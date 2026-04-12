@@ -1,0 +1,64 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="NANKANアナリティクス - Stripe決済統合">
+	<main class="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+		<div class="text-center max-w-4xl px-4">
+			<h1 class="text-6xl font-bold mb-8">
+				🏇 <span class="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+					NANKANアナリティクス
+				</span>
+			</h1>
+			<p class="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
+				南関競馬専門のAI予想システム with 完全自動化Stripe決済システム
+			</p>
+			
+			<div class="grid md:grid-cols-2 gap-6 mt-16">
+				<a href="/pricing" 
+				   class="bg-blue-500 hover:bg-blue-600 text-white p-6 rounded-lg transition-colors">
+					<h3 class="text-xl font-bold mb-2">💳 料金プラン</h3>
+					<p class="text-blue-100">プランを選択して決済をテスト</p>
+				</a>
+				
+				<a href="/docs/stripe-spec.md" target="_blank"
+				   class="bg-purple-500 hover:bg-purple-600 text-white p-6 rounded-lg transition-colors">
+					<h3 class="text-xl font-bold mb-2">📋 仕様書</h3>
+					<p class="text-purple-100">完全な技術仕様と実装ガイド</p>
+				</a>
+			</div>
+			
+			<div class="mt-16 p-6 bg-slate-800 rounded-lg">
+				<h2 class="text-2xl font-bold mb-4">🚀 完全自動化決済システム</h2>
+				<div class="grid md:grid-cols-3 gap-4 text-sm">
+					<div class="text-center">
+						<div class="text-2xl mb-2">⚡</div>
+						<div class="font-semibold">冪等性対応</div>
+						<div class="text-gray-400">Webhook重複処理防止</div>
+					</div>
+					<div class="text-center">
+						<div class="text-2xl mb-2">🔒</div>
+						<div class="font-semibold">RLS強化</div>
+						<div class="text-gray-400">課金情報完全保護</div>
+					</div>
+					<div class="text-center">
+						<div class="text-2xl mb-2">🎯</div>
+						<div class="font-semibold">TypeScript</div>
+						<div class="text-gray-400">型安全な開発</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</main>
+</Layout>
+
+<style>
+	.bg-gradient-to-r {
+		background: linear-gradient(to right, #3b82f6, #8b5cf6);
+	}
+	
+	a:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+	}
+</style>

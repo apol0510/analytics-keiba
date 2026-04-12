@@ -1,0 +1,3266 @@
+{
+  "raceDate": "2026-03-20",
+  "lastUpdated": "2026-03-19T13:14:22.897Z",
+  "track": "浦和競馬",
+  "totalRaces": 12,
+  "races": [
+    {
+      "raceNumber": "1R",
+      "raceName": "浦和８００ラウンド",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 1,
+      "raceInfo": {
+        "title": "浦和1R 浦和８００ラウンド",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "1R",
+        "raceName": "浦和８００ラウンド",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "ダ800m",
+        "horseCount": 11,
+        "startTime": "12:20",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬1R ダ800m （11頭） 発走時刻12:20 浦和８００ラウンド"
+      },
+      "horses": {
+        "main": {
+          "number": 5,
+          "name": "ガールズドリーム",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 90pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.85
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.9
+            },
+            {
+              "label": "展開利",
+              "value": 0.95
+            }
+          ]
+        },
+        "sub": {
+          "number": 3,
+          "name": "ピノヌイ",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 82pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.85
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.82
+            },
+            {
+              "label": "展開利",
+              "value": 0.79
+            }
+          ]
+        },
+        "hole1": {
+          "number": 1,
+          "name": "シャコンヌ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 81pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 10,
+          "name": "マダムファンタジア",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 82pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 2,
+            "name": "ジュニパーダンス ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 78pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 9,
+            "name": "スピークオブデビル ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 76pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 11,
+            "name": "オンネア ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 72pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 4,
+            "name": "シルバーペコ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 67pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "リュウノアーダーン ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 7,
+            "name": "ゴールドボード ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "5 → 3,10,1　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "60",
+          "confidence": 60,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "3,10,1 → 5　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "5 ⇔ 2,9,11　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "3 ⇔ 10,1　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "65",
+          "confidence": 65,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "5 → 4,6,7　3点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "3 ⇔ 2,9,11,4,6,7　12点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "41",
+          "confidence": 41,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "2R",
+      "raceName": "浦和８００ラウンド",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 2,
+      "raceInfo": {
+        "title": "浦和2R 浦和８００ラウンド",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "2R",
+        "raceName": "浦和８００ラウンド",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "ダ800m",
+        "horseCount": 12,
+        "startTime": "12:50",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬2R ダ800m （12頭） 発走時刻12:50 浦和８００ラウンド"
+      },
+      "horses": {
+        "main": {
+          "number": 7,
+          "name": "ササキンポピー",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 90pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.89
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.86
+            },
+            {
+              "label": "展開利",
+              "value": 0.95
+            }
+          ]
+        },
+        "sub": {
+          "number": 12,
+          "name": "メグ",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 83pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.8
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.82
+            },
+            {
+              "label": "展開利",
+              "value": 0.87
+            }
+          ]
+        },
+        "hole1": {
+          "number": 1,
+          "name": "トーアローダンテ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 81pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 5,
+          "name": "サンドバンブー",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 82pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 2,
+            "name": "ミラクルライズ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 79pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "エムティステージ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "スイートウィル ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 80pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 8,
+            "name": "リバーフロント ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 67pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 9,
+            "name": "スマイルポピー ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7 → 12,5,1　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "60",
+          "confidence": 60,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "12,5,1 → 7　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 10,2,6　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "12 ⇔ 5,1　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "65",
+          "confidence": 65,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7 → 8,9　2点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "12 ⇔ 10,2,6,8,9　10点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "42",
+          "confidence": 42,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "3R",
+      "raceName": "３歳(八)ダ1,400m（11頭） 発走時刻13:20",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 3,
+      "raceInfo": {
+        "title": "浦和3R ３歳(八)ダ1,400m（11頭） 発走時刻13:20",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "3R",
+        "raceName": "３歳(八)ダ1,400m（11頭） 発走時刻13:20",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,400m",
+        "horseCount": 11,
+        "startTime": "13:20",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬3R ３歳(八)ダ1,400m（11頭） 発走時刻13:20"
+      },
+      "horses": {
+        "main": {
+          "number": 4,
+          "name": "ジーティープリン",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 90pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.84
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.85
+            },
+            {
+              "label": "展開利",
+              "value": 0.99
+            }
+          ]
+        },
+        "sub": {
+          "number": 7,
+          "name": "センチュリーラヴ",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 84pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.81
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.8
+            },
+            {
+              "label": "展開利",
+              "value": 0.91
+            }
+          ]
+        },
+        "hole1": {
+          "number": 8,
+          "name": "ウェーブスリープス",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 84pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 11,
+          "name": "エガル",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "イビルアイ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 9,
+            "name": "ダイメイバタフライ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 79pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "スプレンディドゥス ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 79pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 2,
+            "name": "ドドドドドカーン ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 5,
+            "name": "フォレバーアイヤ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "4 → 7,8,11　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "60",
+          "confidence": 60,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7,8,11 → 4　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "4 ⇔ 9,10,1　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 8,11　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "66",
+          "confidence": 66,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "4 → 2,5　2点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 9,10,1,2,5　10点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "42",
+          "confidence": 42,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "4R",
+      "raceName": "３歳(七)ダ1,400m（11頭） 発走時刻13:50",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 4,
+      "raceInfo": {
+        "title": "浦和4R ３歳(七)ダ1,400m（11頭） 発走時刻13:50",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "4R",
+        "raceName": "３歳(七)ダ1,400m（11頭） 発走時刻13:50",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,400m",
+        "horseCount": 11,
+        "startTime": "13:50",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬4R ３歳(七)ダ1,400m（11頭） 発走時刻13:50"
+      },
+      "horses": {
+        "main": {
+          "number": 7,
+          "name": "トリケトラ",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 87pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.89
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.91
+            },
+            {
+              "label": "展開利",
+              "value": 0.81
+            }
+          ]
+        },
+        "sub": {
+          "number": 5,
+          "name": "アルコア",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 84pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.86
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.85
+            },
+            {
+              "label": "展開利",
+              "value": 0.81
+            }
+          ]
+        },
+        "hole1": {
+          "number": 2,
+          "name": "テンザンパパ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 79pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 6,
+          "name": "トランキルライト",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 81pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "アヴェマリスステラ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 75pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 3,
+            "name": "ミライヲプラスニ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 76pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 8,
+            "name": "ハルカビジン ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 4,
+            "name": "コンバットジゴロ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "スウィンドル ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 11,
+            "name": "アビエーション ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 68pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7 → 5,6,2　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "57",
+          "confidence": 57,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "5,6,2 → 7　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 3,1,8　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "5 ⇔ 6,2　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "64",
+          "confidence": 64,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7 → 11,4,10　3点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "5 ⇔ 3,1,8,11,4,10　12点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "41",
+          "confidence": 41,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "5R",
+      "raceName": "桜のまち幸手賞ダ1,400m（10頭） 発走時刻14:20",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 5,
+      "raceInfo": {
+        "title": "浦和5R 桜のまち幸手賞ダ1,400m（10頭） 発走時刻14:20",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "5R",
+        "raceName": "桜のまち幸手賞ダ1,400m（10頭） 発走時刻14:20",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,400m",
+        "horseCount": 10,
+        "startTime": "14:20",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬5R 桜のまち幸手賞ダ1,400m（10頭） 発走時刻14:20"
+      },
+      "horses": {
+        "main": {
+          "number": 4,
+          "name": "ブレストサンダー",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 87pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.88
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.84
+            },
+            {
+              "label": "展開利",
+              "value": 0.89
+            }
+          ]
+        },
+        "sub": {
+          "number": 7,
+          "name": "サノノタルマエ",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 86pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.86
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.86
+            },
+            {
+              "label": "展開利",
+              "value": 0.86
+            }
+          ]
+        },
+        "hole1": {
+          "number": 3,
+          "name": "パワーオブザキング",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 84pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 9,
+          "name": "シエルラビクトア",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 2,
+            "name": "ラグーンプリンセス ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 76pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 5,
+            "name": "タキ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 78pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 8,
+            "name": "アオイラン ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 6,
+            "name": "ヴァラムノス ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "ミヅルーラー ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 67pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "4 → 7,3,9　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "57",
+          "confidence": 57,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7,3,9 → 4　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "4 ⇔ 5,2,8　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 3,9　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "66",
+          "confidence": 66,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "4 → 10,6　2点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 5,2,8,10,6　10点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "42",
+          "confidence": 42,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "6R",
+      "raceName": "浦和競馬公式ファンクラブ賞ダ2,000m（12頭） 発走時刻14:50",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 6,
+      "raceInfo": {
+        "title": "浦和6R 浦和競馬公式ファンクラブ賞ダ2,000m（12頭） 発走時刻14:50",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "6R",
+        "raceName": "浦和競馬公式ファンクラブ賞ダ2,000m（12頭） 発走時刻14:50",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "2,000m",
+        "horseCount": 12,
+        "startTime": "14:50",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬6R 浦和競馬公式ファンクラブ賞ダ2,000m（12頭） 発走時刻14:50"
+      },
+      "horses": {
+        "main": {
+          "number": 2,
+          "name": "インベンション",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 86pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.9
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.81
+            },
+            {
+              "label": "展開利",
+              "value": 0.87
+            }
+          ]
+        },
+        "sub": {
+          "number": 9,
+          "name": "ヤマブキ",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 86pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.88
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.84
+            },
+            {
+              "label": "展開利",
+              "value": 0.86
+            }
+          ]
+        },
+        "hole1": {
+          "number": 8,
+          "name": "ステンノー",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 82pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 10,
+          "name": "カバロプレト",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 78pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "ヨツバミッチー ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 76pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 3,
+            "name": "ジャングルタキオン ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 12,
+            "name": "マイアイガー ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 78pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 4,
+            "name": "スプリングネージュ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 67pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 5,
+            "name": "アンパト ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 67pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "バララララララ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "2 → 9,8,10　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "56",
+          "confidence": 56,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "9,8,10 → 2　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "2 ⇔ 12,1,3　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "9 ⇔ 8,10　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "65",
+          "confidence": 65,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "2 → 4,5,6　3点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "9 ⇔ 12,1,3,4,5,6　12点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "41",
+          "confidence": 41,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "7R",
+      "raceName": "特選 Ｃ３ 選抜牝馬ダ1,400m（12頭） 発走時刻15:25",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 7,
+      "raceInfo": {
+        "title": "浦和7R 特選 Ｃ３ 選抜牝馬ダ1,400m（12頭） 発走時刻15:25",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "7R",
+        "raceName": "特選 Ｃ３ 選抜牝馬ダ1,400m（12頭） 発走時刻15:25",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,400m",
+        "horseCount": 12,
+        "startTime": "15:25",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬7R 特選 Ｃ３ 選抜牝馬ダ1,400m（12頭） 発走時刻15:25"
+      },
+      "horses": {
+        "main": {
+          "number": 8,
+          "name": "ファンタフェスタ",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 89pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.9
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.84
+            },
+            {
+              "label": "展開利",
+              "value": 0.93
+            }
+          ]
+        },
+        "sub": {
+          "number": 10,
+          "name": "マロンルピナス",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 86pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.89
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.83
+            },
+            {
+              "label": "展開利",
+              "value": 0.86
+            }
+          ]
+        },
+        "hole1": {
+          "number": 2,
+          "name": "セイウンコチョウ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 77pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 11,
+          "name": "ミサイルビスケッツ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "シックスレター ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "ツーエムルーイー ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 7,
+            "name": "ジャストザヴァルス ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 72pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 4,
+            "name": "ケイティーユイ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 12,
+            "name": "ホシプリンセス ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 72pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "8 → 10,11,2　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "59",
+          "confidence": 59,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "10,11,2 → 8　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "8 ⇔ 1,6,7　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "10 ⇔ 11,2　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "65",
+          "confidence": 65,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "8 → 12,4　2点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "10 ⇔ 1,6,7,12,4　10点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "43",
+          "confidence": 43,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "8R",
+      "raceName": "スイートピー特別ダ1,400m（13頭） 発走時刻16:00",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 8,
+      "raceInfo": {
+        "title": "浦和8R スイートピー特別ダ1,400m（13頭） 発走時刻16:00",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "8R",
+        "raceName": "スイートピー特別ダ1,400m（13頭） 発走時刻16:00",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,400m",
+        "horseCount": 13,
+        "startTime": "16:00",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬8R スイートピー特別ダ1,400m（13頭） 発走時刻16:00"
+      },
+      "horses": {
+        "main": {
+          "number": 13,
+          "name": "ジーティーエンジン",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 90pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.84
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.9
+            },
+            {
+              "label": "展開利",
+              "value": 0.96
+            }
+          ]
+        },
+        "sub": {
+          "number": 12,
+          "name": "シゲルツキミザケ",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 85pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.9
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.81
+            },
+            {
+              "label": "展開利",
+              "value": 0.84
+            }
+          ]
+        },
+        "hole1": {
+          "number": 2,
+          "name": "パカラボーイ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 82pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 8,
+          "name": "フロネシス",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 82pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "フラッシュタイム ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 3,
+            "name": "ネバーエンドマーチ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 5,
+            "name": "シスターネビュラ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "アカネセイコー ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 75pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 7,
+            "name": "ワンダーリーグ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 9,
+            "name": "モリオン ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "ウィルトゥーウェル ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "13 → 12,2,8　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "60",
+          "confidence": 60,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "12,2,8 → 13　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "13 ⇔ 6,1,3,5　8点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "12 ⇔ 2,8　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "66",
+          "confidence": 66,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "13 → 9,7,10　3点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "12 ⇔ 6,1,3,5,9,7,10　14点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "43",
+          "confidence": 43,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "9R",
+      "raceName": "若草（わかくさ）特別ダ1,500m（9頭） 発走時刻16:35",
+      "tier": "premium",
+      "isMainRace": false,
+      "displayOrder": 9,
+      "raceInfo": {
+        "title": "浦和9R 若草（わかくさ）特別ダ1,500m（9頭） 発走時刻16:35",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "9R",
+        "raceName": "若草（わかくさ）特別ダ1,500m（9頭） 発走時刻16:35",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,500m",
+        "horseCount": 9,
+        "startTime": "16:35",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬9R 若草（わかくさ）特別ダ1,500m（9頭） 発走時刻16:35"
+      },
+      "horses": {
+        "main": {
+          "number": 8,
+          "name": "ドリームファイター",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 89pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.86
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.83
+            },
+            {
+              "label": "展開利",
+              "value": 0.98
+            }
+          ]
+        },
+        "sub": {
+          "number": 3,
+          "name": "オリジナルパターン",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 84pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.88
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.82
+            },
+            {
+              "label": "展開利",
+              "value": 0.82
+            }
+          ]
+        },
+        "hole1": {
+          "number": 7,
+          "name": "セイソラボル",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 81pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 9,
+          "name": "フェイティアン",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 78pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "ピカレスクヒーロー ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 77pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 5,
+            "name": "ゴールドライン ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 2,
+            "name": "ミノリクン ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "アマビリティ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 70pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "8 → 3,7,9　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "59",
+          "confidence": 59,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "3,7,9 → 8　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "8 ⇔ 1,5　4点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "3 ⇔ 7,9　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "65",
+          "confidence": 65,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "8 → 6,2　2点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "3 ⇔ 1,5,6,2　8点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "42",
+          "confidence": 42,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "10R",
+      "raceName": "浦和競馬×ｎｅｔｋｅｉｂａコラボ特別ダ1,400m（10頭） 発走時刻17:10",
+      "tier": "standard",
+      "isMainRace": false,
+      "displayOrder": 10,
+      "raceInfo": {
+        "title": "浦和10R 浦和競馬×ｎｅｔｋｅｉｂａコラボ特別ダ1,400m（10頭） 発走時刻17:10",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "10R",
+        "raceName": "浦和競馬×ｎｅｔｋｅｉｂａコラボ特別ダ1,400m（10頭） 発走時刻17:10",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,400m",
+        "horseCount": 10,
+        "startTime": "17:10",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬10R 浦和競馬×ｎｅｔｋｅｉｂａコラボ特別ダ1,400m（10頭） 発走時刻17:10"
+      },
+      "horses": {
+        "main": {
+          "number": 5,
+          "name": "ストイックノア",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 89pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.92
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.91
+            },
+            {
+              "label": "展開利",
+              "value": 0.84
+            }
+          ]
+        },
+        "sub": {
+          "number": 1,
+          "name": "ベストフィールド",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 87pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.87
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.84
+            },
+            {
+              "label": "展開利",
+              "value": 0.9
+            }
+          ]
+        },
+        "hole1": {
+          "number": 3,
+          "name": "マスクドサムライ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 7,
+          "name": "バックビート",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 81pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 9,
+            "name": "ネライウチ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 79pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "ノッテストラータ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 80pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 4,
+            "name": "アーサ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "アルメールヴェント ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "5 → 1,7,3　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "59",
+          "confidence": 59,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "1,7,3 → 5　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "5 ⇔ 10,9　4点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "1 ⇔ 7,3　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "66",
+          "confidence": 66,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "5 → 6,4　2点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "1 ⇔ 10,9,6,4　8点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "43",
+          "confidence": 43,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "11R",
+      "raceName": "弥生（やよい）特別ダ1,500m（12頭） 発走時刻17:45",
+      "tier": "standard",
+      "isMainRace": true,
+      "displayOrder": 11,
+      "raceInfo": {
+        "title": "浦和11R 弥生（やよい）特別ダ1,500m（12頭） 発走時刻17:45",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "11R",
+        "raceName": "弥生（やよい）特別ダ1,500m（12頭） 発走時刻17:45",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "1,500m",
+        "horseCount": 12,
+        "startTime": "17:45",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬11R 弥生（やよい）特別ダ1,500m（12頭） 発走時刻17:45"
+      },
+      "horses": {
+        "main": {
+          "number": 7,
+          "name": "エナジーポコアポコ",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 88pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.92
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.86
+            },
+            {
+              "label": "展開利",
+              "value": 0.86
+            }
+          ]
+        },
+        "sub": {
+          "number": 5,
+          "name": "トノパー",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 86pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.81
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.89
+            },
+            {
+              "label": "展開利",
+              "value": 0.88
+            }
+          ]
+        },
+        "hole1": {
+          "number": 9,
+          "name": "エドノバンザイ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 11,
+          "name": "タイムモーメント",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 4,
+            "name": "リョウタスペシャル ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 75pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 10,
+            "name": "ランドマックス ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 78pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 12,
+            "name": "チョメチョメ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 75pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 1,
+            "name": "リヴィフェイス ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 67pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 3,
+            "name": "ラブアンドハピネス ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 6,
+            "name": "ラブリービュー ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 69pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7 → 5,9,11　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "58",
+          "confidence": 58,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "5,9,11 → 7　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 10,4,12　6点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "5 ⇔ 9,11　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "65",
+          "confidence": 65,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7 → 6,1,3　3点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "5 ⇔ 10,4,12,6,1,3　12点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "42",
+          "confidence": 42,
+          "risk": "高リスク"
+        }
+      }
+    },
+    {
+      "raceNumber": "12R",
+      "raceName": "浦和×ばんえいコラボ賞ダ2,000m（12頭） 発走時刻18:20",
+      "tier": "standard",
+      "isMainRace": false,
+      "displayOrder": 12,
+      "raceInfo": {
+        "title": "浦和12R 浦和×ばんえいコラボ賞ダ2,000m（12頭） 発走時刻18:20",
+        "date": "2026-03-20",
+        "track": "浦和競馬",
+        "raceNumber": "12R",
+        "raceName": "浦和×ばんえいコラボ賞ダ2,000m（12頭） 発走時刻18:20",
+        "abilityIndex": "85.0",
+        "recommendation": "A+",
+        "expectedReturn": "120",
+        "distance": "2,000m",
+        "horseCount": 12,
+        "startTime": "18:20",
+        "raceCondition": "",
+        "raceDetails": "浦和競馬12R 浦和×ばんえいコラボ賞ダ2,000m（12頭） 発走時刻18:20"
+      },
+      "horses": {
+        "main": {
+          "number": 4,
+          "name": "スピンディエゴール",
+          "mark": "◎",
+          "type": "本命",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 88pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.86
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.92
+            },
+            {
+              "label": "展開利",
+              "value": 0.86
+            }
+          ]
+        },
+        "sub": {
+          "number": 7,
+          "name": "ダートレイジング",
+          "mark": "○",
+          "type": "対抗",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 86pt"
+            }
+          ],
+          "importance": [
+            {
+              "label": "安定性",
+              "value": 0.88
+            },
+            {
+              "label": "能力上位性",
+              "value": 0.83
+            },
+            {
+              "label": "展開利",
+              "value": 0.87
+            }
+          ]
+        },
+        "hole1": {
+          "number": 2,
+          "name": "メジャークオリティ",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 84pt"
+            }
+          ],
+          "importance": []
+        },
+        "hole2": {
+          "number": 10,
+          "name": "エーヴベリー",
+          "mark": "▲",
+          "type": "単穴",
+          "factors": [
+            {
+              "icon": "★",
+              "text": "総合評価:★★★"
+            },
+            {
+              "icon": "★",
+              "text": "累積スコア: 80pt"
+            }
+          ],
+          "importance": []
+        },
+        "connect": [
+          {
+            "number": 1,
+            "name": "オデンシタ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 3,
+            "name": "プラティクレール ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 5,
+            "name": "イサナ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 72pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 9,
+            "name": "イエヴァンポルッカ ",
+            "mark": "△",
+            "type": "連下",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 74pt"
+              }
+            ],
+            "importance": []
+          }
+        ],
+        "reserve": [
+          {
+            "number": 6,
+            "name": "ベルウッドウズメ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 8,
+            "name": "レッドゲート ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          },
+          {
+            "number": 12,
+            "name": "ピノマハナ ",
+            "mark": "×",
+            "type": "押さえ",
+            "factors": [
+              {
+                "icon": "★",
+                "text": "総合評価:★★★"
+              },
+              {
+                "icon": "★",
+                "text": "累積スコア: 66pt"
+              }
+            ],
+            "importance": []
+          }
+        ]
+      },
+      "strategies": {
+        "safe": {
+          "title": "🎯 少点数的中型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "4 → 7,2,10　3点",
+              "odds": "3-8倍"
+            }
+          ],
+          "hitRate": "58",
+          "confidence": 58,
+          "risk": "低リスク"
+        },
+        "balance": {
+          "title": "⚖️ バランス型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "7,2,10 → 4　3点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "4 ⇔ 1,9,5,3　8点",
+              "odds": "6-12倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 2,10　4点",
+              "odds": "6-12倍"
+            }
+          ],
+          "hitRate": "66",
+          "confidence": 66,
+          "risk": "中リスク"
+        },
+        "aggressive": {
+          "title": "🚀 高配当追求型モデル",
+          "bets": [
+            {
+              "type": "馬単",
+              "numbers": "4 → 6,8,12　3点",
+              "odds": "10-30倍"
+            },
+            {
+              "type": "馬単",
+              "numbers": "7 ⇔ 1,9,5,3,6,8,12　14点",
+              "odds": "10-30倍"
+            }
+          ],
+          "hitRate": "42",
+          "confidence": 42,
+          "risk": "高リスク"
+        }
+      }
+    }
+  ]
+}

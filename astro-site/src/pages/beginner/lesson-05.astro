@@ -1,0 +1,2598 @@
+---
+export const prerender = true;const title = "Step 5: 配当の考え方 - 的中率≠回収率、期待値の超入門";
+const description = "南関競馬で長期的に勝つための配当理論。的中率と回収率の違い、期待値計算の基本、控除率を超える考え方を解説。";
+---
+
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <meta name="description" content={description}>
+    <link rel="stylesheet" href="/styles/global.css">
+</head>
+
+<body>
+    <div class="container">
+        <nav class="breadcrumb">
+            <a href="/beginner/">初心者講座</a> > Step 5
+        </nav>
+
+        <header class="lesson-header">
+            <h1>Step 5: 配当の考え方 - 的中率≠回収率／期待値の超入門</h1>
+        </header>
+
+        <main class="lesson-content">
+            <section class="data-credibility">
+                <div class="credibility-box">
+                    <h2>📊 このページの信頼性</h2>
+                    <p><strong>NANKANアナリティクスの実戦データに基づく解説</strong></p>
+                    <div class="data-summary">
+                        <div class="data-point">
+                            <span class="label">分析期間</span>
+                            <span class="value">2025年10月〜12月</span>
+                        </div>
+                        <div class="data-point">
+                            <span class="label">分析レース数</span>
+                            <span class="value">780レース</span>
+                        </div>
+                        <div class="data-point">
+                            <span class="label">平均的中率</span>
+                            <span class="value">76.2%</span>
+                        </div>
+                        <div class="data-point highlight">
+                            <span class="label">平均回収率</span>
+                            <span class="value">193.9%</span>
+                        </div>
+                    </div>
+                    <p class="key-finding">🎯 <strong>重要な発見:</strong> 的中率70.5%でも回収率200.2%を達成（浦和競馬場）</p>
+                    <p class="note">※ 以下の事例は全て上記期間の実績値です</p>
+                </div>
+            </section>
+
+            <section class="intro">
+                <h2>このステップで学ぶこと</h2>
+                <p>「当たっているのに儲からない」という経験はありませんか？それは的中率と回収率の違いを理解していないからです。このステップでは、長期的に勝つための数学的思考を身につけます。</p>
+                <ol>
+                    <li><strong>的中率と回収率の決定的な違い</strong></li>
+                    <li><strong>期待値の計算と活用法</strong></li>
+                    <li><strong>控除率25%を超えるための戦略</strong></li>
+                </ol>
+            </section>
+
+            <section class="hit-rate-vs-return">
+                <h2>1. 的中率と回収率の基本</h2>
+                
+                <h3>なぜ的中率だけではダメなのか</h3>
+                
+                <h4>2人の予想家の1ヶ月成績比較</h4>
+                <div class="table-container">
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>項目</th>
+                                <th>Aさん（的中重視）</th>
+                                <th>Bさん（回収重視）</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>購入レース数</strong></td>
+                                <td>100レース</td>
+                                <td>100レース</td>
+                            </tr>
+                            <tr>
+                                <td><strong>的中レース数</strong></td>
+                                <td>40レース</td>
+                                <td>25レース</td>
+                            </tr>
+                            <tr>
+                                <td><strong>的中率</strong></td>
+                                <td>40%</td>
+                                <td>25%</td>
+                            </tr>
+                            <tr>
+                                <td><strong>総投資額</strong></td>
+                                <td>100,000円</td>
+                                <td>100,000円</td>
+                            </tr>
+                            <tr>
+                                <td><strong>総払戻額</strong></td>
+                                <td>80,000円</td>
+                                <td>125,000円</td>
+                            </tr>
+                            <tr class="highlight">
+                                <td><strong>回収率</strong></td>
+                                <td>80%</td>
+                                <td>125%</td>
+                            </tr>
+                            <tr class="result">
+                                <td><strong>収支</strong></td>
+                                <td class="loss">-20,000円</td>
+                                <td class="profit">+25,000円</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="conclusion-box">
+                    <p><strong>結論：</strong> 的中率40%のAさんは赤字、的中率25%のBさんは黒字</p>
+                </div>
+
+                <h3>📈 2025年実績データで証明</h3>
+                <p class="real-data-intro">NANKANアナリティクスの2025年10月〜12月の実戦データが、この理論を完璧に証明しています。</p>
+
+                <div class="real-data-comparison">
+                    <div class="real-data-card best">
+                        <div class="card-header">
+                            <h4>浦和競馬場</h4>
+                            <span class="badge gold">最高回収率</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="stat-row">
+                                <span class="stat-label">的中率</span>
+                                <span class="stat-value">70.5%</span>
+                            </div>
+                            <div class="stat-row highlight">
+                                <span class="stat-label">回収率</span>
+                                <span class="stat-value big">200.2%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">開催日数</span>
+                                <span class="stat-value">11日</span>
+                            </div>
+                        </div>
+                        <div class="card-lesson">
+                            <p><strong>💡 学べるポイント:</strong> 的中率が低くても、高配当を狙えば回収率2倍を達成できる</p>
+                        </div>
+                    </div>
+
+                    <div class="real-data-card">
+                        <div class="card-header">
+                            <h4>船橋競馬場</h4>
+                            <span class="badge silver">最高的中率</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="stat-row">
+                                <span class="stat-label">的中率</span>
+                                <span class="stat-value big">82.1%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">回収率</span>
+                                <span class="stat-value">194.7%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">開催日数</span>
+                                <span class="stat-value">13日</span>
+                            </div>
+                        </div>
+                        <div class="card-lesson">
+                            <p><strong>💡 学べるポイント:</strong> 高的中率でも回収率2倍近く。予想精度が高ければ両立可能</p>
+                        </div>
+                    </div>
+
+                    <div class="real-data-card">
+                        <div class="card-header">
+                            <h4>大井競馬場</h4>
+                            <span class="badge bronze">バランス型</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="stat-row">
+                                <span class="stat-label">的中率</span>
+                                <span class="stat-value">79.2%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">回収率</span>
+                                <span class="stat-value big">206.1%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">開催日数</span>
+                                <span class="stat-value">27日</span>
+                            </div>
+                        </div>
+                        <div class="card-lesson">
+                            <p><strong>💡 学べるポイント:</strong> 的中率・回収率の両方を高水準で維持する理想形</p>
+                        </div>
+                    </div>
+
+                    <div class="real-data-card">
+                        <div class="card-header">
+                            <h4>川崎競馬場</h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="stat-row">
+                                <span class="stat-label">的中率</span>
+                                <span class="stat-value">72.8%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">回収率</span>
+                                <span class="stat-value">174.7%</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">開催日数</span>
+                                <span class="stat-value">15日</span>
+                            </div>
+                        </div>
+                        <div class="card-lesson">
+                            <p><strong>💡 学べるポイント:</strong> 的中率70%台でも回収率170%超。期待値プラスの証明</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="key-insight">
+                    <h4>🎯 重要な洞察</h4>
+                    <ul>
+                        <li><strong>全ての競馬場で回収率170%超を達成</strong> - これは控除率25%を大幅に超えている</li>
+                        <li><strong>的中率と回収率は必ずしも比例しない</strong> - 浦和（70.5%）より川崎（72.8%）の方が的中率は高いが、回収率は浦和が上</li>
+                        <li><strong>最も重要なのは期待値プラスの馬券を選ぶこと</strong> - 的中率だけを追い求めると、Aさんのように赤字になる</li>
+                    </ul>
+                </div>
+
+                <h3>📊 的中率 vs 回収率の視覚化</h3>
+                <p class="chart-intro">データで見ると、的中率と回収率の関係がより明確になります。以下のグラフは、4競馬場の実績を比較したものです。</p>
+
+                <div class="chart-container">
+                    <canvas id="hitRateRecoveryChart"></canvas>
+                </div>
+
+                <div class="chart-explanation">
+                    <h4>📈 グラフから読み取れる重要ポイント</h4>
+                    <div class="explanation-grid">
+                        <div class="explanation-card">
+                            <div class="explanation-icon">🎯</div>
+                            <h5>的中率と回収率は比例しない</h5>
+                            <p>船橋は最高的中率（82.1%）だが、回収率は194.7%。浦和は的中率70.5%で回収率200.2%。<strong>的中率が低くても回収率は上回れる</strong>。</p>
+                        </div>
+                        <div class="explanation-card">
+                            <div class="explanation-icon">💰</div>
+                            <h5>全会場で控除率25%を大幅に超える</h5>
+                            <p>最低でも川崎の174.7%、最高で大井の206.1%。<strong>期待値プラスの馬券選択が実現できている証拠</strong>。</p>
+                        </div>
+                        <div class="explanation-card">
+                            <div class="explanation-icon">📊</div>
+                            <h5>会場ごとに特性がある</h5>
+                            <p>大井はバランス型（79.2%/206.1%）、浦和は高配当型（70.5%/200.2%）。<strong>会場特性を理解すると戦略が立てやすい</strong>。</p>
+                        </div>
+                        <div class="explanation-card">
+                            <div class="explanation-icon">🎓</div>
+                            <h5>初心者が学ぶべきこと</h5>
+                            <p>的中率を追い求めるより、<strong>平均配当が高い馬券を選ぶ</strong>方が長期的に儲かる。Aさんの失敗を繰り返さない。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <h3>回収率の計算方法</h3>
+                <div class="formula-box">
+                    <p><strong>回収率(%) = (総払戻金額 ÷ 総投資金額) × 100</strong></p>
+                </div>
+
+                <h4>回収率別の評価基準</h4>
+                <div class="table-container">
+                    <table class="evaluation-table">
+                        <thead>
+                            <tr>
+                                <th>回収率</th>
+                                <th>評価</th>
+                                <th>1ヶ月10万投資の収支</th>
+                                <th>継続可否</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="excellent">
+                                <td><strong>130%以上</strong></td>
+                                <td>優秀</td>
+                                <td>+30,000円以上</td>
+                                <td>◎継続推奨</td>
+                            </tr>
+                            <tr class="good">
+                                <td><strong>110～129%</strong></td>
+                                <td>良好</td>
+                                <td>+10,000～29,000円</td>
+                                <td>○継続可能</td>
+                            </tr>
+                            <tr class="neutral">
+                                <td><strong>100～109%</strong></td>
+                                <td>収支均衡</td>
+                                <td>0～+9,000円</td>
+                                <td>△要改善</td>
+                            </tr>
+                            <tr class="poor">
+                                <td><strong>80～99%</strong></td>
+                                <td>赤字</td>
+                                <td>-20,000～-1,000円</td>
+                                <td>▲見直し必要</td>
+                            </tr>
+                            <tr class="bad">
+                                <td><strong>80%未満</strong></td>
+                                <td>大幅赤字</td>
+                                <td>-20,000円以上</td>
+                                <td>×即中止</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>的中率と配当の関係</h3>
+                
+                <h4>必要な平均配当の目安</h4>
+                <div class="table-container">
+                    <table class="payout-requirement-table">
+                        <thead>
+                            <tr>
+                                <th>的中率</th>
+                                <th>回収率100%に必要な平均配当</th>
+                                <th>回収率120%に必要な平均配当</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>50%</td>
+                                <td>2.0倍</td>
+                                <td>2.4倍</td>
+                            </tr>
+                            <tr>
+                                <td>40%</td>
+                                <td>2.5倍</td>
+                                <td>3.0倍</td>
+                            </tr>
+                            <tr>
+                                <td>30%</td>
+                                <td>3.3倍</td>
+                                <td>4.0倍</td>
+                            </tr>
+                            <tr>
+                                <td>20%</td>
+                                <td>5.0倍</td>
+                                <td>6.0倍</td>
+                            </tr>
+                            <tr>
+                                <td>10%</td>
+                                <td>10.0倍</td>
+                                <td>12.0倍</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="expected-value">
+                <h2>2. 期待値の理解と計算</h2>
+                
+                <h3>期待値とは何か</h3>
+                <p>期待値は「その賭けを無限回繰り返したときの、1回あたりの平均リターン」を表します。</p>
+
+                <div class="formula-box">
+                    <p><strong>期待値 = (的中確率 × 配当) - 1</strong></p>
+                </div>
+
+                <h3>期待値の計算例</h3>
+                
+                <div class="calculation-examples">
+                    <div class="calculation-example">
+                        <h4>例1：単勝2.0倍の1番人気</h4>
+                        <div class="calculation-steps">
+                            <div class="step">想定勝率：35%</div>
+                            <div class="step">配当：2.0倍</div>
+                            <div class="step">期待値 = (0.35 × 2.0) - 1 = -0.30</div>
+                            <div class="conclusion negative">結論：100円賭けて70円返ってくる計算（マイナス）</div>
+                        </div>
+                    </div>
+
+                    <div class="calculation-example">
+                        <h4>例2：単勝10.0倍の5番人気</h4>
+                        <div class="calculation-steps">
+                            <div class="step">想定勝率：12%</div>
+                            <div class="step">配当：10.0倍</div>
+                            <div class="step">期待値 = (0.12 × 10.0) - 1 = 0.20</div>
+                            <div class="conclusion positive">結論：100円賭けて120円返ってくる計算（プラス）</div>
+                        </div>
+                    </div>
+                </div>
+
+                <h3>オッズと実力の乖離を見つける</h3>
+                
+                <h4>期待値がプラスになるパターン</h4>
+                <div class="table-container">
+                    <table class="pattern-table">
+                        <thead>
+                            <tr>
+                                <th>パターン</th>
+                                <th>具体例</th>
+                                <th>期待値</th>
+                                <th>狙い目度</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>過小評価馬</strong></td>
+                                <td>実力3番手なのに6番人気</td>
+                                <td>+0.25</td>
+                                <td>◎</td>
+                            </tr>
+                            <tr>
+                                <td><strong>復調馬</strong></td>
+                                <td>休み明け2走目で好走傾向</td>
+                                <td>+0.15</td>
+                                <td>○</td>
+                            </tr>
+                            <tr>
+                                <td>+0.10</td>
+                                <td>○</td>
+                            </tr>
+                            <tr>
+                                <td><strong>距離短縮</strong></td>
+                                <td>1600m→1200mで好走歴あり</td>
+                                <td>+0.12</td>
+                                <td>○</td>
+                            </tr>
+                            <tr>
+                                <td><strong>馬場適性</strong></td>
+                                <td>重馬場巧者が雨天時</td>
+                                <td>+0.20</td>
+                                <td>◎</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>期待値計算ツール</h3>
+                
+                <h4>簡易判定表</h4>
+                <div class="judgment-box">
+                    <h5>配当と必要勝率の関係（期待値±0）</h5>
+                    <div class="table-container">
+                        <table class="judgment-table">
+                            <thead>
+                                <tr>
+                                    <th>配当</th>
+                                    <th>必要勝率</th>
+                                    <th>人気順位の目安</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>1.5倍</td>
+                                    <td>67%</td>
+                                    <td>－</td>
+                                </tr>
+                                <tr>
+                                    <td>2.0倍</td>
+                                    <td>50%</td>
+                                    <td>1番人気</td>
+                                </tr>
+                                <tr>
+                                    <td>3.0倍</td>
+                                    <td>33%</td>
+                                    <td>1～2番人気</td>
+                                </tr>
+                                <tr>
+                                    <td>5.0倍</td>
+                                    <td>20%</td>
+                                    <td>2～3番人気</td>
+                                </tr>
+                                <tr>
+                                    <td>10.0倍</td>
+                                    <td>10%</td>
+                                    <td>4～5番人気</td>
+                                </tr>
+                                <tr>
+                                    <td>20.0倍</td>
+                                    <td>5%</td>
+                                    <td>6～7番人気</td>
+                                </tr>
+                                <tr>
+                                    <td>50.0倍</td>
+                                    <td>2%</td>
+                                    <td>8番人気以下</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section class="overcome-deduction">
+                <h2>3. 控除率25%を超える戦略</h2>
+                
+                <h3>控除率の壁を理解する</h3>
+                <p>南関競馬の控除率25%は、何も考えずに賭けると必ず75%しか返ってこない仕組みです。これを超えるには、明確な戦略が必要です。</p>
+
+                <h3>戦略1：情報の非対称性を利用</h3>
+                
+                <h4>一般投票者が見落としがちな要素</h4>
+                <div class="asymmetry-factors">
+                    <div class="factor-card">
+                        <h5>1. 馬場状態の変化</h5>
+                        <ul>
+                            <li>開催3日目以降の馬場悪化</li>
+                            <li>内外の有利不利の変化</li>
+                            <li>前日の雨の影響</li>
+                        </ul>
+                    </div>
+
+                    <div class="factor-card">
+                        <h5>2. ローテーション</h5>
+                        <ul>
+                            <li>中2週以下の連闘馬</li>
+                            <li>休み明け2走目の上昇</li>
+                            <li>長期休養明けの仕上がり</li>
+                        </ul>
+                    </div>
+
+                    <div class="factor-card">
+                        <h5>3. 展開予想</h5>
+                        <ul>
+                            <li>逃げ馬不在のスローペース</li>
+                            <li>多頭数での団子状態</li>
+                            <li>直線の詰まり予測</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3>戦略2：複勝転がしの威力</h3>
+                
+                <h4>複勝転がしシミュレーション</h4>
+                <div class="rolling-simulation">
+                    <div class="simulation-header">
+                        <strong>初期資金：10,000円</strong><br>
+                        <strong>目標：複勝1.3倍を5回的中</strong>
+                    </div>
+                    
+                    <div class="table-container">
+                        <table class="rolling-table">
+                            <thead>
+                                <tr>
+                                    <th>回数</th>
+                                    <th>投資額</th>
+                                    <th>配当</th>
+                                    <th>払戻額</th>
+                                    <th>利益累計</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>1回目</td>
+                                    <td>10,000円</td>
+                                    <td>1.3倍</td>
+                                    <td>13,000円</td>
+                                    <td>+3,000円</td>
+                                </tr>
+                                <tr>
+                                    <td>2回目</td>
+                                    <td>13,000円</td>
+                                    <td>1.3倍</td>
+                                    <td>16,900円</td>
+                                    <td>+6,900円</td>
+                                </tr>
+                                <tr>
+                                    <td>3回目</td>
+                                    <td>16,900円</td>
+                                    <td>1.3倍</td>
+                                    <td>21,970円</td>
+                                    <td>+11,970円</td>
+                                </tr>
+                                <tr>
+                                    <td>4回目</td>
+                                    <td>21,970円</td>
+                                    <td>1.3倍</td>
+                                    <td>28,561円</td>
+                                    <td>+18,561円</td>
+                                </tr>
+                                <tr class="highlight">
+                                    <td>5回目</td>
+                                    <td>28,561円</td>
+                                    <td>1.3倍</td>
+                                    <td>37,129円</td>
+                                    <td>+27,129円</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="simulation-note">
+                        <strong>成功率70%でも期待値プラス</strong>
+                    </div>
+                </div>
+
+                <h3>戦略3：券種の使い分け</h3>
+                
+                <h4>状況別の最適券種</h4>
+                <div class="table-container">
+                    <table class="ticket-strategy-table">
+                        <thead>
+                            <tr>
+                                <th>状況</th>
+                                <th>推奨券種</th>
+                                <th>理由</th>
+                                <th>期待回収率</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>1強レース</strong></td>
+                                <td>複勝</td>
+                                <td>的中率重視</td>
+                                <td>95～105%</td>
+                            </tr>
+                            <tr>
+                                <td><strong>2強対決</strong></td>
+                                <td>ワイド</td>
+                                <td>バランス型</td>
+                                <td>100～120%</td>
+                            </tr>
+                            <tr>
+                                <td><strong>混戦模様</strong></td>
+                                <td>3連複</td>
+                                <td>配当狙い</td>
+                                <td>80～150%</td>
+                            </tr>
+                            <tr>
+                                <td><strong>大荒れ予想</strong></td>
+                                <td>馬連</td>
+                                <td>効率重視</td>
+                                <td>90～130%</td>
+                            </tr>
+                            <tr>
+                                <td><strong>鉄板レース</strong></td>
+                                <td>単勝</td>
+                                <td>シンプル</td>
+                                <td>100～110%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="practical-techniques">
+                <h2>4. 回収率を上げる実践テクニック</h2>
+                
+                <h3>テクニック1：オッズの歪みを狙う</h3>
+                
+                <h4>歪みが生じやすいタイミング</h4>
+                <div class="timing-cards">
+                    <div class="timing-card">
+                        <h5>1. 平日開催の午前中</h5>
+                        <ul>
+                            <li>投票者が少ない</li>
+                            <li>プロの投票が目立つ</li>
+                            <li>締切直前の変動大</li>
+                        </ul>
+                    </div>
+
+                    <div class="timing-card">
+                        <h5>2. 最終レース</h5>
+                        <ul>
+                            <li>負けを取り返そうとする投票</li>
+                            <li>人気馬への過剰投票</li>
+                            <li>穴馬が過小評価</li>
+                        </ul>
+                    </div>
+
+                    <div class="timing-card">
+                        <h5>3. 重賞レースの前後</h5>
+                        <ul>
+                            <li>注目が重賞に集中</li>
+                            <li>一般戦が手薄に</li>
+                            <li>配当妙味が増す</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3>テクニック2：回収率重視の買い方</h3>
+                
+                <h4>高回収率を狙う買い目構成</h4>
+                <div class="high-return-example">
+                    <h5>例：予算1,000円、軸馬3番（4番人気・8.0倍）</h5>
+                    
+                    <div class="betting-composition">
+                        <h6>プランA（回収率重視）：</h6>
+                        <ul>
+                            <li>単勝3番：500円 → 的中時4,000円</li>
+                            <li>ワイド3-1番人気：300円 → 的中時900円</li>
+                            <li>ワイド3-2番人気：200円 → 的中時800円</li>
+                        </ul>
+                    </div>
+
+                    <div class="expected-calculation">
+                        <h6>期待値：</h6>
+                        <div class="calculation-detail">
+                            単勝的中（15%）：4,000円 × 0.15 = 600円<br>
+                            ワイド的中（30%）：850円 × 0.30 = 255円<br>
+                            <strong>合計期待値：855円（回収率85.5%）</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <h3>テクニック3：長期データの活用</h3>
+                
+                <h4>3ヶ月分のデータ蓄積効果</h4>
+                <div class="table-container">
+                    <table class="data-accumulation-table">
+                        <thead>
+                            <tr>
+                                <th>期間</th>
+                                <th>データ数</th>
+                                <th>的中率</th>
+                                <th>回収率</th>
+                                <th>月間収支</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>1ヶ月目</td>
+                                <td>30レース</td>
+                                <td>23%</td>
+                                <td>82%</td>
+                                <td>-5,400円</td>
+                            </tr>
+                            <tr>
+                                <td>2ヶ月目</td>
+                                <td>60レース</td>
+                                <td>27%</td>
+                                <td>94%</td>
+                                <td>-1,800円</td>
+                            </tr>
+                            <tr>
+                                <td>3ヶ月目</td>
+                                <td>90レース</td>
+                                <td>31%</td>
+                                <td>108%</td>
+                                <td>+2,400円</td>
+                            </tr>
+                            <tr class="improvement">
+                                <td>4ヶ月目</td>
+                                <td>120レース</td>
+                                <td>33%</td>
+                                <td>115%</td>
+                                <td>+4,500円</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="data-insight">
+                    <p><strong>データが蓄積されるほど精度が向上</strong></p>
+                </div>
+            </section>
+
+            <section class="practical-case">
+                <h2>5. 期待値プラスの具体例</h2>
+                
+                <h3>ケーススタディ：大井第8レース</h3>
+                
+                <div class="case-study">
+                    <div class="race-info">
+                        <h4>レース条件：</h4>
+                        <ul>
+                            <li>1200m B3 12頭立て</li>
+                            <li>1番人気：5番（2.2倍）</li>
+                            <li>注目馬：8番（7番人気・15.0倍）</li>
+                        </ul>
+                    </div>
+
+                    <div class="analysis-section">
+                        <h4>8番の期待値分析：</h4>
+                        
+                        <div class="analysis-factors">
+                            <h5>プラス要素：</h5>
+                            <ul>
+                                <li>前走0.2秒差の2着（+5%）</li>
+                                <li>得意の1200m（+2%）</li>
+                                <li>外枠から差し可能（+2%）</li>
+                            </ul>
+                        </div>
+
+                        <div class="analysis-calculation">
+                            <div class="calculation-flow">
+                                <div class="flow-step">想定勝率：8% → 12%に上方修正</div>
+                                <div class="flow-step">期待値 = (0.12 × 15.0) - 1 = 0.80</div>
+                                <div class="flow-conclusion positive">結論：期待値+80%の超お宝馬券</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <h3>月間収支シミュレーション</h3>
+                
+                <h4>期待値重視で100レース購入</h4>
+                <div class="monthly-simulation">
+                    <div class="simulation-conditions">
+                        <h5>設定条件：</h5>
+                        <ul>
+                            <li>月間予算：30,000円</li>
+                            <li>1レース：300円</li>
+                            <li>期待値+10%以上のみ購入</li>
+                        </ul>
+                    </div>
+
+                    <div class="simulation-results">
+                        <h5>結果予測：</h5>
+                        <div class="result-details">
+                            購入レース：100レース<br>
+                            的中レース：28レース（的中率28%）<br>
+                            総投資額：30,000円<br>
+                            総払戻額：36,000円<br>
+                            <strong>回収率：120%</strong><br>
+                            <strong>純利益：+6,000円</strong>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 💰 高配当成功事例セクション -->
+            <section class="success-cases-section">
+                <h3>💰 実戦事例：高配当的中レース（2025年10月〜12月）</h3>
+                <p class="success-intro">的中率が低くても、高配当を狙えば大きく稼げる。NANKANアナリティクスが実際に的中させた高配当レースを紹介します。</p>
+
+                <div class="success-cases-grid">
+                    <div class="success-case-card">
+                        <div class="success-case-header">
+                            <h4>🏇 浦和11R</h4>
+                            <p class="success-payout">30,240円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年10月18日</p>
+                        </div>
+                        <div class="success-case-body">
+                            <div class="success-detail">
+                                <span class="success-detail-label">券種</span>
+                                <span class="success-detail-value">馬単</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">買い目</span>
+                                <span class="success-detail-value">4 → 1</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">投資額</span>
+                                <span class="success-detail-value">300円</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">回収率</span>
+                                <span class="success-detail-value">10,080%</span>
+                            </div>
+                        </div>
+                        <div class="success-lesson">
+                            <p><strong>💡 学べること:</strong> 人気薄でもデータに基づいて馬を選べば、10,000%超の回収率も可能。的中率より期待値を重視した結果。</p>
+                        </div>
+                    </div>
+
+                    <div class="success-case-card">
+                        <div class="success-case-header">
+                            <h4>🏇 大井12R（GI レディスプレリュード）</h4>
+                            <p class="success-payout">17,890円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年11月20日</p>
+                        </div>
+                        <div class="success-case-body">
+                            <div class="success-detail">
+                                <span class="success-detail-label">券種</span>
+                                <span class="success-detail-value">馬単</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">買い目</span>
+                                <span class="success-detail-value">9 → 2</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">投資額</span>
+                                <span class="success-detail-value">300円</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">回収率</span>
+                                <span class="success-detail-value">5,963%</span>
+                            </div>
+                        </div>
+                        <div class="success-lesson">
+                            <p><strong>💡 学べること:</strong> GIレースでも高配当は狙える。レース格を気にせず、データ分析で勝負した成功例。</p>
+                        </div>
+                    </div>
+
+                    <div class="success-case-card">
+                        <div class="success-case-header">
+                            <h4>🏇 大井7R</h4>
+                            <p class="success-payout">6,490円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年12月2日</p>
+                        </div>
+                        <div class="success-case-body">
+                            <div class="success-detail">
+                                <span class="success-detail-label">券種</span>
+                                <span class="success-detail-value">馬単</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">買い目</span>
+                                <span class="success-detail-value">9 → 2</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">投資額</span>
+                                <span class="success-detail-value">300円</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">回収率</span>
+                                <span class="success-detail-value">2,163%</span>
+                            </div>
+                        </div>
+                        <div class="success-lesson">
+                            <p><strong>💡 学べること:</strong> 普通のレースでも2,000%超の回収率は実現可能。コツコツより一撃が重要な理由がここにある。</p>
+                        </div>
+                    </div>
+
+                    <div class="success-case-card">
+                        <div class="success-case-header">
+                            <h4>🏇 船橋8R</h4>
+                            <p class="success-payout">5,730円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年11月12日</p>
+                        </div>
+                        <div class="success-case-body">
+                            <div class="success-detail">
+                                <span class="success-detail-label">券種</span>
+                                <span class="success-detail-value">馬単</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">買い目</span>
+                                <span class="success-detail-value">11 → 9</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">投資額</span>
+                                <span class="success-detail-value">300円</span>
+                            </div>
+                            <div class="success-detail">
+                                <span class="success-detail-label">回収率</span>
+                                <span class="success-detail-value">1,910%</span>
+                            </div>
+                        </div>
+                        <div class="success-lesson">
+                            <p><strong>💡 学べること:</strong> 人気薄の組み合わせでも、理論的に裏付けられた予想なら的中できる。Aさんのような低配当狙いでは絶対に稼げない額。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="key-insight">
+                    <h4>🎯 高配当レースから学ぶポイント</h4>
+                    <ul>
+                        <li><strong>月に数回の高配当が全体の回収率を押し上げる</strong> - 浦和の30,240円1回で、100レース分の赤字を補える</li>
+                        <li><strong>的中率28%でも年間+数十万円は可能</strong> - 10,000円投資×100レース=100万円、回収率120%なら+20万円の利益</li>
+                        <li><strong>Aさんの戦略では絶対に到達できない領域</strong> - 的中率40%でも平均配当200円では赤字、高配当狙いこそが勝利への道</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- 📊 安定的中セクション -->
+            <section class="stable-cases-section">
+                <h3>📊 実戦事例：安定的中レース（500円〜2,000円）</h3>
+                <p class="stable-intro">高配当だけでなく、安定的な配当も重要。適度な配当で的中を重ね、資金を増やす戦略も有効です。</p>
+
+                <div class="stable-cases-grid">
+                    <div class="stable-case-card">
+                        <div class="stable-case-header">
+                            <h4>🏇 船橋11R</h4>
+                            <p class="stable-payout">1,990円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年10月8日</p>
+                        </div>
+                        <div class="stable-case-body">
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">券種</span>
+                                <span class="stable-detail-value">馬単</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">買い目</span>
+                                <span class="stable-detail-value">1 → 5</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">投資額</span>
+                                <span class="stable-detail-value">300円</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">回収率</span>
+                                <span class="stable-detail-value">663%</span>
+                            </div>
+                        </div>
+                        <div class="stable-lesson">
+                            <p><strong>💡 学べること:</strong> 1,990円配当でも回収率663%。的中率が高ければ、中配当でも十分に稼げる。</p>
+                        </div>
+                    </div>
+
+                    <div class="stable-case-card">
+                        <div class="stable-case-header">
+                            <h4>🏇 大井12R</h4>
+                            <p class="stable-payout">1,350円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年10月10日</p>
+                        </div>
+                        <div class="stable-case-body">
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">券種</span>
+                                <span class="stable-detail-value">馬単</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">買い目</span>
+                                <span class="stable-detail-value">1 → 5</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">投資額</span>
+                                <span class="stable-detail-value">300円</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">回収率</span>
+                                <span class="stable-detail-value">450%</span>
+                            </div>
+                        </div>
+                        <div class="stable-lesson">
+                            <p><strong>💡 学べること:</strong> 1,350円でも回収率450%。こういう的中を月10回積み重ねれば、安定的に資金が増える。</p>
+                        </div>
+                    </div>
+
+                    <div class="stable-case-card">
+                        <div class="stable-case-header">
+                            <h4>🏇 浦和10R</h4>
+                            <p class="stable-payout">920円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年11月13日</p>
+                        </div>
+                        <div class="stable-case-body">
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">券種</span>
+                                <span class="stable-detail-value">馬単</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">買い目</span>
+                                <span class="stable-detail-value">1 → 4</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">投資額</span>
+                                <span class="stable-detail-value">300円</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">回収率</span>
+                                <span class="stable-detail-value">307%</span>
+                            </div>
+                        </div>
+                        <div class="stable-lesson">
+                            <p><strong>💡 学べること:</strong> 920円でも回収率307%。この程度の配当を高確率で的中させるのが理想的。</p>
+                        </div>
+                    </div>
+
+                    <div class="stable-case-card">
+                        <div class="stable-case-header">
+                            <h4>🏇 川崎9R</h4>
+                            <p class="stable-payout">590円</p>
+                            <p style="margin: 0; opacity: 0.9;">2025年12月1日</p>
+                        </div>
+                        <div class="stable-case-body">
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">券種</span>
+                                <span class="stable-detail-value">馬単</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">買い目</span>
+                                <span class="stable-detail-value">2 → 3</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">投資額</span>
+                                <span class="stable-detail-value">300円</span>
+                            </div>
+                            <div class="stable-detail">
+                                <span class="stable-detail-label">回収率</span>
+                                <span class="stable-detail-value">197%</span>
+                            </div>
+                        </div>
+                        <div class="stable-lesson">
+                            <p><strong>💡 学べること:</strong> 590円でも回収率197%。控除率25%を大幅に超えている。これが「期待値プラスの馬券」。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="key-insight">
+                    <h4>🎯 安定的中レースから学ぶポイント</h4>
+                    <ul>
+                        <li><strong>500円〜2,000円でも十分に稼げる</strong> - 回収率200%〜600%を実現、Aさんの80%赤字とは雲泥の差</li>
+                        <li><strong>高配当と中配当のバランスが重要</strong> - 月に数回の高配当 + 毎週の安定的中 = 回収率200%超</li>
+                        <li><strong>的中率70%〜80%を維持しながら中配当を狙う</strong> - これがNANKANアナリティクスの戦略、Bさんの成功パターン</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section class="summary">
+                <h2>まとめ：次のステップへ</h2>
+                
+                <h3>このステップで学んだこと</h3>
+                <div class="checklist">
+                    <div class="check-item">✅ 的中率より回収率が重要</div>
+                    <div class="check-item">✅ 期待値プラスの馬券を選ぶ</div>
+                    <div class="check-item">✅ 控除率25%を超える戦略</div>
+                    <div class="check-item">✅ オッズの歪みを見つける</div>
+                </div>
+
+                <h3>チェックリスト</h3>
+                <div class="final-checklist">
+                    <label><input type="checkbox"> 回収率の計算方法を理解した</label>
+                    <label><input type="checkbox"> 期待値の概念を把握した</label>
+                    <label><input type="checkbox"> 控除率を超える戦略を学んだ</label>
+                    <label><input type="checkbox"> 高回収率の買い方を覚えた</label>
+                </div>
+
+                <div class="related-content">
+                    <h3>📚 さらに詳しく学ぶ：各コースの詳細攻略法</h3>
+                    <p class="related-intro">このステップで学んだコース別戦略を、実際のデータで深掘りしましょう。各競馬場の主要コースを完全攻略！</p>
+
+                    <div class="course-links-grid">
+                        <!-- 大井競馬場 -->
+                        <div class="venue-group">
+                            <h4 class="venue-title">🏟️ 大井競馬場</h4>
+                            <div class="course-links">
+                                <a href="/blog/course/ooi-1200m/" class="course-link">
+                                    <span class="course-distance">1200m</span>
+                                    <span class="course-feature">直線386m・外枠有利</span>
+                                </a>
+                                <a href="/blog/course/ooi-1400m/" class="course-link">
+                                    <span class="course-distance">1400m</span>
+                                    <span class="course-feature">内回り・先行有利</span>
+                                </a>
+                                <a href="/blog/course/ooi-1600m/" class="course-link">
+                                    <span class="course-distance">1600m</span>
+                                    <span class="course-feature">外回り・バランス型</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- 川崎競馬場 -->
+                        <div class="venue-group">
+                            <h4 class="venue-title">🏟️ 川崎競馬場</h4>
+                            <div class="course-links">
+                                <a href="/blog/course/kawasaki-900m/" class="course-link">
+                                    <span class="course-distance">900m</span>
+                                    <span class="course-feature">逃げ馬天国</span>
+                                </a>
+                                <a href="/blog/course/kawasaki-1400m/" class="course-link">
+                                    <span class="course-distance">1400m</span>
+                                    <span class="course-feature">先行有利・小回り</span>
+                                </a>
+                                <a href="/blog/course/kawasaki-1600m/" class="course-link">
+                                    <span class="course-distance">1600m</span>
+                                    <span class="course-feature">タイトコーナー</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- 船橋競馬場 -->
+                        <div class="venue-group">
+                            <h4 class="venue-title">🏟️ 船橋競馬場</h4>
+                            <div class="course-links">
+                                <a href="/blog/course/funabashi-1000m/" class="course-link">
+                                    <span class="course-distance">1000m</span>
+                                    <span class="course-feature">内枠絶対有利</span>
+                                </a>
+                                <a href="/blog/course/funabashi-1200m/" class="course-link">
+                                    <span class="course-distance">1200m</span>
+                                    <span class="course-feature">スパイラル特性</span>
+                                </a>
+                                <a href="/blog/course/funabashi-1600m/" class="course-link">
+                                    <span class="course-distance">1600m</span>
+                                    <span class="course-feature">外枠差し馬</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- 浦和競馬場 -->
+                        <div class="venue-group">
+                            <h4 class="venue-title">🏟️ 浦和競馬場</h4>
+                            <div class="course-links">
+                                <a href="/blog/course/urawa-800m/" class="course-link">
+                                    <span class="course-distance">800m</span>
+                                    <span class="course-feature">逃げ馬勝率52.1%</span>
+                                </a>
+                                <a href="/blog/course/urawa-1400m/" class="course-link">
+                                    <span class="course-distance">1400m</span>
+                                    <span class="course-feature">先行馬44.8%</span>
+                                </a>
+                                <a href="/blog/course/urawa-1500m/" class="course-link">
+                                    <span class="course-distance">1500m</span>
+                                    <span class="course-feature">直線220m最短</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p class="course-links-note">💡 各コースの馬番別勝率・人気別成績・3段階戦略を詳しく解説しています。</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav">
+                <a href="/beginner/lesson-04/" class="nav-prev">← Step 4: 買い目の作り方</a>
+                <a href="/beginner/lesson-06/" class="nav-next">Step 6: コース別の最初の一手 →</a>
+            </nav>
+
+            <div class="cta-section">
+                <div class="cta-box">
+                    <h3>＼ 実戦の買い目はここで公開 ／</h3>
+                    <p>講座で学んだ知識を、AI予想で実戦活用。<br>プロの予想家も使う最新AIモデルの予想を毎日配信中。</p>
+                    <a href="/premium/" class="cta-button">有料AI予想の詳細を見る →</a>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <style>
+        body {
+            background-color: #ffffff;
+            color: #1a1a1a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            background-color: #ffffff;
+            color: #1a1a1a;
+        }
+
+        .breadcrumb {
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .breadcrumb a {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        .lesson-header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding-bottom: 2rem;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        .lesson-header h1 {
+            font-size: 2rem;
+            color: #1a1a1a;
+            margin: 0;
+        }
+
+        .lesson-content section {
+            margin-bottom: 3rem;
+        }
+
+        .lesson-content h2 {
+            color: #3b82f6;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .lesson-content h3 {
+            color: #1a1a1a;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .lesson-content p, .lesson-content li, .lesson-content td {
+            color: #1a1a1a;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin: 1.5rem 0;
+        }
+
+        .comparison-table, .evaluation-table, .payout-requirement-table, .pattern-table, .judgment-table, .rolling-table, .ticket-strategy-table, .data-accumulation-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background-color: #ffffff;
+        }
+
+        .comparison-table th, .comparison-table td,
+        .evaluation-table th, .evaluation-table td,
+        .payout-requirement-table th, .payout-requirement-table td,
+        .pattern-table th, .pattern-table td,
+        .judgment-table th, .judgment-table td,
+        .rolling-table th, .rolling-table td,
+        .ticket-strategy-table th, .ticket-strategy-table td,
+        .data-accumulation-table th, .data-accumulation-table td {
+            border: 1px solid #e5e7eb;
+            padding: 0.75rem;
+            text-align: center;
+            color: #1a1a1a;
+            background-color: #ffffff;
+        }
+
+        .comparison-table th, .evaluation-table th, .payout-requirement-table th, .pattern-table th, .judgment-table th, .rolling-table th, .ticket-strategy-table th, .data-accumulation-table th {
+            background-color: #f3f4f6;
+            font-weight: bold;
+            color: #1a1a1a;
+        }
+
+        .comparison-table .highlight {
+            background-color: #fef3c7;
+            font-weight: bold;
+        }
+
+        .comparison-table .result {
+            background-color: #f3f4f6;
+            font-weight: bold;
+        }
+
+        .comparison-table .loss {
+            color: #dc2626;
+        }
+
+        .comparison-table .profit {
+            color: #059669;
+        }
+
+        .evaluation-table .excellent {
+            background-color: #ecfdf5;
+        }
+
+        .evaluation-table .good {
+            background-color: #f0f9ff;
+        }
+
+        .evaluation-table .neutral {
+            background-color: #fefce8;
+        }
+
+        .evaluation-table .poor {
+            background-color: #fff7ed;
+        }
+
+        .evaluation-table .bad {
+            background-color: #fef2f2;
+        }
+
+        .rolling-table .highlight {
+            background-color: #ecfdf5;
+            font-weight: bold;
+        }
+
+        .data-accumulation-table .improvement {
+            background-color: #ecfdf5;
+            font-weight: bold;
+        }
+
+        .conclusion-box {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .conclusion-box p {
+            margin: 0;
+            font-weight: bold;
+            color: #1a1a1a;
+        }
+
+        .formula-box {
+            background: #f1f5f9;
+            border: 1px solid #3b82f6;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .formula-box p {
+            margin: 0;
+            font-family: monospace;
+            font-size: 1.1rem;
+            color: #1a1a1a;
+        }
+
+        .calculation-examples {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+
+        .calculation-example {
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .calculation-example h4 {
+            color: #3b82f6;
+            margin-bottom: 1rem;
+        }
+
+        .calculation-steps {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .step {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin: 0.25rem 0;
+            width: 100%;
+            text-align: center;
+            color: #1a1a1a;
+        }
+
+        .conclusion {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+            font-weight: bold;
+            text-align: center;
+            width: 100%;
+        }
+
+        .conclusion.negative {
+            background: #fef2f2;
+            border: 1px solid #ef4444;
+            color: #dc2626;
+        }
+
+        .conclusion.positive {
+            background: #ecfdf5;
+            border: 1px solid #10b981;
+            color: #059669;
+        }
+
+        .judgment-box {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .judgment-box h5 {
+            color: #3b82f6;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .asymmetry-factors {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .factor-card {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .factor-card h5 {
+            color: #3b82f6;
+            margin-bottom: 1rem;
+        }
+
+        .factor-card ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .factor-card li {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+
+        .rolling-simulation {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .simulation-header {
+            background: #eff6ff;
+            border: 1px solid #3b82f6;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+            color: #1a1a1a;
+        }
+
+        .simulation-note {
+            background: #ecfdf5;
+            border: 1px solid #10b981;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+            text-align: center;
+            color: #1a1a1a;
+            font-weight: bold;
+        }
+
+        .timing-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .timing-card {
+            background: #fff7ed;
+            border: 1px solid #fb923c;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .timing-card h5 {
+            color: #ea580c;
+            margin-bottom: 1rem;
+        }
+
+        .timing-card ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .timing-card li {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+
+        .high-return-example {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .high-return-example h5 {
+            color: #3b82f6;
+            margin-bottom: 1.5rem;
+        }
+
+        .betting-composition, .expected-calculation {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .betting-composition h6, .expected-calculation h6 {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+
+        .betting-composition ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .betting-composition li {
+            color: #1a1a1a;
+            margin-bottom: 0.25rem;
+        }
+
+        .calculation-detail {
+            color: #1a1a1a;
+            line-height: 1.8;
+        }
+
+        .data-insight {
+            background: #ecfdf5;
+            border: 1px solid #10b981;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        .data-insight p {
+            margin: 0;
+            color: #1a1a1a;
+            font-weight: bold;
+        }
+
+        .case-study {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .race-info {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .race-info h4 {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+
+        .race-info ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .race-info li {
+            color: #1a1a1a;
+            margin-bottom: 0.25rem;
+        }
+
+        .analysis-section {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 1.5rem;
+        }
+
+        .analysis-section h4 {
+            color: #3b82f6;
+            margin-bottom: 1rem;
+        }
+
+        .analysis-factors {
+            margin: 1rem 0;
+        }
+
+        .analysis-factors h5 {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+
+        .analysis-factors ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .analysis-factors li {
+            color: #1a1a1a;
+            margin-bottom: 0.25rem;
+        }
+
+        .analysis-calculation {
+            margin: 1.5rem 0;
+        }
+
+        .calculation-flow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .flow-step {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin: 0.25rem 0;
+            width: 100%;
+            text-align: center;
+            color: #1a1a1a;
+        }
+
+        .flow-conclusion {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+            font-weight: bold;
+            text-align: center;
+            width: 100%;
+        }
+
+        .flow-conclusion.positive {
+            background: #ecfdf5;
+            border: 1px solid #10b981;
+            color: #059669;
+        }
+
+        .monthly-simulation {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .simulation-conditions, .simulation-results {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .simulation-conditions h5, .simulation-results h5 {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+
+        .simulation-conditions ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .simulation-conditions li {
+            color: #1a1a1a;
+            margin-bottom: 0.25rem;
+        }
+
+        .result-details {
+            color: #1a1a1a;
+            line-height: 1.8;
+        }
+
+        .checklist {
+            margin: 1.5rem 0;
+        }
+
+        .check-item {
+            background: #ecfdf5;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            border-radius: 4px;
+            border-left: 4px solid #10b981;
+            color: #1a1a1a;
+        }
+
+        .final-checklist {
+            margin: 1.5rem 0;
+        }
+
+        .final-checklist label {
+            display: block;
+            margin: 0.5rem 0;
+            padding: 0.5rem;
+            background: #f8fafc;
+            border-radius: 4px;
+            color: #1a1a1a;
+        }
+
+        .final-checklist input[type="checkbox"] {
+            margin-right: 0.5rem;
+        }
+
+        .related-content {
+            margin: 2rem 0;
+        }
+
+        .related-content h3 {
+            color: #3b82f6;
+            margin-bottom: 1rem;
+        }
+
+        .related-links {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .related-link-card {
+            background: #f8fafc;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: border-color 0.2s ease;
+        }
+
+        .related-link-card:hover {
+            border-color: #3b82f6;
+        }
+
+        .related-link-card h4 {
+            color: #1a1a1a;
+            margin: 0 0 0.5rem 0;
+        }
+
+        .related-link-card p {
+            color: #666;
+            margin: 0 0 1rem 0;
+        }
+
+        .related-link {
+            background: #3b82f6;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 0.9rem;
+            display: inline-block;
+            transition: background-color 0.2s ease;
+        }
+
+        .related-link:hover {
+            background: #2563eb;
+        }
+
+        .lesson-nav {
+            display: flex;
+            justify-content: space-between;
+            margin: 3rem 0;
+            padding: 2rem 0;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .nav-prev, .nav-next {
+            background: #3b82f6;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .nav-prev:hover, .nav-next:hover {
+            background: #2563eb;
+        }
+
+        .cta-section {
+            margin: 4rem 0;
+        }
+
+        .cta-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 3rem;
+            border-radius: 12px;
+            text-align: center;
+            color: white;
+        }
+
+        .cta-box h3 {
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+        }
+
+        .cta-box p {
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+
+        .cta-button {
+            background: white;
+            color: #667eea;
+            padding: 1rem 2.5rem;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: bold;
+            display: inline-block;
+            transition: transform 0.2s ease;
+        }
+
+        .cta-button:hover {
+            transform: translateY(-2px);
+        }
+
+        /* 信頼性セクション */
+        .data-credibility {
+            margin-bottom: 3rem;
+        }
+
+        .credibility-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 12px;
+        }
+
+        .credibility-box h2 {
+            color: white;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+            margin-bottom: 1rem;
+        }
+
+        .data-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .data-point {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .data-point.highlight {
+            background: rgba(245, 158, 11, 0.3);
+            border: 2px solid #f59e0b;
+        }
+
+        .data-point .label {
+            display: block;
+            font-size: 0.9rem;
+            opacity: 0.9;
+            margin-bottom: 0.5rem;
+        }
+
+        .data-point .value {
+            display: block;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+
+        .key-finding {
+            background: rgba(245, 158, 11, 0.2);
+            border: 2px solid #f59e0b;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1.5rem;
+            font-size: 1.1rem;
+            text-align: center;
+        }
+
+        .credibility-box .note {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        /* 実データ比較セクション */
+        .real-data-intro {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .real-data-comparison {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .real-data-card {
+            background: white;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .real-data-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .real-data-card.best {
+            border-color: #f59e0b;
+        }
+
+        .card-header {
+            background: #3b82f6;
+            color: white;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .real-data-card.best .card-header {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .card-header h4 {
+            margin: 0;
+            font-size: 1.1rem;
+        }
+
+        .badge {
+            background: rgba(255, 255, 255, 0.3);
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+
+        .badge.gold {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        .badge.silver {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .badge.bronze {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            background: #f8fafc;
+            border-radius: 6px;
+        }
+
+        .stat-row.highlight {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .stat-value {
+            color: #1a1a1a;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .stat-value.big {
+            color: #10b981;
+            font-size: 1.5rem;
+        }
+
+        .card-lesson {
+            padding: 1rem;
+            background: #f8fafc;
+            border-top: 2px solid #e5e7eb;
+        }
+
+        .card-lesson p {
+            margin: 0;
+            color: #1a1a1a;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* 重要な洞察 */
+        .key-insight {
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .key-insight h4 {
+            color: #10b981;
+            margin-top: 0;
+            margin-bottom: 1rem;
+        }
+
+        .key-insight ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .key-insight li {
+            color: #1a1a1a;
+            margin-bottom: 0.75rem;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .lesson-header h1 {
+                font-size: 1.5rem;
+            }
+
+            .data-summary {
+                grid-template-columns: 1fr;
+            }
+
+            .real-data-comparison {
+                grid-template-columns: 1fr;
+            }
+
+            .calculation-examples {
+                grid-template-columns: 1fr;
+            }
+
+            .asymmetry-factors {
+                grid-template-columns: 1fr;
+            }
+
+            .timing-cards {
+                grid-template-columns: 1fr;
+            }
+
+            .lesson-nav {
+                flex-direction: column;
+                gap: 1rem;
+            }
+        }
+
+        /* Chart.js グラフ用スタイル */
+        .chart-intro {
+            font-size: 1.05rem;
+            color: #666;
+            margin: 1rem 0 2rem 0;
+            text-align: center;
+        }
+
+        .chart-container {
+            background: white;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2rem 0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .chart-container canvas {
+            max-height: 400px;
+        }
+
+        .chart-explanation {
+            background: #f8fafc;
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .chart-explanation h4 {
+            color: #3b82f6;
+            margin-top: 0;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        .explanation-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .explanation-card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .explanation-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .explanation-icon {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .explanation-card h5 {
+            color: #1a1a1a;
+            margin: 0.5rem 0 1rem 0;
+            font-size: 1.05rem;
+            text-align: center;
+        }
+
+        .explanation-card p {
+            color: #666;
+            margin: 0;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* 成功事例セクション */
+        .success-cases-section {
+            margin: 3rem 0;
+        }
+
+        .success-cases-section h3 {
+            color: #10b981;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .success-intro {
+            text-align: center;
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .success-cases-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .success-case-card {
+            background: white;
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .success-case-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.3);
+        }
+
+        .success-case-header {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .success-case-header h4 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.2rem;
+        }
+
+        .success-payout {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+
+        .success-case-body {
+            padding: 1.5rem;
+        }
+
+        .success-detail {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background: #f8fafc;
+            border-radius: 6px;
+        }
+
+        .success-detail-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .success-detail-value {
+            color: #1a1a1a;
+            font-weight: bold;
+        }
+
+        .success-lesson {
+            background: #ecfdf5;
+            border: 1px solid #10b981;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .success-lesson p {
+            margin: 0;
+            color: #1a1a1a;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* 安定的中セクション */
+        .stable-cases-section {
+            margin: 3rem 0;
+        }
+
+        .stable-cases-section h3 {
+            color: #3b82f6;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .stable-intro {
+            text-align: center;
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .stable-cases-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .stable-case-card {
+            background: white;
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .stable-case-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.3);
+        }
+
+        .stable-case-header {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .stable-case-header h4 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.2rem;
+        }
+
+        .stable-payout {
+            font-size: 1.8rem;
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+
+        .stable-case-body {
+            padding: 1.5rem;
+        }
+
+        .stable-detail {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background: #f8fafc;
+            border-radius: 6px;
+        }
+
+        .stable-detail-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .stable-detail-value {
+            color: #1a1a1a;
+            font-weight: bold;
+        }
+
+        .stable-lesson {
+            background: #eff6ff;
+            border: 1px solid #3b82f6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .stable-lesson p {
+            margin: 0;
+            color: #1a1a1a;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* コース解説へのリンクセクション（内部リンク強化） */
+        .related-intro {
+            text-align: center;
+            color: #475569;
+            font-size: 1.05rem;
+            margin-bottom: 2rem;
+            line-height: 1.7;
+        }
+
+        .course-links-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+
+        .venue-group {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .venue-title {
+            color: #0c4a6e;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid #bae6fd;
+            padding-bottom: 0.5rem;
+        }
+
+        .course-links {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .course-link {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: #f8fafc;
+            border-left: 3px solid #3b82f6;
+            border-radius: 6px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        .course-link:hover {
+            background: #e0f2fe;
+            transform: translateX(4px);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+        }
+
+        .course-distance {
+            color: #1e293b;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .course-feature {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+
+        .course-links-note {
+            text-align: center;
+            color: #059669;
+            background: #f0fdf4;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 2rem;
+            border-left: 4px solid #10b981;
+        }
+
+        @media (max-width: 768px) {
+            .course-links-grid {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+            }
+        }
+    </style>
+
+    <!-- Chart.js ライブラリ -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <!-- 的中率 vs 回収率グラフ -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const ctx = document.getElementById('hitRateRecoveryChart');
+            if (!ctx) return;
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['浦和', '船橋', '大井', '川崎'],
+                    datasets: [
+                        {
+                            label: '的中率 (%)',
+                            data: [70.5, 82.1, 79.2, 72.8],
+                            backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 2,
+                            yAxisID: 'y',
+                            order: 2
+                        },
+                        {
+                            label: '回収率 (%)',
+                            data: [200.2, 194.7, 206.1, 174.7],
+                            backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                            borderColor: 'rgba(16, 185, 129, 1)',
+                            borderWidth: 2,
+                            yAxisID: 'y1',
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                },
+                                padding: 15
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: '競馬場別 的中率 vs 回収率（2025年10月〜12月）',
+                            font: {
+                                size: 16,
+                                weight: 'bold'
+                            },
+                            padding: {
+                                top: 10,
+                                bottom: 20
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += context.parsed.y.toFixed(1) + '%';
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: '的中率 (%)',
+                                font: {
+                                    size: 13,
+                                    weight: 'bold'
+                                },
+                                color: 'rgba(59, 130, 246, 1)'
+                            },
+                            min: 0,
+                            max: 100,
+                            ticks: {
+                                font: {
+                                    size: 12
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(59, 130, 246, 0.1)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: '回収率 (%)',
+                                font: {
+                                    size: 13,
+                                    weight: 'bold'
+                                },
+                                color: 'rgba(16, 185, 129, 1)'
+                            },
+                            min: 0,
+                            max: 250,
+                            ticks: {
+                                font: {
+                                    size: 12
+                                }
+                            },
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: 'bold'
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>

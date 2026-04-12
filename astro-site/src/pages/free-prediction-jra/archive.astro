@@ -1,0 +1,103 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readdirSync, readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+
+export const prerender = true;
+
+const jraDir = join(process.cwd(), 'src', 'data', 'predictions', 'jra');
+const files = [];
+
+if (existsSync(jraDir)) {
+  const years = readdirSync(jraDir).filter(d => /^\d{4}$/.test(d));
+  for (const year of years) {
+    const yearDir = join(jraDir, year);
+    const months = readdirSync(yearDir).filter(d => /^\d{2}$/.test(d));
+    for (const month of months) {
+      const monthDir = join(yearDir, month);
+      const jsons = readdirSync(monthDir).filter(f => /^\d{4}-\d{2}-\d{2}\.json$/.test(f));
+      for (const f of jsons) {
+        const date = f.replace('.json', '');
+        const [y, m, d] = date.split('-');
+        let totalRaces = 0;
+        let venueNames = [];
+        try {
+          const data = JSON.parse(readFileSync(join(monthDir, f), 'utf-8'));
+          totalRaces = data.totalRaces || 0;
+          venueNames = (data.venues || []).map(v => v.venue);
+        } catch {}
+        files.push({ date, year: y, month: m, day: d, totalRaces, venues: venueNames });
+      }
+    }
+  }
+}
+files.sort((a, b) => b.date.localeCompare(a.date));
+
+const byMonth = {};
+files.forEach(f => {
+  const key = `${f.year}-${f.month}`;
+  if (!byMonth[key]) byMonth[key] = [];
+  byMonth[key].push(f);
+});
+const months = Object.keys(byMonth).sort().reverse();
+---
+
+<BaseLayout
+  title="過去の中央競馬予想一覧 - KEIBA Intelligence"
+  description="KEIBA IntelligenceのAI予想アーカイブ。中央競馬（JRA）の過去の全予想を閲覧できます。"
+>
+  <section class="archive-section">
+    <div class="container">
+      <h1>中央競馬（JRA） 過去の予想一覧</h1>
+      <p class="subtitle">全{files.length}開催日分のAI予想アーカイブ</p>
+
+      <div class="archive-nav">
+        <a href="/free-prediction-jra" class="nav-link">← 最新予想に戻る</a>
+        <a href="/free-prediction/archive" class="nav-link">南関競馬の過去予想 →</a>
+      </div>
+
+      {months.map(monthKey => {
+        const [y, m] = monthKey.split('-');
+        const items = byMonth[monthKey];
+        return (
+          <div class="month-group">
+            <h2>{y}年{parseInt(m)}月 <span class="count">({items.length}開催日)</span></h2>
+            <div class="card-grid">
+              {items.map(item => (
+                <a href={`/free-prediction-jra/${item.date}`} class="archive-card">
+                  <div class="card-date">{parseInt(item.month)}/{parseInt(item.day)}</div>
+                  <div class="card-venues">{item.venues.join('・') || 'JRA'}</div>
+                  <div class="card-races">{item.totalRaces}R</div>
+                </a>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .archive-section { padding: 60px 0 80px; min-height: calc(100vh - 200px); }
+  .container { max-width: 900px; margin: 0 auto; padding: 0 var(--spacing-md); }
+  h1 { font-size: 1.6rem; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 24px; }
+  .archive-nav { display: flex; justify-content: space-between; margin-bottom: 32px; flex-wrap: wrap; gap: 8px; }
+  .nav-link { color: #3b82f6; text-decoration: none; font-size: 0.9rem; }
+  .nav-link:hover { text-decoration: underline; }
+  .month-group { margin-bottom: 32px; }
+  .month-group h2 { font-size: 1.1rem; color: var(--text-primary); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
+  .month-group .count { font-size: 0.85rem; color: var(--text-secondary); font-weight: 400; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .archive-card {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 16px 12px; border-radius: 10px; text-decoration: none;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    transition: all 0.2s;
+  }
+  .archive-card:hover { border-color: rgba(59,130,246,0.4); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(59,130,246,0.1); }
+  .card-date { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+  .card-venues { font-size: 0.8rem; color: #3b82f6; font-weight: 600; text-align: center; }
+  .card-races { font-size: 0.75rem; color: var(--text-secondary); }
+</style>

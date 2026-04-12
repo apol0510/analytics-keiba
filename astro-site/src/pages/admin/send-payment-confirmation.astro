@@ -1,0 +1,363 @@
+---
+// 入金確認メール送信管理画面
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>入金確認メール送信 - NANKANアナリティクス</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+      padding: 40px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+
+    .header h1 {
+      color: #1e293b;
+      font-size: 1.8rem;
+      margin-bottom: 10px;
+    }
+
+    .header p {
+      color: #64748b;
+      font-size: 0.95rem;
+    }
+
+    .form-section {
+      margin-bottom: 30px;
+    }
+
+    .form-section h2 {
+      color: #334155;
+      font-size: 1.2rem;
+      margin-bottom: 20px;
+      padding-left: 10px;
+      border-left: 4px solid #3b82f6;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      color: #475569;
+      font-weight: bold;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 12px 15px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .form-group .hint {
+      color: #64748b;
+      font-size: 0.85rem;
+      margin-top: 5px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 15px;
+      margin-top: 30px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 15px 30px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+
+    .btn-secondary {
+      background: #f1f5f9;
+      color: #475569;
+    }
+
+    .btn-secondary:hover {
+      background: #e2e8f0;
+    }
+
+    .status-box {
+      margin-top: 30px;
+      padding: 20px;
+      border-radius: 8px;
+      display: none;
+    }
+
+    .status-box.success {
+      background: #d1fae5;
+      border: 2px solid #10b981;
+      color: #065f46;
+    }
+
+    .status-box.error {
+      background: #fee2e2;
+      border: 2px solid #ef4444;
+      color: #991b1b;
+    }
+
+    .status-box.loading {
+      background: #dbeafe;
+      border: 2px solid #3b82f6;
+      color: #1e40af;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: #1e40af;
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .info-box {
+      background: #f0f9ff;
+      border-left: 4px solid #0ea5e9;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 30px;
+    }
+
+    .info-box h3 {
+      color: #0c4a6e;
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+
+    .info-box ul {
+      color: #075985;
+      font-size: 0.9rem;
+      padding-left: 20px;
+    }
+
+    .info-box li {
+      margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>💰 入金確認メール送信</h1>
+      <p>銀行振込の入金を確認した後、顧客に「ありがとうメール + ログイン情報」を送信します</p>
+    </div>
+
+    <div class="info-box">
+      <h3>📋 使用方法</h3>
+      <ul>
+        <li>銀行口座で入金を確認</li>
+        <li>下記のフォームに顧客情報を入力</li>
+        <li>「メール送信」ボタンをクリック</li>
+        <li>顧客に「入金ありがとう + ログイン情報」メールが自動送信されます</li>
+        <li>Airtable Record ID を入力すると、Statusが "pending" → "active" に自動更新されます</li>
+      </ul>
+    </div>
+
+    <form id="paymentConfirmationForm">
+      <div class="form-section">
+        <h2>顧客情報</h2>
+
+        <div class="form-group">
+          <label for="email">メールアドレス <span style="color: #ef4444;">*</span></label>
+          <input
+            type="email"
+            id="email"
+            name="email"
+            required
+            placeholder="example@example.com"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="fullName">お名前 <span style="color: #ef4444;">*</span></label>
+          <input
+            type="text"
+            id="fullName"
+            name="fullName"
+            required
+            placeholder="山田 太郎"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="productName">プラン <span style="color: #ef4444;">*</span></label>
+          <select id="productName" name="productName" required>
+            <option value="">-- 選択してください --</option>
+            <option value="Standard (¥5,980/月)">Standard (¥5,980/月)</option>
+            <option value="Premium (¥9,980/月)">Premium (¥9,980/月)</option>
+            <option value="Premium Sanrenpuku (¥19,820/月)">Premium Sanrenpuku (¥19,820/月)</option>
+            <option value="Premium Combo (¥24,800/月)">Premium Combo (¥24,800/月)</option>
+            <option value="Premium Plus (¥68,000/単品)">Premium Plus (¥68,000/単品)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="transferAmount">入金金額</label>
+          <input
+            type="number"
+            id="transferAmount"
+            name="transferAmount"
+            placeholder="68000"
+          />
+          <div class="hint">※メールに表示されます（オプション）</div>
+        </div>
+
+        <div class="form-group">
+          <label for="airtableRecordId">Airtable Record ID</label>
+          <input
+            type="text"
+            id="airtableRecordId"
+            name="airtableRecordId"
+            placeholder="recXXXXXXXXXXXXXX"
+          />
+          <div class="hint">※入力すると、AirtableのStatusが "pending" → "active" に更新されます（オプション）</div>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button type="button" class="btn btn-secondary" onclick="resetForm()">
+          リセット
+        </button>
+        <button type="submit" class="btn btn-primary">
+          📧 メール送信
+        </button>
+      </div>
+    </form>
+
+    <div id="statusBox" class="status-box"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('paymentConfirmationForm');
+    const statusBox = document.getElementById('statusBox');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      // フォームデータ取得
+      const formData = new FormData(form);
+      const data = {
+        email: formData.get('email'),
+        fullName: formData.get('fullName'),
+        productName: formData.get('productName'),
+        transferAmount: formData.get('transferAmount') || null,
+        airtableRecordId: formData.get('airtableRecordId') || null
+      };
+
+      // ローディング表示
+      showStatus('loading', '<span class="spinner"></span> メール送信中...');
+
+      try {
+        // Netlify Functionを呼び出し
+        const response = await fetch('/.netlify/functions/send-payment-confirmation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          showStatus('success', `
+            ✅ メール送信成功！<br>
+            <strong>${data.email}</strong> に「入金ありがとう + ログイン情報」メールを送信しました。<br>
+            プラン: <strong>${data.productName}</strong>
+          `);
+
+          // フォームをリセット
+          form.reset();
+        } else {
+          throw new Error(result.message || 'メール送信に失敗しました');
+        }
+      } catch (error) {
+        showStatus('error', `
+          ❌ エラーが発生しました<br>
+          ${error.message}
+        `);
+      }
+    });
+
+    function showStatus(type, message) {
+      statusBox.className = `status-box ${type}`;
+      statusBox.innerHTML = message;
+      statusBox.style.display = 'block';
+
+      // 成功時は5秒後に自動的に非表示
+      if (type === 'success') {
+        setTimeout(() => {
+          statusBox.style.display = 'none';
+        }, 5000);
+      }
+    }
+
+    function resetForm() {
+      form.reset();
+      statusBox.style.display = 'none';
+    }
+  </script>
+</body>
+</html>

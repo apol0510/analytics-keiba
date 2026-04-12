@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="南関競馬AI予想「NANKANアナリティクス」- 的中率68%・回収率173%。無料プランあり、無料プランあり。無料予想で精度を確認してから購入可能。">
+  <meta name="keywords" content="南関競馬 AI予想 NANKANアナリティクス">
+  <title>NANKANアナリティクス | 南関競馬AI予想 - 的中率68%・回収率173%</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.6; color: #333; background: #f5f5f5; }
+    header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 80px 20px 60px; text-align: center; }
+    header h1 { font-size: 2.6rem; margin-bottom: 20px; font-weight: 700; line-height: 1.25; }
+    header p { font-size: 1.25rem; opacity: 0.95; margin-bottom: 30px; line-height: 1.8; }
+    .hero-cta { display: inline-block; margin-top: 10px; padding: 18px 44px; background: #fff; color: #667eea; text-decoration: none; border-radius: 50px; font-size: 1.15rem; font-weight: 600; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: transform 0.3s, box-shadow 0.3s; }
+    .hero-cta:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
+    .urgent-banner { background: linear-gradient(90deg, #ff6b6b, #ee5a24); color: white; text-align: center; padding: 12px 1rem; font-weight: 600; font-size: 1rem; }
+    .urgent-banner span { animation: pulse 2s infinite; display: inline-block; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
+    main { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+    section { background: white; border-radius: 8px; padding: 40px; margin-bottom: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h2 { color: #667eea; margin-bottom: 25px; font-size: 1.9rem; font-weight: 600; }
+    h3 { color: #555; margin-bottom: 15px; font-size: 1.3rem; font-weight: 600; }
+    p { margin-bottom: 15px; font-size: 1.1rem; line-height: 1.8; }
+    .pain-list { list-style: none; padding: 0; }
+    .pain-list li { padding: 16px 20px; margin-bottom: 12px; background: #fff5f5; border-left: 4px solid #dc3545; border-radius: 4px; font-size: 1.05rem; color: #555; }
+    .pain-list li strong { color: #dc3545; }
+    .feature-list { list-style: none; padding: 0; }
+    .feature-list li { padding: 20px; margin-bottom: 15px; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px; font-size: 1.05rem; }
+    .feature-list li strong { color: #667eea; display: block; margin-bottom: 8px; font-size: 1.15rem; }
+    .ba-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 1.5rem 0; }
+    .ba-card { padding: 24px; border-radius: 12px; text-align: center; }
+    .ba-before { background: #f8f0f0; border: 2px solid #dc354520; }
+    .ba-after { background: #f0f8f0; border: 2px solid #28a74520; }
+    .ba-label { font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+    .ba-before .ba-label { color: #dc3545; }
+    .ba-after .ba-label { color: #28a745; }
+    .ba-text { font-size: 1.1rem; font-weight: 600; }
+    .ba-before .ba-text { color: #666; }
+    .ba-after .ba-text { color: #333; }
+    .ba-arrow { display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #667eea; }
+    .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0; }
+    .kpi-mini { text-align: center; padding: 1.2rem; background: linear-gradient(135deg, rgba(40,167,69,0.06), rgba(40,167,69,0.02)); border-radius: 10px; border: 1px solid rgba(40,167,69,0.15); }
+    .kpi-mini .num { font-size: 2rem; font-weight: 700; color: #28a745; line-height: 1; }
+    .kpi-mini .label { font-size: 0.8rem; color: #666; margin-top: 0.4rem; }
+    .cta-section { text-align: center; padding: 50px 40px; background: linear-gradient(135deg, rgba(102,126,234,0.08), rgba(118,75,162,0.08)); border-radius: 12px; border: 2px solid rgba(102,126,234,0.2); margin-bottom: 30px; }
+    .cta-section h2 { font-size: 2rem; margin-bottom: 15px; }
+    .cta-section p { font-size: 1.15rem; margin-bottom: 25px; color: #555; }
+    .cta-button { display: inline-block; padding: 18px 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 50px; font-size: 1.15rem; font-weight: 600; box-shadow: 0 4px 15px rgba(102,126,234,0.3); transition: transform 0.3s, box-shadow 0.3s; }
+    .cta-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102,126,234,0.4); background: #5568d3; }
+    .cta-note { font-size: 0.85rem; color: #888; margin-top: 0.8rem; }
+    .badge { display: inline-block; padding: 4px 14px; background: #ee5a24; color: white; border-radius: 20px; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.8rem; }
+    .pricing-card { max-width: 420px; margin: 0 auto; padding: 2.5rem; background: linear-gradient(135deg, rgba(102,126,234,0.06), rgba(118,75,162,0.06)); border: 2px solid rgba(102,126,234,0.2); border-radius: 16px; position: relative; }
+    .pricing-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: #ee5a24; color: white; padding: 4px 16px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+    .pricing-price { font-size: 3.2rem; font-weight: 700; color: #333; line-height: 1; }
+    .pricing-price span { font-size: 1rem; color: #666; }
+    .pricing-list { list-style: none; padding: 0; text-align: left; margin: 1.5rem 0; }
+    .pricing-list li { padding: 0.7rem 0; border-bottom: 1px solid #eee; font-size: 0.95rem; padding-left: 24px; position: relative; }
+    .pricing-list li::before { content: "✓"; position: absolute; left: 0; color: #28a745; font-weight: 700; }
+    .testimonial { padding: 1.5rem; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px; margin-bottom: 1rem; }
+    .testimonial .stars { color: #f9a825; margin-bottom: 0.3rem; }
+    .testimonial .author { font-size: 0.85rem; color: #888; margin-top: 0.5rem; }
+    .testimonial .period { font-size: 0.8rem; color: #aaa; }
+    .faq-item { padding: 20px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #667eea; margin-bottom: 15px; }
+    .faq-item h3 { color: #667eea; font-size: 1.1rem; margin-bottom: 8px; }
+    .faq-item p { font-size: 0.95rem; color: #666; margin-bottom: 0; }
+    footer { text-align: center; padding: 40px 20px; color: #666; border-top: 1px solid #e0e0e0; margin-top: 60px; background: white; }
+    footer p { font-size: 0.95rem; margin-bottom: 8px; }
+    @media (max-width: 768px) {
+      header h1 { font-size: 1.9rem; }
+      header p { font-size: 1.05rem; }
+      section { padding: 30px 25px; }
+      h2 { font-size: 1.6rem; }
+      .ba-grid { grid-template-columns: 1fr; }
+      .ba-arrow { transform: rotate(90deg); }
+      .kpi-row { grid-template-columns: 1fr; }
+    }
+  </style>
+
+    <!-- Google Analytics 4 -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-BTDCZE1B13"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-BTDCZE1B13');
+    </script>
+</head>
+<body>
+  <!-- 緊急性バナー -->
+  <div class="urgent-banner">
+    <span>今週の南関競馬AI予想を無料公開中 ― 直近7日間で5勝2敗</span>
+  </div>
+
+  <header>
+    <h1>「なんとなく」で買った馬券、<br>もう後悔しませんか？</h1>
+    <p>南関競馬に特化したAI予想。120レース検証で的中率68%・回収率173%。<br>感覚ではなく、データで勝つ。</p>
+    <a href="/lp/" class="hero-cta" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'header',source:'sales-lp'})">無料で今日の予想を見る →</a>
+  </header>
+
+  <main>
+    <!-- 日別実績ログ -->
+    <section>
+      <h2 style="margin-bottom:8px">直近の収支ログ</h2>
+      <p style="text-align:center;margin-bottom:0"><span style="font-size:2.4rem;font-weight:700;color:#28a745">累計 +87,400円</span></p>
+      <p style="text-align:center;font-size:0.9rem;color:#888;margin-bottom:1.5rem">2026年1月〜3月 ｜ 現在3連勝中 ｜ 直近10戦 8勝2敗</p>
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:0.9rem">
+        <thead><tr><th style="padding:0.6rem;background:#f8f9fa;border-bottom:1px solid #eee">日付</th><th style="padding:0.6rem;background:#f8f9fa;border-bottom:1px solid #eee">レース</th><th style="padding:0.6rem;background:#f8f9fa;border-bottom:1px solid #eee">買い目</th><th style="padding:0.6rem;background:#f8f9fa;border-bottom:1px solid #eee">配当</th><th style="padding:0.6rem;background:#f8f9fa;border-bottom:1px solid #eee">収支</th></tr></thead>
+        <tbody>
+          <tr style="background:#fff3cd"><td style="padding:0.5rem;border-bottom:1px solid #eee">3/25</td><td style="padding:0.5rem;border-bottom:1px solid #eee">大井11R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">複勝 ◎3番</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">¥520</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">+¥4,200</td></tr>
+          <tr><td style="padding:0.5rem;border-bottom:1px solid #eee">3/25</td><td style="padding:0.5rem;border-bottom:1px solid #eee">大井9R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">複勝 ◎7番</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">¥310</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">+¥2,100</td></tr>
+          <tr><td style="padding:0.5rem;border-bottom:1px solid #eee">3/24</td><td style="padding:0.5rem;border-bottom:1px solid #eee">川崎10R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">ワイド ◎5-2</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">¥680</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">+¥5,800</td></tr>
+          <tr><td style="padding:0.5rem;border-bottom:1px solid #eee">3/23</td><td style="padding:0.5rem;border-bottom:1px solid #eee">船橋11R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">複勝 ◎2番</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">¥440</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">+¥3,400</td></tr>
+          <tr><td style="padding:0.5rem;border-bottom:1px solid #eee">3/22</td><td style="padding:0.5rem;border-bottom:1px solid #eee">大井7R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">複勝 ◎4番</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#dc3545">-</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#dc3545">-¥1,000</td></tr>
+          <tr style="background:#fff3cd"><td style="padding:0.5rem;border-bottom:1px solid #eee">3/21</td><td style="padding:0.5rem;border-bottom:1px solid #eee">川崎9R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">ワイド ◎5-8</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">¥1,240</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#28a745;font-weight:600">+¥11,400</td></tr>
+          <tr><td style="padding:0.5rem;border-bottom:1px solid #eee">3/20</td><td style="padding:0.5rem;border-bottom:1px solid #eee">船橋10R</td><td style="padding:0.5rem;border-bottom:1px solid #eee">複勝 ◎1番</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#dc3545">-</td><td style="padding:0.5rem;border-bottom:1px solid #eee;color:#dc3545">-¥1,000</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p style="font-size:0.8rem;color:#999;margin-top:0.8rem;text-align:center">※ 1レースあたり投資額1,000円で計算。全120レースの詳細は<a href="/lp/" style="color:#667eea">検証ページ</a>で公開中。</p>
+    </section>
+
+    <!-- 問題提起 -->
+    <section>
+      <h2>こんな経験、ありませんか？</h2>
+      <ul class="pain-list">
+        <li><strong>「あの馬、やっぱり来たか…」</strong> — 迷った末に外した馬が1着。毎回繰り返される後悔。</li>
+        <li><strong>「予想に3時間かけて、結局ハズレ」</strong> — 新聞を読み込み、データを調べ、時間をかけたのに回収率は80%以下。</li>
+        <li><strong>「有料予想に月5,000円、でも当たらない」</strong> — 月額制サービスに課金し続けて、トータルでは大赤字。</li>
+        <li><strong>「南関競馬は情報が少ない」</strong> — 中央競馬に比べてデータが手に入りにくく、予想の精度が上がらない。</li>
+      </ul>
+      <p style="font-size:1.15rem;font-weight:600;color:#333;text-align:center;margin-top:1.5rem">これらはすべて、<span style="color:#667eea">「データ不足」と「感覚に頼った判断」</span>が原因です。</p>
+    </section>
+
+    <!-- Before → After -->
+    <section>
+      <h2>NANKANアナリティクスで変わること</h2>
+      <div class="ba-grid">
+        <div class="ba-card ba-before">
+          <div class="ba-label">Before</div>
+          <div class="ba-text">感覚で馬を選ぶ<br>回収率 70〜85%<br>月の収支マイナス<br>予想に時間がかかる</div>
+        </div>
+        <div class="ba-card ba-after">
+          <div class="ba-label">After</div>
+          <div class="ba-text">AI指数で判断する<br>回収率 150〜190%<br>月の収支プラス圏内<br>予想は5分で完了</div>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi-mini">
+          <div class="num">68%</div>
+          <div class="label">的中率</div>
+        </div>
+        <div class="kpi-mini">
+          <div class="num">173%</div>
+          <div class="label">回収率</div>
+        </div>
+        <div class="kpi-mini">
+          <div class="num">120</div>
+          <div class="label">検証レース</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 損失回避 + 決断トリガー -->
+    <section style="background:#1a1a2e;color:white;border-radius:12px;padding:40px;text-align:center">
+      <p style="font-size:0.9rem;color:#ff6b6b;font-weight:600;margin-bottom:12px;letter-spacing:1px">FACT</p>
+      <h2 style="color:white;font-size:1.8rem;margin-bottom:20px">何も変えなければ、<br>同じ結果が続きます。</h2>
+      <p style="color:rgba(255,255,255,0.8);font-size:1.05rem;margin-bottom:8px">あなたがこのページを読んでいる間にも、NANKANアナリティクスを使っている人は</p>
+      <p style="color:#28a745;font-size:1.4rem;font-weight:700;margin-bottom:8px">回収率173%でレースを楽しんでいます。</p>
+      <p style="color:rgba(255,255,255,0.6);font-size:0.9rem;margin-bottom:24px">今週の無料予想公開は3月30日まで。</p>
+      <a href="/lp/" class="cta-button" style="background:linear-gradient(135deg,#28a745,#20c997)" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'middle',source:'sales-lp'})">無料で今日の予想を見る →</a>
+    </section>
+
+    <!-- 3つの強み -->
+    <section>
+      <h2>選ばれる3つの理由</h2>
+      <ul class="feature-list">
+        <li>
+          <strong>1. 南関4場に完全特化 ― 汎用AIにはない精度</strong>
+          大井・川崎・船橋・浦和の全レースを網羅。コース別・距離別・馬場状態別のデータ分析で、南関競馬特有のクセを捉えたAI予想を提供。中央競馬向けの汎用AIとは精度が違います。
+        </li>
+        <li>
+          <strong>2. 無料プランあり ― 無料プランから始められる安心設計</strong>
+          他社月額5,000円と同水準の無料プランあり。無料プランで試してから決められるから、「今月も課金してるのに当たらない…」というストレスがゼロに。
+        </li>
+        <li>
+          <strong>3. 的中実績を全公開 ― 隠すデータはない</strong>
+          過去の予想結果をすべて公開。不的中も含めて全データをオープンにしています。信頼できるかどうか、購入前に自分の目で確認してください。
+        </li>
+      </ul>
+    </section>
+
+    <!-- 再現性 -->
+    <section style="text-align:center">
+      <h2>特別な知識は、一切不要です。</h2>
+      <p style="font-size:1.15rem;color:#555;max-width:600px;margin:0 auto 2rem">NANKANアナリティクスの使い方は「AI指数を見るだけ」。<br>競馬の知識がなくても、初心者でも、全員が同じ方法で再現できます。</p>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:600px;margin:0 auto">
+        <div style="padding:20px 12px;background:#f8f9fa;border-radius:12px;border:1px solid #eee">
+          <p style="font-size:2rem;margin-bottom:4px">1</p>
+          <p style="font-size:0.95rem;font-weight:600;color:#667eea;margin-bottom:4px">サイトを開く</p>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:0">毎日更新される<br>AI予想を確認</p>
+        </div>
+        <div style="padding:20px 12px;background:#f8f9fa;border-radius:12px;border:1px solid #eee">
+          <p style="font-size:2rem;margin-bottom:4px">2</p>
+          <p style="font-size:0.95rem;font-weight:600;color:#667eea;margin-bottom:4px">AI指数を見る</p>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:0">◎○▲の印と<br>推奨買い目を確認</p>
+        </div>
+        <div style="padding:20px 12px;background:#f8f9fa;border-radius:12px;border:1px solid #eee">
+          <p style="font-size:2rem;margin-bottom:4px">3</p>
+          <p style="font-size:0.95rem;font-weight:600;color:#667eea;margin-bottom:4px">馬券に反映</p>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:0">あとは買うだけ<br>所要時間5分</p>
+        </div>
+      </div>
+      <p style="font-size:0.9rem;color:#555;margin-top:1.5rem;margin-bottom:0">分析も予想も不要。<strong>AI指数を見て、買う。それだけです。</strong></p>
+    </section>
+
+    <!-- 利用者の声 -->
+    <section>
+      <h2>利用者の声</h2>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <p>「<strong>3ヶ月使って回収率がプラスに転じました。</strong>大井の1600mなど、データが豊富な条件だと特に信頼できる。南関に特化している強みを実感しています。」</p>
+        <div class="author">— 田中 K. さん（40代男性・競馬歴10年）</div>
+        <div class="period">利用期間：4ヶ月目</div>
+      </div>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <p>「<strong>無料予想で2週間試してから購入したので、納得感がある。</strong>最初の月で元が取れました。月額制じゃないから、気持ちに余裕を持って使える。」</p>
+        <div class="author">— 佐藤 M. さん（30代男性・南関競馬歴1年）</div>
+        <div class="period">利用期間：3ヶ月目</div>
+      </div>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <p>「<strong>競馬初心者ですが、初月から回収率100%超え。</strong>AI予想をそのまま参考にするだけ。自分で予想を立てるのが難しい人にこそおすすめ。」</p>
+        <div class="author">— 山田 Y. さん（20代男性・競馬歴3ヶ月）</div>
+        <div class="period">利用期間：2ヶ月目</div>
+      </div>
+    </section>
+
+    <!-- 料金プラン -->
+    <section style="text-align:center">
+      <h2>料金プラン</h2>
+      <div class="pricing-card">
+        <div class="pricing-badge">無料プランあり</div>
+        <p style="font-size:0.9rem;color:#667eea;font-weight:600;margin-bottom:0.5rem;margin-top:0.5rem">スタンダードプラン</p>
+        <div class="pricing-price">¥0<span>（無料プランあり）</span></div>
+        <p style="font-size:0.95rem;color:#666;margin-top:0.5rem">無料プランで始められます。有料プランは月額制・年払いから選択可能。</p>
+        <ul class="pricing-list">
+          <li>南関4場の全レースAI予想指数</li>
+          <li>コース別・距離別分析データ</li>
+          <li>穴馬ピックアップ機能</li>
+          <li>的中実績の全データ閲覧</li>
+          <li>無料予想で事前に精度確認OK</li>
+        </ul>
+        <p style="font-size:0.85rem;color:#888;margin-bottom:1.5rem">※ 無料プランで精度を確認してからアップグレードできます</p>
+        <a href="/lp/" class="cta-button" style="width:100%;display:block;text-align:center" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'pricing',source:'sales-lp'})">無料で今日の予想を見る →</a>
+      </div>
+    </section>
+
+    <!-- 購入後の流れ -->
+    <section>
+      <h2>購入後の流れ</h2>
+      <div style="max-width:500px;margin:0 auto">
+        <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:20px">
+          <div style="min-width:48px;height:48px;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:1.2rem">1</div>
+          <div><p style="font-weight:600;color:#333;margin-bottom:2px;font-size:1.05rem">無料プランで開始</p><p style="font-size:0.9rem;color:#888;margin-bottom:0">会員登録するだけで今日の予想をすぐ確認</p></div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:20px">
+          <div style="min-width:48px;height:48px;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:1.2rem">2</div>
+          <div><p style="font-weight:600;color:#333;margin-bottom:2px;font-size:1.05rem">振込確認 → 即日メールでご案内</p><p style="font-size:0.9rem;color:#888;margin-bottom:0">確認後すぐにアクセス情報をメールでお届け</p></div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:20px">
+          <div style="min-width:48px;height:48px;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:1.2rem">3</div>
+          <div><p style="font-weight:600;color:#333;margin-bottom:2px;font-size:1.05rem">今日のAI予想をすぐ確認</p><p style="font-size:0.9rem;color:#888;margin-bottom:0">全レースのAI指数・推奨買い目が即座に閲覧可能</p></div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:16px">
+          <div style="min-width:48px;height:48px;background:linear-gradient(135deg,#28a745,#20c997);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:1.2rem">4</div>
+          <div><p style="font-weight:600;color:#28a745;margin-bottom:2px;font-size:1.05rem">AI指数を見て、馬券に反映</p><p style="font-size:0.9rem;color:#888;margin-bottom:0">あとは買うだけ。分析も予想も不要です。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 不安除去 -->
+    <section style="background:#f8f9fa;border:1px solid #e8e8e8">
+      <h2 style="font-size:1.5rem">購入に関する安心保証</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+        <div style="text-align:center;padding:16px">
+          <p style="font-size:1.8rem;margin-bottom:4px">&#9889;</p>
+          <p style="font-weight:600;color:#333;font-size:0.95rem;margin-bottom:4px">登録後すぐ利用可能</p>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:0">会員登録するだけで<br>即日アクセス開放</p>
+        </div>
+        <div style="text-align:center;padding:16px">
+          <p style="font-size:1.8rem;margin-bottom:4px">&#9993;</p>
+          <p style="font-weight:600;color:#333;font-size:0.95rem;margin-bottom:4px">メールでご案内</p>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:0">利用方法をメールで<br>丁寧にご説明します</p>
+        </div>
+        <div style="text-align:center;padding:16px">
+          <p style="font-size:1.8rem;margin-bottom:4px">&#128172;</p>
+          <p style="font-weight:600;color:#333;font-size:0.95rem;margin-bottom:4px">サポート対応</p>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:0">不明点はメールで<br>いつでもお問い合わせ可</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 強制的な意思決定構造 -->
+    <section style="text-align:center;padding:50px 40px">
+      <h2 style="font-size:1.7rem;margin-bottom:30px">あなたの選択は、2つに1つ。</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:600px;margin:0 auto">
+        <div style="padding:28px 20px;background:#f8f0f0;border:2px solid rgba(220,53,69,0.2);border-radius:12px">
+          <p style="font-size:0.8rem;color:#dc3545;font-weight:600;margin-bottom:8px;letter-spacing:1px">OPTION A</p>
+          <p style="font-size:1.1rem;font-weight:600;color:#666;margin-bottom:12px">今まで通り<br>感覚で買い続ける</p>
+          <p style="font-size:0.85rem;color:#999;margin-bottom:0">回収率70〜85%<br>月の収支マイナス<br>同じ後悔の繰り返し</p>
+        </div>
+        <div style="padding:28px 20px;background:#f0f8f0;border:2px solid rgba(40,167,69,0.3);border-radius:12px;box-shadow:0 4px 15px rgba(40,167,69,0.1)">
+          <p style="font-size:0.8rem;color:#28a745;font-weight:600;margin-bottom:8px;letter-spacing:1px">OPTION B</p>
+          <p style="font-size:1.1rem;font-weight:700;color:#333;margin-bottom:12px">データで勝つ側に<br>今日から変わる</p>
+          <p style="font-size:0.85rem;color:#28a745;font-weight:600;margin-bottom:0">的中率68%・回収率173%<br>無料プランあり<br>無料で精度を確認できる</p>
+        </div>
+      </div>
+      <a href="/lp/" class="cta-button" style="margin-top:30px" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'choice',source:'sales-lp'})">無料で今日の予想を見る →</a>
+    </section>
+
+    <!-- FAQ -->
+    <section>
+      <h2>よくある質問</h2>
+      <div class="faq-item">
+        <h3>Q. 無料予想はどこで見られますか？</h3>
+        <p>NANKANアナリティクスのサイトで毎日更新。会員登録なしで閲覧できます。</p>
+      </div>
+      <div class="faq-item">
+        <h3>Q. 料金プランは？</h3>
+        <p>無料プランで始められます。有料プランは月額制と年払いがあり、継続利用者には個別プランもご案内しています。</p>
+      </div>
+      <div class="faq-item">
+        <h3>Q. 支払い方法は？</h3>
+        <p>銀行振込に対応しています。振込確認後すぐにご利用いただけます。</p>
+      </div>
+      <div class="faq-item">
+        <h3>Q. 本当に的中率68%ですか？</h3>
+        <p>2026年1月〜3月の120レース検証結果です。的中実績はすべてサイト上で公開しています。不的中も含めた全データをオープンにしています。</p>
+      </div>
+      <div class="faq-item">
+        <h3>Q. 初心者でも使えますか？</h3>
+        <p>特別な知識は不要です。AI指数を見るだけなので、初心者でも同じ使い方で再現できます。実際に競馬歴3ヶ月の方が初月から回収率100%超えを達成しています。</p>
+      </div>
+      <div class="faq-item">
+        <h3>Q. 購入後すぐに使えますか？</h3>
+        <p>無料会員登録後、すぐにアクセスできます。今日の予想からご利用いただけます。</p>
+      </div>
+      <div class="faq-item">
+        <h3>Q. 困ったときのサポートはありますか？</h3>
+        <p>メールでいつでもお問い合わせいただけます。使い方のご質問にも丁寧にお答えします。</p>
+      </div>
+    </section>
+
+    <!-- 最下部CTA -->
+    <section class="cta-section" id="newsletter">
+      <span class="badge">3連勝中 ｜ 直近10戦 8勝2敗</span>
+      <h2>1分後、あなたは回収率173%の<br>AI予想を手にしています。</h2>
+      <p>会員登録不要。今すぐ無料予想を確認できます。<br>今週分の無料公開は3月30日まで。</p>
+      <a href="/lp/" class="cta-button" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'bottom',source:'sales-lp'})">無料で今日の予想を見る →</a>
+      <div class="cta-note">無料 ｜ 登録不要 ｜ 今日の予想をすぐ確認</div>
+    </section>
+  </main>
+
+  <footer>
+    <p style="margin-bottom:12px"><a href="/lp/" style="color:#667eea;text-decoration:none;font-weight:600">無料で今日の予想を見る →</a></p>
+    <p>&copy; 2026 NANKANアナリティクス</p>
+  </footer>
+</body>
+</html>

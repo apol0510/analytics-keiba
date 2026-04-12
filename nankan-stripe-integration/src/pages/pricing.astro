@@ -1,0 +1,140 @@
+---
+/* フロントマターは空でOK */
+---
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>プラン選択</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { margin:0; font-family: system-ui, sans-serif; background:#f3f4f6; }
+      .wrap { max-width: 720px; margin: 40px auto; padding: 0 16px; }
+      .card { background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.1); padding:20px; }
+      h1 { font-size: 1.5rem; margin:0 0 12px; }
+      .row { display:flex; gap:12px; flex-wrap:wrap; }
+      button { padding:10px 14px; border:0; border-radius:8px; cursor:pointer; font-weight:600; }
+      .std { background:#111827; color:#fff; }
+      .pre { background:#1f2937; color:#fff; }
+      .portal { background:#6b7280; color:#fff; }
+      .login { color:#2563eb; text-decoration: underline; }
+      .note { font-size:.9rem; color:#666; margin-top:8px }
+      #msg { margin-top:10px; min-height:1.2em; font-size:.9rem }
+      .hidden { display:none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>プラン選択</h1>
+
+        <!-- ログイン済み用の操作 -->
+        <div id="actions" class="row hidden">
+          <button id="std"   class="std">Standard ¥5,980/月</button>
+          <button id="pre"   class="pre">Premium ¥9,980/月</button>
+          <button id="portal" class="portal">お支払い管理</button>
+        </div>
+
+        <!-- 未ログイン時の導線 -->
+        <div id="guest">
+          <a class="login" href="/auth/login">🔐 ログインして購入</a>
+          <div class="note">先にログイン/新規登録を済ませてください。</div>
+        </div>
+
+        <div id="msg"></div>
+      </div>
+    </div>
+
+    <!-- PUBLIC_* を安全に埋め込む（loginと同じ方式） -->
+    <div
+      id="supabase-config"
+      data-url={import.meta.env.PUBLIC_SUPABASE_URL}
+      data-key={import.meta.env.PUBLIC_SUPABASE_ANON_KEY}
+      style="display:none">
+    </div>
+
+    <script type="module">
+      import { createClient } from 'https://cdn.skypack.dev/@supabase/supabase-js@2';
+
+      const cfg = document.getElementById('supabase-config');
+      const supabaseUrl = cfg?.dataset.url;
+      const supabaseKey = cfg?.dataset.key;
+      const msgEl = document.getElementById('msg');
+      const show = (t, ok=false)=>{ msgEl.textContent=t; msgEl.style.color = ok ? '#16a34a' : '#ef4444'; };
+
+      if (!supabaseUrl || !supabaseKey) {
+        show('Supabase設定エラー: PUBLIC_SUPABASE_URL / ANON_KEY を .env に設定してください');
+        throw new Error('Missing PUBLIC_SUPABASE_* envs');
+      }
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // ログイン状態でUI切替
+      const { data: { session } } = await supabase.auth.getSession();
+      const actions = document.getElementById('actions');
+      const guest = document.getElementById('guest');
+      if (session?.user) { 
+        console.log('ログイン済み:', session.user.email);
+        actions.classList.remove('hidden'); 
+        guest.classList.add('hidden'); 
+      }
+
+      async function go(plan){
+        console.log('プラン選択:', plan);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { location.href = '/auth/login'; return; }
+        
+        show('決済ページへ移動中...');
+        const r = await fetch('/api/stripe/create-checkout', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ 
+            planId: plan,
+            userId: user.id, 
+            userEmail: user.email,
+            successUrl: window.location.origin + '/payment/success?session_id={CHECKOUT_SESSION_ID}',
+            cancelUrl: window.location.origin + '/pricing'
+          })
+        });
+        
+        if (!r.ok) { 
+          const error = await r.text();
+          show('Checkout作成に失敗しました: ' + error); 
+          return; 
+        }
+        
+        const d = await r.json();
+        if (d.url) {
+          location.href = d.url;
+        } else {
+          show('エラー: ' + (d.error || 'URL取得失敗'));
+        }
+      }
+
+      async function openPortal() {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { location.href = '/auth/login'; return; }
+        
+        show('お支払い管理ページへ移動中...');
+        const r = await fetch('/api/stripe/portal', {
+          method:'POST', 
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ 
+            customerId: user.user_metadata?.stripe_customer_id 
+          })
+        });
+        
+        if (!r.ok) { 
+          show('ポータル作成に失敗しました'); 
+          return; 
+        }
+        
+        const d = await r.json(); 
+        if (d.url) location.href = d.url;
+      }
+
+      document.getElementById('std')?.addEventListener('click', ()=>go('standard'));
+      document.getElementById('pre')?.addEventListener('click', ()=>go('premium'));
+      document.getElementById('portal')?.addEventListener('click', openPortal);
+    </script>
+  </body>
+</html>

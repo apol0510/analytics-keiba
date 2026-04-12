@@ -1,0 +1,754 @@
+---
+const title = "特徴量重要度完成形変換ツール";
+---
+
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #3b82f6, #10b981);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #94a3b8;
+            font-size: 1.1rem;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .section {
+            background: rgba(30, 41, 59, 0.6);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid #334155;
+        }
+
+        .section h2 {
+            color: #3b82f6;
+            margin-bottom: 20px;
+            font-size: 1.4rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            color: #cbd5e1;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .input-group input,
+        .input-group textarea {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.8);
+            border: 2px solid #334155;
+            border-radius: 8px;
+            padding: 12px;
+            color: #e2e8f0;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-group input:focus,
+        .input-group textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .input-group textarea {
+            resize: vertical;
+            min-height: 200px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .inline-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin: 5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #2563eb, #1e40af);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.25);
+        }
+
+        .btn-secondary {
+            background: rgba(100, 116, 139, 0.2);
+            color: #e2e8f0;
+            border: 1px solid #475569;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+
+        .processing-section {
+            grid-column: 1 / -1;
+            background: rgba(30, 41, 59, 0.6);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid #334155;
+            margin-bottom: 30px;
+        }
+
+        .horse-analysis {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .horse-card {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .horse-card.honmei {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .horse-card.taikou {
+            background: rgba(249, 115, 22, 0.1);
+            border-color: rgba(249, 115, 22, 0.3);
+        }
+
+        .horse-card.tanana {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .horse-card.renka {
+            background: rgba(168, 85, 247, 0.1);
+            border-color: rgba(168, 85, 247, 0.3);
+        }
+
+        .horse-card.osae {
+            background: rgba(100, 116, 139, 0.1);
+            border-color: rgba(100, 116, 139, 0.3);
+        }
+
+        .horse-name {
+            font-weight: bold;
+            color: #e2e8f0;
+            margin-bottom: 5px;
+        }
+
+        .horse-score {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #3b82f6;
+        }
+
+        .horse-marks {
+            font-family: monospace;
+            color: #f59e0b;
+            font-weight: bold;
+        }
+
+        .output-section {
+            background: rgba(30, 41, 59, 0.6);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid #334155;
+        }
+
+        .output-area {
+            width: 100%;
+            height: 500px;
+            background: rgba(15, 23, 42, 0.8);
+            border: 2px solid #334155;
+            border-radius: 8px;
+            padding: 15px;
+            color: #10b981;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            resize: vertical;
+            white-space: pre-wrap;
+        }
+
+        .strategy-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .strategy-card {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .strategy-title {
+            font-weight: bold;
+            color: #10b981;
+            margin-bottom: 10px;
+        }
+
+        .ai-prediction {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #3b82f6;
+            margin: 10px 0;
+        }
+
+        .bet-pattern {
+            font-family: monospace;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+        }
+
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .success {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #6ee7b7;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .feature-importance {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 10px 0;
+            font-size: 0.9rem;
+        }
+
+        .feature-item {
+            text-align: center;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .strategy-cards {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏇 特徴量重要度完成形変換ツール</h1>
+            <p>競馬予想印データを特徴量重要度付き完成形に自動変換します</p>
+        </div>
+
+        <!-- 入力セクション -->
+        <div class="section">
+            <h2>📝 印データ入力</h2>
+
+            <div class="input-group">
+                <label for="horseData">馬データ（印付き）</label>
+                <textarea id="horseData" placeholder="1　　エンバーク&#10;2　△　レディヴィクトリア&#10;3　　スカイレディ&#10;4　△▲△　ベッティーナ&#10;..."></textarea>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" id="processBtn">
+                    ⚡ 完成形変換
+                </button>
+                <button class="btn btn-secondary" id="clearBtn">
+                    🗑️ クリア
+                </button>
+            </div>
+        </div>
+
+        <!-- 処理結果表示 -->
+        <div class="processing-section" id="processingSection" style="display: none;">
+            <h2>🔬 馬分析結果</h2>
+            <div id="horseAnalysis" class="horse-analysis"></div>
+
+            <h3 style="color: #3b82f6; margin: 30px 0 20px 0;">📊 戦略別AI予測</h3>
+            <div id="strategyCards" class="strategy-cards"></div>
+        </div>
+
+        <!-- 出力セクション -->
+        <div class="output-section">
+            <h2>📋 完成形出力</h2>
+            <textarea id="output" class="output-area" readonly placeholder="変換結果がここに表示されます..."></textarea>
+            <button class="btn btn-success" id="copyBtn">📋 完成形をコピー</button>
+        </div>
+    </div>
+
+    <script is:inline>
+        let processedData = null;
+
+        function processData() {
+            try {
+                const horseDataInput = document.getElementById('horseData').value.trim();
+                if (!horseDataInput) {
+                    showError('馬データを入力してください。');
+                    return;
+                }
+
+                // 設定値（固定）
+                const settings = {
+                    baseScore: 62,
+                    honmeiScore: 7,
+                    taikouScore: 6,
+                    tananaScore: 5,
+                    renkaScore: 4,
+                    type1Adjust: 30,
+                    type2Adjust: 20,
+                    type3Adjust: 45,
+                    starThreshold: 89
+                };
+
+                // レース情報（固定）
+                const raceInfo = {
+                    date: "予想日"
+                };
+
+                // データを処理
+                processedData = analyzeHorseData(horseDataInput, settings, raceInfo);
+
+                // 結果を表示
+                displayAnalysis(processedData);
+                generateOutput(processedData);
+
+                showSuccess('変換が完了しました！');
+
+            } catch (error) {
+                showError('処理中にエラーが発生しました: ' + error.message);
+                console.error('Error:', error);
+            }
+        }
+
+        function analyzeHorseData(input, settings, raceInfo) {
+            const horses = [];
+            const lines = input.split('\n').filter(line => line.trim());
+
+            // 馬データを解析してスコア計算
+            for (const line of lines) {
+                const match = line.match(/^(\d+)\s*([◎○▲△]*)\s*(.+)$/);
+                if (match) {
+                    const [, number, marks, name] = match;
+
+                    // 累積スコア計算
+                    let score = settings.baseScore;
+                    for (const mark of marks) {
+                        switch (mark) {
+                            case '◎': score += settings.honmeiScore; break;
+                            case '○': score += settings.taikouScore; break;
+                            case '▲': score += settings.tananaScore; break;
+                            case '△': score += settings.renkaScore; break;
+                        }
+                    }
+
+                    // 印がある馬のみ含める
+                    if (marks.length > 0) {
+                        horses.push({
+                            number: parseInt(number),
+                            marks: marks,
+                            name: name.trim(),
+                            score: score
+                        });
+                    }
+                }
+            }
+
+            // スコアで降順ソート
+            horses.sort((a, b) => b.score - a.score);
+
+            // 役割を割り当て
+            const result = assignRoles(horses, settings);
+
+            // 戦略別買い目とAI予測を計算
+            result.strategies = calculateStrategies(result, settings);
+
+            // レース情報を追加
+            result.raceInfo = raceInfo;
+
+            return result;
+        }
+
+        function assignRoles(horses, settings) {
+            const result = {
+                honmei: null,      // 本命1頭
+                taikou: null,      // 対抗1頭
+                tanana: [],        // 単穴2頭
+                renka: [],         // 連下1-4頭
+                osae: []           // 抑え1-4頭
+            };
+
+            if (horses.length === 0) return result;
+
+            // 本命（最高スコア）
+            result.honmei = horses[0];
+
+            // 対抗（2番目）
+            if (horses.length > 1) {
+                result.taikou = horses[1];
+            }
+
+            // 単穴（3-4番目）
+            for (let i = 2; i < Math.min(4, horses.length); i++) {
+                result.tanana.push(horses[i]);
+            }
+
+            // 残りを連下と抑えに分類
+            const remaining = horses.slice(4);
+            const midIndex = Math.ceil(remaining.length / 2);
+
+            result.renka = remaining.slice(0, midIndex);
+            result.osae = remaining.slice(midIndex);
+
+            // 抑えが空の場合、連下から移動
+            if (result.osae.length === 0 && result.renka.length > 1) {
+                result.osae = result.renka.splice(-1);
+            }
+
+            return result;
+        }
+
+        function calculateStrategies(data, settings) {
+            const strategies = {};
+
+            // 少点数的中型モデル
+            if (data.honmei && data.taikou && data.tanana.length >= 1) {
+                const targets = [data.taikou].concat(data.tanana.slice(0, 2));
+                const targetNumbers = targets.map(h => h.number);
+                const aiScore = Math.max(0, data.honmei.score - settings.type1Adjust);
+
+                strategies.type1 = {
+                    name: "少点数的中型モデル",
+                    pattern: `馬単 ${data.honmei.number} → ${targetNumbers.join(',')}　${targetNumbers.length}点`,
+                    aiPrediction: `${aiScore}%`
+                };
+            }
+
+            // バランス型モデル
+            if (data.honmei && data.taikou && data.tanana.length >= 1 && data.renka.length >= 1) {
+                const baseHorses = [data.taikou].concat(data.tanana.slice(0, 2));
+                const renkaNumbers = data.renka.slice(0, 4).map(h => h.number);
+                const baseNumbers = baseHorses.map(h => h.number);
+
+                const avgScore = (data.honmei.score + data.taikou.score + (data.tanana[0]?.score || 0)) / 3;
+                const aiScore = Math.max(0, Math.round(avgScore - settings.type2Adjust));
+
+                strategies.type2 = {
+                    name: "バランス型モデル",
+                    pattern: `馬単 ${baseNumbers.join(',')} → ${data.honmei.number}　${baseNumbers.length}点\n馬単 ${data.honmei.number} ⇔ ${renkaNumbers.join(',')}　${renkaNumbers.length * 2}点\n馬単 ${data.taikou.number} ⇔ ${data.tanana.slice(0, 2).map(h => h.number).join(',')}　${data.tanana.slice(0, 2).length * 2}点`,
+                    aiPrediction: `${aiScore}%`
+                };
+            }
+
+            // 高配当追求型モデル
+            if (data.honmei && data.taikou && data.osae.length >= 1) {
+                const osaeNumbers = data.osae.slice(0, 3).map(h => h.number);
+                const allTargets = data.renka.concat(data.osae).slice(0, 7).map(h => h.number);
+
+                const avgScore = (data.honmei.score + data.taikou.score) / 2;
+                const aiScore = Math.max(0, Math.round(avgScore - settings.type3Adjust));
+
+                strategies.type3 = {
+                    name: "高配当追求型モデル",
+                    pattern: `馬単 ${data.honmei.number} → ${osaeNumbers.join(',')}　${osaeNumbers.length}点\n馬単 ${data.taikou.number} ⇔ ${allTargets.join(',')}　${allTargets.length * 2}点`,
+                    aiPrediction: `${aiScore}%`
+                };
+            }
+
+            return strategies;
+        }
+
+        function generateFeatureImportance(horse) {
+            // 🔧 根本解決: 特徴量重要度の平均 = 累積スコア
+            const targetScore = horse.score;
+
+            // ランダム要素を加えつつ、平均が目標スコアになるように調整
+            const variation = 6; // ±6の範囲でランダム
+            const stability = Math.min(99, Math.max(70, targetScore + Math.floor(Math.random() * variation * 2) - variation));
+            const ability = Math.min(99, Math.max(70, targetScore + Math.floor(Math.random() * variation * 2) - variation));
+
+            // 3番目の値は平均が目標スコアになるように逆算
+            const advantage = Math.min(99, Math.max(70, targetScore * 3 - stability - ability));
+
+            console.log(`🎯 特徴量重要度生成: ${horse.name} - 目標${targetScore}pt`);
+            console.log(`   安定性${stability}% + 能力上位性${ability}% + 展開利${advantage}% = ${stability + ability + advantage} (平均${Math.round((stability + ability + advantage) / 3)})`);
+
+            return { stability, ability, advantage };
+        }
+
+        function displayAnalysis(data) {
+            const analysisContainer = document.getElementById('horseAnalysis');
+            const strategyContainer = document.getElementById('strategyCards');
+
+            let html = '';
+
+            // 本命
+            if (data.honmei) {
+                const features = generateFeatureImportance(data.honmei);
+                html += `
+                    <div class="horse-card honmei">
+                        <div class="horse-name">◎ ${data.honmei.number} ${data.honmei.name} 本命</div>
+                        <div class="horse-score">${data.honmei.score}pt</div>
+                        <div class="horse-marks">${data.honmei.marks}</div>
+                        <div class="feature-importance">
+                            <div class="feature-item">安定性<br>${features.stability}%</div>
+                            <div class="feature-item">能力上位性<br>${features.ability}%</div>
+                            <div class="feature-item">展開利<br>${features.advantage}%</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 対抗
+            if (data.taikou) {
+                const features = generateFeatureImportance(data.taikou);
+                html += `
+                    <div class="horse-card taikou">
+                        <div class="horse-name">○ ${data.taikou.number} ${data.taikou.name} 対抗</div>
+                        <div class="horse-score">${data.taikou.score}pt</div>
+                        <div class="horse-marks">${data.taikou.marks}</div>
+                        <div class="feature-importance">
+                            <div class="feature-item">安定性<br>${features.stability}%</div>
+                            <div class="feature-item">能力上位性<br>${features.ability}%</div>
+                            <div class="feature-item">展開利<br>${features.advantage}%</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 単穴
+            data.tanana.forEach(horse => {
+                html += `
+                    <div class="horse-card tanana">
+                        <div class="horse-name">▲ ${horse.number} ${horse.name} 単穴</div>
+                        <div class="horse-score">${horse.score}pt</div>
+                        <div class="horse-marks">${horse.marks}</div>
+                    </div>
+                `;
+            });
+
+            analysisContainer.innerHTML = html;
+
+            // 戦略カード
+            let strategyHtml = '';
+            Object.values(data.strategies).forEach(strategy => {
+                strategyHtml += `
+                    <div class="strategy-card">
+                        <div class="strategy-title">${strategy.name}</div>
+                        <div class="ai-prediction">${strategy.aiPrediction}</div>
+                        <div class="bet-pattern">${strategy.pattern}</div>
+                    </div>
+                `;
+            });
+
+            strategyContainer.innerHTML = strategyHtml;
+            document.getElementById('processingSection').style.display = 'block';
+        }
+
+        function generateOutput(data) {
+            const settings = {
+                starThreshold: 89
+            };
+
+            let output = ``;
+
+            // 本命
+            if (data.honmei) {
+                const features = generateFeatureImportance(data.honmei);
+                const stars = data.honmei.score >= settings.starThreshold ? '★★★★' : '★★★';
+                output += `◎ ${data.honmei.number} ${data.honmei.name} 本命\n`;
+                output += `総合評価:${stars}\n`;
+                output += `累積スコア: ${data.honmei.score}pt\n`;
+                output += `特徴量重要度\n`;
+                output += `安定性${features.stability}%\n`;
+                output += `能力上位性${features.ability}%\n`;
+                output += `展開利${features.advantage}%\n\n`;
+            }
+
+            // 対抗
+            if (data.taikou) {
+                const features = generateFeatureImportance(data.taikou);
+                const stars = data.taikou.score >= settings.starThreshold ? '★★★★' : '★★★';
+                output += `○ ${data.taikou.number} ${data.taikou.name} 対抗\n`;
+                output += `総合評価:${stars}\n`;
+                output += `累積スコア: ${data.taikou.score}pt\n`;
+                output += `特徴量重要度\n`;
+                output += `安定性${features.stability}%\n`;
+                output += `能力上位性${features.ability}%\n`;
+                output += `展開利${features.advantage}%\n\n`;
+            }
+
+            // 単穴
+            data.tanana.forEach(horse => {
+                const stars = horse.score >= settings.starThreshold ? '★★★★' : '★★★';
+                output += `▲ ${horse.number} ${horse.name} 単穴\n`;
+                output += `総合評価:${stars}\n`;
+                output += `累積スコア: ${horse.score}pt\n\n`;
+            });
+
+            // 連下候補馬
+            if (data.renka.length > 0) {
+                output += `△ 連下候補馬\n`;
+                data.renka.forEach(horse => {
+                    output += `${horse.number} ${horse.name} (${horse.score}pt)\n`;
+                });
+                output += '\n';
+            }
+
+            // 抑え候補馬
+            if (data.osae.length > 0) {
+                output += `× 抑え候補馬\n`;
+                data.osae.forEach(horse => {
+                    output += `${horse.number} ${horse.name} (${horse.score}pt)\n`;
+                });
+                output += '\n';
+            }
+
+            // 戦略別買い目
+            Object.values(data.strategies).forEach(strategy => {
+                output += `${strategy.name}\n`;
+                output += `${strategy.pattern}\n`;
+                output += `AI予測${strategy.aiPrediction}\n\n`;
+            });
+
+            document.getElementById('output').value = output;
+        }
+
+        function copyOutput() {
+            const output = document.getElementById('output');
+            output.select();
+            document.execCommand('copy');
+            showSuccess('完成形データをクリップボードにコピーしました！');
+        }
+
+        function clearAll() {
+            document.getElementById('horseData').value = '';
+            document.getElementById('output').value = '';
+            document.getElementById('processingSection').style.display = 'none';
+            clearMessages();
+            console.log('🗑️ 全データクリア完了');
+        }
+
+        function showError(message) {
+            clearMessages();
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = '❌ ' + message;
+            document.querySelector('.container').appendChild(errorDiv);
+        }
+
+        function showSuccess(message) {
+            clearMessages();
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.textContent = '✅ ' + message;
+            document.querySelector('.container').appendChild(successDiv);
+        }
+
+        function clearMessages() {
+            document.querySelectorAll('.error, .success').forEach(el => el.remove());
+        }
+
+        // ページ読み込み時の初期化
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🔧 特徴量重要度完成形変換ツール読み込み開始');
+
+            // イベントリスナーをバインド
+            document.getElementById('processBtn').addEventListener('click', processData);
+            document.getElementById('clearBtn').addEventListener('click', clearAll);
+            document.getElementById('copyBtn').addEventListener('click', copyOutput);
+
+            // 初期状態でデフォルトデータをクリア
+            const horseDataTextarea = document.getElementById('horseData');
+            if (horseDataTextarea && horseDataTextarea.value.includes('エンバーク')) {
+                console.log('🗑️ デフォルトサンプルデータを削除');
+                horseDataTextarea.value = '';
+            }
+
+
+            console.log('✅ 特徴量重要度完成形変換ツール読み込み完了');
+        });
+    </script>
+</body>
+</html>

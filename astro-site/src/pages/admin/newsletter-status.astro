@@ -1,0 +1,481 @@
+---
+// Queue方式メルマガ配信システム - 進捗ダッシュボード
+// 🔧 専門家推奨: API Key露出対策（Functions経由）
+
+// URLパラメータからJobId取得（サーバーサイド）
+const jobId = Astro.url.searchParams.get('jobId') || '';
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>メルマガ配信進捗 - Queue方式</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .dashboard {
+      background: white;
+      border-radius: 20px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      font-size: 32px;
+      color: #2d3748;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .job-info {
+      background: #f7fafc;
+      padding: 20px;
+      border-radius: 10px;
+      margin: 20px 0;
+    }
+
+    .job-info h2 {
+      font-size: 20px;
+      color: #4a5568;
+      margin-bottom: 10px;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+
+    .status-badge.draft { background: #e2e8f0; color: #4a5568; }
+    .status-badge.queued { background: #bee3f8; color: #2c5282; }
+    .status-badge.sending { background: #feebc8; color: #c05621; }
+    .status-badge.completed { background: #c6f6d5; color: #276749; }
+    .status-badge.paused { background: #fef5e7; color: #975a16; }
+    .status-badge.failed { background: #fed7d7; color: #9b2c2c; }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin: 30px 0;
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 15px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      transition: transform 0.3s ease;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-5px);
+    }
+
+    .stat-card.success {
+      background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+    }
+
+    .stat-card.failed {
+      background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+    }
+
+    .stat-card.pending {
+      background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+    }
+
+    .stat-card.sending {
+      background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+    }
+
+    .stat-label {
+      font-size: 14px;
+      opacity: 0.9;
+      margin-bottom: 10px;
+    }
+
+    .stat-value {
+      font-size: 36px;
+      font-weight: bold;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 40px;
+      background: #e2e8f0;
+      border-radius: 20px;
+      overflow: hidden;
+      position: relative;
+      margin: 30px 0;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #48bb78 0%, #38a169 100%);
+      transition: width 0.5s ease;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 15px;
+      font-weight: bold;
+      color: white;
+    }
+
+    .btn {
+      padding: 15px 30px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-success {
+      background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+      color: white;
+    }
+
+    .btn-warning {
+      background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+      color: white;
+    }
+
+    .btn-danger {
+      background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+      color: white;
+    }
+
+    .error {
+      background: #fed7d7;
+      color: #9b2c2c;
+      padding: 20px;
+      border-radius: 10px;
+      border-left: 4px solid #e53e3e;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      font-size: 18px;
+      color: #4a5568;
+    }
+
+    .input-group {
+      margin: 20px 0;
+    }
+
+    .input-group label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: #4a5568;
+    }
+
+    .input-group input {
+      width: 100%;
+      max-width: 500px;
+      padding: 10px;
+      border: 2px solid #e2e8f0;
+      border-radius: 5px;
+      font-size: 16px;
+    }
+
+    .reload-notice {
+      background: #bee3f8;
+      padding: 15px;
+      border-radius: 10px;
+      margin: 20px 0;
+      color: #2c5282;
+      text-align: center;
+    }
+
+    #dashboard-content {
+      display: none;
+    }
+
+    #dashboard-content.show {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="dashboard">
+      <h1>📊 メルマガ配信進捗（Queue方式）</h1>
+
+      {!jobId ? (
+        <div class="input-group">
+          <label>JobIdを入力してください：</label>
+          <input type="text" id="jobIdInput" placeholder="JOB-2026-01-11-001" />
+          <button class="btn btn-primary" onclick="loadJob()">読み込み</button>
+        </div>
+      ) : (
+        <>
+          <div id="loading" class="loading">
+            🔄 データ読み込み中...
+          </div>
+
+          <div id="error-message" class="error" style="display: none;"></div>
+
+          <div id="dashboard-content">
+            <div class="job-info">
+              <h2 id="job-subject"></h2>
+              <div id="job-status-badge" class="status-badge"></div>
+              <p id="job-created" style="margin-top: 10px; color: #718096;"></p>
+              <p id="job-queued" style="color: #718096;"></p>
+              <p id="job-completed" style="color: #718096;"></p>
+            </div>
+
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-label">総配信数</div>
+                <div class="stat-value" id="stat-total">0件</div>
+              </div>
+              <div class="stat-card success">
+                <div class="stat-label">送信成功</div>
+                <div class="stat-value" id="stat-success">0件</div>
+              </div>
+              <div class="stat-card failed">
+                <div class="stat-label">送信失敗</div>
+                <div class="stat-value" id="stat-failed">0件</div>
+              </div>
+              <div class="stat-card pending">
+                <div class="stat-label">送信待ち</div>
+                <div class="stat-value" id="stat-pending">0件</div>
+              </div>
+            </div>
+
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill" style="width: 0%">0%</div>
+            </div>
+
+            <div style="margin-top: 30px;" id="action-buttons">
+              <!-- ボタンは動的に生成 -->
+            </div>
+
+            <div class="reload-notice">
+              💡 進捗は自動更新されません。「更新」ボタンで最新状態を確認してください。
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  </div>
+
+  <script define:vars={{ jobId }}>
+    let currentJobData = null;
+    let currentQueueStats = null;
+
+    // ページ読み込み時にデータ取得
+    if (jobId) {
+      fetchStatus();
+    }
+
+    function loadJob() {
+      const inputJobId = document.getElementById('jobIdInput').value.trim();
+      if (inputJobId) {
+        window.location.href = `/admin/newsletter-status?jobId=${encodeURIComponent(inputJobId)}`;
+      } else {
+        alert('JobIdを入力してください');
+      }
+    }
+
+    async function fetchStatus() {
+      try {
+        // 🔧 専門家推奨: Functions経由でデータ取得（API Key露出なし）
+        const response = await fetch(`/.netlify/functions/get-newsletter-status?jobId=${encodeURIComponent(jobId)}`);
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'データ取得に失敗しました');
+        }
+
+        const data = await response.json();
+        currentJobData = data.job;
+        currentQueueStats = data.queueStats;
+
+        // UI更新
+        updateUI();
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('dashboard-content').classList.add('show');
+      } catch (err) {
+        console.error('データ取得エラー:', err);
+        document.getElementById('loading').style.display = 'none';
+        const errorEl = document.getElementById('error-message');
+        errorEl.textContent = `エラー: ${err.message}`;
+        errorEl.style.display = 'block';
+      }
+    }
+
+    function updateUI() {
+      const job = currentJobData;
+      const stats = currentQueueStats;
+
+      // ジョブ情報
+      document.getElementById('job-subject').textContent = job.Subject;
+
+      const statusBadge = document.getElementById('job-status-badge');
+      statusBadge.textContent = job.Status;
+      statusBadge.className = `status-badge ${job.Status}`;
+
+      document.getElementById('job-created').textContent =
+        `作成日時: ${new Date(job.CreatedAt).toLocaleString('ja-JP')}`;
+
+      if (job.QueuedAt) {
+        document.getElementById('job-queued').textContent =
+          `Queue生成完了: ${new Date(job.QueuedAt).toLocaleString('ja-JP')}`;
+        document.getElementById('job-queued').style.display = 'block';
+      } else {
+        document.getElementById('job-queued').style.display = 'none';
+      }
+
+      if (job.CompletedAt) {
+        document.getElementById('job-completed').textContent =
+          `配信完了: ${new Date(job.CompletedAt).toLocaleString('ja-JP')}`;
+        document.getElementById('job-completed').style.display = 'block';
+      } else {
+        document.getElementById('job-completed').style.display = 'none';
+      }
+
+      // 統計
+      document.getElementById('stat-total').textContent = `${job.TotalRecipients.toLocaleString()}件`;
+      document.getElementById('stat-success').textContent = `${stats.success.toLocaleString()}件`;
+      document.getElementById('stat-failed').textContent = `${stats.failed.toLocaleString()}件`;
+      document.getElementById('stat-pending').textContent = `${stats.pending.toLocaleString()}件`;
+
+      // 進捗バー
+      const progress = job.TotalRecipients > 0 ? Math.round((stats.success / job.TotalRecipients) * 100) : 0;
+      const progressFill = document.getElementById('progress-fill');
+      progressFill.style.width = `${progress}%`;
+      progressFill.textContent = `${progress}%`;
+
+      // ボタン
+      updateButtons(job.Status, stats.failed);
+    }
+
+    function updateButtons(status, failedCount) {
+      const buttonsContainer = document.getElementById('action-buttons');
+      let buttonsHTML = '';
+
+      if (status === 'queued') {
+        buttonsHTML += '<button class="btn btn-success" onclick="startSending()">🚀 送信開始</button>';
+      }
+
+      if (status === 'sending') {
+        buttonsHTML += '<button class="btn btn-warning" onclick="continueSending()">▶️ 送信続行</button>';
+        buttonsHTML += '<button class="btn btn-danger" onclick="pauseSending()">⏸️ 一時停止</button>';
+      }
+
+      if (status === 'paused') {
+        buttonsHTML += '<button class="btn btn-success" onclick="resumeSending()">▶️ 再開</button>';
+      }
+
+      if (failedCount > 0) {
+        buttonsHTML += `<button class="btn btn-primary" onclick="retryFailed()">🔄 失敗分を再送（${failedCount}件）</button>`;
+      }
+
+      buttonsHTML += '<button class="btn btn-primary" onclick="location.reload()">🔄 更新</button>';
+
+      buttonsContainer.innerHTML = buttonsHTML;
+    }
+
+    async function startSending() {
+      if (!confirm('送信を開始しますか？')) return;
+
+      try {
+        const response = await fetch('/.netlify/functions/send-newsletter-worker-background', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId })
+        });
+
+        if (response.ok) {
+          alert('送信を開始しました。進捗は「更新」ボタンで確認できます。');
+          location.reload();
+        } else {
+          const error = await response.json();
+          alert(`エラー: ${error.error || '送信開始に失敗しました'}`);
+        }
+      } catch (err) {
+        alert(`エラー: ${err.message}`);
+      }
+    }
+
+    async function continueSending() {
+      if (!confirm('送信を続行しますか？')) return;
+      await startSending();
+    }
+
+    async function resumeSending() {
+      if (!confirm('送信を再開しますか？')) return;
+      await startSending();
+    }
+
+    async function pauseSending() {
+      if (!confirm('送信を一時停止しますか？\\n（現在のバッチ処理が完了するまで待ちます）')) return;
+      // 実装予定: ジョブのStatusを'paused'に更新
+      alert('一時停止機能は開発中です');
+    }
+
+    async function retryFailed() {
+      if (!confirm('失敗分を再送待ちに戻しますか？')) return;
+
+      try {
+        const response = await fetch('/.netlify/functions/retry-failed-emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId })
+        });
+
+        if (response.ok) {
+          alert('失敗分を再送待ちに戻しました');
+          location.reload();
+        } else {
+          const error = await response.json();
+          alert(`エラー: ${error.error || '再送設定に失敗しました'}`);
+        }
+      } catch (err) {
+        alert(`エラー: ${err.message}`);
+      }
+    }
+  </script>
+</body>
+</html>

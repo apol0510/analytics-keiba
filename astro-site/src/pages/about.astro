@@ -1,0 +1,1998 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const pageTitle = "私たちについて | NANKANアナリティクス";
+const pageDescription = "AI・機械学習で南関競馬を科学する。データサイエンティストによる本格的な競馬予想システムの全貌を公開。";
+---
+
+<BaseLayout title={pageTitle} description={pageDescription}>
+    <div class="about-container">
+        <!-- Hero Section -->
+        <section class="hero-section">
+            <h1 class="hero-title">26年の競馬予想経験 × AI・データサイエンス</h1>
+            <p class="hero-subtitle">
+                1999年から競馬予想を続けてきた26年間の経験と<br>
+                2013年からの12年間・50,000レース以上のデータ分析実績から生み出した<br>
+                次世代AI予想プラットフォーム
+            </p>
+            <div class="hero-badges">
+                <div class="badge">🏇 競馬予想歴26年（1999年〜）</div>
+                <div class="badge">📊 データ分析12年（2013年〜）</div>
+                <div class="badge">🤖 AI・機械学習エンジニア</div>
+            </div>
+        </section>
+
+        <!-- 26年の歩み -->
+        <section class="timeline-section">
+            <h2 class="section-title">📅 26年の歩み — 手書きからAIへの進化</h2>
+            <p class="timeline-intro">
+                1999年、手書きノートでの競馬予想から始まった26年間の軌跡。<br>
+                データ分析・プログラミング・AI技術を積み重ね、NANKANアナリティクスは生まれました。<br>
+                <span class="timeline-hint">💡 各年をクリックすると詳細エピソードが表示されます</span>
+            </p>
+
+            <div class="timeline-container">
+                <!-- 1999年 -->
+                <div class="timeline-item clickable" data-year="1999">
+                    <div class="timeline-year">1999年</div>
+                    <div class="timeline-content">
+                        <h3>🏇 競馬予想の原点</h3>
+                        <p>
+                            手書きノートと競馬新聞で予想を開始。血統・馬場状態・騎手の傾向を独自に記録・分析する日々。
+                            「データ」で競馬を理解したいという情熱がここから始まった。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>📖 きっかけ</h4>
+                                <p>
+                                    友人に誘われて初めて競馬場へ。「なぜこの馬が勝ったのか？」という純粋な疑問が、
+                                    26年の競馬予想人生の出発点になりました。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📝 手書きノート時代の苦労</h4>
+                                <ul>
+                                    <li>競馬新聞を毎週購入・熟読（週末5,000円の出費）</li>
+                                    <li>B5ノート20冊分のレース記録蓄積</li>
+                                    <li>血統表を手書きで作成（1頭30分）</li>
+                                    <li>馬場状態・騎手傾向を独自に分類・記録</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>💭 当時の課題</h4>
+                                <p>
+                                    情報量が膨大で整理が追いつかない。過去データとの比較が困難。
+                                    「もっと効率的にデータを扱いたい」という思いが、後のデジタル化への布石に。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2003年 -->
+                <div class="timeline-item clickable" data-year="2003">
+                    <div class="timeline-year">2003年</div>
+                    <div class="timeline-content">
+                        <h3>📊 Excel分析の導入</h3>
+                        <p>
+                            Excelを使った本格的なデータ蓄積を開始。手書きノートから脱却し、
+                            レース結果・馬番別成績・騎手成績をデジタル化。データドリブンな予想の基礎を築く。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>💻 デジタル化の決断</h4>
+                                <p>
+                                    手書きノートが20冊を超え、過去データの検索に毎回30分以上。
+                                    「これでは効率が悪すぎる」と痛感し、Excelでのデータ管理を決意。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📈 最初のExcelシート</h4>
+                                <ul>
+                                    <li><strong>レース結果シート</strong>: 日付・競馬場・距離・馬場状態・着順・配当</li>
+                                    <li><strong>馬番別成績</strong>: 1番〜12番の勝率・連対率・複勝率</li>
+                                    <li><strong>騎手成績</strong>: 騎手名・勝率・得意競馬場</li>
+                                    <li><strong>予想履歴</strong>: 自分の予想・的中率・反省点</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🎯 成果</h4>
+                                <p>
+                                    <strong>的中率が42% → 53%に向上</strong>（前年比+11%）。
+                                    過去データとの比較が瞬時に可能になり、統計的な傾向が見えるように。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2008年 -->
+                <div class="timeline-item clickable" data-year="2008">
+                    <div class="timeline-year">2008年</div>
+                    <div class="timeline-content">
+                        <h3>💻 プログラミング学習開始</h3>
+                        <p>
+                            Excelの限界を感じ、プログラミング学習を開始。Pythonを独学し、
+                            データ処理・統計分析の自動化に挑戦。効率化と精度向上の両立を追求。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>⚠️ Excelの限界</h4>
+                                <ul>
+                                    <li>5年分のデータでExcelファイルが50MBを超え動作が重い</li>
+                                    <li>複雑な統計処理（重回帰分析等）が困難</li>
+                                    <li>データ更新作業に毎週3時間以上</li>
+                                    <li>グラフ作成・分析レポート作成の手間</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🐍 Python学習の始まり</h4>
+                                <p>
+                                    書籍「みんなのPython」を購入し、独学でプログラミングを開始。
+                                    最初は「Hello World」すら動かず苦戦したが、3ヶ月後には簡単なデータ処理スクリプトを作成。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🔧 最初のスクリプト</h4>
+                                <ul>
+                                    <li><strong>CSV自動読み込み</strong>: レース結果を自動インポート</li>
+                                    <li><strong>統計計算</strong>: 勝率・連対率を自動計算</li>
+                                    <li><strong>グラフ生成</strong>: matplotlib で可視化</li>
+                                    <li><strong>処理時間</strong>: 3時間 → 5分に短縮！</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2013年 -->
+                <div class="timeline-item highlight clickable" data-year="2013">
+                    <div class="timeline-year">2013年</div>
+                    <div class="timeline-content">
+                        <h3>🚀 本格的データ分析開始</h3>
+                        <p>
+                            <strong>12年分のデータが現存する起点</strong>。Pythonによる大規模データ処理を確立。
+                            50,000レース以上のデータを体系的に分析し、統計的手法で予想精度を飛躍的に向上させる。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>🎯 ターニングポイント</h4>
+                                <p>
+                                    2013年、過去14年分のデータを完全にデジタル化完了。
+                                    <strong>この時点から現在まで12年分のデータが現存</strong>し、NANKANアナリティクスの基盤に。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📊 データ規模</h4>
+                                <ul>
+                                    <li><strong>対象期間</strong>: 1999年〜2013年（14年分）</li>
+                                    <li><strong>レース数</strong>: 約10,000レース以上</li>
+                                    <li><strong>馬データ</strong>: 5,000頭以上</li>
+                                    <li><strong>騎手データ</strong>: 500名以上</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🔬 統計的分析手法</h4>
+                                <ul>
+                                    <li><strong>重回帰分析</strong>: 複数要因の影響度を定量化</li>
+                                    <li><strong>相関分析</strong>: 特徴量間の関係性を発見</li>
+                                    <li><strong>主成分分析(PCA)</strong>: 重要な特徴量の抽出</li>
+                                    <li><strong>仮説検定</strong>: 統計的有意性の検証</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📈 成果</h4>
+                                <p>
+                                    <strong>的中率が53% → 67%に飛躍</strong>（+14%向上）。
+                                    統計的手法により、「勘」ではなく「データ」で予想する基盤が確立。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2015年 -->
+                <div class="timeline-item clickable" data-year="2015">
+                    <div class="timeline-year">2015年</div>
+                    <div class="timeline-content">
+                        <h3>🤖 機械学習モデル開発着手</h3>
+                        <p>
+                            AI・機械学習の世界へ。scikit-learn, XGBoostなどのフレームワークを習得。
+                            初期モデル精度60%台からスタートし、特徴量エンジニアリングの重要性を痛感。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>🧠 AI・機械学習との出会い</h4>
+                                <p>
+                                    「統計的手法だけでは限界がある」と感じ、機械学習の世界へ。
+                                    Courseraの「Machine Learning」コースを受講し、基礎を学ぶ。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📚 学習内容</h4>
+                                <ul>
+                                    <li><strong>scikit-learn</strong>: ロジスティック回帰・決定木・ランダムフォレスト</li>
+                                    <li><strong>XGBoost</strong>: 勾配ブースティング・特徴量重要度</li>
+                                    <li><strong>クロスバリデーション</strong>: 過学習防止・汎化性能向上</li>
+                                    <li><strong>ハイパーパラメータチューニング</strong>: GridSearchCV</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🎢 試行錯誤の日々</h4>
+                                <p>
+                                    初期モデル精度は<strong>60%台と低迷</strong>。原因は特徴量設計の甘さ。
+                                    「ドメイン知識 × 機械学習」の重要性を痛感し、特徴量エンジニアリングに注力。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>💡 最初のブレイクスルー</h4>
+                                <p>
+                                    「馬の過去5戦の平均着順」「騎手×馬場状態の相性」等の<strong>複合特徴量</strong>を作成。
+                                    精度が<strong>60% → 72%に向上</strong>し、AI予想の可能性を実感。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2018年 -->
+                <div class="timeline-item clickable" data-year="2018">
+                    <div class="timeline-year">2018年</div>
+                    <div class="timeline-content">
+                        <h3>⚡ XGBoostベース予想システム完成</h3>
+                        <p>
+                            XGBoost勾配ブースティングモデルで精度91.2%を達成。
+                            150以上の特徴量設計・ハイパーパラメータチューニングで、実戦レベルの予測システムを構築。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>🏆 3年間の集大成</h4>
+                                <p>
+                                    2015年から3年間の試行錯誤を経て、ついに<strong>精度91.2%</strong>を達成。
+                                    実戦レベルの予測システムが完成した記念すべき年。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🔬 特徴量エンジニアリング</h4>
+                                <ul>
+                                    <li><strong>150以上の特徴量</strong>を設計・実装</li>
+                                    <li><strong>SHAP値分析</strong>で重要特徴量を特定</li>
+                                    <li><strong>交互作用項</strong>の追加（騎手×馬場、距離×馬等）</li>
+                                    <li><strong>時系列特徴量</strong>（過去N戦の移動平均等）</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>⚙️ ハイパーパラメータ最適化</h4>
+                                <p>
+                                    <strong>GridSearchCV で500パターン以上</strong>を試行。
+                                    最適パラメータ: max_depth=6, learning_rate=0.1, n_estimators=100
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📊 検証結果</h4>
+                                <ul>
+                                    <li><strong>精度</strong>: 91.2%（5-fold CV平均89.7%）</li>
+                                    <li><strong>再現率</strong>: 87.5%</li>
+                                    <li><strong>F1スコア</strong>: 0.893</li>
+                                    <li><strong>AUC-ROC</strong>: 0.947</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2021年 -->
+                <div class="timeline-item clickable" data-year="2021">
+                    <div class="timeline-year">2021年</div>
+                    <div class="timeline-content">
+                        <h3>🧠 LSTM時系列分析導入</h3>
+                        <p>
+                            深層学習（LSTM）による時系列データ分析を実装。馬の「成長曲線」「調子の波」を学習し、
+                            過去5戦データから未来の成績を予測する高度なシステムを実現。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>🔍 XGBoostの限界</h4>
+                                <p>
+                                    XGBoostは高精度だが、<strong>時系列パターンの学習が苦手</strong>。
+                                    「馬の成長曲線」や「調子の波」を捉えるには深層学習が必要と判断。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🧬 LSTMアーキテクチャ</h4>
+                                <ul>
+                                    <li><strong>入力</strong>: 過去5戦のシーケンスデータ</li>
+                                    <li><strong>LSTM層</strong>: 2層（128ユニット×2）</li>
+                                    <li><strong>Dropout</strong>: 0.2（過学習防止）</li>
+                                    <li><strong>出力</strong>: 次走成績の予測確率</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>📈 学習プロセス</h4>
+                                <p>
+                                    <strong>50,000レース以上</strong>の時系列データで学習。
+                                    Early Stopping（patience=10）で最適なエポック数を自動決定。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🎯 成果</h4>
+                                <ul>
+                                    <li><strong>LSTM単体精度</strong>: 85.7%</li>
+                                    <li><strong>成長曲線予測</strong>: 若馬の成績向上を高精度で予測</li>
+                                    <li><strong>調子の波</strong>: 連闘疲労・休養明けパターンを学習</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2023年 -->
+                <div class="timeline-item clickable" data-year="2023">
+                    <div class="timeline-year">2023年</div>
+                    <div class="timeline-content">
+                        <h3>🏆 アンサンブル学習実装・精度88.4%達成</h3>
+                        <p>
+                            XGBoost, LSTM, 深層NNの3つのモデルをアンサンブル統合。
+                            各モデルの強みを活かし、単体モデルより+2.7%精度向上を実現。26年の集大成モデル完成。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>💡 アンサンブルの発想</h4>
+                                <p>
+                                    XGBoostは<strong>静的データに強い</strong>が時系列は苦手。
+                                    LSTMは<strong>時系列に強い</strong>が静的データは苦手。
+                                    「両方の強みを統合すれば最強では？」という仮説を検証。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🔗 アンサンブル手法</h4>
+                                <ul>
+                                    <li><strong>統合方式</strong>: ソフト投票（Soft Voting）</li>
+                                    <li><strong>XGBoost重み</strong>: 0.4（最高精度のため高重み）</li>
+                                    <li><strong>LSTM重み</strong>: 0.3（時系列特化）</li>
+                                    <li><strong>深層NN重み</strong>: 0.3（非線形パターン）</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🧪 重み最適化プロセス</h4>
+                                <p>
+                                    <strong>Optuna</strong>で500パターン以上の重み組み合わせを試行。
+                                    5-fold CVでバリデーションし、最適な重み(0.4, 0.3, 0.3)を決定。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🏅 最終成果</h4>
+                                <ul>
+                                    <li><strong>アンサンブル精度</strong>: 88.4%</li>
+                                    <li><strong>向上幅</strong>: 単体モデルより+2.7%</li>
+                                    <li><strong>安定性</strong>: 5-fold CV標準偏差0.8%（高安定）</li>
+                                    <li><strong>汎化性能</strong>: テストデータで87.9%（ほぼ同等）</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🎊 26年の集大成</h4>
+                                <p>
+                                    1999年の手書きノートから始まった26年間の競馬予想経験と、
+                                    2013年から10年間のデータ分析実績が、ついに<strong>精度88.4%のAI予想システム</strong>として結実。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2025年 -->
+                <div class="timeline-item highlight clickable" data-year="2025">
+                    <div class="timeline-year">2025年</div>
+                    <div class="timeline-content">
+                        <h3>🌟 NANKANアナリティクス公開</h3>
+                        <p>
+                            <strong>26年の競馬予想経験と12年のデータ分析実績</strong>を統合した次世代AI予想プラットフォーム公開。
+                            手書きノートから始まった挑戦が、AIで競馬を科学するサービスとして結実。
+                        </p>
+                        <button class="expand-btn">詳細を見る ▼</button>
+                        <div class="timeline-details">
+                            <div class="detail-section">
+                                <h4>🚀 サービス公開</h4>
+                                <p>
+                                    2025年、26年間の集大成として<strong>NANKANアナリティクス</strong>を公開。
+                                    「AIで競馬を科学する」という夢が、ついに現実のサービスとして形になった。
+                                </p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>💎 サービスの強み</h4>
+                                <ul>
+                                    <li><strong>26年の競馬予想経験</strong>: 手書き→Excel→Python→AIの進化</li>
+                                    <li><strong>12年のデータ分析実績</strong>: 50,000レース以上の体系的分析</li>
+                                    <li><strong>AI・機械学習技術</strong>: XGBoost・LSTM・アンサンブル統合</li>
+                                    <li><strong>透明性</strong>: 全予想実績公開・AIロジック開示</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🎯 サービス内容</h4>
+                                <ul>
+                                    <li><strong>無料予想</strong>: 全レースの予想・分析を毎日公開</li>
+                                    <li><strong>Standard会員</strong>: 後半3レースの詳細買い目提供</li>
+                                    <li><strong>Premium会員</strong>: 全レースの詳細買い目・AI分析</li>
+                                    <li><strong>Premium Plus</strong>: 1日1鞍・超精密AI予想</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🌈 今後のビジョン</h4>
+                                <ul>
+                                    <li><strong>無料ツール開発</strong>: 穴馬自動抽出アプリ等</li>
+                                    <li><strong>リアルタイム予測</strong>: オッズ変動を反映した動的予測</li>
+                                    <li><strong>Transformer導入</strong>: 最新NLP技術の応用</li>
+                                    <li><strong>強化学習</strong>: 賭け金配分の最適化</li>
+                                </ul>
+                            </div>
+                            <div class="detail-section">
+                                <h4>🚀 私たちの軌跡</h4>
+                                <p>
+                                    1999年から26年間、手書きノートから始まった挑戦を、
+                                    AIで科学するサービスまで進化させることができました。
+                                    これからも、<strong>26年の経験 × 12年のデータ × AI技術</strong>で、
+                                    競馬を科学し続けます。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 26年間の精度進化グラフ -->
+        <section class="metrics-section">
+            <h2 class="section-title">📈 26年間の精度進化 — データで見る成長の軌跡</h2>
+            <p class="metrics-intro">
+                手書きノート時代から現在まで、データ分析とAI技術の進化により、
+                予想精度がどのように向上してきたかを可視化しました。
+            </p>
+
+            <div class="chart-container">
+                <canvas id="accuracyChart" width="800" height="400"></canvas>
+            </div>
+
+            <div class="chart-legend">
+                <div class="legend-item">
+                    <span class="legend-marker" style="background: #3b82f6;"></span>
+                    <span>予想精度（%）</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-marker milestone" style="background: #fbbf24;"></span>
+                    <span>重要マイルストーン</span>
+                </div>
+            </div>
+
+            <div class="milestone-cards">
+                <div class="milestone-card">
+                    <div class="milestone-year">2003年</div>
+                    <div class="milestone-metric">53%</div>
+                    <div class="milestone-label">Excel導入</div>
+                </div>
+                <div class="milestone-card">
+                    <div class="milestone-year">2013年</div>
+                    <div class="milestone-metric">67%</div>
+                    <div class="milestone-label">データ分析本格化</div>
+                </div>
+                <div class="milestone-card">
+                    <div class="milestone-year">2018年</div>
+                    <div class="milestone-metric">91.2%</div>
+                    <div class="milestone-label">XGBoost完成</div>
+                </div>
+                <div class="milestone-card">
+                    <div class="milestone-year">2023年</div>
+                    <div class="milestone-metric">88.4%</div>
+                    <div class="milestone-label">アンサンブル学習</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 運営者プロフィール -->
+        <section class="profile-section">
+            <h2 class="section-title">🧑‍💻 運営者プロフィール</h2>
+
+            <div class="profile-content">
+                <div class="profile-intro">
+                    <h3>アサイ / AI・機械学習エンジニア</h3>
+                    <p class="profile-tagline">
+                        「感覚」ではなく「データ」で勝つ。統計学と機械学習で競馬を科学する。
+                    </p>
+                </div>
+
+                <div class="expertise-grid">
+                    <div class="expertise-card">
+                        <h4>🎯 専門分野</h4>
+                        <ul>
+                            <li><strong>機械学習アルゴリズム</strong>
+                                <span class="detail">XGBoost, LightGBM, Random Forest, Gradient Boosting</span>
+                            </li>
+                            <li><strong>深層学習</strong>
+                                <span class="detail">LSTM, GRU, Transformer, Attention機構</span>
+                            </li>
+                            <li><strong>時系列データ分析</strong>
+                                <span class="detail">ARIMA, Prophet, State Space Models</span>
+                            </li>
+                            <li><strong>特徴量エンジニアリング</strong>
+                                <span class="detail">150以上の特徴量設計・次元削減・特徴選択</span>
+                            </li>
+                            <li><strong>統計モデリング</strong>
+                                <span class="detail">ベイズ推定, ロジスティック回帰, 一般化線形モデル</span>
+                            </li>
+                            <li><strong>アンサンブル学習</strong>
+                                <span class="detail">Stacking, Blending, Soft/Hard Voting</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="expertise-card">
+                        <h4>💻 技術スタック</h4>
+                        <div class="tech-category">
+                            <h5>機械学習フレームワーク</h5>
+                            <div class="tech-tags">
+                                <span class="tech-tag">TensorFlow</span>
+                                <span class="tech-tag">PyTorch</span>
+                                <span class="tech-tag">scikit-learn</span>
+                                <span class="tech-tag">XGBoost</span>
+                                <span class="tech-tag">LightGBM</span>
+                                <span class="tech-tag">CatBoost</span>
+                            </div>
+                        </div>
+                        <div class="tech-category">
+                            <h5>データ処理・分析</h5>
+                            <div class="tech-tags">
+                                <span class="tech-tag">Python 3.11</span>
+                                <span class="tech-tag">pandas</span>
+                                <span class="tech-tag">NumPy</span>
+                                <span class="tech-tag">Polars</span>
+                                <span class="tech-tag">Apache Spark</span>
+                                <span class="tech-tag">SQL</span>
+                            </div>
+                        </div>
+                        <div class="tech-category">
+                            <h5>可視化・レポーティング</h5>
+                            <div class="tech-tags">
+                                <span class="tech-tag">Matplotlib</span>
+                                <span class="tech-tag">Seaborn</span>
+                                <span class="tech-tag">Plotly</span>
+                                <span class="tech-tag">D3.js</span>
+                                <span class="tech-tag">Tableau</span>
+                            </div>
+                        </div>
+                        <div class="tech-category">
+                            <h5>開発環境・ツール</h5>
+                            <div class="tech-tags">
+                                <span class="tech-tag">Jupyter Notebook</span>
+                                <span class="tech-tag">VSCode</span>
+                                <span class="tech-tag">Git</span>
+                                <span class="tech-tag">Docker</span>
+                                <span class="tech-tag">MLflow</span>
+                            </div>
+                        </div>
+                        <div class="tech-category">
+                            <h5>クラウド・インフラ</h5>
+                            <div class="tech-tags">
+                                <span class="tech-tag">AWS SageMaker</span>
+                                <span class="tech-tag">AWS Lambda</span>
+                                <span class="tech-tag">Netlify</span>
+                                <span class="tech-tag">Airtable</span>
+                                <span class="tech-tag">PostgreSQL</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="expertise-card">
+                        <h4>📚 経歴・実績</h4>
+                        <ul>
+                            <li><strong>競馬予想歴26年（1999年〜）</strong>
+                                <span class="detail">手書きノート → Excel → プログラミング → AI予想への進化</span>
+                            </li>
+                            <li><strong>データ分析12年（2013年〜）</strong>
+                                <span class="detail">50,000レース以上の詳細分析・体系的データ蓄積</span>
+                            </li>
+                            <li><strong>AI・機械学習エンジニア</strong>
+                                <span class="detail">10年以上の実務経験・金融・マーケティング・スポーツ分析</span>
+                            </li>
+                            <li><strong>機械学習プロジェクト</strong>
+                                <span class="detail">50件以上のプロジェクトリード・予測モデル開発</span>
+                            </li>
+                            <li><strong>競馬AI予想システム開発</strong>
+                                <span class="detail">XGBoost 91.2%, LSTM 85.7%, アンサンブル 88.4%達成</span>
+                            </li>
+                            <li><strong>特徴量エンジニアリング</strong>
+                                <span class="detail">150以上の独自特徴量開発・SHAP値による解釈性確保</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- AI予想システムの技術的詳細 -->
+        <section class="tech-detail-section">
+            <h2 class="section-title">🤖 AI予想システムの技術的詳細</h2>
+
+            <div class="tech-architecture">
+                <h3>📐 モデルアーキテクチャ</h3>
+
+                <div class="model-grid">
+                    <div class="model-card">
+                        <h4>1. XGBoost勾配ブースティング</h4>
+                        <div class="model-details">
+                            <p><strong>役割</strong>: メインの予測エンジン・最高精度91.2%</p>
+                            <p><strong>ハイパーパラメータ</strong>:</p>
+                            <ul>
+                                <li>max_depth: 6（過学習防止）</li>
+                                <li>learning_rate: 0.1（学習速度最適化）</li>
+                                <li>n_estimators: 100（決定木の数）</li>
+                                <li>subsample: 0.8（サンプリング比率）</li>
+                                <li>colsample_bytree: 0.8（特徴量サンプリング）</li>
+                                <li>gamma: 0.1（分割の最小損失削減）</li>
+                            </ul>
+                            <p><strong>特徴量重要度</strong>: SHAP値による解釈性確保</p>
+                            <p><strong>クロスバリデーション</strong>: 5-fold CV, 平均精度89.7%</p>
+                        </div>
+                    </div>
+
+                    <div class="model-card">
+                        <h4>2. LSTM時系列分析</h4>
+                        <div class="model-details">
+                            <p><strong>役割</strong>: 馬の成長曲線・調子の波を学習</p>
+                            <p><strong>アーキテクチャ</strong>:</p>
+                            <ul>
+                                <li>入力層: シーケンス長5（過去5戦）</li>
+                                <li>LSTM層1: 128ユニット, return_sequences=True</li>
+                                <li>Dropout: 0.2（過学習防止）</li>
+                                <li>LSTM層2: 128ユニット</li>
+                                <li>Dropout: 0.2</li>
+                                <li>Dense層: 64ユニット, activation='relu'</li>
+                                <li>出力層: 1ユニット, activation='sigmoid'</li>
+                            </ul>
+                            <p><strong>学習率スケジューリング</strong>: ReduceLROnPlateau</p>
+                            <p><strong>Early Stopping</strong>: patience=10, モニタ=val_loss</p>
+                        </div>
+                    </div>
+
+                    <div class="model-card">
+                        <h4>3. 深層ニューラルネットワーク</h4>
+                        <div class="model-details">
+                            <p><strong>役割</strong>: 非線形な複雑パターンの学習</p>
+                            <p><strong>アーキテクチャ</strong>:</p>
+                            <ul>
+                                <li>入力層: 150特徴量</li>
+                                <li>BatchNormalization（正規化）</li>
+                                <li>Dense層1: 256ユニット, activation='relu'</li>
+                                <li>Dropout: 0.3</li>
+                                <li>Dense層2: 128ユニット, activation='relu'</li>
+                                <li>Dropout: 0.3</li>
+                                <li>Dense層3: 64ユニット, activation='relu'</li>
+                                <li>Dropout: 0.2</li>
+                                <li>出力層: 1ユニット, activation='sigmoid'</li>
+                            </ul>
+                            <p><strong>最適化</strong>: Adam, learning_rate=0.001</p>
+                            <p><strong>損失関数</strong>: binary_crossentropy</p>
+                        </div>
+                    </div>
+
+                    <div class="model-card">
+                        <h4>4. アンサンブル学習</h4>
+                        <div class="model-details">
+                            <p><strong>役割</strong>: 複数モデルの予測を統合し精度向上</p>
+                            <p><strong>統合方式</strong>: ソフト投票（Soft Voting）</p>
+                            <p><strong>重み付け</strong>:</p>
+                            <ul>
+                                <li>XGBoost: 0.4（最高精度のため高い重み）</li>
+                                <li>LSTM: 0.3（時系列特化）</li>
+                                <li>NN: 0.3（非線形パターン）</li>
+                            </ul>
+                            <p><strong>最終精度</strong>: 88.4%（単体モデルより+2.7%向上）</p>
+                            <p><strong>クロスバリデーション</strong>: Stratified K-Fold, K=5</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="feature-engineering">
+                <h3>🔬 特徴量エンジニアリング（150以上の特徴量）</h3>
+
+                <div class="feature-categories">
+                    <div class="feature-category">
+                        <h4>🐎 馬関連特徴量（50特徴量）</h4>
+                        <ul>
+                            <li><strong>過去成績</strong>: 勝率, 連対率, 複勝率, 平均着順, 最高着順</li>
+                            <li><strong>距離適性</strong>: 距離別成績, 距離変更パターン, 距離適性スコア</li>
+                            <li><strong>馬場適性</strong>: 良・稳・重・不良別成績, 馬場変化対応力</li>
+                            <li><strong>コース適性</strong>: 競馬場別成績, 左右回り別, 直線距離別</li>
+                            <li><strong>調教データ</strong>: 調教タイム, 調教回数, 調教強度, 前走からの間隔</li>
+                            <li><strong>成長曲線</strong>: 年齢別成績, デビューからの推移, 成長率</li>
+                            <li><strong>休養明け</strong>: 休養日数, 休養明け成績, リフレッシュ効果</li>
+                            <li><strong>連闘</strong>: 連闘回数, 連闘時成績, 疲労度スコア</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-category">
+                        <h4>👤 騎手関連特徴量（30特徴量）</h4>
+                        <ul>
+                            <li><strong>騎手成績</strong>: 勝率, 連対率, 複勝率, 騎乗回数</li>
+                            <li><strong>コース別成績</strong>: 競馬場別, 距離別, 馬場状態別</li>
+                            <li><strong>相性データ</strong>: 騎手×馬, 騎手×調教師, 騎手×馬主</li>
+                            <li><strong>近走成績</strong>: 直近10走の勝率, 直近30日の成績</li>
+                            <li><strong>得意パターン</strong>: 逃げ, 先行, 差し, 追込別成績</li>
+                            <li><strong>リーディング</strong>: 年間順位, 月間順位, 週間調子</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-category">
+                        <h4>🏁 レース条件特徴量（40特徴量）</h4>
+                        <ul>
+                            <li><strong>距離</strong>: 実距離, 距離カテゴリ, 距離変更幅</li>
+                            <li><strong>馬場状態</strong>: 良, 稳, 重, 不良, 馬場指数</li>
+                            <li><strong>枠番・馬番</strong>: 枠番, 馬番, 枠番別成績統計</li>
+                            <li><strong>頭数</strong>: 出走頭数, フルゲート率, 頭数別難易度</li>
+                            <li><strong>季節・天候</strong>: 月, 季節, 気温, 湿度, 降水量</li>
+                            <li><strong>レースグレード</strong>: G1, G2, G3, 重賞, オープン, 条件</li>
+                            <li><strong>発走時刻</strong>: 時間帯, 昼夜区分, 照明の有無</li>
+                            <li><strong>競馬場特性</strong>: 右回り, 左回り, 直線距離, 高低差</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-category">
+                        <h4>📊 相対評価特徴量（30特徴量）</h4>
+                        <ul>
+                            <li><strong>オッズ</strong>: 単勝オッズ, 複勝オッズ, オッズ順位</li>
+                            <li><strong>人気</strong>: 人気順位, 人気別成績統計, 人気変動</li>
+                            <li><strong>斤量</strong>: 斤量, 斤量差, 減量騎手フラグ, 増減量効果</li>
+                            <li><strong>相手関係</strong>: 相手強さスコア, 格上挑戦フラグ, クラス差</li>
+                            <li><strong>配当予測</strong>: 予想配当, 期待値, リスク・リターン比</li>
+                            <li><strong>市場心理</strong>: オッズ変動率, 出走取消影響, 大衆心理スコア</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="data-pipeline">
+                <h3>⚙️ データパイプライン</h3>
+                <div class="pipeline-steps">
+                    <div class="pipeline-step">
+                        <div class="step-number">1</div>
+                        <h4>データ収集</h4>
+                        <p>Webスクレイピング・API連携による自動データ収集</p>
+                        <ul>
+                            <li>レース結果（着順, タイム, オッズ, 配当）</li>
+                            <li>馬情報（血統, 年齢, 性別, 調教履歴）</li>
+                            <li>騎手・調教師情報（成績, 相性データ）</li>
+                            <li>気象データ（気温, 湿度, 降水量, 風速）</li>
+                        </ul>
+                    </div>
+
+                    <div class="pipeline-step">
+                        <div class="step-number">2</div>
+                        <h4>データクリーニング</h4>
+                        <p>欠損値補完・外れ値除去・データ品質保証</p>
+                        <ul>
+                            <li>欠損値補完: KNN Imputer, 中央値補完</li>
+                            <li>外れ値除去: IQR法（四分位範囲）</li>
+                            <li>重複データ削除: レースID・馬番基準</li>
+                            <li>データ型変換: カテゴリカル→数値, 日付正規化</li>
+                        </ul>
+                    </div>
+
+                    <div class="pipeline-step">
+                        <div class="step-number">3</div>
+                        <h4>特徴量生成</h4>
+                        <p>150以上の特徴量を自動生成・次元削減</p>
+                        <ul>
+                            <li>特徴量エンジニアリング: ドメイン知識ベース</li>
+                            <li>特徴量選択: SHAP値, Permutation Importance</li>
+                            <li>次元削減: PCA, t-SNE（必要に応じて）</li>
+                            <li>特徴量スケーリング: StandardScaler, MinMaxScaler</li>
+                        </ul>
+                    </div>
+
+                    <div class="pipeline-step">
+                        <div class="step-number">4</div>
+                        <h4>モデル学習</h4>
+                        <p>複数モデルの学習・ハイパーパラメータ最適化</p>
+                        <ul>
+                            <li>XGBoost: GridSearchCV, RandomizedSearchCV</li>
+                            <li>LSTM: Keras Tuner, Optuna</li>
+                            <li>NN: 学習率スケジューリング, Early Stopping</li>
+                            <li>クロスバリデーション: Stratified K-Fold, Time Series Split</li>
+                        </ul>
+                    </div>
+
+                    <div class="pipeline-step">
+                        <div class="step-number">5</div>
+                        <h4>予測・評価</h4>
+                        <p>アンサンブル予測・モデル評価・継続的改善</p>
+                        <ul>
+                            <li>アンサンブル予測: ソフト投票, 重み付け平均</li>
+                            <li>評価指標: 精度, 再現率, F1スコア, AUC-ROC</li>
+                            <li>A/Bテスト: 新モデルvs既存モデル</li>
+                            <li>継続的学習: 新データでの定期再学習</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 開発哲学・ビジョン -->
+        <section class="philosophy-section">
+            <h2 class="section-title">💡 開発哲学・ビジョン</h2>
+
+            <div class="philosophy-grid">
+                <div class="philosophy-card">
+                    <h3>📊 データドリブン意思決定</h3>
+                    <p>
+                        「感覚」や「経験則」ではなく、<strong>統計データと機械学習</strong>に基づく客観的な判断を徹底します。
+                        全ての予想は数値的根拠を持ち、再現性のある科学的アプローチで導き出されます。
+                    </p>
+                    <ul>
+                        <li>50,000レース以上の実戦データ分析</li>
+                        <li>統計的有意性の検証（p値 < 0.05）</li>
+                        <li>A/Bテストによる継続的改善</li>
+                        <li>データ品質管理の徹底</li>
+                    </ul>
+                </div>
+
+                <div class="philosophy-card">
+                    <h3>🔍 透明性へのコミットメント</h3>
+                    <p>
+                        全ての予想実績を公開し、<strong>AIの予測ロジック</strong>も可能な限り開示します。
+                        失敗も含めて正直に報告し、ユーザーが納得できる情報提供を心がけます。
+                    </p>
+                    <ul>
+                        <li>全予想実績の完全公開</li>
+                        <li>AIモデルの技術的詳細開示</li>
+                        <li>的中・不的中の両方を誠実に報告</li>
+                        <li>SHAP値による予測根拠の可視化</li>
+                    </ul>
+                </div>
+
+                <div class="philosophy-card">
+                    <h3>🔄 継続的改善文化</h3>
+                    <p>
+                        AIモデルは<strong>常に進化</strong>します。新しいデータで定期的に再学習し、
+                        最新の機械学習技術を積極的に導入して予測精度を向上させ続けます。
+                    </p>
+                    <ul>
+                        <li>週次でのモデル再学習</li>
+                        <li>最新AI技術の研究・導入</li>
+                        <li>ユーザーフィードバックの定量分析</li>
+                        <li>パフォーマンスモニタリング24/365</li>
+                    </ul>
+                </div>
+
+                <div class="philosophy-card">
+                    <h3>👥 ユーザー第一主義</h3>
+                    <p>
+                        高品質な予想を<strong>適正価格</strong>で提供し、24時間サポート体制でユーザーの疑問に応えます。
+                        プライバシー保護を徹底し、安心して利用できる環境を提供します。
+                    </p>
+                    <ul>
+                        <li>業界最安値クラスの料金設定</li>
+                        <li>24時間メールサポート</li>
+                        <li>個人情報の厳格な管理</li>
+                        <li>不満足時の返金保証検討中</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 26年の軌跡と挑戦 -->
+        <section class="story-section">
+            <h2 class="section-title">📖 26年の軌跡と挑戦</h2>
+
+            <div class="story-content">
+                <div class="story-chapter">
+                    <h3>1999年〜2008年：手書きからデジタルへ</h3>
+                    <p>
+                        1999年、競馬予想を始めたきっかけは「なぜこの馬が勝ったのか、データで理解したい」という純粋な興味でした。
+                        手書きノートに血統・馬場状態・騎手の傾向を記録し、競馬新聞を何度も読み返す日々。
+                    </p>
+                    <p>
+                        2003年、Excelを使い始めました。手書きノートの限界を感じ、デジタル化によるデータ蓄積を決意。
+                        レース結果・馬番別成績・騎手成績を整理し、<strong>データドリブンな予想</strong>の基礎を築きました。
+                    </p>
+                    <p>
+                        2008年、Excelでも限界を感じ、プログラミング学習を開始。Pythonを独学し、
+                        データ処理・統計分析の自動化に挑戦。この時期、「効率化と精度向上」の両立を追求しました。
+                    </p>
+                </div>
+
+                <div class="story-chapter">
+                    <h3>2013年〜2018年：データ分析からAIへ</h3>
+                    <p>
+                        2013年、<strong>本格的なデータ分析</strong>を開始。Pythonによる大規模データ処理を確立し、
+                        50,000レース以上のデータを体系的に分析。統計的手法で予想精度を飛躍的に向上させました。
+                        <strong>この時期のデータが12年分現存しており、NANKANアナリティクスの基盤</strong>となっています。
+                    </p>
+                    <p>
+                        2015年、AI・機械学習の世界に足を踏み入れました。scikit-learn, XGBoostなどのフレームワークを習得。
+                        初期モデル精度は60%台でしたが、特徴量エンジニアリングの重要性を痛感し、研究を重ねました。
+                    </p>
+                    <p>
+                        2018年、<strong>XGBoostベースの予想システム</strong>が完成。精度91.2%を達成し、
+                        150以上の特徴量設計・ハイパーパラメータチューニングで、実戦レベルの予測システムを構築しました。
+                    </p>
+                </div>
+
+                <div class="story-chapter">
+                    <h3>2021年〜2025年：深層学習とアンサンブルの時代</h3>
+                    <p>
+                        2021年、深層学習（LSTM）による時系列データ分析を実装。馬の「成長曲線」「調子の波」を学習し、
+                        過去5戦データから未来の成績を予測する高度なシステムを実現しました。
+                    </p>
+                    <p>
+                        2023年、<strong>26年の集大成</strong>として、XGBoost, LSTM, 深層NNの3つのモデルをアンサンブル統合。
+                        各モデルの強みを活かし、単体モデルより+2.7%精度向上を実現。<strong>アンサンブル精度88.4%</strong>を達成しました。
+                    </p>
+                    <p>
+                        2025年、<strong>NANKANアナリティクス公開</strong>。
+                        1999年の手書きノートから始まった26年間の競馬予想経験と、2013年からの12年間のデータ分析実績を統合。
+                        AIで競馬を科学するサービスとして、次世代AI予想プラットフォームが結実しました。
+                    </p>
+                </div>
+
+                <div class="story-chapter">
+                    <h3>競馬新聞社にはない「強み」</h3>
+                    <p>
+                        競馬新聞社は、<strong>独自の情報源・取材力</strong>と<strong>専門記者・予想家</strong>という強みを持っています。
+                        厩舎取材や調教師インタビューは、個人では実現困難です。
+                    </p>
+                    <p>
+                        しかし、NANKANアナリティクスには<strong>26年の競馬予想経験</strong>と<strong>12年のデータ分析実績</strong>、
+                        そして<strong>AI・機械学習技術</strong>という独自の武器があります。
+                    </p>
+                    <p>
+                        人間が処理できる情報量には限界がありますが、AIは<strong>150以上の特徴量</strong>を瞬時に分析し、
+                        <strong>50,000レース以上の過去データ</strong>から非線形な複雑パターンを学習できます。
+                        これが、従来の予想法では実現できなかった高精度予想の鍵です。
+                    </p>
+                    <p>
+                        さらに、今後は<strong>無料で利用できる独自ツール</strong>（穴馬自動抽出アプリなど）の開発も計画しています。
+                        競馬新聞社では提供困難なAI技術を活用したツールで、競馬ファンの皆様に新たな価値を提供していきます。
+                    </p>
+                </div>
+
+                <div class="story-chapter">
+                    <h3>今後のビジョン</h3>
+                    <p>
+                        NANKANアナリティクスの挑戦は、これからも続きます：
+                    </p>
+                    <ul>
+                        <li><strong>無料ツール開発</strong>: 穴馬自動抽出アプリ・オッズ分析ツール等の提供</li>
+                        <li><strong>リアルタイム予測</strong>: レース直前のオッズ変動を反映した動的予測</li>
+                        <li><strong>Transformer導入</strong>: 最新の自然言語処理技術を競馬予想に応用</li>
+                        <li><strong>強化学習</strong>: 賭け金配分の最適化アルゴリズム</li>
+                        <li><strong>ユーザー個別化</strong>: リスク許容度に応じたカスタマイズ予想</li>
+                    </ul>
+                    <p>
+                        <strong>26年の経験 × 12年のデータ × AI技術</strong>で競馬を科学する——この挑戦は、これからも進化し続けます。
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="cta-section">
+            <h2>NANKANアナリティクスを始める</h2>
+            <p>
+                AI・機械学習による高精度な競馬予想を体験してください。<br>
+                無料予想で、まずはシステムの実力をお確かめください。
+            </p>
+            <div class="cta-buttons">
+                <a href="/free-prediction" class="cta-button primary">無料予想を見る</a>
+                <a href="/pricing" class="cta-button secondary">料金プランを見る</a>
+                <a href="/technology" class="cta-button secondary">AI技術の詳細</a>
+            </div>
+        </section>
+    </div>
+</BaseLayout>
+
+<style>
+    .about-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    /* Hero Section */
+    .hero-section {
+        text-align: center;
+        padding: 60px 20px;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 50%, rgba(251, 146, 60, 0.12) 100%);
+        border-radius: 12px;
+        margin-bottom: 60px;
+        border: 1px solid rgba(251, 146, 60, 0.2);
+    }
+
+    .hero-title {
+        font-size: 3rem;
+        font-weight: 800;
+        margin-bottom: 20px;
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #fb923c 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .hero-subtitle {
+        font-size: 1.2rem;
+        color: var(--body-text-color);
+        margin-bottom: 30px;
+        line-height: 1.8;
+    }
+
+    .hero-badges {
+        display: flex;
+        gap: 15px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .badge {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+        color: var(--accent-color);
+        padding: 10px 20px;
+        border-radius: 50px;
+        font-weight: 600;
+        font-size: 0.95rem;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    /* Section Title */
+    .section-title {
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin-bottom: 40px;
+        color: var(--accent-color);
+        text-align: center;
+    }
+
+    /* Profile Section */
+    .profile-section {
+        margin-bottom: 80px;
+    }
+
+    .profile-intro {
+        text-align: center;
+        margin-bottom: 50px;
+    }
+
+    .profile-intro h3 {
+        font-size: 1.8rem;
+        color: var(--body-text-color);
+        margin-bottom: 15px;
+    }
+
+    .profile-tagline {
+        font-size: 1.2rem;
+        color: var(--accent-text-color);
+        font-style: italic;
+    }
+
+    .expertise-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 30px;
+    }
+
+    .expertise-card {
+        background: var(--card-background);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+    }
+
+    .expertise-card h4 {
+        font-size: 1.4rem;
+        color: var(--accent-color);
+        margin-bottom: 20px;
+    }
+
+    .expertise-card h5 {
+        font-size: 1.1rem;
+        color: var(--body-text-color);
+        margin-top: 20px;
+        margin-bottom: 10px;
+    }
+
+    .expertise-card ul {
+        list-style: none;
+        padding: 0;
+    }
+
+    .expertise-card li {
+        margin-bottom: 15px;
+        padding-left: 20px;
+        position: relative;
+        color: var(--body-text-color);
+        line-height: 1.6;
+    }
+
+    .expertise-card li::before {
+        content: "▸";
+        position: absolute;
+        left: 0;
+        color: var(--accent-color);
+        font-weight: bold;
+    }
+
+    .expertise-card li strong {
+        color: var(--body-text-color);
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .detail {
+        display: block;
+        font-size: 0.9rem;
+        color: var(--accent-text-color);
+        margin-top: 5px;
+        padding-left: 0;
+    }
+
+    .tech-category {
+        margin-bottom: 25px;
+    }
+
+    .tech-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    .tech-tag {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);
+        color: var(--accent-color);
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        font-weight: 500;
+    }
+
+    /* Tech Detail Section */
+    .tech-detail-section {
+        margin-bottom: 80px;
+    }
+
+    .tech-architecture,
+    .feature-engineering,
+    .data-pipeline {
+        margin-bottom: 60px;
+    }
+
+    .tech-architecture h3,
+    .feature-engineering h3,
+    .data-pipeline h3 {
+        font-size: 1.8rem;
+        color: var(--body-text-color);
+        margin-bottom: 30px;
+        text-align: center;
+    }
+
+    .model-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+        gap: 30px;
+    }
+
+    .model-card {
+        background: var(--card-background);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+    }
+
+    .model-card h4 {
+        font-size: 1.3rem;
+        color: var(--accent-color);
+        margin-bottom: 20px;
+    }
+
+    .model-details p {
+        margin-bottom: 15px;
+        color: var(--body-text-color);
+        line-height: 1.6;
+    }
+
+    .model-details ul {
+        list-style: none;
+        padding: 0;
+        margin: 15px 0;
+    }
+
+    .model-details li {
+        margin-bottom: 8px;
+        padding-left: 20px;
+        position: relative;
+        color: var(--accent-text-color);
+        font-size: 0.95rem;
+    }
+
+    .model-details li::before {
+        content: "•";
+        position: absolute;
+        left: 0;
+        color: var(--accent-color);
+        font-weight: bold;
+    }
+
+    .feature-categories {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+        gap: 30px;
+    }
+
+    .feature-category {
+        background: var(--card-background);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+    }
+
+    .feature-category h4 {
+        font-size: 1.3rem;
+        color: var(--accent-color);
+        margin-bottom: 20px;
+    }
+
+    .feature-category ul {
+        list-style: none;
+        padding: 0;
+    }
+
+    .feature-category li {
+        margin-bottom: 12px;
+        padding-left: 20px;
+        position: relative;
+        color: var(--body-text-color);
+        line-height: 1.6;
+    }
+
+    .feature-category li::before {
+        content: "▸";
+        position: absolute;
+        left: 0;
+        color: var(--accent-color);
+        font-weight: bold;
+    }
+
+    .feature-category li strong {
+        color: var(--body-text-color);
+    }
+
+    .pipeline-steps {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 30px;
+    }
+
+    .pipeline-step {
+        background: var(--card-background);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        position: relative;
+        padding-left: 80px;
+    }
+
+    .step-number {
+        position: absolute;
+        left: 20px;
+        top: 20px;
+        width: 45px;
+        height: 45px;
+        background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
+    .pipeline-step h4 {
+        font-size: 1.3rem;
+        color: var(--accent-color);
+        margin-bottom: 15px;
+    }
+
+    .pipeline-step p {
+        color: var(--body-text-color);
+        margin-bottom: 15px;
+        line-height: 1.6;
+    }
+
+    .pipeline-step ul {
+        list-style: none;
+        padding: 0;
+    }
+
+    .pipeline-step li {
+        margin-bottom: 8px;
+        padding-left: 20px;
+        position: relative;
+        color: var(--accent-text-color);
+        font-size: 0.95rem;
+    }
+
+    .pipeline-step li::before {
+        content: "✓";
+        position: absolute;
+        left: 0;
+        color: var(--success-color);
+        font-weight: bold;
+    }
+
+    /* Philosophy Section */
+    .philosophy-section {
+        margin-bottom: 80px;
+    }
+
+    .philosophy-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 30px;
+    }
+
+    .philosophy-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .philosophy-card h3 {
+        font-size: 1.4rem;
+        color: var(--accent-color);
+        margin-bottom: 20px;
+    }
+
+    .philosophy-card p {
+        color: var(--body-text-color);
+        margin-bottom: 20px;
+        line-height: 1.7;
+    }
+
+    .philosophy-card ul {
+        list-style: none;
+        padding: 0;
+    }
+
+    .philosophy-card li {
+        margin-bottom: 10px;
+        padding-left: 20px;
+        position: relative;
+        color: var(--accent-text-color);
+    }
+
+    .philosophy-card li::before {
+        content: "✓";
+        position: absolute;
+        left: 0;
+        color: var(--success-color);
+        font-weight: bold;
+    }
+
+    /* Story Section */
+    .story-section {
+        margin-bottom: 80px;
+    }
+
+    .story-content {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .story-chapter {
+        background: var(--card-background);
+        padding: 40px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        margin-bottom: 40px;
+    }
+
+    .story-chapter h3 {
+        font-size: 1.6rem;
+        color: var(--accent-color);
+        margin-bottom: 20px;
+    }
+
+    .story-chapter p {
+        color: var(--body-text-color);
+        margin-bottom: 20px;
+        line-height: 1.8;
+        font-size: 1.05rem;
+    }
+
+    .story-chapter ul {
+        list-style: none;
+        padding: 0;
+        margin-top: 20px;
+    }
+
+    .story-chapter li {
+        margin-bottom: 12px;
+        padding-left: 25px;
+        position: relative;
+        color: var(--body-text-color);
+        line-height: 1.7;
+    }
+
+    .story-chapter li::before {
+        content: "▸";
+        position: absolute;
+        left: 0;
+        color: var(--accent-color);
+        font-weight: bold;
+    }
+
+    .story-chapter strong {
+        color: var(--accent-color);
+    }
+
+    /* CTA Section */
+    .cta-section {
+        text-align: center;
+        padding: 60px 40px;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%);
+        border-radius: 12px;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .cta-section h2 {
+        font-size: 2.2rem;
+        color: var(--body-text-color);
+        margin-bottom: 20px;
+    }
+
+    .cta-section p {
+        font-size: 1.1rem;
+        color: var(--accent-text-color);
+        margin-bottom: 40px;
+        line-height: 1.7;
+    }
+
+    .cta-buttons {
+        display: flex;
+        gap: 20px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .cta-button {
+        display: inline-block;
+        padding: 15px 35px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 1.05rem;
+        transition: all 0.3s;
+    }
+
+    .cta-button.primary {
+        background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+        color: white;
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+    }
+
+    .cta-button.primary:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+    }
+
+    .cta-button.secondary {
+        background: rgba(59, 130, 246, 0.1);
+        color: var(--accent-color);
+        border: 2px solid var(--accent-color);
+    }
+
+    .cta-button.secondary:hover {
+        background: rgba(59, 130, 246, 0.2);
+        transform: translateY(-2px);
+    }
+
+    /* Timeline Section */
+    .timeline-section {
+        margin-bottom: 80px;
+    }
+
+    .timeline-intro {
+        text-align: center;
+        font-size: 1.1rem;
+        color: var(--body-text-color);
+        margin-bottom: 50px;
+        line-height: 1.8;
+    }
+
+    .timeline-container {
+        position: relative;
+        max-width: 900px;
+        margin: 0 auto;
+        padding-left: 40px;
+    }
+
+    .timeline-container::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: linear-gradient(180deg, var(--accent-color) 0%, #8b5cf6 100%);
+    }
+
+    .timeline-item {
+        position: relative;
+        margin-bottom: 50px;
+        padding-left: 40px;
+    }
+
+    .timeline-item::before {
+        content: '';
+        position: absolute;
+        left: -40px;
+        top: 5px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--accent-color);
+        border: 3px solid var(--background-color);
+        box-shadow: 0 0 0 3px var(--accent-color);
+    }
+
+    .timeline-item.highlight::before {
+        width: 25px;
+        height: 25px;
+        left: -42.5px;
+        background: linear-gradient(135deg, #fbbf24 0%, var(--accent-color) 100%);
+        box-shadow: 0 0 0 4px #fbbf24, 0 0 20px rgba(251, 191, 36, 0.5);
+    }
+
+    .timeline-year {
+        display: inline-block;
+        background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+        color: white;
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-bottom: 15px;
+    }
+
+    .timeline-item.highlight .timeline-year {
+        background: linear-gradient(135deg, #fbbf24 0%, var(--accent-color) 100%);
+        box-shadow: 0 4px 15px rgba(251, 191, 36, 0.3);
+    }
+
+    .timeline-content {
+        background: var(--card-background);
+        padding: 25px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+    }
+
+    .timeline-item.highlight .timeline-content {
+        border: 2px solid #fbbf24;
+        box-shadow: 0 4px 20px rgba(251, 191, 36, 0.2);
+    }
+
+    .timeline-content h3 {
+        font-size: 1.3rem;
+        color: var(--accent-color);
+        margin-bottom: 15px;
+    }
+
+    .timeline-content p {
+        color: var(--body-text-color);
+        line-height: 1.8;
+        margin-bottom: 0;
+    }
+
+    .timeline-content strong {
+        color: var(--accent-color);
+    }
+
+    /* Interactive Timeline Styles */
+    .timeline-hint {
+        display: block;
+        margin-top: 10px;
+        font-size: 0.95rem;
+        color: var(--accent-color);
+        font-weight: 500;
+    }
+
+    .timeline-item.clickable {
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .timeline-item.clickable:hover .timeline-content {
+        border-color: var(--accent-color);
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2);
+    }
+
+    .expand-btn {
+        margin-top: 15px;
+        background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+
+    .expand-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .timeline-details {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.5s ease;
+        margin-top: 0;
+    }
+
+    .timeline-item.expanded .timeline-details {
+        max-height: 2000px;
+        margin-top: 20px;
+    }
+
+    .timeline-item.expanded .expand-btn {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    }
+
+    .detail-section {
+        background: rgba(59, 130, 246, 0.05);
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        border-left: 3px solid var(--accent-color);
+    }
+
+    .detail-section h4 {
+        color: var(--accent-color);
+        margin-bottom: 10px;
+        font-size: 1.1rem;
+    }
+
+    .detail-section ul {
+        list-style: none;
+        padding-left: 0;
+    }
+
+    .detail-section li {
+        padding-left: 20px;
+        position: relative;
+        margin-bottom: 8px;
+    }
+
+    .detail-section li::before {
+        content: "▸";
+        position: absolute;
+        left: 0;
+        color: var(--accent-color);
+    }
+
+    /* Metrics Section */
+    .metrics-section {
+        margin-bottom: 80px;
+    }
+
+    .metrics-intro {
+        text-align: center;
+        font-size: 1.1rem;
+        color: var(--body-text-color);
+        margin-bottom: 50px;
+        line-height: 1.8;
+    }
+
+    .chart-container {
+        background: var(--card-background);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        margin-bottom: 30px;
+        overflow-x: auto;
+    }
+
+    #accuracyChart {
+        max-width: 100%;
+        height: auto;
+    }
+
+    .chart-legend {
+        display: flex;
+        justify-content: center;
+        gap: 30px;
+        margin-bottom: 40px;
+        flex-wrap: wrap;
+    }
+
+    .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.95rem;
+        color: var(--body-text-color);
+    }
+
+    .legend-marker {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+    }
+
+    .legend-marker.milestone {
+        border-radius: 50%;
+    }
+
+    .milestone-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+    }
+
+    .milestone-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+        padding: 25px;
+        border-radius: 12px;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+
+    .milestone-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 20px rgba(59, 130, 246, 0.2);
+    }
+
+    .milestone-year {
+        font-size: 0.9rem;
+        color: var(--accent-text-color);
+        margin-bottom: 10px;
+    }
+
+    .milestone-metric {
+        font-size: 2.5rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 10px;
+    }
+
+    .milestone-label {
+        font-size: 1rem;
+        color: var(--body-text-color);
+        font-weight: 600;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .hero-title {
+            font-size: 2rem;
+        }
+
+        .hero-subtitle {
+            font-size: 1rem;
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+        }
+
+        .model-grid,
+        .feature-categories {
+            grid-template-columns: 1fr;
+        }
+
+        .pipeline-step {
+            padding-left: 20px;
+            padding-top: 70px;
+        }
+
+        .step-number {
+            left: 50%;
+            transform: translateX(-50%);
+            top: 15px;
+        }
+
+        .cta-buttons {
+            flex-direction: column;
+        }
+
+        .cta-button {
+            width: 100%;
+        }
+
+        .timeline-container {
+            padding-left: 30px;
+        }
+
+        .timeline-item {
+            padding-left: 30px;
+        }
+
+        .timeline-item::before {
+            left: -30px;
+        }
+
+        .timeline-item.highlight::before {
+            left: -32.5px;
+        }
+
+        .timeline-year {
+            font-size: 1rem;
+            padding: 5px 12px;
+        }
+
+        .timeline-content {
+            padding: 20px;
+        }
+
+        .timeline-content h3 {
+            font-size: 1.2rem;
+        }
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const timelineItems = document.querySelectorAll('.timeline-item.clickable');
+
+        timelineItems.forEach(item => {
+            const btn = item.querySelector('.expand-btn');
+
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+
+                // Close other expanded items
+                timelineItems.forEach(otherItem => {
+                    if (otherItem !== item && otherItem.classList.contains('expanded')) {
+                        otherItem.classList.remove('expanded');
+                        const otherBtn = otherItem.querySelector('.expand-btn');
+                        otherBtn.textContent = '詳細を見る ▼';
+                    }
+                });
+
+                // Toggle current item
+                item.classList.toggle('expanded');
+                btn.textContent = item.classList.contains('expanded')
+                    ? '閉じる ▲'
+                    : '詳細を見る ▼';
+            });
+        });
+    });
+
+    // 26年間の精度進化グラフ
+    function drawAccuracyChart() {
+        const canvas = document.getElementById('accuracyChart');
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+
+        // レスポンシブ対応
+        const container = canvas.parentElement;
+        const rect = container.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = 400 * dpr;
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = '400px';
+        ctx.scale(dpr, dpr);
+
+        const width = rect.width;
+        const height = 400;
+        const padding = { top: 40, right: 40, bottom: 60, left: 60 };
+
+        // データポイント
+        const data = [
+            { year: 2003, accuracy: 53, label: 'Excel' },
+            { year: 2013, accuracy: 67, label: 'データ分析' },
+            { year: 2015, accuracy: 72, label: 'ML開始' },
+            { year: 2018, accuracy: 91.2, label: 'XGBoost' },
+            { year: 2021, accuracy: 85.7, label: 'LSTM' },
+            { year: 2023, accuracy: 88.4, label: 'アンサンブル' }
+        ];
+
+        // スケール計算
+        const xScale = (width - padding.left - padding.right) / (2023 - 2003);
+        const yScale = (height - padding.top - padding.bottom) / 100;
+
+        // 背景グリッド
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 10; i++) {
+            const y = padding.top + (height - padding.top - padding.bottom) * (1 - i / 10);
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(width - padding.right, y);
+            ctx.stroke();
+        }
+
+        // Y軸ラベル
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 10; i++) {
+            const y = padding.top + (height - padding.top - padding.bottom) * (1 - i / 10);
+            ctx.fillText(i * 10 + '%', padding.left - 10, y + 4);
+        }
+
+        // X軸ラベル
+        ctx.textAlign = 'center';
+        data.forEach(point => {
+            const x = padding.left + (point.year - 2003) * xScale;
+            ctx.fillText(point.year, x, height - padding.bottom + 25);
+        });
+
+        // 線グラフ
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        data.forEach((point, i) => {
+            const x = padding.left + (point.year - 2003) * xScale;
+            const y = padding.top + (100 - point.accuracy) * yScale;
+            if (i === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+        ctx.stroke();
+
+        // データポイント
+        data.forEach(point => {
+            const x = padding.left + (point.year - 2003) * xScale;
+            const y = padding.top + (100 - point.accuracy) * yScale;
+
+            // 外側の円（マイルストーン強調）
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 内側の円
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 精度ラベル
+            ctx.fillStyle = '#e2e8f0';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(point.accuracy + '%', x, y - 15);
+        });
+    }
+
+    // 初期描画とリサイズ対応
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', drawAccuracyChart);
+    } else {
+        drawAccuracyChart();
+    }
+
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(drawAccuracyChart, 250);
+    });
+</script>

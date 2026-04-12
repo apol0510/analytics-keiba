@@ -1,0 +1,976 @@
+---
+export const prerender = true;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+const title = "船橋競馬場コース攻略【完全ガイド】全8距離データ分析と勝率向上戦略";
+const description = "船橋競馬場の1000m〜2400m全8距離を実データで完全攻略。左回りコースの特性、外枠有利、バランス展開を詳しく解説。";
+---
+
+<BaseLayout title={title} description={description}>
+    <!-- 構造化データ -->
+    <script type="application/ld+json" slot="head">
+    {
+      "@context": "https://schema.org",
+      "@type": "Guide",
+      "name": "船橋競馬場コース攻略ガイド",
+      "description": "船橋競馬場の全距離コース特性と攻略法を実データで解説",
+      "provider": {
+        "@type": "Organization",
+        "name": "NANKANアナリティクス"
+      },
+      "about": {
+        "@type": "Thing",
+        "name": "船橋競馬場"
+      }
+    }
+    </script>
+
+    <div class="container">
+        <nav class="breadcrumb">
+            <a href="/">ホーム</a> > <a href="/course/">コース攻略</a> > 船橋競馬場
+        </nav>
+
+        <header class="page-header">
+            <h1>⚓ 船橋競馬場コース攻略【完全ガイド】</h1>
+            <div class="last-updated">
+                <span class="updated-label">最終更新日：</span>
+                <time datetime="2025-08-21">2025年8月21日</time>
+            </div>
+            <p class="lead">バランスの取れた左回りコース　実データ完全分析</p>
+        </header>
+
+        <main class="content">
+            <section class="track-overview">
+                <h2>⚡ 船橋競馬場の基本特性</h2>
+                
+                <div class="track-info-grid">
+                    <div class="info-card">
+                        <h3>コース形状</h3>
+                        <p class="highlight">左回り</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>直線距離</h3>
+                        <p class="highlight">362m（ゴールまで308m）</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>コースの特徴</h3>
+                        <p>バランス重視の展開</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>有利な脚質</h3>
+                        <p>先行・差し両立</p>
+                    </div>
+                </div>
+
+                <div class="track-description">
+                    <p>船橋競馬場は<strong>362mの適度な直線距離</strong>を持つ左回りコースで、南関4場の中でも最もバランスの取れた展開を見せます。<strong>外枠がやや有利</strong>な傾向があり、ハイペースになりやすい特性から差し馬にもチャンスが生まれる舞台です。</p>
+                </div>
+            </section>
+
+            <section class="distance-analysis">
+                <h2>📊 距離別攻略法【実データ分析】</h2>
+
+                <!-- 短距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">短距離（1000m〜1200m）</h3>
+                    
+                    <div class="distance-cards">
+                        <div class="distance-card">
+                            <h4>1000m（短距離）- スピード重視の短距離戦</h4>
+                            <div class="strategy-section">
+                                <p>船橋の短距離代表格。外枠有利の傾向があり、スタートダッシュが重要になります。</p>
+                            </div>
+                        </div>
+
+                        <div class="distance-card highlight">
+                            <h4>1200m（短距離）- 外枠が優勢になりやすいハイペース戦</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: 2コーナー奥のポケット地点</span>
+                                    <span>コーナー: 3つ（2・3・4コーナー）</span>
+                                    <span>直線: 362m（ゴールまで308m）</span>
+                                </div>
+                                
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：外枠が優勢になりやすいハイペース戦</h5>
+                                    <p>スタート地点は2コーナー奥のポケット。内枠の馬はコーナーへ斜めに向かう形になるため、発馬で出遅れると外の馬に囲まれやすく、位置取りに苦労するケースがあります。一方で外枠の馬はスムーズに加速できる利点があり、全体的にやや外側有利の傾向が見られるコースです。</p>
+                                    
+                                    <p>序盤の直線部分が長いため、ペースは自然と速くなりやすく、逃げ・先行勢だけでなく差し馬にも十分チャンスが生まれる舞台。スタートダッシュの速さと序盤の位置取りが勝敗を左右する一方で、最後の直線で脚を残せる差しタイプの激走も目立ちます。</p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">2番枠勝率</span>
+                                            <span class="stat-value">10.5%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">外枠優勢</span>
+                                            <span class="stat-value">あり</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">ペース傾向</span>
+                                            <span class="stat-value">ハイペース</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 中距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">中距離（1500m〜1600m）</h3>
+                    
+                    <div class="distance-cards">
+                        <div class="distance-card">
+                            <h4>1500m（中距離）- バランス型の中距離戦</h4>
+                            <div class="strategy-section">
+                                <p>船橋の中距離代表格。先行・差し両方に機会があり、展開の幅が広い距離です。</p>
+                            </div>
+                        </div>
+
+                        <div class="distance-card">
+                            <h4>1600m（マイル）- 展開多様なマイル戦</h4>
+                            <div class="strategy-section">
+                                <p>船橋のマイル戦。バランスの取れたコース特性により、様々な脚質に機会があります。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 中長距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">中長距離（1700m〜1800m）</h3>
+                    
+                    <div class="distance-cards">
+                        <div class="distance-card">
+                            <h4>1700m（中長距離）- スタミナ要素重視</h4>
+                            <div class="strategy-section">
+                                <p>中距離から一段階上がったスタミナ勝負。ペース配分が重要になる距離です。</p>
+                            </div>
+                        </div>
+
+                        <div class="distance-card">
+                            <h4>1800m（中長距離）- 戦略性が問われる距離</h4>
+                            <div class="strategy-section">
+                                <p>スタミナと戦略性の両方が試される距離。展開を活かした馬券戦略が有効です。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 長距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">長距離（2200m〜2400m）</h3>
+                    
+                    <div class="distance-cards">
+                        <div class="distance-card">
+                            <h4>2200m（長距離）- 真のスタミナ勝負</h4>
+                            <div class="strategy-section">
+                                <p>船橋の長距離代表格。スタミナとペース配分が勝負を決める本格派の舞台です。</p>
+                            </div>
+                        </div>
+
+                        <div class="distance-card">
+                            <h4>2400m（長距離）- 船橋最長距離</h4>
+                            <div class="strategy-section">
+                                <p>船橋競馬場の最長距離。真のスタミナ勝負で、ペース読みが最も重要になります。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="funabashi-special">
+                <h2>🌟 船橋競馬場の特色</h2>
+                
+                <div class="special-features">
+                    <div class="feature-card">
+                        <h3>⚡ 外枠有利の傾向</h3>
+                        <ul>
+                            <li>2コーナーポケットからのスタート</li>
+                            <li>内枠は斜めに向かう不利</li>
+                            <li>外枠はスムーズな加速</li>
+                            <li>全体的に外側優勢</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <h3>🏃 バランス型展開</h3>
+                        <ul>
+                            <li>先行・差し両方に機会</li>
+                            <li>ハイペースになりやすい</li>
+                            <li>直線で脚を残せる馬が有利</li>
+                            <li>展開の多様性</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <h3>📏 適度な直線距離</h3>
+                        <ul>
+                            <li>362mの程よい長さ</li>
+                            <li>差し馬に十分な射程</li>
+                            <li>先行馬も粘れる距離</li>
+                            <li>瞬発力と持続力の両立</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <h3>⚡ 距離設定の豊富さ</h3>
+                        <ul>
+                            <li>1000m〜2400mの8距離</li>
+                            <li>短距離から長距離まで対応</li>
+                            <li>様々な適性に対応</li>
+                            <li>バランスの取れた距離構成</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="winning-strategies">
+                <h2>🏆 船橋競馬場勝率向上の鍵</h2>
+                
+                <div class="strategies-grid">
+                    <div class="strategy-card">
+                        <h3>💡 枠順活用戦略</h3>
+                        <ul>
+                            <li>外枠（5番以降）を重視</li>
+                            <li>内枠は出遅れリスクあり</li>
+                            <li>中枠がバランス良好</li>
+                            <li>スタート巧者は内枠でも</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="strategy-card">
+                        <h3>📈 脚質別攻略法</h3>
+                        <ul>
+                            <li>逃げ：スタートダッシュ重視</li>
+                            <li>先行：位置取りの巧さ</li>
+                            <li>差し：直線での瞬発力</li>
+                            <li>追込み：ペース読みと末脚</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="strategy-card">
+                        <h3>⚡ 距離適性判断</h3>
+                        <ul>
+                            <li>短距離：スピード×外枠</li>
+                            <li>中距離：バランス重視</li>
+                            <li>中長距離：スタミナ配分</li>
+                            <li>長距離：持続力最重要</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="strategy-card">
+                        <h3>⚡ 展開予想のポイント</h3>
+                        <ul>
+                            <li>基本的にハイペース</li>
+                            <li>先行・差し両方機能</li>
+                            <li>直線勝負の展開多い</li>
+                            <li>外枠からの仕掛けに注意</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="data-summary">
+                <h2>📊 船橋競馬場データサマリー</h2>
+                
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <h3>実施距離</h3>
+                        <p class="large-text">8距離</p>
+                        <p class="sub-text">1000m〜2400m</p>
+                    </div>
+                    
+                    <div class="summary-card">
+                        <h3>人気距離</h3>
+                        <p class="large-text">1200m・1600m</p>
+                        <p class="sub-text">短距離・マイル</p>
+                    </div>
+                    
+                    <div class="summary-card">
+                        <h3>コース特性</h3>
+                        <p class="large-text">外枠有利</p>
+                        <p class="sub-text">バランス展開</p>
+                    </div>
+                    
+                    <div class="summary-card">
+                        <h3>攻略の鍵</h3>
+                        <p class="large-text">枠順×脚質</p>
+                        <p class="sub-text">展開読み重要</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 関連記事セクション -->
+            <section class="related-articles">
+                <h2>📚 船橋競馬場 関連記事</h2>
+                <div class="articles-grid">
+                    <a href="/blog/course/funabashi-1000m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場1000m完全攻略ガイド</h3>
+                            <p>船橋競馬場1000mの馬番別・人気別成績データを徹底分析。左回り340m直線の特性を活かした攻略法を詳しく解説。先行有利のコース特性と展開読みのポイント。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">🔄 左回りコース</span>
+                                <span class="highlight-data">⚡ 直線340m</span>
+                                <span class="highlight-data">🏃‍♂️ 先行有利</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-1200m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場1200m完全攻略ガイド</h3>
+                            <p>船橋競馬場1200mの馬番別・人気別成績データを徹底分析。3523レース分析で判明した9番枠12.2%の高勝率と先行有利展開を詳しく解説。ハイペース戦での攻略法。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">📊 3523レース分析</span>
+                                <span class="highlight-data">🎯 9番枠12.2%</span>
+                                <span class="highlight-data">⚡ ハイペース</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-1500m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場1500m完全攻略ガイド</h3>
+                            <p>船橋競馬場1500mの馬番別・人気別成績データを徹底分析。11番枠15.4%、9番枠14.2%の高勝率と実力重視の中距離戦を詳しく解説。スピードと持久力のバランス。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">📊 1396レース分析</span>
+                                <span class="highlight-data">🎯 11番枠15.4%</span>
+                                <span class="highlight-data">⚖️ 中距離戦</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-1600m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場1600m完全攻略ガイド</h3>
+                            <p>船橋競馬場1600mマイル戦の馬番別・人気別成績データを徹底分析。11番枠15.1%、1番枠14.7%の高勝率と7番枠40.0%の複勝率を詳しく解説。総合力が問われるマイル戦。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">📊 1185レース分析</span>
+                                <span class="highlight-data">🎯 11番枠15.1%</span>
+                                <span class="highlight-data">🏆 マイル戦</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-1700m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場1700m完全攻略ガイド</h3>
+                            <p>船橋競馬場1700mレア距離の馬番別・人気別成績データを統計的注意と共に分析。わずか14レースの極小データから見る傾向と信頼性の課題を詳しく解説。統計的配慮が必要な距離。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">⚠️ 極小データ14レース</span>
+                                <span class="highlight-data">📊 統計的注意</span>
+                                <span class="highlight-data">💎 レア距離</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-1800m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場1800m完全攻略ガイド</h3>
+                            <p>船橋競馬場1800m中長距離戦の馬番別・人気別成績データを徹底分析。7番枠勝率18.2%、6番枠複勝率40.0%、1番人気複勝率73.2%の高信頼度。スタミナと瞬発力が問われる本格的な中長距離戦。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">🏇 7番枠18.2%最高勝率</span>
+                                <span class="highlight-data">📊 1番人気73.2%複勝率</span>
+                                <span class="highlight-data">⚖️ 中長距離戦</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-2200m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場2200m完全攻略ガイド</h3>
+                            <p>船橋競馬場2200m長距離レースの馬番別・人気別成績を徹底分析。1番人気と2番人気同率31.3%の特異データ、12番枠25.0%最高勝率、7番枠50.0%複勝率。スタミナが全ての真のステイヤー戦。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">⚠️ 極少データ約16レース</span>
+                                <span class="highlight-data">🎯 12番枠25.0%勝率</span>
+                                <span class="highlight-data">🏇 長距離ステイヤー戦</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                    <a href="/blog/course/funabashi-2400m" class="article-card-link">
+                        <div class="article-card">
+                            <h3>📊 船橋競馬場2400m完全攻略ガイド</h3>
+                            <p>船橋競馬場2400m超長距離レースのデータ分析。わずか1レースのみの極少データと統計的注意点を詳しく解説。13番枠勝利、2番人気的中の特殊事例。データ予想不可能な究極の長距離戦。</p>
+                            <div class="article-meta">
+                                <span class="highlight-data">🚨 極少データ1レースのみ</span>
+                                <span class="highlight-data">⚠️ 統計的価値なし</span>
+                                <span class="highlight-data">👑 究極超長距離戦</span>
+                            </div>
+                            <div class="article-action">
+                                <span class="action-text">詳細な攻略法を見る</span>
+                                <span class="action-arrow">→</span>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+            </section>
+
+            <section class="cta-section">
+                <div class="cta-content">
+                    <h2>⚡ 船橋競馬場で勝率アップ！</h2>
+                    <p>実データに基づいた攻略法で、船橋競馬場での的中率を向上させましょう。外枠有利とバランス展開の特性を理解することで、より精度の高い予想が可能になります。</p>
+
+                    <div class="action-buttons">
+                        <a href="/course/" class="cta-button primary">他の競馬場も見る</a>
+                        <a href="/beginner/" class="cta-button secondary">初心者講座を見る</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <style>
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        .breadcrumb {
+            margin: 1rem 0;
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+        }
+
+        .breadcrumb a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        .page-header {
+            text-align: center;
+            margin: 2rem 0 3rem;
+            padding: 2rem;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+            border-radius: 12px;
+            border: 2px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #10b981 0%, #8b5cf6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .last-updated {
+            margin: 1rem 0;
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+        }
+
+        .updated-label {
+            font-weight: 600;
+        }
+
+        .lead {
+            font-size: 1.2rem;
+            color: var(--body-text-color);
+            margin: 0;
+        }
+
+        .track-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .info-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .info-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: #10b981;
+        }
+
+        .info-card .highlight {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #10b981;
+            margin: 0;
+        }
+
+        .track-description {
+            background: rgba(16, 185, 129, 0.05);
+            padding: 1.5rem;
+            border-radius: 10px;
+            border-left: 4px solid var(--success-color);
+            margin: 2rem 0;
+        }
+
+        .distance-category {
+            margin: 3rem 0;
+        }
+
+        .category-title {
+            font-size: 1.6rem;
+            margin-bottom: 1.5rem;
+            color: #10b981;
+            border-bottom: 2px solid rgba(16, 185, 129, 0.3);
+            padding-bottom: 0.5rem;
+        }
+
+        .distance-cards {
+            display: grid;
+            gap: 2rem;
+        }
+
+        .distance-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .distance-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(16, 185, 129, 0.2);
+        }
+
+        .distance-card.highlight {
+            border-color: var(--success-color);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .distance-card h4 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            color: var(--heading-color);
+        }
+
+        .course-specs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .course-specs span {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            padding: 0.3rem 0.8rem;
+            border-radius: 15px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .strategy-section {
+            margin: 1.5rem 0;
+        }
+
+        .strategy-section h5 {
+            font-size: 1.1rem;
+            margin-bottom: 0.8rem;
+            color: #10b981;
+        }
+
+        .strategy-section p {
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        .key-stats {
+            background: rgba(16, 185, 129, 0.1);
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-top: 1.5rem;
+        }
+
+        .key-stats h5 {
+            margin-bottom: 1rem;
+            color: #10b981;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.8rem;
+            border-radius: 6px;
+        }
+
+        .stat-label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--accent-text-color);
+            margin-bottom: 0.3rem;
+        }
+
+        .stat-value {
+            display: block;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #10b981;
+        }
+
+        .special-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .feature-card {
+            background: rgba(59, 130, 246, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+
+        .feature-card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .feature-card li {
+            padding: 0.3rem 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+        }
+
+        .feature-card li:before {
+            content: "✓ ";
+            color: #10b981;
+            font-weight: bold;
+        }
+
+        .strategies-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .strategy-card {
+            background: rgba(16, 185, 129, 0.05);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+        }
+
+        .strategy-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: #10b981;
+        }
+
+        .strategy-card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .strategy-card li {
+            padding: 0.3rem 0;
+            border-bottom: 1px solid rgba(16, 185, 129, 0.1);
+        }
+
+        .strategy-card li:before {
+            content: "✓ ";
+            color: #10b981;
+            font-weight: bold;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .summary-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .summary-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.8rem;
+            color: #10b981;
+        }
+
+        .large-text {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #10b981;
+            margin: 0.5rem 0;
+        }
+
+        .sub-text {
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+            margin: 0;
+        }
+
+        .cta-section {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+            padding: 3rem 2rem;
+            border-radius: 16px;
+            text-align: center;
+            margin: 3rem 0;
+            border: 2px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .cta-content h2 {
+            font-size: 1.8rem;
+            margin-bottom: 1rem;
+            color: var(--heading-color);
+        }
+
+        .cta-content p {
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .cta-button {
+            display: inline-block;
+            padding: 0.8rem 2rem;
+            border-radius: 25px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .cta-button.primary {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .cta-button.primary:hover {
+            background: #059669;
+            transform: translateY(-2px);
+        }
+
+        .cta-button.secondary {
+            background: transparent;
+            color: var(--primary-color);
+            border: 2px solid var(--primary-color);
+        }
+
+        .cta-button.secondary:hover {
+            background: var(--primary-color);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        /* 関連記事セクション */
+        .related-articles {
+            margin: 3rem 0;
+            padding: 2rem;
+            background: rgba(16, 185, 129, 0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .related-articles h2 {
+            color: #10b981;
+            margin-bottom: 1.5rem;
+        }
+
+        .articles-grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .article-card-link {
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .article-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            height: 100%;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        .article-card-link:hover .article-card {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.2);
+            border-color: rgba(16, 185, 129, 0.5);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .article-card h3 {
+            color: #10b981;
+            margin-bottom: 0.8rem;
+            font-size: 1.2rem;
+        }
+
+        .article-card p {
+            color: var(--body-text-color);
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        .article-meta {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .highlight-data {
+            background: rgba(16, 185, 129, 0.1);
+            color: #10b981;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .article-action {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .action-text {
+            color: #10b981;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .action-arrow {
+            color: #10b981;
+            font-size: 1.2rem;
+            font-weight: bold;
+            transition: transform 0.3s ease;
+        }
+
+        .article-card-link:hover .action-arrow {
+            transform: translateX(5px);
+        }
+
+        .article-card-link:hover .action-text {
+            color: #059669;
+        }
+
+        @media (max-width: 768px) {
+            .page-header h1 {
+                font-size: 2rem;
+            }
+
+            .track-info-grid,
+            .special-features,
+            .strategies-grid,
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .course-specs {
+                flex-direction: column;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .action-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .cta-button {
+                width: 100%;
+                max-width: 300px;
+            }
+
+            .related-articles {
+                padding: 1.5rem;
+            }
+
+            .article-card {
+                padding: 1.25rem;
+            }
+
+            .article-meta {
+                gap: 0.5rem;
+            }
+
+            .highlight-data {
+                font-size: 0.8rem;
+                padding: 0.2rem 0.4rem;
+            }
+
+            .action-text {
+                font-size: 0.9rem;
+            }
+        }
+    </style>
+</BaseLayout>

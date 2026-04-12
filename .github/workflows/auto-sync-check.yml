@@ -1,0 +1,172 @@
+name: Auto Sync Check (Fallback)
+
+on:
+  schedule:
+    # 毎日 JST 1:00 (UTC 16:00) に実行（保険として）
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+
+# 並行実行制御：archive更新系workflowで統一
+concurrency:
+  group: archive-nankan-update
+  cancel-in-progress: false
+
+jobs:
+  auto-sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: astro-site
+        run: npm ci
+
+      - name: Check sync status
+        id: check-sync
+        working-directory: astro-site
+        continue-on-error: true
+        run: |
+          echo "🔍 Checking sync status..."
+          npm run verify:sync
+
+      - name: Detect missing dates
+        id: detect-missing
+        if: steps.check-sync.outcome == 'failure'
+        working-directory: astro-site
+        run: |
+          echo "🔍 Detecting missing dates..."
+
+          # 過去7日分の日付をチェック
+          MISSING_DATES=""
+          TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+
+          for i in {1..7}; do
+            CHECK_DATE=$(TZ=Asia/Tokyo date -d "$TODAY - $i days" +%Y-%m-%d 2>/dev/null || date -v-${i}d +%Y-%m-%d)
+            YEAR=${CHECK_DATE:0:4}
+            MONTH=${CHECK_DATE:5:2}
+
+            # keiba-data-shared に結果が存在するか確認
+            VENUES=("OOI" "FUN" "KAW" "URA")
+            FOUND=false
+
+            # 統合ファイル確認
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$CHECK_DATE.json")
+            if [ "$HTTP_CODE" = "200" ]; then
+              FOUND=true
+            else
+              # 会場別ファイル確認（12レース以上）
+              TOTAL_RACES=0
+              for VENUE in "${VENUES[@]}"; do
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$CHECK_DATE-$VENUE.json")
+                if [ "$HTTP_CODE" = "200" ]; then
+                  RACE_COUNT=$(curl -s "https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$CHECK_DATE-$VENUE.json" | jq '.races | length')
+                  TOTAL_RACES=$((TOTAL_RACES + RACE_COUNT))
+                fi
+              done
+
+              if [ "$TOTAL_RACES" -ge 12 ]; then
+                FOUND=true
+              fi
+            fi
+
+            if [ "$FOUND" = true ]; then
+              # archiveResults.json に存在するか確認
+              if ! jq -e --arg date "$CHECK_DATE" '.[] | select(.date == $date)' src/data/archiveResults.json > /dev/null; then
+                echo "❌ Missing: $CHECK_DATE"
+                if [ -z "$MISSING_DATES" ]; then
+                  MISSING_DATES="$CHECK_DATE"
+                else
+                  MISSING_DATES="$MISSING_DATES,$CHECK_DATE"
+                fi
+              fi
+            fi
+          done
+
+          if [ -n "$MISSING_DATES" ]; then
+            echo "missing_dates=$MISSING_DATES" >> $GITHUB_OUTPUT
+            echo "has_missing=true" >> $GITHUB_OUTPUT
+            echo "🔴 Missing dates detected: $MISSING_DATES"
+          else
+            echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "✅ No missing dates"
+          fi
+
+      - name: Auto-import missing dates
+        if: steps.detect-missing.outputs.has_missing == 'true'
+        working-directory: astro-site
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MISSING_DATES="${{ steps.detect-missing.outputs.missing_dates }}"
+          IFS=',' read -ra DATES <<< "$MISSING_DATES"
+
+          for DATE in "${DATES[@]}"; do
+            echo "━━━ Auto-importing: $DATE ━━━"
+            npm run import:results -- --date "$DATE"
+          done
+
+      - name: Validate and verify
+        if: steps.detect-missing.outputs.has_missing == 'true'
+        working-directory: astro-site
+        run: |
+          echo "🔍 Validating archive format..."
+          npm run validate:archive
+
+          echo "🔍 Verifying archive sync..."
+          npm run verify:sync
+
+      - name: Commit and push
+        if: steps.detect-missing.outputs.has_missing == 'true'
+        working-directory: astro-site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add src/data/archiveResults.json
+
+          if git diff --staged --quiet; then
+            echo "⏭️  No changes to commit"
+            exit 0
+          fi
+
+          MISSING_DATES="${{ steps.detect-missing.outputs.missing_dates }}"
+
+          git commit -m "$(cat <<'EOF'
+          🔧 Auto-sync fallback: ${MISSING_DATES}
+
+          【自動修復】
+          sync check で不足日を検出し、自動インポートを実行しました。
+
+          🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+          Co-Authored-By: Claude <noreply@anthropic.com>
+          EOF
+          )"
+
+          git push
+
+      - name: Success notification
+        if: steps.detect-missing.outputs.has_missing == 'true'
+        run: |
+          echo "✅ Auto-sync fallback completed"
+          echo "   Missing dates: ${{ steps.detect-missing.outputs.missing_dates }}"
+          echo "   Successfully imported and pushed to main"
+
+      - name: Already synced notification
+        if: steps.check-sync.outcome == 'success'
+        run: |
+          echo "✅ Archive already in sync"
+          echo "   No action needed"

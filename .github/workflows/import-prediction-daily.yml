@@ -1,0 +1,141 @@
+name: Import Prediction (Daily Check)
+
+on:
+  schedule:
+    # 毎日 23:00 JST = 14:00 UTC
+    - cron: '0 14 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+# 並行実行制御：同じリポジトリのimport-daily-predictionは1つずつ実行
+concurrency:
+  group: import-prediction-daily-${{ github.ref }}
+  cancel-in-progress: false  # 実行中のジョブをキャンセルせず待機
+
+jobs:
+  import-daily-prediction:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for git push
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Calculate JST date
+        id: date
+        run: |
+          # JSTの現在日付を計算（UTC+9）
+          JST_DATE=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          echo "date=$JST_DATE" >> $GITHUB_OUTPUT
+          echo "📅 JST Today: $JST_DATE"
+
+      - name: Import prediction from keiba-data-shared
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE="${{ steps.date.outputs.date }}"
+          echo "🔄 Daily check: Importing prediction for $DATE"
+
+          # import:prediction は日付未指定で JST 今日になるが、明示的に指定
+          npm run import:prediction -- --date "$DATE"
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          # 変更をステージング（新規ファイル + 既存ファイルの変更）
+          git add src/data/predictions/
+          # ステージされた変更があるかチェック
+          git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          DATE="${{ steps.date.outputs.date }}"
+          COMMIT_MSG="Daily auto-import: ${DATE} prediction [scheduled 23:00 JST]"
+
+          # 変更ファイルを退避（git pathはrepo root基準、working-directoryはastro-site）
+          REPO_ROOT=$(git rev-parse --show-toplevel)
+          CHANGED_FILES=$(git diff --staged --name-only)
+          mkdir -p /tmp/staged-backup
+          for FILE in $CHANGED_FILES; do
+            mkdir -p "/tmp/staged-backup/$(dirname "$FILE")"
+            cp "$REPO_ROOT/$FILE" "/tmp/staged-backup/$FILE"
+          done
+          echo "📦 Backed up $CHANGED_FILES"
+
+          # Retry logic: reset → restore → commit → push（最大5回リトライ）
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            # 1. 完全同期：origin/mainの最新状態にリセット
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+            echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
+
+            # 2. 退避ファイルを復元
+            for FILE in $CHANGED_FILES; do
+              mkdir -p "$REPO_ROOT/$(dirname "$FILE")"
+              cp "/tmp/staged-backup/$FILE" "$REPO_ROOT/$FILE"
+            done
+
+            # 3. ステージング＆コミット
+            git add src/data/predictions/
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+            git commit -m "$COMMIT_MSG"
+
+            # 4. プッシュ
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: Success notification
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          echo "✅ Daily import completed and pushed"
+          echo "   Date: ${{ steps.date.outputs.date }}"
+          echo "   Trigger: scheduled (23:00 JST)"
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        run: |
+          echo "⏭️  No changes detected (already up-to-date)"
+          echo "   Date: ${{ steps.date.outputs.date }}"
+          echo "   This is expected if the main trigger already ran today"

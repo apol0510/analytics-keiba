@@ -1,0 +1,75 @@
+{
+  "folders": [
+    {
+      "name": "📦 Root (NANKAN Analytics)",
+      "path": "."
+    },
+    {
+      "name": "🌟 Astro Site (Main)",
+      "path": "astro-site"
+    },
+    {
+      "name": "💳 Stripe Integration",
+      "path": "nankan-stripe-integration"
+    }
+  ],
+  "settings": {
+    // 🔧 VSCodeクラッシュ防止設定（2026-01-13）
+
+    // TypeScriptサーバーのメモリ制限
+    "typescript.tsserver.maxTsServerMemory": 2048,
+
+    // ファイル監視を無効化
+    "files.watcherExclude": {
+      "**/node_modules/**": true,
+      "**/.git/**": true,
+      "**/dist/**": true,
+      "**/.astro/**": true,
+      "**/public/**": true
+    },
+
+    // 検索から除外
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/.astro": true,
+      "**/public/data": true
+    },
+
+    // ファイル数制限
+    "files.maxMemoryForLargeFilesMB": 2048,
+
+    // 自動保存を無効化
+    "files.autoSave": "off",
+
+    // Git自動フェッチを無効化
+    "git.autorefresh": false,
+    "git.autofetch": false,
+
+    // Markdown プレビューを無効化
+    "markdown.preview.breaks": false,
+
+    // Breadcrumbs を簡略化
+    "breadcrumbs.symbolPath": "off",
+
+    // Editor の軽量化
+    "editor.minimap.enabled": false,
+    "editor.suggest.shareSuggestSelections": false,
+    "editor.quickSuggestions": {
+      "other": false,
+      "comments": false,
+      "strings": false
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "astro-build.astro-vscode",
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint"
+    ],
+    "unwantedRecommendations": [
+      "github.vscode-github-actions",
+      "eamodio.gitlens"
+    ]
+  }
+}

@@ -1,0 +1,535 @@
+---
+/**
+ * AIレースコメントコンポーネント
+ * 予想ページ・結果ページの各レースにAI解説を表示
+ *
+ * Props:
+ * - type: 'prediction' | 'result'
+ * - raceData: レースデータ（JSON文字列でdata属性に埋め込み）
+ */
+interface Props {
+  type: 'prediction' | 'result';
+  raceData: string;
+  masked?: boolean;
+}
+
+const { type, raceData, masked = false } = Astro.props;
+const label = type === 'prediction' ? 'AI予想解説' : 'AI振り返り';
+---
+
+<div class="ai-comment-section" data-type={type} data-race={raceData} data-masked={masked ? 'true' : 'false'}>
+  <div class="ai-comment-header">
+    <div class="ai-comment-header-left">
+      <div class="ai-comment-badge">
+        <span class="ai-pulse"></span>
+        <span class="ai-badge-text">AI</span>
+      </div>
+      <div class="ai-comment-title-area">
+        <span class="ai-comment-label">{label}</span>
+        <span class="ai-comment-sub">Powered by Keiba Intelligence</span>
+      </div>
+    </div>
+    <button class="ai-comment-toggle" aria-label="AI解説を表示">
+      <span class="toggle-text">解説を見る</span>
+      <span class="toggle-arrow">▼</span>
+    </button>
+  </div>
+  <div class="ai-comment-body" style="display: none;">
+    <div class="ai-comment-loading" style="display: none;">
+      <div class="ai-loading-bar">
+        <div class="ai-loading-progress"></div>
+      </div>
+      <span class="ai-loading-text">AIがレースを分析中...</span>
+    </div>
+    <div class="ai-comment-text"></div>
+  </div>
+</div>
+
+<style>
+  .ai-comment-section {
+    margin: 16px 0;
+    border-radius: 12px;
+    border: 2px solid rgba(59, 130, 246, 0.4);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+    overflow: visible;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    position: relative;
+  }
+
+  .ai-comment-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899, #8b5cf6, #3b82f6);
+    background-size: 200% 100%;
+    animation: gradientSlide 3s linear infinite;
+    overflow: hidden;
+    border-radius: 12px 12px 0 0;
+  }
+
+  @keyframes gradientSlide {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
+  }
+
+  .ai-comment-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+
+  .ai-comment-header:hover {
+    background: rgba(59, 130, 246, 0.05);
+  }
+
+  .ai-comment-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .ai-comment-badge {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 10px rgba(59, 130, 246, 0.4);
+    flex-shrink: 0;
+  }
+
+  .ai-pulse {
+    position: absolute;
+    inset: -3px;
+    border-radius: 14px;
+    border: 2px solid rgba(59, 130, 246, 0.5);
+    animation: aiBadgePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes aiBadgePulse {
+    0%, 100% { opacity: 0; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.05); }
+  }
+
+  .ai-badge-text {
+    color: white;
+    font-size: 0.9rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+  }
+
+  .ai-comment-title-area {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .ai-comment-label {
+    font-size: 1.1rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .ai-comment-sub {
+    font-size: 0.7rem;
+    color: rgba(139, 92, 246, 0.7);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+
+  .ai-comment-toggle {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(139, 92, 246, 0.15));
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-radius: 20px;
+    padding: 8px 18px;
+    color: #60a5fa;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .ai-comment-toggle:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(139, 92, 246, 0.25));
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  }
+
+  .ai-comment-toggle.open {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: white;
+    border-color: transparent;
+  }
+
+  .ai-comment-toggle.open .toggle-arrow {
+    transform: rotate(180deg);
+  }
+
+  .toggle-arrow {
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+  }
+
+  .ai-comment-body {
+    padding: 0 20px 20px;
+  }
+
+  /* ローディング */
+  .ai-comment-loading {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 0;
+  }
+
+  .ai-loading-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(59, 130, 246, 0.15);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .ai-loading-progress {
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
+    border-radius: 4px;
+    animation: loadingProgress 1.5s ease-in-out infinite;
+  }
+
+  @keyframes loadingProgress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  .ai-loading-text {
+    font-size: 0.85rem;
+    color: #60a5fa;
+    font-weight: 500;
+  }
+
+  /* テキスト */
+  .ai-comment-text {
+    font-size: 0.95rem;
+    line-height: 1.85;
+    color: var(--text-primary);
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    border-left: 3px solid;
+    border-image: linear-gradient(180deg, #3b82f6, #8b5cf6) 1;
+  }
+
+  .ai-comment-text p {
+    margin-bottom: 8px;
+  }
+
+  .ai-comment-text p:last-child {
+    margin-bottom: 0;
+  }
+
+  .ai-comment-text.error {
+    color: var(--text-secondary);
+    font-style: italic;
+    border-image: none;
+    border-left-color: rgba(239, 68, 68, 0.5);
+  }
+
+  /* マスク（無料版） */
+  :global(.ai-comment-masked) {
+    position: relative;
+    margin-top: 14px;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 10px;
+    border: 1px dashed rgba(251, 191, 36, 0.35);
+    overflow: hidden;
+    min-height: 220px;
+  }
+
+  :global(.ai-comment-masked-blur) {
+    filter: blur(6px);
+    user-select: none;
+    pointer-events: none;
+    color: var(--text-primary);
+    line-height: 1.85;
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  :global(.ai-comment-masked-overlay) {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: radial-gradient(ellipse at center, rgba(15, 23, 42, 0.82) 0%, rgba(15, 23, 42, 0.94) 100%);
+    padding: 20px;
+    text-align: center;
+  }
+
+  :global(.ai-comment-masked-lock) {
+    font-size: 2rem;
+    filter: drop-shadow(0 2px 8px rgba(251, 191, 36, 0.4));
+  }
+
+  :global(.ai-comment-masked-title) {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #fbbf24;
+    line-height: 1.4;
+    letter-spacing: 0.5px;
+  }
+
+  :global(.ai-comment-masked-sub) {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+  }
+
+  :global(.ai-comment-masked-buttons) {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 4px;
+  }
+
+  :global(.ai-comment-masked-cta) {
+    display: inline-block;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  }
+
+  :global(.ai-comment-masked-cta.primary) {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
+  }
+
+  :global(.ai-comment-masked-cta.secondary) {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #1e293b;
+    box-shadow: 0 4px 14px rgba(251, 191, 36, 0.35);
+  }
+
+  :global(.ai-comment-masked-cta:hover) {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+  }
+
+  @media (max-width: 480px) {
+    :global(.ai-comment-masked-buttons) {
+      flex-direction: column;
+      width: 100%;
+    }
+    :global(.ai-comment-masked-cta) {
+      width: 100%;
+      text-align: center;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .ai-comment-header {
+      padding: 12px 14px;
+    }
+
+    .ai-comment-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+    }
+
+    .ai-badge-text {
+      font-size: 0.75rem;
+    }
+
+    .ai-comment-label {
+      font-size: 0.95rem;
+    }
+
+    .ai-comment-toggle {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+    }
+
+    .ai-comment-body {
+      padding: 0 14px 14px;
+    }
+
+    .ai-comment-text {
+      font-size: 0.9rem;
+      padding: 12px;
+    }
+  }
+</style>
+
+<script is:inline>
+  // イベント委譲で全AIコメントセクションに対応（1回だけ登録）
+  if (!window._aiCommentInitialized) {
+    window._aiCommentInitialized = true;
+    window._aiCommentCache = {};
+    window._aiCommentLoaded = new Set();
+
+    document.addEventListener('click', async (e) => {
+      const header = e.target.closest('.ai-comment-header');
+      if (!header) return;
+
+      const section = header.closest('.ai-comment-section');
+      if (!section) return;
+
+      const body = section.querySelector('.ai-comment-body');
+      const toggle = section.querySelector('.ai-comment-toggle');
+      const toggleText = toggle.querySelector('.toggle-text');
+      const loading = section.querySelector('.ai-comment-loading');
+      const textEl = section.querySelector('.ai-comment-text');
+      const type = section.dataset.type;
+
+      let raceData;
+      try { raceData = JSON.parse(section.dataset.race); } catch(ex) { return; }
+
+      const cacheKey = `${type}-${raceData.date}-${raceData.venue}-${raceData.raceNumber}`;
+      const isOpen = body.style.display !== 'block';
+
+      body.style.display = isOpen ? 'block' : 'none';
+      toggle.classList.toggle('open', isOpen);
+      toggleText.textContent = isOpen ? '閉じる' : '解説を見る';
+
+      if (isOpen && !window._aiCommentLoaded.has(cacheKey)) {
+        const isMasked = section.dataset.masked === 'true';
+        // キャッシュチェック
+        if (window._aiCommentCache[cacheKey]) {
+          renderAIComment(textEl, window._aiCommentCache[cacheKey], isMasked, type);
+          window._aiCommentLoaded.add(cacheKey);
+          return;
+        }
+
+        loading.style.display = 'flex';
+        textEl.textContent = '';
+
+        try {
+          const res = await fetch('/.netlify/functions/gemini-race-analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, raceData })
+          });
+          const data = await res.json();
+          loading.style.display = 'none';
+
+          if (data.success && data.comment) {
+            console.log('[AI Comment] API response length:', data.comment.length, 'chars');
+            window._aiCommentCache[cacheKey] = data.comment;
+            const isMasked = section.dataset.masked === 'true';
+            renderAIComment(textEl, data.comment, isMasked, type);
+          } else {
+            textEl.textContent = 'AI解説を取得できませんでした。';
+            textEl.classList.add('error');
+          }
+        } catch (err) {
+          loading.style.display = 'none';
+          textEl.textContent = 'AI解説を取得できませんでした。';
+          textEl.classList.add('error');
+        }
+        window._aiCommentLoaded.add(cacheKey);
+      }
+    });
+
+    function renderAIComment(el, comment, masked, type) {
+      el.innerHTML = '';
+      const lines = comment.split('\n').filter(l => l.trim());
+
+      if (!masked) {
+        lines.forEach(line => {
+          const p = document.createElement('p');
+          p.textContent = line;
+          el.appendChild(p);
+        });
+        return;
+      }
+
+      // 無料版: 文の総数に応じて可視範囲を動的に決定
+      const fullText = lines.join('\n');
+      const totalSentences = (fullText.match(/。/g) || []).length;
+      // 短文（〜3文）は40%文字数、長文は3文まで
+      let cutIdx = -1;
+      if (totalSentences <= 3) {
+        // 文字数の約40%で切り、直前の「、」か「。」で区切る
+        const targetLen = Math.max(40, Math.floor(fullText.length * 0.4));
+        cutIdx = targetLen;
+        const nextPunct = fullText.substring(targetLen).search(/[。、]/);
+        if (nextPunct !== -1 && nextPunct < 30) {
+          cutIdx = targetLen + nextPunct;
+        }
+      } else {
+        let searchFrom = 0;
+        for (let i = 0; i < 3; i++) {
+          const idx = fullText.indexOf('。', searchFrom);
+          if (idx === -1) break;
+          cutIdx = idx;
+          searchFrom = idx + 1;
+        }
+      }
+      if (cutIdx === -1 || cutIdx >= fullText.length - 10) {
+        cutIdx = Math.floor(fullText.length * 0.4);
+      }
+      const visible = fullText.slice(0, cutIdx + 1);
+      const hidden = fullText.slice(cutIdx + 1);
+
+      const visibleLines = visible.split('\n').filter(l => l.trim());
+      visibleLines.forEach((line, i) => {
+        const p = document.createElement('p');
+        p.textContent = i === visibleLines.length - 1 ? line + '…' : line;
+        el.appendChild(p);
+      });
+
+      if (hidden.trim()) {
+        const maskWrap = document.createElement('div');
+        maskWrap.className = 'ai-comment-masked';
+
+        const blur = document.createElement('div');
+        blur.className = 'ai-comment-masked-blur';
+        // ブラー領域には隠しテキストの一部を表示（見えそうで見えない演出）
+        blur.textContent = hidden.trim();
+        maskWrap.appendChild(blur);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'ai-comment-masked-overlay';
+        overlay.innerHTML = `
+          <div class="ai-comment-masked-lock">🔒</div>
+          <div class="ai-comment-masked-title">プロ会員で全文表示</div>
+          <div class="ai-comment-masked-sub">各馬の詳細解説・買い目・期待値分析をご覧いただけます</div>
+          <div class="ai-comment-masked-buttons">
+            <a href="/pricing" class="ai-comment-masked-cta primary">料金プランを見る</a>
+            <a href="/register" class="ai-comment-masked-cta secondary">無料会員登録</a>
+          </div>
+        `;
+        maskWrap.appendChild(overlay);
+        el.appendChild(maskWrap);
+      }
+    }
+  }
+</script>

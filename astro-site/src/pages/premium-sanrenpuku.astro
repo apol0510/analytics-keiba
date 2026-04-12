@@ -1,0 +1,2130 @@
+---
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AccessControl from '../components/AccessControl.astro';
+import BettingSelectionQA from '../components/BettingSelectionQA.astro';
+import allRacesData from '../data/allRacesPrediction.json';
+import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark } from '../lib/shared-prediction-logic.js';
+
+// 共有ロジックを使用してデータを処理
+const { sortedRaces } = processRaceData(allRacesData);
+
+// 日付と会場を取得
+const raceDate = allRacesData.raceDate;
+const track = allRacesData.track;
+const totalRaces = allRacesData.totalRaces || 12;
+
+// 日付を日本語形式に変換
+const [year, month, day] = raceDate.split('-');
+const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
+
+// 全レースの三連複買い目生成
+const sanrenpukuRaces = sortedRaces.map(raceData => {
+    const sanrenpukuData = generateSanrenpukuBets(raceData.horses);
+    return {
+        ...raceData,
+        sanrenpuku: sanrenpukuData
+    };
+});
+---
+
+<BaseLayout
+    title={`プレミアム三連複予想 | ${track} ${formattedDate}`}
+    description={`AI技術による${track}競馬の超厳選三連複予想。累積スコアに基づく少点数買い目で最適な組み合わせのみを提供。`}
+>
+    <AccessControl requiredPlan="Premium Sanrenpuku">
+        <!-- 申し込みセクション（Premium Predictions会員向け） -->
+        <div id="sanrenpuku-order" class="order-section" style="display: none;">
+            <div class="order-container">
+                <div class="order-header">
+                    <div class="order-icon">🎯</div>
+                    <h1 class="order-title">Premium Sanrenpuku</h1>
+                    <p class="order-subtitle">AI三連複厳選予想 - 買い目を絞り込んで的中率アップ</p>
+                </div>
+
+                <div class="order-features">
+                    <div class="feature-card">
+                        <div class="feature-icon">📊</div>
+                        <h3>過去1年間の実績</h3>
+                        <div class="feature-stats">
+                            <span class="stat-value">的中率72%</span>
+                            <span class="stat-value">回収率156%</span>
+                        </div>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">🎯</div>
+                        <h3>厳選買い目</h3>
+                        <p class="feature-text">わずか7〜9点の少点数で高確率的中を実現</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">🏇</div>
+                        <h3>全レース対応</h3>
+                        <p class="feature-text">1R〜12R全レースの三連複買い目を提供</p>
+                    </div>
+                </div>
+
+                <div class="order-description">
+                    <h2>こんな方におすすめ</h2>
+                    <ul class="recommend-list">
+                        <li>馬単3戦略から買い目を絞りきれない</li>
+                        <li>オッズ確認して戦略を選ぶのが面倒</li>
+                        <li>もっとシンプルな買い目がほしい</li>
+                        <li>三連複で的中率を安定させたい</li>
+                    </ul>
+                </div>
+
+                <div class="order-price-section">
+                    <div class="price-card">
+                        <div class="price-label">月額料金</div>
+                        <div class="price-value">¥19,820<span class="price-unit">/月</span></div>
+                        <div class="price-note">※ Premium Predictions会員様向けアップグレードプラン</div>
+                    </div>
+
+                    <button onclick="openBankModal('Premium Plus', 68000, 'lifetime')" class="order-btn">
+                        今すぐ申し込む →
+                    </button>
+                    <p class="order-note">
+                        ※ Stripeの安全な決済ページに移動します<br>
+                        ※ お申し込み後、すぐに三連複予想をご利用いただけます
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 三連複予想コンテンツ（Premium Sanrenpuku / Premium Full会員向け） -->
+        <div id="sanrenpuku-content" class="page-container" style="display: none;">
+            <!-- ヘッダーセクション -->
+            <div class="header-section">
+                <div class="ai-badge premium-select-badge">
+                    <span class="pulse"></span>
+                    <span class="ai-status">✨ Premium Sanrenpuku</span>
+                </div>
+                <h1 class="race-title">{formattedDate} {track} - Premium 三連複厳選予想</h1>
+            </div>
+
+            <!-- フローティングレースセレクター（右下固定） -->
+            <div class="floating-race-selector">
+                <button class="floating-selector-toggle" id="raceSelectorToggle">
+                    <span class="toggle-icon">🏇</span>
+                    <span class="toggle-text">レース選択</span>
+                </button>
+                <div class="floating-selector-menu" id="raceSelectorMenu" style="display: none;">
+                    <div class="selector-header">📍 レースを選択</div>
+                    <div class="selector-grid">
+                        {sanrenpukuRaces.map((raceData) => (
+                            <button
+                                class="selector-race-btn"
+                                data-race-number={raceData.raceNumber}
+                                onclick={`document.getElementById('race-${raceData.raceNumber}').scrollIntoView({behavior: 'smooth', block: 'start'}); document.getElementById('raceSelectorMenu').style.display = 'none';`}
+                            >
+                                {raceData.raceNumber}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            <!-- 全レース予想 -->
+            <div class="races-container">
+                {sanrenpukuRaces.map((raceData, index) => {
+                    const sanrenpuku = raceData.sanrenpuku;
+                    const horses = raceData.horses;
+                    const strategies = raceData.strategies;
+
+                    return (
+                        <div class="race-card" id={`race-${raceData.raceNumber}`}>
+                            <div class="race-header">
+                                <div class="race-number">{raceData.raceNumber}</div>
+                                <div class="race-info">
+                                    <h3 class="race-name">{raceData.raceName}</h3>
+                                </div>
+                            </div>
+
+                            <!-- AI選出馬分析（最初に配置） -->
+                            <div class="analysis-section">
+                                <h4 class="section-title">🤖 AIモデル選出馬 - 詳細分析</h4>
+
+                                {/* 本命（最も大きく表示） */}
+                                {horses.main && (
+                                    <div class="horse-card horse-card-main">
+                                        <div class="horse-header">
+                                            <span class="horse-mark-main">◎</span>
+                                            <span class="horse-number-main">{horses.main.number}</span>
+                                            <span class="horse-name-main">{horses.main.name}</span>
+                                            <span class="horse-type-main">本命</span>
+                                        </div>
+                                        <div class="ai-factors">
+                                            {horses.main.factors && horses.main.factors.filter(factor =>
+                                                factor.text.includes('累積スコア') ||
+                                                factor.text.includes('総合評価')
+                                            ).map(factor => {
+                                                const isScore = factor.text.includes('累積スコア');
+                                                const isEvaluation = factor.text.includes('総合評価');
+                                                const factorClass = isScore ? 'factor factor-score' : isEvaluation ? 'factor factor-evaluation' : 'factor';
+                                                const displayText = factor.text.replace(/^★\s*/, '');
+                                                const showIcon = !isScore && !isEvaluation;
+                                                return (
+                                                    <div class={factorClass}>
+                                                        {showIcon && <span class="factor-icon">{factor.icon}</span>}
+                                                        <span>{displayText}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        {horses.main.importance && (
+                                            <div class="feature-importance">
+                                                <h5 style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">特徴量重要度</h5>
+                                                {horses.main.importance.map(item => (
+                                                    <div class="importance-bar">
+                                                        <span class="importance-label">{item.label}</span>
+                                                        <div class="importance-value">
+                                                            <div class="importance-fill" style={`width: ${item.value * 100}%;`}>{Math.round(item.value * 100)}%</div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* 対抗（中サイズ表示） */}
+                                {horses.sub && (
+                                    <div class="horse-card horse-card-sub">
+                                        <div class="horse-header">
+                                            <span class="horse-mark-sub">○</span>
+                                            <span class="horse-number-sub">{horses.sub.number}</span>
+                                            <span class="horse-name-sub">{horses.sub.name}</span>
+                                            <span class="horse-type-sub">対抗</span>
+                                        </div>
+                                        <div class="ai-factors">
+                                            {horses.sub.factors && horses.sub.factors.filter(factor =>
+                                                factor.text.includes('累積スコア') ||
+                                                factor.text.includes('総合評価')
+                                            ).map(factor => {
+                                                const isScore = factor.text.includes('累積スコア');
+                                                const isEvaluation = factor.text.includes('総合評価');
+                                                const factorClass = isScore ? 'factor factor-score' : isEvaluation ? 'factor factor-evaluation' : 'factor';
+                                                const displayText = factor.text.replace(/^★\s*/, '');
+                                                const showIcon = !isScore && !isEvaluation;
+                                                return (
+                                                    <div class={factorClass}>
+                                                        {showIcon && <span class="factor-icon">{factor.icon}</span>}
+                                                        <span>{displayText}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        {horses.sub.importance && (
+                                            <div class="feature-importance">
+                                                <h5 style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">特徴量重要度</h5>
+                                                {horses.sub.importance.map(item => (
+                                                    <div class="importance-bar">
+                                                        <span class="importance-label">{item.label}</span>
+                                                        <div class="importance-value">
+                                                            <div class="importance-fill" style={`width: ${item.value * 100}%;`}>{Math.round(item.value * 100)}%</div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* 単穴候補馬（まとめて表示） */}
+                                {(horses.hole1 || horses.hole2) && (
+                                    <div class="horse-card horse-card-hole">
+                                        <div class="horse-header">
+                                            <span class="horse-mark-hole">▲</span>
+                                            <span class="minor-title title-hole">単穴候補馬</span>
+                                        </div>
+                                        <div class="horse-grid">
+                                            {horses.hole1 && (() => {
+                                                const scoreText = horses.hole1.factors?.find(f => f.text.includes('累積スコア'))?.text;
+                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
+                                                return (
+                                                    <div class="horse-grid-item">
+                                                        <span class="horse-number-small">{horses.hole1.number}</span>
+                                                        <span class="horse-name-small">{horses.hole1.name}{score ? ` (${score}pt)` : ''}</span>
+                                                    </div>
+                                                );
+                                            })()}
+                                            {horses.hole2 && (() => {
+                                                const scoreText = horses.hole2.factors?.find(f => f.text.includes('累積スコア'))?.text;
+                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
+                                                return (
+                                                    <div class="horse-grid-item">
+                                                        <span class="horse-number-small">{horses.hole2.number}</span>
+                                                        <span class="horse-name-small">{horses.hole2.name}{score ? ` (${score}pt)` : ''}</span>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 連下候補馬（まとめて表示） */}
+                                {horses.connect && horses.connect.length > 0 && (
+                                    <div class="horse-card horse-card-renka">
+                                        <div class="horse-header">
+                                            <span class="horse-mark-renka">△</span>
+                                            <span class="minor-title title-renka">連下候補馬</span>
+                                        </div>
+                                        <div class="horse-grid">
+                                            {horses.connect.map(horse => {
+                                                const scoreText = horse.factors?.find(f => f.text.includes('累積スコア'))?.text;
+                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
+                                                return (
+                                                    <div class="horse-grid-item">
+                                                        <span class="horse-number-small">{horse.number}</span>
+                                                        <span class="horse-name-small">{horse.name}{score ? ` (${score}pt)` : ''}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 抑え候補馬（まとめて表示） */}
+                                {horses.reserve && horses.reserve.length > 0 && (
+                                    <div class="horse-card horse-card-minor">
+                                        <div class="horse-header">
+                                            <span class="horse-mark-minor">×</span>
+                                            <span class="minor-title title-minor">抑え候補馬</span>
+                                        </div>
+                                        <div class="horse-grid">
+                                            {horses.reserve.map(horse => {
+                                                const scoreText = horse.factors?.find(f => f.text.includes('累積スコア'))?.text;
+                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
+                                                return (
+                                                    <div class="horse-grid-item">
+                                                        <span class="horse-number-small">{horse.number}</span>
+                                                        <span class="horse-name-small">{horse.name}{score ? ` (${score}pt)` : ''}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <!-- Premium Sanrenpuku絞り込みボタン -->
+                            <button class="premium-select-filter-btn" data-race-index={index}>
+                                <span class="filter-icon">🎯</span>
+                                <span class="filter-text">Premium Sanrenpuku 絞り込む</span>
+                                <span class="filter-arrow">▼</span>
+                            </button>
+
+                            <!-- Premium Sanrenpuku厳選買い目（初期非表示・絞り込み後表示） -->
+                            <div class="premium-select-highlight" data-race-content={index} style="display: none;">
+                                <div class="select-header">
+                                    <div class="select-badge">✨ Premium Sanrenpuku 厳選買い目</div>
+                                </div>
+
+                                <div class="select-bets-list">
+                                    {sanrenpuku.narrowed && sanrenpuku.narrowed.map((bet, i) => {
+                                        // 各買い目の点数を計算（カンマで区切られた馬番号の数）
+                                        const parts = bet.split('-');
+                                        const thirdHorses = parts[2] ? parts[2].split(',') : [];
+                                        const points = thirdHorses.length;
+
+                                        return (
+                                            <div class="select-bet-item">
+                                                <span class="bet-number">{i + 1}</span>
+                                                <span class="bet-display">三連複 {bet}</span>
+                                                <span class="bet-score">{points}点</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div class="total-points-display">
+                                    💰 合計: {sanrenpuku.total || 0}点
+                                </div>
+
+                                <!-- 枠外コンパクト表示 -->
+                                {sanrenpuku.compact && (
+                                    <div class="compact-display-section">
+                                        <h5 class="compact-title">📋 全買い目詳細</h5>
+
+                                        <!-- 1段目：本命ブロック -->
+                                        {sanrenpuku.compact.main && (
+                                            <div class="compact-block">
+                                                <div class="compact-horse-number">{sanrenpuku.compact.main.number}</div>
+                                                <div class="compact-content">
+                                                    <div class="compact-axis">{sanrenpuku.compact.main.axis}</div>
+                                                    <div class="compact-targets">
+                                                        {sanrenpuku.compact.main.targets}
+                                                        {sanrenpuku.compact.main.osaeNumbers && sanrenpuku.compact.main.osaeNumbers.length > 0 && (
+                                                            <span class="osae-note">({sanrenpuku.compact.main.osaeNumbers.join('.')}は抑え)</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <!-- 2段目：対抗ブロック -->
+                                        {sanrenpuku.compact.sub && (
+                                            <div class="compact-block">
+                                                <div class="compact-horse-number">{sanrenpuku.compact.sub.number}</div>
+                                                <div class="compact-content">
+                                                    <div class="compact-axis">{sanrenpuku.compact.sub.axis}</div>
+                                                    <div class="compact-targets">
+                                                        {sanrenpuku.compact.sub.targets}
+                                                        {sanrenpuku.compact.sub.osaeNumbers && sanrenpuku.compact.sub.osaeNumbers.length > 0 && (
+                                                            <span class="osae-note">({sanrenpuku.compact.sub.osaeNumbers.join('.')}は抑え)</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                        </div>
+                    );
+                })}
+            </div>
+
+            <!-- Premium Plus CTAセクション -->
+            <div class="premium-plus-cta-section">
+                <div class="premium-plus-cta-card">
+                    <div class="cta-header">
+                        <div class="cta-icon">💎</div>
+                        <h2 class="cta-title">超精密AIのPremium Plus</h2>
+                        <p class="cta-subtitle">超高性能AIが導く"最高確率の1鞍"を、あなたに。</p>
+                    </div>
+
+                    <!-- 最新の的中実績画像 -->
+                    <div class="cta-results-preview">
+                        <h3 class="preview-title">📊 直近3戦の実績</h3>
+                        <div class="preview-grid">
+                            <div class="preview-image-card">
+                                <img src="/upsell-images/upsell-20260410.png" alt="04/10的中実績" onerror="this.parentElement.style.display='none'" />
+                            </div>
+                            <div class="preview-image-card">
+                                <img src="/upsell-images/upsell-20260409.png" alt="04/09的中実績" onerror="this.parentElement.style.display='none'" />
+                            </div>
+                            <div class="preview-image-card">
+                                <img src="/upsell-images/upsell-20260408.png" alt="04/08的中実績" onerror="this.parentElement.style.display='none'" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="cta-features">
+                        <div class="cta-feature">
+                            <span class="feature-icon">🎯</span>
+                            <div class="feature-content">
+                                <h3>1日1鞍限定</h3>
+                                <p>数万通りの組み合わせから厳選された、たった1つの答え。</p>
+                            </div>
+                        </div>
+                        <div class="cta-feature">
+                            <span class="feature-icon">📊</span>
+                            <div class="feature-content">
+                                <h3>期待リターン265%</h3>
+                                <p>1鞍で投資額の約2.7倍回収を実現する精密予想。</p>
+                            </div>
+                        </div>
+                        <div class="cta-feature">
+                            <span class="feature-icon">💰</span>
+                            <div class="feature-content">
+                                <h3>通常価格¥98,000→今なら¥68,000</h3>
+                                <p>1鞍で投資額の約3倍回収を目指す超精密予想。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="cta-action">
+                        <a href="/premium-plus" class="btn-premium-plus">
+                            Premium Plus 詳細を見る
+                            <span class="arrow">→</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- プラン判定スクリプト -->
+        <script is:inline>
+            (function() {
+                console.log('🔍 Premium Sanrenpuku - プラン判定開始');
+
+                // プラン情報取得
+                function getCurrentUserPlan() {
+                    // 1. デモモード
+                    const demoKeys = Object.keys(localStorage).filter(key => key.startsWith('demo_subscription_'));
+                    if (demoKeys.length > 0) {
+                        try {
+                            const demoData = JSON.parse(localStorage.getItem(demoKeys[0]));
+                            return demoData.planType;
+                        } catch (error) {
+                            console.error('Demo data parsing error:', error);
+                        }
+                    }
+
+                    // 2. 旧形式のtest_subscription_
+                    const testKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
+                    if (testKeys.length > 0) {
+                        try {
+                            const testData = JSON.parse(localStorage.getItem(testKeys[0]));
+                            return testData.planType;
+                        } catch (error) {
+                            console.error('Test subscription parsing error:', error);
+                        }
+                    }
+
+                    // 3. user-plan
+                    const userPlanData = localStorage.getItem('user-plan');
+                    if (userPlanData) {
+                        try {
+                            const userData = JSON.parse(userPlanData);
+                            return userData.plan || 'free';
+                        } catch (error) {
+                            console.error('User plan parsing error:', error);
+                        }
+                    }
+
+                    // 4. nankan_user
+                    const nankanUser = localStorage.getItem('nankan_user');
+                    if (nankanUser) {
+                        try {
+                            const userData = JSON.parse(nankanUser);
+                            return userData.plan || 'free';
+                        } catch (error) {
+                            console.error('Nankan user parsing error:', error);
+                        }
+                    }
+
+                    return null;
+                }
+
+                // プラン判定と表示切り替え
+                function checkPlanAndDisplay() {
+                    const userPlan = getCurrentUserPlan();
+                    console.log('📋 現在のプラン:', userPlan);
+
+                    const orderSection = document.getElementById('sanrenpuku-order');
+                    const contentSection = document.getElementById('sanrenpuku-content');
+
+                    if (!orderSection || !contentSection) {
+                        console.error('❌ セクション要素が見つかりません');
+                        return;
+                    }
+
+                    // Premium Sanrenpuku または Premium Combo または Premium Full 会員の場合 → 予想表示
+                    if (userPlan === 'Premium Sanrenpuku' || userPlan === 'Premium Combo' || userPlan === 'Premium Full') {
+                        console.log('✅ Premium Sanrenpuku/Combo/Full会員 → 三連複予想表示');
+                        orderSection.style.display = 'none';
+                        contentSection.style.display = 'block';
+                    }
+                    // Premium Predictions または Premium 会員の場合 → sanrenpuku-demoへリダイレクト
+                    else if (userPlan === 'Premium Predictions' || userPlan === 'Premium' || userPlan === 'premium') {
+                        console.log('🎯 Premium会員 → sanrenpuku-demoへリダイレクト');
+                        window.location.href = '/sanrenpuku-demo/';
+                    }
+                    // その他の場合（AccessControlで弾かれるはずだが念のため）
+                    else {
+                        console.log('❌ プラン不明 → デフォルト申し込み表示');
+                        orderSection.style.display = 'block';
+                        contentSection.style.display = 'none';
+                    }
+                }
+
+                // DOM読み込み完了後に実行
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', checkPlanAndDisplay);
+                } else {
+                    checkPlanAndDisplay();
+                }
+            })();
+        </script>
+    </AccessControl>
+</BaseLayout>
+    <!-- 銀行振込モーダル -->
+    <div class="bank-modal" id="bankModal">
+      <div class="bank-modal-content">
+        <button class="bank-modal-close" onclick="closeBankModal()">×</button>
+
+        <h2 class="bank-modal-title">🏦 銀行振込でのお申し込み</h2>
+        <p class="modal-plan-info" id="modalPlanInfo"></p>
+
+        <div class="bank-info-box">
+          <div class="bank-info-item">
+            <span class="bank-info-label">振込先銀行</span>
+            <span class="bank-info-value">三井住友銀行
+              <button class="copy-button" onclick="copyToClipboard('三井住友銀行')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">支店名</span>
+            <span class="bank-info-value">洲本支店
+              <button class="copy-button" onclick="copyToClipboard('洲本支店')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座種別</span>
+            <span class="bank-info-value">普通</span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座番号</span>
+            <span class="bank-info-value">5338892
+              <button class="copy-button" onclick="copyToClipboard('5338892')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座名義</span>
+            <span class="bank-info-value" style="font-size: 0.95rem;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
+              <button class="copy-button" onclick="copyToClipboard('ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+            <span class="bank-info-label">振込金額</span>
+            <span class="bank-info-value" style="color: #10b981; font-size: 1.3rem;" id="modalAmount">¥5,980</span>
+          </div>
+        </div>
+
+        <div class="bank-steps">
+          <div class="bank-steps-title">📝 お申し込み手順</div>
+          <div class="bank-step">
+            <span class="bank-step-number">1</span>
+            <span>上記の口座情報に振込金額をお振込みください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">2</span>
+            <span>振込完了後、下記のフォームから必要情報をご送信ください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">3</span>
+            <span>入金確認取れ次第、即時にログイン情報をメールでお送りいたします</span>
+          </div>
+        </div>
+
+        <!-- 銀行振込申し込みフォーム -->
+        <div class="bank-form-section">
+          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
+
+          <form id="bankTransferForm" class="bank-form">
+            <div class="form-group">
+              <label for="fullName" class="form-label">お名前 <span class="required">*</span></label>
+              <input type="text" id="fullName" name="fullName" class="form-input" required placeholder="山田 太郎">
+            </div>
+
+            <div class="form-group">
+              <label for="email" class="form-label">メールアドレス <span class="required">*</span></label>
+              <input type="email" id="email" name="email" class="form-input" required placeholder="example@email.com">
+            </div>
+
+            
+            <div class="form-group">
+                <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
+                <input type="date" id="transferDate" name="transferDate" class="form-input" required>
+              </div>
+
+
+            <div class="form-group">
+              <label for="transferAmount" class="form-label">振込金額 <span class="required">*</span></label>
+              <input type="number" id="transferAmount" name="transferAmount" class="form-input" required readonly>
+            </div>
+
+            <div class="form-group">
+
+            <div class="form-group">
+              <label for="remarks" class="form-label">備考・ご要望</label>
+              <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
+            </div>
+
+            <button type="submit" class="form-submit-button" id="submitButton">
+              <span class="submit-text">📨 申し込みを送信</span>
+              <span class="submit-loading" style="display: none;">送信中...</span>
+            </button>
+
+            <div class="form-message" id="formMessage" style="display: none;"></div>
+          </form>
+        </div>
+
+        <div class="bank-warning">
+          <div class="bank-warning-title">⚠️ ご注意事項</div>
+          <div class="bank-warning-text">
+            ・振込手数料はお客様負担となります<br>
+            ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
+            ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
+            ・名義が異なる場合は、備考欄にその旨をご記入ください<br>
+            ・ご入金後のキャンセル・返金は承っておりません
+          </div>
+        </div>
+      </div>
+    </div>
+</BaseLayout>
+
+<script is:inline>
+  let currentPlan = '';
+  let currentAmount = 0;
+  let currentPlanType = 'monthly';
+
+  function openBankModal(planName, amount, planType = 'monthly') {
+    currentPlan = planName;
+    currentAmount = amount;
+    currentPlanType = planType;
+
+    let periodText = '';
+    if (planType === 'lifetime') {
+      periodText = '（永久アクセス）';
+    } else if (planType === 'annual') {
+      periodText = '/年';
+    } else {
+      periodText = '/月';
+    }
+
+    document.getElementById('modalPlanInfo').textContent = `プラン: ${planName} (¥${amount.toLocaleString()}${periodText})`;
+    document.getElementById('modalAmount').textContent = `¥${amount.toLocaleString()}`;
+    document.getElementById('transferAmount').value = amount;
+    document.getElementById('bankModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeBankModal() {
+    document.getElementById('bankModal').classList.remove('active');
+    document.body.style.overflow = 'auto';
+  }
+
+  function copyToClipboard(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+      alert('コピーしました: ' + text);
+    } catch (err) {
+      console.error('コピーに失敗しました:', err);
+    }
+
+    document.body.removeChild(textarea);
+  }
+
+  // DOMContentLoaded後にフォーム処理を登録
+  document.addEventListener('DOMContentLoaded', () => {
+    // モーダル外クリックで閉じる
+    document.addEventListener('click', (e) => {
+      const bankModal = document.getElementById('bankModal');
+      if (e.target === bankModal) {
+        closeBankModal();
+      }
+    });
+
+    // Escapeキーで閉じる
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeBankModal();
+      }
+    });
+
+    // 銀行振込フォーム送信処理
+    const bankTransferForm = document.getElementById('bankTransferForm');
+    if (bankTransferForm) {
+      bankTransferForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitButton = document.getElementById('submitButton');
+        const submitText = submitButton.querySelector('.submit-text');
+        const submitLoading = submitButton.querySelector('.submit-loading');
+        const formMessage = document.getElementById('formMessage');
+
+        submitButton.disabled = true;
+        submitText.style.display = 'none';
+        submitLoading.style.display = 'inline';
+        formMessage.style.display = 'none';
+
+        let periodText = '';
+        if (currentPlanType === 'lifetime') {
+          periodText = '（永久アクセス）';
+        } else if (currentPlanType === 'annual') {
+          periodText = '/年';
+        } else {
+          periodText = '/月';
+        }
+
+        const formData = {
+          fullName: document.getElementById('fullName').value,
+          email: document.getElementById('email').value,
+          transferDate: document.getElementById('transferDate').value,
+          transferTime: "00:00",  // デフォルト値
+          transferAmount: document.getElementById('transferAmount').value,
+          transferName: document.getElementById('fullName').value,  // お名前と同じ
+          remarks: document.getElementById('remarks').value,
+          productName: `${currentPlan} (¥${currentAmount.toLocaleString()}${periodText})`,
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch('/.netlify/functions/bank-transfer-application', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.className = 'form-message success';
+            formMessage.style.display = 'block';
+
+            document.getElementById('bankTransferForm').reset();
+
+            setTimeout(() => {
+              closeBankModal();
+              formMessage.style.display = 'none';
+            }, 3000);
+          } else {
+            throw new Error(result.error || '送信に失敗しました');
+          }
+        } catch (error) {
+          formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+        } finally {
+          submitButton.disabled = false;
+          submitText.style.display = 'inline';
+          submitLoading.style.display = 'none';
+        }
+      });
+    }
+  });
+</script>
+
+<style is:global>
+    .page-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    /* 背景パターン強化（ガラスモーフィズム効果を可視化） */
+    body {
+        background:
+            linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+            linear-gradient(45deg, rgba(251, 191, 36, 0.05) 0%, transparent 50%),
+            linear-gradient(225deg, rgba(16, 185, 129, 0.05) 0%, transparent 50%),
+            radial-gradient(circle at 20% 50%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+            radial-gradient(circle at 80% 50%, rgba(239, 68, 68, 0.1) 0%, transparent 50%),
+            #0f172a;
+        background-attachment: fixed;
+    }
+
+    /* ヘッダーセクション */
+    .header-section {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border-radius: 16px;
+        padding: 40px;
+        margin-bottom: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .premium-select-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.25) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        color: rgb(251, 191, 36);
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 400;
+        margin-bottom: 20px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 2px 8px rgba(251, 191, 36, 0.15);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .race-title {
+        font-size: 2rem;
+        margin-bottom: 20px;
+        color: #fff;
+    }
+
+    .premium-select-description {
+        background: rgba(251, 191, 36, 0.1);
+        border-left: 4px solid #fbbf24;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 30px;
+    }
+
+    .select-intro {
+        color: #e2e8f0;
+        font-size: 1.1rem;
+        line-height: 1.8;
+    }
+
+    .ai-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-top: 30px;
+    }
+
+    .metric {
+        text-align: center;
+    }
+
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #fbbf24;
+        margin-bottom: 8px;
+    }
+
+    .metric-label {
+        font-size: 0.9rem;
+        color: #94a3b8;
+    }
+
+    /* 特徴説明セクション */
+    .feature-explanation {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.15) 0%, rgba(15, 23, 42, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 30px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 4px 16px rgba(0, 0, 0, 0.1);
+    }
+
+    .feature-title {
+        font-size: 1.5rem;
+        margin-bottom: 20px;
+        color: #fbbf24;
+    }
+
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+    }
+
+    .feature-card {
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.15) 0%, rgba(30, 41, 59, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.4),
+            0 2px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .feature-icon {
+        font-size: 2rem;
+        display: block;
+        margin-bottom: 15px;
+    }
+
+    .feature-card h4 {
+        font-size: 1.1rem;
+        margin-bottom: 10px;
+        color: #fbbf24;
+    }
+
+    .feature-card p {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    /* フローティングレースセレクター */
+    .floating-race-selector {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        z-index: 1000;
+    }
+
+    .floating-selector-toggle {
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        color: #000;
+        border: none;
+        border-radius: 50px;
+        padding: 15px 25px;
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        box-shadow: 0 4px 20px rgba(251, 191, 36, 0.4);
+        transition: all 0.3s ease;
+    }
+
+    .floating-selector-toggle:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 25px rgba(245, 158, 11, 0.5);
+    }
+
+    .toggle-icon {
+        font-size: 1.3rem;
+    }
+
+    .floating-selector-menu {
+        position: absolute;
+        bottom: 70px;
+        right: 0;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 20px;
+        min-width: 250px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(96, 165, 250, 0.4),
+            0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .selector-header {
+        color: #60a5fa;
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    .selector-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+    }
+
+    .selector-race-btn {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(37, 99, 235, 0.25) 100%);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        color: rgb(96, 165, 250);
+        border: none;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(96, 165, 250, 0.4),
+            0 2px 8px rgba(96, 165, 250, 0.15);
+        transition: all 0.2s ease;
+    }
+
+    .selector-race-btn:hover {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.25) 0%, rgba(37, 99, 235, 0.35) 100%);
+        transform: scale(1.05);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(96, 165, 250, 0.6),
+            0 4px 12px rgba(96, 165, 250, 0.3);
+    }
+
+    /* レースカード */
+    .races-container {
+        display: flex;
+        flex-direction: column;
+        gap: 25px;
+    }
+
+    .race-card {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.15) 0%, rgba(15, 23, 42, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 30px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(59, 130, 246, 0.4),
+            0 4px 16px rgba(0, 0, 0, 0.1);
+    }
+
+    .race-header {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .race-number {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(37, 99, 235, 0.25) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        color: rgb(96, 165, 250);
+        padding: 10px 20px;
+        border-radius: 12px;
+        font-weight: 400;
+        font-size: 1.2rem;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(96, 165, 250, 0.5),
+            0 2px 8px rgba(96, 165, 250, 0.15);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .race-name {
+        color: #e2e8f0;
+        font-size: 1.1rem;
+    }
+
+    /* AI選出馬分析セクション */
+    .analysis-section {
+        margin-bottom: 25px;
+    }
+
+    .section-title {
+        color: #fbbf24;
+        font-size: 1.1rem;
+        margin-bottom: 15px;
+        font-weight: 600;
+    }
+
+    /* 馬カード */
+    .horse-card {
+        background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(96, 165, 250, 0.4),
+            0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .horse-card-main {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.2) 100%);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(16, 185, 129, 0.5),
+            0 2px 12px rgba(16, 185, 129, 0.15);
+    }
+
+    .horse-card-sub {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.15) 0%, rgba(219, 39, 119, 0.25) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(236, 72, 153, 0.5),
+            0 2px 12px rgba(236, 72, 153, 0.2);
+    }
+
+    .horse-card-hole {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.25) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 2px 12px rgba(251, 191, 36, 0.2);
+    }
+
+    .horse-card-renka {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(124, 58, 237, 0.25) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(139, 92, 246, 0.5),
+            0 2px 12px rgba(139, 92, 246, 0.2);
+    }
+
+    .horse-card-minor {
+        background: linear-gradient(135deg, rgba(100, 116, 139, 0.15) 0%, rgba(71, 85, 105, 0.2) 100%);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(100, 116, 139, 0.4),
+            0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .horse-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 15px;
+    }
+
+    .horse-mark-main {
+        font-size: 1.5rem;
+        color: rgb(16, 185, 129);
+    }
+
+    .horse-mark-sub {
+        font-size: 1.3rem;
+        color: rgb(236, 72, 153);
+    }
+
+    .horse-mark-hole {
+        font-size: 1.2rem;
+        color: rgb(251, 191, 36);
+    }
+
+    .horse-mark-renka {
+        font-size: 1.2rem;
+        color: rgb(139, 92, 246);
+    }
+
+    .horse-mark-minor {
+        font-size: 1.2rem;
+        color: rgb(148, 163, 184);
+    }
+
+    .horse-number-main {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.25) 100%);
+        color: rgb(16, 185, 129);
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+
+    .horse-number-sub {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.15) 0%, rgba(219, 39, 119, 0.25) 100%);
+        color: rgb(236, 72, 153);
+        padding: 5px 10px;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 1rem;
+    }
+
+    .horse-name-main {
+        color: rgb(16, 185, 129);
+        font-weight: 600;
+        font-size: 1.1rem;
+        flex: 1;
+    }
+
+    .horse-name-sub {
+        color: rgb(236, 72, 153);
+        font-weight: 500;
+        font-size: 1rem;
+        flex: 1;
+    }
+
+    .horse-type-main, .horse-type-sub, .horse-type-hole {
+        background: rgba(255, 255, 255, 0.1);
+        color: #cbd5e1;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .minor-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+    }
+
+    .title-hole {
+        color: rgb(251, 191, 36);
+    }
+
+    .title-renka {
+        color: rgb(139, 92, 246);
+    }
+
+    .title-minor {
+        color: #94a3b8;
+    }
+
+    .horse-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    .horse-grid-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .horse-number-small {
+        background: rgba(255, 255, 255, 0.1);
+        color: #e2e8f0;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    .horse-name-small {
+        color: #cbd5e1;
+        font-size: 0.85rem;
+    }
+
+    .ai-factors {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .factor {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.9rem;
+        color: #cbd5e1;
+    }
+
+    .factor-icon {
+        font-size: 1rem;
+    }
+
+    /* ★ 総合評価と累積スコアの囲みスタイル */
+    .factor-score,
+    .factor-evaluation {
+        padding: 8px 14px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.2) 100%);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow:
+            inset 0 0 0 0.5px rgba(16, 185, 129, 0.5),
+            0 2px 10px rgba(16, 185, 129, 0.15);
+        font-weight: 600;
+        color: rgb(16, 185, 129);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .factor-score .factor-icon,
+    .factor-evaluation .factor-icon {
+        font-size: 1.1rem;
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+    }
+
+    .feature-importance {
+        margin-top: 15px;
+    }
+
+    .importance-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+
+    .importance-label {
+        min-width: 100px;
+        font-size: 0.85rem;
+        color: #94a3b8;
+    }
+
+    .importance-value {
+        flex: 1;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        height: 20px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .importance-fill {
+        background: linear-gradient(90deg, #fbbf24, #f59e0b);
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding-right: 8px;
+        font-size: 0.75rem;
+        color: #000;
+        font-weight: 600;
+        border-radius: 10px;
+    }
+
+    /* Premium Sanrenpuku絞り込みボタン */
+    .premium-select-filter-btn {
+        width: 100%;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        border: none;
+        border-radius: 12px;
+        padding: 18px 25px;
+        margin-bottom: 20px;
+        color: #000;
+        font-size: 1.1rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        box-shadow: 0 4px 15px rgba(251, 191, 36, 0.3);
+    }
+
+    .premium-select-filter-btn:hover {
+        background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+    }
+
+    .premium-select-filter-btn:active {
+        transform: translateY(0);
+    }
+
+    .premium-select-filter-btn.filtering {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        animation: pulse 1s ease-in-out infinite;
+    }
+
+    .premium-select-filter-btn.filtered {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    }
+
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.7;
+        }
+    }
+
+    .filter-icon {
+        font-size: 1.3rem;
+    }
+
+    .filter-text {
+        flex: 1;
+        text-align: center;
+    }
+
+    .filter-arrow {
+        transition: transform 0.3s ease;
+    }
+
+    .premium-select-filter-btn.filtered .filter-arrow {
+        transform: rotate(180deg);
+    }
+
+    /* Premium Sanrenpuku厳選買い目 */
+    .premium-select-highlight {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 25px;
+        margin-bottom: 30px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 4px 16px rgba(251, 191, 36, 0.15);
+        animation: slideDown 0.5s ease;
+    }
+
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .select-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+
+    .select-badge {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.25) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        color: rgb(251, 191, 36);
+        padding: 10px 20px;
+        border-radius: 12px;
+        font-weight: 400;
+        font-size: 1.1rem;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 2px 8px rgba(251, 191, 36, 0.15);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .select-bets-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 15px;
+    }
+
+    .select-bet-item {
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.15) 0%, rgba(30, 41, 59, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 10px;
+        padding: 14px 18px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.4),
+            0 2px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .bet-number {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.25) 100%);
+        color: rgb(251, 191, 36);
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-weight: 600;
+        min-width: 35px;
+        text-align: center;
+    }
+
+    .bet-display {
+        flex: 1;
+        color: #e2e8f0;
+        font-size: 1rem;
+        font-family: 'Courier New', monospace;
+    }
+
+    .bet-score {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+
+    .total-points-display {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.25) 100%);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border-radius: 10px;
+        padding: 15px;
+        margin-top: 20px;
+        text-align: center;
+        font-size: 1.2rem;
+        color: rgb(251, 191, 36);
+        font-weight: 400;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 2px 8px rgba(251, 191, 36, 0.15);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    /* コンパクト表示セクション */
+    .compact-display-section {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.15) 0%, rgba(15, 23, 42, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 20px;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(100, 116, 139, 0.4),
+            0 2px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .compact-title {
+        color: #60a5fa;
+        font-size: 1rem;
+        margin-bottom: 15px;
+        font-weight: 600;
+    }
+
+    .compact-block {
+        display: flex;
+        align-items: flex-start;
+        gap: 15px;
+        margin-bottom: 15px;
+    }
+
+    .compact-horse-number {
+        background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(59, 130, 246, 0.25) 100%);
+        color: rgb(96, 165, 250);
+        padding: 8px 15px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        min-width: 45px;
+        text-align: center;
+    }
+
+    .compact-content {
+        flex: 1;
+    }
+
+    .compact-label {
+        color: #94a3b8;
+        font-size: 0.85rem;
+        margin-bottom: 5px;
+    }
+
+    .compact-axis {
+        color: #e2e8f0;
+        font-size: 0.95rem;
+        margin-bottom: 5px;
+    }
+
+    .compact-targets {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+
+    .osae-note {
+        color: #94a3b8;
+        font-size: 0.8rem;
+        font-style: italic;
+        margin-left: 8px;
+    }
+
+    /* アップグレード案内 */
+    .upgrade-notice {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.2) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 30px;
+        text-align: center;
+        box-shadow:
+            inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+            0 4px 16px rgba(251, 191, 36, 0.15);
+    }
+
+    .upgrade-notice h3 {
+        color: #fbbf24;
+        font-size: 1.5rem;
+        margin-bottom: 15px;
+    }
+
+    .upgrade-notice p {
+        color: #cbd5e1;
+        font-size: 1rem;
+        line-height: 1.6;
+        margin-bottom: 10px;
+    }
+
+    .upgrade-notice strong {
+        color: #fbbf24;
+        font-weight: 700;
+    }
+
+    /* Premium Plus CTAセクション */
+    .premium-plus-cta-section {
+        margin: 60px auto 40px;
+        max-width: 900px;
+    }
+
+    .premium-plus-cta-card {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(234, 88, 12, 0.2) 100%);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 20px;
+        padding: 40px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        transition: all 0.3s ease;
+    }
+
+    .premium-plus-cta-card:hover {
+        border-color: rgba(245, 158, 11, 0.5);
+        transform: translateY(-5px);
+        box-shadow: 0 12px 30px rgba(245, 158, 11, 0.25);
+    }
+
+    /* 的中実績プレビュー */
+    .cta-results-preview {
+        margin: 30px 0;
+    }
+
+    .preview-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #fbbf24;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-bottom: 30px;
+    }
+
+    .preview-image-card {
+        background: rgba(15, 23, 42, 0.6);
+        border-radius: 12px;
+        padding: 10px;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        transition: all 0.3s ease;
+        overflow: hidden;
+    }
+
+    .preview-image-card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(245, 158, 11, 0.5);
+        box-shadow: 0 8px 20px rgba(245, 158, 11, 0.2);
+    }
+
+    .preview-image-card img {
+        width: 100%;
+        height: auto;
+        border-radius: 8px;
+        display: block;
+    }
+
+    .cta-header {
+        text-align: center;
+        margin-bottom: 40px;
+    }
+
+    .cta-icon {
+        font-size: 3rem;
+        margin-bottom: 15px;
+    }
+
+    .cta-title {
+        font-size: 2rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 10px;
+    }
+
+    .cta-subtitle {
+        font-size: 1.1rem;
+        color: #cbd5e1;
+        font-weight: 400;
+    }
+
+    .cta-features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 25px;
+        margin-bottom: 40px;
+    }
+
+    .cta-feature {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 10px;
+    }
+
+    .cta-feature .feature-icon {
+        font-size: 2.5rem;
+    }
+
+    .cta-feature h3 {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #fbbf24;
+        margin: 0 0 5px 0;
+    }
+
+    .cta-feature p {
+        font-size: 0.9rem;
+        color: #cbd5e1;
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    .cta-action {
+        text-align: center;
+    }
+
+    .btn-premium-plus {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        color: #000;
+        padding: 18px 40px;
+        border-radius: 12px;
+        text-decoration: none;
+        font-size: 1.1rem;
+        font-weight: 700;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+    }
+
+    .btn-premium-plus:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+    }
+
+    .btn-premium-plus .arrow {
+        transition: transform 0.3s ease;
+    }
+
+    .btn-premium-plus:hover .arrow {
+        transform: translateX(5px);
+    }
+
+    /* モバイル対応 */
+    @media (max-width: 768px) {
+        .header-section {
+            padding: 25px 15px;
+        }
+
+        .race-title {
+            font-size: 1.5rem;
+        }
+
+        .ai-metrics {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .feature-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .race-card {
+            padding: 20px;
+        }
+
+        .floating-race-selector {
+            bottom: 20px;
+            right: 20px;
+        }
+
+        .floating-selector-toggle {
+            padding: 12px 20px;
+            font-size: 0.95rem;
+        }
+
+        .selector-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
+        .horse-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .premium-plus-cta-card {
+            padding: 30px 20px;
+        }
+
+        .cta-title {
+            font-size: 1.5rem;
+        }
+
+        .cta-subtitle {
+            font-size: 1rem;
+        }
+
+        .preview-grid {
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        .preview-title {
+            font-size: 1.1rem;
+        }
+
+        .cta-features {
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        .btn-premium-plus {
+            width: 100%;
+            justify-content: center;
+            font-size: 1rem;
+            padding: 16px 30px;
+        }
+    }
+
+    /* 申し込みセクションスタイル */
+    .order-section {
+        min-height: 100vh;
+        padding: 40px 20px;
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    }
+
+    .order-container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: rgba(30, 41, 59, 0.8);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 20px;
+        padding: 50px 40px;
+    }
+
+    .order-header {
+        text-align: center;
+        margin-bottom: 50px;
+    }
+
+    .order-icon {
+        font-size: 4rem;
+        margin-bottom: 20px;
+    }
+
+    .order-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        margin-bottom: 15px;
+        background: linear-gradient(to right, #3b82f6, #8b5cf6);
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .order-subtitle {
+        font-size: 1.2rem;
+        color: #94a3b8;
+        margin-bottom: 0;
+    }
+
+    .order-features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 25px;
+        margin-bottom: 50px;
+    }
+
+    .feature-card {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 15px;
+        padding: 30px;
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+
+    .feature-card:hover {
+        transform: translateY(-5px);
+        border-color: rgba(59, 130, 246, 0.5);
+        box-shadow: 0 10px 30px rgba(59, 130, 246, 0.2);
+    }
+
+    .feature-icon {
+        font-size: 2.5rem;
+        margin-bottom: 15px;
+    }
+
+    .feature-card h3 {
+        font-size: 1.2rem;
+        color: #e2e8f0;
+        margin-bottom: 15px;
+    }
+
+    .feature-stats {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #10b981;
+    }
+
+    .feature-text {
+        color: #cbd5e1;
+        line-height: 1.6;
+        margin: 0;
+    }
+
+    .order-description {
+        background: rgba(15, 23, 42, 0.4);
+        border-left: 4px solid #f59e0b;
+        padding: 30px;
+        border-radius: 10px;
+        margin-bottom: 50px;
+    }
+
+    .order-description h2 {
+        color: #fbbf24;
+        font-size: 1.5rem;
+        margin-bottom: 20px;
+    }
+
+    .recommend-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .recommend-list li {
+        color: #cbd5e1;
+        font-size: 1.1rem;
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+        position: relative;
+        padding-left: 30px;
+    }
+
+    .recommend-list li:last-child {
+        border-bottom: none;
+    }
+
+    .recommend-list li::before {
+        content: '✓';
+        position: absolute;
+        left: 0;
+        color: #10b981;
+        font-weight: 700;
+        font-size: 1.3rem;
+    }
+
+    .order-price-section {
+        text-align: center;
+        margin-top: 50px;
+    }
+
+    .price-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+        border: 2px solid rgba(59, 130, 246, 0.4);
+        border-radius: 15px;
+        padding: 40px;
+        margin-bottom: 30px;
+    }
+
+    .price-label {
+        color: #94a3b8;
+        font-size: 1rem;
+        margin-bottom: 10px;
+    }
+
+    .price-value {
+        font-size: 4rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        margin-bottom: 10px;
+    }
+
+    .price-unit {
+        font-size: 1.5rem;
+        color: #94a3b8;
+    }
+
+    .price-note {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    .order-btn {
+        display: inline-block;
+        background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+        color: white;
+        font-size: 1.3rem;
+        font-weight: 700;
+        padding: 18px 60px;
+        border-radius: 12px;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        border: 2px solid rgba(245, 158, 11, 0.5);
+        margin-bottom: 20px;
+    }
+
+    .order-btn:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 15px 40px rgba(245, 158, 11, 0.4);
+        border-color: #f59e0b;
+    }
+
+    .order-note {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        margin: 0;
+    }
+
+    /* モバイル対応 */
+    @media (max-width: 768px) {
+        .order-container {
+            padding: 30px 20px;
+        }
+
+        .order-title {
+            font-size: 2rem;
+        }
+
+        .order-subtitle {
+            font-size: 1rem;
+        }
+
+        .order-features {
+            grid-template-columns: 1fr;
+        }
+
+        .price-value {
+            font-size: 3rem;
+        }
+
+        .order-btn {
+            font-size: 1.1rem;
+            padding: 15px 40px;
+        }
+    }
+</style>
+
+<script is:inline>
+    document.addEventListener('DOMContentLoaded', function() {
+        // フローティングレースセレクターのトグル
+        const selectorToggle = document.getElementById('raceSelectorToggle');
+        const selectorMenu = document.getElementById('raceSelectorMenu');
+
+        if (selectorToggle && selectorMenu) {
+            selectorToggle.addEventListener('click', function() {
+                if (selectorMenu.style.display === 'none') {
+                    selectorMenu.style.display = 'block';
+                } else {
+                    selectorMenu.style.display = 'none';
+                }
+            });
+
+            // メニュー外クリックで閉じる
+            document.addEventListener('click', function(event) {
+                if (!event.target.closest('.floating-race-selector')) {
+                    selectorMenu.style.display = 'none';
+                }
+            });
+        }
+
+        // Premium Sanrenpuku絞り込みボタン（3段階アニメーション）
+        const filterBtns = document.querySelectorAll('.premium-select-filter-btn');
+
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const raceIndex = this.getAttribute('data-race-index');
+                const content = document.querySelector(`[data-race-content="${raceIndex}"]`);
+                const filterText = this.querySelector('.filter-text');
+
+                if (content) {
+                    if (content.style.display === 'none') {
+                        // 段階1: 絞り込む → 絞り込み中（青・pulse）
+                        this.classList.add('filtering');
+                        filterText.textContent = 'Premium Sanrenpuku 絞り込み中';
+
+                        // 段階2: 1.6秒後に 絞り込み中 → 絞り込み完了（緑）
+                        setTimeout(() => {
+                            this.classList.remove('filtering');
+                            this.classList.add('filtered');
+                            filterText.textContent = 'Premium Sanrenpuku 絞り込み完了';
+
+                            // コンテンツ表示
+                            content.style.display = 'block';
+                        }, 1600);
+                    } else {
+                        // コンテンツ非表示 → 初期状態に戻す
+                        content.style.display = 'none';
+                        this.classList.remove('filtered');
+                        filterText.textContent = 'Premium Sanrenpuku 絞り込む';
+                    }
+                }
+            });
+        });
+    });
+</script>

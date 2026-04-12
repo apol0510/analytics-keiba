@@ -1,0 +1,1015 @@
+---
+export const prerender = true;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+const title = "川崎競馬場コース攻略【完全ガイド】全6距離データ分析と勝率向上戦略";
+const description = "川崎競馬場の900m〜2100m全6距離を実データで完全攻略。左回りコースの特性、特殊な900m、差し有利の展開を詳しく解説。";
+---
+
+<BaseLayout title={title} description={description}>
+    <!-- 構造化データ -->
+    <script type="application/ld+json" slot="head">
+    {
+      "@context": "https://schema.org",
+      "@type": "Guide",
+      "name": "川崎競馬場コース攻略ガイド",
+      "description": "川崎競馬場の全距離コース特性と攻略法を実データで解説",
+      "provider": {
+        "@type": "Organization",
+        "name": "NANKANアナリティクス"
+      },
+      "about": {
+        "@type": "Thing",
+        "name": "川崎競馬場"
+      }
+    }
+    </script>
+
+    <div class="container">
+        <nav class="breadcrumb">
+            <a href="/">ホーム</a> > <a href="/course/">コース攻略</a> > 川崎競馬場
+        </nav>
+
+        <header class="page-header">
+            <h1>🌊 川崎競馬場コース攻略【完全ガイド】</h1>
+            <div class="last-updated">
+                <span class="updated-label">最終更新日：</span>
+                <time datetime="2025-08-21">2025年8月21日</time>
+            </div>
+            <p class="lead">小回り左回りコースで独特な展開　実データ完全分析</p>
+        </header>
+
+        <main class="content">
+            <section class="track-overview">
+                <h2>⚡ 川崎競馬場の基本特性</h2>
+                
+                <div class="track-info-grid">
+                    <div class="info-card">
+                        <h3>コース形状</h3>
+                        <p class="highlight">左回り</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>直線距離</h3>
+                        <p class="highlight">400m（ゴールまで300m）</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>コースの特徴</h3>
+                        <p>小回りで独特な展開</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>有利な脚質</h3>
+                        <p>差し・追込み有利</p>
+                    </div>
+                </div>
+
+                <div class="track-description">
+                    <p>川崎競馬場は<strong>左回りの小回りコース</strong>が最大の特徴で、南関4場の中でも独特な展開を見せます。<strong>400mの直線</strong>は適度な長さで、差し馬にも十分なチャンスがあります。特に<strong>900mという特殊な距離</strong>があるのは川崎だけです。</p>
+                </div>
+            </section>
+
+            <section class="distance-analysis">
+                <h2>📊 距離別攻略法【実データ分析】</h2>
+
+                <!-- 短距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">短距離（900m〜1400m）</h3>
+
+                    <div class="distance-cards">
+                        <div class="distance-card highlight">
+                            <h4>900m（超短距離）- ゲート位置と瞬発力が全てを決める超短距離スプリント戦</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: 2コーナー出口付近</span>
+                                    <span>コーナー: 2つ（3・4コーナー）</span>
+                                    <span>直線: 400m（ゴールまで300m）</span>
+                                </div>
+
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：ゲート位置と瞬発力が全てを決める超短距離スプリント戦</h5>
+                                    <p>川崎900mは、4番枠（勝率14.1%）が最高勝率を記録し、1番人気の複勝率80.0%という圧倒的な信頼度を誇ります。南関4場で唯一の900m設定で、極短距離でスタートが96%決める特殊なコースです。</p>
+
+                                    <p>発馬直後の反応とダッシュ力が、そのまま結果を左右する超短距離スプリント戦。ゲート位置の重要性と瞬発力が勝敗を分ける典型的な条件で、主に2歳新馬戦で使用されます。</p>
+
+                                    <p><a href="/blog/course/kawasaki-900m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">4番枠勝率</span>
+                                            <span class="stat-value">14.1%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気複勝率</span>
+                                            <span class="stat-value">80.0%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">展開特性</span>
+                                            <span class="stat-value">ゲート重要</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="distance-card highlight">
+                            <h4>1400m（短距離）- 内枠優勢の左回り短距離戦</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: 直線入り口付近</span>
+                                    <span>コーナー: 3つ（2・3・4コーナー）</span>
+                                    <span>直線: 400m（ゴールまで300m）</span>
+                                </div>
+
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：内枠優勢の左回り短距離戦</h5>
+                                    <p>川崎1400mは、左回りコースの特性が色濃く出る短距離戦です。3番枠（勝率13.7%）と9番枠（13.4%）が二強を形成し、内枠から中枠にかけて好成績を残しています。</p>
+
+                                    <p>1番人気の複勝率76.0%という高い信頼度は、実力重視のコースであることを示しており、スピード能力と左回り適性を併せ持つ馬が好走する傾向があります。</p>
+
+                                    <p><a href="/blog/course/kawasaki-1400m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">3番枠勝率</span>
+                                            <span class="stat-value">13.7%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">9番枠勝率</span>
+                                            <span class="stat-value">13.4%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気複勝率</span>
+                                            <span class="stat-value">76.0%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 中距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">中距離（1500m〜1600m）</h3>
+                    
+                    <div class="distance-cards">
+                        <div class="distance-card highlight">
+                            <h4>1500m（中距離）- 実力と枠順のバランス重視</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: 4コーナー出口あたり</span>
+                                    <span>コーナー: 4つ（全コーナー通過）</span>
+                                    <span>直線: 400m（ゴールまで300m）</span>
+                                </div>
+
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：実力と枠順のバランス重視</h5>
+                                    <p>川崎1500mは、7番枠（勝率15.9%）が最高勝率を記録し、12番枠（12.3%）、4番枠（11.4%）も好成績で、中枠を中心に好走馬が分散しています。1番人気の複勝率71.6%という高い信頼度は、実力が素直に反映される距離です。</p>
+
+                                    <p>スピードと持久力のバランスが求められる中距離戦で、展開の多様性も特徴。内枠（1-3番）はやや苦戦傾向にあり、中枠から外枠にかけて好走馬が多く、展開次第でチャンスが広がる距離と言えます。</p>
+
+                                    <p><a href="/blog/course/kawasaki-1500m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">7番枠勝率</span>
+                                            <span class="stat-value">15.9%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気複勝率</span>
+                                            <span class="stat-value">71.6%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">展開特性</span>
+                                            <span class="stat-value">バランス重視</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="distance-card highlight">
+                            <h4>1600m（マイル）- 内枠優勢の実力重視マイル戦</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: ゴール前直線</span>
+                                    <span>コーナー: 4つ（全コーナー通過）</span>
+                                    <span>直線: 400m（ゴールまで300m）</span>
+                                </div>
+
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：内枠優勢の実力重視マイル戦</h5>
+                                    <p>川崎1600mは、1番枠（勝率16.9%）が圧倒的な優位性を示し、1番人気の勝率41.9%・複勝率72.6%という高い信頼度を誇ります。内枠の優位性が明確で、外枠になるほど成績が低下する傾向が顕著です。</p>
+
+                                    <p>マイル戦としてスピードと持久力の絶妙なバランスが求められ、実力通りの結果になりやすい距離です。内枠からの好ポジション確保が勝敗を大きく左右するコース特性があります。</p>
+
+                                    <p><a href="/blog/course/kawasaki-1600m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番枠勝率</span>
+                                            <span class="stat-value">16.9%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気勝率</span>
+                                            <span class="stat-value">41.9%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気複勝率</span>
+                                            <span class="stat-value">72.6%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 長距離 -->
+                <div class="distance-category">
+                    <h3 class="category-title">長距離（2000m〜2100m）</h3>
+
+                    <div class="distance-cards">
+                        <div class="distance-card highlight">
+                            <h4>2000m（長距離）- スタミナと実力が問われる本格的な長距離戦</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: ホームストレッチ</span>
+                                    <span>コーナー: 4つ（全コーナー通過）</span>
+                                    <span>直線: 400m（ゴールまで300m）</span>
+                                </div>
+
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：スタミナと実力が問われる本格的な長距離戦</h5>
+                                    <p>川崎2000mは、3番枠（勝率19.1%）が圧倒的な優位性を示し、1番人気の勝率40.9%・複勝率59.1%という高い信頼度を誇ります。中枠優勢・実力重視の展開となりやすい本格的な長距離戦です。</p>
+
+                                    <p>スタミナ配分が勝敗を左右する距離で、8番枠（15.2%）、9番枠（12.2%）も好成績を残しており、中枠を中心とした実力馬重視の予想が有効です。</p>
+
+                                    <p><a href="/blog/course/kawasaki-2000m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">3番枠勝率</span>
+                                            <span class="stat-value">19.1%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気勝率</span>
+                                            <span class="stat-value">40.9%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気複勝率</span>
+                                            <span class="stat-value">59.1%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="distance-card highlight">
+                            <h4>2100m（最長距離）- 川崎競馬場究極のスタミナテスト</h4>
+                            <div class="course-details">
+                                <div class="course-specs">
+                                    <span>スタート: 向正面手前</span>
+                                    <span>コーナー: 4つ以上（1周半以上）</span>
+                                    <span>直線: 400m（ゴールまで300m）</span>
+                                </div>
+
+                                <div class="strategy-section">
+                                    <h5>⚡ 攻略法：川崎競馬場究極のスタミナテスト</h5>
+                                    <p>川崎2100mは、1番枠（勝率25.0%）が圧倒的な勝率を誇り、2・3番人気がそれぞれ37.5%の勝率で最も信頼できる川崎最長距離戦です。1番人気の複勝率100%という確実性も見逃せません。</p>
+
+                                    <p>川崎競馬場最長の2100mは究極のスタミナ戦で、持続力と粘り強さが問われる特殊な条件。11番枠（57.1%連対率）の安定性も特筆すべきポイントです。</p>
+
+                                    <p><a href="/blog/course/kawasaki-2100m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></p>
+                                </div>
+
+                                <div class="key-stats">
+                                    <h5>📈 重要データ</h5>
+                                    <div class="stats-grid">
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番枠勝率</span>
+                                            <span class="stat-value">25.0%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">2・3番人気勝率</span>
+                                            <span class="stat-value">37.5%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">1番人気複勝率</span>
+                                            <span class="stat-value">100.0%</span>
+                                        </div>
+                                        <div class="stat-item">
+                                            <span class="stat-label">11番枠連対率</span>
+                                            <span class="stat-value">57.1%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="kawasaki-special">
+                <h2>🌟 川崎競馬場の特殊性</h2>
+                
+                <div class="special-features">
+                    <div class="feature-card">
+                        <h3>🔄 左回りの影響</h3>
+                        <ul>
+                            <li>右回りとは逆の展開パターン</li>
+                            <li>内枠の切れ込みが容易</li>
+                            <li>外枠も大きく不利にならない</li>
+                            <li>左利きの馬に有利な場合がある</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <h3>⚡ 900m距離の特殊性</h3>
+                        <ul>
+                            <li>南関4場で唯一の900m設定</li>
+                            <li>4番枠14.1%の最高勝率記録</li>
+                            <li>1番人気複勝率80.0%の圧倒的信頼度</li>
+                            <li>主に新馬戦・2歳戦で使用</li>
+                            <li>ゲート位置と瞬発力が決め手</li>
+                            <li><a href="/blog/course/kawasaki-900m" style="color: #3b82f6; font-weight: bold;">📊 詳細データ分析を見る</a></li>
+                        </ul>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <h3>🏃 差し有利の展開</h3>
+                        <ul>
+                            <li>ハイペースになりやすい</li>
+                            <li>先行馬の消耗が激しい</li>
+                            <li>差し・追込みが台頭しやすい</li>
+                            <li>直線での末脚勝負</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <h3>⚡ コース特性活用法</h3>
+                        <ul>
+                            <li>小回りコースの機動力重視</li>
+                            <li>コーナーワークの巧さ</li>
+                            <li>左回り適性の見極め</li>
+                            <li>ペース読みの重要性</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="winning-strategies">
+                <h2>🏆 川崎競馬場勝率向上の鍵</h2>
+                
+                <div class="strategies-grid">
+                    <div class="strategy-card">
+                        <h3>💡 脚質別戦略</h3>
+                        <ul>
+                            <li>逃げ・先行：スタート重視</li>
+                            <li>差し：末脚とコーナーワーク</li>
+                            <li>追込み：ペース読みが重要</li>
+                            <li>900mは瞬発力が全て</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="strategy-card">
+                        <h3>📈 距離適性の見極め</h3>
+                        <ul>
+                            <li>900m：純粋なスピード勝負</li>
+                            <li>1400m：バランス型</li>
+                            <li>1500m・1600m：差し適性重視</li>
+                            <li>2000m以上：スタミナ配分</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="strategy-card">
+                        <h3>⚡ 枠順の活用法</h3>
+                        <ul>
+                            <li>内枠：切れ込み有利</li>
+                            <li>外枠：大きな不利なし</li>
+                            <li>900mでは枠順格差小</li>
+                            <li>1500m以上で差し狙い</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="strategy-card">
+                        <h3>⚡ 展開予想のコツ</h3>
+                        <ul>
+                            <li>基本的にハイペース</li>
+                            <li>差し馬の台頭に注意</li>
+                            <li>直線勝負を意識</li>
+                            <li>左回り適性を重視</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="data-summary">
+                <h2>📊 川崎競馬場データサマリー</h2>
+                
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <h3>実施距離</h3>
+                        <p class="large-text">6距離</p>
+                        <p class="sub-text">900m〜2100m</p>
+                    </div>
+                    
+                    <div class="summary-card">
+                        <h3>特殊距離</h3>
+                        <p class="large-text">900m</p>
+                        <p class="sub-text">南関唯一</p>
+                    </div>
+                    
+                    <div class="summary-card">
+                        <h3>コース特性</h3>
+                        <p class="large-text">左回り</p>
+                        <p class="sub-text">小回りコース</p>
+                    </div>
+                    
+                    <div class="summary-card">
+                        <h3>攻略の鍵</h3>
+                        <p class="large-text">差し有利</p>
+                        <p class="sub-text">展開読み重要</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="cta-section">
+                <div class="cta-container">
+                    <h2>🚀 川崎競馬場で勝率アップ！実戦データでさらに高精度予想</h2>
+                    <p>川崎競馬場の攻略法をマスターしたら、次はAI予想で的中率をさらに向上させませんか？左回りコースの特性を活かした戦略的予想で収支アップを目指しましょう。</p>
+
+                    <div class="cta-features">
+                        <div class="feature-item">
+                            <span class="feature-icon">🎯</span>
+                            <span class="feature-text">川崎競馬場特化AI分析</span>
+                        </div>
+                        <div class="feature-item">
+                            <span class="feature-icon">📊</span>
+                            <span class="feature-text">左回り適性データ活用</span>
+                        </div>
+                        <div class="feature-item">
+                            <span class="feature-icon">⚡</span>
+                            <span class="feature-text">差し有利展開予測</span>
+                        </div>
+                        <div class="feature-item">
+                            <span class="feature-icon">💰</span>
+                            <span class="feature-text">900m特殊距離対応</span>
+                        </div>
+                    </div>
+
+                    <div class="cta-buttons">
+                        <a href="/free-prediction" class="cta-button primary">
+                            <span class="button-text">無料予想を試す</span>
+                            <span class="button-subtitle">川崎全レース予想無料公開</span>
+                        </a>
+                        <a href="/pricing" class="cta-button secondary">
+                            <span class="button-text">全距離対応プラン</span>
+                            <span class="button-subtitle">900m〜2100m完全攻略</span>
+                        </a>
+                    </div>
+
+                    <div class="additional-links">
+                        <a href="/course/" class="link-button">他の競馬場も見る</a>
+                        <a href="/blog/course/kawasaki-1600m" class="link-button">詳細記事を読む</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <style>
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        .breadcrumb {
+            margin: 1rem 0;
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+        }
+
+        .breadcrumb a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        .page-header {
+            text-align: center;
+            margin: 2rem 0 3rem;
+            padding: 2rem;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border-radius: 12px;
+            border: 2px solid rgba(139, 92, 246, 0.2);
+        }
+
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .last-updated {
+            margin: 1rem 0;
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+        }
+
+        .updated-label {
+            font-weight: 600;
+        }
+
+        .lead {
+            font-size: 1.2rem;
+            color: var(--body-text-color);
+            margin: 0;
+        }
+
+        .track-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .info-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .info-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: #3b82f6;
+        }
+
+        .info-card .highlight {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #3b82f6;
+            margin: 0;
+        }
+
+        .track-description {
+            background: rgba(59, 130, 246, 0.05);
+            padding: 1.5rem;
+            border-radius: 10px;
+            border-left: 4px solid var(--secondary-color);
+            margin: 2rem 0;
+        }
+
+        .distance-category {
+            margin: 3rem 0;
+        }
+
+        .category-title {
+            font-size: 1.6rem;
+            margin-bottom: 1.5rem;
+            color: #3b82f6;
+            border-bottom: 2px solid rgba(139, 92, 246, 0.3);
+            padding-bottom: 0.5rem;
+        }
+
+        .distance-cards {
+            display: grid;
+            gap: 2rem;
+        }
+
+        .distance-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .distance-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(139, 92, 246, 0.2);
+        }
+
+        .distance-card.highlight {
+            border-color: rgba(59, 130, 246, 0.4);
+            background: rgba(59, 130, 246, 0.05);
+            border-width: 1px;
+        }
+
+        .distance-card h4 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            color: var(--heading-color);
+        }
+
+        .course-specs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .course-specs span {
+            background: rgba(139, 92, 246, 0.2);
+            color: #3b82f6;
+            padding: 0.3rem 0.8rem;
+            border-radius: 15px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .strategy-section {
+            margin: 1.5rem 0;
+        }
+
+        .strategy-section h5 {
+            font-size: 1.1rem;
+            margin-bottom: 0.8rem;
+            color: #3b82f6;
+        }
+
+        .strategy-section p {
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        .key-stats {
+            background: rgba(139, 92, 246, 0.1);
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-top: 1.5rem;
+        }
+
+        .key-stats h5 {
+            margin-bottom: 1rem;
+            color: #3b82f6;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.8rem;
+            border-radius: 6px;
+        }
+
+        .stat-label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--accent-text-color);
+            margin-bottom: 0.3rem;
+        }
+
+        .stat-value {
+            display: block;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #3b82f6;
+        }
+
+        .special-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .feature-card {
+            background: rgba(59, 130, 246, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+
+        .feature-card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .feature-card li {
+            padding: 0.3rem 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+        }
+
+        .feature-card li:before {
+            content: "✓ ";
+            color: #3b82f6;
+            font-weight: bold;
+        }
+
+        .strategies-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .strategy-card {
+            background: rgba(59, 130, 246, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+        }
+
+        .strategy-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: #3b82f6;
+        }
+
+        .strategy-card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .strategy-card li {
+            padding: 0.3rem 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+        }
+
+        .strategy-card li:before {
+            content: "✓ ";
+            color: var(--success-color);
+            font-weight: bold;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .summary-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .summary-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.8rem;
+            color: #3b82f6;
+        }
+
+        .large-text {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #3b82f6;
+            margin: 0.5rem 0;
+        }
+
+        .sub-text {
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+            margin: 0;
+        }
+
+        .cta-section {
+            margin: 4rem 0;
+            padding: 4rem 2rem;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 50%, rgba(16, 185, 129, 0.1) 100%);
+            border-radius: 20px;
+            border: 2px solid rgba(139, 92, 246, 0.3);
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><defs><radialGradient id="g" cx="20" cy="20" r="20"><stop stop-color="%23ffffff" stop-opacity="0.03"/><stop offset="1" stop-color="%23ffffff" stop-opacity="0"/></radialGradient></defs><rect width="100" height="20" fill="url(%23g)"/></svg>');
+            pointer-events: none;
+        }
+
+        .cta-container {
+            position: relative;
+            z-index: 1;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .cta-section h2 {
+            color: #f1f5f9;
+            font-size: 2rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 50%, #10b981 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .cta-section p {
+            color: #cbd5e1;
+            font-size: 1.1rem;
+            margin-bottom: 3rem;
+            line-height: 1.6;
+        }
+
+        .cta-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1.5rem;
+            margin: 3rem 0;
+        }
+
+        .feature-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 1.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .feature-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.2);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .feature-text {
+            color: #e2e8f0;
+            font-weight: 600;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1.5rem;
+            justify-content: center;
+            margin: 3rem 0;
+            flex-wrap: wrap;
+        }
+
+        .cta-button {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 1.5rem 2.5rem;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+            min-width: 200px;
+            border: 2px solid;
+        }
+
+        .cta-button.primary {
+            background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            color: white;
+            border-color: #8b5cf6;
+            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+        }
+
+        .cta-button.primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+        }
+
+        .cta-button.secondary {
+            background: transparent;
+            color: #3b82f6;
+            border-color: #3b82f6;
+        }
+
+        .cta-button.secondary:hover {
+            background: #3b82f6;
+            color: white;
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+        }
+
+        .button-text {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .button-subtitle {
+            font-size: 0.8rem;
+            opacity: 0.8;
+            font-weight: 400;
+        }
+
+        .additional-links {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .link-button {
+            color: #94a3b8;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            transition: all 0.3s;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+        }
+
+        .link-button:hover {
+            color: #3b82f6;
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        @media (max-width: 768px) {
+            .page-header h1 {
+                font-size: 2rem;
+            }
+
+            .track-info-grid,
+            .special-features,
+            .strategies-grid,
+            .summary-grid,
+            .cta-features {
+                grid-template-columns: 1fr;
+            }
+
+            .course-specs {
+                flex-direction: column;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .cta-section {
+                padding: 3rem 1.5rem;
+            }
+
+            .cta-section h2 {
+                font-size: 1.8rem;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .cta-button {
+                width: 100%;
+                max-width: 280px;
+            }
+
+            .additional-links {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</BaseLayout>

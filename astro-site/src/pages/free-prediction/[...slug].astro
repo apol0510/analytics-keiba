@@ -1,0 +1,703 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
+import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../../lib/shared-prediction-logic.js';
+import { getCollection } from 'astro:content';
+
+export async function getStaticPaths() {
+  // src/data/free-predictions/ 内の全JSONファイルを取得
+  const freePredictions = import.meta.glob('/src/data/free-predictions/*.json', { eager: true });
+
+  return Object.entries(freePredictions).map(([path, data]) => {
+    // ファイル名から日付を抽出 (例: /src/data/free-predictions/2026-01-07.json → 2026-01-07)
+    const fileName = path.split('/').pop().replace('.json', '');
+    const [year, month, day] = fileName.split('-');
+
+    return {
+      params: { slug: `${year}/${month}/${day}` },
+      props: { allRacesData: data }
+    };
+  });
+}
+
+const { allRacesData } = Astro.props;
+
+// 共有ロジックを使用してデータを処理
+const { mainRace, race12R: originalRace12R, sortedRaces } = processRaceData(allRacesData);
+
+if (!mainRace) {
+    throw new Error('メインレースが見つかりません。データを確認してください。');
+}
+
+// 日付と会場を取得
+const raceDate = allRacesData.raceDate; // "2026-01-07"
+const track = allRacesData.track; // "浦和競馬"
+
+// 日付を日本語形式に変換
+const [year, month, day] = raceDate.split('-');
+const formattedDate = `${parseInt(month)}月${parseInt(day)}日`;
+
+// メインレースのデータを取得
+const { raceInfo, horses, analysis, preview = '', allHorses, totalHorses } = mainRace;
+
+// 正規化されたホースデータ（メインレース用）
+const normalizedHorses = normalizeHorseData(mainRace);
+
+// 統一システムで戦略データを生成（JSONデータ優先、動的買い目対応）
+const raceData = processUnifiedRaceData(mainRace);
+
+// JSONデータにstrategiesが存在する場合は優先使用
+let strategies;
+if (mainRace.strategies && mainRace.strategies.safe && mainRace.strategies.balance && mainRace.strategies.aggressive) {
+    console.log(`✅ Archive ${allRacesData.raceDate}: Using JSON strategies data`);
+
+    // JSONデータのフィールド名をマッピング（title→name, risk→description）
+    const mapStrategy = (s) => ({
+        ...s,
+        name: s.title || s.name,
+        description: s.risk || s.description
+    });
+
+    strategies = {
+        safe: mapStrategy(mainRace.strategies.safe),
+        balance: mapStrategy(mainRace.strategies.balance),
+        aggressive: mapStrategy(mainRace.strategies.aggressive)
+    };
+} else {
+    console.log(`⚠️ Archive ${allRacesData.raceDate}: Using dynamic strategies`);
+    strategies = {
+        safe: raceData.strategies.safe,
+        balance: raceData.strategies.balance,
+        aggressive: raceData.strategies.aggressive
+    };
+}
+
+// スコア表示用のスコア変数を定義
+const mainHorseScore = getHorseConfidenceFromMark(mainRace.horses.main);
+const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
+
+// アーカイブページ用のヘッダー情報
+const isArchive = true;
+const archiveDate = formattedDate;
+---
+
+<BaseLayout title={`【${formattedDate}】無料予想アーカイブ | ${raceInfo.title}`} description={`${formattedDate} ${track}競馬${raceInfo.raceName}のAI予想アーカイブ。機械学習モデルによる高精度予想の過去データ。`}>
+    <div class="container">
+        <!-- アーカイブ通知バナー -->
+        <div class="archive-banner">
+            <div class="archive-icon">📅</div>
+            <div class="archive-text">
+                <div class="archive-title">過去の予想アーカイブ</div>
+                <div class="archive-date">{year}年{parseInt(month)}月{parseInt(day)}日 ({track})</div>
+            </div>
+            <a href="/free-prediction/" class="btn-latest">最新の予想を見る →</a>
+        </div>
+
+        <!-- ヘッダーセクション -->
+        <div class="header-section">
+            <div class="ai-badge">
+                <span class="pulse"></span>
+                <span class="ai-status">AI分析完了</span>
+            </div>
+            <h1 class="main-title">{formattedDate} {track} メインレース AI予想</h1>
+            <p class="race-title">{raceInfo.raceName}</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">能力指数</div>
+                    <div class="stat-value highlight-value">{raceInfo.abilityIndex}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">期待回収率</div>
+                    <div class="stat-value">{raceInfo.expectedReturn}%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">距離</div>
+                    <div class="stat-value">{raceInfo.distance}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- レースプレビューセクション -->
+        {preview && (
+            <section class="preview-section">
+                <h2 class="section-title">
+                    <span class="icon">🔍</span>
+                    レース展望
+                </h2>
+                <div class="preview-card">
+                    {preview.split('\n').map(paragraph => paragraph.trim() && <p>{paragraph.trim()}</p>)}
+                </div>
+            </section>
+        )}
+
+        <!-- 本命・対抗馬セクション -->
+        <section class="horses-section">
+            <h2 class="section-title">
+                <span class="icon">🎯</span>
+                推奨馬
+            </h2>
+
+            <!-- 本命馬 -->
+            <div class="horse-card main-horse">
+                <div class="horse-header">
+                    <div class="horse-mark">◎</div>
+                    <div class="horse-info-header">
+                        <div class="horse-number">
+                            {horses.main.number}
+                            <span class="horse-name">{horses.main.name}</span>
+                        </div>
+                        <div class="confidence-badge main-badge">
+                            信頼度 {mainHorseScore}%
+                        </div>
+                    </div>
+                </div>
+
+                <div class="analysis-text">
+                    {horses.main.reason && horses.main.reason.split('\n').map(paragraph => paragraph.trim() && <p>{paragraph.trim()}</p>)}
+                </div>
+            </div>
+
+            <!-- 対抗馬 -->
+            <div class="horse-card sub-horse">
+                <div class="horse-header">
+                    <div class="horse-mark sub-mark">○</div>
+                    <div class="horse-info-header">
+                        <div class="horse-number">
+                            {horses.sub.number}
+                            <span class="horse-name">{horses.sub.name}</span>
+                        </div>
+                        <div class="confidence-badge sub-badge">
+                            信頼度 {subHorseScore}%
+                        </div>
+                    </div>
+                </div>
+
+                <div class="analysis-text">
+                    {horses.sub.reason && horses.sub.reason.split('\n').map(paragraph => paragraph.trim() && <p>{paragraph.trim()}</p>)}
+                </div>
+            </div>
+        </section>
+
+        <!-- 戦略セクション -->
+        <section class="strategy-section">
+            <h2 class="section-title">
+                <span class="icon">📊</span>
+                推奨戦略
+            </h2>
+
+            <div class="strategies-grid">
+                <!-- 堅実戦略 -->
+                <div class="strategy-card safe">
+                    <div class="strategy-header">
+                        <div class="strategy-badge">堅実型</div>
+                        <div class="strategy-name">{strategies.safe.name}</div>
+                    </div>
+                    <div class="strategy-description">{strategies.safe.description}</div>
+                    <div class="strategy-stats">
+                        <div class="stat">
+                            <span class="stat-label">的中率</span>
+                            <span class="stat-value-small">{strategies.safe.hitRate}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">回収率</span>
+                            <span class="stat-value-small">{strategies.safe.recoveryRate}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">推奨額</span>
+                            <span class="stat-value-small">{strategies.safe.betAmount}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- バランス戦略 -->
+                <div class="strategy-card balance">
+                    <div class="strategy-header">
+                        <div class="strategy-badge">バランス型</div>
+                        <div class="strategy-name">{strategies.balance.name}</div>
+                    </div>
+                    <div class="strategy-description">{strategies.balance.description}</div>
+                    <div class="strategy-stats">
+                        <div class="stat">
+                            <span class="stat-label">的中率</span>
+                            <span class="stat-value-small">{strategies.balance.hitRate}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">回収率</span>
+                            <span class="stat-value-small">{strategies.balance.recoveryRate}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">推奨額</span>
+                            <span class="stat-value-small">{strategies.balance.betAmount}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 攻撃的戦略 -->
+                <div class="strategy-card aggressive">
+                    <div class="strategy-header">
+                        <div class="strategy-badge">攻撃型</div>
+                        <div class="strategy-name">{strategies.aggressive.name}</div>
+                    </div>
+                    <div class="strategy-description">{strategies.aggressive.description}</div>
+                    <div class="strategy-stats">
+                        <div class="stat">
+                            <span class="stat-label">的中率</span>
+                            <span class="stat-value-small">{strategies.aggressive.hitRate}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">回収率</span>
+                            <span class="stat-value-small">{strategies.aggressive.recoveryRate}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">推奨額</span>
+                            <span class="stat-value-small">{strategies.aggressive.betAmount}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- アーカイブ用CTA -->
+        <section class="cta-section">
+            <div class="cta-card">
+                <h3>最新の予想を今すぐチェック</h3>
+                <p>最新レースのAI予想・買い目情報を無料で公開中</p>
+                <div class="cta-buttons">
+                    <a href="/free-prediction/" class="btn btn-primary">最新の無料予想を見る</a>
+                    <a href="/free-prediction/archive/" class="btn btn-secondary">アーカイブ一覧を見る</a>
+                </div>
+            </div>
+        </section>
+    </div>
+</BaseLayout>
+
+<style>
+/* アーカイブバナー */
+.archive-banner {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border-radius: 16px;
+    padding: 20px 30px;
+    margin-bottom: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.archive-icon {
+    font-size: 40px;
+}
+
+.archive-text {
+    flex: 1;
+}
+
+.archive-title {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.archive-date {
+    color: #fef3c7;
+    font-size: 14px;
+}
+
+.btn-latest {
+    background-color: #ffffff;
+    color: #d97706;
+    padding: 12px 24px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all 0.3s ease;
+}
+
+.btn-latest:hover {
+    background-color: #fef3c7;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* その他のスタイルはfree-prediction.astroと共通 */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header-section {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+.pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #ffffff;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.2); }
+}
+
+.main-title {
+    font-size: 32px;
+    font-weight: 800;
+    margin-bottom: 8px;
+    color: #1f2937;
+}
+
+.race-title {
+    font-size: 18px;
+    color: #6b7280;
+    margin-bottom: 24px;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.stat-card {
+    background-color: #f9fafb;
+    padding: 16px;
+    border-radius: 12px;
+    text-align: center;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 8px;
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1f2937;
+}
+
+.highlight-value {
+    color: #3b82f6;
+}
+
+.stars-value {
+    color: #f59e0b;
+}
+
+/* レースプレビュー */
+.preview-section, .horses-section, .strategy-section, .cta-section {
+    margin-bottom: 40px;
+}
+
+.section-title {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #1f2937;
+}
+
+.icon {
+    font-size: 28px;
+}
+
+.preview-card {
+    background-color: #ffffff;
+    border: 2px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 24px;
+    line-height: 1.8;
+}
+
+.preview-card p {
+    margin-bottom: 12px;
+    color: #4b5563;
+}
+
+/* 馬情報カード */
+.horse-card {
+    background-color: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.main-horse {
+    border: 3px solid #3b82f6;
+}
+
+.sub-horse {
+    border: 3px solid #10b981;
+}
+
+.horse-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.horse-mark {
+    font-size: 48px;
+    color: #3b82f6;
+}
+
+.sub-mark {
+    color: #10b981;
+}
+
+.horse-info-header {
+    flex: 1;
+}
+
+.horse-number {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1f2937;
+    margin-bottom: 8px;
+}
+
+.horse-name {
+    font-size: 20px;
+    font-weight: 600;
+    margin-left: 12px;
+    color: #4b5563;
+}
+
+.confidence-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.main-badge {
+    background-color: #eff6ff;
+    color: #3b82f6;
+}
+
+.sub-badge {
+    background-color: #f0fdf4;
+    color: #10b981;
+}
+
+.analysis-text {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.analysis-text p {
+    margin-bottom: 12px;
+    color: #4b5563;
+    line-height: 1.8;
+}
+
+/* 戦略カード */
+.strategies-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.strategy-card {
+    background-color: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.strategy-card.safe {
+    border-left: 6px solid #3b82f6;
+}
+
+.strategy-card.balance {
+    border-left: 6px solid #10b981;
+}
+
+.strategy-card.aggressive {
+    border-left: 6px solid #f59e0b;
+}
+
+.strategy-header {
+    margin-bottom: 16px;
+}
+
+.strategy-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.safe .strategy-badge {
+    background-color: #eff6ff;
+    color: #3b82f6;
+}
+
+.balance .strategy-badge {
+    background-color: #f0fdf4;
+    color: #10b981;
+}
+
+.aggressive .strategy-badge {
+    background-color: #fef3c7;
+    color: #f59e0b;
+}
+
+.strategy-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1f2937;
+}
+
+.strategy-description {
+    color: #6b7280;
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.strategy-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.stat {
+    text-align: center;
+}
+
+.stat-label {
+    font-size: 11px;
+    color: #9ca3af;
+    display: block;
+    margin-bottom: 4px;
+}
+
+.stat-value-small {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+}
+
+/* CTA */
+.cta-card {
+    background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+    border-radius: 16px;
+    padding: 40px;
+    text-align: center;
+    color: white;
+}
+
+.cta-card h3 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.cta-card p {
+    font-size: 16px;
+    color: #e0e7ff;
+    margin-bottom: 24px;
+}
+
+.cta-buttons {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.btn {
+    display: inline-block;
+    padding: 14px 28px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background-color: #ffffff;
+    color: #3b82f6;
+}
+
+.btn-primary:hover {
+    background-color: #eff6ff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.btn-secondary {
+    background-color: transparent;
+    color: #ffffff;
+    border: 2px solid #ffffff;
+}
+
+.btn-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+}
+
+/* レスポンシブ */
+@media (max-width: 768px) {
+    .archive-banner {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .main-title {
+        font-size: 24px;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .strategies-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .cta-buttons {
+        flex-direction: column;
+    }
+
+    .btn {
+        width: 100%;
+    }
+}
+</style>

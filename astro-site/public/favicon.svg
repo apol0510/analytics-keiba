@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="aiGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge> 
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background Circle -->
+  <circle cx="50" cy="50" r="45" fill="url(#aiGradient)" filter="url(#glow)"/>
+  
+  <!-- Robot Head -->
+  <rect x="35" y="30" width="30" height="25" rx="5" fill="white"/>
+  
+  <!-- Robot Eyes -->
+  <circle cx="42" cy="38" r="3" fill="#3b82f6"/>
+  <circle cx="58" cy="38" r="3" fill="#3b82f6"/>
+  
+  <!-- Robot Mouth -->
+  <rect x="45" y="45" width="10" height="3" rx="1.5" fill="#8b5cf6"/>
+  
+  <!-- Robot Antennae -->
+  <line x1="42" y1="30" x2="42" y2="25" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <line x1="58" y1="30" x2="58" y2="25" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="42" cy="25" r="2" fill="#10b981"/>
+  <circle cx="58" cy="25" r="2" fill="#10b981"/>
+  
+  <!-- Robot Body -->
+  <rect x="30" y="55" width="40" height="20" rx="3" fill="white"/>
+  
+  <!-- Robot Arms -->
+  <rect x="25" y="60" width="8" height="3" rx="1.5" fill="white"/>
+  <rect x="67" y="60" width="8" height="3" rx="1.5" fill="white"/>
+  
+  <!-- Circuit Lines -->
+  <path d="M35 65 L40 65 L40 70 L45 70" stroke="#3b82f6" stroke-width="1" fill="none"/>
+  <path d="M65 65 L60 65 L60 70 L55 70" stroke="#8b5cf6" stroke-width="1" fill="none"/>
+  
+  <!-- Data Points -->
+  <circle cx="38" cy="62" r="1" fill="#10b981"/>
+  <circle cx="50" cy="67" r="1" fill="#f59e0b"/>
+  <circle cx="62" cy="62" r="1" fill="#ef4444"/>
+</svg>

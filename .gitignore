@@ -1,0 +1,25 @@
+.DS_Store
+
+# ========================================
+# 他プロジェクトの誤認識防止（2025-12-03追加）
+# ========================================
+# Claudeが複数ウィンドウで作業する際に
+# 間違ったプロジェクトを参照しないための保護
+# ========================================
+
+# 親ディレクトリの他プロジェクト（相対パス除外）
+../Keiba review platform/
+../nankan-analytics-pro/
+../nankan-beginner/
+../nankan-course/
+../nankan-inteli/
+../nankan-keiba/
+../nankankeiba/
+../nankankeiba.jp/
+../intelligence/
+payment-site/
+node_modules
+dist
+.astro
+.env
+.env.*

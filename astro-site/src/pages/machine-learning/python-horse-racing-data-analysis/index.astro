@@ -1,0 +1,368 @@
+---
+export const prerender = true;
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+
+const title = 'Pythonで始める競馬データ分析 - pandas基礎からXGBoostまで | NANKANアナリティクス';
+const description = 'pandasとscikit-learnを使った競馬データ分析の基礎を解説。データ前処理から特徴量エンジニアリング、XGBoostによる予想モデル構築まで実際のコード例付きで詳解。';
+---
+
+<BaseLayout title={title} description={description}>
+    <article class="article-content">
+        <header class="article-header">
+            <div class="breadcrumb">
+                <a href="/">ホーム</a> → <a href="/machine-learning">機械学習</a> → Pythonで始める競馬データ分析
+            </div>
+            <span class="article-category">機械学習</span>
+            <h1 class="article-title">Pythonで始める競馬データ分析 - pandas基礎からXGBoostまで</h1>
+            <div class="article-meta">
+                <span>📅 2025年1月15日</span>
+                <span>⏱️ 15分で読める</span>
+                <span>🏷️ Python, pandas, XGBoost, 機械学習</span>
+            </div>
+        </header>
+
+        <div class="article-body">
+            <section>
+                <h2>🎯 はじめに</h2>
+                <p>
+                    競馬データ分析は、機械学習の実践的な学習に最適な題材です。本記事では、Pythonのpandasライブラリを使った基本的なデータ処理から、
+                    XGBoostを活用した高精度予想モデルの構築まで、実際のコード例とともに解説します。
+                </p>
+
+                <div class="highlight-box">
+                    <h3>この記事で学べること</h3>
+                    <ul>
+                        <li>pandasによる競馬データの前処理手法</li>
+                        <li>競馬特有の特徴量エンジニアリング</li>
+                        <li>scikit-learnでの基本的な機械学習</li>
+                        <li>XGBoostによる高精度モデル構築</li>
+                        <li>モデル評価とパフォーマンス改善</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section>
+                <h2>📊 1. データ準備とpandas基礎</h2>
+
+                <h3>必要なライブラリのインストール</h3>
+                <pre><code># 必要なライブラリをインストール
+pip install pandas numpy scikit-learn xgboost matplotlib seaborn</code></pre>
+
+                <h3>基本的なデータ読み込み</h3>
+                <pre><code>import pandas as pd
+import numpy as np
+from datetime import datetime
+
+# 競馬データの読み込み
+race_data = pd.read_csv('race_results.csv')
+horse_data = pd.read_csv('horse_info.csv')
+
+# データの基本情報確認
+print("レースデータ形状", race_data.shape)
+print("馬データ形状", horse_data.shape)</code></pre>
+
+                <h3>データの前処理</h3>
+                <pre><code># 欠損値の確認と処理
+print("欠損値の数")
+print(race_data.isnull().sum())
+
+# 日付型への変換
+race_data['race_date'] = pd.to_datetime(race_data['race_date'])
+
+# 不要なデータの除去
+race_data = race_data.dropna(subset=['horse_id', 'finish_position'])</code></pre>
+            </section>
+
+            <section>
+                <h2>🔧 2. 特徴量エンジニアリング</h2>
+
+                <h3>基本的な特徴量作成</h3>
+                <pre><code>def create_basic_features(df):
+    # 馬齢グループ化
+    df['age_group'] = pd.cut(df['horse_age'], bins=[0, 3, 5, 7, 20],
+                            labels=['young', 'prime', 'mature', 'veteran'])
+
+    # 斤量差
+    df['weight_diff'] = df['jockey_weight'] - df['jockey_weight'].mean()
+
+    # 馬体重変化
+    df['weight_change'] = df.groupby('horse_id')['horse_weight'].diff()
+
+    return df
+
+race_data = create_basic_features(race_data)</code></pre>
+
+                <h3>過去成績特徴量</h3>
+                <pre><code>def create_performance_features(df):
+    # ソート
+    df = df.sort_values(['horse_id', 'race_date'])
+
+    # 過去のレース成績
+    df['past_3_avg_finish'] = df.groupby('horse_id')['finish_position'].rolling(3).mean().shift(1)
+    df['past_5_avg_finish'] = df.groupby('horse_id')['finish_position'].rolling(5).mean().shift(1)
+
+    # 勝率計算
+    df['win_rate'] = df.groupby('horse_id').apply(
+        lambda x: (x['finish_position'] == 1).rolling(5).mean().shift(1)
+    ).reset_index(level=0, drop=True)
+
+    return df
+
+race_data = create_performance_features(race_data)</code></pre>
+            </section>
+
+            <section>
+                <h2>🚀 3. XGBoostによる高精度モデル</h2>
+
+                <h3>XGBoostモデルの構築</h3>
+                <pre><code>import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+
+# 目的変数の作成（1着なら1、それ以外は0）
+race_data['target'] = (race_data['finish_position'] == 1).astype(int)
+
+# 特徴量選択
+feature_columns = [
+    'horse_age', 'jockey_weight', 'horse_weight', 'odds',
+    'weight_diff', 'weight_change', 'past_3_avg_finish',
+    'past_5_avg_finish', 'win_rate'
+]
+
+# 欠損値処理
+data_clean = race_data[feature_columns + ['target']].dropna()
+X = data_clean[feature_columns]
+y = data_clean['target']
+
+# 訓練・テストデータ分割
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+# XGBoostモデルの訓練
+xgb_model = xgb.XGBClassifier(
+    objective='binary_logistic',
+    max_depth=6,
+    learning_rate=0.1,
+    n_estimators=100,
+    random_state=42
+)
+
+xgb_model.fit(X_train, y_train)
+
+# 予測と評価
+y_pred = xgb_model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+
+print("XGBoost精度", accuracy)</code></pre>
+            </section>
+
+            <section>
+                <h2>🎯 まとめ</h2>
+                <p>
+                    本記事では、Pythonとpandasを使った競馬データ分析の基礎から、XGBoostによる高精度予想モデルの構築まで解説しました。
+                    特に重要なのは以下のポイントです：
+                </p>
+
+                <div class="summary-box">
+                    <h3>重要なポイント</h3>
+                    <ul>
+                        <li><strong>データ品質</strong>: 前処理と特徴量エンジニアリングがモデル性能に最も影響</li>
+                        <li><strong>過去成績特徴量</strong>: 馬の過去パフォーマンスが最も重要な特徴量</li>
+                        <li><strong>モデル選択</strong>: XGBoostは競馬データに特に有効</li>
+                        <li><strong>評価指標</strong>: 単純な精度だけでなく、AUCや確率較正も重要</li>
+                    </ul>
+                </div>
+
+                <p>
+                    さらに高度な手法（深層学習、アンサンブル学習、時系列分析など）に挑戦することで、
+                    より精度の高い予想モデルを構築できます。
+                </p>
+            </section>
+
+            <div class="article-navigation">
+                <div class="nav-prev">
+                    <a href="/machine-learning/">← 機械学習記事一覧</a>
+                </div>
+                <div class="nav-next">
+                    <a href="/deep-learning/lstm-time-series-tensorflow/">LSTM時系列モデル →</a>
+                </div>
+            </div>
+        </div>
+    </article>
+</BaseLayout>
+
+<style>
+    .article-content {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 20px;
+        line-height: 1.8;
+        color: #e2e8f0;
+    }
+
+    .article-header {
+        margin-bottom: 40px;
+        padding-bottom: 20px;
+        border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .breadcrumb {
+        color: #94a3b8;
+        margin-bottom: 15px;
+        font-size: 0.9rem;
+    }
+
+    .breadcrumb a {
+        color: #60a5fa;
+        text-decoration: none;
+    }
+
+    .breadcrumb a:hover {
+        text-decoration: underline;
+    }
+
+    .article-category {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        display: inline-block;
+        margin-bottom: 15px;
+    }
+
+    .article-title {
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin: 20px 0;
+        background: linear-gradient(135deg, #60a5fa, #c084fc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1.2;
+    }
+
+    .article-meta {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .article-body {
+        color: #cbd5e1;
+    }
+
+    .article-body h2 {
+        color: #60a5fa;
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin: 40px 0 20px 0;
+        padding-bottom: 10px;
+        border-bottom: 2px solid rgba(59, 130, 246, 0.2);
+    }
+
+    .article-body h3 {
+        color: #fbbf24;
+        font-size: 1.3rem;
+        font-weight: 600;
+        margin: 30px 0 15px 0;
+    }
+
+    .article-body p {
+        margin-bottom: 20px;
+        line-height: 1.8;
+    }
+
+    .highlight-box, .summary-box {
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 12px;
+        padding: 25px;
+        margin: 25px 0;
+    }
+
+    .highlight-box h3, .summary-box h3 {
+        color: #60a5fa;
+        margin-top: 0;
+        margin-bottom: 15px;
+    }
+
+    .highlight-box ul, .summary-box ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+
+    .highlight-box li, .summary-box li {
+        margin-bottom: 8px;
+        color: #e2e8f0;
+    }
+
+    pre {
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 8px;
+        padding: 20px;
+        overflow-x: auto;
+        margin: 20px 0;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    code {
+        color: #fbbf24;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    .article-navigation {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 60px;
+        padding-top: 30px;
+        border-top: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .nav-prev a, .nav-next a {
+        color: #60a5fa;
+        text-decoration: none;
+        padding: 12px 20px;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 8px;
+        transition: all 0.3s ease;
+    }
+
+    .nav-prev a:hover, .nav-next a:hover {
+        background: rgba(59, 130, 246, 0.1);
+        border-color: #60a5fa;
+    }
+
+    /* モバイル対応 */
+    @media (max-width: 768px) {
+        .article-content {
+            padding: 20px 15px;
+        }
+
+        .article-title {
+            font-size: 2rem;
+        }
+
+        .article-meta {
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .article-navigation {
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        pre {
+            font-size: 0.8rem;
+            padding: 15px;
+        }
+    }
+</style>

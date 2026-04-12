@@ -1,0 +1,1332 @@
+---
+import '../styles/global.css';
+
+export const prerender = true;
+
+export interface Props {
+  title: string;
+  description?: string;
+  image?: string;
+  type?: string;
+}
+
+const { title, description = 'AI技術で実現する競馬予想の未来。XGBoost・LSTMによる高精度分析で的中率87%、回収率156%を実現。', image, type = 'website' } = Astro.props;
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <meta name="description" content={description}>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon.svg">
+    <link rel="manifest" href="/site.webmanifest">
+    
+    <!-- SEO -->
+    <meta name="keywords" content="競馬,AI,機械学習,南関競馬,データサイエンス,Python,予想,分析" />
+    <link rel="canonical" href={canonicalURL} />
+
+    <!-- Google Search Console 検証用（実際の検証コードは後で置き換え） -->
+    <!-- <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE" /> -->
+
+    <!-- Google Analytics 4 -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-BTDCZE1B13"></script>
+    <script is:inline>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-BTDCZE1B13');
+    </script>
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content={type} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    {image && <meta property="og:image" content={new URL(image, Astro.site)} />}
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content={canonicalURL} />
+    <meta property="twitter:title" content={title} />
+    <meta property="twitter:description" content={description} />
+    {image && <meta property="twitter:image" content={new URL(image, Astro.site)} />}
+
+    <!-- 構造化データ -->
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "NANKANアナリティクス",
+      "description": description,
+      "url": "https://nankan-analytics.keiba.link"
+    })} />
+    
+    <!-- Tailwind CSS CDN削除（CORSエラー回避） -->
+    
+    <style>
+        :root {
+            --card-background: rgba(255, 255, 255, 0.1);
+            --body-background: #0f172a;
+            --accent-color: #3b82f6;
+            --accent-color-darker: #1d4ed8;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --card-border-radius: 10px;
+            --tag-border-radius: 6px;
+            --card-padding: 20px;
+            --main-top-padding: 30px;
+            --body-text-color: #e2e8f0;
+            --accent-text-color: #64748b;
+            --border-color: rgba(148, 163, 184, 0.2);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: var(--body-text-color);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        .header {
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-color);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-color);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .logo-icon {
+            font-size: 28px;
+            filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.3));
+        }
+
+        .nav-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex: 1;
+            justify-content: flex-end;
+        }
+
+        .nav-menu {
+            display: flex;
+            list-style: none;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .nav-menu li.hidden {
+            display: none;
+        }
+
+        .nav-menu a {
+            color: var(--body-text-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+            position: relative;
+            padding: 8px 10px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px solid rgba(59, 130, 246, 0.15);
+        }
+
+        .nav-menu a:hover {
+            color: var(--accent-color);
+            background: rgba(59, 130, 246, 0.15);
+            border-color: rgba(59, 130, 246, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
+        }
+
+        .nav-menu a::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 50%;
+            width: 0;
+            height: 2px;
+            background: var(--accent-color);
+            transition: width 0.3s ease, left 0.3s ease;
+        }
+
+        .nav-menu a:hover::after {
+            width: 80%;
+            left: 10%;
+        }
+
+        .nav-icon {
+            font-size: 1rem;
+            filter: drop-shadow(0 1px 2px rgba(59, 130, 246, 0.2));
+            flex-shrink: 0;
+        }
+
+        .pricing-link {
+            background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%) !important;
+            color: white !important;
+            padding: 8px 16px !important;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+            border: 1px solid rgba(139, 92, 246, 0.4) !important;
+        }
+
+        .pricing-link:hover {
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+            background: linear-gradient(135deg, #4f94ff 0%, #9d6cff 100%) !important;
+            border-color: rgba(139, 92, 246, 0.6) !important;
+        }
+
+        .pricing-link::after {
+            display: none;
+        }
+        
+        .logout-link {
+            background: rgba(239, 68, 68, 0.1) !important;
+            color: #ef4444 !important;
+            border: 1px solid rgba(239, 68, 68, 0.3) !important;
+            padding: 8px 10px !important;
+            border-radius: 6px !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 5px !important;
+            white-space: nowrap !important;
+            font-weight: 500 !important;
+            font-size: 0.9rem !important;
+            text-decoration: none !important;
+            transition: all 0.3s ease !important;
+        }
+        
+        .logout-link:hover {
+            background: rgba(239, 68, 68, 0.2) !important;
+            border-color: rgba(239, 68, 68, 0.5) !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 4px 8px rgba(239, 68, 68, 0.2) !important;
+        }
+        
+        .logout-link .nav-icon {
+            font-size: 1rem !important;
+            filter: drop-shadow(0 1px 2px rgba(239, 68, 68, 0.2)) !important;
+            flex-shrink: 0 !important;
+        }
+
+        /* Mobile Menu */
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--body-text-color);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            position: relative;
+            z-index: 1001;
+        }
+
+        .mobile-menu-toggle:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+
+        /* ハンバーガーアイコン */
+        .hamburger-lines {
+            width: 24px;
+            height: 18px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+
+        .hamburger-lines span {
+            display: block;
+            height: 3px;
+            width: 100%;
+            background-color: var(--body-text-color);
+            border-radius: 2px;
+            transition: all 0.3s ease;
+            transform-origin: center;
+        }
+
+        .mobile-menu-toggle.active .hamburger-lines span:nth-child(1) {
+            transform: translateY(7.5px) rotate(45deg);
+        }
+
+        .mobile-menu-toggle.active .hamburger-lines span:nth-child(2) {
+            opacity: 0;
+            transform: scale(0);
+        }
+
+        .mobile-menu-toggle.active .hamburger-lines span:nth-child(3) {
+            transform: translateY(-7.5px) rotate(-45deg);
+        }
+
+        .mobile-nav-menu {
+            position: fixed;
+            top: 80px;
+            left: 0;
+            right: 0;
+            background: rgba(15, 23, 42, 0.98);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-20px);
+            transition: all 0.3s ease;
+            max-height: 0;
+            overflow: hidden;
+        }
+
+        /* アクティブ時にメニュー表示 */
+        .mobile-nav-menu.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+            max-height: 600px;
+            padding: 20px 0;
+        }
+
+        .mobile-nav-menu ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .mobile-nav-menu li {
+            margin: 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+        }
+
+        .mobile-nav-menu li:last-child {
+            border-bottom: none;
+        }
+
+        .mobile-nav-menu a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 15px 20px;
+            color: var(--body-text-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .mobile-nav-menu a::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 3px;
+            background: var(--accent-color);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+
+        .mobile-nav-menu a:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+            color: var(--accent-color);
+            padding-left: 30px;
+        }
+
+        .mobile-nav-menu a:hover::before {
+            transform: translateX(0);
+        }
+
+        .mobile-nav-icon {
+            font-size: 1.2rem;
+            filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.2));
+            transition: transform 0.3s ease;
+        }
+
+        .mobile-nav-menu a:hover .mobile-nav-icon {
+            transform: scale(1.2) rotate(10deg);
+        }
+
+        .mobile-nav-menu .pricing-link {
+            background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+            color: white !important;
+            margin: 10px 20px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .mobile-nav-menu .pricing-link:hover {
+            background: linear-gradient(135deg, #4f94ff 0%, #9d6cff 100%);
+        }
+        
+        /* モバイルログアウトボタンのスタイル */
+        .mobile-nav-menu #mobile-nav-logout a {
+            background: rgba(239, 68, 68, 0.1) !important;
+            color: #ef4444 !important;
+        }
+        
+        .mobile-nav-menu #mobile-nav-logout a:hover {
+            background: rgba(239, 68, 68, 0.2) !important;
+            color: #ef4444 !important;
+        }
+
+        .mobile-nav-separator {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+            margin: 10px 0;
+        }
+
+
+        /* Main Content */
+        .main-content {
+            margin-top: 80px;
+            padding-top: var(--main-top-padding);
+        }
+
+        /* Footer */
+        .footer {
+            background: linear-gradient(to bottom, rgba(15, 23, 42, 0.98), rgba(10, 15, 30, 1));
+            border-top: 2px solid var(--accent-color);
+            padding: 60px 0 30px;
+            margin-top: 80px;
+            color: var(--body-text-color);
+            position: relative;
+        }
+        
+        .footer::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-color), #8b5cf6, var(--accent-color));
+            animation: gradient-animation 3s linear infinite;
+        }
+        
+        @keyframes gradient-animation {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 100% 50%; }
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 40px;
+            margin-bottom: 50px;
+        }
+        
+        .footer-section {
+            text-align: left;
+        }
+        
+        .footer-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--body-text-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .footer-icon {
+            font-size: 1.2rem;
+            filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.3));
+        }
+        
+        .footer-links {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .footer-links li {
+            margin-bottom: 12px;
+        }
+        
+        .footer-links a {
+            color: var(--accent-text-color);
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            position: relative;
+            padding-left: 12px;
+        }
+        
+        .footer-links a::before {
+            content: '▸';
+            position: absolute;
+            left: 0;
+            color: var(--accent-color);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .footer-links a:hover {
+            color: var(--accent-color);
+            padding-left: 18px;
+        }
+        
+        .footer-links a:hover::before {
+            opacity: 1;
+        }
+        
+        .footer-bottom {
+            padding-top: 30px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+        }
+        
+        .footer-logo {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--accent-color);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .footer-tagline {
+            font-size: 0.95rem;
+            color: var(--accent-text-color);
+            margin-bottom: 8px;
+        }
+        
+        .footer-copyright {
+            font-size: 0.85rem;
+            color: var(--accent-text-color);
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 768px) {
+            .footer-content {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 30px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .footer-content {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+            
+            .footer-section {
+                text-align: center;
+            }
+            
+            .footer-title {
+                justify-content: center;
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .nav-menu {
+                gap: 10px;
+            }
+            
+            .nav-menu a {
+                font-size: 0.85rem;
+                padding: 6px 8px;
+            }
+            
+            .nav-wrapper {
+                gap: 15px;
+            }
+        }
+        
+        @media (max-width: 900px) {
+            .nav-menu a .nav-text {
+                display: none;
+            }
+            
+            .nav-menu a {
+                gap: 0;
+                padding: 8px;
+                min-width: 40px;
+                justify-content: center;
+            }
+            
+            .pricing-link .nav-text {
+                display: inline !important;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .nav-menu {
+                display: none;
+            }
+            
+            .mobile-menu-toggle {
+                display: block;
+            }
+            
+            .logo {
+                font-size: 20px;
+            }
+            
+            .logo-icon {
+                font-size: 24px;
+            }
+            
+            .container {
+                padding: 0 15px;
+            }
+            
+            .header-content {
+                padding: 12px 0;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .logo {
+                font-size: 18px;
+            }
+            
+            .logo-icon {
+                font-size: 20px;
+            }
+            
+            .container {
+                padding: 0 10px;
+            }
+        }
+    </style>
+    <!-- 開発環境用テスト認証スクリプト -->
+    {import.meta.env.DEV && <script src="/test-auth.js" is:inline></script>}
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="/" class="logo">
+                    <span class="logo-icon">🤖</span>
+                    NANKANアナリティクス
+                </a>
+                <nav class="nav-wrapper">
+                    <ul class="nav-menu" id="nav-menu">
+                        <li><a href="/free-prediction/"><span class="nav-icon">🎁</span> <span class="nav-text">無料予想</span></a></li>
+                        <li><a href="/about/"><span class="nav-icon">👨‍💻</span> <span class="nav-text">開発者</span></a></li>
+                        <li><a href="/technology/"><span class="nav-icon">🤖</span> <span class="nav-text">AI技術</span></a></li>
+                        <li><a href="/archive/"><span class="nav-icon">🏆</span> <span class="nav-text">的中実績</span></a></li>
+                        <li><a href="/contact/"><span class="nav-icon">📧</span> <span class="nav-text">お問い合わせ</span></a></li>
+                        <li><a href="/pricing/"><span class="nav-icon">💰</span> <span class="nav-text">料金プラン</span></a></li>
+                        <li id="nav-signup" class="nav-auth-item"><a href="/free-signup/"><span class="nav-icon">✨</span> <span class="nav-text">無料で始める</span></a></li>
+                        <li id="nav-login" class="nav-auth-item"><a href="/dashboard/" class="login-link"><span class="nav-icon">🔐</span> <span class="nav-text">マイページ</span></a></li>
+                        <li id="nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" class="dashboard-link"><span class="nav-icon">👤</span> <span class="nav-text">マイページ</span></a></li>
+                    </ul>
+                    
+                    
+                    <!-- Mobile Menu Toggle (Simple) -->
+                    <button class="mobile-menu-toggle" onclick="this.classList.toggle('active'); document.getElementById('mobile-nav-menu').classList.toggle('active')">
+                        <div class="hamburger-lines">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </button>
+                </nav>
+            </div>
+        </div>
+        
+        <!-- Mobile Navigation -->
+        <nav class="mobile-nav-menu" id="mobile-nav-menu">
+            <div class="container">
+                <ul>
+                    <li><a href="/free-prediction/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🎁</span> 無料予想</a></li>
+                    <li><a href="/about/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">👨‍💻</span> 開発者</a></li>
+                    <li><a href="/technology/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🤖</span> AI技術</a></li>
+                    <li><a href="/archive/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🏆</span> 的中実績</a></li>
+                    <li><a href="/contact/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">📧</span> お問い合わせ</a></li>
+                    <li><a href="/pricing/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">💰</span> 料金プラン</a></li>
+                    <li id="mobile-nav-signup" class="nav-auth-item"><a href="/free-signup/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">✨</span> 無料で始める</a></li>
+                    <li class="mobile-nav-separator nav-auth-item" id="mobile-nav-separator"></li>
+                    <li id="mobile-nav-login" class="nav-auth-item"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🔐</span> マイページ</a></li>
+                    <li id="mobile-nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">👤</span> マイページ</a></li>
+                </ul>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <slot />
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h3 class="footer-title">
+                        <span class="footer-icon">⚡</span>
+                        コース攻略
+                    </h3>
+                    <ul class="footer-links">
+                        <li><a href="/course/ooi">大井競馬場</a></li>
+                        <li><a href="/course/kawasaki">川崎競馬場</a></li>
+                        <li><a href="/course/funabashi">船橋競馬場</a></li>
+                        <li><a href="/course/urawa">浦和競馬場</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h3 class="footer-title">
+                        <span class="footer-icon">📚</span>
+                        初心者ガイド
+                    </h3>
+                    <ul class="footer-links">
+                        <li><a href="/blog/">ブログ</a></li>
+                        <li><a href="/about">私たちについて</a></li>
+                        <li><a href="/beginner">南関競馬入門</a></li>
+                        <li><a href="/beginner/lesson-01">Lesson 1: 基本を学ぶ</a></li>
+                        <li><a href="/beginner/lesson-02">Lesson 2: 馬券の種類</a></li>
+                        <li><a href="/beginner/lesson-03">Lesson 3: 予想の基本</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h3 class="footer-title">
+                        <span class="footer-icon">🤖</span>
+                        AI技術
+                    </h3>
+                    <ul class="footer-links">
+                        <li><a href="/technology">技術解説</a></li>
+                        <li><a href="/free-prediction">無料予想</a></li>
+                        <li><a href="/pricing">料金プラン</a></li>
+                        <li><a href="/archive">実績アーカイブ</a></li>
+                    </ul>
+                </div>
+
+                <div class="footer-section">
+                    <h3 class="footer-title">
+                        <span class="footer-icon">📊</span>
+                        サポート
+                    </h3>
+                    <ul class="footer-links">
+                        <li><a href="/dashboard">ダッシュボード</a></li>
+                        <li><a href="/contact/">お問い合わせ</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="footer-bottom">
+                <div class="footer-logo">
+                    <span class="logo-icon">🤖</span>
+                    NANKANアナリティクス
+                </div>
+                <p class="footer-tagline">AI技術による科学的競馬投資プラットフォーム</p>
+                <p class="footer-copyright">
+                    &copy; 2025 NANKANアナリティクス. All rights reserved.
+                </p>
+                <p style="margin-top: 0.75rem; font-size: 0.9rem;">
+                    <a href="/terms/" style="color: #60a5fa; text-decoration: none;">Terms of Service</a>
+                    <a href="/privacy/" style="color: #60a5fa; text-decoration: none; margin-left: 1rem;">Privacy Policy</a>
+                    <a href="/refund/" style="color: #60a5fa; text-decoration: none; margin-left: 1rem;">Refund Policy</a>
+                    <a href="/legal/" style="color: #60a5fa; text-decoration: none; margin-left: 1rem;">Legal Information</a>
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // 認証機能は一時的に無効化（MIMEエラー回避）
+        // import { getUserWithPlan } from '../lib/auth-utils.js';
+        
+        // プラン別ナビゲーション表示（一時無効化）
+        // async function updateNavigation() {
+        //     const { user, plan } = await getUserWithPlan();
+        //     
+        //     const navStandard = document.querySelectorAll('.nav-standard');
+        //     const navPremium = document.querySelectorAll('.nav-premium');
+        //     
+        //     if (plan === 'standard' || plan === 'premium') {
+        //         navStandard.forEach(el => el.classList.remove('hidden'));
+        //     }
+        //     
+        //     if (plan === 'premium') {
+        //         navPremium.forEach(el => el.classList.remove('hidden'));
+        //     }
+        // }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            // updateNavigation();
+
+            // データフレッシュネス管理システム初期化
+            initializeDataFreshnessSystem();
+
+            // 統合認証システム：ナビゲーションの表示状態を更新
+            const updateAuthNavigation = () => {
+                // 新しい決済システム（user-plan）と古いシステム（isLoggedIn）の両方をチェック
+                const userPlanData = localStorage.getItem('user-plan');
+                const isLoggedInOld = localStorage.getItem('isLoggedIn') === 'true';
+                const userPlanOld = localStorage.getItem('userPlan');
+                
+                let isLoggedIn = false;
+                let planType = null;
+                
+                // 新しいシステム（決済後のuser-plan）をチェック
+                if (userPlanData) {
+                    try {
+                        const userData = JSON.parse(userPlanData);
+                        if (userData && (userData.plan === 'standard' || userData.plan === 'premium')) {
+                            isLoggedIn = true;
+                            planType = userData.plan;
+                        }
+                    } catch (e) {
+                        console.warn('user-plan解析エラー:', e);
+                    }
+                }
+                
+                // 古いシステム（マジックリンクログイン）をチェック
+                if (!isLoggedIn && (isLoggedInOld || userPlanOld)) {
+                    isLoggedIn = true;
+                    planType = userPlanOld || 'free';
+                }
+                
+                // ナビゲーション要素を取得
+                const navSignup = document.getElementById('nav-signup');
+                const navLogin = document.getElementById('nav-login');
+                const navDashboard = document.getElementById('nav-dashboard');
+                
+                const mobileNavSignup = document.getElementById('mobile-nav-signup');
+                const mobileNavLogin = document.getElementById('mobile-nav-login');
+                const mobileNavDashboard = document.getElementById('mobile-nav-dashboard');
+                const mobileNavSeparator = document.getElementById('mobile-nav-separator');
+                
+                // ログアウトボタンを追加
+                if (!document.getElementById('nav-logout') && isLoggedIn) {
+                    const navMenu = document.getElementById('nav-menu');
+                    if (navMenu) {
+                        const logoutLi = document.createElement('li');
+                        logoutLi.id = 'nav-logout';
+                        logoutLi.className = 'nav-auth-item';
+                        
+                        const logoutLink = document.createElement('a');
+                        logoutLink.href = '#';
+                        logoutLink.onclick = (e) => { e.preventDefault(); logout(); return false; };
+                        logoutLink.className = 'logout-link';
+                        
+                        // スタイルを直接適用（確実に表示されるように）
+                        logoutLink.style.cssText = `
+                            background: rgba(239, 68, 68, 0.1) !important;
+                            color: #ef4444 !important;
+                            border: 1px solid rgba(239, 68, 68, 0.3) !important;
+                            padding: 8px 10px !important;
+                            border-radius: 6px !important;
+                            display: flex !important;
+                            align-items: center !important;
+                            gap: 5px !important;
+                            white-space: nowrap !important;
+                            font-weight: 500 !important;
+                            font-size: 0.9rem !important;
+                            text-decoration: none !important;
+                            transition: all 0.3s ease !important;
+                            position: relative !important;
+                        `;
+                        
+                        // ホバーイベントを追加
+                        logoutLink.addEventListener('mouseenter', function() {
+                            this.style.background = 'rgba(239, 68, 68, 0.2)';
+                            this.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                            this.style.transform = 'translateY(-2px)';
+                            this.style.boxShadow = '0 4px 8px rgba(239, 68, 68, 0.2)';
+                        });
+                        
+                        logoutLink.addEventListener('mouseleave', function() {
+                            this.style.background = 'rgba(239, 68, 68, 0.1)';
+                            this.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                            this.style.transform = 'translateY(0)';
+                            this.style.boxShadow = 'none';
+                        });
+                        
+                        logoutLink.innerHTML = `<span class="nav-icon">🚪</span> <span class="nav-text">ログアウト</span>`;
+                        
+                        logoutLi.appendChild(logoutLink);
+                        navMenu.appendChild(logoutLi);
+                    }
+                    
+                    // モバイルメニューにもログアウトボタンを追加
+                    const mobileNavMenu = document.querySelector('#mobile-nav-menu ul');
+                    if (mobileNavMenu && !document.getElementById('mobile-nav-logout')) {
+                        const mobileLogoutLi = document.createElement('li');
+                        mobileLogoutLi.id = 'mobile-nav-logout';
+                        mobileLogoutLi.className = 'nav-auth-item';
+                        
+                        const mobileLogoutLink = document.createElement('a');
+                        mobileLogoutLink.href = '#';
+                        mobileLogoutLink.onclick = (e) => {
+                            e.preventDefault();
+                            document.getElementById('mobile-nav-menu').classList.remove('active');
+                            logout();
+                            return false;
+                        };
+                        
+                        // モバイルログアウトボタンのスタイルを直接適用
+                        mobileLogoutLink.style.cssText = `
+                            display: flex !important;
+                            align-items: center !important;
+                            gap: 12px !important;
+                            padding: 15px 20px !important;
+                            color: #ef4444 !important;
+                            text-decoration: none !important;
+                            font-weight: 500 !important;
+                            transition: all 0.3s ease !important;
+                            position: relative !important;
+                            overflow: hidden !important;
+                            background: rgba(239, 68, 68, 0.1) !important;
+                        `;
+                        
+                        // モバイルホバーイベント
+                        mobileLogoutLink.addEventListener('mouseenter', function() {
+                            this.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+                            this.style.paddingLeft = '30px';
+                        });
+                        
+                        mobileLogoutLink.addEventListener('mouseleave', function() {
+                            this.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                            this.style.paddingLeft = '20px';
+                        });
+                        
+                        mobileLogoutLink.innerHTML = `<span class="mobile-nav-icon" style="font-size: 1.2rem; filter: drop-shadow(0 2px 4px rgba(239, 68, 68, 0.2)); transition: transform 0.3s ease;">🚪</span> ログアウト`;
+                        
+                        mobileLogoutLi.appendChild(mobileLogoutLink);
+                        mobileNavMenu.appendChild(mobileLogoutLi);
+                    }
+                }
+                
+                if (isLoggedIn) {
+                    // ログイン済み：マイページとログアウトを表示、ログイン/登録を非表示
+                    if (navSignup) navSignup.style.display = 'none';
+                    if (navLogin) navLogin.style.display = 'none';
+                    if (navDashboard) navDashboard.style.display = 'block';
+                    
+                    if (mobileNavSignup) mobileNavSignup.style.display = 'none';
+                    if (mobileNavLogin) mobileNavLogin.style.display = 'none';
+                    if (mobileNavDashboard) mobileNavDashboard.style.display = 'block';
+                    if (mobileNavSeparator) mobileNavSeparator.style.display = 'none';
+                    
+                    // マイページリンクにプラン情報を表示
+                    const dashboardLinks = document.querySelectorAll('.dashboard-link');
+                    dashboardLinks.forEach(link => {
+                        const planEmojis = { standard: '⚡', premium: '💎', free: '🎁' };
+                        const emoji = planEmojis[planType] || '👤';
+                        const textSpan = link.querySelector('.nav-text') || link.querySelector('span:last-child');
+                        if (textSpan) textSpan.textContent = `マイページ ${emoji}`;
+                    });
+                } else {
+                    // 未ログイン：ログイン/登録を表示、マイページとログアウトを非表示
+                    if (navSignup) navSignup.style.display = 'block';
+                    if (navLogin) navLogin.style.display = 'block';
+                    if (navDashboard) navDashboard.style.display = 'none';
+                    
+                    if (mobileNavSignup) mobileNavSignup.style.display = 'block';
+                    if (mobileNavLogin) mobileNavLogin.style.display = 'block';
+                    if (mobileNavDashboard) mobileNavDashboard.style.display = 'none';
+                    if (mobileNavSeparator) mobileNavSeparator.style.display = 'block';
+                    
+                    // ログアウトボタンを削除
+                    const logoutBtn = document.getElementById('nav-logout');
+                    if (logoutBtn) logoutBtn.remove();
+                    
+                    const mobileLogoutBtn = document.getElementById('mobile-nav-logout');
+                    if (mobileLogoutBtn) mobileLogoutBtn.remove();
+                }
+            };
+            
+            updateAuthNavigation();
+            
+            // LocalStorageの変更を監視（他のタブでの変更も含む）
+            window.addEventListener('storage', updateAuthNavigation);
+            
+            // カスタムイベントも監視（同一タブでの変更）
+            window.addEventListener('planUpdated', updateAuthNavigation);
+            window.addEventListener('userLoggedOut', updateAuthNavigation);
+        });
+
+        // データフレッシュネス管理システム
+        async function initializeDataFreshnessSystem() {
+            console.log('🔍 Initializing data freshness system...');
+
+            try {
+                // キャッシュバスター機能をインポート（動的import）
+                const { initCacheBuster } = await import('/src/lib/cache-buster.js');
+                const cacheBusterInstance = initCacheBuster();
+
+                // ページロード時のデータ健全性チェック
+                await performDataHealthCheck(cacheBusterInstance);
+
+                // 自動更新スケジューラーを開始（30分間隔）
+                startAutoRefreshScheduler(cacheBusterInstance);
+
+                console.log('✅ Data freshness system initialized successfully');
+            } catch (error) {
+                console.error('❌ Failed to initialize data freshness system:', error);
+                // フォールバック: 基本的なキャッシュクリアのみ実行
+                performBasicCacheCleanup();
+            }
+        }
+
+        async function performDataHealthCheck(cacheBuster) {
+            try {
+                // データが古い場合の警告とクリーンアップ
+                const isPredictionsStale = cacheBuster.isDataStale('predictions', 6);
+
+                if (isPredictionsStale) {
+                    console.warn('⚠️ Prediction data is stale (>6 hours), performing cleanup...');
+
+                    // ステイルデータの警告を表示
+                    showDataRefreshNotification();
+
+                    // キャッシュを強制的にクリア
+                    cacheBuster.forceCacheRefresh();
+
+                    // 最終更新時刻を更新
+                    cacheBuster.setLastDataUpdate('predictions');
+                }
+
+                console.log('🔍 Data health check completed');
+            } catch (error) {
+                console.error('❌ Data health check failed:', error);
+            }
+        }
+
+        function startAutoRefreshScheduler(cacheBuster) {
+            // 30分間隔での自動チェック
+            setInterval(async () => {
+                try {
+                    if (cacheBuster.isDataStale('predictions', 1)) { // 1時間で自動更新
+                        console.log('⏰ Auto-refreshing stale data...');
+
+                        // キャッシュを強制クリア
+                        cacheBuster.forceCacheRefresh();
+
+                        // 予想ページにいる場合はリロードを促す
+                        if (window.location.pathname.includes('prediction')) {
+                            showAutoRefreshNotification();
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ Auto refresh failed:', error);
+                }
+            }, 30 * 60 * 1000); // 30分
+        }
+
+        function showDataRefreshNotification() {
+            // データ更新通知を表示（非侵入的）
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 100px;
+                right: 20px;
+                background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+                color: white;
+                padding: 12px 20px;
+                border-radius: 8px;
+                box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+                z-index: 10000;
+                font-size: 0.9rem;
+                opacity: 0;
+                transform: translateX(100%);
+                transition: all 0.3s ease;
+                max-width: 300px;
+            `;
+            notification.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span>✅</span>
+                    <span>AIから最新の情報を取得しました！</span>
+                </div>
+            `;
+
+            document.body.appendChild(notification);
+
+            // アニメーション表示
+            setTimeout(() => {
+                notification.style.opacity = '1';
+                notification.style.transform = 'translateX(0)';
+            }, 100);
+
+            // 5秒後に自動消去
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transform = 'translateX(100%)';
+                setTimeout(() => notification.remove(), 300);
+            }, 5000);
+        }
+
+        function showAutoRefreshNotification() {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: rgba(15, 23, 42, 0.95);
+                color: white;
+                padding: 16px 20px;
+                border-radius: 10px;
+                border: 1px solid #3b82f6;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+                z-index: 10000;
+                font-size: 0.9rem;
+                opacity: 0;
+                transform: translateY(100%);
+                transition: all 0.3s ease;
+                max-width: 320px;
+                backdrop-filter: blur(10px);
+            `;
+            notification.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
+                        <span>🔄</span>
+                        <span>データを更新しました</span>
+                    </div>
+                    <button onclick="window.location.reload()" style="
+                        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+                        color: white;
+                        border: none;
+                        padding: 8px 16px;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 0.8rem;
+                        transition: all 0.2s ease;
+                    " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                        ページを更新して最新データを表示
+                    </button>
+                </div>
+            `;
+
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.opacity = '1';
+                notification.style.transform = 'translateY(0)';
+            }, 100);
+
+            // 10秒後に自動消去
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transform = 'translateY(100%)';
+                setTimeout(() => notification.remove(), 300);
+            }, 10000);
+        }
+
+        function performBasicCacheCleanup() {
+            // フォールバック: 基本的なキャッシュクリーンアップ
+            try {
+                // LocalStorageから古いキャッシュエントリを削除
+                const keys = Object.keys(localStorage);
+                keys.forEach(key => {
+                    if (key.startsWith('nankan_') && key.includes('cache')) {
+                        const timestamp = localStorage.getItem(key + '_timestamp');
+                        if (timestamp) {
+                            const age = Date.now() - parseInt(timestamp);
+                            if (age > 6 * 60 * 60 * 1000) { // 6時間
+                                localStorage.removeItem(key);
+                                localStorage.removeItem(key + '_timestamp');
+                            }
+                        }
+                    }
+                });
+
+                console.log('🧹 Basic cache cleanup completed');
+            } catch (error) {
+                console.error('❌ Basic cache cleanup failed:', error);
+            }
+        }
+
+        // グローバルログアウト関数
+        window.logout = function() {
+            // 全てのログイン情報をクリア
+            localStorage.removeItem('user-plan');
+            localStorage.removeItem('isLoggedIn');
+            localStorage.removeItem('userPlan');
+            localStorage.removeItem('userData');
+            localStorage.removeItem('userEmail');
+            
+            // ナビゲーション更新イベントを発火
+            window.dispatchEvent(new CustomEvent('userLoggedOut'));
+            
+            // ホームページにリダイレクト
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 500);
+        };
+        
+        // スムーススクロール
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth'
+                    });
+                }
+            });
+        });
+
+        // アニメーション効果
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, observerOptions);
+
+        // 要素にアニメーションを適用
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.tech-card, .article-card, .stats-card').forEach(el => {
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(20px)';
+                el.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+                observer.observe(el);
+            });
+
+            // カウントアップアニメーション（改良版）
+            function animateValue(element, start, end, duration, suffix = '') {
+                if (!element || !element.getAttribute) return;
+                
+                // 初期値をゼロに設定
+                element.innerHTML = '0' + suffix;
+                
+                let startTimestamp = null;
+                const step = (timestamp) => {
+                    if (!startTimestamp) startTimestamp = timestamp;
+                    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                    
+                    let current;
+                    try {
+                        if (end >= 1000) {
+                            current = Math.floor(progress * (end - start) + start);
+                            element.innerHTML = current.toLocaleString() + suffix;
+                        } else {
+                            current = (progress * (end - start) + start);
+                            element.innerHTML = current.toFixed(1) + suffix;
+                        }
+                        
+                        if (progress < 1) {
+                            window.requestAnimationFrame(step);
+                        }
+                    } catch (error) {
+                        console.error('カウントアップエラー:', error);
+                        element.innerHTML = end + suffix;
+                    }
+                };
+                window.requestAnimationFrame(step);
+            }
+
+            // Stats section のカウントアップを観察（改良版）
+            const statsObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && !entry.target.hasAttribute('data-animated')) {
+                        const targetAttr = entry.target.getAttribute('data-target');
+                        const suffixAttr = entry.target.getAttribute('data-suffix') || '';
+                        
+                        if (!targetAttr) {
+                            console.warn('data-target属性が見つかりません:', entry.target);
+                            return;
+                        }
+                        
+                        const target = parseFloat(targetAttr);
+                        if (isNaN(target)) {
+                            console.warn('無効なdata-target値:', targetAttr);
+                            return;
+                        }
+                        
+                        console.log('カウントアップ開始:', target, suffixAttr);
+                        animateValue(entry.target, 0, target, 2000, suffixAttr);
+                        entry.target.setAttribute('data-animated', 'true');
+                    }
+                });
+            }, { threshold: 0.3 });
+
+            // stats-number要素の監視開始
+            const statsElements = document.querySelectorAll('.stats-number');
+            console.log('stats-number要素を発見:', statsElements.length);
+            
+            statsElements.forEach(el => {
+                console.log('要素の監視開始:', el.getAttribute('data-target'));
+                statsObserver.observe(el);
+            });
+
+            // Stats cards hover effect
+            document.querySelectorAll('.stats-card').forEach(card => {
+                card.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-5px) scale(1.02)';
+                    this.style.boxShadow = '0 15px 40px rgba(59, 130, 246, 0.2)';
+                });
+                
+                card.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0) scale(1)';
+                    this.style.boxShadow = 'none';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

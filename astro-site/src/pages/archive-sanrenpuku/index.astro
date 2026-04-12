@@ -1,0 +1,941 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import archiveData2025_11 from '../../data/archiveSanrenpukuResults_2025-11.json';
+import archiveData2025_12 from '../../data/archiveSanrenpukuResults_2025-12.json';
+import archiveData2026_01 from '../../data/archiveSanrenpukuResults_2026-01.json';
+import archiveData2026_02 from '../../data/archiveSanrenpukuResults_2026-02.json';
+import archiveData2026_03 from '../../data/archiveSanrenpukuResults_2026-03.json';
+import archiveData2026_04 from '../../data/archiveSanrenpukuResults_2026-04.json';
+
+// 🔒 Premium会員認証チェック（無料会員はアクセス不可）
+// クライアントサイドでプラン判定を行う想定
+
+// 全月のデータを統合
+const archiveSanrenpukuResults = {
+  '2025': {
+    ...archiveData2025_11['2025'],
+    ...archiveData2025_12['2025']
+  },
+  '2026': {
+    ...archiveData2026_01['2026'],
+    ...archiveData2026_02['2026'],
+    ...archiveData2026_03['2026'],
+    ...archiveData2026_04['2026']
+  }
+};
+
+// 年別集計データを生成
+const years = Object.keys(archiveSanrenpukuResults).sort((a, b) => parseInt(b) - parseInt(a));
+
+const yearSummaries = years.map(year => {
+  const months = archiveSanrenpukuResults[year];
+  let yearTotalRaces = 0;
+  let yearHitRaces = 0;
+  let yearTotalPayout = 0;
+  let totalRecoveryRate = 0;
+  let daysCount = 0;
+
+  Object.values(months).forEach((monthData: any) => {
+    Object.values(monthData).forEach((dayData: any) => {
+      yearTotalRaces += dayData.totalRaces || 0;
+      yearHitRaces += dayData.hitRaces || 0;
+      yearTotalPayout += dayData.totalPayout || 0;
+      totalRecoveryRate += dayData.recoveryRate || 0;
+      daysCount++;
+    });
+  });
+
+  const hitRate = yearTotalRaces > 0 ? Math.round((yearHitRaces / yearTotalRaces) * 100) : 0;
+  const avgRecoveryRate = daysCount > 0 ? Math.round(totalRecoveryRate / daysCount) : 0;
+
+  return {
+    year,
+    totalRaces: yearTotalRaces,
+    hitRaces: yearHitRaces,
+    hitRate,
+    totalPayout: yearTotalPayout,
+    avgRecoveryRate,
+    months: Object.keys(months).length
+  };
+});
+
+// 最新の年の最新月を取得
+const latestYear = years[0];
+const latestMonths = Object.keys(archiveSanrenpukuResults[latestYear]).sort((a, b) => parseInt(b) - parseInt(a));
+const latestMonth = latestMonths[0];
+
+const title = '三連複的中実績アーカイブ | NANKANアナリティクス';
+const description = 'NANKANアナリティクスの三連複買い目的中実績を年別にご覧いただけます。AI予想による高精度な三連複予想の実績をご確認ください。';
+---
+
+<BaseLayout title={title} description={description}>
+  <!-- 🔒 Standard/Premium会員専用認証チェック（クライアントサイドJavaScript） -->
+  <script is:inline>
+    // LocalStorageからプラン情報取得
+    // 🔴 重要: user-planオブジェクトから取得（premium-predictions.astroと同じロジック）
+    let userPlan = null;
+    let userEmail = null;
+
+    // user-planオブジェクトから取得（メインの認証方法）
+    const userPlanData = localStorage.getItem('user-plan');
+    if (userPlanData) {
+      try {
+        const parsed = JSON.parse(userPlanData);
+        userPlan = parsed.plan;
+        userEmail = parsed.email;
+      } catch (e) {
+        console.error('user-plan parse error:', e);
+      }
+    }
+
+    // フォールバック：userPlan（キャメルケース）も確認
+    if (!userPlan) {
+      userPlan = localStorage.getItem('userPlan');
+    }
+
+    // 🔴 LocalStorageキャッシュ問題対策（2025-11-04）
+    // 問題: 古い'Premium Predictions'がLocalStorageに残り続ける
+    // 解決: クライアントサイドで自動正規化してLocalStorageを更新
+    if (userPlan) {
+      const planLowerOriginal = userPlan.toLowerCase();
+      let normalizedPlan = userPlan;
+
+      // Premium Predictionsを自動的にPremiumに正規化
+      if (planLowerOriginal === 'premium predictions') {
+        normalizedPlan = 'Premium';
+        localStorage.setItem('userPlan', normalizedPlan);
+        console.log('🔄 プラン正規化: "Premium Predictions" → "Premium"');
+        userPlan = normalizedPlan;
+      }
+    }
+
+    // デバッグログ
+    console.log('🔍 Archive Sanrenpuku アクセスチェック');
+    console.log('Email:', userEmail);
+    console.log('Plan:', userPlan);
+
+    // Standard・Premium会員のみアクセス可能（大文字小文字区別なし）
+    // Premium Combo・Premium Sanrenpukuはアクセス不可
+    // ※Premium Plusは単発商品（会員プランではない）のため判定不要
+    const planLower = userPlan ? userPlan.toLowerCase() : '';
+
+    // 🔴 三連複アーカイブアクセス制御（2025-11-09修正）
+    // アクセス可能: Standard / Premium / Premium Predictions
+    // アクセス不可: Free / Premium Sanrenpuku / Premium Combo
+    //
+    // 理由: Standard/Premium会員へのアップセル導線のため、
+    //       既に三連複を購入済みの会員（Sanrenpuku/Combo）は閲覧不要
+    const isPremium = planLower === 'premium' || planLower === 'premium predictions';
+    const isStandard = planLower === 'standard';
+    const isAllowed = isStandard || isPremium;
+
+    console.log('🔍 三連複アーカイブアクセス判定:');
+    console.log('  userPlan:', userPlan);
+    console.log('  planLower:', planLower);
+    console.log('  isStandard:', isStandard);
+    console.log('  isPremium:', isPremium);
+    console.log('  isAllowed:', isAllowed);
+
+    if (!userPlan || !isAllowed) {
+      console.log('❌ アクセス拒否');
+      alert('この機能はStandard/Premium会員専用です。\n\nStandard会員以上にアップグレードすると、三連複的中実績をご覧いただけます。');
+      window.location.href = '/premium-predictions';
+    } else {
+      console.log('✅ アクセス許可');
+    }
+  </script>
+
+  <div class="archive-container">
+    <!-- ヘッダーセクション -->
+    <div class="archive-header">
+      <div class="header-content">
+        <div class="premium-badge">
+          <span class="badge-icon">👑</span>
+          <span class="badge-text">Premium専用</span>
+        </div>
+        <h1 class="archive-title">三連複的中実績アーカイブ</h1>
+        <p class="archive-subtitle">
+          Premium Select Sanrenpukuの買い目による的中実績を公開しています
+        </p>
+      </div>
+    </div>
+
+    <!-- 年別アーカイブ一覧 -->
+    <div class="years-grid">
+      {yearSummaries.map(summary => (
+        <a href={`/archive-sanrenpuku/${summary.year}/`} class="year-card">
+          <div class="year-card-header">
+            <h2 class="year-title">{summary.year}年</h2>
+            <div class="months-badge">{summary.months}ヶ月分</div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-label">的中率</div>
+              <div class="stat-value hit-rate">{summary.hitRate}%</div>
+              <div class="stat-detail">{summary.hitRaces}/{summary.totalRaces}R</div>
+            </div>
+
+            <div class="stat-item">
+              <div class="stat-label">合計配当</div>
+              <div class="stat-value payout">¥{summary.totalPayout.toLocaleString()}</div>
+            </div>
+
+            <div class="stat-item">
+              <div class="stat-label">平均回収率</div>
+              <div class="stat-value recovery">{summary.avgRecoveryRate}%</div>
+            </div>
+          </div>
+
+          <div class="view-details-btn">
+            <span>詳細を見る</span>
+            <span class="arrow">→</span>
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <!-- CTAセクション -->
+    <div class="cta-box">
+      <h2 class="cta-title">🎯 高性能AI三連複絞り込み機能搭載</h2>
+      <p class="cta-text">
+        <strong>馬単3戦略 → 絞り込み機能搭載</strong><br>
+        高性能AI自動判定で買い目を絞り込む三連複がおすすめです！
+      </p>
+      <div class="cta-stats">
+        <div class="cta-stat-item">
+          <span class="cta-stat-label">過去1年間実績</span>
+          <span class="cta-stat-value">的中率72% 回収率156%</span>
+        </div>
+        <div class="cta-stat-item">
+          <span class="cta-stat-label">買い目点数</span>
+          <span class="cta-stat-value">わずか7〜9点の少点数！</span>
+        </div>
+      </div>
+      <!-- プラン選択ボタン -->
+      <div class="cta-plans">
+        <button onclick="openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')" class="cta-plan-card cta-plan-recommended">
+          <div class="recommended-badge">おすすめ</div>
+          <div class="plan-header">
+            <span class="plan-name">🏦 Sanrenpuku Lifetime</span>
+          </div>
+          <div class="plan-price">¥78,000<span class="plan-period">（買い切り）</span></div>
+          <div class="plan-description">今だけ特別価格：¥108,000 → ¥78,000</div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+    <!-- 銀行振込モーダル -->
+    <div class="bank-modal" id="bankModal">
+      <div class="bank-modal-content">
+        <button class="bank-modal-close" onclick="closeBankModal()">×</button>
+
+        <h2 class="bank-modal-title">🏦 銀行振込でのお申し込み</h2>
+        <p class="modal-plan-info" id="modalPlanInfo"></p>
+
+        <div class="bank-info-box">
+          <div class="bank-info-item">
+            <span class="bank-info-label">振込先銀行</span>
+            <span class="bank-info-value">三井住友銀行
+              <button class="copy-button" onclick="copyToClipboard('三井住友銀行')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">支店名</span>
+            <span class="bank-info-value">洲本支店
+              <button class="copy-button" onclick="copyToClipboard('洲本支店')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座種別</span>
+            <span class="bank-info-value">普通</span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座番号</span>
+            <span class="bank-info-value">5338892
+              <button class="copy-button" onclick="copyToClipboard('5338892')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座名義</span>
+            <span class="bank-info-value" style="font-size: 0.95rem;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
+              <button class="copy-button" onclick="copyToClipboard('ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+            <span class="bank-info-label">振込金額</span>
+            <span class="bank-info-value" style="color: #10b981; font-size: 1.3rem;" id="modalAmount">¥5,980</span>
+          </div>
+        </div>
+
+        <div class="bank-steps">
+          <div class="bank-steps-title">📝 お申し込み手順</div>
+          <div class="bank-step">
+            <span class="bank-step-number">1</span>
+            <span>上記の口座情報に振込金額をお振込みください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">2</span>
+            <span>振込完了後、下記のフォームから必要情報をご送信ください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">3</span>
+            <span>入金確認取れ次第、即時にログイン情報をメールでお送りいたします</span>
+          </div>
+        </div>
+
+        <!-- 銀行振込申し込みフォーム -->
+        <div class="bank-form-section">
+          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
+
+          <form id="bankTransferForm" class="bank-form">
+            <div class="form-group">
+              <label for="fullName" class="form-label">お名前 <span class="required">*</span></label>
+              <input type="text" id="fullName" name="fullName" class="form-input" required placeholder="山田 太郎">
+            </div>
+
+            <div class="form-group">
+              <label for="email" class="form-label">メールアドレス <span class="required">*</span></label>
+              <input type="email" id="email" name="email" class="form-input" required placeholder="example@email.com">
+            </div>
+
+            
+            <div class="form-group">
+                <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
+                <input type="date" id="transferDate" name="transferDate" class="form-input" required>
+              </div>
+
+
+            <div class="form-group">
+              <label for="transferAmount" class="form-label">振込金額 <span class="required">*</span></label>
+              <input type="number" id="transferAmount" name="transferAmount" class="form-input" required readonly>
+            </div>
+
+            <div class="form-group">
+
+            <div class="form-group">
+              <label for="remarks" class="form-label">備考・ご要望</label>
+              <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
+            </div>
+
+            <button type="submit" class="form-submit-button" id="submitButton">
+              <span class="submit-text">📨 申し込みを送信</span>
+              <span class="submit-loading" style="display: none;">送信中...</span>
+            </button>
+
+            <div class="form-message" id="formMessage" style="display: none;"></div>
+          </form>
+        </div>
+
+        <div class="bank-warning">
+          <div class="bank-warning-title">⚠️ ご注意事項</div>
+          <div class="bank-warning-text">
+            ・振込手数料はお客様負担となります<br>
+            ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
+            ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
+            ・名義が異なる場合は、備考欄にその旨をご記入ください<br>
+            ・ご入金後のキャンセル・返金は承っておりません
+          </div>
+        </div>
+      </div>
+    </div>
+
+<script is:inline>
+  let currentPlan = '';
+  let currentAmount = 0;
+
+  function openBankModal(planName, amount) {
+    currentPlan = planName;
+    currentAmount = amount;
+
+    document.getElementById('modalPlanInfo').textContent = `プラン: ${planName} (¥${amount.toLocaleString()}/月)`;
+    document.getElementById('modalAmount').textContent = `¥${amount.toLocaleString()}`;
+    document.getElementById('transferAmount').value = amount;
+    document.getElementById('bankModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeBankModal() {
+    document.getElementById('bankModal').classList.remove('active');
+    document.body.style.overflow = 'auto';
+  }
+
+  function copyToClipboard(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+      alert('コピーしました: ' + text);
+    } catch (err) {
+      console.error('コピーに失敗しました:', err);
+    }
+
+    document.body.removeChild(textarea);
+  }
+
+  // DOMContentLoaded後にフォーム処理を登録
+  document.addEventListener('DOMContentLoaded', () => {
+    // モーダル外クリックで閉じる
+    document.addEventListener('click', (e) => {
+      const bankModal = document.getElementById('bankModal');
+      if (e.target === bankModal) {
+        closeBankModal();
+      }
+    });
+
+    // Escapeキーで閉じる
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeBankModal();
+      }
+    });
+
+    // 銀行振込フォーム送信処理
+    const bankTransferForm = document.getElementById('bankTransferForm');
+    if (bankTransferForm) {
+      bankTransferForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitButton = document.getElementById('submitButton');
+        const submitText = submitButton.querySelector('.submit-text');
+        const submitLoading = submitButton.querySelector('.submit-loading');
+        const formMessage = document.getElementById('formMessage');
+
+        submitButton.disabled = true;
+        submitText.style.display = 'none';
+        submitLoading.style.display = 'inline';
+        formMessage.style.display = 'none';
+
+        const formData = {
+          fullName: document.getElementById('fullName').value,
+          email: document.getElementById('email').value,
+          transferDate: document.getElementById('transferDate').value,
+          transferTime: "00:00",  // デフォルト値
+          transferAmount: document.getElementById('transferAmount').value,
+          transferName: document.getElementById('fullName').value,  // お名前と同じ
+          remarks: document.getElementById('remarks').value,
+          productName: `${currentPlan} (¥${currentAmount.toLocaleString()}/月)`,
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch('/.netlify/functions/bank-transfer-application', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.className = 'form-message success';
+            formMessage.style.display = 'block';
+
+            document.getElementById('bankTransferForm').reset();
+
+            setTimeout(() => {
+              closeBankModal();
+              formMessage.style.display = 'none';
+            }, 3000);
+          } else {
+            throw new Error(result.error || '送信に失敗しました');
+          }
+        } catch (error) {
+          formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+        } finally {
+          submitButton.disabled = false;
+          submitText.style.display = 'inline';
+          submitLoading.style.display = 'none';
+        }
+      });
+    }
+  });
+</script>
+
+<style>
+  .archive-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+
+  /* ヘッダーセクション */
+  .archive-header {
+    text-align: center;
+    margin-bottom: 48px;
+    padding: 32px 20px;
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
+    border-radius: 16px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow:
+      inset 0 0 0 0.5px rgba(96, 165, 250, 0.5),
+      0 4px 20px rgba(59, 130, 246, 0.15);
+  }
+
+  .premium-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.2) 100%);
+    border-radius: 20px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow:
+      inset 0 0 0 0.5px rgba(251, 191, 36, 0.5),
+      0 2px 10px rgba(251, 191, 36, 0.15);
+    margin-bottom: 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: rgb(251, 191, 36);
+  }
+
+  .badge-icon {
+    font-size: 1.1rem;
+  }
+
+  .archive-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: rgb(96, 165, 250);
+    margin-bottom: 12px;
+    text-shadow: 0 2px 8px rgba(96, 165, 250, 0.3);
+  }
+
+  .archive-subtitle {
+    font-size: 1rem;
+    color: rgba(226, 232, 240, 0.8);
+    line-height: 1.6;
+  }
+
+  /* 年別グリッド */
+  .years-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 24px;
+    margin-bottom: 48px;
+  }
+
+  .year-card {
+    display: block;
+    padding: 24px;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    text-decoration: none;
+    transition: all 0.3s ease;
+  }
+
+  .year-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 30px rgba(59, 130, 246, 0.25);
+    border-color: rgba(96, 165, 250, 0.3);
+  }
+
+  .year-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  }
+
+  .year-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: rgb(96, 165, 250);
+    margin: 0;
+  }
+
+  .months-badge {
+    padding: 4px 12px;
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: rgb(96, 165, 250);
+    box-shadow: inset 0 0 0 0.5px rgba(96, 165, 250, 0.5);
+  }
+
+  /* 統計グリッド */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .stat-item {
+    text-align: center;
+  }
+
+  .stat-label {
+    font-size: 0.75rem;
+    color: rgba(226, 232, 240, 0.6);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+
+  .stat-value.hit-rate {
+    color: rgb(16, 185, 129);
+  }
+
+  .stat-value.payout {
+    color: rgb(251, 191, 36);
+  }
+
+  .stat-value.recovery {
+    color: rgb(96, 165, 250);
+  }
+
+  .stat-detail {
+    font-size: 0.8rem;
+    color: rgba(226, 232, 240, 0.7);
+  }
+
+  /* 詳細ボタン */
+  .view-details-btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(234, 88, 12, 0.2) 100%);
+    border-radius: 8px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: inset 0 0 0 0.5px rgba(245, 158, 11, 0.5);
+    font-weight: 600;
+    color: rgb(245, 158, 11);
+    transition: all 0.3s ease;
+  }
+
+  .year-card:hover .view-details-btn {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(234, 88, 12, 0.3) 100%);
+  }
+
+  .arrow {
+    font-size: 1.2rem;
+    transition: transform 0.3s ease;
+  }
+
+  .year-card:hover .arrow {
+    transform: translateX(5px);
+  }
+
+  /* CTAセクション */
+  .cta-box {
+    padding: 32px;
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
+    border-radius: 16px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow:
+      inset 0 0 0 0.5px rgba(96, 165, 250, 0.5),
+      0 4px 20px rgba(59, 130, 246, 0.15);
+    text-align: center;
+  }
+
+  .cta-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: rgb(96, 165, 250);
+    margin-bottom: 16px;
+  }
+
+  .cta-text {
+    font-size: 1rem;
+    color: rgba(226, 232, 240, 0.8);
+    line-height: 1.8;
+    margin-bottom: 20px;
+  }
+
+  .cta-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .cta-stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    background: rgba(16, 185, 129, 0.1);
+    border-radius: 8px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  .cta-stat-label {
+    color: rgba(226, 232, 240, 0.7);
+    font-size: 0.85rem;
+  }
+
+  .cta-stat-value {
+    color: rgb(16, 185, 129);
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+
+  .cta-reason {
+    color: rgb(251, 191, 36);
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.6;
+    margin-bottom: 20px;
+  }
+
+  .cta-price {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(234, 88, 12, 0.2));
+    border-radius: 12px;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    margin-bottom: 24px;
+  }
+
+  .cta-price-label {
+    color: rgba(226, 232, 240, 0.7);
+    font-size: 0.85rem;
+  }
+
+  .cta-price-value {
+    color: rgb(251, 191, 36);
+    font-size: 2rem;
+    font-weight: 700;
+  }
+
+  .cta-button {
+    display: inline-block;
+    padding: 14px 32px;
+    background: linear-gradient(135deg, rgb(96, 165, 250) 0%, rgb(59, 130, 246) 100%);
+    border-radius: 8px;
+    font-weight: 700;
+    color: #fff;
+    text-decoration: none;
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .cta-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+  }
+
+  /* プラン選択カード */
+  .cta-plans {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 24px;
+  }
+
+  .cta-plan-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 24px;
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.1) 0%, rgba(59, 130, 246, 0.15) 100%);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    text-decoration: none;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+  }
+
+  .cta-plan-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(96, 165, 250, 0.5);
+    box-shadow: 0 8px 20px rgba(96, 165, 250, 0.2);
+  }
+
+  .cta-plan-recommended {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.2) 100%);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+  }
+
+  .cta-plan-recommended:hover {
+    border-color: rgba(251, 191, 36, 0.6);
+    box-shadow: 0 8px 20px rgba(251, 191, 36, 0.3);
+  }
+
+  .recommended-badge {
+    position: absolute;
+    top: -10px;
+    right: 16px;
+    padding: 4px 12px;
+    background: linear-gradient(135deg, rgb(251, 191, 36), rgb(245, 158, 11));
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #0f172a;
+    box-shadow: 0 2px 8px rgba(251, 191, 36, 0.4);
+  }
+
+  .plan-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .plan-name {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: rgb(226, 232, 240);
+  }
+
+  .plan-price {
+    font-size: 2rem;
+    font-weight: 700;
+    color: rgb(96, 165, 250);
+    text-align: center;
+  }
+
+  .cta-plan-recommended .plan-price {
+    color: rgb(251, 191, 36);
+  }
+
+  .plan-period {
+    font-size: 1rem;
+    font-weight: 400;
+    color: rgba(226, 232, 240, 0.7);
+  }
+
+  .plan-description {
+    font-size: 0.9rem;
+    color: rgba(226, 232, 240, 0.8);
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  /* レスポンシブ */
+  @media (max-width: 768px) {
+    .archive-header {
+      padding: 24px 16px;
+      margin-bottom: 32px;
+    }
+
+    .archive-title {
+      font-size: 1.5rem;
+    }
+
+    .archive-subtitle {
+      font-size: 0.9rem;
+    }
+
+    .years-grid {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    .year-card {
+      padding: 20px;
+    }
+
+    .year-title {
+      font-size: 1.3rem;
+    }
+
+    .stats-grid {
+      gap: 12px;
+    }
+
+    .stat-value {
+      font-size: 1.3rem;
+    }
+
+    .cta-box {
+      padding: 24px 16px;
+    }
+
+    .cta-title {
+      font-size: 1.2rem;
+    }
+
+    .cta-text {
+      font-size: 0.9rem;
+    }
+
+    .cta-stats {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .cta-stat-item {
+      padding: 10px;
+    }
+
+    .cta-plans {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    .cta-plan-card {
+      padding: 20px;
+    }
+
+    .plan-price {
+      font-size: 1.8rem;
+    }
+
+    .cta-stat-label {
+      font-size: 0.8rem;
+    }
+
+    .cta-stat-value {
+      font-size: 0.95rem;
+    }
+
+    .cta-reason {
+      font-size: 0.9rem;
+    }
+
+    .cta-price {
+      padding: 10px 16px;
+    }
+
+    .cta-price-label {
+      font-size: 0.8rem;
+    }
+
+    .cta-price-value {
+      font-size: 1.6rem;
+    }
+  }
+</style>
+</BaseLayout>

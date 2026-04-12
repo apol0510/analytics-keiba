@@ -1,0 +1,38 @@
+{
+  "name": "analytics-keiba",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "AI-Powered Analytics for 南関競馬 + 中央競馬 (analytics.keiba.link)",
+  "scripts": {
+    "dev": "astro dev",
+    "validate": "node scripts/validate-archive-data.js",
+    "build": "npm run validate:archive && astro build",
+    "build:skip-validation": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "clean": "rm -rf dist",
+    "typecheck": "astro check",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx,.astro",
+    "validate:archive": "node scripts/validate-archive-json.cjs",
+    "validate:prediction": "node scripts/validate-prediction-json.cjs",
+    "verify:sync": "node scripts/verifyArchiveSync.js",
+    "import:prediction": "node scripts/importPrediction.js",
+    "import:prediction:jra": "node scripts/importPredictionJra.js",
+    "import:results": "node scripts/importResults.js",
+    "import:results:jra": "node scripts/importResultsJra.js"
+  },
+  "dependencies": {
+    "@astrojs/netlify": "^6.5.8",
+    "@astrojs/rss": "^4.0.12",
+    "@astrojs/sitemap": "^3.5.0",
+    "@google/generative-ai": "^0.24.1",
+    "@sendgrid/mail": "^8.1.6",
+    "airtable": "^0.12.2",
+    "astro": "^5.13.2",
+    "sass": "^1.90.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^23.5.0"
+  }
+}

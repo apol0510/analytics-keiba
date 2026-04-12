@@ -1,0 +1,98 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_VERSION = "10"
+  # Force cache clear
+  NETLIFY_CACHE_VERSION = "v9"
+  # EMERGENCY CACHE CLEAR - FORCE REBUILD
+  BUILD_TIMESTAMP = "2026-01-12-22:22-ARCHIVE-2026-COMPLETE"
+  # CRITICAL CACHE BUSTING - COMPLETE INVALIDATION
+  BET_DISPLAY_VERSION = "v8-ARCHIVE-2026-BOTH-YEARS"
+  # FORCE COMPLETE REBUILD
+  FORCE_REBUILD = "ARCHIVE-DATA-2025-2026-BOTH"
+  # CLEAR ALL CACHES
+  CACHE_CLEAR = "TOTAL-REBUILD-20260112-2222"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/admin/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000"
+
+[[headers]]
+  for = "/*.css"  
+  [headers.values]
+    Cache-Control = "public, max-age=31536000"
+
+[[redirects]]
+  from = "/tokutei"
+  to = "/legal"
+  status = 301
+
+[[redirects]]
+  from = "/tokutei/"
+  to = "/legal/"
+  status = 301
+
+[[redirects]]
+  from = "/old-premium"
+  to = "/premium-predictions"
+  status = 301
+
+[[redirects]]
+  from = "/old-standard"
+  to = "/standard-predictions"
+  status = 301
+
+# Stripe Webhook - 必ずNetlify Functionに転送（最優先）
+[[redirects]]
+  from = "/api/stripe/webhook"
+  to = "/.netlify/functions/stripe-webhook"
+  status = 200
+
+# API Routes - Server function handling
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/ssr"
+  status = 200
+
+# Admin panel protection
+[[redirects]]
+  from = "/admin/*"
+  to = "/admin/:splat"
+  status = 200
+  headers = {X-Frame-Options = "DENY"}
+
+[[edge_functions]]
+  function = "admin-auth"
+  path = "/admin/*"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[dev]
+  command = "npm run dev"
+  port = 4321
+  publish = "dist"
+  autoLaunch = false

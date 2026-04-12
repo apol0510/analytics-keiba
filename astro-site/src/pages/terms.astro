@@ -1,0 +1,220 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Terms of Service" description="Terms of Service for NANKAN Analytics sports data analytics platform">
+  <style>
+    /* 暗い背景を完全に覆う */
+    :global(.main-content) {
+      background: white !important;
+      margin-top: 0 !important;
+      padding-top: 80px !important;
+    }
+
+    .legal-page {
+      padding: 4rem 0;
+      background: white;
+      min-height: calc(100vh - 80px);
+    }
+
+    .legal-content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .legal-content h1 {
+      font-size: 2.5rem;
+      color: #1f2937;
+      margin-bottom: 1rem;
+    }
+
+    .last-updated {
+      color: #6b7280;
+      margin-bottom: 3rem;
+      font-style: italic;
+    }
+
+    .legal-content h2 {
+      font-size: 1.75rem;
+      color: #2563eb;
+      margin-top: 2.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .legal-content p {
+      line-height: 1.8;
+      color: #374151;
+      margin-bottom: 1.5rem;
+    }
+
+    .legal-content ul {
+      list-style: disc;
+      margin-left: 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .legal-content li {
+      line-height: 1.8;
+      color: #374151;
+      margin-bottom: 0.5rem;
+    }
+
+    .language-notice {
+      background: #fef3c7;
+      padding: 1.5rem;
+      border-left: 4px solid #f59e0b;
+      margin-bottom: 2rem;
+      border-radius: 4px;
+    }
+
+    .language-notice p {
+      font-size: 1rem;
+      color: #92400e;
+      margin: 0;
+      line-height: 1.8;
+      font-weight: 500;
+    }
+
+    @media (max-width: 768px) {
+      .legal-content h1 {
+        font-size: 2rem;
+      }
+
+      .legal-content h2 {
+        font-size: 1.5rem;
+      }
+    }
+  </style>
+
+  <section class="legal-page">
+    <div class="container legal-content">
+      <h1>Terms of Service</h1>
+      <p class="last-updated">Last Updated: January 21, 2026</p>
+
+      <!-- Language Notice -->
+      <div class="language-notice">
+        <p>
+          <strong>⚠️ Important Notice:</strong><br>
+          This service and all contractual terms are provided in English only.<br>
+          By using this service, you confirm that you understand and agree to these terms.
+        </p>
+      </div>
+
+      <p>
+        Welcome to Tirol Analytics ("we," "our," or "us"). These Terms of Service ("Terms") govern your access to and use of our sports data analytics platform and services (collectively, the "Service").
+      </p>
+
+      <p>
+        By accessing or using our Service, you agree to be bound by these Terms. If you disagree with any part of these Terms, you may not access the Service.
+      </p>
+
+      <h2>1. Service Description</h2>
+      <p>
+        Tirol Analytics provides AI-powered sports data analytics services. Our platform analyzes historical performance data and provides statistical insights and analysis results for various sports competitions.
+      </p>
+
+      <h2>2. User Accounts</h2>
+      <p>
+        To access certain features of the Service, you may be required to create an account. You agree to:
+      </p>
+      <ul>
+        <li>Provide accurate, current, and complete information during registration</li>
+        <li>Maintain and promptly update your account information</li>
+        <li>Maintain the security of your password and account</li>
+        <li>Accept responsibility for all activities that occur under your account</li>
+        <li>Notify us immediately of any unauthorized use of your account</li>
+      </ul>
+
+      <h2>3. Subscription and Payment</h2>
+      <p>
+        Our Service is offered through various subscription plans. By subscribing, you agree to:
+      </p>
+      <ul>
+        <li>Pay all fees associated with your chosen subscription plan</li>
+        <li>Provide current, complete, and accurate payment information</li>
+        <li>Allow us to charge your payment method for recurring subscription fees</li>
+        <li>Accept that subscription fees are non-refundable except as required by law</li>
+      </ul>
+
+      <h2>4. Cancellation and Refunds</h2>
+      <p>
+        You may cancel your subscription at any time. Upon cancellation:
+      </p>
+      <ul>
+        <li>Your access to premium features will continue until the end of your current billing period</li>
+        <li>No refunds will be provided for partial subscription periods</li>
+        <li>You will not be charged for subsequent billing periods</li>
+      </ul>
+
+      <h2>5. Use of Service</h2>
+      <p>
+        You agree to use the Service only for lawful purposes and in accordance with these Terms. You agree NOT to:
+      </p>
+      <ul>
+        <li>Use the Service in any way that violates any applicable national or international law</li>
+        <li>Share your account credentials with others</li>
+        <li>Attempt to reverse engineer, decompile, or otherwise extract the source code of the Service</li>
+        <li>Use any automated system to access the Service without our express written permission</li>
+        <li>Interfere with or disrupt the Service or servers connected to the Service</li>
+      </ul>
+
+      <h2>6. Intellectual Property</h2>
+      <p>
+        The Service and its original content, features, and functionality are owned by Tirol Analytics and are protected by international copyright, trademark, and other intellectual property laws.
+      </p>
+
+      <h2>7. Data Accuracy and Analysis Disclaimer</h2>
+      <p>
+        The data and statistical analysis provided by this Service are based on historical information and mathematical models. While we strive for accuracy, we cannot guarantee the completeness, timeliness, or accuracy of the data or analysis results. The analysis results are provided for reference purposes only and do not guarantee specific outcomes or results in any sports competitions or events.
+      </p>
+
+      <h2>8. No Investment or Decision-Making Advice</h2>
+      <p>
+        This Service provides statistical analysis and data insights as a software tool. It does NOT provide investment advice, financial advice, or decision-making recommendations. Any decisions you make based on the data or analysis provided by this Service are entirely your own responsibility. You should not rely solely on the information provided by this Service for any financial or decision-making purposes.
+      </p>
+
+      <h2>9. Service Type: SaaS Platform</h2>
+      <p>
+        Tirol Analytics is a Software-as-a-Service (SaaS) platform that provides automated data analysis through AI and machine learning algorithms. Users access the platform via their personal dashboard to view real-time analytical results and statistical insights. The Service operates entirely through automated software systems without manual intervention or personalized consultation.
+      </p>
+
+      <h2>10. General Disclaimer of Warranties</h2>
+      <p>
+        The Service is provided "AS IS" and "AS AVAILABLE" without warranties of any kind, either express or implied. We do not warrant that:
+      </p>
+      <ul>
+        <li>The Service will be uninterrupted, secure, or error-free</li>
+        <li>The results obtained from the use of the Service will be accurate or reliable</li>
+        <li>Analysis or statistical results provided will guarantee specific outcomes</li>
+      </ul>
+
+      <h2>11. Limitation of Liability</h2>
+      <p>
+        In no event shall Tirol Analytics be liable for any indirect, incidental, special, consequential, or punitive damages, including without limitation, loss of profits, data, use, or other intangible losses, resulting from:
+      </p>
+      <ul>
+        <li>Your access to or use of or inability to access or use the Service</li>
+        <li>Any conduct or content of any third party on the Service</li>
+        <li>Unauthorized access, use, or alteration of your transmissions or content</li>
+      </ul>
+
+      <h2>12. Changes to Terms</h2>
+      <p>
+        We reserve the right to modify or replace these Terms at any time. If a revision is material, we will provide at least 30 days' notice prior to any new terms taking effect. Your continued use of the Service after such changes constitutes acceptance of the new Terms.
+      </p>
+
+      <h2>13. Governing Law</h2>
+      <p>
+        These Terms shall be governed by and construed in accordance with the laws of Japan, without regard to its conflict of law provisions.
+      </p>
+
+      <h2>14. Contact Information</h2>
+      <p>
+        If you have any questions about these Terms, please contact us at:
+        <br><br>
+        Email: <a href="mailto:support@tirol.link" style="color: #2563eb;">support@tirol.link</a>
+      </p>
+    </div>
+  </section>
+</BaseLayout>

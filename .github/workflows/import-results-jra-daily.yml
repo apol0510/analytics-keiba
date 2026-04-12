@@ -1,0 +1,182 @@
+name: Import JRA Results Daily Check
+
+on:
+  schedule:
+    # 毎日 23:30 JST (14:30 UTC) に実行
+    - cron: '30 14 * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [jra-results-updated]
+
+# 並行実行制御：archiveResultsJra.json更新系workflowで統一（同じファイルへの同時コミット防止）
+concurrency:
+  group: archive-jra-update
+  cancel-in-progress: false
+
+jobs:
+  check-and-import:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get current date (JST)
+        id: date
+        env:
+          PAYLOAD_DATE: ${{ github.event.client_payload.date }}
+        run: |
+          # repository_dispatchで日付が指定されている場合はそれを使用
+          if [ -n "$PAYLOAD_DATE" ] && [ "$PAYLOAD_DATE" != "null" ]; then
+            DATE="$PAYLOAD_DATE"
+            echo "📅 Using date from repository_dispatch: $DATE"
+          else
+            DATE=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            echo "📅 Current date (JST): $DATE"
+          fi
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Check for missing results
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE="${{ steps.date.outputs.date }}"
+
+          # keiba-data-sharedに結果データがあるかチェック
+          RESULT_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/jra/results/${DATE:0:4}/${DATE:5:2}/${DATE}.json"
+
+          echo "🔍 Checking for JRA results: $RESULT_URL"
+
+          if curl -sf "$RESULT_URL" > /tmp/results.json; then
+            echo "✅ Results found in keiba-data-shared"
+
+            # keiba-data-sharedの会場数を取得
+            EXPECTED_VENUES=$(cat /tmp/results.json | node -e "const data = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8')); const venues = [...new Set(data.races.map(r => r.venue))]; console.log(venues.length);")
+            echo "   Expected venues: $EXPECTED_VENUES"
+
+            # アーカイブに既に存在するかチェック
+            if grep -q "\"date\": \"$DATE\"" src/data/archiveResultsJra.json; then
+              # アーカイブの会場数を取得
+              ARCHIVED_VENUES=$(node -e "const data = JSON.parse(require('fs').readFileSync('src/data/archiveResultsJra.json', 'utf8')); const entry = data.find(e => e.date === '$DATE'); console.log(entry ? entry.venues.length : 0);")
+              echo "   Archived venues: $ARCHIVED_VENUES"
+
+              # 会場数が一致するかチェック
+              if [ "$ARCHIVED_VENUES" -ge "$EXPECTED_VENUES" ]; then
+                echo "⏭️  Already processed with all venues: $DATE"
+                echo "has_missing=false" >> $GITHUB_OUTPUT
+              else
+                echo "📥 Missing venues detected (archived: $ARCHIVED_VENUES, expected: $EXPECTED_VENUES)"
+                echo "   Reimporting to include all venues"
+                echo "has_missing=true" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "📥 Missing from archive: $DATE"
+              echo "has_missing=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "⏭️  No results in keiba-data-shared yet"
+            echo "has_missing=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Import missing results
+        if: steps.check.outputs.has_missing == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE="${{ steps.date.outputs.date }}"
+          echo "📥 Importing JRA results for: $DATE"
+          node scripts/importResultsJra.js --date "$DATE"
+
+      - name: Check for changes
+        id: git-check
+        if: steps.check.outputs.has_missing == 'true'
+        run: |
+          git add src/data/archiveResultsJra.json
+          git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          DATE="${{ steps.date.outputs.date }}"
+          COMMIT_MSG="Auto-verify: ${DATE} JRA results (daily check)"
+
+          # 変更ファイルを退避
+          cp src/data/archiveResultsJra.json /tmp/archiveResultsJra.json.backup
+          echo "📦 Backed up archiveResultsJra.json"
+
+          # Retry logic: reset → restore → commit → push（最大5回リトライ）
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            # 1. 完全同期：origin/mainの最新状態にリセット
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+            echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
+
+            # 2. 退避ファイルを復元
+            cp /tmp/archiveResultsJra.json.backup src/data/archiveResultsJra.json
+
+            # 3. ステージング＆コミット
+            git add src/data/archiveResultsJra.json
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+            git commit -m "$COMMIT_MSG"
+
+            # 4. プッシュ
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: Success notification
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          echo "✅ JRA results imported and pushed (daily check)"
+          echo "   Date: ${{ steps.date.outputs.date }}"
+          echo "   Trigger: scheduled (23:30 JST)"
+
+      - name: No changes notification
+        if: steps.check.outputs.has_missing != 'true'
+        run: |
+          echo "⏭️  No missing JRA results to import"
+          echo "   Date: ${{ steps.date.outputs.date }}"
+          echo "   Archive is up-to-date"

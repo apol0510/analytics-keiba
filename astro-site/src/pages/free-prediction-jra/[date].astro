@@ -1,0 +1,1178 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AIRaceComment from '../../components/AIRaceComment.astro';
+import AIBettingSection from '../../components/AIBettingSection.astro';
+import { readdirSync, readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { generateAdvancedMetrics } from '../../utils/featureScores.js';
+
+export const prerender = true;
+
+export function getStaticPaths() {
+  const predictionsDir = join(process.cwd(), 'src', 'data', 'predictions', 'jra');
+  const paths = [];
+
+  if (!existsSync(predictionsDir)) {
+    return paths;
+  }
+
+  const years = readdirSync(predictionsDir).filter(name => /^\d{4}$/.test(name));
+
+  for (const year of years) {
+    const yearPath = join(predictionsDir, year);
+    if (!existsSync(yearPath)) continue;
+
+    const months = readdirSync(yearPath).filter(name => /^\d{2}$/.test(name));
+
+    for (const month of months) {
+      const monthPath = join(yearPath, month);
+      if (!existsSync(monthPath)) continue;
+
+      const files = readdirSync(monthPath).filter(
+        file => file.endsWith('.json') && /^\d{4}-\d{2}-\d{2}\.json$/.test(file)
+      );
+
+      for (const file of files) {
+        const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
+        if (dateMatch) {
+          const filePath = join(monthPath, file);
+          try {
+            const content = readFileSync(filePath, 'utf-8');
+            const data = JSON.parse(content);
+            paths.push({
+              params: { date: dateMatch[1] },
+              props: { jraData: data }
+            });
+          } catch (e) {
+            // Skip invalid JSON files
+          }
+        }
+      }
+    }
+  }
+
+  return paths;
+}
+
+const { date } = Astro.params;
+const { jraData } = Astro.props;
+
+// Normalize data structure
+let venues = [];
+let isMultiVenue = false;
+
+if (jraData.venues && Array.isArray(jraData.venues)) {
+  isMultiVenue = true;
+  venues = jraData.venues;
+} else if (jraData.eventInfo && jraData.predictions) {
+  isMultiVenue = false;
+  venues = [{
+    venue: jraData.eventInfo.venue,
+    eventInfo: jraData.eventInfo,
+    predictions: jraData.predictions
+  }];
+}
+
+const venueNames = venues.map(v => v.venue || v.eventInfo?.venue).join(' / ');
+
+// generateAdvancedMetrics imported from featureScores.js
+---
+
+<BaseLayout
+  title={`${date} 中央競馬 AI予想 - KEIBA Intelligence`}
+  description={`${date} 中央競馬（JRA）${venueNames} のAI予想アーカイブ。KEIBA Intelligence の過去予想データを閲覧できます。`}
+>
+  <section class="prediction-section">
+    <div class="container">
+
+      <!-- アーカイブバナー -->
+      <div class="archive-banner">
+        <span class="archive-icon">&#128218;</span>
+        <span class="archive-text">この予想は過去のアーカイブです</span>
+      </div>
+
+      <!-- ページヘッダー -->
+      <div class="page-header">
+        <div class="ai-badge">
+          <span class="badge-pulse"></span>
+          <span class="badge-text">DEEP LEARNING PREDICTION SYSTEM / 深層学習予測システム</span>
+        </div>
+        <h1 class="page-title">
+          {date} 中央競馬（JRA）{isMultiVenue && venues.length > 1 ? ` - ${venueNames}` : ` - ${venueNames}`}
+        </h1>
+        <p class="page-subtitle">
+          Ensemble Neural Network Analysis / アンサンブル型ニューラルネットワーク分析
+        </p>
+        <div class="scan-line"></div>
+      </div>
+
+      <!-- 会場タブ（複数会場の場合のみ表示）-->
+      {isMultiVenue && venues.length > 1 && (
+        <div class="venue-selector">
+          {venues.map((venueData, venueIndex) => (
+            <button
+              class={`venue-btn ${venueIndex === 0 ? 'active' : ''}`}
+              data-venue-index={venueIndex}
+              onclick="selectVenue(event, this)"
+            >
+              <span class="venue-label">{venueData.venue}</span>
+              <span class="venue-race-count">{venueData.eventInfo.totalRaces}R</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <!-- 会場ごとの表示エリア -->
+      {venues.map((venueData, venueIndex) => {
+        const venuePredictions = venueData.predictions;
+        const venueInfo = venueData.eventInfo;
+
+        return (
+          <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
+            {/* 会場名（複数会場の場合のみ表示）*/}
+            {isMultiVenue && (
+              <div class="venue-header">
+                <h2 class="venue-title">{venueInfo.venue}</h2>
+                <p class="venue-info">{venueInfo.date} - {venueInfo.totalRaces}レース</p>
+              </div>
+            )}
+
+            <!-- レース選択ボタン -->
+            <div class="race-selector">
+              {venuePredictions.map((race, raceIndex) => (
+                <button
+                  class={`race-btn ${raceIndex === 0 ? 'active' : ''}`}
+                  data-venue-index={venueIndex}
+                  data-race-index={raceIndex}
+                  onclick="selectRace(event, this)"
+                  title={race.raceInfo.raceName || `第${race.raceInfo.raceNumber}レース`}
+                >
+                  <span class="race-label">{race.raceInfo.raceNumber}R</span>
+                  <span class="race-indicator"></span>
+                </button>
+              ))}
+            </div>
+
+            <!-- レース表示エリア -->
+            <div class="race-display-area">
+              {venuePredictions.map((race, raceIndex) => {
+                const allHorses = race.horses;
+                const horsesWithMetrics = allHorses.map(horse => ({
+                  ...horse,
+                  metrics: generateAdvancedMetrics(horse, allHorses, race.raceInfo)
+                }));
+
+                // PT値順にソートして上位5頭
+                const sortedTop5 = horsesWithMetrics
+                  .sort((a, b) => b.pt - a.pt)
+                  .slice(0, 5);
+
+                return (
+                  <div class={`race-content ${raceIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex} data-race-index={raceIndex}>
+                    {/* レース名ヘッダー */}
+                    <div class="race-name-header">
+                      <h2 class="race-name-title">{race.raceInfo.raceNumber}R {race.raceInfo.raceName}</h2>
+                      <div class="race-details">
+                        {race.raceInfo.startTime && <span class="race-detail-item">&#128336; {race.raceInfo.startTime}発走</span>}
+                        {race.raceInfo.distance && <span class="race-detail-item">&#128207; {race.raceInfo.distance}m</span>}
+                        {race.raceInfo.horseCount && <span class="race-detail-item">&#128014; {race.raceInfo.horseCount}頭</span>}
+                      </div>
+                    </div>
+
+                    {/* AI予想解説 */}
+                    <AIRaceComment
+                      type="prediction"
+                      masked={true}
+                      raceData={JSON.stringify({
+                        venue: venueData.venue,
+                        date: jraData.date,
+                        raceNumber: race.raceInfo.raceNumber,
+                        raceName: race.raceInfo.raceName,
+                        distance: race.raceInfo.distance,
+                        horseCount: race.raceInfo.horseCount,
+                        topHorses: allHorses.sort((a, b) => b.pt - a.pt).slice(0, 5).map(h => ({
+                          horseNumber: h.horseNumber,
+                          horseName: h.horseName,
+                          pt: h.pt,
+                          role: h.role,
+                          jockey: h.jockey,
+                          trainer: h.trainer,
+                          age: h.age,
+                          weight: h.weight,
+                          recentRaces: h.recentRaces || []
+                        }))
+                      })}
+                    />
+
+                    {/* AI買い目（無料版マスク）*/}
+                    <AIBettingSection masked={true} />
+
+                    {/* 詳細分析テーブル（上位5頭）*/}
+                    <div class="analysis-section">
+                      <div class="section-header">
+                        <div class="header-icon">&#128202;</div>
+                        <h2>Multi-Dimensional Performance Analysis / 多次元パフォーマンス分析（上位5頭）</h2>
+                      </div>
+
+                      {sortedTop5.map((horse, index) => {
+                        const m = horse.metrics;
+                        const isTopTwo = index < 2;
+
+                        return (
+                          <div class={`detailed-horse-card ${isTopTwo ? 'top-horse-detailed' : 'top-horse-simple'}`}>
+                            <div class="dhc-header">
+                              <div class="rank-badge-large">{index + 1}位</div>
+                              <div class="dhc-main-info">
+                                <div class="dhc-info-card">
+                                  <div class="dhc-title-line">
+                                    <span class="dhc-number">{horse.horseNumber}</span>
+                                    <span class="dhc-name">{horse.horseName}</span>
+                                    {horse.role && <span class={`dhc-role role-${horse.role}`}>{horse.role}</span>}
+                                  </div>
+                                  {(horse.jockey || horse.trainer || horse.age || horse.weight) && (
+                                    <div class="dhc-jockey-trainer">
+                                      {horse.age && <span class="dhc-age">&#127874; {horse.age}</span>}
+                                      {horse.weight && <span class="dhc-weight">&#9878;&#65039; {horse.weight}kg</span>}
+                                      {horse.jockey && <span class="dhc-jockey">&#127943; {horse.jockey}</span>}
+                                      {horse.trainer && <span class="dhc-trainer">&#127968; {horse.trainer}</span>}
+                                    </div>
+                                  )}
+                                  <div class="dhc-quick-metrics">
+                                    <div class="qm-item">
+                                      <span class="qm-label">PT値</span>
+                                      <span class="qm-value">{Number(horse.pt).toFixed(2)}</span>
+                                    </div>
+                                    <div class="qm-item">
+                                      <span class="qm-label">Win Prob. / 勝率</span>
+                                      <span class="qm-value">{m.winProbability}%</span>
+                                    </div>
+                                    <div class="qm-item">
+                                      <span class="qm-label">Model Certainty / 確信度</span>
+                                      <span class="qm-value">{m.modelCertainty}%</span>
+                                    </div>
+                                    <div class="qm-item">
+                                      <span class="qm-label">Expected Value / 期待値</span>
+                                      <span class={`qm-value ${m.expectedValue.startsWith('+') ? 'positive' : 'negative'}`}>
+                                        {m.expectedValue}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Feature Importance Analysis（1位・2位のみ詳細表示）*/}
+                            {isTopTwo && (
+                              <div class="dhc-features">
+                                <div class="feature-title">Feature Importance Analysis / 特徴量重要度分析</div>
+                                <div class="feature-grid">
+                                  <div class="feature-item">
+                                    <div class="feature-label">
+                                      <span class="feature-icon">&#9889;</span>
+                                      <span>Speed Index / スピード指数</span>
+                                    </div>
+                                    <div class="feature-bar-container">
+                                      <div class="feature-bar" style={`width: ${m.speedIndex}%`}></div>
+                                    </div>
+                                    <div class="feature-value">{m.speedIndex}</div>
+                                  </div>
+
+                                  <div class="feature-item">
+                                    <div class="feature-label">
+                                      <span class="feature-icon">&#128170;</span>
+                                      <span>Stamina Rating / スタミナ評価</span>
+                                    </div>
+                                    <div class="feature-bar-container">
+                                      <div class="feature-bar" style={`width: ${m.staminaRating}%`}></div>
+                                    </div>
+                                    <div class="feature-value">{m.staminaRating}</div>
+                                  </div>
+
+                                  <div class="feature-item">
+                                    <div class="feature-label">
+                                      <span class="feature-icon">&#128200;</span>
+                                      <span>Form Trend / 調子傾向</span>
+                                    </div>
+                                    <div class="feature-bar-container trend">
+                                      <div class="feature-bar-center"></div>
+                                      <div class="feature-bar trend" style={`width: ${Math.abs(parseFloat(m.formTrend))}%; ${parseFloat(m.formTrend) >= 0 ? 'left: 50%;' : 'right: 50%;'}`}></div>
+                                    </div>
+                                    <div class="feature-value">{m.formTrend}</div>
+                                  </div>
+
+                                  <div class="feature-item">
+                                    <div class="feature-label">
+                                      <span class="feature-icon">&#127937;</span>
+                                      <span>Track Compatibility / コース適性</span>
+                                    </div>
+                                    <div class="feature-bar-container">
+                                      <div class="feature-bar" style={`width: ${m.trackCompatibility}%`}></div>
+                                    </div>
+                                    <div class="feature-value">{m.trackCompatibility}</div>
+                                  </div>
+
+                                  <div class="feature-item">
+                                    <div class="feature-label">
+                                      <span class="feature-icon">&#128207;</span>
+                                      <span>Distance Fitness / 距離適性</span>
+                                    </div>
+                                    <div class="feature-bar-container">
+                                      <div class="feature-bar" style={`width: ${m.distanceFitness}%`}></div>
+                                    </div>
+                                    <div class="feature-value">{m.distanceFitness}</div>
+                                  </div>
+
+                                  <div class="feature-item">
+                                    <div class="feature-label">
+                                      <span class="feature-icon">&#128100;</span>
+                                      <span>Jockey Factor / 騎手要因</span>
+                                    </div>
+                                    <div class="feature-bar-container">
+                                      <div class="feature-bar" style={`width: ${m.jockeyFactor}%`}></div>
+                                    </div>
+                                    <div class="feature-value">{m.jockeyFactor}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 近走成績（あれば表示）*/}
+                            {horse.recentRaces && horse.recentRaces.length > 0 && (
+                              <div class="recent-races">
+                                <div class="recent-races-title">Recent Races / 近走成績</div>
+                                <div class="recent-races-grid">
+                                  {horse.recentRaces.map((recent, rIdx) => (
+                                    <div class="recent-race-item">
+                                      <div class="recent-race-label">{recent.label || `${rIdx + 1}走前`}</div>
+                                      <div class="recent-race-details">
+                                        {recent.venue && <span class="rr-venue">{recent.venue}</span>}
+                                        {recent.result && <span class={`rr-result ${parseInt(recent.result) <= 3 ? 'top3' : ''}`}>{recent.result}着</span>}
+                                        {recent.distance && <span class="rr-distance">{recent.distance}m</span>}
+                                        {recent.condition && <span class="rr-condition">{recent.condition}</span>}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <!-- ナビゲーション -->
+      <div class="archive-nav">
+        <a href="/free-prediction-jra" class="nav-link">
+          <span class="nav-icon">&#128202;</span>
+          <span>最新の中央競馬予想を見る</span>
+        </a>
+        <a href="/free-prediction-jra/archive" class="nav-link">
+          <span class="nav-icon">&#128218;</span>
+          <span>過去予想一覧に戻る</span>
+        </a>
+      </div>
+
+    </div>
+  </section>
+
+  <style>
+    .prediction-section {
+      padding: var(--spacing-xl) 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+        var(--bg-primary);
+    }
+
+    /* アーカイブバナー */
+    .archive-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacing-sm);
+      padding: var(--spacing-md) var(--spacing-lg);
+      background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+      border: 2px solid rgba(251, 191, 36, 0.4);
+      border-radius: var(--radius-lg);
+      margin-bottom: var(--spacing-xl);
+      text-align: center;
+    }
+
+    .archive-icon {
+      font-size: 1.5rem;
+    }
+
+    .archive-text {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #fbbf24;
+      letter-spacing: 0.5px;
+    }
+
+    /* ページヘッダー */
+    .page-header {
+      position: relative;
+      text-align: center;
+      margin-bottom: var(--spacing-xl);
+      padding: var(--spacing-2xl);
+      background: linear-gradient(135deg,
+        rgba(59, 130, 246, 0.1) 0%,
+        rgba(139, 92, 246, 0.1) 100%);
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      overflow: hidden;
+    }
+
+    .ai-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      padding: var(--spacing-xs) var(--spacing-md);
+      background: rgba(59, 130, 246, 0.2);
+      border: 1px solid rgba(59, 130, 246, 0.5);
+      border-radius: 20px;
+      margin-bottom: var(--spacing-md);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #60a5fa;
+    }
+
+    .badge-pulse {
+      width: 8px;
+      height: 8px;
+      background: #3b82f6;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.2); }
+    }
+
+    .page-title {
+      font-size: 1.75rem;
+      margin-bottom: var(--spacing-sm);
+      color: white;
+      text-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+      font-weight: 800;
+    }
+
+    .page-subtitle {
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.7);
+      font-family: 'Courier New', monospace;
+      letter-spacing: 1.5px;
+    }
+
+    .scan-line {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+      animation: scanLine 2s infinite;
+    }
+
+    @keyframes scanLine {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    /* 会場タブ */
+    .venue-selector {
+      display: flex;
+      gap: var(--spacing-md);
+      justify-content: center;
+      margin-bottom: var(--spacing-xl);
+      padding: var(--spacing-lg);
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-color);
+      flex-wrap: wrap;
+    }
+
+    .venue-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--spacing-xs);
+      padding: var(--spacing-md) var(--spacing-xl);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 2px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      min-width: 120px;
+    }
+
+    .venue-btn:hover {
+      border-color: #a78bfa;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(167, 139, 250, 0.3);
+    }
+
+    .venue-btn.active {
+      background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+      border-color: #a78bfa;
+      color: white;
+      box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+    }
+
+    .venue-label {
+      font-size: 1.25rem;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+    }
+
+    .venue-race-count {
+      font-size: 0.75rem;
+      opacity: 0.8;
+      font-family: 'Courier New', monospace;
+    }
+
+    .venue-content {
+      display: none;
+    }
+
+    .venue-content.active {
+      display: block;
+      animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .venue-header {
+      text-align: center;
+      margin-bottom: var(--spacing-xl);
+      padding: var(--spacing-lg);
+      background: linear-gradient(135deg,
+        rgba(139, 92, 246, 0.15) 0%,
+        rgba(167, 139, 250, 0.15) 100%);
+      border-radius: var(--radius-lg);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .venue-title {
+      font-size: 2rem;
+      font-weight: 900;
+      color: #a78bfa;
+      margin: 0 0 var(--spacing-sm) 0;
+      text-shadow: 0 0 15px rgba(167, 139, 250, 0.4);
+    }
+
+    .venue-info {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin: 0;
+      font-family: 'Courier New', monospace;
+    }
+
+    /* レース選択ボタン */
+    .race-selector {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacing-sm);
+      justify-content: center;
+      margin-bottom: var(--spacing-xl);
+      padding: var(--spacing-lg);
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-color);
+    }
+
+    .race-btn {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 2px solid var(--border-color);
+      border-radius: var(--radius-md);
+      font-size: 0.875rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .race-btn:hover {
+      border-color: #3b82f6;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .race-btn.active {
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      border-color: #3b82f6;
+      color: white;
+      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
+    }
+
+    .race-label {
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .race-indicator {
+      width: 20px;
+      height: 2px;
+      background: var(--border-color);
+      border-radius: 1px;
+      transition: all 0.3s;
+    }
+
+    .race-btn.active .race-indicator {
+      background: white;
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+    }
+
+    /* レース表示 */
+    .race-display-area {
+      position: relative;
+      min-height: 500px;
+    }
+
+    .race-content {
+      display: none;
+    }
+
+    .race-content.active {
+      display: block;
+      animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .race-name-header {
+      text-align: center;
+      margin-bottom: var(--spacing-xl);
+      padding: var(--spacing-lg);
+      background: linear-gradient(135deg,
+        rgba(139, 92, 246, 0.15) 0%,
+        rgba(59, 130, 246, 0.15) 100%);
+      border-radius: var(--radius-lg);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .race-name-title {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #a78bfa;
+      margin: 0 0 var(--spacing-md) 0;
+      text-shadow: 0 0 10px rgba(167, 139, 250, 0.3);
+      letter-spacing: 0.5px;
+    }
+
+    .race-details {
+      display: flex;
+      justify-content: center;
+      gap: var(--spacing-lg);
+      flex-wrap: wrap;
+      margin-top: var(--spacing-md);
+    }
+
+    .race-detail-item {
+      font-size: 0.95rem;
+      color: #94a3b8;
+      font-weight: 600;
+      padding: var(--spacing-xs) var(--spacing-md);
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+    }
+
+    /* 分析セクション */
+    .analysis-section {
+      background: var(--bg-secondary);
+      padding: var(--spacing-xl);
+      border-radius: var(--radius-lg);
+      margin-bottom: var(--spacing-xl);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      margin-bottom: var(--spacing-lg);
+    }
+
+    .header-icon {
+      font-size: 1.5rem;
+      filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.5));
+    }
+
+    .section-header h2 {
+      font-size: 1.1rem;
+      color: #60a5fa;
+      font-weight: 800;
+    }
+
+    /* 馬カード */
+    .detailed-horse-card {
+      position: relative;
+      margin-bottom: var(--spacing-lg);
+      padding: var(--spacing-lg);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      border: 2px solid var(--border-color);
+      transition: all 0.3s;
+    }
+
+    .detailed-horse-card:hover {
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+
+    .top-horse-detailed {
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+
+    .dhc-header {
+      display: flex;
+      gap: var(--spacing-lg);
+      align-items: flex-start;
+    }
+
+    .rank-badge-large {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 50px;
+      height: 50px;
+      padding: 0 var(--spacing-sm);
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: var(--radius-md);
+      color: white;
+      font-size: 1rem;
+      font-weight: 900;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .dhc-main-info {
+      flex: 1;
+    }
+
+    .dhc-info-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacing-sm);
+    }
+
+    .dhc-title-line {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      flex-wrap: wrap;
+    }
+
+    .dhc-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #3b82f6, #60a5fa);
+      border-radius: 50%;
+      color: white;
+      font-size: 0.9rem;
+      font-weight: 900;
+    }
+
+    .dhc-name {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+
+    .dhc-role {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      color: white;
+    }
+
+    .role-本命 { background: #ef4444; }
+    .role-対抗 { background: #f97316; }
+    .role-単穴 { background: #eab308; }
+    .role-連下 { background: #22c55e; }
+    .role-穴 { background: #8b5cf6; }
+
+    .dhc-jockey-trainer {
+      display: flex;
+      gap: var(--spacing-md);
+      flex-wrap: wrap;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .dhc-quick-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: var(--spacing-sm);
+      margin-top: var(--spacing-sm);
+    }
+
+    .qm-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: var(--spacing-xs) var(--spacing-sm);
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+    }
+
+    .qm-label {
+      font-size: 0.65rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .qm-value {
+      font-size: 1rem;
+      font-weight: 800;
+      color: #60a5fa;
+      font-family: 'Courier New', monospace;
+    }
+
+    .qm-value.positive { color: #10b981; }
+    .qm-value.negative { color: #ef4444; }
+
+    /* Feature Importance */
+    .dhc-features {
+      margin-top: var(--spacing-lg);
+      padding-top: var(--spacing-lg);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .feature-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #60a5fa;
+      margin-bottom: var(--spacing-md);
+      letter-spacing: 0.5px;
+    }
+
+    .feature-grid {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacing-sm);
+    }
+
+    .feature-item {
+      display: grid;
+      grid-template-columns: 200px 1fr 50px;
+      align-items: center;
+      gap: var(--spacing-sm);
+    }
+
+    .feature-label {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-xs);
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+
+    .feature-icon {
+      font-size: 0.9rem;
+    }
+
+    .feature-bar-container {
+      position: relative;
+      height: 8px;
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .feature-bar-container.trend {
+      overflow: visible;
+    }
+
+    .feature-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      border-radius: 4px;
+      transition: width 0.5s;
+    }
+
+    .feature-bar.trend {
+      background: linear-gradient(90deg, #10b981, #34d399);
+    }
+
+    .feature-bar-center {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 2px;
+      height: 100%;
+      background: var(--text-secondary);
+      z-index: 1;
+    }
+
+    .feature-value {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #60a5fa;
+      text-align: right;
+      font-family: 'Courier New', monospace;
+    }
+
+    /* 近走成績 */
+    .recent-races {
+      margin-top: var(--spacing-lg);
+      padding-top: var(--spacing-lg);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .recent-races-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #60a5fa;
+      margin-bottom: var(--spacing-md);
+      letter-spacing: 0.5px;
+    }
+
+    .recent-races-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: var(--spacing-sm);
+    }
+
+    .recent-race-item {
+      padding: var(--spacing-sm);
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+    }
+
+    .recent-race-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .recent-race-details {
+      display: flex;
+      gap: var(--spacing-xs);
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+    }
+
+    .rr-venue {
+      color: #a78bfa;
+      font-weight: 600;
+    }
+
+    .rr-result {
+      color: var(--text-secondary);
+      font-weight: 700;
+    }
+
+    .rr-result.top3 {
+      color: #fbbf24;
+    }
+
+    .rr-distance {
+      color: var(--text-secondary);
+    }
+
+    .rr-condition {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+    }
+
+    /* ナビゲーション */
+    .archive-nav {
+      display: flex;
+      gap: var(--spacing-lg);
+      justify-content: center;
+      margin-top: var(--spacing-2xl);
+      padding: var(--spacing-xl);
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-color);
+      flex-wrap: wrap;
+    }
+
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      padding: var(--spacing-md) var(--spacing-xl);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      text-decoration: none;
+      border: 2px solid var(--border-color);
+      border-radius: var(--radius-md);
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .nav-link:hover {
+      border-color: #3b82f6;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+    }
+
+    .nav-icon {
+      font-size: 1.2rem;
+    }
+
+    /* レスポンシブ */
+    @media (max-width: 768px) {
+      .page-title {
+        font-size: 1.25rem;
+      }
+
+      .dhc-header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .rank-badge-large {
+        align-self: flex-start;
+        min-width: auto;
+        height: auto;
+        padding: 4px var(--spacing-sm);
+        font-size: 0.9rem;
+      }
+
+      .dhc-quick-metrics {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .feature-item {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .feature-label {
+        justify-content: space-between;
+      }
+
+      .feature-value {
+        text-align: left;
+      }
+
+      .archive-nav {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .nav-link {
+        justify-content: center;
+      }
+
+      .venue-selector {
+        gap: var(--spacing-sm);
+      }
+
+      .venue-btn {
+        min-width: 90px;
+        padding: var(--spacing-sm) var(--spacing-md);
+      }
+
+      .venue-label {
+        font-size: 1rem;
+      }
+
+      .section-header h2 {
+        font-size: 0.9rem;
+      }
+
+      .recent-races-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+
+  <script is:inline>
+    function selectVenue(event, button) {
+      event.preventDefault();
+
+      const venueIndex = button.getAttribute('data-venue-index');
+
+      // 会場タブの切り替え
+      document.querySelectorAll('.venue-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      button.classList.add('active');
+
+      // 会場コンテンツの切り替え
+      document.querySelectorAll('.venue-content').forEach(content => {
+        content.classList.remove('active');
+      });
+
+      const selectedVenue = document.querySelector(`.venue-content[data-venue-index="${venueIndex}"]`);
+      if (selectedVenue) {
+        selectedVenue.classList.add('active');
+      }
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function selectRace(event, button) {
+      event.preventDefault();
+
+      const venueIndex = button.getAttribute('data-venue-index');
+      const raceIndex = button.getAttribute('data-race-index');
+
+      // 現在の会場内のレースボタンのみ更新
+      const currentVenue = document.querySelector(`.venue-content[data-venue-index="${venueIndex}"]`);
+      if (!currentVenue) return;
+
+      currentVenue.querySelectorAll('.race-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      button.classList.add('active');
+
+      // 現在の会場内のレースコンテンツのみ更新
+      currentVenue.querySelectorAll('.race-content').forEach(content => {
+        content.classList.remove('active');
+      });
+
+      const selectedRace = currentVenue.querySelector(`.race-content[data-venue-index="${venueIndex}"][data-race-index="${raceIndex}"]`);
+      if (selectedRace) {
+        selectedRace.classList.add('active');
+      }
+    }
+  </script>
+</BaseLayout>

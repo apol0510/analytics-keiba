@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="競馬AIの具体的な使い方を初心者向けに解説。AI指数の見方から馬券への反映方法まで。">
+  <meta name="keywords" content="競馬 AI 使い方">
+  <title>競馬AIの使い方ガイド｜初心者でも5分で予想に活用する方法</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.8;color:#333;background:#f5f5f5}header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:60px 20px;text-align:center}header h1{font-size:2.2rem;margin-bottom:12px;line-height:1.3}header p{font-size:1.15rem;opacity:.95;margin-bottom:20px}.hero-cta{display:inline-block;padding:16px 40px;background:#fff;color:#667eea;text-decoration:none;border-radius:50px;font-size:1.1rem;font-weight:600;box-shadow:0 4px 15px rgba(0,0,0,.2);transition:transform .3s}.hero-cta:hover{transform:translateY(-2px)}.urgent-banner{background:linear-gradient(90deg,#ff6b6b,#ee5a24);color:#fff;text-align:center;padding:10px;font-weight:600;font-size:.95rem}article{max-width:800px;margin:40px auto;padding:0 20px}.section{background:#fff;border-radius:8px;padding:36px;margin-bottom:24px;box-shadow:0 2px 8px rgba(0,0,0,.08)}h2{color:#667eea;margin-bottom:20px;font-size:1.6rem;font-weight:600}h3{color:#444;margin:20px 0 12px;font-size:1.2rem}p{margin-bottom:16px;font-size:1.05rem}.pain-box{background:#fff5f5;border-left:4px solid #dc3545;padding:16px 20px;margin-bottom:12px;border-radius:4px}.pain-box strong{color:#dc3545}.solution-box{background:#f0f8f0;border-left:4px solid #28a745;padding:16px 20px;margin-bottom:12px;border-radius:4px}.solution-box strong{color:#28a745}.kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}.kpi-card{text-align:center;padding:16px;background:linear-gradient(135deg,rgba(40,167,69,.06),rgba(40,167,69,.02));border-radius:10px;border:1px solid rgba(40,167,69,.15)}.kpi-card .num{font-size:2rem;font-weight:700;color:#28a745}.kpi-card .label{font-size:.8rem;color:#666}.cta-section{text-align:center;padding:40px;background:linear-gradient(135deg,rgba(102,126,234,.08),rgba(118,75,162,.08));border:2px solid rgba(102,126,234,.2);border-radius:12px;margin-bottom:24px}.cta-section h2{font-size:1.7rem;margin-bottom:12px}.cta-section p{color:#555;margin-bottom:20px}.cta-button{display:inline-block;padding:16px 40px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;text-decoration:none;border-radius:50px;font-size:1.1rem;font-weight:600;box-shadow:0 4px 15px rgba(102,126,234,.3);transition:transform .3s}.cta-button:hover{transform:translateY(-2px)}.badge{display:inline-block;padding:4px 14px;background:#ee5a24;color:#fff;border-radius:20px;font-size:.8rem;font-weight:600;margin-bottom:10px}.cta-note{font-size:.85rem;color:#888;margin-top:10px}.internal-links{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}.internal-links a{display:block;padding:16px;background:#f8f9fa;border-radius:8px;border-left:4px solid #667eea;text-decoration:none;color:#667eea;font-weight:600;font-size:.95rem;transition:transform .2s}.internal-links a:hover{transform:translateX(4px)}footer{text-align:center;padding:30px 20px;color:#666;border-top:1px solid #e0e0e0;margin-top:40px}footer a{color:#667eea;text-decoration:none;font-weight:600}@media(max-width:768px){header h1{font-size:1.7rem}.kpi-row{grid-template-columns:1fr}.internal-links{grid-template-columns:1fr}}
+  </style>
+
+    <!-- Google Analytics 4 -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-BTDCZE1B13"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-BTDCZE1B13');
+    </script>
+</head>
+<body>
+  <div class="urgent-banner">今週の南関競馬AI予想を無料公開中 ― 直近7日間で5勝2敗</div>
+  <header>
+    <h1>競馬AIの使い方ガイド｜初心者でも5分で予想に活用する方法</h1>
+    <p>競馬AIの具体的な使い方を初心者向けに解説。AI指数の見方から馬券への反映方法まで。</p>
+    <a href="/lp/" class="hero-cta" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'header',source:'keiba-ai-tsukaikata'})">無料で今日の予想を見る →</a>
+  </header>
+  <article>
+    <div class="section">
+      <h2>問題：初心者の壁が高すぎる</h2>
+      <div class="pain-box"><strong>何から始めればいいか分からない</strong> — 馬券の種類も多く予想の仕方も不明。</div>
+      <div class="pain-box"><strong>周りに教えてくれる人がいない</strong> — 独学で同じ失敗を繰り返す。</div>
+      <div class="pain-box"><strong>最初から負けが続いて嫌になる</strong> — ビギナーズラック後、延々と負け続ける。</div>
+      <p style="text-align:center;font-weight:600;margin-top:20px">これらはすべて、<span style="color:#667eea">「データ不足」と「感覚に頼った判断」</span>が原因です。</p>
+    </div>
+    <div class="section">
+      <h2>原因：学習コストが高すぎる</h2>
+      <h3>覚えることが多すぎる</h3>
+      <p>馬券の種類、オッズの見方、データ分析。一人では非効率。</p>
+      <h3>失敗から学ぶには時間もお金もかかる</h3>
+      <p>「負けて覚える」ではモチベが持たない。最短ルートが必要。</p>
+    </div>
+    <div class="section">
+      <h2>解決策：初心者こそAI予想が最適解</h2>
+      <div class="solution-box"><strong>特別な知識は一切不要</strong> — AI指数を見るだけ。誰でも同じ精度で再現可能。</div>
+      <div class="solution-box"><strong>初月から回収率100%超えの実績</strong> — 競馬歴3ヶ月の初心者が初月から100%超え達成。</div>
+      <div class="solution-box"><strong>無料予想で安全にスタート</strong> — お金をかけずに精度を体験できる。</div>
+    </div>
+    <div class="section">
+      <h2>検証データ</h2>
+      <p>NANKANアナリティクスのAI予想を120レースで検証した結果：</p>
+      <div class="kpi-row">
+        <div class="kpi-card"><div class="num">68%</div><div class="label">的中率</div></div>
+        <div class="kpi-card"><div class="num">173%</div><div class="label">回収率</div></div>
+        <div class="kpi-card"><div class="num">+87,400円</div><div class="label">累計収支</div></div>
+      </div>
+      <p style="font-size:.85rem;color:#888;text-align:center">※ 2026年1月〜3月、1レース1,000円投資での実績。</p>
+    </div>
+    <div class="cta-section">
+      <span class="badge">3連勝中 ｜ 今週の無料公開は3/30まで</span>
+      <h2>このデータを見て、まだ感覚で買いますか。</h2>
+      <p>120レース検証済み。累計+87,400円。すでに使っている人との差は毎日開いています。</p>
+      <a href="/lp/" class="cta-button" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'middle',source:'keiba-ai-tsukaikata'})">無料で今日の予想を見る →</a>
+      <div class="cta-note">無料 ｜ 登録不要 ｜ 今日の予想をすぐ確認</div>
+    </div>
+    <div class="section">
+      <h2>まとめ</h2>
+      <p>「競馬 AI 使い方」で調べているあなたは、すでに現状を変えたいと思っているはずです。感覚ではなくデータで勝つ。その第一歩は、無料予想を確認するだけです。</p>
+    </div>
+    <div class="section">
+      <h2>関連コンテンツ</h2>
+      <div class="internal-links">
+        <a href="/lp/">無料で今日の予想を見る →</a>
+        <a href="/lp/">無料で今日の予想を見る →</a>
+      </div>
+    </div>
+    <div class="cta-section">
+      <span class="badge">直近10戦 8勝2敗</span>
+      <h2>1分後、あなたは回収率173%のAI予想を手にしています。</h2>
+      <p>会員登録不要。今すぐ無料予想を確認できます。</p>
+      <a href="/lp/" class="cta-button" onclick="typeof gtag!=='undefined'&&gtag('event','cta_click',{event_category:'conversion',event_label:'nankan_analytics_cta',cta_position:'bottom',source:'keiba-ai-tsukaikata'})">無料で今日の予想を見る →</a>
+      <div class="cta-note">無料 ｜ 登録不要 ｜ 今日の予想をすぐ確認</div>
+    </div>
+  </article>
+  <footer>
+    <p style="margin-bottom:12px"><a href="/lp/">無料で今日の予想を見る →</a> ｜ <a href="/lp/">無料で今日の予想を見る →</a></p>
+    <p>&copy; 2026 NANKANアナリティクス</p>
+  </footer>
+</body>
+</html>

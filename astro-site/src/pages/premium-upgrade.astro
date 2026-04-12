@@ -1,0 +1,1111 @@
+---
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="プレミアム買い切り - Standard会員限定 - NANKANアナリティクス">
+    <div class="campaign-page">
+        <!-- ヘッダー -->
+        <div class="campaign-header">
+            <div class="campaign-badge">⬆️ Standard会員限定 ⬆️</div>
+            <h1 class="campaign-title">
+                <span class="gradient-text">プレミアム買い切り</span>
+            </h1>
+            <p class="campaign-subtitle">
+                一度きりの支払いで、全レース予想に永久アクセス
+            </p>
+        </div>
+
+        <!-- プラン選択 -->
+        <div class="plans-container">
+            <!-- 買い切り -->
+            <div class="plan-card plan-recommended">
+                <div class="plan-badge-recommended">おすすめ</div>
+                <h3 class="plan-card-name">Premium 買い切り</h3>
+                <p class="plan-card-subtitle">一度きりの支払いで永久アクセス</p>
+                <div class="plan-card-price-strike">¥108,000</div>
+                <div class="plan-card-price">¥78,000</div>
+                <div class="plan-card-period">永久アクセス（追加料金なし）</div>
+                <ul class="plan-card-features">
+                    <li>✅ <strong>全12レース</strong>の予想・買い目</li>
+                    <li>✅ 高精度AI予想</li>
+                    <li>✅ 詳細な投資戦略</li>
+                    <li>✅ 優先サポート</li>
+                </ul>
+                <button class="cta-button" onclick="openBankModal('Premium 買い切り (Standard Upgrade)', 78000, 'lifetime')">
+                    🏦 銀行振込で申し込む
+                </button>
+            </div>
+
+            <!-- 年払い -->
+            <div class="plan-card">
+                <h3 class="plan-card-name">Premium 年払い</h3>
+                <p class="plan-card-subtitle">年間一括でお得に利用</p>
+                <div class="plan-card-price">¥68,000</div>
+                <div class="plan-card-period">/年</div>
+                <ul class="plan-card-features">
+                    <li>✅ <strong>全12レース</strong>の予想・買い目</li>
+                    <li>✅ 高精度AI予想</li>
+                    <li>✅ 詳細な投資戦略</li>
+                    <li>✅ 優先サポート</li>
+                </ul>
+                <button class="cta-button cta-secondary" onclick="openBankModal('Premium 年払い (Standard Upgrade)', 68000, 'annual')">
+                    🏦 銀行振込で申し込む
+                </button>
+            </div>
+
+            <!-- 30日 -->
+            <div class="plan-card">
+                <h3 class="plan-card-name">Premium 30日</h3>
+                <p class="plan-card-subtitle">まずは試したい方に</p>
+                <div class="plan-card-price">¥18,000</div>
+                <div class="plan-card-period">/30日</div>
+                <ul class="plan-card-features">
+                    <li>✅ <strong>全12レース</strong>の予想・買い目</li>
+                    <li>✅ 高精度AI予想</li>
+                    <li>✅ 詳細な投資戦略</li>
+                    <li>✅ 優先サポート</li>
+                </ul>
+                <button class="cta-button cta-secondary" onclick="openBankModal('Premium 30日 (Standard Upgrade)', 18000, 'monthly')">
+                    🏦 銀行振込で申し込む
+                </button>
+            </div>
+        </div>
+
+        <!-- なぜ買い切りか -->
+        <div class="why-now-section">
+            <h2 class="section-title">なぜ買い切りがおすすめなのか？</h2>
+            <div class="why-now-grid">
+                <div class="why-now-card">
+                    <div class="why-now-icon">♾️</div>
+                    <h3>一度きりの支払い</h3>
+                    <p>月々の支払いなし。¥78,000の一度きりで永久にご利用いただけます。</p>
+                </div>
+                <div class="why-now-card">
+                    <div class="why-now-icon">📈</div>
+                    <h3>全レース対応</h3>
+                    <p>メインレースだけでなく、1R〜12R全てのレースの予想・買い目をご利用いただけます。</p>
+                </div>
+                <div class="why-now-card">
+                    <div class="why-now-icon">🚀</div>
+                    <h3>AIは毎日進化</h3>
+                    <p>早く始めるほど、進化し続けるAIの恩恵を長く受けられます。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- FAQ -->
+        <div class="faq-section">
+            <h2 class="section-title">よくある質問</h2>
+
+            <div class="faq-container">
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: 本当に永久に使えますか？</h3>
+                    <p class="faq-answer">
+                        はい。一度ご購入いただければ、追加料金なしで永久にご利用いただけます。
+                    </p>
+                </div>
+
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: ライトプランの残り期間はどうなりますか？</h3>
+                    <p class="faq-answer">
+                        買い切り後は即座にプレミアムへ切り替わります。ライトプランの月額は以降不要になります。
+                    </p>
+                </div>
+
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: 支払い方法は？</h3>
+                    <p class="faq-answer">
+                        銀行振込のみ対応しております。振込後、入金確認取れ次第、即時にプレミアムへ切り替えいたします。
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 最終CTA -->
+        <div class="final-cta-section">
+            <div class="final-cta-card">
+                <h2 class="final-cta-title">全レースの予想を手に入れる</h2>
+                <p class="final-cta-text">
+                    メインレースだけでは物足りない方へ。<br>
+                    全レース（1R〜12R）の予想・買い目が利用可能に。
+                </p>
+                <div class="final-price-options">
+                    <div class="final-option">
+                        <span class="final-option-name">買い切り</span>
+                        <span class="final-option-price">¥78,000</span>
+                        <span class="final-option-note">永久アクセス</span>
+                    </div>
+                    <div class="final-option">
+                        <span class="final-option-name">年払い</span>
+                        <span class="final-option-price">¥68,000</span>
+                        <span class="final-option-note">/年</span>
+                    </div>
+                    <div class="final-option">
+                        <span class="final-option-name">30日</span>
+                        <span class="final-option-price">¥18,000</span>
+                        <span class="final-option-note">/30日</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 銀行振込モーダル -->
+    <div class="bank-modal" id="bankModal">
+      <div class="bank-modal-content">
+        <button class="bank-modal-close" onclick="closeBankModal()">×</button>
+
+        <h2 class="bank-modal-title">🏦 銀行振込でのお申し込み</h2>
+        <p class="modal-plan-info" id="modalPlanInfo"></p>
+
+        <div class="bank-info-box">
+          <div class="bank-info-item">
+            <span class="bank-info-label">振込先銀行</span>
+            <span class="bank-info-value">三井住友銀行
+              <button class="copy-button" onclick="copyToClipboard('三井住友銀行')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">支店名</span>
+            <span class="bank-info-value">洲本支店
+              <button class="copy-button" onclick="copyToClipboard('洲本支店')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座種別</span>
+            <span class="bank-info-value">普通</span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座番号</span>
+            <span class="bank-info-value">5338892
+              <button class="copy-button" onclick="copyToClipboard('5338892')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座名義</span>
+            <span class="bank-info-value" style="font-size: 0.95rem;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
+              <button class="copy-button" onclick="copyToClipboard('ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+            <span class="bank-info-label">振込金額</span>
+            <span class="bank-info-value" style="color: #10b981; font-size: 1.3rem;" id="modalAmount">¥78,000</span>
+          </div>
+        </div>
+
+        <div class="bank-steps">
+          <div class="bank-steps-title">📝 お申し込み手順</div>
+          <div class="bank-step">
+            <span class="bank-step-number">1</span>
+            <span>上記の口座情報に振込金額をお振込みください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">2</span>
+            <span>振込完了後、下記のフォームから必要情報をご送信ください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">3</span>
+            <span>入金確認取れ次第、即時にプレミアムへ切り替えいたします</span>
+          </div>
+        </div>
+
+        <!-- 銀行振込申し込みフォーム -->
+        <div class="bank-form-section">
+          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
+
+          <form id="bankTransferForm" class="bank-form">
+            <div class="form-group">
+              <label for="fullName" class="form-label">お名前 <span class="required">*</span></label>
+              <input type="text" id="fullName" name="fullName" class="form-input" required placeholder="山田 太郎">
+            </div>
+
+            <div class="form-group">
+              <label for="email" class="form-label">メールアドレス <span class="required">*</span></label>
+              <input type="email" id="email" name="email" class="form-input" required placeholder="example@email.com">
+            </div>
+
+            <div class="form-group">
+                <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
+                <input type="date" id="transferDate" name="transferDate" class="form-input" required>
+              </div>
+
+            <div class="form-group">
+              <label for="transferAmount" class="form-label">振込金額 <span class="required">*</span></label>
+              <input type="number" id="transferAmount" name="transferAmount" class="form-input" required readonly>
+            </div>
+
+            <div class="form-group">
+              <label for="remarks" class="form-label">備考・ご要望</label>
+              <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
+            </div>
+
+            <button type="submit" class="form-submit-button" id="submitButton">
+              <span class="submit-text">📨 申し込みを送信</span>
+              <span class="submit-loading" style="display: none;">送信中...</span>
+            </button>
+
+            <div class="form-message" id="formMessage" style="display: none;"></div>
+          </form>
+        </div>
+
+        <div class="bank-warning">
+          <div class="bank-warning-title">⚠️ ご注意事項</div>
+          <div class="bank-warning-text">
+            ・振込手数料はお客様負担となります<br>
+            ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
+            ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
+            ・名義が異なる場合は、備考欄にその旨をご記入ください<br>
+            ・ご入金後のキャンセル・返金は承っておりません
+          </div>
+        </div>
+      </div>
+    </div>
+</BaseLayout>
+
+<script is:inline>
+  // モーダル処理
+  let currentPlan = '';
+  let currentAmount = 0;
+  let currentPlanType = 'lifetime';
+
+  function openBankModal(planName, amount, planType = 'lifetime') {
+    currentPlan = planName;
+    currentAmount = amount;
+    currentPlanType = planType;
+
+    let periodText = '';
+    if (planType === 'lifetime') periodText = '・永久アクセス';
+    else if (planType === 'annual') periodText = '/年';
+    else periodText = '/30日';
+    document.getElementById('modalPlanInfo').textContent = `プラン: ${planName} (¥${amount.toLocaleString()}${periodText})`;
+    document.getElementById('modalAmount').textContent = `¥${amount.toLocaleString()}`;
+    document.getElementById('transferAmount').value = amount;
+    document.getElementById('bankModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeBankModal() {
+    document.getElementById('bankModal').classList.remove('active');
+    document.body.style.overflow = 'auto';
+  }
+
+  function copyToClipboard(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+      alert('コピーしました: ' + text);
+    } catch (err) {
+      console.error('コピーに失敗しました:', err);
+    }
+
+    document.body.removeChild(textarea);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('click', (e) => {
+      const bankModal = document.getElementById('bankModal');
+      if (e.target === bankModal) {
+        closeBankModal();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeBankModal();
+      }
+    });
+
+    const bankTransferForm = document.getElementById('bankTransferForm');
+    if (bankTransferForm) {
+      bankTransferForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitButton = document.getElementById('submitButton');
+        const submitText = submitButton.querySelector('.submit-text');
+        const submitLoading = submitButton.querySelector('.submit-loading');
+        const formMessage = document.getElementById('formMessage');
+
+        submitButton.disabled = true;
+        submitText.style.display = 'none';
+        submitLoading.style.display = 'inline';
+        formMessage.style.display = 'none';
+
+        const formData = {
+          fullName: document.getElementById('fullName').value,
+          email: document.getElementById('email').value,
+          transferDate: document.getElementById('transferDate').value,
+          transferTime: "00:00",
+          transferAmount: document.getElementById('transferAmount').value,
+          transferName: document.getElementById('fullName').value,
+          remarks: document.getElementById('remarks').value,
+          productName: `${currentPlan} (¥${currentAmount.toLocaleString()}${currentPlanType === 'lifetime' ? '・永久アクセス' : currentPlanType === 'annual' ? '/年' : '/30日'})`,
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch('/.netlify/functions/bank-transfer-application', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.className = 'form-message success';
+            formMessage.style.display = 'block';
+
+            document.getElementById('bankTransferForm').reset();
+
+            setTimeout(() => {
+              closeBankModal();
+              formMessage.style.display = 'none';
+            }, 3000);
+          } else {
+            throw new Error(result.error || '送信に失敗しました');
+          }
+        } catch (error) {
+          formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+        } finally {
+          submitButton.disabled = false;
+          submitText.style.display = 'inline';
+          submitLoading.style.display = 'none';
+        }
+      });
+    }
+  });
+</script>
+
+<style>
+    .campaign-page {
+        min-height: 100vh;
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        color: #e2e8f0;
+        padding: 2rem 1rem;
+    }
+
+    .campaign-header {
+        text-align: center;
+        margin-bottom: 4rem;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .campaign-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+        padding: 0.75rem 2rem;
+        border-radius: 9999px;
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin-bottom: 2rem;
+    }
+
+    .campaign-title {
+        font-size: 3rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        line-height: 1.2;
+    }
+
+    .gradient-text {
+        background: linear-gradient(to right, #f59e0b, #ef4444);
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+    }
+
+    .campaign-subtitle {
+        font-size: 1.5rem;
+        color: #94a3b8;
+    }
+
+    /* プラン選択 */
+    .plans-container {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.5rem;
+        max-width: 1000px;
+        margin: 0 auto 4rem auto;
+    }
+
+    .plan-card {
+        background: rgba(30, 41, 59, 0.9);
+        border: 2px solid rgba(100, 116, 139, 0.3);
+        border-radius: 1.5rem;
+        padding: 2rem;
+        position: relative;
+        transition: all 0.3s ease;
+    }
+
+    .plan-card:hover {
+        transform: translateY(-5px);
+        border-color: rgba(245, 158, 11, 0.5);
+        box-shadow: 0 10px 30px rgba(245, 158, 11, 0.2);
+    }
+
+    .plan-recommended {
+        border-color: rgba(245, 158, 11, 0.5);
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(234, 88, 12, 0.05));
+        box-shadow: 0 10px 40px rgba(245, 158, 11, 0.2);
+    }
+
+    .plan-badge-recommended {
+        display: inline-block;
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: white;
+        padding: 0.4rem 1.2rem;
+        border-radius: 9999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }
+
+    .plan-card-name {
+        font-size: 1.4rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+
+    .plan-card-subtitle {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .plan-card-price-strike {
+        color: #64748b;
+        text-decoration: line-through;
+        font-size: 1.1rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .plan-card-price {
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: #f59e0b;
+        margin-bottom: 0.25rem;
+    }
+
+    .plan-card-period {
+        color: #10b981;
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+    }
+
+    .plan-card-features {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 1.5rem 0;
+    }
+
+    .plan-card-features li {
+        margin-bottom: 0.6rem;
+        font-size: 0.95rem;
+    }
+
+    .price-value.highlight {
+        color: #f59e0b;
+        font-size: 3.5rem;
+        font-weight: 700;
+    }
+
+    .price-period {
+        color: #10b981;
+        font-size: 1.3rem;
+        font-weight: 600;
+        text-align: center;
+    }
+
+    /* 比較 */
+    .upgrade-compare {
+        background: rgba(15, 23, 42, 0.6);
+        border-radius: 1rem;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .compare-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+    }
+
+    .compare-label {
+        color: #94a3b8;
+        font-size: 0.95rem;
+    }
+
+    .compare-value {
+        font-weight: 700;
+        font-size: 1.05rem;
+    }
+
+    .compare-value.current {
+        color: #64748b;
+    }
+
+    .compare-value.upgrade {
+        color: #f59e0b;
+    }
+
+    .compare-arrow {
+        text-align: center;
+        font-size: 1.5rem;
+        color: #10b981;
+        padding: 0.5rem 0;
+    }
+
+    /* 特典リスト */
+    .benefits-section {
+        margin-bottom: 2rem;
+    }
+
+    .benefits-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        text-align: center;
+    }
+
+    .benefits-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .benefit-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+        font-size: 1.05rem;
+    }
+
+    .check-icon {
+        color: #10b981;
+        font-weight: 700;
+        flex-shrink: 0;
+    }
+
+    /* CTAボタン */
+    .cta-button {
+        width: 100%;
+        padding: 1.25rem 2rem;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+        border: none;
+        border-radius: 0.75rem;
+        font-size: 1.3rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 8px 30px rgba(245, 158, 11, 0.4);
+    }
+
+    .cta-button:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 40px rgba(245, 158, 11, 0.6);
+        background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+    }
+
+    .cta-secondary {
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        box-shadow: 0 8px 30px rgba(139, 92, 246, 0.4);
+    }
+
+    .cta-secondary:hover {
+        box-shadow: 0 12px 40px rgba(139, 92, 246, 0.6);
+        background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+    }
+
+    .security-note {
+        text-align: center;
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin-top: 1rem;
+    }
+
+    /* なぜ買い切りか */
+    .why-now-section {
+        max-width: 1200px;
+        margin: 0 auto 5rem auto;
+    }
+
+    .section-title {
+        font-size: 2rem;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 3rem;
+    }
+
+    .why-now-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2rem;
+    }
+
+    .why-now-card {
+        background: rgba(30, 41, 59, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        border-radius: 1rem;
+        padding: 2rem;
+        text-align: center;
+    }
+
+    .why-now-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+    }
+
+    .why-now-card h3 {
+        font-size: 1.3rem;
+        margin-bottom: 1rem;
+    }
+
+    .why-now-card p {
+        color: #94a3b8;
+        line-height: 1.6;
+    }
+
+    /* FAQ */
+    .faq-section {
+        max-width: 800px;
+        margin: 0 auto 5rem auto;
+    }
+
+    .faq-container {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+    }
+
+    .faq-item {
+        background: rgba(30, 41, 59, 0.6);
+        border-radius: 0.75rem;
+        padding: 1.5rem;
+        border: 1px solid rgba(51, 65, 85, 0.3);
+    }
+
+    .faq-question {
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        color: #f1f5f9;
+    }
+
+    .faq-answer {
+        color: #94a3b8;
+        line-height: 1.6;
+        margin: 0;
+    }
+
+    /* 最終CTA */
+    .final-cta-section {
+        max-width: 700px;
+        margin: 0 auto;
+    }
+
+    .final-cta-card {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(239, 68, 68, 0.2));
+        border: 3px solid #f59e0b;
+        border-radius: 2rem;
+        padding: 3rem;
+        text-align: center;
+        box-shadow: 0 20px 60px rgba(245, 158, 11, 0.3);
+    }
+
+    .final-cta-title {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }
+
+    .final-cta-text {
+        font-size: 1.2rem;
+        color: #cbd5e1;
+        margin-bottom: 2rem;
+        line-height: 1.6;
+    }
+
+    .final-price-options {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .final-option {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.3rem;
+    }
+
+    .final-option-name {
+        font-size: 0.9rem;
+        color: #94a3b8;
+    }
+
+    .final-option-price {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #f59e0b;
+    }
+
+    .final-option-note {
+        font-size: 0.9rem;
+        color: #10b981;
+        font-weight: 600;
+    }
+
+    /* 銀行振込モーダル */
+    .bank-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .bank-modal.active {
+      display: flex;
+    }
+
+    .bank-modal-content {
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 2px solid rgba(59, 130, 246, 0.5);
+      border-radius: 16px;
+      padding: 2.5rem;
+      max-width: 600px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .bank-modal-close {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.5);
+      color: #ef4444;
+      font-size: 1.5rem;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s;
+    }
+
+    .bank-modal-close:hover {
+      background: rgba(239, 68, 68, 0.3);
+      transform: rotate(90deg);
+    }
+
+    .bank-modal-title {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+
+    .modal-plan-info {
+      text-align: center;
+      color: #10b981;
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+    }
+
+    .bank-info-box {
+      background: rgba(59, 130, 246, 0.1);
+      border: 2px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-info-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .bank-info-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .bank-info-label {
+      color: #94a3b8;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .bank-info-value {
+      color: #e2e8f0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      text-align: right;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .copy-button {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      white-space: nowrap;
+    }
+
+    .copy-button:hover {
+      background: linear-gradient(135deg, #2563eb, #1e40af);
+      transform: translateY(-2px);
+    }
+
+    .bank-steps {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-steps-title {
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #10b981;
+      margin-bottom: 1rem;
+    }
+
+    .bank-step {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 1rem;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .bank-step:last-child {
+      margin-bottom: 0;
+    }
+
+    .bank-step-number {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    .bank-form-section {
+      background: rgba(16, 185, 129, 0.05);
+      border: 2px solid rgba(16, 185, 129, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-form-title {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: #10b981;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .bank-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .form-label {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .required {
+      color: #ef4444;
+      margin-left: 4px;
+    }
+
+    .form-input {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(51, 65, 85, 0.5);
+      color: #e2e8f0;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .form-submit-button {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      border: none;
+      padding: 1rem 2rem;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-top: 1rem;
+    }
+
+    .form-submit-button:hover:not(:disabled) {
+      background: linear-gradient(135deg, #059669, #047857);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);
+    }
+
+    .form-submit-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .form-message {
+      padding: 1rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      text-align: center;
+      margin-top: 1rem;
+    }
+
+    .form-message.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #10b981;
+    }
+
+    .form-message.error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #ef4444;
+    }
+
+    .bank-warning {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .bank-warning-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 0.8rem;
+    }
+
+    .bank-warning-text {
+      color: #cbd5e1;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    /* レスポンシブ */
+    @media (max-width: 768px) {
+        .campaign-title {
+            font-size: 2rem;
+        }
+
+        .campaign-subtitle {
+            font-size: 1.2rem;
+        }
+
+        .plans-container {
+            grid-template-columns: 1fr;
+        }
+
+        .plan-card-price {
+            font-size: 1.8rem;
+        }
+
+        .final-price-options {
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .why-now-grid {
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+
+        .final-cta-card {
+            padding: 2rem 1.5rem;
+        }
+
+        .bank-modal-content {
+            padding: 2rem 1.5rem;
+        }
+
+        .bank-info-item {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .bank-info-value {
+            text-align: left;
+        }
+    }
+</style>

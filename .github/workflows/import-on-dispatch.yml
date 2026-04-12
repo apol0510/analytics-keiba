@@ -1,0 +1,157 @@
+name: Import Prediction (Dispatch)
+
+on:
+  repository_dispatch:
+    types: [prediction-updated]
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to import (YYYY-MM-DD, blank = today JST)'
+        required: false
+        type: string
+
+# 並行実行制御：リポジトリ全体で1つのワークフローのみ実行（同じファイルへの同時コミット防止）
+concurrency:
+  group: import-prediction
+  cancel-in-progress: false  # 実行中のジョブをキャンセルせず待機（順番に実行）
+
+jobs:
+  import-prediction:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for git push
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync and import predictions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+          SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # コミットメッセージ生成
+          if [ -n "$MANUAL_DATE" ]; then
+            COMMIT_MSG="Auto-import: ${MANUAL_DATE} prediction (manual)"
+            DATE_DESC="$MANUAL_DATE (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            DATES=$(echo "$DATES_JSON" | jq -r 'join(", ")')
+            COMMIT_MSG="Auto-import: ${DATES} prediction from ${SOURCE}"
+            DATE_DESC="$DATES from $SOURCE"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            COMMIT_MSG="Auto-import: ${DATE_SINGLE} prediction from ${SOURCE}"
+            DATE_DESC="$DATE_SINGLE from $SOURCE"
+          else
+            TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            COMMIT_MSG="Auto-import: ${TODAY} prediction (today JST)"
+            DATE_DESC="$TODAY (today JST)"
+          fi
+
+          # Retry logic: sync → generate → commit → push (最大3回リトライ)
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            # 1. 完全同期：origin/mainの最新状態にリセット
+            echo "📡 Step 1/5: Syncing to origin/main..."
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+            git clean -fd
+            echo "✅ Synced to latest origin/main ($(git rev-parse --short HEAD))"
+
+            # 2. 予想データ生成
+            echo ""
+            echo "📥 Step 2/5: Generating prediction data..."
+            if [ -n "$MANUAL_DATE" ]; then
+              npm run import:prediction -- --date "$MANUAL_DATE"
+            elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+              while IFS= read -r DATE; do
+                echo "  ━━━ Processing: $DATE ━━━"
+                npm run import:prediction -- --date "$DATE"
+              done < <(echo "$DATES_JSON" | jq -r '.[]')
+            elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+              npm run import:prediction -- --date "$DATE_SINGLE"
+            else
+              TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+              npm run import:prediction -- --date "$TODAY"
+            fi
+            echo "✅ Prediction data generated"
+
+            # 3. 差分チェック
+            echo ""
+            echo "🔍 Step 3/5: Checking for changes..."
+            git add src/data/predictions/
+
+            if git diff --cached --quiet; then
+              echo "⏭️  No changes detected (already up-to-date)"
+              echo "   Date: $DATE_DESC"
+              SUCCESS=true
+              break
+            fi
+
+            CHANGED_FILES=$(git diff --cached --name-only | wc -l | tr -d ' ')
+            echo "✅ Found $CHANGED_FILES file(s) changed"
+
+            # 4. コミット
+            echo ""
+            echo "💾 Step 4/5: Committing changes..."
+            git commit -m "$COMMIT_MSG"
+            echo "✅ Changes committed"
+
+            # 5. プッシュ
+            echo ""
+            echo "📤 Step 5/5: Pushing to origin/main..."
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              echo ""
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "✅ Import completed successfully"
+              echo "   Date: $DATE_DESC"
+              echo "   Files changed: $CHANGED_FILES"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (likely due to new commits on remote)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "   Retrying from scratch (sync → generate → commit → push)..."
+                sleep 2
+              fi
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            echo "   Date: $DATE_DESC"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi

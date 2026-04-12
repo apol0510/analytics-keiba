@@ -1,0 +1,417 @@
+---
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="お問い合わせ | NANKANアナリティクス">
+    <div class="contact-container">
+        <div class="contact-header">
+            <h1>💬 お気軽にお問い合わせください</h1>
+            <p class="header-main">ご質問・ご要望・ご相談など、どんなことでもお気軽にお寄せください。</p>
+            <p class="header-sub">専門スタッフが丁寧にサポートいたします 😊</p>
+        </div>
+
+        <div class="contact-form-wrapper">
+            <form id="contactForm" class="contact-form">
+                <div class="form-intro">
+                    <p>✨ 些細なことでも構いません。お困りのことがあれば、ぜひご連絡ください！</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="name">お名前 <span class="required">*</span></label>
+                    <input type="text" id="name" name="name" required placeholder="例：山田 太郎">
+                </div>
+
+                <div class="form-group">
+                    <label for="email">メールアドレス <span class="required">*</span></label>
+                    <input type="email" id="email" name="email" required placeholder="例：yamada@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label for="subject">お問い合わせの種類 <span class="required">*</span></label>
+                    <select id="subject" name="subject" required>
+                        <option value="">お選びください</option>
+                        <option value="サービスについて">💡 サービスについて知りたい</option>
+                        <option value="料金プランについて">💰 料金プランについて相談したい</option>
+                        <option value="使い方について">📖 使い方を教えてほしい</option>
+                        <option value="アカウントについて">👤 アカウントについて相談したい</option>
+                        <option value="不具合報告">🔧 不具合を報告したい</option>
+                        <option value="ご要望・ご意見">💭 ご要望・ご意見を伝えたい</option>
+                        <option value="その他">📝 その他</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="message">お問い合わせ内容 <span class="required">*</span></label>
+                    <textarea id="message" name="message" rows="8" required placeholder="どんなことでもお気軽にお書きください。詳しく教えていただけると、より的確にサポートできます 😊"></textarea>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="submit-btn">
+                        <span class="btn-text">📨 送信する</span>
+                        <span class="btn-loading" style="display: none;">
+                            <span class="spinner"></span>
+                            送信中...
+                        </span>
+                    </button>
+                </div>
+
+                <div id="formMessage" class="form-message"></div>
+            </form>
+
+            <div class="contact-info">
+                <div class="welcome-message">
+                    <p>💙 お客様の声を大切にしています</p>
+                    <p class="welcome-sub">困ったこと、分からないこと、改善してほしいことなど、何でもお聞かせください。一緒により良いサービスを作っていきましょう！</p>
+                </div>
+
+                <div class="info-item">
+                    <h3>📧 メールでのお問い合わせ</h3>
+                    <p class="email-address">support@keiba.link</p>
+                </div>
+
+                <div class="info-item">
+                    <h3>⏰ サポート対応時間</h3>
+                    <p class="business-hours">24時間対応　順次ご返信いたします</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .contact-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .contact-header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .contact-header h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 15px;
+        }
+
+        .contact-header .header-main {
+            color: var(--body-text-color);
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .contact-header .header-sub {
+            color: var(--accent-text-color);
+            font-size: 1rem;
+        }
+
+        .contact-form-wrapper {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 40px;
+            align-items: start;
+        }
+
+        .contact-form {
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 12px;
+            padding: 30px;
+        }
+
+        .form-intro {
+            background: rgba(59, 130, 246, 0.1);
+            border-left: 3px solid var(--primary-color);
+            padding: 15px;
+            margin-bottom: 25px;
+            border-radius: 8px;
+        }
+
+        .form-intro p {
+            color: var(--body-text-color);
+            margin: 0;
+            font-size: 0.95rem;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            color: var(--body-text-color);
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .required {
+            color: #ef4444;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 15px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            color: var(--body-text-color);
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            background: rgba(15, 23, 42, 0.8);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 120px;
+        }
+
+        .form-actions {
+            margin-top: 30px;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .form-message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            animation: slideIn 0.3s ease;
+        }
+
+        .form-message.success {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #10b981;
+            display: block;
+        }
+
+        .form-message.error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+            display: block;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .contact-info {
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            border-radius: 12px;
+            padding: 30px;
+        }
+
+        .welcome-message {
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 35px;
+            text-align: center;
+        }
+
+        .welcome-message p {
+            color: var(--body-text-color);
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .welcome-sub {
+            color: var(--accent-text-color);
+            font-size: 0.95rem;
+            font-weight: 400;
+            line-height: 1.6;
+        }
+
+        .info-item {
+            margin-bottom: 35px;
+        }
+
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-item h3 {
+            color: var(--primary-color);
+            font-size: 1.2rem;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .info-item p {
+            color: var(--body-text-color);
+            margin-bottom: 5px;
+        }
+
+        .info-note {
+            color: var(--accent-text-color);
+            font-size: 0.9rem;
+        }
+
+        .email-address {
+            color: var(--primary-color);
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin: 10px 0;
+        }
+
+        .business-hours {
+            color: var(--body-text-color);
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 10px 0;
+        }
+
+        .info-item ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .info-item li {
+            color: var(--body-text-color);
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+        }
+
+        .info-item li:last-child {
+            border-bottom: none;
+        }
+
+        @media (max-width: 768px) {
+            .contact-form-wrapper {
+                grid-template-columns: 1fr;
+            }
+
+            .contact-header h1 {
+                font-size: 2rem;
+            }
+
+            .contact-form {
+                padding: 20px;
+            }
+        }
+    </style>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('contactForm');
+            const formMessage = document.getElementById('formMessage');
+            const submitBtn = form.querySelector('.submit-btn');
+            const btnText = submitBtn.querySelector('.btn-text');
+            const btnLoading = submitBtn.querySelector('.btn-loading');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                // ボタンの状態を変更
+                submitBtn.disabled = true;
+                btnText.style.display = 'none';
+                btnLoading.style.display = 'inline-flex';
+                formMessage.className = 'form-message';
+
+                const formData = {
+                    name: form.name.value,
+                    email: form.email.value,
+                    subject: form.subject.value,
+                    message: form.message.value,
+                };
+
+                try {
+                    // SendGrid API経由（Netlify Functions）
+                    const response = await fetch('/.netlify/functions/contact-form', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(formData),
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        formMessage.textContent = 'お問い合わせを送信しました。ご連絡ありがとうございます。';
+                        formMessage.className = 'form-message success';
+                        form.reset();
+                    } else {
+                        throw new Error(result.error || '送信に失敗しました');
+                    }
+                } catch (error) {
+                    formMessage.textContent = error.message || 'エラーが発生しました。しばらくしてから再度お試しください。';
+                    formMessage.className = 'form-message error';
+                }
+
+                // ボタンの状態を戻す
+                submitBtn.disabled = false;
+                btnText.style.display = 'inline';
+                btnLoading.style.display = 'none';
+            });
+        });
+    </script>
+</BaseLayout>

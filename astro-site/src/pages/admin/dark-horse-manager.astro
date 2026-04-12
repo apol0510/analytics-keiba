@@ -1,0 +1,1544 @@
+---
+export const prerender = true;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="本日の穴馬管理 | 管理画面" description="穴馬抽出データの一括登録・管理画面">
+    <div class="admin-container">
+        <div class="admin-header">
+            <h1>🐎 本日の穴馬管理</h1>
+            <p class="subtitle">マコさんの経験と勘による穴馬抽出データを一括登録</p>
+        </div>
+
+        <!-- 使い方セクション -->
+        <div class="how-to-use">
+            <h2>📝 使い方</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <strong>穴馬データ入力</strong>
+                        <p>テキストエリアに全レースの穴馬情報を貼り付け</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <strong>解析実行</strong>
+                        <p>「解析して生成」ボタンでJSON生成</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <strong>プレビュー確認</strong>
+                        <p>生成されたデータを確認</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <strong>コピー</strong>
+                        <p>「📋 JSON全体をコピー」ボタンでクリップボードにコピー</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <div class="step-content">
+                        <strong>GitHub編集</strong>
+                        <p>「🌐 GitHubで編集」ボタンでdarkHorseData.json編集画面へ</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">6</div>
+                    <div class="step-content">
+                        <strong>本番反映</strong>
+                        <p>GitHub上でファイル全体を選択（Ctrl+A / Cmd+A）→ コピーしたJSONを貼り付け → Preview確認 → Commit → 1-2分後に本番反映</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 入力形式例 -->
+        <div class="format-examples">
+            <h3>💡 入力形式例</h3>
+            <div class="format-grid">
+                <div class="format-example">
+                    <h4>✨ 新形式: 1行複数頭対応（推奨）</h4>
+                    <pre>1R 8番 33% 3番 32%
+2R 4番 29% 11番 28%
+3R 2番 30%</pre>
+                    <small>※ 1行に複数頭をまとめて入力可能！</small>
+                </div>
+                <div class="format-example">
+                    <h4>形式1: 基本形式</h4>
+                    <pre>川崎1R 3番 ダークホース 前走好走・騎手変更で今回期待 85%
+川崎2R 7番 サプライズ 血統妙味・距離適性◎ 70%</pre>
+                </div>
+                <div class="format-example">
+                    <h4>形式2: コロン形式</h4>
+                    <pre>1R: 3番 ダークホース (前走好走・騎手変更で今回期待) 85%
+2R: 7番 サプライズ (血統妙味・距離適性◎) 70%</pre>
+                </div>
+            </div>
+            <p class="note">※ レース名は自動検出されます（省略可）。信頼度は%値で指定（例: 85% = 高信頼度、70% = 中信頼度、55% = 低信頼度）</p>
+        </div>
+
+        <!-- 日付・競馬場設定 -->
+        <div class="settings-section">
+            <h2>⚙️ 設定</h2>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label for="raceDate">日付</label>
+                    <input type="date" id="raceDate" />
+                </div>
+                <div class="setting-item">
+                    <label for="raceTrack">競馬場</label>
+                    <select id="raceTrack">
+                        <option value="川崎競馬">川崎競馬</option>
+                        <option value="大井競馬">大井競馬</option>
+                        <option value="船橋競馬">船橋競馬</option>
+                        <option value="浦和競馬">浦和競馬</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label for="totalRaces">総レース数</label>
+                    <select id="totalRaces">
+                        <option value="8">8レース</option>
+                        <option value="10">10レース</option>
+                        <option value="11">11レース</option>
+                        <option value="12" selected>12レース</option>
+                    </select>
+                </div>
+            </div>
+            <div class="load-prediction-section">
+                <button id="loadPredictionBtn" class="load-btn">🔄 予想データを読み込む（馬名自動取得）</button>
+                <div id="loadStatus" class="load-status"></div>
+            </div>
+        </div>
+
+        <!-- タブ切り替え -->
+        <div class="input-tabs">
+            <button class="tab-btn active" data-tab="simple">📝 簡略入力（おすすめ）</button>
+            <button class="tab-btn" data-tab="dropdown">🎯 ドロップダウン選択</button>
+            <button class="tab-btn" data-tab="bulk">📋 一括ペースト（従来）</button>
+        </div>
+
+        <!-- 簡略入力タブ -->
+        <div class="tab-content active" data-tab="simple">
+            <div class="input-section">
+                <h2>📝 簡略入力（馬名自動取得）</h2>
+                <p class="tab-desc">✨ レース番号と馬番だけ入力すれば、馬名は自動で取得されます！</p>
+                <textarea
+                    id="simpleInput"
+                    placeholder="簡略形式で入力（馬名は自動取得されます）
+
+📝 新形式（1行に複数頭対応）:
+1R 8番 33% 3番 32%
+2R 4番 29% 11番 28%
+3R 2番 30%
+
+📝 従来形式（1行に1頭）:
+1R 3
+前走好走・騎手変更で今回期待
+85
+
+2R 7
+血統妙味・距離適性◎
+70
+..."></textarea>
+                <div class="button-group">
+                    <button id="parseSimpleBtn" class="primary-btn">🚀 簡略入力を解析</button>
+                    <button id="clearSimpleBtn" class="secondary-btn">🗑️ クリア</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ドロップダウン選択タブ -->
+        <div class="tab-content" data-tab="dropdown">
+            <div class="input-section">
+                <h2>🎯 ドロップダウン選択</h2>
+                <p class="tab-desc">✨ マウスだけで穴馬を選択・追加できます！</p>
+                <div class="dropdown-form">
+                    <div class="form-row">
+                        <div class="form-item">
+                            <label for="selectRace">レース選択</label>
+                            <select id="selectRace">
+                                <option value="">-- レースを選択 --</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
+                            <label for="selectHorse">馬選択</label>
+                            <select id="selectHorse" disabled>
+                                <option value="">-- まずレースを選択 --</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-item full-width">
+                            <label for="horseReason">穴馬選定理由（任意）</label>
+                            <textarea id="horseReason" rows="3" placeholder="例: 前走好走・騎手変更で今回期待（空欄でもOK）"></textarea>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-item">
+                            <label for="horseConfidence">信頼度（%）</label>
+                            <input type="number" id="horseConfidence" min="0" max="100" step="1" value="50" placeholder="例: 50">
+                        </div>
+                        <div class="form-item">
+                            <button id="addHorseBtn" class="add-btn" disabled>➕ 穴馬を追加</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 追加済みリスト -->
+                <div id="addedList" class="added-list" style="display: none;">
+                    <h3>📋 追加済み穴馬リスト</h3>
+                    <div id="addedItems" class="added-items"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 一括ペーストタブ -->
+        <div class="tab-content" data-tab="bulk">
+            <div class="input-section">
+                <h2>📋 一括ペースト（従来方式）</h2>
+                <p class="tab-desc">全レースの穴馬データをまとめて貼り付けできます</p>
+                <textarea
+                    id="darkHorseInput"
+                    placeholder="全レースの穴馬データを貼り付けてください...
+
+例:
+川崎1R 3番 ダークホース 前走好走・騎手変更で今回期待 85%
+川崎2R 7番 サプライズ 血統妙味・距離適性◎ 70%
+..."></textarea>
+                <div class="button-group">
+                    <button id="parseBtn" class="primary-btn">🔍 解析して生成</button>
+                    <button id="clearBtn" class="secondary-btn">🗑️ クリア</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- プレビューエリア -->
+        <div id="previewSection" class="preview-section" style="display: none;">
+            <h2>👀 プレビュー</h2>
+            <div id="previewContent" class="preview-content"></div>
+        </div>
+
+        <!-- JSON出力エリア -->
+        <div id="jsonSection" class="json-section" style="display: none;">
+            <h2>📄 生成されたJSON</h2>
+            <div class="json-actions">
+                <button id="copyJsonBtn" class="action-btn">📋 JSON全体をコピー</button>
+                <a href="https://github.com/apol0510/nankan-analytics/edit/main/astro-site/src/data/darkHorseData.json" target="_blank" class="action-btn github-btn">🌐 GitHubで編集（本番反映）</a>
+            </div>
+            <pre id="jsonOutput" class="json-output"></pre>
+        </div>
+
+        <!-- 重要ポイント -->
+        <div class="important-notes">
+            <h3>💡 重要ポイント（JSONエラー防止）</h3>
+            <ul>
+                <li><strong>全体置換</strong>: GitHub編集画面でファイル全体を選択（Ctrl+A / Cmd+A）して削除 → 生成JSONを貼り付け</li>
+                <li><strong>Previewタブ確認</strong>: GitHub編集画面上部の「Preview」タブでシンタックスエラーがないか確認</li>
+                <li><strong>インデント維持</strong>: 生成JSONのインデント（2スペース）をそのまま維持</li>
+                <li><strong>Commit後デプロイ</strong>: 「Commit changes」後、1-2分でNetlifyに自動デプロイ</li>
+            </ul>
+        </div>
+    </div>
+</BaseLayout>
+
+<style>
+    .admin-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 20px;
+        color: #e2e8f0;
+    }
+
+    .admin-header {
+        text-align: center;
+        margin-bottom: 40px;
+    }
+
+    .admin-header h1 {
+        font-size: 2.5rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 10px;
+    }
+
+    .subtitle {
+        color: #94a3b8;
+        font-size: 1rem;
+    }
+
+    .how-to-use {
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .how-to-use h2 {
+        color: #f59e0b;
+        font-size: 1.3rem;
+        margin: 0 0 20px 0;
+    }
+
+    .steps {
+        display: grid;
+        gap: 15px;
+    }
+
+    .step {
+        display: flex;
+        gap: 15px;
+        align-items: flex-start;
+        background: rgba(15, 23, 42, 0.8);
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .step-number {
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        flex-shrink: 0;
+    }
+
+    .step-content strong {
+        color: #e2e8f0;
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .step-content p {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    .format-examples {
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .format-examples h3 {
+        color: #3b82f6;
+        font-size: 1.2rem;
+        margin: 0 0 20px 0;
+    }
+
+    .format-grid {
+        display: grid;
+        gap: 15px;
+        margin-bottom: 15px;
+    }
+
+    .format-example {
+        background: rgba(15, 23, 42, 0.8);
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .format-example h4 {
+        color: #60a5fa;
+        font-size: 0.95rem;
+        margin: 0 0 10px 0;
+    }
+
+    .format-example pre {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 10px;
+        border-radius: 6px;
+        color: #cbd5e1;
+        font-size: 0.85rem;
+        margin: 0;
+        overflow-x: auto;
+    }
+
+    .note {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    .settings-section {
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .settings-section h2 {
+        color: #8b5cf6;
+        font-size: 1.3rem;
+        margin: 0 0 20px 0;
+    }
+
+    .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .setting-item label {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+
+    .setting-item input,
+    .setting-item select {
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        border-radius: 8px;
+        color: #e2e8f0;
+        padding: 10px;
+        font-size: 0.95rem;
+    }
+
+    .setting-item input:focus,
+    .setting-item select:focus {
+        outline: none;
+        border-color: #8b5cf6;
+    }
+
+    .input-section {
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .input-section h2 {
+        color: #10b981;
+        font-size: 1.3rem;
+        margin: 0 0 20px 0;
+    }
+
+    #darkHorseInput {
+        width: 100%;
+        min-height: 400px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        border-radius: 8px;
+        color: #e2e8f0;
+        padding: 15px;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9rem;
+        resize: vertical;
+    }
+
+    #darkHorseInput:focus {
+        outline: none;
+        border-color: #10b981;
+    }
+
+    .button-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+    }
+
+    .primary-btn {
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        flex: 1;
+    }
+
+    .primary-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+    }
+
+    .secondary-btn {
+        background: rgba(100, 116, 139, 0.2);
+        color: #94a3b8;
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .secondary-btn:hover {
+        background: rgba(100, 116, 139, 0.3);
+        color: #e2e8f0;
+    }
+
+    .preview-section {
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .preview-section h2 {
+        color: #3b82f6;
+        font-size: 1.3rem;
+        margin: 0 0 20px 0;
+    }
+
+    .preview-content {
+        display: grid;
+        gap: 15px;
+    }
+
+    .race-preview {
+        background: rgba(15, 23, 42, 0.8);
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .race-preview-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .race-number-badge {
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 0.9rem;
+    }
+
+    .confidence-badge {
+        color: #fbbf24;
+        font-size: 1.1rem;
+    }
+
+    .horse-info {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .horse-number {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        color: white;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 0.9rem;
+    }
+
+    .horse-name {
+        color: #e2e8f0;
+        font-weight: 600;
+        font-size: 1rem;
+    }
+
+    .reason-text {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+
+    .json-section {
+        background: rgba(30, 41, 59, 0.95);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .json-section h2 {
+        color: #8b5cf6;
+        font-size: 1.3rem;
+        margin: 0 0 20px 0;
+    }
+
+    .json-actions {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 15px;
+        flex-wrap: wrap;
+    }
+
+    .action-btn {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-decoration: none;
+        display: inline-block;
+    }
+
+    .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(139, 92, 246, 0.3);
+    }
+
+    .github-btn {
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+    }
+
+    .github-btn:hover {
+        box-shadow: 0 10px 25px rgba(245, 158, 11, 0.3);
+    }
+
+    .json-output {
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        border-radius: 8px;
+        padding: 15px;
+        color: #10b981;
+        font-family: 'Courier New', monospace;
+        font-size: 0.85rem;
+        overflow-x: auto;
+        max-height: 500px;
+        overflow-y: auto;
+    }
+
+    .important-notes {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+    }
+
+    .important-notes h3 {
+        color: #fbbf24;
+        font-size: 1.2rem;
+        margin: 0 0 15px 0;
+    }
+
+    .important-notes ul {
+        margin: 0;
+        padding-left: 20px;
+        color: #cbd5e1;
+        line-height: 1.8;
+    }
+
+    .important-notes li {
+        margin-bottom: 8px;
+    }
+
+    .important-notes strong {
+        color: #fbbf24;
+    }
+
+    .load-prediction-section {
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .load-btn {
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        width: 100%;
+    }
+
+    .load-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+    }
+
+    .load-status {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        display: none;
+    }
+
+    .load-status.success {
+        background: rgba(16, 185, 129, 0.2);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        color: #10b981;
+        display: block;
+    }
+
+    .load-status.error {
+        background: rgba(239, 68, 68, 0.2);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+        display: block;
+    }
+
+    .input-tabs {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        border-bottom: 2px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .tab-btn {
+        background: transparent;
+        color: #94a3b8;
+        border: none;
+        padding: 12px 20px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border-bottom: 3px solid transparent;
+        position: relative;
+        bottom: -2px;
+    }
+
+    .tab-btn.active {
+        color: #3b82f6;
+        border-bottom-color: #3b82f6;
+    }
+
+    .tab-btn:hover:not(.active) {
+        color: #cbd5e1;
+    }
+
+    .tab-content {
+        display: none;
+    }
+
+    .tab-content.active {
+        display: block;
+    }
+
+    .tab-desc {
+        color: #94a3b8;
+        font-size: 0.95rem;
+        margin-bottom: 15px;
+    }
+
+    #simpleInput {
+        width: 100%;
+        min-height: 350px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        border-radius: 8px;
+        color: #e2e8f0;
+        padding: 15px;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9rem;
+        resize: vertical;
+    }
+
+    #simpleInput:focus {
+        outline: none;
+        border-color: #3b82f6;
+    }
+
+    .dropdown-form {
+        background: rgba(15, 23, 42, 0.6);
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+        margin-bottom: 20px;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 15px;
+    }
+
+    .form-row:last-child {
+        margin-bottom: 0;
+    }
+
+    .form-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .form-item.full-width {
+        grid-column: 1 / -1;
+    }
+
+    .form-item label {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+
+    .form-item select,
+    .form-item textarea,
+    .form-item input[type="number"] {
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        border-radius: 8px;
+        color: #e2e8f0;
+        padding: 10px;
+        font-size: 0.95rem;
+    }
+
+    .form-item select:focus,
+    .form-item textarea:focus,
+    .form-item input[type="number"]:focus {
+        outline: none;
+        border-color: #3b82f6;
+    }
+
+    .form-item textarea {
+        resize: vertical;
+        font-family: inherit;
+    }
+
+    .add-btn {
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-top: auto;
+    }
+
+    .add-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+    }
+
+    .add-btn:disabled {
+        background: rgba(100, 116, 139, 0.3);
+        cursor: not-allowed;
+    }
+
+    .added-list {
+        background: rgba(15, 23, 42, 0.6);
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .added-list h3 {
+        color: #3b82f6;
+        font-size: 1.1rem;
+        margin: 0 0 15px 0;
+    }
+
+    .added-items {
+        display: grid;
+        gap: 10px;
+    }
+
+    .added-item {
+        background: rgba(30, 41, 59, 0.8);
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .added-item-info {
+        flex: 1;
+    }
+
+    .added-item-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 5px;
+    }
+
+    .added-item-race {
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        color: white;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-weight: 700;
+        font-size: 0.8rem;
+    }
+
+    .added-item-horse {
+        color: #e2e8f0;
+        font-weight: 600;
+    }
+
+    .added-item-reason {
+        color: #94a3b8;
+        font-size: 0.85rem;
+    }
+
+    .remove-btn {
+        background: rgba(239, 68, 68, 0.2);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .remove-btn:hover {
+        background: rgba(239, 68, 68, 0.3);
+    }
+
+    @media (max-width: 768px) {
+        .admin-container {
+            padding: 20px 15px;
+        }
+
+        .admin-header h1 {
+            font-size: 1.8rem;
+        }
+
+        .settings-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .button-group {
+            flex-direction: column;
+        }
+
+        .json-actions {
+            flex-direction: column;
+        }
+
+        .input-tabs {
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .tab-btn {
+            border-bottom: none;
+            border-left: 3px solid transparent;
+            bottom: 0;
+            text-align: left;
+        }
+
+        .tab-btn.active {
+            border-bottom: none;
+            border-left-color: #3b82f6;
+        }
+
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<script is:inline>
+// グローバル変数
+let predictionData = null;
+let addedHorses = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    // 日付を今日に設定
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('raceDate').value = today;
+
+    // タブ切り替え
+    setupTabs();
+
+    // 予想データ読み込みボタン
+    document.getElementById('loadPredictionBtn').addEventListener('click', loadPredictionData);
+
+    // 簡略入力ボタン
+    document.getElementById('parseSimpleBtn').addEventListener('click', parseSimpleInput);
+    document.getElementById('clearSimpleBtn').addEventListener('click', () => {
+        document.getElementById('simpleInput').value = '';
+        clearResults();
+    });
+
+    // 一括ペーストボタン（従来）
+    document.getElementById('parseBtn').addEventListener('click', parseDarkHorseData);
+    document.getElementById('clearBtn').addEventListener('click', () => {
+        document.getElementById('darkHorseInput').value = '';
+        clearResults();
+    });
+
+    // ドロップダウン関連
+    document.getElementById('selectRace').addEventListener('change', onRaceSelect);
+    document.getElementById('addHorseBtn').addEventListener('click', addHorseFromDropdown);
+
+    // JSONコピーボタン
+    document.getElementById('copyJsonBtn').addEventListener('click', () => {
+        const jsonText = document.getElementById('jsonOutput').textContent;
+        navigator.clipboard.writeText(jsonText).then(() => {
+            const btn = document.getElementById('copyJsonBtn');
+            const originalText = btn.textContent;
+            btn.textContent = '✅ コピー完了！';
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        });
+    });
+});
+
+// タブ切り替え設定
+function setupTabs() {
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tabName = btn.dataset.tab;
+
+            // アクティブクラス切り替え
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+
+            btn.classList.add('active');
+            document.querySelector(`.tab-content[data-tab="${tabName}"]`).classList.add('active');
+        });
+    });
+}
+
+// 予想データ読み込み
+async function loadPredictionData() {
+    const raceDate = document.getElementById('raceDate').value;
+    const statusEl = document.getElementById('loadStatus');
+
+    try {
+        statusEl.className = 'load-status';
+        statusEl.textContent = '読み込み中...';
+        statusEl.style.display = 'block';
+
+        const response = await fetch('/data/allRacesPrediction.json');
+        if (!response.ok) throw new Error('予想データの取得に失敗しました');
+
+        const data = await response.json();
+        predictionData = data;
+
+        statusEl.className = 'load-status success';
+        statusEl.textContent = `✅ ${data.raceDate} ${data.track} の予想データを読み込みました（${data.totalRaces}R）`;
+
+        // ドロップダウンを更新
+        populateRaceDropdown();
+    } catch (error) {
+        statusEl.className = 'load-status error';
+        statusEl.textContent = `❌ エラー: ${error.message}`;
+        console.error(error);
+    }
+}
+
+// レースドロップダウンを生成
+function populateRaceDropdown() {
+    if (!predictionData) return;
+
+    const selectRace = document.getElementById('selectRace');
+    selectRace.innerHTML = '<option value="">-- レースを選択 --</option>';
+
+    predictionData.races.forEach(race => {
+        const option = document.createElement('option');
+        option.value = race.raceNumber;
+        option.textContent = `${race.raceNumber} ${race.raceName || ''}`;
+        selectRace.appendChild(option);
+    });
+
+    selectRace.disabled = false;
+}
+
+// レース選択時
+function onRaceSelect() {
+    const raceNumber = document.getElementById('selectRace').value;
+    const selectHorse = document.getElementById('selectHorse');
+
+    if (!raceNumber || !predictionData) {
+        selectHorse.disabled = true;
+        selectHorse.innerHTML = '<option value="">-- まずレースを選択 --</option>';
+        document.getElementById('addHorseBtn').disabled = true;
+        return;
+    }
+
+    const race = predictionData.races.find(r => r.raceNumber === raceNumber);
+    if (!race || !race.horses) {
+        selectHorse.disabled = true;
+        selectHorse.innerHTML = '<option value="">-- 馬データなし --</option>';
+        document.getElementById('addHorseBtn').disabled = true;
+        return;
+    }
+
+    // 馬ドロップダウンを生成
+    selectHorse.innerHTML = '<option value="">-- 馬を選択 --</option>';
+
+    // horsesオブジェクトから全ての馬を抽出
+    const allHorses = [];
+    if (race.horses.main) allHorses.push(race.horses.main);
+    if (race.horses.sub) allHorses.push(race.horses.sub);
+    if (race.horses.hole1) allHorses.push(race.horses.hole1);
+    if (race.horses.hole2) allHorses.push(race.horses.hole2);
+    if (race.horses.connect && Array.isArray(race.horses.connect)) {
+        allHorses.push(...race.horses.connect);
+    }
+    if (race.horses.reserve && Array.isArray(race.horses.reserve)) {
+        allHorses.push(...race.horses.reserve);
+    }
+
+    // 馬番順にソート
+    allHorses.sort((a, b) => {
+        const numA = typeof a.number === 'string' ? parseInt(a.number) : a.number;
+        const numB = typeof b.number === 'string' ? parseInt(b.number) : b.number;
+        return numA - numB;
+    });
+
+    // ドロップダウンに追加
+    allHorses.forEach(horse => {
+        const option = document.createElement('option');
+        option.value = JSON.stringify({ number: horse.number, name: horse.name });
+        option.textContent = `${horse.number}番 ${horse.name}`;
+        selectHorse.appendChild(option);
+    });
+
+    selectHorse.disabled = false;
+
+    // 馬選択時にボタン有効化
+    selectHorse.addEventListener('change', () => {
+        document.getElementById('addHorseBtn').disabled = !selectHorse.value;
+    });
+}
+
+// ドロップダウンから穴馬追加
+function addHorseFromDropdown() {
+    const raceNumber = document.getElementById('selectRace').value;
+    const horseData = document.getElementById('selectHorse').value;
+    const reason = document.getElementById('horseReason').value.trim();
+    const confidenceValue = document.getElementById('horseConfidence').value;
+
+    if (!raceNumber || !horseData || !confidenceValue) {
+        alert('レース、馬、信頼度を選択してください');
+        return;
+    }
+
+    const horse = JSON.parse(horseData);
+    const race = predictionData.races.find(r => r.raceNumber === raceNumber);
+
+    const horseItem = {
+        raceNumber: raceNumber,
+        raceName: race.raceName || '',
+        horseNumber: horse.number,
+        horseName: horse.name.trim(),
+        reason: reason,
+        confidence: `${confidenceValue}%`
+    };
+
+    addedHorses.push(horseItem);
+    updateAddedList();
+    generateFinalJSON();
+
+    // フォームリセット
+    document.getElementById('horseReason').value = '';
+    document.getElementById('horseConfidence').value = '50';
+}
+
+// 追加済みリスト更新
+function updateAddedList() {
+    const addedList = document.getElementById('addedList');
+    const addedItems = document.getElementById('addedItems');
+
+    if (addedHorses.length === 0) {
+        addedList.style.display = 'none';
+        return;
+    }
+
+    addedList.style.display = 'block';
+    addedItems.innerHTML = addedHorses.map((horse, index) => `
+        <div class="added-item">
+            <div class="added-item-info">
+                <div class="added-item-header">
+                    <span class="added-item-race">${horse.raceNumber}</span>
+                    <span class="added-item-horse">${horse.horseNumber}番 ${horse.horseName}</span>
+                    <span class="confidence-badge">${horse.confidence}</span>
+                </div>
+                ${horse.reason ? `<div class="added-item-reason">💡 ${horse.reason}</div>` : ''}
+            </div>
+            <button class="remove-btn" onclick="removeHorse(${index})">🗑️ 削除</button>
+        </div>
+    `).join('');
+}
+
+// 穴馬削除
+function removeHorse(index) {
+    addedHorses.splice(index, 1);
+    updateAddedList();
+    generateFinalJSON();
+}
+
+// 簡略入力パース
+function parseSimpleInput() {
+    if (!predictionData) {
+        alert('先に「予想データを読み込む」ボタンで予想データを読み込んでください');
+        return;
+    }
+
+    const input = document.getElementById('simpleInput').value.trim();
+    if (!input) {
+        alert('簡略データを入力してください');
+        return;
+    }
+
+    const lines = input.split('\n').filter(line => line.trim());
+    const horses = [];
+    let currentHorse = null;
+
+    for (const line of lines) {
+        // 全角数字・全角スペースを半角に変換
+        const trimmedLine = line.trim()
+            .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+            .replace(/　/g, ' ');
+
+        // 新形式チェック: 1R 8番 33% 3番 32%
+        // 馬番と%値のペアが含まれているか確認
+        if (/^\d+R?\s+\d+番\s+\d+%/.test(trimmedLine)) {
+            // 新形式として処理
+            const newFormatMatch = trimmedLine.match(/^(\d+)R?\s+(.+)$/);
+            if (newFormatMatch) {
+                const raceNumber = `${newFormatMatch[1]}R`;
+                const horseDataStr = newFormatMatch[2];
+
+                console.log(`🔍 新形式処理: ${raceNumber}, データ: ${horseDataStr}`);
+
+                // 馬番と%値のペアを抽出
+                const horsePattern = /(\d+)番\s+(\d+)%/g;
+                let match;
+
+                while ((match = horsePattern.exec(horseDataStr)) !== null) {
+                    const horseNumber = match[1];
+                    const confidence = match[2];
+
+                    console.log(`  ✅ 抽出: ${horseNumber}番 ${confidence}%`);
+
+                // 馬名を予想データから取得
+                const race = predictionData.races.find(r => r.raceNumber === raceNumber);
+
+                // horsesオブジェクトから指定された馬番の馬を検索
+                let horse = null;
+                if (race && race.horses) {
+                    const allHorses = [];
+                    if (race.horses.main) allHorses.push(race.horses.main);
+                    if (race.horses.sub) allHorses.push(race.horses.sub);
+                    if (race.horses.hole1) allHorses.push(race.horses.hole1);
+                    if (race.horses.hole2) allHorses.push(race.horses.hole2);
+                    if (race.horses.connect && Array.isArray(race.horses.connect)) {
+                        allHorses.push(...race.horses.connect);
+                    }
+                    if (race.horses.reserve && Array.isArray(race.horses.reserve)) {
+                        allHorses.push(...race.horses.reserve);
+                    }
+                    horse = allHorses.find(h => String(h.number) === String(horseNumber));
+                }
+
+                if (!horse) {
+                    console.warn(`${raceNumber} ${horseNumber}番の馬が見つかりません`);
+                    continue;
+                }
+
+                    horses.push({
+                        raceNumber: raceNumber,
+                        raceName: race.raceName || '',
+                        horseNumber: horseNumber,
+                        horseName: horse.name.trim(),
+                        reason: '',
+                        confidence: `${confidence}%`
+                    });
+                }
+            }
+        } else {
+            // 従来形式の処理
+            // レース番号と馬番（例: 1R 3）
+            const raceMatch = trimmedLine.match(/^(\d+)R?\s+(\d+)$/);
+            if (raceMatch) {
+                if (currentHorse) horses.push(currentHorse);
+
+                const raceNumber = `${raceMatch[1]}R`;
+                const horseNumber = raceMatch[2];
+
+                console.log(`🔍 従来形式処理: ${raceNumber} ${horseNumber}番`);
+
+                // 馬名を予想データから取得
+                const race = predictionData.races.find(r => r.raceNumber === raceNumber);
+
+                // horsesオブジェクトから指定された馬番の馬を検索
+                let horse = null;
+                if (race && race.horses) {
+                    const allHorses = [];
+                    if (race.horses.main) allHorses.push(race.horses.main);
+                    if (race.horses.sub) allHorses.push(race.horses.sub);
+                    if (race.horses.hole1) allHorses.push(race.horses.hole1);
+                    if (race.horses.hole2) allHorses.push(race.horses.hole2);
+                    if (race.horses.connect && Array.isArray(race.horses.connect)) {
+                        allHorses.push(...race.horses.connect);
+                    }
+                    if (race.horses.reserve && Array.isArray(race.horses.reserve)) {
+                        allHorses.push(...race.horses.reserve);
+                    }
+                    horse = allHorses.find(h => String(h.number) === String(horseNumber));
+                }
+
+                if (!horse) {
+                    alert(`${raceNumber} ${horseNumber}番の馬が見つかりません`);
+                    continue;
+                }
+
+                currentHorse = {
+                    raceNumber: raceNumber,
+                    raceName: race.raceName || '',
+                    horseNumber: horseNumber,
+                    horseName: horse.name.trim(),
+                    reason: '',
+                    confidence: '50%'
+                };
+            }
+            // %値（例: 85, 85%）
+            else if (trimmedLine.match(/^\d+%?$/)) {
+                if (currentHorse) {
+                    const confidence = trimmedLine.replace('%', '');
+                    currentHorse.confidence = `${confidence}%`;
+                }
+            }
+            // 理由（それ以外のテキスト）
+            else if (currentHorse && trimmedLine) {
+                currentHorse.reason += (currentHorse.reason ? ' ' : '') + trimmedLine;
+            }
+        }
+    }
+
+    // 最後の馬を追加
+    if (currentHorse) horses.push(currentHorse);
+
+    if (horses.length === 0) {
+        alert('有効なデータが見つかりませんでした');
+        return;
+    }
+
+    // プレビュー表示
+    displayPreview(horses);
+    generateJSON(horses);
+
+    // セクション表示
+    document.getElementById('previewSection').style.display = 'block';
+    document.getElementById('jsonSection').style.display = 'block';
+    document.getElementById('jsonSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// 最終JSON生成（ドロップダウン用）
+function generateFinalJSON() {
+    if (addedHorses.length === 0) {
+        document.getElementById('previewSection').style.display = 'none';
+        document.getElementById('jsonSection').style.display = 'none';
+        return;
+    }
+
+    displayPreview(addedHorses);
+    generateJSON(addedHorses);
+
+    document.getElementById('previewSection').style.display = 'block';
+    document.getElementById('jsonSection').style.display = 'block';
+}
+
+// 結果クリア
+function clearResults() {
+    addedHorses = [];
+    updateAddedList();
+    document.getElementById('previewSection').style.display = 'none';
+    document.getElementById('jsonSection').style.display = 'none';
+}
+
+// 一括ペースト解析（従来）
+function parseDarkHorseData() {
+    const input = document.getElementById('darkHorseInput').value.trim();
+    if (!input) {
+        alert('穴馬データを入力してください');
+        return;
+    }
+
+    const raceDate = document.getElementById('raceDate').value;
+    const track = document.getElementById('raceTrack').value;
+    const totalRaces = parseInt(document.getElementById('totalRaces').value);
+
+    const races = [];
+    const lines = input.split('\n').filter(line => line.trim());
+
+    for (const line of lines) {
+        const parsed = parseLine(line);
+        if (parsed) {
+            races.push(parsed);
+        }
+    }
+
+    if (races.length === 0) {
+        alert('有効な穴馬データが見つかりませんでした');
+        return;
+    }
+
+    // データ補完
+    races.forEach(race => {
+        if (!race.raceName) {
+            race.raceName = getRaceNameFromNumber(race.raceNumber, track);
+        }
+    });
+
+    // プレビュー表示
+    displayPreview(races);
+    generateJSON(races);
+
+    // セクション表示
+    document.getElementById('previewSection').style.display = 'block';
+    document.getElementById('jsonSection').style.display = 'block';
+    document.getElementById('jsonSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// 一行パース（従来方式）
+function parseLine(line) {
+    // パターン1: 川崎1R 3番 ダークホース 前走好走・騎手変更で今回期待 85%
+    let match = line.match(/(\d+)R[:\s]*(\d+)番\s+([^\s]+)\s+(.+?)\s*(\d+%?)$/);
+    if (match) {
+        const confidence = match[5].replace('%', '');
+        return {
+            raceNumber: `${match[1]}R`,
+            horseNumber: match[2],
+            horseName: match[3],
+            reason: match[4].trim(),
+            confidence: `${confidence}%`
+        };
+    }
+
+    // パターン2: 1R: 3番 ダークホース (前走好走・騎手変更で今回期待) 85%
+    match = line.match(/(\d+)R[:\s]*(\d+)番\s+([^\s(]+)\s*\(([^)]+)\)\s*(\d+%?)$/);
+    if (match) {
+        const confidence = match[5].replace('%', '');
+        return {
+            raceNumber: `${match[1]}R`,
+            horseNumber: match[2],
+            horseName: match[3],
+            reason: match[4].trim(),
+            confidence: `${confidence}%`
+        };
+    }
+
+    // パターン3: 1R 【3】ダークホース 前走好走 85%
+    match = line.match(/(\d+)R[:\s]*[【\[](\d+)[】\]]\s*([^\s]+)\s+(.+?)\s*(\d+%?)$/);
+    if (match) {
+        const confidence = match[5].replace('%', '');
+        return {
+            raceNumber: `${match[1]}R`,
+            horseNumber: match[2],
+            horseName: match[3],
+            reason: match[4].trim(),
+            confidence: `${confidence}%`
+        };
+    }
+
+    return null;
+}
+
+// レース名生成
+function getRaceNameFromNumber(raceNumber, track) {
+    const num = parseInt(raceNumber.replace('R', ''));
+    if (num <= 3) return '2歳・C3';
+    if (num <= 6) return 'C2・C1';
+    if (num <= 9) return 'B級';
+    if (num <= 11) return 'A級・重賞';
+    return 'メインレース';
+}
+
+// プレビュー表示
+function displayPreview(races) {
+    const previewContent = document.getElementById('previewContent');
+
+    // レース番号でグループ化
+    const groupedByRace = {};
+    races.forEach(horse => {
+        if (!groupedByRace[horse.raceNumber]) {
+            groupedByRace[horse.raceNumber] = [];
+        }
+        groupedByRace[horse.raceNumber].push(horse);
+    });
+
+    // グループごとに表示
+    const sortedRaceNumbers = Object.keys(groupedByRace).sort((a, b) => {
+        const numA = parseInt(a.replace('R', ''));
+        const numB = parseInt(b.replace('R', ''));
+        return numA - numB;
+    });
+
+    previewContent.innerHTML = sortedRaceNumbers.map(raceNumber => {
+        const horses = groupedByRace[raceNumber];
+        return `
+            <div class="race-preview">
+                <div class="race-preview-header">
+                    <span class="race-number-badge">${raceNumber}</span>
+                    <span style="color: #94a3b8; font-size: 0.9rem;">${horses.length}頭</span>
+                </div>
+                ${horses.map(horse => `
+                    <div class="horse-info" style="margin-bottom: 8px;">
+                        <span class="horse-number">${horse.horseNumber}番</span>
+                        <span class="horse-name">${horse.horseName}</span>
+                        <span class="confidence-badge">${horse.confidence}</span>
+                    </div>
+                    ${horse.reason ? `<div class="reason-text">💡 ${horse.reason}</div>` : ''}
+                `).join('')}
+            </div>
+        `;
+    }).join('');
+}
+
+// JSON生成
+function generateJSON(horses) {
+    const raceDate = document.getElementById('raceDate').value;
+    const track = document.getElementById('raceTrack').value;
+    const totalRaces = parseInt(document.getElementById('totalRaces').value);
+
+    const jsonData = {
+        date: raceDate,
+        track: track,
+        lastUpdated: new Date().toISOString(),
+        totalRaces: totalRaces,
+        races: horses.sort((a, b) => {
+            const numA = parseInt(a.raceNumber.replace('R', ''));
+            const numB = parseInt(b.raceNumber.replace('R', ''));
+            return numA - numB;
+        })
+    };
+
+    const jsonOutput = document.getElementById('jsonOutput');
+    jsonOutput.textContent = JSON.stringify(jsonData, null, 2);
+}
+</script>

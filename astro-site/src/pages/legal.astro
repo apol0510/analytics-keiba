@@ -1,0 +1,201 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Legal Information" description="Legal information and business details for NANKAN Analytics">
+  <style>
+    /* 暗い背景を完全に覆う */
+    :global(.main-content) {
+      background: white !important;
+      margin-top: 0 !important;
+      padding-top: 80px !important;
+    }
+
+    .legal-page {
+      padding: 4rem 0;
+      background: white;
+      min-height: calc(100vh - 80px);
+    }
+
+    .legal-content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .legal-content h1 {
+      font-size: 2.5rem;
+      color: #1f2937;
+      margin-bottom: 1rem;
+    }
+
+    .info-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2rem 0;
+      background: white !important;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      position: relative;
+      z-index: 1;
+    }
+
+    .info-table th,
+    .info-table td {
+      padding: 1rem;
+      text-align: left;
+      border-bottom: 1px solid #e5e7eb;
+      position: relative;
+      z-index: 2;
+    }
+
+    .info-table th {
+      background: #2563eb !important;
+      color: white;
+      font-weight: 600;
+      width: 35%;
+    }
+
+    .info-table td {
+      background: white !important;
+      color: #374151 !important;
+    }
+
+    .info-table tr:last-child th,
+    .info-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .legal-content p {
+      line-height: 1.8;
+      color: #374151;
+      margin-bottom: 1.5rem;
+    }
+
+    .language-notice {
+      background: #fef3c7;
+      padding: 1.5rem;
+      border-left: 4px solid #f59e0b;
+      margin-bottom: 2rem;
+      border-radius: 4px;
+    }
+
+    .language-notice p {
+      font-size: 1rem;
+      color: #92400e;
+      margin: 0;
+      line-height: 1.8;
+      font-weight: 500;
+    }
+
+    @media (max-width: 768px) {
+      .legal-content h1 {
+        font-size: 2rem;
+      }
+
+      .info-table {
+        font-size: 0.9rem;
+      }
+
+      .info-table th,
+      .info-table td {
+        padding: 0.75rem;
+      }
+    }
+  </style>
+
+  <section class="legal-page">
+    <div class="container legal-content">
+      <h1>Legal Information</h1>
+
+      <!-- Language Notice -->
+      <div class="language-notice">
+        <p>
+          <strong>⚠️ Important Notice:</strong><br>
+          This service and all contractual terms are provided in English only.<br>
+          By using this service, you confirm that you understand and agree to these terms.
+        </p>
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <th>Company Name</th>
+          <td>Tirol Analytics</td>
+        </tr>
+        <tr>
+          <th>Representative</th>
+          <td>Toshihiro Asai</td>
+        </tr>
+        <tr>
+          <th>Address</th>
+          <td>550-2 Kagasuno, Kawauchi-cho, Tokushima City, Tokushima 771-0130, Japan</td>
+        </tr>
+        <tr>
+          <th>Phone</th>
+          <td>070-2362-5147</td>
+        </tr>
+        <tr>
+          <th>Email</th>
+          <td>support@tirol.link</td>
+        </tr>
+        <tr>
+          <th>Additional Fees</th>
+          <td>
+            Consumption tax (included in price)<br>
+            Bank transfer fees (if applicable)
+          </td>
+        </tr>
+        <tr>
+          <th>Service Delivery Method</th>
+          <td>
+            After registration, account access is provided via magic link authentication. Services are delivered online through your dashboard.
+          </td>
+        </tr>
+        <tr>
+          <th>Payment Methods</th>
+          <td>
+            • Credit Card (via Paddle / FastSpring)<br>
+            • PayPal<br>
+            • Bank Transfer
+          </td>
+        </tr>
+        <tr>
+          <th>Payment Timing</th>
+          <td>
+            • Subscription Plans: Automatic monthly billing<br>
+            • Premium Plus: One-time payment at purchase
+          </td>
+        </tr>
+        <tr>
+          <th>Service Availability</th>
+          <td>Immediate access upon payment completion</td>
+        </tr>
+        <tr>
+          <th>Refunds and Cancellations</th>
+          <td>
+            Please refer to our <a href="/refund/" style="color: #2563eb;">Refund Policy</a> for complete details.<br>
+            Subscription cancellations are available at any time. Access continues until the end of your current billing period.
+          </td>
+        </tr>
+        <tr>
+          <th>System Requirements</th>
+          <td>
+            Internet connection required<br>
+            Recommended browsers: Google Chrome, Safari, Microsoft Edge (latest versions)
+          </td>
+        </tr>
+        <tr>
+          <th>Privacy</th>
+          <td>
+            Your personal information is handled in accordance with our <a href="/privacy/" style="color: #2563eb;">Privacy Policy</a>.
+          </td>
+        </tr>
+      </table>
+
+      <p style="color: #6b7280; font-size: 0.9rem; line-height: 1.7;">
+        This service provides statistical analysis results and reference indicators based on sports data, and does not guarantee any outcomes or results.<br><br>
+        • We are not liable for any damages resulting from the use of information provided by this service.<br>
+        • Service content may be changed without prior notice.
+      </p>
+    </div>
+  </section>
+</BaseLayout>

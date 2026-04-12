@@ -1,0 +1,239 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "全レース予想データスキーマ",
+  "description": "NANKANアナリティクスの予想データ構造定義",
+  "type": "object",
+  "required": ["raceDate", "track", "totalRaces", "races"],
+  "properties": {
+    "raceDate": {
+      "type": "string",
+      "format": "date",
+      "description": "開催日（YYYY-MM-DD形式）",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "track": {
+      "type": "string",
+      "description": "競馬場名",
+      "enum": ["川崎競馬", "大井競馬", "船橋競馬", "浦和競馬"]
+    },
+    "totalRaces": {
+      "type": "integer",
+      "description": "総レース数",
+      "minimum": 1,
+      "maximum": 12
+    },
+    "races": {
+      "type": "array",
+      "description": "各レースのデータ配列",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "$ref": "#/definitions/race"
+      }
+    }
+  },
+  "definitions": {
+    "race": {
+      "type": "object",
+      "required": ["raceNumber", "tier", "isMainRace", "horses"],
+      "properties": {
+        "raceNumber": {
+          "type": "string",
+          "description": "レース番号（例: 1R, 2R）",
+          "pattern": "^(1[0-2]?|[1-9])R$"
+        },
+        "raceName": {
+          "type": "string",
+          "description": "レース名"
+        },
+        "tier": {
+          "type": "string",
+          "description": "会員レベル",
+          "enum": ["free", "standard", "premium"]
+        },
+        "isMainRace": {
+          "type": "boolean",
+          "description": "メインレースフラグ"
+        },
+        "displayOrder": {
+          "type": "integer",
+          "description": "表示順",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "raceInfo": {
+          "$ref": "#/definitions/raceInfo"
+        },
+        "horses": {
+          "$ref": "#/definitions/horses"
+        },
+        "strategies": {
+          "$ref": "#/definitions/strategies"
+        }
+      }
+    },
+    "raceInfo": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "date": {"type": "string", "format": "date"},
+        "track": {"type": "string"},
+        "raceNumber": {"type": "string"},
+        "raceName": {"type": "string"},
+        "confidence": {
+          "type": "string",
+          "description": "信頼度（0-100）",
+          "pattern": "^\\d{1,3}(\\.\\d)?$"
+        },
+        "abilityIndex": {
+          "type": "string",
+          "description": "能力指数",
+          "pattern": "^\\d{1,3}(\\.\\d)?$"
+        },
+        "recommendation": {
+          "type": "string",
+          "enum": ["A+", "A", "B+", "B", "C+", "C"]
+        },
+        "expectedReturn": {
+          "type": "string",
+          "description": "期待回収率"
+        },
+        "distance": {
+          "type": "string",
+          "description": "距離（例: 1400m）",
+          "pattern": "^\\d{3,4}m$"
+        },
+        "horseCount": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 18
+        },
+        "startTime": {
+          "type": "string",
+          "description": "発走時刻（HH:MM）",
+          "pattern": "^\\d{1,2}:\\d{2}$"
+        }
+      }
+    },
+    "horses": {
+      "type": "object",
+      "required": ["main"],
+      "properties": {
+        "main": {
+          "$ref": "#/definitions/horseData",
+          "description": "本命馬"
+        },
+        "sub": {
+          "$ref": "#/definitions/horseData",
+          "description": "対抗馬"
+        },
+        "thirdChoice": {
+          "$ref": "#/definitions/horseData",
+          "description": "単穴馬"
+        }
+      }
+    },
+    "horseData": {
+      "type": "object",
+      "required": ["number", "name", "type"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "description": "馬番",
+          "minimum": 1,
+          "maximum": 18
+        },
+        "name": {
+          "type": "string",
+          "description": "馬名"
+        },
+        "type": {
+          "type": "string",
+          "description": "種別",
+          "enum": ["本命", "対抗", "単穴", "連下", "注意"]
+        },
+        "confidence": {
+          "type": "string",
+          "description": "信頼度",
+          "pattern": "^\\d{1,3}(\\.\\d)?$"
+        },
+        "factors": {
+          "type": "array",
+          "description": "評価要因",
+          "items": {
+            "type": "object",
+            "properties": {
+              "icon": {"type": "string"},
+              "text": {"type": "string"}
+            }
+          }
+        },
+        "importance": {
+          "type": "array",
+          "description": "重要度指標",
+          "items": {
+            "type": "object",
+            "required": ["label", "value"],
+            "properties": {
+              "label": {"type": "string"},
+              "value": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "0-1の範囲（パーセンテージは100で割る）"
+              }
+            }
+          }
+        }
+      }
+    },
+    "strategies": {
+      "type": "object",
+      "description": "投資戦略",
+      "properties": {
+        "safe": {
+          "$ref": "#/definitions/strategy",
+          "description": "安全戦略"
+        },
+        "balance": {
+          "$ref": "#/definitions/strategy",
+          "description": "バランス戦略"
+        },
+        "aggressive": {
+          "$ref": "#/definitions/strategy",
+          "description": "攻撃的戦略"
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "recommendation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "hitRate": {"type": "string"},
+        "returnRate": {"type": "string"},
+        "riskLevel": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "bets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string"},
+              "horses": {"type": "string"},
+              "points": {"type": "string"}
+            }
+          }
+        },
+        "expectedPayout": {"type": "string"},
+        "payoutType": {"type": "string"}
+      }
+    }
+  }
+}

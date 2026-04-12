@@ -1,0 +1,111 @@
+---
+/** Astroのフロントマターは空でOK。環境変数はdata属性で渡す方式にします。 */
+---
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>ログイン</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      .container { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f3f4f6; }
+      .card { width: 100%; max-width: 24rem; background: white; padding: 2rem; border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+      h1 { font-size: 1.25rem; font-weight: bold; text-align: center; margin: 0 0 1.5rem; }
+      label { display: block; font-size: 0.875rem; margin-bottom: 0.25rem; }
+      input { width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.25rem; margin-bottom: 1rem; box-sizing: border-box; }
+      .btn-group { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+      button { flex: 1; padding: 0.5rem; border: none; border-radius: 0.25rem; color: white; cursor: pointer; font-weight: 500; }
+      #signin { background: #3b82f6; } #signin:hover { background: #2563eb; }
+      #signup { background: #10b981; } #signup:hover { background: #059669; }
+      #msg { text-align: center; font-size: 0.875rem; margin: 0.5rem 0; min-height: 1.25rem; }
+      .link { text-align: center; font-size: 0.875rem; margin-top: 1rem; }
+      .link a { color: #3b82f6; text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <h1>ログイン / 新規登録</h1>
+
+        <label>メールアドレス</label>
+        <input id="email" type="email" placeholder="you@example.com" />
+
+        <label>パスワード</label>
+        <input id="password" type="password" placeholder="••••••••" />
+
+        <div class="btn-group">
+          <button id="signin">ログイン</button>
+          <button id="signup">新規登録</button>
+        </div>
+
+        <p id="msg"></p>
+        <p class="link"><a href="/pricing">← 料金ページへ戻る</a></p>
+      </div>
+    </div>
+
+    <!-- 環境変数（PUBLIC_*）を安全にクライアントへ渡す -->
+    <div
+      id="supabase-config"
+      data-url={import.meta.env.PUBLIC_SUPABASE_URL}
+      data-key={import.meta.env.PUBLIC_SUPABASE_ANON_KEY}
+      style="display:none">
+    </div>
+
+    <script type="module">
+      // CDN版に戻す（Astroのクライアントサイドではnpm importが直接動作しない）
+      import { createClient } from 'https://cdn.skypack.dev/@supabase/supabase-js@2';
+
+      // data属性から環境変数を取得
+      const cfg = document.getElementById('supabase-config');
+      const supabaseUrl = cfg?.dataset.url;
+      const supabaseKey = cfg?.dataset.key;
+
+      const msgEl = document.getElementById('msg');
+      const show = (t, ok=false) => { msgEl.textContent = t; msgEl.style.color = ok ? '#16a34a' : '#ef4444'; };
+
+      if (!supabaseUrl || !supabaseKey) {
+        show('Supabase設定エラー: 環境変数が見つかりません');
+        throw new Error('Missing PUBLIC_SUPABASE_* envs');
+      }
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      
+      // ヘルパー関数
+      const getVal = (id) => document.getElementById(id).value.trim();
+      const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+
+      async function doSignIn() {
+        const email = getVal('email').toLowerCase();
+        const password = getVal('password');
+        
+        if (!email || !password) return show('メールとパスワードを入力してください');
+        if (!isEmail(email)) return show('メール形式が正しくありません');
+        
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) return show(`エラー: ${error.message}`);
+        show('ログインしました。ページを移動します…', true);
+        setTimeout(()=>location.href='/pricing', 400);
+      }
+
+      async function doSignUp() {
+        const email = getVal('email').toLowerCase();
+        const password = getVal('password');
+        
+        if (!email || !password) return show('メールとパスワードを入力してください');
+        if (!isEmail(email)) return show('メール形式が正しくありません');
+        if (password.length < 6) return show('パスワードは6文字以上で入力してください');
+        
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) return show(`エラー: ${error.message}`);
+        show('登録しました。ログインします…', true);
+        await doSignIn();
+      }
+      
+      // デバッグ用：グローバルに公開
+      window.supabase = supabase;
+
+      document.getElementById('signin').addEventListener('click', doSignIn);
+      document.getElementById('signup').addEventListener('click', doSignUp);
+    </script>
+  </body>
+</html>

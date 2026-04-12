@@ -1,0 +1,769 @@
+---
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+
+const allPosts = await getCollection('blog');
+
+// Astroページの記事を手動で追加（競馬場別カテゴリー分け）
+const astroPosts = [
+  {
+    slug: 'course/funabashi-1000m',
+    data: {
+      title: '船橋競馬場1000m完全攻略ガイド【2025年最新版】',
+      description: '船橋競馬場1000mレースの馬番別・人気別成績を徹底分析。左回り340m直線の特性と先行有利の展開を解説。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '1000m', 'データ分析', '左回り'],
+      heroImage: '/course_data/funabashi_1000m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-1200m',
+    data: {
+      title: '船橋競馬場1200m完全攻略ガイド【2025年最新版】',
+      description: '船橋競馬場1200mレースの馬番別・人気別成績を徹底分析。3523レース分析で判明した9番枠12.2%の高勝率と先行有利展開を解説。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '1200m', 'データ分析', '先行有利'],
+      heroImage: '/course_data/funabashi_1200m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-1500m',
+    data: {
+      title: '船橋競馬場1500m完全攻略ガイド【2025年最新版】',
+      description: '船橋競馬場1500mレースの馬番別・人気別成績を徹底分析。11番枠15.4%、9番枠14.2%の高勝率と実力重視の中距離戦を解説。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '1500m', 'データ分析', '中距離'],
+      heroImage: '/course_data/funabashi_1500m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1400m',
+    data: {
+      title: '大井競馬場1400m完全攻略ガイド【2025年最新版】',
+      description: '大井競馬場1400mレースの馬番別・人気別成績を徹底分析。5番枠11.1%の中枠優勢と1番人気49.8%の高信頼度を解説。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1400m', 'データ分析', '特殊距離'],
+      heroImage: '/course_data/ooi_1400m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1200m',
+    data: {
+      title: '大井競馬場1200m完全攻略ガイド【2025年最新版】',
+      description: '大井競馬場1200mレースの馬番別・人気別成績を徹底分析。16番枠13.6%の驚異的勝率など実戦データから導く攻略法を解説。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1200m', 'データ分析'],
+      heroImage: '/course_data/ooi_1200m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-1600m',
+    data: {
+      title: '船橋競馬場1600m完全攻略ガイド【2025年最新版】',
+      description: '船橋競馬場1600mマイルレースの馬番別・人気別成績を徹底分析。11番枠15.1%、1番枠14.7%の高勝率と7番枠40.0%の複勝率を解説。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '1600m', 'データ分析', 'マイル戦'],
+      heroImage: '/course_data/funabashi_1600m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-1700m',
+    data: {
+      title: '船橋競馬場1700m完全攻略ガイド【2025年最新版】極小サンプルレア距離',
+      description: '船橋競馬場1700mレアレースの馬番別・人気別成績を統計的注意と共に分析。わずか14レースの極小データから見る傾向と信頼性の課題を解説。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '1700m', 'データ分析', 'レア距離', '統計注意'],
+      heroImage: '/course_data/funabashi_1700m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-1800m',
+    data: {
+      title: '船橋競馬場1800m完全攻略ガイド【2025年最新版】中長距離戦',
+      description: '船橋競馬場1800m中長距離レースの馬番別・人気別成績を徹底分析。7番枠勝率18.2%、6番枠複勝率40.0%、1番人気複勝率73.2%の高信頼度。スタミナと瞬発力が問われる本格的な中長距離戦。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '1800m', 'データ分析', '中長距離', '実力重視'],
+      heroImage: '/course_data/funabashi_1800m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-2200m',
+    data: {
+      title: '船橋競馬場2200m完全攻略ガイド【2025年最新版】長距離戦',
+      description: '船橋競馬場2200m長距離レースの馬番別・人気別成績を徹底分析。1番人気と2番人気同率31.3%の特異データ、12番枠25.0%最高勝率、7番枠50.0%複勝率。スタミナが全ての真のステイヤー戦。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '2200m', 'データ分析', '長距離', 'ステイヤー', 'サンプル少'],
+      heroImage: '/course_data/funabashi_2200m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/funabashi-2400m',
+    data: {
+      title: '船橋競馬場2400m完全攻略ガイド【2025年最新版】超長距離戦',
+      description: '船橋競馬場2400m超長距離レースのデータ分析。わずか1レースのみの極少データと統計的注意点を詳しく解説。13番枠勝利、2番人気的中の特殊事例。',
+      pubDate: new Date('2025-09-28'),
+      category: '船橋競馬',
+      tags: ['船橋競馬', '2400m', 'データ分析', '超長距離', '極少データ', '統計注意'],
+      heroImage: '/course_data/funabashi_2400m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/kawasaki-1400m',
+    data: {
+      title: '川崎競馬場1400m完全攻略ガイド【2025年最新版】短距離戦',
+      description: '川崎競馬場1400m短距離レースの馬番別・人気別成績を徹底分析。3番枠13.7%、9番枠13.4%の高勝率と1番人気複勝率76.0%の信頼度。左回りコースの特性を活かした内枠優勢戦略。',
+      pubDate: new Date('2025-09-28'),
+      category: '川崎競馬',
+      tags: ['川崎競馬', '1400m', 'データ分析', '短距離', '左回り', '内枠優勢'],
+      heroImage: '/course_data/kawasaki_1400m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/kawasaki-1500m',
+    data: {
+      title: '川崎競馬場1500m完全攻略ガイド【2025年最新版】中距離戦',
+      description: '川崎競馬場1500m中距離レースの馬番別・人気別成績を徹底分析。7番枠15.9%最高勝率、1番人気複勝率71.6%の高信頼度。実力と枠順のバランスが重要な中距離戦攻略法。',
+      pubDate: new Date('2025-09-29'),
+      category: '川崎競馬',
+      tags: ['川崎競馬', '1500m', 'データ分析', '中距離', '実力重視', 'バランス型'],
+      heroImage: '/course_data/kawasaki_1500m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/kawasaki-1600m',
+    data: {
+      title: '川崎競馬場1600m完全攻略ガイド【2025年最新版】マイル戦',
+      description: '川崎競馬場1600mマイルレースの馬番別・人気別成績を徹底分析。内枠優勢の傾向と1番人気の高信頼度。左回りコースの特性を活かしたマイル戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-09-29'),
+      category: '川崎競馬',
+      tags: ['川崎競馬', '1600m', 'データ分析', 'マイル戦', '左回り', '内枠優勢'],
+      heroImage: '/course_data/kawasaki_1600m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/kawasaki-900m',
+    data: {
+      title: '川崎競馬場900m完全攻略ガイド【2025年最新版】超短距離戦',
+      description: '川崎競馬場900m超短距離レースの馬番別・人気別成績を徹底分析。4番枠14.1%最高勝率、1番人気複勝率80.0%の圧倒的信頼度。ゲート位置と瞬発力が全てを決める超短距離スプリント戦攻略法。',
+      pubDate: new Date('2025-09-28'),
+      category: '川崎競馬',
+      tags: ['川崎競馬', '900m', 'データ分析', '超短距離', 'スプリント', 'ゲート重要'],
+      heroImage: '/course_data/kawasaki_900m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/kawasaki-2000m',
+    data: {
+      title: '川崎競馬場2000m完全攻略ガイド【2025年最新版】長距離戦',
+      description: '川崎競馬場2000m長距離レースの馬番別・人気別成績を徹底分析。3番枠19.1%最高勝率、1番人気59.1%複勝率。スタミナと実力が問われる本格的な長距離戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-09-29'),
+      category: '川崎競馬',
+      tags: ['川崎競馬', '2000m', 'データ分析', '長距離', 'スタミナ', '実力重視'],
+      heroImage: '/course_data/kawasaki_2000m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/kawasaki-2100m',
+    data: {
+      title: '川崎競馬場2100m完全攻略ガイド【2025年最新版】最長距離戦',
+      description: '川崎競馬場2100m最長距離レースの馬番別・人気別成績を徹底分析。1番枠25.0%最高勝率、2・3番人気37.5%勝率。スタミナが問われる川崎最長距離戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-01-29'),
+      category: '川崎競馬',
+      tags: ['川崎競馬', '2100m', 'データ分析', '最長距離', 'スタミナ', '究極テスト'],
+      heroImage: '/course_data/kawasaki_2100m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1000m',
+    data: {
+      title: '大井競馬場1000m完全攻略ガイド【2025年最新版】',
+      description: '大井競馬場1000mレースの馬番別・人気別成績を徹底分析。12番枠33.3%の驚異的勝率など実戦データから導く攻略法を解説。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1000m', 'データ分析'],
+      heroImage: '/course_data/ooi_1000m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1600m',
+    data: {
+      title: '大井競馬場1600m完全攻略ガイド【2025年最新版】',
+      description: '大井競馬場1600mレースの馬番別・人気別成績を徹底分析。4番枠12.5%の高勝率と1番人気42.2%の信頼度を解説。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1600m', 'データ分析', 'マイル'],
+      heroImage: '/course_data/ooi_1600m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1650m',
+    data: {
+      title: '大井競馬場1650m完全攻略ガイド【2025年最新版】左回り特殊コース',
+      description: '大井唯一の左回りコース1650mの特殊性を徹底分析。13番枠20.0%の高勝率と左回り適性が勝負の分かれ目。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1650m', 'データ分析', '左回り', '特殊'],
+      heroImage: '/course_data/ooi_1650m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1700m',
+    data: {
+      title: '大井競馬場1700m完全攻略ガイド【2025年最新版】超レア距離',
+      description: '年間数レースしか施行されない超レア距離1700mの特殊性を分析。14番枠33.3%の勝率と1番人気75.0%の信頼度。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1700m', 'データ分析', '超レア距離'],
+      heroImage: '/course_data/ooi_1700m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-1800m',
+    data: {
+      title: '大井競馬場1800m完全攻略ガイド【2025年最新版】中距離戦',
+      description: 'スピードとスタミナのバランスが問われる中距離戦1800mを分析。12番枠20.6%の勝率と1番人気79.7%の信頼度。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '1800m', 'データ分析', '中距離戦'],
+      heroImage: '/course_data/ooi_1800m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-2000m',
+    data: {
+      title: '大井競馬場2000m完全攻略ガイド【2025年最新版】長距離戦',
+      description: '真の実力が問われる長距離戦2000mを分析。1番人気複勝率90.6%は全距離最高、勝率18.8%の12番枠、スタミナが全ての本格派レース。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '2000m', 'データ分析', '長距離戦', 'スタミナ'],
+      heroImage: '/course_data/ooi_2000m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-2400m',
+    data: {
+      title: '大井競馬場2400m完全攻略ガイド【2025年最新版】超長距離戦',
+      description: '極めて稀な開催頻度の超長距離戦2400mを分析。わずか2レースのサンプルから見える傾向と統計的信頼性の注意点を詳述。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '2400m', 'データ分析', '超長距離戦', '統計注意'],
+      heroImage: '/course_data/ooi_2400m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/ooi-2600m',
+    data: {
+      title: '大井競馬場2600m完全攻略ガイド【2025年最新版】最長距離戦',
+      description: '大井競馬2600mレースの馬番別・人気別成績を徹底分析。最長距離戦の特徴と攻略法をデータから解説します。',
+      pubDate: new Date('2025-09-27'),
+      category: '大井競馬',
+      tags: ['大井競馬', '2600m', 'データ分析', '最長距離戦', '究極スタミナ'],
+      heroImage: '/course_data/ooi_2600m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/urawa-800m',
+    data: {
+      title: '浦和競馬場800m完全攻略ガイド【2025年最新版】超短距離戦',
+      description: '浦和競馬場800m超短距離レースの馬番別・人気別成績を徹底分析。12番枠17.1%最高勝率、1番人気44.6%勝率・79.2%複勝率。瞬発力が全てを決める地方競馬最短距離戦攻略法。',
+      pubDate: new Date('2025-09-29'),
+      category: '浦和競馬',
+      tags: ['浦和競馬', '800m', 'データ分析', '超短距離', 'スプリント', '瞬発力重視'],
+      heroImage: '/course_data/urawa_800m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/urawa-1300m',
+    data: {
+      title: '浦和競馬場1300m完全攻略ガイド【2025年最新版】特殊距離戦',
+      description: '浦和競馬場1300m特殊距離レースの馬番別・人気別成績を徹底分析。10番枠40.0%、5番枠20.0%の高勝率と1番人気63.2%の信頼度。浦和特有の特殊距離戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-09-29'),
+      category: '浦和競馬',
+      tags: ['浦和競馬', '1300m', 'データ分析', '特殊距離', '外枠優勢', '実力重視'],
+      heroImage: '/course_data/urawa_1300m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/urawa-1400m',
+    data: {
+      title: '浦和競馬場1400m完全攻略ガイド【2025年最新版】短距離戦',
+      description: '浦和競馬場1400m短距離レースの馬番別・人気別成績を徹底分析。6番枠13.0%、4番枠12.9%の高勝率と1番人気38.0%の信頼度。バランス重視の短距離戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-09-29'),
+      category: '浦和競馬',
+      tags: ['浦和競馬', '1400m', 'データ分析', '短距離', 'バランス型', '中枠優勢'],
+      heroImage: '/course_data/urawa_1400m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/urawa-1500m',
+    data: {
+      title: '浦和競馬場1500m完全攻略ガイド【2025年最新版】中距離戦',
+      description: '浦和競馬場1500m中距離レースの馬番別・人気別成績を徹底分析。8番枠12.5%、1番枠12.3%の高勝率と1番人気40.7%の信頼度。左回りの特性を活かした中距離戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-09-29'),
+      category: '浦和競馬',
+      tags: ['浦和競馬', '1500m', 'データ分析', '中距離', 'バランス型', '実力重視'],
+      heroImage: '/course_data/urawa_1500m.png',
+      featured: true
+    }
+  },
+  {
+    slug: 'course/urawa-2000m',
+    data: {
+      title: '浦和競馬場2000m完全攻略ガイド【2025年最新版】長距離戦',
+      description: '浦和競馬場2000m長距離レースの馬番別・人気別成績を徹底分析。2番枠15.6%最高勝率、1番人気30.6%、2番人気27.8%の高信頼度。スタミナが問われる本格的な長距離戦攻略法を詳しく解説。',
+      pubDate: new Date('2025-09-29'),
+      category: '浦和競馬',
+      tags: ['浦和競馬', '2000m', 'データ分析', '長距離', 'スタミナ', '実力重視'],
+      heroImage: '/course_data/urawa_2000m.png',
+      featured: true
+    }
+  }
+  // 今後、他のコース攻略記事もここに追加予定
+  // 例: 川崎1400m、浦和1400m、船橋1200m など
+];
+
+// コンテンツコレクションとAstroページを結合
+const combinedPosts = [...allPosts, ...astroPosts];
+const sortedPosts = combinedPosts.sort(
+  (a, b) => b.data.pubDate.getTime() - a.data.pubDate.getTime()
+);
+
+const categories = [...new Set(sortedPosts.map(post => post.data.category))];
+
+// カテゴリー別記事数をカウント
+const categoryCounts = categories.reduce((acc, category) => {
+  acc[category] = sortedPosts.filter(post => post.data.category === category).length;
+  return acc;
+}, {});
+---
+
+<BaseLayout 
+  title="ブログ | NANKANアナリティクス"
+  description="AI・機械学習を活用した競馬予想手法について解説。Python実装からモデル構築まで、データサイエンスの視点で競馬を攻略します。"
+>
+  <main class="blog-index">
+    <header class="page-header">
+      <h1>⚡ AI競馬予想ブログ</h1>
+      <p>機械学習・データサイエンスで南関競馬を科学的に攻略</p>
+    </header>
+
+    <div class="blog-container">
+      <!-- カテゴリーフィルター -->
+      <aside class="sidebar">
+        <div class="category-filter">
+          <h3>📚 カテゴリー</h3>
+          <ul class="category-list">
+            <li>
+              <button class="category-button active" data-category="all">
+                すべて <span class="count">({sortedPosts.length})</span>
+              </button>
+            </li>
+            {categories.map(category => (
+              <li>
+                <button class="category-button" data-category={category}>
+                  {category} <span class="count">({categoryCounts[category]})</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <!-- 競馬場ガイド -->
+        <div class="course-guide">
+          <h3>🏁 競馬場ガイド</h3>
+          <div class="guide-links">
+            <a href="/course/ooi" class="guide-link">
+              <span class="icon">🎯</span>
+              <span class="text">大井競馬場</span>
+            </a>
+            <a href="/course/funabashi" class="guide-link">
+              <span class="icon">⚓</span>
+              <span class="text">船橋競馬場</span>
+            </a>
+            <a href="/course/kawasaki" class="guide-link">
+              <span class="icon">⚡</span>
+              <span class="text">川崎競馬場</span>
+            </a>
+            <a href="/course/urawa" class="guide-link">
+              <span class="icon">🌸</span>
+              <span class="text">浦和競馬場</span>
+            </a>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 記事一覧 -->
+      <section class="posts-grid">
+        {sortedPosts.map((post) => (
+          <article class="post-card" data-category={post.data.category}>
+            <a href={`/blog/${post.slug}`} class="card-link">
+              {post.data.heroImage && (
+                <img
+                  src={post.data.heroImage}
+                  alt={post.data.title}
+                  class="post-image"
+                />
+              )}
+              <div class="post-content">
+                <div class="post-meta">
+                  <span class="category-badge">{post.data.category}</span>
+                  <time datetime={post.data.pubDate.toISOString()}>
+                    {post.data.pubDate.toLocaleDateString('ja-JP', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                  </time>
+                </div>
+
+                <h2 class="post-title">
+                  {post.data.title}
+                </h2>
+
+                <p class="post-description">{post.data.description}</p>
+
+                {post.data.tags && (
+                  <div class="post-tags">
+                    {post.data.tags.slice(0, 3).map(tag => (
+                      <span class="tag">#{tag}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </a>
+          </article>
+        ))}
+      </section>
+    </div>
+  </main>
+
+  <!-- カテゴリーフィルタリング用JavaScript -->
+  <script is:inline>
+    document.addEventListener('DOMContentLoaded', function() {
+      const categoryButtons = document.querySelectorAll('.category-button');
+      const postCards = document.querySelectorAll('.post-card');
+
+      categoryButtons.forEach(button => {
+        button.addEventListener('click', function() {
+          const selectedCategory = this.getAttribute('data-category');
+
+          // ボタンのアクティブ状態更新
+          categoryButtons.forEach(btn => btn.classList.remove('active'));
+          this.classList.add('active');
+
+          // 記事のフィルタリング
+          postCards.forEach(card => {
+            const cardCategory = card.getAttribute('data-category');
+
+            if (selectedCategory === 'all' || cardCategory === selectedCategory) {
+              card.style.display = 'block';
+              card.style.animation = 'fadeIn 0.3s ease-in-out';
+            } else {
+              card.style.display = 'none';
+            }
+          });
+        });
+      });
+    });
+
+    // フェードインアニメーション
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    `;
+    document.head.appendChild(style);
+  </script>
+</BaseLayout>
+
+<style>
+.blog-index {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.page-header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.page-header h1 {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #f1f5f9;
+  margin-bottom: 1rem;
+}
+
+.page-header p {
+  font-size: 1.1rem;
+  color: #94a3b8;
+}
+
+.blog-container {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  gap: 3rem;
+}
+
+.sidebar {
+  background: #1e293b;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 1.5rem;
+  height: fit-content;
+  position: sticky;
+  top: 2rem;
+}
+
+.category-filter h3 {
+  color: #f1f5f9;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.category-list {
+  list-style: none;
+  padding: 0;
+}
+
+.category-list li {
+  margin-bottom: 0.5rem;
+}
+
+.category-button {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  color: #cbd5e1;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  transition: all 0.2s;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.95rem;
+}
+
+.category-button:hover,
+.category-button.active {
+  background: #3b82f6;
+  color: white;
+}
+
+.count {
+  opacity: 0.7;
+  font-size: 0.85rem;
+}
+
+/* 競馬場ガイドセクション */
+.course-guide {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #374151;
+}
+
+.course-guide h3 {
+  color: #f1f5f9;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.guide-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.guide-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  color: #cbd5e1;
+  text-decoration: none;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.guide-link:hover {
+  background: #10b981;
+  color: white;
+}
+
+.guide-link .icon {
+  font-size: 1.1rem;
+}
+
+.guide-link .text {
+  font-size: 0.95rem;
+}
+
+.posts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 2rem;
+}
+
+.post-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.post-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+  border-color: #3b82f6;
+}
+
+.card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  height: 100%;
+  transition: all 0.2s ease;
+}
+
+.card-link:active {
+  transform: scale(0.98);
+}
+
+.post-image {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+.post-content {
+  padding: 1.5rem;
+}
+
+.post-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.category-badge {
+  background: #3b82f6;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.post-content time {
+  color: #6b7280;
+}
+
+.post-title {
+  margin-bottom: 1rem;
+  color: #1f2937;
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.3;
+  transition: color 0.2s;
+}
+
+.card-link:hover .post-title {
+  color: #3b82f6;
+}
+
+.post-description {
+  color: #4b5563;
+  line-height: 1.6;
+  margin-bottom: 1rem;
+}
+
+.post-tags {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tag {
+  background: #f3f4f6;
+  color: #8b5cf6;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  border: 1px solid #e5e7eb;
+}
+
+@media (max-width: 968px) {
+  .blog-container {
+    grid-template-columns: 1fr;
+  }
+  
+  .sidebar {
+    position: static;
+    order: 2;
+  }
+  
+  .posts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-header h1 {
+    font-size: 2rem;
+  }
+  
+  .posts-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+  
+  .post-content {
+    padding: 1rem;
+  }
+}
+</style>

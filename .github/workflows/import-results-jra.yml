@@ -1,0 +1,189 @@
+name: Import JRA Results (Dispatch)
+
+on:
+  repository_dispatch:
+    types: [results-jra-updated]
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '日付 (YYYY-MM-DD)'
+        required: false
+        default: ''
+
+# 並行実行制御：archiveResultsJra.json更新系workflowで統一（同じファイルへの同時コミット防止）
+concurrency:
+  group: archive-jra-update
+  cancel-in-progress: false  # 実行中のジョブをキャンセルせず待機（順番に実行）
+
+jobs:
+  import-results-jra:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for git push
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import JRA results from keiba-data-shared
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+        run: |
+          # 優先順位: 手動入力 > repository_dispatch payload > 今日の日付
+          if [ -n "$MANUAL_DATE" ]; then
+            # 手動実行時の入力
+            echo "📅 Manual JRA import for: $MANUAL_DATE"
+            npm run import:results:jra -- --date "$MANUAL_DATE"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            # repository_dispatch（複数日付）
+            echo "📅 Importing JRA results for multiple dates"
+            while IFS= read -r DATE; do
+              echo "━━━ Processing JRA: $DATE ━━━"
+              npm run import:results:jra -- --date "$DATE"
+            done < <(echo "$DATES_JSON" | jq -r '.[]')
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            # repository_dispatch（単一日付）
+            echo "📅 Importing JRA results for single date: $DATE_SINGLE"
+            npm run import:results:jra -- --date "$DATE_SINGLE"
+          else
+            # デフォルト：今日の日付（JST）
+            TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            echo "📅 Importing JRA results for today (JST): $TODAY"
+            npm run import:results:jra -- --date "$TODAY"
+          fi
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          # archiveResultsJra.jsonの変更をステージング
+          git add src/data/archiveResultsJra.json
+          # ステージされた変更があるかチェック
+          git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+          SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # コミットメッセージ生成
+          if [ -n "$MANUAL_DATE" ]; then
+            COMMIT_MSG="Auto-verify: ${MANUAL_DATE} JRA results (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            DATES=$(echo "$DATES_JSON" | jq -r 'join(", ")')
+            COMMIT_MSG="Auto-verify: ${DATES} JRA results from ${SOURCE}"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            COMMIT_MSG="Auto-verify: ${DATE_SINGLE} JRA results from ${SOURCE}"
+          else
+            TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            COMMIT_MSG="Auto-verify: ${TODAY} JRA results (today JST)"
+          fi
+
+          # 変更ファイルを退避
+          cp src/data/archiveResultsJra.json /tmp/archiveResultsJra.json.backup
+          echo "📦 Backed up archiveResultsJra.json"
+
+          # Retry logic: reset → restore → commit → push（最大5回リトライ）
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            # 1. 完全同期：origin/mainの最新状態にリセット
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+            echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
+
+            # 2. 退避ファイルを復元
+            cp /tmp/archiveResultsJra.json.backup src/data/archiveResultsJra.json
+
+            # 3. ステージング＆コミット
+            git add src/data/archiveResultsJra.json
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+            git commit -m "$COMMIT_MSG"
+
+            # 4. プッシュ
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: Success notification
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+          SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          echo "✅ JRA results verification completed and pushed"
+          if [ -n "$MANUAL_DATE" ]; then
+            echo "   Date: $MANUAL_DATE (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            echo "   Dates: $(echo "$DATES_JSON" | jq -r 'join(", ")')"
+            echo "   Source: $SOURCE"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            echo "   Date: $DATE_SINGLE"
+            echo "   Source: $SOURCE"
+          else
+            echo "   Date: $(TZ=Asia/Tokyo date +%Y-%m-%d) (today JST)"
+          fi
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+        run: |
+          echo "⏭️  No changes detected (JRA results already up-to-date)"
+          if [ -n "$MANUAL_DATE" ]; then
+            echo "   Date: $MANUAL_DATE (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            echo "   Dates: $(echo "$DATES_JSON" | jq -r 'join(", ")')"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            echo "   Date: $DATE_SINGLE"
+          else
+            echo "   Date: $(TZ=Asia/Tokyo date +%Y-%m-%d) (today JST)"
+          fi
+          echo "   Archive is up-to-date"

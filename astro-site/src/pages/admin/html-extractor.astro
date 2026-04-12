@@ -1,0 +1,685 @@
+---
+const title = "HTML予想印抽出ツール";
+---
+
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #3b82f6, #10b981);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #94a3b8;
+            font-size: 1.1rem;
+        }
+
+        .input-section {
+            margin-bottom: 30px;
+        }
+
+        .input-section h2 {
+            color: #3b82f6;
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+
+        #htmlInput {
+            width: 100%;
+            height: 300px;
+            background: rgba(30, 41, 59, 0.8);
+            border: 2px solid #334155;
+            border-radius: 10px;
+            padding: 15px;
+            color: #e2e8f0;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            transition: border-color 0.3s ease;
+        }
+
+        #htmlInput:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #2563eb, #1e40af);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.25);
+        }
+
+        .btn-secondary {
+            background: rgba(100, 116, 139, 0.2);
+            color: #e2e8f0;
+            border: 1px solid #475569;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(100, 116, 139, 0.3);
+        }
+
+        .output-section {
+            margin-top: 30px;
+        }
+
+        #output {
+            width: 100%;
+            height: 400px;
+            background: rgba(30, 41, 59, 0.8);
+            border: 2px solid #334155;
+            border-radius: 10px;
+            padding: 15px;
+            color: #10b981;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            white-space: pre-wrap;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #3b82f6;
+        }
+
+        .stat-label {
+            color: #94a3b8;
+            margin-top: 5px;
+        }
+
+        .manual {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+
+        .manual h3 {
+            color: #10b981;
+            margin-bottom: 15px;
+        }
+
+        .manual ul {
+            color: #94a3b8;
+            padding-left: 20px;
+        }
+
+        .manual li {
+            margin: 8px 0;
+        }
+
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .success {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #6ee7b7;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏇 HTML予想印抽出ツール</h1>
+            <p>競馬新聞HTMLから馬番・印・馬名を正確に抽出します</p>
+        </div>
+
+        <div class="input-section">
+            <h2>📝 HTMLデータ入力</h2>
+            <textarea id="htmlInput" placeholder="競馬新聞のHTMLコードをここに貼り付けてください..."></textarea>
+        </div>
+
+        <div class="button-group">
+            <button class="btn btn-primary" id="extractBtn">
+                🔍 印を抽出
+            </button>
+            <button class="btn btn-secondary" id="clearBtn">
+                🗑️ クリア
+            </button>
+            <button class="btn btn-secondary" id="copyBtn">
+                📋 結果をコピー
+            </button>
+        </div>
+
+        <div class="stats" id="statsContainer" style="display: none;">
+            <div class="stat-card">
+                <div class="stat-number" id="totalHorses">0</div>
+                <div class="stat-label">総頭数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalMarks">0</div>
+                <div class="stat-label">総印数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="processedRaces">0</div>
+                <div class="stat-label">処理レース数</div>
+            </div>
+        </div>
+
+        <div class="output-section">
+            <h2>📊 抽出結果</h2>
+            <textarea id="output" readonly placeholder="抽出結果がここに表示されます..."></textarea>
+        </div>
+
+        <div class="manual">
+            <h3>📋 使用方法</h3>
+            <ul>
+                <li><strong>HTMLデータ入力：</strong>競馬新聞のHTMLコードを上部のテキストエリアに貼り付け</li>
+                <li><strong>印の抽出：</strong>「印を抽出」ボタンをクリックして処理実行</li>
+                <li><strong>自動判定：</strong>標準形式と競馬ブック形式を自動判別して処理</li>
+                <li><strong>SVG変換：</strong>SVGタグの三角形は自動的に「▲」に変換</li>
+                <li><strong>順序保持：</strong>HTMLに出現した順番で印を出力</li>
+                <li><strong>品質確認：</strong>印の総数と各馬の印数を自動チェック</li>
+            </ul>
+            <h3 style="margin-top: 20px;">✅ 対応形式</h3>
+            <ul>
+                <li><strong>標準形式：</strong>従来の競馬新聞HTML形式（レース番号付き・なし両対応）</li>
+                <li><strong>JRA形式：</strong>テーブル形式の予想印データ（最大18頭対応・穴印対応）</li>
+            </ul>
+        </div>
+    </div>
+
+    <script is:inline>
+        let extractionStats = {
+            totalHorses: 0,
+            totalMarks: 0,
+            processedRaces: 0
+        };
+
+        function extractMarks() {
+            const htmlInput = document.getElementById('htmlInput').value.trim();
+            if (!htmlInput) {
+                showError('HTMLデータを入力してください。');
+                return;
+            }
+
+            try {
+                const result = processHTML(htmlInput);
+                document.getElementById('output').value = result;
+                updateStats();
+                showSuccess('印の抽出が完了しました！');
+            } catch (error) {
+                showError('処理中にエラーが発生しました: ' + error.message);
+                console.error('Error:', error);
+            }
+        }
+
+        function processHTML(html) {
+            let output = '';
+            extractionStats = { totalHorses: 0, totalMarks: 0, processedRaces: 0 };
+
+            console.log('🔍 HTML処理開始:', html.length, '文字');
+            console.log('📄 HTMLプレビュー（最初の1000文字）:');
+            console.log(html.substring(0, 1000));
+            console.log('📄 HTMLプレビュー（5000-6000文字）:');
+            console.log(html.substring(5000, 6000));
+
+            // ✅ 競馬ブック形式の判定（実際のHTML構造に基づく）
+            const isKeibaBookFormat = html.includes('class="sirusi"') ||
+                                      html.includes('js-yoso-input') ||
+                                      html.includes('mysirusi-input') ||
+                                      html.includes('racekey=');
+
+            console.log('🔍 形式判定:', {
+                'sirusiクラス': html.includes('class="sirusi"'),
+                'yoso-input': html.includes('js-yoso-input'),
+                'mysirusi': html.includes('mysirusi-input'),
+                'racekey': html.includes('racekey='),
+                '最終判定': isKeibaBookFormat ? 'JRA形式' : '標準形式'
+            });
+
+            if (isKeibaBookFormat) {
+                console.log('📖 JRA形式を検出しました');
+                return processKeibaBookFormat(html);
+            }
+
+            // ✅ 既存形式の処理（従来通り）
+            console.log('📰 標準形式で処理します');
+
+            // レース番号を検出（より柔軟なパターン）
+            const raceMatches = html.match(/[大井川崎船橋浦和](\d{1,2})[rRレース]/g) || [];
+            console.log('🏇 検出されたレース:', raceMatches);
+
+            if (raceMatches.length > 0) {
+                // レース番号がある場合の処理
+                const raceSections = html.split(/(?=[大井川崎船橋浦和]\d{1,2}[rRレース])/);
+                console.log('📋 レースセクション数:', raceSections.length);
+
+                for (const section of raceSections) {
+                    if (!section.trim()) continue;
+
+                    const raceMatch = section.match(/([大井川崎船橋浦和])(\d{1,2})[rRレース]/);
+                    if (!raceMatch) continue;
+
+                    const track = raceMatch[1];
+                    const raceNumber = raceMatch[2];
+                    console.log(`🎯 処理中: ${track}${raceNumber}R`);
+                    output += `${track}${raceNumber}R\n`;
+
+                    const horses = extractHorsesFromSection(section);
+                    console.log(`🐎 抽出された馬数: ${horses.length}`);
+
+                    for (const horse of horses) {
+                        output += `${horse.number}\t${horse.marks}\t${horse.name}\n`;
+                        extractionStats.totalHorses++;
+                        extractionStats.totalMarks += horse.marks.length;
+                        console.log(`✅ 馬データ: ${horse.number} ${horse.marks} ${horse.name}`);
+                    }
+
+                    output += '\n';
+                    extractionStats.processedRaces++;
+                }
+            } else {
+                // レース番号がない場合：テーブル行のみの処理
+                console.log('📋 レース番号なし：テーブル行のみで処理');
+
+                const horses = extractHorsesFromSection(html);
+                console.log(`🐎 抽出された馬数: ${horses.length}`);
+
+                for (const horse of horses) {
+                    output += `${horse.number}\t${horse.marks}\t${horse.name}\n`;
+                    extractionStats.totalHorses++;
+                    extractionStats.totalMarks += horse.marks.length;
+                    console.log(`✅ 馬データ: ${horse.number} ${horse.marks} ${horse.name}`);
+                }
+
+                if (horses.length > 0) {
+                    output += '\n';
+                    extractionStats.processedRaces = 1;
+                }
+            }
+
+            console.log('📊 最終統計:', extractionStats);
+            return output;
+        }
+
+        // ✅ JRA形式専用抽出関数（新規追加）
+        function processKeibaBookFormat(html) {
+            let output = '';
+            console.log('📖 JRA形式で処理開始');
+
+            // テーブル行を抽出（最大18頭）
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // 複数の可能なセレクタを試す
+            let rows = doc.querySelectorAll('tr.um-box');
+            if (rows.length === 0) {
+                rows = doc.querySelectorAll('tr');
+                console.log('📊 標準<tr>で検索:', rows.length, '行');
+            } else {
+                console.log('📊 tr.um-boxで検出:', rows.length, '行');
+            }
+
+            let horseCount = 0;
+            for (let i = 0; i < rows.length && horseCount < 18; i++) {
+                const row = rows[i];
+                const horse = extractKeibaBookHorse(row);
+
+                if (horse) {
+                    output += `${horse.number}\t${horse.marks}\t${horse.name}\n`;
+                    extractionStats.totalHorses++;
+                    extractionStats.totalMarks += horse.marks.length;
+                    horseCount++;
+                    console.log(`✅ 馬データ: ${horse.number} ${horse.marks} ${horse.name}`);
+                }
+            }
+
+            if (horseCount > 0) {
+                output += '\n';
+                extractionStats.processedRaces = 1;
+            }
+
+            console.log(`📊 抽出完了: ${horseCount}頭`);
+            return output;
+        }
+
+        // ✅ JRA形式から1頭分のデータを抽出
+        function extractKeibaBookHorse(row) {
+            try {
+                // テーブル行のHTML全体をチェック
+                const rowHTML = row.innerHTML;
+                if (!rowHTML) return null;
+
+                // 馬番を抽出（枠番の次のセルが馬番）
+                let number = null;
+                const tdCells = row.querySelectorAll('td');
+
+                // 2番目のtdセルが馬番（1番目は枠番）
+                if (tdCells.length > 1) {
+                    const secondCell = tdCells[1].textContent.trim();
+                    if (/^\d+$/.test(secondCell)) {
+                        number = secondCell;
+                    }
+                }
+
+                // フォールバック：1番目のセルが馬番の場合
+                if (!number && tdCells.length > 0) {
+                    const firstCell = tdCells[0].textContent.trim();
+                    if (/^\d+$/.test(firstCell)) {
+                        number = firstCell;
+                    }
+                }
+
+                if (!number) return null;
+                console.log(`🔍 馬番: ${number}`);
+
+                // 馬名を抽出（<a>タグまたはテキストから）
+                let name = null;
+                const links = row.querySelectorAll('a[href*="/db/uma/"]');
+                if (links.length > 0) {
+                    name = links[0].textContent.trim();
+                }
+
+                if (!name) return null;
+                console.log(`🔍 馬名: ${name}`);
+
+                // 印を抽出（◎○▲△と「穴」）
+                // 馬名の位置を特定
+                let horseNameIndex = -1;
+                for (let i = 0; i < tdCells.length; i++) {
+                    const links = tdCells[i].querySelectorAll('a[href*="/db/uma/"]');
+                    if (links.length > 0) {
+                        horseNameIndex = i;
+                        break;
+                    }
+                }
+
+                let marks = '';
+
+                // 馬名より前のセルから印を抽出（予想印列のみ）
+                for (let i = 2; i < tdCells.length; i++) {
+                    // 馬名セルに到達したら終了
+                    if (i === horseNameIndex) break;
+
+                    const cellHTML = tdCells[i].innerHTML;
+                    const cellText = tdCells[i].textContent.trim();
+
+                    // セル内容が空の場合はスキップ
+                    if (!cellText && !cellHTML.includes('<polygon') && !cellHTML.includes('<svg')) continue;
+
+                    // 減量マーク（▲、△）を含む場合はスキップ
+                    if (cellText.includes('減量') || cellHTML.includes('減量')) continue;
+
+                    // 斤量・体重などのセルはスキップ
+                    if (/^\d+(\.\d+)?$/.test(cellText)) continue;
+                    if (cellText.includes('kg') || cellText.includes('斤')) continue;
+
+                    // 「穴」を抽出
+                    if (cellText.includes('穴') || cellHTML.includes('穴')) {
+                        marks += '穴';
+                        continue;
+                    }
+
+                    // テキストの印を抽出（◎○▲△）
+                    const textMark = cellText.match(/[◎○▲△]/);
+                    if (textMark) {
+                        marks += textMark[0];
+                        continue;
+                    }
+
+                    // SVGの三角形を▲として抽出（テキスト印がない場合のみ）
+                    if (cellHTML.includes('<polygon') || cellHTML.includes('<svg')) {
+                        marks += '▲';
+                        continue;
+                    }
+                }
+
+                console.log(`🔍 印: ${marks || '（なし）'}`);
+
+                return {
+                    number: number,
+                    marks: marks,
+                    name: name
+                };
+
+            } catch (error) {
+                console.error('❌ 抽出エラー:', error);
+                return null;
+            }
+        }
+
+        function extractHorsesFromSection(html) {
+            const horses = [];
+
+            console.log('🔍 馬データ抽出開始（セクション長:', html.length, '文字）');
+
+            // テーブル行を抽出（より柔軟なパターン）
+            const rowMatches = html.match(/<tr[^>]*class="[^"]*"[^>]*>[\s\S]*?<\/tr>/g) || [];
+            console.log('📋 検出された行数:', rowMatches.length);
+
+            for (let i = 0; i < rowMatches.length; i++) {
+                const row = rowMatches[i];
+                console.log(`🔍 行${i+1}処理中...`);
+
+                const horse = extractHorseFromRow(row);
+                if (horse) {
+                    horses.push(horse);
+                    console.log(`✅ 馬データ抽出成功: ${horse.number} ${horse.marks} ${horse.name}`);
+                } else {
+                    console.log('⚠️ 馬データ抽出失敗');
+                }
+            }
+
+            console.log('🐎 最終抽出馬数:', horses.length);
+            return horses;
+        }
+
+        function extractHorseFromRow(row) {
+            console.log('🔍 行解析開始...');
+
+            // 馬番を抽出
+            const numberMatch = row.match(/<td class="umaban">(\d+)<\/td>/);
+            if (!numberMatch) {
+                console.log('❌ 馬番が見つかりません');
+                return null;
+            }
+
+            const number = numberMatch[1];
+            console.log('✅ 馬番:', number);
+
+            // 馬名を抽出
+            const nameMatch = row.match(/<a href="\/db\/uma\/\d+" class="umalink_click"[^>]*>([^<]+)<\/a>/);
+            if (!nameMatch) {
+                console.log('❌ 馬名が見つかりません');
+                return null;
+            }
+
+            const name = nameMatch[1];
+            console.log('✅ 馬名:', name);
+
+            // 印を抽出（予想印の列から）
+            const marks = extractMarksFromRow(row);
+            console.log('✅ 印:', marks);
+
+            return {
+                number: number,
+                marks: marks,
+                name: name
+            };
+        }
+
+        function extractMarksFromRow(row) {
+            let marks = '';
+
+            console.log('🔍 印抽出開始...');
+
+            // 予想印が含まれる列を特定（umalink_clickの前のtd要素群）
+            const beforeUmalink = row.split('<a href="/db/uma/')[0];
+            console.log('📋 umalink前の部分:', beforeUmalink.length, '文字');
+
+            // td要素内のテキストを抽出（SVGも含む）
+            const tdMatches = beforeUmalink.match(/<td[^>]*>([\s\S]*?)<\/td>/g) || [];
+            console.log('📊 検出されたtd要素数:', tdMatches.length);
+
+            // 馬番とumaban以降のtdから印を抽出
+            let foundUmaban = false;
+            for (let i = 0; i < tdMatches.length; i++) {
+                const td = tdMatches[i];
+                console.log(`🔍 td要素${i+1}:`, td);
+
+                if (td.includes('class="umaban"')) {
+                    foundUmaban = true;
+                    console.log('✅ umaban発見、印抽出開始');
+                    continue;
+                }
+
+                if (foundUmaban) {
+                    // テキストの印を抽出
+                    const textMarks = (td.match(/[◎○▲△]/g) || []).join('');
+                    console.log('📝 テキスト印:', textMarks);
+
+                    // SVGタグを▲に変換
+                    const svgCount = (td.match(/<svg[^>]*>[\s\S]*?<\/svg>/g) || []).length;
+                    const svgMarks = '▲'.repeat(svgCount);
+                    console.log('🎨 SVG印:', svgMarks, '(SVG数:', svgCount, ')');
+
+                    marks += textMarks + svgMarks;
+                }
+            }
+
+            console.log('🎯 最終印:', marks);
+            return marks;
+        }
+
+        function updateStats() {
+            document.getElementById('totalHorses').textContent = extractionStats.totalHorses;
+            document.getElementById('totalMarks').textContent = extractionStats.totalMarks;
+            document.getElementById('processedRaces').textContent = extractionStats.processedRaces;
+            document.getElementById('statsContainer').style.display = 'grid';
+        }
+
+        function clearAll() {
+            document.getElementById('htmlInput').value = '';
+            document.getElementById('output').value = '';
+            document.getElementById('statsContainer').style.display = 'none';
+            clearMessages();
+        }
+
+        function copyOutput() {
+            const output = document.getElementById('output');
+            output.select();
+            document.execCommand('copy');
+            showSuccess('結果をクリップボードにコピーしました！');
+        }
+
+        function showError(message) {
+            clearMessages();
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = '❌ ' + message;
+            document.querySelector('.button-group').after(errorDiv);
+        }
+
+        function showSuccess(message) {
+            clearMessages();
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.textContent = '✅ ' + message;
+            document.querySelector('.button-group').after(successDiv);
+        }
+
+        function clearMessages() {
+            const existing = document.querySelectorAll('.error, .success');
+            existing.forEach(el => el.remove());
+        }
+
+        // ページ読み込み時の初期化
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('HTML予想印抽出ツール読み込み完了');
+
+            // イベントリスナーを追加
+            document.getElementById('extractBtn').addEventListener('click', extractMarks);
+            document.getElementById('clearBtn').addEventListener('click', clearAll);
+            document.getElementById('copyBtn').addEventListener('click', copyOutput);
+        });
+    </script>
+</body>
+</html>

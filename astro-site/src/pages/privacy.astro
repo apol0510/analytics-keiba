@@ -1,0 +1,184 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Privacy Policy"
+  description="Privacy Policy for Tirol Analytics sports data analytics platform"
+>
+  <style>
+    /* 暗い背景を完全に覆う */
+    :global(.main-content) {
+      background: white !important;
+      margin-top: 0 !important;
+      padding-top: 80px !important;
+    }
+
+    .legal-page {
+      padding: 4rem 0;
+      background: white;
+      min-height: calc(100vh - 80px);
+    }
+
+    .legal-content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .legal-content h1 {
+      font-size: 2.5rem;
+      color: #1f2937;
+      margin-bottom: 1rem;
+    }
+
+    .last-updated {
+      color: #6b7280;
+      margin-bottom: 3rem;
+      font-style: italic;
+    }
+
+    .legal-content h2 {
+      font-size: 1.75rem;
+      color: #2563eb;
+      margin-top: 2.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .legal-content p {
+      line-height: 1.8;
+      color: #374151;
+      margin-bottom: 1.5rem;
+    }
+
+    .legal-content ul {
+      list-style: disc;
+      margin-left: 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .legal-content li {
+      line-height: 1.8;
+      color: #374151;
+      margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .legal-content h1 {
+        font-size: 2rem;
+      }
+
+      .legal-content h2 {
+        font-size: 1.5rem;
+      }
+    }
+  </style>
+
+  <section class="legal-page">
+    <div class="container legal-content">
+      <h1>Privacy Policy</h1>
+      <p class="last-updated">Last Updated: January 21, 2026</p>
+
+      <!-- Language Notice -->
+      <div style="background: #fef3c7; padding: 1.5rem; border-left: 4px solid #f59e0b; margin-bottom: 2rem;">
+        <p style="font-size: 1rem; color: #92400e; margin: 0; line-height: 1.8; font-weight: 500;">
+          <strong>⚠️ Important Notice:</strong><br>
+          This service and all contractual terms are provided in English only.<br>
+          By using this service, you confirm that you understand and agree to these terms.
+        </p>
+      </div>
+
+      <p>
+        At Tirol Analytics ("we," "our," or "us"), we are committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our sports data analytics platform and services (the "Service").
+      </p>
+
+      <h2>1. Information We Collect</h2>
+
+      <p><strong>Personal Information</strong></p>
+      <p>We may collect personal information that you provide directly to us, including:</p>
+      <ul>
+        <li>Name and contact information (email address)</li>
+        <li>Payment information (processed securely through third-party payment processors)</li>
+        <li>Account credentials (username and password)</li>
+        <li>Communication preferences</li>
+      </ul>
+
+      <p><strong>Usage Data</strong></p>
+      <p>We automatically collect certain information when you use our Service:</p>
+      <ul>
+        <li>Device information (IP address, browser type, operating system)</li>
+        <li>Usage patterns and preferences</li>
+        <li>Access times and pages viewed</li>
+        <li>Referring URLs and search terms</li>
+      </ul>
+
+      <p><strong>Cookies and Tracking Technologies</strong></p>
+      <p>We use cookies and similar tracking technologies to track activity on our Service and hold certain information. You can instruct your browser to refuse all cookies or to indicate when a cookie is being sent.</p>
+
+      <h2>2. How We Use Your Information</h2>
+      <p>We use the collected information for various purposes:</p>
+      <ul>
+        <li>To provide, maintain, and improve our Service</li>
+        <li>To process your transactions and manage your subscriptions</li>
+        <li>To send you technical notices, updates, and support messages</li>
+        <li>To respond to your comments, questions, and customer service requests</li>
+        <li>To monitor and analyze usage patterns and trends</li>
+        <li>To detect, prevent, and address technical issues and fraudulent activity</li>
+        <li>To comply with legal obligations</li>
+      </ul>
+
+      <h2>3. Sharing of Information</h2>
+      <p>We may share your information in the following circumstances:</p>
+      <ul>
+        <li><strong>Service Providers:</strong> With third-party vendors who perform services on our behalf (payment processing, data analysis, email delivery)</li>
+        <li><strong>Legal Requirements:</strong> When required by law or to protect our rights, property, or safety</li>
+        <li><strong>Business Transfers:</strong> In connection with a merger, sale of company assets, or acquisition</li>
+        <li><strong>With Your Consent:</strong> With your explicit permission for other purposes</li>
+      </ul>
+
+      <h2>4. Data Security</h2>
+      <p>
+        We implement appropriate technical and organizational measures to protect your personal information against unauthorized access, alteration, disclosure, or destruction. However, no method of transmission over the Internet or electronic storage is 100% secure.
+      </p>
+
+      <h2>5. Data Retention</h2>
+      <p>
+        We retain your personal information for as long as necessary to fulfill the purposes outlined in this Privacy Policy, unless a longer retention period is required or permitted by law.
+      </p>
+
+      <h2>6. Your Data Protection Rights</h2>
+      <p>Depending on your location, you may have the following rights:</p>
+      <ul>
+        <li><strong>Access:</strong> Request access to your personal information</li>
+        <li><strong>Correction:</strong> Request correction of inaccurate personal information</li>
+        <li><strong>Deletion:</strong> Request deletion of your personal information</li>
+        <li><strong>Object:</strong> Object to processing of your personal information</li>
+        <li><strong>Restriction:</strong> Request restriction of processing your personal information</li>
+        <li><strong>Data Portability:</strong> Request transfer of your personal information</li>
+        <li><strong>Withdraw Consent:</strong> Withdraw your consent at any time</li>
+      </ul>
+
+      <h2>7. International Data Transfers</h2>
+      <p>
+        Your information may be transferred to and maintained on computers located outside of your country where data protection laws may differ. We ensure appropriate safeguards are in place for such transfers.
+      </p>
+
+      <h2>8. Children's Privacy</h2>
+      <p>
+        Our Service is not intended for individuals under the age of 18. We do not knowingly collect personal information from children under 18. If you become aware that a child has provided us with personal information, please contact us.
+      </p>
+
+      <h2>9. Changes to This Privacy Policy</h2>
+      <p>
+        We may update our Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page and updating the "Last Updated" date.
+      </p>
+
+      <h2>10. Contact Us</h2>
+      <p>
+        If you have questions about this Privacy Policy, please contact us at:
+        <br><br>
+        Email: <a href="mailto:support@tirol.link" style="color: #2563eb;">support@tirol.link</a>
+      </p>
+    </div>
+  </section>
+</BaseLayout>

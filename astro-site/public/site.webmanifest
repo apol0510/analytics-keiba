@@ -1,0 +1,84 @@
+{
+    "name": "NANKANアナリティクス",
+    "short_name": "NANKAN",
+    "description": "AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム",
+    "start_url": "/",
+    "display": "standalone",
+    "theme_color": "#3b82f6",
+    "background_color": "#0f172a",
+    "orientation": "portrait-primary",
+    "categories": ["sports", "analytics", "ai"],
+    "lang": "ja",
+    "scope": "/",
+    "icons": [
+        {
+            "src": "/favicon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml"
+        },
+        {
+            "src": "/icon-192.svg",
+            "sizes": "192x192",
+            "type": "image/svg+xml"
+        },
+        {
+            "src": "/icon-512.svg",
+            "sizes": "512x512",
+            "type": "image/svg+xml"
+        }
+    ],
+    "screenshots": [
+        {
+            "src": "/screenshot-wide.png",
+            "sizes": "1280x720",
+            "type": "image/png",
+            "form_factor": "wide",
+            "label": "NANKANアナリティクス メイン画面"
+        },
+        {
+            "src": "/screenshot-narrow.png",
+            "sizes": "375x812",
+            "type": "image/png",
+            "form_factor": "narrow",
+            "label": "NANKANアナリティクス モバイル画面"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "無料予想",
+            "short_name": "無料予想",
+            "description": "本日の無料予想を確認",
+            "url": "/free-prediction/",
+            "icons": [
+                {
+                    "src": "/favicon.svg",
+                    "sizes": "any"
+                }
+            ]
+        },
+        {
+            "name": "プレミアム予想",
+            "short_name": "プレミアム",
+            "description": "プレミアム予想データを表示",
+            "url": "/premium-predictions/",
+            "icons": [
+                {
+                    "src": "/favicon.svg",
+                    "sizes": "any"
+                }
+            ]
+        },
+        {
+            "name": "ダッシュボード",
+            "short_name": "Dashboard",
+            "description": "ユーザーダッシュボード",
+            "url": "/dashboard/",
+            "icons": [
+                {
+                    "src": "/favicon.svg",
+                    "sizes": "any"
+                }
+            ]
+        }
+    ]
+}

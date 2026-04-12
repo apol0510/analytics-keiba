@@ -1,0 +1,2008 @@
+---
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const title = '高性能AI三連複の自動絞り込み機能 実体験 | NANKANアナリティクス';
+const description = '購入前に実際の的中レースで体験！高性能AI三連複の自動絞り込み機能の実体験。累積スコアベースの自動戦略選択で、わずか9点の少点数買い目を実現。';
+
+// 固定デモデータ（2025年9月3日 大井競馬11R アフター５スター賞）
+const demoData = {
+    raceDate: '2025年9月3日',
+    track: '大井競馬',
+    raceNumber: '11R',
+    raceName: 'アフター５スター賞（SIII）',
+    distance: 'ダ1,200m',
+    horseCount: 16,
+    startTime: '20:10',
+
+    // 馬データ
+    main: {
+        number: 11,
+        name: 'ファーンヒル',
+        role: '本命',
+        confidence: 88,
+        rating: '★★★',
+        features: {
+            stability: 85,
+            ability: 85,
+            pace: 94
+        }
+    },
+    sub: {
+        number: 1,
+        name: 'マックス',
+        role: '対抗',
+        confidence: 85,
+        rating: '★★★',
+        features: {
+            stability: 84,
+            ability: 85,
+            pace: 86
+        }
+    },
+    minor: [
+        { number: 2, name: 'トーセンサンダー', role: '単穴', confidence: 82, rating: '★★★' },
+        { number: 12, name: 'ドリームビリーバー', role: '単穴', confidence: 75, rating: '★★★' }
+    ],
+    low: [
+        { number: 15, name: 'オメガレインボー', confidence: 74 },
+        { number: 4, name: 'ジゼル', confidence: 73 },
+        { number: 3, name: 'リオンダリーナ', confidence: 71 },
+        { number: 9, name: 'シーサーペント', confidence: 71 }
+    ],
+    other: [
+        { number: 7, name: 'ポリゴンウェイヴ', confidence: 70 },
+        { number: 10, name: 'ボヌールバローズ', confidence: 67 },
+        { number: 14, name: 'スワーヴシャルル', confidence: 66 },
+        { number: 16, name: 'ワラ', confidence: 66 }
+    ],
+
+    // 高性能AI三連複買い目
+    sanrenpukuBets: [
+        '11-1-2.3.4.12.15',
+        '11-2-3.4.12.15'
+    ],
+    betCount: 9,
+
+    // 的中結果
+    result: {
+        order: '2-11-12',
+        payout: 36900,
+        isHit: true
+    }
+};
+
+// 累積スコア基準の戦略選択ロジック
+const mainScore = demoData.main.confidence;
+let selectedStrategy = '';
+let strategyDescription = '';
+
+if (mainScore >= 89) {
+    selectedStrategy = '少点数型+バランス型ミックス';
+    strategyDescription = '累積スコア89pt以上。本命の信頼度が非常に高いため、少点数型とバランス型の上位5点のみに絞り込みます。';
+} else if (mainScore === 88) {
+    selectedStrategy = '少点数型寄り';
+    strategyDescription = '累積スコア88pt。本命の信頼度が高いため、少点数型を中心に7点に絞り込みます。';
+} else if (mainScore === 87) {
+    selectedStrategy = 'バランス型';
+    strategyDescription = '累積スコア87pt。バランスの取れた配置のため、バランス型10点を選択します。';
+} else if (mainScore === 86) {
+    selectedStrategy = 'バランス型+高配当型ミックス';
+    strategyDescription = '累積スコア86pt。若干波乱含みのため、バランス型と高配当型から10点選択します。';
+} else {
+    selectedStrategy = '高配当型';
+    strategyDescription = '累積スコア85pt以下。穴狙いの配置のため、高配当型10点を選択します。';
+}
+
+// 今回のデモケースは88ptなので「少点数型寄り 9点」
+const actualStrategy = '少点数型寄り';
+const actualDescription = '本命ファーンヒル（88pt）の信頼度が高いため、少点数型を中心に9点に絞り込みました。';
+---
+
+<BaseLayout title={title} description={description}>
+    <script is:inline>
+        // アクセス制御: Premium Sanrenpuku・Premium Comboは既に購入済みのため閲覧不可
+        (function() {
+            // LocalStorageからuser-planデータ取得（JSON形式）
+            const userPlanData = localStorage.getItem('user-plan');
+
+            if (userPlanData) {
+                try {
+                    const userData = JSON.parse(userPlanData);
+                    const userPlan = userData.plan;
+
+                    console.log('🔍 sanrenpuku-demo アクセスチェック:', userPlan);
+
+                    // Premium Sanrenpuku・Premium Comboは閲覧不可（既に三連複を購入済み）
+                    if (userPlan === 'Premium Sanrenpuku' || userPlan === 'Premium Combo') {
+                        alert('既に三連複をご利用中のため、このページは表示できません');
+                        window.location.href = '/premium-sanrenpuku';
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('user-plan解析エラー:', e);
+                }
+            }
+
+            // Free・Standard・Premium・未ログインはアクセス可能（購入前の体験として）
+        })();
+    </script>
+
+    <div class="sample-page-container">
+        <!-- ヘッダー -->
+        <div class="sample-header">
+            <div class="badge-new">🎯 無料実体験</div>
+            <h1>高性能AI三連複の自動絞り込み機能 実体験</h1>
+            <p class="header-description">
+                実際のレースでPremium Sanrenpukuの絞り込み機能を実体験できます。
+            </p>
+        </div>
+
+        <!-- レース情報 -->
+        <div class="sample-race-info">
+            <h2>📅 2025年9月3日　アフター５スター賞（SIII）</h2>
+            <div class="race-meta">
+                <span class="meta-item">🏇 {demoData.track} {demoData.raceNumber}</span>
+                <span class="meta-item">📏 {demoData.distance}</span>
+                <span class="meta-item">🐎 {demoData.horseCount}頭立て</span>
+                <span class="meta-item">🕐 発走時刻 {demoData.startTime}</span>
+            </div>
+        </div>
+
+        <!-- AI自動判定の説明 -->
+        <div class="auto-selection-explanation">
+            <h2>🤖 AI自動判定の仕組み</h2>
+            <div class="explanation-content">
+                <div class="explanation-step">
+                    <span class="step-number">1</span>
+                    <div class="step-content">
+                        <h3>累積スコアを計算</h3>
+                        <p>本命馬の累積スコア（信頼度）を基準に、レース全体の難易度を判定します。</p>
+                        <div class="score-example">
+                            <span class="score-label">本命 {demoData.main.name}</span>
+                            <span class="score-value">{demoData.main.confidence}pt</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="explanation-step">
+                    <span class="step-number">2</span>
+                    <div class="step-content">
+                        <h3>最適戦略を自動選択</h3>
+                        <p>スコアに応じて、少点数型・バランス型・高配当型から最適な戦略を自動判定します。</p>
+                        <div class="strategy-selected">
+                            <span class="strategy-icon">✅</span>
+                            <span class="strategy-name">{actualStrategy}</span>
+                        </div>
+                        <p class="strategy-reason">{actualDescription}</p>
+                    </div>
+                </div>
+
+                <div class="explanation-step">
+                    <span class="step-number">3</span>
+                    <div class="step-content">
+                        <h3>買い目を自動絞り込み</h3>
+                        <p>選択された戦略の買い目を、累積スコア順にソートして上位のみを抽出します。</p>
+                        <div class="bet-count">
+                            <span class="count-icon">🎯</span>
+                            <span class="count-value">{demoData.betCount}点</span>
+                            <span class="count-label">に絞り込み</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 出走馬分析 -->
+        <div class="horses-analysis">
+            <h2>🐎 出走馬分析</h2>
+
+            <!-- 本命 -->
+            <div class="horse-card main">
+                <div class="horse-header">
+                    <span class="horse-mark">◎</span>
+                    <span class="horse-number">{demoData.main.number}</span>
+                    <h3 class="horse-name">{demoData.main.name}</h3>
+                    <span class="horse-role">{demoData.main.role}</span>
+                </div>
+                <div class="horse-details">
+                    <div class="horse-rating">
+                        <span class="rating-label">総合評価:</span>
+                        <span class="rating-stars">{demoData.main.rating}</span>
+                    </div>
+                    <div class="horse-score">
+                        <span class="score-label">累積スコア:</span>
+                        <span class="score-value">{demoData.main.confidence}pt</span>
+                    </div>
+                    <div class="feature-importance">
+                        <h4>特徴量重要度</h4>
+                        <div class="feature-bar">
+                            <span class="feature-label">安定性</span>
+                            <div class="feature-progress">
+                                <div class="feature-fill" style={`width: ${demoData.main.features.stability}%`}></div>
+                            </div>
+                            <span class="feature-value">{demoData.main.features.stability}%</span>
+                        </div>
+                        <div class="feature-bar">
+                            <span class="feature-label">能力上位性</span>
+                            <div class="feature-progress">
+                                <div class="feature-fill" style={`width: ${demoData.main.features.ability}%`}></div>
+                            </div>
+                            <span class="feature-value">{demoData.main.features.ability}%</span>
+                        </div>
+                        <div class="feature-bar">
+                            <span class="feature-label">展開利</span>
+                            <div class="feature-progress">
+                                <div class="feature-fill" style={`width: ${demoData.main.features.pace}%`}></div>
+                            </div>
+                            <span class="feature-value">{demoData.main.features.pace}%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 対抗 -->
+            <div class="horse-card sub">
+                <div class="horse-header">
+                    <span class="horse-mark">○</span>
+                    <span class="horse-number">{demoData.sub.number}</span>
+                    <h3 class="horse-name">{demoData.sub.name}</h3>
+                    <span class="horse-role">{demoData.sub.role}</span>
+                </div>
+                <div class="horse-details">
+                    <div class="horse-rating">
+                        <span class="rating-label">総合評価:</span>
+                        <span class="rating-stars">{demoData.sub.rating}</span>
+                    </div>
+                    <div class="horse-score">
+                        <span class="score-label">累積スコア:</span>
+                        <span class="score-value">{demoData.sub.confidence}pt</span>
+                    </div>
+                    <div class="feature-importance">
+                        <h4>特徴量重要度</h4>
+                        <div class="feature-bar">
+                            <span class="feature-label">安定性</span>
+                            <div class="feature-progress">
+                                <div class="feature-fill" style={`width: ${demoData.sub.features.stability}%`}></div>
+                            </div>
+                            <span class="feature-value">{demoData.sub.features.stability}%</span>
+                        </div>
+                        <div class="feature-bar">
+                            <span class="feature-label">能力上位性</span>
+                            <div class="feature-progress">
+                                <div class="feature-fill" style={`width: ${demoData.sub.features.ability}%`}></div>
+                            </div>
+                            <span class="feature-value">{demoData.sub.features.ability}%</span>
+                        </div>
+                        <div class="feature-bar">
+                            <span class="feature-label">展開利</span>
+                            <div class="feature-progress">
+                                <div class="feature-fill" style={`width: ${demoData.sub.features.pace}%`}></div>
+                            </div>
+                            <span class="feature-value">{demoData.sub.features.pace}%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 単穴 -->
+            {demoData.minor.map(horse => (
+                <div class="horse-card minor">
+                    <div class="horse-header">
+                        <span class="horse-mark">▲</span>
+                        <span class="horse-number">{horse.number}</span>
+                        <h3 class="horse-name">{horse.name}</h3>
+                        <span class="horse-role">{horse.role}</span>
+                    </div>
+                    <div class="horse-details">
+                        <div class="horse-rating">
+                            <span class="rating-label">総合評価:</span>
+                            <span class="rating-stars">{horse.rating}</span>
+                        </div>
+                        <div class="horse-score">
+                            <span class="score-label">累積スコア:</span>
+                            <span class="score-value">{horse.confidence}pt</span>
+                        </div>
+                    </div>
+                </div>
+            ))}
+
+            <!-- 連下候補馬 -->
+            <div class="horse-group">
+                <h3 class="group-title">△ 連下候補馬</h3>
+                <div class="horse-list">
+                    {demoData.low.map(horse => (
+                        <div class="horse-item">
+                            <span class="horse-number">{horse.number}</span>
+                            <span class="horse-name">{horse.name}</span>
+                            <span class="horse-score">({horse.confidence}pt)</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <!-- 抑え候補馬 -->
+            <div class="horse-group">
+                <h3 class="group-title">× 抑え候補馬</h3>
+                <div class="horse-list">
+                    {demoData.other.map(horse => (
+                        <div class="horse-item">
+                            <span class="horse-number">{horse.number}</span>
+                            <span class="horse-name">{horse.name}</span>
+                            <span class="horse-score">({horse.confidence}pt)</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+
+        <!-- 高性能AI絞り込みボタン -->
+        <button class="demo-filter-btn" id="demoFilterBtn">
+            <span class="filter-icon">🎯</span>
+            <span class="filter-text">高性能AI三連複 絞り込む</span>
+            <span class="filter-arrow">▼</span>
+        </button>
+
+        <!-- 高性能AI絞り込み買い目（初期非表示） -->
+        <div class="filtered-bets" id="demoContent" style="display: none;">
+            <h2>🎯 高性能AI自動絞り込み買い目</h2>
+            <div class="bet-strategy-info">
+                <span class="strategy-badge">{actualStrategy}</span>
+                <span class="bet-count-badge">{demoData.betCount}点</span>
+            </div>
+
+            <div class="sanrenpuku-bets">
+                <h3>三連複買い目</h3>
+                <div class="bet-list">
+                    {demoData.sanrenpukuBets.map(bet => (
+                        <div class="bet-item">
+                            <span class="bet-formula">{bet}</span>
+                        </div>
+                    ))}
+                </div>
+                <div class="bet-total">
+                    <span class="total-label">計</span>
+                    <span class="total-count">{demoData.betCount}点</span>
+                </div>
+            </div>
+
+            <!-- 的中結果 -->
+            {demoData.result.isHit && (
+            <div class="result-section hit">
+                <div class="result-header">
+                    <h2>🎊 的中結果</h2>
+                    <span class="hit-badge">的中！</span>
+                </div>
+                <div class="result-details">
+                    <div class="result-order">
+                        <span class="order-label">着順</span>
+                        <span class="order-value">{demoData.result.order}</span>
+                    </div>
+                    <div class="result-payout">
+                        <span class="payout-label">払い戻し</span>
+                        <span class="payout-value">¥{demoData.result.payout.toLocaleString()}</span>
+                    </div>
+                </div>
+                <p class="result-note">
+                    🤖 <strong>高性能AI搭載の自動絞り込み機能</strong>が、レースごとに最適な買い目を自動判定。<br>
+                    わずか{demoData.betCount}点の少点数で高配当的中を実現しました。<br>
+                    今後は戦略を選ぶ必要なく、自動で絞り込まれた買い目を購入するだけです。
+                </p>
+            </div>
+        )}
+
+        <!-- 商品説明セクション -->
+        <div class="product-explanation">
+            <!-- なぜ三連複なのか -->
+            <div class="why-sanrenpuku">
+                <h2>🎯 高性能AIの三連複モデルについて</h2>
+                <div class="reason-cards">
+                    <div class="reason-card">
+                        <div class="reason-icon">🤖</div>
+                        <h3>最も力を発揮</h3>
+                        <p>三連複は「本命・対抗・単穴」の3頭の相関関係をAIが分析。<br>高性能AIの予測能力が最大限に活かされ、<br>全ての組み合わせから最適な買い目を自動判定します。</p>
+                    </div>
+                    <div class="reason-card">
+                        <div class="reason-icon">💰</div>
+                        <h3>高配当も狙える</h3>
+                        <p>三連複は3頭の組み合わせのため、馬単より配当が高い傾向にあります。少点数で高配当を狙えるバランスの良い券種です。<br>実際に、わずか9点の少点数で高配当的中も連発しています。</p>
+                    </div>
+                    <div class="reason-card">
+                        <div class="reason-icon">🤖</div>
+                        <h3>自動判定</h3>
+                        <p>累積スコアに基づいて南関東４競馬の大井、船橋、川崎、浦和の各会場で、レース毎に最適な戦略を自動選択。あなたは買い目を確認するだけで、迷う必要が一切ありません。</p>
+                    </div>
+                    <div class="reason-card">
+                        <div class="reason-icon">⚡</div>
+                        <h3>オッズ確認不要</h3>
+                        <p>オッズを見て判断する必要なし。<br>毎レースチェックする時間と手間を完全削減。効率性も大幅に向上します。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- こんなお悩みありませんか -->
+            <div class="pain-points">
+                <h2>😰 こんなお悩みありませんか</h2>
+                <div class="pain-list">
+                    <div class="pain-item">
+                        <span class="pain-icon">❌</span>
+                        <div class="pain-content">
+                            <h3>3つの戦略、結局どれを選べばいいか分からない</h3>
+                            <p>馬単の少点数・バランス・高配当の3戦略。それぞれ的中率・配当が異なり、レースごとに選ぶのが面倒...</p>
+                        </div>
+                    </div>
+                    <div class="pain-item">
+                        <span class="pain-icon">❌</span>
+                        <div class="pain-content">
+                            <h3>オッズを確認して戦略を選ぶのが面倒</h3>
+                            <p>オッズ11倍以上なら高配当型、10倍以下なら少点数型...。毎レース判断するのは時間がかかります。</p>
+                        </div>
+                    </div>
+                    <div class="pain-item">
+                        <span class="pain-icon">❌</span>
+                        <div class="pain-content">
+                            <h3>毎レースチェックする時間がない</h3>
+                            <p>12レース全てを分析して戦略を選ぶ余裕がない。シンプルに「これだけ買えばOK」という買い目が欲しい。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 実績データ -->
+            <div class="performance-section">
+                <h2>📊 過去1年間の実績データ</h2>
+                <div class="performance-grid">
+                    <div class="performance-card">
+                        <div class="perf-icon">🎯</div>
+                        <div class="perf-value">72%</div>
+                        <div class="perf-label">的中率</div>
+                        <p class="perf-note">過去1年間の全レース平均</p>
+                    </div>
+                    <div class="performance-card">
+                        <div class="perf-icon">💰</div>
+                        <div class="perf-value">156%</div>
+                        <div class="perf-label">平均回収率</div>
+                        <p class="perf-note">投資額の約1.56倍回収</p>
+                    </div>
+                    <div class="performance-card">
+                        <div class="perf-icon">⏱️</div>
+                        <div class="perf-value">わずか30秒</div>
+                        <div class="perf-label">買い目確認</div>
+                        <p class="perf-note">オッズ確認不要で即購入</p>
+                    </div>
+                </div>
+                <div class="performance-detail">
+                    <h3>💡 なぜ高的中・高回収を実現できるのか</h3>
+                    <ul>
+                        <li><strong>累積スコアベースの戦略選択：</strong>本命馬の信頼度から、レース全体の難易度を自動判定</li>
+                        <li><strong>スコア順の自動ソート：</strong>全戦略の買い目を展開し、上位のみを抽出</li>
+                        <li><strong>高回収率の実現：</strong>馬単が2頭で的中なのに対して三連複では3頭での的中となる為に高配当になる</li>
+                        <li><strong>AI機械学習モデル：</strong>過去5,000レース以上のデータから最適な買い目を生成</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- お客様の声 -->
+            <div class="testimonials-section">
+                <h2>💬 お客様の声</h2>
+                <div class="testimonial-cards">
+                    <div class="testimonial-card">
+                        <div class="testimonial-header">
+                            <div class="testimonial-name">Tさん（40代・会社員）</div>
+                            <div class="testimonial-plan">Premium会員 → Premium Sanrenpuku</div>
+                        </div>
+                        <p class="testimonial-text">
+                            「馬単の3戦略から毎回選ぶのが面倒で退会を考えていましたが、Premium Sanrenpukuに変えて正解でした。<strong>高性能AIが自動で絞り込んでくれるので、迷わず買えます。</strong>的中率も72%と高く、投資額も少なくて済むので助かっています。」
+                        </p>
+                    </div>
+                    <div class="testimonial-card">
+                        <div class="testimonial-header">
+                            <div class="testimonial-name">Kさん（30代・自営業）</div>
+                            <div class="testimonial-plan">新規でPremium Sanrenpuku加入</div>
+                        </div>
+                        <p class="testimonial-text">
+                            「仕事が忙しくて毎レースオッズを確認する時間がなかったのですが、<strong>Premium Sanrenpukuなら買い目がすでに絞り込まれているので楽です。</strong>9点の少点数で的中するので、無駄な投資をしなくて済みます。」
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CTA -->
+        <div class="cta-section">
+            <h2>💎 Premium Sanrenpukuで毎日この精度の予想を</h2>
+            <p class="cta-description">
+                今回体験いただいた高性能AI三連複の自動絞り込み機能を、<br>
+                全レース・毎日の開催でご利用いただけます。
+            </p>
+            <div class="cta-features">
+                <div class="cta-feature">
+                    <span class="feature-icon">🎯</span>
+                    <h3>高性能AI自動絞り込み</h3>
+                    <p>累積スコアベースの自動戦略選択</p>
+                </div>
+                <div class="cta-feature">
+                    <span class="feature-icon">📊</span>
+                    <h3>的中率72%</h3>
+                    <p>過去1年間の実績データ</p>
+                </div>
+                <div class="cta-feature">
+                    <span class="feature-icon">💰</span>
+                    <h3>回収率156%</h3>
+                    <p>投資額の約1.56倍回収</p>
+                </div>
+            </div>
+            <div class="cta-plan-selection">
+                <h3 class="plan-selection-title">🔄 Sanrenpuku Lifetimeに変更</h3>
+                <p class="plan-selection-note">
+                    ※ 高性能AI三連複の自動絞り込み機能（買い切り・Premium会員の間はずっと利用可能）
+                </p>
+                <div class="plan-buttons">
+                    <button onclick="openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')" class="plan-btn combo-plan">
+                        <div class="plan-badge">おすすめ</div>
+                        <div class="plan-name">🏦 Sanrenpuku Lifetime</div>
+                        <div class="plan-subtitle">高性能AI三連複自動絞り込み（買い切り）</div>
+                        <div class="plan-price">¥78,000<span class="plan-period">（買い切り）</span></div>
+                        <div class="plan-note">今だけ特別価格：¥108,000 → ¥78,000</div>
+                        <div class="plan-features">
+                            <div class="feature-item">
+                                <strong>三連複（AI絞り込み）</strong><br>
+                                <span class="feature-detail">永久アクセス（追加料金なし）</span>
+                            </div>
+                            <div class="feature-note">
+                                ✅ Premium会員の間はずっと利用可能
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 銀行振込モーダル -->
+    <div class="bank-modal" id="bankModal">
+      <div class="bank-modal-content">
+        <button class="bank-modal-close" onclick="closeBankModal()">×</button>
+
+        <h2 class="bank-modal-title">🏦 銀行振込でのお申し込み</h2>
+        <p class="modal-plan-info" id="modalPlanInfo"></p>
+
+        <div class="bank-info-box">
+          <div class="bank-info-item">
+            <span class="bank-info-label">振込先銀行</span>
+            <span class="bank-info-value">三井住友銀行
+              <button class="copy-button" onclick="copyToClipboard('三井住友銀行')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">支店名</span>
+            <span class="bank-info-value">洲本支店
+              <button class="copy-button" onclick="copyToClipboard('洲本支店')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座種別</span>
+            <span class="bank-info-value">普通</span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座番号</span>
+            <span class="bank-info-value">5338892
+              <button class="copy-button" onclick="copyToClipboard('5338892')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座名義</span>
+            <span class="bank-info-value" style="font-size: 0.95rem;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
+              <button class="copy-button" onclick="copyToClipboard('ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+            <span class="bank-info-label">振込金額</span>
+            <span class="bank-info-value" style="color: #10b981; font-size: 1.3rem;" id="modalAmount">¥5,980</span>
+          </div>
+        </div>
+
+        <div class="bank-steps">
+          <div class="bank-steps-title">📝 お申し込み手順</div>
+          <div class="bank-step">
+            <span class="bank-step-number">1</span>
+            <span>上記の口座情報に振込金額をお振込みください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">2</span>
+            <span>振込完了後、下記のフォームから必要情報をご送信ください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">3</span>
+            <span>入金確認取れ次第、即時にログイン情報をメールでお送りいたします</span>
+          </div>
+        </div>
+
+        <!-- 銀行振込申し込みフォーム -->
+        <div class="bank-form-section">
+          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
+
+          <form id="bankTransferForm" class="bank-form">
+            <div class="form-group">
+              <label for="fullName" class="form-label">お名前 <span class="required">*</span></label>
+              <input type="text" id="fullName" name="fullName" class="form-input" required placeholder="山田 太郎">
+            </div>
+
+            <div class="form-group">
+              <label for="email" class="form-label">メールアドレス <span class="required">*</span></label>
+              <input type="email" id="email" name="email" class="form-input" required placeholder="example@email.com">
+            </div>
+
+            
+            <div class="form-group">
+                <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
+                <input type="date" id="transferDate" name="transferDate" class="form-input" required>
+              </div>
+
+
+            <div class="form-group">
+              <label for="transferAmount" class="form-label">振込金額 <span class="required">*</span></label>
+              <input type="number" id="transferAmount" name="transferAmount" class="form-input" required readonly>
+            </div>
+
+            <div class="form-group">
+
+            <div class="form-group">
+              <label for="remarks" class="form-label">備考・ご要望</label>
+              <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
+            </div>
+
+            <button type="submit" class="form-submit-button" id="submitButton">
+              <span class="submit-text">📨 申し込みを送信</span>
+              <span class="submit-loading" style="display: none;">送信中...</span>
+            </button>
+
+            <div class="form-message" id="formMessage" style="display: none;"></div>
+          </form>
+        </div>
+
+        <div class="bank-warning">
+          <div class="bank-warning-title">⚠️ ご注意事項</div>
+          <div class="bank-warning-text">
+            ・振込手数料はお客様負担となります<br>
+            ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
+            ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
+            ・名義が異なる場合は、備考欄にその旨をご記入ください<br>
+            ・ご入金後のキャンセル・返金は承っておりません
+          </div>
+        </div>
+      </div>
+    </div>
+
+<script is:inline>
+  let currentPlan = '';
+  let currentAmount = 0;
+
+  function openBankModal(planName, amount) {
+    currentPlan = planName;
+    currentAmount = amount;
+
+    document.getElementById('modalPlanInfo').textContent = `プラン: ${planName} (¥${amount.toLocaleString()}/月)`;
+    document.getElementById('modalAmount').textContent = `¥${amount.toLocaleString()}`;
+    document.getElementById('transferAmount').value = amount;
+    document.getElementById('bankModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeBankModal() {
+    document.getElementById('bankModal').classList.remove('active');
+    document.body.style.overflow = 'auto';
+  }
+
+  function copyToClipboard(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+      alert('コピーしました: ' + text);
+    } catch (err) {
+      console.error('コピーに失敗しました:', err);
+    }
+
+    document.body.removeChild(textarea);
+  }
+
+  // DOMContentLoaded後にフォーム処理を登録
+  document.addEventListener('DOMContentLoaded', () => {
+    // モーダル外クリックで閉じる
+    document.addEventListener('click', (e) => {
+      const bankModal = document.getElementById('bankModal');
+      if (e.target === bankModal) {
+        closeBankModal();
+      }
+    });
+
+    // Escapeキーで閉じる
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeBankModal();
+      }
+    });
+
+    // 銀行振込フォーム送信処理
+    const bankTransferForm = document.getElementById('bankTransferForm');
+    if (bankTransferForm) {
+      bankTransferForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitButton = document.getElementById('submitButton');
+        const submitText = submitButton.querySelector('.submit-text');
+        const submitLoading = submitButton.querySelector('.submit-loading');
+        const formMessage = document.getElementById('formMessage');
+
+        submitButton.disabled = true;
+        submitText.style.display = 'none';
+        submitLoading.style.display = 'inline';
+        formMessage.style.display = 'none';
+
+        const formData = {
+          fullName: document.getElementById('fullName').value,
+          email: document.getElementById('email').value,
+          transferDate: document.getElementById('transferDate').value,
+          transferTime: "00:00",  // デフォルト値
+          transferAmount: document.getElementById('transferAmount').value,
+          transferName: document.getElementById('fullName').value,  // お名前と同じ
+          remarks: document.getElementById('remarks').value,
+          productName: `${currentPlan} (¥${currentAmount.toLocaleString()}/月)`,
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch('/.netlify/functions/bank-transfer-application', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.className = 'form-message success';
+            formMessage.style.display = 'block';
+
+            document.getElementById('bankTransferForm').reset();
+
+            setTimeout(() => {
+              closeBankModal();
+              formMessage.style.display = 'none';
+            }, 3000);
+          } else {
+            throw new Error(result.error || '送信に失敗しました');
+          }
+        } catch (error) {
+          formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+        } finally {
+          submitButton.disabled = false;
+          submitText.style.display = 'inline';
+          submitLoading.style.display = 'none';
+        }
+      });
+    }
+  });
+</script>
+
+<style>
+    .sample-page-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 20px;
+    }
+
+    /* ヘッダー */
+    .sample-header {
+        text-align: center;
+        margin-bottom: 60px;
+    }
+
+    .badge-new {
+        display: inline-block;
+        padding: 8px 20px;
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        color: white;
+        border-radius: 20px;
+        font-weight: 600;
+        margin-bottom: 20px;
+        font-size: 0.9rem;
+    }
+
+    .sample-header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 20px;
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .header-description {
+        font-size: 1.1rem;
+        color: #94a3b8;
+        line-height: 1.8;
+    }
+
+    /* レース情報 */
+    .sample-race-info {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 40px;
+    }
+
+    .sample-race-info h2 {
+        font-size: 1.5rem;
+        margin-bottom: 20px;
+        color: #60a5fa;
+    }
+
+    .race-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        margin-bottom: 15px;
+    }
+
+    .meta-item {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        color: #cbd5e1;
+    }
+
+    .race-name {
+        font-size: 1.1rem;
+        color: #e2e8f0;
+        font-weight: 600;
+    }
+
+    /* AI自動判定説明 */
+    .auto-selection-explanation {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(6, 182, 212, 0.1));
+        border: 1px solid rgba(16, 185, 129, 0.2);
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 40px;
+    }
+
+    .auto-selection-explanation h2 {
+        font-size: 1.5rem;
+        margin-bottom: 30px;
+        color: #10b981;
+    }
+
+    .explanation-content {
+        display: grid;
+        gap: 30px;
+    }
+
+    .explanation-step {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+    }
+
+    .step-number {
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #10b981, #06b6d4);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 1.2rem;
+    }
+
+    .step-content h3 {
+        font-size: 1.2rem;
+        margin-bottom: 10px;
+        color: #e2e8f0;
+    }
+
+    .step-content p {
+        color: #94a3b8;
+        line-height: 1.6;
+        margin-bottom: 15px;
+    }
+
+    .score-example,
+    .strategy-selected,
+    .bet-count {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 12px 20px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    .score-label,
+    .strategy-name,
+    .count-label {
+        color: #cbd5e1;
+    }
+
+    .score-value,
+    .count-value {
+        color: #10b981;
+        font-weight: 700;
+        font-size: 1.2rem;
+    }
+
+    .strategy-icon,
+    .count-icon {
+        font-size: 1.5rem;
+    }
+
+    .strategy-reason {
+        margin-top: 10px;
+        font-size: 0.9rem;
+        color: #94a3b8;
+        font-style: italic;
+    }
+
+    /* 出走馬分析 */
+    .horses-analysis {
+        margin-bottom: 40px;
+    }
+
+    .horses-analysis > h2 {
+        font-size: 1.8rem;
+        margin-bottom: 30px;
+        color: #e2e8f0;
+    }
+
+    .horse-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.05));
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 20px;
+    }
+
+    .horse-card.main {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.05));
+        border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .horse-card.sub {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(236, 72, 153, 0.05));
+        border-color: rgba(236, 72, 153, 0.3);
+    }
+
+    .horse-card.minor {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(251, 191, 36, 0.05));
+        border-color: rgba(251, 191, 36, 0.3);
+    }
+
+    .horse-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .horse-mark {
+        font-size: 1.5rem;
+    }
+
+    .horse-number {
+        background: rgba(59, 130, 246, 0.2);
+        color: #60a5fa;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 700;
+    }
+
+    .horse-name {
+        font-size: 1.3rem;
+        color: #e2e8f0;
+        margin: 0;
+    }
+
+    .horse-role {
+        background: rgba(139, 92, 246, 0.2);
+        color: #a78bfa;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+    }
+
+    .horse-details {
+        display: grid;
+        gap: 15px;
+    }
+
+    .horse-rating,
+    .horse-score {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .rating-label,
+    .score-label {
+        color: #94a3b8;
+        font-size: 0.9rem;
+    }
+
+    .rating-stars {
+        color: #fbbf24;
+        font-size: 1.1rem;
+    }
+
+    .score-value {
+        color: #10b981;
+        font-weight: 700;
+        font-size: 1.1rem;
+    }
+
+    .feature-importance h4 {
+        font-size: 0.95rem;
+        color: #cbd5e1;
+        margin-bottom: 12px;
+    }
+
+    .feature-bar {
+        display: grid;
+        grid-template-columns: 80px 1fr 50px;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .feature-label {
+        font-size: 0.85rem;
+        color: #94a3b8;
+    }
+
+    .feature-progress {
+        background: rgba(255, 255, 255, 0.05);
+        height: 8px;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .feature-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #10b981, #06b6d4);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }
+
+    .feature-value {
+        font-size: 0.85rem;
+        color: #10b981;
+        font-weight: 600;
+        text-align: right;
+    }
+
+    /* 連下・抑え候補馬 */
+    .horse-group {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .group-title {
+        font-size: 1.1rem;
+        color: #cbd5e1;
+        margin-bottom: 15px;
+    }
+
+    .horse-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 10px;
+    }
+
+    .horse-item {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 6px;
+    }
+
+    .horse-item .horse-number {
+        background: rgba(139, 92, 246, 0.2);
+        color: #a78bfa;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    .horse-item .horse-name {
+        color: #e2e8f0;
+        font-size: 0.9rem;
+    }
+
+    .horse-item .horse-score {
+        color: #94a3b8;
+        font-size: 0.85rem;
+        margin-left: auto;
+    }
+
+    /* AI絞り込み買い目 */
+    .filtered-bets {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(234, 88, 12, 0.1));
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 40px;
+    }
+
+    .filtered-bets h2 {
+        font-size: 1.8rem;
+        margin-bottom: 20px;
+        color: #fbbf24;
+    }
+
+    .bet-strategy-info {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 25px;
+    }
+
+    .strategy-badge,
+    .bet-count-badge {
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+
+    .strategy-badge {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+    }
+
+    .bet-count-badge {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .sanrenpuku-bets h3 {
+        font-size: 1.2rem;
+        color: #e2e8f0;
+        margin-bottom: 15px;
+    }
+
+    .bet-list {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 15px;
+    }
+
+    .bet-item {
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .bet-item:last-child {
+        border-bottom: none;
+    }
+
+    .bet-formula {
+        color: #fbbf24;
+        font-size: 1.1rem;
+        font-weight: 600;
+        font-family: 'Courier New', monospace;
+    }
+
+    .bet-total {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        padding-top: 10px;
+        border-top: 2px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .total-label {
+        color: #94a3b8;
+        font-size: 1.1rem;
+    }
+
+    .total-count {
+        color: #fbbf24;
+        font-size: 1.1rem;
+        font-weight: 700;
+    }
+
+    /* 的中結果 */
+    .result-section {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.1));
+        border: 2px solid rgba(16, 185, 129, 0.4);
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 40px;
+    }
+
+    .result-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 25px;
+    }
+
+    .result-header h2 {
+        font-size: 1.8rem;
+        color: #10b981;
+        margin: 0;
+    }
+
+    .hit-badge {
+        background: linear-gradient(135deg, #10b981, #06b6d4);
+        color: white;
+        padding: 10px 24px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+    }
+
+    .result-details {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+
+    .result-order,
+    .result-payout {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+
+    .order-label,
+    .payout-label {
+        display: block;
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin-bottom: 10px;
+    }
+
+    .order-value {
+        display: block;
+        color: #10b981;
+        font-size: 2rem;
+        font-weight: 700;
+        font-family: 'Courier New', monospace;
+    }
+
+    .payout-value {
+        display: block;
+        color: #fbbf24;
+        font-size: 2.2rem;
+        font-weight: 700;
+    }
+
+    .result-note {
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 4px solid #10b981;
+        padding: 15px 20px;
+        border-radius: 8px;
+        color: #cbd5e1;
+        line-height: 1.8;
+    }
+
+    .result-note strong {
+        color: #10b981;
+        font-size: 1.2rem;
+    }
+
+    /* 商品説明セクション */
+    .product-explanation {
+        margin-bottom: 60px;
+    }
+
+    /* なぜ三連複なのか */
+    .why-sanrenpuku {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 16px;
+        padding: 40px 30px;
+        margin-bottom: 40px;
+    }
+
+    .why-sanrenpuku h2 {
+        font-size: 1.8rem;
+        color: #60a5fa;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .reason-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 25px;
+    }
+
+    .reason-card {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 25px;
+        text-align: center;
+    }
+
+    .reason-icon {
+        font-size: 3rem;
+        margin-bottom: 15px;
+    }
+
+    .reason-card h3 {
+        font-size: 1.2rem;
+        color: #e2e8f0;
+        margin-bottom: 12px;
+    }
+
+    .reason-card p {
+        color: #94a3b8;
+        line-height: 1.7;
+        font-size: 0.95rem;
+    }
+
+    /* こんなお悩みありませんか */
+    .pain-points {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(220, 38, 38, 0.05));
+        border: 1px solid rgba(239, 68, 68, 0.2);
+        border-radius: 16px;
+        padding: 40px 30px;
+        margin-bottom: 40px;
+    }
+
+    .pain-points h2 {
+        font-size: 1.8rem;
+        color: #f87171;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .pain-list {
+        display: grid;
+        gap: 20px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .pain-item {
+        display: flex;
+        gap: 15px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 20px;
+        align-items: flex-start;
+    }
+
+    .pain-icon {
+        font-size: 2rem;
+        flex-shrink: 0;
+    }
+
+    .pain-content h3 {
+        font-size: 1.1rem;
+        color: #e2e8f0;
+        margin-bottom: 8px;
+    }
+
+    .pain-content p {
+        color: #94a3b8;
+        line-height: 1.6;
+        font-size: 0.95rem;
+    }
+
+    /* Premium Sanrenpukuで解決 */
+    .solution-section {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(6, 182, 212, 0.1));
+        border: 1px solid rgba(16, 185, 129, 0.2);
+        border-radius: 16px;
+        padding: 40px 30px;
+        margin-bottom: 40px;
+    }
+
+    .solution-section h2 {
+        font-size: 1.8rem;
+        color: #10b981;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .solution-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 25px;
+    }
+
+    .solution-card {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 25px;
+        text-align: center;
+    }
+
+    .solution-icon {
+        font-size: 3rem;
+        margin-bottom: 15px;
+    }
+
+    .solution-card h3 {
+        font-size: 1.2rem;
+        color: #e2e8f0;
+        margin-bottom: 12px;
+    }
+
+    .solution-card p {
+        color: #94a3b8;
+        line-height: 1.7;
+        font-size: 0.95rem;
+    }
+
+    /* 実績データ */
+    .performance-section {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(234, 88, 12, 0.05));
+        border: 1px solid rgba(245, 158, 11, 0.2);
+        border-radius: 16px;
+        padding: 40px 30px;
+        margin-bottom: 40px;
+    }
+
+    .performance-section h2 {
+        font-size: 1.8rem;
+        color: #fbbf24;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .performance-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .performance-card {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 25px;
+        text-align: center;
+    }
+
+    .perf-icon {
+        font-size: 2.5rem;
+        margin-bottom: 10px;
+    }
+
+    .perf-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #fbbf24;
+        margin-bottom: 8px;
+    }
+
+    .perf-label {
+        font-size: 1rem;
+        color: #e2e8f0;
+        margin-bottom: 8px;
+    }
+
+    .perf-note {
+        font-size: 0.85rem;
+        color: #94a3b8;
+    }
+
+    .performance-detail {
+        background: rgba(0, 0, 0, 0.2);
+        border-left: 4px solid #fbbf24;
+        border-radius: 8px;
+        padding: 25px;
+    }
+
+    .performance-detail h3 {
+        font-size: 1.2rem;
+        color: #fbbf24;
+        margin-bottom: 15px;
+    }
+
+    .performance-detail ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .performance-detail li {
+        padding: 10px 0;
+        color: #cbd5e1;
+        line-height: 1.7;
+        font-size: 0.95rem;
+    }
+
+    .performance-detail li strong {
+        color: #e2e8f0;
+    }
+
+    /* お客様の声 */
+    .testimonials-section {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(124, 58, 237, 0.05));
+        border: 1px solid rgba(139, 92, 246, 0.2);
+        border-radius: 16px;
+        padding: 40px 30px;
+        margin-bottom: 40px;
+    }
+
+    .testimonials-section h2 {
+        font-size: 1.8rem;
+        color: #a78bfa;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .testimonial-cards {
+        display: grid;
+        gap: 25px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .testimonial-card {
+        background: rgba(0, 0, 0, 0.2);
+        border-left: 4px solid #a78bfa;
+        border-radius: 12px;
+        padding: 25px;
+    }
+
+    .testimonial-header {
+        margin-bottom: 15px;
+    }
+
+    .testimonial-name {
+        font-size: 1.1rem;
+        color: #e2e8f0;
+        font-weight: 600;
+        margin-bottom: 5px;
+    }
+
+    .testimonial-plan {
+        font-size: 0.9rem;
+        color: #a78bfa;
+    }
+
+    .testimonial-text {
+        color: #cbd5e1;
+        line-height: 1.8;
+        font-size: 0.95rem;
+    }
+
+    .testimonial-text strong {
+        color: #fbbf24;
+    }
+
+    /* CTA */
+    .cta-section {
+        text-align: center;
+        padding: 50px 30px;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 16px;
+    }
+
+    .cta-section h2 {
+        font-size: 1.8rem;
+        margin-bottom: 15px;
+        color: #60a5fa;
+    }
+
+    .cta-description {
+        font-size: 1.1rem;
+        color: #94a3b8;
+        margin-bottom: 40px;
+        line-height: 1.8;
+    }
+
+    .cta-features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 30px;
+        margin-bottom: 40px;
+    }
+
+    .cta-feature {
+        padding: 20px;
+    }
+
+    .feature-icon {
+        font-size: 3rem;
+        display: block;
+        margin-bottom: 15px;
+    }
+
+    .cta-feature h3 {
+        font-size: 1.2rem;
+        color: #e2e8f0;
+        margin-bottom: 10px;
+    }
+
+    .cta-feature p {
+        color: #94a3b8;
+        font-size: 0.95rem;
+    }
+
+    .cta-buttons {
+        display: flex;
+        gap: 20px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .btn-primary,
+    .btn-secondary {
+        padding: 16px 40px;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 1.1rem;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        display: inline-block;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .btn-secondary {
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(59, 130, 246, 0.3);
+        color: #60a5fa;
+    }
+
+    .btn-secondary:hover {
+        background: rgba(59, 130, 246, 0.1);
+        border-color: rgba(59, 130, 246, 0.5);
+    }
+
+    /* プラン選択セクション */
+    .cta-plan-selection {
+        margin-top: 40px;
+    }
+
+    .plan-selection-title {
+        font-size: 1.5rem;
+        color: #e2e8f0;
+        text-align: center;
+        margin-bottom: 15px;
+    }
+
+    .plan-selection-note {
+        text-align: center;
+        color: #fbbf24;
+        font-size: 0.95rem;
+        margin-bottom: 30px;
+        padding: 12px 20px;
+        background: rgba(251, 191, 36, 0.1);
+        border-left: 4px solid #fbbf24;
+        border-radius: 8px;
+        max-width: 800px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .plan-buttons {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 30px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .plan-btn {
+        position: relative;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+        border: 2px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        padding: 30px 25px;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        display: block;
+        text-align: center;
+        width: 100%;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: inherit;
+        color: inherit;
+    }
+
+    .plan-btn:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 30px rgba(59, 130, 246, 0.3);
+        border-color: rgba(59, 130, 246, 0.5);
+    }
+
+    .combo-plan {
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(245, 158, 11, 0.1));
+        border-color: rgba(251, 191, 36, 0.4);
+    }
+
+    .combo-plan:hover {
+        box-shadow: 0 12px 30px rgba(251, 191, 36, 0.4);
+        border-color: rgba(251, 191, 36, 0.6);
+    }
+
+    .plan-badge {
+        position: absolute;
+        top: -12px;
+        right: 20px;
+        background: linear-gradient(135deg, #fbbf24, #f59e0b);
+        color: #000;
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 700;
+    }
+
+    .plan-name {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        margin-bottom: 8px;
+    }
+
+    .plan-subtitle {
+        font-size: 0.9rem;
+        color: #94a3b8;
+        margin-bottom: 15px;
+    }
+
+    .plan-price {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #fbbf24;
+        margin-bottom: 10px;
+    }
+
+    .combo-plan .plan-price {
+        color: #fbbf24;
+    }
+
+    .single-plan .plan-price {
+        color: #60a5fa;
+    }
+
+    .plan-period {
+        font-size: 1rem;
+        color: #94a3b8;
+        font-weight: 400;
+    }
+
+    .plan-note {
+        font-size: 0.9rem;
+        color: #94a3b8;
+        margin-bottom: 20px;
+    }
+
+    .plan-features {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        padding: 20px;
+        font-size: 0.95rem;
+        color: #cbd5e1;
+        line-height: 1.8;
+        text-align: center;
+    }
+
+    .feature-item {
+        margin-bottom: 10px;
+    }
+
+    .feature-item strong {
+        color: #e2e8f0;
+        font-size: 1.05rem;
+    }
+
+    .feature-detail {
+        color: #94a3b8;
+        font-size: 0.85rem;
+    }
+
+    .feature-divider {
+        font-size: 1.5rem;
+        color: #fbbf24;
+        margin: 15px 0;
+        font-weight: 700;
+    }
+
+    .feature-note {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        color: #f59e0b;
+        font-size: 0.9rem;
+    }
+
+    /* AI絞り込みボタン */
+    .demo-filter-btn {
+        width: 100%;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        border: none;
+        border-radius: 12px;
+        padding: 18px 25px;
+        color: #000;
+        font-size: 1.1rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        box-shadow: 0 4px 15px rgba(251, 191, 36, 0.3);
+        margin-bottom: 40px;
+    }
+
+    .demo-filter-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(251, 191, 36, 0.4);
+    }
+
+    .demo-filter-btn.filtering {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        animation: pulse 1s ease-in-out infinite;
+    }
+
+    .demo-filter-btn.filtered {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    }
+
+    .filter-icon {
+        font-size: 1.5rem;
+    }
+
+    .filter-arrow {
+        transition: transform 0.3s ease;
+    }
+
+    .demo-filter-btn.filtered .filter-arrow {
+        transform: rotate(180deg);
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    /* レスポンシブ */
+    @media (max-width: 768px) {
+        .sample-header h1 {
+            font-size: 1.8rem;
+        }
+
+        .race-meta {
+            flex-direction: column;
+        }
+
+        .explanation-step {
+            flex-direction: column;
+        }
+
+        .horse-list {
+            grid-template-columns: 1fr;
+        }
+
+        .plan-buttons {
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        .plan-selection-title {
+            font-size: 1.3rem;
+        }
+
+        .plan-price {
+            font-size: 2rem;
+        }
+
+        .demo-filter-btn {
+            padding: 16px 20px;
+            font-size: 1rem;
+        }
+
+        /* 商品説明セクションのモバイル対応 */
+        .why-sanrenpuku h2,
+        .pain-points h2,
+        .solution-section h2,
+        .performance-section h2,
+        .testimonials-section h2 {
+            font-size: 1.5rem;
+        }
+
+        .reason-cards,
+        .solution-cards {
+            grid-template-columns: 1fr;
+        }
+
+        .performance-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .performance-detail h3 {
+            font-size: 1.1rem;
+        }
+
+        .testimonial-card {
+            padding: 20px;
+        }
+    }
+</style>
+
+<script is:inline>
+document.addEventListener('DOMContentLoaded', function() {
+    const filterBtn = document.getElementById('demoFilterBtn');
+    const demoContent = document.getElementById('demoContent');
+
+    if (filterBtn && demoContent) {
+        filterBtn.addEventListener('click', function() {
+            const filterText = this.querySelector('.filter-text');
+
+            if (demoContent.style.display === 'none') {
+                // 段階1: 絞り込む → 絞り込み中（青・pulse）
+                this.classList.add('filtering');
+                filterText.textContent = '高性能AI三連複 絞り込み中';
+
+                // 段階2: 1.6秒後に 絞り込み中 → 絞り込み完了（緑）
+                setTimeout(() => {
+                    this.classList.remove('filtering');
+                    this.classList.add('filtered');
+                    filterText.textContent = '高性能AI三連複 絞り込み完了';
+                    demoContent.style.display = 'block';
+
+                    // スムーズスクロール
+                    setTimeout(() => {
+                        demoContent.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 100);
+                }, 1600);
+            } else {
+                // 閉じる処理
+                demoContent.style.display = 'none';
+                this.classList.remove('filtered');
+                filterText.textContent = '高性能AI三連複 絞り込む';
+            }
+        });
+    }
+});
+</script>
+</BaseLayout>

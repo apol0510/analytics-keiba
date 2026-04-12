@@ -1,0 +1,929 @@
+---
+// 静的ビルドのためprerender削除
+import BaseLayout from '../layouts/BaseLayout.astro';
+import allRacesData from '../data/allRacesPrediction.json';
+import archiveResults from '../data/archiveResults.json';
+import { weeklyResults, dailyTabs, dailyResultsData } from './standard-predictions.astro';
+
+// archiveResults.jsonから最新日のデータを取得
+function getLatestDayData() {
+    const years = Object.keys(archiveResults).sort().reverse();
+    if (years.length === 0) return null;
+
+    const latestYear = years[0];
+    const months = Object.keys(archiveResults[latestYear]).sort().reverse();
+    if (months.length === 0) return null;
+
+    const latestMonth = months[0];
+    const days = Object.keys(archiveResults[latestYear][latestMonth]).sort().reverse();
+    if (days.length === 0) return null;
+
+    const latestDay = days[0];
+    const dayData = archiveResults[latestYear][latestMonth][latestDay];
+
+    return {
+        year: latestYear,
+        month: latestMonth,
+        day: latestDay,
+        ...dayData
+    };
+}
+
+const latestResult = getLatestDayData();
+
+// 昨日の結果データを作成
+const yesterdayResults = latestResult ? {
+    date: `${parseInt(latestResult.month)}月${parseInt(latestResult.day)}日`,
+    track: latestResult.venue,
+    hitCount: latestResult.hitRaces,
+    totalCount: latestResult.totalRaces,
+    hitRate: latestResult.totalRaces > 0 ? Math.round((latestResult.hitRaces / latestResult.totalRaces) * 100) : 0,
+    totalPayout: latestResult.totalPayout,
+    totalBetPoints: latestResult.races.reduce((sum, race) => sum + (race.betPoints || 0), 0),
+    recoveryRate: (() => {
+        const totalPoints = latestResult.races.reduce((sum, race) => sum + (race.betPoints || 0), 0);
+        const investment = totalPoints * 100; // 1点=100円
+        return investment > 0 ? Math.round((latestResult.totalPayout / investment) * 100) : 0;
+    })(),
+    results: latestResult.races.map(race => ({
+        raceNumber: race.raceNumber,
+        result: race.hit ? 'win' : 'lose',
+        payout: race.payout
+    }))
+} : null;
+// メインレース（11R）のデータを取得 - 防御的プログラミング実装
+const mainRace = (allRacesData && Array.isArray(allRacesData.races))
+    ? allRacesData.races.find(race => race.isMainRace === true)
+    : null;
+
+if (!mainRace) {
+    console.error('❌ メインレースデータが見つかりません:', { allRacesData: allRacesData ? 'exists' : 'missing' });
+    throw new Error('メインレースデータが見つかりません');
+}
+
+const { raceInfo, strategies, horses } = mainRace;
+
+// 戦略データから信頼度を計算
+function calculateAverageConfidence(strategies) {
+    if (!strategies) return 0;
+
+    const strategyKeys = ['safe', 'balance', 'aggressive'];
+    const confidenceValues = strategyKeys
+        .map(key => strategies[key]?.confidence || strategies[key]?.hitRate)
+        .filter(value => value !== undefined && value !== null)
+        .map(value => parseInt(value));
+
+    if (confidenceValues.length === 0) return 0;
+
+    const average = confidenceValues.reduce((sum, val) => sum + val, 0) / confidenceValues.length;
+    return Math.round(average);
+}
+
+// プレビューコンテンツを生成
+function generatePreview(raceInfo, strategies, horses) {
+    if (!raceInfo || !strategies) {
+        return {
+            summary: 'AIから最新の情報を取得しました！',
+            features: ''
+        };
+    }
+
+    // 本命の累積スコアを信頼度として使用
+    let confidence = calculateAverageConfidence(strategies);
+    if (horses?.main?.factors) {
+        const scoreText = horses.main.factors.find(factor => factor.text && factor.text.includes('累積スコア'));
+        if (scoreText) {
+            const scoreMatch = scoreText.text.match(/(\d+)pt/);
+            if (scoreMatch) {
+                confidence = parseInt(scoreMatch[1]);
+            }
+        }
+    }
+
+    const safeTitle = strategies.safe?.title || '少点数的中型';
+    const balanceTitle = strategies.balance?.title || 'バランス型';
+    const aggressiveTitle = strategies.aggressive?.title || '高配当追求型';
+
+    // 本命・対抗の馬名を取得
+    const mainHorseName = horses?.main?.name || '';
+    const subHorseName = horses?.sub?.name || '';
+    const horseInfo = mainHorseName && subHorseName ? `本命${mainHorseName}・対抗${subHorseName}` : '';
+
+    const summary = `${raceInfo.track} ${raceInfo.raceNumber} AI予想完了！`;
+    const features = horseInfo ? `${horseInfo}\n\n信頼度${confidence}%\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。` : `信頼度${confidence}%\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`;
+
+    return { summary, features };
+}
+
+// 信頼度計算とプレビュー生成（本命の累積スコアを使用）
+let calculatedConfidence = calculateAverageConfidence(strategies);
+if (horses?.main?.factors) {
+    const scoreText = horses.main.factors.find(factor => factor.text && factor.text.includes('累積スコア'));
+    if (scoreText) {
+        const scoreMatch = scoreText.text.match(/(\d+)pt/);
+        if (scoreMatch) {
+            calculatedConfidence = parseInt(scoreMatch[1]);
+        }
+    }
+}
+const preview = generatePreview(raceInfo, strategies, horses);
+
+// raceInfoに計算した信頼度を追加
+const enhancedRaceInfo = {
+    ...raceInfo,
+    confidence: calculatedConfidence
+};
+
+// 日付と競馬場の情報をallRacesDataから取得（他のページと統一）
+const raceDate = allRacesData.raceDate; // "2025-09-18"
+const track = allRacesData.track; // "大井競馬"
+
+// 日付を日本語形式に変換（他のページと統一）
+const [year, month, day] = raceDate.split('-');
+const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
+
+// レース情報の整形
+const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || ''}${enhancedRaceInfo?.raceName !== 'レース情報未検出' && enhancedRaceInfo?.raceName ? ' ' + enhancedRaceInfo.raceName : ''}`;
+---
+
+<BaseLayout title="NANKANアナリティクス | AI競馬予想で投資効率を最大化">
+            <!-- Hero Section -->
+            <section class="hero-section">
+                <h1 class="hero-title">AI競馬予想で投資効率を最大化</h1>
+                <p class="hero-subtitle">
+                    XGBoost・LSTM・ニューラルネットワークによる高精度分析で<br>
+                    的中率87%、回収率156%を実現
+                </p>
+                <p class="hero-description">
+                    従来の感覚的予想から、データサイエンスによる科学的投資へ。<br>
+                    AIが24時間365日、南関競馬を分析し続けています。
+                </p>
+
+                <!-- AI Statistics Cards -->
+                <div class="hero-stats-section" style="margin-top: 50px;">
+                    <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-width: 100%; margin: 0 auto; padding: 0 10px;">
+                        <!-- AI Model Accuracy -->
+                        <div class="stats-card" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(59, 130, 246, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
+                            <div class="stats-number" data-target="87.3" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                                0%
+                            </div>
+                            <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
+                                AIモデル精度
+                            </div>
+                            <div style="color: var(--accent-text-color); font-size: 0.75rem; line-height: 1.3;">
+                                XGBoost・LSTM技術
+                            </div>
+                        </div>
+
+                        <!-- Average Return Rate -->
+                        <div class="stats-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(16, 185, 129, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
+                            <div class="stats-number" data-target="156" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                                0%
+                            </div>
+                            <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
+                                平均回収率
+                            </div>
+                            <div style="color: var(--accent-text-color); font-size: 0.75rem; line-height: 1.3;">
+                                投資効率最大化
+                            </div>
+                        </div>
+
+                        <!-- Training Data -->
+                        <div class="stats-card" style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(139, 92, 246, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
+                            <div class="stats-number" data-target="10000" data-suffix="+" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                                0+
+                            </div>
+                            <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
+                                学習データ数
+                            </div>
+                            <div style="color: var(--accent-text-color); font-size: 0.75rem; line-height: 1.3;">
+                                5年間レースデータ
+                            </div>
+                        </div>
+
+                        <!-- Features -->
+                        <div class="stats-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(16, 185, 129, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
+                            <div class="stats-number" data-target="50" data-suffix="+" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                                0+
+                            </div>
+                            <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
+                                特徴量
+                            </div>
+                            <div style="color: var(--accent-text-color); font-size: 0.75rem; line-height: 1.3;">
+                                多角度分析ファクター
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 的中実績セクション -->
+            <section style="padding: 60px 20px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);">
+                <div class="container" style="max-width: 1200px; margin: 0 auto;">
+                    <!-- 大カード -->
+                    <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 20px; padding: 40px; box-shadow: 0 8px 32px rgba(16, 185, 129, 0.15);">
+                        <div style="text-align: center; margin-bottom: 40px;">
+                            <h2 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 15px;">
+                                🏆 昨日の的中結果
+                            </h2>
+                            <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                                <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
+                                    {yesterdayResults.date} {yesterdayResults.track}競馬
+                                </p>
+                                <div style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 0.9rem;">
+                                    🏆 {yesterdayResults.hitCount}/{yesterdayResults.totalCount}的中
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 的中サマリー -->
+                        <div style="display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; margin-bottom: 30px;">
+                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
+                                <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
+                            </div>
+                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                                <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
+                            </div>
+                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
+                                <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.totalBetPoints}点</span>
+                            </div>
+                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
+                                <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayResults.totalPayout.toLocaleString()}</span>
+                            </div>
+                        </div>
+
+                        <!-- レース一覧（的中レースのみ表示） -->
+                        <div style="display: grid; gap: 12px;">
+                            {latestResult?.races?.filter(race => race.hit).map(race => (
+                                <div class="yesterday-race-card">
+                                    <div class="yesterday-race-info">
+                                        <div style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; min-width: 3rem;">
+                                            {race.raceNumber}
+                                        </div>
+                                        <div style="color: #94a3b8; font-size: 0.85rem; font-weight: 400; opacity: 0.8;">
+                                            {race.raceName}
+                                        </div>
+                                    </div>
+                                    <div class="yesterday-race-result">
+                                        <div class="hit-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.9rem; border: 1px solid rgba(16, 185, 129, 0.3);">
+                                            ✅ 的中
+                                        </div>
+                                        <div class="bet-info" style="color: #8b5cf6; font-size: 0.9rem; font-weight: 600;">
+                                            {race.betType}{race.betPoints}点
+                                        </div>
+                                        <div class="payout" style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; text-align: right;">
+                                            ¥{race.payout.toLocaleString()}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <!-- アーカイブリンク -->
+                        <div style="text-align: center; margin-top: 30px;">
+                            <a href="/archive/" style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: transform 0.3s;">
+                                過去の的中実績を見る →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Predictions -->
+            <section class="live-prediction-section" id="predictions">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <div style="display: inline-flex; align-items: center; gap: 12px; background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(5, 150, 105, 0.3) 100%); padding: 8px 24px; border-radius: 50px; border: 1px solid rgba(16, 185, 129, 0.4); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">
+                        <span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%; animation: pulse 2s infinite; box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);"></span>
+                        <span style="color: #6ee7b7; font-weight: 600; font-size: 0.9rem;">LIVE 稼働中</span>
+                    </div>
+                </div>
+                <h2 class="section-title">本日のAI予想（プレビュー）</h2>
+                <p class="section-subtitle">
+                    AIがリアルタイムで分析中。実際の予想プロセスと判断根拠を一部公開。詳細な買い目は有料版で提供中。
+                </p>
+                <div class="prediction-cards">
+                    <div class="prediction-card">
+                        <div class="race-info">
+                            <span class="race-title">{raceTitle}</span>
+                            <span class="confidence-score">信頼度 {Math.floor(parseFloat(enhancedRaceInfo?.confidence || '0'))}%</span>
+                        </div>
+                        <div class="prediction-summary">
+                            {preview.summary}
+                            <br><br>
+                            <div set:html={preview.features.split('\n\n').join('<br><br>')}></div>
+                        </div>
+                        <div class="blur-overlay">
+                            <span class="premium-badge"><a href="/free-prediction/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- AI Technology Section -->
+            <section class="tech-section" id="technology">
+                <h2 class="section-title">🤖 NANKANアナリティクスの AI技術</h2>
+                <p class="section-subtitle">
+                    最新の機械学習アルゴリズムを組み合わせ、人間を超える予想精度を実現
+                </p>
+                <div class="tech-grid">
+                    <div class="tech-card">
+                        <div class="tech-name">XGBoost勾配ブースティング</div>
+                        <div class="tech-accuracy">精度 91.2%</div>
+                        <div class="tech-description">
+                            150以上の特徴量から最適な組み合わせを自動学習。過去5年間50,000レースのデータで訓練済み。
+                        </div>
+                    </div>
+                    <div class="tech-card">
+                        <div class="tech-name">LSTM時系列分析</div>
+                        <div class="tech-accuracy">精度 85.7%</div>
+                        <div class="tech-description">
+                            馬の成長曲線・調子の波を時系列で分析。調教・レース間隔・季節要因を総合判定。
+                        </div>
+                    </div>
+                    <div class="tech-card">
+                        <div class="tech-name">アンサンブル学習</div>
+                        <div class="tech-accuracy">精度 88.4%</div>
+                        <div class="tech-description">
+                            複数モデルの予測を統合し、単体モデルの弱点を補完。安定した高精度予想を実現。
+                        </div>
+                    </div>
+                    <div class="tech-card">
+                        <div class="tech-name">深層ニューラルネット</div>
+                        <div class="tech-accuracy">精度 89.1%</div>
+                        <div class="tech-description">
+                            非線形な複雑パターンを学習。人間では発見困難な隠れた相関関係を自動抽出。
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- AI技術詳細ボタン -->
+                <div style="text-align: center; margin-top: 40px;">
+                    <a href="/technology/" class="tech-detail-button" style="display: inline-block; background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%); color: white; padding: 15px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 1rem; transition: all 0.3s; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);">
+                        🔬 AI技術の詳細を見る
+                    </a>
+                </div>
+            </section>
+
+            <!-- 無料予想CTAセクション -->
+            <section class="free-cta-section">
+                <div class="container">
+                    <h2 class="section-title" style="color: var(--success-color);">まずは無料予想を体験</h2>
+                    <p class="section-subtitle">
+                        毎日更新される無料予想で、AIの実力を体験してください。<br>
+                        本命・対抗・穴馬の3つの戦略で、的中と配当のバランスを最適化。
+                    </p>
+                    <div class="cta-features">
+                        ✓ 毎日無料で更新<br>
+                        ✓ 会員登録不要<br>
+                        ✓ 3つの戦略で最適化
+                    </div>
+                    <a href="/free-prediction/" class="free-cta-button">
+                        無料予想を見る →
+                    </a>
+                </div>
+            </section>
+</BaseLayout>
+
+<style>
+        /* Hero Section - 投資訴求重視 */
+        .hero-section {
+            text-align: center;
+            padding: 60px 40px;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 50%, rgba(251, 146, 60, 0.12) 100%);
+            border-radius: var(--card-border-radius);
+            margin-bottom: 40px;
+            border: 1px solid rgba(251, 146, 60, 0.2);
+            box-shadow: 0 4px 20px rgba(251, 146, 60, 0.08);
+        }
+
+        .hero-stats-section {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid rgba(251, 146, 60, 0.15);
+        }
+
+        .hero-title {
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #fb923c 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: 1.3rem;
+            color: var(--body-text-color);
+            margin-bottom: 30px;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+            font-weight: 500;
+        }
+
+        .hero-description {
+            font-size: 1rem;
+            color: var(--accent-text-color);
+            margin-bottom: 40px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Live Prediction Section - オレンジ系明るいデザイン */
+        .live-prediction-section {
+            background: linear-gradient(135deg, rgba(251, 146, 60, 0.05) 0%, rgba(249, 115, 22, 0.03) 50%, rgba(234, 88, 12, 0.05) 100%);
+            padding: 40px;
+            border-radius: var(--card-border-radius);
+            margin: 40px 0;
+            border: 1px solid rgba(251, 146, 60, 0.3);
+            box-shadow: 0 8px 32px rgba(251, 146, 60, 0.05);
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 1.8rem;
+            color: var(--accent-color);
+            margin-bottom: 15px;
+            font-weight: 700;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            color: var(--accent-text-color);
+            margin-bottom: 30px;
+        }
+
+        /* AI予想プレビュー専用スタイル */
+        .live-prediction-section .section-title {
+            background: linear-gradient(135deg, #fb923c 0%, #f59e0b 50%, #ea580c 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .live-prediction-section .section-subtitle {
+            color: var(--accent-text-color);
+            font-weight: 500;
+        }
+
+        .prediction-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .prediction-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(251, 146, 60, 0.3);
+            position: relative;
+            box-shadow: 0 4px 20px rgba(251, 146, 60, 0.15);
+            backdrop-filter: blur(10px);
+        }
+
+        .race-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .race-title {
+            font-weight: 700;
+            color: #fbbf24;
+            font-size: 0.9rem;
+        }
+
+        .confidence-score {
+            background: linear-gradient(135deg, #fb923c 0%, #ea580c 100%);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(251, 146, 60, 0.3);
+        }
+
+        .prediction-summary {
+            color: var(--body-text-color);
+            margin-bottom: 10px;
+            line-height: 1.5;
+            min-height: 60px;
+            padding: 5px 0;
+        }
+
+        .blur-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 65%;
+            background: linear-gradient(transparent 0%, rgba(15, 23, 42, 0.4) 15%, rgba(15, 23, 42, 0.7) 40%, rgba(15, 23, 42, 0.95) 80%, rgba(15, 23, 42, 1) 100%);
+            border-radius: 0 0 8px 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(3px);
+        }
+
+        .premium-badge {
+            background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        /* AI Technology Section */
+        .tech-section {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            padding: 40px;
+            border-radius: var(--card-border-radius);
+            margin: 40px 0;
+            border: 1px solid var(--border-color);
+        }
+
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .tech-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 25px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            transition: transform 0.3s;
+        }
+
+        .tech-card:hover {
+            transform: translateY(-3px);
+        }
+
+        .tech-name {
+            font-weight: 700;
+            color: var(--accent-color);
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+
+        .tech-accuracy {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--success-color);
+            margin-bottom: 10px;
+        }
+
+        .tech-description {
+            font-size: 0.9rem;
+            color: var(--accent-text-color);
+            line-height: 1.5;
+        }
+
+        /* 無料予想CTAセクション */
+        .free-cta-section {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            padding: 60px 40px;
+            border-radius: 12px;
+            text-align: center;
+            margin: 40px 0;
+            border: 2px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .cta-features {
+            color: var(--body-text-color);
+            font-size: 1rem;
+            margin: 20px 0 30px;
+            line-height: 1.8;
+        }
+
+        .free-cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 15px 40px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+        }
+
+        .free-cta-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(16, 185, 129, 0.4);
+        }
+
+        /* Tech Detail Button */
+        .tech-detail-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4) !important;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero-title {
+                font-size: 2.2rem;
+            }
+
+            .prediction-cards, .tech-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .free-cta-section {
+                padding: 40px 20px;
+            }
+
+            .free-cta-button {
+                padding: 12px 30px;
+                font-size: 1rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr !important;
+                gap: 20px !important;
+                padding: 0 !important;
+            }
+            
+            
+            
+            .hero-section {
+                padding: 40px 20px !important;
+            }
+            
+            .hero-stats-section {
+                margin-top: 30px !important;
+            }
+            
+            .stats-card {
+                padding: 18px 12px !important;
+            }
+            
+            .stats-number {
+                font-size: 2rem !important;
+            }
+        }
+        
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        /* Footer Styles */
+        .footer {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
+            padding: 40px 0 20px;
+            margin-top: 80px;
+            color: #cbd5e1;
+        }
+
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .footer-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+
+        .footer-section h3 {
+            color: #3b82f6;
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+
+        .footer-section ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .footer-section li {
+            margin-bottom: 12px;
+        }
+
+        .footer-section a {
+            color: #94a3b8;
+            text-decoration: none;
+            transition: color 0.3s ease;
+            font-size: 0.95rem;
+        }
+
+        .footer-section a:hover {
+            color: #3b82f6;
+        }
+
+        .footer-bottom {
+            text-align: center;
+            padding-top: 30px;
+            border-top: 1px solid rgba(59, 130, 246, 0.1);
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        .company-info {
+            color: #94a3b8;
+            line-height: 1.6;
+        }
+
+        /* 昨日の的中結果レースカード用スタイル（PC：横並び） */
+        .yesterday-race-card {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(100, 116, 139, 0.3);
+            border-radius: 8px;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s;
+        }
+
+        .yesterday-race-card:hover {
+            border-color: rgba(16, 185, 129, 0.5);
+            background: rgba(15, 23, 42, 0.8);
+        }
+
+        .yesterday-race-info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex: 1;
+        }
+
+        .yesterday-race-result {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        /* モバイル：縦並び（768px以下のみ適用） */
+        @media (max-width: 768px) {
+            .yesterday-race-card {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+                padding: 1rem 1.5rem;
+            }
+
+            .yesterday-race-info {
+                display: grid;
+                grid-template-columns: auto 1fr;
+                gap: 0.5rem;
+                align-items: center;
+            }
+
+            /* レース名を独立行に配置（archive/2025/10.astroと同じ） */
+            .yesterday-race-info > div:nth-child(2) {
+                grid-column: 1 / -1;
+            }
+
+            .yesterday-race-result {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 0.5rem;
+                flex-wrap: nowrap;
+            }
+
+            /* モバイルでのフォントサイズ調整 */
+            .yesterday-race-result .hit-badge {
+                padding: 4px 8px !important;
+                font-size: 0.8rem !important;
+            }
+
+            .yesterday-race-result .bet-info {
+                font-size: 0.85rem !important;
+            }
+
+            .yesterday-race-result .payout {
+                font-size: 1rem !important;
+            }
+
+            .footer-content {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+        }
+</style>
+
+
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+    function s(t,e,r,i,a=""){
+        if(!t||!t.getAttribute)return;
+        t.innerHTML="0"+a;
+        let l=null;
+        const u=g=>{
+            l||(l=g);
+            const d=Math.min((g-l)/i,1);
+            let c;
+            try{
+                r>=1e3?(c=Math.floor(d*(r-e)+e),t.innerHTML=c.toLocaleString()+a):(c=d*(r-e)+e,t.innerHTML=c.toFixed(1)+a),d<1&&window.requestAnimationFrame(u)
+            }catch(f){
+                console.error("カウントアップエラー:",f),t.innerHTML=r+a
+            }
+        };
+        window.requestAnimationFrame(u)
+    }
+
+    const o=new IntersectionObserver(t=>{
+        t.forEach(e=>{
+            if(e.isIntersecting&&!e.target.hasAttribute("data-animated")){
+                const r=e.target.getAttribute("data-target"),
+                      i=e.target.getAttribute("data-suffix")||"";
+                if(!r){
+                    console.warn("data-target属性が見つかりません:",e.target);
+                    return
+                }
+                const a=parseFloat(r);
+                if(isNaN(a)){
+                    console.warn("無効なdata-target値:",r);
+                    return
+                }
+                console.log("カウントアップ開始:",a,i),
+                s(e.target,0,a,2e3,i),
+                e.target.setAttribute("data-animated","true")
+            }
+        })
+    },{threshold:.3});
+
+    const n=document.querySelectorAll(".stats-number");
+    console.log("stats-number要素を発見:",n.length);
+    n.forEach(t=>{
+        const e=t.getAttribute("data-target");
+        console.log("要素:",t,"data-target:",e),
+        o.observe(t)
+    })
+});
+
+// メッセージ表示時間の制御
+document.addEventListener('DOMContentLoaded', function() {
+    const predictionSummary = document.querySelector('.prediction-summary');
+    console.log('予想サマリー要素:', predictionSummary);
+
+    if (predictionSummary) {
+        const initialMessageEl = predictionSummary.querySelector('.initial-message');
+        const actualContentEl = predictionSummary.querySelector('.actual-content');
+
+        console.log('初期メッセージ要素:', initialMessageEl);
+        console.log('実際のコンテンツ要素:', actualContentEl);
+
+        if (initialMessageEl && actualContentEl) {
+            // 実際のコンテンツがある場合（AI予想完了の文字を含むかチェック）
+            const actualText = actualContentEl.innerText.trim();
+            console.log('実際のコンテンツ:', actualText);
+
+            if (actualText && (actualText.includes('AI予想完了') || actualText.includes('信頼度') || actualText.length > 50)) {
+                console.log('条件一致: 2秒後に切り替え開始');
+                // 初期メッセージを表示
+                initialMessageEl.style.display = 'block';
+                actualContentEl.style.display = 'none';
+
+                // 2秒後に切り替え
+                setTimeout(() => {
+                    console.log('切り替え実行');
+                    initialMessageEl.style.display = 'none';
+                    actualContentEl.style.display = 'block';
+                }, 2000);
+            } else {
+                console.log('条件不一致: 初期メッセージのみ表示');
+                // 実際のコンテンツがない場合は初期メッセージをそのまま表示
+                initialMessageEl.style.display = 'block';
+                actualContentEl.style.display = 'none';
+            }
+        } else {
+            console.log('要素が見つかりません');
+        }
+    } else {
+        console.log('.prediction-summary要素が見つかりません');
+    }
+});
+</script>
+</body>
+</html>

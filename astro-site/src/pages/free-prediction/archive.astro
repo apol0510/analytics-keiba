@@ -1,0 +1,491 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+// src/data/free-predictions/ 内の全JSONファイルを取得
+const freePredictions = import.meta.glob('/src/data/free-predictions/*.json', { eager: true });
+
+// 日付順にソート（新しい順）
+const predictions = Object.entries(freePredictions)
+  .map(([path, data]) => {
+    const fileName = path.split('/').pop().replace('.json', '');
+    const [year, month, day] = fileName.split('-');
+    return {
+      date: fileName,
+      year: parseInt(year),
+      month: parseInt(month),
+      day: parseInt(day),
+      track: data.track,
+      totalRaces: data.totalRaces,
+      url: `/free-prediction/${year}/${month}/${day}/`
+    };
+  })
+  .sort((a, b) => b.date.localeCompare(a.date));
+
+// 年月でグループ化
+const groupedByMonth = predictions.reduce((acc, pred) => {
+  const key = `${pred.year}-${String(pred.month).padStart(2, '0')}`;
+  if (!acc[key]) {
+    acc[key] = {
+      year: pred.year,
+      month: pred.month,
+      predictions: []
+    };
+  }
+  acc[key].predictions.push(pred);
+  return acc;
+}, {});
+
+const months = Object.values(groupedByMonth).sort((a, b) => {
+  const dateA = `${a.year}-${String(a.month).padStart(2, '0')}`;
+  const dateB = `${b.year}-${String(b.month).padStart(2, '0')}`;
+  return dateB.localeCompare(dateA);
+});
+
+// 統計情報
+const totalPredictions = predictions.length;
+const latestDate = predictions.length > 0 ? predictions[0] : null;
+const oldestDate = predictions.length > 0 ? predictions[predictions.length - 1] : null;
+---
+
+<BaseLayout title="無料予想アーカイブ | NANKANアナリティクス" description="過去の無料予想をアーカイブ。南関競馬のAI予想・分析データを日付別に閲覧可能。SEO対策済み。">
+    <div class="container">
+        <!-- ヘッダーセクション -->
+        <div class="header-section">
+            <h1 class="main-title">📅 無料予想アーカイブ</h1>
+            <p class="subtitle">過去の南関競馬AI予想を日付別に閲覧できます</p>
+
+            <div class="stats-row">
+                <div class="stat-box">
+                    <div class="stat-label">総予想数</div>
+                    <div class="stat-value">{totalPredictions}日分</div>
+                </div>
+                {latestDate && (
+                    <div class="stat-box">
+                        <div class="stat-label">最新予想</div>
+                        <div class="stat-value">{latestDate.month}/{latestDate.day}</div>
+                    </div>
+                )}
+                {oldestDate && (
+                    <div class="stat-box">
+                        <div class="stat-label">最古予想</div>
+                        <div class="stat-value">{oldestDate.month}/{oldestDate.day}</div>
+                    </div>
+                )}
+            </div>
+
+            <div class="cta-latest">
+                <a href="/free-prediction/" class="btn-latest-prediction">
+                    最新の予想を見る →
+                </a>
+            </div>
+        </div>
+
+        <!-- 月別アーカイブ -->
+        {months.map(monthData => (
+            <section class="month-section">
+                <h2 class="month-title">
+                    📆 {monthData.year}年{monthData.month}月
+                    <span class="count-badge">{monthData.predictions.length}日分</span>
+                </h2>
+
+                <div class="predictions-grid">
+                    {monthData.predictions.map(pred => (
+                        <a href={pred.url} class="prediction-card">
+                            <div class="card-header">
+                                <div class="date-badge">
+                                    <div class="date-day">{pred.day}</div>
+                                    <div class="date-month">{pred.month}月</div>
+                                </div>
+                                <div class="card-info">
+                                    <div class="track-name">{pred.track}</div>
+                                    <div class="race-count">{pred.totalRaces}レース開催</div>
+                                </div>
+                            </div>
+                            <div class="card-footer">
+                                <span class="view-link">予想を見る →</span>
+                            </div>
+                        </a>
+                    ))}
+                </div>
+            </section>
+        ))}
+
+        {predictions.length === 0 && (
+            <div class="no-data">
+                <div class="no-data-icon">📭</div>
+                <p>アーカイブされた予想がまだありません</p>
+                <a href="/free-prediction/" class="btn-primary">最新の予想を見る</a>
+            </div>
+        )}
+
+        <!-- SEO用情報 -->
+        <section class="info-section">
+            <h2>無料予想アーカイブについて</h2>
+            <p>NANKANアナリティクスでは、過去の南関競馬AI予想を日付別にアーカイブしています。機械学習モデルによる高精度予想の履歴を確認でき、予想精度の検証やデータ分析に活用できます。</p>
+
+            <h3>アーカイブの活用方法</h3>
+            <ul>
+                <li>過去の予想精度を確認</li>
+                <li>特定の会場・コースのAI分析傾向を研究</li>
+                <li>本命馬・対抗馬の的中率を検証</li>
+                <li>戦略別の回収率を比較</li>
+            </ul>
+
+            <div class="cta-box">
+                <h3>さらに詳しい予想・買い目情報</h3>
+                <p>有料会員になると、全レースの詳細買い目・三連複予想・穴馬情報が閲覧可能になります。</p>
+                <div class="cta-buttons">
+                    <a href="/pricing/" class="btn btn-primary">料金プランを見る</a>
+                    <a href="/premium-predictions/" class="btn btn-secondary">Premium予想を見る</a>
+                </div>
+            </div>
+        </section>
+    </div>
+</BaseLayout>
+
+<style>
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* ヘッダー */
+.header-section {
+    text-align: center;
+    margin-bottom: 60px;
+}
+
+.main-title {
+    font-size: 40px;
+    font-weight: 800;
+    margin-bottom: 12px;
+    color: #1f2937;
+}
+
+.subtitle {
+    font-size: 18px;
+    color: #6b7280;
+    margin-bottom: 32px;
+}
+
+.stats-row {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+}
+
+.stat-box {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border-radius: 16px;
+    padding: 20px 32px;
+    min-width: 150px;
+}
+
+.stat-label {
+    font-size: 13px;
+    color: #6b7280;
+    margin-bottom: 8px;
+}
+
+.stat-value {
+    font-size: 28px;
+    font-weight: 800;
+    color: #3b82f6;
+}
+
+.cta-latest {
+    margin-top: 24px;
+}
+
+.btn-latest-prediction {
+    display: inline-block;
+    background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+    color: white;
+    padding: 14px 32px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.btn-latest-prediction:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+/* 月別セクション */
+.month-section {
+    margin-bottom: 60px;
+}
+
+.month-title {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 24px;
+    color: #1f2937;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.count-badge {
+    background-color: #eff6ff;
+    color: #3b82f6;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* 予想カードグリッド */
+.predictions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.prediction-card {
+    background-color: #ffffff;
+    border: 2px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 20px;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.prediction-card:hover {
+    border-color: #3b82f6;
+    box-shadow: 0 8px 20px rgba(59, 130, 246, 0.15);
+    transform: translateY(-4px);
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.date-badge {
+    background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+    min-width: 70px;
+}
+
+.date-day {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.date-month {
+    font-size: 13px;
+    margin-top: 4px;
+    opacity: 0.9;
+}
+
+.card-info {
+    flex: 1;
+}
+
+.track-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1f2937;
+    margin-bottom: 4px;
+}
+
+.race-count {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.card-footer {
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.view-link {
+    color: #3b82f6;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+/* データなし */
+.no-data {
+    text-align: center;
+    padding: 80px 20px;
+}
+
+.no-data-icon {
+    font-size: 80px;
+    margin-bottom: 20px;
+}
+
+.no-data p {
+    font-size: 18px;
+    color: #6b7280;
+    margin-bottom: 24px;
+}
+
+/* 情報セクション */
+.info-section {
+    background-color: #f9fafb;
+    border-radius: 16px;
+    padding: 40px;
+    margin-top: 60px;
+}
+
+.info-section h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: #1f2937;
+}
+
+.info-section h3 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 32px 0 16px 0;
+    color: #1f2937;
+}
+
+.info-section p {
+    font-size: 16px;
+    line-height: 1.8;
+    color: #4b5563;
+    margin-bottom: 16px;
+}
+
+.info-section ul {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0;
+}
+
+.info-section li {
+    padding: 12px 0;
+    padding-left: 28px;
+    position: relative;
+    color: #4b5563;
+    font-size: 16px;
+}
+
+.info-section li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: #10b981;
+    font-weight: 700;
+    font-size: 18px;
+}
+
+/* CTA Box */
+.cta-box {
+    background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+    border-radius: 16px;
+    padding: 40px;
+    margin-top: 40px;
+    text-align: center;
+    color: white;
+}
+
+.cta-box h3 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: white;
+}
+
+.cta-box p {
+    font-size: 16px;
+    color: #e0e7ff;
+    margin-bottom: 24px;
+}
+
+.cta-buttons {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.btn {
+    display: inline-block;
+    padding: 14px 28px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background-color: #ffffff;
+    color: #3b82f6;
+}
+
+.btn-primary:hover {
+    background-color: #eff6ff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.btn-secondary {
+    background-color: transparent;
+    color: #ffffff;
+    border: 2px solid #ffffff;
+}
+
+.btn-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+}
+
+/* レスポンシブ */
+@media (max-width: 768px) {
+    .main-title {
+        font-size: 32px;
+    }
+
+    .predictions-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .stats-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .stat-box {
+        width: 100%;
+    }
+
+    .cta-buttons {
+        flex-direction: column;
+    }
+
+    .btn {
+        width: 100%;
+    }
+
+    .info-section {
+        padding: 24px;
+    }
+
+    .cta-box {
+        padding: 24px;
+    }
+}
+</style>

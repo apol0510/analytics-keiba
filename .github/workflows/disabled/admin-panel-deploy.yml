@@ -1,0 +1,48 @@
+name: Admin Panel Quick Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_message:
+        description: 'カスタムデプロイメッセージ'
+        required: false
+        default: '管理者パネルからの手動デプロイ'
+
+jobs:
+  quick-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: './astro-site/package-lock.json'
+        
+    - name: Install dependencies
+      run: cd astro-site && npm ci
+      
+    - name: Build site
+      run: cd astro-site && npm run build
+      
+    - name: Deploy to Netlify
+      uses: nwtgck/actions-netlify@v3.0
+      with:
+        publish-dir: './astro-site/dist'
+        production-branch: main
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        deploy-message: "${{ github.event.inputs.deploy_message || '管理者パネルからの手動デプロイ' }}"
+      env:
+        NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        
+    - name: Send success notification
+      if: success()
+      run: |
+        echo "🚀 デプロイ完了！"
+        echo "📱 サイトURL: https://nankan-analytics.keiba.link"
+        echo "⏰ デプロイ時刻: $(date)"

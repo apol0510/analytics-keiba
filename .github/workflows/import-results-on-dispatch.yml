@@ -1,0 +1,215 @@
+name: Import Results (Dispatch)
+
+on:
+  repository_dispatch:
+    types: [results-updated, nankan-results-updated]
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '日付 (YYYY-MM-DD)'
+        required: false
+        default: ''
+
+# 並行実行制御：archiveResults.json更新系workflowで統一（同じファイルへの同時コミット防止）
+concurrency:
+  group: archive-nankan-update
+  cancel-in-progress: false  # 実行中のジョブをキャンセルせず待機（順番に実行）
+
+jobs:
+  import-results:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for git push
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import results from keiba-data-shared
+        id: import-results
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+        run: |
+          # 日付正規化関数: 会場コード付き日付（例: 2026-03-16-URA）を日付のみに変換
+          normalize_date() {
+            local input_date="$1"
+            # 正規表現で YYYY-MM-DD-XXX 形式を検出し、YYYY-MM-DD のみ抽出
+            if [[ "$input_date" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})-[A-Z]{3}$ ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "$input_date"
+            fi
+          }
+
+          # 優先順位: 手動入力 > repository_dispatch payload > 今日の日付
+          if [ -n "$MANUAL_DATE" ]; then
+            # 手動実行時の入力
+            NORMALIZED_DATE=$(normalize_date "$MANUAL_DATE")
+            echo "📅 Manual import for: $NORMALIZED_DATE"
+            npm run import:results -- --date "$NORMALIZED_DATE"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            # repository_dispatch（複数日付）
+            echo "📅 Importing results for multiple dates"
+            while IFS= read -r DATE; do
+              NORMALIZED_DATE=$(normalize_date "$DATE")
+              echo "━━━ Processing: $DATE → $NORMALIZED_DATE ━━━"
+              npm run import:results -- --date "$NORMALIZED_DATE"
+            done < <(echo "$DATES_JSON" | jq -r '.[]')
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            # repository_dispatch（単一日付）
+            NORMALIZED_DATE=$(normalize_date "$DATE_SINGLE")
+            echo "📅 Importing results for single date: $DATE_SINGLE → $NORMALIZED_DATE"
+            npm run import:results -- --date "$NORMALIZED_DATE"
+          else
+            # デフォルト：今日の日付（JST）
+            TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            echo "📅 Importing for today (JST): $TODAY"
+            npm run import:results -- --date "$TODAY"
+          fi
+
+      - name: Validate archive format (MANDATORY)
+        run: |
+          echo "🔍 Validating archive format..."
+          npm run validate:archive
+
+      - name: Verify archive sync (MANDATORY)
+        run: |
+          echo "🔍 Verifying archive sync with keiba-data-shared..."
+          npm run verify:sync
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          # archiveResults.jsonの変更をステージング
+          git add src/data/archiveResults.json
+          # ステージされた変更があるかチェック
+          git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+          SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # コミットメッセージ生成
+          if [ -n "$MANUAL_DATE" ]; then
+            COMMIT_MSG="Auto-verify: ${MANUAL_DATE} results (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            DATES=$(echo "$DATES_JSON" | jq -r 'join(", ")')
+            COMMIT_MSG="Auto-verify: ${DATES} results from ${SOURCE}"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            COMMIT_MSG="Auto-verify: ${DATE_SINGLE} results from ${SOURCE}"
+          else
+            TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            COMMIT_MSG="Auto-verify: ${TODAY} results (today JST)"
+          fi
+
+          # 変更ファイルを退避（コミット前にバックアップ）
+          cp src/data/archiveResults.json /tmp/archiveResults.json.backup
+          echo "📦 Backed up archiveResults.json"
+
+          # Retry logic: reset → restore → commit → push（最大5回リトライ）
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            # 1. 完全同期：origin/mainの最新状態にリセット
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+            echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
+
+            # 2. 退避ファイルを復元
+            cp /tmp/archiveResults.json.backup src/data/archiveResults.json
+
+            # 3. ステージング＆コミット
+            git add src/data/archiveResults.json
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+            git commit -m "$COMMIT_MSG"
+
+            # 4. プッシュ
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: Success notification
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+          SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          echo "✅ Results verification completed and pushed"
+          if [ -n "$MANUAL_DATE" ]; then
+            echo "   Date: $MANUAL_DATE (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            echo "   Dates: $(echo "$DATES_JSON" | jq -r 'join(", ")')"
+            echo "   Source: $SOURCE"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            echo "   Date: $DATE_SINGLE"
+            echo "   Source: $SOURCE"
+          else
+            echo "   Date: $(TZ=Asia/Tokyo date +%Y-%m-%d) (today JST)"
+          fi
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
+          DATE_SINGLE: ${{ github.event.client_payload.date }}
+        run: |
+          echo "⏭️  No changes detected (already up-to-date)"
+          if [ -n "$MANUAL_DATE" ]; then
+            echo "   Date: $MANUAL_DATE (manual)"
+          elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
+            echo "   Dates: $(echo "$DATES_JSON" | jq -r 'join(", ")')"
+          elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
+            echo "   Date: $DATE_SINGLE"
+          else
+            echo "   Date: $(TZ=Asia/Tokyo date +%Y-%m-%d) (today JST)"
+          fi
+          echo "   Archive is up-to-date"

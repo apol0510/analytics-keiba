@@ -1,0 +1,473 @@
+---
+/**
+ * AI買い目セクションコンポーネント
+ * - 無料版（masked=true）: ブラー+CTA表示
+ * - 有料版（masked=false）: トグルボタンで買い目表示
+ *
+ * Props:
+ * - masked: true で完全ブラー（無料版）
+ * - bettingLines: 買い目配列（有料版のみ使用）
+ */
+interface BettingLine {
+  main: string;
+  osae?: string;
+  axisType?: string;
+  axisMarker?: string;
+  ev?: string;
+}
+
+interface Props {
+  masked?: boolean;
+  bettingLines?: BettingLine[];
+}
+
+const { masked = false, bettingLines = [] } = Astro.props;
+---
+
+<div class="ai-betting-section" data-masked={masked ? 'true' : 'false'}>
+  <div class="ai-betting-header">
+    <div class="ai-betting-header-left">
+      <div class="ai-betting-badge">
+        <span class="ai-betting-pulse"></span>
+        <span class="ai-betting-badge-text">AI</span>
+      </div>
+      <div class="ai-betting-title-area">
+        <span class="ai-betting-label">AI買い目</span>
+        <span class="ai-betting-sub">Recommended Betting Strategy</span>
+      </div>
+    </div>
+    <button class="ai-betting-toggle" aria-label="買い目を表示">
+      <span class="toggle-text">買い目を見る</span>
+      <span class="toggle-arrow">▼</span>
+    </button>
+  </div>
+  <div class="ai-betting-body" style="display: none;">
+    {masked ? (
+      <div class="ai-betting-masked">
+        <div class="ai-betting-masked-blur">
+          {/* ダミー買い目（ブラー表示用） */}
+          <div class="dummy-line">3-1.5.7</div>
+          <div class="dummy-line">1-3.5.7</div>
+        </div>
+        <div class="ai-betting-masked-overlay">
+          <div class="ai-betting-masked-lock">🔒</div>
+          <div class="ai-betting-masked-title">プロ会員で買い目を表示</div>
+          <div class="ai-betting-masked-sub">馬単買い目（本線+抑え）・期待値分析・的中実績をご提供</div>
+          <div class="ai-betting-masked-buttons">
+            <a href="/pricing" class="ai-betting-masked-cta primary">料金プランを見る</a>
+            <a href="/register" class="ai-betting-masked-cta secondary">無料会員登録</a>
+          </div>
+        </div>
+      </div>
+    ) : (
+      <div class="ai-betting-lines">
+        {bettingLines.map((line, idx) => (
+          <div class="betting-line">
+            <div class="axis-label">
+              <span class="axis-type">{line.axisType || (idx === 0 ? 'PRIMARY AXIS' : 'SECONDARY AXIS')}</span>
+              <span class="axis-marker">{line.axisMarker || (idx === 0 ? '◎' : '○')}</span>
+            </div>
+            <div class="betting-formula">
+              <span class="formula-main">{line.main}</span>
+              {line.osae && <span class="formula-osae">{line.osae}</span>}
+            </div>
+            {line.ev && (
+              <div class="ev-indicator">
+                <span class="ev-label">Expected Value / 期待値</span>
+                <span class="ev-value positive">{line.ev}</span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</div>
+
+<style>
+  .ai-betting-section {
+    margin: 16px 0;
+    border-radius: 12px;
+    border: 2px solid rgba(251, 191, 36, 0.4);
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(239, 68, 68, 0.08) 100%);
+    overflow: visible;
+    box-shadow: 0 4px 20px rgba(251, 191, 36, 0.15);
+    position: relative;
+  }
+
+  .ai-betting-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #fbbf24, #f59e0b, #ef4444, #f59e0b, #fbbf24);
+    background-size: 200% 100%;
+    animation: bettingGradientSlide 3s linear infinite;
+    border-radius: 12px 12px 0 0;
+  }
+
+  @keyframes bettingGradientSlide {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
+  }
+
+  .ai-betting-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+
+  .ai-betting-header:hover {
+    background: rgba(251, 191, 36, 0.05);
+  }
+
+  .ai-betting-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .ai-betting-badge {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 10px rgba(251, 191, 36, 0.4);
+    flex-shrink: 0;
+  }
+
+  .ai-betting-pulse {
+    position: absolute;
+    inset: -3px;
+    border-radius: 14px;
+    border: 2px solid rgba(251, 191, 36, 0.5);
+    animation: bettingBadgePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes bettingBadgePulse {
+    0%, 100% { opacity: 0; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.05); }
+  }
+
+  .ai-betting-badge-text {
+    color: white;
+    font-size: 0.9rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+  }
+
+  .ai-betting-title-area {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .ai-betting-label {
+    font-size: 1.1rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .ai-betting-sub {
+    font-size: 0.7rem;
+    color: rgba(251, 191, 36, 0.8);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+
+  .ai-betting-toggle {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(239, 68, 68, 0.15));
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    border-radius: 20px;
+    padding: 8px 18px;
+    color: #fbbf24;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .ai-betting-toggle:hover {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.25), rgba(239, 68, 68, 0.25));
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(251, 191, 36, 0.3);
+  }
+
+  .ai-betting-toggle.open {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: white;
+    border-color: transparent;
+  }
+
+  .ai-betting-toggle.open .toggle-arrow {
+    transform: rotate(180deg);
+  }
+
+  .toggle-arrow {
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+  }
+
+  .ai-betting-body {
+    padding: 0 20px 20px;
+  }
+
+  /* 買い目リスト（有料版） */
+  .ai-betting-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .betting-line {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border-left: 3px solid #fbbf24;
+  }
+
+  .axis-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 60px;
+  }
+
+  .axis-type {
+    font-size: 0.65rem;
+    color: #fbbf24;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+
+  .axis-marker {
+    font-size: 1.4rem;
+    color: #fbbf24;
+  }
+
+  .betting-formula {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .formula-main {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: 'Courier New', monospace;
+    letter-spacing: 0.5px;
+  }
+
+  .formula-osae {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    font-family: 'Courier New', monospace;
+  }
+
+  .ev-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .ev-label {
+    font-size: 0.65rem;
+    color: #94a3b8;
+  }
+
+  .ev-value.positive {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #10b981;
+  }
+
+  /* マスク（無料版） */
+  .ai-betting-masked {
+    position: relative;
+    padding: 18px;
+    background: rgba(30, 41, 59, 0.4);
+    border-radius: 10px;
+    border: 1px dashed rgba(251, 191, 36, 0.35);
+    overflow: hidden;
+    min-height: 200px;
+  }
+
+  .ai-betting-masked-blur {
+    filter: blur(4px);
+    user-select: none;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .dummy-line {
+    font-family: 'Courier New', monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fef3c7;
+    padding: 12px 16px;
+    background: rgba(251, 191, 36, 0.12);
+    border-radius: 6px;
+    border-left: 3px solid #fbbf24;
+    letter-spacing: 1px;
+  }
+
+  .ai-betting-masked-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0) 28%, rgba(15, 23, 42, 0.7) 40%, rgba(15, 23, 42, 0.88) 50%, rgba(15, 23, 42, 0.7) 60%, rgba(15, 23, 42, 0) 72%, rgba(15, 23, 42, 0) 100%);
+    padding: 20px;
+    text-align: center;
+  }
+
+  .ai-betting-masked-lock {
+    font-size: 2rem;
+    filter: drop-shadow(0 2px 8px rgba(251, 191, 36, 0.4));
+  }
+
+  .ai-betting-masked-title {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #fbbf24;
+    line-height: 1.4;
+  }
+
+  .ai-betting-masked-sub {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+  }
+
+  .ai-betting-masked-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 4px;
+  }
+
+  .ai-betting-masked-cta {
+    display: inline-block;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+
+  .ai-betting-masked-cta.primary {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
+  }
+
+  .ai-betting-masked-cta.secondary {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #1e293b;
+    box-shadow: 0 4px 14px rgba(251, 191, 36, 0.35);
+  }
+
+  .ai-betting-masked-cta:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+  }
+
+  @media (max-width: 768px) {
+    .ai-betting-header {
+      padding: 12px 14px;
+    }
+    .ai-betting-badge {
+      width: 36px;
+      height: 36px;
+    }
+    .ai-betting-label {
+      font-size: 0.95rem;
+    }
+    .ai-betting-toggle {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+    }
+    .ai-betting-body {
+      padding: 0 14px 14px;
+    }
+    .betting-line {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .ev-indicator {
+      align-items: flex-start;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .ai-betting-masked-overlay {
+      padding: 16px;
+      background: linear-gradient(90deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0) 18%, rgba(15, 23, 42, 0.82) 32%, rgba(15, 23, 42, 0.92) 50%, rgba(15, 23, 42, 0.82) 68%, rgba(15, 23, 42, 0) 82%, rgba(15, 23, 42, 0) 100%);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .ai-betting-masked-buttons {
+      flex-direction: column;
+      width: 100%;
+    }
+    .ai-betting-masked-cta {
+      width: 100%;
+      text-align: center;
+    }
+    .ai-betting-masked-title,
+    .ai-betting-masked-sub {
+      font-size: 0.85rem;
+    }
+  }
+</style>
+
+<script is:inline>
+  if (!window._aiBettingInitialized) {
+    window._aiBettingInitialized = true;
+    document.addEventListener('click', (e) => {
+      const header = e.target.closest('.ai-betting-header');
+      if (!header) return;
+      const section = header.closest('.ai-betting-section');
+      if (!section) return;
+      const body = section.querySelector('.ai-betting-body');
+      const toggle = section.querySelector('.ai-betting-toggle');
+      const toggleText = toggle.querySelector('.toggle-text');
+      const isOpen = body.style.display !== 'block';
+      body.style.display = isOpen ? 'block' : 'none';
+      toggle.classList.toggle('open', isOpen);
+      toggleText.textContent = isOpen ? '閉じる' : '買い目を見る';
+    });
+  }
+</script>

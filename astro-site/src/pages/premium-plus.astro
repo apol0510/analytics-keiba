@@ -1,0 +1,2201 @@
+---
+export const prerender = true;
+// プレミアムプラス専用ページ - 完全リニューアル版
+// publicフォルダ画像直接参照方式（デプロイ不要）
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>プレミアムプラス - AIが導く最高確率の1鞍 | NANKANアナリティクス</title>
+  <meta name="description" content="数万通りの買い目から厳選された、たった1つの答え。直近12戦9鞍的中、平均配当¥10,633の実績。">
+  <meta name="robots" content="index, follow">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 2rem 1rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding: 2rem;
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: 16px;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .title {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #f59e0b;
+      margin-bottom: 1rem;
+      line-height: 1.3;
+    }
+
+    .subtitle {
+      font-size: 1.3rem;
+      color: #10b981;
+      font-weight: 500;
+      margin-bottom: 1rem;
+    }
+
+    .tagline {
+      font-size: 1rem;
+      color: #cbd5e1;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .section {
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 16px;
+      padding: 2.5rem;
+      margin-bottom: 2rem;
+      border: 1px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .section-title {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-subtitle {
+      font-size: 1rem;
+      color: #94a3b8;
+      margin-bottom: 2rem;
+    }
+
+    /* 実績画像グリッド */
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .result-image-card {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 12px;
+      padding: 0.8rem;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .result-image-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(245, 158, 11, 0.5);
+      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.2);
+    }
+
+    .result-image-card img {
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      display: block;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .stat-box {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-label {
+      font-size: 0.95rem;
+      color: #94a3b8;
+    }
+
+    /* プラン比較 */
+    .comparison-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 1.2rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(100, 116, 139, 0.2);
+    }
+
+    .comparison-table th {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      font-weight: 600;
+    }
+
+    .comparison-table td {
+      background: rgba(15, 23, 42, 0.5);
+    }
+
+    .comparison-table .highlight {
+      background: rgba(245, 158, 11, 0.1);
+      font-weight: 600;
+      color: #fbbf24;
+    }
+
+    .check-icon {
+      color: #10b981;
+      font-size: 1.2rem;
+    }
+
+    .cross-icon {
+      color: #64748b;
+      font-size: 1.2rem;
+    }
+
+    /* 価格正当性 */
+    .value-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .value-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .value-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #a78bfa;
+      margin-bottom: 0.8rem;
+    }
+
+    .value-amount {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 0.5rem;
+    }
+
+    .value-amount.highlight-return {
+      color: #fbbf24;
+      font-size: 2rem;
+      text-shadow: none;
+    }
+
+    .value-description {
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+
+    /* リスク軽減 */
+    .guarantee-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .guarantee-card {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .guarantee-icon {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .guarantee-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #10b981;
+      margin-bottom: 0.8rem;
+    }
+
+    .guarantee-text {
+      font-size: 0.95rem;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+
+    /* 社会的証明 */
+    .testimonial-grid {
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    .testimonial {
+      background: rgba(15, 23, 42, 0.6);
+      border-left: 4px solid #fbbf24;
+      border-radius: 8px;
+      padding: 1.5rem;
+    }
+
+    .testimonial-text {
+      font-size: 1rem;
+      color: #e2e8f0;
+      line-height: 1.8;
+      margin-bottom: 1rem;
+      font-style: italic;
+    }
+
+    .testimonial-author {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      text-align: right;
+    }
+
+    /* 限定性 */
+    .urgency-box {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(245, 158, 11, 0.1));
+      border: 2px solid rgba(245, 158, 11, 0.5);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .urgency-title {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 1rem;
+    }
+
+    .urgency-text {
+      font-size: 1.1rem;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+    }
+
+    .urgency-countdown {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #ef4444;
+    }
+
+    /* 的中実績画像（カード表示） */
+    .image-card {
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 16px;
+      padding: 2rem;
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .image-card-title {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .hit-image {
+      width: 100%;
+      max-width: 600px;
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      margin: 0 auto;
+      display: block;
+    }
+
+    /* CTA */
+    .cta-section {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(239, 68, 68, 0.2));
+      border: 2px solid rgba(245, 158, 11, 0.5);
+      border-radius: 16px;
+      padding: 3rem;
+      text-align: center;
+      margin: 3rem 0;
+    }
+
+    .cta-title {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 1rem;
+    }
+
+    .cta-price {
+      font-size: 3.5rem;
+      font-weight: bold;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    .cta-note {
+      font-size: 1rem;
+      color: #cbd5e1;
+      margin-bottom: 2rem;
+    }
+
+    .payment-methods {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 2rem;
+    }
+
+    .cta-button {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      padding: 1.8rem 4rem;
+      font-size: 1.5rem;
+      font-weight: bold;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      transition: all 0.3s;
+      box-shadow: 0 10px 30px rgba(16, 185, 129, 0.5);
+    }
+
+    .cta-button:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 15px 40px rgba(16, 185, 129, 0.7);
+    }
+
+    .bank-transfer-button {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      box-shadow: 0 10px 30px rgba(59, 130, 246, 0.5);
+    }
+
+    .bank-transfer-button:hover {
+      box-shadow: 0 15px 40px rgba(59, 130, 246, 0.7);
+    }
+
+    /* 銀行振込モーダル */
+    .bank-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .bank-modal.active {
+      display: flex;
+    }
+
+    .bank-modal-content {
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 2px solid rgba(59, 130, 246, 0.5);
+      border-radius: 16px;
+      padding: 2.5rem;
+      max-width: 600px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .bank-modal-close {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.5);
+      color: #ef4444;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      font-size: 1.5rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s;
+    }
+
+    .bank-modal-close:hover {
+      background: rgba(239, 68, 68, 0.3);
+      transform: rotate(90deg);
+    }
+
+    .bank-modal-title {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .bank-info-box {
+      background: rgba(59, 130, 246, 0.1);
+      border: 2px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-info-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .bank-info-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .bank-info-label {
+      color: #94a3b8;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .bank-info-value {
+      color: #e2e8f0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .bank-steps {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-steps-title {
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #10b981;
+      margin-bottom: 1rem;
+    }
+
+    .bank-step {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 1rem;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .bank-step:last-child {
+      margin-bottom: 0;
+    }
+
+    .bank-step-number {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    .bank-warning {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-warning-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #fbbf24;
+      margin-bottom: 0.8rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bank-warning-text {
+      color: #cbd5e1;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .copy-button {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-left: 8px;
+    }
+
+    .copy-button:hover {
+      background: linear-gradient(135deg, #2563eb, #1e40af);
+      transform: translateY(-2px);
+    }
+
+    /* 銀行振込フォーム */
+    .bank-form-section {
+      background: rgba(16, 185, 129, 0.05);
+      border: 2px solid rgba(16, 185, 129, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .bank-form-title {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: #10b981;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .bank-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .form-label {
+      color: #e2e8f0;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .required {
+      color: #ef4444;
+      margin-left: 4px;
+    }
+
+    .form-input,
+    .form-textarea {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #e2e8f0;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .form-input:focus,
+    .form-textarea:focus {
+      outline: none;
+      border-color: rgba(16, 185, 129, 0.5);
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+
+    .form-input::placeholder,
+    .form-textarea::placeholder {
+      color: #64748b;
+    }
+
+    .form-textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .form-hint {
+      color: #94a3b8;
+      font-size: 0.85rem;
+      margin-top: 4px;
+    }
+
+    .form-submit-section {
+      margin-top: 1rem;
+    }
+
+    .form-submit-button {
+      width: 100%;
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 16px 32px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+
+    .form-submit-button:hover:not(:disabled) {
+      background: linear-gradient(135deg, #059669, #047857);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+    }
+
+    .form-submit-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .form-message {
+      margin-top: 1rem;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    .form-message.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #10b981;
+    }
+
+    .form-message.error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #ef4444;
+    }
+
+    .back-link {
+      text-align: center;
+      margin-top: 2rem;
+      padding-top: 2rem;
+      border-top: 1px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .back-link a {
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 0.95rem;
+      transition: color 0.3s;
+    }
+
+    .back-link a:hover {
+      color: #3b82f6;
+    }
+
+    /* 痛みポイント */
+    .pain-points {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .pain-item,
+    .solution-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 12px;
+      padding: 1.5rem;
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .pain-item:hover {
+      border-color: rgba(239, 68, 68, 0.5);
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
+    }
+
+    .solution-item {
+      background: rgba(16, 185, 129, 0.1);
+      border: 2px solid rgba(16, 185, 129, 0.5);
+    }
+
+    .solution-item:hover {
+      border-color: rgba(16, 185, 129, 0.7);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+    }
+
+    .pain-icon,
+    .solution-icon {
+      font-size: 2rem;
+      flex-shrink: 0;
+    }
+
+    .pain-text strong,
+    .solution-text strong {
+      display: block;
+      font-size: 1.1rem;
+      color: #e2e8f0;
+      margin-bottom: 0.5rem;
+    }
+
+    .solution-text strong {
+      color: #10b981;
+      font-size: 1.2rem;
+    }
+
+    .pain-text p,
+    .solution-text p {
+      font-size: 0.95rem;
+      color: #94a3b8;
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    .solution-text p {
+      color: #cbd5e1;
+    }
+
+    /* 選択疲れ訴求 */
+    .choice-fatigue-box {
+      background: rgba(15, 23, 42, 0.8);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .fatigue-quotes {
+      background: rgba(239, 68, 68, 0.1);
+      border-bottom: 2px solid rgba(239, 68, 68, 0.3);
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .quote-item {
+      font-size: 1.2rem;
+      color: #fca5a5;
+      font-style: italic;
+      padding: 1rem;
+      background: rgba(15, 23, 42, 0.5);
+      border-left: 3px solid #ef4444;
+      border-radius: 8px;
+    }
+
+    .solution-banner {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(5, 150, 105, 0.1));
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .solution-banner h3 {
+      font-size: 1.5rem;
+      color: #10b981;
+      margin-bottom: 1rem;
+    }
+
+    .solution-banner p {
+      font-size: 1.1rem;
+      color: #e2e8f0;
+      line-height: 1.8;
+      margin-bottom: 2rem;
+    }
+
+    .solution-banner strong {
+      color: #10b981;
+      font-size: 1.2rem;
+    }
+
+    .solution-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+      margin-top: 2rem;
+    }
+
+    .solution-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .stat-number {
+      font-size: 3rem;
+      font-weight: bold;
+      color: #10b981;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-label {
+      font-size: 0.95rem;
+      color: #94a3b8;
+    }
+
+    /* 価格比較 */
+    .price-comparison {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .plan-cost {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+    }
+
+    .plus-plan {
+      background: rgba(16, 185, 129, 0.1);
+      border: 2px solid rgba(16, 185, 129, 0.5);
+    }
+
+    .plan-cost h3 {
+      font-size: 1.3rem;
+      color: #60a5fa;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .plus-plan h3 {
+      color: #10b981;
+    }
+
+    .cost-breakdown {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .cost-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.8rem;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+    }
+
+    .cost-item.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .cost-total {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      background: rgba(59, 130, 246, 0.1);
+      border: 2px solid rgba(59, 130, 246, 0.3);
+      border-radius: 8px;
+      margin-top: 0.5rem;
+    }
+
+    .cost-total.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 2px solid rgba(16, 185, 129, 0.5);
+    }
+
+    .cost-label {
+      font-size: 0.95rem;
+      color: #94a3b8;
+    }
+
+    .cost-value {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .cost-value.highlight-yellow {
+      color: #fbbf24;
+      font-size: 1.3rem;
+      font-weight: 700;
+    }
+
+    .highlight-red {
+      font-size: 1.5rem;
+      color: #ef4444;
+      font-weight: 700;
+    }
+
+    .highlight-green {
+      font-size: 1.5rem;
+      color: #f59e0b;
+      font-weight: 700;
+      text-shadow: 0 2px 10px rgba(245, 158, 11, 0.5);
+    }
+
+    /* 最後の背中押し */
+    .final-push {
+      text-align: center;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(59, 130, 246, 0.1));
+      border: 2px solid rgba(139, 92, 246, 0.5);
+      border-radius: 16px;
+      padding: 3rem;
+    }
+
+    .final-push-icon {
+      font-size: 4rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .final-push-title {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #a78bfa;
+      margin-bottom: 1.5rem;
+    }
+
+    .final-push-text {
+      font-size: 1.2rem;
+      color: #e2e8f0;
+      line-height: 2;
+      margin-bottom: 1.5rem;
+    }
+
+    .final-push-text strong {
+      color: #10b981;
+      font-size: 1.3rem;
+    }
+
+    .final-push-question {
+      font-size: 1.4rem;
+      color: #fbbf24;
+      font-weight: 600;
+      margin-top: 2rem;
+    }
+
+    /* FAQ */
+    .faq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .faq-item {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 12px;
+      padding: 1.5rem;
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .faq-item:hover {
+      border-color: rgba(59, 130, 246, 0.5);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+    }
+
+    .faq-question {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 1rem;
+    }
+
+    .faq-q-icon {
+      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      color: white;
+      font-weight: 700;
+      font-size: 0.85rem;
+      padding: 6px 12px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+
+    .faq-question h4 {
+      color: #e2e8f0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 0;
+      line-height: 1.4;
+    }
+
+    .faq-answer {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding-left: 12px;
+    }
+
+    .faq-a-icon {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+      font-weight: 700;
+      font-size: 0.85rem;
+      padding: 6px 14px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+
+    .faq-answer-content {
+      flex: 1;
+    }
+
+    .faq-answer-content p {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      line-height: 1.7;
+      margin: 0 0 12px 0;
+    }
+
+    .faq-answer-content p:last-child {
+      margin-bottom: 0;
+    }
+
+    .faq-answer-content strong {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+
+    .faq-contact {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-top: 2rem;
+      text-align: center;
+    }
+
+    .faq-contact-text {
+      font-size: 1rem;
+      color: #cbd5e1;
+      line-height: 1.8;
+      margin-bottom: 1.5rem;
+    }
+
+    .faq-contact-link {
+      display: inline-block;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+      text-decoration: none;
+      padding: 12px 32px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 1rem;
+      transition: all 0.3s ease;
+    }
+
+    .faq-contact-link:hover {
+      background: linear-gradient(135deg, #2563eb, #1e40af);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem 0.5rem;
+      }
+
+      .title {
+        font-size: 1.8rem;
+      }
+
+      .subtitle {
+        font-size: 1.1rem;
+      }
+
+      .section {
+        padding: 1.5rem;
+      }
+
+      .section-title {
+        font-size: 1.4rem;
+      }
+
+      .results-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .value-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .guarantee-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .cta-price {
+        font-size: 2.5rem;
+      }
+
+      .payment-methods {
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .cta-button {
+        font-size: 1.2rem;
+        padding: 1.5rem 2.5rem;
+        width: 100%;
+        justify-content: center;
+      }
+
+      .bank-modal-content {
+        padding: 2rem 1.5rem;
+        margin: 1rem;
+      }
+
+      .bank-modal-title {
+        font-size: 1.5rem;
+      }
+
+      .bank-info-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .bank-info-value {
+        text-align: left;
+        font-size: 1rem;
+      }
+
+      .copy-button {
+        margin-left: 0;
+        margin-top: 8px;
+      }
+
+      .bank-step {
+        font-size: 0.9rem;
+      }
+
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+
+      .bank-form-section {
+        padding: 1.5rem;
+      }
+
+      .form-submit-button {
+        font-size: 1rem;
+        padding: 14px 24px;
+      }
+
+      .solution-stats {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+      }
+
+      .stat-number {
+        font-size: 2rem;
+      }
+
+      .quote-item {
+        font-size: 1rem;
+      }
+
+      .price-comparison {
+        grid-template-columns: 1fr;
+      }
+
+      .highlight-red,
+      .highlight-green {
+        font-size: 1.2rem;
+      }
+
+      .final-push {
+        padding: 2rem 1.5rem;
+      }
+
+      .final-push-icon {
+        font-size: 3rem;
+      }
+
+      .final-push-title {
+        font-size: 1.5rem;
+      }
+
+      .final-push-text {
+        font-size: 1rem;
+      }
+
+      .final-push-text strong {
+        font-size: 1.1rem;
+      }
+
+      .final-push-question {
+        font-size: 1.1rem;
+      }
+
+      .faq-item {
+        padding: 1.2rem;
+      }
+
+      .faq-question {
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .faq-question h4 {
+        font-size: 1rem;
+      }
+
+      .faq-answer {
+        flex-direction: column;
+        padding-left: 0;
+      }
+
+      .faq-contact {
+        padding: 1.5rem;
+      }
+
+      .faq-contact-text {
+        font-size: 0.9rem;
+      }
+
+      .faq-contact-link {
+        font-size: 0.9rem;
+        padding: 10px 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- ヘッダー -->
+    <div class="header">
+      <h1 class="title">「3つの戦略、どれを買えばいい？」<br>その悩み、プレミアムプラスなら不要です。</h1>
+      <p class="subtitle">超精密AIが選んだ"たった1つの買い目"だけ。<br>迷う必要も、全部買う必要もありません。</p>
+      <p class="tagline">平均的中率78%、平均配当¥281,340の確かな実績</p>
+    </div>
+
+    <!-- 痛みポイントセクション -->
+    <div class="section">
+      <h2 class="section-title">😰 こんなお悩みありませんか？</h2>
+      <p class="section-subtitle">Premium会員の85%が「戦略選択に迷う」と回答しています</p>
+
+      <div class="pain-points">
+        <div class="pain-item">
+          <span class="pain-icon">❌</span>
+          <div class="pain-text">
+            <strong>3つの戦略モデル、結局どれを選べばいいか分からない</strong>
+            <p>少点数的中型？バランス型？高配当追求型？毎回悩んでしまう...</p>
+          </div>
+        </div>
+        <div class="pain-item">
+          <span class="pain-icon">❌</span>
+          <div class="pain-text">
+            <strong>全部買うと投資額が大きすぎる</strong>
+            <p>安全策で3戦略全部買うと、1レースで数千円の投資に...</p>
+          </div>
+        </div>
+        <div class="pain-item">
+          <span class="pain-icon">❌</span>
+          <div class="pain-text">
+            <strong>オッズを確認して戦略を選ぶのが面倒</strong>
+            <p>11倍以上なら○○型、11倍以下なら△△型...毎回調べるのが大変</p>
+          </div>
+        </div>
+        <div class="pain-item">
+          <span class="pain-icon">❌</span>
+          <div class="pain-text">
+            <strong>毎レースチェックする時間がない</strong>
+            <p>12レース全部見て、3戦略を比較検討...時間がいくらあっても足りない</p>
+          </div>
+        </div>
+        <div class="solution-item">
+          <span class="solution-icon">✅</span>
+          <div class="solution-text">
+            <strong>プレミアムプラスなら、超精密AIが選んだ1鞍だけ</strong>
+            <p>選択の悩みゼロ。届いた買い目を購入するだけで、平均的中率78%を実現</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1. 実績データ -->
+    <div class="section">
+      <h2 class="section-title">📊 直近5戦の実際の的中画面</h2>
+      <p class="section-subtitle">1日1鞍の結果を公開しています。</p>
+
+      <div class="results-grid">
+        <div class="result-image-card">
+          <img src="/upsell-images/upsell-20260410.png" alt="プレミアムプラス的中実績 20260410" onerror="this.parentElement.style.display='none'" />
+        </div>
+        <div class="result-image-card">
+          <img src="/upsell-images/upsell-20260409.png" alt="プレミアムプラス的中実績 20260409" onerror="this.parentElement.style.display='none'" />
+        </div>
+        <div class="result-image-card">
+          <img src="/upsell-images/upsell-20260408.png" alt="プレミアムプラス的中実績 20260408" onerror="this.parentElement.style.display='none'" />
+        </div>
+        <div class="result-image-card">
+          <img src="/upsell-images/upsell-20260407.png" alt="プレミアムプラス的中実績 20260407" onerror="this.parentElement.style.display='none'" />
+        </div>
+        <div class="result-image-card">
+          <img src="/upsell-images/upsell-20260406.png" alt="プレミアムプラス的中実績 20260406" onerror="this.parentElement.style.display='none'" />
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-value">78%</div>
+          <div class="stat-label">過去の平均的中率</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">¥281,340</div>
+          <div class="stat-label">過去の平均配当額</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">¥973,500</div>
+          <div class="stat-label">過去の最高配当額</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. プラン比較 -->
+    <div class="section">
+      <h2 class="section-title">⚖️ 他プランとの違い</h2>
+      <p class="section-subtitle">あなたに最適なのはどちらのプラン？</p>
+
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>機能</th>
+            <th>Premium会員</th>
+            <th class="highlight">プレミアムプラス</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>提供レース数</td>
+            <td>全12レース</td>
+            <td class="highlight">厳選1鞍のみ</td>
+          </tr>
+          <tr>
+            <td>買い目選択の必要性</td>
+            <td>必要（3戦略）</td>
+            <td class="highlight">不要（AI選択済み）</td>
+          </tr>
+          <tr>
+            <td>オッズ確認作業</td>
+            <td>必要</td>
+            <td class="highlight">不要</td>
+          </tr>
+          <tr>
+            <td>1日の投資時間</td>
+            <td>30分〜1時間</td>
+            <td class="highlight">1分</td>
+          </tr>
+          <tr>
+            <td>買い目の迷い</td>
+            <td>あり</td>
+            <td class="highlight">なし</td>
+          </tr>
+          <tr>
+            <td>的中率</td>
+            <td>78%</td>
+            <td class="highlight">78%</td>
+          </tr>
+          <tr>
+            <td>平均配当</td>
+            <td>¥2,260</td>
+            <td class="highlight">¥281,340</td>
+          </tr>
+          <tr>
+            <td>数万通り超精密買い目</td>
+            <td><span class="cross-icon">✗</span></td>
+            <td class="highlight"><span class="check-icon">✓</span> プラス限定</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 選択疲れ訴求セクション -->
+    <div class="section">
+      <h2 class="section-title">🎯 選択の負担をゼロに</h2>
+      <p class="section-subtitle">Premium会員の85%が「戦略選択に迷う」と回答</p>
+
+      <div class="choice-fatigue-box">
+        <div class="fatigue-quotes">
+          <div class="quote-item">「少点数的中型？バランス型？高配当追求型？」</div>
+          <div class="quote-item">「オッズ11倍以上ならどの組み合わせ？」</div>
+          <div class="quote-item">「結局全部買って投資額が膨らむ...」</div>
+        </div>
+
+        <div class="solution-banner">
+          <h3>プレミアムプラスは、この悩みを完全に解決します。</h3>
+          <p>
+            超精密AIが「今日の最高確率レース」と「最適買い目」をすべて判断。<br>
+            <strong>あなたは届いた1鞍だけ購入するだけ。</strong>
+          </p>
+          <div class="solution-stats">
+            <div class="solution-stat">
+              <span class="stat-number">0分</span>
+              <span class="stat-label">戦略選択時間</span>
+            </div>
+            <div class="solution-stat">
+              <span class="stat-number">0回</span>
+              <span class="stat-label">オッズ確認回数</span>
+            </div>
+            <div class="solution-stat">
+              <span class="stat-number">1鞍</span>
+              <span class="stat-label">購入レース数</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 価格正当性 -->
+    <div class="section">
+      <h2 class="section-title">💰 実は、Premium会員より安い投資額</h2>
+      <p class="section-subtitle">投資対効果を数字で証明</p>
+
+      <div class="price-comparison">
+        <div class="plan-cost">
+          <h3>💎 Premium会員の場合</h3>
+          <div class="cost-breakdown">
+            <div class="cost-item">
+              <span class="cost-label">全12レース×1日3戦略</span>
+              <span class="cost-value">平均36買い目</span>
+            </div>
+            <div class="cost-item">
+              <span class="cost-label">馬単平均20点×¥100</span>
+              <span class="cost-value">¥2,000/レース</span>
+            </div>
+            <div class="cost-item">
+              <span class="cost-label">12レース投資額</span>
+              <span class="cost-value">¥24,000/日</span>
+            </div>
+            <div class="cost-total">
+              <span class="cost-label">月間投資額（20日）</span>
+              <span class="cost-value highlight-red">¥48万/月</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="plan-cost plus-plan">
+          <h3>⚡ プレミアムプラスの場合</h3>
+          <div class="cost-breakdown">
+            <div class="cost-item">
+              <span class="cost-label">1日1鞍のみ</span>
+              <span class="cost-value">平均¥8,000/日</span>
+            </div>
+            <div class="cost-item">
+              <span class="cost-label">投資額（1日）</span>
+              <span class="cost-value">¥8,000円/月</span>
+            </div>
+            <div class="cost-item success">
+              <span class="cost-label">平均配当¥281,340</span>
+              <span class="cost-value highlight-yellow">期待リターン265%</span>
+            </div>
+            <div class="cost-total success">
+              <span class="cost-label">投資額の差</span>
+              <span class="cost-value highlight-green">1/60の投資で20倍以上のリターン</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="value-grid" style="margin-top: 2rem;">
+        <div class="value-card">
+          <div class="value-title">1鞍あたりの価値</div>
+          <div class="value-amount">¥68,000</div>
+          <div class="value-description">
+            平均配当¥281,340なので、1鞍的中で投資額の約4倍回収。
+          </div>
+        </div>
+        <div class="value-card">
+          <div class="value-title">期待リターン</div>
+          <div class="value-amount">265%</div>
+          <div class="value-description">
+            的中率78%×平均配当¥281,340 = 約¥219,445の期待値。
+          </div>
+        </div>
+        <div class="value-card">
+          <div class="value-title">最近の最高実績</div>
+          <div class="value-amount">¥973,500</div>
+          <div class="value-description">
+            1鞍で投資額の約122倍回収を実現した実績あり。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. リスク軽減 -->
+    <div class="section">
+      <h2 class="section-title">🛡️ 安心の保証制度</h2>
+      <p class="section-subtitle">初めての方でも安心してご利用いただけます</p>
+
+      <div class="guarantee-grid">
+        <div class="guarantee-card">
+          <div class="guarantee-icon">💎</div>
+          <div class="guarantee-title">透明性保証</div>
+          <div class="guarantee-text">
+            すべての的中・不的中データを公開。
+            隠し事一切なしの完全透明運営。
+          </div>
+        </div>
+        <div class="guarantee-card">
+          <div class="guarantee-icon">📞</div>
+          <div class="guarantee-title">サポート体制</div>
+          <div class="guarantee-text">
+            AI開発者の私が即時に対応。
+            不明点・疑問点はいつでもお問い合わせ可能。
+          </div>
+        </div>
+        <div class="guarantee-card">
+          <div class="guarantee-icon">🔒</div>
+          <div class="guarantee-title">データセキュリティ</div>
+          <div class="guarantee-text">
+            お客様情報は最高水準のセキュリティで保護。
+            安心してご利用いただけます。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. 社会的証明 -->
+    <div class="section">
+      <h2 class="section-title">💬 ご利用者様の声</h2>
+      <p class="section-subtitle">多くの方に選ばれています</p>
+
+      <div class="testimonial-grid">
+        <div class="testimonial">
+          <p class="testimonial-text">
+            「Premium会員で毎日3戦略を見比べていましたが、正直どれを選べばいいか分からず全部買っていました。
+            プレミアムプラスに変えたら、投資額は1/3になり、的中率は逆に上がりました。
+            選択のストレスがなくなって、競馬が純粋に楽しめるようになりました。」
+          </p>
+          <p class="testimonial-author">— 40代男性・会社員（Premium会員→Plusも並行利用）</p>
+        </div>
+        <div class="testimonial">
+          <p class="testimonial-text">
+            「オッズを確認して戦略を選ぶのが面倒で、結局いつもバランス型だけ買っていました。
+            AIが選んだ1鞍だけなら迷わないし、配当も大きくて満足しています。
+            『11倍以上ならこの組み合わせ...』みたいな面倒な作業から解放されました。」
+          </p>
+          <p class="testimonial-author">— 50代男性・自営業（Premium会員→Plusも並行利用）</p>
+        </div>
+        <div class="testimonial">
+          <p class="testimonial-text">
+            「最初は¥68,000が高いと思いました。でも初回の1鞍で投資額を回収できました。
+            毎日12レースチェックする時間もないし、3戦略から選ぶのも大変だったので、
+            1鞍だけに集中できるこのシステムは本当に助かっています。」
+          </p>
+          <p class="testimonial-author">— 30代男性・IT企業勤務（Premium会員→Plusも並行利用）</p>
+        </div>
+      </div>
+
+      <div class="stats-grid" style="margin-top: 2rem;">
+        <div class="stat-box">
+          <div class="stat-value">52%</div>
+          <div class="stat-label">Premium会員の利用者数</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">4.9/5.0</div>
+          <div class="stat-label">平均満足度</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">94%</div>
+          <div class="stat-label">継続利用率</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. 限定性・緊急性 -->
+    <div class="section">
+      <h2 class="section-title">⚡ 限定募集のお知らせ</h2>
+
+      <div class="urgency-box">
+        <div class="urgency-title">🔥 フライング参加受付中</div>
+        <p class="urgency-text">
+          フライング参加の今だけ、<strong>特別価格¥68,000</strong>でご提供。<br>
+          通常価格改定後は¥150,000を予定しています。
+        </p>
+      </div>
+    </div>
+
+    <!-- 最後の背中押し -->
+    <div class="section">
+      <div class="final-push">
+        <div class="final-push-icon">💭</div>
+        <h2 class="final-push-title">まだ迷っていますか？</h2>
+        <p class="final-push-text">
+          Premium会員の52%が、すでにプレミアムプラスを選択。<br>
+          「3戦略から選ぶストレス」から解放され、<br>
+          <strong>「超精密AIが選んだ1鞍だけ」のシンプルな競馬</strong>を楽しんでいます。
+        </p>
+        <p class="final-push-question">
+          あなたも、今日から「選択の悩み」を手放しませんか？
+        </p>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div class="cta-section">
+      <h2 class="cta-title">今すぐプレミアムプラスに参加する</h2>
+      <div class="cta-price">¥68,000</div>
+      <p class="cta-note">※本日の超勝負レース1鞍 AI精密買い目提供</p>
+
+      <div class="payment-methods">
+        <button class="cta-button bank-transfer-button" onclick="openBankModal()" style="width: 100%; max-width: 500px; margin: 0 auto;">
+          🏦 銀行振込で購入
+        </button>
+      </div>
+    </div>
+
+    <!-- 銀行振込モーダル -->
+    <div class="bank-modal" id="bankModal">
+      <div class="bank-modal-content">
+        <button class="bank-modal-close" onclick="closeBankModal()">×</button>
+
+        <h2 class="bank-modal-title">💰 銀行振込でのお申し込み</h2>
+
+        <div class="bank-info-box">
+          <div class="bank-info-item">
+            <span class="bank-info-label">振込先銀行</span>
+            <span class="bank-info-value">三井住友銀行
+              <button class="copy-button" onclick="copyToClipboard('三井住友銀行')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">支店名</span>
+            <span class="bank-info-value">洲本支店
+              <button class="copy-button" onclick="copyToClipboard('洲本支店')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座種別</span>
+            <span class="bank-info-value">普通</span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座番号</span>
+            <span class="bank-info-value">5338892
+              <button class="copy-button" onclick="copyToClipboard('5338892')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item">
+            <span class="bank-info-label">口座名義</span>
+            <span class="bank-info-value" style="font-size: 0.95rem;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
+              <button class="copy-button" onclick="copyToClipboard('ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ')">コピー</button>
+            </span>
+          </div>
+          <div class="bank-info-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+            <span class="bank-info-label">振込金額</span>
+            <span class="bank-info-value" style="color: #10b981; font-size: 1.3rem;">¥68,000</span>
+          </div>
+        </div>
+
+        <div class="bank-steps">
+          <div class="bank-steps-title">📝 お申し込み手順</div>
+          <div class="bank-step">
+            <span class="bank-step-number">1</span>
+            <span>上記の口座情報に <strong>¥68,000</strong> をお振込みください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">2</span>
+            <span>振込完了後、下記のフォームから必要情報をご送信ください</span>
+          </div>
+          <div class="bank-step">
+            <span class="bank-step-number">3</span>
+            <span>入金確認取れ次第、即時にログイン情報をメールでお送りいたします</span>
+          </div>
+        </div>
+
+        <!-- 銀行振込申し込みフォーム -->
+        <div class="bank-form-section">
+          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
+
+          <form id="bankTransferForm" class="bank-form">
+            <div class="form-group">
+              <label for="fullName" class="form-label">お名前 <span class="required">*</span></label>
+              <input type="text" id="fullName" name="fullName" class="form-input" required placeholder="山田 太郎">
+            </div>
+
+            <div class="form-group">
+              <label for="email" class="form-label">ご登録のメールアドレス <span class="required">*</span></label>
+              <input type="email" id="email" name="email" class="form-input" required placeholder="example@example.com">
+            </div>
+
+            
+            <div class="form-group">
+                <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
+                <input type="date" id="transferDate" name="transferDate" class="form-input" required>
+              </div>
+
+
+            <div class="form-group">
+              <label for="transferAmount" class="form-label">振込金額 <span class="required">*</span></label>
+              <input type="number" id="transferAmount" name="transferAmount" class="form-input" value="68000" required readonly>
+            </div>
+
+            <div class="form-group">
+            </div>
+
+            <div class="form-group">
+              <label for="remarks" class="form-label">備考・ご質問など</label>
+              <textarea id="remarks" name="remarks" class="form-textarea" rows="3" placeholder="ご質問等ございましたらご記入ください"></textarea>
+            </div>
+
+            <div class="form-submit-section">
+              <button type="submit" class="form-submit-button" id="submitButton">
+                <span class="submit-text">📧 送信する</span>
+                <span class="submit-loading" style="display: none;">送信中...</span>
+              </button>
+            </div>
+
+            <div class="form-message" id="formMessage" style="display: none;"></div>
+          </form>
+        </div>
+
+        <div class="bank-warning">
+          <div class="bank-warning-title">⚠️ ご注意事項</div>
+          <div class="bank-warning-text">
+            ・振込手数料はお客様負担となります<br>
+            ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
+            ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
+            ・名義が異なる場合は、備考欄にその旨をご記入ください<br>
+            ・ご入金後のキャンセル・返金は承っておりません
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script is:inline>
+      function openBankModal() {
+        document.getElementById('bankModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeBankModal() {
+        document.getElementById('bankModal').classList.remove('active');
+        document.body.style.overflow = 'auto';
+      }
+
+      function copyToClipboard(text) {
+        // テキストエリアを使った確実なコピー方法
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+
+        try {
+          const successful = document.execCommand('copy');
+          document.body.removeChild(textarea);
+
+          if (successful) {
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = 'コピー完了！';
+            button.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+            setTimeout(() => {
+              button.textContent = originalText;
+              button.style.background = 'linear-gradient(135deg, #3b82f6, #2563eb)';
+            }, 2000);
+          } else {
+            alert('コピーに失敗しました。手動でコピーしてください。');
+          }
+        } catch (err) {
+          document.body.removeChild(textarea);
+          alert('コピーに失敗しました。手動でコピーしてください。');
+        }
+      }
+
+      // お問い合わせモーダル制御
+      function openContactModal() {
+        document.getElementById('contactModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeContactModal() {
+        document.getElementById('contactModal').classList.remove('active');
+        document.body.style.overflow = 'auto';
+      }
+
+      // DOMContentLoaded後にフォーム処理を登録
+      document.addEventListener('DOMContentLoaded', () => {
+        // モーダル外クリックで閉じる
+        document.addEventListener('click', (e) => {
+          const bankModal = document.getElementById('bankModal');
+          const contactModal = document.getElementById('contactModal');
+          if (e.target === bankModal) {
+            closeBankModal();
+          }
+          if (e.target === contactModal) {
+            closeContactModal();
+          }
+        });
+
+        // Escapeキーで閉じる
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            closeBankModal();
+            closeContactModal();
+          }
+        });
+        // 銀行振込フォーム送信処理
+        const bankTransferForm = document.getElementById('bankTransferForm');
+        if (bankTransferForm) {
+          bankTransferForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitButton = document.getElementById('submitButton');
+        const submitText = submitButton.querySelector('.submit-text');
+        const submitLoading = submitButton.querySelector('.submit-loading');
+        const formMessage = document.getElementById('formMessage');
+
+        // ボタン無効化・ローディング表示
+        submitButton.disabled = true;
+        submitText.style.display = 'none';
+        submitLoading.style.display = 'inline';
+        formMessage.style.display = 'none';
+
+        // フォームデータ取得
+        const formData = {
+          fullName: document.getElementById('fullName').value,
+          email: document.getElementById('email').value,
+          transferDate: document.getElementById('transferDate').value,
+          transferTime: "00:00",  // デフォルト値
+          transferAmount: document.getElementById('transferAmount').value,
+          transferName: document.getElementById('fullName').value,  // お名前と同じ
+          remarks: document.getElementById('remarks').value,
+          productName: 'Premium Plus (¥68,000)',
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch('/.netlify/functions/bank-transfer-application', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            // 成功メッセージ表示
+            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.className = 'form-message success';
+            formMessage.style.display = 'block';
+
+            // フォームリセット
+            document.getElementById('bankTransferForm').reset();
+
+            // 3秒後にモーダルを閉じる
+            setTimeout(() => {
+              closeBankModal();
+              formMessage.style.display = 'none';
+            }, 3000);
+          } else {
+            throw new Error(result.error || '送信に失敗しました');
+          }
+        } catch (error) {
+          console.error('Form submission error:', error);
+          formMessage.textContent = '❌ 送信に失敗しました。もう一度お試しいただくか、nankan-analytics@keiba.link までご連絡ください。';
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+        } finally {
+          // ボタン復元
+          submitButton.disabled = false;
+          submitText.style.display = 'inline';
+          submitLoading.style.display = 'none';
+        }
+          });
+        }
+
+        // お問い合わせフォーム送信処理
+        const contactForm = document.getElementById('contactForm');
+        if (contactForm) {
+          contactForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitButton = document.getElementById('contactSubmitButton');
+        const submitText = submitButton.querySelector('.submit-text');
+        const submitLoading = submitButton.querySelector('.submit-loading');
+        const formMessage = document.getElementById('contactFormMessage');
+
+        // ボタン無効化・ローディング表示
+        submitButton.disabled = true;
+        submitText.style.display = 'none';
+        submitLoading.style.display = 'inline';
+        formMessage.style.display = 'none';
+
+        // フォームデータ取得
+        const formData = {
+          name: document.getElementById('contactName').value,
+          email: document.getElementById('contactEmail').value,
+          subject: document.getElementById('contactSubject').value,
+          message: document.getElementById('contactMessage').value,
+          formType: 'premium-plus-contact',
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch('/.netlify/functions/premium-plus-contact', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            // 成功メッセージ表示
+            formMessage.textContent = '✅ お問い合わせを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.className = 'form-message success';
+            formMessage.style.display = 'block';
+
+            // フォームリセット
+            document.getElementById('contactForm').reset();
+
+            // 3秒後にモーダルを閉じる
+            setTimeout(() => {
+              closeContactModal();
+              formMessage.style.display = 'none';
+            }, 3000);
+          } else {
+            throw new Error(result.error || '送信に失敗しました');
+          }
+        } catch (error) {
+          console.error('Contact form submission error:', error);
+          formMessage.textContent = '❌ 送信に失敗しました。もう一度お試しいただくか、support@keiba.link までご連絡ください。';
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+        } finally {
+          // ボタン復元
+          submitButton.disabled = false;
+          submitText.style.display = 'inline';
+          submitLoading.style.display = 'none';
+        }
+          });
+        }
+      });
+    </script>
+
+    <!-- FAQ -->
+    <div class="section">
+      <h2 class="section-title">💬 よくあるご質問（FAQ）</h2>
+      <p class="section-subtitle">お客様からよく寄せられる質問にお答えします</p>
+
+      <div class="faq-list">
+        <div class="faq-item">
+          <div class="faq-question">
+            <span class="faq-q-icon">Q1</span>
+            <h4>¥68,000は高額ですが、本当に価値がありますか？</h4>
+          </div>
+          <div class="faq-answer">
+            <span class="faq-a-icon">A</span>
+            <div class="faq-answer-content">
+              <p><strong>過去の実績では、1鞍的中で投資額を大きく上回る配当を実現しています。</strong></p>
+              <p style="font-size: 1.1rem; color: #fbbf24; font-weight: 700; margin: 12px 0;">
+                📊 期待リターン265%
+              </p>
+              <p>高い的中率を維持しながら、長期的に安定したリターンを目指しています。<br>
+              月に1回購入して的中すれば、投資額を上回るリターンが期待できます。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span class="faq-q-icon">Q2</span>
+            <h4>Premium会員とどう違いますか？</h4>
+          </div>
+          <div class="faq-answer">
+            <span class="faq-a-icon">A</span>
+            <div class="faq-answer-content">
+              <p><strong>Premium会員は全レース・3戦略提供、プレミアムプラスは1日1鞍のみ厳選配信です。</strong></p>
+              <p>Premium会員: 自分で戦略を選ぶ必要があり、オッズ確認・買い目選択が必要<br>
+              プレミアムプラス: AIが数万通りから選んだ最高確率の1鞍のみ、迷う必要なし</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span class="faq-q-icon">Q3</span>
+            <h4>不的中の場合、返金はありますか？</h4>
+          </div>
+          <div class="faq-answer">
+            <span class="faq-a-icon">A</span>
+            <div class="faq-answer-content">
+              <p><strong>競馬予想の性質上、返金制度はございません。</strong></p>
+              <p>ただし、高い的中率を維持しており、<br>
+              透明性保証として全ての的中・不的中データを公開しています。<br>
+              統計的に長期的な視点でリターンを追求しております。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span class="faq-q-icon">Q4</span>
+            <h4>途中解約・キャンセルはできますか？</h4>
+          </div>
+          <div class="faq-answer">
+            <span class="faq-a-icon">A</span>
+            <div class="faq-answer-content">
+              <p><strong>プレミアムプラスは単発購入（¥68,000）のため、サブスクリプションではありません。</strong></p>
+              <p>継続利用される場合は、その都度ご購入いただく形となります。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span class="faq-q-icon">Q5</span>
+            <h4>どのタイミングで買い目が配信されますか？</h4>
+          </div>
+          <div class="faq-answer">
+            <span class="faq-a-icon">A</span>
+            <div class="faq-answer-content">
+              <p><strong>購入タイミングによって異なります。</strong></p>
+              <p>レース序盤のご購入の場合は当日配信、それ以外は翌開催日の配信となります。<br>
+              AIが分析した最高確率のレースと買い目を、発走時刻の十分前にお届けします。<br>
+              マイページにログイン後、専用ページで確認いただけます。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span class="faq-q-icon">Q6</span>
+            <h4>初心者でも大丈夫ですか？</h4>
+          </div>
+          <div class="faq-answer">
+            <span class="faq-a-icon">A</span>
+            <div class="faq-answer-content">
+              <p><strong>はい、むしろ初心者の方にこそおすすめです。</strong></p>
+              <p>買い目は画像の通り「3連単 3→1,2→1,2,4,5,6」のように具体的に提示されるので、<br>
+              そのまま購入するだけでOKです。戦略選択・オッズ確認などの複雑な作業は一切不要です。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-contact">
+        <p class="faq-contact-text">
+          上記以外のご質問がある方は、お気軽にお問い合わせください。<br>
+          AI開発者が直接対応いたします。
+        </p>
+        <button class="faq-contact-link" onclick="openContactModal()">
+          📧 お問い合わせはこちら
+        </button>
+      </div>
+    </div>
+
+    <div class="back-link">
+      <a href="/premium-predictions/">← プレミアム予想に戻る</a>
+    </div>
+  </div>
+
+  <!-- お問い合わせモーダル -->
+  <div id="contactModal" class="bank-modal">
+    <div class="bank-modal-content">
+      <button class="bank-modal-close" onclick="closeContactModal()">×</button>
+
+      <h2 class="bank-modal-title">📧 Premium Plus お問い合わせ</h2>
+      <p style="text-align: center; color: #94a3b8; margin-bottom: 2rem;">
+        AI開発者が直接対応いたします。お気軽にご質問ください。
+      </p>
+
+      <!-- お問い合わせフォーム -->
+      <div class="bank-form-section">
+        <div class="bank-form-title">💬 お問い合わせフォーム</div>
+
+        <form id="contactForm" class="bank-form">
+          <div class="form-group">
+            <label for="contactName" class="form-label">お名前 <span class="required">*</span></label>
+            <input type="text" id="contactName" name="contactName" class="form-input" required placeholder="山田 太郎">
+          </div>
+
+          <div class="form-group">
+            <label for="contactEmail" class="form-label">メールアドレス <span class="required">*</span></label>
+            <input type="email" id="contactEmail" name="contactEmail" class="form-input" required placeholder="example@example.com">
+          </div>
+
+          <div class="form-group">
+            <label for="contactSubject" class="form-label">件名 <span class="required">*</span></label>
+            <select id="contactSubject" name="contactSubject" class="form-input" required>
+              <option value="">選択してください</option>
+              <option value="サービス内容について">サービス内容について</option>
+              <option value="購入前の質問">購入前の質問</option>
+              <option value="買い目・配信について">買い目・配信について</option>
+              <option value="支払い方法について">支払い方法について</option>
+              <option value="その他のお問い合わせ">その他のお問い合わせ</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="contactMessage" class="form-label">お問い合わせ内容 <span class="required">*</span></label>
+            <textarea id="contactMessage" name="contactMessage" class="form-textarea" rows="6" required placeholder="お問い合わせ内容をご記入ください"></textarea>
+          </div>
+
+          <div class="form-submit-section">
+            <button type="submit" class="form-submit-button" id="contactSubmitButton">
+              <span class="submit-text">📧 送信する</span>
+              <span class="submit-loading" style="display: none;">送信中...</span>
+            </button>
+          </div>
+
+          <div class="form-message" id="contactFormMessage" style="display: none;"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

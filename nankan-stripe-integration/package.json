@@ -1,0 +1,23 @@
+{
+  "name": "nankan-stripe-integration",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "南関競馬AI予想システム - Stripe決済統合完全版",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro check && tsc --noEmit"
+  },
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.0",
+    "@supabase/supabase-js": "^2.48.0",
+    "astro": "^4.10.0",
+    "stripe": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

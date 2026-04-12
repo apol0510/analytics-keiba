@@ -1,0 +1,539 @@
+---
+// アクセス制御コンポーネント
+export interface Props {
+    requiredPlan: 'free' | 'standard' | 'premium' | 'Premium Predictions' | 'Premium Sanrenpuku' | 'Premium Combo' | 'Premium Plus';
+    showUpgrade?: boolean;
+}
+
+const { requiredPlan, showUpgrade = true } = Astro.props;
+---
+
+<div id="access-control" data-required-plan={requiredPlan}>
+    <!-- 読み込み中表示 -->
+    <div id="loading-state" class="access-loading">
+        <div class="spinner"></div>
+        <p>アクセス権限を確認中...</p>
+    </div>
+    
+    <!-- コンテンツ表示エリア -->
+    <div id="content-area" class="hidden">
+        <slot />
+    </div>
+    
+    <!-- アクセス拒否メッセージ -->
+    <div id="access-denied" class="access-denied hidden">
+        <div class="denied-icon">🔒</div>
+        <h2>このコンテンツをご覧いただくには会員登録が必要です</h2>
+        <p class="denied-message"></p>
+        
+        {showUpgrade && (
+            <div class="upgrade-options">
+                <a href="/pricing/" class="upgrade-btn primary">料金プランを見る</a>
+                <a href="/auth/login" class="upgrade-btn secondary">ログイン</a>
+            </div>
+        )}
+    </div>
+</div>
+
+<style>
+    .access-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: #94a3b8;
+    }
+
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(59, 130, 246, 0.2);
+        border-top: 3px solid #3b82f6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    .hidden {
+        display: none !important;
+    }
+
+    .access-denied {
+        text-align: center;
+        padding: 80px 20px;
+        background: rgba(30, 41, 59, 0.8);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        margin: 40px auto;
+        max-width: 600px;
+    }
+
+    .denied-icon {
+        font-size: 64px;
+        margin-bottom: 24px;
+        filter: grayscale(0.5);
+        opacity: 0.8;
+    }
+
+    .access-denied h2 {
+        color: #f1f5f9;
+        font-size: 24px;
+        margin-bottom: 16px;
+    }
+
+    .denied-message {
+        color: #94a3b8;
+        font-size: 16px;
+        line-height: 1.6;
+        margin-bottom: 32px;
+    }
+
+    .upgrade-options {
+        display: flex;
+        gap: 16px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .upgrade-btn {
+        padding: 12px 24px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        transition: all 0.3s;
+        display: inline-block;
+    }
+
+    .upgrade-btn.primary {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        color: white;
+    }
+
+    .upgrade-btn.primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+    }
+
+    .upgrade-btn.secondary {
+        background: transparent;
+        color: #3b82f6;
+        border: 2px solid rgba(59, 130, 246, 0.5);
+    }
+
+    .upgrade-btn.secondary:hover {
+        background: rgba(59, 130, 246, 0.1);
+        border-color: #3b82f6;
+    }
+</style>
+
+<script>
+    // 環境判定
+    function isDevelopmentMode() {
+        // 開発環境判定：localhostまたはポート番号がある場合
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const hasDevPort = window.location.port === '4321' || window.location.port === '3000';
+        
+        return isLocalhost || hasDevPort;
+    }
+
+    // 簡易認証状態チェック（認証モジュール使用まで）
+    function getCurrentUserPlan() {
+        console.log('🔍 認証状態チェック開始');
+        
+        // 0. デモモードのサブスクリプション情報をチェック（優先）
+        const demoKeys = Object.keys(localStorage).filter(key => key.startsWith('demo_subscription_'));
+        if (demoKeys.length > 0) {
+            try {
+                const demoData = JSON.parse(localStorage.getItem(demoKeys[0]));
+                console.log('🎭 デモモード認証:', demoData);
+                return {
+                    user: { id: 'demo_user', email: 'demo@example.com', demo: true },
+                    plan: demoData.planType.toLowerCase(),
+                    planType: 'Monthly',
+                    lifetimeSanrenpuku: false
+                };
+            } catch (error) {
+                console.error('Demo data parsing error:', error);
+            }
+        }
+
+        // 1. 旧形式のtest_subscription_データをチェック（最優先 - 本番で実際に使用中）
+        const testSubscriptionKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
+        if (testSubscriptionKeys.length > 0) {
+            try {
+                const testData = JSON.parse(localStorage.getItem(testSubscriptionKeys[0]));
+                console.log('📦 旧形式認証データ発見:', testData);
+                return {
+                    user: { id: testData.userId, legacy: true },
+                    plan: testData.planType.toLowerCase(),
+                    planType: 'Monthly',
+                    lifetimeSanrenpuku: false
+                };
+            } catch (error) {
+                console.error('Test subscription data parsing error:', error);
+            }
+        }
+
+        // 2. 新形式のuser-planチェック（2026-02-09更新: Lifetime対応）
+        const userPlanData = localStorage.getItem('user-plan');
+        if (userPlanData) {
+            try {
+                const userData = JSON.parse(userPlanData);
+                console.log('✅ user-plan認証:', userData);
+                return {
+                    user: { email: userData.email },
+                    plan: userData.plan || 'free',
+                    planType: userData.planType || 'Monthly',  // 追加
+                    lifetimeSanrenpuku: userData.lifetimeSanrenpuku || false  // 追加
+                };
+            } catch (error) {
+                console.error('User plan parsing error:', error);
+            }
+        }
+
+        // 3. 旧形式のisLoggedInチェック（互換性）
+        const isLoggedIn = localStorage.getItem('isLoggedIn');
+        const userPlan = localStorage.getItem('userPlan');
+        if (isLoggedIn === 'true') {
+            console.log('✅ 旧形式認証（isLoggedIn）:', userPlan);
+            return {
+                user: { legacy: true },
+                plan: userPlan || 'free',
+                planType: 'Monthly',
+                lifetimeSanrenpuku: false
+            };
+        }
+
+        // 4. nankan_user認証情報を取得（新テスト認証用・2026-02-09更新: Lifetime対応）
+        const nankanUser = localStorage.getItem('nankan_user');
+        if (nankanUser) {
+            try {
+                const userData = JSON.parse(nankanUser);
+                console.log('✅ nankan_user認証:', userData);
+                return {
+                    user: { email: userData.email, name: userData.name },
+                    plan: userData.plan || 'free',
+                    planType: userData.planType || 'Monthly',  // 追加
+                    lifetimeSanrenpuku: userData.lifetimeSanrenpuku || false  // 追加
+                };
+            } catch (error) {
+                console.error('Nankan user parsing error:', error);
+            }
+        }
+
+        // 5. ローカルストレージから認証情報を取得（2026-02-09更新: Lifetime対応）
+        const authData = localStorage.getItem('auth_data');
+        if (authData) {
+            try {
+                const { user, plan, expiresAt, planType, lifetimeSanrenpuku } = JSON.parse(authData);
+
+                // 有効期限チェック
+                if (new Date() > new Date(expiresAt)) {
+                    localStorage.removeItem('auth_data');
+                    return { user: null, plan: 'free', planType: 'Monthly', lifetimeSanrenpuku: false };
+                }
+
+                return {
+                    user,
+                    plan: plan || 'free',
+                    planType: planType || 'Monthly',
+                    lifetimeSanrenpuku: lifetimeSanrenpuku || false
+                };
+            } catch (error) {
+                console.error('Auth data parsing error:', error);
+                localStorage.removeItem('auth_data');
+            }
+        }
+
+        // 6. セッションストレージチェック（2026-02-09更新: Lifetime対応）
+        const sessionAuth = sessionStorage.getItem('temp_auth');
+        if (sessionAuth) {
+            try {
+                const { plan, planType, lifetimeSanrenpuku } = JSON.parse(sessionAuth);
+                return {
+                    user: { temp: true },
+                    plan: plan || 'free',
+                    planType: planType || 'Monthly',
+                    lifetimeSanrenpuku: lifetimeSanrenpuku || false
+                };
+            } catch (error) {
+                sessionStorage.removeItem('temp_auth');
+            }
+        }
+
+        // 7. デフォルトは未登録
+        console.log('❌ 認証データなし - 未登録状態');
+        return { user: null, plan: null, planType: 'Monthly', lifetimeSanrenpuku: false };
+    }
+
+    // プラン階層チェック（2026-02-09更新: Lifetime対応）
+    function canAccessContent(userPlan, requiredPlan, user, planType = 'Monthly', lifetimeSanrenpuku = false) {
+        // 🚨 2025-11-26追加: 退会申請チェック（最優先）
+        const isWithdrawalRequested = localStorage.getItem('isWithdrawalRequested') === 'true';
+        if (isWithdrawalRequested) {
+            console.log(`🚫 退会申請済み検出 - プランを強制的にFreeとして扱います`);
+            return requiredPlan === 'free' && user !== null; // 無料コンテンツのみアクセス可能
+        }
+
+        // 🔧 2025-11-26強化: 有効期限チェック（isExpiredフラグ優先）
+        const isExpired = localStorage.getItem('isExpired') === 'true';
+        const validUntil = localStorage.getItem('validUntil');
+        let effectivePlan = userPlan;
+
+        // isExpiredフラグ または validUntil日付チェック
+        if (isExpired) {
+            console.log(`⚠️ 有効期限切れ検出（isExpiredフラグ） - プランを強制的にFreeとして扱います`);
+            effectivePlan = 'Free';
+        } else if (validUntil && validUntil !== 'null') {
+            const expiry = new Date(validUntil);
+            const now = new Date();
+
+            if (expiry < now) {
+                console.log(`⚠️ 有効期限切れ検出（validUntil日付）: ${validUntil} - プランを強制的にFreeとして扱います`);
+                effectivePlan = 'Free';
+            }
+        }
+
+        const planHierarchy = {
+            // 旧プラン（互換性維持）
+            'free': 0,
+            'Free': 0,
+            'standard': 1,
+            'Standard': 1,
+            'premium': 2,
+            'Premium': 2,
+
+            // 新プラン（2026-02-09更新）
+            'Premium Predictions': 2,      // 馬単のみ（廃止予定）
+            'Premium Sanrenpuku': 2,       // 三連複のみ（廃止予定）
+            'Premium Combo': 3,            // 馬単+三連複（廃止予定）
+            'Premium Plus': 4              // 1鞍超精密（¥68,000・単品）
+        };
+
+        const userLevel = planHierarchy[effectivePlan] || 0;  // effectivePlanを使用
+        const requiredLevel = planHierarchy[requiredPlan] || 0;
+
+        console.log(`🔍 アクセスチェック詳細:`, {
+            userPlan, effectivePlan, requiredPlan, user,
+            userLevel, requiredLevel,
+            hasUser: user !== null,
+            validUntil: validUntil
+        });
+
+        // 無料プランが必要な場合 - 登録ユーザーのみアクセス可能
+        if (requiredPlan === 'free') {
+            const hasValidFreeUser = user !== null && (user.email || user.legacy || user.demo || user.temp || user.isTest);
+            console.log(`🆓 無料会員限定コンテンツ - 登録チェック:`, hasValidFreeUser, { user, plan });
+            return hasValidFreeUser; // 登録済みユーザーのみアクセス許可
+        }
+
+        // 三連複専用ページの特殊処理（2026-02-09更新: Lifetime Sanrenpuku対応）
+        if (requiredPlan === 'Premium Sanrenpuku') {
+            const hasValidUser = user !== null && (user.email || user.legacy || user.demo || user.temp || user.isTest);
+
+            // 🔧 有効期限切れの場合はアクセス不可
+            if (effectivePlan === 'Free') {
+                console.log(`🐎 三連複アクセスチェック: Free - アクセス拒否`);
+                return false;
+            }
+
+            // 1. Premium Sanrenpuku または Premium Combo でアクセス可能（従来プラン）
+            if (effectivePlan === 'Premium Sanrenpuku' || effectivePlan === 'Premium Combo') {
+                console.log(`🐎 三連複アクセスチェック: ${effectivePlan} - アクセス許可`);
+                return hasValidUser;
+            }
+
+            // 2. ✅ Sanrenpuku Lifetime購入者（新仕様）
+            //    - Premium有効中のみSanrenpuku機能が使える
+            if (lifetimeSanrenpuku === true && effectivePlan === 'Premium') {
+                console.log(`🐎 三連複アクセスチェック: Sanrenpuku Lifetime + Premium - アクセス許可`);
+                return hasValidUser;
+            }
+
+            console.log(`🐎 三連複アクセスチェック: アクセス拒否`, { userPlan, effectivePlan, hasValidUser, lifetimeSanrenpuku });
+            return false;
+        }
+
+        // 馬単専用ページの特殊処理（premium, Premium, Premium Predictions）（有効期限考慮）
+        if (requiredPlan === 'premium' || requiredPlan === 'Premium' || requiredPlan === 'Premium Predictions') {
+            const hasValidUser = user !== null && (user.email || user.legacy || user.demo || user.temp || user.isTest);
+            // Premium / Premium Predictions または Premium Combo でアクセス可能
+            // ⚠️ userLevelは使わない（Premium Sanrenpuku等が誤ってアクセスできてしまうため）
+            // 🔧 有効期限切れの場合はアクセス不可
+            const canAccess = hasValidUser && effectivePlan !== 'Free' && (
+                effectivePlan === 'Premium' ||
+                effectivePlan === 'premium' ||
+                effectivePlan === 'Premium Predictions' ||
+                effectivePlan === 'Premium Combo'
+            );
+            console.log(`🏇 馬単アクセスチェック:`, canAccess, { userPlan, effectivePlan, hasValidUser });
+            return canAccess;
+        }
+
+        // 有料プランの場合は従来通りの階層チェック + 登録チェック
+        const hasValidUser = user !== null && (user.email || user.legacy || user.demo || user.temp || user.isTest);
+        const hasAccess = userLevel >= requiredLevel && hasValidUser;
+        console.log(`💎 有料アクセスチェック:`, hasAccess, { userLevel, requiredLevel, hasValidUser, userPlan, requiredPlan });
+        return hasAccess;
+    }
+
+    // プラン表示名取得（2025-10-30更新）
+    function getPlanDisplayName(plan) {
+        const displayNames = {
+            // 旧プラン
+            'free': '無料プラン',
+            'Free': '無料プラン',
+            'standard': 'スタンダードプラン',
+            'Standard': 'スタンダードプラン',
+            'premium': 'プレミアムプラン',
+            'Premium': 'プレミアムプラン',
+
+            // 新プラン（2025-10-30追加）
+            'Premium Predictions': 'Premium Predictions（馬単）',
+            'Premium Sanrenpuku': 'Premium Sanrenpuku（三連複）',
+            'Premium Combo': 'Premium Combo（馬単+三連複）',
+            'Premium Plus': 'Premium Plus（1鞍超精密）'
+        };
+        return displayNames[plan] || '不明なプラン';
+    }
+
+    async function checkAccess() {
+        const accessControl = document.getElementById('access-control');
+        const loadingState = document.getElementById('loading-state');
+        const contentArea = document.getElementById('content-area');
+        const accessDenied = document.getElementById('access-denied');
+        
+        const requiredPlan = accessControl.dataset.requiredPlan;
+        
+        try {
+            // 認証状態の取得（2026-02-09更新: Lifetime対応）
+            const { user, plan, planType, lifetimeSanrenpuku } = getCurrentUserPlan();
+            console.log(`🔒 認証チェック - ユーザー:`, user, `プラン:`, plan, `PlanType:`, planType, `LifetimeSanrenpuku:`, lifetimeSanrenpuku, `必要プラン:`, requiredPlan);
+
+            // 開発モードでの優先表示（デバッグ用）
+            if (isDevelopmentMode()) {
+                console.log('🔧 開発モード: 認証情報を優先表示');
+                // 開発モードでは10秒以内に認証が完了しない場合は強制表示
+                setTimeout(() => {
+                    if (loadingState && !loadingState.classList.contains('hidden')) {
+                        console.log('⚠️ 開発モード: 認証タイムアウト - 強制表示実行');
+                        loadingState.style.display = 'none';
+                        loadingState.classList.add('hidden');
+                        if (contentArea) {
+                            contentArea.style.display = 'block';
+                            contentArea.classList.remove('hidden');
+                        }
+                    }
+                }, 10000);
+            }
+            
+            // アクセス権限チェック（2026-02-09更新: Lifetime対応）
+            if (canAccessContent(plan, requiredPlan, user, planType, lifetimeSanrenpuku)) {
+                // アクセス許可
+                console.log(`✅ アクセス許可: ${getPlanDisplayName(plan)} → ${requiredPlan}コンテンツ`);
+                console.log('📋 DOM要素状態 - loading:', loadingState, 'content:', contentArea, 'denied:', accessDenied);
+                
+                // 強制的にDOM操作を実行
+                if (loadingState) {
+                    loadingState.style.display = 'none';
+                    loadingState.classList.add('hidden');
+                }
+                if (contentArea) {
+                    contentArea.style.display = 'block';
+                    contentArea.classList.remove('hidden');
+                }
+                if (accessDenied) {
+                    accessDenied.style.display = 'none';
+                    accessDenied.classList.add('hidden');
+                }
+                
+                console.log('🔓 コンテンツ表示完了:', {
+                    loading: loadingState ? loadingState.style.display : 'なし',
+                    content: contentArea ? contentArea.style.display : 'なし',
+                    denied: accessDenied ? accessDenied.style.display : 'なし'
+                });
+            } else {
+                // アクセス拒否
+                console.log(`❌ アクセス拒否: ${getPlanDisplayName(plan)} → ${requiredPlan}コンテンツ`);
+                loadingState.classList.add('hidden');
+                contentArea.classList.add('hidden'); // コンテンツを明示的に非表示
+                accessDenied.classList.remove('hidden');
+                
+                // メッセージをカスタマイズ
+                const deniedMessage = accessDenied.querySelector('.denied-message');
+                
+                if (!user) {
+                    if (requiredPlan === 'free') {
+                        deniedMessage.textContent = '無料予想は会員登録なしでもご覧いただけます。システムエラーが発生している可能性があります。';
+                    } else {
+                        deniedMessage.textContent = 'より詳細な予想をご覧いただくには、会員登録とプランのアップグレードが必要です。';
+                    }
+                } else {
+                    const currentPlanName = getPlanDisplayName(plan);
+                    const requiredPlanName = getPlanDisplayName(requiredPlan);
+                    
+                    deniedMessage.textContent = `現在のプラン: ${currentPlanName}\nこのコンテンツには「${requiredPlanName}」以上のプランが必要です。`;
+                }
+            }
+        } catch (error) {
+            console.error('❌ アクセス制御エラー:', error);
+            
+            // 本番環境ではエラー時はアクセス拒否（安全側に倒す）
+            if (!isDevelopmentMode()) {
+                console.log('🔒 本番モード: エラー時はアクセス拒否');
+                loadingState.classList.add('hidden');
+                accessDenied.classList.remove('hidden');
+                
+                const deniedMessage = accessDenied.querySelector('.denied-message');
+                deniedMessage.textContent = 'システムエラーが発生しました。しばらく待ってから再度お試しください。';
+            } else {
+                // 開発モードでのみエラー時アクセス許可
+                console.log('🔧 開発モード: エラー時も表示継続');
+                loadingState.classList.add('hidden');
+                contentArea.classList.remove('hidden');
+            }
+        }
+    }
+
+    // ⚠️ setTestAuth/clearTestAuth関数は public/test-auth.js で定義されています
+    // ここでの再定義は削除しました（重複防止）
+
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('📋 DOMContentLoaded - AccessControl初期化開始');
+
+        // DOM要素が確実に存在することを確認
+        const accessControl = document.getElementById('access-control');
+        const loadingState = document.getElementById('loading-state');
+        const contentArea = document.getElementById('content-area');
+        const accessDenied = document.getElementById('access-denied');
+
+        if (!accessControl || !loadingState || !contentArea || !accessDenied) {
+            console.error('❌ 必要なDOM要素が見つかりません:', {
+                accessControl: !!accessControl,
+                loadingState: !!loadingState,
+                contentArea: !!contentArea,
+                accessDenied: !!accessDenied
+            });
+            // DOM要素が不足している場合でも最低限の表示を行う
+            if (contentArea) {
+                contentArea.style.display = 'block';
+                contentArea.classList.remove('hidden');
+            }
+            return;
+        }
+
+        console.log('✅ 全DOM要素確認完了 - AccessControl実行開始');
+
+        // DOM要素の完全な準備を待つため少し遅延
+        setTimeout(() => {
+            checkAccess();
+        }, 50);
+    });
+</script>
