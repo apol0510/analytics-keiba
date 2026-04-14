@@ -2,7 +2,7 @@ name: Import JRA Results (Dispatch)
 
 on:
   repository_dispatch:
-    types: [results-jra-updated]
+    types: [jra-results-updated]
   workflow_dispatch:
     inputs:
       date:
