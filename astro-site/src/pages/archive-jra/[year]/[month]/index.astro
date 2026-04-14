@@ -102,7 +102,18 @@ const pageDescription = monthData.length > 0
               ? dayData.venues.join('・')
               : dayData.venue;
             const totalBetPoints = (dayData.totalRaces || 0) * (dayData.betPointsPerRace || 0);
-            const hitRaces = (dayData.races || []).filter((race: any) => race.isHit);
+            const venueOrder: string[] = Array.isArray(dayData.venues) ? dayData.venues : [];
+            const hitRaces = (dayData.races || [])
+              .filter((race: any) => race.isHit)
+              .slice()
+              .sort((a: any, b: any) => {
+                const ai = venueOrder.indexOf(a.venue);
+                const bi = venueOrder.indexOf(b.venue);
+                const sa = ai === -1 ? 999 : ai;
+                const sb = bi === -1 ? 999 : bi;
+                if (sa !== sb) return sa - sb;
+                return Number(a.raceNumber) - Number(b.raceNumber);
+              });
 
             return (
               <section class="day-section">
