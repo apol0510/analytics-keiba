@@ -1,8 +1,8 @@
 # 🚀 次回セッション引き継ぎ (analytics-keiba)
 
-**最終更新**: 2026-04-13
-**前回作業者**: Claude Opus 4.6 (keiba-intelligence window)
-**現在フェーズ**: Phase A 完了 → Phase B 開始待ち
+**最終更新**: 2026-04-14
+**前回作業者**: Claude Opus 4.6 (analytics-keiba window)
+**現在フェーズ**: Phase B 進行中（dispatch連携 / SendGrid upsert 実装済み）
 
 ---
 
@@ -76,12 +76,20 @@ ALERT_EMAIL=<同上>
 `analytics.keiba.link` をNetlifyに向ける CNAME 設定が必要。
 DNS管理サービス（Cloudflare / お名前.com / Value-Domain等）を確認して対応。
 
-### ④ SendGrid カスタムフィールド追加【マコさん作業】
+### ④ SendGrid カスタムフィールド追加【✅完了 2026-04-14】
 
-SendGrid管理画面で以下のカスタムフィールド作成：
-- Field Name: `registered_analytics`
-- Field Type: `Text`
-- 作成後のFieldID（例: `e3_T`）を取得してNetlify環境変数 `SENDGRID_CUSTOM_FIELD_ANALYTICS` に設定
+- SendGrid `registered_analytics` カスタムフィールド作成済み
+- Netlify 環境変数 `SENDGRID_CUSTOM_FIELD_ANALYTICS` 設定済み
+- analytics-keiba `verify-magic-link.js` で認証成功時に upsert する実装をデプロイ済み
+  （commit `5b9f776`、参照: keiba-intelligence/register-free.js のパターン移植）
+
+### ⑤ keiba-data-shared-admin → analytics-keiba dispatch【✅完了】
+
+- `netlify/lib/dispatch.mjs` を新規作成し、keiba-intelligence と analytics-keiba の両方へ並列送信
+- 対象: `save-keiba-book.mjs` / `save-results.mjs` / `save-results-jra.mjs`
+- event_type は既存名を維持: `prediction-updated` / `prediction-jra-updated` / `nankan-results-updated` / `jra-results-updated`
+- 環境変数 `ANALYTICS_KEIBA_TOKEN` を優先、未設定なら `KEIBA_INTELLIGENCE_TOKEN` をフォールバック
+  （**任意**: 既存PATが apol0510/analytics-keiba に書込権限あれば未設定でOK）
 
 ---
 
