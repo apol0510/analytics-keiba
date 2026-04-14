@@ -105,9 +105,13 @@ export const handler = async (event, context) => {
       '認証トークン': null
       // TODO: '最終ログイン': new Date().toISOString() フィールド追加後に有効化
     });
-    
+
     console.log(`✅ ログイン成功: ${email}`);
-    
+
+    // SendGrid Marketing Campaigns に upsert（registered_analytics = "true"）
+    // 失敗しても認証成功処理は落とさない（関数内で例外を握り潰す）
+    await registerToSendGridMarketing(email);
+
     return {
       statusCode: 200,
       headers,
@@ -130,6 +134,61 @@ export const handler = async (event, context) => {
     };
   }
 };
+
+// SendGrid Marketing Campaigns に upsert（既存コンタクトは自動更新）
+// PUT /v3/marketing/contacts に custom_fields.registered_analytics = "true" を付与
+// 失敗しても呼び出し元へ例外を伝播させない（return null）
+async function registerToSendGridMarketing(email) {
+  const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+  const CUSTOM_FIELD_ANALYTICS = process.env.SENDGRID_CUSTOM_FIELD_ANALYTICS;
+
+  if (!SENDGRID_API_KEY) {
+    console.log('⚠️ SENDGRID_API_KEY未設定、SendGrid Marketing upsertスキップ');
+    return null;
+  }
+  if (!CUSTOM_FIELD_ANALYTICS) {
+    console.log('⚠️ SENDGRID_CUSTOM_FIELD_ANALYTICS未設定、SendGrid Marketing upsertスキップ');
+    return null;
+  }
+
+  try {
+    const url = 'https://api.sendgrid.com/v3/marketing/contacts';
+    const payload = {
+      contacts: [
+        {
+          email,
+          custom_fields: {
+            [CUSTOM_FIELD_ANALYTICS]: 'true'
+          }
+        }
+      ]
+    };
+
+    console.log('📧 SendGrid Marketing upsert:', email, 'field:', CUSTOM_FIELD_ANALYTICS);
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${SENDGRID_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ SendGrid Marketing upsert失敗:', response.status, errorText);
+      return null;
+    }
+
+    const result = await response.json();
+    console.log('✅ SendGrid Marketing upsert成功:', email, result);
+    return result;
+  } catch (error) {
+    console.error('❌ SendGrid Marketing upsertエラー:', error.message);
+    return null;
+  }
+}
 
 // ポイントからランク計算
 function calculateRank(points) {
