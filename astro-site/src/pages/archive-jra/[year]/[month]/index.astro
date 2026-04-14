@@ -7,39 +7,32 @@ export const prerender = false;
 
 const { year, month } = Astro.params;
 
-// archiveResultsJra.jsonから該当月のデータを取得
 const archivePath = join(process.cwd(), 'src', 'data', 'archiveResultsJra.json');
-let monthData = [];
+let monthData: any[] = [];
 let monthStats = {
   totalDays: 0,
   totalRaces: 0,
   totalHitRaces: 0,
   totalBetAmount: 0,
   totalPayout: 0,
-  hitRate: 0,
-  returnRate: 0
+  hitRate: '0',
+  returnRate: '0'
 };
 
 try {
   if (existsSync(archivePath)) {
-    const fileContent = readFileSync(archivePath, 'utf-8');
-    const allData = JSON.parse(fileContent);
-
-    // 該当月のデータを抽出
-    monthData = allData.filter(entry => {
-      const [entryYear, entryMonth] = entry.date.split('-');
-      return entryYear === year && entryMonth === month;
+    const allData = JSON.parse(readFileSync(archivePath, 'utf-8'));
+    monthData = allData.filter((entry: any) => {
+      const [y, m] = entry.date.split('-');
+      return y === year && m === month;
     });
-
-    // 月間統計を計算
-    monthData.forEach(entry => {
+    monthData.forEach((entry: any) => {
       monthStats.totalDays++;
-      monthStats.totalRaces += entry.totalRaces;
-      monthStats.totalHitRaces += entry.hitRaces;
-      monthStats.totalBetAmount += entry.betAmount;
-      monthStats.totalPayout += entry.totalPayout;
+      monthStats.totalRaces += entry.totalRaces || 0;
+      monthStats.totalHitRaces += entry.hitRaces || 0;
+      monthStats.totalBetAmount += entry.betAmount || 0;
+      monthStats.totalPayout += entry.totalPayout || 0;
     });
-
     if (monthStats.totalRaces > 0) {
       monthStats.hitRate = ((monthStats.totalHitRaces / monthStats.totalRaces) * 100).toFixed(1);
     }
@@ -52,117 +45,126 @@ try {
 }
 
 const pageTitle = monthData.length > 0
-  ? `${year}年${month}月 的中実績アーカイブ`
+  ? `${year}年${parseInt(month)}月 中央競馬 的中実績アーカイブ`
   : '的中実績が見つかりません';
 
 const pageDescription = monthData.length > 0
-  ? `${year}年${month}月の的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、月間回収率${monthStats.returnRate}%、月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
+  ? `${year}年${parseInt(month)}月の中央競馬的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、月間回収率${monthStats.returnRate}%、月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
   : '中央競馬（JRA）の的中実績アーカイブ';
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>
-  <main class="archive-page">
+  <main class="archive-jra-page">
     <div class="container">
       {monthData.length === 0 ? (
         <div class="no-data">
           <h1>⚠️ データが見つかりません</h1>
-          <p>{year}年{month}月の的中実績はまだありません。</p>
-          <a href="/results" class="btn-back">的中実績一覧へ戻る</a>
+          <p>{year}年{parseInt(month)}月の中央競馬的中実績はまだありません。</p>
+          <a href="/archive-jra/" class="btn-back">アーカイブトップへ戻る</a>
         </div>
       ) : (
         <>
-          {/* ページヘッダー */}
           <header class="page-header">
-            <h1>{year}年{month}月 的中実績アーカイブ</h1>
+            <h1 class="title">🏆 {year}年{parseInt(month)}月 中央競馬 的中実績</h1>
+            <p class="subtitle">JRA全レースの的中記録を公開</p>
           </header>
 
-          {/* 月間サマリー統計 */}
-          <section class="summary-section">
-            <div class="summary-grid">
-              <div class="summary-card">
-                <div class="summary-label">開催日数</div>
-                <div class="summary-value">{monthStats.totalDays}日</div>
-              </div>
-              <div class="summary-card">
-                <div class="summary-label">月間的中率</div>
-                <div class="summary-value highlight">{monthStats.hitRate}%</div>
-              </div>
-              <div class="summary-card">
-                <div class="summary-label">月間回収率</div>
-                <div class={`summary-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
-                  {monthStats.returnRate}%
-                </div>
-              </div>
-              <div class="summary-card">
-                <div class="summary-label">月間合計配当</div>
-                <div class="summary-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
-              </div>
+          {/* 月間サマリー */}
+          <section class="month-stats">
+            <div class="stat-card">
+              <div class="stat-value">{monthStats.totalDays}日</div>
+              <div class="stat-label">開催日数</div>
             </div>
-            <div class="summary-detail">
-              <span>的中レース数: {monthStats.totalHitRaces}/{monthStats.totalRaces}レース</span>
+            <div class="stat-card">
+              <div class="stat-value">{monthStats.hitRate}%</div>
+              <div class="stat-label">月間的中率</div>
+            </div>
+            <div class="stat-card">
+              <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
+                {monthStats.returnRate}%
+              </div>
+              <div class="stat-label">月間回収率</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
+              <div class="stat-label">月間合計配当</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{monthStats.totalHitRaces}/{monthStats.totalRaces}</div>
+              <div class="stat-label">的中レース数</div>
             </div>
           </section>
 
-          {/* 日別結果一覧 */}
-          {monthData.map((dayData) => {
+          {/* 日別アーカイブ */}
+          {monthData.map((dayData: any) => {
             const [, , day] = dayData.date.split('-');
+            const venueLabel = Array.isArray(dayData.venues) && dayData.venues.length > 0
+              ? dayData.venues.join('・')
+              : dayData.venue;
+            const totalBetPoints = (dayData.totalRaces || 0) * (dayData.betPointsPerRace || 0);
+            const hitRaces = (dayData.races || []).filter((race: any) => race.isHit);
 
             return (
               <section class="day-section">
-                <a href={`/results/${year}/${month}/${day}`} class="day-header-link">
                 <div class="day-header">
-                  <h2>
-                    <span class="day-date">{month}月{day}日</span>
-                    <span class="day-venue">{dayData.venue}</span>
-                    <span class="day-detail-link">詳細を見る →</span>
+                  <h2 class="day-title">
+                    <span class="day-date">{parseInt(month)}月{parseInt(day)}日</span>
+                    <span class="day-venue">{venueLabel}</span>
                   </h2>
-                  <div class="day-stats">
-                    <span class="stat">的中 {dayData.hitRaces}/{dayData.totalRaces}レース</span>
-                    <span class="stat">的中率 {dayData.hitRate}%</span>
-                    {dayData.betPointsPerRace && (
-                      <span class="stat">購入点数 {(Number(dayData.totalRaces) || 0) * (Number(dayData.betPointsPerRace) || 0)}点</span>
-                    )}
-                    {dayData.totalPayout > 0 && (
-                      <span class="stat profit">配当 ¥{dayData.totalPayout.toLocaleString()}</span>
-                    )}
-                    <span class={`stat ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>
-                      回収率 {dayData.returnRate}%
-                    </span>
+                  <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces} 的中</div>
+                </div>
+
+                <div class="day-summary">
+                  <div class="summary-item">
+                    📊 的中率: <span class="summary-value">{dayData.hitRate}%</span>
+                  </div>
+                  <div class="summary-item">
+                    📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span>
+                  </div>
+                  {totalBetPoints > 0 && (
+                    <div class="summary-item">
+                      🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
+                    </div>
+                  )}
+                  <div class="summary-item">
+                    💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span>
                   </div>
                 </div>
-                </a>
 
-                <div class="races-list">
-                  {(() => {
-                    // 的中レースのみを元の順序で表示
-                    const hitRaces = dayData.races.filter(race => race.isHit);
-
-                    if (hitRaces.length === 0) {
-                      return <div class="no-hits">的中レースなし</div>;
-                    }
-
-                    return hitRaces.map((race) => {
-                      const payout = race.umatan?.payout || 0;
-                      return (
-                        <div class="race-line hit">
-                          <span class="race-number">{race.venue}{race.raceNumber}レース</span>
-                          <span class="race-name">{race.raceName}</span>
-                          <span class="hit-badge">✅ 的中</span>
-                          {payout > 0 && (
-                            <span class="payout">¥{payout.toLocaleString()}</span>
+                <div class="races-grid">
+                  {hitRaces.length === 0 ? (
+                    <div class="no-hits">的中レースなし</div>
+                  ) : (
+                    hitRaces.map((race: any) => (
+                      <div class="race-card">
+                        <div class="race-info">
+                          <div class="race-number">{race.venue}{race.raceNumber}R</div>
+                          <div class="race-name">{race.raceName}</div>
+                        </div>
+                        <div class="race-result">
+                          <div class="hit-badge">✅ 的中</div>
+                          {race.bettingPoints && (
+                            <div class="bet-info">馬単{race.bettingPoints}点</div>
+                          )}
+                          {race.umatan?.payout > 0 && (
+                            <div class="payout">¥{race.umatan.payout.toLocaleString()}</div>
                           )}
                         </div>
-                      );
-                    });
-                  })()}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div class="day-footer">
+                  <a href={`/results/${year}/${month}/${day}`} class="day-detail-link">詳細を見る →</a>
                 </div>
               </section>
             );
           })}
 
-          {/* フッターナビ */}
           <footer class="page-footer">
-            <a href="/results" class="btn-back">← 的中実績一覧へ戻る</a>
+            <a href="/archive-jra/" class="btn-back">← JRAアーカイブトップ</a>
+            <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
           </footer>
         </>
       )}
@@ -171,307 +173,321 @@ const pageDescription = monthData.length > 0
 </BaseLayout>
 
 <style lang="scss">
-  .archive-page {
+  .archive-jra-page {
     min-height: 100vh;
-    padding: var(--spacing-2xl) 0;
-    background: var(--bg-primary);
+    padding: 2rem 1rem 3rem;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0;
   }
 
   .container {
-    max-width: 1000px;
+    max-width: 1200px;
     margin: 0 auto;
-    padding: 0 var(--spacing-lg);
   }
 
   /* データなし */
   .no-data {
     text-align: center;
-    padding: var(--spacing-2xl);
-    background: var(--bg-secondary);
-    border-radius: var(--radius-lg);
+    padding: 3rem 1.5rem;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 16px;
 
-    h1 {
-      font-size: 2rem;
-      margin-bottom: var(--spacing-md);
-      color: var(--text-primary);
-    }
-
-    p {
-      color: var(--text-secondary);
-      margin-bottom: var(--spacing-xl);
-    }
+    h1 { font-size: 2rem; margin-bottom: 1rem; color: #fbbf24; }
+    p { color: #cbd5e1; margin-bottom: 1.5rem; }
   }
 
-  /* ページヘッダー */
+  /* ヘッダー */
   .page-header {
-    margin-bottom: var(--spacing-2xl);
+    text-align: center;
+    margin-bottom: 2.5rem;
+    padding: 2rem;
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 16px;
 
-    h1 {
-      font-size: 2rem;
+    .title {
+      font-size: 2.25rem;
       font-weight: 800;
-      background: var(--primary-gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: #f59e0b;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      font-size: 1.05rem;
+      color: #cbd5e1;
     }
   }
 
-  /* 月間サマリー */
-  .summary-section {
-    margin-bottom: var(--spacing-2xl);
-    padding: var(--spacing-xl);
-    background: var(--bg-secondary);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border-color);
-  }
-
-  .summary-grid {
+  /* 月間サマリーカード */
+  .month-stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: var(--spacing-lg);
-    margin-bottom: var(--spacing-md);
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2.5rem;
   }
 
-  .summary-card {
+  .stat-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1.5rem 1rem;
     text-align: center;
-    padding: var(--spacing-lg);
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: var(--radius-md);
 
-    .summary-label {
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      margin-bottom: var(--spacing-sm);
-      font-weight: 500;
-    }
-
-    .summary-value {
+    .stat-value {
       font-size: 2rem;
       font-weight: 800;
-      color: var(--text-primary);
+      color: #60a5fa;
+      margin-bottom: 0.35rem;
+      line-height: 1.2;
+      word-break: break-all;
 
-      &.highlight {
-        color: #60a5fa;
-      }
-
-      &.profit {
-        color: #10b981;
-      }
-
-      &.loss {
-        color: #ef4444;
-      }
+      &.profit { color: #10b981; }
+      &.loss { color: #ef4444; }
     }
-  }
 
-  .summary-detail {
-    text-align: center;
-    padding-top: var(--spacing-md);
-    border-top: 1px solid var(--border-color);
-    color: var(--text-secondary);
-    font-size: 0.9375rem;
+    .stat-label {
+      font-size: 0.9rem;
+      color: #94a3b8;
+    }
   }
 
   /* 日別セクション */
   .day-section {
-    margin-bottom: var(--spacing-2xl);
-    background: var(--bg-secondary);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border-color);
-    overflow: hidden;
-  }
-
-  .day-header-link {
-    text-decoration: none;
-    color: inherit;
-    display: block;
-    transition: background 0.2s ease;
-
-    &:hover {
-      background: rgba(59, 130, 246, 0.05);
-
-      .day-detail-link {
-        opacity: 1;
-      }
-    }
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 16px;
+    padding: 2rem;
+    margin-bottom: 2rem;
   }
 
   .day-header {
-    padding: var(--spacing-lg);
-    background: rgba(0, 0, 0, 0.2);
-    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(100, 116, 139, 0.3);
+    flex-wrap: wrap;
+  }
 
-    h2 {
-      font-size: 1.5rem;
-      margin-bottom: var(--spacing-md);
-      display: flex;
-      align-items: baseline;
-      gap: var(--spacing-md);
-      flex-wrap: wrap;
+  .day-title {
+    font-size: 1.6rem;
+    font-weight: 800;
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 0;
 
-      .day-date {
-        font-weight: 800;
-        color: #60a5fa;
-      }
-
-      .day-venue {
-        font-weight: 600;
-        font-size: 1.125rem;
-        color: var(--text-secondary);
-      }
-
-      .day-detail-link {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: #60a5fa;
-        margin-left: auto;
-        opacity: 0.6;
-        transition: opacity 0.2s ease;
-      }
+    .day-date { color: #fbbf24; }
+    .day-venue {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #cbd5e1;
     }
   }
 
-  .day-stats {
+  .perfect-badge {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    white-space: nowrap;
+  }
+
+  .day-summary {
     display: flex;
+    gap: 1.75rem;
+    margin-bottom: 1.5rem;
     flex-wrap: wrap;
-    gap: var(--spacing-lg);
-    font-size: 0.875rem;
 
-    .stat {
-      color: var(--text-secondary);
+    .summary-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+    }
 
-      &.profit {
-        color: #10b981;
-        font-weight: 700;
-      }
+    .summary-value {
+      color: #60a5fa;
+      font-weight: 700;
 
-      &.loss {
-        color: #ef4444;
-        font-weight: 600;
-      }
+      &.profit { color: #10b981; }
+      &.loss { color: #ef4444; }
     }
   }
 
   /* レース一覧 */
-  .races-list {
-    padding: var(--spacing-lg);
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
+  .races-grid {
+    display: grid;
+    gap: 0.85rem;
   }
 
-  .race-line {
+  .race-card {
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.6) 100%);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: var(--spacing-md);
-    padding: var(--spacing-md) var(--spacing-lg);
-    background: linear-gradient(90deg, rgba(16, 185, 129, 0.15) 0%, rgba(0, 0, 0, 0.2) 100%);
-    border-radius: var(--radius-md);
-    transition: all var(--transition-normal);
+    gap: 1rem;
+    transition: all 0.2s ease;
 
     &:hover {
-      background: linear-gradient(90deg, rgba(16, 185, 129, 0.2) 0%, rgba(0, 0, 0, 0.3) 100%);
+      border-color: rgba(16, 185, 129, 0.5);
+      background: linear-gradient(90deg, rgba(16, 185, 129, 0.18) 0%, rgba(15, 23, 42, 0.75) 100%);
     }
+  }
+
+  .race-info {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    flex: 1;
+    min-width: 0;
 
     .race-number {
-      font-weight: 700;
-      color: #60a5fa;
-      min-width: 50px;
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: #fbbf24;
+      min-width: 5.5rem;
+      white-space: nowrap;
     }
 
     .race-name {
-      flex: 1;
-      color: var(--text-secondary);
-      font-size: 0.9375rem;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+  }
+
+  .race-result {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    flex-shrink: 0;
 
     .hit-badge {
+      background: rgba(16, 185, 129, 0.2);
       color: #10b981;
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
       font-weight: 700;
-      font-size: 0.9375rem;
+      font-size: 0.85rem;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      white-space: nowrap;
+    }
+
+    .bet-info {
+      color: #c4b5fd;
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
     }
 
     .payout {
+      font-size: 1.15rem;
       font-weight: 800;
-      color: #10b981;
-      font-size: 1.125rem;
-      margin-left: var(--spacing-sm);
+      color: #fbbf24;
+      white-space: nowrap;
+      min-width: 5rem;
+      text-align: right;
     }
   }
 
   .no-hits {
-    padding: var(--spacing-lg);
+    padding: 1.25rem;
     text-align: center;
-    color: var(--text-tertiary);
-    font-size: 0.875rem;
+    color: #94a3b8;
+    font-size: 0.9rem;
+    background: rgba(15, 23, 42, 0.4);
+    border-radius: 8px;
   }
 
-  /* フッター */
+  .day-footer {
+    margin-top: 1.25rem;
+    text-align: right;
+
+    .day-detail-link {
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+
+      &:hover { color: #93c5fd; }
+    }
+  }
+
+  /* ページフッター */
   .page-footer {
-    margin-top: var(--spacing-2xl);
-    padding-top: var(--spacing-2xl);
-    border-top: 1px solid var(--border-color);
-    text-align: center;
+    margin-top: 2.5rem;
+    padding-top: 2rem;
+    border-top: 1px solid rgba(100, 116, 139, 0.3);
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-back, .btn-primary {
+    display: inline-block;
+    padding: 0.8rem 1.6rem;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 700;
+    transition: all 0.2s ease;
   }
 
   .btn-back {
-    display: inline-block;
-    padding: var(--spacing-md) var(--spacing-xl);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    text-decoration: none;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-    font-weight: 600;
-    transition: all var(--transition-normal);
+    background: rgba(100, 116, 139, 0.25);
+    color: #cbd5e1;
+    border: 1px solid rgba(100, 116, 139, 0.5);
 
-    &:hover {
-      background: var(--bg-tertiary);
-      transform: translateY(-2px);
-    }
+    &:hover { background: rgba(100, 116, 139, 0.4); }
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    color: #fff;
+
+    &:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
   }
 
   /* レスポンシブ */
   @media (max-width: 768px) {
-    .page-header h1 {
-      font-size: 1.5rem;
-    }
+    .page-header .title { font-size: 1.6rem; }
+    .stat-card .stat-value { font-size: 1.5rem; }
+    .day-section { padding: 1.25rem; }
+    .day-title { font-size: 1.25rem; }
+    .day-title .day-venue { font-size: 0.95rem; }
 
-    .summary-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .summary-card .summary-value {
-      font-size: 1.5rem;
-    }
-
-    .day-header h2 {
-      font-size: 1.25rem;
+    .race-card {
       flex-direction: column;
-      gap: var(--spacing-xs);
+      align-items: stretch;
+      gap: 0.6rem;
     }
 
-    .day-stats {
+    .race-info {
       flex-direction: column;
-      gap: var(--spacing-xs);
+      gap: 0.2rem;
+
+      .race-number { min-width: auto; }
+      .race-name { white-space: normal; }
     }
 
-    .race-line {
-      flex-wrap: wrap;
-      gap: var(--spacing-sm);
+    .race-result {
+      justify-content: space-between;
+      gap: 0.5rem;
 
-      .race-number {
-        min-width: auto;
-      }
-
-      .race-name {
-        flex: 1 1 100%;
-        order: 2;
-      }
-
-      .payout {
-        margin-left: 0;
-      }
+      .payout { min-width: auto; }
     }
   }
 </style>
