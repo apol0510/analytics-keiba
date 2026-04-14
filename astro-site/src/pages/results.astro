@@ -1,0 +1,36 @@
+---
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+
+let redirectUrl = '/archive/';
+
+try {
+  const archivePath = join(process.cwd(), 'src', 'data', 'archiveResults.json');
+  if (existsSync(archivePath)) {
+    const archive = JSON.parse(readFileSync(archivePath, 'utf-8'));
+
+    // nested { YYYY: { MM: {...} } } 形式と flat array の両対応
+    if (Array.isArray(archive) && archive.length > 0) {
+      const [y, m] = archive[0].date.split('-');
+      redirectUrl = `/archive/${y}/${m}/`;
+    } else if (archive && typeof archive === 'object') {
+      const years = Object.keys(archive).sort().reverse();
+      if (years.length > 0) {
+        const months = Object.keys(archive[years[0]]).sort().reverse();
+        if (months.length > 0) {
+          redirectUrl = `/archive/${years[0]}/${months[0]}/`;
+        }
+      }
+    }
+  }
+} catch (error) {
+  // fallback は今月
+}
+
+if (redirectUrl === '/archive/') {
+  const now = new Date();
+  redirectUrl = `/archive/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/`;
+}
+
+return Astro.redirect(redirectUrl);
+---

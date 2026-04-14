@@ -1,0 +1,56 @@
+---
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+
+export const prerender = false;
+
+const { year, month, day } = Astro.params;
+const date = `${year}-${month}-${day}`;
+
+let foundType: 'jra' | 'nankan' | null = null;
+let redirectUrl: string | null = null;
+
+// JRA (flat array)
+try {
+  const jraPath = join(process.cwd(), 'src', 'data', 'archiveResultsJra.json');
+  if (existsSync(jraPath)) {
+    const jra = JSON.parse(readFileSync(jraPath, 'utf-8'));
+    if (Array.isArray(jra) && jra.some((e: any) => e.date === date)) {
+      foundType = 'jra';
+      redirectUrl = `/archive-jra/${year}/${month}/`;
+    }
+  }
+} catch (e) { /* noop */ }
+
+// Nankan (nested)
+if (!foundType) {
+  try {
+    const nankanPath = join(process.cwd(), 'src', 'data', 'archiveResults.json');
+    if (existsSync(nankanPath)) {
+      const nankan = JSON.parse(readFileSync(nankanPath, 'utf-8'));
+      if (nankan?.[year]?.[month]?.[day]) {
+        foundType = 'nankan';
+        redirectUrl = `/archive/${year}/${month}/`;
+      }
+    }
+  } catch (e) { /* noop */ }
+}
+
+if (foundType && redirectUrl) {
+  return Astro.redirect(redirectUrl);
+}
+
+// データなし: 404 相当の「該当データなし」ページを返す
+Astro.response.status = 404;
+---
+<BaseLayout title={`${date} の結果は見つかりません`} description="指定された日付の結果データは存在しません">
+  <main style="max-width: 720px; margin: 4rem auto; padding: 0 1rem; text-align: center;">
+    <h1>該当データなし</h1>
+    <p>{date} の結果データは現在公開されていません。</p>
+    <p style="margin-top: 2rem;">
+      <a href="/archive-jra/">中央競馬の結果一覧</a>　/
+      <a href="/archive/">南関競馬の結果一覧</a>
+    </p>
+  </main>
+</BaseLayout>

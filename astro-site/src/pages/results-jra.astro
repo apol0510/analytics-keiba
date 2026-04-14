@@ -1,0 +1,26 @@
+---
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+
+let redirectUrl = '/archive-jra/';
+
+try {
+  const archivePath = join(process.cwd(), 'src', 'data', 'archiveResultsJra.json');
+  if (existsSync(archivePath)) {
+    const archive = JSON.parse(readFileSync(archivePath, 'utf-8'));
+    if (Array.isArray(archive) && archive.length > 0) {
+      const [y, m] = archive[0].date.split('-');
+      redirectUrl = `/archive-jra/${y}/${m}/`;
+    }
+  }
+} catch (error) {
+  // fallback は今月
+}
+
+if (redirectUrl === '/archive-jra/') {
+  const now = new Date();
+  redirectUrl = `/archive-jra/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/`;
+}
+
+return Astro.redirect(redirectUrl);
+---
