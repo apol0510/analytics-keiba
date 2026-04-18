@@ -59,33 +59,42 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE="${{ steps.date.outputs.date }}"
+          YEAR="${DATE:0:4}"
+          MONTH="${DATE:5:2}"
+          BASE="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/${YEAR}/${MONTH}"
 
-          # keiba-data-sharedに結果データがあるかチェック
-          RESULT_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/${DATE:0:4}/${DATE:5:2}/${DATE}.json"
+          # per-venueファイル(OOI/FUN/KAW/URA)の存在を確認
+          # 統合JSON(YYYY-MM-DD.json)は生成されないため使用しない
+          VENUE_CODES=("OOI" "FUN" "KAW" "URA")
+          TOTAL_RACES=0
+          FOUND_VENUES=()
 
-          echo "🔍 Checking for Nankan results: $RESULT_URL"
-
-          if curl -sf "$RESULT_URL" > /tmp/result.json; then
-            RACE_COUNT=$(cat /tmp/result.json | jq -r '.races | length')
-            echo "✅ Results found in keiba-data-shared: $RACE_COUNT races"
-
-            # 12レース揃っている場合のみチェック
-            if [ "$RACE_COUNT" -ge 12 ]; then
-              # アーカイブに既に存在するかチェック
-              if grep -q "\"date\": \"$DATE\"" src/data/archiveResults.json; then
-                echo "⏭️  Already processed: $DATE"
-                echo "has_missing=false" >> $GITHUB_OUTPUT
-              else
-                echo "📥 Missing from archive: $DATE"
-                echo "has_missing=true" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "⏭️  Skipped: $RACE_COUNT races (< 12)"
-              echo "has_missing=false" >> $GITHUB_OUTPUT
+          for code in "${VENUE_CODES[@]}"; do
+            URL="${BASE}/${DATE}-${code}.json"
+            if curl -sf "$URL" > /tmp/venue.json; then
+              RC=$(jq -r '.races | length' /tmp/venue.json)
+              TOTAL_RACES=$((TOTAL_RACES + RC))
+              FOUND_VENUES+=("${code}(${RC})")
             fi
-          else
-            echo "⏭️  No results in keiba-data-shared yet"
+          done
+
+          echo "🔍 per-venue検索結果: ${#FOUND_VENUES[@]}会場 ${TOTAL_RACES}レース (${FOUND_VENUES[*]})"
+
+          if [ "$TOTAL_RACES" -eq 0 ]; then
+            echo "⏭️  No Nankan results in keiba-data-shared yet (全会場404)"
             echo "has_missing=false" >> $GITHUB_OUTPUT
+          elif [ "$TOTAL_RACES" -lt 12 ]; then
+            echo "⏭️  Skipped: $TOTAL_RACES races (< 12)"
+            echo "has_missing=false" >> $GITHUB_OUTPUT
+          else
+            # アーカイブに既に存在するかチェック
+            if grep -q "\"date\": \"$DATE\"" src/data/archiveResults.json; then
+              echo "⏭️  Already processed: $DATE"
+              echo "has_missing=false" >> $GITHUB_OUTPUT
+            else
+              echo "📥 Missing from archive: $DATE"
+              echo "has_missing=true" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Import missing results
