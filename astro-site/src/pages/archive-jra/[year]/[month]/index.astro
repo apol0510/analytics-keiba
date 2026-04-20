@@ -96,13 +96,15 @@ const pageDescription = monthData.length > 0
             </div>
           </section>
 
+          {/* 買い目点数に関する注記（intelligence 方式に合わせて点数は非公開） */}
+          <p class="rule-note">※買い目は内部ルールに基づき調整しています</p>
+
           {/* 日別アーカイブ */}
           {monthData.map((dayData: any) => {
             const [, , day] = dayData.date.split('-');
             const venueLabel = Array.isArray(dayData.venues) && dayData.venues.length > 0
               ? dayData.venues.join('・')
               : dayData.venue;
-            const totalBetPoints = (dayData.totalRaces || 0) * (dayData.betPointsPerRace || 0);
             const hitRaces = sortRacesByVenueAndNumber(
               (dayData.races || []).filter((race: any) => race.isHit),
               dayData.venues
@@ -125,11 +127,6 @@ const pageDescription = monthData.length > 0
                   <div class="summary-item">
                     📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span>
                   </div>
-                  {totalBetPoints > 0 && (
-                    <div class="summary-item">
-                      🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
-                    </div>
-                  )}
                   <div class="summary-item">
                     💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span>
                   </div>
@@ -147,9 +144,6 @@ const pageDescription = monthData.length > 0
                         </div>
                         <div class="race-result">
                           <div class="hit-badge">✅ 的中</div>
-                          {race.bettingPoints && (
-                            <div class="bet-info">馬単{race.bettingPoints}点</div>
-                          )}
                           {race.umatan?.payout > 0 && (
                             <div class="payout">¥{race.umatan.payout.toLocaleString()}</div>
                           )}
@@ -221,6 +215,15 @@ const pageDescription = monthData.length > 0
       font-size: 1.05rem;
       color: #cbd5e1;
     }
+  }
+
+  /* 買い目ルール注記 (点数非公開方針) */
+  .rule-note {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin: 0 0 2rem;
+    opacity: 0.85;
   }
 
   /* 月間サマリーカード */
