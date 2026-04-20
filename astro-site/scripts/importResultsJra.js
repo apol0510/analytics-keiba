@@ -128,7 +128,8 @@ async function fetchSharedResults(date, venue = 'jra') {
 async function fetchAndMergeVenueResults(date, year, month, GITHUB_TOKEN) {
   const owner = 'apol0510';
   const repo = 'keiba-data-shared';
-  const venueCodesJRA = ['TOK', 'KYO', 'HAN', 'NAK', 'CHU', 'KOK', 'NII', 'FUK', 'SAP', 'HAK'];
+  // keiba-data-shared の公式 venue-codes に合わせる (福島=FKS, 函館=HKD)
+  const venueCodesJRA = ['TOK', 'KYO', 'HAN', 'NAK', 'CHU', 'KOK', 'NII', 'FKS', 'SAP', 'HKD'];
 
   const venues = [];
   let allRaces = [];
@@ -307,6 +308,7 @@ function verifyResults(prediction, results) {
     // 会場名を正規化（略称対応）
     const normalizeVenue = (v) => {
       if (!v) return '';
+      // keiba-data-shared 公式 venue-codes に合わせる (福島=FKS, 函館=HKD)
       const venueMap = {
         '京都': 'KYO', 'KYO': 'KYO',
         '小倉': 'KOK', 'KOK': 'KOK',
@@ -315,8 +317,8 @@ function verifyResults(prediction, results) {
         '阪神': 'HAN', 'HAN': 'HAN',
         '新潟': 'NII', 'NII': 'NII',
         '札幌': 'SAP', 'SAP': 'SAP',
-        '函館': 'HAK', 'HAK': 'HAK',
-        '福島': 'FUK', 'FUK': 'FUK',
+        '函館': 'HKD', 'HKD': 'HKD',
+        '福島': 'FKS', 'FKS': 'FKS',
         '中京': 'CHU', 'CHU': 'CHU'
       };
       return venueMap[v] || v;
