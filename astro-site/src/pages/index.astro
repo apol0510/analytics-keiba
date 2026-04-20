@@ -6,51 +6,41 @@ import archiveResults from '../data/archiveResults.json';
 import { weeklyResults, dailyTabs, dailyResultsData } from './standard-predictions.astro';
 
 // archiveResults.jsonから最新日のデータを取得
+// 2026-04-17 以降: 配列形式 (importResults.js v2+ の unshift 順)
 function getLatestDayData() {
-    const years = Object.keys(archiveResults).sort().reverse();
-    if (years.length === 0) return null;
-
-    const latestYear = years[0];
-    const months = Object.keys(archiveResults[latestYear]).sort().reverse();
-    if (months.length === 0) return null;
-
-    const latestMonth = months[0];
-    const days = Object.keys(archiveResults[latestYear][latestMonth]).sort().reverse();
-    if (days.length === 0) return null;
-
-    const latestDay = days[0];
-    const dayData = archiveResults[latestYear][latestMonth][latestDay];
-
-    return {
-        year: latestYear,
-        month: latestMonth,
-        day: latestDay,
-        ...dayData
-    };
+    if (!Array.isArray(archiveResults) || archiveResults.length === 0) return null;
+    const latest = archiveResults[0];
+    if (!latest || !latest.date) return null;
+    const [year, month, day] = latest.date.split('-');
+    return { year, month, day, ...latest };
 }
 
 const latestResult = getLatestDayData();
 
-// 昨日の結果データを作成
-const yesterdayResults = latestResult ? {
-    date: `${parseInt(latestResult.month)}月${parseInt(latestResult.day)}日`,
-    track: latestResult.venue,
-    hitCount: latestResult.hitRaces,
-    totalCount: latestResult.totalRaces,
-    hitRate: latestResult.totalRaces > 0 ? Math.round((latestResult.hitRaces / latestResult.totalRaces) * 100) : 0,
-    totalPayout: latestResult.totalPayout,
-    totalBetPoints: latestResult.races.reduce((sum, race) => sum + (race.betPoints || 0), 0),
-    recoveryRate: (() => {
-        const totalPoints = latestResult.races.reduce((sum, race) => sum + (race.betPoints || 0), 0);
-        const investment = totalPoints * 100; // 1点=100円
-        return investment > 0 ? Math.round((latestResult.totalPayout / investment) * 100) : 0;
-    })(),
-    results: latestResult.races.map(race => ({
-        raceNumber: race.raceNumber,
-        result: race.hit ? 'win' : 'lose',
-        payout: race.payout
-    }))
-} : null;
+// 昨日の結果データを作成 (新フィールド名: bettingPoints / isHit / umatan.payout / returnRate)
+const yesterdayResults = latestResult ? (() => {
+    const races = Array.isArray(latestResult.races) ? latestResult.races : [];
+    const totalBetPoints = races.reduce((sum, r) => sum + (r.bettingPoints || r.betPoints || 0), 0);
+    const jsonRate = latestResult.returnRate ?? latestResult.recoveryRate;
+    const fallbackRate = totalBetPoints > 0
+        ? Math.round((latestResult.totalPayout / (totalBetPoints * 100)) * 100)
+        : 0;
+    return {
+        date: `${parseInt(latestResult.month)}月${parseInt(latestResult.day)}日`,
+        track: latestResult.venue,
+        hitCount: latestResult.hitRaces,
+        totalCount: latestResult.totalRaces,
+        hitRate: latestResult.totalRaces > 0 ? Math.round((latestResult.hitRaces / latestResult.totalRaces) * 100) : 0,
+        totalPayout: latestResult.totalPayout,
+        totalBetPoints,
+        recoveryRate: jsonRate ?? fallbackRate,
+        results: races.map(race => ({
+            raceNumber: race.raceNumber,
+            result: (race.isHit ?? race.hit) ? 'win' : 'lose',
+            payout: race.umatan?.payout ?? race.payout ?? 0,
+        })),
+    };
+})() : null;
 // メインレース（11R）のデータを取得 - 防御的プログラミング実装
 const mainRace = (allRacesData && Array.isArray(allRacesData.races))
     ? allRacesData.races.find(race => race.isMainRace === true)

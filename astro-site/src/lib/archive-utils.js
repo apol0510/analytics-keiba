@@ -8,28 +8,22 @@ import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 
 /**
  * archiveResults.jsonから最新日のデータを取得
+ * 2026-04-17 以降: 配列形式 ({date:"YYYY-MM-DD", ...} が unshift 順) に統一
  * @returns {Object|null} 最新日のデータ（year, month, day, venue, races等を含む）
  */
 export function getLatestDayData() {
-    const years = Object.keys(archiveResults).sort().reverse();
-    if (years.length === 0) return null;
+    if (!Array.isArray(archiveResults) || archiveResults.length === 0) return null;
 
-    const latestYear = years[0];
-    const months = Object.keys(archiveResults[latestYear]).sort().reverse();
-    if (months.length === 0) return null;
+    // 先頭が最新 (importResults.js で unshift 保存)
+    const latest = archiveResults[0];
+    if (!latest || !latest.date) return null;
 
-    const latestMonth = months[0];
-    const days = Object.keys(archiveResults[latestYear][latestMonth]).sort().reverse();
-    if (days.length === 0) return null;
-
-    const latestDay = days[0];
-    const dayData = archiveResults[latestYear][latestMonth][latestDay];
-
+    const [year, month, day] = latest.date.split('-');
     return {
-        year: latestYear,
-        month: latestMonth,
-        day: latestDay,
-        ...dayData
+        year,
+        month,
+        day,
+        ...latest,
     };
 }
 
@@ -41,38 +35,38 @@ export function convertToYesterdayResults() {
     const latestData = getLatestDayData();
     if (!latestData) return null;
 
-    // 🔴 回収率: JSONに保存されている値を優先使用、なければ計算（2025-11-09修正）
-    // 問題: betPointsから再計算すると、JSONの回収率（189%等）が無視される
-    // 解決: latestData.recoveryRateを優先使用（三連複と同じロジック）
-    let recoveryRate = latestData.recoveryRate || 0;
-    const totalBetPoints = latestData.races.reduce((sum, race) => sum + (race.betPoints || 0), 0);
+    // 新フォーマット (配列形式 / importResults.js v2+):
+    //   race.bettingPoints / race.isHit / race.umatan.payout
+    //   latestData.returnRate (旧 recoveryRate 相当)
+    const races = Array.isArray(latestData.races) ? latestData.races : [];
 
-    // betPointsがあってJSONに回収率がない場合のみ計算（フォールバック）
-    if (totalBetPoints > 0 && !latestData.recoveryRate) {
+    // 🔴 回収率: JSONの returnRate を優先。無ければ betPoints 相当から逆算 (フォールバック)
+    let recoveryRate = latestData.returnRate ?? latestData.recoveryRate ?? 0;
+    const totalBetPoints = races.reduce((sum, race) => sum + (race.bettingPoints || race.betPoints || 0), 0);
+
+    if (totalBetPoints > 0 && !latestData.returnRate && !latestData.recoveryRate) {
         const totalInvestment = totalBetPoints * 100; // 1点=100円
         recoveryRate = Math.round((latestData.totalPayout / totalInvestment) * 100);
     }
 
-    // 的中率計算
     const hitRate = latestData.totalRaces > 0 ? Math.round((latestData.hitRaces / latestData.totalRaces) * 100) : 0;
 
-    // results配列変換
-    const results = latestData.races.map(race => ({
+    const results = races.map(race => ({
         race: race.raceNumber,
-        result: race.hit ? 'win' : 'loss',
-        payout: race.payout
+        result: (race.isHit ?? race.hit) ? 'win' : 'loss',
+        payout: race.umatan?.payout ?? race.payout ?? 0,
     }));
 
     return {
         date: `${latestData.month}/${latestData.day}`,
         track: `${latestData.venue}競馬`,
-        hitRate: hitRate,
+        hitRate,
         hitCount: latestData.hitRaces,
         totalCount: latestData.totalRaces,
         totalPayout: latestData.totalPayout,
-        recoveryRate: recoveryRate,
-        totalBetPoints: totalBetPoints,
-        results: results
+        recoveryRate,
+        totalBetPoints,
+        results,
     };
 }
 
