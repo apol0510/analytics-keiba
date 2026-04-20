@@ -466,8 +466,9 @@ function saveArchive(date, venue, raceResults) {
   // 既存エントリを削除（同じ日付があれば上書き）
   archive = archive.filter(entry => entry.date !== date);
 
-  // 新しいエントリを追加
-  archive.unshift(newEntry);
+  // 新しいエントリを追加し、日付降順でソート (表示側も同順に依存)
+  archive.push(newEntry);
+  archive.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 旧フォーマット混入チェック（再発防止）

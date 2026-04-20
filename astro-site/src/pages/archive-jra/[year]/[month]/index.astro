@@ -23,10 +23,13 @@ let monthStats = {
 try {
   if (existsSync(archivePath)) {
     const allData = JSON.parse(readFileSync(archivePath, 'utf-8'));
-    monthData = allData.filter((entry: any) => {
-      const [y, m] = entry.date.split('-');
-      return y === year && m === month;
-    });
+    monthData = allData
+      .filter((entry: any) => {
+        const [y, m] = entry.date.split('-');
+        return y === year && m === month;
+      })
+      // 日付 (YYYY-MM-DD) 降順で安定ソート。import 順に依存しない
+      .sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
     monthData.forEach((entry: any) => {
       monthStats.totalDays++;
       monthStats.totalRaces += entry.totalRaces || 0;
