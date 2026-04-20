@@ -207,6 +207,38 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 </div>
             </section>
 
+            <!-- 会場別導線 (中央メイン / 南関サブ) -->
+            <section class="venue-selector">
+                <div class="venue-selector-header">
+                    <h2>どちらの競馬をお探しですか？</h2>
+                    <p>中央競馬・地方競馬の両方を AI で分析しています</p>
+                </div>
+
+                <div class="venue-selector-grid">
+                    <article class="venue-card venue-card--primary">
+                        <div class="venue-card__badge">メイン</div>
+                        <h3 class="venue-card__title">🏇 中央競馬 <span class="venue-card__tag">JRA</span></h3>
+                        <p class="venue-card__desc">東京・中山・京都・阪神・中京・新潟・福島・小倉・札幌・函館の全10会場を完全対応。重賞レースも分析。</p>
+                        <ul class="venue-card__links">
+                            <li><a href="/free-prediction-jra/">🎁 無料で中央競馬予想を見る →</a></li>
+                            <li><a href="/archive-jra/">🏆 中央競馬の的中実績を見る</a></li>
+                            <li><a href="/pricing/#jra">💰 中央競馬の料金プラン</a></li>
+                        </ul>
+                    </article>
+
+                    <article class="venue-card venue-card--secondary">
+                        <div class="venue-card__badge venue-card__badge--sub">サブ</div>
+                        <h3 class="venue-card__title">🏁 南関競馬</h3>
+                        <p class="venue-card__desc">大井・川崎・船橋・浦和の南関東4場を対応。26年の予想経験と12年分のデータに基づく高精度分析。</p>
+                        <ul class="venue-card__links">
+                            <li><a href="/free-prediction/">🎁 無料で南関競馬予想を見る →</a></li>
+                            <li><a href="/archive/">🏆 南関競馬の的中実績を見る</a></li>
+                            <li><a href="/pricing/#nankan">💰 南関競馬の料金プラン</a></li>
+                        </ul>
+                    </article>
+                </div>
+            </section>
+
             <!-- 的中実績セクション -->
             <section style="padding: 60px 20px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);">
                 <div class="container" style="max-width: 1200px; margin: 0 auto;">
@@ -372,9 +404,14 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         ✓ 会員登録不要<br>
                         ✓ 3つの戦略で最適化
                     </div>
-                    <a href="/free-prediction/" class="free-cta-button">
-                        無料予想を見る →
-                    </a>
+                    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                        <a href="/free-prediction-jra/" class="free-cta-button">
+                            🏇 無料で中央競馬予想を見る →
+                        </a>
+                        <a href="/free-prediction/" class="free-cta-button" style="background: linear-gradient(135deg, #475569 0%, #334155 100%);">
+                            🏁 無料で南関競馬予想を見る →
+                        </a>
+                    </div>
                 </div>
             </section>
 </BaseLayout>
@@ -819,6 +856,134 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 grid-template-columns: 1fr;
                 gap: 30px;
             }
+        }
+
+        /* =======================================================
+           会場別導線 (中央 / 南関) - トップページ専用
+           ======================================================= */
+        .venue-selector {
+            max-width: 1100px;
+            margin: 60px auto;
+            padding: 0 20px;
+        }
+        .venue-selector-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .venue-selector-header h2 {
+            font-size: 1.9rem;
+            font-weight: 800;
+            color: #f1f5f9;
+            margin: 0 0 10px;
+        }
+        .venue-selector-header p {
+            color: #94a3b8;
+            font-size: 1rem;
+            margin: 0;
+        }
+        .venue-selector-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+        @media (min-width: 900px) {
+            .venue-selector-grid {
+                grid-template-columns: 1.1fr 0.9fr;
+            }
+        }
+        .venue-card {
+            position: relative;
+            padding: 28px 28px 24px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .venue-card--primary {
+            border-color: rgba(59, 130, 246, 0.45);
+            box-shadow: 0 8px 28px rgba(59, 130, 246, 0.18);
+        }
+        .venue-card--primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 36px rgba(59, 130, 246, 0.28);
+        }
+        .venue-card--secondary {
+            border-color: rgba(148, 163, 184, 0.25);
+        }
+        .venue-card__badge {
+            position: absolute;
+            top: -11px;
+            left: 22px;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        .venue-card__badge--sub {
+            background: rgba(148, 163, 184, 0.3);
+            color: #e2e8f0;
+            box-shadow: none;
+        }
+        .venue-card__title {
+            margin: 8px 0 10px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .venue-card__tag {
+            font-size: 0.75rem;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: rgba(59, 130, 246, 0.25);
+            color: #93c5fd;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+        .venue-card__desc {
+            color: #cbd5e1;
+            font-size: 0.95rem;
+            line-height: 1.55;
+            margin: 0 0 18px;
+        }
+        .venue-card__links {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            gap: 10px;
+        }
+        .venue-card__links li { margin: 0; }
+        .venue-card__links a {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: 10px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            color: #e2e8f0;
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+        }
+        .venue-card__links a:hover {
+            background: rgba(59, 130, 246, 0.15);
+            border-color: rgba(59, 130, 246, 0.4);
+            transform: translateX(3px);
+        }
+        .venue-card--primary .venue-card__links li:first-child a {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.2));
+            border-color: rgba(59, 130, 246, 0.5);
+            font-weight: 600;
         }
 </style>
 
