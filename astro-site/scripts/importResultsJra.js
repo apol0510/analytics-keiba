@@ -208,7 +208,14 @@ function loadPrediction(date, venue) {
 }
 
 /**
- * 買い目の点数を計算
+ * 買い目の点数を計算（表示用 / 公開向け）
+ *
+ * 運用ルール:
+ *   1レースあたり 8〜12点。お客向けに見せる点数はこの範囲で統一する。
+ *   「抑え」は内部保険であり公開点数には含めない。
+ *
+ * 的中判定は引き続き本線＋抑え両方を対象とする (checkUmatanHit)。
+ * ここで返す値は archive 表示・saveArchive 集計用のみ。
  */
 function calculateBettingPoints(bettingLine) {
   // 買い目解析: "9-16.13.2.3.8.11(抑え12.4.5.6.14.15.10)"
@@ -217,21 +224,10 @@ function calculateBettingPoints(bettingLine) {
 
   const aitePart = match[2];
 
-  // 本線相手馬を抽出
+  // 本線相手馬のみ抽出 (抑え括弧は除外)
   const mainPart = aitePart.replace(/\(抑え.+\)/, '');
   const mainAite = mainPart.split('.').filter(n => n.match(/^\d+$/));
-  const mainPoints = mainAite.length;
-
-  // 抑え馬を抽出
-  let osaePoints = 0;
-  const osaeMatch = aitePart.match(/\(抑え([0-9.]+)\)/);
-  if (osaeMatch) {
-    const osaeAite = osaeMatch[1].split('.').filter(n => n.match(/^\d+$/));
-    osaePoints = osaeAite.length;
-  }
-
-  // 合計点数（本線 + 抑え）
-  return mainPoints + osaePoints;
+  return mainAite.length;
 }
 
 /**
@@ -353,8 +349,10 @@ function verifyResults(prediction, results) {
     const bettingLines = predRace.bettingLines?.umatan || [];
     const hits = bettingLines.filter(line => checkUmatanHit(line, race));
 
-    // 買い目点数を計算（全ラインの合計）
-    const totalPoints = bettingLines.reduce((sum, line) => sum + calculateBettingPoints(line), 0);
+    // 買い目点数を計算（全ラインの本線合計 / 最大12点に cap）
+    // 運用ルール: お客向け表示は 1レースあたり最大12点
+    const rawPoints = bettingLines.reduce((sum, line) => sum + calculateBettingPoints(line), 0);
+    const totalPoints = Math.min(rawPoints, 12);
 
     const first = race.results[0];
     const second = race.results[1];
@@ -549,67 +547,12 @@ async function main() {
       prediction = loadPrediction(date, venue);
       console.log(`✅ 予想データ読み込み完了`);
     } catch (error) {
-      // 予想データがない場合、keiba-data-sharedに本当に存在しないか二重確認
-      console.log(`⏭️  予想データが見つかりません: ${date}`);
-
-      // JRA会場コードマップ（venue日本語名 → 会場コード3文字）
-      const venueCodeMap = {
-        '東京': 'TOK', '中山': 'NAK', '京都': 'KYO', '阪神': 'HAN',
-        '中京': 'CHU', '小倉': 'KOK', '新潟': 'NII', '福島': 'FKS',
-        '札幌': 'SAP', '函館': 'HKD'
-      };
-      const venueCode = venueCodeMap[venue] || venue;
-
-      // keiba-data-sharedに予想データが存在するか確認（会場別ファイル）
-      const [year, month] = date.split('-');
-      const sharedPredictionPath = `jra/predictions/${year}/${month}/${date}-${venueCode}.json`;
-      const checkUrl = `https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/${sharedPredictionPath}`;
-
-      try {
-        console.log(`\n🔍 keiba-data-sharedの予想データ存在確認中...`);
-        const checkResponse = await fetch(checkUrl);
-
-        if (checkResponse.ok) {
-          // 予想データが存在するのに読み込めなかった → 異常
-          console.error(`\n🚨 異常検知：予想データが存在するのに読み込めませんでした！`);
-          console.error(`   keiba-data-shared: ${sharedPredictionPath} (存在)`);
-          console.error(`   keiba-intelligence: 読み込み失敗`);
-          console.error(`   venue: ${venue}`);
-          console.error(`   元のエラー: ${error.message}\n`);
-
-          // アラート送信
-          await sendAlert('import-results-failure', date, {
-            error: error.message,
-            venue: venue,
-            venueIsUndefined: venue === undefined || venue === 'undefined',
-            sharedPredictionExists: true,
-            sharedPredictionPath: sharedPredictionPath,
-            localSearchPath: error.message
-          }, {
-            timestamp: new Date().toISOString(),
-            critical: true
-          });
-
-          // エラーとして終了（修正が必要）
-          process.exit(1);
-        } else {
-          // 予想データが存在しない → 正常（SEO対策用の結果データのみ）
-          console.log(`   keiba-data-sharedにはSEO対策用の結果データのみ保存されています`);
-          console.log(`   keiba-intelligenceでは的中判定をスキップします\n`);
-          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-          console.log(`⏭️  処理完了: 予想データなし（スキップ）`);
-          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-          process.exit(0); // 正常終了
-        }
-      } catch (checkError) {
-        // ネットワークエラー等でチェック失敗 → 警告して正常終了
-        console.warn(`⚠️  keiba-data-sharedの予想データ存在確認に失敗（ネットワークエラー？）`);
-        console.warn(`   処理を継続します（予想データなしとして扱います）\n`);
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`⏭️  処理完了: 予想データなし（スキップ）`);
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-        process.exit(0); // 正常終了
-      }
+      // ローカルに予想データがなければスキップ（analytics-keibaでは正常）
+      console.log(`⏭️  ローカル予想なし → スキップ: ${date} (venue: ${venue})`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`⏭️  処理完了: 予想データなし（スキップ）`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+      process.exit(0); // 正常終了
     }
 
     // 3. 的中判定
