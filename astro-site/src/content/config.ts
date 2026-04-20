@@ -8,7 +8,7 @@ const blogCollection = defineCollection({
     pubDate: z.date(),
     tags: z.array(z.string()).optional(),
     category: z.string().optional().default('機械学習'),
-    author: z.string().optional().default('NANKANアナリティクス'),
+    author: z.string().optional().default('KEIBA Analytics'),
     heroImage: z.string().optional(),
     featured: z.boolean().optional().default(false),
   }),

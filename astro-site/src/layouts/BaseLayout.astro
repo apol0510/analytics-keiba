@@ -10,8 +10,20 @@ export interface Props {
   type?: string;
 }
 
-const { title, description = 'AI技術で実現する競馬予想の未来。XGBoost・LSTMによる高精度分析で的中率87%、回収率156%を実現。', image, type = 'website' } = Astro.props;
+// ブランド定義（サイト全体で統一）
+const SITE_BRAND = 'KEIBA Analytics';
+const SITE_BRAND_JA = '競馬アナリティクス';
+const SITE_TAGLINE = '中央競馬・地方競馬をAIで分析';
+const DEFAULT_DESCRIPTION = `${SITE_BRAND_JA}（${SITE_BRAND}）— ${SITE_TAGLINE}。XGBoost・LSTMによる高精度予想で的中率87%、回収率156%を実現。`;
+
+const { title, description = DEFAULT_DESCRIPTION, image, type = 'website' } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+
+// 最終タイトル: ページタイトル + ブランド (ページタイトルが未指定ならブランドのみ)
+const pageTitle = title && title.trim().length > 0 ? title : '';
+const fullTitle = pageTitle
+  ? `${pageTitle}｜${SITE_BRAND}｜${SITE_BRAND_JA}`
+  : `${SITE_BRAND}｜${SITE_BRAND_JA}`;
 ---
 
 <!DOCTYPE html>
@@ -19,17 +31,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{fullTitle}</title>
     <meta name="description" content={description}>
-    
+
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="apple-touch-icon" sizes="180x180" href="/favicon.svg">
     <link rel="manifest" href="/site.webmanifest">
-    
+
     <!-- SEO -->
-    <meta name="keywords" content="競馬,AI,機械学習,南関競馬,データサイエンス,Python,予想,分析" />
+    <meta name="keywords" content="競馬,AI,機械学習,中央競馬,地方競馬,競馬アナリティクス,KEIBA Analytics,データサイエンス,Python,予想,分析" />
     <link rel="canonical" href={canonicalURL} />
 
     <!-- Google Search Console 検証用（実際の検証コードは後で置き換え） -->
@@ -47,14 +59,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content={type} />
     <meta property="og:url" content={canonicalURL} />
-    <meta property="og:title" content={title} />
+    <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
+    <meta property="og:site_name" content={`${SITE_BRAND}｜${SITE_BRAND_JA}`} />
+    <meta property="og:locale" content="ja_JP" />
     {image && <meta property="og:image" content={new URL(image, Astro.site)} />}
-    
+
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content={canonicalURL} />
-    <meta property="twitter:title" content={title} />
+    <meta property="twitter:title" content={fullTitle} />
     <meta property="twitter:description" content={description} />
     {image && <meta property="twitter:image" content={new URL(image, Astro.site)} />}
 
@@ -62,9 +76,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <script type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
       "@type": "WebSite",
-      "name": "NANKANアナリティクス",
+      "name": SITE_BRAND,
+      "alternateName": SITE_BRAND_JA,
       "description": description,
-      "url": "https://nankan-analytics.keiba.link"
+      "url": "https://nankan-analytics.keiba.link",
+      "inLanguage": "ja-JP"
     })} />
     
     <!-- Tailwind CSS CDN削除（CORSエラー回避） -->
@@ -126,18 +142,36 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         }
 
         .logo {
-            font-size: 24px;
             font-weight: 700;
             color: var(--accent-color);
             text-decoration: none;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            line-height: 1.1;
         }
-        
+
         .logo-icon {
             font-size: 28px;
             filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.3));
+        }
+
+        .logo-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .logo-brand {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+        .logo-sub {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--accent-text-color);
+            opacity: 0.9;
+            letter-spacing: 0.05em;
         }
 
         .nav-wrapper {
@@ -530,14 +564,30 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         }
         
         .footer-logo {
-            font-size: 1.4rem;
             font-weight: 700;
             color: var(--accent-color);
             margin-bottom: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
+            gap: 10px;
+            line-height: 1.1;
+        }
+        .footer-logo-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            align-items: flex-start;
+        }
+        .footer-logo-brand {
+            font-size: 1.3rem;
+        }
+        .footer-logo-sub {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--accent-text-color);
+            opacity: 0.9;
+            letter-spacing: 0.05em;
         }
         
         .footer-tagline {
@@ -616,12 +666,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
                 display: block;
             }
             
-            .logo {
-                font-size: 20px;
+            .logo-brand {
+                font-size: 18px;
             }
-            
+
+            .logo-sub {
+                font-size: 10px;
+            }
+
             .logo-icon {
-                font-size: 24px;
+                font-size: 22px;
             }
             
             .container {
@@ -655,9 +709,12 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <header class="header">
         <div class="container">
             <div class="header-content">
-                <a href="/" class="logo">
+                <a href="/" class="logo" aria-label={`${SITE_BRAND} ${SITE_BRAND_JA}`}>
                     <span class="logo-icon">🤖</span>
-                    NANKANアナリティクス
+                    <span class="logo-text">
+                        <span class="logo-brand">KEIBA Analytics</span>
+                        <span class="logo-sub">競馬アナリティクス</span>
+                    </span>
                 </a>
                 <nav class="nav-wrapper">
                     <ul class="nav-menu" id="nav-menu">
@@ -771,11 +828,14 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
             <div class="footer-bottom">
                 <div class="footer-logo">
                     <span class="logo-icon">🤖</span>
-                    NANKANアナリティクス
+                    <span class="footer-logo-text">
+                        <span class="footer-logo-brand">KEIBA Analytics</span>
+                        <span class="footer-logo-sub">競馬アナリティクス</span>
+                    </span>
                 </div>
-                <p class="footer-tagline">AI技術による科学的競馬投資プラットフォーム</p>
+                <p class="footer-tagline">中央競馬・地方競馬をAIで分析</p>
                 <p class="footer-copyright">
-                    &copy; 2025 NANKANアナリティクス. All rights reserved.
+                    &copy; 2026 KEIBA Analytics. All rights reserved.
                 </p>
                 <p style="margin-top: 0.75rem; font-size: 0.9rem;">
                     <a href="/terms/" style="color: #60a5fa; text-decoration: none;">Terms of Service</a>

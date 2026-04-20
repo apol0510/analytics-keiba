@@ -8,7 +8,7 @@ function validateEmail(email) {
 }
 
 // 統一メール送信関数（SendGrid API）
-export async function sendEmail({ to, subject, html, replyTo, fromName = "NANKANアナリティクス" }) {
+export async function sendEmail({ to, subject, html, replyTo, fromName = "KEIBA Analytics" }) {
     const apiKey = process.env.SENDGRID_API_KEY;
     const fromEmail = process.env.FROM_EMAIL || 'nankan-analytics@keiba.link';
 
@@ -112,7 +112,7 @@ export async function sendContactEmail({ name, email, subject, message }) {
             to: 'nankan.analytics@gmail.com',
             subject: `【お問い合わせ】${subject}`,
             replyTo: email,
-            fromName: 'NANKANアナリティクス システム',
+            fromName: 'KEIBA Analytics システム',
             html: `
                 <!DOCTYPE html>
                 <html>
@@ -129,7 +129,7 @@ export async function sendContactEmail({ name, email, subject, message }) {
                 </head>
                 <body>
                     <div class="header">
-                        <h1>🤖 NANKANアナリティクス</h1>
+                        <h1>🤖 KEIBA Analytics</h1>
                         <p>新しいお問い合わせが届きました</p>
                     </div>
                     <div class="content">
@@ -153,9 +153,9 @@ export async function sendContactEmail({ name, email, subject, message }) {
         // 自動返信メール
         const userResult = await sendEmail({
             to: email,
-            subject: '【NANKANアナリティクス】お問い合わせを受け付けました',
+            subject: '【KEIBA Analytics】お問い合わせを受け付けました',
             replyTo: 'nankan.analytics@gmail.com',
-            fromName: 'NANKANアナリティクス',
+            fromName: 'KEIBA Analytics',
             html: `
                 <!DOCTYPE html>
                 <html>
@@ -173,13 +173,13 @@ export async function sendContactEmail({ name, email, subject, message }) {
                 </head>
                 <body>
                     <div class="header">
-                        <h1>🤖 NANKANアナリティクス</h1>
+                        <h1>🤖 KEIBA Analytics</h1>
                         <p>お問い合わせありがとうございます</p>
                     </div>
                     <div class="content">
                         <p>${name || 'お客'}様</p>
 
-                        <p>この度はNANKANアナリティクスへお問い合わせいただき、誠にありがとうございます。</p>
+                        <p>この度はKEIBA Analyticsへお問い合わせいただき、誠にありがとうございます。</p>
                         <p>以下の内容でお問い合わせを受け付けました。</p>
 
                         <div class="message-copy">
@@ -199,8 +199,8 @@ export async function sendContactEmail({ name, email, subject, message }) {
                         </center>
                     </div>
                     <div class="footer">
-                        <p>NANKANアナリティクス - AI競馬予想システム</p>
-                        <p>© 2025 NANKANアナリティクス. All rights reserved.</p>
+                        <p>KEIBA Analytics - AI競馬予想システム</p>
+                        <p>© 2025 KEIBA Analytics. All rights reserved.</p>
                     </div>
                 </body>
                 </html>
@@ -228,7 +228,7 @@ export async function sendContactEmail({ name, email, subject, message }) {
 export async function sendWelcomeEmail(userEmail) {
     return await sendEmail({
         to: userEmail,
-        subject: '🤖 NANKANアナリティクスへようこそ！',
+        subject: '🤖 KEIBA Analyticsへようこそ！',
         replyTo: 'nankan.analytics@gmail.com',
         html: `
             <!DOCTYPE html>
@@ -247,12 +247,12 @@ export async function sendWelcomeEmail(userEmail) {
             </head>
             <body>
                 <div class="header">
-                    <h1>🤖 NANKANアナリティクス</h1>
+                    <h1>🤖 KEIBA Analytics</h1>
                     <p>AI技術で競馬予想を科学する</p>
                 </div>
                 <div class="content">
                     <h2>ようこそ、${userEmail}さん！</h2>
-                    <p>NANKANアナリティクスにご登録いただき、ありがとうございます。</p>
+                    <p>KEIBA Analyticsにご登録いただき、ありがとうございます。</p>
 
                     <div class="features">
                         <h3>🎁 ご利用可能なサービス</h3>

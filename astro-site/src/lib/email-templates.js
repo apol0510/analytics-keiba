@@ -1,4 +1,4 @@
-// NANKANアナリティクス HTMLメールテンプレート集
+// KEIBA Analytics HTMLメールテンプレート集
 // 南関競馬予想配信用のプロフェッショナルテンプレート
 
 export const emailTemplates = {
@@ -12,7 +12,7 @@ export const emailTemplates = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NANKANアナリティクス</title>
+    <title>KEIBA Analytics</title>
     <style>
         body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4; }
         .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
@@ -31,14 +31,14 @@ export const emailTemplates = {
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏇 NANKANアナリティクス</h1>
+            <h1>🏇 KEIBA Analytics</h1>
             <p>AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム</p>
         </div>
         <div class="content">
             {CONTENT}
         </div>
         <div class="footer">
-            <p>© 2025 NANKANアナリティクス | <a href="https://nankan-analytics.keiba.link/pricing" style="color: #3b82f6;">プラン変更</a> | <a href="#" style="color: #6b7280;">配信停止</a></p>
+            <p>© 2025 KEIBA Analytics | <a href="https://nankan-analytics.keiba.link/pricing" style="color: #3b82f6;">プラン変更</a> | <a href="#" style="color: #6b7280;">配信停止</a></p>
         </div>
     </div>
 </body>
@@ -55,7 +55,7 @@ export const emailTemplates = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>南関競馬予想 - NANKANアナリティクス</title>
+    <title>南関競馬予想 - KEIBA Analytics</title>
     <style>
         body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #0f172a; color: #e2e8f0; }
         .container { max-width: 650px; margin: 0 auto; background-color: #1e293b; }
@@ -92,7 +92,7 @@ export const emailTemplates = {
             <a href="https://nankan-analytics.keiba.link/premium-predictions" class="btn-race">📊 詳細予想を見る</a>
         </div>
         <div class="footer">
-            <p>🤖 AI信頼度: {CONFIDENCE}% | 📈 予想精度向上中 | <a href="https://nankan-analytics.keiba.link" style="color: #10b981;">NANKANアナリティクス</a></p>
+            <p>🤖 AI信頼度: {CONFIDENCE}% | 📈 予想精度向上中 | <a href="https://nankan-analytics.keiba.link" style="color: #10b981;">KEIBA Analytics</a></p>
         </div>
     </div>
 </body>
@@ -109,7 +109,7 @@ export const emailTemplates = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>特別オファー - NANKANアナリティクス</title>
+    <title>特別オファー - KEIBA Analytics</title>
     <style>
         body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
@@ -173,7 +173,7 @@ export const emailTemplates = {
             </div>
         </div>
         <div class="footer">
-            <p>🏆 信頼のAI予想で勝利を掴もう | <a href="https://nankan-analytics.keiba.link" style="color: #60a5fa;">NANKANアナリティクス</a></p>
+            <p>🏆 信頼のAI予想で勝利を掴もう | <a href="https://nankan-analytics.keiba.link" style="color: #60a5fa;">KEIBA Analytics</a></p>
         </div>
     </div>
 </body>
@@ -190,7 +190,7 @@ export const emailTemplates = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ようこそ - NANKANアナリティクス</title>
+    <title>ようこそ - KEIBA Analytics</title>
     <style>
         body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f0f9ff; }
         .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
@@ -219,7 +219,7 @@ export const emailTemplates = {
     <div class="container">
         <div class="header">
             <div class="welcome-icon">🎉</div>
-            <h1>NANKANアナリティクスへようこそ！</h1>
+            <h1>KEIBA Analyticsへようこそ！</h1>
             <p>AI競馬予想の世界へようこそ</p>
         </div>
         <div class="content">
@@ -291,7 +291,7 @@ export const emailTemplates = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>お知らせ - NANKANアナリティクス</title>
+    <title>お知らせ - KEIBA Analytics</title>
     <style>
         body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #fafafa; }
         .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
@@ -311,7 +311,7 @@ export const emailTemplates = {
 <body>
     <div class="container">
         <div class="header">
-            <h1>📢 NANKANアナリティクス お知らせ</h1>
+            <h1>📢 KEIBA Analytics お知らせ</h1>
         </div>
         <div class="content">
             {CONTENT}
@@ -320,8 +320,8 @@ export const emailTemplates = {
             </div>
         </div>
         <div class="footer">
-            <p>今後ともNANKANアナリティクスをよろしくお願いいたします。</p>
-            <p><a href="https://nankan-analytics.keiba.link" style="color: #6366f1;">NANKANアナリティクス</a> | <a href="#" style="color: #6b7280;">配信停止</a></p>
+            <p>今後ともKEIBA Analyticsをよろしくお願いいたします。</p>
+            <p><a href="https://nankan-analytics.keiba.link" style="color: #6366f1;">KEIBA Analytics</a> | <a href="#" style="color: #6b7280;">配信停止</a></p>
         </div>
     </div>
 </body>
