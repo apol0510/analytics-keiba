@@ -47,24 +47,46 @@ jobs:
           DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
           DATE_SINGLE: ${{ github.event.client_payload.date }}
           SOURCE: ${{ github.event.client_payload.source }}
+          CATEGORY: ${{ github.event.client_payload.category }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # category 判定（nankan / jra）。未指定なら両方取り込む。
+          CAT="${CATEGORY:-both}"
+          case "$CAT" in
+            jra|nankan|both) ;;
+            *) CAT="both" ;;
+          esac
+          echo "📂 Category: $CAT"
+
+          # カテゴリ別に import コマンドを実行
+          run_import() {
+            local D="$1"
+            if [ "$CAT" = "jra" ] || [ "$CAT" = "both" ]; then
+              echo "  → JRA import: $D"
+              npm run import:prediction:jra -- --date "$D"
+            fi
+            if [ "$CAT" = "nankan" ] || [ "$CAT" = "both" ]; then
+              echo "  → Nankan import: $D"
+              npm run import:prediction -- --date "$D"
+            fi
+          }
+
           # コミットメッセージ生成
           if [ -n "$MANUAL_DATE" ]; then
-            COMMIT_MSG="Auto-import: ${MANUAL_DATE} prediction (manual)"
+            COMMIT_MSG="Auto-import: ${MANUAL_DATE} prediction [${CAT}] (manual)"
             DATE_DESC="$MANUAL_DATE (manual)"
           elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
             DATES=$(echo "$DATES_JSON" | jq -r 'join(", ")')
-            COMMIT_MSG="Auto-import: ${DATES} prediction from ${SOURCE}"
+            COMMIT_MSG="Auto-import: ${DATES} prediction [${CAT}] from ${SOURCE}"
             DATE_DESC="$DATES from $SOURCE"
           elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
-            COMMIT_MSG="Auto-import: ${DATE_SINGLE} prediction from ${SOURCE}"
+            COMMIT_MSG="Auto-import: ${DATE_SINGLE} prediction [${CAT}] from ${SOURCE}"
             DATE_DESC="$DATE_SINGLE from $SOURCE"
           else
             TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-            COMMIT_MSG="Auto-import: ${TODAY} prediction (today JST)"
+            COMMIT_MSG="Auto-import: ${TODAY} prediction [${CAT}] (today JST)"
             DATE_DESC="$TODAY (today JST)"
           fi
 
@@ -90,17 +112,17 @@ jobs:
             echo ""
             echo "📥 Step 2/5: Generating prediction data..."
             if [ -n "$MANUAL_DATE" ]; then
-              npm run import:prediction -- --date "$MANUAL_DATE"
+              run_import "$MANUAL_DATE"
             elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
               while IFS= read -r DATE; do
                 echo "  ━━━ Processing: $DATE ━━━"
-                npm run import:prediction -- --date "$DATE"
+                run_import "$DATE"
               done < <(echo "$DATES_JSON" | jq -r '.[]')
             elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
-              npm run import:prediction -- --date "$DATE_SINGLE"
+              run_import "$DATE_SINGLE"
             else
               TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-              npm run import:prediction -- --date "$TODAY"
+              run_import "$TODAY"
             fi
             echo "✅ Prediction data generated"
 
