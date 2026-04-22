@@ -23,7 +23,7 @@
  *   node scripts/syncArchiveResults.js --tracks jra        # JRA のみ
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -70,32 +70,6 @@ function getDateRange(days) {
     dates.push(d.toISOString().split('T')[0]);
   }
   return dates;
-}
-
-/**
- * archive を日付降順にソート（archive[0] が最新になるように）
- * 既存エントリの順序を壊さないように、安定ソートで date のみ比較。
- */
-function sortArchiveByDateDesc(archiveFileName) {
-  const path = join(projectRoot, 'src', 'data', archiveFileName);
-  if (!existsSync(path)) return false;
-
-  try {
-    const archive = JSON.parse(readFileSync(path, 'utf-8'));
-    if (!Array.isArray(archive) || archive.length === 0) return false;
-
-    const sorted = [...archive].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    const changed = sorted.some((e, i) => e !== archive[i]);
-
-    if (changed) {
-      writeFileSync(path, JSON.stringify(sorted, null, 2), 'utf-8');
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error(`⚠️  ${archiveFileName} のソートに失敗: ${error.message}`);
-    return false;
-  }
 }
 
 function loadArchiveDates(archiveFileName) {
@@ -301,20 +275,12 @@ async function main() {
     const archived = loadArchiveDates('archiveResults.json');
     console.log(`\n📚 archiveResults.json: ${archived.size}件の既存エントリ`);
     trackResults.push(await processTrack('nankan', dates, archived, args.dryRun));
-    if (!args.dryRun) {
-      const sorted = sortArchiveByDateDesc('archiveResults.json');
-      if (sorted) console.log(`\n🔃 archiveResults.json を日付降順にソートしました`);
-    }
   }
 
   if (args.tracks.includes('jra')) {
     const archived = loadArchiveDates('archiveResultsJra.json');
     console.log(`\n📚 archiveResultsJra.json: ${archived.size}件の既存エントリ`);
     trackResults.push(await processTrack('jra', dates, archived, args.dryRun));
-    if (!args.dryRun) {
-      const sorted = sortArchiveByDateDesc('archiveResultsJra.json');
-      if (sorted) console.log(`\n🔃 archiveResultsJra.json を日付降順にソートしました`);
-    }
   }
 
   const errorCount = printFinalSummary(trackResults, args.dryRun);
