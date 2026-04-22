@@ -2,14 +2,22 @@
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
-import allRacesData from '../data/allRacesPrediction.json';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../lib/shared-prediction-logic.js';
+import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+
+// src/data/predictions/*.json を自動スキャンし、最新日付のファイルを選択して旧スキーマに変換
+const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
+const allRacesData = pickLatestAndAdapt(predictionModules);
+
+if (!allRacesData) {
+    throw new Error('予想データが見つかりません。src/data/predictions/ に有効な JSON がありません。');
+}
 
 // 共有ロジックを使用してデータを処理
 const { mainRace, race12R: originalRace12R, sortedRaces } = processRaceData(allRacesData);
 
 if (!mainRace) {
-    throw new Error('メインレースが見つかりません。allRacesPrediction.jsonのデータを確認してください。');
+    throw new Error(`メインレースが見つかりません。source=${allRacesData._sourceFile}`);
 }
 
 // 日付と会場を取得
