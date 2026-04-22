@@ -9,6 +9,13 @@ on:
         description: 'Date to import (YYYY-MM-DD, blank = today JST)'
         required: false
         type: string
+      category:
+        description: 'Category (jra | nankan) — 必須'
+        required: true
+        type: choice
+        options:
+          - jra
+          - nankan
 
 # 並行実行制御：リポジトリ全体で1つのワークフローのみ実行（同じファイルへの同時コミット防止）
 concurrency:
@@ -47,27 +54,30 @@ jobs:
           DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
           DATE_SINGLE: ${{ github.event.client_payload.date }}
           SOURCE: ${{ github.event.client_payload.source }}
-          CATEGORY: ${{ github.event.client_payload.category }}
+          CATEGORY: ${{ github.event.client_payload.category || github.event.inputs.category }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # category 判定（nankan / jra）。未指定なら両方取り込む。
-          CAT="${CATEGORY:-both}"
+          # category 必須（jra / nankan のみ許可）
+          CAT="${CATEGORY:-}"
           case "$CAT" in
-            jra|nankan|both) ;;
-            *) CAT="both" ;;
+            jra|nankan) ;;
+            *)
+              echo "❌ CATEGORY is required. Got: '$CAT' (expected: jra | nankan)"
+              echo "   client_payload.category を明示的に指定してください。"
+              exit 1
+              ;;
           esac
           echo "📂 Category: $CAT"
 
           # カテゴリ別に import コマンドを実行
           run_import() {
             local D="$1"
-            if [ "$CAT" = "jra" ] || [ "$CAT" = "both" ]; then
+            if [ "$CAT" = "jra" ]; then
               echo "  → JRA import: $D"
               npm run import:prediction:jra -- --date "$D"
-            fi
-            if [ "$CAT" = "nankan" ] || [ "$CAT" = "both" ]; then
+            else
               echo "  → Nankan import: $D"
               npm run import:prediction -- --date "$D"
             fi
