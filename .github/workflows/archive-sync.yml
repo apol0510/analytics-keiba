@@ -1,0 +1,148 @@
+name: Archive Sync (Self-healing)
+
+# 自己回復型の archive 同期ワークフロー
+#
+# - syncArchiveResults.js が直近14日を走査し、南関/JRA 両方の未反映日を自動 import
+# - schedule で1日3回走るので、1回失敗しても次の実行で追いつく
+#   （dispatch 依存を外し、schedule ベースの自己回復に寄せる）
+# - dispatch も補助的に残してあるので、即時トリガーも可能
+# - 他の per-day workflow は残すので、多重安全網として機能する
+
+on:
+  schedule:
+    # JST 23:45 (14:45 UTC) — 当日分取り込み（per-day workflow の直後）
+    - cron: '45 14 * * *'
+    # JST 02:00 (17:00 UTC) — 夜間リトライ
+    - cron: '0 17 * * *'
+    # JST 10:00 (01:00 UTC) — 朝の保険
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '走査する日数'
+        required: false
+        default: '14'
+      tracks:
+        description: '対象トラック (nankan,jra または nankan, jra)'
+        required: false
+        default: 'nankan,jra'
+
+# archiveResults.json / archiveResultsJra.json 両方を触るため専用グループに隔離。
+# per-track の既存ワークフロー (archive-nankan-update / archive-jra-update) とは
+# 別グループだが、commit/push は retry 付きで競合しても追従する。
+concurrency:
+  group: archive-sync-unified
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run archive sync
+        id: sync
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DAYS="${{ github.event.inputs.days || '14' }}"
+          TRACKS="${{ github.event.inputs.tracks || 'nankan,jra' }}"
+          echo "🔄 Running sync: days=$DAYS, tracks=$TRACKS"
+          node scripts/syncArchiveResults.js --days "$DAYS" --tracks "$TRACKS"
+
+      - name: Validate archive format
+        run: |
+          echo "🔍 Validating archive format..."
+          npm run validate:archive
+
+      - name: Verify archive sync
+        run: |
+          echo "🔍 Verifying archive sync status..."
+          npm run verify:sync
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          git add src/data/archiveResults.json src/data/archiveResultsJra.json
+          if git diff --staged --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "⏭️  No archive changes to commit"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "📦 Archive changes detected:"
+            git diff --staged --stat
+          fi
+
+      - name: Commit and push with retry
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          COMMIT_MSG="🔄 Archive self-heal sync (${{ github.event.schedule || 'manual' }})"
+
+          # 変更ファイルを退避
+          cp src/data/archiveResults.json /tmp/archiveResults.json.backup
+          cp src/data/archiveResultsJra.json /tmp/archiveResultsJra.json.backup
+
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+
+            cp /tmp/archiveResults.json.backup src/data/archiveResults.json
+            cp /tmp/archiveResultsJra.json.backup src/data/archiveResultsJra.json
+
+            git add src/data/archiveResults.json src/data/archiveResultsJra.json
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+
+            git commit -m "$COMMIT_MSG"
+
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        run: |
+          echo "✅ Archive already in sync, no action needed"
