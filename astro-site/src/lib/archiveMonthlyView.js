@@ -106,10 +106,8 @@ function normalizeDayFromMonthly(dayObj) {
  * 指定年月のマージ済み monthData を返す。
  *
  * 優先順位:
- *   1. 南関 singular (archiveResults.json) を先に展開
- *   2. 南関 monthly snapshot (archiveResults_YYYY-MM.json) で**上書き**
- *      （monthly はハンドキュレート済みで race 単位の betPoints まで入っており、
- *        importResults.js が出す singular より情報が豊富なため）
+ *   1. 南関 monthly snapshot を先に展開（fallback として残す）
+ *   2. 南関 singular (archiveResults.json) で**上書き** → 新ロジックの数値が最終値
  *   3. 中央（JRA）を "DDj" キーで追加
  *
  * @param {Array} archiveArray     - archiveResults.json の中身（南関、配列）
@@ -122,20 +120,30 @@ function normalizeDayFromMonthly(dayObj) {
 export function buildMergedMonthData(archiveArray, monthlySnapshot, year, month, jraArchive) {
   const merged = {};
 
-  // 1. 南関 singular を先に展開（monthly が無い日を埋めるため）
+  // 1. 南関 monthly snapshot を先に展開（singular に無い日の fallback）
+  const monthlyDays = monthlySnapshot?.[year]?.[month] || {};
+  for (const [day, dayObj] of Object.entries(monthlyDays)) {
+    merged[day] = normalizeDayFromMonthly(dayObj);
+  }
+
+  // 2. 南関 singular で上書き（新しい可変点数ロジックが最終値）。
+  //    ただし singular に race 単位の betPoints が無い古いデータの場合は
+  //    monthly のハンドキュレート版を優先（情報欠落を防ぐため）。
   if (Array.isArray(archiveArray)) {
     for (const entry of archiveArray) {
       if (!entry?.date) continue;
       const [y, m, d] = entry.date.split('-');
       if (y !== year || m !== month) continue;
-      merged[d] = normalizeDayFromSingular(entry, 'nankan');
-    }
-  }
 
-  // 2. 南関 monthly snapshot で上書き（ハンドキュレート優先）
-  const monthlyDays = monthlySnapshot?.[year]?.[month] || {};
-  for (const [day, dayObj] of Object.entries(monthlyDays)) {
-    merged[day] = normalizeDayFromMonthly(dayObj);
+      const hasRaceBetPoints = Array.isArray(entry.races)
+        && entry.races.some(r => r && Number.isFinite(r.betPoints) && r.betPoints > 0);
+      const hasMonthly = Object.prototype.hasOwnProperty.call(merged, d);
+
+      if (hasRaceBetPoints || !hasMonthly) {
+        merged[d] = normalizeDayFromSingular(entry, 'nankan');
+      }
+      // else: monthly を維持
+    }
   }
 
   // 3. 中央（JRA）を追加。キーは "DDj" にして南関と衝突を避ける。
