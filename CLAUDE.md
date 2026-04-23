@@ -58,6 +58,12 @@ Netlify自動ビルド→本番反映
 
 検証: `npm run validate:archive`
 
+## 📊 購入点数ロジック
+
+archiveResults の購入点数・回収率は仮回収率に応じた 3 段階方式。
+詳細仕様は `astro-site/docs/BET_POINT_LOGIC.md` を参照。
+閾値を変更する場合は **コードと MD を必ず両方更新**すること。
+
 ## 🔧 開発コマンド
 
 ```bash
