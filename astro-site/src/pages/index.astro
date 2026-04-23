@@ -227,7 +227,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         <h3 class="venue-card__title">🏇 中央競馬 <span class="venue-card__tag">JRA</span></h3>
                         <p class="venue-card__desc">東京・中山・京都・阪神・中京・新潟・福島・小倉・札幌・函館の全10会場を完全対応。重賞レースも分析。</p>
                         <ul class="venue-card__links">
-                            <li><a href="/free-prediction-jra/">🎁 無料で中央競馬予想を見る →</a></li>
+                            <li><a href="/free-prediction/jra/">🎁 無料で中央競馬予想を見る →</a></li>
                             <li><a href="/archive-jra/">🏆 中央競馬の的中実績を見る</a></li>
                             <li><a href="/pricing/#jra">💰 中央競馬の料金プラン</a></li>
                         </ul>
@@ -238,7 +238,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         <h3 class="venue-card__title">🏁 南関競馬</h3>
                         <p class="venue-card__desc">大井・川崎・船橋・浦和の南関東4場を対応。26年の予想経験と12年分のデータに基づく高精度分析。</p>
                         <ul class="venue-card__links">
-                            <li><a href="/free-prediction/">🎁 無料で南関競馬予想を見る →</a></li>
+                            <li><a href="/free-prediction/nankan/">🎁 無料で南関競馬予想を見る →</a></li>
                             <li><a href="/archive/">🏆 南関競馬の的中実績を見る</a></li>
                             <li><a href="/pricing/#nankan">💰 南関競馬の料金プラン</a></li>
                         </ul>
@@ -346,7 +346,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                             <div set:html={preview.features.split('\n\n').join('<br><br>')}></div>
                         </div>
                         <div class="blur-overlay">
-                            <span class="premium-badge"><a href="/free-prediction/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
+                            <span class="premium-badge"><a href="/free-prediction/nankan/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
                         </div>
                     </div>
                 </div>
@@ -412,10 +412,10 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         ✓ 3つの戦略で最適化
                     </div>
                     <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-                        <a href="/free-prediction-jra/" class="free-cta-button">
+                        <a href="/free-prediction/jra/" class="free-cta-button">
                             🏇 無料で中央競馬予想を見る →
                         </a>
-                        <a href="/free-prediction/" class="free-cta-button" style="background: linear-gradient(135deg, #475569 0%, #334155 100%);">
+                        <a href="/free-prediction/nankan/" class="free-cta-button" style="background: linear-gradient(135deg, #475569 0%, #334155 100%);">
                             🏁 無料で南関競馬予想を見る →
                         </a>
                     </div>

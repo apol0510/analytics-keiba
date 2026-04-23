@@ -1,10 +1,10 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
-import AIRaceComment from '../../components/AIRaceComment.astro';
-import AIBettingSection from '../../components/AIBettingSection.astro';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import AIRaceComment from '../../../components/AIRaceComment.astro';
+import AIBettingSection from '../../../components/AIBettingSection.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { generateAdvancedMetrics } from '../../utils/featureScores.js';
+import { generateAdvancedMetrics } from '../../../utils/featureScores.js';
 
 export const prerender = true;
 
@@ -370,7 +370,7 @@ const venueNames = venues.map(v => v.venue || v.eventInfo?.venue).join(' / ');
 
       <!-- ナビゲーション -->
       <div class="archive-nav">
-        <a href="/free-prediction-jra" class="nav-link">
+        <a href="/free-prediction/jra/" class="nav-link">
           <span class="nav-icon">&#128202;</span>
           <span>最新の中央競馬予想を見る</span>
         </a>

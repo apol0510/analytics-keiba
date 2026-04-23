@@ -146,7 +146,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     if (!userPlan || (!isStandard && !isPremium)) {
       console.log('❌ アクセス拒否 - planLower:', planLower);
       alert('この機能はStandard/Premium会員専用です。\n\nStandard会員以上にアップグレードすると、三連複的中実績をご覧いただけます。');
-      window.location.href = '/premium-predictions';
+      window.location.href = '/premium-prediction/nankan';
     } else {
       console.log('✅ アクセス許可 - isPremium:', isPremium, 'isStandard:', isStandard);
     }
@@ -598,7 +598,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
 
     <div class="back-link">
       <a href="/archive-sanrenpuku/">← 三連複アーカイブトップ</a> |
-      <a href="/premium-predictions/">Premium会員専用ページ</a>
+      <a href="/premium-prediction/nankan/">Premium会員専用ページ</a>
     </div>
   </div>
 

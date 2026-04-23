@@ -1,11 +1,11 @@
 ---
-import BaseLayout from '../layouts/BaseLayout.astro';
-import AccessControl from '../components/AccessControl.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AccessControl from '../../components/AccessControl.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { sortHorsesByRole } from '../utils/sortHorsesByRole.js';
+import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { getStore } from '@netlify/blobs';
-import { generateAdvancedMetrics } from '../utils/featureScores.js';
+import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 
 export const prerender = false;
 

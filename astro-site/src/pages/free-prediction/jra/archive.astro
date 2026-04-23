@@ -1,5 +1,5 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -52,7 +52,7 @@ const months = Object.keys(byMonth).sort().reverse();
       <p class="subtitle">全{files.length}開催日分のAI予想アーカイブ</p>
 
       <div class="archive-nav">
-        <a href="/free-prediction-jra" class="nav-link">← 最新予想に戻る</a>
+        <a href="/free-prediction/jra/" class="nav-link">← 最新予想に戻る</a>
         <a href="/free-prediction/archive" class="nav-link">南関競馬の過去予想 →</a>
       </div>
 

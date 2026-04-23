@@ -32,3 +32,71 @@
   for = "*.js"
   [headers.values]
     Cache-Control = "max-age=31536000, immutable"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 予想ページ URL 再編（南関/中央を対称構造へ）
+# 旧URLは 301 で新URLへ恒久移動
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 無料予想
+[[redirects]]
+  from = "/free-prediction"
+  to = "/free-prediction/nankan"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/free-prediction/"
+  to = "/free-prediction/nankan"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/free-prediction-jra"
+  to = "/free-prediction/jra"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/free-prediction-jra/"
+  to = "/free-prediction/jra"
+  status = 301
+  force = true
+
+# プレミアム予想
+[[redirects]]
+  from = "/premium-predictions"
+  to = "/premium-prediction/nankan"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/premium-predictions/"
+  to = "/premium-prediction/nankan"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/premium-predictions-jra"
+  to = "/premium-prediction/jra"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/premium-predictions-jra/"
+  to = "/premium-prediction/jra"
+  status = 301
+  force = true
+
+# 旧JRAプレミアム相当（SSR）
+[[redirects]]
+  from = "/prediction-jra"
+  to = "/premium-prediction/jra"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/prediction-jra/"
+  to = "/premium-prediction/jra"
+  status = 301
+  force = true

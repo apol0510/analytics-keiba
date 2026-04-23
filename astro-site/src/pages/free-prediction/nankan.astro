@@ -1,9 +1,9 @@
 ---
 export const prerender = true; // 静的サイト生成用に戻す
-import BaseLayout from '../layouts/BaseLayout.astro';
-import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
-import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../lib/shared-prediction-logic.js';
-import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
+import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../../lib/shared-prediction-logic.js';
+import { pickLatestAndAdapt } from '../../lib/adaptLatestPrediction.js';
 
 // src/data/predictions/*.json を自動スキャンし、最新日付のファイルを選択して旧スキーマに変換
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
