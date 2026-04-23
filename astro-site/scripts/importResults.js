@@ -393,13 +393,11 @@ function saveArchive(date, venue, raceResults, venues = []) {
   const hitRate = totalRaces > 0 ? (hitRaces / totalRaces * 100).toFixed(1) : '0.0';
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 払戻金計算（2段階調整方式）
-  // 詳細: BET_POINT_LOGIC.md 参照
+  // 払戻金計算（回収率ベースの可変点数方式）
+  //   低回収（<100%） → 1レース 8点
+  //   高回収（>=100%）→ 1レース 12点
+  // 判定は「8点で仮計算した回収率」を基準に行う。
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  // 第1段階: 基本8点で仮計算
-  let betPointsPerRace = 8;
-  let betAmount = totalRaces * betPointsPerRace * 100; // 8点 × 100円 = 800円/レース
 
   const totalPayout = raceResults.reduce((sum, race) => {
     if (race.isHit && race.umatan.payout) {
@@ -410,18 +408,28 @@ function saveArchive(date, venue, raceResults, venues = []) {
     return sum;
   }, 0);
 
-  let returnRate = betAmount > 0 ? ((totalPayout / betAmount) * 100) : 0;
+  // 仮計算（8点基準）で回収率を判定
+  const provisionalBetAmount = totalRaces * 8 * 100;
+  const provisionalRate = provisionalBetAmount > 0
+    ? (totalPayout / provisionalBetAmount) * 100
+    : 0;
 
-  // 第2段階: 回収率300%超なら12点で再計算
-  if (returnRate > 300) {
-    betPointsPerRace = 12;
-    betAmount = totalRaces * betPointsPerRace * 100; // 12点 × 100円 = 1200円/レース
-    returnRate = betAmount > 0 ? ((totalPayout / betAmount) * 100) : 0;
-    console.log(`\n📊 回収率調整: 8点 → 12点（回収率が300%超のため）`);
-  }
+  // 回収率 >=100% なら 12点、<100% なら 8点
+  const betPointsPerRace = provisionalRate >= 100 ? 12 : 8;
+  const betAmount = totalRaces * betPointsPerRace * 100;
+  const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
+
+  console.log(`\n📊 買い目点数判定: 仮回収率 ${provisionalRate.toFixed(1)}% → ${betPointsPerRace}点/レース (最終回収率 ${returnRate.toFixed(1)}%)`);
 
   // 最終的な回収率（小数点1桁）
   const finalReturnRate = returnRate.toFixed(1);
+
+  // race 単位にも同じ betPoints / betType を埋め込む（archive UI が参照するため）
+  const enrichedRaces = raceResults.map(r => ({
+    ...r,
+    betType: r.betType || '馬単',
+    betPoints: betPointsPerRace,
+  }));
 
   const newEntry = {
     date,
@@ -433,9 +441,12 @@ function saveArchive(date, venue, raceResults, venues = []) {
     hitRate: parseFloat(hitRate),
     betAmount,
     betPointsPerRace, // 追加: 実際の買い目点数を記録
+    totalBetPoints: totalRaces * betPointsPerRace,
+    totalInvestment: betAmount,
     totalPayout,
     returnRate: parseFloat(finalReturnRate),
-    races: raceResults,
+    recoveryRate: parseFloat(finalReturnRate), // 旧フィールド互換
+    races: enrichedRaces,
     verifiedAt: new Date().toISOString()
   };
 
