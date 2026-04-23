@@ -513,24 +513,18 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
           </div>
 
           <div class="races-grid">
-            {dayData.races.filter(race => race.hit).map(race => {
-              const showBet = Number.isFinite(race.betPoints) && race.betPoints > 0;
-              return (
-                <div class="race-card">
-                  <div class="race-info">
-                    <div class="race-number">{race.raceNumber}</div>
-                    <div class="race-name">{race.raceName}</div>
-                  </div>
-                  <div class="race-result">
-                    <div class="hit-badge">✅ 的中</div>
-                    {showBet && (
-                      <div class="bet-info">{race.betType}{race.betPoints}点</div>
-                    )}
-                    <div class="payout">¥{race.payout.toLocaleString()}</div>
-                  </div>
+            {dayData.races.filter(race => race.hit).map(race => (
+              <div class="race-card">
+                <div class="race-info">
+                  <div class="race-number">{race.raceNumber}</div>
+                  <div class="race-name">{race.raceName}</div>
                 </div>
-              );
-            })}
+                <div class="race-result">
+                  <div class="hit-badge">✅ 的中</div>
+                  <div class="payout">¥{race.payout.toLocaleString()}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       );
