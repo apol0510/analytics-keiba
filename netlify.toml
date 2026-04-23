@@ -36,67 +36,50 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 予想ページ URL 再編（南関/中央を対称構造へ）
 # 旧URLは 301 で新URLへ恒久移動
+# 重要:
+#   - 新URL (/free-prediction/nankan 等) には必ず静的ファイルが存在する
+#   - 新URLを巻き込まないよう、from は exact 一致のみ使用
+#   - JRA 旧URLは sub-route ([date]/archive) もあるので splat を後ろに追加
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# 無料予想
+# --- 無料予想 (南関) ---
 [[redirects]]
   from = "/free-prediction"
-  to = "/free-prediction/nankan"
+  to = "/free-prediction/nankan/"
   status = 301
   force = true
 
+# --- 無料予想 (中央) : sub-route も一緒に移行 ---
+# splat で /free-prediction-jra/archive や /free-prediction-jra/2026-04-12 も拾う
 [[redirects]]
-  from = "/free-prediction/"
-  to = "/free-prediction/nankan"
+  from = "/free-prediction-jra/*"
+  to = "/free-prediction/jra/:splat"
   status = 301
   force = true
 
 [[redirects]]
   from = "/free-prediction-jra"
-  to = "/free-prediction/jra"
+  to = "/free-prediction/jra/"
   status = 301
   force = true
 
-[[redirects]]
-  from = "/free-prediction-jra/"
-  to = "/free-prediction/jra"
-  status = 301
-  force = true
-
-# プレミアム予想
+# --- プレミアム予想 (南関) ---
 [[redirects]]
   from = "/premium-predictions"
-  to = "/premium-prediction/nankan"
+  to = "/premium-prediction/nankan/"
   status = 301
   force = true
 
-[[redirects]]
-  from = "/premium-predictions/"
-  to = "/premium-prediction/nankan"
-  status = 301
-  force = true
-
+# --- プレミアム予想 (中央) ---
 [[redirects]]
   from = "/premium-predictions-jra"
-  to = "/premium-prediction/jra"
+  to = "/premium-prediction/jra/"
   status = 301
   force = true
 
-[[redirects]]
-  from = "/premium-predictions-jra/"
-  to = "/premium-prediction/jra"
-  status = 301
-  force = true
-
-# 旧JRAプレミアム相当（SSR）
+# --- 旧SSR JRA prediction (廃止) ---
 [[redirects]]
   from = "/prediction-jra"
-  to = "/premium-prediction/jra"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "/prediction-jra/"
-  to = "/premium-prediction/jra"
+  to = "/premium-prediction/jra/"
   status = 301
   force = true

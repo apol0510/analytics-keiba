@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 
-export const prerender = false;
+export const prerender = true;
 
 // 最新の中央競馬予想JSONファイルを取得
 const predictionsDir = join(process.cwd(), 'src', 'data', 'predictions', 'jra');

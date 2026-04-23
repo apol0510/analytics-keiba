@@ -4,10 +4,9 @@ import AccessControl from '../../components/AccessControl.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
-import { getStore } from '@netlify/blobs';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 
-export const prerender = false;
+export const prerender = true;
 
 // サーバーサイド認証チェック（セキュリティ強化）
 // ⚠️ 一時的に無効化（開発用）
