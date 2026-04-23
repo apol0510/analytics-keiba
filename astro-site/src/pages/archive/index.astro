@@ -7,20 +7,22 @@ import archiveData2026_01 from '../../data/archiveResults_2026-01.json';
 import archiveData2026_02 from '../../data/archiveResults_2026-02.json';
 import archiveData2026_03 from '../../data/archiveResults_2026-03.json';
 import archiveData2026_04 from '../../data/archiveResults_2026-04.json';
+import archiveResults from '../../data/archiveResults.json';
+import { buildMergedMonthData } from '../../lib/archiveMonthlyView.js';
 
-// 全月のデータを統合
+// 月別の snapshot と archiveResults.json（自動更新側）をマージして年次ビューを作る
 const archiveData = {
   '2025': {
-    ...archiveData10['2025'],
-    ...archiveData11['2025'],
-    ...archiveData12['2025']
+    '10': buildMergedMonthData(archiveResults, archiveData10, '2025', '10'),
+    '11': buildMergedMonthData(archiveResults, archiveData11, '2025', '11'),
+    '12': buildMergedMonthData(archiveResults, archiveData12, '2025', '12'),
   },
   '2026': {
-    ...archiveData2026_01['2026'],
-    ...archiveData2026_02['2026'],
-    ...archiveData2026_03['2026'],
-    ...archiveData2026_04['2026']
-  }
+    '01': buildMergedMonthData(archiveResults, archiveData2026_01, '2026', '01'),
+    '02': buildMergedMonthData(archiveResults, archiveData2026_02, '2026', '02'),
+    '03': buildMergedMonthData(archiveResults, archiveData2026_03, '2026', '03'),
+    '04': buildMergedMonthData(archiveResults, archiveData2026_04, '2026', '04'),
+  },
 };
 
 const years = Object.keys(archiveData).sort().reverse(); // 新しい順

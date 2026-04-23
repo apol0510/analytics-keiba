@@ -122,38 +122,56 @@ export function adaptNewToLegacy(newData) {
 }
 
 /**
- * import.meta.glob で集めた predictions/*.json 群から最新日付を選び、
- * 旧スキーマに変換して返す。
+ * import.meta.glob で集めた predictions/*.json 群をフィルタして
+ * 日付降順でソートしたエントリ配列を返す（生データ）。
  *
  * @param {Record<string, any>} modules - import.meta.glob で eager:true 取得した map
- *        キー例: "/src/data/predictions/2026-04-23-urawa.json"
- * @returns {{raceDate:string, track:string, totalRaces:number, races:Array, _sourceFile:string}|null}
+ * @param {{venueSlug?:string}} [opts] - venueSlug 指定時はその会場のみ（例: 'urawa'）
+ * @returns {Array<{path:string, date:string, venueSlug:string, data:any}>}
  */
-export function pickLatestAndAdapt(modules) {
+export function listNankanPredictionEntries(modules, opts = {}) {
+  const { venueSlug } = opts;
   const entries = [];
   for (const [path, mod] of Object.entries(modules)) {
-    // ファイル名からカテゴリ系（jra/）配下は除外（nankan のみ）
+    // JRA 配下は対象外（nankan のみ）
     if (path.includes('/predictions/jra/')) continue;
     const m = path.match(/\/predictions\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+)\.json$/i);
     if (!m) continue;
     const date = m[1];
-    const venueSlug = m[2];
-    // mod は default または object 直下で JSON が入る
+    const slug = m[2].toLowerCase();
+    if (venueSlug && slug !== venueSlug.toLowerCase()) continue;
     const data = mod?.default || mod;
     if (!data?.eventInfo || !Array.isArray(data?.predictions)) continue;
-    entries.push({ path, date, venueSlug, data });
+    entries.push({ path, date, venueSlug: slug, data });
   }
-
-  if (entries.length === 0) return null;
-
-  // 日付降順（同一日は venueSlug のアルファベット順）でソートし先頭を選ぶ
   entries.sort((a, b) => {
     if (a.date !== b.date) return a.date < b.date ? 1 : -1;
     return a.venueSlug.localeCompare(b.venueSlug);
   });
+  return entries;
+}
 
+/**
+ * 最新1件を選んで旧スキーマに変換して返す（nankan 用）。
+ * venueSlug 指定で会場固定も可能。指定 venue が無い場合は opts.fallbackToAny=true で
+ * 任意の最新 nankan データにフォールバックする。
+ *
+ * @param {Record<string, any>} modules - import.meta.glob の結果
+ * @param {{venueSlug?:string, fallbackToAny?:boolean}} [opts]
+ * @returns {{raceDate:string, track:string, totalRaces:number, races:Array, _sourceFile:string, _fallback?:boolean}|null}
+ */
+export function pickLatestAndAdapt(modules, opts = {}) {
+  const { venueSlug, fallbackToAny = false } = opts;
+  let entries = listNankanPredictionEntries(modules, { venueSlug });
+  let fellBack = false;
+  if (entries.length === 0 && venueSlug && fallbackToAny) {
+    entries = listNankanPredictionEntries(modules);
+    fellBack = true;
+  }
+  if (entries.length === 0) return null;
   const latest = entries[0];
   const adapted = adaptNewToLegacy(latest.data);
   adapted._sourceFile = latest.path;
+  if (fellBack) adapted._fallback = true;
   return adapted;
 }

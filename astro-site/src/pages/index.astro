@@ -1,9 +1,16 @@
 ---
 // 静的ビルドのためprerender削除
 import BaseLayout from '../layouts/BaseLayout.astro';
-import allRacesData from '../data/allRacesPrediction.json';
 import archiveResults from '../data/archiveResults.json';
 import { weeklyResults, dailyTabs, dailyResultsData } from './standard-predictions.astro';
+import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+
+// src/data/predictions/*.json（自動反映フロー）から最新日付を自動選択
+const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
+const allRacesData = pickLatestAndAdapt(predictionModules);
+if (!allRacesData) {
+    throw new Error('予想データが見つかりません。src/data/predictions/ に有効な JSON がありません。');
+}
 
 // archiveResults.jsonから最新日のデータを取得
 // 2026-04-17 以降: 配列形式 (importResults.js v2+ の unshift 順)

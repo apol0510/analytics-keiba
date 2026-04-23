@@ -3,9 +3,16 @@ export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccessControl from '../components/AccessControl.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
-import allRacesData from '../data/allRacesPrediction-urawa.json';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence } from '../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../lib/archive-utils.js';
+import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+
+// 浦和の最新予想を対象。無い場合は任意の最新 nankan データへフォールバック。
+const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
+const allRacesData = pickLatestAndAdapt(predictionModules, { venueSlug: 'urawa', fallbackToAny: true });
+if (!allRacesData) {
+    throw new Error('予想データが見つかりません。src/data/predictions/ を確認してください。');
+}
 
 // 共有ロジックを使用してデータを処理（元のデータを直接使用）
 const { mainRace, race12R, sortedRaces } = processRaceData(allRacesData);

@@ -2,14 +2,22 @@
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
-import allRacesData from '../data/allRacesPrediction-funabashi.json';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../lib/shared-prediction-logic.js';
+import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+
+// 船橋の最新予想を対象。船橋データが無い時は任意の最新 nankan データへフォールバック。
+const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
+const allRacesData = pickLatestAndAdapt(predictionModules, { venueSlug: 'funabashi', fallbackToAny: true });
+
+if (!allRacesData) {
+    throw new Error('予想データが見つかりません。src/data/predictions/ を確認してください。');
+}
 
 // 共有ロジックを使用してデータを処理
 const { mainRace, race12R: originalRace12R, sortedRaces } = processRaceData(allRacesData);
 
 if (!mainRace) {
-    throw new Error('メインレースが見つかりません。allRacesPrediction.jsonのデータを確認してください。');
+    throw new Error(`メインレースが見つかりません。source=${allRacesData._sourceFile}`);
 }
 
 // 日付と会場を取得

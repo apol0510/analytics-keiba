@@ -1,10 +1,13 @@
 ---
 export const prerender = true;
 import archiveData from '../../../data/archiveResults_2025-12.json';
+import archiveResults from '../../../data/archiveResults.json';
+import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
 
 const year = '2025';
 const month = '12';
-const monthData = archiveData[year]?.[month] || {};
+// monthly スナップショット（旧データ）と singular（importResults.js で自動更新）をマージ
+const monthData = buildMergedMonthData(archiveResults, archiveData, year, month);
 const days = Object.keys(monthData).sort().reverse(); // 新しい順
 
 // 月間統計計算

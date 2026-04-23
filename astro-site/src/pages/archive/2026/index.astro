@@ -4,14 +4,16 @@ import archiveData01 from '../../../data/archiveResults_2026-01.json';
 import archiveData02 from '../../../data/archiveResults_2026-02.json';
 import archiveData03 from '../../../data/archiveResults_2026-03.json';
 import archiveData04 from '../../../data/archiveResults_2026-04.json';
+import archiveResults from '../../../data/archiveResults.json';
+import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
 
 const year = '2026';
-// 複数月のデータを統合
+// 月別 snapshot と archiveResults.json（自動更新側）をマージ
 const yearData = {
-  ...archiveData01[year],
-  ...archiveData02[year],
-  ...archiveData03[year],
-  ...archiveData04[year]
+  '01': buildMergedMonthData(archiveResults, archiveData01, year, '01'),
+  '02': buildMergedMonthData(archiveResults, archiveData02, year, '02'),
+  '03': buildMergedMonthData(archiveResults, archiveData03, year, '03'),
+  '04': buildMergedMonthData(archiveResults, archiveData04, year, '04'),
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 

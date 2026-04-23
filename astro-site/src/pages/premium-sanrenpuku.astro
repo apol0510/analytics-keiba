@@ -3,8 +3,15 @@ export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccessControl from '../components/AccessControl.astro';
 import BettingSelectionQA from '../components/BettingSelectionQA.astro';
-import allRacesData from '../data/allRacesPrediction.json';
 import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark } from '../lib/shared-prediction-logic.js';
+import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+
+// src/data/predictions/*.json から最新日付を自動選択（自動反映フロー）
+const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
+const allRacesData = pickLatestAndAdapt(predictionModules);
+if (!allRacesData) {
+    throw new Error('予想データが見つかりません。src/data/predictions/ を確認してください。');
+}
 
 // 共有ロジックを使用してデータを処理
 const { sortedRaces } = processRaceData(allRacesData);

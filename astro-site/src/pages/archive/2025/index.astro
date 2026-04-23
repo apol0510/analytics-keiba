@@ -3,13 +3,15 @@ export const prerender = true;
 import archiveData10 from '../../../data/archiveResults_2025-10.json';
 import archiveData11 from '../../../data/archiveResults_2025-11.json';
 import archiveData12 from '../../../data/archiveResults_2025-12.json';
+import archiveResults from '../../../data/archiveResults.json';
+import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
 
 const year = '2025';
-// 複数月のデータを統合
+// 月別 snapshot と archiveResults.json（自動更新側）をマージ
 const yearData = {
-  ...archiveData10[year],
-  ...archiveData11[year],
-  ...archiveData12[year]
+  '10': buildMergedMonthData(archiveResults, archiveData10, year, '10'),
+  '11': buildMergedMonthData(archiveResults, archiveData11, year, '11'),
+  '12': buildMergedMonthData(archiveResults, archiveData12, year, '12'),
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 
