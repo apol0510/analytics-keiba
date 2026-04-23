@@ -413,9 +413,10 @@ function saveArchive(date, venue, raceResults) {
   const hitRate = totalRaces > 0 ? (hitRaces / totalRaces * 100).toFixed(1) : '0.0';
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 払戻金計算（回収率ベースの可変点数方式）
-  //   低回収（<100%） → 1レース 8点
-  //   高回収（>=100%）→ 1レース 12点
+  // 払戻金計算（回収率ベースの3段階可変点数方式）
+  //   仮回収率 >=200% → 1レース 12点
+  //   仮回収率 >=100% → 1レース 10点
+  //   仮回収率 <100%  → 1レース 8点
   // 判定は「8点で仮計算した回収率」を基準に行う。
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -434,8 +435,8 @@ function saveArchive(date, venue, raceResults) {
     ? (totalPayout / provisionalBetAmount) * 100
     : 0;
 
-  // 回収率 >=100% なら 12点、<100% なら 8点
-  const betPointsPerRace = provisionalRate >= 100 ? 12 : 8;
+  // 3段階: >=200% → 12, >=100% → 10, <100% → 8
+  const betPointsPerRace = provisionalRate >= 200 ? 12 : (provisionalRate >= 100 ? 10 : 8);
   const betAmount = totalRaces * betPointsPerRace * 100;
   const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
 
