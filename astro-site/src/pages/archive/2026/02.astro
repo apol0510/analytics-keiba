@@ -482,9 +482,10 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     {days.map(day => {
       const dayData = monthData[day];
       const hitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
-      const totalBetPoints = dayData.races.reduce((sum, race) => sum + (race.betPoints || 0), 0);
+      const totalBetPoints = dayData.races.reduce((sum, race) => sum + (Number.isFinite(race.betPoints) ? race.betPoints : 0), 0);
       const totalInvestment = totalBetPoints * 100; // 1点=100円
-      const recoveryRate = totalInvestment > 0 ? Math.round((dayData.totalPayout / totalInvestment) * 100) : 0;
+      const hasInvestment = totalInvestment > 0;
+      const recoveryRate = hasInvestment ? Math.round((dayData.totalPayout / totalInvestment) * 100) : null;
       return (
         <div class="day-section">
           <div class="day-header">
@@ -496,31 +497,40 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
             <div class="summary-item">
               📊 的中率: <span class="summary-value">{hitRate}%</span>
             </div>
-            <div class="summary-item">
-              📈 回収率: <span class="summary-value">{recoveryRate}%</span>
-            </div>
-            <div class="summary-item">
-              🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
-            </div>
+            {hasInvestment && (
+              <div class="summary-item">
+                📈 回収率: <span class="summary-value">{recoveryRate}%</span>
+              </div>
+            )}
+            {totalBetPoints > 0 && (
+              <div class="summary-item">
+                🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
+              </div>
+            )}
             <div class="summary-item">
               💰 合計配当: <span class="summary-value">¥{dayData.totalPayout.toLocaleString()}</span>
             </div>
           </div>
 
           <div class="races-grid">
-            {dayData.races.filter(race => race.hit).map(race => (
-              <div class="race-card">
-                <div class="race-info">
-                  <div class="race-number">{race.raceNumber}</div>
-                  <div class="race-name">{race.raceName}</div>
+            {dayData.races.filter(race => race.hit).map(race => {
+              const showBet = Number.isFinite(race.betPoints) && race.betPoints > 0;
+              return (
+                <div class="race-card">
+                  <div class="race-info">
+                    <div class="race-number">{race.raceNumber}</div>
+                    <div class="race-name">{race.raceName}</div>
+                  </div>
+                  <div class="race-result">
+                    <div class="hit-badge">✅ 的中</div>
+                    {showBet && (
+                      <div class="bet-info">{race.betType}{race.betPoints}点</div>
+                    )}
+                    <div class="payout">¥{race.payout.toLocaleString()}</div>
+                  </div>
                 </div>
-                <div class="race-result">
-                  <div class="hit-badge">✅ 的中</div>
-                  <div class="bet-info">{race.betType}{race.betPoints}点</div>
-                  <div class="payout">¥{race.payout.toLocaleString()}</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       );

@@ -15,23 +15,44 @@ import { sortRacesByVenueAndNumber } from '../utils/sortRaces.js';
 
 function normalizeRaceForTemplate(race) {
   // 旧 monthly snapshot は {hit, betType, betPoints, payout, raceNumber, raceName}
-  // singular（南関/中央）は {isHit, bettingPoints, umatan:{payout}, bettingLines, ...}
-  // archive ページが参照するキー（hit/betType/betPoints/payout）に揃える。
+  // singular（南関/中央）は {isHit, bettingPoints, umatan:{payout}, bettingLines, raceNumber:number, ...}
+  // archive ページが参照するキー（hit/betType/betPoints/payout/raceNumber/raceLabel）に揃える。
   if (race == null) return race;
   const hit = race.hit ?? race.isHit ?? false;
-  const betPoints = Number(race.betPoints ?? race.bettingPoints ?? 0);
+
+  // bettingPoints が未定義の日もある（南関 singular）。undefined のときは 0 にせず null のままにし、
+  // テンプレート側で「点数が不明 / 0」の場合に非表示にできるようにする。
+  const rawBetPoints = race.betPoints ?? race.bettingPoints;
+  const betPoints = (rawBetPoints == null || rawBetPoints === '') ? null : Number(rawBetPoints);
   const betType = race.betType || (race.umatan ? '馬単' : '');
   const payout = Number(
     race.payout ??
     race.umatan?.payout ??
     0
   );
+
+  // raceNumber を "1R" のような文字列に揃える（生の数値 1 や "1" を "1R" に）
+  const rnRaw = race.raceNumber;
+  let raceNumber;
+  if (typeof rnRaw === 'number') {
+    raceNumber = `${rnRaw}R`;
+  } else if (typeof rnRaw === 'string') {
+    raceNumber = /R$/.test(rnRaw) ? rnRaw : `${rnRaw}R`;
+  } else {
+    raceNumber = '';
+  }
+  const raceName = race.raceName || '';
+  const raceLabel = raceNumber ? `${raceNumber}${raceName ? ' ' + raceName : ''}` : raceName;
+
   return {
     ...race,
     hit,
     betPoints,
     betType,
     payout,
+    raceNumber,
+    raceName,
+    raceLabel,
   };
 }
 
