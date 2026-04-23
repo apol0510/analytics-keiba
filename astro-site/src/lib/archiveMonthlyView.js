@@ -105,23 +105,24 @@ function normalizeDayFromMonthly(dayObj) {
 /**
  * 指定年月のマージ済み monthData を返す。
  *
+ * 優先順位:
+ *   1. 南関 singular (archiveResults.json) を先に展開
+ *   2. 南関 monthly snapshot (archiveResults_YYYY-MM.json) で**上書き**
+ *      （monthly はハンドキュレート済みで race 単位の betPoints まで入っており、
+ *        importResults.js が出す singular より情報が豊富なため）
+ *   3. 中央（JRA）を "DDj" キーで追加
+ *
  * @param {Array} archiveArray     - archiveResults.json の中身（南関、配列）
  * @param {Object} monthlySnapshot - archiveResults_YYYY-MM.json（南関 snapshot）
  * @param {string} year
  * @param {string} month
- * @param {Array} [jraArchive]     - archiveResultsJra.json の中身（中央、配列）※オプション
+ * @param {Array} [jraArchive]     - archiveResultsJra.json の中身（中央、配列）
  * @returns {Object} dayKey -> dayData のマップ
  */
 export function buildMergedMonthData(archiveArray, monthlySnapshot, year, month, jraArchive) {
   const merged = {};
 
-  // 1. 南関 monthly snapshot を展開（既存）
-  const monthlyDays = monthlySnapshot?.[year]?.[month] || {};
-  for (const [day, dayObj] of Object.entries(monthlyDays)) {
-    merged[day] = normalizeDayFromMonthly(dayObj);
-  }
-
-  // 2. 南関 singular で上書き（自動更新側が勝つ）
+  // 1. 南関 singular を先に展開（monthly が無い日を埋めるため）
   if (Array.isArray(archiveArray)) {
     for (const entry of archiveArray) {
       if (!entry?.date) continue;
@@ -129,6 +130,12 @@ export function buildMergedMonthData(archiveArray, monthlySnapshot, year, month,
       if (y !== year || m !== month) continue;
       merged[d] = normalizeDayFromSingular(entry, 'nankan');
     }
+  }
+
+  // 2. 南関 monthly snapshot で上書き（ハンドキュレート優先）
+  const monthlyDays = monthlySnapshot?.[year]?.[month] || {};
+  for (const [day, dayObj] of Object.entries(monthlyDays)) {
+    merged[day] = normalizeDayFromMonthly(dayObj);
   }
 
   // 3. 中央（JRA）を追加。キーは "DDj" にして南関と衝突を避ける。
