@@ -1,22 +1,27 @@
 /**
- * adjustPrediction.js
+ * adjustPrediction.js — analytics-keiba 独自スコアリング
  *
- * 正規化された予想データに対して調整ルールを適用
- * 南関競馬・中央競馬（JRA）共通のロジック
+ * データ主導AI（コンピ指数 + 特徴量重視）の方針で役割を決定する。
+ * 詳細仕様: astro-site/docs/PREDICTION_LOGIC.md
  *
- * 【独自ロジック】
- * 1. 印1◎の馬を必ず本命または対抗に固定
- * 2. 独自スコアリング（印1×4 + 印2×3 + 印3×2 + 印4×1）
- * 3. 独自スコア順で役割を決定
- * 4. 著作権回避のため、印1の複製ではなく複数の印を総合評価
+ * スコア式:
+ *   analyticsScore = computerIndex × 0.5 + featureScore × 0.3 + markScore × 0.2
+ *   （各項は 0–100 に正規化）
  *
- * 調整内容:
- * 1. 独自スコア計算（印1〜4の重み付け合計）
- * 2. displayScore計算（rawScore + 70、0点は0のまま）
- * 3. 印1◎固定 + 独自スコア順で役割決定
- * 4. 連下3頭制限（連下最上位1頭維持 + 連下最大3頭、残りは補欠）
- * 5. 表示用印の割り当て
+ * 役割決定:
+ *   - analyticsScore 降順で決定
+ *   - keiba-intelligence とは異なり「印1◎ 固定」は行わない
+ *   - 差別化ルール（意図的に keiba-intelligence と別結果を作る）:
+ *       a) 上位2頭の analyticsScore 差 < 3% → computerIndex 最大の馬を本命に
+ *       b) analyticsScore 最大 ≠ computerIndex 最大 → computerIndex 最大の馬を本命に
+ *
+ * 共通ルール:
+ *   - displayScore = rawScore + 70（0点は0のまま、UI 互換性のため維持）
+ *   - 連下は 3 頭まで、残りは補欠（変更なし）
+ *   - 表示用印（◎/○/▲/△/×）を割り当て
  */
+
+import { calcSpeedIndex, calcFormTrend, calcStaminaRating } from './featureScores.js';
 
 /**
  * 役割名から表示用印記号に変換
@@ -39,31 +44,54 @@ function getRoleMark(role) {
 }
 
 /**
- * 独自スコア計算（印1〜4の重み付け合計）
- *
- * @param {Object} horse - 馬データ
- * @returns {number} 独自スコア
+ * 印スコア計算（印1〜4の重み付け合計 → 0–100 に正規化）
+ * 旧仕様: 印1×4 + 印2×3 + 印3×2 + 印4×1、最大30。
+ * analytics 独自式では全体の 20% の重みで使用する。
  */
-function calculateCustomScore(horse) {
-  const markPoints = {
-    '◎': 4,
-    '○': 3,
-    '▲': 2,
-    '△': 1,
-    '-': 0,
-    'svg': 0,
-    '無': 0
-  };
-
+function calculateMarkScore(horse) {
+  const markPoints = { '◎': 4, '○': 3, '▲': 2, '△': 1, '-': 0, 'svg': 0, '無': 0 };
   const marks = horse.marks || {};
-
-  const score =
+  const raw =
     (markPoints[marks['印1']] || 0) * 4 +
     (markPoints[marks['印2']] || 0) * 3 +
     (markPoints[marks['印3']] || 0) * 2 +
     (markPoints[marks['印4']] || 0) * 1;
+  // 理論最大 30 を 100 に正規化（超えた分はクリップ）
+  return Math.max(0, Math.min(100, (raw / 30) * 100));
+}
 
-  return score;
+/**
+ * 特徴量スコア計算（0–100 に正規化）
+ * calcSpeedIndex / calcFormTrend / calcStaminaRating の加重平均。
+ * 過去走データ（_pastRaces）が無い馬は featureScore=50（中立）扱い。
+ */
+function calculateFeatureScore(horse) {
+  const recent = horse._pastRaces || horse.recentRaces || [];
+  if (recent.length === 0) return 50;
+  const speed = Math.max(0, Math.min(100, calcSpeedIndex(recent)));
+  const formNorm = Math.max(0, Math.min(100, calcFormTrend(recent) + 50)); // -50..+50 → 0..100
+  const stamina = Math.max(0, Math.min(100, calcStaminaRating(recent)));
+  // 重み: スピード 0.4 / 展開利(form) 0.4 / スタミナ 0.2
+  return speed * 0.4 + formNorm * 0.4 + stamina * 0.2;
+}
+
+/**
+ * コンピ指数を 0–100 に正規化（実運用では 40–99 の範囲に収まる）
+ */
+function normalizeComputer(horse) {
+  const ci = Number(horse.computerIndex || 0);
+  return Math.max(0, Math.min(100, ci));
+}
+
+/**
+ * analytics-keiba 総合スコア
+ *   = computerIndex × 0.5 + featureScore × 0.3 + markScore × 0.2
+ */
+function calculateAnalyticsScore(horse) {
+  const c = normalizeComputer(horse);
+  const f = calculateFeatureScore(horse);
+  const m = calculateMarkScore(horse);
+  return c * 0.5 + f * 0.3 + m * 0.2;
 }
 
 /**
@@ -98,103 +126,82 @@ export function adjustPrediction(normalized) {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 2: 独自スコア計算（印1×4 + 印2×3 + 印3×2 + 印4×1）
+    // Step 2: analytics-keiba 総合スコア計算
+    //   analyticsScore = computerIndex × 0.5 + featureScore × 0.3 + markScore × 0.2
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     for (const horse of race.horses) {
-      horse.customScore = calculateCustomScore(horse);
+      horse.markScore = calculateMarkScore(horse);
+      horse.featureScore = calculateFeatureScore(horse);
+      horse.analyticsScore = calculateAnalyticsScore(horse);
+      // 旧 customScore フィールドは残しておく（UI/ログ互換）
+      horse.customScore = horse.markScore;
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 3: 印1◎固定 + 独自スコア順で役割決定
+    // Step 3: analyticsScore 順で役割決定（差別化ルール付き）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // 印1◎の馬を特定
-    const honmeiMarkHorse = race.horses.find(h => h.marks && h.marks['印1'] === '◎');
+    // スコアのある馬のみ対象
+    const hasAnyScore = race.horses.some(h => h.analyticsScore > 0 || h.rawScore > 0);
+    const activeHorses = race.horses.filter(h => h.analyticsScore > 0 || h.rawScore > 0);
 
-    // 全馬のcustomScoreが0の場合（computer/形式など）、rawScoreでソート
-    const hasCustomScore = race.horses.some(h => h.customScore > 0);
-
-    // スコアのある馬のみ対象（customScore=0 かつ rawScore=0 は「無」のまま）
-    const activeHorses = race.horses.filter(h => h.customScore > 0 || h.rawScore > 0);
-
-    // 独自スコアで降順ソート（customScoreがない場合はrawScoreでソート）
-    const sortedHorses = hasCustomScore
-      ? [...activeHorses].sort((a, b) => b.customScore - a.customScore)
-      : [...activeHorses].sort((a, b) => b.rawScore - a.rawScore);
-
-    // customScoreがない場合（computer/形式など）で、既に役割が割り当てられている場合は維持
+    // analyticsScore がどの馬も 0（= 全馬 computerIndex/mark/feature 全部 0）で、
+    // 既に外部から役割が割り当てられている場合はそれを維持する
     const hasExistingRoles = race.horses.some(h => h.role !== '無');
-    if (!hasCustomScore && hasExistingRoles) {
-      // 既存の役割を維持（adjustPredictionでの再割り当てをスキップ）
-      // Step 4（連下3頭制限）以降の処理は実行
+    const preserveRoles = !hasAnyScore && hasExistingRoles;
+
+    if (preserveRoles) {
+      // 既存の役割を維持（Step 4 以降のみ実行）
     } else {
       // 全馬の役割をリセット
       for (const horse of race.horses) {
         horse.role = '無';
       }
 
-      // 印1◎の順位を確認
-      let honmeiRank = -1;
-      if (honmeiMarkHorse) {
-        honmeiRank = sortedHorses.indexOf(honmeiMarkHorse);
-      }
+      // analyticsScore 降順ソート
+      const sortedByScore = [...activeHorses].sort((a, b) => b.analyticsScore - a.analyticsScore);
+      // computerIndex 降順ソート（差別化ルール用）
+      const sortedByComputer = [...activeHorses].sort((a, b) => normalizeComputer(b) - normalizeComputer(a));
 
-      if (honmeiMarkHorse && honmeiRank === 0) {
-      // 印1◎が1位 → 本命
-      sortedHorses[0].role = '本命';
-      if (sortedHorses[1]) sortedHorses[1].role = '対抗';
-      if (sortedHorses[2]) sortedHorses[2].role = '単穴';
-      if (sortedHorses[3]) sortedHorses[3].role = '連下最上位';
+      // 差別化ルール判定（荒れ防止ガード付き）:
+      //   (a) 上位2頭の analyticsScore 差 < 3% → computer 優先
+      //   (b) analyticsScore 最大 ≠ computerIndex 最大 → computer 優先
+      //   ただし、computer-top が analyticsScore 上位3位以内でない場合は swap しない
+      //   （荒れすぎ防止）
+      let honmei = sortedByScore[0] || null;
+      const topScore = honmei ? honmei.analyticsScore : 0;
+      const secondScore = sortedByScore[1] ? sortedByScore[1].analyticsScore : 0;
+      const closeCall = topScore > 0 && (topScore - secondScore) / topScore < 0.03;
+      const topComputer = sortedByComputer[0] || null;
+      const scoreTopDiffersFromComputer =
+        topComputer && honmei && topComputer !== honmei &&
+        normalizeComputer(topComputer) > normalizeComputer(honmei);
+      // 荒れ防止: computer-top の analyticsScore 順位が 3位以内でないと swap しない
+      const computerTopRank = topComputer ? sortedByScore.indexOf(topComputer) : -1;
+      const computerTopInRange = computerTopRank >= 0 && computerTopRank <= 2;
 
-      // 4位以降は連下
-      for (let i = 4; i < sortedHorses.length; i++) {
-        sortedHorses[i].role = '連下';
-      }
-
-    } else if (honmeiMarkHorse && honmeiRank > 0) {
-      // 印1◎が2位以下 → 1位を本命、印1◎を対抗に固定
-      sortedHorses[0].role = '本命';
-      honmeiMarkHorse.role = '対抗';
-
-      // 単穴: 印1◎を除いた2位
-      let tananaCandidateIndex = 1;
-      while (tananaCandidateIndex < sortedHorses.length &&
-             sortedHorses[tananaCandidateIndex] === honmeiMarkHorse) {
-        tananaCandidateIndex++;
-      }
-      if (tananaCandidateIndex < sortedHorses.length) {
-        sortedHorses[tananaCandidateIndex].role = '単穴';
-      }
-
-      // 連下最上位: 印1◎を除いた3位
-      let renkaTopCandidateIndex = tananaCandidateIndex + 1;
-      while (renkaTopCandidateIndex < sortedHorses.length &&
-             sortedHorses[renkaTopCandidateIndex] === honmeiMarkHorse) {
-        renkaTopCandidateIndex++;
-      }
-      if (renkaTopCandidateIndex < sortedHorses.length) {
-        sortedHorses[renkaTopCandidateIndex].role = '連下最上位';
-      }
-
-      // 残りは連下
-      for (let i = 0; i < sortedHorses.length; i++) {
-        if (sortedHorses[i].role === '無' && sortedHorses[i] !== honmeiMarkHorse) {
-          sortedHorses[i].role = '連下';
+      let ruleApplied = null;
+      if (honmei && topComputer && computerTopInRange && (closeCall || scoreTopDiffersFromComputer)) {
+        if (topComputer !== honmei) {
+          honmei = topComputer;
+          ruleApplied = closeCall ? 'close-call-prefer-computer' : 'computer-top-mismatch';
         }
       }
 
-    } else {
-      // 印1◎がない場合（まれ）→ 独自スコア順で機械的に決定
-      if (sortedHorses[0]) sortedHorses[0].role = '本命';
-      if (sortedHorses[1]) sortedHorses[1].role = '対抗';
-      if (sortedHorses[2]) sortedHorses[2].role = '単穴';
-      if (sortedHorses[3]) sortedHorses[3].role = '連下最上位';
-
-        for (let i = 4; i < sortedHorses.length; i++) {
-          sortedHorses[i].role = '連下';
-        }
+      // 役割割当
+      if (honmei) honmei.role = '本命';
+      // 対抗以下は「本命を除いた analyticsScore 上位」で決定
+      const remaining = sortedByScore.filter(h => h !== honmei);
+      if (remaining[0]) remaining[0].role = '対抗';
+      if (remaining[1]) remaining[1].role = '単穴';
+      if (remaining[2]) remaining[2].role = '連下最上位';
+      for (let i = 3; i < remaining.length; i++) {
+        remaining[i].role = '連下';
       }
-    } // hasExistingRoles のelse終了
+
+      // デバッグ情報を race に残す（PREDICTION_LOGIC.md で言及）
+      race._analyticsRule = ruleApplied;
+    }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // Step 4: 連下3頭制限（連下最上位は保持）
@@ -206,8 +213,12 @@ export function adjustPrediction(normalized) {
     // 連下を抽出（連下最上位は除外）
     const renkaList = race.horses.filter(h => h.role === '連下');
 
-    // customScoreで降順ソート
-    renkaList.sort((a, b) => b.customScore - a.customScore);
+    // analyticsScore で降順ソート（フォールバックで customScore / rawScore）
+    renkaList.sort((a, b) => {
+      const sa = a.analyticsScore ?? a.customScore ?? a.rawScore ?? 0;
+      const sb = b.analyticsScore ?? b.customScore ?? b.rawScore ?? 0;
+      return sb - sa;
+    });
 
     // 上位3頭のみ連下、残りは補欠
     for (let i = 0; i < renkaList.length; i++) {

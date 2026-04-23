@@ -121,6 +121,8 @@ export function normalizeDetailed(input) {
         mark: '', // adjustPrediction()で生成
         mark1: mark1, // 印1を保持（独自予想用）
         marks: horse.marks || {}, // adjustPredictionのcustomScore計算用（印1〜印N）
+        // analytics-keiba 独自スコアリング用（PREDICTION_LOGIC.md 参照）
+        computerIndex: parseInt(horse.computerIndex || '0') || 0,
         jockey: horse.kisyu || horse.jockey || '', // 騎手
         trainer: horse.kyusya || horse.trainer || '', // 厩舎
         age: horse.seirei || horse.ageGender || horse.age || '', // 馬齢（牡3、牝4など）

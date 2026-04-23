@@ -1,12 +1,18 @@
 /**
  * adjustPrediction.test.js
  *
- * adjustPrediction関数のテスト
- * Node標準のassertを使用
+ * ⚠️ LEGACY: これらは旧「印1◎ 固定 + 4点差入れ替え」ロジック用のテスト。
+ * 現行の analyticsScore（computerIndex×0.5 + featureScore×0.3 + markScore×0.2）
+ * ベースの仕様は astro-site/docs/PREDICTION_LOGIC.md を参照。
+ * CI からは呼ばれておらず手動実行のみ。新ロジック用テストは別途整備予定。
+ *
+ * 下記 assert は旧仕様に依存しているため現行コードでは失敗することを許容する。
  */
 
 import assert from 'assert';
 import { adjustPrediction } from './adjustPrediction.js';
+
+console.warn('⚠️ adjustPrediction.test.js はレガシーテストです。PREDICTION_LOGIC.md を参照。');
 
 /**
  * テストケース1: 差4点以上で役割入れ替えが起きる
