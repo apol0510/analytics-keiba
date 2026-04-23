@@ -5,15 +5,16 @@ import archiveData02 from '../../../data/archiveResults_2026-02.json';
 import archiveData03 from '../../../data/archiveResults_2026-03.json';
 import archiveData04 from '../../../data/archiveResults_2026-04.json';
 import archiveResults from '../../../data/archiveResults.json';
+import archiveResultsJra from '../../../data/archiveResultsJra.json';
 import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
 
 const year = '2026';
-// 月別 snapshot と archiveResults.json（自動更新側）をマージ
+// 月別 snapshot + 南関 + 中央をマージ
 const yearData = {
-  '01': buildMergedMonthData(archiveResults, archiveData01, year, '01'),
-  '02': buildMergedMonthData(archiveResults, archiveData02, year, '02'),
-  '03': buildMergedMonthData(archiveResults, archiveData03, year, '03'),
-  '04': buildMergedMonthData(archiveResults, archiveData04, year, '04'),
+  '01': buildMergedMonthData(archiveResults, archiveData01, year, '01', archiveResultsJra),
+  '02': buildMergedMonthData(archiveResults, archiveData02, year, '02', archiveResultsJra),
+  '03': buildMergedMonthData(archiveResults, archiveData03, year, '03', archiveResultsJra),
+  '04': buildMergedMonthData(archiveResults, archiveData04, year, '04', archiveResultsJra),
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 

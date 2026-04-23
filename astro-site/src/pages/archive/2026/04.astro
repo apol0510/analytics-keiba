@@ -2,13 +2,19 @@
 export const prerender = true;
 import archiveData from '../../../data/archiveResults_2026-04.json';
 import archiveResults from '../../../data/archiveResults.json';
-import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
+import archiveResultsJra from '../../../data/archiveResultsJra.json';
+import { buildMergedMonthData, dayKeyToInt } from '../../../lib/archiveMonthlyView.js';
 
 const year = '2026';
 const month = '04';
-// monthly スナップショット（旧データ）と singular（importResults.js で自動更新）をマージ
-const monthData = buildMergedMonthData(archiveResults, archiveData, year, month);
-const days = Object.keys(monthData).sort().reverse(); // 新しい順
+// 南関 snapshot + 南関 singular + 中央 singular をマージ（dayKey: "DD" | "DDj"）
+const monthData = buildMergedMonthData(archiveResults, archiveData, year, month, archiveResultsJra);
+// 日降順（同日は南関→中央の順）
+const days = Object.keys(monthData).sort((a, b) => {
+  const da = dayKeyToInt(a), db = dayKeyToInt(b);
+  if (da !== db) return db - da;
+  return a.localeCompare(b); // "10" < "10j"
+});
 
 // 月間統計計算
 let totalDays = days.length;
@@ -17,8 +23,8 @@ let totalPayoutMonth = 0;
 let totalHitRaces = 0;
 let totalRaces = 0;
 
-days.forEach(day => {
-  const dayData = monthData[day];
+days.forEach(dayKey => {
+  const dayData = monthData[dayKey];
   if (dayData.perfectHit) perfectDays++;
   totalPayoutMonth += dayData.totalPayout || 0;
   totalHitRaces += dayData.hitRaces || 0;
@@ -468,9 +474,10 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       </div>
     </div>
 
-    <!-- 日別アーカイブ -->
-    {days.map(day => {
-      const dayData = monthData[day];
+    <!-- 日別アーカイブ（南関 + 中央） -->
+    {days.map(dayKey => {
+      const dayData = monthData[dayKey];
+      const dayNum = dayKeyToInt(dayKey);
       const hitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
       const totalBetPoints = dayData.races.reduce((sum, race) => sum + (race.betPoints || 0), 0);
       const totalInvestment = totalBetPoints * 100; // 1点=100円
@@ -478,7 +485,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       return (
         <div class="day-section">
           <div class="day-header">
-            <h2 class="day-title">4月{parseInt(day)}日 {dayData.venue}競馬</h2>
+            <h2 class="day-title">4月{dayNum}日 {dayData.venueDisplay}</h2>
             <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces}的中</div>
           </div>
 

@@ -4,14 +4,15 @@ import archiveData10 from '../../../data/archiveResults_2025-10.json';
 import archiveData11 from '../../../data/archiveResults_2025-11.json';
 import archiveData12 from '../../../data/archiveResults_2025-12.json';
 import archiveResults from '../../../data/archiveResults.json';
+import archiveResultsJra from '../../../data/archiveResultsJra.json';
 import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
 
 const year = '2025';
-// 月別 snapshot と archiveResults.json（自動更新側）をマージ
+// 月別 snapshot + 南関 + 中央をマージ
 const yearData = {
-  '10': buildMergedMonthData(archiveResults, archiveData10, year, '10'),
-  '11': buildMergedMonthData(archiveResults, archiveData11, year, '11'),
-  '12': buildMergedMonthData(archiveResults, archiveData12, year, '12'),
+  '10': buildMergedMonthData(archiveResults, archiveData10, year, '10', archiveResultsJra),
+  '11': buildMergedMonthData(archiveResults, archiveData11, year, '11', archiveResultsJra),
+  '12': buildMergedMonthData(archiveResults, archiveData12, year, '12', archiveResultsJra),
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 

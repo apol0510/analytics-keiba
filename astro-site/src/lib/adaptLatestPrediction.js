@@ -156,12 +156,15 @@ export function listNankanPredictionEntries(modules, opts = {}) {
  * venueSlug 指定で会場固定も可能。指定 venue が無い場合は opts.fallbackToAny=true で
  * 任意の最新 nankan データにフォールバックする。
  *
+ * category: 'jra' が指定された場合は pickLatestJraPrediction に委譲する。
+ *
  * @param {Record<string, any>} modules - import.meta.glob の結果
- * @param {{venueSlug?:string, fallbackToAny?:boolean}} [opts]
+ * @param {{venueSlug?:string, fallbackToAny?:boolean, category?:'nankan'|'jra'}} [opts]
  * @returns {{raceDate:string, track:string, totalRaces:number, races:Array, _sourceFile:string, _fallback?:boolean}|null}
  */
 export function pickLatestAndAdapt(modules, opts = {}) {
-  const { venueSlug, fallbackToAny = false } = opts;
+  const { venueSlug, fallbackToAny = false, category = 'nankan' } = opts;
+  if (category === 'jra') return pickLatestJraPrediction(modules);
   let entries = listNankanPredictionEntries(modules, { venueSlug });
   let fellBack = false;
   if (entries.length === 0 && venueSlug && fallbackToAny) {
@@ -174,4 +177,43 @@ export function pickLatestAndAdapt(modules, opts = {}) {
   adapted._sourceFile = latest.path;
   if (fellBack) adapted._fallback = true;
   return adapted;
+}
+
+// ============================================================
+// JRA 用（multi-venue スキーマ）
+// ============================================================
+
+/**
+ * JRA 予想ファイル（src/data/predictions/jra/YYYY/MM/YYYY-MM-DD.json）を
+ * import.meta.glob 結果から全列挙し、日付降順で返す。
+ *
+ * @param {Record<string, any>} modules - `import.meta.glob('/src/data/predictions/jra/**\/*.json', { eager: true })` の結果
+ * @returns {Array<{path:string, date:string, data:any}>}
+ */
+export function listJraPredictionEntries(modules) {
+  const entries = [];
+  for (const [path, mod] of Object.entries(modules)) {
+    const m = path.match(/\/predictions\/jra\/\d{4}\/\d{2}\/(\d{4}-\d{2}-\d{2})\.json$/);
+    if (!m) continue;
+    const data = mod?.default || mod;
+    // JRA スキーマ: {date, totalVenues, totalRaces, venues:[{venue, eventInfo, predictions}]}
+    if (!data?.date || !Array.isArray(data?.venues)) continue;
+    entries.push({ path, date: m[1], data });
+  }
+  entries.sort((a, b) => (a.date < b.date ? 1 : -1));
+  return entries;
+}
+
+/**
+ * JRA の最新予想ファイルを返す。スキーマは元の multi-venue 形式のまま。
+ * （JRA ページは venues 配列を前提に表示しているため、変換せずに返す）
+ *
+ * @param {Record<string, any>} modules
+ * @returns {{date:string, totalVenues:number, totalRaces:number, venues:Array, _sourceFile:string}|null}
+ */
+export function pickLatestJraPrediction(modules) {
+  const entries = listJraPredictionEntries(modules);
+  if (entries.length === 0) return null;
+  const latest = entries[0];
+  return { ...latest.data, _sourceFile: latest.path };
 }
