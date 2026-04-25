@@ -1,0 +1,233 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+export const prerender = true;
+---
+
+<BaseLayout
+  title="ログイン | KEIBA Analytics"
+  description="KEIBA Analyticsへのログイン。メールアドレス宛に届くリンクをクリックしてログインします。"
+>
+  <section class="login-section">
+    <div class="container">
+      <div class="login-card">
+        <div class="login-header">
+          <h1>ログイン</h1>
+          <p>登録済みのメールアドレスを入力してください。<br>ログイン用のリンクをメールでお送りします。</p>
+        </div>
+
+        <form id="loginForm" class="login-form">
+          <div class="form-group">
+            <label for="email">メールアドレス</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              placeholder="your@email.com"
+              required
+              autocomplete="email"
+            />
+          </div>
+
+          <button type="submit" class="btn-primary" id="submitBtn">
+            <span class="btn-text">ログインリンクを送信</span>
+            <span class="btn-loading" style="display: none;">送信中...</span>
+          </button>
+
+          <div id="message" class="message" style="display: none;"></div>
+        </form>
+
+        <div class="login-footer">
+          <p>アカウントをお持ちでない方は、<a href="/pricing/">料金プラン</a>からご登録ください。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style lang="scss">
+  .login-section {
+    min-height: calc(100vh - 200px);
+    display: flex;
+    align-items: center;
+    padding: 80px 0;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  .login-card {
+    max-width: 480px;
+    margin: 0 auto;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 16px;
+    padding: 48px;
+    backdrop-filter: blur(10px);
+  }
+
+  .login-header {
+    text-align: center;
+    margin-bottom: 40px;
+
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+
+    p {
+      color: #94a3b8;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+  }
+
+  .login-form {
+    .form-group {
+      margin-bottom: 24px;
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        color: #e2e8f0;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      input {
+        width: 100%;
+        padding: 14px 16px;
+        background: rgba(30, 41, 59, 0.8);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 8px;
+        color: #f1f5f9;
+        font-size: 16px;
+        transition: all 0.3s ease;
+
+        &:focus {
+          outline: none;
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        &::placeholder { color: #64748b; }
+      }
+    }
+
+    .btn-primary {
+      width: 100%;
+      padding: 16px;
+      background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+
+      &:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+      }
+      &:disabled { opacity: 0.6; cursor: not-allowed; }
+      &.loading {
+        .btn-text { display: none; }
+        .btn-loading { display: inline; }
+      }
+    }
+  }
+
+  .message {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+
+    &.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #6ee7b7;
+    }
+    &.error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+    }
+  }
+
+  .login-footer {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(59, 130, 246, 0.1);
+    text-align: center;
+
+    p {
+      color: #94a3b8;
+      font-size: 14px;
+    }
+    a { color: #3b82f6; text-decoration: none; &:hover { text-decoration: underline; } }
+  }
+
+  @media (max-width: 600px) {
+    .login-card { padding: 32px 24px; }
+    .login-header h1 { font-size: 26px; }
+  }
+</style>
+
+<script>
+  const form = document.getElementById('loginForm') as HTMLFormElement;
+  const emailInput = document.getElementById('email') as HTMLInputElement;
+  const submitBtn = document.getElementById('submitBtn') as HTMLButtonElement;
+  const messageDiv = document.getElementById('message') as HTMLDivElement;
+
+  function showMessage(text: string, type: 'success' | 'error') {
+    messageDiv.textContent = text;
+    messageDiv.className = `message ${type}`;
+    messageDiv.style.display = 'block';
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = emailInput.value.trim();
+    if (!email) { showMessage('メールアドレスを入力してください。', 'error'); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.classList.add('loading');
+    messageDiv.style.display = 'none';
+
+    try {
+      const response = await fetch('/.netlify/functions/send-magic-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+
+      if (response.ok) {
+        showMessage(data.message || 'ログインリンクを送信しました。メールをご確認ください。', 'success');
+        emailInput.value = '';
+      } else {
+        const msg =
+          response.status === 403 ? 'アカウントが無効です。サポートにお問い合わせください。'
+          : data.error || 'エラーが発生しました。もう一度お試しください。';
+        showMessage(msg, 'error');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      showMessage('通信エラーが発生しました。もう一度お試しください。', 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove('loading');
+    }
+  });
+</script>

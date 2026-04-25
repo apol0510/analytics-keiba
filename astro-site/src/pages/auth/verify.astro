@@ -1,0 +1,113 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+export const prerender = false;
+---
+
+<BaseLayout
+  title="認証中... | KEIBA Analytics"
+  description="ログイン処理中"
+>
+  <section class="verify-section">
+    <div class="container">
+      <div class="verify-card">
+        <div id="loading-state" class="verify-content">
+          <div class="spinner"></div>
+          <h1 id="status">認証中...</h1>
+          <p id="message">トークンを確認しています。しばらくお待ちください。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style lang="scss">
+  .verify-section {
+    min-height: calc(100vh - 200px);
+    display: flex;
+    align-items: center;
+    padding: 80px 0;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  .verify-card {
+    max-width: 480px; margin: 0 auto;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 16px; padding: 48px; text-align: center;
+  }
+  .verify-content {
+    h1 {
+      font-size: 28px; font-weight: 700; margin: 24px 0 12px;
+      background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    p { color: #94a3b8; font-size: 15px; line-height: 1.6; }
+    a { color: #3b82f6; text-decoration: none; &:hover { text-decoration: underline; } }
+  }
+  .spinner {
+    width: 48px; height: 48px; margin: 0 auto;
+    border: 4px solid rgba(59, 130, 246, 0.2);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .verify-content.error h1 { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .verify-content.success h1 { background: linear-gradient(135deg, #059669 0%, #10b981 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .verify-content.error .spinner, .verify-content.success .spinner { display: none; }
+</style>
+
+<script>
+  (async () => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const root = document.getElementById('loading-state') as HTMLDivElement;
+    const status = document.getElementById('status') as HTMLHeadingElement;
+    const msg = document.getElementById('message') as HTMLParagraphElement;
+
+    function fail(text: string) {
+      root.classList.add('error');
+      status.textContent = '認証失敗';
+      msg.innerHTML = `${text}<br><br><a href="/login">もう一度ログインする</a>`;
+    }
+    function ok(text: string, redirectTo: string) {
+      root.classList.add('success');
+      status.textContent = 'ログイン成功';
+      msg.innerHTML = `${text}<br><br>3秒後に <a href="${redirectTo}">${redirectTo}</a> へ移動します。`;
+      setTimeout(() => { window.location.replace(redirectTo); }, 3000);
+    }
+
+    if (!token) { fail('トークンが指定されていません。'); return; }
+
+    try {
+      const res = await fetch(`/.netlify/functions/verify-magic-link?token=${encodeURIComponent(token)}`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        fail(data.error === 'Token expired' ? 'リンクの有効期限（15分）が切れています。'
+          : data.error === 'Token already used' ? 'このリンクは既に使用済みです。'
+          : data.error === 'Token not found' ? '無効なトークンです。'
+          : data.error === 'Customer not found' ? 'アカウントが見つかりません。'
+          : 'エラーが発生しました。');
+        return;
+      }
+
+      // AccessControl 互換の localStorage 'user-plan' に保存
+      if (data.userPlan) {
+        try {
+          localStorage.setItem('user-plan', JSON.stringify(data.userPlan));
+        } catch (e) {
+          console.warn('localStorage write failed', e);
+        }
+      }
+      ok('ログインしました。', data.redirectTo || '/free-prediction/nankan/');
+    } catch (e) {
+      console.error(e);
+      fail('通信エラーが発生しました。もう一度お試しください。');
+    }
+  })();
+</script>

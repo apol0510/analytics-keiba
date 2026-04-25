@@ -1,280 +1,173 @@
-// マジックリンク送信Function
-import Airtable from 'airtable';
-import crypto from 'crypto';
+/**
+ * マジックリンク送信API（analytics-keiba）
+ *
+ * - Airtable Customers テーブルでメール検証
+ * - AuthTokens テーブルに使い捨てトークン保存（15分有効）
+ * - SendGrid でログインリンクを送信
+ *
+ * 参照する Airtable Base は nankan-analytics 側の既存 Base。
+ * テーブル: Customers / AuthTokens
+ *   AuthTokens がまだ無い場合は Airtable で新規作成すること
+ *   （フィールド: Token, Email, CreatedAt, ExpiresAt, Used, Ip_Address, User_Agent）
+ *
+ * 環境変数:
+ *   AIRTABLE_API_KEY        nankan-analytics と同じ値
+ *   AIRTABLE_BASE_ID        nankan-analytics と同じ値
+ *   SENDGRID_API_KEY        SendGrid 送信キー
+ *   SENDGRID_FROM_EMAIL     送信元メール（例: noreply@analytics.keiba.link）
+ *   MAGIC_LINK_BASE_URL     マジックリンクのベース（任意、既定 https://analytics.keiba.link）
+ */
 
-export const handler = async (event, context) => {
-  // すぐにログを出力
-  console.log('🚀 Function実行開始:', new Date().toISOString());
-  console.log('Method:', event.httpMethod);
-  console.log('Headers:', JSON.stringify(event.headers));
-  
-  // CORSヘッダー設定
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
+const { v4: uuidv4 } = require('uuid');
+const Airtable = require('airtable');
+const sgMail = require('@sendgrid/mail');
+
+const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'noreply@analytics.keiba.link';
+const SITE_BASE = (process.env.MAGIC_LINK_BASE_URL || 'https://analytics.keiba.link').replace(/\/$/, '');
+
+if (SENDGRID_API_KEY) sgMail.setApiKey(SENDGRID_API_KEY);
+
+const ALLOWED_ORIGINS = [
+  'https://analytics.keiba.link',
+  'https://analytics-keiba.netlify.app',
+  'http://localhost:4321',
+  'http://localhost:3000',
+];
+
+function corsHeaders(event) {
+  const origin = event.headers?.origin || '';
+  const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Credentials': 'true',
+    'Content-Type': 'application/json',
   };
-  
-  // OPTIONSリクエスト（CORS preflight）
-  if (event.httpMethod === 'OPTIONS') {
-    console.log('OPTIONS request received');
-    return {
-      statusCode: 200,
-      headers,
-      body: ''
-    };
-  }
-  
-  // POSTリクエストのみ許可
+}
+
+exports.handler = async (event) => {
+  const headers = corsHeaders(event);
+
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
   if (event.httpMethod !== 'POST') {
-    console.log('Invalid method:', event.httpMethod);
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error: 'Method Not Allowed' })
-    };
+    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
-  
+
+  if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Airtable env not configured' }) };
+  }
+  if (!SENDGRID_API_KEY) {
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'SendGrid env not configured' }) };
+  }
+
   try {
-    console.log('POSTリクエスト処理開始');
     const { email } = JSON.parse(event.body || '{}');
-    
     if (!email) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Email is required' }) };
+    }
+
+    const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(AIRTABLE_BASE_ID);
+    const customersTable = base('Customers');
+    const authTokensTable = base('AuthTokens');
+
+    // 1. Customers テーブルで既存ユーザー確認
+    const customers = await customersTable
+      .select({ filterByFormula: `{Email} = "${email.replace(/"/g, '\\"')}"`, maxRecords: 1 })
+      .firstPage();
+
+    if (customers.length === 0) {
+      // セキュリティ: 存在しないメールでも 200 を返して enumeration を防ぐ
+      console.warn('[send-magic-link] Customer not found:', email);
       return {
-        statusCode: 400,
+        statusCode: 200,
         headers,
-        body: JSON.stringify({ error: 'メールアドレスが必要です' })
+        body: JSON.stringify({
+          success: true,
+          message: '該当するアカウントが存在する場合、ログインリンクを送信しました。',
+        }),
       };
     }
-    
-    // 環境変数チェック（Netlify環境変数必須）
-    const airtableApiKey = process.env.AIRTABLE_API_KEY;
-    const airtableBaseId = process.env.AIRTABLE_BASE_ID;
-    if (!airtableApiKey || !airtableBaseId) {
+
+    const customer = customers[0].fields;
+
+    // ステータスが明示的に inactive の場合は弾く（active / undefined は OK）
+    if (customer.Status && String(customer.Status).toLowerCase() === 'inactive') {
       return {
-        statusCode: 500,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'Server configuration missing' })
+        statusCode: 403,
+        headers,
+        body: JSON.stringify({ error: 'Account is not active' }),
       };
     }
-    
-    console.log('Airtable接続情報:', {
-      hasApiKey: !!airtableApiKey,
-      apiKeyPreview: airtableApiKey.substring(0, 20) + '...',
-      hasBaseId: !!airtableBaseId,
-      baseId: airtableBaseId
+
+    // 2. トークン生成 (15分有効)
+    const token = uuidv4();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await authTokensTable.create([
+      {
+        fields: {
+          Token: token,
+          Email: email,
+          CreatedAt: new Date().toISOString(),
+          ExpiresAt: expiresAt.toISOString(),
+          Used: false,
+          Ip_Address: event.headers['x-forwarded-for'] || 'unknown',
+          User_Agent: event.headers['user-agent'] || 'unknown',
+        },
+      },
+    ]);
+
+    // 3. メール送信
+    const magicLink = `${SITE_BASE}/auth/verify?token=${encodeURIComponent(token)}`;
+    const customerName = customer.Name || customer['お名前'] || 'お客様';
+
+    await sgMail.send({
+      to: email,
+      from: FROM_EMAIL,
+      subject: '【KEIBA Analytics】ログインリンク',
+      html: `
+<div style="font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8fafc;">
+  <div style="background-color: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <h2 style="color: #1e40af; margin-top: 0; font-size: 24px;">ログインリンク</h2>
+    <p style="color: #334155; font-size: 16px; line-height: 1.6;">${customerName} 様</p>
+    <p style="color: #334155; font-size: 16px; line-height: 1.6;">以下のボタンをクリックしてログインしてください。</p>
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${magicLink}" style="display: inline-block; background-color: #3b82f6; color: #ffffff !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; border: 2px solid #3b82f6;">
+        ログインする
+      </a>
+    </div>
+    <div style="background-color: #f1f5f9; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0; border-radius: 4px;">
+      <p style="color: #475569; font-size: 14px; margin: 0; line-height: 1.6;">ボタンが動作しない場合は、以下のURLをコピーしてブラウザに貼り付けてください。</p>
+      <p style="margin: 8px 0 0 0;"><a href="${magicLink}" style="color: #3b82f6; word-break: break-all; font-size: 13px;">${magicLink}</a></p>
+    </div>
+    <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; margin: 24px 0; border-radius: 4px;">
+      <p style="color: #991b1b; font-size: 14px; margin: 0; line-height: 1.6;">⚠️ このリンクは15分間有効です。<br>心当たりがない場合は、このメールを無視してください。</p>
+    </div>
+    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+    <p style="color: #64748b; font-size: 14px; margin: 0;">KEIBA Analytics チーム</p>
+  </div>
+</div>
+`,
     });
-    
-    // Airtable接続
-    const base = new Airtable({
-      apiKey: airtableApiKey
-    }).base(airtableBaseId);
-    
-    // 顧客確認
-    const records = await base('Customers').select({
-      filterByFormula: `{Email} = "${email}"`
-    }).firstPage();
-    
-    if (records.length === 0) {
-      // 新規顧客の場合は Free プランで作成（登録日は自動計算フィールドのため除外）
-      const newRecord = await base('Customers').create({
-        'Email': email,
-        'プラン': 'Free',
-        'ポイント': 0
-      });
-      console.log('新規顧客作成:', email);
-    }
-    
-    // 一時トークン生成（32文字のランダム文字列）
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30分後
-    
-    // トークンをAirtableまたは一時ストレージに保存
-    // ここではAirtableにトークンフィールドを追加して保存
-    const customerRecord = records[0] || await base('Customers').select({
-      filterByFormula: `{Email} = "${email}"`
-    }).firstPage().then(r => r[0]);
-    
-    if (customerRecord) {
-      // とりあえずトークンだけ保存（有効期限は後で対応）
-      await base('Customers').update(customerRecord.id, {
-        '認証トークン': token
-        // TODO: 有効期限フィールドの型を修正後に追加
-      });
-      console.log(`トークン保存完了: ${email} - ${token.substring(0, 8)}...`);
-    }
-    
-    // マジックリンク生成
-    const siteUrl = process.env.SITE_URL || 'https://nankan-analytics.keiba.link';
-    const magicLink = `${siteUrl}/dashboard?token=${token}&email=${encodeURIComponent(email)}`;
-    
-    // メール送信（Resend使用）
-    await sendMagicLinkEmail(email, magicLink);
-    
-    console.log(`✅ マジックリンク送信完了: ${email}`);
-    
+
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         success: true,
-        message: 'マジックリンクをメールで送信しました',
-        email: email
-      })
+        message: 'ログインリンクを送信しました。メールをご確認ください。',
+      }),
     };
-    
   } catch (error) {
-    console.error('❌ エラー発生:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name
-    });
+    console.error('❌ [send-magic-link] error:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({
-        error: '一時的にアクセスできません',
-        details: error.message,
-        type: error.name
-      })
+      body: JSON.stringify({ error: 'Internal Server Error', details: error.message }),
     };
   }
 };
-
-// マジックリンクメール送信
-async function sendMagicLinkEmail(email, magicLink) {
-  // Resend APIキー（環境変数またはハードコード）
-  const apiKey = process.env.RESEND_API_KEY || 're_3V2es1rn_9ghDCmQkPGfTQLdyt7vKcGDe';
-  
-  console.log('📧 メール送信開始:', { 
-    to: email,
-    hasApiKey: !!apiKey,
-    apiKeyPreview: apiKey ? apiKey.substring(0, 10) + '...' : 'なし'
-  });
-  
-  if (!apiKey) {
-    console.log('RESEND_API_KEY未設定のため、メール送信をスキップ');
-    console.log('マジックリンク:', magicLink); // デバッグ用
-    return;
-  }
-  
-  try {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from: process.env.FROM_EMAIL || 'noreply@nankan-analytics.keiba.link',
-        to: email,
-        subject: 'ログインリンク - NANKANアナリティクス',
-        html: `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="utf-8">
-            <style>
-              body {
-                font-family: sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 20px;
-              }
-              .header {
-                background-color: #3b82f6;
-                background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-                color: white;
-                padding: 30px;
-                text-align: center;
-                border-radius: 10px 10px 0 0;
-              }
-              .content {
-                background: #f9fafb;
-                padding: 30px;
-                border-radius: 0 0 10px 10px;
-              }
-              .button {
-                display: inline-block;
-                background-color: #3b82f6;
-                background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-                color: #ffffff !important;
-                padding: 15px 40px;
-                text-decoration: none;
-                border-radius: 8px;
-                font-weight: bold;
-                margin: 20px 0;
-              }
-              .warning {
-                background: #fef2f2;
-                border-left: 4px solid #ef4444;
-                padding: 15px;
-                margin: 20px 0;
-                border-radius: 5px;
-              }
-              .footer {
-                text-align: center;
-                color: #6b7280;
-                font-size: 12px;
-                margin-top: 30px;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>🎯 NANKANアナリティクス</h1>
-              <p>マイページへのログインリンク</p>
-            </div>
-            
-            <div class="content">
-              <h2>こんにちは！</h2>
-              <p>マイページへのログインリンクをお送りします。</p>
-              <p>下記のボタンをクリックして、マイページにアクセスしてください：</p>
-              
-              <center>
-                <a href="${magicLink}" class="button">マイページにログイン</a>
-              </center>
-              
-              <div class="warning">
-                ⏰ <strong>このリンクは30分間有効です。</strong><br>
-                期限が切れた場合は、再度ログインリンクをリクエストしてください。
-              </div>
-              
-              <p>ボタンが機能しない場合は、以下のURLをコピーしてブラウザに貼り付けてください：</p>
-              <p style="word-break: break-all; background: #f3f4f6; padding: 10px; border-radius: 5px;">
-                ${magicLink}
-              </p>
-            </div>
-            
-            <div class="footer">
-              <p>このメールに心当たりがない場合は、無視してください。</p>
-              <p>NANKANアナリティクス - AI競馬予想システム</p>
-            </div>
-          </body>
-          </html>
-        `
-      })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Resend APIエラー:', {
-        status: response.status,
-        error: errorText
-      });
-      throw new Error(`メール送信失敗: ${response.status} - ${errorText}`);
-    }
-    
-    const result = await response.json();
-    console.log('✅ マジックリンクメール送信完了:', {
-      id: result.id,
-      to: email
-    });
-    
-  } catch (error) {
-    console.error('メール送信エラー:', error);
-    throw error;
-  }
-}
