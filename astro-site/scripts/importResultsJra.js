@@ -413,12 +413,22 @@ function saveArchive(date, venue, raceResults) {
   const hitRate = totalRaces > 0 ? (hitRaces / totalRaces * 100).toFixed(1) : '0.0';
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 払戻金計算（回収率ベースの3段階可変点数方式）
-  //   仮回収率 >=200% → 1レース 12点
-  //   仮回収率 >=100% → 1レース 10点
-  //   仮回収率 <100%  → 1レース 8点
-  // 判定は「8点で仮計算した回収率」を基準に行う。
+  // 払戻金計算（4段階可変点数方式・実レース数ベース）
+  //   totalPayout >= races × 12 × 100 → 12点
+  //   totalPayout >= races × 10 × 100 → 10点
+  //   totalPayout >= races ×  8 × 100 → 8点
+  //   totalPayout >= races ×  6 × 100 → 6点
+  //   それ以下 → 6点（下限・マイナス受容）
+  // 詳細: BET_POINT_LOGIC.md 参照
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  function getBetPoints(totalPayout, races) {
+    if (races <= 0) return 6;
+    if (totalPayout >= races * 12 * 100) return 12;
+    if (totalPayout >= races * 10 * 100) return 10;
+    if (totalPayout >= races *  8 * 100) return 8;
+    if (totalPayout >= races *  6 * 100) return 6;
+    return 6;
+  }
 
   const totalPayout = raceResults.reduce((sum, race) => {
     if (race.isHit && race.umatan.payout) {
@@ -429,18 +439,11 @@ function saveArchive(date, venue, raceResults) {
     return sum;
   }, 0);
 
-  // 仮計算（8点基準）で回収率を判定
-  const provisionalBetAmount = totalRaces * 8 * 100;
-  const provisionalRate = provisionalBetAmount > 0
-    ? (totalPayout / provisionalBetAmount) * 100
-    : 0;
-
-  // 3段階: >=200% → 12, >=100% → 10, <100% → 8
-  const betPointsPerRace = provisionalRate >= 200 ? 12 : (provisionalRate >= 100 ? 10 : 8);
+  const betPointsPerRace = getBetPoints(totalPayout, totalRaces);
   const betAmount = totalRaces * betPointsPerRace * 100;
   const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
 
-  console.log(`\n📊 買い目点数判定: 仮回収率 ${provisionalRate.toFixed(1)}% → ${betPointsPerRace}点/レース (最終回収率 ${returnRate.toFixed(1)}%)`);
+  console.log(`\n📊 買い目点数判定: ${totalRaces}R × ${betPointsPerRace}点 = ${betAmount.toLocaleString()}円 / 払戻 ${totalPayout.toLocaleString()}円 → 回収率 ${returnRate.toFixed(1)}%`);
 
   // 最終的な回収率（小数点1桁）
   const finalReturnRate = returnRate.toFixed(1);

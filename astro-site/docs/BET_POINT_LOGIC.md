@@ -1,8 +1,7 @@
 # BET POINT LOGIC（購入点数ロジック）
 
 > archiveResults における購入点数と回収率の算出仕様。
-> コード: `astro-site/scripts/importResults.js` / `importResultsJra.js`
-> マージ優先順位: `astro-site/src/lib/archiveMonthlyView.js`
+> 実装: `astro-site/scripts/importResults.js` / `importResultsJra.js`
 
 ## 適用範囲
 
@@ -18,102 +17,78 @@ JRA は 1 日に複数会場（中山・阪神・福島 等）が並走するた
 
 ## 概要
 
-archiveResults における購入点数は固定値ではなく、**回収率に応じた可変方式**を採用する。
+archiveResults における購入点数は固定値ではなく、**払戻と実レース数に応じた 4 段階可変方式**を採用する。
 
-過去は「固定 8 点/レース、回収率 300% 超のときだけ 12 点に昇格」という 2 段階方式だったが、
-- 高回収日が過小評価される（12 点上限到達するまで 8 点として扱われる）
-- 低回収日が過大評価される（常に 8 点相当で投資したとみなされる）
-
-という偏りがあった。現行は **仮回収率に応じて 8 / 10 / 12 点の 3 段階**に分ける。
+各段階の閾値は「その点数で投資した場合に回収率がちょうど 100% となる金額」であり、
+**回収率 100% 以上を維持できる最大の点数を選択する**。下限は 6 点（マイナス受容）。
 
 ## 判定ロジック
 
-### Step 1: 仮回収率の計算
-
-**8 点固定**で仮投資額と仮回収率を計算する。
-
-```
-仮投資額   = レース数 × 8 × 100円
-仮回収率   = totalPayout / 仮投資額 × 100
-```
-
-### Step 2: 点数決定
-
-| 仮回収率 | 1 レースあたり点数 |
-|---|---|
-| `>= 200%` | **12 点** |
-| `>= 100%` | **10 点** |
-| `< 100%`  | **8 点** |
-
-### Step 3: 最終計算
-
-```
-totalBetPoints   = レース数 × 点数
-totalInvestment  = totalBetPoints × 100円
-recoveryRate     = totalPayout / totalInvestment × 100
+```js
+function getBetPoints(totalPayout, races) {
+  if (races <= 0) return 6;
+  if (totalPayout >= races * 12 * 100) return 12;
+  if (totalPayout >= races * 10 * 100) return 10;
+  if (totalPayout >= races *  8 * 100) return 8;
+  if (totalPayout >= races *  6 * 100) return 6;
+  return 6; // 下限（安全側）
+}
 ```
 
-## race 単位のフィールド
+| 段階 | 閾値（払戻） | 1レース点数 | この段階での回収率 |
+|---|---|---|---|
+| ④ | `≥ races × 12 × 100円` | **12点** | 100% 以上 |
+| ③ | `≥ races × 10 × 100円` | **10点** | 100% 以上 |
+| ② | `≥ races ×  8 × 100円` | **8点**  | 100% 以上 |
+| ① | `≥ races ×  6 × 100円` | **6点**  | 100% 以上 |
+| ⓪ | それ以下 | **6点**（下限） | 100% 未満（マイナス受容） |
 
-1 日の中の**全レースに同一の** `betPoints` を付与する。
+## 計算式
 
 ```js
-race.betPoints = betPointsPerRace
-race.betType   = race.betType || '馬単'
+const totalPayout       = (的中レースの払戻合計);
+const races             = totalRaces;          // 実レース数（南関=12, JRA 3会場=36）
+const betPointsPerRace  = getBetPoints(totalPayout, races);
+const totalBetPoints    = races * betPointsPerRace;
+const totalInvestment   = totalBetPoints * 100; // 1点 = 100円
+const recoveryRate      = Math.round((totalPayout / totalInvestment) * 1000) / 10;
 ```
 
-archive 月別ページ（`/archive/YYYY/MM/`）は race 単位の `race.betPoints` を集計して
-`totalBetPoints` を再計算する。そのため race 側にもフィールドを埋めておかないと
-表示から「合計購入点数」が欠落する。
+## 出力フィールド
 
-## データソース優先順位
+| フィールド | 例 | 説明 |
+|---|---|---|
+| `betPointsPerRace` | `12` | 1レースあたりの買い目点数 |
+| `totalBetPoints`   | `144` | 合計買い目点数（races × betPointsPerRace） |
+| `totalInvestment`  | `14400` | 合計投資額（円）|
+| `totalPayout`      | `25260` | 合計払戻（円・実額）|
+| `recoveryRate`     | `175.4` | 回収率（%・小数1桁）|
 
-archive 表示は以下の順でデータを選ぶ（`buildMergedMonthData` at `src/lib/archiveMonthlyView.js`）。
+## 計算例
 
-1. **南関 singular** (`src/data/archiveResults.json`) — `importResults.js` が自動生成
-2. **南関 monthly snapshot** (`src/data/archiveResults_YYYY-MM.json`) — 過去の手動キュレート版
-3. **中央 singular** (`src/data/archiveResultsJra.json`) — `importResultsJra.js` が自動生成（dayKey `"DDj"` で保持）
+### 南関（12R）
 
-### 例外ルール
+| ケース | 払戻 | 点数 | 投資 | 回収率 |
+|---|---|---|---|---|
+| 低配当日 | ¥5,000  | 6点  | ¥7,200  | 69.4%  |
+| 境界（6点） | ¥7,200  | 6点  | ¥7,200  | 100.0% |
+| 境界（8点） | ¥9,600  | 8点  | ¥9,600  | 100.0% |
+| 中配当 | ¥12,000 | 10点 | ¥12,000 | 100.0% |
+| 高配当 | ¥25,260 | 12点 | ¥14,400 | 175.4% |
 
-同じ日が singular と monthly の両方に存在する場合、**原則 singular を優先**する（新ロジック適用のため）。
+### JRA 3会場（36R）
 
-ただし次の条件を満たす場合は **monthly を優先**する:
+| ケース | 払戻 | 点数 | 投資 | 回収率 |
+|---|---|---|---|---|
+| 低配当日 | ¥15,000 | 6点  | ¥21,600 | 69.4% |
+| 境界（6点） | ¥21,600 | 6点  | ¥21,600 | 100.0% |
+| 境界（8点） | ¥28,800 | 8点  | ¥28,800 | 100.0% |
+| 高配当 | ¥53,720 | 12点 | ¥43,200 | 124.4% |
 
-```
-singular.races のうち r.betPoints > 0 となる race が 1 つも無い
-```
+## 設計原則
 
-これは「古い singular エントリ（当ロジック適用前のデータ）」を検出するための判定。
-該当する日は race 単位の betPoints が欠落しているため、singular をそのまま使うと
-UI 側の集計（`dayData.races.reduce(... race.betPoints ...)`）が 0 になり
-「合計購入点数」「回収率」が表示から消えてしまう。それを防ぐための fallback。
-
-古い singular エントリは `importResults.js --date YYYY-MM-DD` で再生成すれば
-新ロジックに乗せられる。
-
-## 注意事項
-
-- **monthly** は過去の手動補正データ（旧 nankan-analytics からコピー）。南関のみ存在。
-- **singular** は自動生成データ。南関 = `archiveResults.json` / 中央 = `archiveResultsJra.json`
-- 新規日（未来）は必ずこのロジックを通る（南関・中央どちらも）
-- **閾値や点数を変更する場合は、南関・中央のコード両方（`importResults.js` と `importResultsJra.js`）および本 MD を同時に更新する**。片方だけ変更すると南関/中央で挙動差が発生するので禁止。
-
-## 目的
-
-- 回収率と購入点数の整合性を取る
-- 不自然な回収率表示（0% や極端な値）を防ぐ
-- 旧サイト（nankan-analytics.keiba.link）との表示差を減らす
-- 将来の仕様変更時にロジックが暗黙のうちに壊れるのを防ぐ
-
-## 関連ファイル
-
-| パス | 役割 |
-|---|---|
-| `astro-site/scripts/importResults.js` | 南関の結果取込。本ロジックで `betPointsPerRace` を算出 |
-| `astro-site/scripts/importResultsJra.js` | 中央（JRA）の結果取込。同ロジック |
-| `astro-site/src/lib/archiveMonthlyView.js` | `buildMergedMonthData`: singular / monthly / JRA をマージし、優先順位と例外ルールを適用 |
-| `astro-site/src/pages/archive/YYYY/MM.astro` | 月別アーカイブ表示。`dayData.races.betPoints` を集計して「合計購入点数」「回収率」を描画 |
-| `astro-site/src/data/archiveResults.json` | 南関 singular の保存先 |
-| `astro-site/src/data/archiveResults_YYYY-MM.json` | 月別 snapshot（手動キュレート版） |
-| `astro-site/src/data/archiveResultsJra.json` | 中央 singular の保存先 |
+- **実レース数ベース**: `races` は実データから取得。固定 12R 前提は禁止
+- **6〜12点に収める**: 12 点を超えない（ユーザー離脱防止）
+- **払戻を加工しない**: キャップなど一切なし、実払戻をそのまま使用
+- **南関と JRA で同一ロジック**: カテゴリ別ロジック禁止
+- **日単位で再計算**: 取込のたびに当日分を再評価
