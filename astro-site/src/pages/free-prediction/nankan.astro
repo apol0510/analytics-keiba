@@ -184,10 +184,15 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
                                                         </div>
                                                         <div class="stat-block stat-stars-block">
                                                             <div class="stat-label">総合評価</div>
-                                                            <div class="star-rating" aria-label={`総合評価 ${filledStars}つ星`}>
-                                                                {[1, 2, 3, 4].map((i) => (
-                                                                    <span class={`star ${i <= filledStars ? 'star-filled' : 'star-empty'}`}>★</span>
-                                                                ))}
+                                                            <div class="star-rating" aria-label={`総合評価 ${filledStars}つ星 信頼度${horse.confidence ?? ''}`}>
+                                                                <span class="star-row">
+                                                                    {[1, 2, 3, 4].map((i) => (
+                                                                        <span class={`star ${i <= filledStars ? 'star-filled' : 'star-empty'}`}>★</span>
+                                                                    ))}
+                                                                </span>
+                                                                {horse.confidence != null && (
+                                                                    <span class="confidence-num">（{horse.confidence}）</span>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -683,6 +688,13 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
     /* 星評価 */
     .star-rating {
         display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        line-height: 1;
+        flex-wrap: wrap;
+    }
+    .star-row {
+        display: inline-flex;
         align-items: center;
         gap: 2px;
         line-height: 1;
@@ -697,6 +709,18 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
     }
     .star-empty {
         color: rgba(148, 163, 184, 0.35);
+    }
+    /* 信頼度（圧縮スコア）— 星より控えめに、補助情報として */
+    .confidence-num {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #cbd5e1;
+        letter-spacing: 0.02em;
+        opacity: 0.85;
+    }
+    .horse-card-main .confidence-num {
+        color: #d1fae5;
+        opacity: 1;
     }
 
     /* 重要度の数値表示 */

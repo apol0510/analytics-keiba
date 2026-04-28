@@ -31,6 +31,12 @@ function getStarRating(score) {
   return '★';
 }
 
+// 信頼度（圧縮スコア）— 整数のみ、星より差を抑えて違和感のないレンジに
+function computeConfidence(pt) {
+  const v = Number(pt) || 0;
+  return Math.round(50 + Math.min(42, v * 0.28));
+}
+
 // 特徴量重要度（安定性 / 能力上位性 / 展開利）を recentRaces と pt から導出
 function computeImportance(h, allRaceHorses) {
   const pt = Number(h.pt) || 0;
@@ -81,9 +87,10 @@ function convertHorse(h, allRaceHorses) {
   const pt = Number(h.pt || 0);
   const overallScore = computeOverallScore(pt);
   const stars = getStarRating(overallScore);
+  const confidence = computeConfidence(pt);
   const importance = computeImportance(h, allRaceHorses);
   const factors = [
-    { icon: '★', text: `総合評価:${stars}` },
+    { icon: '★', text: `総合評価:${stars}（${confidence}）` },
     { icon: '★', text: `累積スコア: ${pt}pt` },
   ];
   return {
@@ -95,6 +102,7 @@ function convertHorse(h, allRaceHorses) {
     pt,
     overallScore,
     stars,
+    confidence,
     importance,
     factors,
     jockey: h.jockey || '',
