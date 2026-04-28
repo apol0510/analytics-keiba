@@ -655,7 +655,8 @@ function convertToLegacyFormat(data, date, horseDataMap = null) {
             jockey: h.jockey || h.kisyu || '', // 騎手
             trainer: h.trainer || h.kyusya || '', // 厩舎
             age: h.age || h.seirei || '', // 馬齢
-            weight: h.weight || h.kinryo || '' // 斤量
+            weight: h.weight || h.kinryo || '', // 斤量
+            computerIndex: h.computerIndex != null ? h.computerIndex : null // コンピ指数
           };
           // racebook由来の基本情報で補完
           if (horseDataMap && horseDataMap.has(h.name)) {
