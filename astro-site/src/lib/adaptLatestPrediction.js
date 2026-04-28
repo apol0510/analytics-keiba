@@ -17,9 +17,73 @@ const MARK_MAP = {
   '押さえ': '×',
 };
 
-function convertHorse(h) {
+// pt スコアを 0-100 に正規化（旧 nankan-analytics の総合評価レンジに合わせる）
+function computeOverallScore(pt) {
+  const v = Number(pt) || 0;
+  return Math.min(99, Math.max(50, Math.round(50 + v * 0.3)));
+}
+
+// 総合評価の星
+function getStarRating(score) {
+  if (score >= 90) return '★★★★';
+  if (score >= 80) return '★★★';
+  if (score >= 70) return '★★';
+  return '★';
+}
+
+// 特徴量重要度（安定性 / 能力上位性 / 展開利）を recentRaces と pt から導出
+function computeImportance(h, allRaceHorses) {
+  const pt = Number(h.pt) || 0;
+  const recent = Array.isArray(h.recentRaces) ? h.recentRaces : [];
+
+  // 安定性: 直近着順の3着内率
+  const ranks = recent
+    .map(r => Number(r && r.rank))
+    .filter(n => Number.isFinite(n) && n > 0);
+  let stability;
+  if (ranks.length > 0) {
+    const top3Rate = ranks.filter(r => r <= 3).length / ranks.length;
+    stability = 0.55 + top3Rate * 0.4;
+  } else {
+    stability = 0.55 + Math.min(0.4, pt / 400);
+  }
+
+  // 能力上位性: レース内 pt の相対値
+  const ptList = (Array.isArray(allRaceHorses) ? allRaceHorses : [])
+    .map(x => Number(x && x.pt) || 0)
+    .filter(n => n > 0);
+  const maxPt = ptList.length ? Math.max(...ptList) : Math.max(pt, 1);
+  let ability = pt > 0 ? 0.5 + (pt / maxPt) * 0.45 : 0.55;
+
+  // 展開利: 直近の上がり3F平均（38秒台が良、43秒台が悪と仮定）
+  const last3fs = recent
+    .map(r => parseFloat(r && r.last3f))
+    .filter(n => Number.isFinite(n));
+  let pace;
+  if (last3fs.length > 0) {
+    const avg = last3fs.reduce((a, b) => a + b, 0) / last3fs.length;
+    const norm = Math.max(0, Math.min(1, (43 - avg) / 5));
+    pace = 0.6 + norm * 0.35;
+  } else {
+    pace = 0.55 + Math.min(0.4, pt / 450);
+  }
+
+  const clamp = (v) => Math.max(0.55, Math.min(0.97, v));
+  const round2 = (v) => Math.round(v * 100) / 100;
+  return [
+    { label: '安定性',     value: round2(clamp(stability)) },
+    { label: '能力上位性', value: round2(clamp(ability)) },
+    { label: '展開利',     value: round2(clamp(pace)) },
+  ];
+}
+
+function convertHorse(h, allRaceHorses) {
   const pt = Number(h.pt || 0);
+  const overallScore = computeOverallScore(pt);
+  const stars = getStarRating(overallScore);
+  const importance = computeImportance(h, allRaceHorses);
   const factors = [
+    { icon: '★', text: `総合評価:${stars}` },
     { icon: '★', text: `累積スコア: ${pt}pt` },
   ];
   return {
@@ -29,6 +93,9 @@ function convertHorse(h) {
     type: h.role,
     role: h.role,
     pt,
+    overallScore,
+    stars,
+    importance,
     factors,
     jockey: h.jockey || '',
     trainer: h.trainer || '',
@@ -67,8 +134,9 @@ export function adaptNewToLegacy(newData) {
     };
     const holes = [];
 
-    for (const h of (p.horses || [])) {
-      const conv = convertHorse(h);
+    const raceHorses = p.horses || [];
+    for (const h of raceHorses) {
+      const conv = convertHorse(h, raceHorses);
       switch (h.role) {
         case '本命': horsesByRole.main = conv; break;
         case '対抗': horsesByRole.sub = conv; break;
@@ -84,7 +152,7 @@ export function adaptNewToLegacy(newData) {
     horsesByRole.hole1 = holes[0] || null;
     horsesByRole.hole2 = holes[1] || null;
 
-    const allHorses = (p.horses || []).map(convertHorse);
+    const allHorses = raceHorses.map(h => convertHorse(h, raceHorses));
 
     return {
       // 旧スキーマでは raceNumber は "11R" のような文字列
