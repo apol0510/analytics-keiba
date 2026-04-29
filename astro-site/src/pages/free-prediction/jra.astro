@@ -150,42 +150,47 @@ try {
                   </div>
                 )}
 
-                <!-- レース選択ボタン -->
-                <div class="race-selector">
-                  {venuePredictions.map((race, raceIndex) => (
-                    <button
-                      class={`race-btn ${raceIndex === 0 ? 'active' : ''}`}
-                      data-venue-index={venueIndex}
-                      data-race-index={raceIndex}
-                      onclick="selectRace(event, this)"
-                      title={race.raceInfo.raceName || `第${race.raceInfo.raceNumber}レース`}
-                    >
-                      <span class="race-label">{race.raceInfo.raceNumber}R</span>
-                      <span class="race-indicator"></span>
-                    </button>
-                  ))}
-                </div>
-
-                <!-- レース表示エリア（全レース）-->
-                <div class="race-display-area">
+                <!-- 全レースアコーディオン（南関版と同じ縦一覧形式） -->
+                <div class="jra-race-accordion-list">
                   {venuePredictions.map((race, raceIndex) => {
                     const allHorses = race.horses;
                     // 役割で絞り込み（南関版と統一: 本命・対抗・単穴）
                     const roleHorses = ['本命', '対抗', '単穴']
                       .flatMap(r => allHorses.filter(h => h.role === r));
+                    const accordionId = `jra-race-v${venueIndex}-r${raceIndex}`;
+                    const distance = race.raceInfo.distance;
+                    const distanceLabel = distance
+                      ? (typeof distance === 'number' ? `${distance}m` : `${distance}`)
+                      : null;
 
                     return (
-                      <div class={`race-content ${raceIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex} data-race-index={raceIndex}>
-                        {/* レース名ヘッダー */}
-                        <div class="race-name-header">
-                          <h2 class="race-name-title">{race.raceInfo.raceNumber}R {race.raceInfo.raceName}</h2>
-                          <div class="race-details">
-                            {race.raceInfo.startTime && <span class="race-detail-item">🕐 {race.raceInfo.startTime}発走</span>}
-                            {race.raceInfo.distance && <span class="race-detail-item">📏 {race.raceInfo.distance}m</span>}
-                            {race.raceInfo.horseCount && <span class="race-detail-item">🐴 {race.raceInfo.horseCount}頭</span>}
+                      <div class="jra-race-accordion" data-venue-index={venueIndex}>
+                        <button
+                          type="button"
+                          class="jra-race-accordion-header"
+                          data-target={accordionId}
+                          aria-expanded="false"
+                          aria-controls={accordionId}
+                          onclick="toggleJraAccordion(this)"
+                        >
+                          <div class="jra-race-head-left">
+                            <span class="jra-race-num">{race.raceInfo.raceNumber}R</span>
+                            <div class="jra-race-meta">
+                              {race.raceInfo.raceName && (
+                                <span class="jra-race-name">{race.raceInfo.raceName}</span>
+                              )}
+                              <div class="jra-race-meta-line">
+                                {race.raceInfo.startTime && <span class="jra-race-meta-item">🕐 {race.raceInfo.startTime}発走</span>}
+                                {distanceLabel && <span class="jra-race-meta-item">📏 {distanceLabel}</span>}
+                                {race.raceInfo.horseCount && <span class="jra-race-meta-item">🐴 {race.raceInfo.horseCount}頭</span>}
+                              </div>
+                            </div>
                           </div>
-                        </div>
+                          <span class="jra-race-toggle" aria-hidden="true">▼</span>
+                        </button>
 
+                        <div class="jra-race-accordion-content" id={accordionId} style="max-height:0;opacity:0">
+                          <div class="jra-race-accordion-body">
                         {/* AI選出馬カード（南関版と統一デザイン） */}
                         <div class="analysis-section">
                           <h2 class="section-title">
@@ -317,7 +322,8 @@ try {
                             </div>
                           </div>
                         </div>
-
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
@@ -469,59 +475,67 @@ try {
       100% { transform: translateX(100%); }
     }
 
-    /* 会場タブ */
+    /* 会場切り替え（角丸セグメント型） */
     .venue-selector {
       display: flex;
-      gap: var(--spacing-md);
+      gap: 10px;
       justify-content: center;
-      margin-bottom: var(--spacing-xl);
-      padding: var(--spacing-lg);
-      background: var(--bg-secondary);
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border-color);
+      margin: 0 auto 28px;
+      padding: 8px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
       flex-wrap: wrap;
+      max-width: max-content;
+      backdrop-filter: blur(8px);
     }
 
     .venue-btn {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: var(--spacing-xs);
-      padding: var(--spacing-md) var(--spacing-xl);
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-      border: 2px solid var(--border-color);
-      border-radius: var(--radius-lg);
+      display: inline-flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 10px 24px;
+      background: transparent;
+      color: #cbd5e1;
+      border: none;
+      border-radius: 999px;
       font-size: 1rem;
       font-weight: 700;
       cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      min-width: 120px;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .venue-btn:hover {
-      border-color: #a78bfa;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(167, 139, 250, 0.3);
+      background: rgba(139, 92, 246, 0.12);
+      color: #e2e8f0;
     }
 
     .venue-btn.active {
-      background: linear-gradient(135deg, #8b5cf6, #a78bfa);
-      border-color: #a78bfa;
+      background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
       color: white;
-      box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+      box-shadow: 0 4px 14px rgba(139, 92, 246, 0.45);
     }
 
     .venue-label {
-      font-size: 1.25rem;
-      font-weight: 900;
-      letter-spacing: 0.5px;
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
     }
 
     .venue-race-count {
-      font-size: 0.75rem;
-      opacity: 0.8;
-      font-family: 'Courier New', monospace;
+      font-size: 0.78rem;
+      opacity: 0.85;
+      font-weight: 700;
+    }
+
+    @media (max-width: 768px) {
+      .venue-selector {
+        max-width: 100%;
+        gap: 4px;
+        padding: 6px;
+      }
+      .venue-btn { padding: 8px 16px; }
+      .venue-label { font-size: 0.95rem; }
     }
 
     .venue-content {
@@ -559,20 +573,23 @@ try {
       font-family: 'Courier New', monospace;
     }
 
-    /* 無料予想説明 */
+    /* 無料予想説明（角丸・カード型に調整） */
     .free-info-card {
-      background: var(--bg-secondary);
-      padding: var(--spacing-xl);
-      border-radius: var(--radius-lg);
-      margin-bottom: var(--spacing-xl);
-      border: 2px solid rgba(251, 191, 36, 0.3);
+      background: linear-gradient(135deg,
+        rgba(251, 191, 36, 0.08) 0%,
+        rgba(139, 92, 246, 0.08) 100%);
+      padding: 28px;
+      border-radius: 18px;
+      margin: 36px 0 28px;
+      border: 1px solid rgba(251, 191, 36, 0.28);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
     }
 
     .free-info-header {
       display: flex;
       align-items: center;
-      gap: var(--spacing-sm);
-      margin-bottom: var(--spacing-md);
+      gap: 10px;
+      margin-bottom: 14px;
     }
 
     .info-icon {
@@ -580,56 +597,131 @@ try {
     }
 
     .free-info-header h2 {
-      font-size: 1.25rem;
+      font-size: 1.3rem;
       background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
       font-weight: 800;
+      margin: 0;
     }
 
     .free-info-content > p {
-      color: var(--text-secondary);
-      margin-bottom: var(--spacing-lg);
+      color: #cbd5e1;
+      margin-bottom: 22px;
       line-height: 1.6;
-      font-size: 1.05rem;
+      font-size: 1.02rem;
     }
 
     .upgrade-benefits {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: var(--spacing-lg);
-      margin-top: var(--spacing-lg);
+      gap: 18px;
+      margin-top: 18px;
     }
 
     .benefit-section {
-      background: rgba(30, 41, 59, 0.4);
-      padding: var(--spacing-lg);
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border-color);
+      background: rgba(15, 23, 42, 0.55);
+      padding: 22px 20px;
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .benefit-section:first-child {
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+    .benefit-section:last-child {
+      border-color: rgba(139, 92, 246, 0.3);
     }
 
     .benefit-section h3 {
-      font-size: 1.1rem;
-      margin-bottom: var(--spacing-md);
-      font-weight: 700;
+      font-size: 1.05rem;
+      font-weight: 800;
+      margin: 0;
+      color: #e2e8f0;
     }
 
     .free-info-list {
       list-style: none;
-      margin: var(--spacing-md) 0 var(--spacing-lg) 0;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
 
     .free-info-list li {
-      padding: var(--spacing-xs) 0;
-      color: var(--text-secondary);
+      padding: 2px 0;
+      color: #cbd5e1;
       line-height: 1.6;
+      font-size: 0.92rem;
     }
 
     .benefit-section .btn {
       width: 100%;
       justify-content: center;
       font-weight: 700;
+      padding: 12px 20px;
+      border-radius: 999px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.95rem;
+      transition: all 0.25s ease;
+      margin-top: auto;
+    }
+    .benefit-section .btn-success {
+      background: linear-gradient(135deg, #10b981, #22c55e);
+      color: white;
+      border: none;
+    }
+    .benefit-section .btn-success:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(16, 185, 129, 0.4);
+    }
+    .benefit-section .btn-primary {
+      background: linear-gradient(135deg, #8b5cf6, #ec4899);
+      color: white;
+      border: none;
+    }
+    .benefit-section .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(139, 92, 246, 0.4);
+    }
+
+    @media (max-width: 768px) {
+      .upgrade-benefits {
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+      .free-info-card { padding: 22px 18px; margin: 28px 0 24px; }
+    }
+
+    /* 過去予想アーカイブリンク（角丸ピル） */
+    .archive-link-box {
+      text-align: center;
+      margin: 24px 0 12px;
+    }
+    .archive-link-box a {
+      display: inline-block;
+      padding: 12px 24px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      color: #cbd5e1;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: all 0.25s ease;
+    }
+    .archive-link-box a:hover {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #e2e8f0;
+      text-decoration: none;
     }
 
     /* レース選択ボタン */
@@ -1342,21 +1434,118 @@ try {
       }
     }
 
-    .archive-link-box {
+    /* ======================================================
+       JRA レースアコーディオン（南関版相当の縦一覧）
+       ====================================================== */
+    .jra-race-accordion-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .jra-race-accordion {
+      background: rgba(16, 185, 129, 0.05);
+      border-radius: 14px;
+      border: 1px solid rgba(16, 185, 129, 0.22);
+      overflow: hidden;
+      transition: border-color 0.25s ease, transform 0.25s ease;
+    }
+    .jra-race-accordion:hover {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+    .jra-race-accordion-header {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 18px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.10) 0%, rgba(16, 185, 129, 0.04) 100%);
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      transition: background 0.25s ease;
+    }
+    .jra-race-accordion-header:hover {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(16, 185, 129, 0.08) 100%);
+    }
+    .jra-race-accordion-header[aria-expanded="true"] {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.22) 0%, rgba(59, 130, 246, 0.10) 100%);
+      border-bottom: 1px solid rgba(16, 185, 129, 0.25);
+    }
+    .jra-race-head-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      flex: 1;
+    }
+    .jra-race-num {
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: 0.02em;
+      box-shadow: 0 2px 8px rgba(139, 92, 246, 0.35);
+    }
+    .jra-race-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .jra-race-name {
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 1.05rem;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .jra-race-meta-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      color: #94a3b8;
+      font-size: 0.82rem;
+    }
+    .jra-race-meta-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .jra-race-toggle {
+      flex-shrink: 0;
+      font-size: 1.1rem;
+      color: #10b981;
+      transition: transform 0.3s ease;
+      width: 24px;
       text-align: center;
-      margin-top: var(--spacing-xl);
-      padding: var(--spacing-lg);
-      background: rgba(59, 130, 246, 0.06);
-      border: 1px solid rgba(59, 130, 246, 0.15);
-      border-radius: var(--radius-lg);
     }
-    .archive-link-box a {
-      color: #3b82f6;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 1rem;
+    .jra-race-accordion-content {
+      overflow: hidden;
+      transition: max-height 0.4s ease, opacity 0.3s ease;
+      background: rgba(15, 23, 42, 0.95);
     }
-    .archive-link-box a:hover { text-decoration: underline; }
+    .jra-race-accordion-body {
+      padding: 18px 16px 20px;
+    }
+    @media (max-width: 768px) {
+      .jra-race-accordion-header {
+        padding: 12px 14px;
+        gap: 10px;
+      }
+      .jra-race-head-left { gap: 10px; }
+      .jra-race-num { padding: 6px 10px; font-size: 0.95rem; }
+      .jra-race-name { font-size: 0.98rem; white-space: normal; }
+      .jra-race-meta-line { font-size: 0.78rem; gap: 4px 10px; }
+      .jra-race-accordion-body { padding: 14px 12px 16px; }
+    }
 
     /* ======================================================
        南関版と統一: ヘッダー & アクセス制御
@@ -1975,30 +2164,55 @@ try {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    function selectRace(event, button) {
-      event.preventDefault();
+    // アコーディオン: 同じ会場内で他を閉じてからトグル
+    function toggleJraAccordion(headerEl) {
+      const targetId = headerEl.getAttribute('data-target');
+      const target = document.getElementById(targetId);
+      if (!target) return;
 
-      const venueIndex = button.getAttribute('data-venue-index');
-      const raceIndex = button.getAttribute('data-race-index');
+      const venue = headerEl.closest('.venue-content');
+      const isOpen = headerEl.getAttribute('aria-expanded') === 'true';
 
-      // 現在の会場内のレースボタンのみ更新
-      const currentVenue = document.querySelector(`.venue-content[data-venue-index="${venueIndex}"]`);
-      if (!currentVenue) return;
+      // 同会場内の他アコーディオンを閉じる
+      if (venue) {
+        venue.querySelectorAll('.jra-race-accordion-header').forEach(h => {
+          if (h !== headerEl) {
+            const tid = h.getAttribute('data-target');
+            const t = tid ? document.getElementById(tid) : null;
+            if (t) {
+              t.style.maxHeight = '0px';
+              t.style.opacity = '0';
+            }
+            h.setAttribute('aria-expanded', 'false');
+            const ic = h.querySelector('.jra-race-toggle');
+            if (ic) {
+              ic.textContent = '▼';
+              ic.style.transform = 'rotate(0deg)';
+            }
+          }
+        });
+      }
 
-      currentVenue.querySelectorAll('.race-btn').forEach(btn => {
-        btn.classList.remove('active');
-      });
-      button.classList.add('active');
-
-      // 現在の会場内のレースコンテンツのみ更新
-      currentVenue.querySelectorAll('.race-content').forEach(content => {
-        content.classList.remove('active');
-      });
-
-      const selectedRace = currentVenue.querySelector(`.race-content[data-venue-index="${venueIndex}"][data-race-index="${raceIndex}"]`);
-      if (selectedRace) {
-        selectedRace.classList.add('active');
+      // 自身をトグル
+      const icon = headerEl.querySelector('.jra-race-toggle');
+      if (isOpen) {
+        target.style.maxHeight = '0px';
+        target.style.opacity = '0';
+        headerEl.setAttribute('aria-expanded', 'false');
+        if (icon) {
+          icon.textContent = '▼';
+          icon.style.transform = 'rotate(0deg)';
+        }
+      } else {
+        target.style.maxHeight = target.scrollHeight + 'px';
+        target.style.opacity = '1';
+        headerEl.setAttribute('aria-expanded', 'true');
+        if (icon) {
+          icon.textContent = '◎';
+          icon.style.transform = 'rotate(180deg)';
+        }
       }
     }
+    window.toggleJraAccordion = toggleJraAccordion;
   </script>
 </BaseLayout>
