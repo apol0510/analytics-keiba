@@ -332,42 +332,95 @@ try {
             );
           })}
 
-          <!-- 無料予想について -->
-          <div class="free-info-card">
-            <div class="free-info-header">
-              <div class="info-icon">🎁</div>
-              <h2>無料予想について</h2>
-            </div>
-            <div class="free-info-content">
-              <p><strong>無料予想では各レースの本命・対抗・単穴を公開しています。</strong></p>
-              <div class="upgrade-benefits">
-                <div class="benefit-section">
-                  <h3>🆓 無料会員登録でできること</h3>
-                  <ul class="free-info-list">
-                    <li>✅ 連下・押さえ候補馬の確認</li>
-                    <li>✅ 全頭の累積スコア・順位</li>
-                    <li>✅ メールマガジン配信</li>
-                  </ul>
-                  <a href="/register" class="btn btn-success">今すぐ無料登録 →</a>
-                </div>
-                <div class="benefit-section">
-                  <h3>💎 プロ会員でできること</h3>
-                  <ul class="free-info-list">
-                    <li>✅ 完全な馬単買い目（本線+抑え）</li>
-                    <li>✅ 全期間の的中実績</li>
-                    <li>✅ 買い目シミュレーター</li>
-                    <li>✅ 南関4場＋JRA全10場対応</li>
-                    <li>✅ 永久アクセス（買い切りプラン）</li>
-                  </ul>
-                  <a href="/pricing" class="btn btn-primary">料金プランを見る →</a>
-                </div>
+          <!-- アーカイブリンク（南関版と同じ） -->
+          <div class="archive-link-section">
+            <a href="/free-prediction-jra/archive" class="archive-link">
+              <span class="archive-icon">📚</span>
+              <span class="archive-text">過去の的中実績アーカイブを見る</span>
+              <span class="archive-arrow">→</span>
+            </a>
+          </div>
+
+          <!-- AI分析サマリー（南関版と同じ） -->
+          <div class="analysis-summary">
+            <h4 class="analysis-summary-title">📊 重要指標</h4>
+            <div class="key-indicators-grid">
+              <div class="indicator-card">
+                <div class="indicator-icon">🎯</div>
+                <div class="indicator-label">展開予測精度</div>
+                <div class="indicator-value">85%</div>
+              </div>
+              <div class="indicator-card">
+                <div class="indicator-icon">📈</div>
+                <div class="indicator-label">過去類似レース</div>
+                <div class="indicator-value">1,000以上</div>
+              </div>
+              <div class="indicator-card">
+                <div class="indicator-icon">🔒</div>
+                <div class="indicator-label">信頼区間</div>
+                <div class="indicator-value">92%</div>
+              </div>
+              <div class="indicator-card">
+                <div class="indicator-icon">📊</div>
+                <div class="indicator-label">特徴量数</div>
+                <div class="indicator-value">150+</div>
               </div>
             </div>
           </div>
 
-          <!-- 過去予想アーカイブリンク -->
-          <div class="archive-link-box">
-            <a href="/free-prediction-jra/archive">📅 過去の予想アーカイブを見る →</a>
+          <!-- AI予想の技術的背景（南関版と同じ） -->
+          <div class="tech-background">
+            <h2 class="tech-section-title">
+              <span>🔬</span>
+              <span>AI予想の技術的背景</span>
+            </h2>
+
+            <h3 class="tech-heading">使用モデル</h3>
+
+            <div class="tech-block">
+              <h4 class="tech-block-title">🤖 XGBoost</h4>
+              <ul class="tech-list">
+                <li>着順予測精度: 91.2%</li>
+                <li>50種類以上の特徴量を勾配ブースティングで解析</li>
+                <li>過去10,000レース以上の学習データ</li>
+              </ul>
+            </div>
+
+            <div class="tech-block">
+              <h4 class="tech-block-title">🧠 LSTM（長短期記憶）</h4>
+              <ul class="tech-list">
+                <li>オッズ変動予測精度: 85.7%</li>
+                <li>時系列パターン認識による展開予測</li>
+                <li>リカレント構造で過去パフォーマンスを記憶</li>
+              </ul>
+            </div>
+
+            <div class="tech-block">
+              <h4 class="tech-block-title">🔥 ニューラルネットワーク</h4>
+              <ul class="tech-list">
+                <li>複合要因分析精度: 89.1%</li>
+                <li>深層学習による非線形パターン抽出</li>
+              </ul>
+            </div>
+
+            <h3 class="tech-heading tech-heading-spaced">主要特徴量（50項目から抜粋）</h3>
+            <ul class="tech-list tech-list-features">
+              <li><strong>過去パフォーマンス</strong>: 5走の着順・タイム・上がり3ハロン</li>
+              <li><strong>環境要因</strong>: 馬場状態・天候・距離適性・枠順</li>
+              <li><strong>市場要因</strong>: オッズ変動パターン・人気度推移</li>
+              <li><strong>血統要因</strong>: 父系・母系・生産者データ</li>
+            </ul>
+          </div>
+
+          <!-- 免責事項 -->
+          <div class="disclaimer-box">
+            <h3 class="disclaimer-title">⚠️ 免責事項</h3>
+            <p class="disclaimer-text">競馬予想は投資の一種です。必ず余裕資金の範囲内で楽しみ、自己責任でご利用ください。当予想による損失については一切の責任を負いません。</p>
+          </div>
+
+          <!-- 過去の予想アーカイブリンク（控えめ） -->
+          <div class="subtle-archive-link">
+            <a href="/free-prediction-jra/archive">📅 過去の予想を見る</a>
           </div>
         </>
       )}
@@ -573,155 +626,176 @@ try {
       font-family: 'Courier New', monospace;
     }
 
-    /* 無料予想説明（角丸・カード型に調整） */
-    .free-info-card {
+    /* ======================================================
+       下部セクション（南関版と統一）
+       ====================================================== */
+
+    /* アーカイブリンクボタン */
+    .archive-link-section {
+      margin: 30px auto;
+      max-width: 600px;
+      text-align: center;
+    }
+    .archive-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+      padding: 15px 25px;
+      border-radius: 12px;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      font-weight: 600;
+    }
+    .archive-link:hover {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: rgba(59, 130, 246, 0.5);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.2);
+    }
+    .archive-icon { font-size: 1.3rem; }
+    .archive-text { font-size: 0.95rem; }
+    .archive-arrow {
+      font-size: 1rem;
+      transition: transform 0.3s ease;
+    }
+    .archive-link:hover .archive-arrow { transform: translateX(4px); }
+
+    /* AI分析サマリー */
+    .analysis-summary {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 25px;
+      border-radius: 12px;
+      margin-bottom: 25px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    .analysis-summary-title {
+      color: #3b82f6;
+      margin-bottom: 20px;
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+    .key-indicators-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+    .indicator-card {
       background: linear-gradient(135deg,
-        rgba(251, 191, 36, 0.08) 0%,
-        rgba(139, 92, 246, 0.08) 100%);
-      padding: 28px;
-      border-radius: 18px;
-      margin: 36px 0 28px;
-      border: 1px solid rgba(251, 191, 36, 0.28);
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+        rgba(59, 130, 246, 0.1) 0%,
+        rgba(139, 92, 246, 0.1) 100%);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 12px;
+      padding: 20px 16px;
+      text-align: center;
+      transition: all 0.3s ease;
+      backdrop-filter: blur(4px);
+    }
+    .indicator-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(59, 130, 246, 0.4);
+      box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
+    }
+    .indicator-icon {
+      font-size: 1.8rem;
+      margin-bottom: 8px;
+    }
+    .indicator-label {
+      color: #94a3b8;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 6px;
+      line-height: 1.2;
+    }
+    .indicator-value {
+      color: #3b82f6;
+      font-size: 1.4rem;
+      font-weight: 700;
     }
 
-    .free-info-header {
+    /* AI予想の技術的背景 */
+    .tech-background {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 25px;
+      border-radius: 12px;
+      margin-bottom: 25px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    .tech-section-title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #3b82f6;
+      margin-bottom: 20px;
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 14px;
     }
-
-    .info-icon {
-      font-size: 1.5rem;
-    }
-
-    .free-info-header h2 {
-      font-size: 1.3rem;
-      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      font-weight: 800;
-      margin: 0;
-    }
-
-    .free-info-content > p {
-      color: #cbd5e1;
-      margin-bottom: 22px;
-      line-height: 1.6;
-      font-size: 1.02rem;
-    }
-
-    .upgrade-benefits {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 18px;
-      margin-top: 18px;
-    }
-
-    .benefit-section {
-      background: rgba(15, 23, 42, 0.55);
-      padding: 22px 20px;
-      border-radius: 16px;
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .benefit-section:first-child {
-      border-color: rgba(16, 185, 129, 0.3);
-    }
-    .benefit-section:last-child {
-      border-color: rgba(139, 92, 246, 0.3);
-    }
-
-    .benefit-section h3 {
+    .tech-heading {
+      color: #8b5cf6;
+      margin-bottom: 15px;
       font-size: 1.05rem;
-      font-weight: 800;
-      margin: 0;
-      color: #e2e8f0;
     }
-
-    .free-info-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .free-info-list li {
-      padding: 2px 0;
-      color: #cbd5e1;
-      line-height: 1.6;
-      font-size: 0.92rem;
-    }
-
-    .benefit-section .btn {
-      width: 100%;
-      justify-content: center;
+    .tech-heading-spaced { margin-top: 25px; }
+    .tech-block { margin-bottom: 20px; }
+    .tech-block-title {
+      color: #3b82f6;
+      margin-bottom: 8px;
+      font-size: 1rem;
       font-weight: 700;
-      padding: 12px 20px;
-      border-radius: 999px;
+    }
+    .tech-list {
+      color: #e2e8f0;
+      line-height: 1.6;
+      margin-left: 20px;
+      list-style: disc;
+    }
+    .tech-list-features { line-height: 1.8; }
+    .tech-list-features strong { color: #10b981; }
+
+    /* 免責事項 */
+    .disclaimer-box {
+      background: rgba(245, 158, 11, 0.1);
+      padding: 20px;
+      border-radius: 10px;
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      margin-top: 30px;
+    }
+    .disclaimer-title {
+      color: #f59e0b;
+      margin: 0 0 15px;
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+    .disclaimer-text {
+      color: #e2e8f0;
+      line-height: 1.6;
+      margin: 0;
+    }
+
+    /* 控えめなアーカイブリンク */
+    .subtle-archive-link {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+      text-align: center;
+    }
+    .subtle-archive-link a {
+      color: #64748b;
+      font-size: 0.9rem;
       text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.95rem;
-      transition: all 0.25s ease;
-      margin-top: auto;
+      opacity: 0.7;
+      transition: opacity 0.3s ease;
     }
-    .benefit-section .btn-success {
-      background: linear-gradient(135deg, #10b981, #22c55e);
-      color: white;
-      border: none;
-    }
-    .benefit-section .btn-success:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 18px rgba(16, 185, 129, 0.4);
-    }
-    .benefit-section .btn-primary {
-      background: linear-gradient(135deg, #8b5cf6, #ec4899);
-      color: white;
-      border: none;
-    }
-    .benefit-section .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 18px rgba(139, 92, 246, 0.4);
-    }
+    .subtle-archive-link a:hover { opacity: 1; }
 
     @media (max-width: 768px) {
-      .upgrade-benefits {
-        grid-template-columns: 1fr;
-        gap: 14px;
-      }
-      .free-info-card { padding: 22px 18px; margin: 28px 0 24px; }
-    }
-
-    /* 過去予想アーカイブリンク（角丸ピル） */
-    .archive-link-box {
-      text-align: center;
-      margin: 24px 0 12px;
-    }
-    .archive-link-box a {
-      display: inline-block;
-      padding: 12px 24px;
-      border-radius: 999px;
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      color: #cbd5e1;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 0.95rem;
-      transition: all 0.25s ease;
-    }
-    .archive-link-box a:hover {
-      background: rgba(59, 130, 246, 0.12);
-      border-color: rgba(59, 130, 246, 0.4);
-      color: #e2e8f0;
-      text-decoration: none;
+      .key-indicators-grid { gap: 12px; }
+      .indicator-card { padding: 16px 12px; }
+      .indicator-icon { font-size: 1.5rem; margin-bottom: 6px; }
+      .indicator-label { font-size: 0.75rem; margin-bottom: 4px; }
+      .indicator-value { font-size: 1.2rem; }
     }
 
     /* レース選択ボタン */
