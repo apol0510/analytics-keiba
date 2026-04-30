@@ -94,62 +94,40 @@ const jraPreview = (() => {
         return null;
     }
     // メインレース（最終レース or raceNumberが最大）を含む venue を優先選択
-    function getMainPt(race) {
-        const hs = race?.horses;
-        let main = null;
-        if (Array.isArray(hs)) main = hs.find(h => h?.role === '本命');
-        else if (hs && typeof hs === 'object') main = hs.main;
-        return main?.pt ?? main?.confidence ?? 0;
-    }
     let pickedVenue = null;
     let pickedRace = null;
+    let pickedConfidence = null;
     for (const venue of jraLatestPrediction.venues) {
         const preds = Array.isArray(venue?.predictions) ? venue.predictions : [];
         if (preds.length === 0) continue;
-        // raceNumber が最大のレースを最終/メインレース候補として選ぶ
         const sorted = [...preds].sort((a, b) => {
             const an = parseInt(String(a.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
             const bn = parseInt(String(b.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
             return bn - an;
         });
         const candidate = sorted[0];
-        if (!pickedVenue || getMainPt(candidate) > getMainPt(pickedRace)) {
+        const candidateConfidence = getConfidenceFromMainHorse(extractMainHorse(candidate?.horses));
+        if (candidateConfidence == null) continue;
+        if (!pickedVenue || candidateConfidence > (pickedConfidence ?? -1)) {
             pickedVenue = venue;
             pickedRace = candidate;
+            pickedConfidence = candidateConfidence;
         }
     }
-    if (!pickedVenue || !pickedRace) return null;
+    if (!pickedVenue || !pickedRace || pickedConfidence == null) return null;
 
     const ri = pickedRace.raceInfo || {};
     const rawHorses = pickedRace.horses;
-
-    // horses が list（JRA形式）か dict（南関adapt後形式）かで取り出し方が違う
-    let mainHorse = null;
+    const mainHorse = extractMainHorse(rawHorses);
     let subHorse = null;
-    if (Array.isArray(rawHorses)) {
-        mainHorse = rawHorses.find(h => h?.role === '本命') || null;
-        subHorse = rawHorses.find(h => h?.role === '対抗') || null;
-    } else if (rawHorses && typeof rawHorses === 'object') {
-        mainHorse = rawHorses.main || null;
-        subHorse = rawHorses.sub || null;
-    }
+    if (Array.isArray(rawHorses)) subHorse = rawHorses.find(h => h?.role === '対抗') || null;
+    else if (rawHorses && typeof rawHorses === 'object') subHorse = rawHorses.sub || null;
 
     const mainName = mainHorse?.horseName || mainHorse?.name || '';
     const subName = subHorse?.horseName || subHorse?.name || '';
     const horseInfo = mainName && subName ? `本命${mainName}・対抗${subName}` : (mainName ? `本命${mainName}` : '');
 
-    // 信頼度: pt（累積スコア）→ confidence、95%上限
-    let confidence = 0;
-    if (mainHorse?.pt != null) {
-        confidence = ptToConfidence(mainHorse.pt);
-    } else if (typeof mainHorse?.confidence === 'number') {
-        confidence = Math.min(mainHorse.confidence, 95);
-    } else if (Array.isArray(mainHorse?.factors)) {
-        const factor = mainHorse.factors.find(f => f?.text?.includes?.('累積スコア'));
-        const m = factor?.text?.match(/(\d+)pt/);
-        if (m) confidence = ptToConfidence(m[1]);
-    }
-
+    const confidence = pickedConfidence;
     const venueName = pickedVenue.venue || ri.venue || ri.track || '';
     const dateStr = jraLatestPrediction.date || '';
     const [yyyy, mm, dd] = dateStr.split('-');
@@ -179,58 +157,60 @@ if (!mainRace) {
 
 const { raceInfo, strategies, horses } = mainRace;
 
-// 戦略データから信頼度を計算
-function calculateAverageConfidence(strategies) {
-    if (!strategies) return 0;
-
-    const strategyKeys = ['safe', 'balance', 'aggressive'];
-    const confidenceValues = strategyKeys
-        .map(key => strategies[key]?.confidence || strategies[key]?.hitRate)
-        .filter(value => value !== undefined && value !== null)
-        .map(value => parseInt(value));
-
-    if (confidenceValues.length === 0) return 0;
-
-    const average = confidenceValues.reduce((sum, val) => sum + val, 0) / confidenceValues.length;
-    return Math.round(average);
-}
-
-// 累積スコア(pt)を信頼度(%)に変換 — ptは100を超えるため上限95%にクランプ
+// 累積スコア(pt)を信頼度(%)に変換
+// - 70〜85%の範囲に線形スケーリング（過度な高信頼度を防ぎつつレースごとに自然変動）
+// - pt=60 → 70%、pt=160 → 85% の線形マッピング（係数 0.15）
+//   ※ 実データの pt 分布が 60-160 のため、ユーザー提示例の係数 0.75 だと pt>80 で全て上端 85% に張り付き
+//     「レースごとに変動する値」要件を満たすよう係数を 0.15 に調整
+// - 上下限 70/85 を厳守（clamp）
+// - 取得できない場合は null（呼び出し側で非表示判定に使う）
 function ptToConfidence(pt) {
     const n = parseInt(pt);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    return Math.min(n, 95);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const raw = 70 + ((n - 60) * 0.15);
+    return Math.round(Math.max(70, Math.min(85, raw)));
 }
 
-// プレビューコンテンツを生成
-function generatePreview(raceInfo, strategies, horses) {
-    if (!raceInfo) {
-        return {
-            summary: 'AIから最新の情報を取得しました！',
-            features: ''
-        };
-    }
+// horses（配列 or {main} dict）から本命馬を取り出す
+function extractMainHorse(horses) {
+    if (Array.isArray(horses)) return horses.find(h => h?.role === '本命') || null;
+    if (horses && typeof horses === 'object') return horses.main || null;
+    return null;
+}
 
-    // 本命の累積スコアを信頼度として使用（95%上限）
-    let confidence = calculateAverageConfidence(strategies);
-    if (horses?.main?.factors) {
-        const scoreText = horses.main.factors.find(factor => factor.text && factor.text.includes('累積スコア'));
-        if (scoreText) {
-            const scoreMatch = scoreText.text.match(/(\d+)pt/);
-            if (scoreMatch) {
-                confidence = ptToConfidence(scoreMatch[1]);
-            }
-        }
+// 本命馬から信頼度を算出（pt 優先、無ければ factors の「累積スコア: Npt」を抽出）
+function getConfidenceFromMainHorse(mainHorse) {
+    if (!mainHorse) return null;
+    if (mainHorse.pt != null) return ptToConfidence(mainHorse.pt);
+    if (Array.isArray(mainHorse.factors)) {
+        const factor = mainHorse.factors.find(f => f?.text?.includes?.('累積スコア'));
+        const m = factor?.text?.match(/(\d+)pt/);
+        if (m) return ptToConfidence(m[1]);
     }
+    return null;
+}
+
+// プレビューコンテンツを生成（本命の信頼度が取得できない場合は null）
+function generatePreview(raceInfo, strategies, horses) {
+    if (!raceInfo) return null;
+
+    const mainHorse = extractMainHorse(horses);
+    const confidence = getConfidenceFromMainHorse(mainHorse);
+    if (confidence == null) return null;
 
     const safeTitle = strategies?.safe?.title || '少点数的中型';
     const balanceTitle = strategies?.balance?.title || 'バランス型';
     const aggressiveTitle = strategies?.aggressive?.title || '高配当追求型';
 
     // 本命・対抗の馬名を取得
-    const mainHorseName = horses?.main?.name || '';
-    const subHorseName = horses?.sub?.name || '';
-    const horseInfo = mainHorseName && subHorseName ? `本命${mainHorseName}・対抗${subHorseName}` : (mainHorseName ? `本命${mainHorseName}` : '');
+    const mainHorseName = mainHorse?.name || mainHorse?.horseName || '';
+    const subHorse = Array.isArray(horses)
+        ? horses.find(h => h?.role === '対抗')
+        : (horses && typeof horses === 'object' ? horses.sub : null);
+    const subHorseName = subHorse?.name || subHorse?.horseName || '';
+    const horseInfo = mainHorseName && subHorseName
+        ? `本命${mainHorseName}・対抗${subHorseName}`
+        : (mainHorseName ? `本命${mainHorseName}` : '');
 
     const summary = `${raceInfo.track || ''} ${raceInfo.raceNumber || ''} AI予想完了！`.trim();
     const teaser = '🔓 本命の選出理由・対抗馬の評価ポイント・特徴量分析・買い目戦略を完全公開中';
@@ -238,21 +218,12 @@ function generatePreview(raceInfo, strategies, horses) {
         ? `${horseInfo}\n\n信頼度${confidence}%\n\n${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`
         : `信頼度${confidence}%\n\n${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`;
 
-    return { summary, features };
+    return { summary, features, confidence };
 }
 
-// 信頼度計算とプレビュー生成（本命の累積スコアを95%上限でクランプして使用）
-let calculatedConfidence = calculateAverageConfidence(strategies);
-if (horses?.main?.factors) {
-    const scoreText = horses.main.factors.find(factor => factor.text && factor.text.includes('累積スコア'));
-    if (scoreText) {
-        const scoreMatch = scoreText.text.match(/(\d+)pt/);
-        if (scoreMatch) {
-            calculatedConfidence = ptToConfidence(scoreMatch[1]);
-        }
-    }
-}
+// プレビュー生成（本命の信頼度が取得できない場合は null → カード非表示）
 const preview = generatePreview(raceInfo, strategies, horses);
+const calculatedConfidence = preview?.confidence ?? null;
 
 // raceInfoに計算した信頼度を追加
 const enhancedRaceInfo = {
@@ -537,22 +508,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     AIがリアルタイムで分析中。実際の予想プロセスと判断根拠を一部公開。詳細な買い目は有料版で提供中。
                 </p>
                 <div class="prediction-cards">
-                    <!-- 南関 -->
-                    <div class="prediction-card">
-                        <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #475569 0%, #334155 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏁 南関競馬</div>
-                        <div class="race-info">
-                            <span class="race-title">{raceTitle}</span>
-                            <span class="confidence-score">信頼度 {Math.floor(parseFloat(enhancedRaceInfo?.confidence || '0'))}%</span>
+                    {preview && (
+                        <!-- 南関 -->
+                        <div class="prediction-card">
+                            <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #475569 0%, #334155 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏁 南関競馬</div>
+                            <div class="race-info">
+                                <span class="race-title">{raceTitle}</span>
+                                <span class="confidence-score">信頼度 {preview.confidence}%</span>
+                            </div>
+                            <div class="prediction-summary">
+                                {preview.summary}
+                                <br><br>
+                                <div set:html={preview.features.split('\n\n').join('<br><br>')}></div>
+                            </div>
+                            <div class="blur-overlay">
+                                <span class="premium-badge"><a href="/free-prediction/nankan/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
+                            </div>
                         </div>
-                        <div class="prediction-summary">
-                            {preview.summary}
-                            <br><br>
-                            <div set:html={preview.features.split('\n\n').join('<br><br>')}></div>
-                        </div>
-                        <div class="blur-overlay">
-                            <span class="premium-badge"><a href="/free-prediction/nankan/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
-                        </div>
-                    </div>
+                    )}
 
                     {jraPreview && (
                         <!-- JRA -->
@@ -560,7 +533,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                             <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏇 中央競馬（JRA）</div>
                             <div class="race-info">
                                 <span class="race-title">{jraPreview.title}</span>
-                                <span class="confidence-score">信頼度 {Math.floor(jraPreview.confidence)}%</span>
+                                <span class="confidence-score">信頼度 {jraPreview.confidence}%</span>
                             </div>
                             <div class="prediction-summary">
                                 {jraPreview.summary}
