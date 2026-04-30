@@ -87,13 +87,13 @@ try {
   <title>中央競馬（JRA）的中実績アーカイブ｜重賞レース含む全レース公開｜KEIBA Analytics｜競馬アナリティクス</title>
   <meta name="description" content="中央競馬（JRA）の全的中実績アーカイブ。月別の的中記録と配当金額を完全公開。AI予想の精度を実績データで証明。" />
   <meta name="keywords" content="中央競馬,JRA,的中実績,アーカイブ,重賞レース,的中率,配当,競馬予想,AI予想" />
-  <link rel="canonical" href="https://analytics.keiba.link/archive-jra/" />
+  <link rel="canonical" href="https://analytics.keiba.link/archive/jra/" />
 
   <!-- OGPタグ -->
   <meta property="og:title" content="中央競馬（JRA）的中実績アーカイブ｜重賞レース含む全レース公開" />
   <meta property="og:description" content="中央競馬（JRA）の全的中実績を月別に公開。AI予想の精度を実績データで証明。" />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://analytics.keiba.link/archive-jra/" />
+  <meta property="og:url" content="https://analytics.keiba.link/archive/jra/" />
   <meta property="og:site_name" content="KEIBA Analytics" />
   <meta property="og:locale" content="ja_JP" />
 
@@ -109,7 +109,7 @@ try {
     "@type": "CollectionPage",
     "name": "中央競馬（JRA）的中実績アーカイブ",
     "description": "中央競馬（JRA）の全的中実績アーカイブ。月別の的中記録と配当金額。",
-    "url": "https://analytics.keiba.link/archive-jra/",
+    "url": "https://analytics.keiba.link/archive/jra/",
     "publisher": {
       "@type": "Organization",
       "name": "KEIBA Analytics",
@@ -402,7 +402,7 @@ try {
       <!-- 月別アーカイブ -->
       <div class="months-grid">
         {allMonths.map((monthData) => (
-          <a href={`/archive-jra/${monthData.year}/${monthData.month}/`} class="month-card">
+          <a href={`/archive/jra/${monthData.year}/${monthData.month}/`} class="month-card">
             <div class="month-header">
               <h2 class="month-title">{monthData.displayMonth}</h2>
               {parseFloat(monthData.hitRate) === 100 ? (
@@ -445,7 +445,7 @@ try {
 
     <div class="back-link">
       <a href="/">← トップページ</a>
-      <a href="/archive/">南関アーカイブ</a>
+      <a href="/archive/nankan/">南関アーカイブ</a>
       <a href="/pricing/">プレミアム予想</a>
     </div>
 

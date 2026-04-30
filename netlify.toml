@@ -82,4 +82,44 @@
   from = "/prediction-jra"
   to = "/premium-prediction/jra/"
   status = 301
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# アーカイブ URL 再編（中央/南関を /archive 配下の階層構造へ統一）
+# 旧: /archive-jra/*  /archive/[YEAR]/*
+# 新: /archive/jra/*  /archive/nankan/[YEAR]/*
+# 重要: 新URL（/archive/jra, /archive/nankan）には先にしてマッチしないよう
+#   year を明示した from で範囲を絞る
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# --- 中央: /archive-jra/* → /archive/jra/:splat ---
+[[redirects]]
+  from = "/archive-jra/*"
+  to = "/archive/jra/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/archive-jra"
+  to = "/archive/jra/"
+  status = 301
+  force = true
+
+# --- 南関: /archive/{year}/* → /archive/nankan/{year}/:splat ---
+[[redirects]]
+  from = "/archive/2024/*"
+  to = "/archive/nankan/2024/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/archive/2025/*"
+  to = "/archive/nankan/2025/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/archive/2026/*"
+  to = "/archive/nankan/2026/:splat"
+  status = 301
+  force = true
   force = true

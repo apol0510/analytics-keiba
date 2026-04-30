@@ -1,8 +1,8 @@
 ---
-import BaseLayout from '../../../../layouts/BaseLayout.astro';
+import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { sortRacesByVenueAndNumber } from '../../../../utils/sortRaces.js';
+import { sortRacesByVenueAndNumber } from '../../../../../utils/sortRaces.js';
 
 export const prerender = false;
 
@@ -64,7 +64,7 @@ const pageDescription = monthData.length > 0
         <div class="no-data">
           <h1>⚠️ データが見つかりません</h1>
           <p>{year}年{parseInt(month)}月の中央競馬的中実績はまだありません。</p>
-          <a href="/archive-jra/" class="btn-back">アーカイブトップへ戻る</a>
+          <a href="/archive/jra/" class="btn-back">アーカイブトップへ戻る</a>
         </div>
       ) : (
         <>
@@ -164,7 +164,7 @@ const pageDescription = monthData.length > 0
           })}
 
           <footer class="page-footer">
-            <a href="/archive-jra/" class="btn-back">← JRAアーカイブトップ</a>
+            <a href="/archive/jra/" class="btn-back">← JRAアーカイブトップ</a>
             <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
           </footer>
         </>

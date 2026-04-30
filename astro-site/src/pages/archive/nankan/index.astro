@@ -1,0 +1,404 @@
+---
+export const prerender = true;
+import archiveData10 from '../../../data/archiveResults_2025-10.json';
+import archiveData11 from '../../../data/archiveResults_2025-11.json';
+import archiveData12 from '../../../data/archiveResults_2025-12.json';
+import archiveData2026_01 from '../../../data/archiveResults_2026-01.json';
+import archiveData2026_02 from '../../../data/archiveResults_2026-02.json';
+import archiveData2026_03 from '../../../data/archiveResults_2026-03.json';
+import archiveData2026_04 from '../../../data/archiveResults_2026-04.json';
+import archiveResults from '../../../data/archiveResults.json';
+import archiveResultsJra from '../../../data/archiveResultsJra.json';
+import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
+
+// 月別の snapshot + archiveResults.json（南関自動更新）+ archiveResultsJra.json（中央自動更新）をマージ
+const archiveData = {
+  '2025': {
+    '10': buildMergedMonthData(archiveResults, archiveData10, '2025', '10', archiveResultsJra),
+    '11': buildMergedMonthData(archiveResults, archiveData11, '2025', '11', archiveResultsJra),
+    '12': buildMergedMonthData(archiveResults, archiveData12, '2025', '12', archiveResultsJra),
+  },
+  '2026': {
+    '01': buildMergedMonthData(archiveResults, archiveData2026_01, '2026', '01', archiveResultsJra),
+    '02': buildMergedMonthData(archiveResults, archiveData2026_02, '2026', '02', archiveResultsJra),
+    '03': buildMergedMonthData(archiveResults, archiveData2026_03, '2026', '03', archiveResultsJra),
+    '04': buildMergedMonthData(archiveResults, archiveData2026_04, '2026', '04', archiveResultsJra),
+  },
+};
+
+const years = Object.keys(archiveData).sort().reverse(); // 新しい順
+
+// 年別統計計算
+const yearSummaries = years.map(year => {
+  const yearData = archiveData[year];
+  const months = Object.keys(yearData).sort().reverse(); // 新しい順
+
+  let perfectDays = 0;
+  let totalPayout = 0;
+  let totalHitRaces = 0;
+  let totalRaces = 0;
+  let totalDays = 0;
+
+  months.forEach(month => {
+    const monthData = yearData[month];
+    const days = Object.keys(monthData);
+    totalDays += days.length;
+
+    days.forEach(day => {
+      const dayData = monthData[day];
+      if (dayData.perfectHit) perfectDays++;
+      totalPayout += dayData.totalPayout || 0;
+      totalHitRaces += dayData.hitRaces || 0;
+      totalRaces += dayData.totalRaces || 0;
+    });
+  });
+
+  const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+
+  // 最新の月を取得（直接遷移用）
+  const latestMonth = months[0];
+
+  return {
+    year,
+    latestMonth,
+    perfectDays,
+    payout: totalPayout,
+    hitRaces: totalHitRaces,
+    totalRaces,
+    hitRate,
+    daysCount: totalDays,
+    monthsCount: months.length
+  };
+});
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- SEO最適化メタタグ -->
+  <title>南関競馬的中実績アーカイブ｜重賞レース含む全レース公開｜KEIBA Analytics｜競馬アナリティクス</title>
+  <meta name="description" content="南関競馬の全的中実績アーカイブ。マリーンカップ・日本テレビ盃等の重賞レース含む年別・月別の的中記録と配当金額を完全公開。AI予想の精度を実績データで証明。" />
+  <meta name="keywords" content="南関競馬,的中実績,アーカイブ,重賞レース,マリーンカップ,日本テレビ盃,的中率,配当,競馬予想,AI予想" />
+  <link rel="canonical" href="https://analytics.keiba.link/archive/nankan/" />
+
+  <!-- OGPタグ -->
+  <meta property="og:title" content="南関競馬的中実績アーカイブ｜重賞レース含む全レース公開" />
+  <meta property="og:description" content="マリーンカップ・日本テレビ盃等の重賞レース含む全的中実績を公開。AI予想の精度を実績データで証明。" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://analytics.keiba.link/archive/nankan/" />
+  <meta property="og:site_name" content="KEIBA Analytics" />
+  <meta property="og:locale" content="ja_JP" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="南関競馬的中実績アーカイブ｜重賞レース含む全レース公開" />
+  <meta name="twitter:description" content="マリーンカップ・日本テレビ盃等の重賞レース含む全的中実績を公開。" />
+
+  <!-- 構造化データ（JSON-LD） -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    "name": "南関競馬的中実績アーカイブ",
+    "description": "南関競馬の全的中実績アーカイブ。重賞レースを含む年別・月別の的中記録と配当金額。",
+    "url": "https://analytics.keiba.link/archive/nankan/",
+    "about": {
+      "@type": "Thing",
+      "name": "南関競馬重賞レース（マリーンカップ・日本テレビ盃等）"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "KEIBA Analytics",
+      "url": "https://nankan-analytics.keiba.link"
+    }
+  }
+  </script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 2rem 1rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding: 2rem;
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: 16px;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .title {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #f59e0b;
+      margin-bottom: 1rem;
+    }
+
+    .subtitle {
+      font-size: 1.2rem;
+      color: #cbd5e1;
+      margin-bottom: 0.5rem;
+    }
+
+    .description {
+      font-size: 1rem;
+      color: #94a3b8;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    /* 年別一覧 */
+    .years-grid {
+      display: grid;
+      gap: 2rem;
+    }
+
+    .year-card {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 16px;
+      padding: 2.5rem;
+      transition: all 0.3s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+
+    .year-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(245, 158, 11, 0.5);
+      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.3);
+    }
+
+    .year-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 2px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .year-title {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #fbbf24;
+    }
+
+    .perfect-highlight {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      padding: 0.8rem 1.5rem;
+      border-radius: 12px;
+      font-weight: bold;
+      font-size: 1.1rem;
+    }
+
+    .year-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .year-stat {
+      text-align: center;
+      background: rgba(15, 23, 42, 0.5);
+      padding: 1.5rem;
+      border-radius: 8px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+
+    .year-stat-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 0.5rem;
+    }
+
+    .year-stat-label {
+      font-size: 0.9rem;
+      color: #94a3b8;
+    }
+
+    .back-link {
+      text-align: center;
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 1px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .back-link a {
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 1rem;
+      transition: color 0.3s;
+      margin: 0 0.5rem;
+    }
+
+    .back-link a:hover {
+      color: #3b82f6;
+    }
+
+    .cta-box {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .cta-text {
+      font-size: 1.1rem;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+    }
+
+    .cta-button {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: #fff;
+      padding: 1rem 2rem;
+      border-radius: 8px;
+      text-decoration: none;
+      display: inline-block;
+      font-weight: bold;
+      transition: all 0.3s;
+    }
+
+    .cta-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .view-details-button {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 1rem;
+      text-align: center;
+      margin-top: 1.5rem;
+      transition: all 0.3s;
+      display: inline-block;
+      width: 100%;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      backdrop-filter: blur(8px);
+    }
+
+    .view-details-button:hover {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: rgba(245, 158, 11, 0.5);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
+    }
+
+    @media (max-width: 768px) {
+      .title {
+        font-size: 1.8rem;
+      }
+
+      .year-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+      }
+
+      .year-title {
+        font-size: 2rem;
+      }
+
+      .year-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="title">🏆 的中実績アーカイブ</h1>
+      <p class="subtitle">すべての的中記録を完全公開</p>
+      <p class="description">
+        パーフェクト的中の日も、不的中の日も、すべて公開。<br>
+        透明性と信頼性を最優先にしています。
+      </p>
+    </div>
+
+    <!-- 有料プランCTA -->
+    <div class="cta-box">
+      <p class="cta-text">
+        🎯 これらの実績を生み出したAI予想を、あなたも利用できます
+      </p>
+      <a href="/pricing/" class="cta-button">
+        プレミアム予想を見る →
+      </a>
+    </div>
+
+    <!-- 年別アーカイブ -->
+    <div class="years-grid">
+      {yearSummaries.map(summary => (
+        <a href={`/archive/nankan/${summary.year}/`} class="year-card">
+          <div class="year-header">
+            <h2 class="year-title">{summary.year}年</h2>
+            {summary.hitRate === 100 && (
+              <div class="perfect-highlight">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
+            )}
+          </div>
+
+          <div class="year-stats-grid">
+            <div class="year-stat">
+              <div class="year-stat-value">{summary.hitRate}%</div>
+              <div class="year-stat-label">年間的中率</div>
+            </div>
+            <div class="year-stat">
+              <div class="year-stat-value">{summary.monthsCount}ヶ月</div>
+              <div class="year-stat-label">開催月数</div>
+            </div>
+            <div class="year-stat">
+              <div class="year-stat-value">{summary.daysCount}日</div>
+              <div class="year-stat-label">開催日数</div>
+            </div>
+            <div class="year-stat">
+              <div class="year-stat-value">{summary.hitRaces}/{summary.totalRaces}</div>
+              <div class="year-stat-label">的中レース数</div>
+            </div>
+            <div class="year-stat">
+              <div class="year-stat-value">¥{(summary.payout / 1000).toFixed(0)}K</div>
+              <div class="year-stat-label">合計配当</div>
+            </div>
+          </div>
+
+          <div class="view-details-button">
+            📊 詳細を見る →
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <div class="back-link">
+      <a href="/">← トップページ</a>
+      <a href="/pricing/">プレミアム予想</a>
+    </div>
+  </div>
+</body>
+</html>

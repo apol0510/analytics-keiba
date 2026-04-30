@@ -1,12 +1,12 @@
 ---
 export const prerender = true;
-import archiveData from '../../../data/archiveResults_2026-03.json';
-import archiveResults from '../../../data/archiveResults.json';
-import archiveResultsJra from '../../../data/archiveResultsJra.json';
-import { buildMergedMonthData, dayKeyToInt } from '../../../lib/archiveMonthlyView.js';
+import archiveData from '../../../../data/archiveResults_2025-12.json';
+import archiveResults from '../../../../data/archiveResults.json';
+import archiveResultsJra from '../../../../data/archiveResultsJra.json';
+import { buildMergedMonthData, dayKeyToInt } from '../../../../lib/archiveMonthlyView.js';
 
-const year = '2026';
-const month = '03';
+const year = '2025';
+const month = '12';
 // 南関 snapshot + 南関 singular + 中央 singular をマージ（dayKey: "DD" | "DDj"）
 const monthData = buildMergedMonthData(archiveResults, archiveData, year, month, archiveResultsJra);
 const days = Object.keys(monthData).sort((a, b) => {
@@ -40,22 +40,22 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- SEO最適化メタタグ -->
-  <title>2026年3月 南関競馬的中実績｜弥生賞・桜花賞｜KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="2026年3月の南関競馬全的中実績を公開。弥生賞・桜花賞等の特別レース的中記録と配当金額を完全掲載。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ。" />
-  <meta name="keywords" content="南関競馬,的中実績,2026年3月,弥生賞,桜花賞,的中率,配当,競馬予想" />
-  <link rel="canonical" href="https://nankan-analytics.keiba.link/archive/2026/03" />
+  <title>2025年12月 南関競馬的中実績｜師走特別・ノースウインド賞｜KEIBA Analytics｜競馬アナリティクス</title>
+  <meta name="description" content="2025年12月の南関競馬全的中実績を公開。師走特別・ノースウインド賞等の特別レース的中記録と配当金額を完全掲載。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ。" />
+  <meta name="keywords" content="南関競馬,的中実績,2025年12月,師走特別,ノースウインド賞,的中率,配当,競馬予想" />
+  <link rel="canonical" href="https://analytics.keiba.link/archive/nankan/2025/12" />
 
   <!-- OGPタグ -->
-  <meta property="og:title" content="2026年3月 南関競馬的中実績｜弥生賞・桜花賞" />
-  <meta property="og:description" content="弥生賞・桜花賞等の特別レース的中記録。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
+  <meta property="og:title" content="2025年12月 南関競馬的中実績｜師走特別・ノースウインド賞" />
+  <meta property="og:description" content="師走特別・ノースウインド賞等の特別レース的中記録。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://nankan-analytics.keiba.link/archive/2026/03" />
+  <meta property="og:url" content="https://analytics.keiba.link/archive/nankan/2025/12" />
   <meta property="og:site_name" content="KEIBA Analytics" />
   <meta property="og:locale" content="ja_JP" />
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="2026年3月 南関競馬的中実績｜弥生賞・桜花賞" />
+  <meta name="twitter:title" content="2025年12月 南関競馬的中実績｜師走特別・ノースウインド賞" />
   <meta name="twitter:description" content="的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
 
   <!-- 構造化データ（JSON-LD） -->
@@ -63,14 +63,14 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   {
     "@context": "https://schema.org",
     "@type": "ItemList",
-    "name": "2026年3月 南関競馬的中実績",
+    "name": "2025年12月 南関競馬的中実績",
     "description": "南関競馬の的中実績アーカイブ。特別レースを含む全レースの的中記録と配当金額。",
     "numberOfItems": {totalHitRaces},
     "itemListElement": [
       {
         "@type": "SportsEvent",
         "name": "南関競馬的中実績",
-        "startDate": "2026-03",
+        "startDate": "2025-12",
         "location": {
           "@type": "Place",
           "name": "南関競馬（大井・川崎・船橋・浦和）"
@@ -87,7 +87,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     ],
     "about": {
       "@type": "Thing",
-      "name": "弥生賞・桜花賞等の特別レース"
+      "name": "師走特別・ノースウインド賞等の特別レース"
     }
   }
   </script>
@@ -454,7 +454,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
 <body>
   <div class="container">
     <div class="header">
-      <h1 class="title">🏆 2026年3月 的中実績アーカイブ</h1>
+      <h1 class="title">🏆 2025年12月 的中実績アーカイブ</h1>
       <p class="subtitle">全レースの的中記録を公開</p>
     </div>
 
@@ -489,7 +489,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       return (
         <div class="day-section">
           <div class="day-header">
-            <h2 class="day-title">3月{parseInt(day)}日 {dayData.venueDisplay}</h2>
+            <h2 class="day-title">12月{parseInt(day)}日 {dayData.venueDisplay}</h2>
             <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces}的中</div>
           </div>
 
@@ -531,7 +531,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     })}
 
     <div class="back-link">
-      <a href="/archive/">← アーカイブトップ</a> |
+      <a href="/archive/nankan/">← アーカイブトップ</a> |
       <a href="/pricing/">プレミアム予想</a>
     </div>
   </div>

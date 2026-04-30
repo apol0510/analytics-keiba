@@ -1,75 +1,31 @@
 ---
-export const prerender = true;
-import archiveData10 from '../../data/archiveResults_2025-10.json';
-import archiveData11 from '../../data/archiveResults_2025-11.json';
-import archiveData12 from '../../data/archiveResults_2025-12.json';
-import archiveData2026_01 from '../../data/archiveResults_2026-01.json';
-import archiveData2026_02 from '../../data/archiveResults_2026-02.json';
-import archiveData2026_03 from '../../data/archiveResults_2026-03.json';
-import archiveData2026_04 from '../../data/archiveResults_2026-04.json';
-import archiveResults from '../../data/archiveResults.json';
-import archiveResultsJra from '../../data/archiveResultsJra.json';
-import { buildMergedMonthData } from '../../lib/archiveMonthlyView.js';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 
-// 月別の snapshot + archiveResults.json（南関自動更新）+ archiveResultsJra.json（中央自動更新）をマージ
-const archiveData = {
-  '2025': {
-    '10': buildMergedMonthData(archiveResults, archiveData10, '2025', '10', archiveResultsJra),
-    '11': buildMergedMonthData(archiveResults, archiveData11, '2025', '11', archiveResultsJra),
-    '12': buildMergedMonthData(archiveResults, archiveData12, '2025', '12', archiveResultsJra),
-  },
-  '2026': {
-    '01': buildMergedMonthData(archiveResults, archiveData2026_01, '2026', '01', archiveResultsJra),
-    '02': buildMergedMonthData(archiveResults, archiveData2026_02, '2026', '02', archiveResultsJra),
-    '03': buildMergedMonthData(archiveResults, archiveData2026_03, '2026', '03', archiveResultsJra),
-    '04': buildMergedMonthData(archiveResults, archiveData2026_04, '2026', '04', archiveResultsJra),
-  },
-};
+export const prerender = false;
 
-const years = Object.keys(archiveData).sort().reverse(); // 新しい順
+function readLatestMonth(jsonPath: string): { year: string; month: string } | null {
+  if (!existsSync(jsonPath)) return null;
+  try {
+    const data = JSON.parse(readFileSync(jsonPath, 'utf-8'));
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const dates = data.map((e: any) => e?.date).filter(Boolean).sort().reverse() as string[];
+    if (dates.length === 0) return null;
+    const [year, month] = dates[0].split('-');
+    return { year, month };
+  } catch {
+    return null;
+  }
+}
 
-// 年別統計計算
-const yearSummaries = years.map(year => {
-  const yearData = archiveData[year];
-  const months = Object.keys(yearData).sort().reverse(); // 新しい順
+const jraLatest = readLatestMonth(join(process.cwd(), 'src', 'data', 'archiveResultsJra.json'));
+const nankanLatest = readLatestMonth(join(process.cwd(), 'src', 'data', 'archiveResults.json'));
 
-  let perfectDays = 0;
-  let totalPayout = 0;
-  let totalHitRaces = 0;
-  let totalRaces = 0;
-  let totalDays = 0;
+const jraLatestHref = jraLatest ? `/archive/jra/${jraLatest.year}/${jraLatest.month}/` : '/archive/jra/';
+const nankanLatestHref = nankanLatest ? `/archive/nankan/${nankanLatest.year}/${nankanLatest.month}/` : '/archive/nankan/';
 
-  months.forEach(month => {
-    const monthData = yearData[month];
-    const days = Object.keys(monthData);
-    totalDays += days.length;
-
-    days.forEach(day => {
-      const dayData = monthData[day];
-      if (dayData.perfectHit) perfectDays++;
-      totalPayout += dayData.totalPayout || 0;
-      totalHitRaces += dayData.hitRaces || 0;
-      totalRaces += dayData.totalRaces || 0;
-    });
-  });
-
-  const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
-
-  // 最新の月を取得（直接遷移用）
-  const latestMonth = months[0];
-
-  return {
-    year,
-    latestMonth,
-    perfectDays,
-    payout: totalPayout,
-    hitRaces: totalHitRaces,
-    totalRaces,
-    hitRate,
-    daysCount: totalDays,
-    monthsCount: months.length
-  };
-});
+const formatLatestLabel = (m: { year: string; month: string } | null) =>
+  m ? `${m.year}年${parseInt(m.month, 10)}月` : '最新月';
 ---
 
 <!DOCTYPE html>
@@ -78,50 +34,38 @@ const yearSummaries = years.map(year => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- SEO最適化メタタグ -->
-  <title>南関競馬的中実績アーカイブ｜重賞レース含む全レース公開｜KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="南関競馬の全的中実績アーカイブ。マリーンカップ・日本テレビ盃等の重賞レース含む年別・月別の的中記録と配当金額を完全公開。AI予想の精度を実績データで証明。" />
-  <meta name="keywords" content="南関競馬,的中実績,アーカイブ,重賞レース,マリーンカップ,日本テレビ盃,的中率,配当,競馬予想,AI予想" />
-  <link rel="canonical" href="https://nankan-analytics.keiba.link/archive/" />
+  <title>的中実績アーカイブ｜KEIBA Analytics｜競馬アナリティクス</title>
+  <meta name="description" content="中央競馬（JRA）と南関競馬の的中実績アーカイブ。月別・日別の予想結果と配当を全件アーカイブ。AI予想モデルの判定精度を実データでご確認いただけます。" />
+  <meta name="keywords" content="中央競馬,JRA,南関競馬,的中実績,アーカイブ,AI予想" />
+  <link rel="canonical" href="https://analytics.keiba.link/archive/" />
 
-  <!-- OGPタグ -->
-  <meta property="og:title" content="南関競馬的中実績アーカイブ｜重賞レース含む全レース公開" />
-  <meta property="og:description" content="マリーンカップ・日本テレビ盃等の重賞レース含む全的中実績を公開。AI予想の精度を実績データで証明。" />
+  <meta property="og:title" content="的中実績アーカイブ｜KEIBA Analytics" />
+  <meta property="og:description" content="中央競馬（JRA）と南関競馬の的中実績アーカイブ。" />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://nankan-analytics.keiba.link/archive/" />
+  <meta property="og:url" content="https://analytics.keiba.link/archive/" />
   <meta property="og:site_name" content="KEIBA Analytics" />
   <meta property="og:locale" content="ja_JP" />
 
-  <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="南関競馬的中実績アーカイブ｜重賞レース含む全レース公開" />
-  <meta name="twitter:description" content="マリーンカップ・日本テレビ盃等の重賞レース含む全的中実績を公開。" />
+  <meta name="twitter:title" content="的中実績アーカイブ｜KEIBA Analytics" />
+  <meta name="twitter:description" content="中央競馬（JRA）と南関競馬の的中実績アーカイブ。" />
 
-  <!-- 構造化データ（JSON-LD） -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
-    "name": "南関競馬的中実績アーカイブ",
-    "description": "南関競馬の全的中実績アーカイブ。重賞レースを含む年別・月別の的中記録と配当金額。",
-    "url": "https://nankan-analytics.keiba.link/archive/",
-    "about": {
-      "@type": "Thing",
-      "name": "南関競馬重賞レース（マリーンカップ・日本テレビ盃等）"
-    },
+    "name": "的中実績アーカイブ",
+    "description": "中央競馬（JRA）と南関競馬の的中実績アーカイブ",
+    "url": "https://analytics.keiba.link/archive/",
     "publisher": {
       "@type": "Organization",
       "name": "KEIBA Analytics",
-      "url": "https://nankan-analytics.keiba.link"
+      "url": "https://analytics.keiba.link"
     }
   }
   </script>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
       background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -136,112 +80,166 @@ const yearSummaries = years.map(year => {
       margin: 0 auto;
     }
 
-    .header {
+    .page-header {
       text-align: center;
       margin-bottom: 3rem;
-      padding: 2rem;
+      padding: 2.5rem 2rem;
       background: rgba(30, 41, 59, 0.5);
       border-radius: 16px;
       border: 1px solid rgba(245, 158, 11, 0.3);
     }
 
-    .title {
+    .page-title {
       font-size: 2.5rem;
       font-weight: bold;
-      color: #f59e0b;
+      background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 50%, #60a5fa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
       margin-bottom: 1rem;
     }
 
-    .subtitle {
+    .page-subtitle {
       font-size: 1.2rem;
       color: #cbd5e1;
       margin-bottom: 0.5rem;
     }
 
-    .description {
+    .page-description {
       font-size: 1rem;
       color: #94a3b8;
-      max-width: 600px;
+      max-width: 640px;
       margin: 0 auto;
+      line-height: 1.7;
     }
 
-    /* 年別一覧 */
-    .years-grid {
+    .category-grid {
       display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
       gap: 2rem;
+      margin-bottom: 3rem;
     }
 
-    .year-card {
+    .category-card {
       background: rgba(30, 41, 59, 0.8);
       border: 1px solid rgba(100, 116, 139, 0.3);
       border-radius: 16px;
       padding: 2.5rem;
       transition: all 0.3s;
-      cursor: pointer;
-      text-decoration: none;
-      color: inherit;
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
     }
 
-    .year-card:hover {
+    .category-card.jra {
+      border-color: rgba(59, 130, 246, 0.35);
+    }
+
+    .category-card.jra:hover {
       transform: translateY(-4px);
-      border-color: rgba(245, 158, 11, 0.5);
+      border-color: rgba(59, 130, 246, 0.6);
+      box-shadow: 0 12px 30px rgba(59, 130, 246, 0.3);
+    }
+
+    .category-card.nankan {
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+
+    .category-card.nankan:hover {
+      transform: translateY(-4px);
+      border-color: rgba(245, 158, 11, 0.6);
       box-shadow: 0 12px 30px rgba(245, 158, 11, 0.3);
     }
 
-    .year-header {
+    .card-header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      margin-bottom: 2rem;
-      padding-bottom: 1.5rem;
-      border-bottom: 2px solid rgba(100, 116, 139, 0.3);
+      gap: 0.75rem;
     }
 
-    .year-title {
-      font-size: 2.5rem;
-      font-weight: bold;
-      color: #fbbf24;
+    .card-icon {
+      font-size: 2.25rem;
     }
 
-    .perfect-highlight {
-      background: linear-gradient(135deg, #10b981, #059669);
-      color: #fff;
-      padding: 0.8rem 1.5rem;
-      border-radius: 12px;
-      font-weight: bold;
-      font-size: 1.1rem;
+    .card-title {
+      font-size: 1.75rem;
+      font-weight: 800;
     }
 
-    .year-stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1.5rem;
+    .category-card.jra .card-title { color: #60a5fa; }
+    .category-card.nankan .card-title { color: #fbbf24; }
+
+    .card-summary {
+      color: #cbd5e1;
+      font-size: 1rem;
+      line-height: 1.7;
     }
 
-    .year-stat {
+    .card-venues {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .venue-tag {
+      font-size: 0.85rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.6);
+      color: #cbd5e1;
+      border: 1px solid rgba(100, 116, 139, 0.4);
+    }
+
+    .card-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: auto;
+      padding-top: 0.5rem;
+    }
+
+    .btn-primary, .btn-secondary {
+      display: inline-block;
       text-align: center;
-      background: rgba(15, 23, 42, 0.5);
-      padding: 1.5rem;
+      padding: 0.85rem 1.5rem;
       border-radius: 8px;
-      border: 1px solid rgba(59, 130, 246, 0.2);
+      text-decoration: none;
+      font-weight: 700;
+      transition: all 0.3s;
+      border: 1px solid transparent;
     }
 
-    .year-stat-value {
-      font-size: 2rem;
-      font-weight: bold;
-      color: #60a5fa;
-      margin-bottom: 0.5rem;
+    .category-card.jra .btn-primary {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: #fff;
+    }
+    .category-card.jra .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
     }
 
-    .year-stat-label {
-      font-size: 0.9rem;
-      color: #94a3b8;
+    .category-card.nankan .btn-primary {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #fff;
+    }
+    .category-card.nankan .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);
+    }
+
+    .btn-secondary {
+      background: rgba(15, 23, 42, 0.6);
+      color: #cbd5e1;
+      border-color: rgba(100, 116, 139, 0.4);
+    }
+    .btn-secondary:hover {
+      background: rgba(15, 23, 42, 0.85);
+      border-color: rgba(148, 163, 184, 0.6);
     }
 
     .back-link {
       text-align: center;
-      margin-top: 3rem;
+      margin-top: 2rem;
       padding-top: 2rem;
       border-top: 1px solid rgba(100, 116, 139, 0.3);
     }
@@ -250,154 +248,96 @@ const yearSummaries = years.map(year => {
       color: #60a5fa;
       text-decoration: none;
       font-size: 1rem;
-      transition: color 0.3s;
       margin: 0 0.5rem;
     }
+    .back-link a:hover { color: #3b82f6; }
 
-    .back-link a:hover {
-      color: #3b82f6;
+    .results-notice {
+      margin-top: 2rem;
+      padding: 1rem 1.25rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
     }
-
-    .cta-box {
-      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      border-radius: 12px;
-      padding: 2rem;
-      text-align: center;
-      margin-bottom: 3rem;
-    }
-
-    .cta-text {
-      font-size: 1.1rem;
-      color: #e2e8f0;
-      margin-bottom: 1rem;
-    }
-
-    .cta-button {
-      background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: #fff;
-      padding: 1rem 2rem;
-      border-radius: 8px;
-      text-decoration: none;
-      display: inline-block;
-      font-weight: bold;
-      transition: all 0.3s;
-    }
-
-    .cta-button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
-    }
-
-    .view-details-button {
-      background: rgba(245, 158, 11, 0.15);
-      color: #fbbf24;
-      padding: 0.75rem 1.5rem;
-      border-radius: 8px;
-      font-weight: bold;
-      font-size: 1rem;
-      text-align: center;
-      margin-top: 1.5rem;
-      transition: all 0.3s;
-      display: inline-block;
-      width: 100%;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-      backdrop-filter: blur(8px);
-    }
-
-    .view-details-button:hover {
-      background: rgba(245, 158, 11, 0.25);
-      border-color: rgba(245, 158, 11, 0.5);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
+    .results-notice p {
+      font-size: 0.75rem;
+      color: rgba(148, 163, 184, 0.6);
+      line-height: 1.7;
+      margin: 0;
     }
 
     @media (max-width: 768px) {
-      .title {
-        font-size: 1.8rem;
-      }
-
-      .year-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 1rem;
-      }
-
-      .year-title {
-        font-size: 2rem;
-      }
-
-      .year-stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
+      .page-title { font-size: 1.8rem; }
+      .category-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+      .card-title { font-size: 1.5rem; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="header">
-      <h1 class="title">🏆 的中実績アーカイブ</h1>
-      <p class="subtitle">すべての的中記録を完全公開</p>
-      <p class="description">
-        パーフェクト的中の日も、不的中の日も、すべて公開。<br>
-        透明性と信頼性を最優先にしています。
+    <div class="page-header">
+      <h1 class="page-title">🏆 的中実績アーカイブ</h1>
+      <p class="page-subtitle">中央競馬（JRA）と南関競馬の的中記録</p>
+      <p class="page-description">
+        AI予想モデルの判定精度を実データでご確認いただけます。<br>
+        月別・日別の予想結果と配当をすべてアーカイブしています。
       </p>
     </div>
 
-    <!-- 有料プランCTA -->
-    <div class="cta-box">
-      <p class="cta-text">
-        🎯 これらの実績を生み出したAI予想を、あなたも利用できます
-      </p>
-      <a href="/pricing/" class="cta-button">
-        プレミアム予想を見る →
-      </a>
-    </div>
+    <div class="category-grid">
+      <div class="category-card jra">
+        <div class="card-header">
+          <span class="card-icon">🏇</span>
+          <span class="card-title">中央競馬（JRA）</span>
+        </div>
+        <p class="card-summary">
+          東京・中山・京都・阪神を中心に、JRA全10場の的中実績を月別・日別に公開。重賞レースを含む全レースをアーカイブ。
+        </p>
+        <div class="card-venues">
+          <span class="venue-tag">東京</span>
+          <span class="venue-tag">中山</span>
+          <span class="venue-tag">京都</span>
+          <span class="venue-tag">阪神</span>
+          <span class="venue-tag">中京・新潟・福島・小倉・札幌・函館</span>
+        </div>
+        <div class="card-actions">
+          <a href="/archive/jra/" class="btn-primary">📊 JRAアーカイブを見る</a>
+          {jraLatest && (
+            <a href={jraLatestHref} class="btn-secondary">最新開催（{formatLatestLabel(jraLatest)}）を見る</a>
+          )}
+        </div>
+      </div>
 
-    <!-- 年別アーカイブ -->
-    <div class="years-grid">
-      {yearSummaries.map(summary => (
-        <a href={`/archive/${summary.year}/`} class="year-card">
-          <div class="year-header">
-            <h2 class="year-title">{summary.year}年</h2>
-            {summary.hitRate === 100 && (
-              <div class="perfect-highlight">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
-            )}
-          </div>
-
-          <div class="year-stats-grid">
-            <div class="year-stat">
-              <div class="year-stat-value">{summary.hitRate}%</div>
-              <div class="year-stat-label">年間的中率</div>
-            </div>
-            <div class="year-stat">
-              <div class="year-stat-value">{summary.monthsCount}ヶ月</div>
-              <div class="year-stat-label">開催月数</div>
-            </div>
-            <div class="year-stat">
-              <div class="year-stat-value">{summary.daysCount}日</div>
-              <div class="year-stat-label">開催日数</div>
-            </div>
-            <div class="year-stat">
-              <div class="year-stat-value">{summary.hitRaces}/{summary.totalRaces}</div>
-              <div class="year-stat-label">的中レース数</div>
-            </div>
-            <div class="year-stat">
-              <div class="year-stat-value">¥{(summary.payout / 1000).toFixed(0)}K</div>
-              <div class="year-stat-label">合計配当</div>
-            </div>
-          </div>
-
-          <div class="view-details-button">
-            📊 詳細を見る →
-          </div>
-        </a>
-      ))}
+      <div class="category-card nankan">
+        <div class="card-header">
+          <span class="card-icon">🐎</span>
+          <span class="card-title">南関競馬</span>
+        </div>
+        <p class="card-summary">
+          大井・川崎・船橋・浦和の南関4場の的中実績を年別・月別・日別に公開。マリーンカップ・日本テレビ盃等の重賞レースを含むアーカイブ。
+        </p>
+        <div class="card-venues">
+          <span class="venue-tag">大井</span>
+          <span class="venue-tag">川崎</span>
+          <span class="venue-tag">船橋</span>
+          <span class="venue-tag">浦和</span>
+        </div>
+        <div class="card-actions">
+          <a href="/archive/nankan/" class="btn-primary">📊 南関アーカイブを見る</a>
+          {nankanLatest && (
+            <a href={nankanLatestHref} class="btn-secondary">最新開催（{formatLatestLabel(nankanLatest)}）を見る</a>
+          )}
+        </div>
+      </div>
     </div>
 
     <div class="back-link">
       <a href="/">← トップページ</a>
       <a href="/pricing/">プレミアム予想</a>
+    </div>
+
+    <div class="results-notice">
+      <p>※ 掲載されている的中率・収支データは、AIモデルが算出した買い目パターンに基づく理論値です。実際の収支はお客様の購入点数・金額配分により異なります。</p>
+      <p>※ 本サービスで提示する買い目は複数パターンの候補を含むため、表示点数と集計上の基準点数が異なる場合があります。</p>
+      <p>※ 過去の実績は将来の結果を保証するものではありません。馬券購入は自己責任でお願いいたします。</p>
     </div>
   </div>
 </body>

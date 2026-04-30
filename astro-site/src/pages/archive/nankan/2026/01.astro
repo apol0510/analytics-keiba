@@ -1,19 +1,18 @@
 ---
 export const prerender = true;
-import archiveData from '../../../data/archiveResults_2026-04.json';
-import archiveResults from '../../../data/archiveResults.json';
-import archiveResultsJra from '../../../data/archiveResultsJra.json';
-import { buildMergedMonthData, dayKeyToInt } from '../../../lib/archiveMonthlyView.js';
+import archiveData from '../../../../data/archiveResults_2026-01.json';
+import archiveResults from '../../../../data/archiveResults.json';
+import archiveResultsJra from '../../../../data/archiveResultsJra.json';
+import { buildMergedMonthData, dayKeyToInt } from '../../../../lib/archiveMonthlyView.js';
 
 const year = '2026';
-const month = '04';
+const month = '01';
 // 南関 snapshot + 南関 singular + 中央 singular をマージ（dayKey: "DD" | "DDj"）
 const monthData = buildMergedMonthData(archiveResults, archiveData, year, month, archiveResultsJra);
-// 日降順（同日は南関→中央の順）
 const days = Object.keys(monthData).sort((a, b) => {
   const da = dayKeyToInt(a), db = dayKeyToInt(b);
   if (da !== db) return db - da;
-  return a.localeCompare(b); // "10" < "10j"
+  return a.localeCompare(b);
 });
 
 // 月間統計計算
@@ -23,8 +22,8 @@ let totalPayoutMonth = 0;
 let totalHitRaces = 0;
 let totalRaces = 0;
 
-days.forEach(dayKey => {
-  const dayData = monthData[dayKey];
+days.forEach(day => {
+  const dayData = monthData[day];
   if (dayData.perfectHit) perfectDays++;
   totalPayoutMonth += dayData.totalPayout || 0;
   totalHitRaces += dayData.hitRaces || 0;
@@ -41,22 +40,22 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- SEO最適化メタタグ -->
-  <title>2026年4月 南関競馬的中実績｜KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="2026年4月の南関競馬全的中実績を公開。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ。" />
-  <meta name="keywords" content="南関競馬,的中実績,2026年4月,的中率,配当,競馬予想" />
-  <link rel="canonical" href="https://nankan-analytics.keiba.link/archive/2026/04" />
+  <title>2026年1月 南関競馬的中実績｜初夢賞・ゴールデンホース賞｜KEIBA Analytics｜競馬アナリティクス</title>
+  <meta name="description" content="2026年1月の南関競馬全的中実績を公開。初夢賞・ゴールデンホース賞等の特別レース的中記録と配当金額を完全掲載。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ。" />
+  <meta name="keywords" content="南関競馬,的中実績,2026年1月,初夢賞,ゴールデンホース賞,的中率,配当,競馬予想" />
+  <link rel="canonical" href="https://analytics.keiba.link/archive/nankan/2026/01" />
 
   <!-- OGPタグ -->
-  <meta property="og:title" content="2026年4月 南関競馬的中実績" />
-  <meta property="og:description" content="的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
+  <meta property="og:title" content="2026年1月 南関競馬的中実績｜初夢賞・ゴールデンホース賞" />
+  <meta property="og:description" content="初夢賞・ゴールデンホース賞等の特別レース的中記録。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://nankan-analytics.keiba.link/archive/2026/04" />
+  <meta property="og:url" content="https://analytics.keiba.link/archive/nankan/2026/01" />
   <meta property="og:site_name" content="KEIBA Analytics" />
   <meta property="og:locale" content="ja_JP" />
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="2026年4月 南関競馬的中実績" />
+  <meta name="twitter:title" content="2026年1月 南関競馬的中実績｜初夢賞・ゴールデンホース賞" />
   <meta name="twitter:description" content="的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
 
   <!-- 構造化データ（JSON-LD） -->
@@ -64,14 +63,14 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   {
     "@context": "https://schema.org",
     "@type": "ItemList",
-    "name": "2026年4月 南関競馬的中実績",
+    "name": "2026年1月 南関競馬的中実績",
     "description": "南関競馬の的中実績アーカイブ。特別レースを含む全レースの的中記録と配当金額。",
     "numberOfItems": {totalHitRaces},
     "itemListElement": [
       {
         "@type": "SportsEvent",
         "name": "南関競馬的中実績",
-        "startDate": "2026-04",
+        "startDate": "2026-01",
         "location": {
           "@type": "Place",
           "name": "南関競馬（大井・川崎・船橋・浦和）"
@@ -85,7 +84,11 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
           "ratingCount": "{totalRaces}"
         }
       }
-    ]
+    ],
+    "about": {
+      "@type": "Thing",
+      "name": "初夢賞・ゴールデンホース賞等の特別レース"
+    }
   }
   </script>
   <style>
@@ -210,7 +213,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       font-weight: bold;
     }
 
-    /* レース一覧 */
+    /* レース一覧（アコーディオン） */
     .races-grid {
       display: grid;
       gap: 1rem;
@@ -373,7 +376,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       background: rgba(100, 116, 139, 0.5);
     }
 
-    /* ページ下部の余白を確保 */
+    /* ページ下部の余白を確保（スティッキーCTAの高さ分） */
     body {
       padding-bottom: 100px;
     }
@@ -411,6 +414,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
         align-items: center;
       }
 
+      /* Sticky CTA モバイル対応 */
       .sticky-cta {
         padding: 0.75rem;
       }
@@ -450,7 +454,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
 <body>
   <div class="container">
     <div class="header">
-      <h1 class="title">🏆 2026年4月 的中実績アーカイブ</h1>
+      <h1 class="title">🏆 2026年1月 的中実績アーカイブ</h1>
       <p class="subtitle">全レースの的中記録を公開</p>
     </div>
 
@@ -474,12 +478,10 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       </div>
     </div>
 
-    <!-- 日別アーカイブ（南関 + 中央） -->
-    {days.map(dayKey => {
-      const dayData = monthData[dayKey];
-      const dayNum = dayKeyToInt(dayKey);
+    <!-- 日別アーカイブ -->
+    {days.map(day => {
+      const dayData = monthData[day];
       const hitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
-      // betPoints が null（情報なし）の race は投資額計算から除外
       const totalBetPoints = dayData.races.reduce((sum, race) => sum + (Number.isFinite(race.betPoints) ? race.betPoints : 0), 0);
       const totalInvestment = totalBetPoints * 100; // 1点=100円
       const hasInvestment = totalInvestment > 0;
@@ -487,7 +489,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       return (
         <div class="day-section">
           <div class="day-header">
-            <h2 class="day-title">4月{dayNum}日 {dayData.venueDisplay}</h2>
+            <h2 class="day-title">1月{parseInt(day)}日 {dayData.venueDisplay}</h2>
             <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces}的中</div>
           </div>
 
@@ -529,7 +531,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     })}
 
     <div class="back-link">
-      <a href="/archive/">← アーカイブトップ</a> |
+      <a href="/archive/nankan/">← アーカイブトップ</a> |
       <a href="/pricing/">プレミアム予想</a>
     </div>
   </div>

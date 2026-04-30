@@ -18,7 +18,7 @@ try {
     const jra = JSON.parse(readFileSync(jraPath, 'utf-8'));
     if (Array.isArray(jra) && jra.some((e: any) => e.date === date)) {
       foundType = 'jra';
-      redirectUrl = `/archive-jra/${year}/${month}/`;
+      redirectUrl = `/archive/jra/${year}/${month}/`;
     }
   }
 } catch (e) { /* noop */ }
@@ -31,7 +31,7 @@ if (!foundType) {
       const nankan = JSON.parse(readFileSync(nankanPath, 'utf-8'));
       if (nankan?.[year]?.[month]?.[day]) {
         foundType = 'nankan';
-        redirectUrl = `/archive/${year}/${month}/`;
+        redirectUrl = `/archive/nankan/${year}/${month}/`;
       }
     }
   } catch (e) { /* noop */ }
@@ -49,8 +49,8 @@ Astro.response.status = 404;
     <h1>該当データなし</h1>
     <p>{date} の結果データは現在公開されていません。</p>
     <p style="margin-top: 2rem;">
-      <a href="/archive-jra/">中央競馬の結果一覧</a>　/
-      <a href="/archive/">南関競馬の結果一覧</a>
+      <a href="/archive/jra/">中央競馬の結果一覧</a>　/
+      <a href="/archive/nankan/">南関競馬の結果一覧</a>
     </p>
   </main>
 </BaseLayout>

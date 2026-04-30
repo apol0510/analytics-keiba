@@ -26,12 +26,18 @@ export default defineConfig({
         'https://nankan-analytics.keiba.link/',
         'https://nankan-analytics.keiba.link/pricing/',
         'https://nankan-analytics.keiba.link/premium-plus/',
+        // アーカイブハブ・カテゴリトップ（SSRのため明示出力）
+        'https://analytics.keiba.link/archive/',
+        'https://analytics.keiba.link/archive/jra/',
+        'https://analytics.keiba.link/archive/nankan/',
       ],
       filter: (page) => {
         // 管理画面・プロトタイプページを除外
         if (page.includes('/admin/')) return false;
         if (page.includes('-prototype')) return false;
         if (page.includes('-demo')) return false;
+        // 旧URL（リダイレクト元）はサイトマップから除外
+        if (page.includes('/archive-jra')) return false;
         return true;
       },
       changefreq: 'daily',

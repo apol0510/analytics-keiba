@@ -1,18 +1,20 @@
 ---
 export const prerender = true;
-import archiveData10 from '../../../data/archiveResults_2025-10.json';
-import archiveData11 from '../../../data/archiveResults_2025-11.json';
-import archiveData12 from '../../../data/archiveResults_2025-12.json';
-import archiveResults from '../../../data/archiveResults.json';
-import archiveResultsJra from '../../../data/archiveResultsJra.json';
-import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
+import archiveData01 from '../../../../data/archiveResults_2026-01.json';
+import archiveData02 from '../../../../data/archiveResults_2026-02.json';
+import archiveData03 from '../../../../data/archiveResults_2026-03.json';
+import archiveData04 from '../../../../data/archiveResults_2026-04.json';
+import archiveResults from '../../../../data/archiveResults.json';
+import archiveResultsJra from '../../../../data/archiveResultsJra.json';
+import { buildMergedMonthData } from '../../../../lib/archiveMonthlyView.js';
 
-const year = '2025';
+const year = '2026';
 // 月別 snapshot + 南関 + 中央をマージ
 const yearData = {
-  '10': buildMergedMonthData(archiveResults, archiveData10, year, '10', archiveResultsJra),
-  '11': buildMergedMonthData(archiveResults, archiveData11, year, '11', archiveResultsJra),
-  '12': buildMergedMonthData(archiveResults, archiveData12, year, '12', archiveResultsJra),
+  '01': buildMergedMonthData(archiveResults, archiveData01, year, '01', archiveResultsJra),
+  '02': buildMergedMonthData(archiveResults, archiveData02, year, '02', archiveResultsJra),
+  '03': buildMergedMonthData(archiveResults, archiveData03, year, '03', archiveResultsJra),
+  '04': buildMergedMonthData(archiveResults, archiveData04, year, '04', archiveResultsJra),
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 
@@ -65,8 +67,8 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>2025年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="2025年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。">
+  <title>2026年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス</title>
+  <meta name="description" content="2026年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。">
   <style>
     * {
       margin: 0;
@@ -268,7 +270,7 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
 <body>
   <div class="container">
     <div class="header">
-      <h1 class="title">🏆 2025年 的中実績アーカイブ</h1>
+      <h1 class="title">🏆 2026年 的中実績アーカイブ</h1>
       <p class="subtitle">月別の的中記録と統計</p>
     </div>
 
@@ -295,7 +297,7 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
     <!-- 月別一覧 -->
     <div class="months-grid">
       {monthSummaries.map(summary => (
-        <a href={`/archive/2025/${summary.month}/`} class="month-card">
+        <a href={`/archive/nankan/2026/${summary.month}/`} class="month-card">
           <div class="month-header">
             <h2 class="month-title">{summary.month}月</h2>
             {summary.hitRate === 100 && (
@@ -330,7 +332,7 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
     </div>
 
     <div class="back-link">
-      <a href="/archive/">← アーカイブトップ</a>
+      <a href="/archive/nankan/">← アーカイブトップ</a>
       <a href="/pricing/">プレミアム予想</a>
     </div>
   </div>
