@@ -126,14 +126,14 @@ const jraPreviews = (() => {
         const venueName = venue.venue || ri.venue || ri.track || '';
         const title = `${formattedDate} ${venueName} ${ri.raceNumber || ''}${ri.raceName ? ' ' + ri.raceName : ''}`.trim();
 
+        const lockedText = `${teaser}\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`;
         previews.push({
             venueName,
             title,
             confidence,
             summary: `${venueName} ${ri.raceNumber || ''}R AI予想完了！`,
-            features: horseInfo
-                ? `${horseInfo}\n\n信頼度${confidence}%\n\n${teaser}\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`
-                : `信頼度${confidence}%\n\n${teaser}\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`,
+            horseInfo,
+            lockedText,
         });
     }
     return previews;
@@ -215,11 +215,9 @@ function generatePreview(raceInfo, strategies, horses, eventInfo) {
 
     const summary = `${raceInfo.track || ''} ${raceInfo.raceNumber || ''} AI予想完了！`.trim();
     const teaser = '🔓 本命の選出理由・対抗馬の評価ポイント・特徴量分析・買い目戦略を完全公開中';
-    const features = horseInfo
-        ? `${horseInfo}\n\n信頼度${confidence}%\n\n${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`
-        : `信頼度${confidence}%\n\n${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`;
+    const lockedText = `${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`;
 
-    return { summary, features, confidence };
+    return { summary, horseInfo, lockedText, confidence };
 }
 
 // プレビュー生成（本命の信頼度が取得できない場合は null → カード非表示）
@@ -518,9 +516,9 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 <span class="confidence-score">信頼度 {preview.confidence}%</span>
                             </div>
                             <div class="prediction-summary">
-                                {preview.summary}
-                                <br><br>
-                                <div set:html={preview.features.split('\n\n').join('<br><br>')}></div>
+                                <div class="preview-visible">{preview.summary}</div>
+                                {preview.horseInfo && <div class="preview-soft-blur">{preview.horseInfo}</div>}
+                                <div class="preview-hard-blur" set:html={preview.lockedText.split('\n\n').join('<br><br>')}></div>
                             </div>
                             <div class="blur-overlay">
                                 <span class="premium-badge"><a href="/free-prediction/nankan/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
@@ -537,9 +535,9 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 <span class="confidence-score">信頼度 {p.confidence}%</span>
                             </div>
                             <div class="prediction-summary">
-                                {p.summary}
-                                <br><br>
-                                <div set:html={p.features.split('\n\n').join('<br><br>')}></div>
+                                <div class="preview-visible">{p.summary}</div>
+                                {p.horseInfo && <div class="preview-soft-blur">{p.horseInfo}</div>}
+                                <div class="preview-hard-blur" set:html={p.lockedText.split('\n\n').join('<br><br>')}></div>
                             </div>
                             <div class="blur-overlay">
                                 <span class="premium-badge"><a href="/free-prediction/jra/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
@@ -776,6 +774,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             line-height: 1.5;
             min-height: 60px;
             padding: 5px 0;
+            position: relative;
+        }
+        .preview-visible {
+            margin-bottom: 8px;
+        }
+        /* 本命/対抗: 「見えるか見えないか」 */
+        .preview-soft-blur {
+            filter: blur(4px);
+            opacity: 0.6;
+            user-select: none;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        /* teaser + 戦略: ほぼ完全マスク */
+        .preview-hard-blur {
+            filter: blur(9px);
+            opacity: 0.35;
+            user-select: none;
         }
 
         .blur-overlay {
@@ -783,13 +799,14 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             bottom: 0;
             left: 0;
             right: 0;
-            height: 65%;
-            background: linear-gradient(transparent 0%, rgba(15, 23, 42, 0.4) 15%, rgba(15, 23, 42, 0.7) 40%, rgba(15, 23, 42, 0.95) 80%, rgba(15, 23, 42, 1) 100%);
+            height: 55%;
+            background: linear-gradient(transparent 0%, rgba(15, 23, 42, 0.5) 20%, rgba(15, 23, 42, 0.9) 55%, rgba(15, 23, 42, 1) 100%);
             border-radius: 0 0 8px 8px;
             display: flex;
-            align-items: center;
+            align-items: flex-end;
             justify-content: center;
-            backdrop-filter: blur(3px);
+            padding-bottom: 18px;
+            backdrop-filter: blur(2px);
         }
 
         .premium-badge {
