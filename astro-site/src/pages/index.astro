@@ -103,13 +103,11 @@ const jraPreviews = (() => {
     for (const venue of jraLatestPrediction.venues) {
         const preds = Array.isArray(venue?.predictions) ? venue.predictions : [];
         if (preds.length === 0) continue;
-        // 最終レース（raceNumber 最大）をメインレース候補とする
-        const sorted = [...preds].sort((a, b) => {
-            const an = parseInt(String(a.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
-            const bn = parseInt(String(b.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
-            return bn - an;
-        });
-        const pickedRace = sorted[0];
+        // メインレース選定: isMainRace フラグ → 11R → 最大番号 の順でフォールバック
+        const raceNum = (p) => parseInt(String(p?.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
+        let pickedRace = preds.find(p => p?.isMainRace || p?.isMain)
+            || preds.find(p => raceNum(p) === 11)
+            || [...preds].sort((a, b) => raceNum(b) - raceNum(a))[0];
         if (!pickedRace) continue;
         const ri = pickedRace.raceInfo || {};
         const horseCount = ri.horseCount ?? venue?.eventInfo?.horseCount;
