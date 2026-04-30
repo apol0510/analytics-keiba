@@ -510,7 +510,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     {preview && (
                         <!-- 南関 -->
                         <div class="prediction-card">
-                            <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #475569 0%, #334155 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏁 南関競馬</div>
+                            <div class="prediction-card-label prediction-card-label--nankan">🏁 南関競馬</div>
                             <div class="race-info">
                                 <span class="race-title">{raceTitle}</span>
                                 <span class="confidence-score">信頼度 {preview.confidence}%</span>
@@ -529,7 +529,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     {jraPreviews.map((p) => (
                         <!-- JRA: 会場ごと -->
                         <div class="prediction-card">
-                            <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏇 中央競馬（JRA）<span style="margin-left: 6px; opacity: 0.85;">{p.venueName}</span></div>
+                            <div class="prediction-card-label prediction-card-label--jra">🏇 中央競馬（JRA）<span class="prediction-card-label__venue">{p.venueName}</span></div>
                             <div class="race-info">
                                 <span class="race-title">{p.title}</span>
                                 <span class="confidence-score">信頼度 {p.confidence}%</span>
@@ -743,6 +743,41 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 inset 0 1px 0 rgba(255, 255, 255, 0.08);
             backdrop-filter: blur(16px) saturate(160%);
             -webkit-backdrop-filter: blur(16px) saturate(160%);
+        }
+
+        /* 予想カード会場ラベル（ガラスモーフィズム） */
+        .prediction-card-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 14px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(12px) saturate(180%);
+            -webkit-backdrop-filter: blur(12px) saturate(180%);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+        }
+        .prediction-card-label--jra {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(34, 197, 94, 0.3) 100%);
+            color: #ecfdf5;
+            box-shadow:
+                0 4px 16px rgba(16, 185, 129, 0.35),
+                inset 0 1px 0 rgba(255, 255, 255, 0.25);
+        }
+        .prediction-card-label--nankan {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.35) 0%, rgba(249, 115, 22, 0.3) 100%);
+            color: #fff1f2;
+            box-shadow:
+                0 4px 16px rgba(239, 68, 68, 0.35),
+                inset 0 1px 0 rgba(255, 255, 255, 0.25);
+        }
+        .prediction-card-label__venue {
+            opacity: 0.85;
+            font-weight: 700;
         }
 
         .race-info {
