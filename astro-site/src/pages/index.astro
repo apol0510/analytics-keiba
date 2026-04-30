@@ -613,15 +613,34 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
 </BaseLayout>
 
 <style>
-        /* Hero Section - 投資訴求重視 */
+        /* Stats Cards - ガラスモーフィズム（インライン背景の上にレイヤー追加） */
+        .stats-card {
+            backdrop-filter: blur(14px) saturate(160%);
+            -webkit-backdrop-filter: blur(14px) saturate(160%);
+            box-shadow:
+                0 6px 24px rgba(0, 0, 0, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+        }
+        .stats-card:hover {
+            transform: translateY(-3px);
+            box-shadow:
+                0 12px 32px rgba(59, 130, 246, 0.22),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+        }
+
+        /* Hero Section - 投資訴求重視（ガラスモーフィズム） */
         .hero-section {
             text-align: center;
             padding: 60px 40px;
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 50%, rgba(251, 146, 60, 0.12) 100%);
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(251, 146, 60, 0.08) 100%);
             border-radius: var(--card-border-radius);
             margin-bottom: 40px;
-            border: 1px solid rgba(251, 146, 60, 0.2);
-            box-shadow: 0 4px 20px rgba(251, 146, 60, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(20px) saturate(170%);
+            -webkit-backdrop-filter: blur(20px) saturate(170%);
+            box-shadow:
+                0 12px 40px rgba(251, 146, 60, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
         }
 
         .hero-stats-section {
@@ -659,14 +678,18 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             margin-right: auto;
         }
 
-        /* Live Prediction Section - オレンジ系明るいデザイン */
+        /* Live Prediction Section - オレンジ系（ガラスモーフィズム） */
         .live-prediction-section {
-            background: linear-gradient(135deg, rgba(251, 146, 60, 0.05) 0%, rgba(249, 115, 22, 0.03) 50%, rgba(234, 88, 12, 0.05) 100%);
+            background: linear-gradient(135deg, rgba(251, 146, 60, 0.06) 0%, rgba(249, 115, 22, 0.04) 50%, rgba(234, 88, 12, 0.06) 100%);
             padding: 40px;
             border-radius: var(--card-border-radius);
             margin: 40px 0;
-            border: 1px solid rgba(251, 146, 60, 0.3);
-            box-shadow: 0 8px 32px rgba(251, 146, 60, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px) saturate(170%);
+            -webkit-backdrop-filter: blur(20px) saturate(170%);
+            box-shadow:
+                0 12px 40px rgba(251, 146, 60, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
         }
 
         .section-title {
@@ -772,11 +795,16 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
 
         /* AI Technology Section */
         .tech-section {
-            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
             padding: 40px;
             border-radius: var(--card-border-radius);
             margin: 40px 0;
-            border: 1px solid var(--border-color);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px) saturate(170%);
+            -webkit-backdrop-filter: blur(20px) saturate(170%);
+            box-shadow:
+                0 12px 40px rgba(139, 92, 246, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
         }
 
         .tech-grid {
@@ -787,15 +815,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
         }
 
         .tech-card {
-            background: rgba(255, 255, 255, 0.05);
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
             padding: 25px;
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            transition: transform 0.3s;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(14px) saturate(160%);
+            -webkit-backdrop-filter: blur(14px) saturate(160%);
+            box-shadow:
+                0 6px 24px rgba(0, 0, 0, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
         }
 
         .tech-card:hover {
             transform: translateY(-3px);
+            border-color: rgba(139, 92, 246, 0.45);
+            box-shadow:
+                0 12px 32px rgba(139, 92, 246, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.12);
         }
 
         .tech-name {
@@ -818,14 +855,19 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             line-height: 1.5;
         }
 
-        /* 無料予想CTAセクション */
+        /* 無料予想CTAセクション（ガラスモーフィズム） */
         .free-cta-section {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
             padding: 60px 40px;
-            border-radius: 12px;
+            border-radius: 16px;
             text-align: center;
             margin: 40px 0;
-            border: 2px solid rgba(16, 185, 129, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(20px) saturate(170%);
+            -webkit-backdrop-filter: blur(20px) saturate(170%);
+            box-shadow:
+                0 12px 40px rgba(16, 185, 129, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
         }
 
         .cta-features {
