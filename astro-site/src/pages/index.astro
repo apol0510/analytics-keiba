@@ -106,7 +106,8 @@ const jraPreview = (() => {
             return bn - an;
         });
         const candidate = sorted[0];
-        const candidateConfidence = getConfidenceFromMainHorse(extractMainHorse(candidate?.horses));
+        const candidateHorseCount = candidate?.raceInfo?.horseCount ?? venue?.eventInfo?.horseCount;
+        const candidateConfidence = getConfidenceFromMainHorse(extractMainHorse(candidate?.horses), candidateHorseCount);
         if (candidateConfidence == null) continue;
         if (!pickedVenue || candidateConfidence > (pickedConfidence ?? -1)) {
             pickedVenue = venue;
@@ -158,16 +159,22 @@ if (!mainRace) {
 const { raceInfo, strategies, horses } = mainRace;
 
 // 累積スコア(pt)を信頼度(%)に変換
-// - 70〜85%の範囲に線形スケーリング（過度な高信頼度を防ぎつつレースごとに自然変動）
-// - pt=60 → 70%、pt=160 → 85% の線形マッピング（係数 0.15）
-//   ※ 実データの pt 分布が 60-160 のため、ユーザー提示例の係数 0.75 だと pt>80 で全て上端 85% に張り付き
-//     「レースごとに変動する値」要件を満たすよう係数を 0.15 に調整
+// - 70〜85%の範囲に線形スケーリング（pt=60→70%、pt=160→85%、係数 0.15）
+// - 頭数補正: 14頭以上 -3%、8頭以下 +3%（clamp 前）
 // - 上下限 70/85 を厳守（clamp）
 // - 取得できない場合は null（呼び出し側で非表示判定に使う）
-function ptToConfidence(pt) {
+function ptToConfidence(pt, horseCount) {
     const n = parseInt(pt);
     if (!Number.isFinite(n) || n <= 0) return null;
-    const raw = 70 + ((n - 60) * 0.15);
+
+    let raw = 70 + ((n - 60) * 0.15);
+
+    const hc = parseInt(horseCount);
+    if (Number.isFinite(hc)) {
+        if (hc >= 14) raw -= 3;
+        if (hc <= 8)  raw += 3;
+    }
+
     return Math.round(Math.max(70, Math.min(85, raw)));
 }
 
@@ -179,23 +186,24 @@ function extractMainHorse(horses) {
 }
 
 // 本命馬から信頼度を算出（pt 優先、無ければ factors の「累積スコア: Npt」を抽出）
-function getConfidenceFromMainHorse(mainHorse) {
+function getConfidenceFromMainHorse(mainHorse, horseCount) {
     if (!mainHorse) return null;
-    if (mainHorse.pt != null) return ptToConfidence(mainHorse.pt);
+    if (mainHorse.pt != null) return ptToConfidence(mainHorse.pt, horseCount);
     if (Array.isArray(mainHorse.factors)) {
         const factor = mainHorse.factors.find(f => f?.text?.includes?.('累積スコア'));
         const m = factor?.text?.match(/(\d+)pt/);
-        if (m) return ptToConfidence(m[1]);
+        if (m) return ptToConfidence(m[1], horseCount);
     }
     return null;
 }
 
 // プレビューコンテンツを生成（本命の信頼度が取得できない場合は null）
-function generatePreview(raceInfo, strategies, horses) {
+function generatePreview(raceInfo, strategies, horses, eventInfo) {
     if (!raceInfo) return null;
 
     const mainHorse = extractMainHorse(horses);
-    const confidence = getConfidenceFromMainHorse(mainHorse);
+    const horseCount = raceInfo.horseCount ?? eventInfo?.horseCount;
+    const confidence = getConfidenceFromMainHorse(mainHorse, horseCount);
     if (confidence == null) return null;
 
     const safeTitle = strategies?.safe?.title || '少点数的中型';
@@ -222,7 +230,7 @@ function generatePreview(raceInfo, strategies, horses) {
 }
 
 // プレビュー生成（本命の信頼度が取得できない場合は null → カード非表示）
-const preview = generatePreview(raceInfo, strategies, horses);
+const preview = generatePreview(raceInfo, strategies, horses, allRacesData?.eventInfo);
 const calculatedConfidence = preview?.confidence ?? null;
 
 // raceInfoに計算した信頼度を追加
