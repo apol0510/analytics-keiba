@@ -94,19 +94,26 @@ const jraPreview = (() => {
         return null;
     }
     // メインレース（最終レース or raceNumberが最大）を含む venue を優先選択
+    function getMainPt(race) {
+        const hs = race?.horses;
+        let main = null;
+        if (Array.isArray(hs)) main = hs.find(h => h?.role === '本命');
+        else if (hs && typeof hs === 'object') main = hs.main;
+        return main?.pt ?? main?.confidence ?? 0;
+    }
     let pickedVenue = null;
     let pickedRace = null;
     for (const venue of jraLatestPrediction.venues) {
         const preds = Array.isArray(venue?.predictions) ? venue.predictions : [];
         if (preds.length === 0) continue;
-        // raceNumber が "11R" などのフォーマットなので数値化して最大を選ぶ
+        // raceNumber が最大のレースを最終/メインレース候補として選ぶ
         const sorted = [...preds].sort((a, b) => {
             const an = parseInt(String(a.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
             const bn = parseInt(String(b.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
             return bn - an;
         });
         const candidate = sorted[0];
-        if (!pickedVenue || (candidate?.horses?.main?.confidence ?? 0) > (pickedRace?.horses?.main?.confidence ?? 0)) {
+        if (!pickedVenue || getMainPt(candidate) > getMainPt(pickedRace)) {
             pickedVenue = venue;
             pickedRace = candidate;
         }
@@ -114,34 +121,49 @@ const jraPreview = (() => {
     if (!pickedVenue || !pickedRace) return null;
 
     const ri = pickedRace.raceInfo || {};
-    const horses = pickedRace.horses || {};
-    const mainName = horses.main?.name || '';
-    const subName = horses.sub?.name || '';
-    const horseInfo = mainName && subName ? `本命${mainName}・対抗${subName}` : '';
+    const rawHorses = pickedRace.horses;
 
-    // 信頼度: 本命の累積スコア（95%上限）、なければ confidence
-    let confidence = horses.main?.confidence ?? 0;
-    const factor = horses.main?.factors?.find(f => f?.text?.includes?.('累積スコア'));
-    if (factor) {
-        const m = factor.text.match(/(\d+)pt/);
-        if (m) confidence = ptToConfidence(m[1]);
-    } else if (typeof confidence === 'number' && confidence > 95) {
-        confidence = 95;
+    // horses が list（JRA形式）か dict（南関adapt後形式）かで取り出し方が違う
+    let mainHorse = null;
+    let subHorse = null;
+    if (Array.isArray(rawHorses)) {
+        mainHorse = rawHorses.find(h => h?.role === '本命') || null;
+        subHorse = rawHorses.find(h => h?.role === '対抗') || null;
+    } else if (rawHorses && typeof rawHorses === 'object') {
+        mainHorse = rawHorses.main || null;
+        subHorse = rawHorses.sub || null;
     }
 
-    const venueName = pickedVenue.venue || ri.track || '';
+    const mainName = mainHorse?.horseName || mainHorse?.name || '';
+    const subName = subHorse?.horseName || subHorse?.name || '';
+    const horseInfo = mainName && subName ? `本命${mainName}・対抗${subName}` : (mainName ? `本命${mainName}` : '');
+
+    // 信頼度: pt（累積スコア）→ confidence、95%上限
+    let confidence = 0;
+    if (mainHorse?.pt != null) {
+        confidence = ptToConfidence(mainHorse.pt);
+    } else if (typeof mainHorse?.confidence === 'number') {
+        confidence = Math.min(mainHorse.confidence, 95);
+    } else if (Array.isArray(mainHorse?.factors)) {
+        const factor = mainHorse.factors.find(f => f?.text?.includes?.('累積スコア'));
+        const m = factor?.text?.match(/(\d+)pt/);
+        if (m) confidence = ptToConfidence(m[1]);
+    }
+
+    const venueName = pickedVenue.venue || ri.venue || ri.track || '';
     const dateStr = jraLatestPrediction.date || '';
     const [yyyy, mm, dd] = dateStr.split('-');
     const formatted = (yyyy && mm && dd) ? `${yyyy}年${parseInt(mm)}月${parseInt(dd)}日` : dateStr;
     const title = `${formatted} ${venueName} ${ri.raceNumber || ''}${ri.raceName ? ' ' + ri.raceName : ''}`.trim();
 
+    const teaser = '🔓 本命の選出理由・対抗馬の評価ポイント・特徴量分析・買い目戦略を完全公開中';
     return {
         title,
         confidence,
-        summary: `${venueName} ${ri.raceNumber || ''} AI予想完了！`,
+        summary: `${venueName} ${ri.raceNumber || ''}R AI予想完了！`,
         features: horseInfo
-            ? `${horseInfo}\n\n信頼度${confidence}%\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`
-            : `信頼度${confidence}%\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`,
+            ? `${horseInfo}\n\n信頼度${confidence}%\n\n${teaser}\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`
+            : `信頼度${confidence}%\n\n${teaser}\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`,
     };
 })();
 
@@ -211,9 +233,10 @@ function generatePreview(raceInfo, strategies, horses) {
     const horseInfo = mainHorseName && subHorseName ? `本命${mainHorseName}・対抗${subHorseName}` : (mainHorseName ? `本命${mainHorseName}` : '');
 
     const summary = `${raceInfo.track || ''} ${raceInfo.raceNumber || ''} AI予想完了！`.trim();
+    const teaser = '🔓 本命の選出理由・対抗馬の評価ポイント・特徴量分析・買い目戦略を完全公開中';
     const features = horseInfo
-        ? `${horseInfo}\n\n信頼度${confidence}%\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`
-        : `信頼度${confidence}%\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`;
+        ? `${horseInfo}\n\n信頼度${confidence}%\n\n${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`
+        : `信頼度${confidence}%\n\n${teaser}\n\n🎯 ${safeTitle}・⚖️ ${balanceTitle}・🚀 ${aggressiveTitle}で的中と配当のバランスを最適化。`;
 
     return { summary, features };
 }
