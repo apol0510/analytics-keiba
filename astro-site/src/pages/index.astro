@@ -749,13 +749,18 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
             margin-bottom: 15px;
+            flex-wrap: nowrap;
         }
 
         .race-title {
             font-weight: 700;
             color: #fbbf24;
             font-size: 0.9rem;
+            line-height: 1.35;
+            min-width: 0;
+            flex: 1 1 auto;
         }
 
         .confidence-score {
@@ -766,6 +771,8 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             font-size: 0.8rem;
             font-weight: 600;
             box-shadow: 0 2px 8px rgba(251, 146, 60, 0.3);
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .prediction-summary {
