@@ -2,8 +2,9 @@
 // 静的ビルドのためprerender削除
 import BaseLayout from '../layouts/BaseLayout.astro';
 import archiveResults from '../data/archiveResults.json';
+import archiveResultsJra from '../data/archiveResultsJra.json';
 import { weeklyResults, dailyTabs, dailyResultsData } from './standard-predictions.astro';
-import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+import { pickLatestAndAdapt, pickLatestJraPrediction } from '../lib/adaptLatestPrediction.js';
 
 // src/data/predictions/*.json（自動反映フロー）から最新日付を自動選択
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -11,6 +12,10 @@ const allRacesData = pickLatestAndAdapt(predictionModules);
 if (!allRacesData) {
     throw new Error('予想データが見つかりません。src/data/predictions/ に有効な JSON がありません。');
 }
+
+// JRA 予想データ（src/data/predictions/jra/YYYY/MM/*.json）を取得
+const jraPredictionModules = import.meta.glob('/src/data/predictions/jra/**/*.json', { eager: true });
+const jraLatestPrediction = pickLatestJraPrediction(jraPredictionModules);
 
 // archiveResults.jsonから最新日のデータを取得
 // 2026-04-17 以降: 配列形式 (importResults.js v2+ の unshift 順)
@@ -48,6 +53,96 @@ const yesterdayResults = latestResult ? (() => {
         })),
     };
 })() : null;
+
+// JRA 昨日の結果データ
+function getLatestJraDayData() {
+    if (!Array.isArray(archiveResultsJra) || archiveResultsJra.length === 0) return null;
+    const latest = archiveResultsJra[0];
+    if (!latest || !latest.date) return null;
+    const [year, month, day] = latest.date.split('-');
+    return { year, month, day, ...latest };
+}
+
+const latestJraResult = getLatestJraDayData();
+
+const yesterdayJraResults = latestJraResult ? (() => {
+    const races = Array.isArray(latestJraResult.races) ? latestJraResult.races : [];
+    const totalBetPoints = races.reduce((sum, r) => sum + (r.bettingPoints || r.betPoints || 0), 0);
+    const jsonRate = latestJraResult.returnRate ?? latestJraResult.recoveryRate;
+    const fallbackRate = totalBetPoints > 0
+        ? Math.round((latestJraResult.totalPayout / (totalBetPoints * 100)) * 100)
+        : 0;
+    // venues は文字列配列（例: ['京都','東京','福島']）か単一会場名
+    const trackLabel = Array.isArray(latestJraResult.venues) && latestJraResult.venues.length > 0
+        ? latestJraResult.venues.join('・')
+        : latestJraResult.venue;
+    return {
+        date: `${parseInt(latestJraResult.month)}月${parseInt(latestJraResult.day)}日`,
+        track: trackLabel,
+        hitCount: latestJraResult.hitRaces,
+        totalCount: latestJraResult.totalRaces,
+        hitRate: latestJraResult.totalRaces > 0 ? Math.round((latestJraResult.hitRaces / latestJraResult.totalRaces) * 100) : 0,
+        totalPayout: latestJraResult.totalPayout,
+        totalBetPoints,
+        recoveryRate: jsonRate ?? fallbackRate,
+    };
+})() : null;
+
+// JRA 本日のプレビュー
+const jraPreview = (() => {
+    if (!jraLatestPrediction || !Array.isArray(jraLatestPrediction.venues) || jraLatestPrediction.venues.length === 0) {
+        return null;
+    }
+    // メインレース（最終レース or raceNumberが最大）を含む venue を優先選択
+    let pickedVenue = null;
+    let pickedRace = null;
+    for (const venue of jraLatestPrediction.venues) {
+        const preds = Array.isArray(venue?.predictions) ? venue.predictions : [];
+        if (preds.length === 0) continue;
+        // raceNumber が "11R" などのフォーマットなので数値化して最大を選ぶ
+        const sorted = [...preds].sort((a, b) => {
+            const an = parseInt(String(a.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
+            const bn = parseInt(String(b.raceInfo?.raceNumber || '0').replace(/\D/g, '')) || 0;
+            return bn - an;
+        });
+        const candidate = sorted[0];
+        if (!pickedVenue || (candidate?.horses?.main?.confidence ?? 0) > (pickedRace?.horses?.main?.confidence ?? 0)) {
+            pickedVenue = venue;
+            pickedRace = candidate;
+        }
+    }
+    if (!pickedVenue || !pickedRace) return null;
+
+    const ri = pickedRace.raceInfo || {};
+    const horses = pickedRace.horses || {};
+    const mainName = horses.main?.name || '';
+    const subName = horses.sub?.name || '';
+    const horseInfo = mainName && subName ? `本命${mainName}・対抗${subName}` : '';
+
+    // 信頼度: 本命の累積スコア、なければ confidence
+    let confidence = horses.main?.confidence ?? 0;
+    const factor = horses.main?.factors?.find(f => f?.text?.includes?.('累積スコア'));
+    if (factor) {
+        const m = factor.text.match(/(\d+)pt/);
+        if (m) confidence = parseInt(m[1]);
+    }
+
+    const venueName = pickedVenue.venue || ri.track || '';
+    const dateStr = jraLatestPrediction.date || '';
+    const [yyyy, mm, dd] = dateStr.split('-');
+    const formatted = (yyyy && mm && dd) ? `${yyyy}年${parseInt(mm)}月${parseInt(dd)}日` : dateStr;
+    const title = `${formatted} ${venueName} ${ri.raceNumber || ''}${ri.raceName ? ' ' + ri.raceName : ''}`.trim();
+
+    return {
+        title,
+        confidence,
+        summary: `${venueName} ${ri.raceNumber || ''} AI予想完了！`,
+        features: horseInfo
+            ? `${horseInfo}\n\n信頼度${confidence}%\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`
+            : `信頼度${confidence}%\n\n🎯 少点数的中型・⚖️ バランス型・🚀 高配当追求型で的中と配当のバランスを最適化。`,
+    };
+})();
+
 // メインレース（11R）のデータを取得 - 防御的プログラミング実装
 const mainRace = (allRacesData && Array.isArray(allRacesData.races))
     ? allRacesData.races.find(race => race.isMainRace === true)
@@ -253,7 +348,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 20px; padding: 40px; box-shadow: 0 8px 32px rgba(16, 185, 129, 0.15);">
                         <div style="text-align: center; margin-bottom: 40px;">
                             <h2 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 15px;">
-                                🏆 昨日の的中結果
+                                🏆 昨日の的中結果（南関競馬）
                             </h2>
                             <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
                                 <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
@@ -315,10 +410,83 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         <!-- アーカイブリンク -->
                         <div style="text-align: center; margin-top: 30px;">
                             <a href="/archive/" style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: transform 0.3s;">
-                                過去の的中実績を見る →
+                                過去の南関的中実績を見る →
                             </a>
                         </div>
                     </div>
+
+                    {yesterdayJraResults && (
+                        <!-- JRA: 昨日の的中結果 -->
+                        <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 20px; padding: 40px; box-shadow: 0 8px 32px rgba(59, 130, 246, 0.15); margin-top: 40px;">
+                            <div style="text-align: center; margin-bottom: 40px;">
+                                <h2 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 15px;">
+                                    🏆 昨日の的中結果（中央競馬）
+                                </h2>
+                                <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                                    <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
+                                        {yesterdayJraResults.date} {yesterdayJraResults.track}
+                                    </p>
+                                    <div style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 0.9rem;">
+                                        🏆 {yesterdayJraResults.hitCount}/{yesterdayJraResults.totalCount}的中
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 的中サマリー -->
+                            <div style="display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; margin-bottom: 30px;">
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
+                                    <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.hitRate}%</span>
+                                </div>
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                                    <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.recoveryRate}%</span>
+                                </div>
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
+                                    <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.totalBetPoints}点</span>
+                                </div>
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
+                                    <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayJraResults.totalPayout.toLocaleString()}</span>
+                                </div>
+                            </div>
+
+                            <!-- 的中レース一覧 -->
+                            <div style="display: grid; gap: 12px;">
+                                {latestJraResult?.races?.filter(race => race.isHit ?? race.hit).map(race => (
+                                    <div class="yesterday-race-card">
+                                        <div class="yesterday-race-info">
+                                            <div style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; min-width: 3rem;">
+                                                {race.venue ? `${race.venue}${race.raceNumber}R` : `${race.raceNumber}R`}
+                                            </div>
+                                            <div style="color: #94a3b8; font-size: 0.85rem; font-weight: 400; opacity: 0.8;">
+                                                {race.raceName}
+                                            </div>
+                                        </div>
+                                        <div class="yesterday-race-result">
+                                            <div class="hit-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.9rem; border: 1px solid rgba(16, 185, 129, 0.3);">
+                                                ✅ 的中
+                                            </div>
+                                            <div class="bet-info" style="color: #8b5cf6; font-size: 0.9rem; font-weight: 600;">
+                                                {race.betType}{race.bettingPoints ?? race.betPoints}点
+                                            </div>
+                                            <div class="payout" style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; text-align: right;">
+                                                ¥{(race.umatan?.payout ?? race.payout ?? 0).toLocaleString()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <!-- アーカイブリンク -->
+                            <div style="text-align: center; margin-top: 30px;">
+                                <a href="/archive-jra/" style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: transform 0.3s;">
+                                    過去の中央的中実績を見る →
+                                </a>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </section>
 
@@ -335,7 +503,9 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     AIがリアルタイムで分析中。実際の予想プロセスと判断根拠を一部公開。詳細な買い目は有料版で提供中。
                 </p>
                 <div class="prediction-cards">
+                    <!-- 南関 -->
                     <div class="prediction-card">
+                        <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #475569 0%, #334155 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏁 南関競馬</div>
                         <div class="race-info">
                             <span class="race-title">{raceTitle}</span>
                             <span class="confidence-score">信頼度 {Math.floor(parseFloat(enhancedRaceInfo?.confidence || '0'))}%</span>
@@ -349,6 +519,25 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                             <span class="premium-badge"><a href="/free-prediction/nankan/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
                         </div>
                     </div>
+
+                    {jraPreview && (
+                        <!-- JRA -->
+                        <div class="prediction-card">
+                            <div class="prediction-card-label" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: white; padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px;">🏇 中央競馬（JRA）</div>
+                            <div class="race-info">
+                                <span class="race-title">{jraPreview.title}</span>
+                                <span class="confidence-score">信頼度 {Math.floor(jraPreview.confidence)}%</span>
+                            </div>
+                            <div class="prediction-summary">
+                                {jraPreview.summary}
+                                <br><br>
+                                <div set:html={jraPreview.features.split('\n\n').join('<br><br>')}></div>
+                            </div>
+                            <div class="blur-overlay">
+                                <span class="premium-badge"><a href="/free-prediction/jra/" style="color: inherit; text-decoration: underline;">無料予想はこちら</a></span>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </section>
 
