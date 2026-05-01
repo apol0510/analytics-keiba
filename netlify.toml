@@ -42,13 +42,6 @@
 #   - JRA 旧URLは sub-route ([date]/archive) もあるので splat を後ろに追加
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# --- 無料予想 (南関) ---
-[[redirects]]
-  from = "/free-prediction"
-  to = "/free-prediction/nankan/"
-  status = 301
-  force = true
-
 # --- 無料予想 (中央) : sub-route も一緒に移行 ---
 # splat で /free-prediction-jra/archive や /free-prediction-jra/2026-04-12 も拾う
 [[redirects]]
