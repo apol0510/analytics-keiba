@@ -60,36 +60,84 @@ const monthSummaries = months.map(month => {
 });
 
 const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+const pageTitle = `2026年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス`;
+const pageDescription = `2026年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。`;
 ---
 
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>2026年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="2026年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。">
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <div class="archive-page">
+<div class="header">
+      <h1 class="title">🏆 2026年 的中実績アーカイブ</h1>
+      <p class="subtitle">月別の的中記録と統計</p>
+    </div>
 
-    body {
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-      color: #e2e8f0;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      padding: 2rem 1rem;
-      min-height: 100vh;
-    }
+    <!-- 年間統計 -->
+    <div class="year-stats">
+      <div class="stat-card">
+        <div class="stat-value">{totalDays}日</div>
+        <div class="stat-label">年間開催日数</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{yearHitRate}%</div>
+        <div class="stat-label">年間的中率</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">¥{totalPayoutYear.toLocaleString()}</div>
+        <div class="stat-label">年間合計配当</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{totalHitRaces}/{totalRaces}</div>
+        <div class="stat-label">年間的中レース数</div>
+      </div>
+    </div>
 
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
+    <!-- 月別一覧 -->
+    <div class="months-grid">
+      {monthSummaries.map(summary => (
+        <a href={`/archive/nankan/2026/${summary.month}/`} class="month-card">
+          <div class="month-header">
+            <h2 class="month-title">{summary.month}月</h2>
+            {summary.hitRate === 100 && (
+              <div class="perfect-count">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
+            )}
+          </div>
 
-    .header {
+          <div class="month-stats-grid">
+            <div class="month-stat">
+              <div class="month-stat-value">{summary.hitRate}%</div>
+              <div class="month-stat-label">的中率</div>
+            </div>
+            <div class="month-stat">
+              <div class="month-stat-value">{summary.daysCount}日</div>
+              <div class="month-stat-label">開催日数</div>
+            </div>
+            <div class="month-stat">
+              <div class="month-stat-value">{summary.hitRaces}/{summary.totalRaces}</div>
+              <div class="month-stat-label">的中数</div>
+            </div>
+            <div class="month-stat">
+              <div class="month-stat-value">¥{(summary.payout / 1000).toFixed(0)}K</div>
+              <div class="month-stat-label">合計配当</div>
+            </div>
+          </div>
+
+          <div class="view-details-button">
+            📊 詳細を見る →
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <div class="back-link">
+      <a href="/archive/nankan/">← アーカイブトップ</a>
+      <a href="/pricing/">プレミアム予想</a>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+.header {
       text-align: center;
       margin-bottom: 3rem;
       padding: 2rem;
@@ -265,76 +313,4 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
         grid-template-columns: repeat(2, 1fr);
       }
     }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1 class="title">🏆 2026年 的中実績アーカイブ</h1>
-      <p class="subtitle">月別の的中記録と統計</p>
-    </div>
-
-    <!-- 年間統計 -->
-    <div class="year-stats">
-      <div class="stat-card">
-        <div class="stat-value">{totalDays}日</div>
-        <div class="stat-label">年間開催日数</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{yearHitRate}%</div>
-        <div class="stat-label">年間的中率</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">¥{totalPayoutYear.toLocaleString()}</div>
-        <div class="stat-label">年間合計配当</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{totalHitRaces}/{totalRaces}</div>
-        <div class="stat-label">年間的中レース数</div>
-      </div>
-    </div>
-
-    <!-- 月別一覧 -->
-    <div class="months-grid">
-      {monthSummaries.map(summary => (
-        <a href={`/archive/nankan/2026/${summary.month}/`} class="month-card">
-          <div class="month-header">
-            <h2 class="month-title">{summary.month}月</h2>
-            {summary.hitRate === 100 && (
-              <div class="perfect-count">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
-            )}
-          </div>
-
-          <div class="month-stats-grid">
-            <div class="month-stat">
-              <div class="month-stat-value">{summary.hitRate}%</div>
-              <div class="month-stat-label">的中率</div>
-            </div>
-            <div class="month-stat">
-              <div class="month-stat-value">{summary.daysCount}日</div>
-              <div class="month-stat-label">開催日数</div>
-            </div>
-            <div class="month-stat">
-              <div class="month-stat-value">{summary.hitRaces}/{summary.totalRaces}</div>
-              <div class="month-stat-label">的中数</div>
-            </div>
-            <div class="month-stat">
-              <div class="month-stat-value">¥{(summary.payout / 1000).toFixed(0)}K</div>
-              <div class="month-stat-label">合計配当</div>
-            </div>
-          </div>
-
-          <div class="view-details-button">
-            📊 詳細を見る →
-          </div>
-        </a>
-      ))}
-    </div>
-
-    <div class="back-link">
-      <a href="/archive/nankan/">← アーカイブトップ</a>
-      <a href="/pricing/">プレミアム予想</a>
-    </div>
-  </div>
-</body>
-</html>
+</style>

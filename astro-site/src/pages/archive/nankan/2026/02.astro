@@ -31,87 +31,117 @@ days.forEach(day => {
 });
 
 const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+const pageTitle = `2026年2月 南関競馬的中実績｜大寒特別・活火激発賞`;
+const pageDescription = `2026年2月の南関競馬全的中実績を公開。大寒特別・活火激発賞等の特別レース的中記録と配当金額を完全掲載。的中率${hitRate}%・総配当¥${totalPayoutMonth.toLocaleString()}の実績データ。`;
 ---
 
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <div class="archive-page">
+<div class="header">
+      <h1 class="title">🏆 2026年2月 的中実績アーカイブ</h1>
+      <p class="subtitle">全レースの的中記録を公開</p>
+    </div>
 
-  <!-- SEO最適化メタタグ -->
-  <title>2026年2月 南関競馬的中実績｜大寒特別・活火激発賞｜KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="2026年2月の南関競馬全的中実績を公開。大寒特別・活火激発賞等の特別レース的中記録と配当金額を完全掲載。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ。" />
-  <meta name="keywords" content="南関競馬,的中実績,2026年2月,大寒特別,活火激発賞,的中率,配当,競馬予想" />
-  <link rel="canonical" href="https://analytics.keiba.link/archive/nankan/2026/02" />
+    <!-- 月間統計 -->
+    <div class="month-stats">
+      <div class="stat-card">
+        <div class="stat-value">{totalDays}日</div>
+        <div class="stat-label">開催日数</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{hitRate}%</div>
+        <div class="stat-label">月間的中率</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">¥{totalPayoutMonth.toLocaleString()}</div>
+        <div class="stat-label">月間合計配当</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{totalHitRaces}/{totalRaces}</div>
+        <div class="stat-label">的中レース数</div>
+      </div>
+    </div>
 
-  <!-- OGPタグ -->
-  <meta property="og:title" content="2026年2月 南関競馬的中実績｜大寒特別・活火激発賞" />
-  <meta property="og:description" content="大寒特別・活火激発賞等の特別レース的中記録。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://analytics.keiba.link/archive/nankan/2026/02" />
-  <meta property="og:site_name" content="KEIBA Analytics" />
-  <meta property="og:locale" content="ja_JP" />
+    <!-- 日別アーカイブ -->
+    {days.map(day => {
+      const dayData = monthData[day];
+      const hitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
+      const totalBetPoints = dayData.races.reduce((sum, race) => sum + (Number.isFinite(race.betPoints) ? race.betPoints : 0), 0);
+      const totalInvestment = totalBetPoints * 100; // 1点=100円
+      const hasInvestment = totalInvestment > 0;
+      const recoveryRate = hasInvestment ? Math.round((dayData.totalPayout / totalInvestment) * 100) : null;
+      return (
+        <div class="day-section">
+          <div class="day-header">
+            <h2 class="day-title">2月{parseInt(day)}日 {dayData.venueDisplay}</h2>
+            <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces}的中</div>
+          </div>
 
-  <!-- Twitter Card -->
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="2026年2月 南関競馬的中実績｜大寒特別・活火激発賞" />
-  <meta name="twitter:description" content="的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
+          <div class="day-summary">
+            <div class="summary-item">
+              📊 的中率: <span class="summary-value">{hitRate}%</span>
+            </div>
+            {hasInvestment && (
+              <div class="summary-item">
+                📈 回収率: <span class="summary-value">{recoveryRate}%</span>
+              </div>
+            )}
+            {totalBetPoints > 0 && (
+              <div class="summary-item">
+                🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
+              </div>
+            )}
+            <div class="summary-item">
+              💰 合計配当: <span class="summary-value">¥{dayData.totalPayout.toLocaleString()}</span>
+            </div>
+          </div>
 
-  <!-- 構造化データ（JSON-LD） -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "ItemList",
-    "name": "2026年2月 南関競馬的中実績",
-    "description": "南関競馬の的中実績アーカイブ。特別レースを含む全レースの的中記録と配当金額。",
-    "numberOfItems": {totalHitRaces},
-    "itemListElement": [
-      {
-        "@type": "SportsEvent",
-        "name": "南関競馬的中実績",
-        "startDate": "2026-02",
-        "location": {
-          "@type": "Place",
-          "name": "南関競馬（大井・川崎・船橋・浦和）"
-        },
-        "sport": "競馬",
-        "aggregateRating": {
-          "@type": "AggregateRating",
-          "ratingValue": "{hitRate}",
-          "bestRating": "100",
-          "worstRating": "0",
-          "ratingCount": "{totalRaces}"
-        }
-      }
-    ],
-    "about": {
-      "@type": "Thing",
-      "name": "大寒特別・活火激発賞等の特別レース"
-    }
-  }
-  </script>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+          <div class="races-grid">
+            {dayData.races.filter(race => race.hit).map(race => (
+              <div class="race-card">
+                <div class="race-info">
+                  <div class="race-number">{race.raceNumber}</div>
+                  <div class="race-name">{race.raceName}</div>
+                </div>
+                <div class="race-result">
+                  <div class="hit-badge">✅ 的中</div>
+                  <div class="payout">¥{race.payout.toLocaleString()}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    })}
 
-    body {
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-      color: #e2e8f0;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      padding: 2rem 1rem;
-      min-height: 100vh;
-    }
+    <div class="back-link">
+      <a href="/archive/nankan/">← アーカイブトップ</a> |
+      <a href="/pricing/">プレミアム予想</a>
+    </div>
+  </div>
 
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
+  <!-- Sticky CTA（画面下部固定） -->
+  <div class="sticky-cta">
+    <div class="sticky-cta-content">
+      <div class="sticky-cta-text">
+        <div class="sticky-cta-title">🎯 高精度な予想をお求めの方へ</div>
+        <div class="sticky-cta-description">AI分析による全レースの詳細な買い目を提供</div>
+      </div>
+      <div class="sticky-cta-buttons">
+        <a href="/pricing/" class="sticky-cta-button sticky-cta-button-primary">
+          💎 有料プランを見る
+        </a>
+        <a href="/free-prediction/nankan/" class="sticky-cta-button sticky-cta-button-secondary">
+          🆓 無料予想を試す
+        </a>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
 
-    .header {
+<style>
+.header {
       text-align: center;
       margin-bottom: 3rem;
       padding: 2rem;
@@ -449,109 +479,4 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
         padding-bottom: 180px;
       }
     }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1 class="title">🏆 2026年2月 的中実績アーカイブ</h1>
-      <p class="subtitle">全レースの的中記録を公開</p>
-    </div>
-
-    <!-- 月間統計 -->
-    <div class="month-stats">
-      <div class="stat-card">
-        <div class="stat-value">{totalDays}日</div>
-        <div class="stat-label">開催日数</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{hitRate}%</div>
-        <div class="stat-label">月間的中率</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">¥{totalPayoutMonth.toLocaleString()}</div>
-        <div class="stat-label">月間合計配当</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{totalHitRaces}/{totalRaces}</div>
-        <div class="stat-label">的中レース数</div>
-      </div>
-    </div>
-
-    <!-- 日別アーカイブ -->
-    {days.map(day => {
-      const dayData = monthData[day];
-      const hitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
-      const totalBetPoints = dayData.races.reduce((sum, race) => sum + (Number.isFinite(race.betPoints) ? race.betPoints : 0), 0);
-      const totalInvestment = totalBetPoints * 100; // 1点=100円
-      const hasInvestment = totalInvestment > 0;
-      const recoveryRate = hasInvestment ? Math.round((dayData.totalPayout / totalInvestment) * 100) : null;
-      return (
-        <div class="day-section">
-          <div class="day-header">
-            <h2 class="day-title">2月{parseInt(day)}日 {dayData.venueDisplay}</h2>
-            <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces}的中</div>
-          </div>
-
-          <div class="day-summary">
-            <div class="summary-item">
-              📊 的中率: <span class="summary-value">{hitRate}%</span>
-            </div>
-            {hasInvestment && (
-              <div class="summary-item">
-                📈 回収率: <span class="summary-value">{recoveryRate}%</span>
-              </div>
-            )}
-            {totalBetPoints > 0 && (
-              <div class="summary-item">
-                🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
-              </div>
-            )}
-            <div class="summary-item">
-              💰 合計配当: <span class="summary-value">¥{dayData.totalPayout.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <div class="races-grid">
-            {dayData.races.filter(race => race.hit).map(race => (
-              <div class="race-card">
-                <div class="race-info">
-                  <div class="race-number">{race.raceNumber}</div>
-                  <div class="race-name">{race.raceName}</div>
-                </div>
-                <div class="race-result">
-                  <div class="hit-badge">✅ 的中</div>
-                  <div class="payout">¥{race.payout.toLocaleString()}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    })}
-
-    <div class="back-link">
-      <a href="/archive/nankan/">← アーカイブトップ</a> |
-      <a href="/pricing/">プレミアム予想</a>
-    </div>
-  </div>
-
-  <!-- Sticky CTA（画面下部固定） -->
-  <div class="sticky-cta">
-    <div class="sticky-cta-content">
-      <div class="sticky-cta-text">
-        <div class="sticky-cta-title">🎯 高精度な予想をお求めの方へ</div>
-        <div class="sticky-cta-description">AI分析による全レースの詳細な買い目を提供</div>
-      </div>
-      <div class="sticky-cta-buttons">
-        <a href="/pricing/" class="sticky-cta-button sticky-cta-button-primary">
-          💎 有料プランを見る
-        </a>
-        <a href="/free-prediction/nankan/" class="sticky-cta-button sticky-cta-button-secondary">
-          🆓 無料予想を試す
-        </a>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
+</style>

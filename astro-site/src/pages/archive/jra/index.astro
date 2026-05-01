@@ -1,4 +1,5 @@
 ---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -23,7 +24,6 @@ try {
     const fileContent = readFileSync(archivePath, 'utf-8');
     const allData = JSON.parse(fileContent);
 
-    // 年月でグループ化
     const monthsMap = new Map<string, any[]>();
     allData.forEach((entry: any) => {
       const [year, month] = entry.date.split('-');
@@ -34,7 +34,6 @@ try {
       monthsMap.get(key)!.push(entry);
     });
 
-    // 統計を計算
     monthsMap.forEach((entries, key) => {
       const [year, month] = key.split('-');
       let totalRaces = 0;
@@ -65,7 +64,6 @@ try {
       });
     });
 
-    // 新しい順にソート
     allMonths.sort((a, b) => {
       const keyA = `${a.year}-${a.month}`;
       const keyB = `${b.year}-${b.month}`;
@@ -75,307 +73,14 @@ try {
 } catch (error) {
   console.error('Error loading archive:', error);
 }
+
+const pageTitle = '中央競馬（JRA）的中実績アーカイブ';
+const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ。月別の的中記録と配当金額を完全公開。';
 ---
 
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- SEO最適化メタタグ -->
-  <title>中央競馬（JRA）的中実績アーカイブ｜重賞レース含む全レース公開｜KEIBA Analytics｜競馬アナリティクス</title>
-  <meta name="description" content="中央競馬（JRA）の全的中実績アーカイブ。月別の的中記録と配当金額を完全公開。AI予想の精度を実績データで証明。" />
-  <meta name="keywords" content="中央競馬,JRA,的中実績,アーカイブ,重賞レース,的中率,配当,競馬予想,AI予想" />
-  <link rel="canonical" href="https://analytics.keiba.link/archive/jra/" />
-
-  <!-- OGPタグ -->
-  <meta property="og:title" content="中央競馬（JRA）的中実績アーカイブ｜重賞レース含む全レース公開" />
-  <meta property="og:description" content="中央競馬（JRA）の全的中実績を月別に公開。AI予想の精度を実績データで証明。" />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://analytics.keiba.link/archive/jra/" />
-  <meta property="og:site_name" content="KEIBA Analytics" />
-  <meta property="og:locale" content="ja_JP" />
-
-  <!-- Twitter Card -->
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="中央競馬（JRA）的中実績アーカイブ" />
-  <meta name="twitter:description" content="中央競馬（JRA）の全的中実績を月別に公開。" />
-
-  <!-- 構造化データ（JSON-LD） -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "CollectionPage",
-    "name": "中央競馬（JRA）的中実績アーカイブ",
-    "description": "中央競馬（JRA）の全的中実績アーカイブ。月別の的中記録と配当金額。",
-    "url": "https://analytics.keiba.link/archive/jra/",
-    "publisher": {
-      "@type": "Organization",
-      "name": "KEIBA Analytics",
-      "url": "https://analytics.keiba.link"
-    }
-  }
-  </script>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-      color: #e2e8f0;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      padding: 2rem 1rem;
-      min-height: 100vh;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
-
-    .header {
-      text-align: center;
-      margin-bottom: 3rem;
-      padding: 2rem;
-      background: rgba(30, 41, 59, 0.5);
-      border-radius: 16px;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-
-    .title {
-      font-size: 2.5rem;
-      font-weight: bold;
-      color: #f59e0b;
-      margin-bottom: 1rem;
-    }
-
-    .subtitle {
-      font-size: 1.2rem;
-      color: #cbd5e1;
-      margin-bottom: 0.5rem;
-    }
-
-    .description {
-      font-size: 1rem;
-      color: #94a3b8;
-      max-width: 600px;
-      margin: 0 auto;
-    }
-
-    /* 月別一覧 */
-    .months-grid {
-      display: grid;
-      gap: 2rem;
-    }
-
-    .month-card {
-      background: rgba(30, 41, 59, 0.8);
-      border: 1px solid rgba(100, 116, 139, 0.3);
-      border-radius: 16px;
-      padding: 2.5rem;
-      transition: all 0.3s;
-      cursor: pointer;
-      text-decoration: none;
-      color: inherit;
-      display: block;
-    }
-
-    .month-card:hover {
-      transform: translateY(-4px);
-      border-color: rgba(245, 158, 11, 0.5);
-      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.3);
-    }
-
-    .month-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 2rem;
-      padding-bottom: 1.5rem;
-      border-bottom: 2px solid rgba(100, 116, 139, 0.3);
-    }
-
-    .month-title {
-      font-size: 2.5rem;
-      font-weight: bold;
-      color: #fbbf24;
-    }
-
-    .perfect-highlight {
-      background: linear-gradient(135deg, #10b981, #059669);
-      color: #fff;
-      padding: 0.8rem 1.5rem;
-      border-radius: 12px;
-      font-weight: bold;
-      font-size: 1.1rem;
-    }
-
-    .month-badge {
-      background: rgba(245, 158, 11, 0.15);
-      color: #fbbf24;
-      padding: 0.6rem 1.2rem;
-      border-radius: 12px;
-      font-weight: bold;
-      font-size: 1rem;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-
-    .month-stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1.5rem;
-    }
-
-    .month-stat {
-      text-align: center;
-      background: rgba(15, 23, 42, 0.5);
-      padding: 1.5rem;
-      border-radius: 8px;
-      border: 1px solid rgba(59, 130, 246, 0.2);
-    }
-
-    .month-stat-value {
-      font-size: 2rem;
-      font-weight: bold;
-      color: #60a5fa;
-      margin-bottom: 0.5rem;
-    }
-
-    .month-stat-value.profit {
-      color: #10b981;
-    }
-
-    .month-stat-value.loss {
-      color: #ef4444;
-    }
-
-    .month-stat-label {
-      font-size: 0.9rem;
-      color: #94a3b8;
-    }
-
-    .back-link {
-      text-align: center;
-      margin-top: 3rem;
-      padding-top: 2rem;
-      border-top: 1px solid rgba(100, 116, 139, 0.3);
-    }
-
-    .back-link a {
-      color: #60a5fa;
-      text-decoration: none;
-      font-size: 1rem;
-      transition: color 0.3s;
-      margin: 0 0.5rem;
-    }
-
-    .back-link a:hover {
-      color: #3b82f6;
-    }
-
-    .cta-box {
-      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      border-radius: 12px;
-      padding: 2rem;
-      text-align: center;
-      margin-bottom: 3rem;
-    }
-
-    .cta-text {
-      font-size: 1.1rem;
-      color: #e2e8f0;
-      margin-bottom: 1rem;
-    }
-
-    .cta-button {
-      background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: #fff;
-      padding: 1rem 2rem;
-      border-radius: 8px;
-      text-decoration: none;
-      display: inline-block;
-      font-weight: bold;
-      transition: all 0.3s;
-    }
-
-    .cta-button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
-    }
-
-    .view-details-button {
-      background: rgba(245, 158, 11, 0.15);
-      color: #fbbf24;
-      padding: 0.75rem 1.5rem;
-      border-radius: 8px;
-      font-weight: bold;
-      font-size: 1rem;
-      text-align: center;
-      margin-top: 1.5rem;
-      transition: all 0.3s;
-      display: inline-block;
-      width: 100%;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-      backdrop-filter: blur(8px);
-    }
-
-    .view-details-button:hover {
-      background: rgba(245, 158, 11, 0.25);
-      border-color: rgba(245, 158, 11, 0.5);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
-    }
-
-    .no-data {
-      text-align: center;
-      padding: 3rem;
-      background: rgba(30, 41, 59, 0.5);
-      border-radius: 16px;
-      color: #cbd5e1;
-    }
-
-    .results-notice {
-      margin-top: 2rem;
-      padding: 1rem 1.25rem;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-    }
-
-    .results-notice p {
-      font-size: 0.75rem;
-      color: rgba(148, 163, 184, 0.6);
-      line-height: 1.7;
-      margin: 0;
-    }
-
-    @media (max-width: 768px) {
-      .title {
-        font-size: 1.8rem;
-      }
-
-      .month-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 1rem;
-      }
-
-      .month-title {
-        font-size: 2rem;
-      }
-
-      .month-stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <div class="archive-jra-hub">
+    <div class="page-header">
       <h1 class="title">🏆 的中実績アーカイブ</h1>
       <p class="subtitle">中央競馬（JRA）すべての的中記録を完全公開</p>
       <p class="description">
@@ -384,14 +89,11 @@ try {
       </p>
     </div>
 
-    <!-- 有料プランCTA -->
     <div class="cta-box">
       <p class="cta-text">
         🎯 これらの実績を生み出したAI予想を、あなたも利用できます
       </p>
-      <a href="/pricing/" class="cta-button">
-        プレミアム予想を見る →
-      </a>
+      <a href="/pricing/" class="cta-button">プレミアム予想を見る →</a>
     </div>
 
     {allMonths.length === 0 ? (
@@ -399,7 +101,6 @@ try {
         <p>まだ的中実績データがありません。</p>
       </div>
     ) : (
-      <!-- 月別アーカイブ -->
       <div class="months-grid">
         {allMonths.map((monthData) => (
           <a href={`/archive/jra/${monthData.year}/${monthData.month}/`} class="month-card">
@@ -435,16 +136,14 @@ try {
               </div>
             </div>
 
-            <div class="view-details-button">
-              📊 詳細を見る →
-            </div>
+            <div class="view-details-button">📊 詳細を見る →</div>
           </a>
         ))}
       </div>
     )}
 
     <div class="back-link">
-      <a href="/">← トップページ</a>
+      <a href="/archive/">← アーカイブトップ</a>
       <a href="/archive/nankan/">南関アーカイブ</a>
       <a href="/pricing/">プレミアム予想</a>
     </div>
@@ -455,5 +154,166 @@ try {
       <p>※ 過去の実績は将来の結果を保証するものではありません。馬券購入は自己責任でお願いいたします。</p>
     </div>
   </div>
-</body>
-</html>
+</BaseLayout>
+
+<style>
+  .archive-jra-hub { padding: 2rem 0 3rem; color: #e2e8f0; }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 3rem;
+    padding: 2rem;
+    background: rgba(30, 41, 59, 0.5);
+    border-radius: 16px;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .title { font-size: 2.5rem; font-weight: bold; color: #f59e0b; margin: 0 0 1rem; }
+  .subtitle { font-size: 1.2rem; color: #cbd5e1; margin-bottom: 0.5rem; }
+  .description { font-size: 1rem; color: #94a3b8; max-width: 600px; margin: 0 auto; }
+
+  .cta-box {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  .cta-text { font-size: 1.1rem; color: #e2e8f0; margin-bottom: 1rem; }
+
+  .cta-button {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+    padding: 1rem 2rem;
+    border-radius: 8px;
+    text-decoration: none;
+    display: inline-block;
+    font-weight: bold;
+    transition: all 0.3s;
+  }
+  .cta-button:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4); }
+
+  .months-grid { display: grid; gap: 2rem; }
+
+  .month-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 16px;
+    padding: 2.5rem;
+    transition: all 0.3s;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .month-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(245, 158, 11, 0.5);
+    box-shadow: 0 12px 30px rgba(245, 158, 11, 0.3);
+  }
+
+  .month-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 2px solid rgba(100, 116, 139, 0.3);
+  }
+
+  .month-title { font-size: 2.5rem; font-weight: bold; color: #fbbf24; margin: 0; }
+
+  .perfect-highlight {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+    padding: 0.8rem 1.5rem;
+    border-radius: 12px;
+    font-weight: bold;
+    font-size: 1.1rem;
+  }
+
+  .month-badge {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    padding: 0.6rem 1.2rem;
+    border-radius: 12px;
+    font-weight: bold;
+    font-size: 1rem;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .month-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .month-stat {
+    text-align: center;
+    background: rgba(15, 23, 42, 0.5);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+  }
+
+  .month-stat-value { font-size: 2rem; font-weight: bold; color: #60a5fa; margin-bottom: 0.5rem; }
+  .month-stat-value.profit { color: #10b981; }
+  .month-stat-value.loss { color: #ef4444; }
+  .month-stat-label { font-size: 0.9rem; color: #94a3b8; }
+
+  .view-details-button {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 1rem;
+    text-align: center;
+    margin-top: 1.5rem;
+    transition: all 0.3s;
+    display: inline-block;
+    width: 100%;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+  .view-details-button:hover {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: rgba(245, 158, 11, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
+  }
+
+  .no-data {
+    text-align: center;
+    padding: 3rem;
+    background: rgba(30, 41, 59, 0.5);
+    border-radius: 16px;
+    color: #cbd5e1;
+  }
+
+  .back-link {
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid rgba(100, 116, 139, 0.3);
+  }
+  .back-link a {
+    color: #60a5fa;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: color 0.3s;
+    margin: 0 0.5rem;
+  }
+  .back-link a:hover { color: #3b82f6; }
+
+  .results-notice { margin-top: 2rem; padding: 1rem 1.25rem; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+  .results-notice p { font-size: 0.75rem; color: rgba(148, 163, 184, 0.6); line-height: 1.7; margin: 0; }
+
+  @media (max-width: 768px) {
+    .title { font-size: 1.8rem; }
+    .month-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+    .month-title { font-size: 2rem; }
+    .month-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
