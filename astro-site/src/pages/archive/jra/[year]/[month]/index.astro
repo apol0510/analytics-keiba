@@ -108,10 +108,9 @@ const pageDescription = monthData.length > 0
             const venueLabel = Array.isArray(dayData.venues) && dayData.venues.length > 0
               ? dayData.venues.join('・')
               : dayData.venue;
-            const hitRaces = sortRacesByVenueAndNumber(
-              (dayData.races || []).filter((race: any) => race.isHit),
-              dayData.venues
-            );
+            // 全レースをラウンドロビン順にソートしてから的中のみ抽出
+            const hitRaces = sortRacesByVenueAndNumber(dayData.races || [], dayData.venues)
+              .filter((race: any) => race.isHit);
 
             return (
               <section class="day-section">

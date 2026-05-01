@@ -5,6 +5,7 @@ import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
 import { weeklyResults, dailyTabs, dailyResultsData } from './standard-predictions.astro';
 import { pickLatestAndAdapt, pickLatestJraPrediction } from '../lib/adaptLatestPrediction.js';
+import { sortRacesByVenueAndNumber } from '../utils/sortRaces.js';
 
 // src/data/predictions/*.json（自動反映フロー）から最新日付を自動選択
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -456,9 +457,11 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 </div>
                             </div>
 
-                            <!-- 的中レース一覧 -->
+                            <!-- 的中レース一覧（全レースをラウンドロビン順にソートしてから的中のみ抽出） -->
                             <div style="display: grid; gap: 12px;">
-                                {latestJraResult?.races?.filter(race => race.isHit ?? race.hit).map(race => (
+                                {sortRacesByVenueAndNumber(latestJraResult?.races || [], latestJraResult?.venues)
+                                    .filter(race => race.isHit ?? race.hit)
+                                    .map(race => (
                                     <div class="yesterday-race-card">
                                         <div class="yesterday-race-info">
                                             <div style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; min-width: 3rem;">
