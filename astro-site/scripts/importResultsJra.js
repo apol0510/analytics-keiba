@@ -15,6 +15,88 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '..');
 
+// ── 特別競走名マスタ（UI 表示用 displayName の補完）──────────────
+let SPECIALTY_RACE_MASTER = {};
+try {
+  const masterPath = join(projectRoot, 'src', 'data', 'specialty-race-master.json');
+  if (existsSync(masterPath)) {
+    const raw = JSON.parse(readFileSync(masterPath, 'utf-8'));
+    SPECIALTY_RACE_MASTER = Object.fromEntries(
+      Object.entries(raw).filter(([k]) => !k.startsWith('_'))
+    );
+  }
+} catch (e) {
+  console.warn(`⚠️  specialty-race-master.json 読み込み失敗: ${e.message}`);
+}
+
+const JRA_VENUE_TO_CODE = {
+  '東京': 'TOK', '中山': 'NAK', '京都': 'KYO', '阪神': 'HAN',
+  '中京': 'CHU', '小倉': 'KOK', '新潟': 'NII', '福島': 'FKS',
+  '札幌': 'SAP', '函館': 'HKD',
+};
+function venueToCode(venue) {
+  return JRA_VENUE_TO_CODE[venue] || venue || '';
+}
+
+const MOJIBAKE_MARKERS = ['鬟','逶','蛻','繝','縺','豁','譌','蜻','荵','窶','繧','繪','繡','繞','繦','譖','謇','蛟','蛛','蜈','�'];
+function isMojibakeName(s) {
+  if (!s) return false;
+  const t = String(s);
+  for (const m of MOJIBAKE_MARKERS) if (t.indexOf(m) >= 0) return true;
+  const qat = t.match(/\?@/g);
+  if (qat && qat.length >= 2) return true;
+  if (/\?{3,}/.test(t)) return true;
+  if (/@{3,}/.test(t)) return true;
+  return false;
+}
+
+function isGenericVenueRaceName(name, venue, n) {
+  if (!name) return true;
+  const t = String(name).trim();
+  if (!t) return true;
+  return new RegExp(`^${venue || ''}\\s*${n}\\s*(R|レース)?$`).test(t);
+}
+
+function isCleanRaceName(s, venue, raceNumber) {
+  if (!s) return false;
+  const t = String(s).trim();
+  if (!t) return false;
+  if (isGenericVenueRaceName(t, venue, raceNumber)) return false;
+  if (isMojibakeName(t)) return false;
+  return true;
+}
+
+/**
+ * displayName を生成（補完優先順）:
+ *   ① raceName（クリーン）
+ *   ② specialty-race-master.json （JV-Link 文字化け対策）
+ *   ③ raceSubtitle（クリーン）
+ *   ④ raceConditionName（条件戦名）
+ *   ⑤ raceClass / raceCondition / title / name（互換）
+ *   ⑥ fallback「{venue}{number}R」
+ */
+function buildDisplayName(race, venue, raceNumber) {
+  const v = venue || '';
+  const n = raceNumber;
+  const fallback = `${v}${n}R`;
+
+  if (isCleanRaceName(race.raceName, v, n)) {
+    return String(race.raceName).trim();
+  }
+  const date = race.date ? String(race.date).trim() : '';
+  const venueCode = venueToCode(v);
+  if (date && venueCode && n != null) {
+    const masterKey = `${date}-${venueCode}-${n}`;
+    if (SPECIALTY_RACE_MASTER[masterKey]) return String(SPECIALTY_RACE_MASTER[masterKey]).trim();
+  }
+  if (isCleanRaceName(race.raceSubtitle, v, n)) return String(race.raceSubtitle).trim();
+  if (isCleanRaceName(race.raceConditionName, v, n)) return String(race.raceConditionName).trim();
+  for (const c of [race.raceClass, race.raceCondition, race.title, race.name]) {
+    if (isCleanRaceName(c, v, n)) return String(c).trim();
+  }
+  return fallback;
+}
+
 // アラートメール送信URL（Netlify Function）
 const ALERT_ENDPOINT = process.env.ALERT_ENDPOINT || 'https://keiba-intelligence.netlify.app/.netlify/functions/send-alert';
 const IS_CI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
@@ -365,9 +447,18 @@ function verifyResults(prediction, results) {
     const payoutAmount = umatanPayout?.payout || null;
     const payoutCombination = umatanPayout?.combination || null;
 
+    // displayName: 特別競走名 > master > raceSubtitle > raceConditionName > 「{venue}{number}R」
+    const displayName = buildDisplayName(race, raceVenue, normalizedRaceNumber);
+    // raceName: 文字化けなら displayName で置換
+    let storedRaceName = race.raceName;
+    if (isMojibakeName(storedRaceName)) storedRaceName = displayName;
+    const raceConditionName = race.raceConditionName ? String(race.raceConditionName).trim() : null;
+
     raceResults.push({
       raceNumber,
-      raceName: race.raceName,
+      raceName: storedRaceName,
+      displayName,
+      raceConditionName,
       venue: raceVenue, // 会場情報を追加
       result: {
         first: { number: first.number, name: first.name },
