@@ -120,6 +120,41 @@ export function isBrokenEntry(entry) {
 }
 
 /**
+ * BET_POINT_LOGIC.md 準拠: 払戻と実レース数から 1レース当たり購入点数を決定。
+ * 100% 以上を維持できる最大点数を選び、下限は 6 点。
+ * 1 点 = 100 円。
+ */
+export function getBetPointsPerRace(totalPayout, races) {
+  if (!races || races <= 0) return 6;
+  if (totalPayout >= races * 12 * 100) return 12;
+  if (totalPayout >= races * 10 * 100) return 10;
+  if (totalPayout >= races *  8 * 100) return 8;
+  if (totalPayout >= races *  6 * 100) return 6;
+  return 6; // 下限
+}
+
+/**
+ * 払戻と実レース数から購入点数・投資額・回収率を一括計算。
+ * BET_POINT_LOGIC.md と同一実装。
+ */
+export function computeBetMetrics(totalPayout, totalRaces) {
+  const betPointsPerRace = getBetPointsPerRace(totalPayout, totalRaces);
+  const totalBetPoints = totalRaces * betPointsPerRace;
+  const totalInvestment = totalBetPoints * 100;
+  const recoveryRate = totalInvestment > 0
+    ? Math.round((totalPayout / totalInvestment) * 1000) / 10
+    : 0;
+  return {
+    betPointsPerRace,
+    totalBetPoints,
+    totalInvestment,
+    betAmount: totalInvestment, // alias
+    recoveryRate,
+    returnRate: recoveryRate, // alias
+  };
+}
+
+/**
  * 予想データを venue+raceNumber でインデックス化。
  */
 export function buildPredictionIndex(predData) {
@@ -189,6 +224,14 @@ export function enrichEntryWithLive(entry, liveData, predData) {
   if ((Number(entry.totalPayout) || 0) === 0) {
     entry.totalPayout = recomputedPayout;
   }
+  // 投資額・回収率を BET_POINT_LOGIC で再計算 (元値が 0 なら必ず上書き)
+  const m = computeBetMetrics(entry.totalPayout || 0, entry.totalRaces || 0);
+  entry.betPointsPerRace = m.betPointsPerRace;
+  entry.totalBetPoints = m.totalBetPoints;
+  entry.totalInvestment = m.totalInvestment;
+  entry.betAmount = m.betAmount;
+  entry.recoveryRate = m.recoveryRate;
+  entry.returnRate = m.returnRate;
   entry.live = true;
   return true;
 }
@@ -238,6 +281,7 @@ export function synthesizeEntryFromLive(date, liveData, predData) {
     }
   }
 
+  const m = computeBetMetrics(totalPayout, total);
   return {
     date,
     venue: venueNames.join('・'),
@@ -245,12 +289,13 @@ export function synthesizeEntryFromLive(date, liveData, predData) {
     totalRaces: total,
     hitRaces: hits,
     hitRate: total > 0 ? ((hits / total) * 100).toFixed(1) : '0',
-    betAmount: 0,
-    totalBetPoints: 0,
-    totalInvestment: 0,
+    betPointsPerRace: m.betPointsPerRace,
+    totalBetPoints: m.totalBetPoints,
+    totalInvestment: m.totalInvestment,
+    betAmount: m.betAmount,
     totalPayout,
-    returnRate: 0, // 投資額不明のため計算不可
-    betPointsPerRace: 0,
+    recoveryRate: m.recoveryRate,
+    returnRate: m.returnRate,
     races,
     live: true,
     _synthesized: true,
