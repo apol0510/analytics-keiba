@@ -137,6 +137,63 @@ export function buildPredictionIndex(predData) {
 }
 
 /**
+ * 既存 archive entry を live + 予想データで enrich (副作用あり: entry を直接書き換える)。
+ *
+ * - broken (totalPayout=0 + returnRate=0) と判定された entry に対してのみ実行する想定。
+ * - entry.races[].isHit を live ベースで再計算
+ * - entry.races[].umatan を live の payout で backfill (broken 時は元々 null)
+ * - entry.hitRaces / hitRate / totalPayout を再集計
+ * - entry.live = true マーカー
+ *
+ * @returns {boolean} enrich を行った場合 true
+ */
+export function enrichEntryWithLive(entry, liveData, predData) {
+  if (!entry || !liveData || !Array.isArray(liveData.venues)) return false;
+  const predIndex = predData ? buildPredictionIndex(predData) : new Map();
+
+  let recomputedHits = 0;
+  let recomputedPayout = 0;
+  for (const liveVenue of liveData.venues) {
+    const venueName = VENUE_CODE_TO_NAME[liveVenue.venueCode] || liveVenue.venueName;
+    if (!venueName) continue;
+    for (const liveRace of (liveVenue.races || [])) {
+      const predRace = predIndex.get(`${venueName}-${liveRace.raceNumber}`);
+      const judge = judgeLiveHit(liveRace, predRace);
+      if (judge.isHit) recomputedHits++;
+
+      const liveUmatan = liveRace.umatan && liveRace.umatan.payout > 0
+        ? { combination: liveRace.umatan.combination, payout: liveRace.umatan.payout }
+        : null;
+      if (judge.isHit && liveUmatan) recomputedPayout += liveUmatan.payout;
+
+      const archiveRace = entry.races?.find(
+        (r) => r.venue === venueName && r.raceNumber === liveRace.raceNumber
+      );
+      if (archiveRace) {
+        archiveRace.isHit = judge.isHit;
+        archiveRace._liveFirst = judge.first;
+        archiveRace._liveSecond = judge.second;
+        // 既存 payout が空なら live で backfill
+        if (liveUmatan && (!archiveRace.umatan?.payout)) {
+          archiveRace.umatan = { combination: liveUmatan.combination, payout: liveUmatan.payout };
+        }
+      }
+    }
+  }
+
+  entry.hitRaces = recomputedHits;
+  if (entry.totalRaces > 0) {
+    entry.hitRate = ((recomputedHits / entry.totalRaces) * 100).toFixed(1);
+  }
+  // 元々 totalPayout=0 (broken) のはずなので live 由来で backfill
+  if ((Number(entry.totalPayout) || 0) === 0) {
+    entry.totalPayout = recomputedPayout;
+  }
+  entry.live = true;
+  return true;
+}
+
+/**
  * live + 予想データから 暫定 archive entry を合成。
  * archiveResultsJra に該当日のエントリが無いとき、画面に live ベースで表示するために使う。
  *
@@ -151,6 +208,7 @@ export function synthesizeEntryFromLive(date, liveData, predData) {
 
   let hits = 0;
   let total = 0;
+  let totalPayout = 0;
   const races = [];
   const venueNames = [];
 
@@ -163,11 +221,16 @@ export function synthesizeEntryFromLive(date, liveData, predData) {
       const judge = judgeLiveHit(lr, predRace);
       total++;
       if (judge.isHit) hits++;
+      // 馬単払戻: live が umatan を持っていて、かつ的中している場合のみ採用
+      const liveUmatan = lr.umatan && lr.umatan.payout > 0
+        ? { combination: lr.umatan.combination, payout: lr.umatan.payout }
+        : { combination: null, payout: null };
+      if (judge.isHit && liveUmatan.payout) totalPayout += liveUmatan.payout;
       races.push({
         raceNumber: lr.raceNumber,
         venue: venueName,
         isHit: judge.isHit,
-        umatan: { combination: null, payout: null },
+        umatan: liveUmatan,
         results: [],
         _liveFirst: judge.first,
         _liveSecond: judge.second,
@@ -185,11 +248,11 @@ export function synthesizeEntryFromLive(date, liveData, predData) {
     betAmount: 0,
     totalBetPoints: 0,
     totalInvestment: 0,
-    totalPayout: 0,
-    returnRate: 0,
+    totalPayout,
+    returnRate: 0, // 投資額不明のため計算不可
     betPointsPerRace: 0,
     races,
     live: true,
-    _synthesized: true, // archive 由来ではなく live 合成であることのマーカー
+    _synthesized: true,
   };
 }

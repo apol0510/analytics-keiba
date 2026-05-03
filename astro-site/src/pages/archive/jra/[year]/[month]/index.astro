@@ -3,7 +3,7 @@ import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { sortRacesByVenueAndNumber } from '../../../../../utils/sortRaces.js';
-import { judgeLiveHit, VENUE_CODE_TO_NAME, synthesizeEntryFromLive } from '../../../../../utils/jraLiveHitJudge.js';
+import { VENUE_CODE_TO_NAME, synthesizeEntryFromLive, enrichEntryWithLive, isBrokenEntry } from '../../../../../utils/jraLiveHitJudge.js';
 
 export const prerender = false;
 
@@ -23,60 +23,22 @@ let monthStats = {
 };
 
 /**
- * archive entry が「broken」(rank/HR取得失敗で payout=0) かつ
- * live-results + 予想データがあれば暫定的中数を再計算する。
+ * archive entry が broken (payout=0) のとき live + 予想 で enrich。
+ * util の enrichEntryWithLive() に集約。
  */
 function tryEnrichWithLive(entry: any) {
-  const isBroken = (Number(entry.totalPayout) || 0) === 0
-                && (Number(entry.returnRate) || 0) === 0;
-  if (!isBroken) return;
-
+  if (!isBrokenEntry(entry)) return;
   const livePath = join(process.cwd(), 'src', 'data', 'jraLiveResults', `${entry.date}.json`);
   if (!existsSync(livePath)) return;
   let live: any;
   try { live = JSON.parse(readFileSync(livePath, 'utf-8')); } catch { return; }
-  if (!live || !Array.isArray(live.venues)) return;
-
   const [yyyy, mm] = entry.date.split('-');
   const predPath = join(process.cwd(), 'src', 'data', 'predictions', 'jra', yyyy, mm, `${entry.date}.json`);
-  if (!existsSync(predPath)) return;
-  let pred: any;
-  try { pred = JSON.parse(readFileSync(predPath, 'utf-8')); } catch { return; }
-
-  const predIndex = new Map<string, any>();
-  for (const v of (pred.venues || [])) {
-    for (const r of (v.predictions || [])) {
-      const venueName = v.venue || r.raceInfo?.venue;
-      const raceNum = r.raceInfo?.raceNumber;
-      if (venueName && raceNum != null) {
-        predIndex.set(`${venueName}-${raceNum}`, r);
-      }
-    }
+  let pred: any = null;
+  if (existsSync(predPath)) {
+    try { pred = JSON.parse(readFileSync(predPath, 'utf-8')); } catch {}
   }
-
-  let recomputedHits = 0;
-  for (const liveVenue of live.venues || []) {
-    const venueName = (VENUE_CODE_TO_NAME as any)[liveVenue.venueCode] || liveVenue.venueName;
-    for (const liveRace of liveVenue.races || []) {
-      const predRace = predIndex.get(`${venueName}-${liveRace.raceNumber}`);
-      const judge = judgeLiveHit(liveRace, predRace);
-      if (judge.isHit) recomputedHits++;
-      const archiveRace = entry.races?.find(
-        (r: any) => r.venue === venueName && r.raceNumber === liveRace.raceNumber
-      );
-      if (archiveRace) {
-        archiveRace.isHit = judge.isHit;
-        archiveRace._liveFirst = judge.first;
-        archiveRace._liveSecond = judge.second;
-      }
-    }
-  }
-
-  entry.hitRaces = recomputedHits;
-  if (entry.totalRaces > 0) {
-    entry.hitRate = ((recomputedHits / entry.totalRaces) * 100).toFixed(1);
-  }
-  entry.live = true;
+  enrichEntryWithLive(entry, live, pred);
 }
 
 try {
