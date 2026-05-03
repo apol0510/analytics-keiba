@@ -173,21 +173,13 @@ const pageDescription = monthData.length > 0
               <div class="stat-label">月間的中率</div>
             </div>
             <div class="stat-card">
-              {monthStats.hasLive && Number(monthStats.totalPayout) === 0 ? (
-                <div class="stat-value pending">確定待ち</div>
-              ) : (
-                <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
-                  {monthStats.returnRate}%
-                </div>
-              )}
+              <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
+                {monthStats.returnRate}%
+              </div>
               <div class="stat-label">月間回収率</div>
             </div>
             <div class="stat-card">
-              {monthStats.hasLive && Number(monthStats.totalPayout) === 0 ? (
-                <div class="stat-value pending">確定待ち</div>
-              ) : (
-                <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
-              )}
+              <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
               <div class="stat-label">月間合計配当</div>
             </div>
             <div class="stat-card">
@@ -224,20 +216,16 @@ const pageDescription = monthData.length > 0
                   <div class="summary-item">
                     📊 的中率: <span class="summary-value">{dayData.hitRate}%</span>
                   </div>
-                  <div class="summary-item">
-                    {dayData.live ? (
-                      <>📈 回収率: <span class="summary-value pending">確定待ち</span></>
-                    ) : (
-                      <>📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span></>
-                    )}
-                  </div>
-                  <div class="summary-item">
-                    {dayData.live ? (
-                      <>💰 合計配当: <span class="summary-value pending">確定待ち</span></>
-                    ) : (
-                      <>💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span></>
-                    )}
-                  </div>
+                  {!dayData.live && (
+                    <>
+                      <div class="summary-item">
+                        📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span>
+                      </div>
+                      <div class="summary-item">
+                        💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div class="races-grid">
