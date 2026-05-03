@@ -245,10 +245,14 @@ async function fetchAndMergeVenueResults(date, year, month, GITHUB_TOKEN) {
 
       console.log(`   ✅ ${venueCode}: ${venueData.races?.length || 0}レース取得`);
 
-      // 会場データを追加
+      // 会場データを追加（各レースに venue を注入。auto-fetch由来のJSONはrace-levelにvenueが無い）
       if (venueData.races) {
-        allRaces = allRaces.concat(venueData.races);
-        venues.push(venueData.venue || venueCode);
+        const venueName = venueData.venue || venueCode;
+        for (const r of venueData.races) {
+          if (!r.venue) r.venue = venueName;
+          allRaces.push(r);
+        }
+        venues.push(venueName);
       }
 
     } catch (err) {
