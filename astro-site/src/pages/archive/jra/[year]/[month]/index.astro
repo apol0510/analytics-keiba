@@ -1,8 +1,9 @@
 ---
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { sortRacesByVenueAndNumber } from '../../../../../utils/sortRaces.js';
+import { judgeLiveHit, VENUE_CODE_TO_NAME, synthesizeEntryFromLive } from '../../../../../utils/jraLiveHitJudge.js';
 
 export const prerender = false;
 
@@ -17,8 +18,66 @@ let monthStats = {
   totalBetAmount: 0,
   totalPayout: 0,
   hitRate: '0',
-  returnRate: '0'
+  returnRate: '0',
+  hasLive: false,  // 速報モードで暫定表示している日が含まれるか
 };
+
+/**
+ * archive entry が「broken」(rank/HR取得失敗で payout=0) かつ
+ * live-results + 予想データがあれば暫定的中数を再計算する。
+ */
+function tryEnrichWithLive(entry: any) {
+  const isBroken = (Number(entry.totalPayout) || 0) === 0
+                && (Number(entry.returnRate) || 0) === 0;
+  if (!isBroken) return;
+
+  const livePath = join(process.cwd(), 'src', 'data', 'jraLiveResults', `${entry.date}.json`);
+  if (!existsSync(livePath)) return;
+  let live: any;
+  try { live = JSON.parse(readFileSync(livePath, 'utf-8')); } catch { return; }
+  if (!live || !Array.isArray(live.venues)) return;
+
+  const [yyyy, mm] = entry.date.split('-');
+  const predPath = join(process.cwd(), 'src', 'data', 'predictions', 'jra', yyyy, mm, `${entry.date}.json`);
+  if (!existsSync(predPath)) return;
+  let pred: any;
+  try { pred = JSON.parse(readFileSync(predPath, 'utf-8')); } catch { return; }
+
+  const predIndex = new Map<string, any>();
+  for (const v of (pred.venues || [])) {
+    for (const r of (v.predictions || [])) {
+      const venueName = v.venue || r.raceInfo?.venue;
+      const raceNum = r.raceInfo?.raceNumber;
+      if (venueName && raceNum != null) {
+        predIndex.set(`${venueName}-${raceNum}`, r);
+      }
+    }
+  }
+
+  let recomputedHits = 0;
+  for (const liveVenue of live.venues || []) {
+    const venueName = (VENUE_CODE_TO_NAME as any)[liveVenue.venueCode] || liveVenue.venueName;
+    for (const liveRace of liveVenue.races || []) {
+      const predRace = predIndex.get(`${venueName}-${liveRace.raceNumber}`);
+      const judge = judgeLiveHit(liveRace, predRace);
+      if (judge.isHit) recomputedHits++;
+      const archiveRace = entry.races?.find(
+        (r: any) => r.venue === venueName && r.raceNumber === liveRace.raceNumber
+      );
+      if (archiveRace) {
+        archiveRace.isHit = judge.isHit;
+        archiveRace._liveFirst = judge.first;
+        archiveRace._liveSecond = judge.second;
+      }
+    }
+  }
+
+  entry.hitRaces = recomputedHits;
+  if (entry.totalRaces > 0) {
+    entry.hitRate = ((recomputedHits / entry.totalRaces) * 100).toFixed(1);
+  }
+  entry.live = true;
+}
 
 try {
   if (existsSync(archivePath)) {
@@ -28,8 +87,38 @@ try {
         const [y, m] = entry.date.split('-');
         return y === year && m === month;
       })
-      // 日付 (YYYY-MM-DD) 降順で安定ソート。import 順に依存しない
       .sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+
+    // 各エントリを live で enrich (broken なら暫定再計算)
+    for (const entry of monthData) {
+      tryEnrichWithLive(entry);
+      if (entry.live) monthStats.hasLive = true;
+    }
+
+    // archive entry が無い日でも live があれば合成して追加
+    const liveDir = join(process.cwd(), 'src', 'data', 'jraLiveResults');
+    if (existsSync(liveDir)) {
+      const liveFiles = readdirSync(liveDir);
+      for (const f of liveFiles) {
+        const m = f.match(/^(\d{4})-(\d{2})-(\d{2})\.json$/);
+        if (!m || m[1] !== year || m[2] !== month) continue;
+        const date = `${m[1]}-${m[2]}-${m[3]}`;
+        if (monthData.some((e: any) => e.date === date)) continue;
+        let live: any, pred: any;
+        try { live = JSON.parse(readFileSync(join(liveDir, f), 'utf-8')); } catch { continue; }
+        const predPath = join(process.cwd(), 'src', 'data', 'predictions', 'jra', m[1], m[2], `${date}.json`);
+        if (existsSync(predPath)) {
+          try { pred = JSON.parse(readFileSync(predPath, 'utf-8')); } catch {}
+        }
+        const synth = synthesizeEntryFromLive(date, live, pred);
+        if (synth) {
+          monthData.push(synth);
+          monthStats.hasLive = true;
+        }
+      }
+      monthData.sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+    }
+
     monthData.forEach((entry: any) => {
       monthStats.totalDays++;
       monthStats.totalRaces += entry.totalRaces || 0;
@@ -84,13 +173,21 @@ const pageDescription = monthData.length > 0
               <div class="stat-label">月間的中率</div>
             </div>
             <div class="stat-card">
-              <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
-                {monthStats.returnRate}%
-              </div>
+              {monthStats.hasLive && Number(monthStats.totalPayout) === 0 ? (
+                <div class="stat-value pending">確定待ち</div>
+              ) : (
+                <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
+                  {monthStats.returnRate}%
+                </div>
+              )}
               <div class="stat-label">月間回収率</div>
             </div>
             <div class="stat-card">
-              <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
+              {monthStats.hasLive && Number(monthStats.totalPayout) === 0 ? (
+                <div class="stat-value pending">確定待ち</div>
+              ) : (
+                <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
+              )}
               <div class="stat-label">月間合計配当</div>
             </div>
             <div class="stat-card">
@@ -118,8 +215,9 @@ const pageDescription = monthData.length > 0
                   <h2 class="day-title">
                     <span class="day-date">{parseInt(month)}月{parseInt(day)}日</span>
                     <span class="day-venue">{venueLabel}</span>
+                    {dayData.live && <span class="live-badge">速報</span>}
                   </h2>
-                  <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces} 的中</div>
+                  <div class="perfect-badge">🏆 {dayData.live ? '暫定的中' : '的中'} {dayData.hitRaces}/{dayData.totalRaces}</div>
                 </div>
 
                 <div class="day-summary">
@@ -127,10 +225,18 @@ const pageDescription = monthData.length > 0
                     📊 的中率: <span class="summary-value">{dayData.hitRate}%</span>
                   </div>
                   <div class="summary-item">
-                    📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span>
+                    {dayData.live ? (
+                      <>📈 回収率: <span class="summary-value pending">確定待ち</span></>
+                    ) : (
+                      <>📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span></>
+                    )}
                   </div>
                   <div class="summary-item">
-                    💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span>
+                    {dayData.live ? (
+                      <>💰 合計配当: <span class="summary-value pending">確定待ち</span></>
+                    ) : (
+                      <>💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span></>
+                    )}
                   </div>
                 </div>
 
@@ -253,6 +359,11 @@ const pageDescription = monthData.length > 0
 
       &.profit { color: #10b981; }
       &.loss { color: #ef4444; }
+      &.pending {
+        color: #94a3b8;
+        font-size: 1.25rem;
+        font-weight: 600;
+      }
     }
 
     .stat-label {
@@ -328,7 +439,27 @@ const pageDescription = monthData.length > 0
 
       &.profit { color: #10b981; }
       &.loss { color: #ef4444; }
+      &.pending {
+        color: #94a3b8;
+        font-weight: 600;
+      }
     }
+  }
+
+  /* 速報バッジ */
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.7rem;
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.25) 0%, rgba(245, 158, 11, 0.15) 100%);
+    border: 1px solid rgba(251, 191, 36, 0.55);
+    border-radius: 999px;
+    color: #fbbf24;
+    font-weight: 800;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.25);
+    margin-left: 0.5rem;
   }
 
   /* レース一覧 */
