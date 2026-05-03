@@ -1,12 +1,7 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import {
-  enrichEntryWithLive,
-  synthesizeEntryFromLive,
-  isBrokenEntry,
-} from '../../../utils/jraLiveHitJudge.js';
 
 export const prerender = false;
 
@@ -24,51 +19,10 @@ let allMonths: Array<{
   returnRate: string;
 }> = [];
 
-/** broken エントリを live + 予想で enrich (副作用あり) */
-function tryEnrich(entry: any) {
-  if (!isBrokenEntry(entry)) return;
-  const livePath = join(process.cwd(), 'src', 'data', 'jraLiveResults', `${entry.date}.json`);
-  if (!existsSync(livePath)) return;
-  let live: any;
-  try { live = JSON.parse(readFileSync(livePath, 'utf-8')); } catch { return; }
-  const [yyyy, mm] = entry.date.split('-');
-  const predPath = join(process.cwd(), 'src', 'data', 'predictions', 'jra', yyyy, mm, `${entry.date}.json`);
-  let pred: any = null;
-  if (existsSync(predPath)) {
-    try { pred = JSON.parse(readFileSync(predPath, 'utf-8')); } catch {}
-  }
-  enrichEntryWithLive(entry, live, pred);
-}
-
 try {
   if (existsSync(archivePath)) {
     const fileContent = readFileSync(archivePath, 'utf-8');
     const allData = JSON.parse(fileContent);
-
-    // archive 各エントリを live で enrich
-    for (const entry of allData) {
-      tryEnrich(entry);
-    }
-
-    // archive に存在しない日でも live があれば合成
-    const liveDir = join(process.cwd(), 'src', 'data', 'jraLiveResults');
-    if (existsSync(liveDir)) {
-      const liveFiles = readdirSync(liveDir);
-      for (const f of liveFiles) {
-        const m = f.match(/^(\d{4})-(\d{2})-(\d{2})\.json$/);
-        if (!m) continue;
-        const date = `${m[1]}-${m[2]}-${m[3]}`;
-        if (allData.some((e: any) => e.date === date)) continue;
-        let live: any, pred: any;
-        try { live = JSON.parse(readFileSync(join(liveDir, f), 'utf-8')); } catch { continue; }
-        const predPath = join(process.cwd(), 'src', 'data', 'predictions', 'jra', m[1], m[2], `${date}.json`);
-        if (existsSync(predPath)) {
-          try { pred = JSON.parse(readFileSync(predPath, 'utf-8')); } catch {}
-        }
-        const synth = synthesizeEntryFromLive(date, live, pred);
-        if (synth) allData.push(synth);
-      }
-    }
 
     const monthsMap = new Map<string, any[]>();
     allData.forEach((entry: any) => {
