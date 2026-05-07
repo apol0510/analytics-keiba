@@ -1,0 +1,382 @@
+---
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import { join } from 'path';
+import { buildMergedMonthData } from '../../../../lib/archiveMonthlyView.js';
+
+export const prerender = false;
+
+const { year } = Astro.params as { year: string };
+
+const dataDir = join(process.cwd(), 'src', 'data');
+const archivePath = join(dataDir, 'archiveResults.json');
+const archiveJraPath = join(dataDir, 'archiveResultsJra.json');
+
+let archiveResults: any[] = [];
+let archiveResultsJra: any[] = [];
+
+try {
+  if (existsSync(archivePath)) archiveResults = JSON.parse(readFileSync(archivePath, 'utf-8'));
+  if (existsSync(archiveJraPath)) archiveResultsJra = JSON.parse(readFileSync(archiveJraPath, 'utf-8'));
+} catch (e) {
+  console.error(`[archive/nankan/${year}] load error:`, e);
+}
+
+// 該当年に存在する月を全データソースから収集
+const monthsSet = new Set<string>();
+
+for (const entry of archiveResults) {
+  if (!entry?.date) continue;
+  const [y, m] = entry.date.split('-');
+  if (y === year) monthsSet.add(m);
+}
+for (const entry of archiveResultsJra) {
+  if (!entry?.date) continue;
+  const [y, m] = entry.date.split('-');
+  if (y === year) monthsSet.add(m);
+}
+// 月別 snapshot ファイル（手動キュレートデータ）も拾う
+try {
+  const files = readdirSync(dataDir);
+  for (const file of files) {
+    const match = file.match(/^archiveResults_(\d{4})-(\d{2})\.json$/);
+    if (!match) continue;
+    if (match[1] !== year) continue;
+    const snapPath = join(dataDir, file);
+    try {
+      const snap = JSON.parse(readFileSync(snapPath, 'utf-8'));
+      const monthKeys = Object.keys(snap?.[year] || {});
+      for (const mk of monthKeys) {
+        if (Object.keys(snap[year][mk] || {}).length > 0) {
+          monthsSet.add(mk);
+        }
+      }
+    } catch {}
+  }
+} catch {}
+
+const months = Array.from(monthsSet).sort().reverse();
+
+// 各月の統計を算出
+let totalDays = 0;
+let totalPayoutYear = 0;
+let totalHitRaces = 0;
+let totalRaces = 0;
+
+const monthSummaries = months.map(month => {
+  const snapshotPath = join(dataDir, `archiveResults_${year}-${month}.json`);
+  let snapshot: any = {};
+  if (existsSync(snapshotPath)) {
+    try { snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')); } catch {}
+  }
+  const monthData = buildMergedMonthData(archiveResults, snapshot, year, month, archiveResultsJra);
+  const days = Object.keys(monthData);
+
+  let monthPayout = 0;
+  let monthHitRaces = 0;
+  let monthTotalRaces = 0;
+
+  days.forEach(day => {
+    const dayData = monthData[day];
+    monthPayout += dayData.totalPayout || 0;
+    monthHitRaces += dayData.hitRaces || 0;
+    monthTotalRaces += dayData.totalRaces || 0;
+  });
+
+  totalDays += days.length;
+  totalPayoutYear += monthPayout;
+  totalHitRaces += monthHitRaces;
+  totalRaces += monthTotalRaces;
+
+  const hitRate = monthTotalRaces > 0 ? Math.round((monthHitRaces / monthTotalRaces) * 100) : 0;
+
+  return {
+    month,
+    payout: monthPayout,
+    hitRaces: monthHitRaces,
+    totalRaces: monthTotalRaces,
+    hitRate,
+    daysCount: days.length,
+  };
+});
+
+const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+const hasData = months.length > 0;
+
+const pageTitle = `${year}年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス`;
+const pageDescription = `${year}年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。`;
+---
+
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <div class="archive-page">
+    <div class="header">
+      <h1 class="title">🏆 {year}年 的中実績アーカイブ</h1>
+      <p class="subtitle">月別の的中記録と統計</p>
+    </div>
+
+    {!hasData ? (
+      <div class="no-data">
+        <p>{year}年の的中実績はまだ登録されていません。</p>
+        <p class="back-link">
+          <a href="/archive/nankan/">← アーカイブトップへ</a>
+        </p>
+      </div>
+    ) : (
+      <>
+        <!-- 年間統計 -->
+        <div class="year-stats">
+          <div class="stat-card">
+            <div class="stat-value">{totalDays}日</div>
+            <div class="stat-label">年間開催日数</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{yearHitRate}%</div>
+            <div class="stat-label">年間的中率</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">¥{totalPayoutYear.toLocaleString()}</div>
+            <div class="stat-label">年間合計配当</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{totalHitRaces}/{totalRaces}</div>
+            <div class="stat-label">年間的中レース数</div>
+          </div>
+        </div>
+
+        <!-- 月別一覧 -->
+        <div class="months-grid">
+          {monthSummaries.map(summary => (
+            <a href={`/archive/nankan/${year}/${summary.month}/`} class="month-card">
+              <div class="month-header">
+                <h2 class="month-title">{parseInt(summary.month, 10)}月</h2>
+                {summary.hitRate === 100 && summary.totalRaces > 0 && (
+                  <div class="perfect-count">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
+                )}
+              </div>
+
+              <div class="month-stats-grid">
+                <div class="month-stat">
+                  <div class="month-stat-value">{summary.hitRate}%</div>
+                  <div class="month-stat-label">的中率</div>
+                </div>
+                <div class="month-stat">
+                  <div class="month-stat-value">{summary.daysCount}日</div>
+                  <div class="month-stat-label">開催日数</div>
+                </div>
+                <div class="month-stat">
+                  <div class="month-stat-value">{summary.hitRaces}/{summary.totalRaces}</div>
+                  <div class="month-stat-label">的中数</div>
+                </div>
+                <div class="month-stat">
+                  <div class="month-stat-value">¥{(summary.payout / 1000).toFixed(0)}K</div>
+                  <div class="month-stat-label">合計配当</div>
+                </div>
+              </div>
+
+              <div class="view-details-button">
+                📊 詳細を見る →
+              </div>
+            </a>
+          ))}
+        </div>
+      </>
+    )}
+
+    <div class="back-link">
+      <a href="/archive/nankan/">← アーカイブトップ</a>
+      <a href="/pricing/">プレミアム予想</a>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+.header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding: 2rem;
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: 16px;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .title {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #f59e0b;
+      margin-bottom: 1rem;
+    }
+
+    .subtitle {
+      font-size: 1.2rem;
+      color: #cbd5e1;
+    }
+
+    .no-data {
+      text-align: center;
+      padding: 3rem 2rem;
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 16px;
+      margin-bottom: 2rem;
+    }
+    .no-data p {
+      color: #cbd5e1;
+      margin-bottom: 1rem;
+    }
+
+    /* 年間統計 */
+    .year-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 3rem;
+    }
+
+    .stat-card {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-label {
+      font-size: 0.95rem;
+      color: #94a3b8;
+    }
+
+    /* 月別一覧 */
+    .months-grid {
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    .month-card {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 12px;
+      padding: 2rem;
+      transition: all 0.3s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+
+    .month-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(245, 158, 11, 0.5);
+      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.2);
+    }
+
+    .month-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .month-title {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: #fbbf24;
+    }
+
+    .perfect-count {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 0.9rem;
+    }
+
+    .month-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 1rem;
+    }
+
+    .month-stat {
+      text-align: center;
+    }
+
+    .month-stat-value {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 0.3rem;
+    }
+
+    .month-stat-label {
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .back-link {
+      text-align: center;
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 1px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .back-link a {
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 1rem;
+      transition: color 0.3s;
+      margin: 0 0.5rem;
+    }
+
+    .back-link a:hover {
+      color: #3b82f6;
+    }
+
+    .view-details-button {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 1rem;
+      text-align: center;
+      margin-top: 1.5rem;
+      transition: all 0.3s;
+      display: inline-block;
+      width: 100%;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      backdrop-filter: blur(8px);
+    }
+
+    .view-details-button:hover {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: rgba(245, 158, 11, 0.5);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
+    }
+
+    @media (max-width: 768px) {
+      .title {
+        font-size: 1.8rem;
+      }
+
+      .month-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+      }
+
+      .month-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+</style>

@@ -1,37 +1,73 @@
 ---
-export const prerender = true;
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import archiveData10 from '../../../data/archiveResults_2025-10.json';
-import archiveData11 from '../../../data/archiveResults_2025-11.json';
-import archiveData12 from '../../../data/archiveResults_2025-12.json';
-import archiveData2026_01 from '../../../data/archiveResults_2026-01.json';
-import archiveData2026_02 from '../../../data/archiveResults_2026-02.json';
-import archiveData2026_03 from '../../../data/archiveResults_2026-03.json';
-import archiveData2026_04 from '../../../data/archiveResults_2026-04.json';
-import archiveResults from '../../../data/archiveResults.json';
-import archiveResultsJra from '../../../data/archiveResultsJra.json';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
 
-// 月別の snapshot + archiveResults.json（南関自動更新）+ archiveResultsJra.json（中央自動更新）をマージ
-const archiveData = {
-  '2025': {
-    '10': buildMergedMonthData(archiveResults, archiveData10, '2025', '10', archiveResultsJra),
-    '11': buildMergedMonthData(archiveResults, archiveData11, '2025', '11', archiveResultsJra),
-    '12': buildMergedMonthData(archiveResults, archiveData12, '2025', '12', archiveResultsJra),
-  },
-  '2026': {
-    '01': buildMergedMonthData(archiveResults, archiveData2026_01, '2026', '01', archiveResultsJra),
-    '02': buildMergedMonthData(archiveResults, archiveData2026_02, '2026', '02', archiveResultsJra),
-    '03': buildMergedMonthData(archiveResults, archiveData2026_03, '2026', '03', archiveResultsJra),
-    '04': buildMergedMonthData(archiveResults, archiveData2026_04, '2026', '04', archiveResultsJra),
-  },
+export const prerender = false;
+
+const dataDir = join(process.cwd(), 'src', 'data');
+const archivePath = join(dataDir, 'archiveResults.json');
+const archiveJraPath = join(dataDir, 'archiveResultsJra.json');
+
+let archiveResults: any[] = [];
+let archiveResultsJra: any[] = [];
+
+try {
+  if (existsSync(archivePath)) archiveResults = JSON.parse(readFileSync(archivePath, 'utf-8'));
+  if (existsSync(archiveJraPath)) archiveResultsJra = JSON.parse(readFileSync(archiveJraPath, 'utf-8'));
+} catch (e) {
+  console.error('[archive/nankan] load error:', e);
+}
+
+// 全年×月を data 配下から自動収集（singular + monthly snapshot）
+const yearMonthSet = new Map<string, Set<string>>();
+const addYM = (y: string, m: string) => {
+  if (!yearMonthSet.has(y)) yearMonthSet.set(y, new Set());
+  yearMonthSet.get(y)!.add(m);
 };
 
-const years = Object.keys(archiveData).sort().reverse();
+for (const entry of archiveResults) {
+  if (!entry?.date) continue;
+  const [y, m] = entry.date.split('-');
+  if (y && m) addYM(y, m);
+}
+for (const entry of archiveResultsJra) {
+  if (!entry?.date) continue;
+  const [y, m] = entry.date.split('-');
+  if (y && m) addYM(y, m);
+}
+try {
+  const files = readdirSync(dataDir);
+  for (const file of files) {
+    const match = file.match(/^archiveResults_(\d{4})-(\d{2})\.json$/);
+    if (!match) continue;
+    const [, y, m] = match;
+    try {
+      const snap = JSON.parse(readFileSync(join(dataDir, file), 'utf-8'));
+      const entries = snap?.[y]?.[m];
+      if (entries && Object.keys(entries).length > 0) addYM(y, m);
+    } catch {}
+  }
+} catch {}
+
+const snapshotCache = new Map<string, any>();
+const loadSnapshot = (year: string, month: string) => {
+  const key = `${year}-${month}`;
+  if (snapshotCache.has(key)) return snapshotCache.get(key);
+  const path = join(dataDir, `archiveResults_${key}.json`);
+  let snap: any = {};
+  if (existsSync(path)) {
+    try { snap = JSON.parse(readFileSync(path, 'utf-8')); } catch {}
+  }
+  snapshotCache.set(key, snap);
+  return snap;
+};
+
+const years = Array.from(yearMonthSet.keys()).sort().reverse();
 
 const yearSummaries = years.map(year => {
-  const yearData = archiveData[year];
-  const months = Object.keys(yearData).sort().reverse();
+  const months = Array.from(yearMonthSet.get(year)!).sort().reverse();
 
   let perfectDays = 0;
   let totalPayout = 0;
@@ -40,7 +76,8 @@ const yearSummaries = years.map(year => {
   let totalDays = 0;
 
   months.forEach(month => {
-    const monthData = yearData[month];
+    const snapshot = loadSnapshot(year, month);
+    const monthData = buildMergedMonthData(archiveResults, snapshot, year, month, archiveResultsJra);
     const days = Object.keys(monthData);
     totalDays += days.length;
 
