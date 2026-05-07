@@ -4,6 +4,7 @@ import archiveData01 from '../../../../data/archiveResults_2026-01.json';
 import archiveData02 from '../../../../data/archiveResults_2026-02.json';
 import archiveData03 from '../../../../data/archiveResults_2026-03.json';
 import archiveData04 from '../../../../data/archiveResults_2026-04.json';
+import archiveData05 from '../../../../data/archiveResults_2026-05.json';
 import archiveResults from '../../../../data/archiveResults.json';
 import archiveResultsJra from '../../../../data/archiveResultsJra.json';
 import { buildMergedMonthData } from '../../../../lib/archiveMonthlyView.js';
@@ -15,6 +16,7 @@ const yearData = {
   '02': buildMergedMonthData(archiveResults, archiveData02, year, '02', archiveResultsJra),
   '03': buildMergedMonthData(archiveResults, archiveData03, year, '03', archiveResultsJra),
   '04': buildMergedMonthData(archiveResults, archiveData04, year, '04', archiveResultsJra),
+  '05': buildMergedMonthData(archiveResults, archiveData05, year, '05', archiveResultsJra),
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 
