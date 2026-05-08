@@ -2505,10 +2505,12 @@ function generateUmatanBets(horses) {
         });
       } else if (isLightUser) {
         // ライトユーザー向け表示（メインレースのみ買い目表示）
+        // メインレース判定: 12R→R11、10R→R9、8R→R7、それ以外は最終レース
+        const getMainRaceNumber = (n) => n === 12 ? 11 : n === 10 ? 9 : n === 8 ? 7 : n;
         document.querySelectorAll('.betting-section.pro-exclusive').forEach(section => {
           const raceNumber = parseInt(section.dataset.raceNumber);
           const totalRaces = parseInt(section.dataset.totalRaces);
-          const isMainRace = raceNumber === totalRaces; // 最終レースがメイン
+          const isMainRace = raceNumber === getMainRaceNumber(totalRaces);
 
           if (isMainRace) {
             // メインレース：プロと同じ買い目を表示

@@ -11,6 +11,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
+import { isMainRace } from '../src/utils/mainRaceBetting.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '..');
@@ -547,12 +549,33 @@ function saveArchive(date, venue, raceResults) {
   const venues = [...new Set(raceResults.map(r => r.venue))].sort();
   const venueDisplay = venues.join('・');
 
-  // race 単位にも同じ betPoints / betType を埋め込む（archive UI が参照するため）
-  const enrichedRaces = raceResults.map(r => ({
-    ...r,
-    betType: r.betType || '馬単',
-    betPoints: betPointsPerRace,
-  }));
+  // race 単位にも betPoints / betType を埋め込む（archive UI が参照するため）
+  // メインレースは実際の買い目本数 (本命軸 × 上位5頭 × 双方向 = 最大10点) を記録
+  // JRAは複数会場開催が前提のため、会場別にレース数を数える
+  const racesByVenue = new Map();
+  for (const r of raceResults) {
+    const key = r.venue || '';
+    racesByVenue.set(key, (racesByVenue.get(key) || 0) + 1);
+  }
+  const enrichedRaces = raceResults.map(r => {
+    const venueRaces = racesByVenue.get(r.venue || '') || totalRaces;
+    let racePoints = betPointsPerRace;
+    if (isMainRace(r.raceNumber, venueRaces)) {
+      const lines = Array.isArray(r.bettingLines) ? r.bettingLines : [];
+      const firstLine = lines[0] || '';
+      const m = firstLine.match(/^(\d+)-(.+)$/);
+      if (m) {
+        const aitePart = m[2].replace(/\(抑え.+\)/, '');
+        const partners = aitePart.split('.').filter(s => s.length > 0);
+        if (partners.length > 0) racePoints = partners.length * 2;
+      }
+    }
+    return {
+      ...r,
+      betType: r.betType || '馬単',
+      betPoints: racePoints,
+    };
+  });
 
   const newEntry = {
     date,

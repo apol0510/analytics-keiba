@@ -29,6 +29,9 @@ const projectRoot = join(__dirname, '..');
 // src/utils から正規化関数をインポート
 import { normalizeAndAdjust } from '../src/utils/normalizePrediction.js';
 
+// メインレース10点ロジック
+import { isMainRace, generateMainRaceUmatanLines } from '../src/utils/mainRaceBetting.js';
+
 // データ検証関数をインポート
 import { validateJRAPrediction } from './utils/validatePrediction.js';
 
@@ -276,6 +279,14 @@ async function importPrediction(date, venue = 'jra') {
  * @returns {Object} 既存フォーマット
  */
 function convertToLegacyFormat(data, date) {
+  // メインレース判定は会場別レース数で行う（防御）。
+  // JRAは1日3場×12R=36Rが渡るパターンに備えて、race.venue ごとに数える。
+  const dataVenue = data.venue || '';
+  const racesByVenue = new Map();
+  for (const r of (Array.isArray(data.races) ? data.races : [])) {
+    const v = r.venue || r.raceInfo?.venue || dataVenue;
+    racesByVenue.set(v, (racesByVenue.get(v) || 0) + 1);
+  }
   const predictions = data.races.map((race) => {
     // 役割別に馬を抽出
     const honmei = race.horses.find(h => h.role === '本命');
@@ -285,30 +296,36 @@ function convertToLegacyFormat(data, date) {
     const osae = race.horses.filter(h => h.role === '補欠' || h.role === '抑え');
 
     // 買い目生成（馬単）
-    const umatanLines = [];
+    let umatanLines = [];
 
-    if (honmei) {
-      // 本命軸：相手から本命を除外
-      const aite = main.filter(h => h.number !== honmei.number).map(h => h.number).join('.');
-      const renkaNumbers = renka.map(h => h.number).join('.');
-      const osaeNumbers = osae.map(h => h.number).join('.');
+    // メインレースは最大10点ロジック（本命軸・上位5頭・双方向）
+    const venueKey = race.venue || race.raceInfo?.venue || dataVenue;
+    const venueRaces = racesByVenue.get(venueKey) || (Array.isArray(data.races) ? data.races.length : 0);
+    if (isMainRace(race.raceNumber, venueRaces)) {
+      umatanLines = generateMainRaceUmatanLines(race.horses);
+    } else if (honmei || taikou) {
+      // 通常レース: 本命軸 + 対抗軸の従来ロジック
+      if (honmei) {
+        const aite = main.filter(h => h.number !== honmei.number).map(h => h.number).join('.');
+        const renkaNumbers = renka.map(h => h.number).join('.');
+        const osaeNumbers = osae.map(h => h.number).join('.');
 
-      let line = `${honmei.number}-${aite}`;
-      if (renkaNumbers) line += `.${renkaNumbers}`;
-      if (osaeNumbers) line += `(抑え${osaeNumbers})`;
-      umatanLines.push(line);
-    }
+        let line = `${honmei.number}-${aite}`;
+        if (renkaNumbers) line += `.${renkaNumbers}`;
+        if (osaeNumbers) line += `(抑え${osaeNumbers})`;
+        umatanLines.push(line);
+      }
 
-    if (taikou) {
-      // 対抗軸：相手から対抗を除外
-      const aite = main.filter(h => h.number !== taikou.number).map(h => h.number).join('.');
-      const renkaNumbers = renka.map(h => h.number).join('.');
-      const osaeNumbers = osae.map(h => h.number).join('.');
+      if (taikou) {
+        const aite = main.filter(h => h.number !== taikou.number).map(h => h.number).join('.');
+        const renkaNumbers = renka.map(h => h.number).join('.');
+        const osaeNumbers = osae.map(h => h.number).join('.');
 
-      let line = `${taikou.number}-${aite}`;
-      if (renkaNumbers) line += `.${renkaNumbers}`;
-      if (osaeNumbers) line += `(抑え${osaeNumbers})`;
-      umatanLines.push(line);
+        let line = `${taikou.number}-${aite}`;
+        if (renkaNumbers) line += `.${renkaNumbers}`;
+        if (osaeNumbers) line += `(抑え${osaeNumbers})`;
+        umatanLines.push(line);
+      }
     }
 
     return {
