@@ -84,7 +84,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   }
   </script>
 
-  <!-- 🔒 Standard/Premium会員専用認証チェック（クライアントサイドJavaScript） -->
+  <!-- 🔒 Premium会員専用認証チェック（クライアントサイドJavaScript） -->
   <script is:inline>
     // LocalStorageからプラン情報取得
     // 🔴 重要: user-planオブジェクトから取得（premium-predictions.astroと同じロジック）
@@ -129,7 +129,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     console.log('Email:', userEmail);
     console.log('Plan:', userPlan);
 
-    // Standard・Premium会員のみアクセス可能（大文字小文字区別なし）
+    // Premium会員のみアクセス可能（大文字小文字区別なし）
     // Premium Combo・Premium Sanrenpukuはアクセス不可
     // ※Premium Plusは単発商品（会員プランではない）のため判定不要
     const planLower = userPlan ? userPlan.toLowerCase() : '';
@@ -139,16 +139,15 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
     // 原因: planLower === 'premium' のみチェック → 'premium predictions'は弾かれる
     // 解決: 'Premium' と 'Premium Predictions' の両方に明示的に対応
     const isPremium = planLower === 'premium' || planLower === 'premium predictions';
-    const isStandard = planLower === 'standard';
 
     // 🔴 emailチェック削除（2025-11-05）: プラン判定のみで十分
     // 理由: user-planオブジェクトが存在しない環境でもuserPlanは取得できるため
-    if (!userPlan || (!isStandard && !isPremium)) {
+    if (!userPlan || !isPremium) {
       console.log('❌ アクセス拒否 - planLower:', planLower);
-      alert('この機能はStandard/Premium会員専用です。\n\nStandard会員以上にアップグレードすると、三連複的中実績をご覧いただけます。');
+      alert('この機能はPremium会員専用です。\n\nPremium会員にアップグレードすると、三連複的中実績をご覧いただけます。');
       window.location.href = '/premium-prediction/nankan';
     } else {
-      console.log('✅ アクセス許可 - isPremium:', isPremium, 'isStandard:', isStandard);
+      console.log('✅ アクセス許可 - isPremium:', isPremium);
     }
   </script>
 

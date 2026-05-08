@@ -71,7 +71,7 @@ const description = 'KEIBA Analyticsの三連複買い目的中実績を年別�
 ---
 
 <BaseLayout title={title} description={description}>
-  <!-- 🔒 Standard/Premium会員専用認証チェック（クライアントサイドJavaScript） -->
+  <!-- 🔒 Premium会員専用認証チェック（クライアントサイドJavaScript） -->
   <script is:inline>
     // LocalStorageからプラン情報取得
     // 🔴 重要: user-planオブジェクトから取得（premium-predictions.astroと同じロジック）
@@ -116,31 +116,26 @@ const description = 'KEIBA Analyticsの三連複買い目的中実績を年別�
     console.log('Email:', userEmail);
     console.log('Plan:', userPlan);
 
-    // Standard・Premium会員のみアクセス可能（大文字小文字区別なし）
+    // Premium会員のみアクセス可能（大文字小文字区別なし）
     // Premium Combo・Premium Sanrenpukuはアクセス不可
     // ※Premium Plusは単発商品（会員プランではない）のため判定不要
     const planLower = userPlan ? userPlan.toLowerCase() : '';
 
-    // 🔴 三連複アーカイブアクセス制御（2025-11-09修正）
-    // アクセス可能: Standard / Premium / Premium Predictions
-    // アクセス不可: Free / Premium Sanrenpuku / Premium Combo
-    //
-    // 理由: Standard/Premium会員へのアップセル導線のため、
-    //       既に三連複を購入済みの会員（Sanrenpuku/Combo）は閲覧不要
+    // 🔴 三連複アーカイブアクセス制御（2026-05-08修正: Standard廃止に伴いPremiumのみへ）
+    // アクセス可能: Premium / Premium Predictions
+    // アクセス不可: Free / Standard / Premium Sanrenpuku / Premium Combo
     const isPremium = planLower === 'premium' || planLower === 'premium predictions';
-    const isStandard = planLower === 'standard';
-    const isAllowed = isStandard || isPremium;
+    const isAllowed = isPremium;
 
     console.log('🔍 三連複アーカイブアクセス判定:');
     console.log('  userPlan:', userPlan);
     console.log('  planLower:', planLower);
-    console.log('  isStandard:', isStandard);
     console.log('  isPremium:', isPremium);
     console.log('  isAllowed:', isAllowed);
 
     if (!userPlan || !isAllowed) {
       console.log('❌ アクセス拒否');
-      alert('この機能はStandard/Premium会員専用です。\n\nStandard会員以上にアップグレードすると、三連複的中実績をご覧いただけます。');
+      alert('この機能はPremium会員専用です。\n\nPremium会員にアップグレードすると、三連複的中実績をご覧いただけます。');
       window.location.href = '/premium-prediction/nankan';
     } else {
       console.log('✅ アクセス許可');
