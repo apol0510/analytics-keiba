@@ -5,6 +5,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
+import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { enrichHorse } from '../../lib/horseEnrichment.js';
 
 export const prerender = true;
@@ -128,7 +129,9 @@ try {
 // generateAdvancedMetrics imported from featureScores.js
 
 // 馬単買い目を生成する関数（横並び馬番号形式）
-function generateUmatanBets(horses) {
+// メインレースは本命軸のみ・上位5頭・抑えなし（importPredictionJra.js の10点ロジックと一致）。
+// 通常レースは本命軸 + 対抗軸の従来表示。
+function generateUmatanBets(horses, raceNumber, venueRaces) {
   // pt値でソート（降順）
   const sortedHorses = [...horses].sort((a, b) => b.pt - a.pt);
 
@@ -137,7 +140,25 @@ function generateUmatanBets(horses) {
   const taikou = sortedHorses.find(h => h.role === '対抗');
   const tananaList = sortedHorses.filter(h => h.role === '単穴');
 
-  if (!honmei || !taikou) return null;
+  if (!honmei) return null;
+
+  // メインレース: 本命軸 1行 / 上位5頭 / 対抗軸ラインなし
+  if (isMainRace(raceNumber, venueRaces)) {
+    const top5 = getTop5Challengers(horses);
+    const opponents = top5
+      .map(h => h.horseNumber ?? h.number)
+      .filter(n => n != null && n !== honmei.horseNumber);
+    return {
+      honmei: {
+        axis: honmei.horseNumber,
+        axisName: honmei.horseName,
+        opponents
+      },
+      taikou: null
+    };
+  }
+
+  if (!taikou) return null;
 
   // 連下候補（連下最上位・連下・補欠のみ）
   const renkaList = sortedHorses.filter(h =>
@@ -282,7 +303,7 @@ function generateUmatanBets(horses) {
               const sortedHorses = sortHorsesByRole(horsesWithMetrics);
 
               // 買い目生成
-              const umatanBets = generateUmatanBets(allHorses);
+              const umatanBets = generateUmatanBets(allHorses, race.raceInfo.raceNumber, venuePredictions.length);
 
               // モデル統計
               const avgConfidence = (horsesWithMetrics.reduce((sum, h) =>
@@ -437,38 +458,40 @@ function generateUmatanBets(horses) {
                           </div>
                         </div>
 
-                        <!-- 対抗軸 -->
-                        <div class="formula-row taikou-axis">
-                          <div class="formula-header">
-                            <span class="axis-mark">○</span>
-                            <span class="axis-text">対抗</span>
-                            <span class="axis-horse-name">{umatanBets.taikou.axisName}</span>
+                        <!-- 対抗軸（メインレースは描画しない） -->
+                        {umatanBets.taikou && (
+                          <div class="formula-row taikou-axis">
+                            <div class="formula-header">
+                              <span class="axis-mark">○</span>
+                              <span class="axis-text">対抗</span>
+                              <span class="axis-horse-name">{umatanBets.taikou.axisName}</span>
+                            </div>
+                            <div class="formula-content">
+                              <span class="axis-number">{umatanBets.taikou.axis}</span>
+                              <span class="formula-arrow">⇔</span>
+                              <span class="opponents-list">
+                                {umatanBets.taikou.opponents.slice(0, 5).map((num, idx) => (
+                                  <>
+                                    <span class="opponent-number">{num}</span>
+                                    {idx < Math.min(4, umatanBets.taikou.opponents.length - 1) && <span class="opponent-separator">.</span>}
+                                  </>
+                                ))}
+                                {umatanBets.taikou.opponents.length > 5 && (
+                                  <>
+                                    <span class="opponent-paren">(</span>
+                                    {umatanBets.taikou.opponents.slice(5).map((num, idx) => (
+                                      <>
+                                        <span class="opponent-number optional">{num}</span>
+                                        {idx < umatanBets.taikou.opponents.slice(5).length - 1 && <span class="opponent-separator">.</span>}
+                                      </>
+                                    ))}
+                                    <span class="opponent-paren">)</span>
+                                  </>
+                                )}
+                              </span>
+                            </div>
                           </div>
-                          <div class="formula-content">
-                            <span class="axis-number">{umatanBets.taikou.axis}</span>
-                            <span class="formula-arrow">⇔</span>
-                            <span class="opponents-list">
-                              {umatanBets.taikou.opponents.slice(0, 5).map((num, idx) => (
-                                <>
-                                  <span class="opponent-number">{num}</span>
-                                  {idx < Math.min(4, umatanBets.taikou.opponents.length - 1) && <span class="opponent-separator">.</span>}
-                                </>
-                              ))}
-                              {umatanBets.taikou.opponents.length > 5 && (
-                                <>
-                                  <span class="opponent-paren">(</span>
-                                  {umatanBets.taikou.opponents.slice(5).map((num, idx) => (
-                                    <>
-                                      <span class="opponent-number optional">{num}</span>
-                                      {idx < umatanBets.taikou.opponents.slice(5).length - 1 && <span class="opponent-separator">.</span>}
-                                    </>
-                                  ))}
-                                  <span class="opponent-paren">)</span>
-                                </>
-                              )}
-                            </span>
-                          </div>
-                        </div>
+                        )}
                       </div>
                       <!-- /プロ会員向け完全買い目 -->
                     </div>
