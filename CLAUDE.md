@@ -64,6 +64,95 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 詳細仕様は `astro-site/docs/BET_POINT_LOGIC.md` を参照。
 閾値を変更する場合は **コードと MD を必ず両方更新**すること。
 
+## 🎯 メインレース10点ロジック
+
+メインレースの買い目は **全プラン共通で最大10点** に統一する（2026-05-08〜）。
+上位プランへの導線は「買い目数の増加」ではなく「**閲覧できるレース数の増加**」で作る方針。
+ユーザーは10点超の買い目を嫌うため、上位プランでもメインレースは10点を超えない。
+
+### メインレース判定（会場別レース数で判定）
+
+`src/utils/mainRaceBetting.js` の `getMainRaceNumber(totalRaces)`：
+
+| 開催レース数 | メインレース番号 |
+|---|---|
+| 12R | **R11** |
+| 10R | **R9** |
+| 8R | **R7** |
+| その他 | 最終レース（フォールバック） |
+
+`src/lib/race-config.js` の `RACE_TIERS` / `getMainRaceNumber()` と同一の判定基準。
+複数会場同日開催（南関 大井+船橋、JRA 3場×12R など）は **会場別にレース数を数えてから判定**。
+`importResults*.js` / `importPrediction*.js` 内で `racesByVenue` Map を構築し、各 race の venue 別レース数で判定する。
+
+### 10点買い目生成ロジック
+
+メインレースのみ：
+
+1. **本命を軸**にする（**対抗軸の2行目は生成しない**）
+2. 相手は本命を除く **役割優先で上位5頭**
+   - 役割優先順: 対抗 → 単穴 → 連下最上位 → 連下
+   - 同役割内は `pt`（displayScore/rawScore）降順
+3. 1行コンパクト形式で保存: `"{本命}-{c1}.{c2}.{c3}.{c4}.{c5}"`
+4. **5頭未満なら拾えた分のみ**（パディング・補欠埋めはしない）
+
+例：本命3、上位5頭=5,7,8,10,12 → `bettingLines: ["3-5.7.8.10.12"]` の1行
+
+### 的中判定との整合性
+
+既存 `checkUmatanHit` が双方向判定するため、上記1行で：
+
+- 本命→相手（3→5, 3→7, ..., 3→12）= 5点
+- 相手→本命（5→3, 7→3, ..., 12→3）= 5点
+- **合計10点が自然に成立**
+
+**表示・的中判定・archive保存で同じ `bettingLines` 文字列を使用**。別ロジックの混入なし。
+
+### archiveResults.json 保存形式（メインレース）
+
+```json
+{
+  "raceNumber": 11,
+  "venue": "大井",
+  "bettingLines": ["3-5.7.8.10.12"],
+  "isHit": true,
+  "hitLines": ["3-5.7.8.10.12"],
+  "umatan": { "combination": "3-5", "payout": 1200 },
+  "betType": "馬単",
+  "betPoints": 10
+}
+```
+
+メインレースのみ per-race `betPoints` を実本数（top5×2、最大10）で記録。
+通常レースは従来通り `betPointsPerRace`（payout 由来ヒューリスティック）を per-race にも埋め込む。
+
+### 通常レース（メイン以外）
+
+**既存ロジックを維持**：
+
+- 本命軸 + 対抗軸の2行
+- 連下・抑えを含む既存フォーマット（例: `"4-1.11.2.5.7(抑え10.8.6)"`）
+- `betPoints` は payout 由来ヒューリスティック（`betPointsPerRace`）
+
+### 関連ファイル
+
+| 目的 | ファイル |
+|---|---|
+| ロジック本体 | `astro-site/src/utils/mainRaceBetting.js` |
+| 既存メイン判定（プラン tier） | `astro-site/src/lib/race-config.js` |
+| 予想取込（買い目生成） | `astro-site/scripts/importPrediction.js`, `importPredictionJra.js` |
+| 結果取込（メインのみ betPoints 上書き） | `astro-site/scripts/importResults.js`, `importResultsJra.js` |
+| 表示（プラン分岐 / クライアント側 isMainRace） | `astro-site/src/pages/premium-prediction/jra.astro` |
+
+### 過去archive
+
+新ロジックは **新規取込分から適用**。過去の archiveResults エントリは旧フォーマットのまま残る（再生成は別タスク）。
+
+### keiba-intelligence との整合
+
+姉妹repo `keiba-intelligence` にも同じ `src/utils/mainRaceBetting.js` を配置済み。
+**両 repo で同じ判定式・同じ買い目生成ロジック**を使うため、メインレース判定や10点ロジックを変更する場合は **両 repo を同時に更新する**。
+
 ## 🧠 予想ロジック（スコア・役割決定）
 
 本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の
