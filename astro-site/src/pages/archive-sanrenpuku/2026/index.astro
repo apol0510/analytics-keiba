@@ -4,13 +4,15 @@ import archiveData2026_01 from '../../../data/archiveSanrenpukuResults_2026-01.j
 import archiveData2026_02 from '../../../data/archiveSanrenpukuResults_2026-02.json';
 import archiveData2026_03 from '../../../data/archiveSanrenpukuResults_2026-03.json';
 import archiveData2026_04 from '../../../data/archiveSanrenpukuResults_2026-04.json';
+import archiveData2026_05 from '../../../data/archiveSanrenpukuResults_2026-05.json';
 
 const year = '2026';
 const yearData = {
   ...archiveData2026_01[year],
   ...archiveData2026_02[year],
   ...archiveData2026_03[year],
-  ...archiveData2026_04[year]
+  ...archiveData2026_04[year],
+  ...archiveData2026_05[year]
 };
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 
