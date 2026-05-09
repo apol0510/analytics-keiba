@@ -16,16 +16,16 @@ export default defineConfig({
       // SEO最適化：優先度・更新頻度設定
       customPages: [
         // 最優先ページ（毎日更新）
-        'https://nankan-analytics.keiba.link/free-prediction/',
-        'https://nankan-analytics.keiba.link/premium-predictions/',
-        'https://nankan-analytics.keiba.link/standard-predictions/',
+        'https://analytics.keiba.link/free-prediction/',
+        'https://analytics.keiba.link/premium-predictions/',
+        'https://analytics.keiba.link/standard-predictions/',
         // 高優先ページ（週1回更新）
-        'https://nankan-analytics.keiba.link/free-prediction/archive/',
-        'https://nankan-analytics.keiba.link/dark-horse-picks/',
+        'https://analytics.keiba.link/free-prediction/archive/',
+        'https://analytics.keiba.link/dark-horse-picks/',
         // 中優先ページ（月1回更新）
-        'https://nankan-analytics.keiba.link/',
-        'https://nankan-analytics.keiba.link/pricing/',
-        'https://nankan-analytics.keiba.link/premium-plus/',
+        'https://analytics.keiba.link/',
+        'https://analytics.keiba.link/pricing/',
+        'https://analytics.keiba.link/premium-plus/',
         // アーカイブハブ・カテゴリトップ（SSRのため明示出力）
         'https://analytics.keiba.link/archive/',
         'https://analytics.keiba.link/archive/jra/',
