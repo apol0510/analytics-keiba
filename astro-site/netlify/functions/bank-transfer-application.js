@@ -72,12 +72,16 @@ exports.handler = async (event, context) => {
     }
 
     // 管理者向けメール内容
+    const adminPersonalization = {
+      to: [{ email: ADMIN_EMAIL }],
+      subject: `【銀行振込申請】${email} - ${productName}`
+    };
+    // Make Mailhook転送（環境変数があるときだけ bcc を付ける。空配列は SendGrid が 400 を返す）
+    if (process.env.MAKE_MAILHOOK_EMAIL) {
+      adminPersonalization.bcc = [{ email: process.env.MAKE_MAILHOOK_EMAIL }];
+    }
     const adminEmailData = {
-      personalizations: [{
-        to: [{ email: ADMIN_EMAIL }],
-        bcc: [{ email: process.env.MAKE_MAILHOOK_EMAIL || '' }].filter(item => item.email), // Make Mailhook転送
-        subject: `【銀行振込申請】${email} - ${productName}`
-      }],
+      personalizations: [adminPersonalization],
       from: { email: FROM_EMAIL, name: 'NANKANアナリティクス' },
       content: [{
         type: 'text/html',
