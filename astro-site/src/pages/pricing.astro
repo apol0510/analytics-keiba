@@ -17,99 +17,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
         <!-- プラン比較カード -->
         <div class="plans-container">
-            <!-- ライトプラン（Standard） -->
-            <div class="plan-card">
-                <div class="plan-header">
-                    <h3 class="plan-name">ライト</h3>
-                    <div class="plan-price">
-                        <div class="price-strike">¥5,980</div>
-                        <span class="price-amount">¥4,980</span>
-                        <span class="price-period">/30日</span>
-                    </div>
-                    <p class="plan-description">まずは試したい方に</p>
-                </div>
-
-                <div class="plan-venues" aria-label="対応会場">
-                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
-                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
-                    <span class="plan-venue-note">両方対応</span>
-                </div>
-
-                <ul class="plan-features">
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>メインレースの買い目</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>無料予想</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>高精度AI予想</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>サポート</span>
-                    </li>
-                </ul>
-
-                <button class="plan-button plan-button-standard" onclick="openBankModal('Standard (ライト)', 4980, 'monthly')">
-                    🏦 銀行振込で申し込む
-                </button>
-            </div>
-
-            <!-- プレミアム買い切りプラン（中央・おすすめ）※一時非表示 -->
-            <div class="plan-card plan-card-recommended" style="display: none;">
-                <!-- 人気バッジ -->
-                <div class="recommended-badge">
-                    <span>🔥 今だけ特別価格</span>
-                </div>
-
-                <div class="plan-header">
-                    <h3 class="plan-name">プレミアム買い切り</h3>
-                    <div class="plan-price">
-                        <div class="price-strike">¥108,000</div>
-                        <span class="price-amount">¥78,000</span>
-                        <div class="price-period-lifetime">永久アクセス</div>
-                    </div>
-                    <p class="plan-description">一度きりの支払いで永久に使える</p>
-                </div>
-
-                <div class="plan-venues" aria-label="対応会場">
-                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
-                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
-                    <span class="plan-venue-note">両方対応</span>
-                </div>
-
-                <ul class="plan-features">
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>永久アクセス（追加料金なし）</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>全レース（1R〜12R）の買い目</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>高精度AI予想</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>詳細な投資戦略</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>優先サポート</span>
-                    </li>
-                </ul>
-
-                <button class="plan-button plan-button-lifetime" onclick="openBankModal('Premium Lifetime', 78000, 'lifetime')">
-                    🏦 銀行振込で申し込む
-                </button>
-            </div>
-
             <!-- プレミアム年払いプラン -->
             <div class="plan-card plan-card-recommended">
                 <div class="recommended-badge">
@@ -197,6 +104,48 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 </button>
             </div>
 
+            <!-- ライトプラン（Standard） -->
+            <div class="plan-card">
+                <div class="plan-header">
+                    <h3 class="plan-name">ライト</h3>
+                    <div class="plan-price">
+                        <div class="price-strike">¥5,980</div>
+                        <span class="price-amount">¥4,980</span>
+                        <span class="price-period">/30日</span>
+                    </div>
+                    <p class="plan-description">有料版を試したい方に</p>
+                </div>
+
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
+                </div>
+
+                <ul class="plan-features">
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span><strong>メインレースの買い目</strong></span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>無料予想</span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>高精度AI予想</span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>サポート</span>
+                    </li>
+                </ul>
+
+                <button class="plan-button plan-button-standard" onclick="openBankModal('Standard (ライト)', 4980, 'monthly')">
+                    🏦 銀行振込で申し込む
+                </button>
+            </div>
+
             <!-- 無料プラン -->
             <div class="plan-card">
                 <div class="plan-header">
@@ -231,6 +180,57 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <a href="/free-signup/" class="plan-button plan-button-free">
                     無料会員登録
                 </a>
+            </div>
+
+            <!-- プレミアム買い切りプラン（中央・おすすめ）※一時非表示 -->
+            <div class="plan-card plan-card-recommended" style="display: none;">
+                <!-- 人気バッジ -->
+                <div class="recommended-badge">
+                    <span>🔥 今だけ特別価格</span>
+                </div>
+
+                <div class="plan-header">
+                    <h3 class="plan-name">プレミアム買い切り</h3>
+                    <div class="plan-price">
+                        <div class="price-strike">¥108,000</div>
+                        <span class="price-amount">¥78,000</span>
+                        <div class="price-period-lifetime">永久アクセス</div>
+                    </div>
+                    <p class="plan-description">一度きりの支払いで永久に使える</p>
+                </div>
+
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
+                </div>
+
+                <ul class="plan-features">
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span><strong>永久アクセス（追加料金なし）</strong></span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span><strong>全レース（1R〜12R）の買い目</strong></span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>高精度AI予想</span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>詳細な投資戦略</span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>優先サポート</span>
+                    </li>
+                </ul>
+
+                <button class="plan-button plan-button-lifetime" onclick="openBankModal('Premium Lifetime', 78000, 'lifetime')">
+                    🏦 銀行振込で申し込む
+                </button>
             </div>
         </div>
 
