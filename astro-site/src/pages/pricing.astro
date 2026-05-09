@@ -29,6 +29,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     <p class="plan-description">まずは試したい方に</p>
                 </div>
 
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
+                </div>
+
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -68,6 +74,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <div class="price-period-lifetime">永久アクセス</div>
                     </div>
                     <p class="plan-description">一度きりの支払いで永久に使える</p>
+                </div>
+
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
                 </div>
 
                 <ul class="plan-features">
@@ -111,6 +123,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     </div>
                 </div>
 
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
+                </div>
+
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -149,6 +167,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     </div>
                 </div>
 
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
+                </div>
+
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -181,6 +205,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <span class="price-amount">¥0</span>
                     </div>
                     <p class="plan-description">お試ししたい方に</p>
+                </div>
+
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">両方対応</span>
                 </div>
 
                 <ul class="plan-features">
@@ -668,6 +698,58 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     .plan-description {
         color: #94a3b8;
         font-size: 1rem;
+    }
+
+    /* 対応会場バッジ */
+    .plan-venues {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        margin: 0 0 1.5rem;
+        padding: 0.75rem;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+    }
+
+    .plan-venue-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+
+    .plan-venue-pill small {
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        opacity: 0.85;
+        margin-left: 2px;
+    }
+
+    .plan-venue-pill--jra {
+        background: rgba(16, 185, 129, 0.18);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .plan-venue-pill--nankan {
+        background: rgba(239, 68, 68, 0.16);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    .plan-venue-note {
+        color: #cbd5e1;
+        font-size: 0.78rem;
+        font-weight: 600;
+        opacity: 0.8;
     }
 
     /* 機能リスト */
