@@ -329,7 +329,6 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         <ul class="venue-card__links">
                             <li><a href="/free-prediction/jra/">🎁 無料で中央競馬予想を見る →</a></li>
                             <li><a href="/archive/jra/">🏆 中央競馬の的中実績を見る</a></li>
-                            <li><a href="/pricing/#jra">💰 中央競馬の料金プラン</a></li>
                         </ul>
                     </article>
 
@@ -340,9 +339,13 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                         <ul class="venue-card__links">
                             <li><a href="/free-prediction/nankan/">🎁 無料で南関競馬予想を見る →</a></li>
                             <li><a href="/archive/nankan/">🏆 南関競馬の的中実績を見る</a></li>
-                            <li><a href="/pricing/#nankan">💰 南関競馬の料金プラン</a></li>
                         </ul>
                     </article>
+                </div>
+
+                <div class="venue-selector-pricing">
+                    <span class="venue-selector-pricing__badge">1プランで両方対応</span>
+                    <a href="/pricing/" class="venue-selector-pricing__link">💰 料金プランを見る →</a>
                 </div>
             </section>
 
@@ -1246,6 +1249,41 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             .venue-selector-grid {
                 grid-template-columns: 1.1fr 0.9fr;
             }
+        }
+        .venue-selector-pricing {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 14px;
+            margin-top: 28px;
+            padding: 18px 24px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .venue-selector-pricing__badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #ecfdf5;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+        }
+        .venue-selector-pricing__link {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #93c5fd;
+            text-decoration: none;
+            transition: color 0.2s ease, transform 0.2s ease;
+        }
+        .venue-selector-pricing__link:hover {
+            color: #ffffff;
+            transform: translateX(2px);
         }
         .venue-card {
             position: relative;
