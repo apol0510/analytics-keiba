@@ -205,6 +205,29 @@ export function pickLatestAndAdapt(modules, opts = {}) {
   return adapted;
 }
 
+/**
+ * 最新日付の南関全会場をまとめて返す（同時開催対応）。
+ * 例: 2026-05-15 に 大井 と 船橋 が開催されている場合、両方を venues 配列で返す。
+ *
+ * @param {Record<string, any>} modules - import.meta.glob の結果
+ * @returns {{raceDate:string, totalVenues:number, venues:Array<{venueSlug:string, raceDate:string, track:string, totalRaces:number, races:Array, _sourceFile:string}>}|null}
+ */
+export function pickLatestNankanVenuesAndAdapt(modules) {
+  const entries = listNankanPredictionEntries(modules);
+  if (entries.length === 0) return null;
+  const latestDate = entries[0].date;
+  const latestEntries = entries.filter((e) => e.date === latestDate);
+  const venues = latestEntries.map((e) => {
+    const adapted = adaptNewToLegacy(e.data);
+    return { ...adapted, venueSlug: e.venueSlug, _sourceFile: e.path };
+  });
+  return {
+    raceDate: latestDate,
+    totalVenues: venues.length,
+    venues,
+  };
+}
+
 // ============================================================
 // JRA 用（multi-venue スキーマ）
 // ============================================================

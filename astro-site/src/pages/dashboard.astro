@@ -163,32 +163,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <a href="/free-prediction/nankan/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- 船橋競馬 無料予想 -->
-                    <div id="free-predictions-funabashi" class="prediction-card free">
-                        <div class="card-header">
-                            <h3>🎁 船橋競馬 無料予想</h3>
-                            <span class="plan-badge free">FREE</span>
-                        </div>
-                        <div class="race-info">
-                            <div class="race-title">全レース（無料）</div>
-                            <div class="confidence">AI分析完了！</div>
-                        </div>
-                        <a href="/free-prediction-funabashi/" class="view-btn">船橋予想を見る</a>
-                    </div>
-
-                    <!-- 浦和競馬 無料予想 -->
-                    <div id="free-predictions-urawa" class="prediction-card free">
-                        <div class="card-header">
-                            <h3>🎁 浦和競馬 無料予想</h3>
-                            <span class="plan-badge free">FREE</span>
-                        </div>
-                        <div class="race-info">
-                            <div class="race-title">全レース（無料）</div>
-                            <div class="confidence">AI分析完了！</div>
-                        </div>
-                        <a href="/free-prediction-urawa/" class="view-btn">浦和予想を見る</a>
-                    </div>
-
                     <!-- Standard予想 -->
                     <div id="standard-predictions" class="prediction-card standard" style="display: none;">
                         <div class="card-header">
@@ -1411,15 +1385,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
             // 無料予想の表示制御
             if (planLower === 'free' || planLower === '' || !planLower) {
-                console.log('無料予想を表示（Free会員・メイン＋船橋＋浦和）');
+                console.log('無料予想を表示（Free会員）');
                 document.getElementById('free-predictions').style.display = 'block';
-                document.getElementById('free-predictions-funabashi').style.display = 'block';
-                document.getElementById('free-predictions-urawa').style.display = 'block';
             } else {
                 console.log('無料予想を非表示（有料会員）');
                 document.getElementById('free-predictions').style.display = 'none';
-                document.getElementById('free-predictions-funabashi').style.display = 'none';
-                document.getElementById('free-predictions-urawa').style.display = 'none';
             }
 
             // Standard予想の表示制御（Standard会員のみ・既存会員のみ表示）

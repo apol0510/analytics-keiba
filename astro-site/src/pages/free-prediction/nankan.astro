@@ -3,50 +3,52 @@ export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../../lib/shared-prediction-logic.js';
-import { pickLatestAndAdapt } from '../../lib/adaptLatestPrediction.js';
+import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 
-// src/data/predictions/*.json を自動スキャンし、最新日付のファイルを選択して旧スキーマに変換
+// src/data/predictions/*.json を自動スキャンし、最新日付の全会場を取得（同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
-const allRacesData = pickLatestAndAdapt(predictionModules);
+const multiVenueData = pickLatestNankanVenuesAndAdapt(predictionModules);
 
-if (!allRacesData) {
+if (!multiVenueData || multiVenueData.venues.length === 0) {
     throw new Error('予想データが見つかりません。src/data/predictions/ に有効な JSON がありません。');
 }
 
-// 共有ロジックを使用してデータを処理
-const { mainRace, race12R: originalRace12R, sortedRaces } = processRaceData(allRacesData);
+// 各会場ごとに必要な派生データを構築
+const venuesProcessed = multiVenueData.venues.map((venueRaw) => {
+    const { mainRace } = processRaceData(venueRaw);
+    if (!mainRace) {
+        throw new Error(`メインレースが見つかりません。source=${venueRaw._sourceFile}`);
+    }
+    const raceData = processUnifiedRaceData(mainRace);
+    return {
+        allRacesData: venueRaw,
+        venueSlug: venueRaw.venueSlug,
+        track: venueRaw.track,
+        raceDate: venueRaw.raceDate,
+        mainRace,
+        raceInfo: mainRace.raceInfo,
+        normalizedHorses: normalizeHorseData(mainRace),
+        strategies: {
+            safe: raceData.strategies.safe,
+            balance: raceData.strategies.balance,
+            aggressive: raceData.strategies.aggressive,
+        },
+        mainHorseScore: getHorseConfidenceFromMark(mainRace.horses.main),
+        subHorseScore: getHorseConfidenceFromMark(mainRace.horses.sub),
+    };
+});
 
-if (!mainRace) {
-    throw new Error(`メインレースが見つかりません。source=${allRacesData._sourceFile}`);
-}
+const isMultiVenue = venuesProcessed.length > 1;
+const firstVenue = venuesProcessed[0];
 
-// 日付と会場を取得
-const raceDate = allRacesData.raceDate; // "2025-09-18"
-const track = allRacesData.track;
-
-// 日付を日本語形式に変換
+// ページ全体の日付情報（会場共通）
+const raceDate = multiVenueData.raceDate;
 const [year, month, day] = raceDate.split('-');
 const formattedDate = `${parseInt(month)}月${parseInt(day)}日`;
 
-// Free会員向け: 全レース予想・分析閲覧可能（買い目は非表示）
-
-// メインレースのデータを取得
-const { raceInfo, horses, analysis, preview, allHorses, totalHorses } = mainRace;
-
-// 正規化されたホースデータ（メインレース用）
-const normalizedHorses = normalizeHorseData(mainRace);
-
-// 統一システムで戦略データを生成（動的買い目対応）
-const raceData = processUnifiedRaceData(mainRace);
-const strategies = {
-    safe: raceData.strategies.safe,
-    balance: raceData.strategies.balance,
-    aggressive: raceData.strategies.aggressive
-};
-
-// スコア表示用のスコア変数を定義
-const mainHorseScore = getHorseConfidenceFromMark(mainRace.horses.main);
-const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
+// SEO・サマリー用に最初の会場のメインレース情報を採用
+const { raceInfo } = firstVenue;
+const analysis = firstVenue.mainRace.analysis;
 ---
 
 <BaseLayout title={`AI予想分析 | ${raceInfo.title}`} description={`AI技術による${raceInfo.track}競馬${raceInfo.raceName}の詳細分析。機械学習モデルによる高精度予想を無料で提供中。`}>
@@ -57,9 +59,30 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
                 <span class="pulse"></span>
                 <span class="ai-status">AI分析完了</span>
             </div>
-            <h1 class="race-title">{formattedDate}{track}{raceInfo.raceName}</h1>
+            <h1 class="race-title">
+                {isMultiVenue
+                    ? `${formattedDate} 南関競馬 ${venuesProcessed.length}会場`
+                    : `${formattedDate}${firstVenue.track}${raceInfo.raceName}`}
+            </h1>
             <!-- 余計な詳細指標を削除し、シンプルに -->
         </div>
+
+        <!-- 会場タブ（同時開催の場合のみ表示） -->
+        {isMultiVenue && (
+            <div class="venue-selector">
+                {venuesProcessed.map((v, i) => (
+                    <button
+                        class={`venue-btn ${i === 0 ? 'active' : ''}`}
+                        data-venue-index={i}
+                        type="button"
+                        onclick="selectNankanVenue(this)"
+                    >
+                        <span class="venue-label">{v.track}</span>
+                        <span class="venue-race-count">{v.allRacesData.races.length}R</span>
+                    </button>
+                ))}
+            </div>
+        )}
 
         <!-- 穴馬ページリンク -->
         <div class="dark-horse-link-section">
@@ -74,7 +97,13 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
         </div>
 
         <!-- プレミアムと100%同じアコーディオンシステム -->
-        <section style="margin-bottom: 60px;">
+        {venuesProcessed.map((venueData, venueIndex) => (
+        <section class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex} style="margin-bottom: 60px;">
+            {isMultiVenue && (
+                <div class="venue-header-inline">
+                    <h2 class="venue-title-inline">{venueData.track}（{venueData.allRacesData.races.length}R）</h2>
+                </div>
+            )}
             <div class="analysis-section">
                 <h2 style="font-size: 2.5rem; font-weight: 800; color: var(--primary-color); text-align: center; margin-bottom: 15px;">
                     👀 全レースプレビュー
@@ -85,7 +114,7 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
 
                 <!-- 全レースアコーディオン（1R-12R順番通り） -->
                 <div style="display: grid; gap: 10px;">
-                    {allRacesData.races.map((raceData) => {
+                    {venueData.allRacesData.races.map((raceData) => {
                         const raceNum = raceData.raceNumber.replace('R', '');
                         const isMainRace = raceData.isMainRace;
 
@@ -102,9 +131,11 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
                             raceStrategies = processedData.strategies;
                         }
 
+                        const accordionId = `race-v${venueIndex}-${raceNum}r`;
+                        const toggleId = `toggle-v${venueIndex}-${raceNum}r`;
                         return (
                             <div class={`race-${raceNum}r-accordion`}>
-                                <div class="race-accordion-header" onclick={`toggleRace${raceNum}R()`}>
+                                <div class="race-accordion-header" onclick={`toggleNankanRace(${venueIndex}, ${raceNum})`}>
                                     <div class="race-basic-info">
                                         <span class="race-number">{raceData.raceNumber}</span>
                                         <span class="race-name">{(raceData.raceName || '競走名').replace(/\s*[ダ芝]\d+[,.]?\d*m.*$/, '').replace(/\s*（\d+頭）.*$/, '').replace(/\s*発走時刻.*$/, '')}</span>
@@ -112,11 +143,11 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
                                         {isMainRace && <span class="main-race-badge">メインレース</span>}
                                     </div>
                                     <div class="race-preview">
-                                        <span class="toggle-icon" id={`toggle-${raceNum}r`}>▼</span>
+                                        <span class="toggle-icon" id={toggleId}>▼</span>
                                     </div>
                                 </div>
 
-                                <div class="race-accordion-content" id={`race-${raceNum}r`} style="max-height: 0; opacity: 0;">
+                                <div class="race-accordion-content" id={accordionId} style="max-height: 0; opacity: 0;">
                                     <div class={`race-content-${raceNum}r`}>
 
                                         <!-- レース詳細情報 -->
@@ -351,6 +382,7 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
                 </div>
             </div>
         </section>
+        ))}
 
         <!-- アーカイブリンク -->
         <div class="archive-link-section">
@@ -449,6 +481,75 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
 </BaseLayout>
 
 <style>
+    /* 会場切り替え（同時開催対応） */
+    .venue-selector {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin: 0 auto 28px;
+      padding: 8px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      flex-wrap: wrap;
+      max-width: max-content;
+      backdrop-filter: blur(8px);
+    }
+    .venue-btn {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 10px 24px;
+      background: transparent;
+      color: #cbd5e1;
+      border: none;
+      border-radius: 999px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .venue-btn:hover {
+      background: rgba(139, 92, 246, 0.12);
+      color: #e2e8f0;
+    }
+    .venue-btn.active {
+      background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+      color: white;
+      box-shadow: 0 4px 14px rgba(139, 92, 246, 0.45);
+    }
+    .venue-label {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .venue-race-count {
+      font-size: 0.78rem;
+      opacity: 0.85;
+      font-weight: 700;
+    }
+    @media (max-width: 768px) {
+      .venue-selector { max-width: 100%; gap: 4px; padding: 6px; }
+      .venue-btn { padding: 8px 16px; }
+      .venue-label { font-size: 0.95rem; }
+    }
+    .venue-content { display: none; }
+    .venue-content.active { display: block; }
+    .venue-header-inline {
+      text-align: center;
+      margin: 0 0 24px;
+      padding: 16px;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%);
+      border-radius: 12px;
+      border: 2px solid rgba(139, 92, 246, 0.3);
+    }
+    .venue-title-inline {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #e9d5ff;
+      margin: 0;
+    }
+
     .container {
         max-width: 1000px;
         margin: 0 auto;
@@ -2192,10 +2293,17 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
 </style>
 
 <script is:inline>
+    // 会場タブ切り替え（同時開催対応）
+    function selectNankanVenue(btn) {
+        const idx = btn.getAttribute('data-venue-index');
+        document.querySelectorAll('.venue-btn').forEach((b) => b.classList.toggle('active', b.getAttribute('data-venue-index') === idx));
+        document.querySelectorAll('.venue-content').forEach((c) => c.classList.toggle('active', c.getAttribute('data-venue-index') === idx));
+    }
+
     function toggleAccordion(id) {
         const content = document.getElementById(id);
         const icon = document.getElementById(id + 'Icon');
-        
+
         if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
             content.style.maxHeight = content.scrollHeight + 'px';
             content.style.opacity = '1';
@@ -2332,48 +2440,39 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
         });
     }
 
-    // アコーディオン共通化: 一つ開けたら他を自動で閉じる（premium-predictions.astroから完全移植）
-    function createToggleFunction(raceNumber) {
-        return function() {
-            const content = document.getElementById(`race-${raceNumber}r`);
-            const icon = document.getElementById(`toggle-${raceNumber}r`);
+    // アコーディオン共通化: 一つ開けたら他を自動で閉じる（同時開催対応：会場ごとにスコープ）
+    function toggleNankanRace(venueIndex, raceNumber) {
+        const content = document.getElementById(`race-v${venueIndex}-${raceNumber}r`);
+        const icon = document.getElementById(`toggle-v${venueIndex}-${raceNumber}r`);
+        if (!content || !icon) return;
 
-            if (!content || !icon) return;
-
-            // 他のアコーディオンをすべて閉じる
-            for (let i = 1; i <= 12; i++) {
-                if (i !== raceNumber) {
-                    const otherContent = document.getElementById(`race-${i}r`);
-                    const otherIcon = document.getElementById(`toggle-${i}r`);
-                    if (otherContent && otherIcon) {
-                        otherContent.style.maxHeight = '0px';
-                        otherContent.style.opacity = '0';
-                        otherIcon.textContent = '▼';
-                        otherIcon.style.transform = 'rotate(0deg)';
-                    }
+        // 同じ会場の他アコーディオンを閉じる
+        for (let i = 1; i <= 12; i++) {
+            if (i !== raceNumber) {
+                const otherContent = document.getElementById(`race-v${venueIndex}-${i}r`);
+                const otherIcon = document.getElementById(`toggle-v${venueIndex}-${i}r`);
+                if (otherContent && otherIcon) {
+                    otherContent.style.maxHeight = '0px';
+                    otherContent.style.opacity = '0';
+                    otherIcon.textContent = '▼';
+                    otherIcon.style.transform = 'rotate(0deg)';
                 }
             }
+        }
 
-            // 現在のアコーディオンの状態をチェックして開く
-            if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-                content.style.maxHeight = content.scrollHeight + 'px';
-                content.style.opacity = '1';
-                icon.textContent = '◎';
-                icon.style.transform = 'rotate(180deg)';
-            } else {
-                // 既に開いている場合は閉じる
-                content.style.maxHeight = '0px';
-                content.style.opacity = '0';
-                icon.textContent = '▼';
-                icon.style.transform = 'rotate(0deg)';
-            }
-        };
+        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
+            content.style.maxHeight = content.scrollHeight + 'px';
+            content.style.opacity = '1';
+            icon.textContent = '◎';
+            icon.style.transform = 'rotate(180deg)';
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+            icon.textContent = '▼';
+            icon.style.transform = 'rotate(0deg)';
+        }
     }
-
-    // 1R-12Rのすべてのトグル関数を生成
-    for (let i = 1; i <= 12; i++) {
-        window[`toggleRace${i}R`] = createToggleFunction(i);
-    }
+    window.toggleNankanRace = toggleNankanRace;
 
     // デバッグ用：テスト認証関数を直接定義
     window.setTestAuth = function(plan = 'premium') {
