@@ -65,7 +65,9 @@ function buildVenueDisplay(entry) {
       distance: r.distance || r.distanceMeters || null,
       horseCount: r.horseCount || (r.horses?.length ?? null),
       startTime: r.startTime || null,
-      darkHorses: r.darkHorses,
+      darkHorses: [...r.darkHorses]
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
+        .slice(0, 3),
     }))
     .sort((a, b) => parseInt(a.raceNumber) - parseInt(b.raceNumber));
 }
@@ -465,53 +467,79 @@ function formatJpDate(date) {
             });
         }
 
-        function getAINarrative(horse) {
+        const NARRATIVES = {
+            'darkhorse-heavy': [
+                ['前走は厳しい結果だが、別条件での見直しが利く可能性', '人気を落とした分、配当面での妙味あり'],
+                ['前走の着順以上に内容は悪くないと判断', 'ハマれば一考の価値あり'],
+                ['脚質や条件次第で変わり身が期待できるタイプ', '人気の盲点になりやすい'],
+                ['前走から条件が好転すれば見直したい一頭', '相手の一角に押さえる程度で'],
+            ],
+            'darkhorse-mid': [
+                ['前走は崩れたが、好走時とのギャップは大きい', '展開ひとつで上位食い込みも'],
+                ['好走経験があり、ここで巻き返せれば妙味', '配当面で魅力のある一頭'],
+                ['ムラのあるタイプ、ハマった時は注意', '相手の一角として一考'],
+                ['ここ最近は不振だが、内容は着順ほど悪くない', '見直しの余地あり'],
+            ],
+            'darkhorse-close': [
+                ['前走僅差で敗退、能力的には健在', '人気の盲点になりそう'],
+                ['前走4着で見限りにくい一頭', '相手筋に加えたい'],
+                ['前走僅差敗退、AI評価は維持', '配当妙味のある一頭'],
+            ],
+            'darkhorse-na': [
+                ['人気以上の評価ができる一頭', '相手筋に押さえておきたい'],
+                ['人気とのギャップから狙ってみたい', '相手の一角として'],
+                ['目立つ実績はないがAI評価では一考', '配当面で妙味あり'],
+            ],
+            'value-good': [
+                ['好走を続けており、ここでも上位争いが見込める', '人気との比較で割安感あり'],
+                ['成績が安定しており、相手筋として手堅い', 'AI評価でも一定の支持'],
+                ['近走の内容が良く、人気以上の評価が妥当', '相手の一角として一考'],
+                ['崩れにくいタイプ、押さえとして安定感', 'AI評価が支える妙味馬'],
+            ],
+            'value-close': [
+                ['前走4着で安定感もあり、相手筋に', '堅めに買うなら押さえたい'],
+                ['前走僅差で能力健在、AI評価も支持', '相手の一角として'],
+            ],
+            'value-na': [
+                ['データは限定的だがAI評価では妙味あり', '相手筋に押さえておきたい'],
+                ['人気以上に評価できる一頭', '一考の余地あり'],
+            ],
+        };
+
+        function getNarrativeBucket(horse) {
             const isDark = horse.category === 'darkhorse';
             const lf = horse.lastFinish;
             if (isDark) {
-                if (lf != null && lf >= 8) {
-                    return [
-                        '前走大敗で評価を落としているが、AIは依然として高い潜在能力を検出',
-                        '巻き返し余地大の穴候補として推奨'
-                    ];
-                }
-                if (lf != null && lf >= 5) {
-                    return [
-                        '前走凡走から評価を落としているが、AI分析では巻き返し可能性を高評価',
-                        '相手筋として押さえておきたい一頭'
-                    ];
-                }
-                if (lf === 4) {
-                    return [
-                        '前走4着で僅差敗退。AIは依然として上位評価を維持',
-                        '人気以上の好走に期待が持てる'
-                    ];
-                }
-                return [
-                    'AI分析でハイスコアを記録した穴候補',
-                    '人気の盲点を突く一頭として警戒'
-                ];
+                if (lf == null) return 'darkhorse-na';
+                if (lf >= 8) return 'darkhorse-heavy';
+                if (lf >= 5) return 'darkhorse-mid';
+                if (lf === 4) return 'darkhorse-close';
+                return 'darkhorse-na';
             }
-            return [
-                '安定した好走を続けAIが高評価する妙味馬',
-                'AI推奨度の高い堅実な選択肢'
-            ];
+            if (lf == null) return 'value-na';
+            if (lf === 4) return 'value-close';
+            return 'value-good';
         }
 
         function getStarRating(score) {
             const s = Number(score) || 0;
-            const stars = Math.max(1, Math.min(5, Math.round(s / 20)));
+            const stars = Math.max(2, Math.min(5, Math.round(s / 20)));
             return '★'.repeat(stars) + '☆'.repeat(5 - stars);
         }
 
         function buildHorseCardsHtml(horses) {
+            const counters = {};
             return horses.map((h, idx) => {
                 const isDark = h.category === 'darkhorse';
                 const tag = isDark
                     ? '<span class="tag tag-darkhorse">穴馬</span>'
                     : '<span class="tag tag-value">妙味馬</span>';
                 const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
-                const narrative = getAINarrative(h);
+                const bucket = getNarrativeBucket(h);
+                const variants = NARRATIVES[bucket] || NARRATIVES['darkhorse-na'];
+                counters[bucket] = counters[bucket] || 0;
+                const narrative = variants[counters[bucket] % variants.length];
+                counters[bucket]++;
                 const stars = getStarRating(h.score);
                 return `
                     <article class="horse-card ${isDark ? 'is-dark' : 'is-value'}" style="--delay: ${idx * 80}ms">
