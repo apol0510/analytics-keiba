@@ -84,11 +84,31 @@ const totalDarkHorses = venuesForRender.reduce(
 );
 const hasAnyData = totalDarkHorses > 0;
 
-// クライアント JS にレースデータを渡す
+// 前走 finish を抽出（dark-horse.mjs と同じロジック）
+function extractFinishFromPast(pr) {
+  if (!pr) return null;
+  const raw = pr.finish ?? pr.finishPosition ?? pr.position ?? pr.rank ?? pr.chakujun ?? pr.result ?? null;
+  if (raw == null) return null;
+  const digits = String(raw).replace(/[^\d]/g, '');
+  if (!digits) return null;
+  const n = parseInt(digits, 10);
+  return n > 0 ? n : null;
+}
+
+// クライアント JS にレースデータを渡す（dark horses + 各馬の過去走 finish 情報）
 const racesLookup = {};
 for (const v of venuesForRender) {
+  const fullRaces = v.data?.races || [];
   for (const race of v.races) {
     const id = `${v.tabId}:${race.raceNumber}`;
+    const fullRace = fullRaces.find(r => parseInt(r.raceNumber) === parseInt(race.raceNumber));
+    const horsePastInfo = {};
+    for (const dh of race.darkHorses) {
+      const fullHorse = fullRace?.horses?.find(h => String(h.number) === String(dh.number));
+      const past = (fullHorse?.pastRaces || []).slice(0, 5);
+      const finishes = past.map(extractFinishFromPast).filter(n => n != null);
+      horsePastInfo[String(dh.number)] = { count: past.length, finishes };
+    }
     racesLookup[id] = {
       category: v.category,
       venueCode: v.venueCode,
@@ -97,6 +117,7 @@ for (const v of venuesForRender) {
       raceNumber: race.raceNumber,
       raceName: race.raceName,
       darkHorses: race.darkHorses,
+      horsePastInfo,
     };
   }
 }
@@ -467,58 +488,52 @@ function formatJpDate(date) {
             });
         }
 
-        const NARRATIVES = {
-            'darkhorse-heavy': [
-                ['前走は厳しい結果だが、別条件での見直しが利く可能性', '人気を落とした分、配当面での妙味あり'],
-                ['前走の着順以上に内容は悪くないと判断', 'ハマれば一考の価値あり'],
-                ['脚質や条件次第で変わり身が期待できるタイプ', '人気の盲点になりやすい'],
-                ['前走から条件が好転すれば見直したい一頭', '相手の一角に押さえる程度で'],
-            ],
-            'darkhorse-mid': [
-                ['前走は崩れたが、好走時とのギャップは大きい', '展開ひとつで上位食い込みも'],
-                ['好走経験があり、ここで巻き返せれば妙味', '配当面で魅力のある一頭'],
-                ['ムラのあるタイプ、ハマった時は注意', '相手の一角として一考'],
-                ['ここ最近は不振だが、内容は着順ほど悪くない', '見直しの余地あり'],
-            ],
-            'darkhorse-close': [
-                ['前走僅差で敗退、能力的には健在', '人気の盲点になりそう'],
-                ['前走4着で見限りにくい一頭', '相手筋に加えたい'],
-                ['前走僅差敗退、AI評価は維持', '配当妙味のある一頭'],
-            ],
-            'darkhorse-na': [
-                ['人気以上の評価ができる一頭', '相手筋に押さえておきたい'],
-                ['人気とのギャップから狙ってみたい', '相手の一角として'],
-                ['目立つ実績はないがAI評価では一考', '配当面で妙味あり'],
-            ],
-            'value-good': [
-                ['好走を続けており、ここでも上位争いが見込める', '人気との比較で割安感あり'],
-                ['成績が安定しており、相手筋として手堅い', 'AI評価でも一定の支持'],
-                ['近走の内容が良く、人気以上の評価が妥当', '相手の一角として一考'],
-                ['崩れにくいタイプ、押さえとして安定感', 'AI評価が支える妙味馬'],
-            ],
-            'value-close': [
-                ['前走4着で安定感もあり、相手筋に', '堅めに買うなら押さえたい'],
-                ['前走僅差で能力健在、AI評価も支持', '相手の一角として'],
-            ],
-            'value-na': [
-                ['データは限定的だがAI評価では妙味あり', '相手筋に押さえておきたい'],
-                ['人気以上に評価できる一頭', '一考の余地あり'],
-            ],
-        };
+        // pastRaces ベースのコメント生成
+        // 過去走データに基づかない断定（「好走経験」「同距離で好走」「展開向き」等）は禁止
+        const NARR_NO_GOOD_RUNS = [
+            '近走成績だけでは強調しづらいものの、評価データ上は相手候補として拾える一頭です',
+            '大きな強調材料は多くありませんが、人気の盲点として注意したいタイプです',
+        ];
+        const NARR_NO_PASTRACES = [
+            '過去走データが不足しているため、評価データを中心に抽出しています',
+            '詳細な過去走評価は未反映ですが、相手候補として抽出されています',
+        ];
 
-        function getNarrativeBucket(horse) {
-            const isDark = horse.category === 'darkhorse';
-            const lf = horse.lastFinish;
-            if (isDark) {
-                if (lf == null) return 'darkhorse-na';
-                if (lf >= 8) return 'darkhorse-heavy';
-                if (lf >= 5) return 'darkhorse-mid';
-                if (lf === 4) return 'darkhorse-close';
-                return 'darkhorse-na';
+        function getNarrative(horse, info, counters) {
+            const count = info?.count ?? 0;
+            const finishes = info?.finishes ?? [];
+
+            // 6. pastRaces なし
+            if (count === 0 || finishes.length === 0) {
+                const i = (counters['no-past'] || 0) % NARR_NO_PASTRACES.length;
+                counters['no-past'] = (counters['no-past'] || 0) + 1;
+                return NARR_NO_PASTRACES[i];
             }
-            if (lf == null) return 'value-na';
-            if (lf === 4) return 'value-close';
-            return 'value-good';
+
+            const has3 = finishes.some(f => f <= 3);
+            const top4count = finishes.filter(f => f <= 4).length;
+            const lf = horse.lastFinish;
+
+            // 4. 前走8着以下 + 過去5走に3着以内あり
+            if (has3 && lf != null && lf >= 8) {
+                return '前走は大きく崩れましたが、過去走の内容から一変の余地は残ります';
+            }
+            // 3. 前走5〜7着 + 過去5走に3着以内あり
+            if (has3 && lf != null && lf >= 5 && lf <= 7) {
+                return '前走は掲示板外でしたが、過去走には好走実績があり、巻き返し余地があります';
+            }
+            // 1. 過去5走に1〜3着あり
+            if (has3) {
+                return '過去走で好走実績があり、巻き返しの下地はあります';
+            }
+            // 2. 過去5走に4着以内が複数
+            if (top4count >= 2) {
+                return '近走でも崩れすぎておらず、相手候補として見直せます';
+            }
+            // 5. 過去5走に好走実績なし
+            const i = (counters['no-good'] || 0) % NARR_NO_GOOD_RUNS.length;
+            counters['no-good'] = (counters['no-good'] || 0) + 1;
+            return NARR_NO_GOOD_RUNS[i];
         }
 
         function getStarRating(score) {
@@ -527,7 +542,7 @@ function formatJpDate(date) {
             return '★'.repeat(stars) + '☆'.repeat(5 - stars);
         }
 
-        function buildHorseCardsHtml(horses) {
+        function buildHorseCardsHtml(horses, horsePastInfo) {
             const counters = {};
             return horses.map((h, idx) => {
                 const isDark = h.category === 'darkhorse';
@@ -535,11 +550,8 @@ function formatJpDate(date) {
                     ? '<span class="tag tag-darkhorse">穴馬</span>'
                     : '<span class="tag tag-value">妙味馬</span>';
                 const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
-                const bucket = getNarrativeBucket(h);
-                const variants = NARRATIVES[bucket] || NARRATIVES['darkhorse-na'];
-                counters[bucket] = counters[bucket] || 0;
-                const narrative = variants[counters[bucket] % variants.length];
-                counters[bucket]++;
+                const info = horsePastInfo?.[String(h.number)] || null;
+                const narrativeText = getNarrative(h, info, counters);
                 const stars = getStarRating(h.score);
                 return `
                     <article class="horse-card ${isDark ? 'is-dark' : 'is-value'}" style="--delay: ${idx * 80}ms">
@@ -565,9 +577,7 @@ function formatJpDate(date) {
 
                         <div class="horse-narrative">
                             <div class="narrative-head"><span class="narrative-icon">🤖</span><span class="narrative-title">AI分析</span></div>
-                            <ul class="narrative-list">
-                                ${narrative.map(n => `<li>${escapeHtml(n)}</li>`).join('')}
-                            </ul>
+                            <p class="narrative-text">${escapeHtml(narrativeText)}</p>
                         </div>
                     </article>
                 `;
@@ -640,7 +650,7 @@ function formatJpDate(date) {
             document.body.style.overflow = 'hidden';
 
             runLoadingSequence(() => {
-                body.innerHTML = `<div class="horse-card-list">${buildHorseCardsHtml(horses)}</div>`;
+                body.innerHTML = `<div class="horse-card-list">${buildHorseCardsHtml(horses, race.horsePastInfo)}</div>`;
             });
         }
 
@@ -1225,9 +1235,7 @@ function formatJpDate(date) {
             text-transform: uppercase;
         }
         .horse-card.is-value .narrative-title { color: #fcd34d; }
-        .narrative-list { margin: 0; padding-left: 18px; color: #e2e8f0; font-size: 0.9rem; line-height: 1.55; }
-        .narrative-list li { margin-bottom: 3px; }
-        .narrative-list li:last-child { margin-bottom: 0; }
+        .narrative-text { margin: 0; color: #e2e8f0; font-size: 0.9rem; line-height: 1.6; }
 
         .modal-disclaimer {
             margin-top: 16px; padding: 10px 14px;
