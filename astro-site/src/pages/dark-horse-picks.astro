@@ -58,14 +58,13 @@ const tabs = visibleEntries.map(e => ({
 // 表示用に各 venue のレースを整形（darkHorses 入りのみ）
 function buildVenueDisplay(entry) {
   return entry.data.races
-    .filter(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
     .map(r => ({
       raceNumber: parseInt(r.raceNumber, 10) || r.raceNumber,
       raceName: r.raceName || '',
       distance: r.distance || r.distanceMeters || null,
       horseCount: r.horseCount || (r.horses?.length ?? null),
       startTime: r.startTime || null,
-      darkHorses: [...r.darkHorses]
+      darkHorses: [...(r.darkHorses || [])]
         .sort((a, b) => (b.score || 0) - (a.score || 0))
         .slice(0, 3),
     }))
@@ -245,6 +244,7 @@ function formatJpDate(date) {
                 <div class="races-grid">
                     {venue.races.map((race) => {
                         const raceId = `${venue.tabId}:${race.raceNumber}`;
+                        const isEmpty = race.darkHorses.length === 0;
                         const distanceLabel = (() => {
                             if (race.distance == null) return null;
                             const n = typeof race.distance === 'number' ? race.distance : parseInt(String(race.distance).replace(/[^\d]/g, ''), 10);
@@ -254,7 +254,7 @@ function formatJpDate(date) {
                         const sizeLine = distanceLabel ? `${distanceLabel}${horseCountLabel}` : (horseCountLabel ? horseCountLabel : '');
 
                         return (
-                            <div class="race-card" data-race-id={raceId}>
+                            <div class={`race-card${isEmpty ? ' is-empty' : ''}`} data-race-id={raceId} data-empty={isEmpty ? '1' : '0'}>
                                 <div class="race-header">
                                     <div class="race-title-row">
                                         <span class="race-number">{`${race.raceNumber}R`}</span>
@@ -267,10 +267,17 @@ function formatJpDate(date) {
                                     {race.startTime && <div class="race-detail-line start-time">💎発走時刻 {race.startTime}</div>}
                                 </div>
 
-                                <button class="reveal-button" data-race-id={raceId}>
-                                    <span class="button-icon">🔒</span>
-                                    <span class="button-text">穴馬を見る</span>
-                                </button>
+                                {isEmpty ? (
+                                    <div class="empty-pick">
+                                        <span class="empty-pick-icon">―</span>
+                                        <span class="empty-pick-text">本日該当馬なし</span>
+                                    </div>
+                                ) : (
+                                    <button class="reveal-button" data-race-id={raceId}>
+                                        <span class="button-icon">🔒</span>
+                                        <span class="button-text">穴馬を見る</span>
+                                    </button>
+                                )}
                             </div>
                         );
                     })}
@@ -415,6 +422,7 @@ function formatJpDate(date) {
             }
 
             document.querySelectorAll('.race-card').forEach((card) => {
+                if (card.getAttribute('data-empty') === '1') return; // 該当馬なしはスキップ
                 const id = card.getAttribute('data-race-id');
                 const button = card.querySelector('.reveal-button');
                 if (!button) return;
@@ -941,6 +949,34 @@ function formatJpDate(date) {
             background: linear-gradient(135deg, #10b981, #059669);
             opacity: 0.8;
         }
+        /* 該当馬なし（人気と指数順位が完全一致するなど抽出条件を満たさないレース） */
+        .race-card.is-empty {
+            background: rgba(15, 23, 42, 0.5);
+            opacity: 0.7;
+            cursor: default;
+        }
+        .race-card.is-empty::before {
+            background: linear-gradient(135deg, #475569, #334155);
+            opacity: 0.4;
+        }
+        .race-card.is-empty:hover { transform: none; box-shadow: none; }
+        .race-card.is-empty:hover::before { animation: none; opacity: 0.4; }
+        .race-card.is-empty .race-number {
+            background: linear-gradient(135deg, #64748b, #475569);
+            box-shadow: 0 4px 12px rgba(71, 85, 105, 0.3);
+        }
+        .empty-pick {
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            padding: 14px 20px;
+            background: rgba(71, 85, 105, 0.18);
+            border: 1.5px dashed rgba(148, 163, 184, 0.35);
+            color: #94a3b8;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+        }
+        .empty-pick-icon { font-size: 1.05rem; opacity: 0.7; }
 
         .race-header {
             display: flex;
