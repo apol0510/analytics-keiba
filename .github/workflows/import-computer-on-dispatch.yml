@@ -1,0 +1,145 @@
+name: Import Computer (Dispatch)
+
+# keiba-data-shared-admin の save-computer.mjs / save-keiba-book.mjs から
+# repository_dispatch (event_type: computer-updated) を受信して
+# src/data/computer/ を最新化し、push して Netlify ビルドを起こす。
+
+on:
+  repository_dispatch:
+    types: [computer-updated]
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to import (YYYY-MM-DD, blank = last 7 days)'
+        required: false
+        type: string
+
+# 並行実行制御：computer 系の更新は順番に処理（push競合回避）
+concurrency:
+  group: import-computer
+  cancel-in-progress: false
+
+jobs:
+  import-computer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync and import computer JSON
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          PAYLOAD_DATE: ${{ github.event.client_payload.date }}
+          PAYLOAD_CATEGORY: ${{ github.event.client_payload.category }}
+          PAYLOAD_VENUE: ${{ github.event.client_payload.venueCode }}
+          PAYLOAD_PATH: ${{ github.event.client_payload.path }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 日付決定：手動入力 > payload.date > 直近7日
+          # 注: 将来 date 単独取込に最適化したい場合は payload.date のみで日付指定可。
+          if [ -n "$MANUAL_DATE" ]; then
+            DATE_ARGS="--date $MANUAL_DATE"
+            DATE_DESC="$MANUAL_DATE (manual)"
+          elif [ -n "$PAYLOAD_DATE" ] && [ "$PAYLOAD_DATE" != "null" ]; then
+            DATE_ARGS="--date $PAYLOAD_DATE"
+            DATE_DESC="$PAYLOAD_DATE (dispatch)"
+          else
+            DATE_ARGS="--days 7"
+            DATE_DESC="last 7 days (fallback)"
+          fi
+          echo "📅 Target: $DATE_DESC"
+          echo "📂 Category: ${PAYLOAD_CATEGORY:-all} / Venue: ${PAYLOAD_VENUE:-all} / Path: ${PAYLOAD_PATH:-n/a}"
+
+          COMMIT_MSG="Auto-import: ${DATE_DESC} computer JSON"
+
+          # Retry: sync → import → commit → push（最大3回）
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            echo "📡 Step 1/5: Syncing to origin/main..."
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+            git clean -fd
+            echo "✅ Synced to latest origin/main ($(git rev-parse --short HEAD))"
+
+            echo ""
+            echo "📥 Step 2/5: Importing computer JSON..."
+            npm run import:computer -- $DATE_ARGS
+            echo "✅ Import completed"
+
+            echo ""
+            echo "🔍 Step 3/5: Checking for changes..."
+            git add src/data/computer/
+
+            if git diff --cached --quiet; then
+              echo "⏭️  No changes detected (already up-to-date)"
+              echo "   Target: $DATE_DESC"
+              SUCCESS=true
+              break
+            fi
+
+            CHANGED_FILES=$(git diff --cached --name-only | wc -l | tr -d ' ')
+            echo "✅ Found $CHANGED_FILES file(s) changed"
+
+            echo ""
+            echo "💾 Step 4/5: Committing changes..."
+            git commit -m "$COMMIT_MSG"
+            echo "✅ Changes committed"
+
+            echo ""
+            echo "📤 Step 5/5: Pushing to origin/main..."
+            if git push origin main; then
+              echo "✅ Successfully pushed changes"
+              echo ""
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "✅ Computer import completed successfully"
+              echo "   Target: $DATE_DESC"
+              echo "   Files changed: $CHANGED_FILES"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (likely due to new commits on remote)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "   Retrying from scratch (sync → import → commit → push)..."
+                sleep 2
+              fi
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            echo "   Target: $DATE_DESC"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi
