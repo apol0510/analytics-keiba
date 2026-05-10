@@ -186,6 +186,7 @@ function lastFinishLabel(lastFinish) {
                                                     <span class="race-number">R{race.raceNumber}</span>
                                                     {race.raceName && <span class="race-name">{race.raceName}</span>}
                                                 </div>
+                                                <div class="dark-horse-table-wrap">
                                                 <table class="dark-horse-table">
                                                     <thead>
                                                         <tr>
@@ -233,6 +234,7 @@ function lastFinishLabel(lastFinish) {
                                                             })}
                                                     </tbody>
                                                 </table>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -390,10 +392,16 @@ function lastFinishLabel(lastFinish) {
         .race-number { font-weight: 800; color: #a5b4fc; font-size: 0.95rem; }
         .race-name { color: var(--text-mute); font-size: 0.85rem; }
 
+        /* 9列テーブルのスマホ対応: 横スクロール */
+        .dark-horse-table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
         .dark-horse-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.88rem;
+            min-width: 720px;
         }
         .dark-horse-table th, .dark-horse-table td {
             padding: 8px 10px;
