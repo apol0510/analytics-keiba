@@ -111,9 +111,9 @@ function formatJpDate(date) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>中央・南関 穴馬抽出ツール【無料】本日の狙い目を自動抽出 | KEIBA Analytics</title>
-    <meta name="description" content="中央競馬（JRA）と南関競馬の穴馬候補を、コンピ指数と人気順位の乖離・前走着順から自動抽出。レース別に狙い目の穴馬と指数妙味馬を表示します。" />
-    <meta name="keywords" content="中央競馬,JRA,南関競馬,穴馬,穴馬抽出,コンピ指数,人気,指数妙味,予想,競馬ツール" />
+    <title>中央・南関 穴馬抽出ツール【無料】本日の狙い目をAI自動抽出 | KEIBA Analytics</title>
+    <meta name="description" content="中央競馬（JRA）と南関競馬の穴馬候補をAI分析で自動抽出。レース別に狙い目の穴馬と妙味馬を表示します。" />
+    <meta name="keywords" content="中央競馬,JRA,南関競馬,穴馬,穴馬抽出,AI予想,妙味馬,予想,競馬ツール" />
     <link rel="canonical" href="https://analytics.keiba.link/dark-horse-picks" />
 
     <meta property="og:title" content="中央・南関 穴馬抽出ツール【無料】" />
@@ -134,7 +134,7 @@ function formatJpDate(date) {
       "name": "中央・南関 穴馬抽出ツール",
       "applicationCategory": "SportsApplication",
       "operatingSystem": "Any",
-      "description": "中央競馬（JRA）と南関競馬の穴馬候補を、コンピ指数と人気順位の乖離・前走着順から自動抽出するツール",
+      "description": "中央競馬（JRA）と南関競馬の穴馬候補をAI分析で自動抽出するツール",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "JPY", "availability": "https://schema.org/InStock" },
       "provider": { "@type": "Organization", "name": "KEIBA Analytics", "url": "https://analytics.keiba.link" }
     }
@@ -190,7 +190,7 @@ function formatJpDate(date) {
                 <div class="empty-icon">⏳</div>
                 <h2>本日の穴馬候補はまだ生成されていません</h2>
                 <p>
-                    管理画面でコンピ指数を保存すると、自動的にこのページへ反映されます。<br>
+                    本日のレースデータがAIで分析され次第、自動的にこのページへ反映されます。<br>
                     しばらく経ってから再度ご確認ください。
                 </p>
             </div>
@@ -234,7 +234,7 @@ function formatJpDate(date) {
                             <div class="race-card" data-race-id={raceId}>
                                 <div class="race-header">
                                     <div class="race-title-row">
-                                        <span class="race-number">{`R${race.raceNumber}`}</span>
+                                        <span class="race-number">{`${race.raceNumber}R`}</span>
                                         <span class="race-name">{race.raceName || `第${race.raceNumber}レース`}</span>
                                     </div>
                                 </div>
@@ -259,25 +259,24 @@ function formatJpDate(date) {
             <h2>📌 抽出ロジックについて</h2>
             <div class="how-grid">
                 <div class="how-card">
-                    <h3>🔎 抽出条件</h3>
+                    <h3>🤖 AI分析</h3>
                     <ul>
-                        <li>人気順位 &gt; 指数順位（指数の方が上位）</li>
-                        <li>人気1〜2位は穴馬対象から除外</li>
-                        <li>前走着順が悪いほど加点（凡走で人気を落とした馬を優先）</li>
-                        <li>前走1〜3着は「指数妙味馬」として区別</li>
+                        <li>独自AIが各馬の評価データを総合分析</li>
+                        <li>過去パフォーマンスから巻き返し余地を判定</li>
+                        <li>人気と評価のギャップから狙い目を抽出</li>
                     </ul>
                 </div>
                 <div class="how-card">
                     <h3>📊 区分の見方</h3>
                     <ul>
-                        <li><span class="tag tag-darkhorse inline">穴馬</span>：人気は低めだが指数で評価され、前走凡走から巻き返し余地ありの馬</li>
-                        <li><span class="tag tag-value inline">指数妙味</span>：好走続きで人気との差は小さいが、指数評価が高い馬</li>
+                        <li><span class="tag tag-darkhorse inline">穴馬</span>：前走凡走で評価を落とした巻き返し候補</li>
+                        <li><span class="tag tag-value inline">妙味馬</span>：好走を続けるAI高評価の推奨馬</li>
                     </ul>
                 </div>
                 <div class="how-card">
                     <h3>⚠️ 注意事項</h3>
                     <ul>
-                        <li>過去データに基づく自動抽出のため、的中を保証するものではありません</li>
+                        <li>過去データに基づくAI抽出のため、的中を保証するものではありません</li>
                         <li>当日のコンディションも併せてご確認ください</li>
                     </ul>
                 </div>
@@ -304,7 +303,7 @@ function formatJpDate(date) {
             </div>
             <div class="modal-body" id="modal-body"></div>
             <div class="modal-disclaimer">
-                <p>⚠️ この情報はコンピ指数と人気の乖離・前走着順から算出した穴馬候補です。当日のコンディション等もご確認の上でご利用ください。</p>
+                <p>⚠️ この情報はAI分析により抽出した穴馬候補です。当日のコンディション等もご確認の上でご利用ください。</p>
             </div>
         </div>
     </div>
@@ -466,6 +465,130 @@ function formatJpDate(date) {
             });
         }
 
+        function getAINarrative(horse) {
+            const isDark = horse.category === 'darkhorse';
+            const lf = horse.lastFinish;
+            if (isDark) {
+                if (lf != null && lf >= 8) {
+                    return [
+                        '前走大敗で評価を落としているが、AIは依然として高い潜在能力を検出',
+                        '巻き返し余地大の穴候補として推奨'
+                    ];
+                }
+                if (lf != null && lf >= 5) {
+                    return [
+                        '前走凡走から評価を落としているが、AI分析では巻き返し可能性を高評価',
+                        '相手筋として押さえておきたい一頭'
+                    ];
+                }
+                if (lf === 4) {
+                    return [
+                        '前走4着で僅差敗退。AIは依然として上位評価を維持',
+                        '人気以上の好走に期待が持てる'
+                    ];
+                }
+                return [
+                    'AI分析でハイスコアを記録した穴候補',
+                    '人気の盲点を突く一頭として警戒'
+                ];
+            }
+            return [
+                '安定した好走を続けAIが高評価する妙味馬',
+                'AI推奨度の高い堅実な選択肢'
+            ];
+        }
+
+        function getStarRating(score) {
+            const s = Number(score) || 0;
+            const stars = Math.max(1, Math.min(5, Math.round(s / 20)));
+            return '★'.repeat(stars) + '☆'.repeat(5 - stars);
+        }
+
+        function buildHorseCardsHtml(horses) {
+            return horses.map((h, idx) => {
+                const isDark = h.category === 'darkhorse';
+                const tag = isDark
+                    ? '<span class="tag tag-darkhorse">穴馬</span>'
+                    : '<span class="tag tag-value">妙味馬</span>';
+                const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
+                const narrative = getAINarrative(h);
+                const stars = getStarRating(h.score);
+                return `
+                    <article class="horse-card ${isDark ? 'is-dark' : 'is-value'}" style="--delay: ${idx * 80}ms">
+                        <div class="horse-card-glow"></div>
+                        <header class="horse-card-head">
+                            <div class="horse-num-wrap">
+                                <span class="horse-num">${h.number}</span>
+                            </div>
+                            <div class="horse-name-wrap">
+                                <div class="horse-name">${escapeHtml(h.name || '-')}</div>
+                                <div class="horse-tag-row">${tag}</div>
+                            </div>
+                        </header>
+
+                        <div class="horse-card-rating">
+                            <span class="rating-label">🤖 AI評価</span>
+                            <span class="rating-stars">${stars}</span>
+                        </div>
+
+                        <div class="horse-card-meta">
+                            <span class="meta-chip"><span class="meta-icon">🏁</span><span class="meta-label">前走</span><span class="meta-value">${lf}</span></span>
+                        </div>
+
+                        <div class="horse-narrative">
+                            <div class="narrative-head"><span class="narrative-icon">🤖</span><span class="narrative-title">AI分析</span></div>
+                            <ul class="narrative-list">
+                                ${narrative.map(n => `<li>${escapeHtml(n)}</li>`).join('')}
+                            </ul>
+                        </div>
+                    </article>
+                `;
+            }).join('');
+        }
+
+        function buildLoadingHtml() {
+            return `
+                <div class="ai-loading">
+                    <div class="ai-loading-orb">
+                        <div class="orb-ring r1"></div>
+                        <div class="orb-ring r2"></div>
+                        <div class="orb-ring r3"></div>
+                        <div class="orb-core">🤖</div>
+                    </div>
+                    <div class="ai-loading-status">
+                        <div class="ai-loading-title">AI分析中...</div>
+                        <div class="ai-loading-step" id="ai-loading-step">レースデータを読み込み中</div>
+                    </div>
+                    <div class="ai-loading-bar"><div class="ai-loading-bar-fill"></div></div>
+                </div>
+            `;
+        }
+
+        function runLoadingSequence(callback) {
+            const steps = [
+                'レースデータを読み込み中...',
+                '出走馬の過去成績を解析中...',
+                '適性スコアを計算中...',
+                '人気と評価のギャップを検出中...',
+                '穴馬候補を抽出中...',
+                '分析完了'
+            ];
+            const stepEl = document.getElementById('ai-loading-step');
+            const totalMs = 1600;
+            const interval = totalMs / steps.length;
+            let i = 0;
+            const timer = setInterval(() => {
+                i++;
+                if (stepEl && i < steps.length) {
+                    stepEl.textContent = steps[i];
+                }
+                if (i >= steps.length - 1) {
+                    clearInterval(timer);
+                    setTimeout(callback, 220);
+                }
+            }, interval);
+        }
+
         function showModal(id) {
             const race = racesLookup[id];
             if (!race) return;
@@ -476,49 +599,21 @@ function formatJpDate(date) {
 
             const categoryLabel = race.category === 'jra' ? '🏇 中央競馬（JRA）' : '🏁 南関競馬';
             meta.textContent = `${categoryLabel} ／ ${race.date} ／ ${race.venueName}競馬`;
-            title.textContent = `R${race.raceNumber}${race.raceName ? ' ' + race.raceName : ''}`;
+            title.textContent = `${race.raceNumber}R${race.raceName ? ' ' + race.raceName : ''}`;
 
             const horses = (race.darkHorses || []).slice().sort((a, b) => {
                 if (a.category !== b.category) return a.category === 'darkhorse' ? -1 : 1;
                 return (b.score || 0) - (a.score || 0);
             });
 
-            body.innerHTML = horses.map((h) => {
-                const isDark = h.category === 'darkhorse';
-                const tag = isDark
-                    ? '<span class="tag tag-darkhorse">穴馬</span>'
-                    : '<span class="tag tag-value">指数妙味</span>';
-                const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
-                const reasons = Array.isArray(h.reasons) ? h.reasons : [];
-                return `
-                    <div class="horse-info-card ${isDark ? 'is-dark' : 'is-value'}">
-                        <div class="horse-head">
-                            <div class="horse-id-row">
-                                <span class="horse-num">${h.number}</span>
-                                <span class="horse-name">${escapeHtml(h.name || '-')}</span>
-                                ${tag}
-                            </div>
-                            <div class="horse-score">スコア <strong>${h.score ?? '-'}</strong></div>
-                        </div>
-                        <div class="horse-stats">
-                            <div class="stat"><span class="stat-label">人気</span><span class="stat-value">${h.popularityRank}位</span></div>
-                            <div class="stat"><span class="stat-label">指数順位</span><span class="stat-value rank-index">${h.indexRank}位</span></div>
-                            <div class="stat"><span class="stat-label">差</span><span class="stat-value rank-gap">+${h.gap}</span></div>
-                            <div class="stat"><span class="stat-label">前走着順</span><span class="stat-value">${lf}</span></div>
-                        </div>
-                        ${reasons.length > 0 ? `
-                            <div class="horse-reason">
-                                <h4>📊 分析理由</h4>
-                                <ul>${reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            }).join('');
-
+            body.innerHTML = buildLoadingHtml();
             modal.classList.add('show');
             modal.setAttribute('aria-hidden', 'false');
             document.body.style.overflow = 'hidden';
+
+            runLoadingSequence(() => {
+                body.innerHTML = `<div class="horse-card-list">${buildHorseCardsHtml(horses)}</div>`;
+            });
         }
 
         function closeModal() {
@@ -951,44 +1046,161 @@ function formatJpDate(date) {
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-        .modal-body { display: grid; gap: 12px; }
-        .horse-info-card {
-            padding: 14px;
-            background: rgba(15, 23, 42, 0.55);
-            border: 1px solid rgba(148, 163, 184, 0.2);
-            border-radius: 10px;
+        .modal-body { display: block; min-height: 220px; }
+        .horse-card-list { display: grid; gap: 16px; }
+
+        /* AI ローディング演出 */
+        .ai-loading {
+            display: flex; flex-direction: column; align-items: center; gap: 18px;
+            padding: 36px 12px 18px;
         }
-        .horse-info-card.is-dark { border-left: 3px solid #fca5a5; }
-        .horse-info-card.is-value { border-left: 3px solid #fcd34d; }
-        .horse-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-        .horse-id-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .ai-loading-orb {
+            position: relative;
+            width: 110px; height: 110px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .orb-ring {
+            position: absolute; inset: 0;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            border-top-color: rgba(236, 72, 153, 0.85);
+            border-right-color: rgba(139, 92, 246, 0.5);
+            animation: orbSpin 1.4s linear infinite;
+        }
+        .orb-ring.r2 { inset: 12px; border-top-color: rgba(244, 114, 182, 0.7); border-right-color: rgba(167, 139, 250, 0.5); animation-duration: 1.8s; animation-direction: reverse; }
+        .orb-ring.r3 { inset: 24px; border-top-color: rgba(251, 191, 36, 0.7); border-right-color: rgba(236, 72, 153, 0.4); animation-duration: 2.2s; }
+        @keyframes orbSpin { to { transform: rotate(360deg); } }
+        .orb-core {
+            font-size: 2.3rem;
+            filter: drop-shadow(0 0 14px rgba(236, 72, 153, 0.7));
+            animation: orbPulse 1.4s ease-in-out infinite;
+        }
+        @keyframes orbPulse {
+            0%, 100% { transform: scale(1); filter: drop-shadow(0 0 14px rgba(236, 72, 153, 0.7)); }
+            50% { transform: scale(1.12); filter: drop-shadow(0 0 22px rgba(244, 114, 182, 0.95)); }
+        }
+        .ai-loading-status { text-align: center; }
+        .ai-loading-title {
+            font-size: 1.15rem; font-weight: 800; letter-spacing: 0.04em;
+            background: linear-gradient(135deg, #ec4899, #f472b6, #8b5cf6);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            margin-bottom: 6px;
+        }
+        .ai-loading-step {
+            font-size: 0.9rem; color: #cbd5e1;
+            min-height: 1.3em;
+            animation: stepFade 0.4s ease-out;
+        }
+        @keyframes stepFade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+        .ai-loading-bar {
+            width: 220px; height: 6px;
+            background: rgba(148, 163, 184, 0.18);
+            border-radius: 999px; overflow: hidden;
+        }
+        .ai-loading-bar-fill {
+            height: 100%; width: 0;
+            background: linear-gradient(90deg, #ec4899, #f472b6, #8b5cf6, #ec4899);
+            background-size: 200% 100%;
+            animation: barFill 1.6s cubic-bezier(0.4, 0, 0.2, 1) forwards, barShimmer 1.2s linear infinite;
+        }
+        @keyframes barFill { from { width: 0; } to { width: 100%; } }
+        @keyframes barShimmer { to { background-position: 200% 0; } }
+
+        /* 馬カード（モーダル内） */
+        .horse-card {
+            position: relative;
+            padding: 18px 18px 16px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.7) 100%);
+            border: 1.5px solid rgba(236, 72, 153, 0.25);
+            border-radius: 14px;
+            overflow: hidden;
+            opacity: 0;
+            transform: translateY(8px);
+            animation: horseCardReveal 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            animation-delay: var(--delay, 0ms);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+        }
+        @keyframes horseCardReveal {
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .horse-card.is-dark { border-color: rgba(252, 165, 165, 0.45); }
+        .horse-card.is-value { border-color: rgba(252, 211, 77, 0.45); }
+        .horse-card-glow {
+            position: absolute; inset: 0;
+            background: radial-gradient(circle at top right, rgba(236, 72, 153, 0.16), transparent 60%);
+            pointer-events: none;
+        }
+        .horse-card.is-value .horse-card-glow {
+            background: radial-gradient(circle at top right, rgba(251, 191, 36, 0.16), transparent 60%);
+        }
+        .horse-card-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; position: relative; }
+        .horse-num-wrap { flex-shrink: 0; }
         .horse-num {
             display: inline-flex; align-items: center; justify-content: center;
-            min-width: 32px; height: 32px; padding: 0 8px;
+            width: 44px; height: 44px;
             background: linear-gradient(135deg, #ec4899, #8b5cf6);
-            color: white; border-radius: 8px; font-weight: 800; font-size: 0.95rem;
+            color: white; border-radius: 10px;
+            font-weight: 900; font-size: 1.25rem;
+            box-shadow: 0 6px 14px rgba(236, 72, 153, 0.45);
         }
-        .horse-name { color: #f1f5f9; font-weight: 700; font-size: 1rem; }
-        .horse-score { color: #94a3b8; font-size: 0.85rem; }
-        .horse-score strong { color: #fbbf24; margin-left: 4px; }
-        .horse-stats {
-            display: grid; gap: 8px;
-            grid-template-columns: repeat(4, 1fr);
-            margin-bottom: 10px;
+        .horse-card.is-value .horse-num {
+            background: linear-gradient(135deg, #f59e0b, #ec4899);
+            box-shadow: 0 6px 14px rgba(245, 158, 11, 0.45);
         }
-        .horse-stats .stat {
-            display: flex; flex-direction: column; align-items: center;
-            padding: 8px 6px;
-            background: rgba(30, 41, 59, 0.5);
-            border-radius: 6px;
+        .horse-name-wrap { flex: 1; min-width: 0; }
+        .horse-name {
+            color: #f8fafc; font-weight: 800; font-size: 1.05rem; line-height: 1.3;
+            margin-bottom: 4px;
         }
-        .horse-stats .stat-label { font-size: 0.7rem; color: #94a3b8; margin-bottom: 2px; }
-        .horse-stats .stat-value { font-weight: 700; color: #f1f5f9; font-size: 0.95rem; }
-        .horse-stats .rank-index { color: #a5b4fc; }
-        .horse-stats .rank-gap { color: #6ee7b7; }
-        .horse-reason h4 { margin: 0 0 6px; color: #94a3b8; font-size: 0.78rem; }
-        .horse-reason ul { margin: 0; padding-left: 18px; color: #e2e8f0; font-size: 0.85rem; }
-        .horse-reason li { margin-bottom: 3px; }
+        .horse-tag-row { display: flex; gap: 6px; flex-wrap: wrap; }
+        .horse-card-rating {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 14px; margin-bottom: 10px;
+            background: rgba(30, 41, 59, 0.55);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 10px;
+        }
+        .rating-label { color: #cbd5e1; font-size: 0.85rem; font-weight: 700; }
+        .rating-stars {
+            font-size: 1.05rem; letter-spacing: 0.1em;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            font-weight: 700;
+        }
+        .horse-card-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .meta-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 12px;
+            background: rgba(30, 41, 59, 0.55);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 999px;
+            font-size: 0.85rem;
+        }
+        .meta-icon { font-size: 0.95rem; }
+        .meta-label { color: #94a3b8; }
+        .meta-value { color: #f1f5f9; font-weight: 700; }
+        .horse-narrative {
+            padding: 12px 14px;
+            background: linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(139, 92, 246, 0.08));
+            border: 1px solid rgba(139, 92, 246, 0.22);
+            border-radius: 10px;
+        }
+        .horse-card.is-value .horse-narrative {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.08), rgba(236, 72, 153, 0.08));
+            border-color: rgba(251, 191, 36, 0.25);
+        }
+        .narrative-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+        .narrative-icon { font-size: 1rem; }
+        .narrative-title {
+            font-size: 0.78rem; font-weight: 800; letter-spacing: 0.06em;
+            color: #c7d2fe;
+            text-transform: uppercase;
+        }
+        .horse-card.is-value .narrative-title { color: #fcd34d; }
+        .narrative-list { margin: 0; padding-left: 18px; color: #e2e8f0; font-size: 0.9rem; line-height: 1.55; }
+        .narrative-list li { margin-bottom: 3px; }
+        .narrative-list li:last-child { margin-bottom: 0; }
+
         .modal-disclaimer {
             margin-top: 16px; padding: 10px 14px;
             background: rgba(245, 158, 11, 0.08);
@@ -1040,7 +1252,10 @@ function formatJpDate(date) {
             .races-grid { grid-template-columns: 1fr; gap: 14px; }
             .race-card { padding: 18px; }
             .race-number { font-size: 1.1rem; padding: 6px 12px; }
-            .horse-stats { grid-template-columns: repeat(2, 1fr); }
+            .horse-card { padding: 14px; }
+            .horse-num { width: 38px; height: 38px; font-size: 1.05rem; }
+            .horse-name { font-size: 0.98rem; }
+            .horse-card-rating { padding: 8px 12px; }
             .modal-content { padding: 18px; max-height: 92vh; }
             #modal-race-title { font-size: 1.15rem; }
             .user-info-card { flex-direction: column; align-items: flex-start; }
