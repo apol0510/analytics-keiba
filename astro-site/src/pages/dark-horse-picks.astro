@@ -6,29 +6,15 @@ export const prerender = true;
 // keiba-data-shared から取り込んだ computer JSON を読み込み（src/data/computer/{jra,nankan}/...）
 const modules = import.meta.glob('/src/data/computer/**/*.json', { eager: true });
 
-/**
- * @typedef {Object} DarkHorse
- * @property {number|string} number
- * @property {string} name
- * @property {number} popularityRank
- * @property {number} indexRank
- * @property {number} gap
- * @property {number|null} lastFinish
- * @property {number} score
- * @property {'darkhorse'|'value'} category
- * @property {number|string} computerIndex
- * @property {string[]} reasons
- */
-
-const CATEGORY_LABEL = {
-  jra: { title: '🏇 中央競馬（JRA）の穴馬候補', subtitle: '指数で買われていない馬を抽出', accent: '#10b981' },
-  nankan: { title: '🏁 南関競馬の穴馬候補', subtitle: '指数で買われていない馬を抽出', accent: '#ef4444' },
-};
-
 const VENUE_LABEL_JA = {
   TOK: '東京', NAK: '中山', KYO: '京都', HAN: '阪神', CHU: '中京',
   NII: '新潟', KOK: '小倉', SAP: '札幌', HKD: '函館', FKS: '福島',
   OOI: '大井', KAW: '川崎', FUN: '船橋', URA: '浦和'
+};
+
+const CATEGORY_META = {
+  jra: { title: '🏇 中央競馬（JRA）', accent: '#10b981' },
+  nankan: { title: '🏁 南関競馬', accent: '#ef4444' },
 };
 
 // 各 JSON を venue エントリに正規化
@@ -36,19 +22,18 @@ const allEntries = Object.entries(modules)
   .map(([path, mod]) => {
     const m = path.match(/\/computer\/(jra|nankan)\/(\d{4})\/(\d{2})\/(\d{4}-\d{2}-\d{2})-([A-Z]+)\.json$/);
     if (!m) return null;
-    const [, category, year, month, date, venueCode] = m;
+    const [, category, , , date, venueCode] = m;
     const data = (mod && mod.default) ? mod.default : mod;
     if (!data || !Array.isArray(data.races)) return null;
     return { path, category, date, venueCode, data };
   })
   .filter(Boolean);
 
-// darkHorses が1件でも入っているエントリのみ表示対象
 const entriesWithDarkHorses = allEntries.filter(e =>
   e.data.races.some(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
 );
 
-// カテゴリごとに最新日付を採用（古いデータが混じらないように）
+// カテゴリごとに最新日付を採用
 const latestDateByCategory = {};
 for (const e of entriesWithDarkHorses) {
   if (!latestDateByCategory[e.category] || e.date > latestDateByCategory[e.category]) {
@@ -61,28 +46,56 @@ for (const e of entriesWithDarkHorses) {
   if (e.date !== latestDateByCategory[e.category]) continue;
   visibleByCategory[e.category].push(e);
 }
-
-// 会場名でソート
 ['jra', 'nankan'].forEach(cat => {
   visibleByCategory[cat].sort((a, b) => a.venueCode.localeCompare(b.venueCode));
 });
 
-const totalDarkHorses = entriesWithDarkHorses
-  .filter(e => e.date === latestDateByCategory[e.category])
+// 表示用に各 venue のレースを整形（darkHorses 入りのみ）
+function buildVenueDisplay(entry) {
+  const races = entry.data.races
+    .filter(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
+    .map(r => ({
+      raceNumber: parseInt(r.raceNumber, 10) || r.raceNumber,
+      raceName: r.raceName || '',
+      distance: r.distance || r.distanceMeters || null,
+      horseCount: r.horseCount || (r.horses?.length ?? null),
+      startTime: r.startTime || null,
+      darkHorses: r.darkHorses,
+    }))
+    .sort((a, b) => parseInt(a.raceNumber) - parseInt(b.raceNumber));
+  return races;
+}
+
+const totalDarkHorses = ['jra', 'nankan']
+  .flatMap(cat => visibleByCategory[cat])
   .reduce((sum, e) => sum + e.data.races.reduce((s, r) => s + (r.darkHorses?.length || 0), 0), 0);
 
-const hasAnyData = totalDarkHorses > 0;
 const totalVenues = visibleByCategory.jra.length + visibleByCategory.nankan.length;
+const hasAnyData = totalDarkHorses > 0;
+
+// クライアント JS にレースデータを渡すための軽量化構造（HTML data 属性ではなく define:vars を使用）
+const racesLookup = {};
+for (const cat of ['jra', 'nankan']) {
+  for (const entry of visibleByCategory[cat]) {
+    const venueName = VENUE_LABEL_JA[entry.venueCode] || entry.venueCode;
+    for (const race of buildVenueDisplay(entry)) {
+      const id = `${cat}:${entry.venueCode}:${race.raceNumber}`;
+      racesLookup[id] = {
+        category: cat,
+        venueCode: entry.venueCode,
+        venueName,
+        date: entry.date,
+        raceNumber: race.raceNumber,
+        raceName: race.raceName,
+        darkHorses: race.darkHorses,
+      };
+    }
+  }
+}
 
 function formatJpDate(date) {
   const [, m, d] = date.split('-');
   return `${parseInt(m)}月${parseInt(d)}日`;
-}
-function venueLabel(category, venueCode) {
-  return VENUE_LABEL_JA[venueCode] || venueCode;
-}
-function lastFinishLabel(lastFinish) {
-  return lastFinish == null ? '-' : `${lastFinish}着`;
 }
 ---
 
@@ -98,7 +111,7 @@ function lastFinishLabel(lastFinish) {
     <link rel="canonical" href="https://analytics.keiba.link/dark-horse-picks" />
 
     <meta property="og:title" content="中央・南関 穴馬抽出ツール【無料】" />
-    <meta property="og:description" content="中央競馬（JRA）と南関競馬の穴馬候補を自動抽出。コンピ指数と人気の乖離・前走着順から狙い目を表示。" />
+    <meta property="og:description" content="中央競馬（JRA）と南関競馬の穴馬候補を自動抽出。レース別に狙い目を表示。" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://analytics.keiba.link/dark-horse-picks" />
     <meta property="og:site_name" content="KEIBA Analytics" />
@@ -106,7 +119,7 @@ function lastFinishLabel(lastFinish) {
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="中央・南関 穴馬抽出ツール【無料】" />
-    <meta name="twitter:description" content="中央競馬と南関競馬の穴馬候補を自動抽出。レース別に狙い目を表示。" />
+    <meta name="twitter:description" content="中央競馬と南関競馬の穴馬候補を自動抽出。" />
 
     <script type="application/ld+json">
     {
@@ -134,6 +147,38 @@ function lastFinishLabel(lastFinish) {
             </div>
         </header>
 
+        {hasAnyData && (
+            <div class="user-info-card">
+                <div class="user-plan-info">
+                    <div class="plan-badge" id="plan-badge">読み込み中...</div>
+                    <div class="remaining-picks">
+                        <span class="picks-label">本日の残り取得回数:</span>
+                        <span class="picks-count" id="remaining-picks">-</span>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {hasAnyData && (
+            <div class="plan-rules-card">
+                <h2>📋 プラン別取得ルール</h2>
+                <div class="rules-grid">
+                    <div class="rule-item rule-free">
+                        <div class="rule-header"><span class="rule-icon">🎯</span><span class="rule-plan">無料会員</span></div>
+                        <p class="rule-desc">1日 1レース まで</p>
+                    </div>
+                    <div class="rule-item rule-light">
+                        <div class="rule-header"><span class="rule-icon">⭐</span><span class="rule-plan">ライト会員</span></div>
+                        <p class="rule-desc">1日 2レース まで</p>
+                    </div>
+                    <div class="rule-item rule-premium">
+                        <div class="rule-header"><span class="rule-icon">👑</span><span class="rule-plan">プレミアム会員</span></div>
+                        <p class="rule-desc">全レース無制限</p>
+                    </div>
+                </div>
+            </div>
+        )}
+
         {!hasAnyData && (
             <div class="empty-state">
                 <div class="empty-icon">⏳</div>
@@ -148,25 +193,21 @@ function lastFinishLabel(lastFinish) {
         {hasAnyData && (['jra', 'nankan']).map((category) => {
             const venues = visibleByCategory[category];
             if (venues.length === 0) return null;
-            const label = CATEGORY_LABEL[category];
+            const meta = CATEGORY_META[category];
             const date = latestDateByCategory[category];
 
             return (
                 <section class={`category-section category-${category}`}>
                     <div class="category-header">
-                        <h2 class="category-title">{label.title}</h2>
-                        <p class="category-subtitle">{label.subtitle}</p>
+                        <h2 class="category-title">{meta.title}</h2>
                         <p class="category-date">{formatJpDate(date)}（{date}）{venues.length}会場</p>
                     </div>
 
                     <div class="venues-stack">
                         {venues.map((entry) => {
-                            const venueName = venueLabel(category, entry.venueCode);
-                            const races = entry.data.races
-                                .filter(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
-                                .sort((a, b) => parseInt(a.raceNumber) - parseInt(b.raceNumber));
+                            const venueName = VENUE_LABEL_JA[entry.venueCode] || entry.venueCode;
+                            const races = buildVenueDisplay(entry);
                             if (races.length === 0) return null;
-
                             const venueDarkHorseCount = races.reduce((s, r) => s + r.darkHorses.length, 0);
 
                             return (
@@ -179,64 +220,34 @@ function lastFinishLabel(lastFinish) {
                                         <span class="venue-count">{races.length}R / {venueDarkHorseCount}頭</span>
                                     </header>
 
-                                    <div class="races-list">
-                                        {races.map((race) => (
-                                            <div class="race-block">
-                                                <div class="race-header">
-                                                    <span class="race-number">R{race.raceNumber}</span>
-                                                    {race.raceName && <span class="race-name">{race.raceName}</span>}
+                                    <div class="races-grid">
+                                        {races.map((race) => {
+                                            const raceId = `${category}:${entry.venueCode}:${race.raceNumber}`;
+                                            const distanceLabel = (() => {
+                                                if (race.distance == null) return null;
+                                                const n = typeof race.distance === 'number' ? race.distance : parseInt(String(race.distance).replace(/[^\d]/g, ''), 10);
+                                                return Number.isFinite(n) && n > 0 ? `${n}m` : String(race.distance);
+                                            })();
+
+                                            return (
+                                                <div class="race-card" data-race-id={raceId}>
+                                                    <div class="race-card-head">
+                                                        <span class="race-num">R{race.raceNumber}</span>
+                                                        {race.raceName && <span class="race-name">{race.raceName}</span>}
+                                                    </div>
+                                                    <div class="race-card-meta">
+                                                        {distanceLabel && <span class="meta-pill">📏 {distanceLabel}</span>}
+                                                        {race.horseCount && <span class="meta-pill">🐎 {race.horseCount}頭</span>}
+                                                        {race.startTime && <span class="meta-pill">🕐 {race.startTime}</span>}
+                                                    </div>
+                                                    <div class="dark-horse-count-badge">穴馬候補 {race.darkHorses.length}頭</div>
+                                                    <button class="reveal-button" data-race-id={raceId}>
+                                                        <span class="button-icon">🔓</span>
+                                                        <span class="button-text">穴馬を見る</span>
+                                                    </button>
                                                 </div>
-                                                <div class="dark-horse-table-wrap">
-                                                <table class="dark-horse-table">
-                                                    <thead>
-                                                        <tr>
-                                                            <th class="th-num">馬番</th>
-                                                            <th class="th-name">馬名</th>
-                                                            <th class="th-tag">区分</th>
-                                                            <th class="th-rank">人気</th>
-                                                            <th class="th-rank">指数順位</th>
-                                                            <th class="th-rank">差</th>
-                                                            <th class="th-rank">前走</th>
-                                                            <th class="th-score">スコア</th>
-                                                            <th class="th-reason">分析理由</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {race.darkHorses
-                                                            .slice()
-                                                            .sort((a, b) => {
-                                                                if (a.category !== b.category) return a.category === 'darkhorse' ? -1 : 1;
-                                                                return (b.score || 0) - (a.score || 0);
-                                                            })
-                                                            .map((h) => {
-                                                                const isDark = h.category === 'darkhorse';
-                                                                return (
-                                                                    <tr class={isDark ? 'row-darkhorse' : 'row-value'}>
-                                                                        <td class="td-num">{h.number}</td>
-                                                                        <td class="td-name">{h.name || '-'}</td>
-                                                                        <td class="td-tag">
-                                                                            <span class={`tag tag-${h.category}`}>
-                                                                                {isDark ? '穴馬' : '指数妙味'}
-                                                                            </span>
-                                                                        </td>
-                                                                        <td class="td-rank">{h.popularityRank}位</td>
-                                                                        <td class="td-rank rank-index">{h.indexRank}位</td>
-                                                                        <td class="td-rank rank-gap">+{h.gap}</td>
-                                                                        <td class="td-rank">{lastFinishLabel(h.lastFinish)}</td>
-                                                                        <td class="td-score">{h.score}</td>
-                                                                        <td class="td-reason">
-                                                                            {Array.isArray(h.reasons) && h.reasons.length > 0
-                                                                                ? h.reasons.join(' / ')
-                                                                                : '—'}
-                                                                        </td>
-                                                                    </tr>
-                                                                );
-                                                            })}
-                                                    </tbody>
-                                                </table>
-                                                </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </article>
                             );
@@ -284,6 +295,239 @@ function lastFinishLabel(lastFinish) {
         </section>
     </div>
 
+    <!-- 穴馬モーダル -->
+    <div id="dark-horse-modal" class="modal" aria-hidden="true">
+        <div class="modal-backdrop" data-modal-close></div>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="modal-race-title">
+            <button class="modal-close" data-modal-close aria-label="閉じる">×</button>
+            <div class="modal-header">
+                <p class="modal-meta" id="modal-meta"></p>
+                <h2 id="modal-race-title">レース情報</h2>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+            <div class="modal-disclaimer">
+                <p>⚠️ この情報はコンピ指数と人気の乖離・前走着順から算出した穴馬候補です。当日のコンディション等もご確認の上でご利用ください。</p>
+            </div>
+        </div>
+    </div>
+
+    <script is:inline define:vars={{ racesLookup, latestDateByCategory }}>
+        const PLAN_LIMITS = { free: 1, light: 2, standard: 2, premium: Infinity };
+        const PLAN_NAMES = { free: '🎯 無料会員', light: '⭐ ライト会員', standard: '⭐ ライト会員', premium: '👑 プレミアム会員' };
+
+        const STORAGE_KEY = 'analytics-keiba-darkhorse-picks-v1';
+        const STORAGE_DATE = Object.values(latestDateByCategory).sort().join(',') || 'none';
+
+        let userPlan = 'free';
+        let usedPicks = [];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadUserPlan();
+            loadUsedPicks();
+            updatePlanBadge();
+            updateUI();
+            attachEventListeners();
+        });
+
+        function loadUserPlan() {
+            try {
+                const raw = localStorage.getItem('user-plan');
+                if (raw) {
+                    const data = JSON.parse(raw);
+                    const plan = String(data?.plan || '').toLowerCase();
+                    const isWithdrawal = localStorage.getItem('isWithdrawalRequested') === 'true';
+                    const isExpired = localStorage.getItem('isExpired') === 'true';
+                    if (isWithdrawal || isExpired) { userPlan = 'free'; return; }
+                    if (plan.includes('premium')) userPlan = 'premium';
+                    else if (plan.includes('light') || plan.includes('standard')) userPlan = 'light';
+                    else userPlan = 'free';
+                    return;
+                }
+                // 旧形式
+                const oldPlan = localStorage.getItem('userPlan');
+                if (oldPlan) {
+                    const p = String(oldPlan).toLowerCase();
+                    if (p.includes('premium')) userPlan = 'premium';
+                    else if (p.includes('light') || p.includes('standard')) userPlan = 'light';
+                    else userPlan = 'free';
+                }
+            } catch (e) {
+                console.warn('プラン取得エラー:', e);
+                userPlan = 'free';
+            }
+        }
+
+        function loadUsedPicks() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) { usedPicks = []; return; }
+                const data = JSON.parse(raw);
+                if (data?.date !== STORAGE_DATE) {
+                    // 日付が変わったらリセット
+                    usedPicks = [];
+                    saveUsedPicks();
+                    return;
+                }
+                usedPicks = Array.isArray(data?.used) ? data.used : [];
+            } catch (e) {
+                usedPicks = [];
+            }
+        }
+
+        function saveUsedPicks() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ date: STORAGE_DATE, used: usedPicks }));
+            } catch (e) {}
+        }
+
+        function updatePlanBadge() {
+            const el = document.getElementById('plan-badge');
+            if (el) {
+                el.textContent = PLAN_NAMES[userPlan] || PLAN_NAMES.free;
+                el.className = 'plan-badge plan-' + userPlan;
+            }
+        }
+
+        function getLimit() {
+            return PLAN_LIMITS[userPlan] ?? 1;
+        }
+
+        function updateUI() {
+            const limit = getLimit();
+            const remainingEl = document.getElementById('remaining-picks');
+            if (remainingEl) {
+                remainingEl.textContent = limit === Infinity ? '無制限' : `${Math.max(0, limit - usedPicks.length)}回`;
+            }
+
+            document.querySelectorAll('.race-card').forEach((card) => {
+                const id = card.getAttribute('data-race-id');
+                const button = card.querySelector('.reveal-button');
+                if (!button) return;
+                const isUsed = usedPicks.includes(id);
+                const isOverLimit = userPlan !== 'premium' && !isUsed && usedPicks.length >= limit;
+
+                button.classList.remove('upgrade-button', 'used-button');
+                button.disabled = false;
+                card.classList.remove('disabled', 'used');
+
+                if (isUsed) {
+                    card.classList.add('used');
+                    button.classList.add('used-button');
+                    button.innerHTML = '<span class="button-icon">👀</span><span class="button-text">再確認する</span>';
+                } else if (isOverLimit) {
+                    card.classList.add('disabled');
+                    button.classList.add('upgrade-button');
+                    button.innerHTML = '<span class="button-icon">✨</span><span class="button-text">プランをアップグレード</span>';
+                } else {
+                    button.innerHTML = '<span class="button-icon">🔓</span><span class="button-text">穴馬を見る</span>';
+                }
+            });
+        }
+
+        function attachEventListeners() {
+            document.querySelectorAll('.reveal-button').forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const id = btn.getAttribute('data-race-id');
+                    if (btn.classList.contains('upgrade-button')) {
+                        window.location.href = '/pricing';
+                        return;
+                    }
+                    const isUsed = usedPicks.includes(id);
+                    const limit = getLimit();
+                    if (!isUsed && userPlan !== 'premium' && usedPicks.length >= limit) {
+                        alert('本日の取得回数の上限に達しました。プランをアップグレードすると、さらに多くのレースを確認できます。');
+                        return;
+                    }
+                    showModal(id);
+                    if (!isUsed) {
+                        usedPicks.push(id);
+                        saveUsedPicks();
+                        updateUI();
+                    }
+                });
+            });
+
+            document.querySelectorAll('[data-modal-close]').forEach((el) => {
+                el.addEventListener('click', closeModal);
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeModal();
+            });
+        }
+
+        function showModal(id) {
+            const race = racesLookup[id];
+            if (!race) return;
+            const modal = document.getElementById('dark-horse-modal');
+            const meta = document.getElementById('modal-meta');
+            const title = document.getElementById('modal-race-title');
+            const body = document.getElementById('modal-body');
+
+            const categoryLabel = race.category === 'jra' ? '🏇 中央競馬（JRA）' : '🏁 南関競馬';
+            meta.textContent = `${categoryLabel} ／ ${race.date} ／ ${race.venueName}競馬`;
+            title.textContent = `R${race.raceNumber}${race.raceName ? ' ' + race.raceName : ''}`;
+
+            const horses = (race.darkHorses || []).slice().sort((a, b) => {
+                if (a.category !== b.category) return a.category === 'darkhorse' ? -1 : 1;
+                return (b.score || 0) - (a.score || 0);
+            });
+
+            body.innerHTML = horses.map((h) => {
+                const isDark = h.category === 'darkhorse';
+                const tag = isDark
+                    ? '<span class="tag tag-darkhorse">穴馬</span>'
+                    : '<span class="tag tag-value">指数妙味</span>';
+                const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
+                const reasons = Array.isArray(h.reasons) ? h.reasons : [];
+                return `
+                    <div class="horse-info-card ${isDark ? 'is-dark' : 'is-value'}">
+                        <div class="horse-head">
+                            <div class="horse-id-row">
+                                <span class="horse-num">${h.number}</span>
+                                <span class="horse-name">${escapeHtml(h.name || '-')}</span>
+                                ${tag}
+                            </div>
+                            <div class="horse-score">スコア <strong>${h.score ?? '-'}</strong></div>
+                        </div>
+                        <div class="horse-stats">
+                            <div class="stat"><span class="stat-label">人気</span><span class="stat-value">${h.popularityRank}位</span></div>
+                            <div class="stat"><span class="stat-label">指数順位</span><span class="stat-value rank-index">${h.indexRank}位</span></div>
+                            <div class="stat"><span class="stat-label">差</span><span class="stat-value rank-gap">+${h.gap}</span></div>
+                            <div class="stat"><span class="stat-label">前走着順</span><span class="stat-value">${lf}</span></div>
+                        </div>
+                        ${reasons.length > 0 ? `
+                            <div class="horse-reason">
+                                <h4>📊 分析理由</h4>
+                                <ul>${reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('dark-horse-modal');
+            modal.classList.remove('show');
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.style.overflow = '';
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+    </script>
+
     <style>
         :root {
             --bg-deep: #0f172a;
@@ -309,59 +553,94 @@ function lastFinishLabel(lastFinish) {
             line-height: 1.6;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 20px 80px;
-        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px 80px; }
 
         .page-header {
             padding: 32px 0 24px;
             text-align: center;
             border-bottom: 1px solid var(--border);
-            margin-bottom: 32px;
+            margin-bottom: 24px;
         }
-        .header-content .back-link {
-            display: inline-block;
-            color: #93c5fd;
-            text-decoration: none;
-            margin-bottom: 12px;
-            font-size: 0.9rem;
-        }
+        .header-content .back-link { display: inline-block; color: #93c5fd; text-decoration: none; margin-bottom: 12px; font-size: 0.9rem; }
         .header-content .back-link:hover { text-decoration: underline; }
         .page-header h1 {
             font-size: 2rem;
             margin: 0 0 8px;
             background: linear-gradient(135deg, var(--gold) 0%, var(--darkhorse) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
         }
         .page-header .subtitle { color: var(--text-mute); margin: 0 0 6px; font-size: 0.95rem; }
         .page-header .header-meta { color: var(--text-mute); font-size: 0.85rem; margin: 0; }
 
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
+        /* ユーザー情報 */
+        .user-info-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            padding: 14px 18px;
             background: var(--bg-card);
-            border: 1px dashed var(--border);
-            border-radius: 16px;
-            color: var(--text-mute);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 16px;
         }
+        .user-plan-info { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+        .plan-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            background: rgba(148, 163, 184, 0.15);
+            color: var(--text-strong);
+            border: 1px solid var(--border);
+        }
+        .plan-badge.plan-premium { background: rgba(251, 191, 36, 0.2); color: #fde68a; border-color: rgba(251, 191, 36, 0.5); }
+        .plan-badge.plan-light, .plan-badge.plan-standard { background: rgba(99, 102, 241, 0.2); color: #c7d2fe; border-color: rgba(99, 102, 241, 0.5); }
+        .plan-badge.plan-free { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+        .remaining-picks { color: var(--text-mute); font-size: 0.9rem; }
+        .picks-count { color: var(--text-strong); font-weight: 800; margin-left: 6px; }
+
+        /* プラン別ルール */
+        .plan-rules-card {
+            margin-bottom: 28px;
+            padding: 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        .plan-rules-card h2 { margin: 0 0 12px; color: var(--text-strong); font-size: 1.1rem; }
+        .rules-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
+        @media (min-width: 720px) { .rules-grid { grid-template-columns: repeat(3, 1fr); } }
+        .rule-item {
+            padding: 12px 14px;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+        .rule-item.rule-free { border-left: 3px solid #94a3b8; }
+        .rule-item.rule-light { border-left: 3px solid #6366f1; }
+        .rule-item.rule-premium { border-left: 3px solid var(--gold); }
+        .rule-header { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; font-weight: 700; color: var(--text-strong); }
+        .rule-desc { margin: 0; color: var(--text-mute); font-size: 0.88rem; }
+
+        /* 空状態 */
+        .empty-state { text-align: center; padding: 60px 20px; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 16px; color: var(--text-mute); }
         .empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; }
         .empty-state h2 { color: var(--text-strong); margin: 0 0 12px; font-size: 1.3rem; }
         .empty-state p { margin: 0; font-size: 0.95rem; }
 
-        .category-section { margin: 0 0 56px; }
-        .category-header { margin-bottom: 18px; padding: 18px 20px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--border); }
+        /* カテゴリセクション */
+        .category-section { margin: 0 0 48px; }
+        .category-header { margin-bottom: 18px; padding: 16px 18px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--border); }
         .category-section.category-jra .category-header { border-left: 4px solid var(--jra); }
         .category-section.category-nankan .category-header { border-left: 4px solid var(--nankan); }
-        .category-title { margin: 0 0 6px; color: var(--text-strong); font-size: 1.4rem; }
-        .category-subtitle { margin: 0 0 6px; color: var(--text-mute); font-size: 0.9rem; }
+        .category-title { margin: 0 0 4px; color: var(--text-strong); font-size: 1.3rem; }
         .category-date { margin: 0; color: var(--text-mute); font-size: 0.85rem; }
 
-        .venues-stack { display: grid; gap: 18px; }
-
+        /* 会場カード */
+        .venues-stack { display: grid; gap: 16px; }
         .venue-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -369,103 +648,164 @@ function lastFinishLabel(lastFinish) {
             overflow: hidden;
         }
         .venue-card-header {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            padding: 14px 18px;
-            background: var(--bg-elev);
-            border-bottom: 1px solid var(--border);
+            display: flex; align-items: baseline; justify-content: space-between;
+            padding: 12px 16px; background: var(--bg-elev); border-bottom: 1px solid var(--border);
         }
-        .venue-name { margin: 0; color: var(--text-strong); font-size: 1.1rem; }
+        .venue-name { margin: 0; color: var(--text-strong); font-size: 1.05rem; }
         .venue-emoji { margin-right: 6px; }
-        .venue-count { color: var(--text-mute); font-size: 0.85rem; }
+        .venue-count { color: var(--text-mute); font-size: 0.82rem; }
 
-        .races-list { padding: 14px 14px 6px; display: grid; gap: 18px; }
-
-        .race-block {
+        /* レースカードグリッド */
+        .races-grid {
+            display: grid;
+            gap: 12px;
+            padding: 14px;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        }
+        .race-card {
+            display: flex; flex-direction: column; gap: 8px;
+            padding: 14px;
             background: rgba(15, 23, 42, 0.5);
             border: 1px solid var(--border);
             border-radius: 10px;
-            overflow: hidden;
+            transition: transform 0.15s ease, border-color 0.15s ease;
         }
-        .race-header { padding: 10px 14px; background: rgba(51, 65, 85, 0.5); border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: baseline; }
-        .race-number { font-weight: 800; color: #a5b4fc; font-size: 0.95rem; }
-        .race-name { color: var(--text-mute); font-size: 0.85rem; }
-
-        /* 9列テーブルのスマホ対応: 横スクロール */
-        .dark-horse-table-wrap {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
+        .race-card:hover { transform: translateY(-2px); border-color: rgba(167, 139, 250, 0.5); }
+        .race-card.used { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.04); }
+        .race-card.disabled { opacity: 0.78; }
+        .race-card-head { display: flex; gap: 8px; align-items: baseline; }
+        .race-num { font-size: 1.1rem; font-weight: 800; color: #a5b4fc; }
+        .race-name { color: var(--text-strong); font-size: 0.92rem; }
+        .race-card-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+        .meta-pill {
+            display: inline-block; padding: 2px 8px; border-radius: 999px;
+            background: rgba(51, 65, 85, 0.4); color: var(--text-mute);
+            font-size: 0.72rem; border: 1px solid rgba(148, 163, 184, 0.15);
         }
-        .dark-horse-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.88rem;
-            min-width: 720px;
-        }
-        .dark-horse-table th, .dark-horse-table td {
-            padding: 8px 10px;
-            border-bottom: 1px solid var(--border);
-            vertical-align: middle;
-        }
-        .dark-horse-table th {
-            background: rgba(30, 41, 59, 0.5);
-            color: var(--text-strong);
-            font-weight: 700;
-            text-align: center;
-            font-size: 0.78rem;
-            letter-spacing: 0.02em;
-        }
-        .dark-horse-table .th-num, .dark-horse-table .td-num { width: 50px; text-align: center; font-weight: 800; color: var(--text-strong); }
-        .dark-horse-table .td-name { font-weight: 600; color: var(--text-strong); }
-        .dark-horse-table .th-tag, .dark-horse-table .td-tag { width: 90px; text-align: center; }
-        .dark-horse-table .th-rank, .dark-horse-table .td-rank { width: 64px; text-align: center; color: var(--text-mute); }
-        .dark-horse-table .rank-index { color: #a5b4fc; font-weight: 700; }
-        .dark-horse-table .rank-gap { color: #6ee7b7; font-weight: 700; }
-        .dark-horse-table .th-score, .dark-horse-table .td-score { width: 64px; text-align: center; color: var(--gold); font-weight: 700; }
-        .dark-horse-table .td-reason { color: var(--text-mute); font-size: 0.82rem; }
-
-        .row-darkhorse td { background: rgba(239, 68, 68, 0.05); }
-        .row-value td { background: transparent; }
-
-        .tag {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 0.72rem;
-            font-weight: 800;
-            border: 1px solid transparent;
-        }
-        .tag-darkhorse {
-            background: rgba(239, 68, 68, 0.18);
+        .dark-horse-count-badge {
+            display: inline-block; padding: 4px 10px;
+            font-size: 0.78rem; font-weight: 700;
             color: var(--darkhorse);
-            border-color: rgba(239, 68, 68, 0.45);
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            border-radius: 6px;
+            align-self: flex-start;
         }
-        .tag-value {
-            background: rgba(245, 158, 11, 0.18);
-            color: var(--value);
-            border-color: rgba(245, 158, 11, 0.45);
+
+        /* リビールボタン */
+        .reveal-button {
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            width: 100%; padding: 10px 12px;
+            background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+            color: white; font-weight: 700;
+            border: none; border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+            font-size: 0.92rem;
         }
+        .reveal-button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4); }
+        .reveal-button.used-button { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        .reveal-button.upgrade-button { background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); }
+        .button-icon { font-size: 1rem; }
+        .button-text { font-size: 0.9rem; }
+
+        /* タグ */
+        .tag {
+            display: inline-block; padding: 3px 10px; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 800; border: 1px solid transparent;
+        }
+        .tag-darkhorse { background: rgba(239, 68, 68, 0.18); color: var(--darkhorse); border-color: rgba(239, 68, 68, 0.45); }
+        .tag-value { background: rgba(245, 158, 11, 0.18); color: var(--value); border-color: rgba(245, 158, 11, 0.45); }
         .tag.inline { vertical-align: baseline; margin-right: 4px; }
 
+        /* モーダル */
+        .modal {
+            position: fixed; inset: 0; z-index: 1000;
+            display: none; align-items: center; justify-content: center;
+            padding: 20px;
+        }
+        .modal.show { display: flex; animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); }
+        .modal-content {
+            position: relative; z-index: 1;
+            max-width: 760px; width: 100%; max-height: 90vh;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .modal-close {
+            position: absolute; top: 12px; right: 14px;
+            background: transparent; border: none; color: var(--text-mute);
+            font-size: 1.8rem; cursor: pointer; line-height: 1;
+        }
+        .modal-close:hover { color: var(--text-strong); }
+        .modal-header { padding-right: 32px; margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+        .modal-meta { margin: 0 0 6px; color: var(--text-mute); font-size: 0.82rem; }
+        #modal-race-title { margin: 0; color: var(--text-strong); font-size: 1.4rem; }
+        .modal-body { display: grid; gap: 12px; }
+        .horse-info-card {
+            padding: 14px;
+            background: rgba(15, 23, 42, 0.55);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+        .horse-info-card.is-dark { border-left: 3px solid var(--darkhorse); }
+        .horse-info-card.is-value { border-left: 3px solid var(--value); }
+        .horse-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+        .horse-id-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .horse-num {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 32px; height: 32px; padding: 0 8px;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white; border-radius: 8px; font-weight: 800; font-size: 0.95rem;
+        }
+        .horse-name { color: var(--text-strong); font-weight: 700; font-size: 1rem; }
+        .horse-score { color: var(--text-mute); font-size: 0.85rem; }
+        .horse-score strong { color: var(--gold); margin-left: 4px; }
+        .horse-stats {
+            display: grid; gap: 8px;
+            grid-template-columns: repeat(4, 1fr);
+            margin-bottom: 10px;
+        }
+        .horse-stats .stat {
+            display: flex; flex-direction: column; align-items: center;
+            padding: 8px 6px;
+            background: rgba(30, 41, 59, 0.5);
+            border-radius: 6px;
+        }
+        .horse-stats .stat-label { font-size: 0.7rem; color: var(--text-mute); margin-bottom: 2px; }
+        .horse-stats .stat-value { font-weight: 700; color: var(--text-strong); font-size: 0.95rem; }
+        .horse-stats .rank-index { color: #a5b4fc; }
+        .horse-stats .rank-gap { color: #6ee7b7; }
+        .horse-reason h4 { margin: 0 0 6px; color: var(--text-mute); font-size: 0.78rem; }
+        .horse-reason ul { margin: 0; padding-left: 18px; color: var(--text); font-size: 0.85rem; }
+        .horse-reason li { margin-bottom: 3px; }
+        .modal-disclaimer {
+            margin-top: 16px; padding: 10px 14px;
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.25);
+            border-radius: 8px;
+        }
+        .modal-disclaimer p { margin: 0; color: #fcd34d; font-size: 0.78rem; line-height: 1.5; }
+
+        /* 抽出ロジック */
         .how-it-works { margin: 56px 0 32px; }
         .how-it-works h2 { color: var(--text-strong); font-size: 1.3rem; margin: 0 0 16px; }
         .how-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
         @media (min-width: 800px) { .how-grid { grid-template-columns: repeat(3, 1fr); } }
-        .how-card {
-            padding: 18px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-        }
+        .how-card { padding: 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; }
         .how-card h3 { margin: 0 0 10px; color: var(--text-strong); font-size: 1rem; }
         .how-card ul { margin: 0; padding-left: 20px; color: var(--text-mute); font-size: 0.88rem; }
         .how-card li { margin-bottom: 6px; }
 
+        /* CTA */
         .cta-section { margin-top: 32px; }
         .cta-card {
-            text-align: center;
-            padding: 28px 20px;
+            text-align: center; padding: 28px 20px;
             background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
             border: 1px solid rgba(59, 130, 246, 0.3);
             border-radius: 14px;
@@ -473,26 +813,21 @@ function lastFinishLabel(lastFinish) {
         .cta-card h2 { margin: 0 0 10px; color: var(--text-strong); font-size: 1.2rem; }
         .cta-card p { color: var(--text-mute); margin: 0 0 16px; font-size: 0.9rem; }
         .cta-button {
-            display: inline-block;
-            padding: 12px 28px;
+            display: inline-block; padding: 12px 28px;
             background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-            color: #fff;
-            text-decoration: none;
-            font-weight: 700;
-            border-radius: 999px;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            color: #fff; text-decoration: none; font-weight: 700;
+            border-radius: 999px; transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-        .cta-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
-        }
+        .cta-button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4); }
 
         @media (max-width: 720px) {
             .container { padding: 0 12px 60px; }
             .page-header h1 { font-size: 1.6rem; }
-            .dark-horse-table { font-size: 0.78rem; }
-            .dark-horse-table th, .dark-horse-table td { padding: 6px 6px; }
-            .dark-horse-table .td-reason { font-size: 0.75rem; }
+            .races-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); padding: 10px; gap: 8px; }
+            .race-card { padding: 10px; }
+            .horse-stats { grid-template-columns: repeat(2, 1fr); }
+            .modal-content { padding: 18px; max-height: 92vh; }
+            #modal-race-title { font-size: 1.15rem; }
         }
     </style>
 </body>
