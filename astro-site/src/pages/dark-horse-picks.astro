@@ -497,51 +497,69 @@ function formatJpDate(date) {
         }
 
         // pastRaces ベースのコメント生成
-        // 過去走データに基づかない断定（「好走経験」「同距離で好走」「展開向き」等）は禁止
-        const NARR_NO_GOOD_RUNS = [
-            '近走成績だけでは強調しづらいものの、評価データ上は相手候補として拾える一頭です',
-            '大きな強調材料は多くありませんが、人気の盲点として注意したいタイプです',
-        ];
-        const NARR_NO_PASTRACES = [
-            '過去走データが不足しているため、評価データを中心に抽出しています',
-            '詳細な過去走評価は未反映ですが、相手候補として抽出されています',
-        ];
+        // 過去走データに基づかない断定（「好走経験」「同距離で好走」「展開向き」等）は禁止。
+        // 各ルールに複数バリエーションを用意し、同一レース内で連続する馬が同じ文言にならないよう
+        // per-rule カウンターで巡回。
+        const NARR = {
+            rule1: [
+                '過去走で好走実績があり、巻き返しの下地はあります',
+                '過去走に連対経験があり、軽視は禁物のタイプです',
+                '近走に好走例があり、ここでの巻き返しに期待できます',
+            ],
+            rule2: [
+                '近走でも崩れすぎておらず、相手候補として見直せます',
+                '近走の安定感を評価して、相手の一角に置きたい一頭です',
+                '崩れにくいタイプで、押さえに加えたい一頭です',
+            ],
+            rule3: [
+                '前走は掲示板外でしたが、過去走には好走実績があり、巻き返し余地があります',
+                '前走は伸び切れませんでしたが、過去走の好走を評価できる一頭です',
+                '前走着外でしたが、好走経験があり、ここで見直す余地はあります',
+            ],
+            rule4: [
+                '前走は大きく崩れましたが、過去走の内容から一変の余地は残ります',
+                '前走は度外視できる内容、過去走の好走から見直しの余地があります',
+                '前走凡走から立て直しを期待、過去走に好走例のある一頭です',
+            ],
+            rule5: [
+                '近走成績だけでは強調しづらいものの、評価データ上は相手候補として拾える一頭です',
+                '大きな強調材料は多くありませんが、人気の盲点として注意したいタイプです',
+                '目立つ実績は少ないですが、評価データから相手の一角として拾えます',
+            ],
+            rule6: [
+                '過去走データが不足しているため、評価データを中心に抽出しています',
+                '詳細な過去走評価は未反映ですが、相手候補として抽出されています',
+            ],
+        };
+
+        function pickVariant(rule, counters) {
+            const arr = NARR[rule] || NARR.rule6;
+            const i = (counters[rule] || 0) % arr.length;
+            counters[rule] = (counters[rule] || 0) + 1;
+            return arr[i];
+        }
 
         function getNarrative(horse, info, counters) {
             const count = info?.count ?? 0;
             const finishes = info?.finishes ?? [];
 
             // 6. pastRaces なし
-            if (count === 0 || finishes.length === 0) {
-                const i = (counters['no-past'] || 0) % NARR_NO_PASTRACES.length;
-                counters['no-past'] = (counters['no-past'] || 0) + 1;
-                return NARR_NO_PASTRACES[i];
-            }
+            if (count === 0 || finishes.length === 0) return pickVariant('rule6', counters);
 
             const has3 = finishes.some(f => f <= 3);
             const top4count = finishes.filter(f => f <= 4).length;
             const lf = horse.lastFinish;
 
             // 4. 前走8着以下 + 過去5走に3着以内あり
-            if (has3 && lf != null && lf >= 8) {
-                return '前走は大きく崩れましたが、過去走の内容から一変の余地は残ります';
-            }
+            if (has3 && lf != null && lf >= 8) return pickVariant('rule4', counters);
             // 3. 前走5〜7着 + 過去5走に3着以内あり
-            if (has3 && lf != null && lf >= 5 && lf <= 7) {
-                return '前走は掲示板外でしたが、過去走には好走実績があり、巻き返し余地があります';
-            }
+            if (has3 && lf != null && lf >= 5 && lf <= 7) return pickVariant('rule3', counters);
             // 1. 過去5走に1〜3着あり
-            if (has3) {
-                return '過去走で好走実績があり、巻き返しの下地はあります';
-            }
+            if (has3) return pickVariant('rule1', counters);
             // 2. 過去5走に4着以内が複数
-            if (top4count >= 2) {
-                return '近走でも崩れすぎておらず、相手候補として見直せます';
-            }
+            if (top4count >= 2) return pickVariant('rule2', counters);
             // 5. 過去5走に好走実績なし
-            const i = (counters['no-good'] || 0) % NARR_NO_GOOD_RUNS.length;
-            counters['no-good'] = (counters['no-good'] || 0) + 1;
-            return NARR_NO_GOOD_RUNS[i];
+            return pickVariant('rule5', counters);
         }
 
         function getStarRating(score) {
