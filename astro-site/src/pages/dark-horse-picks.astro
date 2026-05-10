@@ -12,11 +12,6 @@ const VENUE_LABEL_JA = {
   OOI: '大井', KAW: '川崎', FUN: '船橋', URA: '浦和'
 };
 
-const CATEGORY_META = {
-  jra: { title: '🏇 中央競馬（JRA）', accent: '#10b981' },
-  nankan: { title: '🏁 南関競馬', accent: '#ef4444' },
-};
-
 // 各 JSON を venue エントリに正規化
 const allEntries = Object.entries(modules)
   .map(([path, mod]) => {
@@ -41,18 +36,28 @@ for (const e of entriesWithDarkHorses) {
   }
 }
 
-const visibleByCategory = { jra: [], nankan: [] };
-for (const e of entriesWithDarkHorses) {
-  if (e.date !== latestDateByCategory[e.category]) continue;
-  visibleByCategory[e.category].push(e);
-}
-['jra', 'nankan'].forEach(cat => {
-  visibleByCategory[cat].sort((a, b) => a.venueCode.localeCompare(b.venueCode));
-});
+// 表示対象は「カテゴリの最新日」と一致するもののみ
+const visibleEntries = entriesWithDarkHorses
+  .filter(e => e.date === latestDateByCategory[e.category])
+  .sort((a, b) => {
+    // JRA を先に、その後南関。同カテゴリ内は会場コード順
+    if (a.category !== b.category) return a.category === 'jra' ? -1 : 1;
+    return a.venueCode.localeCompare(b.venueCode);
+  });
+
+// タブ用 venue 一覧
+const tabs = visibleEntries.map(e => ({
+  category: e.category,
+  venueCode: e.venueCode,
+  venueName: VENUE_LABEL_JA[e.venueCode] || e.venueCode,
+  date: e.date,
+  raceCount: e.data.races.filter(r => r.darkHorses?.length > 0).length,
+  tabId: `${e.category}-${e.venueCode}`,
+}));
 
 // 表示用に各 venue のレースを整形（darkHorses 入りのみ）
 function buildVenueDisplay(entry) {
-  const races = entry.data.races
+  return entry.data.races
     .filter(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
     .map(r => ({
       raceNumber: parseInt(r.raceNumber, 10) || r.raceNumber,
@@ -63,33 +68,34 @@ function buildVenueDisplay(entry) {
       darkHorses: r.darkHorses,
     }))
     .sort((a, b) => parseInt(a.raceNumber) - parseInt(b.raceNumber));
-  return races;
 }
 
-const totalDarkHorses = ['jra', 'nankan']
-  .flatMap(cat => visibleByCategory[cat])
-  .reduce((sum, e) => sum + e.data.races.reduce((s, r) => s + (r.darkHorses?.length || 0), 0), 0);
+const venuesForRender = visibleEntries.map(e => ({
+  ...e,
+  venueName: VENUE_LABEL_JA[e.venueCode] || e.venueCode,
+  tabId: `${e.category}-${e.venueCode}`,
+  races: buildVenueDisplay(e),
+}));
 
-const totalVenues = visibleByCategory.jra.length + visibleByCategory.nankan.length;
+const totalDarkHorses = venuesForRender.reduce(
+  (s, v) => s + v.races.reduce((ss, r) => ss + r.darkHorses.length, 0), 0
+);
 const hasAnyData = totalDarkHorses > 0;
 
-// クライアント JS にレースデータを渡すための軽量化構造（HTML data 属性ではなく define:vars を使用）
+// クライアント JS にレースデータを渡す
 const racesLookup = {};
-for (const cat of ['jra', 'nankan']) {
-  for (const entry of visibleByCategory[cat]) {
-    const venueName = VENUE_LABEL_JA[entry.venueCode] || entry.venueCode;
-    for (const race of buildVenueDisplay(entry)) {
-      const id = `${cat}:${entry.venueCode}:${race.raceNumber}`;
-      racesLookup[id] = {
-        category: cat,
-        venueCode: entry.venueCode,
-        venueName,
-        date: entry.date,
-        raceNumber: race.raceNumber,
-        raceName: race.raceName,
-        darkHorses: race.darkHorses,
-      };
-    }
+for (const v of venuesForRender) {
+  for (const race of v.races) {
+    const id = `${v.tabId}:${race.raceNumber}`;
+    racesLookup[id] = {
+      category: v.category,
+      venueCode: v.venueCode,
+      venueName: v.venueName,
+      date: v.date,
+      raceNumber: race.raceNumber,
+      raceName: race.raceName,
+      darkHorses: race.darkHorses,
+    };
   }
 }
 
@@ -140,10 +146,7 @@ function formatJpDate(date) {
             <div class="header-content">
                 <a href="/" class="back-link">← トップへ戻る</a>
                 <h1>🐴 本日の穴馬抽出</h1>
-                <p class="subtitle">中央競馬（JRA）と南関競馬の穴馬候補を自動抽出</p>
-                <p class="header-meta">
-                    対象会場 {totalVenues} 会場 / 抽出件数 {totalDarkHorses} 頭
-                </p>
+                <p class="subtitle">中央競馬と南関競馬の狙い目を自動抽出</p>
             </div>
         </header>
 
@@ -156,6 +159,9 @@ function formatJpDate(date) {
                         <span class="picks-count" id="remaining-picks">-</span>
                     </div>
                 </div>
+                <div class="daily-info">
+                    <p class="date-info">対象会場 {tabs.length} 会場 / 抽出件数 {totalDarkHorses} 頭</p>
+                </div>
             </div>
         )}
 
@@ -165,15 +171,15 @@ function formatJpDate(date) {
                 <div class="rules-grid">
                     <div class="rule-item rule-free">
                         <div class="rule-header"><span class="rule-icon">🎯</span><span class="rule-plan">無料会員</span></div>
-                        <p class="rule-desc">1日 1レース まで</p>
+                        <p class="rule-desc">1日1レースまで取得可能</p>
                     </div>
                     <div class="rule-item rule-light">
                         <div class="rule-header"><span class="rule-icon">⭐</span><span class="rule-plan">ライト会員</span></div>
-                        <p class="rule-desc">1日 2レース まで</p>
+                        <p class="rule-desc">1日2レースまで取得可能</p>
                     </div>
                     <div class="rule-item rule-premium">
                         <div class="rule-header"><span class="rule-icon">👑</span><span class="rule-plan">プレミアム会員</span></div>
-                        <p class="rule-desc">全レース無制限</p>
+                        <p class="rule-desc">全レース無制限で取得可能</p>
                     </div>
                 </div>
             </div>
@@ -190,72 +196,64 @@ function formatJpDate(date) {
             </div>
         )}
 
-        {hasAnyData && (['jra', 'nankan']).map((category) => {
-            const venues = visibleByCategory[category];
-            if (venues.length === 0) return null;
-            const meta = CATEGORY_META[category];
-            const date = latestDateByCategory[category];
+        {hasAnyData && tabs.length > 0 && (
+            <nav class="venue-tabs" role="tablist" aria-label="会場切り替え">
+                {tabs.map((t, i) => (
+                    <button
+                        class={`venue-tab ${i === 0 ? 'active' : ''}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={i === 0 ? 'true' : 'false'}
+                        data-tab-id={t.tabId}
+                    >
+                        <span class="tab-emoji">{t.category === 'jra' ? '🏇' : '🏁'}</span>
+                        <span class="tab-name">{t.venueName}</span>
+                        <span class="tab-cat">{t.category === 'jra' ? 'JRA' : '南関'}</span>
+                        <span class="tab-count">{t.raceCount}R</span>
+                    </button>
+                ))}
+            </nav>
+        )}
 
-            return (
-                <section class={`category-section category-${category}`}>
-                    <div class="category-header">
-                        <h2 class="category-title">{meta.title}</h2>
-                        <p class="category-date">{formatJpDate(date)}（{date}）{venues.length}会場</p>
-                    </div>
+        {hasAnyData && venuesForRender.map((venue, i) => (
+            <section class={`races-section venue-panel ${i === 0 ? 'active' : ''}`} data-tab-id={venue.tabId} role="tabpanel">
+                <h2>🐎 {venue.date} {venue.venueName}競馬</h2>
+                <p class="section-subtitle">狙い目の穴馬をレース別に抽出</p>
+                <div class="races-grid">
+                    {venue.races.map((race) => {
+                        const raceId = `${venue.tabId}:${race.raceNumber}`;
+                        const distanceLabel = (() => {
+                            if (race.distance == null) return null;
+                            const n = typeof race.distance === 'number' ? race.distance : parseInt(String(race.distance).replace(/[^\d]/g, ''), 10);
+                            return Number.isFinite(n) && n > 0 ? `${n}m` : String(race.distance);
+                        })();
+                        const horseCountLabel = race.horseCount ? `（${race.horseCount}頭）` : '';
+                        const sizeLine = distanceLabel ? `${distanceLabel}${horseCountLabel}` : (horseCountLabel ? horseCountLabel : '');
 
-                    <div class="venues-stack">
-                        {venues.map((entry) => {
-                            const venueName = VENUE_LABEL_JA[entry.venueCode] || entry.venueCode;
-                            const races = buildVenueDisplay(entry);
-                            if (races.length === 0) return null;
-                            const venueDarkHorseCount = races.reduce((s, r) => s + r.darkHorses.length, 0);
-
-                            return (
-                                <article class="venue-card">
-                                    <header class="venue-card-header">
-                                        <h3 class="venue-name">
-                                            <span class="venue-emoji">{category === 'jra' ? '🏇' : '🏁'}</span>
-                                            {venueName}競馬
-                                        </h3>
-                                        <span class="venue-count">{races.length}R / {venueDarkHorseCount}頭</span>
-                                    </header>
-
-                                    <div class="races-grid">
-                                        {races.map((race) => {
-                                            const raceId = `${category}:${entry.venueCode}:${race.raceNumber}`;
-                                            const distanceLabel = (() => {
-                                                if (race.distance == null) return null;
-                                                const n = typeof race.distance === 'number' ? race.distance : parseInt(String(race.distance).replace(/[^\d]/g, ''), 10);
-                                                return Number.isFinite(n) && n > 0 ? `${n}m` : String(race.distance);
-                                            })();
-
-                                            return (
-                                                <div class="race-card" data-race-id={raceId}>
-                                                    <div class="race-card-head">
-                                                        <span class="race-num">R{race.raceNumber}</span>
-                                                        {race.raceName && <span class="race-name">{race.raceName}</span>}
-                                                    </div>
-                                                    <div class="race-card-meta">
-                                                        {distanceLabel && <span class="meta-pill">📏 {distanceLabel}</span>}
-                                                        {race.horseCount && <span class="meta-pill">🐎 {race.horseCount}頭</span>}
-                                                        {race.startTime && <span class="meta-pill">🕐 {race.startTime}</span>}
-                                                    </div>
-                                                    <div class="dark-horse-count-badge">穴馬候補 {race.darkHorses.length}頭</div>
-                                                    <button class="reveal-button" data-race-id={raceId}>
-                                                        <span class="button-icon">🔓</span>
-                                                        <span class="button-text">穴馬を見る</span>
-                                                    </button>
-                                                </div>
-                                            );
-                                        })}
+                        return (
+                            <div class="race-card" data-race-id={raceId}>
+                                <div class="race-header">
+                                    <div class="race-title-row">
+                                        <span class="race-number">{`R${race.raceNumber}`}</span>
+                                        <span class="race-name">{race.raceName || `第${race.raceNumber}レース`}</span>
                                     </div>
-                                </article>
-                            );
-                        })}
-                    </div>
-                </section>
-            );
-        })}
+                                </div>
+
+                                <div class="race-details">
+                                    {sizeLine && <div class="race-detail-line">{sizeLine}</div>}
+                                    {race.startTime && <div class="race-detail-line start-time">💎発走時刻 {race.startTime}</div>}
+                                </div>
+
+                                <button class="reveal-button" data-race-id={raceId}>
+                                    <span class="button-icon">🔒</span>
+                                    <span class="button-text">穴馬を見る</span>
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
+        ))}
 
         <section class="how-it-works">
             <h2>📌 抽出ロジックについて</h2>
@@ -343,7 +341,6 @@ function formatJpDate(date) {
                     else userPlan = 'free';
                     return;
                 }
-                // 旧形式
                 const oldPlan = localStorage.getItem('userPlan');
                 if (oldPlan) {
                     const p = String(oldPlan).toLowerCase();
@@ -352,7 +349,6 @@ function formatJpDate(date) {
                     else userPlan = 'free';
                 }
             } catch (e) {
-                console.warn('プラン取得エラー:', e);
                 userPlan = 'free';
             }
         }
@@ -363,7 +359,6 @@ function formatJpDate(date) {
                 if (!raw) { usedPicks = []; return; }
                 const data = JSON.parse(raw);
                 if (data?.date !== STORAGE_DATE) {
-                    // 日付が変わったらリセット
                     usedPicks = [];
                     saveUsedPicks();
                     return;
@@ -388,9 +383,7 @@ function formatJpDate(date) {
             }
         }
 
-        function getLimit() {
-            return PLAN_LIMITS[userPlan] ?? 1;
-        }
+        function getLimit() { return PLAN_LIMITS[userPlan] ?? 1; }
 
         function updateUI() {
             const limit = getLimit();
@@ -419,12 +412,28 @@ function formatJpDate(date) {
                     button.classList.add('upgrade-button');
                     button.innerHTML = '<span class="button-icon">✨</span><span class="button-text">プランをアップグレード</span>';
                 } else {
-                    button.innerHTML = '<span class="button-icon">🔓</span><span class="button-text">穴馬を見る</span>';
+                    button.innerHTML = '<span class="button-icon">🔒</span><span class="button-text">穴馬を見る</span>';
                 }
             });
         }
 
         function attachEventListeners() {
+            // 会場タブ
+            document.querySelectorAll('.venue-tab').forEach((tab) => {
+                tab.addEventListener('click', () => {
+                    const tabId = tab.getAttribute('data-tab-id');
+                    document.querySelectorAll('.venue-tab').forEach((t) => {
+                        const active = t.getAttribute('data-tab-id') === tabId;
+                        t.classList.toggle('active', active);
+                        t.setAttribute('aria-selected', active ? 'true' : 'false');
+                    });
+                    document.querySelectorAll('.venue-panel').forEach((p) => {
+                        p.classList.toggle('active', p.getAttribute('data-tab-id') === tabId);
+                    });
+                });
+            });
+
+            // 穴馬リビール
             document.querySelectorAll('.reveal-button').forEach((btn) => {
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
@@ -448,6 +457,7 @@ function formatJpDate(date) {
                 });
             });
 
+            // モーダル閉じる
             document.querySelectorAll('[data-modal-close]').forEach((el) => {
                 el.addEventListener('click', closeModal);
             });
@@ -529,193 +539,381 @@ function formatJpDate(date) {
     </script>
 
     <style>
-        :root {
-            --bg-deep: #0f172a;
-            --bg-card: rgba(15, 23, 42, 0.6);
-            --bg-elev: rgba(30, 41, 59, 0.65);
-            --border: rgba(148, 163, 184, 0.2);
-            --text: #e2e8f0;
-            --text-mute: #94a3b8;
-            --text-strong: #f1f5f9;
-            --jra: #10b981;
-            --nankan: #ef4444;
-            --gold: #fbbf24;
-            --darkhorse: #fca5a5;
-            --value: #fcd34d;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            color: var(--text);
-            font-family: 'Hiragino Sans', 'Yu Gothic', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #e2e8f0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
             min-height: 100vh;
-            margin: 0;
-            line-height: 1.6;
+            padding: 20px;
         }
 
-        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px 80px; }
+        .container { max-width: 1200px; margin: 0 auto; }
 
+        /* ヘッダー */
         .page-header {
-            padding: 32px 0 24px;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
             text-align: center;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 24px;
         }
-        .header-content .back-link { display: inline-block; color: #93c5fd; text-decoration: none; margin-bottom: 12px; font-size: 0.9rem; }
-        .header-content .back-link:hover { text-decoration: underline; }
+        .header-content { position: relative; }
+        .back-link {
+            display: inline-block;
+            color: #3b82f6;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding: 8px 16px;
+            background: rgba(59, 130, 246, 0.1);
+            border-radius: 8px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            transition: all 0.3s;
+        }
+        .back-link:hover {
+            color: #60a5fa;
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.5);
+            transform: translateX(-4px);
+        }
         .page-header h1 {
-            font-size: 2rem;
-            margin: 0 0 8px;
-            background: linear-gradient(135deg, var(--gold) 0%, var(--darkhorse) 100%);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            font-size: 2.8rem;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #ec4899, #f472b6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 20px rgba(236, 72, 153, 0.5));
+            animation: titleGlow 3s ease-in-out infinite;
         }
-        .page-header .subtitle { color: var(--text-mute); margin: 0 0 6px; font-size: 0.95rem; }
-        .page-header .header-meta { color: var(--text-mute); font-size: 0.85rem; margin: 0; }
+        @keyframes titleGlow {
+            0%, 100% { filter: drop-shadow(0 0 20px rgba(236, 72, 153, 0.5)); }
+            50% { filter: drop-shadow(0 0 30px rgba(244, 114, 182, 0.7)); }
+        }
+        .subtitle {
+            color: #e9d5ff;
+            font-size: 1.2rem;
+            font-weight: 500;
+            background: rgba(139, 92, 246, 0.15);
+            border: 1px solid rgba(139, 92, 246, 0.4);
+            border-radius: 12px;
+            padding: 12px 24px;
+            display: inline-block;
+            backdrop-filter: blur(8px);
+        }
 
         /* ユーザー情報 */
         .user-info-card {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 12px;
             flex-wrap: wrap;
-            padding: 14px 18px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            margin-bottom: 16px;
+            gap: 20px;
         }
-        .user-plan-info { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+        .user-plan-info { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
         .plan-badge {
-            display: inline-block;
-            padding: 6px 14px;
-            border-radius: 999px;
-            font-size: 0.85rem;
-            font-weight: 700;
-            background: rgba(148, 163, 184, 0.15);
-            color: var(--text-strong);
-            border: 1px solid var(--border);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 1.1rem;
         }
-        .plan-badge.plan-premium { background: rgba(251, 191, 36, 0.2); color: #fde68a; border-color: rgba(251, 191, 36, 0.5); }
-        .plan-badge.plan-light, .plan-badge.plan-standard { background: rgba(99, 102, 241, 0.2); color: #c7d2fe; border-color: rgba(99, 102, 241, 0.5); }
-        .plan-badge.plan-free { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
-        .remaining-picks { color: var(--text-mute); font-size: 0.9rem; }
-        .picks-count { color: var(--text-strong); font-weight: 800; margin-left: 6px; }
+        .plan-badge.plan-free { background: rgba(148, 163, 184, 0.2); border: 1px solid rgba(148, 163, 184, 0.3); }
+        .plan-badge.plan-light, .plan-badge.plan-standard { background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.3); color: #c7d2fe; }
+        .plan-badge.plan-premium { background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.3); color: #fde68a; }
+        .remaining-picks { display: flex; align-items: center; gap: 10px; }
+        .picks-label { color: #94a3b8; font-size: 0.95rem; }
+        .picks-count { font-size: 1.5rem; font-weight: 700; color: #3b82f6; }
+        .daily-info { text-align: right; }
+        .date-info { font-size: 1rem; color: #cbd5e1; }
 
-        /* プラン別ルール */
+        /* プランルール */
         .plan-rules-card {
-            margin-bottom: 28px;
-            padding: 18px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 30px;
         }
-        .plan-rules-card h2 { margin: 0 0 12px; color: var(--text-strong); font-size: 1.1rem; }
-        .rules-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
-        @media (min-width: 720px) { .rules-grid { grid-template-columns: repeat(3, 1fr); } }
+        .plan-rules-card h2 { margin-bottom: 20px; font-size: 1.5rem; }
+        .rules-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+        }
         .rule-item {
-            padding: 12px 14px;
-            background: rgba(15, 23, 42, 0.4);
-            border: 1px solid var(--border);
-            border-radius: 10px;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid transparent;
+            transition: all 0.3s;
         }
-        .rule-item.rule-free { border-left: 3px solid #94a3b8; }
-        .rule-item.rule-light { border-left: 3px solid #6366f1; }
-        .rule-item.rule-premium { border-left: 3px solid var(--gold); }
-        .rule-header { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; font-weight: 700; color: var(--text-strong); }
-        .rule-desc { margin: 0; color: var(--text-mute); font-size: 0.88rem; }
+        .rule-free { background: rgba(148, 163, 184, 0.1); border-color: rgba(148, 163, 184, 0.2); }
+        .rule-light { background: rgba(99, 102, 241, 0.12); border-color: rgba(99, 102, 241, 0.3); }
+        .rule-premium { background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.2); }
+        .rule-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .rule-icon { font-size: 1.5rem; }
+        .rule-plan { font-weight: 600; font-size: 1.1rem; }
+        .rule-desc { color: #cbd5e1; font-size: 0.95rem; }
 
         /* 空状態 */
-        .empty-state { text-align: center; padding: 60px 20px; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 16px; color: var(--text-mute); }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px dashed rgba(148, 163, 184, 0.3);
+            border-radius: 16px;
+            color: #94a3b8;
+        }
         .empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; }
-        .empty-state h2 { color: var(--text-strong); margin: 0 0 12px; font-size: 1.3rem; }
+        .empty-state h2 { color: #f1f5f9; margin: 0 0 12px; font-size: 1.3rem; }
         .empty-state p { margin: 0; font-size: 0.95rem; }
 
-        /* カテゴリセクション */
-        .category-section { margin: 0 0 48px; }
-        .category-header { margin-bottom: 18px; padding: 16px 18px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--border); }
-        .category-section.category-jra .category-header { border-left: 4px solid var(--jra); }
-        .category-section.category-nankan .category-header { border-left: 4px solid var(--nankan); }
-        .category-title { margin: 0 0 4px; color: var(--text-strong); font-size: 1.3rem; }
-        .category-date { margin: 0; color: var(--text-mute); font-size: 0.85rem; }
-
-        /* 会場カード */
-        .venues-stack { display: grid; gap: 16px; }
-        .venue-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
+        /* 会場タブ */
+        .venue-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            padding: 8px;
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(59, 130, 246, 0.2);
             border-radius: 14px;
-            overflow: hidden;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
-        .venue-card-header {
-            display: flex; align-items: baseline; justify-content: space-between;
-            padding: 12px 16px; background: var(--bg-elev); border-bottom: 1px solid var(--border);
+        .venue-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 18px;
+            background: transparent;
+            color: #cbd5e1;
+            border: 1px solid transparent;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: all 0.25s ease;
         }
-        .venue-name { margin: 0; color: var(--text-strong); font-size: 1.05rem; }
-        .venue-emoji { margin-right: 6px; }
-        .venue-count { color: var(--text-mute); font-size: 0.82rem; }
+        .venue-tab:hover {
+            background: rgba(139, 92, 246, 0.12);
+            color: #f1f5f9;
+        }
+        .venue-tab.active {
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            color: white;
+            box-shadow: 0 6px 20px rgba(236, 72, 153, 0.45);
+        }
+        .tab-emoji { font-size: 1rem; }
+        .tab-name { font-weight: 800; }
+        .tab-cat {
+            font-size: 0.7rem;
+            font-weight: 700;
+            opacity: 0.85;
+            background: rgba(255, 255, 255, 0.12);
+            padding: 2px 6px;
+            border-radius: 999px;
+        }
+        .venue-tab.active .tab-cat { background: rgba(255, 255, 255, 0.22); }
+        .tab-count { font-size: 0.75rem; opacity: 0.85; }
+        @media (max-width: 720px) {
+            .venue-tab { padding: 8px 12px; font-size: 0.85rem; }
+            .tab-cat { display: none; }
+        }
 
-        /* レースカードグリッド */
+        /* レースセクション（タブパネル） */
+        .venue-panel { display: none; }
+        .venue-panel.active { display: block; animation: panelFade 0.3s ease-out; }
+        @keyframes panelFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+        .races-section { margin-bottom: 30px; }
+        .races-section h2 {
+            margin-bottom: 12px;
+            font-size: 2rem;
+            background: linear-gradient(135deg, #ec4899, #f472b6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 10px rgba(236, 72, 153, 0.4));
+            text-align: center;
+        }
+        .section-subtitle {
+            color: #94a3b8;
+            font-size: 1rem;
+            margin-bottom: 24px;
+            text-align: center;
+        }
         .races-grid {
             display: grid;
-            gap: 12px;
-            padding: 14px;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        }
-        .race-card {
-            display: flex; flex-direction: column; gap: 8px;
-            padding: 14px;
-            background: rgba(15, 23, 42, 0.5);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            transition: transform 0.15s ease, border-color 0.15s ease;
-        }
-        .race-card:hover { transform: translateY(-2px); border-color: rgba(167, 139, 250, 0.5); }
-        .race-card.used { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.04); }
-        .race-card.disabled { opacity: 0.78; }
-        .race-card-head { display: flex; gap: 8px; align-items: baseline; }
-        .race-num { font-size: 1.1rem; font-weight: 800; color: #a5b4fc; }
-        .race-name { color: var(--text-strong); font-size: 0.92rem; }
-        .race-card-meta { display: flex; gap: 6px; flex-wrap: wrap; }
-        .meta-pill {
-            display: inline-block; padding: 2px 8px; border-radius: 999px;
-            background: rgba(51, 65, 85, 0.4); color: var(--text-mute);
-            font-size: 0.72rem; border: 1px solid rgba(148, 163, 184, 0.15);
-        }
-        .dark-horse-count-badge {
-            display: inline-block; padding: 4px 10px;
-            font-size: 0.78rem; font-weight: 700;
-            color: var(--darkhorse);
-            background: rgba(239, 68, 68, 0.12);
-            border: 1px solid rgba(239, 68, 68, 0.35);
-            border-radius: 6px;
-            align-self: flex-start;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
         }
 
-        /* リビールボタン */
-        .reveal-button {
-            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-            width: 100%; padding: 10px 12px;
-            background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
-            color: white; font-weight: 700;
-            border: none; border-radius: 8px;
-            cursor: pointer;
-            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-            font-size: 0.92rem;
+        /* レースカード（旧nankan-analyticsスタイル再現） */
+        .race-card {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(16px);
+            border: 2px solid transparent;
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
         }
-        .reveal-button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4); }
-        .reveal-button.used-button { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
-        .reveal-button.upgrade-button { background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); }
-        .button-icon { font-size: 1rem; }
-        .button-text { font-size: 0.9rem; }
+        /* グラデーションボーダー */
+        .race-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border-radius: 16px;
+            padding: 2px;
+            background: linear-gradient(135deg, #ec4899, #f472b6, #ec4899);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            opacity: 0.6;
+            transition: opacity 0.4s;
+            pointer-events: none;
+        }
+        .race-card:hover:not(.disabled):not(.used)::before {
+            opacity: 1;
+            animation: borderGlow 2s ease-in-out infinite;
+        }
+        @keyframes borderGlow {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+        .race-card:hover:not(.disabled):not(.used) {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 20px 40px rgba(236, 72, 153, 0.5), 0 0 60px rgba(244, 114, 182, 0.4);
+        }
+        .race-card.disabled::before {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            opacity: 0.5;
+        }
+        .race-card.used { background: rgba(16, 185, 129, 0.15); }
+        .race-card.used::before {
+            background: linear-gradient(135deg, #10b981, #059669);
+            opacity: 0.8;
+        }
+
+        .race-header {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .race-title-row { display: flex; align-items: center; gap: 12px; }
+        .race-number {
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 1.3rem;
+            box-shadow: 0 4px 12px rgba(236, 72, 153, 0.5);
+            flex-shrink: 0;
+        }
+        .race-name {
+            color: #e2e8f0;
+            font-size: 1.05rem;
+            font-weight: 600;
+            line-height: 1.4;
+            flex: 1;
+        }
+        .race-details {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            background: rgba(30, 41, 59, 0.5);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 16px;
+        }
+        .race-detail-line { font-size: 0.95rem; color: #cbd5e1; line-height: 1.6; }
+        .race-detail-line.start-time { color: #fbbf24; font-weight: 600; margin-top: 4px; }
+
+        /* リビールボタン（旧スタイル再現：ガラスモーフィズム＋パープル） */
+        .reveal-button {
+            width: 100%;
+            padding: 14px 20px;
+            background: rgba(139, 92, 246, 0.25);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1.5px solid rgba(139, 92, 246, 0.5);
+            color: white;
+            border-radius: 12px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.3),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+        .reveal-button::before {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 0; height: 0;
+            border-radius: 50%;
+            background: linear-gradient(135deg, rgba(236, 72, 153, 0.3), rgba(167, 139, 250, 0.3));
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+        .reveal-button:hover:not(:disabled)::before { width: 300px; height: 300px; }
+        .reveal-button:hover:not(:disabled) {
+            background: rgba(139, 92, 246, 0.35);
+            border-color: rgba(236, 72, 153, 0.6);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(139, 92, 246, 0.5),
+                        0 0 60px rgba(236, 72, 153, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+        .reveal-button.upgrade-button {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.3), rgba(245, 158, 11, 0.3));
+            border: 1.5px solid rgba(251, 191, 36, 0.6);
+        }
+        .reveal-button.upgrade-button:hover {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.45), rgba(245, 158, 11, 0.45));
+            border-color: rgba(251, 191, 36, 0.85);
+            box-shadow: 0 12px 40px rgba(251, 191, 36, 0.45);
+        }
+        .reveal-button.used-button {
+            background: rgba(16, 185, 129, 0.25);
+            border: 1.5px solid rgba(16, 185, 129, 0.6);
+        }
+        .reveal-button.used-button:hover {
+            background: rgba(16, 185, 129, 0.35);
+            border-color: rgba(16, 185, 129, 0.8);
+            box-shadow: 0 12px 40px rgba(16, 185, 129, 0.4);
+        }
+        .button-icon, .button-text { position: relative; z-index: 1; }
 
         /* タグ */
         .tag {
             display: inline-block; padding: 3px 10px; border-radius: 999px;
             font-size: 0.72rem; font-weight: 800; border: 1px solid transparent;
         }
-        .tag-darkhorse { background: rgba(239, 68, 68, 0.18); color: var(--darkhorse); border-color: rgba(239, 68, 68, 0.45); }
-        .tag-value { background: rgba(245, 158, 11, 0.18); color: var(--value); border-color: rgba(245, 158, 11, 0.45); }
+        .tag-darkhorse { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border-color: rgba(239, 68, 68, 0.45); }
+        .tag-value { background: rgba(245, 158, 11, 0.18); color: #fcd34d; border-color: rgba(245, 158, 11, 0.45); }
         .tag.inline { vertical-align: baseline; margin-right: 4px; }
 
         /* モーダル */
@@ -731,41 +929,48 @@ function formatJpDate(date) {
             position: relative; z-index: 1;
             max-width: 760px; width: 100%; max-height: 90vh;
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            border: 1px solid var(--border);
+            border: 1px solid rgba(236, 72, 153, 0.35);
             border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 60px rgba(236, 72, 153, 0.15);
             overflow-y: auto;
             padding: 24px;
         }
         .modal-close {
             position: absolute; top: 12px; right: 14px;
-            background: transparent; border: none; color: var(--text-mute);
+            background: transparent; border: none; color: #94a3b8;
             font-size: 1.8rem; cursor: pointer; line-height: 1;
         }
-        .modal-close:hover { color: var(--text-strong); }
-        .modal-header { padding-right: 32px; margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
-        .modal-meta { margin: 0 0 6px; color: var(--text-mute); font-size: 0.82rem; }
-        #modal-race-title { margin: 0; color: var(--text-strong); font-size: 1.4rem; }
+        .modal-close:hover { color: #f1f5f9; }
+        .modal-header { padding-right: 32px; margin-bottom: 18px; border-bottom: 1px solid rgba(148, 163, 184, 0.2); padding-bottom: 14px; }
+        .modal-meta { margin: 0 0 6px; color: #94a3b8; font-size: 0.82rem; }
+        #modal-race-title {
+            margin: 0;
+            font-size: 1.4rem;
+            background: linear-gradient(135deg, #ec4899, #f472b6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
         .modal-body { display: grid; gap: 12px; }
         .horse-info-card {
             padding: 14px;
             background: rgba(15, 23, 42, 0.55);
-            border: 1px solid var(--border);
+            border: 1px solid rgba(148, 163, 184, 0.2);
             border-radius: 10px;
         }
-        .horse-info-card.is-dark { border-left: 3px solid var(--darkhorse); }
-        .horse-info-card.is-value { border-left: 3px solid var(--value); }
+        .horse-info-card.is-dark { border-left: 3px solid #fca5a5; }
+        .horse-info-card.is-value { border-left: 3px solid #fcd34d; }
         .horse-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
         .horse-id-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .horse-num {
             display: inline-flex; align-items: center; justify-content: center;
             min-width: 32px; height: 32px; padding: 0 8px;
-            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
             color: white; border-radius: 8px; font-weight: 800; font-size: 0.95rem;
         }
-        .horse-name { color: var(--text-strong); font-weight: 700; font-size: 1rem; }
-        .horse-score { color: var(--text-mute); font-size: 0.85rem; }
-        .horse-score strong { color: var(--gold); margin-left: 4px; }
+        .horse-name { color: #f1f5f9; font-weight: 700; font-size: 1rem; }
+        .horse-score { color: #94a3b8; font-size: 0.85rem; }
+        .horse-score strong { color: #fbbf24; margin-left: 4px; }
         .horse-stats {
             display: grid; gap: 8px;
             grid-template-columns: repeat(4, 1fr);
@@ -777,12 +982,12 @@ function formatJpDate(date) {
             background: rgba(30, 41, 59, 0.5);
             border-radius: 6px;
         }
-        .horse-stats .stat-label { font-size: 0.7rem; color: var(--text-mute); margin-bottom: 2px; }
-        .horse-stats .stat-value { font-weight: 700; color: var(--text-strong); font-size: 0.95rem; }
+        .horse-stats .stat-label { font-size: 0.7rem; color: #94a3b8; margin-bottom: 2px; }
+        .horse-stats .stat-value { font-weight: 700; color: #f1f5f9; font-size: 0.95rem; }
         .horse-stats .rank-index { color: #a5b4fc; }
         .horse-stats .rank-gap { color: #6ee7b7; }
-        .horse-reason h4 { margin: 0 0 6px; color: var(--text-mute); font-size: 0.78rem; }
-        .horse-reason ul { margin: 0; padding-left: 18px; color: var(--text); font-size: 0.85rem; }
+        .horse-reason h4 { margin: 0 0 6px; color: #94a3b8; font-size: 0.78rem; }
+        .horse-reason ul { margin: 0; padding-left: 18px; color: #e2e8f0; font-size: 0.85rem; }
         .horse-reason li { margin-bottom: 3px; }
         .modal-disclaimer {
             margin-top: 16px; padding: 10px 14px;
@@ -794,40 +999,52 @@ function formatJpDate(date) {
 
         /* 抽出ロジック */
         .how-it-works { margin: 56px 0 32px; }
-        .how-it-works h2 { color: var(--text-strong); font-size: 1.3rem; margin: 0 0 16px; }
+        .how-it-works h2 { color: #f1f5f9; font-size: 1.3rem; margin: 0 0 16px; }
         .how-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
         @media (min-width: 800px) { .how-grid { grid-template-columns: repeat(3, 1fr); } }
-        .how-card { padding: 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; }
-        .how-card h3 { margin: 0 0 10px; color: var(--text-strong); font-size: 1rem; }
-        .how-card ul { margin: 0; padding-left: 20px; color: var(--text-mute); font-size: 0.88rem; }
+        .how-card {
+            padding: 18px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 12px;
+        }
+        .how-card h3 { margin: 0 0 10px; color: #f1f5f9; font-size: 1rem; }
+        .how-card ul { margin: 0; padding-left: 20px; color: #94a3b8; font-size: 0.88rem; }
         .how-card li { margin-bottom: 6px; }
 
         /* CTA */
         .cta-section { margin-top: 32px; }
         .cta-card {
             text-align: center; padding: 28px 20px;
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
-            border: 1px solid rgba(59, 130, 246, 0.3);
+            background: linear-gradient(135deg, rgba(236, 72, 153, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
+            border: 1px solid rgba(236, 72, 153, 0.3);
             border-radius: 14px;
         }
-        .cta-card h2 { margin: 0 0 10px; color: var(--text-strong); font-size: 1.2rem; }
-        .cta-card p { color: var(--text-mute); margin: 0 0 16px; font-size: 0.9rem; }
+        .cta-card h2 { margin: 0 0 10px; color: #f1f5f9; font-size: 1.2rem; }
+        .cta-card p { color: #94a3b8; margin: 0 0 16px; font-size: 0.9rem; }
         .cta-button {
             display: inline-block; padding: 12px 28px;
-            background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
             color: #fff; text-decoration: none; font-weight: 700;
             border-radius: 999px; transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 4px 16px rgba(236, 72, 153, 0.35);
         }
-        .cta-button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4); }
+        .cta-button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(236, 72, 153, 0.5); }
 
         @media (max-width: 720px) {
-            .container { padding: 0 12px 60px; }
-            .page-header h1 { font-size: 1.6rem; }
-            .races-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); padding: 10px; gap: 8px; }
-            .race-card { padding: 10px; }
+            body { padding: 12px; }
+            .page-header { padding: 22px 18px; }
+            .page-header h1 { font-size: 1.9rem; }
+            .subtitle { font-size: 1rem; padding: 10px 18px; }
+            .races-section h2 { font-size: 1.5rem; }
+            .races-grid { grid-template-columns: 1fr; gap: 14px; }
+            .race-card { padding: 18px; }
+            .race-number { font-size: 1.1rem; padding: 6px 12px; }
             .horse-stats { grid-template-columns: repeat(2, 1fr); }
             .modal-content { padding: 18px; max-height: 92vh; }
             #modal-race-title { font-size: 1.15rem; }
+            .user-info-card { flex-direction: column; align-items: flex-start; }
+            .daily-info { text-align: left; }
         }
     </style>
 </body>
