@@ -66,6 +66,11 @@ const tabs = visibleEntries.map(e => ({
 }));
 
 // 表示用に各 venue のレースを整形（darkHorses 入りのみ）
+// 旧データに混入していた条件外馬を防御的に除外する：
+// - 人気1位（popularityRank === 1 / popularity === 1）
+// - 前走1着 / 前走2着
+// - 通常抽出（fallback フラグなし）で computerIndex <= 50
+//   fallback の馬は最後の手段なので低指数でも許容する
 function buildVenueDisplay(entry) {
   return entry.data.races
     .map(r => ({
@@ -75,9 +80,13 @@ function buildVenueDisplay(entry) {
       horseCount: r.horseCount || (r.horses?.length ?? null),
       startTime: r.startTime || null,
       darkHorses: [...(r.darkHorses || [])]
-        // 前走1着は完全除外、前走2着は例外（exceptional2nd フラグ）のみ許容
-        .filter(h => h.lastFinish !== 1)
-        .filter(h => h.lastFinish !== 2 || h.exceptional2nd === true)
+        .filter(h => h.popularityRank !== 1 && h.popularity !== 1)
+        .filter(h => h.lastFinish !== 1 && h.lastFinish !== 2)
+        .filter(h => {
+          if (h.fallback === true) return true;
+          const ci = h.computerIndex != null ? parseFloat(h.computerIndex) : null;
+          return ci != null && ci > 50;
+        })
         .sort((a, b) => (b.score || 0) - (a.score || 0))
         .slice(0, 3),
     }))
@@ -309,9 +318,9 @@ function formatJpDate(date) {
                 <div class="how-card">
                     <h3>📊 区分の見方</h3>
                     <ul>
-                        <li><span class="tag tag-darkhorse inline">穴馬</span>：前走6〜12着を中心に、指数評価から巻き返し余地を見込める一頭</li>
-                        <li><span class="tag tag-value inline">妙味馬</span>：前走3〜5着など、指数評価とのバランスから拾える一頭</li>
-                        <li><span class="tag tag-fallback inline">注目候補</span>：通常抽出に該当しないレースで、中位指数から補助的に拾った一頭</li>
+                        <li><span class="tag tag-darkhorse inline">穴馬</span>：指数評価と前走内容から巻き返し余地を見込める一頭</li>
+                        <li><span class="tag tag-value inline">妙味馬</span>：指数評価とのバランスから拾える一頭</li>
+                        <li><span class="tag tag-fallback inline">注目候補</span>：通常条件に該当する馬が少ないレースで、補助的に抽出した一頭</li>
                     </ul>
                 </div>
                 <div class="how-card">
