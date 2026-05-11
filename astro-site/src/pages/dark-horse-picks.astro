@@ -28,16 +28,26 @@ const entriesWithDarkHorses = allEntries.filter(e =>
   e.data.races.some(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
 );
 
-// カテゴリごとに最新日付を採用
+// 開催日（今日以降）のものだけを表示対象にする。
+// 過去レース日のデータが残っていても画面に出さない。基準は JST の YYYY-MM-DD。
+const todayJst = (() => {
+  const now = new Date();
+  const jstMs = now.getTime() + 9 * 60 * 60 * 1000;
+  return new Date(jstMs).toISOString().slice(0, 10);
+})();
+
+const upcomingEntries = entriesWithDarkHorses.filter(e => e.date >= todayJst);
+
+// カテゴリごとに最新日付を採用（upcoming のなかで）
 const latestDateByCategory = {};
-for (const e of entriesWithDarkHorses) {
+for (const e of upcomingEntries) {
   if (!latestDateByCategory[e.category] || e.date > latestDateByCategory[e.category]) {
     latestDateByCategory[e.category] = e.date;
   }
 }
 
 // 表示対象は「カテゴリの最新日」と一致するもののみ
-const visibleEntries = entriesWithDarkHorses
+const visibleEntries = upcomingEntries
   .filter(e => e.date === latestDateByCategory[e.category])
   .sort((a, b) => {
     // JRA を先に、その後南関。同カテゴリ内は会場コード順
