@@ -28,29 +28,29 @@ const entriesWithDarkHorses = allEntries.filter(e =>
   e.data.races.some(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
 );
 
-// 開催日（今日以降）のものだけを表示対象にする。
-// 過去レース日のデータが残っていても画面に出さない。基準は JST の YYYY-MM-DD。
+// 開催日（JST の今日）と完全一致するものだけを表示対象にする。
+// - 過去日も未来日も出さない（次週の JRA データが先行アップされていても今日でなければ出さない）
+// - 今日 0 件なら fallback せず「本日の穴馬候補はまだ公開されていません」を出す
 const todayJst = (() => {
   const now = new Date();
   const jstMs = now.getTime() + 9 * 60 * 60 * 1000;
   return new Date(jstMs).toISOString().slice(0, 10);
 })();
 
-const upcomingEntries = entriesWithDarkHorses.filter(e => e.date >= todayJst);
+const todayEntries = entriesWithDarkHorses.filter(e => e.date === todayJst);
 
-// カテゴリごとに最新日付を採用（upcoming のなかで）
+// カテゴリごとに今日の日付を記録（client 側 storage key で利用）
 const latestDateByCategory = {};
-for (const e of upcomingEntries) {
-  if (!latestDateByCategory[e.category] || e.date > latestDateByCategory[e.category]) {
+for (const e of todayEntries) {
+  if (!latestDateByCategory[e.category]) {
     latestDateByCategory[e.category] = e.date;
   }
 }
 
-// 表示対象は「カテゴリの最新日」と一致するもののみ
-const visibleEntries = upcomingEntries
-  .filter(e => e.date === latestDateByCategory[e.category])
+// 表示対象（JRA を先、同カテゴリ内は会場コード順）
+const visibleEntries = todayEntries
+  .slice()
   .sort((a, b) => {
-    // JRA を先に、その後南関。同カテゴリ内は会場コード順
     if (a.category !== b.category) return a.category === 'jra' ? -1 : 1;
     return a.venueCode.localeCompare(b.venueCode);
   });
@@ -223,7 +223,7 @@ function formatJpDate(date) {
         {!hasAnyData && (
             <div class="empty-state">
                 <div class="empty-icon">⏳</div>
-                <h2>本日の穴馬候補はまだ生成されていません</h2>
+                <h2>本日の穴馬候補はまだ公開されていません</h2>
                 <p>
                     本日のレースデータがAIで分析され次第、自動的にこのページへ反映されます。<br>
                     しばらく経ってから再度ご確認ください。
