@@ -65,6 +65,7 @@ function buildVenueDisplay(entry) {
       horseCount: r.horseCount || (r.horses?.length ?? null),
       startTime: r.startTime || null,
       darkHorses: [...(r.darkHorses || [])]
+        .filter(h => h.lastFinish !== 1) // 前走1着馬は穴馬ページ対象外（防御的に表示側でも除外）
         .sort((a, b) => (b.score || 0) - (a.score || 0))
         .slice(0, 3),
     }))
@@ -270,7 +271,7 @@ function formatJpDate(date) {
                                 {isEmpty ? (
                                     <div class="empty-pick">
                                         <span class="empty-pick-icon">―</span>
-                                        <span class="empty-pick-text">本日該当馬なし</span>
+                                        <span class="empty-pick-text">本日の注目候補は少なめです</span>
                                     </div>
                                 ) : (
                                     <button class="reveal-button" data-race-id={raceId}>
@@ -511,14 +512,13 @@ function formatJpDate(date) {
             const isFallback = !!horse.fallback;
             const gap = horse.gap || 0;
 
-            // 前走着順タグ（5着は掲示板内、1着は「巻き返し」を使わない）
-            if (lf === 1) tags.push({ label: '前走勝利', kind: 'win' });
-            else if (lf === 2 || lf === 3) tags.push({ label: '前走好走', kind: 'good' });
+            // 前走着順タグ（1着馬は穴馬ページ対象外なので「前走勝利」タグは未使用）
+            if (lf === 2 || lf === 3) tags.push({ label: '前走好走', kind: 'good' });
             else if (lf === 4 || lf === 5) tags.push({ label: '掲示板内', kind: 'good' });
             else if (lf != null && lf >= 6 && has3) tags.push({ label: '巻き返し候補', kind: 'recover' });
 
             // 近走安定（4着以内が複数）
-            if (top4count >= 2 && lf !== 1) tags.push({ label: '近走安定', kind: 'good' });
+            if (top4count >= 2) tags.push({ label: '近走安定', kind: 'good' });
 
             // 抽出根拠（gap / fallback）
             if (isFallback) {
@@ -562,9 +562,11 @@ function formatJpDate(date) {
                 const info = horsePastInfo?.[String(h.number)] || null;
                 const factTags = getFactualTags(h, info);
                 const stars = getStarRating(h.score);
+                // タグはチップ表示。CSS gap が効かない環境でも視認できるよう
+                // ラベルに # プレフィックスを付与し、チップ間にスペーステキストノードも挿入
                 const tagsHtml = factTags
-                    .map(t => `<span class="horse-tag-chip tag-${t.kind}">${escapeHtml(t.label)}</span>`)
-                    .join('');
+                    .map(t => `<span class="horse-tag-chip tag-${t.kind}">#${escapeHtml(t.label)}</span>`)
+                    .join(' ');
                 return `
                     <article class="horse-card is-${cls.key}" style="--delay: ${idx * 80}ms">
                         <div class="horse-card-glow"></div>
