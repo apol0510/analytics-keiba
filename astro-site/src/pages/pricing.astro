@@ -372,7 +372,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
         <!-- 銀行振込申し込みフォーム -->
         <div class="bank-form-section">
-          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
+          <div class="bank-form-title">💳 銀行振込完了の報告フォーム</div>
+          <div class="bank-form-note">
+            ※ こちらは <strong>銀行振込完了後</strong> にご送信いただくフォームです。<br>
+            事前予約や <strong>未入金状態での申し込みフォームではありません</strong>。<br>
+            必ず銀行振込を済ませてから送信してください。
+          </div>
 
           <form id="bankTransferForm" class="bank-form">
             <div class="form-group">
@@ -385,10 +390,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               <input type="email" id="email" name="email" class="form-input" required placeholder="example@email.com">
             </div>
 
-            
+
             <div class="form-group">
                 <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
                 <input type="date" id="transferDate" name="transferDate" class="form-input" required>
+                <div class="form-hint">※ 未来の日付は選択できません。実際に振込が完了した日をご入力ください。</div>
               </div>
 
 
@@ -402,8 +408,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
             </div>
 
+            <div class="form-group form-confirm-group">
+              <label class="form-confirm-label">
+                <input type="checkbox" id="paymentCompletedConfirm" name="paymentCompletedConfirm" class="form-confirm-checkbox" required>
+                <span class="form-confirm-text">
+                  銀行振込を完了済みです。このフォームは入金後の報告専用であることを確認しました。
+                  <span class="required">*</span>
+                </span>
+              </label>
+            </div>
+
             <button type="submit" class="form-submit-button" id="submitButton">
-              <span class="submit-text">📨 申し込みを送信</span>
+              <span class="submit-text">📨 入金完了を報告する</span>
               <span class="submit-loading" style="display: none;">送信中...</span>
             </button>
 
@@ -414,6 +430,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <div class="bank-warning">
           <div class="bank-warning-title">⚠️ ご注意事項</div>
           <div class="bank-warning-text">
+            ・<strong>本フォームは振込完了の報告用です</strong>。送信前に必ず銀行振込を完了してください<br>
+            ・<strong>振込完了日は未来の日付では送信できません</strong><br>
             ・振込手数料はお客様負担となります<br>
             ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
             ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
@@ -491,6 +509,25 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       }
     });
 
+    // 振込完了日: JST 今日を最大値に設定（未来日を選択不可にする）
+    const getJstToday = () => {
+      const now = new Date();
+      const jstMs = now.getTime() + 9 * 60 * 60 * 1000;
+      return new Date(jstMs).toISOString().slice(0, 10);
+    };
+    const transferDateInput = document.getElementById('transferDate');
+    if (transferDateInput) {
+      const jstToday = getJstToday();
+      transferDateInput.max = jstToday;
+      // 入力時に未来日が入った場合は即時警告
+      transferDateInput.addEventListener('change', () => {
+        if (transferDateInput.value && transferDateInput.value > jstToday) {
+          alert('⚠️ 振込完了日に未来の日付は指定できません。\n本フォームは振込完了後の報告用です。実際に振込を完了してからご送信ください。');
+          transferDateInput.value = '';
+        }
+      });
+    }
+
     // 銀行振込フォーム送信処理
     const bankTransferForm = document.getElementById('bankTransferForm');
     if (bankTransferForm) {
@@ -501,6 +538,25 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         const submitText = submitButton.querySelector('.submit-text');
         const submitLoading = submitButton.querySelector('.submit-loading');
         const formMessage = document.getElementById('formMessage');
+
+        // 送信前バリデーション: 入金済み確認チェック
+        const paymentCompletedCheckbox = document.getElementById('paymentCompletedConfirm');
+        if (!paymentCompletedCheckbox || !paymentCompletedCheckbox.checked) {
+          formMessage.textContent = '⚠️ 銀行振込完了後にチェックを入れてから送信してください。';
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+          return;
+        }
+
+        // 送信前バリデーション: 未来日ブロック
+        const jstToday = getJstToday();
+        const transferDateValue = document.getElementById('transferDate').value;
+        if (transferDateValue && transferDateValue > jstToday) {
+          formMessage.textContent = '⚠️ 振込完了日に未来の日付は指定できません。実際に振込を完了してからご送信ください。';
+          formMessage.className = 'form-message error';
+          formMessage.style.display = 'block';
+          return;
+        }
 
         submitButton.disabled = true;
         submitText.style.display = 'none';
@@ -525,6 +581,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           transferName: document.getElementById('fullName').value,  // お名前と同じ
           remarks: document.getElementById('remarks').value,
           productName: `${currentPlan} (¥${currentAmount.toLocaleString()}${periodText})`,
+          paymentCompletedConfirm: paymentCompletedCheckbox.checked,
           timestamp: new Date().toISOString()
         };
 
@@ -540,7 +597,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           const result = await response.json();
 
           if (result.success) {
-            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
+            formMessage.textContent = '✅ 入金完了のご報告を受け付けました。確認メールをお送りしましたのでご確認ください。';
             formMessage.className = 'form-message success';
             formMessage.style.display = 'block';
 
@@ -1163,7 +1220,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       font-size: 1.3rem;
       font-weight: bold;
       color: #10b981;
+      margin-bottom: 0.8rem;
+      text-align: center;
+    }
+
+    .bank-form-note {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 8px;
+      padding: 0.8rem 1rem;
       margin-bottom: 1.5rem;
+      color: #fbbf24;
+      font-size: 0.9rem;
+      line-height: 1.6;
       text-align: center;
     }
 
@@ -1210,6 +1279,37 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       color: #94a3b8;
       font-size: 0.85rem;
       margin-top: 4px;
+    }
+
+    .form-confirm-group {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .form-confirm-label {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      color: #e2e8f0;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      cursor: pointer;
+    }
+
+    .form-confirm-checkbox {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      margin-top: 2px;
+      cursor: pointer;
+      accent-color: #10b981;
+    }
+
+    .form-confirm-text {
+      flex: 1;
     }
 
     .form-row {

@@ -1,6 +1,7 @@
 /**
- * 銀行振込申し込みフォーム処理
- * Premium Plus (¥68,000) の銀行振込申請を受け付け、確認メールを送信
+ * 銀行振込完了の報告フォーム処理
+ * 振込完了後のユーザーから報告を受け付け、確認メールを送信する。
+ * 事前予約・事前申し込みではないため、サーバー側で振込完了日の未来日を拒否する。
  */
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
@@ -40,6 +41,7 @@ exports.handler = async (event, context) => {
       transferName,
       remarks,
       productName,
+      paymentCompletedConfirm,
       timestamp
     } = formData;
 
@@ -48,7 +50,57 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: '必須項目が入力されていません' })
+        body: JSON.stringify({ success: false, error: '必須項目が入力されていません' })
+      };
+    }
+
+    // ========================================
+    // 入金済み確認チェック（必須）
+    // 本フォームは振込完了の報告用。チェックなしの送信は受け付けない。
+    // フロントの required を DevTools 等で外しても、ここで弾く。
+    // ========================================
+    if (paymentCompletedConfirm !== true) {
+      console.warn('⚠️ Rejected: paymentCompletedConfirm not true:', { paymentCompletedConfirm, email });
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: '銀行振込完了後にチェックを入れてから送信してください。'
+        })
+      };
+    }
+
+    // ========================================
+    // 振込完了日バリデーション（JST基準）
+    // 未来日は絶対に受け付けない。
+    // 本フォームは振込完了の報告用のため、報告時点で振込が完了済みである必要がある。
+    // ========================================
+    const FUTURE_DATE_ERROR = '振込完了日に未来の日付は指定できません。実際に振込を完了してからご送信ください。';
+
+    // YYYY-MM-DD 形式チェック
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(transferDate))) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ success: false, error: '振込完了日の形式が正しくありません（YYYY-MM-DD）' })
+      };
+    }
+
+    // JST 今日（YYYY-MM-DD）を算出
+    const jstTodayStr = (() => {
+      const now = new Date();
+      const jstMs = now.getTime() + 9 * 60 * 60 * 1000;
+      return new Date(jstMs).toISOString().slice(0, 10);
+    })();
+
+    // 未来日チェック（文字列比較で YYYY-MM-DD は辞書順 = 時系列）
+    if (transferDate > jstTodayStr) {
+      console.warn('⚠️ Rejected future transferDate:', { transferDate, jstTodayStr, email });
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ success: false, error: FUTURE_DATE_ERROR })
       };
     }
 
@@ -74,7 +126,7 @@ exports.handler = async (event, context) => {
     // 管理者向けメール内容
     const adminPersonalization = {
       to: [{ email: ADMIN_EMAIL }],
-      subject: `【銀行振込申請】${email} - ${productName}`
+      subject: `【入金完了報告】${email} - ${productName}`
     };
     // Make Mailhook転送（環境変数があるときだけ bcc を付ける。空配列は SendGrid が 400 を返す）
     if (process.env.MAKE_MAILHOOK_EMAIL) {
@@ -105,14 +157,14 @@ exports.handler = async (event, context) => {
 <body>
   <div class="container">
     <div class="header">
-      <h2 style="margin: 0;">🏦 銀行振込申請通知</h2>
-      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">${productName} 購入申請が届きました</p>
+      <h2 style="margin: 0;">🏦 入金完了報告</h2>
+      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">${productName} の入金完了報告が届きました</p>
     </div>
 
     <div class="section">
-      <h3 style="margin-top: 0; color: #1e293b;">📋 申請情報</h3>
+      <h3 style="margin-top: 0; color: #1e293b;">📋 報告情報</h3>
       <div class="info-row">
-        <span class="label">申請日時:</span>
+        <span class="label">報告日時:</span>
         <span class="value">${japanTime}</span>
       </div>
       <div class="info-row">
@@ -174,11 +226,11 @@ exports.handler = async (event, context) => {
       }
     };
 
-    // 申請者向けメール内容
+    // 報告者向けメール内容
     const userEmailData = {
       personalizations: [{
         to: [{ email: email }],
-        subject: `【銀行振込申請受付】NANKANアナリティクス ${productName}`
+        subject: `【入金完了報告受付】NANKANアナリティクス ${productName}`
       }],
       from: { email: FROM_EMAIL, name: 'NANKANアナリティクス' },
       content: [{
@@ -203,14 +255,14 @@ exports.handler = async (event, context) => {
 <body>
   <div class="container">
     <div class="header">
-      <h2 style="margin: 0;">✅ お申し込みありがとうございます</h2>
-      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">銀行振込申請を受け付けました</p>
+      <h2 style="margin: 0;">✅ 入金完了のご報告ありがとうございます</h2>
+      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">入金完了のご報告を受け付けました</p>
     </div>
 
     <div class="section">
-      <h3 style="margin-top: 0; color: #1e293b;">📋 ご申請内容</h3>
+      <h3 style="margin-top: 0; color: #1e293b;">📋 ご報告内容</h3>
       <div class="info-row">
-        <span class="label">申請日時:</span>
+        <span class="label">報告日時:</span>
         <span class="value">${japanTime}</span>
       </div>
       <div class="info-row">
@@ -298,7 +350,7 @@ exports.handler = async (event, context) => {
       throw new Error(`Failed to send admin email: ${adminResponse.status}`);
     }
 
-    // SendGrid APIでメール送信（申請者向け）
+    // SendGrid APIでメール送信（報告者向け）
     const userResponse = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
@@ -570,7 +622,7 @@ exports.handler = async (event, context) => {
       console.log('ℹ️ Premium Plus - BlastMail registration skipped');
     }
 
-    console.log('✅ Bank transfer application submitted:', {
+    console.log('✅ Bank transfer completion report submitted:', {
       email,
       fullName,
       transferDate,
@@ -584,16 +636,17 @@ exports.handler = async (event, context) => {
       headers,
       body: JSON.stringify({
         success: true,
-        message: '銀行振込申請を受け付けました。確認メールをお送りしましたのでご確認ください。'
+        message: '入金完了のご報告を受け付けました。確認メールをお送りしましたのでご確認ください。'
       })
     };
 
   } catch (error) {
-    console.error('Bank transfer application error:', error);
+    console.error('Bank transfer completion report error:', error);
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({
+        success: false,
         error: 'サーバーエラーが発生しました。時間をおいて再度お試しください。',
         details: error.message
       })
