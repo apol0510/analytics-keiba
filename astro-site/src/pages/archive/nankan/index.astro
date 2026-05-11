@@ -8,14 +8,11 @@ export const prerender = false;
 
 const dataDir = join(process.cwd(), 'src', 'data');
 const archivePath = join(dataDir, 'archiveResults.json');
-const archiveJraPath = join(dataDir, 'archiveResultsJra.json');
 
 let archiveResults: any[] = [];
-let archiveResultsJra: any[] = [];
 
 try {
   if (existsSync(archivePath)) archiveResults = JSON.parse(readFileSync(archivePath, 'utf-8'));
-  if (existsSync(archiveJraPath)) archiveResultsJra = JSON.parse(readFileSync(archiveJraPath, 'utf-8'));
 } catch (e) {
   console.error('[archive/nankan] load error:', e);
 }
@@ -27,12 +24,8 @@ const addYM = (y: string, m: string) => {
   yearMonthSet.get(y)!.add(m);
 };
 
+// 南関ページ専用なので南関データのみから年月を収集（JRA は別ページ）
 for (const entry of archiveResults) {
-  if (!entry?.date) continue;
-  const [y, m] = entry.date.split('-');
-  if (y && m) addYM(y, m);
-}
-for (const entry of archiveResultsJra) {
   if (!entry?.date) continue;
   const [y, m] = entry.date.split('-');
   if (y && m) addYM(y, m);
@@ -77,7 +70,7 @@ const yearSummaries = years.map(year => {
 
   months.forEach(month => {
     const snapshot = loadSnapshot(year, month);
-    const monthData = buildMergedMonthData(archiveResults, snapshot, year, month, archiveResultsJra);
+    const monthData = buildMergedMonthData(archiveResults, snapshot, year, month);
     const days = Object.keys(monthData);
     totalDays += days.length;
 

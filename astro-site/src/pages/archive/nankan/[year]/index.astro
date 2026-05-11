@@ -10,27 +10,19 @@ const { year } = Astro.params as { year: string };
 
 const dataDir = join(process.cwd(), 'src', 'data');
 const archivePath = join(dataDir, 'archiveResults.json');
-const archiveJraPath = join(dataDir, 'archiveResultsJra.json');
 
 let archiveResults: any[] = [];
-let archiveResultsJra: any[] = [];
 
 try {
   if (existsSync(archivePath)) archiveResults = JSON.parse(readFileSync(archivePath, 'utf-8'));
-  if (existsSync(archiveJraPath)) archiveResultsJra = JSON.parse(readFileSync(archiveJraPath, 'utf-8'));
 } catch (e) {
   console.error(`[archive/nankan/${year}] load error:`, e);
 }
 
-// 該当年に存在する月を全データソースから収集
+// 該当年に存在する月を南関データソースのみから収集（JRA は別ページ）
 const monthsSet = new Set<string>();
 
 for (const entry of archiveResults) {
-  if (!entry?.date) continue;
-  const [y, m] = entry.date.split('-');
-  if (y === year) monthsSet.add(m);
-}
-for (const entry of archiveResultsJra) {
   if (!entry?.date) continue;
   const [y, m] = entry.date.split('-');
   if (y === year) monthsSet.add(m);
@@ -69,7 +61,7 @@ const monthSummaries = months.map(month => {
   if (existsSync(snapshotPath)) {
     try { snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')); } catch {}
   }
-  const monthData = buildMergedMonthData(archiveResults, snapshot, year, month, archiveResultsJra);
+  const monthData = buildMergedMonthData(archiveResults, snapshot, year, month);
   const days = Object.keys(monthData);
 
   let monthPayout = 0;

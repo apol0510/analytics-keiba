@@ -10,19 +10,14 @@ const { year, month } = Astro.params as { year: string; month: string };
 
 const dataDir = join(process.cwd(), 'src', 'data');
 const archivePath = join(dataDir, 'archiveResults.json');
-const archiveJraPath = join(dataDir, 'archiveResultsJra.json');
 const snapshotPath = join(dataDir, `archiveResults_${year}-${month}.json`);
 
 let archiveResults: any[] = [];
-let archiveResultsJra: any[] = [];
 let snapshot: any = {};
 
 try {
   if (existsSync(archivePath)) {
     archiveResults = JSON.parse(readFileSync(archivePath, 'utf-8'));
-  }
-  if (existsSync(archiveJraPath)) {
-    archiveResultsJra = JSON.parse(readFileSync(archiveJraPath, 'utf-8'));
   }
   if (existsSync(snapshotPath)) {
     snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8'));
@@ -31,7 +26,8 @@ try {
   console.error(`[archive/nankan/${year}/${month}] load error:`, e);
 }
 
-const monthData = buildMergedMonthData(archiveResults, snapshot, year, month, archiveResultsJra);
+// 南関ページなので JRA データは渡さない（中央結果が混入するのを防ぐ）
+const monthData = buildMergedMonthData(archiveResults, snapshot, year, month);
 const days = Object.keys(monthData).sort((a, b) => {
   const da = dayKeyToInt(a), db = dayKeyToInt(b);
   if (da !== db) return db - da;
