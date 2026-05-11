@@ -65,7 +65,9 @@ function buildVenueDisplay(entry) {
       horseCount: r.horseCount || (r.horses?.length ?? null),
       startTime: r.startTime || null,
       darkHorses: [...(r.darkHorses || [])]
-        .filter(h => h.lastFinish !== 1) // 前走1着馬は穴馬ページ対象外（防御的に表示側でも除外）
+        // 前走1着は完全除外、前走2着は例外（exceptional2nd フラグ）のみ許容
+        .filter(h => h.lastFinish !== 1)
+        .filter(h => h.lastFinish !== 2 || h.exceptional2nd === true)
         .sort((a, b) => (b.score || 0) - (a.score || 0))
         .slice(0, 3),
     }))
@@ -300,8 +302,8 @@ function formatJpDate(date) {
                 <div class="how-card">
                     <h3>📊 区分の見方</h3>
                     <ul>
-                        <li><span class="tag tag-darkhorse inline">穴馬</span>：前走6着以下、巻き返しを狙える一頭</li>
-                        <li><span class="tag tag-value inline">妙味馬</span>：前走1〜5着で人気と評価にズレのある一頭</li>
+                        <li><span class="tag tag-darkhorse inline">穴馬</span>：前走6〜12着、人気以上に指数が評価しており巻き返し余地が大きい一頭</li>
+                        <li><span class="tag tag-value inline">妙味馬</span>：前走3〜5着など、人気と指数のギャップで拾える一頭</li>
                         <li><span class="tag tag-fallback inline">補完候補</span>：通常抽出該当なしのレースで中位指数から拾った一頭</li>
                     </ul>
                 </div>
@@ -498,35 +500,44 @@ function formatJpDate(date) {
             });
         }
 
-        // 事実ベースの評価タグ生成
-        // 自然文の AI 分析コメントは精度が安定するまで停止。
-        // 代わりに pastRaces / lastFinish / gap / fallback フラグから
-        // 短い事実タグを生成する。「巻き返し」「掲示板外」など誤解を招く表現を禁止。
+        // 事実ベースの評価タグ生成（2026-05-11 改訂）
+        // 穴馬・妙味馬の上昇余地と人気/指数ギャップを示す事実タグのみ使用。
+        // 「前走勝利」「前走好走」など好走を強調するタグは穴馬ページの趣旨に反するため禁止。
+        // 使用語彙: #巻き返し候補 / #指数妙味 / #人気盲点 / #着順上昇余地 /
+        //          #中位指数 / #補完候補 / #相手候補 / #過去走データ不足
         function getFactualTags(horse, info) {
             const tags = [];
             const lf = horse.lastFinish;
-            const finishes = info?.finishes ?? [];
             const count = info?.count ?? 0;
-            const has3 = finishes.some(f => f <= 3);
-            const top4count = finishes.filter(f => f <= 4).length;
             const isFallback = !!horse.fallback;
             const gap = horse.gap || 0;
+            const indexRank = horse.indexRank || 0;
 
-            // 前走着順タグ（1着馬は穴馬ページ対象外なので「前走勝利」タグは未使用）
-            if (lf === 2 || lf === 3) tags.push({ label: '前走好走', kind: 'good' });
-            else if (lf === 4 || lf === 5) tags.push({ label: '掲示板内', kind: 'good' });
-            else if (lf != null && lf >= 6 && has3) tags.push({ label: '巻き返し候補', kind: 'recover' });
+            // 前走着順タグ（穴馬ページ趣旨に沿って「上昇余地」「巻き返し」のみ）
+            if (lf != null) {
+                if (lf >= 6 && lf <= 9) {
+                    tags.push({ label: '巻き返し候補', kind: 'recover' });
+                    tags.push({ label: '着順上昇余地', kind: 'good' });
+                } else if (lf >= 10 && lf <= 12) {
+                    tags.push({ label: '巻き返し候補', kind: 'recover' });
+                } else if (lf === 4 || lf === 5) {
+                    tags.push({ label: '着順上昇余地', kind: 'good' });
+                }
+                // lf === 3 や 例外2着、lf >= 13 は gap / indexRank タグに任せる
+            }
 
-            // 近走安定（4着以内が複数）
-            if (top4count >= 2) tags.push({ label: '近走安定', kind: 'good' });
-
-            // 抽出根拠（gap / fallback）
+            // 抽出根拠（gap / fallback / indexRank）
             if (isFallback) {
-                tags.push({ label: '補完抽出', kind: 'fallback' });
+                tags.push({ label: '補完候補', kind: 'fallback' });
             } else if (gap >= 5) {
                 tags.push({ label: '人気盲点', kind: 'edge' });
             } else if (gap >= 2) {
                 tags.push({ label: '指数妙味', kind: 'edge' });
+            }
+
+            // 中位指数（穴馬ページでは中位指数の馬を優遇する）
+            if (indexRank >= 3 && indexRank <= 6) {
+                tags.push({ label: '中位指数', kind: 'edge' });
             }
 
             // データ不足の明示
@@ -535,16 +546,26 @@ function formatJpDate(date) {
             // 何もタグが付かなければ無難な相手候補タグを 1 つ
             if (tags.length === 0) tags.push({ label: '相手候補', kind: 'good' });
 
-            return tags.slice(0, 4);
+            // 重複ラベルを除去（同じラベルが複数 push されるケースの安全弁）
+            const seen = new Set();
+            const dedup = [];
+            for (const t of tags) {
+                if (seen.has(t.label)) continue;
+                seen.add(t.label);
+                dedup.push(t);
+            }
+            return dedup.slice(0, 4);
         }
 
         // 表示用のカテゴリ判定（保存済みデータの category は信用せずクライアント側で再分類）
-        // 前走1〜5着 → 妙味馬 / 前走6着以下 or 不明 → 穴馬 / fallback フラグ → 補完候補
+        // - fallback フラグあり → 補完候補
+        // - 前走6〜12着 → 穴馬（上昇余地が大きい）
+        // - 前走3〜5着、例外2着、データなし → 妙味馬
         function classifyHorse(horse) {
             if (horse.fallback) return { key: 'fallback', label: '補完候補' };
             const lf = horse.lastFinish;
-            if (lf != null && lf >= 1 && lf <= 5) return { key: 'value', label: '妙味馬' };
-            return { key: 'darkhorse', label: '穴馬' };
+            if (lf != null && lf >= 6 && lf <= 12) return { key: 'darkhorse', label: '穴馬' };
+            return { key: 'value', label: '妙味馬' };
         }
 
         function getStarRating(score) {
