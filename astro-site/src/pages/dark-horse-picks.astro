@@ -303,15 +303,15 @@ function formatJpDate(date) {
                     <ul>
                         <li>独自AIが各馬の評価データを総合分析</li>
                         <li>過去パフォーマンスから巻き返し余地を判定</li>
-                        <li>人気と評価のギャップから狙い目を抽出</li>
+                        <li>指数評価のバランスから狙い目を抽出</li>
                     </ul>
                 </div>
                 <div class="how-card">
                     <h3>📊 区分の見方</h3>
                     <ul>
-                        <li><span class="tag tag-darkhorse inline">穴馬</span>：前走6〜12着、人気以上に指数が評価しており巻き返し余地が大きい一頭</li>
-                        <li><span class="tag tag-value inline">妙味馬</span>：前走3〜5着など、人気と指数のギャップで拾える一頭</li>
-                        <li><span class="tag tag-fallback inline">注目候補</span>：通常抽出該当なしのレースで中位指数から拾った一頭</li>
+                        <li><span class="tag tag-darkhorse inline">穴馬</span>：前走6〜12着を中心に、指数評価から巻き返し余地を見込める一頭</li>
+                        <li><span class="tag tag-value inline">妙味馬</span>：前走3〜5着など、指数評価とのバランスから拾える一頭</li>
+                        <li><span class="tag tag-fallback inline">注目候補</span>：通常抽出に該当しないレースで、中位指数から補助的に拾った一頭</li>
                     </ul>
                 </div>
                 <div class="how-card">
@@ -513,7 +513,7 @@ function formatJpDate(date) {
         //
         // 3指標:
         //   1. 指数評価: indexRank 1〜3=上位 / 4〜7=中位 / 8+=下位
-        //   2. 人気妙味: gap >= 3=高い / gap >= 1=あり / gap <= 0=拮抗
+        //   2. 妙味度: gap >= 3=高い / gap >= 1=あり / gap <= 0=拮抗
         //   3. 前走評価: lf 6〜12=巻き返し圏 / lf 4〜5=着順上昇余地 / lf 3=相手候補 /
         //              例外2着=上昇余地小 / lf >= 13=巻き返し圏 / null=データなし
         function getExtractionIndicators(horse, info) {
@@ -535,16 +535,16 @@ function formatJpDate(date) {
                 indicators.push({ key: '指数評価', value: label, kind });
             }
 
-            // 2. 人気妙味（gap ベース）
+            // 2. 妙味度（gap ベース）
             //    fallback で gap=0 のときは「拮抗」を出す。穴馬の趣旨上ノイズになるため
-            //    fallback かつ gap=0 のケースのみ pill を省略してもよいが、ユーザー要望
+            //    fallback かつ gap=0 のケースのみ pill を省略してもよいが、要望
             //    「3指標を一貫して見せたい」を優先し常時表示する。
             if (gap >= 3) {
-                indicators.push({ key: '人気妙味', value: '高い', kind: 'high' });
+                indicators.push({ key: '妙味度', value: '高い', kind: 'high' });
             } else if (gap >= 1) {
-                indicators.push({ key: '人気妙味', value: 'あり', kind: 'mid' });
+                indicators.push({ key: '妙味度', value: 'あり', kind: 'mid' });
             } else {
-                indicators.push({ key: '人気妙味', value: '拮抗', kind: 'low' });
+                indicators.push({ key: '妙味度', value: '拮抗', kind: 'low' });
             }
 
             // 3. 前走評価
@@ -662,7 +662,7 @@ function formatJpDate(date) {
                 'レースデータを読み込み中...',
                 '出走馬の過去成績を解析中...',
                 '適性スコアを計算中...',
-                '人気と評価のギャップを検出中...',
+                '指数評価のバランスを検出中...',
                 '穴馬候補を抽出中...',
                 '分析完了'
             ];
@@ -996,7 +996,7 @@ function formatJpDate(date) {
             background: linear-gradient(135deg, #10b981, #059669);
             opacity: 0.8;
         }
-        /* 該当馬なし（人気と指数順位が完全一致するなど抽出条件を満たさないレース） */
+        /* 該当馬なし（抽出条件を満たさないレース） */
         .race-card.is-empty {
             background: rgba(15, 23, 42, 0.5);
             opacity: 0.7;
