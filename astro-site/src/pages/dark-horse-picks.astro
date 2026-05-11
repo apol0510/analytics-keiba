@@ -304,7 +304,7 @@ function formatJpDate(date) {
                     <ul>
                         <li><span class="tag tag-darkhorse inline">穴馬</span>：前走6〜12着、人気以上に指数が評価しており巻き返し余地が大きい一頭</li>
                         <li><span class="tag tag-value inline">妙味馬</span>：前走3〜5着など、人気と指数のギャップで拾える一頭</li>
-                        <li><span class="tag tag-fallback inline">補完候補</span>：通常抽出該当なしのレースで中位指数から拾った一頭</li>
+                        <li><span class="tag tag-fallback inline">注目候補</span>：通常抽出該当なしのレースで中位指数から拾った一頭</li>
                     </ul>
                 </div>
                 <div class="how-card">
@@ -500,69 +500,76 @@ function formatJpDate(date) {
             });
         }
 
-        // 事実ベースの評価タグ生成（2026-05-11 改訂）
-        // 穴馬・妙味馬の上昇余地と人気/指数ギャップを示す事実タグのみ使用。
-        // 「前走勝利」「前走好走」など好走を強調するタグは穴馬ページの趣旨に反するため禁止。
-        // 使用語彙: #巻き返し候補 / #指数妙味 / #人気盲点 / #着順上昇余地 /
-        //          #中位指数 / #補完候補 / #相手候補 / #過去走データ不足
-        function getFactualTags(horse, info) {
-            const tags = [];
+        // 抽出指標生成（2026-05-11 改訂）
+        // タグ形式（#xxx）を廃止し、key/value 構造の抽出指標として表示。
+        // 「評価根拠」「補完候補」など内部分類めいたラベルはユーザー画面に出さない。
+        //
+        // 3指標:
+        //   1. 指数評価: indexRank 1〜3=上位 / 4〜7=中位 / 8+=下位
+        //   2. 人気妙味: gap >= 3=高い / gap >= 1=あり / gap <= 0=拮抗
+        //   3. 前走評価: lf 6〜12=巻き返し圏 / lf 4〜5=着順上昇余地 / lf 3=相手候補 /
+        //              例外2着=上昇余地小 / lf >= 13=巻き返し圏 / null=データなし
+        function getExtractionIndicators(horse, info) {
+            const indicators = [];
             const lf = horse.lastFinish;
             const count = info?.count ?? 0;
-            const isFallback = !!horse.fallback;
             const gap = horse.gap || 0;
             const indexRank = horse.indexRank || 0;
+            const isFallback = !!horse.fallback;
+            const isExceptional2nd = !!horse.exceptional2nd;
 
-            // 前走着順タグ（穴馬ページ趣旨に沿って「上昇余地」「巻き返し」のみ）
-            if (lf != null) {
-                if (lf >= 6 && lf <= 9) {
-                    tags.push({ label: '巻き返し候補', kind: 'recover' });
-                    tags.push({ label: '着順上昇余地', kind: 'good' });
-                } else if (lf >= 10 && lf <= 12) {
-                    tags.push({ label: '巻き返し候補', kind: 'recover' });
-                } else if (lf === 4 || lf === 5) {
-                    tags.push({ label: '着順上昇余地', kind: 'good' });
+            // 1. 指数評価
+            if (indexRank > 0) {
+                let label;
+                let kind;
+                if (indexRank <= 3) { label = '上位'; kind = 'high'; }
+                else if (indexRank <= 7) { label = '中位'; kind = 'mid'; }
+                else { label = '下位'; kind = 'low'; }
+                indicators.push({ key: '指数評価', value: label, kind });
+            }
+
+            // 2. 人気妙味（gap ベース）
+            //    fallback で gap=0 のときは「拮抗」を出す。穴馬の趣旨上ノイズになるため
+            //    fallback かつ gap=0 のケースのみ pill を省略してもよいが、ユーザー要望
+            //    「3指標を一貫して見せたい」を優先し常時表示する。
+            if (gap >= 3) {
+                indicators.push({ key: '人気妙味', value: '高い', kind: 'high' });
+            } else if (gap >= 1) {
+                indicators.push({ key: '人気妙味', value: 'あり', kind: 'mid' });
+            } else {
+                indicators.push({ key: '人気妙味', value: '拮抗', kind: 'low' });
+            }
+
+            // 3. 前走評価
+            if (lf == null) {
+                if (count === 0) {
+                    indicators.push({ key: '前走', value: 'データなし', kind: 'low' });
+                } else {
+                    indicators.push({ key: '前走', value: '相手候補', kind: 'mid' });
                 }
-                // lf === 3 や 例外2着、lf >= 13 は gap / indexRank タグに任せる
+            } else if (lf >= 6 && lf <= 12) {
+                indicators.push({ key: '前走', value: '巻き返し圏', kind: 'high' });
+            } else if (lf === 4 || lf === 5) {
+                indicators.push({ key: '前走', value: '着順上昇余地', kind: 'mid' });
+            } else if (lf === 3) {
+                indicators.push({ key: '前走', value: '相手候補', kind: 'mid' });
+            } else if (lf === 2 && isExceptional2nd) {
+                indicators.push({ key: '前走', value: '上昇余地小', kind: 'low' });
+            } else if (lf >= 13) {
+                indicators.push({ key: '前走', value: '巻き返し圏', kind: 'high' });
+            } else {
+                indicators.push({ key: '前走', value: '相手候補', kind: 'mid' });
             }
 
-            // 抽出根拠（gap / fallback / indexRank）
-            if (isFallback) {
-                tags.push({ label: '補完候補', kind: 'fallback' });
-            } else if (gap >= 5) {
-                tags.push({ label: '人気盲点', kind: 'edge' });
-            } else if (gap >= 2) {
-                tags.push({ label: '指数妙味', kind: 'edge' });
-            }
-
-            // 中位指数（穴馬ページでは中位指数の馬を優遇する）
-            if (indexRank >= 3 && indexRank <= 6) {
-                tags.push({ label: '中位指数', kind: 'edge' });
-            }
-
-            // データ不足の明示
-            if (count === 0) tags.push({ label: '過去走データ不足', kind: 'warn' });
-
-            // 何もタグが付かなければ無難な相手候補タグを 1 つ
-            if (tags.length === 0) tags.push({ label: '相手候補', kind: 'good' });
-
-            // 重複ラベルを除去（同じラベルが複数 push されるケースの安全弁）
-            const seen = new Set();
-            const dedup = [];
-            for (const t of tags) {
-                if (seen.has(t.label)) continue;
-                seen.add(t.label);
-                dedup.push(t);
-            }
-            return dedup.slice(0, 4);
+            return indicators;
         }
 
         // 表示用のカテゴリ判定（保存済みデータの category は信用せずクライアント側で再分類）
-        // - fallback フラグあり → 補完候補
+        // - fallback フラグあり → 注目候補（「補完候補」はユーザー向けには使わない）
         // - 前走6〜12着 → 穴馬（上昇余地が大きい）
         // - 前走3〜5着、例外2着、データなし → 妙味馬
         function classifyHorse(horse) {
-            if (horse.fallback) return { key: 'fallback', label: '補完候補' };
+            if (horse.fallback) return { key: 'fallback', label: '注目候補' };
             const lf = horse.lastFinish;
             if (lf != null && lf >= 6 && lf <= 12) return { key: 'darkhorse', label: '穴馬' };
             return { key: 'value', label: '妙味馬' };
@@ -577,17 +584,20 @@ function formatJpDate(date) {
         function buildHorseCardsHtml(horses, horsePastInfo) {
             return horses.map((h, idx) => {
                 const cls = classifyHorse(h);
-                const isDark = cls.key === 'darkhorse';
                 const tag = `<span class="tag tag-${cls.key}">${cls.label}</span>`;
                 const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
                 const info = horsePastInfo?.[String(h.number)] || null;
-                const factTags = getFactualTags(h, info);
+                const indicators = getExtractionIndicators(h, info);
                 const stars = getStarRating(h.score);
-                // タグはチップ表示。CSS gap が効かない環境でも視認できるよう
-                // ラベルに # プレフィックスを付与し、チップ間にスペーステキストノードも挿入
-                const tagsHtml = factTags
-                    .map(t => `<span class="horse-tag-chip tag-${t.kind}">#${escapeHtml(t.label)}</span>`)
-                    .join(' ');
+                // 抽出指標は pill 形式（key/value 構造）。# タグ形式は廃止。
+                const indicatorsHtml = indicators
+                    .map(ind => `
+                        <span class="horse-indicator-pill pill-${ind.kind}">
+                            <span class="pill-key">${escapeHtml(ind.key)}</span>
+                            <span class="pill-value">${escapeHtml(ind.value)}</span>
+                        </span>
+                    `)
+                    .join('');
                 return `
                     <article class="horse-card is-${cls.key}" style="--delay: ${idx * 80}ms">
                         <div class="horse-card-glow"></div>
@@ -610,12 +620,12 @@ function formatJpDate(date) {
                             <span class="meta-chip"><span class="meta-icon">🏁</span><span class="meta-label">前走</span><span class="meta-value">${lf}</span></span>
                         </div>
 
-                        <div class="horse-tags">
-                            <div class="tags-head">
-                                <span class="tags-head-icon">🤖</span>
-                                <span class="tags-head-text">評価根拠</span>
+                        <div class="horse-indicators">
+                            <div class="indicators-head">
+                                <span class="indicators-head-icon">📊</span>
+                                <span class="indicators-head-text">抽出指標</span>
                             </div>
-                            <div class="tags-row">${tagsHtml}</div>
+                            <div class="indicators-row">${indicatorsHtml}</div>
                         </div>
                     </article>
                 `;
@@ -1292,68 +1302,66 @@ function formatJpDate(date) {
         .meta-icon { font-size: 0.95rem; }
         .meta-label { color: #94a3b8; }
         .meta-value { color: #f1f5f9; font-weight: 700; }
-        /* 評価根拠タグ（事実ベース） */
-        .horse-tags {
+        /* 抽出指標（key/value 構造の pill） */
+        .horse-indicators {
             padding: 12px 14px;
             background: linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(139, 92, 246, 0.08));
             border: 1px solid rgba(139, 92, 246, 0.22);
             border-radius: 10px;
         }
-        .horse-card.is-value .horse-tags {
+        .horse-card.is-value .horse-indicators {
             background: linear-gradient(135deg, rgba(251, 191, 36, 0.08), rgba(236, 72, 153, 0.08));
             border-color: rgba(251, 191, 36, 0.25);
         }
-        .horse-card.is-fallback .horse-tags {
+        .horse-card.is-fallback .horse-indicators {
             background: linear-gradient(135deg, rgba(148, 163, 184, 0.08), rgba(99, 102, 241, 0.08));
             border-color: rgba(99, 102, 241, 0.22);
         }
-        .tags-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-        .tags-head-icon { font-size: 1rem; }
-        .tags-head-text {
+        .indicators-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+        .indicators-head-icon { font-size: 1rem; }
+        .indicators-head-text {
             font-size: 0.78rem; font-weight: 800; letter-spacing: 0.06em;
             color: #c7d2fe; text-transform: uppercase;
         }
-        .horse-card.is-value .tags-head-text { color: #fcd34d; }
-        .horse-card.is-fallback .tags-head-text { color: #a5b4fc; }
-        .tags-row { display: flex; gap: 6px; flex-wrap: wrap; }
-        .horse-tag-chip {
-            display: inline-flex; align-items: center;
-            padding: 4px 10px;
+        .horse-card.is-value .indicators-head-text { color: #fcd34d; }
+        .horse-card.is-fallback .indicators-head-text { color: #a5b4fc; }
+        .indicators-row {
+            display: flex; gap: 8px; flex-wrap: wrap;
+        }
+        .horse-indicator-pill {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 5px 11px;
             border-radius: 999px;
-            font-size: 0.78rem; font-weight: 700;
+            font-size: 0.78rem;
             border: 1px solid transparent;
+            background: rgba(15, 23, 42, 0.55);
             white-space: nowrap;
+            line-height: 1;
         }
-        .horse-tag-chip.tag-win {
-            color: #fde68a;
-            background: rgba(251, 191, 36, 0.15);
-            border-color: rgba(251, 191, 36, 0.4);
+        .horse-indicator-pill .pill-key {
+            color: #94a3b8;
+            font-weight: 600;
+            letter-spacing: 0.02em;
         }
-        .horse-tag-chip.tag-good {
-            color: #6ee7b7;
-            background: rgba(16, 185, 129, 0.13);
-            border-color: rgba(16, 185, 129, 0.35);
+        .horse-indicator-pill .pill-value {
+            font-weight: 800;
+            color: #f1f5f9;
         }
-        .horse-tag-chip.tag-recover {
-            color: #fca5a5;
-            background: rgba(239, 68, 68, 0.13);
-            border-color: rgba(239, 68, 68, 0.4);
+        .horse-indicator-pill.pill-high {
+            background: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.45);
         }
-        .horse-tag-chip.tag-edge {
-            color: #c4b5fd;
-            background: rgba(139, 92, 246, 0.15);
+        .horse-indicator-pill.pill-high .pill-value { color: #6ee7b7; }
+        .horse-indicator-pill.pill-mid {
+            background: rgba(139, 92, 246, 0.14);
             border-color: rgba(139, 92, 246, 0.4);
         }
-        .horse-tag-chip.tag-fallback {
-            color: #a5b4fc;
-            background: rgba(99, 102, 241, 0.15);
-            border-color: rgba(99, 102, 241, 0.35);
-        }
-        .horse-tag-chip.tag-warn {
-            color: #94a3b8;
+        .horse-indicator-pill.pill-mid .pill-value { color: #c4b5fd; }
+        .horse-indicator-pill.pill-low {
             background: rgba(71, 85, 105, 0.18);
             border-color: rgba(148, 163, 184, 0.3);
         }
+        .horse-indicator-pill.pill-low .pill-value { color: #cbd5e1; }
 
         .modal-disclaimer {
             margin-top: 16px; padding: 10px 14px;
