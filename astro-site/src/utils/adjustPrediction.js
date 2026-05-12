@@ -15,6 +15,12 @@
  *       a) 上位2頭の analyticsScore 差 < 3% → computerIndex 最大の馬を本命に
  *       b) analyticsScore 最大 ≠ computerIndex 最大 → computerIndex 最大の馬を本命に
  *
+ * フォールバック（2026-05-12 追加）:
+ *   レース内に computerIndex > 0 の馬が 1 頭も無い場合は、analyticsScore が
+ *   computerIndex 50% 重みに依存しているため事実上機能しない。
+ *   その場合は keiba-intelligence と同じ「印1◎ 固定 + customScore 順」へフォールバックし、
+ *   実績のある印ベース割当に戻して品質を維持する。
+ *
  * 共通ルール:
  *   - displayScore = rawScore + 70（0点は0のまま、UI 互換性のため維持）
  *   - 連下は 3 頭まで、残りは補欠（変更なし）
@@ -44,18 +50,29 @@ function getRoleMark(role) {
 }
 
 /**
+ * 印1〜印4 を marks フィールドから抽出する。
+ * raw racebook の marks は配列形式（位置で 印1, 印2, ... に対応）。
+ * 一部の正規化済みデータでは {印1:'◎', 印2:'○', ...} の dict 形式もあり得る。
+ */
+function getMark(marks, idx) {
+  if (Array.isArray(marks)) return marks[idx];
+  if (marks && typeof marks === 'object') return marks[`印${idx + 1}`];
+  return undefined;
+}
+
+/**
  * 印スコア計算（印1〜4の重み付け合計 → 0–100 に正規化）
  * 旧仕様: 印1×4 + 印2×3 + 印3×2 + 印4×1、最大30。
  * analytics 独自式では全体の 20% の重みで使用する。
  */
 function calculateMarkScore(horse) {
-  const markPoints = { '◎': 4, '○': 3, '▲': 2, '△': 1, '-': 0, 'svg': 0, '無': 0 };
+  const markPoints = { '◎': 4, '○': 3, '▲': 2, '△': 1, '☆': 1, '-': 0, 'svg': 0, '無': 0 };
   const marks = horse.marks || {};
   const raw =
-    (markPoints[marks['印1']] || 0) * 4 +
-    (markPoints[marks['印2']] || 0) * 3 +
-    (markPoints[marks['印3']] || 0) * 2 +
-    (markPoints[marks['印4']] || 0) * 1;
+    (markPoints[getMark(marks, 0)] || 0) * 4 +
+    (markPoints[getMark(marks, 1)] || 0) * 3 +
+    (markPoints[getMark(marks, 2)] || 0) * 2 +
+    (markPoints[getMark(marks, 3)] || 0) * 1;
   // 理論最大 30 を 100 に正規化（超えた分はクリップ）
   return Math.max(0, Math.min(100, (raw / 30) * 100));
 }
@@ -138,7 +155,9 @@ export function adjustPrediction(normalized) {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 3: analyticsScore 順で役割決定（差別化ルール付き）
+    // Step 3: 役割決定
+    //   通常: analyticsScore 降順 + 差別化ルール
+    //   フォールバック: 印1◎固定 + customScore 順（KI と同等）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // スコアのある馬のみ対象
@@ -150,9 +169,59 @@ export function adjustPrediction(normalized) {
     const hasExistingRoles = race.horses.some(h => h.role !== '無');
     const preserveRoles = !hasAnyScore && hasExistingRoles;
 
+    // computerIndex を持つ馬が 1 頭でもあるか
+    // 無い場合は analyticsScore の 50% 重み枠が機能しないため、
+    // KI と同じ印1◎ベースのフォールバックに切替える
+    const hasComputerIndex = race.horses.some(h => Number(h.computerIndex) > 0);
+
     if (preserveRoles) {
       // 既存の役割を維持（Step 4 以降のみ実行）
+    } else if (!hasComputerIndex) {
+      // ━━ フォールバック: keiba-intelligence と同じ 印1◎ 固定ロジック ━━
+      // 全馬の役割をリセット
+      for (const horse of race.horses) {
+        horse.role = '無';
+      }
+
+      const honmeiMarkHorse = race.horses.find(h => h.marks && getMark(h.marks, 0) === '◎');
+      const hasCustomScore = race.horses.some(h => (h.customScore || 0) > 0);
+      const sortedHorses = hasCustomScore
+        ? [...activeHorses].sort((a, b) => (b.customScore || 0) - (a.customScore || 0))
+        : [...activeHorses].sort((a, b) => b.rawScore - a.rawScore);
+
+      const honmeiRank = honmeiMarkHorse ? sortedHorses.indexOf(honmeiMarkHorse) : -1;
+
+      if (honmeiMarkHorse && honmeiRank === 0) {
+        sortedHorses[0].role = '本命';
+        if (sortedHorses[1]) sortedHorses[1].role = '対抗';
+        if (sortedHorses[2]) sortedHorses[2].role = '単穴';
+        if (sortedHorses[3]) sortedHorses[3].role = '連下最上位';
+        for (let i = 4; i < sortedHorses.length; i++) sortedHorses[i].role = '連下';
+      } else if (honmeiMarkHorse && honmeiRank > 0) {
+        sortedHorses[0].role = '本命';
+        honmeiMarkHorse.role = '対抗';
+        let idx = 1;
+        while (idx < sortedHorses.length && sortedHorses[idx] === honmeiMarkHorse) idx++;
+        if (idx < sortedHorses.length) sortedHorses[idx].role = '単穴';
+        let nextIdx = idx + 1;
+        while (nextIdx < sortedHorses.length && sortedHorses[nextIdx] === honmeiMarkHorse) nextIdx++;
+        if (nextIdx < sortedHorses.length) sortedHorses[nextIdx].role = '連下最上位';
+        for (let i = 0; i < sortedHorses.length; i++) {
+          if (sortedHorses[i].role === '無' && sortedHorses[i] !== honmeiMarkHorse) {
+            sortedHorses[i].role = '連下';
+          }
+        }
+      } else {
+        if (sortedHorses[0]) sortedHorses[0].role = '本命';
+        if (sortedHorses[1]) sortedHorses[1].role = '対抗';
+        if (sortedHorses[2]) sortedHorses[2].role = '単穴';
+        if (sortedHorses[3]) sortedHorses[3].role = '連下最上位';
+        for (let i = 4; i < sortedHorses.length; i++) sortedHorses[i].role = '連下';
+      }
+
+      race._analyticsRule = 'fallback-mark-based-no-ci';
     } else {
+      // ━━ 通常: analyticsScore 順で役割決定（差別化ルール付き） ━━
       // 全馬の役割をリセット
       for (const horse of race.horses) {
         horse.role = '無';

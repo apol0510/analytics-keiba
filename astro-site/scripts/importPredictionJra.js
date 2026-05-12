@@ -30,7 +30,7 @@ const projectRoot = join(__dirname, '..');
 import { normalizeAndAdjust } from '../src/utils/normalizePrediction.js';
 
 // メインレース10点ロジック + 通常レース本命/対抗軸ロジック（共通モジュール）
-import { isMainRace, generateRaceUmatanLines } from '../src/utils/mainRaceBetting.js';
+import { isMainRace, generateRaceUmatanLines, generateMainRaceUmatanLines } from '../src/utils/mainRaceBetting.js';
 
 // データ検証関数をインポート
 import { validateJRAPrediction } from './utils/validatePrediction.js';
@@ -288,11 +288,34 @@ function convertToLegacyFormat(data, date) {
     racesByVenue.set(v, (racesByVenue.get(v) || 0) + 1);
   }
   const predictions = data.races.map((race) => {
-    // 買い目生成（馬単）: メイン10点 / 通常本命+対抗軸を共通モジュールで分岐
+    // 買い目生成（馬単）
+    // - メインレース: 10点ロジック（本命↔上位5頭、双方向）
+    // - 通常レース: keiba-intelligence と同等の wide-partner 方式
+    //   （本命軸 / 対抗軸の2行、相手 = main+osae 全頭）
     const venueKey = race.venue || race.raceInfo?.venue || dataVenue;
     const venueRaces = racesByVenue.get(venueKey) || (Array.isArray(data.races) ? data.races.length : 0);
     const isMain = isMainRace(race.raceNumber, venueRaces);
-    const umatanLines = generateRaceUmatanLines(race.horses, isMain);
+    let umatanLines = [];
+    if (isMain) {
+      umatanLines = generateMainRaceUmatanLines(race.horses);
+    } else {
+      const honmei = race.horses.find(h => h.role === '本命');
+      const taikou = race.horses.find(h => h.role === '対抗');
+      const main = race.horses.filter(h => h.role === '本命' || h.role === '対抗' || h.role === '単穴' || h.role === '連下最上位');
+      const renka = race.horses.filter(h => h.role === '連下');
+      const osae = race.horses.filter(h => h.role === '補欠' || h.role === '抑え');
+      const buildLine = (axis) => {
+        const aite = main.filter(h => h.number !== axis.number).map(h => h.number).join('.');
+        const renkaNumbers = renka.map(h => h.number).join('.');
+        const osaeNumbers = osae.map(h => h.number).join('.');
+        let line = `${axis.number}-${aite}`;
+        if (renkaNumbers) line += `.${renkaNumbers}`;
+        if (osaeNumbers) line += `(抑え${osaeNumbers})`;
+        return line;
+      };
+      if (honmei) umatanLines.push(buildLine(honmei));
+      if (taikou) umatanLines.push(buildLine(taikou));
+    }
 
     return {
       raceInfo: {
@@ -313,7 +336,10 @@ function convertToLegacyFormat(data, date) {
           jockey: h.jockey || h.kisyu || '', // 騎手
           trainer: h.trainer || h.kyusya || '', // 厩舎
           age: h.age || h.seirei || '', // 馬齢
-          weight: h.weight || h.kinryo || '' // 斤量
+          weight: h.weight || h.kinryo || '', // 斤量
+          // 役割再計算（adjustPrediction フォールバック）に必要なフィールド
+          computerIndex: h.computerIndex != null ? h.computerIndex : null,
+          marks: h.marks || {}
         }))
         .sort((a, b) => {
           // 役割の優先順位
