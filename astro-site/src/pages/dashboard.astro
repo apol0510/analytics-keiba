@@ -179,7 +179,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     <!-- Premium予想（Premium会員専用） -->
                     <div id="premium-predictions" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium予想（馬単3戦略）</h3>
+                            <h3>💎 Premium予想</h3>
                             <span class="plan-badge premium">PREMIUM</span>
                         </div>
                         <div class="race-info">
@@ -187,32 +187,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <a href="/premium-prediction/nankan/" class="view-btn">予想を見る</a>
-                    </div>
-
-                    <!-- 船橋競馬 Premium予想（Premium会員専用） -->
-                    <div id="premium-predictions-funabashi" class="prediction-card premium" style="display: none;">
-                        <div class="card-header">
-                            <h3>💎 船橋競馬 Premium予想（馬単3戦略）</h3>
-                            <span class="plan-badge premium">PREMIUM</span>
-                        </div>
-                        <div class="race-info">
-                            <div class="race-title">全レース（1R-12R）</div>
-                            <div class="confidence">AI分析完了！</div>
-                        </div>
-                        <a href="/premium-predictions-funabashi/" class="view-btn">船橋予想を見る</a>
-                    </div>
-
-                    <!-- 浦和競馬 Premium予想（Premium会員専用） -->
-                    <div id="premium-predictions-urawa" class="prediction-card premium" style="display: none;">
-                        <div class="card-header">
-                            <h3>💎 浦和競馬 Premium予想（馬単3戦略）</h3>
-                            <span class="plan-badge premium">PREMIUM</span>
-                        </div>
-                        <div class="race-info">
-                            <div class="race-title">全レース（1R-12R）</div>
-                            <div class="confidence">AI分析完了！</div>
-                        </div>
-                        <a href="/premium-predictions-urawa/" class="view-btn">浦和予想を見る</a>
                     </div>
 
                     <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用） -->
@@ -1433,11 +1407,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
             // Premium予想の表示制御（プラン別）
             if (planLower === 'premium') {
-                // Premium会員：馬単予想のみ（メイン＋船橋＋浦和）
-                console.log('Premium予想を表示（馬単のみ）');
+                // Premium会員：馬単予想（南関統合）
+                console.log('Premium予想を表示');
                 document.getElementById('premium-predictions').style.display = 'block';
-                document.getElementById('premium-predictions-funabashi').style.display = 'block';
-                document.getElementById('premium-predictions-urawa').style.display = 'block';
             } else if (planLower === 'premium sanrenpuku') {
                 // Premium Sanrenpuku会員：三連複予想のみ
                 console.log('Premium Sanrenpuku予想を表示');
@@ -1448,11 +1420,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 document.getElementById('sanrenpuku-predictions').style.display = 'block';
                 document.getElementById('combo-umatan-predictions').style.display = 'block';
             } else if (planLower === 'premium plus') {
-                // Premium Plus会員：Premium予想表示（メイン＋船橋＋浦和）
+                // Premium Plus会員：Premium予想表示
                 console.log('Premium Plus予想を表示');
                 document.getElementById('premium-predictions').style.display = 'block';
-                document.getElementById('premium-predictions-funabashi').style.display = 'block';
-                document.getElementById('premium-predictions-urawa').style.display = 'block';
             }
 
             // プラン管理の表示制御（無料会員のみ）
