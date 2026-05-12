@@ -73,6 +73,23 @@ export function parseRunningStyleFromPassingOrder(passingOrder) {
   return null;
 }
 
+// 連下 / 押さえ 馬向けの短評を、本命との pt 差から決定的に生成する。
+// 同じ役割・差レンジなら毎回同じ文言になるよう、ランダム性は持たせない。
+export function generateMinorHorseComment(role, gapFromHonmei) {
+  const gap = Number(gapFromHonmei) || 0;
+  if (role === '連下' || role === '連下最上位') {
+    if (gap <= 10) return '上位評価馬との差は小さく、馬券圏内まで十分浮上可能な一頭。';
+    if (gap <= 20) return '上位評価馬との差はあるが、相手候補として残せる能力値。';
+    return '能力上位性に支えられた連下評価。展開次第で浮上余地あり。';
+  }
+  if (role === '押さえ' || role === '抑え' || role === '補欠') {
+    if (gap <= 25) return '本線評価までは届かないが、展開が向けば押さえ候補。';
+    if (gap <= 40) return 'スコアは控えめながら、上位崩れの際に浮上余地あり。';
+    return '上位勢崩れの大穴候補として残す価値あり。';
+  }
+  return '';
+}
+
 // 直近 recentRaces を多数決で集約して脚質を返す（不明なら null）
 export function detectRecentRunningStyle(recentRaces) {
   if (!Array.isArray(recentRaces)) return null;
