@@ -46,64 +46,145 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 const { raceInfo, strategies, horses, analysis, preview, allHorses, totalHorses } = mainRace;
 const { raceInfo: race12RInfo, strategies: race12RStrategies, horses: race12RHorses, allHorses: race12RAllHorses } = race12R || {};
 
-// 全レースを自動分析（本日の傾向分析用） - 同時開催時は全会場を集約
-const allSortedRaces = venuesProcessed.flatMap((v) => v.sortedRaces);
-const highConfidenceRaces = [];
-const upsetModeRaces = [];
-const normalRaces = [];
+// =========================================================================
+// 本日の傾向分析（レース信頼度の多要素算出）
+// =========================================================================
+// 旧実装は「馬1頭の confidence (>=89)」だけでほぼ全レースが高信頼度になっていた。
+// レース単位の信頼度は、本命の累積スコア・対抗との差・上位の広がり・頭数・
+// 混戦度（contenderCount）の合成で算出する。
+//
+// 算出フロー:
+//   1. raceData.allHorses から pt を取得
+//   2. honmeiScore / taikouScore / topSpread / scoreGap / fieldSize /
+//      contenderCount / chaosScore を算出
+//   3. confidenceScore = 50 + scoreGap*1.4 + topSpread*0.35
+//                          + (honmeiScore-145)*0.5 - 大頭数ペナルティ
+//                          - contenderCount*1.5（0〜100にクランプ）
+//   4. 分類:
+//        高信頼度: confidenceScore >= 78 かつ scoreGap >= 8（最大4レースに制限）
+//        高配当モード: confidenceScore <= 62 または scoreGap <= 2
+//        それ以外: 通常
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
-allSortedRaces.forEach(raceData => {
-    // 各レースの全馬の累積スコアを取得
-    const horses = raceData.horses || {};
-    const allHorses = [
-        horses.main,
-        horses.sub,
-        ...(horses.minor || []),
-        ...(horses.low || []),
-        ...(horses.other || [])
-    ].filter(Boolean);
+function buildRaceConfidenceMetrics(raceData) {
+    const all = Array.isArray(raceData.allHorses) ? raceData.allHorses : [];
+    const byRole = (role) => all.find((h) => h && h.role === role);
+    const sortedPts = all
+        .map((h) => Number(h?.pt) || 0)
+        .filter((v) => v > 0)
+        .sort((a, b) => b - a);
 
-    // 最高スコアを取得（confidenceフィールドから）
-    const scores = allHorses.map(h => {
-        if (h.confidence) return h.confidence;
-        if (h.mark) return getHorseConfidenceFromMark(h);
-        return 0;
-    }).filter(s => s > 0);
+    const honmei = byRole('本命');
+    const taikou = byRole('対抗');
+    const honmeiScore = Number(honmei?.pt) || sortedPts[0] || 0;
+    const taikouScore = Number(taikou?.pt) || sortedPts[1] || 0;
+    const thirdScore = sortedPts[2] || 0;
+    const fifthScore = sortedPts[4] || sortedPts[sortedPts.length - 1] || 0;
+    const fieldSize = Number(raceData?.raceInfo?.horseCount) || all.length || sortedPts.length;
+    const scoreGap = honmeiScore - taikouScore;
+    const topSpread = honmeiScore - fifthScore;
 
-    const maxScore = Math.max(...scores, 0);
+    // 本命に近い対抗候補の数（本命を除く、pt >= 87% honmei）
+    const contenderThreshold = honmeiScore > 0 ? honmeiScore * 0.87 : 0;
+    const contenderCount = sortedPts.slice(1).filter((p) => p >= contenderThreshold).length;
 
-    // レース分類
-    if (maxScore >= 89) {
-        highConfidenceRaces.push({
-            raceNumber: raceData.raceNumber,
-            raceName: raceData.raceName,
-            maxScore: maxScore
-        });
-    } else if (maxScore <= 85 && maxScore > 0) {
-        upsetModeRaces.push({
-            raceNumber: raceData.raceNumber,
-            raceName: raceData.raceName,
-            maxScore: maxScore
-        });
-    } else if (maxScore > 0) {
-        normalRaces.push({
-            raceNumber: raceData.raceNumber,
-            raceName: raceData.raceName,
-            maxScore: maxScore
-        });
+    // 混戦度: 上位5頭の標準偏差が小さいほど混戦
+    const top5 = sortedPts.slice(0, 5);
+    const top5Mean = top5.length > 0 ? top5.reduce((s, v) => s + v, 0) / top5.length : 0;
+    const top5Var = top5.length > 0
+        ? top5.reduce((s, v) => s + (v - top5Mean) ** 2, 0) / top5.length
+        : 0;
+    const top5Stdev = Math.sqrt(top5Var);
+    // 標準偏差が低い（接近）ほど chaos が高い
+    const chaosScore = clamp(Math.round(30 - top5Stdev * 2), 0, 30);
+
+    const fieldPenalty = Math.max(0, fieldSize - 12) * 3;
+    const rawConfidence =
+        50 +
+        scoreGap * 1.4 +
+        topSpread * 0.35 +
+        (honmeiScore - 145) * 0.5 -
+        fieldPenalty -
+        contenderCount * 1.5;
+    const confidenceScore = clamp(Math.round(rawConfidence), 0, 100);
+
+    return {
+        raceNumber: raceData.raceNumber,
+        raceName: raceData.raceName,
+        honmeiScore,
+        taikouScore,
+        thirdScore,
+        scoreGap,
+        topSpread,
+        fieldSize,
+        contenderCount,
+        chaosScore,
+        confidenceScore,
+    };
+}
+
+const raceMetrics = venuesProcessed
+    .flatMap((v) => v.sortedRaces)
+    .map(buildRaceConfidenceMetrics);
+
+// 1次分類
+const HIGH_CONF_THRESHOLD = 78;
+const HIGH_CONF_GAP_MIN = 8;
+const UPSET_CONF_THRESHOLD = 62;
+const UPSET_GAP_MAX = 2;
+const HIGH_CONF_MAX_COUNT = 4; // 1開催あたり高信頼度の上限
+
+const provisional = raceMetrics.map((m) => {
+    let category;
+    if (m.confidenceScore >= HIGH_CONF_THRESHOLD && m.scoreGap >= HIGH_CONF_GAP_MIN) {
+        category = 'high';
+    } else if (m.confidenceScore <= UPSET_CONF_THRESHOLD || m.scoreGap <= UPSET_GAP_MAX) {
+        category = 'upset';
+    } else {
+        category = 'normal';
     }
+    return { ...m, category };
 });
 
-// 自動コメント生成
+// 高信頼度の数が上限を超えた場合は、confidenceScore 上位だけを高信頼度に残し、
+// 残りは通常レースに降格する（過剰な絞り込みを避ける安全装置）
+const highCandidates = provisional
+    .filter((m) => m.category === 'high')
+    .sort((a, b) => b.confidenceScore - a.confidenceScore);
+if (highCandidates.length > HIGH_CONF_MAX_COUNT) {
+    const keep = new Set(highCandidates.slice(0, HIGH_CONF_MAX_COUNT).map((m) => m.raceNumber));
+    for (const m of provisional) {
+        if (m.category === 'high' && !keep.has(m.raceNumber)) {
+            m.category = 'normal';
+        }
+    }
+}
+
+const highConfidenceRaces = provisional.filter((m) => m.category === 'high');
+const upsetModeRaces = provisional.filter((m) => m.category === 'upset');
+const normalRaces = provisional.filter((m) => m.category === 'normal');
+
+// デバッグログ: 各レースの分類根拠
+console.log('🔍 Race confidence metrics:');
+provisional.forEach((m) => {
+    console.log(
+        `  ${m.raceNumber} cat=${m.category} conf=${m.confidenceScore} ` +
+        `honmei=${m.honmeiScore} taikou=${m.taikouScore} gap=${m.scoreGap} ` +
+        `topSpread=${m.topSpread} field=${m.fieldSize} contender=${m.contenderCount} ` +
+        `chaos=${m.chaosScore}`
+    );
+});
+
+// 自動コメント生成（新分類ベース）
 let autoInsight = '';
 if (highConfidenceRaces.length >= 3) {
-    autoInsight = `本日は高信頼度レースが${highConfidenceRaces.length}レースと多く、本命決着の可能性が高い一日です。AI推奨買い目で堅実な勝負がおすすめです。`;
+    autoInsight = `本日は本命候補が比較的明確なレースが${highConfidenceRaces.length}レースあります。AI推奨買い目で堅実な勝負がおすすめです。`;
 } else if (upsetModeRaces.length >= 3) {
-    autoInsight = `本日は波乱含みのレースが${upsetModeRaces.length}レースと多く、穴馬に注目の一日です。AI推奨買い目で高配当のチャンスを狙えます。`;
+    autoInsight = `本日は上位拮抗・波乱含みのレースが${upsetModeRaces.length}レースあります。AI推奨買い目で高配当のチャンスを狙えます。`;
 } else if (highConfidenceRaces.length > 0 && upsetModeRaces.length > 0) {
-    autoInsight = `本日は高信頼度レース（${highConfidenceRaces.length}R）と高配当モードレース（${upsetModeRaces.length}R）がバランス良く配置されています。AI推奨買い目をレースごとに確認してください。`;
+    autoInsight = `本日は本命明確なレース（${highConfidenceRaces.length}R）と上位拮抗レース（${upsetModeRaces.length}R）がバランス良く配置されています。AI推奨買い目をレースごとに確認してください。`;
 } else {
-    autoInsight = '本日はバランスの取れたレース構成です。各レースのAI推奨買い目を確認しながら勝負レースを絞り込んでください。';
+    autoInsight = '本日は標準的なレース構成です。各レースのAI推奨買い目を確認しながら勝負レースを絞り込んでください。';
 }
 
 // ✅ 三連複昨日の的中結果データ取得（Premium会員のみ表示）
@@ -259,7 +340,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         <!-- 本日の傾向分析（AI自動判定） -->
         <div class="daily-analysis-section">
             <h3 class="analysis-title">🔍 本日の傾向分析（AI自動判定）</h3>
-            <p class="analysis-subtitle">累積スコアに基づく自動分類で、本日のレース傾向を把握できます</p>
+            <p class="analysis-subtitle">本命スコア・対抗との差・混戦度を合成したレース信頼度で自動分類しています</p>
 
             <div class="analysis-stats">
                 <div class="stat-card high-confidence">
@@ -267,7 +348,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                     <div class="stat-content">
                         <div class="stat-number">{highConfidenceRaces.length}</div>
                         <div class="stat-label">高信頼度レース</div>
-                        <div class="stat-description">累積スコア89pt以上</div>
+                        <div class="stat-description">本命候補が比較的明確</div>
                     </div>
                 </div>
 
@@ -276,7 +357,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                     <div class="stat-content">
                         <div class="stat-number">{upsetModeRaces.length}</div>
                         <div class="stat-label">高配当モードレース</div>
-                        <div class="stat-description">累積スコア85pt以下</div>
+                        <div class="stat-description">上位拮抗・波乱含み</div>
                     </div>
                 </div>
 
@@ -285,7 +366,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                     <div class="stat-content">
                         <div class="stat-number">{normalRaces.length}</div>
                         <div class="stat-label">通常レース</div>
-                        <div class="stat-description">累積スコア86-88pt</div>
+                        <div class="stat-description">標準的なAI推奨レース</div>
                     </div>
                 </div>
             </div>
@@ -307,7 +388,24 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                             {highConfidenceRaces.map((race) => (
                                 <div class="race-chip high">
                                     <span class="chip-race">{race.raceNumber}</span>
-                                    <span class="chip-score">{race.maxScore}pt</span>
+                                    <span class="chip-score">{race.confidenceScore}pt</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {normalRaces.length > 0 && (
+                    <div class="classification-group">
+                        <div class="classification-header normal">
+                            <span class="badge">📊 通常</span>
+                            <span class="count">{normalRaces.length}レース</span>
+                        </div>
+                        <div class="race-chips">
+                            {normalRaces.map((race) => (
+                                <div class="race-chip normal">
+                                    <span class="chip-race">{race.raceNumber}</span>
+                                    <span class="chip-score">{race.confidenceScore}pt</span>
                                 </div>
                             ))}
                         </div>
@@ -324,7 +422,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                             {upsetModeRaces.map((race) => (
                                 <div class="race-chip upset">
                                     <span class="chip-race">{race.raceNumber}</span>
-                                    <span class="chip-score">{race.maxScore}pt</span>
+                                    <span class="chip-score">{race.confidenceScore}pt</span>
                                 </div>
                             ))}
                         </div>
@@ -3034,6 +3132,10 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         border-color: rgba(16, 185, 129, 0.3);
     }
 
+    .classification-group .classification-header.normal {
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+
     .classification-group .classification-header.upset {
         border-color: rgba(245, 158, 11, 0.3);
     }
@@ -3057,6 +3159,10 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
     .classification-header.high .badge {
         color: #10b981;
+    }
+
+    .classification-header.normal .badge {
+        color: #3b82f6;
     }
 
     .classification-header.upset .badge {
@@ -3094,6 +3200,18 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     .race-chip.high:hover {
         background: rgba(16, 185, 129, 0.2);
         border-color: rgba(16, 185, 129, 0.5);
+        transform: translateY(-1px);
+    }
+
+    .race-chip.normal {
+        background: rgba(59, 130, 246, 0.1);
+        border-color: rgba(59, 130, 246, 0.3);
+        color: #3b82f6;
+    }
+
+    .race-chip.normal:hover {
+        background: rgba(59, 130, 246, 0.2);
+        border-color: rgba(59, 130, 246, 0.5);
         transform: translateY(-1px);
     }
 
