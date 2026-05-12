@@ -71,11 +71,15 @@ function getTop3(resultRace) {
   return top3.length === 3 ? top3 : [];
 }
 
+// 通常買い目の集計用点数（馬単と同じ「上限点数」運用）
+const NORMAL_SETTLEMENT_POINTS_PER_RACE = 12;
+
 function specToSummary(spec) {
   if (!spec) return null;
   return {
     line: formatSanrenpukuLine(spec),
-    points: spec.points || (Array.isArray(spec.lines) ? spec.lines.length : 0),
+    // 表示用: 実際の組合せ数 (展開後)
+    expandedPoints: spec.points || (Array.isArray(spec.lines) ? spec.lines.length : 0),
   };
 }
 
@@ -86,10 +90,7 @@ async function processDay({ date, venueSlug, venueCode, venue }) {
   const races = [];
   let hitRaces = 0;
   let totalPayout = 0;
-  let totalBetPoints = 0;
   let narrowHits = 0;
-  let narrowPayout = 0;
-  let narrowPoints = 0;
 
   for (const predRace of pred.predictions || []) {
     const rn = Number(predRace?.raceInfo?.raceNumber);
@@ -105,46 +106,41 @@ async function processDay({ date, venueSlug, venueCode, venue }) {
     const hitNarrow = built.narrow ? checkSanrenpukuHit(top3, built.narrow.lines) : false;
     const hitHonmei = built.normalHonmeiAxis ? checkSanrenpukuHit(top3, built.normalHonmeiAxis.lines) : false;
     const hitTaikou = built.normalTaikouAxis ? checkSanrenpukuHit(top3, built.normalTaikouAxis.lines) : false;
-    const hit = hitNarrow || hitHonmei || hitTaikou;
+    const hitNormal = hitHonmei || hitTaikou;
+    const hit = hitNarrow || hitNormal;
 
     const hitTypes = [];
     if (hitNarrow) hitTypes.push('narrow');
     if (hitHonmei) hitTypes.push('normal-honmei-axis');
     if (hitTaikou) hitTypes.push('normal-taikou-axis');
 
-    const honmeiPts = built.normalHonmeiAxis?.points || 0;
-    const taikouPts = built.normalTaikouAxis?.points || 0;
-    const narrowPts = built.narrow?.points || 0;
-    const racePoints = honmeiPts + taikouPts;
-    totalBetPoints += racePoints;
-    narrowPoints += narrowPts;
-
-    if (hit) {
+    // 通常買い目で的中したかどうかで payout 加算（払戻は1レース1回のみ）
+    // 通常本命軸 / 対抗軸どちらかで的中 = 通常買い目的中
+    if (hitNormal) {
       hitRaces++;
       totalPayout += sanrenpukuPayout;
     }
-    if (hitNarrow) {
-      narrowHits++;
-      narrowPayout += sanrenpukuPayout;
-    }
+    if (hitNarrow) narrowHits++;
 
     races.push({
       raceNumber: `${rn}R`,
       raceName: predRace.raceInfo?.raceName || '-',
       betType: '三連複',
-      hit,
-      payout: hit ? sanrenpukuPayout : 0,
+      hit: hitNormal, // archive の通常実績は「通常買い目で的中したか」を採用
+      payout: hitNormal ? sanrenpukuPayout : 0,
       hitTypes,
+      // 通常買い目の集計用点数（馬単と同じ「上限点数」運用、12点固定）
+      settlementPoints: NORMAL_SETTLEMENT_POINTS_PER_RACE,
       narrow: specToSummary(built.narrow),
       normalHonmeiAxis: specToSummary(built.normalHonmeiAxis),
       normalTaikouAxis: specToSummary(built.normalTaikouAxis),
     });
   }
 
+  // 通常買い目は 1レース 12 点で集計（馬単と同じ思想）
+  const totalBetPoints = races.length * NORMAL_SETTLEMENT_POINTS_PER_RACE;
   const totalInvestment = totalBetPoints * 100;
   const recoveryRate = totalInvestment > 0 ? Math.round((totalPayout / totalInvestment) * 100) : 0;
-  const narrowInvestment = narrowPoints * 100;
-  const narrowRecovery = narrowInvestment > 0 ? Math.round((narrowPayout / narrowInvestment) * 100) : 0;
 
   return {
     venue,
@@ -154,12 +150,11 @@ async function processDay({ date, venueSlug, venueCode, venue }) {
     totalPayout,
     recoveryRate,
     totalBetPoints,
+    settlementPointsPerRace: NORMAL_SETTLEMENT_POINTS_PER_RACE,
     rule: 'AI_SANRENPUKU_AXIS_V1',
+    // 絞り込みは hit 件数のみ残し、回収率は計算しない（表示用には使わない）
     narrowSummary: {
       hitRaces: narrowHits,
-      totalPayout: narrowPayout,
-      totalBetPoints: narrowPoints,
-      recoveryRate: narrowRecovery,
     },
     races,
   };

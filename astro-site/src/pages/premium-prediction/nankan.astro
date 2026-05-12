@@ -932,27 +932,29 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                         )}
 
                                         <div class="srp-panel srp-panel-normal">
+                                            <div class="srp-normal-header">
+                                                <span class="srp-normal-title">通常買い目</span>
+                                                <span class="srp-normal-points">集計点数 12点</span>
+                                            </div>
                                             {sanrenpukuView.normalHonmeiAxis && (
                                                 <div class="srp-subblock">
-                                                    <div class="srp-panel-title">通常買い目｜本命軸</div>
+                                                    <div class="srp-panel-title">本命軸</div>
                                                     <div class="bet-item">
                                                         <span class="bet-type">三連複</span>
                                                         <span class="bet-horses">{sanrenpukuView.normalHonmeiAxis.line}</span>
-                                                        <span class="bet-points">{sanrenpukuView.normalHonmeiAxis.points}点</span>
                                                     </div>
                                                 </div>
                                             )}
                                             {sanrenpukuView.normalTaikouAxis && (
                                                 <div class="srp-subblock">
-                                                    <div class="srp-panel-title">通常買い目｜対抗軸</div>
+                                                    <div class="srp-panel-title">対抗軸</div>
                                                     <div class="bet-item">
                                                         <span class="bet-type">三連複</span>
                                                         <span class="bet-horses">{sanrenpukuView.normalTaikouAxis.line}</span>
-                                                        <span class="bet-points">{sanrenpukuView.normalTaikouAxis.points}点</span>
                                                     </div>
                                                 </div>
                                             )}
-                                            <p class="unified-bet-note">※ 本命軸・対抗軸のいずれかで3着以内が揃えば的中扱い</p>
+                                            <p class="unified-bet-note">※ 本命軸・対抗軸のいずれかで3着以内が揃えば的中扱い（集計は 12 点）</p>
                                         </div>
                                     </div>
                                 </div>
@@ -2861,6 +2863,26 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         color: #e2e8f0;
         font-size: 0.95rem;
         margin-bottom: 8px;
+    }
+    .srp-normal-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 10px;
+    }
+    .srp-normal-title {
+        font-weight: 700;
+        color: #e2e8f0;
+        font-size: 1rem;
+    }
+    .srp-normal-points {
+        color: #10b981;
+        font-weight: 700;
+        font-size: 0.85rem;
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        padding: 2px 10px;
+        border-radius: 999px;
     }
 
     .strategy-title {
