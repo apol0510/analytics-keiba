@@ -107,10 +107,22 @@ export function generateNormalRaceUmatanLines(horses) {
 
   if (partners.length === 0) return [];
 
-  // 抑え（補欠・抑え）: 本命・選出済み相手を除外して pt 降順
+  // 抑え候補の抽出条件:
+  //   - role が '抑え' の馬（データに該当 role が来た場合の正規ルート）
+  //     または role が '補欠' で **pt > 70** の馬
+  //   - pt === 70 は importPrediction.js の「未評価フォールバック値」(= 不要馬) なので除外する
+  //   - 本命・選出済み相手も除外
+  //   - 並び順は pt 降順
+  // 結果が 0 件なら "(抑え...)" 自体を付与しない（無理に補欠で埋めない）。
+  const PT_UNRATED_FALLBACK = 70;
   const partnerSet = new Set(partners);
   const osaeNumbers = horses
-    .filter(h => h && (h.role === '補欠' || h.role === '抑え'))
+    .filter(h => {
+      if (!h) return false;
+      if (h.role === '抑え') return true;
+      if (h.role === '補欠' && horsePt(h) > PT_UNRATED_FALLBACK) return true;
+      return false;
+    })
     .filter(h => {
       const n = horseNumber(h);
       return n != null && n !== honmeiNum && !partnerSet.has(n);
