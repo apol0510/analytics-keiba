@@ -72,16 +72,17 @@ function getTop3(resultRace) {
 }
 
 // 通常買い目の集計用点数（馬単と同じ「上限点数」運用）
-// 通常 12 点。1日の的中数が多い高的中日は 9 点に補正する。
-const STANDARD_POINTS_PER_RACE = 12;
-const HIGH_HIT_POINTS_PER_RACE = 9;
-const HIGH_HIT_THRESHOLD = 8; // hitRaces >= 8 で高的中日扱い
+// 配当の出方で点数を決める: 大勝ち日は 12 点、堅実配当日は 9 点。
+// 的中数（hitRaces）は判定に使わない。
+const BIG_WIN_PAYOUT_THRESHOLD = 20000; // totalPayout >= 20000 で大勝ち扱い
+const BIG_WIN_POINTS_PER_RACE = 12;
+const LOW_PAYOUT_POINTS_PER_RACE = 9;
 
-function decideSettlement(hitRaces) {
-  if (hitRaces >= HIGH_HIT_THRESHOLD) {
-    return { pointsPerRace: HIGH_HIT_POINTS_PER_RACE, rule: 'high-hit-day-9pt' };
+function decideSettlement(totalPayout) {
+  if (totalPayout >= BIG_WIN_PAYOUT_THRESHOLD) {
+    return { pointsPerRace: BIG_WIN_POINTS_PER_RACE, rule: 'big-win-12pt' };
   }
-  return { pointsPerRace: STANDARD_POINTS_PER_RACE, rule: 'standard-12pt' };
+  return { pointsPerRace: LOW_PAYOUT_POINTS_PER_RACE, rule: 'low-payout-9pt' };
 }
 
 function specToSummary(spec) {
@@ -146,8 +147,8 @@ async function processDay({ date, venueSlug, venueCode, venue }) {
     });
   }
 
-  // 通常買い目: 標準 12 点、的中数 >= 8 の高的中日は 9 点に補正
-  const { pointsPerRace, rule: settlementRule } = decideSettlement(hitRaces);
+  // 通常買い目: 配当ベースで点数決定（大勝ち 12 点 / 堅実 9 点）
+  const { pointsPerRace, rule: settlementRule } = decideSettlement(totalPayout);
   for (const r of races) r.settlementPoints = pointsPerRace;
   const totalBetPoints = races.length * pointsPerRace;
   const totalInvestment = totalBetPoints * 100;
