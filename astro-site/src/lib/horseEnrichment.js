@@ -132,28 +132,28 @@ export function computeEvalPoints(h, allRaceHorses, raceDistance) {
     if (sameDistTop3 >= 1) points.push('距離適性あり');
   }
 
-  // 上がり3F評価 — 直近の上がり3F平均が良好（< 40.5秒）な場合に、
-  // 馬の脚質に応じた表現でタグ付けする。
-  //   差し / 追込: 「末脚優秀」（差し馬・追い込み馬の表現）
-  //   逃げ:       「終いの持続力」
-  //   先行:       「上がり3F安定」
-  //   不明:       「終い安定」（安易に「末脚優秀」と言わない）
+  // 上がり3F評価 — 直近の上がり3F平均から、脚質に応じた表現でタグ付け。
+  //   差し / 追込: 「末脚優秀」（差し馬・追い込み馬の表現）avg < 40.5
+  //   逃げ:       「終いの持続力」                          avg < 40.5
+  //   先行:       「上がり3F安定」                          avg < 40.5
+  //   不明:       原則タグなし。例外として極めて優秀な場合のみ
+  //               「上がり3F評価」を控えめに付与（avg < 39.0）。
+  // 「終い安定」は脚質不明馬への乱発防止のため廃止。
   const last3fs = recent
     .map(r => parseFloat(r && r.last3f))
     .filter(n => Number.isFinite(n));
   if (last3fs.length >= 2) {
     const avg = last3fs.reduce((a, b) => a + b, 0) / last3fs.length;
-    if (avg < 40.5) {
-      const style = detectRecentRunningStyle(recent);
-      if (style === 'sashi' || style === 'oikomi') {
-        points.push('末脚優秀');
-      } else if (style === 'nige') {
-        points.push('終いの持続力');
-      } else if (style === 'senko') {
-        points.push('上がり3F安定');
-      } else {
-        points.push('終い安定');
-      }
+    const style = detectRecentRunningStyle(recent);
+    if (style === 'sashi' || style === 'oikomi') {
+      if (avg < 40.5) points.push('末脚優秀');
+    } else if (style === 'nige') {
+      if (avg < 40.5) points.push('終いの持続力');
+    } else if (style === 'senko') {
+      if (avg < 40.5) points.push('上がり3F安定');
+    } else {
+      // 脚質不明: 安易にタグ付けしない。極めて優秀な場合のみ控えめに評価。
+      if (avg < 39.0) points.push('上がり3F評価');
     }
   }
 
