@@ -75,42 +75,43 @@ export function countMainRaceBetPoints(horses) {
   return filtered.length * 2;
 }
 
-// 通常レース（メイン以外）の馬単買い目を生成する。
-// 仕様（旧 importPrediction のインラインロジックを集約）:
-//   - 本命を軸に1行、対抗を軸に1行（最大2行）
-//   - 相手は role が 本命/対抗/単穴/連下最上位 のいずれか（軸自身を除く）
-//   - 「.連下番号」「(抑え抑え番号)」を末尾に追加
-//   - 例: "4-1.11.2.5.7(抑え10.8.6)"
+// 通常レース（メイン以外）の馬単買い目を生成する。10点ロジック:
+//   本命→{対抗, 上位4頭} (5点 片方向)
+// + 対抗→{本命, 上位4頭} (5点 片方向)
+// = 合計10点（重複なし）
+// 「上位4頭」は 単穴 → 連下最上位 → 連下 → 補欠 の役割優先＋pt降順で抽出。
 export function generateNormalRaceUmatanLines(horses) {
   if (!Array.isArray(horses)) return [];
   const honmei = horses.find(h => h && h.role === '本命');
   const taikou = horses.find(h => h && h.role === '対抗');
-  if (!honmei && !taikou) return [];
+  if (!honmei || !taikou) return [];
+  const honmeiNum = horseNumber(honmei);
+  const taikouNum = horseNumber(taikou);
+  if (honmeiNum == null || taikouNum == null) return [];
 
-  const main = horses.filter(h => h && (h.role === '本命' || h.role === '対抗' || h.role === '単穴' || h.role === '連下最上位'));
-  const renka = horses.filter(h => h && h.role === '連下');
-  const osae = horses.filter(h => h && (h.role === '補欠' || h.role === '抑え'));
+  // 相手プール: 役割優先 + pt 降順、本命・対抗は除外
+  const oppPriority = { '単穴': 1, '連下最上位': 2, '連下': 3, '補欠': 4, '抑え': 4 };
+  const partners = horses
+    .filter(h => h && oppPriority[h.role] != null)
+    .filter(h => {
+      const n = horseNumber(h);
+      return n != null && n !== honmeiNum && n !== taikouNum;
+    })
+    .sort((a, b) => {
+      const ra = oppPriority[a.role];
+      const rb = oppPriority[b.role];
+      if (ra !== rb) return ra - rb;
+      return horsePt(b) - horsePt(a);
+    })
+    .map(horseNumber)
+    .slice(0, 4);
 
-  const renkaNumbers = renka.map(horseNumber).filter(n => n != null).join('.');
-  const osaeNumbers = osae.map(horseNumber).filter(n => n != null).join('.');
+  if (partners.length === 0) return [];
 
-  const buildLine = (axis) => {
-    const axisNum = horseNumber(axis);
-    const aite = main
-      .filter(h => horseNumber(h) !== axisNum)
-      .map(horseNumber)
-      .filter(n => n != null)
-      .join('.');
-    let line = `${axisNum}↔${aite}`;
-    if (renkaNumbers) line += `.${renkaNumbers}`;
-    if (osaeNumbers) line += `(抑え${osaeNumbers})`;
-    return line;
-  };
-
-  const lines = [];
-  if (honmei && horseNumber(honmei) != null) lines.push(buildLine(honmei));
-  if (taikou && horseNumber(taikou) != null) lines.push(buildLine(taikou));
-  return lines;
+  return [
+    `${honmeiNum}→${[taikouNum, ...partners].join('.')}`,
+    `${taikouNum}→${[honmeiNum, ...partners].join('.')}`,
+  ];
 }
 
 // 1レース分の馬単買い目を生成する dispatcher。
@@ -145,8 +146,15 @@ export function countPointsFromUmatanLine(line) {
     return (right.split(',').filter(Boolean).length || 0) * 2;
   }
   if (line.includes('→')) {
-    const right = line.split('→')[1] || '';
-    return right.split(',').filter(Boolean).length || 0;
+    // 通常レース 10点ロジックの片方向「軸→A.B.C.D.E」（. 区切り）
+    // 後方互換: 旧表記「軸→A,B,C」（, 区切り）も処理
+    const beforeParen = line.split('(')[0];
+    const idx = beforeParen.indexOf('→');
+    const partnersPart = beforeParen.slice(idx + 1);
+    if (partnersPart.includes('.')) {
+      return partnersPart.split('.').filter(Boolean).length || 0;
+    }
+    return partnersPart.split(',').filter(Boolean).length || 0;
   }
   // 旧ダッシュ形式の後方互換
   const beforeParen = line.split('(')[0];

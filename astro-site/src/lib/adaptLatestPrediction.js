@@ -95,8 +95,18 @@ export function adaptNewToLegacy(newData) {
     };
     const holes = [];
 
-    const raceHorses = p.horses || [];
+    const rawRaceHorses = p.horses || [];
     const raceDistance = p.raceInfo && p.raceInfo.distance;
+    // 連下を pt 降順で2頭までに制限し、超過は 補欠 に降格（連下1頭→押さえ振替の方針）
+    const connectSorted = rawRaceHorses
+      .filter(h => h && h.role === '連下')
+      .sort((a, b) => (Number(b.pt) || 0) - (Number(a.pt) || 0));
+    const demotedConnect = new Set(connectSorted.slice(2).map(h => h.horseNumber));
+    const raceHorses = rawRaceHorses.map(h =>
+      h && h.role === '連下' && demotedConnect.has(h.horseNumber)
+        ? { ...h, role: '補欠' }
+        : h
+    );
     for (const h of raceHorses) {
       const conv = convertHorse(h, raceHorses, raceDistance);
       switch (h.role) {
@@ -116,16 +126,12 @@ export function adaptNewToLegacy(newData) {
 
     const allHorses = raceHorses.map(h => convertHorse(h, raceHorses, raceDistance));
 
-    // bettingLines は importPrediction が保存した10点/2行ロジックの単一源。
-    // 無い場合のみ同じロジックを共通モジュールで再生成する（CLAUDE.md「メインレース10点ロジック」準拠）。
-    // 既存 source JSON は旧「-」表記のため、ここで「↔」（双方向馬単）に正規化する。
-    const sourceUmatan = Array.isArray(p?.bettingLines?.umatan) ? p.bettingLines.umatan : null;
-    const rawUmatanLines = sourceUmatan && sourceUmatan.length > 0
-      ? sourceUmatan
-      : generateRaceUmatanLines(raceHorses, rn === mainRaceNumber);
-    const umatanLines = rawUmatanLines.map((line) =>
-      typeof line === 'string' ? line.replace(/-/, '↔') : line
-    );
+    // 買い目は常に共通モジュールで再生成する。
+    // 旧 source JSON の bettingLines は新10点ロジック以前の表記が残っているため使わず、
+    // 連下降格を反映した raceHorses から最新ロジックで構築する。
+    // - メイン: 本命↔上位5頭（10点 双方向）
+    // - 通常: 本命→{対抗+上位4頭}(5点) + 対抗→{本命+上位4頭}(5点) = 10点
+    const umatanLines = generateRaceUmatanLines(raceHorses, rn === mainRaceNumber);
     const strategies = buildStrategiesFromUmatanLines(umatanLines);
 
     return {
