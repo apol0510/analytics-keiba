@@ -154,9 +154,6 @@ const pageDescription = monthData.length > 0
                   )}
                 </div>
 
-                <div class="day-footer">
-                  <a href={`/results/${year}/${month}/${day}`} class="day-detail-link">詳細を見る →</a>
-                </div>
               </section>
             );
           })}
@@ -418,20 +415,6 @@ const pageDescription = monthData.length > 0
     font-size: 0.9rem;
     background: rgba(15, 23, 42, 0.4);
     border-radius: 8px;
-  }
-
-  .day-footer {
-    margin-top: 1.25rem;
-    text-align: right;
-
-    .day-detail-link {
-      color: #60a5fa;
-      text-decoration: none;
-      font-size: 0.9rem;
-      font-weight: 600;
-
-      &:hover { color: #93c5fd; }
-    }
   }
 
   /* ページフッター */
