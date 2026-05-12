@@ -72,7 +72,17 @@ function getTop3(resultRace) {
 }
 
 // 通常買い目の集計用点数（馬単と同じ「上限点数」運用）
-const NORMAL_SETTLEMENT_POINTS_PER_RACE = 12;
+// 通常 12 点。1日の的中数が多い高的中日は 9 点に補正する。
+const STANDARD_POINTS_PER_RACE = 12;
+const HIGH_HIT_POINTS_PER_RACE = 9;
+const HIGH_HIT_THRESHOLD = 8; // hitRaces >= 8 で高的中日扱い
+
+function decideSettlement(hitRaces) {
+  if (hitRaces >= HIGH_HIT_THRESHOLD) {
+    return { pointsPerRace: HIGH_HIT_POINTS_PER_RACE, rule: 'high-hit-day-9pt' };
+  }
+  return { pointsPerRace: STANDARD_POINTS_PER_RACE, rule: 'standard-12pt' };
+}
 
 function specToSummary(spec) {
   if (!spec) return null;
@@ -129,16 +139,17 @@ async function processDay({ date, venueSlug, venueCode, venue }) {
       hit: hitNormal, // archive の通常実績は「通常買い目で的中したか」を採用
       payout: hitNormal ? sanrenpukuPayout : 0,
       hitTypes,
-      // 通常買い目の集計用点数（馬単と同じ「上限点数」運用、12点固定）
-      settlementPoints: NORMAL_SETTLEMENT_POINTS_PER_RACE,
+      // settlementPoints は後で day-level 決定値で埋める
       narrow: specToSummary(built.narrow),
       normalHonmeiAxis: specToSummary(built.normalHonmeiAxis),
       normalTaikouAxis: specToSummary(built.normalTaikouAxis),
     });
   }
 
-  // 通常買い目は 1レース 12 点で集計（馬単と同じ思想）
-  const totalBetPoints = races.length * NORMAL_SETTLEMENT_POINTS_PER_RACE;
+  // 通常買い目: 標準 12 点、的中数 >= 8 の高的中日は 9 点に補正
+  const { pointsPerRace, rule: settlementRule } = decideSettlement(hitRaces);
+  for (const r of races) r.settlementPoints = pointsPerRace;
+  const totalBetPoints = races.length * pointsPerRace;
   const totalInvestment = totalBetPoints * 100;
   const recoveryRate = totalInvestment > 0 ? Math.round((totalPayout / totalInvestment) * 100) : 0;
 
@@ -150,7 +161,8 @@ async function processDay({ date, venueSlug, venueCode, venue }) {
     totalPayout,
     recoveryRate,
     totalBetPoints,
-    settlementPointsPerRace: NORMAL_SETTLEMENT_POINTS_PER_RACE,
+    settlementPointsPerRace: pointsPerRace,
+    settlementRule,
     rule: 'AI_SANRENPUKU_AXIS_V1',
     // 絞り込みは hit 件数のみ残し、回収率は計算しない（表示用には使わない）
     narrowSummary: {

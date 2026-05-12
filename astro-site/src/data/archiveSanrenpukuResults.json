@@ -2831,9 +2831,10 @@
         "hitRaces": 10,
         "perfectHit": false,
         "totalPayout": 41180,
-        "recoveryRate": 286,
-        "totalBetPoints": 144,
-        "settlementPointsPerRace": 12,
+        "recoveryRate": 381,
+        "totalBetPoints": 108,
+        "settlementPointsPerRace": 9,
+        "settlementRule": "high-hit-day-9pt",
         "rule": "AI_SANRENPUKU_AXIS_V1",
         "narrowSummary": {
           "hitRaces": 4
@@ -2849,7 +2850,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "8 - 5.2.12 - 5.2.12",
               "expandedPoints": 3
@@ -2861,7 +2861,8 @@
             "normalTaikouAxis": {
               "line": "5 - 8.2.12 - 8.2.12.3.11.6(抑え9.7.10.1.4)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "2R",
@@ -2872,7 +2873,6 @@
             "hitTypes": [
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "10 - 5.8.3 - 5.8.3",
               "expandedPoints": 3
@@ -2884,7 +2884,8 @@
             "normalTaikouAxis": {
               "line": "5 - 10.8.3 - 10.8.3.2.6.9(抑え1.4.7)",
               "expandedPoints": 21
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "3R",
@@ -2897,7 +2898,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "10 - 1.7.4 - 1.7.4",
               "expandedPoints": 3
@@ -2909,7 +2909,8 @@
             "normalTaikouAxis": {
               "line": "1 - 10.7.4 - 10.7.4.2.8.9(抑え5.6.11.12.3)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "4R",
@@ -2921,7 +2922,6 @@
               "narrow",
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "9 - 6.12.5 - 6.12.5",
               "expandedPoints": 3
@@ -2933,7 +2933,8 @@
             "normalTaikouAxis": {
               "line": "6 - 9.12.5 - 9.12.5.7.10.2(抑え8.3.4.1.11)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "5R",
@@ -2945,7 +2946,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "7 - 4.5.8 - 4.5.8",
               "expandedPoints": 3
@@ -2957,7 +2957,8 @@
             "normalTaikouAxis": {
               "line": "4 - 7.5.8 - 7.5.8.9.6.10(抑え2.3.1.11)",
               "expandedPoints": 24
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "6R",
@@ -2968,7 +2969,6 @@
             "hitTypes": [
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "1 - 9.4.3 - 9.4.3",
               "expandedPoints": 3
@@ -2980,7 +2980,8 @@
             "normalTaikouAxis": {
               "line": "9 - 1.4.3 - 1.4.3.7.2.5(抑え6.8)",
               "expandedPoints": 18
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "7R",
@@ -2991,7 +2992,6 @@
             "hitTypes": [
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "10 - 6.1.4 - 6.1.4",
               "expandedPoints": 3
@@ -3003,7 +3003,8 @@
             "normalTaikouAxis": {
               "line": "6 - 10.1.4 - 10.1.4.2.12.7(抑え9.11.8.5.3)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "8R",
@@ -3012,7 +3013,6 @@
             "hit": false,
             "payout": 0,
             "hitTypes": [],
-            "settlementPoints": 12,
             "narrow": {
               "line": "7 - 8.4.10 - 8.4.10",
               "expandedPoints": 3
@@ -3024,7 +3024,8 @@
             "normalTaikouAxis": {
               "line": "8 - 7.4.10 - 7.4.10.3.5.6(抑え2.1.9)",
               "expandedPoints": 21
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "9R",
@@ -3037,7 +3038,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "9 - 8.3.1 - 8.3.1",
               "expandedPoints": 3
@@ -3049,7 +3049,8 @@
             "normalTaikouAxis": {
               "line": "8 - 9.3.1 - 9.3.1.10.5.7(抑え2.6.4)",
               "expandedPoints": 21
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "10R",
@@ -3061,7 +3062,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "5 - 6.4.3 - 6.4.3",
               "expandedPoints": 3
@@ -3073,7 +3073,8 @@
             "normalTaikouAxis": {
               "line": "6 - 5.4.3 - 5.4.3.2.1",
               "expandedPoints": 9
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "11R",
@@ -3082,7 +3083,6 @@
             "hit": false,
             "payout": 0,
             "hitTypes": [],
-            "settlementPoints": 12,
             "narrow": {
               "line": "5 - 11.8.7 - 11.8.7",
               "expandedPoints": 3
@@ -3094,7 +3094,8 @@
             "normalTaikouAxis": {
               "line": "11 - 5.8.7 - 5.8.7.1.3.10(抑え13.12.2.9.4.14.6)",
               "expandedPoints": 33
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "12R",
@@ -3107,7 +3108,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "5 - 11.9.12 - 11.9.12",
               "expandedPoints": 3
@@ -3119,7 +3119,8 @@
             "normalTaikouAxis": {
               "line": "11 - 5.9.12 - 5.9.12.1.6.10(抑え2.7.8.3.4)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           }
         ]
       },
@@ -3599,9 +3600,10 @@
         "hitRaces": 8,
         "perfectHit": false,
         "totalPayout": 14340,
-        "recoveryRate": 100,
-        "totalBetPoints": 144,
-        "settlementPointsPerRace": 12,
+        "recoveryRate": 133,
+        "totalBetPoints": 108,
+        "settlementPointsPerRace": 9,
+        "settlementRule": "high-hit-day-9pt",
         "rule": "AI_SANRENPUKU_AXIS_V1",
         "narrowSummary": {
           "hitRaces": 6
@@ -3617,7 +3619,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "6 - 5.7.1 - 5.7.1",
               "expandedPoints": 3
@@ -3629,7 +3630,8 @@
             "normalTaikouAxis": {
               "line": "5 - 6.7.1 - 6.7.1.4.3.2",
               "expandedPoints": 12
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "2R",
@@ -3638,7 +3640,6 @@
             "hit": false,
             "payout": 0,
             "hitTypes": [],
-            "settlementPoints": 12,
             "narrow": {
               "line": "5 - 2.1.9 - 2.1.9",
               "expandedPoints": 3
@@ -3650,7 +3651,8 @@
             "normalTaikouAxis": {
               "line": "2 - 5.1.9 - 5.1.9.7.4.3(抑え6.8)",
               "expandedPoints": 18
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "3R",
@@ -3663,7 +3665,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "2 - 6.3.5 - 6.3.5",
               "expandedPoints": 3
@@ -3675,7 +3676,8 @@
             "normalTaikouAxis": {
               "line": "6 - 2.3.5 - 2.3.5.1.4",
               "expandedPoints": 9
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "4R",
@@ -3686,7 +3688,6 @@
             "hitTypes": [
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "2 - 4.1.5 - 4.1.5",
               "expandedPoints": 3
@@ -3698,7 +3699,8 @@
             "normalTaikouAxis": {
               "line": "4 - 2.1.5 - 2.1.5.3",
               "expandedPoints": 6
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "5R",
@@ -3707,7 +3709,6 @@
             "hit": false,
             "payout": 0,
             "hitTypes": [],
-            "settlementPoints": 12,
             "narrow": {
               "line": "6 - 10.12.8 - 10.12.8",
               "expandedPoints": 3
@@ -3719,7 +3720,8 @@
             "normalTaikouAxis": {
               "line": "10 - 6.12.8 - 6.12.8.11.5.9(抑え1.4.7.2.3)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "6R",
@@ -3728,7 +3730,6 @@
             "hit": false,
             "payout": 0,
             "hitTypes": [],
-            "settlementPoints": 12,
             "narrow": {
               "line": "7 - 11.12.5 - 11.12.5",
               "expandedPoints": 3
@@ -3740,7 +3741,8 @@
             "normalTaikouAxis": {
               "line": "11 - 7.12.5 - 7.12.5.1.4.10(抑え9.2.3.6.8)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "7R",
@@ -3752,7 +3754,6 @@
               "narrow",
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "10 - 6.7.5 - 6.7.5",
               "expandedPoints": 3
@@ -3764,7 +3765,8 @@
             "normalTaikouAxis": {
               "line": "6 - 10.7.5 - 10.7.5.4.8.1(抑え11.3.2.12.9)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "8R",
@@ -3776,7 +3778,6 @@
               "narrow",
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "7 - 5.4.12 - 5.4.12",
               "expandedPoints": 3
@@ -3788,7 +3789,8 @@
             "normalTaikouAxis": {
               "line": "5 - 7.4.12 - 7.4.12.2.1.13(抑え11.8.10.14.6.3.9)",
               "expandedPoints": 33
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "9R",
@@ -3801,7 +3803,6 @@
               "normal-honmei-axis",
               "normal-taikou-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "8 - 11.7.6 - 11.7.6",
               "expandedPoints": 3
@@ -3813,7 +3814,8 @@
             "normalTaikouAxis": {
               "line": "11 - 8.7.6 - 8.7.6.4.5.9(抑え10.12.2.1.3)",
               "expandedPoints": 27
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "10R",
@@ -3825,7 +3827,6 @@
               "narrow",
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "7 - 6.9.2 - 6.9.2",
               "expandedPoints": 3
@@ -3837,7 +3838,8 @@
             "normalTaikouAxis": {
               "line": "6 - 7.9.2 - 7.9.2.8.4.12(抑え10.13.1.11.14.5.3)",
               "expandedPoints": 33
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "11R",
@@ -3849,7 +3851,6 @@
               "narrow",
               "normal-honmei-axis"
             ],
-            "settlementPoints": 12,
             "narrow": {
               "line": "4 - 6.5.7 - 6.5.7",
               "expandedPoints": 3
@@ -3861,7 +3862,8 @@
             "normalTaikouAxis": {
               "line": "6 - 4.5.7 - 4.5.7.13.2.10(抑え9.8.1.12.14.11.3)",
               "expandedPoints": 33
-            }
+            },
+            "settlementPoints": 9
           },
           {
             "raceNumber": "12R",
@@ -3870,7 +3872,6 @@
             "hit": false,
             "payout": 0,
             "hitTypes": [],
-            "settlementPoints": 12,
             "narrow": {
               "line": "11 - 9.3.5 - 9.3.5",
               "expandedPoints": 3
@@ -3882,7 +3883,8 @@
             "normalTaikouAxis": {
               "line": "9 - 11.3.5 - 11.3.5.10.8.12(抑え13.2.6.14.4.1.7)",
               "expandedPoints": 33
-            }
+            },
+            "settlementPoints": 9
           }
         ]
       }
