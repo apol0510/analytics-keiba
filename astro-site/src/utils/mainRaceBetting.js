@@ -112,7 +112,7 @@ export function generateNormalRaceUmatanLines(horses) {
   //     または role が '補欠' で **pt > 70** の馬
   //   - pt === 70 は importPrediction.js の「未評価フォールバック値」(= 不要馬) なので除外する
   //   - 本命・選出済み相手も除外
-  //   - 並び順は pt 降順
+  //   - 並び順は **馬番昇順**（評価順ではなく視認性優先）
   // 結果が 0 件なら "(抑え...)" 自体を付与しない（無理に補欠で埋めない）。
   const PT_UNRATED_FALLBACK = 70;
   const partnerSet = new Set(partners);
@@ -127,8 +127,8 @@ export function generateNormalRaceUmatanLines(horses) {
       const n = horseNumber(h);
       return n != null && n !== honmeiNum && !partnerSet.has(n);
     })
-    .sort((a, b) => horsePt(b) - horsePt(a))
-    .map(horseNumber);
+    .map(horseNumber)
+    .sort((a, b) => Number(a) - Number(b));
 
   let line = `${honmeiNum}↔${partners.join('.')}`;
   if (osaeNumbers.length > 0) {
