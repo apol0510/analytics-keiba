@@ -118,10 +118,14 @@ export function adaptNewToLegacy(newData) {
 
     // bettingLines は importPrediction が保存した10点/2行ロジックの単一源。
     // 無い場合のみ同じロジックを共通モジュールで再生成する（CLAUDE.md「メインレース10点ロジック」準拠）。
+    // 既存 source JSON は旧「-」表記のため、ここで「↔」（双方向馬単）に正規化する。
     const sourceUmatan = Array.isArray(p?.bettingLines?.umatan) ? p.bettingLines.umatan : null;
-    const umatanLines = sourceUmatan && sourceUmatan.length > 0
+    const rawUmatanLines = sourceUmatan && sourceUmatan.length > 0
       ? sourceUmatan
       : generateRaceUmatanLines(raceHorses, rn === mainRaceNumber);
+    const umatanLines = rawUmatanLines.map((line) =>
+      typeof line === 'string' ? line.replace(/-/, '↔') : line
+    );
     const strategies = buildStrategiesFromUmatanLines(umatanLines);
 
     return {

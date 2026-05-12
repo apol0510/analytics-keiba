@@ -62,7 +62,7 @@ export function generateMainRaceUmatanLines(horses) {
     .map(horseNumber)
     .filter(n => n != null && n !== honmeiNum);
   if (partners.length === 0) return [];
-  return [`${honmeiNum}-${partners.join('.')}`];
+  return [`${honmeiNum}↔${partners.join('.')}`];
 }
 
 export function countMainRaceBetPoints(horses) {
@@ -101,7 +101,7 @@ export function generateNormalRaceUmatanLines(horses) {
       .map(horseNumber)
       .filter(n => n != null)
       .join('.');
-    let line = `${axisNum}-${aite}`;
+    let line = `${axisNum}↔${aite}`;
     if (renkaNumbers) line += `.${renkaNumbers}`;
     if (osaeNumbers) line += `(抑え${osaeNumbers})`;
     return line;
@@ -122,14 +122,24 @@ export function generateRaceUmatanLines(horses, isMainRaceFlag) {
 }
 
 // 1本の馬単買い目文字列から実点数を算出する。
-//   - メイン10点形式  例 "3-5.7.8.10.12"          → partners × 2（双方向馬単）
-//   - 通常レース形式  例 "4-1.11.2.5.7(抑え10.8.6)" → partners 数（軸→相手の片方向）
-//     ※「抑え」は表示用情報なので、必要なら呼び出し側で加算する
+//   - 双方向形式   例 "3↔5.7.8.10.12" / "4↔1.11.2(抑え10.8)"
+//                  → partners × 2（軸 ↔ 相手の双方向馬単）
+//   - 旧ダッシュ形式 例 "3-5.7.8.10.12" / "4-1.11.2(抑え10.8.6)"
+//                  後方互換: メイン(抑え無し)は ×2、通常(抑え有り)は片方向。
+//                  新規生成はすべて ↔ を出力するため、↔ ブランチが正規。
 //   - 既存ヒューリスティック ⇔ / → / "N点" にも後方互換で対応
 export function countPointsFromUmatanLine(line) {
   if (typeof line !== 'string' || line.length === 0) return 0;
   const explicit = line.match(/(\d+)点/);
   if (explicit) return parseInt(explicit[1], 10) || 0;
+  // ↔ 形式（新規・正規）: 双方向馬単 partners × 2
+  if (line.includes('↔')) {
+    const beforeParen = line.split('(')[0];
+    const idx = beforeParen.indexOf('↔');
+    const partnersPart = beforeParen.slice(idx + 1);
+    const partners = partnersPart.split('.').filter(Boolean).length;
+    return partners * 2;
+  }
   if (line.includes('⇔')) {
     const right = line.split('⇔')[1] || '';
     return (right.split(',').filter(Boolean).length || 0) * 2;
@@ -138,7 +148,7 @@ export function countPointsFromUmatanLine(line) {
     const right = line.split('→')[1] || '';
     return right.split(',').filter(Boolean).length || 0;
   }
-  // ダッシュ形式: メイン10点（抑え無し）は双方向、通常レース（抑え有り）は片方向
+  // 旧ダッシュ形式の後方互換
   const beforeParen = line.split('(')[0];
   const dashIdx = beforeParen.indexOf('-');
   if (dashIdx < 0) return 0;
