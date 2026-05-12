@@ -339,6 +339,61 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             });
         </script>
 
+        <script is:inline>
+            // 🔒 三連複AI推奨買い目セクション（.sanrenpuku-section）のアクセス制御
+            // 対象プラン: Premium Sanrenpuku / Premium Combo / Premium + lifetimeSanrenpuku === true
+            // 馬単のみのプラン (Premium / Premium Predictions など) には絞り込み買い目を出さない。
+            (function gateSanrenpukuRecommendations() {
+                function readPlanState() {
+                    // 1. test_subscription_*（本番互換）
+                    try {
+                        const testKey = Object.keys(localStorage).find(k => k.startsWith('test_subscription_'));
+                        if (testKey) {
+                            const t = JSON.parse(localStorage.getItem(testKey));
+                            return { plan: t.planType, lifetimeSanrenpuku: !!t.lifetimeSanrenpuku };
+                        }
+                    } catch (e) { /* noop */ }
+
+                    // 2. user-plan（新形式・JSON）
+                    try {
+                        const raw = localStorage.getItem('user-plan');
+                        if (raw) {
+                            const u = JSON.parse(raw);
+                            return { plan: u.plan, lifetimeSanrenpuku: !!u.lifetimeSanrenpuku };
+                        }
+                    } catch (e) { /* noop */ }
+
+                    // 3. userPlan（旧キャメルケース）
+                    const legacy = localStorage.getItem('userPlan');
+                    return { plan: legacy || null, lifetimeSanrenpuku: false };
+                }
+
+                function isSanrenpukuEligible(plan, lifetimeSanrenpuku) {
+                    if (!plan) return false;
+                    if (plan === 'Premium Sanrenpuku') return true;
+                    if (plan === 'Premium Combo') return true;
+                    if ((plan === 'Premium' || plan === 'premium') && lifetimeSanrenpuku === true) return true;
+                    return false;
+                }
+
+                function applyGate() {
+                    const { plan, lifetimeSanrenpuku } = readPlanState();
+                    const eligible = isSanrenpukuEligible(plan, lifetimeSanrenpuku);
+                    console.log('🔒 三連複買い目アクセス制御:', { plan, lifetimeSanrenpuku, eligible });
+                    if (!eligible) return; // CSS で既に非表示
+                    document.querySelectorAll('.sanrenpuku-section').forEach((el) => {
+                        el.classList.add('srp-access-granted');
+                    });
+                }
+
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', applyGate);
+                } else {
+                    applyGate();
+                }
+            })();
+        </script>
+
         <!-- 本日の傾向分析（AI自動判定） -->
         <div class="daily-analysis-section">
             <h3 class="analysis-title">🔍 本日の傾向分析（AI自動判定）</h3>
@@ -2830,6 +2885,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     }
 
     /* 三連複AI推奨買い目 タブ UI */
+    /* 🔒 三連複買い目はサーバーサイドで全レース描画されるため、
+       デフォルトは非表示にしてクライアント側で対象プランのみ表示する。
+       対象: Premium Sanrenpuku / Premium Combo / Premium + lifetimeSanrenpuku === true */
+    .sanrenpuku-section { display: none; }
+    .sanrenpuku-section.srp-access-granted { display: block; }
     .sanrenpuku-section .unified-bet-header { margin-bottom: 12px; }
     .sanrenpuku-tabs {
         display: flex;
