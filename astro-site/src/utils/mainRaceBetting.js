@@ -75,43 +75,54 @@ export function countMainRaceBetPoints(horses) {
   return filtered.length * 2;
 }
 
-// 通常レース（メイン以外）の馬単買い目を生成する。10点ロジック:
-//   本命→{対抗, 上位4頭} (5点 片方向)
-// + 対抗→{本命, 上位4頭} (5点 片方向)
-// = 合計10点（重複なし）
-// 「上位4頭」は 単穴 → 連下最上位 → 連下 → 補欠 の役割優先＋pt降順で抽出。
+// 通常レース（メイン以外）の馬単買い目を生成する。10点ロジック（双方向 1行）:
+//   本命 ↔ {対抗, 単穴/連下最上位/連下から上位4頭} = 最大5頭
+//   → 双方向馬単で 5 × 2 = 10点
+//   抑え（補欠・抑え役割の馬）は別括弧で informational に付与する。
+// 例: "7↔11.2.13.9.6(抑え1.3.4.10)"
+// 相手の並び順: 対抗 → 単穴 → 連下最上位 → 連下、同役割内は pt 降順。
 export function generateNormalRaceUmatanLines(horses) {
   if (!Array.isArray(horses)) return [];
   const honmei = horses.find(h => h && h.role === '本命');
-  const taikou = horses.find(h => h && h.role === '対抗');
-  if (!honmei || !taikou) return [];
+  if (!honmei) return [];
   const honmeiNum = horseNumber(honmei);
-  const taikouNum = horseNumber(taikou);
-  if (honmeiNum == null || taikouNum == null) return [];
+  if (honmeiNum == null) return [];
 
-  // 相手プール: 役割優先 + pt 降順、本命・対抗は除外
-  const oppPriority = { '単穴': 1, '連下最上位': 2, '連下': 3, '補欠': 4, '抑え': 4 };
+  // 相手プール: 対抗 → 単穴 → 連下最上位 → 連下、役割優先 + pt 降順 上位5頭
+  const partnerPriority = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
   const partners = horses
-    .filter(h => h && oppPriority[h.role] != null)
+    .filter(h => h && partnerPriority[h.role] != null)
     .filter(h => {
       const n = horseNumber(h);
-      return n != null && n !== honmeiNum && n !== taikouNum;
+      return n != null && n !== honmeiNum;
     })
     .sort((a, b) => {
-      const ra = oppPriority[a.role];
-      const rb = oppPriority[b.role];
+      const ra = partnerPriority[a.role];
+      const rb = partnerPriority[b.role];
       if (ra !== rb) return ra - rb;
       return horsePt(b) - horsePt(a);
     })
     .map(horseNumber)
-    .slice(0, 4);
+    .slice(0, 5);
 
   if (partners.length === 0) return [];
 
-  return [
-    `${honmeiNum}→${[taikouNum, ...partners].join('.')}`,
-    `${taikouNum}→${[honmeiNum, ...partners].join('.')}`,
-  ];
+  // 抑え（補欠・抑え）: 本命・選出済み相手を除外して pt 降順
+  const partnerSet = new Set(partners);
+  const osaeNumbers = horses
+    .filter(h => h && (h.role === '補欠' || h.role === '抑え'))
+    .filter(h => {
+      const n = horseNumber(h);
+      return n != null && n !== honmeiNum && !partnerSet.has(n);
+    })
+    .sort((a, b) => horsePt(b) - horsePt(a))
+    .map(horseNumber);
+
+  let line = `${honmeiNum}↔${partners.join('.')}`;
+  if (osaeNumbers.length > 0) {
+    line += `(抑え${osaeNumbers.join('.')})`;
+  }
+  return [line];
 }
 
 // 1レース分の馬単買い目を生成する dispatcher。
