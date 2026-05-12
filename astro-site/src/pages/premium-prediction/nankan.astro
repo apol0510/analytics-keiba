@@ -824,7 +824,9 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                             <ul class="ineligible-list">
                                                 {ineligible.map((h) => {
                                                     const gap = honmeiPt - (Number(h.pt) || 0);
-                                                    const comment = generateMinorHorseComment(h.role || '無', gap);
+                                                    // D セクションでは元の role に関わらず「見送り」分岐の文言を使う
+                                                    // （元 role が 補欠 だと「大穴候補として残す価値あり」が出てしまうため）
+                                                    const comment = generateMinorHorseComment('無', gap);
                                                     return (
                                                         <li class="ineligible-row">
                                                             <div class="ineligible-row-top">
