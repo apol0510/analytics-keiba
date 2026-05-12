@@ -31,7 +31,7 @@ export const prerender = true;
 
           <button type="submit" class="btn-primary" id="submitBtn">
             <span class="btn-text">ログインリンクを送信</span>
-            <span class="btn-loading" style="display: none;">送信中...</span>
+            <span class="btn-loading" style="display: none;"><span class="inline-spinner" aria-hidden="true"></span>送信中...</span>
           </button>
 
           <div id="message" class="message" style="display: none;"></div>
@@ -141,10 +141,23 @@ export const prerender = true;
       &:disabled { opacity: 0.6; cursor: not-allowed; }
       &.loading {
         .btn-text { display: none; }
-        .btn-loading { display: inline; }
+        .btn-loading { display: inline-flex; align-items: center; gap: 0; }
       }
     }
   }
+
+  .inline-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    vertical-align: -2px;
+    animation: inline-spin 0.7s linear infinite;
+  }
+  @keyframes inline-spin { to { transform: rotate(360deg); } }
 
   .message {
     margin-top: 16px;
