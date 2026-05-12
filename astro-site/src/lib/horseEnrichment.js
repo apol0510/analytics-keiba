@@ -46,6 +46,47 @@ export function parseDistanceMeters(d) {
   return null;
 }
 
+// 1走分の通過順 (e.g. "1-1-1-1" / "5-5-3-1") から脚質を判定する。
+// 戻り値: 'nige' | 'senko' | 'sashi' | 'oikomi' | null
+//   nige   : 序盤から先頭付近（平均1番手前後）
+//   senko  : 序盤2-4番手で運ぶ
+//   oikomi : 序盤後方→終盤前へ大きく順位を上げる
+//   sashi  : 序盤後方で運び、終盤も中位以下から伸びるタイプ
+//   null   : 通過順が無い、または判定不能
+export function parseRunningStyleFromPassingOrder(passingOrder) {
+  if (typeof passingOrder !== 'string') return null;
+  const positions = passingOrder
+    .split(/[-－―ー\s]+/)
+    .map((s) => parseInt(s, 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (positions.length === 0) return null;
+  const half = Math.max(1, Math.floor(positions.length / 2));
+  const early = positions.slice(0, half);
+  const late = positions.slice(-half);
+  const avg = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  const earlyAvg = avg(early);
+  const lateAvg = avg(late);
+  if (earlyAvg <= 1.5) return 'nige';
+  if (earlyAvg <= 4) return 'senko';
+  if (earlyAvg - lateAvg >= 3) return 'oikomi';
+  if (earlyAvg >= 5) return 'sashi';
+  return null;
+}
+
+// 直近 recentRaces を多数決で集約して脚質を返す（不明なら null）
+export function detectRecentRunningStyle(recentRaces) {
+  if (!Array.isArray(recentRaces)) return null;
+  const counts = { nige: 0, senko: 0, sashi: 0, oikomi: 0 };
+  for (const r of recentRaces) {
+    const style = parseRunningStyleFromPassingOrder(r && r.passingOrder);
+    if (style && counts[style] != null) counts[style] += 1;
+  }
+  const ranked = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  return ranked.length > 0 ? ranked[0][0] : null;
+}
+
 // 評価ポイント（根拠タグ）を recentRaces / role / pt から導出
 export function computeEvalPoints(h, allRaceHorses, raceDistance) {
   const points = [];
@@ -91,13 +132,29 @@ export function computeEvalPoints(h, allRaceHorses, raceDistance) {
     if (sameDistTop3 >= 1) points.push('距離適性あり');
   }
 
-  // 展開利 — 直近の上がり3F平均が良好（< 40.5秒）
+  // 上がり3F評価 — 直近の上がり3F平均が良好（< 40.5秒）な場合に、
+  // 馬の脚質に応じた表現でタグ付けする。
+  //   差し / 追込: 「末脚優秀」（差し馬・追い込み馬の表現）
+  //   逃げ:       「終いの持続力」
+  //   先行:       「上がり3F安定」
+  //   不明:       「終い安定」（安易に「末脚優秀」と言わない）
   const last3fs = recent
     .map(r => parseFloat(r && r.last3f))
     .filter(n => Number.isFinite(n));
   if (last3fs.length >= 2) {
     const avg = last3fs.reduce((a, b) => a + b, 0) / last3fs.length;
-    if (avg < 40.5) points.push('末脚優秀');
+    if (avg < 40.5) {
+      const style = detectRecentRunningStyle(recent);
+      if (style === 'sashi' || style === 'oikomi') {
+        points.push('末脚優秀');
+      } else if (style === 'nige') {
+        points.push('終いの持続力');
+      } else if (style === 'senko') {
+        points.push('上がり3F安定');
+      } else {
+        points.push('終い安定');
+      }
+    }
   }
 
   // 馬体重安定 — 直近の馬体重の振れ幅が小さい
