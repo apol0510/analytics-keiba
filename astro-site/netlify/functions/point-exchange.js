@@ -168,7 +168,7 @@ exports.handler = async (event, context) => {
             <p>ご不明な点がございましたら、お気軽にお問い合わせください。</p>
             <hr>
             <p>NANKANアナリティクス<br>
-            <a href="https://nankan-analytics.keiba.link">https://nankan-analytics.keiba.link</a></p>
+            <a href="https://analytics.keiba.link">https://analytics.keiba.link</a></p>
           `,
           tracking_settings: {
             click_tracking: { enable: false, enable_text: false },

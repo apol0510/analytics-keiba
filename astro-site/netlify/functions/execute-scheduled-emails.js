@@ -156,7 +156,7 @@ export default async function handler(request, context) {
             let htmlContent;
 
             if (includeUnsubscribe) {
-              const unsubscribeLink = `https://nankan-analytics.netlify.app/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}`;
+              const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}`;
               htmlContent = `
                 ${Content}
 

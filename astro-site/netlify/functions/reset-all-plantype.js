@@ -3,7 +3,7 @@
  * 全レコードのPlanTypeを空（null）に設定
  *
  * 使い方: ブラウザで以下のURLにアクセス
- * https://nankan-analytics.keiba.link/.netlify/functions/reset-all-plantype
+ * https://analytics.keiba.link/.netlify/functions/reset-all-plantype
  */
 
 exports.handler = async (event, context) => {

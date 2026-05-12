@@ -3,7 +3,7 @@
  * 既存の全レコードのPlanTypeを「Monthly」に設定
  *
  * 使い方: ブラウザで以下のURLにアクセス
- * https://nankan-analytics.keiba.link/.netlify/functions/migrate-customers-plantype
+ * https://analytics.keiba.link/.netlify/functions/migrate-customers-plantype
  */
 
 exports.handler = async (event, context) => {

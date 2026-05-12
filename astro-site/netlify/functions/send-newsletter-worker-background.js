@@ -147,7 +147,7 @@ export default async function handler(request, context) {
 
         try {
           // 配信停止リンク追加
-          const unsubscribeLink = `https://nankan-analytics.netlify.app/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}`;
+          const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}`;
           const htmlContent = `
             ${Content}
 

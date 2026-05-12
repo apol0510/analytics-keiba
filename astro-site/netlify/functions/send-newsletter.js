@@ -531,7 +531,7 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
       let htmlWithUnsubscribe;
 
       if (includeUnsubscribe) {
-        const unsubscribeLink = `https://nankan-analytics.netlify.app/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}`;
+        const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}`;
         htmlWithUnsubscribe = `
           ${htmlContent}
 
@@ -601,7 +601,7 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
         },
         // RFC 8058準拠のList-Unsubscribeヘッダー（Gmail等が要求）
         headers: {
-          "List-Unsubscribe": `<https://nankan-analytics.netlify.app/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
+          "List-Unsubscribe": `<https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
         }
       };
@@ -1229,7 +1229,7 @@ async function reportFailureToDomainProtection(email, errorType, errorMessage, s
 
     // domain-protection.js のreport-failure機能を呼び出し
     const baseUrl = 'http://localhost:8888'; // 開発環境
-    // const baseUrl = process.env.SITE_URL || 'https://nankan-analytics.keiba.link'; // 本番環境
+    // const baseUrl = process.env.SITE_URL || 'https://analytics.keiba.link'; // 本番環境
 
     const reportResponse = await fetch(`${baseUrl}/.netlify/functions/domain-protection?action=report-failure`, {
       method: 'POST',

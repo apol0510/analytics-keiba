@@ -171,7 +171,7 @@ export const handler = async (event, context) => {
                         <strong>📧 メルマガについて：</strong><br>
                         メルマガは引き続き配信されます。<br>
                         配信停止をご希望の場合は、
-                        <a href="https://nankan-analytics.keiba.link/.netlify/functions/unsubscribe?email=${email}"
+                        <a href="https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${email}"
                            style="color: #dc2626; text-decoration: underline;">
                             こちらから配信停止手続き
                         </a>

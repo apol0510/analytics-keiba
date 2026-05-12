@@ -211,7 +211,7 @@ exports.handler = async (event, context) => {
     <div class="footer">
       <p><strong>NANKANアナリティクス</strong></p>
       <p>AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム</p>
-      <p><a href="https://nankan-analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://nankan-analytics.keiba.link</a></p>
+      <p><a href="https://analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://analytics.keiba.link</a></p>
       <p style="font-size:0.9rem;color:#64748b;margin-top:20px;">
         このメールはPremium Plusお問い合わせフォームにご入力いただいた内容の控えとして自動送信されています。<br>
         心当たりがない場合は、このメールを破棄してください。

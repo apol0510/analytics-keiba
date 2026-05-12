@@ -69,7 +69,7 @@ export default async function handler(request, context) {
     }
 
     // 🔒 安全なドメイン（ハードコーディング）- 不正ドメイン防止
-    const SAFE_DOMAIN = 'https://nankan-analytics.keiba.link';
+    const SAFE_DOMAIN = 'https://analytics.keiba.link';
 
     console.log('🔗 使用予定ドメイン確認:', SAFE_DOMAIN);
     console.log('🚫 8912/8219ドメインは使用禁止');

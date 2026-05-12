@@ -160,7 +160,7 @@ async function sendAdminNotification(data) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: process.env.FROM_EMAIL || 'noreply@nankan-analytics.keiba.link',
+        from: process.env.FROM_EMAIL || 'noreply@keiba.link',
         to: 'mako@example.com', // ここを実際のメールアドレスに変更
         subject: '🎁 新しい特典申請が届きました',
         html: `
@@ -205,7 +205,7 @@ async function sendCustomerConfirmation(email, name) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: process.env.FROM_EMAIL || 'noreply@nankan-analytics.keiba.link',
+        from: process.env.FROM_EMAIL || 'noreply@keiba.link',
         to: email,
         subject: '特典申請を受け付けました - NANKANアナリティクス',
         html: `

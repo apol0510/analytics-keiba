@@ -3,7 +3,7 @@
  * Free会員のPlanTypeを空にする（誤って設定されたMonthlyを削除）
  *
  * 使い方: ブラウザで以下のURLにアクセス
- * https://nankan-analytics.keiba.link/.netlify/functions/fix-free-plantype
+ * https://analytics.keiba.link/.netlify/functions/fix-free-plantype
  */
 
 exports.handler = async (event, context) => {

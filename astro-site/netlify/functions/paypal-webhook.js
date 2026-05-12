@@ -495,7 +495,7 @@ function generateWelcomeEmail(customerName, plan, expiryDate, email) {
   const expiryText = expiryDate ? `有効期限: ${expiryDate}` : '無期限';
 
   // マジックリンク生成（既存のauth-user.js経由）
-  const magicLink = `https://nankan-analytics.keiba.link/?email=${encodeURIComponent(email)}`;
+  const magicLink = `https://analytics.keiba.link/?email=${encodeURIComponent(email)}`;
 
   return `
 <!DOCTYPE html>
@@ -538,7 +538,7 @@ function generateWelcomeEmail(customerName, plan, expiryDate, email) {
 
     <div style="text-align: center; margin: 30px 0;">
       <p style="margin: 0 0 15px 0; color: #666;">または、メールアドレスでログインすることもできます：</p>
-      <a href="https://nankan-analytics.keiba.link/"
+      <a href="https://analytics.keiba.link/"
          style="display: inline-block; background: #fff; color: #667eea; text-decoration: none; padding: 12px 30px; border: 2px solid #667eea; border-radius: 25px; font-weight: bold;">
         サイトにアクセス
       </a>

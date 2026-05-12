@@ -323,7 +323,7 @@ function generateAlertEmailHtml({ alertType, message, riskLevel, stats }) {
       </div>
 
       <div style="text-align: center;">
-        <a href="https://nankan-analytics.keiba.link/admin-newsletter-simple"
+        <a href="https://analytics.keiba.link/admin-newsletter-simple"
            style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600;">
           管理画面で確認 →
         </a>

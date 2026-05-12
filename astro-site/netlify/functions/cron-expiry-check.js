@@ -9,7 +9,7 @@ export default async function handler(request, context) {
   console.log('⏰ 期限切れチェックcron開始:', new Date().toISOString());
 
   try {
-    const baseUrl = process.env.URL || 'https://nankan-analytics.netlify.app';
+    const baseUrl = process.env.URL || 'https://analytics.keiba.link';
     const results = {};
 
     // ========================================

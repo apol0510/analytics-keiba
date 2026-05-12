@@ -400,7 +400,7 @@ function generateEmailHTML(fullName, email, productName, planType, expirationDat
     <div class="footer">
       <p><strong>NANKANアナリティクス</strong></p>
       <p>AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム</p>
-      <p><a href="https://nankan-analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://nankan-analytics.keiba.link</a></p>
+      <p><a href="https://analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://analytics.keiba.link</a></p>
       <p style="margin-top: 15px; font-size: 0.85rem; color: #94a3b8;">
         ※このメールは入金確認後に自動送信されています
       </p>
@@ -415,7 +415,7 @@ function generateEmailHTML(fullName, email, productName, planType, expirationDat
  * プラン別の情報を取得
  */
 function getPlanInfo(productName, planType) {
-  const baseUrl = 'https://nankan-analytics.keiba.link';
+  const baseUrl = 'https://analytics.keiba.link';
 
   // Standard
   if (productName.includes('Standard')) {

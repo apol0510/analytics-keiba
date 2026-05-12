@@ -10,7 +10,7 @@ export default async function handler(request, context) {
 
   try {
     // スケジュールされたメールを実行
-    const baseUrl = process.env.URL || 'https://nankan-analytics.keiba.link';
+    const baseUrl = process.env.URL || 'https://analytics.keiba.link';
     const executorUrl = `${baseUrl}/.netlify/functions/execute-scheduled-emails`;
 
     console.log('📧 スケジューラー実行URL:', executorUrl);
