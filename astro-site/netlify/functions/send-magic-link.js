@@ -65,23 +65,36 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { email } = JSON.parse(event.body || '{}');
-    if (!email) {
+    const { email: rawEmail } = JSON.parse(event.body || '{}');
+    if (!rawEmail) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Email is required' }) };
     }
+
+    // 📧 Email 正規化（trim + lowercase）— 検索・AuthTokens保存・SendGrid送信すべてこの値で行う
+    const email = String(rawEmail).trim().toLowerCase();
+    console.log(`📨 [send-magic-link] start: email=${email}`);
 
     const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(AIRTABLE_BASE_ID);
     const customersTable = base('Customers');
     const authTokensTable = base('AuthTokens');
 
-    // 1. Customers テーブルで既存ユーザー確認
+    // 1. Customers テーブルで既存ユーザー確認（Email 完全一致のみ・LOWER(TRIM()) で大小・空白差を吸収）
+    const escapedEmail = email.replace(/'/g, "\\'");
     const customers = await customersTable
-      .select({ filterByFormula: `{Email} = "${email.replace(/"/g, '\\"')}"`, maxRecords: 1 })
+      .select({
+        filterByFormula: `LOWER(TRIM({Email})) = '${escapedEmail}'`,
+        maxRecords: 5  // 重複検出のため複数取得
+      })
       .firstPage();
+
+    console.log(`🔍 [send-magic-link] Customer hits: ${customers.length} (email=${email})`);
+    if (customers.length > 1) {
+      console.warn(`⚠️ [send-magic-link] 同一 Email で複数 Customer 検出: ${email} / recordIds=${customers.map(r => r.id).join(',')}`);
+    }
 
     if (customers.length === 0) {
       // セキュリティ: 存在しないメールでも 200 を返して enumeration を防ぐ
-      console.warn('[send-magic-link] Customer not found:', email);
+      console.warn(`[send-magic-link] Customer not found: email=${email}`);
       return {
         statusCode: 200,
         headers,
@@ -93,9 +106,11 @@ exports.handler = async (event) => {
     }
 
     const customer = customers[0].fields;
+    const customerRecordId = customers[0].id;
 
     // ステータスが明示的に inactive の場合は弾く（active / undefined は OK）
     if (customer.Status && String(customer.Status).toLowerCase() === 'inactive') {
+      console.warn(`⛔ [send-magic-link] Account is inactive: email=${email}, recordId=${customerRecordId}`);
       return {
         statusCode: 403,
         headers,
@@ -105,13 +120,14 @@ exports.handler = async (event) => {
 
     // 2. トークン生成 (15分有効)
     const token = uuidv4();
+    const tokenPrefix = token.slice(0, 8);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     await authTokensTable.create([
       {
         fields: {
           Token: token,
-          Email: email,
+          Email: email,  // 正規化済み Email を保存（verify 側と一致させる）
           CreatedAt: new Date().toISOString(),
           ExpiresAt: expiresAt.toISOString(),
           Used: false,
@@ -120,16 +136,18 @@ exports.handler = async (event) => {
         },
       },
     ]);
+    console.log(`🎫 [send-magic-link] Token issued: tokenPrefix=${tokenPrefix}, email=${email}, expiresAt=${expiresAt.toISOString()}`);
 
     // 3. メール送信
     const magicLink = `${SITE_BASE}/auth/verify?token=${encodeURIComponent(token)}`;
     const customerName = customer.Name || customer['お名前'] || 'お客様';
 
-    await sgMail.send({
-      to: email,
-      from: FROM_EMAIL,
-      subject: '【KEIBA Analytics】ログインリンク',
-      html: `
+    try {
+      await sgMail.send({
+        to: email,
+        from: FROM_EMAIL,
+        subject: '【KEIBA Analytics】ログインリンク',
+        html: `
 <div style="font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8fafc;">
   <div style="background-color: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <h2 style="color: #1e40af; margin-top: 0; font-size: 24px;">ログインリンク</h2>
@@ -152,7 +170,21 @@ exports.handler = async (event) => {
   </div>
 </div>
 `,
-    });
+      });
+      console.log(`✅ [send-magic-link] SendGrid 送信成功: email=${email}, tokenPrefix=${tokenPrefix}`);
+    } catch (sgError) {
+      // SendGrid 送信失敗は握りつぶさず、明確にエラーを返す
+      const errorDetails = sgError?.response?.body || sgError?.message || String(sgError);
+      console.error(`❌ [send-magic-link] SendGrid 送信失敗: email=${email}, error=`, errorDetails);
+      return {
+        statusCode: 502,
+        headers,
+        body: JSON.stringify({
+          error: 'Failed to send login email',
+          details: typeof errorDetails === 'string' ? errorDetails : 'SendGrid send error',
+        }),
+      };
+    }
 
     return {
       statusCode: 200,

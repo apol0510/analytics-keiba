@@ -112,8 +112,21 @@ exports.handler = async (event, context) => {
     // ========================================
     // Step 2: 二重送信防止チェック
     // ========================================
+    // 🔧 運用メモ:
+    //   PaymentEmailSent=true のレコードは再送信されない。
+    //   再送が必要な場合は Airtable 側で PaymentEmailSent のチェックを外す（false/空）
+    //   → Status を pending → active に戻して Automation を再トリガーする。
     if (paymentEmailSent === true) {
-      console.log('ℹ️ Payment email already sent, skipping:', email);
+      const skipStatus = fields.Status || null;
+      const skipPlan = fields['プラン'] || fields.Plan || null;
+      console.log('ℹ️ Payment email already sent, skipping:', {
+        reason: 'PaymentEmailSent=true のため再送信スキップ',
+        email,
+        airtableRecordId,
+        status: skipStatus,
+        plan: skipPlan,
+        howToResend: 'Airtable で PaymentEmailSent を空に戻し、Status を pending → active に切り替えると再送できます。'
+      });
       return {
         statusCode: 200,
         headers,
@@ -121,7 +134,10 @@ exports.handler = async (event, context) => {
           success: true,
           skipped: true,
           message: 'Payment email already sent',
-          email: email
+          reason: 'PaymentEmailSent=true',
+          email: email,
+          airtableRecordId,
+          howToResend: 'PaymentEmailSent を空に戻して Status pending→active で再トリガー'
         })
       };
     }

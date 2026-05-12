@@ -34,7 +34,7 @@ exports.handler = async (event, context) => {
     const formData = JSON.parse(event.body);
     const {
       fullName,
-      email,
+      email: rawEmail,
       transferDate,
       transferTime,
       transferAmount,
@@ -44,6 +44,9 @@ exports.handler = async (event, context) => {
       paymentCompletedConfirm,
       timestamp
     } = formData;
+
+    // 📧 Email 正規化（trim + lowercase）— 検索・登録すべてこの値で行う
+    const email = rawEmail ? String(rawEmail).trim().toLowerCase() : '';
 
     // 必須項目チェック
     if (!fullName || !email || !transferDate || !transferTime || !transferAmount || !transferName) {
@@ -448,9 +451,13 @@ exports.handler = async (event, context) => {
           throw new Error('Airtable credentials missing');
         }
 
-        // 既存顧客チェック
-        const searchFormula = `{Email} = "${email}"`;
-        const searchUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers?filterByFormula=${encodeURIComponent(searchFormula)}`;
+        // ─────────────────────────────────────────────
+        // 既存顧客チェック（Email 完全一致のみ・LOWER(TRIM()) で大小・空白差を吸収）
+        // 旧コードは大小違い等で別レコードを見逃すリスクがあったため正規化比較に変更。
+        // ─────────────────────────────────────────────
+        const escapedEmail = email.replace(/'/g, "\\'");
+        const searchFormula = `LOWER(TRIM({Email})) = '${escapedEmail}'`;
+        const searchUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers?filterByFormula=${encodeURIComponent(searchFormula)}&maxRecords=5`;
 
         const searchResponse = await fetch(searchUrl, {
           method: 'GET',
@@ -466,25 +473,46 @@ exports.handler = async (event, context) => {
 
         const searchData = await searchResponse.json();
         const existingRecords = searchData.records || [];
+        console.log(`🔍 [bank-transfer] Email 検索結果: ${existingRecords.length}件 ヒット（email=${email}）`);
+        if (existingRecords.length > 1) {
+          console.warn(`⚠️ [bank-transfer] 同一 Email で複数レコード検出: ${email} / recordIds=${existingRecords.map(r => r.id).join(',')}`);
+        }
 
         if (existingRecords.length > 0) {
           // 既存顧客 - Update
-          const recordId = existingRecords[0].id;
+          const existingRecord = existingRecords[0];
+          const recordId = existingRecord.id;
+          const currentStatus = existingRecord.fields?.Status || null;
           const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
 
+          // ─────────────────────────────────────────────
+          // 🛡️ 2026-05-12 修正: active 顧客の pending 降格を防止
+          // 既存顧客が active（決済済み・有効）の場合に Status='pending' を書き込むと、
+          // 後の Airtable Automation で送信済みフラグの誤動作を引き起こす。
+          // よって Status は「現在 active 以外」の場合のみ pending に設定する。
+          // ─────────────────────────────────────────────
+          const updateFields = {
+            '氏名': fullName,
+            'プラン': planName,
+            'PlanType': planType,
+            'PaymentMethod': 'Bank Transfer',
+            '有効期限': expirationDate,
+            // 🔧 2026-03-02追加: 新規プラン購入時に退会フラグをリセット
+            'WithdrawalRequested': false,
+            'WithdrawalDate': null,
+            'WithdrawalReason': null
+          };
+          if (String(currentStatus || '').toLowerCase() === 'active') {
+            console.log(`🛡️ [bank-transfer] 既存 active 顧客のため Status は維持: ${email} / recordId=${recordId} / currentStatus=${currentStatus}`);
+          } else {
+            updateFields['Status'] = 'pending';
+            console.log(`📝 [bank-transfer] Status を pending に設定: ${email} / recordId=${recordId} / 旧 currentStatus=${currentStatus}`);
+          }
+
           const updatePayload = {
-            fields: {
-              '氏名': fullName,
-              'プラン': planName,
-              'PlanType': planType,
-              'Status': 'pending',
-              'PaymentMethod': 'Bank Transfer',
-              '有効期限': expirationDate,
-              // 🔧 2026-03-02追加: 新規プラン購入時に退会フラグをリセット
-              'WithdrawalRequested': false,
-              'WithdrawalDate': null,
-              'WithdrawalReason': null
-            }
+            fields: updateFields,
+            // Single select に未登録の値が来た場合は自動でオプションを追加（'Light' リネーム前後どちらでも通す）
+            typecast: true
           };
 
           const updateResponse = await fetch(updateUrl, {
@@ -504,40 +532,101 @@ exports.handler = async (event, context) => {
 
           console.log('✅ Airtable updated (existing customer):', email);
         } else {
-          // 新規顧客 - Create
-          const createUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers`;
-
-          const createPayload = {
-            fields: {
-              'Email': email,
-              '氏名': fullName,
-              'プラン': planName,
-              'PlanType': planType,
-              'Status': 'pending',
-              'PaymentMethod': 'Bank Transfer',
-              '有効期限': expirationDate,
-              'Source': 'nankan-analytics'  // 登録元サイト
-            }
-          };
-
-          console.log('📤 Airtable create payload:', JSON.stringify(createPayload, null, 2));
-
-          const createResponse = await fetch(createUrl, {
-            method: 'POST',
+          // ─────────────────────────────────────────────
+          // 🔁 2026-05-12 修正: 同時リクエストでの重複作成防止（race-safe re-check）
+          // 1回目の検索からこの create までの間に、別リクエストが先に作っていないか
+          // もう一度確認してから作成する。
+          // ─────────────────────────────────────────────
+          console.log(`🔁 [bank-transfer] 新規作成前の再検索: ${email}`);
+          const reCheckResponse = await fetch(searchUrl, {
+            method: 'GET',
             headers: {
               'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
               'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(createPayload)
+            }
           });
+          const reCheckData = reCheckResponse.ok ? await reCheckResponse.json() : { records: [] };
+          const reCheckRecords = reCheckData.records || [];
 
-          if (!createResponse.ok) {
-            const errorText = await createResponse.text();
-            console.error('❌ Airtable create error details:', errorText);
-            throw new Error(`Airtable create failed: ${createResponse.status} - ${errorText}`);
+          if (reCheckRecords.length > 0) {
+            // 直前に他リクエストが作成 → 新規作成せず、既存レコードを update する
+            const raceRecord = reCheckRecords[0];
+            const recordId = raceRecord.id;
+            const raceCurrentStatus = raceRecord.fields?.Status || null;
+            console.log(`✅ [bank-transfer] 再検索で既存レコード検出 → create スキップして update: ${email} / recordId=${recordId} / currentStatus=${raceCurrentStatus}`);
+            const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
+
+            // 🛡️ active 顧客の pending 降格を防止（メインパスと同じガード）
+            const raceUpdateFields = {
+              '氏名': fullName,
+              'プラン': planName,
+              'PlanType': planType,
+              'PaymentMethod': 'Bank Transfer',
+              '有効期限': expirationDate,
+              'WithdrawalRequested': false,
+              'WithdrawalDate': null,
+              'WithdrawalReason': null
+            };
+            if (String(raceCurrentStatus || '').toLowerCase() === 'active') {
+              console.log(`🛡️ [bank-transfer race] 既存 active 顧客のため Status は維持: ${email}`);
+            } else {
+              raceUpdateFields['Status'] = 'pending';
+            }
+            const updatePayload = {
+              fields: raceUpdateFields,
+              typecast: true
+            };
+            const updateResponse = await fetch(updateUrl, {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(updatePayload)
+            });
+            if (!updateResponse.ok) {
+              const errorText = await updateResponse.text();
+              console.error('❌ Airtable update (race fallback) error details:', errorText);
+              throw new Error(`Airtable update failed (race fallback): ${updateResponse.status} - ${errorText}`);
+            }
+          } else {
+            // 新規顧客 - Create
+            const createUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers`;
+
+            const createPayload = {
+              fields: {
+                'Email': email,
+                '氏名': fullName,
+                'プラン': planName,
+                'PlanType': planType,
+                'Status': 'pending',
+                'PaymentMethod': 'Bank Transfer',
+                '有効期限': expirationDate,
+                'Source': 'nankan-analytics'  // 登録元サイト
+              },
+              // Single select に未登録の値が来た場合は自動でオプションを追加（'Light' リネーム前後どちらでも通す）
+              typecast: true
+            };
+
+            console.log('📤 Airtable create payload:', JSON.stringify(createPayload, null, 2));
+
+            const createResponse = await fetch(createUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(createPayload)
+            });
+
+            if (!createResponse.ok) {
+              const errorText = await createResponse.text();
+              console.error('❌ Airtable create error details:', errorText);
+              throw new Error(`Airtable create failed: ${createResponse.status} - ${errorText}`);
+            }
+
+            console.log('✅ Airtable created (new customer):', email);
           }
-
-          console.log('✅ Airtable created (new customer):', email);
         }
       } catch (airtableError) {
         console.error('❌ Airtable registration error:', airtableError);

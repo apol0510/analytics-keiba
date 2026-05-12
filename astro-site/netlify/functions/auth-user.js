@@ -51,18 +51,20 @@ exports.handler = async (event, context) => {
     console.log('🔍 Event httpMethod:', event.httpMethod);
     
     // リクエストボディ取得
-    const { email, allowRegistration } = JSON.parse(event.body || '{}');
-    console.log('🔍 Parsed email:', email);
-    console.log('🔍 IP Address:', ipAddress);
-    console.log('🔍 Allow Registration:', allowRegistration);
-
-    if (!email) {
+    const { email: rawEmail, allowRegistration } = JSON.parse(event.body || '{}');
+    if (!rawEmail) {
       return {
         statusCode: 400,
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ error: 'Email is required' })
       };
     }
+
+    // 📧 Email 正規化（trim + lowercase）。Customers 検索・新規作成すべてこの値で行う
+    const email = String(rawEmail).trim().toLowerCase();
+    console.log('🔍 Parsed email (normalized):', email);
+    console.log('🔍 IP Address:', ipAddress);
+    console.log('🔍 Allow Registration:', allowRegistration);
 
     // 🚨 一時的にログイン試行回数制限を無効化（Netlifyデプロイ問題対応）
     // // 🔒 ブラックリストチェック（IPアドレスベース）
@@ -101,14 +103,27 @@ exports.handler = async (event, context) => {
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY })
       .base(process.env.AIRTABLE_BASE_ID);
 
-    // ユーザー検索（WithdrawalRequestedフィールドも取得）
-    // 🚨 重要: Sourceフィールドでフィルタリング（nankan-analytics登録者のみ）
+    // ─────────────────────────────────────────────
+    // 🔧 2026-05-12 修正: Email 完全一致のみで検索
+    // 旧条件は `AND({Email}=..., OR({Source}='nankan-analytics', {Source}=BLANK()))`
+    // だったが、Source が他の値（旧データや移行行）の既存会員を見逃して重複作成する原因になっていた。
+    // ここでは Source 条件を外し、Email のみで会員を一意に検出する。
+    // 大小違い・前後空白の差で重複検出ミスを起こさないため LOWER(TRIM()) で比較。
+    // ─────────────────────────────────────────────
+    const escapedEmail = email.replace(/'/g, "\\'");
+    const emailFilter = `LOWER(TRIM({Email})) = '${escapedEmail}'`;
+
     const records = await base('Customers')
       .select({
-        filterByFormula: `AND({Email} = '${email}', OR({Source} = 'nankan-analytics', {Source} = BLANK()))`,
-        maxRecords: 1
+        filterByFormula: emailFilter,
+        maxRecords: 5  // 重複検出のため複数取得
       })
       .firstPage();
+
+    console.log(`🔍 Email 検索結果: ${records.length}件 ヒット（email=${email}）`);
+    if (records.length > 1) {
+      console.warn(`⚠️ 同一 Email で複数レコード検出: ${email} / recordIds=${records.map(r => r.id).join(',')}`);
+    }
 
     if (records.length === 0) {
       // 🚨 2026-03-02修正: 新規ユーザーの自動登録を条件付きで許可
@@ -129,63 +144,83 @@ exports.handler = async (event, context) => {
         };
       }
 
-      // allowRegistration=true の場合、新規ユーザーとして登録
-      console.log(`✅ 新規ユーザー登録許可: ${email}`);
+      // 🔁 2026-05-12 修正: 同時リクエストでの重複作成防止
+      // create 直前に Email 完全一致で再検索して、別のリクエストが
+      // 直前に作成したレコードがないか確認する（チェック&クリエイトの race condition 対策）。
+      console.log(`🔁 新規作成前の再検索（race-safe check）: ${email}`);
+      const reCheckRecords = await base('Customers')
+        .select({ filterByFormula: emailFilter, maxRecords: 1 })
+        .firstPage();
 
-      const newRecord = await base('Customers').create({
-        'Email': email,
-        'プラン': 'Free',
-        'ポイント': 1,
-        '最終ポイント付与日': new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' })).toISOString().split('T')[0],
-        'Source': 'nankan-analytics'
-      });
+      if (reCheckRecords.length > 0) {
+        console.log(`✅ 再検索で既存レコード検出 → 新規作成スキップ: ${email} / recordId=${reCheckRecords[0].id}`);
+        // 既存ユーザーとして処理するためフォールスルー
+        records.push(reCheckRecords[0]);
+      } else {
+        // allowRegistration=true かつ既存レコードなし → 新規ユーザーとして登録
+        console.log(`✅ 新規ユーザー登録許可: ${email}`);
 
-      // BlastMail読者登録（無料会員）
-      try {
-        await registerToBlastMail(email, 'nankan-analytics');
-      } catch (blastMailError) {
-        console.error('⚠️ BlastMail登録エラー（処理は継続）:', blastMailError.message);
-      }
-
-      // 新規ユーザー通知
-      try {
-        const notificationResponse = await fetch(`${context.NETLIFY_DEV ? 'http://localhost:8888' : 'https://analytics.keiba.link'}/.netlify/functions/user-notification`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: email,
-            isNewUser: true
-          })
+        const newRecord = await base('Customers').create({
+          'Email': email,
+          'プラン': 'Free',
+          'ポイント': 1,
+          '最終ポイント付与日': new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' })).toISOString().split('T')[0],
+          'Source': 'nankan-analytics'
         });
+        console.log(`📝 新規ユーザー作成完了: ${email} / recordId=${newRecord.id}`);
 
-        if (notificationResponse.ok) {
-          console.log('✅ 新規ユーザー通知送信成功');
-        } else {
-          console.error('⚠️ 新規ユーザー通知送信失敗（処理は継続）:', notificationResponse.status);
+        // BlastMail読者登録（無料会員）
+        try {
+          await registerToBlastMail(email, 'nankan-analytics');
+        } catch (blastMailError) {
+          console.error('⚠️ BlastMail登録エラー（処理は継続）:', blastMailError.message);
         }
-      } catch (notificationError) {
-        console.error('⚠️ 新規ユーザー通知エラー（処理は継続）:', notificationError.message);
-      }
 
-      return {
-        statusCode: 200,
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          success: true,
-          isNewUser: true,
-          user: {
-            email,
-            plan: 'free',
-            points: 1,
-            pointsAdded: 1,
-            lastLogin: new Date().toISOString().split('T')[0]
-          },
-          message: '新規ユーザー登録完了！初回ログインポイント1pt付与'
-        }, null, 2)
-      };
+        // 新規ユーザー通知
+        try {
+          const notificationResponse = await fetch(`${context.NETLIFY_DEV ? 'http://localhost:8888' : 'https://analytics.keiba.link'}/.netlify/functions/user-notification`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: email,
+              isNewUser: true
+            })
+          });
+
+          if (notificationResponse.ok) {
+            console.log('✅ 新規ユーザー通知送信成功');
+          } else {
+            console.error('⚠️ 新規ユーザー通知送信失敗（処理は継続）:', notificationResponse.status);
+          }
+        } catch (notificationError) {
+          console.error('⚠️ 新規ユーザー通知エラー（処理は継続）:', notificationError.message);
+        }
+
+        return {
+          statusCode: 200,
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            success: true,
+            isNewUser: true,
+            user: {
+              email,
+              plan: 'free',
+              points: 1,
+              pointsAdded: 1,
+              lastLogin: new Date().toISOString().split('T')[0]
+            },
+            message: '新規ユーザー登録完了！初回ログインポイント1pt付与'
+          }, null, 2)
+        };
+      }
     }
 
-    // 既存ユーザーの情報取得
+    // ─────────────────────────────────────────────
+    // 既存ユーザーの処理（records.length > 0 または race-safe 再検索でヒット）
+    // 重要: 既存の Plan / Status / PaymentEmailSent / CustomerType などを
+    //       ここで上書きしてはいけない。読み取りと最小限の更新（ポイント・退会フラグ）のみ。
+    // ─────────────────────────────────────────────
+    console.log(`👤 既存ユーザー処理: ${email} / recordId=${records[0].id}`);
     const user = records[0];
     const currentPoints = user.get('ポイント') || 0;
     let currentPlan = user.get('プラン') || 'free';
