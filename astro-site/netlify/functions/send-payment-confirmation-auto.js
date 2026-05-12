@@ -37,16 +37,18 @@ exports.handler = async (event, context) => {
   try {
     // リクエストデータ取得（Airtable Automationから渡される）
     const requestData = JSON.parse(event.body);
-    const { airtableRecordId } = requestData;
+    const { airtableRecordId, email: rawEmail } = requestData;
+    // 📧 email 正規化（fallback 検索用。Automation 側から渡されない場合は空）
+    const inputEmail = rawEmail ? String(rawEmail).trim().toLowerCase() : '';
 
-    console.log('📧 Payment confirmation auto trigger:', airtableRecordId);
+    console.log('📧 Payment confirmation auto trigger:', { airtableRecordId, hasEmailFallback: !!inputEmail });
 
-    // 必須項目チェック
-    if (!airtableRecordId) {
+    // 必須項目チェック（airtableRecordId か email のどちらかは必要）
+    if (!airtableRecordId && !inputEmail) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'airtableRecordId is required' })
+        body: JSON.stringify({ error: 'airtableRecordId or email is required' })
       };
     }
 
@@ -64,70 +66,188 @@ exports.handler = async (event, context) => {
       throw new Error('Airtable credentials not configured');
     }
 
-    // ========================================
-    // Step 1: Airtableからレコード情報取得
-    // ========================================
     // テーブル名に日本語等を含む可能性を考慮して URL エンコード
     const tableSegment = encodeURIComponent(AIRTABLE_CUSTOMERS_TABLE);
-    const recordUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${tableSegment}/${airtableRecordId}`;
 
-    // ⚠️ 注意: API キー本体は絶対にログに出さない。先頭7文字のプレフィックスのみ。
-    console.log('🔍 Debug info:', {
-      AIRTABLE_BASE_ID,
-      tableName: AIRTABLE_CUSTOMERS_TABLE,
-      airtableRecordId,
-      recordUrl,
-      tokenPrefix: AIRTABLE_API_KEY.substring(0, 7),
-      tokenLength: AIRTABLE_API_KEY.length
-    });
+    // ========================================
+    // Step 1: Airtableからレコード情報取得
+    //   1a. まず airtableRecordId で取得を試みる
+    //   1b. 失敗（403/404）かつ email が渡されていれば、email で fallback 検索
+    // ========================================
+    let fields = null;            // 最終的に使う Customer の fields
+    let resolvedRecordId = null;  // PATCH 更新時に使う recordId（fallback 後は新しい値）
+    let recordFetchDiagnostics = null;  // 失敗時の診断情報を蓄積
 
-    const recordResponse = await fetch(recordUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    if (airtableRecordId) {
+      const recordUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${tableSegment}/${airtableRecordId}`;
 
-    if (!recordResponse.ok) {
-      const errorText = await recordResponse.text();
-      // 🔧 2026-05-12 改善: 403/404 の主要因をログで切り分けやすくする
-      const diagnostics = {
-        airtableStatus: recordResponse.status,
-        airtableStatusText: recordResponse.statusText,
-        airtableErrorBody: errorText,
-        baseId: AIRTABLE_BASE_ID,
+      // ⚠️ 注意: API キー本体は絶対にログに出さない。先頭7文字のプレフィックスのみ。
+      console.log('🔍 Debug info (Step 1a recordId fetch):', {
+        AIRTABLE_BASE_ID,
         tableName: AIRTABLE_CUSTOMERS_TABLE,
         airtableRecordId,
+        recordUrl,
         tokenPrefix: AIRTABLE_API_KEY.substring(0, 7),
-        tokenLength: AIRTABLE_API_KEY.length,
-        hints: []
-      };
-      if (recordResponse.status === 403) {
-        diagnostics.hints.push('PAT が Base apptmQUPAlgZMmBC9（または現在の AIRTABLE_BASE_ID）にアクセス権を持っていない可能性');
-        diagnostics.hints.push('PAT に data.records:read スコープが付与されていない可能性');
-        diagnostics.hints.push('テーブル名が実際の名前と一致していない可能性（AIRTABLE_CUSTOMERS_TABLE 環境変数で上書き可能）');
-      } else if (recordResponse.status === 404) {
-        diagnostics.hints.push('airtableRecordId が現在の Base / Table に存在しない可能性');
-        diagnostics.hints.push('AIRTABLE_BASE_ID が旧 Base を指している可能性');
-      } else if (recordResponse.status === 401) {
-        diagnostics.hints.push('PAT が無効・期限切れの可能性。Airtable で再発行してください');
+        tokenLength: AIRTABLE_API_KEY.length
+      });
+
+      const recordResponse = await fetch(recordUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (recordResponse.ok) {
+        const recordData = await recordResponse.json();
+        fields = recordData.fields;
+        resolvedRecordId = airtableRecordId;
+        console.log('✅ recordId fetch 成功:', resolvedRecordId);
+      } else {
+        const errorText = await recordResponse.text();
+        // 🔧 2026-05-12 改善: 403 = recordId 不存在が最有力（PAT問題ではないことが多い）
+        recordFetchDiagnostics = {
+          stage: 'recordId-fetch',
+          airtableStatus: recordResponse.status,
+          airtableStatusText: recordResponse.statusText,
+          airtableErrorBody: errorText,
+          baseId: AIRTABLE_BASE_ID,
+          tableName: AIRTABLE_CUSTOMERS_TABLE,
+          airtableRecordId,
+          tokenPrefix: AIRTABLE_API_KEY.substring(0, 7),
+          tokenLength: AIRTABLE_API_KEY.length,
+          hints: []
+        };
+        if (recordResponse.status === 403) {
+          recordFetchDiagnostics.hints.push('【最有力】airtableRecordId が Customers テーブルに存在しない / 削除済み / 別Base・別Tableのレコード');
+          recordFetchDiagnostics.hints.push('Airtable の INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND は、recordId が見つからない場合にも発生する');
+          recordFetchDiagnostics.hints.push('Automation Test の input recordId が古いサンプルを保持している可能性');
+          recordFetchDiagnostics.hints.push('Trigger table が Customers でない、または input variable が Trigger record ID を参照していない可能性');
+          recordFetchDiagnostics.hints.push('PAT / Base access / data.records:read 不足の可能性（ただし fake recordId で 404 が返れば PAT は正常）');
+        } else if (recordResponse.status === 404) {
+          recordFetchDiagnostics.hints.push('airtableRecordId のフォーマットが不正（rec + 14文字でない）');
+          recordFetchDiagnostics.hints.push('AIRTABLE_BASE_ID が旧 Base を指している可能性');
+        } else if (recordResponse.status === 401) {
+          recordFetchDiagnostics.hints.push('PAT が無効・期限切れの可能性。Airtable で再発行してください');
+        }
+        console.warn('⚠️ recordId fetch failed (will try email fallback if available):', recordFetchDiagnostics);
       }
-      console.error('❌ Airtable record fetch failed:', diagnostics);
-      // Airtable Automation の Test output で原因が見えるよう、レスポンスにも診断情報を返す
+    }
+
+    // ========================================
+    // Step 1b: email fallback
+    //   recordId 取得に失敗（または airtableRecordId 未指定）かつ email がある場合、
+    //   LOWER(TRIM({Email})) で Customers を検索して継続する。
+    // ========================================
+    if (!fields && inputEmail) {
+      const escapedEmail = inputEmail.replace(/'/g, "\\'");
+      const filterFormula = `LOWER(TRIM({Email})) = '${escapedEmail}'`;
+      const searchUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${tableSegment}?filterByFormula=${encodeURIComponent(filterFormula)}&maxRecords=5`;
+
+      console.log('🔁 [email fallback] 検索開始:', {
+        email: inputEmail,
+        tableName: AIRTABLE_CUSTOMERS_TABLE,
+        baseId: AIRTABLE_BASE_ID
+      });
+
+      const searchResponse = await fetch(searchUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!searchResponse.ok) {
+        const errorText = await searchResponse.text();
+        const fallbackDiagnostics = {
+          stage: 'email-fallback-search',
+          airtableStatus: searchResponse.status,
+          airtableStatusText: searchResponse.statusText,
+          airtableErrorBody: errorText,
+          baseId: AIRTABLE_BASE_ID,
+          tableName: AIRTABLE_CUSTOMERS_TABLE,
+          email: inputEmail,
+          tokenPrefix: AIRTABLE_API_KEY.substring(0, 7),
+          tokenLength: AIRTABLE_API_KEY.length,
+          previousRecordIdFetch: recordFetchDiagnostics,
+          hints: [
+            'email fallback の Customers 検索自体が失敗',
+            'PAT / Base access / data.records:read を確認してください'
+          ]
+        };
+        console.error('❌ [email fallback] Customers 検索失敗:', fallbackDiagnostics);
+        return {
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({
+            error: 'Internal Server Error',
+            message: `Email fallback search failed: ${searchResponse.status}`,
+            diagnostics: fallbackDiagnostics
+          })
+        };
+      }
+
+      const searchData = await searchResponse.json();
+      const records = searchData.records || [];
+      console.log(`🔁 [email fallback] 検索結果: ${records.length}件 ヒット（email=${inputEmail}）`);
+
+      if (records.length === 0) {
+        // email でも見つからない場合は最終的なエラーを返す
+        const notFoundDiagnostics = {
+          stage: 'email-fallback-not-found',
+          baseId: AIRTABLE_BASE_ID,
+          tableName: AIRTABLE_CUSTOMERS_TABLE,
+          email: inputEmail,
+          previousRecordIdFetch: recordFetchDiagnostics,
+          hints: [
+            'recordId / email のいずれでも Customers レコードが見つからなかった',
+            'Customers テーブルで該当 Email が存在するか確認してください',
+            'email 正規化（trim + lowercase）後の値で検索しています'
+          ]
+        };
+        console.error('❌ [email fallback] 該当 Email が Customers に見つからない:', notFoundDiagnostics);
+        return {
+          statusCode: 404,
+          headers,
+          body: JSON.stringify({
+            error: 'Customer not found by recordId or email',
+            diagnostics: notFoundDiagnostics
+          })
+        };
+      }
+
+      if (records.length > 1) {
+        console.warn(`⚠️ [email fallback] 同一 Email で複数 Customer 検出: ${inputEmail} / recordIds=${records.map(r => r.id).join(',')}`);
+      }
+
+      const fallbackRecord = records[0];
+      fields = fallbackRecord.fields;
+      resolvedRecordId = fallbackRecord.id;
+      console.log(`✅ [email fallback] レコード解決: recordId=${resolvedRecordId} (元の airtableRecordId=${airtableRecordId || 'なし'})`);
+    }
+
+    // ========================================
+    // Step 1 後の最終確認: recordId / email どちらでも fields を解決できなかった場合
+    // ========================================
+    if (!fields) {
+      // recordId 指定があったが取得失敗、かつ email fallback も使えなかった（email 未指定）
+      console.error('❌ recordId fetch 失敗 + email fallback 不可（email 未指定）:', recordFetchDiagnostics);
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           error: 'Internal Server Error',
-          message: `Airtable record fetch failed: ${recordResponse.status}`,
-          diagnostics
+          message: `Airtable record fetch failed: ${recordFetchDiagnostics?.airtableStatus || 'unknown'}`,
+          diagnostics: {
+            ...recordFetchDiagnostics,
+            emailFallbackAvailable: false,
+            hint: 'Airtable Automation の Run a script で input に email を追加すると、recordId が無効でも email で fallback 検索できます'
+          }
         })
       };
     }
-
-    const recordData = await recordResponse.json();
-    const fields = recordData.fields;
 
     // 必須フィールド確認
     const email = fields.Email;
@@ -165,7 +285,8 @@ exports.handler = async (event, context) => {
       console.log('ℹ️ Payment email already sent, skipping:', {
         reason: 'PaymentEmailSent=true のため再送信スキップ',
         email,
-        airtableRecordId,
+        airtableRecordId,            // Automation から渡された元 ID
+        resolvedRecordId,            // 実際にヒットした recordId（fallback 後は別 ID）
         status: skipStatus,
         plan: skipPlan,
         howToResend: 'Airtable で PaymentEmailSent を空に戻し、Status を pending → active に切り替えると再送できます。'
@@ -180,6 +301,7 @@ exports.handler = async (event, context) => {
           reason: 'PaymentEmailSent=true',
           email: email,
           airtableRecordId,
+          resolvedRecordId,
           howToResend: 'PaymentEmailSent を空に戻して Status pending→active で再トリガー'
         })
       };
@@ -300,7 +422,12 @@ exports.handler = async (event, context) => {
       console.log('💳 PaymentMethod設定: Bank Transfer');
     }
 
-    const updateResponse = await fetch(recordUrl, {
+    // 🔧 2026-05-13 修正: email fallback で recordId が解決された場合に備え、
+    //   PATCH 用 URL は resolvedRecordId（最終的に使った recordId）から組み立てる。
+    //   recordUrl 変数は Step 1a のブロック内スコープに閉じているため、ここで再構築する。
+    const patchUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${tableSegment}/${resolvedRecordId}`;
+
+    const updateResponse = await fetch(patchUrl, {
       method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
@@ -310,7 +437,7 @@ exports.handler = async (event, context) => {
     });
 
     if (updateResponse.ok) {
-      console.log('✅ PaymentEmailSent updated to true:', airtableRecordId);
+      console.log('✅ PaymentEmailSent updated to true:', { resolvedRecordId, originalAirtableRecordId: airtableRecordId });
       if (updatePayload.fields['ExpirationDate']) {
         console.log('✅ ExpirationDate updated:', updatePayload.fields['ExpirationDate']);
       }
@@ -324,6 +451,7 @@ exports.handler = async (event, context) => {
         baseId: AIRTABLE_BASE_ID,
         tableName: AIRTABLE_CUSTOMERS_TABLE,
         airtableRecordId,
+        resolvedRecordId,
         note: 'メール送信は成功済み。PaymentEmailSent が false のまま残るため、次回 Status 変更時に再送される可能性があります。PAT に data.records:write スコープが付与されているか確認してください。'
       });
     }
@@ -337,7 +465,9 @@ exports.handler = async (event, context) => {
         message: 'Payment confirmation email sent successfully',
         email: email,
         productName: productName,
-        airtableRecordId: airtableRecordId
+        airtableRecordId,            // Automation から渡された元 ID
+        resolvedRecordId,            // 実際に使った recordId（email fallback で別 ID になっている可能性あり）
+        emailFallbackUsed: resolvedRecordId !== airtableRecordId
       })
     };
 
