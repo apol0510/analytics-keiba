@@ -791,6 +791,52 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                         </div>
                                     </div>
                                 )}
+
+                                {/* 不要馬・見送り馬（A/B/Cいずれにも入らなかった馬を簡易表示で残す） */}
+                                {(() => {
+                                    const handled = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
+                                    const honmei = raceHorses.find(h => h.role === '本命');
+                                    const honmeiPt = Number(honmei?.pt) || 0;
+                                    const ineligible = (raceHorses || [])
+                                        .filter((h) => !handled.has(h.role))
+                                        .sort((a, b) => (Number(b.pt) || 0) - (Number(a.pt) || 0));
+                                    if (ineligible.length === 0) return null;
+                                    const reasonFor = (h) => {
+                                        const pt = Number(h.pt) || 0;
+                                        const ci = Number(h.computerIndex);
+                                        if (!(pt > 0)) return '評価不足';
+                                        if (Number.isFinite(ci) && ci > 0 && !(ci > 44)) return '指数不足';
+                                        return '上位比較で劣勢';
+                                    };
+                                    return (
+                                        <details class="ineligible-section">
+                                            <summary>不要馬・見送り馬 {ineligible.length}頭</summary>
+                                            <ul class="ineligible-list">
+                                                {ineligible.map((h) => {
+                                                    const gap = honmeiPt - (Number(h.pt) || 0);
+                                                    const comment = generateMinorHorseComment(h.role || '無', gap);
+                                                    return (
+                                                        <li class="ineligible-row">
+                                                            <div class="ineligible-row-top">
+                                                                <span class="ineligible-num">{h.number}</span>
+                                                                <span class="ineligible-name">{h.name}</span>
+                                                                <span class="ineligible-pt">{h.pt ?? 0}pt</span>
+                                                                {h.computerIndex != null && (
+                                                                    <span class="ineligible-meta">指数{h.computerIndex}</span>
+                                                                )}
+                                                                {h.jockey && <span class="ineligible-meta">騎手:{h.jockey}</span>}
+                                                                <span class="ineligible-reason">{reasonFor(h)}</span>
+                                                            </div>
+                                                            {comment && (
+                                                                <div class="ineligible-comment">{comment}</div>
+                                                            )}
+                                                        </li>
+                                                    );
+                                                })}
+                                            </ul>
+                                        </details>
+                                    );
+                                })()}
                             </div>
 
                             <!-- AI推奨買い目（10点ロジック / 通常レースは本命軸+対抗軸 統一表示） -->
@@ -2548,6 +2594,83 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
     @media (max-width: 640px) {
         .minor-horse-grid { grid-template-columns: 1fr; }
+    }
+
+    /* 不要馬・見送り馬 折りたたみ簡易表示 */
+    .ineligible-section {
+        margin-top: 16px;
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 8px;
+        padding: 10px 14px;
+        border: 1px dashed rgba(100, 116, 139, 0.3);
+    }
+    .ineligible-section > summary {
+        cursor: pointer;
+        color: #94a3b8;
+        font-weight: 600;
+        font-size: 0.88rem;
+        list-style: none;
+    }
+    .ineligible-section > summary::-webkit-details-marker { display: none; }
+    .ineligible-section > summary::before {
+        content: '▶';
+        display: inline-block;
+        margin-right: 8px;
+        color: #64748b;
+        font-size: 0.7rem;
+        transition: transform 0.2s ease;
+    }
+    .ineligible-section[open] > summary::before { transform: rotate(90deg); }
+    .ineligible-list {
+        list-style: none;
+        margin: 10px 0 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .ineligible-row {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        font-size: 0.8rem;
+        color: #cbd5e1;
+        padding: 6px 8px;
+        background: rgba(30, 41, 59, 0.4);
+        border-radius: 4px;
+    }
+    .ineligible-row-top {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        align-items: baseline;
+    }
+    .ineligible-comment {
+        color: #94a3b8;
+        font-size: 0.78rem;
+        line-height: 1.4;
+        padding-left: 32px;
+    }
+    .ineligible-num {
+        background: rgba(100, 116, 139, 0.25);
+        color: #e2e8f0;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-weight: 700;
+        font-size: 0.75rem;
+        min-width: 24px;
+        text-align: center;
+    }
+    .ineligible-name { color: #e2e8f0; font-weight: 500; }
+    .ineligible-pt { color: #94a3b8; font-size: 0.78rem; }
+    .ineligible-meta { color: #64748b; font-size: 0.75rem; }
+    .ineligible-reason {
+        color: #94a3b8;
+        font-size: 0.75rem;
+        margin-left: auto;
+        background: rgba(100, 116, 139, 0.15);
+        padding: 1px 8px;
+        border-radius: 999px;
     }
 
     .premium-analysis {

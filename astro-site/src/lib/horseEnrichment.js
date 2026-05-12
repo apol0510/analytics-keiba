@@ -73,7 +73,7 @@ export function parseRunningStyleFromPassingOrder(passingOrder) {
   return null;
 }
 
-// 連下 / 押さえ 馬向けの短評を、本命との pt 差から決定的に生成する。
+// 連下 / 押さえ / 見送り馬向けの短評を、本命との pt 差から決定的に生成する。
 // 同じ役割・差レンジなら毎回同じ文言になるよう、ランダム性は持たせない。
 export function generateMinorHorseComment(role, gapFromHonmei) {
   const gap = Number(gapFromHonmei) || 0;
@@ -87,7 +87,10 @@ export function generateMinorHorseComment(role, gapFromHonmei) {
     if (gap <= 40) return 'スコアは控えめながら、上位崩れの際に浮上余地あり。';
     return '上位勢崩れの大穴候補として残す価値あり。';
   }
-  return '';
+  // 不要 / 無印 / その他（A〜Cいずれにも入らなかった馬）
+  if (gap <= 40) return '上位比較で評価を下げた一頭。今回は買い目候補からは見送り。';
+  if (gap <= 60) return 'スコア面で上位候補には届かず、今回は評価を控えめに判断。';
+  return '展開待ちの要素が強く、今回は買い目から外す判断。';
 }
 
 // 直近 recentRaces を多数決で集約して脚質を返す（不明なら null）
