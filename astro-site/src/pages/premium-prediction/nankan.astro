@@ -638,6 +638,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                         const venue = r?.venue || '';
                                                         const distance = r?.distance || '';
                                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                        const time = r?.time ? `タイム${r.time}` : '';
                                                         const last3f = r?.last3f ? `上がり${r.last3f}` : '';
                                                         const bw = r?.bodyWeight ? `馬体${r.bodyWeight}kg` : '';
                                                         const pass = r?.passingOrder ? `通過${r.passingOrder}` : '';
@@ -647,6 +648,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 <span class="recent-race-venue">{venue}</span>
                                                                 <span class="recent-race-distance">{distance}</span>
                                                                 <span class="recent-race-rank">{rank}</span>
+                                                                {time && <span class="recent-race-meta">{time}</span>}
                                                                 {jk && <span class="recent-race-meta">{jk}</span>}
                                                                 {pass && <span class="recent-race-meta">{pass}</span>}
                                                                 {last3f && <span class="recent-race-meta">{last3f}</span>}
@@ -715,6 +717,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                                 <span class="recent-race-venue">{r?.venue || ''}</span>
                                                                                 <span class="recent-race-distance">{r?.distance || ''}</span>
                                                                                 <span class="recent-race-rank">{rank}</span>
+                                                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
                                                                                 {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
                                                                                 {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
                                                                             </div>
@@ -730,8 +733,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                     </div>
                                 )}
 
-                                {/* 抑え候補馬（控えめなミニカード） */}
-                                {raceHorses && raceHorses.filter(h => h.role === '押さえ' || h.role === '抑え' || h.role === '補欠').length > 0 && (
+                                {/* 抑え候補馬（控えめなミニカード）— pt=70 のフォールバック値は除外し D へ */}
+                                {raceHorses && raceHorses.filter(h => (h.role === '押さえ' || h.role === '抑え' || h.role === '補欠') && (Number(h.pt) || 0) > 70).length > 0 && (
                                     <div class="horse-card horse-card-minor minor-group-osae">
                                         <div class="horse-header">
                                             <div>
@@ -740,7 +743,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                             </div>
                                         </div>
                                         <div class="minor-horse-grid">
-                                            {raceHorses.filter(h => h.role === '押さえ' || h.role === '抑え' || h.role === '補欠').map((horse) => {
+                                            {raceHorses.filter(h => (h.role === '押さえ' || h.role === '抑え' || h.role === '補欠') && (Number(h.pt) || 0) > 70).map((horse) => {
                                                 const honmei = raceHorses.find(h => h.role === '本命');
                                                 const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
                                                 const comment = generateMinorHorseComment(horse.role, gap);
@@ -778,6 +781,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                                 <span class="recent-race-venue">{r?.venue || ''}</span>
                                                                                 <span class="recent-race-distance">{r?.distance || ''}</span>
                                                                                 <span class="recent-race-rank">{rank}</span>
+                                                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
                                                                                 {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
                                                                             </div>
                                                                         );
@@ -792,13 +796,19 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                     </div>
                                 )}
 
-                                {/* 不要馬・見送り馬（A/B/Cいずれにも入らなかった馬を簡易表示で残す） */}
+                                {/* 不要馬・見送り馬: 無/未分類 + pt<=70（rawScore=0 フォールバック）の 抑え/押さえ/補欠 */}
                                 {(() => {
+                                    const cCategoryRoles = new Set(['押さえ', '抑え', '補欠']);
                                     const handled = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
                                     const honmei = raceHorses.find(h => h.role === '本命');
                                     const honmeiPt = Number(honmei?.pt) || 0;
                                     const ineligible = (raceHorses || [])
-                                        .filter((h) => !handled.has(h.role))
+                                        .filter((h) => {
+                                            if (!handled.has(h.role)) return true; // 無 / 未分類
+                                            // 抑え系で pt が 70 以下なら「実質的な見送り馬」として D へ
+                                            if (cCategoryRoles.has(h.role) && !((Number(h.pt) || 0) > 70)) return true;
+                                            return false;
+                                        })
                                         .sort((a, b) => (Number(b.pt) || 0) - (Number(a.pt) || 0));
                                     if (ineligible.length === 0) return null;
                                     const reasonFor = (h) => {
