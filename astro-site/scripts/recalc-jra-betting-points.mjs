@@ -24,7 +24,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const archivePath = join(__dirname, '..', 'src', 'data', 'archiveResultsJra.json');
 
 function calcMainOnly(bettingLine) {
-  const m = bettingLine.match(/^(\d+)-(.+)$/);
+  // 区切り文字は -（旧）/ ↔（双方向）/ →（片方向）の3パターンに対応
+  const m = bettingLine.match(/^(\d+)[\-↔→](.+)$/);
   if (!m) return 0;
   const mainPart = m[2].replace(/\(抑え.+\)/, '');
   return mainPart.split('.').filter(n => /^\d+$/.test(n)).length;

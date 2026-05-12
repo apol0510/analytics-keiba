@@ -307,8 +307,9 @@ function loadPrediction(date, venue) {
  * ここで返す値は archive 表示・saveArchive 集計用のみ。
  */
 function calculateBettingPoints(bettingLine) {
-  // 買い目解析: "9-16.13.2.3.8.11(抑え12.4.5.6.14.15.10)"
-  const match = bettingLine.match(/^(\d+)-(.+)$/);
+  // 買い目解析: 区切り文字は -（旧）/ ↔（双方向新）/ →（片方向新）の3パターンに対応
+  // 例: "9-16.13.2.3.8.11(抑え12.4.5.6.14.15.10)" / "5↔9.11.6.8.4" / "4→8.4.7.5.3"
+  const match = bettingLine.match(/^(\d+)[\-↔→](.+)$/);
   if (!match) return 0;
 
   const aitePart = match[2];
@@ -323,8 +324,9 @@ function calculateBettingPoints(bettingLine) {
  * 馬単の的中判定
  */
 function checkUmatanHit(bettingLine, result) {
-  // 買い目解析: "4-1.11.2.5.7.9(抑え10.8.6)"
-  const match = bettingLine.match(/^(\d+)-(.+)$/);
+  // 買い目解析: 区切り文字は -（旧）/ ↔（双方向新）/ →（片方向新）の3パターンに対応
+  // 例: "4-1.11.2.5.7.9(抑え10.8.6)" / "5↔9.11.6.8.4" / "4→8.4.7.5.3"
+  const match = bettingLine.match(/^(\d+)[\-↔→](.+)$/);
   if (!match) return false;
 
   const axis = parseInt(match[1]);
@@ -563,7 +565,7 @@ function saveArchive(date, venue, raceResults) {
     if (isMainRace(r.raceNumber, venueRaces)) {
       const lines = Array.isArray(r.bettingLines) ? r.bettingLines : [];
       const firstLine = lines[0] || '';
-      const m = firstLine.match(/^(\d+)-(.+)$/);
+      const m = firstLine.match(/^(\d+)[\-↔→](.+)$/);
       if (m) {
         const aitePart = m[2].replace(/\(抑え.+\)/, '');
         const partners = aitePart.split('.').filter(s => s.length > 0);
