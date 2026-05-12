@@ -29,8 +29,8 @@ const projectRoot = join(__dirname, '..');
 // src/utils から正規化関数をインポート
 import { normalizeAndAdjust } from '../src/utils/normalizePrediction.js';
 
-// メインレース10点ロジック
-import { isMainRace, generateMainRaceUmatanLines } from '../src/utils/mainRaceBetting.js';
+// メインレース10点ロジック + 通常レース本命/対抗軸ロジック（共通モジュール）
+import { isMainRace, generateRaceUmatanLines } from '../src/utils/mainRaceBetting.js';
 
 // データ検証関数をインポート
 import { validateNankanPrediction } from './utils/validatePrediction.js';
@@ -613,45 +613,11 @@ function convertToLegacyFormat(data, date, horseDataMap = null) {
     racesByVenue.set(v, (racesByVenue.get(v) || 0) + 1);
   }
   const predictions = data.races.map((race) => {
-    // 役割別に馬を抽出
-    const honmei = race.horses.find(h => h.role === '本命');
-    const taikou = race.horses.find(h => h.role === '対抗');
-    const main = race.horses.filter(h => h.role === '本命' || h.role === '対抗' || h.role === '単穴' || h.role === '連下最上位');
-    const renka = race.horses.filter(h => h.role === '連下');
-    const osae = race.horses.filter(h => h.role === '補欠' || h.role === '抑え');
-
-    // 買い目生成（馬単）
-    let umatanLines = [];
-
-    // メインレースは最大10点ロジック（本命軸・上位5頭・双方向）
+    // 買い目生成（馬単）: メイン10点 / 通常本命+対抗軸を共通モジュールで分岐
     const venueKey = race.venue || race.raceInfo?.venue || dataVenue;
     const venueRaces = racesByVenue.get(venueKey) || (Array.isArray(data.races) ? data.races.length : 0);
-    if (isMainRace(race.raceNumber, venueRaces)) {
-      umatanLines = generateMainRaceUmatanLines(race.horses);
-    } else if (honmei || taikou) {
-      // 通常レース: 本命軸 + 対抗軸の従来ロジック
-      if (honmei) {
-        const aite = main.filter(h => h.number !== honmei.number).map(h => h.number).join('.');
-        const renkaNumbers = renka.map(h => h.number).join('.');
-        const osaeNumbers = osae.map(h => h.number).join('.');
-
-        let line = `${honmei.number}-${aite}`;
-        if (renkaNumbers) line += `.${renkaNumbers}`;
-        if (osaeNumbers) line += `(抑え${osaeNumbers})`;
-        umatanLines.push(line);
-      }
-
-      if (taikou) {
-        const aite = main.filter(h => h.number !== taikou.number).map(h => h.number).join('.');
-        const renkaNumbers = renka.map(h => h.number).join('.');
-        const osaeNumbers = osae.map(h => h.number).join('.');
-
-        let line = `${taikou.number}-${aite}`;
-        if (renkaNumbers) line += `.${renkaNumbers}`;
-        if (osaeNumbers) line += `(抑え${osaeNumbers})`;
-        umatanLines.push(line);
-      }
-    }
+    const isMain = isMainRace(race.raceNumber, venueRaces);
+    const umatanLines = generateRaceUmatanLines(race.horses, isMain);
 
     return {
       raceInfo: {

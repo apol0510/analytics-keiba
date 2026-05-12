@@ -13,6 +13,10 @@ import {
   computeImportance,
   computeEvalPoints,
 } from './horseEnrichment.js';
+import {
+  generateRaceUmatanLines,
+  buildStrategiesFromUmatanLines,
+} from '../utils/mainRaceBetting.js';
 
 // role → mark / role → 旧 type の対応
 const MARK_MAP = {
@@ -112,6 +116,14 @@ export function adaptNewToLegacy(newData) {
 
     const allHorses = raceHorses.map(h => convertHorse(h, raceHorses, raceDistance));
 
+    // bettingLines は importPrediction が保存した10点/2行ロジックの単一源。
+    // 無い場合のみ同じロジックを共通モジュールで再生成する（CLAUDE.md「メインレース10点ロジック」準拠）。
+    const sourceUmatan = Array.isArray(p?.bettingLines?.umatan) ? p.bettingLines.umatan : null;
+    const umatanLines = sourceUmatan && sourceUmatan.length > 0
+      ? sourceUmatan
+      : generateRaceUmatanLines(raceHorses, rn === mainRaceNumber);
+    const strategies = buildStrategiesFromUmatanLines(umatanLines);
+
     return {
       // 旧スキーマでは raceNumber は "11R" のような文字列
       raceNumber: `${rn}R`,
@@ -132,6 +144,8 @@ export function adaptNewToLegacy(newData) {
       },
       horses: horsesByRole,
       allHorses,
+      bettingLines: { umatan: umatanLines },
+      strategies,
     };
   });
 

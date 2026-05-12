@@ -10,6 +10,10 @@
 //     (例: "3-5.7.8.10.12") を共有する。
 //   - 既存の checkUmatanHit が双方向判定するため、
 //     この1行で 本命→相手 / 相手→本命 の合計10点が成立する。
+//
+// 通常レース（メイン以外）は generateNormalRaceUmatanLines() で
+// 本命軸 + 対抗軸の2行を生成する（importPrediction 系で従来使用していたロジックを集約）。
+// プレミアム表示・インポート両方が同じロジックを参照するための単一源として運用する。
 
 const ROLE_PRIORITY = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
 
@@ -69,4 +73,121 @@ export function countMainRaceBetPoints(horses) {
   const honmeiNum = horseNumber(honmei);
   const filtered = partners.filter(p => horseNumber(p) !== honmeiNum);
   return filtered.length * 2;
+}
+
+// 通常レース（メイン以外）の馬単買い目を生成する。
+// 仕様（旧 importPrediction のインラインロジックを集約）:
+//   - 本命を軸に1行、対抗を軸に1行（最大2行）
+//   - 相手は role が 本命/対抗/単穴/連下最上位 のいずれか（軸自身を除く）
+//   - 「.連下番号」「(抑え抑え番号)」を末尾に追加
+//   - 例: "4-1.11.2.5.7(抑え10.8.6)"
+export function generateNormalRaceUmatanLines(horses) {
+  if (!Array.isArray(horses)) return [];
+  const honmei = horses.find(h => h && h.role === '本命');
+  const taikou = horses.find(h => h && h.role === '対抗');
+  if (!honmei && !taikou) return [];
+
+  const main = horses.filter(h => h && (h.role === '本命' || h.role === '対抗' || h.role === '単穴' || h.role === '連下最上位'));
+  const renka = horses.filter(h => h && h.role === '連下');
+  const osae = horses.filter(h => h && (h.role === '補欠' || h.role === '抑え'));
+
+  const renkaNumbers = renka.map(horseNumber).filter(n => n != null).join('.');
+  const osaeNumbers = osae.map(horseNumber).filter(n => n != null).join('.');
+
+  const buildLine = (axis) => {
+    const axisNum = horseNumber(axis);
+    const aite = main
+      .filter(h => horseNumber(h) !== axisNum)
+      .map(horseNumber)
+      .filter(n => n != null)
+      .join('.');
+    let line = `${axisNum}-${aite}`;
+    if (renkaNumbers) line += `.${renkaNumbers}`;
+    if (osaeNumbers) line += `(抑え${osaeNumbers})`;
+    return line;
+  };
+
+  const lines = [];
+  if (honmei && horseNumber(honmei) != null) lines.push(buildLine(honmei));
+  if (taikou && horseNumber(taikou) != null) lines.push(buildLine(taikou));
+  return lines;
+}
+
+// 1レース分の馬単買い目を生成する dispatcher。
+// メインレースは10点ロジック、通常レースは本命軸＋対抗軸ロジックを呼び分ける。
+export function generateRaceUmatanLines(horses, isMainRaceFlag) {
+  return isMainRaceFlag
+    ? generateMainRaceUmatanLines(horses)
+    : generateNormalRaceUmatanLines(horses);
+}
+
+// 1本の馬単買い目文字列から実点数を算出する。
+//   - メイン10点形式  例 "3-5.7.8.10.12"          → partners × 2（双方向馬単）
+//   - 通常レース形式  例 "4-1.11.2.5.7(抑え10.8.6)" → partners 数（軸→相手の片方向）
+//     ※「抑え」は表示用情報なので、必要なら呼び出し側で加算する
+//   - 既存ヒューリスティック ⇔ / → / "N点" にも後方互換で対応
+export function countPointsFromUmatanLine(line) {
+  if (typeof line !== 'string' || line.length === 0) return 0;
+  const explicit = line.match(/(\d+)点/);
+  if (explicit) return parseInt(explicit[1], 10) || 0;
+  if (line.includes('⇔')) {
+    const right = line.split('⇔')[1] || '';
+    return (right.split(',').filter(Boolean).length || 0) * 2;
+  }
+  if (line.includes('→')) {
+    const right = line.split('→')[1] || '';
+    return right.split(',').filter(Boolean).length || 0;
+  }
+  // ダッシュ形式: メイン10点（抑え無し）は双方向、通常レース（抑え有り）は片方向
+  const beforeParen = line.split('(')[0];
+  const dashIdx = beforeParen.indexOf('-');
+  if (dashIdx < 0) return 0;
+  const partnersPart = beforeParen.slice(dashIdx + 1);
+  const partners = partnersPart.split('.').filter(Boolean).length;
+  if (partners === 0) return 0;
+  const hasOsae = line.includes('(抑え');
+  return hasOsae ? partners : partners * 2;
+}
+
+// 馬単買い目（文字列配列）を、プレミアム表示で期待される
+// {safe, balance, aggressive} 3戦略カードの形に変換する。
+// 10点ロジックでは買い目は1セットに統一されるため、3枚のカードは
+// 同じ bets を共有し、信頼度・期待回収率のラベルだけ変える。
+// （CLAUDE.md「メインレース10点ロジック」方針に準拠）
+export function buildStrategiesFromUmatanLines(umatanLines) {
+  if (!Array.isArray(umatanLines) || umatanLines.length === 0) return null;
+  const bets = umatanLines.map((line) => ({
+    type: '馬単',
+    numbers: line,
+    points: countPointsFromUmatanLine(line),
+  }));
+  return {
+    safe: {
+      title: '🎯 少点数的中型モデル',
+      bets,
+      hitRate: 65,
+      confidence: 80,
+      returnRate: 130,
+      riskLevel: '低リスク',
+      recommendation: 2,
+    },
+    balance: {
+      title: '⚖️ バランス型モデル',
+      bets,
+      hitRate: 50,
+      confidence: 70,
+      returnRate: 160,
+      riskLevel: '中リスク',
+      recommendation: 3,
+    },
+    aggressive: {
+      title: '🚀 高配当追求型モデル',
+      bets,
+      hitRate: 35,
+      confidence: 55,
+      returnRate: 200,
+      riskLevel: '高リスク',
+      recommendation: 2,
+    },
+  };
 }

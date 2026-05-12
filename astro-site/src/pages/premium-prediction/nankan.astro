@@ -6,6 +6,7 @@ import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro'
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence } from '../../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../../lib/archive-utils.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
+import { generateRaceUmatanLines, buildStrategiesFromUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 
 // src/data/predictions/*.json から最新日付の全会場を取得（同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -434,34 +435,18 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 console.warn(`Race ${raceData.raceNumber} integrity issues:`, integrity);
             }
 
-            // 戦略データ取得（JSONデータ完全優先システム）
-            // 🔒 動的生成を完全に無効化し、JSONデータのみ使用
-            let raceStrategies;
-
-            // JSONデータが存在するかチェック（一つでも存在すればJSON使用）
-            const hasJsonStrategies = raceData.strategies &&
-                (raceData.strategies.safe || raceData.strategies.balance || raceData.strategies.aggressive);
-
-            if (hasJsonStrategies) {
-                // JSONデータを完全優先使用
-                console.log(`🔒 Race ${raceData.raceNumber}: JSONデータ完全使用（動的生成無効）`);
-                raceStrategies = raceData.strategies;
-
-                // JSONデータの内容を確認ログ
-                if (raceStrategies.safe?.bets) {
-                    console.log(`  ✅ Safe: ${raceStrategies.safe.bets.length}件の買い目`);
-                }
-                if (raceStrategies.balance?.bets) {
-                    console.log(`  ✅ Balance: ${raceStrategies.balance.bets.length}件の買い目`);
-                }
-                if (raceStrategies.aggressive?.bets) {
-                    console.log(`  ✅ Aggressive: ${raceStrategies.aggressive.bets.length}件の買い目`);
-                }
-            } else {
-                // JSONデータがない場合のみ動的生成（フォールバック）
-                console.warn(`⚠️ Race ${raceData.raceNumber}: JSONデータが存在しません。フォールバックとして動的生成を使用`);
-                const processedData = getPredictionDataWithStrategies(raceData.horses);
-                raceStrategies = processedData.strategies;
+            // 戦略データ取得（10点ロジック準拠 / 単一源は importPrediction の bettingLines）
+            // adapter で raceData.strategies は10点ロジック由来で常時生成済みのため、それを採用。
+            // 何らかの理由で空の場合のみ、共通モジュールの 10点/通常ロジックで再生成する。
+            let raceStrategies = raceData.strategies;
+            const hasJsonStrategies = raceStrategies &&
+                (raceStrategies.safe || raceStrategies.balance || raceStrategies.aggressive);
+            if (!hasJsonStrategies) {
+                console.warn(`⚠️ Race ${raceData.raceNumber}: strategies 欠落。共通モジュールで再生成`);
+                const fallbackUmatan = Array.isArray(raceData.bettingLines?.umatan) && raceData.bettingLines.umatan.length > 0
+                    ? raceData.bettingLines.umatan
+                    : generateRaceUmatanLines(raceData.allHorses || [], !!raceData.isMainRace);
+                raceStrategies = buildStrategiesFromUmatanLines(fallbackUmatan) || {};
             }
 
             // リスク表示用のスコア変数を定義
@@ -734,27 +719,14 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
                                             <div class="bet-list">
                                                 {raceStrategies.safe.bets && raceStrategies.safe.bets.map(bet => {
-                                                    // 🔧 復活防止対策: JSONデータ構造に対応した取得方法
+                                                    // bet.numbers が単一源（10点ロジックを通った文字列）
                                                     const betStr = typeof bet === 'string' ? bet : (bet?.numbers || bet?.horses || JSON.stringify(bet));
 
-                                                    // 🔧 点数計算修正: 「X点」表記から正確に抽出
-                                                    let points = 1; // デフォルト
-                                                    if (betStr && typeof betStr === 'string') {
-                                                        // 「3点」のような表記から点数を抽出
-                                                        const pointMatch = betStr.match(/(\d+)点/);
-                                                        if (pointMatch) {
-                                                            points = parseInt(pointMatch[1]);
-                                                        } else {
-                                                            // フォールバック: 従来の計算方法
-                                                            if (betStr.includes('⇔')) {
-                                                                const targets = betStr.split('⇔')[1]?.split(',').length || 1;
-                                                                points = targets * 2;
-                                                            } else if (betStr.includes('→')) {
-                                                                const targets = betStr.split('→')[1]?.split(',').length || 1;
-                                                                points = targets;
-                                                            }
-                                                        }
-                                                    }
+                                                    // 点数は buildStrategiesFromUmatanLines が付与した bet.points を優先
+                                                    // 旧データ形式（文字列のみ）への後方互換として countPointsFromUmatanLine を併用
+                                                    const points = (typeof bet?.points === 'number' && bet.points > 0)
+                                                        ? bet.points
+                                                        : (countPointsFromUmatanLine(betStr) || 1);
 
                                                     // 買い目表示用: 点数表記を除いた馬券部分のみ表示
                                                     const displayBet = betStr.replace(/\s*\d+点\s*$/, '');
@@ -801,27 +773,14 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
                                             <div class="bet-list">
                                                 {raceStrategies.balance.bets && raceStrategies.balance.bets.map(bet => {
-                                                    // 🔧 復活防止対策: JSONデータ構造に対応した取得方法
+                                                    // bet.numbers が単一源（10点ロジックを通った文字列）
                                                     const betStr = typeof bet === 'string' ? bet : (bet?.numbers || bet?.horses || JSON.stringify(bet) || '');
 
-                                                    // 🔧 点数計算修正: 「X点」表記から正確に抽出
-                                                    let points = 1; // デフォルト
-                                                    if (betStr && typeof betStr === 'string') {
-                                                        // 「3点」のような表記から点数を抽出
-                                                        const pointMatch = betStr.match(/(\d+)点/);
-                                                        if (pointMatch) {
-                                                            points = parseInt(pointMatch[1]);
-                                                        } else {
-                                                            // フォールバック: 従来の計算方法
-                                                            if (betStr.includes('⇔')) {
-                                                                const targets = betStr.split('⇔')[1]?.split(',').length || 1;
-                                                                points = targets * 2;
-                                                            } else if (betStr.includes('→')) {
-                                                                const targets = betStr.split('→')[1]?.split(',').length || 1;
-                                                                points = targets;
-                                                            }
-                                                        }
-                                                    }
+                                                    // 点数は buildStrategiesFromUmatanLines が付与した bet.points を優先
+                                                    // 旧データ形式（文字列のみ）への後方互換として countPointsFromUmatanLine を併用
+                                                    const points = (typeof bet?.points === 'number' && bet.points > 0)
+                                                        ? bet.points
+                                                        : (countPointsFromUmatanLine(betStr) || 1);
 
                                                     // 買い目表示用: 点数表記を除いた馬券部分のみ表示
                                                     const displayBet = betStr.replace(/\s*\d+点\s*$/, '');
@@ -868,27 +827,14 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
                                             <div class="bet-list">
                                                 {raceStrategies.aggressive.bets && raceStrategies.aggressive.bets.map(bet => {
-                                                    // 🔧 復活防止対策: JSONデータ構造に対応した取得方法
+                                                    // bet.numbers が単一源（10点ロジックを通った文字列）
                                                     const betStr = typeof bet === 'string' ? bet : (bet?.numbers || bet?.horses || JSON.stringify(bet) || '');
 
-                                                    // 🔧 点数計算修正: 「X点」表記から正確に抽出
-                                                    let points = 1; // デフォルト
-                                                    if (betStr && typeof betStr === 'string') {
-                                                        // 「3点」のような表記から点数を抽出
-                                                        const pointMatch = betStr.match(/(\d+)点/);
-                                                        if (pointMatch) {
-                                                            points = parseInt(pointMatch[1]);
-                                                        } else {
-                                                            // フォールバック: 従来の計算方法
-                                                            if (betStr.includes('⇔')) {
-                                                                const targets = betStr.split('⇔')[1]?.split(',').length || 1;
-                                                                points = targets * 2;
-                                                            } else if (betStr.includes('→')) {
-                                                                const targets = betStr.split('→')[1]?.split(',').length || 1;
-                                                                points = targets;
-                                                            }
-                                                        }
-                                                    }
+                                                    // 点数は buildStrategiesFromUmatanLines が付与した bet.points を優先
+                                                    // 旧データ形式（文字列のみ）への後方互換として countPointsFromUmatanLine を併用
+                                                    const points = (typeof bet?.points === 'number' && bet.points > 0)
+                                                        ? bet.points
+                                                        : (countPointsFromUmatanLine(betStr) || 1);
 
                                                     // 買い目表示用: 点数表記を除いた馬券部分のみ表示
                                                     const displayBet = betStr.replace(/\s*\d+点\s*$/, '');
