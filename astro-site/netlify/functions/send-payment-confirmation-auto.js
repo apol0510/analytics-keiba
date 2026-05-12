@@ -53,21 +53,32 @@ exports.handler = async (event, context) => {
     // Airtable API設定
     const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
     const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+    // 🔧 2026-05-12 追加: テーブル名を env var で上書き可能に（フォールバック 'Customers'）
+    const AIRTABLE_CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
     if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
+      console.error('❌ Airtable credentials missing', {
+        hasApiKey: !!AIRTABLE_API_KEY,
+        hasBaseId: !!AIRTABLE_BASE_ID
+      });
       throw new Error('Airtable credentials not configured');
     }
 
     // ========================================
     // Step 1: Airtableからレコード情報取得
     // ========================================
-    const recordUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${airtableRecordId}`;
+    // テーブル名に日本語等を含む可能性を考慮して URL エンコード
+    const tableSegment = encodeURIComponent(AIRTABLE_CUSTOMERS_TABLE);
+    const recordUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${tableSegment}/${airtableRecordId}`;
 
+    // ⚠️ 注意: API キー本体は絶対にログに出さない。先頭7文字のプレフィックスのみ。
     console.log('🔍 Debug info:', {
       AIRTABLE_BASE_ID,
+      tableName: AIRTABLE_CUSTOMERS_TABLE,
       airtableRecordId,
       recordUrl,
-      tokenPrefix: AIRTABLE_API_KEY.substring(0, 7)
+      tokenPrefix: AIRTABLE_API_KEY.substring(0, 7),
+      tokenLength: AIRTABLE_API_KEY.length
     });
 
     const recordResponse = await fetch(recordUrl, {
@@ -80,7 +91,39 @@ exports.handler = async (event, context) => {
 
     if (!recordResponse.ok) {
       const errorText = await recordResponse.text();
-      throw new Error(`Airtable record fetch failed: ${recordResponse.status} - ${errorText}`);
+      // 🔧 2026-05-12 改善: 403/404 の主要因をログで切り分けやすくする
+      const diagnostics = {
+        airtableStatus: recordResponse.status,
+        airtableStatusText: recordResponse.statusText,
+        airtableErrorBody: errorText,
+        baseId: AIRTABLE_BASE_ID,
+        tableName: AIRTABLE_CUSTOMERS_TABLE,
+        airtableRecordId,
+        tokenPrefix: AIRTABLE_API_KEY.substring(0, 7),
+        tokenLength: AIRTABLE_API_KEY.length,
+        hints: []
+      };
+      if (recordResponse.status === 403) {
+        diagnostics.hints.push('PAT が Base apptmQUPAlgZMmBC9（または現在の AIRTABLE_BASE_ID）にアクセス権を持っていない可能性');
+        diagnostics.hints.push('PAT に data.records:read スコープが付与されていない可能性');
+        diagnostics.hints.push('テーブル名が実際の名前と一致していない可能性（AIRTABLE_CUSTOMERS_TABLE 環境変数で上書き可能）');
+      } else if (recordResponse.status === 404) {
+        diagnostics.hints.push('airtableRecordId が現在の Base / Table に存在しない可能性');
+        diagnostics.hints.push('AIRTABLE_BASE_ID が旧 Base を指している可能性');
+      } else if (recordResponse.status === 401) {
+        diagnostics.hints.push('PAT が無効・期限切れの可能性。Airtable で再発行してください');
+      }
+      console.error('❌ Airtable record fetch failed:', diagnostics);
+      // Airtable Automation の Test output で原因が見えるよう、レスポンスにも診断情報を返す
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({
+          error: 'Internal Server Error',
+          message: `Airtable record fetch failed: ${recordResponse.status}`,
+          diagnostics
+        })
+      };
     }
 
     const recordData = await recordResponse.json();
@@ -273,7 +316,16 @@ exports.handler = async (event, context) => {
       }
     } else {
       const errorText = await updateResponse.text();
-      console.error('⚠️ Airtable update failed:', errorText);
+      // メール送信は既に成功しているので fatal にはしない（ログのみ・主原因のヒント付き）
+      console.error('⚠️ Airtable PATCH (PaymentEmailSent update) failed:', {
+        airtableStatus: updateResponse.status,
+        airtableStatusText: updateResponse.statusText,
+        airtableErrorBody: errorText,
+        baseId: AIRTABLE_BASE_ID,
+        tableName: AIRTABLE_CUSTOMERS_TABLE,
+        airtableRecordId,
+        note: 'メール送信は成功済み。PaymentEmailSent が false のまま残るため、次回 Status 変更時に再送される可能性があります。PAT に data.records:write スコープが付与されているか確認してください。'
+      });
     }
 
     // 成功レスポンス
