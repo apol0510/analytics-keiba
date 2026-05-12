@@ -163,11 +163,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <a href="/free-prediction/nankan/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- Standard予想 -->
+                    <!-- Light予想 -->
                     <div id="standard-predictions" class="prediction-card standard" style="display: none;">
                         <div class="card-header">
-                            <h3>⚡ Standard予想</h3>
-                            <span class="plan-badge standard">STANDARD</span>
+                            <h3>⚡ Light予想</h3>
+                            <span class="plan-badge standard">LIGHT</span>
                         </div>
                         <div class="race-info">
                             <div class="race-title">メインレース馬単買い目</div>
@@ -591,8 +591,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     const planNames = {
                         'free': '無料会員',
                         'Free': '無料会員',
-                        'standard': 'Standard会員',
-                        'Standard': 'Standard会員',
+                        // Light が現行表記。旧 Standard / ライト も Light会員 として表示
+                        'Light': 'Light会員',
+                        'light': 'Light会員',
+                        'ライト': 'Light会員',
+                        'standard': 'Light会員',
+                        'Standard': 'Light会員',
                         'premium': 'Premium会員',
                         'Premium': 'Premium会員',
                         'expired': '期限切れ' // 期限切れ表示
@@ -727,8 +731,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const planNames = {
                 'premium': 'プレミアム',
                 'Premium': 'プレミアム',
-                'standard': 'スタンダード',
-                'Standard': 'スタンダード'
+                // Light が現行表記。旧 Standard / ライト も Light として表示
+                'Light': 'Light',
+                'light': 'Light',
+                'ライト': 'Light',
+                'standard': 'Light',
+                'Standard': 'Light'
             };
 
             document.getElementById('expired-plan-name').textContent = planNames[originalPlan] || originalPlan;
@@ -789,8 +797,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const planNames = {
                 'free': '🎁 無料会員',
                 'Free': '🎁 無料会員',
-                'standard': '⚡ Standard会員',
-                'Standard': '⚡ Standard会員',
+                // Light が現行表記。旧 Standard / ライト も Light会員 として表示
+                'Light': '⚡ Light会員',
+                'light': '⚡ Light会員',
+                'ライト': '⚡ Light会員',
+                'standard': '⚡ Light会員',
+                'Standard': '⚡ Light会員',
                 'premium': '💎 Premium会員',
                 'Premium': '💎 Premium会員',
                 'Premium Combo': '🌟 Premium Combo会員',
@@ -804,6 +816,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const planIcons = {
                 'free': '🎁',
                 'Free': '🎁',
+                'Light': '⚡',
+                'light': '⚡',
+                'ライト': '⚡',
                 'standard': '⚡',
                 'Standard': '⚡',
                 'premium': '💎',
@@ -819,8 +834,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const planBadgeTexts = {
                 'free': 'FREE',
                 'Free': 'FREE',
-                'standard': 'STANDARD',
-                'Standard': 'STANDARD',
+                'Light': 'LIGHT',
+                'light': 'LIGHT',
+                'ライト': 'LIGHT',
+                'standard': 'LIGHT',
+                'Standard': 'LIGHT',
                 'premium': 'PREMIUM',
                 'Premium': 'PREMIUM',
                 'Premium Combo': 'PREMIUM COMBO',
@@ -892,11 +910,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 vipCard.style.display = 'block';
                 planCard.style.display = 'none';
                 updateVipBenefits(data.plan);
-            } else if (data.plan === 'standard' || data.plan === 'Standard') {
-                // Standard会員はプラン特典カードを表示
+            } else if (isLightPlan(data.plan)) {
+                // Light会員（旧 Standard / ライト 含む）はプラン特典カードを表示
                 vipCard.style.display = 'none';
                 planCard.style.display = 'block';
-                updatePlanBenefits('standard');
+                updatePlanBenefits('light');
             } else {
                 // Free会員は両方非表示
                 vipCard.style.display = 'none';
@@ -911,8 +929,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 // Premium会員：三連複追加ボタン表示
                 planChangeSection.style.display = 'block';
                 planChangeBtn.innerHTML = '<span class="btn-icon">➕</span><span class="btn-text">三連複を追加</span>';
-            } else if (data.plan === 'standard' || data.plan === 'Standard') {
-                // Standard会員：プランアップグレードボタン表示
+            } else if (isLightPlan(data.plan)) {
+                // Light会員（旧 Standard / ライト 含む）：プランアップグレードボタン表示
                 planChangeSection.style.display = 'block';
                 planChangeBtn.innerHTML = '<span class="btn-icon">⬆️</span><span class="btn-text">プランアップグレード</span>';
             } else {
@@ -922,43 +940,55 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         }
         
         
+        // Light プラン判定（旧 Standard / ライト も含む後方互換）
+        function isLightPlan(plan) {
+            if (!plan) return false;
+            const p = String(plan);
+            return p === 'Light' || p === 'light' || p === 'ライト'
+                || p === 'standard' || p === 'Standard';
+        }
+
         // VIP特典更新
         function updateVipBenefits(plan) {
+            const lightBenefits = [
+                '⚡ メインレース馬単買い目',
+                '📊 全レース予想（買い目なし）'
+            ];
+            const premiumBenefits = [
+                '💎 全レース予想',
+                '🏆 優先サポート'
+            ];
             const benefits = {
-                standard: [
-                    '⚡ メインレース馬単買い目',
-                    '📊 全レース予想（買い目なし）'
-                ],
-                Standard: [
-                    '⚡ メインレース馬単買い目',
-                    '📊 全レース予想（買い目なし）'
-                ],
-                premium: [
-                    '💎 全レース予想',
-                    '🏆 優先サポート'
-                ],
-                Premium: [
-                    '💎 全レース予想',
-                    '🏆 優先サポート'
-                ]
+                light: lightBenefits,
+                Light: lightBenefits,
+                ライト: lightBenefits,
+                standard: lightBenefits,
+                Standard: lightBenefits,
+                premium: premiumBenefits,
+                Premium: premiumBenefits
             };
-            
-            const planBenefits = benefits[plan] || benefits.standard;
+
+            const planBenefits = benefits[plan] || lightBenefits;
             document.getElementById('vip-benefits').innerHTML = planBenefits
                 .map(benefit => `<div class="vip-benefit">${benefit}</div>`)
                 .join('');
         }
         
-        // プラン特典更新（Standard用）
+        // プラン特典更新（Light用 / 旧 Standard 互換）
         function updatePlanBenefits(plan) {
+            const lightBenefits = [
+                '🏇 メインレース馬単買い目',
+                '📊 全レース予想（買い目なし）'
+            ];
             const benefits = {
-                standard: [
-                    '🏇 メインレース馬単買い目',
-                    '📊 全レース予想（買い目なし）'
-                ]
+                light: lightBenefits,
+                Light: lightBenefits,
+                ライト: lightBenefits,
+                standard: lightBenefits,
+                Standard: lightBenefits
             };
-            
-            const planBenefits = benefits[plan] || benefits.standard;
+
+            const planBenefits = benefits[plan] || lightBenefits;
             document.getElementById('plan-benefits').innerHTML = planBenefits
                 .map(benefit => `<div class="plan-benefit">${benefit}</div>`)
                 .join('');
@@ -1392,12 +1422,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 document.getElementById('free-predictions').style.display = 'none';
             }
 
-            // Standard予想の表示制御（Standard会員のみ・既存会員のみ表示）
-            if (planLower === 'standard') {
-                console.log('Standard予想を表示（メインのみ）');
+            // Light（旧 Standard）予想の表示制御
+            if (planLower === 'light' || planLower === 'standard' || planLower === 'ライト') {
+                console.log('Light予想を表示（メインのみ）');
                 document.getElementById('standard-predictions').style.display = 'block';
             } else {
-                console.log('Standard予想を非表示');
+                console.log('Light予想を非表示');
                 document.getElementById('standard-predictions').style.display = 'none';
             }
 

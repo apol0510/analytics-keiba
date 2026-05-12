@@ -1138,7 +1138,9 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             // Standard/Premium（馬単プラン）は三連複アップセル用に表示
             // Premium Sanrenpukuは契約プランとして表示
             // Premium Comboは/premium-sanrenpuku/で閲覧（/premium-predictions/では非表示）
-            if (userPlan === 'Standard' || userPlan === 'Premium' || userPlan === 'premium' ||
+            if (userPlan === 'Light' || userPlan === 'light' || userPlan === 'ライト' ||
+                userPlan === 'Standard' || userPlan === 'standard' ||
+                userPlan === 'Premium' || userPlan === 'premium' ||
                 userPlan === 'Premium Sanrenpuku') {
                 sanrenpukuResultsSection.style.display = 'block';
                 console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');

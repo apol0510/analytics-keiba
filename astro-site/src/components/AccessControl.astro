@@ -305,6 +305,10 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             // 旧プラン（互換性維持）
             'free': 0,
             'Free': 0,
+            // Light は現行プラン名。旧 Standard / ライト も同階層で後方互換
+            'Light': 1,
+            'light': 1,
+            'ライト': 1,
             'standard': 1,
             'Standard': 1,
             'premium': 2,
@@ -390,8 +394,12 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             // 旧プラン
             'free': '無料プラン',
             'Free': '無料プラン',
-            'standard': 'スタンダードプラン',
-            'Standard': 'スタンダードプラン',
+            // Light は現行表記。旧 Standard / ライト もすべて Lightプラン と表示
+            'Light': 'Lightプラン',
+            'light': 'Lightプラン',
+            'ライト': 'Lightプラン',
+            'standard': 'Lightプラン',
+            'Standard': 'Lightプラン',
             'premium': 'プレミアムプラン',
             'Premium': 'プレミアムプラン',
 

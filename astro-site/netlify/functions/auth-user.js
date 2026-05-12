@@ -267,6 +267,10 @@ exports.handler = async (event, context) => {
     const POINTS_BY_PLAN = {
       'free': 1,
       'Free': 1,
+      // Light が現行表記。旧 Standard / ライト も同階層
+      'Light': 10,
+      'light': 10,
+      'ライト': 10,
       'standard': 10,
       'Standard': 10,
       'premium': 30,
@@ -383,9 +387,11 @@ function normalizePlan(planValue) {
     case 'premiumplus':
     case 'プレミアムプラス':
       return 'Premium Plus';
+    case 'light':
+    case 'ライト':
     case 'standard':
     case 'スタンダード':
-      return 'Standard';
+      return 'Light';
     case 'free':
     case 'フリー':
     case '無料':

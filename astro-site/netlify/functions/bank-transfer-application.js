@@ -394,8 +394,10 @@ exports.handler = async (event, context) => {
       // "Premium 年払い (Standard Upgrade)" → "Premium"
       // "Premium 30日 (Standard Upgrade)" → "Premium"
       // "Premium Sanrenpuku Lifetime" → "Premium Sanrenpuku"
-      // "ライト - Campaign" → "ライト"
-      // 後方互換: 旧キャッシュページから "Standard (ライト)" / "Standard (ライト) - Campaign" が来た場合は "ライト" に揃える
+      // "Light - Campaign" → "Light"
+      // 後方互換（旧キャッシュ）:
+      //   "ライト" / "ライト - Campaign" → "Light"
+      //   "Standard" / "Standard (ライト)" / "Standard (ライト) - Campaign" → "Light"
       let planName = fullPlanName
         .replace(/\s*\(Standard Upgrade\)/, '')  // (Standard Upgrade)を削除
         .replace(/\s*-\s*Campaign/, '')  // - Campaignを削除
@@ -403,9 +405,10 @@ exports.handler = async (event, context) => {
         .replace(/\s+(Lifetime|Annual|Monthly|買い切り|年払い|30日)$/, '')  // 末尾のプラン種別を削除
         .trim();
 
-      // 旧プラン名 "Standard" は Airtable Single select から削除済み。"ライト" に揃える。
-      if (planName === 'Standard') {
-        planName = 'ライト';
+      // 旧プラン名は Airtable Single select から削除済み。すべて "Light" に揃える。
+      if (planName === 'Standard' || planName === 'standard' ||
+          planName === 'ライト' || planName === 'light') {
+        planName = 'Light';
       }
 
       // 有効期限計算（2026-02-09価格体系）
