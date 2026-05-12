@@ -2,11 +2,10 @@
 export const prerender = true;
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import AccessControl from '../../components/AccessControl.astro';
-import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence } from '../../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../../lib/archive-utils.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
-import { generateRaceUmatanLines, buildStrategiesFromUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
+import { generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 
 // src/data/predictions/*.json から最新日付の全会場を取得（同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -98,13 +97,13 @@ allSortedRaces.forEach(raceData => {
 // 自動コメント生成
 let autoInsight = '';
 if (highConfidenceRaces.length >= 3) {
-    autoInsight = `本日は高信頼度レースが${highConfidenceRaces.length}レースと多く、本命決着の可能性が高い一日です。少点数的中型・バランス型モデルでの堅実な勝負がおすすめです。`;
+    autoInsight = `本日は高信頼度レースが${highConfidenceRaces.length}レースと多く、本命決着の可能性が高い一日です。AI推奨買い目で堅実な勝負がおすすめです。`;
 } else if (upsetModeRaces.length >= 3) {
-    autoInsight = `本日は波乱含みのレースが${upsetModeRaces.length}レースと多く、穴馬に注目の一日です。高配当追求型モデルで一攫千金を狙うチャンスがあります。`;
+    autoInsight = `本日は波乱含みのレースが${upsetModeRaces.length}レースと多く、穴馬に注目の一日です。AI推奨買い目で高配当のチャンスを狙えます。`;
 } else if (highConfidenceRaces.length > 0 && upsetModeRaces.length > 0) {
-    autoInsight = `本日は高信頼度レース（${highConfidenceRaces.length}R）と高配当モードレース（${upsetModeRaces.length}R）がバランス良く配置されています。レースごとに戦略を使い分けるのが効果的です。`;
+    autoInsight = `本日は高信頼度レース（${highConfidenceRaces.length}R）と高配当モードレース（${upsetModeRaces.length}R）がバランス良く配置されています。AI推奨買い目をレースごとに確認してください。`;
 } else {
-    autoInsight = '本日はバランスの取れたレース構成です。各レースのAI信頼度を確認しながら、適切な戦略モデルをお選びください。';
+    autoInsight = '本日はバランスの取れたレース構成です。各レースのAI推奨買い目を確認しながら勝負レースを絞り込んでください。';
 }
 
 // ✅ 三連複昨日の的中結果データ取得（Premium会員のみ表示）
@@ -257,85 +256,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             });
         </script>
 
-        <!-- 買い目モデルの選び方ガイド（アコーディオン） -->
-        <div class="betting-guide-card accordion">
-            <button class="guide-title accordion-toggle" id="guideToggle">
-                <span>📚 買い目モデルの選び方について</span>
-                <span class="toggle-icon">▼</span>
-            </button>
-            <div class="guide-content accordion-content" id="guideContent" style="display: none;">
-                <p class="guide-intro">
-                    当サイトでは「<strong>少点数的中型</strong>」「<strong>バランス型</strong>」「<strong>高配当追求型</strong>」の3種類の買い目をご提示しています。
-                    ただし、すべてを購入する必要はありません。オッズ状況に応じて選択・組み合わせることが重要です。
-                </p>
-
-                <div class="guide-section">
-                    <h4 class="section-title">💡 オッズ確認の基準</h4>
-
-                    <div class="odds-case">
-                        <div class="case-header">
-                            <span class="case-condition"><strong>高信頼度レース</strong>で馬単一番人気オッズが<span class="highlight">5倍以上</span>の場合</span>
-                        </div>
-                        <div class="case-content">
-                            <strong>本命からと対抗馬からのバランス型</strong>を重視することで、堅実な的中を狙いつつ配当の幅を広げることができます。
-                        </div>
-                    </div>
-
-                    <div class="odds-case">
-                        <div class="case-header">
-                            <span class="case-condition"><strong>高配当モードレース</strong>で馬単一番人気オッズが<span class="highlight">10倍以下</span>の場合</span>
-                        </div>
-                        <div class="case-content">
-                            <strong>本命、対抗のどちらか1番人気に推された馬からのバランス型</strong>を重視することで、波乱の中にも軸を作り安定性を確保できます。
-                        </div>
-                    </div>
-
-                    <div class="odds-case">
-                        <div class="case-header">
-                            <span class="case-condition"><strong>通常レース</strong>の場合</span>
-                        </div>
-                        <div class="case-content">
-                            通常レースでは<strong>高信頼度レース、高配当モードレースのどちらかに振られる傾向</strong>があります。<br>
-                            上記2つの基準を参考に、オッズと累積スコアの両面から戦略を選択できます。
-                        </div>
-                    </div>
-                </div>
-
-                <div class="guide-table">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>レース分類</th>
-                                <th>オッズ条件</th>
-                                <th>推奨モデル</th>
-                                <th>ポイント</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td class="race-type">⭐ 高信頼度レース</td>
-                                <td class="odds-range">5倍以上</td>
-                                <td class="recommended-model">本命・対抗からのバランス型</td>
-                                <td class="point">堅実な的中＋配当の幅広げ</td>
-                            </tr>
-                            <tr>
-                                <td class="race-type">💰 高配当モードレース</td>
-                                <td class="odds-range">10倍以下</td>
-                                <td class="recommended-model">1番人気馬からのバランス型</td>
-                                <td class="point">波乱の中にも軸を作り安定性確保</td>
-                            </tr>
-                            <tr>
-                                <td class="race-type">🎯 通常レース</td>
-                                <td class="odds-range">10倍以上</td>
-                                <td class="recommended-model">2番人気からのバランス型</td>
-                                <td class="point">オッズ＋累積スコアで判断</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
         <!-- 本日の傾向分析（AI自動判定） -->
         <div class="daily-analysis-section">
             <h3 class="analysis-title">🔍 本日の傾向分析（AI自動判定）</h3>
@@ -435,42 +355,15 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 console.warn(`Race ${raceData.raceNumber} integrity issues:`, integrity);
             }
 
-            // 戦略データ取得（10点ロジック準拠 / 単一源は importPrediction の bettingLines）
-            // adapter で raceData.strategies は10点ロジック由来で常時生成済みのため、それを採用。
-            // 何らかの理由で空の場合のみ、共通モジュールの 10点/通常ロジックで再生成する。
-            let raceStrategies = raceData.strategies;
-            const hasJsonStrategies = raceStrategies &&
-                (raceStrategies.safe || raceStrategies.balance || raceStrategies.aggressive);
-            if (!hasJsonStrategies) {
-                console.warn(`⚠️ Race ${raceData.raceNumber}: strategies 欠落。共通モジュールで再生成`);
-                const fallbackUmatan = Array.isArray(raceData.bettingLines?.umatan) && raceData.bettingLines.umatan.length > 0
-                    ? raceData.bettingLines.umatan
-                    : generateRaceUmatanLines(raceData.allHorses || [], !!raceData.isMainRace);
-                raceStrategies = buildStrategiesFromUmatanLines(fallbackUmatan) || {};
-            }
-
-            // リスク表示用のスコア変数を定義
-            const raceMainHorseScore = getHorseConfidenceFromMark(raceData.horses.main);
-            const raceSubHorseScore = getHorseConfidenceFromMark(raceData.horses.sub);
-
-            // 🛡️ JSONデータ最優先: hitRateとconfidenceを直接使用（動的計算防止）
-            const progressBarA = {
-                progressConfidence: parseInt(raceStrategies.safe?.confidence || raceStrategies.safe?.hitRate) || 0,
-                baseScore: raceMainHorseScore,
-                reduction: 0 // JSONデータ使用時は減算なし
-            };
-            const progressBarB = {
-                progressConfidence: parseInt(raceStrategies.balance?.confidence || raceStrategies.balance?.hitRate) || 0,
-                baseScore: raceMainHorseScore,
-                reduction: 0 // JSONデータ使用時は減算なし
-            };
-            const progressBarC = {
-                progressConfidence: parseInt(raceStrategies.aggressive?.confidence || raceStrategies.aggressive?.hitRate) || 0,
-                baseScore: raceMainHorseScore,
-                reduction: 0 // JSONデータ使用時は減算なし
-            };
-
-            // AI予測値計算完了（JSONスコア使用）
+            // 買い目データ取得（10点ロジック準拠 / 単一源は importPrediction の bettingLines）
+            // raceData.bettingLines.umatan を最優先。欠落時のみ共通モジュールで再生成。
+            const umatanLines = Array.isArray(raceData.bettingLines?.umatan) && raceData.bettingLines.umatan.length > 0
+                ? raceData.bettingLines.umatan
+                : generateRaceUmatanLines(raceData.allHorses || [], !!raceData.isMainRace);
+            const umatanBets = umatanLines.map((line) => ({
+                numbers: line,
+                points: countPointsFromUmatanLine(line) || 0,
+            }));
 
             const accordionId = `race-v${venueIndex}-${raceNum}r`;
             const toggleId = `toggle-v${venueIndex}-${raceNum}r`;
@@ -690,189 +583,36 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                 )}
                             </div>
 
-                            <!-- AI推奨投資戦略 -->
-                            {raceStrategies && (
+                            <!-- AI推奨買い目（10点ロジック / 通常レースは本命軸+対抗軸 統一表示） -->
+                            {umatanBets.length > 0 && (
                                 <div class="recommendation-section">
-                                    <h2 class="section-title">
-                                        <span>📊</span>
-                                        <span>AI推奨投資戦略 - 期待度別最適化買い目</span>
-                                    </h2>
-
-                                    <!-- 🎯 戦略組み合わせ効果説明 -->
-                                    {raceStrategies.combinationTip && (
-                                        <div class="strategy-combination-tips" style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                                            <div style="color: #3b82f6; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
-                                                <span>{raceStrategies.combinationTip.icon}</span>
-                                                <span>{raceStrategies.combinationTip.title}</span>
-                                            </div>
-                                            <div style="color: #94a3b8; font-size: 0.95rem; line-height: 1.5;">
-                                                <strong style="color: #e2e8f0;">{raceStrategies.combinationTip.message}</strong><br>
-                                                {raceStrategies.combinationTip.description}
-                                            </div>
+                                    <div class="bet-strategy unified-bet-card">
+                                        <div class="unified-bet-header">
+                                            <h2 class="section-title">
+                                                <span>📊</span>
+                                                <span>AI推奨買い目</span>
+                                            </h2>
+                                            <span class="unified-bet-subtitle">
+                                                {isMainRace ? '馬単10点' : '馬単'}
+                                            </span>
                                         </div>
-                                    )}
 
-                                    <!-- 戦略1: 的中率重視型 -->
-                                    {raceStrategies.safe && (
-                                        <div class="bet-strategy">
-                                            <div class="strategy-title">🎯 少点数的中型モデル</div>
-
-                                            <div class="bet-list">
-                                                {raceStrategies.safe.bets && raceStrategies.safe.bets.map(bet => {
-                                                    // bet.numbers が単一源（10点ロジックを通った文字列）
-                                                    const betStr = typeof bet === 'string' ? bet : (bet?.numbers || bet?.horses || JSON.stringify(bet));
-
-                                                    // 点数は buildStrategiesFromUmatanLines が付与した bet.points を優先
-                                                    // 旧データ形式（文字列のみ）への後方互換として countPointsFromUmatanLine を併用
-                                                    const points = (typeof bet?.points === 'number' && bet.points > 0)
-                                                        ? bet.points
-                                                        : (countPointsFromUmatanLine(betStr) || 1);
-
-                                                    // 買い目表示用: 点数表記を除いた馬券部分のみ表示
-                                                    const displayBet = betStr.replace(/\s*\d+点\s*$/, '');
-
-                                                    return (
-                                                    <div class="bet-item">
-                                                        <span class="bet-type">馬単</span>
-                                                        <span class="bet-horses">{displayBet}</span>
-                                                        <span class="bet-points">{points}点</span>
-                                                    </div>
-                                                );
-                                            })}
-                                            </div>
-
-                                            <!-- プログレスバー信頼値 -->
-                                            <ProgressBarConfidence
-                                                strategyType="A"
-                                                progressConfidence={progressBarA.progressConfidence}
-                                                baseScore={progressBarA.baseScore}
-                                                reduction={progressBarA.reduction}
-                                                strategyTitle="🎯 少点数的中型モデル"
-                                            />
-
-                                            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 10px;">
-                                                特徴: 少点数で的中率を重視
-                                            </div>
-                                            <div class="strategy-features">
-                                                <div class="feature-item">
-                                                    <span class="feature-label">🎯 的中重視</span>
-                                                    <span class="feature-badge blue">中</span>
+                                        <div class="bet-list">
+                                            {umatanBets.map((bet) => (
+                                                <div class="bet-item">
+                                                    <span class="bet-type">馬単</span>
+                                                    <span class="bet-horses">{bet.numbers}</span>
+                                                    <span class="bet-points">{bet.points}点</span>
                                                 </div>
-                                                <div class="feature-item">
-                                                    <span class="feature-label">💰 配当期待</span>
-                                                    <span class="feature-badge gray">低</span>
-                                                </div>
-                                            </div>
+                                            ))}
                                         </div>
-                                    )}
 
-                                    <!-- 戦略2: バランス型 -->
-                                    {raceStrategies.balance && (
-                                        <div class="bet-strategy">
-                                            <div class="strategy-title">⚖️ バランス型モデル</div>
-
-                                            <div class="bet-list">
-                                                {raceStrategies.balance.bets && raceStrategies.balance.bets.map(bet => {
-                                                    // bet.numbers が単一源（10点ロジックを通った文字列）
-                                                    const betStr = typeof bet === 'string' ? bet : (bet?.numbers || bet?.horses || JSON.stringify(bet) || '');
-
-                                                    // 点数は buildStrategiesFromUmatanLines が付与した bet.points を優先
-                                                    // 旧データ形式（文字列のみ）への後方互換として countPointsFromUmatanLine を併用
-                                                    const points = (typeof bet?.points === 'number' && bet.points > 0)
-                                                        ? bet.points
-                                                        : (countPointsFromUmatanLine(betStr) || 1);
-
-                                                    // 買い目表示用: 点数表記を除いた馬券部分のみ表示
-                                                    const displayBet = betStr.replace(/\s*\d+点\s*$/, '');
-
-                                                    return (
-                                                        <div class="bet-item">
-                                                            <span class="bet-type">馬単</span>
-                                                            <span class="bet-horses">{displayBet}</span>
-                                                            <span class="bet-points">{points}点</span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-
-                                            <!-- プログレスバー信頼値 -->
-                                            <ProgressBarConfidence
-                                                strategyType="B"
-                                                progressConfidence={progressBarB.progressConfidence}
-                                                baseScore={progressBarB.baseScore}
-                                                reduction={progressBarB.reduction}
-                                                strategyTitle="⚖️ バランス型モデル"
-                                            />
-
-                                            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 10px;">
-                                                特徴: 的中率と配当のバランス
-                                            </div>
-                                            <div class="strategy-features">
-                                                <div class="feature-item">
-                                                    <span class="feature-label">🎯 的中重視</span>
-                                                    <span class="feature-badge blue">中</span>
-                                                </div>
-                                                <div class="feature-item">
-                                                    <span class="feature-label">💰 配当期待</span>
-                                                    <span class="feature-badge blue">中</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <!-- 戦略3: 高配当狙い -->
-                                    {raceStrategies.aggressive && (
-                                        <div class="bet-strategy">
-                                            <div class="strategy-title">🚀 高配当追求型モデル</div>
-
-                                            <div class="bet-list">
-                                                {raceStrategies.aggressive.bets && raceStrategies.aggressive.bets.map(bet => {
-                                                    // bet.numbers が単一源（10点ロジックを通った文字列）
-                                                    const betStr = typeof bet === 'string' ? bet : (bet?.numbers || bet?.horses || JSON.stringify(bet) || '');
-
-                                                    // 点数は buildStrategiesFromUmatanLines が付与した bet.points を優先
-                                                    // 旧データ形式（文字列のみ）への後方互換として countPointsFromUmatanLine を併用
-                                                    const points = (typeof bet?.points === 'number' && bet.points > 0)
-                                                        ? bet.points
-                                                        : (countPointsFromUmatanLine(betStr) || 1);
-
-                                                    // 買い目表示用: 点数表記を除いた馬券部分のみ表示
-                                                    const displayBet = betStr.replace(/\s*\d+点\s*$/, '');
-
-                                                    return (
-                                                        <div class="bet-item">
-                                                            <span class="bet-type">馬単</span>
-                                                            <span class="bet-horses">{displayBet}</span>
-                                                            <span class="bet-points">{points}点</span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-
-                                            <!-- プログレスバー信頼値 -->
-                                            <ProgressBarConfidence
-                                                strategyType="C"
-                                                progressConfidence={progressBarC.progressConfidence}
-                                                baseScore={progressBarC.baseScore}
-                                                reduction={progressBarC.reduction}
-                                                strategyTitle="🚀 高配当追求型モデル"
-                                            />
-
-                                            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 10px;">
-                                                特徴: 高配当を追求
-                                            </div>
-                                            <div class="strategy-features">
-                                                <div class="feature-item">
-                                                    <span class="feature-label">🎯 的中重視</span>
-                                                    <span class="feature-badge gray">低</span>
-                                                </div>
-                                                <div class="feature-item">
-                                                    <span class="feature-label">💰 配当期待</span>
-                                                    <span class="feature-badge green">高</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
+                                        {isMainRace && (
+                                            <p class="unified-bet-note">
+                                                ※ 双方向馬単として最大10点（本命軸×上位5頭）
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
@@ -1251,7 +991,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                         <option value="予想内容について">予想内容について</option>
                         <option value="買い目について">買い目について</option>
                         <option value="AI分析について">AI分析について</option>
-                        <option value="戦略モデルについて">戦略モデルについて</option>
                         <option value="的中実績について">的中実績について</option>
                         <option value="その他のお問い合わせ">その他のお問い合わせ</option>
                     </select>
@@ -2462,6 +2201,39 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     .bet-strategy:hover {
         border-color: rgba(139, 92, 246, 0.5);
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .unified-bet-card {
+        margin-bottom: 0;
+    }
+
+    .unified-bet-header {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+    }
+
+    .unified-bet-header .section-title {
+        margin: 0;
+    }
+
+    .unified-bet-subtitle {
+        color: #94a3b8;
+        font-size: 0.95rem;
+        font-weight: 600;
+        background: rgba(139, 92, 246, 0.12);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 999px;
+        padding: 4px 12px;
+    }
+
+    .unified-bet-note {
+        margin-top: 12px;
+        color: #94a3b8;
+        font-size: 0.85rem;
+        line-height: 1.5;
     }
 
     .strategy-title {
