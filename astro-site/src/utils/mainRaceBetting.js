@@ -58,9 +58,12 @@ export function generateMainRaceUmatanLines(horses) {
   const honmei = horses.find(h => h && h.role === '本命');
   const honmeiNum = horseNumber(honmei);
   if (honmeiNum == null) return [];
+  // 選出は getTop5Challengers（役割優先＋pt 降順）。
+  // 表示順は通常レースと揃えて馬番昇順に並び替える（選出対象は変更しない）。
   const partners = getTop5Challengers(horses)
     .map(horseNumber)
-    .filter(n => n != null && n !== honmeiNum);
+    .filter(n => n != null && n !== honmeiNum)
+    .sort((a, b) => Number(a) - Number(b));
   if (partners.length === 0) return [];
   return [`${honmeiNum}↔${partners.join('.')}`];
 }
