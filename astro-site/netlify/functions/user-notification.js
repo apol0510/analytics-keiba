@@ -1,5 +1,12 @@
 // 新規ユーザー通知システム（2025-09-24新規作成）
 // ⚠️ 重要：削除されたウェルカムメール機能とは完全に独立したシステム
+//
+// 🔧 2026-05-12 修正:
+//   - from.email を SENDGRID_FROM_EMAIL 環境変数優先に変更
+//     （旧コードは 'nankan-analytics@keiba.link' をハードコードしており、
+//      SendGrid 側で verified sender でない場合に全送信が無音で失敗する原因になっていた）
+//   - SendGrid 失敗時のレスポンスに API エラー本文を含めるよう変更（呼び出し側がログで原因確認可能）
+//   - ブランドを KEIBA Analytics に更新
 
 export default async function handler(request, context) {
   // CORSヘッダー
@@ -80,16 +87,23 @@ export default async function handler(request, context) {
     }
 
     // 🎯 SendGrid API直接呼び出し（execute-scheduled-emails.jsと同様）
+    // 🔧 2026-05-12 修正: from.email を SENDGRID_FROM_EMAIL 環境変数優先に変更
+    //   旧: 'nankan-analytics@keiba.link' ハードコード → SendGrid で verified sender 未登録の場合に失敗
+    //   新: env var → 'noreply@keiba.link' フォールバック（他関数と統一）
+    const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'noreply@keiba.link';
+    const FROM_NAME = process.env.SENDGRID_FROM_NAME || 'KEIBA Analytics';
+    console.log(`📧 [user-notification] from=${FROM_NAME} <${FROM_EMAIL}>, to=${email}`);
+
     const emailData = {
       personalizations: [
         {
           to: [{ email: email }],
-          subject: '🎉 NANKANアナリティクス登録完了！'
+          subject: '🎉 KEIBA Analytics 登録完了！'
         }
       ],
       from: {
-        name: 'NANKANアナリティクス',
-        email: 'nankan-analytics@keiba.link'
+        name: FROM_NAME,
+        email: FROM_EMAIL
       },
       content: [
         {
@@ -97,14 +111,14 @@ export default async function handler(request, context) {
           value: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 20px;">
               <div style="background-color: #1e293b; background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 30px; text-align: center; border-radius: 12px; margin-bottom: 20px;">
-                <h1 style="color: #ffffff; margin: 0; font-size: 28px;">🏇 NANKANアナリティクス</h1>
-                <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 16px;">南関競馬AI予想プラットフォーム</p>
+                <h1 style="color: #ffffff; margin: 0; font-size: 28px;">🏇 KEIBA Analytics</h1>
+                <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 16px;">南関・JRA統合AI予想プラットフォーム</p>
               </div>
 
               <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                 <h2 style="color: #1e293b; margin-top: 0;">🎉 登録完了！</h2>
                 <p style="color: #475569; line-height: 1.6;">
-                  この度はNANKANアナリティクスにご登録いただき、誠にありがとうございます！
+                  この度は KEIBA Analytics にご登録いただき、誠にありがとうございます！
                 </p>
 
                 <div style="background: #f1f5f9; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -139,7 +153,7 @@ export default async function handler(request, context) {
               <div style="text-align: center; margin-top: 20px; color: #64748b; font-size: 14px;">
                 <p>ご不明な点がございましたら、お気軽にお問い合わせください</p>
                 <p style="margin: 5px 0 0 0;">
-                  <strong>NANKANアナリティクス</strong><br>
+                  <strong>KEIBA Analytics</strong><br>
                   📧 support@keiba.link
                 </p>
                 <hr style="margin: 20px 0; border: none; border-top: 1px solid #e2e8f0;">
@@ -198,8 +212,28 @@ export default async function handler(request, context) {
 
     if (!sendgridResponse.ok) {
       const errorText = await sendgridResponse.text();
-      console.error('🚨 SendGrid API error:', errorText);
-      throw new Error(`SendGrid API error: ${sendgridResponse.status}`);
+      console.error('🚨 SendGrid API error:', {
+        status: sendgridResponse.status,
+        statusText: sendgridResponse.statusText,
+        body: errorText,
+        from: FROM_EMAIL,
+        to: email,
+        hint: 'SendGrid で from.email が verified sender になっているか確認してください'
+      });
+      // 呼び出し側がログで原因確認できるよう、エラー本文をそのままレスポンスに含める
+      return new Response(
+        JSON.stringify({
+          error: 'Failed to send user notification (SendGrid error)',
+          status: sendgridResponse.status,
+          sendgridError: errorText,
+          from: FROM_EMAIL,
+          to: email
+        }),
+        {
+          status: 502,
+          headers
+        }
+      );
     }
 
     console.log(`✅ 新規ユーザー通知送信成功: ${email}`);

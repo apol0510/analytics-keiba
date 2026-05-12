@@ -176,9 +176,12 @@ exports.handler = async (event, context) => {
           console.error('⚠️ BlastMail登録エラー（処理は継続）:', blastMailError.message);
         }
 
-        // 新規ユーザー通知
+        // 新規ユーザー通知（= 実態はウェルカムメール送信。user-notification.js が SendGrid 経由で送る）
         try {
-          const notificationResponse = await fetch(`${context.NETLIFY_DEV ? 'http://localhost:8888' : 'https://analytics.keiba.link'}/.netlify/functions/user-notification`, {
+          const notificationUrl = `${process.env.NETLIFY_DEV ? 'http://localhost:8888' : 'https://analytics.keiba.link'}/.netlify/functions/user-notification`;
+          console.log(`📨 ウェルカムメール送信リクエスト: ${email} → ${notificationUrl}`);
+
+          const notificationResponse = await fetch(notificationUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -188,12 +191,14 @@ exports.handler = async (event, context) => {
           });
 
           if (notificationResponse.ok) {
-            console.log('✅ 新規ユーザー通知送信成功');
+            console.log(`✅ ウェルカムメール送信成功: ${email}`);
           } else {
-            console.error('⚠️ 新規ユーザー通知送信失敗（処理は継続）:', notificationResponse.status);
+            // 失敗時はレスポンス本文を読み出してログに残す
+            const notifyErrorText = await notificationResponse.text().catch(() => '(no body)');
+            console.error(`⚠️ ウェルカムメール送信失敗（処理は継続）: status=${notificationResponse.status}, email=${email}, response=${notifyErrorText}`);
           }
         } catch (notificationError) {
-          console.error('⚠️ 新規ユーザー通知エラー（処理は継続）:', notificationError.message);
+          console.error(`⚠️ ウェルカムメール送信エラー（処理は継続）: email=${email}, error=${notificationError.message}`);
         }
 
         return {
