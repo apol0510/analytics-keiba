@@ -7,6 +7,7 @@ import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from 
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 import { generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 import { generateMinorHorseComment } from '../../lib/horseEnrichment.js';
+import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpukuBetting.js';
 
 // src/data/predictions/*.json から最新日付の全会場を取得（同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -464,6 +465,23 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 points: countPointsFromUmatanLine(line) || 0,
             }));
 
+            // 三連複買い目（絞り込み / 通常本命軸 / 通常対抗軸） AI_SANRENPUKU_AXIS_V1
+            const sanrenpukuBuilt = buildRaceSanrenpuku(raceData.allHorses || []);
+            const sanrenpukuView = {
+                narrow: sanrenpukuBuilt.narrow ? {
+                    line: formatSanrenpukuLine(sanrenpukuBuilt.narrow),
+                    points: sanrenpukuBuilt.narrow.points || 0,
+                } : null,
+                normalHonmeiAxis: sanrenpukuBuilt.normalHonmeiAxis ? {
+                    line: formatSanrenpukuLine(sanrenpukuBuilt.normalHonmeiAxis),
+                    points: sanrenpukuBuilt.normalHonmeiAxis.points || 0,
+                } : null,
+                normalTaikouAxis: sanrenpukuBuilt.normalTaikouAxis ? {
+                    line: formatSanrenpukuLine(sanrenpukuBuilt.normalTaikouAxis),
+                    points: sanrenpukuBuilt.normalTaikouAxis.points || 0,
+                } : null,
+            };
+
             const accordionId = `race-v${venueIndex}-${raceNum}r`;
             const toggleId = `toggle-v${venueIndex}-${raceNum}r`;
             return (
@@ -880,6 +898,62 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 ※ 双方向馬単として最大10点（本命軸×上位5頭）
                                             </p>
                                         )}
+                                    </div>
+                                </div>
+                            )}
+
+                            <!-- 三連複AI推奨買い目（絞り込み / 通常 軸別 切替）AI_SANRENPUKU_AXIS_V1 -->
+                            {(sanrenpukuView.narrow || sanrenpukuView.normalHonmeiAxis || sanrenpukuView.normalTaikouAxis) && (
+                                <div class="recommendation-section sanrenpuku-section" data-race-id={`v${venueIndex}-${raceNum}`}>
+                                    <div class="bet-strategy unified-bet-card">
+                                        <div class="unified-bet-header">
+                                            <h2 class="section-title">
+                                                <span>🎯</span>
+                                                <span>三連複AI推奨買い目</span>
+                                            </h2>
+                                            <span class="unified-bet-subtitle">軸馬構成ルールV1</span>
+                                        </div>
+
+                                        <div class="sanrenpuku-tabs">
+                                            <button type="button" class="srp-tab active" data-srp-mode="narrow">絞り込み</button>
+                                            <button type="button" class="srp-tab" data-srp-mode="normal">通常買い目</button>
+                                        </div>
+
+                                        {sanrenpukuView.narrow && (
+                                            <div class="srp-panel srp-panel-narrow active">
+                                                <div class="srp-panel-title">絞り込み買い目</div>
+                                                <div class="bet-item">
+                                                    <span class="bet-type">三連複</span>
+                                                    <span class="bet-horses">{sanrenpukuView.narrow.line}</span>
+                                                    <span class="bet-points">{sanrenpukuView.narrow.points}点</span>
+                                                </div>
+                                                <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
+                                            </div>
+                                        )}
+
+                                        <div class="srp-panel srp-panel-normal">
+                                            {sanrenpukuView.normalHonmeiAxis && (
+                                                <div class="srp-subblock">
+                                                    <div class="srp-panel-title">通常買い目｜本命軸</div>
+                                                    <div class="bet-item">
+                                                        <span class="bet-type">三連複</span>
+                                                        <span class="bet-horses">{sanrenpukuView.normalHonmeiAxis.line}</span>
+                                                        <span class="bet-points">{sanrenpukuView.normalHonmeiAxis.points}点</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {sanrenpukuView.normalTaikouAxis && (
+                                                <div class="srp-subblock">
+                                                    <div class="srp-panel-title">通常買い目｜対抗軸</div>
+                                                    <div class="bet-item">
+                                                        <span class="bet-type">三連複</span>
+                                                        <span class="bet-horses">{sanrenpukuView.normalTaikouAxis.line}</span>
+                                                        <span class="bet-points">{sanrenpukuView.normalTaikouAxis.points}点</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <p class="unified-bet-note">※ 本命軸・対抗軸のいずれかで3着以内が揃えば的中扱い</p>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -1513,16 +1587,22 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
               const result = await response.json();
 
               if (result.success) {
-                formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
-                formMessage.className = 'form-message success';
-                formMessage.style.display = 'block';
-
                 document.getElementById('bankTransferForm').reset();
-
-                setTimeout(() => {
-                  closeBankModal();
-                  formMessage.style.display = 'none';
-                }, 3000);
+                window.SubmissionResult && window.SubmissionResult.showSuccessScreen({
+                  formEl: bankTransferForm,
+                  messageEl: formMessage,
+                  options: {
+                    title: 'お申し込みを受け付けました',
+                    message: `${formData.productName} のお申し込みを受け付けました。`,
+                    subMessage: '確認メールをお送りしましたのでご確認ください。マイページから申請状況も確認できます。'
+                  },
+                  history: {
+                    type: 'bank-transfer',
+                    label: `銀行振込お申し込み: ${formData.productName}`,
+                    status: 'pending',
+                    details: { email: formData.email, transferAmount: formData.transferAmount, transferDate: formData.transferDate, productName: formData.productName }
+                  }
+                });
               } else {
                 throw new Error(result.error || '送信に失敗しました');
               }
@@ -1531,7 +1611,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
               formMessage.textContent = '❌ 送信に失敗しました。時間をおいて再度お試しください。';
               formMessage.className = 'form-message error';
               formMessage.style.display = 'block';
-            } finally {
               submitButton.disabled = false;
               submitText.style.display = 'inline';
               submitLoading.style.display = 'none';
@@ -2748,6 +2827,42 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         line-height: 1.5;
     }
 
+    /* 三連複AI推奨買い目 タブ UI */
+    .sanrenpuku-section .unified-bet-header { margin-bottom: 12px; }
+    .sanrenpuku-tabs {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+    }
+    .srp-tab {
+        flex: 1;
+        padding: 8px 12px;
+        background: rgba(30, 41, 59, 0.6);
+        color: #cbd5e1;
+        border: 1px solid rgba(100, 116, 139, 0.3);
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .srp-tab:hover { border-color: rgba(139, 92, 246, 0.5); }
+    .srp-tab.active {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        color: #ffffff;
+        border-color: rgba(139, 92, 246, 0.7);
+    }
+    .srp-panel { display: none; }
+    .srp-panel.active { display: block; }
+    .srp-subblock { margin-bottom: 10px; }
+    .srp-subblock:last-child { margin-bottom: 0; }
+    .srp-panel-title {
+        font-weight: 700;
+        color: #e2e8f0;
+        font-size: 0.95rem;
+        margin-bottom: 8px;
+    }
+
     .strategy-title {
         font-size: 1.2rem;
         font-weight: 700;
@@ -3146,6 +3261,21 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     // コンソールにヘルプメッセージ表示
     console.log('%c🔑 テスト認証機能が利用可能です', 'color: #60a5fa; font-weight: bold;');
     console.log('%c使用方法: setTestAuth("premium") または setTestAuth("standard")', 'color: #94a3b8;');
+
+    // 三連複AI推奨買い目: 絞り込み / 通常 タブ切替
+    document.addEventListener('click', function(e) {
+        const btn = e.target && e.target.closest && e.target.closest('.srp-tab');
+        if (!btn) return;
+        const section = btn.closest('.sanrenpuku-section');
+        if (!section) return;
+        const mode = btn.getAttribute('data-srp-mode');
+        section.querySelectorAll('.srp-tab').forEach((b) => {
+            b.classList.toggle('active', b.getAttribute('data-srp-mode') === mode);
+        });
+        section.querySelectorAll('.srp-panel').forEach((p) => {
+            p.classList.toggle('active', p.classList.contains(`srp-panel-${mode}`));
+        });
+    });
 </script>
 
 <style>
