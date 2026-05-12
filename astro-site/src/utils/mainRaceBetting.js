@@ -79,8 +79,9 @@ export function countMainRaceBetPoints(horses) {
 //   本命 ↔ {対抗, 単穴/連下最上位/連下から上位4頭} = 最大5頭
 //   → 双方向馬単で 5 × 2 = 10点
 //   抑え（補欠・抑え役割の馬）は別括弧で informational に付与する。
-// 例: "7↔11.2.13.9.6(抑え1.3.4.10)"
-// 相手の並び順: 対抗 → 単穴 → 連下最上位 → 連下、同役割内は pt 降順。
+// 例: "7↔2.6.9.11.13(抑え1.3.4.10)"
+// 相手の選出順: 対抗 → 単穴 → 連下最上位 → 連下、同役割内は pt 降順で上位5頭。
+// 表示順: 選出済み5頭を**馬番昇順**に並び替えてから出力する。
 export function generateNormalRaceUmatanLines(horses) {
   if (!Array.isArray(horses)) return [];
   const honmei = horses.find(h => h && h.role === '本命');
@@ -88,7 +89,8 @@ export function generateNormalRaceUmatanLines(horses) {
   const honmeiNum = horseNumber(honmei);
   if (honmeiNum == null) return [];
 
-  // 相手プール: 対抗 → 単穴 → 連下最上位 → 連下、役割優先 + pt 降順 上位5頭
+  // 相手プール: 対抗 → 単穴 → 連下最上位 → 連下、役割優先 + pt 降順 上位5頭を「選出」。
+  // 選出後、表示用に馬番昇順へ並び替える（選出対象は変更しない）。
   const partnerPriority = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
   const partners = horses
     .filter(h => h && partnerPriority[h.role] != null)
@@ -102,8 +104,9 @@ export function generateNormalRaceUmatanLines(horses) {
       if (ra !== rb) return ra - rb;
       return horsePt(b) - horsePt(a);
     })
+    .slice(0, 5)
     .map(horseNumber)
-    .slice(0, 5);
+    .sort((a, b) => Number(a) - Number(b));
 
   if (partners.length === 0) return [];
 
