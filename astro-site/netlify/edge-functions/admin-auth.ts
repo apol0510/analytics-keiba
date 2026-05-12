@@ -27,10 +27,10 @@ export default async (request: Request) => {
   const [username, password] = credentials.split(':');
 
   // Verify credentials
-  // Username: nankan-admin
-  // Password: NANKANsecure2025!
-  const validUsername = 'nankan-admin';
-  const validPassword = 'NANKANsecure2025!';
+  // Username: keiba-admin
+  // Password: KEIBAsecure2026!
+  const validUsername = 'keiba-admin';
+  const validPassword = 'KEIBAsecure2026!';
 
   if (username === validUsername && password === validPassword) {
     // Authentication successful - allow access
