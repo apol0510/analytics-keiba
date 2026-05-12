@@ -1,10 +1,15 @@
 ---
 export const prerender = true;
-import archiveData2026_05 from '../../../data/archiveSanrenpukuResults_2026-05.json';
+import archiveDataLegacy from '../../../data/archiveSanrenpukuResults_2026-05.json';
+import archiveDataCombined from '../../../data/archiveSanrenpukuResults.json';
 
 const year = '2026';
 const month = '05';
-const monthData = archiveData2026_05[year]?.[month] || {};
+// 結合データ（自動取込）を優先、未取込分は旧 per-month JSON を補完として使う
+const monthData = {
+  ...(archiveDataLegacy[year]?.[month] || {}),
+  ...(archiveDataCombined[year]?.[month] || {}),
+};
 const days = Object.keys(monthData).sort().reverse(); // 新しい順
 
 // 月間統計計算
@@ -260,6 +265,20 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       font-size: 1.8rem;
       font-weight: bold;
       color: #fbbf24;
+    }
+
+    .auto-tag {
+      display: inline-block;
+      margin-left: 0.6rem;
+      padding: 0.15rem 0.55rem;
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: #94a3b8;
+      background: rgba(100, 116, 139, 0.15);
+      border: 1px solid rgba(100, 116, 139, 0.35);
+      border-radius: 6px;
+      vertical-align: middle;
+      letter-spacing: 0.02em;
     }
 
     .perfect-badge {
@@ -561,7 +580,12 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       return (
         <div class="day-section">
           <div class="day-header">
-            <h2 class="day-title">5月{parseInt(day)}日 {dayData.venue}競馬</h2>
+            <h2 class="day-title">
+              5月{parseInt(day)}日 {dayData.venue}競馬
+              {dayData.rule === 'AI_SANRENPUKU_AXIS_V1' && (
+                <span class="auto-tag">自動集計</span>
+              )}
+            </h2>
             <div class="perfect-badge">🏆 {dayData.hitRaces}/{dayData.totalRaces}的中</div>
           </div>
 

@@ -5,15 +5,33 @@ import archiveData2026_02 from '../../../data/archiveSanrenpukuResults_2026-02.j
 import archiveData2026_03 from '../../../data/archiveSanrenpukuResults_2026-03.json';
 import archiveData2026_04 from '../../../data/archiveSanrenpukuResults_2026-04.json';
 import archiveData2026_05 from '../../../data/archiveSanrenpukuResults_2026-05.json';
+import archiveDataCombined from '../../../data/archiveSanrenpukuResults.json';
 
 const year = '2026';
-const yearData = {
+// 月単位でマージ。結合データ（自動取込）が存在する月はそれを優先し、
+// その月内の日は旧 per-month JSON と結合データを日キー単位でマージする。
+const yearData = {};
+const _months = new Set([
+  ...Object.keys(archiveData2026_01[year] || {}),
+  ...Object.keys(archiveData2026_02[year] || {}),
+  ...Object.keys(archiveData2026_03[year] || {}),
+  ...Object.keys(archiveData2026_04[year] || {}),
+  ...Object.keys(archiveData2026_05[year] || {}),
+  ...Object.keys(archiveDataCombined[year] || {}),
+]);
+const _legacyByMonth = {
   ...archiveData2026_01[year],
   ...archiveData2026_02[year],
   ...archiveData2026_03[year],
   ...archiveData2026_04[year],
-  ...archiveData2026_05[year]
+  ...archiveData2026_05[year],
 };
+for (const _m of _months) {
+  yearData[_m] = {
+    ...(_legacyByMonth[_m] || {}),
+    ...((archiveDataCombined[year] && archiveDataCombined[year][_m]) || {}),
+  };
+}
 const months = Object.keys(yearData).sort().reverse(); // 新しい順
 
 // 年間統計計算

@@ -7,12 +7,14 @@ import archiveData2026_02 from '../../data/archiveSanrenpukuResults_2026-02.json
 import archiveData2026_03 from '../../data/archiveSanrenpukuResults_2026-03.json';
 import archiveData2026_04 from '../../data/archiveSanrenpukuResults_2026-04.json';
 import archiveData2026_05 from '../../data/archiveSanrenpukuResults_2026-05.json';
+import archiveDataCombined from '../../data/archiveSanrenpukuResults.json';
 
 // 🔒 Premium会員認証チェック（無料会員はアクセス不可）
 // クライアントサイドでプラン判定を行う想定
 
-// 全月のデータを統合
-const archiveSanrenpukuResults = {
+// 旧 per-month JSON と結合データを年/月/日キー単位でマージ
+// （結合データ＝自動取込が常に優先）
+const _legacyByYearMonth: Record<string, Record<string, any>> = {
   '2025': {
     ...archiveData2025_11['2025'],
     ...archiveData2025_12['2025']
@@ -25,6 +27,23 @@ const archiveSanrenpukuResults = {
     ...archiveData2026_05['2026']
   }
 };
+const archiveSanrenpukuResults: Record<string, Record<string, any>> = {};
+const _years = new Set([
+  ...Object.keys(_legacyByYearMonth),
+  ...Object.keys(archiveDataCombined),
+]);
+for (const _y of _years) {
+  const _legacyMonths = _legacyByYearMonth[_y] || {};
+  const _combinedMonths = (archiveDataCombined as any)[_y] || {};
+  const _monthSet = new Set([...Object.keys(_legacyMonths), ...Object.keys(_combinedMonths)]);
+  archiveSanrenpukuResults[_y] = {};
+  for (const _m of _monthSet) {
+    archiveSanrenpukuResults[_y][_m] = {
+      ...(_legacyMonths[_m] || {}),
+      ...(_combinedMonths[_m] || {}),
+    };
+  }
+}
 
 // 年別集計データを生成
 const years = Object.keys(archiveSanrenpukuResults).sort((a, b) => parseInt(b) - parseInt(a));
