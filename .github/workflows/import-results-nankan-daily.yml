@@ -61,6 +61,7 @@ jobs:
           DATE="${{ steps.date.outputs.date }}"
           YEAR="${DATE:0:4}"
           MONTH="${DATE:5:2}"
+          DAY="${DATE:8:2}"
           BASE="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/${YEAR}/${MONTH}"
 
           # per-venueファイル(OOI/FUN/KAW/URA)の存在を確認
@@ -68,6 +69,7 @@ jobs:
           VENUE_CODES=("OOI" "FUN" "KAW" "URA")
           TOTAL_RACES=0
           FOUND_VENUES=()
+          FOUND_CODES=()
 
           for code in "${VENUE_CODES[@]}"; do
             URL="${BASE}/${DATE}-${code}.json"
@@ -75,25 +77,42 @@ jobs:
               RC=$(jq -r '.races | length' /tmp/venue.json)
               TOTAL_RACES=$((TOTAL_RACES + RC))
               FOUND_VENUES+=("${code}(${RC})")
+              FOUND_CODES+=("${code}")
             fi
           done
 
           echo "🔍 per-venue検索結果: ${#FOUND_VENUES[@]}会場 ${TOTAL_RACES}レース (${FOUND_VENUES[*]})"
 
+          # 後続ステップ（三連複取込）で再利用するため $GITHUB_ENV に保存
+          echo "FOUND_CODES=${FOUND_CODES[*]}" >> $GITHUB_ENV
+
           if [ "$TOTAL_RACES" -eq 0 ]; then
             echo "⏭️  No Nankan results in keiba-data-shared yet (全会場404)"
             echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
           elif [ "$TOTAL_RACES" -lt 12 ]; then
             echo "⏭️  Skipped: $TOTAL_RACES races (< 12)"
             echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
           else
-            # アーカイブに既に存在するかチェック
+            # 馬単アーカイブに既に存在するかチェック
             if grep -q "\"date\": \"$DATE\"" src/data/archiveResults.json; then
-              echo "⏭️  Already processed: $DATE"
+              echo "⏭️  Umatan already processed: $DATE"
               echo "has_missing=false" >> $GITHUB_OUTPUT
             else
-              echo "📥 Missing from archive: $DATE"
+              echo "📥 Missing umatan archive: $DATE"
               echo "has_missing=true" >> $GITHUB_OUTPUT
+            fi
+
+            # 三連複アーカイブにこの日のエントリがあるかチェック
+            # archiveSanrenpukuResults.json は { "YYYY": { "MM": { "DD": {...} } } } 構造
+            if jq -e --arg y "$YEAR" --arg m "$MONTH" --arg d "$DAY" \
+                 '.[$y][$m][$d]' src/data/archiveSanrenpukuResults.json > /dev/null 2>&1; then
+              echo "⏭️  Sanrenpuku already processed: $DATE"
+              echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
+            else
+              echo "📥 Missing sanrenpuku archive: $DATE"
+              echo "has_missing_sanrenpuku=true" >> $GITHUB_OUTPUT
             fi
           fi
 
@@ -120,11 +139,43 @@ jobs:
           echo "🔍 Verifying archive sync with keiba-data-shared..."
           npm run verify:sync
 
+      # 三連複（AI_SANRENPUKU_AXIS_V1）の自動取込。
+      # 馬単と独立に「三連複アーカイブに当該日が無いか」を判定し、欠落していれば実行。
+      # 同じ日付・会場で再実行しても scripts/importResultsSanrenpuku.js が
+      # arch[y][m][d] を上書きするのみで重複登録は起きない。
+      - name: Import missing sanrenpuku results
+        if: steps.check.outputs.has_missing_sanrenpuku == 'true'
+        id: import-sanrenpuku
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE="${{ steps.date.outputs.date }}"
+          echo "📥 Importing sanrenpuku results for: $DATE (venues: ${FOUND_CODES})"
+          for code in $FOUND_CODES; do
+            case "$code" in
+              OOI) slug=ooi ;;
+              FUN) slug=funabashi ;;
+              KAW) slug=kawasaki ;;
+              URA) slug=urawa ;;
+              *)   echo "⏭️  Unknown venue code: $code"; continue ;;
+            esac
+            # 該当 venue の予想JSONが無い場合は importer が失敗する。
+            # 1会場の失敗で他会場を止めないよう || true でガード。
+            if [ -f "src/data/predictions/${DATE}-${slug}.json" ]; then
+              echo "▶  ${DATE} ${slug} (${code})"
+              node scripts/importResultsSanrenpuku.js --date "$DATE" --venue "$slug" --venueCode "$code" || \
+                echo "⚠️  sanrenpuku import failed for ${DATE} ${slug}"
+            else
+              echo "⏭️  prediction file not found: ${DATE}-${slug}.json"
+            fi
+          done
+
       - name: Check for changes
         id: git-check
-        if: steps.check.outputs.has_missing == 'true'
+        if: steps.check.outputs.has_missing == 'true' || steps.check.outputs.has_missing_sanrenpuku == 'true'
         run: |
-          git add src/data/archiveResults.json
+          git add src/data/archiveResults.json src/data/archiveSanrenpukuResults.json
           git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
 
       - name: Commit and push changes
@@ -134,11 +185,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           DATE="${{ steps.date.outputs.date }}"
-          COMMIT_MSG="Auto-verify: ${DATE} Nankan results (daily check)"
+          COMMIT_MSG="Auto-verify: ${DATE} Nankan results (umatan + sanrenpuku)"
 
-          # 変更ファイルを退避
+          # 変更ファイルを退避（馬単・三連複の両方）
           cp src/data/archiveResults.json /tmp/archiveResults.json.backup
-          echo "📦 Backed up archiveResults.json"
+          cp src/data/archiveSanrenpukuResults.json /tmp/archiveSanrenpukuResults.json.backup
+          echo "📦 Backed up archiveResults.json + archiveSanrenpukuResults.json"
 
           # Retry logic: reset → restore → commit → push（最大5回リトライ）
           MAX_RETRIES=5
@@ -154,11 +206,12 @@ jobs:
             git clean -fd
             echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
 
-            # 2. 退避ファイルを復元
+            # 2. 退避ファイルを復元（両方）
             cp /tmp/archiveResults.json.backup src/data/archiveResults.json
+            cp /tmp/archiveSanrenpukuResults.json.backup src/data/archiveSanrenpukuResults.json
 
             # 3. ステージング＆コミット
-            git add src/data/archiveResults.json
+            git add src/data/archiveResults.json src/data/archiveSanrenpukuResults.json
             if git diff --staged --quiet; then
               echo "⏭️  No changes after sync (remote already has latest)"
               SUCCESS=true
@@ -187,11 +240,12 @@ jobs:
         run: |
           echo "✅ Nankan results imported and pushed (daily check)"
           echo "   Date: ${{ steps.date.outputs.date }}"
-          echo "   Trigger: scheduled (23:30 JST)"
+          echo "   Umatan missing: ${{ steps.check.outputs.has_missing }}"
+          echo "   Sanrenpuku missing: ${{ steps.check.outputs.has_missing_sanrenpuku }}"
 
       - name: No changes notification
-        if: steps.check.outputs.has_missing != 'true'
+        if: steps.check.outputs.has_missing != 'true' && steps.check.outputs.has_missing_sanrenpuku != 'true'
         run: |
           echo "⏭️  No missing Nankan results to import"
           echo "   Date: ${{ steps.date.outputs.date }}"
-          echo "   Archive is up-to-date"
+          echo "   Archives are up-to-date (umatan + sanrenpuku)"
