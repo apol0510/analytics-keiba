@@ -14,6 +14,7 @@
 
 import HorseMainCard from './HorseMainCard.astro';
 import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
+import { isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../lib/shared-prediction-logic.js';
 
 interface Props {
     raceHorses: any[];
@@ -22,44 +23,27 @@ interface Props {
 const { raceHorses = [] } = Astro.props as Props;
 const safeHorses = Array.isArray(raceHorses) ? raceHorses : [];
 
-// 役割ベースで「不要馬」「抑え候補」を振り分け（2026-05-13 修正）
-//
-// 旧仕様: 補欠/抑え/押さえ は pt > 70 の場合のみ「抑え候補」に表示、
-//   pt ≤ 70 だと「不要馬」に落としていた。
-//   admin 側が displayScore/rawScore を空欄で保存すると importPrediction.js が
-//   pt=70 にフロア化するため、十分なコンピ指数を持つ補欠（例: 川崎10R サンダビューク
-//   ci=18 / racebook 指数52）まで「不要馬」にまとめられ表示数が膨らんでいた。
-//
-// 新仕様: admin が role を付けた馬は その role の section に必ず出す。
-//   「不要馬」は role が未割当（'無' / undefined / handledRoles 外）の馬のみ。
-const handledRoles = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
+// 馬の分類は shared-prediction-logic.js に集約。
+// 「補欠ロールを全部抑え候補に移す」と「pt > 70 ハードカット」の両極端を避け、
+// pt > 70 または computerIndex >= 10 の補欠だけを抑え候補に救出し、
+// それ以外の評価弱い補欠は「不要馬・見送り馬」に残す。
 const honmei = safeHorses.find(h => h?.role === '本命');
 const honmeiPt = Number(honmei?.pt) || 0;
+
 const ineligible = safeHorses
-    .filter((h) => {
-        if (!h) return false;
-        return !handledRoles.has(h.role);
-    })
-    .sort((a, b) => (Number(b.pt) || 0) - (Number(a.pt) || 0));
+    .filter(isIneligibleHorse)
+    .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0));
 
 function reasonFor(h: any) {
-    const pt = Number(h.pt) || 0;
-    const ci = Number(h.computerIndex);
+    const pt = Number(h?.pt) || 0;
+    const ci = Number(h?.computerIndex);
     if (!(pt > 0)) return '評価不足';
     if (Number.isFinite(ci) && ci > 0 && !(ci > 44)) return '指数不足';
     return '上位比較で劣勢';
 }
 
-// 連下・抑え（補欠 を含む）— pt フロアでフィルタせず、role 付与馬を全て表示
-// 抑え枠が密にならないよう、pt 降順 → computerIndex 降順で並べる
 const renkaHorses = safeHorses.filter(h => h?.role === '連下' || h?.role === '連下最上位');
-const osaeHorses = safeHorses
-    .filter(h => h?.role === '押さえ' || h?.role === '抑え' || h?.role === '補欠')
-    .sort((a, b) => {
-        const ptDiff = (Number(b?.pt) || 0) - (Number(a?.pt) || 0);
-        if (ptDiff !== 0) return ptDiff;
-        return (Number(b?.computerIndex) || 0) - (Number(a?.computerIndex) || 0);
-    });
+const osaeHorses = sortOsaeCandidates(safeHorses.filter(isOsaeCandidate));
 const renkaMark = safeHorses.find(h => h?.role === '連下')?.displayMark || '△';
 const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '×';
 ---

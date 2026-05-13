@@ -727,6 +727,77 @@ export function getRoleDisplayConfig(role) {
     return ROLE_DISPLAY_CONFIG[role] || ROLE_DISPLAY_CONFIG["連下"];
 }
 
+/**
+ * 馬の分類: 抑え候補か / 不要馬か
+ *
+ * 背景:
+ *   importPrediction.js は displayScore/rawScore が空欄だと pt=70 にフロア化する。
+ *   そのため admin が「補欠」ロールを付けた馬は pt=70 のフロアに張り付くことが多い。
+ *   pt > 70 ハードカットだけで判定すると、評価根拠のある補欠（例: 川崎10R サンダビューク
+ *   pt=70 ci=18）まで不要馬に落ちて表示が壊れる。
+ *
+ *   一方で「補欠 = 全部抑え候補」とすると、ci=1〜2 の明らかに評価弱な馬まで
+ *   抑え候補に並んで買い目候補感が薄れる。
+ *
+ *   両極端を避けるため、補欠は pt と computerIndex の両軸で
+ *   「拾う / 見送る」を判断する。
+ *
+ * 判定基準:
+ *   isOsaeCandidate(h)
+ *     - role が「押さえ」「抑え」 → true (admin 明示)
+ *     - role が「補欠」かつ
+ *         pt > 70  (フロア値を明確に超える / 連下降格分など)
+ *         または computerIndex >= OSAE_CI_THRESHOLD (=10)
+ *       → true
+ *     - それ以外 → false
+ *
+ *   isIneligibleHorse(h)
+ *     - role が未割当 (handledRoles 外 / undefined / '無') → true
+ *     - role が「補欠」かつ isOsaeCandidate が false → true
+ *     - それ以外 → false (本命/対抗/単穴/連下/連下最上位 はここに来ない)
+ *
+ *   しきい値 OSAE_CI_THRESHOLD = 10 の根拠:
+ *     ci=18 (例: サンダビューク) は救出、ci=1〜2 は不要側に残す中間値。
+ *     prediction JSON の computerIndex は本来の racebook 指数 (40-86 帯) ではなく
+ *     印数ベースの 1〜100 帯であり、補欠帯は実測で 1〜30 程度に分布する。
+ *     経験的に 10 を境にすると、明確に評価根拠がある補欠だけが拾える。
+ */
+export const HANDLED_ROLES = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
+export const OSAE_CI_THRESHOLD = 10;
+
+export function isOsaeCandidate(horse) {
+    if (!horse) return false;
+    const role = horse.role;
+    if (role === '押さえ' || role === '抑え') return true;
+    if (role === '補欠') {
+        const pt = Number(horse.pt) || 0;
+        const ci = Number(horse.computerIndex) || 0;
+        if (pt > 70) return true;
+        if (ci >= OSAE_CI_THRESHOLD) return true;
+        return false;
+    }
+    return false;
+}
+
+export function isIneligibleHorse(horse) {
+    if (!horse) return false;
+    const role = horse.role;
+    if (!HANDLED_ROLES.has(role)) return true;
+    if (role === '補欠' && !isOsaeCandidate(horse)) return true;
+    return false;
+}
+
+/**
+ * 抑え候補のソート: pt 降順 → computerIndex 降順
+ */
+export function sortOsaeCandidates(horses) {
+    return [...horses].sort((a, b) => {
+        const ptDiff = (Number(b?.pt) || 0) - (Number(a?.pt) || 0);
+        if (ptDiff !== 0) return ptDiff;
+        return (Number(b?.computerIndex) || 0) - (Number(a?.computerIndex) || 0);
+    });
+}
+
 // データ整合性チェック
 export function validateDataIntegrity(raceData) {
     const errors = [];
