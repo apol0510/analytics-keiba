@@ -8,6 +8,7 @@ import { convertToYesterdayResults, getLatestDayData, convertToSanrenpukuYesterd
 import { getRaceTier, PLAN_ACCESS } from '../lib/race-config.js';
 import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
 import HorseMainCard from '../components/HorseMainCard.astro';
+import RaceHorseSection from '../components/RaceHorseSection.astro';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
 
@@ -367,156 +368,14 @@ export const dailyResultsData = {
                                         <h3 class="race-detail-title">{raceData.raceNumber} {raceData.raceName || '競走名'}</h3>
                                     </div>
 
-                                    <!-- AI選出馬分析 -->
+                                    <!-- AI選出馬分析 — メインレースと同じ表示（買い目だけ非表示） -->
                                     <div class="analysis-section">
                                         <h2 class="section-title">
-                                            <span>👀</span>
-                                            <span>プレビュー - 本命・対抗・単穴</span>
+                                            <span>🤖</span>
+                                            <span>AIモデル選出馬 - XGBoost×LSTM統合分析</span>
                                         </h2>
-
-                                        <!-- 本命馬 -->
-                                        {mainHorse && (
-                                            <div class="horse-card horse-card-main">
-                                                <div class="horse-header">
-                                                    <div>
-                                                        <span class="horse-mark-main">◎</span>
-                                                        <span class="horse-number">{mainHorse.number}</span>
-                                                        <span class="horse-name">{mainHorse.name}</span>
-                                                        <span class="horse-type-main">本命</span>
-                                                    </div>
-                                                </div>
-                                                <div class="ai-factors">
-                                                    {mainHorse.factors && mainHorse.factors.map(factor => (
-                                                        <div class="factor">
-                                                            <span class="factor-icon">{factor.icon}</span>
-                                                            <span>{factor.text}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-
-                                                <!-- 特徴量重要度 -->
-                                                {raceData.horses?.main?.importance && (
-                                                    <div class="feature-importance">
-                                                        <h4 style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">特徴量重要度</h4>
-                                                        {raceData.horses.main.importance.map(item => (
-                                                            <div class="importance-bar">
-                                                                <span class="importance-label">{item.label}</span>
-                                                                <div class="importance-value">
-                                                                    <div class="importance-fill" style={`width: ${item.value * 100}%;`}>{Math.round(item.value * 100)}%</div>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        <!-- 対抗馬 -->
-                                        {subHorse && (
-                                            <div class="horse-card horse-card-sub">
-                                                <div class="horse-header">
-                                                    <div>
-                                                        <span class="horse-mark-sub">○</span>
-                                                        <span class="horse-number">{subHorse.number}</span>
-                                                        <span class="horse-name">{subHorse.name}</span>
-                                                        <span class="horse-type-sub">対抗</span>
-                                                    </div>
-                                                </div>
-                                                <div class="ai-factors">
-                                                    {subHorse.factors && subHorse.factors.map(factor => (
-                                                        <div class="factor">
-                                                            <span class="factor-icon">{factor.icon}</span>
-                                                            <span>{factor.text}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-
-                                                <!-- 特徴量重要度 -->
-                                                {raceData.horses?.sub?.importance && (
-                                                    <div class="feature-importance">
-                                                        <h4 style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">特徴量重要度</h4>
-                                                        {raceData.horses.sub.importance.map(item => (
-                                                            <div class="importance-bar">
-                                                                <span class="importance-label">{item.label}</span>
-                                                                <div class="importance-value">
-                                                                    <div class="importance-fill" style={`width: ${item.value * 100}%;`}>{Math.round(item.value * 100)}%</div>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        <!-- 単穴馬 -->
-                                        {tanaHorses.length > 0 && tanaHorses.map(horse => (
-                                            <div class="horse-card horse-card-sub">
-                                                <div class="horse-header">
-                                                    <div>
-                                                        <span class="horse-mark-minor">▲</span>
-                                                        <span class="horse-number">{horse.number}</span>
-                                                        <span class="horse-name">{horse.name}</span>
-                                                        <span class="horse-type-minor">単穴</span>
-                                                    </div>
-                                                </div>
-                                                <div class="ai-factors">
-                                                    {horse.factors && horse.factors.map(factor => (
-                                                        <div class="factor">
-                                                            <span class="factor-icon">{factor.icon}</span>
-                                                            <span>{factor.text}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ))}
-
-                                        <!-- Standard会員は連下・押さえ解放 -->
-                                        {raceHorses && raceHorses.filter(h => h.role === '連下').length > 0 && (
-                                            <div class="horse-card horse-card-minor">
-                                                <div class="horse-header">
-                                                    <div>
-                                                        <span class="horse-mark-minor">{raceHorses.find(h => h.role === '連下')?.displayMark || '△'}</span>
-                                                        <span style="color: #f59e0b; font-weight: 600;">連下候補馬</span>
-                                                    </div>
-                                                </div>
-                                                <div class="horse-grid">
-                                                    {Array.isArray(raceHorses) && raceHorses.filter(h => h?.role === '連下').map(horse => {
-                                                        const scoreText = horse.factors?.find(f => f.text.includes('累積スコア'))?.text;
-                                                        const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
-                                                        return (
-                                                            <div class="horse-grid-item">
-                                                                <span class="horse-number-small">{horse.number}</span>
-                                                                <span class="horse-name-small">{horse.name}{score ? `(${score}pt)` : ''}</span>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {raceHorses && raceHorses.filter(h => h.role === '押さえ').length > 0 && (
-                                            <div class="horse-card horse-card-minor">
-                                                <div class="horse-header">
-                                                    <div>
-                                                        <span class="horse-mark-minor">{raceHorses.find(h => h.role === '押さえ')?.displayMark || '×'}</span>
-                                                        <span style="color: #64748b; font-weight: 600;">抑え候補馬</span>
-                                                    </div>
-                                                </div>
-                                                <div class="horse-grid">
-                                                    {Array.isArray(raceHorses) && raceHorses.filter(h => h?.role === '押さえ').map(horse => {
-                                                        const scoreText = horse.factors?.find(f => f.text.includes('累積スコア'))?.text;
-                                                        const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
-                                                        return (
-                                                            <div class="horse-grid-item">
-                                                                <span class="horse-number-small">{horse.number}</span>
-                                                                <span class="horse-name-small">{horse.name}{score ? `(${score}pt)` : ''}</span>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
-
+                                        {/* 🎯 メインレースと完全に同じ horse セクション。買い目は出さない */}
+                                        <RaceHorseSection raceHorses={raceHorses} />
                                     </div>
                                 </div>
                             </div>
@@ -622,152 +481,12 @@ export const dailyResultsData = {
                                 </h2>
 
                                 {/*
-                                    🎯 単一ソース: src/components/HorseMainCard.astro が
-                                    本命・対抗・単穴の rich カード描画を担当する。
-                                    Premium / Light で同じコンポーネントを使うことで
-                                    admin 保存後の表示が両ページで自動的に一致する。
-                                    スタイル変更も HorseMainCard.astro 一箇所だけで完結。
+                                    🎯 単一ソース: 本命/対抗/単穴/連下/抑え/不要馬 を
+                                    RaceHorseSection.astro 一括レンダー。
+                                    メインレースも非メインレース（プレビュー）も同じ表示。
+                                    買い目（betting）だけはページ側で出し分け。
                                 */}
-                                {Array.isArray(raceHorses) && raceHorses
-                                    .filter(h => h?.role === '本命' || h?.role === '対抗' || h?.role === '単穴')
-                                    .map((horse) => (
-                                        <HorseMainCard horse={horse} />
-                                    ))
-                                }
-
-                                {/* 連下候補馬（Premium と統一の rich ミニカード） */}
-                                {raceHorses && raceHorses.filter(h => h.role === '連下' || h.role === '連下最上位').length > 0 && (
-                                    <div class="horse-card horse-card-minor minor-group-renka">
-                                        <div class="horse-header">
-                                            <div>
-                                                <span class="horse-mark-minor">{raceHorses.find(h => h.role === '連下')?.displayMark || '△'}</span>
-                                                <span class="minor-group-title minor-group-title-renka">連下候補馬</span>
-                                            </div>
-                                        </div>
-                                        <div class="minor-horse-grid">
-                                            {raceHorses.filter(h => h.role === '連下' || h.role === '連下最上位').map((horse) => {
-                                                const honmei = raceHorses.find(h => h.role === '本命');
-                                                const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
-                                                const comment = generateMinorHorseComment(horse.role, gap);
-                                                const importance = Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null;
-                                                const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
-                                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
-                                                return (
-                                                    <div class="minor-horse-card minor-horse-card-renka">
-                                                        <div class="minor-horse-head">
-                                                            <span class="minor-horse-mark">{horse.displayMark || '△'}</span>
-                                                            <span class="minor-horse-number">{horse.number}</span>
-                                                            <span class="minor-horse-name">{horse.name}</span>
-                                                            <span class="minor-horse-score">{horse.pt ?? 0}pt</span>
-                                                        </div>
-                                                        <div class="minor-horse-meta">
-                                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
-                                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
-                                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                            {horse.computerIndex != null && horse.computerIndex !== 0 && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
-                                                        </div>
-                                                        {evalPoints.length > 0 && (
-                                                            <div class="minor-horse-evals">
-                                                                {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
-                                                            </div>
-                                                        )}
-                                                        {importance && importance.length >= 3 && (
-                                                            <div class="minor-horse-importance">
-                                                                安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
-                                                            </div>
-                                                        )}
-                                                        {comment && <p class="minor-horse-comment">{comment}</p>}
-                                                        {recentRaces.length > 0 && (
-                                                            <details class="recent-races recent-races-compact">
-                                                                <summary>過去{Math.min(4, recentRaces.length)}走</summary>
-                                                                <div class="recent-races-list">
-                                                                    {recentRaces.slice(0, 4).map((r) => {
-                                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
-                                                                        return (
-                                                                            <div class="recent-race-row">
-                                                                                <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                <span class="recent-race-rank">{rank}</span>
-                                                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
-                                                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </details>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 抑え候補馬（Premium と統一の rich ミニカード）— pt=70 のフォールバック値は除外 */}
-                                {raceHorses && raceHorses.filter(h => (h.role === '押さえ' || h.role === '抑え' || h.role === '補欠') && (Number(h.pt) || 0) > 70).length > 0 && (
-                                    <div class="horse-card horse-card-minor minor-group-osae">
-                                        <div class="horse-header">
-                                            <div>
-                                                <span class="horse-mark-minor">{raceHorses.find(h => h.role === '押さえ')?.displayMark || '×'}</span>
-                                                <span class="minor-group-title minor-group-title-osae">抑え候補馬</span>
-                                            </div>
-                                        </div>
-                                        <div class="minor-horse-grid">
-                                            {raceHorses.filter(h => (h.role === '押さえ' || h.role === '抑え' || h.role === '補欠') && (Number(h.pt) || 0) > 70).map((horse) => {
-                                                const honmei = raceHorses.find(h => h.role === '本命');
-                                                const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
-                                                const comment = generateMinorHorseComment(horse.role, gap);
-                                                const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
-                                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
-                                                return (
-                                                    <div class="minor-horse-card minor-horse-card-osae">
-                                                        <div class="minor-horse-head">
-                                                            <span class="minor-horse-mark">{horse.displayMark || '×'}</span>
-                                                            <span class="minor-horse-number">{horse.number}</span>
-                                                            <span class="minor-horse-name">{horse.name}</span>
-                                                            <span class="minor-horse-score">{horse.pt ?? 0}pt</span>
-                                                        </div>
-                                                        <div class="minor-horse-meta">
-                                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
-                                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
-                                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                            {horse.computerIndex != null && horse.computerIndex !== 0 && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
-                                                        </div>
-                                                        {evalPoints.length > 0 && (
-                                                            <div class="minor-horse-evals">
-                                                                {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
-                                                            </div>
-                                                        )}
-                                                        {comment && <p class="minor-horse-comment">{comment}</p>}
-                                                        {recentRaces.length > 0 && (
-                                                            <details class="recent-races recent-races-compact">
-                                                                <summary>過去{Math.min(4, recentRaces.length)}走</summary>
-                                                                <div class="recent-races-list">
-                                                                    {recentRaces.slice(0, 4).map((r) => {
-                                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
-                                                                        return (
-                                                                            <div class="recent-race-row">
-                                                                                <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                <span class="recent-race-rank">{rank}</span>
-                                                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
-                                                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </details>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
+                                <RaceHorseSection raceHorses={raceHorses} />
 
                             </div>
 

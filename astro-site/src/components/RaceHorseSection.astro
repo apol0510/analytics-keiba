@@ -1,0 +1,313 @@
+---
+// レース1件分の rich 馬カード一括レンダーコンポーネント
+//
+// 🎯 単一ソース: メインレース / 非メインレース問わず同じ表示を出すための共通部品
+//   - HorseMainCard で 本命・対抗・単穴 を rich 表示
+//   - 連下候補馬・抑え候補馬の minor-horse-card
+//   - 不要馬・見送り馬の ineligible-section
+//
+// このコンポーネントを呼び出すだけで、メインレースと同じ horse 系セクションが揃う。
+// 買い目（betting）はレース種別ごとに異なるためページ側で別途レンダーする。
+//
+// 必要なデータ:
+//   raceHorses: normalizeHorseData(raceData) で正規化済みの配列
+
+import HorseMainCard from './HorseMainCard.astro';
+import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
+
+interface Props {
+    raceHorses: any[];
+}
+
+const { raceHorses = [] } = Astro.props as Props;
+const safeHorses = Array.isArray(raceHorses) ? raceHorses : [];
+
+// 不要馬・見送り馬の抽出（Premium nankan.astro と同一ロジック）
+const cCategoryRoles = new Set(['押さえ', '抑え', '補欠']);
+const handledRoles = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
+const honmei = safeHorses.find(h => h?.role === '本命');
+const honmeiPt = Number(honmei?.pt) || 0;
+const ineligible = safeHorses
+    .filter((h) => {
+        if (!h) return false;
+        if (!handledRoles.has(h.role)) return true;
+        if (cCategoryRoles.has(h.role) && !((Number(h.pt) || 0) > 70)) return true;
+        return false;
+    })
+    .sort((a, b) => (Number(b.pt) || 0) - (Number(a.pt) || 0));
+
+function reasonFor(h: any) {
+    const pt = Number(h.pt) || 0;
+    const ci = Number(h.computerIndex);
+    if (!(pt > 0)) return '評価不足';
+    if (Number.isFinite(ci) && ci > 0 && !(ci > 44)) return '指数不足';
+    return '上位比較で劣勢';
+}
+
+// 連下・抑えのチェック
+const renkaHorses = safeHorses.filter(h => h?.role === '連下' || h?.role === '連下最上位');
+const osaeHorses = safeHorses.filter(h => (h?.role === '押さえ' || h?.role === '抑え' || h?.role === '補欠') && (Number(h?.pt) || 0) > 70);
+const renkaMark = safeHorses.find(h => h?.role === '連下')?.displayMark || '△';
+const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '×';
+---
+
+{/* 本命・対抗・単穴 — 共有 HorseMainCard で描画 */}
+{safeHorses
+    .filter(h => h?.role === '本命' || h?.role === '対抗' || h?.role === '単穴')
+    .map((horse) => (
+        <HorseMainCard horse={horse} />
+    ))
+}
+
+{/* 連下候補馬 — rich minor-horse-card */}
+{renkaHorses.length > 0 && (
+    <div class="horse-card horse-card-minor minor-group-renka">
+        <div class="horse-header">
+            <div>
+                <span class="horse-mark-minor">{renkaMark}</span>
+                <span class="minor-group-title minor-group-title-renka">連下候補馬</span>
+            </div>
+        </div>
+        <div class="minor-horse-grid">
+            {renkaHorses.map((horse) => {
+                const gap = honmeiPt - (Number(horse?.pt) || 0);
+                const comment = generateMinorHorseComment(horse.role, gap);
+                const importance = Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null;
+                const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
+                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                return (
+                    <div class="minor-horse-card minor-horse-card-renka">
+                        <div class="minor-horse-head">
+                            <span class="minor-horse-mark">{horse.displayMark || '△'}</span>
+                            <span class="minor-horse-number">{horse.number}</span>
+                            <span class="minor-horse-name">{horse.name}</span>
+                            <span class="minor-horse-score">{horse.pt ?? 0}pt</span>
+                        </div>
+                        <div class="minor-horse-meta">
+                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                            {horse.computerIndex != null && horse.computerIndex !== 0 && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                        </div>
+                        {evalPoints.length > 0 && (
+                            <div class="minor-horse-evals">
+                                {evalPoints.slice(0, 3).map((p: string) => (<span class="eval-tag-small">{p}</span>))}
+                            </div>
+                        )}
+                        {importance && importance.length >= 3 && (
+                            <div class="minor-horse-importance">
+                                安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
+                            </div>
+                        )}
+                        {comment && <p class="minor-horse-comment">{comment}</p>}
+                        {recentRaces.length > 0 && (
+                            <details class="recent-races recent-races-compact">
+                                <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                <div class="recent-races-list">
+                                    {recentRaces.slice(0, 4).map((r: any) => {
+                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                        return (
+                                            <div class="recent-race-row">
+                                                <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                <span class="recent-race-rank">{rank}</span>
+                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </details>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    </div>
+)}
+
+{/* 抑え候補馬 — rich minor-horse-card-osae */}
+{osaeHorses.length > 0 && (
+    <div class="horse-card horse-card-minor minor-group-osae">
+        <div class="horse-header">
+            <div>
+                <span class="horse-mark-minor">{osaeMark}</span>
+                <span class="minor-group-title minor-group-title-osae">抑え候補馬</span>
+            </div>
+        </div>
+        <div class="minor-horse-grid">
+            {osaeHorses.map((horse) => {
+                const gap = honmeiPt - (Number(horse?.pt) || 0);
+                const comment = generateMinorHorseComment(horse.role, gap);
+                const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
+                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                return (
+                    <div class="minor-horse-card minor-horse-card-osae">
+                        <div class="minor-horse-head">
+                            <span class="minor-horse-mark">{horse.displayMark || '×'}</span>
+                            <span class="minor-horse-number">{horse.number}</span>
+                            <span class="minor-horse-name">{horse.name}</span>
+                            <span class="minor-horse-score">{horse.pt ?? 0}pt</span>
+                        </div>
+                        <div class="minor-horse-meta">
+                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                            {horse.computerIndex != null && horse.computerIndex !== 0 && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                        </div>
+                        {evalPoints.length > 0 && (
+                            <div class="minor-horse-evals">
+                                {evalPoints.slice(0, 3).map((p: string) => (<span class="eval-tag-small">{p}</span>))}
+                            </div>
+                        )}
+                        {comment && <p class="minor-horse-comment">{comment}</p>}
+                        {recentRaces.length > 0 && (
+                            <details class="recent-races recent-races-compact">
+                                <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                <div class="recent-races-list">
+                                    {recentRaces.slice(0, 4).map((r: any) => {
+                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                        return (
+                                            <div class="recent-race-row">
+                                                <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                <span class="recent-race-rank">{rank}</span>
+                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </details>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    </div>
+)}
+
+{/* 不要馬・見送り馬 — Premium と同一ロジック */}
+{ineligible.length > 0 && (
+    <details class="ineligible-section">
+        <summary>不要馬・見送り馬 {ineligible.length}頭</summary>
+        <ul class="ineligible-list">
+            {ineligible.map((h: any) => {
+                const gap = honmeiPt - (Number(h.pt) || 0);
+                const comment = generateMinorHorseComment('無', gap);
+                return (
+                    <li class="ineligible-row">
+                        <div class="ineligible-row-top">
+                            <span class="ineligible-num">{h.number}</span>
+                            <span class="ineligible-name">{h.name}</span>
+                            <span class="ineligible-pt">{h.pt ?? 0}pt</span>
+                            {h.computerIndex != null && (
+                                <span class="ineligible-meta">指数{h.computerIndex}</span>
+                            )}
+                            {h.jockey && <span class="ineligible-meta">騎手:{h.jockey}</span>}
+                            <span class="ineligible-reason">{reasonFor(h)}</span>
+                        </div>
+                        {comment && (
+                            <div class="ineligible-comment">{comment}</div>
+                        )}
+                    </li>
+                );
+            })}
+        </ul>
+    </details>
+)}
+
+<style is:global>
+    /* 不要馬・見送り馬 折りたたみ表示（Premium と同一） */
+    .ineligible-section {
+        margin-top: 16px;
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 8px;
+        padding: 10px 14px;
+        border: 1px dashed rgba(100, 116, 139, 0.3);
+    }
+    .ineligible-section > summary {
+        cursor: pointer;
+        color: #94a3b8;
+        font-weight: 600;
+        font-size: 0.88rem;
+        list-style: none;
+    }
+    .ineligible-section > summary::-webkit-details-marker { display: none; }
+    .ineligible-section > summary::before {
+        content: '▶';
+        display: inline-block;
+        margin-right: 8px;
+        color: #64748b;
+        font-size: 0.7rem;
+        transition: transform 0.2s ease;
+    }
+    .ineligible-section[open] > summary::before { transform: rotate(90deg); }
+    .ineligible-list {
+        list-style: none;
+        margin: 10px 0 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .ineligible-row {
+        background: rgba(30, 41, 59, 0.4);
+        border-radius: 6px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .ineligible-row-top {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 14px;
+        font-size: 0.85rem;
+        color: #cbd5e1;
+    }
+    .ineligible-num {
+        background: linear-gradient(135deg, #64748b, #475569);
+        color: #f1f5f9;
+        padding: 2px 8px;
+        border-radius: 5px;
+        font-weight: 700;
+        font-size: 0.78rem;
+        min-width: 24px;
+        text-align: center;
+    }
+    .ineligible-name {
+        color: #e2e8f0;
+        font-weight: 600;
+    }
+    .ineligible-pt {
+        color: #94a3b8;
+        font-weight: 700;
+        font-size: 0.8rem;
+    }
+    .ineligible-meta {
+        color: #64748b;
+        font-size: 0.75rem;
+    }
+    .ineligible-reason {
+        margin-left: auto;
+        color: #fca5a5;
+        font-size: 0.78rem;
+        font-weight: 600;
+        background: rgba(239, 68, 68, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px solid rgba(239, 68, 68, 0.25);
+    }
+    .ineligible-comment {
+        color: #94a3b8;
+        font-size: 0.8rem;
+        line-height: 1.4;
+        margin-top: 2px;
+    }
+</style>
