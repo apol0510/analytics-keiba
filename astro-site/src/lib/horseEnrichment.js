@@ -16,24 +16,51 @@ export function computeOverallScore(pt) {
 }
 
 /**
- * 総合評価の星
+ * 総合評価の星 — role を加味した役割別評価
  *
- * 2026-05-14 修正 (累積スコアレンジ拡張対応):
- *   sourceComputerIndex 導入により displayScore = rawScore + 70 のフル構造に乗り、
- *   pt は 70 (フロア) 〜 160 (本命 90点+70) の累積スコアレンジになる。
- *   星評価レンジも累積スコアに合わせて再調整。
+ * 2026-05-14 修正:
+ *   sourceComputerIndex 導入で累積スコアが 70〜160 帯に拡張された結果、
+ *   全頭が★★★★に張り付き「★★★★の価値が薄まる」問題が発生したため、
+ *   role × pt の組合せで星を決める設計に変更。
  *
- *   pt >= 120 → ★★★★   (本命〜単穴帯)
- *   pt >=  90 → ★★★    (連下〜抑え候補帯)
- *   pt >=  70 → ★★      (フロア / 不要馬境界)
- *   pt <   70 → ★       (異常値・欠損)
+ *   本命 / 対抗:
+ *     pt >= 150 → ★★★★    (高評価本命級のみ)
+ *     pt <  150 → ★★★
+ *
+ *   単穴 / 連下最上位 / 連下:
+ *     → 一律 ★★★         (買い目候補の主帯)
+ *
+ *   押さえ / 抑え / 補欠:
+ *     pt >  70 → ★★★      (sourceComputerIndex >=45 で救済された馬)
+ *     pt <= 70 → ★★       (フロア・不要馬境界)
+ *
+ *   無 / 不明 / undefined:
+ *     pt >  0  → ★★
+ *     pt <= 0  → ★         (異常値)
+ *
+ * @param {number|string} pt 累積スコア
+ * @param {string} [role]   馬の役割（本命/対抗/単穴/連下/連下最上位/押さえ/抑え/補欠/無）
+ * @returns {string} 「★」の連続文字列
  */
-export function getStarRating(pt) {
+export function getStarRating(pt, role) {
   const v = Number(pt) || 0;
-  if (v >= 120) return '★★★★';
-  if (v >= 90)  return '★★★';
-  if (v >= 70)  return '★★';
-  return '★';
+  switch (role) {
+    case '本命':
+    case '対抗':
+      return v >= 150 ? '★★★★' : '★★★';
+    case '単穴':
+    case '連下最上位':
+    case '連下':
+      return '★★★';
+    case '押さえ':
+    case '抑え':
+    case '補欠':
+      return v > 70 ? '★★★' : '★★';
+    default:
+      // role が未指定 or '無' などは pt のみで判定（フォールバック）
+      if (v > 0) return '★★';
+      return '★';
+  }
 }
 
 // 信頼度（圧縮スコア）— 整数のみ、星より差を抑えて違和感のないレンジに
@@ -255,7 +282,7 @@ export function computeImportance(h, allRaceHorses) {
 export function enrichHorse(h, allRaceHorses, raceDistance) {
   const pt = Number(h.pt || 0);
   const overallScore = computeOverallScore(pt);
-  const stars = getStarRating(pt); // 2026-05-14: 圧縮値ではなく pt 直接判定に変更
+  const stars = getStarRating(pt, h.role); // 2026-05-14: role-aware 星評価
   const confidence = computeConfidence(pt);
   const importance = computeImportance(h, allRaceHorses);
   const evalPoints = computeEvalPoints(h, allRaceHorses, raceDistance);

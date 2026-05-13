@@ -80,13 +80,15 @@ export function getRaceConfidence(horses) {
     return Math.round(totalConfidence / mainHorses.length);
 }
 
-// 星評価システム — horseEnrichment.js の getStarRating と同一基準
-//   pt >= 120 → ★★★★  (本命〜単穴帯)
-//   pt >=  90 → ★★★   (連下〜抑え候補帯)
-//   pt >=  70 → ★★     (フロア / 不要馬境界)
-//   pt <   70 → ★      (異常値・欠損)
-// 2026-05-14: sourceComputerIndex 導入で累積スコアレンジが 70〜160 に
-// 広がったため、星評価しきい値を 120/90/70 に再調整。
+// 星評価システム — horseEnrichment.js の getStarRating と同一の role-aware ロジック
+//
+//   本命 / 対抗:        pt>=150 → ★★★★、それ未満 → ★★★
+//   単穴 / 連下最上位 / 連下: 一律 ★★★
+//   押さえ / 抑え / 補欠:  pt>70 → ★★★、pt<=70 → ★★
+//   無 / 未指定:         pt>0 → ★★、pt<=0 → ★
+//
+// 2026-05-14: 累積スコアだけで判定する旧仕様は補欠まで★★★★が並んで
+// 「★★★★の価値が薄まる」問題があったため、role × pt で判定する設計に変更。
 export function convertToStarRating(text, horseType, score) {
     if (typeof score !== 'number' && typeof score !== 'string') {
         return text;
@@ -96,10 +98,24 @@ export function convertToStarRating(text, horseType, score) {
         return text;
     }
     let stars;
-    if (numScore >= 120)     stars = '★★★★';
-    else if (numScore >= 90) stars = '★★★';
-    else if (numScore >= 70) stars = '★★';
-    else                     stars = '★';
+    switch (horseType) {
+        case '本命':
+        case '対抗':
+            stars = numScore >= 150 ? '★★★★' : '★★★';
+            break;
+        case '単穴':
+        case '連下最上位':
+        case '連下':
+            stars = '★★★';
+            break;
+        case '押さえ':
+        case '抑え':
+        case '補欠':
+            stars = numScore > 70 ? '★★★' : '★★';
+            break;
+        default:
+            stars = numScore > 0 ? '★★' : '★';
+    }
     return `総合評価:${stars}`;
 }
 
