@@ -739,13 +739,22 @@ export function getRoleDisplayConfig(role) {
  *   一方で「補欠 = 全部抑え候補」とすると、ci=1〜2 の明らかに評価弱な馬まで
  *   抑え候補に並んで買い目候補感が薄れる。
  *
- *   両極端を避けるため、補欠は pt と computerIndex の両軸で
+ *   両極端を避けるため、補欠系は pt と computerIndex の両軸で
  *   「拾う / 見送る」を判断する。
+ *
+ * ロール変換の注意 (2026-05-14 追記):
+ *   - source の予想 JSON では `押さえ` ロールは使われていない（実測 0 件）。
+ *     全て `補欠` で来る。
+ *   - adaptLatestPrediction.js の adaptNewToLegacy は `補欠` を horses.reserve に振り分け、
+ *     normalizeHorseData が reserve を **role='押さえ' に書き換えてから** push する。
+ *   - そのため Astro レンダー時には `押さえ` ロールが「source 補欠由来」として現れる。
+ *   - isOsaeCandidate / isIneligibleHorse は `押さえ` も `補欠` と同じ閾値判定を行う。
+ *   - 「抑え」ロールは現状未使用だが、admin 明示用途として無条件 true で残す。
  *
  * 判定基準:
  *   isOsaeCandidate(h)
- *     - role が「押さえ」「抑え」 → true (admin 明示)
- *     - role が「補欠」かつ
+ *     - role が「抑え」 → true (admin 明示、現状未使用)
+ *     - role が「押さえ」「補欠」かつ
  *         pt > 70  (フロア値を明確に超える / 連下降格分など)
  *         または computerIndex >= OSAE_CI_THRESHOLD (=10)
  *       → true
@@ -753,8 +762,8 @@ export function getRoleDisplayConfig(role) {
  *
  *   isIneligibleHorse(h)
  *     - role が未割当 (handledRoles 外 / undefined / '無') → true
- *     - role が「補欠」かつ isOsaeCandidate が false → true
- *     - それ以外 → false (本命/対抗/単穴/連下/連下最上位 はここに来ない)
+ *     - role が「押さえ」「補欠」かつ isOsaeCandidate が false → true
+ *     - それ以外 → false (本命/対抗/単穴/連下/連下最上位/抑え はここに来ない)
  *
  *   しきい値 OSAE_CI_THRESHOLD = 10 の根拠:
  *     ci=18 (例: サンダビューク) は救出、ci=1〜2 は不要側に残す中間値。
@@ -763,13 +772,14 @@ export function getRoleDisplayConfig(role) {
  *     経験的に 10 を境にすると、明確に評価根拠がある補欠だけが拾える。
  */
 export const HANDLED_ROLES = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
+export const OSAE_LIKE_ROLES = new Set(['押さえ', '補欠']);  // しきい値判定対象（source 補欠 + normalize 後の 押さえ）
 export const OSAE_CI_THRESHOLD = 10;
 
 export function isOsaeCandidate(horse) {
     if (!horse) return false;
     const role = horse.role;
-    if (role === '押さえ' || role === '抑え') return true;
-    if (role === '補欠') {
+    if (role === '抑え') return true; // admin 明示（現状未使用）
+    if (OSAE_LIKE_ROLES.has(role)) {
         const pt = Number(horse.pt) || 0;
         const ci = Number(horse.computerIndex) || 0;
         if (pt > 70) return true;
@@ -783,7 +793,7 @@ export function isIneligibleHorse(horse) {
     if (!horse) return false;
     const role = horse.role;
     if (!HANDLED_ROLES.has(role)) return true;
-    if (role === '補欠' && !isOsaeCandidate(horse)) return true;
+    if (OSAE_LIKE_ROLES.has(role) && !isOsaeCandidate(horse)) return true;
     return false;
 }
 
