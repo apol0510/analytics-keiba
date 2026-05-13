@@ -223,14 +223,14 @@ export const dailyResultsData = {
                 <span class="ai-status">AI分析完了</span>
             </div>
             <h1 class="race-title">{formattedDate} {track} - 予想</h1>
-            <div class="ai-metrics-headline">🚀 Premium プラン 過去1年の実績</div>
+            <div class="ai-metrics-headline">🚀 Premium プランの実績</div>
             <div class="ai-metrics">
                 <div class="metric">
                     <div class="metric-value">87%</div>
                     <div class="metric-label">平均的中率</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">156%</div>
+                    <div class="metric-value">176%</div>
                     <div class="metric-label">平均回収率</div>
                 </div>
                 <div class="metric">
@@ -265,7 +265,7 @@ export const dailyResultsData = {
                     </h2>
                     <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
                         <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
-                            {yesterdayResults.date} {yesterdayResults.track}競馬
+                            {yesterdayResults.date} {yesterdayResults.track}
                         </p>
                         {yesterdayResults.hitRate === 100 && (
                             <div style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 0.9rem;">
@@ -292,22 +292,29 @@ export const dailyResultsData = {
                 </div>
 
                 <!-- レース一覧（archiveと統一デザイン） -->
+                <!-- 🔧 2026-05-13 修正: 新フォーマット対応
+                     旧: raceDetail.hit / raceDetail.payout
+                     新: raceDetail.isHit / raceDetail.umatan.payout
+                     どちらでも動くよう ?? でフォールバック -->
                 <div style="display: grid; gap: 12px;">
-                    {latestResult?.races?.map((raceDetail) =>
-                        raceDetail.hit ? (
+                    {latestResult?.races?.map((raceDetail) => {
+                        const isHit = raceDetail.isHit ?? raceDetail.hit;
+                        const payout = raceDetail.umatan?.payout ?? raceDetail.payout ?? 0;
+                        const betType = raceDetail.betType || (raceDetail.umatan ? '馬単' : '');
+                        return isHit ? (
                             <div class="yesterday-race-card">
                                 <div class="yesterday-race-info">
-                                    <div class="yesterday-race-number">{raceDetail.raceNumber}</div>
-                                    <div class="yesterday-race-name">{raceDetail.raceName}</div>
+                                    <div class="yesterday-race-number">{raceDetail.raceNumber}R</div>
+                                    <div class="yesterday-race-name">{raceDetail.raceName || `第${raceDetail.raceNumber}レース`}</div>
                                 </div>
                                 <div class="yesterday-race-result">
-                                    <div class="yesterday-bet-info">{raceDetail.betType}</div>
+                                    <div class="yesterday-bet-info">{betType}</div>
                                     <div class="yesterday-hit-badge">✅ 的中</div>
-                                    <div class="yesterday-payout">¥{raceDetail.payout.toLocaleString()}</div>
+                                    <div class="yesterday-payout">¥{Number(payout).toLocaleString()}</div>
                                 </div>
                             </div>
-                        ) : null
-                    )}
+                        ) : null;
+                    })}
                 </div>
             </div>
         </section>
@@ -318,9 +325,6 @@ export const dailyResultsData = {
                 <h2 style="font-size: 2.5rem; font-weight: 800; color: var(--primary-color); text-align: center; margin-bottom: 15px;">
                     🔍 全レース AI 印プレビュー
                 </h2>
-                <p style="text-align: center; color: var(--body-text-color); font-size: 1.1rem; margin-bottom: 12px; opacity: 0.9;">
-                    メインレース以外も AI が選定した <strong>本命・対抗・単穴</strong> を全レース分ご確認いただけます。
-                </p>
                 <p style="text-align: center; color: #fbbf24; font-size: 1rem; margin-bottom: 40px; font-weight: 600;">
                     💎 買い目付きの完全版は Premium プランで <strong>全12レース対応</strong>
                 </p>
@@ -521,10 +525,10 @@ export const dailyResultsData = {
             </div>
         </section>
 
-        <!-- スタンダード会員バッジ -->
+        <!-- ライト会員バッジ -->
         <div class="premium-status">
             <span class="premium-icon">⭐</span>
-            <span class="premium-status-text">スタンダード会員限定コンテンツ</span>
+            <span class="premium-status-text">ライト会員コンテンツ</span>
         </div>
 
         <!-- スタンダードレースアコーディオン（データドリブン） -->
@@ -628,6 +632,16 @@ export const dailyResultsData = {
                                                 <span class={roleConfig.typeClass} style={roleConfig.style}>{horse.role}</span>
                                             </div>
                                         </div>
+                                        {(horse.jockey || horse.trainer) && (
+                                            <div class="horse-meta">
+                                                {horse.jockey && (
+                                                    <span class="horse-meta-item"><span class="horse-meta-label">騎手</span>{horse.jockey}</span>
+                                                )}
+                                                {horse.trainer && (
+                                                    <span class="horse-meta-item"><span class="horse-meta-label">厩舎</span>{horse.trainer}</span>
+                                                )}
+                                            </div>
+                                        )}
                                         <div class="ai-factors">
                                             {/* 累積スコアと星評価のみ表示 */}
                                             {horse.factors && horse.factors.filter(factor =>
@@ -672,6 +686,16 @@ export const dailyResultsData = {
                                                 <span class={roleConfig.typeClass} style={roleConfig.style}>{horse.role}</span>
                                             </div>
                                         </div>
+                                        {(horse.jockey || horse.trainer) && (
+                                            <div class="horse-meta">
+                                                {horse.jockey && (
+                                                    <span class="horse-meta-item"><span class="horse-meta-label">騎手</span>{horse.jockey}</span>
+                                                )}
+                                                {horse.trainer && (
+                                                    <span class="horse-meta-item"><span class="horse-meta-label">厩舎</span>{horse.trainer}</span>
+                                                )}
+                                            </div>
+                                        )}
                                         <div class="ai-factors">
                                             {/* 累積スコアと星評価のみ表示 */}
                                             {horse.factors && horse.factors.filter(factor =>
@@ -716,6 +740,16 @@ export const dailyResultsData = {
                                                 <span class={roleConfig.typeClass} style={roleConfig.style}>{horse.role}</span>
                                             </div>
                                         </div>
+                                        {(horse.jockey || horse.trainer) && (
+                                            <div class="horse-meta">
+                                                {horse.jockey && (
+                                                    <span class="horse-meta-item"><span class="horse-meta-label">騎手</span>{horse.jockey}</span>
+                                                )}
+                                                {horse.trainer && (
+                                                    <span class="horse-meta-item"><span class="horse-meta-label">厩舎</span>{horse.trainer}</span>
+                                                )}
+                                            </div>
+                                        )}
                                         <div class="ai-factors">
                                             {/* 累積スコアと星評価のみ表示 */}
                                             {horse.factors && horse.factors.filter(factor =>
@@ -1226,6 +1260,35 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
         font-size: 1rem;
         font-weight: 700;
         color: #fbbf24;
+        letter-spacing: 0.04em;
+    }
+
+    /* 騎手・厩舎メタ表示（本命・対抗・単穴の horse-header 直下） */
+    .horse-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin: 6px 0 12px;
+        padding: 8px 12px;
+        background: rgba(15, 23, 42, 0.4);
+        border-radius: 8px;
+        border-left: 3px solid rgba(139, 92, 246, 0.5);
+        font-size: 0.92rem;
+        color: #cbd5e1;
+    }
+    .horse-meta-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .horse-meta-label {
+        display: inline-block;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #94a3b8;
+        background: rgba(148, 163, 184, 0.12);
+        padding: 2px 8px;
+        border-radius: 4px;
         letter-spacing: 0.04em;
     }
 
