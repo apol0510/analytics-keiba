@@ -22,17 +22,23 @@ interface Props {
 const { raceHorses = [] } = Astro.props as Props;
 const safeHorses = Array.isArray(raceHorses) ? raceHorses : [];
 
-// 不要馬・見送り馬の抽出（Premium nankan.astro と同一ロジック）
-const cCategoryRoles = new Set(['押さえ', '抑え', '補欠']);
+// 役割ベースで「不要馬」「抑え候補」を振り分け（2026-05-13 修正）
+//
+// 旧仕様: 補欠/抑え/押さえ は pt > 70 の場合のみ「抑え候補」に表示、
+//   pt ≤ 70 だと「不要馬」に落としていた。
+//   admin 側が displayScore/rawScore を空欄で保存すると importPrediction.js が
+//   pt=70 にフロア化するため、十分なコンピ指数を持つ補欠（例: 川崎10R サンダビューク
+//   ci=18 / racebook 指数52）まで「不要馬」にまとめられ表示数が膨らんでいた。
+//
+// 新仕様: admin が role を付けた馬は その role の section に必ず出す。
+//   「不要馬」は role が未割当（'無' / undefined / handledRoles 外）の馬のみ。
 const handledRoles = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
 const honmei = safeHorses.find(h => h?.role === '本命');
 const honmeiPt = Number(honmei?.pt) || 0;
 const ineligible = safeHorses
     .filter((h) => {
         if (!h) return false;
-        if (!handledRoles.has(h.role)) return true;
-        if (cCategoryRoles.has(h.role) && !((Number(h.pt) || 0) > 70)) return true;
-        return false;
+        return !handledRoles.has(h.role);
     })
     .sort((a, b) => (Number(b.pt) || 0) - (Number(a.pt) || 0));
 
@@ -44,9 +50,16 @@ function reasonFor(h: any) {
     return '上位比較で劣勢';
 }
 
-// 連下・抑えのチェック
+// 連下・抑え（補欠 を含む）— pt フロアでフィルタせず、role 付与馬を全て表示
+// 抑え枠が密にならないよう、pt 降順 → computerIndex 降順で並べる
 const renkaHorses = safeHorses.filter(h => h?.role === '連下' || h?.role === '連下最上位');
-const osaeHorses = safeHorses.filter(h => (h?.role === '押さえ' || h?.role === '抑え' || h?.role === '補欠') && (Number(h?.pt) || 0) > 70);
+const osaeHorses = safeHorses
+    .filter(h => h?.role === '押さえ' || h?.role === '抑え' || h?.role === '補欠')
+    .sort((a, b) => {
+        const ptDiff = (Number(b?.pt) || 0) - (Number(a?.pt) || 0);
+        if (ptDiff !== 0) return ptDiff;
+        return (Number(b?.computerIndex) || 0) - (Number(a?.computerIndex) || 0);
+    });
 const renkaMark = safeHorses.find(h => h?.role === '連下')?.displayMark || '△';
 const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '×';
 ---
