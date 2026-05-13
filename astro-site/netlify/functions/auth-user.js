@@ -280,7 +280,31 @@ exports.handler = async (event, context) => {
     }
 
     // 🔧 プラン値正規化: 大文字小文字混在問題解決
-    const normalizedPlan = normalizePlan(currentPlan);
+    let normalizedPlan = normalizePlan(currentPlan);
+
+    // ─────────────────────────────────────────────
+    // 🚨 2026-05-13 重大バグ修正: 入金待ち（Status='pending'）は Free 扱い
+    //
+    // 旧バグ:
+    //   bank-transfer-application.js がフォーム送信時点で 'プラン' を申込プラン
+    //   （例: 'Light'）に書き込むため、admin が Status を 'active' にしていなくても
+    //   auth-user.js が 'プラン' を読んでログイン時に有料プラン扱いしてしまっていた。
+    //   → 振込前のユーザーが Light/Premium 機能にアクセスできる重大なセキュリティ問題。
+    //
+    // 修正:
+    //   Status === 'pending' のユーザーは、'プラン' フィールドの値に関わらず Free として扱う。
+    //   admin が Status を 'active' に切り替えた後に正規のプランが反映される。
+    //
+    // 互換性:
+    //   - Status が未設定（旧データ）の場合は従来通り 'プラン' を返す（既存有料会員を壊さない）
+    //   - Status === 'active' の場合は従来通り 'プラン' を返す
+    // ─────────────────────────────────────────────
+    const currentStatus = user.get('Status') || null;
+    const isPendingPayment = String(currentStatus || '').toLowerCase() === 'pending';
+    if (isPendingPayment && normalizedPlan !== 'Free' && normalizedPlan !== 'free') {
+      console.log(`🚫 入金待ち（Status=pending）のため Free 扱い: ${email} / 申込プラン=${normalizedPlan} → Free`);
+      normalizedPlan = 'Free';
+    }
 
     // 🚨 2026-03-02削除: 退会フラグ自動リセットロジックを削除
     // 削除理由: 退会後のログインで有効期限が30日延長されるバグが発生
@@ -324,6 +348,7 @@ exports.handler = async (event, context) => {
     };
 
     // 🚨 2025-11-26修正: 退会申請済み or 有効期限切れの場合はポイント付与なし
+    // 🔧 2026-05-13修正: Status=pending（入金待ち）も Free 扱いでポイント付与
     // 通常のログインポイント（1日1回）
     if (lastLogin !== today) {
       if (withdrawalRequested || isExpired) {
@@ -332,7 +357,10 @@ exports.handler = async (event, context) => {
         pointsAdded = 0;
       } else {
         // 通常ユーザー → プラン別ポイント付与
-        pointsAdded += POINTS_BY_PLAN[currentPlan] || 1;
+        // Status=pending の場合は normalizedPlan が既に 'Free' に置き換わっているため、
+        // それを参照して 1pt 付与（旧バグ: 申込直後の 'プラン'='Light' を読んで 10pt 付与していた）
+        const planForPoints = isPendingPayment ? 'Free' : currentPlan;
+        pointsAdded += POINTS_BY_PLAN[planForPoints] || 1;
       }
       updateData['最終ポイント付与日'] = today;
     }
