@@ -216,7 +216,7 @@ export const dailyResultsData = {
 
 ---
 
-<BaseLayout title="スタンダード会員予想" description={`AI技術による${track}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のスタンダード版を提供中。`}>
+<BaseLayout title="ライト会員予想" description={`AI技術による${track}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のライト版を提供中。`}>
     <AccessControl requiredPlan="standard">
         <div class="page-container">
         <!-- ヘッダーセクション -->
@@ -862,7 +862,13 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 
 </script>
 
-<style>
+<style is:global>
+    /* 🔧 2026-05-13: <style> → <style is:global> に変更
+       RaceHorseSection.astro / HorseMainCard.astro が描画する要素
+       (.minor-horse-card / .recent-races / .horse-card 等) に
+       page-scoped CSS が当たらない問題を解消するため。
+       ページ固有の class 名は light-predictions-* のように他と被らない命名のため
+       global にしても他ページへの影響なし。 */
     body {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         color: #e2e8f0;
@@ -2582,8 +2588,10 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
         };
     }
 
-    // 1R-9Rのプレビュートグル関数を生成
-    for (let i = 1; i <= 9; i++) {
+    // 🔧 2026-05-13 修正: プレビューも全レース番号 (1-12) で生成
+    //   旧: 1-9 のみ → メインレースが 11R の場合は 10R/12R のアコーディオンが開けなかった
+    //   新: 1-12 全てに preview toggle を割り当て
+    for (let i = 1; i <= 12; i++) {
         window[`togglePreview${i}R`] = createPreviewToggleFunction(i);
     }
 
