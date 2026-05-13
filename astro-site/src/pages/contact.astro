@@ -396,9 +396,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     const result = await response.json();
 
                     if (response.ok) {
-                        formMessage.textContent = 'お問い合わせを送信しました。ご連絡ありがとうございます。';
-                        formMessage.className = 'form-message success';
                         form.reset();
+                        if (window.SubmissionResult) {
+                            window.SubmissionResult.showSuccessScreen({
+                                formEl: form,
+                                messageEl: formMessage,
+                                options: {
+                                    title: 'お問い合わせを送信しました',
+                                    message: 'ご連絡ありがとうございます。',
+                                    subMessage: '担当者から順次ご返信いたします。マイページから送信履歴も確認できます。'
+                                },
+                                history: {
+                                    type: 'contact',
+                                    label: `お問い合わせ: ${formData.subject || '(種類未選択)'}`,
+                                    status: 'sent',
+                                    details: { email: formData.email, subject: formData.subject }
+                                }
+                            });
+                        } else {
+                            formMessage.textContent = 'お問い合わせを送信しました。ご連絡ありがとうございます。';
+                            formMessage.className = 'form-message success';
+                        }
+                        return;
                     } else {
                         throw new Error(result.error || '送信に失敗しました');
                     }
@@ -407,7 +426,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     formMessage.className = 'form-message error';
                 }
 
-                // ボタンの状態を戻す
+                // ボタンの状態を戻す（エラー時のみ到達）
                 submitBtn.disabled = false;
                 btnText.style.display = 'inline';
                 btnLoading.style.display = 'none';

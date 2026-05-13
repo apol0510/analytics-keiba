@@ -227,8 +227,28 @@ export const prerender = true;
       const data = await response.json();
 
       if (response.ok) {
-        showMessage(data.message || 'ログインリンクを送信しました。メールをご確認ください。', 'success');
         emailInput.value = '';
+        const SR = (window as any).SubmissionResult;
+        if (SR) {
+          SR.showSuccessScreen({
+            formEl: form,
+            messageEl: messageDiv,
+            options: {
+              title: 'ログインリンクを送信しました',
+              message: data.message || `${email} 宛にログイン用のリンクを送信しました。`,
+              subMessage: 'メールに記載されたリンクをクリックするとログインが完了します。マイページから送信履歴も確認できます。'
+            },
+            history: {
+              type: 'magic-link',
+              label: `ログインリンク送信: ${email}`,
+              status: 'sent',
+              details: { email: email }
+            }
+          });
+        } else {
+          showMessage(data.message || 'ログインリンクを送信しました。メールをご確認ください。', 'success');
+        }
+        return;
       } else {
         const msg =
           response.status === 403 ? 'アカウントが無効です。サポートにお問い合わせください。'

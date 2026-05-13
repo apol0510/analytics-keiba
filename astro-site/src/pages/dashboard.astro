@@ -332,6 +332,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 </div>
             </div>
         </div>
+
+        <!-- 申請・送信履歴（ログイン状態に関わらず表示） -->
+        <div id="submission-history-section" class="submission-history-section">
+            <div class="submission-history-card">
+                <div class="submission-history-header">
+                    <h2>📜 申請・送信履歴</h2>
+                    <p class="submission-history-subtitle">このブラウザから送信した申請・お問い合わせの記録です（最大50件・端末ごとに保存されます）</p>
+                </div>
+                <div id="submission-history-list" class="submission-history-list">
+                    <!-- JS で描画 -->
+                </div>
+                <div class="submission-history-actions">
+                    <button id="submission-history-clear" class="submission-history-clear" type="button">履歴をクリア</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 簡略化された認証システム -->
@@ -4095,6 +4111,114 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 font-size: 0.85rem;
             }
         }
+
+        /* 申請・送信履歴 */
+        .submission-history-section {
+            margin: 2rem 0;
+        }
+        .submission-history-card {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+        .submission-history-header h2 {
+            margin: 0 0 0.4rem;
+            font-size: 1.25rem;
+            color: #e2e8f0;
+        }
+        .submission-history-subtitle {
+            margin: 0 0 1rem;
+            color: #94a3b8;
+            font-size: 0.85rem;
+        }
+        .submission-history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            max-height: 480px;
+            overflow-y: auto;
+        }
+        .submission-history-item {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 0.8rem;
+            padding: 0.8rem 1rem;
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 10px;
+        }
+        .submission-history-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.25rem 0.6rem;
+            border-radius: 999px;
+            white-space: nowrap;
+        }
+        .submission-history-badge.type-bank-transfer { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
+        .submission-history-badge.type-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
+        .submission-history-badge.type-premium-plus-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
+        .submission-history-badge.type-magic-link { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
+        .submission-history-badge.type-withdrawal { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
+        .submission-history-badge.type-submission { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
+        .submission-history-main {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            min-width: 0;
+        }
+        .submission-history-label {
+            color: #e2e8f0;
+            font-weight: 600;
+            font-size: 0.95rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .submission-history-meta {
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+        .submission-history-status {
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.2rem 0.55rem;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+        .submission-history-status.status-pending { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+        .submission-history-status.status-sent { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+        .submission-history-status.status-completed { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
+        .submission-history-status.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+        .submission-history-empty {
+            text-align: center;
+            color: #94a3b8;
+            padding: 1.2rem;
+            font-size: 0.9rem;
+        }
+        .submission-history-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 0.8rem;
+        }
+        .submission-history-clear {
+            background: transparent;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            color: #cbd5e1;
+            padding: 0.45rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .submission-history-clear:hover { background: rgba(148, 163, 184, 0.1); }
+        @media (max-width: 600px) {
+            .submission-history-item {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+            .submission-history-status { justify-self: start; }
+        }
     </style>
 
     <script is:inline>
@@ -4118,6 +4242,91 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 
         console.log('💡 テスト用: setTestAuth("premium"), setTestAuth("standard"), setTestAuth("free") が利用可能です');
+    </script>
+
+    <!-- 申請・送信履歴の描画 -->
+    <script is:inline>
+        (function () {
+            var TYPE_LABELS = {
+                'bank-transfer': '銀行振込',
+                'contact': 'お問い合わせ',
+                'premium-plus-contact': 'Premium Plus 問合せ',
+                'magic-link': 'ログイン',
+                'withdrawal': '退会申請',
+                'submission': '送信'
+            };
+            var STATUS_LABELS = {
+                'pending': '確認待ち',
+                'sent': '送信済み',
+                'completed': '完了',
+                'failed': '失敗'
+            };
+
+            function escapeHtml(str) {
+                return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
+                    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+                });
+            }
+
+            function formatTimestamp(iso) {
+                try {
+                    var d = new Date(iso);
+                    if (isNaN(d.getTime())) return '';
+                    var y = d.getFullYear();
+                    var m = String(d.getMonth() + 1).padStart(2, '0');
+                    var day = String(d.getDate()).padStart(2, '0');
+                    var hh = String(d.getHours()).padStart(2, '0');
+                    var mm = String(d.getMinutes()).padStart(2, '0');
+                    return y + '/' + m + '/' + day + ' ' + hh + ':' + mm;
+                } catch (e) { return ''; }
+            }
+
+            function render() {
+                var listEl = document.getElementById('submission-history-list');
+                if (!listEl) return;
+                var SR = window.SubmissionResult;
+                var history = SR ? SR.getSubmissionHistory() : [];
+
+                if (!history.length) {
+                    listEl.innerHTML = '<div class="submission-history-empty">まだ申請・送信はありません。フォームから送信すると、ここに履歴が表示されます。</div>';
+                    return;
+                }
+
+                listEl.innerHTML = history.map(function (item) {
+                    var typeLabel = TYPE_LABELS[item.type] || item.type || '送信';
+                    var statusLabel = STATUS_LABELS[item.status] || item.status || '';
+                    var timestamp = formatTimestamp(item.timestamp);
+                    return (
+                        '<div class="submission-history-item">' +
+                            '<span class="submission-history-badge type-' + escapeHtml(item.type || 'submission') + '">' + escapeHtml(typeLabel) + '</span>' +
+                            '<div class="submission-history-main">' +
+                                '<div class="submission-history-label">' + escapeHtml(item.label || '送信') + '</div>' +
+                                '<div class="submission-history-meta">' + escapeHtml(timestamp) + '</div>' +
+                            '</div>' +
+                            '<span class="submission-history-status status-' + escapeHtml(item.status || 'pending') + '">' + escapeHtml(statusLabel) + '</span>' +
+                        '</div>'
+                    );
+                }).join('');
+            }
+
+            function bindClear() {
+                var btn = document.getElementById('submission-history-clear');
+                if (!btn) return;
+                btn.addEventListener('click', function () {
+                    if (!confirm('申請・送信履歴をすべて削除しますか？\nサーバーには影響しません（このブラウザの表示のみクリアします）。')) return;
+                    if (window.SubmissionResult) window.SubmissionResult.clearSubmissionHistory();
+                    render();
+                });
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                render();
+                bindClear();
+                window.addEventListener('storage', function (e) {
+                    if (e.key === 'submission-history') render();
+                });
+            });
+        })();
     </script>
 
     <!-- ポイント交換確認モーダル -->

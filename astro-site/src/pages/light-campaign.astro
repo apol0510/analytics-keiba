@@ -433,16 +433,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           const result = await response.json();
 
           if (result.success) {
-            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
-            formMessage.className = 'form-message success';
-            formMessage.style.display = 'block';
-
             document.getElementById('bankTransferForm').reset();
-
-            setTimeout(() => {
-              closeBankModal();
-              formMessage.style.display = 'none';
-            }, 3000);
+            window.SubmissionResult && window.SubmissionResult.showSuccessScreen({
+              formEl: bankTransferForm,
+              messageEl: formMessage,
+              options: {
+                title: 'お申し込みを受け付けました',
+                message: `${formData.productName} のお申し込みを受け付けました。`,
+                subMessage: '確認メールをお送りしましたのでご確認ください。マイページから申請状況も確認できます。'
+              },
+              history: {
+                type: 'bank-transfer',
+                label: `銀行振込お申し込み: ${formData.productName}`,
+                status: 'pending',
+                details: { email: formData.email, transferAmount: formData.transferAmount, transferDate: formData.transferDate, productName: formData.productName }
+              }
+            });
           } else {
             throw new Error(result.error || '送信に失敗しました');
           }
@@ -450,7 +456,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
           formMessage.className = 'form-message error';
           formMessage.style.display = 'block';
-        } finally {
           submitButton.disabled = false;
           submitText.style.display = 'inline';
           submitLoading.style.display = 'none';

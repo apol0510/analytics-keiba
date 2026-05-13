@@ -886,9 +886,26 @@
           const result = await response.json();
 
           if (response.ok) {
-            // 成功時: 完了ページにリダイレクト
-            alert('退会申請を受け付けました。確認メールをお送りしましたのでご確認ください。');
-            window.location.href = '/';
+            // 退会モーダル内のコンテンツを送信完了画面に置き換える
+            const modalContent = modal.querySelector('div');
+            if (window.SubmissionResult) {
+              window.SubmissionResult.recordSubmission({
+                type: 'withdrawal',
+                label: '退会申請',
+                status: 'completed',
+                details: { email: email, reason: reason }
+              });
+              if (modalContent) {
+                modalContent.innerHTML = window.SubmissionResult.buildSuccessHtml({
+                  title: '退会申請を受け付けました',
+                  message: '退会申請を受け付けました。',
+                  subMessage: '確認メールをお送りしましたのでご確認ください。マイページから送信履歴を確認できます。'
+                });
+              }
+            } else {
+              alert('退会申請を受け付けました。確認メールをお送りしましたのでご確認ください。');
+              window.location.href = '/';
+            }
           } else {
             throw new Error(result.error || '退会申請の送信に失敗しました');
           }
@@ -1120,16 +1137,22 @@
           const result = await response.json();
 
           if (result.success) {
-            formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
-            formMessage.className = 'form-message success';
-            formMessage.style.display = 'block';
-
             document.getElementById('bankTransferForm').reset();
-
-            setTimeout(() => {
-              closeBankModal();
-              formMessage.style.display = 'none';
-            }, 3000);
+            window.SubmissionResult && window.SubmissionResult.showSuccessScreen({
+              formEl: bankTransferForm,
+              messageEl: formMessage,
+              options: {
+                title: 'お申し込みを受け付けました',
+                message: `${formData.productName} のお申し込みを受け付けました。`,
+                subMessage: '確認メールをお送りしましたのでご確認ください。マイページから申請状況も確認できます。'
+              },
+              history: {
+                type: 'bank-transfer',
+                label: `銀行振込お申し込み: ${formData.productName}`,
+                status: 'pending',
+                details: { email: formData.email, transferAmount: formData.transferAmount, transferDate: formData.transferDate, productName: formData.productName }
+              }
+            });
           } else {
             throw new Error(result.error || '送信に失敗しました');
           }
@@ -1137,7 +1160,6 @@
           formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
           formMessage.className = 'form-message error';
           formMessage.style.display = 'block';
-        } finally {
           submitButton.disabled = false;
           submitText.style.display = 'inline';
           submitLoading.style.display = 'none';
