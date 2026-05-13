@@ -4,6 +4,7 @@
  */
 
 import archiveResults from '../data/archiveResults.json';
+import archiveResultsJra from '../data/archiveResultsJra.json';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 
 /**
@@ -67,6 +68,67 @@ export function convertToYesterdayResults() {
         recoveryRate,
         totalBetPoints,
         results,
+    };
+}
+
+/**
+ * archiveResultsJra.jsonから最新日のデータを取得
+ * JRA 版（archiveResultsJra.json）: 配列形式 ({date:"YYYY-MM-DD", venues:[], races:[], ...})
+ * @returns {Object|null} 最新日のデータ
+ */
+export function getLatestDayDataJra() {
+    if (!Array.isArray(archiveResultsJra) || archiveResultsJra.length === 0) return null;
+
+    const latest = archiveResultsJra[0];
+    if (!latest || !latest.date) return null;
+
+    const [year, month, day] = latest.date.split('-');
+    return {
+        year,
+        month,
+        day,
+        ...latest,
+    };
+}
+
+/**
+ * JRA 最新日データを yesterdayResults 形式に変換
+ * @returns {Object|null} yesterdayResults 形式のオブジェクト
+ */
+export function convertToYesterdayResultsJra() {
+    const latestData = getLatestDayDataJra();
+    if (!latestData) return null;
+
+    const races = Array.isArray(latestData.races) ? latestData.races : [];
+
+    // 回収率: JSON の returnRate を優先。無ければ totalBetPoints / totalInvestment / totalPayout から逆算
+    let recoveryRate = latestData.returnRate ?? latestData.recoveryRate ?? 0;
+    const totalBetPoints = latestData.totalBetPoints
+        ?? races.reduce((sum, race) => sum + (race.bettingPoints || race.betPoints || 0), 0);
+
+    if (totalBetPoints > 0 && !latestData.returnRate && !latestData.recoveryRate) {
+        const totalInvestment = totalBetPoints * 100;
+        recoveryRate = Math.round((latestData.totalPayout / totalInvestment) * 100);
+    }
+
+    const hitRate = latestData.totalRaces > 0 ? Math.round((latestData.hitRaces / latestData.totalRaces) * 100) : 0;
+
+    // JRA は複数会場開催 (venue が "京都・新潟・東京" 形式)。表示用は venues 配列があれば全会場を列挙、
+    // 無ければ venue 文字列のみ。
+    const trackLabel = Array.isArray(latestData.venues) && latestData.venues.length > 0
+        ? latestData.venues.join('・')
+        : (latestData.venue || 'JRA');
+
+    return {
+        date: `${latestData.month}/${latestData.day}`,
+        track: trackLabel,
+        hitRate,
+        hitCount: latestData.hitRaces,
+        totalCount: latestData.totalRaces,
+        totalPayout: latestData.totalPayout,
+        recoveryRate,
+        totalBetPoints,
+        races,
     };
 }
 

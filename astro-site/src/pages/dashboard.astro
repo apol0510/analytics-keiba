@@ -188,10 +188,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <a href="/free-prediction/nankan/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- Light予想 -->
+                    <!-- Light予想（南関） -->
                     <div id="standard-predictions" class="prediction-card standard" style="display: none;">
                         <div class="card-header">
-                            <h3>⚡ Light予想</h3>
+                            <h3>⚡ Light予想（南関）</h3>
                             <span class="plan-badge standard">LIGHT</span>
                         </div>
                         <div class="race-info">
@@ -199,6 +199,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <a href="/light-predictions/" class="view-btn">予想を見る</a>
+                    </div>
+
+                    <!-- Light予想（中央／JRA） -->
+                    <div id="standard-predictions-jra" class="prediction-card standard" style="display: none;">
+                        <div class="card-header">
+                            <h3>⚡ Light予想（中央）</h3>
+                            <span class="plan-badge standard">LIGHT</span>
+                        </div>
+                        <div class="race-info">
+                            <div class="race-title">JRA メインレース馬単買い目</div>
+                            <div class="confidence">AI分析完了！</div>
+                        </div>
+                        <a href="/light-predictions-jra/" class="view-btn">予想を見る</a>
                     </div>
 
                     <!-- Premium予想（Premium会員専用） -->
@@ -1440,13 +1453,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 document.getElementById('free-predictions').style.display = 'none';
             }
 
-            // Light（旧 Standard）予想の表示制御
+            // Light（旧 Standard）予想の表示制御（南関 + 中央）
             if (planLower === 'light' || planLower === 'standard' || planLower === 'ライト') {
-                console.log('Light予想を表示（メインのみ）');
+                console.log('Light予想を表示（南関 / 中央 メインのみ）');
                 document.getElementById('standard-predictions').style.display = 'block';
+                const jraCard = document.getElementById('standard-predictions-jra');
+                if (jraCard) jraCard.style.display = 'block';
             } else {
                 console.log('Light予想を非表示');
                 document.getElementById('standard-predictions').style.display = 'none';
+                const jraCard = document.getElementById('standard-predictions-jra');
+                if (jraCard) jraCard.style.display = 'none';
             }
 
             // Premium予想の表示制御（プラン別）
