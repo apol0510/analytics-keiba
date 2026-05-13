@@ -18,21 +18,21 @@ export function computeOverallScore(pt) {
 /**
  * 総合評価の星
  *
- * 2026-05-14 修正: 引数を「pt（累積スコア）」に統一。
- *   旧仕様 computeOverallScore(pt) は pt を 50-80 程度に圧縮するため、
- *   pt=90 の本命でも overallScore=77 → ★★ になり累積スコアと矛盾していた。
- *   pt 直接判定にして累積スコアと星表示の整合を取る。
+ * 2026-05-14 修正 (累積スコアレンジ拡張対応):
+ *   sourceComputerIndex 導入により displayScore = rawScore + 70 のフル構造に乗り、
+ *   pt は 70 (フロア) 〜 160 (本命 90点+70) の累積スコアレンジになる。
+ *   星評価レンジも累積スコアに合わせて再調整。
  *
- *   pt >= 89 → ★★★★
- *   pt >= 71 → ★★★
- *   pt >  0  → ★★
- *   pt <= 0  → ★
+ *   pt >= 120 → ★★★★   (本命〜単穴帯)
+ *   pt >=  90 → ★★★    (連下〜抑え候補帯)
+ *   pt >=  70 → ★★      (フロア / 不要馬境界)
+ *   pt <   70 → ★       (異常値・欠損)
  */
 export function getStarRating(pt) {
   const v = Number(pt) || 0;
-  if (v >= 89) return '★★★★';
-  if (v >= 71) return '★★★';
-  if (v > 0)   return '★★';
+  if (v >= 120) return '★★★★';
+  if (v >= 90)  return '★★★';
+  if (v >= 70)  return '★★';
   return '★';
 }
 
