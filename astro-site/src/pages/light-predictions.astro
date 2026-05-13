@@ -622,6 +622,14 @@ export const dailyResultsData = {
                                 {/* 20年運営対応: role-based表示（本命）- 最も大きく表示 */}
                                 {Array.isArray(raceHorses) && raceHorses.filter(h => h?.role === '本命').map((horse, index) => {
                                     const roleConfig = getRoleDisplayConfig(horse.role);
+                                    // 基本情報（騎手・厩舎・斤量・馬齢・指数・父）— Premium と統一
+                                    const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+                                        ? `${horse.weight}kg`
+                                        : (horse.weight ? String(horse.weight) : null);
+                                    const ageGenderStr = (horse.ageNum != null && horse.gender)
+                                        ? `${horse.ageNum}歳${horse.gender}`
+                                        : (horse.age || null);
+                                    const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || (horse.computerIndex != null && horse.computerIndex !== 0) || horse.sire || horse._sire;
                                     return (
                                     <div class="horse-card horse-card-main">
                                         <div class="horse-header">
@@ -632,14 +640,32 @@ export const dailyResultsData = {
                                                 <span class={roleConfig.typeClass} style={roleConfig.style}>{horse.role}</span>
                                             </div>
                                         </div>
-                                        {(horse.jockey || horse.trainer) && (
-                                            <div class="horse-meta">
-                                                {horse.jockey && (
-                                                    <span class="horse-meta-item"><span class="horse-meta-label">騎手</span>{horse.jockey}</span>
-                                                )}
-                                                {horse.trainer && (
-                                                    <span class="horse-meta-item"><span class="horse-meta-label">厩舎</span>{horse.trainer}</span>
-                                                )}
+                                        {hasBasicInfo && (
+                                            <div class="basic-info">
+                                                <h4>基本情報</h4>
+                                                <div class="info-grid">
+                                                    {(ageGenderStr || weightStr) && (
+                                                        <div class="info-line info-line-primary">
+                                                            {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
+                                                            {weightStr && <span class="info-chip">{weightStr}</span>}
+                                                        </div>
+                                                    )}
+                                                    {horse.jockey && (
+                                                        <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
+                                                    )}
+                                                    {horse.trainer && (
+                                                        <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
+                                                    )}
+                                                    {horse.frame != null && (
+                                                        <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                                                    )}
+                                                    {horse.computerIndex != null && horse.computerIndex !== 0 && (
+                                                        <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                                                    )}
+                                                    {(horse.sire || horse._sire) && (
+                                                        <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire || horse._sire}</span></div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
                                         <div class="ai-factors">
@@ -676,6 +702,14 @@ export const dailyResultsData = {
                                 {/* 20年運営対応: role-based表示（対抗）- 中サイズで表示 */}
                                 {Array.isArray(raceHorses) && raceHorses.filter(h => h?.role === '対抗').map((horse, index) => {
                                     const roleConfig = getRoleDisplayConfig(horse.role);
+                                    // 基本情報（騎手・厩舎・斤量・馬齢・指数・父）— Premium と統一
+                                    const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+                                        ? `${horse.weight}kg`
+                                        : (horse.weight ? String(horse.weight) : null);
+                                    const ageGenderStr = (horse.ageNum != null && horse.gender)
+                                        ? `${horse.ageNum}歳${horse.gender}`
+                                        : (horse.age || null);
+                                    const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || (horse.computerIndex != null && horse.computerIndex !== 0) || horse.sire || horse._sire;
                                     return (
                                     <div class="horse-card horse-card-sub">
                                         <div class="horse-header">
@@ -686,14 +720,32 @@ export const dailyResultsData = {
                                                 <span class={roleConfig.typeClass} style={roleConfig.style}>{horse.role}</span>
                                             </div>
                                         </div>
-                                        {(horse.jockey || horse.trainer) && (
-                                            <div class="horse-meta">
-                                                {horse.jockey && (
-                                                    <span class="horse-meta-item"><span class="horse-meta-label">騎手</span>{horse.jockey}</span>
-                                                )}
-                                                {horse.trainer && (
-                                                    <span class="horse-meta-item"><span class="horse-meta-label">厩舎</span>{horse.trainer}</span>
-                                                )}
+                                        {hasBasicInfo && (
+                                            <div class="basic-info">
+                                                <h4>基本情報</h4>
+                                                <div class="info-grid">
+                                                    {(ageGenderStr || weightStr) && (
+                                                        <div class="info-line info-line-primary">
+                                                            {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
+                                                            {weightStr && <span class="info-chip">{weightStr}</span>}
+                                                        </div>
+                                                    )}
+                                                    {horse.jockey && (
+                                                        <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
+                                                    )}
+                                                    {horse.trainer && (
+                                                        <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
+                                                    )}
+                                                    {horse.frame != null && (
+                                                        <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                                                    )}
+                                                    {horse.computerIndex != null && horse.computerIndex !== 0 && (
+                                                        <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                                                    )}
+                                                    {(horse.sire || horse._sire) && (
+                                                        <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire || horse._sire}</span></div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
                                         <div class="ai-factors">
@@ -730,6 +782,14 @@ export const dailyResultsData = {
                                 {/* 20年運営対応: role-based表示（単穴）- 中サイズで表示 */}
                                 {Array.isArray(raceHorses) && raceHorses.filter(h => h?.role === '単穴').map((horse, index) => {
                                     const roleConfig = getRoleDisplayConfig(horse.role);
+                                    // 基本情報（騎手・厩舎・斤量・馬齢・指数・父）— Premium と統一
+                                    const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+                                        ? `${horse.weight}kg`
+                                        : (horse.weight ? String(horse.weight) : null);
+                                    const ageGenderStr = (horse.ageNum != null && horse.gender)
+                                        ? `${horse.ageNum}歳${horse.gender}`
+                                        : (horse.age || null);
+                                    const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || (horse.computerIndex != null && horse.computerIndex !== 0) || horse.sire || horse._sire;
                                     return (
                                     <div class="horse-card horse-card-sub">
                                         <div class="horse-header">
@@ -740,14 +800,32 @@ export const dailyResultsData = {
                                                 <span class={roleConfig.typeClass} style={roleConfig.style}>{horse.role}</span>
                                             </div>
                                         </div>
-                                        {(horse.jockey || horse.trainer) && (
-                                            <div class="horse-meta">
-                                                {horse.jockey && (
-                                                    <span class="horse-meta-item"><span class="horse-meta-label">騎手</span>{horse.jockey}</span>
-                                                )}
-                                                {horse.trainer && (
-                                                    <span class="horse-meta-item"><span class="horse-meta-label">厩舎</span>{horse.trainer}</span>
-                                                )}
+                                        {hasBasicInfo && (
+                                            <div class="basic-info">
+                                                <h4>基本情報</h4>
+                                                <div class="info-grid">
+                                                    {(ageGenderStr || weightStr) && (
+                                                        <div class="info-line info-line-primary">
+                                                            {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
+                                                            {weightStr && <span class="info-chip">{weightStr}</span>}
+                                                        </div>
+                                                    )}
+                                                    {horse.jockey && (
+                                                        <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
+                                                    )}
+                                                    {horse.trainer && (
+                                                        <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
+                                                    )}
+                                                    {horse.frame != null && (
+                                                        <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                                                    )}
+                                                    {horse.computerIndex != null && horse.computerIndex !== 0 && (
+                                                        <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                                                    )}
+                                                    {(horse.sire || horse._sire) && (
+                                                        <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire || horse._sire}</span></div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
                                         <div class="ai-factors">
@@ -1263,33 +1341,80 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
         letter-spacing: 0.04em;
     }
 
-    /* 騎手・厩舎メタ表示（本命・対抗・単穴の horse-header 直下） */
-    .horse-meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        margin: 6px 0 12px;
-        padding: 8px 12px;
-        background: rgba(15, 23, 42, 0.4);
-        border-radius: 8px;
-        border-left: 3px solid rgba(139, 92, 246, 0.5);
-        font-size: 0.92rem;
-        color: #cbd5e1;
+    /* 基本情報セクション（本命・対抗・単穴）— Premium と統一 */
+    .basic-info {
+        margin-top: 18px;
+        padding: 14px 16px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px;
     }
-    .horse-meta-item {
-        display: inline-flex;
+    .basic-info h4 {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0 0 10px;
+        letter-spacing: 0.04em;
+        display: flex;
         align-items: center;
         gap: 6px;
     }
-    .horse-meta-label {
+    .basic-info h4::before { content: "📋"; }
+    .horse-card-main .basic-info {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: rgba(16, 185, 129, 0.28);
+    }
+    .info-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .info-line {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 0.92rem;
+        color: #e2e8f0;
+        line-height: 1.4;
+    }
+    .info-line-primary {
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+    }
+    .info-chip {
         display: inline-block;
-        font-size: 0.75rem;
+        background: rgba(59, 130, 246, 0.18);
+        color: #bfdbfe;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 0.85rem;
         font-weight: 700;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .horse-card-main .info-chip {
+        background: rgba(16, 185, 129, 0.2);
+        color: #d1fae5;
+        border-color: rgba(16, 185, 129, 0.4);
+    }
+    .info-key {
         color: #94a3b8;
-        background: rgba(148, 163, 184, 0.12);
-        padding: 2px 8px;
-        border-radius: 4px;
-        letter-spacing: 0.04em;
+        font-size: 0.82rem;
+        font-weight: 600;
+        min-width: 48px;
+        flex-shrink: 0;
+    }
+    .info-val {
+        color: #e2e8f0;
+        font-weight: 600;
+    }
+    .info-val-strong {
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 800;
+        font-size: 1rem;
     }
 
     .ai-metrics {
