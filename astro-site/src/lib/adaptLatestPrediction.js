@@ -33,7 +33,7 @@ function convertHorse(h, allRaceHorses, raceDistance) {
   const pt = Number(h.pt || 0);
   const overallScore = computeOverallScore(pt);
   const stars = getStarRating(pt, h.role); // 2026-05-14: role-aware 星評価（本命★★★★、補欠★★ 等）
-  const confidence = computeConfidence(pt);
+  const confidence = computeConfidence(pt, h.role); // 2026-05-14: role-aware（85 点上限）
   const importance = computeImportance(h, allRaceHorses);
   const evalPoints = computeEvalPoints(h, allRaceHorses, raceDistance);
   const { gender, ageNum } = parseSexAge(h.age);

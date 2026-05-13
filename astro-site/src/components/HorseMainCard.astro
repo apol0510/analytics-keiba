@@ -136,17 +136,28 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
 
     {importance && (
         <div class="feature-importance">
-            <h4>特徴量重要度</h4>
+            {/* 2026-05-14: 「特徴量重要度 95%」 → 「評価材料 85点」表記に変更。
+                バーの満タンも 85点満点で計算（item.point は computeImportance が
+                role-aware に 65-85 帯で返す。バーの最大幅は (point/85)*100 %）。
+                旧 item.value (0-1 比率) しか持たない古いデータには
+                value*100 を point 換算（×0.85）してフォールバック表示。 */}
+            <h4>評価材料</h4>
             <div class="importance-list">
-                {importance.map((item) => (
-                    <div class="importance-item">
-                        <span class="importance-label">{item.label}</span>
-                        <div class="importance-bar">
-                            <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
+                {importance.map((item) => {
+                    const point = (item.point != null && Number.isFinite(Number(item.point)))
+                        ? Number(item.point)
+                        : Math.round((Number(item.value) || 0) * 85);
+                    const barWidth = Math.max(0, Math.min(100, (point / 85) * 100));
+                    return (
+                        <div class="importance-item">
+                            <span class="importance-label">{item.label}</span>
+                            <div class="importance-bar">
+                                <div class="importance-fill" style={`width: ${barWidth}%`}></div>
+                            </div>
+                            <span class="importance-percent">{point}点</span>
                         </div>
-                        <span class="importance-percent">{Math.round(item.value * 100)}%</span>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     )}

@@ -63,10 +63,40 @@ export function getStarRating(pt, role) {
   }
 }
 
-// 信頼度（圧縮スコア）— 整数のみ、星より差を抑えて違和感のないレンジに
-export function computeConfidence(pt) {
+// 役割別の総合評価 (confidence) レンジ — 表示用に 85 点上限で圧縮
+// 「★★★★ (92)」のような過大表記を避けるため、role に応じた控えめなレンジに収める。
+const CONFIDENCE_RANGE = {
+  '本命':       [83, 85],
+  '対抗':       [80, 84],
+  '単穴':       [76, 82],
+  '連下最上位': [76, 82],
+  '連下':       [72, 80],
+  '押さえ':     [68, 76],
+  '抑え':       [68, 76],
+  '補欠':       [68, 76],
+};
+
+/**
+ * 総合評価カッコ内に表示する 0-85 帯の信頼度スコア。
+ *
+ * 累積スコア (pt) は 70〜160 の広いレンジになるが、表示用には role 別の
+ * レンジ [base, cap] に正規化して圧縮する。
+ *
+ *   ratio = clamp((pt - 70) / 90, 0, 1)
+ *   confidence = round(base + ratio * (cap - base))
+ *
+ * 2026-05-14: 旧仕様は (50 + min(42, pt * 0.28)) で pt=156 → 92 を返していた。
+ * 「総合評価★★★★（92）」が過大表記との指摘により、85 点上限に再設計。
+ *
+ * @param {number|string} pt 累積スコア
+ * @param {string} [role]   馬の役割
+ */
+export function computeConfidence(pt, role) {
   const v = Number(pt) || 0;
-  return Math.round(50 + Math.min(42, v * 0.28));
+  if (v <= 0) return 50;
+  const [base, cap] = CONFIDENCE_RANGE[role] || [60, 70];
+  const ratio = Math.max(0, Math.min(1, (v - 70) / 90));
+  return Math.round(base + ratio * (cap - base));
 }
 
 // "牝6" / "牡4" / "騸5" / "セ5" → { gender, ageNum }
@@ -232,6 +262,27 @@ export function computeEvalPoints(h, allRaceHorses, raceDistance) {
   return points;
 }
 
+// 役割別の評価材料（特徴量）上限 — 85 点満点
+// 「特徴量重要度 95%」のような確率風表記を避け、評価材料の「点数」として
+// 役割に応じた控えめなレンジに収める。
+const IMPORTANCE_CAP = {
+  '本命':       { stab: 85, abil: 85, pace: 84 },
+  '対抗':       { stab: 84, abil: 84, pace: 82 },
+  '単穴':       { stab: 82, abil: 82, pace: 80 },
+  '連下最上位': { stab: 80, abil: 80, pace: 78 },
+  '連下':       { stab: 78, abil: 78, pace: 76 },
+  '押さえ':     { stab: 76, abil: 76, pace: 74 },
+  '抑え':       { stab: 76, abil: 76, pace: 74 },
+  '補欠':       { stab: 76, abil: 76, pace: 74 },
+};
+const IMPORTANCE_FLOOR = 65;
+
+// 0.55〜0.97 帯の比率を role 別 cap で 0-85 帯の点数に変換
+function importanceValueToPoint(value, cap) {
+  const norm = Math.max(0, Math.min(1, ((Number(value) || 0) - 0.55) / 0.42));
+  return Math.round(IMPORTANCE_FLOOR + norm * (cap - IMPORTANCE_FLOOR));
+}
+
 // 特徴量重要度（安定性 / 能力上位性 / 展開利）を recentRaces と pt から導出
 export function computeImportance(h, allRaceHorses) {
   const pt = Number(h.pt) || 0;
@@ -271,10 +322,15 @@ export function computeImportance(h, allRaceHorses) {
 
   const clamp = (v) => Math.max(0.55, Math.min(0.97, v));
   const round2 = (v) => Math.round(v * 100) / 100;
+  // role 別の上限を引き、value (0-1) と point (0-85) を両方返す
+  const caps = IMPORTANCE_CAP[h.role] || { stab: 70, abil: 70, pace: 70 };
+  const sV = round2(clamp(stability));
+  const aV = round2(clamp(ability));
+  const pV = round2(clamp(pace));
   return [
-    { label: '安定性',     value: round2(clamp(stability)) },
-    { label: '能力上位性', value: round2(clamp(ability)) },
-    { label: '展開利',     value: round2(clamp(pace)) },
+    { label: '安定性',     value: sV, point: importanceValueToPoint(sV, caps.stab) },
+    { label: '能力上位性', value: aV, point: importanceValueToPoint(aV, caps.abil) },
+    { label: '展開利',     value: pV, point: importanceValueToPoint(pV, caps.pace) },
   ];
 }
 
@@ -283,7 +339,7 @@ export function enrichHorse(h, allRaceHorses, raceDistance) {
   const pt = Number(h.pt || 0);
   const overallScore = computeOverallScore(pt);
   const stars = getStarRating(pt, h.role); // 2026-05-14: role-aware 星評価
-  const confidence = computeConfidence(pt);
+  const confidence = computeConfidence(pt, h.role); // 2026-05-14: role-aware（85 点上限）
   const importance = computeImportance(h, allRaceHorses);
   const evalPoints = computeEvalPoints(h, allRaceHorses, raceDistance);
   const { gender, ageNum } = parseSexAge(h.age);
