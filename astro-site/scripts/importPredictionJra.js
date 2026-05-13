@@ -131,6 +131,104 @@ async function fetchSharedPrediction(date, venue = 'jra') {
 }
 
 /**
+ * 同日の computer JSON 群から sourceComputerIndex の lookup map を構築する（JRA 用）。
+ *
+ * 返り値: Map<会場名, Map<"馬番|馬名", computerIndex>>
+ * 突合キーは「会場名 → (馬番, 馬名) 完全一致」。
+ */
+async function buildSourceComputerIndexMap(date, category = 'jra') {
+  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+  const [year, month] = date.split('-');
+  const dirPath = `${category}/predictions/computer/${year}/${month}`;
+  const owner = 'apol0510';
+  const repo = 'keiba-data-shared';
+
+  console.log(`📡 [IMPORT-JRA] computer JSON 併読み: ${dirPath}`);
+
+  const headers = GITHUB_TOKEN ? {
+    'Authorization': `token ${GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'keiba-intelligence-import-jra'
+  } : {
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'keiba-intelligence-import-jra'
+  };
+
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
+  const dirResponse = await fetch(apiUrl, { headers });
+  if (!dirResponse.ok) {
+    console.log(`⏭️  [IMPORT-JRA] computer ディレクトリなし: ${dirPath}`);
+    return null;
+  }
+
+  const files = await dirResponse.json();
+  const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
+  if (dateFiles.length === 0) {
+    console.log(`⏭️  [IMPORT-JRA] ${date} の computer ファイルなし`);
+    return null;
+  }
+
+  const venueMap = new Map();
+  for (const file of dateFiles) {
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
+    const res = await fetch(rawUrl, { headers: GITHUB_TOKEN ? { Authorization: `token ${GITHUB_TOKEN}` } : {} });
+    if (!res.ok) continue;
+    const venueData = JSON.parse(await res.text());
+    const venueName = venueData.venue || venueData.name || null;
+    if (!venueName) continue;
+    const horseMap = new Map();
+    for (const race of (venueData.races || [])) {
+      for (const h of (race.horses || [])) {
+        const num = Number(h.number ?? h.horseNumber);
+        const name = h.name ?? h.horseName;
+        const ci = Number(h.computerIndex);
+        if (!Number.isFinite(num) || !name || !Number.isFinite(ci)) continue;
+        horseMap.set(`${num}|${name}`, ci);
+      }
+    }
+    if (horseMap.size > 0) {
+      venueMap.set(venueName, horseMap);
+      console.log(`   📋 [IMPORT-JRA] ${venueName}: ${horseMap.size} 頭の sourceComputerIndex を取得`);
+    }
+  }
+  if (venueMap.size === 0) return null;
+  return venueMap;
+}
+
+/**
+ * sharedJSON (予想 JSON) に sourceComputerIndex を注入する。
+ * - 会場名で venue を突合
+ * - 馬番+馬名で各馬を突合
+ */
+function injectSourceComputerIndex(sharedJSON, venueMap) {
+  if (!sharedJSON || !venueMap) return;
+  const venues = Array.isArray(sharedJSON.venues) ? sharedJSON.venues : [sharedJSON];
+  let totalInjected = 0;
+  let totalUnmatched = 0;
+  for (const venueData of venues) {
+    const venueName = venueData.venue || venueData.name || null;
+    if (!venueName) continue;
+    const horseMap = venueMap.get(venueName);
+    if (!horseMap) continue;
+    for (const race of (venueData.races || [])) {
+      for (const h of (race.horses || [])) {
+        const num = Number(h.horseNumber ?? h.number);
+        const name = h.horseName ?? h.name;
+        if (!Number.isFinite(num) || !name) continue;
+        const ci = horseMap.get(`${num}|${name}`);
+        if (Number.isFinite(ci)) {
+          h.sourceComputerIndex = ci;
+          totalInjected++;
+        } else {
+          totalUnmatched++;
+        }
+      }
+    }
+  }
+  console.log(`✅ [IMPORT-JRA] sourceComputerIndex 注入: ${totalInjected} 頭 (突合失敗 ${totalUnmatched})`);
+}
+
+/**
  * keiba-data-sharedからracebook JSONを取得（JRA用）
  */
 async function fetchRacebookData(date, category = 'jra') {
@@ -221,6 +319,12 @@ async function importPrediction(date, venue = 'jra') {
   if (!sharedJSON) {
     console.log(`⏭️  予想データがないため、スキップします`);
     return null;
+  }
+
+  // 【2026-05-14 追加】computer JSON を併読みして sourceComputerIndex を注入
+  const computerSourceMap = await buildSourceComputerIndexMap(date, venue);
+  if (computerSourceMap && computerSourceMap.size > 0) {
+    injectSourceComputerIndex(sharedJSON, computerSourceMap);
   }
 
   // 複数会場対応：venues配列がある場合
@@ -339,6 +443,8 @@ function convertToLegacyFormat(data, date) {
           weight: h.weight || h.kinryo || '', // 斤量
           // 役割再計算（adjustPrediction フォールバック）に必要なフィールド
           computerIndex: h.computerIndex != null ? h.computerIndex : null,
+          // 2026-05-14: 元 racebook 指数（pt 生成の正規ソース）
+          ...(h.sourceComputerIndex != null ? { sourceComputerIndex: h.sourceComputerIndex } : {}),
           marks: h.marks || {}
         }))
         .sort((a, b) => {

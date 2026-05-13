@@ -144,6 +144,90 @@ async function fetchComputerPredictions(date, venue = 'nankan') {
 }
 
 /**
+ * 同日の computer JSON 群から sourceComputerIndex の lookup map を構築する。
+ *
+ * 返り値: Map<会場名, Map<"馬番|馬名", computerIndex>>
+ *
+ * - 会場名は computer JSON 側の `venue` フィールド（例: "川崎"）。
+ * - 馬番+馬名で突合する（馬番だけだと馬の入れ替えがあった場合に誤マッチするため）。
+ * - computer JSON が存在しない / 一頭も無い場合は null を返す。
+ */
+async function buildSourceComputerIndexMap(date, venue = 'nankan') {
+  console.log(`📡 [IMPORT] computer JSON を sourceComputerIndex として併読み開始`);
+  const computerJSON = await fetchVenuePredictions(date, venue, 'computer');
+  if (!computerJSON || !Array.isArray(computerJSON.venues) || computerJSON.venues.length === 0) {
+    console.log(`⏭️  [IMPORT] computer JSON が見つからないため sourceComputerIndex 注入をスキップ`);
+    return null;
+  }
+
+  const venueMap = new Map();
+  for (const venueData of computerJSON.venues) {
+    const venueName = venueData.venue || venueData.name || null;
+    if (!venueName) continue;
+    const horseMap = new Map();
+    for (const race of (venueData.races || [])) {
+      for (const h of (race.horses || [])) {
+        const num = Number(h.number ?? h.horseNumber);
+        const name = h.name ?? h.horseName;
+        const ci = Number(h.computerIndex);
+        if (!Number.isFinite(num) || !name || !Number.isFinite(ci)) continue;
+        // キー: 馬番|馬名 完全一致
+        horseMap.set(`${num}|${name}`, ci);
+      }
+    }
+    if (horseMap.size > 0) {
+      venueMap.set(venueName, horseMap);
+      console.log(`   📋 [IMPORT] ${venueName}: ${horseMap.size} 頭の sourceComputerIndex を取得`);
+    }
+  }
+
+  if (venueMap.size === 0) {
+    console.log(`⏭️  [IMPORT] computer JSON に有効な馬データなし`);
+    return null;
+  }
+  return venueMap;
+}
+
+/**
+ * sharedJSON (予想 JSON) に sourceComputerIndex を注入する。
+ *
+ * - 各 venue を会場名で突合
+ * - 各馬を `馬番|馬名` 完全一致で突合
+ * - 突合できなかった馬は無印（sourceComputerIndex 未設定 = 既存挙動）
+ */
+function injectSourceComputerIndex(sharedJSON, venueMap) {
+  if (!sharedJSON || !venueMap) return;
+  const venues = Array.isArray(sharedJSON.venues) ? sharedJSON.venues : [sharedJSON];
+  let totalInjected = 0;
+  let totalUnmatched = 0;
+
+  for (const venueData of venues) {
+    const venueName = venueData.venue || venueData.name || null;
+    if (!venueName) continue;
+    const horseMap = venueMap.get(venueName);
+    if (!horseMap) {
+      console.log(`   ⚠️  [IMPORT] computer JSON に会場「${venueName}」が無いためスキップ`);
+      continue;
+    }
+    for (const race of (venueData.races || [])) {
+      for (const h of (race.horses || [])) {
+        const num = Number(h.horseNumber ?? h.number);
+        const name = h.horseName ?? h.name;
+        if (!Number.isFinite(num) || !name) continue;
+        const ci = horseMap.get(`${num}|${name}`);
+        if (Number.isFinite(ci)) {
+          h.sourceComputerIndex = ci;
+          totalInjected++;
+        } else {
+          totalUnmatched++;
+        }
+      }
+    }
+  }
+  console.log(`✅ [IMPORT] sourceComputerIndex 注入完了: ${totalInjected} 頭 (突合失敗 ${totalUnmatched} 頭)`);
+}
+
+/**
  * keiba-data-sharedからracebook JSONを取得
  * race-data-importer が保存したデータ（印・近走・調教を含む）
  */
@@ -440,6 +524,16 @@ async function importPrediction(date, venue = 'nankan') {
     horseDataMap = await fetchRacebookPastRaces(date, venue);
   }
 
+  // 【2026-05-14 追加】computer JSON を併読みして sourceComputerIndex を注入
+  //   - 予想 JSON の computerIndex は admin 編集系の値で、元 racebook 指数とは別物
+  //   - 元 racebook 指数（pt 生成に使う値）は computer JSON 側にしか無い
+  //   - 各馬に sourceComputerIndex フィールドを追加（normalizePrediction.js が COMPI_MIN=45 判定で使う）
+  //   - 突合キー: 会場名 → (馬番, 馬名) 完全一致
+  const computerSourceMap = await buildSourceComputerIndexMap(date, venue);
+  if (computerSourceMap && computerSourceMap.size > 0) {
+    injectSourceComputerIndex(sharedJSON, computerSourceMap);
+  }
+
   // 【複数会場対応】venues配列があるか確認
   if (sharedJSON.venues && Array.isArray(sharedJSON.venues) && sharedJSON.venues.length > 0) {
     // 複数会場形式（venues配列）
@@ -640,7 +734,10 @@ function convertToLegacyFormat(data, date, horseDataMap = null) {
             trainer: h.trainer || h.kyusya || '', // 厩舎
             age: h.age || h.seirei || '', // 馬齢
             weight: h.weight || h.kinryo || '', // 斤量
-            computerIndex: h.computerIndex != null ? h.computerIndex : null // コンピ指数
+            computerIndex: h.computerIndex != null ? h.computerIndex : null, // コンピ指数（admin 編集系の値）
+            // 2026-05-14 追加: 元 racebook 指数（computer JSON 由来）。
+            // pt 生成（rawScore 昇格判定）の正規ソース。
+            sourceComputerIndex: h.sourceComputerIndex != null ? h.sourceComputerIndex : null
           };
           // racebook由来の基本情報で補完
           if (horseDataMap && horseDataMap.has(h.name)) {

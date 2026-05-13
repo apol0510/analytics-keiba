@@ -100,12 +100,21 @@ export function normalizeDetailed(input) {
 
     // 馬データ変換
     let horses = (race.horses || []).map(horse => {
-      // computerIndex 44以下は「無」扱い（rawScore=0）
+      // 2026-05-14 修正: rawScore 昇格の正規ソースを sourceComputerIndex に変更。
+      //   - 旧仕様: predictions JSON の computerIndex（admin 編集系の値）で >=45 判定
+      //   - 新仕様: importPrediction.js が computer JSON 併読みで付与した
+      //            sourceComputerIndex（元 racebook 指数）で >=45 判定
+      //   - sourceComputerIndex が無いデータ (旧 predictions JSON や computer JSON 取得失敗時)
+      //     は従来通り computerIndex にフォールバック
       const COMPI_MIN = 45;
       let rawScore = horse.PT || horse.totalScore || horse.rawScore || 0;
+      const sourceCi = (horse.sourceComputerIndex != null && Number.isFinite(Number(horse.sourceComputerIndex)))
+        ? Number(horse.sourceComputerIndex)
+        : null;
+      const fallbackCi = parseInt(horse.computerIndex || '0') || 0;
+      const ciForFloor = sourceCi != null ? sourceCi : fallbackCi;
       if (rawScore === 0) {
-        const ci = parseInt(horse.computerIndex || '0');
-        rawScore = (ci >= COMPI_MIN) ? ci : 0;
+        rawScore = (ciForFloor >= COMPI_MIN) ? ciForFloor : 0;
       }
       const role = horse.assignment || horse.role || '無';
 
@@ -122,7 +131,9 @@ export function normalizeDetailed(input) {
         mark1: mark1, // 印1を保持（独自予想用）
         marks: horse.marks || {}, // adjustPredictionのcustomScore計算用（印1〜印N）
         // analytics-keiba 独自スコアリング用（PREDICTION_LOGIC.md 参照）
-        computerIndex: parseInt(horse.computerIndex || '0') || 0,
+        computerIndex: fallbackCi,
+        // 2026-05-14: 元 racebook 指数を後段にも流す（出力に保存して再生成・診断に使う）
+        ...(sourceCi != null ? { sourceComputerIndex: sourceCi } : {}),
         jockey: horse.kisyu || horse.jockey || '', // 騎手
         trainer: horse.kyusya || horse.trainer || '', // 厩舎
         age: horse.seirei || horse.ageGender || horse.age || '', // 馬齢（牡3、牝4など）
