@@ -730,81 +730,69 @@ export function getRoleDisplayConfig(role) {
 /**
  * 馬の分類: 抑え候補か / 不要馬か
  *
- * 背景:
- *   importPrediction.js は displayScore/rawScore が空欄だと pt=70 にフロア化する。
- *   そのため admin が「補欠」ロールを付けた馬は pt=70 のフロアに張り付くことが多い。
- *   pt > 70 ハードカットだけで判定すると、評価根拠のある補欠（例: 川崎10R サンダビューク
- *   pt=70 ci=18）まで不要馬に落ちて表示が壊れる。
+ * 方針 (2026-05-14): 買い目生成側（mainRaceBetting.js）の明示方針に揃える。
+ *   mainRaceBetting.js のコメント:
+ *     "pt === 70 は importPrediction.js の未評価フォールバック値 (= 不要馬) なので除外する"
  *
- *   一方で「補欠 = 全部抑え候補」とすると、ci=1〜2 の明らかに評価弱な馬まで
- *   抑え候補に並んで買い目候補感が薄れる。
+ *   importPrediction.js は displayScore/rawScore が空欄だと pt を 70 にフロア化する。
+ *   そのため admin が role='補欠' を付けても displayScore が空のままだと pt=70 に張り付く。
+ *   買い目には pt > 70 の馬しか登場しないので、画面の抑え候補表示も同じ条件に揃える
+ *   ことで「画面で抑え扱いだが買い目には絶対出ない」というズレを防ぐ。
  *
- *   両極端を避けるため、補欠系は pt と computerIndex の両軸で
- *   「拾う / 見送る」を判断する。
- *
- * ロール変換の注意 (2026-05-14 追記):
- *   - source の予想 JSON では `押さえ` ロールは使われていない（実測 0 件）。
- *     全て `補欠` で来る。
+ * ロール変換の注意:
+ *   - source の予想 JSON では `押さえ` ロールは現状使われない (実測 0 件)。すべて `補欠`。
  *   - adaptLatestPrediction.js の adaptNewToLegacy は `補欠` を horses.reserve に振り分け、
  *     normalizeHorseData が reserve を **role='押さえ' に書き換えてから** push する。
  *   - そのため Astro レンダー時には `押さえ` ロールが「source 補欠由来」として現れる。
- *   - isOsaeCandidate / isIneligibleHorse は `押さえ` も `補欠` と同じ閾値判定を行う。
- *   - 「抑え」ロールは現状未使用だが、admin 明示用途として無条件 true で残す。
+ *   - 抑え系の判定はこの 3 ロール (押さえ / 抑え / 補欠) を一括で扱う。
  *
  * 判定基準:
  *   isOsaeCandidate(h)
- *     - role が「抑え」 → true (admin 明示、現状未使用)
- *     - role が「押さえ」「補欠」かつ
- *         pt > 70  (フロア値を明確に超える / 連下降格分など)
- *         または computerIndex >= OSAE_CI_THRESHOLD (=10)
- *       → true
+ *     - role が '押さえ' / '抑え' / '補欠' かつ pt > 70 → true
  *     - それ以外 → false
  *
  *   isIneligibleHorse(h)
- *     - role が未割当 (handledRoles 外 / undefined / '無') → true
- *     - role が「押さえ」「補欠」かつ isOsaeCandidate が false → true
- *     - それ以外 → false (本命/対抗/単穴/連下/連下最上位/抑え はここに来ない)
+ *     - role が HANDLED_ROLES 外 / '無' / 未割当 → true
+ *     - role が '押さえ' / '抑え' / '補欠' かつ pt <= 70 → true
+ *     - それ以外（本命 / 対抗 / 単穴 / 連下 / 連下最上位） → false
  *
- *   しきい値 OSAE_CI_THRESHOLD = 10 の根拠:
- *     ci=18 (例: サンダビューク) は救出、ci=1〜2 は不要側に残す中間値。
- *     prediction JSON の computerIndex は本来の racebook 指数 (40-86 帯) ではなく
- *     印数ベースの 1〜100 帯であり、補欠帯は実測で 1〜30 程度に分布する。
- *     経験的に 10 を境にすると、明確に評価根拠がある補欠だけが拾える。
+ * 注:
+ *   将来 racebook 由来の元指数を predictions JSON に保持できれば、
+ *   元指数しきい値で「pt=70 でも拾う」運用も検討可能（別改修）。
+ *   今回は買い目（mainRaceBetting.js）と画面表示の整合性を最優先とし、
+ *   独自しきい値（例: ci >= 10）は導入しない。
  */
 export const HANDLED_ROLES = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
-export const OSAE_LIKE_ROLES = new Set(['押さえ', '補欠']);  // しきい値判定対象（source 補欠 + normalize 後の 押さえ）
-export const OSAE_CI_THRESHOLD = 10;
+export const OSAE_LIKE_ROLES = new Set(['押さえ', '抑え', '補欠']);
+const PT_UNRATED_FALLBACK = 70; // importPrediction.js のフロア値（mainRaceBetting.js と同値）
 
 export function isOsaeCandidate(horse) {
     if (!horse) return false;
-    const role = horse.role;
-    if (role === '抑え') return true; // admin 明示（現状未使用）
-    if (OSAE_LIKE_ROLES.has(role)) {
-        const pt = Number(horse.pt) || 0;
-        const ci = Number(horse.computerIndex) || 0;
-        if (pt > 70) return true;
-        if (ci >= OSAE_CI_THRESHOLD) return true;
-        return false;
-    }
-    return false;
+    if (!OSAE_LIKE_ROLES.has(horse.role)) return false;
+    const pt = Number(horse.pt) || 0;
+    return pt > PT_UNRATED_FALLBACK;
 }
 
 export function isIneligibleHorse(horse) {
     if (!horse) return false;
     const role = horse.role;
     if (!HANDLED_ROLES.has(role)) return true;
-    if (OSAE_LIKE_ROLES.has(role) && !isOsaeCandidate(horse)) return true;
+    if (OSAE_LIKE_ROLES.has(role)) {
+        const pt = Number(horse.pt) || 0;
+        return !(pt > PT_UNRATED_FALLBACK);
+    }
     return false;
 }
 
 /**
- * 抑え候補のソート: pt 降順 → computerIndex 降順
+ * 抑え候補のソート: pt 降順 → 馬番昇順（視認性優先）
+ *   ci 救済は撤回したため、副次キーには ci ではなく馬番を用いる。
  */
 export function sortOsaeCandidates(horses) {
     return [...horses].sort((a, b) => {
         const ptDiff = (Number(b?.pt) || 0) - (Number(a?.pt) || 0);
         if (ptDiff !== 0) return ptDiff;
-        return (Number(b?.computerIndex) || 0) - (Number(a?.computerIndex) || 0);
+        return (Number(a?.number) || 0) - (Number(b?.number) || 0);
     });
 }
 
