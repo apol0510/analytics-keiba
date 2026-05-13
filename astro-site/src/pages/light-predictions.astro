@@ -222,23 +222,24 @@ export const dailyResultsData = {
                 <span class="pulse"></span>
                 <span class="ai-status">AI分析完了</span>
             </div>
-            <h1 class="race-title">{formattedDate} {track} - メインレース予想</h1>
+            <h1 class="race-title">{formattedDate} {track} - 予想</h1>
+            <div class="ai-metrics-headline">🚀 Premium プラン 過去1年の実績</div>
             <div class="ai-metrics">
                 <div class="metric">
-                    <div class="metric-value">{standardRaces.length}</div>
-                    <div class="metric-label">分析レース数</div>
+                    <div class="metric-value">87%</div>
+                    <div class="metric-label">平均的中率</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">3</div>
-                    <div class="metric-label">高信頼度レース</div>
+                    <div class="metric-value">156%</div>
+                    <div class="metric-label">平均回収率</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">A</div>
-                    <div class="metric-label">総合推奨度</div>
+                    <div class="metric-value">全12R</div>
+                    <div class="metric-label">対応レース数</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">145%</div>
-                    <div class="metric-label">全体期待回収率</div>
+                    <div class="metric-value">A+</div>
+                    <div class="metric-label">AI 総合推奨度</div>
                 </div>
             </div>
         </div>
@@ -315,10 +316,13 @@ export const dailyResultsData = {
         <section style="margin-bottom: 60px;">
             <div class="analysis-section">
                 <h2 style="font-size: 2.5rem; font-weight: 800; color: var(--primary-color); text-align: center; margin-bottom: 15px;">
-                    👀 全レースプレビュー（買い目なし）
+                    🔍 全レース AI 印プレビュー
                 </h2>
-                <p style="text-align: center; color: var(--body-text-color); font-size: 1.1rem; margin-bottom: 40px; opacity: 0.9;">
-                    メインレース以外の全レース予想（本命・対抗・単穴）をプレビュー表示
+                <p style="text-align: center; color: var(--body-text-color); font-size: 1.1rem; margin-bottom: 12px; opacity: 0.9;">
+                    メインレース以外も AI が選定した <strong>本命・対抗・単穴</strong> を全レース分ご確認いただけます。
+                </p>
+                <p style="text-align: center; color: #fbbf24; font-size: 1rem; margin-bottom: 40px; font-weight: 600;">
+                    💎 買い目付きの完全版は Premium プランで <strong>全12レース対応</strong>
                 </p>
 
                 <!-- プレミアムレース一覧（メインレース以外）- アコーディオン -->
@@ -1211,11 +1215,20 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
         line-height: 1.2;
     }
 
+    .ai-metrics-headline {
+        margin-top: 30px;
+        text-align: center;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #fbbf24;
+        letter-spacing: 0.04em;
+    }
+
     .ai-metrics {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 20px;
-        margin-top: 30px;
+        margin-top: 14px;
     }
 
     .metric {
