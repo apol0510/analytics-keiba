@@ -213,7 +213,11 @@ function generateOneLineUmatanBets(horses) {
 
 ---
 
-<BaseLayout title="スタンダード会員予想" description={`AI技術による${track}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のスタンダード版を提供中。`}>
+<BaseLayout title="ライト会員予想" description={`AI技術による${track}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のライト版を提供中。`}>
+    {/* 🔧 requiredPlan="standard" は AccessControl 内のプラン階層キー（canonical）。
+        表示名は「ライト会員」で、AccessControl 側の getPlanDisplayName でも
+        'light' / 'standard' は両方とも「Lightプラン」として表示される。
+        新しい権限値を作らず、内部の standard キーをそのまま使う。 */}
     <AccessControl requiredPlan="standard">
         <div class="page-container">
         <!-- ヘッダーセクション -->
@@ -517,10 +521,10 @@ function generateOneLineUmatanBets(horses) {
             </div>
         </section>
 
-        <!-- スタンダード会員バッジ -->
+        <!-- ライト会員バッジ -->
         <div class="premium-status">
             <span class="premium-icon">⭐</span>
-            <span class="premium-status-text">スタンダード会員限定コンテンツ</span>
+            <span class="premium-status-text">ライト会員コンテンツ</span>
         </div>
 
         <!-- スタンダードレースアコーディオン（データドリブン） -->

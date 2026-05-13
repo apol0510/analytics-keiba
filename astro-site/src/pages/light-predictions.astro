@@ -217,6 +217,10 @@ export const dailyResultsData = {
 ---
 
 <BaseLayout title="ライト会員予想" description={`AI技術による${track}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のライト版を提供中。`}>
+    {/* 🔧 requiredPlan="standard" は AccessControl 内のプラン階層キー（canonical）。
+        表示名は「ライト会員」で、AccessControl 側の getPlanDisplayName でも
+        'light' / 'standard' は両方とも「Lightプラン」として表示される。
+        新しい権限値を作らず、内部の standard キーをそのまま使う。 */}
     <AccessControl requiredPlan="standard">
         <div class="page-container">
         <!-- ヘッダーセクション -->
@@ -2550,7 +2554,7 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
         };
     }
 
-    // プレビュー用のトグル関数を生成（1R-9R）
+    // プレビュー用のトグル関数を生成（1R-12R）
     function createPreviewToggleFunction(raceNumber) {
         return function() {
             const content = document.getElementById(`preview-${raceNumber}r`);
@@ -2558,8 +2562,8 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 
             if (!content || !icon) return;
 
-            // 他のプレビューアコーディオンをすべて閉じる
-            for (let i = 1; i <= 9; i++) {
+            // 他のプレビューアコーディオンをすべて閉じる（1-12 全範囲）
+            for (let i = 1; i <= 12; i++) {
                 if (i !== raceNumber) {
                     const otherContent = document.getElementById(`preview-${i}r`);
                     const otherIcon = document.getElementById(`toggle-preview-${i}r`);
