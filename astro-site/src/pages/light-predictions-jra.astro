@@ -425,6 +425,42 @@ const latestResult = getLatestDayDataJra();
 </BaseLayout>
 
 <script is:inline>
+    // 🔧 2026-05-13 修正: 内側 <details>（不要馬・見送り馬 等）を開いても
+    //   親アコーディオンの max-height でクリップされないように、開動作後は 'none' に切替
+    function openAccordion(content, icon) {
+        if (content.style.maxHeight === 'none') return;
+        content.style.maxHeight = content.scrollHeight + 'px';
+        content.style.opacity = '1';
+        icon.textContent = '◎';
+        icon.style.transform = 'rotate(180deg)';
+        const onEnd = (e) => {
+            if (e.propertyName !== 'max-height') return;
+            content.removeEventListener('transitionend', onEnd);
+            if (content.style.maxHeight !== '0px') {
+                content.style.maxHeight = 'none';
+            }
+        };
+        content.addEventListener('transitionend', onEnd);
+    }
+    function closeAccordion(content, icon) {
+        if (content.style.maxHeight === 'none') {
+            content.style.maxHeight = content.scrollHeight + 'px';
+            requestAnimationFrame(() => {
+                content.style.maxHeight = '0px';
+                content.style.opacity = '0';
+            });
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+        }
+        icon.textContent = '▼';
+        icon.style.transform = 'rotate(0deg)';
+    }
+    function isAccordionOpen(content) {
+        return content.style.maxHeight === 'none' ||
+            (content.style.maxHeight && content.style.maxHeight !== '0px' && content.style.maxHeight !== '');
+    }
+
     // venue タブ切替
     function selectJraVenue(e) {
         const btn = e.currentTarget;
@@ -447,25 +483,14 @@ const latestResult = getLatestDayDataJra();
             if (i !== raceNumber) {
                 const otherContent = document.getElementById(`jra-${vIdx}-race-${i}r`);
                 const otherIcon = document.getElementById(`jra-${vIdx}-toggle-${i}r`);
-                if (otherContent && otherIcon) {
-                    otherContent.style.maxHeight = '0px';
-                    otherContent.style.opacity = '0';
-                    otherIcon.textContent = '▼';
-                    otherIcon.style.transform = 'rotate(0deg)';
-                }
+                if (otherContent && otherIcon) closeAccordion(otherContent, otherIcon);
             }
         }
 
-        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-            content.style.maxHeight = content.scrollHeight + 'px';
-            content.style.opacity = '1';
-            icon.textContent = '◎';
-            icon.style.transform = 'rotate(180deg)';
+        if (!isAccordionOpen(content)) {
+            openAccordion(content, icon);
         } else {
-            content.style.maxHeight = '0px';
-            content.style.opacity = '0';
-            icon.textContent = '▼';
-            icon.style.transform = 'rotate(0deg)';
+            closeAccordion(content, icon);
         }
     }
     window.toggleRaceJra = toggleRaceJra;
@@ -479,25 +504,14 @@ const latestResult = getLatestDayDataJra();
             if (i !== raceNumber) {
                 const otherContent = document.getElementById(`jra-${vIdx}-preview-${i}r`);
                 const otherIcon = document.getElementById(`jra-${vIdx}-toggle-preview-${i}r`);
-                if (otherContent && otherIcon) {
-                    otherContent.style.maxHeight = '0px';
-                    otherContent.style.opacity = '0';
-                    otherIcon.textContent = '▼';
-                    otherIcon.style.transform = 'rotate(0deg)';
-                }
+                if (otherContent && otherIcon) closeAccordion(otherContent, otherIcon);
             }
         }
 
-        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-            content.style.maxHeight = content.scrollHeight + 'px';
-            content.style.opacity = '1';
-            icon.textContent = '◎';
-            icon.style.transform = 'rotate(180deg)';
+        if (!isAccordionOpen(content)) {
+            openAccordion(content, icon);
         } else {
-            content.style.maxHeight = '0px';
-            content.style.opacity = '0';
-            icon.textContent = '▼';
-            icon.style.transform = 'rotate(0deg)';
+            closeAccordion(content, icon);
         }
     }
     window.togglePreviewJra = togglePreviewJra;

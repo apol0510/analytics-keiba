@@ -2516,6 +2516,49 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 </style>
 
 <script is:inline>
+    // 🔧 2026-05-13 修正: アコーディオン内で <details>（不要馬・見送り馬 など）を
+    //   開いた際、親の max-height が固定値のままだと overflow: hidden で
+    //   クリップされる問題があった。
+    //   open 時: 一度 scrollHeight に設定 → transitionend で 'none' に切替（内側展開を阻害しない）
+    //   close 時: 一度 scrollHeight に戻してから次フレームで 0px → 閉じアニメ
+    function openAccordion(content, icon) {
+        // 既に open 中（'none'）で再度呼ばれた場合は何もしない
+        if (content.style.maxHeight === 'none') return;
+        content.style.maxHeight = content.scrollHeight + 'px';
+        content.style.opacity = '1';
+        icon.textContent = '◎';
+        icon.style.transform = 'rotate(180deg)';
+        const onEnd = (e) => {
+            if (e.propertyName !== 'max-height') return;
+            content.removeEventListener('transitionend', onEnd);
+            // open アニメ完了後は制限解除（内側 details 展開を阻害しない）
+            if (content.style.maxHeight !== '0px') {
+                content.style.maxHeight = 'none';
+            }
+        };
+        content.addEventListener('transitionend', onEnd);
+    }
+    function closeAccordion(content, icon) {
+        if (content.style.maxHeight === 'none') {
+            // none の状態から閉じる場合、現実の高さに戻してから 0 にしてアニメ
+            content.style.maxHeight = content.scrollHeight + 'px';
+            // 次フレームで 0 に
+            requestAnimationFrame(() => {
+                content.style.maxHeight = '0px';
+                content.style.opacity = '0';
+            });
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+        }
+        icon.textContent = '▼';
+        icon.style.transform = 'rotate(0deg)';
+    }
+    function isAccordionOpen(content) {
+        return content.style.maxHeight === 'none' ||
+            (content.style.maxHeight && content.style.maxHeight !== '0px' && content.style.maxHeight !== '');
+    }
+
     // アコーディオン共通化: 一つ開けたら他を自動で閉じる
     function createToggleFunction(raceNumber) {
         return function() {
@@ -2530,26 +2573,15 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
                     const otherContent = document.getElementById(`race-${i}r`);
                     const otherIcon = document.getElementById(`toggle-${i}r`);
                     if (otherContent && otherIcon) {
-                        otherContent.style.maxHeight = '0px';
-                        otherContent.style.opacity = '0';
-                        otherIcon.textContent = '▼';
-                        otherIcon.style.transform = 'rotate(0deg)';
+                        closeAccordion(otherContent, otherIcon);
                     }
                 }
             }
 
-            // 現在のアコーディオンの状態をチェックして開く
-            if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-                content.style.maxHeight = content.scrollHeight + 'px';
-                content.style.opacity = '1';
-                icon.textContent = '◎';
-                icon.style.transform = 'rotate(180deg)';
+            if (!isAccordionOpen(content)) {
+                openAccordion(content, icon);
             } else {
-                // 既に開いている場合は閉じる
-                content.style.maxHeight = '0px';
-                content.style.opacity = '0';
-                icon.textContent = '▼';
-                icon.style.transform = 'rotate(0deg)';
+                closeAccordion(content, icon);
             }
         };
     }
@@ -2568,26 +2600,15 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
                     const otherContent = document.getElementById(`preview-${i}r`);
                     const otherIcon = document.getElementById(`toggle-preview-${i}r`);
                     if (otherContent && otherIcon) {
-                        otherContent.style.maxHeight = '0px';
-                        otherContent.style.opacity = '0';
-                        otherIcon.textContent = '▼';
-                        otherIcon.style.transform = 'rotate(0deg)';
+                        closeAccordion(otherContent, otherIcon);
                     }
                 }
             }
 
-            // 現在のアコーディオンの状態をチェックして開く
-            if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-                content.style.maxHeight = content.scrollHeight + 'px';
-                content.style.opacity = '1';
-                icon.textContent = '◎';
-                icon.style.transform = 'rotate(180deg)';
+            if (!isAccordionOpen(content)) {
+                openAccordion(content, icon);
             } else {
-                // 既に開いている場合は閉じる
-                content.style.maxHeight = '0px';
-                content.style.opacity = '0';
-                icon.textContent = '▼';
-                icon.style.transform = 'rotate(0deg)';
+                closeAccordion(content, icon);
             }
         };
     }

@@ -2502,6 +2502,41 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 </style>
 
 <script is:inline>
+    // 🔧 2026-05-13 修正: 内側 <details> 展開時の max-height クリップを回避
+    function openAccordion(content, icon) {
+        if (content.style.maxHeight === 'none') return;
+        content.style.maxHeight = content.scrollHeight + 'px';
+        content.style.opacity = '1';
+        icon.textContent = '◎';
+        icon.style.transform = 'rotate(180deg)';
+        const onEnd = (e) => {
+            if (e.propertyName !== 'max-height') return;
+            content.removeEventListener('transitionend', onEnd);
+            if (content.style.maxHeight !== '0px') {
+                content.style.maxHeight = 'none';
+            }
+        };
+        content.addEventListener('transitionend', onEnd);
+    }
+    function closeAccordion(content, icon) {
+        if (content.style.maxHeight === 'none') {
+            content.style.maxHeight = content.scrollHeight + 'px';
+            requestAnimationFrame(() => {
+                content.style.maxHeight = '0px';
+                content.style.opacity = '0';
+            });
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+        }
+        icon.textContent = '▼';
+        icon.style.transform = 'rotate(0deg)';
+    }
+    function isAccordionOpen(content) {
+        return content.style.maxHeight === 'none' ||
+            (content.style.maxHeight && content.style.maxHeight !== '0px' && content.style.maxHeight !== '');
+    }
+
     // アコーディオン共通化: 一つ開けたら他を自動で閉じる
     function createToggleFunction(raceNumber) {
         return function() {
@@ -2510,37 +2545,23 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 
             if (!content || !icon) return;
 
-            // 他のアコーディオンをすべて閉じる
             for (let i = 1; i <= 12; i++) {
                 if (i !== raceNumber) {
                     const otherContent = document.getElementById(`race-${i}r`);
                     const otherIcon = document.getElementById(`toggle-${i}r`);
-                    if (otherContent && otherIcon) {
-                        otherContent.style.maxHeight = '0px';
-                        otherContent.style.opacity = '0';
-                        otherIcon.textContent = '▼';
-                        otherIcon.style.transform = 'rotate(0deg)';
-                    }
+                    if (otherContent && otherIcon) closeAccordion(otherContent, otherIcon);
                 }
             }
 
-            // 現在のアコーディオンの状態をチェックして開く
-            if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-                content.style.maxHeight = content.scrollHeight + 'px';
-                content.style.opacity = '1';
-                icon.textContent = '◎';
-                icon.style.transform = 'rotate(180deg)';
+            if (!isAccordionOpen(content)) {
+                openAccordion(content, icon);
             } else {
-                // 既に開いている場合は閉じる
-                content.style.maxHeight = '0px';
-                content.style.opacity = '0';
-                icon.textContent = '▼';
-                icon.style.transform = 'rotate(0deg)';
+                closeAccordion(content, icon);
             }
         };
     }
 
-    // プレビュー用のトグル関数を生成（1R-9R）
+    // プレビュー用のトグル関数を生成（1R-12R 全範囲）
     function createPreviewToggleFunction(raceNumber) {
         return function() {
             const content = document.getElementById(`preview-${raceNumber}r`);
@@ -2548,38 +2569,24 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 
             if (!content || !icon) return;
 
-            // 他のプレビューアコーディオンをすべて閉じる
-            for (let i = 1; i <= 9; i++) {
+            for (let i = 1; i <= 12; i++) {
                 if (i !== raceNumber) {
                     const otherContent = document.getElementById(`preview-${i}r`);
                     const otherIcon = document.getElementById(`toggle-preview-${i}r`);
-                    if (otherContent && otherIcon) {
-                        otherContent.style.maxHeight = '0px';
-                        otherContent.style.opacity = '0';
-                        otherIcon.textContent = '▼';
-                        otherIcon.style.transform = 'rotate(0deg)';
-                    }
+                    if (otherContent && otherIcon) closeAccordion(otherContent, otherIcon);
                 }
             }
 
-            // 現在のアコーディオンの状態をチェックして開く
-            if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-                content.style.maxHeight = content.scrollHeight + 'px';
-                content.style.opacity = '1';
-                icon.textContent = '◎';
-                icon.style.transform = 'rotate(180deg)';
+            if (!isAccordionOpen(content)) {
+                openAccordion(content, icon);
             } else {
-                // 既に開いている場合は閉じる
-                content.style.maxHeight = '0px';
-                content.style.opacity = '0';
-                icon.textContent = '▼';
-                icon.style.transform = 'rotate(0deg)';
+                closeAccordion(content, icon);
             }
         };
     }
 
-    // 1R-9Rのプレビュートグル関数を生成
-    for (let i = 1; i <= 9; i++) {
+    // 1R-12Rのプレビュートグル関数を生成
+    for (let i = 1; i <= 12; i++) {
         window[`togglePreview${i}R`] = createPreviewToggleFunction(i);
     }
 
