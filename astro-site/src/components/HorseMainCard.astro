@@ -1,0 +1,569 @@
+---
+// 本命・対抗・単穴 共通の rich 馬カード
+//
+// 🎯 単一ソース: このコンポーネントが Premium / Light 両方の主力馬表示を担当する。
+//   ・admin が src/data/predictions/*.json を更新すれば自動的に両ページで同じ表示になる
+//   ・スタイル変更は HorseMainCard.astro 一箇所だけで全ページに反映
+//   ・横展開: free-prediction / premium-prediction も将来このコンポーネントに移行可能
+//
+// 必要なデータ: normalizeHorseData() で正規化済みの horse オブジェクト
+//   - role, displayMark, number, name
+//   - pt, stars, confidence
+//   - jockey, trainer, weight, age, ageNum, gender, frame, computerIndex, sire/_sire
+//   - importance (オプション), evalPoints (オプション), recentRaces (オプション)
+
+import { getRoleDisplayConfig } from '../lib/shared-prediction-logic.js';
+
+interface HorseLike {
+    role?: string;
+    displayMark?: string;
+    number?: number | string;
+    name?: string;
+    pt?: number;
+    stars?: string;
+    confidence?: number | null;
+    jockey?: string;
+    trainer?: string;
+    weight?: number | string | null;
+    age?: string;
+    ageNum?: number;
+    gender?: string;
+    frame?: number;
+    computerIndex?: number;
+    sire?: string;
+    _sire?: string;
+    importance?: { label: string; value: number }[];
+    evalPoints?: string[];
+    recentRaces?: any[];
+}
+
+interface Props {
+    horse: HorseLike;
+}
+
+const { horse } = Astro.props as Props;
+const roleConfig = getRoleDisplayConfig(horse.role);
+const cardClass = horse.role === '本命'
+    ? 'horse-card horse-card-main'
+    : horse.role === '対抗'
+        ? 'horse-card horse-card-sub'
+        : 'horse-card horse-card-tana';
+const filledStars = (horse.stars || '★').length;
+const pt = horse.pt ?? 0;
+const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
+const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
+const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+    ? `${horse.weight}kg`
+    : null;
+const ageGenderStr = (horse.ageNum != null && horse.gender)
+    ? `${horse.ageNum}歳${horse.gender}`
+    : (horse.age || null);
+const hasBasicInfo = !!(ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || (horse.computerIndex != null && horse.computerIndex !== 0) || horse.sire || horse._sire);
+const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' ? 'sub' : 'tana';
+---
+
+<div class={cardClass}>
+    {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
+    <div class="horse-header">
+        <div class="horse-identity">
+            <span class={roleConfig.markClass}>{horse.displayMark}</span>
+            <span class="horse-number">{horse.number}</span>
+            <span class="horse-name">{horse.name}</span>
+        </div>
+        <span class={`role-badge role-badge-${roleBadgeKey}`}>{horse.role}</span>
+    </div>
+
+    <div class="horse-stats-row">
+        <div class="stat-block stat-score-block">
+            <div class="stat-label">累積スコア</div>
+            <div class="stat-value stat-score">{pt}<span class="stat-unit">pt</span></div>
+        </div>
+        <div class="stat-block stat-stars-block">
+            <div class="stat-label">総合評価</div>
+            <div class="star-rating" aria-label={`総合評価 ${filledStars}つ星 信頼度${horse.confidence ?? ''}`}>
+                <span class="star-row">
+                    {[1, 2, 3, 4].map((i) => (
+                        <span class={`star ${i <= filledStars ? 'star-filled' : 'star-empty'}`}>★</span>
+                    ))}
+                </span>
+                {horse.confidence != null && (
+                    <span class="confidence-num">（{horse.confidence}）</span>
+                )}
+            </div>
+        </div>
+    </div>
+
+    {hasBasicInfo && (
+        <div class="basic-info">
+            <h4>基本情報</h4>
+            <div class="info-grid">
+                {(ageGenderStr || weightStr) && (
+                    <div class="info-line info-line-primary">
+                        {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
+                        {weightStr && <span class="info-chip">{weightStr}</span>}
+                    </div>
+                )}
+                {horse.jockey && (
+                    <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
+                )}
+                {horse.trainer && (
+                    <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
+                )}
+                {horse.frame != null && (
+                    <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                )}
+                {horse.computerIndex != null && horse.computerIndex !== 0 && (
+                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                )}
+                {(horse.sire || horse._sire) && (
+                    <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire || horse._sire}</span></div>
+                )}
+            </div>
+        </div>
+    )}
+
+    {evalPoints.length > 0 && (
+        <div class="eval-points">
+            <h4>評価ポイント</h4>
+            <div class="eval-tags">
+                {evalPoints.map((p) => (
+                    <span class="eval-tag">{p}</span>
+                ))}
+            </div>
+        </div>
+    )}
+
+    {importance && (
+        <div class="feature-importance">
+            <h4>特徴量重要度</h4>
+            <div class="importance-list">
+                {importance.map((item) => (
+                    <div class="importance-item">
+                        <span class="importance-label">{item.label}</span>
+                        <div class="importance-bar">
+                            <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
+                        </div>
+                        <span class="importance-percent">{Math.round(item.value * 100)}%</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )}
+
+    {recentRaces.length > 0 && (
+        <details class="recent-races">
+            <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+            <div class="recent-races-list">
+                {recentRaces.slice(0, 4).map((r) => {
+                    const venue = r?.venue || '';
+                    const distance = r?.distance || '';
+                    const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                    const time = r?.time ? `タイム${r.time}` : '';
+                    const last3f = r?.last3f ? `上がり${r.last3f}` : '';
+                    const bw = r?.bodyWeight ? `馬体${r.bodyWeight}kg` : '';
+                    const pass = r?.passingOrder ? `通過${r.passingOrder}` : '';
+                    const jk = r?.jockey ? `騎手:${r.jockey}` : '';
+                    return (
+                        <div class="recent-race-row">
+                            <span class="recent-race-venue">{venue}</span>
+                            <span class="recent-race-distance">{distance}</span>
+                            <span class="recent-race-rank">{rank}</span>
+                            {time && <span class="recent-race-meta">{time}</span>}
+                            {jk && <span class="recent-race-meta">{jk}</span>}
+                            {pass && <span class="recent-race-meta">{pass}</span>}
+                            {last3f && <span class="recent-race-meta">{last3f}</span>}
+                            {bw && <span class="recent-race-meta">{bw}</span>}
+                        </div>
+                    );
+                })}
+            </div>
+        </details>
+    )}
+</div>
+
+<style is:global>
+    /* HorseMainCard 共通スタイル（is:global で他ページからも参照可能） */
+
+    .horse-card {
+        position: relative;
+        background: rgba(15, 23, 42, 0.7);
+        border-radius: 14px;
+        padding: 18px 20px;
+        margin-bottom: 20px;
+        border: 1px solid rgba(100, 116, 139, 0.25);
+    }
+    .horse-card-main {
+        background: linear-gradient(180deg, rgba(16, 185, 129, 0.06) 0%, rgba(15, 23, 42, 0.75) 100%);
+        border-color: rgba(16, 185, 129, 0.45);
+        box-shadow: 0 8px 24px rgba(16, 185, 129, 0.12);
+    }
+    .horse-card-sub {
+        border-color: rgba(59, 130, 246, 0.4);
+    }
+    .horse-card-tana {
+        border-color: rgba(245, 158, 11, 0.35);
+    }
+    .main-glow {
+        position: absolute;
+        inset: -2px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(59, 130, 246, 0.2));
+        opacity: 0.4;
+        z-index: -1;
+        filter: blur(8px);
+        pointer-events: none;
+    }
+
+    .horse-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+    }
+    .horse-identity {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .horse-number {
+        background: linear-gradient(135deg, #10b981, #3b82f6);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 1rem;
+        min-width: 36px;
+        text-align: center;
+    }
+    .horse-name {
+        color: #e2e8f0;
+        font-weight: 700;
+        font-size: 1.25rem;
+    }
+    .horse-card-main .horse-name { font-size: 1.4rem; color: #f0fdf4; }
+    .role-badge {
+        font-size: 0.8rem;
+        font-weight: 800;
+        padding: 5px 14px;
+        border-radius: 999px;
+        letter-spacing: 0.05em;
+    }
+    .role-badge-main {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+    .role-badge-sub {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+    .role-badge-tana {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+    }
+
+    /* 累積スコア + 総合評価 を横並び stat-block で表示 */
+    .horse-stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+        margin-bottom: 16px;
+    }
+    .stat-block {
+        background: rgba(30, 41, 59, 0.55);
+        border: 1px solid rgba(100, 116, 139, 0.25);
+        border-radius: 10px;
+        padding: 12px 14px;
+    }
+    .horse-card-main .stat-block {
+        background: rgba(16, 185, 129, 0.08);
+        border-color: rgba(16, 185, 129, 0.35);
+    }
+    .stat-label {
+        color: #94a3b8;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-bottom: 4px;
+        letter-spacing: 0.04em;
+    }
+    .stat-value {
+        font-weight: 800;
+        font-size: 1.6rem;
+        color: #e2e8f0;
+        line-height: 1.1;
+    }
+    .stat-score {
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    .stat-unit {
+        font-size: 0.9rem;
+        margin-left: 2px;
+        opacity: 0.9;
+    }
+    .star-rating {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+    .star-row { display: inline-flex; gap: 2px; }
+    .star {
+        font-size: 1.3rem;
+        line-height: 1;
+    }
+    .star-filled { color: #fbbf24; }
+    .star-empty { color: rgba(148, 163, 184, 0.35); }
+    .confidence-num {
+        margin-left: 6px;
+        color: #94a3b8;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    /* 基本情報 */
+    .basic-info {
+        margin-top: 18px;
+        padding: 14px 16px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px;
+    }
+    .basic-info h4 {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0 0 10px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .basic-info h4::before { content: "📋"; }
+    .horse-card-main .basic-info {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: rgba(16, 185, 129, 0.28);
+    }
+    .info-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .info-line {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 0.92rem;
+        color: #e2e8f0;
+        line-height: 1.4;
+    }
+    .info-line-primary {
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+    }
+    .info-chip {
+        display: inline-block;
+        background: rgba(59, 130, 246, 0.18);
+        color: #bfdbfe;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .horse-card-main .info-chip {
+        background: rgba(16, 185, 129, 0.2);
+        color: #d1fae5;
+        border-color: rgba(16, 185, 129, 0.4);
+    }
+    .info-key {
+        color: #94a3b8;
+        font-size: 0.82rem;
+        font-weight: 600;
+        min-width: 48px;
+        flex-shrink: 0;
+    }
+    .info-val {
+        color: #e2e8f0;
+        font-weight: 600;
+    }
+    .info-val-strong {
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 800;
+        font-size: 1rem;
+    }
+
+    /* 評価ポイント */
+    .eval-points {
+        margin-top: 14px;
+        padding: 14px 16px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px;
+    }
+    .eval-points h4 {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0 0 10px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .eval-points h4::before { content: "🎯"; }
+    .horse-card-main .eval-points {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: rgba(16, 185, 129, 0.28);
+    }
+    .eval-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+    .eval-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 12px;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(59, 130, 246, 0.18) 100%);
+        border: 1px solid rgba(16, 185, 129, 0.4);
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #d1fae5;
+    }
+    .eval-tag::before {
+        content: "✓";
+        color: #10b981;
+        font-weight: 900;
+    }
+    .horse-card-main .eval-tag {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(34, 197, 94, 0.2) 100%);
+        border-color: rgba(16, 185, 129, 0.55);
+        box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+    }
+
+    /* 特徴量重要度 */
+    .feature-importance {
+        margin-top: 20px;
+    }
+    .feature-importance h4 {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0 0 10px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .feature-importance h4::before { content: "📊"; }
+    .importance-list { display: grid; gap: 12px; }
+    .importance-item {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    .importance-label {
+        min-width: 120px;
+        color: #94a3b8;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    .importance-bar {
+        flex: 1;
+        height: 16px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        overflow: hidden;
+        position: relative;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .importance-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%);
+        border-radius: 7px;
+        transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+        position: relative;
+        box-shadow:
+            0 0 8px rgba(59, 130, 246, 0.5) inset,
+            0 0 12px rgba(139, 92, 246, 0.3);
+    }
+    .importance-fill::after {
+        content: "";
+        position: absolute;
+        top: 0; right: 0; bottom: 0;
+        width: 18px;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45));
+        border-top-right-radius: 7px;
+        border-bottom-right-radius: 7px;
+    }
+    .horse-card-main .importance-fill {
+        background: linear-gradient(90deg, #22c55e 0%, #10b981 45%, #3b82f6 100%);
+        box-shadow:
+            0 0 10px rgba(16, 185, 129, 0.55) inset,
+            0 0 14px rgba(16, 185, 129, 0.35);
+    }
+    .importance-percent {
+        min-width: 42px;
+        text-align: right;
+        color: #e2e8f0;
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+
+    /* 過去走 */
+    .recent-races {
+        margin-top: 12px;
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 8px;
+        padding: 8px 12px;
+        border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+    .recent-races > summary {
+        cursor: pointer;
+        color: #cbd5e1;
+        font-weight: 600;
+        font-size: 0.88rem;
+        list-style: none;
+    }
+    .recent-races > summary::-webkit-details-marker { display: none; }
+    .recent-races > summary::before {
+        content: '▶';
+        display: inline-block;
+        margin-right: 8px;
+        color: #64748b;
+        font-size: 0.7rem;
+        transition: transform 0.2s ease;
+    }
+    .recent-races[open] > summary::before { transform: rotate(90deg); }
+    .recent-races-list {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .recent-race-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        align-items: baseline;
+        font-size: 0.78rem;
+        color: #cbd5e1;
+        padding: 4px 6px;
+        background: rgba(30, 41, 59, 0.4);
+        border-radius: 4px;
+    }
+    .recent-race-venue { color: #e2e8f0; font-weight: 600; }
+    .recent-race-rank { color: #10b981; font-weight: 700; }
+    .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+</style>
