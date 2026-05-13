@@ -32,7 +32,7 @@ const MARK_MAP = {
 function convertHorse(h, allRaceHorses, raceDistance) {
   const pt = Number(h.pt || 0);
   const overallScore = computeOverallScore(pt);
-  const stars = getStarRating(overallScore);
+  const stars = getStarRating(pt); // 2026-05-14: 圧縮値ではなく pt 直接判定に変更
   const confidence = computeConfidence(pt);
   const importance = computeImportance(h, allRaceHorses);
   const evalPoints = computeEvalPoints(h, allRaceHorses, raceDistance);

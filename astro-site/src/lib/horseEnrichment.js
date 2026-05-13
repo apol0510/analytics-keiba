@@ -8,16 +8,31 @@
  */
 
 // pt スコアを 0-100 に正規化（旧 nankan-analytics の総合評価レンジに合わせる）
+// 注: 星評価判定には使わない（getStarRating は pt を直接見る）。
+// この関数は overallScore の数値表示や confidence と独立した参考値用途として残置。
 export function computeOverallScore(pt) {
   const v = Number(pt) || 0;
   return Math.min(99, Math.max(50, Math.round(50 + v * 0.3)));
 }
 
-// 総合評価の星
-export function getStarRating(score) {
-  if (score >= 90) return '★★★★';
-  if (score >= 80) return '★★★';
-  if (score >= 70) return '★★';
+/**
+ * 総合評価の星
+ *
+ * 2026-05-14 修正: 引数を「pt（累積スコア）」に統一。
+ *   旧仕様 computeOverallScore(pt) は pt を 50-80 程度に圧縮するため、
+ *   pt=90 の本命でも overallScore=77 → ★★ になり累積スコアと矛盾していた。
+ *   pt 直接判定にして累積スコアと星表示の整合を取る。
+ *
+ *   pt >= 89 → ★★★★
+ *   pt >= 71 → ★★★
+ *   pt >  0  → ★★
+ *   pt <= 0  → ★
+ */
+export function getStarRating(pt) {
+  const v = Number(pt) || 0;
+  if (v >= 89) return '★★★★';
+  if (v >= 71) return '★★★';
+  if (v > 0)   return '★★';
   return '★';
 }
 
@@ -240,7 +255,7 @@ export function computeImportance(h, allRaceHorses) {
 export function enrichHorse(h, allRaceHorses, raceDistance) {
   const pt = Number(h.pt || 0);
   const overallScore = computeOverallScore(pt);
-  const stars = getStarRating(overallScore);
+  const stars = getStarRating(pt); // 2026-05-14: 圧縮値ではなく pt 直接判定に変更
   const confidence = computeConfidence(pt);
   const importance = computeImportance(h, allRaceHorses);
   const evalPoints = computeEvalPoints(h, allRaceHorses, raceDistance);

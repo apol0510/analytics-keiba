@@ -80,23 +80,27 @@ export function getRaceConfidence(horses) {
     return Math.round(totalConfidence / mainHorses.length);
 }
 
-// 星評価システム（89以上=4つ星、88以下=3つ星）
+// 星評価システム — horseEnrichment.js の getStarRating と同一基準
+//   pt >= 89 → ★★★★
+//   pt >= 71 → ★★★
+//   pt > 0  → ★★
+//   pt <= 0 → ★
+// 2026-05-14: 旧仕様 (89 で 2 分岐) は累積スコア 70 の馬まで ★★★ になり
+// 「pt=70 不要馬なのに ★★★」という矛盾を生んでいたため、星評価ロジックを
+// 全ページで同じ 3 段階に統一する。
 export function convertToStarRating(text, horseType, score) {
-    // スコアが数値でない場合はテキストをそのまま返す
     if (typeof score !== 'number' && typeof score !== 'string') {
         return text;
     }
-    
     const numScore = typeof score === 'string' ? parseInt(score) : score;
-    
-    // スコアが有効な数値でない場合はデフォルトテキスト
     if (isNaN(numScore)) {
         return text;
     }
-    
-    // 89以上は4つ星、88以下は3つ星
-    const stars = numScore >= 89 ? '★★★★' : '★★★';
-    
+    let stars;
+    if (numScore >= 89)      stars = '★★★★';
+    else if (numScore >= 71) stars = '★★★';
+    else if (numScore > 0)   stars = '★★';
+    else                     stars = '★';
     return `総合評価:${stars}`;
 }
 
