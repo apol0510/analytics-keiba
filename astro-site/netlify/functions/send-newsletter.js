@@ -29,6 +29,28 @@ export default async function handler(request, context) {
     );
   }
 
+  // 🛡️ 止血ガード（2026-05-14 追加）
+  // admin画面から呼ばれる即送信ルート。過去にテスト時の重複配信が発生したため、
+  // NEWSLETTER_AUTOMATION_ENABLED === 'true' でない限り完全に無効化する。
+  // cron-email-scheduler.js / execute-scheduled-emails.js と同じ思想で
+  // ここで早期 return することで、Airtable / SendGrid / schedule-email 登録に一切到達しない。
+  // 即送信ルート・予約送信ルート（scheduledAt）両方を一括で止める。
+  // 本番配信を再開する際は、dry-run・test を整備してから明示的にフラグを立てる。
+  if (process.env.NEWSLETTER_AUTOMATION_ENABLED !== 'true') {
+    console.log('🛡️ newsletter automation disabled (NEWSLETTER_AUTOMATION_ENABLED !== "true") - send-newsletter is a no-op');
+    return new Response(
+      JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: 'newsletter automation disabled',
+        flag: 'NEWSLETTER_AUTOMATION_ENABLED',
+        flagValue: process.env.NEWSLETTER_AUTOMATION_ENABLED ?? null,
+        timestamp: new Date().toISOString()
+      }),
+      { status: 200, headers }
+    );
+  }
+
   try {
     const requestBody = await request.text();
     console.log('Received request body:', requestBody);

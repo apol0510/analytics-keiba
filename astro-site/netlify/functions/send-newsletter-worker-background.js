@@ -7,6 +7,28 @@ export default async function handler(request, context) {
     'Content-Type': 'application/json'
   };
 
+  // 🛡️ 止血ガード（2026-05-14 追加）
+  // Queue方式 worker は admin UI 未統合の死蔵経路だが、外部から直接 POST されると
+  // SendGrid 送信が走ってしまう。完全自動化の安全設計が終わるまで送信自体を無効化する。
+  // cron-email-scheduler.js / execute-scheduled-emails.js / send-newsletter.js /
+  // schedule-email.js / create-newsletter-queue.js と同じ思想。
+  // ここで早期 return することで、Airtable / NewsletterQueue / SendGrid に一切到達しない。
+  // 本番配信を再開する際は、dry-run・test を整備してから明示的にフラグを立てる。
+  if (process.env.NEWSLETTER_AUTOMATION_ENABLED !== 'true') {
+    console.log('🛡️ newsletter automation disabled (NEWSLETTER_AUTOMATION_ENABLED !== "true") - send-newsletter-worker-background is a no-op');
+    return new Response(
+      JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: 'newsletter automation disabled',
+        flag: 'NEWSLETTER_AUTOMATION_ENABLED',
+        flagValue: process.env.NEWSLETTER_AUTOMATION_ENABLED ?? null,
+        timestamp: new Date().toISOString()
+      }),
+      { status: 200, headers }
+    );
+  }
+
   try {
     const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
     const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;

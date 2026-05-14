@@ -13,6 +13,28 @@ export default async function handler(request, context) {
     return new Response('', { status: 200, headers });
   }
 
+  // 🛡️ 止血ガード（2026-05-14 追加）
+  // 実送信はしないが、ScheduledEmails テーブルに予約レコードを積むため、
+  // executor を将来復活させた時に過去の予約が一斉に流れる危険がある。
+  // NEWSLETTER_AUTOMATION_ENABLED === 'true' でない限り、予約登録自体も無効化する。
+  // cron-email-scheduler.js / execute-scheduled-emails.js / send-newsletter.js と同じ思想。
+  // ここで早期 return することで、Airtable / ScheduledEmails 登録に一切到達しない。
+  // 本番配信を再開する際は、dry-run・test を整備してから明示的にフラグを立てる。
+  if (process.env.NEWSLETTER_AUTOMATION_ENABLED !== 'true') {
+    console.log('🛡️ newsletter automation disabled (NEWSLETTER_AUTOMATION_ENABLED !== "true") - schedule-email is a no-op');
+    return new Response(
+      JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: 'newsletter automation disabled',
+        flag: 'NEWSLETTER_AUTOMATION_ENABLED',
+        flagValue: process.env.NEWSLETTER_AUTOMATION_ENABLED ?? null,
+        timestamp: new Date().toISOString()
+      }),
+      { status: 200, headers }
+    );
+  }
+
   try {
     const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
     const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;

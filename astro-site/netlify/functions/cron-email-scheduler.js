@@ -8,6 +8,26 @@ export default async function handler(request, context) {
 
   console.log('🕐 Cron実行開始:', new Date().toISOString());
 
+  // 🛡️ 止血ガード（2026-05-14 追加）
+  // 過去にテスト時の重複配信が発生したため、Scheduled Function による自動配信は
+  // NEWSLETTER_AUTOMATION_ENABLED === 'true' でない限り完全に無効化する。
+  // ここで早期 return することで、execute-scheduled-emails / SendGrid に一切到達しない。
+  // 本番配信を再開する際は、設計・dry-run・test を整備してから明示的にフラグを立てる。
+  if (process.env.NEWSLETTER_AUTOMATION_ENABLED !== 'true') {
+    console.log('🛡️ newsletter automation disabled (NEWSLETTER_AUTOMATION_ENABLED !== "true") - cron is a no-op');
+    return new Response(
+      JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: 'newsletter automation disabled',
+        flag: 'NEWSLETTER_AUTOMATION_ENABLED',
+        flagValue: process.env.NEWSLETTER_AUTOMATION_ENABLED ?? null,
+        timestamp: new Date().toISOString()
+      }),
+      { status: 200, headers }
+    );
+  }
+
   try {
     // スケジュールされたメールを実行
     const baseUrl = process.env.URL || 'https://analytics.keiba.link';
