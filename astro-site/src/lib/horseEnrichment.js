@@ -7,6 +7,51 @@
  * 元のキー名は予想スキーマごとに異なるため、各ページで正規化してから呼ぶ。
  */
 
+/**
+ * 過去走 (recentRaces) の venue 文字列を判読性の高い表記に整形する。
+ *
+ * JRA 形式: "2中3.15" → "2回中山 3/15"
+ *   - 先頭の数字: 開催回（その年の N 回目の開催節）
+ *   - 次の漢字: 競馬場略号（京=京都 / 阪=阪神 / 東=東京 / 中=中山-中京 / 新=新潟 / 福=福島 / 小=小倉 / 札=札幌 / 函=函館）
+ *   - 末尾の "M.D": 月.日
+ *
+ * 「中」は元データで中山/中京の区別が無いため、開催月で推定：
+ *   - 5月・7月 → 中京（その月の中山開催は無い）
+ *   - 8月・10月・11月 → 中山（その月の中京開催は無い）
+ *   - それ以外（1/3/9/12月など両方ありえる月）→ "中山/中京" と並記
+ *
+ * パターン一致しない場合は元文字列をそのまま返す。
+ *
+ * @param {string} s venue 文字列
+ * @returns {string} 整形済み venue 文字列
+ */
+export function formatRecentVenue(s) {
+  if (!s || typeof s !== 'string') return s || '';
+  const m = s.match(/^(\d+)([^\d]+?)(\d+)\.(\d+)$/);
+  if (!m) return s;
+  const round = m[1];
+  const abbr = m[2];
+  const mo = parseInt(m[3], 10);
+  const day = m[4];
+  const map = {
+    '京': '京都', '阪': '阪神', '東': '東京', '新': '新潟',
+    '福': '福島', '小': '小倉', '札': '札幌', '函': '函館',
+  };
+  let full;
+  if (map[abbr]) {
+    full = map[abbr];
+  } else if (abbr === '中') {
+    // JRA 中山開催月: 1, 3, 4, 9, 12 / 中京開催月: 1, 3, 5, 7, 9, 12
+    // 確実に区別できる月のみ展開、それ以外は安全側で並記表示。
+    if (mo === 5 || mo === 7) full = '中京';
+    else if (mo === 4) full = '中山';
+    else full = '中山/中京';
+  } else {
+    full = abbr;
+  }
+  return `${round}回${full} ${mo}/${day}`;
+}
+
 // pt スコアを 0-100 に正規化（旧 nankan-analytics の総合評価レンジに合わせる）
 // 注: 星評価判定には使わない（getStarRating は pt を直接見る）。
 // この関数は overallScore の数値表示や confidence と独立した参考値用途として残置。

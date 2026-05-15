@@ -3,7 +3,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { enrichHorse } from '../../lib/horseEnrichment.js';
+import { enrichHorse, formatRecentVenue } from '../../lib/horseEnrichment.js';
 import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse } from '../../lib/shared-prediction-logic.js';
 
 // 表示用指数の選定: sourceComputerIndex > pt > totalScore/displayScore/rawScore。
@@ -380,7 +380,7 @@ try {
                                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                   return (
                                                     <div class="recent-race-row">
-                                                      <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                                       <span class="recent-race-distance">{r?.distance || ''}</span>
                                                       <span class="recent-race-rank">{rank}</span>
                                                       {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
@@ -444,7 +444,7 @@ try {
                                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                   return (
                                                     <div class="recent-race-row">
-                                                      <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                                       <span class="recent-race-distance">{r?.distance || ''}</span>
                                                       <span class="recent-race-rank">{rank}</span>
                                                       {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
@@ -509,7 +509,7 @@ try {
                                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                   return (
                                                     <div class="recent-race-row">
-                                                      <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                                       <span class="recent-race-distance">{r?.distance || ''}</span>
                                                       <span class="recent-race-rank">{rank}</span>
                                                       {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
