@@ -111,10 +111,18 @@ export function normalizeDetailed(input) {
       const sourceCi = (horse.sourceComputerIndex != null && Number.isFinite(Number(horse.sourceComputerIndex)))
         ? Number(horse.sourceComputerIndex)
         : null;
-      const fallbackCi = parseInt(horse.computerIndex || '0') || 0;
+      // admin 編集系 computerIndex は 0-9 スケールに正規化されている場合があるため、
+      // しきい値 10 未満なら指数として扱わず、sourceComputerIndex 由来の昇格に任せる。
+      const fallbackCiRaw = parseInt(horse.computerIndex || '0') || 0;
+      const fallbackCi = fallbackCiRaw >= 10 ? fallbackCiRaw : 0;
       const ciForFloor = sourceCi != null ? sourceCi : fallbackCi;
-      if (rawScore === 0) {
-        rawScore = (ciForFloor >= COMPI_MIN) ? ciForFloor : 0;
+      // 2026-05-16 修正: 南関/JRA で pt スケールを揃えるため、
+      // totalScore など低い値（< COMPI_MIN）の場合は ciForFloor(>=45) で昇格させる。
+      // 旧仕様は rawScore === 0 のときだけ ciForFloor を採用していたため、
+      // racebook の totalScore=19 程度が pt スケールに反映されず、JRA だけが低い pt 帯
+      // (~80) で表示されていた。南関の挙動（pt~150 帯）に揃える。
+      if (rawScore < COMPI_MIN && ciForFloor >= COMPI_MIN) {
+        rawScore = ciForFloor;
       }
       const role = horse.assignment || horse.role || '無';
 
