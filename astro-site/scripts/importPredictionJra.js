@@ -284,14 +284,35 @@ async function fetchRacebookData(date, category = 'jra') {
   }
 
   const files = await dirResponse.json();
-  const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
+
+  // 2026-05-15 追加: JRA の同一開催（5/16 土）に対し、TOK/NII の racebook ファイル名は
+  // 2026-05-15-*.json として保存される運用がある（データ供給側仕様）。
+  // 指定日 ±1 日のファイルを全件取得し、ファイル中身の `date` または venue 重複で正しくマージする。
+  const toMs = (d) => new Date(d + 'T00:00:00Z').getTime();
+  const targetMs = toMs(date);
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+  const dateFiles = files.filter(f => {
+    if (!f.name.endsWith('.json')) return false;
+    const m = f.name.match(/^(\d{4}-\d{2}-\d{2})-/);
+    if (!m) return false;
+    const fileMs = toMs(m[1]);
+    const diff = Math.abs(targetMs - fileMs);
+    return diff <= ONE_DAY; // 指定日 or 前後1日まで
+  });
 
   if (dateFiles.length === 0) {
-    console.log(`⏭️  [RACEBOOK] ${date}のracebookファイルなし`);
+    console.log(`⏭️  [RACEBOOK] ${date}±1日のracebookファイルなし`);
     return null;
   }
 
   const venues = [];
+  const seenVenues = new Set();
+  // 指定日と完全一致するファイルを優先するためソート（差0 → 差1日の順）
+  dateFiles.sort((a, b) => {
+    const da = Math.abs(targetMs - toMs(a.name.match(/^(\d{4}-\d{2}-\d{2})-/)[1]));
+    const db = Math.abs(targetMs - toMs(b.name.match(/^(\d{4}-\d{2}-\d{2})-/)[1]));
+    return da - db;
+  });
   for (const file of dateFiles) {
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
     const fetchHeaders = GITHUB_TOKEN ? { 'Authorization': `token ${GITHUB_TOKEN}` } : {};
@@ -299,10 +320,17 @@ async function fetchRacebookData(date, category = 'jra') {
     if (!response.ok) continue;
 
     const rbData = JSON.parse(await response.text());
-    console.log(`   ✅ [RACEBOOK] ${file.name} 取得完了 (${rbData.races?.length || 0}R)`);
+    const venueName = rbData.track || rbData.venue || null;
+    if (!venueName) continue;
+    if (seenVenues.has(venueName)) {
+      console.log(`   ⏭️  [RACEBOOK] ${file.name} スキップ（${venueName} は既に取込済）`);
+      continue;
+    }
+    seenVenues.add(venueName);
+    console.log(`   ✅ [RACEBOOK] ${file.name} 取得完了 (${venueName} / ${rbData.races?.length || 0}R)`);
 
     venues.push({
-      date, venue: rbData.track, totalRaces: rbData.races?.length || 0,
+      date, venue: venueName, totalRaces: rbData.races?.length || 0,
       races: (rbData.races || []).map(r => ({
         raceInfo: {
           raceNumber: `${r.raceNumber}R`, raceName: r.raceClass || '',
@@ -312,7 +340,9 @@ async function fetchRacebookData(date, category = 'jra') {
           number: h.number, name: h.name, totalScore: h.totalScore || 0, assignment: h.assignment || '無',
           jockey: h.jockey || '', trainer: h.trainer || '', seirei: h.sexAge || '',
           kinryo: h.weight != null ? String(h.weight) : '', computerIndex: h.computerIndex || null,
-          marks: h.marks || [], ranking: h.ranking || null
+          marks: h.marks || [], ranking: h.ranking || null,
+          // 過去走（5走分まで保持。convertToLegacyFormat で recentRaces に変換）
+          _pastRaces: Array.isArray(h.pastRaces) ? h.pastRaces.slice(0, 5) : []
         }))
       }))
     });
@@ -458,23 +488,39 @@ function convertToLegacyFormat(data, date) {
         horseCount: race.horses?.length || 0 // 頭数
       },
       horses: race.horses
-        .map(h => ({
-          horseNumber: h.number,
-          horseName: h.name,
-          pt: h.displayScore || h.rawScore || 70, // ptフィールド
-          role: h.role, // roleをそのまま保持（JRAのassignmentをそのまま使用）
-          jockey: h.jockey || h.kisyu || '', // 騎手
-          trainer: h.trainer || h.kyusya || '', // 厩舎
-          age: h.age || h.seirei || '', // 馬齢
-          weight: h.weight || h.kinryo || '', // 斤量
-          // 役割再計算（adjustPrediction フォールバック）に必要なフィールド
-          computerIndex: h.computerIndex != null ? h.computerIndex : null,
-          // 2026-05-14: 元 racebook 指数（pt 生成の正規ソース）
-          ...(h.sourceComputerIndex != null ? { sourceComputerIndex: h.sourceComputerIndex } : {}),
-          // 過去走（computer JSON 由来）— 表示用に保持
-          ...(Array.isArray(h.recentRaces) && h.recentRaces.length > 0 ? { recentRaces: h.recentRaces } : {}),
-          marks: h.marks || {}
-        }))
+        .map(h => {
+          // 過去走の優先順位: racebook由来 _pastRaces（豊富なフィールド） > computer由来 recentRaces（注入済み）
+          const fromPast = Array.isArray(h._pastRaces) && h._pastRaces.length > 0
+            ? h._pastRaces.slice(0, 5).map(pr => ({
+                venue: pr.venue || '',
+                distance: pr.distance || pr.distanceMeters || '',
+                rank: (pr.finish != null && Number.isFinite(Number(pr.finish))) ? Number(pr.finish) : null,
+                time: pr.time || '',
+                last3f: pr.final3F || pr.last3f || '',
+                bodyWeight: pr.bodyWeight || null,
+                jockey: pr.jockey || '',
+                passingOrder: pr.passingOrder || ''
+              }))
+            : null;
+          const recentRaces = fromPast || (Array.isArray(h.recentRaces) && h.recentRaces.length > 0 ? h.recentRaces : null);
+          return {
+            horseNumber: h.number,
+            horseName: h.name,
+            pt: h.displayScore || h.rawScore || 70, // ptフィールド
+            role: h.role, // roleをそのまま保持（JRAのassignmentをそのまま使用）
+            jockey: h.jockey || h.kisyu || '', // 騎手
+            trainer: h.trainer || h.kyusya || '', // 厩舎
+            age: h.age || h.seirei || '', // 馬齢
+            weight: h.weight || h.kinryo || '', // 斤量
+            // 役割再計算（adjustPrediction フォールバック）に必要なフィールド
+            computerIndex: h.computerIndex != null ? h.computerIndex : null,
+            // 2026-05-14: 元 racebook 指数（pt 生成の正規ソース）
+            ...(h.sourceComputerIndex != null ? { sourceComputerIndex: h.sourceComputerIndex } : {}),
+            // 過去走（racebook由来 _pastRaces 優先 / computer由来 recentRaces をフォールバック）
+            ...(recentRaces ? { recentRaces } : {}),
+            marks: h.marks || {}
+          };
+        })
         .sort((a, b) => {
           // 役割の優先順位
           const roleOrder = { '本命': 1, '対抗': 2, '単穴': 3, '連下': 4, '補欠': 5, '抑え': 6, '無': 7 };
