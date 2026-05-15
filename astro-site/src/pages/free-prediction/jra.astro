@@ -4,6 +4,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { enrichHorse } from '../../lib/horseEnrichment.js';
+import { isOsaeCandidate, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
+
+// 表示用指数の選定: sourceComputerIndex > pt > totalScore/displayScore/rawScore。
+// computerIndex は admin 編集系の 0-9 スケールが入る場合があり、そのまま「指数」表示には使わない。
+function getDisplayIndex(horse, enriched) {
+  const candidates = [
+    horse?.sourceComputerIndex,
+    enriched?.sourceComputerIndex,
+    horse?.pt,
+    enriched?.pt,
+    horse?.totalScore,
+    horse?.displayScore,
+    horse?.rawScore
+  ];
+  for (const v of candidates) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 10) return Math.round(n);
+  }
+  return null;
+}
 
 export const prerender = true;
 
@@ -215,7 +235,8 @@ try {
                             const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
                               ? `${horse.weight}kg`
                               : null;
-                            const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.computerIndex != null || horse.sire;
+                            const displayIndex = getDisplayIndex(horse, e);
+                            const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || displayIndex != null || horse.sire;
                             return (
                               <div class={cardClass}>
                                 {role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -265,8 +286,8 @@ try {
                                       {horse.frame != null && (
                                         <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
                                       )}
-                                      {horse.computerIndex != null && (
-                                        <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                                      {displayIndex != null && (
+                                        <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{displayIndex}</span></div>
                                       )}
                                       {horse.sire && (
                                         <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
@@ -326,6 +347,7 @@ try {
                                       const importance = Array.isArray(eMinor.importance) && eMinor.importance.length >= 3 ? eMinor.importance : null;
                                       const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
                                       const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                      const idx = getDisplayIndex(horse, eMinor);
                                       return (
                                         <div class="minor-horse-card minor-horse-card-renka">
                                           <div class="minor-horse-head">
@@ -338,7 +360,7 @@ try {
                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                            {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                            {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
                                           </div>
                                           {evalPoints.length > 0 && (
                                             <div class="minor-horse-evals">
@@ -377,7 +399,9 @@ try {
                               </div>
                             )}
 
-                            {allHorses.filter(h => h.role === '補欠' || h.role === '押さえ' || h.role === '抑え').length > 0 && (
+                            {/* 抑え候補は南関と同じ isOsaeCandidate（押さえ/抑え/補欠 かつ pt > 70）でフィルタ。
+                                pt <= 70 の補欠は「不要馬」として除外する。 */}
+                            {allHorses.filter(isOsaeCandidate).length > 0 && (
                               <div class="horse-card horse-card-minor minor-group-osae">
                                 <div class="horse-header">
                                   <div>
@@ -386,13 +410,13 @@ try {
                                   </div>
                                 </div>
                                 <div class="minor-horse-grid">
-                                  {allHorses
-                                    .filter(h => h.role === '補欠' || h.role === '押さえ' || h.role === '抑え')
+                                  {sortOsaeCandidates(allHorses.filter(isOsaeCandidate))
                                     .map((horse) => {
                                       const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
                                       const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
                                       const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
                                       const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                      const idx = getDisplayIndex(horse, eMinor);
                                       return (
                                         <div class="minor-horse-card minor-horse-card-osae">
                                           <div class="minor-horse-head">
@@ -405,7 +429,7 @@ try {
                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                            {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                            {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
                                           </div>
                                           {evalPoints.length > 0 && (
                                             <div class="minor-horse-evals">
