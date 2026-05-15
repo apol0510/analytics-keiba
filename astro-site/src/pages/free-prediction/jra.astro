@@ -306,25 +306,70 @@ try {
                             );
                           })}
 
-                          {/* 連下・抑えの実データ（登録済みユーザーのみ表示・デフォルト非表示） */}
+                          {/* 連下・抑えの実データ（登録済みユーザーのみ表示・デフォルト非表示）
+                              premium-prediction/jra.astro と同じ minor-horse-card 構造 */}
                           <div class="free-member-unlock-content" style="display: none;">
                             {allHorses.filter(h => h.role === '連下最上位' || h.role === '連下').length > 0 && (
-                              <div class="horse-card horse-card-minor">
+                              <div class="horse-card horse-card-minor minor-group-renka">
                                 <div class="horse-header">
                                   <div>
                                     <span class="horse-mark-minor">△</span>
-                                    <span style="color: #f59e0b; font-weight: 600;">連下候補馬</span>
+                                    <span class="minor-group-title minor-group-title-renka">連下候補馬</span>
                                   </div>
                                 </div>
-                                <div class="horse-grid">
+                                <div class="minor-horse-grid">
                                   {allHorses
                                     .filter(h => h.role === '連下最上位' || h.role === '連下')
-                                    .map(horse => {
+                                    .map((horse) => {
                                       const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                      const importance = Array.isArray(eMinor.importance) && eMinor.importance.length >= 3 ? eMinor.importance : null;
+                                      const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                      const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                       return (
-                                        <div class="horse-grid-item">
-                                          <span class="horse-number-small">{horse.horseNumber}</span>
-                                          <span class="horse-name-small">{horse.horseName}{eMinor.pt != null ? ` (${eMinor.pt}pt)` : ''}</span>
+                                        <div class="minor-horse-card minor-horse-card-renka">
+                                          <div class="minor-horse-head">
+                                            <span class="minor-horse-mark">△</span>
+                                            <span class="minor-horse-number">{horse.horseNumber}</span>
+                                            <span class="minor-horse-name">{horse.horseName}</span>
+                                            <span class="minor-horse-score">{eMinor.pt ?? 0}pt</span>
+                                          </div>
+                                          <div class="minor-horse-meta">
+                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                            {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                          </div>
+                                          {evalPoints.length > 0 && (
+                                            <div class="minor-horse-evals">
+                                              {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                            </div>
+                                          )}
+                                          {importance && (
+                                            <div class="minor-horse-importance">
+                                              安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
+                                            </div>
+                                          )}
+                                          {recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-compact">
+                                              <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                              <div class="recent-races-list">
+                                                {recentRaces.slice(0, 4).map((r) => {
+                                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                  return (
+                                                    <div class="recent-race-row">
+                                                      <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                      <span class="recent-race-rank">{rank}</span>
+                                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                      {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </details>
+                                          )}
                                         </div>
                                       );
                                     })}
@@ -333,22 +378,59 @@ try {
                             )}
 
                             {allHorses.filter(h => h.role === '補欠' || h.role === '押さえ' || h.role === '抑え').length > 0 && (
-                              <div class="horse-card horse-card-minor">
+                              <div class="horse-card horse-card-minor minor-group-osae">
                                 <div class="horse-header">
                                   <div>
                                     <span class="horse-mark-minor">×</span>
-                                    <span style="color: #64748b; font-weight: 600;">抑え候補馬</span>
+                                    <span class="minor-group-title minor-group-title-osae">抑え候補馬</span>
                                   </div>
                                 </div>
-                                <div class="horse-grid">
+                                <div class="minor-horse-grid">
                                   {allHorses
                                     .filter(h => h.role === '補欠' || h.role === '押さえ' || h.role === '抑え')
-                                    .map(horse => {
+                                    .map((horse) => {
                                       const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                      const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                      const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                       return (
-                                        <div class="horse-grid-item">
-                                          <span class="horse-number-small">{horse.horseNumber}</span>
-                                          <span class="horse-name-small">{horse.horseName}{eMinor.pt != null ? ` (${eMinor.pt}pt)` : ''}</span>
+                                        <div class="minor-horse-card minor-horse-card-osae">
+                                          <div class="minor-horse-head">
+                                            <span class="minor-horse-mark">×</span>
+                                            <span class="minor-horse-number">{horse.horseNumber}</span>
+                                            <span class="minor-horse-name">{horse.horseName}</span>
+                                            <span class="minor-horse-score">{eMinor.pt ?? 0}pt</span>
+                                          </div>
+                                          <div class="minor-horse-meta">
+                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                            {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                          </div>
+                                          {evalPoints.length > 0 && (
+                                            <div class="minor-horse-evals">
+                                              {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                            </div>
+                                          )}
+                                          {recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-compact">
+                                              <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                              <div class="recent-races-list">
+                                                {recentRaces.slice(0, 4).map((r) => {
+                                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                  return (
+                                                    <div class="recent-race-row">
+                                                      <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                      <span class="recent-race-rank">{rank}</span>
+                                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </details>
+                                          )}
                                         </div>
                                       );
                                     })}
@@ -1741,52 +1823,146 @@ try {
       gap: 15px;
     }
 
-    /* 連下・抑え（登録ユーザー向け） - 南関版と統一 */
+    /* 連下・抑え（minor-horse-card 系） — premium-prediction 共通CSSと統一 */
     .horse-card-minor {
-      padding: 20px;
-      background: linear-gradient(135deg, rgba(148, 163, 184, 0.05) 0%, rgba(100, 116, 139, 0.05) 100%);
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(30, 41, 59, 0.9) 100%);
+      border-radius: 14px;
+      padding: 18px 18px;
       border: 1px solid rgba(148, 163, 184, 0.2);
-      border-radius: 12px;
-      margin-top: 20px;
+      margin-top: 16px;
     }
     .horse-mark-minor {
-      display: inline-block;
       font-size: 1.3rem;
       color: #f59e0b;
-      font-weight: 700;
+      font-weight: 900;
       margin-right: 10px;
     }
-    .horse-grid {
+    .minor-group-title { margin-left: 10px; font-weight: 600; }
+    .minor-group-title-renka { color: #f59e0b; }
+    .minor-group-title-osae { color: #94a3b8; }
+    .minor-group-osae .horse-mark-minor { color: #94a3b8; }
+
+    .minor-horse-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 15px;
-      margin-top: 15px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
     }
-    .horse-grid-item {
+    .minor-horse-card {
+      background: rgba(15, 23, 42, 0.7);
+      border-radius: 10px;
+      padding: 12px 14px;
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .minor-horse-card-renka {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), rgba(15, 23, 42, 0.7));
+    }
+    .minor-horse-card-osae { border-color: rgba(100, 116, 139, 0.3); }
+    .minor-horse-head {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px;
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 8px;
-      border: 1px solid rgba(148, 163, 184, 0.1);
+      flex-wrap: wrap;
     }
-    .horse-number-small {
-      display: inline-block;
-      width: 25px;
-      height: 25px;
-      background: #64748b;
+    .minor-horse-mark { color: #f59e0b; font-weight: 700; font-size: 1rem; }
+    .minor-horse-card-osae .minor-horse-mark { color: #94a3b8; }
+    .minor-horse-number {
+      background: linear-gradient(135deg, #6b7280, #4b5563);
       color: white;
-      text-align: center;
-      line-height: 25px;
-      border-radius: 50%;
-      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-weight: 700;
       font-size: 0.85rem;
+      min-width: 26px;
+      text-align: center;
     }
-    .horse-name-small {
-      font-weight: 600;
+    .minor-horse-name {
       color: #e2e8f0;
+      font-weight: 600;
       font-size: 0.95rem;
+      flex: 1;
+    }
+    .minor-horse-score {
+      color: #10b981;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 0.8rem;
+    }
+    .minor-horse-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      color: #cbd5e1;
+      font-size: 0.82rem;
+    }
+    .minor-horse-meta .meta-key { color: #64748b; margin-right: 4px; font-size: 0.75rem; }
+    .minor-horse-evals { display: flex; flex-wrap: wrap; gap: 5px; }
+    .eval-tag-small {
+      background: rgba(59, 130, 246, 0.12);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+    }
+    .minor-horse-importance { color: #94a3b8; font-size: 0.78rem; }
+
+    /* 過去走（折りたたみ） */
+    .recent-races {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+    .recent-races > summary {
+      cursor: pointer;
+      color: #cbd5e1;
+      font-weight: 600;
+      font-size: 0.88rem;
+      list-style: none;
+    }
+    .recent-races > summary::-webkit-details-marker { display: none; }
+    .recent-races > summary::before {
+      content: '▶';
+      display: inline-block;
+      margin-right: 8px;
+      color: #64748b;
+      font-size: 0.7rem;
+      transition: transform 0.2s ease;
+    }
+    .recent-races[open] > summary::before { transform: rotate(90deg); }
+    .recent-races-list {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .recent-race-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      align-items: baseline;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      padding: 4px 6px;
+      background: rgba(30, 41, 59, 0.4);
+      border-radius: 4px;
+    }
+    .recent-race-venue { color: #e2e8f0; font-weight: 600; }
+    .recent-race-distance { color: #cbd5e1; }
+    .recent-race-rank { color: #10b981; font-weight: 700; }
+    .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+    .recent-races-compact .recent-race-row { font-size: 0.72rem; }
+    @media (max-width: 640px) {
+      .minor-horse-grid { grid-template-columns: 1fr; }
     }
     .lock-icon { font-size: 2rem; opacity: 0.8; }
     .locked-content h3 {
