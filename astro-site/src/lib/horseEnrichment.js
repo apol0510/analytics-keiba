@@ -308,14 +308,33 @@ export function computeImportance(h, allRaceHorses) {
   let ability = pt > 0 ? 0.5 + (pt / maxPt) * 0.45 : 0.55;
 
   // 展開利
+  // 2026-05-16: JRA/南関で last3f の絶対値域が大きく異なる（JRA ~33-36, 南関 ~38-42）。
+  // 従来の固定式 (43-avg)/5 は南関想定で、JRA では常に飽和して全頭展開利95%に張り付いた。
+  // そのため「同レース内の last3f 中央値」を基準にした相対比較に切り替え、
+  // どちらの開催種別でも自然な分布が出るようにする。
   const last3fs = recent
     .map(r => parseFloat(r && r.last3f))
-    .filter(n => Number.isFinite(n));
+    .filter(n => Number.isFinite(n) && n > 0);
   let pace;
   if (last3fs.length > 0) {
     const avg = last3fs.reduce((a, b) => a + b, 0) / last3fs.length;
-    const norm = Math.max(0, Math.min(1, (43 - avg) / 5));
-    pace = 0.6 + norm * 0.35;
+    // 同レース全頭の recentRaces.last3f を集めて中央値を取る
+    const all = (Array.isArray(allRaceHorses) ? allRaceHorses : [])
+      .flatMap(x => Array.isArray(x && x.recentRaces) ? x.recentRaces : [])
+      .map(r => parseFloat(r && r.last3f))
+      .filter(n => Number.isFinite(n) && n > 0);
+    if (all.length >= 4) {
+      const sorted = all.slice().sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      // median ±2.0 秒の幅で 0-1 線形（速いほど高評価）
+      const diff = median - avg;
+      const norm = Math.max(0, Math.min(1, (diff + 2) / 4));
+      pace = 0.55 + norm * 0.4;
+    } else {
+      // 全頭分のサンプルが少ないときの絶対値フォールバック（従来式）
+      const norm = Math.max(0, Math.min(1, (43 - avg) / 5));
+      pace = 0.6 + norm * 0.35;
+    }
   } else {
     pace = 0.55 + Math.min(0.4, pt / 450);
   }
