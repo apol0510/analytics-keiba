@@ -463,12 +463,13 @@ try {
                             )}
 
                             {/* 不要馬セクション — 抑え候補から除外された馬を別枠で表示
-                                判定: isIneligibleHorse（HANDLED_ROLES 外 / 無 / 補欠 pt<=70 など） */}
+                                判定: isIneligibleHorse（HANDLED_ROLES 外 / 無 / 補欠 pt<=70 など）
+                                南関 premium の ineligible-section と同じ folding 表示 */}
                             {allHorses.filter(isIneligibleHorse).length > 0 && (
-                              <details class="horse-card horse-card-minor minor-group-ineligible">
+                              <details class="minor-group-ineligible">
                                 <summary class="ineligible-summary">
-                                  <span class="horse-mark-minor minor-mark-ineligible">無</span>
-                                  <span class="minor-group-title minor-group-title-ineligible">不要馬 {allHorses.filter(isIneligibleHorse).length}頭</span>
+                                  <span class="ineligible-summary-icon">無</span>
+                                  <span class="ineligible-summary-title">不要馬 {allHorses.filter(isIneligibleHorse).length}頭</span>
                                 </summary>
                                 <div class="minor-horse-grid">
                                   {allHorses
@@ -1951,36 +1952,53 @@ try {
     }
     .minor-horse-card-osae { border-color: rgba(100, 116, 139, 0.3); }
 
-    /* 不要馬セクション — 抑え候補よりさらに控えめなグレー */
-    .minor-group-ineligible {
-      background: linear-gradient(135deg, rgba(100, 116, 139, 0.05) 0%, rgba(15, 23, 42, 0.7) 100%);
-      border: 1px dashed rgba(100, 116, 139, 0.35);
+    /* 不要馬セクション — 南関 premium ineligible-section と同様の折りたたみ表示
+       horse-card 系の派手な背景は継承させず、視認できるグレー枠で独立表示する */
+    details.minor-group-ineligible {
+      margin-top: 24px;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: 14px;
+      padding: 14px 18px;
     }
-    .minor-mark-ineligible { color: #94a3b8 !important; }
-    .minor-group-title-ineligible { color: #94a3b8; }
     .ineligible-summary {
       cursor: pointer;
       list-style: none;
       display: flex;
       align-items: center;
-      gap: 4px;
-      color: #94a3b8;
-      font-weight: 600;
+      gap: 10px;
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 0.95rem;
+      padding: 4px 0;
     }
     .ineligible-summary::-webkit-details-marker { display: none; }
     .ineligible-summary::before {
       content: '▶';
       display: inline-block;
-      margin-right: 8px;
-      color: #64748b;
-      font-size: 0.7rem;
+      color: #94a3b8;
+      font-size: 0.85rem;
       transition: transform 0.2s ease;
     }
     details.minor-group-ineligible[open] > .ineligible-summary::before { transform: rotate(90deg); }
+    .ineligible-summary-icon {
+      display: inline-block;
+      width: 26px;
+      height: 26px;
+      line-height: 26px;
+      text-align: center;
+      border-radius: 50%;
+      background: rgba(100, 116, 139, 0.25);
+      color: #cbd5e1;
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+    .ineligible-summary-title { color: #e2e8f0; }
+    details.minor-group-ineligible[open] .minor-horse-grid { margin-top: 12px; }
     .minor-horse-card-ineligible {
-      border-color: rgba(100, 116, 139, 0.25);
+      border-color: rgba(100, 116, 139, 0.3);
       background: rgba(15, 23, 42, 0.55);
-      opacity: 0.85;
+      opacity: 0.9;
     }
     .minor-horse-card-ineligible .minor-horse-mark { color: #94a3b8; font-weight: 600; }
     .minor-horse-card-ineligible .minor-horse-score {
