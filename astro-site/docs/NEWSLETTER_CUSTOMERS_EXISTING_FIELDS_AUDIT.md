@@ -1,10 +1,87 @@
 # Customers テーブル 既存挙動 調査レポート
 
 **調査日**: 2026-05-14  
-**目的**: [NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) で追加する10フィールドが既存挙動と衝突しないかを READ ONLY で精査  
-**Airtable API 呼び出し**: なし（コード grep のみ）  
+**改訂日**: 2026-05-15（Airtable 実測結果を反映）  
+**目的**: [NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) で追加する各フィールドが既存挙動と衝突しないかを READ ONLY で精査  
+**Airtable API 呼び出し**: なし（コード grep + マコさんによる UI 目視）  
 **SendGrid API 呼び出し**: なし  
 **コード変更**: なし
+
+---
+
+## 0. Airtable 実測結果（2026-05-15 取得）
+
+⚠️ **重要発見**: メルマガ配信対象の Airtable Base は **2 つに分かれている**（共有ではない）。
+両 Base を対象に拡張作業を行う必要がある。
+
+### 0.1 analytics-keiba Base
+
+| 項目 | 実測値 |
+|---|---|
+| Base名 | `analytics-keiba` |
+| Customers レコード数 | **1,121** |
+| Status フィールド | あり（Single select） |
+| Status 既存選択肢 | `active` / `pending` / `cancelled` / `suspended` |
+| メール配信 フィールド | **なし** |
+| 配信停止日 フィールド | **なし** |
+| WithdrawalRequested | あり |
+| 有効期限 | あり |
+| ValidUntil | なし |
+| ExpirationDate | なし |
+| ExpiryDate | あり |
+| プラン（日本語） | あり |
+| PlanType | なし |
+| Plan | なし |
+| 名前フィールド | `名前`（日本語） |
+
+### 0.2 keiba-intelligence Base
+
+| 項目 | 実測値 |
+|---|---|
+| Base名 | `keiba-intelligence` |
+| Customers レコード数 | **32** |
+| Status フィールド | あり（Single select） |
+| Status 既存選択肢 | `pending` / `active` / `cancelled` / `expired` |
+| メール配信 フィールド | **なし** |
+| 配信停止日 フィールド | **なし** |
+| WithdrawalRequested | **なし** |
+| 有効期限 | あり |
+| ValidUntil | なし |
+| ExpirationDate | あり |
+| ExpiryDate | なし |
+| プラン（日本語） | なし |
+| PlanType | あり |
+| Plan | あり |
+| plan_type | あり |
+| 名前フィールド | `Name`（英語） |
+
+### 0.3 設計への影響（重要）
+
+| 観点 | 結論 |
+|---|---|
+| Base アーキ | **2 Base 構成**（共有ではない）。コードは brand → Base 切替が必要 |
+| 既存 Status 値の差異 | analytics-keiba は `suspended` あり、keiba-intelligence は `expired` あり。追加すべき選択肢が Base ごとに異なる |
+| 名前フィールド | analytics-keiba=`名前`、keiba-intelligence=`Name`。**`Name` → `名前` のフォールバック**で正規化 |
+| プランフィールド | analytics-keiba=`プラン`、keiba-intelligence=`PlanType` / `plan_type` / `Plan`。**`PlanType` → `plan_type` → `Plan` → `プラン` のフォールバック** |
+| 期限フィールド | analytics-keiba=`有効期限` / `ExpiryDate`、keiba-intelligence=`有効期限` / `ExpirationDate`。Base ごとにフォールバック順を変える |
+| 配信停止 | 両 Base とも `メール配信` / `配信停止日` フィールド**なし**。既存 `unsubscribe.js` の書き込みは**サイレント失敗していたことが確定**。改修は別タスク |
+| 退会 | analytics-keiba のみ `WithdrawalRequested` あり、keiba-intelligence には**なし**。退会判定ロジックは Base 別に分岐させる必要あり |
+| 新規フィールド命名 | **新規追加分は英語名に統一**（`Brand`, `ServiceType`, `AudienceType`, `Unsubscribed*` 等）。両 Base で同じ名前で動かす |
+
+### 0.4 各 Base に対する Status 追加プラン
+
+両 Base で最終的に取りうる値を以下に統一する:
+
+```
+active / pending / cancelled / suspended / expired / unpaid / refunded / withdrawn / test
+```
+
+| Base | 既存 | 追加（このタスクで実施） |
+|---|---|---|
+| analytics-keiba | active, pending, cancelled, suspended | `expired`, `unpaid`, `refunded`, `withdrawn`, `test`（**5個追加**） |
+| keiba-intelligence | pending, active, cancelled, expired | `suspended`, `unpaid`, `refunded`, `withdrawn`, `test`（**5個追加**） |
+
+**既存選択肢は両 Base とも削除・リネーム禁止**。順序は触らない。
 
 ---
 
@@ -138,31 +215,48 @@
 | `LastNewsletterSentAt` | ❌ なし | 新規追加でOK |
 | `LastNewsletterBrand` | ❌ なし | 新規追加でOK |
 
-### 5.2 重大: `Status` フィールド衝突の詳細
+### 5.2 重大: `Status` フィールド衝突の詳細（2026-05-15 実測反映）
 
-**既存 `Status`**:
-- 型: Single select（推定）
-- 既存値: `active`, `pending`（コード grep より）
+**既存 `Status`**（実測値）:
+- 型: Single select（**両 Base 共通**）
+- 既存値:
+  - **analytics-keiba**: `active`, `pending`, `cancelled`, `suspended`（4種）
+  - **keiba-intelligence**: `pending`, `active`, `cancelled`, `expired`（4種）
 - 書く関数: `bank-transfer-application.js`（`pending`）, `send-payment-confirmation.js`（`active`）
 - 読む関数: `verify-magic-link.js`, `bank-transfer-application.js`
 
-**新規追加で提案している値**:
-- `active`（既存と一致）
-- `expired`（新）
-- `unpaid`（新）
-- `cancelled`（新）
-- `refunded`（新）
-- `withdrawn`（新）
-- `test`（新）
+**目標統一値**（[§0.4](#04-各-base-に対する-status-追加プラン) より）:
+```
+active / pending / cancelled / suspended / expired / unpaid / refunded / withdrawn / test
+```
 
-**衝突回避策**（Airtable UI 作業）:
-1. **既存 `Status` フィールドはそのまま使う**（削除・リネーム禁止）
-2. その Single select に **追加で6つの選択肢を足す**: `expired`, `unpaid`, `cancelled`, `refunded`, `withdrawn`, `test`
-3. 既存 `pending` の値も残す（bank-transfer-application が書き続ける）
-4. 結果として `Status` の取りうる値: `active` / `pending` / `expired` / `unpaid` / `cancelled` / `refunded` / `withdrawn` / `test`
-5. 既存レコードの `Status` 値は変更しない
+**衝突回避策**（Airtable UI 作業、**両 Base で個別実施**）:
 
-⚠️ これは [NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md §3](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) の「Status を新規追加」という記述と矛盾するため、**手順書の修正が必要**（別タスク）。
+#### analytics-keiba Base
+1. 既存 `Status` フィールドはそのまま使う（**削除・リネーム禁止**）
+2. その Single select に **5つの選択肢を追加**:
+   - `expired`
+   - `unpaid`
+   - `refunded`
+   - `withdrawn`
+   - `test`
+3. 既存 `active` / `pending` / `cancelled` / `suspended` は**温存**
+4. 既存レコードの `Status` 値は変更しない
+
+#### keiba-intelligence Base
+1. 既存 `Status` フィールドはそのまま使う（**削除・リネーム禁止**）
+2. その Single select に **5つの選択肢を追加**:
+   - `suspended`
+   - `unpaid`
+   - `refunded`
+   - `withdrawn`
+   - `test`
+3. 既存 `pending` / `active` / `cancelled` / `expired` は**温存**
+4. 既存レコードの `Status` 値は変更しない
+
+→ 両 Base の Status は**結果的に同じ9値**になり、コード側で分岐不要。
+
+詳細 UI 手順は [NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md §3 ④](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) を参照。
 
 ### 5.3 セマンティック重複（衝突ではないが要設計）
 

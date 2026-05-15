@@ -1,8 +1,54 @@
 # 完全自動化メルマガ配信システム Airtable / 運用設計書
 
 **最終更新**: 2026-05-14  
+**追補**: 2026-05-15（Airtable 実測結果反映: **2 Base 構成**を確定）  
 **対象 repo**: analytics-keiba（正） + 参照: keiba-intelligence  
 **現状フェーズ**: 止血完了 → dry-run 基盤稼働 → **本設計書の確定（実会員READ前の最終仕様固め）**
+
+---
+
+## 0. Airtable Base 構成（2026-05-15 実測で確定）
+
+⚠️ **メルマガ配信対象の Airtable Base は 2 つに分離**（共有ではない）。本設計書は当初「同一 Base 共有」を想定していたが、実測で否定された。
+
+| Base | レコード数 | 名前フィールド | プランフィールド | Status 既存値 | 退会フラグ | 期限フィールド |
+|---|---|---|---|---|---|---|
+| `analytics-keiba` | 1,121 | `名前` | `プラン` | active / pending / cancelled / suspended | `WithdrawalRequested` あり | `有効期限` + `ExpiryDate` |
+| `keiba-intelligence` | 32 | `Name` | `PlanType` / `plan_type` / `Plan` | pending / active / cancelled / expired | **なし** | `有効期限` + `ExpirationDate` |
+
+### コード側のフォールバック方針
+
+両 Base を共通コードで扱うため、以下のフォールバック順で読み取る:
+
+| 項目 | フォールバック順（先勝ち） |
+|---|---|
+| 名前 | `Name` → `名前` |
+| プラン | `PlanType` → `plan_type` → `Plan` → `プラン` |
+| 期限（analytics-keiba） | `有効期限` → `ExpiryDate` |
+| 期限（keiba-intelligence） | `有効期限` → `ExpirationDate` |
+| 退会判定 | analytics-keiba: `WithdrawalRequested=true` または `Status='withdrawn'`<br>keiba-intelligence: `Status='withdrawn'` のみ |
+
+### 新規追加フィールドは英語名で統一
+
+両 Base に同じ名前で追加する（`Brand` / `ServiceType` / `AudienceType` / `Unsubscribed*` / `LastNewsletter*`）。日本語の既存フィールドはリネームしない。
+
+### `Status` 統一目標
+
+両 Base で取りうる値を以下9種に統一する:
+```
+active / pending / cancelled / suspended / expired / unpaid / refunded / withdrawn / test
+```
+
+| Base | 既存 | 追加 |
+|---|---|---|
+| analytics-keiba | active, pending, cancelled, suspended | expired, unpaid, refunded, withdrawn, test |
+| keiba-intelligence | pending, active, cancelled, expired | suspended, unpaid, refunded, withdrawn, test |
+
+### `メール配信` / `配信停止日` は両 Base に存在しない
+
+既存 `unsubscribe.js` は両 Base で**サイレント失敗**していた（書き込み先のフィールド自体がない）。新システムでは `UnsubscribedAnalyticsKeiba` / `UnsubscribedKeibaIntelligence` で代替する。既存 `unsubscribe.js` の改修は別タスク。
+
+→ 詳細手順は [NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md)、実測根拠は [NEWSLETTER_CUSTOMERS_EXISTING_FIELDS_AUDIT.md §0](./NEWSLETTER_CUSTOMERS_EXISTING_FIELDS_AUDIT.md#0-airtable-実測結果2026-05-15-取得) を参照。
 
 ---
 
@@ -91,45 +137,55 @@
 
 ## 4. Customers テーブル拡張案
 
-### 現状（既存）
+⚠️ **2026-05-15 改訂**: 本章は 2 Base 構成（[§0](#0-airtable-base-構成2026-05-15-実測で確定)）を前提に書き直し。両 Base に同じ新規フィールドを追加し、`Status` は Base 別の追加リストで運用する。実行手順詳細は [NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) を参照。
 
-- `Email` / `プラン` / `有効期限` / `WithdrawalRequested` 等が存在
-- SendGrid カスタムフィールド `registered_intelligence` / `registered_analytics` で登録元判定（ただし Airtable 側にも明示フィールドを追加した方が安全）
+### 現状（実測 2026-05-15）
 
-### 追加フィールド案
+詳細は [§0](#0-airtable-base-構成2026-05-15-実測で確定) 参照。要点:
+- analytics-keiba: `Email` / `名前` / `プラン` / `Status`(active/pending/cancelled/suspended) / `WithdrawalRequested` / `有効期限` / `ExpiryDate`
+- keiba-intelligence: `Email` / `Name` / `PlanType` / `plan_type` / `Plan` / `Status`(pending/active/cancelled/expired) / `有効期限` / `ExpirationDate`
+- 両 Base とも `メール配信` / `配信停止日` は**存在しない**
 
-| フィールド | 型 | 必須 | 説明 |
-|---|---|---|---|
-| `Brand` | Multi-select | ✅ | `analytics-keiba`, `keiba-intelligence` の片方または両方 |
-| `ServiceType` | Multi-select | ✅ | 当面は Brand と同一値（将来分離用に別フィールド） |
-| `AudienceType` | Single select | ✅ | `free` / `standard` / `premium` / `premium-sanrenpuku` / `premium-combo` / `premium-plus` / `expired` |
-| `PlanType` | Single select | ❌ | `free` / `paid-monthly` / `paid-annual` / `lifetime` 等の課金形態 |
-| `Status` | Single select | ✅ | `active` / `expired` / `unpaid` / `withdrawn` / `bounced` / `blacklisted` |
-| `UnsubscribedAnalyticsKeiba` | Checkbox | ✅ | デフォルト false |
-| `UnsubscribedKeibaIntelligence` | Checkbox | ✅ | デフォルト false |
-| `UnsubscribedAtAnalyticsKeiba` | Datetime | ❌ | 停止日時 |
-| `UnsubscribedAtKeibaIntelligence` | Datetime | ❌ | 停止日時 |
-| `Email` | Email | ✅ | 既存 |
-| `Name` | Text | ❌ | 既存（あれば） |
-| `ExpiredAt` | Date | ❌ | 既存 `有効期限` から派生 / 別途用意 |
-| `LastLoginAt` | Datetime | ❌ | 休眠判定用 |
-| `PaymentStatus` | Single select | ❌ | `paid` / `pending` / `failed` / `refunded` |
+### 追加フィールド案（両 Base 共通・**英語名で統一**）
 
-### 既存フィールドとの整合
+| フィールド | 型 | 必須 | 操作 | 説明 |
+|---|---|---|---|---|
+| `Brand` | Multi-select | ✅ | **新規** | `analytics-keiba`, `keiba-intelligence` の片方または両方 |
+| `ServiceType` | Multi-select | ✅ | **新規** | 当面は Brand と同一値（将来分離用） |
+| `AudienceType` | Single select | ✅ | **新規** | `free` / `light` / `standard` / `premium` / `premium-combo` / `expired` / `unpaid` / `admin-test` |
+| `Status` | Single select | ✅ | **既存・選択肢追加** | Base 別に [§0](#0-airtable-base-構成2026-05-15-実測で確定) の追加リストで運用 |
+| `UnsubscribedAnalyticsKeiba` | Checkbox | ✅ | **新規** | デフォルト false |
+| `UnsubscribedKeibaIntelligence` | Checkbox | ✅ | **新規** | デフォルト false |
+| `UnsubscribedAtAnalyticsKeiba` | Datetime | ❌ | **新規** | 停止日時 |
+| `UnsubscribedAtKeibaIntelligence` | Datetime | ❌ | **新規** | 停止日時 |
+| `LastNewsletterSentAt` | Datetime | ❌ | **新規** | 直近メルマガ送信日時 |
+| `LastNewsletterBrand` | Single select | ❌ | **新規** | `analytics-keiba` / `keiba-intelligence` |
 
-- `WithdrawalRequested` → `Status='withdrawn'` に統合する案（既存値は移行スクリプトで一括変換）
-- 既存 `プラン` の値（Free / Standard / Premium 等）→ `AudienceType` に正規化マッピング
-- どちらも **READ ONLY で移行ダブルライト**にし、半年程度様子見してから旧フィールド廃止
+→ 既存フィールド（`Email` / `名前` / `Name` / `プラン` / `PlanType` / `plan_type` / `Plan` / `有効期限` / `ExpiryDate` / `ExpirationDate` / `WithdrawalRequested` 等）は**リネームせず温存**。コード側でフォールバックする。
+
+### 既存フィールドとの整合（Base 別）
+
+- **analytics-keiba**:
+  - `WithdrawalRequested=true` → `Status='withdrawn'` に統合（次タスクの遡及スクリプト）
+  - `プラン` の値 → `AudienceType` に正規化マッピング
+  - `有効期限` / `ExpiryDate` は当面温存、コード側で fallback
+- **keiba-intelligence**:
+  - 退会は `Status='withdrawn'` 一本（`WithdrawalRequested` フィールドが存在しない）
+  - `PlanType` / `plan_type` / `Plan` の値 → `AudienceType` に正規化マッピング
+  - `有効期限` / `ExpirationDate` は当面温存、コード側で fallback
+
+どちらも **READ ONLY 移行 → ダブルライト → 半年様子見 → 旧フィールド廃止** の手順を取る。
 
 ### マイグレーション方針
 
-1. **手動で Brand / Unsubscribed* / Status 列を追加**（既存レコードに影響なし）
-2. **遡及付与スクリプト**（READ ONLY 集計 → 別途UPDATE案を出力するのみ、自動実行しない）:
-   - SendGrid `registered_analytics='true'` → `Brand += 'analytics-keiba'`
-   - SendGrid `registered_intelligence='true'` → `Brand += 'keiba-intelligence'`
-   - `WithdrawalRequested=true` → `Status='withdrawn'`
-3. 出力 CSV を**人間レビュー後に手動で Airtable インポート**
-4. 新規登録は `register-free.js` / `verify-magic-link.js` で最初から付与する仕様変更
+1. **手動で両 Base に同じ9個の新規フィールドを追加**（[NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md](./NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) に従う）
+2. **両 Base の既存 `Status` に Base 別の5選択肢を追加**（既存値削除禁止）
+3. **遡及付与スクリプト**（READ ONLY 集計 → 別途UPDATE案を出力するのみ、自動実行しない）:
+   - SendGrid `registered_analytics='true'` → analytics-keiba Base の該当 Customer の `Brand += 'analytics-keiba'`
+   - SendGrid `registered_intelligence='true'` → keiba-intelligence Base の該当 Customer の `Brand += 'keiba-intelligence'`
+   - analytics-keiba: `WithdrawalRequested=true` → `Status='withdrawn'` 案
+4. 出力 CSV を**人間レビュー後に手動で各 Base に手動インポート**
+5. 新規登録は `register-free.js` / `verify-magic-link.js` で最初から付与する仕様変更（別タスク、Base ごとに routing）
 
 ---
 
