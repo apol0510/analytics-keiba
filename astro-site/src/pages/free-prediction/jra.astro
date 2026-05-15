@@ -306,6 +306,57 @@ try {
                             );
                           })}
 
+                          {/* 連下・抑えの実データ（登録済みユーザーのみ表示・デフォルト非表示） */}
+                          <div class="free-member-unlock-content" style="display: none;">
+                            {allHorses.filter(h => h.role === '連下最上位' || h.role === '連下').length > 0 && (
+                              <div class="horse-card horse-card-minor">
+                                <div class="horse-header">
+                                  <div>
+                                    <span class="horse-mark-minor">△</span>
+                                    <span style="color: #f59e0b; font-weight: 600;">連下候補馬</span>
+                                  </div>
+                                </div>
+                                <div class="horse-grid">
+                                  {allHorses
+                                    .filter(h => h.role === '連下最上位' || h.role === '連下')
+                                    .map(horse => {
+                                      const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      return (
+                                        <div class="horse-grid-item">
+                                          <span class="horse-number-small">{horse.horseNumber}</span>
+                                          <span class="horse-name-small">{horse.horseName}{eMinor.pt != null ? ` (${eMinor.pt}pt)` : ''}</span>
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
+
+                            {allHorses.filter(h => h.role === '補欠' || h.role === '押さえ' || h.role === '抑え').length > 0 && (
+                              <div class="horse-card horse-card-minor">
+                                <div class="horse-header">
+                                  <div>
+                                    <span class="horse-mark-minor">×</span>
+                                    <span style="color: #64748b; font-weight: 600;">抑え候補馬</span>
+                                  </div>
+                                </div>
+                                <div class="horse-grid">
+                                  {allHorses
+                                    .filter(h => h.role === '補欠' || h.role === '押さえ' || h.role === '抑え')
+                                    .map(horse => {
+                                      const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      return (
+                                        <div class="horse-grid-item">
+                                          <span class="horse-number-small">{horse.horseNumber}</span>
+                                          <span class="horse-name-small">{horse.horseName}{eMinor.pt != null ? ` (${eMinor.pt}pt)` : ''}</span>
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
                           {/* アクセス制御（南関版と統一） */}
                           <div class="access-control-section">
                             <div class="locked-content">
@@ -1689,6 +1740,54 @@ try {
       align-items: center;
       gap: 15px;
     }
+
+    /* 連下・抑え（登録ユーザー向け） - 南関版と統一 */
+    .horse-card-minor {
+      padding: 20px;
+      background: linear-gradient(135deg, rgba(148, 163, 184, 0.05) 0%, rgba(100, 116, 139, 0.05) 100%);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      margin-top: 20px;
+    }
+    .horse-mark-minor {
+      display: inline-block;
+      font-size: 1.3rem;
+      color: #f59e0b;
+      font-weight: 700;
+      margin-right: 10px;
+    }
+    .horse-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+      margin-top: 15px;
+    }
+    .horse-grid-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    .horse-number-small {
+      display: inline-block;
+      width: 25px;
+      height: 25px;
+      background: #64748b;
+      color: white;
+      text-align: center;
+      line-height: 25px;
+      border-radius: 50%;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .horse-name-small {
+      font-weight: 600;
+      color: #e2e8f0;
+      font-size: 0.95rem;
+    }
     .lock-icon { font-size: 2rem; opacity: 0.8; }
     .locked-content h3 {
       color: #8b5cf6;
@@ -2288,5 +2387,75 @@ try {
       }
     }
     window.toggleJraAccordion = toggleJraAccordion;
+
+    // 無料会員アクセス制御
+    // 登録済みユーザー（プラン期限切れ含む）には連下・押さえデータを解放する
+    // 判定はダッシュボード isAuthenticated() と完全統一（5キー OR 判定）+ 互換キー
+    function checkFreeMemberAccess() {
+      function isRegisteredUser() {
+        // ダッシュボード isAuthenticated() と同一の 5 キー OR 判定
+        const userPlanData = localStorage.getItem('user-plan');
+        const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+        const userPlan = localStorage.getItem('userPlan');
+        const userPlanUnderscore = localStorage.getItem('user_plan');
+        const userEmail = localStorage.getItem('user_email');
+        if (userPlanData || isLoggedIn || userPlan || userPlanUnderscore || userEmail) {
+          return true;
+        }
+        // 互換: 他ページで使われている userEmail (camelCase) / nankan_user / auth_data / test_subscription_*
+        if (localStorage.getItem('userEmail')) return true;
+        if (localStorage.getItem('nankan_user')) return true;
+        if (localStorage.getItem('auth_data')) return true;
+        if (Object.keys(localStorage).some(k => k.startsWith('test_subscription_'))) return true;
+        return false;
+      }
+
+      const isRegistered = isRegisteredUser();
+
+      console.log('🔍 JRA無料 - 連下・押さえアクセス制御:', {
+        isRegistered,
+        'user-plan': !!localStorage.getItem('user-plan'),
+        isLoggedIn: localStorage.getItem('isLoggedIn'),
+        userPlan: localStorage.getItem('userPlan'),
+        user_plan: !!localStorage.getItem('user_plan'),
+        user_email: !!localStorage.getItem('user_email'),
+        userEmail: !!localStorage.getItem('userEmail')
+      });
+
+      // 連下・抑えの実データ表示制御
+      document.querySelectorAll('.free-member-unlock-content').forEach(content => {
+        content.style.display = isRegistered ? 'block' : 'none';
+      });
+
+      // 連下・押さえ鍵の表示制御（有料鍵は維持）
+      document.querySelectorAll('.access-control-section').forEach(section => {
+        const lockedContents = section.querySelectorAll('.locked-content');
+        const renshitaOsaeLock = Array.from(lockedContents).find(c =>
+          c.querySelector('h3')?.textContent?.includes('連下・押さえ候補馬')
+        );
+        if (renshitaOsaeLock) {
+          renshitaOsaeLock.style.display = isRegistered ? 'none' : 'flex';
+        }
+        const paidLock = Array.from(lockedContents).find(c =>
+          c.querySelector('h3')?.textContent?.includes('AI予測買い目')
+        );
+        if (paidLock) {
+          paidLock.style.display = 'flex';
+        }
+      });
+
+      // 開いているアコーディオンの maxHeight を再計算（コンテンツが伸びるため）
+      document.querySelectorAll('.jra-race-accordion-content').forEach(content => {
+        if (content.style.maxHeight && content.style.maxHeight !== '0px') {
+          content.style.maxHeight = content.scrollHeight + 'px';
+        }
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      checkFreeMemberAccess();
+      window.addEventListener('storage', () => setTimeout(checkFreeMemberAccess, 100));
+    });
+    window.addEventListener('load', () => setTimeout(checkFreeMemberAccess, 300));
   </script>
 </BaseLayout>
