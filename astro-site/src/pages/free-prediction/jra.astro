@@ -4,7 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { enrichHorse } from '../../lib/horseEnrichment.js';
-import { isOsaeCandidate, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
+import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse } from '../../lib/shared-prediction-logic.js';
 
 // 表示用指数の選定: sourceComputerIndex > pt > totalScore/displayScore/rawScore。
 // computerIndex は admin 編集系の 0-9 スケールが入る場合があり、そのまま「指数」表示には使わない。
@@ -460,6 +460,70 @@ try {
                                     })}
                                 </div>
                               </div>
+                            )}
+
+                            {/* 不要馬セクション — 抑え候補から除外された馬を別枠で表示
+                                判定: isIneligibleHorse（HANDLED_ROLES 外 / 無 / 補欠 pt<=70 など） */}
+                            {allHorses.filter(isIneligibleHorse).length > 0 && (
+                              <details class="horse-card horse-card-minor minor-group-ineligible">
+                                <summary class="ineligible-summary">
+                                  <span class="horse-mark-minor minor-mark-ineligible">無</span>
+                                  <span class="minor-group-title minor-group-title-ineligible">不要馬 {allHorses.filter(isIneligibleHorse).length}頭</span>
+                                </summary>
+                                <div class="minor-horse-grid">
+                                  {allHorses
+                                    .filter(isIneligibleHorse)
+                                    .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0))
+                                    .map((horse) => {
+                                      const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                      const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                      const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                      const idx = getDisplayIndex(horse, eMinor);
+                                      const ptNum = Number(eMinor.pt);
+                                      return (
+                                        <div class="minor-horse-card minor-horse-card-ineligible">
+                                          <div class="minor-horse-head">
+                                            <span class="minor-horse-mark">無</span>
+                                            <span class="minor-horse-number">{horse.horseNumber}</span>
+                                            <span class="minor-horse-name">{horse.horseName}</span>
+                                            <span class="minor-horse-score">{Number.isFinite(ptNum) && ptNum > 70 ? `${ptNum}pt` : '見送り'}</span>
+                                          </div>
+                                          <div class="minor-horse-meta">
+                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                            {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                          </div>
+                                          {evalPoints.length > 0 && (
+                                            <div class="minor-horse-evals">
+                                              {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                            </div>
+                                          )}
+                                          {recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-compact">
+                                              <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                              <div class="recent-races-list">
+                                                {recentRaces.slice(0, 4).map((r) => {
+                                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                  return (
+                                                    <div class="recent-race-row">
+                                                      <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                      <span class="recent-race-rank">{rank}</span>
+                                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </details>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </details>
                             )}
                           </div>
 
@@ -1886,6 +1950,44 @@ try {
       background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), rgba(15, 23, 42, 0.7));
     }
     .minor-horse-card-osae { border-color: rgba(100, 116, 139, 0.3); }
+
+    /* 不要馬セクション — 抑え候補よりさらに控えめなグレー */
+    .minor-group-ineligible {
+      background: linear-gradient(135deg, rgba(100, 116, 139, 0.05) 0%, rgba(15, 23, 42, 0.7) 100%);
+      border: 1px dashed rgba(100, 116, 139, 0.35);
+    }
+    .minor-mark-ineligible { color: #94a3b8 !important; }
+    .minor-group-title-ineligible { color: #94a3b8; }
+    .ineligible-summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+    .ineligible-summary::-webkit-details-marker { display: none; }
+    .ineligible-summary::before {
+      content: '▶';
+      display: inline-block;
+      margin-right: 8px;
+      color: #64748b;
+      font-size: 0.7rem;
+      transition: transform 0.2s ease;
+    }
+    details.minor-group-ineligible[open] > .ineligible-summary::before { transform: rotate(90deg); }
+    .minor-horse-card-ineligible {
+      border-color: rgba(100, 116, 139, 0.25);
+      background: rgba(15, 23, 42, 0.55);
+      opacity: 0.85;
+    }
+    .minor-horse-card-ineligible .minor-horse-mark { color: #94a3b8; font-weight: 600; }
+    .minor-horse-card-ineligible .minor-horse-score {
+      color: #94a3b8;
+      background: rgba(100, 116, 139, 0.15);
+      border-color: rgba(100, 116, 139, 0.3);
+    }
     .minor-horse-head {
       display: flex;
       align-items: center;
