@@ -143,7 +143,9 @@ export function normalizeDetailed(input) {
         ...(horse._training ? { _training: horse._training } : {}),
         ...(horse._shortComment ? { _shortComment: horse._shortComment } : {}),
         ...(horse._predictedOdds ? { _predictedOdds: horse._predictedOdds } : {}),
-        ...(horse._sire ? { _sire: horse._sire } : {})
+        ...(horse._sire ? { _sire: horse._sire } : {}),
+        // 過去走（南関 racebook / JRA computer 由来）— 表示用に保持
+        ...(Array.isArray(horse.recentRaces) && horse.recentRaces.length > 0 ? { recentRaces: horse.recentRaces } : {})
       };
     });
 

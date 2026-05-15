@@ -177,18 +177,37 @@ async function buildSourceComputerIndexMap(date, category = 'jra') {
     const venueName = venueData.venue || venueData.name || null;
     if (!venueName) continue;
     const horseMap = new Map();
+    let pastRacesCount = 0;
     for (const race of (venueData.races || [])) {
       for (const h of (race.horses || [])) {
         const num = Number(h.number ?? h.horseNumber);
         const name = h.name ?? h.horseName;
         const ci = Number(h.computerIndex);
-        if (!Number.isFinite(num) || !name || !Number.isFinite(ci)) continue;
-        horseMap.set(`${num}|${name}`, ci);
+        if (!Number.isFinite(num) || !name) continue;
+        // 過去走（pastRaces）も同時保持。computer JSON のフィールド名で正規化して保存。
+        // free/premium 表示側は recentRaces として参照するため、ここでフィールド名統一する。
+        const pastRaces = Array.isArray(h.pastRaces)
+          ? h.pastRaces.slice(0, 5).map(pr => ({
+              venue: pr.venue || '',
+              distance: pr.distance || pr.distanceMeters || '',
+              rank: (pr.finish != null && Number.isFinite(Number(pr.finish))) ? Number(pr.finish) : null,
+              time: pr.time || '',
+              last3f: pr.final3F || pr.last3f || '',
+              bodyWeight: pr.bodyWeight || null,
+              jockey: pr.jockey || '',
+              passingOrder: pr.passingOrder || ''
+            }))
+          : [];
+        if (pastRaces.length > 0) pastRacesCount++;
+        horseMap.set(`${num}|${name}`, {
+          ci: Number.isFinite(ci) ? ci : null,
+          recentRaces: pastRaces
+        });
       }
     }
     if (horseMap.size > 0) {
       venueMap.set(venueName, horseMap);
-      console.log(`   📋 [IMPORT-JRA] ${venueName}: ${horseMap.size} 頭の sourceComputerIndex を取得`);
+      console.log(`   📋 [IMPORT-JRA] ${venueName}: ${horseMap.size} 頭の computer データを取得 (うち過去走あり: ${pastRacesCount})`);
     }
   }
   if (venueMap.size === 0) return null;
@@ -205,6 +224,7 @@ function injectSourceComputerIndex(sharedJSON, venueMap) {
   const venues = Array.isArray(sharedJSON.venues) ? sharedJSON.venues : [sharedJSON];
   let totalInjected = 0;
   let totalUnmatched = 0;
+  let totalRecentInjected = 0;
   for (const venueData of venues) {
     const venueName = venueData.venue || venueData.name || null;
     if (!venueName) continue;
@@ -215,17 +235,23 @@ function injectSourceComputerIndex(sharedJSON, venueMap) {
         const num = Number(h.horseNumber ?? h.number);
         const name = h.horseName ?? h.name;
         if (!Number.isFinite(num) || !name) continue;
-        const ci = horseMap.get(`${num}|${name}`);
-        if (Number.isFinite(ci)) {
-          h.sourceComputerIndex = ci;
-          totalInjected++;
+        const entry = horseMap.get(`${num}|${name}`);
+        if (entry && typeof entry === 'object') {
+          if (Number.isFinite(entry.ci)) {
+            h.sourceComputerIndex = entry.ci;
+            totalInjected++;
+          }
+          if (Array.isArray(entry.recentRaces) && entry.recentRaces.length > 0) {
+            h.recentRaces = entry.recentRaces;
+            totalRecentInjected++;
+          }
         } else {
           totalUnmatched++;
         }
       }
     }
   }
-  console.log(`✅ [IMPORT-JRA] sourceComputerIndex 注入: ${totalInjected} 頭 (突合失敗 ${totalUnmatched})`);
+  console.log(`✅ [IMPORT-JRA] computer データ注入: sourceComputerIndex ${totalInjected} 頭 / recentRaces ${totalRecentInjected} 頭 (突合失敗 ${totalUnmatched})`);
 }
 
 /**
@@ -445,6 +471,8 @@ function convertToLegacyFormat(data, date) {
           computerIndex: h.computerIndex != null ? h.computerIndex : null,
           // 2026-05-14: 元 racebook 指数（pt 生成の正規ソース）
           ...(h.sourceComputerIndex != null ? { sourceComputerIndex: h.sourceComputerIndex } : {}),
+          // 過去走（computer JSON 由来）— 表示用に保持
+          ...(Array.isArray(h.recentRaces) && h.recentRaces.length > 0 ? { recentRaces: h.recentRaces } : {}),
           marks: h.marks || {}
         }))
         .sort((a, b) => {
