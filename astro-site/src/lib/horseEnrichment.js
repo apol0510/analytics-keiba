@@ -63,30 +63,35 @@ export function getStarRating(pt, role) {
   }
 }
 
-// 役割別の総合評価 (confidence) レンジ — 表示用に 85 点上限で圧縮
-// 「★★★★ (92)」のような過大表記を避けるため、role に応じた控えめなレンジに収める。
-const CONFIDENCE_RANGE = {
-  '本命':       [83, 85],
-  '対抗':       [80, 84],
-  '単穴':       [76, 82],
-  '連下最上位': [76, 82],
-  '連下':       [72, 80],
-  '押さえ':     [68, 76],
-  '抑え':       [68, 76],
-  '補欠':       [68, 76],
+// 星数別の confidence レンジ。
+// 2026-05-16: getStarRating と完全連動させ「★★★ 85 と ★★★★ 85 が並ぶ」矛盾を解消。
+//   星数が増えるほど confidence の上限も上がる単調な対応にする。
+const STAR_CONFIDENCE_RANGE = {
+  4: [82, 85], // ★★★★ 高評価帯
+  3: [75, 81], // ★★★   中評価帯
+  2: [65, 74], // ★★    控えめ評価帯
+  1: [50, 64], // ★     最低評価帯
 };
 
 /**
  * 総合評価カッコ内に表示する 0-85 帯の信頼度スコア。
  *
- * 累積スコア (pt) は 70〜160 の広いレンジになるが、表示用には role 別の
- * レンジ [base, cap] に正規化して圧縮する。
+ * 星数（getStarRating の結果）と完全連動させる。
+ *   - ★★★★ → 82-85
+ *   - ★★★  → 75-81
+ *   - ★★   → 65-74
+ *   - ★    → 50-64
  *
+ * 各帯の中での具体値は pt の相対位置で線形補間。
  *   ratio = clamp((pt - 70) / 90, 0, 1)
  *   confidence = round(base + ratio * (cap - base))
  *
  * 2026-05-14: 旧仕様は (50 + min(42, pt * 0.28)) で pt=156 → 92 を返していた。
- * 「総合評価★★★★（92）」が過大表記との指摘により、85 点上限に再設計。
+ *   「総合評価★★★★（92）」が過大表記との指摘により、85 点上限に再設計。
+ * 2026-05-16: role 別レンジから「星数別レンジ」へ切替。
+ *   旧仕様では本命 pt=148 が ★★★(85) / 本命 pt=150 が ★★★★(85) のように
+ *   星数が増えても confidence が変わらない並びが発生していたため、
+ *   星数を一次キーにして単調連動するレンジに変更。
  *
  * @param {number|string} pt 累積スコア
  * @param {string} [role]   馬の役割
@@ -94,7 +99,8 @@ const CONFIDENCE_RANGE = {
 export function computeConfidence(pt, role) {
   const v = Number(pt) || 0;
   if (v <= 0) return 50;
-  const [base, cap] = CONFIDENCE_RANGE[role] || [60, 70];
+  const stars = getStarRating(v, role).length;
+  const [base, cap] = STAR_CONFIDENCE_RANGE[stars] || [60, 70];
   const ratio = Math.max(0, Math.min(1, (v - 70) / 90));
   return Math.round(base + ratio * (cap - base));
 }
