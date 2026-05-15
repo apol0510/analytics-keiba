@@ -25,14 +25,14 @@
  * @param {string} s venue 文字列
  * @returns {string} 整形済み venue 文字列
  */
-export function formatRecentVenue(s) {
+export function formatRecentVenue(s, baseDate) {
   if (!s || typeof s !== 'string') return s || '';
   const m = s.match(/^(\d+)([^\d]+?)(\d+)\.(\d+)$/);
   if (!m) return s;
-  const round = m[1];
+  // m[1] (開催回) は判読の妨げになるため非表示
   const abbr = m[2];
   const mo = parseInt(m[3], 10);
-  const day = m[4];
+  const day = parseInt(m[4], 10);
   const map = {
     '京': '京都', '阪': '阪神', '東': '東京', '新': '新潟',
     '福': '福島', '小': '小倉', '札': '札幌', '函': '函館',
@@ -49,7 +49,16 @@ export function formatRecentVenue(s) {
   } else {
     full = abbr;
   }
-  return `${round}回${full} ${mo}/${day}`;
+  // 年推定: ベース日付（省略時=現在）と比較し、月日が未来側なら前年とみなす。
+  const today = baseDate instanceof Date ? baseDate : new Date();
+  const ty = today.getFullYear();
+  const tm = today.getMonth() + 1;
+  const td = today.getDate();
+  const year = (mo > tm || (mo === tm && day > td)) ? ty - 1 : ty;
+  const yy = String(year).slice(-2);
+  const mm = String(mo).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${full} ${yy}/${mm}/${dd}`;
 }
 
 // pt スコアを 0-100 に正規化（旧 nankan-analytics の総合評価レンジに合わせる）
