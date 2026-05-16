@@ -749,14 +749,26 @@ export function getRoleDisplayConfig(role) {
 /**
  * 馬の分類: 抑え候補か / 不要馬か
  *
- * 方針 (2026-05-14): 買い目生成側（mainRaceBetting.js）の明示方針に揃える。
- *   mainRaceBetting.js のコメント:
- *     "pt === 70 は importPrediction.js の未評価フォールバック値 (= 不要馬) なので除外する"
+ * 方針 (2026-05-16 更新): racebook 系コンピ指数 ≥ 45 を基準にする。
  *
- *   importPrediction.js は displayScore/rawScore が空欄だと pt を 70 にフロア化する。
- *   そのため admin が role='補欠' を付けても displayScore が空のままだと pt=70 に張り付く。
- *   買い目には pt > 70 の馬しか登場しないので、画面の抑え候補表示も同じ条件に揃える
- *   ことで「画面で抑え扱いだが買い目には絶対出ない」というズレを防ぐ。
+ *   旧仕様 (〜2026-05-14): `pt > 70` を抑え候補の閾値としていた。
+ *   importPrediction.js は displayScore=0 のとき pt を 70 にフロア化するため、
+ *   「pt=70 = 未評価 = 不要馬」「pt>70 = 評価あり = 抑え候補」で振り分けていた。
+ *
+ *   問題 (2026-05-16): JRA の racebook には totalScore（編集系の小さい点数、1〜25 程度）
+ *   があり、sourceComputerIndex が 45 未満（COMPI_MIN 未満で rawScore 昇格対象外）でも
+ *   `rawScore = totalScore` から `pt = totalScore + 70` で pt が 71〜114 に張り付き、
+ *   実質「racebook computer 評価のない弱い馬」が抑え候補に誤分類されていた。
+ *
+ *   修正 (2026-05-16): racebook 系コンピ指数（sourceComputerIndex 優先、無ければ
+ *   computerIndex）が COMPI_MIN (= 45) 以上を抑え候補の条件にする。これは
+ *   normalizePrediction.js の rawScore 昇格閾値と同一で、pt promotion と抑え判定が
+ *   同じ「racebook が一定以上評価した馬」基準で一貫する。
+ *
+ *   南関は computerIndex が racebook 値 (40〜99) で入っているため、従来通り
+ *   ci<45 → pt=70 → 不要馬、ci≥45 → pt≥115 → 抑え候補 と同じ結果になる。
+ *   sourceComputerIndex も computerIndex もない古いデータは pt > 70 で
+ *   レガシーフォールバックする。
  *
  * ロール変換の注意:
  *   - source の予想 JSON では `押さえ` ロールは現状使われない (実測 0 件)。すべて `補欠`。
@@ -767,39 +779,47 @@ export function getRoleDisplayConfig(role) {
  *
  * 判定基準:
  *   isOsaeCandidate(h)
- *     - role が '押さえ' / '抑え' / '補欠' かつ pt > 70 → true
+ *     - role が '押さえ' / '抑え' / '補欠' かつ getOsaeCi(h) ≥ 45 → true
+ *     - ci 情報が皆無のレガシーデータは pt > 70 でフォールバック
  *     - それ以外 → false
  *
  *   isIneligibleHorse(h)
  *     - role が HANDLED_ROLES 外 / '無' / 未割当 → true
- *     - role が '押さえ' / '抑え' / '補欠' かつ pt <= 70 → true
+ *     - role が '押さえ' / '抑え' / '補欠' かつ抑え候補でない → true
  *     - それ以外（本命 / 対抗 / 単穴 / 連下 / 連下最上位） → false
  *
- * 注:
- *   将来 racebook 由来の元指数を predictions JSON に保持できれば、
- *   元指数しきい値で「pt=70 でも拾う」運用も検討可能（別改修）。
- *   今回は買い目（mainRaceBetting.js）と画面表示の整合性を最優先とし、
- *   独自しきい値（例: ci >= 10）は導入しない。
+ * 関連: mainRaceBetting.js の通常レース買い目 (抑え括弧) も同じ判定を使う。
  */
 export const HANDLED_ROLES = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
 export const OSAE_LIKE_ROLES = new Set(['押さえ', '抑え', '補欠']);
-const PT_UNRATED_FALLBACK = 70; // importPrediction.js のフロア値（mainRaceBetting.js と同値）
+const PT_UNRATED_FALLBACK = 70; // importPrediction.js のフロア値（レガシーフォールバック用）
+export const MIN_OSAE_CI = 45;  // COMPI_MIN — rawScore 昇格閾値と一致
+
+// racebook 系コンピ指数を取り出す。JRA は sourceComputerIndex、南関は computerIndex。
+// どちらも 10 未満なら 0 を返す（admin の 0–9 編集系スケールは無視）。
+function getOsaeCi(horse) {
+    const sci = Number(horse?.sourceComputerIndex || 0);
+    const ci = Number(horse?.computerIndex || 0);
+    if (sci >= 10) return sci;
+    if (ci >= 10) return ci;
+    return 0;
+}
 
 export function isOsaeCandidate(horse) {
     if (!horse) return false;
     if (!OSAE_LIKE_ROLES.has(horse.role)) return false;
-    const pt = Number(horse.pt) || 0;
-    return pt > PT_UNRATED_FALLBACK;
+    // racebook 系コンピ指数 ≥ MIN_OSAE_CI (= 45) のみ抑え候補とみなす。
+    // ci が無い馬や ci < 45 の馬は「racebook が一定以上評価していない」ため不要馬扱い。
+    // 旧仕様の pt > 70 フォールバックは JRA で totalScore 由来 pt (71〜114) を
+    // 誤って抑えに分類していたため撤回。
+    return getOsaeCi(horse) >= MIN_OSAE_CI;
 }
 
 export function isIneligibleHorse(horse) {
     if (!horse) return false;
     const role = horse.role;
     if (!HANDLED_ROLES.has(role)) return true;
-    if (OSAE_LIKE_ROLES.has(role)) {
-        const pt = Number(horse.pt) || 0;
-        return !(pt > PT_UNRATED_FALLBACK);
-    }
+    if (OSAE_LIKE_ROLES.has(role)) return !isOsaeCandidate(horse);
     return false;
 }
 

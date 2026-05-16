@@ -113,22 +113,34 @@ export function generateNormalRaceUmatanLines(horses) {
 
   if (partners.length === 0) return [];
 
-  // 抑え候補の抽出条件:
+  // 抑え候補の抽出条件 (2026-05-16 更新):
   //   - role が '抑え' の馬（データに該当 role が来た場合の正規ルート）
-  //     または role が '補欠' で **pt > 70** の馬
-  //   - pt === 70 は importPrediction.js の「未評価フォールバック値」(= 不要馬) なので除外する
+  //     または role が '補欠' で racebook 系コンピ指数 ≥ MIN_OSAE_CI (= 45) の馬
+  //   - racebook 系コンピ指数 = sourceComputerIndex (JRA) || computerIndex (南関)、10 未満は無効
+  //   - 旧仕様 (pt > 70) は JRA の totalScore 由来 pt (71〜114) を誤って抑えに入れていたため
+  //     COMPI_MIN ベースに変更。shared-prediction-logic.js の isOsaeCandidate と同期。
+  //   - ci 情報が無いレガシーデータは pt > 70 でフォールバック判定。
   //   - 本命・選出済み相手も除外
   //   - 並び順は **馬番昇順**（評価順ではなく視認性優先）
   // 結果が 0 件なら "(抑え...)" 自体を付与しない（無理に補欠で埋めない）。
   const PT_UNRATED_FALLBACK = 70;
+  const MIN_OSAE_CI = 45;
+  const getOsaeCi = (h) => {
+    const sci = Number(h?.sourceComputerIndex || 0);
+    const ci = Number(h?.computerIndex || 0);
+    if (sci >= 10) return sci;
+    if (ci >= 10) return ci;
+    return 0;
+  };
+  const isOsae = (h) => {
+    if (!h) return false;
+    if (h.role === '抑え') return true;
+    if (h.role !== '補欠') return false;
+    return getOsaeCi(h) >= MIN_OSAE_CI;
+  };
   const partnerSet = new Set(partners);
   const osaeNumbers = horses
-    .filter(h => {
-      if (!h) return false;
-      if (h.role === '抑え') return true;
-      if (h.role === '補欠' && horsePt(h) > PT_UNRATED_FALLBACK) return true;
-      return false;
-    })
+    .filter(isOsae)
     .filter(h => {
       const n = horseNumber(h);
       return n != null && n !== honmeiNum && !partnerSet.has(n);
