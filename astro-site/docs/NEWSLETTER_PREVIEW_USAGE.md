@@ -214,8 +214,39 @@ curl -X POST http://localhost:8888/.netlify/functions/newsletter-preview \
 | 未知 `brand` | 400 | `unknown brand: ...` |
 | brand と fromEmail のドメイン不整合 | 400 | `brand-from validation failed` |
 | サポート外 `audienceMode` | 400 | `unsupported audienceMode` |
-| `audienceMode=real-count-only` 時に Airtable env 不足 | 503 | `audienceMode=real-count-only requires Airtable env vars` + どれが足りないか |
-| `audienceMode=real-count-only` で Airtable READ 失敗 | 502 | `airtable fetch failed (READ-ONLY)` |
+| `audienceMode=real-count-only` 時に Airtable env 不足 | 503 | `audienceMode=real-count-only requires Airtable env vars` + `missingEnv` |
+| `audienceMode=real-count-only` で Airtable READ 失敗 | 502 | `airtable fetch failed (READ-ONLY)` + 構造化診断フィールド（下記） |
+| audience カウント中の例外（不正 record shape 等） | 500 | `audience count failed` |
+| ハンドラ未捕捉例外（最終防衛線） | 500 | `unexpected handler error` |
+
+### 502 レスポンスの構造化診断フィールド
+
+Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（Cloudflare/Netlify edge の generic 502 プレーンテキストを抑止）:
+
+```json
+{
+  "error": "airtable fetch failed (READ-ONLY)",
+  "brand": "keiba-intelligence",
+  "baseSource": "keiba-intelligence",
+  "envName": "AIRTABLE_BASE_ID_KEIBA_INTELLIGENCE",
+  "table": "Customers",
+  "airtableStatus": 403,
+  "airtableErrorType": "NOT_AUTHORIZED",
+  "page": 1,
+  "hint": "401/403 means PAT scope or base access issue. ..."
+}
+```
+
+| airtableStatus | 典型 airtableErrorType | 対処 |
+|---|---|---|
+| 401 | `AUTHENTICATION_REQUIRED` | PAT が無効 / 失効。Netlify env の `AIRTABLE_API_KEY` を再発行 |
+| 403 | `NOT_AUTHORIZED` | PAT に対象 Base のアクセス権がない、または `data.records:read` scope なし |
+| 404 | `NOT_FOUND` / `TABLE_NOT_FOUND` | Base ID が間違っている、または KI Base に `Customers` テーブルがない |
+| 429 | `RATE_LIMIT_REACHED` | Airtable 5rps 制限。数秒待って再試行 |
+| 0 | `NETWORK_ERROR` | 関数 egress / Airtable 障害 |
+| 5xx | `UNKNOWN` / etc. | Airtable 上流障害。https://status.airtable.com を確認 |
+
+レスポンスに **絶対に含めない**もの: `AIRTABLE_API_KEY` の値 / Base ID の値 / `Authorization` ヘッダ / Airtable 生レスポンス全文 / record id / email / name。
 
 ## 次のステップ（このAPIには含めない）
 
