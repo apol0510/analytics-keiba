@@ -248,15 +248,132 @@ Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（
 
 レスポンスに **絶対に含めない**もの: `AIRTABLE_API_KEY` の値 / Base ID の値 / `Authorization` ヘッダ / Airtable 生レスポンス全文 / record id / email / name。
 
-## 次のステップ（このAPIには含めない）
+## 本番到達点（2026-05-17 時点）
 
-1. **Airtable READ 追加**: `Customers` テーブルから brand / audienceType 別に受信者抽出（書き込みなし）
-2. **EmailBlacklist / 配信停止 / 期限切れ除外** の集計
-3. **test モード追加**: `NEWSLETTER_TEST_RECIPIENTS` 宛のみ SendGrid 送信
-4. **`Campaigns` / `CampaignDeliveries` テーブルへの書き込み**: dry-run 結果保存・admin 承認フロー
-5. **production モード**: `NEWSLETTER_AUTOMATION_ENABLED=true` + `Status=approved` のみ pick する worker
+ここまでで実装・本番デプロイ済の機能:
 
-このAPIに**実送信機能・実顧客リスト参照を直接足してはいけない**。
+- ✅ `mode='dry-run'` 固定で副作用ゼロのプレビュー（subject / bodyHtml / contentHash / deliveryKey）
+- ✅ brand × fromEmail 整合チェック（誤組合せ事故防止）
+- ✅ deliveryKey 構造化（brand|serviceType|campaignType|campaignDate|audienceType|recipientEmail|contentHash|fromEmail|extraKey）
+- ✅ `audienceMode='mock'` 既定で Airtable も読まない
+- ✅ `audienceMode='real-count-only'` で **Airtable READ-ONLY** から実 Customers 件数のみ返却（PII 露出ゼロ）
+- ✅ 退会候補 (`SuggestedStatus=withdrawn`) を matched から除外
+- ✅ Airtable READ 失敗時の構造化 502 JSON（airtableStatus / airtableErrorType / page / table / hint）
+- ✅ ハンドラ未捕捉例外の最終防衛線（500 JSON、generic 502 plaintext を抑止）
+
+**Cloudflare 5xx 書き換え事象（運用知見）**:
+`analytics.keiba.link`（Cloudflare 前段）は origin の 5xx を Cloudflare 汎用エラーページ
+（`content-type: text/plain`, `body: error code: 502`）に書き換える。`x-nf-request-id` 等の
+Netlify ヘッダも消える。**デバッグ時は `https://analytics-keiba.netlify.app` の直 URL で叩く** と
+Function が返した構造化 JSON 診断がそのまま見える（運用 SOP として記録）。
+
+## 本番確認実績（PII なし）
+
+### 2026-05-17 全件 READ-ONLY 検証
+
+| Base | totalCustomers | filter | matchedCount | withdrawnExcluded | sideEffects | pii |
+|---|---|---|---|---|---|---|
+| analytics-keiba | 1123 | free | 1033 | 37 | airtable-read-only | none-exposed |
+| analytics-keiba | 1123 | expired | 30 | 37 | airtable-read-only | none-exposed |
+| keiba-intelligence | 32 | free | 21 | 0 | airtable-read-only | none-exposed |
+
+- Airtable WRITE: なし
+- SendGrid 呼び出し: なし
+- レスポンス body に email / name / record id: なし（コード上構造的に到達不可、Cloudflare bypass 経由でも検証済）
+- backfill-customers の CSV 統計と整合（free=1045 から退会 12 を除外で 1033、expired=67 から退会 37 を除外で 30）
+
+### 既知の Airtable 認証エラー型（hint テーブル参照）
+
+`audienceMode=real-count-only` で本番返却が確認された Airtable error type:
+- `AUTHENTICATION_REQUIRED` (401): PAT 失効
+- `INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND` (403): PAT に対象 Base のアクセス権がない or Base ID 誤り
+
+## 次の実装候補
+
+### A. admin 画面「対象者数確認」ボタン（設計案・実装未着手）
+
+既存の `src/pages/admin-newsletter-simple.astro` には `customerStats`（ページ初期化時に Airtable から
+全 Customers を取得して集計するレガシー実装）を参照する「現在の配信対象者数」ボタンがあるが、これは:
+- analytics-keiba Base のみで keiba-intelligence をカバーしない
+- 退会候補・期限切れ判定が現在の plan-normalizer ロジックと乖離している可能性
+- 旧プラン名（standard / premium / premium-sanrenpuku / premium-combo）ベースで AudienceType と一致しない
+
+→ **newsletter-preview API (`audienceMode=real-count-only`) を呼び出す形に置き換える**のが望ましい。
+
+#### UI 設計（提案）
+
+```
+┌─────────────────────────────────────────────┐
+│ 📊 対象者数確認 (Real-Count Only)            │
+├─────────────────────────────────────────────┤
+│ ブランド: ( ) analytics-keiba               │
+│            ( ) keiba-intelligence           │
+│ 配信対象: [ free ▼ ]                         │
+│           free / light / standard / premium │
+│           premium-combo / unpaid / expired  │
+│           admin-test / * (全件合算)          │
+│ [ 確認する (READ-ONLY) ]                    │
+├─────────────────────────────────────────────┤
+│ 結果（個人情報は表示しません）:              │
+│  対象件数: 1,033 名                          │
+│  退会除外: 37 名                             │
+│  AudienceType 内訳:                          │
+│    free        1,045                         │
+│    premium         8                         │
+│    expired        67                         │
+│    unpaid          2                         │
+│    (null/unknown)  8                         │
+│  matched ステータス内訳:                     │
+│    active 1,031 / pending 2                  │
+│  queriedAt: 2026-05-17T...                   │
+│  sideEffects: airtable-read-only             │
+└─────────────────────────────────────────────┘
+```
+
+#### 動作仕様（提案）
+
+1. **送信先**: `POST /.netlify/functions/newsletter-preview`
+   - `audienceMode: 'real-count-only'`
+   - `targetRace` はダミーで OK（preview API の必須項目を満たすためだけ、admin は内部固定値）
+   - `campaignType` は当面 `daily-main-race-nankan`（admin はその他を呼ぶ必要なし）
+2. **追加で投げる必要があるもの**: brand / serviceType / audienceType / campaignDate (=今日)
+3. **クリック時の安全装置**:
+   - 配信ボタン (`production`) とは UI 上で**明確に分離**（色・配置）
+   - `audienceMode=real-count-only` 固定（select / hidden、ユーザーが他値に変えられない）
+   - ボタン disabled → 確認中 → 結果表示 → 「もう一度」で disabled 解除
+4. **エラーハンドリング**:
+   - 4xx / 5xx 時は JSON 診断フィールド (`airtableStatus`, `airtableErrorType`, `hint`) を表示
+   - Cloudflare 5xx 書き換え対策として、admin の fetch は **`window.location.host` を使わず固定の直 Netlify URL** または同一オリジン経由を選べる切替を入れる
+5. **既存「現在の配信対象者数」ボタンの扱い**:
+   - 当面は両方並置（新ボタンは「新方式 (READ-ONLY API)」、旧ボタンは「ローカル集計 (legacy)」）
+   - 数値が一致することを目視確認できたら旧ボタン削除（別タスク）
+
+#### 実装スコープ（admin 側）
+
+| 変更 | 内容 |
+|---|---|
+| `src/pages/admin-newsletter-simple.astro` | フォーム UI 追加（brand select / audienceType select / submit ボタン）+ fetch 関数 + 結果表示テーブル |
+| 新規 fetch helper | preview API レスポンス整形（成功 / 4xx / 5xx の 3 分岐表示） |
+
+ファイル数: 1（既存ファイル編集のみ）。新規 netlify function は不要（既存 `newsletter-preview.js` を呼ぶだけ）。
+
+#### 禁止事項の継承
+
+- ❌ admin から SendGrid を呼ばない（API 経由でも）
+- ❌ admin から Airtable WRITE しない
+- ❌ admin で `NEWSLETTER_AUTOMATION_ENABLED=true` を立てない
+- ❌ admin で `audienceMode=production` 等の未実装値を許可しない
+- ✅ 表示するのは件数 / 内訳 / hint のみ、email / name / record id は表示も保持もしない
+
+### B. その他の次ステップ候補（将来）
+
+1. **EmailBlacklist / 配信停止フラグ除外** の matched 計算への組み込み
+2. **test モード**: `NEWSLETTER_TEST_RECIPIENTS` 宛のみ SendGrid 送信（admin から手動で安全テスト送信）
+3. **`Campaigns` / `CampaignDeliveries` テーブル**: dry-run 結果保存・admin 承認フロー
+4. **production モード**: `NEWSLETTER_AUTOMATION_ENABLED=true` + `Status=approved` のみ pick する worker
+5. **502→200+structured_error 化**: Cloudflare 5xx 書き換え回避（HTTP 200 で body に `success: false` を含める案）
+
+このAPIに**実送信機能を直接足してはいけない**。
 追加は順を追って、それぞれ別の関数として実装する。
 
 ## 関連ファイル
@@ -265,4 +382,9 @@ Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（
 - `astro-site/src/lib/newsletter/content-hash.js`
 - `astro-site/src/lib/newsletter/delivery-key.js`
 - `astro-site/src/lib/newsletter/render-daily-main-race.js`
+- `astro-site/src/lib/newsletter/audience-counter.js`
 - `astro-site/netlify/functions/newsletter-preview.js`
+- `astro-site/scripts/newsletter/lib/plan-normalizer.mjs` (preview API も再利用)
+- `astro-site/scripts/newsletter/lib/status-resolver.mjs` (preview API も再利用)
+- `astro-site/scripts/newsletter/lib/customer-field-resolver.mjs` (preview API も再利用)
+- `astro-site/scripts/newsletter/backfill-customers.mjs` (オフライン CSV 出力、preview と同一ロジック)
