@@ -162,36 +162,42 @@ BACKFILL_DRY_RUN=true          # デフォルト true。false にしても WRITE
 | 文字列に `test` / `テスト` を含む | `admin-test` |
 | 上記いずれにも一致しない | `null`（= SuggestedAudienceType 空）+ `Warning="unknown plan: <CurrentPlanRaw>"` + `NeedsManualReview=true` |
 
-### 6.2 期限切れ補正
+### 6.2 期限切れ補正（**2026-05-16 改訂: 全 AudienceType 共通**）
 
-上記で算出した `SuggestedAudienceType` が `premium` / `premium-combo` / `standard` / `light` のいずれかで、かつ `ExpiryDateResolved < today (JST)` の場合:
+`ExpiryDateResolved < today (JST)` の場合:
 
-- `SuggestedAudienceType` を **`expired`** に上書き
-- `Warning="plan-expired: original=<元のSuggestedAudienceType>, expiry=<ExpiryDateResolved>"` 追加
+- `SuggestedAudienceType` を **`expired`** に上書き（**プラン名・元 AudienceType に関係なく**）
+- 元 AudienceType の有無で Reason を区別:
+  - 元 AudienceType あり（例: `premium`）→ `Reason="plan-expired: original=<元>, expiry=<日付>"`
+  - 元 AudienceType なし（unknown plan、例: `Monthly`）→ `Reason="audience-expired-by-date: expiry=<日付>"`、`Warning="unknown plan: ..."` は **suppress**（過度な警告を出さない）
+
+これにより `Monthly` などの未対応プランでも、期限切れなら自動的に `expired` グループに分類される。
 
 ### 6.3 未入金補正
 
 `CurrentStatus='pending'` の場合:
 
 - `SuggestedAudienceType` を **`unpaid`** に上書き
-- `Warning="status-pending: original=<元のSuggestedAudienceType>"` 追加
+- `Reason="status-pending: original=<元のSuggestedAudienceType>"` 追加
 
 ### 6.4 退会補正
 
 退会判定が真の場合:
 
 - `SuggestedAudienceType` は元の判定を残す（退会自体は `SuggestedStatus='withdrawn'` で表現）
-- `SuggestedStatus='withdrawn'` を出力
+- `SuggestedStatus='withdrawn'` を出力（status-resolver 側で）
 - `NeedsManualReview=true`
 
-### 6.5 ルール優先順（早い者勝ち、上書き順）
+### 6.5 ルール優先順（早い者勝ち、上書き順、**2026-05-16 改訂**）
 
 1. 元プランから `SuggestedAudienceType` を算出（[§6.1](#61-ルール先勝ち)）
-2. 期限切れ補正（[§6.2](#62-期限切れ補正)）
-3. 未入金補正（[§6.3](#63-未入金補正)）
-4. 退会補正（[§6.4](#64-退会補正)）
+2. 未入金補正（[§6.3](#63-未入金補正)） — pending 時に `unpaid` 上書き
+3. **期限切れ補正（[§6.2](#62-期限切れ補正)） — expired で最終上書き（pending より強い）**
+4. 退会補正（[§6.4](#64-退会補正)） — `SuggestedStatus` のみに影響
 
-→ 退会 > 未入金 > 期限切れ > 平常 の優先で `SuggestedAudienceType` / `SuggestedStatus` が決まる。
+→ AudienceType の優先順は **退会 > 期限切れ > 未入金 > 平常**。
+→ 期限切れ判定が pending より強くなる（仕様変更）。これは
+   「期限切れユーザーは pending かどうかを問わず expired グループに集約する」運用方針による。
 
 ---
 
@@ -221,15 +227,17 @@ BACKFILL_DRY_RUN=true          # デフォルト true。false にしても WRITE
 `CurrentStatus='pending'` の場合は **`SuggestedStatus` は `pending` のまま**（自動で `unpaid` にしない）。  
 代わりに `Reason="status-pending may be 'unpaid' (manual review)"` を `Reason` 列に出力。
 
-### 7.4 期限切れ候補
+### 7.4 期限切れ候補（**2026-05-16 改訂: SuggestedStatus を expired に変更**）
 
-`ExpiryDateResolved < today (JST)` かつ `CurrentStatus` が `active` の場合:
+`ExpiryDateResolved < today (JST)` **かつ `CurrentStatus='active'`** の場合:
 
-- `SuggestedStatus` は `active` のまま
+- `SuggestedStatus` を **`expired`** に上書き（候補値として）
 - `Reason="active-but-expired: expiry=<ExpiryDateResolved>"` を出力
 - `NeedsManualReview=true`
 
-⚠️ Status の自動上書き候補は出さない（人間判断を必須にする）。
+⚠️ Airtable への自動 PATCH はしない。マコさんが CSV レビューで承認したら手動反映する。
+
+`CurrentStatus` が `expired` / `cancelled` / `suspended` / `withdrawn` の場合は、期限切れであっても**この補正は発火しない**（status-resolver は何もしない）。AudienceType=expired への分類は plan-normalizer §6.2 が担当し、人間レビューは不要（過度な警告を出さない）。
 
 ---
 

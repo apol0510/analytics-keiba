@@ -50,14 +50,26 @@ function baseRule(planRaw) {
 
 /**
  * AudienceType を補正ロジック込みで正規化する
- * 優先順（後勝ち上書き）: 平常 → 期限切れ → 未入金 → 退会
+ *
+ * 優先順（後勝ち上書き、AudienceType 値の決定順）:
+ *   1. WithdrawalRequested=true / Status=withdrawn → status-resolver で扱う
+ *      （ここでは AudienceType を withdrawn にしない、SuggestedStatus を別途出す）
+ *   2. 有効期限切れ → AudienceType=expired（全プラン・全 status 共通、最優先）
+ *   3. Status=pending → AudienceType=unpaid（expired より弱い）
+ *   4. プラン名判定 → free / light / standard / premium / premium-combo / admin-test
+ *   5. unknown plan → AudienceType=null + warning（NeedsManualReview=true）
+ *
+ * 2026-05-16 改訂:
+ *   - 期限切れ補正は **全 AudienceType 共通**（旧: paid プランのみ）
+ *   - unknown plan でも有効期限切れなら expired に分類（reason: audience-expired-by-date）
+ *   - expired 分類時は unknown plan warning を suppress（過度な警告防止）
+ *   - 補正順を「pending → expired」に変更（expired 優先のため後勝ち）
  *
  * @param {string|null|undefined} planRaw
  * @param {object} [options]
  * @param {string|null} [options.status] - Customers.Status 現在値
- * @param {string|null} [options.expiryDate] - ISO 形式の期限日 (YYYY-MM-DD)
- * @param {string|null} [options.today] - 比較基準日 (YYYY-MM-DD)、未指定なら今日(UTC)
- * @param {boolean} [options.withdrawn] - 退会判定（true で SuggestedStatus は別途 withdrawn 提案）
+ * @param {string|null} [options.expiryDate] - ISO 形式の期限日 (YYYY-MM-DD or ISO 8601)
+ * @param {string|null} [options.today] - 比較基準日 (YYYY-MM-DD)、未指定ならスキップ
  * @returns {{ audienceType: string|null, planResolvedLabel: string|null, reasons: string[], warning: string }}
  */
 export function normalizeAudienceType(planRaw, options = {}) {
@@ -65,7 +77,7 @@ export function normalizeAudienceType(planRaw, options = {}) {
   const reasons = [];
   let warning = '';
 
-  // §6.1 base rule
+  // Step 1: base rule (§6.1) - プラン名から base AudienceType を決定
   const base = baseRule(planRaw);
   let audienceType = base.audienceType;
   const planResolvedLabel = base.audienceType; // 元判定を保持
@@ -75,27 +87,42 @@ export function normalizeAudienceType(planRaw, options = {}) {
     warning = `unknown plan: ${String(planRaw).trim()}`;
   }
 
-  // §6.2 expired correction
-  if (audienceType && ['premium', 'premium-combo', 'standard', 'light'].includes(audienceType)) {
-    if (expiryDate && today) {
-      // ISO 日付の文字列比較で十分（同じ YYYY-MM-DD 形式前提）
-      if (String(expiryDate) < String(today)) {
-        reasons.push(`plan-expired: original=${audienceType}, expiry=${expiryDate}`);
-        audienceType = 'expired';
-      }
-    }
-  }
-
-  // §6.3 unpaid correction
+  // Step 2: pending → unpaid 補正 (§6.3)
+  //   expired 補正より先に実行する（expired が後勝ちで上書きできるように）
   if (status === 'pending') {
-    if (audienceType !== 'unpaid') {
-      reasons.push(`status-pending: original=${audienceType ?? 'null'}`);
+    if (audienceType !== 'unpaid' && audienceType !== null) {
+      reasons.push(`status-pending: original=${audienceType}`);
+      audienceType = 'unpaid';
+    } else if (audienceType === null) {
+      // unknown plan + pending → unpaid に分類（unknown warning は残す: pending データ品質警告として有効）
+      reasons.push('status-pending: original=null');
       audienceType = 'unpaid';
     }
   }
 
-  // §6.4 withdrawal は status-resolver 側で suggestedStatus に反映する
-  // ここでは AudienceType に退会を表さない
+  // Step 3: 期限切れ補正 (§6.2、全 AudienceType 共通)
+  //   AudienceType に対して最優先（withdrawn 除く）。free / unpaid / unknown 含む全パターンを expired に寄せる。
+  //   unknown plan 由来の warning は expired で分類された時点で suppress
+  //   （pending が間に挟まって audienceType=unpaid 経由でも同様）。
+  const isExpired = expiryDate != null && today != null && String(expiryDate) < String(today);
+  if (isExpired) {
+    if (audienceType === null) {
+      // unknown plan → 期限切れで分類
+      reasons.push(`audience-expired-by-date: expiry=${expiryDate}`);
+      audienceType = 'expired';
+    } else if (audienceType !== 'expired') {
+      reasons.push(`plan-expired: original=${audienceType}, expiry=${expiryDate}`);
+      audienceType = 'expired';
+    }
+    // unknown plan warning は expired 分類で suppress（pending 経由含む）
+    if (warning.startsWith('unknown plan')) {
+      warning = '';
+    }
+  }
+
+  // Step 4: withdrawal は status-resolver 側で SuggestedStatus に反映する
+  //   ここでは AudienceType を withdrawn にしない。
+  //   （AudienceType の値域に withdrawn は含まれない、SuggestedStatus=withdrawn のみ）
 
   return { audienceType, planResolvedLabel, reasons, warning };
 }
