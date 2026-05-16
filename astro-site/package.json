@@ -16,6 +16,7 @@
     "validate:archive": "node scripts/validate-archive-json.cjs",
     "validate:prediction": "node scripts/validate-prediction-json.cjs",
     "verify:sync": "node scripts/verifyArchiveSync.js",
+    "verify:jra:roles": "node scripts/verify-jra-role-score-consistency.mjs",
     "import:prediction": "node scripts/importPrediction.js",
     "import:prediction:jra": "node scripts/importPredictionJra.js",
     "import:results": "node scripts/importResults.js",

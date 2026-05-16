@@ -74,34 +74,48 @@ raw =
 markScore = clamp(raw / 30 × 100, 0, 100)   // 理論最大30を100に正規化
 ```
 
-## 役割決定
+## 役割決定 (2026-05-16 strict-pt-desc に刷新)
 
 ### 基本ルール
 
-1. `analyticsScore` 降順でソート
-2. 上位から `本命 → 対抗 → 単穴 → 連下最上位 → 連下…` を割り当て
-3. **keiba-intelligence とは異なり「印1◎ 固定」は行わない**（ここが最大の差別化点）
+1. 各馬の `displayScore` (= pt = rawScore + 70) を降順でソート
+2. 上位から `本命 → 対抗 → 単穴 → 連下最上位 → 連下(最大3頭) → 補欠` を割り当てる
+3. タイブレーク: `sourceComputerIndex` (なければ `computerIndex`) 降順 → 馬番昇順
 
-### 差別化ルール（意図的に keiba-intelligence と結果を違える）
+### 不変条件 (`npm run verify:jra:roles` で検証)
 
-以下の条件を満たす場合、**本命を analyticsScore 最上位 → computerIndex 最上位** に差し替える:
+各レースで以下を満たすこと:
 
-- **(a) 上位2頭の `analyticsScore` 差 < 3%** が close-call → `close-call-prefer-computer`
-- **(b) `analyticsScore` 最上位 ≠ `computerIndex` 最上位** → `computer-top-mismatch`
+1. 本命 pt ≥ 対抗 pt
+2. 対抗 pt ≥ 単穴 pt
+3. 単穴 pt ≥ 連下最上位 pt
+4. 連下最上位 pt ≥ max(連下 pt)
+5. max(連下 pt) ≥ max(補欠/抑え pt)
+6. 本命・対抗・単穴・連下最上位 はそれぞれ 1 頭
 
-### 荒れ防止ガード
+`scripts/verify-jra-role-score-consistency.mjs` が JRA 全 prediction JSON を走査し、
+不整合があれば exit 1。`import:prediction:jra` 後に必ず実行する運用。
 
-差別化ルールを適用するのは次の条件を満たす場合のみ:
+### 旧仕様 (削除済み・参考)
 
-- **`computerIndex` 最上位馬が `analyticsScore` 上位 3 位以内に入っている**
+2026-05-16 まで「analyticsScore (ci×0.5 + feature×0.3 + mark×0.2) 降順で役割決定 +
+差別化ルール (close-call-prefer-computer / computer-top-mismatch)」を採用していた。
+しかし `pt = rawScore + 70` (主に sourceComputerIndex 由来) と analyticsScore は
+異なる式から導出されるため、role 順と pt 順が逆転する事例が頻発した
+(2026-05-16 検証で JRA 36R 中 31R で逆転)。
 
-これにより「コンピ 1 位だが feature も mark も極端に低い馬」を本命に押し上げる暴発を防ぐ。ガード不発時は通常通り analyticsScore 最上位を本命として採用する。
+strict-pt-desc に切替えた現在も `analyticsScore` / `markScore` / `featureScore` は
+診断用に各馬に計算・保存しているが、役割決定には使用しない。
+keiba-intelligence との差別化は「pt のソース (sourceComputerIndex 優先) を ci-top
+ベースにする」ことで結果的に担保される (印1◎ 固定の KI と必然的に異なる)。
 
 ### 連下・補欠
 
-- 連下は 3 頭まで、残りは補欠（`analyticsScore` 降順）
-- `連下最上位` は 1 頭固定（単穴の次の順位）
-- analyticsScore が 0 かつ rawScore が 0 の馬は「無」扱い
+- 連下は 3 頭まで (5 位〜7 位)、残り (8 位以降) は補欠
+- 連下最上位は 4 位固定 (単穴の次)
+- `rawScore = 0` の馬は activeHorses から除外し「無」のまま (役割不付与)
+- 補欠の中で `shared-prediction-logic.js` の `isOsaeCandidate` (racebook 系 ci ≥ 45)
+  が true なら抑え候補、false なら不要馬 (表示・買い目で同じ判定)
 
 ## 買い目との関係
 
