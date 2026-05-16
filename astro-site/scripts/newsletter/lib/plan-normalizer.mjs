@@ -20,6 +20,12 @@ function baseRule(planRaw) {
   if (lower.includes('premium')) {
     return { audienceType: 'premium', reason: 'plan-matched:premium' };
   }
+  // free-registered / free registered / free-* は free 扱い
+  // （keiba-intelligence の verify-magic-link.js:117 が default に 'free-registered' を使うため
+  //  既存運用で頻出する。'free' の前にチェックして prefix 漏れを防ぐ）
+  if (lower === 'free-registered' || lower === 'free registered' || lower.startsWith('free-')) {
+    return { audienceType: 'free', reason: 'plan-matched:free-registered' };
+  }
   if (lower === 'free' || raw === 'フリー' || raw === '無料' || raw === '無料会員') {
     return { audienceType: 'free', reason: 'plan-matched:free' };
   }
@@ -28,6 +34,13 @@ function baseRule(planRaw) {
   }
   if (lower === 'standard' || raw === 'スタンダード') {
     return { audienceType: 'standard', reason: 'plan-matched:standard' };
+  }
+  // pro / pro-plus は keiba-intelligence の verify-magic-link.js:155 で
+  // ['pro', 'pro-plus', 'premium', 'premium-plus', 'standard', 'light'] と
+  // 同じ paid 扱いされている。当面はメルマガ配信ターゲットとして premium に集約する
+  // （AudienceType に 'pro' 枠は作らない。文面差別化が必要になったら別タスクで分離）。
+  if (lower === 'pro' || lower === 'pro-plus' || lower === 'pro plus') {
+    return { audienceType: 'premium', reason: 'plan-matched:pro-as-premium' };
   }
   if (lower.includes('test') || raw.includes('テスト')) {
     return { audienceType: 'admin-test', reason: 'plan-matched:admin-test' };

@@ -23,3 +23,7 @@ dist
 .astro
 .env
 .env.*
+
+# Newsletter backfill CSV/JSON output (Email/PII を含むため repo にコミットしない)
+# 出力先は backfill-customers.mjs を node 起動した cwd / tmp/newsletter-backfill/
+tmp/newsletter-backfill/
