@@ -14,9 +14,11 @@
  *   7. role / pt が空でない
  *
  * 使い方:
- *   node scripts/verify-jra-role-score-consistency.mjs                # 全データ
- *   node scripts/verify-jra-role-score-consistency.mjs 2026-05-16     # 特定日のみ
- *   node scripts/verify-jra-role-score-consistency.mjs --nankan       # 南関も含む
+ *   node scripts/verify-jra-role-score-consistency.mjs                # JRA 全期間
+ *   node scripts/verify-jra-role-score-consistency.mjs 2026-05-16     # JRA 特定日のみ
+ *   node scripts/verify-jra-role-score-consistency.mjs --nankan       # 南関のみ 全期間
+ *   node scripts/verify-jra-role-score-consistency.mjs --nankan 2026-05-13  # 南関 特定日
+ *   node scripts/verify-jra-role-score-consistency.mjs --all          # JRA + 南関 両方
  *
  * 終了コード:
  *   0: すべて整合
@@ -35,8 +37,17 @@ const JRA_DIR = join(projectRoot, 'src/data/predictions/jra');
 const NANKAN_DIR = join(projectRoot, 'src/data/predictions');
 
 const args = process.argv.slice(2);
-const includeNankan = args.includes('--nankan');
+const nankanFlag = args.includes('--nankan');
+const allFlag = args.includes('--all');
 const dateFilter = args.find(a => /^\d{4}-\d{2}-\d{2}$/.test(a)) || null;
+
+// scope 決定:
+//   --all                → JRA + 南関 両方
+//   --nankan             → 南関のみ
+//   (デフォルト)         → JRA のみ
+const scope = allFlag ? 'all' : (nankanFlag ? 'nankan' : 'jra');
+const scanJra = scope === 'jra' || scope === 'all';
+const scanNankan = scope === 'nankan' || scope === 'all';
 
 const OSAE_LIKE_ROLES = new Set(['押さえ', '抑え', '補欠']);
 
@@ -158,14 +169,21 @@ let totalRaces = 0;
 let badRaces = 0;
 const issues = [];
 
-function scanDir(dir, label) {
-  for (const file of walkJsonFiles(dir)) {
+console.log('━━━ role/pt 整合性検証 ━━━');
+console.log(`📂 対象: ${scope.toUpperCase()}`);
+if (dateFilter) console.log(`📅 日付フィルタ: ${dateFilter}`);
+console.log();
+
+let scannedFiles = 0;
+
+if (scanJra) {
+  // JRA: src/data/predictions/jra/YYYY/MM/YYYY-MM-DD.json (フォーマット1: venues[])
+  for (const file of walkJsonFiles(JRA_DIR)) {
     const filename = file.split('/').pop();
     if (dateFilter && !filename.includes(dateFilter)) continue;
+    scannedFiles++;
     let data;
-    try {
-      data = JSON.parse(readFileSync(file, 'utf8'));
-    } catch (e) {
+    try { data = JSON.parse(readFileSync(file, 'utf8')); } catch (e) {
       console.warn(`⚠️  ${file}: JSON 読込み失敗 (${e.message})`);
       continue;
     }
@@ -175,25 +193,25 @@ function scanDir(dir, label) {
       const errors = checkRace(r.venue, r.raceNumber, r.horses);
       if (errors.length > 0) {
         badRaces++;
-        issues.push({ source: label, file: filename, venue: r.venue, raceNumber: r.raceNumber, errors });
+        issues.push({ source: 'JRA', file: filename, venue: r.venue, raceNumber: r.raceNumber, errors });
       }
     }
   }
 }
 
-console.log('━━━ role/pt 整合性検証 ━━━');
-if (dateFilter) console.log(`📅 日付フィルタ: ${dateFilter}`);
-console.log();
-
-scanDir(JRA_DIR, 'JRA');
-if (includeNankan) {
-  // 南関は同階層 .json (フォーマット2)
+if (scanNankan) {
+  // 南関: src/data/predictions/*.json (フォーマット2: predictions[])
+  // ※ jra/ サブディレクトリは除外
   for (const file of walkJsonFiles(NANKAN_DIR)) {
     if (file.includes('/jra/')) continue;
     const filename = file.split('/').pop();
     if (dateFilter && !filename.includes(dateFilter)) continue;
+    scannedFiles++;
     let data;
-    try { data = JSON.parse(readFileSync(file, 'utf8')); } catch { continue; }
+    try { data = JSON.parse(readFileSync(file, 'utf8')); } catch (e) {
+      console.warn(`⚠️  ${file}: JSON 読込み失敗 (${e.message})`);
+      continue;
+    }
     const races = extractRaces(data, filename);
     for (const r of races) {
       totalRaces++;
@@ -206,6 +224,7 @@ if (includeNankan) {
   }
 }
 
+console.log(`スキャンファイル数: ${scannedFiles}`);
 console.log(`検証レース数: ${totalRaces}`);
 console.log(`不整合レース数: ${badRaces}`);
 console.log();
