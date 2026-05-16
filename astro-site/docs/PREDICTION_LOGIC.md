@@ -33,8 +33,17 @@ analyticsScore
 日刊コンピ指数。nankan/jra とも 40〜99 の範囲が実運用値。欠損時は 0。
 
 ```
-normComputer = clamp(computerIndex, 0, 100)
+normComputer = clamp(sourceComputerIndex || computerIndex, 0, 100)
 ```
+
+**ソース優先順位（2026-05-16〜）**:
+1. `sourceComputerIndex` （racebook 由来の元コンピ指数、JRA は computer JSON 由来 / 南関は racebook 由来）が 10 以上なら採用。
+2. なければ `computerIndex` が 10 以上なら採用（南関 admin 系・JRA admin 系の 0–9 スケールは 0 扱い）。
+3. どちらも無ければ 0。
+
+`normalizePrediction.js` が `rawScore`（→ `displayScore` = `pt`）を `sourceComputerIndex` から
+昇格させているため、`adjustPrediction.js` も同じソースを参照することで「役割順 ≠ pt 順」の
+矛盾（例: 単穴の pt が本命より高い）を防ぐ。
 
 ### featureScore（30%）
 

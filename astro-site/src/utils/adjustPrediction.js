@@ -94,10 +94,20 @@ function calculateFeatureScore(horse) {
 
 /**
  * コンピ指数を 0–100 に正規化（実運用では 40–99 の範囲に収まる）
+ *
+ * 2026-05-16: sourceComputerIndex を優先するように変更。
+ *   - JRA: admin の computerIndex フィールドは 0–9 スケールで実運用では 0 が多く、
+ *     racebook 由来の本来のコンピ指数（40–99）は sourceComputerIndex に格納される。
+ *     pt（rawScore + 70）は normalizePrediction で sourceComputerIndex から計算されるため、
+ *     analyticsScore も同じソースを使うことで pt と役割の順序を一致させる。
+ *   - 南関: computerIndex は通常 40–99。sourceComputerIndex が無いか 10 未満なら従来通り
+ *     computerIndex を使用する。
  */
 function normalizeComputer(horse) {
+  const sci = Number(horse.sourceComputerIndex || 0);
   const ci = Number(horse.computerIndex || 0);
-  return Math.max(0, Math.min(100, ci));
+  const v = sci >= 10 ? sci : (ci >= 10 ? ci : 0);
+  return Math.max(0, Math.min(100, v));
 }
 
 /**
@@ -172,7 +182,11 @@ export function adjustPrediction(normalized) {
     // computerIndex を持つ馬が 1 頭でもあるか
     // 無い場合は analyticsScore の 50% 重み枠が機能しないため、
     // KI と同じ印1◎ベースのフォールバックに切替える
-    const hasComputerIndex = race.horses.some(h => Number(h.computerIndex) > 0);
+    // 2026-05-16: sourceComputerIndex も判定対象に含める（JRA で computerIndex が 0 でも
+    // sourceComputerIndex が機能していれば通常ロジックを使う）
+    const hasComputerIndex = race.horses.some(
+      h => Number(h.computerIndex) > 0 || Number(h.sourceComputerIndex) > 0
+    );
 
     if (preserveRoles) {
       // 既存の役割を維持（Step 4 以降のみ実行）
