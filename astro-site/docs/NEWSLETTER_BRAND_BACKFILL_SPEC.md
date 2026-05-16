@@ -159,8 +159,11 @@ BACKFILL_DRY_RUN=true          # デフォルト true。false にしても WRITE
 | `standard` / `スタンダード` | `standard` |
 | 文字列に `premium combo` / `Premium Combo` / `premium-combo` を含む | `premium-combo` |
 | 文字列に `premium` を含む（Combo 以外）<br>例: `Premium`, `Premium Lifetime`, `Premium Annual`, `Premium Predictions`, `Premium Sanrenpuku`, `Premium Plus` | `premium` |
+| `pro` / `pro-plus` / `pro plus`（KI 互換、有料月額として集約） | `premium`（reason: `plan-matched:pro-as-premium`） |
 | 文字列に `test` / `テスト` を含む | `admin-test` |
-| 上記いずれにも一致しない | `null`（= SuggestedAudienceType 空）+ `Warning="unknown plan: <CurrentPlanRaw>"` + `NeedsManualReview=true` |
+| 上記いずれにも一致しない（例: `Monthly`） | `null`（= SuggestedAudienceType 空）+ `Warning="unknown plan: <CurrentPlanRaw>"` + `NeedsManualReview=true` |
+
+> **Monthly は自動分類しない**: `Monthly` は「課金サイクル / 支払い区分」を表す値であり、プラン種別そのものではない。現時点で Stripe / PayPal は使われておらず、銀行振込ユーザーにも `Monthly` が入る運用のため、`Monthly = premium` と断定できない。よって `Monthly` は unknown plan のまま残し、人間が CSV レビューで判断する。期限切れ Monthly は §6.2 で `expired` に、pending Monthly は §6.3 で `unpaid` に自動分類されるが、active かつ有効期限内の Monthly は `NeedsManualReview=true` のまま残る。
 
 ### 6.2 期限切れ補正（**2026-05-16 改訂: 全 AudienceType 共通**）
 
@@ -171,7 +174,7 @@ BACKFILL_DRY_RUN=true          # デフォルト true。false にしても WRITE
   - 元 AudienceType あり（例: `premium`）→ `Reason="plan-expired: original=<元>, expiry=<日付>"`
   - 元 AudienceType なし（unknown plan、例: `Monthly`）→ `Reason="audience-expired-by-date: expiry=<日付>"`、`Warning="unknown plan: ..."` は **suppress**（過度な警告を出さない）
 
-これにより `Monthly` などの未対応プランでも、期限切れなら自動的に `expired` グループに分類される。
+これにより `Monthly` などの未対応プランでも、期限切れなら自動的に `expired` グループに分類される（unknown plan のまま放置しない）。
 
 ### 6.3 未入金補正
 

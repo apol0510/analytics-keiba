@@ -42,6 +42,12 @@ function baseRule(planRaw) {
   if (lower === 'pro' || lower === 'pro-plus' || lower === 'pro plus') {
     return { audienceType: 'premium', reason: 'plan-matched:pro-as-premium' };
   }
+  // Monthly は「課金サイクル / 支払い区分」であり、プラン種別そのものではない。
+  // 現在 Stripe / PayPal は使われておらず、銀行振込ユーザーにも Monthly が入る。
+  // よって Monthly = premium とは断定できないため自動分類しない（unknown plan のまま）。
+  // - 期限切れ Monthly → §6.2 で expired に分類
+  // - pending Monthly → §6.3 で unpaid に分類
+  // - active かつ有効期限内 Monthly → unknown plan のまま NeedsManualReview=true で人間判断
   if (lower.includes('test') || raw.includes('テスト')) {
     return { audienceType: 'admin-test', reason: 'plan-matched:admin-test' };
   }
