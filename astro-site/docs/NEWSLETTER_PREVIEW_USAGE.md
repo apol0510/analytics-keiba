@@ -1,7 +1,16 @@
-# Newsletter Preview API（dry-run・最小構成）
+# Newsletter Preview API（dry-run）
 
 完全自動化メルマガ配信システムの第一段階。  
-**副作用ゼロ** の dry-run プレビュー API。
+**dry-run のみ** のプレビュー API。送信は絶対に行わない。
+
+## audienceMode
+
+`audienceMode` リクエストパラメータで挙動を切り替える（既定: `'mock'`）。
+
+| audienceMode | Airtable READ | レスポンス内容 | sideEffects |
+|---|---|---|---|
+| `mock`（既定） | ❌ 読まない | モック受信者2名固定 | `none` |
+| `real-count-only` | ✅ READ-ONLY | 実 Customers の **件数のみ**（PII なし） | `airtable-read-only` |
 
 ## 何をするか
 
@@ -9,21 +18,23 @@
   - 件名（subject）
   - 本文 HTML（bodyHtml）
   - contentHash（sha256）
-  - deliveryKey サンプル（モック受信者2名分）
+  - deliveryKey サンプル（モック受信者2名分、`real-count-only` でもモックのまま）
   - fromEmail / fromName（brand-config から取得）
   - brand と fromEmail の組合せ検証結果
-- を JSON で返すだけ。
+- を JSON で返す。
+- `audienceMode='real-count-only'` の場合は加えて、対応 Base の Customers を Airtable GET で読み、
+  AudienceType=指定値に該当する件数を返す。
 
 ## 何をしないか（重要）
 
 - ❌ SendGrid を呼ばない
-- ❌ Airtable を読まない
-- ❌ Airtable を書き込まない
+- ❌ Airtable WRITE（PATCH/POST/PUT/DELETE）
 - ❌ ファイルを書き込まない
 - ❌ 既存テーブル（ScheduledEmails / NewsletterJobs / NewsletterQueue / Campaigns / CampaignDeliveries）に一切触らない
-- ❌ 受信者は **モック固定**（`preview-user-1@example.com`, `preview-user-2@example.com`）
+- ❌ レスポンスに email / name / AirtableRecordId などの **PII を含めない**（`real-count-only` でも件数のみ）
+- ❌ `audienceMode='mock'` では Airtable も読まない
 
-レスポンスには `sideEffects: "none"` を明記している。
+レスポンスには `sideEffects` を `none`（mock）または `airtable-read-only`（real-count-only）として明記する。
 
 ## エンドポイント
 
@@ -84,6 +95,58 @@ curl -X POST http://localhost:8888/.netlify/functions/newsletter-preview \
 ```
 
 → 400 Bad Request `brand-from validation failed`
+
+### 3. real-count-only（Airtable READ-ONLY で実件数のみ取得）
+
+`AIRTABLE_API_KEY` と `AIRTABLE_BASE_ID_ANALYTICS_KEIBA`（または `AIRTABLE_BASE_ID_KEIBA_INTELLIGENCE`）が
+Netlify 環境変数に設定されている必要がある（READ-ONLY スコープの PAT 推奨）。
+
+```bash
+curl -X POST http://localhost:8888/.netlify/functions/newsletter-preview \
+  -H "Content-Type: application/json" \
+  -d '{
+    "brand": "analytics-keiba",
+    "serviceType": "analytics-keiba",
+    "campaignType": "daily-main-race-nankan",
+    "campaignDate": "2026-05-14",
+    "audienceType": "free",
+    "audienceMode": "real-count-only",
+    "targetRace": { "raceId": "nankan:2026-05-14:KAW:R11", "venue": "川崎", "raceNumber": 11, "raceName": "メイン", "postTime": "20:10" }
+  }'
+```
+
+レスポンスの `audience` ブロック（**件数のみ**、PII 一切なし）:
+
+```json
+{
+  "audience": {
+    "source": "airtable-read-only",
+    "audienceMode": "real-count-only",
+    "brand": "analytics-keiba",
+    "base": "analytics-keiba",
+    "audienceTypeFilter": "free",
+    "today": "2026-05-16",
+    "totalCustomers": 1123,
+    "matchedCount": 1045,
+    "withdrawnExcluded": 37,
+    "audienceTypeBreakdown": {
+      "free": 1045,
+      "premium": 8,
+      "expired": 67,
+      "unpaid": 2,
+      "(null/unknown)": 8
+    },
+    "matchedStatusBreakdown": { "active": 1043, "pending": 2 },
+    "pii": "none-exposed",
+    "note": "Emails / names / record ids are not exposed. This is a dry-run count only.",
+    "queriedAt": "2026-05-16T12:34:56.789Z"
+  }
+}
+```
+
+`sideEffects` は `"airtable-read-only"` になる（`mock` モードの `"none"` と区別）。
+
+`audienceType` に `"*"` を指定すると AudienceType フィルタを外して全 AudienceType（withdrawn 除く）の合算件数を返す。
 
 ## 期待レスポンス例（正常系）
 
@@ -150,6 +213,9 @@ curl -X POST http://localhost:8888/.netlify/functions/newsletter-preview \
 | サポート外 `campaignType` | 400 | `unsupported campaignType (minimal preview supports only daily-main-race-nankan)` |
 | 未知 `brand` | 400 | `unknown brand: ...` |
 | brand と fromEmail のドメイン不整合 | 400 | `brand-from validation failed` |
+| サポート外 `audienceMode` | 400 | `unsupported audienceMode` |
+| `audienceMode=real-count-only` 時に Airtable env 不足 | 503 | `audienceMode=real-count-only requires Airtable env vars` + どれが足りないか |
+| `audienceMode=real-count-only` で Airtable READ 失敗 | 502 | `airtable fetch failed (READ-ONLY)` |
 
 ## 次のステップ（このAPIには含めない）
 

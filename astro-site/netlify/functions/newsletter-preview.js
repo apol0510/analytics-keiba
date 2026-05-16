@@ -1,12 +1,15 @@
-// 完全自動化メルマガ配信システム - dry-run プレビュー API（最小構成）
+// 完全自動化メルマガ配信システム - dry-run プレビュー API
 //
-// 仕様（2026-05-14 時点）:
-//  - SendGrid を呼ばない
-//  - Airtable を読まない / 書かない
-//  - ファイルを書き込まない
-//  - 副作用ゼロ
+// 仕様（2026-05-16 時点）:
+//  - SendGrid を呼ばない（常に）
+//  - Airtable WRITE は呼ばない（常に）
+//  - ファイルを書き込まない（常に）
 //  - mode は 'dry-run' 固定（test / production はまだ実装しない）
-//  - 受信者はモック（preview-user-1@example.com / preview-user-2@example.com）
+//  - audienceMode='mock'（既定）: 受信者はモック2名のみ、Airtable も読まない（副作用ゼロ）
+//  - audienceMode='real-count-only': brand 対応の Airtable Base を READ-ONLY で参照し、
+//    AudienceType=<指定値> に該当する Customers の **件数のみ** を返す。
+//    email / name / AirtableRecordId など PII は一切レスポンスに含めない。
+//    deliveryKey サンプルはモック受信者のまま（実 email を露出させない）。
 //
 // 入力（POST JSON）:
 //   {
@@ -15,6 +18,7 @@
 //     "campaignType": "daily-main-race-nankan",
 //     "campaignDate": "2026-05-14",
 //     "audienceType": "free",
+//     "audienceMode": "mock" | "real-count-only",  // 任意、既定 "mock"
 //     "targetRace": {
 //       "raceId": "nankan:2026-05-14:KAW:R11",
 //       "venue": "川崎",
@@ -28,6 +32,7 @@ import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter
 import { computeContentHash } from '../../src/lib/newsletter/content-hash.js';
 import { computeDeliveryKey, describeDeliveryKeyTemplate } from '../../src/lib/newsletter/delivery-key.js';
 import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-race.js';
+import { countAudience, BRAND_TO_BASE_NAME } from '../../src/lib/newsletter/audience-counter.js';
 
 const MOCK_RECIPIENTS = [
   'preview-user-1@example.com',
@@ -37,6 +42,51 @@ const MOCK_RECIPIENTS = [
 const SUPPORTED_CAMPAIGN_TYPES = new Set([
   'daily-main-race-nankan',
 ]);
+
+const SUPPORTED_AUDIENCE_MODES = new Set(['mock', 'real-count-only']);
+
+const BRAND_TO_BASE_ID_ENV = {
+  'analytics-keiba': 'AIRTABLE_BASE_ID_ANALYTICS_KEIBA',
+  'keiba-intelligence': 'AIRTABLE_BASE_ID_KEIBA_INTELLIGENCE',
+};
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Airtable Customers を GET でページネーション取得（READ-ONLY 明示）
+ * 失敗時は API key を含めない安全なエラーメッセージを投げる
+ */
+async function fetchCustomersReadOnly(baseId, apiKey) {
+  const records = [];
+  let offset = null;
+  let pageCount = 0;
+
+  do {
+    pageCount += 1;
+    const url = new URL(`https://api.airtable.com/v0/${baseId}/Customers`);
+    url.searchParams.set('pageSize', '100');
+    if (offset) url.searchParams.set('offset', offset);
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!res.ok) {
+      throw new Error(`airtable fetch failed: status=${res.status} page=${pageCount}`);
+    }
+
+    const data = await res.json();
+    records.push(...(data.records || []));
+    offset = data.offset || null;
+
+    if (offset) await sleep(220); // Airtable 5rps 対策
+  } while (offset);
+
+  return records;
+}
 
 export default async function handler(request) {
   const headers = {
@@ -76,7 +126,20 @@ export default async function handler(request) {
     targetRace,
     fromEmail: requestedFromEmail,
     fromName: requestedFromName,
+    audienceMode: requestedAudienceMode,
   } = body || {};
+
+  const audienceMode = requestedAudienceMode || 'mock';
+  if (!SUPPORTED_AUDIENCE_MODES.has(audienceMode)) {
+    return new Response(
+      JSON.stringify({
+        error: 'unsupported audienceMode',
+        supportedAudienceModes: [...SUPPORTED_AUDIENCE_MODES],
+        got: audienceMode,
+      }),
+      { status: 400, headers }
+    );
+  }
 
   // 必須項目チェック
   const missing = [];
@@ -157,7 +220,7 @@ export default async function handler(request) {
 
   const contentHash = computeContentHash(subject, bodyHtml);
 
-  // sample deliveryKey 生成（モック受信者2名分）
+  // sample deliveryKey 生成（実 email を露出させないため、real-count-only でもモック使用）
   const extraKey = targetRace?.raceId ? `race:${targetRace.raceId}` : '';
   const sampleDeliveryKeys = MOCK_RECIPIENTS.map((recipientEmail) => ({
     recipientEmail,
@@ -174,11 +237,83 @@ export default async function handler(request) {
     }),
   }));
 
+  // audience ブロックを mode 別に組み立て
+  let audienceBlock;
+  let sideEffects = 'none';
+
+  if (audienceMode === 'real-count-only') {
+    const apiKey = process.env.AIRTABLE_API_KEY;
+    const baseIdEnvName = BRAND_TO_BASE_ID_ENV[brand];
+    const baseId = baseIdEnvName ? process.env[baseIdEnvName] : null;
+
+    const missingEnv = [];
+    if (!apiKey) missingEnv.push('AIRTABLE_API_KEY');
+    if (!baseId) missingEnv.push(baseIdEnvName || `AIRTABLE_BASE_ID_<${brand}>`);
+    if (missingEnv.length > 0) {
+      return new Response(
+        JSON.stringify({
+          error: 'audienceMode=real-count-only requires Airtable env vars',
+          missingEnv,
+          hint: 'Use a READ-ONLY scoped Personal Access Token. Falls back to audienceMode=mock if not set.',
+        }),
+        { status: 503, headers }
+      );
+    }
+
+    let records;
+    try {
+      records = await fetchCustomersReadOnly(baseId, apiKey);
+    } catch (e) {
+      return new Response(
+        JSON.stringify({
+          error: 'airtable fetch failed (READ-ONLY)',
+          detail: e.message,
+          brand,
+          baseSource: BRAND_TO_BASE_NAME[brand],
+        }),
+        { status: 502, headers }
+      );
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const counts = countAudience({
+      records,
+      brand,
+      audienceTypeFilter: audienceType,
+      today,
+    });
+    sideEffects = 'airtable-read-only';
+    audienceBlock = {
+      source: 'airtable-read-only',
+      audienceMode: 'real-count-only',
+      brand,
+      base: BRAND_TO_BASE_NAME[brand],
+      audienceTypeFilter: audienceType,
+      today,
+      totalCustomers: counts.totalCustomers,
+      matchedCount: counts.matchedCount,
+      withdrawnExcluded: counts.withdrawnExcluded,
+      audienceTypeBreakdown: counts.audienceTypeBreakdown,
+      matchedStatusBreakdown: counts.matchedStatusBreakdown,
+      pii: 'none-exposed',
+      note: 'Emails / names / record ids are not exposed. This is a dry-run count only.',
+      queriedAt: new Date().toISOString(),
+    };
+  } else {
+    audienceBlock = {
+      source: 'mock',
+      audienceMode: 'mock',
+      sampleRecipients: MOCK_RECIPIENTS,
+      mockRecipientCount: MOCK_RECIPIENTS.length,
+      note: 'Send audienceMode="real-count-only" to count real Customers via Airtable READ.',
+    };
+  }
+
   return new Response(
     JSON.stringify({
       success: true,
       mode: 'dry-run',
-      sideEffects: 'none',
+      sideEffects,
       campaign: {
         brand,
         serviceType,
@@ -193,12 +328,7 @@ export default async function handler(request) {
         contentPreview: bodyHtml.slice(0, 2000),
         contentLength: bodyHtml.length,
       },
-      audience: {
-        source: 'mock',
-        sampleRecipients: MOCK_RECIPIENTS,
-        mockRecipientCount: MOCK_RECIPIENTS.length,
-        note: 'Airtable READ は未実装。次のステップで実会員リストを参照する',
-      },
+      audience: audienceBlock,
       deliveryKey: {
         template: describeDeliveryKeyTemplate(),
         extraKey,
