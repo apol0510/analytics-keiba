@@ -380,36 +380,41 @@ exports.handler = async (event, context) => {
     };
 
     // 有効期限計算（2026-02-09価格体系対応）
+    // 🔧 2026-05-18修正: PlanType を優先判定。「プラン」フィールドは bank-transfer-application.js の
+    //   正規化で短縮形（"Premium" / "Light" 等）になり Annual/Monthly/Lifetime を含まないため、
+    //   productName だけだと Annual 申込が常に else 分岐に落ちて 1ヶ月後で上書きされていた。
     if (!productName.includes('Premium Plus') && !productName.includes('Plus')) {
       const today = new Date();
       let expirationDate = null;
+      const planTypeNormalized = String(planType || '').toLowerCase();
 
-      if (productName.includes('Lifetime')) {
+      if (planTypeNormalized === 'lifetime' || productName.includes('Lifetime')) {
         // 買い切りプラン: 2099年12月31日（永久）
         expirationDate = '2099-12-31';
-        console.log('📅 有効期限設定: 永久アクセス (2099-12-31) for', productName);
-      } else if (productName.includes('Annual')) {
+        console.log('📅 有効期限設定: 永久アクセス (2099-12-31) for', productName, '/ planType=', planType);
+      } else if (planTypeNormalized === 'annual' || productName.includes('Annual')) {
         // 年払いプラン: 1年後
         const expDate = new Date(today);
         expDate.setFullYear(expDate.getFullYear() + 1);
         expirationDate = expDate.toISOString().split('T')[0];
-        console.log('📅 有効期限設定: 1年後', expirationDate, 'for', productName);
-      } else if (productName.includes('Monthly')) {
+        console.log('📅 有効期限設定: 1年後', expirationDate, 'for', productName, '/ planType=', planType);
+      } else if (planTypeNormalized === 'monthly' || productName.includes('Monthly')) {
         // 月払いプラン: 1ヶ月後
         const expDate = new Date(today);
         expDate.setMonth(expDate.getMonth() + 1);
         expirationDate = expDate.toISOString().split('T')[0];
-        console.log('📅 有効期限設定: 1ヶ月後', expirationDate, 'for', productName);
+        console.log('📅 有効期限設定: 1ヶ月後', expirationDate, 'for', productName, '/ planType=', planType);
       } else {
-        // デフォルト: 1ヶ月後
+        // デフォルト: 1ヶ月後（planType も productName も判定不能）
         const expDate = new Date(today);
         expDate.setMonth(expDate.getMonth() + 1);
         expirationDate = expDate.toISOString().split('T')[0];
-        console.log('📅 有効期限設定: デフォルト1ヶ月後', expirationDate, 'for', productName);
+        console.warn('⚠️ 有効期限設定: デフォルト1ヶ月後（planType/productName 判定不能）', expirationDate, 'for', productName, '/ planType=', planType);
       }
 
-      // 🔧 2026-03-02修正: 日本語フィールド「有効期限」も同時更新（auth-user.jsで優先されるため）
-      updatePayload.fields['ExpirationDate'] = expirationDate;
+      // 🔧 2026-05-18修正: ExpirationDate フィールドは Customers テーブルに存在しない（UNKNOWN_FIELD で
+      //   PATCH 全体が失敗していた）。auth-user.js は「有効期限」→「ValidUntil」→「ExpiryDate」の順で
+      //   読むため、「有効期限」のみ書けば運用上十分。
       updatePayload.fields['有効期限'] = expirationDate;
     } else {
       console.log('💎 Premium Plus: 有効期限設定スキップ（単品商品）');
