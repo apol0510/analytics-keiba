@@ -29,7 +29,7 @@ function baseRule(planRaw) {
   if (lower === 'free' || raw === 'フリー' || raw === '無料' || raw === '無料会員') {
     return { audienceType: 'free', reason: 'plan-matched:free' };
   }
-  if (lower === 'light' || raw === 'ライト') {
+  if (lower === 'light' || raw === 'ライト' || raw === 'ライトプラン') {
     return { audienceType: 'light', reason: 'plan-matched:light' };
   }
   if (lower === 'standard' || raw === 'スタンダード') {
