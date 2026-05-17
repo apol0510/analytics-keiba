@@ -260,6 +260,11 @@ Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（
 - ✅ 退会候補 (`SuggestedStatus=withdrawn`) を matched から除外
 - ✅ Airtable READ 失敗時の構造化 502 JSON（airtableStatus / airtableErrorType / page / table / hint）
 - ✅ ハンドラ未捕捉例外の最終防衛線（500 JSON、generic 502 plaintext を抑止）
+- ✅ admin 画面「対象者数確認 (READ-ONLY)」ボタン (commit `f81540b`)
+- ✅ customer-field-resolver の `??` 連鎖を `firstNonEmpty()` に置換、`Plan=""` で
+  停止していた Light/Premium 取りこぼしを修正 (commit `4e21fa4`)
+- ✅ 旧 admin「配信統計」カードに誤解防止 amber バナー (commit `bdb3528`)
+- ✅ netlify.toml の `force = true` 重複を削除し netlify CLI 動作を回復 (commit `0877e86`)
 
 **Cloudflare 5xx 書き換え事象（運用知見）**:
 `analytics.keiba.link`（Cloudflare 前段）は origin の 5xx を Cloudflare 汎用エラーページ
@@ -269,7 +274,7 @@ Function が返した構造化 JSON 診断がそのまま見える（運用 SOP 
 
 ## 本番確認実績（PII なし）
 
-### 2026-05-17 全件 READ-ONLY 検証
+### 2026-05-17 全件 READ-ONLY 検証（初回・resolver バグ未修正版）
 
 | Base | totalCustomers | filter | matchedCount | withdrawnExcluded | sideEffects | pii |
 |---|---|---|---|---|---|---|
@@ -277,10 +282,36 @@ Function が返した構造化 JSON 診断がそのまま見える（運用 SOP 
 | analytics-keiba | 1123 | expired | 30 | 37 | airtable-read-only | none-exposed |
 | keiba-intelligence | 32 | free | 21 | 0 | airtable-read-only | none-exposed |
 
+### 2026-05-17 Light 取りこぼし修正後 (commit `4e21fa4`) 再検証
+
+`customer-field-resolver.mjs` の `??` 連鎖を `firstNonEmpty()` に置換し、
+AK の `Plan=""` で停止していた問題を解消した直後の本番値:
+
+| Base | totalCustomers | filter | matchedCount | withdrawnExcluded | sideEffects | pii |
+|---|---|---|---|---|---|---|
+| analytics-keiba | 1123 | **light** | **3** ← 旧 0 から改善 | 37 | airtable-read-only | none-exposed |
+| analytics-keiba | 1123 | free | 1033 | 37 | airtable-read-only | none-exposed |
+| analytics-keiba | 1123 | expired | 30 | 37 | airtable-read-only | none-exposed |
+| keiba-intelligence | 32 | light | 3 ← regression なし | 0 | airtable-read-only | none-exposed |
+
+AK の audienceTypeBreakdown 変化（同時に Premium 取りこぼしも回復）:
+
+| AudienceType | 修正前 | 修正後 | 差分 |
+|---|---|---|---|
+| free | 1033 | 1033 | ±0 |
+| premium | 8 | **13** | +5 (Plan="" 取りこぼし回復) |
+| expired | 67 | 67 | ±0 |
+| admin-test | 5 | 5 | ±0 |
+| unpaid | 2 | 2 | ±0 |
+| (null/unknown) | 8 | **0** | -8 (全件正しく分類) |
+| **light** | (なし) | **3** | +3 (新規分類) |
+| 合計 | 1123 | 1123 | ✓ |
+
 - Airtable WRITE: なし
 - SendGrid 呼び出し: なし
-- レスポンス body に email / name / record id: なし（コード上構造的に到達不可、Cloudflare bypass 経由でも検証済）
-- backfill-customers の CSV 統計と整合（free=1045 から退会 12 を除外で 1033、expired=67 から退会 37 を除外で 30）
+- email / name / record id 漏洩: regex 検査で 0 件
+- 既存 admin 「配信統計」(legacy customerStats) との数値ズレが大きいため、
+  旧カードに **誤解防止 amber バナー** を追加して送信判断は本 API を使うよう誘導 (commit `bdb3528`)
 
 ### 既知の Airtable 認証エラー型（hint テーブル参照）
 
