@@ -265,6 +265,9 @@ Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（
   停止していた Light/Premium 取りこぼしを修正 (commit `4e21fa4`)
 - ✅ 旧 admin「配信統計」カードに誤解防止 amber バナー (commit `bdb3528`)
 - ✅ netlify.toml の `force = true` 重複を削除し netlify CLI 動作を回復 (commit `0877e86`)
+- ✅ 排他 3 段階除外 (withdrawn → unsubscribe → blacklist) + AK のみ EmailBlacklist
+  READ-ONLY 取得 + admin UI に `blacklistStatus` / `unsubscribeExcluded` /
+  `blacklistExcluded` 表示 (commit `c786f22`)
 
 **Cloudflare 5xx 書き換え事象（運用知見）**:
 `analytics.keiba.link`（Cloudflare 前段）は origin の 5xx を Cloudflare 汎用エラーページ
@@ -312,6 +315,34 @@ AK の audienceTypeBreakdown 変化（同時に Premium 取りこぼしも回復
 - email / name / record id 漏洩: regex 検査で 0 件
 - 既存 admin 「配信統計」(legacy customerStats) との数値ズレが大きいため、
   旧カードに **誤解防止 amber バナー** を追加して送信判断は本 API を使うよう誘導 (commit `bdb3528`)
+
+### 2026-05-17 配信停止 / EmailBlacklist 除外実装後 (commit `c786f22`) 検証
+
+`audience-counter` に排他 3 段階除外 (withdrawn → unsubscribe → blacklist) を組み込み、
+`newsletter-preview` で AK のみ EmailBlacklist テーブルを READ-ONLY 取得する実装の本番結果:
+
+| Base | filter | matched | withdrawn | unsub | blacklist | blacklistStatus | sideEffects | pii |
+|---|---|---|---|---|---|---|---|---|
+| analytics-keiba | free | **1032** ← 前 1033 から -1 | 37 | 0 | **3** | **enabled** | airtable-read-only | none-exposed |
+| analytics-keiba | light | 3 維持 | 37 | 0 | 3 | enabled | airtable-read-only | none-exposed |
+| keiba-intelligence | free | 21 維持 | 0 | 0 | 0 | **not-applicable** | airtable-read-only | none-exposed |
+| keiba-intelligence | light | 3 維持 | 0 | 0 | 0 | not-applicable | airtable-read-only | none-exposed |
+
+数値の解説:
+- **AK の `blacklistExcluded=3`** は AK EmailBlacklist の HARD_BOUNCE / COMPLAINT 件数（AudienceType に依存しない Set）
+- AK × free で matched が 1033 → 1032 と -1 なのは、blacklist 3 件のうち **1 件のみが Free 会員**だったため。残り 2 件は元々 free 以外で AudienceType フィルタ段階で既に弾かれていた範囲
+- **AK の `unsubscribeExcluded=0`** は現時点で `UnsubscribedAnalyticsKeiba=true` の会員ゼロ（既存 `unsubscribe.js` が旧フィールド `メール配信` に書こうとしてサイレント失敗中なので新フィールドは未利用と整合）
+- **KI の `blacklistStatus=not-applicable`** は KI Base に EmailBlacklist テーブル未存在のため READ を skip した結果（`BRAND_HAS_BLACKLIST_TABLE['keiba-intelligence'] = false`）
+- KI × light = 3 維持により Light resolver 修正の regression なしを再確認
+
+不変条件 (`matched + 全 excluded + filter 不一致 = totalCustomers`) 検算:
+- AK × free: 1032 + 37 + 0 + 3 + (1123 - 1072 = 51 filter 不一致) = 1123 ✓
+- KI × free: 21 + 0 + 0 + 0 + 11 (filter 不一致) = 32 ✓
+
+PII 検証:
+- regex で実 email 漏洩: 0 件 (4 パターン全て)
+- Airtable record id (`rec[14 chars]`) 漏洩: 0 件
+- Airtable WRITE / SendGrid 呼び出しなし
 
 ### 既知の Airtable 認証エラー型（hint テーブル参照）
 
