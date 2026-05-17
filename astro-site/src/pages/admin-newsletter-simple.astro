@@ -720,6 +720,20 @@ debugInfo.uniquePlanValues = Array.from(debugInfo.uniquePlanValues);
             <!-- 配信統計 -->
             <div class="card">
                 <h2>📊 配信統計</h2>
+
+                <!-- 旧集計の誤解防止バナー（2026-05-17 追加）
+                     legacy customerStats は AK Base のみ・Light/expired/unpaid 分類なしのため
+                     送信判断には下の「対象者数確認（READ-ONLY）」を使う -->
+                <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 14px; border-radius: 6px; margin-bottom: 16px;">
+                    <div style="color: #92400e; font-weight: 700; margin-bottom: 6px;">⚠️ この配信統計は旧集計です</div>
+                    <div style="color: #78350f; font-size: 13px; line-height: 1.6;">
+                        ・analytics-keiba Base のみの簡易集計です（keiba-intelligence は含まれません）<br>
+                        ・<strong>Light / expired / unpaid</strong> の枠はありません（プラン分類ロジックが古いため）<br>
+                        ・<strong>正確な配信対象者数は下の「🔍 対象者数確認（READ-ONLY）」</strong>を使用してください<br>
+                        ・Light / expired / unpaid / keiba-intelligence の件数は READ-ONLY 確認側で参照できます
+                    </div>
+                </div>
+
                 <div class="stats-grid">
                     <div class="stat-box">
                         <div class="stat-label">総顧客数</div>
