@@ -857,6 +857,50 @@ debugInfo.uniquePlanValues = Array.from(debugInfo.uniquePlanValues);
                 </div>
             </div>
 
+            <!-- 🔍 対象者数確認（READ-ONLY）- 送信フォームとは完全分離 -->
+            <div class="card" id="audience-count-card" style="border: 2px solid #2563eb; background: #eff6ff;">
+                <h2 style="color: #1e40af;">🔍 対象者数確認（READ-ONLY）</h2>
+                <p style="margin-bottom: 12px; color: #1e3a8a; font-weight: 600;">
+                    ⛔ この操作ではメール送信されません / Airtable 書き込みなし / SendGrid 呼び出しなし
+                </p>
+                <p style="margin-bottom: 16px; color: #475569; font-size: 13px;">
+                    両 Base (analytics-keiba / keiba-intelligence) の Customers を Airtable READ-ONLY で参照し、
+                    配信対象者の <strong>件数のみ</strong> を返します。email / name / record id は表示も保持もしません。
+                </p>
+
+                <div class="form-group">
+                    <label for="audienceCountBrand">ブランド</label>
+                    <select id="audienceCountBrand" class="form-control">
+                        <option value="analytics-keiba">analytics-keiba</option>
+                        <option value="keiba-intelligence">keiba-intelligence</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="audienceCountType">配信対象 (AudienceType)</label>
+                    <select id="audienceCountType" class="form-control">
+                        <option value="free">free</option>
+                        <option value="light">light</option>
+                        <option value="standard">standard</option>
+                        <option value="premium">premium</option>
+                        <option value="premium-combo">premium-combo</option>
+                        <option value="expired">expired</option>
+                        <option value="unpaid">unpaid</option>
+                        <option value="admin-test">admin-test</option>
+                        <option value="*">* (全 AudienceType 合算、withdrawn 除外)</option>
+                    </select>
+                </div>
+
+                <button type="button" class="btn" id="audienceCountBtn"
+                        style="background: #2563eb; color: white; width: 100%; padding: 12px;">
+                    🔍 対象者数を確認（READ-ONLY）
+                </button>
+
+                <div id="audienceCountResult" style="margin-top: 16px; display: none;">
+                    <div id="audienceCountBody" style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px;"></div>
+                </div>
+            </div>
+
             <!-- メール作成フォーム -->
             <div class="card">
                 <h2>✉️ メール作成</h2>
@@ -2546,5 +2590,177 @@ ${error.message}
 
             console.log('✅ admin-newsletter-simple 初期化完了');
         }); // DOMContentLoaded終了
+    </script>
+
+    <!-- 🔍 対象者数確認（READ-ONLY）専用スクリプト（既存ロジックと完全分離） -->
+    <script is:inline>
+        (function () {
+            'use strict';
+
+            const PREVIEW_ENDPOINT = '/.netlify/functions/newsletter-preview';
+            const NETLIFY_FALLBACK_HOST = 'https://analytics-keiba.netlify.app';
+
+            // HTML エスケープ（XSS 防止 / レスポンスを画面表示するため必須）
+            function escapeHtml(s) {
+                return String(s ?? '').replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+                });
+            }
+
+            function todayIsoDate() {
+                const d = new Date();
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            }
+
+            function renderBreakdown(obj) {
+                if (!obj || typeof obj !== 'object') return '<em>(なし)</em>';
+                const keys = Object.keys(obj);
+                if (keys.length === 0) return '<em>(空)</em>';
+                return keys
+                    .map((k) => `<div style="padding-left: 16px;">${escapeHtml(k)}: <strong>${escapeHtml(obj[k])}</strong></div>`)
+                    .join('');
+            }
+
+            function renderSuccess(body) {
+                // 期待フィールド以外は表示しない（防御的）
+                const audience = (body && body.audience) || {};
+                const allowedKeys = [
+                    'brand', 'base', 'audienceTypeFilter', 'today',
+                    'totalCustomers', 'matchedCount', 'withdrawnExcluded',
+                    'audienceTypeBreakdown', 'matchedStatusBreakdown',
+                    'pii', 'queriedAt',
+                ];
+                const lines = [];
+                lines.push(`<div style="color: #047857; font-weight: 700; margin-bottom: 8px;">✅ READ-ONLY 取得成功</div>`);
+
+                // sideEffects / pii の整合警告（送信前必須チェック）
+                const sideEffects = body && body.sideEffects;
+                if (sideEffects !== 'airtable-read-only') {
+                    lines.push(`<div style="background: #fef2f2; border: 1px solid #dc2626; color: #991b1b; padding: 8px; margin: 8px 0; border-radius: 4px;">⚠️ sideEffects が想定外: <strong>${escapeHtml(sideEffects)}</strong>（期待: airtable-read-only）</div>`);
+                } else {
+                    lines.push(`<div style="color: #475569;">sideEffects: <strong>${escapeHtml(sideEffects)}</strong></div>`);
+                }
+                if (audience.pii !== 'none-exposed') {
+                    lines.push(`<div style="background: #fef2f2; border: 1px solid #dc2626; color: #991b1b; padding: 8px; margin: 8px 0; border-radius: 4px;">⚠️ pii フィールドが想定外: <strong>${escapeHtml(audience.pii)}</strong>（期待: none-exposed）</div>`);
+                }
+
+                lines.push(`<hr style="margin: 10px 0; border: none; border-top: 1px solid #e5e7eb;">`);
+
+                for (const k of allowedKeys) {
+                    const v = audience[k];
+                    if (v === undefined) continue;
+                    if (k === 'audienceTypeBreakdown' || k === 'matchedStatusBreakdown') {
+                        lines.push(`<div style="margin-top: 8px;"><strong>${escapeHtml(k)}:</strong></div>`);
+                        lines.push(renderBreakdown(v));
+                    } else if (k === 'matchedCount' || k === 'totalCustomers') {
+                        lines.push(`<div style="font-size: 16px; margin: 4px 0;">${escapeHtml(k)}: <strong style="color: #1e40af; font-size: 18px;">${escapeHtml(v)}</strong></div>`);
+                    } else {
+                        lines.push(`<div>${escapeHtml(k)}: <strong>${escapeHtml(v)}</strong></div>`);
+                    }
+                }
+
+                lines.push(`<hr style="margin: 10px 0; border: none; border-top: 1px solid #e5e7eb;">`);
+                lines.push(`<div style="color: #6b7280; font-size: 12px;">⛔ この応答に email / name / record id は含まれていません（コード上構造的に到達不可）</div>`);
+                return lines.join('');
+            }
+
+            function renderJsonError(body, httpStatus) {
+                const lines = [];
+                lines.push(`<div style="color: #b91c1c; font-weight: 700;">❌ HTTP ${escapeHtml(httpStatus)} エラー</div>`);
+                const fields = ['error', 'airtableStatus', 'airtableErrorType', 'envName', 'table', 'page', 'hint', 'brand', 'baseSource', 'missingEnv'];
+                for (const k of fields) {
+                    if (body && body[k] !== undefined && body[k] !== null) {
+                        const v = Array.isArray(body[k]) ? body[k].join(', ') : body[k];
+                        lines.push(`<div>${escapeHtml(k)}: <strong>${escapeHtml(v)}</strong></div>`);
+                    }
+                }
+                return lines.join('');
+            }
+
+            function renderPlaintextError(text, httpStatus) {
+                const safe = escapeHtml(String(text).slice(0, 200));
+                return [
+                    `<div style="color: #b91c1c; font-weight: 700;">❌ HTTP ${escapeHtml(httpStatus)} - 非 JSON レスポンス</div>`,
+                    `<div style="background: #f3f4f6; padding: 8px; margin: 8px 0; border-radius: 4px; font-family: monospace;">${safe}</div>`,
+                    `<div style="background: #fef3c7; border: 1px solid #f59e0b; padding: 8px; margin-top: 8px; border-radius: 4px; color: #92400e;">💡 Cloudflare が origin の 5xx を generic 502 (text/plain) に書き換えている可能性があります。診断 JSON を確認するには <strong>${escapeHtml(NETLIFY_FALLBACK_HOST)}/.netlify/functions/newsletter-preview</strong> に対して同じ POST を直接実行してください（curl での実行例は docs/NEWSLETTER_PREVIEW_USAGE.md 参照）。</div>`,
+                ].join('');
+            }
+
+            async function onClick(evt) {
+                const btn = evt.currentTarget;
+                const resultBox = document.getElementById('audienceCountResult');
+                const bodyBox = document.getElementById('audienceCountBody');
+                const brandEl = document.getElementById('audienceCountBrand');
+                const typeEl = document.getElementById('audienceCountType');
+                if (!btn || !resultBox || !bodyBox || !brandEl || !typeEl) return;
+
+                const brand = brandEl.value;
+                const audienceType = typeEl.value;
+
+                btn.disabled = true;
+                const origLabel = btn.textContent;
+                btn.textContent = '確認中...';
+                resultBox.style.display = 'block';
+                bodyBox.innerHTML = '<div style="color: #6b7280;">⏳ Airtable READ-ONLY で取得中…（数秒）</div>';
+
+                const requestBody = {
+                    brand: brand,
+                    serviceType: brand,
+                    campaignType: 'daily-main-race-nankan',
+                    campaignDate: todayIsoDate(),
+                    audienceType: audienceType,
+                    audienceMode: 'real-count-only',
+                    targetRace: {
+                        raceId: 'admin:audience-count-preview',
+                        venue: '管理画面',
+                        raceNumber: 0,
+                        raceName: '対象者数確認',
+                        postTime: '00:00',
+                    },
+                };
+
+                try {
+                    const res = await fetch(PREVIEW_ENDPOINT, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody),
+                    });
+                    const ct = res.headers.get('content-type') || '';
+                    const isJson = ct.includes('application/json');
+                    if (res.ok && isJson) {
+                        const body = await res.json();
+                        bodyBox.innerHTML = renderSuccess(body);
+                    } else if (isJson) {
+                        let body = {};
+                        try { body = await res.json(); } catch (_) {}
+                        bodyBox.innerHTML = renderJsonError(body, res.status);
+                    } else {
+                        const text = await res.text();
+                        bodyBox.innerHTML = renderPlaintextError(text, res.status);
+                    }
+                } catch (err) {
+                    bodyBox.innerHTML = `<div style="color: #b91c1c; font-weight: 700;">❌ ネットワーク / fetch エラー</div><div>${escapeHtml(err && err.message ? err.message : 'unknown')}</div>`;
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = origLabel;
+                }
+            }
+
+            function init() {
+                const btn = document.getElementById('audienceCountBtn');
+                if (!btn) return;
+                btn.addEventListener('click', onClick);
+                console.log('🔍 audience-count-only button initialized');
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+        })();
     </script>
 </BaseLayout>
