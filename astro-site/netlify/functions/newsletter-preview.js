@@ -32,7 +32,7 @@ import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter
 import { computeContentHash } from '../../src/lib/newsletter/content-hash.js';
 import { computeDeliveryKey, describeDeliveryKeyTemplate } from '../../src/lib/newsletter/delivery-key.js';
 import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-race.js';
-import { countAudience, BRAND_TO_BASE_NAME } from '../../src/lib/newsletter/audience-counter.js';
+import { countAudience, BRAND_TO_BASE_NAME, EXCLUSION_POLICY } from '../../src/lib/newsletter/audience-counter.js';
 
 const MOCK_RECIPIENTS = [
   'preview-user-1@example.com',
@@ -55,6 +55,19 @@ function sleep(ms) {
 }
 
 const CUSTOMERS_TABLE = 'Customers';
+const BLACKLIST_TABLE = 'EmailBlacklist';
+
+/**
+ * brand → EmailBlacklist テーブルを持つかのマップ
+ * 2026-05-17 時点: AK のみ存在、KI は将来追加予定（追加されたら true に変更）
+ */
+const BRAND_HAS_BLACKLIST_TABLE = {
+  'analytics-keiba': true,
+  'keiba-intelligence': false,
+};
+
+/** 除外対象とする EmailBlacklist.Status（大文字化後で比較） */
+const EXCLUDED_BLACKLIST_STATUSES = new Set(['HARD_BOUNCE', 'COMPLAINT']);
 
 /**
  * 構造化された Airtable 取得エラー。安全フィールドのみ持つ。
@@ -151,6 +164,107 @@ async function fetchCustomersReadOnly(baseId, apiKey) {
   } while (offset);
 
   return records;
+}
+
+/**
+ * EmailBlacklist を GET でページネーション取得（READ-ONLY 明示）
+ * 失敗時は AirtableFetchError を throw（呼び出し側で classify する）
+ * テーブル名以外は fetchCustomersReadOnly と同じパターン
+ */
+async function fetchEmailBlacklistReadOnly(baseId, apiKey) {
+  const records = [];
+  let offset = null;
+  let pageCount = 0;
+
+  do {
+    pageCount += 1;
+    const url = new URL(`https://api.airtable.com/v0/${baseId}/${BLACKLIST_TABLE}`);
+    url.searchParams.set('pageSize', '100');
+    if (offset) url.searchParams.set('offset', offset);
+
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+    } catch (networkErr) {
+      throw new AirtableFetchError({
+        airtableStatus: 0,
+        airtableErrorType: 'NETWORK_ERROR',
+        page: pageCount,
+        table: BLACKLIST_TABLE,
+        message: `network error reaching airtable: name=${networkErr?.name || 'Error'} page=${pageCount}`,
+      });
+    }
+
+    if (!res.ok) {
+      const airtableErrorType = await extractAirtableErrorType(res);
+      throw new AirtableFetchError({
+        airtableStatus: res.status,
+        airtableErrorType,
+        page: pageCount,
+        table: BLACKLIST_TABLE,
+        message: `airtable fetch failed: status=${res.status} type=${airtableErrorType} page=${pageCount}`,
+      });
+    }
+
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new AirtableFetchError({
+        airtableStatus: res.status,
+        airtableErrorType: 'INVALID_JSON_BODY',
+        page: pageCount,
+        table: BLACKLIST_TABLE,
+        message: `invalid JSON body from airtable: status=${res.status} page=${pageCount}`,
+      });
+    }
+    records.push(...(data.records || []));
+    offset = data.offset || null;
+
+    if (offset) await sleep(220);
+  } while (offset);
+
+  return records;
+}
+
+/**
+ * EmailBlacklist 取得失敗のエラーを blacklistStatus 値に分類する
+ *  - missing: テーブル未存在（404 / NOT_FOUND 系）→ KI で想定内
+ *  - permission-error: PAT scope 不足（403）
+ *  - network-error: 通信失敗
+ *  - read-error: それ以外（5xx / parse 失敗等）
+ *  全て matched 集計は継続させる（blacklistEmails 空 Set で続行）
+ */
+function classifyBlacklistError(err) {
+  if (!(err instanceof AirtableFetchError)) return 'read-error';
+  const s = err.airtableStatus;
+  const t = err.airtableErrorType;
+  if (s === 404 || t === 'NOT_FOUND' || t === 'TABLE_NOT_FOUND' || t === 'MODEL_NOT_FOUND') return 'missing';
+  if (s === 403 || t === 'NOT_AUTHORIZED' || t === 'INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND') return 'permission-error';
+  if (s === 0 || t === 'NETWORK_ERROR') return 'network-error';
+  return 'read-error';
+}
+
+/**
+ * EmailBlacklist records から HARD_BOUNCE / COMPLAINT の email Set を構築（純粋関数）
+ * - Status は String(x).toUpperCase().trim() で正規化
+ * - Email は trim + toLowerCase で正規化（resolveEmail と一致）
+ * - PII は外部に出さない（内部 Set のみ）
+ */
+function buildBlacklistEmailSet(records) {
+  const set = new Set();
+  for (const r of records || []) {
+    const status = r?.fields?.Status;
+    const email = r?.fields?.Email;
+    if (!status || !email) continue;
+    const normStatus = String(status).toUpperCase().trim();
+    if (!EXCLUDED_BLACKLIST_STATUSES.has(normStatus)) continue;
+    set.add(String(email).trim().toLowerCase());
+  }
+  return set;
 }
 
 /**
@@ -388,6 +502,21 @@ async function handleRequest(request, headers) {
       );
     }
 
+    // EmailBlacklist 取得（brand 別: AK のみ READ、KI は skip）
+    // 失敗してもエラー化せず空 Set + status コードで継続
+    let blacklistEmails = new Set();
+    let blacklistStatus = 'not-applicable';
+    if (BRAND_HAS_BLACKLIST_TABLE[brand]) {
+      try {
+        const blRecords = await fetchEmailBlacklistReadOnly(baseId, apiKey);
+        blacklistEmails = buildBlacklistEmailSet(blRecords);
+        blacklistStatus = 'enabled';
+      } catch (e) {
+        blacklistStatus = classifyBlacklistError(e);
+        // blacklistEmails は空 Set のまま、Customers 集計は継続
+      }
+    }
+
     let counts;
     try {
       const today = new Date().toISOString().slice(0, 10);
@@ -396,6 +525,7 @@ async function handleRequest(request, headers) {
         brand,
         audienceTypeFilter: audienceType,
         today,
+        blacklistEmails,
       });
     } catch (e) {
       // countAudience が予期せぬ例外を投げた場合（不正な record shape など）も JSON で返す
@@ -424,6 +554,10 @@ async function handleRequest(request, headers) {
       totalCustomers: counts.totalCustomers,
       matchedCount: counts.matchedCount,
       withdrawnExcluded: counts.withdrawnExcluded,
+      unsubscribeExcluded: counts.unsubscribeExcluded,
+      blacklistExcluded: counts.blacklistExcluded,
+      blacklistStatus,
+      exclusionPolicy: EXCLUSION_POLICY,
       audienceTypeBreakdown: counts.audienceTypeBreakdown,
       matchedStatusBreakdown: counts.matchedStatusBreakdown,
       pii: 'none-exposed',

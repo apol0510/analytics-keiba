@@ -319,6 +319,68 @@ AK の audienceTypeBreakdown 変化（同時に Premium 取りこぼしも回復
 - `AUTHENTICATION_REQUIRED` (401): PAT 失効
 - `INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND` (403): PAT に対象 Base のアクセス権がない or Base ID 誤り
 
+## 除外ロジック仕様（2026-05-17 改訂）
+
+`audienceMode='real-count-only'` で matched から除外する条件と優先順を以下に固定（排他カウント、最初に該当した理由だけ加算）:
+
+| 優先順 | 理由 | 判定 | カウンタ |
+|---|---|---|---|
+| 1 | `withdrawn` | `SuggestedStatus === 'withdrawn'` (status-resolver の判定結果) | `withdrawnExcluded` |
+| 2 | `unsubscribe` | brand 別 Customers Checkbox = `true` <br>・analytics-keiba → `UnsubscribedAnalyticsKeiba` <br>・keiba-intelligence → `UnsubscribedKeibaIntelligence` | `unsubscribeExcluded` |
+| 3 | `blacklist` | EmailBlacklist テーブルの `Status` ∈ `{HARD_BOUNCE, COMPLAINT}` の email (大文字化後で比較) | `blacklistExcluded` |
+| 4 | `audienceType` フィルタ | リクエストの `audienceType` と一致しない | どこにもカウントしない |
+| 5 | 全通過 | matched | `matchedCount` |
+
+不変条件: `matchedCount + withdrawnExcluded + unsubscribeExcluded + blacklistExcluded + (filter 不一致) = totalCustomers`
+
+### EmailBlacklist の base 別扱い
+
+| brand | EmailBlacklist テーブル | blacklistStatus |
+|---|---|---|
+| `analytics-keiba` | ✅ 存在（domain-protection.js が運用中） | `enabled` (取得成功時) |
+| `keiba-intelligence` | ❌ 未追加（2026-05-17 時点） | `not-applicable` (READ せず skip) |
+
+将来 KI に EmailBlacklist を追加する場合は `netlify/functions/newsletter-preview.js` の `BRAND_HAS_BLACKLIST_TABLE` を `true` に変更するだけ。
+
+### EmailBlacklist 取得失敗時の blacklistStatus 値
+
+| 状況 | airtableStatus / errorType | blacklistStatus | 動作 |
+|---|---|---|---|
+| 取得成功 | – | `enabled` | matchedCount から除外実行 |
+| brand が対象外 | – | `not-applicable` | スキップ |
+| テーブル未存在 | 404 / NOT_FOUND / TABLE_NOT_FOUND / MODEL_NOT_FOUND | `missing` | 空 Set で継続 |
+| PAT 権限不足 | 403 / NOT_AUTHORIZED / INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND | `permission-error` | 空 Set で継続 |
+| 通信失敗 | 0 / NETWORK_ERROR | `network-error` | 空 Set で継続 |
+| その他 (5xx 等) | – | `read-error` | 空 Set で継続 |
+
+**いずれの失敗時も Customers 集計は継続**（全体エラーにしない）。admin UI 側で `blacklistStatus !== 'enabled' && !== 'not-applicable'` のときは赤バナー警告を出して運用者に通知。
+
+### 追加レスポンスフィールド
+
+```json
+"audience": {
+  ...,
+  "matchedCount": 1028,           // 3 種類除外後
+  "withdrawnExcluded": 37,
+  "unsubscribeExcluded": 3,       // 新規 2026-05-17
+  "blacklistExcluded": 5,         // 新規 2026-05-17
+  "blacklistStatus": "enabled",   // 新規 2026-05-17
+  "exclusionPolicy": {            // 新規 2026-05-17 (運用透明性のための説明文)
+    "withdrawn": "SuggestedStatus=withdrawn を除外",
+    "unsubscribe": "brand 別 UnsubscribedAnalyticsKeiba / UnsubscribedKeibaIntelligence = true を除外",
+    "blacklist": "EmailBlacklist Status が HARD_BOUNCE / COMPLAINT の email を除外",
+    "blacklistCriteria": ["HARD_BOUNCE", "COMPLAINT"],
+    "order": ["withdrawn", "unsubscribe", "blacklist", "audienceTypeFilter"]
+  }
+}
+```
+
+### PII 取り扱い
+
+- EmailBlacklist の email は **内部 `Set<string>` のみで保持**、レスポンスや log に出さない
+- normalized email (trim + lowercase) で `resolveEmail()` と一致させて Set lookup
+- `pii: "none-exposed"` を引き続き返す
+
 ## 次の実装候補
 
 ### A. admin 画面「対象者数確認」ボタン（設計案・実装未着手）

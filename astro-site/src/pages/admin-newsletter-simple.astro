@@ -2643,7 +2643,9 @@ ${error.message}
                 const audience = (body && body.audience) || {};
                 const allowedKeys = [
                     'brand', 'base', 'audienceTypeFilter', 'today',
-                    'totalCustomers', 'matchedCount', 'withdrawnExcluded',
+                    'totalCustomers', 'matchedCount',
+                    'withdrawnExcluded', 'unsubscribeExcluded', 'blacklistExcluded',
+                    'blacklistStatus',
                     'audienceTypeBreakdown', 'matchedStatusBreakdown',
                     'pii', 'queriedAt',
                 ];
@@ -2661,6 +2663,12 @@ ${error.message}
                     lines.push(`<div style="background: #fef2f2; border: 1px solid #dc2626; color: #991b1b; padding: 8px; margin: 8px 0; border-radius: 4px;">⚠️ pii フィールドが想定外: <strong>${escapeHtml(audience.pii)}</strong>（期待: none-exposed）</div>`);
                 }
 
+                // blacklistStatus の運用警告（enabled / not-applicable 以外は赤バナー）
+                const blStatus = audience.blacklistStatus;
+                if (blStatus && blStatus !== 'enabled' && blStatus !== 'not-applicable') {
+                    lines.push(`<div style="background: #fef2f2; border: 1px solid #dc2626; color: #991b1b; padding: 10px; margin: 8px 0; border-radius: 4px;">⚠️ EmailBlacklist 取得異常: <strong>${escapeHtml(blStatus)}</strong><br><span style="font-size: 12px;">送信前にバウンス除外が機能しない可能性があります。blacklistExcluded が 0 のまま matched に含まれているハードバウンス / 苦情ユーザーがいるかもしれません。</span></div>`);
+                }
+
                 lines.push(`<hr style="margin: 10px 0; border: none; border-top: 1px solid #e5e7eb;">`);
 
                 for (const k of allowedKeys) {
@@ -2671,6 +2679,9 @@ ${error.message}
                         lines.push(renderBreakdown(v));
                     } else if (k === 'matchedCount' || k === 'totalCustomers') {
                         lines.push(`<div style="font-size: 16px; margin: 4px 0;">${escapeHtml(k)}: <strong style="color: #1e40af; font-size: 18px;">${escapeHtml(v)}</strong></div>`);
+                    } else if (k === 'blacklistStatus') {
+                        const color = v === 'enabled' ? '#047857' : (v === 'not-applicable' ? '#475569' : '#b91c1c');
+                        lines.push(`<div>${escapeHtml(k)}: <strong style="color: ${color};">${escapeHtml(v)}</strong></div>`);
                     } else {
                         lines.push(`<div>${escapeHtml(k)}: <strong>${escapeHtml(v)}</strong></div>`);
                     }

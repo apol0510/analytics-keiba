@@ -107,6 +107,32 @@ export function resolveExpiryDate(fields, base) {
 }
 
 /**
+ * ブランド別 配信停止フィールド名（docs/NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md §5）
+ *   - analytics-keiba: UnsubscribedAnalyticsKeiba (Checkbox)
+ *   - keiba-intelligence: UnsubscribedKeibaIntelligence (Checkbox)
+ * Airtable Checkbox は チェック済み=true / 未チェック=フィールド省略 で返るため
+ * `=== true` 厳密判定で false 扱いに統一する。
+ */
+export const BRAND_TO_UNSUBSCRIBE_FIELD = {
+  'analytics-keiba': 'UnsubscribedAnalyticsKeiba',
+  'keiba-intelligence': 'UnsubscribedKeibaIntelligence',
+};
+
+/**
+ * ブランド別 配信停止判定（純粋関数）
+ * - 該当フィールドが true のときのみ true
+ * - 未知 brand / フィールド不在 / undefined / false / null は false
+ * @param {object} fields
+ * @param {'analytics-keiba'|'keiba-intelligence'} brand
+ * @returns {boolean}
+ */
+export function resolveUnsubscribed(fields, brand) {
+  const fieldName = BRAND_TO_UNSUBSCRIBE_FIELD[brand];
+  if (!fieldName) return false;
+  return fields?.[fieldName] === true;
+}
+
+/**
  * 退会フラグ: analytics-keiba のみ WithdrawalRequested を返す
  * keiba-intelligence は存在しないので null
  *
