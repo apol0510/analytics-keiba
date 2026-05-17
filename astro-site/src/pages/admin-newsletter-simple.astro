@@ -2695,7 +2695,11 @@ ${error.message}
             function renderJsonError(body, httpStatus) {
                 const lines = [];
                 lines.push(`<div style="color: #b91c1c; font-weight: 700;">❌ HTTP ${escapeHtml(httpStatus)} エラー</div>`);
-                const fields = ['error', 'airtableStatus', 'airtableErrorType', 'envName', 'table', 'page', 'hint', 'brand', 'baseSource', 'missingEnv'];
+                // structured_error の場合は errorClass を強調表示
+                if (body && body.structured_error === true) {
+                    lines.push(`<div style="background: #fef3c7; border-left: 3px solid #f59e0b; padding: 6px 10px; margin: 6px 0; border-radius: 4px;">📌 structured_error: <strong>${escapeHtml(body.errorClass)}</strong>（本来 HTTP ${escapeHtml(body.httpStatusSource)} 相当を 200 で返却 / Cloudflare 5xx 書き換え回避のため）</div>`);
+                }
+                const fields = ['error', 'errorClass', 'httpStatusSource', 'mode', 'name', 'message', 'airtableStatus', 'airtableErrorType', 'envName', 'table', 'page', 'recordCount', 'hint', 'brand', 'baseSource', 'missingEnv'];
                 for (const k of fields) {
                     if (body && body[k] !== undefined && body[k] !== null) {
                         const v = Array.isArray(body[k]) ? body[k].join(', ') : body[k];
@@ -2757,8 +2761,16 @@ ${error.message}
                     const isJson = ct.includes('application/json');
                     if (res.ok && isJson) {
                         const body = await res.json();
-                        bodyBox.innerHTML = renderSuccess(body);
+                        // 2026-05-17: 200 + structured_error も errror としてレンダリング
+                        // (Cloudflare 5xx 書き換え回避のため、5xx は 200 で返るようになった)
+                        if (body && body.success === false && body.structured_error === true) {
+                            const sourceStatus = body.httpStatusSource || 'structured_error';
+                            bodyBox.innerHTML = renderJsonError(body, `200 (was ${sourceStatus})`);
+                        } else {
+                            bodyBox.innerHTML = renderSuccess(body);
+                        }
                     } else if (isJson) {
+                        // 4xx (client error) は引き続き 4xx で返る
                         let body = {};
                         try { body = await res.json(); } catch (_) {}
                         bodyBox.innerHTML = renderJsonError(body, res.status);

@@ -219,7 +219,51 @@ curl -X POST http://localhost:8888/.netlify/functions/newsletter-preview \
 | audience カウント中の例外（不正 record shape 等） | 500 | `audience count failed` |
 | ハンドラ未捕捉例外（最終防衛線） | 500 | `unexpected handler error` |
 
-### 502 レスポンスの構造化診断フィールド
+### 5xx 系エラーは HTTP 200 + structured_error で返す（2026-05-17 改訂）
+
+Cloudflare 前段が origin の 5xx を generic 502 (text/plain `error code: 502`) に
+書き換える事象を回避するため、**既知のサーバ側エラー (旧 500/502/503) は
+HTTP 200 + `body.success: false` + `structured_error: true` で返却**するように
+した。4xx クライアントエラーは Cloudflare が透過するためそのまま 4xx を返す（仕様維持）。
+
+| 旧 HTTP | errorClass | 発生条件 |
+|---|---|---|
+| 503 | `missing-env` | `audienceMode=real-count-only` で `AIRTABLE_API_KEY` / `AIRTABLE_BASE_ID_<BRAND>` 不足 |
+| 502 | `airtable-customers-fetch` | Customers テーブル READ-ONLY 取得失敗 (401/403/404/5xx/network) |
+| 500 | `audience-count` | countAudience 内部例外（不正 record shape 等） |
+| 500 | `unexpected-handler-error` | 最終防衛線（上記以外の未捕捉例外） |
+
+EmailBlacklist 取得失敗は元々全体エラーにせず `blacklistStatus` で表現する設計
+なので、structured_error には変換しない（success 応答内の `audience.blacklistStatus` で
+`missing` / `permission-error` / `network-error` / `read-error` を見る）。
+
+#### structured_error レスポンス body 例
+
+```json
+{
+  "success": false,
+  "structured_error": true,
+  "httpStatusSource": 502,
+  "errorClass": "airtable-customers-fetch",
+  "error": "airtable fetch failed (READ-ONLY)",
+  "mode": "real-count-only",
+  "brand": "analytics-keiba",
+  "baseSource": "analytics-keiba",
+  "envName": "AIRTABLE_BASE_ID_ANALYTICS_KEIBA",
+  "table": "Customers",
+  "airtableStatus": 403,
+  "airtableErrorType": "INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND",
+  "page": 1,
+  "hint": "401/403 means PAT scope or base access issue. ...",
+  "pii": "none-exposed",
+  "queriedAt": "2026-05-17T..."
+}
+```
+
+admin UI 側は `body.success === false && body.structured_error === true` を
+検出して既存 `renderJsonError()` に流す（`errorClass` を黄バナーで強調表示）。
+
+### 旧 502 レスポンスの構造化診断フィールド（4xx エラーには残存、参考）
 
 Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（Cloudflare/Netlify edge の generic 502 プレーンテキストを抑止）:
 

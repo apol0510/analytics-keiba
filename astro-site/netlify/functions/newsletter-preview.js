@@ -268,6 +268,40 @@ function buildBlacklistEmailSet(records) {
 }
 
 /**
+ * structured_error レスポンスを HTTP 200 で返す（Cloudflare 5xx 書き換え回避）
+ *
+ * 2026-05-17 改訂: origin が 5xx を返すと Cloudflare 前段が generic 502
+ * (text/plain "error code: 502") に書き換える事象が観測されたため、
+ * **既知のサーバ側エラーは HTTP 200 + body.success=false + structured_error=true** で
+ * 返却し、運用者が admin UI で原因を直接読めるようにする。
+ *
+ * 4xx クライアントエラー (bad JSON / unknown brand / unsupported audienceMode 等) は
+ * Cloudflare が透過するためそのまま 4xx を返す（既存仕様互換）。
+ *
+ * @param {object} headers - レスポンスヘッダ
+ * @param {object} opts
+ * @param {number} opts.httpStatusSource - 本来意図していた HTTP status (500/502/503 等、デバッグ用)
+ * @param {string} opts.errorClass - エラー分類 slug（missing-env / airtable-customers-fetch / airtable-blacklist-fetch / audience-count / unexpected-handler-error）
+ * @param {string} opts.error - 短いメッセージ
+ * @param {object} [opts.extra] - 追加フィールド（airtableStatus / errorType / hint / brand / table / 等）
+ */
+function structuredErrorResponse(headers, { httpStatusSource, errorClass, error, extra = {} }) {
+  return new Response(
+    JSON.stringify({
+      success: false,
+      structured_error: true,
+      httpStatusSource,
+      errorClass,
+      error,
+      pii: 'none-exposed',
+      queriedAt: new Date().toISOString(),
+      ...extra,
+    }),
+    { status: 200, headers },
+  );
+}
+
+/**
  * Airtable HTTP status から、運用者向けの対処ヒントを返す（PII なし、固定文字列のみ）
  */
 function airtableStatusHint(airtableStatus) {
@@ -300,17 +334,18 @@ export default async function handler(request) {
   try {
     return await handleRequest(request, headers);
   } catch (unexpected) {
-    // 最終防衛線: ここまで来たら関数本体の予期しない例外。
-    // Cloudflare/Netlify edge の generic 502 (text/plain) を出さないため、JSON で返す。
-    // 例外メッセージは name と message のみ（自分のコードが投げたもの。PII は含まない）。
-    return new Response(
-      JSON.stringify({
-        error: 'unexpected handler error',
+    // 最終防衛線: 関数本体の未捕捉例外も Cloudflare の generic 502 を回避するため
+    // HTTP 200 + structured_error JSON で返す。
+    // 例外メッセージは name と message のみ（自分のコードが投げたもの、PII なし）。
+    return structuredErrorResponse(headers, {
+      httpStatusSource: 500,
+      errorClass: 'unexpected-handler-error',
+      error: 'unexpected handler error',
+      extra: {
         name: unexpected?.name || 'Error',
         message: unexpected?.message || 'unknown error',
-      }),
-      { status: 500, headers }
-    );
+      },
+    });
   }
 }
 
@@ -469,26 +504,34 @@ async function handleRequest(request, headers) {
     if (!apiKey) missingEnv.push('AIRTABLE_API_KEY');
     if (!baseId) missingEnv.push(baseIdEnvName || `AIRTABLE_BASE_ID_<${brand}>`);
     if (missingEnv.length > 0) {
-      return new Response(
-        JSON.stringify({
-          error: 'audienceMode=real-count-only requires Airtable env vars',
+      // 旧 503 → 200 + structured_error (Cloudflare 5xx 書き換え回避)
+      return structuredErrorResponse(headers, {
+        httpStatusSource: 503,
+        errorClass: 'missing-env',
+        error: 'audienceMode=real-count-only requires Airtable env vars',
+        extra: {
+          mode: 'real-count-only',
+          brand,
           missingEnv,
           hint: 'Use a READ-ONLY scoped Personal Access Token. Falls back to audienceMode=mock if not set.',
-        }),
-        { status: 503, headers }
-      );
+        },
+      });
     }
 
     let records;
     try {
       records = await fetchCustomersReadOnly(baseId, apiKey);
     } catch (e) {
+      // 旧 502 → 200 + structured_error
       const isAirtableErr = e instanceof AirtableFetchError;
       const airtableStatus = isAirtableErr ? e.airtableStatus : null;
       const airtableErrorType = isAirtableErr ? e.airtableErrorType : 'UNKNOWN';
-      return new Response(
-        JSON.stringify({
-          error: 'airtable fetch failed (READ-ONLY)',
+      return structuredErrorResponse(headers, {
+        httpStatusSource: 502,
+        errorClass: 'airtable-customers-fetch',
+        error: 'airtable fetch failed (READ-ONLY)',
+        extra: {
+          mode: 'real-count-only',
           brand,
           baseSource: BRAND_TO_BASE_NAME[brand],
           envName: baseIdEnvName,
@@ -497,9 +540,8 @@ async function handleRequest(request, headers) {
           airtableErrorType,
           page: isAirtableErr ? e.page : null,
           hint: airtableStatusHint(airtableStatus),
-        }),
-        { status: 502, headers }
-      );
+        },
+      });
     }
 
     // EmailBlacklist 取得（brand 別: AK のみ READ、KI は skip）
@@ -528,18 +570,21 @@ async function handleRequest(request, headers) {
         blacklistEmails,
       });
     } catch (e) {
-      // countAudience が予期せぬ例外を投げた場合（不正な record shape など）も JSON で返す
-      return new Response(
-        JSON.stringify({
-          error: 'audience count failed',
+      // countAudience が予期せぬ例外を投げた場合（不正な record shape など）も
+      // 旧 500 → 200 + structured_error で返す
+      return structuredErrorResponse(headers, {
+        httpStatusSource: 500,
+        errorClass: 'audience-count',
+        error: 'audience count failed',
+        extra: {
+          mode: 'real-count-only',
           brand,
           baseSource: BRAND_TO_BASE_NAME[brand],
           recordCount: records.length,
           name: e?.name || 'Error',
           message: e?.message || 'unknown error',
-        }),
-        { status: 500, headers }
-      );
+        },
+      });
     }
 
     const today = new Date().toISOString().slice(0, 10);
