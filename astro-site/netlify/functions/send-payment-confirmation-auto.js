@@ -251,7 +251,9 @@ exports.handler = async (event, context) => {
 
     // 必須フィールド確認
     const email = fields.Email;
-    const fullName = fields['氏名'];
+    // 🔧 2026-05-18修正: 氏名が空でも送信を止めない（申込フォーム未経由ケースで頻発）。
+    //   空時は「お客様」をフォールバックしてメール本文に使う。
+    const fullName = fields['氏名'] || 'お客様';
     const productName = fields['プラン'];
     const planType = fields['PlanType'] || null;  // monthly, annual, lifetime, null for Free
     const expirationDate = fields['有効期限'] || fields['ExpiryDate'] || null;
@@ -260,14 +262,14 @@ exports.handler = async (event, context) => {
 
     console.log('📋 Record info:', { email, fullName, productName, planType, expirationDate, paymentAmount, paymentEmailSent });
 
-    if (!email || !fullName || !productName) {
-      console.error('⚠️ Missing required fields:', { email, fullName, productName });
+    if (!email || !productName) {
+      console.error('⚠️ Missing required fields:', { email, productName });
       return {
         statusCode: 400,
         headers,
         body: JSON.stringify({
           error: 'Missing required fields in Airtable record',
-          details: { email, fullName, productName }
+          details: { email, productName }
         })
       };
     }
