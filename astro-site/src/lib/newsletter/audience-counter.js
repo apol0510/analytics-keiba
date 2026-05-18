@@ -14,41 +14,29 @@
 //   4. audienceType フィルタ不一致                        → どこにもカウントしない
 //   5. 全て通過                                            → matched
 //   => matched + 全 excluded + filter 不一致 = totalCustomers
+//
+// 2026-05-19 改訂: resolveAudienceRecipients への薄いラッパーに変更。
+//   preview の matchedCount と実送信の対象件数を **同一の関数** から導出することで、
+//   D2（preview/send 件数ズレ）を構造的に解消する。
+//   matchedCount は dedupe + email 妥当性チェック後の値（= 実送信件数）になる。
 
-import { normalizeAudienceType } from '../../../scripts/newsletter/lib/plan-normalizer.mjs';
-import { resolveStatus } from '../../../scripts/newsletter/lib/status-resolver.mjs';
+// 定数は実ロジック側（audience-resolver.js）から re-export して所在を統一。
+// 既存 caller（newsletter-preview.js）は audience-counter.js から import しているため、
+// 互換性のためここで re-export を維持する。
 import {
-  resolvePlanRaw,
-  resolveExpiryDate,
-  resolveWithdrawalFlag,
-  resolveEmail,
-  resolveUnsubscribed,
-} from '../../../scripts/newsletter/lib/customer-field-resolver.mjs';
+  BRAND_TO_BASE_NAME,
+  EXCLUSION_POLICY,
+  resolveAudienceRecipients,
+} from './audience-resolver.js';
 
-/**
- * brand → Airtable Base 名のマッピング
- *   - analytics-keiba ブランドの Customers は analytics-keiba Base に存在
- *   - keiba-intelligence ブランドの Customers は keiba-intelligence Base に存在
- */
-export const BRAND_TO_BASE_NAME = {
-  'analytics-keiba': 'analytics-keiba',
-  'keiba-intelligence': 'keiba-intelligence',
-};
-
-/**
- * 除外ポリシーの説明（レスポンスに含めて運用透明性を確保）
- * UI / 監査ログ用、計算には使わない
- */
-export const EXCLUSION_POLICY = {
-  withdrawn: 'SuggestedStatus=withdrawn を除外',
-  unsubscribe: 'brand 別 UnsubscribedAnalyticsKeiba / UnsubscribedKeibaIntelligence = true を除外',
-  blacklist: 'EmailBlacklist Status が HARD_BOUNCE / COMPLAINT の email を除外',
-  blacklistCriteria: ['HARD_BOUNCE', 'COMPLAINT'],
-  order: ['withdrawn', 'unsubscribe', 'blacklist', 'audienceTypeFilter'],
-};
+export { BRAND_TO_BASE_NAME, EXCLUSION_POLICY };
 
 /**
  * Airtable records を分類して集計（純粋関数）
+ *
+ * 内部実装: resolveAudienceRecipients を呼んで emails を捨て、counts のみを返す。
+ *   - matchedCount は dedupe + email 妥当性チェック後の値（= 実送信件数）
+ *   - 旧仕様（matchedCount = 重複・無効 email を含む生件数）からの軽微な差分あり
  *
  * @param {object} options
  * @param {Array<{id: string, fields: object}>} options.records - Airtable records
@@ -66,95 +54,15 @@ export const EXCLUSION_POLICY = {
  *   matchedStatusBreakdown: Record<string, number>,
  * }}
  */
-export function countAudience({
-  records,
-  brand,
-  audienceTypeFilter,
-  today,
-  blacklistEmails = new Set(),
-}) {
-  if (!Array.isArray(records)) {
-    throw new Error('records must be an array');
-  }
-  const baseName = BRAND_TO_BASE_NAME[brand];
-  if (!baseName) {
-    throw new Error(`unknown brand: ${brand}`);
-  }
-  if (!(blacklistEmails instanceof Set)) {
-    throw new Error('blacklistEmails must be a Set');
-  }
-  const isAnalyticsKeiba = baseName === 'analytics-keiba';
-  const filterAll = audienceTypeFilter === '*' || audienceTypeFilter === 'all';
-
-  const audienceTypeBreakdown = {};
-  const matchedStatusBreakdown = {};
-  let matchedCount = 0;
-  let withdrawnExcluded = 0;
-  let unsubscribeExcluded = 0;
-  let blacklistExcluded = 0;
-
-  for (const record of records) {
-    const f = record?.fields || {};
-    const planRaw = resolvePlanRaw(f);
-    const expiryDate = resolveExpiryDate(f, baseName);
-    const withdrawalFlag = resolveWithdrawalFlag(f, baseName);
-    const currentStatus = (f.Status ?? null) || null;
-
-    const { audienceType } = normalizeAudienceType(planRaw, {
-      status: currentStatus,
-      expiryDate,
-      today,
-    });
-    const statusResult = resolveStatus({
-      currentStatus,
-      withdrawalRequested: withdrawalFlag,
-      expiryDate,
-      today,
-      isAnalyticsKeiba,
-    });
-
-    // AudienceType 全件 breakdown（除外前、参考情報）
-    const atKey = audienceType ?? '(null/unknown)';
-    audienceTypeBreakdown[atKey] = (audienceTypeBreakdown[atKey] || 0) + 1;
-
-    // 排他カウント（優先順固定）
-    // 1. 退会候補
-    if (statusResult.suggestedStatus === 'withdrawn') {
-      withdrawnExcluded += 1;
-      continue;
-    }
-    // 2. 配信停止（brand 別）
-    if (resolveUnsubscribed(f, brand)) {
-      unsubscribeExcluded += 1;
-      continue;
-    }
-    // 3. EmailBlacklist (HARD_BOUNCE / COMPLAINT)
-    if (blacklistEmails.size > 0) {
-      const normalizedEmail = resolveEmail(f);
-      if (normalizedEmail && blacklistEmails.has(normalizedEmail)) {
-        blacklistExcluded += 1;
-        continue;
-      }
-    }
-    // 4. AudienceType フィルタ（不一致はどこにもカウントしない）
-    const matches = filterAll
-      ? audienceType !== null
-      : audienceType === audienceTypeFilter;
-    if (!matches) continue;
-
-    // 5. matched
-    matchedCount += 1;
-    const sKey = currentStatus || '(null/unknown)';
-    matchedStatusBreakdown[sKey] = (matchedStatusBreakdown[sKey] || 0) + 1;
-  }
-
+export function countAudience(options) {
+  const r = resolveAudienceRecipients(options);
   return {
-    totalCustomers: records.length,
-    matchedCount,
-    withdrawnExcluded,
-    unsubscribeExcluded,
-    blacklistExcluded,
-    audienceTypeBreakdown,
-    matchedStatusBreakdown,
+    totalCustomers: r.counts.totalCustomers,
+    matchedCount: r.counts.matchedCount,
+    withdrawnExcluded: r.counts.withdrawnExcluded,
+    unsubscribeExcluded: r.counts.unsubscribeExcluded,
+    blacklistExcluded: r.counts.blacklistExcluded,
+    audienceTypeBreakdown: r.audienceTypeBreakdown,
+    matchedStatusBreakdown: r.matchedStatusBreakdown,
   };
 }

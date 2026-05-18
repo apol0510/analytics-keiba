@@ -1,6 +1,19 @@
 // 自作メールスケジューラー - 実行エンジンFunction
 // Airtableから予約メールを取得して実行
 
+import {
+  fetchCustomersReadOnly,
+  loadBlacklistEmails,
+  BRAND_TO_BASE_ID_ENV,
+} from '../../src/lib/newsletter/airtable-fetch.js';
+import {
+  resolveAudienceRecipients,
+  mapLegacyTargetToAudienceType,
+} from '../../src/lib/newsletter/audience-resolver.js';
+
+// ScheduledEmails は AK 専用経路。LAZY_LOAD で受信者を解決する時の brand 既定値。
+const DEFAULT_BRAND = 'analytics-keiba';
+
 export default async function handler(request, context) {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -393,79 +406,52 @@ async function updateEmailStatus(recordId, status, apiKey, baseId, additionalFie
   return response.ok;
 }
 
-// 受信者リストを取得するヘルパー関数
+// 受信者リストを取得するヘルパー関数（2026-05-19: 5-tier 除外に統一）
+//
+// 旧実装は {プラン} のみフィルタで unsubscribe / blacklist / withdrawn が抜けていた
+// （safety audit D1/D2/D5）。新実装は preview と同じ resolveAudienceRecipients() を使う。
+//
+// 旧 admin の "退会者" mailingList は 5-tier 除外に反するため明示拒否。
+// 期限切れ会員への再エンゲージメントは audienceType='expired' を使う設計に統一。
 async function getRecipientsList(targetPlan, targetMailingList, apiKey, baseId) {
   console.log(`🔍 受信者リスト取得開始: targetPlan=${targetPlan}, targetMailingList=${targetMailingList}`);
 
-  let filterFormula = '';
-
-  // targetMailingListフィルタ
-  if (targetMailingList === 'expired') {
-    // 有効期限切れ会員（Standard/Premium）
-    const today = new Date().toISOString().split('T')[0];
-    filterFormula = `AND(
-      OR({プラン} = 'Standard', {プラン} = 'Premium', {プラン} = 'Premium Predictions', {プラン} = 'Premium Sanrenpuku', {プラン} = 'Premium Combo'),
-      OR(
-        IS_BEFORE({有効期限}, '${today}'),
-        IS_BEFORE({ValidUntil}, '${today}'),
-        IS_BEFORE({ExpiryDate}, '${today}')
-      )
-    )`;
-  } else if (targetMailingList === 'test') {
-    // テスト用（nankan.analytics@gmail.com）
-    filterFormula = `{Email} = 'nankan.analytics@gmail.com'`;
-  } else {
-    // 通常配信（targetPlan基準）
-    if (targetPlan === 'all') {
-      // 🔧 2025-11-12修正: シンプルなフィルタでEmailが存在する全レコード取得
-      filterFormula = "{Email} != ''";
-    } else if (targetPlan === 'free') {
-      filterFormula = "{プラン} = 'Free'";
-    } else if (targetPlan === 'standard') {
-      filterFormula = "{プラン} = 'Standard'";
-    } else if (targetPlan === 'premium') {
-      filterFormula = "OR({プラン} = 'Premium', {プラン} = 'Premium Predictions', {プラン} = 'Premium Sanrenpuku', {プラン} = 'Premium Combo', {プラン} = 'Premium Plus')";
-    }
+  if (typeof targetMailingList === 'string' && targetMailingList === '退会者') {
+    console.warn('🛑 targetMailingList="退会者" は 5-tier 除外に反するため拒否');
+    return [];
   }
 
-  console.log(`🔍 フィルタ条件: ${filterFormula}`);
+  const audienceTypeFilter = mapLegacyTargetToAudienceType({ targetPlan, targetMailingList });
+  console.log('🎯 audienceTypeFilter 解決:', { targetPlan, targetMailingList, audienceTypeFilter });
 
-  let allRecipients = [];
-  let offset = null;
+  const records = await fetchCustomersReadOnly(baseId, apiKey);
+  const { emails: blacklistEmails, status: blacklistStatus } = await loadBlacklistEmails({
+    brand: DEFAULT_BRAND,
+    baseId,
+    apiKey,
+  });
+  const today = new Date().toISOString().slice(0, 10);
 
-  // Airtableページネーション（全件取得）
-  do {
-    let url = `https://api.airtable.com/v0/${baseId}/Customers?pageSize=100&filterByFormula=${encodeURIComponent(filterFormula)}`;
-    if (offset) {
-      url += `&offset=${offset}`;
-    }
+  const result = resolveAudienceRecipients({
+    records,
+    brand: DEFAULT_BRAND,
+    audienceTypeFilter,
+    today,
+    blacklistEmails,
+  });
 
-    console.log(`📄 ページ取得: offset=${offset || 'なし'}`);
+  console.log('📊 受信者解決:', {
+    audienceTypeFilter,
+    totalCustomers: result.counts.totalCustomers,
+    matchedCount: result.counts.matchedCount,
+    withdrawnExcluded: result.counts.withdrawnExcluded,
+    unsubscribeExcluded: result.counts.unsubscribeExcluded,
+    blacklistExcluded: result.counts.blacklistExcluded,
+    audienceTypeMismatchSkipped: result.counts.audienceTypeMismatchSkipped,
+    invalidEmailSkipped: result.counts.invalidEmailSkipped,
+    dedupedFromMatched: result.counts.dedupedFromMatched,
+    blacklistStatus,
+  });
 
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Airtable query failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const emails = data.records
-      .map(record => record.fields.Email)
-      .filter(email => email);
-
-    allRecipients.push(...emails);
-    offset = data.offset;
-
-    console.log(`✅ ${emails.length}件取得、累計: ${allRecipients.length}件`);
-
-  } while (offset);
-
-  console.log(`🎯 受信者リスト取得完了: 合計${allRecipients.length}件`);
-
-  return allRecipients;
+  return result.emails;
 }

@@ -33,6 +33,17 @@ import { computeContentHash } from '../../src/lib/newsletter/content-hash.js';
 import { computeDeliveryKey, describeDeliveryKeyTemplate } from '../../src/lib/newsletter/delivery-key.js';
 import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-race.js';
 import { countAudience, BRAND_TO_BASE_NAME, EXCLUSION_POLICY } from '../../src/lib/newsletter/audience-counter.js';
+// 2026-05-19: Airtable READ-ONLY 共通モジュールに統合（重複実装を解消、preview と send で同一経路）
+import {
+  fetchCustomersReadOnly,
+  loadBlacklistEmails,
+  airtableStatusHint,
+  AirtableFetchError,
+  BRAND_TO_BASE_ID_ENV,
+} from '../../src/lib/newsletter/airtable-fetch.js';
+
+// 既存 export 互換性のため再 export（外部 caller がいる場合への保険）
+export { AirtableFetchError };
 
 const MOCK_RECIPIENTS = [
   'preview-user-1@example.com',
@@ -45,227 +56,7 @@ const SUPPORTED_CAMPAIGN_TYPES = new Set([
 
 const SUPPORTED_AUDIENCE_MODES = new Set(['mock', 'real-count-only']);
 
-const BRAND_TO_BASE_ID_ENV = {
-  'analytics-keiba': 'AIRTABLE_BASE_ID_ANALYTICS_KEIBA',
-  'keiba-intelligence': 'AIRTABLE_BASE_ID_KEIBA_INTELLIGENCE',
-};
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 const CUSTOMERS_TABLE = 'Customers';
-const BLACKLIST_TABLE = 'EmailBlacklist';
-
-/**
- * brand → EmailBlacklist テーブルを持つかのマップ
- * 2026-05-17 時点: AK のみ存在、KI は将来追加予定（追加されたら true に変更）
- */
-const BRAND_HAS_BLACKLIST_TABLE = {
-  'analytics-keiba': true,
-  'keiba-intelligence': false,
-};
-
-/** 除外対象とする EmailBlacklist.Status（大文字化後で比較） */
-const EXCLUDED_BLACKLIST_STATUSES = new Set(['HARD_BOUNCE', 'COMPLAINT']);
-
-/**
- * 構造化された Airtable 取得エラー。安全フィールドのみ持つ。
- * API key / Base ID / Authorization ヘッダ / Airtable 生レスポンスは絶対に含めない。
- */
-export class AirtableFetchError extends Error {
-  constructor({ airtableStatus, airtableErrorType, page, table, message }) {
-    super(message);
-    this.name = 'AirtableFetchError';
-    this.airtableStatus = airtableStatus;
-    this.airtableErrorType = airtableErrorType;
-    this.page = page;
-    this.table = table;
-  }
-}
-
-/**
- * Airtable のエラー応答 body から error.type だけを安全に抽出する。
- * - JSON でなければ 'UNKNOWN'
- * - 値の形式は [A-Z0-9_]{1,64} にホワイトリスト（PII / 任意文字列の混入を防ぐ）
- */
-async function extractAirtableErrorType(res) {
-  let raw = 'UNKNOWN';
-  try {
-    const body = await res.json();
-    if (body && body.error) {
-      if (typeof body.error === 'string') raw = body.error;
-      else if (typeof body.error.type === 'string') raw = body.error.type;
-    }
-  } catch {
-    // body が JSON でない（HTML / 空 / バイナリ）→ UNKNOWN のまま
-  }
-  return /^[A-Z0-9_]{1,64}$/.test(raw) ? raw : 'UNKNOWN';
-}
-
-/**
- * Airtable Customers を GET でページネーション取得（READ-ONLY 明示）
- * 失敗時は AirtableFetchError を throw（安全フィールドのみ）
- */
-async function fetchCustomersReadOnly(baseId, apiKey) {
-  const records = [];
-  let offset = null;
-  let pageCount = 0;
-
-  do {
-    pageCount += 1;
-    const url = new URL(`https://api.airtable.com/v0/${baseId}/${CUSTOMERS_TABLE}`);
-    url.searchParams.set('pageSize', '100');
-    if (offset) url.searchParams.set('offset', offset);
-
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-    } catch (networkErr) {
-      throw new AirtableFetchError({
-        airtableStatus: 0,
-        airtableErrorType: 'NETWORK_ERROR',
-        page: pageCount,
-        table: CUSTOMERS_TABLE,
-        message: `network error reaching airtable: name=${networkErr?.name || 'Error'} page=${pageCount}`,
-      });
-    }
-
-    if (!res.ok) {
-      const airtableErrorType = await extractAirtableErrorType(res);
-      throw new AirtableFetchError({
-        airtableStatus: res.status,
-        airtableErrorType,
-        page: pageCount,
-        table: CUSTOMERS_TABLE,
-        message: `airtable fetch failed: status=${res.status} type=${airtableErrorType} page=${pageCount}`,
-      });
-    }
-
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      throw new AirtableFetchError({
-        airtableStatus: res.status,
-        airtableErrorType: 'INVALID_JSON_BODY',
-        page: pageCount,
-        table: CUSTOMERS_TABLE,
-        message: `invalid JSON body from airtable: status=${res.status} page=${pageCount}`,
-      });
-    }
-    records.push(...(data.records || []));
-    offset = data.offset || null;
-
-    if (offset) await sleep(220); // Airtable 5rps 対策
-  } while (offset);
-
-  return records;
-}
-
-/**
- * EmailBlacklist を GET でページネーション取得（READ-ONLY 明示）
- * 失敗時は AirtableFetchError を throw（呼び出し側で classify する）
- * テーブル名以外は fetchCustomersReadOnly と同じパターン
- */
-async function fetchEmailBlacklistReadOnly(baseId, apiKey) {
-  const records = [];
-  let offset = null;
-  let pageCount = 0;
-
-  do {
-    pageCount += 1;
-    const url = new URL(`https://api.airtable.com/v0/${baseId}/${BLACKLIST_TABLE}`);
-    url.searchParams.set('pageSize', '100');
-    if (offset) url.searchParams.set('offset', offset);
-
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-    } catch (networkErr) {
-      throw new AirtableFetchError({
-        airtableStatus: 0,
-        airtableErrorType: 'NETWORK_ERROR',
-        page: pageCount,
-        table: BLACKLIST_TABLE,
-        message: `network error reaching airtable: name=${networkErr?.name || 'Error'} page=${pageCount}`,
-      });
-    }
-
-    if (!res.ok) {
-      const airtableErrorType = await extractAirtableErrorType(res);
-      throw new AirtableFetchError({
-        airtableStatus: res.status,
-        airtableErrorType,
-        page: pageCount,
-        table: BLACKLIST_TABLE,
-        message: `airtable fetch failed: status=${res.status} type=${airtableErrorType} page=${pageCount}`,
-      });
-    }
-
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      throw new AirtableFetchError({
-        airtableStatus: res.status,
-        airtableErrorType: 'INVALID_JSON_BODY',
-        page: pageCount,
-        table: BLACKLIST_TABLE,
-        message: `invalid JSON body from airtable: status=${res.status} page=${pageCount}`,
-      });
-    }
-    records.push(...(data.records || []));
-    offset = data.offset || null;
-
-    if (offset) await sleep(220);
-  } while (offset);
-
-  return records;
-}
-
-/**
- * EmailBlacklist 取得失敗のエラーを blacklistStatus 値に分類する
- *  - missing: テーブル未存在（404 / NOT_FOUND 系）→ KI で想定内
- *  - permission-error: PAT scope 不足（403）
- *  - network-error: 通信失敗
- *  - read-error: それ以外（5xx / parse 失敗等）
- *  全て matched 集計は継続させる（blacklistEmails 空 Set で続行）
- */
-function classifyBlacklistError(err) {
-  if (!(err instanceof AirtableFetchError)) return 'read-error';
-  const s = err.airtableStatus;
-  const t = err.airtableErrorType;
-  if (s === 404 || t === 'NOT_FOUND' || t === 'TABLE_NOT_FOUND' || t === 'MODEL_NOT_FOUND') return 'missing';
-  if (s === 403 || t === 'NOT_AUTHORIZED' || t === 'INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND') return 'permission-error';
-  if (s === 0 || t === 'NETWORK_ERROR') return 'network-error';
-  return 'read-error';
-}
-
-/**
- * EmailBlacklist records から HARD_BOUNCE / COMPLAINT の email Set を構築（純粋関数）
- * - Status は String(x).toUpperCase().trim() で正規化
- * - Email は trim + toLowerCase で正規化（resolveEmail と一致）
- * - PII は外部に出さない（内部 Set のみ）
- */
-function buildBlacklistEmailSet(records) {
-  const set = new Set();
-  for (const r of records || []) {
-    const status = r?.fields?.Status;
-    const email = r?.fields?.Email;
-    if (!status || !email) continue;
-    const normStatus = String(status).toUpperCase().trim();
-    if (!EXCLUDED_BLACKLIST_STATUSES.has(normStatus)) continue;
-    set.add(String(email).trim().toLowerCase());
-  }
-  return set;
-}
 
 /**
  * structured_error レスポンスを HTTP 200 で返す（Cloudflare 5xx 書き換え回避）
@@ -299,28 +90,6 @@ function structuredErrorResponse(headers, { httpStatusSource, errorClass, error,
     }),
     { status: 200, headers },
   );
-}
-
-/**
- * Airtable HTTP status から、運用者向けの対処ヒントを返す（PII なし、固定文字列のみ）
- */
-function airtableStatusHint(airtableStatus) {
-  if (airtableStatus === 401 || airtableStatus === 403) {
-    return '401/403 means PAT scope or base access issue. Verify the PAT has data.records:read scope AND the target base is added to its Access list.';
-  }
-  if (airtableStatus === 404) {
-    return '404 means base id or table name issue. Verify the env var value (base id starts with "app...") and the table is literally named "Customers".';
-  }
-  if (airtableStatus === 429) {
-    return '429 means Airtable rate limit (5rps per base). Retry after a few seconds.';
-  }
-  if (airtableStatus === 0) {
-    return 'Network error reaching Airtable. Check function egress or Airtable status page.';
-  }
-  if (airtableStatus >= 500) {
-    return 'Airtable upstream error. Check https://status.airtable.com and retry.';
-  }
-  return 'Unexpected Airtable status. See https://airtable.com/developers/web/api/errors for details.';
 }
 
 export default async function handler(request) {
@@ -545,19 +314,12 @@ async function handleRequest(request, headers) {
     }
 
     // EmailBlacklist 取得（brand 別: AK のみ READ、KI は skip）
-    // 失敗してもエラー化せず空 Set + status コードで継続
-    let blacklistEmails = new Set();
-    let blacklistStatus = 'not-applicable';
-    if (BRAND_HAS_BLACKLIST_TABLE[brand]) {
-      try {
-        const blRecords = await fetchEmailBlacklistReadOnly(baseId, apiKey);
-        blacklistEmails = buildBlacklistEmailSet(blRecords);
-        blacklistStatus = 'enabled';
-      } catch (e) {
-        blacklistStatus = classifyBlacklistError(e);
-        // blacklistEmails は空 Set のまま、Customers 集計は継続
-      }
-    }
+    // 失敗してもエラー化せず空 Set + status コードで継続（共通 helper を使用）
+    const { emails: blacklistEmails, status: blacklistStatus } = await loadBlacklistEmails({
+      brand,
+      baseId,
+      apiKey,
+    });
 
     let counts;
     try {

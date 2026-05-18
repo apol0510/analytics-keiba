@@ -1,6 +1,19 @@
 // SendGridメルマガ配信Function
 // 南関競馬の予想結果や攻略情報を配信
 
+import {
+  fetchCustomersReadOnly,
+  loadBlacklistEmails,
+  BRAND_TO_BASE_ID_ENV,
+} from '../../src/lib/newsletter/airtable-fetch.js';
+import {
+  resolveAudienceRecipients,
+  mapLegacyTargetToAudienceType,
+} from '../../src/lib/newsletter/audience-resolver.js';
+
+// 旧 admin UI は brand を渡さない。AK 専用 function なので analytics-keiba を既定値とする。
+const DEFAULT_BRAND = 'analytics-keiba';
+
 export default async function handler(request, context) {
   // CORS対応ヘッダー
   const headers = {
@@ -315,171 +328,72 @@ export default async function handler(request, context) {
   }
 }
 
-// Airtableから受信者リストを取得
+// Airtableから受信者リストを取得（2026-05-19: 5-tier 除外に統一）
+//
+// 旧実装は filterFormula で {プラン} のみフィルタしており、unsubscribe / blacklist /
+// withdrawn 除外が抜けていた（safety audit D1/D2/D5）。
+// 新実装は preview と同じ resolveAudienceRecipients() を使うことで、preview の
+// matchedCount と実送信対象が構造的に一致する設計。
 async function getRecipientsList(targetPlan, targetMailingList = 'all') {
   console.log('📧 getRecipientsList開始:', { targetPlan, targetMailingList });
 
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+  // brand 専用 env を優先、なければレガシー AIRTABLE_BASE_ID を fallback で使用
+  const brandBaseEnv = BRAND_TO_BASE_ID_ENV[DEFAULT_BRAND];
+  const AIRTABLE_BASE_ID = (brandBaseEnv && process.env[brandBaseEnv]) || process.env.AIRTABLE_BASE_ID;
 
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     console.error('Airtable設定が見つかりません');
     return [];
   }
 
+  // 旧 admin の "退会者" 配信先は 5-tier 除外に反するため明示的に拒否する。
+  // 期限切れ会員への再エンゲージメントは audienceType='expired' を使う設計に統一。
+  if (typeof targetMailingList === 'string' && targetMailingList === '退会者') {
+    console.warn('🛑 targetMailingList="退会者" は 5-tier 除外に反するため拒否（withdrawn 除外を優先）');
+    return [];
+  }
+
   try {
-    let filterFormula = '';
+    const audienceTypeFilter = mapLegacyTargetToAudienceType({ targetPlan, targetMailingList });
+    console.log('🎯 audienceTypeFilter 解決:', { targetPlan, targetMailingList, audienceTypeFilter });
 
-    // 🆕 MailingListフィールドベースのフィルタリング（優先使用）
-    let mailingListFilter = '';
+    const records = await fetchCustomersReadOnly(AIRTABLE_BASE_ID, AIRTABLE_API_KEY);
+    const { emails: blacklistEmails, status: blacklistStatus } = await loadBlacklistEmails({
+      brand: DEFAULT_BRAND,
+      baseId: AIRTABLE_BASE_ID,
+      apiKey: AIRTABLE_API_KEY,
+    });
+    const today = new Date().toISOString().slice(0, 10);
 
-    if (targetMailingList && targetMailingList !== 'all') {
-      if (targetMailingList === '退会者') {
-        // 退会者 = 有効期限切れ OR 退会申請済み
-        const today = new Date().toISOString().split('T')[0];
-        mailingListFilter = `OR(
-          IS_BEFORE({有効期限}, '${today}'),
-          IS_BEFORE({ValidUntil}, '${today}'),
-          IS_BEFORE({ExpiryDate}, '${today}'),
-          {WithdrawalRequested} = 1
-        )`;
-      } else {
-        // 通常のMailingListフィルタ
-        mailingListFilter = `{MailingList} = '${targetMailingList}'`;
-      }
-    }
-
-    // 🔧 2025-11-11修正: {メール配信}フィールドが存在しないため、フィルタを無効化
-    // Customersテーブルに{メール配信}フィールドが存在しないことを確認
-    // 全ての顧客に配信するため、unsubscribeFilterは空文字列に設定
-    const unsubscribeFilter = "";
-
-    // 最終的なフィルタ式の構築
-    if (mailingListFilter) {
-      // MailingListフィルタ優先
-      filterFormula = `AND(${mailingListFilter}, {Email} != '')`;
-    } else if (targetPlan === 'expired') {
-      // 🆕 2025-11-10追加: 退会者（有効期限切れ）フィルタ
-      // 有効期限が切れているPremium/Standard会員を抽出
-      const today = new Date().toISOString().split('T')[0];
-      const expiredFilter = `AND(
-        OR(
-          IS_BEFORE({有効期限}, '${today}'),
-          IS_BEFORE({ValidUntil}, '${today}'),
-          IS_BEFORE({ExpiryDate}, '${today}')
-        ),
-        OR(
-          {プラン} = 'Premium',
-          {プラン} = 'Standard',
-          {プラン} = 'Premium Predictions',
-          {プラン} = 'Premium Sanrenpuku',
-          {プラン} = 'Premium Combo',
-          {プラン} = 'Premium Plus'
-        ),
-        {Email} != ''
-      )`;
-      filterFormula = expiredFilter;
-      console.log('🔧 退会者フィルタ適用:', { today, expiredFilter });
-    } else if (targetPlan && targetPlan !== 'all' && targetPlan !== 'test') {
-      // 旧プランフィルタ（後方互換性のため維持）
-      let planFilter = '';
-      if (targetPlan === 'free') {
-        planFilter = "{プラン} = 'Free'";
-      } else if (targetPlan === 'standard') {
-        planFilter = "{プラン} = 'Standard'";
-      } else if (targetPlan === 'premium') {
-        planFilter = "OR({プラン} = 'Premium', {プラン} = 'Premium Predictions', {プラン} = 'Premium Sanrenpuku', {プラン} = 'Premium Combo', {プラン} = 'Premium Plus')";
-      }
-      if (planFilter) {
-        filterFormula = `AND(${planFilter}, {Email} != '')`;
-      }
-    } else if (targetPlan === 'test') {
-      // 🔧 2025-11-12修正: Testプラン会員全員を取得（6件）
-      filterFormula = "AND(OR({プラン} = 'Test', {プラン} = 'test', {プラン} = 'TEST', {プラン} = 'テスト'), {Email} != '')";
-    } else {
-      // 🔧 2025-11-12修正: 'all'の場合はEmailが存在するレコードのみ取得（プラン制限なし）
-      filterFormula = "{Email} != ''";
-    }
-
-    console.log('🔍 フィルター適用:', {
-      mailingListFilter,
-      unsubscribeFilter,
-      finalFormula: filterFormula
+    const result = resolveAudienceRecipients({
+      records,
+      brand: DEFAULT_BRAND,
+      audienceTypeFilter,
+      today,
+      blacklistEmails,
     });
 
-    const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers`;
-    const queryParams = filterFormula ? `?filterByFormula=${encodeURIComponent(filterFormula)}` : '';
-
-    console.log('🔍 Airtable検索:', {
-      url: url + queryParams,
-      filterFormula,
-      targetPlan: '指定されたプラン'
+    console.log('📊 受信者解決:', {
+      audienceTypeFilter,
+      totalCustomers: result.counts.totalCustomers,
+      matchedCount: result.counts.matchedCount,
+      withdrawnExcluded: result.counts.withdrawnExcluded,
+      unsubscribeExcluded: result.counts.unsubscribeExcluded,
+      blacklistExcluded: result.counts.blacklistExcluded,
+      audienceTypeMismatchSkipped: result.counts.audienceTypeMismatchSkipped,
+      invalidEmailSkipped: result.counts.invalidEmailSkipped,
+      dedupedFromMatched: result.counts.dedupedFromMatched,
+      blacklistStatus,
     });
 
-    // Airtableページネーション対応: 全レコード取得
-    let allRecords = [];
-    let offset = null;
-    let pageCount = 0;
-
-    do {
-      pageCount++;
-      let urlWithPagination = url + queryParams;
-      if (queryParams) {
-        urlWithPagination += offset ? `&offset=${offset}` : '';
-      } else {
-        urlWithPagination += offset ? `?offset=${offset}` : '';
-      }
-
-      console.log(`📄 Airtableページ${pageCount}取得中: ${allRecords.length}件取得済み`);
-
-      const response = await fetch(urlWithPagination, {
-        headers: {
-          'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Airtable API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.records && data.records.length > 0) {
-        allRecords.push(...data.records);
-        console.log(`✅ ページ${pageCount}: ${data.records.length}件取得 (累計: ${allRecords.length}件)`);
-      }
-
-      offset = data.offset;
-    } while (offset);
-
-    console.log('📋 全ページAirtableデータ:', {
-      totalRecords: allRecords.length,
-      totalPages: pageCount,
-      sampleRecords: allRecords.slice(0, 3).map(r => ({
-        email: r.fields.Email,
-        plan: r.fields['プラン'] || r.fields.Plan
-      }))
-    });
-
-    const recipients = allRecords
-      .map(record => record.fields.Email)
-      .filter(email => email && email.includes('@'));
-
-    console.log(`📧 取得した受信者数: ${recipients.length}`);
-    console.log(`📧 受信者リスト（最初5件）:`, recipients.slice(0, 5));
-
-    // バウンス管理: 無効なメールアドレスをフィルタリング
-    const validRecipients = await filterValidEmails(recipients);
-    console.log(`✅ 有効な受信者数: ${validRecipients.length} (除外: ${recipients.length - validRecipients.length}件)`);
-
-    return validRecipients;
-
+    return result.emails;
   } catch (error) {
-    console.error('受信者リスト取得エラー:', error);
+    console.error('受信者リスト取得エラー:', error?.name, error?.message);
     return [];
   }
 }
+
 
 // SendGrid APIでメール送信
 async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, includeUnsubscribe = true }) {
@@ -684,181 +598,6 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
   }
 
   return results;
-}
-
-// 🛡️ 高度なバウンス管理システム
-async function filterValidEmails(emails) {
-  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-
-  if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
-    console.log('⚠️ バウンス管理: 環境変数未設定のため全メール有効として処理');
-    return emails;
-  }
-
-  const validEmails = [];
-  const invalidEmails = [];
-  const quarantinedEmails = []; // 検疫中のメール
-
-  for (const email of emails) {
-    try {
-      // 基本的なフォーマットチェック
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        invalidEmails.push({ email, reason: 'invalid-format' });
-        continue;
-      }
-
-      // バウンス履歴チェック
-      const bounceStatus = await checkBounceHistory(email);
-
-      if (bounceStatus.isBlacklisted) {
-        invalidEmails.push({
-          email,
-          reason: bounceStatus.reason,
-          bounceCount: bounceStatus.bounceCount,
-          lastBounce: bounceStatus.lastBounceDate
-        });
-        continue;
-      }
-
-      if (bounceStatus.isQuarantined) {
-        quarantinedEmails.push({
-          email,
-          reason: 'soft-bounce-warning',
-          bounceCount: bounceStatus.bounceCount,
-          remainingAttempts: 5 - bounceStatus.bounceCount
-        });
-        // 検疫中でも配信は継続（最後のチャンス）
-      }
-
-      validEmails.push(email);
-
-    } catch (error) {
-      console.error(`バウンス管理エラー ${email}:`, error);
-      // エラー時は安全のため有効として扱う
-      validEmails.push(email);
-    }
-  }
-
-  // 詳細ログ出力
-  if (invalidEmails.length > 0) {
-    console.log('🚫 ブラックリスト除外:', invalidEmails);
-  }
-  if (quarantinedEmails.length > 0) {
-    console.log('⚠️ 検疫中（最後のチャンス）:', quarantinedEmails);
-  }
-
-  console.log(`📊 バウンス管理結果: 有効${validEmails.length}件, 除外${invalidEmails.length}件, 検疫${quarantinedEmails.length}件`);
-
-  return validEmails;
-}
-
-// バウンス履歴の詳細チェック
-async function checkBounceHistory(email) {
-  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-
-  try {
-    const response = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/EmailBlacklist?filterByFormula=SEARCH('${email}',{Email})`,
-      {
-        headers: {
-          'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    if (!response.ok) {
-      return { isBlacklisted: false, isQuarantined: false };
-    }
-
-    const data = await response.json();
-
-    if (data.records.length === 0) {
-      return { isBlacklisted: false, isQuarantined: false };
-    }
-
-    const record = data.records[0].fields;
-    const bounceCount = record.BounceCount || 0;
-    const bounceType = record.BounceType || 'unknown';
-    const status = record.Status || 'UNKNOWN';
-    // LastBounceDateフィールドは現在のテーブルに存在しないため削除
-
-    // 永続的エラー（Hard Bounce）= 即座にブラックリスト
-    if (bounceType === 'hard' || status === 'HARD_BOUNCE' || status === 'COMPLAINT') {
-      return {
-        isBlacklisted: true,
-        isQuarantined: false,
-        reason: bounceType === 'hard' ? 'hard-bounce' : 'complaint',
-        bounceCount,
-        lastBounceDate
-      };
-    }
-
-    // 一時的エラー（Soft Bounce）= 5回で昇格
-    if (bounceType === 'soft' && bounceCount >= 5) {
-      // 5回に達したので永続的エラーに昇格
-      await upgradeToHardBounce(email, record);
-      return {
-        isBlacklisted: true,
-        isQuarantined: false,
-        reason: 'soft-bounce-upgraded',
-        bounceCount,
-        lastBounceDate
-      };
-    }
-
-    // 一時的エラー（Soft Bounce）= 検疫中（3-4回）
-    if (bounceType === 'soft' && bounceCount >= 3) {
-      return {
-        isBlacklisted: false,
-        isQuarantined: true,
-        reason: 'soft-bounce-warning',
-        bounceCount,
-        lastBounceDate
-      };
-    }
-
-    // その他は有効
-    return { isBlacklisted: false, isQuarantined: false };
-
-  } catch (error) {
-    console.error(`バウンス履歴チェックエラー ${email}:`, error);
-    return { isBlacklisted: false, isQuarantined: false };
-  }
-}
-
-// Soft BounceをHard Bounceに昇格
-async function upgradeToHardBounce(email, currentRecord) {
-  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-
-  try {
-    const recordId = currentRecord.id || currentRecord.recordId;
-
-    await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/EmailBlacklist/${recordId}`, {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        fields: {
-          Status: 'HARD_BOUNCE',
-          BounceType: 'hard',
-          UpgradedAt: new Date().toISOString(),
-          Notes: `Soft bounce上限(5回)に達したため永続エラーに昇格`
-        }
-      })
-    });
-
-    console.log(`🔄 ${email}: Soft→Hard Bounce昇格完了`);
-
-  } catch (error) {
-    console.error(`Bounce昇格エラー ${email}:`, error);
-  }
 }
 
 // 🔍 SendGridエラー詳細解析でバウンス種別判定

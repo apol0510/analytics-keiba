@@ -2,6 +2,18 @@
 // PayPal Webhook Phase 7の冪等性設計応用
 // ジョブ作成 → Customers取得 → Queue一括投入
 
+import {
+  fetchCustomersReadOnly,
+  loadBlacklistEmails,
+} from '../../src/lib/newsletter/airtable-fetch.js';
+import {
+  resolveAudienceRecipients,
+  mapLegacyTargetToAudienceType,
+} from '../../src/lib/newsletter/audience-resolver.js';
+
+// Queue 経路は AK 専用。新仕様で 5-tier 除外を適用する時の brand 既定値。
+const DEFAULT_BRAND = 'analytics-keiba';
+
 export default async function handler(request, context) {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -109,60 +121,51 @@ export default async function handler(request, context) {
     console.log('✅ ジョブ作成完了:', job.id);
 
     // ===========================================
-    // Step 2: Customers取得（スナップショット）
+    // Step 2: Customers取得（5-tier 除外で snapshot 構築）
+    // 2026-05-19: preview と同じ resolveAudienceRecipients() を使うことで、
+    // unsubscribe / blacklist / withdrawn 除外を確実に適用する（D1/D2/D5）。
+    // 旧 admin の "ALL" 引数は audienceTypeFilter='*' にマップされる。
     // ===========================================
-    console.log('👥 Step 2: Customers取得中...');
+    console.log('👥 Step 2: Customers取得中（5-tier 除外）...');
 
-    const customersUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers`;
+    const audienceTypeFilter = mapLegacyTargetToAudienceType({
+      targetPlan: targetPlan === 'ALL' ? 'all' : targetPlan,
+    });
 
-    // プラン別フィルター
-    let filterFormula = '{WithdrawalRequested} = FALSE()';
+    const records = await fetchCustomersReadOnly(AIRTABLE_BASE_ID, AIRTABLE_API_KEY);
+    const { emails: blacklistEmails, status: blacklistStatus } = await loadBlacklistEmails({
+      brand: DEFAULT_BRAND,
+      baseId: AIRTABLE_BASE_ID,
+      apiKey: AIRTABLE_API_KEY,
+    });
+    const today = new Date().toISOString().slice(0, 10);
 
-    if (targetPlan !== 'ALL') {
-      filterFormula = `AND(${filterFormula}, {プラン} = "${targetPlan}")`;
-    }
+    const audience = resolveAudienceRecipients({
+      records,
+      brand: DEFAULT_BRAND,
+      audienceTypeFilter,
+      today,
+      blacklistEmails,
+    });
 
-    const customers = [];
-    let offset = undefined;
+    console.log('📊 受信者解決:', {
+      targetPlan,
+      audienceTypeFilter,
+      totalCustomers: audience.counts.totalCustomers,
+      matchedCount: audience.counts.matchedCount,
+      withdrawnExcluded: audience.counts.withdrawnExcluded,
+      unsubscribeExcluded: audience.counts.unsubscribeExcluded,
+      blacklistExcluded: audience.counts.blacklistExcluded,
+      audienceTypeMismatchSkipped: audience.counts.audienceTypeMismatchSkipped,
+      invalidEmailSkipped: audience.counts.invalidEmailSkipped,
+      dedupedFromMatched: audience.counts.dedupedFromMatched,
+      blacklistStatus,
+    });
 
-    do {
-      const url = new URL(customersUrl);
-      url.searchParams.set('filterByFormula', filterFormula);
-      url.searchParams.set('fields[]', 'Email');
-      if (offset) {
-        url.searchParams.set('offset', offset);
-      }
-
-      const customersResponse = await fetch(url.toString(), {
-        headers: {
-          'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!customersResponse.ok) {
-        throw new Error(`Customers fetch failed: ${customersResponse.status}`);
-      }
-
-      const data = await customersResponse.json();
-      customers.push(...data.records.map(r => ({
-        email: r.fields.Email
-      })));
-
-      offset = data.offset;
-
-      console.log(`📊 取得中... 現在${customers.length}件`);
-
-      // Airtableレート制限対策（5rps）
-      if (offset) {
-        await sleep(200); // 200ms待機
-      }
-    } while (offset);
-
-    console.log(`✅ Customers取得完了: ${customers.length}件`);
+    const customers = audience.emails.map((email) => ({ email }));
 
     if (customers.length === 0) {
-      throw new Error('対象顧客が0件です');
+      throw new Error('対象顧客が0件です（5-tier 除外後）');
     }
 
     // ===========================================
