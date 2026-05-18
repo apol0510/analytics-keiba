@@ -169,6 +169,34 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 詳細仕様は `astro-site/docs/PREDICTION_LOGIC.md` を参照。
 重み・閾値・差別化ルールを変更する場合は **コードと MD を必ず両方更新**すること。
 
+## 🔢 指数表示ルール（著作権・表示安全対策）
+
+analytics-keiba では、外部由来の元指数（racebook 系 `computerIndex` / `sourceComputerIndex`）を
+画面にそのまま表示してはならない。**ユーザー表示用の指数は必ず「元指数 − 1」** とする。
+
+| 用途 | 値 | 関数 |
+|---|---|---|
+| 内部計算（pt / analyticsScore / 役割分類 / isOsaeCandidate / isIneligibleHorse / 買い目生成 / 特徴量重要度） | raw `computerIndex` をそのまま使用 | （関数ラップ不要） |
+| 画面表示（HTML / カード / 全レースプレビュー / 無料予想 / プレミアム予想 / 不要馬・抑え候補・連下） | raw − 1 | `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` |
+
+### 必須ルール
+- 個別ページで `{horse.computerIndex}` を直接 JSX に埋めるのは **禁止**。必ず共通関数経由。
+- 共通関数は `astro-site/src/lib/shared-prediction-logic.js` の
+  `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` を使用。
+- JRA 側で `sourceComputerIndex` を選定してから表示する場合も、最終出力は同関数で `-1` する。
+- 新しい指数表示箇所を追加する場合も、必ず共通関数を使うこと。
+
+### 検証
+`node astro-site/scripts/check-display-computer-index.mjs [YYYY-MM-DD] [venueSlug]` で
+全レース・全馬を `raw - 1 == display` で検証する（不一致 1件でも非ゼロ exit）。
+
+### 関連ファイル
+| 目的 | ファイル |
+|---|---|
+| 共通関数 | `astro-site/src/lib/shared-prediction-logic.js` (`getDisplayComputerIndex` / `formatDisplayComputerIndex`) |
+| 表示適用 | `src/pages/free-prediction/nankan.astro`, `premium-prediction/nankan.astro`, `free-prediction/jra.astro`, `premium-prediction/jra.astro`, `src/components/HorseMainCard.astro`, `src/components/RaceHorseSection.astro` |
+| 検証スクリプト | `astro-site/scripts/check-display-computer-index.mjs` |
+
 ## 🔑 ログイン（マジックリンク方式）
 
 `/login` でメール入力 → SendGrid 経由でリンク送信 → `/auth/verify?token=...` で検証 →

@@ -12,7 +12,7 @@
 //   - jockey, trainer, weight, age, ageNum, gender, frame, computerIndex, sire/_sire
 //   - importance (オプション), evalPoints (オプション), recentRaces (オプション)
 
-import { getRoleDisplayConfig } from '../lib/shared-prediction-logic.js';
+import { getRoleDisplayConfig, getDisplayComputerIndex } from '../lib/shared-prediction-logic.js';
 
 interface HorseLike {
     role?: string;
@@ -113,8 +113,8 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
                 {horse.frame != null && (
                     <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
                 )}
-                {horse.computerIndex != null && horse.computerIndex !== 0 && (
-                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                {horse.computerIndex != null && horse.computerIndex !== 0 && getDisplayComputerIndex(horse.computerIndex) != null && (
+                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{getDisplayComputerIndex(horse.computerIndex)}</span></div>
                 )}
                 {(horse.sire || horse._sire) && (
                     <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire || horse._sire}</span></div>

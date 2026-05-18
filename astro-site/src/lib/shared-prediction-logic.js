@@ -835,6 +835,36 @@ export function sortOsaeCandidates(horses) {
     });
 }
 
+/**
+ * 【表示用コンピ指数】外部由来の元指数（racebook 系 computerIndex / sourceComputerIndex）を
+ * 画面表示用に必ず -1 した値に変換する。著作権・表示上の安全対策のための恒久ルール。
+ *
+ * 重要:
+ *   - 内部計算（pt / analyticsScore / 役割分類 / isOsaeCandidate / isIneligibleHorse / 買い目生成）には
+ *     これを使わず、raw computerIndex を使うこと。
+ *   - ユーザーに見える指数表示は必ずこの関数を通すこと（個別ページで horse.computerIndex を直接 JSX に
+ *     埋めるのは禁止）。
+ *   - null / undefined / 数値化不能 → null（表示側で '-' などにフォールバック）
+ *   - 0 以下にはならないよう Math.max(0, n - 1) で下限保護。
+ *
+ * @param {number|string|null|undefined} rawIndex - 元指数
+ * @returns {number|null} 表示用指数（raw - 1）。数値化不能なら null。
+ */
+export function getDisplayComputerIndex(rawIndex) {
+    const n = Number(rawIndex);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0, n - 1);
+}
+
+/**
+ * 表示用コンピ指数を文字列で返す（テンプレ用）。
+ * null/undefined/数値化不能なら '-' を返す。
+ */
+export function formatDisplayComputerIndex(rawIndex) {
+    const display = getDisplayComputerIndex(rawIndex);
+    return display == null ? '-' : String(display);
+}
+
 // データ整合性チェック
 export function validateDataIntegrity(raceData) {
     const errors = [];

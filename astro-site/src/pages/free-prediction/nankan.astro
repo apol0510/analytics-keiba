@@ -2,7 +2,7 @@
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
-import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
+import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex } from '../../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 
 // src/data/predictions/*.json を自動スキャンし、最新日付の全会場を取得（同時開催対応）
@@ -255,8 +255,8 @@ const analysis = firstVenue.mainRace.analysis;
                                                                 {horse.frame != null && (
                                                                     <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
                                                                 )}
-                                                                {horse.computerIndex != null && (
-                                                                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                                                                {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && (
+                                                                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{getDisplayComputerIndex(horse.computerIndex)}</span></div>
                                                                 )}
                                                                 {horse.sire && (
                                                                     <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
@@ -326,7 +326,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                                            {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                                                            {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
                                                                         </div>
                                                                         {evalPoints.length > 0 && (
                                                                             <div class="minor-horse-evals">
@@ -393,7 +393,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                                            {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                                                            {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
                                                                         </div>
                                                                         {evalPoints.length > 0 && (
                                                                             <div class="minor-horse-evals">
@@ -456,7 +456,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                                                 {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                                                 {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                                                {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                                                                {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
                                                                             </div>
                                                                             {evalPoints.length > 0 && (
                                                                                 <div class="minor-horse-evals">

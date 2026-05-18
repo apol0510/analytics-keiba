@@ -7,6 +7,7 @@ import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { enrichHorse } from '../../lib/horseEnrichment.js';
+import { getDisplayComputerIndex } from '../../lib/shared-prediction-logic.js';
 
 export const prerender = true;
 
@@ -571,8 +572,8 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
                                 {horse.frame != null && (
                                   <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
                                 )}
-                                {horse.computerIndex != null && (
-                                  <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{horse.computerIndex}</span></div>
+                                {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && (
+                                  <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{getDisplayComputerIndex(horse.computerIndex)}</span></div>
                                 )}
                                 {horse.sire && (
                                   <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
