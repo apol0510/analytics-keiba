@@ -4,7 +4,10 @@
 
 export const BRAND_FROM_WHITELIST = {
   'analytics-keiba': {
-    defaultFromEmail: 'analytics@keiba.link',
+    // 2026-05-19 Phase 2.5+ B: 実送信値 (send-newsletter / newsletter-send-test / expiry-* 全て noreply@keiba.link)
+    // と preview の表示値を揃えるため analytics@keiba.link → noreply@keiba.link に統一。
+    // allowedDomains は 'keiba.link' のままで、admin が override する場合の互換性は維持。
+    defaultFromEmail: 'noreply@keiba.link',
     defaultFromName: 'KEIBA Analytics',
     allowedDomains: ['keiba.link'],
   },
