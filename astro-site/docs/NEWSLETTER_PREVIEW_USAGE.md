@@ -456,6 +456,142 @@ PII 検証:
 - normalized email (trim + lowercase) で `resolveEmail()` と一致させて Set lookup
 - `pii: "none-exposed"` を引き続き返す
 
+## newsletter-send-test エンドポイント (2026-05-18 追加)
+
+newsletter-preview とは **別 function** として `newsletter-send-test.js` を新設。
+副作用 (SendGrid 呼び出し) を含むので preview の「副作用ゼロ宣言」を保ったまま、
+test 送信機能を提供する。
+
+### エンドポイント
+
+```
+POST /.netlify/functions/newsletter-send-test
+```
+
+### 多層安全装置
+
+| # | 装置 | 動作 |
+|---|---|---|
+| 1 | `NEWSLETTER_TEST_SEND_ENABLED === 'true'` | 違う → 200 + `structured_error errorClass='test-send-disabled'` |
+| 2 | `NEWSLETTER_TEST_RECIPIENTS` 1 件以上 | 空 → 200 + `errorClass='test-recipients-not-set'` |
+| 3 | `audienceMode === 'test-send'` | 違う → 400 |
+| 4 | `brand × from='noreply@keiba.link'` 整合 (validateBrandFromEmail) | 不整合 → 400。**test-send は brand='analytics-keiba' のみ対応** (KI の Domain Auth 別途) |
+| 5 | `SENDGRID_API_KEY` 必須 | なし → 200 + `errorClass='missing-env'` |
+| 6 | 宛先は **env-whitelist のみ** | Customers / Airtable READ は構造的に到達不可（resolver/counter 未 import） |
+| 7 | `NEWSLETTER_AUTOMATION_ENABLED` は触らない | 本番送信系の安全装置は温存 |
+
+### 環境変数
+
+```bash
+# 有効化フラグ (NEWSLETTER_AUTOMATION_ENABLED とは独立)
+NEWSLETTER_TEST_SEND_ENABLED=true
+
+# 宛先ホワイトリスト (comma-separated)
+NEWSLETTER_TEST_RECIPIENTS="ops@example.com,dev@example.com"
+
+# 既存 (流用)
+SENDGRID_API_KEY=<既存>
+```
+
+### リクエスト例 (curl 限定、admin UI は当面なし)
+
+```bash
+curl -X POST 'https://analytics-keiba.netlify.app/.netlify/functions/newsletter-send-test' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "brand": "analytics-keiba",
+    "serviceType": "analytics-keiba",
+    "campaignType": "daily-main-race-nankan",
+    "campaignDate": "2026-05-18",
+    "audienceType": "free",
+    "audienceMode": "test-send",
+    "targetRace": { "raceId": "test:1", "venue": "テスト", "raceNumber": 11, "raceName": "メイン", "postTime": "20:10" }
+  }'
+```
+
+### メール内容
+
+- **subject 接頭辞**: `[TEST] ` を付加（誤届時の識別用）
+- **本文先頭バナー**: 赤枠で `⚠️ これはテスト配信です / brand=... / 本番会員には送信されていません` を埋込
+- **from**: `noreply@keiba.link` 固定 (Single Sender Verification 済)
+- **tracking**: click / open / subscription / GA 全 disabled (preview と同じ)
+
+### レスポンス
+
+成功時:
+```json
+{
+  "success": true,
+  "mode": "test-send",
+  "sideEffects": "sendgrid-test-send-only",
+  "campaign": {
+    "brand": "analytics-keiba",
+    "fromEmail": "noreply@keiba.link",
+    "subject": "[TEST] ...",
+    "subjectPrefixed": true,
+    "contentHash": "<sha256>"
+  },
+  "testRecipients": {
+    "source": "env:NEWSLETTER_TEST_RECIPIENTS",
+    "count": 2,
+    "skipped": 0,
+    "domainBreakdown": { "example.com": 1, "gmail.com": 1 },
+    "traces": [
+      { "trace": "ab12cd34ef56", "domain": "example.com", "sendStatus": "ok", "sendgridStatus": 202 },
+      { "trace": "ff00aa11bb22", "domain": "gmail.com", "sendStatus": "ok", "sendgridStatus": 202 }
+    ]
+  },
+  "result": { "sentCount": 2, "failedCount": 0 },
+  "deliveryKey": {
+    "namespace": "test-send",
+    "extraKey": "test-send:<raceId>",
+    "samples": [ { "trace": "...", "deliveryKey": "<sha256>" } ]
+  },
+  "customersAccessed": false,
+  "airtableAccessed": false,
+  "pii": "none-exposed-recipient-emails-redacted-to-trace-only"
+}
+```
+
+失敗時 (SendGrid 401/403/400/429/5xx/network):
+```json
+{
+  "success": false,
+  "structured_error": true,
+  "httpStatusSource": 502,
+  "errorClass": "sendgrid-auth",
+  "error": "all test-send recipients failed",
+  "result": { "sentCount": 0, "failedCount": 2, "failureByClass": { "sendgrid-auth": 2 } },
+  "traces": [...]
+}
+```
+
+### SendGrid エラー分類
+
+| HTTP status | errorClass | 意味 |
+|---|---|---|
+| 401 | `sendgrid-auth` | API key 失効 |
+| 403 | `sendgrid-forbidden` | 権限不足 (Sender 未認証等) |
+| 400 | `sendgrid-bad-request` | 本文・ヘッダ問題 |
+| 429 | `sendgrid-rate-limit` | レート制限 |
+| 5xx | `sendgrid-upstream` | SendGrid 障害 |
+| 0 | `sendgrid-network-error` | 通信失敗 |
+
+### PII 取り扱い
+
+- 宛先 email 全文は **レスポンス・ログ・SendGrid 以外** に出さない
+- 各宛先は **sha256 先頭 12 文字の trace ID** + **ドメイン部分**のみ表示
+- `pii: 'none-exposed-recipient-emails-redacted-to-trace-only'` を明示
+- SendGrid API key は fetch ヘッダに直接渡し、変数に保持しない
+
+### 制限事項 / 現状の運用想定
+
+- **admin UI からは触らない** (誤クリック防止、curl 限定)
+- **brand='analytics-keiba' のみ** 対応 (`noreply@keiba.link` が Single Sender 認証済のため)
+- **KI 対応は別タスク** (`em8410.keiba-intelligence.jp` の Domain Auth 設定後)
+- test 送信履歴は **Airtable に保存しない** (function ログのみ)
+- 1 リクエストの宛先数は env サイズに依存、SendGrid rate limit (600 req/min) 余裕で内
+
 ## 次の実装候補
 
 ### A. admin 画面「対象者数確認」ボタン（設計案・実装未着手）
