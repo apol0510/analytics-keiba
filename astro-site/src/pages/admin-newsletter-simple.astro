@@ -186,6 +186,27 @@ try {
 
 // ✅ Set を配列に変換（JSON シリアライズ可能にする）
 debugInfo.uniquePlanValues = Array.from(debugInfo.uniquePlanValues);
+
+// 🎯 本日メインレースの本文プレビュー用メタを SSR で組み立てる
+//   - 予想 JSON を import.meta.glob で bundle（既存 free-prediction / premium 系と同じパターン）
+//   - JST の今日の日付に該当する 1 ファイルだけ採用し、メインレース + featuredHorse を抽出
+//   - 該当日のデータが無ければ todayMainRaceMeta = null（admin UI 側で disabled ボタン表示）
+let todayMainRaceMeta = null;
+try {
+    const { buildTodayMainRaceMeta } = await import('../lib/newsletter/today-main-race-meta.js');
+    const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
+    const predictionsByFile = {};
+    for (const [filePath, mod] of Object.entries(predictionModules)) {
+        const data = mod && mod.default !== undefined ? mod.default : mod;
+        const basename = filePath.split('/').pop();
+        if (basename) predictionsByFile[basename] = data;
+    }
+    const todayJst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
+    todayMainRaceMeta = buildTodayMainRaceMeta(predictionsByFile, todayJst);
+} catch (metaErr) {
+    console.error('todayMainRaceMeta build error:', metaErr);
+    todayMainRaceMeta = null;
+}
 ---
 
 <BaseLayout title="メルマガ配信">
@@ -912,6 +933,33 @@ debugInfo.uniquePlanValues = Array.from(debugInfo.uniquePlanValues);
 
                 <div id="audienceCountResult" style="margin-top: 16px; display: none;">
                     <div id="audienceCountBody" style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px;"></div>
+                </div>
+            </div>
+
+            <!-- 🎯 本文プレビュー（本日のメイン）- 実予想データから featuredHorse 自動抽出 -->
+            <div class="card">
+                <h2>🎯 本文プレビュー（本日のメイン）</h2>
+                <p style="margin-bottom: 16px; color: #475569; font-size: 13px;">
+                    本日の南関メインレースを <code>src/data/predictions/</code> から自動抽出し、
+                    注目馬（◎本命 → 役割『本命』 / 無ければ pt 最大 → 役割『注目馬』）を含む
+                    本文を newsletter-preview で生成します。Customers / SendGrid には到達しません。
+                </p>
+
+                <div id="todayMainRaceMetaSummary" style="background: #f3f4f6; border-radius: 6px; padding: 12px; margin-bottom: 12px; font-size: 13px; color: #1f2937;">
+                    <!-- SSR で算出した本日のメイン情報を JS で描画 -->
+                </div>
+
+                <button type="button" class="btn" id="todayMainPreviewBtn"
+                        style="background: #059669; color: white; width: 100%; padding: 12px;">
+                    🎯 本文プレビューを生成（本日のメイン）
+                </button>
+
+                <div id="todayMainPreviewResult" style="margin-top: 16px; display: none;">
+                    <div id="todayMainPreviewSummary" style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; margin-bottom: 12px;"></div>
+                    <details style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px;">
+                        <summary style="cursor: pointer; font-weight: 600; color: #1f2937;">📧 本文 HTML プレビュー（iframe sandbox）</summary>
+                        <iframe id="todayMainPreviewIframe" sandbox="" style="width: 100%; height: 600px; border: 1px solid #e5e7eb; border-radius: 4px; margin-top: 8px; background: white;"></iframe>
+                    </details>
                 </div>
             </div>
 
@@ -2606,8 +2654,8 @@ ${error.message}
         }); // DOMContentLoaded終了
     </script>
 
-    <!-- 🔍 対象者数確認（READ-ONLY）専用スクリプト（既存ロジックと完全分離） -->
-    <script is:inline>
+    <!-- 🔍 対象者数確認 + 🎯 本文プレビュー（本日のメイン）専用スクリプト（既存ロジックと完全分離） -->
+    <script is:inline define:vars={{ todayMainRaceMeta }}>
         (function () {
             'use strict';
 
@@ -2786,11 +2834,123 @@ ${error.message}
                 }
             }
 
+            // ============================================================
+            // 🎯 本文プレビュー（本日のメイン）
+            //   SSR で算出した todayMainRaceMeta（define:vars 経由）を使い、
+            //   newsletter-preview に targetRace + featuredHorse を渡す。
+            //   実 SendGrid 送信 / Customers 参照は発生しない（audienceMode='mock'）。
+            // ============================================================
+            function renderTodayMainSummary() {
+                const summaryBox = document.getElementById('todayMainRaceMetaSummary');
+                const btn = document.getElementById('todayMainPreviewBtn');
+                if (!summaryBox || !btn) return;
+
+                if (!todayMainRaceMeta) {
+                    summaryBox.innerHTML = '<div style="color: #b91c1c;">⚠️ 本日の予想データが見つかりません（<code>src/data/predictions/YYYY-MM-DD-*.json</code> が無い）。次の更新まで待つか、データ取込を確認してください。</div>';
+                    btn.disabled = true;
+                    btn.style.background = '#9ca3af';
+                    btn.style.cursor = 'not-allowed';
+                    return;
+                }
+
+                const tr = todayMainRaceMeta.targetRace || {};
+                const fh = todayMainRaceMeta.featuredHorse;
+                const src = todayMainRaceMeta.source || {};
+                const fhBlock = fh
+                    ? `<span style="display:inline-block; padding:2px 8px; background:#fef3c7; border-radius:4px; color:#92400e;">${escapeHtml(fh.role)} <strong>#${escapeHtml(fh.number)} ${escapeHtml(fh.name)}</strong></span>`
+                    : '<span style="color:#6b7280;">注目馬: 取得できず（featuredHorse なしで送信）</span>';
+                summaryBox.innerHTML = [
+                    `<div><strong>📅 ${escapeHtml(src.date)}</strong> ${escapeHtml(tr.venue)} ${escapeHtml(tr.raceNumber)}R 「${escapeHtml(tr.raceName)}」 発走 ${escapeHtml(tr.postTime)}</div>`,
+                    `<div style="margin-top:6px;">${fhBlock}</div>`,
+                    `<div style="margin-top:6px; color:#6b7280; font-size:12px;">source: ${escapeHtml(src.filename)} (totalRaces ${escapeHtml(src.totalRaces)})</div>`,
+                ].join('');
+            }
+
+            async function onTodayMainPreviewClick(evt) {
+                const btn = evt.currentTarget;
+                const resultBox = document.getElementById('todayMainPreviewResult');
+                const summaryEl = document.getElementById('todayMainPreviewSummary');
+                const iframeEl = document.getElementById('todayMainPreviewIframe');
+                if (!btn || !resultBox || !summaryEl || !iframeEl) return;
+                if (!todayMainRaceMeta) return;
+
+                btn.disabled = true;
+                const origLabel = btn.textContent;
+                btn.textContent = 'プレビュー生成中...';
+                resultBox.style.display = 'block';
+                summaryEl.innerHTML = '<div style="color: #6b7280;">⏳ newsletter-preview 呼び出し中…</div>';
+                iframeEl.srcdoc = '';
+
+                const requestBody = {
+                    brand: 'analytics-keiba',
+                    serviceType: 'analytics-keiba',
+                    campaignType: 'daily-main-race-nankan',
+                    campaignDate: todayIsoDate(),
+                    audienceType: 'free',
+                    audienceMode: 'mock',
+                    targetRace: todayMainRaceMeta.targetRace,
+                };
+                if (todayMainRaceMeta.featuredHorse) {
+                    requestBody.featuredHorse = todayMainRaceMeta.featuredHorse;
+                }
+
+                try {
+                    const res = await fetch(PREVIEW_ENDPOINT, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody),
+                    });
+                    const ct = res.headers.get('content-type') || '';
+                    const isJson = ct.includes('application/json');
+                    if (res.ok && isJson) {
+                        const body = await res.json();
+                        if (body && body.success === false && body.structured_error === true) {
+                            const sourceStatus = body.httpStatusSource || 'structured_error';
+                            summaryEl.innerHTML = renderJsonError(body, `200 (was ${sourceStatus})`);
+                        } else if (body && body.success === true && body.campaign) {
+                            const c = body.campaign;
+                            summaryEl.innerHTML = [
+                                `<div><strong>✅ 生成成功</strong> (sideEffects: ${escapeHtml(body.sideEffects)}, mode: ${escapeHtml(body.mode)})</div>`,
+                                `<div style="margin-top:6px;">subject: <strong>${escapeHtml(c.subject)}</strong></div>`,
+                                `<div>fromEmail: ${escapeHtml(c.fromEmail)} / fromName: ${escapeHtml(c.fromName)}</div>`,
+                                `<div>contentLength: ${escapeHtml(c.contentLength)} bytes / contentHash: <code style="font-size:11px;">${escapeHtml(String(c.contentHash).slice(0, 16))}…</code></div>`,
+                                c.featuredHorse
+                                    ? `<div style="margin-top:6px;">featuredHorse: <span style="background:#fef3c7; padding:2px 6px; border-radius:4px; color:#92400e;">${escapeHtml(c.featuredHorse.role)} #${escapeHtml(c.featuredHorse.number)} ${escapeHtml(c.featuredHorse.name)}</span></div>`
+                                    : '<div style="margin-top:6px; color:#6b7280;">featuredHorse: null（注目馬セクションは描画されません）</div>',
+                            ].join('');
+                            // iframe sandbox で本文 HTML を表示（admin 用、外部リクエスト不可）
+                            iframeEl.srcdoc = c.contentPreview || '';
+                        } else {
+                            summaryEl.innerHTML = renderJsonError(body, res.status);
+                        }
+                    } else if (isJson) {
+                        let body = {};
+                        try { body = await res.json(); } catch (_) {}
+                        summaryEl.innerHTML = renderJsonError(body, res.status);
+                    } else {
+                        const text = await res.text();
+                        summaryEl.innerHTML = renderPlaintextError(text, res.status);
+                    }
+                } catch (err) {
+                    summaryEl.innerHTML = `<div style="color: #b91c1c; font-weight: 700;">❌ ネットワーク / fetch エラー</div><div>${escapeHtml(err && err.message ? err.message : 'unknown')}</div>`;
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = origLabel;
+                }
+            }
+
             function init() {
                 const btn = document.getElementById('audienceCountBtn');
-                if (!btn) return;
-                btn.addEventListener('click', onClick);
-                console.log('🔍 audience-count-only button initialized');
+                if (btn) {
+                    btn.addEventListener('click', onClick);
+                    console.log('🔍 audience-count-only button initialized');
+                }
+                const previewBtn = document.getElementById('todayMainPreviewBtn');
+                if (previewBtn) {
+                    renderTodayMainSummary();
+                    previewBtn.addEventListener('click', onTodayMainPreviewClick);
+                    console.log('🎯 today-main-race-preview button initialized', todayMainRaceMeta ? 'with meta' : '(no data)');
+                }
             }
 
             if (document.readyState === 'loading') {
