@@ -175,7 +175,7 @@ export default async function handler(request, context) {
 
             <hr style="margin: 30px 0; border: none; border-top: 1px solid #e5e7eb;">
             <div style="text-align: center; padding: 20px; background-color: #f9fafb; font-size: 12px; color: #6b7280; font-family: Arial, sans-serif;">
-              <p style="margin: 0 0 10px 0;">このメールは NANKANアナリティクス からお送りしています</p>
+              <p style="margin: 0 0 10px 0;">このメールは KEIBA Analytics からお送りしています</p>
               <p style="margin: 10px 0;">
                 <a href="${unsubscribeLink}" style="color: #dc2626; text-decoration: underline;">
                   🚫 配信停止はこちら
@@ -193,7 +193,7 @@ export default async function handler(request, context) {
               }
             ],
             from: {
-              name: "NANKANアナリティクス",
+              name: "KEIBA Analytics",
               email: "noreply@keiba.link"
             },
             content: [

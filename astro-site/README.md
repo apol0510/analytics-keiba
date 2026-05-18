@@ -1,4 +1,4 @@
-# 🏇 NANKANアナリティクス - AI競馬予想プラットフォーム
+# 🏇 KEIBA Analytics - AI競馬予想プラットフォーム
 
 南関競馬専門のAI予想システム with Stripe決済システム
 

@@ -52,7 +52,7 @@ exports.handler = async (event, context) => {
       const customerEmail = {
         to: email,
         from: 'nankan-analytics@keiba.link',
-        subject: '【期間限定】特別割引で復帰しませんか？ - NANKANアナリティクス',
+        subject: '【期間限定】特別割引で復帰しませんか？ - KEIBA Analytics',
         html: generateCustomerEmail(fullName, email, plan, expiryDate),
         tracking_settings: {
           click_tracking: { enable: false, enable_text: false },
@@ -164,7 +164,7 @@ function generateCustomerEmail(fullName, email, plan, expiryDate) {
       <p style="font-size: 1.1rem; margin: 10px 0;">でも、まだ間に合います！</p>
     </div>
     <div class="content">
-      <p>いつもNANKANアナリティクスをご利用いただきありがとうございます。</p>
+      <p>いつもKEIBA Analyticsをご利用いただきありがとうございます。</p>
       <p><strong>${fullName} 様</strong>のプランが有効期限を迎えました。</p>
 
       <div class="expiry-box">
@@ -212,7 +212,7 @@ function generateCustomerEmail(fullName, email, plan, expiryDate) {
       </div>
 
       <div class="footer">
-        <p>NANKANアナリティクス<br>
+        <p>KEIBA Analytics<br>
         Email: nankan-analytics@keiba.link</p>
         <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 15px;">
           ※このメールは有効期限切れ時に自動送信されています
@@ -269,7 +269,7 @@ function generateAdminEmail(email, fullName, plan, expiryDate) {
     </ul>
 
     <p>---<br>
-    NANKANアナリティクス 期限管理システム</p>
+    KEIBA Analytics 期限管理システム</p>
   </div>
 </body>
 </html>

@@ -175,7 +175,7 @@ pending → success
 ### NewsletterJobs例
 ```
 JobId: JOB-2026-01-12-001
-Subject: 【NANKANアナリティクス】1月の無料予想配信開始！
+Subject: 【KEIBA Analytics】1月の無料予想配信開始！
 Content: <html>...</html>
 TargetPlan: ALL
 Status: completed

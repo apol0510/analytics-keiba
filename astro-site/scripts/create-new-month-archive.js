@@ -112,7 +112,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- SEO最適化メタタグ -->
-  <title>${year}年${parseInt(month)}月 南関競馬的中実績｜NANKANアナリティクス</title>
+  <title>${year}年${parseInt(month)}月 南関競馬的中実績｜KEIBA Analytics</title>
   <meta name="description" content="${year}年${parseInt(month)}月の南関競馬全的中実績を公開。的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ。" />
   <meta name="keywords" content="南関競馬,的中実績,${year}年${parseInt(month)}月,的中率,配当,競馬予想" />
   <link rel="canonical" href="https://nankan-analytics.keiba.link/archive/${year}/${month}" />
@@ -122,7 +122,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
   <meta property="og:description" content="的中率{hitRate}%・総配当¥{totalPayoutMonth.toLocaleString()}の実績データ公開。" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://nankan-analytics.keiba.link/archive/${year}/${month}" />
-  <meta property="og:site_name" content="NANKANアナリティクス" />
+  <meta property="og:site_name" content="KEIBA Analytics" />
   <meta property="og:locale" content="ja_JP" />
 
   <!-- Twitter Card -->

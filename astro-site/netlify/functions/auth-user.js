@@ -559,7 +559,7 @@ async function registerToBlastMail(email, registrationSource = 'nankan-analytics
 //   - sendWelcomeEmail関数・sendWelcomeEmailDirect関数
 //   - 90行以上のHTMLメールテンプレート
 //   - 環境変数SITE_URLに依存するURL生成
-//   - NANKANアナリティクスへようこそメール
+//   - KEIBA Analyticsへようこそメール
 //   - マイページログインリンク付きメール
 //
 // 📧 新規ユーザー通知が必要な場合は、独立したuser-notification.jsを使用

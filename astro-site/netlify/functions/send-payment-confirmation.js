@@ -74,9 +74,9 @@ exports.handler = async (event, context) => {
     const userEmailData = {
       personalizations: [{
         to: [{ email: email }],
-        subject: `【入金確認】NANKANアナリティクス ${productName} - アクセス情報`
+        subject: `【入金確認】KEIBA Analytics ${productName} - アクセス情報`
       }],
-      from: { email: FROM_EMAIL, name: 'NANKANアナリティクス' },
+      from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
       content: [{
         type: 'text/html',
         value: `
@@ -172,7 +172,7 @@ exports.handler = async (event, context) => {
     </div>
 
     <div class="footer">
-      <p><strong>NANKANアナリティクス</strong></p>
+      <p><strong>KEIBA Analytics</strong></p>
       <p>AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム</p>
       <p><a href="https://analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://analytics.keiba.link</a></p>
       <p style="margin-top: 15px; font-size: 0.85rem; color: #94a3b8;">

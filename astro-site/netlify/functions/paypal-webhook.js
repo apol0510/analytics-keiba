@@ -406,11 +406,11 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({
           personalizations: [{
             to: [{ email: email }],
-            subject: `【NANKANアナリティクス】${userPlan}プラン ご登録ありがとうございます`
+            subject: `【KEIBA Analytics】${userPlan}プラン ご登録ありがとうございます`
           }],
           from: {
             email: 'support@keiba.link',
-            name: 'NANKANアナリティクス'
+            name: 'KEIBA Analytics'
           },
           content: [{
             type: 'text/html',
@@ -513,7 +513,7 @@ function generateWelcomeEmail(customerName, plan, expiryDate, email) {
   <div style="background: #fff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
     <p>${customerName ? customerName + '様' : 'お客様'}</p>
 
-    <p>NANKANアナリティクスへのご登録ありがとうございます。<br>
+    <p>KEIBA Analyticsへのご登録ありがとうございます。<br>
     以下の内容でご登録が完了しました。</p>
 
     <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">

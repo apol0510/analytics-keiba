@@ -2,7 +2,7 @@
 
 ## 📋 概要
 
-apolon.keibanahibi.com から**12年分（2013年9月〜現在）**のレース実績データを自動取得し、NANKANアナリティクスのarchiveResults.json形式に変換するスクリプトです。
+apolon.keibanahibi.com から**12年分（2013年9月〜現在）**のレース実績データを自動取得し、KEIBA AnalyticsのarchiveResults.json形式に変換するスクリプトです。
 
 ## ✨ 機能
 

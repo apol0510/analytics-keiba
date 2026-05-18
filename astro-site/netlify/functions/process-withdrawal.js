@@ -121,7 +121,7 @@ export const handler = async (event, context) => {
 
                 <hr style="margin: 30px 0;">
                 <p style="font-size: 12px; color: #666;">
-                    NANKANアナリティクス - 退会管理システム
+                    KEIBA Analytics - 退会管理システム
                 </p>
             </div>
         `;
@@ -131,13 +131,13 @@ export const handler = async (event, context) => {
             subject: `【退会申請】${email} - ${customerRecord.fields['プラン'] || customerRecord.fields.Plan || '会員'}`,
             html: adminEmailHtml,
             replyTo: email,  // 🔧 既に設定済み（管理者向けメール）
-            fromName: 'NANKANアナリティクス 退会管理'
+            fromName: 'KEIBA Analytics 退会管理'
         });
 
         // 4. 会員向け退会受付確認メール
         const userEmailHtml = `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #3b82f6;">🏇 NANKANアナリティクス</h2>
+                <h2 style="color: #3b82f6;">🏇 KEIBA Analytics</h2>
 
                 <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
                     <h3>退会申請を受け付けました</h3>
@@ -163,7 +163,7 @@ export const handler = async (event, context) => {
                 </div>
 
                 <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p>今後ともNANKANアナリティクスをご利用いただける日を心よりお待ちしております。</p>
+                    <p>今後ともKEIBA Analyticsをご利用いただける日を心よりお待ちしております。</p>
                     <p>ご不明な点がございましたら、お気軽にお問い合わせください。</p>
 
                     <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;">
@@ -181,7 +181,7 @@ export const handler = async (event, context) => {
 
                 <hr style="margin: 30px 0;">
                 <p style="font-size: 12px; color: #666;">
-                    NANKANアナリティクス<br>
+                    KEIBA Analytics<br>
                     AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム<br>
                     ※このメールは自動送信されています
                 </p>
@@ -194,10 +194,10 @@ export const handler = async (event, context) => {
 
         await sendEmailViaSendGrid({
             to: email,
-            subject: '【退会申請受付】NANKANアナリティクス',
+            subject: '【退会申請受付】KEIBA Analytics',
             html: userEmailHtml,
             replyTo: 'nankan.analytics@gmail.com',  // 🔧 2025-11-26追加: サポート窓口への返信設定
-            fromName: 'NANKANアナリティクス サポート'
+            fromName: 'KEIBA Analytics サポート'
         });
 
         console.log(`✅ 退会申請処理完了: ${email}`);
@@ -306,7 +306,7 @@ async function sendEmailViaSendGrid({ to, subject, html, replyTo, fromName }) {
             }
         ],
         from: {
-            name: fromName || "NANKANアナリティクス サポート",
+            name: fromName || "KEIBA Analytics サポート",
             email: "support@keiba.link"  // 🔧 2025-11-26変更: 迷惑メール対策でsupportに変更
         },
         content: [

@@ -146,7 +146,7 @@ exports.handler = async (event, context) => {
         const userEmail_data = {
           to: userEmail,
           from: 'nankan-analytics@keiba.link',
-          subject: '【ポイント交換申請受付】NANKANアナリティクス',
+          subject: '【ポイント交換申請受付】KEIBA Analytics',
           html: `
             <h2>ポイント交換申請を受け付けました</h2>
             <p>${userName || 'お客様'}、この度はポイント交換をお申し込みいただき、ありがとうございます。</p>
@@ -167,7 +167,7 @@ exports.handler = async (event, context) => {
             </ol>
             <p>ご不明な点がございましたら、お気軽にお問い合わせください。</p>
             <hr>
-            <p>NANKANアナリティクス<br>
+            <p>KEIBA Analytics<br>
             <a href="https://analytics.keiba.link">https://analytics.keiba.link</a></p>
           `,
           tracking_settings: {

@@ -207,7 +207,7 @@ async function sendCustomerConfirmation(email, name) {
       body: JSON.stringify({
         from: process.env.FROM_EMAIL || 'noreply@keiba.link',
         to: email,
-        subject: '特典申請を受け付けました - NANKANアナリティクス',
+        subject: '特典申請を受け付けました - KEIBA Analytics',
         html: `
           <h2>特典申請ありがとうございます</h2>
           <p>${name}様</p>
@@ -215,10 +215,10 @@ async function sendCustomerConfirmation(email, name) {
           <p>特典申請を受け付けました。</p>
           <p>3営業日以内にメールでご連絡いたします。</p>
           
-          <p>今後ともNANKANアナリティクスをよろしくお願いいたします。</p>
+          <p>今後ともKEIBA Analyticsをよろしくお願いいたします。</p>
           
           <hr>
-          <p><small>NANKANアナリティクス</small></p>
+          <p><small>KEIBA Analytics</small></p>
         `
       })
     });

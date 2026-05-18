@@ -23,7 +23,7 @@ import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-
 import { parseTestRecipientsEnv, emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
 
 const TEST_FROM_EMAIL = 'noreply@keiba.link';
-const TEST_FROM_NAME = 'NANKANアナリティクス [TEST]';
+const TEST_FROM_NAME = 'KEIBA Analytics [TEST]';
 const SENDGRID_ENDPOINT = 'https://api.sendgrid.com/v3/mail/send';
 const SUPPORTED_CAMPAIGN_TYPES = new Set(['daily-main-race-nankan']);
 const SUPPORTED_AUDIENCE_MODES = new Set(['test-send']);

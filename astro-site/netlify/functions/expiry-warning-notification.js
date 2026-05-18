@@ -162,7 +162,7 @@ function generateCustomerEmail(fullName, email, plan, expiryDate) {
       <p style="font-size: 1.2rem; margin: 10px 0;">特別割引でプランを継続しませんか？</p>
     </div>
     <div class="content">
-      <p>いつもNANKANアナリティクスをご利用いただきありがとうございます。</p>
+      <p>いつもKEIBA Analyticsをご利用いただきありがとうございます。</p>
       <p><strong>${fullName} 様</strong>のプランが間もなく有効期限を迎えます。</p>
 
       <div class="expiry-box">
@@ -199,7 +199,7 @@ function generateCustomerEmail(fullName, email, plan, expiryDate) {
       </div>
 
       <div class="footer">
-        <p>NANKANアナリティクス<br>
+        <p>KEIBA Analytics<br>
         Email: nankan-analytics@keiba.link</p>
         <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 15px;">
           ※このメールは有効期限7日前に自動送信されています
@@ -255,7 +255,7 @@ function generateAdminEmail(email, fullName, plan, expiryDate) {
     </ul>
 
     <p>---<br>
-    NANKANアナリティクス 期限管理システム</p>
+    KEIBA Analytics 期限管理システム</p>
   </div>
 </body>
 </html>

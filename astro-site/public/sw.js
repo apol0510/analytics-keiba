@@ -1,4 +1,4 @@
-// Service Worker for NANKANアナリティクス
+// Service Worker for KEIBA Analytics
 const CACHE_NAME = 'nankan-analytics-v1';
 const STATIC_CACHE_NAME = 'nankan-static-v1';
 const DYNAMIC_CACHE_NAME = 'nankan-dynamic-v1';
@@ -186,7 +186,7 @@ self.addEventListener('push', (event) => {
         };
 
         event.waitUntil(
-            self.registration.showNotification(data.title || 'NANKANアナリティクス', options)
+            self.registration.showNotification(data.title || 'KEIBA Analytics', options)
         );
     }
 });

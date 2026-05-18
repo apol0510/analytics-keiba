@@ -255,11 +255,11 @@ async function sendAlertEmail({ alertType, message, riskLevel, stats }) {
     personalizations: [
       {
         to: [{ email: adminEmail }],
-        subject: `🚨 NANKANアナリティクス - ドメイン保護アラート [${riskLevel.toUpperCase()}]`
+        subject: `🚨 KEIBA Analytics - ドメイン保護アラート [${riskLevel.toUpperCase()}]`
       }
     ],
     from: {
-      name: "NANKAN Domain Protection",
+      name: "KEIBA Domain Protection",
       email: "noreply@keiba.link"
     },
     content: [
@@ -331,7 +331,7 @@ function generateAlertEmailHtml({ alertType, message, riskLevel, stats }) {
 
       <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
         <p style="color: #6b7280; font-size: 12px; margin: 0;">
-          ${new Date().toLocaleString('ja-JP')} - NANKANアナリティクス ドメイン保護システム
+          ${new Date().toLocaleString('ja-JP')} - KEIBA Analytics ドメイン保護システム
         </p>
       </div>
     </div>

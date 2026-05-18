@@ -67,7 +67,7 @@ export const handler = async (event, context) => {
 
                 <hr style="margin: 30px 0;">
                 <p style="font-size: 12px; color: #666;">
-                    NANKANアナリティクス - お問い合わせ管理システム
+                    KEIBA Analytics - お問い合わせ管理システム
                 </p>
             </div>
         `;
@@ -77,18 +77,18 @@ export const handler = async (event, context) => {
             subject: `【お問い合わせ】${subject}`,
             html: adminEmailHtml,
             replyTo: email,
-            fromName: 'NANKANアナリティクス お問い合わせ'
+            fromName: 'KEIBA Analytics お問い合わせ'
         });
 
         // 自動返信メール
         const autoReplyHtml = `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #3b82f6;">🏇 NANKANアナリティクス</h2>
+                <h2 style="color: #3b82f6;">🏇 KEIBA Analytics</h2>
 
                 <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
                     <h3>お問い合わせを受け付けました</h3>
                     <p>${name} 様</p>
-                    <p>この度はNANKANアナリティクスへお問い合わせいただき、誠にありがとうございます。</p>
+                    <p>この度はKEIBA Analyticsへお問い合わせいただき、誠にありがとうございます。</p>
                     <p>以下の内容でお問い合わせを承りました。</p>
                 </div>
 
@@ -106,7 +106,7 @@ export const handler = async (event, context) => {
 
                 <hr style="margin: 30px 0;">
                 <p style="font-size: 12px; color: #666;">
-                    NANKANアナリティクス<br>
+                    KEIBA Analytics<br>
                     AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム<br>
                     ※このメールは自動送信されています
                 </p>
@@ -119,10 +119,10 @@ export const handler = async (event, context) => {
 
         await sendEmailViaSendGrid({
             to: email,
-            subject: '【自動返信】お問い合わせを受け付けました - NANKANアナリティクス',
+            subject: '【自動返信】お問い合わせを受け付けました - KEIBA Analytics',
             html: autoReplyHtml,
             replyTo: 'nankan.analytics@gmail.com',  // 🔧 2025-11-26追加: サポート窓口への返信設定
-            fromName: 'NANKANアナリティクス サポート'
+            fromName: 'KEIBA Analytics サポート'
         });
 
         return {
@@ -164,7 +164,7 @@ async function sendEmailViaSendGrid({ to, subject, html, replyTo, fromName }) {
             }
         ],
         from: {
-            name: fromName || "NANKANアナリティクス サポート",
+            name: fromName || "KEIBA Analytics サポート",
             email: "support@keiba.link"  // 🔧 2025-11-26変更: 迷惑メール対策でsupportに変更
         },
         content: [

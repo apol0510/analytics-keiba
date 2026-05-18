@@ -74,7 +74,7 @@ exports.handler = async (event, context) => {
         to: [{ email: ADMIN_EMAIL }],
         subject: `【Premium Plus お問い合わせ】${subject} - ${email}`
       }],
-      from: { email: FROM_EMAIL, name: 'NANKANアナリティクス サポート' },
+      from: { email: FROM_EMAIL, name: 'KEIBA Analytics サポート' },
       reply_to: { email: email, name: name },  // 🔧 2025-11-26追加: ユーザーへの返信設定
       content: [{
         type: 'text/html',
@@ -128,7 +128,7 @@ exports.handler = async (event, context) => {
     </div>
 
     <div class="footer">
-      <p>NANKANアナリティクス 管理システム</p>
+      <p>KEIBA Analytics 管理システム</p>
     </div>
   </div>
 </body>
@@ -145,10 +145,10 @@ exports.handler = async (event, context) => {
     const userEmailData = {
       personalizations: [{
         to: [{ email: email }],
-        subject: '【お問い合わせ受付】NANKANアナリティクス Premium Plus'
+        subject: '【お問い合わせ受付】KEIBA Analytics Premium Plus'
       }],
-      from: { email: FROM_EMAIL, name: 'NANKANアナリティクス サポート' },
-      reply_to: { email: 'nankan.analytics@gmail.com', name: 'NANKANアナリティクス サポート' },  // 🔧 2025-11-26追加: ユーザー宛メールにも返信先設定
+      from: { email: FROM_EMAIL, name: 'KEIBA Analytics サポート' },
+      reply_to: { email: 'nankan.analytics@gmail.com', name: 'KEIBA Analytics サポート' },  // 🔧 2025-11-26追加: ユーザー宛メールにも返信先設定
       content: [{
         type: 'text/html',
         value: `
@@ -209,7 +209,7 @@ exports.handler = async (event, context) => {
     </div>
 
     <div class="footer">
-      <p><strong>NANKANアナリティクス</strong></p>
+      <p><strong>KEIBA Analytics</strong></p>
       <p>AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム</p>
       <p><a href="https://analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://analytics.keiba.link</a></p>
       <p style="font-size:0.9rem;color:#64748b;margin-top:20px;">

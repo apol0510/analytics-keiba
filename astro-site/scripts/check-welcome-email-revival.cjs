@@ -15,7 +15,7 @@ const FORBIDDEN_PATTERNS = [
   '8912keibalink',
   'process.env.SITE_URL.*dashboard',
   'ウェルカムメール送信成功',
-  'NANKANアナリティクスへようこそ',
+  'KEIBA Analyticsへようこそ',
   'マイページにログイン 📊'
 ];
 

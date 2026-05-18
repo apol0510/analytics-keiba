@@ -16,7 +16,7 @@ export default async (request: Request) => {
     return new Response('Authentication required', {
       status: 401,
       headers: {
-        'WWW-Authenticate': 'Basic realm="NANKAN Admin Panel"',
+        'WWW-Authenticate': 'Basic realm="KEIBA Admin Panel"',
       },
     });
   }
@@ -41,7 +41,7 @@ export default async (request: Request) => {
   return new Response('Invalid credentials', {
     status: 401,
     headers: {
-      'WWW-Authenticate': 'Basic realm="NANKAN Admin Panel"',
+      'WWW-Authenticate': 'Basic realm="KEIBA Admin Panel"',
     },
   });
 };
