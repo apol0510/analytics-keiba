@@ -1,6 +1,10 @@
 // analytics-keiba デイリーメルマガ（メインレース中心）の subject / bodyHtml 生成。
 // 副作用ゼロの純粋関数。Airtable / SendGrid / fs に触れない。
 // 全レース羅列ではなく、メインレース・注目レース1点に絞った文面にする。
+//
+// 2026-05-19 Phase 2.5: featuredHorse + 有料予想 CTA + links optional 引数を追加。
+//   - featuredHorse が未指定なら注目馬セクションを出さない（仮データで埋めない）。
+//   - links.free / links.premium で URL を上書き可能（将来 JRA / KI 拡張用）。
 
 function escapeHtml(s) {
   if (s == null) return '';
@@ -23,10 +27,17 @@ function formatJpDate(isoDate) {
   return `${m}/${d}(${wd})`;
 }
 
+const DEFAULT_LINKS = Object.freeze({
+  free: 'https://analytics.keiba.link/free-prediction/nankan',
+  premium: 'https://analytics.keiba.link/premium-prediction/nankan',
+});
+
 export function renderDailyMainRace({
   campaignDate,
   targetRace,
   brand = 'analytics-keiba',
+  featuredHorse = null,
+  links = null,
 }) {
   if (!targetRace || typeof targetRace !== 'object') {
     throw new Error('targetRace is required');
@@ -48,7 +59,31 @@ export function renderDailyMainRace({
 
   const brandLabel = brand === 'keiba-intelligence' ? '競馬インテリジェンス' : 'KEIBA Analytics';
 
+  const resolvedLinks = {
+    free: (links && typeof links.free === 'string' && links.free) ? links.free : DEFAULT_LINKS.free,
+    premium: (links && typeof links.premium === 'string' && links.premium) ? links.premium : DEFAULT_LINKS.premium,
+  };
+  const freeUrl = escapeHtml(resolvedLinks.free);
+  const premiumUrl = escapeHtml(resolvedLinks.premium);
+
   const subject = `【${brandLabel}】${dateLabel} ${venueLabel}${raceNumLabel} ${raceNameLabel}${gradeLabel} の予想を公開`;
+
+  // 注目馬セクション（featuredHorse が未指定なら何も出さない）
+  let featuredHorseBlock = '';
+  if (featuredHorse && typeof featuredHorse === 'object') {
+    const fhName = escapeHtml(featuredHorse.name || '');
+    const fhNumber = featuredHorse.number != null && featuredHorse.number !== '' ? escapeHtml(String(featuredHorse.number)) : '';
+    const fhRole = escapeHtml(featuredHorse.role || '本命');
+    if (fhName) {
+      const numTag = fhNumber ? `<span style="display:inline-block; min-width:28px; padding:2px 8px; margin-right:8px; background:#1f2937; color:#fff; border-radius:4px; font-weight:700; text-align:center;">${fhNumber}</span>` : '';
+      featuredHorseBlock = [
+        '<div style="background:#fef3c7; border-left:4px solid #f59e0b; border-radius:6px; padding:16px; margin:20px 0;">',
+        `<p style="margin:0 0 8px; font-weight:600; color:#92400e;">本日の${fhRole}</p>`,
+        `<p style="margin:0; font-size:18px;">${numTag}<strong>${fhName}</strong></p>`,
+        '</div>',
+      ].join('\n');
+    }
+  }
 
   const bodyHtml = [
     '<!doctype html>',
@@ -61,10 +96,12 @@ export function renderDailyMainRace({
     `<p style="margin: 0 0 8px; font-weight: 600;">本日のメイン</p>`,
     `<p style="margin: 0;">${venueLabel} ${raceNumLabel} ${raceNameLabel}${gradeLabel}</p>`,
     '</div>',
+    featuredHorseBlock,
     '<p>無料予想・有料予想ともに公開しています。本日の本命・買い目をぜひご確認ください。</p>',
-    '<p style="margin: 28px 0;"><a href="https://analytics.keiba.link/free-prediction/" style="display:inline-block; background:#059669; color:#fff; text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:700;">無料予想を見る</a></p>',
+    `<p style="margin: 24px 0 12px;"><a href="${freeUrl}" style="display:inline-block; background:#059669; color:#fff; text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:700;">無料予想を見る</a></p>`,
+    `<p style="margin: 12px 0 28px;"><a href="${premiumUrl}" style="display:inline-block; background:#dc2626; color:#fff; text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:700;">有料予想を見る</a></p>`,
     '<hr style="border:none; border-top:1px solid #e5e7eb; margin: 32px 0;">',
-    '<p style="color:#6b7280; font-size:12px;">このメールは KEIBA Analytics からお送りしています。</p>',
+    `<p style="color:#6b7280; font-size:12px;">このメールは ${brandLabel} からお送りしています。</p>`,
     '</div></body></html>',
   ].filter(Boolean).join('\n');
 

@@ -467,7 +467,7 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
       let htmlWithUnsubscribe;
 
       if (includeUnsubscribe) {
-        const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}`;
+        const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}&brand=analytics-keiba`;
         htmlWithUnsubscribe = `
           ${htmlContent}
 
@@ -536,8 +536,9 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
           }
         },
         // RFC 8058準拠のList-Unsubscribeヘッダー（Gmail等が要求）
+        // 2026-05-19 Phase 2.5: brand クエリを付与して unsubscribe.js が brand 別フィールドを書き込めるようにする
         headers: {
-          "List-Unsubscribe": `<https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
+          "List-Unsubscribe": `<https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}&brand=analytics-keiba>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
         }
       };
