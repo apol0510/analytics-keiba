@@ -6,6 +6,27 @@ export default async function handler(request, context) {
     'Content-Type': 'application/json'
   };
 
+  // 🛡️ 止血ガード（2026-05-18 追加）
+  // 期限通知は NEWSLETTER_AUTOMATION_ENABLED の対象外で別系統として
+  // 毎日18時に自動送信されていた（safety audit D3）。
+  // 本番配信再開の安全設計が終わるまで cron 自体を no-op にして、
+  // expiry-warning-notification / expiry-notification への HTTP 呼び出しも行わない。
+  // 呼び出し先の expiry-warning / expiry-notification にも同じガードを多層配置している。
+  if (process.env.NEWSLETTER_AUTOMATION_ENABLED !== 'true') {
+    console.log('🛡️ newsletter automation disabled (NEWSLETTER_AUTOMATION_ENABLED !== "true") - cron-expiry-check is a no-op');
+    return new Response(
+      JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: 'newsletter automation disabled',
+        flag: 'NEWSLETTER_AUTOMATION_ENABLED',
+        flagValue: process.env.NEWSLETTER_AUTOMATION_ENABLED ?? null,
+        timestamp: new Date().toISOString()
+      }),
+      { status: 200, headers }
+    );
+  }
+
   console.log('⏰ 期限切れチェックcron開始:', new Date().toISOString());
 
   try {

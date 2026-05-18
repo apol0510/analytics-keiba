@@ -8,6 +8,27 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 exports.handler = async (event, context) => {
+  // 🛡️ 止血ガード（2026-05-18 追加）
+  // 期限通知は NEWSLETTER_AUTOMATION_ENABLED の対象外で別系統として
+  // 毎日18時に SendGrid 送信されていた（safety audit D3）。
+  // cron-expiry-check.js のガードに加え、直接呼び出された場合の二重防御。
+  // ここで早期 return することで、Airtable / SendGrid に一切到達しない。
+  // 本番配信を再開する際は、設計・dry-run・test を整備してから明示的にフラグを立てる。
+  if (process.env.NEWSLETTER_AUTOMATION_ENABLED !== 'true') {
+    console.log('🛡️ newsletter automation disabled (NEWSLETTER_AUTOMATION_ENABLED !== "true") - expiry-warning-notification is a no-op');
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        success: true,
+        skipped: true,
+        reason: 'newsletter automation disabled',
+        flag: 'NEWSLETTER_AUTOMATION_ENABLED',
+        flagValue: process.env.NEWSLETTER_AUTOMATION_ENABLED ?? null,
+        timestamp: new Date().toISOString()
+      })
+    };
+  }
+
   console.log('⚠️ 有効期限1週間前通知システム開始');
 
   try {
