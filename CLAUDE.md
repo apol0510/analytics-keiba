@@ -215,7 +215,51 @@ npm run import:prediction
 npm run import:prediction:jra
 npm run import:results
 npm run import:results:jra
+
+# 恒久ルール検証（指数表示 raw-1 / 全頭分類）
+npm run check:no-raw-index     # JSX に {horse.computerIndex} を直接出力していないか
+npm run check:display-index    # 全 predictions で 表示指数 == raw-1
+npm run check:horse-sections   # 全レースで 合計 == 出走頭数（不要馬セクション維持）
+npm run check:safety           # 上記 3 つを直列実行
+npm run verify:safety          # build → check:safety（push 前推奨）
 ```
+
+## 🛡️ CI Safety Check（恒久ルール強制）
+
+以下 2 つの恒久ルールは **CI で強制**する。CI を通さずに予想表示や馬分類を変更してはいけない。
+一時的に検証を無効化することは **禁止**。
+
+### CI で強制しているルール
+1. **指数表示は必ず raw − 1**
+   - `horse.computerIndex` / `horse.sourceComputerIndex` を JSX に直接埋めるのは禁止
+   - 必ず `getDisplayComputerIndex` / `formatDisplayComputerIndex` 経由
+2. **全レースプレビューで全頭が分類される**
+   - 本命 / 対抗 / 単穴 / 連下 / 抑え / 不要馬 のいずれかに必ず分類
+   - 表示合計 = 出走頭数
+   - 不要馬セクションが消えないこと
+
+### CI が失敗する条件
+- 表示指数が raw と同じ
+- `getDisplayComputerIndex` で `-1` されていない
+- JSX に `{horse.computerIndex}` / `{horse.sourceComputerIndex}` を直接出力
+- 表示分類合計 != 出走頭数（不要馬・抑え・連下の分類漏れ）
+- 検証対象スコープなのに対象ファイル 0 件（「素通り」防止）
+- 対象ファイルがあるのに馬数 0 件（スキーマ破損）
+
+### Workflow / Scripts
+| ファイル | 役割 |
+|---|---|
+| `.github/workflows/safety-check.yml` | PR / push to main / dispatch で実行 |
+| `astro-site/scripts/check-display-computer-index.mjs` | raw vs display 一致検証 |
+| `astro-site/scripts/check-no-raw-computer-index-display.mjs` | JSX 直接出力の grep ガード |
+| `astro-site/scripts/check-free-prediction-horse-sections.mjs` | 全頭分類検証 |
+| `astro-site/package.json` の `check:*` / `verify:safety` | 実行エントリ |
+
+### 運用ルール
+- 予想ページ・カード・全レースプレビューを変更したら **必ず** `npm run check:safety` を実行
+- push 前は `npm run verify:safety`（build + safety）を推奨
+- CI を通さずに指数表示や馬分類を変更してはいけない
+- 一時的に検証を無効化することは禁止
 
 ## 📝 技術スタック
 

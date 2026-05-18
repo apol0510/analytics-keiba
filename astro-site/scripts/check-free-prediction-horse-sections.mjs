@@ -146,8 +146,12 @@ function main() {
   const dateFilter = args[0] || null;
   const venueFilter = args[1] || null;
 
-  const nankanFiles = listNankanFiles(dateFilter, venueFilter);
-  const jraFiles = listJraFiles(dateFilter);
+  // 対象スコープを明確化（CI 用途で「0件 → 成功」を防ぐ）
+  const wantNankan = !venueFilter || !['jra', 'all'].includes(venueFilter.toLowerCase());
+  const wantJra = !venueFilter || ['jra', 'all'].includes(venueFilter.toLowerCase());
+
+  const nankanFiles = wantNankan ? listNankanFiles(dateFilter, venueFilter === 'all' ? null : venueFilter) : [];
+  const jraFiles = wantJra ? listJraFiles(dateFilter) : [];
 
   const nk = summarize('NANKAN', nankanFiles, false);
   const jr = summarize('JRA', jraFiles, true);
@@ -155,6 +159,25 @@ function main() {
   console.log('\n--- まとめ ---');
   console.log(`NANKAN: ${nk.races} レース / 失敗 ${nk.failures}`);
   console.log(`JRA   : ${jr.races} レース / 失敗 ${jr.failures}`);
+
+  // strict: 検証対象スコープなのに 0 件 → 失敗
+  const emptyScopes = [];
+  if (wantNankan && nankanFiles.length === 0) emptyScopes.push('NANKAN');
+  if (wantJra && jraFiles.length === 0) emptyScopes.push('JRA');
+  if (emptyScopes.length > 0) {
+    console.error(`\n❌ ${emptyScopes.join(' / ')} で対象ファイル 0 件。引数 ${JSON.stringify(args)} が誤っているか、predictions 配置が壊れている可能性。`);
+    process.exit(2);
+  }
+
+  // strict: 対象ファイルがあるのに 0 レース → 失敗
+  if (wantNankan && nankanFiles.length > 0 && nk.races === 0) {
+    console.error('\n❌ NANKAN は対象ファイルがあるが、検証対象レースが 0 件。スキーマ破損の可能性。');
+    process.exit(3);
+  }
+  if (wantJra && jraFiles.length > 0 && jr.races === 0) {
+    console.error('\n❌ JRA は対象ファイルがあるが、検証対象レースが 0 件。スキーマ破損の可能性。');
+    process.exit(3);
+  }
 
   if (nk.failures > 0 || jr.failures > 0) {
     console.error('\n❌ 表示分類合計が出走頭数と一致しないレースがあります。');

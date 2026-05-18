@@ -24,7 +24,12 @@
     "import:results": "node scripts/importResults.js",
     "import:results:jra": "node scripts/importResultsJra.js",
     "import:computer": "node scripts/importComputer.js",
-    "sync:archive": "node scripts/syncArchiveResults.js"
+    "sync:archive": "node scripts/syncArchiveResults.js",
+    "check:display-index": "node scripts/check-display-computer-index.mjs",
+    "check:horse-sections": "node scripts/check-free-prediction-horse-sections.mjs",
+    "check:no-raw-index": "node scripts/check-no-raw-computer-index-display.mjs",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections",
+    "verify:safety": "npm run build && npm run check:safety"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.5.8",

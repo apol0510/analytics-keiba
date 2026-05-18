@@ -1,0 +1,76 @@
+name: Safety Check (display index / 不要馬分類)
+
+# 2 つの恒久ルールを CI で強制するためのワークフロー:
+#   1) 表示用コンピ指数は必ず raw − 1（共通関数経由）
+#      → astro-site/scripts/check-display-computer-index.mjs
+#      → astro-site/scripts/check-no-raw-computer-index-display.mjs（grep ガード）
+#   2) 全レースプレビューで全頭が分類済み（合計 == 出走頭数、不要馬セクション維持）
+#      → astro-site/scripts/check-free-prediction-horse-sections.mjs
+
+on:
+  pull_request:
+    paths:
+      - 'astro-site/src/**'
+      - 'astro-site/scripts/check-display-computer-index.mjs'
+      - 'astro-site/scripts/check-free-prediction-horse-sections.mjs'
+      - 'astro-site/scripts/check-no-raw-computer-index-display.mjs'
+      - 'astro-site/package.json'
+      - 'astro-site/package-lock.json'
+      - '.github/workflows/safety-check.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'astro-site/src/**'
+      - 'astro-site/scripts/check-display-computer-index.mjs'
+      - 'astro-site/scripts/check-free-prediction-horse-sections.mjs'
+      - 'astro-site/scripts/check-no-raw-computer-index-display.mjs'
+      - 'astro-site/package.json'
+      - 'astro-site/package-lock.json'
+      - '.github/workflows/safety-check.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: safety-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safety:
+    name: build + display-index + horse-sections + grep guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: astro-site
+        run: npm ci
+
+      - name: Static guard - no raw {horse.computerIndex} in JSX
+        working-directory: astro-site
+        run: npm run check:no-raw-index
+
+      - name: Build (astro)
+        working-directory: astro-site
+        env:
+          # 本番と同じ validate:archive を通すため、build は最大限実運用に近付ける
+          NODE_ENV: production
+        run: npm run build
+
+      - name: Verify display index == raw - 1
+        working-directory: astro-site
+        run: npm run check:display-index
+
+      - name: Verify 全頭分類（不要馬セクション維持）
+        working-directory: astro-site
+        run: npm run check:horse-sections
