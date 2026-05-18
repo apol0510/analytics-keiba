@@ -32,6 +32,12 @@ const DEFAULT_LINKS = Object.freeze({
   premium: 'https://analytics.keiba.link/premium-prediction/nankan',
 });
 
+// href に javascript: / data: 等の不正スキームを差し込まれないよう、http(s) のみ受け入れる。
+// 不正な値は default にフォールバック（defense in depth、caller 側でも検証する想定）。
+function isSafeUrl(u) {
+  return typeof u === 'string' && /^https?:\/\//i.test(u);
+}
+
 export function renderDailyMainRace({
   campaignDate,
   targetRace,
@@ -60,8 +66,8 @@ export function renderDailyMainRace({
   const brandLabel = brand === 'keiba-intelligence' ? '競馬インテリジェンス' : 'KEIBA Analytics';
 
   const resolvedLinks = {
-    free: (links && typeof links.free === 'string' && links.free) ? links.free : DEFAULT_LINKS.free,
-    premium: (links && typeof links.premium === 'string' && links.premium) ? links.premium : DEFAULT_LINKS.premium,
+    free: isSafeUrl(links?.free) ? links.free : DEFAULT_LINKS.free,
+    premium: isSafeUrl(links?.premium) ? links.premium : DEFAULT_LINKS.premium,
   };
   const freeUrl = escapeHtml(resolvedLinks.free);
   const premiumUrl = escapeHtml(resolvedLinks.premium);

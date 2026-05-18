@@ -150,6 +150,9 @@ async function handleRequest(request, headers) {
     fromEmail: requestedFromEmail,
     fromName: requestedFromName,
     audienceMode: requestedAudienceMode,
+    // 2026-05-19 Phase 2.5+: renderer に注目馬 / CTA URL を渡せるよう forward
+    featuredHorse: requestedFeaturedHorse,
+    links: requestedLinks,
   } = body || {};
 
   const audienceMode = requestedAudienceMode || 'mock';
@@ -229,11 +232,56 @@ async function handleRequest(request, headers) {
     );
   }
 
+  // featuredHorse / links を validate（不正値は preview 段階で 400 に倒す。renderer 側にも防御あり）
+  // featuredHorse: object かつ name が非空文字列のときのみ採用、それ以外は null
+  let featuredHorse = null;
+  if (requestedFeaturedHorse != null) {
+    if (typeof requestedFeaturedHorse !== 'object' || Array.isArray(requestedFeaturedHorse)) {
+      return new Response(
+        JSON.stringify({ error: 'featuredHorse must be an object', got: typeof requestedFeaturedHorse }),
+        { status: 400, headers }
+      );
+    }
+    const name = typeof requestedFeaturedHorse.name === 'string' ? requestedFeaturedHorse.name.trim() : '';
+    if (name) {
+      featuredHorse = {
+        name,
+        // number は number | string どちらでも許容（renderer 側で String() + escape）
+        number: requestedFeaturedHorse.number != null ? requestedFeaturedHorse.number : '',
+        role: typeof requestedFeaturedHorse.role === 'string' && requestedFeaturedHorse.role.trim() ? requestedFeaturedHorse.role.trim() : '本命',
+      };
+    }
+  }
+
+  // links: { free, premium } を https:// のみ受け入れる（javascript: / data: 等を拒否）
+  let links = null;
+  if (requestedLinks != null) {
+    if (typeof requestedLinks !== 'object' || Array.isArray(requestedLinks)) {
+      return new Response(
+        JSON.stringify({ error: 'links must be an object', got: typeof requestedLinks }),
+        { status: 400, headers }
+      );
+    }
+    const safeHttps = (u) => typeof u === 'string' && /^https:\/\//i.test(u);
+    const linkErrors = [];
+    if (requestedLinks.free != null && !safeHttps(requestedLinks.free)) linkErrors.push('links.free must be https://');
+    if (requestedLinks.premium != null && !safeHttps(requestedLinks.premium)) linkErrors.push('links.premium must be https://');
+    if (linkErrors.length > 0) {
+      return new Response(
+        JSON.stringify({ error: 'invalid links', detail: linkErrors }),
+        { status: 400, headers }
+      );
+    }
+    links = {};
+    if (safeHttps(requestedLinks.free)) links.free = requestedLinks.free;
+    if (safeHttps(requestedLinks.premium)) links.premium = requestedLinks.premium;
+  }
+
   // 本文レンダリング
   let subject;
   let bodyHtml;
   try {
-    ({ subject, bodyHtml } = renderDailyMainRace({ campaignDate, targetRace, brand }));
+    ({ subject, bodyHtml } = renderDailyMainRace({ campaignDate, targetRace, brand, featuredHorse, links }));
   } catch (e) {
     return new Response(
       JSON.stringify({ error: 'render failed', detail: e.message }),
@@ -395,6 +443,9 @@ async function handleRequest(request, headers) {
         fromEmail,
         fromName,
         targetRace,
+        // 2026-05-19 Phase 2.5+: admin が renderer に渡された値を確認できるようエコー
+        featuredHorse,
+        links,
         subject,
         contentHash,
         contentPreview: bodyHtml.slice(0, 2000),
