@@ -69,24 +69,34 @@ exports.handler = async (event, context) => {
 
       console.log(`📧 期限切れ通知送信: ${email} (${plan}, 期限: ${expiryDate})`);
 
-      // お客様への通知メール
+      // 配信停止 URL（brand 別 unsubscribe フィールドに書き込む）
+      const unsubscribeUrl = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}&brand=analytics-keiba`;
+
+      // お客様への通知メール（D4 統一: KEIBA Analytics ブランド + RFC 8058 List-Unsubscribe）
       const customerEmail = {
         to: email,
-        from: 'nankan-analytics@keiba.link',
+        from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
+        replyTo: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
         subject: '【期間限定】特別割引で復帰しませんか？ - KEIBA Analytics',
-        html: generateCustomerEmail(fullName, email, plan, expiryDate),
+        html: generateCustomerEmail(fullName, email, plan, expiryDate, unsubscribeUrl),
         tracking_settings: {
           click_tracking: { enable: false, enable_text: false },
           open_tracking: { enable: false },
           subscription_tracking: { enable: false },
           ganalytics: { enable: false }
+        },
+        // RFC 8058 準拠の List-Unsubscribe ヘッダー（Gmail 等が要求）
+        headers: {
+          'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
         }
       };
 
-      // マコさんへの通知メール
+      // 管理者向け通知メール（to は既存運用継続、from/reply_to のみ統一）
       const adminEmail = {
         to: 'nankan-analytics@keiba.link',
-        from: 'nankan-analytics@keiba.link',
+        from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
+        replyTo: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
         subject: `[管理者通知] ${email} 様に期限切れ通知+割引案内を送信しました`,
         html: generateAdminEmail(email, fullName, plan, expiryDate),
         tracking_settings: {
@@ -155,7 +165,7 @@ exports.handler = async (event, context) => {
 };
 
 // お客様向けメール本文生成（3ヶ月40%OFF、6ヶ月50%OFF + アップセル案内）
-function generateCustomerEmail(fullName, email, plan, expiryDate) {
+function generateCustomerEmail(fullName, email, plan, expiryDate, unsubscribeUrl) {
   const planInfo = getPlanDiscountInfo(plan);
 
   return `
@@ -234,9 +244,12 @@ function generateCustomerEmail(fullName, email, plan, expiryDate) {
 
       <div class="footer">
         <p>KEIBA Analytics<br>
-        Email: nankan-analytics@keiba.link</p>
+        お問い合わせ: <a href="mailto:${SUPPORT_EMAIL}" style="color: #6b7280;">${SUPPORT_EMAIL}</a></p>
         <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 15px;">
           ※このメールは有効期限切れ時に自動送信されています
+        </p>
+        <p style="font-size: 0.85rem; margin-top: 12px;">
+          <a href="${unsubscribeUrl}" style="color: #dc2626; text-decoration: underline;">🚫 配信停止はこちら</a>
         </p>
       </div>
     </div>
