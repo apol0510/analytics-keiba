@@ -2,7 +2,7 @@
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
-import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
+import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 
 // src/data/predictions/*.json を自動スキャンし、最新日付の全会場を取得（同時開催対応）
@@ -365,7 +365,9 @@ const analysis = firstVenue.mainRace.analysis;
                                                     </div>
                                                 )}
 
-                                                {/* 抑え候補馬 — premium と同じ isOsaeCandidate 振り分け */}
+                                                {/* 抑え候補馬 — premium と同じ isOsaeCandidate 振り分け
+                                                    （ここに表示されるのは role が 押さえ/抑え/補欠 かつ ci ≥ 45 の馬のみ。
+                                                    それ以外の弱評価補欠・無 ロールは下の「不要馬」セクションに残す） */}
                                                 {raceHorses && raceHorses.filter(isOsaeCandidate).length > 0 && (
                                                     <div class="horse-card horse-card-minor minor-group-osae">
                                                         <div class="horse-header">
@@ -422,6 +424,69 @@ const analysis = firstVenue.mainRace.analysis;
                                                             })}
                                                         </div>
                                                     </div>
+                                                )}
+
+                                                {/* 不要馬セクション — isIneligibleHorse（HANDLED_ROLES 外 / 無 / 補欠 ci<45 など）
+                                                    抑え候補から漏れた馬を、抑えとは別枠の見出しで全頭表示する。
+                                                    （恒久仕様: 抑え候補馬と不要馬は混同しない。section title は「不要馬」固定） */}
+                                                {raceHorses && raceHorses.filter(isIneligibleHorse).length > 0 && (
+                                                    <details class="minor-group-ineligible">
+                                                        <summary class="ineligible-summary">
+                                                            <span class="ineligible-summary-icon">無</span>
+                                                            <span class="ineligible-summary-title">不要馬 {raceHorses.filter(isIneligibleHorse).length}頭</span>
+                                                        </summary>
+                                                        <div class="minor-horse-grid">
+                                                            {raceHorses
+                                                                .filter(isIneligibleHorse)
+                                                                .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0))
+                                                                .map((horse) => {
+                                                                    const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
+                                                                    const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                                                    const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                                                    const ptNum = Number(horse.pt);
+                                                                    return (
+                                                                        <div class="minor-horse-card minor-horse-card-ineligible">
+                                                                            <div class="minor-horse-head">
+                                                                                <span class="minor-horse-mark">無</span>
+                                                                                <span class="minor-horse-number">{horse.number}</span>
+                                                                                <span class="minor-horse-name">{horse.name}</span>
+                                                                                <span class="minor-horse-score">{Number.isFinite(ptNum) && ptNum > 70 ? `${ptNum}pt` : '見送り'}</span>
+                                                                            </div>
+                                                                            <div class="minor-horse-meta">
+                                                                                {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                                                                {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                                                                {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                                                                {horse.computerIndex != null && <span><span class="meta-key">指数</span>{horse.computerIndex}</span>}
+                                                                            </div>
+                                                                            {evalPoints.length > 0 && (
+                                                                                <div class="minor-horse-evals">
+                                                                                    {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                                                                </div>
+                                                                            )}
+                                                                            {recentRaces.length > 0 && (
+                                                                                <details class="recent-races recent-races-compact">
+                                                                                    <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                                                                    <div class="recent-races-list">
+                                                                                        {recentRaces.slice(0, 4).map((r) => {
+                                                                                            const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                                            return (
+                                                                                                <div class="recent-race-row">
+                                                                                                    <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                                                                    <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                                                                    <span class="recent-race-rank">{rank}</span>
+                                                                                                    {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                                                                    {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                                                </div>
+                                                                                            );
+                                                                                        })}
+                                                                                    </div>
+                                                                                </details>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                        </div>
+                                                    </details>
                                                 )}
                                             </div>
 
@@ -818,6 +883,61 @@ const analysis = firstVenue.mainRace.analysis;
         background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), rgba(15, 23, 42, 0.7));
     }
     .minor-horse-card-osae { border-color: rgba(100, 116, 139, 0.3); }
+
+    /* 不要馬セクション — 抑え候補と混同しないように独立した折りたたみ枠で表示
+       色トーンは抑えカードよりさらに沈めて「買い目対象外」を視覚的に区別する */
+    details.minor-group-ineligible {
+        margin-top: 24px;
+        background: rgba(15, 23, 42, 0.75);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 14px;
+        padding: 14px 18px;
+    }
+    .ineligible-summary {
+        cursor: pointer;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #e2e8f0;
+        font-weight: 700;
+        font-size: 0.95rem;
+        padding: 4px 0;
+    }
+    .ineligible-summary::-webkit-details-marker { display: none; }
+    .ineligible-summary::before {
+        content: '▶';
+        display: inline-block;
+        color: #94a3b8;
+        font-size: 0.85rem;
+        transition: transform 0.2s ease;
+    }
+    details.minor-group-ineligible[open] > .ineligible-summary::before { transform: rotate(90deg); }
+    .ineligible-summary-icon {
+        display: inline-block;
+        width: 26px;
+        height: 26px;
+        line-height: 26px;
+        text-align: center;
+        border-radius: 50%;
+        background: rgba(100, 116, 139, 0.25);
+        color: #cbd5e1;
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+    .ineligible-summary-title { color: #e2e8f0; }
+    details.minor-group-ineligible[open] .minor-horse-grid { margin-top: 12px; }
+    .minor-horse-card-ineligible {
+        border-color: rgba(100, 116, 139, 0.3);
+        background: rgba(15, 23, 42, 0.55);
+        opacity: 0.9;
+    }
+    .minor-horse-card-ineligible .minor-horse-mark { color: #94a3b8; font-weight: 600; }
+    .minor-horse-card-ineligible .minor-horse-score {
+        color: #94a3b8;
+        background: rgba(100, 116, 139, 0.15);
+        border-color: rgba(100, 116, 139, 0.3);
+    }
     .minor-horse-head {
         display: flex;
         align-items: center;
@@ -2647,6 +2767,40 @@ const analysis = firstVenue.mainRace.analysis;
     }
 
     // アコーディオン共通化: 一つ開けたら他を自動で閉じる（同時開催対応：会場ごとにスコープ）
+    // 2026-05-18: 内側 <details>（不要馬 等）を開いても親の max-height でクリップされないよう、
+    // open アニメ完了後に maxHeight='none' に切り替える方式へ変更。
+    function _closeAccordionNK(content, icon) {
+        if (!content || !icon) return;
+        if (content.style.maxHeight === 'none') {
+            // none → 現高さに固定してから次フレームで 0 へ
+            content.style.maxHeight = content.scrollHeight + 'px';
+            requestAnimationFrame(() => {
+                content.style.maxHeight = '0px';
+                content.style.opacity = '0';
+            });
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+        }
+        icon.textContent = '▼';
+        icon.style.transform = 'rotate(0deg)';
+    }
+    function _openAccordionNK(content, icon) {
+        if (!content || !icon) return;
+        if (content.style.maxHeight === 'none') return; // 既に open
+        content.style.maxHeight = content.scrollHeight + 'px';
+        content.style.opacity = '1';
+        icon.textContent = '◎';
+        icon.style.transform = 'rotate(180deg)';
+        const onEnd = (e) => {
+            if (e.propertyName !== 'max-height') return;
+            content.removeEventListener('transitionend', onEnd);
+            if (content.style.maxHeight !== '0px') {
+                content.style.maxHeight = 'none';
+            }
+        };
+        content.addEventListener('transitionend', onEnd);
+    }
     function toggleNankanRace(venueIndex, raceNumber) {
         const content = document.getElementById(`race-v${venueIndex}-${raceNumber}r`);
         const icon = document.getElementById(`toggle-v${venueIndex}-${raceNumber}r`);
@@ -2658,24 +2812,16 @@ const analysis = firstVenue.mainRace.analysis;
                 const otherContent = document.getElementById(`race-v${venueIndex}-${i}r`);
                 const otherIcon = document.getElementById(`toggle-v${venueIndex}-${i}r`);
                 if (otherContent && otherIcon) {
-                    otherContent.style.maxHeight = '0px';
-                    otherContent.style.opacity = '0';
-                    otherIcon.textContent = '▼';
-                    otherIcon.style.transform = 'rotate(0deg)';
+                    _closeAccordionNK(otherContent, otherIcon);
                 }
             }
         }
 
-        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-            content.style.maxHeight = content.scrollHeight + 'px';
-            content.style.opacity = '1';
-            icon.textContent = '◎';
-            icon.style.transform = 'rotate(180deg)';
+        const isClosed = content.style.maxHeight === '0px' || content.style.maxHeight === '';
+        if (isClosed) {
+            _openAccordionNK(content, icon);
         } else {
-            content.style.maxHeight = '0px';
-            content.style.opacity = '0';
-            icon.textContent = '▼';
-            icon.style.transform = 'rotate(0deg)';
+            _closeAccordionNK(content, icon);
         }
     }
     window.toggleNankanRace = toggleNankanRace;
