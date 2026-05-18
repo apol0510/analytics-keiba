@@ -292,7 +292,7 @@ Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（
 
 レスポンスに **絶対に含めない**もの: `AIRTABLE_API_KEY` の値 / Base ID の値 / `Authorization` ヘッダ / Airtable 生レスポンス全文 / record id / email / name。
 
-## 本番到達点（2026-05-17 時点）
+## 本番到達点（2026-05-18 時点）
 
 ここまでで実装・本番デプロイ済の機能:
 
@@ -312,6 +312,18 @@ Airtable READ が non-2xx を返した場合、必ず JSON で以下を返す（
 - ✅ 排他 3 段階除外 (withdrawn → unsubscribe → blacklist) + AK のみ EmailBlacklist
   READ-ONLY 取得 + admin UI に `blacklistStatus` / `unsubscribeExcluded` /
   `blacklistExcluded` 表示 (commit `c786f22`)
+- ✅ unsubscribe.js を brand 別新フィールド (`UnsubscribedAnalyticsKeiba` /
+  `UnsubscribedKeibaIntelligence`) 書込に全面改修 + email を sha256 trace ID
+  化して PII ログを排除 (commit `8ee7467`)
+- ✅ newsletter-preview の 5xx 既知エラーを HTTP 200 + `structured_error` で返却
+  (Cloudflare 5xx 書換回避、4xx は維持) (commit `0a44f26`)
+- ✅ `newsletter-send-test` 関数を追加。multi-layer safety + env-only
+  recipients で運営者宛のみ実 SendGrid 送信、subject `[TEST]` 接頭辞 + 本文
+  バナー (commit `6d63c69`)。初回実送信検証成功 (本番、運営者 1 件、
+  sentCount=1)
+- ✅ メール配信・公開ページ・docs の旧表記 `NANKANアナリティクス` を全て
+  `KEIBA Analytics` に統一 (commit `b13fc65`、59 ファイル)。最終 From 表示
+  確認は本番運営者宛先で実 SendGrid 送信 (1 通) して目視確認済み
 
 **Cloudflare 5xx 書き換え事象（運用知見）**:
 `analytics.keiba.link`（Cloudflare 前段）は origin の 5xx を Cloudflare 汎用エラーページ
@@ -387,6 +399,77 @@ PII 検証:
 - regex で実 email 漏洩: 0 件 (4 パターン全て)
 - Airtable record id (`rec[14 chars]`) 漏洩: 0 件
 - Airtable WRITE / SendGrid 呼び出しなし
+
+### 2026-05-18 newsletter-send-test 初回実 SendGrid 送信検証 (commit `6d63c69`)
+
+`newsletter-send-test` 関数 (本コミットで新設) を運営者宛先 1 件で初回実送信し、
+disabled gate / env-only recipients / SendGrid 呼び出し / PII 取り扱いが
+仕様通り動作することを本番で確認:
+
+| 項目 | 結果 |
+|---|---|
+| Deploy commit | `6d63c69` (state: ready) |
+| 安全装置 disabled パス事前確認 | ✅ `errorClass=test-send-disabled` (env 未設定時) |
+| 一時 env 設定 | `NEWSLETTER_TEST_SEND_ENABLED=true` + `NEWSLETTER_TEST_RECIPIENTS=<運営者 1 件>` |
+| 送信 POST 回数 | **1 回のみ** |
+| HTTP / Content-Type | 200 / application/json |
+| success | true |
+| result.sentCount | **1** |
+| result.failedCount | 0 |
+| SendGrid 応答 status | **202 Accepted** |
+| testRecipients.source | `env:NEWSLETTER_TEST_RECIPIENTS` |
+| testRecipients.count | 1 |
+| testRecipients.domainBreakdown | `{ yahoo.co.jp: 1 }` |
+| trace (sha256 12 chars) | 公開、email 全文は出力なし |
+| customersAccessed / airtableAccessed | **false / false** |
+| pii | `none-exposed-recipient-emails-redacted-to-trace-only` |
+| 終了時 env | `NEWSLETTER_TEST_SEND_ENABLED=false` に戻し、disabled 再確認済み |
+| `NEWSLETTER_AUTOMATION_ENABLED` | 未変更 (本番送信系の安全装置は触らず) |
+| 本番会員への副作用 | なし (env-whitelist のみ、Customers 経路ゼロ) |
+
+PII / 秘密漏洩スキャン:
+- 実 email 漏洩 (dummy/brand domain 以外): **0 件**
+- SendGrid key (`SG.*`) 漏洩: 0 件
+- Airtable record id (`rec[14]`) 漏洩: 0 件
+
+### 2026-05-18 ブランド名統一後の最終 From 表示確認 (commit `b13fc65`)
+
+`b13fc65` の旧表記 `NANKANアナリティクス` → `KEIBA Analytics` 統一後、
+**運営者宛先 1 件で再度実 SendGrid 送信**し From 表示更新を本番で確認:
+
+| 項目 | 結果 |
+|---|---|
+| Deploy commit | `b13fc65` (state: ready) |
+| 送信 POST 回数 | **1 回のみ** |
+| campaign.fromEmail | `noreply@keiba.link` |
+| **campaign.fromName** | **`KEIBA Analytics [TEST]`** ← 旧 NANKAN 表記から更新 |
+| campaign.subject | `[TEST] 【KEIBA Analytics】5/18(月) テスト11R メイン の予想を公開` |
+| campaign.subjectPrefixed | true |
+| 本文先頭バナー | `⚠️ これはテスト配信です / brand=analytics-keiba / ...` (赤枠) |
+| SendGrid 応答 | 202 Accepted |
+| result.sentCount / failedCount | 1 / 0 |
+| レスポンス内 `NANKANアナリティクス` 出現 | **0** (旧表記完全消失) |
+| `KEIBA Analytics` 出現 | 2 (fromName + subject 内) |
+| 運営者メールボックス目視 | From 表示が `KEIBA Analytics [TEST]` で 1 通受信、内容 OK |
+| 終了時 env | `NEWSLETTER_TEST_SEND_ENABLED=false` に戻し、disabled 再確認済み |
+| `NEWSLETTER_AUTOMATION_ENABLED` | 未変更 |
+| 本番会員への副作用 | なし |
+
+#### 運用 SOP (test-send を再実行するときの手順)
+
+実 SendGrid 送信を伴うので、毎回以下を厳守:
+
+1. `netlify env:set NEWSLETTER_TEST_SEND_ENABLED true --context production`
+2. `netlify env:set NEWSLETTER_TEST_RECIPIENTS "<運営者 email>" --context production` (既設定済みなら省略)
+3. `netlify api createSiteBuild --data '{"site_id":"..."}'` で redeploy trigger → ready 待機
+4. curl で `audienceMode=test-send` POST を **1 回だけ** 実行
+5. レスポンス確認: `success=true / sentCount=1 / customersAccessed=false / airtableAccessed=false`
+6. 運営者メールボックスで `[TEST]` 件名 + `KEIBA Analytics [TEST]` From を目視確認
+7. **すぐに** `netlify env:set NEWSLETTER_TEST_SEND_ENABLED false --context production`
+8. redeploy trigger → disabled curl で `errorClass=test-send-disabled` を再確認
+
+7-8 を必ずセットで実行すること。途中で false に戻し忘れると後続の curl が
+意図せず実送信を発火させる。
 
 ### 既知の Airtable 認証エラー型（hint テーブル参照）
 
