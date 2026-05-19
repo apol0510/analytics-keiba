@@ -20,6 +20,7 @@ import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter
 import { computeContentHash } from '../../src/lib/newsletter/content-hash.js';
 import { computeDeliveryKey, describeDeliveryKeyTemplate } from '../../src/lib/newsletter/delivery-key.js';
 import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-race.js';
+import { normalizeRenderOptions } from '../../src/lib/newsletter/render-options-validator.js';
 import { parseTestRecipientsEnv, emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
 
 const TEST_FROM_EMAIL = 'noreply@keiba.link';
@@ -210,7 +211,12 @@ async function handleRequest(request, headers) {
   } catch {
     return new Response(JSON.stringify({ error: 'invalid JSON body' }), { status: 400, headers });
   }
-  const { brand, serviceType, campaignType, campaignDate, audienceType, targetRace, audienceMode } = body || {};
+  const {
+    brand, serviceType, campaignType, campaignDate, audienceType, targetRace, audienceMode,
+    // 2026-05-19 Phase 2.5+ C': preview と同じく renderer に注目馬 / CTA URL を渡せるよう forward
+    featuredHorse: requestedFeaturedHorse,
+    links: requestedLinks,
+  } = body || {};
 
   // === 安全装置 3: audienceMode === 'test-send' ===
   if (!audienceMode || audienceMode !== 'test-send' || !SUPPORTED_AUDIENCE_MODES.has(audienceMode)) {
@@ -277,11 +283,22 @@ async function handleRequest(request, headers) {
     );
   }
 
+  // === featuredHorse / links を共通 helper で validate（preview と完全同一ルール） ===
+  const optsResult = normalizeRenderOptions({
+    featuredHorse: requestedFeaturedHorse,
+    links: requestedLinks,
+  });
+  if (optsResult.error) {
+    return new Response(JSON.stringify(optsResult.error), { status: 400, headers });
+  }
+  const featuredHorse = optsResult.featuredHorse;
+  const links = optsResult.links;
+
   // === 本文 render ===
   let subject;
   let bodyHtml;
   try {
-    ({ subject, bodyHtml } = renderDailyMainRace({ campaignDate, targetRace, brand }));
+    ({ subject, bodyHtml } = renderDailyMainRace({ campaignDate, targetRace, brand, featuredHorse, links }));
   } catch (e) {
     return new Response(
       JSON.stringify({ error: 'render failed', detail: e.message }),
@@ -376,6 +393,9 @@ async function handleRequest(request, headers) {
         fromEmail: TEST_FROM_EMAIL,
         fromName: TEST_FROM_NAME,
         targetRace,
+        // 2026-05-19 Phase 2.5+ C': admin が renderer 入力を確認できるよう echo
+        featuredHorse,
+        links,
         subject: testSubject,
         subjectPrefixed: true,
         contentHash,
