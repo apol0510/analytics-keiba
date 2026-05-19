@@ -68,16 +68,35 @@ function classifySendgridError(status) {
 /**
  * 単一宛先に SendGrid /v3/mail/send で POST する。
  * 戻り値はサニタイズ済（email 含まない）。
+ *
+ * 2026-05-19 Phase 3 修正: 本文末尾の配信停止 footer と RFC 8058 List-Unsubscribe ヘッダーを
+ * recipient 単位で付与（send-newsletter.js D4 統一と同パターン）。テスト配信でも本番と同等の
+ * unsubscribe 体験を確保し、Gmail / Outlook の登録解除ボタンが正しく表示されるようにする。
  */
 async function sendOneViaSendGrid({ apiKey, recipient, subject, htmlBody }) {
   const trace = emailTraceId(recipient);
   const domain = recipient.split('@')[1] || 'unknown';
 
+  // 配信停止 URL（brand 別 unsubscribe フィールドに書き込む）
+  const unsubscribeUrl = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}&brand=analytics-keiba`;
+
+  // 本文末尾に配信停止 footer を append（recipient 固有 URL を含むため per-recipient で構築）
+  const htmlBodyWithUnsubscribe = `${htmlBody}
+    <hr style="margin: 30px 0; border: none; border-top: 1px solid #e5e7eb;">
+    <div style="text-align: center; padding: 20px; background-color: #f9fafb; font-size: 12px; color: #6b7280; font-family: Arial, sans-serif;">
+      <p style="margin: 0 0 10px 0;">このメールは KEIBA Analytics [TEST] からお送りしています</p>
+      <p style="margin: 10px 0;">
+        <a href="${unsubscribeUrl}" style="color: #dc2626; text-decoration: underline;">
+          🚫 配信停止はこちら
+        </a>
+      </p>
+    </div>`;
+
   const emailData = {
     personalizations: [{ to: [{ email: recipient }], subject }],
     from: { name: TEST_FROM_NAME, email: TEST_FROM_EMAIL },
     reply_to: { name: TEST_FROM_NAME, email: TEST_FROM_EMAIL },
-    content: [{ type: 'text/html', value: htmlBody }],
+    content: [{ type: 'text/html', value: htmlBodyWithUnsubscribe }],
     tracking_settings: {
       click_tracking: { enable: false, enable_text: false },
       open_tracking: { enable: false, substitution_tag: null },
@@ -88,6 +107,11 @@ async function sendOneViaSendGrid({ apiKey, recipient, subject, htmlBody }) {
       bypass_list_management: { enable: false },
       footer: { enable: false },
       sandbox_mode: { enable: false },
+    },
+    // RFC 8058 準拠の List-Unsubscribe ヘッダー（Gmail 等が要求）
+    headers: {
+      'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     },
   };
 
