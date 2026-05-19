@@ -1,6 +1,7 @@
 // SendGridメルマガ配信Function
 // 南関競馬の予想結果や攻略情報を配信
 
+import { createHash } from 'node:crypto';
 import {
   fetchCustomersReadOnly,
   loadBlacklistEmails,
@@ -10,9 +11,16 @@ import {
   resolveAudienceRecipients,
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
+import { emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
 
 // 旧 admin UI は brand を渡さない。AK 専用 function なので analytics-keiba を既定値とする。
 const DEFAULT_BRAND = 'analytics-keiba';
+
+// 2026-05-19 Phase 4 後追い修正: Function ログに recipient email を残さないための trace ID。
+// newsletter-send-test と同じ仕組みを再利用（hash(email)[0:12]）。
+function emailTraceId(email) {
+  return emailTraceIdRaw(email, { createHash });
+}
 
 export default async function handler(request, context) {
   // CORS対応ヘッダー
@@ -66,17 +74,22 @@ export default async function handler(request, context) {
 
   try {
     const requestBody = await request.text();
-    console.log('Received request body:', requestBody);
+    // 2026-05-19 Phase 4 後追い修正: 全文ログは PII (recipient email / htmlContent) を残すため削除。
+    // 必要な集計値のみ出す。
+    console.log('📥 send-newsletter request received:', { bodyBytes: requestBody.length });
 
     const { subject, htmlContent, scheduledAt, targetPlan = 'all', targetMailingList = 'all', retryEmails, includeUnsubscribe = true } = JSON.parse(requestBody);
 
-    // 🔍 デバッグログ追加
+    // 🔍 パラメータ詳細確認（PII を含めない）
     console.log('🎯 パラメータ詳細確認:', {
       subject,
       targetPlan,
       targetMailingList,
       scheduledAt,
-      hasRetryEmails: !!retryEmails
+      hasRetryEmails: !!retryEmails,
+      retryEmailsCount: Array.isArray(retryEmails) ? retryEmails.length : 0,
+      htmlContentBytes: typeof htmlContent === 'string' ? htmlContent.length : 0,
+      includeUnsubscribe,
     });
 
     // 必須パラメータチェック
@@ -440,7 +453,7 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
       });
 
       if (response.ok) {
-        console.log(`✅ EmailBlacklistに自動記録: ${email} - ${reason}`);
+        console.log(`✅ EmailBlacklistに自動記録: trace=${emailTraceId(email)} - ${reason}`);
       }
     } catch (error) {
       console.error(`❌ EmailBlacklist記録エラー: ${error.message}`);
@@ -453,7 +466,7 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
 
     // 🛡️ 送信前の厳格なメール形式チェック（根本解決）
     if (!validateEmailFormat(recipient)) {
-      console.log(`🚫 無効なメール形式検出: ${recipient}`);
+      console.log(`🚫 無効なメール形式検出: trace=${emailTraceId(recipient)}`);
       results.totalFailed += 1;
       results.failedEmails.push(recipient);
 
@@ -552,39 +565,42 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
         body: JSON.stringify(emailData)
       });
 
+      // 2026-05-19 Phase 4 後追い: per-recipient ログは trace 化（recipient を出さない）
+      const trace = emailTraceId(recipient);
+
       if (response.ok) {
         results.totalSent += 1;
-        console.log(`✅ 個別送信成功: ${recipient}`);
+        console.log(`✅ 個別送信成功: trace=${trace}`);
       } else {
         const errorData = await response.text();
-        console.error(`❌ 個別送信失敗 ${recipient}:`, errorData);
+        console.error(`❌ 個別送信失敗 trace=${trace}:`, errorData);
 
         // 🔍 SendGridエラー詳細解析でバウンス検知
-        console.log(`🔍 バウンス分析開始: ${recipient} - Status: ${response.status}`);
+        console.log(`🔍 バウンス分析開始: trace=${trace} - Status: ${response.status}`);
         console.log(`🔍 Error Data: ${errorData.substring(0, 200)}...`);
 
         const bounceInfo = await analyzeSendGridBounce(recipient, response.status, errorData);
         console.log(`🔍 バウンス分析結果:`, bounceInfo);
 
         if (bounceInfo.isBounce) {
-          console.log(`🚫 バウンス検知！記録更新開始: ${recipient} (${bounceInfo.type})`);
+          console.log(`🚫 バウンス検知！記録更新開始: trace=${trace} (${bounceInfo.type})`);
 
           try {
             await updateBounceRecord(recipient, bounceInfo);
-            console.log(`✅ バウンス記録更新成功: ${recipient}`);
+            console.log(`✅ バウンス記録更新成功: trace=${trace}`);
           } catch (updateError) {
-            console.error(`❌ バウンス記録更新失敗: ${recipient}`, updateError);
+            console.error(`❌ バウンス記録更新失敗: trace=${trace}`, updateError);
           }
 
           // 🛡️ ドメイン保護システムに失敗を報告
           try {
             await reportFailureToDomainProtection(recipient, bounceInfo.type, errorData, response.status);
-            console.log(`🛡️ ドメイン保護システムに報告完了: ${recipient}`);
+            console.log(`🛡️ ドメイン保護システムに報告完了: trace=${trace}`);
           } catch (reportError) {
-            console.error(`❌ ドメイン保護報告失敗: ${recipient}`, reportError);
+            console.error(`❌ ドメイン保護報告失敗: trace=${trace}`, reportError);
           }
         } else {
-          console.log(`ℹ️ バウンスではないエラー: ${recipient} - ${bounceInfo.reason || 'unknown'}`);
+          console.log(`ℹ️ バウンスではないエラー: trace=${trace} - ${bounceInfo.reason || 'unknown'}`);
         }
 
         results.totalFailed += 1;
@@ -592,7 +608,7 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
       }
 
     } catch (error) {
-      console.error(`個別送信エラー ${recipient}:`, error);
+      console.error(`個別送信エラー trace=${emailTraceId(recipient)}:`, error);
       results.totalFailed += 1;
       results.failedEmails.push(recipient);
     }
@@ -662,14 +678,14 @@ async function analyzeSendGridBounce(email, statusCode, errorData) {
       bounceInfo.reason = 'send-error';
     }
 
-    console.log(`🔍 バウンス解析結果 ${email}:`, {
+    console.log(`🔍 バウンス解析結果 trace=${emailTraceId(email)}:`, {
       statusCode,
       errorMessage: errorMessage.substring(0, 100),
       bounceInfo
     });
 
   } catch (error) {
-    console.error(`バウンス解析エラー ${email}:`, error);
+    console.error(`バウンス解析エラー trace=${emailTraceId(email)}:`, error);
   }
 
   return bounceInfo;
@@ -680,7 +696,7 @@ async function updateBounceRecord(email, bounceInfo) {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
-  console.log(`📝 バウンス記録開始: ${email} - Type: ${bounceInfo.type}, Reason: ${bounceInfo.reason}`);
+  console.log(`📝 バウンス記録開始: trace=${emailTraceId(email)} - Type: ${bounceInfo.type}, Reason: ${bounceInfo.reason}`);
 
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     console.error('❌ Airtable環境変数未設定のためバウンス記録をスキップ');
@@ -692,11 +708,12 @@ async function updateBounceRecord(email, bounceInfo) {
   }
 
   try {
-    console.log(`🔍 既存記録をチェック中: ${email}`);
+    const trace = emailTraceId(email);
+    console.log(`🔍 既存記録をチェック中: trace=${trace}`);
 
-    // 既存記録チェック
+    // 既存記録チェック (URL に email を含むが console.log には出さない)
     const searchUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/EmailBlacklist?filterByFormula=SEARCH('${email}',{Email})`;
-    console.log(`🔗 Airtable検索URL: ${searchUrl}`);
+    console.log(`🔗 Airtable検索 (trace=${trace}, status TBD)`);
 
     const existingRecordResponse = await fetch(searchUrl, {
       headers: {
@@ -722,7 +739,7 @@ async function updateBounceRecord(email, bounceInfo) {
       const currentCount = record.fields.BounceCount || 0;
       const newCount = currentCount + 1;
 
-      console.log(`📝 既存記録更新: ${email} - ${currentCount}回 → ${newCount}回`);
+      console.log(`📝 既存記録更新: trace=${trace} - ${currentCount}回 → ${newCount}回`);
 
       // Soft Bounceが5回に達したらHard Bounceに昇格
       const finalType = bounceInfo.type === 'soft' && newCount >= 5 ? 'hard' : bounceInfo.type;
@@ -752,7 +769,7 @@ async function updateBounceRecord(email, bounceInfo) {
         throw new Error(`更新失敗: ${updateResponse.status} - ${updateErrorText}`);
       }
 
-      console.log(`✅ バウンス記録更新完了: ${email} (${currentCount}→${newCount}回, ${finalType})`);
+      console.log(`✅ バウンス記録更新完了: trace=${trace} (${currentCount}→${newCount}回, ${finalType})`);
 
     } else {
       // 新規記録作成
@@ -774,11 +791,11 @@ async function updateBounceRecord(email, bounceInfo) {
         })
       });
 
-      console.log(`📝 新規バウンス記録作成: ${email} (${bounceInfo.type})`);
+      console.log(`📝 新規バウンス記録作成: trace=${trace} (${bounceInfo.type})`);
     }
 
   } catch (error) {
-    console.error(`バウンス記録更新エラー ${email}:`, error);
+    console.error(`バウンス記録更新エラー trace=${emailTraceId(email)}:`, error);
   }
 }
 
@@ -800,7 +817,7 @@ async function filterRecipientsForDomainProtection(recipients) {
 
         // 警告レベルの場合はログ出力
         if (status.riskLevel === 'high') {
-          console.log(`⚠️ 高リスクだが配信許可: ${email} (${status.failureCount}回失敗)`);
+          console.log(`⚠️ 高リスクだが配信許可: trace=${emailTraceId(email)} (${status.failureCount}回失敗)`);
         }
       } else {
         blocked.push({
@@ -818,7 +835,7 @@ async function filterRecipientsForDomainProtection(recipients) {
       }
 
     } catch (error) {
-      console.error(`ドメイン保護チェックエラー ${email}:`, error);
+      console.error(`ドメイン保護チェックエラー trace=${emailTraceId(email)}:`, error);
       // エラー時は安全のため配信許可
       deliverable.push(email);
     }
@@ -852,7 +869,7 @@ async function recordInvalidEmailToBlacklist(email, reason) {
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
   try {
-    console.log(`🛡️ 自動ブラックリスト登録: ${email} (理由: ${reason})`);
+    console.log(`🛡️ 自動ブラックリスト登録: trace=${emailTraceId(email)} (理由: ${reason})`);
 
     const recordData = {
       fields: {
@@ -875,9 +892,9 @@ async function recordInvalidEmailToBlacklist(email, reason) {
     });
 
     if (response.ok) {
-      const result = await response.json();
-      console.log('✅ 自動ブラックリスト登録成功!');
-      console.log('📋 レコードID:', result.id);
+      // result.id (Airtable record id) は PII 観点で出さない
+      await response.json().catch(() => null);
+      console.log('✅ 自動ブラックリスト登録成功');
       return true;
     } else {
       const error = await response.text();
@@ -905,7 +922,7 @@ async function checkEmailDeliverabilityForProtection(email) {
     // 📧 厳密なメール形式検証（根本解決）
     const emailRegex = /^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
     if (!emailRegex.test(email)) {
-      console.log(`⚡ 根本解決発動: 無効メール検出 ${email}`);
+      console.log(`⚡ 根本解決発動: 無効メール検出 trace=${emailTraceId(email)}`);
       // 🛡️ 無効メールを自動ブラックリスト登録（根本解決）
       await recordInvalidEmailToBlacklist(email, '無効なメール形式（@なしまたは形式エラー）');
       return { canDeliver: false, reason: 'invalid-format', failureCount: 0, riskLevel: 'critical' };
@@ -978,7 +995,7 @@ async function checkEmailDeliverabilityForProtection(email) {
     };
 
   } catch (error) {
-    console.error(`配信可否チェックエラー ${email}:`, error);
+    console.error(`配信可否チェックエラー trace=${emailTraceId(email)}:`, error);
     // エラー時は配信許可
     return { canDeliver: true, reason: 'check-error', failureCount: 0, riskLevel: 'unknown' };
   }
@@ -987,7 +1004,8 @@ async function checkEmailDeliverabilityForProtection(email) {
 // ドメイン保護システムに失敗を報告
 async function reportFailureToDomainProtection(email, errorType, errorMessage, statusCode) {
   try {
-    console.log(`🛡️ ドメイン保護に失敗報告: ${email} (${errorType})`);
+    const trace = emailTraceId(email);
+    console.log(`🛡️ ドメイン保護に失敗報告: trace=${trace} (${errorType})`);
 
     // domain-protection.js のreport-failure機能を呼び出し
     const baseUrl = 'http://localhost:8888'; // 開発環境
@@ -1012,15 +1030,15 @@ async function reportFailureToDomainProtection(email, errorType, errorMessage, s
     }
 
     const result = await reportResponse.json();
-    console.log(`✅ ドメイン保護報告完了: ${email} - ${result.message}`);
+    console.log(`✅ ドメイン保護報告完了: trace=${trace} - ${result.message}`);
 
     // 5回に達した場合は警告ログ
     if (result.isBlocked) {
-      console.warn(`🚨 ドメイン保護により自動ブロック: ${email} (${result.newFailureCount}回失敗)`);
+      console.warn(`🚨 ドメイン保護により自動ブロック: trace=${trace} (${result.newFailureCount}回失敗)`);
     }
 
   } catch (error) {
-    console.error(`ドメイン保護報告エラー ${email}:`, error);
+    console.error(`ドメイン保護報告エラー trace=${emailTraceId(email)}:`, error);
     // エラーが発生しても配信処理は継続
   }
 }
