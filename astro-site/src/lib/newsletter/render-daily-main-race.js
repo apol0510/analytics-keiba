@@ -106,8 +106,11 @@ export function renderDailyMainRace({
     '<p>無料予想・有料予想ともに公開しています。本日の本命・買い目をぜひご確認ください。</p>',
     `<p style="margin: 24px 0 12px;"><a href="${freeUrl}" style="display:inline-block; background:#059669; color:#fff; text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:700;">無料予想を見る</a></p>`,
     `<p style="margin: 12px 0 28px;"><a href="${premiumUrl}" style="display:inline-block; background:#dc2626; color:#fff; text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:700;">有料予想を見る</a></p>`,
-    '<hr style="border:none; border-top:1px solid #e5e7eb; margin: 32px 0;">',
-    `<p style="color:#6b7280; font-size:12px;">このメールは ${brandLabel} からお送りしています。</p>`,
+    // 2026-05-19 Phase 4 受信目視で footer 二重表示が判明したため、renderer の simple footer
+    // （「このメールは ... からお送りしています」+ <hr>）は削除。
+    // 送信時の footer / 配信停止リンクは送信側（send-newsletter / newsletter-send-test）で
+    // per-recipient に付与する設計に統一。preview 単独で本文を見る場合は footer が表示されないが、
+    // admin UI 側で「送信時に footer + 配信停止リンクが自動付与される」案内する想定。
     '</div></body></html>',
   ].filter(Boolean).join('\n');
 
