@@ -30,9 +30,12 @@ export default async function handler(request, context) {
     const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/ScheduledEmails`;
     
     // 最新の配信順にソート (ScheduledForでソート)
+    // Airtable は sort を sort[0][field] / sort[0][direction] 形式で受け取る。
+    // 旧実装の sort=JSON.stringify(...) は 422 になり catch で [] が返っていた（get-scheduled-jobs.js と同形式に統一）。
     const queryParams = new URLSearchParams({
-      sort: JSON.stringify([{field: "ScheduledFor", direction: "desc"}]),
-      maxRecords: "20"
+      'sort[0][field]': 'ScheduledFor',
+      'sort[0][direction]': 'desc',
+      maxRecords: '20'
     });
     
     const response = await fetch(`${url}?${queryParams}`, {
