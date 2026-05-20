@@ -40,6 +40,22 @@
 
 import { calcSpeedIndex, calcFormTrend, calcStaminaRating } from './featureScores.js';
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// analytics-keiba 差別化パラメータ（★ keiba-intelligence と共通化禁止 ★）
+//
+// AK の pt(displayScore) は computerIndex を主軸に、race-data-importer 由来の
+// 過去走(featureScore) と 印(markScore) を「補助シグナル」として加点する。
+// これにより pt 自体が keiba-intelligence（pt = computerIndex + 70）と構造的に分岐し、
+// 役割(本命/対抗/単穴) と 買い目 も連動して差別化される（PREDICTION_LOGIC.md 参照）。
+//
+// 設計上の不変条件:
+//   - featureScore は 0–100（過去走が無い馬は中立 50）、markScore は 0–100（印が無い馬は 0）。
+//   - よって補助シグナルが無い馬は nudge=0 となり pt = rawScore + 70（従来値）に一致する
+//     （後方互換・既存テスト不変）。
+//   - 値を 0 にすると KI と同一 pt に戻る（＝同一化バグの再発）。変更時は必ず両サイト比較で検証。
+const FEATURE_NUDGE_WEIGHT = 0.6; // (featureScore − 50) への係数: 概ね ±30 点の範囲で pt を前後
+const MARK_NUDGE_WEIGHT = 0.4;    // markScore への係数: 印が濃いほど最大 +40 点
+
 /**
  * 役割名から表示用印記号に変換
  *
@@ -153,19 +169,10 @@ export function adjustPrediction(normalized) {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 1: displayScore計算
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    for (const horse of race.horses) {
-      if (horse.rawScore > 0) {
-        horse.displayScore = horse.rawScore + 70;
-      } else {
-        horse.displayScore = 0;
-      }
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 2: analytics-keiba 総合スコア計算
-    //   analyticsScore = computerIndex × 0.5 + featureScore × 0.3 + markScore × 0.2
+    // Step 1: analytics-keiba 独自指標（補助シグナル）を計算
+    //   markScore: race-data-importer 由来の印 → 0–100
+    //   featureScore: race-data-importer 由来の過去走(recentRaces) → 0–100（中立50）
+    //   analyticsScore: 診断用の総合（ci×0.5+feature×0.3+mark×0.2）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     for (const horse of race.horses) {
       horse.markScore = calculateMarkScore(horse);
@@ -173,6 +180,26 @@ export function adjustPrediction(normalized) {
       horse.analyticsScore = calculateAnalyticsScore(horse);
       // 旧 customScore フィールドは残しておく（UI/ログ互換）
       horse.customScore = horse.markScore;
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Step 2: displayScore (= pt) 計算 ★keiba-intelligence との差別化の核心★
+    //   pt = rawScore(主軸: computerIndex) + 70
+    //      + (featureScore − 50) × FEATURE_NUDGE_WEIGHT   ← 過去走の補助加点
+    //      + markScore × MARK_NUDGE_WEIGHT                ← 印の補助加点
+    //
+    //   KI は pt = computerIndex + 70 のみ。AK は pt 自体に racebook シグナルを織り込むため、
+    //   pt / 役割 / 買い目 が構造的に分岐する。補助シグナルが無い馬は nudge=0 → pt=rawScore+70。
+    //   役割は Step 3 で displayScore 降順 strict に決まるので pt==役割順 の不変条件は維持される。
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    for (const horse of race.horses) {
+      if (horse.rawScore > 0) {
+        const featureNudge = (horse.featureScore - 50) * FEATURE_NUDGE_WEIGHT;
+        const markNudge = horse.markScore * MARK_NUDGE_WEIGHT;
+        horse.displayScore = Math.max(1, Math.round(horse.rawScore + 70 + featureNudge + markNudge));
+      } else {
+        horse.displayScore = 0;
+      }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -74,11 +74,38 @@ raw =
 markScore = clamp(raw / 30 × 100, 0, 100)   // 理論最大30を100に正規化
 ```
 
+## pt（displayScore）算出 ★keiba-intelligence との差別化の核心★ (2026-05-20〜)
+
+> **背景（重要）**: かつて `analyticsScore` は「診断用」に計算されるだけで、pt も役割も
+> `computerIndex` 降順のみで決まっていた。一方 keiba-intelligence も印が無い素材では
+> rawScore(=computerIndex) 降順に潰れるため、**両サイトの pt・役割・買い目が完全一致**する
+> 同一化バグが長期間続いた。これを断つため、AK の **pt 自体に racebook 由来シグナルを織り込む**。
+
+`adjustPrediction.js`（南関・JRA 共通）で、出走資格のある馬（`rawScore > 0`）の pt を次式で算出する。
+
+```
+pt (displayScore)
+  = rawScore + 70                                   // 主軸: computer-manager 由来の computerIndex
+  + (featureScore − 50) × FEATURE_NUDGE_WEIGHT      // 補助: race-data-importer 由来の過去走
+  + markScore × MARK_NUDGE_WEIGHT                    // 補助: race-data-importer 由来の印
+
+FEATURE_NUDGE_WEIGHT = 0.6   // 過去走で概ね ±30 点
+MARK_NUDGE_WEIGHT    = 0.4   // 印が濃いほど最大 +40 点
+```
+
+- **computer 主軸 + racebook 補助**：computerIndex を土台に、過去走・印で前後させる。
+- **後方互換**：過去走が無い馬は `featureScore=50` → 加点 0、印が無い馬は `markScore=0` → 加点 0。
+  よって補助シグナルが無い馬は `pt = rawScore + 70`（従来値）に一致する。
+- keiba-intelligence は `pt = computerIndex + 70`（補助加点なし）。**この差で pt・役割・買い目が分岐する。**
+- 役割は下記 strict-pt-desc なので、pt にシグナルを織り込めば役割も自動的に差別化される
+  （pt と役割の逆転は起きない）。
+- 検証: `npm run check:differentiation`（過去走の強い馬が ci の高い馬を pt で逆転することを保証）。
+
 ## 役割決定 (2026-05-16 strict-pt-desc に刷新)
 
 ### 基本ルール
 
-1. 各馬の `displayScore` (= pt = rawScore + 70) を降順でソート
+1. 各馬の `displayScore` (= pt、上記「pt 算出」式) を降順でソート
 2. 上位から `本命 → 対抗 → 単穴 → 連下最上位 → 連下(最大3頭) → 補欠` を割り当てる
 3. タイブレーク: `sourceComputerIndex` (なければ `computerIndex`) 降順 → 馬番昇順
 
@@ -145,12 +172,41 @@ keiba-intelligence との差別化は「pt のソース (sourceComputerIndex 優
 - `horse.customScore`（旧 UI 互換のため markScore と同値）
 - `race._analyticsRule`: `'close-call-prefer-computer'` / `'computer-top-mismatch'` / `null`
 
+## 🛡️ keiba-intelligence との共通化ルール（同一化バグ再発防止）
+
+AK と KI は同じ keiba-data-shared（race-data-importer の racebook ＋ computer-manager の指数）を
+入力に使う。**素材は共通でよいが、最終アウトプットは共通化してはいけない。**
+
+### 共通化してよい範囲（データ層）
+- データ取込・正規化（馬名・日付・場コード・出走表・過去走の整形）
+- `featureScores.js` の特徴量「計算関数」そのもの（calcSpeedIndex 等）※どう使うかは各サイト独自
+
+### 共通化禁止範囲（最終ロジック層）★これらが一致したら同一化バグ★
+- **totalScore / pt**（AK は上記「pt 算出」で feature/mark を織り込む。KI は computerIndex ベース）
+- **役割（本命 / 対抗 / 単穴 / 連下 / 抑え）**
+- **印**
+- **買い目（betTickets）**
+
+### サイト別の主軸（意図的に違える）
+| サイト | pt / 役割の主軸 | 補助 |
+|---|---|---|
+| **analytics-keiba** | **computerIndex（computer-manager）** | 過去走・印（race-data-importer）を pt に加点 |
+| keiba-intelligence | 印・racebook（race-data-importer） | computerIndex を補助 |
+
+### 不一致の運用基準
+- 12R 全てが一致する必要は無い。computerIndex の差が大きい（明確な抜けた1頭がいる）レースは
+  本命が一致してよい。**全レースの本命/対抗/単穴と買い目が KI と完全一致したら異常**。
+- 自動検証: `npm run check:differentiation`（CI の safety-check で強制）。
+  これが落ちたら「pt が computerIndex 単独に潰れている＝KI と同一化」のサインなので、
+  係数 0 化や analyticsScore の格下げ等の回帰を疑うこと。
+
 ## 今後の閾値・重み変更時の運用
 
 1. `astro-site/src/utils/adjustPrediction.js` のコードを修正する
 2. **本 MD の該当節を必ず同時更新する**
 3. `importPrediction.js --date YYYY-MM-DD` で過去日を再生成してスナップショット比較
 4. keiba-intelligence 側との重複が極端に増えていないか（目安: 12R 中 5R 以上の重複なら再調整）
+5. `npm run check:differentiation` が通ること（pt が computerIndex 単独に戻っていないか）
 
 ## 関連ファイル
 
