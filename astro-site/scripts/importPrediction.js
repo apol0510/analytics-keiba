@@ -29,6 +29,37 @@ const projectRoot = join(__dirname, '..');
 // src/utils から正規化関数をインポート
 import { normalizeAndAdjust } from '../src/utils/normalizePrediction.js';
 
+/**
+ * 2026-05-20: pt 差別化（featureScore）を adjustPrediction 時点で有効化するため、
+ * 過去走(recentRaces) を「正規化・役割決定の前」に各馬へ付与する。
+ *
+ * 旧フロー: recentRaces は convertToLegacyFormat（adjust 後）でしか付かず、
+ * adjust 時の featureScore が常に中立 50 → pt 加点が効かず keiba-intelligence と同一化していた。
+ * このマージで adjust 前に過去走を渡し、featureScore が pt に反映されるようにする。
+ * （PREDICTION_LOGIC.md「pt 算出」/「共通化禁止範囲」参照）
+ *
+ * @param {Object} predData - 予想データ（.races[].horses[]）。破壊的に recentRaces を付与する。
+ * @param {Map|null} horseDataMap - 馬名 → recentRaces配列（entries形式） or {recentRaces:[]}（racebook形式）
+ */
+function attachRecentRacesBeforeScoring(predData, horseDataMap) {
+  if (!horseDataMap || !predData) return;
+  const races = Array.isArray(predData.races) ? predData.races : [];
+  for (const race of races) {
+    for (const h of (race.horses || [])) {
+      // 既に過去走を持つ馬（racebook 由来 _pastRaces / recentRaces 等）はそのまま尊重
+      if ((Array.isArray(h.recentRaces) && h.recentRaces.length > 0) ||
+          (Array.isArray(h._pastRaces) && h._pastRaces.length > 0)) continue;
+      const md = horseDataMap.get(h.name);
+      if (!md) continue;
+      if (Array.isArray(md) && md.length > 0) {
+        h.recentRaces = md;                       // entries 形式（配列）
+      } else if (md && Array.isArray(md.recentRaces) && md.recentRaces.length > 0) {
+        h.recentRaces = md.recentRaces;           // racebook 形式（{recentRaces:[]}）
+      }
+    }
+  }
+}
+
 // メインレース10点ロジック + 通常レース本命/対抗軸ロジック（共通モジュール）
 import { isMainRace, generateRaceUmatanLines } from '../src/utils/mainRaceBetting.js';
 
@@ -545,6 +576,8 @@ async function importPrediction(date, venue = 'nankan') {
       const venueName = venueData.venue || venueData.name || '不明';
       console.log(`\n⚙️  ${venueName} の正規化 + 調整ルール適用中...`);
 
+      // adjust 前に過去走を付与（featureScore→pt 差別化を有効にする）
+      attachRecentRacesBeforeScoring(venueData, horseDataMap);
       const normalizedAndAdjusted = normalizeAndAdjust(venueData);
 
       console.log(`✅ ${venueName} 正規化完了`);
@@ -578,6 +611,8 @@ async function importPrediction(date, venue = 'nankan') {
 
     // 正規化 + 調整ルール適用
     console.log(`⚙️  正規化 + 調整ルール適用中...`);
+    // adjust 前に過去走を付与（featureScore→pt 差別化を有効にする）
+    attachRecentRacesBeforeScoring(sharedJSON, horseDataMap);
     const normalizedAndAdjusted = normalizeAndAdjust(sharedJSON);
 
     console.log(`✅ 正規化完了`);
