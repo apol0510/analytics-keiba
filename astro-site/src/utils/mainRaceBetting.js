@@ -78,32 +78,35 @@ export function countMainRaceBetPoints(horses) {
   return filtered.length * 2;
 }
 
-// 通常レース（メイン以外）の馬単買い目を生成する。10点ロジック（双方向 1行）:
-//   本命 ↔ {対抗, 単穴/連下最上位/連下から上位4頭} = 最大5頭
-//   → 双方向馬単で 5 × 2 = 10点
-//   抑え（補欠・抑え役割の馬）は別括弧で informational に付与する。
-// 例: "7↔2.6.9.11.13(抑え1.3.4.10)"
-// 相手の選出順: 対抗 → 単穴 → 連下最上位 → 連下、同役割内は pt 降順で上位5頭。
-// 表示順: 選出済み5頭を**馬番昇順**に並び替えてから出力する。
+// 通常レース（メイン以外）の馬単買い目を生成する。本命軸 + 対抗軸の 2 段構成:
+//   1段目（本命軸）: 本命 ↔ {対抗, 単穴, 連下最上位, 連下} 役割優先で上位5頭
+//   2段目（対抗軸）: 対抗 ↔ {本命, 単穴, 連下最上位, 連下} 役割優先で上位5頭
+//     ※ 2段目は本命を相手に入れる（対抗は軸なので相手から除外）
+//   抑え（補欠・抑え役割の馬）は各行末尾に "(抑え...)" として共通付与（informational）。
+// 例（本命9 / 対抗12 / 単穴1,2 / 連下3,6 / 抑え5,8,11）:
+//   "9↔1.2.3.6.12(抑え5.8.11)"
+//   "12↔1.2.3.6.9(抑え5.8.11)"
+// 相手の選出順: 役割優先 → 同役割内は pt 降順で上位5頭。表示順は **馬番昇順**。
+// 対抗が存在しない場合は本命軸の 1 行のみ。メインレースは別関数（1段）で現状維持。
 export function generateNormalRaceUmatanLines(horses) {
   if (!Array.isArray(horses)) return [];
   const honmei = horses.find(h => h && h.role === '本命');
   if (!honmei) return [];
   const honmeiNum = horseNumber(honmei);
   if (honmeiNum == null) return [];
+  const taikou = horses.find(h => h && h.role === '対抗');
+  const taikouNum = horseNumber(taikou);
 
-  // 相手プール: 対抗 → 単穴 → 連下最上位 → 連下、役割優先 + pt 降順 上位5頭を「選出」。
-  // 選出後、表示用に馬番昇順へ並び替える（選出対象は変更しない）。
-  const partnerPriority = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
-  const partners = horses
-    .filter(h => h && partnerPriority[h.role] != null)
+  // 軸を除く、役割優先 + pt 降順で相手上位5頭を「選出」→ 表示用に馬番昇順へ並び替える。
+  const selectPartners = (axisNum, priority) => horses
+    .filter(h => h && priority[h.role] != null)
     .filter(h => {
       const n = horseNumber(h);
-      return n != null && n !== honmeiNum;
+      return n != null && n !== axisNum;
     })
     .sort((a, b) => {
-      const ra = partnerPriority[a.role];
-      const rb = partnerPriority[b.role];
+      const ra = priority[a.role];
+      const rb = priority[b.role];
       if (ra !== rb) return ra - rb;
       return horsePt(b) - horsePt(a);
     })
@@ -111,7 +114,14 @@ export function generateNormalRaceUmatanLines(horses) {
     .map(horseNumber)
     .sort((a, b) => Number(a) - Number(b));
 
-  if (partners.length === 0) return [];
+  // 1段目（本命軸）相手プール: 対抗 → 単穴 → 連下最上位 → 連下
+  const honmeiPartners = selectPartners(honmeiNum, { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 });
+  // 2段目（対抗軸）相手プール: 本命 → 単穴 → 連下最上位 → 連下（本命を相手に入れる）
+  const taikouPartners = taikouNum != null
+    ? selectPartners(taikouNum, { '本命': 1, '単穴': 2, '連下最上位': 3, '連下': 4 })
+    : [];
+
+  if (honmeiPartners.length === 0) return [];
 
   // 抑え候補の抽出条件 (2026-05-16 更新):
   //   - role が '抑え' の馬（データに該当 role が来た場合の正規ルート）
@@ -119,11 +129,9 @@ export function generateNormalRaceUmatanLines(horses) {
   //   - racebook 系コンピ指数 = sourceComputerIndex (JRA) || computerIndex (南関)、10 未満は無効
   //   - 旧仕様 (pt > 70) は JRA の totalScore 由来 pt (71〜114) を誤って抑えに入れていたため
   //     COMPI_MIN ベースに変更。shared-prediction-logic.js の isOsaeCandidate と同期。
-  //   - ci 情報が無いレガシーデータは pt > 70 でフォールバック判定。
-  //   - 本命・選出済み相手も除外
+  //   - 本命・対抗・選出済み相手（両軸分）も除外
   //   - 並び順は **馬番昇順**（評価順ではなく視認性優先）
   // 結果が 0 件なら "(抑え...)" 自体を付与しない（無理に補欠で埋めない）。
-  const PT_UNRATED_FALLBACK = 70;
   const MIN_OSAE_CI = 45;
   const getOsaeCi = (h) => {
     const sci = Number(h?.sourceComputerIndex || 0);
@@ -138,21 +146,24 @@ export function generateNormalRaceUmatanLines(horses) {
     if (h.role !== '補欠') return false;
     return getOsaeCi(h) >= MIN_OSAE_CI;
   };
-  const partnerSet = new Set(partners);
+  // 両軸・両相手リストに含まれる馬は抑えから除外（相手と重複させない）
+  const usedSet = new Set([honmeiNum, taikouNum, ...honmeiPartners, ...taikouPartners]);
   const osaeNumbers = horses
     .filter(isOsae)
     .filter(h => {
       const n = horseNumber(h);
-      return n != null && n !== honmeiNum && !partnerSet.has(n);
+      return n != null && !usedSet.has(n);
     })
     .map(horseNumber)
     .sort((a, b) => Number(a) - Number(b));
+  const osaeSuffix = osaeNumbers.length > 0 ? `(抑え${osaeNumbers.join('.')})` : '';
 
-  let line = `${honmeiNum}↔${partners.join('.')}`;
-  if (osaeNumbers.length > 0) {
-    line += `(抑え${osaeNumbers.join('.')})`;
+  // 1段目（本命軸）は常に出力。2段目（対抗軸）は対抗が居て相手が拾えた時のみ。
+  const lines = [`${honmeiNum}↔${honmeiPartners.join('.')}${osaeSuffix}`];
+  if (taikouNum != null && taikouPartners.length > 0) {
+    lines.push(`${taikouNum}↔${taikouPartners.join('.')}${osaeSuffix}`);
   }
-  return [line];
+  return lines;
 }
 
 // 1レース分の馬単買い目を生成する dispatcher。
