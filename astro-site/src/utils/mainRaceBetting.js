@@ -15,6 +15,10 @@
 // 本命軸 + 対抗軸の2行を生成する（importPrediction 系で従来使用していたロジックを集約）。
 // プレミアム表示・インポート両方が同じロジックを参照するための単一源として運用する。
 
+// 抑え判定は単一源 osaeClassification.js に集約（ローカル isOsae は撤去）。
+// 依存ゼロモジュールなので Node 実行の importPrediction*.js からも安全に読める。
+import { selectOsaeNumbers } from './osaeClassification.js';
+
 const ROLE_PRIORITY = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
 
 export function getMainRaceNumber(totalRaces) {
@@ -65,7 +69,16 @@ export function generateMainRaceUmatanLines(horses) {
     .filter(n => n != null && n !== honmeiNum)
     .sort((a, b) => Number(a) - Number(b));
   if (partners.length === 0) return [];
-  return [`${honmeiNum}↔${partners.join('.')}`];
+  // 抑え（補欠/抑え かつ racebook 系コンピ指数 ≥ 45）を情報として括弧付与する。
+  // 表示側 isOsaeCandidate と同じ selectOsaeNumbers を使うため、メインレースでも
+  // 「表示の抑え」と「買い目の抑え」が一致する。本線10点（top5×2）には含めない。
+  // 軸・選出済み相手は除外。0 件なら "(抑え...)" を付与しない。
+  const osaeNumbers = selectOsaeNumbers(horses, [honmeiNum, ...partners]);
+  let line = `${honmeiNum}↔${partners.join('.')}`;
+  if (osaeNumbers.length > 0) {
+    line += `(抑え${osaeNumbers.join('.')})`;
+  }
+  return [line];
 }
 
 export function countMainRaceBetPoints(horses) {
@@ -123,39 +136,12 @@ export function generateNormalRaceUmatanLines(horses) {
 
   if (honmeiPartners.length === 0) return [];
 
-  // 抑え候補の抽出条件 (2026-05-16 更新):
-  //   - role が '抑え' の馬（データに該当 role が来た場合の正規ルート）
-  //     または role が '補欠' で racebook 系コンピ指数 ≥ MIN_OSAE_CI (= 45) の馬
-  //   - racebook 系コンピ指数 = sourceComputerIndex (JRA) || computerIndex (南関)、10 未満は無効
-  //   - 旧仕様 (pt > 70) は JRA の totalScore 由来 pt (71〜114) を誤って抑えに入れていたため
-  //     COMPI_MIN ベースに変更。shared-prediction-logic.js の isOsaeCandidate と同期。
-  //   - 本命・対抗・選出済み相手（両軸分）も除外
-  //   - 並び順は **馬番昇順**（評価順ではなく視認性優先）
-  // 結果が 0 件なら "(抑え...)" 自体を付与しない（無理に補欠で埋めない）。
-  const MIN_OSAE_CI = 45;
-  const getOsaeCi = (h) => {
-    const sci = Number(h?.sourceComputerIndex || 0);
-    const ci = Number(h?.computerIndex || 0);
-    if (sci >= 10) return sci;
-    if (ci >= 10) return ci;
-    return 0;
-  };
-  const isOsae = (h) => {
-    if (!h) return false;
-    if (h.role === '抑え') return true;
-    if (h.role !== '補欠') return false;
-    return getOsaeCi(h) >= MIN_OSAE_CI;
-  };
-  // 両軸・両相手リストに含まれる馬は抑えから除外（相手と重複させない）
-  const usedSet = new Set([honmeiNum, taikouNum, ...honmeiPartners, ...taikouPartners]);
-  const osaeNumbers = horses
-    .filter(isOsae)
-    .filter(h => {
-      const n = horseNumber(h);
-      return n != null && !usedSet.has(n);
-    })
-    .map(horseNumber)
-    .sort((a, b) => Number(a) - Number(b));
+  // 抑え（補欠/抑え かつ racebook 系コンピ指数 ≥ 45）を各行末尾に情報付与する。
+  //   - 判定は単一源 osaeClassification.js の selectOsaeNumbers に委譲
+  //     （表示側 isOsaeCandidate / メインレース / 三連複 と完全に同一基準）
+  //   - 両軸・両相手リストに含まれる馬は除外（相手と重複させない）、馬番昇順
+  //   - 0 件なら "(抑え...)" を付与しない（無理に補欠で埋めない）
+  const osaeNumbers = selectOsaeNumbers(horses, [honmeiNum, taikouNum, ...honmeiPartners, ...taikouPartners]);
   const osaeSuffix = osaeNumbers.length > 0 ? `(抑え${osaeNumbers.join('.')})` : '';
 
   // 1段目（本命軸）は常に出力。2段目（対抗軸）は対抗が居て相手が拾えた時のみ。

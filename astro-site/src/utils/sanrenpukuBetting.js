@@ -9,6 +9,11 @@
 //
 // 連下上位 (renkaTop): 連下最上位を優先、無ければ連下のpt最大
 
+// 抑え判定は単一源 osaeClassification.js に集約（ローカル isOsaeRole は撤去）。
+// 旧 isOsaeRole は role のみ（ci 閾値なし）で、表示・買い目（ci≥45）と基準が
+// ズレていた。isOsaeCandidate に統一して三連複も同一基準にする。
+import { isOsaeCandidate } from './osaeClassification.js';
+
 function horseNumber(h) {
   return h?.horseNumber ?? h?.number ?? null;
 }
@@ -57,11 +62,6 @@ function buildCombos(axisNum, c2pool, c3pool) {
   return Array.from(result.values());
 }
 
-// 抑え系: 抑え / 押さえ / 補欠
-function isOsaeRole(role) {
-  return role === '抑え' || role === '押さえ' || role === '補欠';
-}
-
 // 絞り込み買い目
 export function generateNarrowSanrenpuku(horses) {
   if (!Array.isArray(horses)) return null;
@@ -105,7 +105,8 @@ export function generateNormalSanrenpuku(horses, axisRole) {
 
   // 3頭目候補: c2pool + 連下 + 抑え
   const renkaNums = horses.filter((h) => h?.role === '連下').map(horseNumber);
-  const osaeNums = horses.filter((h) => isOsaeRole(h?.role)).map(horseNumber);
+  // 抑え候補は単一源 isOsaeCandidate（抑え系 role かつ ci≥45）に統一。
+  const osaeNums = horses.filter(isOsaeCandidate).map(horseNumber);
   const c3pool = uniqueNums([...c2pool, ...renkaNums, ...osaeNums]).filter((n) => n !== axisNum);
   const osae = uniqueNums(osaeNums).filter((n) => n !== axisNum && !c2pool.includes(n));
 

@@ -1,5 +1,27 @@
 // 共有予想ロジック - 古いデータ参照問題対応＆統一システム
 import { dataManager } from './integrated-data-manager.js';
+// 抑え / 不要馬 判定は依存ゼロの単一源 osaeClassification.js に集約。
+// 本ファイルは表示側（astro ページ）向けに同名で再エクスポートする薄いラッパー。
+import {
+  HANDLED_ROLES,
+  OSAE_LIKE_ROLES,
+  MIN_OSAE_CI,
+  getOsaeCi,
+  isOsaeCandidate,
+  isIneligibleHorse,
+  sortOsaeCandidates,
+  selectOsaeNumbers,
+} from '../utils/osaeClassification.js';
+export {
+  HANDLED_ROLES,
+  OSAE_LIKE_ROLES,
+  MIN_OSAE_CI,
+  getOsaeCi,
+  isOsaeCandidate,
+  isIneligibleHorse,
+  sortOsaeCandidates,
+  selectOsaeNumbers,
+};
 
 // 印に基づく統一信頼度計算関数（多重印対応・累積加算式）
 export function calculateMarkBasedConfidence(horse) {
@@ -746,94 +768,10 @@ export function getRoleDisplayConfig(role) {
     return ROLE_DISPLAY_CONFIG[role] || ROLE_DISPLAY_CONFIG["連下"];
 }
 
-/**
- * 馬の分類: 抑え候補か / 不要馬か
- *
- * 方針 (2026-05-16 更新): racebook 系コンピ指数 ≥ 45 を基準にする。
- *
- *   旧仕様 (〜2026-05-14): `pt > 70` を抑え候補の閾値としていた。
- *   importPrediction.js は displayScore=0 のとき pt を 70 にフロア化するため、
- *   「pt=70 = 未評価 = 不要馬」「pt>70 = 評価あり = 抑え候補」で振り分けていた。
- *
- *   問題 (2026-05-16): JRA の racebook には totalScore（編集系の小さい点数、1〜25 程度）
- *   があり、sourceComputerIndex が 45 未満（COMPI_MIN 未満で rawScore 昇格対象外）でも
- *   `rawScore = totalScore` から `pt = totalScore + 70` で pt が 71〜114 に張り付き、
- *   実質「racebook computer 評価のない弱い馬」が抑え候補に誤分類されていた。
- *
- *   修正 (2026-05-16): racebook 系コンピ指数（sourceComputerIndex 優先、無ければ
- *   computerIndex）が COMPI_MIN (= 45) 以上を抑え候補の条件にする。これは
- *   normalizePrediction.js の rawScore 昇格閾値と同一で、pt promotion と抑え判定が
- *   同じ「racebook が一定以上評価した馬」基準で一貫する。
- *
- *   南関は computerIndex が racebook 値 (40〜99) で入っているため、従来通り
- *   ci<45 → pt=70 → 不要馬、ci≥45 → pt≥115 → 抑え候補 と同じ結果になる。
- *   sourceComputerIndex も computerIndex もない古いデータは pt > 70 で
- *   レガシーフォールバックする。
- *
- * ロール変換の注意:
- *   - source の予想 JSON では `押さえ` ロールは現状使われない (実測 0 件)。すべて `補欠`。
- *   - adaptLatestPrediction.js の adaptNewToLegacy は `補欠` を horses.reserve に振り分け、
- *     normalizeHorseData が reserve を **role='押さえ' に書き換えてから** push する。
- *   - そのため Astro レンダー時には `押さえ` ロールが「source 補欠由来」として現れる。
- *   - 抑え系の判定はこの 3 ロール (押さえ / 抑え / 補欠) を一括で扱う。
- *
- * 判定基準:
- *   isOsaeCandidate(h)
- *     - role が '押さえ' / '抑え' / '補欠' かつ getOsaeCi(h) ≥ 45 → true
- *     - ci 情報が皆無のレガシーデータは pt > 70 でフォールバック
- *     - それ以外 → false
- *
- *   isIneligibleHorse(h)
- *     - role が HANDLED_ROLES 外 / '無' / 未割当 → true
- *     - role が '押さえ' / '抑え' / '補欠' かつ抑え候補でない → true
- *     - それ以外（本命 / 対抗 / 単穴 / 連下 / 連下最上位） → false
- *
- * 関連: mainRaceBetting.js の通常レース買い目 (抑え括弧) も同じ判定を使う。
- */
-export const HANDLED_ROLES = new Set(['本命', '対抗', '単穴', '連下', '連下最上位', '押さえ', '抑え', '補欠']);
-export const OSAE_LIKE_ROLES = new Set(['押さえ', '抑え', '補欠']);
-const PT_UNRATED_FALLBACK = 70; // importPrediction.js のフロア値（レガシーフォールバック用）
-export const MIN_OSAE_CI = 45;  // COMPI_MIN — rawScore 昇格閾値と一致
-
-// racebook 系コンピ指数を取り出す。JRA は sourceComputerIndex、南関は computerIndex。
-// どちらも 10 未満なら 0 を返す（admin の 0–9 編集系スケールは無視）。
-function getOsaeCi(horse) {
-    const sci = Number(horse?.sourceComputerIndex || 0);
-    const ci = Number(horse?.computerIndex || 0);
-    if (sci >= 10) return sci;
-    if (ci >= 10) return ci;
-    return 0;
-}
-
-export function isOsaeCandidate(horse) {
-    if (!horse) return false;
-    if (!OSAE_LIKE_ROLES.has(horse.role)) return false;
-    // racebook 系コンピ指数 ≥ MIN_OSAE_CI (= 45) のみ抑え候補とみなす。
-    // ci が無い馬や ci < 45 の馬は「racebook が一定以上評価していない」ため不要馬扱い。
-    // 旧仕様の pt > 70 フォールバックは JRA で totalScore 由来 pt (71〜114) を
-    // 誤って抑えに分類していたため撤回。
-    return getOsaeCi(horse) >= MIN_OSAE_CI;
-}
-
-export function isIneligibleHorse(horse) {
-    if (!horse) return false;
-    const role = horse.role;
-    if (!HANDLED_ROLES.has(role)) return true;
-    if (OSAE_LIKE_ROLES.has(role)) return !isOsaeCandidate(horse);
-    return false;
-}
-
-/**
- * 抑え候補のソート: pt 降順 → 馬番昇順（視認性優先）
- *   ci 救済は撤回したため、副次キーには ci ではなく馬番を用いる。
- */
-export function sortOsaeCandidates(horses) {
-    return [...horses].sort((a, b) => {
-        const ptDiff = (Number(b?.pt) || 0) - (Number(a?.pt) || 0);
-        if (ptDiff !== 0) return ptDiff;
-        return (Number(a?.number) || 0) - (Number(b?.number) || 0);
-    });
-}
+// 抑え / 不要馬 判定（isOsaeCandidate / isIneligibleHorse / getOsaeCi /
+// sortOsaeCandidates / selectOsaeNumbers / HANDLED_ROLES / OSAE_LIKE_ROLES /
+// MIN_OSAE_CI）は src/utils/osaeClassification.js に集約し、上部で再エクスポート済み。
+// 表示・買い目・三連複・import がすべて同じ判定を参照する単一源。
 
 /**
  * 【表示用コンピ指数】外部由来の元指数（racebook 系 computerIndex / sourceComputerIndex）を
