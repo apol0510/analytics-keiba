@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   safety:
-    name: build + display-index + horse-sections + grep guard
+    name: build + display-index + horse-sections + differentiation + grep guard
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,3 +74,7 @@ jobs:
       - name: Verify 全頭分類（不要馬セクション維持）
         working-directory: astro-site
         run: npm run check:horse-sections
+
+      - name: Verify 差別化ガード（pt が computerIndex 単独に潰れない）
+        working-directory: astro-site
+        run: npm run check:differentiation

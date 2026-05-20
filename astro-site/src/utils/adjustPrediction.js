@@ -34,7 +34,10 @@
  *   - 全馬 rawScore=0 かつ role なし → 役割不付与 (displayScore で並べ替え不能のため)
  *
  * 共通ルール:
- *   - displayScore = rawScore + 70 (0点は0のまま、UI 互換性のため維持)
+ *   - displayScore (= pt) = rawScore + 70 + (featureScore−50)×0.6 + markScore×0.4
+ *     （補助シグナル無し＝featureScore50/markScore0 なら加点0で従来値 rawScore+70。0点は0のまま）
+ *     keiba-intelligence との同一化を防ぐ差別化加点。役割は同 displayScore で決めるため
+ *     「役割順 == pt 順」は不変。詳細は docs/PREDICTION_LOGIC.md「pt 算出」。
  *   - 表示用印 (◎/○/▲/△/×) を割り当て
  */
 
@@ -153,19 +156,8 @@ export function adjustPrediction(normalized) {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 1: displayScore計算
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    for (const horse of race.horses) {
-      if (horse.rawScore > 0) {
-        horse.displayScore = horse.rawScore + 70;
-      } else {
-        horse.displayScore = 0;
-      }
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 2: analytics-keiba 総合スコア計算
-    //   analyticsScore = computerIndex × 0.5 + featureScore × 0.3 + markScore × 0.2
+    // Step 1: 補助スコア計算（featureScore / markScore / analyticsScore）
+    //   displayScore より先に計算する（差別化加点に featureScore/markScore を使うため）。
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     for (const horse of race.horses) {
       horse.markScore = calculateMarkScore(horse);
@@ -176,8 +168,31 @@ export function adjustPrediction(normalized) {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // Step 3: 役割決定 (2026-05-16 strict-pt-desc)
-    //   全馬を displayScore (= pt = rawScore + 70) 降順でソートし、
+    // Step 2: displayScore (= pt) 計算【差別化】
+    //   pt = rawScore + 70
+    //      + (featureScore − 50) × 0.6   // 過去走（race-data-importer 由来）
+    //      + markScore × 0.4             // 印1〜4
+    //
+    //   keiba-intelligence との同一化バグ対策（PREDICTION_LOGIC.md「pt 算出」参照）:
+    //   pt を computerIndex 単独に潰さず、AK 独自の補助シグナルで動かす。
+    //   役割は本ステップの displayScore で決める（Step 3）ので「役割順 == pt 順」は不変。
+    //
+    //   後方互換: 過去走が無い馬は featureScore=50（中立）、印が無い馬は markScore=0 →
+    //   加点 0 → pt = rawScore + 70（従来値）。rawScore=0（未評価）は pt=0 のまま。
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    for (const horse of race.horses) {
+      if (horse.rawScore > 0) {
+        const featureAdj = (horse.featureScore - 50) * 0.6;
+        const markAdj = horse.markScore * 0.4;
+        horse.displayScore = Math.max(0, Math.round(horse.rawScore + 70 + featureAdj + markAdj));
+      } else {
+        horse.displayScore = 0;
+      }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Step 3: 役割決定 (2026-05-16 strict-pt-desc / 2026-05-20 差別化加点込み)
+    //   全馬を displayScore (= pt、差別化加点込み) 降順でソートし、
     //   1位=本命 / 2位=対抗 / 3位=単穴 / 4位=連下最上位 /
     //   5-7位=連下 (最大3頭) / 8位以降=補欠 を割当てる。
     //   タイブレーク: sourceComputerIndex (or computerIndex) 降順 → 馬番昇順。

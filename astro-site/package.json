@@ -28,7 +28,8 @@
     "check:display-index": "node scripts/check-display-computer-index.mjs",
     "check:horse-sections": "node scripts/check-free-prediction-horse-sections.mjs",
     "check:no-raw-index": "node scripts/check-no-raw-computer-index-display.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections",
+    "check:differentiation": "node src/utils/adjustPrediction.differentiation.test.js",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation",
     "verify:safety": "npm run build && npm run check:safety"
   },
   "dependencies": {

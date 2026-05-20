@@ -74,11 +74,48 @@ raw =
 markScore = clamp(raw / 30 × 100, 0, 100)   // 理論最大30を100に正規化
 ```
 
+## pt 算出（差別化・2026-05-20 再着地）
+
+役割と表示に使う `pt` (= `displayScore`) は **rawScore に AK 独自の補助シグナルを加点**して求める。
+keiba-intelligence（印1◎固定・computerIndex 単独順）との同一化を防ぐための恒久ルール。
+
+```
+pt = rawScore + 70
+   + (featureScore − 50) × 0.6   // 過去走（race-data-importer / racebook 由来）
+   + markScore × 0.4             // 印1〜4
+```
+
+- `rawScore = 0`（未評価）は `pt = 0` のまま（並べ替え対象外）。
+- **後方互換**: 過去走が無い馬は `featureScore = 50`、印が無い馬は `markScore = 0` →
+  加点 0 → `pt = rawScore + 70`（従来値）。補助シグナルが無い限り KI と同値でも可。
+- `analyticsScore`（ci×0.5+feature×0.3+mark×0.2）は **診断用に計算・保存するのみ**で、
+  pt にも役割にも使わない（pt は上式、役割は下記 pt 降順）。
+
+### 「役割順 == pt 順」を壊さない理由
+
+役割は **この pt（加点込み displayScore）の降順** で決める（下記 strict-pt-desc）。
+2026-05-16 に逆転バグが頻発したのは「役割 = analyticsScore 順 / pt = rawScore+70」と
+**式が別だった**ため。役割と pt を**同一の displayScore から導く**現方式では逆転は構造的に起きない。
+
+### import パイプライン（差別化が効く前提）
+
+featureScore は過去走（`recentRaces` / `_pastRaces`）から計算されるため、
+**adjustPrediction が走る前に recentRaces が馬に付いていること**が必須。
+`scripts/importPrediction.js` は `attachRecentRacesBeforeScoring(sharedJSON, horseDataMap)` を
+`normalizeAndAdjust` の**前**に呼ぶ（従来は convertToLegacyFormat=adjust後 でしか付かず
+featureScore=50 に潰れて差別化が無効化されていた）。
+
+### 再発防止ガード
+
+`src/utils/adjustPrediction.differentiation.test.js`（`npm run check:differentiation`）が
+「過去走の強い ci 低め馬が ci 高め凡走馬を pt で上回る」「シグナル無しは pt=rawScore+70」
+「役割順 == pt 順」を検証。`check:safety` と CI（`safety-check.yml`）に組込み済み。**外さないこと。**
+
 ## 役割決定 (2026-05-16 strict-pt-desc に刷新)
 
 ### 基本ルール
 
-1. 各馬の `displayScore` (= pt = rawScore + 70) を降順でソート
+1. 各馬の `displayScore` (= pt、上記「pt 算出」の差別化加点込み) を降順でソート
 2. 上位から `本命 → 対抗 → 単穴 → 連下最上位 → 連下(最大3頭) → 補欠` を割り当てる
 3. タイブレーク: `sourceComputerIndex` (なければ `computerIndex`) 降順 → 馬番昇順
 
@@ -104,10 +141,11 @@ markScore = clamp(raw / 30 × 100, 0, 100)   // 理論最大30を100に正規化
 異なる式から導出されるため、role 順と pt 順が逆転する事例が頻発した
 (2026-05-16 検証で JRA 36R 中 31R で逆転)。
 
-strict-pt-desc に切替えた現在も `analyticsScore` / `markScore` / `featureScore` は
-診断用に各馬に計算・保存しているが、役割決定には使用しない。
-keiba-intelligence との差別化は「pt のソース (sourceComputerIndex 優先) を ci-top
-ベースにする」ことで結果的に担保される (印1◎ 固定の KI と必然的に異なる)。
+`analyticsScore` は現在も診断用に計算・保存するのみで役割決定には使わない。
+ただし `featureScore` / `markScore` は **上記「pt 算出」で displayScore に加点**され、
+役割は加点込み displayScore の降順で決まる（= featureScore/markScore が役割を動かす）。
+2026-05-20 以前は「pt = rawScore+70 のみ・featureScore は診断用」で差別化が無効化され、
+KI と同一化していた。差別化は sourceComputerIndex ソースだけでなく、この補助シグナル加点で担保する。
 
 ### 連下・補欠
 

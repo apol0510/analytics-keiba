@@ -534,6 +534,10 @@ async function importPrediction(date, venue = 'nankan') {
     injectSourceComputerIndex(sharedJSON, computerSourceMap);
   }
 
+  // 【2026-05-20 差別化再着地】recentRaces を adjust 前に付与して featureScore を有効化。
+  // （従来は convertToLegacyFormat=adjust後 でしか付かず featureScore=50 に潰れていた）
+  attachRecentRacesBeforeScoring(sharedJSON, horseDataMap);
+
   // 【複数会場対応】venues配列があるか確認
   if (sharedJSON.venues && Array.isArray(sharedJSON.venues) && sharedJSON.venues.length > 0) {
     // 複数会場形式（venues配列）
@@ -693,6 +697,48 @@ async function fetchEntriesData(date, venue = 'nankan') {
  *
  * @param {Object} data - 正規化・調整済みデータ
  * @param {string} date - 日付
+ * adjust 前に recentRaces を付与する（差別化再着地・2026-05-20）。
+ *
+ * 背景: 従来 recentRaces は convertToLegacyFormat（= normalizeAndAdjust の **後**）でしか
+ * 馬に付かず、adjustPrediction が calculateFeatureScore を計算する時点では recentRaces が
+ * 無いため featureScore=50（中立）に潰れ、pt 差別化加点が 0 → pt が computerIndex+70 に
+ * 張り付いて keiba-intelligence と同一化していた。
+ *
+ * 本関数を normalizeAndAdjust の **前** に呼び、horseDataMap（出馬表 entries / racebook
+ * pastRaces）の recentRaces を素の予想 JSON 馬へ馬名一致で注入する。normalizeDetailed が
+ * recentRaces を引き継ぎ、adjustPrediction の featureScore が有効化される。
+ *
+ * @param {Object} predData - 素の予想 JSON（単一会場 .races[] / 複数会場 .venues[].races[]）
+ * @param {Map|null} horseDataMap - 馬名→recentRaces(配列) または {recentRaces:[...]}
+ * @returns {Object} predData（破壊的に recentRaces を付与して返す）
+ */
+function attachRecentRacesBeforeScoring(predData, horseDataMap) {
+  if (!predData || !horseDataMap || horseDataMap.size === 0) return predData;
+  const races = Array.isArray(predData.races)
+    ? predData.races
+    : (Array.isArray(predData.venues) ? predData.venues.flatMap(v => v.races || []) : []);
+  let attached = 0;
+  for (const race of races) {
+    for (const h of (race.horses || [])) {
+      // 既に過去走を持つ馬（racebook inline 等）は触らない
+      const hasPast = (Array.isArray(h._pastRaces) && h._pastRaces.length > 0) ||
+                      (Array.isArray(h.recentRaces) && h.recentRaces.length > 0);
+      if (hasPast || !h.name || !horseDataMap.has(h.name)) continue;
+      const md = horseDataMap.get(h.name);
+      const recent = Array.isArray(md) ? md : (md && Array.isArray(md.recentRaces) ? md.recentRaces : null);
+      if (recent && recent.length > 0) {
+        h.recentRaces = recent;
+        attached++;
+      }
+    }
+  }
+  if (attached > 0) {
+    console.log(`🔁 [DIFF] adjust前に recentRaces を ${attached}頭へ付与（featureScore 差別化を有効化）`);
+  }
+  return predData;
+}
+
+/**
  * @param {Map|null} horseDataMap - 馬名→recentRacesのMap
  * @returns {Object} 既存フォーマット
  */

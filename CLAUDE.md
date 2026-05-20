@@ -164,10 +164,15 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 
 ## 🧠 予想ロジック（スコア・役割決定）
 
-本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の
-データ主導方式。keiba-intelligence（印ベース）と意図的に差別化している。
-詳細仕様は `astro-site/docs/PREDICTION_LOGIC.md` を参照。
-重み・閾値・差別化ルールを変更する場合は **コードと MD を必ず両方更新**すること。
+役割（本命/対抗/単穴/連下/補欠）は **pt（displayScore）降順** で決める（strict-pt-desc）。
+その pt は **差別化加点込み**：`pt = rawScore+70 + (featureScore−50)×0.6 + markScore×0.4`。
+役割と pt を同一 displayScore から導くため「役割順 == pt順」は不変。補助シグナルが無い馬は
+加点0で従来値（後方互換）。`analyticsScore` は診断用に残すのみ。
+keiba-intelligence（印1◎固定・computerIndex 単独順）との同一化はこの加点で防ぐ（差別化）。
+**前提**: featureScore を効かせるため `importPrediction.js` は recentRaces を adjust 前に付与
+（`attachRecentRacesBeforeScoring`）。再発防止は `npm run check:differentiation`（check:safety/CI 組込み）。
+詳細仕様は `astro-site/docs/PREDICTION_LOGIC.md`「pt 算出」を参照。
+重み・閾値・差別化ルールを変更する場合は **コードと MD を必ず両方更新**し、check:differentiation を外さないこと。
 
 ## 🔢 指数表示ルール（著作権・表示安全対策）
 
