@@ -95,8 +95,13 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
    - 同役割内は `pt`（displayScore/rawScore）降順
 3. 1行コンパクト形式で保存: `"{本命}↔{c1}.{c2}.{c3}.{c4}.{c5}"`（双方向馬単）
 4. **5頭未満なら拾えた分のみ**（パディング・補欠埋めはしない）
+5. **抑え（補欠/抑え かつ racebook 系コンピ指数 ≥ 45）を `(抑え...)` で情報付与**する
+   （2026-05-20〜）。通常レースと同じ単一源 `selectOsaeNumbers`（`osaeClassification.js`）で
+   選出し、軸・選出済み相手を除外して馬番昇順。**本線10点には含めない情報表示**。
+   これにより「表示の抑え（isOsaeCandidate）」と「買い目の抑え」が構造的に一致する。
 
-例：本命3、上位5頭=5,7,8,10,12 → `bettingLines: ["3↔5.7.8.10.12"]` の1行
+例：本命3、上位5頭=5,7,8,10,12、抑え=9,14 → `bettingLines: ["3↔5.7.8.10.12(抑え9.14)"]` の1行
+（抑え0件なら `"3↔5.7.8.10.12"`）
 
 ### 的中判定との整合性
 
@@ -132,7 +137,7 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 
 - 1行 双方向: `"{本命}↔{相手1}.{相手2}.{相手3}.{相手4}.{相手5}(抑え{...})"`
 - 相手は本命を除く **役割優先で上位5頭**（対抗 → 単穴 → 連下最上位 → 連下、同役割内は pt 降順）
-- `(抑え...)` は role が `補欠` または `抑え` の馬（本命・選出済み相手を除く）を pt 降順で全件
+- `(抑え...)` は **抑え候補（role が `補欠`/`押さえ`/`抑え` かつ racebook 系コンピ指数 ≥ 45）**の馬（本命・選出済み相手を除く）を **馬番昇順**で全件。判定は単一源 `osaeClassification.js` の `selectOsaeNumbers`
 - 双方向馬単として **5頭 × 2 = 10点**（抑えは点数に含めない情報表示）
 - `betPoints` は payout 由来ヒューリスティック（`betPointsPerRace`）
 
@@ -143,11 +148,31 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 - メインレース・通常レースともに `↔` を使用（双方向馬単の正規表記）
 - `checkUmatanHit`（`scripts/importResults*.js`）は `↔` / `→` / `-` を全て解釈し、軸→相手・相手→軸の双方向で判定する
 
+### 🧩 抑え/不要馬 判定の単一源（2026-05-20 集約）
+
+抑え・不要馬の判定は **`astro-site/src/utils/osaeClassification.js` に一本化**する。
+過去、判定が表示・買い目・三連複に分散し基準がズレ、「抑えのはずが不要馬」「直すと別が壊れる」
+が再発していたため、依存ゼロの純粋モジュールに集約した。
+
+| 判定 | 仕様 |
+|---|---|
+| `getOsaeCi(h)` | racebook 系コンピ指数（JRA: sourceComputerIndex 優先 / 南関: computerIndex、10未満は0） |
+| `isOsaeCandidate(h)` | role が `押さえ`/`抑え`/`補欠` かつ `getOsaeCi(h) ≥ 45` |
+| `isIneligibleHorse(h)` | HANDLED_ROLES 外/`無` または 抑え系だが候補でない |
+| `selectOsaeNumbers(h, exclude)` | `(抑え...)` 用の馬番（軸・相手除外、馬番昇順） |
+
+**禁止事項**:
+- `mainRaceBetting.js` / `sanrenpukuBetting.js` / 各 astro ページに**ローカル抑え判定を再実装しない**。
+  必ず `osaeClassification.js`（または再エクスポートする `shared-prediction-logic.js`）を import する。
+- `shared-prediction-logic.js` は `osaeClassification.js` を再エクスポートする薄いラッパー
+  （Astro/ブラウザ依存の `integrated-data-manager.js` を Node 実行へ巻き込まないため判定本体は置かない）。
+
 ### 関連ファイル
 
 | 目的 | ファイル |
 |---|---|
 | ロジック本体 | `astro-site/src/utils/mainRaceBetting.js` |
+| **抑え/不要馬 判定（単一源）** | `astro-site/src/utils/osaeClassification.js` |
 | 既存メイン判定（プラン tier） | `astro-site/src/lib/race-config.js` |
 | 予想取込（買い目生成） | `astro-site/scripts/importPrediction.js`, `importPredictionJra.js` |
 | 結果取込（メインのみ betPoints 上書き） | `astro-site/scripts/importResults.js`, `importResultsJra.js` |
