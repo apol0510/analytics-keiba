@@ -89,12 +89,20 @@ export function sortOsaeCandidates(horses) {
 
 /**
  * 買い目 "(抑え...)" 用の馬番リストを返す。
- *   - 抑え候補（isOsaeCandidate）から、軸・選出済み相手（excludeNumbers）を除外
- *   - 並びは馬番昇順（評価順ではなく視認性優先）
- *   - 0 件なら空配列（呼び出し側は "(抑え...)" を付与しない）
  *
- * メインレース・通常レース・三連複のいずれも同じこの関数を使うことで、
- * 「表示の抑え」と「買い目の抑え」が構造的に一致する。
+ * 方針 (2026-05-21): **指数45以上の馬を本線から漏らさない**ための role 非依存ルール。
+ *   - racebook 系コンピ指数（getOsaeCi）≥ MIN_OSAE_CI(=45) の馬から、軸・選出済み相手
+ *     （excludeNumbers）を除外したものを全て抑えに入れる。**role は問わない**。
+ *   - 旧仕様（isOsaeCandidate = role が 補欠/押さえ/抑え に限定）では、指数45以上でも
+ *     role=連下 で top5 相手に選ばれなかった馬（例 ci50 の連下6番手）が本線にも抑えにも
+ *     入らず買い目から漏れていた。これを防ぐため role ゲートを外す。
+ *   - これにより「指数45以上の馬は必ず 本線 ∪ 抑え に入る」不変条件が構造的に成立する。
+ *   - 並びは馬番昇順、0 件なら空配列。
+ *   - 指数44以下（不要馬・見送り）は対象外（= 抑えにしない）。
+ *
+ * 注意: 表示側の抑えセクション（isOsaeCandidate, role=補欠 限定）とは集合が異なり得る
+ *   （連下で本線外の指数45以上馬は表示上は連下セクション、買い目上は抑え）。買い目の
+ *   「指数45以上を漏らさない」要件を優先した意図的な差。
  *
  * @param {object[]} horses - レースの全馬
  * @param {Array<number|string>} excludeNumbers - 軸・通常相手など除外する馬番
@@ -104,7 +112,7 @@ export function selectOsaeNumbers(horses, excludeNumbers = []) {
   if (!Array.isArray(horses)) return [];
   const exclude = new Set(excludeNumbers.map((n) => Number(n)).filter((n) => Number.isFinite(n)));
   return horses
-    .filter(isOsaeCandidate)
+    .filter((h) => getOsaeCi(h) >= MIN_OSAE_CI)
     .map((h) => Number(h?.number ?? h?.horseNumber))
     .filter((n) => Number.isFinite(n) && !exclude.has(n))
     .sort((a, b) => a - b);
