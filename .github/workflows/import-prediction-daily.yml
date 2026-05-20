@@ -126,6 +126,13 @@ jobs:
             exit 1
           fi
 
+      - name: Trigger Netlify deploy
+        if: steps.git-check.outputs.changed == 'true'
+        uses: ./.github/actions/netlify-deploy
+        with:
+          build-hook: ${{ secrets.NETLIFY_BUILD_HOOK }}
+          reason: "daily prediction ${{ steps.date.outputs.date }}"
+
       - name: Success notification
         if: steps.git-check.outputs.changed == 'true'
         run: |

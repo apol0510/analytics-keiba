@@ -1,0 +1,47 @@
+name: 'Trigger Netlify Deploy'
+description: >-
+  Netlify Build Hook を POST して本番デプロイを起動する。
+  GitHub Actions の bot push (GITHUB_TOKEN) は Netlify の GitHub 連携で
+  デプロイされないことがあるため、自動取込コミット後に確実にデプロイを起こす目的。
+  secret 未設定時は何もしない（no-op）ので、設定前でも安全に置ける。
+
+inputs:
+  build-hook:
+    description: 'Netlify Build Hook の URL（secrets.NETLIFY_BUILD_HOOK を渡す）'
+    required: false
+    default: ''
+  reason:
+    description: 'デプロイ理由（ログ用）'
+    required: false
+    default: 'auto-import'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Trigger Netlify build hook
+      shell: bash
+      env:
+        NETLIFY_BUILD_HOOK: ${{ inputs.build-hook }}
+        DEPLOY_REASON: ${{ inputs.reason }}
+      run: |
+        if [ -z "$NETLIFY_BUILD_HOOK" ]; then
+          echo "⏭️  NETLIFY_BUILD_HOOK が未設定のためデプロイトリガーをスキップ（no-op）"
+          echo "    → 自動デプロイを有効化するには Netlify Build Hook を作成し、"
+          echo "       GitHub secret 'NETLIFY_BUILD_HOOK' に登録してください。"
+          exit 0
+        fi
+        echo "🚀 Netlify デプロイをトリガー: ${DEPLOY_REASON}"
+        # URL 値はログに出さない（-w で HTTP コードのみ出力）
+        HTTP=$(curl -sS -o /tmp/nf_deploy_resp -w "%{http_code}" \
+          -X POST -d '{}' "$NETLIFY_BUILD_HOOK" || echo "000")
+        echo "   HTTP ${HTTP}"
+        case "$HTTP" in
+          2*)
+            echo "✅ Netlify ビルドを起動しました（数分後に本番反映）"
+            ;;
+          *)
+            echo "❌ Netlify ビルド起動に失敗 (HTTP ${HTTP})"
+            cat /tmp/nf_deploy_resp 2>/dev/null || true
+            exit 1
+            ;;
+        esac

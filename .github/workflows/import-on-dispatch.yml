@@ -48,6 +48,7 @@ jobs:
         run: npm ci
 
       - name: Sync and import predictions
+        id: import
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANUAL_DATE: ${{ github.event.inputs.date }}
@@ -169,6 +170,8 @@ jobs:
               echo "   Files changed: $CHANGED_FILES"
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               SUCCESS=true
+              # デプロイトリガー用フラグ（実際に push できた時のみ）
+              echo "changed=true" >> "$GITHUB_OUTPUT"
             else
               echo "⚠️  Push failed (likely due to new commits on remote)"
               RETRY_COUNT=$((RETRY_COUNT + 1))
@@ -187,3 +190,10 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             exit 1
           fi
+
+      - name: Trigger Netlify deploy
+        if: steps.import.outputs.changed == 'true'
+        uses: ./.github/actions/netlify-deploy
+        with:
+          build-hook: ${{ secrets.NETLIFY_BUILD_HOOK }}
+          reason: "prediction dispatch [${{ github.event.client_payload.category || github.event.inputs.category }}]"

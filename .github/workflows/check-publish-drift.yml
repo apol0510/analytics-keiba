@@ -1,0 +1,81 @@
+name: Check Publish Drift (Self-heal)
+
+# 目的: 「予想データは main に取り込まれているのに本番サイトが古い日付のまま」
+#       という公開ズレ（= Netlify 未デプロイ）を定期検知し、Build Hook で自己修復する。
+#
+# 背景: 自動取込コミットは GITHUB_TOKEN による bot push のため、他 workflow を起動できず、
+#       Netlify の自動デプロイが取りこぼした場合に誰も気づけなかった（手動デプロイ運用の原因）。
+#       この workflow は schedule で独立起動するため bot push の制約を受けない。
+
+on:
+  schedule:
+    # 2時間おき（南関の予想は前日夜に確定するため日中の取りこぼしを拾う）
+    - cron: '15 */2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: check-publish-drift
+  cancel-in-progress: false
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: astro-site
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect latest nankan prediction date on main
+        id: latest
+        run: |
+          # 南関の予想ファイルは predictions/ 直下（jra は jra/ サブディレクトリ）
+          LATEST=$(ls src/data/predictions/*.json 2>/dev/null \
+            | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | sort | tail -1)
+          if [ -z "$LATEST" ]; then
+            echo "❌ 予想ファイルから日付を検出できませんでした"
+            exit 1
+          fi
+          echo "📅 main 上の最新南関予想日付: $LATEST"
+          echo "date=$LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Compare with production site
+        id: compare
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://analytics.keiba.link' }}
+        run: |
+          LATEST="${{ steps.latest.outputs.date }}"
+          PAGE="${SITE_URL%/}/free-prediction/nankan/"
+          echo "🌐 本番ページ確認: $PAGE （期待日付: $LATEST）"
+          BODY=$(curl -sS -m 30 "$PAGE" || echo "")
+          if [ -z "$BODY" ]; then
+            echo "⚠️  本番ページ取得失敗（一時的な可能性）。今回はスキップ。"
+            echo "drift=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s' "$BODY" | grep -q "$LATEST"; then
+            echo "✅ 本番は最新（$LATEST）を表示中。ズレなし。"
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "🚨 公開ズレ検出: 本番に $LATEST が見当たりません（古いビルドの可能性）。"
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Self-heal — trigger Netlify deploy
+        if: steps.compare.outputs.drift == 'true'
+        uses: ./.github/actions/netlify-deploy
+        with:
+          build-hook: ${{ secrets.NETLIFY_BUILD_HOOK }}
+          reason: "publish-drift self-heal (expected ${{ steps.latest.outputs.date }})"
+
+      - name: Report
+        if: always()
+        run: |
+          echo "── Publish Drift Check ──"
+          echo "main latest : ${{ steps.latest.outputs.date }}"
+          echo "drift       : ${{ steps.compare.outputs.drift }}"
+          if [ "${{ steps.compare.outputs.drift }}" = "true" ]; then
+            echo "→ Build Hook を叩いて再デプロイを起動しました（数分後に解消見込み）。"
+            echo "  解消しない場合は Netlify の Auto publishing / ビルド失敗 / ビルド分を点検してください。"
+          fi
