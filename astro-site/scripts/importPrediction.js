@@ -248,6 +248,14 @@ function injectSourceComputerIndex(sharedJSON, venueMap) {
         const ci = horseMap.get(`${num}|${name}`);
         if (Number.isFinite(ci)) {
           h.sourceComputerIndex = ci;
+          // 2026-05-21: computer JSON の値（= 日刊コンピ指数の正本）を computerIndex にも上書きする。
+          //   南関の予想ソースが racebook フォールバックの場合、racebook の computerIndex は
+          //   admin 編集系の別スケール（例 1〜9 や日刊と異なる値）で、表示指数・rawScore 昇格が
+          //   誤る（指数45以上の馬が ci<10→0 に潰れ role='無'→不要馬 になる）。computer JSON が
+          //   突合できた馬は computerIndex も正本へ揃え、表示・分類・買い目を一致させる。
+          //   （sourceComputerIndex 単独注入では classification は直るが画面表示指数が racebook の
+          //     ままズレるため、computerIndex も上書きする。JRA は別 import で本関数を使わない。）
+          h.computerIndex = ci;
           totalInjected++;
         } else {
           totalUnmatched++;
