@@ -78,6 +78,10 @@ export default async function handler(request, context) {
         jobId: fields.JobId,
         errorMessage: fields.ErrorMessage,
         failedCount: fields.FailedCount || 0,
+        // 大量配信の進捗可視化: scheduled/execute 経路の実送信カーソル / 完了時刻。
+        // 即時配信ジョブでは未設定（0 / null）。
+        sentCount: fields.SentCount || 0,
+        completedAt: fields.CompletedAt || null,
         notes: fields.Notes || ''
       };
     });

@@ -82,6 +82,10 @@ export default async function handler(request, context) {
         }),
         recipients: fields.Recipients,
         recipientCount: fields.Recipients ? fields.Recipients.split(',').length : 0,
+        // 大量配信の進捗可視化: execute-scheduled-emails が書く実送信カーソル / 完了時刻を表示。
+        // recipientCount は LAZY_LOAD ジョブでは 1 になるため、実送信数は sentCount を参照すること。
+        sentCount: fields.SentCount || 0,
+        completedAt: fields.CompletedAt || null,
         createdBy: fields.CreatedBy,
         createdAt: fields.CreatedAt,
         sentAt: fields.SentAt,
