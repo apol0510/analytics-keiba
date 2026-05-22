@@ -3,7 +3,211 @@
 **最終更新**: 2026-05-14  
 **追補**: 2026-05-15（Airtable 実測結果反映: **2 Base 構成**を確定）  
 **対象 repo**: analytics-keiba（正） + 参照: keiba-intelligence  
-**現状フェーズ**: 止血完了 → dry-run 基盤稼働 → **本設計書の確定（実会員READ前の最終仕様固め）**
+**現状フェーズ**: 止血完了 → dry-run 基盤稼働 → 単発配信本番運用（free 1,031件実証済 2026-05-22）→ **ステップメール状態管理の採用方針確定（下記 §確定）**
+
+---
+
+## ★ 採用方針確定（2026-05-22）— ステップメール状態管理
+
+> 本セクションは §5〜§7（Campaigns / CampaignDeliveries / StepEmail*）の**実装方針を確定**するもので、矛盾する場合は本セクションが優先（旧§は背景・将来拡張案として残す）。
+
+### 確定.0 名称対応（仮称 → 正式名）
+
+| 過去の仮称（調査メモ） | 本設計の正式名 | 役割 |
+|---|---|---|
+| `EmailSequences`（定義） | **StepEmailSequences / StepEmailSteps（当面コード定数）** | シーケンス定義・各ステップ |
+| `CustomerEmailLog`（状態） | **StepEnrollments** | ユーザー別カーソル（次に送るステップ） |
+| `CustomerEmailLog`（送信ログ） | **CampaignDeliveries** | 受信者1人=1通の冪等ログ（`DeliveryKey` unique） |
+
+### 確定.1 採用するもの / しないもの
+
+**採用する**:
+- 状態管理テーブル：**`StepEnrollments` ＋ `CampaignDeliveries`**（Airtable 新規2テーブル・手動作成）
+- 送信エンジン：**既存 `ScheduledEmails` ＋ `execute-scheduled-emails-background`（background化済 PR#10）を流用**。専用 worker は新設しない。
+- シーケンス定義：**当面コード定数**（`src/lib/newsletter/step-sequences.js` 予定）。`StepEmailSequences` / `StepEmailSteps` の Airtable テーブル化は将来の admin UI 化まで保留（§8 の「初期はコード内 render のみ」方針に一致）。
+
+**採用しない**:
+- `create-newsletter-queue.js` / `send-newsletter-worker-background.js` 系（**本番 Airtable に `NewsletterJobs` / `NewsletterQueue` が存在せず**死蔵経路。2026-05-22 メタAPI実測で不在確認）。
+- → **`NewsletterJobs` / `NewsletterQueue` を前提にしない**。これらに依存する設計記述は無効。
+
+### 確定.2 StepEnrollments フィールド定義（Airtable 手動作成）
+
+役割：1 enrollment = 「あるユーザーがあるシーケンスを今どこまで進んだか」の状態カーソル。
+
+| フィールド | 型 | 必須 | unique | 説明 |
+|---|---|---|---|---|
+| `EnrollmentId` | Single line text | ✅ | ✅ | uuid v4。主キー |
+| `StepSequenceId` | Single line text | ✅ | | 例 `analytics-keiba:signup-onboarding`（コード定数のID） |
+| `RecipientEmail` | Email (lowercase) | ✅ | | 正規化（trim + lowercase） |
+| `CustomerRecordId` | Single line text | ❌ | | Customers の record id（join 用・任意） |
+| `EnrolledAt` | Date time | ✅ | | トリガー発火時刻（= enroll した瞬間。**登録日ではなく enroll 時刻**） |
+| `CurrentStepNumber` | Number | ✅ | | 次に送る StepNumber（初期 1） |
+| `Status` | Single select | ✅ | | `active`/`completed`/`paused`/`removed`/`unsubscribed`/`converted`/`failed` |
+| `LastSentAt` | Date time | ❌ | | 直近ステップ送信成功時刻 |
+| `CompletedAt` | Date time | ❌ | | 全ステップ消化時刻 |
+| `RemovedAt` | Date time | ❌ | | removed/converted 化した時刻 |
+| `RemovalReason` | Single line text | ❌ | | `converted-paid`/`unsubscribed`/`blacklisted`/`withdrawn`/`manual` 等 |
+| `Metadata` | Long text (JSON) | ❌ | | `{"planAtEnroll":"free","source":"register-free"}` |
+| `CreatedAt` | Created time | ✅(自動) | | Airtable createdTime |
+| `UpdatedAt` | Last modified time | ✅(自動) | | Airtable lastModifiedTime |
+
+**Status 遷移**:
+```
+active ──全ステップ消化──▶ completed
+  ├──有料化────────▶ converted (RemovalReason=converted-paid)
+  ├──配信停止──────▶ unsubscribed
+  ├──退会/blacklist─▶ removed
+  ├──一時停止──────▶ paused ──▶ active（再開可）
+  └──恒久送信不能──▶ failed
+```
+
+### 確定.3 CampaignDeliveries フィールド定義（Airtable 手動作成）
+
+役割：1 row = 「誰に・どの配信を・送ったか」の冪等ログ。step / campaign / race 全 emailType 共通。**二重送信防止の物理的な核**。
+
+| フィールド | 型 | 必須 | unique | 説明 |
+|---|---|---|---|---|
+| `DeliveryKey` | Single line text | ✅ | ✅(Duplicate不可) | sha256（確定.4）。**冪等キー** |
+| `CampaignType` | Single line text | ✅ | | `step-signup-d1` / `daily-main-race-nankan` / `campaign-winback` 等 |
+| `EmailType` | Single select | ✅ | | `step` / `campaign` / `race_main` |
+| `StepSequenceId` | Single line text | ❌ | | step のみ |
+| `StepNumber` | Number | ❌ | | step のみ |
+| `RecipientEmail` | Email (lowercase) | ✅ | | 正規化 |
+| `CustomerRecordId` | Single line text | ❌ | | join 用・任意 |
+| `ScheduledEmailJobId` | Single line text | ❌ | | 送信に使った ScheduledEmails の `JobId` |
+| `ScheduledEmailRecordId` | Single line text | ❌ | | 同 record id |
+| `Status` | Single select | ✅ | | `queued`/`sent`/`failed`/`skipped-unsubscribed`/`skipped-blacklist`/`skipped-converted`/`skipped-frequency-cap`/`skipped-duplicate` |
+| `QueuedAt` | Date time | ❌ | | enqueue 時刻 |
+| `SentAt` | Date time | ❌ | | 送信成功 |
+| `FailedAt` | Date time | ❌ | | 失敗 |
+| `SkippedAt` | Date time | ❌ | | skip 確定 |
+| `ErrorMessage` | Long text | ❌ | | 失敗詳細（PIIなし） |
+| `ProviderMessageId` | Single line text | ❌ | | SendGrid message id |
+| `Metadata` | Long text (JSON) | ❌ | | 補足 |
+| `CreatedAt` | Created time | ✅(自動) | | |
+| `UpdatedAt` | Last modified time | ✅(自動) | | |
+
+**Status 遷移**:
+```
+queued ──送信成功──▶ sent
+   ├──blacklist/HARD_BOUNCE/COMPLAINT──▶ skipped-blacklist
+   ├──配信停止────────────────────▶ skipped-unsubscribed
+   ├──送信前に有料化────────────────▶ skipped-converted
+   ├──頻度上限────────────────────▶ skipped-frequency-cap
+   ├──既送信(DeliveryKey衝突)────────▶ skipped-duplicate（upsertで物理的に発生しない想定の保険）
+   └──SendGrid失敗──▶ failed ──retry──▶ queued
+```
+
+### 確定.4 DeliveryKey 仕様
+
+**PII を素のキーに含めない**ため、既存実装 `src/lib/newsletter/delivery-key.js` の `computeDeliveryKey()`（sha256）を**再利用**する。emailType ごとに `extraKey` を変えて衝突を防ぐ。
+
+```
+DeliveryKey = computeDeliveryKey({
+  brand, serviceType, campaignType, campaignDate, audienceType,
+  recipientEmail: email.trim().toLowerCase(),   // 正規化
+  contentHash, fromEmail, extraKey
+})  // = sha256(... '|' join ...)
+```
+
+| emailType | extraKey | 効果 |
+|---|---|---|
+| step | `step:{sequenceId}:{stepNumber}` | 同人・同ステップは1通（CurrentStepNumber が前進するので再発火しない＋キーでも保証） |
+| campaign | `cmp:{campaignId}` | 同キャンペーンは1通。世代化（`winback-2026-W20`）で再送可 |
+| race_main | `race:{raceDate}:{raceId}` | 同レース告知は1通。翌日別レースは別キー |
+
+要件の充足:
+- 同人に同ステップ2回送らない → `extraKey=step:seq:n` ＋ `recipientEmail` で一意。
+- step / campaign / race で衝突しない → extraKey の接頭辞（`step:`/`cmp:`/`race:`）＋ `campaignType` で分離。
+- email は小文字化・trim 済を投入。
+- **PII 非露出**：最終 `DeliveryKey` は sha256 ハッシュ（email 平文を含まない）。`RecipientEmail` 列は別途保持するが、キー自体は hash。
+
+### 確定.5 enroll-from-now 方針（バックフィルしない）
+
+- **新規 free 登録時**に `StepEnrollments` を1件作成（`EnrolledAt=now`, `CurrentStepNumber=1`, `Status=active`）。トリガー実装は `register-free.js` / `verify-magic-link.js`（将来 Phase 2.3）。
+- **既存 free 1,001人超（登録31日超・平均192日）は自動 enroll しない**。登録日を遡って Day0〜Day21 を一斉発火させない（事故防止）。
+- 既存 free 向けは**別途、単発の reengage / catch-up campaign**（`EmailType=campaign`, `campaignType=campaign-reengage` 等）として設計・送信。ドリップとは別経路。
+
+### 確定.6 有料化時の停止ルール
+
+- free ステップ進行中に有料化（AudienceType が free 以外）を検知したら、該当 `StepEnrollments.Status=converted`（`RemovalReason=converted-paid`, `RemovedAt=now`）。
+- cron 抽出時に**現在の AudienceType を必ず再判定**し、free 以外は送信せず `CampaignDeliveries.Status=skipped-converted`。
+- paid 向けステップは将来**別 sequence**（例 `analytics-keiba:paid-onboarding`）に enroll。free ステップは送らない。
+
+### 確定.7 配信停止・ブラックリスト・退会の扱い
+
+- **既存5-tier除外（withdrawn → unsubscribe(brand別) → blacklist(HARD_BOUNCE/COMPLAINT) → audienceType）を全 emailType で必ず通す**（`resolveAudienceRecipients` 共通・本送信1031と同一）。
+- unsubscribe 検知 → `StepEnrollments.Status=unsubscribed` ＋ `CampaignDeliveries.Status=skipped-unsubscribed`。
+- blacklist / HARD_BOUNCE / COMPLAINT → 送信対象外 ＋ `skipped-blacklist`。
+- `withdrawn`（退会）→ `StepEnrollments.Status=removed`。`cancelled`/`expired` → free シーケンス対象外（必要なら winback campaign へ）。
+
+### 確定.8 STEP_EMAIL_AUTOMATION_ENABLED 設計
+
+- **新規環境変数・既定 `false`**。`NEWSLETTER_AUTOMATION_ENABLED` とは**別ガード**。
+- **step enqueue 系のみ**を制御（日次 step cron / step ジョブ生成関数）。
+- 実際の送信エンジン（`execute-scheduled-emails-background`）は従来どおり **`NEWSLETTER_AUTOMATION_ENABLED`** で制御。
+- → **両方 true のときだけ**ステップメールが自動送信される（二重ガード）。片方 false で安全停止。
+
+```
+STEP_EMAIL_AUTOMATION_ENABLED=true  ┐
+                                    ├─ 両方 true → ステップ自動送信
+NEWSLETTER_AUTOMATION_ENABLED=true  ┘
+（どちらか false → ステップは送信されない）
+```
+
+### 確定.9 次フェーズ実装候補
+
+| Phase | 内容 | 送信 |
+|---|---|---|
+| **2.1** | Airtable に `StepEnrollments`/`CampaignDeliveries` 手動作成（確定.2/.3）＋ **PATスコープに両テーブル追加**（NewsletterJobs 403 の轍を踏まない）＋ read-only schema 確認 | なし |
+| **2.2** | `StepEnrollments`/`CampaignDeliveries` を読む **preview API（due step 件数を送信ゼロで確認）** | なし |
+| **2.3** | 新規 free 登録時の **enroll 作成**（register/verify でStepEnrollments書込み）。**送信はまだしない** | なし |
+| **3** | **admin-test のみ**でステップメールカナリア（enroll→cron手動→CampaignDeliveries/StepEnrollments 遷移確認） | あり(極小) |
+
+### 確定.10 Airtable 手作業作成用フィールド一覧（コピペ用）
+
+**テーブル1: `StepEnrollments`**
+```
+EnrollmentId            : Single line text   (※フィールド設定で「重複を許可しない」推奨／主キー)
+StepSequenceId          : Single line text
+RecipientEmail          : Email
+CustomerRecordId        : Single line text
+EnrolledAt              : Date (時刻を含む = Date time)
+CurrentStepNumber       : Number (整数)
+Status                  : Single select [active, completed, paused, removed, unsubscribed, converted, failed]
+LastSentAt              : Date (時刻を含む)
+CompletedAt             : Date (時刻を含む)
+RemovedAt               : Date (時刻を含む)
+RemovalReason           : Single line text
+Metadata                : Long text
+CreatedAt               : Created time (自動)
+UpdatedAt               : Last modified time (自動)
+```
+
+**テーブル2: `CampaignDeliveries`**
+```
+DeliveryKey             : Single line text   (★「重複を許可しない」を必ず ON＝冪等キー)
+CampaignType            : Single line text
+EmailType               : Single select [step, campaign, race_main]
+StepSequenceId          : Single line text
+StepNumber              : Number (整数)
+RecipientEmail          : Email
+CustomerRecordId        : Single line text
+ScheduledEmailJobId     : Single line text
+ScheduledEmailRecordId  : Single line text
+Status                  : Single select [queued, sent, failed, skipped-unsubscribed, skipped-blacklist, skipped-converted, skipped-frequency-cap, skipped-duplicate]
+QueuedAt                : Date (時刻を含む)
+SentAt                  : Date (時刻を含む)
+FailedAt                : Date (時刻を含む)
+SkippedAt               : Date (時刻を含む)
+ErrorMessage            : Long text
+ProviderMessageId       : Single line text
+Metadata                : Long text
+CreatedAt               : Created time (自動)
+UpdatedAt               : Last modified time (自動)
+```
+
+> 作成後、Airtable PAT のスコープに両テーブルへの read/write を追加すること（`NewsletterJobs` が 403 だった原因はスコープ未追加の可能性が高い）。作成・スコープ追加は**人間が手動で行う**（Claude は作成しない）。
 
 ---
 
