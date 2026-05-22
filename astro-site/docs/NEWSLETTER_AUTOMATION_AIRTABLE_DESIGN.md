@@ -326,6 +326,67 @@ UpdatedAt               : Last modified time (自動)
 
 ---
 
+## ★ Phase 3.4 設計確定（2026-05-22）— 日次 step cron 配線
+
+> Phase 3.1〜3.3（dryRun / live enqueue / reconcile）は本番反映済み、Phase 3.2 統合カナリア（apolone 1件）成功。
+> 本セクションは**日次自動配信（cron）**の設計を確定する。送信は引き続き
+> **`STEP_EMAIL_AUTOMATION_ENABLED` ＋ `NEWSLETTER_AUTOMATION_ENABLED` の両 true** のときのみ成立。
+
+### P3.4.1 cron-step-email-scheduler（新規・Netlify Scheduled Function）
+
+- **スケジュール**: 日次 1 回。`export const config = { schedule: "0 0 * * *" }`（= **09:00 JST**。朝の登録者に当日分を流す）。
+- **ガード**: `STEP_EMAIL_AUTOMATION_ENABLED==='true'` 以外は no-op（早期 return・skipped）。送信エンジン側は別途 `NEWSLETTER_AUTOMATION_ENABLED`。
+- **処理フロー（reconcile-then-enqueue）**:
+  ```
+  ① reconcile-step-deliveries(live) を呼ぶ
+       → 前回までに SENT になった step ジョブを CampaignDeliveries=sent / CurrentStepNumber++ に反映
+  ② enqueue-step-emails(live, 全step) を呼ぶ
+       → 当日 due な enrollment を CampaignDeliveries=queued ＋ ScheduledEmails ジョブ(PENDING)化
+  ③ 送信は既存 */15 cron-email-scheduler → execute-scheduled-emails-background が担う（変更なし）
+  ```
+  - reconcile を enqueue の**前**に置くことで、前回送信分の CurrentStepNumber を先に前進させ、当日 due 判定を正しくする。
+  - 当日送信分を**同日中**に反映したい場合は、reconcile を後追いする2本目の cron（例 `"30 0 * * *"` = 09:30 JST、execute の */15 が走った後）を別途置く案。初期は「翌朝 reconcile」で許容（drip は日単位粒度のため）。
+
+### P3.4.2 既存 cron との関係
+
+| cron | 役割 | ガード | 変更 |
+|---|---|---|---|
+| `cron-step-email-scheduler`（新規・日次） | step の reconcile＋enqueue | STEP_EMAIL_AUTOMATION_ENABLED | 新規 |
+| `cron-email-scheduler`（既存・*/15） | ScheduledEmails(PENDING) を execute-background で送信 | NEWSLETTER_AUTOMATION_ENABLED | **不変** |
+
+→ step cron は「ジョブを積む」だけ。送信は既存 */15 経路がそのまま担う（実証済みエンジンを壊さない）。
+
+### P3.4.3 段階拡大（対象限定）
+
+- enqueue-step-emails は現状 free 全 due を対象にする。**初期 cron カナリアでは対象を絞る**ため、`enqueue-step-emails` に **`targetEmails`（明示許可リスト）/ `maxCohort`（上限）** パラメータを将来追加し、cron から渡す案。
+  - Phase 3.4 カナリア：`targetEmails=[admin-test1件]` または `maxCohort=1` で1件のみ自動配信を検証。
+  - 検証後：`maxCohort` を段階的に引き上げ → 撤廃で free 全体へ。
+- フリークエンシー上限（P3.8 同日重複禁止）は enqueue 側で CampaignDeliveries 直近 sent 突合。race_main↔step のクロス抑制は後続。
+
+### P3.4.4 監視
+
+- step 系は `get-newsletter-status`（NewsletterJobs/Queue 用・別系統）では見られない。
+- 監視は **`step-due-preview` / `enqueue-step-emails`(dryRun) / Airtable（StepEnrollments・CampaignDeliveries・ScheduledEmails）** で行う。
+- cron 実行ログは Netlify Functions ログ。
+
+### P3.4.5 安全運用
+
+- 既定で両フラグ false → cron は no-op・送信ゼロ。
+- 異常時は `STEP_EMAIL_AUTOMATION_ENABLED=false`（enqueue/reconcile 停止）または `NEWSLETTER_AUTOMATION_ENABLED=false`（送信停止）で即停止。
+- enroll-from-now 維持（既存 free はバックフィルしない）。CurrentStepNumber は reconcile 成功時のみ前進（多重防止は P3.4/確定.4.1）。
+
+### P3.4.6 Phase 3.4 着手順（送信前提なし）
+
+| 段階 | 内容 | 送信/書込み |
+|---|---|---|
+| 3.4a | 本設計書確定（本セクション） | なし（doc のみ） |
+| 3.4b | `enqueue-step-emails` に `targetEmails`/`maxCohort` 追加（dryRun で対象限定を確認） | なし |
+| 3.4c | `cron-step-email-scheduler.js` 実装（フラグ no-op・dryRun 相当の自己ログ）＋デプロイ | なし（フラグ未設定で no-op） |
+| 3.4d | admin-test 1件で **cron 経路カナリア**（両フラグ一時 true・`maxCohort=1` 等で1件・承認制） | あり（極小・承認制） |
+| 3.4e | `maxCohort` 段階引き上げ → free 全体へ。各拡大は承認制 | あり（承認制） |
+
+---
+
 ## 0. Airtable Base 構成（2026-05-15 実測で確定）
 
 ⚠️ **メルマガ配信対象の Airtable Base は 2 つに分離**（共有ではない）。本設計書は当初「同一 Base 共有」を想定していたが、実測で否定された。
