@@ -229,6 +229,103 @@ UpdatedAt               : Last modified time (自動)
 
 ---
 
+## ★ Phase 3 設計確定（2026-05-22）— ステップメール自動送信
+
+> 状態管理（StepEnrollments / CampaignDeliveries）と enroll（auth-user.js）は本番反映済み（PR#11/#14/#15・enroll書込みカナリア成功）。本セクションは**初の送信フェーズ**の設計を確定する。送信は **`STEP_EMAIL_AUTOMATION_ENABLED` ＋ `NEWSLETTER_AUTOMATION_ENABLED` の両 true** のときのみ成立。
+
+### P3.1 全体フロー（per-step ジョブ方式・execute 非干渉）
+
+```
+[日次 cron-step-email-scheduler]  ← STEP_EMAIL_AUTOMATION_ENABLED ガード
+  └ 各 step(1..6) ごとに enqueue-step-emails(live) を呼ぶ
+      ├ StepEnrollments(active) から当該 step が due な enrollment 抽出
+      │   （EnrolledAt + delayDays <= today ∧ CurrentStepNumber==stepNumber）
+      ├ 5-tier 除外（resolveAudienceRecipients/free）で適格者に限定
+      │   └ 非適格 → CampaignDeliveries=skipped-*（unsubscribed/blacklist/converted）
+      ├ CampaignDeliveries に DeliveryKey で冪等記録（queued）＝二重enqueue防止の核
+      ├ ScheduledEmails に「この step・この cohort」専用ジョブ1件作成（explicit宛先・JobId記録）
+      └ ※ CurrentStepNumber はここで進めない（送信成功確認後に reconcile で進める）
+  ↓ 既存 */15 cron-email-scheduler
+[execute-scheduled-emails-background]  ← NEWSLETTER_AUTOMATION_ENABLED ガード（既存・不変・流用）
+  └ PENDING を送信（PR#9 brand付き解除URL + List-Unsubscribe）。SentCount/CompletedAt/Status 更新のみ
+  ↓
+[reconcile-step-deliveries]  ← STEP_EMAIL_AUTOMATION_ENABLED ガード（新規・別関数）
+  └ Status=SENT ∧ FailedCount=0 の step ジョブ(JobId突合)を:
+      ├ CampaignDeliveries: queued→sent（SentAt）
+      └ StepEnrollments: CurrentStepNumber++（最終 step 消化なら Status=completed/CompletedAt）
+```
+
+### P3.2 per-step ジョブ分割（① ⑩）
+
+- ScheduledEmails は「1ジョブ1本文」。よって **step ごと（=本文ごと）に別ジョブ**（Day0 step1 / Day1 step2 / …）。
+- cohort は **explicit カンマ宛先**（LAZY_LOAD は audienceType 単位で step cohort を表現できない）。
+- ⚠️ explicit 宛先は execute-background が **5-tier を再適用しない**（LAZY_LOAD のみ getRecipientsList で除外）。→ **5-tier は enqueue 時に必ず適用**してから cohort を確定する。
+- cohort が大きい場合は ~N件で複数ジョブにチャンク（将来）。
+- ⑩ **step 本文は per-recipient placeholder（{{firstName}} 等）を使わない**。ScheduledEmails は 1ジョブ1本文で全員同一 Content を送るため、汎用挨拶（例「KEIBA Analytics をご利用の皆様へ」）にする。step-sequences.js の placeholder は enqueue 時に汎用文へ解決 or 除去。
+
+### P3.3 二重ガード（②）
+
+| フラグ | 制御対象 | 既定 |
+|---|---|---|
+| `STEP_EMAIL_AUTOMATION_ENABLED` | enqueue-step-emails(live) / cron-step-email-scheduler / reconcile-step-deliveries | **false** |
+| `NEWSLETTER_AUTOMATION_ENABLED` | 送信エンジン（execute-background / cron-email-scheduler / schedule-email） | false |
+
+- **両方 true** のときだけ自動ステップ配信が成立。片方 false で安全停止。
+- **手動 dryRun / preview はフラグ不要**（read-only・送信なし）。
+
+### P3.4 reconcile は execute を触らない（③・最重要）
+
+- execute-background は **ScheduledEmails 集計のみ更新**（per-customer は触らない）。1,031件実証済みエンジンを**壊さない**ため、後段の別関数 `reconcile-step-deliveries` で per-customer 反映する。
+- 紐付け：enqueue 時に `CampaignDeliveries.ScheduledEmailJobId` にジョブ JobId を記録。reconcile は JobId で突合。
+- ⚠️ execute は per-recipient 成否を出さない（SentCount/FailedCount は集計のみ）。**v1 は「ジョブ Status=SENT ∧ FailedCount=0 → cohort 全員 sent 扱いで CurrentStepNumber++」**。
+- **FailedCount>0 のジョブは reconcile せず保留＋ログ**（CurrentStepNumber を勝手に進めない）。per-recipient 失敗追跡は将来 execute 拡張で対応（step 専用 worker は非採用）。
+
+### P3.5 CampaignDeliveries Status 遷移（④）
+
+- **enqueue 時**：適格=`queued`／非適格=`skipped-unsubscribed`/`skipped-blacklist`/`skipped-converted`/`skipped-frequency-cap`／既存DeliveryKey有=`skipped-duplicate`（upsert で物理重複しない保険）
+- **reconcile 時**：ジョブ SENT→`sent`（SentAt）／ジョブ FAILED→`failed`（→retry で queued）
+
+### P3.6 DeliveryKey（⑤）
+
+- **enqueue 時に作成**（ジョブ作成前に CampaignDeliveries を upsert＝二重 enqueue 防止）。
+- **step は contentHash 非依存**：`extraKey='step:{seqId}:{stepNumber}'`、contentHash スロットには **step 固定トークン**（campaignType 例 `step-signup-d0`）を入れる。
+  - 理由：「DayN メールは1人1通きり」を本文修正に関係なく保証（copy 微修正で再送しない）。
+  - daily/campaign は逆に **contentHash 依存**（意図的な再送のため）＝確定.4 のまま。**step だけ content非依存**。
+
+### P3.7 同日1step・catch-upなし（⑥）
+
+- `CurrentStepNumber` により **1 enrollment は現ステップ1つだけ due**（step-due-preview の実装どおり）。
+- catch-up しない・enroll-from-now 維持（既存 free 1,001人は対象外）。
+
+### P3.8 頻度制御（⑦）
+
+- `Customers.LastNewsletterSentAt` は**送信エンジンが書いていない**（paypal-webhook のみ）→ 不使用。
+- **CampaignDeliveries の直近 sent を頻度ソース**：enqueue 時に `RecipientEmail` の `SentAt` が当日内に有れば `skipped-frequency-cap`（同日重複禁止）。
+- v1 は **race_main↔step のクロス抑制は入れない**（step は低 volume・日次 cohort 小）。同日重複禁止フックのみ用意し、race 協調は後続。
+
+### P3.9 関数案（⑧）
+
+| 関数 | 状態 | 役割 | 書込み |
+|---|---|---|---|
+| `step-due-preview.js` | 既存 | 当日 due 件数の read-only 集計 | なし |
+| `enqueue-step-emails.js` | 新規 | step cohort 抽出→5-tier→CampaignDeliveries(queued)→ScheduledEmails ジョブ作成。**`dryRun` 対応**（true=件数のみ書込みなし／false=実投入・STEP_EMAIL_AUTOMATION_ENABLED 必須） | live時のみ |
+| `cron-step-email-scheduler.js` | 新規 | 日次（例 JST 9:00）に各 step の enqueue(live) を起動。フラグガード | （enqueue 経由） |
+| `reconcile-step-deliveries.js` | 新規 | SENT step ジョブを CampaignDeliveries=sent ＋ StepEnrollments.CurrentStepNumber++ に反映 | CampaignDeliveries/StepEnrollments |
+
+### P3.10 段階ロードマップ（⑨）
+
+| Phase | 内容 | 送信/書込み |
+|---|---|---|
+| **3.0** | 設計書に本設計を確定追記（本セクション） | なし（doc のみ） |
+| **3.1** | `enqueue-step-emails.js`（**dryRun=true のみ**）実装＋read-only ドライラン | なし |
+| **3.2** | enqueue live パス＋`STEP_EMAIL_AUTOMATION_ENABLED`（既定false）追加。**admin-test 1件**で enqueue→execute→受信カナリア | あり（admin-test極小・承認制） |
+| **3.3** | `reconcile-step-deliveries`（SENT→sent＋CurrentStepNumber++）。admin-test で遷移検証 | あり（承認制） |
+| **3.4** | `cron-step-email-scheduler`（日次）配線＋小 cohort→free 全 step へ段階拡大 | あり（承認制） |
+
+> 推奨着手順：**3.1（dryRun先行）→ 3.2（admin-test カナリア）→ 3.3 → 3.4**。各送信・書込みフェーズは実行前に承認を取る。
+
+---
+
 ## 0. Airtable Base 構成（2026-05-15 実測で確定）
 
 ⚠️ **メルマガ配信対象の Airtable Base は 2 つに分離**（共有ではない）。本設計書は当初「同一 Base 共有」を想定していたが、実測で否定された。
