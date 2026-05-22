@@ -176,6 +176,24 @@ exports.handler = async (event, context) => {
           console.error('⚠️ BlastMail登録エラー（処理は継続）:', blastMailError.message);
         }
 
+        // ステップメール enroll（signup-onboarding）。新規 free 登録時のみ enroll 行を作成。
+        // ベストエフォート: enroll 失敗は free 登録本体を壊さない（throw しない）。
+        // step-enroll.js は ESM のため CommonJS から dynamic import で読み込む。
+        // ※ enroll 行作成のみ。送信・enqueue・他テーブル書込みは一切しない。
+        try {
+          const { enrollSignupOnboarding } = await import('../../src/lib/newsletter/step-enroll.js');
+          const enrollResult = await enrollSignupOnboarding({
+            apiKey: process.env.AIRTABLE_API_KEY,
+            baseId: process.env.AIRTABLE_BASE_ID,
+            email,
+            customerRecordId: newRecord.id,
+            source: 'auth-user-free-signup',
+          });
+          console.log(`📩 step enroll: created=${enrollResult.created} reason=${enrollResult.reason}`);
+        } catch (enrollError) {
+          console.error('⚠️ step enroll 失敗（登録は継続）:', enrollError.message);
+        }
+
         // 新規ユーザー通知（= 実態はウェルカムメール送信。user-notification.js が SendGrid 経由で送る）
         try {
           const notificationUrl = `${process.env.NETLIFY_DEV ? 'http://localhost:8888' : 'https://analytics.keiba.link'}/.netlify/functions/user-notification`;
