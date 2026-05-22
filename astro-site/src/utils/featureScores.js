@@ -5,43 +5,6 @@
  * 全予想ページ共通で使用
  */
 
-/**
- * レースタイムから距離を推定する（racebook近走に distance がない場合のフォールバック）
- * タイム形式: "1.24.4" (分.秒.コンマ) or "59.8" (秒.コンマ)
- * JRA近走の time は "内1.23.4" / "外1.21.9" のようにトラックバイアス記号（内/外/中 等）が
- * 先頭に付くため、最初の数字までを除去してからパースする。
- * 精度は ±200m 程度のため、calcDistanceFitness の ±200m 許容範囲で機能する。
- */
-function estimateDistanceFromTime(timeStr) {
-  if (!timeStr) return 0;
-  const t = String(timeStr).replace(/^[^\d]+/, '').trim();
-  let totalSeconds = 0;
-  const minsMatch = t.match(/^(\d+)\.(\d{2})\.(\d)$/);
-  if (minsMatch) {
-    totalSeconds = parseInt(minsMatch[1]) * 60 + parseInt(minsMatch[2]) + parseInt(minsMatch[3]) * 0.1;
-  } else {
-    const secsMatch = t.match(/^(\d{2})\.(\d)$/);
-    if (secsMatch) {
-      totalSeconds = parseInt(secsMatch[1]) + parseInt(secsMatch[2]) * 0.1;
-    } else {
-      return 0;
-    }
-  }
-  if (totalSeconds < 55) return 0; // 異常値
-  if (totalSeconds < 65) return 1000;
-  if (totalSeconds < 77) return 1200;
-  if (totalSeconds < 89) return 1400;
-  if (totalSeconds < 101) return 1600;
-  if (totalSeconds < 115) return 1800;
-  if (totalSeconds < 127) return 2000;
-  if (totalSeconds < 140) return 2200;
-  if (totalSeconds < 155) return 2400;
-  if (totalSeconds < 170) return 2600;
-  if (totalSeconds < 185) return 3000;
-  if (totalSeconds < 220) return 3200;
-  return 3600;
-}
-
 function finishToScore(rank) {
   if (!rank || rank <= 0) return 0;
   if (rank === 1) return 100;
@@ -130,8 +93,7 @@ export function calcDistanceFitness(recentRaces, currentDistance) {
 
   let sameDist = 0, sameDistGood = 0;
   for (const r of recentRaces) {
-    // distance(文字列) から抽出、空なら time から推定（JRA近走は distance が空のため必須）
-    const rDist = (r.distance ? parseInt(String(r.distance).match(/(\d{3,4})/)?.[1] || '0') : 0) || estimateDistanceFromTime(r.time);
+    const rDist = r.distance ? parseInt(String(r.distance).match(/(\d{3,4})/)?.[1] || '0') : 0;
     if (rDist && Math.abs(rDist - targetDist) <= 200) {
       sameDist++;
       const rank = r.rank || r.finish;
