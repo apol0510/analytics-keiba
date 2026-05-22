@@ -107,12 +107,57 @@ export function calcStaminaRating(recentRaces) {
   return Math.min(100, Math.max(20, score));
 }
 
+/**
+ * JRA racebook 近走の venue 形式（"4東10.18"）から場名略称1文字を抽出し、
+ * 正式名称に展開するマップ。中 → 中山/中京 は曖昧なため両方をマッチ対象とする。
+ */
+const VENUE_ABBREV_MAP = {
+  '東': '東京', '京': '京都', '阪': '阪神',
+  '小': '小倉', '新': '新潟', '福': '福島', '札': '札幌', '函': '函館',
+  // '中' → 中山 or 中京（曖昧）。extractVenueName で 1文字 "中" を返し、比較側で先頭一致
+  // 南関・地方
+  '大': '大井', '川': '川崎', '船': '船橋', '浦': '浦和',
+  '門': '門別', '盛': '盛岡', '水': '水沢', '金': '金沢',
+  '笠': '笠松', '名': '名古屋', '園': '園田', '姫': '姫路',
+  '高': '高知', '佐': '佐賀', '帯': '帯広',
+};
+
+/**
+ * 近走venueから場名を抽出する
+ * - "大井 3.24" → "大井"     (南関テキスト形式: スペース区切り)
+ * - "4東10.18"  → "東京"     (JRA XML形式: 回次+場名1字+日付)
+ * - "東京"      → "東京"     (そのまま)
+ */
+function extractVenueName(rawVenue) {
+  if (!rawVenue) return '';
+  // 南関テキスト形式: "大井 3.24" → スペース前を取得
+  if (/\s/.test(rawVenue)) return rawVenue.split(/\s+/)[0];
+  // JRA XML形式: "4東10.18" → 数字+漢字1文字+数字... のパターン
+  const jraMatch = rawVenue.match(/^\d([^\d])/);
+  if (jraMatch) {
+    const abbrev = jraMatch[1];
+    // "中" は中山/中京で曖昧 → そのまま返す（比較側で先頭一致を使う）
+    return VENUE_ABBREV_MAP[abbrev] || abbrev;
+  }
+  // その他: そのまま返す
+  return rawVenue;
+}
+
 export function calcTrackCompatibility(recentRaces, currentVenue) {
   if (!recentRaces || recentRaces.length === 0) return 50;
+  // currentVenue: "大井", "東京競馬", "福島" etc. → 比較用に"競馬"を除去
+  const normalizedCurrentVenue = (currentVenue || '').replace('競馬', '');
+  if (!normalizedCurrentVenue) return 50;
   let sameVenue = 0, sameVenueGood = 0;
   for (const r of recentRaces) {
-    const venue = r.venue || '';
-    if (currentVenue && venue.includes(currentVenue.replace('競馬', ''))) {
+    const trackName = extractVenueName(r.venue || '');
+    if (!trackName) continue;
+    // "中" の曖昧対応: "中山" の先頭1文字 "中" で比較、
+    // または trackName="東京" と currentVenue="東京" の完全一致/包含
+    const isMatch = trackName.includes(normalizedCurrentVenue)
+      || normalizedCurrentVenue.includes(trackName)
+      || (trackName.length === 1 && normalizedCurrentVenue.startsWith(trackName));
+    if (isMatch) {
       sameVenue++;
       const rank = r.rank || r.finish;
       if (rank && rank <= 3) sameVenueGood++;
