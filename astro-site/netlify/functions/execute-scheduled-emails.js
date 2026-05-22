@@ -187,10 +187,15 @@ export default async function handler(request, context) {
           }
           try {
             // 配信停止リンクを条件付きで追加
+            // brand=analytics-keiba を付与する（unsubscribe.js は brand 必須。無いと GET の
+            // ブランド選択 UI に着地して 1 ステップ増える）。newsletter-send-test.js と統一。
+            // List-Unsubscribe ヘッダーでも同じ URL を使うため if 外で定義する。
+            const unsubscribeLink = includeUnsubscribe
+              ? `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}&brand=analytics-keiba`
+              : null;
             let htmlContent;
 
             if (includeUnsubscribe) {
-              const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}`;
               htmlContent = `
                 ${Content}
 
@@ -226,6 +231,14 @@ export default async function handler(request, context) {
                   value: htmlContent
                 }
               ],
+              // RFC 8058 準拠の List-Unsubscribe ヘッダー（Gmail / Outlook のネイティブ配信停止
+              // ボタン表示。newsletter-send-test.js D4 と同パターン）。includeUnsubscribe 時のみ付与。
+              ...(unsubscribeLink ? {
+                headers: {
+                  'List-Unsubscribe': `<${unsubscribeLink}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
+                  'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+                }
+              } : {}),
               // 🚨 重要：SendGridトラッキング完全無効化（復活防止対策 2025-09-29）
               tracking_settings: {
                 click_tracking: {
