@@ -36,7 +36,7 @@
 
 | フィールド | 型 | 必須 | unique | 説明 |
 |---|---|---|---|---|
-| `EnrollmentId` | Single line text | ✅ | ✅ | uuid v4。主キー |
+| `EnrollmentId` | Single line text | ✅ | 任意* | uuid v4。主キー（*unique は確定.4.1 参照＝コード側で担保） |
 | `StepSequenceId` | Single line text | ✅ | | 例 `analytics-keiba:signup-onboarding`（コード定数のID） |
 | `RecipientEmail` | Email (lowercase) | ✅ | | 正規化（trim + lowercase） |
 | `CustomerRecordId` | Single line text | ❌ | | Customers の record id（join 用・任意） |
@@ -67,7 +67,7 @@ active ──全ステップ消化──▶ completed
 
 | フィールド | 型 | 必須 | unique | 説明 |
 |---|---|---|---|---|
-| `DeliveryKey` | Single line text | ✅ | ✅(Duplicate不可) | sha256（確定.4）。**冪等キー** |
+| `DeliveryKey` | Single line text | ✅ | 任意*（コード側で担保） | sha256（確定.4）。**冪等キー**。*unique は確定.4.1 参照 |
 | `CampaignType` | Single line text | ✅ | | `step-signup-d1` / `daily-main-race-nankan` / `campaign-winback` 等 |
 | `EmailType` | Single select | ✅ | | `step` / `campaign` / `race_main` |
 | `StepSequenceId` | Single line text | ❌ | | step のみ |
@@ -122,6 +122,24 @@ DeliveryKey = computeDeliveryKey({
 - email は小文字化・trim 済を投入。
 - **PII 非露出**：最終 `DeliveryKey` は sha256 ハッシュ（email 平文を含まない）。`RecipientEmail` 列は別途保持するが、キー自体は hash。
 
+### 確定.4.1 重複防止＝Airtable unique に依存せずコード側で担保（2026-05-22 改訂）
+
+**経緯**: Airtable UI のフィールド設定に「重複した値を許可しない（unique）」項目が表示されないことが判明（プラン/フィールド種別により非表示）。よって **`DeliveryKey` / `EnrollmentId` の unique 制約を必須条件にしない**。両フィールドは **Single line text のまま**とし、**重複防止はコード側で担保**する。
+
+> 旧 §5/§6/§7 の「unique」「Duplicate records are not allowed 必須」「重複を許可しないを必ず ON」等の表現は、**本確定.4.1 で上書き**する：「**可能なら Airtable 側でも設定。表示されない/設定不可なら、下記コード側の冪等処理で担保する（必須はコード側）**」。
+
+**CampaignDeliveries（DeliveryKey 冪等）**:
+- 作成は **`performUpsert { fieldsToMergeOn: ['DeliveryKey'] }`（PATCH）** を第一手段とする（休眠 NewsletterQueue 実装と同パターン。Airtable 側 unique 非依存で二重 row を防げる）。
+- performUpsert が使えない経路では **作成前に `filterByFormula={DeliveryKey}='...'` で既存検索 → 在れば skip（`Status=skipped-duplicate`）**。
+- 万一 unique 制約なしで二重 row が出ても、送信側は **DeliveryKey 単位で「未送信(queued)のうち1件のみ送信し、他は skipped-duplicate」** にするガードを入れる。
+
+**StepEnrollments（多重 enroll 防止）**:
+- `EnrollmentId` は uuid 主キー（衝突しない）。
+- **同一人の二重シーケンス登録**は、作成前に **`filterByFormula=AND({RecipientEmail}='...', {StepSequenceId}='...', {Status}='active')` で既存 active を検索 → 在れば作成しない**。
+- enroll 作成関数を**単一窓口**に集約し、必ずこの事前検索を通す（複数箇所から直接 create しない）。
+
+→ Airtable の unique トグルは「**可能なら ON（多層防御）、無くてもコード側で必須担保**」という位置づけ。
+
 ### 確定.5 enroll-from-now 方針（バックフィルしない）
 
 - **新規 free 登録時**に `StepEnrollments` を1件作成（`EnrolledAt=now`, `CurrentStepNumber=1`, `Status=active`）。トリガー実装は `register-free.js` / `verify-magic-link.js`（将来 Phase 2.3）。
@@ -168,7 +186,7 @@ NEWSLETTER_AUTOMATION_ENABLED=true  ┘
 
 **テーブル1: `StepEnrollments`**
 ```
-EnrollmentId            : Single line text   (※フィールド設定で「重複を許可しない」推奨／主キー)
+EnrollmentId            : Single line text   (主キー。unique は可能なら設定。表示されない場合はコード側冪等で担保=確定.4.1)
 StepSequenceId          : Single line text
 RecipientEmail          : Email
 CustomerRecordId        : Single line text
@@ -186,7 +204,7 @@ UpdatedAt               : Last modified time (自動)
 
 **テーブル2: `CampaignDeliveries`**
 ```
-DeliveryKey             : Single line text   (★「重複を許可しない」を必ず ON＝冪等キー)
+DeliveryKey             : Single line text   (冪等キー。unique は可能なら設定。表示されない場合はコード側 performUpsert/事前検索で担保=確定.4.1)
 CampaignType            : Single line text
 EmailType               : Single select [step, campaign, race_main]
 StepSequenceId          : Single line text
