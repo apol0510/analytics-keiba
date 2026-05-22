@@ -30,10 +30,13 @@ export default async function handler(request, context) {
 
   try {
     // スケジュールされたメールを実行
+    // 2026-05-22: 実行エンジンを Background Function 化（execute-scheduled-emails-background）。
+    // Background Function は 202 Accepted を即返しし body を返さない（非同期で最大15分実行）。
+    // そのため response.json() は行わず、起動の成否のみ status で判定する。
     const baseUrl = process.env.URL || 'https://analytics.keiba.link';
-    const executorUrl = `${baseUrl}/.netlify/functions/execute-scheduled-emails`;
+    const executorUrl = `${baseUrl}/.netlify/functions/execute-scheduled-emails-background`;
 
-    console.log('📧 スケジューラー実行URL:', executorUrl);
+    console.log('📧 スケジューラー起動URL(background):', executorUrl);
 
     const response = await fetch(executorUrl, {
       method: 'POST',
@@ -42,19 +45,18 @@ export default async function handler(request, context) {
       }
     });
 
-    if (!response.ok) {
-      throw new Error(`スケジューラー実行失敗: ${response.status}`);
+    // Background Function は 202 即返し。2xx 以外のみ失敗扱い。
+    if (!response.ok && response.status !== 202) {
+      throw new Error(`スケジューラー起動失敗: ${response.status}`);
     }
 
-    const result = await response.json();
-    
-    console.log('✅ Cron実行結果:', result);
+    console.log(`✅ Cron: background executor 起動 (status=${response.status})`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        message: 'Cron execution completed',
-        executorResult: result,
+        message: 'Background executor triggered',
+        executorStatus: response.status,
         timestamp: new Date().toISOString()
       }),
       { status: 200, headers }

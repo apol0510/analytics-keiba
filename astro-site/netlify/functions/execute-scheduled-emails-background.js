@@ -1,5 +1,12 @@
-// 自作メールスケジューラー - 実行エンジンFunction
+// 自作メールスケジューラー - 実行エンジン（Netlify Background Function）
 // Airtableから予約メールを取得して実行
+//
+// 2026-05-22: 同期関数（最大26秒）では 1000 件規模を1パスで送れず、SentCount 書込み前に
+// kill されて cron 再実行で重複送信するため、ファイル名を *-background.js に変更して
+// Background Function 化（最大15分）。内部 8 分グレースフル break までに必ず SentCount を
+// 書くため、resume が重複なしで成立する。送信ロジック / LAZY_LOAD 受信者解決 /
+// SentCount・CompletedAt 記録 / brand付き配信停止URL / List-Unsubscribe ヘッダーは不変。
+// 呼び出し元 cron-email-scheduler.js は本関数を 202 即返しで起動する（結果は Airtable で監視）。
 
 import {
   fetchCustomersReadOnly,
