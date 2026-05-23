@@ -550,125 +550,96 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                   )}
 
 
-                  <!-- 買い目セクション（プロ会員限定）-->
-                  {umatanBets && (
-                    <div class="betting-section pro-exclusive" id={`betting-section-${raceIndex}`} data-race-number={race.raceInfo.raceNumber} data-total-races={venuePredictions.length}>
-                      <div class="section-header">
-                        <div class="header-icon">💰</div>
-                        <h2>AI推奨買い目</h2>
-                        <span class="pro-tag pro-only">PRO限定</span>
-                      </div>
-
-                      <!-- ライトプラン向け制限メッセージ（メインレース以外）-->
-                      <div class="light-user-restricted hidden" data-race-index={raceIndex}>
-                        <div class="limited-betting-info">
-                          <p>🔒 <strong>ライトプラン：</strong>買い目はメインレース（最終レース）のみ閲覧可能です</p>
-                          <div class="upgrade-notice">
-                            <p>💎 <strong>プロプランにアップグレードで全レースの買い目が見られます</strong></p>
-                            <a href="/pricing" class="btn btn-upgrade">料金プランを見る →</a>
+                  {/* AI推奨買い目（nankan 統一カード形式） */}
+                  {umatanBets && (() => {
+                    const isMain = isMainRace(race.raceInfo.raceNumber, venuePredictions.length);
+                    const buildLine = (axisInfo, mark) => {
+                      const opps5 = axisInfo.opponents.slice(0, 5);
+                      const oppsExtra = axisInfo.opponents.slice(5);
+                      const oppsStr = opps5.join('.') + (oppsExtra.length > 0 ? `（抑え ${oppsExtra.join('.')}）` : '');
+                      const numbers = `${mark}${axisInfo.axis}↔${oppsStr}`;
+                      const points = opps5.length + oppsExtra.length;
+                      return { mark, name: axisInfo.axisName, numbers, points };
+                    };
+                    const lines = [];
+                    if (umatanBets.honmei) {
+                      const ln = buildLine(umatanBets.honmei, '◎');
+                      if (isMain) ln.points = ln.points * 2;
+                      lines.push({ ...ln, role: '本命' });
+                    }
+                    if (umatanBets.taikou) {
+                      lines.push({ ...buildLine(umatanBets.taikou, '○'), role: '対抗' });
+                    }
+                    return (
+                      <div class="betting-section pro-exclusive recommendation-section" id={`betting-section-${raceIndex}`} data-race-number={race.raceInfo.raceNumber} data-total-races={venuePredictions.length}>
+                        <div class="bet-strategy unified-bet-card">
+                          <div class="unified-bet-header">
+                            <h2 class="section-title">
+                              <span>📊</span>
+                              <span>AI推奨買い目</span>
+                            </h2>
+                            <span class="unified-bet-subtitle">{isMain ? '馬単10点' : '馬単'}</span>
+                            <span class="pro-tag pro-only">PRO限定</span>
                           </div>
-                        </div>
-                      </div>
 
-                      <!-- 無料会員向け制限買い目 -->
-                      <div class="free-user-betting hidden" data-race-index={raceIndex}>
-                        <div class="limited-betting-info">
-                          <p>🎁 <strong>無料会員特典：</strong>本命・対抗・単穴・連下最上位の馬番号を表示</p>
-                          <div class="limited-horses">
-                            {allHorses
-                              .filter(h => ['本命', '対抗', '単穴', '連下最上位'].includes(h.role))
-                              .map((horse) => (
-                                <div class={`limited-horse ${horse.role === '本命' ? 'honmei' : horse.role === '対抗' ? 'taikou' : horse.role === '単穴' ? 'tanana' : 'renka-top'}`}>
-                                  <span class="limited-mark">
-                                    {horse.role === '本命' ? '◎' : horse.role === '対抗' ? '○' : horse.role === '単穴' ? '▲' : '△'}
-                                  </span>
-                                  <span class="limited-number">{horse.horseNumber}</span>
-                                  <span class="limited-name">{horse.horseName}</span>
-                                  <span class="limited-role">{horse.role}</span>
+                          {/* ライトプラン向け制限メッセージ（メインレース以外）*/}
+                          <div class="light-user-restricted hidden" data-race-index={raceIndex}>
+                            <div class="limited-betting-info">
+                              <p>🔒 <strong>ライトプラン：</strong>買い目はメインレース（最終レース）のみ閲覧可能です</p>
+                              <div class="upgrade-notice">
+                                <p>💎 <strong>プロプランにアップグレードで全レースの買い目が見られます</strong></p>
+                                <a href="/pricing" class="btn btn-upgrade">料金プランを見る →</a>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 無料会員向け制限買い目 */}
+                          <div class="free-user-betting hidden" data-race-index={raceIndex}>
+                            <div class="limited-betting-info">
+                              <p>🎁 <strong>無料会員特典：</strong>本命・対抗・単穴・連下最上位の馬番号を表示</p>
+                              <div class="limited-horses">
+                                {allHorses
+                                  .filter(h => ['本命', '対抗', '単穴', '連下最上位'].includes(h.role))
+                                  .map((horse) => (
+                                    <div class={`limited-horse ${horse.role === '本命' ? 'honmei' : horse.role === '対抗' ? 'taikou' : horse.role === '単穴' ? 'tanana' : 'renka-top'}`}>
+                                      <span class="limited-mark">
+                                        {horse.role === '本命' ? '◎' : horse.role === '対抗' ? '○' : horse.role === '単穴' ? '▲' : '△'}
+                                      </span>
+                                      <span class="limited-number">{horse.horseNumber}</span>
+                                      <span class="limited-name">{horse.horseName}</span>
+                                      <span class="limited-role">{horse.role}</span>
+                                    </div>
+                                  ))
+                                }
+                              </div>
+                              <div class="upgrade-notice">
+                                <p>💎 <strong>有料プランにアップグレードで全買い目（本線＋抑え）が見られます</strong></p>
+                                <a href="/pricing" class="btn btn-upgrade">料金プランを見る →</a>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* プロ会員向け完全買い目（bet-item 形式 / nankan 統一） */}
+                          <div class="bet-list pro-user-only hidden">
+                            {lines.map((ln) => (
+                              <div class="bet-item">
+                                <span class="bet-type">馬単</span>
+                                <div class="bet-horses">
+                                  {ln.name && <span class="bet-axis-label">{ln.role} {ln.name}</span>}
+                                  <span class="bet-numbers">{ln.numbers}</span>
                                 </div>
-                              ))
-                            }
+                                <span class="bet-points">{ln.points}点</span>
+                              </div>
+                            ))}
                           </div>
-                          <div class="upgrade-notice">
-                            <p>💎 <strong>有料プランにアップグレードで全買い目（本線＋抑え）が見られます</strong></p>
-                            <a href="/pricing" class="btn btn-upgrade">料金プランを見る →</a>
-                          </div>
+
+                          {isMain && (
+                            <p class="unified-bet-note">本命軸の馬単10点構成です。</p>
+                          )}
                         </div>
                       </div>
-
-                      <!-- プロ会員向け完全買い目（デフォルト非表示、JSでプラン判定後に表示） -->
-                      <div class="betting-formula pro-user-only hidden">
-                        <!-- 本命軸 -->
-                        <div class="formula-row honmei-axis">
-                          <div class="formula-header">
-                            <span class="axis-mark">◎</span>
-                            <span class="axis-text">本命</span>
-                            <span class="axis-horse-name">{umatanBets.honmei.axisName}</span>
-                          </div>
-                          <div class="formula-content">
-                            <span class="axis-number">{umatanBets.honmei.axis}</span>
-                            <span class="formula-arrow">⇔</span>
-                            <span class="opponents-list">
-                              {umatanBets.honmei.opponents.slice(0, 5).map((num, idx) => (
-                                <>
-                                  <span class="opponent-number">{num}</span>
-                                  {idx < Math.min(4, umatanBets.honmei.opponents.length - 1) && <span class="opponent-separator">.</span>}
-                                </>
-                              ))}
-                              {umatanBets.honmei.opponents.length > 5 && (
-                                <>
-                                  <span class="opponent-paren">(</span>
-                                  {umatanBets.honmei.opponents.slice(5).map((num, idx) => (
-                                    <>
-                                      <span class="opponent-number optional">{num}</span>
-                                      {idx < umatanBets.honmei.opponents.slice(5).length - 1 && <span class="opponent-separator">.</span>}
-                                    </>
-                                  ))}
-                                  <span class="opponent-paren">)</span>
-                                </>
-                              )}
-                            </span>
-                          </div>
-                        </div>
-
-                        <!-- 対抗軸（メインレースは描画しない） -->
-                        {umatanBets.taikou && (
-                          <div class="formula-row taikou-axis">
-                            <div class="formula-header">
-                              <span class="axis-mark">○</span>
-                              <span class="axis-text">対抗</span>
-                              <span class="axis-horse-name">{umatanBets.taikou.axisName}</span>
-                            </div>
-                            <div class="formula-content">
-                              <span class="axis-number">{umatanBets.taikou.axis}</span>
-                              <span class="formula-arrow">⇔</span>
-                              <span class="opponents-list">
-                                {umatanBets.taikou.opponents.slice(0, 5).map((num, idx) => (
-                                  <>
-                                    <span class="opponent-number">{num}</span>
-                                    {idx < Math.min(4, umatanBets.taikou.opponents.length - 1) && <span class="opponent-separator">.</span>}
-                                  </>
-                                ))}
-                                {umatanBets.taikou.opponents.length > 5 && (
-                                  <>
-                                    <span class="opponent-paren">(</span>
-                                    {umatanBets.taikou.opponents.slice(5).map((num, idx) => (
-                                      <>
-                                        <span class="opponent-number optional">{num}</span>
-                                        {idx < umatanBets.taikou.opponents.slice(5).length - 1 && <span class="opponent-separator">.</span>}
-                                      </>
-                                    ))}
-                                    <span class="opponent-paren">)</span>
-                                  </>
-                                )}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <!-- /プロ会員向け完全買い目 -->
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   <!-- AIモデル選出馬カード（無料版と統一デザイン） -->
                   <div class="analysis-section ai-pick-section">
@@ -1674,7 +1645,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     .race-selector {
       display: flex;
       flex-wrap: wrap;
-      gap: var(--spacing-sm);
+      gap: 10px;
       justify-content: center;
       margin-bottom: var(--spacing-xl);
       padding: var(--spacing-lg);
@@ -1688,13 +1659,15 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: center;
       gap: 4px;
-      padding: var(--spacing-sm) var(--spacing-md);
+      padding: 10px 14px;
+      min-width: 64px;
       background: var(--bg-tertiary);
       color: var(--text-primary);
       border: 2px solid var(--border-color);
       border-radius: var(--radius-md);
-      font-size: 0.875rem;
+      font-size: 0.95rem;
       font-weight: 700;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2956,6 +2929,160 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       }
       .dark-horse-arrow {
         font-size: 1.2rem;
+      }
+    }
+
+    /* ================================================================
+       AI推奨買い目カード（nankan 統一スタイル）
+       ================================================================ */
+    .betting-section.recommendation-section {
+      margin-bottom: 40px;
+      padding: 30px;
+      background: rgba(30, 41, 59, 0.7);
+      border-radius: 15px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+      /* 旧 .betting-section の派手な装飾を上書き */
+      box-shadow: none;
+    }
+    .betting-section.recommendation-section::before,
+    .betting-section.recommendation-section::after {
+      content: none;
+    }
+    .recommendation-section .bet-strategy {
+      background: rgba(15, 23, 42, 0.8);
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 0;
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      transition: all 0.3s ease;
+    }
+    .recommendation-section .bet-strategy:hover {
+      border-color: rgba(139, 92, 246, 0.5);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    }
+    .recommendation-section .unified-bet-card {
+      margin-bottom: 0;
+    }
+    .recommendation-section .unified-bet-header {
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+      padding: 0;
+      background: none;
+      border: none;
+    }
+    .recommendation-section .unified-bet-header .section-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      border: none;
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .recommendation-section .unified-bet-subtitle {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      font-weight: 600;
+      background: rgba(139, 92, 246, 0.12);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 999px;
+      padding: 4px 12px;
+    }
+    .recommendation-section .unified-bet-header .pro-tag {
+      background: linear-gradient(135deg, #f59e0b, #f97316);
+      color: #ffffff;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .recommendation-section .bet-list {
+      margin-bottom: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .recommendation-section .bet-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      background: rgba(30, 41, 59, 0.65);
+      border-radius: 10px;
+      border: 1px solid rgba(100, 116, 139, 0.25);
+    }
+    .recommendation-section .bet-item .bet-type {
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      color: #ffffff;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      min-width: 62px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .recommendation-section .bet-item .bet-horses {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+    .recommendation-section .bet-item .bet-axis-label {
+      color: #a78bfa;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .recommendation-section .bet-item .bet-numbers {
+      color: #f8fafc;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      word-break: break-all;
+    }
+    .recommendation-section .bet-item .bet-points {
+      color: #10b981;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      flex-shrink: 0;
+    }
+    .recommendation-section .unified-bet-note {
+      margin-top: 14px;
+      margin-bottom: 0;
+      color: #94a3b8;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 768px) {
+      .betting-section.recommendation-section {
+        padding: 18px;
+      }
+      .recommendation-section .bet-strategy {
+        padding: 16px;
+      }
+      .recommendation-section .bet-item {
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .recommendation-section .bet-item .bet-numbers {
+        font-size: 0.95rem;
+      }
+      .race-btn {
+        min-width: 56px;
+        padding: 8px 10px;
+        font-size: 0.9rem;
       }
     }
   </style>
