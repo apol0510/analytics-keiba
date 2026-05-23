@@ -488,15 +488,14 @@ export function processUnifiedRaceData(raceData) {
     const subStars = convertToStarRating("総合評価", "対抗", subScore);
 
     // 特徴量重要度（バリエーション付き）
+    // 2026-05-24: 「能力上位性」を廃止（pt との情報重複のため）
     const mainImportance = [
         {label: "安定性", value: Math.round((mainScore + 3 + Math.random() * 4 - 2)) / 100},
-        {label: "能力上位性", value: Math.round((mainScore + 3 + Math.random() * 4 - 2)) / 100},
         {label: "展開利", value: Math.round((mainScore - 6 + Math.random() * 4 - 2)) / 100}
     ];
 
     const subImportance = [
         {label: "安定性", value: Math.round((subScore + 3 + Math.random() * 4 - 2)) / 100},
-        {label: "能力上位性", value: Math.round((subScore + 3 + Math.random() * 4 - 2)) / 100},
         {label: "展開利", value: Math.round((subScore - 6 + Math.random() * 4 - 2)) / 100}
     ];
 
