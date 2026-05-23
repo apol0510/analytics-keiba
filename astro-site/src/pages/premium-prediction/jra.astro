@@ -356,22 +356,6 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               </div>
             </div>
 
-            <!-- 会場タブ（複数会場の場合のみ表示）-->
-            {isMultiVenue && venues.length > 1 && (
-              <div class="venue-selector">
-                {venues.map((venueData, venueIndex) => (
-                  <button
-                    class={`venue-btn ${venueIndex === 0 ? 'active' : ''}`}
-                    data-venue-index={venueIndex}
-                    onclick="selectVenue(event, this)"
-                  >
-                    <span class="venue-label">{venueData.venue}</span>
-                    <span class="venue-race-count">{venueData.eventInfo.totalRaces}R</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
             <!-- 穴馬ページリンク -->
             <div class="dark-horse-link-section">
               <a href="/dark-horse-picks/" class="dark-horse-link-btn">
@@ -497,6 +481,22 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                           </div>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {/* 会場タブ（レース選択の直上） */}
+                  {isMultiVenue && venues.length > 1 && (
+                    <div class="venue-selector">
+                      {venues.map((vd, vi) => (
+                        <button
+                          class={`venue-btn ${vi === venueIndex ? 'active' : ''}`}
+                          data-venue-index={vi}
+                          onclick="selectVenue(event, this)"
+                        >
+                          <span class="venue-label">{vd.venue}</span>
+                          <span class="venue-race-count">{vd.eventInfo.totalRaces}R</span>
+                        </button>
+                      ))}
                     </div>
                   )}
 
