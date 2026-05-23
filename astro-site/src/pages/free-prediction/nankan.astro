@@ -193,8 +193,8 @@ const analysis = firstVenue.mainRace.analysis;
                                                 const cardClass = horse.role === '本命' ? 'horse-card horse-card-main'
                                                     : horse.role === '対抗' ? 'horse-card horse-card-sub'
                                                     : 'horse-card horse-card-tana';
+                                                const filledStars = (horse.stars || '★').length;
                                                 const pt = horse.pt ?? 0;
-                                                const aiIndex = horse.computerIndex != null ? getDisplayComputerIndex(horse.computerIndex) : null;
                                                 const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
                                                 const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
@@ -203,7 +203,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                 const ageGenderStr = (horse.ageNum != null && horse.gender)
                                                     ? `${horse.ageNum}歳${horse.gender}`
                                                     : (horse.age || null);
-                                                const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
+                                                const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.computerIndex != null || horse.sire;
                                                 return (
                                                 <div class={cardClass}>
                                                     {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -221,12 +221,19 @@ const analysis = firstVenue.mainRace.analysis;
                                                             <div class="stat-label">累積スコア</div>
                                                             <div class="stat-value stat-score">{pt}<span class="stat-unit">pt</span></div>
                                                         </div>
-                                                        {aiIndex != null && (
-                                                            <div class="stat-block stat-index-block">
-                                                                <div class="stat-label">AI総合指数</div>
-                                                                <div class="stat-value stat-index">{aiIndex}</div>
+                                                        <div class="stat-block stat-stars-block">
+                                                            <div class="stat-label">総合評価</div>
+                                                            <div class="star-rating" aria-label={`総合評価 ${filledStars}つ星 信頼度${horse.confidence ?? ''}`}>
+                                                                <span class="star-row">
+                                                                    {[1, 2, 3, 4].map((i) => (
+                                                                        <span class={`star ${i <= filledStars ? 'star-filled' : 'star-empty'}`}>★</span>
+                                                                    ))}
+                                                                </span>
+                                                                {horse.confidence != null && (
+                                                                    <span class="confidence-num">（{horse.confidence}）</span>
+                                                                )}
                                                             </div>
-                                                        )}
+                                                        </div>
                                                     </div>
 
                                                     {hasBasicInfo && (
@@ -247,6 +254,9 @@ const analysis = firstVenue.mainRace.analysis;
                                                                 )}
                                                                 {horse.frame != null && (
                                                                     <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                                                                )}
+                                                                {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && (
+                                                                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{getDisplayComputerIndex(horse.computerIndex)}</span></div>
                                                                 )}
                                                                 {horse.sire && (
                                                                     <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
@@ -1143,17 +1153,49 @@ const analysis = firstVenue.mainRace.analysis;
         -webkit-text-fill-color: transparent;
         background-clip: text;
     }
-    .stat-index {
-        background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
     .stat-unit {
         font-size: 0.8rem;
         font-weight: 700;
         margin-left: 4px;
         -webkit-text-fill-color: #f59e0b;
+    }
+
+    /* 星評価 */
+    .star-rating {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        line-height: 1;
+        flex-wrap: wrap;
+    }
+    .star-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        line-height: 1;
+    }
+    .star {
+        font-size: 1.6rem;
+        line-height: 1;
+    }
+    .star-filled {
+        color: #fbbf24;
+        text-shadow: 0 0 10px rgba(251, 191, 36, 0.55);
+    }
+    .star-empty {
+        color: rgba(148, 163, 184, 0.35);
+    }
+    /* 信頼度（圧縮スコア）— 星より控えめに、補助情報として */
+    .confidence-num {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #cbd5e1;
+        letter-spacing: 0.02em;
+        opacity: 0.85;
+    }
+    .horse-card-main .confidence-num {
+        color: #d1fae5;
+        opacity: 1;
     }
 
     /* 基本情報セクション */
