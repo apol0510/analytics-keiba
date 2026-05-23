@@ -323,6 +323,16 @@ async function fetchRacebookData(date, category = 'jra') {
     if (!response.ok) continue;
 
     const rbData = JSON.parse(await response.text());
+    // 【中身 date 検証ガード】(2026-05-23 追加)
+    // admin 側のペア揃いガード（keiba-data-shared-admin#1）を補完する追加防御。
+    // ±1日マージで拾ったファイルでも、ファイル中身の date が指定日と一致するものだけ採用する。
+    // 2026-05-24 案件: 24-NII / 24-TOK が未投入の状態で 23-NII / 23-TOK が ±1日マージで
+    // 拾われ、中身 date=2026-05-23 のまま24日 prediction に混入していた。
+    // 中身に date フィールドが無い古いファイルは後方互換のため通す。
+    if (rbData.date && rbData.date !== date) {
+      console.log(`   ⏭️  [RACEBOOK-GUARD] ${file.name} スキップ（中身 date=${rbData.date} ≠ 指定日 ${date}）`);
+      continue;
+    }
     const venueName = rbData.track || rbData.venue || null;
     if (!venueName) continue;
     if (seenVenues.has(venueName)) {
