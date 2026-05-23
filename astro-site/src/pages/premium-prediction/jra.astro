@@ -222,14 +222,6 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
           <>
             <!-- ページヘッダー -->
             <div class="page-header">
-              <div class="ai-badge">
-                <span class="badge-pulse"></span>
-                <span class="badge-text">DEEP LEARNING PREDICTION SYSTEM / 深層学習予測システム</span>
-              </div>
-              <div class="pro-badge">
-                <span class="pro-icon">👑</span>
-                <span class="pro-text">PRO MEMBER EXCLUSIVE</span>
-              </div>
               <h1 class="page-title">
                 {isMultiVenue ? (
                   <>{predictionData.date} 中央競馬 - {venues.length}会場</>
@@ -237,10 +229,6 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
                   <>{predictionData.eventInfo.date} {predictionData.eventInfo.venue}</>
                 )}
               </h1>
-              <p class="page-subtitle">
-                Ensemble Neural Network Analysis / アンサンブル型ニューラルネットワーク分析 - {isMultiVenue ? predictionData.totalRaces : predictionData.eventInfo.totalRaces} Races
-              </p>
-              <div class="scan-line"></div>
             </div>
 
             <!-- 会場タブ（複数会場の場合のみ表示）-->
@@ -324,59 +312,6 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
                     </div>
                   )}
 
-                  <!-- AIモデル情報カード -->
-                  <div class="ai-model-card">
-                    <div class="model-header">
-                      <div class="model-icon">🧠</div>
-                      <div class="model-title">
-                        <h3>Ensemble Deep Neural Network / アンサンブル型深層ニューラルネットワーク</h3>
-                        <p class="model-subtitle">XGBoost + LSTM Hybrid Architecture / 勾配ブースティング+長短期記憶ハイブリッド構造</p>
-                      </div>
-                      <div class="processing-badge">
-                        <span class="processing-dot"></span>
-                        <span>OPTIMIZED / 最適化済</span>
-                      </div>
-                    </div>
-
-                    <div class="model-specs">
-                      <div class="spec-group">
-                        <div class="spec-label">Model Architecture</div>
-                        <div class="spec-value">Multi-Layer Perceptron + Gradient Boosting</div>
-                      </div>
-                      <div class="spec-group">
-                        <div class="spec-label">Feature Engineering</div>
-                        <div class="spec-value">127 Features w/ PCA Dimensionality Reduction</div>
-                      </div>
-                      <div class="spec-group">
-                        <div class="spec-label">Training Dataset</div>
-                        <div class="spec-value">48,392 Historical Races (2019-2025)</div>
-                      </div>
-                      <div class="spec-group">
-                        <div class="spec-label">Optimization</div>
-                        <div class="spec-value">Adam Optimizer w/ L2 Regularization (λ=0.001)</div>
-                      </div>
-                    </div>
-
-                    <div class="model-metrics">
-                      <div class="metric-box">
-                        <div class="metric-label">Cross-Val Score</div>
-                        <div class="metric-value" data-counter="9247">0</div>
-                        <div class="metric-unit">/ 10000</div>
-                      </div>
-                      <div class="metric-box">
-                        <div class="metric-label">Validation Accuracy</div>
-                        <div class="metric-value">{avgConfidence}%</div>
-                      </div>
-                      <div class="metric-box">
-                        <div class="metric-label">Training Loss</div>
-                        <div class="metric-value">0.{Math.floor(Math.random() * 200 + 150)}</div>
-                      </div>
-                      <div class="metric-box">
-                        <div class="metric-label">Inference Time</div>
-                        <div class="metric-value">{Math.floor(Math.random() * 300 + 100)}ms</div>
-                      </div>
-                    </div>
-                  </div>
 
                   <!-- 買い目セクション（プロ会員限定）-->
                   {umatanBets && (
@@ -679,80 +614,6 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
                             </div>
                           </div>
 
-                          <!-- Feature Analysis (上位3頭のみ詳細表示) -->
-                          {(horse.role === '本命' || horse.role === '対抗' || horse.role === '単穴') && (
-                            <div class="dhc-features">
-                              <div class="feature-title">Feature Importance Analysis / 特徴量重要度分析</div>
-                              <div class="feature-grid">
-                                <div class="feature-item">
-                                  <div class="feature-label">
-                                    <span class="feature-icon">⚡</span>
-                                    <span>Speed Index / スピード指数</span>
-                                  </div>
-                                  <div class="feature-bar-container">
-                                    <div class="feature-bar" style={`width: ${m.speedIndex}%`}></div>
-                                  </div>
-                                  <div class="feature-value">{m.speedIndex}</div>
-                                </div>
-
-                                <div class="feature-item">
-                                  <div class="feature-label">
-                                    <span class="feature-icon">💪</span>
-                                    <span>Stamina Rating / スタミナ評価</span>
-                                  </div>
-                                  <div class="feature-bar-container">
-                                    <div class="feature-bar" style={`width: ${m.staminaRating}%`}></div>
-                                  </div>
-                                  <div class="feature-value">{m.staminaRating}</div>
-                                </div>
-
-                                <div class="feature-item">
-                                  <div class="feature-label">
-                                    <span class="feature-icon">📈</span>
-                                    <span>Form Trend / 調子傾向</span>
-                                  </div>
-                                  <div class="feature-bar-container trend">
-                                    <div class="feature-bar-center"></div>
-                                    <div class="feature-bar trend" style={`width: ${Math.abs(parseFloat(m.formTrend))}%; ${parseFloat(m.formTrend) >= 0 ? 'left: 50%;' : 'right: 50%;'}`}></div>
-                                  </div>
-                                  <div class="feature-value">{m.formTrend}</div>
-                                </div>
-
-                                <div class="feature-item">
-                                  <div class="feature-label">
-                                    <span class="feature-icon">🏁</span>
-                                    <span>Track Compatibility / コース適性</span>
-                                  </div>
-                                  <div class="feature-bar-container">
-                                    <div class="feature-bar" style={`width: ${m.trackCompatibility}%`}></div>
-                                  </div>
-                                  <div class="feature-value">{m.trackCompatibility}</div>
-                                </div>
-
-                                <div class="feature-item">
-                                  <div class="feature-label">
-                                    <span class="feature-icon">📏</span>
-                                    <span>Distance Fitness / 距離適性</span>
-                                  </div>
-                                  <div class="feature-bar-container">
-                                    <div class="feature-bar" style={`width: ${m.distanceFitness}%`}></div>
-                                  </div>
-                                  <div class="feature-value">{m.distanceFitness}</div>
-                                </div>
-
-                                <div class="feature-item">
-                                  <div class="feature-label">
-                                    <span class="feature-icon">👤</span>
-                                    <span>Jockey Factor / 騎手要因</span>
-                                  </div>
-                                  <div class="feature-bar-container">
-                                    <div class="feature-bar" style={`width: ${m.jockeyFactor}%`}></div>
-                                  </div>
-                                  <div class="feature-value">{m.jockeyFactor}</div>
-                                </div>
-                              </div>
-                            </div>
-                          )}
                         </div>
                       );
                     })}
@@ -765,37 +626,10 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
               );
             })}
 
-            <!-- Technical Notes -->
-            <div class="info-card">
-              <div class="info-header">
-                <div class="info-icon">📋</div>
-                <h3>Technical Specifications & Disclaimer / 技術仕様・免責事項</h3>
-              </div>
-              <div class="info-content">
-                <div class="tech-section">
-                  <h4>Model Architecture / モデル構造</h4>
-                  <ul>
-                    <li><strong>Primary Model / 主要モデル:</strong> Ensemble Neural Network (XGBoost + LSTM)</li>
-                    <li><strong>Feature Engineering / 特徴量エンジニアリング:</strong> 127-dimensional feature space with PCA compression</li>
-                    <li><strong>Training Data / 学習データ:</strong> 48,392 historical races spanning 2019-2025</li>
-                    <li><strong>Validation Method / 検証方法:</strong> 5-Fold Cross-Validation with stratified sampling</li>
-                    <li><strong>Regularization / 正則化:</strong> L2 (Ridge) with λ=0.001, Dropout rate=0.3</li>
-                  </ul>
-                </div>
-                <div class="tech-section">
-                  <h4>Performance Metrics / パフォーマンス指標</h4>
-                  <ul>
-                    <li><strong>Win Probability / 勝率:</strong> Softmax probability distribution across all contenders</li>
-                    <li><strong>Model Certainty / モデル確信度:</strong> Inverse of prediction entropy (Shannon entropy)</li>
-                    <li><strong>Expected Value / 期待値:</strong> Kelly Criterion-based bet sizing recommendation</li>
-                    <li><strong>Risk Assessment / リスク評価:</strong> Variance-based volatility measurement</li>
-                  </ul>
-                </div>
-                <div class="disclaimer">
-                  <h4>⚠️ Important Notice / 重要なお知らせ</h4>
-                  <p>このAI予測システムは機械学習アルゴリズムによる統計的分析結果です。過去のパフォーマンスは将来の結果を保証するものではありません。馬券購入は自己責任でお願いします。</p>
-                </div>
-              </div>
+            <!-- 免責事項（free 版に揃えてシンプル化） -->
+            <div class="disclaimer-box">
+              <h3 class="disclaimer-title">⚠️ 免責事項</h3>
+              <p class="disclaimer-text">競馬予想は投資の一種です。必ず余裕資金の範囲内で楽しみ、自己責任でご利用ください。当予想による損失については一切の責任を負いません。</p>
             </div>
           </>
         )}
