@@ -3086,6 +3086,265 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
         font-size: 0.9rem;
       }
     }
+
+    /* ================================================================
+       連下/抑え/不要馬ミニカード（nankan 由来）
+       ================================================================ */
+    .horse-card-minor {
+      padding: 20px;
+      background: linear-gradient(135deg, rgba(148, 163, 184, 0.05) 0%, rgba(100, 116, 139, 0.05) 100%);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 14px;
+      margin-bottom: 18px;
+    }
+    .horse-mark-minor {
+      display: inline-block;
+      font-size: 1.3rem;
+      color: #f59e0b;
+      font-weight: 700;
+      margin-right: 10px;
+    }
+    .minor-group-title {
+      margin-left: 10px;
+      font-weight: 600;
+    }
+    .minor-group-title-renka { color: #f59e0b; }
+    .minor-group-title-osae { color: #94a3b8; }
+    .minor-horse-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .minor-horse-card {
+      background: rgba(15, 23, 42, 0.7);
+      border-radius: 10px;
+      padding: 12px 14px;
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .minor-horse-card-renka {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), rgba(15, 23, 42, 0.7));
+    }
+    .minor-horse-card-osae {
+      border-color: rgba(100, 116, 139, 0.3);
+    }
+    .minor-horse-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .minor-horse-mark {
+      color: #f59e0b;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .minor-horse-card-osae .minor-horse-mark { color: #94a3b8; }
+    .minor-horse-number {
+      background: linear-gradient(135deg, #6b7280, #4b5563);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      min-width: 26px;
+      text-align: center;
+    }
+    .minor-horse-name {
+      color: #e2e8f0;
+      font-weight: 600;
+      font-size: 0.95rem;
+      flex: 1;
+    }
+    .minor-horse-score {
+      color: #10b981;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 0.8rem;
+    }
+    .minor-horse-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      color: #cbd5e1;
+      font-size: 0.82rem;
+    }
+    .minor-horse-meta .meta-key {
+      color: #64748b;
+      margin-right: 4px;
+      font-size: 0.75rem;
+    }
+    .minor-horse-evals {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .eval-tag-small {
+      background: rgba(59, 130, 246, 0.12);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+    }
+    .minor-horse-importance {
+      color: #94a3b8;
+      font-size: 0.78rem;
+    }
+    .minor-horse-comment {
+      margin: 0;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      padding: 6px 8px;
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: 6px;
+      border-left: 3px solid rgba(245, 158, 11, 0.4);
+    }
+    .minor-horse-card-osae .minor-horse-comment {
+      border-left-color: rgba(100, 116, 139, 0.4);
+    }
+
+    /* 過去走（共通） */
+    .recent-races {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+    .recent-races > summary {
+      cursor: pointer;
+      color: #cbd5e1;
+      font-weight: 600;
+      font-size: 0.88rem;
+      list-style: none;
+    }
+    .recent-races > summary::-webkit-details-marker { display: none; }
+    .recent-races > summary::before {
+      content: '▶';
+      display: inline-block;
+      margin-right: 8px;
+      color: #64748b;
+      font-size: 0.7rem;
+      transition: transform 0.2s ease;
+    }
+    .recent-races[open] > summary::before { transform: rotate(90deg); }
+    .recent-races-list {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .recent-race-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      align-items: baseline;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      padding: 4px 6px;
+      background: rgba(30, 41, 59, 0.4);
+      border-radius: 4px;
+    }
+    .recent-race-venue { color: #e2e8f0; font-weight: 600; }
+    .recent-race-rank { color: #10b981; font-weight: 700; }
+    .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+    .recent-races-compact .recent-race-row { font-size: 0.72rem; }
+
+    @media (max-width: 640px) {
+      .minor-horse-grid { grid-template-columns: 1fr; }
+    }
+
+    /* 不要馬・見送り馬 折りたたみ */
+    .ineligible-section {
+      margin-top: 16px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      padding: 10px 14px;
+      border: 1px dashed rgba(100, 116, 139, 0.3);
+    }
+    .ineligible-section > summary {
+      cursor: pointer;
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.88rem;
+      list-style: none;
+    }
+    .ineligible-section > summary::-webkit-details-marker { display: none; }
+    .ineligible-section > summary::before {
+      content: '▶';
+      display: inline-block;
+      margin-right: 8px;
+      color: #64748b;
+      font-size: 0.7rem;
+      transition: transform 0.2s ease;
+    }
+    .ineligible-section[open] > summary::before { transform: rotate(90deg); }
+    .ineligible-list {
+      list-style: none;
+      margin: 10px 0 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .ineligible-row {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      padding: 6px 8px;
+      background: rgba(30, 41, 59, 0.4);
+      border-radius: 4px;
+    }
+    .ineligible-row-top {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      align-items: baseline;
+    }
+    .ineligible-comment {
+      color: #94a3b8;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      padding-left: 32px;
+    }
+    .ineligible-num {
+      background: rgba(100, 116, 139, 0.25);
+      color: #e2e8f0;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 0.75rem;
+      min-width: 24px;
+      text-align: center;
+    }
+    .ineligible-name { color: #e2e8f0; font-weight: 500; }
+    .ineligible-pt { color: #94a3b8; font-size: 0.78rem; }
+    .ineligible-pt-skip {
+      background: rgba(100, 116, 139, 0.18);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .ineligible-meta { color: #64748b; font-size: 0.75rem; }
+    .ineligible-reason {
+      color: #94a3b8;
+      font-size: 0.75rem;
+      margin-left: auto;
+      background: rgba(100, 116, 139, 0.15);
+      padding: 1px 8px;
+      border-radius: 999px;
+    }
   </style>
 
   <script is:inline>
