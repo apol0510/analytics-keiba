@@ -1088,7 +1088,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       background: var(--bg-tertiary);
       color: var(--text-primary);
       border: 2px solid var(--border-color);
-      border-radius: var(--radius-lg);
+      border-radius: 999px;
       font-size: 1rem;
       font-weight: 700;
       cursor: pointer;
@@ -1667,7 +1667,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       background: var(--bg-tertiary);
       color: var(--text-primary);
       border: 2px solid var(--border-color);
-      border-radius: var(--radius-md);
+      border-radius: 999px;
       font-size: 0.95rem;
       font-weight: 700;
       cursor: pointer;
@@ -1675,16 +1675,16 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     }
 
     .race-btn:hover {
-      border-color: var(--primary-end);
+      border-color: #10b981;
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
     }
 
     .race-btn.active {
-      background: linear-gradient(135deg, var(--primary-start), var(--primary-end));
-      border-color: var(--primary-end);
+      background: linear-gradient(135deg, #10b981, #059669);
+      border-color: #10b981;
       color: white;
-      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
     }
 
     .race-label {
@@ -1701,8 +1701,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     }
 
     .race-btn.active .race-indicator {
-      background: white;
-      box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
     }
 
     .race-display-area {
