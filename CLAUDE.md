@@ -363,6 +363,59 @@ npm run verify:safety          # build → check:safety（push 前推奨）
 - CI を通さずに指数表示や馬分類を変更してはいけない
 - 一時的に検証を無効化することは禁止
 
+## 🛡️ JRA premium 恒久ルール（KI 風ブロック再混入防止 / 2026-05-24 集約）
+
+`/premium-prediction/jra/` は keiba-intelligence (KI) からの fork 経緯で、
+旧 KI 風の演出（Ensemble Neural Network / XGBoost×LSTM / Multi-Dimensional
+Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた。
+2026-05-24 にこれらを段階的に削除し、**`/premium-prediction/nankan/` の
+有料ページ構造に完全に寄せる**方針が集約された。
+
+**今後の作業・revert・コピペ・テンプレート同期で旧 KI 風ブロックが復活しないよう
+3 段の防御を入れる**:
+
+### 1. ドキュメント化
+詳細な禁止リスト・必須セクション・許可される維持要素・作業フローは
+`astro-site/docs/PREMIUM_JRA_RULES.md` に集約。**修正前に必ず読む**。
+
+### 2. grep 検査（再混入検知）
+`npm run check:ki-relics:jra` で `premium-prediction/jra.astro` から
+旧 KI 風文字列・クラスを検出。
+- 禁止文字列の例: `AI Recommended Betting Strategy`, `Multi-Dimensional
+  Performance Analysis`, `Ensemble Neural Network`, `XGBoost`, `LSTM`,
+  `Cross-val`, `Win Prob`, `Model Certainty`, `Expected Value`,
+  `Feature Importance Analysis`, `DEEP LEARNING PREDICTION`,
+  `PRO MEMBER EXCLUSIVE`, `Inference Time`
+- 禁止クラスの例: `.ai-model-card`, `.detailed-horse-card`,
+  `.dhc-quick-metrics`, `.qm-label`, `.qm-value`, `formula-row`,
+  `axis-mark`, `opponents-list`, `stat-stars-block`, `star-rating`
+
+### 3. 構造パリティ検証（PR/作業時の差分確認の強制）
+`npm run check:jra-nankan-parity` で nankan.astro に存在する必須セクションが
+jra.astro にも存在するかを検証。
+- 必須: `.ai-badge`, `.race-title`, `.dark-horse-link-section`,
+  `.premium-status`, `.daily-analysis-section`, `.recommendation-section`,
+  `.unified-bet-card`, `.bet-list`, `.bet-item`, `.minor-group-renka`,
+  `.minor-group-osae`, `.ineligible-section`, `isOsaeCandidate` import,
+  `isIneligibleHorse` import
+
+### CI で強制
+上記 2 つは `check:safety` に組み込み済みで、PR / push to main で
+自動実行される（`.github/workflows/safety-check.yml`）。
+**「一時的に無効化」は禁止**。
+
+### 触ってはいけない領域
+- `keiba-intelligence` 側（**絶対に触らない**）
+- JSON データ / `importPrediction*.js` / `featureScores.js` /
+  `osaeClassification.js` / `shared-prediction-logic.js`（再エクスポート以外）
+
+### 復活させようとする操作の例（すべて検知できる状態）
+- `git revert <KI 風削除コミット>` → grep ガードで検知
+- `git checkout <旧コミット> -- premium-prediction/jra.astro` → grep ガード + パリティで検知
+- 別名で復活（`detailed-horse-card` → `detail-horse-card` 等）→ 禁止リストを更新して対応
+- nankan に無いセクション追加 → パリティチェックでは検知できないので、上記の grep
+  ガードに該当クラス/文字列を追加すること
+
 ## 📝 技術スタック
 
 - Astro 5 + Sass（SSR mode）
