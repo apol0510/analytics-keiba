@@ -35,17 +35,47 @@
 
 ```
 keiba-data-shared-admin（入力）
+  │ [ペア揃いガード] racebook + computer の両方が揃ったときだけ発火
   ↓ repository_dispatch (prediction-updated / results-updated)
 .github/workflows/import-on-dispatch.yml
 .github/workflows/import-results-on-dispatch.yml
   ↓
 astro-site/scripts/importPrediction{,Jra}.js
+  │ [中身 date 検証ガード] ±1日マージで拾ったファイルも中身 date が
+  │ 指定日と一致するもののみ採用
 astro-site/scripts/importResults{,Jra}.js
   ↓
 astro-site/src/data/archive{,Jra}.json
   ↓ 自動commit/push
 Netlify自動ビルド→本番反映
 ```
+
+### 🛡️ 二段防御: ペア揃いガード + 中身 date 検証（2026-05-23 集約）
+
+`prediction-updated` dispatch の取込で **前日データが当日 prediction に混入する**
+事故（2026-05-24 案件: 36レース中24レースが23日と完全同一）を恒久的に防ぐため、
+入力側と取込側に**二段の防御**を入れる。
+
+#### Step 1: 入力側ガード（`keiba-data-shared-admin/netlify/lib/pair-guard.mjs`）
+- `racebook` JSON と `computer` JSON の両方が `keiba-data-shared` に揃ったときだけ
+  `prediction-updated` dispatch を発火
+- race-data-importer / computer-manager のどちらが先でも、**後勝ちで1回**発火
+- 詳細は admin 側 CLAUDE.md「🧠 keiba-intelligence連携」参照
+
+#### Step 2: 取込側ガード（`astro-site/scripts/importPredictionJra.js`）
+- `fetchRacebookData` 内で **rbData.date が指定日と一致するもののみ採用**
+- ±1日マージロジック自体は維持（「ファイル名は前日付だが中身は当日」運用の救済）
+- admin ガードをすり抜けた場合の追加防御
+
+#### 触ってはいけないこと
+- ±1日マージロジックを削除しない（2026-05-15 案件の救済機能）
+- 中身 date 検証ガードを無効化しない（24日案件の追加防御）
+- 入力側ガードと取込側ガードは**両方で1セット**。片方だけ無効化しない
+
+#### 検知時のログ
+- 入力側: `⏸️ [PairGuard] dispatch保留: ...` （Netlify Functions ログ）
+- 取込側: `⏭️ [RACEBOOK-GUARD] ... スキップ（中身 date=... ≠ 指定日 ...）`
+  （GitHub Actions ログ）
 
 ## 🛡️ 旧フォーマット禁止
 
