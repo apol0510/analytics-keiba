@@ -201,6 +201,108 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
     }
   };
 }
+
+// =========================================================================
+// 本日の傾向分析（AI自動判定）— 会場ごと
+// nankan 版と同一ロジック（buildRaceConfidenceMetrics → classifyRaces）
+// =========================================================================
+const __clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+function buildRaceConfidenceMetrics(race) {
+  const all = Array.isArray(race.horses) ? race.horses : [];
+  const byRole = (role) => all.find((h) => h && h.role === role);
+  const sortedPts = all
+    .map((h) => Number(h?.pt) || 0)
+    .filter((v) => v > 0)
+    .sort((a, b) => b - a);
+  const honmei = byRole('本命');
+  const taikou = byRole('対抗');
+  const honmeiScore = Number(honmei?.pt) || sortedPts[0] || 0;
+  const taikouScore = Number(taikou?.pt) || sortedPts[1] || 0;
+  const fifthScore = sortedPts[4] || sortedPts[sortedPts.length - 1] || 0;
+  const fieldSize = Number(race?.raceInfo?.horseCount) || all.length || sortedPts.length;
+  const scoreGap = honmeiScore - taikouScore;
+  const topSpread = honmeiScore - fifthScore;
+  const contenderThreshold = honmeiScore > 0 ? honmeiScore * 0.87 : 0;
+  const contenderCount = sortedPts.slice(1).filter((p) => p >= contenderThreshold).length;
+  const top5 = sortedPts.slice(0, 5);
+  const top5Mean = top5.length > 0 ? top5.reduce((s, v) => s + v, 0) / top5.length : 0;
+  const top5Var = top5.length > 0
+    ? top5.reduce((s, v) => s + (v - top5Mean) ** 2, 0) / top5.length
+    : 0;
+  const top5Stdev = Math.sqrt(top5Var);
+  const chaosScore = __clamp(Math.round(30 - top5Stdev * 2), 0, 30);
+  const fieldPenalty = Math.max(0, fieldSize - 12) * 3;
+  const rawConfidence =
+    50 +
+    scoreGap * 1.4 +
+    topSpread * 0.35 +
+    (honmeiScore - 145) * 0.5 -
+    fieldPenalty -
+    contenderCount * 1.5;
+  const confidenceScore = __clamp(Math.round(rawConfidence), 0, 100);
+  return {
+    raceNumber: race.raceInfo?.raceNumber,
+    raceName: race.raceInfo?.raceName,
+    honmeiScore,
+    taikouScore,
+    scoreGap,
+    topSpread,
+    fieldSize,
+    contenderCount,
+    chaosScore,
+    confidenceScore,
+  };
+}
+
+const HIGH_CONF_THRESHOLD = 78;
+const HIGH_CONF_GAP_MIN = 8;
+const UPSET_CONF_THRESHOLD = 62;
+const UPSET_GAP_MAX = 2;
+const HIGH_CONF_MAX_COUNT = 4;
+
+function classifyVenue(predictions) {
+  const raceMetrics = (predictions || []).map(buildRaceConfidenceMetrics);
+  const provisional = raceMetrics.map((m) => {
+    let category;
+    if (m.confidenceScore >= HIGH_CONF_THRESHOLD && m.scoreGap >= HIGH_CONF_GAP_MIN) {
+      category = 'high';
+    } else if (m.confidenceScore <= UPSET_CONF_THRESHOLD || m.scoreGap <= UPSET_GAP_MAX) {
+      category = 'upset';
+    } else {
+      category = 'normal';
+    }
+    return { ...m, category };
+  });
+  const highCandidates = provisional
+    .filter((m) => m.category === 'high')
+    .sort((a, b) => b.confidenceScore - a.confidenceScore);
+  if (highCandidates.length > HIGH_CONF_MAX_COUNT) {
+    const keep = new Set(highCandidates.slice(0, HIGH_CONF_MAX_COUNT).map((m) => m.raceNumber));
+    for (const m of provisional) {
+      if (m.category === 'high' && !keep.has(m.raceNumber)) {
+        m.category = 'normal';
+      }
+    }
+  }
+  const highConfidenceRaces = provisional.filter((m) => m.category === 'high');
+  const upsetModeRaces = provisional.filter((m) => m.category === 'upset');
+  const normalRaces = provisional.filter((m) => m.category === 'normal');
+  let autoInsight = '';
+  if (highConfidenceRaces.length >= 3) {
+    autoInsight = `本日は本命候補が比較的明確なレースが${highConfidenceRaces.length}レースあります。AI推奨買い目で堅実な勝負がおすすめです。`;
+  } else if (upsetModeRaces.length >= 3) {
+    autoInsight = `本日は上位拮抗・波乱含みのレースが${upsetModeRaces.length}レースあります。AI推奨買い目で高配当のチャンスを狙えます。`;
+  } else if (highConfidenceRaces.length > 0 && upsetModeRaces.length > 0) {
+    autoInsight = `本日は本命明確なレース（${highConfidenceRaces.length}R）と上位拮抗レース（${upsetModeRaces.length}R）がバランス良く配置されています。AI推奨買い目をレースごとに確認してください。`;
+  } else {
+    autoInsight = '本日は標準的なレース構成です。各レースのAI推奨買い目を確認しながら勝負レースを絞り込んでください。';
+  }
+  return { highConfidenceRaces, upsetModeRaces, normalRaces, autoInsight };
+}
+
+const venueAnalysis = (venues || []).map((venueData) => classifyVenue(venueData.predictions));
+const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.predictions?.length || 0), 0);
 ---
 
 <BaseLayout
@@ -220,15 +322,37 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
 
         {predictionData && (
           <>
-            <!-- ページヘッダー -->
-            <div class="page-header">
-              <h1 class="page-title">
+            <!-- ページヘッダー（nankan版と統一） -->
+            <div class="header-section">
+              <div class="ai-badge">
+                <span class="pulse"></span>
+                <span class="ai-status">AI分析完了</span>
+              </div>
+              <h1 class="race-title">
                 {isMultiVenue ? (
-                  <>{predictionData.date} 中央競馬 - {venues.length}会場</>
+                  <>{predictionData.date} 中央競馬（JRA） {venues.length}会場 - 全{totalAnalyzedRaces}レース総合予想</>
                 ) : (
-                  <>{predictionData.eventInfo.date} {predictionData.eventInfo.venue}</>
+                  <>{predictionData.eventInfo.date} {predictionData.eventInfo.venue} - 全{venues[0]?.predictions?.length || 0}レース総合予想</>
                 )}
               </h1>
+              <div class="ai-metrics">
+                <div class="metric">
+                  <div class="metric-value">{totalAnalyzedRaces}</div>
+                  <div class="metric-label">分析レース数</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-value">全レース対応</div>
+                  <div class="metric-label">AI精密分析</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-value">馬単</div>
+                  <div class="metric-label">AI推奨買い目</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-value">機械学習モデル</div>
+                  <div class="metric-label">AI予想システム</div>
+                </div>
+              </div>
             </div>
 
             <!-- 会場タブ（複数会場の場合のみ表示）-->
@@ -247,6 +371,24 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
               </div>
             )}
 
+            <!-- 穴馬ページリンク -->
+            <div class="dark-horse-link-section">
+              <a href="/dark-horse-picks/" class="dark-horse-link-btn">
+                <span class="dark-horse-icon">🐎</span>
+                <div class="dark-horse-text">
+                  <span class="dark-horse-title">本日の穴馬抽出ツール</span>
+                  <span class="dark-horse-subtitle">AI予想から狙い目の穴馬を自動抽出</span>
+                </div>
+                <span class="dark-horse-arrow">→</span>
+              </a>
+            </div>
+
+            <!-- プレミアム会員バッジ -->
+            <div class="premium-status">
+              <span class="premium-icon">👑</span>
+              <span class="premium-status-text">プレミアム会員限定コンテンツ</span>
+            </div>
+
             <!-- 会場ごとの表示エリア -->
             {venues.map((venueData, venueIndex) => {
               const venuePredictions = venueData.predictions;
@@ -259,6 +401,101 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
                     <div class="venue-header">
                       <h2 class="venue-title">{venueInfo.venue}</h2>
                       <p class="venue-info">{venueInfo.date} - {venueInfo.totalRaces}レース</p>
+                    </div>
+                  )}
+
+                  {/* 本日の傾向分析（AI自動判定）— 会場ごと */}
+                  {venueAnalysis[venueIndex] && (
+                    <div class="daily-analysis-section">
+                      <h3 class="analysis-title">🔍 本日の傾向分析（AI自動判定）</h3>
+                      <p class="analysis-subtitle">本命スコア・対抗との差・混戦度を合成したレース信頼度で自動分類しています</p>
+
+                      <div class="analysis-stats">
+                        <div class="stat-card high-confidence">
+                          <div class="stat-icon">⭐</div>
+                          <div class="stat-content">
+                            <div class="stat-number">{venueAnalysis[venueIndex].highConfidenceRaces.length}</div>
+                            <div class="stat-label">高信頼度レース</div>
+                            <div class="stat-description">本命候補が比較的明確</div>
+                          </div>
+                        </div>
+
+                        <div class="stat-card upset-mode">
+                          <div class="stat-icon">💰</div>
+                          <div class="stat-content">
+                            <div class="stat-number">{venueAnalysis[venueIndex].upsetModeRaces.length}</div>
+                            <div class="stat-label">高配当モードレース</div>
+                            <div class="stat-description">上位拮抗・波乱含み</div>
+                          </div>
+                        </div>
+
+                        <div class="stat-card normal">
+                          <div class="stat-icon">📊</div>
+                          <div class="stat-content">
+                            <div class="stat-number">{venueAnalysis[venueIndex].normalRaces.length}</div>
+                            <div class="stat-label">通常レース</div>
+                            <div class="stat-description">標準的なAI推奨レース</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="auto-insight">
+                        <div class="insight-icon">💡</div>
+                        <div class="insight-text">{venueAnalysis[venueIndex].autoInsight}</div>
+                      </div>
+
+                      <div class="race-classification-list">
+                        {venueAnalysis[venueIndex].highConfidenceRaces.length > 0 && (
+                          <div class="classification-group">
+                            <div class="classification-header high">
+                              <span class="badge">⭐ 高信頼度</span>
+                              <span class="count">{venueAnalysis[venueIndex].highConfidenceRaces.length}レース</span>
+                            </div>
+                            <div class="race-chips">
+                              {venueAnalysis[venueIndex].highConfidenceRaces.map((race) => (
+                                <div class="race-chip high">
+                                  <span class="chip-race">{race.raceNumber}R</span>
+                                  <span class="chip-score">{race.confidenceScore}pt</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {venueAnalysis[venueIndex].normalRaces.length > 0 && (
+                          <div class="classification-group">
+                            <div class="classification-header normal">
+                              <span class="badge">📊 通常</span>
+                              <span class="count">{venueAnalysis[venueIndex].normalRaces.length}レース</span>
+                            </div>
+                            <div class="race-chips">
+                              {venueAnalysis[venueIndex].normalRaces.map((race) => (
+                                <div class="race-chip normal">
+                                  <span class="chip-race">{race.raceNumber}R</span>
+                                  <span class="chip-score">{race.confidenceScore}pt</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {venueAnalysis[venueIndex].upsetModeRaces.length > 0 && (
+                          <div class="classification-group">
+                            <div class="classification-header upset">
+                              <span class="badge">💰 高配当モード</span>
+                              <span class="count">{venueAnalysis[venueIndex].upsetModeRaces.length}レース</span>
+                            </div>
+                            <div class="race-chips">
+                              {venueAnalysis[venueIndex].upsetModeRaces.map((race) => (
+                                <div class="race-chip upset">
+                                  <span class="chip-race">{race.raceNumber}R</span>
+                                  <span class="chip-score">{race.confidenceScore}pt</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -2338,6 +2575,387 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
 
       .feature-label {
         justify-content: space-between;
+      }
+    }
+
+    /* ================================================================
+       nankan 構造準拠ヘッダー/分析セクション CSS（jra.astro 末尾で上書き）
+       既存の .ai-badge / .metric-* 定義を上書きする
+       ================================================================ */
+    .header-section {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+      border-radius: 20px;
+      padding: 40px;
+      margin-bottom: 40px;
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      text-align: center;
+    }
+    .header-section .ai-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 8px 20px;
+      border-radius: 25px;
+      margin-bottom: 20px;
+      color: inherit;
+      font-size: inherit;
+      letter-spacing: normal;
+    }
+    .header-section .pulse {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      animation: ak-pulse 2s infinite;
+    }
+    @keyframes ak-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+    .header-section .ai-status {
+      color: #10b981;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .header-section .race-title {
+      font-size: 2.5rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 30px;
+      line-height: 1.2;
+    }
+    .header-section .ai-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-top: 30px;
+    }
+    .header-section .metric {
+      text-align: center;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 15px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .header-section .metric-value {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #3b82f6;
+      margin-bottom: 5px;
+    }
+    .header-section .metric-label {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    /* 穴馬ページリンク */
+    .dark-horse-link-section {
+      margin-bottom: 30px;
+    }
+    .dark-horse-link-btn {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 16px;
+      padding: 20px 24px;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+    .dark-horse-link-btn:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.4);
+      border-color: rgba(245, 158, 11, 0.5);
+    }
+    .dark-horse-icon {
+      font-size: 2rem;
+      flex-shrink: 0;
+    }
+    .dark-horse-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+    .dark-horse-title {
+      color: white;
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .dark-horse-subtitle {
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 0.9rem;
+      line-height: 1.3;
+    }
+    .dark-horse-arrow {
+      color: white;
+      font-size: 1.5rem;
+      font-weight: 700;
+      transition: transform 0.3s ease;
+      flex-shrink: 0;
+    }
+    .dark-horse-link-btn:hover .dark-horse-arrow {
+      transform: translateX(5px);
+    }
+
+    /* プレミアム会員バッジ */
+    .premium-status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #f59e0b;
+      padding: 12px 40px;
+      border-radius: 25px;
+      margin: 0 auto 30px;
+      font-weight: 600;
+      backdrop-filter: blur(8px);
+      max-width: 600px;
+    }
+    .premium-icon {
+      font-size: 1.1rem;
+      filter: saturate(1.5);
+    }
+    .premium-status-text {
+      font-size: 0.9rem;
+      letter-spacing: 0.05em;
+    }
+
+    /* 本日の傾向分析（AI自動判定） */
+    .daily-analysis-section {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 16px;
+      padding: 30px;
+      margin: 30px 0;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 0 40px rgba(59, 130, 246, 0.05);
+      backdrop-filter: blur(10px);
+    }
+    .daily-analysis-section .analysis-title {
+      color: #60a5fa;
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 0 0 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .daily-analysis-section .analysis-subtitle {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin: 0 0 25px 0;
+      line-height: 1.6;
+    }
+    .daily-analysis-section .analysis-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 25px;
+    }
+    .daily-analysis-section .stat-card {
+      background: rgba(15, 23, 42, 0.8);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      border: 1px solid;
+      transition: all 0.3s ease;
+    }
+    .daily-analysis-section .stat-card.high-confidence {
+      border-color: rgba(16, 185, 129, 0.3);
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(15, 23, 42, 0.8) 100%);
+    }
+    .daily-analysis-section .stat-card.upset-mode {
+      border-color: rgba(245, 158, 11, 0.3);
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(15, 23, 42, 0.8) 100%);
+    }
+    .daily-analysis-section .stat-card.normal {
+      border-color: rgba(59, 130, 246, 0.3);
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(15, 23, 42, 0.8) 100%);
+    }
+    .daily-analysis-section .stat-icon {
+      font-size: 2rem;
+      flex-shrink: 0;
+    }
+    .daily-analysis-section .stat-content {
+      flex: 1;
+    }
+    .daily-analysis-section .stat-number {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+    .daily-analysis-section .stat-card.high-confidence .stat-number {
+      color: #10b981;
+    }
+    .daily-analysis-section .stat-card.upset-mode .stat-number {
+      color: #f59e0b;
+    }
+    .daily-analysis-section .stat-card.normal .stat-number {
+      color: #3b82f6;
+    }
+    .daily-analysis-section .stat-label {
+      color: #e2e8f0;
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 3px;
+    }
+    .daily-analysis-section .stat-description {
+      color: #94a3b8;
+      font-size: 0.8rem;
+    }
+    .daily-analysis-section .auto-insight {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 25px;
+      display: flex;
+      align-items: flex-start;
+      gap: 15px;
+    }
+    .daily-analysis-section .insight-icon {
+      font-size: 1.5rem;
+      color: #60a5fa;
+      flex-shrink: 0;
+    }
+    .daily-analysis-section .insight-text {
+      color: #e2e8f0;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+    .daily-analysis-section .race-classification-list {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .daily-analysis-section .classification-group {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+    .daily-analysis-section .classification-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(100, 116, 139, 0.3);
+    }
+    .daily-analysis-section .badge {
+      font-weight: 600;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .daily-analysis-section .classification-header.high .badge { color: #10b981; }
+    .daily-analysis-section .classification-header.normal .badge { color: #3b82f6; }
+    .daily-analysis-section .classification-header.upset .badge { color: #f59e0b; }
+    .daily-analysis-section .count {
+      color: #94a3b8;
+      font-size: 0.9rem;
+    }
+    .daily-analysis-section .race-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .daily-analysis-section .race-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 15px;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      border: 1px solid;
+      transition: all 0.2s ease;
+    }
+    .daily-analysis-section .race-chip.high {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.3);
+      color: #10b981;
+    }
+    .daily-analysis-section .race-chip.normal {
+      background: rgba(59, 130, 246, 0.1);
+      border-color: rgba(59, 130, 246, 0.3);
+      color: #3b82f6;
+    }
+    .daily-analysis-section .race-chip.upset {
+      background: rgba(245, 158, 11, 0.1);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: #f59e0b;
+    }
+    .daily-analysis-section .chip-race {
+      font-weight: 700;
+    }
+    .daily-analysis-section .chip-score {
+      font-size: 0.8rem;
+      opacity: 0.8;
+    }
+
+    @media (max-width: 768px) {
+      .header-section {
+        padding: 24px 16px;
+      }
+      .header-section .race-title {
+        font-size: 1.6rem;
+      }
+      .header-section .ai-metrics {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+      .header-section .metric {
+        padding: 12px;
+      }
+      .header-section .metric-value {
+        font-size: 1.2rem;
+      }
+      .daily-analysis-section {
+        padding: 20px;
+      }
+      .daily-analysis-section .analysis-title {
+        font-size: 1.2rem;
+      }
+      .daily-analysis-section .analysis-stats {
+        grid-template-columns: 1fr;
+        gap: 15px;
+      }
+      .daily-analysis-section .stat-number {
+        font-size: 1.5rem;
+      }
+      .daily-analysis-section .race-chips {
+        justify-content: center;
+      }
+      .dark-horse-link-btn {
+        padding: 16px 18px;
+        gap: 12px;
+      }
+      .dark-horse-icon {
+        font-size: 1.6rem;
+      }
+      .dark-horse-title {
+        font-size: 1rem;
+      }
+      .dark-horse-subtitle {
+        font-size: 0.8rem;
+      }
+      .dark-horse-arrow {
+        font-size: 1.2rem;
       }
     }
   </style>
