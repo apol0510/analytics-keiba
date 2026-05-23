@@ -161,9 +161,10 @@ function generateUmatanBets(horses, raceNumber, venueRaces) {
 
   if (!taikou) return null;
 
-  // 連下候補（連下最上位・連下・補欠のみ）
+  // 連下候補（連下最上位・連下、および「抑え候補」と判定された補欠のみ）
+  // ※ 補欠でも isOsaeCandidate=false（ci<45 など）は不要馬扱いのため買い目に含めない
   const renkaList = sortedHorses.filter(h =>
-    h.role === '連下最上位' || h.role === '連下' || h.role === '補欠'
+    h.role === '連下最上位' || h.role === '連下' || (h.role === '補欠' && isOsaeCandidate(h))
   );
 
   // 相手馬リスト作成
@@ -3191,7 +3192,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
         document.querySelectorAll('.free-user-betting').forEach(el => {
           el.classList.remove('hidden');
         });
-        document.querySelectorAll('.betting-formula.pro-user-only').forEach(el => {
+        document.querySelectorAll('.bet-list.pro-user-only, .betting-formula.pro-user-only').forEach(el => {
           el.classList.add('hidden');
         });
         document.querySelectorAll('.light-user-restricted').forEach(el => {
@@ -3212,12 +3213,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 
           if (isMainRace) {
             // メインレース：プロと同じ買い目を表示
-            section.querySelector('.betting-formula.pro-user-only')?.classList.remove('hidden');
+            section.querySelector('.bet-list.pro-user-only, .betting-formula.pro-user-only')?.classList.remove('hidden');
             section.querySelector('.free-user-betting')?.classList.add('hidden');
             section.querySelector('.light-user-restricted')?.classList.add('hidden');
           } else {
             // メインレース以外：制限メッセージを表示
-            section.querySelector('.betting-formula.pro-user-only')?.classList.add('hidden');
+            section.querySelector('.bet-list.pro-user-only, .betting-formula.pro-user-only')?.classList.add('hidden');
             section.querySelector('.free-user-betting')?.classList.add('hidden');
             section.querySelector('.light-user-restricted')?.classList.remove('hidden');
           }
@@ -3234,7 +3235,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
         document.querySelectorAll('.light-user-restricted').forEach(el => {
           el.classList.add('hidden');
         });
-        document.querySelectorAll('.betting-formula.pro-user-only').forEach(el => {
+        document.querySelectorAll('.bet-list.pro-user-only, .betting-formula.pro-user-only').forEach(el => {
           el.classList.remove('hidden');
         });
       }
