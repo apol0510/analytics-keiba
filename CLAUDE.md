@@ -50,6 +50,20 @@ astro-site/src/data/archive{,Jra}.json
 Netlify自動ビルド→本番反映
 ```
 
+### 📊 入力データの構成（前提）
+
+予想ページに表示されるデータは、admin 側の **2 つの入力経路** から成る：
+
+| admin 経路 | 役割 | 取込元パス（keiba-data-shared） |
+|---|---|---|
+| `/admin/computer-manager` | **予想本体**（コンピ指数 + 印 + 役割振り分け） | `{cat}/predictions/computer/YYYY/MM/YYYY-MM-DD-{CODE}.json` |
+| `/admin/race-data-importer` | **補完情報**（騎手・調教師・斤量・性齢・近走など、表示に必須の値） | `{cat}/racebook/YYYY/MM/YYYY-MM-DD-{CODE}.json` |
+
+- **予想の本体は computer-manager**。コンピ指数と印・役割振り分けはこちらから来る
+- **race-data-importer は補完**。予想ロジック自体には使わないが、騎手・調教師・斤量・
+  性齢・近走など**ページ表示やfeatureScores計算に必須**の値を埋める
+- 両方揃って初めて完全な予想ページが描画できる → だから dispatch も「両方揃いガード」
+
 ### 🛡️ 二段防御: ペア揃いガード + 中身 date 検証（2026-05-23 集約）
 
 `prediction-updated` dispatch の取込で **前日データが当日 prediction に混入する**
