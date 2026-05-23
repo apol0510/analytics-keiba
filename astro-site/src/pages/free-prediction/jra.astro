@@ -371,9 +371,9 @@ try {
                                               {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
                                             </div>
                                           )}
-                                          {importance && importance.length >= 2 && (
+                                          {importance && (
                                             <div class="minor-horse-importance">
-                                              安定{Math.round(importance[0].value * 100)} / 展開{Math.round(importance[1].value * 100)}
+                                              安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
                                             </div>
                                           )}
                                           {recentRaces.length > 0 && (
