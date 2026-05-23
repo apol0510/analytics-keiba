@@ -239,16 +239,24 @@ export function detectRecentRunningStyle(recentRaces) {
   return ranked.length > 0 ? ranked[0][0] : null;
 }
 
-// 評価ポイント（根拠タグ）を recentRaces から導出
-//
-// 2026-05-24 廃止: 「能力上位」タグ
-//   理由: pt ランク上位2頭に必ず付くため、本命・対抗で常に表示され
-//         「評価ポイントが能力上位ばかり」状態になっていた。役割バッジ
-//         （本命/対抗/単穴）で同じ情報を既に表現しているので冗長。
-//         過去走由来の他タグで馬ごとの個別差を出す。
+// 評価ポイント（根拠タグ）を recentRaces / role / pt から導出
 export function computeEvalPoints(h, allRaceHorses, raceDistance) {
   const points = [];
   const recent = Array.isArray(h.recentRaces) ? h.recentRaces : [];
+  const role = h.role;
+  const pt = Number(h.pt) || 0;
+
+  // 能力上位 — レース内で pt が上位
+  const ptList = (Array.isArray(allRaceHorses) ? allRaceHorses : [])
+    .map(x => Number(x && x.pt) || 0)
+    .filter(n => n > 0);
+  if (ptList.length > 0) {
+    const sorted = [...ptList].sort((a, b) => b - a);
+    const rank = sorted.indexOf(pt) + 1;
+    if (rank > 0 && rank <= 2) points.push('能力上位');
+  } else if (role === '本命' || role === '対抗') {
+    points.push('能力上位');
+  }
 
   // 近走安定 — 直近の3着内率（rank が数値の走のみ）
   const validRanks = recent
@@ -317,21 +325,15 @@ export function computeEvalPoints(h, allRaceHorses, raceDistance) {
 // 役割別の評価材料（特徴量）上限 — 85 点満点
 // 「特徴量重要度 95%」のような確率風表記を避け、評価材料の「点数」として
 // 役割に応じた控えめなレンジに収める。
-//
-// 2026-05-24 廃止: abil（能力上位性）
-//   理由: pt / maxPt の写像でしかなく、累積スコア(pt)と同じ情報を％で
-//         繰り返し表示していた。本命馬は必ず 95% 付近に張り付いて
-//         「特徴量重要度がデタラメ」とユーザー体感を損なっていた。
-//         過去走由来の安定性 + 展開利の2軸に絞ることで個別差を出す。
 const IMPORTANCE_CAP = {
-  '本命':       { stab: 85, pace: 84 },
-  '対抗':       { stab: 84, pace: 82 },
-  '単穴':       { stab: 82, pace: 80 },
-  '連下最上位': { stab: 80, pace: 78 },
-  '連下':       { stab: 78, pace: 76 },
-  '押さえ':     { stab: 76, pace: 74 },
-  '抑え':       { stab: 76, pace: 74 },
-  '補欠':       { stab: 76, pace: 74 },
+  '本命':       { stab: 85, abil: 85, pace: 84 },
+  '対抗':       { stab: 84, abil: 84, pace: 82 },
+  '単穴':       { stab: 82, abil: 82, pace: 80 },
+  '連下最上位': { stab: 80, abil: 80, pace: 78 },
+  '連下':       { stab: 78, abil: 78, pace: 76 },
+  '押さえ':     { stab: 76, abil: 76, pace: 74 },
+  '抑え':       { stab: 76, abil: 76, pace: 74 },
+  '補欠':       { stab: 76, abil: 76, pace: 74 },
 };
 const IMPORTANCE_FLOOR = 65;
 
@@ -341,9 +343,7 @@ function importanceValueToPoint(value, cap) {
   return Math.round(IMPORTANCE_FLOOR + norm * (cap - IMPORTANCE_FLOOR));
 }
 
-// 特徴量重要度（安定性 / 展開利）を recentRaces から導出
-//
-// 2026-05-24: 「能力上位性」を廃止（pt との情報重複のため）
+// 特徴量重要度（安定性 / 能力上位性 / 展開利）を recentRaces と pt から導出
 export function computeImportance(h, allRaceHorses) {
   const pt = Number(h.pt) || 0;
   const recent = Array.isArray(h.recentRaces) ? h.recentRaces : [];
@@ -359,6 +359,13 @@ export function computeImportance(h, allRaceHorses) {
   } else {
     stability = 0.55 + Math.min(0.4, pt / 400);
   }
+
+  // 能力上位性
+  const ptList = (Array.isArray(allRaceHorses) ? allRaceHorses : [])
+    .map(x => Number(x && x.pt) || 0)
+    .filter(n => n > 0);
+  const maxPt = ptList.length ? Math.max(...ptList) : Math.max(pt, 1);
+  let ability = pt > 0 ? 0.5 + (pt / maxPt) * 0.45 : 0.55;
 
   // 展開利
   // 2026-05-16: JRA/南関で last3f の絶対値域が大きく異なる（JRA ~33-36, 南関 ~38-42）。
@@ -395,12 +402,14 @@ export function computeImportance(h, allRaceHorses) {
   const clamp = (v) => Math.max(0.55, Math.min(0.97, v));
   const round2 = (v) => Math.round(v * 100) / 100;
   // role 別の上限を引き、value (0-1) と point (0-85) を両方返す
-  const caps = IMPORTANCE_CAP[h.role] || { stab: 70, pace: 70 };
+  const caps = IMPORTANCE_CAP[h.role] || { stab: 70, abil: 70, pace: 70 };
   const sV = round2(clamp(stability));
+  const aV = round2(clamp(ability));
   const pV = round2(clamp(pace));
   return [
-    { label: '安定性', value: sV, point: importanceValueToPoint(sV, caps.stab) },
-    { label: '展開利', value: pV, point: importanceValueToPoint(pV, caps.pace) },
+    { label: '安定性',     value: sV, point: importanceValueToPoint(sV, caps.stab) },
+    { label: '能力上位性', value: aV, point: importanceValueToPoint(aV, caps.abil) },
+    { label: '展開利',     value: pV, point: importanceValueToPoint(pV, caps.pace) },
   ];
 }
 
