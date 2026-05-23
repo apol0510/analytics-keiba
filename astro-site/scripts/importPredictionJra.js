@@ -365,6 +365,154 @@ async function fetchRacebookData(date, category = 'jra') {
   return { date, venues };
 }
 
+// =============================================================================
+// 過去走 distance 補強（2026-05-24 追加）
+// =============================================================================
+// 元データ（racebook）の過去走では distance が PUA 外字で表現されており
+// パーサーが取れていない（全件 null）。一方、jra/results/ の各レースには
+// distance が整数で確実に入っているため、過去走の venue を解析して
+// 該当する結果ファイルを参照し、馬名で照合して distance を埋める。
+//
+// この処理により待たずに既存データへも遡及対応でき、特徴量重要度や評価
+// ポイントの「距離適性」が機能するようになる。
+// =============================================================================
+
+const VENUE_ABBR_TO_CODE = {
+  '京': 'KYO', '阪': 'HAN', '東': 'TOK', '新': 'NII',
+  '福': 'FKS', '小': 'KOK', '札': 'SAP', '函': 'HKD',
+};
+
+// 「中」は月で中山/中京を判別（horseEnrichment.js の formatRecentVenue と同基準）
+function resolveNakaVenueCode(month) {
+  if (month === 5 || month === 7) return 'CHU';            // 中京
+  if ([4, 8, 9, 10, 11, 12].includes(month)) return 'NAK'; // 中山
+  return null; // 両方ありえる月（1, 3）は安全側で skip
+}
+
+// 過去走 venue 文字列 ('3京5.10') を { year, month, day, venueCode } に解析
+function parseRecentVenueStr(venueStr, baseDate) {
+  if (!venueStr || typeof venueStr !== 'string') return null;
+  const m = venueStr.match(/^(\d+)([^\d]+?)(\d+)\.(\d+)$/);
+  if (!m) return null;
+  const abbr = m[2];
+  const mo = parseInt(m[3], 10);
+  const day = parseInt(m[4], 10);
+  if (!Number.isFinite(mo) || !Number.isFinite(day)) return null;
+
+  let venueCode = VENUE_ABBR_TO_CODE[abbr];
+  if (!venueCode && abbr === '中') venueCode = resolveNakaVenueCode(mo);
+  if (!venueCode) return null; // 地方競馬・不明会場は対象外
+
+  const today = baseDate instanceof Date ? baseDate : new Date();
+  const ty = today.getFullYear();
+  const tm = today.getMonth() + 1;
+  const td = today.getDate();
+  // 月日が今より未来側なら前年とみなす
+  const year = (mo > tm || (mo === tm && day > td)) ? ty - 1 : ty;
+  return { year, month: mo, day, venueCode };
+}
+
+const _resultsCache = new Map();
+
+async function fetchResultsFileCached(year, month, day, venueCode) {
+  const key = `${year}-${month}-${day}-${venueCode}`;
+  if (_resultsCache.has(key)) return _resultsCache.get(key);
+  const yyyy = String(year);
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  const url = `https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/jra/results/${yyyy}/${mm}/${yyyy}-${mm}-${dd}-${venueCode}.json`;
+  try {
+    const headers = process.env.GITHUB_TOKEN
+      ? { 'Authorization': `token ${process.env.GITHUB_TOKEN}` }
+      : {};
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      _resultsCache.set(key, null);
+      return null;
+    }
+    const data = await res.json();
+    _resultsCache.set(key, data);
+    return data;
+  } catch (err) {
+    _resultsCache.set(key, null);
+    return null;
+  }
+}
+
+// shared/racebook JSON の各馬の過去走（recentRaces / _pastRaces）に
+// distance を結果データから補完する。馬名+着順で照合する。
+async function enrichPastRacesWithResults(sharedJSON, baseDateStr) {
+  if (!sharedJSON) return;
+  const venues = Array.isArray(sharedJSON.venues) ? sharedJSON.venues : [sharedJSON];
+  const baseDate = new Date(baseDateStr + 'T00:00:00');
+  let enriched = 0, scanned = 0, lookupFail = 0;
+
+  for (const venueData of venues) {
+    for (const race of (venueData.races || [])) {
+      for (const h of (race.horses || [])) {
+        const horseName = h.horseName || h.name;
+        if (!horseName) continue;
+
+        // 過去走配列の両系統（computer由来 recentRaces / racebook由来 _pastRaces）
+        // を順に補完する。
+        const pastArrays = [];
+        if (Array.isArray(h.recentRaces) && h.recentRaces.length > 0) pastArrays.push(h.recentRaces);
+        if (Array.isArray(h._pastRaces) && h._pastRaces.length > 0) pastArrays.push(h._pastRaces);
+
+        for (const arr of pastArrays) {
+          for (const pr of arr) {
+            scanned++;
+            // 既に distance / distanceMeters があれば skip（数値も文字列もカバー）
+            const existing = pr.distance || pr.distanceMeters;
+            if (existing && String(existing).trim() !== '') continue;
+
+            const parsed = parseRecentVenueStr(pr.venue, baseDate);
+            if (!parsed) continue;
+
+            const results = await fetchResultsFileCached(parsed.year, parsed.month, parsed.day, parsed.venueCode);
+            if (!results || !Array.isArray(results.races)) { lookupFail++; continue; }
+
+            // 馬名で該当レース探索。
+            // 照合の信頼度:
+            //   time 一致 > rank 一致 > 馬名一致のみ
+            // time は完全一致のとき同レース同馬の確率が極めて高い（フォーマット
+            // 差異 "1.26.4" vs "1:26.4" は正規化して比較）。
+            // rank は racebook 側で finish フィールドの値が間違っているケース
+            // があったため（2026-05-23 デルニエジョイ等）、補助確認に降格。
+            const normalizeTime = (t) => String(t || '').replace(/[:.]/g, '.').replace(/\.+/g, '.').trim();
+            const prTime = normalizeTime(pr.time);
+            const candidates = [];
+            for (const rr of results.races) {
+              const found = (rr.results || []).find(r => r && r.name === horseName);
+              if (!found) continue;
+              if (!rr.distance) continue;
+              const foundTime = normalizeTime(found.time);
+              const timeMatch = prTime && foundTime && prTime === foundTime;
+              const prRank = Number(pr.rank ?? pr.finish);
+              const foundRank = Number(found.rank);
+              const rankMatch = Number.isFinite(prRank) && Number.isFinite(foundRank) && prRank === foundRank;
+              candidates.push({ rr, timeMatch, rankMatch });
+            }
+            // 優先順: time一致 → rank一致 → 候補唯一 → fallback skip
+            const pick =
+              candidates.find(c => c.timeMatch) ||
+              candidates.find(c => c.rankMatch) ||
+              (candidates.length === 1 ? candidates[0] : null);
+            if (pick && pick.rr.distance) {
+              pr.distance = String(pick.rr.distance);
+              pr.distanceMeters = Number(pick.rr.distance);
+              enriched++;
+            } else {
+              lookupFail++;
+            }
+          }
+        }
+      }
+    }
+  }
+  console.log(`✅ [DISTANCE-ENRICH] ${enriched}/${scanned} 件の過去走に distance を補完 (照合不可 ${lookupFail}, 結果キャッシュ ${_resultsCache.size}件)`);
+}
+
 /**
  * 予想データを取り込み（正規化 + 調整ルール適用）
  *
@@ -395,6 +543,9 @@ async function importPrediction(date, venue = 'jra') {
   if (computerSourceMap && computerSourceMap.size > 0) {
     injectSourceComputerIndex(sharedJSON, computerSourceMap);
   }
+
+  // 【2026-05-24 追加】過去走の distance を jra/results から補完
+  await enrichPastRacesWithResults(sharedJSON, date);
 
   // 複数会場対応：venues配列がある場合
   if (sharedJSON.venues && Array.isArray(sharedJSON.venues)) {
