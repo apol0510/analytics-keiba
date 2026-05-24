@@ -603,7 +603,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                     const cardClass = horse.role === '本命' ? 'horse-card horse-card-main'
                                         : horse.role === '対抗' ? 'horse-card horse-card-sub'
                                         : 'horse-card horse-card-tana';
-                                    const filledStars = (horse.stars || '★').length;
                                     const pt = horse.pt ?? 0;
                                     const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
                                     const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
@@ -613,7 +612,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                     const ageGenderStr = (horse.ageNum != null && horse.gender)
                                         ? `${horse.ageNum}歳${horse.gender}`
                                         : (horse.age || null);
-                                    const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.computerIndex != null || horse.sire;
+                                    const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
+                                    const displayCi = horse.computerIndex != null ? getDisplayComputerIndex(horse.computerIndex) : null;
                                     return (
                                     <div class={cardClass}>
                                         {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -631,19 +631,12 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 <div class="stat-label">累積スコア</div>
                                                 <div class="stat-value stat-score">{pt}<span class="stat-unit">pt</span></div>
                                             </div>
-                                            <div class="stat-block stat-stars-block">
-                                                <div class="stat-label">総合評価</div>
-                                                <div class="star-rating" aria-label={`総合評価 ${filledStars}つ星 信頼度${horse.confidence ?? ''}`}>
-                                                    <span class="star-row">
-                                                        {[1, 2, 3, 4].map((i) => (
-                                                            <span class={`star ${i <= filledStars ? 'star-filled' : 'star-empty'}`}>★</span>
-                                                        ))}
-                                                    </span>
-                                                    {horse.confidence != null && (
-                                                        <span class="confidence-num">（{horse.confidence}）</span>
-                                                    )}
+                                            {displayCi != null && (
+                                                <div class="stat-block stat-index-block">
+                                                    <div class="stat-label">AI総合指数</div>
+                                                    <div class="stat-value stat-index">{displayCi}</div>
                                                 </div>
-                                            </div>
+                                            )}
                                         </div>
 
                                         {hasBasicInfo && (
@@ -664,9 +657,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                     )}
                                                     {horse.frame != null && (
                                                         <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
-                                                    )}
-                                                    {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && (
-                                                        <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{getDisplayComputerIndex(horse.computerIndex)}</span></div>
                                                     )}
                                                     {horse.sire && (
                                                         <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
@@ -2268,6 +2258,12 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     }
     .stat-score {
         background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    .stat-index {
+        background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;

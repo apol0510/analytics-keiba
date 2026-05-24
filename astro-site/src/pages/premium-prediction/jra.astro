@@ -665,7 +665,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                       const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
                         ? `${horse.weight}kg`
                         : null;
-                      const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.computerIndex != null || horse.sire;
+                      const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
+                      const displayCi = horse.computerIndex != null ? getDisplayComputerIndex(horse.computerIndex) : null;
                       return (
                         <div class={cardClass}>
                           {role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -683,6 +684,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                               <div class="stat-label">累積スコア</div>
                               <div class="stat-value stat-score">{e.pt}<span class="stat-unit">pt</span></div>
                             </div>
+                            {displayCi != null && (
+                              <div class="stat-block stat-index-block">
+                                <div class="stat-label">AI総合指数</div>
+                                <div class="stat-value stat-index">{displayCi}</div>
+                              </div>
+                            )}
                           </div>
 
                           {hasBasicInfo && (
@@ -703,9 +710,6 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 )}
                                 {horse.frame != null && (
                                   <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
-                                )}
-                                {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && (
-                                  <div class="info-line"><span class="info-key">AI総合指数</span><span class="info-val info-val-strong">{getDisplayComputerIndex(horse.computerIndex)}</span></div>
                                 )}
                                 {horse.sire && (
                                   <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
@@ -1826,6 +1830,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     }
     .ai-pick-section .stat-score {
       background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .ai-pick-section .stat-index {
+      background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
