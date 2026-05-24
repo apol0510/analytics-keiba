@@ -16,6 +16,50 @@
 import { adjustPrediction } from './adjustPrediction.js';
 
 /**
+ * 【2026-05-24】馬データの sanitize / 安全化処理。
+ *
+ * keiba-data-shared (admin) 側で OCR / HTML パースに失敗した馬データ
+ * (name === '' / sexAge === ')' 等) が後段の予想カードに昇格してしまう事故
+ * (例: 2026-05-24 京都4R 馬番1 が単穴に昇格し AI総合指数 161 表示) を防ぐ。
+ *
+ * - 馬名が空文字 / null / 空白のみの馬は role を強制的に '無' に降格。
+ *   → 本命・対抗・単穴・連下・補欠 などのカードに登場しない。
+ * - age (性齢) が記号のみ (')', '(', ')(' 等) の場合は空文字に正規化。
+ *
+ * 注意: AK は keiba-data-shared 側を直接修正しない (admin 独立運用) ため、
+ *       取込側でこの sanitize を必ず通す。表示側で隠す対応は禁止 (CLAUDE.md)。
+ */
+function sanitizeHorseName(name) {
+  if (typeof name !== 'string') return '';
+  return name.trim();
+}
+/**
+ * 馬名が破損しているか判定。
+ * - 空文字 / 空白のみ → 破損
+ * - ひらがな / カタカナ / 漢字 (CJK) / ラテン英数を 1 文字も含まない → 破損
+ *   (2026-05-24 京都4R 馬番1: name が U+E615 1 文字 = Private Use Area で
+ *    "name === ''" だけでは検知できないケースがあった)
+ */
+function isHorseNameBroken(name) {
+  const s = sanitizeHorseName(name);
+  if (s === '') return true;
+  // ひらがな (U+3040-309F) / カタカナ (U+30A0-30FF) / CJK (U+4E00-9FFF, 拡張A U+3400-4DBF) / 英数
+  const hasValid = /[぀-ゟ゠-ヿ一-鿿㐀-䶿0-9A-Za-z]/.test(s);
+  return !hasValid;
+}
+function sanitizeAge(age) {
+  if (typeof age !== 'string') return '';
+  const s = age.trim();
+  if (s === '') return '';
+  // 性齢の正規形は「牡3」「牝4」「セ5」「騙3」など。
+  // それ以外で記号 / 空白のみの場合は空文字に正規化する。
+  if (/^[牡牝セ騙][0-9]+$/.test(s)) return s;
+  if (/^[\)\(\s\-_~・,\.]+$/.test(s)) return '';
+  // それ以外は upstream に従う（不明な記号入りは目視確認のため保持）
+  return s;
+}
+
+/**
  * 競馬場名から競馬場コードに変換
  *
  * @param {string} venueName - 競馬場名
@@ -124,14 +168,26 @@ export function normalizeDetailed(input) {
       if (rawScore < COMPI_MIN && ciForFloor >= COMPI_MIN) {
         rawScore = ciForFloor;
       }
-      const role = horse.assignment || horse.role || '無';
+      // 【2026-05-24】馬データ破損ガード:
+      //   馬名が空 / 性齢が記号のみ などの場合、上流側パース失敗が確実。
+      //   役割を '無' に降格して予想カード（本命/対抗/単穴/連下系/補欠）に登場させない。
+      //   さらに adjustPrediction が rawScore 降順で再分類するため、rawScore も 0 に潰す
+      //   (これで活性馬群から外れ、本命/対抗/単穴 に昇格しなくなる)。
+      const nameBroken = isHorseNameBroken(horse.name);
+      const upstreamRole = horse.assignment || horse.role || '無';
+      const role = nameBroken ? '無' : upstreamRole;
+      if (nameBroken) {
+        console.warn(`⚠️ [SANITIZE] 馬データ破損で '無' 降格 + rawScore=0: ${date} ${venue} R${raceNumber} 馬番${horse.number} (元role=${upstreamRole}, sexAge=${JSON.stringify(horse.sexAge)})`);
+        rawScore = 0;
+      }
 
       // 印1を取得（独自予想用）
       const mark1 = horse.marks?.['印1'] || '';
 
       return {
         number: horse.number,
-        name: horse.name,
+        // 破損馬名 (PUA 文字 1 文字 等) は表示で `)` 様のゴミになるため空文字に正規化
+        name: nameBroken ? '' : sanitizeHorseName(horse.name),
         rawScore: rawScore,
         displayScore: 0, // adjustPrediction()で計算
         role: role,
@@ -144,7 +200,7 @@ export function normalizeDetailed(input) {
         ...(sourceCi != null ? { sourceComputerIndex: sourceCi } : {}),
         jockey: horse.kisyu || horse.jockey || '', // 騎手
         trainer: horse.kyusya || horse.trainer || '', // 厩舎
-        age: horse.seirei || horse.ageGender || horse.age || '', // 馬齢（牡3、牝4など）
+        age: sanitizeAge(horse.seirei || horse.ageGender || horse.age || ''), // 馬齢（牡3、牝4など）
         weight: horse.kinryo || horse.weight || '', // 斤量
         // racebook由来の拡張フィールド（存在する場合のみ保持）
         ...(horse._pastRaces ? { _pastRaces: horse._pastRaces } : {}),

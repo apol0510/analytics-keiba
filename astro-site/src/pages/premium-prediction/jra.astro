@@ -7,7 +7,7 @@ import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { enrichHorse, generateMinorHorseComment } from '../../lib/horseEnrichment.js';
-import { getDisplayComputerIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
+import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 
 export const prerender = true;
 
@@ -666,7 +666,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                         ? `${horse.weight}kg`
                         : null;
                       const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
-                      const displayCi = horse.computerIndex != null ? getDisplayComputerIndex(horse.computerIndex) : null;
+                      const displayCi = getHorseAiIndex(horse);
                       return (
                         <div class={cardClass}>
                           {role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -779,7 +779,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                   {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                   {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                   {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                  {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">AI総合指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                  {getHorseAiIndex(horse) != null && <span><span class="meta-key">AI総合指数</span>{getHorseAiIndex(horse)}</span>}
                                 </div>
                                 {evalPoints.length > 0 && (
                                   <div class="minor-horse-evals">
@@ -848,7 +848,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                   {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                   {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                   {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                  {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">AI総合指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                  {getHorseAiIndex(horse) != null && <span><span class="meta-key">AI総合指数</span>{getHorseAiIndex(horse)}</span>}
                                 </div>
                                 {evalPoints.length > 0 && (
                                   <div class="minor-horse-evals">

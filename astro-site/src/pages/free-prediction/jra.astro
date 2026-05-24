@@ -4,30 +4,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { enrichHorse, formatRecentVenue } from '../../lib/horseEnrichment.js';
-import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse, getDisplayComputerIndex } from '../../lib/shared-prediction-logic.js';
+import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 
-// 表示用指数の選定: sourceComputerIndex > pt > totalScore/displayScore/rawScore。
-// computerIndex は admin 編集系の 0-9 スケールが入る場合があり、そのまま「指数」表示には使わない。
-// 著作権・表示上の安全対策: 最終出力は必ず getDisplayComputerIndex(...) で -1 する。
-function getDisplayIndex(horse, enriched) {
-  const candidates = [
-    horse?.sourceComputerIndex,
-    enriched?.sourceComputerIndex,
-    horse?.pt,
-    enriched?.pt,
-    horse?.totalScore,
-    horse?.displayScore,
-    horse?.rawScore
-  ];
-  for (const v of candidates) {
-    const n = Number(v);
-    if (Number.isFinite(n) && n >= 10) {
-      // raw - 1 ルール（恒久仕様）。共通関数経由で統一する。
-      return getDisplayComputerIndex(Math.round(n));
-    }
-  }
-  return null;
-}
+// AI総合指数の取得は 4 領域共通の getHorseAiIndex に集約 (2026-05-24)。
+// pt / totalScore / displayScore / rawScore はスケールが違うため使わない。
+const getDisplayIndex = (horse, enriched) => getHorseAiIndex(horse) ?? getHorseAiIndex(enriched);
 
 export const prerender = true;
 

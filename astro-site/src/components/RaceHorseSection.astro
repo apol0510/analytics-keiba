@@ -14,7 +14,7 @@
 
 import HorseMainCard from './HorseMainCard.astro';
 import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
-import { isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex } from '../lib/shared-prediction-logic.js';
+import { isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../lib/shared-prediction-logic.js';
 
 interface Props {
     raceHorses: any[];
@@ -86,7 +86,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                            {horse.computerIndex != null && horse.computerIndex !== 0 && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                         </div>
                         {evalPoints.length > 0 && (
                             <div class="minor-horse-evals">
@@ -154,7 +154,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                            {horse.computerIndex != null && horse.computerIndex !== 0 && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                         </div>
                         {evalPoints.length > 0 && (
                             <div class="minor-horse-evals">

@@ -2,7 +2,7 @@
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
-import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex } from '../../lib/shared-prediction-logic.js';
+import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 
 // src/data/predictions/*.json を自動スキャンし、最新日付の全会場を取得（同時開催対応）
@@ -193,7 +193,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                 const cardClass = horse.role === '本命' ? 'horse-card horse-card-main'
                                                     : horse.role === '対抗' ? 'horse-card horse-card-sub'
                                                     : 'horse-card horse-card-tana';
-                                                const displayCi = horse.computerIndex != null ? getDisplayComputerIndex(horse.computerIndex) : null;
+                                                const displayCi = getHorseAiIndex(horse);
                                                 const pt = horse.pt ?? 0;
                                                 const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
@@ -316,7 +316,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                                            {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                                                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                                                                         </div>
                                                                         {evalPoints.length > 0 && (
                                                                             <div class="minor-horse-evals">
@@ -383,7 +383,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                                            {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                                                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                                                                         </div>
                                                                         {evalPoints.length > 0 && (
                                                                             <div class="minor-horse-evals">
@@ -446,7 +446,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                                                 {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                                                 {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                                                {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                                                                {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                                                                             </div>
                                                                             {evalPoints.length > 0 && (
                                                                                 <div class="minor-horse-evals">

@@ -2,7 +2,7 @@
 export const prerender = true;
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import AccessControl from '../../components/AccessControl.astro';
-import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex } from '../../lib/shared-prediction-logic.js';
+import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../../lib/archive-utils.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 import { generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
@@ -613,7 +613,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                         ? `${horse.ageNum}歳${horse.gender}`
                                         : (horse.age || null);
                                     const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
-                                    const displayCi = horse.computerIndex != null ? getDisplayComputerIndex(horse.computerIndex) : null;
+                                    const displayCi = getHorseAiIndex(horse);
                                     return (
                                     <div class={cardClass}>
                                         {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -756,7 +756,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                            {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                                                         </div>
                                                         {evalPoints.length > 0 && (
                                                             <div class="minor-horse-evals">
@@ -828,7 +828,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                             {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
                                                             {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
                                                             {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                            {horse.computerIndex != null && getDisplayComputerIndex(horse.computerIndex) != null && <span><span class="meta-key">指数</span>{getDisplayComputerIndex(horse.computerIndex)}</span>}
+                                                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
                                                         </div>
                                                         {evalPoints.length > 0 && (
                                                             <div class="minor-horse-evals">
