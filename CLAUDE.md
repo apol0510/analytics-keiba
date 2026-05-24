@@ -31,6 +31,62 @@
 5. **commit前にgit diffを確認する**
 6. **本番反映前に確認方法を示す**
 
+## 🧭 修正対象範囲ルール（4領域横断確認 / 2026-05-24 集約）
+
+表示・ロジック・データ反映・UI修正・文言修正・不具合修正を行う場合は、
+**原則として以下の 4 領域すべてを対象確認範囲に含める**こと。
+一部だけを修正して「完了」扱いにしてはいけない。
+
+| # | 領域 | 主な該当ページ |
+|---|---|---|
+| 1 | 中央競馬（JRA）**無料版** | `src/pages/free-prediction/jra.astro` |
+| 2 | 中央競馬（JRA）**有料版** | `src/pages/premium-prediction/jra.astro` |
+| 3 | 南関競馬（NANKAN）**無料版** | `src/pages/free-prediction/nankan.astro` |
+| 4 | 南関競馬（NANKAN）**有料版** | `src/pages/premium-prediction/nankan.astro` |
+
+### 必ず 4 領域を横断確認すべき修正
+
+以下のいずれかに該当する場合は、4 領域すべてを必ず差分確認・整合性確認すること:
+
+- 指数表示
+- 総合評価表示
+- 買い目表示
+- 不要馬表示
+- 過去走表示
+- 特徴量・評価ポイント表示
+- レース一覧／詳細ページ表示
+- アーカイブ結果表示
+- データ取込・変換ロジック（importPrediction*.js / importResults*.js / featureScores.js / osaeClassification.js など）
+- 表示文言・演出 UI
+
+### 特定領域のみが対象の場合（例外運用）
+
+修正内容が明確に特定領域のみを対象としている場合は、**作業前または報告時に以下を必ず明記**すること:
+
+- **今回の対象範囲**（例: JRA 有料版のみ）
+- **対象外とした範囲**（例: JRA 無料版 / NANKAN 両版）
+- **対象外にした理由**（例: nankan には該当 HTML/CSS が無い・該当ロジックを使っていない 等）
+- **中央／南関、無料／有料のどこに影響する可能性があるか**
+
+明記なしで一領域だけ修正して push することは禁止。
+
+### 目的
+
+- 片側だけ直って、もう片側が旧仕様のまま残る事故を防ぐ
+- 無料版だけ直って、有料版が壊れる事故を防ぐ
+- 中央と南関で**意図しない仕様差**が生じる事故を防ぐ
+
+過去事例（2026-05-24）: JRA 有料版の `総合評価★` を廃止して `AI総合指数` に移行
+した際、無料版 JRA に同じ `総合評価★` ブロックが残り続け、ユーザー指摘で初めて
+発覚した。同種の事故再発防止のためこのルールを集約。
+
+### 関連する単一源・パリティ検証
+
+- `src/utils/osaeClassification.js` — 抑え/不要馬判定の単一源
+- `src/lib/shared-prediction-logic.js` — 指数表示用関数 (`getDisplayComputerIndex` / `formatDisplayComputerIndex`)
+- `npm run check:jra-nankan-parity` — JRA 有料版が NANKAN 有料版の構造に揃っているか検証
+- `npm run check:safety` — 上記を含む全 safety check
+
 ## 📊 データフロー
 
 ```
