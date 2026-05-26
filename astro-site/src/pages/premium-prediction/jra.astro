@@ -8,6 +8,17 @@ import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { enrichHorse, generateMinorHorseComment, formatRecentVenue } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
+import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
+
+// 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
+// 既存 recentRaces は温存するため、計算系 (computeEvalPoints / computeImportance /
+// detectRecentRunningStyle / AI 総合指数 / 印 / 買い目 / darkHorses) に副作用なし。
+function _displayRecentOf(horse) {
+  if (Array.isArray(horse?.recentRacesFromHistories) && horse.recentRacesFromHistories.length > 0) {
+    return horse.recentRacesFromHistories;
+  }
+  return Array.isArray(horse?.recentRaces) ? horse.recentRaces : [];
+}
 
 // 過去走の距離表記: 数値/数値文字列なら末尾に m を付ける。
 // 既に "ダ1800" のような surface 付き文字列や、"芝1600m" のように m が付いている場合は原文を維持。
@@ -135,6 +146,21 @@ try {
   }
 } catch (err) {
   error = err.message;
+}
+
+// horseHistories の recent5 を表示専用フォールバックとして注入する (premium-jra のみ)。
+// - 既存 horse.recentRaces は温存 (計算系の入力を変えない)
+// - レース日と同じ date は除外、最大 4 走
+// - 該当 venue / 馬 が見つからなければ何もしない (= 既存 recentRaces にそのままフォールバック)
+if (!error && Array.isArray(venues) && venues.length > 0) {
+  try {
+    const targetDate = predictionData?.date || null;
+    if (targetDate) {
+      injectHorseHistoriesIntoVenues(venues, targetDate, process.cwd());
+    }
+  } catch (_e) {
+    // 表示専用フォールバック。失敗時は既存 recentRaces のまま表示。
+  }
 }
 
 // generateAdvancedMetrics imported from featureScores.js
@@ -756,12 +782,15 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             </div>
                           )}
 
-                          {/* 過去走（recentRaces） — 連下候補馬と同一構造 */}
-                          {Array.isArray(horse.recentRaces) && horse.recentRaces.length > 0 && (
+                          {/* 過去走 — horseHistories.recent5 を優先、なければ既存 recentRaces にフォールバック */}
+                          {(() => {
+                            const displayRecent = _displayRecentOf(horse);
+                            if (!displayRecent.length) return null;
+                            return (
                             <details class="recent-races recent-races-compact">
-                              <summary>過去{Math.min(4, horse.recentRaces.length)}走</summary>
+                              <summary>過去{Math.min(4, displayRecent.length)}走</summary>
                               <div class="recent-races-list">
-                                {horse.recentRaces.slice(0, 4).map((r) => {
+                                {displayRecent.slice(0, 4).map((r) => {
                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                   return (
                                     <div class="recent-race-row">
@@ -776,7 +805,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 })}
                               </div>
                             </details>
-                          )}
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -797,7 +827,9 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             const comment = generateMinorHorseComment(horse.role, gap);
                             const importance = Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null;
                             const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                            const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                            // 表示用過去走: horseHistories 由来があれば優先、なければ既存 recentRaces。
+                            // (計算系の入力には影響しない — _displayRecentOf は表示専用)
+                            const recentRaces = _displayRecentOf(horse);
                             const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                             return (
                               <div class="minor-horse-card minor-horse-card-renka">
@@ -866,7 +898,9 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
                             const comment = generateMinorHorseComment(horse.role, gap);
                             const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                            const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                            // 表示用過去走: horseHistories 由来があれば優先、なければ既存 recentRaces。
+                            // (計算系の入力には影響しない — _displayRecentOf は表示専用)
+                            const recentRaces = _displayRecentOf(horse);
                             const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                             return (
                               <div class="minor-horse-card minor-horse-card-osae">
