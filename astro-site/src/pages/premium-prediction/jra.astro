@@ -9,6 +9,16 @@ import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { enrichHorse, generateMinorHorseComment, formatRecentVenue } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 
+// 過去走の距離表記: 数値/数値文字列なら末尾に m を付ける。
+// 既に "ダ1800" のような surface 付き文字列や、"芝1600m" のように m が付いている場合は原文を維持。
+const formatRecentDistance = (d) => {
+  if (d == null || d === '') return '';
+  const s = String(d);
+  if (/m$/.test(s)) return s;
+  if (/^\d+$/.test(s)) return `${s}m`;
+  return s;
+};
+
 export const prerender = true;
 
 // サーバーサイド認証チェック（セキュリティ強化）
@@ -756,7 +766,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                   return (
                                     <div class="recent-race-row">
                                       <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
-                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                      <span class="recent-race-distance">{formatRecentDistance(r?.distance)}</span>
                                       <span class="recent-race-rank">{rank}</span>
                                       {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
                                       {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
@@ -823,7 +833,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                         return (
                                           <div class="recent-race-row">
                                             <span class="recent-race-venue">{r?.venue || ''}</span>
-                                            <span class="recent-race-distance">{r?.distance || ''}</span>
+                                            <span class="recent-race-distance">{formatRecentDistance(r?.distance)}</span>
                                             <span class="recent-race-rank">{rank}</span>
                                             {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
                                             {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
@@ -887,7 +897,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                         return (
                                           <div class="recent-race-row">
                                             <span class="recent-race-venue">{r?.venue || ''}</span>
-                                            <span class="recent-race-distance">{r?.distance || ''}</span>
+                                            <span class="recent-race-distance">{formatRecentDistance(r?.distance)}</span>
                                             <span class="recent-race-rank">{rank}</span>
                                             {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
                                             {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
