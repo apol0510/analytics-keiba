@@ -6,7 +6,7 @@ import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
-import { enrichHorse, generateMinorHorseComment } from '../../lib/horseEnrichment.js';
+import { enrichHorse, generateMinorHorseComment, formatRecentVenue } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 
 export const prerender = true;
@@ -744,6 +744,28 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 ))}
                               </div>
                             </div>
+                          )}
+
+                          {/* 過去走（recentRaces） — 連下候補馬と同一構造 */}
+                          {Array.isArray(horse.recentRaces) && horse.recentRaces.length > 0 && (
+                            <details class="recent-races recent-races-compact">
+                              <summary>過去{Math.min(4, horse.recentRaces.length)}走</summary>
+                              <div class="recent-races-list">
+                                {horse.recentRaces.slice(0, 4).map((r) => {
+                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                  return (
+                                    <div class="recent-race-row">
+                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                      <span class="recent-race-rank">{rank}</span>
+                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                      {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </details>
                           )}
                         </div>
                       );
