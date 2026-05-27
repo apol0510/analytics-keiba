@@ -204,6 +204,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                     ? `${horse.ageNum}歳${horse.gender}`
                                                     : (horse.age || null);
                                                 const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
+                                                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
                                                 return (
                                                 <div class={cardClass}>
                                                     {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -281,6 +282,27 @@ const analysis = firstVenue.mainRace.analysis;
                                                                 ))}
                                                             </div>
                                                         </div>
+                                                    )}
+
+                                                    {recentRaces.length > 0 && (
+                                                        <details class="recent-races recent-races-compact">
+                                                            <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                                            <div class="recent-races-list">
+                                                                {recentRaces.slice(0, 4).map((r) => {
+                                                                    const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                    return (
+                                                                        <div class="recent-race-row">
+                                                                            <span class="recent-race-venue">{r?.venue || ''}</span>
+                                                                            <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                                            <span class="recent-race-rank">{rank}</span>
+                                                                            {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                                            {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                            {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </details>
                                                     )}
                                                 </div>
                                                 );
