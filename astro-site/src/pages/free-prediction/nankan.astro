@@ -5,6 +5,10 @@ import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro'
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 
+// 過去走表示用ラベル (index 連動、表示専用)。
+// 南関は horseHistories 対象外のため、既存 horse.recentRaces をそのまま使う。
+const RECENT_LABELS = ['前走', '2走前', '3走前', '4走前'];
+
 // src/data/predictions/*.json を自動スキャンし、最新日付の全会場を取得（同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
 const multiVenueData = pickLatestNankanVenuesAndAdapt(predictionModules);
@@ -288,10 +292,11 @@ const analysis = firstVenue.mainRace.analysis;
                                                         <details class="recent-races recent-races-compact">
                                                             <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                             <div class="recent-races-list">
-                                                                {recentRaces.slice(0, 4).map((r) => {
+                                                                {recentRaces.slice(0, 4).map((r, i) => {
                                                                     const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                     return (
                                                                         <div class="recent-race-row">
+                                                                            <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                                             <span class="recent-race-venue">{r?.venue || ''}</span>
                                                                             <span class="recent-race-distance">{r?.distance || ''}</span>
                                                                             <span class="recent-race-rank">{rank}</span>
@@ -354,10 +359,11 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             <details class="recent-races recent-races-compact">
                                                                                 <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
-                                                                                    {recentRaces.slice(0, 4).map((r) => {
+                                                                                    {recentRaces.slice(0, 4).map((r, i) => {
                                                                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                                         return (
                                                                                             <div class="recent-race-row">
+                                                                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                                                                 <span class="recent-race-venue">{r?.venue || ''}</span>
                                                                                                 <span class="recent-race-distance">{r?.distance || ''}</span>
                                                                                                 <span class="recent-race-rank">{rank}</span>
@@ -416,10 +422,11 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             <details class="recent-races recent-races-compact">
                                                                                 <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
-                                                                                    {recentRaces.slice(0, 4).map((r) => {
+                                                                                    {recentRaces.slice(0, 4).map((r, i) => {
                                                                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                                         return (
                                                                                             <div class="recent-race-row">
+                                                                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                                                                 <span class="recent-race-venue">{r?.venue || ''}</span>
                                                                                                 <span class="recent-race-distance">{r?.distance || ''}</span>
                                                                                                 <span class="recent-race-rank">{rank}</span>
@@ -479,10 +486,11 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 <details class="recent-races recent-races-compact">
                                                                                     <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                                                     <div class="recent-races-list">
-                                                                                        {recentRaces.slice(0, 4).map((r) => {
+                                                                                        {recentRaces.slice(0, 4).map((r, i) => {
                                                                                             const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                                             return (
                                                                                                 <div class="recent-race-row">
+                                                                                                    <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                                                                     <span class="recent-race-venue">{r?.venue || ''}</span>
                                                                                                     <span class="recent-race-distance">{r?.distance || ''}</span>
                                                                                                     <span class="recent-race-rank">{rank}</span>
@@ -1044,6 +1052,7 @@ const analysis = firstVenue.mainRace.analysis;
         background: rgba(30, 41, 59, 0.4);
         border-radius: 4px;
     }
+    .recent-race-label { color: #94a3b8; font-size: 0.7rem; min-width: 3em; }
     .recent-race-venue { color: #e2e8f0; font-weight: 600; }
     .recent-race-distance { color: #cbd5e1; }
     .recent-race-rank { color: #10b981; font-weight: 700; }
