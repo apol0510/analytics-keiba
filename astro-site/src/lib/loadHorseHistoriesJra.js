@@ -104,8 +104,11 @@ function convertHistoryRaceToRecentShape(h) {
 }
 
 /**
- * 1頭ぶんの horseHistories から、表示用 recentRaces (最大 4 走) を生成する。
- * recent5 を入力にし、excludeDate と一致する race は除外、最大 4 走。
+ * 1頭ぶんの horseHistories から、表示用 recentRaces (最大 5 走) を生成する。
+ * 入力は history (全レース履歴) を使用。excludeDate と一致する race は除外、最大 5 走。
+ *
+ * recent5 は仕様上 [0]=当日レース を含むため、当日除外後は最大 4 走しか取れず
+ * 「最大 5 走表示」の目的を満たせない。よって全件保持の history を使う。
  *
  * @param {object|undefined} horseHistoryEntry historiesJson.horses[horseId]
  * @param {string} excludeDate YYYY-MM-DD (レース当日)
@@ -113,10 +116,12 @@ function convertHistoryRaceToRecentShape(h) {
  */
 export function pickRecentRacesFromHistories(horseHistoryEntry, excludeDate) {
   if (!horseHistoryEntry || typeof horseHistoryEntry !== 'object') return null;
-  const recent = Array.isArray(horseHistoryEntry.recent5) ? horseHistoryEntry.recent5 : null;
-  if (!recent) return null;
-  const filtered = recent.filter((r) => r && r.date !== excludeDate);
-  const converted = filtered.slice(0, 4).map(convertHistoryRaceToRecentShape).filter(Boolean);
+  const source = Array.isArray(horseHistoryEntry.history)
+    ? horseHistoryEntry.history
+    : (Array.isArray(horseHistoryEntry.recent5) ? horseHistoryEntry.recent5 : null);
+  if (!source) return null;
+  const filtered = source.filter((r) => r && r.date !== excludeDate);
+  const converted = filtered.slice(0, 5).map(convertHistoryRaceToRecentShape).filter(Boolean);
   return converted.length > 0 ? converted : null;
 }
 

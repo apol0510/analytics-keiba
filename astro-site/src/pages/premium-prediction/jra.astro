@@ -788,9 +788,9 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             if (!displayRecent.length) return null;
                             return (
                             <details class="recent-races recent-races-compact">
-                              <summary>過去{Math.min(4, displayRecent.length)}走</summary>
+                              <summary>過去{Math.min(5, displayRecent.length)}走</summary>
                               <div class="recent-races-list">
-                                {displayRecent.slice(0, 4).map((r) => {
+                                {displayRecent.slice(0, 5).map((r) => {
                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                   return (
                                     <div class="recent-race-row">
@@ -858,9 +858,9 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 {comment && <p class="minor-horse-comment">{comment}</p>}
                                 {recentRaces.length > 0 && (
                                   <details class="recent-races recent-races-compact">
-                                    <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                    <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                     <div class="recent-races-list">
-                                      {recentRaces.slice(0, 4).map((r) => {
+                                      {recentRaces.slice(0, 5).map((r) => {
                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                         return (
                                           <div class="recent-race-row">
@@ -924,9 +924,9 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 {comment && <p class="minor-horse-comment">{comment}</p>}
                                 {recentRaces.length > 0 && (
                                   <details class="recent-races recent-races-compact">
-                                    <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                    <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                     <div class="recent-races-list">
-                                      {recentRaces.slice(0, 4).map((r) => {
+                                      {recentRaces.slice(0, 5).map((r) => {
                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                         return (
                                           <div class="recent-race-row">
