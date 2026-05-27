@@ -292,7 +292,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                         <details class="recent-races recent-races-compact">
                                                             <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                             <div class="recent-races-list">
-                                                                {recentRaces.slice(0, 4).map((r, i) => {
+                                                                {recentRaces.slice(-4).reverse().map((r, i) => {
                                                                     const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                     return (
                                                                         <div class="recent-race-row">
@@ -359,7 +359,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             <details class="recent-races recent-races-compact">
                                                                                 <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
-                                                                                    {recentRaces.slice(0, 4).map((r, i) => {
+                                                                                    {recentRaces.slice(-4).reverse().map((r, i) => {
                                                                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                                         return (
                                                                                             <div class="recent-race-row">
@@ -422,7 +422,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             <details class="recent-races recent-races-compact">
                                                                                 <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
-                                                                                    {recentRaces.slice(0, 4).map((r, i) => {
+                                                                                    {recentRaces.slice(-4).reverse().map((r, i) => {
                                                                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                                         return (
                                                                                             <div class="recent-race-row">
@@ -486,7 +486,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 <details class="recent-races recent-races-compact">
                                                                                     <summary>過去{Math.min(4, recentRaces.length)}走</summary>
                                                                                     <div class="recent-races-list">
-                                                                                        {recentRaces.slice(0, 4).map((r, i) => {
+                                                                                        {recentRaces.slice(-4).reverse().map((r, i) => {
                                                                                             const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                                                             return (
                                                                                                 <div class="recent-race-row">
