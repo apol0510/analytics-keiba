@@ -5,6 +5,19 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { enrichHorse, formatRecentVenue } from '../../lib/horseEnrichment.js';
 import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
+import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
+
+// 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
+// 既存 horse.recentRaces は温存するため、計算系 (AI総合指数 / 印 / 買い目 / darkHorses /
+// 特徴量重要度) に副作用なし。
+function _displayRecentOf(horse) {
+  if (Array.isArray(horse?.recentRacesFromHistories) && horse.recentRacesFromHistories.length > 0) {
+    return horse.recentRacesFromHistories;
+  }
+  return Array.isArray(horse?.recentRaces) ? horse.recentRaces : [];
+}
+
+const RECENT_LABELS = ['前走', '2走前', '3走前', '4走前', '5走前'];
 
 // AI総合指数の取得は 4 領域共通の getHorseAiIndex に集約 (2026-05-24)。
 // pt / totalScore / displayScore / rawScore はスケールが違うため使わない。
@@ -89,6 +102,18 @@ try {
   }
 } catch (err) {
   error = err.message;
+}
+
+// horseHistories 由来の表示専用注入 (失敗時は既存 recentRaces にフォールバック)
+if (!error && Array.isArray(venues) && venues.length > 0) {
+  try {
+    const targetDate = predictionData?.date || null;
+    if (targetDate) {
+      injectHorseHistoriesIntoVenues(venues, targetDate, process.cwd());
+    }
+  } catch (_e) {
+    // 表示専用フォールバック。失敗時は既存 recentRaces のまま表示。
+  }
 }
 
 // generateAdvancedMetrics imported from featureScores.js
@@ -221,7 +246,7 @@ try {
                               : null;
                             const displayIndex = getDisplayIndex(horse, e);
                             const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
-                            const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                            const recentRaces = _displayRecentOf(horse);
                             return (
                               <div class={cardClass}>
                                 {role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -303,12 +328,13 @@ try {
 
                                 {recentRaces.length > 0 && (
                                   <details class="recent-races recent-races-compact">
-                                    <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                    <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                     <div class="recent-races-list">
-                                      {recentRaces.slice(0, 4).map((r) => {
+                                      {recentRaces.slice(0, 5).map((r, i) => {
                                         const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                         return (
                                           <div class="recent-race-row">
+                                            <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                             <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                             <span class="recent-race-distance">{r?.distance || ''}</span>
                                             <span class="recent-race-rank">{rank}</span>
@@ -343,7 +369,7 @@ try {
                                       const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
                                       const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
                                       const importance = Array.isArray(eMinor.importance) && eMinor.importance.length >= 3 ? eMinor.importance : null;
-                                      const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                      const recentRaces = _displayRecentOf(horse);
                                       const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                       const idx = getDisplayIndex(horse, eMinor);
                                       return (
@@ -372,12 +398,13 @@ try {
                                           )}
                                           {recentRaces.length > 0 && (
                                             <details class="recent-races recent-races-compact">
-                                              <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                              <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                               <div class="recent-races-list">
-                                                {recentRaces.slice(0, 4).map((r) => {
+                                                {recentRaces.slice(0, 5).map((r, i) => {
                                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                   return (
                                                     <div class="recent-race-row">
+                                                      <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                       <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                                       <span class="recent-race-distance">{r?.distance || ''}</span>
                                                       <span class="recent-race-rank">{rank}</span>
@@ -412,7 +439,7 @@ try {
                                     .map((horse) => {
                                       const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
                                       const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
-                                      const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                      const recentRaces = _displayRecentOf(horse);
                                       const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                       const idx = getDisplayIndex(horse, eMinor);
                                       return (
@@ -436,12 +463,13 @@ try {
                                           )}
                                           {recentRaces.length > 0 && (
                                             <details class="recent-races recent-races-compact">
-                                              <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                              <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                               <div class="recent-races-list">
-                                                {recentRaces.slice(0, 4).map((r) => {
+                                                {recentRaces.slice(0, 5).map((r, i) => {
                                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                   return (
                                                     <div class="recent-race-row">
+                                                      <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                       <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                                       <span class="recent-race-distance">{r?.distance || ''}</span>
                                                       <span class="recent-race-rank">{rank}</span>
@@ -476,7 +504,7 @@ try {
                                     .map((horse) => {
                                       const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
                                       const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
-                                      const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                      const recentRaces = _displayRecentOf(horse);
                                       const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                       const idx = getDisplayIndex(horse, eMinor);
                                       const ptNum = Number(eMinor.pt);
@@ -501,12 +529,13 @@ try {
                                           )}
                                           {recentRaces.length > 0 && (
                                             <details class="recent-races recent-races-compact">
-                                              <summary>過去{Math.min(4, recentRaces.length)}走</summary>
+                                              <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                               <div class="recent-races-list">
-                                                {recentRaces.slice(0, 4).map((r) => {
+                                                {recentRaces.slice(0, 5).map((r, i) => {
                                                   const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
                                                   return (
                                                     <div class="recent-race-row">
+                                                      <span class="recent-race-label">{RECENT_LABELS[i]}</span>
                                                       <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
                                                       <span class="recent-race-distance">{r?.distance || ''}</span>
                                                       <span class="recent-race-rank">{rank}</span>
@@ -2098,6 +2127,7 @@ try {
       background: rgba(30, 41, 59, 0.4);
       border-radius: 4px;
     }
+    .recent-race-label { color: #94a3b8; font-size: 0.7rem; min-width: 3em; }
     .recent-race-venue { color: #e2e8f0; font-weight: 600; }
     .recent-race-distance { color: #cbd5e1; }
     .recent-race-rank { color: #10b981; font-weight: 700; }
