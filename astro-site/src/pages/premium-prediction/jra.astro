@@ -6,7 +6,7 @@ import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
-import { enrichHorse, generateMinorHorseComment, formatRecentVenue } from '../../lib/horseEnrichment.js';
+import { enrichHorse, generateMinorHorseComment, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
 
@@ -18,6 +18,120 @@ function _displayRecentOf(horse) {
     return horse.recentRacesFromHistories;
   }
   return Array.isArray(horse?.recentRaces) ? horse.recentRaces : [];
+}
+
+// 過去走データアコーディオン用: 条件別成績の文字列を組み立てる。
+// JSX 内のテンプレートリテラル + 三項演算子だと Astro 5.13 パーサーが
+// 比較演算子を JSX タグと誤認識することがあるため、フロントマッター側に外出ししている。
+function fmtHistoryCondStat(s) {
+  let out = s.n + '戦 ' + s.w + '-' + s.p2 + '-' + s.p3;
+  if (s.n > 0) {
+    const ratio = Math.round(((s.w + s.p2 + s.p3) / s.n) * 100);
+    out += ' (3着内' + ratio + '%)';
+  }
+  return out;
+}
+
+// 過去走データアコーディオンの集計を1関数に集約。
+// 各馬カードの JSX 内に書いていた IIFE が Astro 5.13 のパーサーで
+// 比較演算子をJSXタグ開始と誤認識してビルドが落ちるため、
+// 集計をすべてフロントマッター側で実行し、JSX 内は値の参照のみに留める。
+// AI 指数・印・買い目・特徴量重要度・予想ロジックには一切関与しない（表示専用）。
+function buildHistoryAccordionContext(horse, race) {
+  if (!horse || !Array.isArray(horse.historyForDetails) || horse.historyForDetails.length === 0) return null;
+  const hist = horse.historyForDetails;
+  const ranked = hist.filter((r) => r && Number.isFinite(Number(r.rank)));
+  const totalRanked = ranked.length;
+  const cnt = (pred) => ranked.filter(pred).length;
+  const w = cnt((r) => Number(r.rank) === 1);
+  const p2 = cnt((r) => Number(r.rank) === 2);
+  const p3 = cnt((r) => Number(r.rank) === 3);
+  const others = totalRanked - w - p2 - p3;
+  const hasRanked = totalRanked > 0;
+  const pct = (n) => hasRanked ? Math.round((n / totalRanked) * 100) : 0;
+  const winPct = pct(w);
+  const placePct = pct(w + p2);
+  const showPct = pct(w + p2 + p3);
+  const condCount = (arr) => ({
+    n: arr.length,
+    w: arr.filter((r) => Number(r.rank) === 1).length,
+    p2: arr.filter((r) => Number(r.rank) === 2).length,
+    p3: arr.filter((r) => Number(r.rank) === 3).length,
+  });
+  const turfStat = condCount(ranked.filter((r) => r.surface === '芝'));
+  const dirtStat = condCount(ranked.filter((r) => r.surface === 'ダ'));
+  const _rawRaceDist = race && race.raceInfo && race.raceInfo.distance != null ? race.raceInfo.distance : null;
+  const _parsedRaceDist = _rawRaceDist != null ? parseDistanceMeters(_rawRaceDist) : null;
+  const raceDist = Number.isFinite(_parsedRaceDist) ? _parsedRaceDist : null;
+  const raceVenue = race && race.raceInfo && race.raceInfo.venue ? race.raceInfo.venue : null;
+  const sameDist = raceDist != null
+    ? condCount(ranked.filter((r) => Number.isFinite(Number(r.distanceMeters)) && Math.abs(Number(r.distanceMeters) - raceDist) <= 200))
+    : null;
+  const sameVenue = raceVenue ? condCount(ranked.filter((r) => r.venue === raceVenue)) : null;
+  const _weight = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+    ? (horse.weight + 'kg')
+    : null;
+  const _sex = parseSexAge(horse.age);
+  const _ageGenderDisplay = (_sex.ageNum != null && _sex.gender)
+    ? (_sex.ageNum + '歳' + _sex.gender)
+    : (horse.age || null);
+  const profileItems = [
+    _ageGenderDisplay && { label: '性齢', value: _ageGenderDisplay },
+    horse.sire && { label: '父', value: horse.sire },
+    horse.jockey && { label: '騎手', value: horse.jockey },
+    _weight && { label: '斤量', value: _weight },
+    horse.trainer && { label: '調教師', value: horse.trainer },
+  ].filter(Boolean);
+  const condRows = [
+    turfStat.n > 0 && { label: '芝', stat: turfStat },
+    dirtStat.n > 0 && { label: 'ダート', stat: dirtStat },
+    sameDist && sameDist.n > 0 && { label: '同距離±200m(' + raceDist + 'm基準)', stat: sameDist },
+    sameVenue && sameVenue.n > 0 && { label: '同会場(' + raceVenue + ')', stat: sameVenue },
+  ].filter(Boolean);
+  const display = hist.slice(0, 10);
+  const overflow = hist.length - display.length;
+  const hasOverflow = overflow > 0;
+  const sectionLabel = hist.length > 10 ? '競走成績（直近10走）' : '競走成績';
+  const summaryCount = '（' + hist.length + '走）';
+  const recordValue = w + '-' + p2 + '-' + p3 + '-' + others;
+  const winPctStr = winPct + '%';
+  const placePctStr = placePct + '%';
+  const showPctStr = showPct + '%';
+  const rows = display.map((r) => {
+    const rankNum = Number(r.rank);
+    const isWin = rankNum === 1;
+    const isGood = Number.isFinite(rankNum) && rankNum < 4;
+    const rankClass = isWin ? 'hh-rank win' : (isGood ? 'hh-rank good' : 'hh-rank');
+    const hasFinishStatus = !!r.finishStatus;
+    const hasRank = r.rank != null && !hasFinishStatus;
+    const hasPopularity = r.popularity !== '' && r.popularity != null;
+    return {
+      r,
+      rankClass,
+      hasFinishStatus,
+      hasRank,
+      hasPopularity,
+    };
+  });
+  return {
+    hist,
+    totalRanked,
+    hasRanked,
+    hasProfile: profileItems.length > 0,
+    hasCondRows: condRows.length > 0,
+    w, p2, p3, others,
+    profileItems,
+    condRows,
+    rows,
+    overflow,
+    hasOverflow,
+    sectionLabel,
+    summaryCount,
+    recordValue,
+    winPctStr,
+    placePctStr,
+    showPctStr,
+  };
 }
 
 // 過去走の距離表記: 数値/数値文字列なら末尾に m を付ける。
@@ -807,6 +921,102 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             </details>
                             );
                           })()}
+
+                          {/* 過去走データ（horseHistories.history 由来・表示専用アコーディオン）
+                              プロフィール → 通算成績 → 条件別成績 → 競走成績の4セクション。
+                              集計は buildHistoryAccordionContext（フロントマッター）で実行。
+                              計算系・印・買い目・特徴量重要度には一切関与しない。 */}
+                          {(() => {
+                            const ctx = buildHistoryAccordionContext(horse, race);
+                            if (!ctx) return null;
+                            return (
+                              <details class="history-details">
+                                <summary class="history-summary">
+                                  <span class="history-summary-text">過去走データ</span>
+                                  <span class="history-summary-count">{ctx.summaryCount}</span>
+                                  <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                </summary>
+                                <div class="history-content">
+                                  {ctx.hasProfile && (
+                                    <div class="history-section">
+                                      <div class="history-section-label">プロフィール</div>
+                                      <div class="history-profile-grid">
+                                        {ctx.profileItems.map((p) => (
+                                          <div class="history-profile-item">
+                                            <span class="history-profile-label">{p.label}</span>
+                                            <span class="history-profile-value">{p.value}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {ctx.hasRanked && (
+                                    <div class="history-section">
+                                      <div class="history-section-label">通算成績</div>
+                                      <div class="history-record-grid">
+                                        <div class="history-rec-card">
+                                          <div class="history-rec-label">通算</div>
+                                          <div class="history-rec-value">{ctx.recordValue}</div>
+                                        </div>
+                                        <div class="history-rec-card">
+                                          <div class="history-rec-label">勝率</div>
+                                          <div class="history-rec-value">{ctx.winPctStr}</div>
+                                        </div>
+                                        <div class="history-rec-card">
+                                          <div class="history-rec-label">連対率</div>
+                                          <div class="history-rec-value">{ctx.placePctStr}</div>
+                                        </div>
+                                        <div class="history-rec-card">
+                                          <div class="history-rec-label">3着内率</div>
+                                          <div class="history-rec-value">{ctx.showPctStr}</div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {ctx.hasCondRows && (
+                                    <div class="history-section">
+                                      <div class="history-section-label">条件別成績</div>
+                                      <div class="history-cond-list">
+                                        {ctx.condRows.map((row) => (
+                                          <div class="history-cond-row">
+                                            <span class="history-cond-label">{row.label}</span>
+                                            <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div class="history-section">
+                                    <div class="history-section-label">{ctx.sectionLabel}</div>
+                                    <div class="history-list">
+                                      {ctx.rows.map((row) => (
+                                        <div class="history-row">
+                                          <div class="hh-line hh-line-primary">
+                                            {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                            {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                            {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                            {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                            {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                            {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                          </div>
+                                          <div class="hh-line hh-line-secondary">
+                                            {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                            {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                            {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                            {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                            {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                          </div>
+                                        </div>
+                                      ))}
+                                      {ctx.hasOverflow && (
+                                        <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </details>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -876,6 +1086,98 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                     </div>
                                   </details>
                                 )}
+                                {/* 過去走データ（連下マイナーカード用・表示専用） */}
+                                {(() => {
+                                  const ctx = buildHistoryAccordionContext(horse, race);
+                                  if (!ctx) return null;
+                                  return (
+                                    <details class="history-details">
+                                      <summary class="history-summary">
+                                        <span class="history-summary-text">過去走データ</span>
+                                        <span class="history-summary-count">{ctx.summaryCount}</span>
+                                        <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                      </summary>
+                                      <div class="history-content">
+                                        {ctx.hasProfile && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">プロフィール</div>
+                                            <div class="history-profile-grid">
+                                              {ctx.profileItems.map((p) => (
+                                                <div class="history-profile-item">
+                                                  <span class="history-profile-label">{p.label}</span>
+                                                  <span class="history-profile-value">{p.value}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasRanked && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">通算成績</div>
+                                            <div class="history-record-grid">
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">通算</div>
+                                                <div class="history-rec-value">{ctx.recordValue}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">勝率</div>
+                                                <div class="history-rec-value">{ctx.winPctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">連対率</div>
+                                                <div class="history-rec-value">{ctx.placePctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">3着内率</div>
+                                                <div class="history-rec-value">{ctx.showPctStr}</div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasCondRows && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">条件別成績</div>
+                                            <div class="history-cond-list">
+                                              {ctx.condRows.map((row) => (
+                                                <div class="history-cond-row">
+                                                  <span class="history-cond-label">{row.label}</span>
+                                                  <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div class="history-section">
+                                          <div class="history-section-label">{ctx.sectionLabel}</div>
+                                          <div class="history-list">
+                                            {ctx.rows.map((row) => (
+                                              <div class="history-row">
+                                                <div class="hh-line hh-line-primary">
+                                                  {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                  {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                  {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                  {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                  {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                  {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                                </div>
+                                                <div class="hh-line hh-line-secondary">
+                                                  {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                  {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                  {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                  {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                  {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                                </div>
+                                              </div>
+                                            ))}
+                                            {ctx.hasOverflow && (
+                                              <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </details>
+                                  );
+                                })()}
                               </div>
                             );
                           })}
@@ -941,6 +1243,98 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                     </div>
                                   </details>
                                 )}
+                                {/* 過去走データ（抑えマイナーカード用・表示専用） */}
+                                {(() => {
+                                  const ctx = buildHistoryAccordionContext(horse, race);
+                                  if (!ctx) return null;
+                                  return (
+                                    <details class="history-details">
+                                      <summary class="history-summary">
+                                        <span class="history-summary-text">過去走データ</span>
+                                        <span class="history-summary-count">{ctx.summaryCount}</span>
+                                        <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                      </summary>
+                                      <div class="history-content">
+                                        {ctx.hasProfile && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">プロフィール</div>
+                                            <div class="history-profile-grid">
+                                              {ctx.profileItems.map((p) => (
+                                                <div class="history-profile-item">
+                                                  <span class="history-profile-label">{p.label}</span>
+                                                  <span class="history-profile-value">{p.value}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasRanked && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">通算成績</div>
+                                            <div class="history-record-grid">
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">通算</div>
+                                                <div class="history-rec-value">{ctx.recordValue}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">勝率</div>
+                                                <div class="history-rec-value">{ctx.winPctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">連対率</div>
+                                                <div class="history-rec-value">{ctx.placePctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">3着内率</div>
+                                                <div class="history-rec-value">{ctx.showPctStr}</div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasCondRows && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">条件別成績</div>
+                                            <div class="history-cond-list">
+                                              {ctx.condRows.map((row) => (
+                                                <div class="history-cond-row">
+                                                  <span class="history-cond-label">{row.label}</span>
+                                                  <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div class="history-section">
+                                          <div class="history-section-label">{ctx.sectionLabel}</div>
+                                          <div class="history-list">
+                                            {ctx.rows.map((row) => (
+                                              <div class="history-row">
+                                                <div class="hh-line hh-line-primary">
+                                                  {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                  {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                  {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                  {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                  {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                  {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                                </div>
+                                                <div class="hh-line hh-line-secondary">
+                                                  {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                  {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                  {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                  {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                  {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                                </div>
+                                              </div>
+                                            ))}
+                                            {ctx.hasOverflow && (
+                                              <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </details>
+                                  );
+                                })()}
                               </div>
                             );
                           })}
@@ -3062,6 +3456,175 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       background: rgba(100, 116, 139, 0.15);
       padding: 1px 8px;
       border-radius: 999px;
+    }
+
+    /* 過去走データアコーディオン（horseHistories.history 由来・表示専用） */
+    .history-details {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+    .history-summary {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: #e2e8f0;
+      list-style: none;
+      padding: 4px 0;
+    }
+    .history-summary::-webkit-details-marker { display: none; }
+    .history-summary-text { color: #93c5fd; }
+    .history-summary-count { color: #94a3b8; font-size: 0.82rem; }
+    .history-summary-chevron {
+      margin-left: auto;
+      color: #64748b;
+      transition: transform 0.2s ease;
+    }
+    .history-details[open] .history-summary-chevron { transform: rotate(180deg); }
+    .history-content {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .history-section {
+      background: rgba(30, 41, 59, 0.35);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .history-section-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #93c5fd;
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+    }
+    .history-profile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px 12px;
+    }
+    .history-profile-item {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+    .history-profile-label {
+      color: #64748b;
+      font-size: 0.72rem;
+      flex-shrink: 0;
+    }
+    .history-profile-value {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+    .history-record-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .history-rec-card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 5px;
+      padding: 6px 4px;
+      text-align: center;
+    }
+    .history-rec-label {
+      color: #64748b;
+      font-size: 0.7rem;
+      margin-bottom: 2px;
+    }
+    .history-rec-value {
+      color: #fbbf24;
+      font-weight: 700;
+      font-size: 0.92rem;
+    }
+    .history-cond-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .history-cond-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 0.8rem;
+      padding: 3px 0;
+    }
+    .history-cond-label {
+      color: #94a3b8;
+      min-width: 110px;
+      font-weight: 600;
+    }
+    .history-cond-stat {
+      color: #e2e8f0;
+    }
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .history-row {
+      background: rgba(15, 23, 42, 0.5);
+      border-left: 3px solid rgba(59, 130, 246, 0.35);
+      border-radius: 4px;
+      padding: 5px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .hh-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      align-items: baseline;
+      font-size: 0.78rem;
+    }
+    .hh-line-primary { font-weight: 600; }
+    .hh-line-secondary { font-size: 0.74rem; color: #94a3b8; }
+    .hh-date { color: #cbd5e1; }
+    .hh-venue { color: #e2e8f0; font-weight: 700; }
+    .hh-dist { color: #93c5fd; }
+    .hh-rank { color: #cbd5e1; }
+    .hh-rank.win { color: #fbbf24; font-weight: 800; }
+    .hh-rank.good { color: #10b981; }
+    .hh-status { color: #f87171; }
+    .hh-pop { color: #94a3b8; font-size: 0.72rem; }
+    .hh-race-name { color: #cbd5e1; font-weight: 600; }
+    .hh-jockey { color: #94a3b8; }
+    .hh-bw { color: #94a3b8; }
+    .hh-time { color: #a78bfa; }
+    .hh-winner { color: #64748b; font-size: 0.72rem; }
+    .hh-overflow {
+      text-align: center;
+      color: #64748b;
+      font-size: 0.74rem;
+      padding: 4px;
+    }
+    @media (max-width: 640px) {
+      .history-profile-grid {
+        grid-template-columns: 1fr;
+      }
+      .history-record-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .history-cond-label {
+        min-width: 84px;
+        font-size: 0.74rem;
+      }
+      .history-cond-row {
+        flex-wrap: wrap;
+      }
+      .hh-line {
+        font-size: 0.74rem;
+      }
     }
   </style>
 
