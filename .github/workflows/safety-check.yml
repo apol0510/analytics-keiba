@@ -82,3 +82,7 @@ jobs:
       - name: Verify free JRA [date] 旧 KI 風混入なし
         working-directory: astro-site
         run: npm run check:ki-relics:free-jra-date
+
+      - name: Verify free JRA index 旧 KI 風混入なし
+        working-directory: astro-site
+        run: npm run check:ki-relics:free-jra

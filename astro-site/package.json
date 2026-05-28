@@ -32,9 +32,10 @@
     "check:differentiation": "node src/utils/adjustPrediction.differentiation.test.js",
     "check:ki-relics:jra": "node scripts/check-no-ki-relics-premium-jra.mjs",
     "check:ki-relics:free-jra-date": "node scripts/check-no-ki-relics-free-jra-date.mjs",
+    "check:ki-relics:free-jra": "node scripts/check-no-ki-relics-free-jra.mjs",
     "check:jra-nankan-parity": "node scripts/check-jra-nankan-structure-parity.mjs",
     "check:prediction-integrity": "node scripts/check-prediction-data-integrity.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:jra-nankan-parity && npm run check:prediction-integrity",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-integrity",
     "verify:safety": "npm run build && npm run check:safety"
   },
   "dependencies": {
