@@ -12,6 +12,26 @@
 参照: /Users/user/Projects/keiba-intelligence (先行実装)
 ```
 
+## 🌐 本番 URL ルール（運用厳守 / 2026-05-29 集約）
+
+| 項目 | 値 |
+|---|---|
+| **本番 URL** | `https://analytics.keiba.link/` |
+| **使用禁止 URL** | `https://analytics.keiba.jp/`（誤記・存在しない）|
+| **Netlify サブドメイン** | `https://*.netlify.app/` は **Deploy Preview 専用**。本番案内に使わない |
+
+### 禁止事項
+
+- `analytics.keiba.jp` を本番 URL として使わない / 案内しない
+- Netlify サブドメイン (`analytics-keiba.netlify.app` / `deploy-preview-NN--analytics-keiba.netlify.app`) を本番案内・目視確認 URL として使わない
+- 本番確認 URL を **推測で生成しない**
+- ドメインを記憶や雰囲気で補完しない
+- 不明な場合は **ユーザー確認を取る**
+
+### 該当する操作
+
+PR description の本番リンク / ユーザーへの本番反映確認案内 / 目視確認の指示 / 外部ドキュメント生成時の URL すべて。
+
 ## 🚨 最重要：AI作業ルール 🚨
 
 ### 作業開始時に必ず明示
@@ -540,6 +560,24 @@ PR-F1 では guard 検知対象外とした。
 **PR-F2 で削除方針が確定したら、本セクションの「検知対象外」記述から該当項目を移し、
 guard の BANNED リストにも追加する。**
 
+#### CI workflow ステップマトリクス（2026-05-29 / PR-J 集約）
+
+`.github/workflows/safety-check.yml` の `jobs.safety.steps` で **3 つの ki-relics guard すべてが PR / push to main で個別 step として CI 実行される**。
+
+| step 名 | npm script | 検査対象 |
+|---|---|---|
+| Verify premium JRA 旧 KI 風混入なし | `check:ki-relics:jra` | `premium-prediction/jra.astro` |
+| Verify free JRA [date] 旧 KI 風混入なし | `check:ki-relics:free-jra-date` | `free-prediction/jra/[date].astro` |
+| Verify free JRA index 旧 KI 風混入なし | `check:ki-relics:free-jra` | `free-prediction/jra.astro` |
+
+paths フィルターにも対応する guard スクリプト 3 ファイルが追加済み (PR-J / #46)。guard スクリプト単独修正の PR でも workflow が起動し、該当 step が CI 上で実際に実行される。
+
+**新規 guard を追加する場合の手順**:
+1. `astro-site/scripts/check-no-ki-relics-XXX.mjs` を作成
+2. `astro-site/package.json` の `check:safety` に組み込み
+3. `.github/workflows/safety-check.yml` の `pull_request.paths` / `push.paths` に追加
+4. **`jobs.safety.steps` にも個別 step として追加**（paths だけでは CI 実行されない）
+
 ### 3. 構造パリティ検証（PR/作業時の差分確認の強制）
 `npm run check:jra-nankan-parity` で nankan.astro に存在する必須セクションが
 jra.astro にも存在するかを検証。
@@ -565,6 +603,23 @@ jra.astro にも存在するかを検証。
 - 別名で復活（`detailed-horse-card` → `detail-horse-card` 等）→ 禁止リストを更新して対応
 - nankan に無いセクション追加 → パリティチェックでは検知できないので、上記の grep
   ガードに該当クラス/文字列を追加すること
+
+### 🔒 旧 KI 風除去 / guard 強化 系列の保留・禁止事項（2026-05-29 集約）
+
+旧 KI 風除去・guard 強化系列は **PR #41〜#46 / #45 で一段落**。以後の関連タスクは下表の保留・除外区分に従う。
+
+#### 触ってはいけないコンポーネント
+
+- `astro-site/src/components/AIBettingSection.astro` は **削除禁止**。`src/pages/prediction/[slug].astro`（南関 SSR 動的ページ・OOI / URAWA / FUNABASHI / KAWASAKI）で現役使用中のため、削除すると build / SSR が落ちる。premium-prediction/jra.astro / 無料 JRA から再 import するのも禁止（guard で検知）。
+
+#### 保留 / 凍結 / 除外
+
+| 候補 | 状態 | 理由 |
+|---|---|---|
+| **PR-F2** | 保留（着手可能・要判断）| `free-prediction/jra.astro` の tech-background (XGBoost / LSTM / Ensemble Neural Network) 削除可否 + `free-prediction/nankan.astro` 側との同時対応の要否判断が必要 |
+| **PR-H-2** | **無期限保留** | AIBettingSection.astro 削除は南関 prediction 系の刷新方針確定まで凍結 |
+| **PR-G2** | **候補から除外** | 上部 UI / 会場切替 / 余白 / 角丸デザイン統一は本番目視で問題なし。崩れが出た場合のみ別途対応 |
+| **PR-K** | 低優先度 | `check:jra-nankan-parity` / `check:prediction-integrity` の `safety-check.yml` 組み込み。`check:prediction-integrity` は既存問題（検査対象 0 件で失敗）があるため、まず原因調査が先 |
 
 ## 📝 技術スタック
 
