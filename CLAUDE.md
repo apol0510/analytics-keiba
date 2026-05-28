@@ -484,10 +484,13 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
 
 ### 1. ドキュメント化
 詳細な禁止リスト・必須セクション・許可される維持要素・作業フローは
-`astro-site/docs/PREMIUM_JRA_RULES.md` に集約。**修正前に必ず読む**。
+ページ別に集約。**修正前に必ず読む**。
+- premium: `astro-site/docs/PREMIUM_JRA_RULES.md`
+- free `[date]`（過去日アーカイブ）: `astro-site/docs/FREE_JRA_RULES.md`
 
 ### 2. grep 検査（再混入検知）
-`npm run check:ki-relics:jra` で `premium-prediction/jra.astro` から
+`npm run check:ki-relics:jra` で `premium-prediction/jra.astro` から、
+`npm run check:ki-relics:free-jra-date` で `free-prediction/jra/[date].astro` から、
 旧 KI 風文字列・クラスを検出。
 - 禁止文字列の例: `AI Recommended Betting Strategy`, `Multi-Dimensional
   Performance Analysis`, `Ensemble Neural Network`, `XGBoost`, `LSTM`,
@@ -495,8 +498,18 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
   `Feature Importance Analysis`, `DEEP LEARNING PREDICTION`,
   `PRO MEMBER EXCLUSIVE`, `Inference Time`
 - 禁止クラスの例: `.ai-model-card`, `.detailed-horse-card`,
-  `.dhc-quick-metrics`, `.qm-label`, `.qm-value`, `formula-row`,
-  `axis-mark`, `opponents-list`, `stat-stars-block`, `star-rating`
+  `.dhc-quick-metrics`, `.qm-label`, `.qm-value`, `.feature-grid`,
+  `.feature-bar`, `.recent-races-grid`, `.recent-race-item`, `.rr-venue`,
+  `formula-row`, `axis-mark`, `opponents-list`, `stat-stars-block`, `star-rating`
+- **free JRA `[date]` 限定の追加禁止対象**（`check:ki-relics:free-jra-date` で検知）:
+  - 文字列: `Powered by Keiba Intelligence`, `Recommended Betting Strategy`,
+    `AI予想解説`, `AI買い目`, `AI振り返り`, `AIRaceComment`, `AIBettingSection`
+  - クラス: `.ai-comment-*` (header / badge / label / sub / masked-* など),
+    `.ai-betting-*` (header / badge / label / sub / toggle / masked-* など)
+  - 理由: KI 由来コンポーネント (Powered by Keiba Intelligence クレジット /
+    Recommended Betting Strategy 見出し / 有料版風 CTA) を含むため、
+    free JRA 過去日ページには載せない。
+    無料版の正規構造（`free-prediction/jra.astro` の `jra-race-accordion-list`）にはこれらは含まれない。
 
 ### 3. 構造パリティ検証（PR/作業時の差分確認の強制）
 `npm run check:jra-nankan-parity` で nankan.astro に存在する必須セクションが

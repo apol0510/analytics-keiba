@@ -1,12 +1,26 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import AIRaceComment from '../../../components/AIRaceComment.astro';
-import AIBettingSection from '../../../components/AIBettingSection.astro';
+// 旧 KI 由来コンポーネント (詳細は astro-site/docs/FREE_JRA_RULES.md) は本ファイルで import しない。
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { generateAdvancedMetrics } from '../../../utils/featureScores.js';
 import { injectHorseHistoriesIntoVenues } from '../../../lib/loadHorseHistoriesJra.js';
-import { parseSexAge, parseDistanceMeters } from '../../../lib/horseEnrichment.js';
+import { enrichHorse, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../../lib/horseEnrichment.js';
+import { getHorseAiIndex } from '../../../lib/shared-prediction-logic.js';
+
+// 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
+// 既存 horse.recentRaces は温存するため、計算系 (AI総合指数 / 印 / 買い目 /
+// 特徴量重要度) に副作用なし。
+function _displayRecentOf(horse) {
+  if (Array.isArray(horse?.recentRacesFromHistories) && horse.recentRacesFromHistories.length > 0) {
+    return horse.recentRacesFromHistories;
+  }
+  return Array.isArray(horse?.recentRaces) ? horse.recentRaces : [];
+}
+
+const RECENT_LABELS = ['前走', '2走前', '3走前', '4走前', '5走前'];
+
+// AI総合指数の取得（4 領域共通の getHorseAiIndex に集約）
+const getDisplayIndex = (horse, enriched) => getHorseAiIndex(horse) ?? getHorseAiIndex(enriched);
 
 // 過去走データアコーディオン用: 条件別成績の文字列を組み立てる。
 // JSX 内のテンプレートリテラル + 三項演算子だと Astro 5.13 パーサーが
@@ -200,7 +214,6 @@ try {
   // 注入失敗時は既存表示にフォールバック。ビルドは止めない。
 }
 
-// generateAdvancedMetrics imported from featureScores.js
 ---
 
 <BaseLayout
@@ -218,15 +231,11 @@ try {
 
       <!-- ページヘッダー -->
       <div class="page-header">
-        <div class="ai-badge">
-          <span class="badge-pulse"></span>
-          <span class="badge-text">DEEP LEARNING PREDICTION SYSTEM / 深層学習予測システム</span>
-        </div>
         <h1 class="page-title">
           {date} 中央競馬（JRA）{isMultiVenue && venues.length > 1 ? ` - ${venueNames}` : ` - ${venueNames}`}
         </h1>
         <p class="page-subtitle">
-          Ensemble Neural Network Analysis / アンサンブル型ニューラルネットワーク分析
+          analytics-keiba 中央競馬予想アーカイブ
         </p>
         <div class="scan-line"></div>
       </div>
@@ -282,16 +291,6 @@ try {
             <div class="race-display-area">
               {venuePredictions.map((race, raceIndex) => {
                 const allHorses = race.horses;
-                const horsesWithMetrics = allHorses.map(horse => ({
-                  ...horse,
-                  metrics: generateAdvancedMetrics(horse, allHorses, race.raceInfo)
-                }));
-
-                // PT値順にソートして上位5頭
-                const sortedTop5 = horsesWithMetrics
-                  .sort((a, b) => b.pt - a.pt)
-                  .slice(0, 5);
-
                 return (
                   <div class={`race-content ${raceIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex} data-race-index={raceIndex}>
                     {/* レース名ヘッダー */}
@@ -304,282 +303,236 @@ try {
                       </div>
                     </div>
 
-                    {/* AI予想解説 */}
-                    <AIRaceComment
-                      type="prediction"
-                      masked={true}
-                      raceData={JSON.stringify({
-                        venue: venueData.venue,
-                        date: jraData.date,
-                        raceNumber: race.raceInfo.raceNumber,
-                        raceName: race.raceInfo.raceName,
-                        distance: race.raceInfo.distance,
-                        horseCount: race.raceInfo.horseCount,
-                        topHorses: allHorses.sort((a, b) => b.pt - a.pt).slice(0, 5).map(h => ({
-                          horseNumber: h.horseNumber,
-                          horseName: h.horseName,
-                          pt: h.pt,
-                          role: h.role,
-                          jockey: h.jockey,
-                          trainer: h.trainer,
-                          age: h.age,
-                          weight: h.weight,
-                          recentRaces: h.recentRaces || []
-                        }))
-                      })}
-                    />
+                    {/* AIモデル選出馬（analytics 風・free-prediction/jra.astro と統一）
+                        旧 KI 風カード構造（旧詳細分析テーブル + Feature Importance 6軸バー + 旧近走grid）は
+                        astro-site/docs/FREE_JRA_RULES.md に基づき削除済み。再復活禁止。
+                        正規表示要素: 累積スコア / AI総合指数 / 基本情報 / 評価ポイント /
+                                      特徴量重要度（安定性・能力上位性・展開利） / 過去5走 / 過去走データ */}
+                    <div class="analysis-section ai-pick-section">
+                      <h2 class="section-title">
+                        <span>🤖</span>
+                        <span>AIモデル選出馬</span>
+                      </h2>
 
-                    {/* AI買い目（無料版マスク）*/}
-                    <AIBettingSection masked={true} />
-
-                    {/* 詳細分析テーブル（上位5頭）*/}
-                    <div class="analysis-section">
-                      <div class="section-header">
-                        <div class="header-icon">&#128202;</div>
-                        <h2>Multi-Dimensional Performance Analysis / 多次元パフォーマンス分析（上位5頭）</h2>
-                      </div>
-
-                      {sortedTop5.map((horse, index) => {
-                        const m = horse.metrics;
-                        const isTopTwo = index < 2;
-
-                        return (
-                          <div class={`detailed-horse-card ${isTopTwo ? 'top-horse-detailed' : 'top-horse-simple'}`}>
-                            <div class="dhc-header">
-                              <div class="rank-badge-large">{index + 1}位</div>
-                              <div class="dhc-main-info">
-                                <div class="dhc-info-card">
-                                  <div class="dhc-title-line">
-                                    <span class="dhc-number">{horse.horseNumber}</span>
-                                    <span class="dhc-name">{horse.horseName}</span>
-                                    {horse.role && <span class={`dhc-role role-${horse.role}`}>{horse.role}</span>}
-                                  </div>
-                                  {(horse.jockey || horse.trainer || horse.age || horse.weight) && (
-                                    <div class="dhc-jockey-trainer">
-                                      {horse.age && <span class="dhc-age">&#127874; {horse.age}</span>}
-                                      {horse.weight && <span class="dhc-weight">&#9878;&#65039; {horse.weight}kg</span>}
-                                      {horse.jockey && <span class="dhc-jockey">&#127943; {horse.jockey}</span>}
-                                      {horse.trainer && <span class="dhc-trainer">&#127968; {horse.trainer}</span>}
-                                    </div>
-                                  )}
-                                  <div class="dhc-quick-metrics">
-                                    <div class="qm-item">
-                                      <span class="qm-label">PT値</span>
-                                      <span class="qm-value">{Number(horse.pt).toFixed(2)}</span>
-                                    </div>
-                                    <div class="qm-item">
-                                      <span class="qm-label">Win Prob. / 勝率</span>
-                                      <span class="qm-value">{m.winProbability}%</span>
-                                    </div>
-                                    <div class="qm-item">
-                                      <span class="qm-label">Model Certainty / 確信度</span>
-                                      <span class="qm-value">{m.modelCertainty}%</span>
-                                    </div>
-                                    <div class="qm-item">
-                                      <span class="qm-label">Expected Value / 期待値</span>
-                                      <span class={`qm-value ${m.expectedValue.startsWith('+') ? 'positive' : 'negative'}`}>
-                                        {m.expectedValue}
-                                      </span>
-                                    </div>
-                                  </div>
+                      {['本命', '対抗', '単穴']
+                        .flatMap((r) => allHorses.filter((h) => h.role === r))
+                        .map((horse) => {
+                          const e = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                          const role = horse.role;
+                          const cardClass = role === '本命' ? 'horse-card horse-card-main'
+                            : role === '対抗' ? 'horse-card horse-card-sub'
+                            : 'horse-card horse-card-tana';
+                          const mark = role === '本命' ? '◎' : role === '対抗' ? '○' : '▲';
+                          const markKey = role === '本命' ? 'main' : role === '対抗' ? 'sub' : 'tana';
+                          const ageGenderStr = (e.ageNum != null && e.gender)
+                            ? `${e.ageNum}歳${e.gender}`
+                            : (horse.age || null);
+                          const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+                            ? `${horse.weight}kg`
+                            : null;
+                          const displayIndex = getDisplayIndex(horse, e);
+                          const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
+                          const recentRaces = _displayRecentOf(horse);
+                          return (
+                            <div class={cardClass}>
+                              {role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
+                              <div class="horse-header">
+                                <div class="horse-identity">
+                                  <span class={`horse-mark-${markKey}`}>{mark}</span>
+                                  <span class="horse-number">{horse.horseNumber}</span>
+                                  <span class="horse-name">{horse.horseName}</span>
                                 </div>
+                                <span class={`role-badge role-badge-${markKey}`}>{role}</span>
                               </div>
-                            </div>
 
-                            {/* Feature Importance Analysis（1位・2位のみ詳細表示）*/}
-                            {isTopTwo && (
-                              <div class="dhc-features">
-                                <div class="feature-title">Feature Importance Analysis / 特徴量重要度分析</div>
-                                <div class="feature-grid">
-                                  <div class="feature-item">
-                                    <div class="feature-label">
-                                      <span class="feature-icon">&#9889;</span>
-                                      <span>Speed Index / スピード指数</span>
-                                    </div>
-                                    <div class="feature-bar-container">
-                                      <div class="feature-bar" style={`width: ${m.speedIndex}%`}></div>
-                                    </div>
-                                    <div class="feature-value">{m.speedIndex}</div>
-                                  </div>
-
-                                  <div class="feature-item">
-                                    <div class="feature-label">
-                                      <span class="feature-icon">&#128170;</span>
-                                      <span>Stamina Rating / スタミナ評価</span>
-                                    </div>
-                                    <div class="feature-bar-container">
-                                      <div class="feature-bar" style={`width: ${m.staminaRating}%`}></div>
-                                    </div>
-                                    <div class="feature-value">{m.staminaRating}</div>
-                                  </div>
-
-                                  <div class="feature-item">
-                                    <div class="feature-label">
-                                      <span class="feature-icon">&#128200;</span>
-                                      <span>Form Trend / 調子傾向</span>
-                                    </div>
-                                    <div class="feature-bar-container trend">
-                                      <div class="feature-bar-center"></div>
-                                      <div class="feature-bar trend" style={`width: ${Math.abs(parseFloat(m.formTrend))}%; ${parseFloat(m.formTrend) >= 0 ? 'left: 50%;' : 'right: 50%;'}`}></div>
-                                    </div>
-                                    <div class="feature-value">{m.formTrend}</div>
-                                  </div>
-
-                                  <div class="feature-item">
-                                    <div class="feature-label">
-                                      <span class="feature-icon">&#127937;</span>
-                                      <span>Track Compatibility / コース適性</span>
-                                    </div>
-                                    <div class="feature-bar-container">
-                                      <div class="feature-bar" style={`width: ${m.trackCompatibility}%`}></div>
-                                    </div>
-                                    <div class="feature-value">{m.trackCompatibility}</div>
-                                  </div>
-
-                                  <div class="feature-item">
-                                    <div class="feature-label">
-                                      <span class="feature-icon">&#128207;</span>
-                                      <span>Distance Fitness / 距離適性</span>
-                                    </div>
-                                    <div class="feature-bar-container">
-                                      <div class="feature-bar" style={`width: ${m.distanceFitness}%`}></div>
-                                    </div>
-                                    <div class="feature-value">{m.distanceFitness}</div>
-                                  </div>
-
-                                  <div class="feature-item">
-                                    <div class="feature-label">
-                                      <span class="feature-icon">&#128100;</span>
-                                      <span>Jockey Factor / 騎手要因</span>
-                                    </div>
-                                    <div class="feature-bar-container">
-                                      <div class="feature-bar" style={`width: ${m.jockeyFactor}%`}></div>
-                                    </div>
-                                    <div class="feature-value">{m.jockeyFactor}</div>
-                                  </div>
+                              <div class="horse-stats-row">
+                                <div class="stat-block stat-score-block">
+                                  <div class="stat-label">累積スコア</div>
+                                  <div class="stat-value stat-score">{e.pt}<span class="stat-unit">pt</span></div>
                                 </div>
+                                {displayIndex != null && (
+                                  <div class="stat-block stat-index-block">
+                                    <div class="stat-label">AI総合指数</div>
+                                    <div class="stat-value stat-index">{displayIndex}</div>
+                                  </div>
+                                )}
                               </div>
-                            )}
 
-                            {/* 近走成績（あれば表示）*/}
-                            {horse.recentRaces && horse.recentRaces.length > 0 && (
-                              <div class="recent-races">
-                                <div class="recent-races-title">Recent Races / 近走成績</div>
-                                <div class="recent-races-grid">
-                                  {horse.recentRaces.map((recent, rIdx) => (
-                                    <div class="recent-race-item">
-                                      <div class="recent-race-label">{recent.label || `${rIdx + 1}走前`}</div>
-                                      <div class="recent-race-details">
-                                        {recent.venue && <span class="rr-venue">{recent.venue}</span>}
-                                        {recent.result && <span class={`rr-result ${parseInt(recent.result) <= 3 ? 'top3' : ''}`}>{recent.result}着</span>}
-                                        {recent.distance && <span class="rr-distance">{recent.distance}m</span>}
-                                        {recent.condition && <span class="rr-condition">{recent.condition}</span>}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* 過去走データ（horseHistories.history 由来・表示専用アコーディオン）
-                                集計は buildHistoryAccordionContext で実行。
-                                horse.historyForDetails が無い馬は何も出さない。
-                                計算系・印・買い目・特徴量重要度には一切関与しない。 */}
-                            {(() => {
-                              const ctx = buildHistoryAccordionContext(horse, race);
-                              if (!ctx) return null;
-                              return (
-                                <details class="history-details">
-                                  <summary class="history-summary">
-                                    <span class="history-summary-text">過去走データ</span>
-                                    <span class="history-summary-count">{ctx.summaryCount}</span>
-                                    <span class="history-summary-chevron" aria-hidden="true">▾</span>
-                                  </summary>
-                                  <div class="history-content">
-                                    {ctx.hasProfile && (
-                                      <div class="history-section">
-                                        <div class="history-section-label">プロフィール</div>
-                                        <div class="history-profile-grid">
-                                          {ctx.profileItems.map((p) => (
-                                            <div class="history-profile-item">
-                                              <span class="history-profile-label">{p.label}</span>
-                                              <span class="history-profile-value">{p.value}</span>
-                                            </div>
-                                          ))}
-                                        </div>
+                              {hasBasicInfo && (
+                                <div class="basic-info">
+                                  <h4>基本情報</h4>
+                                  <div class="info-grid">
+                                    {(ageGenderStr || weightStr) && (
+                                      <div class="info-line info-line-primary">
+                                        {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
+                                        {weightStr && <span class="info-chip">{weightStr}</span>}
                                       </div>
                                     )}
-                                    {ctx.hasRanked && (
-                                      <div class="history-section">
-                                        <div class="history-section-label">通算成績</div>
-                                        <div class="history-record-grid">
-                                          <div class="history-rec-card">
-                                            <div class="history-rec-label">通算</div>
-                                            <div class="history-rec-value">{ctx.recordValue}</div>
-                                          </div>
-                                          <div class="history-rec-card">
-                                            <div class="history-rec-label">勝率</div>
-                                            <div class="history-rec-value">{ctx.winPctStr}</div>
-                                          </div>
-                                          <div class="history-rec-card">
-                                            <div class="history-rec-label">連対率</div>
-                                            <div class="history-rec-value">{ctx.placePctStr}</div>
-                                          </div>
-                                          <div class="history-rec-card">
-                                            <div class="history-rec-label">3着内率</div>
-                                            <div class="history-rec-value">{ctx.showPctStr}</div>
-                                          </div>
-                                        </div>
-                                      </div>
+                                    {horse.jockey && (
+                                      <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
                                     )}
-                                    {ctx.hasCondRows && (
-                                      <div class="history-section">
-                                        <div class="history-section-label">条件別成績</div>
-                                        <div class="history-cond-list">
-                                          {ctx.condRows.map((row) => (
-                                            <div class="history-cond-row">
-                                              <span class="history-cond-label">{row.label}</span>
-                                              <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
+                                    {horse.trainer && (
+                                      <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
                                     )}
-                                    <div class="history-section">
-                                      <div class="history-section-label">{ctx.sectionLabel}</div>
-                                      <div class="history-list">
-                                        {ctx.rows.map((row) => (
-                                          <div class="history-row">
-                                            <div class="hh-line hh-line-primary">
-                                              {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
-                                              {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
-                                              {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
-                                              {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
-                                              {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
-                                              {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
-                                            </div>
-                                            <div class="hh-line hh-line-secondary">
-                                              {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
-                                              {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
-                                              {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
-                                              {row.r.time && <span class="hh-time">{row.r.time}</span>}
-                                              {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
-                                            </div>
-                                          </div>
-                                        ))}
-                                        {ctx.hasOverflow && (
-                                          <div class="hh-overflow">他{ctx.overflow}走あり</div>
-                                        )}
+                                    {horse.frame != null && (
+                                      <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                                    )}
+                                    {horse.sire && (
+                                      <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {e.evalPoints && e.evalPoints.length > 0 && (
+                                <div class="eval-points">
+                                  <h4>評価ポイント</h4>
+                                  <div class="eval-tags">
+                                    {e.evalPoints.map((p) => (
+                                      <span class="eval-tag">{p}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {e.importance && e.importance.length > 0 && (
+                                <div class="feature-importance">
+                                  <h4>特徴量重要度</h4>
+                                  <div class="importance-list">
+                                    {e.importance.map((item) => (
+                                      <div class="importance-item">
+                                        <span class="importance-label">{item.label}</span>
+                                        <div class="importance-bar">
+                                          <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
+                                        </div>
+                                        <span class="importance-percent">{Math.round(item.value * 100)}%</span>
                                       </div>
-                                    </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {recentRaces.length > 0 && (
+                                <details class="recent-races recent-races-compact">
+                                  <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                  <div class="recent-races-list">
+                                    {recentRaces.slice(0, 5).map((r, i) => {
+                                      const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                      return (
+                                        <div class="recent-race-row">
+                                          <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                          <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                          <span class="recent-race-distance">{r?.distance || ''}</span>
+                                          <span class="recent-race-rank">{rank}</span>
+                                          {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                          {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                          {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </details>
-                              );
-                            })()}
-                          </div>
-                        );
-                      })}
+                              )}
+                              {/* 過去走データ（horseHistories.history 由来・表示専用アコーディオン）
+                                  集計は buildHistoryAccordionContext で実行。
+                                  horse.historyForDetails が無い馬は何も出さない。
+                                  計算系・印・買い目・特徴量重要度には一切関与しない。 */}
+                              {(() => {
+                                const ctx = buildHistoryAccordionContext(horse, race);
+                                if (!ctx) return null;
+                                return (
+                                  <details class="history-details">
+                                    <summary class="history-summary">
+                                      <span class="history-summary-text">過去走データ</span>
+                                      <span class="history-summary-count">{ctx.summaryCount}</span>
+                                      <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                    </summary>
+                                    <div class="history-content">
+                                      {ctx.hasProfile && (
+                                        <div class="history-section">
+                                          <div class="history-section-label">プロフィール</div>
+                                          <div class="history-profile-grid">
+                                            {ctx.profileItems.map((p) => (
+                                              <div class="history-profile-item">
+                                                <span class="history-profile-label">{p.label}</span>
+                                                <span class="history-profile-value">{p.value}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {ctx.hasRanked && (
+                                        <div class="history-section">
+                                          <div class="history-section-label">通算成績</div>
+                                          <div class="history-record-grid">
+                                            <div class="history-rec-card">
+                                              <div class="history-rec-label">通算</div>
+                                              <div class="history-rec-value">{ctx.recordValue}</div>
+                                            </div>
+                                            <div class="history-rec-card">
+                                              <div class="history-rec-label">勝率</div>
+                                              <div class="history-rec-value">{ctx.winPctStr}</div>
+                                            </div>
+                                            <div class="history-rec-card">
+                                              <div class="history-rec-label">連対率</div>
+                                              <div class="history-rec-value">{ctx.placePctStr}</div>
+                                            </div>
+                                            <div class="history-rec-card">
+                                              <div class="history-rec-label">3着内率</div>
+                                              <div class="history-rec-value">{ctx.showPctStr}</div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {ctx.hasCondRows && (
+                                        <div class="history-section">
+                                          <div class="history-section-label">条件別成績</div>
+                                          <div class="history-cond-list">
+                                            {ctx.condRows.map((row) => (
+                                              <div class="history-cond-row">
+                                                <span class="history-cond-label">{row.label}</span>
+                                                <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      <div class="history-section">
+                                        <div class="history-section-label">{ctx.sectionLabel}</div>
+                                        <div class="history-list">
+                                          {ctx.rows.map((row) => (
+                                            <div class="history-row">
+                                              <div class="hh-line hh-line-primary">
+                                                {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                              </div>
+                                              <div class="hh-line hh-line-secondary">
+                                                {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                              </div>
+                                            </div>
+                                          ))}
+                                          {ctx.hasOverflow && (
+                                            <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </details>
+                                );
+                              })()}
+                            </div>
+                          );
+                        })}
                     </div>
+
 
                   </div>
                 );
@@ -651,34 +604,6 @@ try {
       border-radius: var(--radius-lg);
       border: 1px solid rgba(59, 130, 246, 0.2);
       overflow: hidden;
-    }
-
-    .ai-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--spacing-sm);
-      padding: var(--spacing-xs) var(--spacing-md);
-      background: rgba(59, 130, 246, 0.2);
-      border: 1px solid rgba(59, 130, 246, 0.5);
-      border-radius: 20px;
-      margin-bottom: var(--spacing-md);
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      color: #60a5fa;
-    }
-
-    .badge-pulse {
-      width: 8px;
-      height: 8px;
-      background: #3b82f6;
-      border-radius: 50%;
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(1.2); }
     }
 
     .page-title {
@@ -926,316 +851,508 @@ try {
       border: 1px solid rgba(139, 92, 246, 0.2);
     }
 
-    /* 分析セクション */
+    /* AIモデル選出馬カード（analytics 風・free-prediction/jra.astro の正規CSSに完全準拠）
+       旧 KI 風カード構造（旧詳細分析テーブル + 特徴量重要度6軸バー + 旧近走grid）は
+       astro-site/docs/FREE_JRA_RULES.md に基づき削除済み。再復活禁止。
+       本ファイルでは accordion 内 history-* は別実装（過去走データ専用）。 */
     .analysis-section {
-      background: var(--bg-secondary);
-      padding: var(--spacing-xl);
-      border-radius: var(--radius-lg);
+      margin-top: var(--spacing-lg);
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.3);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
       margin-bottom: var(--spacing-xl);
     }
-
-    .section-header {
+    .section-title {
       display: flex;
       align-items: center;
-      gap: var(--spacing-sm);
-      margin-bottom: var(--spacing-lg);
-    }
-
-    .header-icon {
-      font-size: 1.5rem;
-      filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.5));
-    }
-
-    .section-header h2 {
-      font-size: 1.1rem;
-      color: #60a5fa;
+      gap: 8px;
+      font-size: 1.05rem;
+      color: #e2e8f0;
       font-weight: 800;
+      margin: 0 0 18px;
+      letter-spacing: 0.02em;
     }
 
-    /* 馬カード */
-    .detailed-horse-card {
+    .horse-card {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
+      padding: 20px;
+      border-radius: 14px;
+      margin-bottom: 18px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
       position: relative;
-      margin-bottom: var(--spacing-lg);
-      padding: var(--spacing-lg);
-      background: var(--bg-tertiary);
-      border-radius: var(--radius-md);
-      border: 2px solid var(--border-color);
-      transition: all 0.3s;
+      overflow: hidden;
+    }
+    .horse-card:last-child { margin-bottom: 0; }
+    .horse-card-tana {
+      padding: 22px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(139, 92, 246, 0.06) 100%);
+      border: 1.5px solid rgba(245, 158, 11, 0.28);
+    }
+    .horse-card-main {
+      padding: 28px;
+      background: linear-gradient(135deg,
+        rgba(16, 185, 129, 0.18) 0%,
+        rgba(34, 197, 94, 0.14) 45%,
+        rgba(59, 130, 246, 0.16) 100%);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      box-shadow:
+        0 0 0 1.5px rgba(16, 185, 129, 0.55),
+        0 8px 28px rgba(16, 185, 129, 0.28),
+        0 0 60px rgba(16, 185, 129, 0.18) inset;
+      position: relative;
+    }
+    .horse-card-main::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 16px;
+      padding: 2px;
+      background: linear-gradient(135deg, #10b981 0%, #22c55e 35%, #3b82f6 70%, #8b5cf6 100%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .horse-card-main > * { position: relative; z-index: 1; }
+
+    .main-glow {
+      position: absolute;
+      top: -40%;
+      left: -10%;
+      width: 60%;
+      height: 180%;
+      background: radial-gradient(closest-side, rgba(16, 185, 129, 0.28), transparent 70%);
+      filter: blur(20px);
+      pointer-events: none;
+      z-index: 0;
+      animation: ak-jra-date-main-glow-pulse 3.6s ease-in-out infinite;
+    }
+    @keyframes ak-jra-date-main-glow-pulse {
+      0%, 100% { opacity: 0.55; transform: translateX(0); }
+      50%      { opacity: 0.95; transform: translateX(8%); }
     }
 
-    .detailed-horse-card:hover {
-      border-color: rgba(59, 130, 246, 0.3);
+    .horse-card-sub {
+      padding: 24px;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
+      border: 1.5px solid rgba(59, 130, 246, 0.45);
+      box-shadow: 0 4px 18px rgba(59, 130, 246, 0.18);
     }
 
-    .top-horse-detailed {
-      border-color: rgba(59, 130, 246, 0.3);
-    }
-
-    .dhc-header {
-      display: flex;
-      gap: var(--spacing-lg);
-      align-items: flex-start;
-    }
-
-    .rank-badge-large {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 50px;
-      height: 50px;
-      padding: 0 var(--spacing-sm);
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-      border-radius: var(--radius-md);
-      color: white;
-      font-size: 1rem;
+    .horse-mark-main {
+      display: inline-block;
+      font-size: 2.4rem;
+      color: #10b981;
       font-weight: 900;
-      white-space: nowrap;
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      margin-right: 12px;
+      text-shadow:
+        0 0 10px rgba(16, 185, 129, 0.7),
+        0 0 22px rgba(16, 185, 129, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .horse-mark-sub {
+      display: inline-block;
+      font-size: 1.7rem;
+      color: #3b82f6;
+      font-weight: 800;
+      margin-right: 10px;
+      text-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .horse-mark-tana {
+      display: inline-block;
+      font-size: 1.55rem;
+      color: #f59e0b;
+      font-weight: 800;
+      margin-right: 10px;
+      text-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+      line-height: 1;
+      vertical-align: middle;
     }
 
-    .dhc-main-info {
-      flex: 1;
-    }
-
-    .dhc-info-card {
+    .horse-header {
       display: flex;
-      flex-direction: column;
-      gap: var(--spacing-sm);
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      gap: 10px;
     }
-
-    .dhc-title-line {
+    .horse-identity {
       display: flex;
       align-items: center;
-      gap: var(--spacing-sm);
+      gap: 4px;
       flex-wrap: wrap;
     }
-
-    .dhc-number {
+    .horse-number {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 32px;
-      height: 32px;
-      background: linear-gradient(135deg, #3b82f6, #60a5fa);
-      border-radius: 50%;
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
       color: white;
+      border-radius: 50%;
+      font-weight: 800;
+      font-size: 1rem;
+      margin-right: 10px;
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+    }
+    .horse-card-main .horse-number {
+      width: 40px;
+      height: 40px;
+      font-size: 1.15rem;
+      background: linear-gradient(135deg, #10b981, #22c55e);
+      box-shadow:
+        0 0 0 2px rgba(255, 255, 255, 0.08),
+        0 4px 14px rgba(16, 185, 129, 0.55);
+    }
+    .horse-card-sub .horse-number {
+      width: 36px;
+      height: 36px;
+    }
+    .horse-name {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .horse-card-main .horse-name {
+      font-size: 1.45rem;
+      font-weight: 900;
+      color: #f0fdf4;
+      text-shadow: 0 1px 6px rgba(16, 185, 129, 0.35);
+    }
+
+    .role-badge {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .role-badge-main {
+      background: linear-gradient(135deg, #10b981 0%, #22c55e 100%);
+      color: #052e1a;
+      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.45);
+    }
+    .role-badge-sub {
+      background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+      color: white;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+    }
+    .role-badge-tana {
+      background: linear-gradient(135deg, #f59e0b 0%, #fb923c 100%);
+      color: #2a1500;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+    }
+
+    /* 累積スコア / AI総合指数 */
+    .horse-stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 18px;
+      margin-bottom: 18px;
+    }
+    .stat-block {
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .horse-card-main .stat-block {
+      background: rgba(15, 23, 42, 0.6);
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+    .horse-card-sub .stat-block {
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+    .stat-label {
+      font-size: 0.78rem;
+      color: #94a3b8;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 900;
+      line-height: 1;
+      color: #e2e8f0;
+    }
+    .stat-score {
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-index {
+      background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-unit {
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-left: 4px;
+      -webkit-text-fill-color: #f59e0b;
+    }
+
+    /* 基本情報 / 評価ポイント / 特徴量重要度 共通 */
+    .basic-info {
+      margin-top: 18px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+    .basic-info h4,
+    .eval-points h4,
+    .feature-importance h4 {
+      color: #cbd5e1;
       font-size: 0.9rem;
+      font-weight: 700;
+      margin: 0 0 10px;
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .basic-info h4::before { content: "📋"; }
+    .eval-points h4::before { content: "🎯"; }
+    .feature-importance h4::before { content: "📊"; }
+    .horse-card-main .basic-info {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
+    .info-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .info-line {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 0.92rem;
+      color: #e2e8f0;
+      line-height: 1.4;
+    }
+    .info-line-primary {
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .info-chip {
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.18);
+      color: #bfdbfe;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .horse-card-main .info-chip {
+      background: rgba(16, 185, 129, 0.2);
+      color: #d1fae5;
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+    .info-key {
+      color: #94a3b8;
+      font-size: 0.82rem;
+      font-weight: 600;
+      min-width: 48px;
+      flex-shrink: 0;
+    }
+    .info-val {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+
+    /* 評価ポイント */
+    .eval-points {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+    .horse-card-main .eval-points {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
+    .eval-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .eval-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 12px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(59, 130, 246, 0.18) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #d1fae5;
+    }
+    .eval-tag::before {
+      content: "✓";
+      color: #10b981;
       font-weight: 900;
     }
-
-    .dhc-name {
-      font-size: 1.25rem;
-      font-weight: 800;
-      color: var(--text-primary);
+    .horse-card-main .eval-tag {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(34, 197, 94, 0.2) 100%);
+      border-color: rgba(16, 185, 129, 0.55);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
     }
 
-    .dhc-role {
-      font-size: 0.75rem;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 4px;
-      color: white;
+    /* 特徴量重要度（安定性 / 能力上位性 / 展開利 の 3 項目バー）
+       旧 KI 風の 6 軸英語演出バーとは別物。再復活禁止（FREE_JRA_RULES.md 参照）。 */
+    .feature-importance {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
     }
-
-    .role-本命 { background: #ef4444; }
-    .role-対抗 { background: #f97316; }
-    .role-単穴 { background: #eab308; }
-    .role-連下 { background: #22c55e; }
-    .role-穴 { background: #8b5cf6; }
-
-    .dhc-jockey-trainer {
-      display: flex;
-      gap: var(--spacing-md);
-      flex-wrap: wrap;
-      font-size: 0.85rem;
-      color: var(--text-secondary);
+    .horse-card-main .feature-importance {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
     }
-
-    .dhc-quick-metrics {
+    .importance-list {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: var(--spacing-sm);
-      margin-top: var(--spacing-sm);
+      gap: 10px;
     }
-
-    .qm-item {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: var(--spacing-xs) var(--spacing-sm);
-      background: rgba(30, 41, 59, 0.5);
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border-color);
-    }
-
-    .qm-label {
-      font-size: 0.65rem;
-      color: var(--text-secondary);
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-
-    .qm-value {
-      font-size: 1rem;
-      font-weight: 800;
-      color: #60a5fa;
-      font-family: 'Courier New', monospace;
-    }
-
-    .qm-value.positive { color: #10b981; }
-    .qm-value.negative { color: #ef4444; }
-
-    /* Feature Importance */
-    .dhc-features {
-      margin-top: var(--spacing-lg);
-      padding-top: var(--spacing-lg);
-      border-top: 1px solid var(--border-color);
-    }
-
-    .feature-title {
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: #60a5fa;
-      margin-bottom: var(--spacing-md);
-      letter-spacing: 0.5px;
-    }
-
-    .feature-grid {
-      display: flex;
-      flex-direction: column;
-      gap: var(--spacing-sm);
-    }
-
-    .feature-item {
-      display: grid;
-      grid-template-columns: 200px 1fr 50px;
-      align-items: center;
-      gap: var(--spacing-sm);
-    }
-
-    .feature-label {
+    .importance-item {
       display: flex;
       align-items: center;
-      gap: var(--spacing-xs);
-      font-size: 0.8rem;
-      color: var(--text-secondary);
+      gap: 12px;
+    }
+    .importance-label {
+      min-width: 92px;
+      color: #94a3b8;
+      font-size: 0.85rem;
       font-weight: 600;
     }
-
-    .feature-icon {
-      font-size: 0.9rem;
-    }
-
-    .feature-bar-container {
-      position: relative;
-      height: 8px;
-      background: rgba(30, 41, 59, 0.8);
-      border-radius: 4px;
+    .importance-bar {
+      flex: 1;
+      height: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 7px;
       overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.18);
     }
-
-    .feature-bar-container.trend {
-      overflow: visible;
-    }
-
-    .feature-bar {
-      position: absolute;
-      top: 0;
-      left: 0;
+    .importance-fill {
       height: 100%;
-      background: linear-gradient(90deg, #3b82f6, #60a5fa);
-      border-radius: 4px;
-      transition: width 0.5s;
+      background: linear-gradient(90deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%);
+      border-radius: 7px;
+      transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+      position: relative;
+      box-shadow:
+        0 0 8px rgba(59, 130, 246, 0.5) inset,
+        0 0 12px rgba(139, 92, 246, 0.3);
     }
-
-    .feature-bar.trend {
-      background: linear-gradient(90deg, #10b981, #34d399);
-    }
-
-    .feature-bar-center {
+    .importance-fill::after {
+      content: "";
       position: absolute;
-      top: 0;
-      left: 50%;
-      width: 2px;
-      height: 100%;
-      background: var(--text-secondary);
-      z-index: 1;
+      top: 0; right: 0; bottom: 0;
+      width: 18px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45));
+      border-top-right-radius: 7px;
+      border-bottom-right-radius: 7px;
     }
-
-    .feature-value {
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: #60a5fa;
+    .horse-card-main .importance-fill {
+      background: linear-gradient(90deg, #22c55e 0%, #10b981 45%, #3b82f6 100%);
+      box-shadow:
+        0 0 10px rgba(16, 185, 129, 0.55) inset,
+        0 0 14px rgba(16, 185, 129, 0.35);
+    }
+    .importance-percent {
+      min-width: 42px;
       text-align: right;
-      font-family: 'Courier New', monospace;
-    }
-
-    /* 近走成績 */
-    .recent-races {
-      margin-top: var(--spacing-lg);
-      padding-top: var(--spacing-lg);
-      border-top: 1px solid var(--border-color);
-    }
-
-    .recent-races-title {
+      color: #e2e8f0;
+      font-weight: 700;
       font-size: 0.85rem;
-      font-weight: 700;
-      color: #60a5fa;
-      margin-bottom: var(--spacing-md);
-      letter-spacing: 0.5px;
     }
 
-    .recent-races-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: var(--spacing-sm);
+    /* 過去5走（compact details） */
+    .recent-races {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
     }
-
-    .recent-race-item {
-      padding: var(--spacing-sm);
-      background: rgba(30, 41, 59, 0.5);
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border-color);
-    }
-
-    .recent-race-label {
-      font-size: 0.7rem;
-      font-weight: 700;
-      color: var(--text-secondary);
-      margin-bottom: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .recent-race-details {
-      display: flex;
-      gap: var(--spacing-xs);
-      flex-wrap: wrap;
-      font-size: 0.8rem;
-    }
-
-    .rr-venue {
-      color: #a78bfa;
+    .recent-races > summary {
+      cursor: pointer;
+      color: #cbd5e1;
       font-weight: 600;
+      font-size: 0.88rem;
+      list-style: none;
     }
-
-    .rr-result {
-      color: var(--text-secondary);
-      font-weight: 700;
+    .recent-races > summary::-webkit-details-marker { display: none; }
+    .recent-races > summary::before {
+      content: '▶';
+      display: inline-block;
+      margin-right: 8px;
+      color: #64748b;
+      font-size: 0.7rem;
+      transition: transform 0.2s ease;
     }
-
-    .rr-result.top3 {
-      color: #fbbf24;
+    .recent-races[open] > summary::before { transform: rotate(90deg); }
+    .recent-races-list {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
-
-    .rr-distance {
-      color: var(--text-secondary);
+    .recent-race-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      align-items: baseline;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      padding: 4px 6px;
+      background: rgba(30, 41, 59, 0.4);
+      border-radius: 4px;
     }
+    .recent-race-label { color: #94a3b8; font-size: 0.7rem; min-width: 3em; }
+    .recent-race-venue { color: #e2e8f0; font-weight: 600; }
+    .recent-race-distance { color: #cbd5e1; }
+    .recent-race-rank { color: #10b981; font-weight: 700; }
+    .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+    .recent-races-compact .recent-race-row { font-size: 0.72rem; }
 
-    .rr-condition {
-      color: var(--text-secondary);
-      font-size: 0.75rem;
+    @media (max-width: 768px) {
+      .horse-stats-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 14px;
+        margin-bottom: 14px;
+      }
+      .stat-value { font-size: 1.4rem; }
+      .horse-mark-main { font-size: 2rem; }
+      .horse-card { padding: 16px; }
+      .horse-card-tana { padding: 18px; }
+      .horse-card-sub { padding: 20px; }
+      .horse-card-main { padding: 22px; }
+      .importance-label { min-width: 70px; font-size: 0.8rem; }
+      .importance-bar { height: 12px; }
+      .importance-percent { min-width: 36px; font-size: 0.78rem; }
     }
 
     /* ナビゲーション */
@@ -1277,40 +1394,10 @@ try {
       font-size: 1.2rem;
     }
 
-    /* レスポンシブ */
+    /* レスポンシブ（ページ全体・horse-card 系は正規 CSS の @media で別途調整） */
     @media (max-width: 768px) {
       .page-title {
         font-size: 1.25rem;
-      }
-
-      .dhc-header {
-        flex-direction: column;
-        align-items: stretch;
-      }
-
-      .rank-badge-large {
-        align-self: flex-start;
-        min-width: auto;
-        height: auto;
-        padding: 4px var(--spacing-sm);
-        font-size: 0.9rem;
-      }
-
-      .dhc-quick-metrics {
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .feature-item {
-        grid-template-columns: 1fr;
-        gap: 4px;
-      }
-
-      .feature-label {
-        justify-content: space-between;
-      }
-
-      .feature-value {
-        text-align: left;
       }
 
       .archive-nav {
@@ -1333,14 +1420,6 @@ try {
 
       .venue-label {
         font-size: 1rem;
-      }
-
-      .section-header h2 {
-        font-size: 0.9rem;
-      }
-
-      .recent-races-grid {
-        grid-template-columns: 1fr;
       }
     }
 

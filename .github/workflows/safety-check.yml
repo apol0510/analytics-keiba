@@ -78,3 +78,7 @@ jobs:
       - name: Verify 差別化（keiba-intelligence と pt/役割が同一化していない）
         working-directory: astro-site
         run: npm run check:differentiation
+
+      - name: Verify free JRA [date] 旧 KI 風混入なし
+        working-directory: astro-site
+        run: npm run check:ki-relics:free-jra-date
