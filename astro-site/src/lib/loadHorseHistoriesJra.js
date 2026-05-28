@@ -125,6 +125,65 @@ export function pickRecentRacesFromHistories(horseHistoryEntry, excludeDate) {
   return converted.length > 0 ? converted : null;
 }
 
+// 詳細表示（過去走データアコーディオン）用の race shape。
+// 既存 recentRaces 互換の shape (convertHistoryRaceToRecentShape) とは別に、
+// プロフィール／通算成績／条件別成績／競走成績の集計に必要な原値を保持する。
+function convertHistoryRaceToDetailShape(h) {
+  if (!h || typeof h !== 'object') return null;
+  const dm = String(h.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const dateStr = dm ? `${dm[1].slice(2)}/${dm[2]}/${dm[3]}` : '';
+  const finishNum = Number(h.finish);
+  const rank = Number.isFinite(finishNum) ? finishNum : null;
+  const finishStatus = (typeof h.finish === 'string' && !Number.isFinite(finishNum)) ? h.finish : '';
+  const distanceMetersNum = Number(h.distanceMeters);
+  const distanceMeters = Number.isFinite(distanceMetersNum) ? distanceMetersNum : null;
+  const time = h.time ? String(h.time).replace(/:/g, '.') : '';
+  const displayDistance = h.displayDistance
+    || (h.surface && distanceMeters != null ? `${h.surface}${distanceMeters}` : '');
+  return {
+    date: h.date || '',
+    _dateStr: dateStr,
+    venue: h.venue || '',
+    raceName: h.raceName || '',
+    surface: h.surface || '',
+    distanceMeters,
+    _displayDistance: displayDistance,
+    trackCondition: h.trackCondition || '',
+    entryCount: h.entryCount ?? '',
+    popularity: h.popularity ?? '',
+    finish: h.finish ?? '',
+    rank,
+    finishStatus,
+    jockey: h.jockey || '',
+    carryWeight: h.carryWeight ?? '',
+    bodyWeight: h.bodyWeight ?? '',
+    time,
+    winnerName: h.winnerName || '',
+    _fromHistories: true,
+  };
+}
+
+/**
+ * 1頭ぶんの horseHistories から、詳細表示（過去走データアコーディオン）用の配列を生成する。
+ * 入力は history (全レース履歴) のみを使用。excludeDate と一致する race は除外、最大 maxCount 走。
+ *
+ * 表示専用。pickRecentRacesFromHistories とは独立しており、
+ * 既存 5 走表示（recentRacesFromHistories）には一切影響しない。
+ *
+ * @param {object|undefined} horseHistoryEntry historiesJson.horses[horseId]
+ * @param {string} excludeDate YYYY-MM-DD (レース当日)
+ * @param {number} [maxCount=20] 最大件数
+ * @returns {Array|null} 1件以上あれば配列、無ければ null
+ */
+export function pickHistoryForDetails(horseHistoryEntry, excludeDate, maxCount = 20) {
+  if (!horseHistoryEntry || typeof horseHistoryEntry !== 'object') return null;
+  const source = Array.isArray(horseHistoryEntry.history) ? horseHistoryEntry.history : null;
+  if (!source) return null;
+  const filtered = source.filter((r) => r && r.date !== excludeDate);
+  const converted = filtered.slice(0, maxCount).map(convertHistoryRaceToDetailShape).filter(Boolean);
+  return converted.length > 0 ? converted : null;
+}
+
 /**
  * venues 配列内の各 horse に対し、表示用 recentRacesFromHistories を注入する。
  * 既存 horse.recentRaces は触らない。
@@ -152,6 +211,12 @@ export function injectHorseHistoriesIntoVenues(venues, date, projectRoot) {
         const built = pickRecentRacesFromHistories(histHorse, date);
         if (built && built.length > 0) {
           horse.recentRacesFromHistories = built;
+        }
+        // 詳細表示（過去走データアコーディオン）用。
+        // 既存 recentRacesFromHistories 注入とは独立しており、片方が空でも他方は機能する。
+        const builtForDetails = pickHistoryForDetails(histHorse, date);
+        if (builtForDetails && builtForDetails.length > 0) {
+          horse.historyForDetails = builtForDetails;
         }
       }
     }
