@@ -83,6 +83,20 @@ const BANNED = [
   // analytics-keiba 方針: JRA premium では星評価ブロック廃止、累積スコアのみ表示
   { pattern: /class="stat-stars-block"/i, reason: '総合評価★★★★ブロック。JRA premium では廃止（累積スコアのみ表示）' },
   { pattern: /class="star-rating"/i, reason: '星評価コンポーネント。JRA premium では非使用' },
+
+  // Intelligence 由来コンポーネント（PR-I 追加: 無料側 guard と整合）
+  // AIRaceComment / AIBettingSection が premium-prediction/jra.astro に
+  // 別経路で混入することを防ぐ。AIBettingSection は南関 prediction/[slug] で現役のため、
+  // 名前空間ベースで premium への流入だけを遮断する目的。
+  { pattern: 'Powered by Keiba Intelligence', reason: 'AIRaceComment 内の KI クレジット。premium では使用禁止' },
+  { pattern: /\bRecommended Betting Strategy\b/i, reason: 'AIBettingSection 内の旧 KI 風買い目見出し。premium では使用禁止' },
+  { pattern: 'AI予想解説', reason: 'AIRaceComment のラベルテキスト。premium では非表示・使用禁止' },
+  { pattern: 'AI買い目', reason: 'AIBettingSection のラベルテキスト。premium では非表示・使用禁止' },
+  { pattern: 'AI振り返り', reason: 'AIRaceComment type=result 時のラベルテキスト。premium では非表示・使用禁止' },
+  { pattern: 'AIRaceComment', reason: 'KI 由来コンポーネント。premium では import / 使用禁止' },
+  { pattern: 'AIBettingSection', reason: 'KI 由来コンポーネント。premium では import / 使用禁止' },
+  { pattern: /\bai-comment-(section|header|header-left|badge|pulse|badge-text|title-area|label|sub|masked-overlay|masked-lock|masked-title|masked-sub|masked-buttons|masked-cta)\b/i, reason: 'AIRaceComment 由来クラス (ai-comment-*)。premium では使用禁止' },
+  { pattern: /\bai-betting-(section|header|header-left|badge|pulse|badge-text|title-area|label|sub|toggle|body|masked|masked-blur|masked-title)\b/i, reason: 'AIBettingSection 由来クラス (ai-betting-*)。premium では使用禁止' },
 ];
 
 if (!existsSync(TARGET)) {
