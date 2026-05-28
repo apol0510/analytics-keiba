@@ -1,6 +1,6 @@
 # /free-prediction/jra/[date]/ 恒久ルール（再発防止）
 
-最終更新: 2026-05-28
+最終更新: 2026-05-29
 
 ## 背景
 
@@ -27,6 +27,11 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 - **`AIRaceComment` / `AIBettingSection` コンポーネントは `[date].astro` で使用禁止**。
   これらは `Powered by Keiba Intelligence` クレジット / `Recommended Betting Strategy`
   見出し / 有料版風 CTA を含む KI 由来コンポーネントのため、free JRA 過去日ページに載せない。
+- **`AIBettingSection.astro` コンポーネント本体は削除禁止**。`src/pages/prediction/[slug].astro`
+  （南関 SSR 動的ページ・OOI / URAWA / FUNABASHI / KAWASAKI）で現役使用中のため、削除すると
+  build / SSR が落ちる。free JRA / premium JRA から import するのも禁止（guard で検知）。
+  コンポーネント本体の削除は南関 prediction 系の刷新方針が確定してから（PR-H-2、無期限保留）。
+  なお `AIRaceComment.astro` 本体は被参照ゼロのため PR-H-1 (#44) で削除済み。
 
 ## 表示構造のページ別境界
 
@@ -150,6 +155,8 @@ PR-F2 はあくまで無料 JRA 側のスコープ判断であり、premium 側�
 - PR #39: free JRA index に過去走データ UI 追加
 - PR #40: free JRA `[date]` に loader 呼び出し + 過去走データ UI 追加
 - PR-E: free JRA `[date]` から旧 KI 風表示を完全除去 + 過去走データ UI 再配置 + guard 追加（本ドキュメント追加）
+- PR #43 (PR-F1): free JRA index `jra.astro` の dead CSS 一掃 + 専用 guard `check-no-ki-relics-free-jra.mjs` を追加
+- PR #44 (PR-H-1): 未使用化された `AIRaceComment.astro` を削除（被参照ゼロのため）
 
 ## ルール改訂時の運用
 

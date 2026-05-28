@@ -1,6 +1,6 @@
 # /premium-prediction/jra/ 恒久ルール（再発防止）
 
-最終更新: 2026-05-24
+最終更新: 2026-05-29
 
 ## 背景
 
@@ -47,6 +47,11 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
 | 旧クラス | `.dhc-header`, `.dhc-main-info`, `.dhc-info-card`, `.dhc-title-line`, `.dhc-jockey-trainer` | KI 風カード |
 | 旧買い目クラス | `formula-row`, `axis-mark`, `opponents-list`, `opponent-paren` | KI 風買い目フォーマット。nankan 統一 `bet-item` を使う |
 | 著作権配慮 | `stat-stars-block`, `star-rating` (★★★★ + (85) 表示) | JRA premium は累積スコアのみ表示。星評価は廃止 |
+| **KI 由来コンポーネント** | `AIRaceComment` / `AIBettingSection` | `Powered by Keiba Intelligence` クレジット / `Recommended Betting Strategy` / 有料版風 CTA を含む。premium での import / 使用禁止 (PR-I / #45) |
+| **KI 由来テキスト** | `Powered by Keiba Intelligence` | `AIRaceComment` 内の KI クレジット。premium では使用禁止 (PR-I) |
+| **KI 由来テキスト** | `Recommended Betting Strategy` | `AIBettingSection` 内の旧 KI 風買い目見出し。premium では使用禁止 (PR-I) |
+| **KI 由来テキスト** | `AI予想解説` / `AI買い目` / `AI振り返り` | KI 由来コンポーネントのラベル。premium では非表示・使用禁止 (PR-I) |
+| **KI 由来クラス** | `.ai-comment-*` / `.ai-betting-*` | `AIRaceComment` / `AIBettingSection` 由来クラス。premium では使用禁止 (PR-I) |
 
 ## 必須セクション（nankan と同一の構造）
 
@@ -124,6 +129,8 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
 | `42f9600` | AI推奨買い目を nankan 統一 unified-bet-card 形式に書き換え |
 | `1655f13` | 買い目非表示バグ修正 + renkaList から不要馬補欠を除外 (isOsaeCandidate 単一源) |
 | `c16bc13` | 連下/抑え/不要馬ミニカードの CSS を nankan から移植 |
+| `ad4e0fe` | premium JRA guard に Intelligence 由来コンポーネント検知 9 項目を追加 (PR-I / #45) |
+| `5526d80` | Safety Check workflow に paths + premium step を追加 (PR-J / #46)（CI で `check:ki-relics:jra` が個別 step として走るようになる）|
 
 ## ルール改訂時の運用
 
@@ -131,3 +138,6 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
 - `scripts/check-no-ki-relics-premium-jra.mjs` の BANNED リストも同時に更新
 - `scripts/check-jra-nankan-structure-parity.mjs` の REQUIRED リストも同時に更新
 - 単独で「禁止文字列だけ追加」「ドキュメントだけ更新」は不整合の元になるため避ける
+- **新規 guard スクリプトを追加した場合は、`.github/workflows/safety-check.yml` の
+  `pull_request.paths` / `push.paths` に追加するだけでなく、
+  `jobs.safety.steps` にも個別 step として追加すること**（paths だけでは CI 実行されない / PR-J / #46 集約）
