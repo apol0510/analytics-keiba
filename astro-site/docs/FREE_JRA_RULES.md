@@ -18,10 +18,26 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 
 - `/free-prediction/jra/[date]/` には旧 KI 風演出を**復活させない**。
 - 過去走データアコーディオン（PR #40 で追加、`history-details` / `hh-*` 系）は維持。
-- 計算ロジック（`featureScores.js` / `generateAdvancedMetrics` / `shared-prediction-logic.js`）
-  には触れない。本ページでは「特徴量重要度」を**表示しない**（計算結果を画面に出さない）。
+- analytics 風 AIモデル選出馬カード（累積スコア / AI総合指数 / 基本情報 /
+  評価ポイント / 特徴量重要度〈安定性・能力上位性・展開利の3項目〉/ 過去5走）は維持。
+- 計算ロジック（`featureScores.js` / `generateAdvancedMetrics` /
+  `shared-prediction-logic.js` / `loadHorseHistoriesJra.js`）には触れない。
 - **keiba-intelligence は別サービスとして独立運用**（CLAUDE.md「KI 独立運用方針」参照）。
 - 廃止する要素（旧 KI 風演出）は二度と復活させない（**別名での復活も禁止**）。
+- **`AIRaceComment` / `AIBettingSection` コンポーネントは `[date].astro` で使用禁止**。
+  これらは `Powered by Keiba Intelligence` クレジット / `Recommended Betting Strategy`
+  見出し / 有料版風 CTA を含む KI 由来コンポーネントのため、free JRA 過去日ページに載せない。
+
+## 表示構造のページ別境界
+
+| ページ | 構造 | 備考 |
+|---|---|---|
+| `/free-prediction/jra/`（無料 index） | **アコーディオン表示** (`jra-race-accordion-list`) | 無料版の正規構造 |
+| `/free-prediction/jra/[date]/`（無料 過去日）| 現状 venue-selector + race-selector の**タブ構造**（KI fork 時の経緯）| 本来は無料版アコーディオン構造に揃えるのが理想。ただし大規模再構築のため **別 PR 扱い**。PR-E ではタブ構造自体は変更しない |
+| `/premium-prediction/jra/`（有料）| **タブ表示** (venue-selector + race-selector) | 有料版の正規構造（`PREMIUM_JRA_RULES.md` 参照）|
+
+→ 「有料版タブ構造を free 側にコピーして持ち込む」「KI 由来の演出を free 側に表示する」は禁止。
+   `[date].astro` の既存タブ構造のアコーディオン化は別 PR で扱う。
 
 ## 廃止済み（再復活禁止）ブロック / 文字列 / クラス
 
@@ -40,6 +56,11 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 | 旧クラス | `.rank-badge-large` | 旧 KI 風順位バッジ。削除済み・再復活禁止 |
 | 旧クラス | `.recent-races-title` / `.recent-races-grid` / `.recent-race-item` / `.recent-race-label` / `.recent-race-details` | 旧 KI 風近走 grid 構造。analytics 風カードに置き換え済み |
 | 旧クラス | `.rr-venue` / `.rr-result` / `.rr-distance` / `.rr-condition` (`top3` 含む) | 旧 KI 風近走フィールドクラス (rr-*)。削除済み・再復活禁止 |
+| **KI 由来コンポーネント** | `AIRaceComment` / `AIBettingSection` | `Powered by Keiba Intelligence` クレジット / `Recommended Betting Strategy` / 有料版風 CTA を含む。`[date].astro` での import / 使用禁止 |
+| **KI 由来テキスト** | `Powered by Keiba Intelligence` | `AIRaceComment` 内の KI クレジット。削除済み・再復活禁止 |
+| **KI 由来テキスト** | `Recommended Betting Strategy` | `AIBettingSection` 内の旧 KI 風買い目見出し。削除済み・再復活禁止 |
+| **KI 由来テキスト** | `AI予想解説` / `AI買い目` / `AI振り返り` | KI 由来コンポーネントのラベル。free [date] では非表示・再復活禁止 |
+| **KI 由来クラス** | `ai-comment-*` / `ai-betting-*` | `AIRaceComment` / `AIBettingSection` 由来クラス。削除済み・再復活禁止 |
 
 ## 維持する要素（廃止禁止）
 
@@ -47,10 +68,10 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 |---|---|
 | archive-banner | 「過去のアーカイブです」表示 |
 | page-title / page-subtitle | 日付 + 会場名のヘッダー |
-| venue-selector | 複数会場の場合の会場タブ |
-| race-selector / race-name-header | レース選択・レース名表示 |
-| AIRaceComment masked / AIBettingSection masked | AI 解説・買い目のマスク表示（KI 風ではない構成） |
-| **analytics 風 horse-card 系** (`horse-card horse-card-{main/sub/tana}` + `horse-header` + `horse-identity` + `horse-mark-*` + `horse-number` + `horse-name` + `role-badge`) | PR-E で追加した本命/対抗/単穴の簡素カード |
+| venue-selector | 複数会場の場合の会場タブ（現状維持、別 PR でアコーディオン化検討予定） |
+| race-selector / race-name-header | レース選択・レース名表示（同上） |
+| **analytics 風 AIモデル選出馬カード** (`horse-card horse-card-{main/sub/tana}` + `horse-header` + `horse-identity` + `horse-mark-*` + `horse-number` + `horse-name` + `role-badge` + `horse-stats-row` + `stat-block` + `basic-info` + `eval-points` + `feature-importance` + `importance-*` + `recent-races recent-races-compact`) | PR-E で再構築。`free-prediction/jra.astro` の正規構造に準拠 |
+| 累積スコア / AI総合指数 / 基本情報 / 評価ポイント / 特徴量重要度（安定性・能力上位性・展開利の 3 項目バー）/ 過去5走 | analytics 正規表示要素。維持 |
 | **過去走データアコーディオン** (`history-details` / `history-summary` / `history-content` / `history-section*` / `history-profile-*` / `history-record-*` / `history-cond-*` / `history-list` / `history-row` / `hh-*`) | PR #40 で追加した表示専用 UI。集計関数は `buildHistoryAccordionContext` / `fmtHistoryCondStat` |
 | archive-nav | 「最新の中央競馬予想を見る」「過去予想一覧に戻る」リンク |
 

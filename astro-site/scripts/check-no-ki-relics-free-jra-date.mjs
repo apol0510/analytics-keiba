@@ -69,6 +69,19 @@ const BANNED = [
   { pattern: /\brecent-races-(title|grid)\b/i, reason: '旧 KI 風近走 grid 構造。analytics 風カードに置き換え済み・再復活禁止' },
   { pattern: /\brecent-race-(item|details)\b/i, reason: '旧 KI 風近走 grid 構造。削除済み・再復活禁止' },
   { pattern: /\brr-(venue|result|distance|condition)\b/i, reason: '旧 KI 風近走フィールドクラス (rr-*)。削除済み・再復活禁止' },
+
+  // Intelligence 由来コンポーネント（PR-E 追加: AIRaceComment / AIBettingSection）
+  // これらは Powered by Keiba Intelligence / Recommended Betting Strategy などの
+  // KI クレジット・有料版風 CTA を含むため、free JRA 過去日ページには載せない。
+  { pattern: 'Powered by Keiba Intelligence', reason: 'AIRaceComment 内の KI クレジット。削除済み・再復活禁止' },
+  { pattern: /\bRecommended Betting Strategy\b/i, reason: 'AIBettingSection 内の旧 KI 風買い目見出し。削除済み・再復活禁止' },
+  { pattern: 'AI予想解説', reason: 'AIRaceComment のラベルテキスト。free [date] では非表示・再復活禁止' },
+  { pattern: 'AI買い目', reason: 'AIBettingSection のラベルテキスト。free [date] では非表示・再復活禁止' },
+  { pattern: 'AI振り返り', reason: 'AIRaceComment type=result 時のラベルテキスト。free [date] では非表示・再復活禁止' },
+  { pattern: 'AIRaceComment', reason: 'KI 由来コンポーネント。free [date] では import / 使用禁止' },
+  { pattern: 'AIBettingSection', reason: 'KI 由来コンポーネント。free [date] では import / 使用禁止' },
+  { pattern: /\bai-comment-(section|header|header-left|badge|pulse|badge-text|title-area|label|sub|masked-overlay|masked-lock|masked-title|masked-sub|masked-buttons|masked-cta)\b/i, reason: 'AIRaceComment 由来クラス (ai-comment-*)。削除済み・再復活禁止' },
+  { pattern: /\bai-betting-(section|header|header-left|badge|pulse|badge-text|title-area|label|sub|toggle|body|masked|masked-blur|masked-title)\b/i, reason: 'AIBettingSection 由来クラス (ai-betting-*)。削除済み・再復活禁止' },
 ];
 
 if (!existsSync(TARGET)) {

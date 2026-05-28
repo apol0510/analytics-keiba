@@ -1,7 +1,6 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import AIRaceComment from '../../../components/AIRaceComment.astro';
-import AIBettingSection from '../../../components/AIBettingSection.astro';
+// 旧 KI 由来コンポーネント (詳細は astro-site/docs/FREE_JRA_RULES.md) は本ファイルで import しない。
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { injectHorseHistoriesIntoVenues } from '../../../lib/loadHorseHistoriesJra.js';
@@ -303,34 +302,6 @@ try {
                         {race.raceInfo.horseCount && <span class="race-detail-item">&#128014; {race.raceInfo.horseCount}頭</span>}
                       </div>
                     </div>
-
-                    {/* AI予想解説 */}
-                    <AIRaceComment
-                      type="prediction"
-                      masked={true}
-                      raceData={JSON.stringify({
-                        venue: venueData.venue,
-                        date: jraData.date,
-                        raceNumber: race.raceInfo.raceNumber,
-                        raceName: race.raceInfo.raceName,
-                        distance: race.raceInfo.distance,
-                        horseCount: race.raceInfo.horseCount,
-                        topHorses: allHorses.sort((a, b) => b.pt - a.pt).slice(0, 5).map(h => ({
-                          horseNumber: h.horseNumber,
-                          horseName: h.horseName,
-                          pt: h.pt,
-                          role: h.role,
-                          jockey: h.jockey,
-                          trainer: h.trainer,
-                          age: h.age,
-                          weight: h.weight,
-                          recentRaces: h.recentRaces || []
-                        }))
-                      })}
-                    />
-
-                    {/* AI買い目（無料版マスク）*/}
-                    <AIBettingSection masked={true} />
 
                     {/* AIモデル選出馬（analytics 風・free-prediction/jra.astro と統一）
                         旧 KI 風カード構造（旧詳細分析テーブル + Feature Importance 6軸バー + 旧近走grid）は
@@ -880,245 +851,449 @@ try {
       border: 1px solid rgba(139, 92, 246, 0.2);
     }
 
-    /* AIモデル選出馬カード（analytics 風・free-prediction/jra.astro と統一）
+    /* AIモデル選出馬カード（analytics 風・free-prediction/jra.astro の正規CSSに完全準拠）
        旧 KI 風カード構造（旧詳細分析テーブル + 特徴量重要度6軸バー + 旧近走grid）は
        astro-site/docs/FREE_JRA_RULES.md に基づき削除済み。再復活禁止。
        本ファイルでは accordion 内 history-* は別実装（過去走データ専用）。 */
     .analysis-section {
-      background: var(--bg-secondary);
-      padding: var(--spacing-lg);
-      border-radius: var(--radius-lg);
+      margin-top: var(--spacing-lg);
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.3);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
       margin-bottom: var(--spacing-xl);
-      border: 1px solid var(--border-color);
     }
     .section-title {
       display: flex;
       align-items: center;
-      gap: var(--spacing-sm);
+      gap: 8px;
       font-size: 1.05rem;
-      color: #60a5fa;
+      color: #e2e8f0;
       font-weight: 800;
-      margin-bottom: var(--spacing-lg);
+      margin: 0 0 18px;
+      letter-spacing: 0.02em;
     }
+
     .horse-card {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
+      padding: 20px;
+      border-radius: 14px;
+      margin-bottom: 18px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
       position: relative;
-      background: var(--bg-tertiary);
-      border-radius: var(--radius-md);
-      padding: var(--spacing-md);
-      border: 1px solid var(--border-color);
-      margin-bottom: var(--spacing-md);
+      overflow: hidden;
     }
-    .horse-card:last-child {
-      margin-bottom: 0;
+    .horse-card:last-child { margin-bottom: 0; }
+    .horse-card-tana {
+      padding: 22px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(139, 92, 246, 0.06) 100%);
+      border: 1.5px solid rgba(245, 158, 11, 0.28);
     }
-    .horse-card-main { border-color: rgba(251, 191, 36, 0.45); }
-    .horse-card-sub { border-color: rgba(96, 165, 250, 0.45); }
-    .horse-card-tana { border-color: rgba(167, 139, 250, 0.45); }
+    .horse-card-main {
+      padding: 28px;
+      background: linear-gradient(135deg,
+        rgba(16, 185, 129, 0.18) 0%,
+        rgba(34, 197, 94, 0.14) 45%,
+        rgba(59, 130, 246, 0.16) 100%);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      box-shadow:
+        0 0 0 1.5px rgba(16, 185, 129, 0.55),
+        0 8px 28px rgba(16, 185, 129, 0.28),
+        0 0 60px rgba(16, 185, 129, 0.18) inset;
+      position: relative;
+    }
+    .horse-card-main::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 16px;
+      padding: 2px;
+      background: linear-gradient(135deg, #10b981 0%, #22c55e 35%, #3b82f6 70%, #8b5cf6 100%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .horse-card-main > * { position: relative; z-index: 1; }
+
     .main-glow {
       position: absolute;
-      inset: 0;
+      top: -40%;
+      left: -10%;
+      width: 60%;
+      height: 180%;
+      background: radial-gradient(closest-side, rgba(16, 185, 129, 0.28), transparent 70%);
+      filter: blur(20px);
       pointer-events: none;
-      border-radius: var(--radius-md);
-      box-shadow: 0 0 24px rgba(251, 191, 36, 0.18);
+      z-index: 0;
+      animation: ak-jra-date-main-glow-pulse 3.6s ease-in-out infinite;
     }
+    @keyframes ak-jra-date-main-glow-pulse {
+      0%, 100% { opacity: 0.55; transform: translateX(0); }
+      50%      { opacity: 0.95; transform: translateX(8%); }
+    }
+
+    .horse-card-sub {
+      padding: 24px;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
+      border: 1.5px solid rgba(59, 130, 246, 0.45);
+      box-shadow: 0 4px 18px rgba(59, 130, 246, 0.18);
+    }
+
+    .horse-mark-main {
+      display: inline-block;
+      font-size: 2.4rem;
+      color: #10b981;
+      font-weight: 900;
+      margin-right: 12px;
+      text-shadow:
+        0 0 10px rgba(16, 185, 129, 0.7),
+        0 0 22px rgba(16, 185, 129, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .horse-mark-sub {
+      display: inline-block;
+      font-size: 1.7rem;
+      color: #3b82f6;
+      font-weight: 800;
+      margin-right: 10px;
+      text-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .horse-mark-tana {
+      display: inline-block;
+      font-size: 1.55rem;
+      color: #f59e0b;
+      font-weight: 800;
+      margin-right: 10px;
+      text-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+
     .horse-header {
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      gap: var(--spacing-sm);
-      flex-wrap: wrap;
-      margin-bottom: var(--spacing-sm);
+      align-items: center;
+      margin-bottom: 15px;
+      gap: 10px;
     }
     .horse-identity {
       display: flex;
       align-items: center;
-      gap: var(--spacing-sm);
+      gap: 4px;
       flex-wrap: wrap;
     }
-    .horse-mark-main { color: #fbbf24; font-size: 1.4rem; font-weight: 800; }
-    .horse-mark-sub { color: #60a5fa; font-size: 1.4rem; font-weight: 800; }
-    .horse-mark-tana { color: #a78bfa; font-size: 1.4rem; font-weight: 800; }
     .horse-number {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
-      height: 28px;
-      background: rgba(59, 130, 246, 0.2);
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      color: white;
       border-radius: 50%;
-      color: #cbd5e1;
-      font-size: 0.85rem;
-      font-weight: 700;
+      font-weight: 800;
+      font-size: 1rem;
+      margin-right: 10px;
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+    }
+    .horse-card-main .horse-number {
+      width: 40px;
+      height: 40px;
+      font-size: 1.15rem;
+      background: linear-gradient(135deg, #10b981, #22c55e);
+      box-shadow:
+        0 0 0 2px rgba(255, 255, 255, 0.08),
+        0 4px 14px rgba(16, 185, 129, 0.55);
+    }
+    .horse-card-sub .horse-number {
+      width: 36px;
+      height: 36px;
     }
     .horse-name {
-      font-size: 1.05rem;
+      font-size: 1.2rem;
       font-weight: 700;
-      color: var(--text-primary);
+      color: #e2e8f0;
     }
+    .horse-card-main .horse-name {
+      font-size: 1.45rem;
+      font-weight: 900;
+      color: #f0fdf4;
+      text-shadow: 0 1px 6px rgba(16, 185, 129, 0.35);
+    }
+
     .role-badge {
-      font-size: 0.75rem;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 4px;
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
     }
-    .role-badge-main { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
-    .role-badge-sub { background: rgba(96, 165, 250, 0.2); color: #60a5fa; }
-    .role-badge-tana { background: rgba(167, 139, 250, 0.2); color: #a78bfa; }
+    .role-badge-main {
+      background: linear-gradient(135deg, #10b981 0%, #22c55e 100%);
+      color: #052e1a;
+      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.45);
+    }
+    .role-badge-sub {
+      background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+      color: white;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+    }
+    .role-badge-tana {
+      background: linear-gradient(135deg, #f59e0b 0%, #fb923c 100%);
+      color: #2a1500;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+    }
 
     /* 累積スコア / AI総合指数 */
     .horse-stats-row {
-      display: flex;
-      gap: var(--spacing-sm);
-      margin-bottom: var(--spacing-md);
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 18px;
+      margin-bottom: 18px;
     }
     .stat-block {
-      flex: 1;
-      min-width: 130px;
-      background: rgba(15, 23, 42, 0.5);
-      border-radius: var(--radius-sm);
-      padding: var(--spacing-sm) var(--spacing-md);
-      border: 1px solid rgba(100, 116, 139, 0.2);
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .horse-card-main .stat-block {
+      background: rgba(15, 23, 42, 0.6);
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+    .horse-card-sub .stat-block {
+      border-color: rgba(59, 130, 246, 0.3);
     }
     .stat-label {
-      font-size: 0.72rem;
-      color: var(--text-secondary);
+      font-size: 0.78rem;
+      color: #94a3b8;
       font-weight: 600;
-      margin-bottom: 2px;
+      letter-spacing: 0.04em;
     }
     .stat-value {
-      font-size: 1.25rem;
-      font-weight: 800;
-      color: var(--text-primary);
+      font-size: 1.6rem;
+      font-weight: 900;
+      line-height: 1;
+      color: #e2e8f0;
     }
-    .stat-score { color: #fbbf24; }
-    .stat-index { color: #60a5fa; }
+    .stat-score {
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-index {
+      background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
     .stat-unit {
       font-size: 0.8rem;
-      color: var(--text-secondary);
-      margin-left: 2px;
+      font-weight: 700;
+      margin-left: 4px;
+      -webkit-text-fill-color: #f59e0b;
     }
 
-    /* 基本情報 / 評価ポイント / 特徴量重要度 共通 h4 */
-    .basic-info,
-    .eval-points,
-    .feature-importance {
-      margin-bottom: var(--spacing-md);
-      padding: var(--spacing-sm) var(--spacing-md);
-      background: rgba(15, 23, 42, 0.4);
-      border-radius: var(--radius-sm);
-      border-left: 3px solid rgba(59, 130, 246, 0.4);
+    /* 基本情報 / 評価ポイント / 特徴量重要度 共通 */
+    .basic-info {
+      margin-top: 18px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
     }
     .basic-info h4,
     .eval-points h4,
     .feature-importance h4 {
-      font-size: 0.85rem;
+      color: #cbd5e1;
+      font-size: 0.9rem;
       font-weight: 700;
-      color: #93c5fd;
-      margin: 0 0 var(--spacing-sm) 0;
+      margin: 0 0 10px;
       letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-
-    /* 基本情報 */
+    .basic-info h4::before { content: "📋"; }
+    .eval-points h4::before { content: "🎯"; }
+    .feature-importance h4::before { content: "📊"; }
+    .horse-card-main .basic-info {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
     .info-grid {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
     .info-line {
       display: flex;
-      gap: 8px;
       align-items: baseline;
-      font-size: 0.85rem;
+      gap: 8px;
+      font-size: 0.92rem;
+      color: #e2e8f0;
+      line-height: 1.4;
     }
     .info-line-primary {
-      gap: 6px;
+      gap: 8px;
       flex-wrap: wrap;
+      margin-bottom: 4px;
     }
     .info-chip {
-      background: rgba(59, 130, 246, 0.15);
-      border: 1px solid rgba(59, 130, 246, 0.35);
-      color: #e2e8f0;
-      padding: 1px 8px;
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.18);
+      color: #bfdbfe;
+      padding: 3px 10px;
       border-radius: 999px;
-      font-size: 0.78rem;
-      font-weight: 600;
+      font-size: 0.85rem;
+      font-weight: 700;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .horse-card-main .info-chip {
+      background: rgba(16, 185, 129, 0.2);
+      color: #d1fae5;
+      border-color: rgba(16, 185, 129, 0.4);
     }
     .info-key {
-      color: var(--text-secondary);
-      min-width: 56px;
-      font-size: 0.78rem;
+      color: #94a3b8;
+      font-size: 0.82rem;
+      font-weight: 600;
+      min-width: 48px;
+      flex-shrink: 0;
     }
     .info-val {
-      color: var(--text-primary);
+      color: #e2e8f0;
       font-weight: 600;
     }
 
     /* 評価ポイント */
+    .eval-points {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+    .horse-card-main .eval-points {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
     .eval-tags {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px 6px;
+      gap: 8px;
     }
     .eval-tag {
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: #10b981;
-      padding: 1px 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 12px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(59, 130, 246, 0.18) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.4);
       border-radius: 999px;
-      font-size: 0.74rem;
-      font-weight: 600;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #d1fae5;
+    }
+    .eval-tag::before {
+      content: "✓";
+      color: #10b981;
+      font-weight: 900;
+    }
+    .horse-card-main .eval-tag {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(34, 197, 94, 0.2) 100%);
+      border-color: rgba(16, 185, 129, 0.55);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
     }
 
     /* 特徴量重要度（安定性 / 能力上位性 / 展開利 の 3 項目バー）
        旧 KI 風の 6 軸英語演出バーとは別物。再復活禁止（FREE_JRA_RULES.md 参照）。 */
+    .feature-importance {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+    .horse-card-main .feature-importance {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
     .importance-list {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
+      display: grid;
+      gap: 10px;
     }
     .importance-item {
-      display: grid;
-      grid-template-columns: minmax(0, auto) 1fr 44px;
-      gap: 8px;
+      display: flex;
       align-items: center;
+      gap: 12px;
     }
     .importance-label {
-      color: var(--text-secondary);
-      font-size: 0.78rem;
+      min-width: 92px;
+      color: #94a3b8;
+      font-size: 0.85rem;
       font-weight: 600;
-      white-space: nowrap;
     }
     .importance-bar {
-      position: relative;
-      height: 8px;
-      background: rgba(30, 41, 59, 0.7);
-      border-radius: 4px;
+      flex: 1;
+      height: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 7px;
       overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.18);
     }
     .importance-fill {
-      position: absolute;
-      top: 0;
-      left: 0;
       height: 100%;
-      background: linear-gradient(90deg, #3b82f6, #60a5fa);
-      border-radius: 4px;
-      transition: width 0.4s ease;
+      background: linear-gradient(90deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%);
+      border-radius: 7px;
+      transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+      position: relative;
+      box-shadow:
+        0 0 8px rgba(59, 130, 246, 0.5) inset,
+        0 0 12px rgba(139, 92, 246, 0.3);
+    }
+    .importance-fill::after {
+      content: "";
+      position: absolute;
+      top: 0; right: 0; bottom: 0;
+      width: 18px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45));
+      border-top-right-radius: 7px;
+      border-bottom-right-radius: 7px;
+    }
+    .horse-card-main .importance-fill {
+      background: linear-gradient(90deg, #22c55e 0%, #10b981 45%, #3b82f6 100%);
+      box-shadow:
+        0 0 10px rgba(16, 185, 129, 0.55) inset,
+        0 0 14px rgba(16, 185, 129, 0.35);
     }
     .importance-percent {
+      min-width: 42px;
       text-align: right;
-      color: #93c5fd;
-      font-size: 0.78rem;
+      color: #e2e8f0;
       font-weight: 700;
-      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
     }
 
     /* 過去5走（compact details） */
     .recent-races {
-      margin-top: var(--spacing-md);
+      margin-top: 12px;
       background: rgba(15, 23, 42, 0.5);
-      border-radius: var(--radius-sm);
-      padding: 6px 12px;
+      border-radius: 8px;
+      padding: 8px 12px;
       border: 1px solid rgba(100, 116, 139, 0.2);
     }
     .recent-races > summary {
@@ -1139,10 +1314,10 @@ try {
     }
     .recent-races[open] > summary::before { transform: rotate(90deg); }
     .recent-races-list {
-      margin-top: 8px;
+      margin-top: 10px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
     .recent-race-row {
       display: flex;
@@ -1151,36 +1326,33 @@ try {
       align-items: baseline;
       font-size: 0.78rem;
       color: #cbd5e1;
-      padding: 3px 6px;
+      padding: 4px 6px;
       background: rgba(30, 41, 59, 0.4);
       border-radius: 4px;
     }
-    .recent-race-label {
-      color: #94a3b8;
-      font-weight: 600;
-      min-width: 48px;
-      font-size: 0.72rem;
-    }
+    .recent-race-label { color: #94a3b8; font-size: 0.7rem; min-width: 3em; }
     .recent-race-venue { color: #e2e8f0; font-weight: 600; }
-    .recent-race-distance { color: #93c5fd; }
+    .recent-race-distance { color: #cbd5e1; }
     .recent-race-rank { color: #10b981; font-weight: 700; }
-    .recent-race-meta { color: #94a3b8; font-size: 0.72rem; }
+    .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+    .recent-races-compact .recent-race-row { font-size: 0.72rem; }
 
-    @media (max-width: 640px) {
-      .horse-header {
-        flex-direction: column;
-        align-items: flex-start;
-      }
+    @media (max-width: 768px) {
       .horse-stats-row {
-        flex-direction: column;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 14px;
+        margin-bottom: 14px;
       }
-      .importance-item {
-        grid-template-columns: minmax(0, auto) 1fr 40px;
-        gap: 6px;
-      }
-      .importance-label {
-        font-size: 0.74rem;
-      }
+      .stat-value { font-size: 1.4rem; }
+      .horse-mark-main { font-size: 2rem; }
+      .horse-card { padding: 16px; }
+      .horse-card-tana { padding: 18px; }
+      .horse-card-sub { padding: 20px; }
+      .horse-card-main { padding: 22px; }
+      .importance-label { min-width: 70px; font-size: 0.8rem; }
+      .importance-bar { height: 12px; }
+      .importance-percent { min-width: 36px; font-size: 0.78rem; }
     }
 
     /* ナビゲーション */
@@ -1222,19 +1394,10 @@ try {
       font-size: 1.2rem;
     }
 
-    /* レスポンシブ */
+    /* レスポンシブ（ページ全体・horse-card 系は正規 CSS の @media で別途調整） */
     @media (max-width: 768px) {
       .page-title {
         font-size: 1.25rem;
-      }
-
-      .horse-header {
-        flex-direction: column;
-        align-items: flex-start;
-      }
-
-      .horse-name {
-        font-size: 0.95rem;
       }
 
       .archive-nav {

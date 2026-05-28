@@ -501,6 +501,15 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
   `.dhc-quick-metrics`, `.qm-label`, `.qm-value`, `.feature-grid`,
   `.feature-bar`, `.recent-races-grid`, `.recent-race-item`, `.rr-venue`,
   `formula-row`, `axis-mark`, `opponents-list`, `stat-stars-block`, `star-rating`
+- **free JRA `[date]` 限定の追加禁止対象**（`check:ki-relics:free-jra-date` で検知）:
+  - 文字列: `Powered by Keiba Intelligence`, `Recommended Betting Strategy`,
+    `AI予想解説`, `AI買い目`, `AI振り返り`, `AIRaceComment`, `AIBettingSection`
+  - クラス: `.ai-comment-*` (header / badge / label / sub / masked-* など),
+    `.ai-betting-*` (header / badge / label / sub / toggle / masked-* など)
+  - 理由: KI 由来コンポーネント (Powered by Keiba Intelligence クレジット /
+    Recommended Betting Strategy 見出し / 有料版風 CTA) を含むため、
+    free JRA 過去日ページには載せない。
+    無料版の正規構造（`free-prediction/jra.astro` の `jra-race-accordion-list`）にはこれらは含まれない。
 
 ### 3. 構造パリティ検証（PR/作業時の差分確認の強制）
 `npm run check:jra-nankan-parity` で nankan.astro に存在する必須セクションが
