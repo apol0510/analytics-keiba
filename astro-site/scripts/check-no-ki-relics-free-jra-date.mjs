@@ -64,9 +64,10 @@ const BANNED = [
   { pattern: /\bfeature-(title|grid|item|label|icon|bar-container|bar-center|bar|value)\b/i, reason: '旧 KI 風 Feature Importance バー (feature-*)。削除済み・再復活禁止' },
   { pattern: /\brank-badge-large\b/i, reason: '旧 KI 風順位バッジ。削除済み・再復活禁止' },
 
-  // 旧 KI 風 近走 grid (近走自体の表示は OK だが、旧形式の recent-races-grid / recent-race-item / rr-* は禁止)
+  // 旧 KI 風 近走 grid (旧形式の recent-races-grid / recent-race-item / recent-race-details / rr-* は禁止)
+  // NOTE: recent-race-label は analytics 風 compact details (recent-races recent-races-compact 内) で使うため除外
   { pattern: /\brecent-races-(title|grid)\b/i, reason: '旧 KI 風近走 grid 構造。analytics 風カードに置き換え済み・再復活禁止' },
-  { pattern: /\brecent-race-(item|label|details)\b/i, reason: '旧 KI 風近走 grid 構造。削除済み・再復活禁止' },
+  { pattern: /\brecent-race-(item|details)\b/i, reason: '旧 KI 風近走 grid 構造。削除済み・再復活禁止' },
   { pattern: /\brr-(venue|result|distance|condition)\b/i, reason: '旧 KI 風近走フィールドクラス (rr-*)。削除済み・再復活禁止' },
 ];
 
