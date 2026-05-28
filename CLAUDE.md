@@ -489,27 +489,56 @@ Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた
 - free `[date]`（過去日アーカイブ）: `astro-site/docs/FREE_JRA_RULES.md`
 
 ### 2. grep 検査（再混入検知）
-`npm run check:ki-relics:jra` で `premium-prediction/jra.astro` から、
-`npm run check:ki-relics:free-jra-date` で `free-prediction/jra/[date].astro` から、
-旧 KI 風文字列・クラスを検出。
-- 禁止文字列の例: `AI Recommended Betting Strategy`, `Multi-Dimensional
-  Performance Analysis`, `Ensemble Neural Network`, `XGBoost`, `LSTM`,
-  `Cross-val`, `Win Prob`, `Model Certainty`, `Expected Value`,
-  `Feature Importance Analysis`, `DEEP LEARNING PREDICTION`,
-  `PRO MEMBER EXCLUSIVE`, `Inference Time`
-- 禁止クラスの例: `.ai-model-card`, `.detailed-horse-card`,
-  `.dhc-quick-metrics`, `.qm-label`, `.qm-value`, `.feature-grid`,
-  `.feature-bar`, `.recent-races-grid`, `.recent-race-item`, `.rr-venue`,
-  `formula-row`, `axis-mark`, `opponents-list`, `stat-stars-block`, `star-rating`
-- **free JRA `[date]` 限定の追加禁止対象**（`check:ki-relics:free-jra-date` で検知）:
-  - 文字列: `Powered by Keiba Intelligence`, `Recommended Betting Strategy`,
-    `AI予想解説`, `AI買い目`, `AI振り返り`, `AIRaceComment`, `AIBettingSection`
-  - クラス: `.ai-comment-*` (header / badge / label / sub / masked-* など),
-    `.ai-betting-*` (header / badge / label / sub / toggle / masked-* など)
-  - 理由: KI 由来コンポーネント (Powered by Keiba Intelligence クレジット /
-    Recommended Betting Strategy 見出し / 有料版風 CTA) を含むため、
-    free JRA 過去日ページには載せない。
-    無料版の正規構造（`free-prediction/jra.astro` の `jra-race-accordion-list`）にはこれらは含まれない。
+
+JRA 系ページごとに **対象スコープ・検知範囲が異なる**ため、ページ別に分けて記述する。
+（共通: いずれも `check:safety` に組み込み済み・CI で強制実行）
+
+#### 2-A. `premium-prediction/jra.astro`（有料）
+
+`npm run check:ki-relics:jra` で検知。  
+詳細禁止リストは [`astro-site/docs/PREMIUM_JRA_RULES.md`](./astro-site/docs/PREMIUM_JRA_RULES.md) を参照。  
+代表的な禁止対象:
+- 文字列: `AI Recommended Betting Strategy`, `Multi-Dimensional Performance Analysis`,
+  `Ensemble Neural Network`, `XGBoost`, `LSTM`, `Cross-val`, `Win Prob`,
+  `Model Certainty`, `Expected Value`, `Feature Importance Analysis`,
+  `DEEP LEARNING PREDICTION`, `PRO MEMBER EXCLUSIVE`, `Inference Time`
+- クラス: `.ai-model-card`, `.detailed-horse-card`, `.dhc-quick-metrics`,
+  `.qm-label`, `.qm-value`, `.feature-grid`, `.feature-bar`, `.recent-races-grid`,
+  `.recent-race-item`, `.rr-venue`, `formula-row`, `axis-mark`, `opponents-list`,
+  `stat-stars-block`, `star-rating`
+
+#### 2-B. `free-prediction/jra/[date].astro`（無料 過去日）
+
+`npm run check:ki-relics:free-jra-date` で検知。  
+詳細禁止リストは [`astro-site/docs/FREE_JRA_RULES.md`](./astro-site/docs/FREE_JRA_RULES.md) を参照。  
+**A. 共通禁止対象**（PREMIUM と整合）に加えて、以下を**追加で検知**:
+- 文字列: `Powered by Keiba Intelligence`, `Recommended Betting Strategy`,
+  `AI予想解説`, `AI買い目`, `AI振り返り`, `AIRaceComment`, `AIBettingSection`
+- クラス: `.ai-comment-*` (header / badge / label / sub / masked-* など),
+  `.ai-betting-*` (header / badge / label / sub / toggle / masked-* など)
+
+理由: KI 由来コンポーネント（Powered by Keiba Intelligence クレジット /
+Recommended Betting Strategy 見出し / 有料版風 CTA）を含むため、
+free JRA 過去日ページには載せない。
+無料版の正規構造（`free-prediction/jra.astro` の `jra-race-accordion-list`）にはこれらは含まれない。
+
+#### 2-C. `free-prediction/jra.astro`（無料 index、PR-F1 で追加）
+
+`npm run check:ki-relics:free-jra` で検知。  
+**B (free [date]) と同じ禁止対象**（共通禁止 + KI 由来コンポーネント）を検知。
+
+ただし PR-F1 時点では以下を **意図的に検知対象外**としている（**恒久的な許可ではない・PR-F2 判断保留**）:
+- 文字列: `XGBoost`, `LSTM`, `Ensemble Neural Network`
+- 関連クラス: `.tech-background`, `.tech-section-title`, `.tech-block`,
+  `.tech-block-title`, `.tech-list`, `.tech-heading` 等
+
+理由: 上記は L1102-1144 の「AI予想の技術的背景」セクションで現在も画面表示されており、
+無料南関側 (`free-prediction/nankan.astro`) にも同様セクションがある可能性が高く、
+削除可否・南関側との同時対応の要否は **PR-F2 で判断**するため、
+PR-F1 では guard 検知対象外とした。
+
+**PR-F2 で削除方針が確定したら、本セクションの「検知対象外」記述から該当項目を移し、
+guard の BANNED リストにも追加する。**
 
 ### 3. 構造パリティ検証（PR/作業時の差分確認の強制）
 `npm run check:jra-nankan-parity` で nankan.astro に存在する必須セクションが

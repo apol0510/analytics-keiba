@@ -90,7 +90,34 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 | script | 目的 | 失敗条件 |
 |---|---|---|
 | `npm run check:ki-relics:free-jra-date` | `[date].astro` への旧 KI 風混入検知 | 禁止文字列・クラスが 1 件でも見つかれば fail |
+| `npm run check:ki-relics:free-jra` | `free-prediction/jra.astro`（無料 index）への旧 KI 風混入検知（PR-F1 で追加）| 同上 |
 | `npm run check:safety` | 上記を含む全 safety check | いずれか失敗で fail |
+
+### PR-F1 で対象拡張（2026-05-29）
+
+`check:ki-relics:free-jra` の検査対象: `free-prediction/jra.astro`（無料 index）。  
+PR-F1 で dead CSS 一掃 + guard 追加。
+
+#### PR-F1 時点で検知する対象
+
+- 検出する禁止クラス例: `.detailed-horse-card` / `.dhc-*` / `.qm-label` / `.qm-value` / `.feature-grid` / `.feature-bar` / `.feature-icon` / `.feature-title` / `.feature-value` / `.feature-item` / `.feature-label` / `.feature-bar-container` / `.feature-bar-center` / `.rank-badge-large` / 旧 `.recent-races-grid` / `.recent-race-item` / `.recent-race-details` / `.rr-*` / `.ai-comment-*` / `.ai-betting-*`
+- 検出する禁止文字列例: `Powered by Keiba Intelligence` / `Recommended Betting Strategy` / `AI予想解説` / `AI買い目` / `AI振り返り` / `AIRaceComment` / `AIBettingSection` / `Feature Importance Analysis` / `Multi-Dimensional Performance Analysis` / `DEEP LEARNING PREDICTION` / `Win Prob` / `Model Certainty` / `Expected Value` ほか
+
+#### PR-F1 時点で **意図的に検知対象外**（PR-F2 判断保留・恒久的な許可ではない）
+
+- 文字列: `XGBoost` / `LSTM` / `Ensemble Neural Network`
+- 関連クラス: `.tech-background` / `.tech-section-title` / `.tech-block` / `.tech-block-title` / `.tech-list` / `.tech-heading` 等
+
+理由: 上記は `free-prediction/jra.astro` L1102-1144 の「AI予想の技術的背景」セクションで
+現在も画面表示されており、無料南関側 (`free-prediction/nankan.astro`) にも同様セクションがある可能性が高い。
+削除可否・南関側との同時対応の要否は **PR-F2 で判断**するため、PR-F1 では guard 検知対象外とした。
+
+**PR-F2 で削除方針が確定したら、本セクションの「検知対象外」記述から該当項目を移し、
+`check-no-ki-relics-free-jra.mjs` の BANNED リストにも追加する。**
+
+なお `premium-prediction/jra.astro` 用の `check-no-ki-relics-premium-jra.mjs` では
+`XGBoost` / `LSTM` / `Ensemble Neural Network` は **既に禁止対象**（`PREMIUM_JRA_RULES.md` 参照）。
+PR-F2 はあくまで無料 JRA 側のスコープ判断であり、premium 側の既存禁止規定には影響しない。
 
 これらは `.github/workflows/safety-check.yml` 経由で **PR / push to main で
 自動実行**される（既存 `safety-check.yml` が `npm run check:safety` を呼ぶため）。
