@@ -5,7 +5,12 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { injectHorseHistoriesIntoVenues } from '../../../lib/loadHorseHistoriesJra.js';
 import { enrichHorse, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../../lib/horseEnrichment.js';
-import { getHorseAiIndex } from '../../../lib/shared-prediction-logic.js';
+import {
+  getHorseAiIndex,
+  isOsaeCandidate,
+  isIneligibleHorse,
+  sortOsaeCandidates,
+} from '../../../lib/shared-prediction-logic.js';
 
 // 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
 // 既存 horse.recentRaces は温存するため、計算系 (AI総合指数 / 印 / 買い目 /
@@ -537,6 +542,228 @@ try {
                             </div>
                           );
                         })}
+                    </div>
+
+                    {/* 連下・抑えの実データ（登録済みユーザーのみ表示・デフォルト非表示）
+                        free-prediction/jra.astro (無料 index) の minor-horse-card 構造を
+                        analytics-keiba 無料 JRA 正規仕様として移植。
+                        旧 KI 由来コンポーネントは使用しない (FREE_JRA_RULES.md 参照)。 */}
+                    <div class="free-member-unlock-content" style="display: none;">
+                      {allHorses.filter(h => h.role === '連下最上位' || h.role === '連下').length > 0 && (
+                        <div class="horse-card horse-card-minor minor-group-renka">
+                          <div class="horse-header">
+                            <div>
+                              <span class="horse-mark-minor">△</span>
+                              <span class="minor-group-title minor-group-title-renka">連下候補馬</span>
+                            </div>
+                          </div>
+                          <div class="minor-horse-grid">
+                            {allHorses
+                              .filter(h => h.role === '連下最上位' || h.role === '連下')
+                              .map((horse) => {
+                                const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                const importance = Array.isArray(eMinor.importance) && eMinor.importance.length >= 3 ? eMinor.importance : null;
+                                const recentRaces = _displayRecentOf(horse);
+                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                const idx = getDisplayIndex(horse, eMinor);
+                                return (
+                                  <div class="minor-horse-card minor-horse-card-renka">
+                                    <div class="minor-horse-head">
+                                      <span class="minor-horse-mark">△</span>
+                                      <span class="minor-horse-number">{horse.horseNumber}</span>
+                                      <span class="minor-horse-name">{horse.horseName}</span>
+                                      <span class="minor-horse-score">{eMinor.pt ?? 0}pt</span>
+                                    </div>
+                                    <div class="minor-horse-meta">
+                                      {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                      {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                      {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                      {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                    </div>
+                                    {evalPoints.length > 0 && (
+                                      <div class="minor-horse-evals">
+                                        {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                      </div>
+                                    )}
+                                    {importance && (
+                                      <div class="minor-horse-importance">
+                                        安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
+                                      </div>
+                                    )}
+                                    {recentRaces.length > 0 && (
+                                      <details class="recent-races recent-races-compact">
+                                        <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                        <div class="recent-races-list">
+                                          {recentRaces.slice(0, 5).map((r, i) => {
+                                            const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                            return (
+                                              <div class="recent-race-row">
+                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                                <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                <span class="recent-race-rank">{rank}</span>
+                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 抑え候補は isOsaeCandidate（押さえ/抑え/補欠 かつ pt > 70）でフィルタ。
+                          pt <= 70 の補欠は「不要馬」として除外する。 */}
+                      {allHorses.filter(isOsaeCandidate).length > 0 && (
+                        <div class="horse-card horse-card-minor minor-group-osae">
+                          <div class="horse-header">
+                            <div>
+                              <span class="horse-mark-minor">×</span>
+                              <span class="minor-group-title minor-group-title-osae">抑え候補馬</span>
+                            </div>
+                          </div>
+                          <div class="minor-horse-grid">
+                            {sortOsaeCandidates(allHorses.filter(isOsaeCandidate))
+                              .map((horse) => {
+                                const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                const recentRaces = _displayRecentOf(horse);
+                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                const idx = getDisplayIndex(horse, eMinor);
+                                return (
+                                  <div class="minor-horse-card minor-horse-card-osae">
+                                    <div class="minor-horse-head">
+                                      <span class="minor-horse-mark">×</span>
+                                      <span class="minor-horse-number">{horse.horseNumber}</span>
+                                      <span class="minor-horse-name">{horse.horseName}</span>
+                                      <span class="minor-horse-score">{eMinor.pt ?? 0}pt</span>
+                                    </div>
+                                    <div class="minor-horse-meta">
+                                      {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                      {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                      {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                      {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                    </div>
+                                    {evalPoints.length > 0 && (
+                                      <div class="minor-horse-evals">
+                                        {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                      </div>
+                                    )}
+                                    {recentRaces.length > 0 && (
+                                      <details class="recent-races recent-races-compact">
+                                        <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                        <div class="recent-races-list">
+                                          {recentRaces.slice(0, 5).map((r, i) => {
+                                            const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                            return (
+                                              <div class="recent-race-row">
+                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                                <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                <span class="recent-race-rank">{rank}</span>
+                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 不要馬セクション — 抑え候補から除外された馬を別枠で表示。
+                          判定: isIneligibleHorse */}
+                      {allHorses.filter(isIneligibleHorse).length > 0 && (
+                        <details class="minor-group-ineligible">
+                          <summary class="ineligible-summary">
+                            <span class="ineligible-summary-icon">無</span>
+                            <span class="ineligible-summary-title">不要馬 {allHorses.filter(isIneligibleHorse).length}頭</span>
+                          </summary>
+                          <div class="minor-horse-grid">
+                            {allHorses
+                              .filter(isIneligibleHorse)
+                              .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0))
+                              .map((horse) => {
+                                const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                const recentRaces = _displayRecentOf(horse);
+                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                const idx = getDisplayIndex(horse, eMinor);
+                                const ptNum = Number(eMinor.pt);
+                                return (
+                                  <div class="minor-horse-card minor-horse-card-ineligible">
+                                    <div class="minor-horse-head">
+                                      <span class="minor-horse-mark">無</span>
+                                      <span class="minor-horse-number">{horse.horseNumber}</span>
+                                      <span class="minor-horse-name">{horse.horseName}</span>
+                                      <span class="minor-horse-score">{Number.isFinite(ptNum) && ptNum > 70 ? `${ptNum}pt` : '見送り'}</span>
+                                    </div>
+                                    <div class="minor-horse-meta">
+                                      {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                      {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                      {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                      {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                    </div>
+                                    {evalPoints.length > 0 && (
+                                      <div class="minor-horse-evals">
+                                        {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                      </div>
+                                    )}
+                                    {recentRaces.length > 0 && (
+                                      <details class="recent-races recent-races-compact">
+                                        <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                        <div class="recent-races-list">
+                                          {recentRaces.slice(0, 5).map((r, i) => {
+                                            const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                            return (
+                                              <div class="recent-race-row">
+                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                                <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                <span class="recent-race-rank">{rank}</span>
+                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+
+                    {/* アクセス制御カード（free-prediction/jra.astro 無料 index と同じ 2 種ロック）
+                        無料登録で連下・押さえ解放 / 有料会員で AI 予測買い目解放 (今回は買い目実装なし) */}
+                    <div class="access-control-section">
+                      <div class="locked-content">
+                        <div class="lock-icon">🔐</div>
+                        <h3>連下・押さえ候補馬</h3>
+                        <p>より多くの候補馬情報を確認できます</p>
+                        <a href="/register" class="unlock-btn unlock-btn-free">無料登録で解放</a>
+                      </div>
+                      <div class="locked-content">
+                        <div class="lock-icon">🔐</div>
+                        <h3>AI予測買い目</h3>
+                        <p>戦略別の具体的な買い目とAI予測値を提供</p>
+                        <a href="/pricing" class="unlock-btn unlock-btn-paid">有料会員で解放</a>
+                      </div>
                     </div>
 
                       </div>
@@ -1591,6 +1818,223 @@ try {
         font-size: 0.74rem;
       }
     }
+    /* ===== 連下・抑え候補馬 / 不要馬 / アクセス制御カード =====
+       free-prediction/jra.astro (無料 index) の minor-horse-card 系を
+       analytics-keiba 無料 JRA 正規仕様として [date] にも展開。
+       旧 KI 由来コンポーネントは使用しない。
+       詳細: astro-site/docs/FREE_JRA_RULES.md */
+    .free-member-unlock-content { display: none; }
+    .horse-card-minor {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(30, 41, 59, 0.9) 100%);
+      border-radius: 14px;
+      padding: 18px 18px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      margin-top: 16px;
+    }
+    .horse-mark-minor {
+      font-size: 1.3rem;
+      color: #f59e0b;
+      font-weight: 900;
+      margin-right: 10px;
+    }
+    .minor-group-title { margin-left: 10px; font-weight: 600; }
+    .minor-group-title-renka { color: #f59e0b; }
+    .minor-group-title-osae { color: #94a3b8; }
+    .minor-group-osae .horse-mark-minor { color: #94a3b8; }
+
+    .minor-horse-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .minor-horse-card {
+      background: rgba(15, 23, 42, 0.7);
+      border-radius: 10px;
+      padding: 12px 14px;
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .minor-horse-card-renka {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), rgba(15, 23, 42, 0.7));
+    }
+    .minor-horse-card-osae { border-color: rgba(100, 116, 139, 0.3); }
+
+    details.minor-group-ineligible {
+      margin-top: 24px;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: 14px;
+      padding: 14px 18px;
+    }
+    .ineligible-summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 0.95rem;
+      padding: 4px 0;
+    }
+    .ineligible-summary::-webkit-details-marker { display: none; }
+    .ineligible-summary::before {
+      content: '▶';
+      display: inline-block;
+      color: #94a3b8;
+      font-size: 0.85rem;
+      transition: transform 0.2s ease;
+    }
+    details.minor-group-ineligible[open] > .ineligible-summary::before { transform: rotate(90deg); }
+    .ineligible-summary-icon {
+      display: inline-block;
+      width: 26px;
+      height: 26px;
+      line-height: 26px;
+      text-align: center;
+      border-radius: 50%;
+      background: rgba(100, 116, 139, 0.25);
+      color: #cbd5e1;
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+    .ineligible-summary-title { color: #e2e8f0; }
+    details.minor-group-ineligible[open] .minor-horse-grid { margin-top: 12px; }
+    .minor-horse-card-ineligible {
+      border-color: rgba(100, 116, 139, 0.3);
+      background: rgba(15, 23, 42, 0.55);
+      opacity: 0.9;
+    }
+    .minor-horse-card-ineligible .minor-horse-mark { color: #94a3b8; font-weight: 600; }
+    .minor-horse-card-ineligible .minor-horse-score {
+      color: #94a3b8;
+      background: rgba(100, 116, 139, 0.15);
+      border-color: rgba(100, 116, 139, 0.3);
+    }
+    .minor-horse-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .minor-horse-mark { color: #f59e0b; font-weight: 700; font-size: 1rem; }
+    .minor-horse-card-osae .minor-horse-mark { color: #94a3b8; }
+    .minor-horse-number {
+      background: linear-gradient(135deg, #6b7280, #4b5563);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      min-width: 26px;
+      text-align: center;
+    }
+    .minor-horse-name {
+      color: #e2e8f0;
+      font-weight: 600;
+      font-size: 0.95rem;
+      flex: 1;
+    }
+    .minor-horse-score {
+      color: #10b981;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 0.8rem;
+    }
+    .minor-horse-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      color: #cbd5e1;
+      font-size: 0.82rem;
+    }
+    .minor-horse-meta .meta-key { color: #64748b; margin-right: 4px; font-size: 0.75rem; }
+    .minor-horse-evals { display: flex; flex-wrap: wrap; gap: 5px; }
+    .eval-tag-small {
+      background: rgba(59, 130, 246, 0.12);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+    }
+    .minor-horse-importance { color: #94a3b8; font-size: 0.78rem; }
+    @media (max-width: 640px) {
+      .minor-horse-grid { grid-template-columns: 1fr; }
+    }
+
+    .access-control-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 30px;
+      padding: 20px;
+      background: rgba(30, 41, 59, 0.3);
+      border-radius: 12px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+    .locked-content {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(236, 72, 153, 0.1) 100%);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      padding: 25px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+    }
+    .lock-icon { font-size: 2rem; opacity: 0.8; }
+    .locked-content h3 {
+      color: #8b5cf6;
+      font-weight: 600;
+      font-size: 1.1rem;
+      margin: 0;
+    }
+    .locked-content p {
+      color: #cbd5e1;
+      font-size: 0.9rem;
+      margin: 0;
+      opacity: 0.8;
+    }
+    .unlock-btn {
+      padding: 10px 20px;
+      border-radius: 20px;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.3s ease;
+      display: inline-block;
+    }
+    .unlock-btn-free {
+      background: linear-gradient(135deg, #10b981, #22c55e);
+      color: white;
+    }
+    .unlock-btn-free:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+    }
+    .unlock-btn-paid {
+      background: linear-gradient(135deg, #8b5cf6, #ec4899);
+      color: white;
+    }
+    .unlock-btn-paid:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+    }
+    @media (max-width: 768px) {
+      .access-control-section {
+        grid-template-columns: 1fr;
+        gap: 15px;
+      }
+    }
   </style>
 
   <script is:inline>
@@ -1669,5 +2113,64 @@ try {
       }
     }
     window.toggleJraAccordion = toggleJraAccordion;
+
+    // 無料会員アクセス制御
+    // 登録済みユーザー（プラン期限切れ含む）には連下・押さえデータを解放する。
+    // 判定はダッシュボード isAuthenticated() と完全統一（5キー OR 判定）+ 互換キー。
+    // free-prediction/jra.astro (無料 index) の checkFreeMemberAccess と同等。
+    function checkFreeMemberAccess() {
+      function isRegisteredUser() {
+        const userPlanData = localStorage.getItem('user-plan');
+        const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+        const userPlan = localStorage.getItem('userPlan');
+        const userPlanUnderscore = localStorage.getItem('user_plan');
+        const userEmail = localStorage.getItem('user_email');
+        if (userPlanData || isLoggedIn || userPlan || userPlanUnderscore || userEmail) {
+          return true;
+        }
+        if (localStorage.getItem('userEmail')) return true;
+        if (localStorage.getItem('nankan_user')) return true;
+        if (localStorage.getItem('auth_data')) return true;
+        if (Object.keys(localStorage).some(k => k.startsWith('test_subscription_'))) return true;
+        return false;
+      }
+
+      const isRegistered = isRegisteredUser();
+
+      // 連下・抑えの実データ表示制御
+      document.querySelectorAll('.free-member-unlock-content').forEach(content => {
+        content.style.display = isRegistered ? 'block' : 'none';
+      });
+
+      // 連下・押さえ鍵の表示制御（AI予測買い目鍵は維持）
+      document.querySelectorAll('.access-control-section').forEach(section => {
+        const lockedContents = section.querySelectorAll('.locked-content');
+        const renshitaOsaeLock = Array.from(lockedContents).find(c =>
+          c.querySelector('h3')?.textContent?.includes('連下・押さえ候補馬')
+        );
+        if (renshitaOsaeLock) {
+          renshitaOsaeLock.style.display = isRegistered ? 'none' : 'flex';
+        }
+        const paidLock = Array.from(lockedContents).find(c =>
+          c.querySelector('h3')?.textContent?.includes('AI予測買い目')
+        );
+        if (paidLock) {
+          paidLock.style.display = 'flex';
+        }
+      });
+
+      // 開いているアコーディオンの maxHeight を再計算（コンテンツが伸びるため）
+      document.querySelectorAll('.jra-race-accordion-content').forEach(content => {
+        if (content.style.maxHeight && content.style.maxHeight !== '0px') {
+          content.style.maxHeight = content.scrollHeight + 'px';
+        }
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      checkFreeMemberAccess();
+      window.addEventListener('storage', () => setTimeout(checkFreeMemberAccess, 100));
+    });
+    window.addEventListener('load', () => setTimeout(checkFreeMemberAccess, 300));
   </script>
 </BaseLayout>
