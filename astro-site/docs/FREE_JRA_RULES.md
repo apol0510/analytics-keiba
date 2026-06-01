@@ -18,6 +18,7 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 
 - `/free-prediction/jra/[date]/` には旧 KI 風演出を**復活させない**。
 - 過去走データアコーディオン（PR #40 で追加、`history-details` / `hh-*` 系）は維持。
+- 連下候補馬・抑え候補馬・不要馬セクションは `free-prediction/jra.astro`（無料 index）と同等構造を **analytics-keiba 無料 JRA 正規仕様** として `[date].astro` でも維持する（KI 由来ではない）。アクセス制御は無料 index と同じ「無料登録で連下・押さえ解放／有料会員で AI 予測買い目解放（[date] では買い目実データは未実装）」。
 - analytics 風 AIモデル選出馬カード（累積スコア / AI総合指数 / 基本情報 /
   評価ポイント / 特徴量重要度〈安定性・能力上位性・展開利の3項目〉/ 過去5走）は維持。
 - 計算ロジック（`featureScores.js` / `generateAdvancedMetrics` /
@@ -79,6 +80,11 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 | 累積スコア / AI総合指数 / 基本情報 / 評価ポイント / 特徴量重要度（安定性・能力上位性・展開利の 3 項目バー）/ 過去5走 | analytics 正規表示要素。維持 |
 | **過去走データアコーディオン** (`history-details` / `history-summary` / `history-content` / `history-section*` / `history-profile-*` / `history-record-*` / `history-cond-*` / `history-list` / `history-row` / `hh-*`) | PR #40 で追加した表示専用 UI。集計関数は `buildHistoryAccordionContext` / `fmtHistoryCondStat` |
 | archive-nav | 「最新の中央競馬予想を見る」「過去予想一覧に戻る」リンク |
+| **連下候補馬セクション** (`.horse-card-minor` / `.minor-group-renka` / `.minor-horse-card-renka` / `.minor-horse-grid` / `.minor-horse-card` / `.minor-horse-head` / `.minor-horse-mark` / `.minor-horse-number` / `.minor-horse-name` / `.minor-horse-score` / `.minor-horse-meta` / `.minor-horse-evals` / `.minor-horse-importance` / `.meta-key` / `.eval-tag-small`) | `free-prediction/jra.astro`（無料 index）と同等。`role === '連下最上位' \|\| '連下'` でフィルタ。無料登録済みユーザー限定で表示 |
+| **抑え候補馬セクション** (`.minor-group-osae` / `.minor-group-title-osae` / `.minor-horse-card-osae`) | 同上。`isOsaeCandidate`（押さえ/抑え/補欠 かつ pt>70）でフィルタ。`sortOsaeCandidates` で並び替え。無料登録済みユーザー限定で表示 |
+| **不要馬セクション** (`.minor-group-ineligible` / `.ineligible-summary` / `.ineligible-summary-icon` / `.ineligible-summary-title` / `.minor-horse-card-ineligible`) | 同上。`isIneligibleHorse` でフィルタ。pt 降順、`details/summary` 折りたたみ表示 |
+| **アクセス制御カード** (`.free-member-unlock-content` / `.access-control-section` / `.locked-content` / `.lock-icon` / `.unlock-btn` / `.unlock-btn-free` / `.unlock-btn-paid`) | `free-prediction/jra.astro`（無料 index）と同等の 2 種ロック（連下・押さえロック + AI 予測買い目ロック）|
+| **無料会員アクセス制御 JS** (`checkFreeMemberAccess` 関数 + DOMContentLoaded/storage/load イベント) | localStorage の 5 キー OR 判定でユーザー状態を識別。ダッシュボード `isAuthenticated()` と統一。アコーディオン maxHeight 再計算込み |
 
 ## 触ってはいけない領域
 
@@ -89,6 +95,7 @@ PR-E (2026-05-28) で完全除去 + PR #40 で追加した過去走データ UI 
 - `astro-site/src/utils/featureScores.js` （特徴量計算）
 - `astro-site/src/lib/loadHorseHistoriesJra.js` （horseHistories loader）
 - `astro-site/src/lib/shared-prediction-logic.js` （予想ロジック）
+- 上記から **参照のみ** する関数 (`isOsaeCandidate` / `isIneligibleHorse` / `sortOsaeCandidates`) は import して使ってよい。ロジックの変更・上書き・代替実装は禁止。
 
 ## 検証スクリプト（再混入検知）
 
@@ -157,6 +164,7 @@ PR-F2 はあくまで無料 JRA 側のスコープ判断であり、premium 側�
 - PR-E: free JRA `[date]` から旧 KI 風表示を完全除去 + 過去走データ UI 再配置 + guard 追加（本ドキュメント追加）
 - PR #43 (PR-F1): free JRA index `jra.astro` の dead CSS 一掃 + 専用 guard `check-no-ki-relics-free-jra.mjs` を追加
 - PR #44 (PR-H-1): 未使用化された `AIRaceComment.astro` を削除（被参照ゼロのため）
+- PR-J (本 PR): `[date].astro` に連下候補馬・抑え候補馬・不要馬セクション + 無料会員アクセス制御を `free-prediction/jra.astro` から移植（KI 由来ではなく analytics-keiba 無料 JRA 正規仕様として整備）
 
 ## ルール改訂時の運用
 
