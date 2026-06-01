@@ -1,0 +1,147 @@
+name: Import Feature Scores (Dispatch)
+
+# keiba-data-shared/{category}/featureScores/... を本リポジトリの
+# astro-site/src/data/featureScores/{category}/... へ転記する。
+#
+# 第一段階は workflow_dispatch（手動）のみ。featureScores は admin で手動生成・
+# shared へ後着 PUT されるデータのため、既存 repository_dispatch
+# (horse-histories-updated / prediction-updated) への相乗りは採用しない
+# （タイミング不整合で 404 skip になりやすいため）。
+#
+# 既存 import-horse-histories-on-dispatch.yml 等は一切変更しない（本ファイルは新規追加）。
+# git add は src/data/featureScores/ のみに限定し、他の src/data はステージしない。
+# 新規 repository_dispatch は送らない（push による Netlify リビルドが反映導線）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: 'jra | nankan'
+        required: true
+        default: 'jra'
+      date:
+        description: '日付 (YYYY-MM-DD)'
+        required: true
+        default: ''
+      venues:
+        description: 'カンマ区切りの場コード (例: TOK,KYO,NII / 空=カテゴリ全場)'
+        required: false
+        default: ''
+
+# 並行実行制御：featureScores 更新系（horseHistories とは別 group）
+concurrency:
+  group: import-feature-scores-update
+  cancel-in-progress: false
+
+jobs:
+  import-feature-scores:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # git push に必要
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import featureScores from keiba-data-shared
+        env:
+          # keiba-data-shared 読み取り専用 PAT（horseHistories と同じ secret）
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CATEGORY: ${{ github.event.inputs.category }}
+          DATE: ${{ github.event.inputs.date }}
+          VENUES: ${{ github.event.inputs.venues }}
+        run: |
+          if [ -z "$DATE" ]; then
+            echo "❌ date 未指定"
+            exit 1
+          fi
+          echo "📥 featureScores import: category=$CATEGORY date=$DATE venues=${VENUES:-(all)}"
+          # 404 skip は import スクリプト側で正常終了（exit 0）
+          if [ -n "$VENUES" ]; then
+            npm run import:feature-scores -- --category "$CATEGORY" --date "$DATE" --venues "$VENUES"
+          else
+            npm run import:feature-scores -- --category "$CATEGORY" --date "$DATE"
+          fi
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          # featureScores 配下の変更だけをステージング（他の src/data は触らない）
+          git add src/data/featureScores/
+          git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          CATEGORY: ${{ github.event.inputs.category }}
+          DATE: ${{ github.event.inputs.date }}
+          VENUES: ${{ github.event.inputs.venues }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          COMMIT_MSG="Auto-import: ${DATE} featureScores [${CATEGORY}:${VENUES:-all}]"
+
+          # featureScores ファイル群を退避（featureScores のみ）
+          mkdir -p /tmp/fs-backup
+          cp -r src/data/featureScores /tmp/fs-backup/
+          echo "📦 Backed up featureScores"
+
+          # Retry: reset → restore → commit → push（最大5回）
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+
+            # 退避した featureScores のみ復元（他 src/data には触れない）
+            mkdir -p src/data
+            cp -r /tmp/fs-backup/featureScores src/data/
+
+            git add src/data/featureScores/
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+            git commit -m "$COMMIT_MSG"
+
+            if git push origin main; then
+              echo "✅ Successfully pushed featureScores"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        run: |
+          echo "⏭️  No changes detected (featureScores already up-to-date, or all venues 404 skip)"
