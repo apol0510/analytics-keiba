@@ -9,6 +9,10 @@ import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { enrichHorse, generateMinorHorseComment, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
+// AK専用: shared featureScores（正本素材）を読むだけ → AK専用3項目へ要約派生。
+// KIは6項目詳細 / AKは3項目要約（docs/feature-scores-site-differentiation.md）。
+import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
+import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 
 // 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
 // 既存 recentRaces は温存するため、計算系 (computeEvalPoints / computeImportance /
@@ -529,6 +533,11 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               const venuePredictions = venueData.predictions;
               const venueInfo = venueData.eventInfo;
 
+              // AK専用3項目の素材: shared featureScores を会場単位で1回ロード（読むだけ）。
+              // 無ければ null → 各馬は既存 e.importance fallback。
+              const fsDate = venueInfo?.date || predictionData?.date || predictionData?.eventInfo?.date || null;
+              const featureScoresData = loadFeatureScores('jra', fsDate, venueCodeFromName('jra', venueInfo?.venue));
+
               return (
                 <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
                   <!-- 会場名（複数会場の場合のみ表示）-->
@@ -879,22 +888,52 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             </div>
                           )}
 
-                          {e.importance && e.importance.length > 0 && (
-                            <div class="feature-importance ai-pick-importance">
-                              <h4>特徴量重要度</h4>
-                              <div class="importance-list">
-                                {e.importance.map((item) => (
-                                  <div class="importance-item">
-                                    <span class="importance-label">{item.label}</span>
-                                    <div class="importance-bar">
-                                      <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
-                                    </div>
-                                    <span class="importance-percent">{Math.round(item.value * 100)}%</span>
+                          {/* 特徴量重要度: shared featureScores 由来の AK専用3項目を優先。
+                              無い/算出不能なら既存 e.importance(computeImportance 由来) に fallback。
+                              両者は排他（二重表示しない）。AK では6項目名・個別値はそのまま出さない。 */}
+                          {(() => {
+                            const fs6 = featureScoresData
+                              ? getHorseFeatures(featureScoresData, race.raceInfo.raceNumber, horse.horseNumber)
+                              : null;
+                            const akImp = fs6 ? deriveAkImportance(fs6) : null;
+                            if (akImp) {
+                              return (
+                                <div class="feature-importance ai-pick-importance">
+                                  <h4>特徴量重要度</h4>
+                                  <div class="importance-list">
+                                    {akImp.map((item) => (
+                                      <div class="importance-item">
+                                        <span class="importance-label">{item.label}</span>
+                                        <div class="importance-bar">
+                                          <div class="importance-fill" style={`width: ${item.value == null ? 0 : item.value}%`}></div>
+                                        </div>
+                                        <span class="importance-percent">{item.value == null ? '—' : `${item.value}%`}</span>
+                                      </div>
+                                    ))}
                                   </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                                </div>
+                              );
+                            }
+                            if (e.importance && e.importance.length > 0) {
+                              return (
+                                <div class="feature-importance ai-pick-importance">
+                                  <h4>特徴量重要度</h4>
+                                  <div class="importance-list">
+                                    {e.importance.map((item) => (
+                                      <div class="importance-item">
+                                        <span class="importance-label">{item.label}</span>
+                                        <div class="importance-bar">
+                                          <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
+                                        </div>
+                                        <span class="importance-percent">{Math.round(item.value * 100)}%</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
 
                           {/* 過去走 — horseHistories.recent5 を優先、なければ既存 recentRaces にフォールバック */}
                           {(() => {
