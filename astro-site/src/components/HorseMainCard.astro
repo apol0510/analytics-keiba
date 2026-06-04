@@ -13,6 +13,7 @@
 //   - importance (オプション), evalPoints (オプション), recentRaces (オプション)
 
 import { getRoleDisplayConfig, getDisplayComputerIndex, getHorseAiIndex } from '../lib/shared-prediction-logic.js';
+import { getDisplayRecentRacesForNankan } from '../lib/getDisplayRecentRacesForNankan.js';
 
 interface HorseLike {
     role?: string;
@@ -52,7 +53,7 @@ const filledStars = (horse.stars || '★').length;
 const pt = horse.pt ?? 0;
 const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+const recentRaces = getDisplayRecentRacesForNankan(horse);
 const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
     ? `${horse.weight}kg`
     : null;

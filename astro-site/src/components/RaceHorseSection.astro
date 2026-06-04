@@ -15,6 +15,7 @@
 import HorseMainCard from './HorseMainCard.astro';
 import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
 import { isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../lib/shared-prediction-logic.js';
+import { getDisplayRecentRacesForNankan } from '../lib/getDisplayRecentRacesForNankan.js';
 
 interface Props {
     raceHorses: any[];
@@ -72,7 +73,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                 const comment = generateMinorHorseComment(horse.role, gap);
                 const importance = Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null;
                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                const recentRaces = getDisplayRecentRacesForNankan(horse);
                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                 return (
                     <div class="minor-horse-card minor-horse-card-renka">
@@ -140,7 +141,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                 const gap = honmeiPt - (Number(horse?.pt) || 0);
                 const comment = generateMinorHorseComment(horse.role, gap);
                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                const recentRaces = getDisplayRecentRacesForNankan(horse);
                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                 return (
                     <div class="minor-horse-card minor-horse-card-osae">
