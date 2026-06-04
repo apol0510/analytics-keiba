@@ -4,6 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
+import { getDisplayRecentRacesForNankan } from '../../lib/getDisplayRecentRacesForNankan.js';
 
 // 過去走表示用ラベル (index 連動、表示専用)。
 // 南関は horseHistories 対象外のため、既存 horse.recentRaces をそのまま使う。
@@ -208,7 +209,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                     ? `${horse.ageNum}歳${horse.gender}`
                                                     : (horse.age || null);
                                                 const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
-                                                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                                const recentRaces = getDisplayRecentRacesForNankan(horse);
                                                 return (
                                                 <div class={cardClass}>
                                                     {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -329,7 +330,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                             {raceHorses.filter(h => h.role === '連下' || h.role === '連下最上位').map((horse) => {
                                                                 const importanceArr = Array.isArray(horse.importance) && horse.importance.length >= 3 ? horse.importance : null;
                                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                                                const recentRaces = getDisplayRecentRacesForNankan(horse);
                                                                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                                                 return (
                                                                     <div class="minor-horse-card minor-horse-card-renka">
@@ -397,7 +398,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                         <div class="minor-horse-grid">
                                                             {sortOsaeCandidates(raceHorses.filter(isOsaeCandidate)).map((horse) => {
                                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                                const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                                                const recentRaces = getDisplayRecentRacesForNankan(horse);
                                                                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                                                 return (
                                                                     <div class="minor-horse-card minor-horse-card-osae">
@@ -460,7 +461,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                 .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0))
                                                                 .map((horse) => {
                                                                     const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                                    const recentRaces = Array.isArray(horse.recentRaces) ? horse.recentRaces : [];
+                                                                    const recentRaces = getDisplayRecentRacesForNankan(horse);
                                                                     const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                                                     const ptNum = Number(horse.pt);
                                                                     return (
