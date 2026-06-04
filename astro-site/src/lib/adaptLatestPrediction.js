@@ -17,6 +17,7 @@ import {
   generateRaceUmatanLines,
   buildStrategiesFromUmatanLines,
 } from '../utils/mainRaceBetting.js';
+import { injectRecentHorseHistoriesNankan } from './injectRecentHorseHistoriesNankan.js';
 
 // role → mark / role → 旧 type の対応
 const MARK_MAP = {
@@ -245,6 +246,13 @@ export function pickLatestNankanVenuesAndAdapt(modules) {
     const adapted = adaptNewToLegacy(e.data);
     return { ...adapted, venueSlug: e.venueSlug, _sourceFile: e.path };
   });
+  // Phase 6: 南関 recentHorseHistories を別フィールド recentRacesFromHistoriesNankan へ注入。
+  // horse.recentRaces は不変。失敗時は既存表示にフォールバック（何もしない）。
+  try {
+    injectRecentHorseHistoriesNankan(venues, latestDate, process.cwd());
+  } catch (_e) {
+    // 注入失敗は非致命。既存 recentRaces 表示を維持する。
+  }
   return {
     raceDate: latestDate,
     totalVenues: venues.length,
