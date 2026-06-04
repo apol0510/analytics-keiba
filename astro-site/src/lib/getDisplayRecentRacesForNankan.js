@@ -12,7 +12,7 @@
  * 並び順:
  *   注入元 recentRacesFromHistoriesNankan は「古→新」。
  *   AK の既存 recentRaces も「古→新」のため reverse しない。
- *   表示側 free=slice(-4).reverse() / premium=slice(0,4) を既存どおり維持。
+ *   表示側 free=slice(-5).reverse() / premium=slice(0,5)（公式出馬表に合わせ最大5走）。
  */
 
 // 注入元から表示へ渡してよい項目（内部・診断フィールドは落とす）
