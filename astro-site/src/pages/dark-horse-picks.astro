@@ -520,21 +520,15 @@ function formatJpDate(date) {
         // タグ形式（#xxx）を廃止し、key/value 構造の抽出指標として表示。
         // 「評価根拠」「補完候補」など内部分類めいたラベルはユーザー画面に出さない。
         //
-        // 3指標:
-        //   1. 指数評価: indexRank 1〜3=上位 / 4〜7=中位 / 8+=下位
-        //   2. 妙味度: gap >= 3=高い / gap >= 1=あり / gap <= 0=拮抗
-        //   3. 前走評価: lf 6〜12=巻き返し圏 / lf 4〜5=着順上昇余地 / lf 3=相手候補 /
-        //              例外2着=上昇余地小 / lf >= 13=巻き返し圏 / null=データなし
-        function getExtractionIndicators(horse, info) {
+        // 表示する抽出指標は「指数評価」のみ:
+        //   指数評価: indexRank 1〜3=上位 / 4〜7=中位 / 8+=下位
+        // ※ gap 由来・前走着順由来の評価ラベルは根拠表示として強すぎるため公開画面から削除済み。
+        //   抽出ロジック（score / gap / lastFinish）自体は変更しない。
+        function getExtractionIndicators(horse) {
             const indicators = [];
-            const lf = horse.lastFinish;
-            const count = info?.count ?? 0;
-            const gap = horse.gap || 0;
             const indexRank = horse.indexRank || 0;
-            const isFallback = !!horse.fallback;
-            const isExceptional2nd = !!horse.exceptional2nd;
 
-            // 1. 指数評価
+            // 指数評価
             if (indexRank > 0) {
                 let label;
                 let kind;
@@ -542,39 +536,6 @@ function formatJpDate(date) {
                 else if (indexRank <= 7) { label = '中位'; kind = 'mid'; }
                 else { label = '下位'; kind = 'low'; }
                 indicators.push({ key: '指数評価', value: label, kind });
-            }
-
-            // 2. 妙味度（gap ベース）
-            //    fallback で gap=0 のときは「拮抗」を出す。穴馬の趣旨上ノイズになるため
-            //    fallback かつ gap=0 のケースのみ pill を省略してもよいが、要望
-            //    「3指標を一貫して見せたい」を優先し常時表示する。
-            if (gap >= 3) {
-                indicators.push({ key: '妙味度', value: '高い', kind: 'high' });
-            } else if (gap >= 1) {
-                indicators.push({ key: '妙味度', value: 'あり', kind: 'mid' });
-            } else {
-                indicators.push({ key: '妙味度', value: '拮抗', kind: 'low' });
-            }
-
-            // 3. 前走評価
-            if (lf == null) {
-                if (count === 0) {
-                    indicators.push({ key: '前走', value: 'データなし', kind: 'low' });
-                } else {
-                    indicators.push({ key: '前走', value: '相手候補', kind: 'mid' });
-                }
-            } else if (lf >= 6 && lf <= 12) {
-                indicators.push({ key: '前走', value: '巻き返し圏', kind: 'high' });
-            } else if (lf === 4 || lf === 5) {
-                indicators.push({ key: '前走', value: '着順上昇余地', kind: 'mid' });
-            } else if (lf === 3) {
-                indicators.push({ key: '前走', value: '相手候補', kind: 'mid' });
-            } else if (lf === 2 && isExceptional2nd) {
-                indicators.push({ key: '前走', value: '上昇余地小', kind: 'low' });
-            } else if (lf >= 13) {
-                indicators.push({ key: '前走', value: '巻き返し圏', kind: 'high' });
-            } else {
-                indicators.push({ key: '前走', value: '相手候補', kind: 'mid' });
             }
 
             return indicators;
@@ -603,7 +564,7 @@ function formatJpDate(date) {
                 const tag = `<span class="tag tag-${cls.key}">${cls.label}</span>`;
                 const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
                 const info = horsePastInfo?.[String(h.number)] || null;
-                const indicators = getExtractionIndicators(h, info);
+                const indicators = getExtractionIndicators(h);
                 const stars = getStarRating(h.score);
                 // 抽出指標は pill 形式（key/value 構造）。# タグ形式は廃止。
                 const indicatorsHtml = indicators
