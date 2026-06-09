@@ -197,6 +197,26 @@ AI評価 ★★☆☆☆
 
 ---
 
+## 表示ラベル削除方針
+
+Phase 1監査の結果、「妙味度あり」「前走 巻き返し圏」が実質的に固定表示のように見えることが確認された。
+この2系統は根拠表示として強すぎるため、公開画面から完全削除する。
+
+削除対象:
+- 妙味度ラベル全般
+- 前走評価ラベル全般
+
+残すもの:
+- AI評価
+- 前走着順の事実表示
+- 指数評価 上位 / 中位 / 下位
+
+今回の変更は表示整理のみ。
+抽出ロジック、AI指数、印、買い目、shared JSONは変更しない。
+
+---
+
 ## 進捗ログ
 
+- **2026-06-10**: 表示ラベル削除を実装（`dark-horse-picks.astro` の `getExtractionIndicators` を「指数評価のみ」に整理）。妙味度（高い/あり/拮抗）と前走評価（巻き返し圏/着順上昇余地/相手候補/データなし/上昇余地小）の pill を公開画面から完全削除。**抽出ロジック（score/gap/lastFinish）・AI指数・印・買い目・shared JSON は不変更**。星評価・前走着順の事実表示・指数評価ラベルは存置。
 - **2026-06-10**: 本docs作成（Phase 0）。AK main=`8cd5991` 一致確認。穴馬抽出の監査対象ファイル（`dark-horse-picks.astro` / `dark-horse-manager.astro` / `darkHorseData.json` / `regenerateDarkHorses.mjs` / `import-computer-on-dispatch.yml`）を grep スカウトで特定。暫定ロジック（指数評価/妙味度/前走評価の閾値コメント）を§5.2に記録。**実装・ロジック変更・UI変更は未着手**。次は Phase 1 read-only 精査。
