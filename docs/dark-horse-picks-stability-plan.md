@@ -495,6 +495,109 @@ featureScores が無い日:
 
 ---
 
+## 南関 featureScores データ層整備＋AK/KI表示配線 完了記録（2026-06-10）
+
+### 完了したこと
+
+南関 featureScores の初期2件について、shared保存、AK/KIへの取り込み、AK/KI南関ページへの表示配線、本番確認まで完了。
+
+対象データ:
+- 2026-06-09 OOI: 11R / 137頭
+- 2026-06-05 FUN: 12R / 127頭
+
+category:
+- nankan
+
+engine:
+- nankan-v1
+
+### shared 保存
+
+以下2件を keiba-data-shared に保存済み。
+
+- nankan/featureScores/2026/06/2026-06-09-OOI.json
+- nankan/featureScores/2026/06/2026-06-05-FUN.json
+
+### AK / KI import
+
+以下に取り込み済み。
+
+AK:
+- astro-site/src/data/featureScores/nankan/2026/06/2026-06-09-OOI.json
+- astro-site/src/data/featureScores/nankan/2026/06/2026-06-05-FUN.json
+
+KI:
+- astro-site/src/data/featureScores/nankan/2026/06/2026-06-09-OOI.json
+- astro-site/src/data/featureScores/nankan/2026/06/2026-06-05-FUN.json
+
+### AK 表示配線
+
+analytics-keiba PR #64 で対応済み。
+
+merge commit:
+- 4558f72
+
+対象:
+- astro-site/src/pages/premium-prediction/nankan.astro
+- astro-site/src/pages/free-prediction/nankan.astro
+
+方針:
+- nankan featureScores がある馬は shared 6項目を deriveAkImportance で AK用3項目へ変換
+- featureScores が無い日・欠落レース・欠落馬・一部軸null馬は既存 horse.importance / computeImportance に fallback
+- AI指数・印・買い目・穴馬抽出ロジックは変更なし
+
+本番反映:
+- 確認済み
+- 最新ページが表示している日付は 2026-06-10 のため、保存済み featureScores 06-09 / 06-05 とは一致せず、live画面では fallback 表示
+- fallback 表示で既存3項目は維持され、回帰なし
+
+### KI 表示配線
+
+keiba-intelligence PR #30 で対応済み。
+
+merge commit:
+- 10b955a
+
+対象:
+- astro-site/src/pages/prediction/nankan/index.astro
+- astro-site/src/pages/free-prediction/nankan/index.astro
+
+方針:
+- nankan featureScores がある馬は stored 6項目を優先表示
+- featureScores が無い日・欠落レース・欠落馬・一部項目null馬は既存 generateAdvancedMetrics に fallback
+- JRA の stored-only とは異なり、南関は未生成日の表示回帰を避けるため fallback を維持
+- AI指数・印・買い目・穴馬抽出ロジックは変更なし
+
+本番反映:
+- 確認済み
+- 本番URLは keiba-intelligence.netlify.app 側で確認
+- prediction は 2026-06-10 表示のため、保存済み featureScores 06-09 / 06-05 とは一致せず fallback 表示
+- 6項目表示は維持され、回帰なし
+
+### 現時点の注意点
+
+featureScores はデータ層・表示配線とも完了したが、保存済み対象が 2026-06-09 OOI / 2026-06-05 FUN の2件のみである。
+
+そのため、本番の最新南関ページで featureScores 由来の表示を live 視認するには、表示中の日付、例: 2026-06-10 の南関 featureScores を生成・shared保存・AK/KI import する必要がある。
+
+現時点では、最新日と featureScores 対象日が一致しない場合は fallback 表示になる。
+これは設計どおりであり、回帰ではない。
+
+### 次の候補
+
+1. 日次運用化
+   - 南関 featureScores を当日/最新日で生成・shared保存・AK/KI import する手順を整備する
+   - JRA featureScores pipeline 相当の南関版を検討する
+
+2. 穴馬抽出 Phase 3
+   - featureScores を admin dark-horse.mjs の弱い補助シグナルとして利用する設計へ進む
+   - ただし featureScores の日次運用が安定してから着手する
+
+3. 一旦区切り
+   - 南関 featureScores 初期整備＋AK/KI配線は完了としてクローズする
+
+---
+
 ## 進捗ログ
 
 - **2026-06-10**: 表示ラベル削除を実装（`dark-horse-picks.astro` の `getExtractionIndicators` を「指数評価のみ」に整理）。妙味度（高い/あり/拮抗）と前走評価（巻き返し圏/着順上昇余地/相手候補/データなし/上昇余地小）の pill を公開画面から完全削除。**抽出ロジック（score/gap/lastFinish）・AI指数・印・買い目・shared JSON は不変更**。星評価・前走着順の事実表示・指数評価ラベルは存置。
