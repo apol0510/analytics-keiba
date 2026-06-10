@@ -246,6 +246,7 @@ function formatJpDate(date) {
                         role="tab"
                         aria-selected={i === 0 ? 'true' : 'false'}
                         data-tab-id={t.tabId}
+                        data-category={t.category}
                     >
                         <span class="tab-emoji">{t.category === 'jra' ? '🏇' : '🏁'}</span>
                         <span class="tab-name">{t.venueName}</span>
@@ -257,7 +258,7 @@ function formatJpDate(date) {
         )}
 
         {hasAnyData && venuesForRender.map((venue, i) => (
-            <section class={`races-section venue-panel ${i === 0 ? 'active' : ''}`} data-tab-id={venue.tabId} role="tabpanel">
+            <section class={`races-section venue-panel ${i === 0 ? 'active' : ''}`} data-tab-id={venue.tabId} data-category={venue.category} role="tabpanel">
                 <h2>🐎 {venue.date} {venue.venueName}競馬</h2>
                 <p class="section-subtitle">狙い目の穴馬をレース別に抽出</p>
                 <div class="races-grid">
@@ -374,6 +375,7 @@ function formatJpDate(date) {
             updatePlanBadge();
             updateUI();
             attachEventListeners();
+            applyCategoryFromQuery();
         });
 
         function loadUserPlan() {
@@ -467,19 +469,34 @@ function formatJpDate(date) {
             });
         }
 
+        // タブ/パネルの active 切替を1関数に集約（クリックと query 初期表示で共用）
+        function activateTab(tabId) {
+            if (!tabId) return;
+            document.querySelectorAll('.venue-tab').forEach((t) => {
+                const active = t.getAttribute('data-tab-id') === tabId;
+                t.classList.toggle('active', active);
+                t.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            document.querySelectorAll('.venue-panel').forEach((p) => {
+                p.classList.toggle('active', p.getAttribute('data-tab-id') === tabId);
+            });
+        }
+
+        // リンク元カテゴリ(?category=jra|nankan)に一致する当日タブがあれば初期 active にする。
+        // 該当タブが無い／query が無い場合は何もしない（= サーバ側の i===0 先頭表示を維持）。
+        function applyCategoryFromQuery() {
+            const requested = new URLSearchParams(window.location.search).get('category');
+            if (requested !== 'jra' && requested !== 'nankan') return;
+            const target = Array.from(document.querySelectorAll('.venue-tab'))
+                .find((tab) => tab.getAttribute('data-category') === requested);
+            if (target) activateTab(target.getAttribute('data-tab-id'));
+        }
+
         function attachEventListeners() {
             // 会場タブ
             document.querySelectorAll('.venue-tab').forEach((tab) => {
                 tab.addEventListener('click', () => {
-                    const tabId = tab.getAttribute('data-tab-id');
-                    document.querySelectorAll('.venue-tab').forEach((t) => {
-                        const active = t.getAttribute('data-tab-id') === tabId;
-                        t.classList.toggle('active', active);
-                        t.setAttribute('aria-selected', active ? 'true' : 'false');
-                    });
-                    document.querySelectorAll('.venue-panel').forEach((p) => {
-                        p.classList.toggle('active', p.getAttribute('data-tab-id') === tabId);
-                    });
+                    activateTab(tab.getAttribute('data-tab-id'));
                 });
             });
 
