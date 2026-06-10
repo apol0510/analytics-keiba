@@ -9,6 +9,22 @@ import { getDisplayRecentRacesForNankan } from '../../lib/getDisplayRecentRacesF
 import { generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 import { generateMinorHorseComment } from '../../lib/horseEnrichment.js';
 import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpukuBetting.js';
+import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
+import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
+
+// 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
+// shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
+// deriveAkImportance の値は 0〜100。既存 importance(0〜1) と揃えるため /100 に正規化。一部軸が欠ける馬は fallback。
+function fsImportanceFor(featureScoresData, raceNumber, horseNumber) {
+  if (!featureScoresData) return null;
+  const fs6 = getHorseFeatures(featureScoresData, raceNumber, horseNumber);
+  if (!fs6) return null;
+  const akImp = deriveAkImportance(fs6);
+  if (!akImp) return null;
+  // 一部の軸が欠ける馬（少走・新馬など）は信頼できる3項目にならないため既存表示に fallback。
+  if (akImp.some((it) => it.value == null)) return null;
+  return akImp.map((it) => ({ label: it.label, value: it.value / 100 }));
+}
 
 // src/data/predictions/*.json から最新日付の全会場を取得（同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -501,6 +517,10 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             const raceNum = raceData.raceNumber.replace('R', '');
             const isMainRace = raceData.isMainRace;
 
+            // 南関 featureScores（この会場・日付分）。馬単位で getHorseFeatures が引く。無ければ既存表示に fallback。
+            const fsVenueCode = venueCodeFromName('nankan', (venueData.track || '').replace('競馬', '').trim());
+            const featureScoresData = loadFeatureScores('nankan', venueData.raceDate, fsVenueCode);
+
             // 20年運営対応: データ正規化システム使用
             const normalizedHorses = normalizeHorseData(raceData);
             const raceHorses = normalizedHorses; // 正規化されたデータを使用
@@ -605,7 +625,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                         : horse.role === '対抗' ? 'horse-card horse-card-sub'
                                         : 'horse-card horse-card-tana';
                                     const pt = horse.pt ?? 0;
-                                    const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
+                                    const importance = fsImportanceFor(featureScoresData, raceNum, horse.number) || (horse.importance && horse.importance.length > 0 ? horse.importance : null);
                                     const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
                                     const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
                                         ? `${horse.weight}kg`
@@ -741,7 +761,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 const honmei = raceHorses.find(h => h.role === '本命');
                                                 const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
                                                 const comment = generateMinorHorseComment(horse.role, gap);
-                                                const importance = Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null;
+                                                const importance = fsImportanceFor(featureScoresData, raceNum, horse.number) || (Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null);
                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
                                                 const recentRaces = getDisplayRecentRacesForNankan(horse);
                                                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
