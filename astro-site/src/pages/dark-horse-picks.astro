@@ -552,9 +552,13 @@ function formatJpDate(date) {
             return { key: 'value', label: '妙味馬' };
         }
 
-        function getStarRating(score) {
-            const s = Number(score) || 0;
-            const stars = Math.max(2, Math.min(5, Math.round(s / 20)));
+        // 星評価再設計 第1段: fallback（救済枠）の星は最大★★に抑える。
+        // fallback は score=50 固定で本来 ★★★ になり、通常候補(★★)より強く見える逆転が起きるため。
+        // score / gap / lastFinish 等の抽出ロジック（admin 正本）は変更しない。表示のみの制限。
+        function getStarRating(horse) {
+            const s = Number(horse?.score) || 0;
+            const rawStars = Math.max(2, Math.min(5, Math.round(s / 20)));
+            const stars = horse?.fallback ? Math.min(rawStars, 2) : rawStars;
             return '★'.repeat(stars) + '☆'.repeat(5 - stars);
         }
 
@@ -565,7 +569,7 @@ function formatJpDate(date) {
                 const lf = h.lastFinish == null ? '-' : `${h.lastFinish}着`;
                 const info = horsePastInfo?.[String(h.number)] || null;
                 const indicators = getExtractionIndicators(h);
-                const stars = getStarRating(h.score);
+                const stars = getStarRating(h);
                 // 抽出指標は pill 形式（key/value 構造）。# タグ形式は廃止。
                 const indicatorsHtml = indicators
                     .map(ind => `

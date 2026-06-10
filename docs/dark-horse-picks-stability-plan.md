@@ -257,6 +257,34 @@ Phase 1監査の結果、「妙味度あり」「前走 巻き返し圏」が実
 
 ---
 
+## 星評価再設計 第1段: fallback の星上限
+
+Phase 2監査で、fallback 馬は score=50 固定のため常に★★★となり、通常抽出の★★馬より強く見えることが確認された。
+fallback は「通常条件に該当馬がいない場合の救済枠」であり、通常候補より強く見せるべきではない。
+
+第1段では、抽出ロジック本体や admin/shared の score は変更せず、AK表示側で fallback 馬の星評価を最大★★に抑える。
+
+変更対象:
+- dark-horse-picks.astro の getStarRating / 呼び出しのみ
+
+変更しないもの:
+- admin dark-horse.mjs
+- score計算
+- gap計算
+- lastFinish計算
+- 抽出フィルタ
+- AI指数
+- 印
+- 買い目
+- shared JSON
+- KI
+
+第2段（別途）で検討:
+- 表示用 ratingScore の新設（gap＋前走帯＋fallback減点、指数≤2位ペナルティの表示撤廃）
+- 「AI評価」名称の弱体化（「注目度」「好走タイミング」など）
+
+---
+
 ## 進捗ログ
 
 - **2026-06-10**: 表示ラベル削除を実装（`dark-horse-picks.astro` の `getExtractionIndicators` を「指数評価のみ」に整理）。妙味度（高い/あり/拮抗）と前走評価（巻き返し圏/着順上昇余地/相手候補/データなし/上昇余地小）の pill を公開画面から完全削除。**抽出ロジック（score/gap/lastFinish）・AI指数・印・買い目・shared JSON は不変更**。星評価・前走着順の事実表示・指数評価ラベルは存置。
