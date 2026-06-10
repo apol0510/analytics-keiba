@@ -370,6 +370,131 @@ Phase 2 / 第2段設計監査の結果、「AI評価」は決定論的な星表�
 
 ---
 
+## 南関 featureScores 表示配線方針（read-only監査結果）
+
+### 現状
+
+南関 featureScores は shared / AK / KI のデータ層まで取り込み済み。
+
+対象:
+- 2026-06-09 OOI: 11R / 137頭
+- 2026-06-05 FUN: 12R / 127頭
+
+category:
+- nankan
+
+engine:
+- nankan-v1
+
+ただし、現時点では AK/KI の南関ページは featureScores を読んでいない。
+そのため、データ層には存在するが画面表示にはまだ反映されていない。
+
+### AK の実装方針
+
+AK の JRA ページでは、shared featureScores 6項目をそのまま出さず、AK用の3項目へ派生して表示している。
+
+表示項目:
+- 安定性
+- 能力上位性
+- 展開利
+
+南関でも同じ方針を採用する。
+
+方針:
+- nankan featureScores がある場合は、shared 6項目を deriveAkImportance で3項目へ変換して表示する
+- featureScores が無い場合は、既存の computeImportance / horse.importance に fallback する
+- premium / free の両方で同じ対応を行う
+
+対象ファイル:
+- astro-site/src/pages/premium-prediction/nankan.astro
+- astro-site/src/pages/free-prediction/nankan.astro
+
+変更しないもの:
+- AI指数
+- 印
+- 買い目
+- 穴馬抽出ロジック
+- admin/shared の生成ロジック
+
+### KI の実装方針
+
+KI の JRA ページは、shared featureScores がある場合のみ stored value を表示し、generateAdvancedMetrics には fallback しない。
+
+ただし、南関は featureScores がまだ一部日付のみである。
+JRAと同じ stored-only にすると、未生成日の南関6項目表示が消えるため、南関では JRA と異なる方針を採用する。
+
+方針:
+- nankan featureScores がある馬は stored 6項目を優先表示する
+- featureScores が無い馬・無い日付・欠落レースは、既存 generateAdvancedMetrics に fallback する
+- prediction / free-prediction の両方で同じ対応を行う
+
+対象ファイル:
+- astro-site/src/pages/prediction/nankan/index.astro
+- astro-site/src/pages/free-prediction/nankan/index.astro
+
+変更しないもの:
+- AI指数
+- 印
+- 買い目
+- 穴馬抽出ロジック
+- admin/shared の生成ロジック
+
+### join key
+
+featureScores とページ側 horse の join key は以下とする。
+
+- raceNumber
+- horseNumber
+
+featureScores 側は races / horses が string key だが、getHorseFeatures が String() 強制で参照するため、number / string の型差には耐性がある。
+
+horseName 正規化は不要。
+馬番 join を基本とする。
+
+### 欠落時の扱い
+
+featureScores が無い場合:
+- AK: 既存 computeImportance / horse.importance に fallback
+- KI: 既存 generateAdvancedMetrics に fallback
+
+featureScores に一部レースが無い場合:
+- 該当レースだけ fallback
+
+featureScores に一部馬が無い場合:
+- 該当馬だけ fallback
+
+既知例:
+- 2026-06-09 OOI は racebook 側の入力事情により3R欠落がある
+- このような場合も getHorseFeatures が null を返し、既存計算へ fallback するため表示回帰を避けられる
+
+### 実装順序
+
+repo単位でPRを分ける。
+
+1. AK: 南関 premium/free 2ページを1PRで対応
+2. KI: 南関 prediction/free-prediction 2ページを1PRで対応
+
+ただし、方針としては AK/KI を同一作業セッションで揃える。
+片側だけ長期間残さない。
+
+### 回帰確認
+
+featureScores がある日:
+- 2026-06-09 OOI
+- 2026-06-05 FUN
+
+featureScores が無い日:
+- 既存の南関表示が消えず、fallback 表示されること
+
+確認すること:
+- AKは3項目が表示されること
+- KIは6項目が表示されること
+- featureScores が無い場合も既存表示が維持されること
+- 3R欠落など一部欠落時もレース全体が落ちないこと
+- AI指数・印・買い目に影響しないこと
+
+---
+
 ## 進捗ログ
 
 - **2026-06-10**: 表示ラベル削除を実装（`dark-horse-picks.astro` の `getExtractionIndicators` を「指数評価のみ」に整理）。妙味度（高い/あり/拮抗）と前走評価（巻き返し圏/着順上昇余地/相手候補/データなし/上昇余地小）の pill を公開画面から完全削除。**抽出ロジック（score/gap/lastFinish）・AI指数・印・買い目・shared JSON は不変更**。星評価・前走着順の事実表示・指数評価ラベルは存置。
