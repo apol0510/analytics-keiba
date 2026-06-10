@@ -324,6 +324,52 @@ Phase 2 / 第2段設計監査の結果、「AI評価」は決定論的な星表�
 
 ---
 
+## Phase 3 入力拡張 監査結果（2026-06-10・read-only）
+
+### 結論
+現時点では、穴馬抽出ロジックに**新入力を追加しない**（候補6を採用）。
+
+理由:
+- computer JSON に **pt / totalScore / 印 / odds が存在しない**（racebook/predictions にのみ存在・admin側 join 要）。
+- featureScores は本命入力だが、**現状 JRA のみ保存済み（7日分）・南関0件**。JRA だけで先行利用すると **AK/KI 片側寄せ・JRA/南関 非対称**になる。
+- recentHorseHistories / horseHistories は**疎・別構造・join 必要**。
+- distanceMeters は南関100%だが **JRA 0%**。
+- final3F は両カテゴリで高充足だが、**単体では距離・展開・馬場文脈を欠きノイズが大きい**（正しい使い方＝featureScores が既に合成済み）。
+
+### 現在 dark-horse.mjs が使っている入力
+- computerIndex / popularity（→ popularityRank） / indexRank / gap = popularityRank − indexRank / pastRaces 末尾の finish / fallback
+
+### computer JSON に存在しない入力
+- pt / totalScore / 印 / odds
+
+### computer JSON に存在する入力
+- computerIndex / popularity / jockey / bracket / trainer / weight / ageGender / pastRaces
+
+### pastRaces に存在する主な入力
+- finish / final3F / paceType / paceRank / distanceMeters / venue / time / bodyWeight / winner / distance / raceClass / cond / courseNote
+
+### JRA / 南関の差分（pastRaces 充足率）
+| 区分 | 入力 | 備考 |
+|---|---|---|
+| 共通で比較的使える | finish / final3F / venue / time / bodyWeight | finish 97-100%・final3F 91-99% |
+| 南関◯ JRA弱い | distanceMeters（南関100% / JRA0%） / paceType（南関99% / JRA75%） | — |
+| JRA◯ 南関弱い | cond / courseNote（JRA約88% / 南関0%） | — |
+| 現時点で使いにくい | featureScores（JRAのみ・南関0件） / horseHistories・recentHorseHistories（疎・別構造・join要） | — |
+
+### Phase 3 の方針
+- **初手は候補6「まだ抽出入力を拡張しない」を採用**。
+- 本命入力は featureScores。まず**南関 featureScores の生成・shared保存・AK/KI配線前提**を整える必要がある。JRA/南関の両方で featureScores が安定してから、**admin側 dark-horse.mjs で弱い補助シグナル**として利用する。
+- final3F は両カテゴリ高充足で次善候補ではあるが、距離・展開・馬場文脈を欠き単体では score にノイズを持ち込むため**初手には採用しない**。
+
+### 今後の優先順位
+1. 南関 featureScores の生成・shared保存を整備する。
+2. JRA / 南関 両方で featureScores が揃う状態にする。
+3. その後、admin dark-horse.mjs で featureScores を弱い補助シグナルとして使う設計を行う。
+4. それまでは穴馬抽出ロジック本体の入力拡張は行わない。
+5. AK側は表示改善に留める。
+
+---
+
 ## 進捗ログ
 
 - **2026-06-10**: 表示ラベル削除を実装（`dark-horse-picks.astro` の `getExtractionIndicators` を「指数評価のみ」に整理）。妙味度（高い/あり/拮抗）と前走評価（巻き返し圏/着順上昇余地/相手候補/データなし/上昇余地小）の pill を公開画面から完全削除。**抽出ロジック（score/gap/lastFinish）・AI指数・印・買い目・shared JSON は不変更**。星評価・前走着順の事実表示・指数評価ラベルは存置。
