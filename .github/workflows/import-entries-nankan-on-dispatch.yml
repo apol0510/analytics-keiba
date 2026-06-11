@@ -1,0 +1,166 @@
+name: Import Entries Nankan (Dispatch)
+
+# admin 側の南関 entries(出馬表) 配信から送られる
+# repository_dispatch (entries-nankan-updated) を受け取り、
+# keiba-data-shared/nankan/entries/... を本リポジトリの
+# astro-site/src/data/entries/nankan/... へ転記する。
+#
+# ※ JRA horseHistories (horse-histories-updated) / 南関 recentHorseHistories
+#    (recent-horse-histories-nankan-updated) とは別 event / 別 script /
+#    別 concurrency group。既存同期には一切相乗りしない。
+#    full venue 判定 / R01-only skip / record 0埋め reject は
+#    importEntriesNankan.js の guard に委譲する（workflow で重複実装しない）。
+
+on:
+  repository_dispatch:
+    types: [entries-nankan-updated]
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '日付 (YYYY-MM-DD)'
+        required: true
+        default: ''
+      venues:
+        description: 'カンマ区切りの場コード (例: OOI,KAW,FUN,URA)'
+        required: true
+        default: ''
+
+# 並行実行制御：南関 entries ファイル群更新系の専用 group
+# (JRA horseHistories / featureScores / recentHorseHistories とは混線させない)
+concurrency:
+  group: archive-entries-nankan-update
+  cancel-in-progress: false
+
+jobs:
+  import-entries-nankan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # git push に必要
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import entries (nankan) from keiba-data-shared
+        env:
+          # keiba-data-shared 読み取り専用 PAT (Actions の自動 GITHUB_TOKEN では届かないため必須)
+          # secret 名は GITHUB_ で始まる名前が GitHub Actions で禁止されているため
+          # KEIBA_DATA_SHARED_TOKEN を採用
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          MANUAL_VENUES: ${{ github.event.inputs.venues }}
+          PAYLOAD_DATE: ${{ github.event.client_payload.date }}
+          PAYLOAD_VENUES_JSON: ${{ toJSON(github.event.client_payload.venues) }}
+        run: |
+          # 優先順位: 手動入力 > repository_dispatch payload
+          if [ -n "$MANUAL_DATE" ]; then
+            echo "📅 Manual entries(nankan) import for: $MANUAL_DATE"
+            if [ -n "$MANUAL_VENUES" ]; then
+              npm run import:entries:nankan -- --date "$MANUAL_DATE" --venues "$MANUAL_VENUES"
+            else
+              npm run import:entries:nankan -- --date "$MANUAL_DATE"
+            fi
+          elif [ -n "$PAYLOAD_DATE" ] && [ "$PAYLOAD_DATE" != "null" ]; then
+            echo "📅 Importing entries(nankan) for: $PAYLOAD_DATE"
+            # venues は payload から JSON 配列で来るのでカンマ区切りに変換
+            VENUES_CSV=$(echo "$PAYLOAD_VENUES_JSON" | jq -r 'if . == null then "" else join(",") end')
+            if [ -n "$VENUES_CSV" ]; then
+              npm run import:entries:nankan -- --date "$PAYLOAD_DATE" --venues "$VENUES_CSV"
+            else
+              npm run import:entries:nankan -- --date "$PAYLOAD_DATE"
+            fi
+          else
+            echo "❌ No date provided (neither manual input nor client_payload.date)"
+            exit 1
+          fi
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          # entries/nankan 配下の変更だけをステージング
+          git add src/data/entries/nankan/
+          git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          PAYLOAD_DATE: ${{ github.event.client_payload.date }}
+          PAYLOAD_VENUES_JSON: ${{ toJSON(github.event.client_payload.venues) }}
+          SOURCE: ${{ github.event.client_payload.source }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ -n "$MANUAL_DATE" ]; then
+            DATE_FOR_MSG="$MANUAL_DATE"
+            VENUES_FOR_MSG="(manual)"
+          else
+            DATE_FOR_MSG="$PAYLOAD_DATE"
+            VENUES_FOR_MSG=$(echo "$PAYLOAD_VENUES_JSON" | jq -r 'if . == null then "" else join(",") end')
+          fi
+          COMMIT_MSG="Auto-import: ${DATE_FOR_MSG} entries(nankan) [${VENUES_FOR_MSG}] from ${SOURCE:-nankan-entries}"
+
+          # entries ファイル群を退避
+          mkdir -p /tmp/entries-backup
+          cp -r src/data/entries /tmp/entries-backup/
+          echo "📦 Backed up entries"
+
+          # Retry: reset → restore → commit → push（最大5回）
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+
+            # 退避した entries を復元
+            mkdir -p src/data
+            cp -r /tmp/entries-backup/entries src/data/
+
+            git add src/data/entries/nankan/
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already has latest)"
+              SUCCESS=true
+              break
+            fi
+            git commit -m "$COMMIT_MSG"
+
+            if git push origin main; then
+              echo "✅ Successfully pushed entries(nankan)"
+              SUCCESS=true
+            else
+              echo "⚠️  Push failed (remote updated during attempt)"
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        run: |
+          echo "⏭️  No changes detected (entries already up-to-date)"
