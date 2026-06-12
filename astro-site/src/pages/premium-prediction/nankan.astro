@@ -12,6 +12,24 @@ import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpuk
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 
+// R1d-impl-v2c Step2: 連下/補欠 compact 近走の field 読み替え（entries 由来 / 既存 getDisplay 由来の両 shape 対応）。
+// 表示専用・正本順位不変・recentHorseHistories fallback 正本化しない・compact 維持・docs §34.24。
+// 値が無いものは空文字を返し、呼び出し側で項目ごと非表示にする（空ラベル・0埋めはしない）。
+function neCompactCell(v) { return v !== null && v !== undefined && String(v).trim() !== ''; }
+function pickCompactCell(...xs) { for (const x of xs) { if (neCompactCell(x)) return String(x).trim(); } return ''; }
+function compactRaceCells(r) {
+  const rankRaw = r?.rank ?? r?.finish ?? r?.position;
+  return {
+    venue: pickCompactCell(r?.venue, r?.track, r?.trackName),
+    distance: pickCompactCell(r?.distance),
+    rank: (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : '',
+    time: pickCompactCell(r?.time),
+    last3f: pickCompactCell(r?.last3f, r?.agari),
+    bodyWeight: pickCompactCell(r?.bodyWeight, r?.weightBody),
+    pass: pickCompactCell(r?.passingOrder, r?.cornerPassage, r?.corner),
+  };
+}
+
 // 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
 // shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
 // deriveAkImportance の値は 0〜100。既存 importance(0〜1) と揃えるため /100 に正規化。一部軸が欠ける馬は fallback。
@@ -812,15 +830,17 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                 <div class="recent-races-list">
                                                                     {recentRaces.slice(0, 5).map((r) => {
-                                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                        // R1d-impl-v2c Step2: コーナー通過順を最小追加・field 読み替え補強（compact 維持・docs §34.24）
+                                                                        const c = compactRaceCells(r);
                                                                         return (
                                                                             <div class="recent-race-row">
-                                                                                <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                <span class="recent-race-rank">{rank}</span>
-                                                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
-                                                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                                                                {c.venue && <span class="recent-race-venue">{c.venue}</span>}
+                                                                                {c.distance && <span class="recent-race-distance">{c.distance}</span>}
+                                                                                {c.rank && <span class="recent-race-rank">{c.rank}</span>}
+                                                                                {c.time && <span class="recent-race-meta">タイム{c.time}</span>}
+                                                                                {c.last3f && <span class="recent-race-meta">上がり{c.last3f}</span>}
+                                                                                {c.pass && <span class="recent-race-meta">通過{c.pass}</span>}
+                                                                                {c.bodyWeight && <span class="recent-race-meta">{c.bodyWeight}kg</span>}
                                                                             </div>
                                                                         );
                                                                     })}
@@ -881,14 +901,16 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                 <div class="recent-races-list">
                                                                     {recentRaces.slice(0, 5).map((r) => {
-                                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                        // R1d-impl-v2c Step2: コーナー通過順を最小追加・field 読み替え補強（compact 維持・docs §34.24）
+                                                                        const c = compactRaceCells(r);
                                                                         return (
                                                                             <div class="recent-race-row">
-                                                                                <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                <span class="recent-race-rank">{rank}</span>
-                                                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                                {c.venue && <span class="recent-race-venue">{c.venue}</span>}
+                                                                                {c.distance && <span class="recent-race-distance">{c.distance}</span>}
+                                                                                {c.rank && <span class="recent-race-rank">{c.rank}</span>}
+                                                                                {c.time && <span class="recent-race-meta">タイム{c.time}</span>}
+                                                                                {c.last3f && <span class="recent-race-meta">上がり{c.last3f}</span>}
+                                                                                {c.pass && <span class="recent-race-meta">通過{c.pass}</span>}
                                                                             </div>
                                                                         );
                                                                     })}
