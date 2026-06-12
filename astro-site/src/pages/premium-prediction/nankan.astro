@@ -6,7 +6,6 @@ import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDis
 import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../../lib/archive-utils.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 import { getDisplayRecentRacesForNankan } from '../../lib/getDisplayRecentRacesForNankan.js';
-import NankanHorseDetailPanel from '../../components/NankanHorseDetailPanel.astro';
 import { generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 import { generateMinorHorseComment } from '../../lib/horseEnrichment.js';
 import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpukuBetting.js';
@@ -715,10 +714,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                             </div>
                                         )}
 
-                                        {/* R1d-1: entries がある馬だけ馬詳細パネルに置き換え。無ければ既存「過去N走」を維持（並列表示しない） */}
-                                        {(horse.recentRacesFromEntriesNankan && horse.recentRacesFromEntriesNankan.length > 0) ? (
-                                            <NankanHorseDetailPanel horse={horse} mode="premium" maxRecentRaces={5} />
-                                        ) : (() => { const recentRaces = getDisplayRecentRacesForNankan(horse); return Array.isArray(recentRaces) && recentRaces.length > 0 && (
+                                        {(() => { const recentRaces = getDisplayRecentRacesForNankan(horse); return Array.isArray(recentRaces) && recentRaces.length > 0 && (
                                             <details class="recent-races">
                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                 <div class="recent-races-list">
