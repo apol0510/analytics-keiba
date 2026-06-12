@@ -2,7 +2,6 @@
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
-import RecentRacesFromEntriesNankan from '../../components/RecentRacesFromEntriesNankan.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
 import { getDisplayRecentRacesForNankan } from '../../lib/getDisplayRecentRacesForNankan.js';
@@ -331,7 +330,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                             </div>
                                                         </details>
                                                     )}
-                                                        <RecentRacesFromEntriesNankan horse={horse} />
                                                 </div>
                                                 );
                                             })}
@@ -399,7 +397,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 </div>
                                                                             </details>
                                                                         )}
-                                                        <RecentRacesFromEntriesNankan horse={horse} />
                                                                     </div>
                                                                 );
                                                             })}
@@ -462,7 +459,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 </div>
                                                                             </details>
                                                                         )}
-                                                        <RecentRacesFromEntriesNankan horse={horse} />
                                                                     </div>
                                                                 );
                                                             })}
@@ -527,7 +523,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                     </div>
                                                                                 </details>
                                                                             )}
-                                                        <RecentRacesFromEntriesNankan horse={horse} />
                                                                         </div>
                                                                     );
                                                                 })}
