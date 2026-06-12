@@ -2,6 +2,7 @@
 export const prerender = true;
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import AccessControl from '../../components/AccessControl.astro';
+import RecentRacesFromEntriesNankan from '../../components/RecentRacesFromEntriesNankan.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../../lib/archive-utils.js';
 import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.js';
@@ -743,6 +744,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 </div>
                                             </details>
                                         ); })()}
+                                        <RecentRacesFromEntriesNankan horse={horse} />
                                     </div>
                                     );
                                 })}
@@ -810,6 +812,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 </div>
                                                             </details>
                                                         )}
+                                                        <RecentRacesFromEntriesNankan horse={horse} />
                                                     </div>
                                                 );
                                             })}
@@ -876,6 +879,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 </div>
                                                             </details>
                                                         )}
+                                                        <RecentRacesFromEntriesNankan horse={horse} />
                                                     </div>
                                                 );
                                             })}
