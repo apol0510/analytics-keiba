@@ -18,6 +18,7 @@ import {
   buildStrategiesFromUmatanLines,
 } from '../utils/mainRaceBetting.js';
 import { injectRecentHorseHistoriesNankan } from './injectRecentHorseHistoriesNankan.js';
+import { injectEntriesRecentRacesNankan } from './injectEntriesRecentRacesNankan.js';
 
 // role → mark / role → 旧 type の対応
 const MARK_MAP = {
@@ -252,6 +253,14 @@ export function pickLatestNankanVenuesAndAdapt(modules) {
     injectRecentHorseHistoriesNankan(venues, latestDate, process.cwd());
   } catch (_e) {
     // 注入失敗は非致命。既存 recentRaces 表示を維持する。
+  }
+  // PR-F5e-1: 南関 entries(出馬表)由来の近走を別フィールド recentRacesFromEntriesNankan へ注入。
+  // 上の recentRacesFromHistoriesNankan / horse.recentRaces は不変。表示接続は F5e-2。
+  // 失敗時は非致命（何もしない・既存表示を維持）。
+  try {
+    injectEntriesRecentRacesNankan(venues, latestDate, process.cwd());
+  } catch (_e) {
+    // 注入失敗は非致命。既存表示を維持する。
   }
   return {
     raceDate: latestDate,
