@@ -714,29 +714,44 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                             </div>
                                         )}
 
-                                        {(() => { const recentRaces = getDisplayRecentRacesForNankan(horse); return Array.isArray(recentRaces) && recentRaces.length > 0 && (
-                                            <details class="recent-races">
+                                        {/* R1d-impl-v2: 既存「過去N走」アコーディオンを維持しつつ内部だけ整理（上がり3F/通過を優先表示・白カード不可） */}
+                                        {/* R1d-impl-v2b: entries は premium 近走アコーディオンの「表示専用ソース」。entries があれば優先し、無ければ既存 getDisplay を維持（正本順位は変更しない・recentHorseHistories fallback 正本にしない・docs §34.21） */}
+                                        {(() => {
+                                            const entriesRecentRaces = Array.isArray(horse.recentRacesFromEntriesNankan) ? horse.recentRacesFromEntriesNankan : [];
+                                            const recentRaces = entriesRecentRaces.length > 0 ? entriesRecentRaces : getDisplayRecentRacesForNankan(horse);
+                                            return Array.isArray(recentRaces) && recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-enhanced">
                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                 <div class="recent-races-list">
                                                     {recentRaces.slice(0, 5).map((r) => {
-                                                        const venue = r?.venue || '';
-                                                        const distance = r?.distance || '';
-                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
-                                                        const time = r?.time ? `タイム${r.time}` : '';
-                                                        const last3f = r?.last3f ? `上がり${r.last3f}` : '';
-                                                        const bw = r?.bodyWeight ? `馬体${r.bodyWeight}kg` : '';
-                                                        const pass = r?.passingOrder ? `通過${r.passingOrder}` : '';
-                                                        const jk = r?.jockey ? `騎手:${r.jockey}` : '';
+                                                        const ne = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+                                                        const pick = (...xs) => { for (const x of xs) { if (ne(x)) return String(x).trim(); } return ''; };
+                                                        const date = pick(r?.date, r?.raceDate);
+                                                        const venue = pick(r?.venue, r?.track, r?.trackName);
+                                                        const distance = pick(r?.distance);
+                                                        const cond = pick(r?.trackCondition, r?.going, r?.condition);
+                                                        const rankRaw = r?.rank ?? r?.finish ?? r?.order;
+                                                        const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : pick(r?.finishStatus);
+                                                        const pop = ne(r?.popularity) ? `${r.popularity}人気` : '';
+                                                        const time = ne(r?.time) ? `タイム${r.time}` : '';
+                                                        const margin = ne(r?.margin) ? `着差${r.margin}` : '';
+                                                        const last3f = (() => { const v = pick(r?.last3f, r?.lastThreeFurlong, r?.agari, r?.closing3f); return v ? `上がり${v}` : ''; })();
+                                                        const pass = (() => { const v = pick(r?.passingOrder, r?.cornerPassage, r?.corner); return v ? `通過${v}` : ''; })();
+                                                        const jk = ne(r?.jockey) ? `騎手:${r.jockey}` : '';
+                                                        const kin = (() => { const v = pick(r?.carriedWeight, r?.weight); return v ? `斤量${v}` : ''; })();
+                                                        const bw = ne(r?.bodyWeight) ? `馬体${r.bodyWeight}kg` : '';
+                                                        const raceName = pick(r?.raceName);
+                                                        const row1 = [date, venue, distance, cond].filter(Boolean);
+                                                        const row2 = [rank, pop, time, margin].filter(Boolean);
+                                                        const row3 = [last3f, pass].filter(Boolean);
+                                                        const row4 = [jk, kin, bw].filter(Boolean);
                                                         return (
-                                                            <div class="recent-race-row">
-                                                                <span class="recent-race-venue">{venue}</span>
-                                                                <span class="recent-race-distance">{distance}</span>
-                                                                <span class="recent-race-rank">{rank}</span>
-                                                                {time && <span class="recent-race-meta">{time}</span>}
-                                                                {jk && <span class="recent-race-meta">{jk}</span>}
-                                                                {pass && <span class="recent-race-meta">{pass}</span>}
-                                                                {last3f && <span class="recent-race-meta">{last3f}</span>}
-                                                                {bw && <span class="recent-race-meta">{bw}</span>}
+                                                            <div class="recent-race-card">
+                                                                {row1.length > 0 && <div class="recent-race-line recent-race-head">{row1.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
+                                                                {row2.length > 0 && <div class="recent-race-line recent-race-result">{row2.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
+                                                                {row3.length > 0 && <div class="recent-race-line recent-race-lap">{row3.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
+                                                                {row4.length > 0 && <div class="recent-race-line recent-race-meta">{row4.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
+                                                                {raceName && <div class="recent-race-line recent-race-name">{raceName}</div>}
                                                             </div>
                                                         );
                                                     })}
@@ -2755,6 +2770,30 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     .recent-race-rank { color: #10b981; font-weight: 700; }
     .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
     .recent-races-compact .recent-race-row { font-size: 0.72rem; }
+
+    /* R1d-impl-v2: 既存トーン準拠の近走カード（白背景禁止・dark/slate 系・上がり3F/通過を accent 強調） */
+    .recent-races-enhanced .recent-races-list { gap: 8px; }
+    .recent-race-card {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 6px 8px;
+        background: rgba(30, 41, 59, 0.45);
+        border: 1px solid rgba(100, 116, 139, 0.18);
+        border-radius: 6px;
+    }
+    .recent-race-line {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 10px;
+        align-items: baseline;
+    }
+    .recent-race-cell { color: #cbd5e1; font-size: 0.78rem; }
+    .recent-race-head .recent-race-cell:first-child { color: #e2e8f0; font-weight: 600; }
+    .recent-race-result .recent-race-cell:first-child { color: #10b981; font-weight: 700; }
+    .recent-race-lap .recent-race-cell { color: #38bdf8; font-size: 0.76rem; }
+    .recent-race-meta .recent-race-cell { color: #94a3b8; font-size: 0.74rem; }
+    .recent-race-name { color: #94a3b8; font-size: 0.72rem; line-height: 1.35; }
 
     @media (max-width: 640px) {
         .minor-horse-grid { grid-template-columns: 1fr; }
