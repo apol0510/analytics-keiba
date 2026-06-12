@@ -715,7 +715,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                         )}
 
                                         {/* R1d-impl-v2: 既存「過去N走」アコーディオンを維持しつつ内部だけ整理（上がり3F/通過を優先表示・白カード不可） */}
-                                        {(() => { const recentRaces = getDisplayRecentRacesForNankan(horse); return Array.isArray(recentRaces) && recentRaces.length > 0 && (
+                                        {/* R1d-impl-v2b: entries は premium 近走アコーディオンの「表示専用ソース」。entries があれば優先し、無ければ既存 getDisplay を維持（正本順位は変更しない・recentHorseHistories fallback 正本にしない・docs §34.21） */}
+                                        {(() => {
+                                            const entriesRecentRaces = Array.isArray(horse.recentRacesFromEntriesNankan) ? horse.recentRacesFromEntriesNankan : [];
+                                            const recentRaces = entriesRecentRaces.length > 0 ? entriesRecentRaces : getDisplayRecentRacesForNankan(horse);
+                                            return Array.isArray(recentRaces) && recentRaces.length > 0 && (
                                             <details class="recent-races recent-races-enhanced">
                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                 <div class="recent-races-list">
