@@ -1,0 +1,178 @@
+---
+/**
+ * NankanHorseDetailPanel.astro (analytics-keiba) — R1d-1
+ *
+ * 南関「馬詳細パネル」の preview 用 component。
+ * 契約: keiba-data-shared-admin docs/nankan-horse-detail-display-plan.md §34.16 / §34.17。
+ *
+ *   - 近走成績（C ブロック）を主役に、profile / entryInfo の最小項目を併記する。
+ *   - 近走は `horse.recentRacesFromEntriesNankan`（mapper 適用済み）だけを使う。
+ *     getDisplayRecentRacesForNankan は import しない（正本順位を変えない・fallback 化しない）。
+ *   - profile / entryInfo は predictions horse に既にある最小項目だけ任意表示
+ *     （馬番 / 馬名 / 性齢 / 父 / 騎手 / 斤量 / 調教師）。
+ *     毛色 / 母父 / 騎手所属 / 調教師所属 / 枠番 / 母馬名 / 生年月日 / 馬主 / 生産牧場 は R1d-1 では出さない。
+ *   - 値が null / undefined / 空文字なら表示しない。空ラベルだけ出さない。0埋めしない。
+ *     「取得なし」「不明」は出さない。距離 / 馬場状態は値がある場合のみ。
+ *   - 近走が空なら何も描画しない（呼び出し側は entries がある時だけ本 component を出す）。
+ *   - 予測スコア・評価記号・推奨系ロジック・オッズ・集計成績には接続しない。
+ *   - record / 1着馬または2着馬(opponentName) / postPosition は mapper 出力に無いため表示しない。
+ */
+const { horse, mode = 'premium', maxRecentRaces = 5 } = Astro.props;
+
+const isNonEmpty = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+
+const recent = Array.isArray(horse?.recentRacesFromEntriesNankan)
+  ? horse.recentRacesFromEntriesNankan.slice(0, maxRecentRaces)
+  : [];
+
+// profile / entryInfo は predictions horse 既存項目のみ（R1d-1）。空は出さない。
+// horse のフィールド名は predictions 生（horseNumber/horseName）と正規化後（number/name）の双方に対応する。
+const horseNumber = horse?.horseNumber ?? horse?.number;
+const horseName = horse?.horseName ?? horse?.name;
+
+const profile = [
+  isNonEmpty(horseNumber) && { label: '馬番', value: String(horseNumber) },
+  isNonEmpty(horse?.age) && { label: '性齢', value: String(horse.age) },
+  isNonEmpty(horse?.sire) && { label: '父', value: String(horse.sire) },
+].filter(Boolean);
+
+const entryInfo = [
+  isNonEmpty(horse?.jockey) && { label: '騎手', value: String(horse.jockey) },
+  isNonEmpty(horse?.weight) && { label: '斤量', value: String(horse.weight) },
+  isNonEmpty(horse?.trainer) && { label: '調教師', value: String(horse.trainer) },
+].filter(Boolean);
+
+const hasName = isNonEmpty(horseName);
+---
+{recent.length > 0 && (
+  <section class="nankan-horse-detail-panel" data-mode={mode}>
+    {(hasName || profile.length > 0) && (
+      <div class="nankan-horse-profile">
+        {hasName && <span class="nankan-horse-name">{horseName}</span>}
+        {profile.map((f) => (
+          <span class="nankan-field">
+            <span class="nankan-field-label">{f.label}</span>
+            <span class="nankan-field-value">{f.value}</span>
+          </span>
+        ))}
+      </div>
+    )}
+
+    {entryInfo.length > 0 && (
+      <div class="nankan-entry-info">
+        {entryInfo.map((f) => (
+          <span class="nankan-field">
+            <span class="nankan-field-label">{f.label}</span>
+            <span class="nankan-field-value">{f.value}</span>
+          </span>
+        ))}
+      </div>
+    )}
+
+    <div class="nankan-recent-races">
+      <div class="nankan-recent-heading">近走成績</div>
+      {recent.map((r) => {
+        const date = isNonEmpty(r?.date) ? String(r.date) : '';
+        const venue = isNonEmpty(r?.venue) ? String(r.venue) : '';
+        const distance = isNonEmpty(r?.distance) ? String(r.distance) : '';
+        const cond = isNonEmpty(r?.trackCondition) ? String(r.trackCondition) : '';
+        const rank = (r?.rank != null && Number.isFinite(Number(r.rank)))
+          ? `${r.rank}着`
+          : (isNonEmpty(r?.finishStatus) ? String(r.finishStatus) : '');
+        const pop = isNonEmpty(r?.popularity) ? `${r.popularity}番人気` : '';
+        const raceName = isNonEmpty(r?.raceName) ? String(r.raceName) : '';
+        const head = isNonEmpty(r?.headCount) ? `${r.headCount}頭` : '';
+        const time = isNonEmpty(r?.time) ? `タイム${r.time}` : '';
+        const margin = isNonEmpty(r?.margin) ? `着差${r.margin}` : '';
+        const last3f = isNonEmpty(r?.last3f) ? `上がり${r.last3f}` : '';
+        const pass = isNonEmpty(r?.passingOrder) ? `通過${r.passingOrder}` : '';
+        const jk = isNonEmpty(r?.jockey) ? `騎手:${r.jockey}` : '';
+        const kin = isNonEmpty(r?.carriedWeight) ? `斤量${r.carriedWeight}` : '';
+        const bw = isNonEmpty(r?.bodyWeight) ? `馬体${r.bodyWeight}kg` : '';
+        const metas = [raceName, head, cond, time, margin, last3f, pass, jk, kin, bw].filter(Boolean);
+        return (
+          <div class="nankan-recent-card">
+            <div class="nankan-recent-main">
+              {date && <span class="nankan-recent-date">{date}</span>}
+              {venue && <span class="nankan-recent-venue">{venue}</span>}
+              {distance && <span class="nankan-recent-distance">{distance}</span>}
+              {rank && <span class="nankan-recent-rank">{rank}</span>}
+              {pop && <span class="nankan-recent-pop">{pop}</span>}
+            </div>
+            {metas.length > 0 && (
+              <div class="nankan-recent-meta-row">
+                {metas.map((m) => (<span class="nankan-recent-meta">{m}</span>))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  </section>
+)}
+
+<style>
+  .nankan-horse-detail-panel {
+    margin-top: 0.5rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid #e2e6ea;
+    border-radius: 8px;
+    background: #fafbfc;
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+  .nankan-horse-profile,
+  .nankan-entry-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.6rem;
+    align-items: baseline;
+  }
+  .nankan-horse-profile { margin-bottom: 0.3rem; }
+  .nankan-entry-info {
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed #e2e6ea;
+  }
+  .nankan-horse-name {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #1f2a37;
+    margin-right: 0.2rem;
+  }
+  .nankan-field { display: inline-flex; align-items: baseline; gap: 0.2rem; }
+  .nankan-field-label { color: #7a8694; font-size: 0.72rem; }
+  .nankan-field-value { color: #1f2a37; }
+  .nankan-recent-heading {
+    font-weight: 600;
+    color: #46566a;
+    font-size: 0.78rem;
+    margin-bottom: 0.35rem;
+  }
+  .nankan-recent-card {
+    padding: 0.4rem 0.45rem;
+    border-radius: 6px;
+    background: #fff;
+    border: 1px solid #edf0f3;
+    margin-bottom: 0.35rem;
+  }
+  .nankan-recent-card:last-child { margin-bottom: 0; }
+  .nankan-recent-main {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: baseline;
+  }
+  .nankan-recent-date { color: #7a8694; font-size: 0.74rem; }
+  .nankan-recent-venue { font-weight: 600; color: #1f2a37; }
+  .nankan-recent-distance { color: #46566a; }
+  .nankan-recent-rank { font-weight: 700; color: #16407a; }
+  .nankan-recent-pop { color: #46566a; font-size: 0.76rem; }
+  .nankan-recent-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.5rem;
+    margin-top: 0.25rem;
+  }
+  .nankan-recent-meta { color: #57636f; font-size: 0.74rem; }
+</style>
