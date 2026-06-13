@@ -22,7 +22,7 @@ function compactRaceCells(r) {
   return {
     venue: pickCompactCell(r?.venue, r?.track, r?.trackName),
     distance: pickCompactCell(r?.distance),
-    rank: (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : '',
+    rank: (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : pickCompactCell(r?.finishStatus),
     time: pickCompactCell(r?.time),
     last3f: pickCompactCell(r?.last3f, r?.agari),
     bodyWeight: pickCompactCell(r?.bodyWeight, r?.weightBody),
