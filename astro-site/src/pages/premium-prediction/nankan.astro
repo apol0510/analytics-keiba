@@ -3396,6 +3396,39 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     }
     window.toggleNankanRace = toggleNankanRace;
 
+    // R1d-scroll-v1: 内側の過去走 <details> を後から開くと、親レースアコーディオン
+    // (.race-accordion-content) の固定 maxHeight を超えてクリップされる問題を解消する。
+    // admin docs §34.26。表示構造・データソース・通過順・コメント文言は変更しない（高さ再計算のみ）。
+    function recalculateOpenAccordionHeightFrom(el) {
+        const content = el && el.closest && el.closest('.race-accordion-content');
+        if (!content) return;
+        // レースアコーディオンが開いている時だけ再計算（閉じている＝maxHeight 0px/未設定 は触らない）
+        const mh = content.style.maxHeight;
+        if (mh === '0px' || mh === '') return;
+        // 内側 details の開閉が DOM に反映された後の scrollHeight で追従させる
+        requestAnimationFrame(() => {
+            content.style.maxHeight = content.scrollHeight + 'px';
+        });
+    }
+
+    // premium 南関ページ内の過去走 details(.recent-races) の toggle を監視。
+    function bindRecentRacesAccordionRecalc() {
+        document.querySelectorAll('details.recent-races').forEach((d) => {
+            if (d.dataset.r1dScrollBound === '1') return;
+            d.dataset.r1dScrollBound = '1';
+            d.addEventListener('toggle', () => {
+                recalculateOpenAccordionHeightFrom(d);
+                // 補助: 開いた details を視認範囲に入れる（主目的は上の maxHeight 再計算）
+                if (d.open) d.scrollIntoView({ block: 'nearest' });
+            });
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindRecentRacesAccordionRecalc);
+    } else {
+        bindRecentRacesAccordionRecalc();
+    }
+
     // テスト認証機能（開発環境用）
     window.setTestAuth = function(plan) {
         if (!['premium', 'standard', 'free'].includes(plan.toLowerCase())) {
