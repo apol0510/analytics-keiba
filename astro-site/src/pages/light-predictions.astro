@@ -557,6 +557,9 @@ export const dailyResultsData = {
                 <a href="/premium-upgrade/" class="btn-purchase-modal">
                   ⬆️ Premiumにアップグレード
                 </a>
+                <button type="button" class="btn-purchase-lifetime" onclick="openBankModal('Premium Lifetime', 78000, 'lifetime')">
+                  🎫 買い切りを購入（¥78,000）
+                </button>
               </div>
             </div>
           </div>
@@ -2147,7 +2150,8 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
 
     .btn-sample,
     .btn-archive,
-    .btn-purchase-modal {
+    .btn-purchase-modal,
+    .btn-purchase-lifetime {
         flex: 1;
         padding: 14px 20px;
         border-radius: 10px;
@@ -2197,6 +2201,18 @@ console.log('%c使用方法: setTestAuth("standard") または setTestAuth("prem
         background: linear-gradient(135deg, #ea580c, #dc2626);
         transform: translateY(-2px);
         box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);
+    }
+
+    .btn-purchase-lifetime {
+        background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+        color: white;
+        border: 2px solid rgba(139, 92, 246, 0.5);
+    }
+
+    .btn-purchase-lifetime:hover {
+        background: linear-gradient(135deg, #7c3aed, #5b21b6);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4);
     }
 
     .upsell-icon-wrapper {
