@@ -229,7 +229,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                     ? `${horse.ageNum}歳${horse.gender}`
                                                     : (horse.age || null);
                                                 const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
-                                                const recentRaces = getDisplayRecentRacesForNankan(horse);
+                                                const recentRaces = (Array.isArray(horse.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0) ? horse.recentRacesFromEntriesNankan : getDisplayRecentRacesForNankan(horse);
                                                 return (
                                                 <div class={cardClass}>
                                                     {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
@@ -314,7 +314,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                             <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                             <div class="recent-races-list">
                                                                 {recentRaces.slice(-5).reverse().map((r, i) => {
-                                                                    const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                    const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                     return (
                                                                         <div class="recent-race-row">
                                                                             <span class="recent-race-label">{RECENT_LABELS[i]}</span>
@@ -350,7 +350,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                             {raceHorses.filter(h => h.role === '連下' || h.role === '連下最上位').map((horse) => {
                                                                 const importanceArr = fsImportanceFor(featureScoresData, raceNum, horse.number) || (Array.isArray(horse.importance) && horse.importance.length >= 3 ? horse.importance : null);
                                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                                const recentRaces = getDisplayRecentRacesForNankan(horse);
+                                                                const recentRaces = (Array.isArray(horse.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0) ? horse.recentRacesFromEntriesNankan : getDisplayRecentRacesForNankan(horse);
                                                                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                                                 return (
                                                                     <div class="minor-horse-card minor-horse-card-renka">
@@ -381,7 +381,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
                                                                                     {recentRaces.slice(-5).reverse().map((r, i) => {
-                                                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                                        const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                                         return (
                                                                                             <div class="recent-race-row">
                                                                                                 <span class="recent-race-label">{RECENT_LABELS[i]}</span>
@@ -418,7 +418,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                         <div class="minor-horse-grid">
                                                             {sortOsaeCandidates(raceHorses.filter(isOsaeCandidate)).map((horse) => {
                                                                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                                const recentRaces = getDisplayRecentRacesForNankan(horse);
+                                                                const recentRaces = (Array.isArray(horse.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0) ? horse.recentRacesFromEntriesNankan : getDisplayRecentRacesForNankan(horse);
                                                                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                                                 return (
                                                                     <div class="minor-horse-card minor-horse-card-osae">
@@ -444,7 +444,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
                                                                                     {recentRaces.slice(-5).reverse().map((r, i) => {
-                                                                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                                        const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                                         return (
                                                                                             <div class="recent-race-row">
                                                                                                 <span class="recent-race-label">{RECENT_LABELS[i]}</span>
@@ -481,7 +481,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                 .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0))
                                                                 .map((horse) => {
                                                                     const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                                    const recentRaces = getDisplayRecentRacesForNankan(horse);
+                                                                    const recentRaces = (Array.isArray(horse.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0) ? horse.recentRacesFromEntriesNankan : getDisplayRecentRacesForNankan(horse);
                                                                     const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                                                                     const ptNum = Number(horse.pt);
                                                                     return (
@@ -508,7 +508,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                     <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                                     <div class="recent-races-list">
                                                                                         {recentRaces.slice(-5).reverse().map((r, i) => {
-                                                                                            const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                                                            const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                                             return (
                                                                                                 <div class="recent-race-row">
                                                                                                     <span class="recent-race-label">{RECENT_LABELS[i]}</span>
