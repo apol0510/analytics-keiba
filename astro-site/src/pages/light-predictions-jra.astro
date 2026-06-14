@@ -194,11 +194,11 @@ const latestResult = getLatestDayDataJra();
                         const isHit = raceDetail.isHit ?? raceDetail.hit;
                         const payout = raceDetail.umatan?.payout ?? raceDetail.payout ?? 0;
                         const betType = raceDetail.betType || (raceDetail.umatan ? '馬単' : '');
-                        const raceVenue = raceDetail.venue ? `（${raceDetail.venue}）` : '';
+                        const raceVenue = raceDetail.venue ? raceDetail.venue : '';
                         return isHit ? (
                             <div class="yesterday-race-card">
                                 <div class="yesterday-race-info">
-                                    <div class="yesterday-race-number">{raceDetail.raceNumber}R{raceVenue}</div>
+                                    <div class="yesterday-race-number">{raceVenue}{raceDetail.raceNumber}R</div>
                                     <div class="yesterday-race-name">{raceDetail.raceName || `第${raceDetail.raceNumber}レース`}</div>
                                 </div>
                                 <div class="yesterday-race-result">
@@ -685,14 +685,15 @@ const latestResult = getLatestDayDataJra();
         align-items: center;
         gap: 12px;
     }
-    .yesterday-bet-info { color: #94a3b8; font-size: 0.85rem; }
+    .yesterday-bet-info { color: #8b5cf6; font-size: 0.9rem; font-weight: 600; }
     .yesterday-hit-badge {
-        background: linear-gradient(135deg, #10b981, #059669);
-        color: white;
-        padding: 4px 10px;
-        border-radius: 8px;
-        font-size: 0.85rem;
-        font-weight: 700;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        padding: 0.4rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: bold;
+        border: 1px solid rgba(16, 185, 129, 0.3);
     }
     .yesterday-payout { color: #fbbf24; font-weight: 700; }
 
@@ -847,86 +848,112 @@ const latestResult = getLatestDayDataJra();
     .premium-icon { font-size: 1.1rem; }
     .premium-status-text { font-size: 0.95rem; }
 
-    /* Premium upsell card */
+    /* Premium upsell card（南関 Light と同じデザイン） */
     .sanrenpuku-upsell-section {
         margin-top: 40px;
-        margin-bottom: 0;
+        margin-bottom: 60px;
     }
     .sanrenpuku-upsell-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 20px;
         max-width: 1200px;
         margin: 0 auto;
-        background: linear-gradient(135deg, rgba(251, 191, 36, 0.08), rgba(139, 92, 246, 0.08));
-        border: 1px solid rgba(251, 191, 36, 0.3);
-        border-radius: 20px;
-        padding: 32px;
-        position: relative;
-        overflow: hidden;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(234, 88, 12, 0.2) 100%);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 16px;
+        padding: 24px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
     }
     .upsell-icon-wrapper {
-        position: absolute;
-        top: 22px;
-        right: 22px;
+        position: relative;
+        flex-shrink: 0;
     }
     .new-badge {
-        background: linear-gradient(135deg, #fbbf24, #f59e0b);
-        color: #1e1b4b;
-        padding: 4px 12px;
-        border-radius: 999px;
-        font-size: 0.78rem;
-        font-weight: 900;
-        letter-spacing: 0.05em;
+        position: absolute;
+        top: -8px;
+        right: -10px;
+        background: linear-gradient(135deg, #ef4444, #dc2626);
+        color: white;
+        font-size: 0.65rem;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
     }
-    .upsell-content { max-width: 900px; }
+    .upsell-content { flex: 1; }
     .upsell-title {
-        font-size: 1.6rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #fbbf24, #f59e0b);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin: 0 0 14px;
+        color: rgb(245, 158, 11);
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+        line-height: 1.2;
     }
     .upsell-description {
-        color: #e2e8f0;
-        line-height: 1.7;
-        margin-bottom: 18px;
+        color: rgba(226, 232, 240, 0.8);
+        font-size: 0.95rem;
+        line-height: 1.5;
+        margin-bottom: 8px;
     }
     .upsell-stats {
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        margin-bottom: 22px;
+        gap: 8px;
+        margin-bottom: 12px;
+        padding: 12px;
+        background: rgba(16, 185, 129, 0.1);
+        border-radius: 8px;
+        border: 1px solid rgba(16, 185, 129, 0.3);
     }
     .stat-highlight {
-        color: #cbd5e1;
+        color: rgb(16, 185, 129);
         font-size: 0.95rem;
+        font-weight: 700;
     }
     .upsell-buttons {
         display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
+        gap: 15px;
+        margin-top: 15px;
     }
     .btn-archive, .btn-purchase-modal {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 12px 22px;
-        border-radius: 12px;
+        flex: 1;
+        padding: 14px 20px;
+        border-radius: 10px;
         font-weight: 700;
+        font-size: 0.95rem;
         text-decoration: none;
-        transition: transform 0.2s, box-shadow 0.2s;
+        text-align: center;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        border: none;
+        display: inline-block;
     }
     .btn-archive {
-        background: rgba(15, 23, 42, 0.7);
-        border: 1px solid rgba(139, 92, 246, 0.35);
-        color: #e2e8f0;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.2));
+        color: #10b981;
+        border: 2px solid rgba(16, 185, 129, 0.4);
+    }
+    .btn-archive:hover {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.3));
+        border-color: rgba(16, 185, 129, 0.6);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);
     }
     .btn-purchase-modal {
-        background: linear-gradient(135deg, #fbbf24, #f59e0b);
-        color: #1e1b4b;
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        color: white;
+        border: 2px solid rgba(245, 158, 11, 0.5);
     }
-    .btn-archive:hover, .btn-purchase-modal:hover {
+    .btn-purchase-modal:hover {
+        background: linear-gradient(135deg, #ea580c, #dc2626);
         transform: translateY(-2px);
-        box-shadow: 0 10px 20px rgba(0,0,0,0.25);
+        box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);
+    }
+    @media (max-width: 768px) {
+        .sanrenpuku-upsell-card { flex-direction: column; }
+        .upsell-buttons { flex-direction: column; gap: 12px; }
     }
 </style>
