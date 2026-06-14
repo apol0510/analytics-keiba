@@ -1057,7 +1057,7 @@ const analysis = firstVenue.mainRace.analysis;
         margin-top: 10px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
     }
     .recent-race-row {
         display: flex;
@@ -1076,8 +1076,16 @@ const analysis = firstVenue.mainRace.analysis;
     .recent-race-rank { color: #10b981; font-weight: 700; }
     .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
     .recent-races-compact .recent-race-row { font-size: 0.72rem; }
-    /* 過去5走 可読性: 1走を3サブ行に整理し、項目ごとに色を付ける */
-    .recent-race-row-detail { flex-direction: column; gap: 3px; align-items: stretch; }
+    /* 過去5走 可読性: 1走を3サブ行に整理し、項目ごとに色を付ける。1走ごとに薄い枠で小カード化 */
+    .recent-race-row-detail {
+        flex-direction: column;
+        gap: 4px;
+        align-items: stretch;
+        padding: 8px 10px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.32);
+    }
     .recent-race-line { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
     .recent-race-line-main { font-weight: 600; }
     .recent-race-line-performance { padding-left: 0.2em; }
