@@ -18,7 +18,7 @@ import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 function neCompactCell(v) { return v !== null && v !== undefined && String(v).trim() !== ''; }
 function pickCompactCell(...xs) { for (const x of xs) { if (neCompactCell(x)) return String(x).trim(); } return ''; }
 function compactRaceCells(r) {
-  const rankRaw = r?.rank ?? r?.finish ?? r?.position;
+  const rankRaw = r?.rank ?? r?.finish;
   return {
     venue: pickCompactCell(r?.venue, r?.track, r?.trackName),
     distance: pickCompactCell(r?.distance),
@@ -748,7 +748,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                         const venue = pick(r?.venue, r?.track, r?.trackName);
                                                         const distance = pick(r?.distance);
                                                         const cond = pick(r?.trackCondition, r?.going, r?.condition);
-                                                        const rankRaw = r?.rank ?? r?.finish ?? r?.order;
+                                                        const rankRaw = r?.rank ?? r?.finish;
                                                         const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : pick(r?.finishStatus);
                                                         const pop = ne(r?.popularity) ? `${r.popularity}人気` : '';
                                                         const time = ne(r?.time) ? `タイム${r.time}` : '';
