@@ -39,6 +39,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
             <!-- 年払い -->
             <div class="plan-card">
+                <div class="plan-badge-secondary">おすすめ</div>
                 <h3 class="plan-card-name">Premium 年払い</h3>
                 <p class="plan-card-subtitle">年間一括でお得に利用</p>
                 <div class="plan-card-price">¥49,800</div>
@@ -473,6 +474,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     .plan-badge-recommended {
         display: inline-block;
         background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: white;
+        padding: 0.4rem 1.2rem;
+        border-radius: 9999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }
+
+    .plan-badge-secondary {
+        display: inline-block;
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
         color: white;
         padding: 0.4rem 1.2rem;
         border-radius: 9999px;
