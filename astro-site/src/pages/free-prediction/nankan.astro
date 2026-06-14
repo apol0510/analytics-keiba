@@ -317,12 +317,12 @@ const analysis = firstVenue.mainRace.analysis;
                                                                     const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                     return (
                                                                         <div class="recent-race-row">
-                                                                            <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                                            <span class="recent-race-label">{RECENT_LABELS[i]}</span>{r?.date && <span class="recent-race-meta">{r.date}</span>}
                                                                             <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                            <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                            <span class="recent-race-rank">{rank}</span>
+                                                                            <span class="recent-race-distance">{r?.distance || ''}</span>{r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                                                            <span class="recent-race-rank">{rank}</span>{r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
                                                                             {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                            {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                            {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}{r?.margin && <span class="recent-race-meta">着差{r.margin}</span>}{r?.passingOrder && <span class="recent-race-meta">通過{r.passingOrder}</span>}{r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}{r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}{r?.raceName && <span class="recent-race-meta">{r.raceName}</span>}{r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
                                                                             {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
                                                                         </div>
                                                                     );
@@ -384,12 +384,12 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                         const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                                         return (
                                                                                             <div class="recent-race-row">
-                                                                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>{r?.date && <span class="recent-race-meta">{r.date}</span>}
                                                                                                 <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                                <span class="recent-race-rank">{rank}</span>
+                                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>{r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                                                                                <span class="recent-race-rank">{rank}</span>{r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
                                                                                                 {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}{r?.margin && <span class="recent-race-meta">着差{r.margin}</span>}{r?.passingOrder && <span class="recent-race-meta">通過{r.passingOrder}</span>}{r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}{r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}{r?.raceName && <span class="recent-race-meta">{r.raceName}</span>}{r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
                                                                                                 {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
                                                                                             </div>
                                                                                         );
@@ -447,12 +447,12 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                         const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                                         return (
                                                                                             <div class="recent-race-row">
-                                                                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                                                                <span class="recent-race-label">{RECENT_LABELS[i]}</span>{r?.date && <span class="recent-race-meta">{r.date}</span>}
                                                                                                 <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                                <span class="recent-race-rank">{rank}</span>
+                                                                                                <span class="recent-race-distance">{r?.distance || ''}</span>{r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                                                                                <span class="recent-race-rank">{rank}</span>{r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
                                                                                                 {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}{r?.margin && <span class="recent-race-meta">着差{r.margin}</span>}{r?.passingOrder && <span class="recent-race-meta">通過{r.passingOrder}</span>}{r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}{r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}{r?.raceName && <span class="recent-race-meta">{r.raceName}</span>}{r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
                                                                                             </div>
                                                                                         );
                                                                                     })}
@@ -511,12 +511,12 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                             const rankRaw = r?.rank ?? r?.finish; const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : (r?.finishStatus || '');
                                                                                             return (
                                                                                                 <div class="recent-race-row">
-                                                                                                    <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                                                                    <span class="recent-race-label">{RECENT_LABELS[i]}</span>{r?.date && <span class="recent-race-meta">{r.date}</span>}
                                                                                                     <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                                                                    <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                                                                    <span class="recent-race-rank">{rank}</span>
+                                                                                                    <span class="recent-race-distance">{r?.distance || ''}</span>{r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                                                                                    <span class="recent-race-rank">{rank}</span>{r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
                                                                                                     {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                                                                    {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                                                                    {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}{r?.margin && <span class="recent-race-meta">着差{r.margin}</span>}{r?.passingOrder && <span class="recent-race-meta">通過{r.passingOrder}</span>}{r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}{r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}{r?.raceName && <span class="recent-race-meta">{r.raceName}</span>}{r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
                                                                                                 </div>
                                                                                             );
                                                                                         })}
