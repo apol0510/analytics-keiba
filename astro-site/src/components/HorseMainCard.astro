@@ -78,6 +78,57 @@ const jraHistoryCtx = (() => {
         wStr && { label: '斤量', value: wStr },
         horse.trainer && { label: '調教師', value: horse.trainer },
     ].filter(Boolean);
+    // 条件別成績（premium JRA 同方式）: 芝 / ダート / 同距離±200m / 同会場。rank 数値の走のみ集計。
+    const condCount = (arr) => ({
+        n: arr.length,
+        w: arr.filter((r) => Number(r.rank) === 1).length,
+        p2: arr.filter((r) => Number(r.rank) === 2).length,
+        p3: arr.filter((r) => Number(r.rank) === 3).length,
+    });
+    const fmtCond = (s) => {
+        let out = `${s.n}戦 ${s.w}-${s.p2}-${s.p3}`;
+        if (s.n > 0) out += `（3着内${Math.round(((s.w + s.p2 + s.p3) / s.n) * 100)}%）`;
+        return out;
+    };
+    const turf = condCount(ranked.filter((r) => r.surface === '芝'));
+    const dirt = condCount(ranked.filter((r) => r.surface === 'ダ'));
+    const raceDist = Number.isFinite(Number(horse._raceDistanceMeters)) ? Number(horse._raceDistanceMeters) : null;
+    const raceVenue = horse._raceVenueName || null;
+    const sameDist = raceDist != null
+        ? condCount(ranked.filter((r) => Number.isFinite(Number(r.distanceMeters)) && Math.abs(Number(r.distanceMeters) - raceDist) <= 200))
+        : null;
+    const sameVenue = raceVenue ? condCount(ranked.filter((r) => r.venue === raceVenue)) : null;
+    const condRows = [
+        turf.n > 0 && { label: '芝', stat: fmtCond(turf) },
+        dirt.n > 0 && { label: 'ダート', stat: fmtCond(dirt) },
+        sameDist && sameDist.n > 0 && { label: `同距離±200m（${raceDist}m基準）`, stat: fmtCond(sameDist) },
+        sameVenue && sameVenue.n > 0 && { label: `同会場（${raceVenue}）`, stat: fmtCond(sameVenue) },
+    ].filter(Boolean);
+    // 競走成績（最大10走）: rank は finish 由来（order は使わない）。非数値は finishStatus 単独。
+    const display = jraHistory.slice(0, 10);
+    const overflow = jraHistory.length - display.length;
+    const rows = display.map((r) => {
+        const rankNum = Number(r.rank);
+        const hasFinishStatus = !!r.finishStatus;
+        const hasRank = r.rank != null && Number.isFinite(rankNum) && !hasFinishStatus;
+        const isGood = Number.isFinite(rankNum) && rankNum < 4;
+        return {
+            dateStr: r._dateStr || '',
+            venue: r.venue || '',
+            dist: r._displayDistance || '',
+            hasRank,
+            rank: rankNum,
+            isGood,
+            hasFinishStatus,
+            finishStatus: r.finishStatus || '',
+            hasPop: r.popularity !== '' && r.popularity != null,
+            popularity: r.popularity,
+            raceName: r.raceName || '',
+            jockey: r.jockey || '',
+            bodyWeight: r.bodyWeight ?? '',
+            time: r.time || '',
+        };
+    });
     return {
         count: jraHistory.length,
         hasRanked: total > 0,
@@ -87,6 +138,12 @@ const jraHistoryCtx = (() => {
         winPctStr: `${pct(w)}%`,
         placePctStr: `${pct(w + p2)}%`,
         showPctStr: `${pct(w + p2 + p3)}%`,
+        hasCondRows: condRows.length > 0,
+        condRows,
+        sectionLabel: jraHistory.length > 10 ? '競走成績（直近10走）' : '競走成績',
+        rows,
+        hasOverflow: overflow > 0,
+        overflow,
     };
 })();
 const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
@@ -262,6 +319,44 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
                             <div class="jra-history-rec"><span class="jra-history-rec-label">勝率</span><span class="jra-history-rec-value">{jraHistoryCtx.winPctStr}</span></div>
                             <div class="jra-history-rec"><span class="jra-history-rec-label">連対率</span><span class="jra-history-rec-value">{jraHistoryCtx.placePctStr}</span></div>
                             <div class="jra-history-rec"><span class="jra-history-rec-label">3着内率</span><span class="jra-history-rec-value">{jraHistoryCtx.showPctStr}</span></div>
+                        </div>
+                    </div>
+                )}
+                {jraHistoryCtx.hasCondRows && (
+                    <div class="jra-history-section">
+                        <div class="jra-history-section-label">条件別成績</div>
+                        <div class="jra-history-cond-list">
+                            {jraHistoryCtx.condRows.map((row) => (
+                                <div class="jra-history-cond-row"><span class="jra-history-cond-label">{row.label}</span><span class="jra-history-cond-stat">{row.stat}</span></div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {jraHistoryCtx.rows.length > 0 && (
+                    <div class="jra-history-section">
+                        <div class="jra-history-section-label">{jraHistoryCtx.sectionLabel}</div>
+                        <div class="jra-history-list">
+                            {jraHistoryCtx.rows.map((row) => (
+                                <div class="jra-history-row">
+                                    <div class="jra-hh-line jra-hh-primary">
+                                        {row.dateStr && <span class="jra-hh-date">{row.dateStr}</span>}
+                                        {row.venue && <span class="jra-hh-venue">{row.venue}</span>}
+                                        {row.dist && <span class="jra-hh-dist">{row.dist}</span>}
+                                        {row.hasFinishStatus && <span class="jra-hh-status">{row.finishStatus}</span>}
+                                        {row.hasRank && <span class={`jra-hh-rank ${row.isGood ? 'good' : ''}`}>{row.rank}着</span>}
+                                        {row.hasPop && <span class="jra-hh-pop">{row.popularity}人気</span>}
+                                    </div>
+                                    <div class="jra-hh-line jra-hh-secondary">
+                                        {row.raceName && <span class="jra-hh-name">{row.raceName}</span>}
+                                        {row.jockey && <span class="jra-hh-jk">{row.jockey}</span>}
+                                        {row.bodyWeight && <span class="jra-hh-bw">{row.bodyWeight}kg</span>}
+                                        {row.time && <span class="jra-hh-time">{row.time}</span>}
+                                    </div>
+                                </div>
+                            ))}
+                            {jraHistoryCtx.hasOverflow && (
+                                <div class="jra-hh-overflow">他{jraHistoryCtx.overflow}走あり</div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -711,4 +806,30 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
     }
     .jra-history-rec-label { color: #94a3b8; font-size: 0.68rem; }
     .jra-history-rec-value { color: #e2e8f0; font-weight: 700; font-size: 0.82rem; }
+    /* 条件別成績 */
+    .jra-history-cond-list { display: flex; flex-direction: column; gap: 4px; }
+    .jra-history-cond-row {
+        display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
+        font-size: 0.76rem; padding: 3px 0;
+    }
+    .jra-history-cond-label { color: #cbd5e1; font-weight: 600; min-width: 5.5rem; }
+    .jra-history-cond-stat { color: #94a3b8; }
+    /* 競走成績リスト */
+    .jra-history-list { display: flex; flex-direction: column; gap: 6px; }
+    .jra-history-row {
+        display: flex; flex-direction: column; gap: 2px;
+        padding: 5px 7px; border-radius: 6px;
+        background: rgba(30, 41, 59, 0.4);
+    }
+    .jra-hh-line { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: baseline; font-size: 0.74rem; }
+    .jra-hh-secondary { font-size: 0.72rem; color: #94a3b8; }
+    .jra-hh-date { color: #94a3b8; }
+    .jra-hh-venue { color: #e2e8f0; font-weight: 600; }
+    .jra-hh-dist { color: #cbd5e1; }
+    .jra-hh-rank { color: #cbd5e1; font-weight: 700; }
+    .jra-hh-rank.good { color: #10b981; }
+    .jra-hh-status { color: #94a3b8; font-weight: 600; }
+    .jra-hh-pop { color: #94a3b8; }
+    .jra-hh-name { color: #cbd5e1; }
+    .jra-hh-overflow { color: #64748b; font-size: 0.72rem; padding: 2px 0; }
 </style>
