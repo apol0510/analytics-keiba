@@ -7,6 +7,27 @@ import { convertToYesterdayResultsJra, getLatestDayDataJra } from '../lib/archiv
 import { PLAN_ACCESS } from '../lib/race-config.js';
 import RaceHorseSection from '../components/RaceHorseSection.astro';
 import { pickLatestJraPrediction, adaptNewToLegacy } from '../lib/adaptLatestPrediction.js';
+// premium JRA と同じ shared featureScores 由来の AK3項目で特徴量重要度を揃える（表示専用・読むだけ）。
+import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../lib/loadFeatureScores.js';
+import { deriveAkImportance } from '../lib/akFeatureSummary.js';
+
+// 算出可能な馬のみ horse.importance を shared featureScores 由来へ差し替える。
+// 算出不能（fs6 無し / 全項目 null）の馬は既存 horse.importance（computeImportance 由来）を維持。
+// featureScores の生成・計算には一切関与しない（premium-prediction/jra.astro と同方式）。
+function applyAkImportanceJra(horses, featureScoresData, raceNumber) {
+    if (!featureScoresData || !Array.isArray(horses)) return horses;
+    for (const horse of horses) {
+        if (!horse) continue;
+        const fs6 = getHorseFeatures(featureScoresData, raceNumber, horse.horseNumber ?? horse.number);
+        const akImp = fs6 ? deriveAkImportance(fs6) : null;
+        // deriveAkImportance は 0〜100。共有 component は value×100 で描画するため 0〜1 に正規化して揃える。
+        // 全項目が揃う馬のみ差し替え（部分欠損は既存 importance を維持し 0%/NaN を避ける）。
+        if (Array.isArray(akImp) && akImp.length > 0 && akImp.every((it) => it.value != null)) {
+            horse.importance = akImp.map((it) => ({ label: it.label, value: Number(it.value) / 100 }));
+        }
+    }
+    return horses;
+}
 
 // 🔧 requiredPlan="standard" は AccessControl 内のプラン階層キー（canonical）。
 // 'light' / 'standard' は両方とも「Lightプラン」として表示される。
@@ -58,6 +79,9 @@ const venuesView = adaptedVenues.map(({ venueName, adapted }) => {
         return standardRaceNumbers.includes(raceNum);
     });
 
+    // premium JRA と同方式: 会場単位で shared featureScores を1回ロード（読むだけ）。
+    const featureScoresData = loadFeatureScores('jra', adapted.raceDate, venueCodeFromName('jra', venueName));
+
     return {
         venueName,
         track: adapted.track,
@@ -66,6 +90,7 @@ const venuesView = adaptedVenues.map(({ venueName, adapted }) => {
         sortedRaces,
         standardRaces,
         mainRace,
+        featureScoresData,
     };
 });
 
@@ -248,6 +273,7 @@ const latestResult = getLatestDayDataJra();
                             {v.sortedRaces.filter(race => !race.isMainRace).map((raceData) => {
                                 const normalizedHorses = normalizeHorseData(raceData) || [];
                                 const raceHorses = Array.isArray(normalizedHorses) ? normalizedHorses : [];
+                                applyAkImportanceJra(raceHorses, v.featureScoresData, parseInt(raceData.raceNumber));
                                 const raceNum = raceData.raceNumber.replace('R', '');
                                 const accordionId = `jra-${vIdx}-preview-${raceNum}r`;
                                 const iconId = `jra-${vIdx}-toggle-preview-${raceNum}r`;
@@ -298,6 +324,7 @@ const latestResult = getLatestDayDataJra();
                     const isMainRace = raceData.isMainRace;
                     const normalizedHorses = normalizeHorseData(raceData) || [];
                     const raceHorses = Array.isArray(normalizedHorses) ? normalizedHorses : [];
+                    applyAkImportanceJra(raceHorses, v.featureScoresData, parseInt(raceData.raceNumber));
 
                     const integrity = validateDataIntegrity(raceData);
                     if (integrity.length > 0) {
