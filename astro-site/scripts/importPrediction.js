@@ -420,7 +420,7 @@ async function fetchRacebookPastRaces(date, category = 'nankan') {
               data.recentRaces = horse.pastRaces.slice(0, 5).map(pr => ({
                 date: null, venue: pr.venue || null, distance: pr.distance || null,
                 rank: pr.finish, finishStatus: null, headCount: null,
-                raceName: pr.raceClass || null, popularity: null,
+                raceName: pr.raceName || pr.raceClass || null, popularity: null,
                 passingOrder: null, last3f: pr.final3F || null,
                 time: pr.time || null, paceType: pr.paceType || null,
                 bodyWeight: pr.bodyWeight || null, winner: pr.winner || null
@@ -798,7 +798,7 @@ function convertToLegacyFormat(data, date, horseDataMap = null) {
             horseObj.recentRaces = h._pastRaces.slice(0, 5).map(pr => ({
               date: null, venue: pr.venue || null, distance: pr.distance || null,
               rank: pr.finish, finishStatus: null, headCount: null,
-              raceName: pr.raceClass || null, popularity: null,
+              raceName: pr.raceName || pr.raceClass || null, popularity: null,
               passingOrder: null, last3f: pr.final3F || null,
               time: pr.time || null, paceType: pr.paceType || null,
               bodyWeight: pr.bodyWeight || null, winner: pr.winner || null
