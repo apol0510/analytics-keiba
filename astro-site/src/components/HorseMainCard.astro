@@ -108,9 +108,6 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
                 {horse.frame != null && (
                     <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
                 )}
-                {getHorseAiIndex(horse) != null && (
-                    <div class="info-line"><span class="info-key">指数</span><span class="info-val info-val-strong">{getHorseAiIndex(horse)}</span></div>
-                )}
                 {(horse.sire || horse._sire) && (
                     <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire || horse._sire}</span></div>
                 )}
@@ -151,7 +148,7 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
 
     {recentRaces.length > 0 && (
         <details class="recent-races">
-            <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+            <summary>過去5走</summary>
             <div class="recent-races-list">
                 {recentRaces.slice(0, 5).map((r, i) => {
                     const rankRaw = r?.rank ?? r?.finish;
