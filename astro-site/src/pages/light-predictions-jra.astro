@@ -34,7 +34,7 @@ function applyAkImportanceJra(horses, featureScoresData, raceNumber) {
 // premium JRA と同方式: JRA horseHistories の recent5（当日除外・最大5走）を表示用 recentRaces に差し替える。
 // histories が無い馬は既存 recentRaces を維持。表示専用（pt/印/ロール/featureScores 等の計算入力は変えない）。
 // rank は finish 由来（order は使わない）。convertHistoryRaceToRecentShape の shape は premium JRA recent5 と同一。
-function applyHorseHistoriesJra(horses, nameIndex, date) {
+function applyHorseHistoriesJra(horses, nameIndex, date, raceVenue, raceDistanceMeters) {
     if (!nameIndex || !Array.isArray(horses)) return horses;
     for (const horse of horses) {
         if (!horse) continue;
@@ -47,10 +47,13 @@ function applyHorseHistoriesJra(horses, nameIndex, date) {
             // 南関 light はこのフラグを付けないため、既存カード表示のまま影響しない。
             horse.isJraHistoryEnriched = true;
         }
-        // 過去走データ accordion（プロフィール / 通算成績）用の詳細データ。premium JRA と同じ pickHistoryForDetails。
+        // 過去走データ accordion（プロフィール / 通算成績 / 条件別成績 / 競走成績）用の詳細データ。
         const details = pickHistoryForDetails(histHorse, date);
         if (Array.isArray(details) && details.length > 0) {
             horse.historyForDetails = details;
+            // 条件別成績の「同距離 / 同会場」集計用に当日レースの会場・距離を表示専用で添える。
+            if (raceVenue) horse._raceVenueName = raceVenue;
+            if (Number.isFinite(raceDistanceMeters)) horse._raceDistanceMeters = raceDistanceMeters;
         }
     }
     return horses;
@@ -307,7 +310,7 @@ const latestResult = getLatestDayDataJra();
                                 const normalizedHorses = normalizeHorseData(raceData) || [];
                                 const raceHorses = Array.isArray(normalizedHorses) ? normalizedHorses : [];
                                 applyAkImportanceJra(raceHorses, v.featureScoresData, parseInt(raceData.raceNumber));
-                                applyHorseHistoriesJra(raceHorses, v.historiesIndex, v.raceDate);
+                                applyHorseHistoriesJra(raceHorses, v.historiesIndex, v.raceDate, v.venueName, parseInt(String(raceData?.raceInfo?.distance ?? '').replace(/[^0-9]/g, '')) || null);
                                 const raceNum = raceData.raceNumber.replace('R', '');
                                 const accordionId = `jra-${vIdx}-preview-${raceNum}r`;
                                 const iconId = `jra-${vIdx}-toggle-preview-${raceNum}r`;
@@ -359,7 +362,7 @@ const latestResult = getLatestDayDataJra();
                     const normalizedHorses = normalizeHorseData(raceData) || [];
                     const raceHorses = Array.isArray(normalizedHorses) ? normalizedHorses : [];
                     applyAkImportanceJra(raceHorses, v.featureScoresData, parseInt(raceData.raceNumber));
-                    applyHorseHistoriesJra(raceHorses, v.historiesIndex, v.raceDate);
+                    applyHorseHistoriesJra(raceHorses, v.historiesIndex, v.raceDate, v.venueName, parseInt(String(raceData?.raceInfo?.distance ?? '').replace(/[^0-9]/g, '')) || null);
 
                     const integrity = validateDataIntegrity(raceData);
                     if (integrity.length > 0) {
