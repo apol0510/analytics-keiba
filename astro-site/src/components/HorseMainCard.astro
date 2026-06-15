@@ -49,11 +49,12 @@ const cardClass = horse.role === '本命'
     : horse.role === '対抗'
         ? 'horse-card horse-card-sub'
         : 'horse-card horse-card-tana';
-const filledStars = (horse.stars || '★').length;
 const pt = horse.pt ?? 0;
 const importance = horse.importance && horse.importance.length > 0 ? horse.importance : null;
 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-const recentRaces = getDisplayRecentRacesForNankan(horse);
+const recentRaces = (Array.isArray(horse?.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0)
+    ? horse.recentRacesFromEntriesNankan
+    : getDisplayRecentRacesForNankan(horse);
 const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
     ? `${horse.weight}kg`
     : null;
@@ -80,19 +81,12 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
             <div class="stat-label">累積スコア</div>
             <div class="stat-value stat-score">{pt}<span class="stat-unit">pt</span></div>
         </div>
-        <div class="stat-block stat-stars-block">
-            <div class="stat-label">総合評価</div>
-            <div class="star-rating" aria-label={`総合評価 ${filledStars}つ星 信頼度${horse.confidence ?? ''}`}>
-                <span class="star-row">
-                    {[1, 2, 3, 4].map((i) => (
-                        <span class={`star ${i <= filledStars ? 'star-filled' : 'star-empty'}`}>★</span>
-                    ))}
-                </span>
-                {horse.confidence != null && (
-                    <span class="confidence-num">（{horse.confidence}）</span>
-                )}
+        {getHorseAiIndex(horse) != null && (
+            <div class="stat-block stat-index-block">
+                <div class="stat-label">AI総合指数</div>
+                <div class="stat-value stat-index">{getHorseAiIndex(horse)}</div>
             </div>
-        </div>
+        )}
     </div>
 
     {hasBasicInfo && (
@@ -137,25 +131,17 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
 
     {importance && (
         <div class="feature-importance">
-            {/* 2026-05-14: 「特徴量重要度 95%」 → 「評価材料 85点」表記に変更。
-                バーの満タンも 85点満点で計算（item.point は computeImportance が
-                role-aware に 65-85 帯で返す。バーの最大幅は (point/85)*100 %）。
-                旧 item.value (0-1 比率) しか持たない古いデータには
-                value*100 を point 換算（×0.85）してフォールバック表示。 */}
-            <h4>評価材料</h4>
+            <h4>特徴量重要度</h4>
             <div class="importance-list">
                 {importance.map((item) => {
-                    const point = (item.point != null && Number.isFinite(Number(item.point)))
-                        ? Number(item.point)
-                        : Math.round((Number(item.value) || 0) * 85);
-                    const barWidth = Math.max(0, Math.min(100, (point / 85) * 100));
+                    const pct = Math.max(0, Math.min(100, Math.round((Number(item.value) || 0) * 100)));
                     return (
                         <div class="importance-item">
                             <span class="importance-label">{item.label}</span>
                             <div class="importance-bar">
-                                <div class="importance-fill" style={`width: ${barWidth}%`}></div>
+                                <div class="importance-fill" style={`width: ${pct}%`}></div>
                             </div>
-                            <span class="importance-percent">{point}点</span>
+                            <span class="importance-percent">{pct}%</span>
                         </div>
                     );
                 })}
@@ -167,25 +153,41 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
         <details class="recent-races">
             <summary>過去{Math.min(5, recentRaces.length)}走</summary>
             <div class="recent-races-list">
-                {recentRaces.slice(0, 5).map((r) => {
-                    const venue = r?.venue || '';
-                    const distance = r?.distance || '';
-                    const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
-                    const time = r?.time ? `タイム${r.time}` : '';
-                    const last3f = r?.last3f ? `上がり${r.last3f}` : '';
-                    const bw = r?.bodyWeight ? `馬体${r.bodyWeight}kg` : '';
-                    const pass = r?.passingOrder ? `通過${r.passingOrder}` : '';
-                    const jk = r?.jockey ? `騎手:${r.jockey}` : '';
+                {recentRaces.slice(0, 5).map((r, i) => {
+                    const rankRaw = r?.rank ?? r?.finish;
+                    const isNum = (rankRaw != null && Number.isFinite(Number(rankRaw)));
+                    const rank = isNum ? `${rankRaw}着` : (r?.finishStatus || '');
+                    const label = i === 0 ? '前走' : `${i + 1}走前`;
+                    const hasPerf = r?.time || r?.last3f || r?.margin || r?.passingOrder || r?.bodyWeight;
+                    const hasMeta = r?.jockey || r?.carriedWeight || r?.raceName || r?.headCount;
                     return (
-                        <div class="recent-race-row">
-                            <span class="recent-race-venue">{venue}</span>
-                            <span class="recent-race-distance">{distance}</span>
-                            <span class="recent-race-rank">{rank}</span>
-                            {time && <span class="recent-race-meta">{time}</span>}
-                            {jk && <span class="recent-race-meta">{jk}</span>}
-                            {pass && <span class="recent-race-meta">{pass}</span>}
-                            {last3f && <span class="recent-race-meta">{last3f}</span>}
-                            {bw && <span class="recent-race-meta">{bw}</span>}
+                        <div class="recent-race-card">
+                            <div class="recent-race-line recent-race-line-main">
+                                <span class="recent-race-tag">{label}</span>
+                                {r?.date && <span class="recent-race-meta">{r.date}</span>}
+                                {r?.venue && <span class="recent-race-venue">{r.venue}</span>}
+                                {r?.distance && <span class="recent-race-distance">{r.distance}</span>}
+                                {r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                {rank && <span class="recent-race-rank">{rank}</span>}
+                                {r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
+                            </div>
+                            {hasPerf && (
+                                <div class="recent-race-line recent-race-line-perf">
+                                    {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                    {r?.last3f && <span class="recent-race-meta recent-race-last3f">上がり{r.last3f}</span>}
+                                    {r?.margin && <span class="recent-race-meta recent-race-margin">着差{r.margin}</span>}
+                                    {r?.passingOrder && <span class="recent-race-meta recent-race-passing">通過{r.passingOrder}</span>}
+                                    {r?.bodyWeight && <span class="recent-race-meta">馬体{r.bodyWeight}kg</span>}
+                                </div>
+                            )}
+                            {hasMeta && (
+                                <div class="recent-race-line recent-race-line-meta">
+                                    {r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}
+                                    {r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}
+                                    {r?.raceName && <span class="recent-race-meta recent-race-name">{r.raceName}</span>}
+                                    {r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
+                                </div>
+                            )}
                         </div>
                     );
                 })}
@@ -280,7 +282,7 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
         box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
     }
 
-    /* 累積スコア + 総合評価 を横並び stat-block で表示 */
+    /* 累積スコア + AI総合指数 を横並び stat-block で表示 */
     .horse-stats-row {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -321,24 +323,11 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
         margin-left: 2px;
         opacity: 0.9;
     }
-    .star-rating {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        flex-wrap: wrap;
-    }
-    .star-row { display: inline-flex; gap: 2px; }
-    .star {
-        font-size: 1.3rem;
-        line-height: 1;
-    }
-    .star-filled { color: #fbbf24; }
-    .star-empty { color: rgba(148, 163, 184, 0.35); }
-    .confidence-num {
-        margin-left: 6px;
-        color: #94a3b8;
-        font-size: 0.85rem;
-        font-weight: 600;
+    .stat-index {
+        background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
     }
 
     /* 基本情報 */
@@ -562,20 +551,35 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
         margin-top: 10px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
     }
-    .recent-race-row {
+    /* 1走 = 1カード（3行構成: main / performance / meta） */
+    .recent-race-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 10px;
+        background: rgba(15, 23, 42, 0.32);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 8px;
+        font-size: 0.78rem;
+        color: #cbd5e1;
+    }
+    .recent-race-line {
         display: flex;
         flex-wrap: wrap;
         gap: 4px 12px;
         align-items: baseline;
-        font-size: 0.78rem;
-        color: #cbd5e1;
-        padding: 4px 6px;
-        background: rgba(30, 41, 59, 0.4);
-        border-radius: 4px;
     }
+    .recent-race-line-perf,
+    .recent-race-line-meta { font-size: 0.74rem; }
+    .recent-race-tag { color: #94a3b8; font-weight: 700; min-width: 3.2rem; }
     .recent-race-venue { color: #e2e8f0; font-weight: 600; }
     .recent-race-rank { color: #10b981; font-weight: 700; }
     .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+    /* 色分け（上がり=青 / 通過=水 / 着差=琥珀 / レース名=灰） */
+    .recent-race-last3f { color: #38bdf8; }
+    .recent-race-passing { color: #67e8f9; }
+    .recent-race-margin { color: #fbbf24; }
+    .recent-race-name { color: #94a3b8; }
 </style>

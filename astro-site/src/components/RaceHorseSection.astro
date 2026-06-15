@@ -73,7 +73,9 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                 const comment = generateMinorHorseComment(horse.role, gap);
                 const importance = Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null;
                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                const recentRaces = getDisplayRecentRacesForNankan(horse);
+                const recentRaces = (Array.isArray(horse?.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0)
+                    ? horse.recentRacesFromEntriesNankan
+                    : getDisplayRecentRacesForNankan(horse);
                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                 return (
                     <div class="minor-horse-card minor-horse-card-renka">
@@ -104,16 +106,41 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                             <details class="recent-races recent-races-compact">
                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                 <div class="recent-races-list">
-                                    {recentRaces.slice(0, 5).map((r: any) => {
-                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                    {recentRaces.slice(0, 5).map((r: any, i: number) => {
+                                        const rankRaw = r?.rank ?? r?.finish;
+                                        const isNum = (rankRaw != null && Number.isFinite(Number(rankRaw)));
+                                        const rank = isNum ? `${rankRaw}着` : (r?.finishStatus || '');
+                                        const label = i === 0 ? '前走' : `${i + 1}走前`;
+                                        const hasPerf = r?.time || r?.last3f || r?.margin || r?.passingOrder || r?.bodyWeight;
+                                        const hasMeta = r?.jockey || r?.carriedWeight || r?.raceName || r?.headCount;
                                         return (
-                                            <div class="recent-race-row">
-                                                <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                <span class="recent-race-rank">{rank}</span>
-                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
-                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                            <div class="recent-race-card">
+                                                <div class="recent-race-line recent-race-line-main">
+                                                    <span class="recent-race-tag">{label}</span>
+                                                    {r?.date && <span class="recent-race-meta">{r.date}</span>}
+                                                    {r?.venue && <span class="recent-race-venue">{r.venue}</span>}
+                                                    {r?.distance && <span class="recent-race-distance">{r.distance}</span>}
+                                                    {r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                                    {rank && <span class="recent-race-rank">{rank}</span>}
+                                                    {r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
+                                                </div>
+                                                {hasPerf && (
+                                                    <div class="recent-race-line recent-race-line-perf">
+                                                        {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                        {r?.last3f && <span class="recent-race-meta recent-race-last3f">上がり{r.last3f}</span>}
+                                                        {r?.margin && <span class="recent-race-meta recent-race-margin">着差{r.margin}</span>}
+                                                        {r?.passingOrder && <span class="recent-race-meta recent-race-passing">通過{r.passingOrder}</span>}
+                                                        {r?.bodyWeight && <span class="recent-race-meta">馬体{r.bodyWeight}kg</span>}
+                                                    </div>
+                                                )}
+                                                {hasMeta && (
+                                                    <div class="recent-race-line recent-race-line-meta">
+                                                        {r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}
+                                                        {r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}
+                                                        {r?.raceName && <span class="recent-race-meta recent-race-name">{r.raceName}</span>}
+                                                        {r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
+                                                    </div>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -141,7 +168,9 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                 const gap = honmeiPt - (Number(horse?.pt) || 0);
                 const comment = generateMinorHorseComment(horse.role, gap);
                 const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                const recentRaces = getDisplayRecentRacesForNankan(horse);
+                const recentRaces = (Array.isArray(horse?.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0)
+                    ? horse.recentRacesFromEntriesNankan
+                    : getDisplayRecentRacesForNankan(horse);
                 const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
                 return (
                     <div class="minor-horse-card minor-horse-card-osae">
@@ -167,16 +196,41 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                             <details class="recent-races recent-races-compact">
                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                 <div class="recent-races-list">
-                                    {recentRaces.slice(0, 5).map((r: any) => {
-                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                    {recentRaces.slice(0, 5).map((r: any, i: number) => {
+                                        const rankRaw = r?.rank ?? r?.finish;
+                                        const isNum = (rankRaw != null && Number.isFinite(Number(rankRaw)));
+                                        const rank = isNum ? `${rankRaw}着` : (r?.finishStatus || '');
+                                        const label = i === 0 ? '前走' : `${i + 1}走前`;
+                                        const hasPerf = r?.time || r?.last3f || r?.margin || r?.passingOrder || r?.bodyWeight;
+                                        const hasMeta = r?.jockey || r?.carriedWeight || r?.raceName || r?.headCount;
                                         return (
-                                            <div class="recent-race-row">
-                                                <span class="recent-race-venue">{r?.venue || ''}</span>
-                                                <span class="recent-race-distance">{r?.distance || ''}</span>
-                                                <span class="recent-race-rank">{rank}</span>
-                                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
-                                                {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
-                                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                            <div class="recent-race-card">
+                                                <div class="recent-race-line recent-race-line-main">
+                                                    <span class="recent-race-tag">{label}</span>
+                                                    {r?.date && <span class="recent-race-meta">{r.date}</span>}
+                                                    {r?.venue && <span class="recent-race-venue">{r.venue}</span>}
+                                                    {r?.distance && <span class="recent-race-distance">{r.distance}</span>}
+                                                    {r?.trackCondition && <span class="recent-race-meta">{r.trackCondition}</span>}
+                                                    {rank && <span class="recent-race-rank">{rank}</span>}
+                                                    {r?.popularity && <span class="recent-race-meta">{r.popularity}人気</span>}
+                                                </div>
+                                                {hasPerf && (
+                                                    <div class="recent-race-line recent-race-line-perf">
+                                                        {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                        {r?.last3f && <span class="recent-race-meta recent-race-last3f">上がり{r.last3f}</span>}
+                                                        {r?.margin && <span class="recent-race-meta recent-race-margin">着差{r.margin}</span>}
+                                                        {r?.passingOrder && <span class="recent-race-meta recent-race-passing">通過{r.passingOrder}</span>}
+                                                        {r?.bodyWeight && <span class="recent-race-meta">馬体{r.bodyWeight}kg</span>}
+                                                    </div>
+                                                )}
+                                                {hasMeta && (
+                                                    <div class="recent-race-line recent-race-line-meta">
+                                                        {r?.jockey && <span class="recent-race-meta">騎手:{r.jockey}</span>}
+                                                        {r?.carriedWeight && <span class="recent-race-meta">斤量{r.carriedWeight}</span>}
+                                                        {r?.raceName && <span class="recent-race-meta recent-race-name">{r.raceName}</span>}
+                                                        {r?.headCount && <span class="recent-race-meta">{r.headCount}頭</span>}
+                                                    </div>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -379,23 +433,38 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
         margin-top: 10px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
     }
-    .recent-race-row {
+    /* 1走 = 1カード（3行構成: main / performance / meta） */
+    .recent-race-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 10px;
+        background: rgba(15, 23, 42, 0.32);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 8px;
+        font-size: 0.78rem;
+        color: #cbd5e1;
+    }
+    .recent-race-line {
         display: flex;
         flex-wrap: wrap;
         gap: 4px 12px;
         align-items: baseline;
-        font-size: 0.78rem;
-        color: #cbd5e1;
-        padding: 4px 6px;
-        background: rgba(30, 41, 59, 0.4);
-        border-radius: 4px;
     }
+    .recent-race-line-perf,
+    .recent-race-line-meta { font-size: 0.74rem; }
+    .recent-race-tag { color: #94a3b8; font-weight: 700; min-width: 3.2rem; }
     .recent-race-venue { color: #e2e8f0; font-weight: 600; }
     .recent-race-distance { color: #cbd5e1; }
     .recent-race-rank { color: #10b981; font-weight: 700; }
     .recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+    /* 色分け（上がり=青 / 通過=水 / 着差=琥珀 / レース名=灰） */
+    .recent-race-last3f { color: #38bdf8; }
+    .recent-race-passing { color: #67e8f9; }
+    .recent-race-margin { color: #fbbf24; }
+    .recent-race-name { color: #94a3b8; }
     .recent-races-compact .recent-race-row { font-size: 0.72rem; }
 
     @media (max-width: 640px) {
