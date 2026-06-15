@@ -111,6 +111,17 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                                         const isNum = (rankRaw != null && Number.isFinite(Number(rankRaw)));
                                         const rank = isNum ? `${rankRaw}着` : (r?.finishStatus || '');
                                         const label = i === 0 ? '前走' : `${i + 1}走前`;
+                                        if (horse?.isJraHistoryEnriched === true) {
+                                            return (
+                                                <div class="recent-race-compact">
+                                                    {r?.venue && <span class="recent-race-venue">{r.venue}</span>}
+                                                    {r?.distance && <span class="recent-race-distance">{r.distance}</span>}
+                                                    {rank && <span class="recent-race-rank">{rank}</span>}
+                                                    {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                    {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                                </div>
+                                            );
+                                        }
                                         const hasPerf = r?.time || r?.last3f || r?.margin || r?.passingOrder || r?.bodyWeight;
                                         const hasMeta = r?.jockey || r?.carriedWeight || r?.raceName || r?.headCount;
                                         return (
@@ -201,6 +212,17 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                                         const isNum = (rankRaw != null && Number.isFinite(Number(rankRaw)));
                                         const rank = isNum ? `${rankRaw}着` : (r?.finishStatus || '');
                                         const label = i === 0 ? '前走' : `${i + 1}走前`;
+                                        if (horse?.isJraHistoryEnriched === true) {
+                                            return (
+                                                <div class="recent-race-compact">
+                                                    {r?.venue && <span class="recent-race-venue">{r.venue}</span>}
+                                                    {r?.distance && <span class="recent-race-distance">{r.distance}</span>}
+                                                    {rank && <span class="recent-race-rank">{rank}</span>}
+                                                    {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                    {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                                </div>
+                                            );
+                                        }
                                         const hasPerf = r?.time || r?.last3f || r?.margin || r?.passingOrder || r?.bodyWeight;
                                         const hasMeta = r?.jockey || r?.carriedWeight || r?.raceName || r?.headCount;
                                         return (

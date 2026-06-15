@@ -55,6 +55,40 @@ const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
 const recentRaces = (Array.isArray(horse?.recentRacesFromEntriesNankan) && horse.recentRacesFromEntriesNankan.length > 0)
     ? horse.recentRacesFromEntriesNankan
     : getDisplayRecentRacesForNankan(horse);
+// JRA light の horseHistories 由来馬のみ: 過去5走を premium 風 compact 行 ＋ 過去走データ accordion に切替。
+// 南関 light（フラグ無し）は既存の3行カードのまま影響しない。
+const isJraHist = horse?.isJraHistoryEnriched === true;
+const jraHistory = (isJraHist && Array.isArray(horse.historyForDetails) && horse.historyForDetails.length > 0)
+    ? horse.historyForDetails
+    : null;
+const jraHistoryCtx = (() => {
+    if (!jraHistory) return null;
+    const ranked = jraHistory.filter((r) => r && Number.isFinite(Number(r.rank)));
+    const total = ranked.length;
+    const c = (n) => ranked.filter((r) => Number(r.rank) === n).length;
+    const w = c(1), p2 = c(2), p3 = c(3);
+    const others = total - w - p2 - p3;
+    const pct = (n) => total > 0 ? Math.round((n / total) * 100) : 0;
+    const wStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+    const ageGender = (horse.ageNum != null && horse.gender) ? `${horse.ageNum}歳${horse.gender}` : (horse.age || null);
+    const profileItems = [
+        ageGender && { label: '性齢', value: ageGender },
+        (horse.sire || horse._sire) && { label: '父', value: horse.sire || horse._sire },
+        horse.jockey && { label: '騎手', value: horse.jockey },
+        wStr && { label: '斤量', value: wStr },
+        horse.trainer && { label: '調教師', value: horse.trainer },
+    ].filter(Boolean);
+    return {
+        count: jraHistory.length,
+        hasRanked: total > 0,
+        hasProfile: profileItems.length > 0,
+        profileItems,
+        recordValue: `${w}-${p2}-${p3}-${others}`,
+        winPctStr: `${pct(w)}%`,
+        placePctStr: `${pct(w + p2)}%`,
+        showPctStr: `${pct(w + p2 + p3)}%`,
+    };
+})();
 const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
     ? `${horse.weight}kg`
     : null;
@@ -155,6 +189,18 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
                     const isNum = (rankRaw != null && Number.isFinite(Number(rankRaw)));
                     const rank = isNum ? `${rankRaw}着` : (r?.finishStatus || '');
                     const label = i === 0 ? '前走' : `${i + 1}走前`;
+                    if (isJraHist) {
+                        // JRA light: premium 風の compact 1行表示（騎手等の詳細は過去走データへ分離）。
+                        return (
+                            <div class="recent-race-compact">
+                                {r?.venue && <span class="recent-race-venue">{r.venue}</span>}
+                                {r?.distance && <span class="recent-race-distance">{r.distance}</span>}
+                                {rank && <span class="recent-race-rank">{rank}</span>}
+                                {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                            </div>
+                        );
+                    }
                     const hasPerf = r?.time || r?.last3f || r?.margin || r?.passingOrder || r?.bodyWeight;
                     const hasMeta = r?.jockey || r?.carriedWeight || r?.raceName || r?.headCount;
                     return (
@@ -188,6 +234,37 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
                         </div>
                     );
                 })}
+            </div>
+        </details>
+    )}
+
+    {/* JRA light のみ: 過去走データ accordion（horseHistories.history 由来・表示専用・初期 close）。
+        南関 light は jraHistoryCtx=null のため出さない。 */}
+    {jraHistoryCtx && (
+        <details class="jra-history-details">
+            <summary class="jra-history-summary"><span class="jra-history-summary-text">過去走データ</span><span class="jra-history-count">（{jraHistoryCtx.count}走）</span></summary>
+            <div class="jra-history-content">
+                {jraHistoryCtx.hasProfile && (
+                    <div class="jra-history-section">
+                        <div class="jra-history-section-label">プロフィール</div>
+                        <div class="jra-history-profile">
+                            {jraHistoryCtx.profileItems.map((p) => (
+                                <div class="jra-history-profile-item"><span class="jra-history-profile-label">{p.label}</span><span class="jra-history-profile-value">{p.value}</span></div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {jraHistoryCtx.hasRanked && (
+                    <div class="jra-history-section">
+                        <div class="jra-history-section-label">通算成績</div>
+                        <div class="jra-history-record">
+                            <div class="jra-history-rec"><span class="jra-history-rec-label">通算</span><span class="jra-history-rec-value">{jraHistoryCtx.recordValue}</span></div>
+                            <div class="jra-history-rec"><span class="jra-history-rec-label">勝率</span><span class="jra-history-rec-value">{jraHistoryCtx.winPctStr}</span></div>
+                            <div class="jra-history-rec"><span class="jra-history-rec-label">連対率</span><span class="jra-history-rec-value">{jraHistoryCtx.placePctStr}</span></div>
+                            <div class="jra-history-rec"><span class="jra-history-rec-label">3着内率</span><span class="jra-history-rec-value">{jraHistoryCtx.showPctStr}</span></div>
+                        </div>
+                    </div>
+                )}
             </div>
         </details>
     )}
@@ -579,4 +656,59 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
     .recent-race-passing { color: #67e8f9; }
     .recent-race-margin { color: #fbbf24; }
     .recent-race-name { color: #94a3b8; }
+    /* JRA light: compact 1行表示（premium 風） */
+    .recent-race-compact {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        align-items: baseline;
+        padding: 4px 8px;
+        font-size: 0.76rem;
+        color: #cbd5e1;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .recent-race-compact:last-child { border-bottom: none; }
+    /* JRA light: 過去走データ accordion（表示専用・初期 close） */
+    .jra-history-details {
+        margin-top: 10px;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(100, 116, 139, 0.2);
+        border-radius: 8px;
+        padding: 8px 12px;
+    }
+    .jra-history-summary {
+        cursor: pointer;
+        color: #cbd5e1;
+        font-weight: 600;
+        font-size: 0.84rem;
+        list-style: none;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+    }
+    .jra-history-summary::-webkit-details-marker { display: none; }
+    .jra-history-summary::before {
+        content: '▶';
+        color: #64748b;
+        font-size: 0.7rem;
+        transition: transform 0.2s ease;
+    }
+    .jra-history-details[open] .jra-history-summary::before { transform: rotate(90deg); }
+    .jra-history-count { color: #94a3b8; font-size: 0.74rem; font-weight: 500; }
+    .jra-history-content { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+    .jra-history-section-label {
+        font-size: 0.74rem; font-weight: 700; color: #94a3b8; margin-bottom: 6px;
+    }
+    .jra-history-profile { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+    .jra-history-profile-item { display: flex; gap: 5px; font-size: 0.76rem; }
+    .jra-history-profile-label { color: #94a3b8; }
+    .jra-history-profile-value { color: #e2e8f0; font-weight: 600; }
+    .jra-history-record { display: flex; flex-wrap: wrap; gap: 8px; }
+    .jra-history-rec {
+        display: flex; flex-direction: column; align-items: center;
+        min-width: 56px; padding: 4px 8px;
+        background: rgba(30, 41, 59, 0.5); border-radius: 6px;
+    }
+    .jra-history-rec-label { color: #94a3b8; font-size: 0.68rem; }
+    .jra-history-rec-value { color: #e2e8f0; font-weight: 700; font-size: 0.82rem; }
 </style>
