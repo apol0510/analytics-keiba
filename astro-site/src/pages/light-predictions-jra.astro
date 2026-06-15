@@ -11,7 +11,7 @@ import { pickLatestJraPrediction, adaptNewToLegacy } from '../lib/adaptLatestPre
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../lib/akFeatureSummary.js';
 // premium JRA と同じ JRA horseHistories を表示専用フォールバックとして使う（読むだけ）。
-import { jraVenueCodeFromName, loadHorseHistoriesForVenue, buildHorseNameIndex, pickRecentRacesFromHistories } from '../lib/loadHorseHistoriesJra.js';
+import { jraVenueCodeFromName, loadHorseHistoriesForVenue, buildHorseNameIndex, pickRecentRacesFromHistories, pickHistoryForDetails } from '../lib/loadHorseHistoriesJra.js';
 
 // 算出可能な馬のみ horse.importance を shared featureScores 由来へ差し替える。
 // 算出不能（fs6 無し / 全項目 null）の馬は既存 horse.importance（computeImportance 由来）を維持。
@@ -43,6 +43,14 @@ function applyHorseHistoriesJra(horses, nameIndex, date) {
         const recent = pickRecentRacesFromHistories(histHorse, date);
         if (Array.isArray(recent) && recent.length > 0) {
             horse.recentRaces = recent;
+            // JRA horseHistories 由来であることを示すフラグ（共通 component の JRA 専用 gating 用）。
+            // 南関 light はこのフラグを付けないため、既存カード表示のまま影響しない。
+            horse.isJraHistoryEnriched = true;
+        }
+        // 過去走データ accordion（プロフィール / 通算成績）用の詳細データ。premium JRA と同じ pickHistoryForDetails。
+        const details = pickHistoryForDetails(histHorse, date);
+        if (Array.isArray(details) && details.length > 0) {
+            horse.historyForDetails = details;
         }
     }
     return horses;
