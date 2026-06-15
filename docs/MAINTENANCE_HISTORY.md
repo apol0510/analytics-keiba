@@ -1,3 +1,28 @@
+### ✅ **2026-06-15 AK light JRA 過去走UI整合（PR #91〜#96）**
+
+- **対象**: `/light-predictions-jra/`（比較対象 `/premium-prediction/jra/`）
+- **完了PR**:
+  - #91: light系 近走カード化（旧 総合評価★/評価材料 → AI総合指数/特徴量重要度）
+  - #92: 基本情報の重複「指数」削除、過去5走表記固定
+  - #93: light JRA の特徴量重要度を premium JRA と同じ shared featureScores 由来（deriveAkImportance）へ差し替え
+  - #94: light JRA に horseHistories を接続し、過去5走の中身を histories 由来へ改善
+  - #95: light JRA の過去5走を compact 表示化し、過去走データ accordion の主要ブロック（プロフィール/通算成績）を追加
+  - #96: 過去走データ accordion に条件別成績・競走成績を追加
+- **本番確認**:
+  - `/light-predictions-jra/` HTTP 200
+  - クロワデュノールで AI総合指数 77、特徴量重要度 74% / 69% / 70%
+  - 過去5走 compact 表示
+  - 過去走データ accordion にプロフィール / 通算成績 / 条件別成績 / 競走成績を表示
+  - 旧「総合評価」「評価材料」は復活なし
+  - 南関 light への過去走データ accordion / recent-race-compact 混入なし（recent-race-card は維持）
+- **実装の要点**:
+  - 共通 component `HorseMainCard.astro` / `RaceHorseSection.astro` は light 2ページ専用。`horse.isJraHistoryEnriched` フラグで JRA 専用 gating し南関 light へ非波及。
+  - deriveAkImportance は 0〜100 のため共通 component（value×100 描画）に合わせ /100 正規化。馬番は `horse.horseNumber ?? horse.number`。
+  - 条件別成績/競走成績は `historyForDetails` 由来・rank 数値走のみ集計（order/position は着順代替に使わない）。details は初期 close。
+- **最終確認 commit**: PR #96 merge commit `0960ecc`
+
+---
+
 ### ✅ **2026-01-13 VSCodeクラッシュ防止対策実装**
 
 #### **背景・問題**
