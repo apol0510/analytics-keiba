@@ -7,7 +7,6 @@ import { pickLatestNankanVenuesAndAdapt } from '../../lib/adaptLatestPrediction.
 import { getDisplayRecentRacesForNankan } from '../../lib/getDisplayRecentRacesForNankan.js';
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
-import NankanHorseDetailPanel from '../../components/NankanHorseDetailPanel.astro';
 
 // 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
 // shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
@@ -329,7 +328,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                             </div>
                                                         </details>
                                                     )}
-                                                    <NankanHorseDetailPanel horse={horse} races={recentRaces} />
                                                 </div>
                                                 );
                                             })}
@@ -396,7 +394,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 </div>
                                                                             </details>
                                                                         )}
-                                                                        <NankanHorseDetailPanel horse={horse} races={recentRaces} />
                                                                     </div>
                                                                 );
                                                             })}
@@ -459,7 +456,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 </div>
                                                                             </details>
                                                                         )}
-                                                                        <NankanHorseDetailPanel horse={horse} races={recentRaces} />
                                                                     </div>
                                                                 );
                                                             })}
@@ -524,7 +520,6 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                     </div>
                                                                                 </details>
                                                                             )}
-                                                                            <NankanHorseDetailPanel horse={horse} races={recentRaces} />
                                                                         </div>
                                                                     );
                                                                 })}
