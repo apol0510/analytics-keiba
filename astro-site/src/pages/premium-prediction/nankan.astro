@@ -12,6 +12,7 @@ import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpuk
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro';
+import AccordionClickClose from '../../components/AccordionClickClose.astro';
 
 // R1d-impl-v2c Step2: 連下/補欠 compact 近走の field 読み替え（entries 由来 / 既存 getDisplay 由来の両 shape 対応）。
 // 表示専用・正本順位不変・recentHorseHistories fallback 正本化しない・compact 維持・docs §34.24。
@@ -740,7 +741,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                             const entriesRecentRaces = Array.isArray(horse.recentRacesFromEntriesNankan) ? horse.recentRacesFromEntriesNankan : [];
                                             const recentRaces = entriesRecentRaces.length > 0 ? entriesRecentRaces : getDisplayRecentRacesForNankan(horse);
                                             return Array.isArray(recentRaces) && recentRaces.length > 0 && (
-                                            <details class="recent-races recent-races-enhanced">
+                                            <details class="recent-races recent-races-enhanced" data-click-close="true">
                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                 <div class="recent-races-list">
                                                     {recentRaces.slice(0, 5).map((r) => {
@@ -829,7 +830,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                         )}
                                                         {comment && <p class="minor-horse-comment">{comment}</p>}
                                                         {recentRaces.length > 0 && (
-                                                            <details class="recent-races recent-races-compact">
+                                                            <details class="recent-races recent-races-compact" data-click-close="true">
                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                 <div class="recent-races-list">
                                                                     {recentRaces.slice(0, 5).map((r) => {
@@ -902,7 +903,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                         )}
                                                         {comment && <p class="minor-horse-comment">{comment}</p>}
                                                         {recentRaces.length > 0 && (
-                                                            <details class="recent-races recent-races-compact">
+                                                            <details class="recent-races recent-races-compact" data-click-close="true">
                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                 <div class="recent-races-list">
                                                                     {recentRaces.slice(0, 5).map((r) => {
@@ -948,7 +949,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                         return '買い目基準未満';
                                     };
                                     return (
-                                        <details class="ineligible-section">
+                                        <details class="ineligible-section" data-click-close="true">
                                             <summary>不要馬・見送り馬 {ineligible.length}頭</summary>
                                             <ul class="ineligible-list">
                                                 {ineligible.map((h) => {
@@ -1241,6 +1242,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         </div>
 
     </AccessControl>
+
+<AccordionClickClose />
 
 <script>
     // Modal functionality

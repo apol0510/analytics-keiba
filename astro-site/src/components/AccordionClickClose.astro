@@ -1,0 +1,22 @@
+---
+/**
+ * AccordionClickClose.astro (analytics-keiba)
+ *
+ * 開いている <details data-click-close="true"> の中身をクリック/タップしたら閉じる。
+ * リンク/ボタン/フォーム/summary 等の操作は邪魔しない（限定方式・全 details 一括適用はしない）。
+ * 表示専用挙動。featureScores / AI指数 / 印 / 買い目 / EV / data には一切関与しない。
+ */
+---
+<script>
+  document.addEventListener('click', (event) => {
+    const t = event.target;
+    if (!(t instanceof Element)) return;
+    // リンク・ボタン・フォーム・summary・label をクリックした場合は閉じない
+    if (t.closest('a,button,input,select,textarea,summary,label,details summary')) return;
+    const details = t.closest('details[data-click-close="true"][open]');
+    if (!details) return;
+    const summary = details.querySelector('summary');
+    if (summary && summary.contains(t)) return;
+    details.open = false;
+  });
+</script>

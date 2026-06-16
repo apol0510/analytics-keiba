@@ -92,7 +92,7 @@ if (rrChips.length) sections.push({ title: '回収率', chips: rrChips, accent: 
 const show = !!s && (profileItems.length > 0 || sections.length > 0);
 ---
 {show && (
-  <details class="aknhs">
+  <details class="aknhs" data-click-close="true">
     <summary class="aknhs-sum"><span class="aknhs-title">近走詳細データ</span><span class="aknhs-sub">条件別成績・回収率</span></summary>
     <div class="aknhs-body">
       {profileItems.length > 0 && (

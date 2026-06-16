@@ -8,6 +8,7 @@ import { getDisplayRecentRacesForNankan } from '../../lib/getDisplayRecentRacesF
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro';
+import AccordionClickClose from '../../components/AccordionClickClose.astro';
 
 // 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
 // shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
@@ -311,7 +312,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                     )}
 
                                                     {recentRaces.length > 0 && (
-                                                        <details class="recent-races recent-races-compact">
+                                                        <details class="recent-races recent-races-compact" data-click-close="true">
                                                             <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                             <div class="recent-races-list">
                                                                 {recentRaces.slice(-5).reverse().map((r, i) => {
@@ -377,7 +378,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             </div>
                                                                         )}
                                                                         {recentRaces.length > 0 && (
-                                                                            <details class="recent-races recent-races-compact">
+                                                                            <details class="recent-races recent-races-compact" data-click-close="true">
                                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
                                                                                     {recentRaces.slice(-5).reverse().map((r, i) => {
@@ -440,7 +441,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                             </div>
                                                                         )}
                                                                         {recentRaces.length > 0 && (
-                                                                            <details class="recent-races recent-races-compact">
+                                                                            <details class="recent-races recent-races-compact" data-click-close="true">
                                                                                 <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                                 <div class="recent-races-list">
                                                                                     {recentRaces.slice(-5).reverse().map((r, i) => {
@@ -471,7 +472,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                     抑え候補から漏れた馬を、抑えとは別枠の見出しで全頭表示する。
                                                     （恒久仕様: 抑え候補馬と不要馬は混同しない。section title は「不要馬」固定） */}
                                                 {raceHorses && raceHorses.filter(isIneligibleHorse).length > 0 && (
-                                                    <details class="minor-group-ineligible">
+                                                    <details class="minor-group-ineligible" data-click-close="true">
                                                         <summary class="ineligible-summary">
                                                             <span class="ineligible-summary-icon">無</span>
                                                             <span class="ineligible-summary-title">不要馬 {raceHorses.filter(isIneligibleHorse).length}頭</span>
@@ -505,7 +506,7 @@ const analysis = firstVenue.mainRace.analysis;
                                                                                 </div>
                                                                             )}
                                                                             {recentRaces.length > 0 && (
-                                                                                <details class="recent-races recent-races-compact">
+                                                                                <details class="recent-races recent-races-compact" data-click-close="true">
                                                                                     <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                                                                     <div class="recent-races-list">
                                                                                         {recentRaces.slice(-5).reverse().map((r, i) => {
@@ -664,6 +665,8 @@ const analysis = firstVenue.mainRace.analysis;
             </a>
         </div>
         </div>
+
+    <AccordionClickClose />
 </BaseLayout>
 
 <style>
