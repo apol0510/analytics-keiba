@@ -19,6 +19,7 @@ import {
 } from '../utils/mainRaceBetting.js';
 import { injectRecentHorseHistoriesNankan } from './injectRecentHorseHistoriesNankan.js';
 import { injectEntriesRecentRacesNankan } from './injectEntriesRecentRacesNankan.js';
+import { injectHorseStatsNankan } from './injectHorseStatsNankan.js';
 
 // role → mark / role → 旧 type の対応
 const MARK_MAP = {
@@ -259,6 +260,13 @@ export function pickLatestNankanVenuesAndAdapt(modules) {
   // 失敗時は非致命（何もしない・既存表示を維持）。
   try {
     injectEntriesRecentRacesNankan(venues, latestDate, process.cwd());
+  } catch (_e) {
+    // 注入失敗は非致命。既存表示を維持する。
+  }
+  // 南関 uma_info 元表統計を別フィールド horse.horseStatsNankan へ注入（表示専用・UI接続は後続）。
+  // recentRaces / featureScores / AI指数 / 印 / 買い目 は不変。失敗時は非致命。
+  try {
+    injectHorseStatsNankan(venues, latestDate, process.cwd());
   } catch (_e) {
     // 注入失敗は非致命。既存表示を維持する。
   }
