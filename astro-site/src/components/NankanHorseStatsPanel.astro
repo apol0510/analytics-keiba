@@ -24,6 +24,17 @@ const fmtPctRow = (r) => {
   return [(ne(r.label) ? r.label : ''), (ne(w) ? `勝${w}` : ''), (ne(q) ? `連${q}` : '')].filter(ne).join(' ');
 };
 const hasPct = (r) => ne(pctStr(r.winRateRaw, r.winRate)) || ne(pctStr(r.quinellaRateRaw, r.quinellaRate));
+// 距離ラベル整形: 数値→m付き、会場略字→正式名＋m（川2100→川崎2100m 等）
+const formatDistanceLabel = (label) => {
+  if (!ne(label)) return '';
+  const s = String(label).trim();
+  if (/^\d+$/.test(s)) return `${s}m`;
+  return s
+    .replace(/^川(\d+)$/, '川崎$1m')
+    .replace(/^大(\d+)$/, '大井$1m')
+    .replace(/^浦(\d+)$/, '浦和$1m')
+    .replace(/^船(\d+)$/, '船橋$1m');
+};
 
 // ---- 基本情報 ----
 const p = (s && s.profile) || {};
@@ -50,10 +61,14 @@ const chakuRows = (rows) => (arr(rows) ? rows.filter((r) => starts(r) > 0) : [])
 if (arr(s && s.bestTimes)) {
   pushChips('持時計', s.bestTimes.map((b) => [b.venue, (ne(b.time) ? b.time : b.raw), b.trackCondition, b.surface, (b.finish != null ? `${b.finish}着` : '')].filter(ne).join(' ')));
 }
-// 2-6. 着別（距離別/場別/馬場状態別/出走間隔別/季節別）
+// 2-6. 着別（距離別[m付]/場別[地方・ダート]/馬場状態別/出走間隔別/季節別）
+// 距離別は label を m 付き整形。場別は見出しで地方・ダートを明記。騎手系は非表示。
+{
+  const dr = chakuRows(s && s.finishStatsByDistance);
+  if (dr.length) pushChips('距離別成績', dr.map((x) => `${ne(x.label) ? formatDistanceLabel(x.label) + ' ' : ''}${chaku(x)}`));
+}
 for (const [title, rows] of [
-  ['距離別成績', s && s.finishStatsByDistance],
-  ['場別成績', s && s.finishStatsByVenue],
+  ['場別成績（地方・ダート）', s && s.finishStatsByVenue],
   ['馬場状態別成績', s && s.trackConditionStats],
   ['出走間隔別成績', s && s.intervalStats],
   ['季節別成績', s && s.seasonStats],
@@ -61,28 +76,12 @@ for (const [title, rows] of [
   const r = chakuRows(rows);
   if (r.length) pushChips(title, r.map((x) => `${ne(x.label) ? x.label + ' ' : ''}${chaku(x)}`));
 }
-// 7-8. % 系（種牡馬/騎手コース）
-for (const [title, rows] of [
-  ['種牡馬分析', s && s.sireStats],
-  ['騎手コース別成績', s && s.jockeyCourseStats],
-]) {
-  if (arr(rows)) {
-    const c = rows.filter(hasPct).map(fmtPctRow);
-    pushChips(title, c);
-  }
+// 7. 種牡馬分析（距離 label を m 付き整形）。※ 騎手コース別・騎手別は非表示。
+if (arr(s && s.sireStats)) {
+  const c = s.sireStats.filter(hasPct).map((r) => fmtPctRow({ ...r, label: formatDistanceLabel(r.label) }));
+  pushChips('種牡馬分析', c);
 }
-// 9. 騎手別（今回/前回/全）
-if (s && s.jockeyStats) {
-  const jkLabel = { current: '今回騎手', previous: '前回騎手', all: '全成績' };
-  const jkChips = ['current', 'previous', 'all'].map((k) => {
-    const j = s.jockeyStats[k];
-    if (!j || (starts(j) === 0 && j.winRate == null)) return '';
-    const rate = [(ne(j.winRateRaw) ? `勝${j.winRateRaw}` : ''), (ne(j.quinellaRateRaw) ? `連${j.quinellaRateRaw}` : '')].filter(ne).join(' ');
-    return `${jkLabel[k]} ${chaku(j)}${rate ? ' ' + rate : ''}`;
-  });
-  pushChips('騎手別成績', jkChips);
-}
-// 10. 回収率（強調）
+// 8. 回収率（強調）
 const rr = s && s.returnRates;
 const rrChips = [];
 if (rr && rr.horse && rr.horse.win) rrChips.push(`競走馬 単${rr.horse.win.raw} 複${rr.horse.place ? rr.horse.place.raw : ''}`);
