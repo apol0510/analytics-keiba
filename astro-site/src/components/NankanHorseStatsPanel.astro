@@ -87,7 +87,8 @@ const rr = s && s.returnRates;
 const rrChips = [];
 if (rr && rr.horse && rr.horse.win) rrChips.push(`競走馬 単${rr.horse.win.raw} 複${rr.horse.place ? rr.horse.place.raw : ''}`);
 if (rr && rr.jockey && rr.jockey.win) rrChips.push(`騎手 単${rr.jockey.win.raw} 複${rr.jockey.place ? rr.jockey.place.raw : ''}`);
-if (rrChips.length) sections.push({ title: '回収率', chips: rrChips, accent: true });
+const RETURN_NOTE = '※ 南関・地方競馬データベース上の集計値です。中央競馬のみの戦績は反映されない場合があります。';
+if (rrChips.length) sections.push({ title: '回収率', chips: rrChips, accent: true, note: RETURN_NOTE });
 
 const show = !!s && (profileItems.length > 0 || sections.length > 0);
 ---
@@ -107,6 +108,7 @@ const show = !!s && (profileItems.length > 0 || sections.length > 0);
         <div class={sec.accent ? 'aknhs-sec aknhs-sec-accent' : 'aknhs-sec'}>
           <div class="aknhs-h">{sec.title}</div>
           <div class="aknhs-chips">{sec.chips.map((c) => (<span class="aknhs-chip">{c}</span>))}</div>
+          {sec.note && <div class="aknhs-note">{sec.note}</div>}
         </div>
       ))}
     </div>
@@ -132,4 +134,5 @@ const show = !!s && (profileItems.length > 0 || sections.length > 0);
   .aknhs-chip { font-size: 0.76rem; color: #e2e8f0; background: rgba(15,23,42,0.62); border: 1px solid rgba(148,163,184,0.20); border-radius: 999px; padding: 0.25rem 0.6rem; }
   .aknhs-sec-accent .aknhs-h { color: #fbbf24; border-left-color: #fbbf24; }
   .aknhs-sec-accent .aknhs-chip { color: #fde68a; border-color: rgba(251,191,36,0.45); background: rgba(120,53,15,0.35); }
+  .aknhs-note { margin-top: 0.4rem; font-size: 0.68rem; color: #94a3b8; line-height: 1.5; }
 </style>
