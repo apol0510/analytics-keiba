@@ -27,6 +27,7 @@ function compactRaceCells(r) {
     last3f: pickCompactCell(r?.last3f, r?.agari),
     bodyWeight: pickCompactCell(r?.bodyWeight, r?.weightBody),
     pass: pickCompactCell(r?.passingOrder, r?.cornerPassage, r?.corner),
+    raceName: pickCompactCell(r?.raceName),
   };
 }
 
@@ -841,6 +842,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                                 {c.last3f && <span class="recent-race-meta">上がり{c.last3f}</span>}
                                                                                 {c.pass && <span class="recent-race-meta">通過{c.pass}</span>}
                                                                                 {c.bodyWeight && <span class="recent-race-meta">{c.bodyWeight}kg</span>}
+                                                                                {c.raceName && <span class="recent-race-meta recent-race-name">{c.raceName}</span>}
                                                                             </div>
                                                                         );
                                                                     })}
@@ -911,6 +913,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                                 {c.time && <span class="recent-race-meta">タイム{c.time}</span>}
                                                                                 {c.last3f && <span class="recent-race-meta">上がり{c.last3f}</span>}
                                                                                 {c.pass && <span class="recent-race-meta">通過{c.pass}</span>}
+                                                                                {c.raceName && <span class="recent-race-meta recent-race-name">{c.raceName}</span>}
                                                                             </div>
                                                                         );
                                                                     })}
