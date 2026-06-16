@@ -1,0 +1,156 @@
+---
+/**
+ * NankanHorseStatsPanel.astro (analytics-keiba)
+ *
+ * horse.horseStatsNankan（uma_info 元表統計）を「近走詳細データ」として表示する（表示専用）。
+ * 契約: keiba-data-shared-admin docs/nankan-uma-info-horse-stats-schema.md。
+ *
+ * 厳守:
+ *   - horse.horseStatsNankan を参照（recentRaces の再表示ではない）。
+ *   - featureScores / AI指数 / 印 / 買い目 / EV には一切接続しない（表示専用）。
+ *   - 空配列 / null / 空ブロックは表示しない。
+ *   - 表示名は「近走詳細データ」固定（「過去走データ/最大5走/5走」は使わない）。
+ *
+ * JSX パーサ回避のため、表示文字列は frontmatter で組み立て JSX は単純 map のみにする。
+ */
+const { horse } = Astro.props;
+const s = horse?.horseStatsNankan || null;
+
+const ne = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+const arr = (x) => Array.isArray(x) && x.length > 0;
+const chaku = (r) => `${r?.first ?? 0}-${r?.second ?? 0}-${r?.third ?? 0}-${r?.out ?? 0}`;
+const pctStr = (raw, val) => (ne(raw) ? raw : (val != null ? `${val}%` : ''));
+
+// ---- profile（基本情報）----
+const p = (s && s.profile) || {};
+const sexAge = `${ne(p.sex) ? p.sex : ''}${p.age != null ? p.age : ''}`;
+const profileItems = [
+  ne(sexAge) && { k: '性齢', v: sexAge },
+  ne(p.sire) && { k: '父', v: p.sire },
+  ne(p.dam) && { k: '母', v: p.dam },
+  ne(p.damsire) && { k: '母父', v: p.damsire },
+  ne(p.color) && { k: '毛色', v: p.color },
+  ne(p.jockey) && { k: '騎手', v: p.jockey + (ne(p.jockeyAffiliation) ? `(${p.jockeyAffiliation})` : '') },
+  ne(p.carriedWeight) && { k: '斤量', v: String(p.carriedWeight) },
+  ne(p.trainer) && { k: '調教師', v: p.trainer + (ne(p.trainerAffiliation) ? `(${p.trainerAffiliation})` : '') },
+  ne(p.owner) && { k: '馬主', v: p.owner },
+  ne(p.breeder) && { k: '生産', v: p.breeder },
+].filter(Boolean);
+
+// ---- recentRacesDetailed（近走詳細）----
+const recentRows = (arr(s && s.recentRacesDetailed) ? s.recentRacesDetailed : []).map((r) => {
+  const head = [r.date, r.venue, r.trackCondition, r.surface, (r.distance != null ? `${r.distance}m` : '')].filter(ne);
+  const result = [
+    (r.finish != null ? `${r.finish}着` : ''),
+    (ne(r.headCount) ? `${r.headCount}頭` : ''),
+    (ne(r.popularity) ? `${r.popularity}人気` : ''),
+    (ne(r.bodyWeight) ? `${r.bodyWeight}kg` : ''),
+  ].filter(ne);
+  const perf = [
+    (ne(r.time) ? `${r.time}${ne(r.margin) ? `(${r.margin})` : ''}` : ''),
+    (ne(r.last3f) ? `上り${r.last3f}${ne(r.last3fRank) ? `(${r.last3fRank})` : ''}` : ''),
+    (ne(r.passingOrder) ? `通過${r.passingOrder}` : ''),
+    (ne(r.jockey) ? r.jockey : ''),
+    (ne(r.carriedWeight) ? String(r.carriedWeight) : ''),
+    (ne(r.winnerOrRunnerUp) ? `勝馬${r.winnerOrRunnerUp}` : ''),
+  ].filter(ne);
+  return { head: head.join(' '), name: ne(r.raceName) ? r.raceName : '', result: result.join(' '), perf: perf.join(' ') };
+});
+
+// ---- chips セクション（着別 / %）----
+const chipSections = [];
+const pushChips = (title, chips) => { const c = chips.filter(ne); if (c.length) chipSections.push({ title, chips: c }); };
+
+if (arr(s && s.bestTimes)) {
+  pushChips('持時計', s.bestTimes.map((b) => [b.venue, (ne(b.time) ? b.time : b.raw), b.trackCondition, b.surface, (b.finish != null ? `${b.finish}着` : '')].filter(ne).join(' ')));
+}
+for (const [title, rows] of [
+  ['距離別成績', s && s.finishStatsByDistance],
+  ['場別成績', s && s.finishStatsByVenue],
+  ['馬場状態別成績', s && s.trackConditionStats],
+  ['出走間隔別成績', s && s.intervalStats],
+  ['季節別成績', s && s.seasonStats],
+]) {
+  if (arr(rows)) pushChips(title, rows.map((r) => `${ne(r.label) ? r.label + ' ' : ''}${chaku(r)}`));
+}
+for (const [title, rows] of [
+  ['種牡馬分析', s && s.sireStats],
+  ['騎手コース別成績', s && s.jockeyCourseStats],
+]) {
+  if (arr(rows)) pushChips(title, rows.filter((r) => r.winRate != null || r.quinellaRate != null).map((r) => `${ne(r.label) ? r.label + ' ' : ''}勝${pctStr(r.winRateRaw, r.winRate)} 連${pctStr(r.quinellaRateRaw, r.quinellaRate)}`));
+}
+// jockeyStats（今回/前回/全）
+if (s && s.jockeyStats) {
+  const jkLabel = { current: '今回', previous: '前回', all: '全' };
+  const jkChips = ['current', 'previous', 'all'].map((k) => {
+    const j = s.jockeyStats[k];
+    if (!j || (j.first == null && j.winRate == null)) return '';
+    const rate = [(ne(j.winRateRaw) ? `勝${j.winRateRaw}` : ''), (ne(j.quinellaRateRaw) ? `連${j.quinellaRateRaw}` : '')].filter(ne).join(' ');
+    return `${jkLabel[k]} ${chaku(j)}${rate ? ' ' + rate : ''}`;
+  });
+  pushChips('騎手別成績', jkChips);
+}
+// returnRates（回収率）
+const rr = s && s.returnRates;
+const rrChips = [];
+if (rr && rr.horse && rr.horse.win) rrChips.push(`競走馬 単${rr.horse.win.raw} 複${rr.horse.place ? rr.horse.place.raw : ''}`);
+if (rr && rr.jockey && rr.jockey.win) rrChips.push(`騎手 単${rr.jockey.win.raw} 複${rr.jockey.place ? rr.jockey.place.raw : ''}`);
+if (rrChips.length) chipSections.push({ title: '回収率', chips: rrChips });
+
+const show = !!s && (profileItems.length > 0 || recentRows.length > 0 || chipSections.length > 0);
+---
+{show && (
+  <details class="nhs">
+    <summary class="nhs-sum">近走詳細データ</summary>
+    <div class="nhs-body">
+      {profileItems.length > 0 && (
+        <div class="nhs-sec">
+          <div class="nhs-h">基本情報</div>
+          <div class="nhs-kvwrap">
+            {profileItems.map((it) => (<span class="nhs-kv"><span class="nhs-k">{it.k}</span>{it.v}</span>))}
+          </div>
+        </div>
+      )}
+      {recentRows.length > 0 && (
+        <div class="nhs-sec">
+          <div class="nhs-h">近走詳細</div>
+          {recentRows.map((r) => (
+            <div class="nhs-rr">
+              <div class="nhs-rr-head">{r.head}</div>
+              {r.name && <div class="nhs-rr-name">{r.name}</div>}
+              {r.result && <div class="nhs-rr-line">{r.result}</div>}
+              {r.perf && <div class="nhs-rr-line nhs-rr-perf">{r.perf}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {chipSections.map((sec) => (
+        <div class="nhs-sec">
+          <div class="nhs-h">{sec.title}</div>
+          <div class="nhs-chips">{sec.chips.map((c) => (<span class="nhs-chip">{c}</span>))}</div>
+        </div>
+      ))}
+    </div>
+  </details>
+)}
+
+<style>
+  .nhs { margin-top: 8px; border: 1px solid rgba(148,163,184,0.25); border-radius: 8px; background: rgba(15,23,42,0.55); overflow: hidden; }
+  .nhs-sum { cursor: pointer; padding: 8px 12px; font-weight: 600; color: #e2e8f0; font-size: 0.82rem; list-style: none; display: flex; align-items: center; gap: 6px; }
+  .nhs-sum::-webkit-details-marker { display: none; }
+  .nhs-sum::before { content: '▸'; color: #38bdf8; font-size: 0.7rem; }
+  .nhs[open] .nhs-sum::before { content: '▾'; }
+  .nhs-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .nhs-h { font-size: 0.72rem; font-weight: 700; color: #38bdf8; margin-bottom: 4px; letter-spacing: 0.02em; }
+  .nhs-kvwrap { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .nhs-kv { font-size: 0.78rem; color: #e2e8f0; }
+  .nhs-k { color: #94a3b8; margin-right: 3px; }
+  .nhs-rr { padding: 6px 8px; border-radius: 6px; background: rgba(30,41,59,0.6); margin-bottom: 5px; }
+  .nhs-rr:last-child { margin-bottom: 0; }
+  .nhs-rr-head { font-size: 0.74rem; color: #cbd5e1; }
+  .nhs-rr-name { font-size: 0.78rem; color: #e2e8f0; font-weight: 600; }
+  .nhs-rr-line { font-size: 0.74rem; color: #cbd5e1; }
+  .nhs-rr-perf { color: #94a3b8; }
+  .nhs-chips { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+  .nhs-chip { font-size: 0.74rem; color: #cbd5e1; background: rgba(30,41,59,0.6); border-radius: 5px; padding: 2px 7px; }
+</style>

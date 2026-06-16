@@ -11,6 +11,7 @@ import { generateMinorHorseComment } from '../../lib/horseEnrichment.js';
 import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpukuBetting.js';
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
+import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro';
 
 // R1d-impl-v2c Step2: 連下/補欠 compact 近走の field 読み替え（entries 由来 / 既存 getDisplay 由来の両 shape 対応）。
 // 表示専用・正本順位不変・recentHorseHistories fallback 正本化しない・compact 維持・docs §34.24。
@@ -777,6 +778,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 </div>
                                             </details>
                                         ); })()}
+                                        <NankanHorseStatsPanel horse={horse} />
                                     </div>
                                     );
                                 })}
@@ -849,6 +851,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 </div>
                                                             </details>
                                                         )}
+                                                        <NankanHorseStatsPanel horse={horse} />
                                                     </div>
                                                 );
                                             })}
@@ -920,6 +923,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                                 </div>
                                                             </details>
                                                         )}
+                                                        <NankanHorseStatsPanel horse={horse} />
                                                     </div>
                                                 );
                                             })}
@@ -969,6 +973,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                             {comment && (
                                                                 <div class="ineligible-comment">{comment}</div>
                                                             )}
+                                                            <NankanHorseStatsPanel horse={h} />
                                                         </li>
                                                     );
                                                 })}
