@@ -3856,9 +3856,14 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       bindRecentRacesAccordionRecalc();
     }
 
-    // 開いているレースアコーディオンの「中身（非操作領域・テキスト部分・内側 details の中身）」を
-    // クリックしたら閉じる。操作要素（リンク/ボタン/summary/入力系/label 等）と開閉ヘッダー自身のみ除外。
-    // summary は除外するので内側 details の開閉操作は維持される（details 全体は除外しない）。委譲で実装。
+    // 開いているレースアコーディオンの「通常本文（非操作領域・テキスト・余白）」を
+    // クリックしたら閉じる。次は閉じない:
+    //   - 操作要素（a/button/summary/input/select/textarea/label/[role=button]/[contenteditable]）
+    //   - 開閉ヘッダー自身（.race-accordion-header は独自に toggle）
+    //   - 内側 details（過去5走/過去走データ/recent-races/history-details/data-click-close 等）の内部
+    //     → 内側 details の開閉だけを行い、親レースは閉じない（AccordionClickClose と二重発火しない）。
+    // レースアコーディオン本体は <div>（details ではない）ため、本文中で closest('details') に当たるのは
+    // 必ず内側 details。content.contains で当該アコーディオン内であることも確認する。委譲で実装。
     const ACCORDION_CLOSE_IGNORE = 'a, button, summary, input, select, textarea, label, [role="button"], [contenteditable], .race-accordion-header';
     document.addEventListener('click', (event) => {
       const target = event.target;
@@ -3866,6 +3871,9 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       if (target.closest(ACCORDION_CLOSE_IGNORE)) return;
       const content = target.closest('.race-accordion-content');
       if (!content) return;
+      // 内側 details の操作・本文クリックでは親レースを閉じない
+      const nestedDetails = target.closest('details');
+      if (nestedDetails && content.contains(nestedDetails)) return;
       const mh = content.style.maxHeight;
       const isOpen = mh === 'none' || (!!mh && mh !== '0px');
       if (!isOpen) return;
