@@ -659,24 +659,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                     </div>
                   )}
 
-                  <!-- レース選択ボタン -->
-                  <div class="race-selector">
-                    {venuePredictions.map((race, raceIndex) => (
-                      <button
-                        class={`race-btn ${raceIndex === 0 ? 'active' : ''}`}
-                        data-venue-index={venueIndex}
-                        data-race-index={raceIndex}
-                        onclick="selectRace(event, this)"
-                        title={race.raceInfo.raceName || `第${race.raceInfo.raceNumber}レース`}
-                      >
-                        <span class="race-label">{race.raceInfo.raceNumber}R</span>
-                        <span class="race-indicator"></span>
-                      </button>
-                    ))}
-                  </div>
-
-                  <!-- レース表示エリア -->
-                  <div class="race-display-area">
+                  <!-- レース一覧（アコーディオン：premium 南関と統一） -->
+                  <div class="race-accordion-list">
                     {venuePredictions.map((race, raceIndex) => {
               const allHorses = race.horses;
               const horsesWithMetrics = allHorses.map(horse => ({
@@ -695,19 +679,27 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               const avgConfidence = (horsesWithMetrics.reduce((sum, h) =>
                 sum + parseFloat(h.metrics.modelCertainty), 0) / horsesWithMetrics.length).toFixed(1);
 
+              const accordionId = `race-v${venueIndex}-r${raceIndex}`;
+              const toggleId = `toggle-v${venueIndex}-r${raceIndex}`;
               return (
-                <div class={`race-content ${raceIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex} data-race-index={raceIndex}>
-                  <!-- レース名ヘッダー -->
-                  {race.raceInfo.raceName && (
-                    <div class="race-name-header">
-                      <h2 class="race-name-title">{race.raceInfo.raceNumber}R {race.raceInfo.raceName}</h2>
-                      <div class="race-details">
-                        {race.raceInfo.startTime && <span class="race-detail-item">🕐 {race.raceInfo.startTime}発走</span>}
-                        {race.raceInfo.distance && <span class="race-detail-item">📏 {race.raceInfo.distance}m</span>}
-                        {race.raceInfo.horseCount && <span class="race-detail-item">🐴 {race.raceInfo.horseCount}頭</span>}
+                <div class="race-accordion-block" data-venue-index={venueIndex} data-race-index={raceIndex}>
+                  <!-- レース概要カード（アコーディオンヘッダー） -->
+                  <div class="race-accordion-header" onclick={`toggleJraRace(${venueIndex}, ${raceIndex})`}>
+                    <div class="race-basic-info">
+                      <span class="race-number">{race.raceInfo.raceNumber}R</span>
+                      {race.raceInfo.raceName && <span class="race-name">{race.raceInfo.raceName}</span>}
+                      {isMainRace(race.raceInfo.raceNumber, venuePredictions.length) && <span class="main-race-badge">メインレース</span>}
+                      <div class="race-head-meta">
+                        {race.raceInfo.startTime && <span class="race-meta-chip">🕐 {race.raceInfo.startTime}発走</span>}
+                        {race.raceInfo.distance && <span class="race-meta-chip">📏 {race.raceInfo.distance}m</span>}
+                        {race.raceInfo.horseCount && <span class="race-meta-chip">🐴 {race.raceInfo.horseCount}頭</span>}
                       </div>
                     </div>
-                  )}
+                    <span class="toggle-icon" id={toggleId}>▼</span>
+                  </div>
+
+                  <div class="race-accordion-content" id={accordionId} data-default-open={raceIndex === 0 ? 'true' : undefined} style="max-height:0;opacity:0">
+                    <div class="race-accordion-body">
 
 
                   {/* AI推奨買い目（nankan 統一カード形式） */}
@@ -1425,10 +1417,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                       );
                     })()}
                   </div>
-                </div>
+                    </div> <!-- race-accordion-body -->
+                  </div> <!-- race-accordion-content -->
+                </div> <!-- race-accordion-block -->
               );
                     })}
-                  </div> <!-- race-display-area -->
+                  </div> <!-- race-accordion-list -->
                 </div> <!-- venue-content -->
               );
             })}
@@ -1963,122 +1957,121 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     /* 残りのスタイルはfree-prediction.astroから継承（省略） */
     /* AIモデルカード、レース選択、詳細分析等は同じなので省略 */
 
-    /* レース名ヘッダー */
-    .race-name-header {
-      text-align: center;
-      margin-bottom: var(--spacing-xl);
-      padding: var(--spacing-lg);
-      background: linear-gradient(135deg,
-        rgba(139, 92, 246, 0.15) 0%,
-        rgba(59, 130, 246, 0.15) 100%);
-      border-radius: var(--radius-lg);
-      border: 2px solid rgba(139, 92, 246, 0.3);
-    }
-
-    .race-name-title {
-      font-size: 1.5rem;
-      font-weight: 800;
-      color: #a78bfa;
-      margin: 0 0 var(--spacing-md) 0;
-      text-shadow: 0 0 10px rgba(167, 139, 250, 0.3);
-      letter-spacing: 0.5px;
-    }
-
-    .race-details {
+    /* ================================================================
+       レースアコーディオン（premium 南関 .race-accordion-* と統一）
+       会場タブの下に各レースを「概要カード＝開閉ヘッダー」で縦並びに。
+       横へ広がるレース番号タブ UI は廃止。
+       ================================================================ */
+    .race-accordion-list {
       display: flex;
-      justify-content: center;
-      gap: var(--spacing-lg);
-      flex-wrap: wrap;
-      margin-top: var(--spacing-md);
+      flex-direction: column;
+      gap: var(--spacing-md);
     }
 
-    .race-detail-item {
-      font-size: 0.95rem;
+    .race-accordion-block {
+      background: rgba(16, 185, 129, 0.05);
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      overflow: hidden;
+      transition: border-color 0.25s ease;
+    }
+
+    .race-accordion-block:hover {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .race-accordion-header {
+      padding: 16px 20px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.10) 0%, rgba(16, 185, 129, 0.04) 100%);
+      transition: background 0.25s ease;
+      border-bottom: 1px solid transparent;
+    }
+
+    .race-accordion-header:hover {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(16, 185, 129, 0.08) 100%);
+    }
+
+    .race-basic-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .race-number {
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: 0.02em;
+      box-shadow: 0 2px 8px rgba(139, 92, 246, 0.35);
+    }
+
+    .race-name {
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 1.05rem;
+      line-height: 1.25;
+    }
+
+    .race-head-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      align-items: center;
+    }
+
+    .race-meta-chip {
+      font-size: 0.82rem;
       color: #94a3b8;
       font-weight: 600;
-      padding: var(--spacing-xs) var(--spacing-md);
+      padding: 3px 8px;
       background: rgba(30, 41, 59, 0.5);
       border-radius: var(--radius-md);
       border: 1px solid rgba(139, 92, 246, 0.2);
-    }
-
-    /* 旧 KI 風孤児 CSS 群は 2026-05-24 クリーンアップで除去済み。
-       新ヘッダーの metric 系は .header-section スコープで再定義。 */
-
-    .race-selector {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      justify-content: center;
-      margin-bottom: var(--spacing-xl);
-      padding: var(--spacing-lg);
-      background: var(--bg-secondary);
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border-color);
-    }
-
-    .race-btn {
-      position: relative;
-      display: flex;
-      flex-direction: column;
+      display: inline-flex;
       align-items: center;
-      justify-content: center;
       gap: 4px;
-      padding: 10px 14px;
-      min-width: 64px;
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-      border: 2px solid var(--border-color);
-      border-radius: 999px;
-      font-size: 0.95rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .race-btn:hover {
-      border-color: #10b981;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-
-    .race-btn.active {
-      background: linear-gradient(135deg, #10b981, #059669);
-      border-color: #10b981;
+    .main-race-badge {
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #f59e0b, #fb923c);
       color: white;
-      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+      padding: 4px 12px;
+      border-radius: 15px;
+      font-size: 0.8rem;
+      font-weight: 700;
     }
 
-    .race-label {
-      font-size: 1rem;
-      font-weight: 800;
+    .toggle-icon {
+      flex-shrink: 0;
+      font-size: 1.2rem;
+      color: #10b981;
+      transition: transform 0.3s ease;
+      width: 24px;
+      text-align: center;
     }
 
-    .race-indicator {
-      width: 20px;
-      height: 2px;
-      background: var(--border-color);
-      border-radius: 1px;
-      transition: all 0.3s;
+    .race-accordion-content {
+      overflow: hidden;
+      max-height: 0;
+      opacity: 0;
+      transition: max-height 0.4s ease, opacity 0.3s ease;
+      background: rgba(15, 23, 42, 0.95);
     }
 
-    .race-btn.active .race-indicator {
-      background: rgba(255, 255, 255, 0.9);
-      box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
-    }
-
-    .race-display-area {
-      position: relative;
-      min-height: 500px;
-    }
-
-    .race-content {
-      display: none;
-    }
-
-    .race-content.active {
-      display: block;
-      animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    .race-accordion-body {
+      padding: 20px 18px 22px;
     }
 
     .analysis-section {
@@ -3231,10 +3224,28 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       .recommendation-section .bet-item .bet-numbers {
         font-size: 0.95rem;
       }
-      .race-btn {
-        min-width: 56px;
-        padding: 8px 10px;
-        font-size: 0.9rem;
+      .race-accordion-header {
+        padding: 14px 14px;
+        gap: 10px;
+      }
+      .race-basic-info {
+        gap: 8px;
+      }
+      .race-number {
+        padding: 6px 10px;
+        font-size: 0.95rem;
+      }
+      .race-name {
+        font-size: 0.98rem;
+      }
+      .race-head-meta {
+        gap: 4px 8px;
+      }
+      .race-meta-chip {
+        font-size: 0.78rem;
+      }
+      .race-accordion-body {
+        padding: 14px 12px 16px;
       }
     }
 
@@ -3687,50 +3698,146 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       const selectedVenue = document.querySelector(`.venue-content[data-venue-index="${venueIndex}"]`);
       if (selectedVenue) {
         selectedVenue.classList.add('active');
-
-        // カウンターアニメーション（アクティブなレースのみ）
-        const activeRace = selectedVenue.querySelector('.race-content.active');
-        if (activeRace) {
-          activeRace.querySelectorAll('[data-counter]').forEach(el => {
-            const target = parseInt(el.getAttribute('data-counter'));
-            animateCounter(el, target);
+        // 非表示中（display:none）は scrollHeight=0 のため高さを測れない。
+        // 表示反映後に、開いているアコーディオンの高さを再計算し、
+        // どれも開いていなければ既定（1R）を開く。
+        requestAnimationFrame(() => {
+          selectedVenue.querySelectorAll('.race-accordion-content').forEach((c) => {
+            // px 指定で開いているものだけ再計算（none は内容量追従済みで触らない）。
+            if (isAccordionOpen(c) && c.style.maxHeight !== 'none') c.style.maxHeight = c.scrollHeight + 'px';
           });
-        }
+          openVenueDefaultRace(selectedVenue);
+        });
       }
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    function selectRace(event, button) {
-      event.preventDefault();
+    // レース切替: premium 南関と統一したアコーディオン開閉。
+    // 同じ会場内で 1 つ開いたら他を閉じる。
+    function toggleJraRace(venueIndex, raceIndex) {
+      const content = document.getElementById(`race-v${venueIndex}-r${raceIndex}`);
+      const icon = document.getElementById(`toggle-v${venueIndex}-r${raceIndex}`);
+      if (!content || !icon) return;
 
-      const venueIndex = button.getAttribute('data-venue-index');
-      const raceIndex = button.getAttribute('data-race-index');
-
-      // 現在の会場内のレースボタンのみ更新
       const currentVenue = document.querySelector(`.venue-content[data-venue-index="${venueIndex}"]`);
-      if (!currentVenue) return;
 
-      currentVenue.querySelectorAll('.race-btn').forEach(btn => {
-        btn.classList.remove('active');
-      });
-      button.classList.add('active');
-
-      // 現在の会場内のレースコンテンツのみ更新
-      currentVenue.querySelectorAll('.race-content').forEach(content => {
-        content.classList.remove('active');
-      });
-
-      const selectedRace = currentVenue.querySelector(`.race-content[data-venue-index="${venueIndex}"][data-race-index="${raceIndex}"]`);
-      if (selectedRace) {
-        selectedRace.classList.add('active');
-
-        selectedRace.querySelectorAll('[data-counter]').forEach(el => {
-          const target = parseInt(el.getAttribute('data-counter'));
-          animateCounter(el, target);
+      // 同じ会場内の他アコーディオンを閉じる
+      if (currentVenue) {
+        currentVenue.querySelectorAll('.race-accordion-content').forEach(other => {
+          if (other !== content) {
+            other.style.maxHeight = '0px';
+            other.style.opacity = '0';
+            const otherIcon = document.getElementById(other.id.replace('race-v', 'toggle-v'));
+            if (otherIcon) {
+              otherIcon.textContent = '▼';
+              otherIcon.style.transform = 'rotate(0deg)';
+            }
+          }
         });
       }
+
+      const mh = content.style.maxHeight;
+      const isClosed = mh === '0px' || mh === '';
+      if (isClosed) {
+        content.style.maxHeight = content.scrollHeight + 'px';
+        content.style.opacity = '1';
+        icon.textContent = '◎';
+        icon.style.transform = 'rotate(180deg)';
+        // カウンターアニメーション（開いたレースのみ）
+        content.querySelectorAll('[data-counter]').forEach(el => {
+          const target = parseInt(el.getAttribute('data-counter'));
+          if (!isNaN(target)) animateCounter(el, target);
+        });
+      } else {
+        // 初期 open（none）は一旦実高さの px に固定してから 0 へ畳むと滑らかに閉じる。
+        if (mh === 'none') {
+          content.style.maxHeight = content.scrollHeight + 'px';
+          requestAnimationFrame(() => {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+          });
+        } else {
+          content.style.maxHeight = '0px';
+          content.style.opacity = '0';
+        }
+        icon.textContent = '▼';
+        icon.style.transform = 'rotate(0deg)';
+      }
     }
+    window.toggleJraRace = toggleJraRace;
+
+    // ---- アコーディオン初期 open ヘルパー --------------------------------
+    function iconForContent(content) {
+      return document.getElementById(content.id.replace('race-v', 'toggle-v'));
+    }
+    function isAccordionOpen(content) {
+      return !!content.style.maxHeight && content.style.maxHeight !== '0px';
+    }
+    function openAccordionContent(content) {
+      if (!content) return;
+      // 初期 open は max-height:none（内容量に完全追従・測定不要）。
+      // AccessControl が premium 本文を非同期で表示するため、DOMContentLoaded 時点では
+      // 本文が hidden で scrollHeight=0 になり得る。none なら測定タイミングに依存せず、
+      // 表示された瞬間に内容量どおり開いた状態になる（内側 details でもクリップしない）。
+      content.style.maxHeight = 'none';
+      content.style.opacity = '1';
+      const icon = iconForContent(content);
+      if (icon) { icon.textContent = '◎'; icon.style.transform = 'rotate(180deg)'; }
+      // 開いたレースのカウンター演出（手動 toggle と挙動を揃える）
+      content.querySelectorAll('[data-counter]').forEach((el) => {
+        const target = parseInt(el.getAttribute('data-counter'));
+        if (!isNaN(target)) animateCounter(el, target);
+      });
+    }
+    // venue 内に開いているものが無ければ既定（1R = data-default-open）を開く。
+    function openVenueDefaultRace(venueEl) {
+      if (!venueEl) return;
+      const contents = Array.from(venueEl.querySelectorAll('.race-accordion-content'));
+      if (contents.some(isAccordionOpen)) return;
+      const def = venueEl.querySelector('.race-accordion-content[data-default-open="true"]');
+      if (def) openAccordionContent(def);
+    }
+
+    // 内側の過去走 <details>（過去5走 / 過去走データ）を後から開くと、親レース
+    // アコーディオン (.race-accordion-content) の固定 maxHeight を超えてクリップされる
+    // 問題を解消する（高さ再計算のみ・表示構造やデータは変更しない）。premium 南関 §R1d 準拠。
+    function recalculateOpenAccordionHeightFrom(el) {
+      const content = el && el.closest && el.closest('.race-accordion-content');
+      if (!content) return;
+      const mh = content.style.maxHeight;
+      // 閉じている(0px/'')、または none（=内容量どおり開いておりクリップ無し）は再計算不要。
+      if (mh === '0px' || mh === '' || mh === 'none') return;
+      requestAnimationFrame(() => {
+        content.style.maxHeight = content.scrollHeight + 'px';
+      });
+    }
+    function bindRecentRacesAccordionRecalc() {
+      document.querySelectorAll('details.recent-races, details.history-details').forEach(d => {
+        if (d.dataset.r1dScrollBound === '1') return;
+        d.dataset.r1dScrollBound = '1';
+        d.addEventListener('toggle', () => {
+          recalculateOpenAccordionHeightFrom(d);
+          if (d.open) d.scrollIntoView({ block: 'nearest' });
+        });
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bindRecentRacesAccordionRecalc);
+    } else {
+      bindRecentRacesAccordionRecalc();
+    }
+
+    // フォント/画像のロード完了で scrollHeight が変わるため、表示中で開いている
+    // アコーディオンの max-height を再計算して内容量に追従させる。
+    window.addEventListener('load', () => {
+      const activeVenue = document.querySelector('.venue-content.active');
+      if (!activeVenue) return;
+      activeVenue.querySelectorAll('.race-accordion-content').forEach((c) => {
+        // px 指定で開いているものだけ再計算（none は内容量追従済みで触らない）。
+        if (isAccordionOpen(c) && c.style.maxHeight !== 'none') c.style.maxHeight = c.scrollHeight + 'px';
+      });
+    });
 
     function animateCounter(element, target) {
       const duration = 1500;
@@ -3753,13 +3860,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      const activeRace = document.querySelector('.race-content.active');
-      if (activeRace) {
-        activeRace.querySelectorAll('[data-counter]').forEach(el => {
-          const target = parseInt(el.getAttribute('data-counter'));
-          animateCounter(el, target);
-        });
-      }
+      // 初期表示: アクティブ会場の 1R（data-default-open）を開く。
+      // 非アクティブ会場は display:none で scrollHeight=0 のためここでは開かず、
+      // selectVenue で会場が表示された時点で 1R を開く（同じ観測結果になる）。
+      // 高さは固定値ではなく scrollHeight で算出し、内容量に追従させる。
+      const activeVenue = document.querySelector('.venue-content.active');
+      if (activeVenue) openVenueDefaultRace(activeVenue);
 
       // ユーザータイプチェック
       const isFreeUser = sessionStorage.getItem('isFreeUser') === 'true';
