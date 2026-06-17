@@ -14,6 +14,7 @@
 
 import { getRoleDisplayConfig, getDisplayComputerIndex, getHorseAiIndex } from '../lib/shared-prediction-logic.js';
 import { getDisplayRecentRacesForNankan } from '../lib/getDisplayRecentRacesForNankan.js';
+import NankanHorseStatsPanel from './NankanHorseStatsPanel.astro';
 
 interface HorseLike {
     role?: string;
@@ -294,6 +295,11 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
             </div>
         </details>
     )}
+
+    {/* 南関のみ: 近走詳細データ（条件別成績・回収率）。adapt が注入する horse.horseStatsNankan を
+        既存 NankanHorseStatsPanel で表示（premium/free 南関と同一 component・正本を再利用）。
+        horseStatsNankan が無い馬・JRA 馬では panel 側 show 判定で何も描画しない。過去5走とは別 accordion。 */}
+    <NankanHorseStatsPanel horse={horse} />
 
     {/* JRA light のみ: 過去走データ accordion（horseHistories.history 由来・表示専用・初期 close）。
         南関 light は jraHistoryCtx=null のため出さない。 */}

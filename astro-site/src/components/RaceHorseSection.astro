@@ -13,6 +13,7 @@
 //   raceHorses: normalizeHorseData(raceData) で正規化済みの配列
 
 import HorseMainCard from './HorseMainCard.astro';
+import NankanHorseStatsPanel from './NankanHorseStatsPanel.astro';
 import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
 import { isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates, getDisplayComputerIndex, getHorseAiIndex } from '../lib/shared-prediction-logic.js';
 import { getDisplayRecentRacesForNankan } from '../lib/getDisplayRecentRacesForNankan.js';
@@ -158,6 +159,10 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                                 </div>
                             </details>
                         )}
+                        {/* 南関のみ: 近走詳細データ（条件別成績・回収率）。premium 南関 連下ミニカードと同一の
+                            既存 NankanHorseStatsPanel を再利用。horseStatsNankan が無い馬・JRA 馬では panel 側
+                            show 判定で何も描画しない。compact 過去走とは別 accordion・初期 close。 */}
+                        <NankanHorseStatsPanel horse={horse} />
                     </div>
                 );
             })}
@@ -259,6 +264,10 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                                 </div>
                             </details>
                         )}
+                        {/* 南関のみ: 近走詳細データ（条件別成績・回収率）。premium 南関 抑えミニカードと同一の
+                            既存 NankanHorseStatsPanel を再利用。horseStatsNankan が無い馬・JRA 馬では panel 側
+                            show 判定で何も描画しない。compact 過去走とは別 accordion・初期 close。 */}
+                        <NankanHorseStatsPanel horse={horse} />
                     </div>
                 );
             })}
@@ -294,6 +303,10 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                         {comment && (
                             <div class="ineligible-comment">{comment}</div>
                         )}
+                        {/* 南関のみ: 近走詳細データ（条件別成績・回収率）。premium 南関 不要馬行と同一の
+                            既存 NankanHorseStatsPanel を再利用。horseStatsNankan が無い馬・JRA 馬では panel 側
+                            show 判定で何も描画しない。初期 close・本文クリックで内側 details だけ閉じる。 */}
+                        <NankanHorseStatsPanel horse={h} />
                     </li>
                 );
             })}

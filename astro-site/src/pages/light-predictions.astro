@@ -13,12 +13,23 @@ import HorseMainCard from '../components/HorseMainCard.astro';
 import RaceHorseSection from '../components/RaceHorseSection.astro';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+import { injectHorseStatsNankan } from '../lib/injectHorseStatsNankan.js';
 
 // src/data/predictions/*.json から最新日付を自動選択（自動反映フロー）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
 const allRacesData = pickLatestAndAdapt(predictionModules);
 if (!allRacesData) {
     throw new Error('予想データが見つかりません。src/data/predictions/ を確認してください。');
+}
+
+// 南関 uma_info 元表統計（既存正本 src/data/horseStats/nankan）を horse.horseStatsNankan へ注入。
+// pickLatestAndAdapt（legacy単会場経路）は注入しないため、light でも premium/free 南関と同じ
+// 既存 injectHorseStatsNankan で表示専用に補う（[allRacesData] を venues 形状として渡す）。
+// recentRaces / featureScores / AI指数 / 印 / 買い目 / EV は一切変更しない。失敗は非致命。
+try {
+    injectHorseStatsNankan([allRacesData], allRacesData.raceDate, process.cwd());
+} catch (_e) {
+    // 注入失敗は非致命。既存表示を維持する。
 }
 
 // 🛡️ 復活防止対策: processRaceDataのエラーハンドリング強化
