@@ -240,7 +240,7 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
 
     {recentRaces.length > 0 && (
         <details class="recent-races" data-click-close="true">
-            <summary>過去5走</summary>
+            <summary>過去{Math.min(5, recentRaces.length)}走</summary>
             <div class="recent-races-list">
                 {recentRaces.slice(0, 5).map((r, i) => {
                     const rankRaw = r?.rank ?? r?.finish;
