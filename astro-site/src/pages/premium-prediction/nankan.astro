@@ -13,6 +13,7 @@ import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../li
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
+import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
 
 // R1d-impl-v2c Step2: 連下/補欠 compact 近走の field 読み替え（entries 由来 / 既存 getDisplay 由来の両 shape 対応）。
 // 表示専用・正本順位不変・recentHorseHistories fallback 正本化しない・compact 維持・docs §34.24。
@@ -1244,6 +1245,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     </AccessControl>
 
 <AccordionClickClose />
+<RaceAccordionClickClose />
 
 <script>
     // Modal functionality
@@ -3408,32 +3410,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     }
     window.toggleNankanRace = toggleNankanRace;
 
-    // 開いているレースアコーディオンの「通常本文（非操作領域・テキスト・余白）」を
-    // クリックしたら閉じる（JRA と同方針）。次は閉じない:
-    //   - 操作要素（a/button/summary/input/select/textarea/label/[role=button]/[contenteditable]）
-    //   - 開閉ヘッダー自身（.race-accordion-header は独自に toggle）
-    //   - 内側 details（過去5走/過去走データ/recent-races/data-click-close 等）の内部
-    //     → 内側 details の開閉だけを行い、親レースは閉じない（AccordionClickClose と二重発火しない）。
-    // レースアコーディオン本体は <div>（details ではない）ため、本文中で closest('details') に当たるのは
-    // 必ず内側 details。content.contains で当該アコーディオン内であることも確認する。委譲で実装。
-    const ACCORDION_CLOSE_IGNORE = 'a, button, summary, input, select, textarea, label, [role="button"], [contenteditable], .race-accordion-header';
-    document.addEventListener('click', (event) => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        if (target.closest(ACCORDION_CLOSE_IGNORE)) return;
-        const content = target.closest('.race-accordion-content');
-        if (!content) return;
-        // 内側 details の操作・本文クリックでは親レースを閉じない
-        const nestedDetails = target.closest('details');
-        if (nestedDetails && content.contains(nestedDetails)) return;
-        const mh = content.style.maxHeight;
-        const isOpen = mh === 'none' || (!!mh && mh !== '0px');
-        if (!isOpen) return;
-        // id 形式: race-v{venueIndex}-{raceNumber}r
-        const m = content.id.match(/^race-v(\d+)-(\d+)r$/);
-        if (!m) return;
-        toggleNankanRace(parseInt(m[1], 10), parseInt(m[2], 10));
-    });
+    // 親レース本文クリックで閉じる挙動は共有 <RaceAccordionClickClose /> に統一（ページ個別実装は撤去）。
+    // 内側 details の本文クリック閉じは共有 <AccordionClickClose /> が担当。
 
     // R1d-scroll-v1: 内側の過去走 <details> を後から開くと、親レースアコーディオン
     // (.race-accordion-content) の固定 maxHeight を超えてクリップされる問題を解消する。

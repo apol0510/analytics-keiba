@@ -9,6 +9,7 @@ import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../li
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
+import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
 
 // 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
 // shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
@@ -667,6 +668,7 @@ const analysis = firstVenue.mainRace.analysis;
         </div>
 
     <AccordionClickClose />
+    <RaceAccordionClickClose />
 </BaseLayout>
 
 <style>

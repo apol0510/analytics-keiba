@@ -103,7 +103,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                         )}
                         {comment && <p class="minor-horse-comment">{comment}</p>}
                         {recentRaces.length > 0 && (
-                            <details class="recent-races recent-races-compact">
+                            <details class="recent-races recent-races-compact" data-click-close="true">
                                 <summary>過去5走</summary>
                                 <div class="recent-races-list">
                                     {recentRaces.slice(0, 5).map((r: any, i: number) => {
@@ -204,7 +204,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
                         )}
                         {comment && <p class="minor-horse-comment">{comment}</p>}
                         {recentRaces.length > 0 && (
-                            <details class="recent-races recent-races-compact">
+                            <details class="recent-races recent-races-compact" data-click-close="true">
                                 <summary>過去5走</summary>
                                 <div class="recent-races-list">
                                     {recentRaces.slice(0, 5).map((r: any, i: number) => {
@@ -268,7 +268,7 @@ const osaeMark = safeHorses.find(h => h?.role === '押さえ')?.displayMark || '
 
 {/* 不要馬・見送り馬 — Premium と同一ロジック */}
 {ineligible.length > 0 && (
-    <details class="ineligible-section">
+    <details class="ineligible-section" data-click-close="true">
         <summary>不要馬・見送り馬 {ineligible.length}頭</summary>
         <ul class="ineligible-list">
             {ineligible.map((h: any) => {

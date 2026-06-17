@@ -238,7 +238,7 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
     )}
 
     {recentRaces.length > 0 && (
-        <details class="recent-races">
+        <details class="recent-races" data-click-close="true">
             <summary>過去5走</summary>
             <div class="recent-races-list">
                 {recentRaces.slice(0, 5).map((r, i) => {
@@ -298,7 +298,7 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
     {/* JRA light のみ: 過去走データ accordion（horseHistories.history 由来・表示専用・初期 close）。
         南関 light は jraHistoryCtx=null のため出さない。 */}
     {jraHistoryCtx && (
-        <details class="jra-history-details">
+        <details class="jra-history-details" data-click-close="true">
             <summary class="jra-history-summary"><span class="jra-history-summary-text">過去走データ</span><span class="jra-history-count">（{jraHistoryCtx.count}走）</span></summary>
             <div class="jra-history-content">
                 {jraHistoryCtx.hasProfile && (

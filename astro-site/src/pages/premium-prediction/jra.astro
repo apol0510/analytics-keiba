@@ -1,6 +1,8 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import AccessControl from '../../components/AccessControl.astro';
+import AccordionClickClose from '../../components/AccordionClickClose.astro';
+import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
@@ -699,7 +701,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                     <span class="toggle-icon" id={toggleId}>▼</span>
                   </div>
 
-                  <div class="race-accordion-content" id={accordionId} data-default-open={raceIndex === 0 ? 'true' : undefined} style="max-height:0;opacity:0">
+                  <div class="race-accordion-content" id={accordionId} style="max-height:0;opacity:0">
                     <div class="race-accordion-body">
 
 
@@ -933,7 +935,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             const displayRecent = _displayRecentOf(horse);
                             if (!displayRecent.length) return null;
                             return (
-                            <details class="recent-races recent-races-compact">
+                            <details class="recent-races recent-races-compact" data-click-close="true">
                               <summary>過去{Math.min(5, displayRecent.length)}走</summary>
                               <div class="recent-races-list">
                                 {displayRecent.slice(0, 5).map((r) => {
@@ -962,7 +964,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                             const ctx = buildHistoryAccordionContext(horse, race);
                             if (!ctx) return null;
                             return (
-                              <details class="history-details">
+                              <details class="history-details" data-click-close="true">
                                 <summary class="history-summary">
                                   <span class="history-summary-text">過去走データ</span>
                                   <span class="history-summary-count">{ctx.summaryCount}</span>
@@ -1099,7 +1101,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 )}
                                 {comment && <p class="minor-horse-comment">{comment}</p>}
                                 {recentRaces.length > 0 && (
-                                  <details class="recent-races recent-races-compact">
+                                  <details class="recent-races recent-races-compact" data-click-close="true">
                                     <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                     <div class="recent-races-list">
                                       {recentRaces.slice(0, 5).map((r) => {
@@ -1123,7 +1125,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                   const ctx = buildHistoryAccordionContext(horse, race);
                                   if (!ctx) return null;
                                   return (
-                                    <details class="history-details">
+                                    <details class="history-details" data-click-close="true">
                                       <summary class="history-summary">
                                         <span class="history-summary-text">過去走データ</span>
                                         <span class="history-summary-count">{ctx.summaryCount}</span>
@@ -1257,7 +1259,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                 )}
                                 {comment && <p class="minor-horse-comment">{comment}</p>}
                                 {recentRaces.length > 0 && (
-                                  <details class="recent-races recent-races-compact">
+                                  <details class="recent-races recent-races-compact" data-click-close="true">
                                     <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                     <div class="recent-races-list">
                                       {recentRaces.slice(0, 5).map((r) => {
@@ -1280,7 +1282,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                   const ctx = buildHistoryAccordionContext(horse, race);
                                   if (!ctx) return null;
                                   return (
-                                    <details class="history-details">
+                                    <details class="history-details" data-click-close="true">
                                       <summary class="history-summary">
                                         <span class="history-summary-text">過去走データ</span>
                                         <span class="history-summary-count">{ctx.summaryCount}</span>
@@ -1438,6 +1440,10 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       </div>
     </section>
   </AccessControl>
+
+  <!-- accordion 共通挙動: 内側 details 本文クリックで内側のみ閉じる / レース本文クリックで親レースを閉じる -->
+  <AccordionClickClose />
+  <RaceAccordionClickClose />
 
   <style>
     /* free-prediction.astroの基本スタイルを継承 + PRO専用スタイル追加 */
@@ -3726,16 +3732,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       const selectedVenue = document.querySelector(`.venue-content[data-venue-index="${venueIndex}"]`);
       if (selectedVenue) {
         selectedVenue.classList.add('active');
-        // 非表示中（display:none）は scrollHeight=0 のため高さを測れない。
-        // 表示反映後に、開いているアコーディオンの高さを再計算し、
-        // どれも開いていなければ既定（1R）を開く。
-        requestAnimationFrame(() => {
-          selectedVenue.querySelectorAll('.race-accordion-content').forEach((c) => {
-            // px 指定で開いているものだけ再計算（none は内容量追従済みで触らない）。
-            if (isAccordionOpen(c) && c.style.maxHeight !== 'none') c.style.maxHeight = c.scrollHeight + 'px';
-          });
-          openVenueDefaultRace(selectedVenue);
-        });
+        // 会場切替時にレースを自動 open しない（全レース閉のまま維持）。
       }
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3795,37 +3792,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     }
     window.toggleJraRace = toggleJraRace;
 
-    // ---- アコーディオン初期 open ヘルパー --------------------------------
-    function iconForContent(content) {
-      return document.getElementById(content.id.replace('race-v', 'toggle-v'));
-    }
-    function isAccordionOpen(content) {
-      return !!content.style.maxHeight && content.style.maxHeight !== '0px';
-    }
-    function openAccordionContent(content) {
-      if (!content) return;
-      // 初期 open は max-height:none（内容量に完全追従・測定不要）。
-      // AccessControl が premium 本文を非同期で表示するため、DOMContentLoaded 時点では
-      // 本文が hidden で scrollHeight=0 になり得る。none なら測定タイミングに依存せず、
-      // 表示された瞬間に内容量どおり開いた状態になる（内側 details でもクリップしない）。
-      content.style.maxHeight = 'none';
-      content.style.opacity = '1';
-      const icon = iconForContent(content);
-      if (icon) { icon.textContent = '◎'; icon.style.transform = 'rotate(180deg)'; }
-      // 開いたレースのカウンター演出（手動 toggle と挙動を揃える）
-      content.querySelectorAll('[data-counter]').forEach((el) => {
-        const target = parseInt(el.getAttribute('data-counter'));
-        if (!isNaN(target)) animateCounter(el, target);
-      });
-    }
-    // venue 内に開いているものが無ければ既定（1R = data-default-open）を開く。
-    function openVenueDefaultRace(venueEl) {
-      if (!venueEl) return;
-      const contents = Array.from(venueEl.querySelectorAll('.race-accordion-content'));
-      if (contents.some(isAccordionOpen)) return;
-      const def = venueEl.querySelector('.race-accordion-content[data-default-open="true"]');
-      if (def) openAccordionContent(def);
-    }
+    // 初期 open は廃止（全レース初期 closed）。会場切替でも自動 open しない。
 
     // 内側の過去走 <details>（過去5走 / 過去走データ）を後から開くと、親レース
     // アコーディオン (.race-accordion-content) の固定 maxHeight を超えてクリップされる
@@ -3856,42 +3823,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       bindRecentRacesAccordionRecalc();
     }
 
-    // 開いているレースアコーディオンの「通常本文（非操作領域・テキスト・余白）」を
-    // クリックしたら閉じる。次は閉じない:
-    //   - 操作要素（a/button/summary/input/select/textarea/label/[role=button]/[contenteditable]）
-    //   - 開閉ヘッダー自身（.race-accordion-header は独自に toggle）
-    //   - 内側 details（過去5走/過去走データ/recent-races/history-details/data-click-close 等）の内部
-    //     → 内側 details の開閉だけを行い、親レースは閉じない（AccordionClickClose と二重発火しない）。
-    // レースアコーディオン本体は <div>（details ではない）ため、本文中で closest('details') に当たるのは
-    // 必ず内側 details。content.contains で当該アコーディオン内であることも確認する。委譲で実装。
-    const ACCORDION_CLOSE_IGNORE = 'a, button, summary, input, select, textarea, label, [role="button"], [contenteditable], .race-accordion-header';
-    document.addEventListener('click', (event) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest(ACCORDION_CLOSE_IGNORE)) return;
-      const content = target.closest('.race-accordion-content');
-      if (!content) return;
-      // 内側 details の操作・本文クリックでは親レースを閉じない
-      const nestedDetails = target.closest('details');
-      if (nestedDetails && content.contains(nestedDetails)) return;
-      const mh = content.style.maxHeight;
-      const isOpen = mh === 'none' || (!!mh && mh !== '0px');
-      if (!isOpen) return;
-      const m = content.id.match(/^race-v(\d+)-r(\d+)$/);
-      if (!m) return;
-      toggleJraRace(parseInt(m[1], 10), parseInt(m[2], 10));
-    });
-
-    // フォント/画像のロード完了で scrollHeight が変わるため、表示中で開いている
-    // アコーディオンの max-height を再計算して内容量に追従させる。
-    window.addEventListener('load', () => {
-      const activeVenue = document.querySelector('.venue-content.active');
-      if (!activeVenue) return;
-      activeVenue.querySelectorAll('.race-accordion-content').forEach((c) => {
-        // px 指定で開いているものだけ再計算（none は内容量追従済みで触らない）。
-        if (isAccordionOpen(c) && c.style.maxHeight !== 'none') c.style.maxHeight = c.scrollHeight + 'px';
-      });
-    });
+    // 親レース本文クリックで閉じる挙動は共有 <RaceAccordionClickClose /> に統一（ページ個別実装は撤去）。
+    // 内側 details の本文クリック閉じは共有 <AccordionClickClose /> が担当。
 
     function animateCounter(element, target) {
       const duration = 1500;
@@ -3914,12 +3847,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      // 初期表示: アクティブ会場の 1R（data-default-open）を開く。
-      // 非アクティブ会場は display:none で scrollHeight=0 のためここでは開かず、
-      // selectVenue で会場が表示された時点で 1R を開く（同じ観測結果になる）。
-      // 高さは固定値ではなく scrollHeight で算出し、内容量に追従させる。
-      const activeVenue = document.querySelector('.venue-content.active');
-      if (activeVenue) openVenueDefaultRace(activeVenue);
+      // レースアコーディオンは初期状態すべて閉じる（自動 open しない）。
 
       // ユーザータイプチェック
       const isFreeUser = sessionStorage.getItem('isFreeUser') === 'true';

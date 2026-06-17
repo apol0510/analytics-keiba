@@ -1,5 +1,7 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
+import AccordionClickClose from '../../../components/AccordionClickClose.astro';
+import RaceAccordionClickClose from '../../../components/RaceAccordionClickClose.astro';
 // 旧 KI 由来コンポーネント (詳細は astro-site/docs/FREE_JRA_RULES.md) は本ファイルで import しない。
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -424,7 +426,7 @@ try {
                               )}
 
                               {recentRaces.length > 0 && (
-                                <details class="recent-races recent-races-compact">
+                                <details class="recent-races recent-races-compact" data-click-close="true">
                                   <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                   <div class="recent-races-list">
                                     {recentRaces.slice(0, 5).map((r, i) => {
@@ -452,7 +454,7 @@ try {
                                 const ctx = buildHistoryAccordionContext(horse, race);
                                 if (!ctx) return null;
                                 return (
-                                  <details class="history-details">
+                                  <details class="history-details" data-click-close="true">
                                     <summary class="history-summary">
                                       <span class="history-summary-text">過去走データ</span>
                                       <span class="history-summary-count">{ctx.summaryCount}</span>
@@ -592,7 +594,7 @@ try {
                                       </div>
                                     )}
                                     {recentRaces.length > 0 && (
-                                      <details class="recent-races recent-races-compact">
+                                      <details class="recent-races recent-races-compact" data-click-close="true">
                                         <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                         <div class="recent-races-list">
                                           {recentRaces.slice(0, 5).map((r, i) => {
@@ -657,7 +659,7 @@ try {
                                       </div>
                                     )}
                                     {recentRaces.length > 0 && (
-                                      <details class="recent-races recent-races-compact">
+                                      <details class="recent-races recent-races-compact" data-click-close="true">
                                         <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                         <div class="recent-races-list">
                                           {recentRaces.slice(0, 5).map((r, i) => {
@@ -686,7 +688,7 @@ try {
                       {/* 不要馬セクション — 抑え候補から除外された馬を別枠で表示。
                           判定: isIneligibleHorse */}
                       {allHorses.filter(isIneligibleHorse).length > 0 && (
-                        <details class="minor-group-ineligible">
+                        <details class="minor-group-ineligible" data-click-close="true">
                           <summary class="ineligible-summary">
                             <span class="ineligible-summary-icon">無</span>
                             <span class="ineligible-summary-title">不要馬 {allHorses.filter(isIneligibleHorse).length}頭</span>
@@ -722,7 +724,7 @@ try {
                                       </div>
                                     )}
                                     {recentRaces.length > 0 && (
-                                      <details class="recent-races recent-races-compact">
+                                      <details class="recent-races recent-races-compact" data-click-close="true">
                                         <summary>過去{Math.min(5, recentRaces.length)}走</summary>
                                         <div class="recent-races-list">
                                           {recentRaces.slice(0, 5).map((r, i) => {
@@ -2173,4 +2175,6 @@ try {
     });
     window.addEventListener('load', () => setTimeout(checkFreeMemberAccess, 300));
   </script>
+  <AccordionClickClose />
+  <RaceAccordionClickClose />
 </BaseLayout>

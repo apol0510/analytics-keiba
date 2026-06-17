@@ -1,6 +1,8 @@
 ---
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import AccordionClickClose from '../components/AccordionClickClose.astro';
+import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
 import AccessControl from '../components/AccessControl.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
 import { processRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence } from '../lib/shared-prediction-logic.js';
@@ -564,6 +566,8 @@ export const dailyResultsData = {
 
 
     </AccessControl>
+    <AccordionClickClose />
+    <RaceAccordionClickClose />
 </BaseLayout>
     <!-- 銀行振込モーダル -->
     <div class="bank-modal" id="bankModal">

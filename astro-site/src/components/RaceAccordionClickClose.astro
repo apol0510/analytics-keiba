@@ -1,0 +1,66 @@
+---
+/**
+ * RaceAccordionClickClose.astro (analytics-keiba)
+ *
+ * 開いているレースアコーディオン本文の「通常領域（非操作・非nested-details・余白/テキスト）」を
+ * クリック/タップしたら、そのレースを閉じる。全プラン（free/light/premium）・全場（JRA/南関/地方）共通。
+ *
+ * 【閉じ方】ページ固有の toggle をそのまま再利用する（対応ヘッダーを programmatic click）。
+ *   - 各ページの既存ロジック（max-height / opacity / icon / aria-expanded / active class /
+ *     同会場内の排他制御 など）をそのまま使うため、ページ差（class名・icon記法・関数名）を
+ *     共有側に持たない。
+ *   - 文字列からの関数生成・eval はしない。window 関数の有無に依存しない（onclick 属性経由）。
+ *   - 「一律 maxHeight=0」では閉じない（icon/aria 等のページ別状態を壊さないため）。
+ *
+ * 【ページ差の吸収】content / header は複数 selector で受ける:
+ *   - content: .race-accordion-content / .jra-race-accordion-content
+ *   - header : .race-accordion-header / .jra-race-accordion-header
+ *   （header は content の直前兄弟。fallback で同ブロック内を querySelector）
+ *
+ * 【除外（親を閉じない）】
+ *   - 操作要素: a / button / summary / input / select / textarea / label /
+ *               [role="button"] / [contenteditable]
+ *   - アコーディオンヘッダー自身（各自の onclick が開閉する）
+ *   - nested details（過去5走/過去走データ/recent-races/history-details/data-click-close 等）の内部
+ *     → 内側 details の本文クリックは AccordionClickClose.astro が担当。本 component は親を閉じない
+ *       （二重発火しない）。
+ *
+ * 表示専用挙動。featureScores / AI指数 / 印 / 買い目 / EV / 予想データ には一切関与しない。
+ */
+---
+<script>
+  const CONTENT_SEL = '.race-accordion-content, .jra-race-accordion-content';
+  const HEADER_SEL = '.race-accordion-header, .jra-race-accordion-header';
+  const IGNORE_SEL =
+    'a, button, summary, input, select, textarea, label, [role="button"], [contenteditable], ' +
+    HEADER_SEL;
+
+  document.addEventListener('click', (event) => {
+    const t = event.target;
+    if (!(t instanceof Element)) return;
+
+    // 操作要素・ヘッダーは無視（ヘッダーは各ページの onclick が開閉する）
+    if (t.closest(IGNORE_SEL)) return;
+
+    // 開いているレース本文の内側か
+    const content = t.closest(CONTENT_SEL);
+    if (!content) return;
+
+    // nested details（過去5走/過去走データ等）の内部クリックでは親レースを閉じない
+    // （内側 details の開閉は AccordionClickClose が担当）
+    const nested = t.closest('details');
+    if (nested && content.contains(nested)) return;
+
+    // クリックが本文内に届いている＝開いている前提だが、安全のため可視性も確認
+    if (content.offsetHeight === 0) return;
+
+    // 閉じ方はページ固有 toggle を再利用: 対応ヘッダーを programmatic click（＝再度クリックで閉じる）
+    let header = content.previousElementSibling;
+    if (!(header && header.matches && header.matches(HEADER_SEL))) {
+      const block = content.parentElement;
+      header = block ? block.querySelector(HEADER_SEL) : null;
+    }
+    if (!header) return;
+    header.click();
+  });
+</script>

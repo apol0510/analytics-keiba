@@ -1,6 +1,7 @@
 ---
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../layouts/BaseLayout.astro';
+import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../lib/shared-prediction-logic.js';
 import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
@@ -461,6 +462,7 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
             </a>
         </div>
         </div>
+<RaceAccordionClickClose />
 </BaseLayout>
 
 <style>
