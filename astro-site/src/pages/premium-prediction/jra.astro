@@ -540,13 +540,6 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 
               return (
                 <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
-                  <!-- 会場名（複数会場の場合のみ表示）-->
-                  {isMultiVenue && (
-                    <div class="venue-header">
-                      <h2 class="venue-title">{venueInfo.venue}</h2>
-                      <p class="venue-info">{venueInfo.date} - {venueInfo.totalRaces}レース</p>
-                    </div>
-                  )}
 
                   {/* 本日の傾向分析（AI自動判定）— 会場ごと */}
                   {venueAnalysis[venueIndex] && (
@@ -656,6 +649,14 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                           <span class="venue-race-count">{vd.eventInfo.totalRaces}R</span>
                         </button>
                       ))}
+                    </div>
+                  )}
+
+                  <!-- 会場セクションラベル（タブの下に小さく統合・孤立した大カードは廃止） -->
+                  {isMultiVenue && (
+                    <div class="venue-section-label">
+                      <span class="vsl-name">{venueInfo.venue}</span>
+                      <span class="vsl-meta">{venueInfo.date}・全{venueInfo.totalRaces}レース</span>
                     </div>
                   )}
 
@@ -1566,12 +1567,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     /* 会場タブ */
     .venue-selector {
       display: flex;
-      gap: var(--spacing-md);
+      gap: 12px;
       justify-content: center;
-      margin-bottom: var(--spacing-xl);
-      padding: var(--spacing-lg);
+      margin: 0 0 28px;
+      padding: 14px 16px;
       background: var(--bg-secondary);
-      border-radius: var(--radius-lg);
+      border-radius: 18px;
       border: 1px solid var(--border-color);
       flex-wrap: wrap;
     }
@@ -1580,41 +1581,67 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: var(--spacing-xs);
-      padding: var(--spacing-md) var(--spacing-xl);
+      gap: 2px;
+      padding: 12px 22px;
       background: var(--bg-tertiary);
       color: var(--text-primary);
-      border: 2px solid var(--border-color);
-      border-radius: 999px;
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
       font-size: 1rem;
       font-weight: 700;
       cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      min-width: 120px;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      min-width: 104px;
     }
 
     .venue-btn:hover {
-      border-color: #a78bfa;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(167, 139, 250, 0.3);
+      border-color: rgba(167, 139, 250, 0.6);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(167, 139, 250, 0.22);
     }
 
     .venue-btn.active {
       background: linear-gradient(135deg, #8b5cf6, #a78bfa);
-      border-color: #a78bfa;
+      border-color: transparent;
       color: white;
-      box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+      box-shadow: 0 6px 18px rgba(139, 92, 246, 0.35);
     }
 
     .venue-label {
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       font-weight: 900;
       letter-spacing: 0.5px;
     }
 
     .venue-race-count {
       font-size: 0.75rem;
-      opacity: 0.8;
+      opacity: 0.85;
+      font-family: 'Courier New', monospace;
+    }
+
+    /* 会場セクションラベル（旧 venue-header 大カードの置き換え：小さく左寄せ） */
+    .venue-section-label {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      margin: 0 2px 14px;
+      padding: 8px 14px;
+      background: rgba(139, 92, 246, 0.08);
+      border-left: 3px solid rgba(139, 92, 246, 0.55);
+      border-radius: 8px;
+    }
+
+    .vsl-name {
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: #a78bfa;
+      letter-spacing: 0.3px;
+    }
+
+    .vsl-meta {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
       font-family: 'Courier New', monospace;
     }
 
@@ -1627,31 +1654,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .venue-header {
-      text-align: center;
-      margin-bottom: var(--spacing-xl);
-      padding: var(--spacing-lg);
-      background: linear-gradient(135deg,
-        rgba(139, 92, 246, 0.15) 0%,
-        rgba(167, 139, 250, 0.15) 100%);
-      border-radius: var(--radius-lg);
-      border: 2px solid rgba(139, 92, 246, 0.3);
-    }
-
-    .venue-title {
-      font-size: 2rem;
-      font-weight: 900;
-      color: #a78bfa;
-      margin: 0 0 var(--spacing-sm) 0;
-      text-shadow: 0 0 15px rgba(167, 139, 250, 0.4);
-    }
-
-    .venue-info {
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      margin: 0;
-      font-family: 'Courier New', monospace;
-    }
+    /* 旧 venue-header（大きい紫枠の孤立カード）は廃止し、
+       .venue-section-label（タブ直下の小さな左寄せラベル）へ統合した。 */
 
     /* 買い目セクション */
     .betting-section {
@@ -1965,28 +1969,30 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     .race-accordion-list {
       display: flex;
       flex-direction: column;
-      gap: var(--spacing-md);
+      gap: 16px;
     }
 
     .race-accordion-block {
       background: rgba(16, 185, 129, 0.05);
-      border-radius: var(--radius-lg);
-      border: 1px solid rgba(16, 185, 129, 0.2);
+      border-radius: 18px;
+      border: 1px solid rgba(16, 185, 129, 0.22);
       overflow: hidden;
-      transition: border-color 0.25s ease;
+      transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
     }
 
     .race-accordion-block:hover {
-      border-color: rgba(16, 185, 129, 0.4);
+      border-color: rgba(16, 185, 129, 0.45);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
     }
 
     .race-accordion-header {
-      padding: 16px 20px;
+      padding: 20px 24px;
       cursor: pointer;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 14px;
+      gap: 18px;
       background: linear-gradient(135deg, rgba(16, 185, 129, 0.10) 0%, rgba(16, 185, 129, 0.04) 100%);
       transition: background 0.25s ease;
       border-bottom: 1px solid transparent;
@@ -1999,7 +2005,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     .race-basic-info {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px 16px;
       flex-wrap: wrap;
       min-width: 0;
     }
@@ -2008,8 +2014,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       flex-shrink: 0;
       background: linear-gradient(135deg, #8b5cf6, #7c3aed);
       color: white;
-      padding: 8px 14px;
-      border-radius: 10px;
+      padding: 9px 16px;
+      border-radius: 12px;
       font-weight: 800;
       font-size: 1.05rem;
       letter-spacing: 0.02em;
@@ -2019,28 +2025,30 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     .race-name {
       color: #e2e8f0;
       font-weight: 700;
-      font-size: 1.05rem;
-      line-height: 1.25;
+      font-size: 1.08rem;
+      line-height: 1.3;
     }
 
     .race-head-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 6px 10px;
+      gap: 8px 12px;
       align-items: center;
+      width: 100%;
+      margin-top: 2px;
     }
 
     .race-meta-chip {
-      font-size: 0.82rem;
-      color: #94a3b8;
+      font-size: 0.83rem;
+      color: #b6c2d9;
       font-weight: 600;
-      padding: 3px 8px;
-      background: rgba(30, 41, 59, 0.5);
-      border-radius: var(--radius-md);
-      border: 1px solid rgba(139, 92, 246, 0.2);
+      padding: 5px 11px;
+      background: rgba(30, 41, 59, 0.7);
+      border-radius: 999px;
+      border: 1px solid rgba(139, 92, 246, 0.28);
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 5px;
     }
 
     .main-race-badge {
@@ -3224,28 +3232,48 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       .recommendation-section .bet-item .bet-numbers {
         font-size: 0.95rem;
       }
+      .venue-selector {
+        gap: 8px;
+        padding: 12px 12px;
+        margin-bottom: 22px;
+      }
+      .venue-btn {
+        flex: 1 1 0;
+        min-width: 84px;
+        padding: 10px 12px;
+      }
+      .venue-label {
+        font-size: 1.05rem;
+      }
+      .venue-section-label {
+        margin-bottom: 12px;
+      }
+      .race-accordion-list {
+        gap: 12px;
+      }
       .race-accordion-header {
-        padding: 14px 14px;
-        gap: 10px;
+        padding: 16px 16px;
+        gap: 12px;
       }
       .race-basic-info {
-        gap: 8px;
+        gap: 10px 12px;
       }
       .race-number {
-        padding: 6px 10px;
-        font-size: 0.95rem;
-      }
-      .race-name {
+        padding: 7px 12px;
         font-size: 0.98rem;
       }
+      .race-name {
+        font-size: 1rem;
+      }
       .race-head-meta {
-        gap: 4px 8px;
+        gap: 6px 10px;
       }
       .race-meta-chip {
         font-size: 0.78rem;
+        padding: 4px 9px;
       }
       .race-accordion-body {
-        padding: 14px 12px 16px;
+        padding: 16px 14px 18px;
       }
     }
 
@@ -3827,6 +3855,24 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     } else {
       bindRecentRacesAccordionRecalc();
     }
+
+    // 開いているレースアコーディオンの「中身（非操作領域・テキスト部分・内側 details の中身）」を
+    // クリックしたら閉じる。操作要素（リンク/ボタン/summary/入力系/label 等）と開閉ヘッダー自身のみ除外。
+    // summary は除外するので内側 details の開閉操作は維持される（details 全体は除外しない）。委譲で実装。
+    const ACCORDION_CLOSE_IGNORE = 'a, button, summary, input, select, textarea, label, [role="button"], [contenteditable], .race-accordion-header';
+    document.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(ACCORDION_CLOSE_IGNORE)) return;
+      const content = target.closest('.race-accordion-content');
+      if (!content) return;
+      const mh = content.style.maxHeight;
+      const isOpen = mh === 'none' || (!!mh && mh !== '0px');
+      if (!isOpen) return;
+      const m = content.id.match(/^race-v(\d+)-r(\d+)$/);
+      if (!m) return;
+      toggleJraRace(parseInt(m[1], 10), parseInt(m[2], 10));
+    });
 
     // フォント/画像のロード完了で scrollHeight が変わるため、表示中で開いている
     // アコーディオンの max-height を再計算して内容量に追従させる。
