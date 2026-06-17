@@ -3168,8 +3168,7 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
       if (selectedVenue) {
         selectedVenue.classList.add('active');
       }
-
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // 会場タブ切替では active 切替のみ。ページ最上部へスクロールしない（スクロール位置を維持）。
     }
 
     // アコーディオン: 同じ会場内で他を閉じてからトグル
@@ -3204,8 +3203,17 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
       // 自身をトグル
       const icon = headerEl.querySelector('.jra-race-toggle');
       if (isOpen) {
-        target.style.maxHeight = '0px';
-        target.style.opacity = '0';
+        // none の場合は一旦実 px に固定してから 0 へ畳むと滑らかに閉じる
+        if (target.style.maxHeight === 'none') {
+          target.style.maxHeight = target.scrollHeight + 'px';
+          requestAnimationFrame(() => {
+            target.style.maxHeight = '0px';
+            target.style.opacity = '0';
+          });
+        } else {
+          target.style.maxHeight = '0px';
+          target.style.opacity = '0';
+        }
         headerEl.setAttribute('aria-expanded', 'false');
         if (icon) {
           icon.textContent = '▼';
@@ -3219,6 +3227,14 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
           icon.textContent = '◎';
           icon.style.transform = 'rotate(180deg)';
         }
+        // 開アニメ完了後に max-height:none 化（内側 details=過去5走/過去走データ/不要馬 を
+        // 開いてもクリップしないようにする。閉じ状態に戻った場合は none 化しない）
+        const onEnd = (e) => {
+          if (e.propertyName !== 'max-height') return;
+          target.removeEventListener('transitionend', onEnd);
+          if (target.style.maxHeight !== '0px') target.style.maxHeight = 'none';
+        };
+        target.addEventListener('transitionend', onEnd);
       }
     }
     window.toggleJraAccordion = toggleJraAccordion;
@@ -3280,8 +3296,9 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
       });
 
       // 開いているアコーディオンの maxHeight を再計算（コンテンツが伸びるため）
+      // none（内容量追従・クリップなし）はそのまま維持する
       document.querySelectorAll('.jra-race-accordion-content').forEach(content => {
-        if (content.style.maxHeight && content.style.maxHeight !== '0px') {
+        if (content.style.maxHeight && content.style.maxHeight !== '0px' && content.style.maxHeight !== 'none') {
           content.style.maxHeight = content.scrollHeight + 'px';
         }
       });

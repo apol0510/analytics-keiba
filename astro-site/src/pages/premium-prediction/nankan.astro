@@ -3428,9 +3428,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         });
     }
 
-    // premium 南関ページ内の過去走 details(.recent-races) の toggle を監視。
+    // premium 南関ページ内の内側 details の toggle を監視し、親レースアコーディオンの高さを再計算。
+    // 過去走(.recent-races) に加え、近走詳細データ(.aknhs=条件別成績・回収率) も対象に含める
+    // （開いた時に親の固定 max-height でクリップされないようにする。表示と高さ再計算のみ）。
     function bindRecentRacesAccordionRecalc() {
-        document.querySelectorAll('details.recent-races').forEach((d) => {
+        document.querySelectorAll('details.recent-races, details.aknhs').forEach((d) => {
             if (d.dataset.r1dScrollBound === '1') return;
             d.dataset.r1dScrollBound = '1';
             d.addEventListener('toggle', () => {

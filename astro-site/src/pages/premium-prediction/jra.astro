@@ -3734,8 +3734,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
         selectedVenue.classList.add('active');
         // 会場切替時にレースを自動 open しない（全レース閉のまま維持）。
       }
-
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // 会場タブ切替では active 切替のみ。ページ最上部へスクロールしない（スクロール位置を維持）。
     }
 
     // レース切替: premium 南関と統一したアコーディオン開閉。
