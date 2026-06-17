@@ -641,7 +641,13 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
         .hero-section {
             text-align: center;
             padding: 60px 40px;
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(251, 146, 60, 0.08) 100%);
+            background:
+                linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(251, 146, 60, 0.08) 100%),
+                linear-gradient(180deg, rgba(15, 23, 42, 0.50) 0%, rgba(15, 23, 42, 0.20) 55%, rgba(15, 23, 42, 0.10) 100%),
+                url('/images/AK_hero_desktop.jpg');
+            background-size: cover;
+            background-position: center right;
+            background-repeat: no-repeat;
             border-radius: var(--card-border-radius);
             margin-bottom: 40px;
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1011,6 +1017,11 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             
             .hero-section {
                 padding: 40px 20px !important;
+                background-image:
+                    linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(251, 146, 60, 0.08) 100%),
+                    linear-gradient(180deg, rgba(15, 23, 42, 0.50) 0%, rgba(15, 23, 42, 0.20) 55%, rgba(15, 23, 42, 0.10) 100%),
+                    url('/images/AK_hero_mobile.jpg');
+                background-position: center;
             }
             
             .hero-stats-section {
