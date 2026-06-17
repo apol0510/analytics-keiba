@@ -1390,7 +1390,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                         return '買い目基準未満';
                       };
                       return (
-                        <details class="ineligible-section">
+                        <details class="ineligible-section" data-click-close="true">
                           <summary>不要馬・見送り馬 {ineligible.length}頭</summary>
                           <ul class="ineligible-list">
                             {ineligible.map((h) => {
@@ -3807,7 +3807,10 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       });
     }
     function bindRecentRacesAccordionRecalc() {
-      document.querySelectorAll('details.recent-races, details.history-details').forEach(d => {
+      // レース本文内の全 nested details（過去5走/過去走データ/不要馬・見送り馬 等）を監視し、
+      // open/close 双方で親レースアコーディオンの固定 max-height を再計算してクリップを防ぐ。
+      // 個別 class 列挙だと追加漏れ（例: ineligible-section）でクリップするため、全 details を対象にする。
+      document.querySelectorAll('.race-accordion-content details').forEach(d => {
         if (d.dataset.r1dScrollBound === '1') return;
         d.dataset.r1dScrollBound = '1';
         d.addEventListener('toggle', () => {
