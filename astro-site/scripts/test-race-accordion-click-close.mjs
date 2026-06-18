@@ -14,6 +14,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { isOpenMaxHeight, shouldRestoreHeader, isCloseTransitionEnd } from '../src/lib/raceAccordionCloseScroll.js';
 
 // ---- 実装↔テスト 乖離検出（実 .astro を読み、重要箇所の存在と一致を確認） ----
 {
@@ -200,6 +201,69 @@ for (const [label, bc, hc, cc] of classSystems) {
   // 7. ヘッダークリックは Race ハンドラの対象外（各ページ onclick が開閉）
   { const t = buildTree(bc, hc, cc);
     check('header クリック → Race ハンドラは ignore(二重発火しない)', raceAccordionClickClose(t.header) === 'ignore'); }
+}
+
+// ── close後スクロール復元: 静的検査（実装に必要な配線がソースに在るか） ──────────
+console.log('\n[close後スクロール復元: 静的検査（実装↔テスト 乖離検出）]');
+{
+  const racePath = new URL('../src/components/RaceAccordionClickClose.astro', import.meta.url);
+  const src = readFileSync(racePath, 'utf-8');
+  const must = [
+    ['共有判定モジュールを import', src.includes("from '../lib/raceAccordionCloseScroll.js'")],
+    ['判定3関数を使用', src.includes('isOpenMaxHeight(') && src.includes('shouldRestoreHeader(') && src.includes('isCloseTransitionEnd(')],
+    ['capture 段で登録（第3引数 true）', src.includes('    true,\n  );')],
+    ['transitionend を待つ', src.includes("addEventListener('transitionend', onEnd)")],
+    ['有限 fallback setTimeout', src.includes('window.setTimeout(finish, 500)')],
+    ['二重実行ガード completed', src.includes('let completed = false') && src.includes('if (completed) return')],
+    ["scrollIntoView block:'start'", src.includes("scrollIntoView({ block: 'start', behavior: 'auto' })")],
+    ['新操作で保留 cancel', src.includes('cancelPending()') && src.includes('seq += 1')],
+    ['seq 追い越しガード', src.includes('if (mySeq !== seq) return')],
+  ];
+  for (const [name, ok] of must) { if (ok) { pass++; console.log('  ✅ ' + name); } else { fail++; console.log('  ❌ ' + name); } }
+}
+
+// ── close後スクロール復元: ロジック検査（実装と同一の共有純粋関数を直接実行） ──────
+console.log('\n[close後スクロール復元: ロジック検査（実装と同一の共有関数を実行）]');
+{
+  // open/close 判定（実装が import している関数そのもの）
+  check('open状態(none)→閉じる操作と判定', isOpenMaxHeight('none') === true);
+  check('open状態(4233px)→閉じる操作と判定', isOpenMaxHeight('4233px') === true);
+  check('closed状態(0px)→開く操作=予約しない', isOpenMaxHeight('0px') === false);
+  check('closed状態(空)→開く操作=予約しない', isOpenMaxHeight('') === false);
+
+  // 復元発火条件
+  check('header上方(-1746)→復元する', shouldRestoreHeader(-1746) === true);
+  check('header画面内(0)→復元しない', shouldRestoreHeader(0) === false);
+  check('header画面内(120)→復元しない', shouldRestoreHeader(120) === false);
+
+  // transitionend ガード
+  const C = { id: 'content' }, child = { id: 'child' };
+  check('target===content & max-height → 発火', isCloseTransitionEnd(C, C, 'max-height') === true);
+  check('子要素の transitionend → 無視', isCloseTransitionEnd(child, C, 'max-height') === false);
+  check('opacity の transitionend → 無視', isCloseTransitionEnd(C, C, 'opacity') === false);
+
+  // 二重実行ガード（transitionend と fallback の両方が来ても1回）
+  {
+    let runs = 0, completed = false;
+    const finish = () => { if (completed) return; completed = true; runs++; };
+    finish(); finish();
+    check('finish 二重呼び出しでも1回だけ', runs === 1);
+  }
+
+  // seq 追い越し（新操作で旧復元が無効化される）— 実装の finish と同じ seq ガードを再現
+  {
+    let restored = null;
+    let seq = 0;
+    const make = (mySeq, headerTop) => () => { if (mySeq !== seq) return; if (shouldRestoreHeader(headerTop)) restored = mySeq; };
+    seq = 1; const oldFinish = make(1, -1746); // Y を閉じて予約
+    seq = 2;                                    // X を開く=新操作で seq 進む
+    oldFinish();                               // 旧 fallback が後から発火
+    check('新操作後に旧復元 fallback が発火しても戻さない', restored === null);
+    let restored2 = null; let seq2 = 5;
+    const f = (() => { const my = seq2; return () => { if (my !== seq2) return; if (shouldRestoreHeader(-100)) restored2 = my; }; })();
+    f();
+    check('追い越されない通常closeは復元する', restored2 === 5);
+  }
 }
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`);

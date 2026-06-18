@@ -26,9 +26,17 @@
  *       （二重発火しない）。
  *
  * 表示専用挙動。featureScores / AI指数 / 印 / 買い目 / EV / 予想データ には一切関与しない。
+ *
+ * 【close後スクロール復元】flow 内の `.race-accordion-content` を max-height で高さ0へ collapse
+ *   すると、collapse 分だけ下方が上昇するのに window.scrollY は不変のため、表示が後方（11R〜footer）
+ *   へ飛ぶ。対策として close 完了後、閉じた header が viewport 上端より上にあるときだけ header を
+ *   上端へ戻す。close 時のみ・対象レースのみ・open / nested toggle では発火しない。判定は
+ *   src/lib/raceAccordionCloseScroll.js（テストと共有）。
  */
 ---
 <script>
+  import { isOpenMaxHeight, shouldRestoreHeader, isCloseTransitionEnd } from '../lib/raceAccordionCloseScroll.js';
+
   const CONTENT_SEL = '.race-accordion-content, .jra-race-accordion-content';
   const HEADER_SEL = '.race-accordion-header, .jra-race-accordion-header';
   const IGNORE_SEL =
@@ -63,4 +71,68 @@
     if (!header) return;
     header.click();
   });
+
+  // ── close後スクロール復元 ───────────────────────────────────────────────────
+  // 意味を持つ復元は同時に1件だけ。新しい操作（別レース open/close・連打・本文クリック委譲の
+  // header.click()）が来たら seq を進めて直前の保留を無効化する。
+  let pending = null;
+  let seq = 0;
+
+  function cancelPending() {
+    if (!pending) return;
+    pending.cancel();
+    pending = null;
+  }
+
+  // close 完了（max-height の transitionend）または有限 fallback の早い方だけで1回実行。
+  function scheduleCloseRestore(content, header, mySeq) {
+    let completed = false;
+    let timer = 0;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(timer);
+      content.removeEventListener('transitionend', onEnd);
+      if (pending && pending.seq === mySeq) pending = null;
+      if (mySeq !== seq) return; // 後続操作に追い越されたら復元しない
+      if (shouldRestoreHeader(header.getBoundingClientRect().top)) {
+        header.scrollIntoView({ block: 'start', behavior: 'auto' });
+      }
+    };
+    const onEnd = (event) => {
+      if (isCloseTransitionEnd(event.target, content, event.propertyName)) finish();
+    };
+    content.addEventListener('transitionend', onEnd);
+    timer = window.setTimeout(finish, 500); // transitionend 不発時の有限保険
+    pending = {
+      seq: mySeq,
+      cancel: () => { clearTimeout(timer); content.removeEventListener('transitionend', onEnd); },
+    };
+  }
+
+  // capture 段で各ページの inline onclick（開閉）より前に、開→閉になる操作だけを拾う。
+  document.addEventListener(
+    'click',
+    (event) => {
+      const t = event.target;
+      if (!(t instanceof Element)) return;
+      const header = t.closest(HEADER_SEL);
+      if (!header) return;
+
+      let content = header.nextElementSibling;
+      if (!(content && content.matches && content.matches(CONTENT_SEL))) {
+        const block = header.parentElement;
+        content = block ? block.querySelector(CONTENT_SEL) : null;
+      }
+      if (!content) return;
+
+      // 新操作で直前の保留を無効化（古い fallback が後から飛ばすのを防ぐ）
+      seq += 1;
+      cancelPending();
+
+      // toggle 実行前の状態で「開いている＝これから閉じる」ときだけ予約。open では予約しない。
+      if (isOpenMaxHeight(content.style.maxHeight)) scheduleCloseRestore(content, header, seq);
+    },
+    true,
+  );
 </script>
