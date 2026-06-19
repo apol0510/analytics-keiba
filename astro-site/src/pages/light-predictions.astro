@@ -14,6 +14,7 @@ import RaceHorseSection from '../components/RaceHorseSection.astro';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
 import { injectHorseStatsNankan } from '../lib/injectHorseStatsNankan.js';
+import { injectEntriesRecentRacesNankan } from '../lib/injectEntriesRecentRacesNankan.js';
 
 // src/data/predictions/*.json から最新日付を自動選択（自動反映フロー）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -30,6 +31,17 @@ try {
     injectHorseStatsNankan([allRacesData], allRacesData.raceDate, process.cwd());
 } catch (_e) {
     // 注入失敗は非致命。既存表示を維持する。
+}
+
+// 南関 entries(出馬表) 由来の近走(最大5走)を horse.recentRacesFromEntriesNankan へ注入する。
+// legacy単会場経路(pickLatestAndAdapt)は premium/free が通る adaptLatestPrediction 内の
+// injectEntriesRecentRacesNankan を経由しないため、entries 近走が注入されず、
+// RaceHorseSection が fallback の旧 recentRaces(最大4走)に落ちて「4走止まり」になっていた。
+// premium/free と同じ既存ヘルパーで補う（別フィールドのみ・recentRaces / fallback / JRA は不変）。失敗は非致命。
+try {
+    injectEntriesRecentRacesNankan([allRacesData], allRacesData.raceDate, process.cwd());
+} catch (_e) {
+    // 注入失敗は非致命。既存表示(fallback)を維持する。
 }
 
 // 🛡️ 復活防止対策: processRaceDataのエラーハンドリング強化
