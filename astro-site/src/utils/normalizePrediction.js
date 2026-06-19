@@ -29,7 +29,7 @@ import { adjustPrediction } from './adjustPrediction.js';
  * 注意: AK は keiba-data-shared 側を直接修正しない (admin 独立運用) ため、
  *       取込側でこの sanitize を必ず通す。表示側で隠す対応は禁止 (CLAUDE.md)。
  */
-function sanitizeHorseName(name) {
+export function sanitizeHorseName(name) {
   if (typeof name !== 'string') return '';
   return name.trim();
 }
@@ -40,7 +40,7 @@ function sanitizeHorseName(name) {
  *   (2026-05-24 京都4R 馬番1: name が U+E615 1 文字 = Private Use Area で
  *    "name === ''" だけでは検知できないケースがあった)
  */
-function isHorseNameBroken(name) {
+export function isHorseNameBroken(name) {
   const s = sanitizeHorseName(name);
   if (s === '') return true;
   // ひらがな (U+3040-309F) / カタカナ (U+30A0-30FF) / CJK (U+4E00-9FFF, 拡張A U+3400-4DBF) / 英数

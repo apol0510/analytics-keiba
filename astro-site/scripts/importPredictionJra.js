@@ -27,7 +27,9 @@ const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '..');
 
 // src/utils から正規化関数をインポート
-import { normalizeAndAdjust } from '../src/utils/normalizePrediction.js';
+import { normalizeAndAdjust, isHorseNameBroken } from '../src/utils/normalizePrediction.js';
+// 2026-06-19: computer→racebook の真コンピ指数注入を race-scoped 馬番主キーで行う共通 helper
+import { buildRaceScopedComputerMap, injectSourceComputerIndexRaceScoped, assertInjectionSafe } from './lib/computerIndexMatch.mjs';
 
 // メインレース10点ロジック + 通常レース本命軸双方向1行ロジック（共通モジュール）
 // 🔧 2026-05-18: 通常レース買い目を CLAUDE.md 仕様の generateRaceUmatanLines（双方向 ↔ 1行）に統一。
@@ -171,7 +173,8 @@ async function buildSourceComputerIndexMap(date, category = 'jra') {
     return null;
   }
 
-  const venueMap = new Map();
+  // computer 各会場データを race-scoped 形へ整形して収集（過去走はフィールド名統一）。
+  const venuesForMap = [];
   for (const file of dateFiles) {
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
     const res = await fetch(rawUrl, { headers: GITHUB_TOKEN ? { Authorization: `token ${GITHUB_TOKEN}` } : {} });
@@ -179,17 +182,15 @@ async function buildSourceComputerIndexMap(date, category = 'jra') {
     const venueData = JSON.parse(await res.text());
     const venueName = venueData.venue || venueData.name || null;
     if (!venueName) continue;
-    const horseMap = new Map();
+    let horseCount = 0;
     let pastRacesCount = 0;
-    for (const race of (venueData.races || [])) {
-      for (const h of (race.horses || [])) {
-        const num = Number(h.number ?? h.horseNumber);
-        const name = h.name ?? h.horseName;
-        const ci = Number(h.computerIndex);
-        if (!Number.isFinite(num) || !name) continue;
+    const races = (venueData.races || []).map(race => ({
+      raceNumber: race.raceNumber ?? race.raceInfo?.raceNumber,
+      horses: (race.horses || []).map(h => {
+        horseCount++;
         // 過去走（pastRaces）も同時保持。computer JSON のフィールド名で正規化して保存。
         // free/premium 表示側は recentRaces として参照するため、ここでフィールド名統一する。
-        const pastRaces = Array.isArray(h.pastRaces)
+        const recentRaces = Array.isArray(h.pastRaces)
           ? h.pastRaces.slice(0, 5).map(pr => ({
               venue: pr.venue || '',
               distance: pr.distance || pr.distanceMeters || '',
@@ -201,60 +202,36 @@ async function buildSourceComputerIndexMap(date, category = 'jra') {
               passingOrder: pr.passingOrder || ''
             }))
           : [];
-        if (pastRaces.length > 0) pastRacesCount++;
-        horseMap.set(`${num}|${name}`, {
-          ci: Number.isFinite(ci) ? ci : null,
-          recentRaces: pastRaces
-        });
-      }
-    }
-    if (horseMap.size > 0) {
-      venueMap.set(venueName, horseMap);
-      console.log(`   📋 [IMPORT-JRA] ${venueName}: ${horseMap.size} 頭の computer データを取得 (うち過去走あり: ${pastRacesCount})`);
+        if (recentRaces.length > 0) pastRacesCount++;
+        return { number: h.number ?? h.horseNumber, name: h.name ?? h.horseName, computerIndex: h.computerIndex, recentRaces };
+      })
+    }));
+    if (horseCount > 0) {
+      venuesForMap.push({ venue: venueName, races });
+      console.log(`   📋 [IMPORT-JRA] ${venueName}: ${horseCount} 頭の computer データを取得 (うち過去走あり: ${pastRacesCount})`);
     }
   }
-  if (venueMap.size === 0) return null;
-  return venueMap;
+  if (venuesForMap.length === 0) return null;
+  // race-scoped (venue, raceNumber, horseNumber) 主キーの lookup を構築
+  return buildRaceScopedComputerMap(venuesForMap);
 }
 
 /**
- * sharedJSON (予想 JSON) に sourceComputerIndex を注入する。
- * - 会場名で venue を突合
- * - 馬番+馬名で各馬を突合
+ * sharedJSON (racebook 本体) に sourceComputerIndex / recentRaces / 破損名復元を注入する。
+ * 突合は (会場, レース番号, 馬番) を主キー、馬番欠損時のみ正規化馬名フォールバック。
+ * 馬名完全一致には依存しない（2026-06-19 不要馬誤判定バグ対策）。詳細は computerIndexMatch.mjs。
  */
 function injectSourceComputerIndex(sharedJSON, venueMap) {
-  if (!sharedJSON || !venueMap) return;
-  const venues = Array.isArray(sharedJSON.venues) ? sharedJSON.venues : [sharedJSON];
-  let totalInjected = 0;
-  let totalUnmatched = 0;
-  let totalRecentInjected = 0;
-  for (const venueData of venues) {
-    const venueName = venueData.venue || venueData.name || null;
-    if (!venueName) continue;
-    const horseMap = venueMap.get(venueName);
-    if (!horseMap) continue;
-    for (const race of (venueData.races || [])) {
-      for (const h of (race.horses || [])) {
-        const num = Number(h.horseNumber ?? h.number);
-        const name = h.horseName ?? h.name;
-        if (!Number.isFinite(num) || !name) continue;
-        const entry = horseMap.get(`${num}|${name}`);
-        if (entry && typeof entry === 'object') {
-          if (Number.isFinite(entry.ci)) {
-            h.sourceComputerIndex = entry.ci;
-            totalInjected++;
-          }
-          if (Array.isArray(entry.recentRaces) && entry.recentRaces.length > 0) {
-            h.recentRaces = entry.recentRaces;
-            totalRecentInjected++;
-          }
-        } else {
-          totalUnmatched++;
-        }
-      }
-    }
-  }
-  console.log(`✅ [IMPORT-JRA] computer データ注入: sourceComputerIndex ${totalInjected} 頭 / recentRaces ${totalRecentInjected} 頭 (突合失敗 ${totalUnmatched})`);
+  const stats = injectSourceComputerIndexRaceScoped(sharedJSON, venueMap, {
+    isNameBroken: isHorseNameBroken,
+    onWarn: (msg) => console.warn(`⚠️ ${msg}`),
+  });
+  console.log(
+    `✅ [IMPORT-JRA] computer データ注入: sourceComputerIndex ${stats.injected} 頭 / recentRaces ${stats.recentInjected} 頭 ` +
+    `/ 破損名復元 ${stats.nameRecovered} 頭 / 名前フォールバック ${stats.matchedByName} 頭 ` +
+    `(突合失敗 ${stats.unmatched} / 馬番重複 ${stats.ambiguous} / 名前乖離 ${stats.nameMismatch} / 未対応ci≥45 ${stats.uncoveredHighCi.length})`
+  );
+  return stats;
 }
 
 /**
@@ -391,9 +368,11 @@ async function importPrediction(date, venue = 'jra') {
   }
 
   // 【2026-05-14 追加】computer JSON を併読みして sourceComputerIndex を注入
+  // 【2026-06-19】race-scoped 馬番主キー注入 + 安全アサート（真ci>=45の未対応/馬番重複なら import を FAIL）
   const computerSourceMap = await buildSourceComputerIndexMap(date, venue);
   if (computerSourceMap && computerSourceMap.size > 0) {
-    injectSourceComputerIndex(sharedJSON, computerSourceMap);
+    const stats = injectSourceComputerIndex(sharedJSON, computerSourceMap);
+    assertInjectionSafe(stats, { label: `IMPORT-JRA ${date}` });
   }
 
   // 複数会場対応：venues配列がある場合
