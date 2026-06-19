@@ -838,4 +838,27 @@ const roleBadgeKey = horse.role === '本命' ? 'main' : horse.role === '対抗' 
     .jra-hh-pop { color: #94a3b8; }
     .jra-hh-name { color: #cbd5e1; }
     .jra-hh-overflow { color: #64748b; font-size: 0.72rem; padding: 2px 0; }
+
+    /* ── モバイル幅最適化（スマホ実機で本命/対抗/単穴カード内が中央に細く押し込まれる対策） ──
+       入れ子カードの横padding累積を抑え、情報領域を画面幅近くまで広げる。
+       縦paddingと装飾borderは維持。desktop/tablet は不変（mobile media query 限定）。 */
+    @media (max-width: 640px) {
+        .horse-card {
+            padding: 16px 12px;
+            box-sizing: border-box;
+        }
+        .basic-info,
+        .eval-points {
+            padding: 12px 12px;
+            box-sizing: border-box;
+        }
+        .recent-races {
+            padding: 8px 10px;
+            box-sizing: border-box;
+        }
+        .recent-race-card {
+            padding: 8px 9px;
+            box-sizing: border-box;
+        }
+    }
 </style>

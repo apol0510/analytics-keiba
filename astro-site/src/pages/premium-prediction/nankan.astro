@@ -2837,6 +2837,28 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
     @media (max-width: 640px) {
         .minor-horse-grid { grid-template-columns: 1fr; }
+
+        /* ── モバイル幅最適化（light と同一方針・入れ子ラッパー横padding累積の抑制） ── */
+        .page-container {
+            padding-left: 10px;
+            padding-right: 10px;
+            box-sizing: border-box;
+        }
+        .analysis-section {
+            padding: 16px 10px;
+            box-sizing: border-box;
+        }
+        .race-accordion-header {
+            padding: 14px 12px;
+        }
+        .horse-card {
+            padding: 16px 12px;
+            box-sizing: border-box;
+        }
+        .races-container,
+        .race-accordion-content {
+            box-sizing: border-box;
+        }
     }
 
     /* 不要馬・見送り馬 折りたたみ簡易表示 */
