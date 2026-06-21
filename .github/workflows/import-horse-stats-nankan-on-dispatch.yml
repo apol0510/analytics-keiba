@@ -1,0 +1,152 @@
+name: Import HorseStats Nankan (Dispatch)
+
+# admin 側の南関 horseStats(近走詳細データ) 配信から送られる
+# repository_dispatch (horse-stats-nankan-updated) を受け取り、
+# keiba-data-shared/nankan/horseStats/... を本リポジトリの
+# astro-site/src/data/horseStats/nankan/... へ転記する。
+#
+# ※ entries(entries-nankan-updated) / JRA horseHistories(horse-histories-updated) /
+#    南関 recentHorseHistories(recent-horse-histories-nankan-updated) とは
+#    別 event / 別 script / 別 concurrency group。既存同期には一切相乗りしない。
+#    1会場=R01〜R12（最大12ファイル）。R01-only skip / 0埋め reject 等の guard は
+#    importHorseStatsNankan.js に委譲する（workflow で重複実装しない）。
+
+on:
+  repository_dispatch:
+    types: [horse-stats-nankan-updated]
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '日付 (YYYY-MM-DD)'
+        required: true
+        default: ''
+      venue:
+        description: '場コード (OOI/KAW/FUN/URA のいずれか1つ)'
+        required: true
+        default: ''
+
+# 並行実行制御：南関 horseStats 更新系の専用 group（他系統と混線させない）
+concurrency:
+  group: archive-horse-stats-nankan-update
+  cancel-in-progress: false
+
+jobs:
+  import-horse-stats-nankan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # git push に必要
+    defaults:
+      run:
+        working-directory: astro-site
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'astro-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve and validate date/venue
+        id: resolve
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.date }}
+          MANUAL_VENUE: ${{ github.event.inputs.venue }}
+          PAYLOAD_DATE: ${{ github.event.client_payload.date }}
+          PAYLOAD_VENUE: ${{ github.event.client_payload.venue }}
+        run: |
+          # 優先順位: 手動入力 > repository_dispatch payload
+          if [ -n "$MANUAL_DATE" ]; then
+            DATE="$MANUAL_DATE"; VENUE="$MANUAL_VENUE"
+          else
+            DATE="$PAYLOAD_DATE"; VENUE="$PAYLOAD_VENUE"
+          fi
+          # 単日・単会場のみ。date 形式 / venue allowlist を厳格検証（任意入力を弾く）
+          if ! echo "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+            echo "❌ invalid date: '$DATE'"; exit 1
+          fi
+          case "$VENUE" in
+            OOI|KAW|FUN|URA) : ;;
+            *) echo "❌ invalid venue (allowlist OOI/KAW/FUN/URA): '$VENUE'"; exit 1 ;;
+          esac
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          echo "venue=$VENUE" >> "$GITHUB_OUTPUT"
+          echo "📅 horseStats(nankan) import: $DATE $VENUE"
+
+      - name: Import horseStats (nankan) from keiba-data-shared
+        env:
+          # keiba-data-shared 読み取り用 PAT（Actions の自動 GITHUB_TOKEN では届かないため）
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/importHorseStatsNankan.js \
+            --date "${{ steps.resolve.outputs.date }}" \
+            --venue "${{ steps.resolve.outputs.venue }}"
+
+      - name: Check for changes (horseStats only)
+        id: git-check
+        run: |
+          # horseStats/nankan 配下の変更だけをステージング（他系統は触らない）
+          git add src/data/horseStats/nankan/
+          git diff --staged --exit-code || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — only target date/venue horseStats changed
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+          VENUE: ${{ steps.resolve.outputs.venue }}
+        run: |
+          # ステージ済み差分が「対象日・対象会場の horseStats」以外を含まないことを保証（事故防止）
+          OFFENDERS=$(git diff --staged --name-only | grep -v "^src/data/horseStats/nankan/.*${DATE}-${VENUE}-R[0-9][0-9]\.json$" || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "❌ 対象外ファイルが staged されています:"; echo "$OFFENDERS"; exit 1
+          fi
+          git diff --staged --check
+          echo "✅ 対象 ${DATE} ${VENUE} の horseStats のみ"
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+          VENUE: ${{ steps.resolve.outputs.venue }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          COMMIT_MSG="Auto-import: ${DATE} horseStats(nankan) [${VENUE}]"
+
+          # horseStats ファイル群を退避（push 競合時の再構築用）
+          mkdir -p /tmp/horse-stats-backup
+          cp -r src/data/horseStats /tmp/horse-stats-backup/
+
+          MAX_RETRIES=5; RETRY_COUNT=0; SUCCESS=false
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+            echo "🔄 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES"
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+            mkdir -p src/data
+            cp -r /tmp/horse-stats-backup/horseStats src/data/
+            git add src/data/horseStats/nankan/
+            if git diff --staged --quiet; then
+              echo "⏭️  No changes after sync (remote already up-to-date)"; SUCCESS=true; break
+            fi
+            git commit -m "$COMMIT_MSG"
+            if git push origin main; then
+              echo "✅ pushed horseStats(nankan)"; SUCCESS=true
+            else
+              echo "⚠️  push failed (remote moved)"; RETRY_COUNT=$((RETRY_COUNT + 1)); sleep 2
+            fi
+          done
+          if [ "$SUCCESS" = false ]; then echo "❌ push failed after $MAX_RETRIES attempts"; exit 1; fi
+
+      - name: No changes notification
+        if: steps.git-check.outputs.changed != 'true'
+        run: echo "⏭️  No changes (horseStats already up-to-date) — no-op success"
