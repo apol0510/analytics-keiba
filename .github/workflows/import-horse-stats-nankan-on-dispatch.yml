@@ -105,7 +105,11 @@ jobs:
           VENUE: ${{ steps.resolve.outputs.venue }}
         run: |
           # ステージ済み差分が「対象日・対象会場の horseStats」以外を含まないことを保証（事故防止）
-          OFFENDERS=$(git diff --staged --name-only | grep -v "^src/data/horseStats/nankan/.*${DATE}-${VENUE}-R[0-9][0-9]\.json$" || true)
+          # working-directory は astro-site だが git diff --staged --name-only は repo ルート相対
+          # （astro-site/...）で出力されるため、接頭辞込みで date/venue/R01-R12 を完全一致判定する。
+          YYYY="${DATE:0:4}"; MM="${DATE:5:2}"
+          ALLOW="^astro-site/src/data/horseStats/nankan/${YYYY}/${MM}/${DATE}-${VENUE}-R(0[1-9]|1[0-2])\.json$"
+          OFFENDERS=$(git diff --staged --name-only | grep -Ev "$ALLOW" || true)
           if [ -n "$OFFENDERS" ]; then
             echo "❌ 対象外ファイルが staged されています:"; echo "$OFFENDERS"; exit 1
           fi
