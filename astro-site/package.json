@@ -41,7 +41,10 @@
     "check:jra-join": "node scripts/lib/computerIndexMatch.test.mjs",
     "audit:jra-ineligible": "node scripts/audit-jra-ineligible-invariant.mjs",
     "check:jra-ineligible-6paths": "node scripts/check-jra-ineligible-6paths.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-integrity && npm run check:jra-join",
+    "test:nankan-recent-races": "node src/lib/getDisplayRecentRacesForNankan.test.js",
+    "test:nankan-injection": "node src/lib/nankanHorseStatsInjection.guard.test.js",
+    "test:nankan": "npm run test:nankan-recent-races && npm run test:nankan-injection",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-integrity && npm run check:jra-join && npm run test:nankan",
     "verify:safety": "npm run build && npm run check:safety"
   },
   "dependencies": {

@@ -121,5 +121,14 @@ t('passingOrder 配列 → "4-3-4-5" 文字列化', () => {
   assert.strictEqual(out[0].passingOrder, '4-3-4-5');
 });
 
+// order は順序であり着順ではない: rank=finish のみ・order は出力に残さない
+t('order を着順(rank)に使わない・order を出力に残さない', () => {
+  const out = getDisplayRecentRacesForNankan({
+    horseStatsNankan: { recentRacesDetailed: [{ order: 1, finish: 7, date: '2026-05-28', raceName: '３歳(六)' }] },
+  });
+  assert.strictEqual(out[0].rank, 7, 'rank は finish(=7) であるべき（order=1 を使っていない）');
+  assert.ok(!('order' in out[0]), 'order が出力に混入している');
+});
+
 console.log(`\ngetDisplayRecentRacesForNankan (AK): ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

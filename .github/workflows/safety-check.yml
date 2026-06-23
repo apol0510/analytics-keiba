@@ -85,6 +85,10 @@ jobs:
         working-directory: astro-site
         run: npm run check:differentiation
 
+      - name: Verify 南関近走 horseStats fallback（resolver 優先順位 + 注入配線の退行検知）
+        working-directory: astro-site
+        run: npm run test:nankan
+
       - name: Verify premium JRA 旧 KI 風混入なし
         working-directory: astro-site
         run: npm run check:ki-relics:jra
