@@ -24,26 +24,21 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { isJraPredictionFilename, parseNankanPredictionFilename, inWindow } from './lib/predictionFileScope.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-const ROOTS = [
-  { path: join(ROOT, 'src/data/predictions/jra'), label: 'JRA' },
-  { path: join(ROOT, 'src/data/predictions/nankan'), label: 'NANKAN' },
-];
+// JRA 予想: src/data/predictions/jra 以下を再帰走査（filename = YYYY-MM-DD.json）。
+const JRA_ROOT = join(ROOT, 'src/data/predictions/jra');
+// 南関 予想: src/data/predictions 直下のフラットファイル（filename = YYYY-MM-DD-<venueSlug>.json）。
+// ※ predictions 直下は南関ファイルと jra/ サブディレクトリのみ。jra/ は下の readdir(非再帰)で
+//   ディレクトリとして除外され、parseNankanPredictionFilename でも非該当のため二重走査しない。
+const NANKAN_ROOT = join(ROOT, 'src/data/predictions');
 
-// 検査対象: 今日以降 (-1 日マージン含む) のみ。
+// 検査対象: 今日以降 (-1 日マージン含む) のみ。窓判定は predictionFileScope.inWindow に集約。
 // 過去 JSON はサニタイズ実装前データが残るため CI ブロッカーにはしない。
 // (CLAUDE.md「過去 JSON は遡及修正しない、新規取込から正常化」方針)
-const today = new Date();
-const inWindow = (yyyyMmDd) => {
-  const d = new Date(yyyyMmDd);
-  if (Number.isNaN(d.getTime())) return false;
-  const diffDays = (today.getTime() - d.getTime()) / (1000 * 60 * 60 * 24);
-  // 今日 (差 0) ＋ 未来 30 日。直前 1 日 (前日朝など) もマージンで含める。
-  return diffDays >= -30 && diffDays <= 1;
-};
 
 const PICK_ROLES = new Set(['本命', '対抗', '単穴', '連下最上位', '連下', '補欠', '抑え']);
 const errors = [];
@@ -95,44 +90,62 @@ function checkHorse(h, ctx) {
 let totalScanned = 0;
 let totalFiles = 0;
 
-function walk(dir, out = []) {
+// 再帰走査して JRA 予想ファイル（YYYY-MM-DD.json）のパスを集める。
+function walkJra(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     const st = statSync(p);
-    if (st.isDirectory()) walk(p, out);
-    else if (name.endsWith('.json') && /^\d{4}-\d{2}-\d{2}\.json$/.test(name)) out.push(p);
+    if (st.isDirectory()) walkJra(p, out);
+    else if (isJraPredictionFilename(name)) out.push(p);
   }
   return out;
 }
 
-for (const { path: root, label: cat } of ROOTS) {
-  for (const file of walk(root)) {
-    const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})\.json$/);
-    if (!dateMatch || !inWindow(dateMatch[1])) continue;
-    totalFiles += 1;
-
-    const d = JSON.parse(readFileSync(file, 'utf-8'));
-    const date = dateMatch[1];
-
-    const collectRace = (race, venueLabel) => {
-      const ri = race.raceInfo || {};
-      const horses = race.horses || [];
-      for (const h of horses) {
-        totalScanned += 1;
-        checkHorse(h, { cat, venue: venueLabel || ri.venue || '', raceNumber: ri.raceNumber, date });
-      }
-    };
-
-    if (d.venues) {
-      const venues = Array.isArray(d.venues) ? d.venues : Object.values(d.venues);
-      for (const v of venues) {
-        const races = v.predictions || v.races || [];
-        for (const r of races) collectRace(r, v.venue || '');
-      }
-    } else if (d.races) {
-      for (const r of d.races) collectRace(r, d.venue || '');
+// 1 予想ファイルの中身を走査して馬データを検査する。
+// 対応構造: JRA = d.venues / d.races、南関 = d.predictions（eventInfo+predictions[].raceInfo+horses[]）。
+function scanPredictionData(d, cat, date, defaultVenue) {
+  const collectRace = (race, venueLabel) => {
+    const ri = race.raceInfo || {};
+    const horses = race.horses || [];
+    for (const h of horses) {
+      totalScanned += 1;
+      checkHorse(h, { cat, venue: venueLabel || ri.venue || '', raceNumber: ri.raceNumber, date });
     }
+  };
+
+  if (d.venues) {
+    const venues = Array.isArray(d.venues) ? d.venues : Object.values(d.venues);
+    for (const v of venues) {
+      const races = v.predictions || v.races || [];
+      for (const r of races) collectRace(r, v.venue || '');
+    }
+  } else if (d.races) {
+    for (const r of d.races) collectRace(r, d.venue || '');
+  } else if (Array.isArray(d.predictions)) {
+    // 南関: { eventInfo:{date,venue}, predictions:[{raceInfo, horses}] }
+    const venueLabel = (d.eventInfo && d.eventInfo.venue) || defaultVenue || '';
+    for (const r of d.predictions) collectRace(r, venueLabel);
+  }
+}
+
+// JRA 予想（再帰・YYYY-MM-DD.json）
+for (const file of walkJra(JRA_ROOT)) {
+  const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})\.json$/);
+  if (!dateMatch || !inWindow(dateMatch[1])) continue;
+  totalFiles += 1;
+  const d = JSON.parse(readFileSync(file, 'utf-8'));
+  scanPredictionData(d, 'JRA', dateMatch[1]);
+}
+
+// 南関 予想（predictions 直下フラット・YYYY-MM-DD-<venueSlug>.json）
+if (existsSync(NANKAN_ROOT)) {
+  for (const name of readdirSync(NANKAN_ROOT)) {
+    const parsed = parseNankanPredictionFilename(name);
+    if (!parsed || !inWindow(parsed.date)) continue;
+    totalFiles += 1;
+    const d = JSON.parse(readFileSync(join(NANKAN_ROOT, name), 'utf-8'));
+    scanPredictionData(d, 'NANKAN', parsed.date, parsed.venueSlug);
   }
 }
 
