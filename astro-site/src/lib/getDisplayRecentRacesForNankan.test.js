@@ -130,5 +130,32 @@ t('order を着順(rank)に使わない・order を出力に残さない', () =>
   assert.ok(!('order' in out[0]), 'order が出力に混入している');
 });
 
+// 非完走 finish=null の実在パターン（2026-06-18 KAW R01 アビエーション 2026-05-29 走）。
+// finish=null の走が脱落して5走→4走に減る／rank=null や order由来の rank が生成される／
+// null参照で例外になる、という将来の mapper 退行を防ぐ。
+const ABIATION_DETAILED = [
+  { order: 1, date: '2026-05-29', venue: '川崎', raceName: '３歳(八)', finish: null, finishStatus: null, passingOrder: '6-6-10' },
+  { order: 2, date: '2026-05-12', venue: '川崎', raceName: '３歳(七)', finish: 9, passingOrder: '12-11-8-8' },
+  { order: 3, date: '2026-04-22', venue: '川崎', raceName: '３歳(五)', finish: 8, passingOrder: '8-8-8-8' },
+  { order: 4, date: '2026-03-20', venue: '川崎', raceName: '３歳(七)', finish: 7, passingOrder: '6-8-8-7' },
+  { order: 5, date: '2026-02-28', venue: '川崎', raceName: '３歳(四)', finish: 3, passingOrder: '5-5-5-4' },
+];
+t('非完走 finish=null の走を5走内に保持・rank非生成・例外なし（古→新）', () => {
+  let out;
+  assert.doesNotThrow(() => { out = getDisplayRecentRacesForNankan({ horseStatsNankan: { recentRacesDetailed: ABIATION_DETAILED } }); }, '例外を出した');
+  assert.strictEqual(out.length, 5, 'finish=null の走が脱落して5走を割っている');
+  // AK 契約 古→新: order1(最新/非完走)=末尾, order5(最古)=先頭
+  const nonFinisher = out[out.length - 1];
+  assert.strictEqual(nonFinisher.date, '2026-05-29', '非完走走(2026-05-29)が末尾に存在しない');
+  assert.ok(out.some((r) => r.date === '2026-05-29'), '非完走走が戻り値から脱落');
+  assert.ok(!('rank' in nonFinisher), 'finish=null なのに rank キーが生成された');
+  assert.ok(!('order' in nonFinisher), 'order が出力に混入（rank転用の温床）');
+  assert.strictEqual(nonFinisher.raceName, '３歳(八)', 'raceName が保持されていない');
+  assert.strictEqual(nonFinisher.passingOrder, '6-6-10', 'passingOrder が保持されていない');
+  // 完走走は従来どおり rank=finish
+  const finisher = out.find((r) => r.date === '2026-05-12');
+  assert.strictEqual(finisher.rank, 9, '完走走の rank=finish が壊れている');
+});
+
 console.log(`\ngetDisplayRecentRacesForNankan (AK): ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
