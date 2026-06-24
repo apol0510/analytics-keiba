@@ -10,6 +10,13 @@ export default defineConfig({
   output: 'server',
   adapter: netlify(),
 
+  // リンク先を hover/focus 時に先読みしてページ遷移を高速化
+  // （全 <a> 内部リンク対象 / hover で先読みするので余計な帯域を使わない）
+  prefetch: {
+    prefetchAll: true,
+    defaultStrategy: 'hover',
+  },
+
   // インテグレーション
   integrations: [
     sitemap({

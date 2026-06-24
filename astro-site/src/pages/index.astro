@@ -5,7 +5,6 @@ import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
 import { weeklyResults, dailyTabs, dailyResultsData } from './light-predictions.astro';
 import { pickLatestAndAdapt, pickLatestJraPrediction } from '../lib/adaptLatestPrediction.js';
-import { sortRacesByVenueAndNumber } from '../utils/sortRaces.js';
 
 // src/data/predictions/*.json（自動反映フロー）から最新日付を自動選択
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
@@ -460,31 +459,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 </div>
                             </div>
 
-                            <!-- 的中レース一覧（全レースをラウンドロビン順にソートしてから的中のみ抽出） -->
-                            <div style="display: grid; gap: 12px;">
-                                {sortRacesByVenueAndNumber(latestJraResult?.races || [], latestJraResult?.venues)
-                                    .filter(race => race.isHit ?? race.hit)
-                                    .map(race => (
-                                    <div class="yesterday-race-card">
-                                        <div class="yesterday-race-info">
-                                            <div style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; min-width: 3rem;">
-                                                {race.venue ? `${race.venue}${race.raceNumber}R` : `${race.raceNumber}R`}
-                                            </div>
-                                            <div style="color: #94a3b8; font-size: 0.85rem; font-weight: 400; opacity: 0.8;">
-                                                {race.raceName}
-                                            </div>
-                                        </div>
-                                        <div class="yesterday-race-result">
-                                            <div class="hit-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.9rem; border: 1px solid rgba(16, 185, 129, 0.3);">
-                                                ✅ 的中
-                                            </div>
-                                            <div class="payout" style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; text-align: right;">
-                                                ¥{(race.umatan?.payout ?? race.payout ?? 0).toLocaleString()}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                            <!-- レース個別一覧は /archive/jra/ で確認できるため、トップでは南関同様コンパクト表示 -->
 
                             <!-- アーカイブリンク -->
                             <div style="text-align: center; margin-top: 30px;">
@@ -643,11 +618,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             padding: 60px 40px;
             background:
                 linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(251, 146, 60, 0.08) 100%),
-                linear-gradient(180deg, rgba(15, 23, 42, 0.50) 0%, rgba(15, 23, 42, 0.20) 55%, rgba(15, 23, 42, 0.10) 100%),
-                url('/images/AK_hero_desktop.jpg');
-            background-size: cover;
-            background-position: center right;
-            background-repeat: no-repeat;
+                linear-gradient(180deg, rgba(15, 23, 42, 0.50) 0%, rgba(15, 23, 42, 0.20) 55%, rgba(15, 23, 42, 0.10) 100%);
             border-radius: var(--card-border-radius);
             margin-bottom: 40px;
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1017,11 +988,6 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             
             .hero-section {
                 padding: 40px 20px !important;
-                background-image:
-                    linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(251, 146, 60, 0.08) 100%),
-                    linear-gradient(180deg, rgba(15, 23, 42, 0.50) 0%, rgba(15, 23, 42, 0.20) 55%, rgba(15, 23, 42, 0.10) 100%),
-                    url('/images/AK_hero_mobile.jpg');
-                background-position: center;
             }
             
             .hero-stats-section {
