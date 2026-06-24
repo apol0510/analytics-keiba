@@ -1,5 +1,8 @@
 ---
-// 静的ビルドのためprerender削除
+// 静的プリレンダリング: output:'server' 下では prerender 無印 = SSR(毎回 ~1秒) になるため
+// 明示的に true にして CDN 静的配信（TTFB 短縮・hover 先読みを有効化）。
+// データは日次の取込コミット → Netlify 再ビルドで更新される（他の静的予想ページと同じ運用）。
+export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
