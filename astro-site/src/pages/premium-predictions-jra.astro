@@ -1,20 +1,5 @@
 ---
-export const prerender = true;
-const target = '/premium-prediction/jra/';
+// 旧URL → 新統合URL へのサーバ301（SSRで確実に発火。静的stubのmeta-refresh/JS転送を廃止）
+export const prerender = false;
+return Astro.redirect('/premium-prediction/jra/', 301);
 ---
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <title>移動しました — /premium-prediction/jra/</title>
-  <meta http-equiv="refresh" content={`0; url=${target}`}>
-  <link rel="canonical" href={target}>
-  <meta name="robots" content="noindex,follow">
-  <script is:inline define:vars={{ target }}>
-    window.location.replace(target);
-  </script>
-</head>
-<body>
-  <p>このページは <a href={target}>{target}</a> に移動しました。</p>
-</body>
-</html>
