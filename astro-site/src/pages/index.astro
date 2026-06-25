@@ -249,7 +249,9 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             <!-- Hero Key Visual（ファーストビュー / PC・モバイルで切替） -->
             <section class="hero-keyvisual">
                 <picture>
-                    <source media="(max-width: 768px)" srcset="/images/ak-hero-mobile.webp" width="941" height="1672" />
+                    <source media="(max-width: 768px)" type="image/avif" srcset="/images/ak-hero-mobile.avif" width="941" height="1672" />
+                    <source media="(max-width: 768px)" type="image/webp" srcset="/images/ak-hero-mobile.webp" width="941" height="1672" />
+                    <source type="image/avif" srcset="/images/ak-hero-pc.avif" width="1536" height="1024" />
                     <img
                         src="/images/ak-hero-pc.webp"
                         width="1536"
