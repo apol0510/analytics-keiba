@@ -3,7 +3,7 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
-export const prerender = false;
+export const prerender = true;
 
 // archiveResultsJra.jsonから全データを取得
 const archivePath = join(process.cwd(), 'src', 'data', 'archiveResultsJra.json');

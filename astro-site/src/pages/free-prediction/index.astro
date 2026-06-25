@@ -3,7 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 
-export const prerender = false;
+export const prerender = true;
 
 // 南関の最新予想日付（src/data/predictions/*.json から拾う）
 function readLatestNankanDate(): string | null {
