@@ -1,2 +1,7 @@
+# /api/* は Astro SSR 関数へ（互換のため維持）
 /api/*  /.netlify/functions/ssr  200
-/*      /index.html               200
+
+# 注意: かつてここに `/* /index.html 200`（SPAフォールバック）があったが、
+# これは全SSRページ(/free-prediction/ 等)をトップに化けさせる原因だったため削除。
+# ルーティングは Astro Netlify アダプタの SSR 関数（path:'/*' + preferStatic:true）に委譲する。
+# = 静的ファイルがあれば静的配信、無ければ SSR。手動フォールバックは入れないこと。
