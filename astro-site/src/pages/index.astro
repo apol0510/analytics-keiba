@@ -246,6 +246,22 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
 ---
 
 <BaseLayout title="AI競馬予想で投資効率を最大化" description="KEIBA Analytics（競馬アナリティクス）— 中央競馬・地方競馬をAIで分析。XGBoost・LSTMによる高精度予想で的中率87%、回収率156%を実現。">
+            <!-- Hero Key Visual（ファーストビュー / PC・モバイルで切替） -->
+            <section class="hero-keyvisual">
+                <picture>
+                    <source media="(max-width: 768px)" srcset="/images/ak-hero-mobile.webp" width="941" height="1672" />
+                    <img
+                        src="/images/ak-hero-pc.webp"
+                        width="1536"
+                        height="1024"
+                        alt="AIで、競馬の見方が変わる。データ分析で有力馬と勝負のポイントを素早く可視化。無料で体験、プレミアムで全レースをもっと深く。"
+                        class="hero-keyvisual__img"
+                        fetchpriority="high"
+                        decoding="async"
+                    />
+                </picture>
+            </section>
+
             <!-- Hero Section -->
             <section class="hero-section">
                 <h1 class="hero-title">AI競馬予想で投資効率を最大化</h1>
@@ -613,6 +629,19 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             box-shadow:
                 0 12px 32px rgba(59, 130, 246, 0.22),
                 inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+        }
+
+        /* Hero Key Visual（ファーストビュー画像バナー） */
+        .hero-keyvisual {
+            margin-bottom: 30px;
+        }
+        .hero-keyvisual__img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border-radius: var(--card-border-radius);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 12px 40px rgba(59, 130, 246, 0.12);
         }
 
         /* Hero Section - 投資訴求重視（ガラスモーフィズム） */
