@@ -69,7 +69,7 @@ export const prerender = false;
     function fail(text: string) {
       root.classList.add('error');
       status.textContent = '認証失敗';
-      msg.innerHTML = `${text}<br><br><a href="/login">もう一度ログインする</a>`;
+      msg.innerHTML = `${text}<br><br><a href="/login/">もう一度ログインする</a>`;
     }
     function ok(text: string, redirectTo: string) {
       root.classList.add('success');

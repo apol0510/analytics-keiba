@@ -409,19 +409,19 @@ const categoryCounts = categories.reduce((acc, category) => {
         <div class="course-guide">
           <h3>🏁 競馬場ガイド</h3>
           <div class="guide-links">
-            <a href="/course/ooi" class="guide-link">
+            <a href="/course/ooi/" class="guide-link">
               <span class="icon">🎯</span>
               <span class="text">大井競馬場</span>
             </a>
-            <a href="/course/funabashi" class="guide-link">
+            <a href="/course/funabashi/" class="guide-link">
               <span class="icon">⚓</span>
               <span class="text">船橋競馬場</span>
             </a>
-            <a href="/course/kawasaki" class="guide-link">
+            <a href="/course/kawasaki/" class="guide-link">
               <span class="icon">⚡</span>
               <span class="text">川崎競馬場</span>
             </a>
-            <a href="/course/urawa" class="guide-link">
+            <a href="/course/urawa/" class="guide-link">
               <span class="icon">🌸</span>
               <span class="text">浦和競馬場</span>
             </a>
@@ -433,7 +433,7 @@ const categoryCounts = categories.reduce((acc, category) => {
       <section class="posts-grid">
         {sortedPosts.map((post) => (
           <article class="post-card" data-category={post.data.category}>
-            <a href={`/blog/${post.slug}`} class="card-link">
+            <a href={`/blog/${post.slug}/`} class="card-link">
               {post.data.heroImage && (
                 <img
                   src={post.data.heroImage}

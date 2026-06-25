@@ -53,7 +53,7 @@ const months = Object.keys(byMonth).sort().reverse();
 
       <div class="archive-nav">
         <a href="/free-prediction/jra/" class="nav-link">← 最新予想に戻る</a>
-        <a href="/free-prediction/archive" class="nav-link">南関競馬の過去予想 →</a>
+        <a href="/free-prediction/archive/" class="nav-link">南関競馬の過去予想 →</a>
       </div>
 
       {months.map(monthKey => {
@@ -64,7 +64,7 @@ const months = Object.keys(byMonth).sort().reverse();
             <h2>{y}年{parseInt(m)}月 <span class="count">({items.length}開催日)</span></h2>
             <div class="card-grid">
               {items.map(item => (
-                <a href={`/free-prediction-jra/${item.date}`} class="archive-card">
+                <a href={`/free-prediction/jra/${item.date}/`} class="archive-card">
                   <div class="card-date">{parseInt(item.month)}/{parseInt(item.day)}</div>
                   <div class="card-venues">{item.venues.join('・') || 'JRA'}</div>
                   <div class="card-races">{item.totalRaces}R</div>

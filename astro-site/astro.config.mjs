@@ -25,7 +25,7 @@ export default defineConfig({
         // 最優先ページ（毎日更新）
         'https://analytics.keiba.link/free-prediction/',
         'https://analytics.keiba.link/premium-predictions/',
-        'https://analytics.keiba.link/standard-predictions/',
+        // /standard-predictions/ は実ページ不在(404)のため customPages から除去（2026-06-25 URL正規化）
         // 高優先ページ（週1回更新）
         'https://analytics.keiba.link/free-prediction/archive/',
         'https://analytics.keiba.link/dark-horse-picks/',
@@ -59,5 +59,10 @@ export default defineConfig({
   },
 
   // SEO設定
-  trailingSlash: 'never'
+  // URL正規化: 末尾スラッシュ「有」に統一（trailingSlash:'always'）。
+  // 理由: Netlify は静的ディレクトリ(/foo/index.html)を末尾スラッシュ有で 200 配信し、
+  //   netlify.toml の 301 先・sitemap customPages・内部リンク多数(479)も既にスラッシュ有。
+  //   これで canonical(=Astro.url 追従)も末尾スラッシュ有=直接200となり自己301が解消する。
+  // build.format は既定の 'directory'（/foo/index.html）を維持。
+  trailingSlash: 'always'
 });
