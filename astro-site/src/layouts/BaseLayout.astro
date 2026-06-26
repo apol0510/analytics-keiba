@@ -18,7 +18,7 @@ const SITE_BRAND_JA = '競馬アナリティクス';
 const SITE_TAGLINE = '中央競馬・地方競馬をAIで分析';
 const DEFAULT_DESCRIPTION = `${SITE_BRAND_JA}（${SITE_BRAND}）— ${SITE_TAGLINE}。XGBoost・LSTMによる高精度予想で的中率87%、回収率156%を実現。`;
 
-const { title, description = DEFAULT_DESCRIPTION, image, type = 'website', canonical, noindex = false } = Astro.props;
+const { title, description = DEFAULT_DESCRIPTION, image, type = 'website', canonical, noindex = false, heroPreload } = Astro.props;
 const canonicalURL = new URL(canonical ?? Astro.url.pathname, Astro.site);
 
 // 最終タイトル: ページタイトル + ブランド (ページタイトルが未指定ならブランドのみ)
@@ -41,6 +41,14 @@ const fullTitle = pageTitle
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="apple-touch-icon" sizes="180x180" href="/favicon.svg">
     <link rel="manifest" href="/site.webmanifest">
+
+    {/* LCP ヒーロー画像の先読み（media別に1枚だけ取得） */}
+    {heroPreload && (
+      <>
+        <link rel="preload" as="image" href={heroPreload.mobile} type="image/webp" media="(max-width: 768px)" fetchpriority="high" />
+        <link rel="preload" as="image" href={heroPreload.pc} type="image/webp" media="(min-width: 769px)" fetchpriority="high" />
+      </>
+    )}
 
     <!-- SEO -->
     <meta name="keywords" content="競馬,AI,機械学習,中央競馬,地方競馬,競馬アナリティクス,KEIBA Analytics,データサイエンス,Python,予想,分析" />

@@ -3,8 +3,26 @@ export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
-<BaseLayout title="料金プラン">
+<BaseLayout title="料金プラン" heroPreload={{ pc: "/images/ak-pricing-pc.webp", mobile: "/images/ak-pricing-mobile.webp" }}>
     <div class="pricing-page">
+        <!-- ヒーロー画像（購買後押し） -->
+        <div class="pricing-hero">
+            <picture>
+                <source media="(max-width: 768px)" srcset="/images/ak-pricing-mobile.webp" type="image/webp" />
+                <source media="(max-width: 768px)" srcset="/images/ak-pricing-mobile.png" />
+                <source srcset="/images/ak-pricing-pc.webp" type="image/webp" />
+                <img
+                    src="/images/ak-pricing-pc.png"
+                    alt="勝負を変える、AI分析。中央・南関どちらも対応。Lightで始めて、Premiumで深く勝負。"
+                    class="pricing-hero-img"
+                    width="1672"
+                    height="941"
+                    fetchpriority="high"
+                    decoding="async"
+                />
+            </picture>
+        </div>
+
         <!-- ヘッダー -->
         <div class="pricing-header">
             <h1 class="pricing-title">
@@ -637,6 +655,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         color: #e2e8f0;
         padding: 2rem 1rem;
+    }
+
+    /* ヒーロー画像 */
+    .pricing-hero {
+        max-width: 1100px;
+        margin: 0 auto 2.5rem;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 20px 60px rgba(2, 6, 23, 0.55), 0 0 0 1px rgba(59, 130, 246, 0.18);
+    }
+
+    .pricing-hero-img {
+        display: block;
+        width: 100%;
+        height: auto;
+        aspect-ratio: 1672 / 941; /* PC: 横長。CLS防止のため領域を予約 */
+    }
+
+    @media (max-width: 768px) {
+        .pricing-hero {
+            border-radius: 14px;
+            margin-bottom: 2rem;
+        }
+        .pricing-hero-img {
+            aspect-ratio: 941 / 1672; /* モバイル: 縦長 */
+        }
     }
 
     /* ヘッダー */
