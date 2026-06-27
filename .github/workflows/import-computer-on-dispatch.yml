@@ -47,7 +47,8 @@ jobs:
       - name: Sync and import computer JSON
         id: import
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # private 化後の cross-repo read 用。importComputer.js が認証取得に使用。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
           MANUAL_DATE: ${{ github.event.inputs.date }}
           PAYLOAD_DATE: ${{ github.event.client_payload.date }}
           PAYLOAD_CATEGORY: ${{ github.event.client_payload.category }}
