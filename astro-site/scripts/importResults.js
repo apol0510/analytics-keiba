@@ -8,10 +8,16 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
 
 import { isMainRace } from '../src/utils/mainRaceBetting.js';
+import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+
+// keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止）。
+// token 未設定は取得前に fatal（匿名 fallback 禁止）。private 化後も KEIBA_DATA_SHARED_TOKEN で読取可。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -81,115 +87,48 @@ function normalizeVenue(venue) {
  * keiba-data-sharedから結果データを取得
  * 統合ファイルがない場合は会場別ファイルをマージ
  */
-async function fetchSharedResults(date, venue = 'nankan') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function fetchSharedResults(date, venue = 'nankan', client = sharedClient) {
   const [year, month] = date.split('-');
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
   const path = `${venue}/results/${year}/${month}/${date}.json`;
 
   console.log(`📡 keiba-data-sharedから取得中: ${path}`);
 
-  // まず統合ファイルを試す
-  try {
-    // ローカル実行時（GITHUB_TOKENなし）: raw.githubusercontent.comを使用（公開リポジトリ）
-    if (!GITHUB_TOKEN) {
-      console.log(`   ローカル実行モード: raw.githubusercontent.comからダウンロード`);
-      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
-      const response = await fetch(rawUrl);
-
-      if (response.ok) {
-        const content = await response.text();
-        const results = JSON.parse(content);
-        console.log(`✅ 取得成功: ${path}`);
-        return results;
-      }
-      // 404の場合は会場別ファイルにフォールバック
-      if (response.status !== 404) {
-        throw new Error(`結果データの取得に失敗: ${response.status} ${response.statusText}`);
-      }
-    } else {
-      // GitHub Actions実行時: GitHub API経由（レート制限回避）
-      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-
-      const response = await fetch(apiUrl, {
-        headers: {
-          'Authorization': `token ${GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const content = Buffer.from(data.content, 'base64').toString('utf-8');
-        console.log(`✅ 取得成功: ${path}`);
-        return JSON.parse(content);
-      }
-      // 404の場合は会場別ファイルにフォールバック
-      if (response.status !== 404) {
-        throw new Error(`結果データの取得に失敗: ${response.status} ${response.statusText}`);
-      }
-    }
-
-    // 統合ファイルがない場合、会場別ファイルをマージ
-    console.log(`   統合ファイルが見つかりません。会場別ファイルを検索します...`);
-    return await fetchAndMergeVenueResults(date, year, month, GITHUB_TOKEN);
-
-  } catch (error) {
-    // ネットワークエラー等
-    throw error;
+  // 統合ファイル（任意）: 404 は会場別マージへフォールバック。
+  // 認証/権限/レート/サーバ/タイムアウト等は SharedFetchError として throw（fatal・匿名 fallback なし）。
+  const unified = await client.fetchJson(path, { ref: SHARED_REF, required: false });
+  if (unified) {
+    console.log(`✅ 取得成功: ${path}`);
+    return unified;
   }
+
+  // 統合ファイルがない場合、会場別ファイルをマージ
+  console.log(`   統合ファイルが見つかりません。会場別ファイルを検索します...`);
+  return await fetchAndMergeVenueResults(date, year, month, client);
 }
 
 /**
  * 会場別結果ファイルを取得してマージ（南関版）
  */
-async function fetchAndMergeVenueResults(date, year, month, GITHUB_TOKEN) {
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
+export async function fetchAndMergeVenueResults(date, year, month, client = sharedClient) {
   const venueCodes = ['OOI', 'FUN', 'KAW', 'URA']; // 大井・船橋・川崎・浦和
 
   const venues = [];
   let allRaces = [];
 
   for (const venueCode of venueCodes) {
-    const venueFile = `${date}-${venueCode}.json`;
-    const venuePath = `nankan/results/${year}/${month}/${venueFile}`;
+    const venuePath = `nankan/results/${year}/${month}/${date}-${venueCode}.json`;
 
-    try {
-      let venueData;
+    // 会場別（任意）: 404 のみ未投入として skip。認証/権限/レート/5xx/timeout は throw（fatal 伝播）。
+    // 旧実装の per-venue catch による silent skip を廃止し、取得失敗を握りつぶさない。
+    const venueData = await client.fetchJson(venuePath, { ref: SHARED_REF, required: false });
+    if (venueData === null) continue; // 404 = 未投入
 
-      if (!GITHUB_TOKEN) {
-        // ローカル実行時
-        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${venuePath}`;
-        const response = await fetch(rawUrl);
-        if (!response.ok) continue; // 404ならスキップ
-        venueData = JSON.parse(await response.text());
-      } else {
-        // GitHub Actions実行時
-        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${venuePath}`;
-        const response = await fetch(apiUrl, {
-          headers: {
-            'Authorization': `token ${GITHUB_TOKEN}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        });
-        if (!response.ok) continue; // 404ならスキップ
-        const data = await response.json();
-        venueData = JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
-      }
+    console.log(`   ✅ ${venueCode}: ${venueData.races?.length || 0}レース取得`);
 
-      console.log(`   ✅ ${venueCode}: ${venueData.races?.length || 0}レース取得`);
-
-      // 会場データを追加
-      if (venueData.races) {
-        allRaces = allRaces.concat(venueData.races);
-        venues.push(venueData.venue || venueCode);
-      }
-
-    } catch (err) {
-      // エラーは無視して次の会場へ
-      continue;
+    // 会場データを追加
+    if (venueData.races) {
+      allRaces = allRaces.concat(venueData.races);
+      venues.push(venueData.venue || venueCode);
     }
   }
 
@@ -518,6 +457,9 @@ function saveArchive(date, venue, raceResults, venues = []) {
  */
 async function main() {
   try {
+    // private 化後に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+    resolveSharedToken();
+
     // 引数から日付を取得
     const args = process.argv.slice(2);
     const dateIndex = args.indexOf('--date');
@@ -601,13 +543,13 @@ async function main() {
         const venueMap = { '大井': 'OOI', '船橋': 'FUN', '川崎': 'KAW', '浦和': 'URA' };
         const venueCode = venueMap[venueName] || venueName;
         const sharedPredictionPath = `nankan/predictions/${year}/${month}/${date}-${venueCode}.json`;
-        const checkUrl = `https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/${sharedPredictionPath}`;
 
         try {
           console.log(`\n🔍 keiba-data-sharedの予想データ存在確認中（${venueName}）...`);
-          const checkResponse = await fetch(checkUrl);
+          // 認証付き Contents API（匿名 raw 廃止）。404=未存在、非null=存在。
+          const predData = await sharedClient.fetchJson(sharedPredictionPath, { ref: SHARED_REF, required: false });
 
-          if (checkResponse.ok) {
+          if (predData !== null) {
             checkResults.push({ venue: venueName, exists: true });
             console.error(`   🚨 ${venueName}: 予想データが存在するのに読み込めませんでした！`);
           } else {
@@ -615,8 +557,9 @@ async function main() {
             console.log(`   ⏭️  ${venueName}: 予想データなし（SEO対策用の結果データのみ）`);
           }
         } catch (checkError) {
+          // 診断目的の best-effort 確認。code のみログ（token・body は出さない）。
           checkResults.push({ venue: venueName, exists: null });
-          console.warn(`   ⚠️  ${venueName}: 存在確認失敗（ネットワークエラー？）`);
+          console.warn(`   ⚠️  ${venueName}: 存在確認失敗（${checkError?.code || 'error'}）`);
         }
       }
 
@@ -736,4 +679,8 @@ async function main() {
   }
 }
 
-main();
+// 直接実行時のみ起動（import 時は実行しない＝テスト可能）。
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main();
+}

@@ -14,6 +14,11 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+
+// keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止・匿名 fallback 禁止）。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,32 +32,25 @@ async function checkNankanResults(dateStr) {
   const venues = [];
   let totalRaces = 0;
 
-  const unifiedUrl = `https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/${year}/${month}/${dateStr}.json`;
-  try {
-    const response = await fetch(unifiedUrl);
-    if (response.ok) {
-      const data = await response.json();
-      const raceCount = data.races?.length || 0;
-      totalRaces = raceCount;
-      venues.push({ code: 'unified', races: raceCount });
-      return { hasResults: totalRaces >= MIN_RACES_THRESHOLD, totalRaces, venues };
-    }
-  } catch (error) {
-    // Continue to venue-specific files
+  const dir = `nankan/results/${year}/${month}`;
+
+  // 統合ファイル（任意）: 404 は会場別へフォールバック。
+  // 認証/権限/レート/5xx/timeout は SharedFetchError として throw（fatal・匿名 fallback なし）。
+  const unified = await sharedClient.fetchJson(`${dir}/${dateStr}.json`, { ref: SHARED_REF, required: false });
+  if (unified) {
+    const raceCount = unified.races?.length || 0;
+    totalRaces = raceCount;
+    venues.push({ code: 'unified', races: raceCount });
+    return { hasResults: totalRaces >= MIN_RACES_THRESHOLD, totalRaces, venues };
   }
 
   for (const code of NANKAN_VENUES) {
-    const venueUrl = `https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/${year}/${month}/${dateStr}-${code}.json`;
-    try {
-      const response = await fetch(venueUrl);
-      if (response.ok) {
-        const data = await response.json();
-        const raceCount = data.races?.length || 0;
-        totalRaces += raceCount;
-        venues.push({ code, races: raceCount });
-      }
-    } catch (error) {
-      // Venue not found, continue
+    // 会場別（任意）: 404 のみ未投入として skip。認証/通信エラーは throw（fatal 伝播）。
+    const data = await sharedClient.fetchJson(`${dir}/${dateStr}-${code}.json`, { ref: SHARED_REF, required: false });
+    if (data) {
+      const raceCount = data.races?.length || 0;
+      totalRaces += raceCount;
+      venues.push({ code, races: raceCount });
     }
   }
 
@@ -119,6 +117,9 @@ async function main() {
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 
   try {
+    // private 化後に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+    resolveSharedToken();
+
     const latestResult = await getLatestResultDate();
     const latestResultDate = latestResult.date;
 

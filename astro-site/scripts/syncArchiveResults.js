@@ -27,6 +27,11 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+
+// keiba-data-shared 存在確認は認証付き Contents API へ統一（匿名 raw 廃止・匿名 fallback 禁止）。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -86,21 +91,17 @@ function loadArchiveDates(archiveFileName) {
   }
 }
 
-async function fetchJson(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    return null;
-  }
+// shared の results JSON を取得（任意）。404 は null（未投入）。
+// 認証/権限/レート/5xx/timeout は SharedFetchError として throw（fatal・匿名 fallback なし）。
+async function fetchSharedJson(sharedPath) {
+  return sharedClient.fetchJson(sharedPath, { ref: SHARED_REF, required: false });
 }
 
 async function checkSharedResults(date, track) {
   const [year, month] = date.split('-');
-  const base = `https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/${track}/results/${year}/${month}`;
+  const dir = `${track}/results/${year}/${month}`;
 
-  const unified = await fetchJson(`${base}/${date}.json`);
+  const unified = await fetchSharedJson(`${dir}/${date}.json`);
   if (unified && Array.isArray(unified.races) && unified.races.length > 0) {
     return { totalRaces: unified.races.length, venues: [unified.venue || 'unified'] };
   }
@@ -110,7 +111,7 @@ async function checkSharedResults(date, track) {
   const foundVenues = [];
 
   for (const code of venues) {
-    const data = await fetchJson(`${base}/${date}-${code}.json`);
+    const data = await fetchSharedJson(`${dir}/${date}-${code}.json`);
     if (data && Array.isArray(data.races)) {
       totalRaces += data.races.length;
       foundVenues.push(code);
@@ -259,6 +260,9 @@ function printFinalSummary(trackResults, dryRun) {
 }
 
 async function main() {
+  // private 化後に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+  resolveSharedToken();
+
   const args = parseArgs();
   const dates = getDateRange(args.days);
 

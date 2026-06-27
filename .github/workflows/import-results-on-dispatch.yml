@@ -42,9 +42,9 @@ jobs:
 
       - name: Import results from keiba-data-shared
         id: import-results
-        continue-on-error: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # private 化後の cross-repo read 用。認証/通信失敗は importResults.js が exit 1 → step 失敗。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
           MANUAL_DATE: ${{ github.event.inputs.date }}
           DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}
           DATE_SINGLE: ${{ github.event.client_payload.date }}
@@ -92,6 +92,8 @@ jobs:
           npm run validate:archive
 
       - name: Verify archive sync (MANDATORY)
+        env:
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           echo "🔍 Verifying archive sync with keiba-data-shared..."
           npm run verify:sync
