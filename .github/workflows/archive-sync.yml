@@ -39,6 +39,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # private 化後の cross-repo read 用。syncArchiveResults.js / verifyArchiveSync.js が
+    # 認証取得に使用（Run archive sync / Verify archive sync 両 step が継承）。
+    # 自repo checkout・push 用の secrets.GITHUB_TOKEN とは用途を分離する。
+    env:
+      KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
     defaults:
       run:
         working-directory: astro-site
