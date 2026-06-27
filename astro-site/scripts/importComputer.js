@@ -17,7 +17,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { createSharedClient, resolveSharedToken, SharedFetchError, SHARED_FETCH_CODES } from './lib/sharedFetch.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,6 +26,10 @@ const projectRoot = join(__dirname, '..');
 
 const OWNER = 'apol0510';
 const REPO = 'keiba-data-shared';
+
+// keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止・token 未設定 fatal）。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 function getTodayJST() {
   const now = new Date();
@@ -46,31 +51,21 @@ function shiftDate(yyyymmdd, deltaDays) {
   ].join('-');
 }
 
-async function fetchComputerForDate(category, date) {
+export async function fetchComputerForDate(category, date, client = sharedClient) {
   const [year, month] = date.split('-');
   const dirPath = `${category}/predictions/computer/${year}/${month}`;
-  const apiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${dirPath}`;
-  const headers = {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'analytics-keiba-import-computer'
-  };
-  if (process.env.GITHUB_TOKEN) headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
 
-  const dirRes = await fetch(apiUrl, { headers });
-  if (!dirRes.ok) {
-    if (dirRes.status === 404) return [];
-    throw new Error(`GitHub API ${dirRes.status} for ${dirPath}`);
-  }
-  const files = await dirRes.json();
+  // ディレクトリ一覧（任意）: 404 は当該カテゴリ未投入として []。
+  // 認証/権限/レート/5xx/timeout は SharedFetchError として throw（fatal・匿名 fallback なし）。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) return [];
   const targets = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
   if (targets.length === 0) return [];
 
   const results = [];
   for (const f of targets) {
-    const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${dirPath}/${f.name}`;
-    const res = await fetch(rawUrl, { headers: process.env.GITHUB_TOKEN ? { Authorization: `token ${process.env.GITHUB_TOKEN}` } : {} });
-    if (!res.ok) continue;
-    const content = await res.text();
+    // ファイル本文は text のまま保存（既存と同一）。一覧に存在したファイルの 404 は異常として fatal。
+    const content = await client.fetchText(`${dirPath}/${f.name}`, { ref: SHARED_REF, required: true });
     results.push({ name: f.name, content, year, month });
   }
   return results;
@@ -104,6 +99,8 @@ async function importDate(date) {
         }
       }
     } catch (e) {
+      // 認証/通信 fatal は握りつぶさず再 throw（silent skip 防止）。NOT_FOUND は上で [] 化済み。
+      if (e instanceof SharedFetchError && e.code !== SHARED_FETCH_CODES.NOT_FOUND) throw e;
       console.warn(`⚠️ ${category} ${date}: ${e.message}`);
     }
   }
@@ -111,6 +108,9 @@ async function importDate(date) {
 }
 
 async function main() {
+  // private 化後に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+  resolveSharedToken();
+
   const args = process.argv.slice(2);
   let date = null;
   let days = 1;
@@ -135,7 +135,11 @@ async function main() {
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 }
 
-main().catch(err => {
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+// 直接実行時のみ起動（import 時は実行しない＝テスト可能）。
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main().catch(err => {
+    console.error('❌ Error:', err.message);
+    process.exit(1);
+  });
+}
