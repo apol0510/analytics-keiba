@@ -82,8 +82,9 @@ test('9. secret 値を echo していない（両 step）', () => {
   assert.doesNotMatch(sanrenpukuStep, /echo[^\n]*\$\{\{\s*secrets\./);
 });
 
-// ---- スコープ確認（対象外 step は未変更） ----
-test('10. 対象外 step（Import missing results=umatan）は今回未変更（continue-on-error 保持）', () => {
+// ---- umatan step は PR-AK-2 で認証化（importResults.js 移行に伴い continue-on-error 撤去 + token 供給） ----
+test('10. umatan step（Import missing results）は token 供給 + continue-on-error 撤去（PR-AK-2）', () => {
   const importResults = extractStep('Import missing results');
-  assert.match(importResults, /continue-on-error:\s*true/, 'umatan step は PR-AK-1 のスコープ外（PR-AK-2 で対応）');
+  assert.doesNotMatch(importResults, /continue-on-error:\s*true/);
+  assert.match(importResults, /KEIBA_DATA_SHARED_TOKEN:\s*\$\{\{\s*secrets\.KEIBA_DATA_SHARED_TOKEN\s*\}\}/);
 });

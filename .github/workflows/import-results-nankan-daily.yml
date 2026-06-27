@@ -120,9 +120,10 @@ jobs:
       - name: Import missing results
         if: steps.check.outputs.has_missing == 'true'
         id: import-results
-        continue-on-error: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # private 化後の keiba-data-shared を cross-repo read（importResults.js が優先使用）。
+          # 認証/通信失敗は importResults.js が exit 1 → step 失敗。silent success にしない。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           DATE="${{ steps.date.outputs.date }}"
           echo "📥 Importing Nankan results for: $DATE"
@@ -136,6 +137,8 @@ jobs:
 
       - name: Verify archive sync (MANDATORY)
         if: steps.check.outputs.has_missing == 'true'
+        env:
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           echo "🔍 Verifying archive sync with keiba-data-shared..."
           npm run verify:sync

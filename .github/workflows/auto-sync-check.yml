@@ -16,6 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # private 化後の keiba-data-shared を cross-repo read するため、本 job の全 step へ供給。
+    # verify:sync(verifyArchiveSync.js) / import:results(importResults.js) が認証取得に使用。
+    # 注: 本 workflow "Detect missing dates" 内のインライン匿名 curl 撤去は PR-AK-3 で対応。
+    env:
+      KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
 
     steps:
       - name: Checkout
