@@ -56,35 +56,36 @@ jobs:
       - name: Check for missing results
         id: check
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # private 化後の keiba-data-shared を cross-repo read するための token。
+          # secrets.GITHUB_TOKEN（自repoスコープ）は private 別repo読取に使わない。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
+          # token 未設定は取得前に fail-fast（値は出力しない）
+          if [ -z "${KEIBA_DATA_SHARED_TOKEN:-}" ]; then
+            echo "❌ KEIBA_DATA_SHARED_TOKEN is not configured"
+            exit 1
+          fi
+
           DATE="${{ steps.date.outputs.date }}"
           YEAR="${DATE:0:4}"
           MONTH="${DATE:5:2}"
           DAY="${DATE:8:2}"
-          BASE="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/${YEAR}/${MONTH}"
 
-          # per-venueファイル(OOI/FUN/KAW/URA)の存在を確認
-          # 統合JSON(YYYY-MM-DD.json)は生成されないため使用しない
-          VENUE_CODES=("OOI" "FUN" "KAW" "URA")
-          TOTAL_RACES=0
-          FOUND_VENUES=()
-          FOUND_CODES=()
+          # per-venue results(OOI/FUN/KAW/URA) の存在を「認証付き」で確認する。
+          # 匿名 curl/raw は廃止。401/403/429/5xx/timeout は fatal（404 のみ未投入）。
+          # 1件でも fatal なら確認 script が exit 1 → 本 step も失敗（results無しと誤判定しない）。
+          CHECK_OUT=$(node scripts/checkSharedNankanResults.mjs --date "$DATE" --venues OOI,FUN,KAW,URA) || {
+            echo "❌ Failed to confirm Nankan results availability (auth/network error). Not treating as 'no results'."
+            exit 1
+          }
+          FOUND_CODES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^FOUND_CODES=//p')
+          TOTAL_RACES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^TOTAL_RACES=//p')
+          TOTAL_RACES="${TOTAL_RACES:-0}"
 
-          for code in "${VENUE_CODES[@]}"; do
-            URL="${BASE}/${DATE}-${code}.json"
-            if curl -sf "$URL" > /tmp/venue.json; then
-              RC=$(jq -r '.races | length' /tmp/venue.json)
-              TOTAL_RACES=$((TOTAL_RACES + RC))
-              FOUND_VENUES+=("${code}(${RC})")
-              FOUND_CODES+=("${code}")
-            fi
-          done
-
-          echo "🔍 per-venue検索結果: ${#FOUND_VENUES[@]}会場 ${TOTAL_RACES}レース (${FOUND_VENUES[*]})"
+          echo "🔍 per-venue検索結果: ${TOTAL_RACES}レース (codes: ${FOUND_CODES:-none})"
 
           # 後続ステップ（三連複取込）で再利用するため $GITHUB_ENV に保存
-          echo "FOUND_CODES=${FOUND_CODES[*]}" >> $GITHUB_ENV
+          echo "FOUND_CODES=${FOUND_CODES}" >> $GITHUB_ENV
 
           if [ "$TOTAL_RACES" -eq 0 ]; then
             echo "⏭️  No Nankan results in keiba-data-shared yet (全会場404)"
@@ -146,12 +147,17 @@ jobs:
       - name: Import missing sanrenpuku results
         if: steps.check.outputs.has_missing_sanrenpuku == 'true'
         id: import-sanrenpuku
-        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # keiba-data-shared private 化後の認証取得用（importResultsSanrenpuku.js が優先使用）。
+          # fork PR 等で未供給の場合は sharedFetch が TOKEN_MISSING で明示失敗し、匿名 fallback しない。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           DATE="${{ steps.date.outputs.date }}"
           echo "📥 Importing sanrenpuku results for: $DATE (venues: ${FOUND_CODES})"
+          # private 化後の認証障害（TOKEN_MISSING/401/403/rate/5xx/必須404）を検知するため、
+          # importer の非0 exit を握りつぶさない。全会場を試行しつつ、1件でも失敗したら step を失敗させる。
+          FAILED=0
           for code in $FOUND_CODES; do
             case "$code" in
               OOI) slug=ooi ;;
@@ -160,16 +166,21 @@ jobs:
               URA) slug=urawa ;;
               *)   echo "⏭️  Unknown venue code: $code"; continue ;;
             esac
-            # 該当 venue の予想JSONが無い場合は importer が失敗する。
-            # 1会場の失敗で他会場を止めないよう || true でガード。
+            # 予想JSONが無い会場は importer 対象外（results は前段で存在確認済み）。
             if [ -f "src/data/predictions/${DATE}-${slug}.json" ]; then
               echo "▶  ${DATE} ${slug} (${code})"
-              node scripts/importResultsSanrenpuku.js --date "$DATE" --venue "$slug" --venueCode "$code" || \
-                echo "⚠️  sanrenpuku import failed for ${DATE} ${slug}"
+              if ! node scripts/importResultsSanrenpuku.js --date "$DATE" --venue "$slug" --venueCode "$code"; then
+                echo "❌ sanrenpuku import failed for ${DATE} ${slug} (exit non-zero)"
+                FAILED=1
+              fi
             else
               echo "⏭️  prediction file not found: ${DATE}-${slug}.json"
             fi
           done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "❌ One or more sanrenpuku imports failed — failing step (no commit/push)."
+            exit 1
+          fi
 
       - name: Check for changes
         id: git-check
