@@ -11,13 +11,20 @@
  *   node scripts/importPrediction.js  # 今日の日付を使用
  *
  * 環境変数:
- *   GITHUB_TOKEN: GitHub Personal Access Token（read-only）
+ *   KEIBA_DATA_SHARED_TOKEN: keiba-data-shared 読取用トークン（必須・匿名 fallback 禁止）
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
+
+import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+
+// keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止）。
+// token 未設定は取得前に fatal（匿名 fallback 禁止）。private 化後も KEIBA_DATA_SHARED_TOKEN で読取可。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 // ESモジュールで __dirname を取得
 const __filename = fileURLToPath(import.meta.url);
@@ -91,39 +98,21 @@ function getTodayJST() {
  * @param {string} subDir - サブディレクトリ（'computer' または ''）
  * @returns {Promise<Object|null>} venues配列を持つ統合JSON、またはnull
  */
-async function fetchVenuePredictions(date, venue = 'nankan', subDir = '') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function fetchVenuePredictions(date, venue = 'nankan', subDir = '', client = sharedClient) {
   const [year, month, day] = date.split('-');
   const dirPath = subDir
     ? `${venue}/predictions/${subDir}/${year}/${month}`
     : `${venue}/predictions/${year}/${month}`;
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
 
   console.log(`📡 [IMPORT] 会場別ファイル取得中: ${dirPath}`);
 
-  // ディレクトリ内のファイル一覧を取得
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
-  const headers = GITHUB_TOKEN ? {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  } : {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  };
-
-  const dirResponse = await fetch(apiUrl, { headers });
-
-  if (!dirResponse.ok) {
-    if (dirResponse.status === 404) {
-      console.log(`⏭️  [IMPORT] ディレクトリが見つかりません: ${dirPath}`);
-      return null;
-    }
-    throw new Error(`GitHub API Error: ${dirResponse.status}`);
+  // ディレクトリ内のファイル一覧を取得（ディレクトリ未投入の 404 のみ skip。
+  // 認証/権限/レート/5xx/timeout は SharedFetchError として throw＝fatal・匿名 fallback なし）。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) {
+    console.log(`⏭️  [IMPORT] ディレクトリが見つかりません: ${dirPath}`);
+    return null;
   }
-
-  const files = await dirResponse.json();
 
   // 指定日付の会場別ファイルを抽出（例: 2026-03-09-OOI.json）
   const dateFiles = files.filter(file =>
@@ -137,20 +126,12 @@ async function fetchVenuePredictions(date, venue = 'nankan', subDir = '') {
 
   console.log(`✅ [IMPORT] ${dateFiles.length}会場のファイルを検出:`, dateFiles.map(f => f.name).join(', '));
 
-  // 各ファイルを取得
+  // 各ファイルを取得（一覧済みファイルは required:true＝取得失敗は fatal・握りつぶさない）
   const venues = [];
   for (const file of dateFiles) {
-    const fileUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
-    const response = await fetch(fileUrl);
-
-    if (response.ok) {
-      const content = await response.text();
-      const venueData = JSON.parse(content);
-      venues.push(venueData);
-      console.log(`   ✅ [IMPORT] ${file.name} 取得完了`);
-    } else {
-      console.log(`   ⚠️  [IMPORT] ${file.name} 取得失敗: ${response.status}`);
-    }
+    const venueData = await client.fetchJson(file.path, { ref: SHARED_REF });
+    venues.push(venueData);
+    console.log(`   ✅ [IMPORT] ${file.name} 取得完了`);
   }
 
   if (venues.length === 0) {
@@ -170,8 +151,8 @@ async function fetchVenuePredictions(date, venue = 'nankan', subDir = '') {
  * computer/ディレクトリから会場別ファイルを取得（後方互換のため残す）
  * @deprecated 内部でfetchVenuePredictionsを呼び出す
  */
-async function fetchComputerPredictions(date, venue = 'nankan') {
-  return await fetchVenuePredictions(date, venue, 'computer');
+async function fetchComputerPredictions(date, venue = 'nankan', client = sharedClient) {
+  return await fetchVenuePredictions(date, venue, 'computer', client);
 }
 
 /**
@@ -183,9 +164,9 @@ async function fetchComputerPredictions(date, venue = 'nankan') {
  * - 馬番+馬名で突合する（馬番だけだと馬の入れ替えがあった場合に誤マッチするため）。
  * - computer JSON が存在しない / 一頭も無い場合は null を返す。
  */
-async function buildSourceComputerIndexMap(date, venue = 'nankan') {
+async function buildSourceComputerIndexMap(date, venue = 'nankan', client = sharedClient) {
   console.log(`📡 [IMPORT] computer JSON を sourceComputerIndex として併読み開始`);
-  const computerJSON = await fetchVenuePredictions(date, venue, 'computer');
+  const computerJSON = await fetchVenuePredictions(date, venue, 'computer', client);
   if (!computerJSON || !Array.isArray(computerJSON.venues) || computerJSON.venues.length === 0) {
     console.log(`⏭️  [IMPORT] computer JSON が見つからないため sourceComputerIndex 注入をスキップ`);
     return null;
@@ -270,33 +251,19 @@ function injectSourceComputerIndex(sharedJSON, venueMap) {
  * keiba-data-sharedからracebook JSONを取得
  * race-data-importer が保存したデータ（印・近走・調教を含む）
  */
-async function fetchRacebookData(date, category = 'nankan') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function fetchRacebookData(date, category = 'nankan', client = sharedClient) {
   const [year, month] = date.split('-');
   const dirPath = `${category}/racebook/${year}/${month}`;
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
 
   console.log(`📡 [RACEBOOK] racebookデータ取得中: ${dirPath}`);
 
-  const headers = GITHUB_TOKEN ? {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  } : {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  };
-
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
-  const dirResponse = await fetch(apiUrl, { headers });
-
-  if (!dirResponse.ok) {
+  // ディレクトリ未投入の 404 のみ skip。認証/権限/レート/5xx/timeout は throw（fatal）。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) {
     console.log(`⏭️  [RACEBOOK] ディレクトリなし: ${dirPath}`);
     return null;
   }
 
-  const files = await dirResponse.json();
   const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
 
   if (dateFiles.length === 0) {
@@ -306,12 +273,8 @@ async function fetchRacebookData(date, category = 'nankan') {
 
   const venues = [];
   for (const file of dateFiles) {
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
-    const fetchHeaders = GITHUB_TOKEN ? { 'Authorization': `token ${GITHUB_TOKEN}` } : {};
-    const response = await fetch(rawUrl, { headers: fetchHeaders });
-    if (!response.ok) continue;
-
-    const rbData = JSON.parse(await response.text());
+    // 一覧済みファイルは required:true＝取得失敗は fatal（握りつぶさない）
+    const rbData = await client.fetchJson(file.path, { ref: SHARED_REF });
     console.log(`   ✅ [RACEBOOK] ${file.name} 取得完了 (${rbData.races?.length || 0}R)`);
 
     venues.push(convertRacebookToPredictions(rbData, date));
@@ -371,73 +334,52 @@ function convertRacebookToPredictions(rbData, date) {
 /**
  * racebook JSONからpastRacesだけを取得してhorseDataMapに変換
  */
-async function fetchRacebookPastRaces(date, category = 'nankan') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function fetchRacebookPastRaces(date, category = 'nankan', client = sharedClient) {
   const [year, month] = date.split('-');
   const dirPath = `${category}/racebook/${year}/${month}`;
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
 
   console.log(`📡 [RACEBOOK-PAST] racebookからpastRaces取得中: ${dirPath}`);
 
-  const headers = GITHUB_TOKEN ? {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  } : {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  };
+  // ディレクトリ未投入の 404 のみ skip（補完データ）。認証/権限/レート/5xx/timeout は throw（fatal）。
+  // 旧実装の包括 try/catch による silent null 化を廃止し、取得失敗を握りつぶさない。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) return null;
 
-  try {
-    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
-    const dirResponse = await fetch(apiUrl, { headers });
-    if (!dirResponse.ok) return null;
+  const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
+  if (dateFiles.length === 0) return null;
 
-    const files = await dirResponse.json();
-    const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
-    if (dateFiles.length === 0) return null;
-
-    const horseDataMap = new Map();
-    for (const file of dateFiles) {
-      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
-      const fetchHeaders = GITHUB_TOKEN ? { 'Authorization': `token ${GITHUB_TOKEN}` } : {};
-      const response = await fetch(rawUrl, { headers: fetchHeaders });
-      if (!response.ok) continue;
-
-      const rbData = JSON.parse(await response.text());
-      for (const race of (rbData.races || [])) {
-        for (const horse of (race.horses || [])) {
-          if (horse.name) {
-            const data = {
-              jockey: horse.jockey || null,
-              trainer: horse.trainer || null,
-              weight: horse.weight || null,
-              age: horse.sexAge || null,
-              sire: horse.sire || null
-            };
-            if (horse.pastRaces && horse.pastRaces.length > 0) {
-              data.recentRaces = horse.pastRaces.slice(0, 5).map(pr => ({
-                date: null, venue: pr.venue || null, distance: pr.distance || null,
-                rank: pr.finish, finishStatus: null, headCount: null,
-                raceName: pr.raceName || pr.raceClass || null, popularity: null,
-                passingOrder: pr.passingOrder || null, last3f: pr.final3F || null,
-                time: pr.time || null, paceType: pr.paceType || null,
-                bodyWeight: pr.bodyWeight || null, winner: pr.winner || null
-              }));
-            }
-            horseDataMap.set(horse.name, data);
+  const horseDataMap = new Map();
+  for (const file of dateFiles) {
+    // 一覧済みファイルは required:true＝取得失敗は fatal
+    const rbData = await client.fetchJson(file.path, { ref: SHARED_REF });
+    for (const race of (rbData.races || [])) {
+      for (const horse of (race.horses || [])) {
+        if (horse.name) {
+          const data = {
+            jockey: horse.jockey || null,
+            trainer: horse.trainer || null,
+            weight: horse.weight || null,
+            age: horse.sexAge || null,
+            sire: horse.sire || null
+          };
+          if (horse.pastRaces && horse.pastRaces.length > 0) {
+            data.recentRaces = horse.pastRaces.slice(0, 5).map(pr => ({
+              date: null, venue: pr.venue || null, distance: pr.distance || null,
+              rank: pr.finish, finishStatus: null, headCount: null,
+              raceName: pr.raceName || pr.raceClass || null, popularity: null,
+              passingOrder: pr.passingOrder || null, last3f: pr.final3F || null,
+              time: pr.time || null, paceType: pr.paceType || null,
+              bodyWeight: pr.bodyWeight || null, winner: pr.winner || null
+            }));
           }
+          horseDataMap.set(horse.name, data);
         }
       }
     }
-
-    console.log(`✅ [RACEBOOK-PAST] ${horseDataMap.size}頭のpastRacesを取得`);
-    return horseDataMap.size > 0 ? horseDataMap : null;
-  } catch (err) {
-    console.warn('[RACEBOOK-PAST] 取得エラー:', err.message);
-    return null;
   }
+
+  console.log(`✅ [RACEBOOK-PAST] ${horseDataMap.size}頭のpastRacesを取得`);
+  return horseDataMap.size > 0 ? horseDataMap : null;
 }
 
 /**
@@ -449,71 +391,25 @@ async function fetchRacebookPastRaces(date, category = 'nankan') {
  * @param {string} venue - 競馬場カテゴリ（デフォルト: 'nankan'）
  * @returns {Promise<Object>} 予想JSON
  */
-async function fetchSharedPrediction(date, venue = 'nankan') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-
+export async function fetchSharedPrediction(date, venue = 'nankan', client = sharedClient) {
   // 日付をパースしてパスを構築
   const [year, month, day] = date.split('-');
   const path = `${venue}/predictions/${year}/${month}/${date}.json`;
 
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
-
   console.log(`📡 keiba-data-sharedから取得中: ${path}`);
 
-  // ローカル実行時（GITHUB_TOKENなし）: raw.githubusercontent.comを使用（公開リポジトリ）
-  if (!GITHUB_TOKEN) {
-    console.log(`   ローカル実行モード: raw.githubusercontent.comからダウンロード`);
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
-    const response = await fetch(rawUrl);
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        // 予想データがない場合は正常終了（エラーではない）
-        console.log(`⏭️  予想データが見つかりません: ${path}`);
-        console.log(`   まだ予想が作成されていない可能性があります`);
-        return null; // nullを返す
-      }
-      throw new Error(`予想データの取得に失敗: ${response.status} ${response.statusText}`);
-    }
-
-    const content = await response.text();
-    const prediction = JSON.parse(content);
-    console.log(`✅ 取得成功: ${path}`);
-    return prediction;
+  // 統合ファイル（任意）: 404 は未投入として null（正常終了）。
+  // 認証/権限/レート/サーバ/タイムアウトは SharedFetchError として throw（fatal・匿名 fallback なし）。
+  const prediction = await client.fetchJson(path, { ref: SHARED_REF, required: false });
+  if (prediction === null) {
+    // 予想データがない場合は正常終了（エラーではない）
+    console.log(`⏭️  予想データが見つかりません: ${path}`);
+    console.log(`   まだ予想が作成されていない可能性があります`);
+    return null; // nullを返す
   }
-
-  // GitHub Actions実行時: GitHub API経由（レート制限回避）
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-
-  const response = await fetch(apiUrl, {
-    headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'keiba-intelligence-import'
-    }
-  });
-
-  if (!response.ok) {
-    if (response.status === 404) {
-      // 予想データがない場合は正常終了（エラーではない）
-      console.log(`⏭️  予想データが見つかりません: ${path}`);
-      console.log(`   まだ予想が作成されていない可能性があります`);
-      return null; // nullを返す
-    }
-    const errorData = await response.json();
-    throw new Error(`GitHub API Error: ${response.status} ${JSON.stringify(errorData)}`);
-  }
-
-  const data = await response.json();
-
-  // Base64デコード
-  const content = Buffer.from(data.content, 'base64').toString('utf-8');
-  const predictionJSON = JSON.parse(content);
 
   console.log(`✅ 取得成功: ${path}`);
-
-  return predictionJSON;
+  return prediction;
 }
 
 /**
@@ -523,22 +419,22 @@ async function fetchSharedPrediction(date, venue = 'nankan') {
  * @param {string} venue - 競馬場カテゴリ（デフォルト: 'nankan'）
  * @returns {Promise<Object[]>} 調整済みNormalizedPrediction配列（複数会場対応）
  */
-async function importPrediction(date, venue = 'nankan') {
+async function importPrediction(date, venue = 'nankan', client = sharedClient) {
   console.log(`\n━━━ ${date} 予想データ取り込み開始 ━━━`);
 
   // 優先順位1: 正規形式の会場別ファイル（nankan/predictions/YYYY/MM/YYYY-MM-DD-{VENUE}.json）
-  let sharedJSON = await fetchVenuePredictions(date, venue, '');
+  let sharedJSON = await fetchVenuePredictions(date, venue, '', client);
 
   // 優先順位2: computer/ディレクトリから会場別ファイル（コンピ指数）
   if (!sharedJSON) {
     console.log(`📡 [IMPORT] computer/配下をチェック`);
-    sharedJSON = await fetchComputerPredictions(date, venue);
+    sharedJSON = await fetchComputerPredictions(date, venue, client);
   }
 
   // 優先順位3（非推奨）: 従来の統合ファイル（YYYY-MM-DD.json）
   if (!sharedJSON) {
     console.log(`⚠️  [IMPORT] 【非推奨】従来の単一ファイルを取得します`);
-    sharedJSON = await fetchSharedPrediction(date, venue);
+    sharedJSON = await fetchSharedPrediction(date, venue, client);
     if (sharedJSON) {
       console.log(`⚠️  [IMPORT] 警告: 単一ファイル形式は将来廃止されます。会場別ファイルに移行してください。`);
     }
@@ -547,7 +443,7 @@ async function importPrediction(date, venue = 'nankan') {
   // 優先順位4: racebook（race-data-importer保存データ）
   if (!sharedJSON) {
     console.log(`📡 [IMPORT] racebook配下をチェック`);
-    sharedJSON = await fetchRacebookData(date, venue);
+    sharedJSON = await fetchRacebookData(date, venue, client);
   }
 
   // 予想データがない場合はスキップ
@@ -557,10 +453,10 @@ async function importPrediction(date, venue = 'nankan') {
   }
 
   // 出馬表データ（recentRaces）を取得
-  let horseDataMap = await fetchEntriesData(date, venue);
+  let horseDataMap = await fetchEntriesData(date, venue, client);
   // entries未保存時はracebookのpastRacesで補完
   if (!horseDataMap || horseDataMap.size === 0) {
-    horseDataMap = await fetchRacebookPastRaces(date, venue);
+    horseDataMap = await fetchRacebookPastRaces(date, venue, client);
   }
 
   // 【2026-05-14 追加】computer JSON を併読みして sourceComputerIndex を注入
@@ -568,7 +464,7 @@ async function importPrediction(date, venue = 'nankan') {
   //   - 元 racebook 指数（pt 生成に使う値）は computer JSON 側にしか無い
   //   - 各馬に sourceComputerIndex フィールドを追加（normalizePrediction.js が COMPI_MIN=45 判定で使う）
   //   - 突合キー: 会場名 → (馬番, 馬名) 完全一致
-  const computerSourceMap = await buildSourceComputerIndexMap(date, venue);
+  const computerSourceMap = await buildSourceComputerIndexMap(date, venue, client);
   if (computerSourceMap && computerSourceMap.size > 0) {
     injectSourceComputerIndex(sharedJSON, computerSourceMap);
   }
@@ -656,34 +552,21 @@ async function importPrediction(date, venue = 'nankan') {
  * @param {string} venue - 競馬場カテゴリ（デフォルト: 'nankan'）
  * @returns {Promise<Map|null>} 馬名→recentRacesのMap
  */
-async function fetchEntriesData(date, venue = 'nankan') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function fetchEntriesData(date, venue = 'nankan', client = sharedClient) {
   const [year, month] = date.split('-');
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
 
   // entriesディレクトリのファイル一覧を取得
   const dirPath = `${venue}/entries/${year}/${month}`;
-  const headers = GITHUB_TOKEN ? {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  } : {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  };
 
   console.log(`📡 [ENTRIES] 出馬表データ取得中: ${dirPath}`);
 
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
-  const dirResponse = await fetch(apiUrl, { headers });
-
-  if (!dirResponse.ok) {
+  // ディレクトリ未投入の 404 のみ skip（補完データ）。認証/権限/レート/5xx/timeout は throw（fatal）。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) {
     console.log(`⏭️  [ENTRIES] 出馬表ディレクトリが見つかりません: ${dirPath}`);
     return null;
   }
 
-  const files = await dirResponse.json();
   const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
 
   if (dateFiles.length === 0) {
@@ -695,12 +578,8 @@ async function fetchEntriesData(date, venue = 'nankan') {
   const horseDataMap = new Map();
 
   for (const file of dateFiles) {
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
-    const response = await fetch(rawUrl, GITHUB_TOKEN ? { headers: { 'Authorization': `token ${GITHUB_TOKEN}` } } : {});
-
-    if (!response.ok) continue;
-
-    const entryData = JSON.parse(await response.text());
+    // 一覧済みファイルは required:true＝取得失敗は fatal
+    const entryData = await client.fetchJson(file.path, { ref: SHARED_REF });
     console.log(`   ✅ [ENTRIES] ${file.name} 取得完了`);
 
     if (entryData.races) {
@@ -928,6 +807,9 @@ function savePrediction(date, normalizedAndAdjusted, horseDataMap = null) {
  */
 async function main() {
   try {
+    // private 化後に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+    resolveSharedToken();
+
     // コマンドライン引数をパース
     const args = process.argv.slice(2);
     let date = null;
@@ -1008,5 +890,8 @@ async function main() {
   }
 }
 
-// 実行
-main();
+// 直接実行時のみ起動（import 時は実行しない＝テスト可能）。
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main();
+}

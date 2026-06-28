@@ -14,6 +14,8 @@
  *   - fetchSharedJson(path, options?)        // 既定クライアント（process.env / global fetch）
  *   - fetchSharedText(path, options?)
  *   - listSharedDirectory(path, options?)
+ *   - fetchSharedFileFromEntry(entry, options?)   // listing entry から本文取得（1MB超は blobs API）
+ *   - fetchSharedJsonFromEntry(entry, options?)
  *
  * 設計方針:
  *   - token 未設定は即時 TOKEN_MISSING（匿名 fallback 禁止）
@@ -21,7 +23,8 @@
  *   - required=true の 404 は throw、required=false の 404 のみ null
  *   - retry は 5xx / timeout / rate-limit のみ。token/401/403/404/JSON破損/too-large は retry しない
  *   - token・Authorization・token 付き URL・秘密値を message/log へ含めない
- *   - 1MB 超 blob/raw 切替（git blobs API）は PR-AK-2 で実装（本ファイルは Contents API のみ）
+ *   - 1MB 超ファイルは listing entry の size/sha を見て git blobs API（base64）へ切替（PR-AK-4）。
+ *     encoding!==base64・content 欠落は INVALID_RESPONSE、本文破損は INVALID_JSON。
  */
 
 /** エラー分類コード（taxonomy） */
@@ -252,10 +255,70 @@ export function createSharedClient(options = {}) {
     return body.map((e) => ({ name: e.name, path: e.path, sha: e.sha, size: e.size, type: e.type }));
   }
 
+  // GitHub Contents API は ~1MB 上限。超過ファイルは git blobs API（base64）で取得する。
+  const CONTENTS_MAX_BYTES = 1024 * 1024;
+
+  function buildBlobUrl(sha) {
+    return `https://api.github.com/repos/${owner}/${repo}/git/blobs/${encodeURIComponent(String(sha))}`;
+  }
+
+  async function fetchBlobBySha(sha, path, ref) {
+    const res = await requestWithRetry(buildBlobUrl(sha), JSON_ACCEPT, path, ref);
+    let body;
+    try {
+      body = JSON.parse(await res.text());
+    } catch {
+      throw new SharedFetchError(SHARED_FETCH_CODES.INVALID_JSON, 'Blob response is not valid JSON.', { path, ref });
+    }
+    if (!body || body.encoding !== 'base64') {
+      throw new SharedFetchError(SHARED_FETCH_CODES.INVALID_RESPONSE, 'Blob encoding is not base64.', { path, ref });
+    }
+    if (typeof body.content !== 'string') {
+      throw new SharedFetchError(SHARED_FETCH_CODES.INVALID_RESPONSE, 'Blob content is missing.', { path, ref });
+    }
+    return Buffer.from(body.content, 'base64').toString('utf-8'); // base64 本文はログに出さない
+  }
+
+  /**
+   * listing entry（listDirectory の要素）から本文を取得する。
+   * size が 1MB を超える場合のみ git blobs API（sha 経由）へ切り替える。
+   * 既定 required=true（一覧済みファイルの 404 は fatal）。
+   */
+  async function fetchFileFromEntry(entry, { ref, required = true } = {}) {
+    if (!entry || typeof entry.path !== 'string' || entry.path === '') {
+      throw new SharedFetchError(SHARED_FETCH_CODES.INVALID_RESPONSE, 'Invalid directory entry (path missing).', {});
+    }
+    const usedRef = ref || defaultRef;
+    if (typeof entry.size === 'number' && entry.size > CONTENTS_MAX_BYTES) {
+      if (typeof entry.sha !== 'string' || entry.sha === '') {
+        throw new SharedFetchError(SHARED_FETCH_CODES.INVALID_RESPONSE, 'Large entry missing sha for blobs API.', { path: entry.path, ref: usedRef });
+      }
+      try {
+        return await fetchBlobBySha(entry.sha, entry.path, usedRef);
+      } catch (e) {
+        if (required === false && e instanceof SharedFetchError && e.code === SHARED_FETCH_CODES.NOT_FOUND) return null;
+        throw e;
+      }
+    }
+    return fetchText(entry.path, { ref: usedRef, required });
+  }
+
+  async function fetchJsonFromEntry(entry, options = {}) {
+    const text = await fetchFileFromEntry(entry, options);
+    if (text === null) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new SharedFetchError(SHARED_FETCH_CODES.INVALID_JSON, 'Entry body is not valid JSON.', { path: entry?.path ?? null, ref: options?.ref ?? null });
+    }
+  }
+
   return {
     fetchJson,
     fetchText,
     listDirectory,
+    fetchFileFromEntry,
+    fetchJsonFromEntry,
     resolveToken: () => resolveSharedToken({ env }),
     owner,
     repo,
@@ -273,4 +336,10 @@ export function fetchSharedText(path, options) {
 }
 export function listSharedDirectory(path, options) {
   return defaultClient.listDirectory(path, options);
+}
+export function fetchSharedFileFromEntry(entry, options) {
+  return defaultClient.fetchFileFromEntry(entry, options);
+}
+export function fetchSharedJsonFromEntry(entry, options) {
+  return defaultClient.fetchJsonFromEntry(entry, options);
 }

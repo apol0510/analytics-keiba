@@ -210,3 +210,100 @@ test('18. 403 "too large" は FILE_TOO_LARGE（retry しない）', async () => 
   await assert.rejects(client.fetchJson('jra/horseHistories/2026/05/2026-05-31-TOK.json'), (e) => e.code === SHARED_FETCH_CODES.FILE_TOO_LARGE);
   assert.equal(fetchImpl.calls.length, 1);
 });
+
+// ───────── entry 取得（1MB 以下 = Contents API / 1MB 超 = blobs API） ─────────
+
+const SMALL = { name: 'a.json', path: 'jra/horseHistories/a.json', sha: 'sha_small', size: 500, type: 'file' };
+const BIG = { name: 'b.json', path: 'jra/horseHistories/b.json', sha: 'sha_big', size: 2 * 1024 * 1024, type: 'file' };
+const b64 = (s) => Buffer.from(s, 'utf-8').toString('base64');
+
+function isContentsUrl(url) { return url.includes('/contents/'); }
+function isBlobUrl(url) { return url.includes('/git/blobs/'); }
+
+// 19. 1MB 以下 entry は Contents API（blobs API を呼ばない）
+test('19. 小ファイル entry は Contents API で取得（blobs 未使用）', async () => {
+  const fetchImpl = mkFetch((url) => (isContentsUrl(url) ? mkRes(200, '{"h":"small"}') : mkRes(500, 'should not call blobs')));
+  const client = makeClient({ fetchImpl });
+  const out = await client.fetchJsonFromEntry(SMALL);
+  assert.deepEqual(out, { h: 'small' });
+  assert.ok(fetchImpl.calls.every((c) => isContentsUrl(c.url)), 'blobs API は呼ばれない');
+});
+
+// 20. 1MB 超 entry は blobs API + base64 decode
+test('20. 大ファイル entry は blobs API で base64 decode 取得', async () => {
+  const fetchImpl = mkFetch((url) => {
+    if (isBlobUrl(url)) return mkRes(200, { encoding: 'base64', content: b64('{"h":"big"}'), sha: 'sha_big' });
+    return mkRes(500, 'contents must not be used for >1MB');
+  });
+  const client = makeClient({ fetchImpl });
+  const out = await client.fetchJsonFromEntry(BIG);
+  assert.deepEqual(out, { h: 'big' });
+  assert.ok(fetchImpl.calls.some((c) => isBlobUrl(c.url)), 'blobs API が使われる');
+  assert.ok(fetchImpl.calls[0].url.includes('sha_big'), 'sha で blob URL を構築');
+  assert.ok(!fetchImpl.calls[0].url.includes(SECRET), 'token を URL へ含めない');
+});
+
+// 21. blobs encoding が base64 でない → INVALID_RESPONSE
+test('21. blob encoding 非 base64 は INVALID_RESPONSE', async () => {
+  const fetchImpl = mkFetch(() => mkRes(200, { encoding: 'utf-8', content: 'plain', sha: 'sha_big' }));
+  const client = makeClient({ fetchImpl });
+  await assert.rejects(client.fetchFileFromEntry(BIG), (e) => e.code === SHARED_FETCH_CODES.INVALID_RESPONSE);
+});
+
+// 22. blob content 欠落 → INVALID_RESPONSE
+test('22. blob content 欠落は INVALID_RESPONSE', async () => {
+  const fetchImpl = mkFetch(() => mkRes(200, { encoding: 'base64', sha: 'sha_big' }));
+  const client = makeClient({ fetchImpl });
+  await assert.rejects(client.fetchFileFromEntry(BIG), (e) => e.code === SHARED_FETCH_CODES.INVALID_RESPONSE);
+});
+
+// 23. blob 本文の base64 が壊れた JSON → INVALID_JSON
+test('23. blob decode 後の本文が不正 JSON は INVALID_JSON', async () => {
+  const fetchImpl = mkFetch(() => mkRes(200, { encoding: 'base64', content: b64('{ not json'), sha: 'sha_big' }));
+  const client = makeClient({ fetchImpl });
+  await assert.rejects(client.fetchJsonFromEntry(BIG), (e) => e.code === SHARED_FETCH_CODES.INVALID_JSON);
+});
+
+// 24. 一覧済み entry の 404（小）は required=true で fatal、required=false で null
+test('24. 一覧済み entry 404: required=true fatal / required=false null', async () => {
+  const fetchImpl = mkFetch(() => mkRes(404, 'Not Found'));
+  const client = makeClient({ fetchImpl });
+  await assert.rejects(client.fetchFileFromEntry(SMALL), (e) => e.code === SHARED_FETCH_CODES.NOT_FOUND);
+  assert.equal(await client.fetchFileFromEntry(SMALL, { required: false }), null);
+});
+
+// 25. 大 entry の blobs 404: required=true fatal / required=false null
+test('25. 大 entry blobs 404: required=true fatal / required=false null', async () => {
+  const fetchImpl = mkFetch(() => mkRes(404, 'Not Found'));
+  const client = makeClient({ fetchImpl });
+  await assert.rejects(client.fetchFileFromEntry(BIG), (e) => e.code === SHARED_FETCH_CODES.NOT_FOUND);
+  assert.equal(await client.fetchFileFromEntry(BIG, { required: false }), null);
+});
+
+// 26. 大 entry に sha が無い → INVALID_RESPONSE（blobs 不可）
+test('26. 大 entry に sha 無しは INVALID_RESPONSE', async () => {
+  const fetchImpl = mkFetch(() => mkRes(200, { encoding: 'base64', content: b64('{}') }));
+  const client = makeClient({ fetchImpl });
+  await assert.rejects(client.fetchFileFromEntry({ ...BIG, sha: '' }), (e) => e.code === SHARED_FETCH_CODES.INVALID_RESPONSE);
+  assert.equal(fetchImpl.calls.length, 0, 'sha 無しは fetch せず即失敗');
+});
+
+// 27. entry 取得も token 未設定で TOKEN_MISSING（fetch 未実行）
+test('27. entry 取得は token 未設定で TOKEN_MISSING（fetch 未実行）', async () => {
+  const fetchImpl = mkFetch(() => mkRes(200, { encoding: 'base64', content: b64('{}'), sha: 'x' }));
+  const client = makeClient({ fetchImpl, env: {} });
+  await assert.rejects(client.fetchFileFromEntry(BIG), (e) => e.code === SHARED_FETCH_CODES.TOKEN_MISSING);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+// 28. blobs 5xx は retry 後 fatal / token・secret 非露出
+test('28. blobs 5xx は retry 後 SERVER_ERROR、secret 非露出', async () => {
+  const fetchImpl = mkFetch(() => mkRes(500, 'err'));
+  const client = makeClient({ fetchImpl, retries: 2 });
+  await assert.rejects(client.fetchFileFromEntry(BIG), (e) => {
+    assert.equal(e.code, SHARED_FETCH_CODES.SERVER_ERROR);
+    assert.ok(!String(e.message).includes(SECRET) && !String(e.stack || '').includes(SECRET));
+    return true;
+  });
+  assert.equal(fetchImpl.calls.length, 3, '初回 + retry2');
+});
