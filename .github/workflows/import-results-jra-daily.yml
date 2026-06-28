@@ -56,20 +56,32 @@ jobs:
       - name: Check for missing results
         id: check
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # private 化後の keiba-data-shared を cross-repo read するための token。
+          # secrets.GITHUB_TOKEN（自repoスコープ）は private 別repo読取に使わない。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
+          # token 未設定は取得前に fail-fast（値は出力しない）
+          if [ -z "${KEIBA_DATA_SHARED_TOKEN:-}" ]; then
+            echo "❌ KEIBA_DATA_SHARED_TOKEN is not configured"
+            exit 1
+          fi
+
           DATE="${{ steps.date.outputs.date }}"
 
-          # keiba-data-sharedに結果データがあるかチェック
-          RESULT_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/jra/results/${DATE:0:4}/${DATE:5:2}/${DATE}.json"
+          # keiba-data-shared の JRA 統合 results を「認証付き」で確認する。
+          # 匿名 curl/raw は廃止。401/403/429/5xx/timeout は fatal（404 のみ未投入）。
+          # fatal なら確認 script が exit 1 → 本 step も失敗（results無しと誤判定しない）。
+          echo "🔍 Checking for JRA results: $DATE"
+          CHECK_OUT=$(node scripts/checkSharedDailyFile.mjs --date "$DATE") || {
+            echo "❌ Failed to confirm JRA results availability (auth/network error). Not treating as 'no results'."
+            exit 1
+          }
+          FOUND=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^FOUND=//p')
+          EXPECTED_VENUES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^EXPECTED_VENUES=//p')
+          EXPECTED_VENUES="${EXPECTED_VENUES:-0}"
 
-          echo "🔍 Checking for JRA results: $RESULT_URL"
-
-          if curl -sf "$RESULT_URL" > /tmp/results.json; then
+          if [ "$FOUND" = "true" ]; then
             echo "✅ Results found in keiba-data-shared"
-
-            # keiba-data-sharedの会場数を取得
-            EXPECTED_VENUES=$(cat /tmp/results.json | node -e "const data = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8')); const venues = [...new Set(data.races.map(r => r.venue))]; console.log(venues.length);")
             echo "   Expected venues: $EXPECTED_VENUES"
 
             # アーカイブに既に存在するかチェック
@@ -100,7 +112,7 @@ jobs:
         if: steps.check.outputs.has_missing == 'true'
         env:
           # private 化後の cross-repo read 用。importResultsJra.js が認証取得に使用。
-          # 注: 本 workflow の "Check for missing results" 内インライン匿名 curl 撤去は PR-AK-4。
+          # "Check for missing results" 内の匿名 curl は checkSharedDailyFile.mjs（認証付き）へ移行済み（PR-AK-4）。
           KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           DATE="${{ steps.date.outputs.date }}"

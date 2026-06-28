@@ -9,6 +9,11 @@ on:
 jobs:
   verify-sync:
     runs-on: ubuntu-latest
+    # private 化後の keiba-data-shared を cross-repo read するため、本 job の全 step へ供給。
+    # JRA/南関の存在確認 step（checkSharedDailyFile.mjs で unified daily ファイルを確認）が認証取得に使用。
+    # secrets.GITHUB_TOKEN（自repoスコープ）は private 別repo読取に使わない。
+    env:
+      KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
 
     steps:
       - name: Checkout keiba-intelligence
@@ -22,6 +27,12 @@ jobs:
       - name: Check JRA archive sync
         id: check-jra
         run: |
+          # token 未設定は取得前に fail-fast（値は出力しない）
+          if [ -z "${KEIBA_DATA_SHARED_TOKEN:-}" ]; then
+            echo "❌ KEIBA_DATA_SHARED_TOKEN is not configured"
+            exit 1
+          fi
+
           # 過去7日間の日付をチェック
           MISSING_DATES=""
           NO_RESULTS_DATES=""
@@ -30,27 +41,32 @@ jobs:
 
           for i in {0..6}; do
             DATE=$(date -u -d "$i days ago" +%Y-%m-%d 2>/dev/null || date -u -v-${i}d +%Y-%m-%d)
-            YEAR=${DATE:0:4}
-            MONTH=${DATE:5:2}
 
             echo "━━━ Checking: $DATE ━━━"
 
-            # 予想データがあるかチェック
-            PREDICTION_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/jra/predictions/$YEAR/$MONTH/$DATE.json"
+            # 予想データ存在確認（認証付き / 匿名 curl・raw 廃止）
             HAS_PREDICTION=false
-
-            if curl -sf "$PREDICTION_URL" > /dev/null; then
+            PRED_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category jra --kind predictions) || {
+              echo "❌ Failed to confirm JRA prediction availability for $DATE (auth/network error)."
+              exit 1
+            }
+            if [ "$(printf '%s\n' "$PRED_OUT" | sed -n 's/^FOUND=//p')" = "true" ]; then
               echo "✅ Prediction: Found"
               HAS_PREDICTION=true
             else
               echo "⏭️  Prediction: Not found"
             fi
 
-            # 結果データがあるかチェック
-            RESULT_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/jra/results/$YEAR/$MONTH/$DATE.json"
+            # 結果データ存在確認（認証付き / race数は EXPECTED_RACES を消費）
+            RES_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category jra --kind results) || {
+              echo "❌ Failed to confirm JRA results availability for $DATE (auth/network error)."
+              exit 1
+            }
+            RES_FOUND=$(printf '%s\n' "$RES_OUT" | sed -n 's/^FOUND=//p')
+            RACE_COUNT=$(printf '%s\n' "$RES_OUT" | sed -n 's/^EXPECTED_RACES=//p')
+            RACE_COUNT="${RACE_COUNT:-0}"
 
-            if curl -sf "$RESULT_URL" > /tmp/result.json; then
-              RACE_COUNT=$(cat /tmp/result.json | jq -r '.races | length')
+            if [ "$RES_FOUND" = "true" ]; then
               echo "✅ Results: $RACE_COUNT races"
 
               # 10レース以上ある場合のみチェック
@@ -103,6 +119,12 @@ jobs:
       - name: Check Nankan archive sync
         id: check-nankan
         run: |
+          # token 未設定は取得前に fail-fast（値は出力しない）
+          if [ -z "${KEIBA_DATA_SHARED_TOKEN:-}" ]; then
+            echo "❌ KEIBA_DATA_SHARED_TOKEN is not configured"
+            exit 1
+          fi
+
           # 過去7日間の日付をチェック
           MISSING_DATES=""
           NO_RESULTS_DATES=""
@@ -111,27 +133,33 @@ jobs:
 
           for i in {0..6}; do
             DATE=$(date -u -d "$i days ago" +%Y-%m-%d 2>/dev/null || date -u -v-${i}d +%Y-%m-%d)
-            YEAR=${DATE:0:4}
-            MONTH=${DATE:5:2}
 
             echo "━━━ Checking: $DATE ━━━"
 
-            # 予想データがあるかチェック
-            PREDICTION_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/predictions/$YEAR/$MONTH/$DATE.json"
+            # 予想データ存在確認（認証付き / 匿名 curl・raw 廃止）
             HAS_PREDICTION=false
-
-            if curl -sf "$PREDICTION_URL" > /dev/null; then
+            PRED_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category nankan --kind predictions) || {
+              echo "❌ Failed to confirm Nankan prediction availability for $DATE (auth/network error)."
+              exit 1
+            }
+            if [ "$(printf '%s\n' "$PRED_OUT" | sed -n 's/^FOUND=//p')" = "true" ]; then
               echo "✅ Prediction: Found"
               HAS_PREDICTION=true
             else
               echo "⏭️  Prediction: Not found"
             fi
 
-            # 結果データがあるかチェック
-            RESULT_URL="https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$DATE.json"
+            # 結果データ存在確認（認証付き / 旧契約どおり unified nankan/results/Y/M/DATE.json のみ）。
+            # per-venue へ fallback しない（unified が正規404 なら「結果なし」側へ）。
+            RES_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category nankan --kind results) || {
+              echo "❌ Failed to confirm Nankan results availability for $DATE (auth/network error)."
+              exit 1
+            }
+            RES_FOUND=$(printf '%s\n' "$RES_OUT" | sed -n 's/^FOUND=//p')
+            RACE_COUNT=$(printf '%s\n' "$RES_OUT" | sed -n 's/^EXPECTED_RACES=//p')
+            RACE_COUNT="${RACE_COUNT:-0}"
 
-            if curl -sf "$RESULT_URL" > /tmp/result.json; then
-              RACE_COUNT=$(cat /tmp/result.json | jq -r '.races | length')
+            if [ "$RES_FOUND" = "true" ]; then
               echo "✅ Results: $RACE_COUNT races"
 
               # 12レース揃っている場合のみチェック

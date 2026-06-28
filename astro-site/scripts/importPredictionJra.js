@@ -11,13 +11,20 @@
  *   node scripts/importPredictionJra.js  # 今日の日付を使用
  *
  * 環境変数:
- *   GITHUB_TOKEN: GitHub Personal Access Token（read-only）
+ *   KEIBA_DATA_SHARED_TOKEN: keiba-data-shared 読取用トークン（必須・匿名 fallback 禁止）
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
+
+import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+
+// keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止）。
+// token 未設定は取得前に fatal（匿名 fallback 禁止）。private 化後も KEIBA_DATA_SHARED_TOKEN で読取可。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 // ESモジュールで __dirname を取得
 const __filename = fileURLToPath(import.meta.url);
@@ -66,73 +73,25 @@ function getTodayJST() {
  * @param {string} venue - 競馬場カテゴリ（デフォルト: 'jra'）
  * @returns {Promise<Object>} 予想JSON
  */
-async function fetchSharedPrediction(date, venue = 'jra') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-
+export async function fetchSharedPrediction(date, venue = 'jra', client = sharedClient) {
   // 日付をパースしてパスを構築
   const [year, month, day] = date.split('-');
   const path = `${venue}/predictions/${year}/${month}/${date}.json`;
 
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
-
   console.log(`📡 keiba-data-sharedから取得中: ${path}`);
 
-  // ローカル実行時（GITHUB_TOKENなし）: raw.githubusercontent.comを使用（公開リポジトリ）
-  if (!GITHUB_TOKEN) {
-    console.log(`   ローカル実行モード: raw.githubusercontent.comからダウンロード`);
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
-    console.log(`   📍 URL: ${rawUrl}`);
-    const response = await fetch(rawUrl);
-    console.log(`   📡 Response status: ${response.status} ${response.statusText}`);
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        // 予想データがない場合は正常終了（エラーではない）
-        console.log(`⏭️  予想データが見つかりません: ${path}`);
-        console.log(`   まだ予想が作成されていない可能性があります`);
-        return null; // nullを返す
-      }
-      throw new Error(`予想データの取得に失敗: ${response.status} ${response.statusText}`);
-    }
-
-    const content = await response.text();
-    const prediction = JSON.parse(content);
-    console.log(`✅ 取得成功: ${path}`);
-    return prediction;
+  // 統合ファイル（任意）: 404 は未投入として null（正常終了）。
+  // 認証/権限/レート/サーバ/タイムアウトは SharedFetchError として throw（fatal・匿名 fallback なし）。
+  const prediction = await client.fetchJson(path, { ref: SHARED_REF, required: false });
+  if (prediction === null) {
+    // 予想データがない場合は正常終了（エラーではない）
+    console.log(`⏭️  予想データが見つかりません: ${path}`);
+    console.log(`   まだ予想が作成されていない可能性があります`);
+    return null; // nullを返す
   }
-
-  // GitHub Actions実行時: GitHub API経由（レート制限回避）
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-
-  const response = await fetch(apiUrl, {
-    headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'keiba-intelligence-import-jra'
-    }
-  });
-
-  if (!response.ok) {
-    if (response.status === 404) {
-      // 予想データがない場合は正常終了（エラーではない）
-      console.log(`⏭️  予想データが見つかりません: ${path}`);
-      console.log(`   まだ予想が作成されていない可能性があります`);
-      return null; // nullを返す
-    }
-    const errorData = await response.json();
-    throw new Error(`GitHub API Error: ${response.status} ${JSON.stringify(errorData)}`);
-  }
-
-  const data = await response.json();
-
-  // Base64デコード
-  const content = Buffer.from(data.content, 'base64').toString('utf-8');
-  const predictionJSON = JSON.parse(content);
 
   console.log(`✅ 取得成功: ${path}`);
-
-  return predictionJSON;
+  return prediction;
 }
 
 /**
@@ -141,32 +100,19 @@ async function fetchSharedPrediction(date, venue = 'jra') {
  * 返り値: Map<会場名, Map<"馬番|馬名", computerIndex>>
  * 突合キーは「会場名 → (馬番, 馬名) 完全一致」。
  */
-async function buildSourceComputerIndexMap(date, category = 'jra') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function buildSourceComputerIndexMap(date, category = 'jra', client = sharedClient) {
   const [year, month] = date.split('-');
   const dirPath = `${category}/predictions/computer/${year}/${month}`;
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
 
   console.log(`📡 [IMPORT-JRA] computer JSON 併読み: ${dirPath}`);
 
-  const headers = GITHUB_TOKEN ? {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import-jra'
-  } : {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import-jra'
-  };
-
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
-  const dirResponse = await fetch(apiUrl, { headers });
-  if (!dirResponse.ok) {
+  // ディレクトリ未投入の 404 のみ skip。認証/権限/レート/5xx/timeout は throw（fatal）。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) {
     console.log(`⏭️  [IMPORT-JRA] computer ディレクトリなし: ${dirPath}`);
     return null;
   }
 
-  const files = await dirResponse.json();
   const dateFiles = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
   if (dateFiles.length === 0) {
     console.log(`⏭️  [IMPORT-JRA] ${date} の computer ファイルなし`);
@@ -176,10 +122,8 @@ async function buildSourceComputerIndexMap(date, category = 'jra') {
   // computer 各会場データを race-scoped 形へ整形して収集（過去走はフィールド名統一）。
   const venuesForMap = [];
   for (const file of dateFiles) {
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
-    const res = await fetch(rawUrl, { headers: GITHUB_TOKEN ? { Authorization: `token ${GITHUB_TOKEN}` } : {} });
-    if (!res.ok) continue;
-    const venueData = JSON.parse(await res.text());
+    // 一覧済みファイルは required:true＝取得失敗は fatal
+    const venueData = await client.fetchJson(file.path, { ref: SHARED_REF });
     const venueName = venueData.venue || venueData.name || null;
     if (!venueName) continue;
     let horseCount = 0;
@@ -237,33 +181,18 @@ function injectSourceComputerIndex(sharedJSON, venueMap) {
 /**
  * keiba-data-sharedからracebook JSONを取得（JRA用）
  */
-async function fetchRacebookData(date, category = 'jra') {
-  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+export async function fetchRacebookData(date, category = 'jra', client = sharedClient) {
   const [year, month] = date.split('-');
   const dirPath = `${category}/racebook/${year}/${month}`;
-  const owner = 'apol0510';
-  const repo = 'keiba-data-shared';
 
   console.log(`📡 [RACEBOOK] racebookデータ取得中: ${dirPath}`);
 
-  const headers = GITHUB_TOKEN ? {
-    'Authorization': `token ${GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  } : {
-    'Accept': 'application/vnd.github.v3+json',
-    'User-Agent': 'keiba-intelligence-import'
-  };
-
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`;
-  const dirResponse = await fetch(apiUrl, { headers });
-
-  if (!dirResponse.ok) {
+  // ディレクトリ未投入の 404 のみ skip。認証/権限/レート/5xx/timeout は throw（fatal）。
+  const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (files === null) {
     console.log(`⏭️  [RACEBOOK] ディレクトリなし: ${dirPath}`);
     return null;
   }
-
-  const files = await dirResponse.json();
 
   // 2026-05-15 追加: JRA の同一開催（5/16 土）に対し、TOK/NII の racebook ファイル名は
   // 2026-05-15-*.json として保存される運用がある（データ供給側仕様）。
@@ -294,12 +223,8 @@ async function fetchRacebookData(date, category = 'jra') {
     return da - db;
   });
   for (const file of dateFiles) {
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${dirPath}/${file.name}`;
-    const fetchHeaders = GITHUB_TOKEN ? { 'Authorization': `token ${GITHUB_TOKEN}` } : {};
-    const response = await fetch(rawUrl, { headers: fetchHeaders });
-    if (!response.ok) continue;
-
-    const rbData = JSON.parse(await response.text());
+    // 一覧済みファイルは required:true＝取得失敗は fatal（握りつぶさない）
+    const rbData = await client.fetchJson(file.path, { ref: SHARED_REF });
     // 【中身 date 検証ガード】(2026-05-23 追加)
     // admin 側のペア揃いガード（keiba-data-shared-admin#1）を補完する追加防御。
     // ±1日マージで拾ったファイルでも、ファイル中身の date が指定日と一致するものだけ採用する。
@@ -349,16 +274,16 @@ async function fetchRacebookData(date, category = 'jra') {
  * @param {string} venue - 競馬場カテゴリ（デフォルト: 'jra'）
  * @returns {Promise<Object>} 調整済みNormalizedPrediction
  */
-async function importPrediction(date, venue = 'jra') {
+export async function importPrediction(date, venue = 'jra', client = sharedClient) {
   console.log(`\n━━━ ${date} 中央競馬予想データ取り込み開始 ━━━`);
 
   // 優先順位1: predictions（従来）
-  let sharedJSON = await fetchSharedPrediction(date, venue);
+  let sharedJSON = await fetchSharedPrediction(date, venue, client);
 
   // 優先順位2: racebook（race-data-importer保存データ）
   if (!sharedJSON) {
     console.log(`📡 [IMPORT] racebook配下をチェック`);
-    sharedJSON = await fetchRacebookData(date, venue);
+    sharedJSON = await fetchRacebookData(date, venue, client);
   }
 
   // 予想データがない場合はスキップ
@@ -369,7 +294,7 @@ async function importPrediction(date, venue = 'jra') {
 
   // 【2026-05-14 追加】computer JSON を併読みして sourceComputerIndex を注入
   // 【2026-06-19】race-scoped 馬番主キー注入 + 安全アサート（真ci>=45の未対応/馬番重複なら import を FAIL）
-  const computerSourceMap = await buildSourceComputerIndexMap(date, venue);
+  const computerSourceMap = await buildSourceComputerIndexMap(date, venue, client);
   if (computerSourceMap && computerSourceMap.size > 0) {
     const stats = injectSourceComputerIndex(sharedJSON, computerSourceMap);
     assertInjectionSafe(stats, { label: `IMPORT-JRA ${date}` });
@@ -611,6 +536,9 @@ function savePrediction(date, normalizedAndAdjusted) {
  */
 async function main() {
   try {
+    // private 化後に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+    resolveSharedToken();
+
     // コマンドライン引数をパース
     const args = process.argv.slice(2);
     let date = null;
@@ -674,5 +602,8 @@ async function main() {
   }
 }
 
-// 実行
-main();
+// 直接実行時のみ起動（import 時は実行しない＝テスト可能）。
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main();
+}

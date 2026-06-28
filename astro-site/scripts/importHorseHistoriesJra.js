@@ -5,15 +5,13 @@
  * keiba-data-shared の jra/horseHistories/YYYY/MM/YYYY-MM-DD-{VENUE}.json を
  * 本リポジトリの astro-site/src/data/horseHistories/jra/YYYY/MM/{file} に転記する。
  *
- * 取得方式:
- *   - Contents API + Accept: application/vnd.github.raw を使用
- *     (>1MB のファイルでも raw でボディに返るため Unexpected end of JSON input を防ぐ)
- *   - token 優先順位:
- *       1. KEIBA_DATA_SHARED_TOKEN (推奨 / Actions secret はこの名前)
- *       2. GITHUB_TOKEN_KEIBA_DATA_SHARED (ローカル互換用 fallback)
- *       3. GITHUB_TOKEN (最終 fallback。Actions の自動トークンは
- *          keiba-data-shared には届かないため通常使えない)
- *   - token が無ければ raw.githubusercontent.com に fallback (public 前提)
+ * 取得方式（PR-AK-4 で認証付き shared-fetch helper へ統一）:
+ *   - 認証必須: 開始直後に resolveSharedToken() で token を必須化（匿名 fallback 廃止）。
+ *   - listDirectory() で月ディレクトリを列挙し、対象 venue の entry を取得。
+ *   - fetchJsonFromEntry() で本文取得。≤1MB は Contents API raw、>1MB は
+ *     git blobs API（base64）へ helper が entry.size/entry.sha を見て自動切替する。
+ *     （horseHistories には 1MB 超のファイルが多数あり Contents raw では取得不可）
+ *   - token 解決順は helper（KEIBA_DATA_SHARED_TOKEN 推奨）に委譲。
  *
  * 使い方:
  *   node scripts/importHorseHistoriesJra.js --date 2026-05-24
@@ -23,15 +21,16 @@
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createSharedClient, resolveSharedToken, SharedFetchError, SHARED_FETCH_CODES } from './lib/sharedFetch.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '..');
 
-const SHARED_OWNER = 'apol0510';
-const SHARED_REPO = 'keiba-data-shared';
-const SHARED_BRANCH = 'main';
+// keiba-data-shared 取得は認証付き helper へ統一（匿名 raw 廃止・token 未設定 fatal）。
+const SHARED_REF = 'main';
+const sharedClient = createSharedClient();
 
 const ALL_JRA_VENUES = ['TOK', 'NAK', 'KYO', 'HAN', 'CHU', 'KOK', 'NII', 'FKS', 'SAP', 'HKD'];
 
@@ -53,115 +52,13 @@ function resolveVenues(arg) {
   return arg.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 }
 
-function buildSharedPath(date, venue) {
-  const [year, month] = date.split('-');
-  return `jra/horseHistories/${year}/${month}/${date}-${venue}.json`;
+function buildFileName(date, venue) {
+  return `${date}-${venue}.json`;
 }
 
 function buildLocalPath(date, venue) {
   const [year, month] = date.split('-');
   return join(projectRoot, 'src', 'data', 'horseHistories', 'jra', year, month, `${date}-${venue}.json`);
-}
-
-function pickToken() {
-  // 優先順位:
-  //   1. KEIBA_DATA_SHARED_TOKEN  ← Actions secret はこの名前 (GITHUB_ 始まりは禁止のため)
-  //   2. GITHUB_TOKEN_KEIBA_DATA_SHARED  ← ローカル互換用 fallback
-  //   3. GITHUB_TOKEN  ← Actions の自動トークン。keiba-data-shared には通常届かない
-  if (process.env.KEIBA_DATA_SHARED_TOKEN) {
-    return { token: process.env.KEIBA_DATA_SHARED_TOKEN, source: 'KEIBA_DATA_SHARED_TOKEN' };
-  }
-  if (process.env.GITHUB_TOKEN_KEIBA_DATA_SHARED) {
-    return { token: process.env.GITHUB_TOKEN_KEIBA_DATA_SHARED, source: 'GITHUB_TOKEN_KEIBA_DATA_SHARED' };
-  }
-  if (process.env.GITHUB_TOKEN) {
-    return { token: process.env.GITHUB_TOKEN, source: 'GITHUB_TOKEN' };
-  }
-  return { token: null, source: 'NONE' };
-}
-
-function safePrefix(text, n = 80) {
-  if (text == null) return '<null>';
-  const s = String(text).replace(/\s+/g, ' ');
-  return s.length > n ? s.slice(0, n) + '…' : s;
-}
-
-async function fetchSharedRaw(sharedPath, token) {
-  // Contents API + Accept: application/vnd.github.raw
-  //   * >1MB のファイルでもボディに raw が返る
-  //   * private repo でも token があれば取得可
-  if (token) {
-    const url = `https://api.github.com/repos/${SHARED_OWNER}/${SHARED_REPO}/contents/${sharedPath}?ref=${SHARED_BRANCH}`;
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `token ${token}`,
-        Accept: 'application/vnd.github.raw',
-        'User-Agent': 'import-horse-histories-jra',
-      },
-    });
-    const meta = {
-      url: `api.github.com/.../contents/${sharedPath}`,
-      status: res.status,
-      contentType: res.headers.get('content-type') || '',
-      contentLength: res.headers.get('content-length') || '',
-      rateRemaining: res.headers.get('x-ratelimit-remaining') || '',
-    };
-    if (res.status === 404) return { ok: false, status: 404, meta };
-    if (res.status === 401) {
-      return { ok: false, status: 401, meta, error: 'HTTP 401 from keiba-data-shared (token missing/invalid)' };
-    }
-    if (res.status === 403) {
-      const body = await res.text().catch(() => '');
-      const isRate = /rate limit/i.test(body) || meta.rateRemaining === '0';
-      return {
-        ok: false,
-        status: 403,
-        meta,
-        error: isRate
-          ? `HTTP 403 from keiba-data-shared (rate limit, body=${safePrefix(body)})`
-          : `HTTP 403 from keiba-data-shared (forbidden, body=${safePrefix(body)})`,
-      };
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      return { ok: false, status: res.status, meta, error: `Contents API ${res.status}: ${safePrefix(body)}` };
-    }
-    const body = await res.text();
-    return { ok: true, status: 200, meta, body };
-  }
-
-  // public 前提の raw fallback (CI では推奨されない)
-  const rawUrl = `https://raw.githubusercontent.com/${SHARED_OWNER}/${SHARED_REPO}/${SHARED_BRANCH}/${sharedPath}?t=${Date.now()}`;
-  const res = await fetch(rawUrl, { cache: 'no-store' });
-  const meta = {
-    url: `raw.githubusercontent.com/.../${sharedPath}`,
-    status: res.status,
-    contentType: res.headers.get('content-type') || '',
-    contentLength: res.headers.get('content-length') || '',
-    rateRemaining: '',
-  };
-  if (res.status === 404) return { ok: false, status: 404, meta };
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    return { ok: false, status: res.status, meta, error: `raw fetch ${res.status}: ${safePrefix(body)}` };
-  }
-  const body = await res.text();
-  return { ok: true, status: 200, meta, body };
-}
-
-function parseJsonStrict(body, meta) {
-  if (body == null || body === '') {
-    throw new Error(`empty response body (status=${meta.status}, contentType=${meta.contentType})`);
-  }
-  const first = body.trimStart()[0];
-  if (first !== '{' && first !== '[') {
-    throw new Error(`invalid JSON response prefix: "${safePrefix(body)}" (status=${meta.status}, contentType=${meta.contentType})`);
-  }
-  try {
-    return JSON.parse(body);
-  } catch (e) {
-    throw new Error(`JSON.parse failed: ${e.message} (length=${body.length}, prefix="${safePrefix(body)}")`);
-  }
 }
 
 function validateHorseHistoriesJson(json, expectedVenue, expectedDate) {
@@ -173,80 +70,121 @@ function validateHorseHistoriesJson(json, expectedVenue, expectedDate) {
   return true;
 }
 
+/**
+ * 指定日の対象 venue の horseHistories JSON を取得する。
+ *
+ * 月ディレクトリの一覧を 1 回だけ取得（任意=required:false。月ディレクトリが
+ * まだ無ければ null を返し、呼び出し側は全 venue skip 扱い）。一覧済みの
+ * 各 entry は required:true で本文取得し、≤1MB/>1MB の振り分けは helper の
+ * fetchJsonFromEntry が entry.size/entry.sha を見て透過的に行う。
+ *
+ * 認証/権限/レート/5xx/timeout/INVALID_RESPONSE/INVALID_JSON/FILE_TOO_LARGE、および一覧済み
+ * ファイルの 404 は SharedFetchError として throw（fatal・匿名 fallback なし）。
+ *
+ * @returns {Promise<null|Array<{venue,name,found,json?,size?,year?,month?}>>}
+ *   月ディレクトリが無ければ null。あれば venue ごとの結果配列。
+ */
+export async function fetchHorseHistoriesForDate(date, venues, client = sharedClient) {
+  const [year, month] = date.split('-');
+  const dirPath = `jra/horseHistories/${year}/${month}`;
+
+  const listing = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
+  if (listing === null) return null; // 月ディレクトリ未投入（optional 404 のみ許容する silent skip）
+
+  const byName = new Map(listing.map((e) => [e.name, e]));
+
+  const results = [];
+  for (const venue of venues) {
+    const name = buildFileName(date, venue);
+    const entry = byName.get(name);
+    if (!entry) {
+      // 一覧に無い = その venue のファイルは未投入。skip（fatal ではない）。
+      results.push({ venue, name, found: false });
+      continue;
+    }
+    // 一覧済み entry の本文取得。required:true なので 404 は fatal。
+    // ≤1MB は Contents raw / >1MB は git blobs API（base64）へ helper が自動切替。
+    const json = await client.fetchJsonFromEntry(entry, { ref: SHARED_REF, required: true });
+    results.push({ venue, name, found: true, json, size: entry.size, year, month });
+  }
+  return results;
+}
+
 async function main() {
+  // private 化に備え、開始直後に token を必須化（未設定なら匿名 fallback せず即 fatal）。
+  resolveSharedToken();
+
   const args = parseArgs(process.argv);
   if (!args.date || !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
     console.error('❌ --date YYYY-MM-DD が必要');
     process.exit(2);
   }
   const venues = resolveVenues(args.venues);
-  const { token, source: tokenSource } = pickToken();
 
   console.log(`📥 importHorseHistoriesJra`);
   console.log(`   date:    ${args.date}`);
   console.log(`   venues:  ${venues.join(', ')}`);
-  console.log(`   auth:    ${token ? `Contents API (token from ${tokenSource})` : 'NONE (raw fallback, public only)'}`);
+  console.log(`   auth:    Contents/Blobs API (authenticated shared-fetch)`);
   console.log(`   dry-run: ${args.dryRun ? 'YES' : 'NO'}`);
   console.log('');
 
   let savedCount = 0;
   let skippedCount = 0;
-  let failedCount = 0;
 
-  for (const venue of venues) {
-    const sharedPath = buildSharedPath(args.date, venue);
-    const localPath = buildLocalPath(args.date, venue);
-    process.stdout.write(`  ${venue}: `);
-    try {
-      const r = await fetchSharedRaw(sharedPath, token);
-      if (r.status === 404) {
-        console.log(`skip (HTTP 404 from keiba-data-shared: ${sharedPath})`);
+  // 取得を先に完走させる（fatal は write 前に throw → 部分書き込みを防止）。
+  const results = await fetchHorseHistoriesForDate(args.date, venues);
+
+  if (results === null) {
+    for (const venue of venues) {
+      console.log(`  ${venue}: skip (月ディレクトリ未投入: jra/horseHistories/${args.date.slice(0, 4)}/${args.date.slice(5, 7)})`);
+      skippedCount++;
+    }
+  } else {
+    for (const r of results) {
+      process.stdout.write(`  ${r.venue}: `);
+      if (!r.found) {
+        console.log(`skip (keiba-data-shared に未投入: ${r.name})`);
         skippedCount++;
         continue;
       }
-      if (!r.ok) {
-        throw new Error(r.error || `fetch failed (status=${r.status})`);
-      }
-      const json = parseJsonStrict(r.body, r.meta);
-      validateHorseHistoriesJson(json, venue, args.date);
-      const horseCount = Object.keys(json.horses || {}).length;
+      validateHorseHistoriesJson(r.json, r.venue, args.date);
+      const horseCount = Object.keys(r.json.horses || {}).length;
+      const localPath = buildLocalPath(args.date, r.venue);
       if (args.dryRun) {
-        console.log(`OK (dry-run, horses=${horseCount}, bytes=${r.body.length}, would write ${localPath.replace(projectRoot, '.')})`);
+        console.log(`OK (dry-run, horses=${horseCount}, would write ${localPath.replace(projectRoot, '.')})`);
         savedCount++;
         continue;
       }
       mkdirSync(dirname(localPath), { recursive: true });
-      writeFileSync(localPath, JSON.stringify(json, null, 2), 'utf-8');
-      console.log(`saved (horses=${horseCount}, bytes=${r.body.length}) -> ${localPath.replace(projectRoot, '.')}`);
+      writeFileSync(localPath, JSON.stringify(r.json, null, 2), 'utf-8');
+      console.log(`saved (horses=${horseCount}) -> ${localPath.replace(projectRoot, '.')}`);
       savedCount++;
-    } catch (e) {
-      console.log(`FAIL: ${e.message}`);
-      failedCount++;
     }
   }
 
   console.log('');
-  console.log(`━━━ サマリ: saved=${savedCount} skipped=${skippedCount} failed=${failedCount} ━━━`);
+  console.log(`━━━ サマリ: saved=${savedCount} skipped=${skippedCount} ━━━`);
 
-  if (failedCount > 0) {
-    console.error('❌ 一部 venue で取得失敗');
-    if (tokenSource === 'NONE') {
-      console.error('   ヒント: keiba-data-shared が private の場合、token が必須です。');
-      console.error('   workflow secret に KEIBA_DATA_SHARED_TOKEN を設定してください。');
-      console.error('   (GITHUB_ で始まる secret 名は GitHub Actions で禁止のため、専用名を使います)');
-    } else if (tokenSource === 'GITHUB_TOKEN') {
-      console.error('   ヒント: Actions の自動 GITHUB_TOKEN は keiba-data-shared には通常届きません。');
-      console.error('   workflow secret に KEIBA_DATA_SHARED_TOKEN を設定し、env で渡してください。');
-    }
-    process.exit(4);
-  }
   if (savedCount === 0) {
-    console.error('❌ 1件も保存されなかった (すべて 404?)');
+    console.error('❌ 1件も保存されなかった (すべて未投入?)');
     process.exit(5);
   }
 }
 
-main().catch((e) => {
-  console.error('FATAL:', e);
-  process.exit(1);
-});
+// 直接実行時のみ起動（import 時は実行しない＝テスト可能）。
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main().catch((e) => {
+    // SharedFetchError は token・秘密値を含めない設計（message のみ表示）。
+    if (e instanceof SharedFetchError) {
+      console.error(`❌ shared-fetch ${e.code}: ${e.message}`);
+      if (e.code === SHARED_FETCH_CODES.TOKEN_MISSING) {
+        console.error('   ヒント: keiba-data-shared 用の token が未設定です。');
+        console.error('   KEIBA_DATA_SHARED_TOKEN を env / workflow secret に設定してください。');
+      }
+      process.exit(1);
+    }
+    console.error('FATAL:', e.message);
+    process.exit(1);
+  });
+}

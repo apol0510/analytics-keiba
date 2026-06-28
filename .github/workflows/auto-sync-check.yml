@@ -18,7 +18,8 @@ jobs:
       contents: write
     # private 化後の keiba-data-shared を cross-repo read するため、本 job の全 step へ供給。
     # verify:sync(verifyArchiveSync.js) / import:results(importResults.js) が認証取得に使用。
-    # 注: 本 workflow "Detect missing dates" 内のインライン匿名 curl 撤去は PR-AK-3 で対応。
+    # "Detect missing dates" 内の匿名 curl は認証付き Node（checkSharedDailyFile.mjs で unified 確認 →
+    # 正規404時のみ checkSharedNankanResults.mjs で per-venue 合算）へ移行済み（PR-AK-4・旧契約を厳密再現）。
     env:
       KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
 
@@ -54,34 +55,43 @@ jobs:
         run: |
           echo "🔍 Detecting missing dates..."
 
+          # token 未設定は取得前に fail-fast（値は出力しない）
+          if [ -z "${KEIBA_DATA_SHARED_TOKEN:-}" ]; then
+            echo "❌ KEIBA_DATA_SHARED_TOKEN is not configured"
+            exit 1
+          fi
+
           # 過去7日分の日付をチェック
           MISSING_DATES=""
           TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
 
           for i in {1..7}; do
             CHECK_DATE=$(TZ=Asia/Tokyo date -d "$TODAY - $i days" +%Y-%m-%d 2>/dev/null || date -v-${i}d +%Y-%m-%d)
-            YEAR=${CHECK_DATE:0:4}
-            MONTH=${CHECK_DATE:5:2}
 
-            # keiba-data-shared に結果が存在するか確認
-            VENUES=("OOI" "FUN" "KAW" "URA")
+            # 旧契約の厳密再現（匿名 curl/raw 廃止・認証付き）:
+            #   FOUND = unified nankan/results/Y/M/DATE.json が存在（race数不問）
+            #           OR unified が正規404 のとき per-venue OOI/FUN/KAW/URA の race 合計 ≥ 12
+            # fatal（token不足/401/403/429/5xx/timeout/malformed/INVALID_*）は確認 script が exit 1
+            # → step 失敗。fallback へ進むのは unified が「正規404=FOUND=false」のときだけ。
             FOUND=false
 
-            # 統合ファイル確認
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$CHECK_DATE.json")
-            if [ "$HTTP_CODE" = "200" ]; then
+            # (1) unified を認証付きで確認（旧: HTTP200 なら race数不問で FOUND）
+            UNIFIED_OUT=$(node scripts/checkSharedDailyFile.mjs --category nankan --kind results --date "$CHECK_DATE") || {
+              echo "❌ Failed to confirm Nankan unified results for $CHECK_DATE (auth/network error)."
+              exit 1
+            }
+            UNIFIED_FOUND=$(printf '%s\n' "$UNIFIED_OUT" | sed -n 's/^FOUND=//p')
+
+            if [ "$UNIFIED_FOUND" = "true" ]; then
               FOUND=true
             else
-              # 会場別ファイル確認（12レース以上）
-              TOTAL_RACES=0
-              for VENUE in "${VENUES[@]}"; do
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$CHECK_DATE-$VENUE.json")
-                if [ "$HTTP_CODE" = "200" ]; then
-                  RACE_COUNT=$(curl -s "https://raw.githubusercontent.com/apol0510/keiba-data-shared/main/nankan/results/$YEAR/$MONTH/$CHECK_DATE-$VENUE.json" | jq '.races | length')
-                  TOTAL_RACES=$((TOTAL_RACES + RACE_COUNT))
-                fi
-              done
-
+              # (2) unified が正規404 のときだけ per-venue 合算へ fallback（旧契約どおり）
+              CHECK_OUT=$(node scripts/checkSharedNankanResults.mjs --date "$CHECK_DATE" --venues OOI,FUN,KAW,URA) || {
+                echo "❌ Failed to confirm Nankan per-venue results for $CHECK_DATE (auth/network error)."
+                exit 1
+              }
+              TOTAL_RACES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^TOTAL_RACES=//p')
+              TOTAL_RACES="${TOTAL_RACES:-0}"
               if [ "$TOTAL_RACES" -ge 12 ]; then
                 FOUND=true
               fi
