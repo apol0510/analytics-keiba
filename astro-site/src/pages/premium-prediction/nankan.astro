@@ -164,9 +164,8 @@ function buildRaceConfidenceMetrics(raceData) {
     };
 }
 
-const raceMetrics = venuesProcessed
-    .flatMap((v) => v.sortedRaces)
-    .map(buildRaceConfidenceMetrics);
+const allSortedRaces = venuesProcessed.flatMap((v) => v.sortedRaces);
+const raceMetrics = allSortedRaces.map(buildRaceConfidenceMetrics);
 
 // 1次分類
 const HIGH_CONF_THRESHOLD = 78;
