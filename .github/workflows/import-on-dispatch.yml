@@ -50,6 +50,9 @@ jobs:
       - name: Sync and import predictions
         id: import
         env:
+          # private 化後の keiba-data-shared を cross-repo read する用。
+          # importPrediction{,Jra}.js が認証取得に使用（GITHUB_TOKEN は self-repo commit/push 用）。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANUAL_DATE: ${{ github.event.inputs.date }}
           DATES_JSON: ${{ toJSON(github.event.client_payload.dates) }}

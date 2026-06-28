@@ -46,6 +46,9 @@ jobs:
 
       - name: Import prediction from keiba-data-shared
         env:
+          # private 化後の keiba-data-shared を cross-repo read する用。
+          # importPrediction.js が認証取得に使用（GITHUB_TOKEN は self-repo 用途のまま）。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE="${{ steps.date.outputs.date }}"
