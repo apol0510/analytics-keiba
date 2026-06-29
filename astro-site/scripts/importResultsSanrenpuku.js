@@ -43,6 +43,9 @@ const VENUE_NAME_TO_CODE = Object.fromEntries(
   Object.values(VENUE_MAP).map(v => [v.name, v.code])
 );
 
+// 南関会場の表示優先順（馬単 archive と整合）
+const NANKAN_VENUE_ORDER = ['OOI', 'FUN', 'KAW', 'URA'];
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i++) {
@@ -271,11 +274,15 @@ export function mergeSanrenpukuDayData(existing, incoming) {
 
   const allRaces = [...existingRaces, ...incomingRaces];
 
-  // venueCode + raceNumber の決定的ソート（順序非依存を保証）
+  // 南関会場優先順 + raceNumber 昇順の決定的ソート（順序非依存を保証）
   allRaces.sort((a, b) => {
     const ca = a.venueCode || VENUE_NAME_TO_CODE[a.venue] || '';
     const cb = b.venueCode || VENUE_NAME_TO_CODE[b.venue] || '';
-    if (ca !== cb) return ca.localeCompare(cb);
+    const ia = NANKAN_VENUE_ORDER.indexOf(ca);
+    const ib = NANKAN_VENUE_ORDER.indexOf(cb);
+    const sa = ia === -1 ? 999 : ia;
+    const sb = ib === -1 ? 999 : ib;
+    if (sa !== sb) return sa - sb;
     return (parseInt(String(a.raceNumber), 10) || 0) - (parseInt(String(b.raceNumber), 10) || 0);
   });
 
