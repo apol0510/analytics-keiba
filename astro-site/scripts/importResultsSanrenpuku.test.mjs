@@ -453,4 +453,104 @@ test('T_order_5: 未知venueCodeを含んでも既知会場(OOI)が先頭', () =
   assert.strictEqual(r.races.filter(rc => rc.venueCode === 'OOI').length, 12, 'OOI 12R 保持');
 });
 
+// ─── venue 表示テスト（TV1〜TV8）──────────────────────────────────────────────
+
+// TV1: 単一会場 — 全 race に venue フィールドが存在する
+test('TV1: 単一会場OOI import後 全raceに venue="大井" が付く', () => {
+  const r = mergeSanrenpukuDayData(null, makeOOI_order());
+  for (const race of r.races) {
+    assert.strictEqual(race.venue, '大井', `race ${race.raceNumber} venue`);
+    assert.strictEqual(race.venueCode, 'OOI', `race ${race.raceNumber} venueCode`);
+  }
+});
+
+// TV2: 複数会場 — OOI races は venue="大井", FUN races は venue="船橋"
+test('TV2: OOI+FUN 複数会場 各raceのvenueが正しく区別される', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI_order()), makeFUN_order());
+  const ooiRaces = r.races.filter(rc => rc.venueCode === 'OOI');
+  const funRaces = r.races.filter(rc => rc.venueCode === 'FUN');
+  assert.strictEqual(ooiRaces.length, 12, 'OOI 12R');
+  assert.strictEqual(funRaces.length, 12, 'FUN 12R');
+  for (const rc of ooiRaces) assert.strictEqual(rc.venue, '大井', `OOI race ${rc.raceNumber}`);
+  for (const rc of funRaces) assert.strictEqual(rc.venue, '船橋', `FUN race ${rc.raceNumber}`);
+});
+
+// TV3: 旧単一会場 schema — race.venue なし→dayData.venue でfallback補完される
+test('TV3: 旧schema(race.venue なし) でもbackfill後 venue が付く', () => {
+  const legacyOOI = {
+    date: '2026-06-29', venue: '大井', venueCode: 'OOI',
+    totalRaces: 12, hitRaces: 1, totalPayout: 2000, totalBetPoints: 12,
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1, hit: i === 0, payout: i === 0 ? 2000 : 0, settlementPoints: 1,
+    })),
+  };
+  const r = mergeSanrenpukuDayData(legacyOOI, makeFUN_order());
+  const ooiRaces = r.races.filter(rc => rc.venueCode === 'OOI');
+  assert.strictEqual(ooiRaces.length, 12, '旧OOI 12R 保持');
+  for (const rc of ooiRaces) assert.strictEqual(rc.venue, '大井', `fallback venue race ${rc.raceNumber}`);
+});
+
+// TV4: OOI→FUN 取込順 — race.venue が混同しない
+test('TV4: OOI→FUN 取込順 同一R番号の venue が混同しない', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI_order()), makeFUN_order());
+  const ooi1 = r.races.find(rc => rc.venueCode === 'OOI' && rc.raceNumber === 1);
+  const fun1 = r.races.find(rc => rc.venueCode === 'FUN' && rc.raceNumber === 1);
+  assert.strictEqual(ooi1.venue, '大井', '大井 1R の venue');
+  assert.strictEqual(fun1.venue, '船橋', '船橋 1R の venue');
+});
+
+// TV5: FUN→OOI 取込順 — race.venue が混同しない（TV4 と逆順）
+test('TV5: FUN→OOI 取込順でも venue が混同しない', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeFUN_order()), makeOOI_order());
+  const ooi1 = r.races.find(rc => rc.venueCode === 'OOI' && rc.raceNumber === 1);
+  const fun1 = r.races.find(rc => rc.venueCode === 'FUN' && rc.raceNumber === 1);
+  assert.strictEqual(ooi1.venue, '大井', '逆順 大井 1R');
+  assert.strictEqual(fun1.venue, '船橋', '逆順 船橋 1R');
+});
+
+// TV6: nankan.astro が sanrenpuku-race-venue クラスを含む（venue prefix 表示）
+test('TV6: nankan.astroに sanrenpuku-race-venue クラスあり', () => {
+  const src = readFileSync(new URL('../src/pages/premium-prediction/nankan.astro', import.meta.url), 'utf-8');
+  assert.ok(src.includes('sanrenpuku-race-venue'), 'sanrenpuku-race-venue クラスが存在する');
+  assert.ok(src.includes('race.venue'), 'race.venue を参照している');
+});
+
+// TV7: archive 月別ページが race-venue-prefix クラスを含む（venue prefix 表示）
+test('TV7: archive 月別ページに race-venue-prefix クラスあり', () => {
+  const pages = [
+    '../src/pages/archive-sanrenpuku/2025/11.astro',
+    '../src/pages/archive-sanrenpuku/2025/12.astro',
+    '../src/pages/archive-sanrenpuku/2026/01.astro',
+    '../src/pages/archive-sanrenpuku/2026/02.astro',
+    '../src/pages/archive-sanrenpuku/2026/03.astro',
+    '../src/pages/archive-sanrenpuku/2026/04.astro',
+    '../src/pages/archive-sanrenpuku/2026/05.astro',
+  ];
+  for (const p of pages) {
+    const src = readFileSync(new URL(p, import.meta.url), 'utf-8');
+    assert.ok(src.includes('race-venue-prefix'), `${p}: race-venue-prefix クラスがない`);
+    assert.ok(src.includes('race.venue'), `${p}: race.venue を参照していない`);
+  }
+});
+
+// TV8: 2026-06-29 の実アーカイブデータ検証
+test('TV8: 2026-06-29 archiveSanrenpukuResults.json — 24R/hitRaces=19/totalPayout=33460/rate=133', () => {
+  const arch = JSON.parse(readFileSync(new URL('../src/data/archiveSanrenpukuResults.json', import.meta.url), 'utf-8'));
+  const day = arch['2026']?.['06']?.['29'];
+  assert.ok(day, '2026-06-29 データが存在する');
+  assert.strictEqual(day.totalRaces, 24, 'totalRaces=24');
+  assert.strictEqual(day.hitRaces, 19, 'hitRaces=19');
+  assert.strictEqual(day.totalPayout, 33460, 'totalPayout=33460');
+  assert.strictEqual(day.totalBetPoints, 252, 'totalBetPoints=252');
+  assert.strictEqual(day.recoveryRate, 133, 'recoveryRate=133');
+  assert.ok(day.venues?.includes('大井'), 'venues に大井');
+  assert.ok(day.venues?.includes('船橋'), 'venues に船橋');
+  const ooiRaces = day.races.filter(r => r.venueCode === 'OOI');
+  const funRaces = day.races.filter(r => r.venueCode === 'FUN');
+  assert.strictEqual(ooiRaces.length, 12, 'OOI 12R');
+  assert.strictEqual(funRaces.length, 12, 'FUN 12R');
+  for (const rc of ooiRaces) assert.strictEqual(rc.venue, '大井', `OOI race ${rc.raceNumber} venue`);
+  for (const rc of funRaces) assert.strictEqual(rc.venue, '船橋', `FUN race ${rc.raceNumber} venue`);
+});
+
 // ────────────────────────────────────────────────────────────────────────────
