@@ -38,6 +38,11 @@ const VENUE_MAP = {
   urawa: { name: '浦和', code: 'URA' },
 };
 
+// venue名 → venueCode のルックアップ（VENUE_MAP から自動生成）
+const VENUE_NAME_TO_CODE = Object.fromEntries(
+  Object.values(VENUE_MAP).map(v => [v.name, v.code])
+);
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i++) {
@@ -164,6 +169,7 @@ async function processDay({ date, venueSlug, venueCode, venue }, { optionalNotFo
 
   return {
     venue,
+    venueCode,
     totalRaces: races.length,
     hitRaces,
     perfectHit: hitRaces === races.length && races.length > 0,
@@ -177,7 +183,7 @@ async function processDay({ date, venueSlug, venueCode, venue }, { optionalNotFo
     narrowSummary: {
       hitRaces: narrowHits,
     },
-    races,
+    races: races.map(r => ({ ...r, venue, venueCode })),
   };
 }
 
@@ -209,6 +215,98 @@ function resolveTargets(args) {
     return [{ date: args.date, venueSlug, venueCode, venue: VENUE_MAP[venueSlug].name }];
   }
   throw new Error('Usage: --date YYYY-MM-DD --venue funabashi | --batch');
+}
+
+/**
+ * 同日複数会場の dayData を冪等マージする。
+ *
+ * 契約:
+ *  - 日キー arch[y][m][d] は変更しない
+ *  - existing === null のとき incoming を正規化して返す
+ *  - 同じ venueCode の既存 races を除外してから incoming.races を追加（会場単位置換）
+ *  - 別会場の races は常に保持
+ *  - OOI→FUN / FUN→OOI どちらの順でも同一結果（順序非依存）
+ *  - venueCode が解決できない場合は例外（誤削除防止）
+ */
+export function mergeSanrenpukuDayData(existing, incoming) {
+  // incoming の venueCode を解決（dayData.venueCode → VENUE_NAME_TO_CODE[venue] の順）
+  const incomingVenueCode = incoming.venueCode || VENUE_NAME_TO_CODE[incoming.venue];
+  if (!incomingVenueCode) {
+    throw new Error(
+      `mergeSanrenpukuDayData: cannot resolve venueCode for venue="${incoming.venue}"`
+    );
+  }
+
+  // incoming races に venue / venueCode を補完
+  const incomingRaces = (incoming.races || []).map(r => ({
+    ...r,
+    venue: r.venue || incoming.venue,
+    venueCode: r.venueCode || incomingVenueCode,
+  }));
+
+  if (existing === null) {
+    // 初回 import: 正規化して返す
+    return {
+      ...incoming,
+      venueCode: incomingVenueCode,
+      venues: incoming.venues ?? (incoming.venue ? [incoming.venue] : []),
+      races: incomingRaces,
+    };
+  }
+
+  // 既存 races から incoming 会場分を除外（会場単位置換）
+  const existingRaces = (existing.races || []).filter(r => {
+    const code = r.venueCode || VENUE_NAME_TO_CODE[r.venue];
+    return code !== incomingVenueCode;
+  });
+
+  const allRaces = [...existingRaces, ...incomingRaces];
+
+  // venueCode + raceNumber の決定的ソート（順序非依存を保証）
+  allRaces.sort((a, b) => {
+    const ca = a.venueCode || VENUE_NAME_TO_CODE[a.venue] || '';
+    const cb = b.venueCode || VENUE_NAME_TO_CODE[b.venue] || '';
+    if (ca !== cb) return ca.localeCompare(cb);
+    return (parseInt(String(a.raceNumber), 10) || 0) - (parseInt(String(b.raceNumber), 10) || 0);
+  });
+
+  // venues を races から重複なく再構築（sort順に準拠）
+  const venueNames = [];
+  const seenCodes = new Set();
+  for (const r of allRaces) {
+    const code = r.venueCode || VENUE_NAME_TO_CODE[r.venue];
+    if (code && !seenCodes.has(code)) {
+      seenCodes.add(code);
+      if (r.venue) venueNames.push(r.venue);
+    }
+  }
+
+  // races から集計を再計算
+  const totalRaces = allRaces.length;
+  // hit / isHit 両フィールドに対応（旧 archive は hit、fixture は isHit の場合あり）
+  const hitRaces = allRaces.filter(r => !!(r.hit ?? r.isHit)).length;
+  const totalPayout = allRaces.reduce((s, r) => s + (Number(r.payout) || 0), 0);
+  const totalBetPoints = allRaces.reduce((s, r) => s + (Number(r.settlementPoints) || 0), 0);
+  const totalInvestment = totalBetPoints * 100;
+  const recoveryRate = totalInvestment > 0 ? Math.round((totalPayout / totalInvestment) * 100) : 0;
+
+  return {
+    ...existing,
+    venue: venueNames.length === 1 ? venueNames[0] : venueNames.join('・'),
+    venues: venueNames,
+    venueCode: venueNames.length === 1 ? incomingVenueCode : undefined,
+    totalRaces,
+    hitRaces,
+    perfectHit: totalRaces > 0 && hitRaces === totalRaces,
+    totalPayout,
+    recoveryRate,
+    totalBetPoints,
+    generatedAt: incoming.generatedAt,
+    narrowSummary: {
+      hitRaces: allRaces.filter(r => r.hitTypes?.includes('narrow')).length,
+    },
+    races: allRaces,
+  };
 }
 
 /**
@@ -252,7 +350,7 @@ export async function runImport({
       const [y, m, d] = t.date.split('-');
       if (!arch[y]) arch[y] = {};
       if (!arch[y][m]) arch[y][m] = {};
-      arch[y][m][d] = data;
+      arch[y][m][d] = mergeSanrenpukuDayData(arch[y][m][d] ?? null, data);
       updated++;
       logger.log(
         `✅ ${t.date} ${t.venue}: ${data.hitRaces}/${data.totalRaces} hits, ` +
