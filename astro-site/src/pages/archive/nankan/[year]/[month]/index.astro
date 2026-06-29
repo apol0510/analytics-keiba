@@ -137,7 +137,12 @@ const pageDescription = hasData
                 {dayData.races.filter((race: any) => race.hit).map((race: any) => (
                   <div class="race-card">
                     <div class="race-info">
-                      <div class="race-number">{race.raceNumber}</div>
+                      <div class="race-number">
+                        {dayData.venues?.length > 1 && race.venue && (
+                          <span class="venue-tag">{race.venue}</span>
+                        )}
+                        {race.raceNumber}
+                      </div>
                       <div class="race-name">{race.raceName}</div>
                     </div>
                     <div class="race-result">
@@ -336,6 +341,20 @@ const pageDescription = hasData
       font-weight: bold;
       color: #fbbf24;
       min-width: 3rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .venue-tag {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #94a3b8;
+      background: rgba(100, 116, 139, 0.2);
+      border: 1px solid rgba(100, 116, 139, 0.4);
+      border-radius: 4px;
+      padding: 1px 6px;
+      white-space: nowrap;
     }
 
     .race-name {
