@@ -350,3 +350,26 @@ test('T26: nankan.astroに「直近の的中結果」パターンあり', () => 
   const src = readFileSync(new URL('../src/pages/premium-prediction/nankan.astro', import.meta.url), 'utf-8');
   assert.ok(src.includes('直近の的中結果'));
 });
+
+test('T27: legacy archive OOI (races に venueCode/venue なし) + FUN → 24R, venues に大井と船橋', () => {
+  // 旧コードで生成された archive の状態を再現（dayData.venue="大井" のみ、races に venue/venueCode なし）
+  const legacyArchiveDay = {
+    date: '2026-06-29',
+    venue: '大井',
+    totalRaces: 12,
+    hitRaces: 10,
+    totalPayout: 22410,
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1,
+      isHit: i < 10,
+      payout: i < 10 ? 2241 : 0,
+    })),
+  };
+  const result = mergeSanrenpukuDayData(legacyArchiveDay, makeFUN());
+  assert.strictEqual(result.totalRaces, 24, 'T27: totalRaces=24');
+  assert.ok(Array.isArray(result.venues) && result.venues.includes('大井'), 'T27: venues に大井');
+  assert.ok(Array.isArray(result.venues) && result.venues.includes('船橋'), 'T27: venues に船橋');
+  assert.ok(result.venue.includes('大井') && result.venue.includes('船橋'), 'T27: venue に両会場');
+  assert.strictEqual(result.races.filter(r => r.venueCode === 'OOI').length, 12, 'T27: OOI 12R 保持');
+  assert.strictEqual(result.races.filter(r => r.venueCode === 'FUN').length, 12, 'T27: FUN 12R 追加');
+});
