@@ -254,8 +254,17 @@ export function mergeSanrenpukuDayData(existing, incoming) {
     };
   }
 
+  // legacy archive 対応: existing dayData から venueCode/venue を races に backfill
+  const existingDayCode = existing.venueCode || VENUE_NAME_TO_CODE[existing.venue];
+  const existingDayVenue = existing.venue;
+  const taggedExistingRaces = (existing.races || []).map(r => ({
+    ...r,
+    venue: r.venue || existingDayVenue,
+    venueCode: r.venueCode || VENUE_NAME_TO_CODE[r.venue] || existingDayCode,
+  }));
+
   // 既存 races から incoming 会場分を除外（会場単位置換）
-  const existingRaces = (existing.races || []).filter(r => {
+  const existingRaces = taggedExistingRaces.filter(r => {
     const code = r.venueCode || VENUE_NAME_TO_CODE[r.venue];
     return code !== incomingVenueCode;
   });
