@@ -373,3 +373,84 @@ test('T27: legacy archive OOI (races に venueCode/venue なし) + FUN → 24R, 
   assert.strictEqual(result.races.filter(r => r.venueCode === 'OOI').length, 12, 'T27: OOI 12R 保持');
   assert.strictEqual(result.races.filter(r => r.venueCode === 'FUN').length, 12, 'T27: FUN 12R 追加');
 });
+
+// ─── 会場順テスト ───────────────────────────────────────────────────────────
+
+function makeOOI_order(overrides = {}) {
+  return {
+    date: '2026-06-29', venue: '大井', venueCode: 'OOI',
+    totalRaces: 12, hitRaces: 2, totalPayout: 5000, totalBetPoints: 12,
+    generatedAt: '2026-06-29T12:00:00Z',
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1, venue: '大井', venueCode: 'OOI',
+      hit: i < 2, payout: i < 2 ? 2500 : 0, settlementPoints: 1,
+    })),
+    ...overrides,
+  };
+}
+function makeFUN_order(overrides = {}) {
+  return {
+    date: '2026-06-29', venue: '船橋', venueCode: 'FUN',
+    totalRaces: 12, hitRaces: 1, totalPayout: 3000, totalBetPoints: 12,
+    generatedAt: '2026-06-29T13:00:00Z',
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1, venue: '船橋', venueCode: 'FUN',
+      hit: i === 0, payout: i === 0 ? 3000 : 0, settlementPoints: 1,
+    })),
+    ...overrides,
+  };
+}
+
+test('T_order_1: OOI→FUN → venues[0]="大井", venue="大井・船橋"', () => {
+  const a = mergeSanrenpukuDayData(null, makeOOI_order());
+  const r = mergeSanrenpukuDayData(a, makeFUN_order());
+  assert.strictEqual(r.venues[0], '大井', 'venues[0]="大井"');
+  assert.strictEqual(r.venues[1], '船橋', 'venues[1]="船橋"');
+  assert.strictEqual(r.venue, '大井・船橋', 'venue="大井・船橋"');
+});
+
+test('T_order_2: FUN→OOI → 同じ順序（順序非依存）', () => {
+  const a = mergeSanrenpukuDayData(null, makeFUN_order());
+  const r = mergeSanrenpukuDayData(a, makeOOI_order());
+  assert.strictEqual(r.venues[0], '大井', 'FUN→OOI venues[0]="大井"');
+  assert.strictEqual(r.venues[1], '船橋', 'FUN→OOI venues[1]="船橋"');
+  assert.strictEqual(r.venue, '大井・船橋', 'FUN→OOI venue="大井・船橋"');
+});
+
+test('T_order_3: races順（OOI 1R先頭、FUN 1R は index 12）', () => {
+  const a = mergeSanrenpukuDayData(null, makeOOI_order());
+  const r = mergeSanrenpukuDayData(a, makeFUN_order());
+  assert.strictEqual(r.races[0].venueCode, 'OOI', 'races[0]=OOI');
+  assert.strictEqual(r.races[0].raceNumber, 1, 'races[0].raceNumber=1');
+  assert.strictEqual(r.races[12].venueCode, 'FUN', 'races[12]=FUN');
+  assert.strictEqual(r.races[12].raceNumber, 1, 'races[12].raceNumber=1');
+});
+
+test('T_order_4: FUN→OOI でも races 順が OOI先頭', () => {
+  const a = mergeSanrenpukuDayData(null, makeFUN_order());
+  const r = mergeSanrenpukuDayData(a, makeOOI_order());
+  assert.strictEqual(r.races[0].venueCode, 'OOI', 'races[0]=OOI');
+  assert.strictEqual(r.races[12].venueCode, 'FUN', 'races[12]=FUN');
+});
+
+test('T_order_5: 未知venueCodeを含んでも既知会場(OOI)が先頭', () => {
+  const a = mergeSanrenpukuDayData(null, makeOOI_order());
+  // venueCode='XXX' は VENUE_NAME_TO_CODE にないが VENUE_NAME_TO_CODE[venue] もないため throw
+  // → venueCode='XXX' の dayData.venue も解決できない場合はそもそも例外になる
+  // ここでは venueCode='XXX' を明示してスルーさせる（throw しない設計の確認）
+  const unknown = {
+    date: '2026-06-29', venue: '不知火競馬', venueCode: 'XXX',
+    totalRaces: 3, hitRaces: 0, totalPayout: 0, totalBetPoints: 3,
+    generatedAt: '2026-06-29T10:00:00Z',
+    races: Array.from({ length: 3 }, (_, i) => ({
+      raceNumber: i + 1, venue: '不知火競馬', venueCode: 'XXX',
+      hit: false, payout: 0, settlementPoints: 1,
+    })),
+  };
+  const r = mergeSanrenpukuDayData(a, unknown);
+  // OOI 12R は先頭グループに残る（未知は 999 位でそれ以降）
+  assert.strictEqual(r.races[0].venueCode, 'OOI', '未知venueでもOOI先頭');
+  assert.strictEqual(r.races.filter(rc => rc.venueCode === 'OOI').length, 12, 'OOI 12R 保持');
+});
+
+// ────────────────────────────────────────────────────────────────────────────
