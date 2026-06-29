@@ -1212,7 +1212,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                 race.isHit ? (
                                     <div class="yesterday-race-card">
                                         <div class="yesterday-race-info">
-                                            <div class="yesterday-race-number">{race.raceNumber}</div>
+                                            <div class="yesterday-race-number">{race.venue && <span class="sanrenpuku-race-venue">{race.venue}</span>}{race.raceNumber}</div>
                                             <div class="yesterday-race-name">{race.raceName}</div>
                                         </div>
                                         <div class="yesterday-race-result">
@@ -3307,7 +3307,15 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         font-size: 1.2rem;
         font-weight: bold;
         color: #fbbf24;
-        min-width: 3rem;
+        min-width: 4rem;
+        white-space: nowrap;
+    }
+
+    .sanrenpuku-race-venue {
+        font-size: 0.85em;
+        color: #94a3b8;
+        font-weight: 600;
+        margin-right: 0.3em;
     }
 
     .yesterday-race-name {
