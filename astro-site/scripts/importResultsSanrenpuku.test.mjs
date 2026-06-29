@@ -6,7 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runImport } from './importResultsSanrenpuku.js';
+import { readFileSync } from 'fs';
+import { runImport, mergeSanrenpukuDayData } from './importResultsSanrenpuku.js';
 import { SharedFetchError, SHARED_FETCH_CODES } from './lib/sharedFetch.mjs';
 
 const SECRET = 'ghp_THIS_IS_A_TEST_SECRET_TOKEN_should_never_leak';
@@ -15,7 +16,7 @@ const ENV_OK = { KEIBA_DATA_SHARED_TOKEN: SECRET };
 const T_FUN = { date: '2026-05-08', venueSlug: 'funabashi', venueCode: 'FUN', venue: '船橋' };
 const T_OOI = { date: '2026-05-08', venueSlug: 'ooi', venueCode: 'OOI', venue: '大井' };
 
-const okData = () => ({ hitRaces: 1, totalRaces: 12, totalPayout: 1000, recoveryRate: 50, totalBetPoints: 9 });
+const okData = (venue = '船橋', venueCode = 'FUN') => ({ venue, venueCode, hitRaces: 1, totalRaces: 12, totalPayout: 1000, recoveryRate: 50, totalBetPoints: 9, races: [] });
 
 function makeLogger() {
   const lines = [];
@@ -170,4 +171,182 @@ test('10. token/Authorization/Bearer/URL がログ・エラーへ漏れない', 
   assert.ok(!/Bearer\s/i.test(haystack), 'Authorization Bearer が漏れない');
   assert.ok(!haystack.includes('raw.githubusercontent.com'), '匿名 raw URL が出ない');
   assert.ok(!/Authorization/i.test(haystack), 'Authorization 文字列が出ない');
+});
+
+// ── mergeSanrenpukuDayData テスト（T1〜T26） ──────────────────────────
+
+function makeOOI(overrides = {}) {
+  return {
+    date: '2026-06-29', venue: '大井', venueCode: 'OOI',
+    totalRaces: 12, hitRaces: 2, totalPayout: 5000,
+    totalBetPoints: 12, recoveryRate: 41,
+    generatedAt: '2026-06-29T12:00:00Z',
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1, venue: '大井', venueCode: 'OOI',
+      isHit: i < 2, payout: i < 2 ? 2500 : 0,
+      betPoints: 1, raceName: `大井${i + 1}R`,
+    })),
+    ...overrides,
+  };
+}
+
+function makeFUN(overrides = {}) {
+  return {
+    date: '2026-06-29', venue: '船橋', venueCode: 'FUN',
+    totalRaces: 12, hitRaces: 1, totalPayout: 3000,
+    totalBetPoints: 12, recoveryRate: 25,
+    generatedAt: '2026-06-29T13:00:00Z',
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1, venue: '船橋', venueCode: 'FUN',
+      isHit: i === 0, payout: i === 0 ? 3000 : 0,
+      betPoints: 1, raceName: `船橋${i + 1}R`,
+    })),
+    ...overrides,
+  };
+}
+
+test('T1: existing=null + OOI → 12R', () => {
+  const r = mergeSanrenpukuDayData(null, makeOOI());
+  assert.equal(r.races.length, 12); assert.equal(r.venue, '大井');
+});
+
+test('T2: existing=null + FUN → 12R', () => {
+  const r = mergeSanrenpukuDayData(null, makeFUN());
+  assert.equal(r.races.length, 12); assert.equal(r.venue, '船橋');
+});
+
+test('T3: OOI → FUN → 24R', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(r.races.length, 24);
+});
+
+test('T4: FUN → OOI → 24R', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeFUN()), makeOOI());
+  assert.equal(r.races.length, 24);
+});
+
+test('T5: OOI → OOI → 12R（重複なし）', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeOOI());
+  assert.equal(r.races.length, 12);
+});
+
+test('T6: FUN → FUN → 12R', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeFUN()), makeFUN());
+  assert.equal(r.races.length, 12);
+});
+
+test('T7: OOI+FUN後にOOI再import → 24R', () => {
+  const base = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(mergeSanrenpukuDayData(base, makeOOI()).races.length, 24);
+});
+
+test('T8: OOI+FUN後にFUN再import → 24R', () => {
+  const base = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(mergeSanrenpukuDayData(base, makeFUN()).races.length, 24);
+});
+
+test('T9: OOI更新時にFUN保持', () => {
+  const base = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  const r = mergeSanrenpukuDayData(base, makeOOI({ hitRaces: 3 }));
+  assert.equal(r.races.filter(x => x.venueCode === 'FUN').length, 12);
+});
+
+test('T10: FUN更新時にOOI保持', () => {
+  const base = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  const r = mergeSanrenpukuDayData(base, makeFUN({ hitRaces: 2 }));
+  assert.equal(r.races.filter(x => x.venueCode === 'OOI').length, 12);
+});
+
+test('T11: 大井1Rと船橋1Rが共存', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.ok(r.races.find(x => x.venueCode === 'OOI' && Number(x.raceNumber) === 1));
+  assert.ok(r.races.find(x => x.venueCode === 'FUN' && Number(x.raceNumber) === 1));
+});
+
+test('T12: venueCode+raceNumber重複なし', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  const keys = r.races.map(x => `${x.venueCode}-${x.raceNumber}`);
+  assert.equal(new Set(keys).size, r.races.length);
+});
+
+test('T13: venues配列に大井・船橋', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(r.venues.length, 2);
+  assert.ok(r.venues.includes('大井'));
+  assert.ok(r.venues.includes('船橋'));
+});
+
+test('T14: venue文字列に大井・船橋', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.ok(r.venue.includes('大井') && r.venue.includes('船橋'));
+});
+
+test('T15: totalRaces=24', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(r.totalRaces, 24);
+});
+
+test('T16: hitRaces=3（OOI:2+FUN:1）', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(r.hitRaces, 3);
+});
+
+test('T17: totalPayout=8000（5000+3000）', () => {
+  const r = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  assert.equal(r.totalPayout, 8000);
+});
+
+test('T18: incoming raceのvenue/venueCode補完', () => {
+  const ooi = makeOOI();
+  ooi.races = ooi.races.map(({ venue, venueCode, ...rest }) => rest);
+  const r = mergeSanrenpukuDayData(null, ooi);
+  assert.ok(r.races[0].venue);
+  assert.ok(r.races[0].venueCode);
+});
+
+test('T19: raceのvenueCode補完（venue名→コード）', () => {
+  const ooi = makeOOI();
+  ooi.races = ooi.races.map(({ venueCode, ...rest }) => rest);
+  const r = mergeSanrenpukuDayData(null, ooi);
+  assert.equal(r.races[0].venueCode, 'OOI');
+});
+
+test('T20: venueCode欠損・venue名不明で例外', () => {
+  assert.throws(
+    () => mergeSanrenpukuDayData(null, { date: '2026-06-29', venue: '不明会場', venueCode: '', totalRaces: 1, races: [{ raceNumber: 1 }] }),
+    /cannot resolve venueCode/
+  );
+});
+
+test('T21: 旧単一会場schema互換', () => {
+  const legacy = makeOOI();
+  delete legacy.venueCode; delete legacy.venues;
+  legacy.races.forEach(r => delete r.venueCode);
+  assert.equal(mergeSanrenpukuDayData(null, legacy).totalRaces, 12);
+});
+
+test('T22: import順序によらず同等', () => {
+  const of = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeOOI()), makeFUN());
+  const fo = mergeSanrenpukuDayData(mergeSanrenpukuDayData(null, makeFUN()), makeOOI());
+  assert.equal(of.totalRaces, fo.totalRaces);
+  assert.equal(of.hitRaces, fo.hitRaces);
+});
+
+test('T23: 別日付も正常動作', () => {
+  assert.ok(mergeSanrenpukuDayData(null, makeOOI({ date: '2026-06-28' })));
+});
+
+test('T24: nankan.astroに「昨日の的中結果」なし', () => {
+  const src = readFileSync(new URL('../src/pages/premium-prediction/nankan.astro', import.meta.url), 'utf-8');
+  assert.ok(!src.includes('昨日の的中結果'));
+});
+
+test('T25: nankan.astroに「の的中結果」パターンあり', () => {
+  const src = readFileSync(new URL('../src/pages/premium-prediction/nankan.astro', import.meta.url), 'utf-8');
+  assert.ok(src.includes('の的中結果'));
+});
+
+test('T26: nankan.astroに「直近の的中結果」パターンあり', () => {
+  const src = readFileSync(new URL('../src/pages/premium-prediction/nankan.astro', import.meta.url), 'utf-8');
+  assert.ok(src.includes('直近の的中結果'));
 });
