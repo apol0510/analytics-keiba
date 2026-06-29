@@ -344,7 +344,15 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
       font-size: 1.2rem;
       font-weight: bold;
       color: #fbbf24;
-      min-width: 3rem;
+      min-width: 4rem;
+      white-space: nowrap;
+    }
+
+    .race-venue-prefix {
+      font-size: 0.85em;
+      color: #94a3b8;
+      font-weight: 600;
+      margin-right: 0.3em;
     }
 
     .race-name {
@@ -605,7 +613,7 @@ const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) 
             {dayData.races.filter(race => race.hit).map(race => (
               <div class="race-card">
                 <div class="race-info">
-                  <div class="race-number">{race.raceNumber}</div>
+                  <div class="race-number">{race.venue && <span class="race-venue-prefix">{race.venue}</span>}{race.raceNumber}</div>
                   <div class="race-name">{race.raceName}</div>
                 </div>
                 <div class="race-result">
