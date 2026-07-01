@@ -11,8 +11,32 @@ import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
 
-import { isMainRace } from '../src/utils/mainRaceBetting.js';
+import { countUmatanUniquePoints } from '../src/utils/nankanBetPoints.js';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+
+/**
+ * 南関馬単 archive の購入点数・投資額・回収率を「案1（実買い目ユニーク組数）」で算出する。
+ * 払戻から逆算しない（getBetPoints 廃止）。JRA は対象外。
+ *   - race.betPoints = countUmatanUniquePoints(bettingLines)（抑え込み・双方向・全行dedup）
+ *   - totalBetPoints = Σ betPoints、betAmount = totalBetPoints × 100（1点=100円）
+ *   - returnRate = totalPayout ÷ betAmount × 100（betAmount=0 なら 0）
+ * @param {Array} raceResults verifyResults の出力（bettingLines/isHit/umatan を含む）
+ * @param {number} totalPayout 的中レースの払戻合計（本関数では未加工で分子に使うのみ）
+ */
+export function computeNankanUmatanArchiveTotals(raceResults, totalPayout) {
+  const enrichedRaces = raceResults.map(r => ({
+    ...r,
+    betType: r.betType || '馬単',
+    betPoints: countUmatanUniquePoints(Array.isArray(r.bettingLines) ? r.bettingLines : []),
+  }));
+  const totalBetPoints = enrichedRaces.reduce((sum, r) => sum + (Number.isFinite(r.betPoints) ? r.betPoints : 0), 0);
+  const betAmount = totalBetPoints * 100; // 1点 = 100円
+  const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
+  const totalRaces = raceResults.length;
+  // betPointsPerRace は非一様のため参考値（平均/レース）。表示は per-race 合計を使用。
+  const betPointsPerRace = totalRaces > 0 ? Math.round(totalBetPoints / totalRaces) : 0;
+  return { enrichedRaces, totalBetPoints, betAmount, returnRate, betPointsPerRace };
+}
 
 // keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止）。
 // token 未設定は取得前に fatal（匿名 fallback 禁止）。private 化後も KEIBA_DATA_SHARED_TOKEN で読取可。
@@ -335,23 +359,11 @@ function saveArchive(date, venue, raceResults, venues = []) {
   const hitRate = totalRaces > 0 ? (hitRaces / totalRaces * 100).toFixed(1) : '0.0';
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 払戻金計算（4段階可変点数方式・実レース数ベース）
-  //   totalPayout >= races × 12 × 100 → 12点
-  //   totalPayout >= races × 10 × 100 → 10点
-  //   totalPayout >= races ×  8 × 100 → 8点
-  //   totalPayout >= races ×  6 × 100 → 6点
-  //   それ以下 → 6点（下限・マイナス受容）
-  // 詳細: BET_POINT_LOGIC.md 参照
+  // 購入点数（案1・Phase 2）: 払戻から逆算せず、実際に表示している買い目
+  //   (bettingLines.umatan) のユニーク順序付き組数で算出する。
+  //   getBetPoints(払戻逆算) は南関 archive 生成では廃止。
+  //   JRA(importResultsJra.js) は対象外・変更しない。
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  function getBetPoints(totalPayout, races) {
-    if (races <= 0) return 6;
-    if (totalPayout >= races * 12 * 100) return 12;
-    if (totalPayout >= races * 10 * 100) return 10;
-    if (totalPayout >= races *  8 * 100) return 8;
-    if (totalPayout >= races *  6 * 100) return 6;
-    return 6;
-  }
-
   const totalPayout = raceResults.reduce((sum, race) => {
     if (race.isHit && race.umatan.payout) {
       // 的中した場合、払戻金を加算
@@ -361,42 +373,14 @@ function saveArchive(date, venue, raceResults, venues = []) {
     return sum;
   }, 0);
 
-  const betPointsPerRace = getBetPoints(totalPayout, totalRaces);
-  const betAmount = totalRaces * betPointsPerRace * 100;
-  const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
+  // 的中実績画面の「合計購入点数」「投資額」「回収率」は per-race betPoints 合計を正本とする。
+  const { enrichedRaces, totalBetPoints, betAmount, returnRate, betPointsPerRace } =
+    computeNankanUmatanArchiveTotals(raceResults, totalPayout);
 
-  console.log(`\n📊 買い目点数判定: ${totalRaces}R × ${betPointsPerRace}点 = ${betAmount.toLocaleString()}円 / 払戻 ${totalPayout.toLocaleString()}円 → 回収率 ${returnRate.toFixed(1)}%`);
+  console.log(`\n📊 購入点数(実買い目ユニーク): 合計 ${totalBetPoints}点 = ${betAmount.toLocaleString()}円 / 払戻 ${totalPayout.toLocaleString()}円 → 回収率 ${returnRate.toFixed(1)}%`);
 
   // 最終的な回収率（小数点1桁）
   const finalReturnRate = returnRate.toFixed(1);
-
-  // race 単位にも betPoints / betType を埋め込む（archive UI が参照するため）
-  // メインレースは実際の買い目本数 (本命軸 × 上位5頭 × 双方向 = 最大10点) を記録
-  // 複数会場開催の日は会場別にレース数を数えて判定する
-  const racesByVenue = new Map();
-  for (const r of raceResults) {
-    const key = r.venue || '';
-    racesByVenue.set(key, (racesByVenue.get(key) || 0) + 1);
-  }
-  const enrichedRaces = raceResults.map(r => {
-    const venueRaces = racesByVenue.get(r.venue || '') || totalRaces;
-    let racePoints = betPointsPerRace;
-    if (isMainRace(r.raceNumber, venueRaces)) {
-      const lines = Array.isArray(r.bettingLines) ? r.bettingLines : [];
-      const firstLine = lines[0] || '';
-      const m = firstLine.match(/^(\d+)[\-↔→](.+)$/);
-      if (m) {
-        const aitePart = m[2].replace(/\(抑え.+\)/, '');
-        const partners = aitePart.split('.').filter(s => s.length > 0);
-        if (partners.length > 0) racePoints = partners.length * 2;
-      }
-    }
-    return {
-      ...r,
-      betType: r.betType || '馬単',
-      betPoints: racePoints,
-    };
-  });
 
   const newEntry = {
     date,
@@ -407,8 +391,8 @@ function saveArchive(date, venue, raceResults, venues = []) {
     missRaces: totalRaces - hitRaces,
     hitRate: parseFloat(hitRate),
     betAmount,
-    betPointsPerRace, // 追加: 実際の買い目点数を記録
-    totalBetPoints: totalRaces * betPointsPerRace,
+    betPointsPerRace, // 参考: 平均点数/レース（非一様。表示は per-race 合計を使用）
+    totalBetPoints,
     totalInvestment: betAmount,
     totalPayout,
     returnRate: parseFloat(finalReturnRate),
