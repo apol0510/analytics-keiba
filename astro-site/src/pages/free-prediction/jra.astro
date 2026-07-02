@@ -456,6 +456,98 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
                                     </div>
                                   </details>
                                 )}
+                                {/* 過去走データ（表示専用・過去走由来の集計のみ。pt/CI/役割は出さない） */}
+                                {(() => {
+                                  const ctx = buildHistoryAccordionContext(row._horse, race);
+                                  if (!ctx) return null;
+                                  return (
+                                    <details class="history-details" data-click-close="true">
+                                      <summary class="history-summary">
+                                        <span class="history-summary-text">過去走データ</span>
+                                        <span class="history-summary-count">{ctx.summaryCount}</span>
+                                        <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                      </summary>
+                                      <div class="history-content">
+                                        {ctx.hasProfile && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">プロフィール</div>
+                                            <div class="history-profile-grid">
+                                              {ctx.profileItems.map((p) => (
+                                                <div class="history-profile-item">
+                                                  <span class="history-profile-label">{p.label}</span>
+                                                  <span class="history-profile-value">{p.value}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasRanked && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">通算成績</div>
+                                            <div class="history-record-grid">
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">通算</div>
+                                                <div class="history-rec-value">{ctx.recordValue}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">勝率</div>
+                                                <div class="history-rec-value">{ctx.winPctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">連対率</div>
+                                                <div class="history-rec-value">{ctx.placePctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">3着内率</div>
+                                                <div class="history-rec-value">{ctx.showPctStr}</div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasCondRows && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">条件別成績</div>
+                                            <div class="history-cond-list">
+                                              {ctx.condRows.map((crow) => (
+                                                <div class="history-cond-row">
+                                                  <span class="history-cond-label">{crow.label}</span>
+                                                  <span class="history-cond-stat">{fmtHistoryCondStat(crow.stat)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div class="history-section">
+                                          <div class="history-section-label">{ctx.sectionLabel}</div>
+                                          <div class="history-list">
+                                            {ctx.rows.map((hrow) => (
+                                              <div class="history-row">
+                                                <div class="hh-line hh-line-primary">
+                                                  {hrow.r._dateStr && <span class="hh-date">{hrow.r._dateStr}</span>}
+                                                  {hrow.r.venue && <span class="hh-venue">{hrow.r.venue}</span>}
+                                                  {hrow.r._displayDistance && <span class="hh-dist">{hrow.r._displayDistance}</span>}
+                                                  {hrow.hasFinishStatus && <span class="hh-status">[{hrow.r.finishStatus}]</span>}
+                                                  {hrow.hasRank && <span class={hrow.rankClass}>{hrow.r.rank}着</span>}
+                                                  {hrow.hasPopularity && <span class="hh-pop">{hrow.r.popularity}人気</span>}
+                                                </div>
+                                                <div class="hh-line hh-line-secondary">
+                                                  {hrow.r.raceName && <span class="hh-race-name">{hrow.r.raceName}</span>}
+                                                  {hrow.r.jockey && <span class="hh-jockey">🏇 {hrow.r.jockey}</span>}
+                                                  {hrow.r.bodyWeight && <span class="hh-bw">{hrow.r.bodyWeight}kg</span>}
+                                                  {hrow.r.time && <span class="hh-time">{hrow.r.time}</span>}
+                                                  {hrow.r.winnerName && <span class="hh-winner">勝: {hrow.r.winnerName}</span>}
+                                                </div>
+                                              </div>
+                                            ))}
+                                            {ctx.hasOverflow && (
+                                              <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </details>
+                                  );
+                                })()}
                               </div>
                             );
                             const headlineRows = freeRows.filter((r) => r.isHeadline);

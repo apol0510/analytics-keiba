@@ -52,6 +52,9 @@ export function buildFreePublicRows(horses, opts = {}) {
         headlineKind: head ? head.kind : null,
         markClass: head ? head.markClass : null,
         // 公開DTOには pt / aiIndex / role / importance / evalPoints を **入れない**（有料限定）。
+        // _horse は「過去走由来の集計のみを出す検証済みコンポーネント」専用の生データ参照。
+        // pt/CI/役割/特徴量を描画してはならない（描画は過去走・通算成績など公開事実に限る）。
+        _horse: h,
       };
     });
 }
