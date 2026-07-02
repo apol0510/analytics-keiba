@@ -184,30 +184,24 @@ function loadPrediction(date, venue) {
 }
 
 /**
- * 馬単の的中判定
+ * 馬単の的中判定（公開本線のみ・2026-07 仕様）
+ *
+ * Premium でユーザーへ公開した「本線相手」だけを的中対象とする。
+ * 括弧内の内部保険 (抑え…)／（抑え…） は判定対象外（公開買い目とアーカイブ実績の基準を一致させる）。
+ * 投資額は従来どおり全レース5点固定・保存 bettingLines.umatan の形式は不変（抑え表記は記録として残置）。
+ * 区切り記号 -（旧）/ ↔・⇔（双方向）/ →（片方向）、半角/全角括弧に対応。
+ * 例: "4-1.11.2.5.7.9(抑え10.8.6)" → 本線 1.11.2.5.7.9 のみで判定 / "5↔9.11.6.8.4" / "4→8.4.7.5.3"
  */
-function checkUmatanHit(bettingLine, result) {
-  // 買い目解析: 区切り文字は -（旧）/ ↔（双方向新）/ →（片方向新）の3パターンに対応
-  // 例: "4-1.11.2.5.7.9(抑え10.8.6)" / "5↔9.11.6.8.4" / "4→8.4.7.5.3"
-  const match = bettingLine.match(/^(\d+)[\-↔→](.+)$/);
+export function checkUmatanHit(bettingLine, result) {
+  const match = String(bettingLine).match(/^(\d+)[\-↔⇔→](.+)$/);
   if (!match) return false;
 
   const axis = parseInt(match[1]);
   const aitePart = match[2];
 
-  // 本線相手馬を抽出
-  const mainPart = aitePart.replace(/\(抑え.+\)/, '');
+  // 本線相手馬のみ抽出（(抑え…)／（抑え…）は判定対象外）
+  const mainPart = aitePart.replace(/[(（]抑え[^)）]*[)）]/g, '');
   const mainAite = mainPart.split('.').map(n => parseInt(n)).filter(n => !isNaN(n));
-
-  // 抑え馬を抽出
-  let osaeAite = [];
-  const osaeMatch = aitePart.match(/\(抑え([0-9.]+)\)/);
-  if (osaeMatch) {
-    osaeAite = osaeMatch[1].split('.').map(n => parseInt(n)).filter(n => !isNaN(n));
-  }
-
-  // 全相手馬（本線+抑え）
-  const allAite = [...mainAite, ...osaeAite];
 
   // 1着と2着を取得
   const first = result.results[0]?.number;
@@ -215,14 +209,14 @@ function checkUmatanHit(bettingLine, result) {
 
   if (!first || !second) return false;
 
-  // 馬単判定（2パターン）
-  // パターン1: 軸が1着、相手が2着
-  if (axis === first && allAite.includes(second)) {
+  // 馬単判定（2パターン）本線相手のみ
+  // パターン1: 軸が1着、本線相手が2着
+  if (axis === first && mainAite.includes(second)) {
     return true;
   }
 
-  // パターン2: 相手が1着、軸が2着
-  if (allAite.includes(first) && axis === second) {
+  // パターン2: 本線相手が1着、軸が2着
+  if (mainAite.includes(first) && axis === second) {
     return true;
   }
 
@@ -337,8 +331,9 @@ function saveArchive(date, venue, raceResults, venues = []) {
   // 投資額計算（全レース1レース5点固定・実レース数ベース）
   //   1レース5点 × 100円。投資額 = 実レース数 × 5 × 100（採用有無に不依存の定数）。
   //   例: 12レース → 60点・6,000円 / 36レース → 180点・18,000円。
-  //   DP・目標回収率(165%等)・上限(200%等)は使用しない。的中候補は全件を公開実績へ算入する。
-  //   買い目そのもの（双方向2段＋抑え）と的中判定は変更せず、投資点数のみ5点固定へ統一する。
+  //   DP・目標回収率(165%等)・上限(200%等)は使用しない。
+  //   買い目そのもの（双方向2段＋抑え表記）と保存形式は不変。投資点数は5点固定を維持する。
+  //   的中判定は 2026-07 仕様で「公開本線のみ（抑え除外）」へ変更済み（checkUmatanHit）。
   //   （旧・4段階可変点数方式 6/8/10/12 は廃止）詳細: BET_POINT_LOGIC.md 参照
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const BET_POINTS_PER_RACE = 5;
