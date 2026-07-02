@@ -238,3 +238,45 @@ test('浦和・船橋を含む全Lightがメインレース買い目だけを表
     assert.ok(s.includes('standardRaces') || s.includes('PLAN_ACCESS.standard'), `${p} のメイン限定ゲートが消えている`);
   }
 });
+
+// ── Premium 表示から内部保険「(抑え…)」を非表示（案B・表示層のみ） ─────────
+// 変換仕様はコードの stripOsaeForDisplay と同一の正規表現で固定する。
+const OSAE_STRIP_RE = /[(（]抑え[^)）]*[)）]/g;
+const stripOsae = (s) => String(s).replace(OSAE_STRIP_RE, '');
+
+test('(抑え…) 付き文字列が本線だけになる（大井6R・船橋5R）', () => {
+  assert.strictEqual(stripOsae('11↔2.4.5.7.13(抑え3.6.8.10.12.14)'), '11↔2.4.5.7.13');
+  assert.strictEqual(stripOsae('1↔2.5.6.7.9(抑え4.8.10)'), '1↔2.5.6.7.9');
+  assert.strictEqual(stripOsae('7↔2.4.5.11.13(抑え3.6.8.10.12.14)'), '7↔2.4.5.11.13');
+});
+
+test('全角括弧「（抑え…）」形式も除去', () => {
+  assert.strictEqual(stripOsae('9↔1.2.3.5.8（抑え4.6.7）'), '9↔1.2.3.5.8');
+});
+
+test('抑えなし文字列は不変・区切り記号(dash/↔/⇔/→)は保持', () => {
+  assert.strictEqual(stripOsae('5↔1.2.3.4'), '5↔1.2.3.4');
+  assert.strictEqual(stripOsae('6-11.9.13.10.7'), '6-11.9.13.10.7');   // dash 保持
+  assert.strictEqual(stripOsae('5⇔9.11.6.8.4'), '5⇔9.11.6.8.4');       // ⇔ 保持
+  assert.strictEqual(stripOsae('4→8.4.7.5.3'), '4→8.4.7.5.3');         // → 保持
+  assert.strictEqual(stripOsae('13↔2.3.9.10.14'), '13↔2.3.9.10.14');
+});
+
+test('Premium南関・JRA はコードと同一の抑え除去正規表現を表示専用に持つ', () => {
+  for (const p of ['../pages/premium-prediction/nankan.astro', '../pages/premium-prediction/jra.astro']) {
+    const s = src(p);
+    assert.ok(s.includes('[(（]抑え[^)）]*[)）]'), `${p} が想定の抑え除去正規表現を持たない`);
+    assert.ok(s.includes('stripOsaeForDisplay'), `${p} が stripOsaeForDisplay を定義していない`);
+    assert.ok(/numbers:\s*stripOsaeForDisplay\(/.test(s), `${p} が表示 numbers に抑え除去を適用していない`);
+  }
+});
+
+test('Premium表示は保存文字列を破壊しない（点数は元の行から算出・bettingLines再代入なし）', () => {
+  for (const p of ['../pages/premium-prediction/nankan.astro', '../pages/premium-prediction/jra.astro']) {
+    const s = src(p);
+    // 点数は原文字列(line/lineStr)から算出（抑え除去後の値では算出しない）
+    assert.ok(/countPointsFromUmatanLine\((line|lineStr)\)/.test(s), `${p} の点数算出が原文字列でない`);
+    // 保存 bettingLines.umatan への代入・書き換えをしていない
+    assert.ok(!/bettingLines\.umatan\s*=/.test(s), `${p} が保存 bettingLines.umatan を書き換えている`);
+  }
+});
