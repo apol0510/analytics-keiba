@@ -138,44 +138,25 @@ const [year, month, day] = raceDate.split('-');
 const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 const venueListLabel = venuesView.map(v => v.venueName).join('・');
 
-// 通常レース 1段構成買い目（本命軸 or 対抗軸の自動判定）
-function generateOneLineUmatanBets(horses) {
-    if (!Array.isArray(horses) || horses.length === 0) return null;
-    const honmei = horses.find(h => h.role === '本命');
-    const taikou = horses.find(h => h.role === '対抗');
-    if (!honmei) return null;
-
-    let axisHorse = honmei;
-    let axisLabel = '本命';
-    if (taikou && honmei.score && taikou.score) {
-        const scoreDiff = honmei.score - taikou.score;
-        if (scoreDiff <= 2) {
-            axisHorse = taikou;
-            axisLabel = '対抗';
-        }
-    }
-
-    const taikouHorse = horses.find(h => h.role === '対抗');
-    const taikouNumber = taikouHorse?.number;
-    const otherHorses = horses
-        .filter(h => h.number !== axisHorse.number)
-        .filter(h => h.number !== taikouNumber)
-        .filter(h => h.role !== '押さえ')
-        .sort((a, b) => a.number - b.number)
-        .map(h => h.number)
-        .filter(Boolean);
-
-    const opponents = [taikouNumber, ...otherHorses]
-        .filter(Boolean)
-        .slice(0, 5)
-        .sort((a, b) => a - b);
-
+// Light の買い目はローカル生成を廃止し、保存 bettingLines.umatan（単一正本）のメインレース買い目を参照する。
+// Light はメインレースのみ表示し、Premium の同一メインレースと完全一致させる（軸・相手の独自再選定はしない）。
+// 正本のメインレース行「本命↔相手5」を軸+相手へ分解して既存の式表示に流すヘルパー。
+function parseMainUmatanForDisplay(bettingLines, horses) {
+    const stored = Array.isArray(bettingLines?.umatan) ? bettingLines.umatan : [];
+    const mainLine = stored[0];
+    if (!mainLine) return null;
+    // 区切りは正本の ↔ を主とし、旧 dash/⇔/→ 形式にも後方互換で対応。
+    const m = String(mainLine).match(/^(\d+)[-↔⇔→]([^()]+)/);
+    if (!m) return null;
+    const axis = parseInt(m[1], 10);
+    const opponents = m[2].split('.').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n));
+    const axisHorse = (Array.isArray(horses) ? horses : []).find(h => Number(h.number ?? h.horseNumber) === axis);
     return {
-        axis: axisHorse.number,
-        axisName: axisHorse.name,
-        axisLabel,
+        axis,
+        axisName: axisHorse?.name ?? axisHorse?.horseName ?? '',
+        axisLabel: '本命',
         opponents,
-        scoreDiff: taikou && honmei.score && taikou.score ? honmei.score - taikou.score : null,
+        scoreDiff: null,
     };
 }
 
@@ -388,7 +369,7 @@ const latestResult = getLatestDayDataJra();
                     const progressBarB = calculateProgressBarConfidence('B', raceMainHorseScore, raceSubHorseScore);
                     const progressBarC = calculateProgressBarConfidence('C', raceMainHorseScore, raceSubHorseScore);
 
-                    const oneLineBets = generateOneLineUmatanBets(raceHorses);
+                    const oneLineBets = parseMainUmatanForDisplay(raceData.bettingLines, raceHorses);
 
                     const accordionId = `jra-${vIdx}-race-${raceNum}r`;
                     const iconId = `jra-${vIdx}-toggle-${raceNum}r`;
