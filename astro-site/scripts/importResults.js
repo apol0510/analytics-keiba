@@ -11,7 +11,6 @@ import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
 
-import { isMainRace } from '../src/utils/mainRaceBetting.js';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 
 // keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止）。
@@ -335,22 +334,14 @@ function saveArchive(date, venue, raceResults, venues = []) {
   const hitRate = totalRaces > 0 ? (hitRaces / totalRaces * 100).toFixed(1) : '0.0';
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 払戻金計算（4段階可変点数方式・実レース数ベース）
-  //   totalPayout >= races × 12 × 100 → 12点
-  //   totalPayout >= races × 10 × 100 → 10点
-  //   totalPayout >= races ×  8 × 100 → 8点
-  //   totalPayout >= races ×  6 × 100 → 6点
-  //   それ以下 → 6点（下限・マイナス受容）
-  // 詳細: BET_POINT_LOGIC.md 参照
+  // 投資額計算（全レース1レース5点固定・実レース数ベース）
+  //   1レース5点 × 100円。投資額 = 実レース数 × 5 × 100（採用有無に不依存の定数）。
+  //   例: 12レース → 60点・6,000円 / 36レース → 180点・18,000円。
+  //   DP・目標回収率(165%等)・上限(200%等)は使用しない。的中候補は全件を公開実績へ算入する。
+  //   買い目そのもの（双方向2段＋抑え）と的中判定は変更せず、投資点数のみ5点固定へ統一する。
+  //   （旧・4段階可変点数方式 6/8/10/12 は廃止）詳細: BET_POINT_LOGIC.md 参照
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  function getBetPoints(totalPayout, races) {
-    if (races <= 0) return 6;
-    if (totalPayout >= races * 12 * 100) return 12;
-    if (totalPayout >= races * 10 * 100) return 10;
-    if (totalPayout >= races *  8 * 100) return 8;
-    if (totalPayout >= races *  6 * 100) return 6;
-    return 6;
-  }
+  const BET_POINTS_PER_RACE = 5;
 
   const totalPayout = raceResults.reduce((sum, race) => {
     if (race.isHit && race.umatan.payout) {
@@ -361,42 +352,22 @@ function saveArchive(date, venue, raceResults, venues = []) {
     return sum;
   }, 0);
 
-  const betPointsPerRace = getBetPoints(totalPayout, totalRaces);
+  const betPointsPerRace = BET_POINTS_PER_RACE;
   const betAmount = totalRaces * betPointsPerRace * 100;
   const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
 
-  console.log(`\n📊 買い目点数判定: ${totalRaces}R × ${betPointsPerRace}点 = ${betAmount.toLocaleString()}円 / 払戻 ${totalPayout.toLocaleString()}円 → 回収率 ${returnRate.toFixed(1)}%`);
+  console.log(`\n📊 投資点数(5点固定): ${totalRaces}R × ${betPointsPerRace}点 = ${betAmount.toLocaleString()}円 / 払戻 ${totalPayout.toLocaleString()}円 → 回収率 ${returnRate.toFixed(1)}%`);
 
   // 最終的な回収率（小数点1桁）
   const finalReturnRate = returnRate.toFixed(1);
 
-  // race 単位にも betPoints / betType を埋め込む（archive UI が参照するため）
-  // メインレースは実際の買い目本数 (本命軸 × 上位5頭 × 双方向 = 最大10点) を記録
-  // 複数会場開催の日は会場別にレース数を数えて判定する
-  const racesByVenue = new Map();
-  for (const r of raceResults) {
-    const key = r.venue || '';
-    racesByVenue.set(key, (racesByVenue.get(key) || 0) + 1);
-  }
-  const enrichedRaces = raceResults.map(r => {
-    const venueRaces = racesByVenue.get(r.venue || '') || totalRaces;
-    let racePoints = betPointsPerRace;
-    if (isMainRace(r.raceNumber, venueRaces)) {
-      const lines = Array.isArray(r.bettingLines) ? r.bettingLines : [];
-      const firstLine = lines[0] || '';
-      const m = firstLine.match(/^(\d+)[\-↔→](.+)$/);
-      if (m) {
-        const aitePart = m[2].replace(/\(抑え.+\)/, '');
-        const partners = aitePart.split('.').filter(s => s.length > 0);
-        if (partners.length > 0) racePoints = partners.length * 2;
-      }
-    }
-    return {
-      ...r,
-      betType: r.betType || '馬単',
-      betPoints: racePoints,
-    };
-  });
+  // race 単位にも betPoints / betType を埋め込む（archive UI が参照するため）。
+  // 投資点数は全レース5点固定（表示買い目の実点数とは分離した回収率計算上の基準点数）。
+  const enrichedRaces = raceResults.map(r => ({
+    ...r,
+    betType: r.betType || '馬単',
+    betPoints: betPointsPerRace,
+  }));
 
   const newEntry = {
     date,
