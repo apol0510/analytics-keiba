@@ -2,7 +2,7 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { buildMergedMonthData } from '../../../lib/archiveMonthlyView.js';
+import { buildMergedMonthData, aggregateMonthByBasis, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
 
 export const prerender = true;
 
@@ -59,43 +59,36 @@ const loadSnapshot = (year: string, month: string) => {
 
 const years = Array.from(yearMonthSet.keys()).sort().reverse();
 
+// 現在基準（2026-04-15 以降）だけで年間集計する。旧基準期間は混在させず、旧基準のみの年は「参考」表示。
 const yearSummaries = years.map(year => {
   const months = Array.from(yearMonthSet.get(year)!).sort().reverse();
 
-  let perfectDays = 0;
-  let totalPayout = 0;
-  let totalHitRaces = 0;
-  let totalRaces = 0;
-  let totalDays = 0;
+  const cur = { days: 0, hitRaces: 0, totalRaces: 0, payout: 0, perfectDays: 0, months: new Set<string>() };
+  const leg = { days: 0, hitRaces: 0, totalRaces: 0, payout: 0, perfectDays: 0, months: new Set<string>() };
 
   months.forEach(month => {
     const snapshot = loadSnapshot(year, month);
     const monthData = buildMergedMonthData(archiveResults, snapshot, year, month);
-    const days = Object.keys(monthData);
-    totalDays += days.length;
-
-    days.forEach(day => {
-      const dayData = monthData[day];
-      if (dayData.perfectHit) perfectDays++;
-      totalPayout += dayData.totalPayout || 0;
-      totalHitRaces += dayData.hitRaces || 0;
-      totalRaces += dayData.totalRaces || 0;
-    });
+    const { current, legacy } = aggregateMonthByBasis(monthData, year, month);
+    cur.days += current.days; cur.hitRaces += current.hitRaces; cur.totalRaces += current.totalRaces; cur.payout += current.payout; cur.perfectDays += current.perfectDays; if (current.days > 0) cur.months.add(month);
+    leg.days += legacy.days; leg.hitRaces += legacy.hitRaces; leg.totalRaces += legacy.totalRaces; leg.payout += legacy.payout; leg.perfectDays += legacy.perfectDays; if (legacy.days > 0) leg.months.add(month);
   });
 
-  const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
-  const latestMonth = months[0];
+  const hasCurrent = cur.totalRaces > 0;
+  const shown = hasCurrent ? cur : leg;                 // 現在基準が無い年は旧基準値を参考表示
+  const hitRate = shown.totalRaces > 0 ? Math.round((shown.hitRaces / shown.totalRaces) * 100) : 0;
 
   return {
     year,
-    latestMonth,
-    perfectDays,
-    payout: totalPayout,
-    hitRaces: totalHitRaces,
-    totalRaces,
+    isLegacyReference: !hasCurrent,                     // 全期間が旧基準の年（参考）
+    hasLegacyMonths: hasCurrent && leg.days > 0,        // 現在基準の年だが旧基準の参考月も含む
+    perfectDays: shown.perfectDays,
+    payout: shown.payout,
+    hitRaces: shown.hitRaces,
+    totalRaces: shown.totalRaces,
     hitRate,
-    daysCount: totalDays,
-    monthsCount: months.length
+    daysCount: shown.days,
+    monthsCount: (hasCurrent ? cur.months : leg.months).size
   };
 });
 
@@ -121,15 +114,28 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
       <a href="/pricing/" class="cta-button">プレミアム予想を見る →</a>
     </div>
 
+    <p class="basis-note">
+      現在の公開買い目基準による実績は、{CURRENT_BASIS_START_LABEL}以降を集計しています。
+    </p>
+
     <div class="years-grid">
       {yearSummaries.map(summary => (
         <a href={`/archive/nankan/${summary.year}/`} class="year-card">
           <div class="year-header">
             <h2 class="year-title">{summary.year}年</h2>
-            {summary.hitRate === 100 && (
+            {summary.isLegacyReference && (
+              <div class="legacy-badge">旧基準（参考）</div>
+            )}
+            {!summary.isLegacyReference && summary.hitRate === 100 && (
               <div class="perfect-highlight">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
             )}
           </div>
+          {summary.isLegacyReference && (
+            <p class="card-legacy-note">{LEGACY_BASIS_END_LABEL}以前は旧集計基準の参考実績です。</p>
+          )}
+          {summary.hasLegacyMonths && (
+            <p class="card-legacy-note">{LEGACY_BASIS_END_LABEL}以前の月は参考実績として現在基準集計に含みません。</p>
+          )}
 
           <div class="year-stats-grid">
             <div class="year-stat">
@@ -295,10 +301,38 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
     box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
   }
 
+  .basis-note {
+    text-align: center;
+    color: #94a3b8;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin: 0 auto 1.5rem;
+    max-width: 640px;
+    padding: 0.75rem 1rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(100, 116, 139, 0.25);
+    border-radius: 8px;
+  }
+  .legacy-badge {
+    background: rgba(100, 116, 139, 0.25);
+    color: #cbd5e1;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 0.9rem;
+    border: 1px solid rgba(100, 116, 139, 0.4);
+  }
+  .card-legacy-note {
+    color: #94a3b8;
+    font-size: 0.8rem;
+    margin: 0 0 1rem;
+  }
+
   @media (max-width: 768px) {
     .title { font-size: 1.8rem; }
     .year-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .year-title { font-size: 2rem; }
     .year-stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .basis-note { font-size: 0.85rem; }
   }
 </style>

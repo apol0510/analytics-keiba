@@ -2,7 +2,7 @@
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { buildMergedMonthData } from '../../../../lib/archiveMonthlyView.js';
+import { buildMergedMonthData, aggregateMonthByBasis, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
 
 export const prerender = false;
 
@@ -49,7 +49,7 @@ try {
 
 const months = Array.from(monthsSet).sort().reverse();
 
-// 各月の統計を算出
+// 各月の統計を算出（現在基準=2026-04-15以降のみ年間集計に算入。旧基準月は参考表示）。
 let totalDays = 0;
 let totalPayoutYear = 0;
 let totalHitRaces = 0;
@@ -62,38 +62,35 @@ const monthSummaries = months.map(month => {
     try { snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')); } catch {}
   }
   const monthData = buildMergedMonthData(archiveResults, snapshot, year, month);
-  const days = Object.keys(monthData);
+  const { current, legacy } = aggregateMonthByBasis(monthData, year, month);
 
-  let monthPayout = 0;
-  let monthHitRaces = 0;
-  let monthTotalRaces = 0;
+  const hasCurrent = current.totalRaces > 0;
+  const shown = hasCurrent ? current : legacy;   // 現在基準が無い月は旧基準値を参考表示
+  const hitRate = shown.totalRaces > 0 ? Math.round((shown.hitRaces / shown.totalRaces) * 100) : 0;
 
-  days.forEach(day => {
-    const dayData = monthData[day];
-    monthPayout += dayData.totalPayout || 0;
-    monthHitRaces += dayData.hitRaces || 0;
-    monthTotalRaces += dayData.totalRaces || 0;
-  });
-
-  totalDays += days.length;
-  totalPayoutYear += monthPayout;
-  totalHitRaces += monthHitRaces;
-  totalRaces += monthTotalRaces;
-
-  const hitRate = monthTotalRaces > 0 ? Math.round((monthHitRaces / monthTotalRaces) * 100) : 0;
+  // 年間集計には現在基準ぶんだけ算入
+  if (hasCurrent) {
+    totalDays += current.days;
+    totalPayoutYear += current.payout;
+    totalHitRaces += current.hitRaces;
+    totalRaces += current.totalRaces;
+  }
 
   return {
     month,
-    payout: monthPayout,
-    hitRaces: monthHitRaces,
-    totalRaces: monthTotalRaces,
+    isLegacyReference: !hasCurrent,                 // 旧基準のみの月（参考）
+    hasLegacyDays: hasCurrent && legacy.days > 0,   // 現在基準の月だが参考日を含む
+    payout: shown.payout,
+    hitRaces: shown.hitRaces,
+    totalRaces: shown.totalRaces,
     hitRate,
-    daysCount: days.length,
+    daysCount: shown.days,
   };
 });
 
 const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
 const hasData = months.length > 0;
+const hasCurrentBasisData = totalRaces > 0;
 
 const pageTitle = `${year}年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス`;
 const pageDescription = `${year}年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。`;
@@ -135,16 +132,27 @@ const pageDescription = `${year}年の全月別的中実績。パーフェクト
           </div>
         </div>
 
+        <p class="basis-note">
+          現在の公開買い目基準による実績は、{CURRENT_BASIS_START_LABEL}以降を集計しています。
+          {!hasCurrentBasisData && <>この年は{LEGACY_BASIS_END_LABEL}以前の旧集計基準による参考実績です。</>}
+        </p>
+
         <!-- 月別一覧 -->
         <div class="months-grid">
           {monthSummaries.map(summary => (
             <a href={`/archive/nankan/${year}/${summary.month}/`} class="month-card">
               <div class="month-header">
                 <h2 class="month-title">{parseInt(summary.month, 10)}月</h2>
-                {summary.hitRate === 100 && summary.totalRaces > 0 && (
+                {summary.isLegacyReference && (
+                  <div class="legacy-badge">旧基準（参考）</div>
+                )}
+                {!summary.isLegacyReference && summary.hitRate === 100 && summary.totalRaces > 0 && (
                   <div class="perfect-count">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
                 )}
               </div>
+              {(summary.isLegacyReference || summary.hasLegacyDays) && (
+                <p class="card-legacy-note">{LEGACY_BASIS_END_LABEL}以前は旧集計基準の参考実績です。</p>
+              )}
 
               <div class="month-stats-grid">
                 <div class="month-stat">
@@ -356,6 +364,33 @@ const pageDescription = `${year}年の全月別的中実績。パーフェクト
       box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
     }
 
+    .basis-note {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin: 0 auto 2.5rem;
+      max-width: 640px;
+      padding: 0.75rem 1rem;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      border-radius: 8px;
+    }
+    .legacy-badge {
+      background: rgba(100, 116, 139, 0.25);
+      color: #cbd5e1;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 0.85rem;
+      border: 1px solid rgba(100, 116, 139, 0.4);
+    }
+    .card-legacy-note {
+      color: #94a3b8;
+      font-size: 0.8rem;
+      margin: 0 0 1rem;
+    }
+
     @media (max-width: 768px) {
       .title {
         font-size: 1.8rem;
@@ -370,5 +405,7 @@ const pageDescription = `${year}年の全月別的中実績。パーフェクト
       .month-stats-grid {
         grid-template-columns: repeat(2, 1fr);
       }
+
+      .basis-note { font-size: 0.85rem; }
     }
 </style>

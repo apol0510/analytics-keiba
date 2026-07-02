@@ -2,7 +2,7 @@
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { buildMergedMonthData, dayKeyToInt } from '../../../../../lib/archiveMonthlyView.js';
+import { buildMergedMonthData, dayKeyToInt, isCurrentBasisEntry, LEGACY_BASIS_END_LABEL } from '../../../../../lib/archiveMonthlyView.js';
 
 export const prerender = false;
 
@@ -52,6 +52,8 @@ days.forEach(dayKey => {
 
 const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
 const hasData = days.length > 0;
+// この月に旧集計基準（2026-04-14以前、または snapshot 由来の旧判定日）が含まれるか（参考実績の注記用）。
+const monthHasLegacyDays = days.some(dayKey => !isCurrentBasisEntry(year, month, dayKey, monthData[dayKey]));
 
 const pageTitle = hasData
   ? `${year}年${monthInt}月 南関競馬的中実績`
@@ -97,6 +99,10 @@ const pageDescription = hasData
             <div class="stat-label">的中レース数</div>
           </div>
         </div>
+
+        {monthHasLegacyDays && (
+          <p class="basis-note">{LEGACY_BASIS_END_LABEL}以前は旧集計基準の参考実績です。</p>
+        )}
 
         <!-- 日別アーカイブ（南関 + 中央） -->
         {days.map(dayKey => {
@@ -232,6 +238,19 @@ const pageDescription = hasData
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 1.5rem;
       margin-bottom: 3rem;
+    }
+
+    .basis-note {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin: -1.5rem auto 2.5rem;
+      max-width: 640px;
+      padding: 0.75rem 1rem;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      border-radius: 8px;
     }
 
     .stat-card {
