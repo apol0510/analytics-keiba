@@ -81,6 +81,7 @@ function normalizeDayFromSingular(entry, category) {
   }
   return {
     category,
+    source: 'live', // archiveResults.json(=公開本線のみ判定済み) 由来
     venue: entry.venue,
     venues,
     venueDisplay: buildVenueDisplay(entry.venue, venues, category),
@@ -97,6 +98,7 @@ function normalizeDayFromMonthly(dayObj) {
   return {
     ...dayObj,
     category: 'nankan',
+    source: 'snapshot', // 旧月別 snapshot(=旧「本線+抑え」基準)由来
     venueDisplay: buildVenueDisplay(dayObj.venue, dayObj.venues, 'nankan'),
     races: (Array.isArray(dayObj.races) ? dayObj.races : []).map(normalizeRaceForTemplate),
   };
@@ -126,23 +128,28 @@ export function buildMergedMonthData(archiveArray, monthlySnapshot, year, month,
     merged[day] = normalizeDayFromMonthly(dayObj);
   }
 
-  // 2. 南関 singular で上書き（新しい可変点数ロジックが最終値）。
-  //    ただし singular に race 単位の betPoints が無い古いデータの場合は
-  //    monthly のハンドキュレート版を優先（情報欠落を防ぐため）。
+  // 2. 南関 singular で上書き（公開本線のみ判定済みの最終値）。
+  //    live(archiveResults.json)が「betPoints を持つ」または「公開本線判定済み(bettingLines保有)」
+  //    または「snapshot に無い日」の場合は live を採用する。
+  //    betPoints の有無だけで snapshot(旧「本線+抑え」判定)へ戻さない
+  //    （2026-04-14 対策: live に公開本線判定済み値があるのに snapshot が上書きしていた不具合の解消）。
   if (Array.isArray(archiveArray)) {
     for (const entry of archiveArray) {
       if (!entry?.date) continue;
       const [y, m, d] = entry.date.split('-');
       if (y !== year || m !== month) continue;
 
-      const hasRaceBetPoints = Array.isArray(entry.races)
-        && entry.races.some(r => r && Number.isFinite(r.betPoints) && r.betPoints > 0);
+      const races = Array.isArray(entry.races) ? entry.races : [];
+      const hasRaceBetPoints = races.some(r => r && Number.isFinite(r.betPoints) && r.betPoints > 0);
+      // 公開本線判定済み = bettingLines を持つ（=snapshot の旧判定より優先すべき表示可能データ）。
+      const hasLiveDisplayData = races.length > 0
+        && races.some(r => Array.isArray(r.bettingLines) && r.bettingLines.length > 0);
       const hasMonthly = Object.prototype.hasOwnProperty.call(merged, d);
 
-      if (hasRaceBetPoints || !hasMonthly) {
+      if (hasRaceBetPoints || hasLiveDisplayData || !hasMonthly) {
         merged[d] = normalizeDayFromSingular(entry, 'nankan');
       }
-      // else: monthly を維持
+      // else: 最低限の表示データも持たない場合のみ monthly を維持
     }
   }
 
@@ -166,4 +173,50 @@ export function buildMergedMonthData(archiveArray, monthlySnapshot, year, month,
 export function dayKeyToInt(key) {
   const m = String(key).match(/^(\d{1,2})/);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * 南関AK馬単「公開本線のみ」実績の集計開始日。
+ * これ以前（2026-04-14 以前）の月別 snapshot は bettingLines/着順を持たず公開本線のみで再判定できないため、
+ * 旧「本線＋抑え」基準のまま。年間・全期間の“現在基準”集計には混在させず、この日以降だけを対象とする。
+ * 旧期間データ自体は削除せず、月別履歴として閲覧可能なまま維持する。
+ */
+export const CURRENT_BASIS_START = '2026-04-15';
+export const CURRENT_BASIS_START_LABEL = '2026年4月15日';
+export const LEGACY_BASIS_END_LABEL = '2026年4月14日';
+
+/** dayKey("14"|"14j") と year,month から日付が現在基準期間（>= CURRENT_BASIS_START）か判定（日付のみ）。 */
+export function isCurrentBasisDay(year, month, dayKey) {
+  const d = String(dayKeyToInt(dayKey)).padStart(2, '0');
+  return `${year}-${String(month).padStart(2, '0')}-${d}` >= CURRENT_BASIS_START;
+}
+
+/**
+ * 1日分のマージ済みデータが「現在基準」か判定。
+ * 現在基準 = live(archiveResults.json=公開本線のみ判定済み)由来 かつ 日付 >= CURRENT_BASIS_START。
+ * snapshot 由来（旧「本線+抑え」基準）は、たとえ日付が 04-15 以降でも現在基準に含めない。
+ */
+export function isCurrentBasisEntry(year, month, dayKey, dayData) {
+  return dayData?.source === 'live' && isCurrentBasisDay(year, month, dayKey);
+}
+
+/**
+ * buildMergedMonthData の返り値（南関）を「現在基準」「旧基準」に分けて集計する共通 helper。
+ * JRA 日（"DDj" / category==='jra'）は南関集計から除外。日付キー map のため二重計上は起きない。
+ * 現在基準は live 由来かつ 2026-04-15 以降のみ（snapshot 由来は日付に関わらず legacy）。
+ * @returns {{current:Object, legacy:Object}} 各 {days,hitRaces,totalRaces,payout,perfectDays}
+ */
+export function aggregateMonthByBasis(monthData, year, month) {
+  const mk = () => ({ days: 0, hitRaces: 0, totalRaces: 0, payout: 0, perfectDays: 0 });
+  const current = mk(), legacy = mk();
+  for (const [key, d] of Object.entries(monthData || {})) {
+    if (String(key).endsWith('j') || d?.category === 'jra') continue; // 南関のみ
+    const bucket = isCurrentBasisEntry(year, month, key, d) ? current : legacy;
+    bucket.days += 1;
+    bucket.hitRaces += d.hitRaces || 0;
+    bucket.totalRaces += d.totalRaces || 0;
+    bucket.payout += d.totalPayout || 0;
+    if (d.perfectHit) bucket.perfectDays += 1;
+  }
+  return { current, legacy };
 }

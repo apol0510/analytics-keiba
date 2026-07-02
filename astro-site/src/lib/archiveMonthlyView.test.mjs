@@ -5,7 +5,12 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMergedMonthData } from './archiveMonthlyView.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import {
+  buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisDay, CURRENT_BASIS_START,
+} from './archiveMonthlyView.js';
 
 // fixture helpers
 function makeRaces(count, venue, allHit = true) {
@@ -167,5 +172,107 @@ describe('buildMergedMonthData — null 安全性', () => {
     const data = buildMergedMonthData(threeVenue, {}, '2026', '06');
     assert.ok(data['05'].venues?.length > 1, '3会場で badge 条件が不成立');
     assert.equal(data['05'].venues.length, 3);
+  });
+});
+
+// ─────────────────────────────────────────────
+// 現在基準（2026-04-15以降）集計 + 2026-04-14 live優先
+// ─────────────────────────────────────────────
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA = join(__dirname, '..', 'data');
+const loadArchive = () => JSON.parse(readFileSync(join(DATA, 'archiveResults.json'), 'utf-8'));
+const loadJra = () => JSON.parse(readFileSync(join(DATA, 'archiveResultsJra.json'), 'utf-8'));
+const loadSnap = (ym) => JSON.parse(readFileSync(join(DATA, `archiveResults_${ym}.json`), 'utf-8'));
+
+describe('現在基準カットオフ (2026-04-15)', () => {
+  it('CURRENT_BASIS_START は 2026-04-15', () => {
+    assert.equal(CURRENT_BASIS_START, '2026-04-15');
+  });
+
+  it('isCurrentBasisDay: 04-14以前は除外・15以降は現在基準', () => {
+    assert.equal(isCurrentBasisDay('2026', '04', '14'), false);
+    assert.equal(isCurrentBasisDay('2026', '04', '15'), true);
+    assert.equal(isCurrentBasisDay('2026', '03', '31'), false);
+    assert.equal(isCurrentBasisDay('2026', '07', '1'), true);
+    assert.equal(isCurrentBasisDay('2025', '10', '31'), false);
+  });
+
+  it('現在基準 = live由来かつ04-15以降のみ / JRA・snapshotは除外', () => {
+    const merged = {
+      // live かつ 04-15以降 → 現在基準
+      '15': { category: 'nankan', source: 'live', totalRaces: 12, hitRaces: 6, totalPayout: 1000, perfectHit: false },
+      // live だが 04-14 → legacy
+      '14': { category: 'nankan', source: 'live', totalRaces: 12, hitRaces: 8, totalPayout: 2000, perfectHit: false },
+      // snapshot由来で04-18(>=15)でも旧基準 → legacy（回帰: snapshot日を現在基準へ混入させない）
+      '18': { category: 'nankan', source: 'snapshot', totalRaces: 12, hitRaces: 7, totalPayout: 3000, perfectHit: false },
+      // JRAは南関集計外
+      '15j': { category: 'jra', source: 'live', totalRaces: 12, hitRaces: 9, totalPayout: 99999, perfectHit: false },
+    };
+    const { current, legacy } = aggregateMonthByBasis(merged, '2026', '04');
+    assert.equal(current.totalRaces, 12);   // '15' のみ
+    assert.equal(current.hitRaces, 6);
+    assert.equal(current.payout, 1000);     // JRA(99999)・snapshot(3000)不算入
+    assert.equal(legacy.totalRaces, 24);    // '14' + '18'（snapshot日を含む）
+  });
+});
+
+describe('2026-04-14 live優先マージ（実データ）', () => {
+  it('04-14 は snapshot でなく live(公開本線判定済み)が採用される', () => {
+    const live = loadArchive();
+    const live0414 = live.find((e) => e.date === '2026-04-14');
+    assert.ok(live0414, 'live 2026-04-14 が存在');
+    const merged = buildMergedMonthData(live, loadSnap('2026-04'), '2026', '04');
+    assert.ok(merged['14'], '14日がマージ結果に存在');
+    assert.equal(merged['14'].recoveryRate, live0414.returnRate);
+    assert.equal(merged['14'].hitRaces, live0414.hitRaces);
+    assert.equal(merged['14'].totalRaces, live0414.totalRaces);
+  });
+
+  it('同一日は二重計上されない（current+legacy = 南関日数）', () => {
+    const merged = buildMergedMonthData(loadArchive(), loadSnap('2026-04'), '2026', '04');
+    const keys = Object.keys(merged);
+    assert.equal(keys.length, new Set(keys).size);
+    const { current, legacy } = aggregateMonthByBasis(merged, '2026', '04');
+    const nankanDays = keys.filter((k) => !k.endsWith('j')).length;
+    assert.equal(current.days + legacy.days, nankanDays);
+  });
+
+  it('現在基準は04-15以降のみ・04-14以前はlegacyへ分離', () => {
+    const merged = buildMergedMonthData(loadArchive(), loadSnap('2026-04'), '2026', '04');
+    for (const k of Object.keys(merged)) {
+      if (k.endsWith('j')) continue;
+      assert.equal(isCurrentBasisDay('2026', '04', k), parseInt(k, 10) >= 15);
+    }
+    const { current } = aggregateMonthByBasis(merged, '2026', '04');
+    assert.ok(current.totalRaces > 0);
+  });
+});
+
+describe('旧月の閲覧維持 / 2026-07-01 維持', () => {
+  it('2025-10 は snapshot から閲覧可能・現在基準集計は0', () => {
+    const merged = buildMergedMonthData(loadArchive(), loadSnap('2025-10'), '2025', '10');
+    assert.ok(Object.keys(merged).length > 0);
+    const { current, legacy } = aggregateMonthByBasis(merged, '2025', '10');
+    assert.equal(current.totalRaces, 0);
+    assert.ok(legacy.totalRaces > 0);
+  });
+
+  it('2026-07-01 は現在基準・10/12・回収率368%相当を維持', () => {
+    const merged = buildMergedMonthData(loadArchive(), {}, '2026', '07');
+    const d1 = merged['01'];
+    assert.ok(d1, '07-01(キー"01")が存在');
+    assert.equal(d1.hitRaces, 10);
+    assert.equal(d1.totalRaces, 12);
+    assert.equal(Math.round(d1.recoveryRate), 368);
+    const { current } = aggregateMonthByBasis(merged, '2026', '07');
+    assert.ok(current.totalRaces >= 12);
+  });
+
+  it('JRA archive を渡してもキーは "DDj" で南関と衝突しない', () => {
+    const merged = buildMergedMonthData(loadArchive(), {}, '2026', '06', loadJra());
+    for (const k of Object.keys(merged)) {
+      if (k.endsWith('j')) assert.equal(merged[k].category, 'jra');
+      else assert.notEqual(merged[k].category, 'jra');
+    }
   });
 });
