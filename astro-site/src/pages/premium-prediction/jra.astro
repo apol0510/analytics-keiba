@@ -8,6 +8,10 @@ import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
 import { isMainRace, generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
+// 表示専用: 保存 bettingLines.umatan 末尾の内部保険「(抑え…)」/「（抑え…）」を表示文字列からのみ除去する。
+// 保存値・アーカイブ判定(checkUmatanHit)・点数計算(countPointsFromUmatanLine)は不変（保存文字列は加工しない）。
+// 区切り記号(-/↔/⇔/→)・軸・本線相手は保持。抑え表記が無い買い目はそのまま返す。
+const stripOsaeForDisplay = (s) => String(s).replace(/[(（]抑え[^)）]*[)）]/g, '');
 import { enrichHorse, generateMinorHorseComment, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
@@ -650,7 +654,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                       return {
                         mark: markOf(role),
                         name: axisHorse?.horseName ?? axisHorse?.name ?? '',
-                        numbers: lineStr,
+                        numbers: stripOsaeForDisplay(lineStr),
                         points: countPointsFromUmatanLine(lineStr) || 0,
                         role,
                       };
