@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
 import { generateAdvancedMetrics } from '../../utils/featureScores.js';
-import { isMainRace, getTop5Challengers } from '../../utils/mainRaceBetting.js';
+import { isMainRace, generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 import { enrichHorse, generateMinorHorseComment, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
@@ -285,79 +285,9 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
 
 // generateAdvancedMetrics imported from featureScores.js
 
-// 馬単買い目を生成する関数（横並び馬番号形式）
-// メインレースは本命軸のみ・上位5頭・抑えなし（importPredictionJra.js の10点ロジックと一致）。
-// 通常レースは本命軸 + 対抗軸の従来表示。
-function generateUmatanBets(horses, raceNumber, venueRaces) {
-  // pt値でソート（降順）
-  const sortedHorses = [...horses].sort((a, b) => b.pt - a.pt);
-
-  // 本命・対抗・単穴を特定
-  const honmei = sortedHorses.find(h => h.role === '本命');
-  const taikou = sortedHorses.find(h => h.role === '対抗');
-  const tananaList = sortedHorses.filter(h => h.role === '単穴');
-
-  if (!honmei) return null;
-
-  // メインレース: 本命軸 1行 / 上位5頭 / 対抗軸ラインなし
-  if (isMainRace(raceNumber, venueRaces)) {
-    const top5 = getTop5Challengers(horses);
-    const opponents = top5
-      .map(h => h.horseNumber ?? h.number)
-      .filter(n => n != null && n !== honmei.horseNumber);
-    return {
-      honmei: {
-        axis: honmei.horseNumber,
-        axisName: honmei.horseName,
-        opponents
-      },
-      taikou: null
-    };
-  }
-
-  if (!taikou) return null;
-
-  // 連下候補（連下最上位・連下、および「抑え候補」と判定された補欠のみ）
-  // ※ 補欠でも isOsaeCandidate=false（ci<45 など）は不要馬扱いのため買い目に含めない
-  const renkaList = sortedHorses.filter(h =>
-    h.role === '連下最上位' || h.role === '連下' || (h.role === '補欠' && isOsaeCandidate(h))
-  );
-
-  // 相手馬リスト作成
-  const buildOpponents = (axis) => {
-    const opponents = [];
-
-    // 軸が本命の場合：対抗→単穴→連下
-    // 軸が対抗の場合：本命→単穴→連下
-    if (axis === 'honmei') {
-      opponents.push(taikou.horseNumber);
-      tananaList.forEach(h => opponents.push(h.horseNumber));
-      renkaList.forEach(h => opponents.push(h.horseNumber));
-    } else {
-      opponents.push(honmei.horseNumber);
-      tananaList.forEach(h => opponents.push(h.horseNumber));
-      renkaList.forEach(h => opponents.push(h.horseNumber));
-    }
-
-    return opponents;
-  };
-
-  const honmeiOpponents = buildOpponents('honmei');
-  const taikouOpponents = buildOpponents('taikou');
-
-  return {
-    honmei: {
-      axis: honmei.horseNumber,
-      axisName: honmei.horseName,
-      opponents: honmeiOpponents
-    },
-    taikou: {
-      axis: taikou.horseNumber,
-      axisName: taikou.horseName,
-      opponents: taikouOpponents
-    }
-  };
-}
+// 馬単買い目はローカル生成を廃止し、保存 bettingLines.umatan（単一正本）を参照する。
+// 欠落時のみ共通モジュール generateRaceUmatanLines で再生成（nankan Premium と同一パターン）。
+// 通常レースは正本側で G-CI 適用済み、メインレースは本命軸一方向の既存仕様のまま。
 
 // =========================================================================
 // 本日の傾向分析（AI自動判定）— 会場ごと
@@ -675,8 +605,11 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               // 役割順にソート（本命→対抗→単穴→連下最上位→連下→補欠→無）
               const sortedHorses = sortHorsesByRole(horsesWithMetrics);
 
-              // 買い目生成
-              const umatanBets = generateUmatanBets(allHorses, race.raceInfo.raceNumber, venuePredictions.length);
+              // 買い目データ取得（単一正本 = 保存 bettingLines.umatan / 欠落時のみ共通モジュールで再生成）
+              // 通常レースは正本側で G-CI 適用済み、メインレースは本命軸の既存仕様のまま。
+              const umatanLines = Array.isArray(race.bettingLines?.umatan) && race.bettingLines.umatan.length > 0
+                ? race.bettingLines.umatan
+                : generateRaceUmatanLines(allHorses, isMainRace(race.raceInfo.raceNumber, venuePredictions.length));
 
               // モデル統計
               const avgConfidence = (horsesWithMetrics.reduce((sum, h) =>
@@ -706,25 +639,22 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 
 
                   {/* AI推奨買い目（nankan 統一カード形式） */}
-                  {umatanBets && (() => {
+                  {umatanLines && umatanLines.length > 0 && (() => {
                     const isMain = isMainRace(race.raceInfo.raceNumber, venuePredictions.length);
-                    const buildLine = (axisInfo, mark) => {
-                      const opps5 = axisInfo.opponents.slice(0, 5);
-                      const oppsExtra = axisInfo.opponents.slice(5);
-                      const oppsStr = opps5.join('.') + (oppsExtra.length > 0 ? `（抑え ${oppsExtra.join('.')}）` : '');
-                      const numbers = `${mark}${axisInfo.axis}↔${oppsStr}`;
-                      const points = opps5.length + oppsExtra.length;
-                      return { mark, name: axisInfo.axisName, numbers, points };
-                    };
-                    const lines = [];
-                    if (umatanBets.honmei) {
-                      const ln = buildLine(umatanBets.honmei, '◎');
-                      if (isMain) ln.points = ln.points * 2;
-                      lines.push({ ...ln, role: '本命' });
-                    }
-                    if (umatanBets.taikou) {
-                      lines.push({ ...buildLine(umatanBets.taikou, '○'), role: '対抗' });
-                    }
+                    // 保存 bettingLines.umatan（正本）をそのまま表示。軸の役割・馬名はラベル用に allHorses から復元。
+                    const markOf = (role) => role === '本命' ? '◎' : role === '対抗' ? '○' : role === '単穴' ? '▲' : role === '連下最上位' ? '△' : '';
+                    const lines = umatanLines.map((lineStr) => {
+                      const axisNum = parseInt(String(lineStr).match(/^(\d+)/)?.[1] ?? '', 10);
+                      const axisHorse = allHorses.find(h => Number(h.horseNumber ?? h.number) === axisNum);
+                      const role = axisHorse?.role || '';
+                      return {
+                        mark: markOf(role),
+                        name: axisHorse?.horseName ?? axisHorse?.name ?? '',
+                        numbers: lineStr,
+                        points: countPointsFromUmatanLine(lineStr) || 0,
+                        role,
+                      };
+                    });
                     return (
                       <div class="betting-section pro-exclusive recommendation-section" id={`betting-section-${raceIndex}`} data-race-number={race.raceInfo.raceNumber} data-total-races={venuePredictions.length}>
                         <div class="bet-strategy unified-bet-card">

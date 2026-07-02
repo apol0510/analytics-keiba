@@ -88,6 +88,31 @@ export function sortOsaeCandidates(horses) {
 }
 
 /**
+ * G-CI 昇格用の「抑え最上位」を決定的に返す。
+ *
+ * 抑え候補（isOsaeCandidate: role ∈ {補欠, 押さえ, 抑え} かつ getOsaeCi(h) >= MIN_OSAE_CI）から、
+ * **CI 降順 → pt 降順 → 馬番昇順** の決定順で先頭 1 頭を返す。候補が無ければ null。
+ *   - import 時は role='補欠'、Astro 表示時は role='押さえ' に別名化されるが、いずれも
+ *     OSAE_LIKE_ROLES に含まれるため import と表示で同一の抑え最上位を返す（正本一致）。
+ *   - CI 欠落（getOsaeCi < 45）なら候補ゼロ → null を返し、呼び出し側は従来 F3 へフォールバックする。
+ *
+ * @param {object[]} horses - レースの全馬
+ * @returns {object|null} 抑え最上位の horse、無ければ null
+ */
+export function getTopOsaeCandidate(horses) {
+  if (!Array.isArray(horses)) return null;
+  const candidates = horses.filter(isOsaeCandidate);
+  if (candidates.length === 0) return null;
+  return candidates.slice().sort((a, b) => {
+    const ciDiff = getOsaeCi(b) - getOsaeCi(a);
+    if (ciDiff !== 0) return ciDiff;
+    const ptDiff = (Number(b?.pt) || 0) - (Number(a?.pt) || 0);
+    if (ptDiff !== 0) return ptDiff;
+    return (Number(a?.number ?? a?.horseNumber) || 0) - (Number(b?.number ?? b?.horseNumber) || 0);
+  })[0];
+}
+
+/**
  * 買い目 "(抑え...)" 用の馬番リストを返す。
  *
  * 方針 (2026-05-21): **指数45以上の馬を本線から漏らさない**ための role 非依存ルール。

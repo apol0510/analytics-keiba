@@ -17,9 +17,14 @@
 
 // 抑え判定は単一源 osaeClassification.js に集約（ローカル isOsae は撤去）。
 // 依存ゼロモジュールなので Node 実行の importPrediction*.js からも安全に読める。
-import { selectOsaeNumbers } from './osaeClassification.js';
+import { selectOsaeNumbers, getOsaeCi, getTopOsaeCandidate } from './osaeClassification.js';
 
 const ROLE_PRIORITY = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
+
+// G-CI（抑え最上位昇格）: 通常レースのみ。相手5位が連下 かつ 抑え最上位の
+// racebook 系コンピ指数が相手5位より GCI_MIN_CI_MARGIN 以上高いとき、相手5位を1頭差し替える。
+// メインレースには適用しない。CI 欠落時は候補ゼロ → 従来 F3 へフォールバック。
+const GCI_MIN_CI_MARGIN = 5;
 
 export function getMainRaceNumber(totalRaces) {
   if (totalRaces === 8) return 7;
@@ -110,8 +115,9 @@ export function generateNormalRaceUmatanLines(horses) {
   const taikou = horses.find(h => h && h.role === '対抗');
   const taikouNum = horseNumber(taikou);
 
-  // 軸を除く、役割優先 + pt 降順で相手上位5頭を「選出」→ 表示用に馬番昇順へ並び替える。
-  const selectPartners = (axisNum, priority) => horses
+  // 軸を除く、役割優先 + pt 降順で相手上位5頭を「強さ順」の horse オブジェクトで選出する。
+  // （G-CI の「相手5位」判定に強さ順が必要なため、馬番昇順への並び替えは表示直前に行う）
+  const selectRankedPartners = (axisNum, priority) => horses
     .filter(h => h && priority[h.role] != null)
     .filter(h => {
       const n = horseNumber(h);
@@ -123,15 +129,39 @@ export function generateNormalRaceUmatanLines(horses) {
       if (ra !== rb) return ra - rb;
       return horsePt(b) - horsePt(a);
     })
-    .slice(0, 5)
+    .slice(0, 5);
+
+  // G-CI（通常レースのみ）: 相手5位が連下 かつ 抑え最上位が CI 差 GCI_MIN_CI_MARGIN 以上で
+  // 上回るとき、相手5位を抑え最上位へ1頭差し替える。点数（相手5頭）は不変。
+  //   発動条件: (1)相手5頭ある (2)相手5位が連下 (3)抑え候補(補欠系・CI≥45)が存在
+  //            (4)抑え最上位.CI ≥ 相手5位.CI + 5 (5)抑え最上位が当該段の相手に未包含
+  // getTopOsaeCandidate は CI降順→pt降順→馬番昇順で決定的に1頭を返す。CI欠落時は null → 差替なし=F3。
+  const applyGciSwap = (rankedPartners) => {
+    if (rankedPartners.length < 5) return rankedPartners;
+    const fifth = rankedPartners[4];
+    if (!fifth || fifth.role !== '連下') return rankedPartners;
+    const top = getTopOsaeCandidate(horses);
+    if (!top) return rankedPartners;
+    const topNum = horseNumber(top);
+    if (topNum == null || rankedPartners.some(p => horseNumber(p) === topNum)) return rankedPartners;
+    if (getOsaeCi(top) >= getOsaeCi(fifth) + GCI_MIN_CI_MARGIN) {
+      return rankedPartners.slice(0, 4).concat([top]);
+    }
+    return rankedPartners;
+  };
+
+  const toDisplayNumbers = (ranked) => ranked
     .map(horseNumber)
     .sort((a, b) => Number(a) - Number(b));
 
   // 1段目（本命軸）相手プール: 対抗 → 単穴 → 連下最上位 → 連下
-  const honmeiPartners = selectPartners(honmeiNum, { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 });
+  const honmeiPartners = toDisplayNumbers(
+    applyGciSwap(selectRankedPartners(honmeiNum, { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 }))
+  );
   // 2段目（対抗軸）相手プール: 本命 → 単穴 → 連下最上位 → 連下（本命を相手に入れる）
+  // 両段は独立判定。両段で同じ抑え最上位が条件を満たせば両段昇格を許容する。
   const taikouPartners = taikouNum != null
-    ? selectPartners(taikouNum, { '本命': 1, '単穴': 2, '連下最上位': 3, '連下': 4 })
+    ? toDisplayNumbers(applyGciSwap(selectRankedPartners(taikouNum, { '本命': 1, '単穴': 2, '連下最上位': 3, '連下': 4 })))
     : [];
 
   if (honmeiPartners.length === 0) return [];

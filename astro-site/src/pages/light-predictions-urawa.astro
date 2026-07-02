@@ -159,56 +159,25 @@ export const dailyResultsData = {
     ],
 };
 
-// Standard会員向け1段構成買い目生成関数（本命軸 or 対抗軸の自動判定）
-function generateOneLineUmatanBets(horses) {
-    // 配列チェック
-    if (!Array.isArray(horses) || horses.length === 0) return null;
-
-    // 本命と対抗を特定
-    const honmei = horses.find(h => h.role === '本命');
-    const taikou = horses.find(h => h.role === '対抗');
-
-    if (!honmei) return null;
-
-    // 本命と対抗の点数差を確認（2ポイント以内なら対抗軸に切り替え）
-    let axisHorse = honmei;
-    let axisLabel = '本命';
-
-    if (taikou && honmei.score && taikou.score) {
-        const scoreDiff = honmei.score - taikou.score;
-        if (scoreDiff <= 2) {
-            axisHorse = taikou;
-            axisLabel = '対抗';
-            console.log(`🔄 軸を対抗に変更: 本命${honmei.score}点 vs 対抗${taikou.score}点 (差${scoreDiff}点)`);
-        }
-    }
-
-    // 相手馬を馬番順に並べる（軸馬以外を番号順）
-    // ただし、対抗は必ず含める、押さえは除外
-    const taikouHorse = horses.find(h => h.role === '対抗');
-    const taikouNumber = taikouHorse?.number;
-
-    // 対抗以外の馬を馬番順で取得（押さえは除外）
-    const otherHorses = horses
-        .filter(h => h.number !== axisHorse.number)
-        .filter(h => h.number !== taikouNumber)
-        .filter(h => h.role !== '押さえ') // 押さえを除外
-        .sort((a, b) => a.number - b.number) // 馬番順にソート
-        .map(h => h.number)
-        .filter(Boolean);
-
-    // 対抗を優先し、残り枠に他の馬を追加（最大5頭）
-    const opponents = [taikouNumber, ...otherHorses]
-        .filter(Boolean)
-        .slice(0, 5)
-        .sort((a, b) => a - b); // 最終的に馬番順でソート
-
+// Light の買い目はローカル生成を廃止し、保存 bettingLines.umatan（単一正本）のメインレース買い目を参照する。
+// Light はメインレースのみ表示し、Premium の同一メインレースと完全一致させる（軸・相手の独自再選定はしない）。
+// 正本のメインレース行「本命↔相手5」を軸+相手へ分解して既存の式表示に流すヘルパー。
+function parseMainUmatanForDisplay(bettingLines, horses) {
+    const stored = Array.isArray(bettingLines?.umatan) ? bettingLines.umatan : [];
+    const mainLine = stored[0];
+    if (!mainLine) return null;
+    // 区切りは正本の ↔ を主とし、旧 dash/⇔/→ 形式にも後方互換で対応。
+    const m = String(mainLine).match(/^(\d+)[-↔⇔→]([^()]+)/);
+    if (!m) return null;
+    const axis = parseInt(m[1], 10);
+    const opponents = m[2].split('.').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n));
+    const axisHorse = (Array.isArray(horses) ? horses : []).find(h => Number(h.number ?? h.horseNumber) === axis);
     return {
-        axis: axisHorse.number,
-        axisName: axisHorse.name,
-        axisLabel: axisLabel,
-        opponents: opponents,
-        scoreDiff: taikou && honmei.score && taikou.score ? honmei.score - taikou.score : null
+        axis,
+        axisName: axisHorse?.name ?? axisHorse?.horseName ?? '',
+        axisLabel: '本命',
+        opponents,
+        scoreDiff: null,
     };
 }
 
@@ -785,7 +754,7 @@ function generateOneLineUmatanBets(horses) {
 
                             <!-- AI推奨馬単買い目（1段構成・本命軸のみ） -->
                             {(() => {
-                                const oneLineBets = generateOneLineUmatanBets(raceData.horses);
+                                const oneLineBets = parseMainUmatanForDisplay(raceData.bettingLines, raceData.horses);
                                 if (!oneLineBets) return null;
 
                                 return (
