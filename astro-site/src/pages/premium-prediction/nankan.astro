@@ -997,9 +997,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 <span>📊</span>
                                                 <span>AI推奨買い目</span>
                                             </h2>
-                                            <span class="unified-bet-subtitle">
-                                                {isMainRace ? '馬単10点' : '馬単'}
-                                            </span>
                                         </div>
 
                                         <div class="bet-list">
@@ -1007,16 +1004,9 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                                 <div class="bet-item">
                                                     <span class="bet-type">馬単</span>
                                                     <span class="bet-horses">{bet.numbers}</span>
-                                                    <span class="bet-points">{bet.points}点</span>
                                                 </div>
                                             ))}
                                         </div>
-
-                                        {isMainRace && (
-                                            <p class="unified-bet-note">
-                                                本命軸の馬単10点構成です。
-                                            </p>
-                                        )}
                                     </div>
                                 </div>
                             )}

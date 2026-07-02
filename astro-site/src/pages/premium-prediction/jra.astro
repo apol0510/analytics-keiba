@@ -667,7 +667,6 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                               <span>📊</span>
                               <span>AI推奨買い目</span>
                             </h2>
-                            <span class="unified-bet-subtitle">{isMain ? '馬単10点' : '馬単'}</span>
                             <span class="pro-tag pro-only">PRO限定</span>
                           </div>
 
@@ -717,14 +716,10 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                                   {ln.name && <span class="bet-axis-label">{ln.role} {ln.name}</span>}
                                   <span class="bet-numbers">{ln.numbers}</span>
                                 </div>
-                                <span class="bet-points">{ln.points}点</span>
                               </div>
                             ))}
                           </div>
 
-                          {isMain && (
-                            <p class="unified-bet-note">本命軸の馬単10点構成です。</p>
-                          )}
                         </div>
                       </div>
                     );
