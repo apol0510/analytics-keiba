@@ -280,3 +280,23 @@ test('Premium表示は保存文字列を破壊しない（点数は元の行か�
     assert.ok(!/bettingLines\.umatan\s*=/.test(s), `${p} が保存 bettingLines.umatan を書き換えている`);
   }
 });
+
+// ── Premium から「馬単10点」バッジ / 右端「N点」バッジ / 「…10点構成です」注記を非表示 ──
+test('Premium南関・JRA に「馬単10点」バッジ・「10点構成です」注記が残っていない', () => {
+  for (const p of ['../pages/premium-prediction/nankan.astro', '../pages/premium-prediction/jra.astro']) {
+    const s = src(p);
+    // 「馬単10点」チップと「…10点構成です」注記の本文を削除（unified-bet-subtitle/note クラス自体は
+    //  三連複カードが共用するため存在は許容。馬単固有のテキストが消えていることで判定する）。
+    assert.ok(!s.includes('馬単10点'), `${p} に「馬単10点」表記が残存`);
+    assert.ok(!s.includes('10点構成です'), `${p} に「10点構成です」注記が残存`);
+  }
+});
+
+test('Premium馬単 bet-item に点数バッジ(bet-points)を表示していない', () => {
+  for (const p of ['../pages/premium-prediction/nankan.astro', '../pages/premium-prediction/jra.astro']) {
+    const s = src(p);
+    // 馬単の bet-item 内に <span class="bet-points">…点</span> を出していない
+    // （三連複カードは対象外だが、馬単側の points バッジ記述が消えていることを確認）
+    assert.ok(!/bet-points">\{(bet|ln)\.points\}点/.test(s), `${p} の馬単に点数バッジが残存`);
+  }
+});
