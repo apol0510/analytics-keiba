@@ -592,17 +592,27 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
                           })()}
 
                           <div class="access-control-section">
-                            <div class="locked-content">
-                              <div class="lock-icon">🔐</div>
-                              <h3>出走全頭を表示</h3>
-                              <p>無料登録で本命◎以外の出走全頭も表示</p>
-                              <a href="/register/" class="unlock-btn unlock-btn-free">無料登録で全頭解放</a>
+                            <div class="locked-content locked-free">
+                              <span class="cta-badge cta-badge-free">¥0 完全無料</span>
+                              <div class="cta-icon">🔓</div>
+                              <h3>出走全頭をフル解放</h3>
+                              <ul class="cta-benefits">
+                                <li>本命◎に加え ○▲△ほか全出走馬</li>
+                                <li>騎手・厩舎・近走もまとめて確認</li>
+                                <li>登録はメールアドレスだけ</li>
+                              </ul>
+                              <a href="/register/" class="unlock-btn unlock-btn-free">無料登録で全頭を見る →</a>
                             </div>
-                            <div class="locked-content">
-                              <div class="lock-icon">🔐</div>
-                              <h3>AI予測買い目</h3>
-                              <p>戦略別の具体的な買い目とAI予測値を提供</p>
-                              <a href="/pricing/" class="unlock-btn unlock-btn-paid">有料会員で解放</a>
+                            <div class="locked-content locked-paid">
+                              <span class="cta-badge cta-badge-paid">★ PREMIUM</span>
+                              <div class="cta-icon">👑</div>
+                              <h3>AI予測買い目をフル解放</h3>
+                              <ul class="cta-benefits">
+                                <li>高性能AIの具体的な買い目</li>
+                                <li>AI予測値で選出根拠まで確認</li>
+                                <li>買い目セクションを完全解禁</li>
+                              </ul>
+                              <a href="/pricing/" class="unlock-btn unlock-btn-paid">🚀 高性能AIの買い目を見る</a>
                             </div>
                           </div>
                         </div>
@@ -1708,6 +1718,25 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
       align-items: center;
       gap: 15px;
     }
+
+    /* CTA 2枚（無料=グリーン / 有料=プレミアム）購買誘導デザイン */
+    .locked-content { position: relative; gap: 12px; padding: 26px 22px 22px; }
+    .cta-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.5px; padding: 4px 14px; border-radius: 999px; white-space: nowrap; }
+    .cta-badge-free { background: linear-gradient(135deg, #10b981, #22c55e); color: #06281c; box-shadow: 0 2px 10px rgba(16,185,129,0.4); }
+    .cta-badge-paid { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #3a2400; box-shadow: 0 2px 10px rgba(245,158,11,0.4); }
+    .cta-icon { font-size: 2.1rem; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); }
+    .cta-benefits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; width: 100%; text-align: left; }
+    .cta-benefits li { position: relative; padding-left: 24px; font-size: 0.86rem; color: #e2e8f0; line-height: 1.4; }
+    .cta-benefits li::before { content: '✓'; position: absolute; left: 4px; top: 0; font-weight: 900; }
+    .locked-free { background: linear-gradient(160deg, rgba(16,185,129,0.14) 0%, rgba(15,23,42,0.6) 100%); border-color: rgba(16,185,129,0.45); }
+    .locked-free h3 { color: #34d399; font-size: 1.18rem; font-weight: 800; }
+    .locked-free .cta-benefits li::before { color: #34d399; }
+    .locked-paid { background: linear-gradient(160deg, rgba(139,92,246,0.16) 0%, rgba(245,158,11,0.06) 60%, rgba(15,23,42,0.6) 100%); border-color: rgba(245,158,11,0.4); box-shadow: 0 0 24px rgba(139,92,246,0.12); }
+    .locked-paid h3 { color: #c4b5fd; font-size: 1.18rem; font-weight: 800; }
+    .locked-paid .cta-benefits li::before { color: #fbbf24; }
+    .unlock-btn { padding: 12px 22px; font-weight: 700; font-size: 0.95rem; margin-top: 4px; }
+    .unlock-btn-free { box-shadow: 0 3px 12px rgba(16,185,129,0.35); }
+    .unlock-btn-paid { box-shadow: 0 3px 14px rgba(139,92,246,0.4); }
 
     /* 連下・抑え（minor-horse-card 系） — premium-prediction 共通CSSと統一 */
     .horse-card-minor {
