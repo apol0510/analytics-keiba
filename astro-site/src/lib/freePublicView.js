@@ -3,7 +3,7 @@
  *
  * 目的（有料買い目の無料再現を防ぐ）:
  *   無料の HTML/JSON へは「公開事実（馬番・馬名・騎手・厩舎・斤量・過去走）」と
- *   「本命◎ / 対抗○ の印」だけを出す。買い目再現の入力になる
+ *   「上位4頭の印（◎本命 / ○対抗 / ▲単穴 / △連下最上位）」を出す。買い目再現の入力になる
  *     - pt（累積スコア）
  *     - AI総合指数（computerIndex / sourceComputerIndex 由来）
  *     - 特徴量重要度
@@ -14,10 +14,13 @@
  * pt/CI/特徴量/役割の位置は呼び出し側でダミーのモザイク（うっすら見えそう）を描画する。
  */
 
-// 本命/対抗だけが「見せ場」= 実印を出す。単穴以下は役割自体を伏せる。
+// 上位4頭だけ実印を出す（◎本命 / ○対抗 / ▲単穴 / △連下最上位）。
+// 連下(残り) / 押さえ / 不要馬 の役割、および pt/CI/特徴量 は伏せる（有料限定）。
 const HEADLINE = {
   '本命': { mark: '◎', kind: 'main', markClass: 'horse-mark horse-mark-main' },
   '対抗': { mark: '○', kind: 'sub', markClass: 'horse-mark horse-mark-sub' },
+  '単穴': { mark: '▲', kind: 'tana', markClass: 'horse-mark horse-mark-tana' },
+  '連下最上位': { mark: '△', kind: 'ren', markClass: 'horse-mark horse-mark-minor' },
 };
 
 const num = (h) => Number(h?.number ?? h?.horseNumber);
@@ -31,10 +34,13 @@ const num = (h) => Number(h?.number ?? h?.horseNumber);
  */
 export function buildFreePublicRows(horses, opts = {}) {
   const resolveRecent = typeof opts.resolveRecent === 'function' ? opts.resolveRecent : () => [];
+  // 並び順: 本命→対抗→単穴→連下最上位 を先頭（役割順）、以降は馬番順。
+  const ORDER = { '本命': 0, '対抗': 1, '単穴': 2, '連下最上位': 3 };
+  const rank = (h) => (ORDER[h?.role] ?? 99);
   return (Array.isArray(horses) ? horses : [])
     .filter((h) => h && Number.isFinite(num(h)))
     .slice()
-    .sort((a, b) => num(a) - num(b))
+    .sort((a, b) => (rank(a) - rank(b)) || (num(a) - num(b)))
     .map((h) => {
       const head = HEADLINE[h.role] || null;
       return {
