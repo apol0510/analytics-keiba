@@ -594,9 +594,9 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
                           <div class="access-control-section">
                             <div class="locked-content">
                               <div class="lock-icon">🔐</div>
-                              <h3>連下・押さえ候補馬</h3>
-                              <p>より多くの候補馬情報を確認できます</p>
-                              <a href="/register/" class="unlock-btn unlock-btn-free">無料登録で解放</a>
+                              <h3>出走全頭を表示</h3>
+                              <p>無料登録で本命◎以外の出走全頭も表示</p>
+                              <a href="/register/" class="unlock-btn unlock-btn-free">無料登録で全頭解放</a>
                             </div>
                             <div class="locked-content">
                               <div class="lock-icon">🔐</div>
@@ -2830,11 +2830,11 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
         content.style.display = isRegistered ? 'block' : 'none';
       });
 
-      // 連下・押さえ鍵の表示制御（有料鍵は維持）
+      // 全頭解放鍵の表示制御（有料鍵は維持）
       document.querySelectorAll('.access-control-section').forEach(section => {
         const lockedContents = section.querySelectorAll('.locked-content');
         const renshitaOsaeLock = Array.from(lockedContents).find(c =>
-          c.querySelector('h3')?.textContent?.includes('連下・押さえ候補馬')
+          c.querySelector('h3')?.textContent?.includes('全頭')
         );
         if (renshitaOsaeLock) {
           renshitaOsaeLock.style.display = isRegistered ? 'none' : 'flex';

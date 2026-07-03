@@ -352,16 +352,16 @@ const analysis = firstVenue.mainRace.analysis;
 
                                             <!-- Free会員用アクセス制御（レース別） -->
                                             <div class="access-control-section">
-                                                {/* 連下・押さえ - メインレースかどうかで表示変更 */}
+                                                {/* 全頭解放 - 無料登録で本命◎以外も出走全頭を表示 */}
                                                 <div class="locked-content">
                                                     <div class="lock-icon">🔐</div>
-                                                    <h3>連下・押さえ候補馬</h3>
+                                                    <h3>出走全頭を表示</h3>
                                                     {isMainRace ? (
-                                                        <p>メインレース：登録ユーザーには解放済み</p>
+                                                        <p>メインレース：登録ユーザーは全頭表示済み</p>
                                                     ) : (
-                                                        <p>より多くの候補馬情報を確認できます</p>
+                                                        <p>無料登録で本命◎以外の出走全頭も表示</p>
                                                     )}
-                                                    <a href="/free-signup/" class="unlock-btn unlock-btn-free">無料登録で解放</a>
+                                                    <a href="/free-signup/" class="unlock-btn unlock-btn-free">無料登録で全頭解放</a>
                                                 </div>
 
                                                 {/* 買い目は全レース共通で有料会員で解放 */}
@@ -2694,20 +2694,20 @@ const analysis = firstVenue.mainRace.analysis;
         accessControlSections.forEach(section => {
             const lockedContents = section.querySelectorAll('.locked-content');
 
-            // 連下・押さえ候補馬の鍵のみを制御（有料鍵は除外）
+            // 全頭解放の鍵のみを制御（有料鍵は除外）
             const renshitaOsaeLock = Array.from(lockedContents).find(content =>
-                content.querySelector('h3')?.textContent?.includes('連下・押さえ候補馬')
+                content.querySelector('h3')?.textContent?.includes('全頭')
             );
 
             if (renshitaOsaeLock) {
                 if (isRegistered) {
-                    // 登録済み：連下・押さえの鍵のみ非表示
+                    // 登録済み：全頭解放の鍵のみ非表示
                     renshitaOsaeLock.style.display = 'none';
-                    console.log('✅ 連下・押さえ鍵のみ非表示（登録済み）');
+                    console.log('✅ 全頭解放の鍵のみ非表示（登録済み）');
                 } else {
-                    // 未登録：連下・押さえの鍵表示
+                    // 未登録：全頭解放の鍵表示
                     renshitaOsaeLock.style.display = 'flex';
-                    console.log('🔒 連下・押さえ鍵表示（未登録）');
+                    console.log('🔒 全頭解放の鍵表示（未登録）');
                 }
             }
 
