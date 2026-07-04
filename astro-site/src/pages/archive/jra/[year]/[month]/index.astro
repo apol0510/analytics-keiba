@@ -98,9 +98,6 @@ const pageDescription = monthData.length > 0
             </div>
           </section>
 
-          {/* 買い目点数に関する注記（intelligence 方式に合わせて点数は非公開） */}
-          <p class="rule-note">※買い目は内部ルールに基づき調整しています</p>
-
           {/* 日別アーカイブ */}
           {monthData.map((dayData: any) => {
             const [, , day] = dayData.date.split('-');
@@ -162,6 +159,9 @@ const pageDescription = monthData.length > 0
             <a href="/archive/jra/" class="btn-back">← JRAアーカイブトップ</a>
             <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
           </footer>
+
+          {/* 買い目点数に関する注記（intelligence 方式に合わせて点数は非公開）。最下部に控えめに表示。 */}
+          <p class="rule-note">※買い目は内部ルールに基づき調整しています</p>
         </>
       )}
     </div>
@@ -215,13 +215,13 @@ const pageDescription = monthData.length > 0
     }
   }
 
-  /* 買い目ルール注記 (点数非公開方針) */
+  /* 買い目ルール注記 (点数非公開方針) — 最下部に控えめに表示 */
   .rule-note {
     text-align: center;
-    font-size: 0.85rem;
-    color: #94a3b8;
-    margin: 0 0 2rem;
-    opacity: 0.85;
+    font-size: 0.72rem;
+    color: #64748b;
+    margin: 1.5rem 0 0;
+    opacity: 0.6;
   }
 
   /* 月間サマリーカード */
