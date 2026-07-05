@@ -1,5 +1,5 @@
 // シンプルなプラン管理システム（LocalStorage使用）
-// Stripe Payment Links + Zapier構成用
+// プラン情報の正本は Airtable。ここではブラウザ表示用にキャッシュするだけ。
 
 export const PlanStorage = {
   // プラン情報を取得

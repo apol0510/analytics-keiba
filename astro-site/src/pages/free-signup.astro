@@ -534,8 +534,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 return;
             }
             
-            // 本番環境：Netlify Functions経由でZapier連携（CORS回避）
-            console.log('🚀 本番モード: Functions経由Zapier連携');
+            // 本番環境：Netlify Functions (auth-user) 経由で Airtable 登録（CORS回避）
+            console.log('🚀 本番モード: Functions経由でAirtable登録');
             
             const response = await fetch('/.netlify/functions/auth-user', {
                 method: 'POST',
