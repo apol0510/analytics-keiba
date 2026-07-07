@@ -195,3 +195,41 @@ for (const [name, src] of [['login.astro', loginPage], ['dashboard.astro', dashb
     assert.equal(/send-magic-link[\s\S]{0,200}\}\)\.catch\(\(\)\s*=>\s*\{\}\)/.test(s), false);
   });
 }
+
+// =========================================================================
+// #4: 有料ログアウト配線（dashboard.astro）
+//   - 有料時に logout-section-paid を表示 / 無料時は非表示
+//   - logout Function を呼び、response.ok の時だけ localStorage を削除
+//   - 失敗時に localStorage を先に消さない / Cookie 値を JS から読まない
+// =========================================================================
+{
+  const s = stripJs(dashboard);
+  test('dashboard.astro: 有料時に logout-section-paid を表示（display 制御あり）', () => {
+    // showPlanContent 内で logout-section-paid を isPaid 判定で表示切替している
+    assert.match(s, /logout-section-paid/);
+    assert.match(s, /paidLogoutSection[\s\S]{0,200}style\.display/);
+    assert.match(s, /isPaidLogout\s*\?\s*'block'\s*:\s*'none'/);
+  });
+
+  test('dashboard.astro: logout は logout Function を呼び response.ok を確認する', () => {
+    assert.match(s, /\/\.netlify\/functions\/logout/);
+    assert.match(s, /res\.ok/);
+    // 二重クリック防止フラグ + finally 復元
+    assert.match(s, /_loggingOut/);
+    assert.match(s, /finally\s*\{[\s\S]*?disabled\s*=\s*false/);
+  });
+
+  test('dashboard.astro: Cookie 削除失敗時に localStorage を先に消さない（ok 判定が先）', () => {
+    // logout 関数本体にスコープを絞る（ファイル内の他 removeItem に引っ張られないため）
+    const body = s.slice(s.indexOf('window.logout'));
+    const iOkGuard = body.indexOf('if (!res.ok)');
+    const iRemove = body.indexOf("localStorage.removeItem('user-plan')");
+    assert.ok(iOkGuard > -1 && iRemove > -1, 'ok ガードと removeItem が存在する');
+    assert.ok(iOkGuard < iRemove, '!res.ok の早期 return は localStorage 削除より前');
+  });
+
+  test('dashboard.astro: 有料 Cookie 値を JS から読まない（ak_session / document.cookie 参照なし）', () => {
+    assert.equal(/ak_session/.test(s), false);
+    assert.equal(/document\.cookie/.test(s), false);
+  });
+}

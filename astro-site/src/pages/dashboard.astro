@@ -1553,7 +1553,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 console.log('プラン管理を表示（無料会員）');
                 document.getElementById('plan-section').style.display = 'block';
             }
-            // 有料会員（Standard/Premium）はログアウトボタン非表示
+            // ログアウトボタンの表示制御:
+            //   無料 → plan-section 内の logout-btn-free（上で表示済み）
+            //   有料 → logout-section-paid を表示（PR-B: ak_session を持つ有料会員のログアウト導線）
+            const paidLogoutSection = document.getElementById('logout-section-paid');
+            if (paidLogoutSection) {
+                const isPaidLogout = !(planLower === 'free' || planLower === '' || !planLower);
+                paidLogoutSection.style.display = isPaidLogout ? 'block' : 'none';
+            }
 
             // アップグレード促進の表示制御（Premium系以外）
             if (planLower !== 'premium' && planLower !== 'premium combo' && planLower !== 'premium plus' && planLower !== 'premium sanrenpuku') {
@@ -1624,23 +1631,61 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
         // ポイント交換申請関数は下部の <script is:inline> セクションで定義
 
-        // ログアウト（簡略化）
-        window.logout = function() {
-            // 全てのログイン情報をクリア
-            localStorage.removeItem('user-plan');
-            localStorage.removeItem('isLoggedIn');
-            localStorage.removeItem('userPlan');
-            localStorage.removeItem('userData');
-            localStorage.removeItem('userEmail');
-            localStorage.removeItem('hasClaimedReward');
-            
-            // ナビゲーション更新イベントを発火
-            window.dispatchEvent(new CustomEvent('userLoggedOut'));
-            
-            // ホームページにリダイレクト
-            setTimeout(() => {
-                window.location.href = '/';
-            }, 500);
+        // ログアウト（PR-B: サーバーで ak_session Cookie を削除してから localStorage を消す）
+        // - まず logout Function を呼び、response.ok の時だけ localStorage 旧認証情報を削除する
+        //   （Cookie 削除失敗時に「ログアウト成功」と誤表示しない / 有料 Cookie を残さない）
+        // - HttpOnly の ak_session は JS から読まない・触らない（削除はサーバーの責務）
+        // - 二重クリック防止 + finally でボタン状態を復元
+        let _loggingOut = false;
+        window.logout = async function() {
+            if (_loggingOut) return;
+            _loggingOut = true;
+
+            const logoutButtons = [
+                document.getElementById('logout-btn-free'),
+                document.getElementById('logout-btn-paid'),
+            ].filter(Boolean);
+            const prevLabels = logoutButtons.map((b) => b.textContent);
+            logoutButtons.forEach((b) => { b.disabled = true; b.textContent = 'ログアウト中...'; });
+
+            try {
+                const logoutUrl = window.location.hostname === 'localhost'
+                    ? 'http://localhost:8888/.netlify/functions/logout'
+                    : '/.netlify/functions/logout';
+
+                let res;
+                try {
+                    res = await fetch(logoutUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                    });
+                } catch (netErr) {
+                    console.warn('logout 通信エラー:', netErr);
+                    showError('ログアウトに失敗しました。通信環境を確認して、もう一度お試しください。');
+                    return;
+                }
+
+                // サーバー Cookie 削除が成功した時だけ localStorage を消す
+                if (!res.ok) {
+                    showError('ログアウトに失敗しました。時間をおいて、もう一度お試しください。');
+                    return;
+                }
+
+                localStorage.removeItem('user-plan');
+                localStorage.removeItem('isLoggedIn');
+                localStorage.removeItem('userPlan');
+                localStorage.removeItem('userData');
+                localStorage.removeItem('userEmail');
+                localStorage.removeItem('hasClaimedReward');
+
+                // ナビゲーション更新イベントを発火 → ホームへ
+                window.dispatchEvent(new CustomEvent('userLoggedOut'));
+                setTimeout(() => { window.location.href = '/'; }, 500);
+            } finally {
+                _loggingOut = false;
+                logoutButtons.forEach((b, i) => { b.disabled = false; b.textContent = prevLabels[i]; });
+            }
         };
 
         // ページ読み込み時の初期化（簡略化）
