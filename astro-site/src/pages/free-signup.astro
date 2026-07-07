@@ -549,24 +549,35 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             });
 
             const data = await response.json();
-            
-            if (data.success) {
-                // LocalStorage更新（Airtableデータと同期）
+
+            // 🔒 2026-07-07 セキュリティ改修: 既存会員のログインと新規無料登録を混同しない
+            //   既存会員（isExistingMember）はここで plan を保存してログイン成立させない。
+            //   auth-user は既存会員の plan を返さないため、正規のマジックリンクでログインしてもらう。
+            if (data.success && data.isExistingMember) {
+                showSuccess('このメールアドレスは既にご登録済みです。ログインページからログインしてください。');
+                setTimeout(() => {
+                    window.location.href = '/login/';
+                }, 2500);
+                return;
+            }
+
+            if (data.success && data.isNewUser) {
+                // 新規無料登録のみ: Free としてローカル保存（有料 plan は絶対に入らない）
                 const userData = {
                     email: email,
-                    plan: data.user.plan || 'free',
-                    points: data.user.points || 1,
+                    plan: 'free',
+                    points: (data.user && data.user.points) || 1,
                     registeredAt: new Date().toISOString(),
-                    lastLogin: data.user.lastLogin
+                    lastLogin: data.user && data.user.lastLogin
                 };
-                
+
                 localStorage.setItem('user-plan', JSON.stringify(userData));
-                
+
                 // 旧形式との互換性
                 localStorage.setItem('isLoggedIn', 'true');
-                localStorage.setItem('userPlan', userData.plan);
-                
-                showSuccess(`無料会員登録が完了しました！${data.user.pointsAdded > 0 ? ' ログインポイント' + data.user.pointsAdded + 'pt獲得！' : ''}`);
+                localStorage.setItem('userPlan', 'free');
+
+                showSuccess(`無料会員登録が完了しました！${data.user && data.user.pointsAdded > 0 ? ' ログインポイント' + data.user.pointsAdded + 'pt獲得！' : ''}`);
 
                 // ログイン情報カードを表示
                 showLoginInfo(data.isNewUser, data.user, data.message);
@@ -577,7 +588,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     document.getElementById('login-info-section').style.display = 'none';
                     document.getElementById('completed-section').style.display = 'block';
                 }, 3000);
-                
+
             } else {
                 throw new Error(data.message || 'サーバーエラー');
             }

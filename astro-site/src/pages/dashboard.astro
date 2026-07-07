@@ -536,170 +536,45 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             ダイヤモンド: ['毎日10ポイント獲得', '個別AI分析', 'VIPサポート', '特典申請可能']
         };
 
-        // 簡略化されたマジックリンクフォーム処理
+        // 🔒 2026-07-07 セキュリティ改修: ログインは正規マジックリンク経路に一本化
+        //   旧実装は auth-user にメールを渡し、返ってきた plan をそのまま localStorage に
+        //   保存してログイン成立させていた（= メール入力だけで他人の有料 plan を取得できる裏経路）。
+        //   ここでは send-magic-link を呼んでメールにログインリンクを送るだけにする。
+        //   実際のログイン（user-plan 保存）はリンク先 /auth/verify → verify-magic-link で行う。
         document.getElementById('magic-link-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('email-input').value;
             const button = document.getElementById('magic-link-btn');
-            
+
             button.disabled = true;
-            button.innerHTML = '<span class="inline-spinner" aria-hidden="true"></span>認証中...';
-            
+            button.innerHTML = '<span class="inline-spinner" aria-hidden="true"></span>送信中...';
+
             try {
-                // Netlify Functions経由でAirtableから正確なプラン情報を取得（エラーハンドリング強化）
-                let response;
-                let data;
-                
-                try {
-                    // 開発環境では直接Functions サーバーを呼び出す
-                    const functionsUrl = window.location.hostname === 'localhost' 
-                        ? 'http://localhost:8888/.netlify/functions/auth-user'
-                        : '/.netlify/functions/auth-user';
-                    
-                    response = await fetch(functionsUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ email: email })
-                    });
-                    
-                    if (!response.ok) {
-                        // レスポンステキストを取得してログ出力
-                        const errorText = await response.text();
-                        console.error('🚨 Response error text:', errorText);
+                const functionsUrl = window.location.hostname === 'localhost'
+                    ? 'http://localhost:8888/.netlify/functions/send-magic-link'
+                    : '/.netlify/functions/send-magic-link';
 
-                        // 🔧 2026-03-02追加: 401エラー（未登録ユーザー）の場合は /pricing/ にリダイレクト
-                        if (response.status === 401) {
-                            try {
-                                const errorData = JSON.parse(errorText);
-                                if (errorData.redirectTo) {
-                                    showError(errorData.error + '\n' + errorData.message);
-                                    setTimeout(() => {
-                                        window.location.href = errorData.redirectTo;
-                                    }, 3000);
-                                    return;
-                                }
-                            } catch (e) {
-                                // JSON解析失敗時はそのままエラーを投げる
-                            }
-                        }
+                const response = await fetch(functionsUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email })
+                });
 
-                        throw new Error(`Functions error: ${response.status} - ${errorText}`);
-                    }
+                let data = {};
+                try { data = await response.json(); } catch (_) { /* 本文なしでも継続 */ }
 
-                    data = await response.json();
-                } catch (fetchError) {
-                    console.error('Functions呼び出しエラー:', fetchError);
-                    console.error('エラー詳細:', {
-                        message: fetchError.message,
-                        stack: fetchError.stack,
-                        response: response ? {
-                            status: response.status,
-                            statusText: response.statusText,
-                            url: response.url
-                        } : null
-                    });
-                    
-                    // 具体的なエラーメッセージを表示
-                    throw new Error(`認証API接続エラー: ${fetchError.message}`);
-                }
-                
-                // 🚨 2026-02-28追加: 強制ログアウトチェック
-                if (data.forceLogout) {
-                    console.log('🚨 強制ログアウト検出');
-                    // LocalStorageをクリア
-                    localStorage.removeItem('isLoggedIn');
-                    localStorage.removeItem('userEmail');
-                    localStorage.removeItem('userPlan');
-                    localStorage.removeItem('user-plan');
-
-                    showError('プランが更新されました。再度ログインしてください。');
-                    return;
-                }
-
-                if (data.success && data.user) {
-                    console.log('✅ ログイン成功:', data.user);
-
-                    // セッション情報保存
-                    localStorage.setItem('isLoggedIn', 'true');
-                    localStorage.setItem('userEmail', data.user.email);
-                    localStorage.setItem('userPlan', data.user.plan);
-
-                    // 🚨 2025-11-26追加: 退会申請情報保存
-                    if (data.isWithdrawalRequested) {
-                        localStorage.setItem('isWithdrawalRequested', 'true');
-                    } else {
-                        localStorage.removeItem('isWithdrawalRequested');
-                    }
-
-                    // 期限切れ情報保存
-                    if (data.isExpired) {
-                        localStorage.setItem('isExpired', 'true');
-                        localStorage.setItem('originalPlan', data.user.originalPlan || 'premium');
-                        localStorage.setItem('expiryDate', data.user.expiryDate || '');
-                    } else {
-                        localStorage.removeItem('isExpired');
-                        localStorage.removeItem('originalPlan');
-                        if (data.user.expiryDate) {
-                            localStorage.setItem('expiryDate', data.user.expiryDate);
-                        }
-                    }
-
-                    const planNames = {
-                        'free': '無料会員',
-                        'Free': '無料会員',
-                        // Light が現行表記。旧 Standard / ライト も Light会員 として表示
-                        'Light': 'Light会員',
-                        'light': 'Light会員',
-                        'ライト': 'Light会員',
-                        'standard': 'Light会員',
-                        'Standard': 'Light会員',
-                        'premium': 'Premium会員',
-                        'Premium': 'Premium会員',
-                        'expired': '期限切れ' // 期限切れ表示
-                    };
-
-                    const planDisplayName = planNames[data.user.plan] || data.user.plan;
-                    
-                    // ログイン情報をダッシュボードに保存（画面切り替え後に表示用）
-                    const loginInfo = {
-                        planDisplayName: planDisplayName,
-                        pointsAdded: data.user.pointsAdded,
-                        totalPoints: data.user.points,
-                        email: data.user.email
-                    };
-                    localStorage.setItem('loginInfo', JSON.stringify(loginInfo));
-
-                    // ログイン成功メッセージ
-                    const message = `✅ ${planDisplayName}でログインしました`;
-                    console.log('成功メッセージ:', message);
-                    showSuccess(message);
-
+                if (response.ok && data.success) {
+                    // 成否に関わらず（enumeration 防止のため）汎用の成功案内を表示
+                    showSuccess('✉️ ログインリンクをメールに送信しました。メールに届いたリンク（15分間有効）を開いてログインしてください。');
                     document.getElementById('email-input').value = '';
-                    
-                    // ダッシュボード表示用データ準備（Functionsから取得した実データを使用）
-                    const dashboardData = {
-                        email: data.user.email,
-                        plan: data.user.plan,
-                        points: data.user.points,  // Functions から取得した実際のポイント
-                        hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
-                        registrationDate: data.user.registeredAt || data.user.lastLogin,
-                        name: 'お客様'
-                    };
-                    
-                    setTimeout(() => {
-                        showDashboard(dashboardData);
-                        // ナビゲーション更新のためイベント発火
-                        window.dispatchEvent(new Event('storage'));
-                    }, 1000);
+                } else if (response.status === 403) {
+                    showError('このアカウントは現在ご利用いただけません。お問い合わせください。');
                 } else {
-                    throw new Error('Invalid customer data');
+                    throw new Error((data && (data.error || data.details)) || `送信エラー: ${response.status}`);
                 }
-                
             } catch (error) {
-                console.error('Login error:', error);
-                showError(`認証エラー: ${error.message}`);
+                console.error('Magic link send error:', error);
+                showError(`ログインリンクの送信に失敗しました: ${error.message}`);
             } finally {
                 button.disabled = false;
                 button.textContent = 'ログイン';
@@ -707,37 +582,16 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         });
 
         // URLパラメータからトークン認証処理（簡略化）
+        // 🔒 2026-07-07 セキュリティ改修: URL の email からプランを推定してログインさせる
+        //   旧 mock 認証を廃止。?token= を渡された場合は正規の検証ページ /auth/verify に委譲する
+        //   （プランを一切推定・保存しない）。正規マジックリンクも /auth/verify を指すため実害なし。
         async function handleTokenAuth() {
             const urlParams = new URLSearchParams(window.location.search);
             const token = urlParams.get('token');
-            const email = urlParams.get('email');
-            
-            if (token && email) {
-                console.log('マジックリンク認証開始:', email);
-                
-                try {
-                    // 簡略化された認証：メールアドレスからプランを推定
-                    const mockCustomer = {
-                        email: email,
-                        plan: email.includes('premium') ? 'premium' : (email.includes('standard') ? 'standard' : 'free'),
-                        registrationDate: new Date().toISOString()
-                    };
-                    
-                    // セッション情報保存
-                    localStorage.setItem('isLoggedIn', 'true');
-                    localStorage.setItem('userEmail', mockCustomer.email);
-                    localStorage.setItem('userPlan', mockCustomer.plan);
-                    
-                    console.log('認証成功:', mockCustomer);
-                    // URLからパラメータを削除
-                    window.history.replaceState({}, document.title, window.location.pathname);
-                    // ダッシュボード表示
-                    showDashboard(mockCustomer);
-                    
-                } catch (error) {
-                    console.error('認証エラー:', error);
-                    showError('認証に失敗しました');
-                }
+
+            if (token) {
+                // 正規のトークン検証ページへリダイレクト（サーバー側で AuthTokens を照合）
+                window.location.replace('/auth/verify?token=' + encodeURIComponent(token));
             }
         }
 
@@ -4285,26 +4139,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
     </style>
 
     <script is:inline>
-        // テスト用認証関数（開発環境用）
-        window.setTestAuth = function(plan) {
-            const testUser = {
-                email: 'test@example.com',
-                plan: plan,
-                points: plan === 'premium' ? 300 : plan === 'standard' ? 100 : 30,
-                name: 'テストユーザー',
-                registrationDate: '2024-01-01',
-                lastLogin: new Date().toISOString()
-            };
-
-            localStorage.setItem('user-plan', JSON.stringify(testUser));
-            console.log(`✅ テスト認証設定完了: ${plan}プラン`, testUser);
-
-            // ページリロードして変更を反映
-            location.reload();
-        };
-
-
-        console.log('💡 テスト用: setTestAuth("premium"), setTestAuth("standard"), setTestAuth("free") が利用可能です');
+        // 🔒 2026-07-07 セキュリティ改修: テスト認証関数を削除
     </script>
 
     <!-- 申請・送信履歴の描画 -->

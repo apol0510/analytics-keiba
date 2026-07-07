@@ -2653,19 +2653,7 @@ const analysis = firstVenue.mainRace.analysis;
                 };
             }
 
-            // 3. 旧形式のtest_subscription_データをチェック
-            const testSubscriptionKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
-            if (testSubscriptionKeys.length > 0) {
-                try {
-                    const testData = JSON.parse(localStorage.getItem(testSubscriptionKeys[0]));
-                    return { 
-                        user: { id: testData.userId, legacy: true }, 
-                        plan: testData.planType.toLowerCase() 
-                    };
-                } catch (error) {
-                    console.error('Test subscription data parsing error:', error);
-                }
-            }
+            // 🔒 2026-07-07 セキュリティ改修: localStorage 直接昇格 backdoor 除去
 
             // 4. デフォルトは未登録
             return { user: null, plan: null };
@@ -2810,21 +2798,7 @@ const analysis = firstVenue.mainRace.analysis;
     }
     window.toggleNankanRace = toggleNankanRace;
 
-    // デバッグ用：テスト認証関数を直接定義
-    window.setTestAuth = function(plan = 'premium') {
-        const userData = {
-            email: 'test@example.com',
-            plan: plan,
-            name: 'テストユーザー',
-            createdAt: new Date().toISOString(),
-            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-        };
-        localStorage.setItem('user-plan', JSON.stringify(userData));
-        localStorage.setItem('isLoggedIn', 'true');
-        localStorage.setItem('userPlan', plan);
-        console.log(`✅ テスト認証設定完了: ${plan}会員`);
-        setTimeout(() => location.reload(), 100);
-    };
+    // 🔒 2026-07-07 セキュリティ改修: テスト認証関数を削除
 
     window.clearTestAuth = function() {
         localStorage.removeItem('user-plan');
@@ -2834,14 +2808,12 @@ const analysis = firstVenue.mainRace.analysis;
         setTimeout(() => location.reload(), 100);
     };
 
-    console.log('🛠️ テスト認証関数準備完了: setTestAuth("free"), clearTestAuth()');
-
     // ページ読み込み後に実行
     document.addEventListener('DOMContentLoaded', function() {
         console.log('🚀 DOMContentLoaded - 無料会員アクセスチェック開始');
         checkFreeMemberAccess();
 
-        // LocalStorage変更時にも再チェック（setTestAuthからのリロード後）
+        // LocalStorage変更時にも再チェック
         window.addEventListener('storage', function() {
             console.log('📦 LocalStorage変更検知 - アクセスチェック再実行');
             setTimeout(() => checkFreeMemberAccess(), 100);

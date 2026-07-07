@@ -147,39 +147,10 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
     function getCurrentUserPlan() {
         console.log('🔍 認証状態チェック開始');
         
-        // 0. デモモードのサブスクリプション情報をチェック（優先）
-        const demoKeys = Object.keys(localStorage).filter(key => key.startsWith('demo_subscription_'));
-        if (demoKeys.length > 0) {
-            try {
-                const demoData = JSON.parse(localStorage.getItem(demoKeys[0]));
-                console.log('🎭 デモモード認証:', demoData);
-                return {
-                    user: { id: 'demo_user', email: 'demo@example.com', demo: true },
-                    plan: demoData.planType.toLowerCase(),
-                    planType: 'Monthly',
-                    lifetimeSanrenpuku: false
-                };
-            } catch (error) {
-                console.error('Demo data parsing error:', error);
-            }
-        }
-
-        // 1. 旧形式のtest_subscription_データをチェック（最優先 - 本番で実際に使用中）
-        const testSubscriptionKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
-        if (testSubscriptionKeys.length > 0) {
-            try {
-                const testData = JSON.parse(localStorage.getItem(testSubscriptionKeys[0]));
-                console.log('📦 旧形式認証データ発見:', testData);
-                return {
-                    user: { id: testData.userId, legacy: true },
-                    plan: testData.planType.toLowerCase(),
-                    planType: 'Monthly',
-                    lifetimeSanrenpuku: false
-                };
-            } catch (error) {
-                console.error('Test subscription data parsing error:', error);
-            }
-        }
+        // 🔒 2026-07-07 セキュリティ改修: localStorage 直接昇格 backdoor を除去
+        //   旧 0. demo_subscription_* / 1. test_subscription_* の読み取りを削除。
+        //   これらはアプリ内に書き込み経路が存在せず（grep 済み）、開発ツールから手動注入して
+        //   有料 plan を偽装するための裏経路になっていた。正規 plan は user-plan（マジックリンク）で判定する。
 
         // 2. 新形式のuser-planチェック（2026-02-09更新: Lifetime対応）
         const userPlanData = localStorage.getItem('user-plan');
@@ -211,22 +182,8 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             };
         }
 
-        // 4. nankan_user認証情報を取得（新テスト認証用・2026-02-09更新: Lifetime対応）
-        const nankanUser = localStorage.getItem('nankan_user');
-        if (nankanUser) {
-            try {
-                const userData = JSON.parse(nankanUser);
-                console.log('✅ nankan_user認証:', userData);
-                return {
-                    user: { email: userData.email, name: userData.name },
-                    plan: userData.plan || 'free',
-                    planType: userData.planType || 'Monthly',  // 追加
-                    lifetimeSanrenpuku: userData.lifetimeSanrenpuku || false  // 追加
-                };
-            } catch (error) {
-                console.error('Nankan user parsing error:', error);
-            }
-        }
+        // 🔒 2026-07-07 セキュリティ改修: テスト認証由来の nankan_user 読み取りを除去。
+        //   関連する window 定義は全ページから削除済み。手動注入による plan 偽装を防ぐため読み取りも廃止する。
 
         // 5. ローカルストレージから認証情報を取得（2026-02-09更新: Lifetime対応）
         const authData = localStorage.getItem('auth_data');
@@ -535,8 +492,7 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
         }
     }
 
-    // ⚠️ setTestAuth/clearTestAuth関数は public/test-auth.js で定義されています
-    // ここでの再定義は削除しました（重複防止）
+    // 🔒 2026-07-07 セキュリティ改修: テスト認証関数（旧 window 定義）は本番から全廃済み。
 
     document.addEventListener('DOMContentLoaded', () => {
         console.log('📋 DOMContentLoaded - AccessControl初期化開始');

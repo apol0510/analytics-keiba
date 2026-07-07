@@ -1,4 +1,18 @@
-// ユーザー認証関数（メールアドレスでシンプル認証）
+// ─────────────────────────────────────────────
+// auth-user.js — 役割を限定した会員ユーティリティ（2026-07-07 セキュリティ改修）
+//
+// 🔒 重要: この Function は「認証 API」ではない。
+//   メールアドレスのみを根拠に、既存会員の plan やログイン済み状態を返してはいけない。
+//   （メール入力だけで他人の有料 plan を取得できる重大な裏経路を廃止するため）
+//
+// 許可される役割:
+//   1. 新規無料登録（allowRegistration=true かつ未登録メール）→ Free として作成し plan:'free' を返す
+//   2. 既存会員のポイント表示用の読み取り（plan・認証状態は返さない / isExistingMember フラグのみ）
+//
+// 既存会員のログイン（認証済み状態の確立）は send-magic-link → verify-magic-link の
+// 正規マジックリンク経路に一本化する。auth-user は plan を返さないため、
+// この応答を localStorage に保存しても有料アクセスは得られない。
+// ─────────────────────────────────────────────
 const Airtable = require('airtable');
 
 // 🚨 一時的にログイン試行回数制限を無効化（Netlifyデプロイ問題対応）
@@ -399,16 +413,20 @@ exports.handler = async (event, context) => {
     // // ✅ ログイン成功 → ログイン試行カウンターリセット
     // resetLoginAttempts(ipAddress);
 
-    // 通常ユーザーのレスポンス
+    // ─────────────────────────────────────────────
+    // 🔒 既存会員の応答: plan・認証済み状態を返さない
+    //   - plan を含めない（メールだけで有料 plan を取得させない）
+    //   - isExistingMember / requiresMagicLink で「これはログインではない」ことを明示
+    //   - ポイント表示用に points のみ返す（plan 判定には使われない値）
+    //   ログインは send-magic-link → verify-magic-link の正規経路で行うこと。
+    // ─────────────────────────────────────────────
     let message = '';
     if (withdrawalRequested) {
       message = '退会申請済みです。新規ポイント付与・プレミアム機能のご利用はできません。';
-    } else if (isExpired) {
-      message = '有効期限が切れています。無料会員としてご利用いただけます。';
     } else if (pointsAdded > 0) {
-      message = `ログイン成功！本日のポイント${pointsAdded}pt付与`;
+      message = `本日のポイント${pointsAdded}pt付与`;
     } else {
-      message = 'ログイン成功！';
+      message = 'アカウントを確認しました。';
     }
 
     return {
@@ -417,16 +435,15 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         success: true,
         isNewUser: false,
-        isExpired: isExpired,  // 🔧 有効期限切れフラグを正確に返す
+        isExistingMember: true,      // 🔒 既存会員（このメールは登録済み）
+        requiresMagicLink: true,     // 🔒 認証済みアクセスにはマジックリンクが必要
         isWithdrawalRequested: withdrawalRequested,  // 🔧 2025-11-26追加: 退会申請フラグ
         user: {
           email,
-          plan: normalizedPlan,  // プランはそのまま（Premiumなど）
-          points: newPoints,
+          // 🔒 plan は返さない（メールのみでの有料 plan 取得を防止）
+          points: newPoints,         // ポイント表示用のみ
           pointsAdded,
-          lastLogin: today,
-          validUntil: validUntil || null,  // 🔧 有効期限をレスポンスに含める
-          registeredAt: user.get('登録日')
+          lastLogin: today
         },
         message: message
       }, null, 2)

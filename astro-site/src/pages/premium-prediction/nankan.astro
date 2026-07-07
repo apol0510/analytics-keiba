@@ -379,14 +379,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             // 馬単のみのプラン (Premium / Premium Predictions など) には絞り込み買い目を出さない。
             (function gateSanrenpukuRecommendations() {
                 function readPlanState() {
-                    // 1. test_subscription_*（本番互換）
-                    try {
-                        const testKey = Object.keys(localStorage).find(k => k.startsWith('test_subscription_'));
-                        if (testKey) {
-                            const t = JSON.parse(localStorage.getItem(testKey));
-                            return { plan: t.planType, lifetimeSanrenpuku: !!t.lifetimeSanrenpuku };
-                        }
-                    } catch (e) { /* noop */ }
+                    // 🔒 2026-07-07 セキュリティ改修: localStorage 直接昇格 backdoor 除去
 
                     // 2. user-plan（新形式・JSON）
                     try {
@@ -1274,17 +1267,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             // AccessControlコンポーネントと同じロジックでプラン取得
             let userPlan = null;
 
-            // 1. test_subscription_*（本番で実際に使用中）
-            const testSubscriptionKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
-            if (testSubscriptionKeys.length > 0) {
-                try {
-                    const testData = JSON.parse(localStorage.getItem(testSubscriptionKeys[0]));
-                    userPlan = testData.planType;
-                    console.log('📦 プラン検出（test_subscription）:', userPlan);
-                } catch (error) {
-                    console.error('Test subscription parsing error:', error);
-                }
-            }
+            // 🔒 2026-07-07 セキュリティ改修: localStorage 直接昇格 backdoor 除去
 
             // 2. user-plan（新形式・JSON）
             if (!userPlan) {
@@ -3465,40 +3448,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         bindRecentRacesAccordionRecalc();
     }
 
-    // テスト認証機能（開発環境用）
-    window.setTestAuth = function(plan) {
-        if (!['premium', 'standard', 'free'].includes(plan.toLowerCase())) {
-            console.error('❌ 無効なプラン:', plan);
-            console.log('📋 有効なプラン: premium, standard, free');
-            return;
-        }
-
-        const testUser = {
-            email: `test-${plan}@example.com`,
-            name: `テスト${plan.charAt(0).toUpperCase() + plan.slice(1)}ユーザー`,
-            plan: plan.toLowerCase(),
-            isTest: true,
-            points: plan === 'premium' ? 1000 : plan === 'standard' ? 500 : 100,
-            registrationDate: new Date().toISOString(),
-            lastLogin: new Date().toISOString()
-        };
-
-        // LocalStorageに保存
-        localStorage.setItem('nankan_user', JSON.stringify(testUser));
-        localStorage.setItem('nankan_test_auth', 'true');
-
-        console.log(`✅ テスト認証設定完了: ${plan}プラン`, testUser);
-        console.log('🔄 ページを更新して認証を適用してください');
-
-        // 1秒後に自動リロード
-        setTimeout(() => {
-            location.reload();
-        }, 1000);
-    };
-
-    // コンソールにヘルプメッセージ表示
-    console.log('%c🔑 テスト認証機能が利用可能です', 'color: #60a5fa; font-weight: bold;');
-    console.log('%c使用方法: setTestAuth("premium") または setTestAuth("standard")', 'color: #94a3b8;');
+    // 🔒 2026-07-07 セキュリティ改修: テスト認証関数を削除
 
     // 三連複AI推奨買い目: 絞り込み / 通常 タブ切替
     document.addEventListener('click', function(e) {

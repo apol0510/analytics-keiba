@@ -363,27 +363,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 
                 // プラン情報取得
                 function getCurrentUserPlan() {
-                    // 1. デモモード
-                    const demoKeys = Object.keys(localStorage).filter(key => key.startsWith('demo_subscription_'));
-                    if (demoKeys.length > 0) {
-                        try {
-                            const demoData = JSON.parse(localStorage.getItem(demoKeys[0]));
-                            return demoData.planType;
-                        } catch (error) {
-                            console.error('Demo data parsing error:', error);
-                        }
-                    }
-
-                    // 2. 旧形式のtest_subscription_
-                    const testKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
-                    if (testKeys.length > 0) {
-                        try {
-                            const testData = JSON.parse(localStorage.getItem(testKeys[0]));
-                            return testData.planType;
-                        } catch (error) {
-                            console.error('Test subscription parsing error:', error);
-                        }
-                    }
+                    // 🔒 2026-07-07 セキュリティ改修: localStorage 直接昇格 backdoor 除去
 
                     // 3. user-plan
                     const userPlanData = localStorage.getItem('user-plan');
@@ -396,16 +376,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
                         }
                     }
 
-                    // 4. nankan_user
-                    const nankanUser = localStorage.getItem('nankan_user');
-                    if (nankanUser) {
-                        try {
-                            const userData = JSON.parse(nankanUser);
-                            return userData.plan || 'free';
-                        } catch (error) {
-                            console.error('Nankan user parsing error:', error);
-                        }
-                    }
+                    // 🔒 2026-07-07 セキュリティ改修: localStorage 直接昇格 backdoor 除去
 
                     return null;
                 }
