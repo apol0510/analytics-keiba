@@ -83,14 +83,23 @@ exports.handler = async (event) => {
       .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escapedEmail}'`, maxRecords: 5 })
       .firstPage();
 
-    if (customers.length === 0) {
+    const { resolveMembership, shouldSendMagicLink, classifyCustomerMatches, CUSTOMER_LOOKUP } =
+      await import('../../src/lib/auth/index.js');
+
+    // 0件 / 1件 / 複数件を明確に区別。複数件は fail closed（送信も token 作成もしない）。
+    const lookup = classifyCustomerMatches(customers);
+    if (lookup.kind === CUSTOMER_LOOKUP.NONE) {
       console.warn(`[send-magic-link] Customer not found (generic 200): email=${email}`);
+      return genericOk(headers);
+    }
+    if (lookup.kind === CUSTOMER_LOOKUP.CONFLICT) {
+      // 重複レコード → 送信しない。会員の有無を漏らさないため応答は generic 200 のまま。
+      console.error(`⛔ [send-magic-link] 同一 Email で複数 Customers → 送信しない fail closed (件数=${customers.length})`);
       return genericOk(headers);
     }
 
     // 会員判定: paid だけ送信対象（free / denied には送らない）
-    const record = customers[0];
-    const { resolveMembership, shouldSendMagicLink } = await import('../../src/lib/auth/index.js');
+    const record = lookup.record;
     const membership = resolveMembership({ fields: record.fields, recordId: record.id, now: Date.now() });
     if (!shouldSendMagicLink(membership)) {
       console.log(`[send-magic-link] not paid → 送信しない (generic 200): reason=${membership.reason}`);

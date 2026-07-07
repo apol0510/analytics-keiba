@@ -32,6 +32,7 @@ const verifyMagic = raw(FN('verify-magic-link.js'));
 const logout = raw(FN('logout.js'));
 const dashboard = raw(PAGE('dashboard.astro'));
 const verifyPage = raw(PAGE('auth/verify.astro'));
+const loginPage = raw(PAGE('login.astro'));
 
 const FUNCTIONS = [
   ['auth-user.js', authUser],
@@ -131,3 +132,66 @@ test('logout.js: 削除 Cookie を Set-Cookie で返す', () => {
   assert.match(logout, /buildLogoutCookie/);
   assert.match(logout, /Set-Cookie/);
 });
+
+// =========================================================================
+// マージブロッカー1: Customers 重複を先頭採用しない（0/1/複数を明確に区別）
+// =========================================================================
+for (const [name, src] of [
+  ['auth-user.js', authUser],
+  ['send-magic-link.js', sendMagic],
+  ['verify-magic-link.js', verifyMagic],
+]) {
+  test(`${name}: classifyCustomerMatches で Customers 検索結果を分類する`, () => {
+    assert.match(src, /classifyCustomerMatches/);
+    assert.match(src, /CUSTOMER_LOOKUP/);
+  });
+}
+test('auth-user.js: 先頭レコード records[0] を会員判定に使わない', () => {
+  assert.equal(/records\[0\]/.test(stripJs(authUser)), false);
+});
+test('send-magic-link.js: 先頭レコード customers[0] を会員判定に使わない', () => {
+  assert.equal(/customers\[0\]/.test(stripJs(sendMagic)), false);
+});
+test('verify-magic-link.js: 重複時 conflict を返し CUSTOMER_CONFLICT を処理する', () => {
+  assert.match(verifyMagic, /conflict:\s*true/);
+  assert.match(verifyMagic, /CUSTOMER_CONFLICT/);
+});
+test('verifyMagicLinkFlow.js: conflict は resolveMembership/issue/markUsed より前で返す', () => {
+  const iConflict = verifyFlow.indexOf('CUSTOMER_CONFLICT');
+  const iResolve = verifyFlow.indexOf('resolveMembership({');
+  const iMark = verifyFlow.indexOf('markUsed(tok.id)');
+  assert.ok(iConflict > -1 && iResolve > -1 && iMark > -1);
+  assert.ok(iConflict < iResolve, 'conflict 判定は resolveMembership より前');
+  assert.ok(iConflict < iMark, 'conflict 判定は markUsed より前');
+});
+
+// =========================================================================
+// マージブロッカー2: 新規登録 race再検索は resolveMembership へ渡す（固定 Free 化しない）
+// =========================================================================
+test('auth-user.js: 新規登録の再検索は resolveMembership 経由（固定 Free 化しない）', () => {
+  const s = stripJs(authUser);
+  const iReg = s.indexOf('handleNewFreeRegistration');
+  assert.ok(iReg > -1);
+  const body = s.slice(s.indexOf('async function handleNewFreeRegistration'));
+  // 再検索結果を resolveMembership / decideFreeLogin に渡している
+  assert.match(body, /classifyCustomerMatches/);
+  assert.match(body, /resolveMembership\(/);
+  assert.match(body, /decideFreeLogin\(/);
+  // 旧: reCheck.length > 0 で無条件 Free 化する分岐を残さない
+  assert.equal(/reCheck\.length\s*>\s*0/.test(body), false);
+});
+
+// =========================================================================
+// マージブロッカー3: send-magic-link 失敗時に成功表示しない（response.ok 確認）
+// =========================================================================
+for (const [name, src] of [['login.astro', loginPage], ['dashboard.astro', dashboard]]) {
+  test(`${name}: send-magic-link の応答 ok を確認してから成功表示する`, () => {
+    const s = stripJs(src);
+    // requiresMagicLink 分岐で send-magic-link を呼び、response.ok を確認している
+    assert.match(s, /requiresMagicLink/);
+    assert.match(s, /send-magic-link/);
+    assert.match(s, /sendRes\.ok/);
+    // 旧: 送信結果を捨てて（.catch(() => {})）無条件に成功表示するパターンを残さない
+    assert.equal(/send-magic-link[\s\S]{0,200}\}\)\.catch\(\(\)\s*=>\s*\{\}\)/.test(s), false);
+  });
+}

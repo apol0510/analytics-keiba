@@ -20,6 +20,7 @@ export const VERIFY_FLOW = Object.freeze({
   TOKEN_USED: 'token_used',                 // 403
   TOKEN_EXPIRED: 'token_expired',           // 403
   CUSTOMER_NOT_FOUND: 'customer_not_found', // 404
+  CUSTOMER_CONFLICT: 'customer_conflict',   // 409 (重複レコード → fail closed)
   NOT_PAID: 'not_paid',                     // 403
   ISSUE_FAILED: 'issue_failed',             // 500 (secret_invalid → 503)
   CONSUME_FAILED: 'consume_failed',         // 500
@@ -54,9 +55,12 @@ export async function runVerifyMagicLink(deps) {
   if (Number.isNaN(exp) || now > exp) return { outcome: VERIFY_FLOW.TOKEN_EXPIRED };
 
   // 3. Customers 再取得
+  //    findCustomer の契約: null=未登録 / { conflict: true }=重複（fail closed） /
+  //    { id, fields }=一意。重複時は会員判定・Cookie 発行・markUsed のいずれも行わない。
   const email = String(tok.fields?.Email || '').trim().toLowerCase();
   const customer = await findCustomer(email);
   if (!customer) return { outcome: VERIFY_FLOW.CUSTOMER_NOT_FOUND };
+  if (customer.conflict === true) return { outcome: VERIFY_FLOW.CUSTOMER_CONFLICT };
 
   // 4. 会員再判定（クライアント plan は使わない）
   const membership = resolveMembership({ fields: customer.fields, recordId: customer.id, now });

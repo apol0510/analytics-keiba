@@ -126,6 +126,14 @@ test('customer 見つからない → customer_not_found', async () => {
   const { deps } = harness({ customer: null });
   assert.equal((await runVerifyMagicLink(deps)).outcome, VERIFY_FLOW.CUSTOMER_NOT_FOUND);
 });
+test('customer 重複（conflict）→ customer_conflict・Cookie 発行不可・token 消費しない', async () => {
+  const { deps, calls } = harness({ customer: { conflict: true } });
+  const r = await runVerifyMagicLink(deps);
+  assert.equal(r.outcome, VERIFY_FLOW.CUSTOMER_CONFLICT);
+  assert.equal(r.cookie, undefined);
+  assert.equal(r.membership, undefined);
+  assert.equal(calls.includes('markUsed'), false);
+});
 test('Free へ変更済み → not_paid・Cookie 発行不可・token 消費しない', async () => {
   const { deps, calls } = harness({ customer: { id: 'recF', fields: { Email: 'p@x.jp', 'プラン': 'Free' } } });
   const r = await runVerifyMagicLink(deps);

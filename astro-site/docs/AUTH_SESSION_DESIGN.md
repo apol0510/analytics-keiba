@@ -195,6 +195,38 @@ Airtable に原子的 compare-and-set が無いため、使用済み更新の**�
 未使用を再確認する最小リスク設計。会員判定・Cookie 準備が成功してから使用済みにし、
 **使用済み更新が成功した場合だけ** `Set-Cookie` を返す（更新失敗時は Cookie を発行しない）。
 
+### Customers 重複レコードの fail closed（PR-B マージブロッカー1 対応）
+
+同一正規化 email に対する Customers ヒットは **0件 / 1件 / 複数件** で意味が異なる。
+分類は単一源 `src/lib/auth/customerLookup.js` の `classifyCustomerMatches(rows)` に集約し、
+`auth-user` / `send-magic-link` / `verify-magic-link`（`findCustomer`）は先頭レコード
+（`records[0]` / `customers[0]`）を無条件採用しない。
+
+- **複数件 → fail closed**: 会員判定しない・token 作成しない・メール送信しない・
+  Cookie 発行しない・token 使用済み更新しない・Airtable 更新しない。
+  外部レスポンスに plan / Status / recordId 等の内部値を出さない。
+  - `auth-user`: 403（generic denied）
+  - `send-magic-link`: generic 200（会員の有無を漏らさない・送信しない）
+  - `verify-magic-link`: `findCustomer` が `{ conflict: true }` を返し、フローは
+    `CUSTOMER_CONFLICT`（409）で **resolveMembership / Cookie 発行 / markUsed の前**に打ち切る。
+
+### 新規無料登録の race-safe 再検索（PR-B マージブロッカー2 対応）
+
+`handleNewFreeRegistration` は create 直前の再検索で既存レコードが見つかった場合、
+固定 Free 化せず **`resolveMembership` → `decideFreeLogin`** に渡して判定する。
+
+- 明確な Free → `plan:'free'` 固定で即時ログイン（既存レコード更新・ポイント付与・
+  最終ログイン更新はしない）
+- Paid → `requiresMagicLink`
+- denied → 拒否 / 複数件 → 拒否
+- **0件のときだけ**新規 Free 作成（初回 1pt のみ）
+
+### マジックリンク送信失敗の画面表示（PR-B マージブロッカー3 対応）
+
+`login` / `dashboard` は `send-magic-link` の応答 `response.ok` を必ず確認し、
+HTTP 5xx・通信失敗・SendGrid 失敗時は「送信しました」を表示しない。送信中はボタンを
+disabled にし、`finally` で状態復元する（二重クリック防止）。
+
 ### session refresh
 
 PR-B には含めない（**PR-B2 へ分離**）。最初の有料ログイン Cookie は **20 分で失効**し、

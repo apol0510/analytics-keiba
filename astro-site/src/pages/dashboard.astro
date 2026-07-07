@@ -630,18 +630,26 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 }
 
                 // 🔒 PR-B: 有料会員は即時ログイン不可 → マジックリンクを送信
+                // 送信失敗（HTTP 5xx / 通信断 / SendGrid 失敗）は成功表示せず、必ずエラーを出す。
                 if (data.requiresMagicLink) {
+                    let sendRes;
                     try {
                         const sendUrl = window.location.hostname === 'localhost'
                             ? 'http://localhost:8888/.netlify/functions/send-magic-link'
                             : '/.netlify/functions/send-magic-link';
-                        await fetch(sendUrl, {
+                        sendRes = await fetch(sendUrl, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ email })
                         });
                     } catch (sendErr) {
                         console.warn('send-magic-link 呼び出しエラー:', sendErr);
+                        showError('ログインリンクの送信中に通信エラーが発生しました。時間をおいて再度お試しください。');
+                        return;
+                    }
+                    if (!sendRes.ok) {
+                        showError('ログインリンクの送信に失敗しました。時間をおいて再度お試しください。');
+                        return;
                     }
                     showSuccess('有料会員のログインには、メールでお送りするログインリンクが必要です。メールをご確認ください。');
                     return;

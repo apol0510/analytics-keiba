@@ -44,18 +44,38 @@ exports.handler = async (event) => {
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
+    const authLib = await loadAuthLib();
+    const {
+      resolveMembership, decideFreeLogin, FREE_LOGIN_OUTCOME,
+      classifyCustomerMatches, CUSTOMER_LOOKUP,
+    } = authLib;
+
     // Email 完全一致（LOWER(TRIM()) で大小・空白差を吸収）
     const escapedEmail = email.replace(/'/g, "\\'");
     const emailFilter = `LOWER(TRIM({Email})) = '${escapedEmail}'`;
     const records = await base('Customers').select({ filterByFormula: emailFilter, maxRecords: 5 }).firstPage();
 
     console.log(`🔍 [auth-user] Email hits: ${records.length} (email=${email})`);
-    if (records.length > 1) {
-      console.warn(`⚠️ [auth-user] 同一 Email で複数レコード: ${email} / ids=${records.map((r) => r.id).join(',')}`);
+
+    // 0件 / 1件 / 複数件を明確に区別。複数件は fail closed（判定も書き込みもしない）。
+    const lookup = classifyCustomerMatches(records);
+
+    // ── 複数件 → 会員情報を列挙せず拒否（token/Cookie/書き込みなし） ──
+    if (lookup.kind === CUSTOMER_LOOKUP.CONFLICT) {
+      console.error(`⛔ [auth-user] 同一 Email で複数 Customers → fail closed (件数=${records.length})`);
+      return {
+        statusCode: 403,
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          success: false,
+          denied: true,
+          message: 'このアカウントではログインできません。お心当たりがない場合はサポートへお問い合わせください。',
+        }),
+      };
     }
 
     // ── 未登録 ─────────────────────────────────────────────
-    if (records.length === 0) {
+    if (lookup.kind === CUSTOMER_LOOKUP.NONE) {
       if (!allowRegistration) {
         // 未登録は新規無料登録経路へ分離
         return {
@@ -69,12 +89,11 @@ exports.handler = async (event) => {
           }),
         };
       }
-      return await handleNewFreeRegistration(base, email, jsonHeaders);
+      return await handleNewFreeRegistration(base, email, jsonHeaders, authLib);
     }
 
-    // ── 既存レコード: 会員判定（サーバー側・書き込みなし） ──
-    const record = records[0];
-    const { resolveMembership, decideFreeLogin, FREE_LOGIN_OUTCOME } = await loadAuthLib();
+    // ── 既存レコード（一意）: 会員判定（サーバー側・書き込みなし） ──
+    const record = lookup.record;
     const membership = resolveMembership({ fields: record.fields, recordId: record.id, now: Date.now() });
     const decision = decideFreeLogin(membership);
     console.log(`👤 [auth-user] decision=${decision.outcome} reason=${membership.reason} (email=${email})`);
@@ -129,27 +148,74 @@ exports.handler = async (event) => {
 
 // 新規無料登録（allowRegistration=true / /free-signup/ からのみ）
 // 初回作成時に 1pt 付与するのは **作成時 1 回だけ**（既存レコードの email 入力更新はしない）。
-async function handleNewFreeRegistration(base, email, jsonHeaders) {
-  // race-safe: create 直前に再検索
+async function handleNewFreeRegistration(base, email, jsonHeaders, authLib) {
+  const { resolveMembership, decideFreeLogin, FREE_LOGIN_OUTCOME, classifyCustomerMatches, CUSTOMER_LOOKUP } = authLib;
+
+  // race-safe: create 直前に再検索（複数件検出のため maxRecords>=2）
   const escaped = email.replace(/'/g, "\\'");
   const reCheck = await base('Customers')
-    .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escaped}'`, maxRecords: 1 })
+    .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escaped}'`, maxRecords: 5 })
     .firstPage();
-  if (reCheck.length > 0) {
-    // 既に存在 → 無料としてログイン（新規作成しない）
+
+  const lookup = classifyCustomerMatches(reCheck);
+
+  // 複数件 → fail closed（作成も更新もせず拒否）
+  if (lookup.kind === CUSTOMER_LOOKUP.CONFLICT) {
+    console.error(`⛔ [auth-user] 新規登録 race再検索で複数 Customers → fail closed (件数=${reCheck.length})`);
     return {
-      statusCode: 200,
+      statusCode: 403,
       headers: jsonHeaders,
       body: JSON.stringify({
-        success: true,
-        isNewUser: false,
-        memberType: 'free',
-        user: { email, plan: 'free' },
-        message: 'ログインしました。',
+        success: false,
+        denied: true,
+        message: 'このアカウントではログインできません。お心当たりがない場合はサポートへお問い合わせください。',
       }),
     };
   }
 
+  // 既に一意で存在 → resolveMembership で再判定（固定 Free 化しない・既存レコードは更新しない）
+  if (lookup.kind === CUSTOMER_LOOKUP.SINGLE) {
+    const membership = resolveMembership({ fields: lookup.record.fields, recordId: lookup.record.id, now: Date.now() });
+    const decision = decideFreeLogin(membership);
+    if (decision.outcome === FREE_LOGIN_OUTCOME.FREE) {
+      // 明確な無料会員だけ即時ログイン（新規作成なし・ポイント付与なし・最終ログイン更新なし）
+      return {
+        statusCode: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          success: true,
+          isNewUser: false,
+          memberType: 'free',
+          user: { email, plan: 'free' },
+          message: 'ログインしました。',
+        }),
+      };
+    }
+    if (decision.outcome === FREE_LOGIN_OUTCOME.REQUIRES_MAGIC_LINK) {
+      // 有料会員 → 即時ログインさせない。plan 名・内部状態は返さない。
+      return {
+        statusCode: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          success: false,
+          requiresMagicLink: true,
+          message: '有料会員のログインには、メールでお送りするログインリンクが必要です。',
+        }),
+      };
+    }
+    // denied（退会/停止/期限切れ/判定不能）
+    return {
+      statusCode: 403,
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        success: false,
+        denied: true,
+        message: 'このアカウントではログインできません。お心当たりがない場合はサポートへお問い合わせください。',
+      }),
+    };
+  }
+
+  // ── 0件のときだけ新規 Free 作成 ──
   const todayJst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
     .toISOString()
     .split('T')[0];

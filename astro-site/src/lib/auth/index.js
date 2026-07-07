@@ -71,4 +71,9 @@ export {
   FREE_LOGIN_OUTCOME,
 } from './authPolicies.js';
 
+export {
+  classifyCustomerMatches,
+  CUSTOMER_LOOKUP,
+} from './customerLookup.js';
+
 export { runVerifyMagicLink, VERIFY_FLOW } from './verifyMagicLinkFlow.js';

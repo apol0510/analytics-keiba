@@ -75,7 +75,8 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { runVerifyMagicLink, VERIFY_FLOW } = await import('../../src/lib/auth/index.js');
+    const { runVerifyMagicLink, VERIFY_FLOW, classifyCustomerMatches, CUSTOMER_LOOKUP } =
+      await import('../../src/lib/auth/index.js');
 
     const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(AIRTABLE_BASE_ID);
     const authTokensTable = base('AuthTokens');
@@ -94,7 +95,13 @@ exports.handler = async (event) => {
       const rows = await customersTable
         .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escaped}'`, maxRecords: 5 })
         .firstPage();
-      return rows.length ? { id: rows[0].id, fields: rows[0].fields } : null;
+      // 0件=null / 複数件={conflict:true}（fail closed）/ 1件={id,fields}
+      const c = classifyCustomerMatches(rows);
+      if (c.kind === CUSTOMER_LOOKUP.CONFLICT) {
+        console.warn(`⚠️ [verify-magic-link] 同一 Email で複数 Customers → fail closed (件数=${rows.length})`);
+        return { conflict: true };
+      }
+      return c.record; // NONE→null / SINGLE→{ id, fields }
     };
     const markUsed = async (id) => {
       await authTokensTable.update([{ id, fields: { Used: true } }]);
@@ -123,6 +130,10 @@ exports.handler = async (event) => {
         return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token expired' }) };
       case VERIFY_FLOW.CUSTOMER_NOT_FOUND:
         return { statusCode: 404, headers, body: JSON.stringify({ error: 'Customer not found' }) };
+      case VERIFY_FLOW.CUSTOMER_CONFLICT:
+        // 重複レコード → 会員情報を出さず fail closed（Cookie 発行・markUsed は行われていない）
+        console.error('⛔ [verify-magic-link] Customers 重複 → Cookie 発行中止（fail closed）');
+        return { statusCode: 409, headers, body: JSON.stringify({ error: 'Account verification unavailable' }) };
       case VERIFY_FLOW.NOT_PAID:
         console.warn(`⛔ [verify-magic-link] 現在 paid ではない: reason=${result.reason}`);
         return { statusCode: 403, headers, body: JSON.stringify({ error: 'Not a paid member' }) };
