@@ -50,12 +50,13 @@ jobs:
         run: |
           # 優先順位: 手動入力 > repository_dispatch payload > 今日の日付
           # 馬単・三連複を同じ対象日で取込（南関 import-results-nankan-daily と同型）。
-          # 三連複取込は非致命（|| で握る）: 失敗しても馬単の取込・コミットは阻害しない。
+          # 三連複取込失敗は致命（job を fail させる）: 成功扱いで三連複の欠落を残さない。
+          # 両 archive は同一 commit 対象なので、失敗時は馬単だけ landing することもない
+          # （step が abort し Commit step へ進まない → 次回 dispatch/手動再実行で両方揃えて取込）。
           import_jra_day() {
             local d="$1"
             npm run import:results:jra -- --date "$d"
-            npm run import:results:jra:sanrenpuku -- --date "$d" \
-              || echo "⚠️  sanrenpuku import failed for $d (continuing; 馬単は不変)"
+            npm run import:results:jra:sanrenpuku -- --date "$d"
           }
           if [ -n "$MANUAL_DATE" ]; then
             # 手動実行時の入力
