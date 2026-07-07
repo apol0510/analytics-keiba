@@ -6,6 +6,7 @@
 import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
+import archiveSanrenpukuResultsJra from '../data/archiveSanrenpukuResultsJra.json';
 
 /**
  * archiveResults.jsonから最新日のデータを取得
@@ -213,5 +214,89 @@ export function convertToSanrenpukuYesterdayResults() {
         recoveryRate: recoveryRate,
         totalBetPoints: totalBetPoints,
         results: results
+    };
+}
+
+// ============================================================
+// JRA（中央競馬）三連複 実績ヘルパ（南関版の JRA 差し替え）
+// archiveSanrenpukuResultsJra.json も南関と同じネスト辞書 {YYYY}{MM}{DD} 構造。
+// ============================================================
+
+/**
+ * archiveSanrenpukuResultsJra.json から最新日のデータを取得（JRA 版）
+ * @returns {Object|null}
+ */
+export function getLatestSanrenpukuDayDataJra() {
+    const years = Object.keys(archiveSanrenpukuResultsJra).sort().reverse();
+    if (years.length === 0) return null;
+
+    const latestYear = years[0];
+    const months = Object.keys(archiveSanrenpukuResultsJra[latestYear]).sort().reverse();
+    if (months.length === 0) return null;
+
+    const latestMonth = months[0];
+    const days = Object.keys(archiveSanrenpukuResultsJra[latestYear][latestMonth]).sort().reverse();
+    if (days.length === 0) return null;
+
+    const latestDay = days[0];
+    const dayData = archiveSanrenpukuResultsJra[latestYear][latestMonth][latestDay];
+
+    const hitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
+    // 三連複 archive の race は settlementPoints を持つ（betPoints ではない）
+    const totalBetPoints = dayData.totalBetPoints
+        || (dayData.races ? dayData.races.reduce((sum, race) => sum + (race.settlementPoints || 0), 0) : 0);
+    const racesWithIsHit = dayData.races ? dayData.races.map(race => ({ ...race, isHit: race.hit })) : [];
+
+    return {
+        year: latestYear,
+        month: latestMonth,
+        day: latestDay,
+        date: `${parseInt(latestMonth)}月${parseInt(latestDay)}日`,
+        hitRate,
+        totalBetPoints,
+        ...dayData,
+        races: racesWithIsHit,
+    };
+}
+
+/**
+ * 最新日データを三連複 yesterday 結果形式に変換（JRA 版）
+ * @returns {Object|null}
+ */
+export function convertToSanrenpukuYesterdayResultsJra() {
+    const latestData = getLatestSanrenpukuDayDataJra();
+    if (!latestData) return null;
+
+    // 回収率は JSON 値を最優先（settlementPoints ベースで救済）
+    let recoveryRate = latestData.recoveryRate || 0;
+    const totalBetPoints = latestData.totalBetPoints
+        || latestData.races.reduce((sum, race) => sum + (race.settlementPoints || 0), 0);
+    if (!latestData.recoveryRate && totalBetPoints > 0) {
+        const totalInvestment = totalBetPoints * 100;
+        recoveryRate = Math.round((latestData.totalPayout / totalInvestment) * 100);
+    }
+
+    const hitRate = latestData.totalRaces > 0 ? Math.round((latestData.hitRaces / latestData.totalRaces) * 100) : 0;
+
+    const results = latestData.races.map(race => ({
+        race: race.venue ? `${race.venue}${race.raceNumber}` : race.raceNumber,
+        result: race.hit ? 'win' : 'loss',
+        payout: race.payout,
+    }));
+
+    const track = (latestData.venues && latestData.venues.length)
+        ? latestData.venues.join('・')
+        : `${latestData.venue}`;
+
+    return {
+        date: `${latestData.month}/${latestData.day}`,
+        track,
+        hitRate,
+        hitCount: latestData.hitRaces,
+        totalCount: latestData.totalRaces,
+        totalPayout: latestData.totalPayout,
+        recoveryRate,
+        totalBetPoints,
+        results,
     };
 }

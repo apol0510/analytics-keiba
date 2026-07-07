@@ -119,11 +119,21 @@ jobs:
           echo "📥 Importing JRA results for: $DATE"
           node scripts/importResultsJra.js --date "$DATE"
 
+      - name: Import JRA sanrenpuku results
+        if: steps.check.outputs.has_missing == 'true'
+        env:
+          # 馬単と同一の結果ソース（jra/results）から三連複買い目の的中を集計。
+          KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
+        run: |
+          DATE="${{ steps.date.outputs.date }}"
+          echo "📥 Importing JRA sanrenpuku results for: $DATE"
+          node scripts/importResultsJraSanrenpuku.js --date "$DATE"
+
       - name: Check for changes
         id: git-check
         if: steps.check.outputs.has_missing == 'true'
         run: |
-          git add src/data/archiveResultsJra.json
+          git add src/data/archiveResultsJra.json src/data/archiveSanrenpukuResultsJra.json
           git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
 
       - name: Commit and push changes
@@ -135,9 +145,10 @@ jobs:
           DATE="${{ steps.date.outputs.date }}"
           COMMIT_MSG="Auto-verify: ${DATE} JRA results (daily check)"
 
-          # 変更ファイルを退避
+          # 変更ファイルを退避（馬単 + 三連複）
           cp src/data/archiveResultsJra.json /tmp/archiveResultsJra.json.backup
-          echo "📦 Backed up archiveResultsJra.json"
+          cp src/data/archiveSanrenpukuResultsJra.json /tmp/archiveSanrenpukuResultsJra.json.backup
+          echo "📦 Backed up archiveResultsJra.json / archiveSanrenpukuResultsJra.json"
 
           # Retry logic: reset → restore → commit → push（最大5回リトライ）
           MAX_RETRIES=5
@@ -153,11 +164,12 @@ jobs:
             git clean -fd
             echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
 
-            # 2. 退避ファイルを復元
+            # 2. 退避ファイルを復元（馬単 + 三連複）
             cp /tmp/archiveResultsJra.json.backup src/data/archiveResultsJra.json
+            cp /tmp/archiveSanrenpukuResultsJra.json.backup src/data/archiveSanrenpukuResultsJra.json
 
             # 3. ステージング＆コミット
-            git add src/data/archiveResultsJra.json
+            git add src/data/archiveResultsJra.json src/data/archiveSanrenpukuResultsJra.json
             if git diff --staged --quiet; then
               echo "⏭️  No changes after sync (remote already has latest)"
               SUCCESS=true

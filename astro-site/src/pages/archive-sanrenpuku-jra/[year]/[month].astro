@@ -1,0 +1,249 @@
+---
+// 中央競馬（JRA）三連複 的中実績 月別詳細ページ。
+// archiveSanrenpukuResultsJra.json（ネスト辞書 {YYYY}{MM}{DD}）の各 {年}{月} から getStaticPaths でルート生成。
+// ランディング /archive-sanrenpuku-jra/ の月カードからここへ遷移。会員ゲート＋Sticky CTA＋SEO＋戻るリンク。
+export const prerender = true;
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import archiveData from '../../../data/archiveSanrenpukuResultsJra.json';
+
+const MONTH_LABEL = ['', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+export function getStaticPaths() {
+  const data = archiveData;
+  const paths = [];
+  for (const year of Object.keys(data)) {
+    for (const month of Object.keys(data[year])) {
+      paths.push({ params: { year, month }, props: { year, month } });
+    }
+  }
+  return paths;
+}
+
+const { year, month } = Astro.props;
+const daysObj = archiveData[year][month] || {};
+const monthNum = parseInt(month);
+const monthLabel = `${year}年${MONTH_LABEL[monthNum]}`;
+
+// 日別（新しい順）＋月間集計
+const dayKeys = Object.keys(daysObj).sort().reverse();
+let mRaces = 0, mHits = 0, mPayout = 0, mBetPoints = 0;
+const days = dayKeys.map((d) => {
+  const dd = daysObj[d];
+  mRaces += dd.totalRaces || 0;
+  mHits += dd.hitRaces || 0;
+  mPayout += dd.totalPayout || 0;
+  mBetPoints += dd.totalBetPoints || 0;
+  const hitRate = dd.totalRaces > 0 ? Math.round((dd.hitRaces / dd.totalRaces) * 100) : 0;
+  // 日次回収率: データに無ければ settlementPoints ベースで逆算
+  let dayRecovery = dd.recoveryRate;
+  if (dayRecovery === undefined || dayRecovery === null) {
+    const invest = (dd.totalBetPoints || 0) * 100;
+    dayRecovery = invest > 0 ? Math.round((dd.totalPayout / invest) * 100) : 0;
+  }
+  return { day: d, dd, hitRate, dayRecovery, hitRaces: (dd.races || []).filter((r) => r.hit) };
+});
+
+const mRecovery = mBetPoints > 0 ? Math.round((mPayout / (mBetPoints * 100)) * 100) : 0;
+const mHitRate = mRaces > 0 ? Math.round((mHits / mRaces) * 100) : 0;
+
+const pageTitle = `${monthLabel} 中央競馬（JRA）三連複 的中実績`;
+const pageDesc = `${monthLabel}の中央競馬（JRA）三連複 AI厳選買い目 的中実績。的中率${mHitRate}%・回収率${mRecovery}%・合計配当¥${mPayout.toLocaleString()}。Premium Sanrenpuku なら中央＋南関の三連複が1購入で両方使えます。`;
+const canonicalPath = `/archive-sanrenpuku-jra/${year}/${month}/`;
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: pageTitle,
+  description: pageDesc,
+  about: '中央競馬 JRA 三連複 AI予想 的中実績',
+};
+---
+
+<BaseLayout title={pageTitle} description={pageDesc} canonical={canonicalPath}>
+    <!-- 🔒 会員専用認証チェック（クライアントサイド / casing 非依存 / dev はバイパス） -->
+    <script is:inline>
+      (function () {
+        function isDev() {
+          return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+            || location.port === '4321' || location.port === '3000';
+        }
+        var userPlan = null;
+        try {
+          var d = localStorage.getItem('user-plan');
+          if (d) userPlan = JSON.parse(d).plan;
+        } catch (e) {}
+        if (!userPlan) userPlan = localStorage.getItem('userPlan');
+        var planLower = userPlan ? String(userPlan).toLowerCase() : '';
+        var ALLOWED = ['premium','premium predictions','premiumpredictions',
+          'premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo',
+          'premium plus','premiumplus','premium full'];
+        var isAllowed = !!userPlan && ALLOWED.indexOf(planLower) !== -1;
+        if (!isDev() && !isAllowed) {
+          alert('この実績ページは会員専用です。\n\nPremium会員にアップグレードすると、中央（JRA）三連複の的中実績をご覧いただけます。');
+          window.location.href = '/premium-prediction/jra/';
+        }
+      })();
+    </script>
+
+    <div class="archive-container">
+        <div class="detail-topbar">
+            <a href="/archive-sanrenpuku-jra/" class="detail-back-link">← 実績アーカイブトップ</a>
+        </div>
+
+        <div class="month-detail-header">
+            <div class="premium-badge"><span class="badge-icon">👑</span><span>Premium会員 実績</span></div>
+            <h1 class="month-detail-title">{monthLabel} 中央競馬（JRA）三連複 的中実績</h1>
+            <div class="month-detail-stats">
+                <div class="mds-item"><div class="mds-value">{mHitRate}%</div><div class="mds-label">的中率</div></div>
+                <div class="mds-item"><div class="mds-value">{mRecovery}%</div><div class="mds-label">回収率</div></div>
+                <div class="mds-item"><div class="mds-value">{mHits}<span class="unit">/{mRaces}</span></div><div class="mds-label">的中/レース</div></div>
+                <div class="mds-item"><div class="mds-value">¥{mPayout.toLocaleString()}</div><div class="mds-label">合計配当</div></div>
+            </div>
+        </div>
+
+        {days.map(({ day, dd, hitRate, dayRecovery, hitRaces }) => (
+            <div class="day-section">
+                <div class="day-header">
+                    <h3 class="day-title">
+                        {monthNum}月{parseInt(day)}日 {(dd.venues && dd.venues.length ? dd.venues.join('・') : dd.venue)}
+                        {dd.rule === 'AI_SANRENPUKU_AXIS_V1' && <span class="auto-tag">自動集計</span>}
+                    </h3>
+                    <div class="perfect-badge">🏆 {dd.hitRaces}/{dd.totalRaces}的中</div>
+                </div>
+                <div class="day-summary">
+                    <div class="summary-item">📊 的中率: <span class="summary-value">{hitRate}%</span></div>
+                    <div class="summary-item">📈 回収率: <span class="summary-value">{dayRecovery}%</span></div>
+                    <div class="summary-item">💰 合計配当: <span class="summary-value">¥{(dd.totalPayout || 0).toLocaleString()}</span></div>
+                </div>
+                {hitRaces.length > 0 ? (
+                    <div class="races-grid">
+                        {hitRaces.map((race) => (
+                            <div class="race-card">
+                                <div class="race-info">
+                                    <div class="race-number">{race.venue && <span class="race-venue-prefix">{race.venue}</span>}{race.raceNumber}</div>
+                                    <div class="race-name">{race.raceName}</div>
+                                </div>
+                                <div class="race-result">
+                                    <div class="hit-badge">✅ 的中</div>
+                                    <div class="payout">¥{(race.payout || 0).toLocaleString()}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p class="no-hit">この日は的中なし</p>
+                )}
+            </div>
+        ))}
+
+        <div class="back-link">
+            <a href="/archive-sanrenpuku-jra/">← 実績アーカイブトップ</a>
+            <a href="/premium-sanrenpuku-jra/">🎯 中央三連複 予想を見る</a>
+        </div>
+    </div>
+
+    <!-- Sticky CTA（リンク型 / 三連複保有会員には JS で非表示） -->
+    <div class="sticky-cta" id="sticky-cta" style="display: none;">
+        <div class="sticky-cta-content">
+            <div class="sticky-cta-text">
+                <div class="sticky-cta-title">🎯 中央＋南関の三連複買い目をお求めの方へ</div>
+                <div class="sticky-cta-description">Premium Sanrenpuku 一つで両方の三連複（AI自動絞り込み）が使えます</div>
+            </div>
+            <a href="/archive-sanrenpuku-jra/" class="sticky-cta-button">👑 三連複プランを見る</a>
+        </div>
+    </div>
+
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)}></script>
+
+    <!-- Sticky の表示制御: 三連複保有（Sanrenpuku/Combo/Full）会員には出さない。casing 非依存。 -->
+    <script is:inline>
+      (function () {
+        try {
+          var raw = localStorage.getItem('user-plan');
+          var plan = '';
+          if (raw) { try { plan = (JSON.parse(raw).plan || '').toString(); } catch (e) {} }
+          if (!plan) plan = localStorage.getItem('userPlan') || '';
+          plan = plan.toString().trim().toLowerCase();
+          var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
+          if (HAS_SRP.indexOf(plan) !== -1) return;
+          var sticky = document.getElementById('sticky-cta');
+          if (sticky) sticky.style.display = '';
+        } catch (e) {}
+      })();
+    </script>
+</BaseLayout>
+
+<style is:global>
+    .archive-container { max-width: 960px; margin: 0 auto; padding: 20px; }
+    .detail-topbar { margin-bottom: 12px; }
+    .detail-back-link { color: #a855f7; font-weight: 700; text-decoration: none; font-size: 0.9rem; }
+    .detail-back-link:hover { text-decoration: underline; }
+
+    .month-detail-header { text-align: center; margin-bottom: 24px; }
+    .premium-badge {
+        display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px;
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.2) 100%);
+        border: 1px solid rgba(251, 191, 36, 0.4); margin-bottom: 12px;
+        font-size: 0.9rem; font-weight: 700; color: rgb(251, 191, 36);
+    }
+    .badge-icon { font-size: 1.1rem; }
+    .month-detail-title { margin: 10px 0 16px; font-size: 1.5rem; font-weight: 800; color: #f1f5f9; }
+    .month-detail-stats { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
+    .mds-item {
+        min-width: 100px; padding: 14px 18px; border-radius: 12px;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(99, 102, 241, 0.15));
+        border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+    .mds-value { font-size: 1.35rem; font-weight: 800; color: #e9d5ff; }
+    .mds-value .unit { font-size: 0.85rem; color: #cbd5e1; font-weight: 700; }
+    .mds-label { font-size: 0.78rem; color: #94a3b8; margin-top: 4px; }
+
+    .day-section {
+        background: rgba(30, 41, 59, 0.55); border: 1px solid rgba(100, 116, 139, 0.25);
+        border-radius: 14px; padding: 16px; margin-bottom: 16px;
+    }
+    .day-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .day-title { margin: 0; font-size: 1.05rem; font-weight: 700; color: #f1f5f9; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .auto-tag { font-size: 0.7rem; font-weight: 700; color: #10b981; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3); border-radius: 999px; padding: 2px 8px; }
+    .perfect-badge { font-size: 0.85rem; font-weight: 700; color: #fbbf24; background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.3); border-radius: 999px; padding: 4px 12px; }
+    .day-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; color: #cbd5e1; font-size: 0.85rem; }
+    .summary-value { color: #10b981; font-weight: 700; }
+
+    .races-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+    .race-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 10px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(16, 185, 129, 0.25); }
+    .race-number { font-weight: 800; color: #f1f5f9; }
+    .race-venue-prefix { color: #a855f7; margin-right: 4px; }
+    .race-name { font-size: 0.8rem; color: #94a3b8; }
+    .hit-badge { font-size: 0.8rem; font-weight: 700; color: #10b981; }
+    .payout { font-weight: 800; color: #34d399; }
+    .no-hit { color: #64748b; font-size: 0.85rem; }
+
+    .back-link { text-align: center; margin-top: 24px; display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .back-link a { color: #a855f7; font-weight: 700; text-decoration: none; }
+    .back-link a:hover { text-decoration: underline; }
+
+    /* Sticky CTA（画面下部固定 / 南関 05.astro と同型） */
+    .sticky-cta {
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000; padding: 1rem;
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.98));
+        border-top: 2px solid rgba(139, 92, 246, 0.5); box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5); backdrop-filter: blur(10px);
+    }
+    .sticky-cta-content { max-width: 960px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+    .sticky-cta-text { flex: 1; }
+    .sticky-cta-title { font-size: 1.1rem; font-weight: 800; color: #fbbf24; margin-bottom: 0.25rem; }
+    .sticky-cta-description { font-size: 0.9rem; color: #cbd5e1; }
+    .sticky-cta-button {
+        padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 800; font-size: 1rem; white-space: nowrap;
+        border: none; cursor: pointer; background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; transition: all 0.3s;
+        text-decoration: none; display: inline-block;
+    }
+    .sticky-cta-button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4); }
+    body { padding-bottom: 100px; }
+
+    @media (max-width: 768px) {
+        .sticky-cta { padding: 0.75rem; }
+        .sticky-cta-content { flex-direction: column; align-items: stretch; gap: 0.75rem; }
+        .sticky-cta-title { font-size: 1rem; }
+        .sticky-cta-button { text-align: center; }
+    }
+</style>

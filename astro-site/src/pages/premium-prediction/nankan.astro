@@ -342,42 +342,34 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         </script>
 
         <script is:inline>
-            // Premium Combo・Premium Sanrenpuku会員は三連複CTAを非表示
+            // 三連複CTAの表示制御（中央 premium-prediction/jra と同一ロジック）:
+            // 既定は非表示。馬単購入者で「初回ログインから5日経過」かつ「未dismiss」のときだけ表示。
+            // Sanrenpuku/Combo/Full 会員・無料/未ログインには出さない。casing 非依存。
+            // 初回時刻(ak-umatan-first-seen)・dismiss(ak-srp-cta-dismissed) は中央ページと共有。
             document.addEventListener('DOMContentLoaded', function() {
-                // user-plan（ハイフン）からJSON取得
-                const userPlanData = localStorage.getItem('user-plan');
-                let userPlan = null;
-
-                if (userPlanData) {
-                    try {
-                        const data = JSON.parse(userPlanData);
-                        userPlan = data.plan;
-                    } catch (e) {
-                        console.error('user-plan parse error:', e);
-                    }
-                }
-
-                // フォールバック：userPlan（キャメルケース）も確認
-                if (!userPlan) {
-                    userPlan = localStorage.getItem('userPlan');
-                }
-
-                console.log('🔍 CTA制御: userPlan =', userPlan);
-
-                const sanrenpukuCta = document.getElementById('sanrenpuku-cta-section');
-                console.log('📍 sanrenpuku-cta-section要素:', sanrenpukuCta);
-
-                // Premium Combo・Premium Sanrenpuku会員はCTA非表示
-                if (userPlan === 'Premium Combo' || userPlan === 'Premium Sanrenpuku') {
-                    if (sanrenpukuCta) {
-                        sanrenpukuCta.style.display = 'none';
-                        console.log('✅ 三連複CTA非表示完了');
-                    } else {
-                        console.error('❌ sanrenpuku-cta-section要素が見つかりません');
-                    }
-                } else {
-                    console.log('ℹ️ 三連複CTA表示（プラン:', userPlan, ')');
-                }
+                var el = document.getElementById('sanrenpuku-cta-section');
+                if (!el) return;
+                try {
+                    var raw = localStorage.getItem('user-plan');
+                    if (!raw) return; // 未ログイン → 既定 display:none のまま
+                    var plan = (JSON.parse(raw).plan || '').toString().trim().toLowerCase();
+                    var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
+                    var PAID_UMATAN = ['premium','premium predictions','premiumpredictions'];
+                    if (HAS_SRP.indexOf(plan) !== -1) return;     // 既に三連複保有
+                    if (PAID_UMATAN.indexOf(plan) === -1) return;  // 馬単購入者以外（free等）
+                    if (localStorage.getItem('ak-srp-cta-dismissed') === '1') return; // ×で閉じ済み
+                    var GRACE_MS = 5 * 24 * 60 * 60 * 1000;
+                    var now = Date.now();
+                    var first = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10);
+                    if (!first) { localStorage.setItem('ak-umatan-first-seen', String(now)); first = now; }
+                    if (now - first < GRACE_MS) return; // 猶予期間中 → 非表示のまま
+                    el.style.display = '';
+                    var closeBtn = el.querySelector('.srp-cta-close');
+                    if (closeBtn) closeBtn.addEventListener('click', function () {
+                        el.style.display = 'none';
+                        try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
+                    });
+                } catch (e) {}
             });
         </script>
 
@@ -1080,8 +1072,9 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         </div>
 
         <!-- 三連複商品への導線セクション -->
-        <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section">
+        <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section" style="display: none;">
           <div class="sanrenpuku-upsell-card">
+            <button type="button" class="srp-cta-close" aria-label="閉じる">×</button>
             <div class="upsell-icon-wrapper">
               <span class="new-badge">NEW</span>
             </div>
@@ -4116,6 +4109,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     }
 
     .sanrenpuku-upsell-card {
+        position: relative;
         display: flex;
         align-items: flex-start;
         gap: 20px;
@@ -4126,6 +4120,12 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
     }
+    .srp-cta-close {
+        position: absolute; top: 8px; right: 10px;
+        background: transparent; border: none; color: rgba(226, 232, 240, 0.6);
+        font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 2px 6px; z-index: 2;
+    }
+    .srp-cta-close:hover { color: #e2e8f0; }
 
     .upsell-buttons {
         display: flex;

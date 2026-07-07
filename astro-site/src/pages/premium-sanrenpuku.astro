@@ -3,36 +3,46 @@ export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccessControl from '../components/AccessControl.astro';
 import BettingSelectionQA from '../components/BettingSelectionQA.astro';
-import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark } from '../lib/shared-prediction-logic.js';
-import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+import RaceHorseSection from '../components/RaceHorseSection.astro';
+import AccordionClickClose from '../components/AccordionClickClose.astro';
+import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
+import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark, normalizeHorseData } from '../lib/shared-prediction-logic.js';
+import { pickLatestNankanVenuesAndAdapt } from '../lib/adaptLatestPrediction.js';
 
-// src/data/predictions/*.json から最新日付を自動選択（自動反映フロー）
+// src/data/predictions/*.json から最新日付の全会場を取得（南関同時開催対応）
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
-const allRacesData = pickLatestAndAdapt(predictionModules);
-if (!allRacesData) {
+const multiVenueData = pickLatestNankanVenuesAndAdapt(predictionModules);
+if (!multiVenueData || multiVenueData.venues.length === 0) {
     throw new Error('予想データが見つかりません。src/data/predictions/ を確認してください。');
 }
 
-// 共有ロジックを使用してデータを処理
-const { sortedRaces } = processRaceData(allRacesData);
+// 会場ごとに三連複買い目を生成（generateSanrenpukuBets は会場非依存・各レースへ適用）
+const venuesProcessed = multiVenueData.venues.map((venueRaw) => {
+    const { sortedRaces } = processRaceData(venueRaw);
+    const sanrenpukuRaces = sortedRaces.map(raceData => ({
+        ...raceData,
+        sanrenpuku: generateSanrenpukuBets(raceData.horses)
+    }));
+    return {
+        venueSlug: venueRaw.venueSlug,
+        track: venueRaw.track,
+        raceDate: venueRaw.raceDate,
+        totalRaces: venueRaw.totalRaces || (venueRaw.races ? venueRaw.races.length : sanrenpukuRaces.length),
+        sanrenpukuRaces,
+    };
+});
 
-// 日付と会場を取得
-const raceDate = allRacesData.raceDate;
-const track = allRacesData.track;
-const totalRaces = allRacesData.totalRaces || 12;
+const isMultiVenue = venuesProcessed.length > 1;
+const firstVenue = venuesProcessed[0];
+
+// タイトル・SEO 用に最初の会場を代表採用
+const raceDate = firstVenue.raceDate;
+const track = firstVenue.track;
+const totalRaces = firstVenue.totalRaces;
 
 // 日付を日本語形式に変換
 const [year, month, day] = raceDate.split('-');
 const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
-
-// 全レースの三連複買い目生成
-const sanrenpukuRaces = sortedRaces.map(raceData => {
-    const sanrenpukuData = generateSanrenpukuBets(raceData.horses);
-    return {
-        ...raceData,
-        sanrenpuku: sanrenpukuData
-    };
-});
 ---
 
 <BaseLayout
@@ -111,20 +121,46 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
                 <h1 class="race-title">{formattedDate} {track} - Premium 三連複厳選予想</h1>
             </div>
 
-            <!-- フローティングレースセレクター（右下固定） -->
+            <!-- 会場タブ（南関同時開催の場合のみ表示・nankan premium と同一パターン） -->
+            {isMultiVenue && (
+                <div class="venue-selector">
+                    {venuesProcessed.map((v, i) => (
+                        <button
+                            class={`venue-btn ${i === 0 ? 'active' : ''}`}
+                            data-venue-index={i}
+                            type="button"
+                            onclick="selectSanrenpukuVenue(this)"
+                        >
+                            <span class="venue-label">{v.track}</span>
+                            <span class="venue-race-count">{v.sanrenpukuRaces.length}R</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {venuesProcessed.map((venue, venueIndex) => (
+            <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
+                {isMultiVenue && (
+                    <div class="venue-header-inline">
+                        <h2 class="venue-title">{venue.track}</h2>
+                        <p class="venue-subtitle">{venue.totalRaces}レース - Premium 三連複厳選予想</p>
+                    </div>
+                )}
+
+            <!-- フローティングレースセレクター（右下固定・会場ごと） -->
             <div class="floating-race-selector">
-                <button class="floating-selector-toggle" id="raceSelectorToggle">
+                <button class="floating-selector-toggle" type="button">
                     <span class="toggle-icon">🏇</span>
                     <span class="toggle-text">レース選択</span>
                 </button>
-                <div class="floating-selector-menu" id="raceSelectorMenu" style="display: none;">
+                <div class="floating-selector-menu" style="display: none;">
                     <div class="selector-header">📍 レースを選択</div>
                     <div class="selector-grid">
-                        {sanrenpukuRaces.map((raceData) => (
+                        {venue.sanrenpukuRaces.map((raceData) => (
                             <button
                                 class="selector-race-btn"
                                 data-race-number={raceData.raceNumber}
-                                onclick={`document.getElementById('race-${raceData.raceNumber}').scrollIntoView({behavior: 'smooth', block: 'start'}); document.getElementById('raceSelectorMenu').style.display = 'none';`}
+                                onclick={`openSanrenpukuRace(${venueIndex}, ${String(raceData.raceNumber).replace('R','')}); this.closest('.floating-selector-menu').style.display = 'none';`}
                             >
                                 {raceData.raceNumber}
                             </button>
@@ -135,196 +171,55 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
 
             <!-- 全レース予想 -->
             <div class="races-container">
-                {sanrenpukuRaces.map((raceData, index) => {
+                {venue.sanrenpukuRaces.map((raceData, index) => {
                     const sanrenpuku = raceData.sanrenpuku;
                     const horses = raceData.horses;
                     const strategies = raceData.strategies;
+                    // 予想ページ(premium-prediction/nankan)と同一の馬表示へ寄せる。
+                    // role 付き配列に正規化して共有部品 RaceHorseSection に渡す（AI総合指数＋過去走が基準どおり出る）。
+                    const raceHorses = normalizeHorseData(raceData) || [];
+                    // 予想ページと同じ「レース単位アコーディオン」用の値
+                    const raceNum = String(raceData.raceNumber).replace('R', '');
+                    const cleanRaceName = (raceData.raceName || '競走名')
+                        .replace(/\s*[ダ芝]\d+[,.]?\d*m.*$/, '')
+                        .replace(/\s*（\d+頭）.*$/, '')
+                        .replace(/\s*発走時刻.*$/, '');
 
                     return (
-                        <div class="race-card" id={`race-${raceData.raceNumber}`}>
-                            <div class="race-header">
-                                <div class="race-number">{raceData.raceNumber}</div>
-                                <div class="race-info">
-                                    <h3 class="race-name">{raceData.raceName}</h3>
+                        <div class={`race-${raceNum}r-accordion`}>
+                            <!-- レース単位アコーディオン ヘッダー（予想ページ premium-prediction/nankan と同型） -->
+                            <div class="race-accordion-header" onclick={`toggleSanrenpukuRace(${venueIndex}, ${raceNum})`}>
+                                <div class="race-basic-info">
+                                    <span class="race-number">{raceData.raceNumber}</span>
+                                    <span class="race-name">{cleanRaceName}</span>
+                                    <span class="race-tier-badge">{`第${raceNum}レース`}</span>
+                                </div>
+                                <div class="race-preview">
+                                    <span class="toggle-icon" id={`srp-toggle-v${venueIndex}-${raceNum}r`}>▼</span>
                                 </div>
                             </div>
 
-                            <!-- AI選出馬分析（最初に配置） -->
+                            <!-- アコーディオン中身（初期は畳む。max-height はトグルJSで制御） -->
+                            <div class="race-accordion-content" id={`srp-race-v${venueIndex}-${raceNum}r`} style="max-height: 0; opacity: 0;">
+
+                            <!-- AI選出馬分析（最初に配置）— 予想ページと同一の共有部品で描画 -->
                             <div class="analysis-section">
                                 <h4 class="section-title">🤖 AIモデル選出馬 - 詳細分析</h4>
 
-                                {/* 本命（最も大きく表示） */}
-                                {horses.main && (
-                                    <div class="horse-card horse-card-main">
-                                        <div class="horse-header">
-                                            <span class="horse-mark-main">◎</span>
-                                            <span class="horse-number-main">{horses.main.number}</span>
-                                            <span class="horse-name-main">{horses.main.name}</span>
-                                            <span class="horse-type-main">本命</span>
-                                        </div>
-                                        <div class="ai-factors">
-                                            {horses.main.factors && horses.main.factors.filter(factor =>
-                                                factor.text.includes('累積スコア') ||
-                                                factor.text.includes('総合評価')
-                                            ).map(factor => {
-                                                const isScore = factor.text.includes('累積スコア');
-                                                const isEvaluation = factor.text.includes('総合評価');
-                                                const factorClass = isScore ? 'factor factor-score' : isEvaluation ? 'factor factor-evaluation' : 'factor';
-                                                const displayText = factor.text.replace(/^★\s*/, '');
-                                                const showIcon = !isScore && !isEvaluation;
-                                                return (
-                                                    <div class={factorClass}>
-                                                        {showIcon && <span class="factor-icon">{factor.icon}</span>}
-                                                        <span>{displayText}</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                        {horses.main.importance && (
-                                            <div class="feature-importance">
-                                                <h5 style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">特徴量重要度</h5>
-                                                {horses.main.importance.map(item => (
-                                                    <div class="importance-bar">
-                                                        <span class="importance-label">{item.label}</span>
-                                                        <div class="importance-value">
-                                                            <div class="importance-fill" style={`width: ${item.value * 100}%;`}>{Math.round(item.value * 100)}%</div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {/* 対抗（中サイズ表示） */}
-                                {horses.sub && (
-                                    <div class="horse-card horse-card-sub">
-                                        <div class="horse-header">
-                                            <span class="horse-mark-sub">○</span>
-                                            <span class="horse-number-sub">{horses.sub.number}</span>
-                                            <span class="horse-name-sub">{horses.sub.name}</span>
-                                            <span class="horse-type-sub">対抗</span>
-                                        </div>
-                                        <div class="ai-factors">
-                                            {horses.sub.factors && horses.sub.factors.filter(factor =>
-                                                factor.text.includes('累積スコア') ||
-                                                factor.text.includes('総合評価')
-                                            ).map(factor => {
-                                                const isScore = factor.text.includes('累積スコア');
-                                                const isEvaluation = factor.text.includes('総合評価');
-                                                const factorClass = isScore ? 'factor factor-score' : isEvaluation ? 'factor factor-evaluation' : 'factor';
-                                                const displayText = factor.text.replace(/^★\s*/, '');
-                                                const showIcon = !isScore && !isEvaluation;
-                                                return (
-                                                    <div class={factorClass}>
-                                                        {showIcon && <span class="factor-icon">{factor.icon}</span>}
-                                                        <span>{displayText}</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                        {horses.sub.importance && (
-                                            <div class="feature-importance">
-                                                <h5 style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">特徴量重要度</h5>
-                                                {horses.sub.importance.map(item => (
-                                                    <div class="importance-bar">
-                                                        <span class="importance-label">{item.label}</span>
-                                                        <div class="importance-value">
-                                                            <div class="importance-fill" style={`width: ${item.value * 100}%;`}>{Math.round(item.value * 100)}%</div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {/* 単穴候補馬（まとめて表示） */}
-                                {(horses.hole1 || horses.hole2) && (
-                                    <div class="horse-card horse-card-hole">
-                                        <div class="horse-header">
-                                            <span class="horse-mark-hole">▲</span>
-                                            <span class="minor-title title-hole">単穴候補馬</span>
-                                        </div>
-                                        <div class="horse-grid">
-                                            {horses.hole1 && (() => {
-                                                const scoreText = horses.hole1.factors?.find(f => f.text.includes('累積スコア'))?.text;
-                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
-                                                return (
-                                                    <div class="horse-grid-item">
-                                                        <span class="horse-number-small">{horses.hole1.number}</span>
-                                                        <span class="horse-name-small">{horses.hole1.name}{score ? ` (${score}pt)` : ''}</span>
-                                                    </div>
-                                                );
-                                            })()}
-                                            {horses.hole2 && (() => {
-                                                const scoreText = horses.hole2.factors?.find(f => f.text.includes('累積スコア'))?.text;
-                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
-                                                return (
-                                                    <div class="horse-grid-item">
-                                                        <span class="horse-number-small">{horses.hole2.number}</span>
-                                                        <span class="horse-name-small">{horses.hole2.name}{score ? ` (${score}pt)` : ''}</span>
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 連下候補馬（まとめて表示） */}
-                                {horses.connect && horses.connect.length > 0 && (
-                                    <div class="horse-card horse-card-renka">
-                                        <div class="horse-header">
-                                            <span class="horse-mark-renka">△</span>
-                                            <span class="minor-title title-renka">連下候補馬</span>
-                                        </div>
-                                        <div class="horse-grid">
-                                            {horses.connect.map(horse => {
-                                                const scoreText = horse.factors?.find(f => f.text.includes('累積スコア'))?.text;
-                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
-                                                return (
-                                                    <div class="horse-grid-item">
-                                                        <span class="horse-number-small">{horse.number}</span>
-                                                        <span class="horse-name-small">{horse.name}{score ? ` (${score}pt)` : ''}</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 抑え候補馬（まとめて表示） */}
-                                {horses.reserve && horses.reserve.length > 0 && (
-                                    <div class="horse-card horse-card-minor">
-                                        <div class="horse-header">
-                                            <span class="horse-mark-minor">×</span>
-                                            <span class="minor-title title-minor">抑え候補馬</span>
-                                        </div>
-                                        <div class="horse-grid">
-                                            {horses.reserve.map(horse => {
-                                                const scoreText = horse.factors?.find(f => f.text.includes('累積スコア'))?.text;
-                                                const score = scoreText ? scoreText.match(/\d+/)?.[0] : '';
-                                                return (
-                                                    <div class="horse-grid-item">
-                                                        <span class="horse-number-small">{horse.number}</span>
-                                                        <span class="horse-name-small">{horse.name}{score ? ` (${score}pt)` : ''}</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
+                                {/* 本命/対抗/単穴の rich カード + 連下/抑えミニカード + AI総合指数 + 過去走を
+                                    予想ページ(premium-prediction/nankan)と完全同型で描画する共有部品 */}
+                                <RaceHorseSection raceHorses={raceHorses} />
                             </div>
 
                             <!-- Premium Sanrenpuku絞り込みボタン -->
-                            <button class="premium-select-filter-btn" data-race-index={index}>
+                            <button class="premium-select-filter-btn" data-race-index={`v${venueIndex}-${index}`}>
                                 <span class="filter-icon">🎯</span>
                                 <span class="filter-text">Premium Sanrenpuku 絞り込む</span>
                                 <span class="filter-arrow">▼</span>
                             </button>
 
                             <!-- Premium Sanrenpuku厳選買い目（初期非表示・絞り込み後表示） -->
-                            <div class="premium-select-highlight" data-race-content={index} style="display: none;">
+                            <div class="premium-select-highlight" data-race-content={`v${venueIndex}-${index}`} style="display: none;">
                                 <div class="select-header">
                                     <div class="select-badge">✨ Premium Sanrenpuku 厳選買い目</div>
                                 </div>
@@ -390,10 +285,13 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
                                 )}
                             </div>
 
+                            </div>
                         </div>
                     );
                 })}
             </div>
+            </div>
+            ))}
 
             <!-- Premium Plus CTAセクション -->
             <div class="premium-plus-cta-section">
@@ -453,6 +351,10 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
                 </div>
             </div>
         </div>
+
+        {/* 予想ページと同じアコーディオン挙動（過去走 details の開閉／レース折りたたみ） */}
+        <AccordionClickClose />
+        <RaceAccordionClickClose />
 
         <!-- プラン判定スクリプト -->
         <script is:inline>
@@ -820,6 +722,60 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
         padding: 20px;
     }
 
+    /* 会場切り替え（南関同時開催対応・premium-prediction/nankan.astro と同一パターン） */
+    .venue-selector {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin: 0 auto 28px;
+        padding: 8px;
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        flex-wrap: wrap;
+        max-width: max-content;
+        backdrop-filter: blur(8px);
+    }
+    .venue-btn {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 10px 24px;
+        background: transparent;
+        color: #cbd5e1;
+        border: none;
+        border-radius: 999px;
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .venue-btn:hover { background: rgba(139, 92, 246, 0.12); color: #e2e8f0; }
+    .venue-btn.active {
+        background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+        color: white;
+        box-shadow: 0 4px 14px rgba(139, 92, 246, 0.45);
+    }
+    .venue-label { font-size: 1.05rem; font-weight: 800; letter-spacing: 0.02em; }
+    .venue-race-count { font-size: 0.78rem; opacity: 0.85; font-weight: 700; }
+    @media (max-width: 768px) {
+        .venue-selector { max-width: 100%; gap: 4px; padding: 6px; }
+        .venue-btn { padding: 8px 16px; }
+        .venue-label { font-size: 0.95rem; }
+    }
+    .venue-content { display: none; }
+    .venue-content.active { display: block; }
+    .venue-header-inline {
+        text-align: center;
+        margin: 0 0 24px;
+        padding: 16px;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%);
+        border-radius: 12px;
+        border: 2px solid rgba(139, 92, 246, 0.3);
+    }
+    .venue-header-inline .venue-title { margin: 0; font-size: 1.4rem; font-weight: 800; color: #e9d5ff; }
+    .venue-header-inline .venue-subtitle { margin: 4px 0 0; font-size: 0.9rem; color: #cbd5e1; }
+
     /* 背景パターン強化（ガラスモーフィズム効果を可視化） */
     body {
         background:
@@ -1047,7 +1003,9 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
     .races-container {
         display: flex;
         flex-direction: column;
-        gap: 25px;
+        /* レース間隔はアコーディオンwrapperの margin-bottom:25px に一本化（基準 premium-prediction/nankan と同一）。
+           旧 .race-card レイアウト由来の gap:25px を残すと wrapper margin と二重(50px)になり閉状態の余白が過大になる。 */
+        gap: 0;
     }
 
     .race-card {
@@ -2080,30 +2038,156 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
             padding: 15px 40px;
         }
     }
+
+    /* ==== レース単位アコーディオン（予想ページ premium-prediction/nankan と同型・衝突回避のためヘッダー配下にスコープ）==== */
+    [class*="race-"][class*="r-accordion"] {
+        background: rgba(16, 185, 129, 0.05);
+        border-radius: 12px;
+        border: 1px solid rgba(16, 185, 129, 0.2);
+        margin-bottom: 25px;
+        overflow: hidden;
+    }
+    .race-accordion-header {
+        padding: 20px 25px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
+        transition: all 0.3s ease;
+        border-bottom: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    .race-accordion-header:hover {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.08) 100%);
+    }
+    .race-accordion-header .race-basic-info {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex-wrap: wrap;
+    }
+    .race-accordion-header .race-number {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        color: white;
+        padding: 8px 15px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 1.1rem;
+    }
+    .race-accordion-header .race-name {
+        color: #e2e8f0;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    .race-accordion-header .race-tier-badge {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        padding: 4px 10px;
+        border-radius: 15px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .race-accordion-header .race-preview .toggle-icon {
+        font-size: 1.2rem;
+        color: #10b981;
+        transition: transform 0.3s ease;
+    }
+    .race-accordion-content {
+        overflow: hidden;
+        transition: all 0.3s ease;
+        background: rgba(15, 23, 42, 0.95);
+    }
 </style>
 
 <script is:inline>
-    document.addEventListener('DOMContentLoaded', function() {
-        // フローティングレースセレクターのトグル
-        const selectorToggle = document.getElementById('raceSelectorToggle');
-        const selectorMenu = document.getElementById('raceSelectorMenu');
+    // 会場切替（南関同時開催・nankan premium の selectNankanVenue と同一挙動）
+    function selectSanrenpukuVenue(btn) {
+        const idx = btn.getAttribute('data-venue-index');
+        document.querySelectorAll('.venue-btn').forEach((b) => b.classList.toggle('active', b.getAttribute('data-venue-index') === idx));
+        document.querySelectorAll('.venue-content').forEach((c) => c.classList.toggle('active', c.getAttribute('data-venue-index') === idx));
+        // 会場切替時に開いているレース選択メニューを閉じる
+        document.querySelectorAll('.floating-selector-menu').forEach((m) => { m.style.display = 'none'; });
+    }
+    window.selectSanrenpukuVenue = selectSanrenpukuVenue;
 
-        if (selectorToggle && selectorMenu) {
-            selectorToggle.addEventListener('click', function() {
-                if (selectorMenu.style.display === 'none') {
-                    selectorMenu.style.display = 'block';
-                } else {
-                    selectorMenu.style.display = 'none';
-                }
-            });
+    // ==== レース単位アコーディオン（予想ページ toggleNankanRace と同型 / srp- プレフィックスでID衝突回避）====
+    // 開いているレースアコーディオンの固定 max-height を、内側の開閉に追従して再計算（クリップ防止）
+    function _srpRecalcFrom(el) {
+        const content = el && el.closest && el.closest('.race-accordion-content');
+        if (!content) return;
+        const mh = content.style.maxHeight;
+        if (mh === '0px' || mh === '') return; // 閉じているレースは触らない
+        requestAnimationFrame(() => { content.style.maxHeight = content.scrollHeight + 'px'; });
+    }
+    window._srpRecalcFrom = _srpRecalcFrom;
 
-            // メニュー外クリックで閉じる
-            document.addEventListener('click', function(event) {
-                if (!event.target.closest('.floating-race-selector')) {
-                    selectorMenu.style.display = 'none';
-                }
-            });
+    function toggleSanrenpukuRace(venueIndex, raceNumber) {
+        const content = document.getElementById(`srp-race-v${venueIndex}-${raceNumber}r`);
+        const icon = document.getElementById(`srp-toggle-v${venueIndex}-${raceNumber}r`);
+        if (!content || !icon) return;
+        // 同じ会場の他アコーディオンを閉じる（1レースのみ展開）
+        for (let i = 1; i <= 12; i++) {
+            if (i !== raceNumber) {
+                const oc = document.getElementById(`srp-race-v${venueIndex}-${i}r`);
+                const oi = document.getElementById(`srp-toggle-v${venueIndex}-${i}r`);
+                if (oc && oi) { oc.style.maxHeight = '0px'; oc.style.opacity = '0'; oi.textContent = '▼'; oi.style.transform = 'rotate(0deg)'; }
+            }
         }
+        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
+            content.style.maxHeight = content.scrollHeight + 'px';
+            content.style.opacity = '1';
+            icon.textContent = '◎';
+            icon.style.transform = 'rotate(180deg)';
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+            icon.textContent = '▼';
+            icon.style.transform = 'rotate(0deg)';
+        }
+    }
+    window.toggleSanrenpukuRace = toggleSanrenpukuRace;
+
+    // フローティングレース選択から呼ぶ: 必ず開いてスクロール
+    function openSanrenpukuRace(venueIndex, raceNumber) {
+        const content = document.getElementById(`srp-race-v${venueIndex}-${raceNumber}r`);
+        if (!content) return;
+        const isClosed = content.style.maxHeight === '0px' || content.style.maxHeight === '';
+        if (isClosed) toggleSanrenpukuRace(venueIndex, raceNumber);
+        content.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    window.openSanrenpukuRace = openSanrenpukuRace;
+
+    // 内側 details（過去走/近走詳細）の開閉で親レースアコーディオンの max-height を再計算
+    function bindSrpNestedDetailsRecalc() {
+        document.querySelectorAll('.race-accordion-content details').forEach((d) => {
+            if (d.dataset.srpScrollBound === '1') return;
+            d.dataset.srpScrollBound = '1';
+            d.addEventListener('toggle', () => { _srpRecalcFrom(d); });
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindSrpNestedDetailsRecalc);
+    } else {
+        bindSrpNestedDetailsRecalc();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // フローティングレースセレクターのトグル（会場ごとに複数存在しうるため class ベース）
+        document.querySelectorAll('.floating-selector-toggle').forEach(function(toggle) {
+            const menu = toggle.parentElement.querySelector('.floating-selector-menu');
+            if (!menu) return;
+            toggle.addEventListener('click', function(e) {
+                e.stopPropagation();
+                menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
+            });
+        });
+
+        // メニュー外クリックで全メニューを閉じる
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.floating-race-selector')) {
+                document.querySelectorAll('.floating-selector-menu').forEach(function(m) { m.style.display = 'none'; });
+            }
+        });
 
         // Premium Sanrenpuku絞り込みボタン（3段階アニメーション）
         const filterBtns = document.querySelectorAll('.premium-select-filter-btn');
@@ -2128,12 +2212,15 @@ const sanrenpukuRaces = sortedRaces.map(raceData => {
 
                             // コンテンツ表示
                             content.style.display = 'block';
+                            // 買い目表示ぶん親レースアコーディオンの高さを再計算（クリップ防止）
+                            if (window._srpRecalcFrom) window._srpRecalcFrom(content);
                         }, 1600);
                     } else {
                         // コンテンツ非表示 → 初期状態に戻す
                         content.style.display = 'none';
                         this.classList.remove('filtered');
                         filterText.textContent = 'Premium Sanrenpuku 絞り込む';
+                        if (window._srpRecalcFrom) window._srpRecalcFrom(content);
                     }
                 }
             });

@@ -3,6 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import AccessControl from '../../components/AccessControl.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
+import PremiumContactModal from '../../components/PremiumContactModal.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { sortHorsesByRole } from '../../utils/sortHorsesByRole.js';
@@ -1360,12 +1361,74 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
             })}
 
             <!-- 免責事項（free 版に揃えてシンプル化） -->
+            <!-- 中央（JRA）三連複 CTA（予想の下に配置 / 初回ログインから5日間は非表示・×で閉じる / Sanrenpuku・Combo 会員には非表示） -->
+            <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section-jra" style="display: none;">
+              <div class="sanrenpuku-upsell-card">
+                <button type="button" class="srp-cta-close" aria-label="閉じる">×</button>
+                <div class="upsell-icon-wrapper">
+                  <span class="upsell-icon">🎯</span>
+                  <span class="new-badge">NEW</span>
+                </div>
+                <div class="upsell-content">
+                  <h3 class="upsell-title">馬単の買い目が絞りきれない方へ</h3>
+                  <p class="upsell-description">
+                    <strong>中央（JRA）三連複 → 絞り込み機能搭載</strong><br>
+                    高性能AIが買い目を自動で絞り込む三連複がおすすめです！
+                  </p>
+                  <div class="upsell-stats">
+                    <span class="stat-highlight">🎯 買い目点数わずか7〜9点の少点数！</span>
+                    <span class="stat-highlight">📊 本命軸ボックスで高性能AI自動絞り込み</span>
+                  </div>
+                  <div class="upsell-buttons">
+                    <a href="/premium-sanrenpuku-jra/" class="btn-sample">✨ 三連複予想を見る</a>
+                    <a href="/archive-sanrenpuku-jra/" class="btn-archive">📊 三連複の実績を見る</a>
+                    <a href="/plan-upgrade-guide/" class="btn-purchase-modal">➕ 三連複を追加</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <script is:inline>
+              // 三連複CTAの表示制御: 既定は非表示。馬単購入者で「初回ログインから5日経過」かつ
+              // 「未dismiss」のときだけ表示する（購入直後の押し売りを避ける）。
+              // Sanrenpuku/Combo/Full 会員・無料/未ログインには出さない。casing 非依存。
+              (function () {
+                var el = document.getElementById('sanrenpuku-cta-section-jra');
+                if (!el) return;
+                try {
+                  var raw = localStorage.getItem('user-plan');
+                  if (!raw) return; // 未ログイン → 既定 display:none のまま
+                  var plan = (JSON.parse(raw).plan || '').toString().trim().toLowerCase();
+                  var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
+                  var PAID_UMATAN = ['premium','premium predictions','premiumpredictions'];
+                  if (HAS_SRP.indexOf(plan) !== -1) return;     // 既に三連複保有
+                  if (PAID_UMATAN.indexOf(plan) === -1) return;  // 馬単購入者以外（free等）
+                  if (localStorage.getItem('ak-srp-cta-dismissed') === '1') return; // ×で閉じ済み
+                  // 馬単購入者として初回に見た時刻を記録し、そこから5日間は非表示
+                  var GRACE_MS = 5 * 24 * 60 * 60 * 1000;
+                  var now = Date.now();
+                  var first = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10);
+                  if (!first) { localStorage.setItem('ak-umatan-first-seen', String(now)); first = now; }
+                  if (now - first < GRACE_MS) return; // 猶予期間中 → 非表示のまま
+                  // 表示条件クリア → 表示 ＋ ×ボタン結線
+                  el.style.display = '';
+                  var closeBtn = el.querySelector('.srp-cta-close');
+                  if (closeBtn) closeBtn.addEventListener('click', function () {
+                    el.style.display = 'none';
+                    try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
+                  });
+                } catch (e) {}
+              })();
+            </script>
+
             <div class="disclaimer-box">
               <h3 class="disclaimer-title">⚠️ 免責事項</h3>
               <p class="disclaimer-text">競馬予想は投資の一種です。必ず余裕資金の範囲内で楽しみ、自己責任でご利用ください。当予想による損失については一切の責任を負いません。</p>
             </div>
           </>
         )}
+
+        <!-- 有料会員お問い合わせモーダル（南関 premium-prediction/nankan と同型・再利用コンポーネント） -->
+        <PremiumContactModal />
       </div>
     </section>
   </AccessControl>
@@ -2736,6 +2799,55 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
       transform: translateY(-3px);
       box-shadow: 0 12px 30px rgba(245, 158, 11, 0.4);
       border-color: rgba(245, 158, 11, 0.5);
+    }
+
+    /* 三連複 CTA アップセルカード（南関 premium-prediction/nankan と同型） */
+    .sanrenpuku-upsell-section { margin: 0 0 20px; }
+    .sanrenpuku-upsell-card {
+      position: relative;
+      display: flex; align-items: flex-start; gap: 20px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(234, 88, 12, 0.2) 100%);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 16px; padding: 24px;
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    }
+    .srp-cta-close {
+      position: absolute; top: 8px; right: 10px;
+      background: transparent; border: none; color: rgba(226, 232, 240, 0.6);
+      font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 2px 6px; z-index: 2;
+    }
+    .srp-cta-close:hover { color: #e2e8f0; }
+    .upsell-icon-wrapper { position: relative; flex-shrink: 0; }
+    .upsell-icon { font-size: 3rem; display: block; }
+    .new-badge {
+      position: absolute; top: -8px; right: -10px;
+      background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff;
+      font-size: 0.65rem; font-weight: 700; padding: 3px 8px; border-radius: 12px;
+      text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+    }
+    .upsell-content { flex: 1; }
+    .upsell-title { color: rgb(245, 158, 11); font-size: 1.3rem; font-weight: 700; margin-bottom: 8px; line-height: 1.2; }
+    .upsell-description { color: rgba(226, 232, 240, 0.8); font-size: 0.95rem; line-height: 1.5; margin-bottom: 8px; }
+    .upsell-stats {
+      display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 12px;
+      background: rgba(16, 185, 129, 0.1); border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .stat-highlight { color: rgb(16, 185, 129); font-size: 0.95rem; font-weight: 700; }
+    .upsell-buttons { display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap; }
+    .btn-sample, .btn-archive, .btn-purchase-modal {
+      flex: 1; min-width: 140px; padding: 14px 20px; border-radius: 10px;
+      font-weight: 700; font-size: 0.95rem; text-decoration: none; text-align: center;
+      transition: all 0.3s ease; cursor: pointer; border: none; display: inline-block;
+    }
+    .btn-sample { background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.2)); color: #60a5fa; border: 2px solid rgba(59, 130, 246, 0.4); }
+    .btn-sample:hover { background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(139, 92, 246, 0.3)); border-color: rgba(59, 130, 246, 0.6); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3); }
+    .btn-archive { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.2)); color: #10b981; border: 2px solid rgba(16, 185, 129, 0.4); }
+    .btn-archive:hover { background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.3)); border-color: rgba(16, 185, 129, 0.6); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
+    .btn-purchase-modal { background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; border: 2px solid rgba(245, 158, 11, 0.5); }
+    .btn-purchase-modal:hover { background: linear-gradient(135deg, #ea580c, #dc2626); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4); }
+    @media (max-width: 640px) {
+      .sanrenpuku-upsell-card { flex-direction: column; gap: 14px; padding: 18px; }
+      .upsell-buttons { flex-direction: column; }
     }
     .dark-horse-icon {
       font-size: 2rem;

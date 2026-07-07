@@ -1,0 +1,531 @@
+---
+// 中央競馬（JRA）Premium 三連複 予想ページ
+// - データ: loadJraVenuesForDisplay()（JRA multi-venue スキーマ・近走注入込み）
+// - 買い目: buildRaceSanrenpuku()（単一源 osaeClassification 基準・南関 premium と同一ロジック）
+// - 会場切替: premium-sanrenpuku.astro / premium-prediction/nankan.astro と同一の venue タブ方式
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AccessControl from '../components/AccessControl.astro';
+import { loadJraVenuesForDisplay } from '../lib/loadJraVenuesForDisplay.js';
+import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../utils/sanrenpukuBetting.js';
+import { getHorseAiIndex } from '../lib/shared-prediction-logic.js';
+import { convertToSanrenpukuYesterdayResultsJra } from '../lib/archive-utils.js';
+import { loadFeatureScores, venueCodeFromName } from '../lib/loadFeatureScores.js';
+import JraRaceHorseSection from '../components/JraRaceHorseSection.astro';
+
+// 直近の三連複的中実績（archiveSanrenpukuResultsJra 由来・表示専用）
+const latestResult = convertToSanrenpukuYesterdayResultsJra();
+
+const { predictionData, venues, isMultiVenue, error } = loadJraVenuesForDisplay();
+
+// 会場ごとに各レースの三連複買い目を構築（generateSanrenpukuBets ではなく単一源 buildRaceSanrenpuku）
+const venuesProcessed = (venues || []).map((v) => {
+    const track = v.venue || v.eventInfo?.venue || 'JRA';
+    const preds = Array.isArray(v.predictions) ? v.predictions : [];
+    // AK専用3項目の素材: shared featureScores を会場単位で1回ロード（読むだけ・無ければ null）
+    const fsDate = v.eventInfo?.date || predictionData?.date || predictionData?.eventInfo?.date || null;
+    const featureScoresData = loadFeatureScores('jra', fsDate, venueCodeFromName('jra', track));
+    const races = preds.map((race) => {
+        const horses = Array.isArray(race.horses) ? race.horses : [];
+        const built = buildRaceSanrenpuku(horses);
+        const sanrenpukuView = {
+            narrow: built.narrow
+                ? { line: formatSanrenpukuLine(built.narrow), points: built.narrow.points || 0 }
+                : null,
+            normalHonmeiAxis: built.normalHonmeiAxis
+                ? { line: formatSanrenpukuLine(built.normalHonmeiAxis) }
+                : null,
+            normalTaikouAxis: built.normalTaikouAxis
+                ? { line: formatSanrenpukuLine(built.normalTaikouAxis) }
+                : null,
+        };
+        const hasSanrenpuku = !!(sanrenpukuView.narrow || sanrenpukuView.normalHonmeiAxis || sanrenpukuView.normalTaikouAxis);
+        // AI 選出馬（本命・対抗・単穴）
+        const roleHorses = ['本命', '対抗', '単穴'].flatMap((r) => horses.filter((h) => h.role === r));
+        return {
+            raceNumber: race.raceInfo?.raceNumber ?? null,
+            raceName: race.raceInfo?.raceName ?? '',
+            startTime: race.raceInfo?.startTime ?? '',
+            horseCount: race.raceInfo?.horseCount ?? null,
+            roleHorses,
+            allHorses: horses,
+            raceObj: race,
+            sanrenpukuView,
+            hasSanrenpuku,
+        };
+    });
+    return { track, venueSlug: v.venueSlug, races, featureScoresData };
+});
+
+const hasData = !error && venuesProcessed.length > 0 && venuesProcessed.some((v) => v.races.length > 0);
+const firstVenue = venuesProcessed[0] || { track: 'JRA', races: [] };
+const track = firstVenue.track;
+
+// 日付（predictionData.date / venue eventInfo.date のいずれか）
+const raceDate = predictionData?.date || venues?.[0]?.eventInfo?.date || '';
+let formattedDate = '';
+if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
+    const [year, month, day] = raceDate.split('-');
+    formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
+}
+---
+
+<BaseLayout
+    title={`中央競馬 Premium三連複予想 | ${track} ${formattedDate}`}
+    description={`AI技術による中央競馬（JRA）の超厳選三連複予想。累積スコアに基づく少点数買い目で最適な組み合わせのみを提供。`}
+>
+    <AccessControl requiredPlan="Premium Sanrenpuku">
+        <div class="page-container">
+            <!-- ヘッダー -->
+            <div class="header-section">
+                <div class="ai-badge premium-select-badge">
+                    <span class="pulse"></span>
+                    <span class="ai-status">✨ Premium Sanrenpuku（中央）</span>
+                </div>
+                <h1 class="race-title">{formattedDate} {track} - Premium 三連複厳選予想</h1>
+            </div>
+
+            {!hasData && (
+                <div class="no-data-card">
+                    <p>本日の中央競馬（JRA）三連複予想データがありません。</p>
+                    <p class="no-data-sub">開催日に自動反映されます。</p>
+                </div>
+            )}
+
+            {hasData && (
+                <>
+                    <!-- 会場タブ（同時開催の場合のみ表示） -->
+                    {isMultiVenue && (
+                        <div class="venue-selector">
+                            {venuesProcessed.map((v, i) => (
+                                <button
+                                    class={`venue-btn ${i === 0 ? 'active' : ''}`}
+                                    data-venue-index={i}
+                                    type="button"
+                                    onclick="selectJraSanrenpukuVenue(this)"
+                                >
+                                    <span class="venue-label">{v.track}</span>
+                                    <span class="venue-race-count">{v.races.length}R</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {venuesProcessed.map((venue, venueIndex) => (
+                    <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
+                        {isMultiVenue && (
+                            <div class="venue-header-inline">
+                                <h2 class="venue-title">{venue.track}</h2>
+                                <p class="venue-subtitle">{venue.races.length}レース - Premium 三連複厳選予想</p>
+                            </div>
+                        )}
+
+                        <!-- フローティングレースセレクター（右下固定・会場ごと） -->
+                        <div class="floating-race-selector">
+                            <button class="floating-selector-toggle" type="button">
+                                <span class="toggle-icon">🏇</span>
+                                <span class="toggle-text">レース選択</span>
+                            </button>
+                            <div class="floating-selector-menu" style="display: none;">
+                                <div class="selector-header">📍 レースを選択</div>
+                                <div class="selector-grid">
+                                    {venue.races.map((race) => (
+                                        <button
+                                            class="selector-race-btn"
+                                            data-race-number={race.raceNumber}
+                                            onclick={`openSanrenpukuRace(${venueIndex}, ${String(race.raceNumber).replace('R','')}); this.closest('.floating-selector-menu').style.display = 'none';`}
+                                        >
+                                            {race.raceNumber}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 全レース予想 -->
+                        <div class="races-container">
+                            {venue.races.map((race) => {
+                                const raceNum = String(race.raceNumber).replace('R', '');
+                                return (
+                                <div class={`race-${raceNum}r-accordion`} id={`jra-srp-race-v${venueIndex}-${raceNum}`}>
+                                    <!-- レース単位アコーディオン ヘッダー（南関 premium-sanrenpuku と同型） -->
+                                    <div class="race-accordion-header" onclick={`toggleSanrenpukuRace(${venueIndex}, ${raceNum})`}>
+                                        <div class="race-basic-info">
+                                            <span class="race-number">{race.raceNumber}R</span>
+                                            {race.raceName && <span class="race-name">{race.raceName}</span>}
+                                            <span class="race-tier-badge">{`第${raceNum}レース`}</span>
+                                        </div>
+                                        <div class="race-preview">
+                                            {race.startTime && <span class="race-preview-time">🕐 {race.startTime}</span>}
+                                            <span class="toggle-icon" id={`srp-toggle-v${venueIndex}-${raceNum}r`}>▼</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- アコーディオン中身（初期は畳む。max-height はトグルJSで制御） -->
+                                    <div class="race-accordion-content" id={`srp-race-v${venueIndex}-${raceNum}r`} style="max-height: 0; opacity: 0;">
+                                        <div class="race-meta race-meta-inner">
+                                            {race.horseCount && <span>🐴 {race.horseCount}頭</span>}
+                                            {race.startTime && <span>🕐 {race.startTime}発走</span>}
+                                        </div>
+
+                                    <!-- AI選出馬（本命・対抗・単穴 + 連下 + 抑え + 不要馬 / 過去走詳細つき） -->
+                                    {race.allHorses.length > 0 && (
+                                        <JraRaceHorseSection
+                                            horses={race.allHorses}
+                                            race={race.raceObj}
+                                            featureScoresData={venue.featureScoresData}
+                                        />
+                                    )}
+
+                                    <!-- 三連複AI推奨買い目（絞り込み / 通常 軸別 切替）AI_SANRENPUKU_AXIS_V1 -->
+                                    {race.hasSanrenpuku && (
+                                        <div class="recommendation-section srp-block">
+                                            <div class="unified-bet-card">
+                                                <div class="unified-bet-header">
+                                                    <h2 class="section-title"><span>🎯</span><span>三連複AI推奨買い目</span></h2>
+                                                    <span class="unified-bet-subtitle">軸馬構成ルールV1</span>
+                                                </div>
+
+                                                <div class="sanrenpuku-tabs">
+                                                    <button type="button" class="srp-tab active" data-srp-mode="narrow">絞り込み</button>
+                                                    <button type="button" class="srp-tab" data-srp-mode="normal">通常買い目</button>
+                                                </div>
+
+                                                {race.sanrenpukuView.narrow && (
+                                                    <div class="srp-panel srp-panel-narrow active">
+                                                        <div class="srp-panel-title">絞り込み買い目</div>
+                                                        <div class="bet-item">
+                                                            <span class="bet-type">三連複</span>
+                                                            <span class="bet-horses">{race.sanrenpukuView.narrow.line}</span>
+                                                            <span class="bet-points">{race.sanrenpukuView.narrow.points}点</span>
+                                                        </div>
+                                                        <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
+                                                    </div>
+                                                )}
+
+                                                <div class="srp-panel srp-panel-normal">
+                                                    <div class="srp-normal-header">
+                                                        <span class="srp-normal-title">通常買い目</span>
+                                                        <span class="srp-normal-points">集計点数 9〜12点</span>
+                                                    </div>
+                                                    {race.sanrenpukuView.normalHonmeiAxis && (
+                                                        <div class="srp-subblock">
+                                                            <div class="srp-panel-title">本命軸</div>
+                                                            <div class="bet-item">
+                                                                <span class="bet-type">三連複</span>
+                                                                <span class="bet-horses">{race.sanrenpukuView.normalHonmeiAxis.line}</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {race.sanrenpukuView.normalTaikouAxis && (
+                                                        <div class="srp-subblock">
+                                                            <div class="srp-panel-title">対抗軸</div>
+                                                            <div class="bet-item">
+                                                                <span class="bet-type">三連複</span>
+                                                                <span class="bet-horses">{race.sanrenpukuView.normalTaikouAxis.line}</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    <p class="unified-bet-note">※ 本命軸・対抗軸のいずれかで3着以内が揃えば的中扱い（大勝ち日は12点、堅実配当日は9点で集計）</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    </div>
+                                </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    ))}
+                </>
+            )}
+        </div>
+    </AccessControl>
+</BaseLayout>
+
+<script is:inline>
+    // 会場切替（南関 premium-sanrenpuku と同一挙動・JRA 用に名前空間を分離）
+    function selectJraSanrenpukuVenue(btn) {
+        const idx = btn.getAttribute('data-venue-index');
+        document.querySelectorAll('.venue-btn').forEach((b) => b.classList.toggle('active', b.getAttribute('data-venue-index') === idx));
+        document.querySelectorAll('.venue-content').forEach((c) => c.classList.toggle('active', c.getAttribute('data-venue-index') === idx));
+        document.querySelectorAll('.floating-selector-menu').forEach((m) => { m.style.display = 'none'; });
+    }
+    window.selectJraSanrenpukuVenue = selectJraSanrenpukuVenue;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // フローティングレースセレクターのトグル（会場ごとに複数存在しうるため class ベース）
+        document.querySelectorAll('.floating-selector-toggle').forEach(function(toggle) {
+            const menu = toggle.parentElement.querySelector('.floating-selector-menu');
+            if (!menu) return;
+            toggle.addEventListener('click', function(e) {
+                e.stopPropagation();
+                menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
+            });
+        });
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.floating-race-selector')) {
+                document.querySelectorAll('.floating-selector-menu').forEach(function(m) { m.style.display = 'none'; });
+            }
+        });
+    });
+
+    // 三連複AI推奨買い目: 絞り込み / 通常 タブ切替（premium-prediction/nankan.astro と同一）
+    document.addEventListener('click', function(e) {
+        const btn = e.target && e.target.closest && e.target.closest('.srp-tab');
+        if (!btn) return;
+        const block = btn.closest('.srp-block');
+        if (!block) return;
+        const mode = btn.getAttribute('data-srp-mode');
+        block.querySelectorAll('.srp-tab').forEach((b) => {
+            b.classList.toggle('active', b.getAttribute('data-srp-mode') === mode);
+        });
+        block.querySelectorAll('.srp-panel').forEach((p) => {
+            p.classList.toggle('active', p.classList.contains(`srp-panel-${mode}`));
+        });
+    });
+
+    // ==== レース単位アコーディオン（南関 premium-sanrenpuku と同型）====
+    // 開いているレースの固定 max-height を内側 details の開閉に追従して再計算（クリップ防止）
+    function _srpRecalcFrom(el) {
+        const content = el && el.closest && el.closest('.race-accordion-content');
+        if (!content) return;
+        const mh = content.style.maxHeight;
+        if (mh === '0px' || mh === '') return; // 閉じているレースは触らない
+        requestAnimationFrame(() => { content.style.maxHeight = content.scrollHeight + 'px'; });
+    }
+    window._srpRecalcFrom = _srpRecalcFrom;
+
+    function toggleSanrenpukuRace(venueIndex, raceNumber) {
+        const content = document.getElementById(`srp-race-v${venueIndex}-${raceNumber}r`);
+        const icon = document.getElementById(`srp-toggle-v${venueIndex}-${raceNumber}r`);
+        if (!content || !icon) return;
+        // 同じ会場の他アコーディオンを閉じる（1レースのみ展開）
+        for (let i = 1; i <= 12; i++) {
+            if (i !== raceNumber) {
+                const oc = document.getElementById(`srp-race-v${venueIndex}-${i}r`);
+                const oi = document.getElementById(`srp-toggle-v${venueIndex}-${i}r`);
+                if (oc && oi) { oc.style.maxHeight = '0px'; oc.style.opacity = '0'; oi.textContent = '▼'; oi.style.transform = 'rotate(0deg)'; }
+            }
+        }
+        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
+            content.style.maxHeight = content.scrollHeight + 'px';
+            content.style.opacity = '1';
+            icon.textContent = '◎';
+            icon.style.transform = 'rotate(180deg)';
+        } else {
+            content.style.maxHeight = '0px';
+            content.style.opacity = '0';
+            icon.textContent = '▼';
+            icon.style.transform = 'rotate(0deg)';
+        }
+    }
+    window.toggleSanrenpukuRace = toggleSanrenpukuRace;
+
+    // フローティングレース選択から呼ぶ: 必ず開いてスクロール
+    function openSanrenpukuRace(venueIndex, raceNumber) {
+        const content = document.getElementById(`srp-race-v${venueIndex}-${raceNumber}r`);
+        if (!content) return;
+        const isClosed = content.style.maxHeight === '0px' || content.style.maxHeight === '';
+        if (isClosed) toggleSanrenpukuRace(venueIndex, raceNumber);
+        const wrapper = document.getElementById(`jra-srp-race-v${venueIndex}-${raceNumber}`);
+        (wrapper || content).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    window.openSanrenpukuRace = openSanrenpukuRace;
+
+    // 内側 details（過去走簡易 / 過去走詳細）の開閉で親レースアコーディオンの max-height を再計算
+    function bindSrpNestedDetailsRecalc() {
+        document.querySelectorAll('.race-accordion-content details').forEach((d) => {
+            if (d.dataset.srpScrollBound === '1') return;
+            d.dataset.srpScrollBound = '1';
+            d.addEventListener('toggle', () => { _srpRecalcFrom(d); });
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindSrpNestedDetailsRecalc);
+    } else {
+        bindSrpNestedDetailsRecalc();
+    }
+</script>
+
+<style is:global>
+    .page-container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+    .header-section { text-align: center; margin-bottom: 28px; }
+    .ai-badge {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 6px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem;
+        background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.4); color: #e9d5ff;
+    }
+    .ai-badge .pulse { width: 8px; height: 8px; border-radius: 50%; background: #a855f7; box-shadow: 0 0 0 0 rgba(168,85,247,0.6); animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(168,85,247,0.6); } 70% { box-shadow: 0 0 0 8px rgba(168,85,247,0); } 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); } }
+    .race-title { margin: 14px 0 0; font-size: 1.5rem; font-weight: 800; color: #f1f5f9; }
+
+    /* レース単位アコーディオン（南関 premium-sanrenpuku と同型） */
+    .races-container { display: flex; flex-direction: column; gap: 14px; }
+    [id^="jra-srp-race-v"] {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(139, 92, 246, 0.25);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .race-accordion-header {
+        padding: 16px 20px; cursor: pointer; display: flex;
+        justify-content: space-between; align-items: center;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.12) 0%, rgba(139, 92, 246, 0.05) 100%);
+        transition: all 0.3s ease; border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+    }
+    .race-accordion-header:hover { background: linear-gradient(135deg, rgba(139, 92, 246, 0.18) 0%, rgba(139, 92, 246, 0.08) 100%); }
+    .race-accordion-header .race-basic-info { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .race-accordion-header .race-number {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: #fff;
+        padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 1.05rem;
+    }
+    .race-accordion-header .race-name { color: #e2e8f0; font-weight: 600; font-size: 1.05rem; }
+    .race-accordion-header .race-tier-badge {
+        background: rgba(139, 92, 246, 0.2); color: #c4b5fd;
+        padding: 4px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: 600;
+    }
+    .race-accordion-header .race-preview { display: flex; align-items: center; gap: 10px; }
+    .race-accordion-header .race-preview-time { color: #94a3b8; font-size: 0.85rem; }
+    .race-accordion-header .race-preview .toggle-icon { font-size: 1.2rem; color: #a855f7; transition: transform 0.3s ease; }
+    .race-accordion-content { overflow: hidden; transition: all 0.3s ease; background: rgba(15, 23, 42, 0.95); }
+    .race-meta-inner { display: flex; gap: 14px; flex-wrap: wrap; color: #94a3b8; font-size: 0.85rem; padding: 12px 20px 0; }
+
+    .latest-result-banner {
+        max-width: 640px; margin: 18px auto 0; padding: 14px 18px; border-radius: 12px; text-align: left;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(139, 92, 246, 0.12));
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .lr-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .lr-title { font-weight: 800; color: #e2e8f0; }
+    .lr-date { color: #94a3b8; font-size: 0.85rem; }
+    .lr-stats { display: flex; gap: 16px; flex-wrap: wrap; color: #cbd5e1; font-size: 0.9rem; }
+    .lr-stats strong { color: #34d399; }
+    .lr-archive-link { display: inline-block; margin-top: 10px; color: #a855f7; font-weight: 700; text-decoration: none; font-size: 0.9rem; }
+    .lr-archive-link:hover { text-decoration: underline; }
+
+    .no-data-card {
+        text-align: center; padding: 40px 20px; color: #cbd5e1;
+        background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(100,116,139,0.3); border-radius: 12px;
+    }
+    .no-data-sub { color: #94a3b8; font-size: 0.9rem; margin-top: 6px; }
+
+    /* 会場切り替え（premium-prediction/nankan.astro と同一パターン） */
+    .venue-selector {
+        display: flex; gap: 10px; justify-content: center; margin: 0 auto 28px; padding: 8px;
+        background: rgba(15, 23, 42, 0.5); border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.2);
+        flex-wrap: wrap; max-width: max-content; backdrop-filter: blur(8px);
+    }
+    .venue-btn {
+        display: inline-flex; align-items: baseline; gap: 8px; padding: 10px 24px;
+        background: transparent; color: #cbd5e1; border: none; border-radius: 999px;
+        font-size: 1rem; font-weight: 700; cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .venue-btn:hover { background: rgba(139, 92, 246, 0.12); color: #e2e8f0; }
+    .venue-btn.active { background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); color: white; box-shadow: 0 4px 14px rgba(139, 92, 246, 0.45); }
+    .venue-label { font-size: 1.05rem; font-weight: 800; letter-spacing: 0.02em; }
+    .venue-race-count { font-size: 0.78rem; opacity: 0.85; font-weight: 700; }
+    @media (max-width: 768px) {
+        .venue-selector { max-width: 100%; gap: 4px; padding: 6px; }
+        .venue-btn { padding: 8px 16px; }
+        .venue-label { font-size: 0.95rem; }
+    }
+    .venue-content { display: none; }
+    .venue-content.active { display: block; }
+    .venue-header-inline {
+        text-align: center; margin: 0 0 24px; padding: 16px;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%);
+        border-radius: 12px; border: 2px solid rgba(139, 92, 246, 0.3);
+    }
+    .venue-header-inline .venue-title { margin: 0; font-size: 1.4rem; font-weight: 800; color: #e9d5ff; }
+    .venue-header-inline .venue-subtitle { margin: 4px 0 0; font-size: 0.9rem; color: #cbd5e1; }
+
+    /* フローティングレースセレクター */
+    .floating-race-selector { position: fixed; right: 18px; bottom: 18px; z-index: 60; }
+    .floating-selector-toggle {
+        display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border: none; cursor: pointer;
+        border-radius: 999px; font-weight: 700; color: #fff;
+        background: linear-gradient(135deg, #8b5cf6, #6366f1); box-shadow: 0 8px 20px rgba(99,102,241,0.4);
+    }
+    .floating-selector-menu {
+        position: absolute; right: 0; bottom: 60px; width: 260px; padding: 14px;
+        background: rgba(15, 23, 42, 0.97); border: 1px solid rgba(148,163,184,0.25); border-radius: 14px;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+    }
+    .selector-header { color: #cbd5e1; font-weight: 700; font-size: 0.9rem; margin-bottom: 10px; }
+    .selector-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .selector-race-btn {
+        padding: 10px 0; border-radius: 8px; border: 1px solid rgba(148,163,184,0.3);
+        background: rgba(30,41,59,0.7); color: #e2e8f0; font-weight: 700; cursor: pointer;
+    }
+    .selector-race-btn:hover { border-color: rgba(139,92,246,0.6); background: rgba(139,92,246,0.18); }
+
+    /* レースカード */
+    .races-container { display: flex; flex-direction: column; gap: 20px; }
+    .race-card {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.92) 0%, rgba(15, 23, 42, 0.92) 100%);
+        border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 16px; padding: 20px; scroll-margin-top: 16px;
+    }
+    .race-header { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+    .race-number {
+        min-width: 54px; height: 54px; display: flex; align-items: center; justify-content: center;
+        border-radius: 12px; font-weight: 800; font-size: 1.1rem; color: #fff;
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+    }
+    .race-name { margin: 0; color: #f1f5f9; font-size: 1.1rem; font-weight: 700; }
+    .race-meta { display: flex; gap: 12px; color: #94a3b8; font-size: 0.85rem; margin-top: 4px; flex-wrap: wrap; }
+
+    .analysis-section { margin-bottom: 18px; }
+    .section-title { display: flex; align-items: center; gap: 8px; color: #e2e8f0; font-size: 1.05rem; font-weight: 700; margin: 0 0 12px; }
+
+    /* 馬表示は JraRaceHorseSection.astro（scoped）へ移行。旧最小カードCSSは撤去。 */
+
+    /* 三連複買い目 */
+    .recommendation-section { margin-top: 8px; }
+    .unified-bet-card {
+        background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(139, 92, 246, 0.25);
+        border-radius: 12px; padding: 16px;
+    }
+    .unified-bet-header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+    .unified-bet-header .section-title { margin: 0; }
+    .unified-bet-subtitle {
+        color: #94a3b8; font-size: 0.9rem; font-weight: 600; background: rgba(139, 92, 246, 0.12);
+        border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 999px; padding: 4px 12px;
+    }
+    .unified-bet-note { margin-top: 12px; color: #94a3b8; font-size: 0.85rem; line-height: 1.5; }
+
+    .sanrenpuku-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+    .srp-tab {
+        flex: 1; padding: 8px 12px; background: rgba(30, 41, 59, 0.6); color: #cbd5e1;
+        border: 1px solid rgba(100, 116, 139, 0.3); border-radius: 8px; font-weight: 600; font-size: 0.85rem;
+        cursor: pointer; transition: all 0.2s ease;
+    }
+    .srp-tab:hover { border-color: rgba(139, 92, 246, 0.5); }
+    .srp-tab.active { background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: #fff; border-color: rgba(139, 92, 246, 0.7); }
+    .srp-panel { display: none; }
+    .srp-panel.active { display: block; }
+    .srp-subblock { margin-bottom: 10px; }
+    .srp-subblock:last-child { margin-bottom: 0; }
+    .srp-panel-title { font-weight: 700; color: #e2e8f0; font-size: 0.95rem; margin-bottom: 8px; }
+    .srp-normal-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+    .srp-normal-title { font-weight: 700; color: #e2e8f0; font-size: 1rem; }
+    .srp-normal-points {
+        color: #10b981; font-weight: 700; font-size: 0.85rem; background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3); padding: 2px 10px; border-radius: 999px;
+    }
+    .bet-item {
+        display: flex; justify-content: space-between; align-items: center; padding: 12px 15px; margin-bottom: 10px;
+        background: rgba(30, 41, 59, 0.6); border-radius: 8px; border: 1px solid rgba(100, 116, 139, 0.2); gap: 10px;
+    }
+    .bet-type {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: white; padding: 4px 12px; border-radius: 15px;
+        font-weight: 600; font-size: 0.85rem; min-width: 60px; text-align: center;
+    }
+    .bet-horses { color: #e2e8f0; font-weight: 600; flex: 1; text-align: center; }
+    .bet-points {
+        color: #10b981; font-weight: 700; background: rgba(16, 185, 129, 0.1); padding: 4px 10px;
+        border-radius: 15px; border: 1px solid rgba(16, 185, 129, 0.3); white-space: nowrap;
+    }
+</style>

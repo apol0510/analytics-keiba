@@ -1,6 +1,7 @@
 ---
 export const prerender = true; // 静的サイト生成用に戻す
 import BaseLayout from '../layouts/BaseLayout.astro';
+import PremiumContactModal from '../components/PremiumContactModal.astro';
 ---
 
 <BaseLayout title="マイページ">
@@ -370,6 +371,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                     <a href="/pricing/" class="upgrade-btn">今すぐアップグレード</a>
                 </div>
             </div>
+
+            <!-- 有料会員お問い合わせ（初期非表示・有料会員のときだけ JS で表示。無料会員は /contact/ を使用） -->
+            <PremiumContactModal hidden={true} />
         </div>
 
         <!-- 申請・送信履歴（ログイン状態に関わらず表示） -->
@@ -900,8 +904,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 'Premium': 'PREMIUM',
                 'Premium Combo': 'PREMIUM COMBO',
                 'premium combo': 'PREMIUM COMBO',
-                'Premium Sanrenpuku': 'PREMIUM 三連複',
-                'premium sanrenpuku': 'PREMIUM 三連複',
+                'Premium Sanrenpuku': 'PREMIUM 馬単+三連複',
+                'premium sanrenpuku': 'PREMIUM 馬単+三連複',
                 'Premium Plus': 'PREMIUM PLUS',
                 'premium plus': 'PREMIUM PLUS'
             };
@@ -1503,9 +1507,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 document.getElementById('premium-predictions').style.display = 'block';
                 if (premiumJraCard) premiumJraCard.style.display = 'block';
             } else if (planLower === 'premium sanrenpuku') {
-                // Premium Sanrenpuku会員：三連複予想のみ
-                console.log('Premium Sanrenpuku予想を表示');
+                // Premium Sanrenpuku会員：三連複 + 馬単（2026-07〜 両方利用可・Combo と同等）
+                console.log('Premium Sanrenpuku予想を表示（三連複 + 馬単 / 中央含む）');
                 document.getElementById('sanrenpuku-predictions').style.display = 'block';
+                document.getElementById('combo-umatan-predictions').style.display = 'block';
+                if (premiumJraCard) premiumJraCard.style.display = 'block';
             } else if (planLower === 'premium combo') {
                 // Premium Combo会員：三連複優先＋馬単も表示（中央 Premium 馬単も表示）
                 console.log('Premium Combo予想を表示（三連複優先 / 中央含む）');
@@ -1517,6 +1523,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 console.log('Premium Plus予想を表示（南関 / 中央）');
                 document.getElementById('premium-predictions').style.display = 'block';
                 if (premiumJraCard) premiumJraCard.style.display = 'block';
+            }
+
+            // 有料会員お問い合わせの表示制御（無料会員は /contact/ を使うため非表示のまま）
+            const premiumContactSection = document.querySelector('.contact-section');
+            if (premiumContactSection) {
+                const isPaidMember = !(planLower === 'free' || planLower === '' || !planLower);
+                premiumContactSection.style.display = isPaidMember ? '' : 'none';
             }
 
             // プラン管理の表示制御（無料会員のみ）

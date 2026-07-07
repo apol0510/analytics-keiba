@@ -45,6 +45,8 @@ export default defineConfig({
         if (page.includes('-demo')) return false;
         // 旧URL（リダイレクト元）はサイトマップから除外
         if (page.includes('/archive-jra')) return false;
+        // JRA会場フラグメント（タブ初回選択時に fetch する内部用HTML断片）はサイトマップ非掲載
+        if (page.includes('/free-prediction/jra/fragment/')) return false;
         // 旧予想URLの整理（2026-06-25）: stub(noindex) / 重複・stale な会場別 legacy ページを除外。
         // 正規URLは除外しない:
         //   '/premium-predictions'（複数形s）は旧stub/会場別のみ。新 '/premium-prediction/'(単数slash) は不一致。

@@ -9,6 +9,10 @@ import archiveData2026_04 from '../../data/archiveSanrenpukuResults_2026-04.json
 import archiveData2026_05 from '../../data/archiveSanrenpukuResults_2026-05.json';
 import archiveDataCombined from '../../data/archiveSanrenpukuResults.json';
 
+// 三連複アーカイブは統合ページ /archive-sanrenpuku-all/ に集約。南関ランディングは 301 リダイレクトのみ。
+// 月別詳細ページ（2026/05.astro 等）は現状維持（統合ページの南関タブからリンク）。
+return Astro.redirect('/archive-sanrenpuku-all/', 301);
+
 // 🔒 Premium会員認証チェック（無料会員はアクセス不可）
 // クライアントサイドでプラン判定を行う想定
 

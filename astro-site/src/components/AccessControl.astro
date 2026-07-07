@@ -274,6 +274,24 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
     }
 
     // プラン階層チェック（2026-02-09更新: Lifetime対応）
+    // プラン名を正準 Title Case へ正規化（casing 非依存判定のため）。
+    // 認証経路により 'premium sanrenpuku'（verify-magic-link は toLowerCase）と
+    // 'Premium Sanrenpuku'（auth-user は Title Case）が混在するため、ここで一本化する。
+    // 未知の値は素通し（後方互換・想定外を壊さない）。
+    function normalizePlanName(p) {
+        const lc = String(p == null ? '' : p).trim().toLowerCase();
+        const map = {
+            'free': 'Free', 'free-registered': 'Free', 'freeregistered': 'Free', 'expired': 'Free',
+            'light': 'light', 'ライト': 'light', 'standard': 'standard', 'ﾗｲﾄ': 'light',
+            'premium': 'Premium', 'プレミアム': 'Premium',
+            'premium predictions': 'Premium Predictions', 'premiumpredictions': 'Premium Predictions',
+            'premium sanrenpuku': 'Premium Sanrenpuku', 'premiumsanrenpuku': 'Premium Sanrenpuku', 'プレミアム三連複': 'Premium Sanrenpuku',
+            'premium combo': 'Premium Combo', 'premiumcombo': 'Premium Combo', 'プレミアムコンボ': 'Premium Combo',
+            'premium plus': 'Premium Plus', 'premiumplus': 'Premium Plus', 'プレミアムプラス': 'Premium Plus',
+        };
+        return map[lc] || p;
+    }
+
     function canAccessContent(userPlan, requiredPlan, user, planType = 'Monthly', lifetimeSanrenpuku = false) {
         // 🚨 2025-11-26追加: 退会申請チェック（最優先）
         const isWithdrawalRequested = localStorage.getItem('isWithdrawalRequested') === 'true';
@@ -301,6 +319,9 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             }
         }
 
+        // casing 非依存化: 認証経路差（小文字/Title Case）を吸収して以降の判定を安定させる
+        effectivePlan = normalizePlanName(effectivePlan);
+
         const planHierarchy = {
             // 旧プラン（互換性維持）
             'free': 0,
@@ -316,8 +337,8 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
 
             // 新プラン（2026-02-09更新）
             'Premium Predictions': 2,      // 馬単のみ（廃止予定）
-            'Premium Sanrenpuku': 2,       // 三連複のみ（廃止予定）
-            'Premium Combo': 3,            // 馬単+三連複（廃止予定）
+            'Premium Sanrenpuku': 3,       // 馬単+三連複（2026-07〜 両方利用可に変更）
+            'Premium Combo': 3,            // 馬単+三連複（Premium Sanrenpuku と同等・既存会員互換）
             'Premium Plus': 4              // 1鞍超精密（¥68,000・単品）
         };
 
@@ -368,14 +389,16 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
         // 馬単専用ページの特殊処理（premium, Premium, Premium Predictions）（有効期限考慮）
         if (requiredPlan === 'premium' || requiredPlan === 'Premium' || requiredPlan === 'Premium Predictions') {
             const hasValidUser = user !== null && (user.email || user.legacy || user.demo || user.temp || user.isTest);
-            // Premium / Premium Predictions または Premium Combo でアクセス可能
-            // ⚠️ userLevelは使わない（Premium Sanrenpuku等が誤ってアクセスできてしまうため）
+            // Premium / Premium Predictions / Premium Combo / Premium Sanrenpuku でアクセス可能
+            // ⚠️ userLevelは使わない（プラン名で厳密判定）
             // 🔧 有効期限切れの場合はアクセス不可
+            // 2026-07: Premium Sanrenpuku は「馬単+三連複 両方」プランに変更。馬単ページも許可する。
             const canAccess = hasValidUser && effectivePlan !== 'Free' && (
                 effectivePlan === 'Premium' ||
                 effectivePlan === 'premium' ||
                 effectivePlan === 'Premium Predictions' ||
-                effectivePlan === 'Premium Combo'
+                effectivePlan === 'Premium Combo' ||
+                effectivePlan === 'Premium Sanrenpuku'
             );
             console.log(`🏇 馬単アクセスチェック:`, canAccess, { userPlan, effectivePlan, hasValidUser });
             return canAccess;
@@ -405,7 +428,7 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
 
             // 新プラン（2025-10-30追加）
             'Premium Predictions': 'Premium Predictions（馬単）',
-            'Premium Sanrenpuku': 'Premium Sanrenpuku（三連複）',
+            'Premium Sanrenpuku': 'Premium Sanrenpuku（馬単+三連複）',
             'Premium Combo': 'Premium Combo（馬単+三連複）',
             'Premium Plus': 'Premium Plus（1鞍超精密）'
         };
@@ -443,7 +466,9 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             }
             
             // アクセス権限チェック（2026-02-09更新: Lifetime対応）
-            if (canAccessContent(plan, requiredPlan, user, planType, lifetimeSanrenpuku)) {
+            // 開発モード（localhost / 127.0.0.1 / port 4321・3000）はゲート解除でローカル閲覧可。
+            // 本番ドメイン（analytics.keiba.link）は hostname/port が一致しないため発火しない。
+            if (isDevelopmentMode() || canAccessContent(plan, requiredPlan, user, planType, lifetimeSanrenpuku)) {
                 // アクセス許可
                 console.log(`✅ アクセス許可: ${getPlanDisplayName(plan)} → ${requiredPlan}コンテンツ`);
                 console.log('📋 DOM要素状態 - loading:', loadingState, 'content:', contentArea, 'denied:', accessDenied);

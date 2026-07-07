@@ -1,0 +1,1951 @@
+---
+// JRA 1会場描画 component（候補A: scoped <style>）。active会場と非選択会場フラグメントを同一生成。
+import RaceAccordionClickClose from './RaceAccordionClickClose.astro';
+import { enrichHorse, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../lib/horseEnrichment.js';
+import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse, getDisplayComputerIndex, getHorseAiIndex } from '../lib/shared-prediction-logic.js';
+import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../lib/loadFeatureScores.js';
+import { deriveAkImportance } from '../lib/akFeatureSummary.js';
+const RECENT_LABELS = ['前走', '2走前', '3走前', '4走前', '5走前'];
+const getDisplayIndex = (horse, enriched) => getHorseAiIndex(horse) ?? getHorseAiIndex(enriched);
+function _displayRecentOf(horse) {
+  if (Array.isArray(horse?.recentRacesFromHistories) && horse.recentRacesFromHistories.length > 0) {
+    return horse.recentRacesFromHistories;
+  }
+  return Array.isArray(horse?.recentRaces) ? horse.recentRaces : [];
+}
+
+// 過去走データアコーディオン用: 条件別成績の文字列を組み立てる。
+// JSX 内のテンプレートリテラル + 三項演算子だと Astro 5.13 パーサーが
+// 比較演算子を JSX タグと誤認識することがあるため、フロントマッター側に外出ししている。
+function fmtHistoryCondStat(s) {
+  let out = s.n + '戦 ' + s.w + '-' + s.p2 + '-' + s.p3;
+  if (s.n > 0) {
+    const ratio = Math.round(((s.w + s.p2 + s.p3) / s.n) * 100);
+    out += ' (3着内' + ratio + '%)';
+  }
+  return out;
+}
+
+// 過去走データアコーディオンの集計を1関数に集約。
+// 各馬カードの JSX 内に書いていた IIFE が Astro 5.13 のパーサーで
+// 比較演算子をJSXタグ開始と誤認識してビルドが落ちるため、
+// 集計をすべてフロントマッター側で実行し、JSX 内は値の参照のみに留める。
+// AI 指数・印・買い目・特徴量重要度・予想ロジックには一切関与しない（表示専用）。
+function buildHistoryAccordionContext(horse, race) {
+  if (!horse || !Array.isArray(horse.historyForDetails) || horse.historyForDetails.length === 0) return null;
+  const hist = horse.historyForDetails;
+  const ranked = hist.filter((r) => r && Number.isFinite(Number(r.rank)));
+  const totalRanked = ranked.length;
+  const cnt = (pred) => ranked.filter(pred).length;
+  const w = cnt((r) => Number(r.rank) === 1);
+  const p2 = cnt((r) => Number(r.rank) === 2);
+  const p3 = cnt((r) => Number(r.rank) === 3);
+  const others = totalRanked - w - p2 - p3;
+  const hasRanked = totalRanked > 0;
+  const pct = (n) => hasRanked ? Math.round((n / totalRanked) * 100) : 0;
+  const winPct = pct(w);
+  const placePct = pct(w + p2);
+  const showPct = pct(w + p2 + p3);
+  const condCount = (arr) => ({
+    n: arr.length,
+    w: arr.filter((r) => Number(r.rank) === 1).length,
+    p2: arr.filter((r) => Number(r.rank) === 2).length,
+    p3: arr.filter((r) => Number(r.rank) === 3).length,
+  });
+  const turfStat = condCount(ranked.filter((r) => r.surface === '芝'));
+  const dirtStat = condCount(ranked.filter((r) => r.surface === 'ダ'));
+  const _rawRaceDist = race && race.raceInfo && race.raceInfo.distance != null ? race.raceInfo.distance : null;
+  const _parsedRaceDist = _rawRaceDist != null ? parseDistanceMeters(_rawRaceDist) : null;
+  const raceDist = Number.isFinite(_parsedRaceDist) ? _parsedRaceDist : null;
+  const raceVenue = race && race.raceInfo && race.raceInfo.venue ? race.raceInfo.venue : null;
+  const sameDist = raceDist != null
+    ? condCount(ranked.filter((r) => Number.isFinite(Number(r.distanceMeters)) && Math.abs(Number(r.distanceMeters) - raceDist) <= 200))
+    : null;
+  const sameVenue = raceVenue ? condCount(ranked.filter((r) => r.venue === raceVenue)) : null;
+  const _weight = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+    ? (horse.weight + 'kg')
+    : null;
+  const _sex = parseSexAge(horse.age);
+  const _ageGenderDisplay = (_sex.ageNum != null && _sex.gender)
+    ? (_sex.ageNum + '歳' + _sex.gender)
+    : (horse.age || null);
+  const profileItems = [
+    _ageGenderDisplay && { label: '性齢', value: _ageGenderDisplay },
+    horse.sire && { label: '父', value: horse.sire },
+    horse.jockey && { label: '騎手', value: horse.jockey },
+    _weight && { label: '斤量', value: _weight },
+    horse.trainer && { label: '調教師', value: horse.trainer },
+  ].filter(Boolean);
+  const condRows = [
+    turfStat.n > 0 && { label: '芝', stat: turfStat },
+    dirtStat.n > 0 && { label: 'ダート', stat: dirtStat },
+    sameDist && sameDist.n > 0 && { label: '同距離±200m(' + raceDist + 'm基準)', stat: sameDist },
+    sameVenue && sameVenue.n > 0 && { label: '同会場(' + raceVenue + ')', stat: sameVenue },
+  ].filter(Boolean);
+  const display = hist.slice(0, 10);
+  const overflow = hist.length - display.length;
+  const hasOverflow = overflow > 0;
+  const sectionLabel = hist.length > 10 ? '競走成績（直近10走）' : '競走成績';
+  const summaryCount = '（' + hist.length + '走）';
+  const recordValue = w + '-' + p2 + '-' + p3 + '-' + others;
+  const winPctStr = winPct + '%';
+  const placePctStr = placePct + '%';
+  const showPctStr = showPct + '%';
+  const rows = display.map((r) => {
+    const rankNum = Number(r.rank);
+    const isWin = rankNum === 1;
+    const isGood = Number.isFinite(rankNum) && rankNum < 4;
+    const rankClass = isWin ? 'hh-rank win' : (isGood ? 'hh-rank good' : 'hh-rank');
+    const hasFinishStatus = !!r.finishStatus;
+    const hasRank = r.rank != null && !hasFinishStatus;
+    const hasPopularity = r.popularity !== '' && r.popularity != null;
+    return {
+      r,
+      rankClass,
+      hasFinishStatus,
+      hasRank,
+      hasPopularity,
+    };
+  });
+  return {
+    hist,
+    totalRanked,
+    hasRanked,
+    hasProfile: profileItems.length > 0,
+    hasCondRows: condRows.length > 0,
+    w, p2, p3, others,
+    profileItems,
+    condRows,
+    rows,
+    overflow,
+    hasOverflow,
+    sectionLabel,
+    summaryCount,
+    recordValue,
+    winPctStr,
+    placePctStr,
+    showPctStr,
+  };
+}
+const { venueData, venueIndex, isMultiVenue, predictionData } = Astro.props;
+            const venuePredictions = venueData.predictions;
+            const venueInfo = venueData.eventInfo;
+
+            // AK専用3項目の素材: shared featureScores を会場単位で1回ロード（読むだけ）。
+            // 無ければ null → 各馬は既存 e.importance fallback。
+            const fsDate = venueInfo?.date || predictionData?.date || predictionData?.eventInfo?.date || null;
+            const featureScoresData = loadFeatureScores('jra', fsDate, venueCodeFromName('jra', venueInfo?.venue));
+
+---
+              <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
+                {/* 会場名（複数会場の場合のみ表示）*/}
+                {isMultiVenue && (
+                  <div class="venue-header">
+                    <h2 class="venue-title">{venueInfo.venue}</h2>
+                    <p class="venue-info">{venueInfo.date} - {venueInfo.totalRaces}レース（無料公開）</p>
+                  </div>
+                )}
+
+                <!-- 全レースアコーディオン（南関版と同じ縦一覧形式） -->
+                <div class="jra-race-accordion-list">
+                  {venuePredictions.map((race, raceIndex) => {
+                    const allHorses = race.horses;
+                    // 役割で絞り込み（南関版と統一: 本命・対抗・単穴）
+                    const roleHorses = ['本命', '対抗', '単穴']
+                      .flatMap(r => allHorses.filter(h => h.role === r));
+                    const accordionId = `jra-race-v${venueIndex}-r${raceIndex}`;
+                    const distance = race.raceInfo.distance;
+                    const distanceLabel = distance
+                      ? (typeof distance === 'number' ? `${distance}m` : `${distance}`)
+                      : null;
+
+                    return (
+                      <div class="jra-race-accordion" data-venue-index={venueIndex}>
+                        <button
+                          type="button"
+                          class="jra-race-accordion-header"
+                          data-target={accordionId}
+                          aria-expanded="false"
+                          aria-controls={accordionId}
+                          onclick="toggleJraAccordion(this)"
+                        >
+                          <div class="jra-race-head-left">
+                            <span class="jra-race-num">{race.raceInfo.raceNumber}R</span>
+                            <div class="jra-race-meta">
+                              {race.raceInfo.raceName && (
+                                <span class="jra-race-name">{race.raceInfo.raceName}</span>
+                              )}
+                              <div class="jra-race-meta-line">
+                                {race.raceInfo.startTime && <span class="jra-race-meta-item">🕐 {race.raceInfo.startTime}発走</span>}
+                                {distanceLabel && <span class="jra-race-meta-item">📏 {distanceLabel}</span>}
+                                {race.raceInfo.horseCount && <span class="jra-race-meta-item">🐴 {race.raceInfo.horseCount}頭</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <span class="jra-race-toggle" aria-hidden="true">▼</span>
+                        </button>
+
+                        <div class="jra-race-accordion-content" id={accordionId} style="max-height:0;opacity:0">
+                          <div class="jra-race-accordion-body">
+                        {/* AI選出馬カード（南関版と統一デザイン） */}
+                        <div class="analysis-section">
+                          <h2 class="section-title">
+                            <span>🤖</span>
+                            <span>AIモデル選出馬</span>
+                          </h2>
+
+                          {roleHorses.map((horse) => {
+                            const e = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                            const role = horse.role;
+                            const cardClass = role === '本命' ? 'horse-card horse-card-main'
+                              : role === '対抗' ? 'horse-card horse-card-sub'
+                              : 'horse-card horse-card-tana';
+                            const mark = role === '本命' ? '◎' : role === '対抗' ? '○' : '▲';
+                            const markClass = role === '本命' ? 'horse-mark-main'
+                              : role === '対抗' ? 'horse-mark-sub'
+                              : 'horse-mark-tana';
+                            const ageGenderStr = (e.ageNum != null && e.gender)
+                              ? `${e.ageNum}歳${e.gender}`
+                              : (horse.age || null);
+                            const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
+                              ? `${horse.weight}kg`
+                              : null;
+                            const displayIndex = getDisplayIndex(horse, e);
+                            const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
+                            const recentRaces = _displayRecentOf(horse);
+                            return (
+                              <div class={cardClass}>
+                                {role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
+                                <div class="horse-header">
+                                  <div class="horse-identity">
+                                    <span class={markClass}>{mark}</span>
+                                    <span class="horse-number">{horse.horseNumber}</span>
+                                    <span class="horse-name">{horse.horseName}</span>
+                                  </div>
+                                  <span class={`role-badge role-badge-${role === '本命' ? 'main' : role === '対抗' ? 'sub' : 'tana'}`}>{role}</span>
+                                </div>
+
+                                <div class="horse-stats-row">
+                                  <div class="stat-block stat-score-block">
+                                    <div class="stat-label">累積スコア</div>
+                                    <div class="stat-value stat-score">{e.pt}<span class="stat-unit">pt</span></div>
+                                  </div>
+                                  {displayIndex != null && (
+                                    <div class="stat-block stat-index-block">
+                                      <div class="stat-label">AI総合指数</div>
+                                      <div class="stat-value stat-index">{displayIndex}</div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {hasBasicInfo && (
+                                  <div class="basic-info">
+                                    <h4>基本情報</h4>
+                                    <div class="info-grid">
+                                      {(ageGenderStr || weightStr) && (
+                                        <div class="info-line info-line-primary">
+                                          {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
+                                          {weightStr && <span class="info-chip">{weightStr}</span>}
+                                        </div>
+                                      )}
+                                      {horse.jockey && (
+                                        <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
+                                      )}
+                                      {horse.trainer && (
+                                        <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
+                                      )}
+                                      {horse.frame != null && (
+                                        <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
+                                      )}
+                                      {horse.sire && (
+                                        <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {e.evalPoints.length > 0 && (
+                                  <div class="eval-points">
+                                    <h4>評価ポイント</h4>
+                                    <div class="eval-tags">
+                                      {e.evalPoints.map((p) => (
+                                        <span class="eval-tag">{p}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* 特徴量重要度: shared featureScores 由来の AK専用3項目を優先。
+                                    無い/算出不能なら既存 e.importance(computeImportance 由来) に fallback。
+                                    両者は排他（二重表示しない）。AK では6項目名・個別値はそのまま出さない。 */}
+                                {(() => {
+                                  const fs6 = featureScoresData
+                                    ? getHorseFeatures(featureScoresData, race.raceInfo.raceNumber, horse.horseNumber)
+                                    : null;
+                                  const akImp = fs6 ? deriveAkImportance(fs6) : null;
+                                  if (akImp) {
+                                    return (
+                                      <div class="feature-importance">
+                                        <h4>特徴量重要度</h4>
+                                        <div class="importance-list">
+                                          {akImp.map((item) => (
+                                            <div class="importance-item">
+                                              <span class="importance-label">{item.label}</span>
+                                              <div class="importance-bar">
+                                                <div class="importance-fill" style={`width: ${item.value == null ? 0 : item.value}%`}></div>
+                                              </div>
+                                              <span class="importance-percent">{item.value == null ? '—' : `${item.value}%`}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  if (e.importance && e.importance.length > 0) {
+                                    return (
+                                      <div class="feature-importance">
+                                        <h4>特徴量重要度</h4>
+                                        <div class="importance-list">
+                                          {e.importance.map((item) => (
+                                            <div class="importance-item">
+                                              <span class="importance-label">{item.label}</span>
+                                              <div class="importance-bar">
+                                                <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
+                                              </div>
+                                              <span class="importance-percent">{Math.round(item.value * 100)}%</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+
+                                {recentRaces.length > 0 && (
+                                  <details class="recent-races recent-races-compact" data-click-close="true">
+                                    <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                    <div class="recent-races-list">
+                                      {recentRaces.slice(0, 5).map((r, i) => {
+                                        const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                        return (
+                                          <div class="recent-race-row">
+                                            <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                            <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                            <span class="recent-race-distance">{r?.distance || ''}</span>
+                                            <span class="recent-race-rank">{rank}</span>
+                                            {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                            {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                            {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </details>
+                                )}
+                                {/* 過去走データ（メイン馬カード用・表示専用） */}
+                                {(() => {
+                                  const ctx = buildHistoryAccordionContext(horse, race);
+                                  if (!ctx) return null;
+                                  return (
+                                    <details class="history-details" data-click-close="true">
+                                      <summary class="history-summary">
+                                        <span class="history-summary-text">過去走データ</span>
+                                        <span class="history-summary-count">{ctx.summaryCount}</span>
+                                        <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                      </summary>
+                                      <div class="history-content">
+                                        {ctx.hasProfile && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">プロフィール</div>
+                                            <div class="history-profile-grid">
+                                              {ctx.profileItems.map((p) => (
+                                                <div class="history-profile-item">
+                                                  <span class="history-profile-label">{p.label}</span>
+                                                  <span class="history-profile-value">{p.value}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasRanked && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">通算成績</div>
+                                            <div class="history-record-grid">
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">通算</div>
+                                                <div class="history-rec-value">{ctx.recordValue}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">勝率</div>
+                                                <div class="history-rec-value">{ctx.winPctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">連対率</div>
+                                                <div class="history-rec-value">{ctx.placePctStr}</div>
+                                              </div>
+                                              <div class="history-rec-card">
+                                                <div class="history-rec-label">3着内率</div>
+                                                <div class="history-rec-value">{ctx.showPctStr}</div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                        {ctx.hasCondRows && (
+                                          <div class="history-section">
+                                            <div class="history-section-label">条件別成績</div>
+                                            <div class="history-cond-list">
+                                              {ctx.condRows.map((row) => (
+                                                <div class="history-cond-row">
+                                                  <span class="history-cond-label">{row.label}</span>
+                                                  <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div class="history-section">
+                                          <div class="history-section-label">{ctx.sectionLabel}</div>
+                                          <div class="history-list">
+                                            {ctx.rows.map((row) => (
+                                              <div class="history-row">
+                                                <div class="hh-line hh-line-primary">
+                                                  {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                  {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                  {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                  {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                  {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                  {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                                </div>
+                                                <div class="hh-line hh-line-secondary">
+                                                  {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                  {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                  {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                  {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                  {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                                </div>
+                                              </div>
+                                            ))}
+                                            {ctx.hasOverflow && (
+                                              <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </details>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })}
+
+                          {/* 連下・抑えの実データ（登録済みユーザーのみ表示・デフォルト非表示）
+                              premium-prediction/jra.astro と同じ minor-horse-card 構造 */}
+                          <div class="free-member-unlock-content" style="display: none;">
+                            {allHorses.filter(h => h.role === '連下最上位' || h.role === '連下').length > 0 && (
+                              <div class="horse-card horse-card-minor minor-group-renka">
+                                <div class="horse-header">
+                                  <div>
+                                    <span class="horse-mark-minor">△</span>
+                                    <span class="minor-group-title minor-group-title-renka">連下候補馬</span>
+                                  </div>
+                                </div>
+                                <div class="minor-horse-grid">
+                                  {allHorses
+                                    .filter(h => h.role === '連下最上位' || h.role === '連下')
+                                    .map((horse) => {
+                                      const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                      const importance = Array.isArray(eMinor.importance) && eMinor.importance.length >= 3 ? eMinor.importance : null;
+                                      const recentRaces = _displayRecentOf(horse);
+                                      const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                      const idx = getDisplayIndex(horse, eMinor);
+                                      return (
+                                        <div class="minor-horse-card minor-horse-card-renka">
+                                          <div class="minor-horse-head">
+                                            <span class="minor-horse-mark">△</span>
+                                            <span class="minor-horse-number">{horse.horseNumber}</span>
+                                            <span class="minor-horse-name">{horse.horseName}</span>
+                                            <span class="minor-horse-score">{eMinor.pt ?? 0}pt</span>
+                                          </div>
+                                          <div class="minor-horse-meta">
+                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                            {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                          </div>
+                                          {evalPoints.length > 0 && (
+                                            <div class="minor-horse-evals">
+                                              {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                            </div>
+                                          )}
+                                          {importance && (
+                                            <div class="minor-horse-importance">
+                                              安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
+                                            </div>
+                                          )}
+                                          {recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-compact" data-click-close="true">
+                                              <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                              <div class="recent-races-list">
+                                                {recentRaces.slice(0, 5).map((r, i) => {
+                                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                  return (
+                                                    <div class="recent-race-row">
+                                                      <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                      <span class="recent-race-rank">{rank}</span>
+                                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                      {r?.bodyWeight && <span class="recent-race-meta">{r.bodyWeight}kg</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </details>
+                                          )}
+                                          {/* 過去走データ（連下マイナーカード用・表示専用） */}
+                                          {(() => {
+                                            const ctx = buildHistoryAccordionContext(horse, race);
+                                            if (!ctx) return null;
+                                            return (
+                                              <details class="history-details" data-click-close="true">
+                                                <summary class="history-summary">
+                                                  <span class="history-summary-text">過去走データ</span>
+                                                  <span class="history-summary-count">{ctx.summaryCount}</span>
+                                                  <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                                </summary>
+                                                <div class="history-content">
+                                                  {ctx.hasProfile && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">プロフィール</div>
+                                                      <div class="history-profile-grid">
+                                                        {ctx.profileItems.map((p) => (
+                                                          <div class="history-profile-item">
+                                                            <span class="history-profile-label">{p.label}</span>
+                                                            <span class="history-profile-value">{p.value}</span>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {ctx.hasRanked && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">通算成績</div>
+                                                      <div class="history-record-grid">
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">通算</div>
+                                                          <div class="history-rec-value">{ctx.recordValue}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">勝率</div>
+                                                          <div class="history-rec-value">{ctx.winPctStr}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">連対率</div>
+                                                          <div class="history-rec-value">{ctx.placePctStr}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">3着内率</div>
+                                                          <div class="history-rec-value">{ctx.showPctStr}</div>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {ctx.hasCondRows && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">条件別成績</div>
+                                                      <div class="history-cond-list">
+                                                        {ctx.condRows.map((row) => (
+                                                          <div class="history-cond-row">
+                                                            <span class="history-cond-label">{row.label}</span>
+                                                            <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  <div class="history-section">
+                                                    <div class="history-section-label">{ctx.sectionLabel}</div>
+                                                    <div class="history-list">
+                                                      {ctx.rows.map((row) => (
+                                                        <div class="history-row">
+                                                          <div class="hh-line hh-line-primary">
+                                                            {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                            {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                            {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                            {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                            {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                            {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                                          </div>
+                                                          <div class="hh-line hh-line-secondary">
+                                                            {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                            {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                            {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                            {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                            {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                      {ctx.hasOverflow && (
+                                                        <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              </details>
+                                            );
+                                          })()}
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 抑え候補は南関と同じ isOsaeCandidate（押さえ/抑え/補欠 かつ pt > 70）でフィルタ。
+                                pt <= 70 の補欠は「不要馬」として除外する。 */}
+                            {allHorses.filter(isOsaeCandidate).length > 0 && (
+                              <div class="horse-card horse-card-minor minor-group-osae">
+                                <div class="horse-header">
+                                  <div>
+                                    <span class="horse-mark-minor">×</span>
+                                    <span class="minor-group-title minor-group-title-osae">抑え候補馬</span>
+                                  </div>
+                                </div>
+                                <div class="minor-horse-grid">
+                                  {sortOsaeCandidates(allHorses.filter(isOsaeCandidate))
+                                    .map((horse) => {
+                                      const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                      const recentRaces = _displayRecentOf(horse);
+                                      const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                      const idx = getDisplayIndex(horse, eMinor);
+                                      return (
+                                        <div class="minor-horse-card minor-horse-card-osae">
+                                          <div class="minor-horse-head">
+                                            <span class="minor-horse-mark">×</span>
+                                            <span class="minor-horse-number">{horse.horseNumber}</span>
+                                            <span class="minor-horse-name">{horse.horseName}</span>
+                                            <span class="minor-horse-score">{eMinor.pt ?? 0}pt</span>
+                                          </div>
+                                          <div class="minor-horse-meta">
+                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                            {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                          </div>
+                                          {evalPoints.length > 0 && (
+                                            <div class="minor-horse-evals">
+                                              {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                            </div>
+                                          )}
+                                          {recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-compact" data-click-close="true">
+                                              <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                              <div class="recent-races-list">
+                                                {recentRaces.slice(0, 5).map((r, i) => {
+                                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                  return (
+                                                    <div class="recent-race-row">
+                                                      <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                      <span class="recent-race-rank">{rank}</span>
+                                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </details>
+                                          )}
+                                          {/* 過去走データ（マイナーカード用・表示専用 / 抑え・見送り共通） */}
+                                          {(() => {
+                                            const ctx = buildHistoryAccordionContext(horse, race);
+                                            if (!ctx) return null;
+                                            return (
+                                              <details class="history-details" data-click-close="true">
+                                                <summary class="history-summary">
+                                                  <span class="history-summary-text">過去走データ</span>
+                                                  <span class="history-summary-count">{ctx.summaryCount}</span>
+                                                  <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                                </summary>
+                                                <div class="history-content">
+                                                  {ctx.hasProfile && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">プロフィール</div>
+                                                      <div class="history-profile-grid">
+                                                        {ctx.profileItems.map((p) => (
+                                                          <div class="history-profile-item">
+                                                            <span class="history-profile-label">{p.label}</span>
+                                                            <span class="history-profile-value">{p.value}</span>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {ctx.hasRanked && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">通算成績</div>
+                                                      <div class="history-record-grid">
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">通算</div>
+                                                          <div class="history-rec-value">{ctx.recordValue}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">勝率</div>
+                                                          <div class="history-rec-value">{ctx.winPctStr}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">連対率</div>
+                                                          <div class="history-rec-value">{ctx.placePctStr}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">3着内率</div>
+                                                          <div class="history-rec-value">{ctx.showPctStr}</div>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {ctx.hasCondRows && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">条件別成績</div>
+                                                      <div class="history-cond-list">
+                                                        {ctx.condRows.map((row) => (
+                                                          <div class="history-cond-row">
+                                                            <span class="history-cond-label">{row.label}</span>
+                                                            <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  <div class="history-section">
+                                                    <div class="history-section-label">{ctx.sectionLabel}</div>
+                                                    <div class="history-list">
+                                                      {ctx.rows.map((row) => (
+                                                        <div class="history-row">
+                                                          <div class="hh-line hh-line-primary">
+                                                            {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                            {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                            {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                            {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                            {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                            {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                                          </div>
+                                                          <div class="hh-line hh-line-secondary">
+                                                            {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                            {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                            {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                            {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                            {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                      {ctx.hasOverflow && (
+                                                        <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              </details>
+                                            );
+                                          })()}
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 不要馬セクション — 抑え候補から除外された馬を別枠で表示
+                                判定: isIneligibleHorse（HANDLED_ROLES 外 / 無 / 補欠 pt<=70 など）
+                                南関 premium の ineligible-section と同じ folding 表示 */}
+                            {allHorses.filter(isIneligibleHorse).length > 0 && (
+                              <details class="minor-group-ineligible" data-click-close="true">
+                                <summary class="ineligible-summary">
+                                  <span class="ineligible-summary-icon">無</span>
+                                  <span class="ineligible-summary-title">不要馬 {allHorses.filter(isIneligibleHorse).length}頭</span>
+                                </summary>
+                                <div class="minor-horse-grid">
+                                  {allHorses
+                                    .filter(isIneligibleHorse)
+                                    .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0))
+                                    .map((horse) => {
+                                      const eMinor = enrichHorse(horse, allHorses, race.raceInfo?.distance);
+                                      const evalPoints = Array.isArray(eMinor.evalPoints) ? eMinor.evalPoints : [];
+                                      const recentRaces = _displayRecentOf(horse);
+                                      const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
+                                      const idx = getDisplayIndex(horse, eMinor);
+                                      const ptNum = Number(eMinor.pt);
+                                      return (
+                                        <div class="minor-horse-card minor-horse-card-ineligible">
+                                          <div class="minor-horse-head">
+                                            <span class="minor-horse-mark">無</span>
+                                            <span class="minor-horse-number">{horse.horseNumber}</span>
+                                            <span class="minor-horse-name">{horse.horseName}</span>
+                                            <span class="minor-horse-score">{Number.isFinite(ptNum) && ptNum > 70 ? `${ptNum}pt` : '見送り'}</span>
+                                          </div>
+                                          <div class="minor-horse-meta">
+                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
+                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
+                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
+                                            {idx != null && <span><span class="meta-key">指数</span>{idx}</span>}
+                                          </div>
+                                          {evalPoints.length > 0 && (
+                                            <div class="minor-horse-evals">
+                                              {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
+                                            </div>
+                                          )}
+                                          {recentRaces.length > 0 && (
+                                            <details class="recent-races recent-races-compact" data-click-close="true">
+                                              <summary>過去{Math.min(5, recentRaces.length)}走</summary>
+                                              <div class="recent-races-list">
+                                                {recentRaces.slice(0, 5).map((r, i) => {
+                                                  const rank = (r?.rank != null && Number.isFinite(Number(r.rank))) ? `${r.rank}着` : '';
+                                                  return (
+                                                    <div class="recent-race-row">
+                                                      <span class="recent-race-label">{RECENT_LABELS[i]}</span>
+                                                      <span class="recent-race-venue">{formatRecentVenue(r?.venue) || ''}</span>
+                                                      <span class="recent-race-distance">{r?.distance || ''}</span>
+                                                      <span class="recent-race-rank">{rank}</span>
+                                                      {r?.time && <span class="recent-race-meta">タイム{r.time}</span>}
+                                                      {r?.last3f && <span class="recent-race-meta">上がり{r.last3f}</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </details>
+                                          )}
+                                          {/* 過去走データ（マイナーカード用・表示専用 / 抑え・見送り共通） */}
+                                          {(() => {
+                                            const ctx = buildHistoryAccordionContext(horse, race);
+                                            if (!ctx) return null;
+                                            return (
+                                              <details class="history-details" data-click-close="true">
+                                                <summary class="history-summary">
+                                                  <span class="history-summary-text">過去走データ</span>
+                                                  <span class="history-summary-count">{ctx.summaryCount}</span>
+                                                  <span class="history-summary-chevron" aria-hidden="true">▾</span>
+                                                </summary>
+                                                <div class="history-content">
+                                                  {ctx.hasProfile && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">プロフィール</div>
+                                                      <div class="history-profile-grid">
+                                                        {ctx.profileItems.map((p) => (
+                                                          <div class="history-profile-item">
+                                                            <span class="history-profile-label">{p.label}</span>
+                                                            <span class="history-profile-value">{p.value}</span>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {ctx.hasRanked && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">通算成績</div>
+                                                      <div class="history-record-grid">
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">通算</div>
+                                                          <div class="history-rec-value">{ctx.recordValue}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">勝率</div>
+                                                          <div class="history-rec-value">{ctx.winPctStr}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">連対率</div>
+                                                          <div class="history-rec-value">{ctx.placePctStr}</div>
+                                                        </div>
+                                                        <div class="history-rec-card">
+                                                          <div class="history-rec-label">3着内率</div>
+                                                          <div class="history-rec-value">{ctx.showPctStr}</div>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {ctx.hasCondRows && (
+                                                    <div class="history-section">
+                                                      <div class="history-section-label">条件別成績</div>
+                                                      <div class="history-cond-list">
+                                                        {ctx.condRows.map((row) => (
+                                                          <div class="history-cond-row">
+                                                            <span class="history-cond-label">{row.label}</span>
+                                                            <span class="history-cond-stat">{fmtHistoryCondStat(row.stat)}</span>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  <div class="history-section">
+                                                    <div class="history-section-label">{ctx.sectionLabel}</div>
+                                                    <div class="history-list">
+                                                      {ctx.rows.map((row) => (
+                                                        <div class="history-row">
+                                                          <div class="hh-line hh-line-primary">
+                                                            {row.r._dateStr && <span class="hh-date">{row.r._dateStr}</span>}
+                                                            {row.r.venue && <span class="hh-venue">{row.r.venue}</span>}
+                                                            {row.r._displayDistance && <span class="hh-dist">{row.r._displayDistance}</span>}
+                                                            {row.hasFinishStatus && <span class="hh-status">[{row.r.finishStatus}]</span>}
+                                                            {row.hasRank && <span class={row.rankClass}>{row.r.rank}着</span>}
+                                                            {row.hasPopularity && <span class="hh-pop">{row.r.popularity}人気</span>}
+                                                          </div>
+                                                          <div class="hh-line hh-line-secondary">
+                                                            {row.r.raceName && <span class="hh-race-name">{row.r.raceName}</span>}
+                                                            {row.r.jockey && <span class="hh-jockey">🏇 {row.r.jockey}</span>}
+                                                            {row.r.bodyWeight && <span class="hh-bw">{row.r.bodyWeight}kg</span>}
+                                                            {row.r.time && <span class="hh-time">{row.r.time}</span>}
+                                                            {row.r.winnerName && <span class="hh-winner">勝: {row.r.winnerName}</span>}
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                      {ctx.hasOverflow && (
+                                                        <div class="hh-overflow">他{ctx.overflow}走あり</div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              </details>
+                                            );
+                                          })()}
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </details>
+                            )}
+                          </div>
+
+                          {/* アクセス制御（南関版と統一） */}
+                          <div class="access-control-section">
+                            <div class="locked-content">
+                              <div class="lock-icon">🔐</div>
+                              <h3>連下・押さえ候補馬</h3>
+                              <p>より多くの候補馬情報を確認できます</p>
+                              <a href="/register/" class="unlock-btn unlock-btn-free">無料登録で解放</a>
+                            </div>
+                            <div class="locked-content">
+                              <div class="lock-icon">🔐</div>
+                              <h3>AI予測買い目</h3>
+                              <p>戦略別の具体的な買い目とAI予測値を提供</p>
+                              <a href="/pricing/" class="unlock-btn unlock-btn-paid">有料会員で解放</a>
+                            </div>
+                          </div>
+                        </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+<style>
+.venue-content { display: none; }
+.venue-content.active { display: block; animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+.venue-header {
+      text-align: center;
+      margin-bottom: var(--spacing-xl);
+      padding: var(--spacing-lg);
+      background: linear-gradient(135deg,
+        rgba(139, 92, 246, 0.15) 0%,
+        rgba(167, 139, 250, 0.15) 100%);
+      border-radius: var(--radius-lg);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+    }
+.venue-title {
+      font-size: 2rem;
+      font-weight: 900;
+      color: #a78bfa;
+      margin: 0 0 var(--spacing-sm) 0;
+      text-shadow: 0 0 15px rgba(167, 139, 250, 0.4);
+    }
+.venue-info {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin: 0;
+      font-family: 'Courier New', monospace;
+    }
+.analysis-section {
+      background: var(--bg-secondary);
+      padding: var(--spacing-xl);
+      border-radius: var(--radius-lg);
+      margin-bottom: var(--spacing-xl);
+    }
+.lock-icon {
+      font-size: 2.5rem;
+      margin-bottom: var(--spacing-md);
+      opacity: 0.7;
+      filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.3));
+    }
+.jra-race-accordion-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 8px;
+    }
+.jra-race-accordion {
+      background: rgba(16, 185, 129, 0.05);
+      border-radius: 14px;
+      border: 1px solid rgba(16, 185, 129, 0.22);
+      overflow: hidden;
+      transition: border-color 0.25s ease, transform 0.25s ease;
+    }
+.jra-race-accordion:hover {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+.jra-race-accordion-header {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 18px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.10) 0%, rgba(16, 185, 129, 0.04) 100%);
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      transition: background 0.25s ease;
+    }
+.jra-race-accordion-header:hover {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(16, 185, 129, 0.08) 100%);
+    }
+.jra-race-accordion-header[aria-expanded="true"] {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.22) 0%, rgba(59, 130, 246, 0.10) 100%);
+      border-bottom: 1px solid rgba(16, 185, 129, 0.25);
+    }
+.jra-race-head-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      flex: 1;
+    }
+.jra-race-num {
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: 0.02em;
+      box-shadow: 0 2px 8px rgba(139, 92, 246, 0.35);
+    }
+.jra-race-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+.jra-race-name {
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 1.05rem;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+.jra-race-meta-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      color: #94a3b8;
+      font-size: 0.82rem;
+    }
+.jra-race-meta-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+.jra-race-toggle {
+      flex-shrink: 0;
+      font-size: 1.1rem;
+      color: #10b981;
+      transition: transform 0.3s ease;
+      width: 24px;
+      text-align: center;
+    }
+.jra-race-accordion-content {
+      overflow: hidden;
+      transition: max-height 0.4s ease, opacity 0.3s ease;
+      background: rgba(15, 23, 42, 0.95);
+    }
+.jra-race-accordion-body {
+      padding: 18px 16px 20px;
+    }
+.jra-race-accordion-header {
+        padding: 12px 14px;
+        gap: 10px;
+      }
+.jra-race-head-left { gap: 10px; }
+.jra-race-num { padding: 6px 10px; font-size: 0.95rem; }
+.jra-race-name { font-size: 0.98rem; white-space: normal; }
+.jra-race-meta-line { font-size: 0.78rem; gap: 4px 10px; }
+.jra-race-accordion-body { padding: 14px 12px 16px; }
+.access-control-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 30px;
+      padding: 20px;
+      background: rgba(30, 41, 59, 0.3);
+      border-radius: 12px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+.locked-content {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(236, 72, 153, 0.1) 100%);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      padding: 25px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+    }
+.horse-card-minor {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(30, 41, 59, 0.9) 100%);
+      border-radius: 14px;
+      padding: 18px 18px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      margin-top: 16px;
+    }
+.horse-mark-minor {
+      font-size: 1.3rem;
+      color: #f59e0b;
+      font-weight: 900;
+      margin-right: 10px;
+    }
+.minor-group-title { margin-left: 10px; font-weight: 600; }
+.minor-group-title-renka { color: #f59e0b; }
+.minor-group-title-osae { color: #94a3b8; }
+.minor-group-osae .horse-mark-minor { color: #94a3b8; }
+.minor-horse-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+.minor-horse-card {
+      background: rgba(15, 23, 42, 0.7);
+      border-radius: 10px;
+      padding: 12px 14px;
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+.minor-horse-card-renka {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), rgba(15, 23, 42, 0.7));
+    }
+.minor-horse-card-osae { border-color: rgba(100, 116, 139, 0.3); }
+details.minor-group-ineligible {
+      margin-top: 24px;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: 14px;
+      padding: 14px 18px;
+    }
+.ineligible-summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 0.95rem;
+      padding: 4px 0;
+    }
+.ineligible-summary::-webkit-details-marker { display: none; }
+.ineligible-summary::before {
+      content: '▶';
+      display: inline-block;
+      color: #94a3b8;
+      font-size: 0.85rem;
+      transition: transform 0.2s ease;
+    }
+details.minor-group-ineligible[open] > .ineligible-summary::before { transform: rotate(90deg); }
+.ineligible-summary-icon {
+      display: inline-block;
+      width: 26px;
+      height: 26px;
+      line-height: 26px;
+      text-align: center;
+      border-radius: 50%;
+      background: rgba(100, 116, 139, 0.25);
+      color: #cbd5e1;
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+.ineligible-summary-title { color: #e2e8f0; }
+details.minor-group-ineligible[open] .minor-horse-grid { margin-top: 12px; }
+.minor-horse-card-ineligible {
+      border-color: rgba(100, 116, 139, 0.3);
+      background: rgba(15, 23, 42, 0.55);
+      opacity: 0.9;
+    }
+.minor-horse-card-ineligible .minor-horse-mark { color: #94a3b8; font-weight: 600; }
+.minor-horse-card-ineligible .minor-horse-score {
+      color: #94a3b8;
+      background: rgba(100, 116, 139, 0.15);
+      border-color: rgba(100, 116, 139, 0.3);
+    }
+.minor-horse-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+.minor-horse-mark { color: #f59e0b; font-weight: 700; font-size: 1rem; }
+.minor-horse-card-osae .minor-horse-mark { color: #94a3b8; }
+.minor-horse-number {
+      background: linear-gradient(135deg, #6b7280, #4b5563);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      min-width: 26px;
+      text-align: center;
+    }
+.minor-horse-name {
+      color: #e2e8f0;
+      font-weight: 600;
+      font-size: 0.95rem;
+      flex: 1;
+    }
+.minor-horse-score {
+      color: #10b981;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 0.8rem;
+    }
+.minor-horse-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      color: #cbd5e1;
+      font-size: 0.82rem;
+    }
+.minor-horse-meta .meta-key { color: #64748b; margin-right: 4px; font-size: 0.75rem; }
+.minor-horse-evals { display: flex; flex-wrap: wrap; gap: 5px; }
+.eval-tag-small {
+      background: rgba(59, 130, 246, 0.12);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+    }
+.minor-horse-importance { color: #94a3b8; font-size: 0.78rem; }
+.recent-races {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(100, 116, 139, 0.2);
+    }
+.recent-races > summary {
+      cursor: pointer;
+      color: #cbd5e1;
+      font-weight: 600;
+      font-size: 0.88rem;
+      list-style: none;
+    }
+.recent-races > summary::-webkit-details-marker { display: none; }
+.recent-races > summary::before {
+      content: '▶';
+      display: inline-block;
+      margin-right: 8px;
+      color: #64748b;
+      font-size: 0.7rem;
+      transition: transform 0.2s ease;
+    }
+.recent-races[open] > summary::before { transform: rotate(90deg); }
+.recent-races-list {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+.recent-race-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      align-items: baseline;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      padding: 4px 6px;
+      background: rgba(30, 41, 59, 0.4);
+      border-radius: 4px;
+    }
+.recent-race-label { color: #94a3b8; font-size: 0.7rem; min-width: 3em; }
+.recent-race-venue { color: #e2e8f0; font-weight: 600; }
+.recent-race-distance { color: #cbd5e1; }
+.recent-race-rank { color: #10b981; font-weight: 700; }
+.recent-race-meta { color: #94a3b8; font-size: 0.75rem; }
+.recent-races-compact .recent-race-row { font-size: 0.72rem; }
+.minor-horse-grid { grid-template-columns: 1fr; }
+.lock-icon { font-size: 2rem; opacity: 0.8; }
+.locked-content h3 {
+      color: #8b5cf6;
+      font-weight: 600;
+      font-size: 1.1rem;
+      margin: 0;
+    }
+.locked-content p {
+      color: #cbd5e1;
+      font-size: 0.9rem;
+      margin: 0;
+      opacity: 0.8;
+    }
+.unlock-btn {
+      padding: 10px 20px;
+      border-radius: 20px;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.3s ease;
+      display: inline-block;
+    }
+.unlock-btn-free {
+      background: linear-gradient(135deg, #10b981, #22c55e);
+      color: white;
+    }
+.unlock-btn-free:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+    }
+.unlock-btn-paid {
+      background: linear-gradient(135deg, #8b5cf6, #ec4899);
+      color: white;
+    }
+.unlock-btn-paid:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+    }
+.access-control-section {
+        grid-template-columns: 1fr;
+        gap: 15px;
+      }
+.analysis-section .section-title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #3b82f6;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+.horse-card {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
+      padding: 20px;
+      border-radius: 14px;
+      margin-bottom: 18px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      position: relative;
+      overflow: hidden;
+    }
+.horse-card-tana {
+      padding: 22px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(139, 92, 246, 0.06) 100%);
+      border: 1.5px solid rgba(245, 158, 11, 0.28);
+    }
+.horse-card-main {
+      padding: 28px;
+      background: linear-gradient(135deg,
+        rgba(16, 185, 129, 0.18) 0%,
+        rgba(34, 197, 94, 0.14) 45%,
+        rgba(59, 130, 246, 0.16) 100%);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      box-shadow:
+        0 0 0 1.5px rgba(16, 185, 129, 0.55),
+        0 8px 28px rgba(16, 185, 129, 0.28),
+        0 0 60px rgba(16, 185, 129, 0.18) inset;
+      position: relative;
+    }
+.horse-card-main::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 16px;
+      padding: 2px;
+      background: linear-gradient(135deg, #10b981 0%, #22c55e 35%, #3b82f6 70%, #8b5cf6 100%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      pointer-events: none;
+      z-index: 0;
+    }
+.horse-card-main > * { position: relative; z-index: 1; }
+.main-glow {
+      position: absolute;
+      top: -40%;
+      left: -10%;
+      width: 60%;
+      height: 180%;
+      background: radial-gradient(closest-side, rgba(16, 185, 129, 0.28), transparent 70%);
+      filter: blur(20px);
+      pointer-events: none;
+      z-index: 0;
+      animation: jra-main-glow-pulse 3.6s ease-in-out infinite;
+    }
+.horse-card-sub {
+      padding: 24px;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
+      border: 1.5px solid rgba(59, 130, 246, 0.45);
+      box-shadow: 0 4px 18px rgba(59, 130, 246, 0.18);
+    }
+.horse-mark-main {
+      display: inline-block;
+      font-size: 2.4rem;
+      color: #10b981;
+      font-weight: 900;
+      margin-right: 12px;
+      text-shadow:
+        0 0 10px rgba(16, 185, 129, 0.7),
+        0 0 22px rgba(16, 185, 129, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+.horse-mark-sub {
+      display: inline-block;
+      font-size: 1.7rem;
+      color: #3b82f6;
+      font-weight: 800;
+      margin-right: 10px;
+      text-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+.horse-mark-tana {
+      display: inline-block;
+      font-size: 1.55rem;
+      color: #f59e0b;
+      font-weight: 800;
+      margin-right: 10px;
+      text-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+      line-height: 1;
+      vertical-align: middle;
+    }
+.horse-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      gap: 10px;
+    }
+.horse-identity {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+.horse-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      color: white;
+      border-radius: 50%;
+      font-weight: 800;
+      font-size: 1rem;
+      margin-right: 10px;
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+    }
+.horse-card-main .horse-number {
+      width: 40px;
+      height: 40px;
+      font-size: 1.15rem;
+      background: linear-gradient(135deg, #10b981, #22c55e);
+      box-shadow:
+        0 0 0 2px rgba(255, 255, 255, 0.08),
+        0 4px 14px rgba(16, 185, 129, 0.55);
+    }
+.horse-card-sub .horse-number {
+      width: 36px;
+      height: 36px;
+    }
+.horse-name {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+.horse-card-main .horse-name {
+      font-size: 1.45rem;
+      font-weight: 900;
+      color: #f0fdf4;
+      text-shadow: 0 1px 6px rgba(16, 185, 129, 0.35);
+    }
+.role-badge {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+.role-badge-main {
+      background: linear-gradient(135deg, #10b981 0%, #22c55e 100%);
+      color: #052e1a;
+      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.45);
+    }
+.role-badge-sub {
+      background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+      color: white;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+    }
+.role-badge-tana {
+      background: linear-gradient(135deg, #f59e0b 0%, #fb923c 100%);
+      color: #2a1500;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+    }
+.horse-stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 18px;
+      margin-bottom: 18px;
+    }
+.stat-block {
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+.horse-card-main .stat-block {
+      background: rgba(15, 23, 42, 0.6);
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+.horse-card-sub .stat-block {
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+.stat-label {
+      font-size: 0.78rem;
+      color: #94a3b8;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+.stat-value {
+      font-size: 1.6rem;
+      font-weight: 900;
+      line-height: 1;
+      color: #e2e8f0;
+    }
+.stat-score {
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+.stat-index {
+      background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+.stat-unit {
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-left: 4px;
+      -webkit-text-fill-color: #f59e0b;
+    }
+.horse-card-main .confidence-num {
+      color: #d1fae5;
+      opacity: 1;
+    }
+.basic-info {
+      margin-top: 18px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+.basic-info h4,
+    .eval-points h4,
+    .feature-importance h4 {
+      color: #cbd5e1;
+      font-size: 0.9rem;
+      font-weight: 700;
+      margin: 0 0 10px;
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+.basic-info h4::before { content: "📋"; }
+.eval-points h4::before { content: "🎯"; }
+.feature-importance h4::before { content: "📊"; }
+.horse-card-main .basic-info {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
+.info-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+.info-line {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 0.92rem;
+      color: #e2e8f0;
+      line-height: 1.4;
+    }
+.info-line-primary {
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+.info-chip {
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.18);
+      color: #bfdbfe;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+.horse-card-main .info-chip {
+      background: rgba(16, 185, 129, 0.2);
+      color: #d1fae5;
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+.info-key {
+      color: #94a3b8;
+      font-size: 0.82rem;
+      font-weight: 600;
+      min-width: 48px;
+      flex-shrink: 0;
+    }
+.info-val {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+.eval-points {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+.horse-card-main .eval-points {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
+.eval-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+.eval-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 12px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(59, 130, 246, 0.18) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #d1fae5;
+    }
+.eval-tag::before {
+      content: "✓";
+      color: #10b981;
+      font-weight: 900;
+    }
+.horse-card-main .eval-tag {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(34, 197, 94, 0.2) 100%);
+      border-color: rgba(16, 185, 129, 0.55);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+    }
+.feature-importance {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+    }
+.horse-card-main .feature-importance {
+      background: rgba(15, 23, 42, 0.55);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
+.importance-list {
+      display: grid;
+      gap: 10px;
+    }
+.importance-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+.importance-label {
+      min-width: 92px;
+      color: #94a3b8;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+.importance-bar {
+      flex: 1;
+      height: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 7px;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+.importance-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%);
+      border-radius: 7px;
+      transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+      position: relative;
+      box-shadow:
+        0 0 8px rgba(59, 130, 246, 0.5) inset,
+        0 0 12px rgba(139, 92, 246, 0.3);
+    }
+.importance-fill::after {
+      content: "";
+      position: absolute;
+      top: 0; right: 0; bottom: 0;
+      width: 18px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45));
+      border-top-right-radius: 7px;
+      border-bottom-right-radius: 7px;
+    }
+.horse-card-main .importance-fill {
+      background: linear-gradient(90deg, #22c55e 0%, #10b981 45%, #3b82f6 100%);
+      box-shadow:
+        0 0 10px rgba(16, 185, 129, 0.55) inset,
+        0 0 14px rgba(16, 185, 129, 0.35);
+    }
+.importance-percent {
+      min-width: 42px;
+      text-align: right;
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+.horse-stats-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 14px;
+        margin-bottom: 14px;
+      }
+.stat-value { font-size: 1.4rem; }
+.horse-mark-main { font-size: 2rem; }
+.importance-label { min-width: 70px; font-size: 0.8rem; }
+.importance-bar { height: 12px; }
+.importance-percent { min-width: 36px; font-size: 0.78rem; }
+.history-details {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+.history-summary {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: #e2e8f0;
+      list-style: none;
+      padding: 4px 0;
+    }
+.history-summary::-webkit-details-marker { display: none; }
+.history-summary-text { color: #93c5fd; }
+.history-summary-count { color: #94a3b8; font-size: 0.82rem; }
+.history-summary-chevron {
+      margin-left: auto;
+      color: #64748b;
+      transition: transform 0.2s ease;
+    }
+.history-details[open] .history-summary-chevron { transform: rotate(180deg); }
+.history-content {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+.history-section {
+      background: rgba(30, 41, 59, 0.35);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+.history-section-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #93c5fd;
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+    }
+.history-profile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px 12px;
+    }
+.history-profile-item {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+.history-profile-label {
+      color: #64748b;
+      font-size: 0.72rem;
+      flex-shrink: 0;
+    }
+.history-profile-value {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+.history-record-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+.history-rec-card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 5px;
+      padding: 6px 4px;
+      text-align: center;
+    }
+.history-rec-label {
+      color: #64748b;
+      font-size: 0.7rem;
+      margin-bottom: 2px;
+    }
+.history-rec-value {
+      color: #fbbf24;
+      font-weight: 700;
+      font-size: 0.92rem;
+    }
+.history-cond-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+.history-cond-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 0.8rem;
+      padding: 3px 0;
+    }
+.history-cond-label {
+      color: #94a3b8;
+      min-width: 110px;
+      font-weight: 600;
+    }
+.history-cond-stat {
+      color: #e2e8f0;
+    }
+.history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+.history-row {
+      background: rgba(15, 23, 42, 0.5);
+      border-left: 3px solid rgba(59, 130, 246, 0.35);
+      border-radius: 4px;
+      padding: 5px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+.hh-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      align-items: baseline;
+      font-size: 0.78rem;
+    }
+.hh-line-primary { font-weight: 600; }
+.hh-line-secondary { font-size: 0.74rem; color: #94a3b8; }
+.hh-date { color: #cbd5e1; }
+.hh-venue { color: #e2e8f0; font-weight: 700; }
+.hh-dist { color: #93c5fd; }
+.hh-rank { color: #cbd5e1; }
+.hh-rank.win { color: #fbbf24; font-weight: 800; }
+.hh-rank.good { color: #10b981; }
+.hh-status { color: #f87171; }
+.hh-pop { color: #94a3b8; font-size: 0.72rem; }
+.hh-race-name { color: #cbd5e1; font-weight: 600; }
+.hh-jockey { color: #94a3b8; }
+.hh-bw { color: #94a3b8; }
+.hh-time { color: #a78bfa; }
+.hh-winner { color: #64748b; font-size: 0.72rem; }
+.hh-overflow {
+      text-align: center;
+      color: #64748b;
+      font-size: 0.74rem;
+      padding: 4px;
+    }
+.history-profile-grid {
+        grid-template-columns: 1fr;
+      }
+.history-record-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+.history-cond-label {
+        min-width: 84px;
+        font-size: 0.74rem;
+      }
+.history-cond-row {
+        flex-wrap: wrap;
+      }
+.hh-line {
+        font-size: 0.74rem;
+      }
+@keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.2); }
+    }
+@keyframes scanLine {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+@keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+@keyframes jra-header-pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.5; }
+    }
+@keyframes jra-main-glow-pulse {
+      0%, 100% { opacity: 0.55; transform: translateX(0); }
+      50%      { opacity: 0.95; transform: translateX(8%); }
+    }
+</style>
