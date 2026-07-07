@@ -49,33 +49,41 @@ jobs:
           DATE_SINGLE: ${{ github.event.client_payload.date }}
         run: |
           # 優先順位: 手動入力 > repository_dispatch payload > 今日の日付
+          # 馬単・三連複を同じ対象日で取込（南関 import-results-nankan-daily と同型）。
+          # 三連複取込は非致命（|| で握る）: 失敗しても馬単の取込・コミットは阻害しない。
+          import_jra_day() {
+            local d="$1"
+            npm run import:results:jra -- --date "$d"
+            npm run import:results:jra:sanrenpuku -- --date "$d" \
+              || echo "⚠️  sanrenpuku import failed for $d (continuing; 馬単は不変)"
+          }
           if [ -n "$MANUAL_DATE" ]; then
             # 手動実行時の入力
             echo "📅 Manual JRA import for: $MANUAL_DATE"
-            npm run import:results:jra -- --date "$MANUAL_DATE"
+            import_jra_day "$MANUAL_DATE"
           elif [ -n "$DATES_JSON" ] && [ "$DATES_JSON" != "null" ]; then
             # repository_dispatch（複数日付）
             echo "📅 Importing JRA results for multiple dates"
             while IFS= read -r DATE; do
               echo "━━━ Processing JRA: $DATE ━━━"
-              npm run import:results:jra -- --date "$DATE"
+              import_jra_day "$DATE"
             done < <(echo "$DATES_JSON" | jq -r '.[]')
           elif [ -n "$DATE_SINGLE" ] && [ "$DATE_SINGLE" != "null" ]; then
             # repository_dispatch（単一日付）
             echo "📅 Importing JRA results for single date: $DATE_SINGLE"
-            npm run import:results:jra -- --date "$DATE_SINGLE"
+            import_jra_day "$DATE_SINGLE"
           else
             # デフォルト：今日の日付（JST）
             TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
             echo "📅 Importing JRA results for today (JST): $TODAY"
-            npm run import:results:jra -- --date "$TODAY"
+            import_jra_day "$TODAY"
           fi
 
       - name: Check for changes
         id: git-check
         run: |
-          # archiveResultsJra.jsonの変更をステージング
-          git add src/data/archiveResultsJra.json
+          # archiveResultsJra.json（馬単）+ archiveSanrenpukuResultsJra.json（三連複）の変更をステージング
+          git add src/data/archiveResultsJra.json src/data/archiveSanrenpukuResultsJra.json
           # ステージされた変更があるかチェック
           git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
 
@@ -103,9 +111,10 @@ jobs:
             COMMIT_MSG="Auto-verify: ${TODAY} JRA results (today JST)"
           fi
 
-          # 変更ファイルを退避
+          # 変更ファイルを退避（馬単・三連複の両アーカイブ）
           cp src/data/archiveResultsJra.json /tmp/archiveResultsJra.json.backup
-          echo "📦 Backed up archiveResultsJra.json"
+          cp src/data/archiveSanrenpukuResultsJra.json /tmp/archiveSanrenpukuResultsJra.json.backup
+          echo "📦 Backed up archiveResultsJra.json / archiveSanrenpukuResultsJra.json"
 
           # Retry logic: reset → restore → commit → push（最大5回リトライ）
           MAX_RETRIES=5
@@ -121,11 +130,12 @@ jobs:
             git clean -fd
             echo "✅ Synced to origin/main ($(git rev-parse --short HEAD))"
 
-            # 2. 退避ファイルを復元
+            # 2. 退避ファイルを復元（馬単・三連複の両アーカイブ）
             cp /tmp/archiveResultsJra.json.backup src/data/archiveResultsJra.json
+            cp /tmp/archiveSanrenpukuResultsJra.json.backup src/data/archiveSanrenpukuResultsJra.json
 
             # 3. ステージング＆コミット
-            git add src/data/archiveResultsJra.json
+            git add src/data/archiveResultsJra.json src/data/archiveSanrenpukuResultsJra.json
             if git diff --staged --quiet; then
               echo "⏭️  No changes after sync (remote already has latest)"
               SUCCESS=true
