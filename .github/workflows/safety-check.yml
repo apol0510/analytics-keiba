@@ -100,3 +100,7 @@ jobs:
       - name: Verify free JRA index 旧 KI 風混入なし
         working-directory: astro-site
         run: npm run check:ki-relics:free-jra
+
+      - name: Verify 有料セッション共通ライブラリ（PR-A / Node 20 で全テスト実行）
+        working-directory: astro-site
+        run: npm run test:auth-session
