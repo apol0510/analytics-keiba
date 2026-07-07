@@ -1,21 +1,13 @@
 /**
- * マジックリンク送信API（analytics-keiba）
+ * マジックリンク送信API（analytics-keiba / PR-B: 有料会員のみ対象）
  *
- * - Airtable Customers テーブルでメール検証
- * - AuthTokens テーブルに使い捨てトークン保存（15分有効）
- * - SendGrid でログインリンクを送信
+ * - Airtable Customers でメール検証 → 会員判定（resolveMembership）
+ * - **paid の場合だけ** AuthTokens に使い捨てトークンを作成し SendGrid で送信
+ * - free / denied / 未登録 は送らず、常に一定の 200 応答（会員情報を列挙しない）
+ * - token は uuid v4・15分有効・単回使用（従来どおり）
  *
- * 参照する Airtable Base は nankan-analytics 側の既存 Base。
- * テーブル: Customers / AuthTokens
- *   AuthTokens がまだ無い場合は Airtable で新規作成すること
- *   （フィールド: Token, Email, CreatedAt, ExpiresAt, Used, Ip_Address, User_Agent）
- *
- * 環境変数:
- *   AIRTABLE_API_KEY        nankan-analytics と同じ値
- *   AIRTABLE_BASE_ID        nankan-analytics と同じ値
- *   SENDGRID_API_KEY        SendGrid 送信キー
- *   SENDGRID_FROM_EMAIL     送信元メール（例: noreply@analytics.keiba.link）
- *   MAGIC_LINK_BASE_URL     マジックリンクのベース（任意、既定 https://analytics.keiba.link）
+ * テーブル: Customers / AuthTokens（Token, Email, CreatedAt, ExpiresAt, Used, Ip_Address, User_Agent）
+ * 環境変数: AIRTABLE_API_KEY / AIRTABLE_BASE_ID / SENDGRID_API_KEY / SENDGRID_FROM_EMAIL / MAGIC_LINK_BASE_URL
  */
 
 const { v4: uuidv4 } = require('uuid');
@@ -49,6 +41,18 @@ function corsHeaders(event) {
   };
 }
 
+// free / denied / 未登録 で返す共通応答（会員の有無・種別を漏らさない）
+function genericOk(headers) {
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({
+      success: true,
+      message: '有料会員のアカウントが存在する場合、ログインリンクを送信しました。',
+    }),
+  };
+}
+
 exports.handler = async (event) => {
   const headers = corsHeaders(event);
 
@@ -56,7 +60,6 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
-
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'Airtable env not configured' }) };
   }
@@ -69,65 +72,40 @@ exports.handler = async (event) => {
     if (!rawEmail) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Email is required' }) };
     }
-
-    // 📧 Email 正規化（trim + lowercase）— 検索・AuthTokens保存・SendGrid送信すべてこの値で行う
     const email = String(rawEmail).trim().toLowerCase();
-    console.log(`📨 [send-magic-link] start: email=${email}`);
 
     const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(AIRTABLE_BASE_ID);
     const customersTable = base('Customers');
     const authTokensTable = base('AuthTokens');
 
-    // 1. Customers テーブルで既存ユーザー確認（Email 完全一致のみ・LOWER(TRIM()) で大小・空白差を吸収）
     const escapedEmail = email.replace(/'/g, "\\'");
     const customers = await customersTable
-      .select({
-        filterByFormula: `LOWER(TRIM({Email})) = '${escapedEmail}'`,
-        maxRecords: 5  // 重複検出のため複数取得
-      })
+      .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escapedEmail}'`, maxRecords: 5 })
       .firstPage();
 
-    console.log(`🔍 [send-magic-link] Customer hits: ${customers.length} (email=${email})`);
-    if (customers.length > 1) {
-      console.warn(`⚠️ [send-magic-link] 同一 Email で複数 Customer 検出: ${email} / recordIds=${customers.map(r => r.id).join(',')}`);
-    }
-
     if (customers.length === 0) {
-      // セキュリティ: 存在しないメールでも 200 を返して enumeration を防ぐ
-      console.warn(`[send-magic-link] Customer not found: email=${email}`);
-      return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({
-          success: true,
-          message: '該当するアカウントが存在する場合、ログインリンクを送信しました。',
-        }),
-      };
+      console.warn(`[send-magic-link] Customer not found (generic 200): email=${email}`);
+      return genericOk(headers);
     }
 
-    const customer = customers[0].fields;
-    const customerRecordId = customers[0].id;
-
-    // ステータスが明示的に inactive の場合は弾く（active / undefined は OK）
-    if (customer.Status && String(customer.Status).toLowerCase() === 'inactive') {
-      console.warn(`⛔ [send-magic-link] Account is inactive: email=${email}, recordId=${customerRecordId}`);
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Account is not active' }),
-      };
+    // 会員判定: paid だけ送信対象（free / denied には送らない）
+    const record = customers[0];
+    const { resolveMembership, shouldSendMagicLink } = await import('../../src/lib/auth/index.js');
+    const membership = resolveMembership({ fields: record.fields, recordId: record.id, now: Date.now() });
+    if (!shouldSendMagicLink(membership)) {
+      console.log(`[send-magic-link] not paid → 送信しない (generic 200): reason=${membership.reason}`);
+      return genericOk(headers);
     }
 
-    // 2. トークン生成 (15分有効)
+    // トークン生成 (15分有効・単回使用)
     const token = uuidv4();
     const tokenPrefix = token.slice(0, 8);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
     await authTokensTable.create([
       {
         fields: {
           Token: token,
-          Email: email,  // 正規化済み Email を保存（verify 側と一致させる）
+          Email: email,
           CreatedAt: new Date().toISOString(),
           ExpiresAt: expiresAt.toISOString(),
           Used: false,
@@ -136,11 +114,10 @@ exports.handler = async (event) => {
         },
       },
     ]);
-    console.log(`🎫 [send-magic-link] Token issued: tokenPrefix=${tokenPrefix}, email=${email}, expiresAt=${expiresAt.toISOString()}`);
+    console.log(`🎫 [send-magic-link] Token issued (paid): tokenPrefix=${tokenPrefix}, email=${email}`);
 
-    // 3. メール送信
     const magicLink = `${SITE_BASE}/auth/verify?token=${encodeURIComponent(token)}`;
-    const customerName = customer.Name || customer['お名前'] || 'お客様';
+    const customerName = record.fields.Name || record.fields['お名前'] || 'お客様';
 
     try {
       await sgMail.send({
@@ -173,33 +150,18 @@ exports.handler = async (event) => {
       });
       console.log(`✅ [send-magic-link] SendGrid 送信成功: email=${email}, tokenPrefix=${tokenPrefix}`);
     } catch (sgError) {
-      // SendGrid 送信失敗は握りつぶさず、明確にエラーを返す
       const errorDetails = sgError?.response?.body || sgError?.message || String(sgError);
       console.error(`❌ [send-magic-link] SendGrid 送信失敗: email=${email}, error=`, errorDetails);
       return {
         statusCode: 502,
         headers,
-        body: JSON.stringify({
-          error: 'Failed to send login email',
-          details: typeof errorDetails === 'string' ? errorDetails : 'SendGrid send error',
-        }),
+        body: JSON.stringify({ error: 'Failed to send login email' }),
       };
     }
 
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        success: true,
-        message: 'ログインリンクを送信しました。メールをご確認ください。',
-      }),
-    };
+    return genericOk(headers);
   } catch (error) {
-    console.error('❌ [send-magic-link] error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Internal Server Error', details: error.message }),
-    };
+    console.error('❌ [send-magic-link] error:', error.message);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Internal Server Error' }) };
   }
 };

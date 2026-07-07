@@ -1,14 +1,23 @@
 /**
- * マジックリンク検証API（analytics-keiba）
+ * マジックリンク検証API（analytics-keiba / PR-B: 有料セッション Cookie 発行）
  *
- * - GET /.netlify/functions/verify-magic-link?token=...
- * - AuthTokens テーブルでトークン検証（未使用 / 期限内）
- * - 使用済みフラグを立て、Customers から会員情報を取得
- * - クライアント保存用のセッション JSON を返す
- *   AccessControl が読む localStorage 'user-plan' 形式に整形済み
+ * GET /.netlify/functions/verify-magic-link?token=...
  *
- * 環境変数:
- *   AIRTABLE_API_KEY / AIRTABLE_BASE_ID    nankan-analytics 側と同じ値
+ * オーケストレーションは純粋モジュール runVerifyMagicLink（src/lib/auth）に集約し、
+ * 本ハンドラは Airtable / env / 時計を注入してHTTP応答へマッピングするだけ。
+ *
+ * 手順（runVerifyMagicLink）:
+ *   1. SESSION_SIGNING_SECRET を検証（未設定/短い → 503。token に触れない）
+ *   2. token 存在 → 未使用 → 期限 を確認
+ *   3. token の Email で Customers 再取得 → resolveMembership（クライアント plan は使わない）
+ *   4. paid のみ createSession(20分) + serializeSessionCookie(ak_session)
+ *   5. Cookie 準備が成功してから token を再確認して使用済みに更新
+ *   6. 使用済み更新が成功した場合だけ Set-Cookie を返す（更新失敗時は Cookie を出さない）
+ *
+ * Airtable に原子的 compare-and-set は無いため、更新直前の再読込で単回性を最大限守る
+ * （残る同時実行リスクは最小化にとどまる。全端末失効は SessionVersion 導入の PR-C 以降）。
+ *
+ * 環境変数: AIRTABLE_API_KEY / AIRTABLE_BASE_ID / SESSION_SIGNING_SECRET
  */
 
 const Airtable = require('airtable');
@@ -35,6 +44,25 @@ function corsHeaders(event) {
   };
 }
 
+// 正規プラン → AccessControl 互換の表示プラン名（localStorage UI 用・非権威）
+function displayPlanName(canonical) {
+  switch (canonical) {
+    case 'light': return 'Light';
+    case 'premium': return 'Premium';
+    case 'premium-predictions': return 'Premium';
+    case 'premium-sanrenpuku': return 'Premium Sanrenpuku';
+    case 'premium-sanrentan': return 'Premium Plus';
+    case 'premium-combo': return 'Premium Combo';
+    case 'premium-plus': return 'Premium Plus';
+    default: return 'Premium';
+  }
+}
+
+function venueString(venues) {
+  if (Array.isArray(venues) && venues.length === 1) return venues[0];
+  return 'all';
+}
+
 exports.handler = async (event) => {
   const headers = corsHeaders(event);
 
@@ -42,133 +70,98 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
-
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'Airtable env not configured' }) };
   }
 
   try {
-    const { token } = event.queryStringParameters || {};
-    if (!token) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Token is required' }) };
-    }
-
-    // セキュリティ: token はログに全文出さず先頭8文字のみ表示
-    const tokenPrefix = String(token).slice(0, 8);
-    const nowIso = new Date().toISOString();
-    console.log(`🔐 [verify-magic-link] verify start: tokenPrefix=${tokenPrefix}... now=${nowIso}`);
+    const { runVerifyMagicLink, VERIFY_FLOW } = await import('../../src/lib/auth/index.js');
 
     const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(AIRTABLE_BASE_ID);
     const authTokensTable = base('AuthTokens');
     const customersTable = base('Customers');
+    const { token } = event.queryStringParameters || {};
 
-    // 1. AuthTokens でトークン検証
-    const tokens = await authTokensTable
-      .select({ filterByFormula: `{Token} = "${token.replace(/"/g, '\\"')}"`, maxRecords: 1 })
-      .firstPage();
-
-    console.log(`🔍 [verify-magic-link] AuthTokens hits: ${tokens.length} (tokenPrefix=${tokenPrefix})`);
-    if (tokens.length === 0) {
-      console.warn(`❌ [verify-magic-link] Token not found: tokenPrefix=${tokenPrefix}`);
-      return { statusCode: 404, headers, body: JSON.stringify({ error: 'Token not found' }) };
-    }
-
-    const tokenRecord = tokens[0];
-    const tokenData = tokenRecord.fields;
-
-    if (tokenData.Used) {
-      console.warn(`❌ [verify-magic-link] Token already used: tokenPrefix=${tokenPrefix}, email=${tokenData.Email}`);
-      return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token already used' }) };
-    }
-    const expiresAt = new Date(tokenData.ExpiresAt);
-    const now = new Date();
-    if (now > expiresAt) {
-      console.warn(`❌ [verify-magic-link] Token expired: tokenPrefix=${tokenPrefix}, email=${tokenData.Email}, expiresAt=${tokenData.ExpiresAt}, now=${nowIso}`);
-      return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token expired' }) };
-    }
-
-    // 2. トークンを使用済みに更新（再使用防止）
-    await authTokensTable.update([
-      { id: tokenRecord.id, fields: { Used: true } },
-    ]);
-    console.log(`✅ [verify-magic-link] Token marked as used: tokenPrefix=${tokenPrefix}`);
-
-    // 3. Customers から会員情報を取得（Email 正規化 + LOWER(TRIM()) 比較）
-    const tokenEmail = String(tokenData.Email || '').trim().toLowerCase();
-    const escapedTokenEmail = tokenEmail.replace(/'/g, "\\'");
-    const customers = await customersTable
-      .select({
-        filterByFormula: `LOWER(TRIM({Email})) = '${escapedTokenEmail}'`,
-        maxRecords: 5  // 重複検出のため複数取得
-      })
-      .firstPage();
-
-    console.log(`🔍 [verify-magic-link] Customer hits: ${customers.length} (email=${tokenEmail})`);
-    if (customers.length > 1) {
-      console.warn(`⚠️ [verify-magic-link] 同一 Email で複数 Customer 検出: ${tokenEmail} / recordIds=${customers.map(r => r.id).join(',')}`);
-    }
-    if (customers.length === 0) {
-      console.warn(`❌ [verify-magic-link] Customer not found: email=${tokenEmail}`);
-      return { statusCode: 404, headers, body: JSON.stringify({ error: 'Customer not found' }) };
-    }
-
-    const customer = customers[0].fields;
-    const customerRecordId = customers[0].id;
-    const planType = customer.PlanType || 'free-registered';
-    const venueAccess = customer.VenueAccess || 'all';
-    const planExpiresAt = customer.ExpirationDate || customer['有効期限'] || null;
-    const lifetimeSanrenpuku = !!(customer.LifetimeSanrenpuku || customer['三連複Lifetime']);
-    const currentStatus = customer.Status || null;
-    const currentPlan = customer['プラン'] || customer.Plan || null;
-
-    console.log(`👤 [verify-magic-link] Customer found: recordId=${customerRecordId}, email=${tokenEmail}, status=${currentStatus}, plan=${currentPlan}, planType=${planType}`);
-
-    // ─────────────────────────────────────────────
-    // 🚨 2026-05-12 重大修正: 認証時の Status / PlanType の上書きを禁止
-    // 旧コードは Status='active' を強制更新していたため、入金待ち（Status='pending'）
-    // の顧客がログインリンクをクリックすると Airtable Automation が誤発火し、
-    // send-payment-confirmation-auto が走って PaymentEmailSent=true になり、
-    // 後の正式な「入金確認 → active」での再送信が二重送信防止ガードに阻まれていた。
-    //
-    // ログイン認証は本人確認の手段でしかなく、決済ステータスを変更するべきではない。
-    // よって Status / PlanType / Plan / PaymentEmailSent はここで触らない。
-    // ─────────────────────────────────────────────
-    console.log(`🔒 [verify-magic-link] Status/PlanType の上書きはスキップ（決済ステータスは保持）: status=${currentStatus}, planType=${planType}`);
-
-    // 4. 既存 AccessControl 互換のセッション JSON を返す
-    //    AccessControl は localStorage 'user-plan' を {email, plan, planType, lifetimeSanrenpuku} 形で読む
-    const userPlan = {
-      email: customer.Email,
-      name: customer.Name || customer['お名前'] || '',
-      plan: String(planType).toLowerCase(),
-      planType: planType,
-      planExpiresAt,
-      venueAccess,
-      lifetimeSanrenpuku,
-      issuedAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    // Airtable を注入（純粋オーケストレータは I/O を持たない）
+    const findToken = async (t) => {
+      const rows = await authTokensTable
+        .select({ filterByFormula: `{Token} = "${String(t).replace(/"/g, '\\"')}"`, maxRecords: 1 })
+        .firstPage();
+      return rows.length ? { id: rows[0].id, fields: rows[0].fields } : null;
+    };
+    const findCustomer = async (email) => {
+      const escaped = String(email).replace(/'/g, "\\'");
+      const rows = await customersTable
+        .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escaped}'`, maxRecords: 5 })
+        .firstPage();
+      return rows.length ? { id: rows[0].id, fields: rows[0].fields } : null;
+    };
+    const markUsed = async (id) => {
+      await authTokensTable.update([{ id, fields: { Used: true } }]);
     };
 
-    // 5. ログイン後リダイレクト先（プラン別）
-    const lower = String(planType).toLowerCase();
-    let redirectTo = '/free-prediction/nankan/';
-    if (['pro', 'pro-plus', 'premium', 'premium-plus', 'standard', 'light'].some(p => lower.includes(p))) {
-      redirectTo = venueAccess === 'jra' ? '/premium-prediction/jra/' : '/premium-prediction/nankan/';
+    const result = await runVerifyMagicLink({
+      token,
+      secret: process.env.SESSION_SIGNING_SECRET,
+      now: Date.now(),
+      findToken,
+      findCustomer,
+      markUsed,
+    });
+
+    switch (result.outcome) {
+      case VERIFY_FLOW.SECRET_UNAVAILABLE:
+        console.error('❌ [verify-magic-link] SESSION_SIGNING_SECRET 未設定/不正 → 503');
+        return { statusCode: 503, headers, body: JSON.stringify({ error: 'Session service unavailable' }) };
+      case VERIFY_FLOW.MISSING_TOKEN:
+        return { statusCode: 400, headers, body: JSON.stringify({ error: 'Token is required' }) };
+      case VERIFY_FLOW.TOKEN_NOT_FOUND:
+        return { statusCode: 404, headers, body: JSON.stringify({ error: 'Token not found' }) };
+      case VERIFY_FLOW.TOKEN_USED:
+        return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token already used' }) };
+      case VERIFY_FLOW.TOKEN_EXPIRED:
+        return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token expired' }) };
+      case VERIFY_FLOW.CUSTOMER_NOT_FOUND:
+        return { statusCode: 404, headers, body: JSON.stringify({ error: 'Customer not found' }) };
+      case VERIFY_FLOW.NOT_PAID:
+        console.warn(`⛔ [verify-magic-link] 現在 paid ではない: reason=${result.reason}`);
+        return { statusCode: 403, headers, body: JSON.stringify({ error: 'Not a paid member' }) };
+      case VERIFY_FLOW.ISSUE_FAILED: {
+        const code = result.reason === 'secret_invalid' ? 503 : 500;
+        console.error(`❌ [verify-magic-link] Cookie 発行不可: reason=${result.reason}`);
+        return { statusCode: code, headers, body: JSON.stringify({ error: 'Failed to issue session' }) };
+      }
+      case VERIFY_FLOW.CONSUME_FAILED:
+        console.error('❌ [verify-magic-link] Used 更新失敗 → Cookie 発行中止');
+        return { statusCode: 500, headers, body: JSON.stringify({ error: 'Failed to consume token' }) };
+      case VERIFY_FLOW.OK: {
+        const m = result.membership;
+        const venue = venueString(m.venueAccess);
+        const redirectTo = venue === 'jra' ? '/premium-prediction/jra/' : '/premium-prediction/nankan/';
+        // localStorage UI 互換用（非権威。認可の真実源は HttpOnly Cookie ak_session。
+        // PR-C/PR-D で AccessControl を Cookie ベースへ移行後に削除予定）。
+        const userPlan = {
+          email: result.email,
+          name: result.name,
+          plan: displayPlanName(m.normalizedPlan),
+          venueAccess: venue,
+          lifetimeSanrenpuku: !!m.lifetimeSanrenpuku,
+          nonAuthoritative: true,
+          issuedAt: new Date(result.payload.issuedAt).toISOString(),
+          expiresAt: new Date(result.payload.expiresAt).toISOString(),
+        };
+        console.log(`✅ [verify-magic-link] paid ログイン成功: plan=${m.normalizedPlan}`);
+        return {
+          statusCode: 200,
+          headers: { ...headers, 'Set-Cookie': result.cookie },
+          body: JSON.stringify({ success: true, redirectTo, userPlan }),
+        };
+      }
+      default:
+        return { statusCode: 500, headers, body: JSON.stringify({ error: 'Internal Server Error' }) };
     }
-
-    console.log(`✅ [verify-magic-link] 認証成功: email=${tokenEmail}, redirectTo=${redirectTo}`);
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ success: true, redirectTo, userPlan }),
-    };
   } catch (error) {
-    console.error('❌ [verify-magic-link] error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Internal Server Error', details: error.message }),
-    };
+    console.error('❌ [verify-magic-link] error:', error.message);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Internal Server Error' }) };
   }
 };

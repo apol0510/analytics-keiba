@@ -48,3 +48,27 @@ export {
 export { createSession, verifySession, VERIFY_REJECT } from './session.js';
 
 export { resolveEdgeGateMode } from './edgeGatePolicy.js';
+
+// --- PR-B: 会員判定 / セッション発行オーケストレーション ---
+export {
+  resolveMembership,
+  resolveSessionVersion,
+  MEMBER_TYPE,
+  MEMBER_REASON,
+} from './memberResolution.js';
+
+export {
+  issuePaidSessionCookie,
+  buildLogoutCookie,
+  checkSigningSecret,
+  DEFAULT_SESSION_TTL_MS,
+  ISSUE_REJECT,
+} from './sessionIssuance.js';
+
+export {
+  decideFreeLogin,
+  shouldSendMagicLink,
+  FREE_LOGIN_OUTCOME,
+} from './authPolicies.js';
+
+export { runVerifyMagicLink, VERIFY_FLOW } from './verifyMagicLinkFlow.js';

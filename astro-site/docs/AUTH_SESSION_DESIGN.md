@@ -151,6 +151,62 @@ token = base64url(UTF-8 JSON payload) + "." + base64url(HMAC-SHA256)
    単一セッションの寿命は 30 分を超えない。Cookie の `Max-Age` も同じ実 TTL から生成する。
 4. **`sub` に使う不透明 ID の確定**（Airtable recordId を採用するか）。
 
+## PR-B 実装（無料/有料ログイン分離 + Cookie 発行）
+
+PR-A の共通ライブラリを実際の認証経路へ配線した段階。**Edge ゲート・有料ページ SSR 化は
+まだ行わない**（PR-C）。認可の真実源は HttpOnly Cookie `ak_session` に移行するが、
+移行期は既存 localStorage（`user-plan` 等）を **非権威** の UI 互換として残す（PR-C/PR-D で削除）。
+
+### 会員判定の単一源: `resolveMembership`（`src/lib/auth/memberResolution.js`）
+
+サーバー専用・純粋関数。Airtable レコードの `fields` と `now` を受け取り I/O しない。
+クライアント由来の plan は**引数に取らない**（推測・採用しない）。
+
+| フィールド（正本） | 用途 |
+|---|---|
+| `プラン`（英語 `Plan` は互換別名） | ティア。`PlanType` は課金サイクルでありティアではない → **参照しない** |
+| `Status` | `pending`/`入金待ち` は Free 扱い。`suspended`/`inactive`/`停止`/`解約` 等は denied |
+| `有効期限`（`ValidUntil`/`ExpiryDate`/`ExpirationDate` は互換） | 期限切れ有料は **Free に落とさず denied** |
+| `WithdrawalRequested` / `ForceLogout` | 真なら denied（lifetime より優先） |
+| `VenueAccess`（文字列 `jra`/`nankan`/`all`） | 正規配列へ。未指定は両会場、未知値は denied |
+| `LifetimeSanrenpuku`（`三連複Lifetime` 互換） | 真なら `premium-sanrenpuku` として paid 維持 |
+| `SessionVersion`（**未作成**。欠落=0） | 負数/非整数/異常型は denied |
+
+出力: `{ memberType: 'free'|'paid'|'denied', normalizedPlan, venueAccess, sessionVersion, recordId, reason, lifetimeSanrenpuku }`
+
+### 経路別の分岐
+
+| Function | 役割 |
+|---|---|
+| `auth-user.js`（無料経路） | email のみ。明確な Free だけ即時ログイン（固定 `plan:'free'`）。有料は `requiresMagicLink:true`（plan 名は返さない）。denied は 403。未登録は `/free-signup/`。**日次ポイント付与は廃止・email 入力での既存レコード更新ゼロ**。初回 1pt は新規作成時 1 回のみ |
+| `send-magic-link.js`（有料送信） | `resolveMembership` が **paid のときだけ** token 発行 + 送信。free/denied/未登録は一定の 200（会員情報を列挙しない）。token は uuid v4・15分・単回 |
+| `verify-magic-link.js`（検証+発行） | 純粋オーケストレータ `runVerifyMagicLink` に Airtable/secret/時計を注入。token 検証 → Customers 再取得 → `resolveMembership` → **paid のみ** `createSession`(20分) + `ak_session` 発行 → 会員判定・Cookie 準備成功後に token を再確認して使用済み化 → 更新成功時のみ `Set-Cookie` |
+| `logout.js`（新規） | `ak_session` を Max-Age=0・同一属性で削除。Airtable/secret に触れない。全端末失効は SessionVersion 導入（PR-C）の別運用 |
+
+### 秘密鍵の扱い
+
+- `SESSION_SIGNING_SECRET` は **呼び出し側（Function）が `process.env` から読む**。
+- 未設定・短すぎ（< 32 文字）は **fail closed**（verify は 503）。fallback 鍵は持たない。
+- 値をログ・レスポンスへ出さない。テストは固定のテスト専用鍵を注入。
+
+### token 単回性（Airtable の制約）
+
+Airtable に原子的 compare-and-set が無いため、使用済み更新の**直前に token を再読込**して
+未使用を再確認する最小リスク設計。会員判定・Cookie 準備が成功してから使用済みにし、
+**使用済み更新が成功した場合だけ** `Set-Cookie` を返す（更新失敗時は Cookie を発行しない）。
+
+### session refresh
+
+PR-B には含めない（**PR-B2 へ分離**）。最初の有料ログイン Cookie は **20 分で失効**し、
+その後は再度マジックリンクが必要。無制限ローリング更新は将来 PR-B2 で頻度制限付きで実装する。
+
+### PR-C 前に必要なユーザー操作
+
+1. Netlify に `SESSION_SIGNING_SECRET`（32 文字以上のランダム値）を設定（本番/Deploy Preview）。
+   **未設定のままだと有料マジックリンク検証は 503（fail closed）で Cookie を発行しない**。
+2. Airtable Customers に `SessionVersion`（整数・既定 0）フィールドを追加（欠落時は 0 として動作）。
+3. `EDGE_GATE_ENABLED` の本番方針確定（PR-C の Edge ゲート導入時）。
+
 ## PR #128 / #129 の扱い
 
 - **PR #128**: OPEN・未マージ・保留。merge / close / 追加 commit / cherry-pick を **しない**。

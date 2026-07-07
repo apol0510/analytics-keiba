@@ -96,7 +96,11 @@ export const prerender = false;
         return;
       }
 
-      // AccessControl 互換の localStorage 'user-plan' に保存
+      // PR-B: 認可の真実源はサーバーが発行した HttpOnly Cookie `ak_session`
+      // （このfetchは credentials:'include' で受け取る）。以下の localStorage 保存は
+      // 既存 AccessControl の UI 互換のための **非権威**情報で、PR-C/PR-D で Cookie ベースへ
+      // 移行後に削除予定。ここではサーバー判定済みの userPlan をそのまま保存するだけ
+      // （クライアントでプランを推定・改変しない）。
       if (data.userPlan) {
         try {
           localStorage.setItem('user-plan', JSON.stringify(data.userPlan));
