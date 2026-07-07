@@ -47,7 +47,7 @@
     "test:nankan-injection": "node src/lib/nankanHorseStatsInjection.guard.test.js",
     "test:nankan": "npm run test:nankan-recent-races && npm run test:nankan-injection",
     "test:contact-autofill": "node src/lib/contact-autofill.test.js && node src/lib/contact-forms.guard.test.js",
-    "test:auth-session": "node --test \"src/lib/auth/*.test.mjs\"",
+    "test:auth-session": "node --test src/lib/auth/*.test.mjs",
     "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run test:nankan && npm run test:contact-autofill",
     "verify:safety": "npm run build && npm run check:safety"
   },

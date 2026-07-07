@@ -20,7 +20,9 @@ import { SESSION_SCHEMA_VERSION, MAX_SESSION_TTL_MS } from './constants.js';
 const TEST_SECRET = 'test-only-fixed-hmac-secret-DO-NOT-USE-IN-PROD-0123456789';
 const OTHER_SECRET = 'test-only-different-hmac-key-DO-NOT-USE-IN-PROD-zyxwvut987';
 const NOW = 1_750_000_000_000; // 固定 ms epoch（決定的テストのため Date.now は使わない）
+const MINUTE = 60_000;
 const HOUR = 3_600_000;
+const DEFAULT_TTL = 20 * MINUTE; // 通常 TTL（絶対上限 30 分の範囲内）
 const subtle = globalThis.crypto.subtle;
 
 function validPayload(over = {}) {
@@ -31,7 +33,7 @@ function validPayload(over = {}) {
     venueAccess: ['jra'],
     sessionVersion: 0,
     issuedAt: NOW,
-    expiresAt: NOW + HOUR,
+    expiresAt: NOW + DEFAULT_TTL,
     ...over,
   };
 }
@@ -51,7 +53,7 @@ async function issue(over = {}, opts = {}) {
     venueAccess: over.venueAccess ?? ['jra'],
     sessionVersion: over.sessionVersion,
     now: NOW,
-    ttlMs: over.ttlMs ?? HOUR,
+    ttlMs: over.ttlMs ?? DEFAULT_TTL,
     subtle,
     ...opts,
   });
@@ -73,7 +75,7 @@ test('2. Node の Web Crypto (globalThis.crypto.subtle) で検証できる', asy
   assert.ok(globalThis.crypto && globalThis.crypto.subtle, 'WebCrypto subtle must exist');
   // subtle を明示注入せず globalThis 経由でも通ること
   const { token } = await createSession({
-    secret: TEST_SECRET, sub: 'recX', plan: 'premium', venueAccess: 'all', now: NOW, ttlMs: HOUR,
+    secret: TEST_SECRET, sub: 'recX', plan: 'premium', venueAccess: 'all', now: NOW, ttlMs: DEFAULT_TTL,
   });
   const res = await verifySession({ token, secret: TEST_SECRET, now: NOW });
   assert.equal(res.ok, true);
@@ -208,16 +210,17 @@ test('18. 別鍵による検証 → signature_invalid', async () => {
   assert.equal(res.reason, VERIFY_REJECT.SIGNATURE_INVALID);
 });
 
-test('19. 期限切れ → expired', async () => {
-  const { token } = await issue({ ttlMs: HOUR });
-  // now を expiresAt + skew より後へ
-  const res = await verifySession({ token, secret: TEST_SECRET, now: NOW + HOUR + 10 * 60 * 1000, subtle });
+test('19. 期限切れ → expired（skew 猶予を足さない）', async () => {
+  const { token } = await issue({ ttlMs: DEFAULT_TTL });
+  // expiresAt (NOW+20分) を 1ms でも過ぎたら expired（skew の 5 分猶予は効かない）
+  const res = await verifySession({ token, secret: TEST_SECRET, now: NOW + DEFAULT_TTL + 1, subtle });
   assert.equal(res.ok, false);
   assert.equal(res.reason, PAYLOAD_REJECT.EXPIRED);
 });
 
 test('20. issuedAt 未来異常 → issued_in_future', async () => {
-  const token = await mintToken(validPayload({ issuedAt: NOW + 60 * 60 * 1000, expiresAt: NOW + 2 * 60 * 60 * 1000 }));
+  // TTL は上限内（20 分）に保ちつつ issuedAt を未来へ（TTL_EXCEEDED と混同しない）
+  const token = await mintToken(validPayload({ issuedAt: NOW + 60 * MINUTE, expiresAt: NOW + 60 * MINUTE + DEFAULT_TTL }));
   const res = await verifySession({ token, secret: TEST_SECRET, now: NOW, subtle });
   assert.equal(res.ok, false);
   assert.equal(res.reason, PAYLOAD_REJECT.ISSUED_IN_FUTURE);
@@ -234,6 +237,42 @@ test('22. TTL 上限超過 → ttl_exceeded', () => {
   assert.equal(res.ok, false);
   assert.equal(res.reason, PAYLOAD_REJECT.TTL_EXCEEDED);
 });
+
+// --- TTL 絶対上限（30 分）境界 ------------------------------------------
+// 絶対最大 TTL は 30 分。生成側（createSession）・検証側（外部 mintToken）の
+// 両経路で、上限内は成功・超過は ttl_exceeded で拒否されること。
+assert.equal(MAX_SESSION_TTL_MS, 30 * MINUTE, 'MAX_SESSION_TTL_MS は 30 分であること');
+
+const TTL_BOUNDARY = [
+  ['20分', 20 * MINUTE, true],
+  ['30分ちょうど', 30 * MINUTE, true],
+  ['30分+1ms', 30 * MINUTE + 1, false],
+  ['1時間', HOUR, false],
+  ['30日', 30 * 24 * HOUR, false],
+];
+
+for (const [name, ttlMs, shouldPass] of TTL_BOUNDARY) {
+  test(`22-生成側 TTL 境界: ${name} → ${shouldPass ? '成功' : 'ttl_exceeded'}`, async () => {
+    if (shouldPass) {
+      const { payload } = await issue({ ttlMs });
+      assert.equal(payload.expiresAt - payload.issuedAt, ttlMs);
+    } else {
+      await assert.rejects(() => issue({ ttlMs }), (e) => e.code === PAYLOAD_REJECT.TTL_EXCEEDED);
+    }
+  });
+
+  test(`22-検証側 外部payload TTL 境界: ${name} → ${shouldPass ? '成功' : 'ttl_exceeded'}`, async () => {
+    // 外部から署名した（buildPayload を通らない）payload でも上限を強制する
+    const token = await mintToken(validPayload({ issuedAt: NOW, expiresAt: NOW + ttlMs }));
+    const res = await verifySession({ token, secret: TEST_SECRET, now: NOW, subtle });
+    if (shouldPass) {
+      assert.equal(res.ok, true);
+    } else {
+      assert.equal(res.ok, false);
+      assert.equal(res.reason, PAYLOAD_REJECT.TTL_EXCEEDED);
+    }
+  });
+}
 
 test('23. version 不明 → unknown_version', async () => {
   const token = await mintToken(validPayload({ v: 2 }));

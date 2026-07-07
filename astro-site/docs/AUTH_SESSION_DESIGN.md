@@ -69,8 +69,12 @@ Node Functions / Astro middleware / Netlify Edge(Deno) で共有する。無理�
 ### 検証ルール（`validatePayload` / `verifySession`）
 
 オブジェクト以外・配列・必須キー欠落・不正型・未知 `v`・`expiresAt <= issuedAt`・
-TTL 上限（`MAX_SESSION_TTL_MS` = 30 日）超過・未来すぎる `issuedAt`（`CLOCK_SKEW_MS` = 5 分超）・
+TTL 上限（`MAX_SESSION_TTL_MS` = **最大 30 分**）超過・未来すぎる `issuedAt`（`CLOCK_SKEW_MS` = 5 分超）・
 `free` plan・不明 venue・`sessionVersion` 欠落 / 負数・不明キーはすべて拒否。
+TTL 上限は短寿命セッション設計の絶対上限で、発行時（`buildPayload`/`createSession`）と
+検証時（`validatePayload`/`verifySession`）の両方で強制する。
+`CLOCK_SKEW_MS` は「未来すぎる `issuedAt`」の判定にのみ使い、**有効期限の延長には使わない**
+（`now > expiresAt` を過ぎたら即 `expired`）。
 失敗は例外を投げず **構造化された理由コード**（`PAYLOAD_REJECT` / `VERIFY_REJECT`）で返す。
 ログに payload / email 相当 / secret は出さない（本体は `console` を使わない）。
 
@@ -142,8 +146,9 @@ token = base64url(UTF-8 JSON payload) + "." + base64url(HMAC-SHA256)
    環境変数に設定（本番 / Deploy Preview の扱いも決める）。※ PR-A では未設定でよい。
 2. **Airtable `SessionVersion` フィールド追加**（Customers）: 整数、既定 `0`。強制ログアウト時に
    +1 する運用を決める。
-3. **セッション TTL の確定**: 有料プラン有効期限との整合（`MAX_SESSION_TTL_MS` = 30 日を上限に、
-   実 TTL を PR-B の発行側で指定）。
+3. **セッション TTL の確定**: `MAX_SESSION_TTL_MS` = **最大 30 分**を絶対上限に、実 TTL を PR-B の
+   発行側で指定（通常 20 分予定）。有料プラン有効期限は Cookie 再発行（延長）側で扱い、
+   単一セッションの寿命は 30 分を超えない。Cookie の `Max-Age` も同じ実 TTL から生成する。
 4. **`sub` に使う不透明 ID の確定**（Airtable recordId を採用するか）。
 
 ## PR #128 / #129 の扱い

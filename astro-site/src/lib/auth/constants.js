@@ -15,15 +15,17 @@ export const SESSION_SCHEMA_VERSION = 1;
 export const SESSION_COOKIE_NAME = 'ak_session';
 
 /**
- * 有料セッションの最大 TTL（ミリ秒）。
- * expiresAt - issuedAt がこれを超える payload は拒否する。
+ * 有料セッションの絶対最大 TTL（ミリ秒）。
+ * expiresAt - issuedAt がこれを超える payload は発行時・検証時とも拒否する。
+ * 短寿命セッション設計。PR-B の呼び出しミスで長期有料セッションを発行できないよう
+ * ライブラリ側の絶対上限を 30 分に固定する（PR-B の通常 TTL は 20 分予定）。
  */
-export const MAX_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30日
+export const MAX_SESSION_TTL_MS = 30 * 60 * 1000; // 30分
 
 /**
- * 時刻ズレ許容（ミリ秒）。
- * issuedAt がこの値を超えて未来なら「未来すぎる」として拒否、
- * expiresAt はこの猶予を足したうえで期限切れ判定する。
+ * 時刻ズレ許容（ミリ秒）。未来すぎる issuedAt の判定にのみ使う。
+ * issuedAt がこの値を超えて未来なら「未来すぎる」として拒否する。
+ * ※ 有効期限（expiresAt）の延長には使わない（skew で寿命を伸ばさない）。
  */
 export const CLOCK_SKEW_MS = 5 * 60 * 1000; // 5分
 

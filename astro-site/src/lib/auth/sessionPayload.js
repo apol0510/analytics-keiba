@@ -126,7 +126,8 @@ export function validatePayload(payload, opts = {}) {
     if (payload.issuedAt > now + clockSkewMs) {
       return { ok: false, reason: PAYLOAD_REJECT.ISSUED_IN_FUTURE };
     }
-    if (now > payload.expiresAt + clockSkewMs) {
+    // 期限切れ判定に clock skew の猶予は足さない（skew で有効期限を延長しない）
+    if (now > payload.expiresAt) {
       return { ok: false, reason: PAYLOAD_REJECT.EXPIRED };
     }
   }
