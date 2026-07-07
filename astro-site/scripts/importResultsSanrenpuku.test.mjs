@@ -517,14 +517,10 @@ test('TV6: nankan.astroに sanrenpuku-race-venue クラスあり', () => {
 
 // TV7: archive 月別ページが race-venue-prefix クラスを含む（venue prefix 表示）
 test('TV7: archive 月別ページに race-venue-prefix クラスあり', () => {
+  // 月別詳細は getStaticPaths([year]/[month].astro) に一本化（手書き月ページは廃止）。
+  // venue prefix 表示（race-venue-prefix / race.venue）はこのテンプレートで担保する。
   const pages = [
-    '../src/pages/archive-sanrenpuku/2025/11.astro',
-    '../src/pages/archive-sanrenpuku/2025/12.astro',
-    '../src/pages/archive-sanrenpuku/2026/01.astro',
-    '../src/pages/archive-sanrenpuku/2026/02.astro',
-    '../src/pages/archive-sanrenpuku/2026/03.astro',
-    '../src/pages/archive-sanrenpuku/2026/04.astro',
-    '../src/pages/archive-sanrenpuku/2026/05.astro',
+    '../src/pages/archive-sanrenpuku/[year]/[month].astro',
   ];
   for (const p of pages) {
     const src = readFileSync(new URL(p, import.meta.url), 'utf-8');
