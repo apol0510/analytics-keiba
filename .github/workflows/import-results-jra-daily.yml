@@ -103,9 +103,23 @@ jobs:
               echo "📥 Missing from archive: $DATE"
               echo "has_missing=true" >> $GITHUB_OUTPUT
             fi
+
+            # 三連複アーカイブにこの日のエントリがあるかを馬単と独立にチェック。
+            # archiveSanrenpukuResultsJra.json は { "YYYY": { "MM": { "DD": {...} } } } 構造。
+            # 馬単は取込済みでも三連複だけ欠落している日を確実に取り込む（南関 daily と同方針）。
+            YEAR="${DATE%%-*}"; MONTH=$(echo "$DATE" | cut -d- -f2); DAY=$(echo "$DATE" | cut -d- -f3)
+            if jq -e --arg y "$YEAR" --arg m "$MONTH" --arg d "$DAY" \
+                 '.[$y][$m][$d]' src/data/archiveSanrenpukuResultsJra.json > /dev/null 2>&1; then
+              echo "⏭️  Sanrenpuku already processed: $DATE"
+              echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
+            else
+              echo "📥 Missing sanrenpuku archive: $DATE"
+              echo "has_missing_sanrenpuku=true" >> $GITHUB_OUTPUT
+            fi
           else
             echo "⏭️  No results in keiba-data-shared yet"
             echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Import missing results
@@ -120,7 +134,7 @@ jobs:
           node scripts/importResultsJra.js --date "$DATE"
 
       - name: Import JRA sanrenpuku results
-        if: steps.check.outputs.has_missing == 'true'
+        if: steps.check.outputs.has_missing_sanrenpuku == 'true'
         env:
           # 馬単と同一の結果ソース（jra/results）から三連複買い目の的中を集計。
           KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
@@ -131,7 +145,7 @@ jobs:
 
       - name: Check for changes
         id: git-check
-        if: steps.check.outputs.has_missing == 'true'
+        if: steps.check.outputs.has_missing == 'true' || steps.check.outputs.has_missing_sanrenpuku == 'true'
         run: |
           git add src/data/archiveResultsJra.json src/data/archiveSanrenpukuResultsJra.json
           git diff --staged --exit-code || echo "changed=true" >> $GITHUB_OUTPUT
@@ -201,7 +215,7 @@ jobs:
           echo "   Trigger: scheduled (23:30 JST)"
 
       - name: No changes notification
-        if: steps.check.outputs.has_missing != 'true'
+        if: steps.check.outputs.has_missing != 'true' && steps.check.outputs.has_missing_sanrenpuku != 'true'
         run: |
           echo "⏭️  No missing JRA results to import"
           echo "   Date: ${{ steps.date.outputs.date }}"
