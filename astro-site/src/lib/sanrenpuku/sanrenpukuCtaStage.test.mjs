@@ -132,6 +132,20 @@ for (const plan of ['Premium Sanrenpuku', 'Premium Combo', 'Premium Full', 'Free
   });
 }
 
+test('三連複購入済み（Sanrenpuku/Combo/Full）は全日で 予告・先行結果・CTA すべて非表示（売る導線を出さない）', () => {
+  for (const plan of ['Premium Sanrenpuku', 'premium sanrenpuku', 'Premium Combo', 'Premium Full']) {
+    for (let day = 1; day <= 6; day++) {
+      for (const hasResultSection of [true, false]) {
+        const r = planSanrenpukuDisplay({ planRaw: plan, firstSeen: firstSeenForDay(day), now: NOW, hasResultSection });
+        assert.equal(r.isFunnelTarget, false, `${plan} day${day}: funnel対象になっている`);
+        assert.equal(r.teaser, 'none', `${plan} day${day}: 予告が出る`);
+        assert.equal(r.showResult, false, `${plan} day${day}: 先行結果が出る`);
+        assert.equal(r.showCta, false, `${plan} day${day}: CTA が出る`);
+      }
+    }
+  }
+});
+
 test('排他性: teaser 表示中は showCta=false / showCta 中は teaser=none（全日 × 両ページ）', () => {
   for (const hasResultSection of [true, false]) {
     for (let day = 1; day <= 6; day++) {

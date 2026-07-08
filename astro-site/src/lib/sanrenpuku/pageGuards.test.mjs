@@ -55,6 +55,16 @@ test('南関の下部結果ゲートは馬単のみ Premium を先出ししな�
   );
 });
 
+test('三連複購入済みユーザーに的中結果の先行表示をしない（結果ゲートが Premium Sanrenpuku を show しない）', () => {
+  // 結果ゲートは変数 userPlan で判定する。`userPlan === 'Premium Sanrenpuku'` が残っていれば
+  // 購入済みに先行結果を出している（売る導線を出さない方針に反する）。
+  // ※ 買い目セクションの権利判定は別変数 `plan === 'Premium Sanrenpuku'` で行い、こちらは維持する。
+  assert.ok(
+    !/userPlan === 'Premium Sanrenpuku'/.test(nankan),
+    'nankan 結果ゲートが購入済み Premium Sanrenpuku に先行結果を表示している',
+  );
+});
+
 test('×閉じ（ak-srp-cta-dismissed）と初回時刻（ak-umatan-first-seen）の扱いを維持', () => {
   for (const [name, src] of [['nankan', nankan], ['jra', jra]]) {
     assert.match(src, /ak-srp-cta-dismissed/, `${name}: dismiss キー無し`);

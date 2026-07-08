@@ -330,15 +330,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 const sanrenpukuSection = document.getElementById('sanrenpuku-yesterday-results');
 
                 if (sanrenpukuSection) {
-                    // 三連複保有（Premium Sanrenpuku）は常時表示。
-                    // 馬単のみの Premium（アップセル funnel 対象）の的中結果は、段階表示コントローラ
-                    // （sanrenpukuCtaStage / 3日目以降）が担当するため、ここでは出さない。
-                    if (userPlan === 'Premium Sanrenpuku') {
-                        sanrenpukuSection.style.display = 'block';
-                        console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
-                    } else if (userPlan === 'Premium Combo') {
-                        console.log('🚫 三連複昨日の結果非表示: Premium Combo会員（/premium-sanrenpuku/で閲覧可能）');
-                    }
+                    // 三連複購入済み（Premium Sanrenpuku / Combo / Full）には売る導線を出さない方針のため、
+                    // 的中結果の先行表示もここでは行わない（購入済み向け利用導線は別タスク）。
+                    // 馬単のみの未購入 Premium の先行結果は段階表示コントローラ（sanrenpukuCtaStage / 3日目以降）が担当する。
+                    // Light/Standard の表示は下部ゲートで制御。
+                    console.log('ℹ️ 三連複結果の先行表示は購入状況に応じて別ロジックで制御（userPlan: ' + userPlan + '）');
                 }
             })();
         </script>
@@ -1122,7 +1118,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 Premium予想で軸馬や相手候補が見えても、最後の買い目点数で迷う場面があります。<br>
                 三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。
               </p>
-              <p class="upsell-subnote">馬単予想とあわせて使うことで、迷いやすいレースの判断をサポートします。</p>
+              <p class="upsell-subnote">中央・南関に対応した三連複絞り込み機能です。馬単予想とあわせて使うことで、買い目点数に迷うレースの判断をサポートします。</p>
               <div class="upsell-stats">
                 <span class="stat-highlight">📊 過去1年間：的中率72% 回収率203%</span>
                 <span class="stat-highlight">🎯 買い目点数：6〜9点前後まで整理</span>
@@ -1349,12 +1345,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
             console.log('🔍 最終プラン判定:', userPlan);
 
-            // Light/Standard（アップセル用）・Premium Sanrenpuku（契約）は従来どおり常時表示。
-            // 馬単のみの Premium は段階表示コントローラ（sanrenpukuCtaStage / 3日目以降）が担当するため、
-            // ここでは出さない（1〜2日目に結果だけ先出ししない）。Premium Combo は /premium-sanrenpuku/ で閲覧。
+            // Light/Standard（未購入・アップセル層）は従来どおり表示。
+            // 三連複購入済み（Premium Sanrenpuku / Combo / Full）には売る導線を出さない方針のため先行結果も非表示
+            // （購入済み向け利用導線は別タスク）。馬単のみの未購入 Premium は段階表示コントローラ（3日目以降）が担当。
             if (userPlan === 'Light' || userPlan === 'light' || userPlan === 'ライト' ||
-                userPlan === 'Standard' || userPlan === 'standard' ||
-                userPlan === 'Premium Sanrenpuku') {
+                userPlan === 'Standard' || userPlan === 'standard') {
                 sanrenpukuResultsSection.style.display = 'block';
                 console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
             } else if (userPlan === 'Premium Combo') {
