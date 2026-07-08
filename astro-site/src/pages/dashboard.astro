@@ -232,10 +232,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         <a href="/light-predictions-jra/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- Premium予想（南関） -->
+                    <!-- Premium馬単予想（南関） -->
                     <div id="premium-predictions" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium予想（南関）</h3>
+                            <h3>💎 Premium馬単予想（南関）</h3>
                             <span class="plan-badge premium">PREMIUM</span>
                         </div>
                         <div class="race-info">
@@ -245,10 +245,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         <a href="/premium-prediction/nankan/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- Premium予想（中央／JRA） -->
+                    <!-- Premium馬単予想（中央／JRA） -->
                     <div id="premium-predictions-jra" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium予想（中央）</h3>
+                            <h3>💎 Premium馬単予想（中央）</h3>
                             <span class="plan-badge premium">PREMIUM</span>
                         </div>
                         <div class="race-info">
@@ -258,22 +258,26 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         <a href="/premium-prediction/jra/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用） -->
+                    <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用・中央/南関セット利用導線） -->
                     <div id="sanrenpuku-predictions" class="prediction-card sanrenpuku" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium三連複予想 <span class="method-badge">AI絞り込み</span></h3>
+                            <h3>💎 Premium三連複予想 <span class="method-badge">中央・南関対応 AI絞り込み</span></h3>
                         </div>
                         <div class="race-info">
                             <div class="race-title">全レース（1R-12R）</div>
-                            <div class="confidence">AI分析完了！</div>
+                            <div class="confidence">買い目を6〜9点前後まで整理</div>
                         </div>
-                        <a href="/premium-sanrenpuku/" class="view-btn primary">三連複予想を見る</a>
+                        <div class="sanrenpuku-view-buttons">
+                            <a href="/premium-sanrenpuku/" class="view-btn primary">南関 三連複を見る</a>
+                            <a href="/premium-sanrenpuku-jra/" class="view-btn primary">中央 三連複を見る</a>
+                        </div>
                     </div>
 
                     <!-- Premium Combo用：馬単予想カード -->
                     <div id="combo-umatan-predictions" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium馬単予想 <span class="method-badge">10点</span></h3>
+                            <h3>💎 Premium馬単予想（南関）</h3>
+                            <span class="plan-badge premium">PREMIUM</span>
                         </div>
                         <div class="race-info">
                             <div class="race-title">全レース（1R-12R）</div>
@@ -2841,6 +2845,13 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         .view-btn:hover {
             background: #1d4ed8;
             transform: translateY(-2px);
+        }
+
+        /* 三連複カードの中央・南関 2 導線（利用ページへのリンク・縦並び） */
+        .sanrenpuku-view-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
         }
 
         /* プラン管理（無料会員のみ） */
