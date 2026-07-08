@@ -16,6 +16,9 @@ const stripOsaeForDisplay = (s) => String(s).replace(/[(（]抑え[^)）]*[)）]
 import { enrichHorse, generateMinorHorseComment, formatRecentVenue, parseSexAge, parseDistanceMeters } from '../../lib/horseEnrichment.js';
 import { getDisplayComputerIndex, getHorseAiIndex, isOsaeCandidate, isIneligibleHorse, sortOsaeCandidates } from '../../lib/shared-prediction-logic.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
+// JRA 三連複 直近の的中結果（段階表示: 未購入 Premium の3日目以降に表示。南関と出力shape一致）
+import { getLatestSanrenpukuDayDataJra } from '../../lib/archive-utils.js';
+const sanrenpukuLatestResultJra = getLatestSanrenpukuDayDataJra();
 // AK専用: shared featureScores（正本素材）を読むだけ → AK専用3項目へ要約派生。
 // KIは6項目詳細 / AKは3項目要約（docs/feature-scores-site-differentiation.md）。
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
@@ -1372,6 +1375,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                   <p class="srp-teaser-note">三連複絞り込み機能は近日ご案内します。</p>
                   <p class="srp-teaser-archive-note">三連複アーカイブは機能解禁後に閲覧できます。</p>
                 </div>
+                <div class="srp-teaser-day3" style="display: none;">
+                  <h3 class="srp-teaser-title">三連複絞り込み機能の直近結果を先行公開中</h3>
+                  <p class="srp-teaser-desc">買い目の絞り込みに迷いやすいレースでも、三連複では候補を整理して、6〜9点前後の買い目にまとめます。</p>
+                  <p class="srp-teaser-note">三連複絞り込み機能は明日ご案内します。</p>
+                  <p class="srp-teaser-archive-note">三連複アーカイブは機能解禁後に閲覧できます。</p>
+                </div>
               </div>
             </div>
             <!-- 中央（JRA）三連複 CTA（段階表示: 4日目以降に解禁・×で閉じる / Sanrenpuku・Combo 会員には非表示） -->
@@ -1401,9 +1410,67 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                 </div>
               </div>
             </div>
+
+            <!-- 🏆 JRA 三連複 直近の的中結果（段階表示: 未購入 Premium の3日目以降のみ・購入済み/無料/未ログインには非表示） -->
+            <!-- 南関 premium-prediction/nankan の #sanrenpuku-yesterday-results を JRA データへ最小移植（getLatestSanrenpukuDayDataJra） -->
+            <div id="sanrenpuku-yesterday-results" style="display: none;">
+              <div style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(234, 88, 12, 0.2)); padding: 2rem; border-radius: 16px; border: 1px solid rgba(245, 158, 11, 0.3);">
+                <h2 style="font-size: 1.8rem; font-weight: 700; color: rgb(245, 158, 11); margin-bottom: 1rem; text-align: center;">
+                  🏆 三連複 {sanrenpukuLatestResultJra?.date ? `${sanrenpukuLatestResultJra.date}の的中結果` : '直近の的中結果'}
+                </h2>
+
+                {sanrenpukuLatestResultJra && sanrenpukuLatestResultJra.date && (
+                  <>
+                    <div style="text-align: center; margin-bottom: 1.5rem;">
+                      <p style="font-size: 1.1rem; color: #cbd5e1; margin-bottom: 0.5rem;">{sanrenpukuLatestResultJra.date} {sanrenpukuLatestResultJra.venues ? sanrenpukuLatestResultJra.venues.join('・') : sanrenpukuLatestResultJra.venue}</p>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+                      <div style="background: rgba(16, 185, 129, 0.1); padding: 1rem; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #10b981; margin-bottom: 0.5rem;">
+                          {sanrenpukuLatestResultJra.hitRate}%
+                        </div>
+                        <div style="font-size: 0.85rem; color: #94a3b8;">的中率</div>
+                      </div>
+                      <div style="background: rgba(245, 158, 11, 0.1); padding: 1rem; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #f59e0b; margin-bottom: 0.5rem;">
+                          {sanrenpukuLatestResultJra.recoveryRate}%
+                        </div>
+                        <div style="font-size: 0.85rem; color: #94a3b8;">回収率</div>
+                      </div>
+                      <div style="background: rgba(59, 130, 246, 0.1); padding: 1rem; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #3b82f6; margin-bottom: 0.5rem;">
+                          ¥{sanrenpukuLatestResultJra.totalPayout?.toLocaleString()}
+                        </div>
+                        <div style="font-size: 0.85rem; color: #94a3b8;">合計配当</div>
+                      </div>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                      {sanrenpukuLatestResultJra.races && sanrenpukuLatestResultJra.races.map(race =>
+                        race.isHit ? (
+                          <div class="yesterday-race-card">
+                            <div class="yesterday-race-info">
+                              <div class="yesterday-race-number">{race.venue && <span class="sanrenpuku-race-venue">{race.venue}</span>}{race.raceNumber}</div>
+                              <div class="yesterday-race-name">{race.raceName}</div>
+                            </div>
+                            <div class="yesterday-race-result">
+                              <div class="yesterday-bet-info">三連複</div>
+                              <div class="yesterday-hit-badge">✅ 的中</div>
+                              <div class="yesterday-payout">¥{race.payout?.toLocaleString()}</div>
+                            </div>
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             <script>
               // 三連複 段階表示コントローラ（単一源 sanrenpukuCtaStage.js を使用 / 南関 nankan と同型）:
-              //   1日目=非表示 / 2日目=予告のみ / 3日目=予告のみ（JRA は的中結果セクションを新設しない） / 4日目以降=既存CTA
+              //   1日目=非表示 / 2日目=予告のみ / 3日目=予告＋三連複的中結果 / 4日目以降=既存CTA＋結果（南関と対称）
               // 対象は馬単のみの Premium（アップセル funnel）。三連複保有・無料・未ログインは何も出さない。
               // 【基準日】現状はブラウザ localStorage の初回表示時刻 ak-umatan-first-seen。
               //   サーバー Premium 開始日基準化は PR-C / PR-D 以降の認証強化フェーズで別対応（本スクリプトは認証コード非依存）。
@@ -1412,7 +1479,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               (function () {
                 var teaserEl = document.getElementById('sanrenpuku-teaser-section-jra');
                 var ctaEl = document.getElementById('sanrenpuku-cta-section-jra');
-                var resultEl = document.getElementById('sanrenpuku-yesterday-results'); // JRA には存在しない（新設しない）
+                var resultEl = document.getElementById('sanrenpuku-yesterday-results'); // JRA も結果セクションを持つ（3日目以降に表示）
                 if (!teaserEl && !ctaEl) return;
                 var planRaw = '';
                 try { var raw = localStorage.getItem('user-plan'); if (raw) planRaw = (JSON.parse(raw).plan || ''); } catch (e) {}
@@ -1425,12 +1492,16 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                 var dismissed = false;
                 try { dismissed = localStorage.getItem('ak-srp-cta-dismissed') === '1'; } catch (e) {}
                 var view = planSanrenpukuDisplay({ planRaw: planRaw, dismissed: dismissed, firstSeen: firstSeen, now: now, hasResultSection: !!resultEl });
-                // 予告カード（2〜3日目=day2 表記。4日目以降は none で CTA に切替＝排他）
+                // 予告カード（2日目=day2 / 3日目=day3。4日目以降は none で CTA に切替＝排他）
                 if (teaserEl) {
                   var day2 = teaserEl.querySelector('.srp-teaser-day2');
-                  if (day2) day2.style.display = view.teaser === 'none' ? 'none' : '';
+                  var day3 = teaserEl.querySelector('.srp-teaser-day3');
+                  if (day2) day2.style.display = view.teaser === 'day2' ? '' : 'none';
+                  if (day3) day3.style.display = view.teaser === 'day3' ? '' : 'none';
                   teaserEl.style.display = view.teaser === 'none' ? 'none' : '';
                 }
+                // 三連複的中結果（未購入 Premium は3日目以降のみ。購入済み/無料/未ログインは funnel 外で早期 return 済み）
+                if (resultEl && view.showResult) resultEl.style.display = 'block';
                 // 既存 CTA カード（4日目以降・未dismiss）
                 if (ctaEl) {
                   ctaEl.style.display = view.showCta ? '' : 'none';
@@ -2852,6 +2923,93 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
     .srp-teaser-note { font-size: 0.9rem; color: #fbbf24; font-weight: 600; margin: 0; }
     .srp-teaser-archive-note { font-size: 0.82rem; color: #94a3b8; margin: 0.5rem 0 0; }
     .upsell-subnote { font-size: 0.85rem; color: #cbd5e1; margin: 0.5rem 0 0; }
+    /* 三連複 直近の的中結果カード（南関 premium-prediction/nankan と同型・JRA 移植） */
+    .yesterday-race-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 8px;
+      padding: 15px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.3s;
+    }
+    .yesterday-race-card:hover {
+      border-color: rgba(16, 185, 129, 0.5);
+      background: rgba(15, 23, 42, 0.8);
+    }
+    .yesterday-race-info {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex: 1;
+      flex-wrap: wrap;
+    }
+    .yesterday-race-number {
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #fbbf24;
+      min-width: 4rem;
+      white-space: nowrap;
+    }
+    .sanrenpuku-race-venue {
+      font-size: 0.85em;
+      color: #94a3b8;
+      font-weight: 600;
+      margin-right: 0.3em;
+    }
+    .yesterday-race-name {
+      color: #94a3b8;
+      font-size: 0.85rem;
+      font-weight: 400;
+      opacity: 0.8;
+    }
+    .yesterday-race-result {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+    .yesterday-bet-info {
+      color: #8b5cf6;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .yesterday-hit-badge {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      font-weight: bold;
+      font-size: 0.9rem;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .yesterday-payout {
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #fbbf24;
+    }
+    @media (max-width: 768px) {
+      .yesterday-race-card {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 12px 15px;
+      }
+      .yesterday-race-info {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 8px;
+        align-items: center;
+      }
+      .yesterday-race-name {
+        grid-column: 1 / -1;
+      }
+      .yesterday-race-result {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+    }
     .sanrenpuku-upsell-card {
       position: relative;
       display: flex; align-items: flex-start; gap: 20px;

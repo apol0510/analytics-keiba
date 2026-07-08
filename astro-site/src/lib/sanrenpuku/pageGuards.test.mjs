@@ -37,15 +37,24 @@ test('予告カード要素が両ページに存在する（南関/JRA で id �
   assert.match(jra, /srp-teaser-day2/, 'jra day2 body 無し');
 });
 
-test('day3（予告＋結果）ボディは結果セクションのある南関のみ。JRA には持ち込まない', () => {
+test('day3（予告＋結果）ボディは南関・JRA 双方に存在する（中央・南関で3日目対称）', () => {
   assert.match(nankan, /srp-teaser-day3/, 'nankan day3 body 無し');
-  assert.ok(!/srp-teaser-day3/.test(jra), 'jra に day3 body を持ち込んでいる（結果を約束する文言）');
+  assert.match(jra, /srp-teaser-day3/, 'jra day3 body 無し（JRA 結果セクション新設に伴い追加）');
 });
 
-test('JRA に三連複的中結果セクションを新設していない（id 定義が無い）', () => {
-  assert.ok(!/id=["']sanrenpuku-yesterday-results["']/.test(jra), 'jra に結果セクションを新設している');
-  // 南関は結果セクションを保持
+test('JRA に三連複的中結果セクションを新設し、getLatestSanrenpukuDayDataJra を使う（既定は非表示）', () => {
+  assert.match(jra, /id="sanrenpuku-yesterday-results"/, 'jra に結果セクションが無い');
   assert.match(nankan, /id="sanrenpuku-yesterday-results"/, 'nankan 結果セクションが消えている');
+  assert.match(jra, /getLatestSanrenpukuDayDataJra/, 'jra が JRA 用データ取得関数を使っていない');
+  assert.match(jra, /id="sanrenpuku-yesterday-results" style="display: none;"/, 'jra 結果セクションが既定表示になっている（未購入 Premium の3日目以降のみ表示すべき）');
+});
+
+test('JRA 結果は funnel（未購入 Premium）限定・段階ゲート経由でのみ表示＝購入済み/無料/未ログインに出さない', () => {
+  // funnel 対象外は早期 return。結果表示は view.showResult（helper が購入済み=false を保証）でのみ発火。
+  assert.match(jra, /if \(!isFunnelTarget\(planRaw\)\) return;/, 'jra コントローラに funnel 早期 return が無い');
+  assert.match(jra, /resultEl && view\.showResult/, 'jra 結果表示が段階ゲート（view.showResult）を経由していない');
+  // JRA には結果をプラン直判定で無条件表示するゲートを設けない
+  assert.ok(!/userPlan === 'Premium Sanrenpuku'/.test(jra), 'jra に購入済みへ結果を出すプラン直ゲートが混入している');
 });
 
 test('南関の下部結果ゲートは馬単のみ Premium を先出ししない（旧 broad OR 行を除去）', () => {
