@@ -7,7 +7,7 @@ export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccessControl from '../components/AccessControl.astro';
 import { loadJraVenuesForDisplay } from '../lib/loadJraVenuesForDisplay.js';
-import { buildRaceSanrenpuku, formatSanrenpukuLine } from '../utils/sanrenpukuBetting.js';
+import { buildRaceSanrenpuku, formatSanrenpukuLine, generateNarrowedDisplayLines } from '../utils/sanrenpukuBetting.js';
 import { getHorseAiIndex } from '../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResultsJra } from '../lib/archive-utils.js';
 import { loadFeatureScores, venueCodeFromName } from '../lib/loadFeatureScores.js';
@@ -32,6 +32,8 @@ const venuesProcessed = (venues || []).map((v) => {
             narrow: built.narrow
                 ? { line: formatSanrenpukuLine(built.narrow), points: built.narrow.points || 0 }
                 : null,
+            // 南関 premium-sanrenpuku と同じ 2段グループ表示（本命-対抗 / 本命-単穴）
+            narrowedLines: generateNarrowedDisplayLines(horses),
             normalHonmeiAxis: built.normalHonmeiAxis
                 ? { line: formatSanrenpukuLine(built.normalHonmeiAxis) }
                 : null,
@@ -201,11 +203,21 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
                                                             <span class="filter-arrow">▼</span>
                                                         </button>
                                                         <div class="premium-select-reveal" style="display: none;">
-                                                            <div class="bet-item">
-                                                                <span class="bet-type">三連複</span>
-                                                                <span class="bet-horses">{race.sanrenpukuView.narrow.line}</span>
-                                                                <span class="bet-points">{race.sanrenpukuView.narrow.points}点</span>
-                                                            </div>
+                                                            {race.sanrenpukuView.narrowedLines && race.sanrenpukuView.narrowedLines.length > 0 ? (
+                                                                race.sanrenpukuView.narrowedLines.map((b) => (
+                                                                    <div class="bet-item">
+                                                                        <span class="bet-type">三連複</span>
+                                                                        <span class="bet-horses">{b.line}</span>
+                                                                        <span class="bet-points">{b.points}点</span>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <div class="bet-item">
+                                                                    <span class="bet-type">三連複</span>
+                                                                    <span class="bet-horses">{race.sanrenpukuView.narrow.line}</span>
+                                                                    <span class="bet-points">{race.sanrenpukuView.narrow.points}点</span>
+                                                                </div>
+                                                            )}
                                                             <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
                                                         </div>
                                                     </div>
