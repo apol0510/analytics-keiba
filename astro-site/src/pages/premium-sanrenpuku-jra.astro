@@ -304,6 +304,9 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
         block.querySelectorAll('.srp-panel').forEach((p) => {
             p.classList.toggle('active', p.classList.contains(`srp-panel-${mode}`));
         });
+        // タブ切替で表示パネルの高さが変わるため、親アコーディオンの max-height を再計算
+        // （未再計算だと通常買い目の2段目=対抗軸がクリップされて隠れる）
+        if (window._srpRecalcFrom) window._srpRecalcFrom(block);
     });
 
     // AI絞り込み演出ボタン（3段階アニメ・南関 premium-sanrenpuku と同型）
