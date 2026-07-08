@@ -194,12 +194,20 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
                                                 {race.sanrenpukuView.narrow && (
                                                     <div class="srp-panel srp-panel-narrow active">
                                                         <div class="srp-panel-title">絞り込み買い目</div>
-                                                        <div class="bet-item">
-                                                            <span class="bet-type">三連複</span>
-                                                            <span class="bet-horses">{race.sanrenpukuView.narrow.line}</span>
-                                                            <span class="bet-points">{race.sanrenpukuView.narrow.points}点</span>
+                                                        <!-- AI絞り込み演出ボタン（南関 premium-sanrenpuku と同型・クリックで解析→reveal） -->
+                                                        <button type="button" class="premium-select-filter-btn">
+                                                            <span class="filter-icon">🎯</span>
+                                                            <span class="filter-text">AIで絞り込む</span>
+                                                            <span class="filter-arrow">▼</span>
+                                                        </button>
+                                                        <div class="premium-select-reveal" style="display: none;">
+                                                            <div class="bet-item">
+                                                                <span class="bet-type">三連複</span>
+                                                                <span class="bet-horses">{race.sanrenpukuView.narrow.line}</span>
+                                                                <span class="bet-points">{race.sanrenpukuView.narrow.points}点</span>
+                                                            </div>
+                                                            <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
                                                         </div>
-                                                        <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
                                                     </div>
                                                 )}
 
@@ -286,6 +294,36 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
         });
     });
 
+    // AI絞り込み演出ボタン（3段階アニメ・南関 premium-sanrenpuku と同型）
+    document.addEventListener('click', function(e) {
+        const btn = e.target && e.target.closest && e.target.closest('.premium-select-filter-btn');
+        if (!btn) return;
+        const panel = btn.closest('.srp-panel-narrow');
+        const reveal = panel && panel.querySelector('.premium-select-reveal');
+        if (!reveal) return;
+        const filterText = btn.querySelector('.filter-text');
+        const hidden = reveal.style.display === 'none' || reveal.style.display === '';
+        if (hidden) {
+            // 段階1: AIで絞り込む → AI絞り込み中（青・pulse）
+            btn.classList.add('filtering');
+            if (filterText) filterText.textContent = 'AI絞り込み中';
+            // 段階2: 1.6秒後に 絞り込み完了（緑）＋ 買い目 reveal
+            setTimeout(() => {
+                btn.classList.remove('filtering');
+                btn.classList.add('filtered');
+                if (filterText) filterText.textContent = 'AI絞り込み完了';
+                reveal.style.display = 'block';
+                if (window._srpRecalcFrom) window._srpRecalcFrom(reveal);
+            }, 1600);
+        } else {
+            // 初期状態へ戻す
+            reveal.style.display = 'none';
+            btn.classList.remove('filtered');
+            if (filterText) filterText.textContent = 'AIで絞り込む';
+            if (window._srpRecalcFrom) window._srpRecalcFrom(reveal);
+        }
+    });
+
     // ==== レース単位アコーディオン（南関 premium-sanrenpuku と同型）====
     // 開いているレースの固定 max-height を内側 details の開閉に追従して再計算（クリップ防止）
     function _srpRecalcFrom(el) {
@@ -360,6 +398,56 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
     }
     .ai-badge .pulse { width: 8px; height: 8px; border-radius: 50%; background: #a855f7; box-shadow: 0 0 0 0 rgba(168,85,247,0.6); animation: pulse 2s infinite; }
     @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(168,85,247,0.6); } 70% { box-shadow: 0 0 0 8px rgba(168,85,247,0); } 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); } }
+
+    /* ===== AI絞り込み演出（南関 premium-sanrenpuku と同型の3段階アニメ） ===== */
+    .premium-select-filter-btn {
+        width: 100%;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        border: none;
+        border-radius: 12px;
+        padding: 16px 22px;
+        margin: 4px 0 14px;
+        color: #000;
+        font-size: 1.05rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        box-shadow: 0 4px 15px rgba(251, 191, 36, 0.3);
+    }
+    .premium-select-filter-btn:hover {
+        background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+    }
+    .premium-select-filter-btn:active { transform: translateY(0); }
+    .premium-select-filter-btn.filtering {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        animation: srp-jra-pulse 1s ease-in-out infinite;
+    }
+    .premium-select-filter-btn.filtered {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    }
+    @keyframes srp-jra-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    .premium-select-filter-btn .filter-icon { font-size: 1.25rem; }
+    .premium-select-filter-btn .filter-text { flex: 1; text-align: center; }
+    .premium-select-filter-btn .filter-arrow { transition: transform 0.3s ease; }
+    .premium-select-filter-btn.filtered .filter-arrow { transform: rotate(180deg); }
+    .premium-select-reveal { animation: srp-jra-reveal 0.45s ease; }
+    @keyframes srp-jra-reveal {
+        from { opacity: 0; transform: translateY(-6px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .premium-select-filter-btn.filtering { animation: none; }
+        .premium-select-reveal { animation: none; }
+    }
     .race-title { margin: 14px 0 0; font-size: 1.5rem; font-weight: 800; color: #f1f5f9; }
 
     /* レース単位アコーディオン（南関 premium-sanrenpuku と同型） */
