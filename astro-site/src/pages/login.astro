@@ -13,7 +13,7 @@ export const prerender = true;
       <div class="login-card">
         <div class="login-header">
           <h1>ログイン</h1>
-          <p>登録済みのメールアドレスを入力してください。<br>ログイン用のリンクをメールでお送りします。</p>
+          <p>登録済みのメールアドレスを入力してください。<br>無料会員はそのままログイン、有料会員にはログイン用リンクをメールでお送りします。</p>
         </div>
 
         <form id="loginForm" class="login-form">
@@ -209,6 +209,11 @@ export const prerender = true;
     messageDiv.style.display = 'block';
   }
 
+  // PR-B: まず auth-user で無料/有料/拒否を判定。
+  //  - 無料会員: そのまま無料状態でログイン（マジックリンク不要）
+  //  - 有料会員: send-magic-link を呼び「メールのリンクを開いてください」
+  //  - 未登録: /free-signup/ へ誘導
+  //  - 判定不能/拒否: 即時ログインさせない
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = emailInput.value.trim();
@@ -219,42 +224,60 @@ export const prerender = true;
     messageDiv.style.display = 'none';
 
     try {
-      const response = await fetch('/.netlify/functions/send-magic-link', {
+      const authRes = await fetch('/.netlify/functions/auth-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      const data = await response.json();
+      const data = await authRes.json().catch(() => ({}));
 
-      if (response.ok) {
-        emailInput.value = '';
-        const SR = (window as any).SubmissionResult;
-        if (SR) {
-          SR.showSuccessScreen({
-            formEl: form,
-            messageEl: messageDiv,
-            options: {
-              title: 'ログインリンクを送信しました',
-              message: data.message || `${email} 宛にログイン用のリンクを送信しました。`,
-              subMessage: 'メールに記載されたリンクをクリックするとログインが完了します。マイページから送信履歴も確認できます。'
-            },
-            history: {
-              type: 'magic-link',
-              label: `ログインリンク送信: ${email}`,
-              status: 'sent',
-              details: { email: email }
-            }
-          });
-        } else {
-          showMessage(data.message || 'ログインリンクを送信しました。メールをご確認ください。', 'success');
-        }
+      // 未登録 → 新規無料登録へ
+      if (authRes.status === 401 && data.redirectTo) {
+        showMessage('このメールアドレスは未登録です。新規登録ページへ移動します。', 'error');
+        setTimeout(() => { window.location.href = data.redirectTo; }, 2500);
         return;
-      } else {
-        const msg =
-          response.status === 403 ? 'アカウントが無効です。サポートにお問い合わせください。'
-          : data.error || 'エラーが発生しました。もう一度お試しください。';
-        showMessage(msg, 'error');
       }
+      // 拒否（退会/停止/期限切れ/判定不能）
+      if (authRes.status === 403 || data.denied) {
+        showMessage(data.message || 'このアカウントではログインできません。サポートにお問い合わせください。', 'error');
+        return;
+      }
+      // 有料会員 → マジックリンク送信。送信失敗（HTTP 5xx / 通信断 / SendGrid 失敗）は
+      // 成功表示せず、必ずエラーを出す（「送信しました」の誤表示を防ぐ）。
+      if (data.requiresMagicLink) {
+        let sendRes: Response;
+        try {
+          sendRes = await fetch('/.netlify/functions/send-magic-link', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+          });
+        } catch (sendErr) {
+          console.error('send-magic-link error:', sendErr);
+          showMessage('ログインリンクの送信中に通信エラーが発生しました。時間をおいて再度お試しください。', 'error');
+          return;
+        }
+        if (!sendRes.ok) {
+          showMessage('ログインリンクの送信に失敗しました。時間をおいて再度お試しください。', 'error');
+          return;
+        }
+        emailInput.value = '';
+        showMessage('有料会員のログインには、メールでお送りするログインリンクが必要です。メールに届いたリンクを開いてください。', 'success');
+        return;
+      }
+      // 無料会員 → 即時無料ログイン（plan は固定 'free' のみ保存・有料 Cookie とは分離）
+      if (data.success && data.user && data.memberType === 'free') {
+        try {
+          localStorage.setItem('user-plan', JSON.stringify({ email, plan: 'free', nonAuthoritative: true }));
+          localStorage.setItem('isLoggedIn', 'true');
+          localStorage.setItem('userPlan', 'free');
+          localStorage.setItem('userEmail', email);
+        } catch (_) {}
+        showMessage('ログインしました。マイページへ移動します。', 'success');
+        setTimeout(() => { window.location.href = '/dashboard/'; }, 1500);
+        return;
+      }
+      showMessage('エラーが発生しました。もう一度お試しください。', 'error');
     } catch (err) {
       console.error('Login error:', err);
       showMessage('通信エラーが発生しました。もう一度お試しください。', 'error');

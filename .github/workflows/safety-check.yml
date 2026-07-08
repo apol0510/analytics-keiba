@@ -17,6 +17,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-premium-jra.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra-date.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
+      - 'astro-site/netlify/functions/**'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
       - '.github/workflows/safety-check.yml'
@@ -31,6 +32,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-premium-jra.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra-date.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
+      - 'astro-site/netlify/functions/**'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
       - '.github/workflows/safety-check.yml'
@@ -101,6 +103,6 @@ jobs:
         working-directory: astro-site
         run: npm run check:ki-relics:free-jra
 
-      - name: Verify 有料セッション共通ライブラリ（PR-A / Node 20 で全テスト実行）
+      - name: Verify 有料セッション ライブラリ + 会員判定/検証フロー（PR-A/PR-B / Node 20 全テスト）
         working-directory: astro-site
         run: npm run test:auth-session

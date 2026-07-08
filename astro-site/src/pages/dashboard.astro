@@ -132,6 +132,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                             <h3>会員ステータス</h3>
                             <div id="membership-status" class="status-value">読み込み中...</div>
                             <div id="membership-details" class="status-details"></div>
+                            <!-- 有料会員のアカウント操作（ログアウト）: 会員情報の下・右寄せ・控えめ -->
+                            <div id="logout-section-paid" class="account-actions" style="display: none;">
+                                <button id="logout-btn-paid" class="account-logout-btn" type="button">ログアウト</button>
+                            </div>
                         </div>
                         <!-- 三連複追加ボタン -->
                         <div class="plan-change-section" id="plan-change-section" style="display: none;">
@@ -358,11 +362,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 </div>
             </div>
 
-            <!-- ログアウトボタン（有料会員のみ表示） -->
-            <div id="logout-section-paid" class="logout-section-paid" style="display: none;">
-                <button id="logout-btn-paid" class="action-btn logout-primary">ログアウト</button>
-            </div>
-
             <!-- アップグレード促進（無料・Standard会員のみ表示） -->
             <div id="upgrade-promotion" class="upgrade-section" style="display: none;">
                 <div class="upgrade-card">
@@ -569,12 +568,12 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         const errorText = await response.text();
                         console.error('🚨 Response error text:', errorText);
 
-                        // 🔧 2026-03-02追加: 401エラー（未登録ユーザー）の場合は /pricing/ にリダイレクト
+                        // 🔧 2026-03-02追加: 401エラー（未登録ユーザー）の場合は /free-signup/ にリダイレクト
                         if (response.status === 401) {
                             try {
                                 const errorData = JSON.parse(errorText);
                                 if (errorData.redirectTo) {
-                                    showError(errorData.error + '\n' + errorData.message);
+                                    showError((errorData.error || '') + '\n' + (errorData.message || ''));
                                     setTimeout(() => {
                                         window.location.href = errorData.redirectTo;
                                     }, 3000);
@@ -583,6 +582,17 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                             } catch (e) {
                                 // JSON解析失敗時はそのままエラーを投げる
                             }
+                        }
+
+                        // 🔒 PR-B: 403（退会/停止/期限切れ/判定不能）は即時ログインさせない
+                        if (response.status === 403) {
+                            try {
+                                const denyData = JSON.parse(errorText);
+                                showError(denyData.message || 'このアカウントではログインできません。');
+                            } catch (e) {
+                                showError('このアカウントではログインできません。');
+                            }
+                            return;
                         }
 
                         throw new Error(`Functions error: ${response.status} - ${errorText}`);
@@ -615,6 +625,32 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     localStorage.removeItem('user-plan');
 
                     showError('プランが更新されました。再度ログインしてください。');
+                    return;
+                }
+
+                // 🔒 PR-B: 有料会員は即時ログイン不可 → マジックリンクを送信
+                // 送信失敗（HTTP 5xx / 通信断 / SendGrid 失敗）は成功表示せず、必ずエラーを出す。
+                if (data.requiresMagicLink) {
+                    let sendRes;
+                    try {
+                        const sendUrl = window.location.hostname === 'localhost'
+                            ? 'http://localhost:8888/.netlify/functions/send-magic-link'
+                            : '/.netlify/functions/send-magic-link';
+                        sendRes = await fetch(sendUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email })
+                        });
+                    } catch (sendErr) {
+                        console.warn('send-magic-link 呼び出しエラー:', sendErr);
+                        showError('ログインリンクの送信中に通信エラーが発生しました。時間をおいて再度お試しください。');
+                        return;
+                    }
+                    if (!sendRes.ok) {
+                        showError('ログインリンクの送信に失敗しました。時間をおいて再度お試しください。');
+                        return;
+                    }
+                    showSuccess('有料会員のログインには、メールでお送りするログインリンクが必要です。メールをご確認ください。');
                     return;
                 }
 
@@ -706,38 +742,17 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             }
         });
 
-        // URLパラメータからトークン認証処理（簡略化）
+        // URLパラメータのトークン処理
+        // 🔒 PR-B: メールアドレス文字列からプランを推定する旧ロジックは廃止（危険・禁止）。
+        // 有料の本人確認は必ずマジックリンク検証（/auth/verify → verify-magic-link）で行い、
+        // 署名済み HttpOnly Cookie ak_session をサーバーが発行する。ここでは token があれば
+        // 正規の検証ページへ委譲するだけで、クライアント側で権限を決めない。
         async function handleTokenAuth() {
             const urlParams = new URLSearchParams(window.location.search);
             const token = urlParams.get('token');
-            const email = urlParams.get('email');
-            
-            if (token && email) {
-                console.log('マジックリンク認証開始:', email);
-                
-                try {
-                    // 簡略化された認証：メールアドレスからプランを推定
-                    const mockCustomer = {
-                        email: email,
-                        plan: email.includes('premium') ? 'premium' : (email.includes('standard') ? 'standard' : 'free'),
-                        registrationDate: new Date().toISOString()
-                    };
-                    
-                    // セッション情報保存
-                    localStorage.setItem('isLoggedIn', 'true');
-                    localStorage.setItem('userEmail', mockCustomer.email);
-                    localStorage.setItem('userPlan', mockCustomer.plan);
-                    
-                    console.log('認証成功:', mockCustomer);
-                    // URLからパラメータを削除
-                    window.history.replaceState({}, document.title, window.location.pathname);
-                    // ダッシュボード表示
-                    showDashboard(mockCustomer);
-                    
-                } catch (error) {
-                    console.error('認証エラー:', error);
-                    showError('認証に失敗しました');
-                }
+            if (token) {
+                // 正規のマジックリンク検証ページへ委譲（プラン推定は行わない）
+                window.location.replace(`/auth/verify?token=${encodeURIComponent(token)}`);
             }
         }
 
@@ -1537,7 +1552,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 console.log('プラン管理を表示（無料会員）');
                 document.getElementById('plan-section').style.display = 'block';
             }
-            // 有料会員（Standard/Premium）はログアウトボタン非表示
+            // ログアウトボタンの表示制御:
+            //   無料 → plan-section 内の logout-btn-free（上で表示済み）
+            //   有料 → logout-section-paid を表示（PR-B: ak_session を持つ有料会員のログアウト導線）
+            const paidLogoutSection = document.getElementById('logout-section-paid');
+            if (paidLogoutSection) {
+                const isPaidLogout = !(planLower === 'free' || planLower === '' || !planLower);
+                paidLogoutSection.style.display = isPaidLogout ? 'block' : 'none';
+            }
 
             // アップグレード促進の表示制御（Premium系以外）
             if (planLower !== 'premium' && planLower !== 'premium combo' && planLower !== 'premium plus' && planLower !== 'premium sanrenpuku') {
@@ -1608,23 +1630,61 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
         // ポイント交換申請関数は下部の <script is:inline> セクションで定義
 
-        // ログアウト（簡略化）
-        window.logout = function() {
-            // 全てのログイン情報をクリア
-            localStorage.removeItem('user-plan');
-            localStorage.removeItem('isLoggedIn');
-            localStorage.removeItem('userPlan');
-            localStorage.removeItem('userData');
-            localStorage.removeItem('userEmail');
-            localStorage.removeItem('hasClaimedReward');
-            
-            // ナビゲーション更新イベントを発火
-            window.dispatchEvent(new CustomEvent('userLoggedOut'));
-            
-            // ホームページにリダイレクト
-            setTimeout(() => {
-                window.location.href = '/';
-            }, 500);
+        // ログアウト（PR-B: サーバーで ak_session Cookie を削除してから localStorage を消す）
+        // - まず logout Function を呼び、response.ok の時だけ localStorage 旧認証情報を削除する
+        //   （Cookie 削除失敗時に「ログアウト成功」と誤表示しない / 有料 Cookie を残さない）
+        // - HttpOnly の ak_session は JS から読まない・触らない（削除はサーバーの責務）
+        // - 二重クリック防止 + finally でボタン状態を復元
+        let _loggingOut = false;
+        window.logout = async function() {
+            if (_loggingOut) return;
+            _loggingOut = true;
+
+            const logoutButtons = [
+                document.getElementById('logout-btn-free'),
+                document.getElementById('logout-btn-paid'),
+            ].filter(Boolean);
+            const prevLabels = logoutButtons.map((b) => b.textContent);
+            logoutButtons.forEach((b) => { b.disabled = true; b.textContent = 'ログアウト中...'; });
+
+            try {
+                const logoutUrl = window.location.hostname === 'localhost'
+                    ? 'http://localhost:8888/.netlify/functions/logout'
+                    : '/.netlify/functions/logout';
+
+                let res;
+                try {
+                    res = await fetch(logoutUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                    });
+                } catch (netErr) {
+                    console.warn('logout 通信エラー:', netErr);
+                    showError('ログアウトに失敗しました。通信環境を確認して、もう一度お試しください。');
+                    return;
+                }
+
+                // サーバー Cookie 削除が成功した時だけ localStorage を消す
+                if (!res.ok) {
+                    showError('ログアウトに失敗しました。時間をおいて、もう一度お試しください。');
+                    return;
+                }
+
+                localStorage.removeItem('user-plan');
+                localStorage.removeItem('isLoggedIn');
+                localStorage.removeItem('userPlan');
+                localStorage.removeItem('userData');
+                localStorage.removeItem('userEmail');
+                localStorage.removeItem('hasClaimedReward');
+
+                // ナビゲーション更新イベントを発火 → ホームへ
+                window.dispatchEvent(new CustomEvent('userLoggedOut'));
+                setTimeout(() => { window.location.href = '/'; }, 500);
+            } finally {
+                _loggingOut = false;
+                logoutButtons.forEach((b, i) => { b.disabled = false; b.textContent = prevLabels[i]; });
+            }
         };
 
         // ページ読み込み時の初期化（簡略化）
@@ -2800,10 +2860,49 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             flex-wrap: wrap;
         }
 
-        /* ログアウトセクション（有料会員専用） */
-        .logout-section-paid {
-            margin-bottom: 2rem;
-            text-align: center;
+        /* 有料会員のアカウント操作: ステータスカード内・会員情報の下・右寄せ・控えめ */
+        .account-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 1rem;
+        }
+
+        .account-logout-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            width: auto;
+            padding: 0.4rem 0.9rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            line-height: 1;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            color: #fca5a5;
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            transition: all 0.2s ease;
+        }
+
+        .account-logout-btn::before {
+            content: "⎋";
+            font-size: 0.95rem;
+            line-height: 1;
+        }
+
+        .account-logout-btn:hover:not(:disabled) {
+            background: rgba(239, 68, 68, 0.16);
+            border-color: rgba(239, 68, 68, 0.55);
+            color: #fecaca;
+        }
+
+        .account-logout-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        @media (max-width: 768px) {
+            .account-actions { justify-content: center; }
         }
 
         .action-btn {
@@ -2825,22 +2924,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             background: rgba(30, 41, 59, 0.8);
             color: #e2e8f0;
             border: 1px solid rgba(59, 130, 246, 0.3);
-        }
-
-        /* 有料会員用ログアウトボタン（目立つデザイン） */
-        .action-btn.logout-primary {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
-            color: #fca5a5;
-            border: 1px solid rgba(239, 68, 68, 0.4);
-            font-weight: 600;
-            padding: 1rem 2rem;
-            font-size: 1.1rem;
-        }
-
-        .action-btn.logout-primary:hover {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(220, 38, 38, 0.3) 100%);
-            border-color: rgba(239, 68, 68, 0.6);
-            color: #fecaca;
         }
 
         .action-btn:hover {
