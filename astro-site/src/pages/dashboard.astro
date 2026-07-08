@@ -132,6 +132,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                             <h3>会員ステータス</h3>
                             <div id="membership-status" class="status-value">読み込み中...</div>
                             <div id="membership-details" class="status-details"></div>
+                            <!-- 有料会員のアカウント操作（ログアウト）: 会員情報の下・右寄せ・控えめ -->
+                            <div id="logout-section-paid" class="account-actions" style="display: none;">
+                                <button id="logout-btn-paid" class="account-logout-btn" type="button">ログアウト</button>
+                            </div>
                         </div>
                         <!-- 三連複追加ボタン -->
                         <div class="plan-change-section" id="plan-change-section" style="display: none;">
@@ -356,11 +360,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <a href="/pricing/" class="action-btn upgrade">プランをアップグレード</a>
                     <button id="logout-btn-free" class="action-btn logout">ログアウト</button>
                 </div>
-            </div>
-
-            <!-- ログアウトボタン（有料会員のみ表示） -->
-            <div id="logout-section-paid" class="logout-section-paid" style="display: none;">
-                <button id="logout-btn-paid" class="action-btn logout-primary">ログアウト</button>
             </div>
 
             <!-- アップグレード促進（無料・Standard会員のみ表示） -->
@@ -2861,10 +2860,49 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             flex-wrap: wrap;
         }
 
-        /* ログアウトセクション（有料会員専用） */
-        .logout-section-paid {
-            margin-bottom: 2rem;
-            text-align: center;
+        /* 有料会員のアカウント操作: ステータスカード内・会員情報の下・右寄せ・控えめ */
+        .account-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 1rem;
+        }
+
+        .account-logout-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            width: auto;
+            padding: 0.4rem 0.9rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            line-height: 1;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            color: #fca5a5;
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            transition: all 0.2s ease;
+        }
+
+        .account-logout-btn::before {
+            content: "⎋";
+            font-size: 0.95rem;
+            line-height: 1;
+        }
+
+        .account-logout-btn:hover:not(:disabled) {
+            background: rgba(239, 68, 68, 0.16);
+            border-color: rgba(239, 68, 68, 0.55);
+            color: #fecaca;
+        }
+
+        .account-logout-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        @media (max-width: 768px) {
+            .account-actions { justify-content: center; }
         }
 
         .action-btn {
@@ -2886,22 +2924,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             background: rgba(30, 41, 59, 0.8);
             color: #e2e8f0;
             border: 1px solid rgba(59, 130, 246, 0.3);
-        }
-
-        /* 有料会員用ログアウトボタン（目立つデザイン） */
-        .action-btn.logout-primary {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
-            color: #fca5a5;
-            border: 1px solid rgba(239, 68, 68, 0.4);
-            font-weight: 600;
-            padding: 1rem 2rem;
-            font-size: 1.1rem;
-        }
-
-        .action-btn.logout-primary:hover {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(220, 38, 38, 0.3) 100%);
-            border-color: rgba(239, 68, 68, 0.6);
-            color: #fecaca;
         }
 
         .action-btn:hover {

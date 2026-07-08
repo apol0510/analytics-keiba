@@ -233,3 +233,19 @@ for (const [name, src] of [['login.astro', loginPage], ['dashboard.astro', dashb
     assert.equal(/document\.cookie/.test(s), false);
   });
 }
+
+// #4b: 配置改善 — ステータスカード内・会員情報の下（ページ最下部に単独表示しない）
+test('dashboard.astro: 有料ログアウトはステータスカード内・会員情報の下（最下部に単独表示しない）', () => {
+  const html = dashboard; // markup の順序で位置を検証（strip しない）
+  const iDetails = html.indexOf('id="membership-details"');
+  const iLogout = html.indexOf('id="logout-section-paid"');
+  const iPreds = html.indexOf('id="free-predictions"');
+  assert.ok(iDetails > -1 && iLogout > -1 && iPreds > -1);
+  assert.ok(iDetails < iLogout, 'ログアウトは会員情報(details)の直後');
+  assert.ok(iLogout < iPreds, 'ログアウトは予想カード群より前＝ステータスカード内（最下部単独ではない）');
+  assert.match(html, /id="logout-section-paid"[^>]*class="account-actions"/);
+});
+test('dashboard.astro: 旧・最下部の目立つログアウト（logout-primary / logout-section-paid class）を残さない', () => {
+  assert.equal(/action-btn logout-primary/.test(dashboard), false);
+  assert.equal(/class="logout-section-paid"/.test(dashboard), false);
+});
