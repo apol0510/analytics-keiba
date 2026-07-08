@@ -3,7 +3,7 @@
  *   node --test src/lib/sanrenpuku/sanrenpukuCtaStage.test.mjs
  *
  * 固定する仕様（4日目 CTA 解禁 / 初日完全非表示 / 排他性）:
- *   1日目=非表示 / 2日目=予告のみ / 3日目=予告＋結果(南関) or 予告のみ(JRA) / 4日目以降=CTA
+ *   1日目=非表示 / 2日目=予告のみ / 3日目=予告＋結果(南関・JRAとも) / 4日目以降=CTA＋結果
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,27 +97,38 @@ test('南関 4日目以降 dismissed: CTA は出さない。結果は出す', ()
   assert.equal(r.showCta, false);
 });
 
-// ---- planSanrenpukuDisplay: JRA（hasResultSection: false / 結果セクション新設しない） ----
+// ---- planSanrenpukuDisplay: JRA（hasResultSection: true / 結果セクション新設済み・南関と対称） ----
 
-test('JRA 2日目: 予告(day2)のみ', () => {
-  const r = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(2), now: NOW, hasResultSection: false });
+test('JRA 2日目: 予告(day2)のみ・結果は出さない', () => {
+  const r = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(2), now: NOW, hasResultSection: true });
   assert.equal(r.teaser, 'day2');
   assert.equal(r.showResult, false);
   assert.equal(r.showCta, false);
 });
 
-test('JRA 3日目: 予告のみ(day2表記)・結果は出さない（結果セクション新設しない）', () => {
-  const r = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(3), now: NOW, hasResultSection: false });
-  assert.equal(r.teaser, 'day2'); // 結果を約束しない予告文言
-  assert.equal(r.showResult, false);
+test('JRA 3日目: 予告(day3)＋結果（中央・南関で3日目対称）', () => {
+  const r = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(3), now: NOW, hasResultSection: true });
+  assert.equal(r.teaser, 'day3');
+  assert.equal(r.showResult, true);
   assert.equal(r.showCta, false);
 });
 
-test('JRA 4日目以降: CTA。結果は出さない', () => {
-  const r = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(4), now: NOW, hasResultSection: false });
+test('JRA 4日目以降: CTA＋結果', () => {
+  const r = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(4), now: NOW, hasResultSection: true });
   assert.equal(r.teaser, 'none');
-  assert.equal(r.showResult, false);
+  assert.equal(r.showResult, true);
   assert.equal(r.showCta, true);
+});
+
+// ---- 汎用: 結果セクションを持たないページ（hasResultSection: false）は3〜4日目でも結果を出さない ----
+
+test('結果セクション無しページ: 3日目は day2 表記・結果なし / 4日目は CTA・結果なし', () => {
+  const d3 = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(3), now: NOW, hasResultSection: false });
+  assert.equal(d3.teaser, 'day2');
+  assert.equal(d3.showResult, false);
+  const d4 = planSanrenpukuDisplay({ planRaw: 'Premium', firstSeen: firstSeenForDay(4), now: NOW, hasResultSection: false });
+  assert.equal(d4.showResult, false);
+  assert.equal(d4.showCta, true);
 });
 
 // ---- funnel 対象外は一切触らない ----
