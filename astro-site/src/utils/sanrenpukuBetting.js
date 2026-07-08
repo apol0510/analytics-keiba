@@ -138,6 +138,44 @@ export function formatSanrenpukuLine(spec) {
   return line;
 }
 
+// 南関 premium-sanrenpuku と同じ「絞り込み買い目」2段グループ表示用の行配列。
+//   1段目: 本命-対抗-(単穴群, 連下全頭)
+//   2段目: 本命-単穴1-(対抗, 単穴2, 連下全頭)
+// 各行の points = 3頭目候補の数。役割選定は buildRaceSanrenpuku と同じ role ベース
+// （本命/対抗/単穴/連下/連下最上位）。表示専用（narrow spec の値・点数は変更しない）。
+export function generateNarrowedDisplayLines(horses) {
+  if (!Array.isArray(horses)) return [];
+  const honmei = horses.find((h) => h?.role === '本命');
+  const taikou = horses.find((h) => h?.role === '対抗');
+  const tanaList = horses.filter((h) => h?.role === '単穴');
+  const renkaNums = horses
+    .filter((h) => h?.role === '連下' || h?.role === '連下最上位')
+    .map(horseNumber);
+
+  const mainNumber = horseNumber(honmei);
+  if (mainNumber == null) return [];
+  const subNumber = horseNumber(taikou);
+  const hole1 = horseNumber(tanaList[0]);
+  const hole2 = horseNumber(tanaList[1]);
+
+  const out = [];
+  // 1段目: 本命-対抗-(単穴群, 連下全頭)
+  if (subNumber != null) {
+    const targets = uniqueNums([hole1, hole2, ...renkaNums])
+      .filter((n) => n != null && n !== mainNumber && n !== subNumber)
+      .sort((a, b) => a - b);
+    if (targets.length) out.push({ line: `${mainNumber}-${subNumber}-${targets.join(',')}`, points: targets.length });
+  }
+  // 2段目: 本命-単穴1-(対抗, 単穴2, 連下全頭)
+  if (hole1 != null) {
+    const targets = uniqueNums([subNumber, hole2, ...renkaNums])
+      .filter((n) => n != null && n !== mainNumber && n !== hole1)
+      .sort((a, b) => a - b);
+    if (targets.length) out.push({ line: `${mainNumber}-${hole1}-${targets.join(',')}`, points: targets.length });
+  }
+  return out;
+}
+
 // 結果との照合
 export function checkSanrenpukuHit(top3, lines) {
   if (!Array.isArray(top3) || top3.length !== 3) return false;
