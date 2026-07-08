@@ -1095,14 +1095,16 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
           <div class="sanrenpuku-teaser-card">
             <span class="srp-teaser-badge">🎯 三連複 絞り込み機能</span>
             <div class="srp-teaser-day2" style="display: none;">
-              <h3 class="srp-teaser-title">馬単で絞り込みづらいレース向け</h3>
-              <p class="srp-teaser-desc">三連複では、相手候補が広いレースを絞り込むための補助機能を提供しています。</p>
+              <h3 class="srp-teaser-title">買い目の絞り込みに不安はありませんか？</h3>
+              <p class="srp-teaser-desc">Premium予想を使い始めると、軸馬や相手候補は見えてきても、最後の買い目点数で迷う場面があります。</p>
+              <p class="srp-teaser-desc">三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。</p>
               <p class="srp-teaser-note">明日から直近の的中結果を先行公開します。</p>
             </div>
             <div class="srp-teaser-day3" style="display: none;">
-              <h3 class="srp-teaser-title">三連複の直近結果を先行公開中</h3>
-              <p class="srp-teaser-desc">馬単で絞り込みづらいレース向けに、三連複の的中結果を先に確認できます。</p>
-              <p class="srp-teaser-note">三連複の絞り込み機能は明日ご案内します。</p>
+              <h3 class="srp-teaser-title">三連複絞り込み機能の直近結果を先行公開中</h3>
+              <p class="srp-teaser-desc">買い目の絞り込みに迷いやすいレースでも、三連複では候補を整理して、6〜9点前後の買い目にまとめます。</p>
+              <p class="srp-teaser-desc">現在は直近の的中結果を先に確認できます。</p>
+              <p class="srp-teaser-note">三連複絞り込み機能は明日ご案内します。</p>
               <p class="srp-teaser-archive-note">三連複アーカイブは機能解禁後に閲覧できます。</p>
             </div>
           </div>
@@ -1115,24 +1117,25 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
               <span class="new-badge">NEW</span>
             </div>
             <div class="upsell-content">
-              <h3 class="upsell-title">馬単の買い目が絞りきれない方へ</h3>
+              <h3 class="upsell-title">買い目の絞り込みに不安はありませんか？</h3>
               <p class="upsell-description">
-                <strong>馬単予想 → 絞り込み機能搭載</strong><br>
-                高性能AI自動判定で買い目を絞り込む三連複がおすすめです！
+                Premium予想で軸馬や相手候補が見えても、最後の買い目点数で迷う場面があります。<br>
+                三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。
               </p>
+              <p class="upsell-subnote">馬単予想とあわせて使うことで、迷いやすいレースの判断をサポートします。</p>
               <div class="upsell-stats">
                 <span class="stat-highlight">📊 過去1年間：的中率72% 回収率203%</span>
-                <span class="stat-highlight">🎯 買い目点数：わずか7〜9点の少点数！</span>
+                <span class="stat-highlight">🎯 買い目点数：6〜9点前後まで整理</span>
               </div>
               <div class="upsell-buttons">
                 <a href="/sanrenpuku-demo/" class="btn-sample">
-                  ✨ 絞り込み機能を実体験する
+                  ✨ 三連複絞り込み機能を使う
                 </a>
                 <a href="/archive-sanrenpuku/" class="btn-archive">
                   📊 三連複アーカイブを見る
                 </a>
                 <button class="btn-purchase-modal" id="openPlanModal">
-                  ➕ 三連複を追加
+                  ➕ 三連複を追加する
                 </button>
               </div>
             </div>
@@ -4211,6 +4214,12 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     .srp-teaser-archive-note {
         font-size: 0.82rem;
         color: #94a3b8;
+        margin: 0.5rem 0 0;
+    }
+    /* CTA 補足（悩み解決の後押し・控えめ） */
+    .upsell-subnote {
+        font-size: 0.85rem;
+        color: #cbd5e1;
         margin: 0.5rem 0 0;
     }
 
