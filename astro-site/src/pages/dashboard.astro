@@ -235,11 +235,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <!-- Premium馬単予想（中央・南関）統合カード -->
                     <div id="premium-predictions" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium馬単予想（中央・南関）</h3>
-                            <span class="plan-badge premium">PREMIUM</span>
+                            <h3>💎 Premium馬単予想 <span class="method-badge">中央・南関対応</span></h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title">全レース（1R-12R）</div>
+                            <div class="race-title race-title-sm">全レース（1R-12R）</div>
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <div class="sanrenpuku-view-buttons">
@@ -251,11 +250,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用・中央/南関セット利用導線） -->
                     <div id="sanrenpuku-predictions" class="prediction-card sanrenpuku" style="display: none;">
                         <div class="card-header">
-                            <h3><span class="premium-diamond">💎</span> Premium三連複予想 <span class="method-badge">中央・南関対応 AI絞り込み</span></h3>
+                            <h3>💎 Premium三連複予想 <span class="method-badge">中央・南関対応 AI絞り込み</span></h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title">全レース（1R-12R）</div>
-                            <div class="confidence">買い目を6〜9点前後まで整理</div>
+                            <div class="race-title race-title-sm">全レース（1R-12R）</div>
+                            <div class="confidence">AI分析完了！</div>
                         </div>
                         <div class="sanrenpuku-view-buttons">
                             <a href="/premium-sanrenpuku/" class="view-btn primary">南関 三連複を見る</a>
@@ -2821,24 +2820,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             gap: 0.5rem;
         }
 
-        /* 三連複カードの 💎 をプレミア演出（ゴールドの発光＋ゆるやかな鼓動） */
-        .premium-diamond {
-            display: inline-block;
-            filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.9)) drop-shadow(0 0 9px rgba(255, 200, 70, 0.5));
-            animation: premium-diamond-glow 2.4s ease-in-out infinite;
-        }
-        @keyframes premium-diamond-glow {
-            0%, 100% {
-                filter: drop-shadow(0 0 3px rgba(255, 215, 0, 0.7)) drop-shadow(0 0 6px rgba(255, 200, 70, 0.35));
-                transform: scale(1);
-            }
-            50% {
-                filter: drop-shadow(0 0 7px rgba(255, 215, 0, 1)) drop-shadow(0 0 13px rgba(255, 200, 70, 0.65));
-                transform: scale(1.14);
-            }
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .premium-diamond { animation: none; }
+        /* 馬単・三連複カードの「全レース（1R-12R）」は控えめに（大きすぎ防止） */
+        .race-title-sm {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #cbd5e1;
         }
 
         /* プラン管理（無料会員のみ） */
