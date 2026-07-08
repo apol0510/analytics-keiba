@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import { selectTodaysEntries } from '../lib/darkHorse/selectTodaysDarkHorses.js';
 
 export const prerender = true;
 
@@ -24,10 +25,6 @@ const allEntries = Object.entries(modules)
   })
   .filter(Boolean);
 
-const entriesWithDarkHorses = allEntries.filter(e =>
-  e.data.races.some(r => Array.isArray(r.darkHorses) && r.darkHorses.length > 0)
-);
-
 // 開催日（JST の今日）と完全一致するものだけを表示対象にする。
 // - 過去日も未来日も出さない（次週の JRA データが先行アップされていても今日でなければ出さない）
 // - 今日 0 件なら fallback せず「本日の穴馬候補はまだ公開されていません」を出す
@@ -37,7 +34,9 @@ const todayJst = (() => {
   return new Date(jstMs).toISOString().slice(0, 10);
 })();
 
-const todayEntries = entriesWithDarkHorses.filter(e => e.date === todayJst);
+// 選定は純粋ヘルパに集約（todayJst 完全一致 & darkHorses あり・過去日 fallback なし）。
+// 挙動は従来と同一（darkHorses 判定 → 当日一致の 2 段を 1 関数へ）。
+const todayEntries = selectTodaysEntries(allEntries, todayJst);
 
 // カテゴリごとに今日の日付を記録（client 側 storage key で利用）
 const latestDateByCategory = {};
