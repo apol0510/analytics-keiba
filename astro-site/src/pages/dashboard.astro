@@ -232,36 +232,26 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         <a href="/light-predictions-jra/" class="view-btn">予想を見る</a>
                     </div>
 
-                    <!-- Premium馬単予想（南関） -->
+                    <!-- Premium馬単予想（中央・南関）統合カード -->
                     <div id="premium-predictions" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium馬単予想（南関）</h3>
+                            <h3>💎 Premium馬単予想（中央・南関）</h3>
                             <span class="plan-badge premium">PREMIUM</span>
                         </div>
                         <div class="race-info">
                             <div class="race-title">全レース（1R-12R）</div>
                             <div class="confidence">AI分析完了！</div>
                         </div>
-                        <a href="/premium-prediction/nankan/" class="view-btn">予想を見る</a>
-                    </div>
-
-                    <!-- Premium馬単予想（中央／JRA） -->
-                    <div id="premium-predictions-jra" class="prediction-card premium" style="display: none;">
-                        <div class="card-header">
-                            <h3>💎 Premium馬単予想（中央）</h3>
-                            <span class="plan-badge premium">PREMIUM</span>
+                        <div class="sanrenpuku-view-buttons">
+                            <a href="/premium-prediction/nankan/" class="view-btn">南関 馬単を見る</a>
+                            <a href="/premium-prediction/jra/" class="view-btn">中央 馬単を見る</a>
                         </div>
-                        <div class="race-info">
-                            <div class="race-title">JRA 全レース（1R-12R）</div>
-                            <div class="confidence">AI分析完了！</div>
-                        </div>
-                        <a href="/premium-prediction/jra/" class="view-btn">予想を見る</a>
                     </div>
 
                     <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用・中央/南関セット利用導線） -->
                     <div id="sanrenpuku-predictions" class="prediction-card sanrenpuku" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium三連複予想 <span class="method-badge">中央・南関対応 AI絞り込み</span></h3>
+                            <h3><span class="premium-diamond">💎</span> Premium三連複予想 <span class="method-badge">中央・南関対応 AI絞り込み</span></h3>
                         </div>
                         <div class="race-info">
                             <div class="race-title">全レース（1R-12R）</div>
@@ -273,18 +263,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         </div>
                     </div>
 
-                    <!-- Premium Combo用：馬単予想カード -->
-                    <div id="combo-umatan-predictions" class="prediction-card premium" style="display: none;">
-                        <div class="card-header">
-                            <h3>💎 Premium馬単予想（南関）</h3>
-                            <span class="plan-badge premium">PREMIUM</span>
-                        </div>
-                        <div class="race-info">
-                            <div class="race-title">全レース（1R-12R）</div>
-                            <div class="confidence">AI分析完了！</div>
-                        </div>
-                        <a href="/premium-prediction/nankan/" class="view-btn">馬単予想を見る</a>
-                    </div>
                 </div>
             </div>
 
@@ -1518,30 +1496,19 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 if (jraCard) jraCard.style.display = 'none';
             }
 
-            // Premium予想の表示制御（プラン別 / 南関 + 中央）
-            const premiumJraCard = document.getElementById('premium-predictions-jra');
-            if (planLower === 'premium') {
-                // Premium会員：馬単予想（南関 + 中央）
-                console.log('Premium予想を表示（南関 / 中央）');
+            // Premium予想の表示制御（プラン別）
+            // 馬単は中央・南関を1枚に統合した #premium-predictions（中央/南関の2ボタン）で表示。
+            // 全 Premium 系（premium / premium plus / premium sanrenpuku / premium combo）に共通表示。
+            const isAnyPremium = (planLower === 'premium' || planLower === 'premium plus'
+                || planLower === 'premium sanrenpuku' || planLower === 'premium combo');
+            if (isAnyPremium) {
+                console.log('Premium馬単予想（中央・南関 統合カード）を表示: ' + planLower);
                 document.getElementById('premium-predictions').style.display = 'block';
-                if (premiumJraCard) premiumJraCard.style.display = 'block';
-            } else if (planLower === 'premium sanrenpuku') {
-                // Premium Sanrenpuku会員：三連複 + 馬単（2026-07〜 両方利用可・Combo と同等）
-                console.log('Premium Sanrenpuku予想を表示（三連複 + 馬単 / 中央含む）');
+            }
+            // 三連複カードは購入済み（Premium Sanrenpuku / Combo）のみ表示（中央/南関の2ボタン）
+            if (planLower === 'premium sanrenpuku' || planLower === 'premium combo') {
+                console.log('Premium三連複予想（中央・南関）を表示: ' + planLower);
                 document.getElementById('sanrenpuku-predictions').style.display = 'block';
-                document.getElementById('combo-umatan-predictions').style.display = 'block';
-                if (premiumJraCard) premiumJraCard.style.display = 'block';
-            } else if (planLower === 'premium combo') {
-                // Premium Combo会員：三連複優先＋馬単も表示（中央 Premium 馬単も表示）
-                console.log('Premium Combo予想を表示（三連複優先 / 中央含む）');
-                document.getElementById('sanrenpuku-predictions').style.display = 'block';
-                document.getElementById('combo-umatan-predictions').style.display = 'block';
-                if (premiumJraCard) premiumJraCard.style.display = 'block';
-            } else if (planLower === 'premium plus') {
-                // Premium Plus会員：Premium予想表示（南関 + 中央）
-                console.log('Premium Plus予想を表示（南関 / 中央）');
-                document.getElementById('premium-predictions').style.display = 'block';
-                if (premiumJraCard) premiumJraCard.style.display = 'block';
             }
 
             // 有料会員お問い合わせの表示制御（無料会員は /contact/ を使うため非表示のまま）
@@ -2852,6 +2819,26 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
+        }
+
+        /* 三連複カードの 💎 をプレミア演出（ゴールドの発光＋ゆるやかな鼓動） */
+        .premium-diamond {
+            display: inline-block;
+            filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.9)) drop-shadow(0 0 9px rgba(255, 200, 70, 0.5));
+            animation: premium-diamond-glow 2.4s ease-in-out infinite;
+        }
+        @keyframes premium-diamond-glow {
+            0%, 100% {
+                filter: drop-shadow(0 0 3px rgba(255, 215, 0, 0.7)) drop-shadow(0 0 6px rgba(255, 200, 70, 0.35));
+                transform: scale(1);
+            }
+            50% {
+                filter: drop-shadow(0 0 7px rgba(255, 215, 0, 1)) drop-shadow(0 0 13px rgba(255, 200, 70, 0.65));
+                transform: scale(1.14);
+            }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .premium-diamond { animation: none; }
         }
 
         /* プラン管理（無料会員のみ） */
