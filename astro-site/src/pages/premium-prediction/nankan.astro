@@ -330,47 +330,61 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 const sanrenpukuSection = document.getElementById('sanrenpuku-yesterday-results');
 
                 if (sanrenpukuSection) {
-                    // 🔧 2025-12-01修正: Premium会員・Premium Sanrenpuku会員のみ三連複結果を表示（Comboは非表示）
-                    if (userPlan === 'Premium' || userPlan === 'Premium Sanrenpuku') {
-                        sanrenpukuSection.style.display = 'block';
-                        console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
-                    } else if (userPlan === 'Premium Combo') {
-                        console.log('🚫 三連複昨日の結果非表示: Premium Combo会員（/premium-sanrenpuku/で閲覧可能）');
-                    }
+                    // 三連複購入済み（Premium Sanrenpuku / Combo / Full）には売る導線を出さない方針のため、
+                    // 的中結果の先行表示もここでは行わない（購入済み向け利用導線は別タスク）。
+                    // 馬単のみの未購入 Premium の先行結果は段階表示コントローラ（sanrenpukuCtaStage / 3日目以降）が担当する。
+                    // Light/Standard の表示は下部ゲートで制御。
+                    console.log('ℹ️ 三連複結果の先行表示は購入状況に応じて別ロジックで制御（userPlan: ' + userPlan + '）');
                 }
             })();
         </script>
 
-        <script is:inline>
-            // 三連複CTAの表示制御（中央 premium-prediction/jra と同一ロジック）:
-            // 既定は非表示。馬単購入者で「初回ログインから5日経過」かつ「未dismiss」のときだけ表示。
-            // Sanrenpuku/Combo/Full 会員・無料/未ログインには出さない。casing 非依存。
-            // 初回時刻(ak-umatan-first-seen)・dismiss(ak-srp-cta-dismissed) は中央ページと共有。
-            document.addEventListener('DOMContentLoaded', function() {
-                var el = document.getElementById('sanrenpuku-cta-section');
-                if (!el) return;
-                try {
-                    var raw = localStorage.getItem('user-plan');
-                    if (!raw) return; // 未ログイン → 既定 display:none のまま
-                    var plan = (JSON.parse(raw).plan || '').toString().trim().toLowerCase();
-                    var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
-                    var PAID_UMATAN = ['premium','premium predictions','premiumpredictions'];
-                    if (HAS_SRP.indexOf(plan) !== -1) return;     // 既に三連複保有
-                    if (PAID_UMATAN.indexOf(plan) === -1) return;  // 馬単購入者以外（free等）
-                    if (localStorage.getItem('ak-srp-cta-dismissed') === '1') return; // ×で閉じ済み
-                    var GRACE_MS = 5 * 24 * 60 * 60 * 1000;
-                    var now = Date.now();
-                    var first = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10);
-                    if (!first) { localStorage.setItem('ak-umatan-first-seen', String(now)); first = now; }
-                    if (now - first < GRACE_MS) return; // 猶予期間中 → 非表示のまま
-                    el.style.display = '';
-                    var closeBtn = el.querySelector('.srp-cta-close');
-                    if (closeBtn) closeBtn.addEventListener('click', function () {
-                        el.style.display = 'none';
-                        try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
-                    });
-                } catch (e) {}
-            });
+        <script>
+            // 三連複 段階表示コントローラ（単一源 sanrenpukuCtaStage.js を使用 / 中央 jra と同型）:
+            //   1日目=非表示 / 2日目=予告のみ / 3日目=予告＋的中結果 / 4日目以降=既存CTA（申込・アーカイブ）＋結果
+            // 対象は馬単のみの Premium（アップセル funnel）。三連複保有・無料・未ログインは既存ゲートに委ねる。
+            // 【基準日】現状はブラウザ localStorage の初回表示時刻 ak-umatan-first-seen。
+            //   サーバー Premium 開始日基準化は PR-C / PR-D 以降の認証強化フェーズで別対応（本スクリプトは認証コード非依存）。
+            //   dismiss(ak-srp-cta-dismissed)・初回時刻(ak-umatan-first-seen) は中央ページと共有。
+            import { isFunnelTarget, planSanrenpukuDisplay } from '../../lib/sanrenpuku/sanrenpukuCtaStage.js';
+            (function () {
+                var teaserEl = document.getElementById('sanrenpuku-teaser-section');
+                var ctaEl = document.getElementById('sanrenpuku-cta-section');
+                var resultEl = document.getElementById('sanrenpuku-yesterday-results');
+                if (!teaserEl && !ctaEl) return;
+                var planRaw = '';
+                try { var raw = localStorage.getItem('user-plan'); if (raw) planRaw = (JSON.parse(raw).plan || ''); } catch (e) {}
+                if (!planRaw) { try { planRaw = localStorage.getItem('userPlan') || ''; } catch (e) {} }
+                if (!isFunnelTarget(planRaw)) return; // 三連複保有・無料・未ログイン → 既存ゲートが担当
+                var now = Date.now();
+                var firstSeen = 0;
+                try { firstSeen = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10) || 0; } catch (e) {}
+                if (!firstSeen) { firstSeen = now; try { localStorage.setItem('ak-umatan-first-seen', String(now)); } catch (e) {} }
+                var dismissed = false;
+                try { dismissed = localStorage.getItem('ak-srp-cta-dismissed') === '1'; } catch (e) {}
+                var view = planSanrenpukuDisplay({ planRaw: planRaw, dismissed: dismissed, firstSeen: firstSeen, now: now, hasResultSection: !!resultEl });
+                // 予告カード（2日目=day2 / 3日目=day3。4日目以降は none で下の CTA に切替＝排他）
+                if (teaserEl) {
+                    var day2 = teaserEl.querySelector('.srp-teaser-day2');
+                    var day3 = teaserEl.querySelector('.srp-teaser-day3');
+                    if (day2) day2.style.display = view.teaser === 'day2' ? '' : 'none';
+                    if (day3) day3.style.display = view.teaser === 'day3' ? '' : 'none';
+                    teaserEl.style.display = view.teaser === 'none' ? 'none' : '';
+                }
+                // 的中結果（馬単 Premium は3日目以降のみ。他プランは既存ゲートが担当）
+                if (resultEl && view.showResult) resultEl.style.display = 'block';
+                // 既存 CTA カード（4日目以降・未dismiss）
+                if (ctaEl) {
+                    ctaEl.style.display = view.showCta ? '' : 'none';
+                    if (view.showCta) {
+                        var closeBtn = ctaEl.querySelector('.srp-cta-close');
+                        if (closeBtn) closeBtn.addEventListener('click', function () {
+                            ctaEl.style.display = 'none';
+                            try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
+                        });
+                    }
+                }
+            })();
         </script>
 
         <script is:inline>
@@ -1072,6 +1086,26 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         </div>
 
         <!-- 三連複商品への導線セクション -->
+        <!-- 三連複 予告カード（段階表示: 2日目=day2 / 3日目=day3。4日目以降は下の CTA カードへ切替＝排他） -->
+        <div class="sanrenpuku-teaser-section" id="sanrenpuku-teaser-section" style="display: none;">
+          <div class="sanrenpuku-teaser-card">
+            <span class="srp-teaser-badge">🎯 三連複 絞り込み機能</span>
+            <div class="srp-teaser-day2" style="display: none;">
+              <h3 class="srp-teaser-title">買い目の絞り込みに不安はありませんか？</h3>
+              <p class="srp-teaser-desc">Premium予想を使い始めると、軸馬や相手候補は見えてきても、最後の買い目点数で迷う場面があります。</p>
+              <p class="srp-teaser-desc">三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。</p>
+              <p class="srp-teaser-note">明日から直近の的中結果を先行公開します。</p>
+            </div>
+            <div class="srp-teaser-day3" style="display: none;">
+              <h3 class="srp-teaser-title">三連複絞り込み機能の直近結果を先行公開中</h3>
+              <p class="srp-teaser-desc">買い目の絞り込みに迷いやすいレースでも、三連複では候補を整理して、6〜9点前後の買い目にまとめます。</p>
+              <p class="srp-teaser-desc">現在は直近の的中結果を先に確認できます。</p>
+              <p class="srp-teaser-note">三連複絞り込み機能は明日ご案内します。</p>
+              <p class="srp-teaser-archive-note">三連複アーカイブは機能解禁後に閲覧できます。</p>
+            </div>
+          </div>
+        </div>
+
         <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section" style="display: none;">
           <div class="sanrenpuku-upsell-card">
             <button type="button" class="srp-cta-close" aria-label="閉じる">×</button>
@@ -1079,24 +1113,25 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
               <span class="new-badge">NEW</span>
             </div>
             <div class="upsell-content">
-              <h3 class="upsell-title">馬単の買い目が絞りきれない方へ</h3>
+              <h3 class="upsell-title">買い目の絞り込みに不安はありませんか？</h3>
               <p class="upsell-description">
-                <strong>馬単予想 → 絞り込み機能搭載</strong><br>
-                高性能AI自動判定で買い目を絞り込む三連複がおすすめです！
+                Premium予想で軸馬や相手候補が見えても、最後の買い目点数で迷う場面があります。<br>
+                三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。
               </p>
+              <p class="upsell-subnote">中央・南関に対応した三連複絞り込み機能です。馬単予想とあわせて使うことで、買い目点数に迷うレースの判断をサポートします。</p>
               <div class="upsell-stats">
                 <span class="stat-highlight">📊 過去1年間：的中率72% 回収率203%</span>
-                <span class="stat-highlight">🎯 買い目点数：わずか7〜9点の少点数！</span>
+                <span class="stat-highlight">🎯 買い目点数：6〜9点前後まで整理</span>
               </div>
               <div class="upsell-buttons">
                 <a href="/sanrenpuku-demo/" class="btn-sample">
-                  ✨ 絞り込み機能を実体験する
+                  ✨ 三連複絞り込み機能を使う
                 </a>
                 <a href="/archive-sanrenpuku/" class="btn-archive">
-                  📊 三連複の実績を見る
+                  📊 三連複アーカイブを見る
                 </a>
                 <button class="btn-purchase-modal" id="openPlanModal">
-                  ➕ 三連複を追加
+                  ➕ 三連複を追加する
                 </button>
               </div>
             </div>
@@ -1310,14 +1345,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 
             console.log('🔍 最終プラン判定:', userPlan);
 
-            // 🔧 2025-12-01修正: Premium会員・Premium Sanrenpuku会員のみ三連複結果を表示（Comboは非表示）
-            // Standard/Premium（馬単プラン）は三連複アップセル用に表示
-            // Premium Sanrenpukuは契約プランとして表示
-            // Premium Comboは/premium-sanrenpuku/で閲覧（/premium-predictions/では非表示）
+            // Light/Standard（未購入・アップセル層）は従来どおり表示。
+            // 三連複購入済み（Premium Sanrenpuku / Combo / Full）には売る導線を出さない方針のため先行結果も非表示
+            // （購入済み向け利用導線は別タスク）。馬単のみの未購入 Premium は段階表示コントローラ（3日目以降）が担当。
             if (userPlan === 'Light' || userPlan === 'light' || userPlan === 'ライト' ||
-                userPlan === 'Standard' || userPlan === 'standard' ||
-                userPlan === 'Premium' || userPlan === 'premium' ||
-                userPlan === 'Premium Sanrenpuku') {
+                userPlan === 'Standard' || userPlan === 'standard') {
                 sanrenpukuResultsSection.style.display = 'block';
                 console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
             } else if (userPlan === 'Premium Combo') {
@@ -4133,6 +4165,57 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     /* 三連複商品への導線セクション */
     .sanrenpuku-upsell-section {
         margin-bottom: 0;
+    }
+
+    /* 三連複 予告カード（解禁前の段階表示・控えめ） */
+    .sanrenpuku-teaser-section {
+        margin: 2rem 0;
+    }
+    .sanrenpuku-teaser-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.10) 100%);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        border-radius: 14px;
+        padding: 1.5rem;
+        text-align: center;
+    }
+    .srp-teaser-badge {
+        display: inline-block;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #93c5fd;
+        background: rgba(59, 130, 246, 0.15);
+        border-radius: 999px;
+        padding: 0.25rem 0.9rem;
+        margin-bottom: 0.9rem;
+    }
+    .srp-teaser-title {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        margin: 0 0 0.6rem;
+    }
+    .srp-teaser-desc {
+        font-size: 0.95rem;
+        color: #cbd5e1;
+        line-height: 1.7;
+        margin: 0 0 0.6rem;
+    }
+    .srp-teaser-note {
+        font-size: 0.9rem;
+        color: #fbbf24;
+        font-weight: 600;
+        margin: 0;
+    }
+    .srp-teaser-archive-note {
+        font-size: 0.82rem;
+        color: #94a3b8;
+        margin: 0.5rem 0 0;
+    }
+    /* CTA 補足（悩み解決の後押し・控えめ） */
+    .upsell-subnote {
+        font-size: 0.85rem;
+        color: #cbd5e1;
+        margin: 0.5rem 0 0;
     }
 
     .sanrenpuku-upsell-card {

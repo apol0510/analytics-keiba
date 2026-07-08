@@ -110,3 +110,7 @@ jobs:
       - name: Verify 穴馬抽出の当日データ選定（過去日 fallback なし 回帰テスト）
         working-directory: astro-site
         run: npm run test:dark-horse
+
+      - name: Verify 三連複 段階表示（初回表示日基準 4日目解禁 / 予告・結果・CTA 排他）
+        working-directory: astro-site
+        run: npm run test:sanrenpuku-cta

@@ -1361,7 +1361,20 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
             })}
 
             <!-- 免責事項（free 版に揃えてシンプル化） -->
-            <!-- 中央（JRA）三連複 CTA（予想の下に配置 / 初回ログインから5日間は非表示・×で閉じる / Sanrenpuku・Combo 会員には非表示） -->
+            <!-- 中央（JRA）三連複 予告カード（段階表示: 2〜3日目は予告のみ。JRA は的中結果セクションを新設しない） -->
+            <div class="sanrenpuku-teaser-section" id="sanrenpuku-teaser-section-jra" style="display: none;">
+              <div class="sanrenpuku-teaser-card">
+                <span class="srp-teaser-badge">🎯 三連複 絞り込み機能</span>
+                <div class="srp-teaser-day2" style="display: none;">
+                  <h3 class="srp-teaser-title">買い目の絞り込みに不安はありませんか？</h3>
+                  <p class="srp-teaser-desc">Premium予想を使い始めると、軸馬や相手候補は見えてきても、最後の買い目点数で迷う場面があります。</p>
+                  <p class="srp-teaser-desc">三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。</p>
+                  <p class="srp-teaser-note">三連複絞り込み機能は近日ご案内します。</p>
+                  <p class="srp-teaser-archive-note">三連複アーカイブは機能解禁後に閲覧できます。</p>
+                </div>
+              </div>
+            </div>
+            <!-- 中央（JRA）三連複 CTA（段階表示: 4日目以降に解禁・×で閉じる / Sanrenpuku・Combo 会員には非表示） -->
             <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section-jra" style="display: none;">
               <div class="sanrenpuku-upsell-card">
                 <button type="button" class="srp-cta-close" aria-label="閉じる">×</button>
@@ -1370,53 +1383,65 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                   <span class="new-badge">NEW</span>
                 </div>
                 <div class="upsell-content">
-                  <h3 class="upsell-title">馬単の買い目が絞りきれない方へ</h3>
+                  <h3 class="upsell-title">買い目の絞り込みに不安はありませんか？</h3>
                   <p class="upsell-description">
-                    <strong>中央（JRA）三連複 → 絞り込み機能搭載</strong><br>
-                    高性能AIが買い目を自動で絞り込む三連複がおすすめです！
+                    Premium予想で軸馬や相手候補が見えても、最後の買い目点数で迷う場面があります。<br>
+                    三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。
                   </p>
+                  <p class="upsell-subnote">中央・南関に対応した三連複絞り込み機能です。馬単予想とあわせて使うことで、買い目点数に迷うレースの判断をサポートします。</p>
                   <div class="upsell-stats">
-                    <span class="stat-highlight">🎯 買い目点数わずか7〜9点の少点数！</span>
+                    <span class="stat-highlight">🎯 買い目点数：6〜9点前後まで整理</span>
                     <span class="stat-highlight">📊 本命軸ボックスで高性能AI自動絞り込み</span>
                   </div>
                   <div class="upsell-buttons">
-                    <a href="/premium-sanrenpuku-jra/" class="btn-sample">✨ 三連複予想を見る</a>
-                    <a href="/archive-sanrenpuku-jra/" class="btn-archive">📊 三連複の実績を見る</a>
-                    <a href="/plan-upgrade-guide/" class="btn-purchase-modal">➕ 三連複を追加</a>
+                    <a href="/premium-sanrenpuku-jra/" class="btn-sample">✨ 三連複絞り込み機能を使う</a>
+                    <a href="/archive-sanrenpuku-jra/" class="btn-archive">📊 三連複アーカイブを見る</a>
+                    <a href="/plan-upgrade-guide/" class="btn-purchase-modal">➕ 三連複を追加する</a>
                   </div>
                 </div>
               </div>
             </div>
-            <script is:inline>
-              // 三連複CTAの表示制御: 既定は非表示。馬単購入者で「初回ログインから5日経過」かつ
-              // 「未dismiss」のときだけ表示する（購入直後の押し売りを避ける）。
-              // Sanrenpuku/Combo/Full 会員・無料/未ログインには出さない。casing 非依存。
+            <script>
+              // 三連複 段階表示コントローラ（単一源 sanrenpukuCtaStage.js を使用 / 南関 nankan と同型）:
+              //   1日目=非表示 / 2日目=予告のみ / 3日目=予告のみ（JRA は的中結果セクションを新設しない） / 4日目以降=既存CTA
+              // 対象は馬単のみの Premium（アップセル funnel）。三連複保有・無料・未ログインは何も出さない。
+              // 【基準日】現状はブラウザ localStorage の初回表示時刻 ak-umatan-first-seen。
+              //   サーバー Premium 開始日基準化は PR-C / PR-D 以降の認証強化フェーズで別対応（本スクリプトは認証コード非依存）。
+              //   dismiss(ak-srp-cta-dismissed)・初回時刻(ak-umatan-first-seen) は南関ページと共有。
+              import { isFunnelTarget, planSanrenpukuDisplay } from '../../lib/sanrenpuku/sanrenpukuCtaStage.js';
               (function () {
-                var el = document.getElementById('sanrenpuku-cta-section-jra');
-                if (!el) return;
-                try {
-                  var raw = localStorage.getItem('user-plan');
-                  if (!raw) return; // 未ログイン → 既定 display:none のまま
-                  var plan = (JSON.parse(raw).plan || '').toString().trim().toLowerCase();
-                  var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
-                  var PAID_UMATAN = ['premium','premium predictions','premiumpredictions'];
-                  if (HAS_SRP.indexOf(plan) !== -1) return;     // 既に三連複保有
-                  if (PAID_UMATAN.indexOf(plan) === -1) return;  // 馬単購入者以外（free等）
-                  if (localStorage.getItem('ak-srp-cta-dismissed') === '1') return; // ×で閉じ済み
-                  // 馬単購入者として初回に見た時刻を記録し、そこから5日間は非表示
-                  var GRACE_MS = 5 * 24 * 60 * 60 * 1000;
-                  var now = Date.now();
-                  var first = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10);
-                  if (!first) { localStorage.setItem('ak-umatan-first-seen', String(now)); first = now; }
-                  if (now - first < GRACE_MS) return; // 猶予期間中 → 非表示のまま
-                  // 表示条件クリア → 表示 ＋ ×ボタン結線
-                  el.style.display = '';
-                  var closeBtn = el.querySelector('.srp-cta-close');
-                  if (closeBtn) closeBtn.addEventListener('click', function () {
-                    el.style.display = 'none';
-                    try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
-                  });
-                } catch (e) {}
+                var teaserEl = document.getElementById('sanrenpuku-teaser-section-jra');
+                var ctaEl = document.getElementById('sanrenpuku-cta-section-jra');
+                var resultEl = document.getElementById('sanrenpuku-yesterday-results'); // JRA には存在しない（新設しない）
+                if (!teaserEl && !ctaEl) return;
+                var planRaw = '';
+                try { var raw = localStorage.getItem('user-plan'); if (raw) planRaw = (JSON.parse(raw).plan || ''); } catch (e) {}
+                if (!planRaw) { try { planRaw = localStorage.getItem('userPlan') || ''; } catch (e) {} }
+                if (!isFunnelTarget(planRaw)) return; // 三連複保有・無料・未ログイン
+                var now = Date.now();
+                var firstSeen = 0;
+                try { firstSeen = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10) || 0; } catch (e) {}
+                if (!firstSeen) { firstSeen = now; try { localStorage.setItem('ak-umatan-first-seen', String(now)); } catch (e) {} }
+                var dismissed = false;
+                try { dismissed = localStorage.getItem('ak-srp-cta-dismissed') === '1'; } catch (e) {}
+                var view = planSanrenpukuDisplay({ planRaw: planRaw, dismissed: dismissed, firstSeen: firstSeen, now: now, hasResultSection: !!resultEl });
+                // 予告カード（2〜3日目=day2 表記。4日目以降は none で CTA に切替＝排他）
+                if (teaserEl) {
+                  var day2 = teaserEl.querySelector('.srp-teaser-day2');
+                  if (day2) day2.style.display = view.teaser === 'none' ? 'none' : '';
+                  teaserEl.style.display = view.teaser === 'none' ? 'none' : '';
+                }
+                // 既存 CTA カード（4日目以降・未dismiss）
+                if (ctaEl) {
+                  ctaEl.style.display = view.showCta ? '' : 'none';
+                  if (view.showCta) {
+                    var closeBtn = ctaEl.querySelector('.srp-cta-close');
+                    if (closeBtn) closeBtn.addEventListener('click', function () {
+                      ctaEl.style.display = 'none';
+                      try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
+                    });
+                  }
+                }
               })();
             </script>
 
@@ -2803,6 +2828,30 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 
     /* 三連複 CTA アップセルカード（南関 premium-prediction/nankan と同型） */
     .sanrenpuku-upsell-section { margin: 0 0 20px; }
+    /* 三連複 予告カード（解禁前の段階表示・控えめ / 南関 nankan と同型） */
+    .sanrenpuku-teaser-section { margin: 2rem 0; }
+    .sanrenpuku-teaser-card {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.10) 100%);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      border-radius: 14px;
+      padding: 1.5rem;
+      text-align: center;
+    }
+    .srp-teaser-badge {
+      display: inline-block;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #93c5fd;
+      background: rgba(59, 130, 246, 0.15);
+      border-radius: 999px;
+      padding: 0.25rem 0.9rem;
+      margin-bottom: 0.9rem;
+    }
+    .srp-teaser-title { font-size: 1.2rem; font-weight: 700; color: #e2e8f0; margin: 0 0 0.6rem; }
+    .srp-teaser-desc { font-size: 0.95rem; color: #cbd5e1; line-height: 1.7; margin: 0 0 0.6rem; }
+    .srp-teaser-note { font-size: 0.9rem; color: #fbbf24; font-weight: 600; margin: 0; }
+    .srp-teaser-archive-note { font-size: 0.82rem; color: #94a3b8; margin: 0.5rem 0 0; }
+    .upsell-subnote { font-size: 0.85rem; color: #cbd5e1; margin: 0.5rem 0 0; }
     .sanrenpuku-upsell-card {
       position: relative;
       display: flex; align-items: flex-start; gap: 20px;
