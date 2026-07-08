@@ -1,0 +1,63 @@
+/**
+ * pageGuards.test.mjs — premium-prediction/{nankan,jra}.astro が三連複 段階表示へ
+ * 正しく配線され、旧5日ゲートの残骸や JRA 結果セクション新設が無いことを固定する静的 guard。
+ *   node --test src/lib/sanrenpuku/pageGuards.test.mjs
+ *
+ * DOM を評価せず、ソース文字列を検査する（prbFunctionGuards.test.mjs と同型）。
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const root = process.cwd(); // astro-site
+const nankan = readFileSync(join(root, 'src/pages/premium-prediction/nankan.astro'), 'utf8');
+const jra = readFileSync(join(root, 'src/pages/premium-prediction/jra.astro'), 'utf8');
+
+test('両ページが単一源 sanrenpukuCtaStage を import して planSanrenpukuDisplay を使う', () => {
+  for (const [name, src] of [['nankan', nankan], ['jra', jra]]) {
+    assert.match(src, /from ['"]\.\.\/\.\.\/lib\/sanrenpuku\/sanrenpukuCtaStage\.js['"]/, `${name}: helper import 無し`);
+    assert.match(src, /planSanrenpukuDisplay\(/, `${name}: planSanrenpukuDisplay 呼び出し無し`);
+    assert.match(src, /isFunnelTarget\(/, `${name}: isFunnelTarget 呼び出し無し`);
+    assert.match(src, /hasResultSection:/, `${name}: hasResultSection 未指定`);
+  }
+});
+
+test('旧5日ゲート（5 * 24 * 60 * 60 * 1000 / GRACE_MS）が両ページから除去されている', () => {
+  for (const [name, src] of [['nankan', nankan], ['jra', jra]]) {
+    assert.ok(!/5 \* 24 \* 60 \* 60 \* 1000/.test(src), `${name}: 旧5日 GRACE_MS が残存`);
+    assert.ok(!/GRACE_MS/.test(src), `${name}: GRACE_MS が残存`);
+  }
+});
+
+test('予告カード要素が両ページに存在する（南関/JRA で id 別）', () => {
+  assert.match(nankan, /id="sanrenpuku-teaser-section"/, 'nankan 予告カード id 無し');
+  assert.match(jra, /id="sanrenpuku-teaser-section-jra"/, 'jra 予告カード id 無し');
+  assert.match(nankan, /srp-teaser-day2/, 'nankan day2 body 無し');
+  assert.match(jra, /srp-teaser-day2/, 'jra day2 body 無し');
+});
+
+test('day3（予告＋結果）ボディは結果セクションのある南関のみ。JRA には持ち込まない', () => {
+  assert.match(nankan, /srp-teaser-day3/, 'nankan day3 body 無し');
+  assert.ok(!/srp-teaser-day3/.test(jra), 'jra に day3 body を持ち込んでいる（結果を約束する文言）');
+});
+
+test('JRA に三連複的中結果セクションを新設していない（id 定義が無い）', () => {
+  assert.ok(!/id=["']sanrenpuku-yesterday-results["']/.test(jra), 'jra に結果セクションを新設している');
+  // 南関は結果セクションを保持
+  assert.match(nankan, /id="sanrenpuku-yesterday-results"/, 'nankan 結果セクションが消えている');
+});
+
+test('南関の下部結果ゲートは馬単のみ Premium を先出ししない（旧 broad OR 行を除去）', () => {
+  assert.ok(
+    !/userPlan === 'Premium' \|\| userPlan === 'premium' \|\|/.test(nankan),
+    'nankan 下部ゲートに Premium/premium の先出し行が残存（1〜2日目に結果だけ出る）',
+  );
+});
+
+test('×閉じ（ak-srp-cta-dismissed）と初回時刻（ak-umatan-first-seen）の扱いを維持', () => {
+  for (const [name, src] of [['nankan', nankan], ['jra', jra]]) {
+    assert.match(src, /ak-srp-cta-dismissed/, `${name}: dismiss キー無し`);
+    assert.match(src, /ak-umatan-first-seen/, `${name}: 初回時刻キー無し`);
+  }
+});
