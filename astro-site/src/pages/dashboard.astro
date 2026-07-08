@@ -183,11 +183,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <!-- 無料予想（南関） -->
                     <div id="free-predictions" class="prediction-card free">
                         <div class="card-header">
-                            <h3>🎁 無料予想（南関）</h3>
-                            <span class="plan-badge free">FREE</span>
+                            <h3>🎁 無料予想 <span class="method-badge">南関</span></h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title">全レース（無料）</div>
+                            <div class="race-title race-title-sm">全レース（無料）</div>
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <a href="/free-prediction/nankan/" class="view-btn">予想を見る</a>
@@ -196,11 +195,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <!-- 無料予想（中央／JRA） -->
                     <div id="free-predictions-jra" class="prediction-card free">
                         <div class="card-header">
-                            <h3>🎁 無料予想（中央）</h3>
-                            <span class="plan-badge free">FREE</span>
+                            <h3>🎁 無料予想 <span class="method-badge">中央</span></h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title">JRA 全レース（無料）</div>
+                            <div class="race-title race-title-sm">JRA 全レース（無料）</div>
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <a href="/free-prediction/jra/" class="view-btn">予想を見る</a>
@@ -209,11 +207,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <!-- Light予想（南関） -->
                     <div id="standard-predictions" class="prediction-card standard" style="display: none;">
                         <div class="card-header">
-                            <h3>⚡ Light予想（南関）</h3>
-                            <span class="plan-badge standard">LIGHT</span>
+                            <h3>⚡ Light予想 <span class="method-badge">南関</span></h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title">メインレース馬単買い目</div>
+                            <div class="race-title race-title-sm">メインレース馬単買い目</div>
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <a href="/light-predictions/" class="view-btn">予想を見る</a>
@@ -222,11 +219,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <!-- Light予想（中央／JRA） -->
                     <div id="standard-predictions-jra" class="prediction-card standard" style="display: none;">
                         <div class="card-header">
-                            <h3>⚡ Light予想（中央）</h3>
-                            <span class="plan-badge standard">LIGHT</span>
+                            <h3>⚡ Light予想 <span class="method-badge">中央</span></h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title">JRA メインレース馬単買い目</div>
+                            <div class="race-title race-title-sm">JRA メインレース馬単買い目</div>
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <a href="/light-predictions-jra/" class="view-btn">予想を見る</a>
@@ -2798,19 +2794,61 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
         .view-btn {
             display: block;
-            background: #3b82f6;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, #3b82f6 0%, #6366f1 50%, #8b5cf6 100%);
+            background-size: 200% 200%;
             color: white;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
+            padding: 0.9rem 1.5rem;
+            border-radius: 0.6rem;
             text-decoration: none;
             text-align: center;
-            font-weight: 600;
-            transition: all 0.3s ease;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+            transition: transform 0.15s ease, box-shadow 0.25s ease, background-position 0.4s ease;
+        }
+
+        /* 光沢が横に走るシャイン演出 */
+        .view-btn::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -75%;
+            width: 55%;
+            height: 100%;
+            background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+            transform: skewX(-20deg);
+            animation: view-btn-shine 3.4s ease-in-out infinite;
+        }
+
+        @keyframes view-btn-shine {
+            0% { left: -75%; }
+            35%, 100% { left: 135%; }
         }
 
         .view-btn:hover {
-            background: #1d4ed8;
-            transform: translateY(-2px);
+            transform: translateY(-3px) scale(1.02);
+            background-position: 100% 50%;
+            box-shadow: 0 10px 26px rgba(99, 102, 241, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+        }
+
+        /* 三連複導線（.primary）は上位商品としてゴールド〜マゼンタで一段派手に */
+        .view-btn.primary {
+            background: linear-gradient(135deg, #fbbf24 0%, #f43f5e 50%, #a855f7 100%);
+            background-size: 200% 200%;
+            box-shadow: 0 4px 16px rgba(244, 63, 94, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+
+        .view-btn.primary:hover {
+            box-shadow: 0 10px 28px rgba(244, 63, 94, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .view-btn::after { animation: none; display: none; }
+            .view-btn { transition: box-shadow 0.25s ease; }
+            .view-btn:hover { transform: none; }
         }
 
         /* 三連複カードの中央・南関 2 導線（利用ページへのリンク・縦並び） */
