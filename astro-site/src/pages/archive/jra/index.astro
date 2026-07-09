@@ -74,6 +74,17 @@ try {
   console.error('Error loading archive:', error);
 }
 
+// 年ごとにグループ化（allMonths は年月降順ソート済み → 年降順・月降順で並ぶ）
+const yearGroups: Array<{ year: string; months: typeof allMonths }> = [];
+for (const m of allMonths) {
+  let g = yearGroups.find((x) => x.year === m.year);
+  if (!g) {
+    g = { year: m.year, months: [] };
+    yearGroups.push(g);
+  }
+  g.months.push(m);
+}
+
 const pageTitle = '中央競馬（JRA）的中実績アーカイブ';
 const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ。月別の的中記録と配当金額を完全公開。';
 ---
@@ -101,11 +112,18 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
         <p>まだ的中実績データがありません。</p>
       </div>
     ) : (
-      <div class="months-grid">
-        {allMonths.map((monthData) => (
-          <a href={`/archive/jra/${monthData.year}/${monthData.month}/`} class="month-card">
-            <div class="month-header">
-              <h2 class="month-title">{monthData.displayMonth}</h2>
+      <div class="year-groups">
+        {yearGroups.map((group) => (
+          <section class="year-group">
+            <a href={`/archive/jra/${group.year}/`} class="year-heading">
+              <span class="year-heading-title">📅 {group.year}年の実績</span>
+              <span class="year-heading-link">年間統計を見る →</span>
+            </a>
+            <div class="months-grid">
+              {group.months.map((monthData) => (
+                <a href={`/archive/jra/${monthData.year}/${monthData.month}/`} class="month-card">
+                  <div class="month-header">
+                    <h2 class="month-title">{monthData.displayMonth}</h2>
               {parseFloat(monthData.hitRate) === 100 ? (
                 <div class="perfect-highlight">🏆 {monthData.totalHitRaces}/{monthData.totalRaces}的中</div>
               ) : (
@@ -136,8 +154,11 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
               </div>
             </div>
 
-            <div class="view-details-button">📊 詳細を見る →</div>
-          </a>
+                  <div class="view-details-button">📊 詳細を見る →</div>
+                </a>
+              ))}
+            </div>
+          </section>
         ))}
       </div>
     )}
@@ -194,6 +215,28 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
     transition: all 0.3s;
   }
   .cta-button:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4); }
+
+  .year-groups { display: grid; gap: 3rem; }
+  .year-group { display: grid; gap: 1.5rem; }
+  .year-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1rem 1.5rem;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 12px;
+    text-decoration: none;
+    transition: all 0.3s;
+  }
+  .year-heading:hover {
+    border-color: rgba(245, 158, 11, 0.7);
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.2);
+  }
+  .year-heading-title { font-size: 1.5rem; font-weight: 800; color: #f59e0b; }
+  .year-heading-link { font-size: 0.95rem; font-weight: 700; color: #fbbf24; }
 
   .months-grid { display: grid; gap: 2rem; }
 

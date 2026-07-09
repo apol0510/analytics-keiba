@@ -1,0 +1,323 @@
+---
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+
+export const prerender = false;
+
+const { year } = Astro.params as { year: string };
+
+const archivePath = join(process.cwd(), 'src', 'data', 'archiveResultsJra.json');
+let allData: any[] = [];
+try {
+  if (existsSync(archivePath)) allData = JSON.parse(readFileSync(archivePath, 'utf-8'));
+} catch (e) {
+  console.error(`[archive/jra/${year}] load error:`, e);
+}
+
+// その年のエントリのみ（JRA データソース）
+const yearEntries = allData.filter(
+  (e: any) => typeof e?.date === 'string' && e.date.split('-')[0] === year
+);
+
+// 月別に集計
+const monthsMap = new Map<string, any[]>();
+yearEntries.forEach((entry: any) => {
+  const month = entry.date.split('-')[1];
+  if (!monthsMap.has(month)) monthsMap.set(month, []);
+  monthsMap.get(month)!.push(entry);
+});
+
+const monthSummaries = Array.from(monthsMap.entries())
+  .map(([month, entries]) => {
+    let totalRaces = 0;
+    let totalHitRaces = 0;
+    let totalBetAmount = 0;
+    let totalPayout = 0;
+    entries.forEach((e: any) => {
+      totalRaces += e.totalRaces || 0;
+      totalHitRaces += e.hitRaces || 0;
+      totalBetAmount += e.betAmount || 0;
+      totalPayout += e.totalPayout || 0;
+    });
+    const hitRate = totalRaces > 0 ? ((totalHitRaces / totalRaces) * 100).toFixed(1) : '0.0';
+    const returnRate = totalBetAmount > 0 ? ((totalPayout / totalBetAmount) * 100).toFixed(1) : '0.0';
+    return { month, daysCount: entries.length, totalRaces, totalHitRaces, totalBetAmount, totalPayout, hitRate, returnRate };
+  })
+  .sort((a, b) => b.month.localeCompare(a.month));
+
+// 年間合計（回収率は年間配当 ÷ 年間投資 = betAmount ベースで既存 JRA と整合）
+let yTotalDays = 0;
+let yTotalRaces = 0;
+let yTotalHitRaces = 0;
+let yTotalBetAmount = 0;
+let yTotalPayout = 0;
+monthSummaries.forEach((m) => {
+  yTotalDays += m.daysCount;
+  yTotalRaces += m.totalRaces;
+  yTotalHitRaces += m.totalHitRaces;
+  yTotalBetAmount += m.totalBetAmount;
+  yTotalPayout += m.totalPayout;
+});
+const yearHitRate = yTotalRaces > 0 ? ((yTotalHitRaces / yTotalRaces) * 100).toFixed(1) : '0.0';
+const yearReturnRate = yTotalBetAmount > 0 ? ((yTotalPayout / yTotalBetAmount) * 100).toFixed(1) : '0.0';
+
+const hasData = monthSummaries.length > 0;
+
+const pageTitle = hasData
+  ? `${year}年 中央競馬（JRA）的中実績アーカイブ`
+  : `${year}年 中央競馬の的中実績はまだありません`;
+const pageDescription = hasData
+  ? `${year}年の中央競馬（JRA）全的中実績。年間的中率${yearHitRate}%・年間回収率${yearReturnRate}%・年間合計配当¥${yTotalPayout.toLocaleString()}の実績データ。`
+  : `${year}年の中央競馬（JRA）の的中実績アーカイブ。`;
+---
+
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <main class="archive-jra-page">
+    <div class="container">
+      {!hasData ? (
+        <div class="no-data">
+          <h1>⚠️ データが見つかりません</h1>
+          <p>{year}年の中央競馬（JRA）の的中実績はまだありません。</p>
+          <a href="/archive/jra/" class="btn-back">アーカイブトップへ戻る</a>
+        </div>
+      ) : (
+        <>
+          <header class="page-header">
+            <h1 class="title">🏆 {year}年 中央競馬 的中実績</h1>
+            <p class="subtitle">JRA月別の的中記録と年間統計</p>
+          </header>
+
+          {/* 年間統計 */}
+          <section class="year-stats">
+            <div class="stat-card">
+              <div class="stat-value">{yTotalDays}日</div>
+              <div class="stat-label">年間開催日数</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{yearHitRate}%</div>
+              <div class="stat-label">年間的中率</div>
+            </div>
+            <div class="stat-card">
+              <div class={`stat-value ${parseFloat(yearReturnRate) >= 100 ? 'profit' : 'loss'}`}>
+                {yearReturnRate}%
+              </div>
+              <div class="stat-label">年間回収率</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value profit">¥{yTotalPayout.toLocaleString()}</div>
+              <div class="stat-label">年間合計配当</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{yTotalHitRaces}/{yTotalRaces}</div>
+              <div class="stat-label">年間的中レース数</div>
+            </div>
+          </section>
+
+          {/* 月別一覧 */}
+          <section class="months-grid">
+            {monthSummaries.map((m) => (
+              <a href={`/archive/jra/${year}/${m.month}/`} class="month-card">
+                <div class="month-header">
+                  <h2 class="month-title">{parseInt(m.month, 10)}月</h2>
+                  {parseFloat(m.hitRate) === 100 ? (
+                    <div class="perfect-count">🏆 {m.totalHitRaces}/{m.totalRaces}的中</div>
+                  ) : (
+                    <div class="month-badge">{m.daysCount}日開催</div>
+                  )}
+                </div>
+
+                <div class="month-stats-grid">
+                  <div class="month-stat">
+                    <div class="month-stat-value">{m.hitRate}%</div>
+                    <div class="month-stat-label">的中率</div>
+                  </div>
+                  <div class="month-stat">
+                    <div class={`month-stat-value ${parseFloat(m.returnRate) >= 100 ? 'profit' : 'loss'}`}>{m.returnRate}%</div>
+                    <div class="month-stat-label">回収率</div>
+                  </div>
+                  <div class="month-stat">
+                    <div class="month-stat-value">{m.daysCount}日</div>
+                    <div class="month-stat-label">開催日数</div>
+                  </div>
+                  <div class="month-stat">
+                    <div class="month-stat-value">{m.totalHitRaces}/{m.totalRaces}</div>
+                    <div class="month-stat-label">的中レース数</div>
+                  </div>
+                  <div class="month-stat">
+                    <div class="month-stat-value profit">¥{(m.totalPayout / 1000).toFixed(0)}K</div>
+                    <div class="month-stat-label">合計配当</div>
+                  </div>
+                </div>
+
+                <div class="view-details-button">📊 詳細を見る →</div>
+              </a>
+            ))}
+          </section>
+
+          <footer class="page-footer">
+            <a href="/archive/jra/" class="btn-back">← JRAアーカイブトップ</a>
+            <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
+          </footer>
+        </>
+      )}
+    </div>
+  </main>
+</BaseLayout>
+
+<style lang="scss">
+  .archive-jra-page {
+    min-height: 100vh;
+    padding: 2rem 1rem 3rem;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .no-data {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 16px;
+    h1 { font-size: 2rem; margin-bottom: 1rem; color: #fbbf24; }
+    p { color: #cbd5e1; margin-bottom: 1.5rem; }
+  }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+    padding: 2rem;
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 16px;
+    .title { font-size: 2.25rem; font-weight: 800; color: #f59e0b; margin-bottom: 0.5rem; }
+    .subtitle { font-size: 1.05rem; color: #cbd5e1; }
+  }
+
+  .year-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 3rem;
+  }
+  .stat-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 2.25rem;
+    font-weight: bold;
+    color: #60a5fa;
+    margin-bottom: 0.5rem;
+    &.profit { color: #10b981; }
+    &.loss { color: #f87171; }
+  }
+  .stat-label { font-size: 0.95rem; color: #94a3b8; }
+
+  .months-grid { display: grid; gap: 1.5rem; }
+  .month-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 12px;
+    padding: 2rem;
+    transition: all 0.3s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    &:hover {
+      transform: translateY(-4px);
+      border-color: rgba(245, 158, 11, 0.5);
+      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.2);
+    }
+  }
+  .month-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(100, 116, 139, 0.3);
+  }
+  .month-title { font-size: 1.8rem; font-weight: bold; color: #fbbf24; }
+  .perfect-count {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 0.9rem;
+  }
+  .month-badge {
+    background: rgba(100, 116, 139, 0.25);
+    color: #cbd5e1;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 0.85rem;
+    border: 1px solid rgba(100, 116, 139, 0.4);
+  }
+  .month-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 1rem;
+  }
+  .month-stat { text-align: center; }
+  .month-stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #60a5fa;
+    margin-bottom: 0.3rem;
+    &.profit { color: #10b981; }
+    &.loss { color: #f87171; }
+  }
+  .month-stat-label { font-size: 0.85rem; color: #94a3b8; }
+
+  .view-details-button {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 1rem;
+    text-align: center;
+    margin-top: 1.5rem;
+    display: block;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .page-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid rgba(100, 116, 139, 0.3);
+  }
+  .btn-back, .btn-primary {
+    text-decoration: none;
+    font-weight: 700;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+  }
+  .btn-back { color: #60a5fa; }
+  .btn-back:hover { color: #3b82f6; }
+  .btn-primary {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #1a1400;
+  }
+
+  @media (max-width: 768px) {
+    .page-header .title { font-size: 1.8rem; }
+    .month-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+    .month-stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .page-footer { flex-direction: column; }
+  }
+</style>
