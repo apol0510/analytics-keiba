@@ -381,7 +381,7 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 | 独立ページ（prerender=false） | `src/pages/results-showcase/{jra,nankan}.astro` |
 | 無料ページ埋込バナー | `src/components/ResultsShowcaseBanner.astro`（category prop） |
 | 埋込先 | `src/pages/free-prediction/{jra,nankan}.astro`（dark-horse-link-section 直前） |
-| nav | `src/layouts/BaseLayout.astro`（PC/モバイルに「💎 昨日の買い目」。「的中実績」＝アーカイブとの混同回避で命名） |
+| nav | `src/layouts/BaseLayout.astro`。ナビ集約後、昨日の買い目は top-level ではなく「🏆 実績」ドロップダウン内の「💎 昨日の買い目」グループ（JRA/NANKAN）に格納。的中実績（アーカイブ）と同じ実績メニューにまとめて混同回避 |
 
 ### 運用の注意
 
