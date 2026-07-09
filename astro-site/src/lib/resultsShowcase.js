@@ -64,15 +64,38 @@ function buildMainRace(race) {
   const parsed = parseMainLine(firstOrNull(race?.bettingLines));
   if (!parsed) return null;
   const payout = Number(race?.umatan?.payout);
+  const isHit = !!race?.isHit;
+  const combination = race?.umatan?.combination ?? null;
+
+  // 表示形態の決定:
+  //   配信買い目は双方向馬単（本命⇄相手5頭・表裏両取り）。
+  //   通常は「本命 → 相手5頭」を → で見せる（本命が1着の順目的中・不的中はこれで自然）。
+  //   ただし的中が「相手が1着・本命が2着」の裏目だと、→ 表記のままでは
+  //   結果（例 2-1）と食い違って見える。この裏目的中のときだけ、勝った1組に畳んで
+  //   「本命 ⇄ 勝った相手」を ⇄ で見せる（相手5頭は出さない）。
+  let displayArrow = '→';
+  let displayPartners = parsed.partners;
+  if (isHit && combination) {
+    const [first, second] = String(combination)
+      .split('-')
+      .map((s) => s.trim());
+    if (second === parsed.honmei && first && first !== parsed.honmei) {
+      displayArrow = '⇄';
+      displayPartners = [first];
+    }
+  }
+
   return {
     raceNumber: race.raceNumber,
     raceName: race.displayName || race.raceName || '',
     venue: race.venue,
     honmei: parsed.honmei,
     partners: parsed.partners,
+    displayArrow,
+    displayPartners,
     betPoints: Number(race?.betPoints) || parsed.partners.length,
-    isHit: !!race?.isHit,
-    combination: race?.umatan?.combination ?? null,
+    isHit,
+    combination,
     payout: Number.isFinite(payout) && payout > 0 ? payout : null,
     result: race?.result ?? null,
   };

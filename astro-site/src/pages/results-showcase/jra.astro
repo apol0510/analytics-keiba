@@ -108,9 +108,9 @@ const pageDescription = view
                   <span class="sc-bet-label">配信買い目<span class="sc-bet-type">馬単 {g.mainRace.betPoints}点</span></span>
                   <div class="sc-bet-line">
                     <span class="sc-honmei">{g.mainRace.honmei}</span>
-                    <span class="sc-arrow">→</span>
+                    <span class="sc-arrow">{g.mainRace.displayArrow}</span>
                     <span class="sc-partners">
-                      {g.mainRace.partners.map((p: string) => (
+                      {g.mainRace.displayPartners.map((p: string) => (
                         <span class="sc-num">{p}</span>
                       ))}
                     </span>
