@@ -41,6 +41,9 @@ let perfectDays = 0;
 let totalPayoutMonth = 0;
 let totalHitRaces = 0;
 let totalRaces = 0;
+// 月間回収率用：購入点数のある日だけを分子・分母に算入（旧フォーマットの点数ゼロ日を除外）
+let totalBetPointsMonth = 0;
+let payoutWithBetsMonth = 0;
 
 days.forEach(dayKey => {
   const dayData = monthData[dayKey];
@@ -48,9 +51,16 @@ days.forEach(dayKey => {
   totalPayoutMonth += dayData.totalPayout || 0;
   totalHitRaces += dayData.hitRaces || 0;
   totalRaces += dayData.totalRaces || 0;
+  const dayBetPoints = dayData.races.reduce((s: number, r: any) => s + (Number.isFinite(r.betPoints) ? r.betPoints : 0), 0);
+  if (dayBetPoints > 0) {
+    totalBetPointsMonth += dayBetPoints;
+    payoutWithBetsMonth += dayData.totalPayout || 0;
+  }
 });
 
 const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+const totalInvestmentMonth = totalBetPointsMonth * 100;
+const recoveryRateMonth = totalInvestmentMonth > 0 ? Math.round((payoutWithBetsMonth / totalInvestmentMonth) * 100) : null;
 const hasData = days.length > 0;
 // この月に旧集計基準（2026-04-14以前、または snapshot 由来の旧判定日）が含まれるか（参考実績の注記用）。
 const monthHasLegacyDays = days.some(dayKey => !isCurrentBasisEntry(year, month, dayKey, monthData[dayKey]));
@@ -90,6 +100,12 @@ const pageDescription = hasData
             <div class="stat-value">{hitRate}%</div>
             <div class="stat-label">月間的中率</div>
           </div>
+          {recoveryRateMonth != null && (
+            <div class="stat-card">
+              <div class="stat-value">{recoveryRateMonth}%</div>
+              <div class="stat-label">月間回収率</div>
+            </div>
+          )}
           <div class="stat-card">
             <div class="stat-value">¥{totalPayoutMonth.toLocaleString()}</div>
             <div class="stat-label">月間合計配当</div>

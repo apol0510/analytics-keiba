@@ -2,7 +2,7 @@
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { buildMergedMonthData, aggregateMonthByBasis, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
+import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
 
 export const prerender = false;
 
@@ -54,6 +54,8 @@ let totalDays = 0;
 let totalPayoutYear = 0;
 let totalHitRaces = 0;
 let totalRaces = 0;
+// 年間回収率用：現在基準の日だけ購入点数を積算（年間配当と同じ基準に揃える）
+let totalBetPointsYear = 0;
 
 const monthSummaries = months.map(month => {
   const snapshotPath = join(dataDir, `archiveResults_${year}-${month}.json`);
@@ -74,6 +76,11 @@ const monthSummaries = months.map(month => {
     totalPayoutYear += current.payout;
     totalHitRaces += current.hitRaces;
     totalRaces += current.totalRaces;
+    for (const dayKey of Object.keys(monthData)) {
+      if (isCurrentBasisEntry(year, month, dayKey, monthData[dayKey])) {
+        totalBetPointsYear += monthData[dayKey].races.reduce((s: number, r: any) => s + (Number.isFinite(r.betPoints) ? r.betPoints : 0), 0);
+      }
+    }
   }
 
   return {
@@ -89,6 +96,8 @@ const monthSummaries = months.map(month => {
 });
 
 const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+const totalInvestmentYear = totalBetPointsYear * 100;
+const yearRecoveryRate = totalInvestmentYear > 0 ? Math.round((totalPayoutYear / totalInvestmentYear) * 100) : null;
 const hasData = months.length > 0;
 const hasCurrentBasisData = totalRaces > 0;
 
@@ -122,6 +131,12 @@ const pageDescription = `${year}年の全月別的中実績。パーフェクト
             <div class="stat-value">{yearHitRate}%</div>
             <div class="stat-label">年間的中率</div>
           </div>
+          {yearRecoveryRate != null && (
+            <div class="stat-card">
+              <div class="stat-value">{yearRecoveryRate}%</div>
+              <div class="stat-label">年間回収率</div>
+            </div>
+          )}
           <div class="stat-card">
             <div class="stat-value">¥{totalPayoutYear.toLocaleString()}</div>
             <div class="stat-label">年間合計配当</div>
