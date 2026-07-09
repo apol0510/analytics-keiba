@@ -148,7 +148,9 @@ exports.handler = async (event) => {
       case VERIFY_FLOW.OK: {
         const m = result.membership;
         const venue = venueString(m.venueAccess);
-        const redirectTo = venue === 'jra' ? '/premium-prediction/jra/' : '/premium-prediction/nankan/';
+        // ログイン成功後はダッシュボード（マイページ）へ遷移する。
+        // 予想ページへの導線はダッシュボード内から辿る。
+        const redirectTo = '/dashboard/';
         // localStorage UI 互換用（非権威。認可の真実源は HttpOnly Cookie ak_session。
         // PR-C/PR-D で AccessControl を Cookie ベースへ移行後に削除予定）。
         const userPlan = {

@@ -108,7 +108,7 @@ export const prerender = false;
           console.warn('localStorage write failed', e);
         }
       }
-      ok('ログインしました。', data.redirectTo || '/free-prediction/nankan/');
+      ok('ログインしました。', data.redirectTo || '/dashboard/');
     } catch (e) {
       console.error(e);
       fail('通信エラーが発生しました。もう一度お試しください。');
