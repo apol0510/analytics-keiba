@@ -16,7 +16,6 @@ let monthStats = {
   totalHitRaces: 0,
   totalBetAmount: 0,
   totalPayout: 0,
-  totalBetPoints: 0,
   hitRate: '0',
   returnRate: '0'
 };
@@ -36,8 +35,6 @@ try {
       monthStats.totalHitRaces += entry.hitRaces || 0;
       monthStats.totalBetAmount += entry.betAmount || 0;
       monthStats.totalPayout += entry.totalPayout || 0;
-      monthStats.totalBetPoints += entry.totalBetPoints
-        || (Array.isArray(entry.races) ? entry.races.reduce((s: number, r: any) => s + (Number(r.betPoints) || 0), 0) : 0);
     });
     if (monthStats.totalRaces > 0) {
       monthStats.hitRate = ((monthStats.totalHitRaces / monthStats.totalRaces) * 100).toFixed(1);
@@ -90,10 +87,6 @@ const pageDescription = monthData.length > 0
                 {monthStats.returnRate}%
               </div>
               <div class="stat-label">月間回収率</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-value">{monthStats.totalBetPoints.toLocaleString()}点</div>
-              <div class="stat-label">月間購入点数</div>
             </div>
             <div class="stat-card">
               <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
