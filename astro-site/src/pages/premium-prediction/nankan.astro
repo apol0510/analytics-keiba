@@ -618,8 +618,13 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                                     const horseCountMatch = raceName.match(/[（(](\d+)頭[）)]/);
                                     const startTimeMatch = raceName.match(/発走時刻\s?(\d+:\d+)/);
 
-                                    // 抽出した情報またはraceInfoから取得
-                                    const distance = distanceMatch ? distanceMatch[0] : (raceData.raceInfo?.distance || null);
+                                    // 抽出した情報またはraceInfoから取得（末尾に m を付与。free 版と同一正規化）
+                                    const rawDistance = distanceMatch ? distanceMatch[0] : (raceData.raceInfo?.distance || null);
+                                    const distance = (() => {
+                                        if (rawDistance == null || rawDistance === '') return null;
+                                        const s = String(rawDistance).replace(/㍍|メートル|ｍ|Ｍ/g, 'm').trim();
+                                        return /m$/i.test(s) ? s.replace(/M$/, 'm') : `${s}m`;
+                                    })();
                                     const horseCount = horseCountMatch ? horseCountMatch[1] : (raceData.raceInfo?.horseCount || null);
                                     const startTime = startTimeMatch ? startTimeMatch[1] : (raceData.raceInfo?.startTime || null);
 
