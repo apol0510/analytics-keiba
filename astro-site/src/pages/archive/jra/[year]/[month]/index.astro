@@ -107,6 +107,8 @@ const pageDescription = monthData.length > 0
             // 全レースをラウンドロビン順にソートしてから的中のみ抽出
             const hitRaces = sortRacesByVenueAndNumber(dayData.races || [], dayData.venues)
               .filter((race: any) => race.isHit);
+            const dayBetPoints = dayData.totalBetPoints
+              || (dayData.races || []).reduce((s: number, r: any) => s + (Number(r.betPoints) || 0), 0);
 
             return (
               <section class="day-section">
@@ -124,6 +126,9 @@ const pageDescription = monthData.length > 0
                   </div>
                   <div class="summary-item">
                     📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span>
+                  </div>
+                  <div class="summary-item">
+                    🎫 合計購入点数: <span class="summary-value">{dayBetPoints.toLocaleString()}点</span>
                   </div>
                   <div class="summary-item">
                     💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span>
