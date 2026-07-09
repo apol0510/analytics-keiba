@@ -393,16 +393,19 @@ const pageDescription = view
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 0.35rem 0.2rem;
+    gap: 0.1rem;
+    padding: 0.4rem 0.2rem;
     border-radius: 8px;
-    background: #f2f2f4;
-    border: 1px solid transparent;
-    &.hit { background: #e4f6ec; }
-    &.miss { opacity: 0.7; }
-    &.main { border-color: #ffcf5c; box-shadow: 0 0 0 1px #ffcf5c inset; }
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    &.hit { background: rgba(38, 174, 97, 0.22); border-color: rgba(38, 174, 97, 0.55); }
+    &.miss { opacity: 0.55; }
+    &.main { border-color: #f5c542; box-shadow: 0 0 0 1px #f5c542 inset; }
   }
-  .sc-chip-r { font-size: 0.72rem; font-weight: 700; color: #666; }
-  .sc-chip-mark { font-size: 0.85rem; }
+  .sc-chip-r { font-size: 0.72rem; font-weight: 700; color: #cfc7ee; }
+  .sc-chip.hit .sc-chip-r { color: #eafff2; }
+  .sc-chip-mark { font-size: 0.85rem; line-height: 1; }
+  .sc-chip.miss .sc-chip-mark { color: rgba(255, 255, 255, 0.4); }
 
   .sc-note {
     font-size: 0.78rem;
