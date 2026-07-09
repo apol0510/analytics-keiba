@@ -1,0 +1,124 @@
+---
+// ResultsShowcaseBanner.astro
+// 無料予想ページ上部に埋め込む「有料版の直近実績」コンパクトバナー。
+// 既存の結果アーカイブ（最新日 index 0）を読み、有料実績ショーケースへ誘導する。
+// データが無い場合は何も描画しない。
+//
+// props:
+//   category: 'jra' | 'nankan'
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { buildLatestShowcase } from '../lib/resultsShowcase.js';
+
+const { category } = Astro.props as { category: 'jra' | 'nankan' };
+const ARCHIVE_FILE = category === 'jra' ? 'archiveResultsJra.json' : 'archiveResults.json';
+const LABEL = category === 'jra' ? '中央競馬' : '南関競馬';
+
+let view: any = null;
+try {
+  const p = join(process.cwd(), 'src', 'data', ARCHIVE_FILE);
+  if (existsSync(p)) {
+    view = buildLatestShowcase(JSON.parse(readFileSync(p, 'utf-8')));
+  }
+} catch (e) {
+  console.error('[ResultsShowcaseBanner] load error:', e);
+}
+
+const dateLabel = view
+  ? (() => {
+      const [, m, d] = view.date.split('-');
+      return `${parseInt(m)}/${parseInt(d)}`;
+    })()
+  : '';
+
+// 代表メイン（最初の会場のメインレース）を1つピックしてティーザーにする
+const teaserMain = view?.venueGroups?.map((g: any) => g.mainRace).find(Boolean) || null;
+---
+
+{view && (
+  <a href={`/results-showcase/${category}/`} class="scb-banner" aria-label="有料版の買い目実績を見る">
+    <div class="scb-left">
+      <span class="scb-badge">💎 有料版 実績</span>
+      <span class="scb-meta">{dateLabel} {view.venueLabel}</span>
+    </div>
+    <div class="scb-body">
+      <div class="scb-headline">
+        有料会員に配信した<strong>メインの買い目</strong>を公開中
+      </div>
+      <div class="scb-stats">
+        <span class="scb-stat">的中 <b>{view.hitRaces}/{view.totalRaces}</b></span>
+        {view.recoveryRate != null && (
+          <span class={`scb-stat ${Number(view.recoveryRate) >= 100 ? 'profit' : ''}`}>
+            回収率 <b>{view.recoveryRate}%</b>
+          </span>
+        )}
+        {teaserMain && teaserMain.isHit && teaserMain.payout && (
+          <span class="scb-stat hit">メイン的中 <b>¥{teaserMain.payout.toLocaleString()}</b></span>
+        )}
+      </div>
+    </div>
+    <span class="scb-arrow">見る →</span>
+  </a>
+)}
+
+<style lang="scss">
+  .scb-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    text-decoration: none;
+    color: #fff;
+    background: linear-gradient(135deg, #2a1a5e 0%, #6a2ea6 100%);
+    border-radius: 14px;
+    padding: 0.9rem 1.1rem;
+    margin: 0 0 1.25rem;
+    box-shadow: 0 4px 16px rgba(58, 30, 110, 0.25);
+    transition: transform 0.15s, box-shadow 0.15s;
+    &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(58, 30, 110, 0.35); }
+  }
+  .scb-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+  .scb-badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #f5c542, #e08f1e);
+    color: #2a1a00;
+    white-space: nowrap;
+  }
+  .scb-meta { font-size: 0.72rem; opacity: 0.85; }
+  .scb-body { flex: 1; min-width: 180px; }
+  .scb-headline {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.4;
+    margin-bottom: 0.35rem;
+    strong { color: #f5c542; }
+  }
+  .scb-stats { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+  .scb-stat {
+    font-size: 0.78rem;
+    opacity: 0.9;
+    b { font-size: 0.9rem; }
+    &.profit b, &.hit b { color: #ffd75e; }
+  }
+  .scb-arrow {
+    font-weight: 800;
+    font-size: 0.9rem;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 0.5rem 0.9rem;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  @media (max-width: 560px) {
+    .scb-banner { gap: 0.6rem; padding: 0.8rem 0.9rem; }
+    .scb-arrow { width: 100%; text-align: center; }
+  }
+</style>

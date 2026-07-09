@@ -9,6 +9,7 @@ import { enrichHorse, formatRecentVenue, parseSexAge, parseDistanceMeters } from
 import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse, getDisplayComputerIndex, getHorseAiIndex } from '../../lib/shared-prediction-logic.js';
 import { buildFreePublicRows } from '../../lib/freePublicView.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
+import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
 // AK専用: shared featureScores（正本素材）を読むだけ → AK専用3項目へ要約派生（premium と同じ）。
 // KIは6項目詳細 / AKは3項目要約（docs/feature-scores-site-differentiation.md）。
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
@@ -285,6 +286,9 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
               ))}
             </div>
           )}
+
+          <!-- 有料版 実績ショーケースへの導線 -->
+          <ResultsShowcaseBanner category="jra" />
 
           <!-- 穴馬ページリンク -->
           <div class="dark-horse-link-section">

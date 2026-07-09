@@ -1,0 +1,459 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { buildLatestShowcase } from '../../lib/resultsShowcase.js';
+
+export const prerender = false;
+
+const CATEGORY = 'nankan';
+const CATEGORY_LABEL = '南関競馬';
+const ARCHIVE_FILE = 'archiveResults.json';
+
+const archivePath = join(process.cwd(), 'src', 'data', ARCHIVE_FILE);
+let view: any = null;
+try {
+  if (existsSync(archivePath)) {
+    const arr = JSON.parse(readFileSync(archivePath, 'utf-8'));
+    view = buildLatestShowcase(arr);
+  }
+} catch (error) {
+  console.error('[results-showcase] load error:', error);
+}
+
+const dateLabel = view
+  ? (() => {
+      const [y, m, d] = view.date.split('-');
+      return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+    })()
+  : '';
+
+const pageTitle = view
+  ? `有料版 買い目実績【${CATEGORY_LABEL}】${dateLabel}`
+  : `有料版 買い目実績【${CATEGORY_LABEL}】`;
+const pageDescription = view
+  ? `${dateLabel} ${view.venueLabel} 有料会員に配信したメインレースの買い目と結果。的中${view.hitRaces}/${view.totalRaces}・回収率${view.recoveryRate}%。毎日自動更新。`
+  : `${CATEGORY_LABEL}の有料版で配信したメインレース買い目の結果を毎日公開。`;
+---
+
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <main class="showcase-page">
+    <header class="sc-hero">
+      <div class="sc-badge">💎 PREMIUM 配信実績</div>
+      <h1 class="sc-title">有料版で配信した<br />メインレースの買い目と結果</h1>
+      <p class="sc-lead">
+        有料会員に<strong>実際に配信</strong>したメインレース（各会場）の買い目を、<br
+          class="pc-only"
+        />結果とともに公開しています。<strong>毎日自動更新</strong>。
+      </p>
+      <nav class="sc-cat-switch" aria-label="カテゴリ切替">
+        <a href="/results-showcase/jra/">中央競馬 JRA</a>
+        <a href="/results-showcase/nankan/" class="active">南関競馬 NANKAN</a>
+      </nav>
+    </header>
+
+    {!view ? (
+      <div class="sc-empty">
+        <h2>⚠️ 実績データがまだありません</h2>
+        <p>直近の開催結果が確定すると、ここに自動で表示されます。</p>
+        <a href="/pricing/" class="sc-btn-primary">💎 プレミアム予想を見る</a>
+      </div>
+    ) : (
+      <>
+        {/* 当日サマリー */}
+        <section class="sc-summary">
+          <div class="sc-summary-head">
+            <span class="sc-date">🗓 {dateLabel}</span>
+            <span class="sc-venue">{view.venueLabel}</span>
+          </div>
+          <div class="sc-summary-stats">
+            <div class="sc-stat">
+              <div class="sc-stat-value">{view.hitRaces}/{view.totalRaces}</div>
+              <div class="sc-stat-label">的中レース</div>
+            </div>
+            {view.hitRate != null && (
+              <div class="sc-stat">
+                <div class="sc-stat-value">{view.hitRate}%</div>
+                <div class="sc-stat-label">的中率</div>
+              </div>
+            )}
+            {view.recoveryRate != null && (
+              <div class="sc-stat">
+                <div class={`sc-stat-value ${Number(view.recoveryRate) >= 100 ? 'profit' : ''}`}>
+                  {view.recoveryRate}%
+                </div>
+                <div class="sc-stat-label">回収率</div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* 会場ごと */}
+        {view.venueGroups.map((g: any) => (
+          <section class="sc-venue-block">
+            <h2 class="sc-venue-title">
+              <span class="sc-venue-name">{g.venue}</span>
+              <span class="sc-venue-sub">全{g.totalRaces}R</span>
+            </h2>
+
+            {/* メインレース：買い目公開 */}
+            {g.mainRace ? (
+              <div class={`sc-main-card ${g.mainRace.isHit ? 'is-hit' : 'is-miss'}`}>
+                <div class="sc-main-head">
+                  <span class="sc-main-tag">🎯 メインレース {g.mainRace.raceNumber}R</span>
+                  {g.mainRace.raceName && <span class="sc-main-name">{g.mainRace.raceName}</span>}
+                </div>
+
+                <div class="sc-bet">
+                  <span class="sc-bet-label">配信買い目<span class="sc-bet-type">馬単 {g.mainRace.betPoints}点</span></span>
+                  <div class="sc-bet-line">
+                    <span class="sc-honmei">{g.mainRace.honmei}</span>
+                    <span class="sc-arrow">→</span>
+                    <span class="sc-partners">
+                      {g.mainRace.partners.map((p: string) => (
+                        <span class="sc-num">{p}</span>
+                      ))}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="sc-result">
+                  {g.mainRace.isHit ? (
+                    <>
+                      <span class="sc-hit-badge">✅ 的中</span>
+                      {g.mainRace.combination && (
+                        <span class="sc-hit-combo">{g.mainRace.combination}</span>
+                      )}
+                      {g.mainRace.payout && (
+                        <span class="sc-hit-payout">¥{g.mainRace.payout.toLocaleString()}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span class="sc-miss-badge">✗ 不的中</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div class="sc-main-card is-nodata">
+                <span class="sc-main-tag">メインレース買い目は準備中です</span>
+              </div>
+            )}
+
+            {/* 全レース的中一覧（メイン以外は的中有無のみ） */}
+            <div class="sc-race-strip">
+              {g.races.map((r: any) => (
+                <div
+                  class={`sc-chip ${r.isHit ? 'hit' : 'miss'} ${r.isMain ? 'main' : ''}`}
+                  title={`${r.raceNumber}R${r.isMain ? '（メイン）' : ''} ${r.isHit ? '的中' : '不的中'}`}
+                >
+                  <span class="sc-chip-r">{r.raceNumber}R</span>
+                  <span class="sc-chip-mark">{r.isHit ? '✅' : '✗'}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+
+        <p class="sc-note">
+          ※ メインレース以外は的中の有無のみ表示しています。全レースの買い目・印・指数はプレミアム予想でご覧いただけます。
+        </p>
+
+        {/* CTA */}
+        <section class="sc-cta">
+          <h2 class="sc-cta-title">この買い目は<br class="sp-only" />有料会員に配信済みです</h2>
+          <p class="sc-cta-text">今日のメインレース・全レースの買い目を受け取るには</p>
+          <a href="/pricing/" class="sc-btn-primary">💎 プランを見る</a>
+          <a href="/free-signup/" class="sc-btn-secondary">✨ まずは無料登録</a>
+        </section>
+      </>
+    )}
+  </main>
+</BaseLayout>
+
+<style lang="scss">
+  .showcase-page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 1rem 0 3rem;
+  }
+
+  /* Hero */
+  .sc-hero {
+    text-align: center;
+    padding: 2rem 1.25rem 1.75rem;
+    background: linear-gradient(135deg, #1a1440 0%, #3a1e6e 100%);
+    border-radius: 20px;
+    color: #fff;
+    margin-bottom: 1.5rem;
+  }
+  .sc-badge {
+    display: inline-block;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #f5c542, #e08f1e);
+    color: #2a1a00;
+    margin-bottom: 1rem;
+  }
+  .sc-title {
+    font-size: 1.6rem;
+    line-height: 1.35;
+    font-weight: 800;
+    margin: 0 0 0.75rem;
+  }
+  .sc-lead {
+    font-size: 0.95rem;
+    line-height: 1.7;
+    opacity: 0.92;
+    margin: 0 0 1.25rem;
+    strong { color: #f5c542; }
+  }
+  .sc-cat-switch {
+    display: inline-flex;
+    gap: 0.4rem;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 0.3rem;
+    border-radius: 999px;
+    a {
+      padding: 0.45rem 1.1rem;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #e9e4ff;
+      text-decoration: none;
+      transition: all 0.15s;
+      &.active { background: linear-gradient(135deg, #7c4dff, #b79bff); color: #fff; box-shadow: 0 2px 10px rgba(124, 77, 255, 0.5); }
+    }
+  }
+
+  /* Summary */
+  .sc-summary {
+    background: linear-gradient(135deg, #201a44, #2e2158);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 1.1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 18px rgba(20, 12, 50, 0.35);
+    color: #ece9ff;
+  }
+  .sc-summary-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.9rem;
+  }
+  .sc-date { font-weight: 700; font-size: 1.05rem; color: #fff; }
+  .sc-venue {
+    background: rgba(124, 77, 255, 0.28);
+    color: #d7c9ff;
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 0.2rem 0.7rem;
+    border-radius: 999px;
+  }
+  .sc-summary-stats { display: flex; gap: 0.75rem; }
+  .sc-stat {
+    flex: 1;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 0.7rem 0.4rem;
+  }
+  .sc-stat-value { font-size: 1.35rem; font-weight: 800; color: #fff; }
+  .sc-stat-value.profit { color: #ff7aa5; }
+  .sc-stat-label { font-size: 0.72rem; color: #b3a9d9; margin-top: 0.15rem; }
+
+  /* Venue block */
+  .sc-venue-block { margin-bottom: 1.75rem; }
+  .sc-venue-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    font-size: 1.15rem;
+    margin: 0 0 0.75rem;
+    padding-left: 0.5rem;
+    border-left: 4px solid #7c4dff;
+  }
+  .sc-venue-sub { font-size: 0.8rem; color: #999; font-weight: 500; }
+
+  /* Main race card */
+  .sc-main-card {
+    border-radius: 16px;
+    padding: 1.1rem 1.2rem;
+    margin-bottom: 0.9rem;
+    border: 2px solid rgba(124, 77, 255, 0.4);
+    background: linear-gradient(180deg, #1f1a42, #2a1f56);
+    color: #ece9ff;
+    box-shadow: 0 4px 18px rgba(20, 12, 50, 0.35);
+    &.is-hit { border-color: #f5c542; background: linear-gradient(180deg, #2b2340, #3c2e1c); box-shadow: 0 4px 22px rgba(245, 197, 66, 0.2); }
+    &.is-miss { opacity: 0.94; }
+    &.is-nodata { text-align: center; color: #9a90c4; font-size: 0.9rem; }
+  }
+  .sc-main-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+  }
+  .sc-main-tag {
+    font-weight: 800;
+    font-size: 0.9rem;
+    color: #c9b3ff;
+  }
+  .sc-main-name { font-size: 0.85rem; color: #cfc7ee; }
+
+  .sc-bet { margin-bottom: 0.85rem; }
+  .sc-bet-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: #b3a9d9;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+  .sc-bet-type {
+    background: rgba(124, 77, 255, 0.3);
+    color: #e2d7ff;
+    padding: 0.1rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.72rem;
+  }
+  .sc-bet-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .sc-honmei,
+  .sc-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    height: 2rem;
+    padding: 0 0.35rem;
+    border-radius: 8px;
+    font-weight: 800;
+    font-size: 1.05rem;
+  }
+  .sc-honmei { background: #e0447a; color: #fff; box-shadow: 0 2px 8px rgba(224, 68, 122, 0.5); }
+  .sc-num { background: rgba(255, 255, 255, 0.08); border: 2px solid rgba(180, 160, 240, 0.5); color: #ece9ff; }
+  .sc-arrow { font-weight: 800; color: #b79bff; font-size: 1.1rem; }
+  .sc-partners { display: inline-flex; gap: 0.35rem; flex-wrap: wrap; }
+
+  .sc-result {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding-top: 0.75rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.15);
+  }
+  .sc-hit-badge {
+    background: #21a05a;
+    color: #fff;
+    font-weight: 800;
+    font-size: 0.9rem;
+    padding: 0.3rem 0.8rem;
+    border-radius: 999px;
+  }
+  .sc-hit-combo {
+    font-weight: 800;
+    font-size: 1rem;
+    color: #fff;
+    letter-spacing: 0.03em;
+  }
+  .sc-hit-payout {
+    margin-left: auto;
+    font-weight: 800;
+    font-size: 1.2rem;
+    color: #ffcf5c;
+  }
+  .sc-miss-badge {
+    background: rgba(255, 255, 255, 0.1);
+    color: #b3a9d9;
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.8rem;
+    border-radius: 999px;
+  }
+
+  /* Race strip */
+  .sc-race-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+    gap: 0.4rem;
+  }
+  .sc-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.35rem 0.2rem;
+    border-radius: 8px;
+    background: #f2f2f4;
+    border: 1px solid transparent;
+    &.hit { background: #e4f6ec; }
+    &.miss { opacity: 0.7; }
+    &.main { border-color: #ffcf5c; box-shadow: 0 0 0 1px #ffcf5c inset; }
+  }
+  .sc-chip-r { font-size: 0.72rem; font-weight: 700; color: #666; }
+  .sc-chip-mark { font-size: 0.85rem; }
+
+  .sc-note {
+    font-size: 0.78rem;
+    color: #999;
+    line-height: 1.6;
+    margin: 1.25rem 0.25rem 0;
+  }
+
+  /* CTA */
+  .sc-cta {
+    margin-top: 2rem;
+    text-align: center;
+    padding: 2rem 1.25rem;
+    background: linear-gradient(135deg, #2a1a5e, #6a2ea6);
+    border-radius: 20px;
+    color: #fff;
+  }
+  .sc-cta-title { font-size: 1.35rem; font-weight: 800; margin: 0 0 0.6rem; line-height: 1.4; }
+  .sc-cta-text { font-size: 0.9rem; opacity: 0.9; margin: 0 0 1.25rem; }
+  .sc-btn-primary,
+  .sc-btn-secondary {
+    display: inline-block;
+    font-weight: 800;
+    text-decoration: none;
+    padding: 0.85rem 1.75rem;
+    border-radius: 999px;
+    margin: 0.3rem;
+  }
+  .sc-btn-primary {
+    background: linear-gradient(135deg, #f5c542, #e08f1e);
+    color: #2a1a00;
+  }
+  .sc-btn-secondary {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+  }
+
+  .sc-empty {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
+    p { color: #666; margin-bottom: 1.5rem; }
+  }
+
+  .pc-only { display: inline; }
+  .sp-only { display: none; }
+  @media (max-width: 600px) {
+    .sc-title { font-size: 1.35rem; }
+    .sc-hit-payout { font-size: 1.05rem; }
+    .pc-only { display: none; }
+    .sp-only { display: inline; }
+  }
+</style>

@@ -11,6 +11,7 @@ import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro'
 import { buildFreePublicRows } from '../../lib/freePublicView.js';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
+import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
 
 // 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
 // shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
@@ -108,6 +109,9 @@ const analysis = firstVenue.mainRace.analysis;
                 ))}
             </div>
         )}
+
+        <!-- 有料版 実績ショーケースへの導線 -->
+        <ResultsShowcaseBanner category="nankan" />
 
         <!-- 穴馬ページリンク -->
         <div class="dark-horse-link-section">
