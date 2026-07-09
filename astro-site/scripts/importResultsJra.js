@@ -268,11 +268,12 @@ function calculateBettingPoints(bettingLine) {
  * 例: "9-16.13.2.3.8.11(抑え12.4.5.6.14.15.10)" → 本線 16.13.2.3.8.11 のみで判定 / "5↔9.11.6.8.4"
  */
 export function checkUmatanHit(bettingLine, result) {
-  const match = String(bettingLine).match(/^(\d+)[\-↔⇔→](.+)$/);
+  const match = String(bettingLine).match(/^(\d+)([\-↔⇔→])(.+)$/);
   if (!match) return false;
 
   const axis = parseInt(match[1]);
-  const aitePart = match[2];
+  const separator = match[2];
+  const aitePart = match[3];
 
   // 本線相手馬のみ抽出（(抑え…)／（抑え…）は判定対象外）
   const mainPart = aitePart.replace(/[(（]抑え[^)）]*[)）]/g, '');
@@ -284,14 +285,16 @@ export function checkUmatanHit(bettingLine, result) {
 
   if (!first || !second) return false;
 
-  // 馬単判定（2パターン）本線相手のみ
-  // パターン1: 軸が1着、本線相手が2着
+  // → はメインレースの一方向馬単（本命→相手のみ）。↔ / ⇔ / -（旧・通常レース）は双方向。
+  const oneWay = separator === '→';
+
+  // パターン1: 軸が1着、本線相手が2着（順目）
   if (axis === first && mainAite.includes(second)) {
     return true;
   }
 
-  // パターン2: 本線相手が1着、軸が2着
-  if (mainAite.includes(first) && axis === second) {
+  // パターン2: 本線相手が1着、軸が2着（裏目）。一方向（→）のときは的中としない。
+  if (!oneWay && mainAite.includes(first) && axis === second) {
     return true;
   }
 

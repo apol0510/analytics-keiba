@@ -76,10 +76,11 @@ export function generateMainRaceUmatanLines(horses) {
   if (partners.length === 0) return [];
   // 抑え（補欠/抑え かつ racebook 系コンピ指数 ≥ 45）を情報として括弧付与する。
   // 表示側 isOsaeCandidate と同じ selectOsaeNumbers を使うため、メインレースでも
-  // 「表示の抑え」と「買い目の抑え」が一致する。本線10点（top5×2）には含めない。
+  // 「表示の抑え」と「買い目の抑え」が一致する。本線5点（本命→相手5頭・一方向）には含めない。
   // 軸・選出済み相手は除外。0 件なら "(抑え...)" を付与しない。
   const osaeNumbers = selectOsaeNumbers(horses, [honmeiNum, ...partners]);
-  let line = `${honmeiNum}↔${partners.join('.')}`;
+  // メインレースは「本命 → 相手5頭」の一方向馬単 5 点（2026-07-09〜。旧: 双方向↔10点）。
+  let line = `${honmeiNum}→${partners.join('.')}`;
   if (osaeNumbers.length > 0) {
     line += `(抑え${osaeNumbers.join('.')})`;
   }
@@ -93,7 +94,8 @@ export function countMainRaceBetPoints(horses) {
   const honmei = horses.find(h => h && h.role === '本命');
   const honmeiNum = horseNumber(honmei);
   const filtered = partners.filter(p => horseNumber(p) !== honmeiNum);
-  return filtered.length * 2;
+  // メインレースは一方向馬単（本命→相手5頭）= 相手頭数そのまま（最大5点）。旧: ×2（双方向10点）。
+  return filtered.length;
 }
 
 // 通常レース（メイン以外）の馬単買い目を生成する。本命軸 + 対抗軸の 2 段構成:
@@ -214,7 +216,7 @@ export function countPointsFromUmatanLine(line) {
     return (right.split(',').filter(Boolean).length || 0) * 2;
   }
   if (line.includes('→')) {
-    // 通常レース 10点ロジックの片方向「軸→A.B.C.D.E」（. 区切り）
+    // メインレース 5点「本命→相手5頭」（一方向・. 区切り）= 相手頭数（×1）
     // 後方互換: 旧表記「軸→A,B,C」（, 区切り）も処理
     const beforeParen = line.split('(')[0];
     const idx = beforeParen.indexOf('→');

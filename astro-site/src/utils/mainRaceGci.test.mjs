@@ -35,7 +35,8 @@ const HJ = (number, role, pt, sci, ci) => {
   if (ci !== undefined) h.computerIndex = ci;
   return h;
 };
-const partnersOf = (line) => line.split('(')[0].split('↔')[1].split('.');
+// 通常レースは双方向「↔」、メインレースは一方向「→」。どちらの区切りでも相手を取り出す。
+const partnersOf = (line) => line.split('(')[0].split(/[↔→]/)[1].split('.');
 const stripCI = (hs) => hs.map((h) => { const { computerIndex, sourceComputerIndex, ...rest } = h; return { ...rest }; });
 
 // 基準レース: 本命1 / 対抗2 / 単穴3 / 連下最上位4 / 連下5(pt50) / 連下6(pt40,CI40) / 補欠7(CI45)。
@@ -165,10 +166,10 @@ test('同一の順序付き馬単を重複生成しない（段内の相手は�
 });
 
 // ── メインレース非影響 ───────────────────────────────────────────
-test('メインレース生成は従来F3のまま（G-CIの差し替えを行わない）', () => {
+test('メインレース生成は一方向「本命→相手5頭」5点（G-CIの差し替えを行わない）', () => {
   const main = generateRaceUmatanLines(raceFire(), true);
   assert.deepStrictEqual(main, generateMainRaceUmatanLines(raceFire()));
-  assert.deepStrictEqual(main, ['1↔2.3.4.5.6(抑え7)']); // 相手5位#6は #7へ差し替えない
+  assert.deepStrictEqual(main, ['1→2.3.4.5.6(抑え7)']); // 一方向→ / 相手5位#6は #7へ差し替えない
 });
 
 test('G-CIは通常レースだけに適用（同一レースでメイン=#6維持 / 通常=#7昇格）', () => {

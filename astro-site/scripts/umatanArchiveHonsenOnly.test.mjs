@@ -6,7 +6,7 @@
  * 固定する契約:
  *   - 本線相手で 1着・2着成立 → 的中 / 抑え馬だけ絡む → 不的中
  *   - 本線と抑え両方に存在 → 本線として的中 / 抑え表記なし → 従来どおり
- *   - 半角/全角括弧・dash/↔/⇔/→ の各形式対応
+ *   - 半角/全角括弧対応・双方向区切り(dash/↔/⇔)は両方向判定・一方向(→)は軸→相手のみ的中
  *   - 投資額5点固定不変・払戻/回収率の集計式不変
  *   - 2026-07-01 大井 R10 が不的中 / 開催集計 10-12・払戻¥22,090・ROI≈368.2%
  */
@@ -53,12 +53,18 @@ for (const [label, check] of [['南関', checkNankan], ['JRA', checkJra]]) {
     assert.equal(check('5↔9.11（抑え3）', res(5, 9)), true);
   });
 
-  test(`[${label}] dash / ↔ / ⇔ / → の各区切り記号対応`, () => {
-    for (const sep of ['-', '↔', '⇔', '→']) {
+  test(`[${label}] 双方向区切り (dash / ↔ / ⇔) は軸→相手・相手→軸の両方向で的中`, () => {
+    for (const sep of ['-', '↔', '⇔']) {
       assert.equal(check(`5${sep}9.11`, res(5, 9)), true, `sep=${sep} axis1着`);
       assert.equal(check(`5${sep}9.11`, res(9, 5)), true, `sep=${sep} 相手1着`);
       assert.equal(check(`5${sep}9.11`, res(5, 2)), false, `sep=${sep} 不在`);
     }
+  });
+
+  test(`[${label}] 一方向区切り (→) は軸→相手のみ的中・裏目(相手→軸)は不的中`, () => {
+    assert.equal(check('5→9.11', res(5, 9)), true, '軸1着・相手2着 → 的中');
+    assert.equal(check('5→9.11', res(9, 5)), false, '相手1着・軸2着(裏目) → 不的中');
+    assert.equal(check('5→9.11', res(5, 2)), false, '不在');
   });
 
   test(`[${label}] 1着/2着欠落 → 不的中（防御）`, () => {

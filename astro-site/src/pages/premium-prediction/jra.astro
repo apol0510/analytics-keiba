@@ -648,8 +648,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 
                   {/* AI推奨買い目（nankan 統一カード形式） */}
                   {umatanLines && umatanLines.length > 0 && (() => {
-                    const isMain = isMainRace(race.raceInfo.raceNumber, venuePredictions.length);
                     // 保存 bettingLines.umatan（正本）をそのまま表示。軸の役割・馬名はラベル用に allHorses から復元。
+                    // メインレースは正本生成時点で一方向「本命→相手5頭」5点で保存されるため、表示側で加工しない。
                     const markOf = (role) => role === '本命' ? '◎' : role === '対抗' ? '○' : role === '単穴' ? '▲' : role === '連下最上位' ? '△' : '';
                     const lines = umatanLines.map((lineStr) => {
                       const axisNum = parseInt(String(lineStr).match(/^(\d+)/)?.[1] ?? '', 10);

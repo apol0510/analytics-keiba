@@ -562,11 +562,12 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 console.warn(`Race ${raceData.raceNumber} integrity issues:`, integrity);
             }
 
-            // 買い目データ取得（10点ロジック準拠 / 単一源は importPrediction の bettingLines）
+            // 買い目データ取得（メイン=一方向5点ロジック準拠 / 単一源は importPrediction の bettingLines）
             // raceData.bettingLines.umatan を最優先。欠落時のみ共通モジュールで再生成。
             const umatanLines = Array.isArray(raceData.bettingLines?.umatan) && raceData.bettingLines.umatan.length > 0
                 ? raceData.bettingLines.umatan
                 : generateRaceUmatanLines(raceData.allHorses || [], !!raceData.isMainRace);
+            // 保存文字列をそのまま表示。メインは正本生成時点で一方向「本命→相手5頭」5点で保存される。
             const umatanBets = umatanLines.map((line) => ({
                 numbers: stripOsaeForDisplay(line),
                 points: countPointsFromUmatanLine(line) || 0,

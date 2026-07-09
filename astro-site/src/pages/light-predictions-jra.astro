@@ -140,12 +140,12 @@ const venueListLabel = venuesView.map(v => v.venueName).join('・');
 
 // Light の買い目はローカル生成を廃止し、保存 bettingLines.umatan（単一正本）のメインレース買い目を参照する。
 // Light はメインレースのみ表示し、Premium の同一メインレースと完全一致させる（軸・相手の独自再選定はしない）。
-// 正本のメインレース行「本命↔相手5」を軸+相手へ分解して既存の式表示に流すヘルパー。
+// 正本のメインレース行「本命→相手5」(一方向5点)を軸+相手へ分解して既存の式表示に流すヘルパー。
 function parseMainUmatanForDisplay(bettingLines, horses) {
     const stored = Array.isArray(bettingLines?.umatan) ? bettingLines.umatan : [];
     const mainLine = stored[0];
     if (!mainLine) return null;
-    // 区切りは正本の ↔ を主とし、旧 dash/⇔/→ 形式にも後方互換で対応。
+    // 区切りは正本の → を主とし、旧 dash/↔/⇔ 形式にも後方互換で対応。
     const m = String(mainLine).match(/^(\d+)[-↔⇔→]([^()]+)/);
     if (!m) return null;
     const axis = parseInt(m[1], 10);
@@ -418,7 +418,7 @@ const latestResult = getLatestDayDataJra();
                                                 <div class="formula-horse-name">{oneLineBets.axisName}</div>
                                                 <div class="formula-content">
                                                     <span class="axis-number">{oneLineBets.axis}</span>
-                                                    <span class="formula-arrow">⇔</span>
+                                                    <span class="formula-arrow">→</span>
                                                     <span class="opponents-list">
                                                         {oneLineBets.opponents.map((num, idx) => (
                                                             <>
