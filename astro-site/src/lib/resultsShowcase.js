@@ -154,6 +154,9 @@ export function buildShowcaseDay(dayEntry) {
     venueLabel: venues.join('・') || dayEntry.venue || '',
     totalRaces: Number(dayEntry.totalRaces) || dayEntry.races.length,
     hitRaces: Number(dayEntry.hitRaces) || dayEntry.races.filter((r) => r.isHit).length,
+    totalBetPoints:
+      Number(dayEntry.totalBetPoints) ||
+      dayEntry.races.reduce((s, r) => s + (Number(r.betPoints) || 0), 0),
     hitRate: dayEntry.hitRate ?? null,
     recoveryRate: dayEntry.recoveryRate ?? dayEntry.returnRate ?? null,
     totalPayout: Number(dayEntry.totalPayout) || 0,
