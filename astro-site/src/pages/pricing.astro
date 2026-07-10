@@ -335,10 +335,15 @@ const planTierByToken = buildPlanTierByToken();
                 </div>
 
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: メインレースの買い目は何点ですか？</h3>
+                    <h3 class="faq-question">Q: 買い目は何点ですか？</h3>
                     <p class="faq-answer">
-                        馬単「本命 → 相手5頭」の最大5点です。裏目（相手 → 本命）は買いません。<br>
-                        上位プランでも買い目の点数は増やさず、<strong>閲覧できるレース数が増える</strong>設計にしています。点数を増やして的中率を買う方式は取りません。
+                        メインレースは馬単「本命 → 相手5頭」の<strong>最大5点</strong>です。裏目（相手 → 本命）は買いません。<br>
+                        メインレース以外は、本命を軸にした買い目と対抗を軸にした買い目の2段構成でご提供します（プレミアム年払いのみ）。<br>
+                        上位プランでも買い目の点数は増やさず、<strong>閲覧できるレース数が増える</strong>設計にしています。点数を増やして的中率を買う方式は取りません。<br>
+                        実際にお出ししたメインレースの買い目と結果は
+                        <a href="/results-showcase/nankan/">昨日の買い目（南関）</a>・<a href="/results-showcase/jra/">昨日の買い目（中央）</a>で、
+                        日々の的中実績は
+                        <a href="/archive/nankan/">実績アーカイブ（南関）</a>・<a href="/archive/jra/">実績アーカイブ（中央）</a>で公開しています。ご購入前にご確認ください。
                     </p>
                 </div>
 
@@ -353,7 +358,7 @@ const planTierByToken = buildPlanTierByToken();
                 <div class="faq-item" data-faq-only-for="light">
                     <h3 class="faq-question">Q: Lightからプレミアム年払いへの切り替え手順は？</h3>
                     <p class="faq-answer">
-                        上の「🏦 銀行振込へ進む」からお申し込みください。ご入金の確認が取れ次第、プレミアムのご利用を開始いただけます。<br>
+                        上の「🏦 銀行振込へ進む」で口座情報をご確認のうえお振込みいただき、振込完了後に報告フォームをご送信ください。入金確認取れ次第、プレミアムのご利用を開始いただけます。<br>
                         現在ご利用中のLightの残り期間の取り扱いについては個別にご案内しますので、お気軽にお問い合わせください。
                     </p>
                 </div>
@@ -398,11 +403,12 @@ const planTierByToken = buildPlanTierByToken();
                 </div>
                 -->
 
+                <!-- 手順は銀行振込モーダル内の .bank-steps と必ず一致させること（振込が先） -->
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
-                        ①お申し込みフォームから送信 → ②銀行振込 → ③入金確認後、ログイン情報をメールでお送りします。<br>
-                        入金確認取れ次第、即時にご利用開始いただけます。
+                        ①銀行振込 → ②振込完了後、報告フォームをご送信 → ③入金確認後、ログイン情報をメールでお送りします。<br>
+                        フォームは<strong>お振込みが済んでから</strong>ご送信ください（未入金の状態でのお申し込みフォームではありません）。入金確認取れ次第、即時にご利用開始いただけます。
                     </p>
                 </div>
 
@@ -1162,6 +1168,16 @@ const planTierByToken = buildPlanTierByToken();
         color: #94a3b8;
         line-height: 1.6;
         margin: 0;
+    }
+
+    .faq-answer a {
+        color: #60a5fa;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    .faq-answer a:hover {
+        color: #93c5fd;
     }
 
     /* レスポンシブ */

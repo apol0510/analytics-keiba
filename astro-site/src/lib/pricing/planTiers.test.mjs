@@ -80,6 +80,34 @@ test('guard: pricing.astro に FAQ のプラン別出し分けルールがある
   assert.ok(src.includes('data-faq-only-for="light"'), 'only-for を使う FAQ が無い');
 });
 
+// FAQ の手順は銀行振込モーダルの .bank-steps と同じ順序（振込 → 報告フォーム）でなければならない
+test('guard: FAQ の利用開始フローが「振込が先」になっている', () => {
+  const src = readFileSync(PRICING_ASTRO, 'utf8');
+  const faq = src.slice(src.indexOf('Q: 利用開始までの流れは？'));
+  const flow = faq.slice(0, faq.indexOf('</div>'));
+  assert.ok(
+    flow.indexOf('①銀行振込') < flow.indexOf('報告フォーム'),
+    'FAQ が「フォーム送信 → 振込」の順になっている（モーダルの実手順と矛盾）',
+  );
+  // モーダル側の実手順が変わっていないことも確認
+  assert.ok(src.includes('上記の口座情報に振込金額をお振込みください'));
+  assert.ok(src.includes('振込完了後、下記のフォームから必要情報をご送信ください'));
+});
+
+// 買い目 FAQ は実績ページへ導線を張る（購入前に実物を確認できる状態を維持する）
+test('guard: 買い目 FAQ が実績ページへリンクしている', () => {
+  const src = readFileSync(PRICING_ASTRO, 'utf8');
+  assert.ok(src.includes('Q: 買い目は何点ですか？'), '買い目 FAQ の見出しが変わった');
+  for (const href of [
+    '/results-showcase/nankan/',
+    '/results-showcase/jra/',
+    '/archive/nankan/',
+    '/archive/jra/',
+  ]) {
+    assert.ok(src.includes(`href="${href}"`), `実績リンクが無い: ${href}`);
+  }
+});
+
 // Light → プレミアム年払いの価格比較を FAQ に書いている。カードの価格を直したら破綻するため固定する
 test('guard: FAQ の Light 年間換算と差額がカード表示価格と整合する', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
