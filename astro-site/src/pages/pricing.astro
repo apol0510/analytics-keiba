@@ -1,9 +1,44 @@
 ---
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
+
+// 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
+const planTierByToken = buildPlanTierByToken();
 ---
 
 <BaseLayout title="料金プラン" heroPreload={{ pc: "/images/ak-pricing-pc.webp", mobile: "/images/ak-pricing-mobile.webp" }}>
+    <!-- プラン出し分け: カードが描画される前に <html> へ現在プランの tier を付ける。
+         判定は CSS 側（下位カードの display:none）で行うため、ちらつきなく確定する。
+         define:vars は is:inline を含意するので、この script はパース時に同期実行される。 -->
+    <script define:vars={{ planTierByToken }}>
+      (function () {
+        try {
+          // 退会申請 / 有効期限切れは無料相当。出し分けせず全プランを見せる（fail-open）
+          if (localStorage.getItem('isWithdrawalRequested') === 'true') return;
+          if (localStorage.getItem('isExpired') === 'true') return;
+          const validUntil = localStorage.getItem('validUntil');
+          if (validUntil && validUntil !== 'null' && new Date(validUntil) < new Date()) return;
+
+          // dashboard.astro / AccessControl.astro と同じ取得順
+          let raw = '';
+          const stored = localStorage.getItem('user-plan');
+          if (stored) {
+            try { raw = (JSON.parse(stored) || {}).plan || ''; } catch (_) {}
+          }
+          if (!raw) raw = localStorage.getItem('user_plan') || localStorage.getItem('userPlan') || '';
+          if (!raw) return;
+
+          // normalizePlanToken(src/lib/auth/planNormalization.js) と同一の正規化。変更時は両方直すこと
+          const token = String(raw).normalize('NFKC').trim().toLowerCase().replace(/[\s_]+/g, '-');
+          const tier = planTierByToken[token];
+          if (typeof tier !== 'number') return; // 未知プランは fail-open
+
+          document.documentElement.setAttribute('data-plan-tier', String(tier));
+        } catch (_) {}
+      })();
+    </script>
+
     <div class="pricing-page">
         <!-- ヒーロー画像（購買後押し） -->
         <div class="pricing-hero">
@@ -31,12 +66,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <p class="pricing-subtitle">
                 中央競馬・南関競馬の両方に対応するAI予想システム。1つのプランでどちらもご利用いただけます。
             </p>
+            <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
+            <p class="pricing-upgrade-note">
+                現在 <strong>Light</strong> プランをご利用中です。アップグレード可能なプランのみ表示しています。
+            </p>
         </div>
 
         <!-- プラン比較カード -->
         <div class="plans-container">
             <!-- プレミアム年払いプラン -->
-            <div class="plan-card plan-card-recommended">
+            <div class="plan-card plan-card-recommended" data-plan-tier="2">
                 <div class="recommended-badge">
                     <span>✨ お得</span>
                 </div>
@@ -84,7 +123,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
             <!-- プレミアム月払いプラン（非表示中） -->
             {false && (
-            <div class="plan-card">
+            <div class="plan-card" data-plan-tier="2">
                 <div class="plan-header">
                     <h3 class="plan-name">プレミアム月払い</h3>
                     <div class="plan-price">
@@ -125,7 +164,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             )}
 
             <!-- Lightプラン -->
-            <div class="plan-card">
+            <div class="plan-card" data-plan-tier="1">
                 <div class="plan-header">
                     <h3 class="plan-name">Light</h3>
                     <div class="plan-price">
@@ -167,7 +206,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </div>
 
             <!-- 無料プラン -->
-            <div class="plan-card">
+            <div class="plan-card" data-plan-tier="0">
                 <div class="plan-header">
                     <h3 class="plan-name">無料プラン</h3>
                     <div class="plan-price">
@@ -203,7 +242,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </div>
 
             <!-- プレミアム買い切りプラン（中央・おすすめ）※一時非表示 -->
-            <div class="plan-card plan-card-recommended" style="display: none;">
+            <div class="plan-card plan-card-recommended" data-plan-tier="2" style="display: none;">
                 <!-- 人気バッジ -->
                 <div class="recommended-badge">
                     <span>🔥 今だけ特別価格</span>
@@ -710,6 +749,37 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         font-size: 1.25rem;
         color: #94a3b8;
         line-height: 1.6;
+    }
+
+    /* ===== プラン出し分け（Light 会員のみ） =====
+       Light 会員には現在プラン(tier 1)と下位(tier 0 = 無料)を出さない。
+       プレミアム系(tier 2 以上)は上位プランが存在しないため、意図的に全プランを表示する。
+       未ログイン / 無料会員 / 未知プランは data-plan-tier が付かず全プラン表示（fail-open）。 */
+    .pricing-upgrade-note {
+        display: none;
+        margin-top: 1.25rem;
+        padding: 0.75rem 1.25rem;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+        border-radius: 0.75rem;
+        background: rgba(59, 130, 246, 0.08);
+        color: #cbd5e1;
+        font-size: 0.95rem;
+    }
+
+    :global(:root[data-plan-tier="1"]) .pricing-upgrade-note {
+        display: block;
+    }
+
+    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"],
+    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"] {
+        display: none;
+    }
+
+    /* 残り 1 枚になっても 4 カラムに引き伸ばされないよう中央寄せ
+       （min() で狭い端末でも横溢れさせない） */
+    :global(:root[data-plan-tier="1"]) .plans-container {
+        grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 380px));
+        justify-content: center;
     }
 
     /* プランカード */

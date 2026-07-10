@@ -37,7 +37,7 @@ const CANONICAL_VENUE_SET = new Set(CANONICAL_VENUES);
  * 別名 → 正規プラン。
  * キーは normalizeToken() を通した後の値（小文字 / NFKC / 空白・アンダースコアをハイフンに）。
  */
-const PLAN_ALIASES = Object.freeze({
+export const PLAN_ALIASES = Object.freeze({
   // free 系（有料セッションとしては発行不可）
   'free': 'free',
   'free-registered': 'free',
@@ -89,11 +89,13 @@ const VENUE_ALIASES = Object.freeze({
  * - trim / 小文字化
  * - 連続する空白・アンダースコアを 1 個のハイフンに
  */
-function normalizeToken(raw) {
+export function normalizePlanToken(raw) {
   if (typeof raw !== 'string') return null;
   const t = raw.normalize('NFKC').trim().toLowerCase().replace(/[\s_]+/g, '-');
   return t.length > 0 ? t : null;
 }
+
+const normalizeToken = normalizePlanToken;
 
 /**
  * plan を正規値へ変換する。未知なら null。
