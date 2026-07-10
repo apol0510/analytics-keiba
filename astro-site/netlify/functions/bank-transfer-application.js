@@ -5,6 +5,7 @@
  */
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
+import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -414,31 +415,27 @@ exports.handler = async (event, context) => {
         planName = 'Light';
       }
 
-      // 有効期限計算（2026-02-09価格体系）
-      const today = new Date();
-      let expirationDate = null;
+      // ─────────────────────────────────────────────
+      // 🛡️ 2026-07-10: 申込時点では有効期限を計算しない・書かない
+      //
+      // 旧実装は申込時に「申込日 + 1年」を書いていたため、
+      //   (a) 有効期限の基準日が入金確認日ではなく申込日になる
+      //   (b) 既存 active 会員は プラン も同時に上書きされ、入金前に Premium 化する
+      // という 2 つの問題があった。
+      //
+      // 新実装では申込内容を RequestedPlan / RequestedPlanType / RequestedAmount に退避し、
+      // 昇格（プラン / PlanType / Status=active / 有効期限）は
+      // confirm-bank-payment.js が PaymentConfirmed を起点に行う。
+      // 有効期限は入金確認日（JST）基準で自動計算されるため手入力は不要。
+      // ─────────────────────────────────────────────
+      const requestedAmount = Number.parseInt(transferAmount, 10);
 
-      if (planType === 'Lifetime') {
-        // 買い切りプラン: 2099年12月31日（永久）
-        expirationDate = '2099-12-31';
-      } else if (planType === 'Annual') {
-        // 年払いプラン: 1年後
-        const expDate = new Date(today);
-        expDate.setFullYear(expDate.getFullYear() + 1);
-        expirationDate = expDate.toISOString().split('T')[0];
-      } else if (planType === 'Monthly') {
-        // 月払いプラン: 1ヶ月後
-        const expDate = new Date(today);
-        expDate.setMonth(expDate.getMonth() + 1);
-        expirationDate = expDate.toISOString().split('T')[0];
-      }
-
-      console.log('📅 計算された有効期限:', {
+      console.log('📝 申込内容を Requested* に退避:', {
         productName,
         fullPlanName,
         planName,
         planType,
-        expirationDate
+        requestedAmount: Number.isFinite(requestedAmount) ? requestedAmount : null
       });
 
       // Airtable登録処理
@@ -486,27 +483,24 @@ exports.handler = async (event, context) => {
           const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
 
           // ─────────────────────────────────────────────
-          // 🛡️ 2026-05-12 修正: active 顧客の pending 降格を防止
-          // 既存顧客が active（決済済み・有効）の場合に Status='pending' を書き込むと、
-          // 後の Airtable Automation で送信済みフラグの誤動作を引き起こす。
-          // よって Status は「現在 active 以外」の場合のみ pending に設定する。
+          // 🛡️ 2026-05-12 修正: active 顧客の pending 降格を防止（現在も維持）
+          // 🛡️ 2026-07-10 修正: プラン / PlanType / 有効期限 も申込時には書かない。
+          //   既存 active 会員（例: Light）は Light active のまま維持され、
+          //   PaymentConfirmed が押されるまで Premium にならない。
+          //   判定の単一源は src/lib/payments/bankPaymentFlow.js。
           // ─────────────────────────────────────────────
-          const updateFields = {
-            '氏名': fullName,
-            'プラン': planName,
-            'PlanType': planType,
-            'PaymentMethod': 'Bank Transfer',
-            '有効期限': expirationDate,
-            // 🔧 2026-03-02追加: 新規プラン購入時に退会フラグをリセット
-            'WithdrawalRequested': false,
-            'WithdrawalDate': null,
-            'WithdrawalReason': null
-          };
-          if (String(currentStatus || '').toLowerCase() === 'active') {
-            console.log(`🛡️ [bank-transfer] 既存 active 顧客のため Status は維持: ${email} / recordId=${recordId} / currentStatus=${currentStatus}`);
-          } else {
-            updateFields['Status'] = 'pending';
+          const updateFields = buildApplicationFields({
+            currentStatus,
+            fullName,
+            planName,
+            planType,
+            amount: requestedAmount
+          });
+
+          if (updateFields['Status'] === 'pending') {
             console.log(`📝 [bank-transfer] Status を pending に設定: ${email} / recordId=${recordId} / 旧 currentStatus=${currentStatus}`);
+          } else {
+            console.log(`🛡️ [bank-transfer] 既存 active 顧客のため Status / プラン / 有効期限は据え置き: ${email} / recordId=${recordId} / currentStatus=${currentStatus}`);
           }
 
           const updatePayload = {
@@ -556,21 +550,16 @@ exports.handler = async (event, context) => {
             console.log(`✅ [bank-transfer] 再検索で既存レコード検出 → create スキップして update: ${email} / recordId=${recordId} / currentStatus=${raceCurrentStatus}`);
             const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
 
-            // 🛡️ active 顧客の pending 降格を防止（メインパスと同じガード）
-            const raceUpdateFields = {
-              '氏名': fullName,
-              'プラン': planName,
-              'PlanType': planType,
-              'PaymentMethod': 'Bank Transfer',
-              '有効期限': expirationDate,
-              'WithdrawalRequested': false,
-              'WithdrawalDate': null,
-              'WithdrawalReason': null
-            };
-            if (String(raceCurrentStatus || '').toLowerCase() === 'active') {
-              console.log(`🛡️ [bank-transfer race] 既存 active 顧客のため Status は維持: ${email}`);
-            } else {
-              raceUpdateFields['Status'] = 'pending';
+            // 🛡️ active 顧客の pending 降格を防止（メインパスと同じ単一源を使う）
+            const raceUpdateFields = buildApplicationFields({
+              currentStatus: raceCurrentStatus,
+              fullName,
+              planName,
+              planType,
+              amount: requestedAmount
+            });
+            if (raceUpdateFields['Status'] !== 'pending') {
+              console.log(`🛡️ [bank-transfer race] 既存 active 顧客のため Status / プラン / 有効期限は据え置き: ${email}`);
             }
             const updatePayload = {
               fields: raceUpdateFields,
@@ -593,17 +582,17 @@ exports.handler = async (event, context) => {
             // 新規顧客 - Create
             const createUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers`;
 
+            // 新規も Status='pending' のみ。プラン / 有効期限は入金確認まで書かない
             const createPayload = {
-              fields: {
-                'Email': email,
-                '氏名': fullName,
-                'プラン': planName,
-                'PlanType': planType,
-                'Status': 'pending',
-                'PaymentMethod': 'Bank Transfer',
-                '有効期限': expirationDate,
-                'Source': 'nankan-analytics'  // 登録元サイト
-              },
+              fields: buildApplicationFields({
+                currentStatus: null,
+                fullName,
+                planName,
+                planType,
+                amount: requestedAmount,
+                isNewRecord: true,
+                email
+              }),
               // Single select に未登録の値が来た場合は自動でオプションを追加（'Light' リネーム前後どちらでも通す）
               typecast: true
             };
