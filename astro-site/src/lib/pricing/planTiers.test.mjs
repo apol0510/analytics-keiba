@@ -67,17 +67,62 @@ test('guard: pricing.astro に Light 会員向けの下位カード非表示ル�
   assert.ok(/class="plan-card" data-plan-tier="0"/.test(src), '無料カードに tier 属性が無い');
 });
 
-// FAQ のプラン別出し分け。only-for はデフォルト非表示 → Light 会員でだけ表示、が両方必要
-test('guard: pricing.astro に FAQ のプラン別出し分けルールがある', () => {
+// プラン別出し分け。only-for はデフォルト非表示 → Light 会員でだけ表示、が両方必要
+test('guard: pricing.astro にプラン別出し分けルールがある', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
+  // !important が無いと .plan-button 等の後発 display 宣言に負けて乗り換えボタンが全員に見える
   assert.ok(
-    /\.faq-item\[data-faq-only-for\]\s*\{\s*display:\s*none/.test(src),
-    'data-faq-only-for のデフォルト非表示ルールが無い（全員に露出する）',
+    /\[data-only-for\]\s*\{\s*display:\s*none\s*!important/.test(src),
+    'data-only-for のデフォルト非表示が !important でない（乗り換え価格が全員に露出する）',
   );
-  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) .faq-item[data-faq-hide-for="light"]'));
-  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) .faq-item[data-faq-only-for="light"]'));
-  assert.ok(src.includes('data-faq-hide-for="light"'), 'hide-for を使う FAQ が無い');
-  assert.ok(src.includes('data-faq-only-for="light"'), 'only-for を使う FAQ が無い');
+  assert.ok(
+    /\[data-hide-for="light"\]\s*\{\s*display:\s*none\s*!important/.test(src),
+    'data-hide-for の非表示が !important でない',
+  );
+  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) [data-hide-for="light"]'));
+  assert.ok(src.includes('data-hide-for="light"'), 'hide-for を使う要素が無い');
+  assert.ok(src.includes('data-only-for="light"'), 'only-for を使う要素が無い');
+
+  // display の復帰値を明示していない要素があると、表示されるべきものが出ない
+  for (const sel of ['.faq-item', '.plan-price', '.plan-button', '.recommended-badge', '.feature-item']) {
+    assert.ok(
+      src.includes(`${sel}[data-only-for="light"]`),
+      `only-for の復帰ルールが無い: ${sel}`,
+    );
+  }
+});
+
+// 乗り換えキャンペーン: 金額と、Functions 側のプラン名正規化を通ることを固定する。
+// bank-transfer-application.js は productName から料金部分と "- Campaign" を除去して
+// Airtable Single select の planName / planType を作る。接尾辞を変えると壊れる。
+test('guard: 乗り換え特典価格が Functions のプラン名正規化を通る', () => {
+  const src = readFileSync(PRICING_ASTRO, 'utf8');
+  const listPrice = 49800;
+  const discount = 4980; // Light 1ヶ月分
+  const switchPrice = listPrice - discount;
+  assert.equal(switchPrice, 44820);
+  assert.equal(switchPrice / 12, 3735); // カードの「月額換算 ¥3,735」
+  assert.equal(4980 * 12 - switchPrice, 14940); // FAQ の「¥14,940 お得」
+
+  assert.ok(
+    src.includes("openBankModal('Premium Annual - Campaign', 44820, 'annual')"),
+    '乗り換えボタンの引数が変わった',
+  );
+  assert.ok(src.includes('¥44,820'), 'カード/FAQ に乗り換え価格が無い');
+  assert.ok(src.includes('¥14,940'), 'FAQ の差額表記が無い');
+
+  // bank-transfer-application.js の正規化を再現して planName='Premium' / planType='Annual' を確認
+  const productName = 'Premium Annual - Campaign (¥44,820/年)';
+  const fullPlanName = productName.replace(/\s*\(.*\)$/, '').trim();
+  const planType = fullPlanName.includes('Annual') ? 'Annual' : 'Monthly';
+  const planName = fullPlanName
+    .replace(/\s*\(Standard Upgrade\)/, '')
+    .replace(/\s*-\s*Campaign/, '')
+    .replace(/\s*\(ライト\)/, '')
+    .replace(/\s+(Lifetime|Annual|Monthly|買い切り|年払い|30日)$/, '')
+    .trim();
+  assert.equal(planName, 'Premium', 'Airtable の Single select が不正値になる');
+  assert.equal(planType, 'Annual', '有効期限が1ヶ月後で上書きされる');
 });
 
 // FAQ の手順は銀行振込モーダルの .bank-steps と同じ順序（振込 → 報告フォーム）でなければならない
@@ -108,17 +153,14 @@ test('guard: 買い目 FAQ が昨日の買い目へリンクしている', () =>
 });
 
 // Light → プレミアム年払いの価格比較を FAQ に書いている。カードの価格を直したら破綻するため固定する
-test('guard: FAQ の Light 年間換算と差額がカード表示価格と整合する', () => {
+test('guard: FAQ の Light 年間換算がカード表示価格と整合する', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
   const lightMonthly = 4980;
   const premiumAnnual = 49800;
-  const lightYearly = lightMonthly * 12; // 59760
-  assert.equal(lightYearly, 59760);
-  assert.equal(lightYearly - premiumAnnual, 9960);
+  assert.equal(lightMonthly * 12, 59760);
   assert.equal(premiumAnnual / 12, 4150); // カードの「月額換算 ¥4,150」
 
   assert.ok(src.includes("openBankModal('Light', 4980, 'monthly')"), 'Light の価格が変わった');
   assert.ok(src.includes("openBankModal('Premium Annual', 49800, 'annual')"), 'プレミアム年払いの価格が変わった');
   assert.ok(src.includes('¥59,760'), 'FAQ の Light 年間換算が無い');
-  assert.ok(src.includes('¥9,960'), 'FAQ の差額表記が無い');
 });

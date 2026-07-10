@@ -68,7 +68,8 @@ const planTierByToken = buildPlanTierByToken();
             </p>
             <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
             <p class="pricing-upgrade-note">
-                現在 <strong>Light</strong> プランをご利用中です。アップグレード可能なプランのみ表示しています。
+                現在 <strong>Light</strong> プランをご利用中です。アップグレード可能なプランのみ表示しています。<br>
+                Light会員さま限定の<strong>乗り換え特典 ¥4,980 OFF</strong>を適用した価格を表示しています。
             </p>
         </div>
 
@@ -76,14 +77,24 @@ const planTierByToken = buildPlanTierByToken();
         <div class="plans-container">
             <!-- プレミアム年払いプラン -->
             <div class="plan-card plan-card-recommended" data-plan-tier="2">
-                <div class="recommended-badge">
+                <div class="recommended-badge" data-hide-for="light">
                     <span>✨ お得</span>
+                </div>
+                <div class="recommended-badge" data-only-for="light">
+                    <span>🔁 乗り換え特典</span>
                 </div>
                 <div class="plan-header">
                     <h3 class="plan-name">プレミアム年払い</h3>
-                    <div class="plan-price">
+                    <div class="plan-price" data-hide-for="light">
                         <span class="price-amount">¥49,800</span>
                         <span class="price-period">/年</span>
+                    </div>
+                    <!-- Light からの乗り換え価格: ¥49,800 − ¥4,980 = ¥44,820 -->
+                    <div class="plan-price" data-only-for="light">
+                        <div class="price-strike">¥49,800</div>
+                        <span class="price-amount">¥44,820</span>
+                        <span class="price-period">/年</span>
+                        <p class="plan-description">Light会員さま限定 ¥4,980 OFF</p>
                     </div>
                 </div>
 
@@ -94,9 +105,13 @@ const planTierByToken = buildPlanTierByToken();
                 </div>
 
                 <ul class="plan-features">
-                    <li class="feature-item">
+                    <li class="feature-item" data-hide-for="light">
                         <span class="check-icon">✓</span>
                         <span><strong>月額換算 ¥4,150/30日</strong></span>
+                    </li>
+                    <li class="feature-item" data-only-for="light">
+                        <span class="check-icon">✓</span>
+                        <span><strong>月額換算 ¥3,735/30日</strong></span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -116,8 +131,14 @@ const planTierByToken = buildPlanTierByToken();
                     </li>
                 </ul>
 
-                <button class="plan-button plan-button-annual" onclick="openBankModal('Premium Annual', 49800, 'annual')">
+                <button class="plan-button plan-button-annual" data-hide-for="light" onclick="openBankModal('Premium Annual', 49800, 'annual')">
                     🏦 銀行振込へ進む
+                </button>
+                <!-- 「- Campaign」は bank-transfer-application.js が除去して planName='Premium' /
+                     planType='Annual' に正規化する既存パターン。別の接尾辞にすると Airtable の
+                     Single select が不正値になり登録が落ちる（エラーは握りつぶされる） -->
+                <button class="plan-button plan-button-annual" data-only-for="light" onclick="openBankModal('Premium Annual - Campaign', 44820, 'annual')">
+                    🏦 乗り換え特典価格で申し込む
                 </button>
             </div>
 
@@ -299,10 +320,10 @@ const planTierByToken = buildPlanTierByToken();
             
             <div class="faq-container">
                 <!-- FAQ の出し分け（プラン別）:
-                     data-faq-hide-for="light" … Light 会員には不要な話題（現在プラン以下の説明）
-                     data-faq-only-for="light" … Light 会員にだけ出す話題（アップグレード比較・手順）
+                     data-hide-for="light" … Light 会員には不要な話題（現在プラン以下の説明）
+                     data-only-for="light" … Light 会員にだけ出す話題（アップグレード比較・手順）
                      属性なし … 全員に出す。未ログイン / 無料 / プレミアムは全項目表示 -->
-                <div class="faq-item" data-faq-hide-for="light">
+                <div class="faq-item" data-hide-for="light">
                     <h3 class="faq-question">Q: 無料プランでも予想は見れますか？</h3>
                     <p class="faq-answer">
                         はい。無料プランでも全レースの無料予想（AI指数・印・分析）をご覧いただけます。<br>
@@ -310,7 +331,7 @@ const planTierByToken = buildPlanTierByToken();
                     </p>
                 </div>
 
-                <div class="faq-item" data-faq-hide-for="light">
+                <div class="faq-item" data-hide-for="light">
                     <h3 class="faq-question">Q: Lightプランでは何が見られますか？</h3>
                     <p class="faq-answer">
                         メインレースの馬単買い目（最大5点）に加えて、全レースの予想を買い目なしでご覧いただけます。<br>
@@ -341,19 +362,27 @@ const planTierByToken = buildPlanTierByToken();
                     </p>
                 </div>
 
-                <div class="faq-item" data-faq-only-for="light">
-                    <h3 class="faq-question">Q: Lightを続けるのと、プレミアム年払いはどちらがお得ですか？</h3>
+                <div class="faq-item" data-only-for="light">
+                    <h3 class="faq-question">Q: 乗り換え特典とは何ですか？</h3>
                     <p class="faq-answer">
-                        Light は ¥4,980/30日のため、1年間（12回）継続すると <strong>¥59,760</strong> になります。<br>
-                        プレミアム年払いは <strong>¥49,800/年</strong>（月額換算 ¥4,150）で、<strong>¥9,960 お得</strong>な上に、買い目がメインレースのみから全レースへ広がります。
+                        Light会員さまがプレミアム年払いへ切り替える際、<strong>無条件で ¥4,980 割引</strong>する特典です。<br>
+                        通常 ¥49,800/年 のところ <strong>¥44,820/年</strong>（月額換算 ¥3,735）でご利用いただけます。残り日数の申告は不要です。
                     </p>
                 </div>
 
-                <div class="faq-item" data-faq-only-for="light">
+                <div class="faq-item" data-only-for="light">
+                    <h3 class="faq-question">Q: Lightを続けるのと、プレミアム年払いはどちらがお得ですか？</h3>
+                    <p class="faq-answer">
+                        Light は ¥4,980/30日のため、1年間（12回）継続すると <strong>¥59,760</strong> になります。<br>
+                        乗り換え特典価格のプレミアム年払いは <strong>¥44,820/年</strong>（月額換算 ¥3,735）で、<strong>¥14,940 お得</strong>な上に、買い目がメインレースのみから全レースへ広がります。
+                    </p>
+                </div>
+
+                <div class="faq-item" data-only-for="light">
                     <h3 class="faq-question">Q: Lightからプレミアム年払いへの切り替え手順は？</h3>
                     <p class="faq-answer">
-                        上の「🏦 銀行振込へ進む」で口座情報をご確認のうえお振込みいただき、振込完了後に報告フォームをご送信ください。入金確認取れ次第、プレミアムのご利用を開始いただけます。<br>
-                        現在ご利用中のLightの残り期間の取り扱いについては個別にご案内しますので、お気軽にお問い合わせください。
+                        上の「🏦 乗り換え特典価格で申し込む」で口座情報をご確認のうえ <strong>¥44,820</strong> をお振込みいただき、振込完了後に報告フォームをご送信ください。入金確認取れ次第、プレミアムのご利用を開始いただけます。<br>
+                        ご不明な点はお気軽にお問い合わせください。
                     </p>
                 </div>
 
@@ -414,7 +443,7 @@ const planTierByToken = buildPlanTierByToken();
                 </div>
 
                 <!-- Light 会員には上の「切り替え手順」FAQ が同じ役割を果たすため出さない -->
-                <div class="faq-item" data-faq-hide-for="light">
+                <div class="faq-item" data-hide-for="light">
                     <h3 class="faq-question">Q: プランの変更はできますか？</h3>
                     <p class="faq-answer">
                         はい、可能です。Lightプランからプレミアムプランへのアップグレードなど、お気軽にご相談ください。
@@ -829,17 +858,30 @@ const planTierByToken = buildPlanTierByToken();
         display: none;
     }
 
-    /* FAQ はプラン別の出し分け。Light 会員以外（未ログイン / 無料 / プレミアム）は全項目表示 */
-    .faq-item[data-faq-only-for] {
-        display: none;
+    /* 要素単位のプラン別出し分け（カード内の価格・ボタン・FAQ 等）。
+       data-only-for はデフォルト非表示なので、対象プラン以外へは決して漏れない。
+       Light 会員以外（未ログイン / 無料 / プレミアム）は data-hide-for 側だけが見える。
+
+       !important は必須。.plan-button など「display を持つクラス」は同じ詳細度で
+       後に定義されるため、!important 無しだと乗り換え価格のボタンが全員に見えてしまう。 */
+    [data-only-for] {
+        display: none !important;
     }
 
-    :global(:root[data-plan-tier="1"]) .faq-item[data-faq-hide-for="light"] {
-        display: none;
+    :global(:root[data-plan-tier="1"]) [data-hide-for="light"] {
+        display: none !important;
     }
 
-    :global(:root[data-plan-tier="1"]) .faq-item[data-faq-only-for="light"] {
-        display: block;
+    /* display の既定値は要素ごとに違うため、復帰値を明示する */
+    :global(:root[data-plan-tier="1"]) .faq-item[data-only-for="light"],
+    :global(:root[data-plan-tier="1"]) .plan-price[data-only-for="light"],
+    :global(:root[data-plan-tier="1"]) .plan-button[data-only-for="light"],
+    :global(:root[data-plan-tier="1"]) .recommended-badge[data-only-for="light"] {
+        display: block !important;
+    }
+
+    :global(:root[data-plan-tier="1"]) .feature-item[data-only-for="light"] {
+        display: flex !important;
     }
 
     /* 残り 1 枚になっても 4 カラムに引き伸ばされないよう中央寄せ
