@@ -94,17 +94,16 @@ test('guard: FAQ の利用開始フローが「振込が先」になっている
   assert.ok(src.includes('振込完了後、下記のフォームから必要情報をご送信ください'));
 });
 
-// 買い目 FAQ は実績ページへ導線を張る（購入前に実物を確認できる状態を維持する）
-test('guard: 買い目 FAQ が実績ページへリンクしている', () => {
+// 買い目 FAQ は「昨日の買い目」へ導線を張る（購入前に実物を確認できる状態を維持する）
+test('guard: 買い目 FAQ が昨日の買い目へリンクしている', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
-  assert.ok(src.includes('Q: 買い目は何点ですか？'), '買い目 FAQ の見出しが変わった');
-  for (const href of [
-    '/results-showcase/nankan/',
-    '/results-showcase/jra/',
-    '/archive/nankan/',
-    '/archive/jra/',
-  ]) {
-    assert.ok(src.includes(`href="${href}"`), `実績リンクが無い: ${href}`);
+  const heading = 'Q: 買い目は何点ですか？';
+  assert.ok(src.includes(heading), '買い目 FAQ の見出しが変わった');
+
+  const faq = src.slice(src.indexOf(heading));
+  const answer = faq.slice(0, faq.indexOf('</div>'));
+  for (const href of ['/results-showcase/nankan/', '/results-showcase/jra/']) {
+    assert.ok(answer.includes(`href="${href}"`), `買い目 FAQ に導線が無い: ${href}`);
   }
 });
 
