@@ -298,7 +298,9 @@ const planTierByToken = buildPlanTierByToken();
             <h2 class="faq-title">よくある質問</h2>
             
             <div class="faq-container">
-                <div class="faq-item">
+                <!-- data-plan-tier: その項目が扱うプランの tier。カードと同じ規則で
+                     Light 会員（tier 1）には現在プラン以下の話題を出さない -->
+                <div class="faq-item" data-plan-tier="0">
                     <h3 class="faq-question">Q: 無料プランでも予想は見れますか？</h3>
                     <p class="faq-answer">
                         はい。無料プランでも全レースの無料予想をご利用いただけます。
@@ -771,7 +773,9 @@ const planTierByToken = buildPlanTierByToken();
     }
 
     :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"],
-    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"] {
+    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"],
+    :global(:root[data-plan-tier="1"]) .faq-item[data-plan-tier="0"],
+    :global(:root[data-plan-tier="1"]) .faq-item[data-plan-tier="1"] {
         display: none;
     }
 

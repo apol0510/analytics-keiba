@@ -55,10 +55,17 @@ test('guard: pricing.astro のインライン正規化が normalizePlanToken と
 });
 
 // Light 会員に無料/Light を出さない CSS ルールが消えていないこと（デザイン修正での事故防止）
-test('guard: pricing.astro に Light 会員向けの下位カード非表示ルールがある', () => {
+test('guard: pricing.astro に Light 会員向けの下位カード・FAQ 非表示ルールがある', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
-  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"]'));
-  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"]'));
-  assert.ok(src.includes('data-plan-tier="1"'), 'Light カードに tier 属性が無い');
-  assert.ok(src.includes('data-plan-tier="0"'), '無料カードに tier 属性が無い');
+  for (const target of ['plan-card', 'faq-item']) {
+    for (const tier of ['0', '1']) {
+      assert.ok(
+        src.includes(`:global(:root[data-plan-tier="1"]) .${target}[data-plan-tier="${tier}"]`),
+        `非表示ルールが無い: .${target}[data-plan-tier="${tier}"]`,
+      );
+    }
+  }
+  assert.ok(/class="plan-card" data-plan-tier="1"/.test(src), 'Light カードに tier 属性が無い');
+  assert.ok(/class="plan-card" data-plan-tier="0"/.test(src), '無料カードに tier 属性が無い');
+  assert.ok(/class="faq-item" data-plan-tier="0"/.test(src), '無料プラン FAQ に tier 属性が無い');
 });
