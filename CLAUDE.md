@@ -499,6 +499,92 @@ localStorage `user-plan` に保存して AccessControl が読む構成。
 Airtable Base は **nankan-analytics と共有**（顧客は引き継ぎ）。
 詳細・環境変数・Airtable スキーマ追加手順は `astro-site/docs/AUTH_LOGIN.md` を参照。
 
+## 🏦 銀行振込 入金確認フロー（2026-07-10 再設計 / 本番反映済み）
+
+**入金確認は `PaymentConfirmed` にチェックを入れる 1 アクションだけ。有効期限は手入力しない。**
+
+### フロー
+
+| 段階 | 何が起きるか |
+|---|---|
+| **申込フォーム送信** | `bank-transfer-application.js` が `氏名` / `PaymentMethod` / `RequestedPlan` / `RequestedPlanType` / `RequestedAmount` / `PaymentConfirmed=false` のみ書く |
+| **入金確認（MK）** | Airtable で `PaymentConfirmed` にチェック |
+| **昇格（自動）** | Automation → `confirm-bank-payment.js` が `プラン` / `PlanType` / `Status='active'` / `有効期限`（**入金確認日 JST + 1年**）/ `PaidAt` / `PaymentEmailSent=true` を 1 回の PATCH で確定し、確認メールを送信 |
+
+- **申込時に有料権限を付与しない**。`プラン` / `PlanType` / `有効期限` / `Status='active'` は書かない
+- **既存 active Light 会員はフォーム送信だけでは昇格しない**（Light active のまま維持）
+- 新規 / 非 active のみ `Status='pending'`（`auth-user.js` の pending ガードで Free 扱い）
+- 退会フラグのリセットは**承認時**（未入金の申込で退会申請が消えないように）
+
+### 判定の単一源
+
+`astro-site/src/lib/payments/bankPaymentFlow.js`（純粋関数・Airtable 非依存）
+
+- `buildApplicationFields()` — 申込時に書くフィールド
+- `buildConfirmationFields()` — 承認時に書くフィールド。`RequestedPlan` が空なら `null`（fail closed）
+- `addOneYearJst()` / `addMonthsJst()` — **JST の暦日**で計算。`toISOString()` の UTC 基準は使わない
+  （JST 深夜 0〜9 時に 1 日ズレる）。閏日 2/29 + 1年 は 3/1 ではなく 2/28 に丸める
+
+検証: `npm run test:bank-payment`（`check:safety` に組込済み）
+
+**禁止事項**: Function 内で `プラン` / `有効期限` / `Status='active'` を直書きしない。
+必ず `bankPaymentFlow.js` 経由。guard テストが直書きを検知する。
+
+### 認可・冪等性・二重メール防止
+
+- **認可**: `confirm-bank-payment.js` は公開 URL。Airtable の `PaymentConfirmed=true` を
+  **再読込して検証**し、false なら 403。チェックできるのは Airtable にアクセスできる MK だけ
+- **冪等性**: 承認時に `Requested*` をクリア。再チェックしても `RequestedPlan` が空 → 昇格しない
+  （有効期限が再延長されない）
+- **二重メール防止**: confirm が `PaymentEmailSent=true` を立てるため、
+  `send-payment-confirmation-auto.js` の再送ガードでスキップされる。メールは常に 1 通
+
+### Airtable Automation（2 本。触る前に必読）
+
+| Automation | Trigger | 監視 Fields | 条件 | Action |
+|---|---|---|---|---|
+| 入金確認 → 有料プラン昇格 | When record updated | `PaymentConfirmed` | PaymentConfirmed is checked | `confirm-bank-payment` |
+| 入金確認メール自動送信 | When record updated | **`Status` のみ** | Status is active AND PaymentEmailSent is unchecked | `send-payment-confirmation-auto` |
+
+後者は元 `When a record matches conditions`（フィールド監視なし）で**レコード更新全般で発火**していた。
+2026-07-10 に `Status` のみ監視へ変更し、役割を「MK が手動で pending→active にしたときの確認メール」に縮小。
+
+**監視 Fields を空欄に戻さないこと。** 空欄 = 全フィールド監視となり、`RequestedAmount` の更新等でも
+入金確認メールが誤送信される。
+
+### ⚠️ 再送手順（変更あり）
+
+**`PaymentEmailSent` を空に戻すだけでは再送されない。**
+Automation は `Status` の変化でしか発火しないため、再送するには
+**`Status` を pending → active に切り替える**必要がある。
+これは `send-payment-confirmation-auto.js` が返す `howToResend` メッセージと同じ手順。
+
+### ⚠️ 未使用経路の二重送信リスク（未修正）
+
+`paypal-webhook.js` と `send-payment-confirmation.js` は
+**自前で SendGrid を叩き `Status='active'` を書くが `PaymentEmailSent=true` を立てない**。
+そのため Automation「入金確認メール自動送信」が発火し、**確認メールが 2 通届く**。
+
+現在 pricing は銀行振込のみを案内しており両経路とも未使用のため実害は無い。
+**復活させる場合は、両ファイルで `PaymentEmailSent: true` を同時に書く修正が必須。**
+
+### 残件
+
+- `PAYMENT_CONFIRM_SECRET` は**未設定**。設定すると `confirm-bank-payment` で
+  `x-confirm-secret` ヘッダが必須になる（Automation 側のヘッダ設定も要る）。**後続の堅牢化タスク**
+- Airtable Customers に `Amount` / `ProductName` フィールドは無い。振込金額は
+  `RequestedAmount`（承認時にクリア）と管理者宛メールにしか残らない
+
+### 関連ファイル
+
+| 目的 | ファイル |
+|---|---|
+| 判定の単一源 | `astro-site/src/lib/payments/bankPaymentFlow.js` |
+| 申込 | `astro-site/netlify/functions/bank-transfer-application.js` |
+| 昇格 | `astro-site/netlify/functions/confirm-bank-payment.js` |
+| 確認メール（手動 active 化用） | `astro-site/netlify/functions/send-payment-confirmation-auto.js` |
+| テスト | `astro-site/src/lib/payments/bankPaymentFlow.test.mjs` / `bankPaymentFunctions.guard.test.mjs` |
+
 ## 🔧 開発コマンド
 
 ```bash
@@ -515,7 +601,9 @@ npm run import:results:jra
 npm run check:no-raw-index     # JSX に {horse.computerIndex} を直接出力していないか
 npm run check:display-index    # 全 predictions で 表示指数 == raw-1
 npm run check:horse-sections   # 全レースで 合計 == 出走頭数（不要馬セクション維持）
-npm run check:safety           # 上記 3 つを直列実行
+npm run test:pricing-tiers     # /pricing/ のプラン別出し分け（Light 乗り換え価格の露出防止）
+npm run test:bank-payment      # 銀行振込 申込/入金確認フロー（入金前に昇格しない）
+npm run check:safety           # 上記を含む全 safety check を直列実行
 npm run verify:safety          # build → check:safety（push 前推奨）
 ```
 
