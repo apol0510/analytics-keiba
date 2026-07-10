@@ -54,18 +54,44 @@ test('guard: pricing.astro のインライン正規化が normalizePlanToken と
   assert.equal(normalizePlanToken('Premium_Plus'), 'premium-plus');
 });
 
-// Light 会員に無料/Light を出さない CSS ルールが消えていないこと（デザイン修正での事故防止）
-test('guard: pricing.astro に Light 会員向けの下位カード・FAQ 非表示ルールがある', () => {
+// Light 会員に無料/Light カードを出さない CSS ルールが消えていないこと（デザイン修正での事故防止）
+test('guard: pricing.astro に Light 会員向けの下位カード非表示ルールがある', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
-  for (const target of ['plan-card', 'faq-item']) {
-    for (const tier of ['0', '1']) {
-      assert.ok(
-        src.includes(`:global(:root[data-plan-tier="1"]) .${target}[data-plan-tier="${tier}"]`),
-        `非表示ルールが無い: .${target}[data-plan-tier="${tier}"]`,
-      );
-    }
+  for (const tier of ['0', '1']) {
+    assert.ok(
+      src.includes(`:global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="${tier}"]`),
+      `非表示ルールが無い: .plan-card[data-plan-tier="${tier}"]`,
+    );
   }
   assert.ok(/class="plan-card" data-plan-tier="1"/.test(src), 'Light カードに tier 属性が無い');
   assert.ok(/class="plan-card" data-plan-tier="0"/.test(src), '無料カードに tier 属性が無い');
-  assert.ok(/class="faq-item" data-plan-tier="0"/.test(src), '無料プラン FAQ に tier 属性が無い');
+});
+
+// FAQ のプラン別出し分け。only-for はデフォルト非表示 → Light 会員でだけ表示、が両方必要
+test('guard: pricing.astro に FAQ のプラン別出し分けルールがある', () => {
+  const src = readFileSync(PRICING_ASTRO, 'utf8');
+  assert.ok(
+    /\.faq-item\[data-faq-only-for\]\s*\{\s*display:\s*none/.test(src),
+    'data-faq-only-for のデフォルト非表示ルールが無い（全員に露出する）',
+  );
+  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) .faq-item[data-faq-hide-for="light"]'));
+  assert.ok(src.includes(':global(:root[data-plan-tier="1"]) .faq-item[data-faq-only-for="light"]'));
+  assert.ok(src.includes('data-faq-hide-for="light"'), 'hide-for を使う FAQ が無い');
+  assert.ok(src.includes('data-faq-only-for="light"'), 'only-for を使う FAQ が無い');
+});
+
+// Light → プレミアム年払いの価格比較を FAQ に書いている。カードの価格を直したら破綻するため固定する
+test('guard: FAQ の Light 年間換算と差額がカード表示価格と整合する', () => {
+  const src = readFileSync(PRICING_ASTRO, 'utf8');
+  const lightMonthly = 4980;
+  const premiumAnnual = 49800;
+  const lightYearly = lightMonthly * 12; // 59760
+  assert.equal(lightYearly, 59760);
+  assert.equal(lightYearly - premiumAnnual, 9960);
+  assert.equal(premiumAnnual / 12, 4150); // カードの「月額換算 ¥4,150」
+
+  assert.ok(src.includes("openBankModal('Light', 4980, 'monthly')"), 'Light の価格が変わった');
+  assert.ok(src.includes("openBankModal('Premium Annual', 49800, 'annual')"), 'プレミアム年払いの価格が変わった');
+  assert.ok(src.includes('¥59,760'), 'FAQ の Light 年間換算が無い');
+  assert.ok(src.includes('¥9,960'), 'FAQ の差額表記が無い');
 });

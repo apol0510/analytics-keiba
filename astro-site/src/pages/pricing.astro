@@ -298,12 +298,63 @@ const planTierByToken = buildPlanTierByToken();
             <h2 class="faq-title">よくある質問</h2>
             
             <div class="faq-container">
-                <!-- data-plan-tier: その項目が扱うプランの tier。カードと同じ規則で
-                     Light 会員（tier 1）には現在プラン以下の話題を出さない -->
-                <div class="faq-item" data-plan-tier="0">
+                <!-- FAQ の出し分け（プラン別）:
+                     data-faq-hide-for="light" … Light 会員には不要な話題（現在プラン以下の説明）
+                     data-faq-only-for="light" … Light 会員にだけ出す話題（アップグレード比較・手順）
+                     属性なし … 全員に出す。未ログイン / 無料 / プレミアムは全項目表示 -->
+                <div class="faq-item" data-faq-hide-for="light">
                     <h3 class="faq-question">Q: 無料プランでも予想は見れますか？</h3>
                     <p class="faq-answer">
-                        はい。無料プランでも全レースの無料予想をご利用いただけます。
+                        はい。無料プランでも全レースの無料予想（AI指数・印・分析）をご覧いただけます。<br>
+                        買い目は有料プランでのご提供ですが、前日の有料メインレース買い目とその結果は「昨日の買い目」ページで公開しています。
+                    </p>
+                </div>
+
+                <div class="faq-item" data-faq-hide-for="light">
+                    <h3 class="faq-question">Q: Lightプランでは何が見られますか？</h3>
+                    <p class="faq-answer">
+                        メインレースの馬単買い目（最大5点）に加えて、全レースの予想を買い目なしでご覧いただけます。<br>
+                        中央（JRA）・南関の両方に対応しており、1つのプランでどちらもご利用いただけます。
+                    </p>
+                </div>
+
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: プレミアム年払いでは何が見られますか？</h3>
+                    <p class="faq-answer">
+                        全レース（1R〜12R）の買い目をご覧いただけます。加えて、詳細な投資戦略と優先サポートをご利用いただけます。<br>
+                        中央（JRA）・南関の両方で、すべてのレースが対象です。
+                    </p>
+                </div>
+
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: 中央（JRA）と南関、両方見られますか？</h3>
+                    <p class="faq-answer">
+                        はい。すべてのプランが中央・南関の両方に対応しており、会場ごとに追加料金はかかりません。<br>
+                        中央は主に土日、南関は主に平日に開催されるため、平日・週末どちらもAI予想をご利用いただけます。
+                    </p>
+                </div>
+
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: メインレースの買い目は何点ですか？</h3>
+                    <p class="faq-answer">
+                        馬単「本命 → 相手5頭」の最大5点です。裏目（相手 → 本命）は買いません。<br>
+                        上位プランでも買い目の点数は増やさず、<strong>閲覧できるレース数が増える</strong>設計にしています。点数を増やして的中率を買う方式は取りません。
+                    </p>
+                </div>
+
+                <div class="faq-item" data-faq-only-for="light">
+                    <h3 class="faq-question">Q: Lightを続けるのと、プレミアム年払いはどちらがお得ですか？</h3>
+                    <p class="faq-answer">
+                        Light は ¥4,980/30日のため、1年間（12回）継続すると <strong>¥59,760</strong> になります。<br>
+                        プレミアム年払いは <strong>¥49,800/年</strong>（月額換算 ¥4,150）で、<strong>¥9,960 お得</strong>な上に、買い目がメインレースのみから全レースへ広がります。
+                    </p>
+                </div>
+
+                <div class="faq-item" data-faq-only-for="light">
+                    <h3 class="faq-question">Q: Lightからプレミアム年払いへの切り替え手順は？</h3>
+                    <p class="faq-answer">
+                        上の「🏦 銀行振込へ進む」からお申し込みください。ご入金の確認が取れ次第、プレミアムのご利用を開始いただけます。<br>
+                        現在ご利用中のLightの残り期間の取り扱いについては個別にご案内しますので、お気軽にお問い合わせください。
                     </p>
                 </div>
 
@@ -362,7 +413,8 @@ const planTierByToken = buildPlanTierByToken();
                     </p>
                 </div>
 
-                <div class="faq-item">
+                <!-- Light 会員には上の「切り替え手順」FAQ が同じ役割を果たすため出さない -->
+                <div class="faq-item" data-faq-hide-for="light">
                     <h3 class="faq-question">Q: プランの変更はできますか？</h3>
                     <p class="faq-answer">
                         はい、可能です。Lightプランからプレミアムプランへのアップグレードなど、お気軽にご相談ください。
@@ -773,10 +825,21 @@ const planTierByToken = buildPlanTierByToken();
     }
 
     :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"],
-    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"],
-    :global(:root[data-plan-tier="1"]) .faq-item[data-plan-tier="0"],
-    :global(:root[data-plan-tier="1"]) .faq-item[data-plan-tier="1"] {
+    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"] {
         display: none;
+    }
+
+    /* FAQ はプラン別の出し分け。Light 会員以外（未ログイン / 無料 / プレミアム）は全項目表示 */
+    .faq-item[data-faq-only-for] {
+        display: none;
+    }
+
+    :global(:root[data-plan-tier="1"]) .faq-item[data-faq-hide-for="light"] {
+        display: none;
+    }
+
+    :global(:root[data-plan-tier="1"]) .faq-item[data-faq-only-for="light"] {
+        display: block;
     }
 
     /* 残り 1 枚になっても 4 カラムに引き伸ばされないよう中央寄せ
