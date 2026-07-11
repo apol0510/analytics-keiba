@@ -568,10 +568,31 @@ Automation は `Status` の変化でしか発火しないため、再送する�
 現在 pricing は銀行振込のみを案内しており両経路とも未使用のため実害は無い。
 **復活させる場合は、両ファイルで `PaymentEmailSent: true` を同時に書く修正が必須。**
 
+### 🔐 PAYMENT_CONFIRM_SECRET（設定・本番検証済み / 2026-07-11）
+
+`confirm-bank-payment` は公開 URL のため、`PaymentConfirmed=true` 再読込認可に加えて
+`x-confirm-secret` ヘッダ認証を本番で有効化済み。**認証機能の有効化に追加のコード変更は不要**
+（gating は `if (process.env.PAYMENT_CONFIRM_SECRET)` として既にデプロイ済み。env 投入だけで有効化される）。
+
+- **Netlify**: `PAYMENT_CONFIRM_SECRET` を **production context に設定済み**。
+- **Airtable Automation**「入金確認 → 有料プラン昇格」の Run script は
+  `confirm-bank-payment` 呼び出し時に **`x-confirm-secret` ヘッダを送信する**
+  （`Content-Type: application/json` は残したまま1行追加）。
+- **順序厳守**: Automation ヘッダ追加 → その後 env 設定。逆順にすると env 有効化後に
+  ヘッダ無し Automation が全て 403 となり昇格が止まる。env 未設定の間はヘッダを送っても
+  Function 側が無視する（`if(CONFIRM_SECRET)` が false）ため無害。
+- **本番検証済み**:
+  - secret **なし** / **不一致** → `403 Forbidden`（認可段で停止・レコード非破壊）を確認済み。
+  - **正しい secret** による Premium 昇格（Automation 経由で `プラン=Premium` /
+    `PlanType=Annual` / `Status=active` / 有効期限 JST+1年 / `PaymentEmailSent=true` /
+    `Requested*` クリア / 確認メール1通）を確認済み。
+- **rollback**: `netlify env:unset PAYMENT_CONFIRM_SECRET --context production` →
+  正規 production build（Build Hook で origin/main を1回ビルド）で、コード変更なしに
+  従来の `PaymentConfirmed` 再読込認可のみへ即復帰する。
+- **secret 値そのものは CLAUDE.md / ログ / commit に絶対に記載しない。**
+
 ### 残件
 
-- `PAYMENT_CONFIRM_SECRET` は**未設定**。設定すると `confirm-bank-payment` で
-  `x-confirm-secret` ヘッダが必須になる（Automation 側のヘッダ設定も要る）。**後続の堅牢化タスク**
 - Airtable Customers に `Amount` / `ProductName` フィールドは無い。振込金額は
   `RequestedAmount`（承認時にクリア）と管理者宛メールにしか残らない
 
