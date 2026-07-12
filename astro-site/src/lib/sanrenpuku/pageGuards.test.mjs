@@ -14,6 +14,14 @@ const root = process.cwd(); // astro-site
 const nankan = readFileSync(join(root, 'src/pages/premium-prediction/nankan.astro'), 'utf8');
 const jra = readFileSync(join(root, 'src/pages/premium-prediction/jra.astro'), 'utf8');
 
+// Light 会員が閲覧するページ（AccessControl requiredPlan="standard"）
+const LIGHT_PAGES = [
+  'src/pages/light-predictions.astro',
+  'src/pages/light-predictions-jra.astro',
+  'src/pages/light-predictions-urawa.astro',
+  'src/pages/light-predictions-funabashi.astro',
+];
+
 test('両ページが単一源 sanrenpukuCtaStage を import して planSanrenpukuDisplay を使う', () => {
   for (const [name, src] of [['nankan', nankan], ['jra', jra]]) {
     assert.match(src, /from ['"]\.\.\/\.\.\/lib\/sanrenpuku\/sanrenpukuCtaStage\.js['"]/, `${name}: helper import 無し`);
@@ -72,6 +80,22 @@ test('三連複購入済みユーザーに的中結果の先行表示をしな�
     !/userPlan === 'Premium Sanrenpuku'/.test(nankan),
     'nankan 結果ゲートが購入済み Premium Sanrenpuku に先行結果を表示している',
   );
+});
+
+test('Light 会員ページに三連複導線を出さない（Light の次は「全レース対応の Premium」であって三連複ではない）', () => {
+  // 三連複は Premium（馬単）保有者向けのアップセル商品。メインレースのみの Light に対して
+  // 三連複を売ると、本来必要な Premium（全レース）への導線が濁る。
+  for (const rel of LIGHT_PAGES) {
+    const src = readFileSync(join(root, rel), 'utf8');
+    assert.ok(
+      !/href="\/premium-sanrenpuku/.test(src),
+      `${rel}: 三連複ページへの CTA リンクが混入（Light には Premium アップグレード導線のみ出すこと）`,
+    );
+    assert.ok(
+      !/href="\/archive-sanrenpuku/.test(src),
+      `${rel}: 三連複アーカイブへの CTA リンクが混入（Light には Premium アップグレード導線のみ出すこと）`,
+    );
+  }
 });
 
 test('×閉じ（ak-srp-cta-dismissed）と初回時刻（ak-umatan-first-seen）の扱いを維持', () => {
