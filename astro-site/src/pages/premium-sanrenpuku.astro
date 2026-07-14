@@ -1,4 +1,20 @@
 ---
+/**
+ * 【2026-07-15】申込セクション (#sanrenpuku-order) と専用の銀行振込モーダル・openBankModal を削除した。
+ *
+ * 理由（復活させないこと）:
+ * - 画面表示は「Premium Sanrenpuku ¥19,820/月」なのに、送信値は openBankModal('Premium Plus', 68000, 'lifetime')
+ *   で商品名・金額・PlanType がすべて不整合だった。
+ * - bank-transfer-application.js は productName に 'Premium Plus' を含む申込を Airtable 登録スキップ扱いにするため
+ *   （`if (!productName.includes('Premium Plus'))`）、RequestedPlan / RequestedPlanType / RequestedAmount が保存されず、
+ *   PaymentConfirmed を押しても confirm-bank-payment が昇格できない（fail closed）状態だった。
+ * - 三連複商品の正しい銀行振込価格・PlanType がコード上に存在しない（pricing.astro に三連複プランの記載なし）ため、
+ *   推測で修正して有効化するのは危険。使われていない壊れた導線として除去する。
+ * - 副次効果として、生成 HTML から商品名 'Premium Plus' / 68,000 / 口座情報が消える（存在秘匿にも寄与）。
+ *
+ * 申込導線を再度作る場合は、正しい商品名・価格・PlanType を確定し、bank-transfer-application の
+ * Airtable 登録分岐に載る productName を使うこと。
+ */
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccessControl from '../components/AccessControl.astro';
@@ -52,65 +68,6 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
     description={`AI技術による${track}競馬の超厳選三連複予想。累積スコアに基づく少点数買い目で最適な組み合わせのみを提供。`}
 >
     <AccessControl requiredPlan="Premium Sanrenpuku">
-        <!-- 申し込みセクション（Premium Predictions会員向け） -->
-        <div id="sanrenpuku-order" class="order-section" style="display: none;">
-            <div class="order-container">
-                <div class="order-header">
-                    <div class="order-icon">🎯</div>
-                    <h1 class="order-title">Premium Sanrenpuku</h1>
-                    <p class="order-subtitle">AI三連複厳選予想 - 買い目を絞り込んで的中率アップ</p>
-                </div>
-
-                <div class="order-features">
-                    <div class="feature-card">
-                        <div class="feature-icon">📊</div>
-                        <h3>過去1年間の実績</h3>
-                        <div class="feature-stats">
-                            <span class="stat-value">的中率72%</span>
-                            <span class="stat-value">回収率203%</span>
-                        </div>
-                    </div>
-
-                    <div class="feature-card">
-                        <div class="feature-icon">🎯</div>
-                        <h3>厳選買い目</h3>
-                        <p class="feature-text">わずか7〜9点の少点数で高確率的中を実現</p>
-                    </div>
-
-                    <div class="feature-card">
-                        <div class="feature-icon">🏇</div>
-                        <h3>全レース対応</h3>
-                        <p class="feature-text">1R〜12R全レースの三連複買い目を提供</p>
-                    </div>
-                </div>
-
-                <div class="order-description">
-                    <h2>こんな方におすすめ</h2>
-                    <ul class="recommend-list">
-                        <li>馬単予想から買い目を絞りきれない</li>
-                        <li>オッズ確認して戦略を選ぶのが面倒</li>
-                        <li>もっとシンプルな買い目がほしい</li>
-                        <li>三連複で的中率を安定させたい</li>
-                    </ul>
-                </div>
-
-                <div class="order-price-section">
-                    <div class="price-card">
-                        <div class="price-label">月額料金</div>
-                        <div class="price-value">¥19,820<span class="price-unit">/月</span></div>
-                        <div class="price-note">※ Premium Predictions会員様向けアップグレードプラン</div>
-                    </div>
-
-                    <button onclick="openBankModal('Premium Plus', 68000, 'lifetime')" class="order-btn">
-                        今すぐ申し込む →
-                    </button>
-                    <p class="order-note">
-                        ※ Stripeの安全な決済ページに移動します<br>
-                        ※ お申し込み後、すぐに三連複予想をご利用いただけます
-                    </p>
-                </div>
-            </div>
-        </div>
 
         <!-- 三連複予想コンテンツ（Premium Sanrenpuku / Premium Full会員向け） -->
         <div id="sanrenpuku-content" class="page-container" style="display: none;">
@@ -366,10 +323,9 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
                     const userPlan = getCurrentUserPlan();
                     console.log('📋 現在のプラン:', userPlan);
 
-                    const orderSection = document.getElementById('sanrenpuku-order');
                     const contentSection = document.getElementById('sanrenpuku-content');
 
-                    if (!orderSection || !contentSection) {
+                    if (!contentSection) {
                         console.error('❌ セクション要素が見つかりません');
                         return;
                     }
@@ -377,7 +333,6 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
                     // Premium Sanrenpuku または Premium Combo または Premium Full 会員の場合 → 予想表示
                     if (userPlan === 'Premium Sanrenpuku' || userPlan === 'Premium Combo' || userPlan === 'Premium Full') {
                         console.log('✅ Premium Sanrenpuku/Combo/Full会員 → 三連複予想表示');
-                        orderSection.style.display = 'none';
                         contentSection.style.display = 'block';
                     }
                     // Premium Predictions または Premium 会員の場合 → sanrenpuku-demoへリダイレクト
@@ -385,10 +340,11 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
                         console.log('🎯 Premium会員 → sanrenpuku-demoへリダイレクト');
                         window.location.href = '/sanrenpuku-demo/';
                     }
-                    // その他の場合（AccessControlで弾かれるはずだが念のため）
+                    // その他（プラン不明）→ 何も表示しない（判定は AccessControl に委ねる）
+                    // ※ この分岐の経緯は frontmatter のコメント参照。is:inline のコメントは HTML に出力されるため、
+                    //    商品名・金額を含む説明をここに書かないこと。
                     else {
-                        console.log('❌ プラン不明 → デフォルト申し込み表示');
-                        orderSection.style.display = 'block';
+                        console.log('❌ プラン不明 → 予想は表示しない');
                         contentSection.style.display = 'none';
                     }
                 }
@@ -403,268 +359,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
         </script>
     </AccessControl>
 </BaseLayout>
-    <!-- 銀行振込モーダル -->
-    <div class="bank-modal" id="bankModal">
-      <div class="bank-modal-content">
-        <button class="bank-modal-close" onclick="closeBankModal()">×</button>
 
-        <h2 class="bank-modal-title">🏦 銀行振込でのお申し込み</h2>
-        <p class="modal-plan-info" id="modalPlanInfo"></p>
-
-        <div class="bank-info-box">
-          <div class="bank-info-item">
-            <span class="bank-info-label">振込先銀行</span>
-            <span class="bank-info-value">三井住友銀行
-              <button class="copy-button" onclick="copyToClipboard('三井住友銀行')">コピー</button>
-            </span>
-          </div>
-          <div class="bank-info-item">
-            <span class="bank-info-label">支店名</span>
-            <span class="bank-info-value">洲本支店
-              <button class="copy-button" onclick="copyToClipboard('洲本支店')">コピー</button>
-            </span>
-          </div>
-          <div class="bank-info-item">
-            <span class="bank-info-label">口座種別</span>
-            <span class="bank-info-value">普通</span>
-          </div>
-          <div class="bank-info-item">
-            <span class="bank-info-label">口座番号</span>
-            <span class="bank-info-value">5338892
-              <button class="copy-button" onclick="copyToClipboard('5338892')">コピー</button>
-            </span>
-          </div>
-          <div class="bank-info-item">
-            <span class="bank-info-label">口座名義</span>
-            <span class="bank-info-value" style="font-size: 0.95rem;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
-              <button class="copy-button" onclick="copyToClipboard('ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ')">コピー</button>
-            </span>
-          </div>
-          <div class="bank-info-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
-            <span class="bank-info-label">振込金額</span>
-            <span class="bank-info-value" style="color: #10b981; font-size: 1.3rem;" id="modalAmount">¥5,980</span>
-          </div>
-        </div>
-
-        <div class="bank-steps">
-          <div class="bank-steps-title">📝 お申し込み手順</div>
-          <div class="bank-step">
-            <span class="bank-step-number">1</span>
-            <span>上記の口座情報に振込金額をお振込みください</span>
-          </div>
-          <div class="bank-step">
-            <span class="bank-step-number">2</span>
-            <span>振込完了後、下記のフォームから必要情報をご送信ください</span>
-          </div>
-          <div class="bank-step">
-            <span class="bank-step-number">3</span>
-            <span>入金確認取れ次第、即時にログイン情報をメールでお送りいたします</span>
-          </div>
-        </div>
-
-        <!-- 銀行振込申し込みフォーム -->
-        <div class="bank-form-section">
-          <div class="bank-form-title">💳 銀行振込完了フォーム</div>
-
-          <form id="bankTransferForm" class="bank-form">
-            <div class="form-group">
-              <label for="fullName" class="form-label">お名前 <span class="required">*</span></label>
-              <input type="text" id="fullName" name="fullName" class="form-input" required placeholder="山田 太郎">
-            </div>
-
-            <div class="form-group">
-              <label for="email" class="form-label">メールアドレス <span class="required">*</span></label>
-              <input type="email" id="email" name="email" class="form-input" required placeholder="example@email.com">
-            </div>
-
-            
-            <div class="form-group">
-                <label for="transferDate" class="form-label">振込完了日 <span class="required">*</span></label>
-                <input type="date" id="transferDate" name="transferDate" class="form-input" required>
-              </div>
-
-
-            <div class="form-group">
-              <label for="transferAmount" class="form-label">振込金額 <span class="required">*</span></label>
-              <input type="number" id="transferAmount" name="transferAmount" class="form-input" required readonly>
-            </div>
-
-            <div class="form-group">
-
-            <div class="form-group">
-              <label for="remarks" class="form-label">備考・ご要望</label>
-              <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
-            </div>
-
-            <button type="submit" class="form-submit-button" id="submitButton">
-              <span class="submit-text">📨 申し込みを送信</span>
-              <span class="submit-loading" style="display: none;">送信中...</span>
-            </button>
-
-            <div class="form-message" id="formMessage" style="display: none;"></div>
-          </form>
-        </div>
-
-        <div class="bank-warning">
-          <div class="bank-warning-title">⚠️ ご注意事項</div>
-          <div class="bank-warning-text">
-            ・振込手数料はお客様負担となります<br>
-            ・土日祝日の場合、確認が翌営業日となる場合がございます<br>
-            ・<strong>お名前と同じ名義で振込をお願いします</strong><br>
-            ・名義が異なる場合は、備考欄にその旨をご記入ください<br>
-            ・ご入金後のキャンセル・返金は承っておりません
-          </div>
-        </div>
-      </div>
-    </div>
-</BaseLayout>
-
-<script is:inline>
-  let currentPlan = '';
-  let currentAmount = 0;
-  let currentPlanType = 'monthly';
-
-  function openBankModal(planName, amount, planType = 'monthly') {
-    currentPlan = planName;
-    currentAmount = amount;
-    currentPlanType = planType;
-
-    let periodText = '';
-    if (planType === 'lifetime') {
-      periodText = '（永久アクセス）';
-    } else if (planType === 'annual') {
-      periodText = '/年';
-    } else {
-      periodText = '/月';
-    }
-
-    document.getElementById('modalPlanInfo').textContent = `プラン: ${planName} (¥${amount.toLocaleString()}${periodText})`;
-    document.getElementById('modalAmount').textContent = `¥${amount.toLocaleString()}`;
-    document.getElementById('transferAmount').value = amount;
-    document.getElementById('bankModal').classList.add('active');
-    document.body.style.overflow = 'hidden';
-  }
-
-  function closeBankModal() {
-    document.getElementById('bankModal').classList.remove('active');
-    document.body.style.overflow = 'auto';
-  }
-
-  function copyToClipboard(text) {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-
-    try {
-      document.execCommand('copy');
-      alert('コピーしました: ' + text);
-    } catch (err) {
-      console.error('コピーに失敗しました:', err);
-    }
-
-    document.body.removeChild(textarea);
-  }
-
-  // DOMContentLoaded後にフォーム処理を登録
-  document.addEventListener('DOMContentLoaded', () => {
-    // モーダル外クリックで閉じる
-    document.addEventListener('click', (e) => {
-      const bankModal = document.getElementById('bankModal');
-      if (e.target === bankModal) {
-        closeBankModal();
-      }
-    });
-
-    // Escapeキーで閉じる
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        closeBankModal();
-      }
-    });
-
-    // 銀行振込フォーム送信処理
-    const bankTransferForm = document.getElementById('bankTransferForm');
-    if (bankTransferForm) {
-      bankTransferForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const submitButton = document.getElementById('submitButton');
-        const submitText = submitButton.querySelector('.submit-text');
-        const submitLoading = submitButton.querySelector('.submit-loading');
-        const formMessage = document.getElementById('formMessage');
-
-        submitButton.disabled = true;
-        submitText.style.display = 'none';
-        submitLoading.style.display = 'inline';
-        formMessage.style.display = 'none';
-
-        let periodText = '';
-        if (currentPlanType === 'lifetime') {
-          periodText = '（永久アクセス）';
-        } else if (currentPlanType === 'annual') {
-          periodText = '/年';
-        } else {
-          periodText = '/月';
-        }
-
-        const formData = {
-          fullName: document.getElementById('fullName').value,
-          email: document.getElementById('email').value,
-          transferDate: document.getElementById('transferDate').value,
-          transferTime: "00:00",  // デフォルト値
-          transferAmount: document.getElementById('transferAmount').value,
-          transferName: document.getElementById('fullName').value,  // お名前と同じ
-          remarks: document.getElementById('remarks').value,
-          productName: `${currentPlan} (¥${currentAmount.toLocaleString()}${periodText})`,
-          timestamp: new Date().toISOString()
-        };
-
-        try {
-          const response = await fetch('/.netlify/functions/bank-transfer-application', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(formData)
-          });
-
-          const result = await response.json();
-
-          if (result.success) {
-            document.getElementById('bankTransferForm').reset();
-            window.SubmissionResult && window.SubmissionResult.showSuccessScreen({
-              formEl: bankTransferForm,
-              messageEl: formMessage,
-              options: {
-                title: 'お申し込みを受け付けました',
-                message: `${formData.productName} のお申し込みを受け付けました。`,
-                subMessage: '確認メールをお送りしましたのでご確認ください。マイページから申請状況も確認できます。'
-              },
-              history: {
-                type: 'bank-transfer',
-                label: `銀行振込お申し込み: ${formData.productName}`,
-                status: 'pending',
-                details: { email: formData.email, transferAmount: formData.transferAmount, transferDate: formData.transferDate, productName: formData.productName }
-              }
-            });
-          } else {
-            throw new Error(result.error || '送信に失敗しました');
-          }
-        } catch (error) {
-          formMessage.textContent = '❌ エラーが発生しました: ' + error.message;
-          formMessage.className = 'form-message error';
-          formMessage.style.display = 'block';
-          submitButton.disabled = false;
-          submitText.style.display = 'inline';
-          submitLoading.style.display = 'none';
-        }
-      });
-    }
-  });
-</script>
 
 <style is:global>
     .page-container {
