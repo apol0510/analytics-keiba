@@ -7,17 +7,26 @@
  *   1. recordId（または email）でレコードを取得
  *   2. 【認可】Airtable 上で PaymentConfirmed が true であることを確認（false なら 403）
  *   3. RequestedPlan / RequestedPlanType から昇格内容を決める（空なら昇格せず管理者へ通知）
- *   4. プラン / PlanType / Status=active / 有効期限（入金確認日 JST + 1年）を一括 PATCH
- *   5. 入金確認メールを送信
+ *   4. 入金確認メールを送信し、provider が受理したかを判定する
+ *   5. プラン / PlanType / Status=active / 有効期限（入金確認日 JST + 1年）/
+ *      PaymentEmailSent（= provider が受理したか）を一括 PATCH
  *
  * 設計上の要点:
  * - MK の操作は「PaymentConfirmed にチェックを入れる」1 アクションのみ。
  *   有効期限は入金確認日を基準に自動計算するため、日付の手入力は不要。
  * - 昇格はこの Function だけが行う。bank-transfer-application.js は
  *   申込内容を Requested* に退避するだけで、有料権限を一切付与しない。
- * - 二重メール防止: PATCH に PaymentEmailSent=true を含める。Status pending→active で
- *   発火する既存 Automation (send-payment-confirmation-auto.js) はこのフラグを見て
- *   再送信をスキップするため、メールは常に 1 通になる。
+ * - **メール送信は PATCH より先**（Step 4 → Step 5）。PaymentEmailSent を provider の
+ *   結果で決めた上で Status='active' と同じ PATCH に載せるため。
+ *   分割すると Status 変化で発火する Automation (send-payment-confirmation-auto.js) が
+ *   PaymentEmailSent 未チェックを見て二重送信する。
+ * - 二重メール防止: PATCH に PaymentEmailSent=<provider が受理したか> を含める。
+ *   受理時は Status=active と同時に true になるため既存 Automation はスキップする。
+ * - PaymentEmailSent は「送信できた証拠」。旧実装は送信前に無条件で true を立て、
+ *   送信失敗も握り潰していたため、メール 0 通でも true になっていた（2026-07-14 修正）。
+ * - メール送信が失敗しても昇格は巻き戻さない（権限・PaidAt・有効期限・Requested* クリアは維持）。
+ * - ⚠️ provider の 2xx は「受理」までしか保証しない。バウンス抑制リスト等で受理後に
+ *   配信が破棄される場合があり、実受信の保証にはならない。
  * - 二重延長防止: PATCH で Requested* をクリアする。再度チェックしても
  *   RequestedPlan が空なので昇格処理は走らない（fail closed）。
  * - 認可: この endpoint は公開 URL なので、Airtable 上の PaymentConfirmed=true を
@@ -28,7 +37,7 @@
  */
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
-import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+import { buildConfirmationFields, evaluateMailOutcome } from '../../src/lib/payments/bankPaymentFlow.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
@@ -45,6 +54,10 @@ function jsonResponse(statusCode, body) {
   };
 }
 
+/**
+ * SendGrid へ送信し、結果を構造化して返す（throw しない）。
+ * status / messageId だけを返し、API key・本文はけっして返さない。
+ */
 async function sendMail({ apiKey, to, subject, html }) {
   const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
@@ -60,10 +73,11 @@ async function sendMail({ apiKey, to, subject, html }) {
       content: [{ type: 'text/html', value: html }]
     })
   });
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`SendGrid failed: ${response.status} - ${errorText}`);
-  }
+  return {
+    status: response.status,
+    // provider 側の追跡 ID。秘密情報ではないのでログに残してよい
+    messageId: response.headers?.get?.('x-message-id') || null
+  };
 }
 
 function confirmationEmailHtml({ fullName, plan, planType, expiration }) {
@@ -163,13 +177,13 @@ exports.handler = async (event) => {
 
     // ── Step 3: 昇格内容を決める（fail closed）──────────────
     const confirmedAt = new Date();
-    const confirmation = buildConfirmationFields({
+    const planned = buildConfirmationFields({
       requestedPlan: fields['RequestedPlan'],
       requestedPlanType: fields['RequestedPlanType'],
       confirmedAt
     });
 
-    if (!confirmation) {
+    if (!planned) {
       // フォーム未経由 / 二重実行 / PlanType 不明。推測で昇格させず管理者へ通知する
       const reason = fields['RequestedPlan']
         ? `RequestedPlanType が不正: ${fields['RequestedPlanType']}`
@@ -177,6 +191,7 @@ exports.handler = async (event) => {
       console.warn(`⏸️ [confirm-bank-payment] 昇格スキップ: ${email} / ${reason}`);
 
       if (SENDGRID_API_KEY) {
+        // sendMail は throw しないので、非 2xx も自前で検知してログに残す
         await sendMail({
           apiKey: SENDGRID_API_KEY,
           to: ADMIN_EMAIL,
@@ -184,13 +199,79 @@ exports.handler = async (event) => {
           html: `<p>${email}（recordId: ${recordId}）の PaymentConfirmed が押されましたが、自動昇格をスキップしました。</p>
                  <p>理由: ${reason}</p>
                  <p>Airtable でプラン・PlanType・有効期限・Status を手動で設定してください。</p>`
-        }).catch((e) => console.error('管理者通知メール失敗:', e.message));
+        })
+          .then((r) => {
+            const outcome = evaluateMailOutcome({ hasApiKey: true, hasEmail: true, providerStatus: r.status });
+            if (!outcome.providerAccepted) {
+              console.error('管理者通知メール失敗:', { providerStatus: r.status, failureStage: outcome.failureStage });
+            }
+          })
+          .catch((e) => console.error('管理者通知メール失敗（例外）:', e.message));
       }
 
       return jsonResponse(200, { skipped: true, reason, recordId });
     }
 
-    // ── Step 4: 昇格（1 回の PATCH で確定）────────────────
+    // ── Step 4: 入金確認メール（昇格 PATCH より先に送る）──────
+    //
+    // PATCH より前に送るのは、PaymentEmailSent を「provider が受理したか」で決めた上で
+    // Status='active' と同じ 1 回の PATCH に載せるため。分割して後から PaymentEmailSent を
+    // 立てると、Status 変化で発火する Automation (send-payment-confirmation-auto) が
+    // PaymentEmailSent 未チェックを見て二重送信してしまう。
+    //
+    // メール失敗でも昇格は続行する（Premium 権限・PaidAt・有効期限・Requested* クリアは維持）。
+    let providerStatus = null;
+    let providerMessageId = null;
+    let threw = false;
+
+    if (SENDGRID_API_KEY && email) {
+      try {
+        const result = await sendMail({
+          apiKey: SENDGRID_API_KEY,
+          to: email,
+          subject: '【KEIBA Analytics】ご入金を確認いたしました',
+          html: confirmationEmailHtml({
+            fullName,
+            plan: planned.fields['プラン'],
+            planType: planned.fields['PlanType'],
+            expiration: planned.expiration
+          })
+        });
+        providerStatus = result.status;
+        providerMessageId = result.messageId;
+      } catch (e) {
+        threw = true;
+        console.error('❌ 入金確認メール送信で例外（昇格は続行）:', e.message);
+      }
+    }
+
+    const mail = evaluateMailOutcome({
+      hasApiKey: !!SENDGRID_API_KEY,
+      hasEmail: !!email,
+      providerStatus,
+      threw
+    });
+
+    // 構造化ログ。API key / Authorization / メール本文は出さない
+    console.log('📧 [confirm-bank-payment] メール送信結果:', {
+      recordId,
+      providerAttempted: mail.providerAttempted,
+      providerAccepted: mail.providerAccepted,
+      providerStatus,
+      hasProviderMessageId: !!providerMessageId,
+      providerMessageId,
+      failureStage: mail.failureStage
+    });
+
+    // ── Step 5: 昇格（1 回の PATCH で確定）────────────────
+    // PaymentEmailSent は provider が受理したときだけ true。
+    const confirmation = buildConfirmationFields({
+      requestedPlan: fields['RequestedPlan'],
+      requestedPlanType: fields['RequestedPlanType'],
+      confirmedAt,
+      emailSent: mail.providerAccepted
+    });
+
     const patchRes = await fetch(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
       {
@@ -215,35 +296,18 @@ exports.handler = async (event) => {
       recordId,
       plan: confirmation.fields['プラン'],
       planType: confirmation.fields['PlanType'],
-      expiration: confirmation.expiration
+      expiration: confirmation.expiration,
+      paymentEmailSent: confirmation.fields['PaymentEmailSent']
     });
-
-    // ── Step 5: 入金確認メール ────────────────────────────
-    if (SENDGRID_API_KEY && email) {
-      await sendMail({
-        apiKey: SENDGRID_API_KEY,
-        to: email,
-        subject: '【KEIBA Analytics】ご入金を確認いたしました',
-        html: confirmationEmailHtml({
-          fullName,
-          plan: confirmation.fields['プラン'],
-          planType: confirmation.fields['PlanType'],
-          expiration: confirmation.expiration
-        })
-      }).catch((e) => {
-        // メール失敗で昇格を巻き戻さない。PaymentEmailSent は既に true なので手動再送が必要
-        console.error('❌ 入金確認メール送信失敗（昇格は完了済み）:', e.message);
-      });
-    } else {
-      console.warn('⚠️ SENDGRID_API_KEY 未設定 or email 空。メール送信をスキップ');
-    }
 
     return jsonResponse(200, {
       success: true,
       recordId,
       plan: confirmation.fields['プラン'],
       planType: confirmation.fields['PlanType'],
-      expiration: confirmation.expiration
+      expiration: confirmation.expiration,
+      emailSent: mail.providerAccepted,
+      emailFailureStage: mail.failureStage
     });
   } catch (error) {
     console.error('❌ [confirm-bank-payment] error:', error);
