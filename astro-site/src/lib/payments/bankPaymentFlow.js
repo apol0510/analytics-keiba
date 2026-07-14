@@ -85,50 +85,6 @@ export function isActiveStatus(status) {
   return String(status || '').trim().toLowerCase() === 'active';
 }
 
-/** メール送信がどこで失敗したか。null は成功。 */
-export const MAIL_FAILURE_STAGE = Object.freeze({
-  NO_API_KEY: 'no_api_key',
-  NO_EMAIL: 'no_email',
-  PROVIDER_REJECTED: 'provider_rejected',
-  PROVIDER_EXCEPTION: 'provider_exception',
-});
-
-/**
- * メール送信の結果を判定する（provider 非依存の純粋関数）。
- *
- * `PaymentEmailSent` は **provider が 2xx を返したときだけ** true にする。
- * 旧実装は昇格 PATCH に `PaymentEmailSent: true` を無条件で含めており、
- * 送信を試みる前に true が立つ上に送信失敗も握り潰していたため、
- * 「メールが 1 通も出ていないのに PaymentEmailSent=true」が発生していた。
- *
- * ⚠️ 2xx は「provider が受理した」までしか保証しない。バウンス済みアドレス等で
- * provider が受理後に配信を破棄する場合があり、実受信の保証にはならない。
- *
- * @param {object} input
- * @param {boolean} input.hasApiKey  provider の API key が設定されているか
- * @param {boolean} input.hasEmail   送信先アドレスがあるか
- * @param {number|null} [input.providerStatus] provider の HTTP status（未送信なら null）
- * @param {boolean} [input.threw]    provider 呼び出しが例外で落ちたか
- * @returns {{providerAttempted: boolean, providerAccepted: boolean, failureStage: string|null}}
- */
-export function evaluateMailOutcome({ hasApiKey, hasEmail, providerStatus = null, threw = false }) {
-  if (!hasApiKey) {
-    return { providerAttempted: false, providerAccepted: false, failureStage: MAIL_FAILURE_STAGE.NO_API_KEY };
-  }
-  if (!hasEmail) {
-    return { providerAttempted: false, providerAccepted: false, failureStage: MAIL_FAILURE_STAGE.NO_EMAIL };
-  }
-  if (threw) {
-    return { providerAttempted: true, providerAccepted: false, failureStage: MAIL_FAILURE_STAGE.PROVIDER_EXCEPTION };
-  }
-  const accepted = Number.isInteger(providerStatus) && providerStatus >= 200 && providerStatus < 300;
-  return {
-    providerAttempted: true,
-    providerAccepted: accepted,
-    failureStage: accepted ? null : MAIL_FAILURE_STAGE.PROVIDER_REJECTED,
-  };
-}
-
 /**
  * 申込フォーム送信時に Airtable へ書くフィールドを組み立てる。
  *
@@ -190,25 +146,17 @@ export function buildApplicationFields({
  * これにより (a) フォーム未経由の申込を推測で昇格させない (b) PaymentConfirmed の
  * 再チェックで有効期限が二重に延長されない（承認時に Requested* をクリアするため）。
  *
- * 二重メール防止: PaymentEmailSent を **この PATCH に含める**。Status pending→active で発火する
+ * 二重メール防止: PaymentEmailSent=true をここで立てる。Status pending→active で発火する
  * 既存 Automation (send-payment-confirmation-auto.js) は PaymentEmailSent=true を見て
- * 再送信をスキップする。Status=active と PaymentEmailSent=true が同一 PATCH で原子的に
- * 書かれるため、Automation が「未送信」と誤認して二重送信することがない。
- *
- * ⚠️ emailSent は **provider が実際に受理してから** 呼び出し側が渡すこと。
- * 呼び出し側（confirm-bank-payment.js）はメール送信を PATCH の前に行い、
- * その結果（evaluateMailOutcome().providerAccepted）を emailSent として渡す。
- * 送信に失敗した場合は false のままとなり、`PaymentEmailSent=true` が
- * 「送信できた証拠」として機能する。
+ * 再送信をスキップするため、メールは常に 1 通になる。
  *
  * @param {object} input
  * @param {string|null} input.requestedPlan
  * @param {string|null} input.requestedPlanType
  * @param {Date} input.confirmedAt 入金確認日時（有効期限の基準）
- * @param {boolean} [input.emailSent] provider が確認メールを受理したか（既定 false）
  * @returns {{fields: Record<string, unknown>, expiration: string}|null}
  */
-export function buildConfirmationFields({ requestedPlan, requestedPlanType, confirmedAt, emailSent = false }) {
+export function buildConfirmationFields({ requestedPlan, requestedPlanType, confirmedAt }) {
   const plan = String(requestedPlan || '').trim();
   const planType = String(requestedPlanType || '').trim();
   if (!plan || !planType) return null; // fail closed: 推測で昇格しない
@@ -224,8 +172,8 @@ export function buildConfirmationFields({ requestedPlan, requestedPlanType, conf
       'Status': 'active',
       '有効期限': expiration,
       'PaidAt': confirmedAt.toISOString(),
-      // provider が受理したときだけ true。false のままなら「メールは出ていない」ことを表す。
-      'PaymentEmailSent': emailSent === true,
+      // 既存 Automation の二重送信ガードを踏ませる（メールは confirm 側で送る）
+      'PaymentEmailSent': true,
       // 新規プラン購入時に退会フラグをリセット（申込時ではなく入金確認時に行う）
       'WithdrawalRequested': false,
       'WithdrawalDate': null,

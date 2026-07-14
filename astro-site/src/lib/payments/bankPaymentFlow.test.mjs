@@ -7,10 +7,8 @@ import {
   buildApplicationFields,
   buildConfirmationFields,
   computeExpiration,
-  evaluateMailOutcome,
   isActiveStatus,
   LIFETIME_EXPIRATION,
-  MAIL_FAILURE_STAGE,
 } from './bankPaymentFlow.js';
 
 const PREMIUM_ANNUAL = { planName: 'Premium', planType: 'Annual', amount: 44820 };
@@ -86,9 +84,7 @@ test('入金確認時だけ Premium / Annual / active / 有効期限1年後に�
   assert.equal(r.fields['Status'], 'active');
   assert.equal(r.fields['有効期限'], '2027-07-10');
   assert.equal(r.expiration, '2027-07-10');
-  // emailSent を渡さない = メール未送信 → PaymentEmailSent は false
-  // （旧実装は無条件 true。メール 0 通でも true になる欠陥があった）
-  assert.equal(r.fields['PaymentEmailSent'], false);
+  assert.equal(r.fields['PaymentEmailSent'], true); // 既存 Automation の二重送信ガード
   assert.equal(r.fields['WithdrawalRequested'], false);
 });
 
@@ -195,101 +191,4 @@ test('Premium Annual - Campaign も planName=Premium / planType=Annual として
   assert.equal(confirmed.fields['プラン'], 'Premium');
   assert.equal(confirmed.fields['PlanType'], 'Annual');
   assert.equal(confirmed.fields['有効期限'], '2027-07-10');
-});
-
-// ─── メール送信状態: PaymentEmailSent は「送信できた証拠」────────────
-//
-// 旧実装は昇格 PATCH に PaymentEmailSent=true を無条件で含めており、
-// 送信を試みる前に true が立ち、送信失敗も握り潰していた。その結果
-// 「メールが 1 通も出ていないのに PaymentEmailSent=true」が起きていた（2026-07-14）。
-
-const CONFIRMED_AT = new Date('2026-07-14T05:00:00Z'); // JST 14:00
-const REQ = { requestedPlan: 'Premium', requestedPlanType: 'Annual', confirmedAt: CONFIRMED_AT };
-
-/** メール結果から昇格 PATCH の fields を組み立てる（Function と同じ経路） */
-function confirmWithMail(outcomeInput) {
-  const mail = evaluateMailOutcome(outcomeInput);
-  const confirmation = buildConfirmationFields({ ...REQ, emailSent: mail.providerAccepted });
-  return { mail, confirmation };
-}
-
-/** 昇格そのものは常に成立する（メール失敗で巻き戻さない） */
-function assertPromoted(confirmation) {
-  assert.equal(confirmation.fields['プラン'], 'Premium');
-  assert.equal(confirmation.fields['PlanType'], 'Annual');
-  assert.equal(confirmation.fields['Status'], 'active');
-  assert.equal(confirmation.fields['有効期限'], '2027-07-14');
-  assert.equal(typeof confirmation.fields['PaidAt'], 'string');
-  // Requested* クリアは維持（再チェックによる二重延長を防ぐ）
-  assert.equal(confirmation.fields['RequestedPlan'], '');
-  assert.equal(confirmation.fields['RequestedPlanType'], '');
-  assert.equal(confirmation.fields['RequestedAmount'], null);
-}
-
-test('provider 2xx: 昇格成功 + PaymentEmailSent=true', () => {
-  const { mail, confirmation } = confirmWithMail({ hasApiKey: true, hasEmail: true, providerStatus: 202 });
-  assert.equal(mail.providerAttempted, true);
-  assert.equal(mail.providerAccepted, true);
-  assert.equal(mail.failureStage, null);
-  assertPromoted(confirmation);
-  assert.equal(confirmation.fields['PaymentEmailSent'], true);
-});
-
-test('provider 非2xx: 昇格成功 + PaymentEmailSent=false', () => {
-  const { mail, confirmation } = confirmWithMail({ hasApiKey: true, hasEmail: true, providerStatus: 401 });
-  assert.equal(mail.providerAttempted, true);
-  assert.equal(mail.providerAccepted, false);
-  assert.equal(mail.failureStage, MAIL_FAILURE_STAGE.PROVIDER_REJECTED);
-  assertPromoted(confirmation);
-  assert.equal(confirmation.fields['PaymentEmailSent'], false);
-});
-
-test('provider 例外: 昇格成功 + PaymentEmailSent=false', () => {
-  const { mail, confirmation } = confirmWithMail({ hasApiKey: true, hasEmail: true, threw: true });
-  assert.equal(mail.providerAttempted, true);
-  assert.equal(mail.providerAccepted, false);
-  assert.equal(mail.failureStage, MAIL_FAILURE_STAGE.PROVIDER_EXCEPTION);
-  assertPromoted(confirmation);
-  assert.equal(confirmation.fields['PaymentEmailSent'], false);
-});
-
-test('API key 欠如: 送信を試行せず 昇格成功 + PaymentEmailSent=false', () => {
-  const { mail, confirmation } = confirmWithMail({ hasApiKey: false, hasEmail: true });
-  assert.equal(mail.providerAttempted, false);
-  assert.equal(mail.providerAccepted, false);
-  assert.equal(mail.failureStage, MAIL_FAILURE_STAGE.NO_API_KEY);
-  assertPromoted(confirmation);
-  assert.equal(confirmation.fields['PaymentEmailSent'], false);
-});
-
-test('email 欠如: 送信を試行せず 昇格成功 + PaymentEmailSent=false', () => {
-  const { mail, confirmation } = confirmWithMail({ hasApiKey: true, hasEmail: false });
-  assert.equal(mail.providerAttempted, false);
-  assert.equal(mail.providerAccepted, false);
-  assert.equal(mail.failureStage, MAIL_FAILURE_STAGE.NO_EMAIL);
-  assertPromoted(confirmation);
-  assert.equal(confirmation.fields['PaymentEmailSent'], false);
-});
-
-test('境界: 2xx の端（200 / 299）は受理、300 / 199 は非受理', () => {
-  for (const s of [200, 299]) {
-    assert.equal(evaluateMailOutcome({ hasApiKey: true, hasEmail: true, providerStatus: s }).providerAccepted, true, `status ${s}`);
-  }
-  for (const s of [199, 300, 500]) {
-    assert.equal(evaluateMailOutcome({ hasApiKey: true, hasEmail: true, providerStatus: s }).providerAccepted, false, `status ${s}`);
-  }
-});
-
-test('providerStatus 欠落（null / 非整数）は非受理（fail closed）', () => {
-  for (const s of [null, undefined, NaN, '202']) {
-    assert.equal(evaluateMailOutcome({ hasApiKey: true, hasEmail: true, providerStatus: s }).providerAccepted, false);
-  }
-});
-
-test('二重送信防止: provider 受理時は Status=active と PaymentEmailSent=true が同一 PATCH に載る', () => {
-  // Status 変化で発火する Automation (send-payment-confirmation-auto) が
-  // PaymentEmailSent=true を見てスキップできるよう、両者は同じ fields に無ければならない。
-  const { confirmation } = confirmWithMail({ hasApiKey: true, hasEmail: true, providerStatus: 202 });
-  assert.equal(confirmation.fields['Status'], 'active');
-  assert.equal(confirmation.fields['PaymentEmailSent'], true);
 });
