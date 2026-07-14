@@ -32,7 +32,6 @@ export default defineConfig({
         // 中優先ページ（月1回更新）
         'https://analytics.keiba.link/',
         'https://analytics.keiba.link/pricing/',
-        'https://analytics.keiba.link/premium-plus/',
         // アーカイブハブ・カテゴリトップ（SSRのため明示出力）
         'https://analytics.keiba.link/archive/',
         'https://analytics.keiba.link/archive/jra/',
@@ -41,6 +40,8 @@ export default defineConfig({
       filter: (page) => {
         // 管理画面・プロトタイプページを除外
         if (page.includes('/admin/')) return false;
+        // Premium Plus は Premium Sanrenpuku 会員限定の非公開商品。存在を知らせないため常に除外する
+        if (page.includes('/premium-plus')) return false;
         if (page.includes('-prototype')) return false;
         if (page.includes('-demo')) return false;
         // 旧URL（リダイレクト元）はサイトマップから除外

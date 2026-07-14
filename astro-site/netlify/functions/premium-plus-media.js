@@ -101,6 +101,14 @@ function decodeImage(imageBase64) {
 }
 
 export async function handler(event) {
+  // 【一時遮断 2026-07-15】GET（manifest / image）が無認可のため、明示的に有効化されるまで
+  // 全メソッドを 404 にする。env PREMIUM_PLUS_ENABLED が未設定なら「存在しない」ものとして振る舞う。
+  // ここで return するため Blobs には一切到達しない（書き込み・削除ともに構造的に 0 件）。
+  // 解除条件: GET 側にも Premium Sanrenpuku のサーバー側認可を実装すること。
+  if (process.env.PREMIUM_PLUS_ENABLED !== 'true') {
+    return { statusCode: 404, headers: { 'Content-Type': 'text/plain' }, body: 'Not Found' };
+  }
+
   try {
     if (event.httpMethod === 'GET') {
       const params = event.queryStringParameters || {};

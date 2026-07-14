@@ -1,3 +1,13 @@
 # Admin panel Basic Authentication
 /admin/*
   Basic-Auth: nankan-admin:NANKANsecure2025!
+
+# 【一時遮断 2026-07-15】Premium Plus 存在秘匿が未実装のため外部から遮断する。
+# 現状 premium-plus.astro は prerender=true + クライアント側 AccessControl のみで、
+# 未ログイン・JS無効でも HTML に商品名・価格・口座番号が含まれてしまう。
+# ak_session によるサーバー側認可（非会員へ 404）が入るまで、この 2 ルールを外さないこと。
+# 末尾スラッシュ有無の両方を塞ぐため 2 行必要。
+/premium-plus
+  Basic-Auth: nankan-admin:NANKANsecure2025!
+/premium-plus/*
+  Basic-Auth: nankan-admin:NANKANsecure2025!

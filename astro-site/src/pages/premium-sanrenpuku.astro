@@ -6,7 +6,8 @@ import BettingSelectionQA from '../components/BettingSelectionQA.astro';
 import RaceHorseSection from '../components/RaceHorseSection.astro';
 import AccordionClickClose from '../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
-import PremiumPlusCta from '../components/PremiumPlusCta.astro';
+// 【一時非表示 2026-07-15】Premium Plus CTA は存在秘匿が完成するまで出さない（下部の設置箇所を参照）
+// import PremiumPlusCta from '../components/PremiumPlusCta.astro';
 import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark, normalizeHorseData } from '../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../lib/adaptLatestPrediction.js';
 
@@ -294,8 +295,12 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
             </div>
             ))}
 
-            {/* Premium Plus CTA（三連複会員のみが到達するページ。実績画像は実行時取得） */}
-            <PremiumPlusCta />
+            {/* 【一時非表示 2026-07-15】Premium Plus CTA
+                このページは prerender=true + クライアント側 AccessControl のため、CTA を置くと
+                商品名・キャッチコピー・/premium-plus/ へのリンクが未ログイン者の HTML にも載る。
+                存在秘匿（サーバー側認可）が完成するまで出さない。
+                コンポーネント（src/components/PremiumPlusCta.astro）は削除せず保持する。
+                <PremiumPlusCta /> */}
         </div>
 
         {/* 予想ページと同じアコーディオン挙動（過去走 details の開閉／レース折りたたみ） */}
