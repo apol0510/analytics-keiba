@@ -1,0 +1,341 @@
+---
+export const prerender = true;
+// Premium Plus 実績画像 管理画面
+// 画像は Netlify Blobs に入るため、アップロード = 即本番反映（ビルド不要）。
+// 同じ API をターミナルからも叩ける: npm run upload:premium-plus -- --help 相当は docs/PREMIUM_PLUS.md
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Premium Plus 実績画像 管理 | analytics-keiba</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 2rem 1rem;
+      line-height: 1.6;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; color: #fbbf24; margin-bottom: 0.5rem; }
+    .lead { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .card h2 { font-size: 1.1rem; color: #60a5fa; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.85rem; color: #cbd5e1; margin-bottom: 6px; font-weight: 600; }
+    input[type=text], input[type=date], input[type=number], input[type=password] {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #e2e8f0;
+      font-size: 1rem;
+    }
+    input:focus { outline: none; border-color: #3b82f6; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+    .field { margin-bottom: 1rem; }
+    .drop {
+      border: 2px dashed #475569;
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .drop:hover, .drop.over { border-color: #3b82f6; background: rgba(59,130,246,.08); color: #e2e8f0; }
+    .drop img { max-width: 100%; max-height: 320px; border-radius: 8px; margin-top: 1rem; }
+    .radios { display: flex; gap: 1rem; }
+    .radios label {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      margin: 0;
+    }
+    .radios label:has(input:checked) { border-color: #10b981; background: rgba(16,185,129,.1); }
+    button {
+      width: 100%;
+      background: linear-gradient(135deg,#10b981,#059669);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .msg { margin-top: 1rem; padding: 12px; border-radius: 8px; font-size: .9rem; display: none; }
+    .msg.ok { display: block; background: rgba(16,185,129,.12); border: 1px solid #10b981; color: #6ee7b7; }
+    .msg.ng { display: block; background: rgba(239,68,68,.12); border: 1px solid #ef4444; color: #fca5a5; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 1rem; }
+    .stat { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 1rem; text-align: center; }
+    .stat b { display: block; font-size: 1.4rem; color: #60a5fa; }
+    .stat span { font-size: .78rem; color: #94a3b8; }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 10px 0;
+      border-bottom: 1px solid #334155;
+      font-size: .9rem;
+    }
+    .row:last-child { border-bottom: none; }
+    .row img { width: 56px; height: 40px; object-fit: cover; border-radius: 4px; background: #0f172a; }
+    .row .date { font-weight: 700; width: 92px; }
+    .row .race { color: #94a3b8; flex: 1; }
+    .badge { font-size: .75rem; padding: 3px 8px; border-radius: 999px; font-weight: 700; }
+    .badge.hit { background: rgba(16,185,129,.15); color: #6ee7b7; }
+    .badge.miss { background: rgba(100,116,139,.2); color: #94a3b8; }
+    .badge.legacy { background: rgba(245,158,11,.12); color: #fbbf24; }
+    .del { width: auto; background: none; border: 1px solid #475569; color: #94a3b8; padding: 4px 10px; font-size: .75rem; font-weight: 500; }
+    .note { font-size: .82rem; color: #94a3b8; background: rgba(245,158,11,.08); border-left: 3px solid #f59e0b; padding: 12px; border-radius: 4px; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>💎 Premium Plus 実績画像 管理</h1>
+    <p class="lead">
+      1 日 1 枚。アップロードすると <strong>ビルド不要で数秒後に本番反映</strong>されます
+      （/premium-plus/ と /premium-sanrenpuku/ の CTA）。
+    </p>
+
+    <div class="card">
+      <h2>🔑 管理者シークレット</h2>
+      <div class="field">
+        <label for="secret">PREMIUM_PLUS_ADMIN_SECRET（このブラウザに保存されます）</label>
+        <input type="password" id="secret" placeholder="Netlify に設定した値">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📤 アップロード</h2>
+
+      <p class="note" style="margin-bottom: 1.5rem;">
+        <strong>不的中の日も必ず上げてください。</strong>
+        的中した日だけを上げると的中率が「100%」になり、数値そのものが信用されなくなります。
+        的中率タイルは不的中も含めた 10 鞍がたまるまで自動で非表示のままです。
+      </p>
+
+      <div class="field">
+        <label>投票内容照会のスクショ</label>
+        <div class="drop" id="drop">
+          <div id="dropLabel">クリック、またはドラッグ＆ドロップ（PNG / JPG・5MB まで）</div>
+          <img id="preview" style="display:none" alt="プレビュー">
+        </div>
+        <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label for="date">開催日</label>
+          <input type="date" id="date">
+        </div>
+        <div>
+          <label for="venue">会場</label>
+          <input type="text" id="venue" placeholder="川崎 / 大井 / 東京 …">
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label for="race">レース番号</label>
+          <input type="number" id="race" min="1" max="12" placeholder="6">
+        </div>
+        <div>
+          <label for="stake">投票金額（合計）</label>
+          <input type="number" id="stake" value="16000" step="1000">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>結果</label>
+        <div class="radios">
+          <label><input type="radio" name="result" value="hit" checked> 🎯 的中</label>
+          <label><input type="radio" name="result" value="miss"> — 不的中</label>
+        </div>
+      </div>
+
+      <div class="field" id="payoutField">
+        <label for="payout">払戻金額</label>
+        <input type="number" id="payout" step="100" placeholder="277000">
+      </div>
+
+      <button id="submit">アップロードして本番反映</button>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>📊 現在の実績数値（ページに出ている値）</h2>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <h2>🗂 登録済み（直近30件）</h2>
+      <div id="list"></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    const API = '/.netlify/functions/premium-plus-media';
+    const $ = (id) => document.getElementById(id);
+    const yen = (n) => '¥' + Number(n || 0).toLocaleString('ja-JP');
+
+    let imageBase64 = '';
+
+    // シークレットはこのブラウザだけに保持する（送信時に x-admin-secret ヘッダで送る）
+    $('secret').value = localStorage.getItem('pp-admin-secret') || '';
+    $('secret').addEventListener('input', (e) => localStorage.setItem('pp-admin-secret', e.target.value));
+
+    // 既定の開催日 = 今日（JST）
+    const jstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    $('date').value = jstToday;
+
+    // 的中/不的中で払戻欄を出し分け
+    document.querySelectorAll('input[name=result]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        $('payoutField').style.display = radio.value === 'hit' && radio.checked ? 'block' : 'none';
+      });
+    });
+
+    // 画像選択（クリック / ドラッグ＆ドロップ / ペースト）
+    $('drop').addEventListener('click', () => $('file').click());
+    $('drop').addEventListener('dragover', (e) => { e.preventDefault(); $('drop').classList.add('over'); });
+    $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
+    $('drop').addEventListener('drop', (e) => {
+      e.preventDefault();
+      $('drop').classList.remove('over');
+      if (e.dataTransfer.files[0]) readImage(e.dataTransfer.files[0]);
+    });
+    $('file').addEventListener('change', (e) => { if (e.target.files[0]) readImage(e.target.files[0]); });
+    document.addEventListener('paste', (e) => {
+      const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+      if (item) readImage(item.getAsFile());
+    });
+
+    function readImage(file) {
+      if (file.size > 5 * 1024 * 1024) return show('画像が 5MB を超えています', false);
+      const reader = new FileReader();
+      reader.onload = () => {
+        imageBase64 = reader.result;
+        $('preview').src = imageBase64;
+        $('preview').style.display = 'block';
+        $('dropLabel').textContent = file.name;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function show(text, ok) {
+      $('msg').textContent = (ok ? '✅ ' : '❌ ') + text;
+      $('msg').className = 'msg ' + (ok ? 'ok' : 'ng');
+    }
+
+    $('submit').addEventListener('click', async () => {
+      const secret = $('secret').value.trim();
+      if (!secret) return show('管理者シークレットを入力してください', false);
+      if (!imageBase64) return show('画像を選択してください', false);
+      if (!$('date').value) return show('開催日を入力してください', false);
+
+      const isHit = document.querySelector('input[name=result]:checked').value === 'hit';
+      const payout = Number($('payout').value || 0);
+      if (isHit && !payout) return show('的中なら払戻金額を入力してください', false);
+
+      $('submit').disabled = true;
+      $('submit').textContent = '送信中…';
+
+      try {
+        const response = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({
+            action: 'upload',
+            date: $('date').value,
+            venue: $('venue').value.trim(),
+            raceNumber: Number($('race').value) || null,
+            stake: Number($('stake').value) || 0,
+            isHit,
+            payout: isHit ? payout : 0,
+            imageBase64,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || '送信に失敗しました');
+
+        show(`${result.saved.date} を保存しました（登録 ${result.count} 件）。本番は数秒で反映されます。`, true);
+        imageBase64 = '';
+        $('preview').style.display = 'none';
+        $('dropLabel').textContent = 'クリック、またはドラッグ＆ドロップ（PNG / JPG・5MB まで）';
+        $('payout').value = '';
+        await load();
+      } catch (error) {
+        show(error.message, false);
+      } finally {
+        $('submit').disabled = false;
+        $('submit').textContent = 'アップロードして本番反映';
+      }
+    });
+
+    async function remove(date) {
+      const secret = $('secret').value.trim();
+      if (!secret) return show('管理者シークレットを入力してください', false);
+      if (!confirm(`${date} の画像と結果を削除しますか？`)) return;
+      const response = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify({ action: 'delete', date }),
+      });
+      const result = await response.json();
+      if (!response.ok) return show(result.error || '削除に失敗しました', false);
+      show(`${date} を削除しました`, true);
+      await load();
+    }
+
+    async function load() {
+      const response = await fetch(`${API}?limit=30`);
+      const { entries, stats } = await response.json();
+
+      $('stats').innerHTML = [
+        stats.rate.available
+          ? `<div class="stat"><b>${stats.rate.hitRate}%</b><span>的中率（${stats.rate.hits}/${stats.rate.races}）</span></div>
+             <div class="stat"><b>${stats.rate.roi}%</b><span>回収率</span></div>`
+          : `<div class="stat"><b>${stats.rate.races}/10</b><span>的中率は10鞍から公開<br>（現在は非表示）</span></div>`,
+        `<div class="stat"><b>${yen(stats.payout.max)}</b><span>最高払戻</span></div>`,
+        `<div class="stat"><b>${yen(stats.payout.avg)}</b><span>的中時 平均払戻</span></div>`,
+      ].join('');
+
+      $('list').innerHTML = entries.length
+        ? entries.map((e) => `
+            <div class="row">
+              <img src="${e.imageUrl}" alt="">
+              <span class="date">${e.date}</span>
+              <span class="race">${e.venue || ''}${e.raceNumber ? e.raceNumber + 'R' : ''}</span>
+              <span class="badge ${e.isHit ? 'hit' : 'miss'}">${e.isHit ? yen(e.payout) : '不的中'}</span>
+              ${e.legacy ? '<span class="badge legacy">集計外</span>' : ''}
+              <button class="del" onclick="removeEntry('${e.date}')">削除</button>
+            </div>`).join('')
+        : '<p style="color:#94a3b8;font-size:.9rem">まだ登録がありません。</p>';
+    }
+
+    window.removeEntry = remove;
+    load();
+  </script>
+</body>
+</html>

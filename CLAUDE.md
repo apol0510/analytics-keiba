@@ -405,6 +405,42 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 - ローカルで最新日が出ないときは、まず `origin/main` を fetch。結果取込コミットが先行しているだけ
   （本番は Actions→Netlify で常に最新日を反映）。
 
+## 💠 Premium Plus（1日1鞍・単品商品 / 2026-07-15 刷新）
+
+`/premium-plus/` は **1 日 1 鞍・三連単フォーメーション**の単品商品。
+詳細な運用手順は `astro-site/docs/PREMIUM_PLUS.md` を参照。
+
+### 変更してはいけない前提
+
+- **単品購入**（サブスクではない）
+- **Premium Sanrenpuku 会員にのみ表示**。Premium / Light には存在も知らせない
+  → `AccessControl requiredPlan="Premium Sanrenpuku"` + `noindex` + robots.txt `Disallow: /premium-plus/`
+  → CTA (`PremiumPlusCta.astro`) を **Premium / Light / 無料ページに置かない**
+- 超精密 AI が厳選 1 鞍を提供（レース数を増やす訴求はしない）
+- 価格 ¥98,000 → ¥68,000
+
+### 実績画像は Netlify Blobs（ビルド不要・即反映）
+
+毎日 1 枚、投票内容照会のスクショを `/admin/premium-plus-images` または
+`npm run upload:premium-plus` でアップロードする。git には置かない。
+
+**旧方式（禁止・復活させない）**: `public/upsell-images/upsell-YYYYMMDD.png` をページに
+ハードコードし sed で書き換える方式。更新が止まり 3 ヶ月古い日付が本番に残った。
+（`public/upsell-images/` 自体は `withdrawal-upsell.astro` が参照しているため残す）
+
+### 実績数値の手書き禁止
+
+ページに出る数値は `src/lib/premiumPlusShowcase.js` の `computeStats()` の戻り値のみ。
+旧版の「的中率78% / 平均配当¥281,340 / 満足度4.9 / 継続率94%」は根拠のない手書き固定値だった。
+
+- **的中率・回収率**: `legacy` を除く直近 30 鞍から自動集計。**10 鞍未満なら非表示**
+- **最高払戻・的中時平均払戻**: `legacy` を含む全的中エントリから算出
+- 刷新前の 30 枚は**的中日しか保存されていない**ため `legacy=true`。
+  的中率の母数に入れると「的中率100%」という嘘になる
+- **不的中の日も必ずアップロードすること**（的中日だけ上げると的中率が嘘になる）
+
+検証: `npm run test:premium-plus`（`check:safety` に組込済み）
+
 ## 🧠 予想ロジック（スコア・役割決定）
 
 本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の

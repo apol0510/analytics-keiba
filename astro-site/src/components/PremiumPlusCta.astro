@@ -1,0 +1,231 @@
+---
+/**
+ * Premium Plus CTA（Premium Sanrenpuku 会員ページ内にのみ設置する）
+ *
+ * ⚠️ 設置してよいのは Premium Sanrenpuku 会員だけが到達するページに限る。
+ *    Premium / Light / 無料ページには置かない（存在を知らせない商品のため）。
+ *
+ * 実績画像は Netlify Blobs から実行時に取得する（直近 3 枚）。
+ * 画像パスをここに書かないこと — 旧実装は upsell-YYYYMMDD.png をハードコードしており、
+ * 更新が 3 ヶ月止まったまま古い日付が本番に出続けていた。
+ */
+---
+
+<section class="pp-cta">
+  <div class="pp-card">
+    <header class="pp-head">
+      <span class="pp-eyebrow">◆ 三連複会員だけにお見せしています</span>
+      <h2 class="pp-title">今日、1鞍だけ。<span>配当の上限を、外す。</span></h2>
+      <p class="pp-sub">
+        三連複で「当たる」を手にした方へ。<br>
+        超精密 AI がその日の全開催から <strong>最も獲れる 1 鞍</strong>だけを選び、
+        <strong>三連単フォーメーション</strong>の買い目を確定してお渡しする単品商品です。
+      </p>
+    </header>
+
+    <div class="pp-shots" id="ppShots">
+      <p class="pp-loading">実績を読み込み中…</p>
+    </div>
+    <p class="pp-shots-note">実際に投票した控えをそのまま掲載しています（的中も、不的中も）。</p>
+
+    <ul class="pp-points">
+      <li>
+        <span class="pp-icon">🎯</span>
+        <div>
+          <h3>勝負レースを、AI が決める</h3>
+          <p>「どこに資金を集中させるか」という一番難しい判断を、こちらが引き受けます。</p>
+        </div>
+      </li>
+      <li>
+        <span class="pp-icon">💥</span>
+        <div>
+          <h3>式別は三連単フォーメーション</h3>
+          <p>三連複では届かない配当帯を狙うための、1 鞍集中の設計です。</p>
+        </div>
+      </li>
+      <li>
+        <span class="pp-icon">🎫</span>
+        <div>
+          <h3>単品購入・継続課金なし</h3>
+          <p>必要なときに、その都度。三連複プランはそのままお使いいただけます。</p>
+        </div>
+      </li>
+    </ul>
+
+    <a href="/premium-plus/" class="pp-button">
+      Premium Plus の詳細を見る
+      <span class="pp-arrow">→</span>
+    </a>
+  </div>
+</section>
+
+<style>
+  .pp-cta { margin: 3rem 0 1rem; }
+
+  .pp-card {
+    background:
+      radial-gradient(700px 300px at 50% 0%, rgba(245, 196, 81, 0.10), transparent 65%),
+      linear-gradient(180deg, #111c33, #0d1729);
+    border: 1px solid rgba(245, 196, 81, 0.32);
+    border-radius: 20px;
+    padding: 2.5rem 1.75rem;
+    color: #e6edf7;
+  }
+
+  .pp-head { text-align: center; margin-bottom: 2rem; }
+
+  .pp-eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #f5c451;
+    background: rgba(245, 196, 81, 0.08);
+    border: 1px solid rgba(245, 196, 81, 0.28);
+    border-radius: 999px;
+    padding: 5px 13px;
+    margin-bottom: 1.1rem;
+  }
+
+  .pp-title {
+    font-size: clamp(1.5rem, 4.5vw, 2.2rem);
+    font-weight: 900;
+    line-height: 1.35;
+    margin: 0 0 1rem;
+  }
+
+  .pp-title span {
+    display: block;
+    background: linear-gradient(100deg, #f5c451 10%, #fff3d0 50%, #d99b1f 90%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .pp-sub {
+    color: #93a4bd;
+    font-size: 0.92rem;
+    line-height: 1.8;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
+  .pp-sub strong { color: #e6edf7; }
+
+  .pp-shots {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.85rem;
+  }
+
+  .pp-shot {
+    background: #0b1120;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .pp-shot img { width: 100%; height: auto; display: block; }
+
+  .pp-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.72rem;
+  }
+
+  .pp-date { font-weight: 700; }
+
+  .pp-badge { font-weight: 800; padding: 2px 7px; border-radius: 999px; white-space: nowrap; font-size: 0.68rem; }
+  .pp-badge.hit { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+  .pp-badge.miss { background: rgba(148, 163, 184, 0.14); color: #93a4bd; }
+
+  .pp-loading, .pp-empty { grid-column: 1 / -1; text-align: center; color: #93a4bd; font-size: 0.85rem; padding: 1.5rem 0; }
+
+  .pp-shots-note { text-align: center; font-size: 0.75rem; color: #93a4bd; margin-top: 0.8rem; }
+
+  .pp-points { list-style: none; padding: 0; margin: 2rem 0 0; display: grid; gap: 0.85rem; }
+
+  .pp-points li {
+    display: flex;
+    gap: 0.9rem;
+    align-items: flex-start;
+    background: rgba(11, 17, 32, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 12px;
+    padding: 1.05rem 1.2rem;
+  }
+
+  .pp-icon { font-size: 1.3rem; line-height: 1.4; }
+
+  .pp-points h3 { font-size: 0.98rem; font-weight: 700; margin: 0 0 0.2rem; color: #e6edf7; }
+  .pp-points p { font-size: 0.86rem; color: #93a4bd; margin: 0; line-height: 1.7; }
+
+  .pp-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    max-width: 420px;
+    margin: 2rem auto 0;
+    background: linear-gradient(135deg, #f5c451, #d99b1f);
+    color: #1a1205;
+    padding: 1.1rem 2rem;
+    border-radius: 12px;
+    font-size: 1.02rem;
+    font-weight: 900;
+    text-decoration: none;
+    box-shadow: 0 12px 32px rgba(245, 196, 81, 0.2);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .pp-button:hover { transform: translateY(-2px); box-shadow: 0 16px 40px rgba(245, 196, 81, 0.3); }
+
+  .pp-arrow { transition: transform 0.2s; }
+  .pp-button:hover .pp-arrow { transform: translateX(4px); }
+
+  @media (max-width: 640px) {
+    .pp-card { padding: 2rem 1.1rem; }
+    .pp-shots { grid-template-columns: 1fr; }
+  }
+</style>
+
+<script is:inline>
+  (async () => {
+    const container = document.getElementById('ppShots');
+    if (!container) return;
+
+    try {
+      const response = await fetch('/.netlify/functions/premium-plus-media?limit=3');
+      if (!response.ok) throw new Error('failed');
+      const { entries } = await response.json();
+
+      if (!entries.length) {
+        container.innerHTML = '<p class="pp-empty">実績を準備中です。</p>';
+        return;
+      }
+
+      const yen = (n) => '¥' + Number(n || 0).toLocaleString('ja-JP');
+
+      container.innerHTML = entries.map((entry) => {
+        const race = `${entry.venue || ''}${entry.raceNumber ? entry.raceNumber + 'R' : ''}`;
+        const badge = entry.isHit
+          ? `<span class="pp-badge hit">${yen(entry.payout)}</span>`
+          : '<span class="pp-badge miss">不的中</span>';
+        return `
+          <figure class="pp-shot">
+            <img src="${entry.imageUrl}" alt="${entry.date} ${race} の投票控え" loading="lazy">
+            <figcaption class="pp-meta">
+              <span class="pp-date">${entry.date.slice(5).replace('-', '/')} ${race}</span>
+              ${badge}
+            </figcaption>
+          </figure>`;
+      }).join('');
+    } catch (error) {
+      console.error('[PremiumPlusCta] load failed:', error);
+      container.innerHTML = '<p class="pp-empty">実績を読み込めませんでした。</p>';
+    }
+  })();
+</script>

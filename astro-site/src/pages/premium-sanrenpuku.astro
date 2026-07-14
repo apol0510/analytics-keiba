@@ -6,6 +6,7 @@ import BettingSelectionQA from '../components/BettingSelectionQA.astro';
 import RaceHorseSection from '../components/RaceHorseSection.astro';
 import AccordionClickClose from '../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
+import PremiumPlusCta from '../components/PremiumPlusCta.astro';
 import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark, normalizeHorseData } from '../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../lib/adaptLatestPrediction.js';
 
@@ -293,63 +294,8 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
             </div>
             ))}
 
-            <!-- Premium Plus CTAセクション -->
-            <div class="premium-plus-cta-section">
-                <div class="premium-plus-cta-card">
-                    <div class="cta-header">
-                        <div class="cta-icon">💎</div>
-                        <h2 class="cta-title">超精密AIのPremium Plus</h2>
-                        <p class="cta-subtitle">超高性能AIが導く"最高確率の1鞍"を、あなたに。</p>
-                    </div>
-
-                    <!-- 最新の的中実績画像 -->
-                    <div class="cta-results-preview">
-                        <h3 class="preview-title">📊 直近3戦の実績</h3>
-                        <div class="preview-grid">
-                            <div class="preview-image-card">
-                                <img src="/upsell-images/upsell-20260410.png" alt="04/10的中実績" onerror="this.parentElement.style.display='none'" />
-                            </div>
-                            <div class="preview-image-card">
-                                <img src="/upsell-images/upsell-20260409.png" alt="04/09的中実績" onerror="this.parentElement.style.display='none'" />
-                            </div>
-                            <div class="preview-image-card">
-                                <img src="/upsell-images/upsell-20260408.png" alt="04/08的中実績" onerror="this.parentElement.style.display='none'" />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="cta-features">
-                        <div class="cta-feature">
-                            <span class="feature-icon">🎯</span>
-                            <div class="feature-content">
-                                <h3>1日1鞍限定</h3>
-                                <p>数万通りの組み合わせから厳選された、たった1つの答え。</p>
-                            </div>
-                        </div>
-                        <div class="cta-feature">
-                            <span class="feature-icon">📊</span>
-                            <div class="feature-content">
-                                <h3>期待リターン265%</h3>
-                                <p>1鞍で投資額の約2.7倍回収を実現する精密予想。</p>
-                            </div>
-                        </div>
-                        <div class="cta-feature">
-                            <span class="feature-icon">💰</span>
-                            <div class="feature-content">
-                                <h3>通常価格¥98,000→今なら¥68,000</h3>
-                                <p>1鞍で投資額の約3倍回収を目指す超精密予想。</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="cta-action">
-                        <a href="/premium-plus/" class="btn-premium-plus">
-                            Premium Plus 詳細を見る
-                            <span class="arrow">→</span>
-                        </a>
-                    </div>
-                </div>
-            </div>
+            {/* Premium Plus CTA（三連複会員のみが到達するページ。実績画像は実行時取得） */}
+            <PremiumPlusCta />
         </div>
 
         {/* 予想ページと同じアコーディオン挙動（過去走 details の開閉／レース折りたたみ） */}
@@ -1581,161 +1527,6 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
         font-weight: 700;
     }
 
-    /* Premium Plus CTAセクション */
-    .premium-plus-cta-section {
-        margin: 60px auto 40px;
-        max-width: 900px;
-    }
-
-    .premium-plus-cta-card {
-        background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(234, 88, 12, 0.2) 100%);
-        border: 1px solid rgba(245, 158, 11, 0.3);
-        border-radius: 20px;
-        padding: 40px;
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        transition: all 0.3s ease;
-    }
-
-    .premium-plus-cta-card:hover {
-        border-color: rgba(245, 158, 11, 0.5);
-        transform: translateY(-5px);
-        box-shadow: 0 12px 30px rgba(245, 158, 11, 0.25);
-    }
-
-    /* 的中実績プレビュー */
-    .cta-results-preview {
-        margin: 30px 0;
-    }
-
-    .preview-title {
-        font-size: 1.3rem;
-        font-weight: 700;
-        color: #fbbf24;
-        text-align: center;
-        margin-bottom: 20px;
-    }
-
-    .preview-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 15px;
-        margin-bottom: 30px;
-    }
-
-    .preview-image-card {
-        background: rgba(15, 23, 42, 0.6);
-        border-radius: 12px;
-        padding: 10px;
-        border: 1px solid rgba(245, 158, 11, 0.3);
-        transition: all 0.3s ease;
-        overflow: hidden;
-    }
-
-    .preview-image-card:hover {
-        transform: translateY(-4px);
-        border-color: rgba(245, 158, 11, 0.5);
-        box-shadow: 0 8px 20px rgba(245, 158, 11, 0.2);
-    }
-
-    .preview-image-card img {
-        width: 100%;
-        height: auto;
-        border-radius: 8px;
-        display: block;
-    }
-
-    .cta-header {
-        text-align: center;
-        margin-bottom: 40px;
-    }
-
-    .cta-icon {
-        font-size: 3rem;
-        margin-bottom: 15px;
-    }
-
-    .cta-title {
-        font-size: 2rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 10px;
-    }
-
-    .cta-subtitle {
-        font-size: 1.1rem;
-        color: #cbd5e1;
-        font-weight: 400;
-    }
-
-    .cta-features {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 25px;
-        margin-bottom: 40px;
-    }
-
-    .cta-feature {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        gap: 10px;
-    }
-
-    .cta-feature .feature-icon {
-        font-size: 2.5rem;
-    }
-
-    .cta-feature h3 {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #fbbf24;
-        margin: 0 0 5px 0;
-    }
-
-    .cta-feature p {
-        font-size: 0.9rem;
-        color: #cbd5e1;
-        margin: 0;
-        line-height: 1.5;
-    }
-
-    .cta-action {
-        text-align: center;
-    }
-
-    .btn-premium-plus {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-        color: #000;
-        padding: 18px 40px;
-        border-radius: 12px;
-        text-decoration: none;
-        font-size: 1.1rem;
-        font-weight: 700;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
-    }
-
-    .btn-premium-plus:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
-    }
-
-    .btn-premium-plus .arrow {
-        transition: transform 0.3s ease;
-    }
-
-    .btn-premium-plus:hover .arrow {
-        transform: translateX(5px);
-    }
-
     /* モバイル対応 */
     @media (max-width: 768px) {
         .header-section {
@@ -1774,39 +1565,6 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 
         .horse-grid {
             grid-template-columns: 1fr;
-        }
-
-        .premium-plus-cta-card {
-            padding: 30px 20px;
-        }
-
-        .cta-title {
-            font-size: 1.5rem;
-        }
-
-        .cta-subtitle {
-            font-size: 1rem;
-        }
-
-        .preview-grid {
-            grid-template-columns: 1fr;
-            gap: 12px;
-        }
-
-        .preview-title {
-            font-size: 1.1rem;
-        }
-
-        .cta-features {
-            grid-template-columns: 1fr;
-            gap: 20px;
-        }
-
-        .btn-premium-plus {
-            width: 100%;
-            justify-content: center;
-            font-size: 1rem;
-            padding: 16px 30px;
         }
     }
 
