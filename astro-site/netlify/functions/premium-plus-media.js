@@ -17,12 +17,11 @@
 
 import { getStore } from '@netlify/blobs';
 import { handleMediaGet, handleMediaPost } from '../../src/lib/premiumPlus/mediaHandlers.js';
-
-const STORE_NAME = 'premium-plus';
+import { resolvePremiumPlusStoreName } from '../../src/lib/premiumPlus/storeSelection.js';
 
 /** Netlify Blobs を manifestStore が期待する注入インターフェースにアダプトする。 */
-function blobStore() {
-  const options = { name: STORE_NAME, consistency: 'strong' };
+function blobStore(storeName) {
+  const options = { name: storeName, consistency: 'strong' };
   const siteID = process.env.NETLIFY_SITE_ID;
   const token = process.env.NETLIFY_AUTH_TOKEN || process.env.NETLIFY_API_TOKEN;
   const s = siteID && token ? getStore({ ...options, siteID, token }) : getStore(options);
@@ -55,12 +54,38 @@ function blobStore() {
   };
 }
 
+/** Netlify エントリ。テストは runHandler に blobStore factory を注入する。 */
 export async function handler(event) {
-  // 【kill-switch・最上流】PREMIUM_PLUS_ENABLED が 'true' でない限り全メソッド 404。
-  // ここで return するため Blobs には一切到達しない（書き込み・削除ともに構造的に 0 件）。
+  return runHandler(event);
+}
+
+/**
+ * @param {object} event  Netlify Functions event
+ * @param {{blobStore?: (storeName:string)=>object}} [deps]  テスト用に store factory を注入可能
+ */
+export async function runHandler(event, deps = {}) {
+  const blobStoreFactory = typeof deps.blobStore === 'function' ? deps.blobStore : blobStore;
+
+  // 【a. kill-switch・最上流】PREMIUM_PLUS_ENABLED が 'true' でない限り全メソッド 404。
+  // ここで return するため store 選択・getStore・Blobs には一切到達しない（書き込み 0 件）。
   if (process.env.PREMIUM_PLUS_ENABLED !== 'true') {
     return { statusCode: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: 'Not Found' };
   }
+
+  // 【b/c. store 選択・fail-closed】PREMIUM_PLUS_CANARY を厳格判定。誤設定は本番へフォールバック
+  // させず 503 で停止する。ここで return するため getStore・認証処理・Blobs へ到達しない。
+  // 生値はレスポンス・ログに一切含めない（configuration error の事実のみ）。
+  const storeSel = resolvePremiumPlusStoreName(process.env.PREMIUM_PLUS_CANARY);
+  if (!storeSel.ok) {
+    return {
+      statusCode: 503,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'private, no-store' },
+      body: 'Service Unavailable',
+    };
+  }
+  // 解決済みストア名に束縛した factory（認可通過後に getStore を呼ぶ）。
+  const storeName = storeSel.storeName;
+  const store = () => blobStoreFactory(storeName);
 
   try {
     const now = Date.now();
@@ -73,7 +98,7 @@ export async function handler(event) {
         secret: process.env.SESSION_SIGNING_SECRET,
         now,
         // 会員認可を通ってから getStore を呼ぶ（factory を渡す）
-        store: blobStore,
+        store,
       });
     }
 
@@ -86,7 +111,7 @@ export async function handler(event) {
       body: event.body,
       now,
       // 管理者認可を通ってから getStore を呼ぶ（factory を渡す）
-      store: blobStore,
+      store,
     });
   } catch (error) {
     // ログ衛生: error.message は内部ストレージ URL / key / token 断片を含み得るため出さない。
