@@ -79,6 +79,49 @@ test('12 kill-switch ON + "false"/未設定 → getStore へ premium-plus を渡
   }
 });
 
+test('14 env ADMIN_SECRET に末尾改行が混入していても、clean な x-admin-secret で 200（本番 403 症状の回帰・正規化）', async () => {
+  const snap = snapshotEnv();
+  const { calls, factory } = spyFactory();
+  try {
+    process.env.PREMIUM_PLUS_ENABLED = 'true';
+    process.env.PREMIUM_PLUS_CANARY = 'true';
+    process.env.CONTEXT = 'production';
+    process.env.PREMIUM_PLUS_ADMIN_SECRET = `${ADMIN}\n`; // env storage 由来の末尾改行を模擬
+    // ヘッダは clean（runner が送出する値）。正規化前は byte 不一致で 403 になっていた。
+    const res = await runHandler(adminPost('status'), { blobStore: factory });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(calls, ['premium-plus-canary']);
+  } finally { restoreEnv(snap); }
+});
+
+test('15 env ADMIN_SECRET が clean・ヘッダに前後空白でも 200（HTTP OWS 相当の正規化）', async () => {
+  const snap = snapshotEnv();
+  const { calls, factory } = spyFactory();
+  try {
+    process.env.PREMIUM_PLUS_ENABLED = 'true';
+    process.env.PREMIUM_PLUS_CANARY = 'true';
+    process.env.CONTEXT = 'production';
+    process.env.PREMIUM_PLUS_ADMIN_SECRET = ADMIN;
+    const res = await runHandler(adminPost('status', { 'x-admin-secret': ` ${ADMIN} ` }), { blobStore: factory });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(calls, ['premium-plus-canary']);
+  } finally { restoreEnv(snap); }
+});
+
+test('16 正規化しても本質的に異なる secret は 403（マスクしない・store 未到達）', async () => {
+  const snap = snapshotEnv();
+  const { calls, factory } = spyFactory();
+  try {
+    process.env.PREMIUM_PLUS_ENABLED = 'true';
+    process.env.PREMIUM_PLUS_CANARY = 'true';
+    process.env.CONTEXT = 'production';
+    process.env.PREMIUM_PLUS_ADMIN_SECRET = ADMIN;
+    const res = await runHandler(adminPost('status', { 'x-admin-secret': `${ADMIN}-tampered` }), { blobStore: factory });
+    assert.equal(res.statusCode, 403);
+    assert.equal(calls.length, 0); // 認証失敗で getStore 未到達
+  } finally { restoreEnv(snap); }
+});
+
 test('13 不正設定のレスポンス・console に env 生値/secret/cookie を含めない', async () => {
   const snap = snapshotEnv();
   const errCalls = [];

@@ -66,12 +66,18 @@ export async function decideAdminWrite(input, deps = {}) {
 
   if (method !== 'POST') return reject(ADMIN_REJECT.METHOD);
 
-  // 認証: env 未設定/短すぎ → fail closed（503）
-  if (typeof adminSecret !== 'string' || adminSecret.length < MIN_ADMIN_SECRET_LENGTH) {
+  // 認証: env 由来 secret は前後の空白/改行を正規化してから評価する。
+  // 環境変数ストアや設定経路（CLI/ダッシュボード/コピペ）で値の末尾に改行(\n / \r\n)や
+  // 空白が混入すると、送出ヘッダが同一文字列でも byte 完全一致比較で不一致となり 403 に
+  // なる（env secret の定番 footgun）。前後のみ trim し、秘密内部の空白は保持する。
+  // trim 後に空/短すぎ → fail closed（503）。
+  const normAdminSecret = typeof adminSecret === 'string' ? adminSecret.trim() : '';
+  if (normAdminSecret.length < MIN_ADMIN_SECRET_LENGTH) {
     return reject(ADMIN_REJECT.SECRET_UNAVAILABLE);
   }
-  // secret 一致（timing-safe）
-  const matched = await timingSafeEqualString(String(providedSecret ?? ''), adminSecret, deps.subtle);
+  // 送出 secret も前後空白を正規化（HTTP ヘッダの OWS 相当）。比較は timing-safe。
+  const normProvidedSecret = String(providedSecret ?? '').trim();
+  const matched = await timingSafeEqualString(normProvidedSecret, normAdminSecret, deps.subtle);
   if (!matched) return reject(ADMIN_REJECT.FORBIDDEN);
 
   // 本番 context のみ書き込み可（strictly 'production'）

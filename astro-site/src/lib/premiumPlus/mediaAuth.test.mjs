@@ -59,3 +59,48 @@ test('POST 以外 → 405', async () => {
     assert.equal(r.status, 405);
   }
 });
+
+// secret の前後空白/改行を正規化（env secret footgun 対策・本番 403 の code-level 機序の回帰）
+test('env secret に前後の改行/空白が混入しても、送出ヘッダが本質同一なら ALLOW（正規化）', async () => {
+  // adminSecret 側に末尾改行/空白/CR/タブ、providedSecret は clean
+  for (const suffix of ['\n', '\r\n', ' ', '  \n', '\t', '\r']) {
+    const r = await decideAdminWrite({ ...allow, adminSecret: `${SECRET}${suffix}` });
+    assert.equal(r.decision, ADMIN_WRITE.ALLOW, `admin suffix=${JSON.stringify(suffix)}`);
+  }
+  // providedSecret 側に前後空白（HTTP OWS 相当）、adminSecret は clean
+  for (const wrap of [`${SECRET}\n`, ` ${SECRET} `, `\t${SECRET}\r\n`]) {
+    const r = await decideAdminWrite({ ...allow, providedSecret: wrap });
+    assert.equal(r.decision, ADMIN_WRITE.ALLOW, `provided wrap=${JSON.stringify(wrap)}`);
+  }
+  // 両側に異なる前後空白でも本質が同じなら ALLOW
+  assert.equal(
+    (await decideAdminWrite({ ...allow, adminSecret: `${SECRET}\r\n`, providedSecret: ` ${SECRET}` })).decision,
+    ADMIN_WRITE.ALLOW,
+  );
+});
+
+test('正規化は前後のみ。本質が異なる/内部空白の差は依然 403（マスクしない）', async () => {
+  // trim 後も異なる → FORBIDDEN
+  assert.equal(
+    (await decideAdminWrite({ ...allow, providedSecret: `${SECRET}x` })).reason,
+    ADMIN_REJECT.FORBIDDEN,
+  );
+  // 内部空白は秘密の一部として保持（trim しない）→ 不一致
+  const withInner = 'admin secret-32-characters-minimum-length!!';
+  assert.equal(
+    (await decideAdminWrite({ ...allow, adminSecret: withInner, providedSecret: SECRET })).reason,
+    ADMIN_REJECT.FORBIDDEN,
+  );
+});
+
+test('trim 後に空/短すぎ → 503 fail closed（空白のみ・短い値+改行）', async () => {
+  assert.equal((await decideAdminWrite({ ...allow, adminSecret: '   \n\t ' })).reason, ADMIN_REJECT.SECRET_UNAVAILABLE);
+  assert.equal((await decideAdminWrite({ ...allow, adminSecret: '   ' })).reason, ADMIN_REJECT.SECRET_UNAVAILABLE);
+  assert.equal((await decideAdminWrite({ ...allow, adminSecret: `short\n` })).reason, ADMIN_REJECT.SECRET_UNAVAILABLE);
+});
+
+test('core が 16 文字以上なら末尾改行付きでも 503 にならず一致で ALLOW', async () => {
+  const core16 = 'abcdefghijklmnop'; // ちょうど 16
+  const r = await decideAdminWrite({ ...allow, adminSecret: `${core16}\n`, providedSecret: core16 });
+  assert.equal(r.decision, ADMIN_WRITE.ALLOW);
+});
