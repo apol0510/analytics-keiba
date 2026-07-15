@@ -53,9 +53,10 @@
     "test:pricing-tiers": "node --test src/lib/pricing/*.test.mjs",
     "test:bank-payment": "node --test src/lib/payments/*.test.mjs",
     "test:premium-plus": "node --test src/lib/premiumPlusShowcase.test.mjs",
+    "test:premium-plus-media": "node --test src/lib/premiumPlus/*.test.mjs",
     "upload:premium-plus": "node scripts/uploadPremiumPlusImage.mjs",
     "seed:premium-plus": "node scripts/seedPremiumPlusLegacy.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:premium-plus && npm run test:auth-session",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:auth-session",
     "verify:safety": "npm run build && npm run check:safety"
   },
   "dependencies": {

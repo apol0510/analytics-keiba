@@ -1,8 +1,11 @@
 ---
 export const prerender = true;
-// Premium Plus 実績画像 管理画面
+// Premium Plus 実績画像 管理画面（Phase 3）
 // 画像は Netlify Blobs に入るため、アップロード = 即本番反映（ビルド不要）。
-// 同じ API をターミナルからも叩ける: npm run upload:premium-plus -- --help 相当は docs/PREMIUM_PLUS.md
+// 認可: この画面は /admin/* の Basic-Auth 背後。POST は x-admin-secret + Origin + production で
+//       Function 側が再検証する。読み書きとも同じ Function（premium-plus-media）を叩く。
+// 楽観ロック: status で version を取得 → upload/hide/rollback に expectedVersion + operationId を付ける。
+// 物理削除は廃止（論理非表示 hide のみ）。secret は sessionStorage に限定。
 ---
 
 <!DOCTYPE html>
@@ -85,6 +88,7 @@ export const prerender = true;
     .msg { margin-top: 1rem; padding: 12px; border-radius: 8px; font-size: .9rem; display: none; }
     .msg.ok { display: block; background: rgba(16,185,129,.12); border: 1px solid #10b981; color: #6ee7b7; }
     .msg.ng { display: block; background: rgba(239,68,68,.12); border: 1px solid #ef4444; color: #fca5a5; }
+    .msg.warn { display: block; background: rgba(245,158,11,.12); border: 1px solid #f59e0b; color: #fcd34d; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 1rem; }
     .stat { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 1rem; text-align: center; }
     .stat b { display: block; font-size: 1.4rem; color: #60a5fa; }
@@ -98,15 +102,19 @@ export const prerender = true;
       font-size: .9rem;
     }
     .row:last-child { border-bottom: none; }
-    .row img { width: 56px; height: 40px; object-fit: cover; border-radius: 4px; background: #0f172a; }
     .row .date { font-weight: 700; width: 92px; }
     .row .race { color: #94a3b8; flex: 1; }
     .badge { font-size: .75rem; padding: 3px 8px; border-radius: 999px; font-weight: 700; }
     .badge.hit { background: rgba(16,185,129,.15); color: #6ee7b7; }
     .badge.miss { background: rgba(100,116,139,.2); color: #94a3b8; }
     .badge.legacy { background: rgba(245,158,11,.12); color: #fbbf24; }
-    .del { width: auto; background: none; border: 1px solid #475569; color: #94a3b8; padding: 4px 10px; font-size: .75rem; font-weight: 500; }
+    .badge.hidden { background: rgba(148,163,184,.15); color: #cbd5e1; }
+    .act { width: auto; background: none; border: 1px solid #475569; color: #94a3b8; padding: 4px 10px; font-size: .75rem; font-weight: 500; }
     .note { font-size: .82rem; color: #94a3b8; background: rgba(245,158,11,.08); border-left: 3px solid #f59e0b; padding: 12px; border-radius: 4px; }
+    .ver { font-size: .8rem; color: #94a3b8; }
+    .inline { display: flex; gap: .75rem; align-items: end; }
+    .inline > div { flex: 1; }
+    .inline button { width: auto; padding: 10px 16px; }
     @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -115,14 +123,14 @@ export const prerender = true;
     <h1>💎 Premium Plus 実績画像 管理</h1>
     <p class="lead">
       1 日 1 枚。アップロードすると <strong>ビルド不要で数秒後に本番反映</strong>されます
-      （/premium-plus/ と /premium-sanrenpuku/ の CTA）。
+      （会員のみ閲覧）。現在の manifest version: <span class="ver" id="curVer">—</span>
     </p>
 
     <div class="card">
       <h2>🔑 管理者シークレット</h2>
       <div class="field">
-        <label for="secret">PREMIUM_PLUS_ADMIN_SECRET（このブラウザに保存されます）</label>
-        <input type="password" id="secret" placeholder="Netlify に設定した値">
+        <label for="secret">PREMIUM_PLUS_ADMIN_SECRET（このタブのみ・sessionStorage 保持）</label>
+        <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off">
       </div>
     </div>
 
@@ -192,6 +200,20 @@ export const prerender = true;
       <h2>🗂 登録済み（直近30件）</h2>
       <div id="list"></div>
     </div>
+
+    <div class="card">
+      <h2>↩️ ロールバック（過去 version へ）</h2>
+      <p class="lead" style="margin-bottom:1rem">
+        過去の manifest version をコピーして<strong>新 version として</strong>発行します（過去は上書きしません）。
+      </p>
+      <div class="inline">
+        <div>
+          <label for="rollbackVer">戻したい version 番号</label>
+          <input type="number" id="rollbackVer" min="1" placeholder="42">
+        </div>
+        <button id="rollbackBtn" class="act" style="padding:12px 18px">ロールバック</button>
+      </div>
+    </div>
   </div>
 
   <script is:inline>
@@ -200,29 +222,27 @@ export const prerender = true;
     const yen = (n) => '¥' + Number(n || 0).toLocaleString('ja-JP');
 
     let imageBase64 = '';
+    let currentVersion = 0;
+    let knownDates = new Set();
 
-    // シークレットはこのブラウザだけに保持する（送信時に x-admin-secret ヘッダで送る）
-    $('secret').value = localStorage.getItem('pp-admin-secret') || '';
-    $('secret').addEventListener('input', (e) => localStorage.setItem('pp-admin-secret', e.target.value));
+    // secret は sessionStorage 限定（localStorage には保存しない）
+    $('secret').value = sessionStorage.getItem('pp-admin-secret') || '';
+    $('secret').addEventListener('input', (e) => sessionStorage.setItem('pp-admin-secret', e.target.value));
 
-    // 既定の開催日 = 今日（JST）
     const jstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
     $('date').value = jstToday;
 
-    // 的中/不的中で払戻欄を出し分け
     document.querySelectorAll('input[name=result]').forEach((radio) => {
       radio.addEventListener('change', () => {
         $('payoutField').style.display = radio.value === 'hit' && radio.checked ? 'block' : 'none';
       });
     });
 
-    // 画像選択（クリック / ドラッグ＆ドロップ / ペースト）
     $('drop').addEventListener('click', () => $('file').click());
     $('drop').addEventListener('dragover', (e) => { e.preventDefault(); $('drop').classList.add('over'); });
     $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
     $('drop').addEventListener('drop', (e) => {
-      e.preventDefault();
-      $('drop').classList.remove('over');
+      e.preventDefault(); $('drop').classList.remove('over');
       if (e.dataTransfer.files[0]) readImage(e.dataTransfer.files[0]);
     });
     $('file').addEventListener('change', (e) => { if (e.target.files[0]) readImage(e.target.files[0]); });
@@ -232,7 +252,7 @@ export const prerender = true;
     });
 
     function readImage(file) {
-      if (file.size > 5 * 1024 * 1024) return show('画像が 5MB を超えています', false);
+      if (file.size > 5 * 1024 * 1024) return show('画像が 5MB を超えています', 'ng');
       const reader = new FileReader();
       reader.onload = () => {
         imageBase64 = reader.result;
@@ -243,74 +263,93 @@ export const prerender = true;
       reader.readAsDataURL(file);
     }
 
-    function show(text, ok) {
-      $('msg').textContent = (ok ? '✅ ' : '❌ ') + text;
-      $('msg').className = 'msg ' + (ok ? 'ok' : 'ng');
+    function show(text, kind) {
+      const icon = kind === 'ok' ? '✅ ' : kind === 'warn' ? '⚠️ ' : '❌ ';
+      $('msg').textContent = icon + text;
+      $('msg').className = 'msg ' + kind;
+    }
+
+    // 管理 POST（ブラウザが Origin を自動付与。secret はヘッダのみ・console に出さない）
+    async function adminPost(payload) {
+      const secret = $('secret').value.trim();
+      if (!secret) { show('管理者シークレットを入力してください', 'ng'); return null; }
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json().catch(() => ({}));
+      return { status: res.status, ok: res.ok, result };
     }
 
     $('submit').addEventListener('click', async () => {
-      const secret = $('secret').value.trim();
-      if (!secret) return show('管理者シークレットを入力してください', false);
-      if (!imageBase64) return show('画像を選択してください', false);
-      if (!$('date').value) return show('開催日を入力してください', false);
-
+      if (!imageBase64) return show('画像を選択してください', 'ng');
+      if (!$('date').value) return show('開催日を入力してください', 'ng');
       const isHit = document.querySelector('input[name=result]:checked').value === 'hit';
       const payout = Number($('payout').value || 0);
-      if (isHit && !payout) return show('的中なら払戻金額を入力してください', false);
+      if (isHit && !payout) return show('的中なら払戻金額を入力してください', 'ng');
+
+      const date = $('date').value;
+      if (knownDates.has(date) && !confirm(`${date} は既に登録済みです。上書き（新 version 発行）しますか？`)) return;
+      if (!confirm(`${date} を version ${currentVersion} を基準に登録します。よろしいですか？`)) return;
 
       $('submit').disabled = true;
       $('submit').textContent = '送信中…';
-
       try {
-        const response = await fetch(API, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-          body: JSON.stringify({
-            action: 'upload',
-            date: $('date').value,
-            venue: $('venue').value.trim(),
-            raceNumber: Number($('race').value) || null,
-            stake: Number($('stake').value) || 0,
-            isHit,
-            payout: isHit ? payout : 0,
-            imageBase64,
-          }),
+        const r = await adminPost({
+          action: 'upload',
+          operationId: crypto.randomUUID(),
+          expectedVersion: currentVersion,
+          date, venue: $('venue').value.trim(), raceNumber: Number($('race').value) || null,
+          stake: Number($('stake').value) || 0, isHit, payout: isHit ? payout : 0, imageBase64,
         });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || '送信に失敗しました');
-
-        show(`${result.saved.date} を保存しました（登録 ${result.count} 件）。本番は数秒で反映されます。`, true);
+        if (!r) return;
+        if (r.status === 409) { show(`version 競合（current=${r.result.currentVersion}）。最新を再取得しました。もう一度お試しください。`, 'warn'); await load(); return; }
+        if (!r.ok) throw new Error(r.result.error || '送信に失敗しました');
+        show(`${date} を保存しました（version ${r.result.version} / op ${r.result.operationId}）。数秒で反映されます。`, 'ok');
         imageBase64 = '';
         $('preview').style.display = 'none';
         $('dropLabel').textContent = 'クリック、またはドラッグ＆ドロップ（PNG / JPG・5MB まで）';
         $('payout').value = '';
         await load();
       } catch (error) {
-        show(error.message, false);
+        show(error.message, 'ng');
       } finally {
         $('submit').disabled = false;
         $('submit').textContent = 'アップロードして本番反映';
       }
     });
 
-    async function remove(date) {
-      const secret = $('secret').value.trim();
-      if (!secret) return show('管理者シークレットを入力してください', false);
-      if (!confirm(`${date} の画像と結果を削除しますか？`)) return;
-      const response = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-        body: JSON.stringify({ action: 'delete', date }),
-      });
-      const result = await response.json();
-      if (!response.ok) return show(result.error || '削除に失敗しました', false);
-      show(`${date} を削除しました`, true);
+    async function toggleVisibility(date, action) {
+      if (!confirm(`${date} を${action === 'hide' ? '非表示' : '再表示'}にしますか？（画像は削除しません）`)) return;
+      const r = await adminPost({ action, date, operationId: crypto.randomUUID(), expectedVersion: currentVersion });
+      if (!r) return;
+      if (r.status === 409) { show(`version 競合（current=${r.result.currentVersion}）。再取得しました。`, 'warn'); await load(); return; }
+      if (!r.ok) return show(r.result.error || '操作に失敗しました', 'ng');
+      show(`${date} を${action === 'hide' ? '非表示' : '再表示'}にしました（version ${r.result.version}）`, 'ok');
       await load();
     }
 
+    $('rollbackBtn').addEventListener('click', async () => {
+      const targetVersion = Number($('rollbackVer').value);
+      if (!Number.isInteger(targetVersion) || targetVersion < 1) return show('version 番号を入力してください', 'ng');
+      if (!confirm(`v${targetVersion} の内容を新 version として発行します。よろしいですか？`)) return;
+      const r = await adminPost({ action: 'rollback', targetVersion, operationId: crypto.randomUUID(), expectedVersion: currentVersion });
+      if (!r) return;
+      if (r.status === 409) { show(`version 競合（current=${r.result.currentVersion}）。再取得しました。`, 'warn'); await load(); return; }
+      if (!r.ok) return show(r.result.error || 'ロールバックに失敗しました', 'ng');
+      show(`v${targetVersion} へ巻き戻しました（新 version ${r.result.version}）`, 'ok');
+      await load();
+    });
+
     async function load() {
-      const response = await fetch(`${API}?limit=30`);
-      const { entries, stats } = await response.json();
+      const r = await adminPost({ action: 'status' });
+      if (!r) return;
+      if (!r.ok) return show(r.result.error || 'status 取得に失敗しました', 'ng');
+      const { version, entries, stats } = r.result;
+      currentVersion = version;
+      knownDates = new Set(entries.map((e) => e.date));
+      $('curVer').textContent = version;
 
       $('stats').innerHTML = [
         stats.rate.available
@@ -324,18 +363,23 @@ export const prerender = true;
       $('list').innerHTML = entries.length
         ? entries.map((e) => `
             <div class="row">
-              <img src="${e.imageUrl}" alt="">
               <span class="date">${e.date}</span>
               <span class="race">${e.venue || ''}${e.raceNumber ? e.raceNumber + 'R' : ''}</span>
               <span class="badge ${e.isHit ? 'hit' : 'miss'}">${e.isHit ? yen(e.payout) : '不的中'}</span>
               ${e.legacy ? '<span class="badge legacy">集計外</span>' : ''}
-              <button class="del" onclick="removeEntry('${e.date}')">削除</button>
+              ${e.visible === false ? '<span class="badge hidden">非表示</span>' : ''}
+              ${e.visible === false
+                ? `<button class="act" onclick="ppShow('${e.date}')">再表示</button>`
+                : `<button class="act" onclick="ppHide('${e.date}')">非表示</button>`}
             </div>`).join('')
         : '<p style="color:#94a3b8;font-size:.9rem">まだ登録がありません。</p>';
     }
 
-    window.removeEntry = remove;
-    load();
+    window.ppHide = (date) => toggleVisibility(date, 'hide');
+    window.ppShow = (date) => toggleVisibility(date, 'show');
+    // 初期ロードは secret 入力後に手動でも走るよう、secret があれば自動実行
+    if ($('secret').value.trim()) load();
+    $('secret').addEventListener('change', () => { if ($('secret').value.trim()) load(); });
   </script>
 </body>
 </html>
