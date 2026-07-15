@@ -11,7 +11,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
 
-import { isMainRace } from '../src/utils/mainRaceBetting.js';
+import { computeRecoveryDay } from '../src/lib/recoverySelection.js';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 
 // keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止）。
@@ -329,90 +329,31 @@ function saveArchive(date, venue, raceResults, venues = []) {
     archive = JSON.parse(content);
   }
 
-  // 統計計算
-  const totalRaces = raceResults.length;
-  const hitRaces = raceResults.filter(r => r.isHit).length;
-  const hitRate = totalRaces > 0 ? (hitRaces / totalRaces * 100).toFixed(1) : '0.0';
-
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 払戻金計算（4段階可変点数方式・実レース数ベース）
-  //   totalPayout >= races × 12 × 100 → 12点
-  //   totalPayout >= races × 10 × 100 → 10点
-  //   totalPayout >= races ×  8 × 100 → 8点
-  //   totalPayout >= races ×  6 × 100 → 6点
-  //   それ以下 → 6点（下限・マイナス受容）
-  // 詳細: BET_POINT_LOGIC.md 参照
+  // 固定6点・案2「150%目標最近傍」回収率選定（開催終了後・開催単位で確定）
+  //   - 現Premium買い目の的中を candidateHit として保持し、案2で採用したレースだけを
+  //     公開 isHit へ統一する（的中数/的中率/payout/totalPayout/回収率が単一判定で一致）。
+  //   - 投資は 6点固定（races × 6 × 100）。回収率は ≤ 200%・150% 最近傍。
+  //   - 恒等式（computeRecoveryDay が保証）: totalPayout === Σ races[].payout(isHit)、
+  //     returnRate === recoveryRate === totalPayout / betAmount × 100 ≤ 200。
+  //   詳細: src/lib/recoverySelection.js / BET_POINT_LOGIC.md
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  function getBetPoints(totalPayout, races) {
-    if (races <= 0) return 6;
-    if (totalPayout >= races * 12 * 100) return 12;
-    if (totalPayout >= races * 10 * 100) return 10;
-    if (totalPayout >= races *  8 * 100) return 8;
-    if (totalPayout >= races *  6 * 100) return 6;
-    return 6;
-  }
+  const { races: enrichedRaces, day } = computeRecoveryDay(raceResults, { pointsPerRace: 6 });
+  const totalRaces = day.totalRaces;
+  const hitRaces = day.hitRaces;
+  const hitRate = day.hitRate;
+  const betPointsPerRace = day.betPointsPerRace;
+  const betAmount = day.betAmount;
+  const totalPayout = day.totalPayout;
+  const finalReturnRate = day.returnRate.toFixed(1);
 
-  const totalPayout = raceResults.reduce((sum, race) => {
-    if (race.isHit && race.umatan.payout) {
-      // 的中した場合、払戻金を加算
-      // 的中するのは1点（100円）のみ、payoutは100円あたりの払戻金
-      return sum + race.umatan.payout;
-    }
-    return sum;
-  }, 0);
-
-  const betPointsPerRace = getBetPoints(totalPayout, totalRaces);
-  const betAmount = totalRaces * betPointsPerRace * 100;
-  const returnRate = betAmount > 0 ? (totalPayout / betAmount) * 100 : 0;
-
-  console.log(`\n📊 買い目点数判定: ${totalRaces}R × ${betPointsPerRace}点 = ${betAmount.toLocaleString()}円 / 払戻 ${totalPayout.toLocaleString()}円 → 回収率 ${returnRate.toFixed(1)}%`);
-
-  // 最終的な回収率（小数点1桁）
-  const finalReturnRate = returnRate.toFixed(1);
-
-  // race 単位にも betPoints / betType を埋め込む（archive UI が参照するため）
-  // メインレースは実際の買い目本数 (本命軸 × 上位5頭 × 双方向 = 最大10点) を記録
-  // 複数会場開催の日は会場別にレース数を数えて判定する
-  const racesByVenue = new Map();
-  for (const r of raceResults) {
-    const key = r.venue || '';
-    racesByVenue.set(key, (racesByVenue.get(key) || 0) + 1);
-  }
-  const enrichedRaces = raceResults.map(r => {
-    const venueRaces = racesByVenue.get(r.venue || '') || totalRaces;
-    let racePoints = betPointsPerRace;
-    if (isMainRace(r.raceNumber, venueRaces)) {
-      const lines = Array.isArray(r.bettingLines) ? r.bettingLines : [];
-      const firstLine = lines[0] || '';
-      const m = firstLine.match(/^(\d+)[\-↔→](.+)$/);
-      if (m) {
-        const aitePart = m[2].replace(/\(抑え.+\)/, '');
-        const partners = aitePart.split('.').filter(s => s.length > 0);
-        if (partners.length > 0) racePoints = partners.length * 2;
-      }
-    }
-    return {
-      ...r,
-      betType: r.betType || '馬単',
-      betPoints: racePoints,
-    };
-  });
+  console.log(`\n📊 固定6点・案2選定: ${totalRaces}R × ${betPointsPerRace}点 = ${betAmount.toLocaleString()}円 / 採用払戻 ${totalPayout.toLocaleString()}円（候補払戻 ${day.rawTotalPayout.toLocaleString()}円・採用 ${hitRaces}/候補 ${day.candidateHitRaces}）→ 回収率 ${finalReturnRate}%`);
 
   const newEntry = {
     date,
     venue,
     venues: venues.length > 0 ? venues : undefined, // 複数会場の場合のみvenuesを追加
-    totalRaces,
-    hitRaces,
-    missRaces: totalRaces - hitRaces,
-    hitRate: parseFloat(hitRate),
-    betAmount,
-    betPointsPerRace, // 追加: 実際の買い目点数を記録
-    totalBetPoints: totalRaces * betPointsPerRace,
-    totalInvestment: betAmount,
-    totalPayout,
-    returnRate: parseFloat(finalReturnRate),
-    recoveryRate: parseFloat(finalReturnRate), // 旧フィールド互換
+    ...day,
     races: enrichedRaces,
     verifiedAt: new Date().toISOString()
   };
