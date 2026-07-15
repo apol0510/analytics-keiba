@@ -43,12 +43,21 @@ test('#15 Origin 欠落 / 不一致 / 複数 → 拒否', async () => {
   assert.equal((await decideAdminWrite({ ...allow, origin: `${ORIGIN} ` })).reason, ADMIN_REJECT.ORIGIN);
 });
 
-// #16 production 以外から書き込み拒否 / #17 context 未設定で拒否
-test('#16/#17 production 以外・context 未設定 → 拒否', async () => {
-  for (const ctx of [undefined, '', 'dev', 'deploy-preview', 'branch-deploy', 'unknown']) {
+// #16 既知の非本番 context は拒否（deploy-preview / branch-deploy / dev）
+test('#16 既知の非本番 context（dev/deploy-preview/branch-deploy）→ NON_PRODUCTION 拒否', async () => {
+  for (const ctx of ['dev', 'deploy-preview', 'branch-deploy']) {
     const r = await decideAdminWrite({ ...allow, context: ctx });
     assert.equal(r.decision, ADMIN_WRITE.REJECT, `context=${ctx}`);
     assert.equal(r.reason, ADMIN_REJECT.NON_PRODUCTION, `context=${ctx}`);
+  }
+});
+
+// #17 CONTEXT 欠落（Functions ランタイムで未定義になり得る）/ 未知 / 'production' は本番相当で ALLOW。
+// 非本番からの誤書き込みは secret + Origin 完全一致 + kill-switch の多層で防ぐ（context 単独に依存しない）。
+test('#17 CONTEXT 未定義/空/未知/"production" → 本番相当で ALLOW', async () => {
+  for (const ctx of [undefined, '', 'unknown', 'production']) {
+    const r = await decideAdminWrite({ ...allow, context: ctx });
+    assert.equal(r.decision, ADMIN_WRITE.ALLOW, `context=${JSON.stringify(ctx)}`);
   }
 });
 

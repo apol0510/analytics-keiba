@@ -122,6 +122,34 @@ test('16 正規化しても本質的に異なる secret は 403（マスクし�
   } finally { restoreEnv(snap); }
 });
 
+test('17 CONTEXT 未設定（Functions ランタイム欠落を模擬）でも valid secret+Origin で 200（本番 403 仮説の回帰）', async () => {
+  const snap = snapshotEnv();
+  const { calls, factory } = spyFactory();
+  try {
+    process.env.PREMIUM_PLUS_ENABLED = 'true';
+    process.env.PREMIUM_PLUS_CANARY = 'true';
+    delete process.env.CONTEXT; // ランタイムで CONTEXT が欠落するケース
+    process.env.PREMIUM_PLUS_ADMIN_SECRET = ADMIN;
+    const res = await runHandler(adminPost('status'), { blobStore: factory });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(calls, ['premium-plus-canary']);
+  } finally { restoreEnv(snap); }
+});
+
+test('18 既知の非本番 context（deploy-preview）は valid secret+Origin でも 403・store 未到達', async () => {
+  const snap = snapshotEnv();
+  const { calls, factory } = spyFactory();
+  try {
+    process.env.PREMIUM_PLUS_ENABLED = 'true';
+    process.env.PREMIUM_PLUS_CANARY = 'true';
+    process.env.CONTEXT = 'deploy-preview';
+    process.env.PREMIUM_PLUS_ADMIN_SECRET = ADMIN;
+    const res = await runHandler(adminPost('status'), { blobStore: factory });
+    assert.equal(res.statusCode, 403);
+    assert.equal(calls.length, 0);
+  } finally { restoreEnv(snap); }
+});
+
 test('13 不正設定のレスポンス・console に env 生値/secret/cookie を含めない', async () => {
   const snap = snapshotEnv();
   const errCalls = [];

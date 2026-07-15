@@ -11,7 +11,7 @@
  * 管理者 secret は URL/body/query に入れない前提。ここではヘッダのみを見る。
  */
 
-import { decideRefreshOrigin, ORIGIN_DECISION } from '../auth/originPolicy.js';
+import { decideRefreshOrigin, ORIGIN_DECISION, isProductionContext } from '../auth/originPolicy.js';
 
 export const MIN_ADMIN_SECRET_LENGTH = 16;
 
@@ -80,8 +80,12 @@ export async function decideAdminWrite(input, deps = {}) {
   const matched = await timingSafeEqualString(normProvidedSecret, normAdminSecret, deps.subtle);
   if (!matched) return reject(ADMIN_REJECT.FORBIDDEN);
 
-  // 本番 context のみ書き込み可（strictly 'production'）
-  if (context !== 'production') return reject(ADMIN_REJECT.NON_PRODUCTION);
+  // 本番 context のみ書き込み可。既知の非本番（dev / deploy-preview / branch-deploy）は拒否。
+  // ただし CONTEXT は Netlify の build 変数で、Functions ランタイムでは欠落し得る（undefined/空）。
+  // 欠落を非本番として一律 403 にすると本番の書き込みまで塞ぐため、originPolicy と同じ
+  // isProductionContext（未設定/未知 → 本番相当）で判定する。非本番からの誤書き込みは
+  // secret（timing-safe）＋ Origin 完全一致 ＋ kill-switch(ENABLED) の多層で引き続き防ぐ。
+  if (!isProductionContext(context)) return reject(ADMIN_REJECT.NON_PRODUCTION);
 
   // Origin 完全一致（本番オリジン。欠落/不一致/複数は拒否）
   if (decideRefreshOrigin({ origin, context: 'production' }) !== ORIGIN_DECISION.ALLOW) {
