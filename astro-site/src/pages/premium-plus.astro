@@ -1,13 +1,21 @@
 ---
-export const prerender = true;
+export const prerender = false;
 /**
  * Premium Plus — 1 日 1 鞍・三連単フォーメーションの単品商品
  *
  * 前提（変更禁止）:
  * - 単品商品（サブスクではない）
  * - Premium Sanrenpuku 会員にのみ見せる。Premium / Light には存在も知らせない
- *   → AccessControl requiredPlan="Premium Sanrenpuku" + noindex + robots.txt Disallow
  * - 超精密 AI が厳選した 1 鞍のみを提供する
+ *
+ * 認可（Phase 2 / SSR サーバー側・存在秘匿）:
+ * - prerender=false（SSR）。ak_session（HttpOnly 署名 Cookie）をサーバーで検証する。
+ * - verifyPlanAccess が OK（premium-sanrenpuku / premium-combo）のときだけ HTML を返す。
+ * - 未ログイン / free / light / premium / 期限切れ / Cookie 破損 / 鍵未設定 は
+ *   すべて 404 を返し、商品名・価格・口座番号を一切出さず存在を秘匿する（fail closed）。
+ * - localStorage / クライアント AccessControl は認可の根拠にしない（下の <AccessControl>
+ *   は多層防御として残すのみ。真実源はこの SSR ゲート）。
+ * - 会員別 HTML なので CDN 共有を禁止（Cache-Control: private, no-store / Vary: Cookie）。
  *
  * 実績画像・実績数値:
  * - 画像は Netlify Blobs（/admin/premium-plus-images から日次アップロード。ビルド不要で反映）
@@ -16,6 +24,27 @@ export const prerender = true;
  *   満足度4.9 / 継続率94%」は根拠のない固定値で、更新も止まっていた）
  */
 import AccessControl from '../components/AccessControl.astro';
+import { verifyPlanAccess } from '../lib/auth/index.js';
+
+// --- SSR プラン認可（真実源） ---
+const access = await verifyPlanAccess({
+  cookieHeader: Astro.request.headers.get('cookie') || '',
+  secret: process.env.SESSION_SIGNING_SECRET,
+  now: Date.now(),
+});
+if (!access.ok) {
+  // 非会員には存在すら知らせない → 401/403 ではなく 404。商品情報は一切描画しない。
+  return new Response('Not Found', {
+    status: 404,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+// 会員別レスポンス。CDN に共有キャッシュさせない。
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('Vary', 'Cookie');
 
 const PRICE = 68000;
 const LIST_PRICE = 98000;
