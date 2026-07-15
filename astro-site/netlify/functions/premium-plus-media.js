@@ -103,10 +103,6 @@ export async function runHandler(event, deps = {}) {
     const now = Date.now();
     const headers = event.headers || {};
 
-    // [TEMP-DIAG 2026-07-16] 本番 admin 403 の切り分け用。CONTEXT リテラル（非秘密）と
-    // method のみ記録する。secret / cookie / body は出さない。原因確定後に除去する。
-    console.log('[pp-media][diag-temp] method=%s CONTEXT=%s', event.httpMethod, JSON.stringify(process.env.CONTEXT));
-
     if (event.httpMethod === 'GET') {
       return await handleMediaGet({
         params: event.queryStringParameters || {},
