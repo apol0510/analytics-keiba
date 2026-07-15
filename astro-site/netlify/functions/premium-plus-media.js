@@ -21,7 +21,11 @@ import { resolvePremiumPlusStoreName } from '../../src/lib/premiumPlus/storeSele
 
 /** Netlify Blobs を manifestStore が期待する注入インターフェースにアダプトする。 */
 function blobStore(storeName) {
-  const options = { name: storeName, consistency: 'strong' };
+  // consistency は既定（eventual）。strong 読取は uncachedEdgeURL を要するが、classic Function の
+  // connectLambda コンテキストには含まれず BlobsConsistencyError になる。正当性は manifest の
+  // etag CAS（onlyIfMatch/onlyIfNew）が担保しており、eventual 読取でも stale は CAS 失敗→リトライに
+  // なるだけで破損しない（勝者を上書きしない・過去 manifest は不変）。
+  const options = { name: storeName };
   const siteID = process.env.NETLIFY_SITE_ID;
   const token = process.env.NETLIFY_AUTH_TOKEN || process.env.NETLIFY_API_TOKEN;
   const s = siteID && token ? getStore({ ...options, siteID, token }) : getStore(options);
