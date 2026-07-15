@@ -3,7 +3,33 @@
  * Premium Plus専用のお問い合わせを受け付け、確認メールを送信
  */
 
+import Airtable from 'airtable';
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
+import { buildAdminContactSubject } from '../../src/lib/contact/contactSubject.js';
+
+/**
+ * email から Airtable Customers の会員種別（プラン）を引く。fail-open:
+ * env 未設定 / 未登録 / エラーは null を返し、問い合わせ送信は止めない（ラベルは formType でフォールバック）。
+ */
+async function lookupPlanByEmail(email) {
+  try {
+    if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID) return null;
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return null;
+    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
+    const escaped = normalized.replace(/'/g, "\\'");
+    const records = await base('Customers')
+      .select({ filterByFormula: `LOWER(TRIM({Email})) = '${escaped}'`, maxRecords: 1 })
+      .firstPage();
+    if (!records || records.length === 0) return null;
+    const f = records[0].fields || {};
+    return f['プラン'] ?? f['Plan'] ?? null;
+  } catch (error) {
+    console.error('Premium contact plan lookup failed:', (error && error.name) || 'Error');
+    return null; // fail-open（問い合わせ自体は継続）
+  }
+}
+
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
   const headers = {
@@ -68,11 +94,16 @@ exports.handler = async (event, context) => {
       throw new Error('SendGrid API key not configured');
     }
 
+    // 会員種別（Airtable プラン）に応じた件名・見出しラベルを決める。
+    // plan 取得不可でも formType でフォールバックし、Premium Plus 固定にはしない。
+    const plan = await lookupPlanByEmail(email);
+    const { heading: memberHeading, adminSubject } = buildAdminContactSubject({ plan, formType, subject, email });
+
     // 管理者向けメール内容
     const adminEmailData = {
       personalizations: [{
         to: [{ email: ADMIN_EMAIL }],
-        subject: `【Premium Plus お問い合わせ】${subject} - ${email}`
+        subject: adminSubject
       }],
       from: { email: FROM_EMAIL, name: 'KEIBA Analytics サポート' },
       reply_to: { email: email, name: name },  // 🔧 2025-11-26追加: ユーザーへの返信設定
@@ -98,7 +129,7 @@ exports.handler = async (event, context) => {
 <body>
   <div class="container">
     <div class="header">
-      <h2 style="margin: 0;">📧 Premium Plus お問い合わせ</h2>
+      <h2 style="margin: 0;">📧 ${memberHeading}</h2>
       <p style="margin: 10px 0 0 0; font-size: 0.95rem;">新しいお問い合わせが届きました</p>
     </div>
 
@@ -145,7 +176,7 @@ exports.handler = async (event, context) => {
     const userEmailData = {
       personalizations: [{
         to: [{ email: email }],
-        subject: '【お問い合わせ受付】KEIBA Analytics Premium Plus'
+        subject: '【お問い合わせ受付】KEIBA Analytics'
       }],
       from: { email: FROM_EMAIL, name: 'KEIBA Analytics サポート' },
       reply_to: { email: 'nankan.analytics@gmail.com', name: 'KEIBA Analytics サポート' },  // 🔧 2025-11-26追加: ユーザー宛メールにも返信先設定
@@ -213,7 +244,7 @@ exports.handler = async (event, context) => {
       <p>AI・機械学習で勝つ。南関競馬の次世代予想プラットフォーム</p>
       <p><a href="https://analytics.keiba.link" style="color: #3b82f6; text-decoration: none;">https://analytics.keiba.link</a></p>
       <p style="font-size:0.9rem;color:#64748b;margin-top:20px;">
-        このメールはPremium Plusお問い合わせフォームにご入力いただいた内容の控えとして自動送信されています。<br>
+        このメールはお問い合わせフォームにご入力いただいた内容の控えとして自動送信されています。<br>
         心当たりがない場合は、このメールを破棄してください。
       </p>
     </div>
