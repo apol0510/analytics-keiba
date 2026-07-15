@@ -15,7 +15,7 @@
  *      NETLIFY_SITE_ID / NETLIFY_AUTH_TOKEN（ローカル netlify dev のみ）
  */
 
-import { getStore } from '@netlify/blobs';
+import { getStore, connectLambda } from '@netlify/blobs';
 import { handleMediaGet, handleMediaPost } from '../../src/lib/premiumPlus/mediaHandlers.js';
 import { resolvePremiumPlusStoreName } from '../../src/lib/premiumPlus/storeSelection.js';
 
@@ -65,6 +65,14 @@ export async function handler(event) {
  */
 export async function runHandler(event, deps = {}) {
   const blobStoreFactory = typeof deps.blobStore === 'function' ? deps.blobStore : blobStore;
+
+  // 実ストア（本番 classic Function）利用時のみ、Lambda 互換の Blobs コンテキストを
+  // event から初期化する。これを呼ばないと後段の getStore が MissingBlobsEnvironmentError を
+  // 投げる（本番は従来ここへ到達する前に 403 で落ちていたため未発覚だった）。
+  // テストは blobStore を注入するため呼ばない（モック event に Blobs メタデータが無く失敗する）。
+  if (typeof deps.blobStore !== 'function') {
+    connectLambda(event);
+  }
 
   // 【a. kill-switch・最上流】PREMIUM_PLUS_ENABLED が 'true' でない限り全メソッド 404。
   // ここで return するため store 選択・getStore・Blobs には一切到達しない（書き込み 0 件）。
