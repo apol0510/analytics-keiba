@@ -30,6 +30,7 @@ const authUser = raw(FN('auth-user.js'));
 const sendMagic = raw(FN('send-magic-link.js'));
 const verifyMagic = raw(FN('verify-magic-link.js'));
 const logout = raw(FN('logout.js'));
+const refreshSession = raw(FN('refresh-session.js'));
 const dashboard = raw(PAGE('dashboard.astro'));
 const verifyPage = raw(PAGE('auth/verify.astro'));
 const loginPage = raw(PAGE('login.astro'));
@@ -249,3 +250,48 @@ test('dashboard.astro: 旧・最下部の目立つログアウト（logout-prima
   assert.equal(/action-btn logout-primary/.test(dashboard), false);
   assert.equal(/class="logout-section-paid"/.test(dashboard), false);
 });
+
+// ─── refresh-session.js（PR-B2）───────────────────────────────
+// Origin 拒否時に Airtable 照会も Set-Cookie も行わないことを、ソースの制御フロー順で保証する。
+{
+  const s = stripJs(refreshSession);
+
+  test('refresh-session.js: Origin 検証が Airtable 照会より前（#7 拒否時に照会しない）', () => {
+    // 呼び出し箇所（定義ではなく実行順）で比較する
+    const iOrigin = s.indexOf('decideRefreshOrigin({');
+    const iAirtable = s.indexOf('new Airtable');
+    const iFindCall = s.indexOf('findCustomerById(base, verified');
+    assert.ok(iOrigin > -1, 'decideRefreshOrigin を呼ぶ');
+    assert.ok(iAirtable > -1 && iFindCall > -1, 'Airtable 照会の呼び出しが存在する');
+    assert.ok(iOrigin < iAirtable, 'Origin 検証は new Airtable より前');
+    assert.ok(iOrigin < iFindCall, 'Origin 検証は findCustomerById 呼び出しより前');
+  });
+
+  test('refresh-session.js: Origin 拒否の 403 は Set-Cookie を返さない（#8）', () => {
+    // 403 Forbidden を返す行に Set-Cookie が無いこと
+    const forbiddenLine = s.split('\n').find((l) => l.includes('403') && l.includes('Forbidden'));
+    assert.ok(forbiddenLine, '403 Forbidden の return がある');
+    assert.equal(/Set-Cookie/i.test(forbiddenLine), false, '403 行に Set-Cookie を含めない');
+  });
+
+  test('refresh-session.js: Origin 検証は process.env.CONTEXT を根拠にする（クライアント値を信用しない）', () => {
+    assert.match(s, /decideRefreshOrigin\(\s*\{[^}]*context:\s*process\.env\.CONTEXT/);
+  });
+
+  test('refresh-session.js: 全レスポンスに Cache-Control: private, no-store', () => {
+    assert.match(s, /'Cache-Control':\s*'private, no-store'/);
+  });
+
+  test('refresh-session.js: POST 以外は 405 / secret 未設定は 503（fail closed）', () => {
+    assert.match(s, /httpMethod\s*!==\s*'POST'[\s\S]{0,120}405/);
+    assert.match(s, /checkSigningSecret[\s\S]{0,160}503/);
+  });
+
+  test('refresh-session.js: secret / Cookie / token をログに出さない', () => {
+    // console.* の引数に secret / token / cookie 変数を渡していない
+    const logs = s.match(/console\.(log|warn|error)\([^)]*\)/g) || [];
+    for (const line of logs) {
+      assert.equal(/\bsecret\b|\btoken\b|\bcookie\b/i.test(line), false, `ログに機密を含めない: ${line}`);
+    }
+  });
+}

@@ -7,11 +7,16 @@
 
 export {
   SESSION_SCHEMA_VERSION,
+  SESSION_SCHEMA_VERSION_V2,
+  SUPPORTED_SCHEMA_VERSIONS,
+  ISSUE_SCHEMA_VERSION,
   SESSION_COOKIE_NAME,
   MAX_SESSION_TTL_MS,
+  ABSOLUTE_SESSION_TTL_MS,
   CLOCK_SKEW_MS,
   MIN_SECRET_LENGTH,
   ALLOWED_PAYLOAD_KEYS,
+  ALLOWED_PAYLOAD_KEYS_V2,
   EDGE_GATE_MODE,
 } from './constants.js';
 
@@ -35,6 +40,7 @@ export {
 
 export {
   buildPayload,
+  buildPayloadV2,
   validatePayload,
   PAYLOAD_REJECT,
 } from './sessionPayload.js';
@@ -45,9 +51,26 @@ export {
   readSessionCookie,
 } from './sessionCookie.js';
 
-export { createSession, verifySession, VERIFY_REJECT } from './session.js';
+export { createSession, createSessionV2, verifySession, VERIFY_REJECT } from './session.js';
+
+export {
+  decideRefresh,
+  resolveCarriedSessionStart,
+  REFRESH_DECISION,
+  REFRESH_REJECT,
+  REFRESH_THRESHOLD_MS,
+} from './sessionRefresh.js';
 
 export { resolveEdgeGateMode } from './edgeGatePolicy.js';
+
+export {
+  decideRefreshOrigin,
+  isProductionContext,
+  ORIGIN_DECISION,
+  PROD_ALLOWED_ORIGINS,
+  NONPROD_EXTRA_ORIGINS,
+  NON_PRODUCTION_CONTEXTS,
+} from './originPolicy.js';
 
 // --- PR-B: 会員判定 / セッション発行オーケストレーション ---
 export {

@@ -15,7 +15,7 @@
 import { MAX_SESSION_TTL_MS, CLOCK_SKEW_MS } from './constants.js';
 import { checkSecret, signHmac, verifyHmac, SecretError } from './sessionCrypto.js';
 import { utf8ToBase64url, base64urlToUtf8 } from './encoding.js';
-import { buildPayload, validatePayload } from './sessionPayload.js';
+import { buildPayload, buildPayloadV2, validatePayload } from './sessionPayload.js';
 
 /** verifySession が返す失敗理由（構造化）。 */
 export const VERIFY_REJECT = Object.freeze({
@@ -64,6 +64,55 @@ export async function createSession(input) {
   });
   if (!built.ok) {
     const err = new Error('createSession: payload rejected');
+    err.code = built.reason;
+    throw err;
+  }
+
+  const payloadPart = utf8ToBase64url(JSON.stringify(built.payload));
+  const signature = await signHmac({
+    secret: input.secret,
+    signingInput: payloadPart,
+    subtle: input.subtle,
+  });
+  return { token: `${payloadPart}.${signature}`, payload: built.payload };
+}
+
+/**
+ * v2 セッショントークンを発行する（sessionStart 付き）。新規ログイン・refresh はこれを使う。
+ * createSession（v1）と同一の署名処理で、payload だけ v2（sessionStart 必須）にする。
+ *
+ * @param {{
+ *   secret: string,
+ *   sub: string,
+ *   plan: unknown,
+ *   venueAccess: unknown,
+ *   sessionVersion?: number,
+ *   now: number,
+ *   ttlMs: number,
+ *   sessionStart?: number,
+ *   maxTtlMs?: number,
+ *   subtle?: SubtleCrypto,
+ * }} input
+ * @returns {Promise<{ token: string, payload: import('./sessionPayload.js').SessionPayload }>}
+ */
+export async function createSessionV2(input) {
+  const maxTtlMs = input.maxTtlMs ?? MAX_SESSION_TTL_MS;
+
+  const secretCheck = checkSecret(input.secret);
+  if (!secretCheck.ok) throw new SecretError(secretCheck.reason);
+
+  const built = buildPayloadV2({
+    sub: input.sub,
+    plan: input.plan,
+    venueAccess: input.venueAccess,
+    sessionVersion: input.sessionVersion,
+    issuedAt: input.now,
+    ttlMs: input.ttlMs,
+    sessionStart: input.sessionStart ?? input.now, // 省略時は初回ログイン
+    maxTtlMs,
+  });
+  if (!built.ok) {
+    const err = new Error('createSessionV2: payload rejected');
     err.code = built.reason;
     throw err;
   }

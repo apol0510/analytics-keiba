@@ -8,7 +8,7 @@
  */
 
 import { checkSecret } from './sessionCrypto.js';
-import { createSession } from './session.js';
+import { createSessionV2 } from './session.js';
 import { serializeSessionCookie, serializeLogoutCookie } from './sessionCookie.js';
 import { MEMBER_TYPE } from './memberResolution.js';
 
@@ -34,11 +34,16 @@ export function checkSigningSecret(rawSecret) {
  * paid 会員に対して ak_session Cookie を発行する。
  * paid 以外・鍵不正・payload 構築失敗はいずれも { ok:false } を返す（Cookie を作らない）。
  *
+ * v2 セッション（sessionStart 付き）を発行する。
+ *   - 初回ログイン: sessionStart 省略 → now（= issuedAt）が起点になる
+ *   - refresh:      呼び出し側が既存 payload の sessionStart を渡し、初回ログイン時刻を保持する
+ *
  * @param {{
  *   membership: { memberType: string, normalizedPlan: string|null, venueAccess: string[], sessionVersion: number, recordId: string|null },
  *   secret: string,
  *   now: number,
  *   ttlMs?: number,
+ *   sessionStart?: number,
  *   subtle?: SubtleCrypto,
  * }} input
  * @returns {Promise<{ ok: true, cookie: string, token: string, payload: object }
@@ -57,7 +62,7 @@ export async function issuePaidSessionCookie(input) {
 
   let created;
   try {
-    created = await createSession({
+    created = await createSessionV2({
       secret,
       sub: membership.recordId,
       plan: membership.normalizedPlan,
@@ -65,6 +70,7 @@ export async function issuePaidSessionCookie(input) {
       sessionVersion: membership.sessionVersion ?? 0,
       now,
       ttlMs,
+      sessionStart: input.sessionStart, // 省略時は createSessionV2 が now を採用
       subtle,
     });
   } catch {

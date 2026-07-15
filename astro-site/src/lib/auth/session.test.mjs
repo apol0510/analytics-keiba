@@ -275,7 +275,8 @@ for (const [name, ttlMs, shouldPass] of TTL_BOUNDARY) {
 }
 
 test('23. version 不明 → unknown_version', async () => {
-  const token = await mintToken(validPayload({ v: 2 }));
+  // v1/v2 は SUPPORTED（PR-B2 で v2 追加）。ここでは真に未知の版でのみ拒否を確認する。
+  const token = await mintToken(validPayload({ v: 99 }));
   const res = await verifySession({ token, secret: TEST_SECRET, now: NOW, subtle });
   assert.equal(res.ok, false);
   assert.equal(res.reason, PAYLOAD_REJECT.UNKNOWN_VERSION);

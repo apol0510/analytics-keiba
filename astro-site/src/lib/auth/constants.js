@@ -8,11 +8,31 @@
  * 全ランタイム（Node Functions / Astro middleware / Netlify Edge(Deno)）で共有する。
  */
 
-/** 現行スキーマバージョン（payload.v）。未知の v は検証で拒否する。 */
-export const SESSION_SCHEMA_VERSION = 1;
+/**
+ * スキーマバージョン（payload.v）。
+ * v1: 初期スキーマ（sessionStart 無し）。既存発行済み Cookie 互換のため検証は受理し続ける。
+ * v2: sessionStart を必須にした版（絶対 TTL の起点）。新規発行・refresh 後はすべて v2。
+ * SUPPORTED_SCHEMA_VERSIONS 以外の v は検証で拒否する。
+ */
+export const SESSION_SCHEMA_VERSION = 1; // = v1（後方互換の基準・既存参照を壊さないため据置）
+export const SESSION_SCHEMA_VERSION_V2 = 2;
+
+/** 検証側が受理するスキーマバージョン（移行期間中は v1/v2 両方）。 */
+export const SUPPORTED_SCHEMA_VERSIONS = Object.freeze([SESSION_SCHEMA_VERSION, SESSION_SCHEMA_VERSION_V2]);
+
+/** 新規発行・refresh 時に採用するスキーマバージョン（常に v2）。 */
+export const ISSUE_SCHEMA_VERSION = SESSION_SCHEMA_VERSION_V2;
 
 /** Cookie 名（有料セッション専用）。 */
 export const SESSION_COOKIE_NAME = 'ak_session';
+
+/**
+ * 絶対最大ログイン継続時間（ミリ秒）。
+ * v2 payload の sessionStart（初回ログイン時刻。refresh で引き継ぐ）を起点に、
+ * now - sessionStart >= これ で refresh を拒否し、再度マジックリンク認証を要求する。
+ * refresh をいくら繰り返してもこの上限は延長されない。
+ */
+export const ABSOLUTE_SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12時間
 
 /**
  * 有料セッションの絶対最大 TTL（ミリ秒）。
@@ -47,6 +67,15 @@ export const ALLOWED_PAYLOAD_KEYS = Object.freeze([
   'sessionVersion',
   'issuedAt',
   'expiresAt',
+]);
+
+/**
+ * v2 payload に許可するキー（allow-list）。v1 の全キー + sessionStart。
+ * v1 payload に sessionStart が来た場合は v1 allow-list 外 → 拒否される（版ごとに厳密分離）。
+ */
+export const ALLOWED_PAYLOAD_KEYS_V2 = Object.freeze([
+  ...ALLOWED_PAYLOAD_KEYS,
+  'sessionStart',
 ]);
 
 /**
