@@ -60,6 +60,43 @@ function defaultNewId() {
   return globalThis.crypto.randomUUID();
 }
 
+/** waiter 既定は instant（テスト高速）。本番 Function は実 sleep を注入する。 */
+export const noopSleep = () => Promise.resolve();
+
+/**
+ * eventual consistency 下の read-your-writes を近似する収束読取。
+ *
+ * classic Netlify Function + Netlify Blobs（strong 不可）では manifest-current の read が
+ * 直近書込を即座に反映せず、単発 readCurrent は stale snapshot を返し得る。stale を起点に
+ * expectedVersion 判定や CAS を行うと「behind client の書込が誤って通る（lost-update）」/
+ * 「直後 status が古い version」/「idempotent 再送が新規扱い」等が起きる（#10/#11/#13/#18）。
+ *
+ * 対策: manifest-current を有限回 read し、logicalVersion 最大（= 最新可視。version は単調増加）を
+ * 採用する。attempt 間に waiter(backoff) で propagation を待つ。十分条件は
+ * 「minVersion 以上 かつ 直近 read が同一 version で安定」。上限に達したら best を返す（fail-closed:
+ * その後の expectedVersion 判定が stale client を 409 で弾く）。無制限 retry はしない。
+ *
+ * @param {object} store
+ * @param {{attempts?:number, waiter?:(ms:number)=>Promise<void>, delays?:number[], minVersion?:number}} [opts]
+ */
+export async function readCurrentStable(store, opts = {}) {
+  const attempts = Number.isInteger(opts.attempts) && opts.attempts > 0 ? opts.attempts : 5;
+  const waiter = typeof opts.waiter === 'function' ? opts.waiter : noopSleep;
+  const delays = Array.isArray(opts.delays) && opts.delays.length ? opts.delays : [75, 150, 300, 600];
+  const minVersion = Number.isInteger(opts.minVersion) && opts.minVersion > 0 ? opts.minVersion : 0;
+
+  let best = await readCurrent(store);
+  let agree = 0;
+  for (let i = 0; i + 1 < attempts; i++) {
+    if (best.logicalVersion >= minVersion && agree >= 1) break; // 下限充足 & 安定
+    await waiter(delays[Math.min(i, delays.length - 1)]);
+    const next = await readCurrent(store);
+    if (next.logicalVersion > best.logicalVersion) { best = next; agree = 0; } // 新しい方を採用
+    else if (next.logicalVersion === best.logicalVersion) { agree += 1; }
+  }
+  return best;
+}
+
 /** 現行 pointer / manifest / etag を読む。未初期化は logicalVersion 0 / manifestId null。 */
 export async function readCurrent(store) {
   const { value: pointer, etag: pointerEtag } = await store.getJSONWithEtag(mediaKeys.current());

@@ -13,7 +13,7 @@ import { computeStats, sortEntries, GALLERY_LIMIT } from '../premiumPlusShowcase
 import { decideAdminWrite, ADMIN_WRITE } from './mediaAuth.js';
 import { validateUploadMeta } from './uploadValidation.js';
 import { validateImage, decodeBase64Image } from './imageValidation.js';
-import { readCurrent, applyUpload, applyVisibility, applyRollback, applySeedStage, applySeedCommit } from './manifestStore.js';
+import { readCurrent, readCurrentStable, noopSleep, applyUpload, applyVisibility, applyRollback, applySeedStage, applySeedCommit } from './manifestStore.js';
 
 // Netlify Functions の同期リクエスト body 上限（~6MB）に対する安全側の閾値。
 // 画像は base64 で ~1.33 倍に膨らむため、1 リクエスト 1 画像前提で 5.5MB を上限にする。
@@ -127,8 +127,8 @@ function toExpectedVersion(v) {
   return Number.isInteger(n) ? n : NaN;
 }
 
-/** POST: 管理者認可付き更新。 */
-export async function handleMediaPost({ method, providedSecret, origin, context, adminSecret, body, now, store: rawStore, subtle }) {
+/** POST: 管理者認可付き更新。waiter は eventual read 収束の backoff（本番は実 sleep / テストは instant）。 */
+export async function handleMediaPost({ method, providedSecret, origin, context, adminSecret, body, now, store: rawStore, subtle, waiter = noopSleep }) {
   const authz = await decideAdminWrite({ method, adminSecret, providedSecret, origin, context }, { subtle });
   if (authz.decision !== ADMIN_WRITE.ALLOW) {
     // store を解決しない（Blobs 未接続）。Set-Cookie も秘密値も返さない。理由は汎用。
@@ -153,8 +153,9 @@ export async function handleMediaPost({ method, providedSecret, origin, context,
   if (Number.isNaN(expectedVersion)) return json(400, { error: 'invalid expectedVersion' });
 
   // 読み取り（管理者）。version を返し、以降の楽観ロックに使わせる。
+  // 収束読取で最新可視 version を返す（直後 status の read-your-writes / 楽観ロック値の鮮度）。
   if (action === 'status') {
-    const { logicalVersion, manifest } = await readCurrent(store);
+    const { logicalVersion, manifest } = await readCurrentStable(store, { waiter });
     const all = sortEntries(manifest.entries || []);
     return json(200, {
       version: logicalVersion, // クライアントは opaque な楽観ロック値として使う（= logicalVersion）
@@ -202,7 +203,8 @@ export async function handleMediaPost({ method, providedSecret, origin, context,
     const imageResult = await validateImage(bytes, { subtle });
     if (!imageResult.ok) return json(400, { error: `image: ${imageResult.reason}` });
 
-    const result = await applyUpload({ store, image: imageResult, meta: metaResult.meta, operationId, expectedVersion, now, subtle });
+    const preread = await readCurrentStable(store, { waiter, minVersion: expectedVersion });
+    const result = await applyUpload({ store, image: imageResult, meta: metaResult.meta, operationId, expectedVersion, now, subtle, preread });
     if (result.ok) return json(200, { ok: true, version: result.version, operationId, idempotent: result.idempotent === true, ...(result.entry ? { saved: sanitizeForAdmin(result.entry) } : {}) });
     if (result.conflict) return json(409, conflictBody(result));
     return json(500, { error: `transaction failed: ${result.reason}` });
@@ -219,7 +221,8 @@ export async function handleMediaPost({ method, providedSecret, origin, context,
       if (typeof raw.checksum !== 'string' || !/^[0-9a-f]{64}$/.test(raw.checksum)) return json(400, { error: 'invalid checksum' });
       items.push({ meta: metaResult.meta, checksum: raw.checksum });
     }
-    const result = await applySeedCommit({ store, items, operationId, expectedVersion, now, subtle });
+    const preread = await readCurrentStable(store, { waiter, minVersion: expectedVersion });
+    const result = await applySeedCommit({ store, items, operationId, expectedVersion, now, subtle, preread });
     if (result.ok) return json(200, { ok: true, version: result.version, operationId, count: result.count, idempotent: result.idempotent === true });
     if (result.conflict) return json(409, conflictBody(result));
     return json(500, { error: `transaction failed: ${result.reason}` });
@@ -228,7 +231,8 @@ export async function handleMediaPost({ method, providedSecret, origin, context,
   if (action === 'hide' || action === 'show') {
     const date = typeof payload.date === 'string' ? payload.date.trim() : '';
     if (!date) return json(400, { error: 'date required' });
-    const result = await applyVisibility({ store, date, visible: action === 'show', operationId, expectedVersion, now, subtle });
+    const preread = await readCurrentStable(store, { waiter, minVersion: expectedVersion });
+    const result = await applyVisibility({ store, date, visible: action === 'show', operationId, expectedVersion, now, subtle, preread });
     if (result.ok) return json(200, { ok: true, version: result.version, operationId, date, visible: action === 'show', idempotent: result.idempotent === true });
     if (result.conflict) return json(409, conflictBody(result));
     if (result.reason === 'entry_not_found') return json(404, { error: 'entry not found' });
@@ -238,7 +242,8 @@ export async function handleMediaPost({ method, providedSecret, origin, context,
   if (action === 'rollback') {
     const targetVersion = Number(payload.targetVersion);
     if (!Number.isInteger(targetVersion) || targetVersion < 1) return json(400, { error: 'invalid targetVersion' });
-    const result = await applyRollback({ store, targetVersion, operationId, expectedVersion, now, subtle });
+    const preread = await readCurrentStable(store, { waiter, minVersion: expectedVersion });
+    const result = await applyRollback({ store, targetVersion, operationId, expectedVersion, now, subtle, preread });
     if (result.ok) return json(200, { ok: true, version: result.version, rolledBackFrom: targetVersion, operationId, idempotent: result.idempotent === true });
     if (result.conflict) return json(409, conflictBody(result));
     if (result.reason === 'target_not_found') return json(404, { error: 'target version not found' });

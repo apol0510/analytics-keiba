@@ -67,8 +67,12 @@ export async function handler(event) {
  * @param {object} event  Netlify Functions event
  * @param {{blobStore?: (storeName:string)=>object}} [deps]  テスト用に store factory を注入可能
  */
+// eventual read 収束の backoff。本番は実 sleep、テストは deps.waiter で instant 上書き。
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function runHandler(event, deps = {}) {
   const blobStoreFactory = typeof deps.blobStore === 'function' ? deps.blobStore : blobStore;
+  const waiter = typeof deps.waiter === 'function' ? deps.waiter : realSleep;
 
   // 実ストア（本番 classic Function）利用時のみ、Lambda 互換の Blobs コンテキストを
   // event から初期化する。これを呼ばないと後段の getStore が MissingBlobsEnvironmentError を
@@ -124,6 +128,7 @@ export async function runHandler(event, deps = {}) {
       now,
       // 管理者認可を通ってから getStore を呼ぶ（factory を渡す）
       store,
+      waiter,
     });
   } catch (error) {
     // ログ衛生: error.message は内部ストレージ URL / key / token 断片を含み得るため出さない。
