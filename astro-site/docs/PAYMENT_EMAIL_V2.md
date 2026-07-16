@@ -135,6 +135,18 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 
 ---
 
+## legacy 管理経路の無効化（設計・cutover 時に実施）
+
+`/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` は
+運用上未使用だが到達可能で、**誤操作すると自前送信 + A2 で 2 通**届く（`PaymentEmailSent` を立てないため）。
+
+- **即時（コード変更前）**: 使用禁止を運用で明文化。`admin-promote-customer` 完成まで触らない。
+- **cutover 時（S3〜S6 のどこか・本タスクでは未実施）**:
+  - 推奨: 管理画面を新 `admin-promote-customer` 画面へ **redirect**、旧 Function は **410 Gone** を返す。
+  - **feature flag に依存した 403 だけでは legacy 期間中に誤操作可能**なので不十分（恒久 410 にする）。
+  - `paypal-webhook.js` は未使用を**コードコメント + 運用文書に明記**し、v2 対応完了まで有効化禁止。
+- 本タスクでは**旧 Function の挙動は変更しない**（cutover 時のアクションのため）。
+
 ## 別課題（本設計と分離・未解決）
 
 - **送信元不一致**: `email-config.js` の `FROM_EMAIL='noreply@keiba.link'` だが AK 正式送信元は

@@ -11,7 +11,7 @@ import {
   idempotencyKeyInput, computeIdempotencyKey, buildPendingEmailFields,
   decideLeaseAcquire, buildWriteAheadFields, evaluateMailOutcome, decideAfterProvider,
   classifyActivityResult, decideReconcile, decideWebhookEvent,
-  parseBoolEnv, parseGatesFromEnv, validateEmailGates,
+  parseBoolEnv, parseGatesFromEnv, validateEmailGates, shouldConfirmUseV2,
 } from './paymentEmailState.js';
 
 const T0 = Date.UTC(2026, 6, 16, 0, 0, 0); // 2026-07-16T00:00:00Z（固定・Date.now 不使用）
@@ -135,6 +135,13 @@ test('after provider 5xx → failed_retryable（PaymentEmailSent は書かない
   assert.equal('PaymentEmailSent' in r.fields, false);
 });
 
+test('after provider 送信例外 → failed_retryable（一時的エラーは再試行可）', () => {
+  const outcome = evaluateMailOutcome({ hasApiKey: true, hasEmail: true, threw: true });
+  const r = decideAfterProvider({ outcome, now: T0 });
+  assert.equal(r.status, EMAIL_STATUS.FAILED_RETRYABLE);
+  assert.equal('PaymentEmailSent' in r.fields, false);
+});
+
 test('after provider 4xx / no_key → failed_terminal', () => {
   const t1 = decideAfterProvider({ outcome: evaluateMailOutcome({ hasApiKey: true, hasEmail: true, providerStatus: 403 }), now: T0 });
   assert.equal(t1.status, EMAIL_STATUS.FAILED_TERMINAL);
@@ -217,11 +224,27 @@ test('webhook: delivered/bounce/dropped は状態遷移、deferred は無視', (
 });
 
 // ── gate 検証（fail closed）──────────────────────────
-test('gate: 有効な 4 構成', () => {
+test('gate: cutover の各モード（legacy → v2-dry-run → v2-worker → v2-full）', () => {
   assert.equal(validateEmailGates({ flow: 'legacy', workerSend: false, reconcilerWrite: false, globalPause: false }).mode, 'legacy');
   assert.equal(validateEmailGates({ flow: 'v2', workerSend: false, reconcilerWrite: false, globalPause: true, a2DisabledConfirmed: true }).mode, 'paused');
   assert.equal(validateEmailGates({ flow: 'v2', workerSend: false, reconcilerWrite: false, globalPause: false, a2DisabledConfirmed: true }).mode, 'v2-dry-run');
-  assert.equal(validateEmailGates({ flow: 'v2', workerSend: true, reconcilerWrite: true, globalPause: false, a2DisabledConfirmed: true }).mode, 'v2-active');
+  assert.equal(validateEmailGates({ flow: 'v2', workerSend: true, reconcilerWrite: false, globalPause: false, a2DisabledConfirmed: true }).mode, 'v2-worker'); // S7
+  assert.equal(validateEmailGates({ flow: 'v2', workerSend: true, reconcilerWrite: true, globalPause: false, a2DisabledConfirmed: true }).mode, 'v2-full');   // S8
+});
+
+test('gate: reconciler だけ ON で worker OFF は禁止（resend が滞留する）', () => {
+  const r = validateEmailGates({ flow: 'v2', workerSend: false, reconcilerWrite: true, a2DisabledConfirmed: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.violations.includes('reconciler_needs_worker'), true);
+});
+
+test('shouldConfirmUseV2: worker が送れるモードだけ true（dry-run/legacy/不正は false）', () => {
+  const A2 = { a2DisabledConfirmed: true };
+  assert.equal(shouldConfirmUseV2({ flow: 'legacy' }), false);
+  assert.equal(shouldConfirmUseV2({ flow: 'v2', workerSend: false, ...A2 }), false); // dry-run は inline 送信(legacy)
+  assert.equal(shouldConfirmUseV2({ flow: 'v2', workerSend: true, ...A2 }), true);    // v2-worker
+  assert.equal(shouldConfirmUseV2({ flow: 'v2', workerSend: true, reconcilerWrite: true, ...A2 }), true); // v2-full
+  assert.equal(shouldConfirmUseV2({ flow: 'v2', workerSend: true }), false); // a2 未宣言 → 不正 → fail closed
 });
 
 test('gate: 禁止構成はすべて invalid（fail closed）', () => {

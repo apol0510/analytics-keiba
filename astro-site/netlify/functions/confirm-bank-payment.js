@@ -29,6 +29,8 @@
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js';
+import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
@@ -162,12 +164,22 @@ exports.handler = async (event) => {
     }
 
     // ── Step 3: 昇格内容を決める（fail closed）──────────────
+    // gate が v2（worker が送信できるモード）のときだけ v2 挙動へ切替。
+    // 既定（env 未設定）は flow=legacy → useV2=false で従来と完全に同一挙動。
+    const useV2 = shouldConfirmUseV2(parseGatesFromEnv(process.env));
     const confirmedAt = new Date();
-    const confirmation = buildConfirmationFields({
-      requestedPlan: fields['RequestedPlan'],
-      requestedPlanType: fields['RequestedPlanType'],
-      confirmedAt
-    });
+    const confirmation = useV2
+      ? buildV2ConfirmationFields({
+          requestedPlan: fields['RequestedPlan'],
+          requestedPlanType: fields['RequestedPlanType'],
+          confirmedAt,
+          recordId,
+        })
+      : buildConfirmationFields({
+          requestedPlan: fields['RequestedPlan'],
+          requestedPlanType: fields['RequestedPlanType'],
+          confirmedAt
+        });
 
     if (!confirmation) {
       // フォーム未経由 / 二重実行 / PlanType 不明。推測で昇格させず管理者へ通知する
@@ -219,7 +231,11 @@ exports.handler = async (event) => {
     });
 
     // ── Step 5: 入金確認メール ────────────────────────────
-    if (SENDGRID_API_KEY && email) {
+    // v2 では confirm は送信しない。pending を作り、送信 worker に委譲する
+    // （PaymentEmailStatus='pending' は Step 4 の PATCH で既に書かれている）。
+    if (useV2) {
+      console.log('📮 [confirm-bank-payment] v2: pending 生成。送信は worker が担当', { recordId });
+    } else if (SENDGRID_API_KEY && email) {
       await sendMail({
         apiKey: SENDGRID_API_KEY,
         to: email,

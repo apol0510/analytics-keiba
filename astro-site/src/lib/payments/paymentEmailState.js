@@ -205,7 +205,11 @@ export function decideAfterProvider({ outcome, now, providerMessageId = null, la
     };
   }
 
-  const retryable = outcome.failureStage === FAILURE_STAGE.PROVIDER_5XX;
+  // 5xx/429 と送信例外（ネットワーク/timeout）は一時的 → 再試行可。
+  // 4xx / api key・email 欠如は恒久 → terminal。
+  const retryable =
+    outcome.failureStage === FAILURE_STAGE.PROVIDER_5XX ||
+    outcome.failureStage === FAILURE_STAGE.PROVIDER_EXCEPTION;
   const next = retryable ? EMAIL_STATUS.FAILED_RETRYABLE : EMAIL_STATUS.FAILED_TERMINAL;
   return {
     status: next,
@@ -371,19 +375,33 @@ export function validateEmailGates(gates) {
   const violations = [];
 
   if (g.flow === 'v2' && !g.a2DisabledConfirmed) violations.push('v2_requires_a2_disabled');
-  if (g.flow === 'legacy' && g.workerSend) violations.push('legacy_with_worker');
   if (g.workerSend && g.flow !== 'v2') violations.push('worker_requires_v2');
   if (g.reconcilerWrite && g.flow !== 'v2') violations.push('reconciler_requires_v2');
   if (g.globalPause && g.workerSend) violations.push('pause_with_worker');
   if (g.globalPause && g.reconcilerWrite) violations.push('pause_with_reconciler');
+  // reconciler は resend で pending を作るが、worker が無ければ送られず滞留する。
+  if (g.reconcilerWrite && !g.workerSend) violations.push('reconciler_needs_worker');
 
+  // モード（cutover 順序に対応）:
+  //   legacy → v2-dry-run(S6) → v2-worker(S7: worker ON / reconciler dry-run) → v2-full(S8)
   let mode = 'invalid';
   if (violations.length === 0) {
     if (g.globalPause) mode = 'paused';
     else if (g.flow === 'legacy') mode = 'legacy';
-    else if (g.flow === 'v2' && g.workerSend && g.reconcilerWrite) mode = 'v2-active';
+    else if (g.flow === 'v2' && g.workerSend && g.reconcilerWrite) mode = 'v2-full';
+    else if (g.flow === 'v2' && g.workerSend) mode = 'v2-worker';
     else if (g.flow === 'v2') mode = 'v2-dry-run';
   }
 
   return { ok: violations.length === 0, mode, violations };
+}
+
+/**
+ * confirm が v2（pending を書き、送信は worker に委譲）で振る舞ってよいか。
+ * worker が送信できるモードのときだけ true（v2-dry-run では legacy 挙動 = confirm が inline 送信）。
+ * これで「送信されない pending」が滞留しない。gate 不正時は fail closed で false（=legacy）。
+ */
+export function shouldConfirmUseV2(gates) {
+  const v = validateEmailGates(gates);
+  return v.ok && (v.mode === 'v2-worker' || v.mode === 'v2-full');
 }

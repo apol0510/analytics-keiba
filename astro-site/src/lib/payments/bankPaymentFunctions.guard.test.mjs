@@ -75,3 +75,17 @@ test('guard: 二重メール防止 — confirm が PaymentEmailSent を立て、
 test('guard: confirm は Airtable PATCH 失敗を握りつぶさない', () => {
   assert.ok(CONFIRM.includes("error: 'Airtable update failed'"), 'PATCH 失敗が握りつぶされている');
 });
+
+// ── v2 配線（gate OFF=legacy で本番挙動を変えない）─────────────────
+test('guard: confirm の v2 分岐は gate 経由で、legacy 経路も残る', () => {
+  assert.ok(CONFIRM.includes('shouldConfirmUseV2'), 'gate による v2 判定が無い');
+  assert.ok(CONFIRM.includes('buildV2ConfirmationFields'), 'v2 昇格ビルダーを使っていない');
+  // legacy 経路（buildConfirmationFields + inline sendMail）が消えていないこと
+  assert.ok(CONFIRM.includes('buildConfirmationFields'), 'legacy 昇格経路が消えた');
+  assert.ok(/const useV2 = shouldConfirmUseV2\(/.test(CONFIRM), 'useV2 が gate から導出されていない');
+});
+
+test('guard: v2 confirm は inline 送信を useV2=false のときだけ行う（三項/分岐）', () => {
+  // Step 5 が useV2 で分岐し、v2 では送信しない設計であること
+  assert.ok(CONFIRM.includes('if (useV2)'), 'Step5 の useV2 分岐が無い（v2 で inline 送信してしまう）');
+});
