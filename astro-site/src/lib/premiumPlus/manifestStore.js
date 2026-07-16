@@ -1,12 +1,22 @@
 /**
- * manifestStore.js — UUID キー manifest の atomic トランザクション（純粋・store 注入）
+ * manifestStore.js — UUID キー manifest の CAS 型トランザクション設計（純粋・store 注入）
  *
- * 競合制御（Netlify Blobs の atomic conditional write を利用。外部ロック不要）:
+ * ⚠️ Phase 5（2026-07-16）の重要な訂正:
+ *   以下の CAS/atomic 設計は「注入ストアが atomic 条件付き書込みを提供する」前提でのみ成立する。
+ *   **実 Netlify Blobs はこの前提を満たさない**（同一キー競合 last-write-wins・concurrency control
+ *   なし。onlyIfNew/onlyIfMatch は best-effort で strong な排他ではない。canary #13 で実 lost-update
+ *   を確認）。したがって本モジュールを実 Blobs 単独で使うと lost-update を防げない。
+ *   本番書込み経路は premium-plus-media.js の PREMIUM_PLUS_STORAGE_SAFE hard block で 404 に封じ、
+ *   安全な storage backend（docs/PREMIUM_PLUS_STORAGE_DESIGN.md 参照）まで有効化しない。
+ *   下記の機械テスト（manifestStore*.test.mjs）は in-memory の *atomic モデル* に対する設計の
+ *   正しさを示すもので、実ストアの安全性を保証しない。
+ *
+ * 競合制御（注入ストアが atomic 条件付き書込みを提供する前提の設計）:
  *   1. manifests/{manifestId} を create-only（onlyIfNew）で書く
  *        manifestId は UUID なので衝突しない → 各 writer は必ず自分の manifest を durable に書ける。
  *   2. manifest-current を preread した etag に対して CAS（onlyIfMatch）で切替える
  *        同じ current を読んだ 2 writer のうち pointer を進められるのは 1 人だけ（他は 409）。
- *   この 2 段が atomic なので read-then-write の TOCTOU にならない。
+ *   ※ この 2 段の原子性はモデル前提であり、実 Blobs では保証されない（上記警告）。
  *
  * ── orphan manifest（pointer CAS 失敗時）──
  *   pointer CAS が「throw（transient error）」または「modified:false（同時 writer の敗者）」でも、
@@ -66,15 +76,17 @@ export const noopSleep = () => Promise.resolve();
 /**
  * eventual consistency 下の read-your-writes を近似する収束読取。
  *
- * classic Netlify Function + Netlify Blobs（strong 不可）では manifest-current の read が
- * 直近書込を即座に反映せず、単発 readCurrent は stale snapshot を返し得る。stale を起点に
- * expectedVersion 判定や CAS を行うと「behind client の書込が誤って通る（lost-update）」/
- * 「直後 status が古い version」/「idempotent 再送が新規扱い」等が起きる（#10/#11/#13/#18）。
+ * ⚠️ これは freshness mitigation（読取鮮度の best-effort 改善）であって correctness guarantee では
+ *   ない。lost-update を防ぐ機能はない。同一 edge の cache を読み続ける burst では収束しないことが
+ *   あり（canary #10/#11/#13 で継続失敗を確認）、収束の成否は安全性の根拠にできない。以前ここに
+ *   「上限到達で fail-closed／stale client を 409 で弾く」と書いていたが、その 409 は下流 CAS の
+ *   strong 排他に依存し、実 Blobs ではその依存が成立しないため、correctness の主張から除外した。
  *
- * 対策: manifest-current を有限回 read し、logicalVersion 最大（= 最新可視。version は単調増加）を
- * 採用する。attempt 間に waiter(backoff) で propagation を待つ。十分条件は
- * 「minVersion 以上 かつ 直近 read が同一 version で安定」。上限に達したら best を返す（fail-closed:
- * その後の expectedVersion 判定が stale client を 409 で弾く）。無制限 retry はしない。
+ * classic Netlify Function + Netlify Blobs（strong 不可）では manifest-current の read が
+ * 直近書込を即座に反映せず、単発 readCurrent は stale snapshot を返し得る。本関数は
+ * manifest-current を有限回 read し logicalVersion 最大（= 最新可視。version は単調増加）を採用し、
+ * attempt 間に waiter(backoff) で propagation を待つ。上限に達したら best を返す（無制限 retry しない）。
+ * あくまで表示鮮度の改善であり、書込みの正当性は別途 storage 側の真の排他が要る。
  *
  * @param {object} store
  * @param {{attempts?:number, waiter?:(ms:number)=>Promise<void>, delays?:number[], minVersion?:number}} [opts]

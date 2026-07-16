@@ -2,6 +2,64 @@
 
 `/premium-plus/` — 1 日 1 鞍・三連単フォーメーションの**単品商品**。
 
+## ⛔ Phase 5 結論（2026-07-16）: サーバー側書込み経路は本番 hard block・現状 404 inert
+
+`premium-plus-media` API のサーバー側 manifest 更新経路（upload / seed / hide / show /
+rollback）は、**Netlify Blobs 単独では multi-writer の lost-update を防げないと確定した**ため、
+env フラグとは独立に**コードレベルで hard block** している。安全な storage backend が
+実装されるまで有効化してはならない。
+
+- **本番判定 = No-Go**。`/premium-plus/` ページ自体（SSR 会員ゲート）は従来どおり稼働するが、
+  `premium-plus-media` Function は **GET / POST とも常時 404**（`PREMIUM_PLUS_STORAGE_SAFE = false`
+  コード定数 ＋ `PREMIUM_PLUS_ENABLED` env の二重 kill）。
+- 画像日次更新（この doc の「方法 A / B」）は **この書込み経路に依存するため現状は使用不可**。
+  安全な backend が入るまで実運用の画像更新はできない（設計見直しが前提）。
+
+### 何が起きたか（#13 実 lost-update の確定証拠）
+
+canary（`premium-plus-canary` 隔離ストア）で並び順を検証したところ、eventual 遅延下で
+**実際の lost-update が再現**した。manifest チェーンの証拠:
+
+- #4 upload → manifest `50fad4a6`（v1）、pointer → 50fad4a6
+- #13 stale write（別 operationId）→ manifest `010738f9`（v1, **`previousManifestId="" `= 空 snapshot
+  から生成**）。その pointer への **`setJSONIfNew`（create-only）が成功して #4 の pointer を上書き**
+  し、50fad4a6 を orphan 化した。
+- #18 hide は #13 の manifest に chain した。
+
+`setJSONIfNew` は既存キーに対して `modified:false`（=409）を返すべきところ **成功した**。
+
+### 根本原因（重要・次工程の前提を修正）
+
+**Netlify Blobs は同一キー競合について last-write-wins であり、concurrency control mechanism
+（atomic compare-and-swap）を提供しない。** `onlyIfNew` / `onlyIfMatch` は best-effort であって
+strong な排他保証ではなく、eventual read で「キー無し／古い etag」を見た writer が既存の勝者を
+上書きできる。
+
+- **strong consistency は「読取り鮮度」の設定であり、atomic CAS の保証ではない。**
+  したがって **Netlify Functions 2.0 / modern Blobs runtime への移行だけでは #13 は解決しない**
+  （この前提は撤回済み）。`uncachedEdgeURL` による strong 読取を足しても、書込みの排他は得られない。
+- 以前コード内に書いていた「etag CAS が正当性を担保」「eventual でも stale は CAS 失敗→リトライに
+  なるだけで破損しない」「atomic なので TOCTOU にならない」は **実 Netlify Blobs には当てはまらない**
+  （in-memory テストストアは atomic 条件付き書込みを*モデル化*しているため、機械テストは design が
+  正しいことのみを示す。実ストアがそのモデルを破る）。該当コメントは実態へ是正済み。
+
+### readCurrentStable の位置づけ（是正）
+
+`readCurrentStable`（収束読取）は **freshness mitigation（読取鮮度の best-effort 改善）であって
+correctness guarantee ではない**。同一 edge の cache を読み続ける burst では収束しないことがあり、
+lost-update を防ぐ機能はない。以前「fail-closed で stale client を 409 で弾く」と記述していたが、
+**その 409 は CAS の strong 排他に依存しており、実 Blobs ではその依存が成立しない**ため、
+correctness の主張から除外した。読取鮮度の改善策としてコードに残すが、安全性の根拠にはしない。
+
+### 次期設計
+
+lost-update 防止・operationId 一意性・rollback・障害復旧・運用コストの比較と推奨案は
+[`PREMIUM_PLUS_STORAGE_DESIGN.md`](./PREMIUM_PLUS_STORAGE_DESIGN.md) を参照（read-only 比較・未着手）。
+storage migration / 外部 DB 作成 / env 投入 / 実データ書込みは**まだ行わない**。
+
+---
+
+
 ## 変更してはいけない前提
 
 | 前提 | 実装での担保 |

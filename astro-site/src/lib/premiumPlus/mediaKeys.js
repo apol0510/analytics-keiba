@@ -1,10 +1,17 @@
 /**
- * mediaKeys.js — Blobs キー設計 + checksum + テスト用インメモリストア（atomic 条件付き書き込み対応）
+ * mediaKeys.js — Blobs キー設計 + checksum + テスト用インメモリストア（atomic 条件付き書き込みを *モデル化*）
  *
- * 競合制御は Netlify Blobs 10.7.9 の atomic conditional write を使う:
+ * ⚠️ Phase 5（2026-07-16）訂正: 下記の create-only / CAS は **理想的な atomic 条件付き書込み**を
+ *   前提とした設計で、`createMemoryStore` はそれを厳密にモデル化する。しかし **実 Netlify Blobs は
+ *   同一キー競合 last-write-wins であり、この原子性を保証しない**（onlyIfNew/onlyIfMatch は
+ *   best-effort。canary #13 で実 lost-update を確認）。本ファイルの記述はテストモデルの仕様であって
+ *   実ストアの安全性ではない。実 Blobs 書込み経路は hard block 済み（docs/PREMIUM_PLUS_STORAGE_DESIGN.md）。
+ *
+ * 競合制御の設計（モデル前提）:
  *   - create-only（onlyIfNew / If-None-Match:*）… manifests/{manifestId} と画像の二重書き込みを防ぐ
  *   - CAS（onlyIfMatch:<etag> / If-Match）        … manifest-current ポインタの切替を直列化する
- * サーバー側で条件判定される（412→modified:false）ため、read-then-write の TOCTOU にならない。
+ *   モデル上はサーバー側で条件判定される（412→modified:false）ため TOCTOU にならないが、
+ *   実 Blobs ではこの条件判定が strong でないため成立しない（上記警告）。
  *
  * 保存構造（immutable manifest / UUID キー / 論理削除のみ）:
  *   images/{date}/{checksum}          … 画像本体（checksum immutable）

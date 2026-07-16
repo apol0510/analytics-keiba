@@ -2,13 +2,20 @@
  * manifestStore.consistency.test.mjs — eventual consistency 下の lost-update 否定（決定的検証）
  *   node --test src/lib/premiumPlus/manifestStore.consistency.test.mjs
  *
- * 目的（canary #10/#11/#13/#18 の timing 失敗に対する構造的保証）:
- *   - 正当性の hard guarantee は atomic pointer CAS（stale etag では絶対に上書きできない）。
- *   - 鮮度は readCurrentStable の収束読取（有限 retry + backoff で max logicalVersion を採用）。
- *     収束は best-effort（read-your-writes 近似）だが、収束に失敗しても CAS が破損を止める＝fail-closed。
+ * ⚠️ このテストが証明するのは「注入ストアが atomic 条件付き書込みを提供するなら、本設計は
+ *   lost-update を防ぐ」という *設計の正しさ*（対 in-memory atomic モデル）であって、**実 Netlify
+ *   Blobs の安全性ではない**。実 Blobs は last-write-wins で atomic 条件付き書込みを保証せず
+ *   （canary #13 で実 lost-update を確認）、そのため本番書込み経路は hard block 済み
+ *   （PREMIUM_PLUS_STORAGE_SAFE=false）。これらのテストは将来 storage を strong 排他対応へ
+ *   置換したときに設計を再利用できることを担保する回帰資産。詳細: docs/PREMIUM_PLUS_STORAGE_DESIGN.md
+ *
+ * 目的（atomic モデル上での設計検証）:
+ *   - 正当性は atomic pointer CAS（stale etag では上書きできない）— *モデルが原子性を守る前提*。
+ *   - 鮮度は readCurrentStable の収束読取（有限 retry + backoff で max logicalVersion を採用。
+ *     freshness mitigation であり correctness の根拠ではない）。
  *
  * staleness 模擬: manifest-current の read だけを K 回 stale スナップショットで返す薄いラッパ。
- *   書込（CAS / create-only）は実ストアの atomic セマンティクスをそのまま通す。
+ *   書込（CAS / create-only）は in-memory モデルの atomic セマンティクスを通す（実 Blobs とは異なる）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
