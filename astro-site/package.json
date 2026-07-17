@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "astro dev",
     "validate": "node scripts/validate-archive-data.js",
-    "build": "npm run validate:archive && astro build",
+    "build": "npm run validate:archive && astro build && node scripts/prune-ssr-function-data.mjs",
     "build:skip-validation": "astro build",
     "preview": "astro preview",
     "astro": "astro",
