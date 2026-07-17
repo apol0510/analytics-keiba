@@ -97,12 +97,13 @@
   # ビルド時の prerender はリポジトリ実体を読むため影響しない。
   # 維持: src/data/predictions/*.json（root=南関・prediction/[slug] が runtime 参照）、
   #       src/data/archiveResults*.json（results/results-showcase が runtime 参照）。
-  excluded_files = [
-    "src/data/horseHistories/**",
-    "src/data/horseStats/**",
-    "src/data/featureScores/**",
-    "src/data/computer/**",
-    "src/data/predictions/jra/**"
+  # Netlify は excluded_files 配列を受け付けないため included_files の "!" 否定グロブで除外する。
+  included_files = [
+    "!src/data/horseHistories/**",
+    "!src/data/horseStats/**",
+    "!src/data/featureScores/**",
+    "!src/data/computer/**",
+    "!src/data/predictions/jra/**"
   ]
 
 [dev]
