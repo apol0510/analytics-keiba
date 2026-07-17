@@ -467,7 +467,10 @@ const fullTitle = pageTitle
             opacity: 1;
             visibility: visible;
             transform: translateY(0);
-            max-height: 600px;
+            max-height: calc(100vh - 80px);
+            max-height: calc(100dvh - 80px);
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
             padding: 20px 0;
         }
 
