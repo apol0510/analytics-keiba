@@ -90,6 +90,20 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+  # SSR 関数肥大化対策（2026-07-18）: これらの src/data 配下の重いデータ群は
+  # prerender=true ページがビルド時に読むだけで、runtime SSR 経路は一切参照しない。
+  # 動的な readFileSync/readdirSync を nft がトレースできず data ツリー全体が
+  # 関数に同梱され 250MB 上限を超えてデプロイが失敗していたため、関数バンドルから除外する。
+  # ビルド時の prerender はリポジトリ実体を読むため影響しない。
+  # 維持: src/data/predictions/*.json（root=南関・prediction/[slug] が runtime 参照）、
+  #       src/data/archiveResults*.json（results/results-showcase が runtime 参照）。
+  excluded_files = [
+    "src/data/horseHistories/**",
+    "src/data/horseStats/**",
+    "src/data/featureScores/**",
+    "src/data/computer/**",
+    "src/data/predictions/jra/**"
+  ]
 
 [dev]
   command = "npm run dev"
