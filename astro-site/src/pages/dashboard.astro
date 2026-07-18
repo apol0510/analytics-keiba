@@ -243,6 +243,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         </div>
                     </div>
 
+                    <!-- Premium予想（契約期間終了）: 期限切れ時に上のカードの代わりに表示。予想リンクは出さない。 -->
+                    <div id="premium-predictions-expired" class="prediction-card premium" style="display: none;">
+                        <div class="card-header">
+                            <h3>💎 Premium予想</h3>
+                        </div>
+                        <div class="race-info">
+                            <div class="race-title race-title-sm">契約期間が終了しました</div>
+                            <div class="confidence">再契約後、Premium予想をご利用いただけます</div>
+                        </div>
+                        <div class="sanrenpuku-view-buttons">
+                            <a href="/pricing/" class="view-btn">再契約はこちら</a>
+                        </div>
+                    </div>
+
                     <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用・中央/南関セット利用導線） -->
                     <div id="sanrenpuku-predictions" class="prediction-card sanrenpuku" style="display: none;">
                         <div class="card-header">
@@ -1530,14 +1544,19 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             // Premium予想の表示制御（プラン別）
             // 馬単は中央・南関を1枚に統合した #premium-predictions（中央/南関の2ボタン）で表示。
             // 全 Premium 系（premium / premium plus / premium sanrenpuku / premium combo）に共通表示。
-            // 馬単カード・三連複カードは共通 resolver（resolveClientView）の結果で制御する。判定式を dashboard に再実装しない。
+            // Premium/三連複カードは共通 resolver（resolveClientView）の結果で制御する。判定式を dashboard に再実装しない。
             const _view = getClientView();
-            // 馬単: canViewPremium（Premium系 かつ 期限切れでない）→ 期限切れ後は非表示（完成条件5）
-            if (_view.showBaCard) {
-                console.log('Premium馬単予想（中央・南関 統合カード）を表示');
+            // Premium 有効 → 通常の馬単カード（中央/南関 予想リンクあり）
+            if (_view.showPremiumActiveCard) {
+                console.log('Premium予想（有効）を表示');
                 document.getElementById('premium-predictions').style.display = 'block';
             }
-            // 三連複: canViewSanrenpuku（LifetimeSanrenpuku フラグなら Premium 期限切れ後も表示・完成条件3/4）
+            // Premium 期限切れ → 契約期間終了カード（予想リンクは出さない・再契約導線のみ）。馬単ページは canViewPremium で別途拒否。
+            if (_view.showPremiumExpiredCard) {
+                console.log('Premium予想（契約期間終了）を表示');
+                document.getElementById('premium-predictions-expired').style.display = 'block';
+            }
+            // 三連複: canViewSanrenpuku（LifetimeSanrenpuku フラグなら Premium 期限切れ後も表示）
             if (_view.showSanrenpukuCard) {
                 console.log('Premium三連複予想（中央・南関）を表示');
                 document.getElementById('sanrenpuku-predictions').style.display = 'block';

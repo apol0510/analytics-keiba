@@ -361,3 +361,49 @@ test('email 不明どうし: 継承しない（fail closed）', () => {
   assert.equal(persistLifetimeForUser({}, { lifetimeSanrenpuku: true }), false);
   assert.equal(persistLifetimeForUser(null, { email: 'a', lifetimeSanrenpuku: true }), false);
 });
+
+// ═══ Premium 期限切れカードの表示判定（resolveClientView 拡張）═══════════
+test('期限切れカードA: Premium有効 → 有効カード表示 / 期限切れカード非表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual' }), { validUntil: FUTURE }, NOW);
+  assert.equal(v.showPremiumActiveCard, true);
+  assert.equal(v.showPremiumExpiredCard, false);
+  assert.equal(v.showSanrenpukuCard, false);
+});
+
+test('期限切れカードB: Premium期限切れ・三連複未購入 → 期限切れカード表示 / 有効カード非表示 / 三連複なし', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual' }), { validUntil: PAST }, NOW);
+  assert.equal(v.showPremiumActiveCard, false);
+  assert.equal(v.showPremiumExpiredCard, true);
+  assert.equal(v.showSanrenpukuCard, false);
+});
+
+test('期限切れカードB2: Status=expired でも期限切れカード表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', status: 'expired' }), {}, NOW);
+  assert.equal(v.showPremiumExpiredCard, true);
+  assert.equal(v.showPremiumActiveCard, false);
+});
+
+test('期限切れカードC: Premium期限切れ・三連複購入済み → 期限切れカード + 三連複カード両方表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual', lifetimeSanrenpuku: true }), { validUntil: PAST }, NOW);
+  assert.equal(v.showPremiumActiveCard, false);   // 馬単は不可
+  assert.equal(v.showPremiumExpiredCard, true);
+  assert.equal(v.showSanrenpukuCard, true);        // 三連複は表示
+});
+
+test('期限切れカードD: Free / Light → 期限切れカードを表示しない', () => {
+  assert.equal(resolveClientView(upStr({ plan: 'Free' }), {}, NOW).showPremiumExpiredCard, false);
+  assert.equal(resolveClientView(upStr({ plan: 'Light', planType: 'Monthly' }), { validUntil: FUTURE }, NOW).showPremiumExpiredCard, false);
+  // Light 期限切れも Premium 期限切れカードではない
+  assert.equal(resolveClientView(upStr({ plan: 'Light' }), { validUntil: PAST }, NOW).showPremiumExpiredCard, false);
+});
+
+test('期限切れカードE: withdrawn / suspended / ForceLogout → 期限切れカードを出さずアクセス拒否', () => {
+  const withdrawn = resolveClientView(upStr({ plan: 'Premium', status: 'withdrawn' }), { validUntil: PAST }, NOW);
+  assert.equal(withdrawn.showPremiumExpiredCard, false);
+  assert.equal(withdrawn.entitlements.canLogin, false);
+  const suspended = resolveClientView(upStr({ plan: 'Premium', status: 'suspended' }), { validUntil: PAST }, NOW);
+  assert.equal(suspended.showPremiumExpiredCard, false);
+  const forced = resolveClientView(upStr({ plan: 'Premium', forceLogout: true }), { validUntil: PAST }, NOW);
+  assert.equal(forced.showPremiumExpiredCard, false);
+  assert.equal(forced.entitlements.canLogin, false);
+});
