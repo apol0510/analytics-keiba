@@ -359,26 +359,29 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             return hasValidFreeUser; // 登録済みユーザーのみアクセス許可
         }
 
-        // 三連複専用ページの特殊処理（2026-02-09更新: Lifetime Sanrenpuku対応）
+        // 三連複専用ページの特殊処理（2026-02-09: Lifetime Sanrenpuku対応 / 2026-07-18: 馬単期限切れ後も三連複を維持）
         if (requiredPlan === 'Premium Sanrenpuku') {
             const hasValidUser = user !== null && (user.email || user.legacy || user.demo || user.temp || user.isTest);
 
-            // 🔧 有効期限切れの場合はアクセス不可
+            // ✅ Sanrenpuku Lifetime 購入者（買い切り）は、馬単 Premium の有効期限とは独立に三連複を永久利用できる。
+            //    馬単が年払いで期限切れ（effectivePlan='Free'）になっても三連複だけは維持する。
+            //    退会は最優先チェック（上部）で既に弾かれており、サーバー側 memberResolution と同じ扱い。
+            //    ※ これを Free 判定より前に置くのが要点（旧実装は effectivePlan==='Premium' を要求し、
+            //       馬単期限切れで買い切りの三連複まで消えるバグがあった）。
+            if (lifetimeSanrenpuku === true) {
+                console.log(`🐎 三連複アクセスチェック: Sanrenpuku Lifetime（買い切り・馬単期限に非依存） - アクセス許可`);
+                return hasValidUser;
+            }
+
+            // 🔧 有効期限切れ（かつ lifetime 保有でない）の場合はアクセス不可
             if (effectivePlan === 'Free') {
                 console.log(`🐎 三連複アクセスチェック: Free - アクセス拒否`);
                 return false;
             }
 
-            // 1. Premium Sanrenpuku または Premium Combo でアクセス可能（従来プラン）
+            // Premium Sanrenpuku または Premium Combo でアクセス可能（従来プラン）
             if (effectivePlan === 'Premium Sanrenpuku' || effectivePlan === 'Premium Combo') {
                 console.log(`🐎 三連複アクセスチェック: ${effectivePlan} - アクセス許可`);
-                return hasValidUser;
-            }
-
-            // 2. ✅ Sanrenpuku Lifetime購入者（新仕様）
-            //    - Premium有効中のみSanrenpuku機能が使える
-            if (lifetimeSanrenpuku === true && effectivePlan === 'Premium') {
-                console.log(`🐎 三連複アクセスチェック: Sanrenpuku Lifetime + Premium - アクセス許可`);
                 return hasValidUser;
             }
 
