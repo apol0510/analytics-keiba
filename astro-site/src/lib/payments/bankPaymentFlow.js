@@ -161,6 +161,28 @@ export function buildConfirmationFields({ requestedPlan, requestedPlanType, conf
   const planType = String(requestedPlanType || '').trim();
   if (!plan || !planType) return null; // fail closed: 推測で昇格しない
 
+  // ── 三連複（買い切り永久権）の追加付与 ──────────────────────────
+  // Premium Sanrenpuku / Combo は「会員ランクの変更」ではなく、有効な Premium 会員への
+  // 追加 entitlement。会員ランク（プラン）・PlanType・有効期限・PaidAt・Status は変更せず、
+  // LifetimeSanrenpuku=true だけを付与する。永久権の正本は LifetimeSanrenpuku フラグ。
+  const isSanrenpukuPurchase = /sanrenpuku|combo|三連複/i.test(plan);
+  if (isSanrenpukuPurchase) {
+    return {
+      expiration: null, // 有効期限は変更しない
+      sanrenpuku: true,
+      fields: {
+        'LifetimeSanrenpuku': true,
+        // 既存メール契約（二重送信ガード）を維持
+        'PaymentEmailSent': true,
+        // 冪等性: 申込内容をクリア（PaymentConfirmed は true のまま）
+        'RequestedPlan': '',
+        'RequestedPlanType': '',
+        'RequestedAmount': null,
+        // ※ プラン / PlanType / 有効期限 / PaidAt / Status / WithdrawalRequested は意図的に書かない
+      },
+    };
+  }
+
   const expiration = computeExpiration(planType, confirmedAt);
   if (!expiration) return null; // PlanType が判定不能 → 昇格しない
 

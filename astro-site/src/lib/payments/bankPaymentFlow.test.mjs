@@ -192,3 +192,40 @@ test('Premium Annual - Campaign も planName=Premium / planType=Annual として
   assert.equal(confirmed.fields['PlanType'], 'Annual');
   assert.equal(confirmed.fields['有効期限'], '2027-07-10');
 });
+
+// ─── 三連複（買い切り永久権）の入金確認: フラグのみ付与・会員ランク不変 ───────────
+
+test('三連複購入の確認: LifetimeSanrenpuku=true のみ付与し プラン/PlanType/有効期限/PaidAt/Status を変更しない', () => {
+  const r = buildConfirmationFields({
+    requestedPlan: 'Premium Sanrenpuku',
+    requestedPlanType: 'Lifetime',
+    confirmedAt: new Date('2026-07-18T00:00:00Z'),
+  });
+  assert.ok(r, '確認フィールドが返る');
+  assert.equal(r.sanrenpuku, true);
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+  // 会員ランク・契約情報は不変（キー自体を書かない）
+  for (const forbidden of ['プラン', 'PlanType', '有効期限', 'PaidAt', 'Status', 'WithdrawalRequested']) {
+    assert.ok(!(forbidden in r.fields), `三連複付与時に ${forbidden} を書いてはいけない`);
+  }
+  // 冪等性: 申込内容はクリア
+  assert.equal(r.fields['RequestedPlan'], '');
+  assert.equal(r.fields['RequestedPlanType'], '');
+  assert.equal(r.fields['RequestedAmount'], null);
+  // 既存メール契約は維持
+  assert.equal(r.fields['PaymentEmailSent'], true);
+});
+
+test('三連複: Premium Combo も同様にフラグのみ付与', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium Combo', requestedPlanType: 'Lifetime', confirmedAt: new Date() });
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+  assert.ok(!('プラン' in r.fields));
+});
+
+test('通常の Premium 購入は従来どおり プラン/有効期限 を書く（三連複分岐に誤って入らない）', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium', requestedPlanType: 'Annual', confirmedAt: new Date('2026-07-18T00:00:00Z') });
+  assert.equal(r.fields['プラン'], 'Premium');
+  assert.equal(r.fields['Status'], 'active');
+  assert.ok(r.fields['有効期限']);
+  assert.ok(!('LifetimeSanrenpuku' in r.fields), '通常購入で三連複フラグを立ててはいけない');
+});

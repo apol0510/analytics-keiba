@@ -978,8 +978,16 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             const planChangeSection = document.getElementById('plan-change-section');
             const planChangeBtn = document.getElementById('plan-change-btn');
 
-            if (data.plan === 'premium' || data.plan === 'Premium') {
-                // Premium会員：三連複追加ボタン表示
+            // canPurchaseSanrenpuku（resolveEntitlements.js と同一意味論）: 有効な純Premium かつ 未所有 のみ購入導線。
+            let _lifetimeOwned = false;
+            try { _lifetimeOwned = JSON.parse(localStorage.getItem('user-plan') || '{}').lifetimeSanrenpuku === true; } catch (e) {}
+            const _vu2 = localStorage.getItem('validUntil');
+            const _pExpired = localStorage.getItem('isExpired') === 'true'
+                || (_vu2 && _vu2 !== 'null' && new Date(_vu2) < new Date());
+            const _isPremium = (data.plan === 'premium' || data.plan === 'Premium');
+
+            if (_isPremium && !_pExpired && !_lifetimeOwned) {
+                // 有効な純Premium 会員で三連複未所有：三連複追加ボタン表示（完成条件1）
                 planChangeSection.style.display = 'block';
                 planChangeBtn.innerHTML = '<span class="btn-icon">➕</span><span class="btn-text">三連複を追加</span>';
             } else if (isLightPlan(data.plan)) {
@@ -987,7 +995,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 planChangeSection.style.display = 'block';
                 planChangeBtn.innerHTML = '<span class="btn-icon">⬆️</span><span class="btn-text">プランアップグレード</span>';
             } else {
-                // Free会員：非表示
+                // Free / 期限切れPremium / 三連複購入済み：非表示（購入資格なし）
                 planChangeSection.style.display = 'none';
             }
         }
@@ -1494,15 +1502,32 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             // Premium予想の表示制御（プラン別）
             // 馬単は中央・南関を1枚に統合した #premium-predictions（中央/南関の2ボタン）で表示。
             // 全 Premium 系（premium / premium plus / premium sanrenpuku / premium combo）に共通表示。
+            // ── 権限判定は src/lib/entitlements/resolveEntitlements.js と同一意味論 ──
+            //   馬単カード   = canViewPremium（Premium系 かつ 期限切れでない）
+            //   三連複カード = canViewSanrenpuku（LifetimeSanrenpuku フラグ、または 旧 sanrenpuku/combo かつ Premium有効）
+            //   購入CTA      = canPurchaseSanrenpuku（Premium有効 かつ 未所有）
+            let hasLifetimeSanrenpuku = false;
+            try { hasLifetimeSanrenpuku = JSON.parse(localStorage.getItem('user-plan') || '{}').lifetimeSanrenpuku === true; } catch (e) {}
+            const _vu = localStorage.getItem('validUntil');
+            const _premiumExpired = localStorage.getItem('isExpired') === 'true'
+                || (_vu && _vu !== 'null' && new Date(_vu) < new Date());
             const isAnyPremium = (planLower === 'premium' || planLower === 'premium plus'
                 || planLower === 'premium sanrenpuku' || planLower === 'premium combo');
-            if (isAnyPremium) {
+            const canViewPremiumCard = isAnyPremium && !_premiumExpired;
+            const canViewSanrenpukuCard = hasLifetimeSanrenpuku
+                || ((planLower === 'premium sanrenpuku' || planLower === 'premium combo') && !_premiumExpired);
+            // 純Premium（三連複ではないプラン）が有効中 かつ 未所有 のときだけ購入導線
+            const canPurchaseSanrenpuku = (planLower === 'premium') && !_premiumExpired && !hasLifetimeSanrenpuku;
+            window.__akCanPurchaseSanrenpuku = canPurchaseSanrenpuku;
+
+            // 馬単: 期限切れ後は非表示（完成条件5）
+            if (canViewPremiumCard) {
                 console.log('Premium馬単予想（中央・南関 統合カード）を表示: ' + planLower);
                 document.getElementById('premium-predictions').style.display = 'block';
             }
-            // 三連複カードは購入済み（Premium Sanrenpuku / Combo）のみ表示（中央/南関の2ボタン）
-            if (planLower === 'premium sanrenpuku' || planLower === 'premium combo') {
-                console.log('Premium三連複予想（中央・南関）を表示: ' + planLower);
+            // 三連複: LifetimeSanrenpuku フラグなら Premium 期限切れ後も表示（完成条件3/4）
+            if (canViewSanrenpukuCard) {
+                console.log('Premium三連複予想（中央・南関）を表示: lifetime=' + hasLifetimeSanrenpuku + ' plan=' + planLower);
                 document.getElementById('sanrenpuku-predictions').style.display = 'block';
             }
 

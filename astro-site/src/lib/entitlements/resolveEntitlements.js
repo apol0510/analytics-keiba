@@ -21,9 +21,11 @@
 
 import { normalizePlan } from '../auth/planNormalization.js';
 
-// アカウント停止扱いにする Status（memberResolution.js の SUSPENDED_STATUS と揃える）
+// アカウント拒否扱いにする Status（memberResolution.js の SUSPENDED_STATUS ＋ 実 Status 選択肢に合わせる）。
+// 2026-07-18 追加: withdrawn / expired / unpaidrefunded（Airtable の実選択肢）。'test' は下の isTestAccount で扱う。
 const SUSPENDED_STATUS = new Set([
   'suspended', 'inactive', 'banned', 'disabled', 'cancelled', 'canceled', 'closed',
+  'withdrawn', 'expired', 'unpaidrefunded',
   '停止', '無効', '解約', '退会',
 ]);
 // 入金待ち等（登録済みだが有料権限は未確定＝Free 扱い）
@@ -79,19 +81,24 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   const nowMs = toMillis(now) ?? Date.now();
   const reasons = [];
 
-  const tier = normalizePlan(c.tier ?? c.plan) ?? 'free'; // 不明は fail-closed で free
+  const rawPlan = String(c.tier ?? c.plan ?? '').trim();
+  const rawPlanLower = rawPlan.toLowerCase();
+  const tier = normalizePlan(rawPlan) ?? 'free'; // 不明は fail-closed で free
   const lifetime = isTruthyFlag(c.lifetimeSanrenpuku);
   const status = String(c.accountStatus ?? c.status ?? '').trim().toLowerCase();
   const withdrawal = isTruthyFlag(c.withdrawalRequested);
   const forceLogout = isTruthyFlag(c.forceLogout);
   const suspended = SUSPENDED_STATUS.has(status);
   const pending = PENDING_STATUS.has(status);
+  // テスト用アカウント（Status=test または プラン=Test）は通常顧客権限を与えない。
+  const isTestAccount = status === 'test' || rawPlanLower === 'test';
 
-  // アカウントが使えるか（登録済みでログイン可能）。停止・退会・強制ログアウトは不可。
-  const accountUsable = !forceLogout && !withdrawal && !suspended;
+  // アカウントが使えるか（登録済みでログイン可能）。停止・退会・強制ログアウト・テストは不可。
+  const accountUsable = !forceLogout && !withdrawal && !suspended && !isTestAccount;
   if (forceLogout) reasons.push('FORCE_LOGOUT');
   if (withdrawal) reasons.push('WITHDRAWAL_REQUESTED');
   if (suspended) reasons.push('STATUS_SUSPENDED');
+  if (isTestAccount) reasons.push('TEST_ACCOUNT');
 
   const canLogin = accountUsable;
 

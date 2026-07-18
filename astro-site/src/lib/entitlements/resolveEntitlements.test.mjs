@@ -164,3 +164,51 @@ test('fromClientUserPlan: isExpired フラグで強制期限切れ', () => {
   assert.equal(e.canViewPremium, false);     // isExpired で馬単不可
   assert.equal(e.canViewSanrenpuku, true);   // フラグは残る
 });
+
+// ── 棚卸しで判明した Status 網羅（拒否集合の追加）──────────────────
+for (const st of ['withdrawn', 'expired', 'unpaidrefunded']) {
+  test(`Status='${st}' → フラグがあっても通常商品アクセス不可（拒否集合）`, () => {
+    const e = R({ tier: 'Premium', accountStatus: st, expiresAt: FUTURE, lifetimeSanrenpuku: true });
+    assert.equal(e.canLogin, false);
+    assert.equal(e.canViewPremium, false);
+    assert.equal(e.canViewSanrenpuku, false);
+    assert.equal(e.canPurchaseSanrenpuku, false);
+    assert.ok(e.reasons.includes('STATUS_SUSPENDED'));
+  });
+}
+
+test("Status='test' → 通常顧客権限を与えない", () => {
+  const e = R({ tier: 'Premium', accountStatus: 'test', expiresAt: FUTURE, lifetimeSanrenpuku: true });
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, false);
+  assert.ok(e.reasons.includes('TEST_ACCOUNT'));
+});
+
+test("プラン='Test' → 通常顧客権限を与えない（Status空でも）", () => {
+  const e = R({ tier: 'Test', accountStatus: '', expiresAt: FUTURE, lifetimeSanrenpuku: true });
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, false);
+  assert.ok(e.reasons.includes('TEST_ACCOUNT'));
+});
+
+// ── Status 空（本番の 1340 件）の互換扱い ────────────────────────
+test('Status空 + Premium + 有効期限内 → 明示拒否でなく互換的に有効', () => {
+  const e = R({ tier: 'Premium', accountStatus: '', expiresAt: FUTURE });
+  assert.equal(e.canLogin, true);
+  assert.equal(e.canViewPremium, true);       // 空Statusは拒否ではない
+  assert.equal(e.canPurchaseSanrenpuku, true);
+});
+
+test('Status空 + Premium + 有効期限内 + フラグ → 三連複可', () => {
+  const e = R({ tier: 'Premium', accountStatus: '', expiresAt: FUTURE, lifetimeSanrenpuku: true });
+  assert.equal(e.canViewSanrenpuku, true);
+  assert.equal(e.canPurchaseSanrenpuku, false); // 既所有
+});
+
+test('Status空 + Premium + 期限切れ + フラグ → 馬単不可/三連複可（設計表 C）', () => {
+  const e = R({ tier: 'Premium', accountStatus: '', expiresAt: PAST, lifetimeSanrenpuku: true });
+  assert.equal(e.canLogin, true);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.premiumExpired, true);
+  assert.equal(e.canViewSanrenpuku, true);
+});
