@@ -234,9 +234,18 @@ export function resolveClientView(userPlanRaw, flags = {}, now = Date.now()) {
   });
   const e = resolveEntitlements(customer, now);
   return {
-    showBaCard: e.canViewPremium,          // 馬単カード
-    showSanrenpukuCard: e.canViewSanrenpuku, // 三連複カード
-    showPurchaseCta: e.canPurchaseSanrenpuku, // 三連複購入CTA
+    // 互換維持（= showPremiumActiveCard と同義）。同じ条件を複数箇所に書かないため resolver 値を単一源にする。
+    showBaCard: e.canViewPremium,
+    // Premium 有効カード（中央/南関の予想リンクあり）
+    showPremiumActiveCard: e.canViewPremium,
+    // Premium 期限切れカード（予想リンクなし・再契約導線）。ログイン可能 かつ Premium 契約が期限切れのとき。
+    // premiumExpired は「Premium tier かつ 期限切れ」。Free/Light は tier 非該当で false、
+    // withdrawn/suspended/ForceLogout は canLogin=false で false（アクセス拒否側）。
+    showPremiumExpiredCard: e.canLogin && e.premiumExpired,
+    // 三連複カード（独立）
+    showSanrenpukuCard: e.canViewSanrenpuku,
+    // 三連複購入CTA
+    showPurchaseCta: e.canPurchaseSanrenpuku,
     entitlements: e,
   };
 }
