@@ -212,3 +212,83 @@ test('Status空 + Premium + 期限切れ + フラグ → 馬単不可/三連複�
   assert.equal(e.premiumExpired, true);
   assert.equal(e.canViewSanrenpuku, true);
 });
+
+// ═══ dashboard 表示判定（resolveClientView）を直接検証 ═══════════════
+import { resolveClientView, parseUserPlan } from './resolveEntitlements.js';
+
+// localStorage 契約: 実際は JSON 文字列で入る（auth/verify.astro が JSON.stringify する）
+const upStr = (obj) => JSON.stringify(obj);
+
+test('UI-1: Premium有効・三連複未購入 → 馬単カード表示 / 三連複カード非表示 / 購入CTA表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual' }), { validUntil: FUTURE }, NOW);
+  assert.equal(v.showBaCard, true);
+  assert.equal(v.showSanrenpukuCard, false);
+  assert.equal(v.showPurchaseCta, true);
+});
+
+test('UI-2: Premium有効・三連複購入済み → 馬単表示 / 三連複表示 / 購入CTA非表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual', lifetimeSanrenpuku: true }), { validUntil: FUTURE }, NOW);
+  assert.equal(v.showBaCard, true);
+  assert.equal(v.showSanrenpukuCard, true);
+  assert.equal(v.showPurchaseCta, false);
+});
+
+test('UI-3: Premium期限切れ・購入済み → 馬単カード非表示 / 三連複カード表示 / 購入CTA非表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual', lifetimeSanrenpuku: true }), { validUntil: PAST }, NOW);
+  assert.equal(v.showBaCard, false);
+  assert.equal(v.showSanrenpukuCard, true);
+  assert.equal(v.showPurchaseCta, false);
+});
+
+test('UI-3b: isExpired フラグ("true"文字列)でも馬単非表示・三連複表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', lifetimeSanrenpuku: true }), { isExpired: 'true' }, NOW);
+  assert.equal(v.showBaCard, false);
+  assert.equal(v.showSanrenpukuCard, true);
+});
+
+test('UI-4: Premium期限切れ・未購入 → すべて非表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Premium', planType: 'Annual' }), { validUntil: PAST }, NOW);
+  assert.equal(v.showBaCard, false);
+  assert.equal(v.showSanrenpukuCard, false);
+  assert.equal(v.showPurchaseCta, false);
+});
+
+test('UI-5: Light → 購入CTA非表示 / 三連複カード非表示（フラグ無）', () => {
+  const v = resolveClientView(upStr({ plan: 'Light', planType: 'Monthly' }), { validUntil: FUTURE }, NOW);
+  assert.equal(v.showPurchaseCta, false);
+  assert.equal(v.showSanrenpukuCard, false);
+  assert.equal(v.showBaCard, false);
+});
+
+test('UI-5b: Free + LifetimeSanrenpuku=true → 三連複カード表示 / 購入CTA非表示 / 馬単非表示', () => {
+  const v = resolveClientView(upStr({ plan: 'Free', lifetimeSanrenpuku: true }), {}, NOW);
+  assert.equal(v.showSanrenpukuCard, true);
+  assert.equal(v.showPurchaseCta, false);
+  assert.equal(v.showBaCard, false);
+});
+
+// localStorage データ契約の頑健性（推測を排除）
+test('契約: user-plan が生文字列(非JSON)でも throw せずプラン名として扱う', () => {
+  assert.deepEqual(parseUserPlan('premium'), { plan: 'premium' });
+  const v = resolveClientView('premium', { validUntil: FUTURE }, NOW);
+  assert.equal(v.showBaCard, true); // 'premium' 生文字列でも判定できる
+});
+
+test('契約: user-plan が null / 空 → 何も表示しない（throw しない）', () => {
+  assert.deepEqual(parseUserPlan(null), {});
+  assert.deepEqual(parseUserPlan(''), {});
+  const v = resolveClientView(null, {}, NOW);
+  assert.equal(v.showBaCard, false);
+  assert.equal(v.showSanrenpukuCard, false);
+  assert.equal(v.showPurchaseCta, false);
+});
+
+test('契約: user-plan が壊れたJSON → throw せず空扱い', () => {
+  assert.deepEqual(parseUserPlan('{bad json'), {});
+  assert.equal(resolveClientView('{bad', {}, NOW).showBaCard, false);
+});
+
+test('契約: user-plan が object でもそのまま扱える', () => {
+  const v = resolveClientView({ plan: 'Premium', lifetimeSanrenpuku: true }, { validUntil: FUTURE }, NOW);
+  assert.equal(v.showSanrenpukuCard, true);
+});

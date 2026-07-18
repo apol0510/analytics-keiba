@@ -13,6 +13,8 @@
  *   RequestedAmount (number, precision=0) / PaymentConfirmed (checkbox)
  */
 
+import { normalizePlan } from '../auth/planNormalization.js';
+
 /** Lifetime プランの有効期限（永久アクセス）。 */
 export const LIFETIME_EXPIRATION = '2099-12-31';
 
@@ -158,30 +160,38 @@ export function buildApplicationFields({
  */
 export function buildConfirmationFields({ requestedPlan, requestedPlanType, confirmedAt }) {
   const plan = String(requestedPlan || '').trim();
-  const planType = String(requestedPlanType || '').trim();
-  if (!plan || !planType) return null; // fail closed: 推測で昇格しない
+  if (!plan) return null; // plan は必須（fail closed）
+
+  const canonical = normalizePlan(plan); // 大小/別名/全角を正規化。不明は null。
 
   // ── 三連複（買い切り永久権）の追加付与 ──────────────────────────
-  // Premium Sanrenpuku / Combo は「会員ランクの変更」ではなく、有効な Premium 会員への
-  // 追加 entitlement。会員ランク（プラン）・PlanType・有効期限・PaidAt・Status は変更せず、
-  // LifetimeSanrenpuku=true だけを付与する。永久権の正本は LifetimeSanrenpuku フラグ。
-  const isSanrenpukuPurchase = /sanrenpuku|combo|三連複/i.test(plan);
-  if (isSanrenpukuPurchase) {
+  // 新規三連複申込 = RequestedPlan 'Premium Sanrenpuku'（canonical premium-sanrenpuku）。
+  // 旧 Premium Combo（canonical premium-combo）も互換で同扱い。**exact な canonical 一致のみ**許可し、
+  // 広い部分一致（/sanrenpuku|combo/ 等）では判定しない。planType は不要（Premium 本体の PlanType を
+  // 変えないため、三連複判定を planType 必須ガードより前に置く）。
+  //
+  // 🚫 メール関連フィールドは一切書かない。権限付与成功 ≠ メール送信成功。
+  //    メール未送信で PaymentEmailSent=true を書く欠陥（過去に緊急 revert 済み）を再導入しない。
+  if (canonical === 'premium-sanrenpuku' || canonical === 'premium-combo') {
     return {
       expiration: null, // 有効期限は変更しない
       sanrenpuku: true,
       fields: {
         'LifetimeSanrenpuku': true,
-        // 既存メール契約（二重送信ガード）を維持
-        'PaymentEmailSent': true,
         // 冪等性: 申込内容をクリア（PaymentConfirmed は true のまま）
         'RequestedPlan': '',
         'RequestedPlanType': '',
         'RequestedAmount': null,
-        // ※ プラン / PlanType / 有効期限 / PaidAt / Status / WithdrawalRequested は意図的に書かない
+        // ※ プラン / PlanType / 有効期限 / PaidAt / Status / WithdrawalRequested /
+        //    PaymentEmailSent 等のメール状態は意図的に一切書かない。
       },
     };
   }
+
+  // ── 通常の Light / Premium 購入（会員ランク付与）──────────────
+  const planType = String(requestedPlanType || '').trim();
+  if (!planType) return null;  // 通常購入は PlanType 必須
+  if (!canonical) return null; // 不明プランは fail closed（旧: verbatim 書込のリスクを排除）
 
   const expiration = computeExpiration(planType, confirmedAt);
   if (!expiration) return null; // PlanType が判定不能 → 昇格しない

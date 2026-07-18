@@ -188,4 +188,49 @@ export function fromClientUserPlan(userPlan, flags = {}) {
   };
 }
 
+/**
+ * localStorage['user-plan'] を頑健にパースする。
+ * 実データ契約: auth/verify.astro が `JSON.stringify(userPlan オブジェクト)` を書く（lifetimeSanrenpuku 含む）。
+ * ただし旧 session / 別経路で生文字列が入っている可能性に備え、object / JSON文字列 / 生プラン名 / null を全て扱う。
+ * （`JSON.parse(x||'{}')` は x が生文字列だと throw して false に化けるため、その推測を排除する）
+ * @param {unknown} raw
+ * @returns {object}
+ */
+export function parseUserPlan(raw) {
+  if (raw == null) return {};
+  if (typeof raw === 'object') return raw;
+  const s = String(raw).trim();
+  if (!s) return {};
+  if (s[0] === '{' || s[0] === '[') {
+    try { const o = JSON.parse(s); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+  }
+  return { plan: s }; // JSON でない生文字列は旧形式のプラン名として扱う
+}
+
+/**
+ * ダッシュボード等クライアント表示の単一判定。共通 resolver を呼び出し、
+ * カード / CTA の表示可否を返す。判定式をクライアント側で再実装しないための関数。
+ *
+ * @param {unknown} userPlanRaw localStorage['user-plan']（文字列 or object）
+ * @param {{isExpired?: boolean|string, validUntil?: string, isWithdrawalRequested?: boolean|string}} [flags]
+ *   AccessControl / dashboard が別キーで持つ localStorage.isExpired / validUntil / isWithdrawalRequested
+ * @param {Date|number} [now]
+ * @returns {{showBaCard: boolean, showSanrenpukuCard: boolean, showPurchaseCta: boolean, entitlements: object}}
+ */
+export function resolveClientView(userPlanRaw, flags = {}, now = Date.now()) {
+  const up = parseUserPlan(userPlanRaw);
+  const customer = fromClientUserPlan(up, {
+    isExpired: flags.isExpired === true || flags.isExpired === 'true',
+    validUntil: flags.validUntil && flags.validUntil !== 'null' ? flags.validUntil : undefined,
+    isWithdrawalRequested: flags.isWithdrawalRequested === true || flags.isWithdrawalRequested === 'true',
+  });
+  const e = resolveEntitlements(customer, now);
+  return {
+    showBaCard: e.canViewPremium,          // 馬単カード
+    showSanrenpukuCard: e.canViewSanrenpuku, // 三連複カード
+    showPurchaseCta: e.canPurchaseSanrenpuku, // 三連複購入CTA
+    entitlements: e,
+  };
+}
+
 export default resolveEntitlements;
