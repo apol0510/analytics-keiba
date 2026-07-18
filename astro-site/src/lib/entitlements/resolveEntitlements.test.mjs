@@ -292,3 +292,33 @@ test('契約: user-plan が object でもそのまま扱える', () => {
   const v = resolveClientView({ plan: 'Premium', lifetimeSanrenpuku: true }, { validUntil: FUTURE }, NOW);
   assert.equal(v.showSanrenpukuCard, true);
 });
+
+// ═══ 別アカウントへの三連複権限継承を防ぐ（persistLifetimeForUser）═══════════
+import { persistLifetimeForUser } from './resolveEntitlements.js';
+
+test('切替A(lifetime=true)→B(未指定): 別ユーザーには継承しない（fail closed）', () => {
+  const existing = { email: 'a@example.com', lifetimeSanrenpuku: true };
+  const incomingB = { email: 'b@example.com' }; // B のサーバーレスポンスに lifetime 無し
+  assert.equal(persistLifetimeForUser(incomingB, existing), false);
+});
+
+test('サーバー true→false 訂正: incoming が false を明示 → 古い true を復活させない', () => {
+  const existing = { email: 'a@example.com', lifetimeSanrenpuku: true };
+  const incoming = { email: 'a@example.com', lifetimeSanrenpuku: false };
+  assert.equal(persistLifetimeForUser(incoming, existing), false);
+});
+
+test('同一ユーザー再ログイン: サーバーが true → 付与', () => {
+  assert.equal(persistLifetimeForUser({ email: 'a@example.com', lifetimeSanrenpuku: true }, {}), true);
+});
+
+test('同一ユーザー・incoming未指定: 直近の同一ユーザー値のみ引き継ぐ', () => {
+  const existing = { email: 'a@example.com', lifetimeSanrenpuku: true };
+  assert.equal(persistLifetimeForUser({ email: 'A@Example.com' }, existing), true); // 大小非依存で同一
+  assert.equal(persistLifetimeForUser({ email: 'other@example.com' }, existing), false); // 別ユーザー
+});
+
+test('email 不明どうし: 継承しない（fail closed）', () => {
+  assert.equal(persistLifetimeForUser({}, { lifetimeSanrenpuku: true }), false);
+  assert.equal(persistLifetimeForUser(null, { email: 'a', lifetimeSanrenpuku: true }), false);
+});

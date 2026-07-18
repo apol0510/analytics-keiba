@@ -58,6 +58,9 @@ export const PLAN_ALIASES = Object.freeze({
   'プレミアム予想': 'premium-predictions',
   'premium-sanrenpuku': 'premium-sanrenpuku',
   'プレミアム三連複': 'premium-sanrenpuku',
+  // 表示ラベル 'Premium Sanrenpuku Lifetime'（プラン選択肢 / 購入CTA由来）も同一 canonical へ。
+  // 三連複は買い切りのみ。'Lifetime' 付きラベルが正規化前に届いても premium-sanrenpuku 扱いにする。
+  'premium-sanrenpuku-lifetime': 'premium-sanrenpuku',
   'premium-sanrentan': 'premium-sanrentan',
   'プレミアム三連単': 'premium-sanrentan',
   'premium-combo': 'premium-combo',

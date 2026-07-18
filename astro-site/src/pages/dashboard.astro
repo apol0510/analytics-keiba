@@ -372,7 +372,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
     <!-- 簡略化された認証システム -->
     <script>
         // 権限判定の単一源（共通 resolver）。カード/CTA の表示可否は必ずこれ経由で決める。
-        import { resolveClientView } from '../lib/entitlements/resolveEntitlements.js';
+        import { resolveClientView, persistLifetimeForUser } from '../lib/entitlements/resolveEntitlements.js';
 
         // localStorage の user-plan + 補助フラグから、共通 resolver で表示可否を得る。
         // 同じ判定式を dashboard 内へ再実装しないための唯一の入口。
@@ -418,6 +418,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     const result = {
                         email: userData.email,
                         plan: userData.plan || 'free',
+                        // 現在ユーザー(userData=user-plan)自身の権威値を保持（別ユーザー継承ではない）
+                        lifetimeSanrenpuku: userData.lifetimeSanrenpuku === true,
                         points: realPoints,
                         hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
                         registrationDate: userData.registeredAt,
@@ -710,6 +712,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     const dashboardData = {
                         email: data.user.email,
                         plan: data.user.plan,
+                        // 現在ユーザーのサーバーレスポンス由来の権威値（無料経路は false）。継承しない。
+                        lifetimeSanrenpuku: data.user.lifetimeSanrenpuku === true,
                         points: data.user.points,  // Functions から取得した実際のポイント
                         hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
                         registrationDate: data.user.registeredAt || data.user.lastLogin,
@@ -753,20 +757,16 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             console.log('🎨 showDashboard 開始, customerData:', customerData);
 
             // 🔴 LocalStorageにユーザープランデータを保存（プラン変更ボタン用）
-            // ⚠️ 既存 user-plan の lifetimeSanrenpuku（三連複買い切り永久権）を再保存で落とさない。
-            //    有料の権威書込は verify-magic-link → auth/verify.astro（フラグ含む）。customerData がフラグを
-            //    持たない経路（無料ログインフォーム等）でも、既存フラグを維持する。
-            let _existingLifetime = false;
-            try {
-                const _existing = JSON.parse(localStorage.getItem('user-plan') || '{}');
-                _existingLifetime = _existing && _existing.lifetimeSanrenpuku === true;
-            } catch (e) {}
-            const _mergedUserPlan = Object.assign({}, customerData);
-            if (_mergedUserPlan.lifetimeSanrenpuku === undefined && _existingLifetime) {
-                _mergedUserPlan.lifetimeSanrenpuku = true;
-            }
-            localStorage.setItem('user-plan', JSON.stringify(_mergedUserPlan));
-            console.log('💾 LocalStorageにuser-planデータ保存完了:', _mergedUserPlan);
+            // ⚠️ 三連複永久権(lifetimeSanrenpuku)は「別アカウントへ継承しない」。
+            //    現在ユーザーの権威値（customerData = サーバーレスポンス由来）を採用し、未指定のときのみ
+            //    同一ユーザー(email一致)の直近値を引き継ぐ。別ユーザー/不明は false（fail closed）。
+            //    → サーバーでの true→false 訂正が反映され、A→B 切替で A の権限が B に残らない。
+            let _existingUserPlan = {};
+            try { _existingUserPlan = JSON.parse(localStorage.getItem('user-plan') || '{}') || {}; } catch (e) {}
+            const _toSave = Object.assign({}, customerData);
+            _toSave.lifetimeSanrenpuku = persistLifetimeForUser(customerData, _existingUserPlan);
+            localStorage.setItem('user-plan', JSON.stringify(_toSave));
+            console.log('💾 LocalStorageにuser-planデータ保存完了:', _toSave);
 
             // 🔧 2025-11-10追加: 有効期限をLocalStorageに保存
             if (customerData.validUntil) {
@@ -1672,6 +1672,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 localStorage.removeItem('userData');
                 localStorage.removeItem('userEmail');
                 localStorage.removeItem('hasClaimedReward');
+                // 前ユーザーの権限・期限情報を確実に消す（次ユーザーへの残存＝三連複含む権限漏洩を防ぐ）
+                localStorage.removeItem('validUntil');
+                localStorage.removeItem('isExpired');
+                localStorage.removeItem('isWithdrawalRequested');
+                localStorage.removeItem('originalPlan');
+                localStorage.removeItem('expiryDate');
+                localStorage.removeItem('loginInfo');
+                localStorage.removeItem('user_plan');
 
                 // ナビゲーション更新イベントを発火 → ホームへ
                 window.dispatchEvent(new CustomEvent('userLoggedOut'));
@@ -1753,6 +1761,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     return {
                         email: u.email,
                         plan: u.plan || 'free',
+                        // 現在ユーザー(u)自身の権威値。同一ユーザーの user-plan から引き継ぐ（別ユーザー継承ではない）。
+                        lifetimeSanrenpuku: u.lifetimeSanrenpuku === true,
                         points: typeof u.points === 'number' ? u.points : 0,
                         hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
                         registrationDate: u.registeredAt,

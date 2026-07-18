@@ -259,3 +259,13 @@ test('申込: 三連複の buildApplicationFields は RequestedPlan/RequestedPla
   assert.equal(f['RequestedPlan'], 'Premium Sanrenpuku');
   assert.equal(f['RequestedPlanType'], 'Lifetime');
 });
+
+// 実 CTA ラベル 'Premium Sanrenpuku Lifetime' が confirm に届いても正しく処理する（堅牢化）
+test('三連複: RequestedPlan="Premium Sanrenpuku Lifetime" でも フラグのみ付与・会員ランク/メール不変', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium Sanrenpuku Lifetime', requestedPlanType: 'Lifetime', confirmedAt: new Date() });
+  assert.ok(r);
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+  for (const forbidden of ['プラン', 'PlanType', '有効期限', 'PaidAt', 'Status', 'PaymentEmailSent']) {
+    assert.ok(!(forbidden in r.fields), `${forbidden} を書いてはいけない`);
+  }
+});

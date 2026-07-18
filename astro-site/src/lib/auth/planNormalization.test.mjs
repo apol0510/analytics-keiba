@@ -104,3 +104,14 @@ test('isValidVenueAccessArray: 正規配列のみ true', () => {
   assert.equal(isValidVenueAccessArray('jra'), false);
   assert.equal(isValidVenueAccessArray(null), false);
 });
+
+// 'Premium Sanrenpuku Lifetime'（プラン選択肢/CTA由来ラベル）の exact 正規化 + 誤正規化しないこと
+test('normalizePlan: Premium Sanrenpuku Lifetime → premium-sanrenpuku（誤正規化なし）', () => {
+  assert.equal(normalizePlan('Premium Sanrenpuku Lifetime'), 'premium-sanrenpuku');
+  assert.equal(normalizePlan('Premium Sanrenpuku'), 'premium-sanrenpuku');
+  // 別商品/通常プランへ誤って寄せない
+  assert.equal(normalizePlan('Premium'), 'premium');
+  assert.equal(normalizePlan('Premium Plus'), 'premium-plus');
+  assert.equal(normalizePlan('Premium Sanrentan'), 'premium-sanrentan');
+  assert.equal(normalizePlan('Premium Combo'), 'premium-combo');
+});

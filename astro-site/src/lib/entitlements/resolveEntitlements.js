@@ -233,4 +233,29 @@ export function resolveClientView(userPlanRaw, flags = {}, now = Date.now()) {
   };
 }
 
+/**
+ * user-plan を保存する際に永続化すべき lifetimeSanrenpuku 値を決める。
+ *
+ * 権限漏洩防止の要:
+ * - 古い localStorage の値を**無条件に継承しない**（別アカウントへ true が残る事故を防ぐ）。
+ * - incoming（現在ユーザーの権威源＝サーバーレスポンス由来 customerData）が true/false を
+ *   明示していればそれを採用（＝サーバーの true→false 訂正が反映される）。
+ * - incoming が未指定のときだけ、**同一ユーザー（email 一致）と証明できる場合に限り**、
+ *   直近の user-plan 値を引き継ぐ。別ユーザー / 不明は fail closed で false。
+ *
+ * @param {object|null} incoming 保存しようとする customerData（email, lifetimeSanrenpuku?）
+ * @param {object|null} existing 既存 localStorage user-plan（別ユーザーの可能性がある古い値）
+ * @returns {boolean}
+ */
+export function persistLifetimeForUser(incoming, existing) {
+  const inc = incoming || {};
+  if (inc.lifetimeSanrenpuku === true) return true;
+  if (inc.lifetimeSanrenpuku === false) return false; // サーバーが明示 false → 訂正を反映
+  const ex = existing || {};
+  const sameUser = inc.email && ex.email
+    && String(inc.email).trim().toLowerCase() === String(ex.email).trim().toLowerCase();
+  if (sameUser) return ex.lifetimeSanrenpuku === true; // 同一ユーザーのみ直近値を引き継ぐ
+  return false; // 別ユーザー / 不明 → 継承しない（fail closed）
+}
+
 export default resolveEntitlements;
