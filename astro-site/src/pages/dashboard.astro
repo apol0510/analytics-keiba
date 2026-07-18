@@ -387,6 +387,17 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             );
         }
 
+        // ログアウト/強制ログアウトで消すべき localStorage キーの単一源。
+        // 前ユーザーの権限・期限・三連複永久権が次ユーザーへ残らないよう、両経路でこれを使う（削除漏れ防止）。
+        const AUTH_LOCALSTORAGE_KEYS = [
+            'user-plan', 'user_plan', 'isLoggedIn', 'userPlan', 'userData', 'userEmail',
+            'hasClaimedReward', 'validUntil', 'isExpired', 'isWithdrawalRequested',
+            'originalPlan', 'expiryDate', 'loginInfo',
+        ];
+        function clearAuthLocalStorage() {
+            AUTH_LOCALSTORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+        }
+
         // 簡略化されたセッション管理
         function isAuthenticated() {
             const userPlanData = localStorage.getItem('user-plan');
@@ -612,11 +623,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 // 🚨 2026-02-28追加: 強制ログアウトチェック
                 if (data.forceLogout) {
                     console.log('🚨 強制ログアウト検出');
-                    // LocalStorageをクリア
-                    localStorage.removeItem('isLoggedIn');
-                    localStorage.removeItem('userEmail');
-                    localStorage.removeItem('userPlan');
-                    localStorage.removeItem('user-plan');
+                    // LocalStorage を全キー削除（権限・期限・三連複永久権の残存を防ぐ・logout と同一）
+                    clearAuthLocalStorage();
 
                     showError('プランが更新されました。再度ログインしてください。');
                     return;
@@ -1666,20 +1674,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     return;
                 }
 
-                localStorage.removeItem('user-plan');
-                localStorage.removeItem('isLoggedIn');
-                localStorage.removeItem('userPlan');
-                localStorage.removeItem('userData');
-                localStorage.removeItem('userEmail');
-                localStorage.removeItem('hasClaimedReward');
-                // 前ユーザーの権限・期限情報を確実に消す（次ユーザーへの残存＝三連複含む権限漏洩を防ぐ）
-                localStorage.removeItem('validUntil');
-                localStorage.removeItem('isExpired');
-                localStorage.removeItem('isWithdrawalRequested');
-                localStorage.removeItem('originalPlan');
-                localStorage.removeItem('expiryDate');
-                localStorage.removeItem('loginInfo');
-                localStorage.removeItem('user_plan');
+                // 全キー削除（強制ログアウトと同一の単一源）。権限・期限・三連複永久権の残存を防ぐ。
+                clearAuthLocalStorage();
 
                 // ナビゲーション更新イベントを発火 → ホームへ
                 window.dispatchEvent(new CustomEvent('userLoggedOut'));

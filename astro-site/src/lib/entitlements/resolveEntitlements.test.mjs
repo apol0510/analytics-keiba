@@ -165,17 +165,56 @@ test('fromClientUserPlan: isExpired フラグで強制期限切れ', () => {
   assert.equal(e.canViewSanrenpuku, true);   // フラグは残る
 });
 
-// ── 棚卸しで判明した Status 網羅（拒否集合の追加）──────────────────
-for (const st of ['withdrawn', 'expired', 'unpaidrefunded']) {
-  test(`Status='${st}' → フラグがあっても通常商品アクセス不可（拒否集合）`, () => {
-    const e = R({ tier: 'Premium', accountStatus: st, expiresAt: FUTURE, lifetimeSanrenpuku: true });
-    assert.equal(e.canLogin, false);
-    assert.equal(e.canViewPremium, false);
-    assert.equal(e.canViewSanrenpuku, false);
-    assert.equal(e.canPurchaseSanrenpuku, false);
-    assert.ok(e.reasons.includes('STATUS_SUSPENDED'));
-  });
-}
+// ── アカウント拒否 Status（withdrawn 等）はフラグがあっても全不可 ──────────
+test("Status='withdrawn' → フラグがあってもログイン不可・全不可（アカウント拒否）", () => {
+  const e = R({ tier: 'Premium', accountStatus: 'withdrawn', expiresAt: FUTURE, lifetimeSanrenpuku: true });
+  assert.equal(e.canLogin, false);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, false);
+  assert.equal(e.canPurchaseSanrenpuku, false);
+  assert.ok(e.reasons.includes('STATUS_SUSPENDED'));
+});
+
+// ── Status='expired' / 'unpaidrefunded' は「契約切れ」= アカウント/永久権は拒否しない ──
+// 要件テスト1: Status='expired' + Premium期限切れ + LifetimeSanrenpuku=true
+test("要件1: Status='expired' + 期限切れ + フラグ → ログイン可/馬単不可/三連複可/購入不可", () => {
+  const e = R({ tier: 'Premium', accountStatus: 'expired', expiresAt: PAST, lifetimeSanrenpuku: true });
+  assert.equal(e.canLogin, true);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, true);
+  assert.equal(e.canPurchaseSanrenpuku, false);
+});
+// 要件テスト2: Status='expired' + Premium期限切れ + LifetimeSanrenpuku=false
+test("要件2: Status='expired' + 期限切れ + フラグ無 → ログイン可/馬単不可/三連複不可", () => {
+  const e = R({ tier: 'Premium', accountStatus: 'expired', expiresAt: PAST, lifetimeSanrenpuku: false });
+  assert.equal(e.canLogin, true);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, false);
+});
+// Status='expired' は日付が未設定でも契約切れ扱い（馬単不可・ログイン可）
+test("Status='expired' は 有効期限未設定でも契約切れ（馬単不可・ログイン可・フラグは有効）", () => {
+  const e = R({ tier: 'Premium', accountStatus: 'expired', lifetimeSanrenpuku: true });
+  assert.equal(e.canLogin, true);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, true);
+});
+// unpaidrefunded も契約切れ扱い（アカウント拒否ではない）
+test("Status='unpaidrefunded' → 契約切れ扱い（ログイン可・馬単不可）。フラグがあれば三連複可", () => {
+  const withFlag = R({ tier: 'Premium', accountStatus: 'unpaidrefunded', expiresAt: PAST, lifetimeSanrenpuku: true });
+  assert.equal(withFlag.canLogin, true);
+  assert.equal(withFlag.canViewPremium, false);
+  assert.equal(withFlag.canViewSanrenpuku, true);
+  const noFlag = R({ tier: 'Premium', accountStatus: 'unpaidrefunded', expiresAt: PAST });
+  assert.equal(noFlag.canViewSanrenpuku, false);
+});
+// 要件テスト4: ForceLogout=true → 全アクセス不可
+test("要件4: ForceLogout=true + フラグ → 全アクセス不可", () => {
+  const e = R({ tier: 'Premium', accountStatus: 'active', expiresAt: FUTURE, lifetimeSanrenpuku: true, forceLogout: true });
+  assert.equal(e.canLogin, false);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewSanrenpuku, false);
+  assert.ok(e.reasons.includes('FORCE_LOGOUT'));
+});
 
 test("Status='test' → 通常顧客権限を与えない", () => {
   const e = R({ tier: 'Premium', accountStatus: 'test', expiresAt: FUTURE, lifetimeSanrenpuku: true });

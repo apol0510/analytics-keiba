@@ -221,12 +221,13 @@ for (const [name, src] of [['login.astro', loginPage], ['dashboard.astro', dashb
   });
 
   test('dashboard.astro: Cookie 削除失敗時に localStorage を先に消さない（ok 判定が先）', () => {
-    // logout 関数本体にスコープを絞る（ファイル内の他 removeItem に引っ張られないため）
+    // logout 関数本体にスコープを絞る（ファイル内の他クリア箇所に引っ張られないため）
     const body = s.slice(s.indexOf('window.logout'));
     const iOkGuard = body.indexOf('if (!res.ok)');
-    const iRemove = body.indexOf("localStorage.removeItem('user-plan')");
-    assert.ok(iOkGuard > -1 && iRemove > -1, 'ok ガードと removeItem が存在する');
-    assert.ok(iOkGuard < iRemove, '!res.ok の早期 return は localStorage 削除より前');
+    // localStorage クリアは共通関数 clearAuthLocalStorage() に集約済み（旧: localStorage.removeItem('user-plan')）
+    const iClear = body.indexOf('clearAuthLocalStorage()');
+    assert.ok(iOkGuard > -1 && iClear > -1, 'ok ガードと localStorage クリアが存在する');
+    assert.ok(iOkGuard < iClear, '!res.ok の早期 return は localStorage クリアより前');
   });
 
   test('dashboard.astro: 有料 Cookie 値を JS から読まない（ak_session / document.cookie 参照なし）', () => {

@@ -21,13 +21,19 @@
 
 import { normalizePlan } from '../auth/planNormalization.js';
 
-// アカウント拒否扱いにする Status（memberResolution.js の SUSPENDED_STATUS ＋ 実 Status 選択肢に合わせる）。
-// 2026-07-18 追加: withdrawn / expired / unpaidrefunded（Airtable の実選択肢）。'test' は下の isTestAccount で扱う。
+// アカウント全体を拒否する Status（＝ログインも不可）。memberResolution.js の SUSPENDED_STATUS に
+// 揃え、ユーザー要件の明示状態（withdrawn / closed）を加える。'test' は下の isTestAccount で扱う。
+// ⚠️ 'expired' / 'unpaidrefunded' は「契約（Premium/Light）だけが無効」であり**アカウント拒否ではない**。
+//    Expiry 処理は Status を書かず 有効期限（日付）で判定する（memberResolution も 'expired' を停止扱いにしない）。
+//    → 下の CONTRACT_EXPIRED_STATUS で「契約切れ」として扱い、ログイン・LifetimeSanrenpuku は拒否しない。
 const SUSPENDED_STATUS = new Set([
-  'suspended', 'inactive', 'banned', 'disabled', 'cancelled', 'canceled', 'closed',
-  'withdrawn', 'expired', 'unpaidrefunded',
+  'suspended', 'inactive', 'banned', 'disabled', 'cancelled', 'canceled', 'closed', 'withdrawn',
   '停止', '無効', '解約', '退会',
 ]);
+// 契約（Premium/Light）だけが無効な Status。アカウント全体・三連複永久権(LifetimeSanrenpuku)は拒否しない。
+// unpaidrefunded は「未払い/返金済み」で有料契約は無効だが、アカウント拒否とする証拠は無い（コードで一切書かれず
+// memberResolution も停止扱いにしない）ため、推測で全拒否にせず契約切れ扱いにする。
+const CONTRACT_EXPIRED_STATUS = new Set(['expired', 'unpaidrefunded']);
 // 入金待ち等（登録済みだが有料権限は未確定＝Free 扱い）
 const PENDING_STATUS = new Set(['pending', '入金待ち', '未入金']);
 
@@ -89,6 +95,7 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   const withdrawal = isTruthyFlag(c.withdrawalRequested);
   const forceLogout = isTruthyFlag(c.forceLogout);
   const suspended = SUSPENDED_STATUS.has(status);
+  const statusContractExpired = CONTRACT_EXPIRED_STATUS.has(status);
   const pending = PENDING_STATUS.has(status);
   // テスト用アカウント（Status=test または プラン=Test）は通常顧客権限を与えない。
   const isTestAccount = status === 'test' || rawPlanLower === 'test';
@@ -109,7 +116,8 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   const planTypeLower = String(c.planType ?? '').trim().toLowerCase();
   const lifetimeBilling = planTypeLower === 'lifetime';
   const forceExpired = isTruthyFlag(c.forceExpired);
-  const expired = !lifetimeBilling && (forceExpired || isExpiredAt(c.expiresAt ?? c.validUntil, nowMs));
+  // Status='expired'/'unpaidrefunded' も契約切れ扱い（アカウントは拒否しない）。日付期限切れと同義。
+  const expired = !lifetimeBilling && (forceExpired || statusContractExpired || isExpiredAt(c.expiresAt ?? c.validUntil, nowMs));
 
   const isPremiumTier = PREMIUM_TIERS.has(tier);
   const isLightTier = tier === 'light';
