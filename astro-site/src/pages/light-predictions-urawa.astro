@@ -921,6 +921,13 @@ function parseMainUmatanForDisplay(bettingLines, horses) {
               <textarea id="remarks" name="remarks" class="form-input" rows="3" placeholder="何かご要望がありましたらご記入ください（任意）"></textarea>
             </div>
 
+            <div class="form-group" style="margin: 16px 0;">
+              <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:0.9rem; line-height:1.5; text-align:left;">
+                <input type="checkbox" id="paymentCompletedConfirm" name="paymentCompletedConfirm" required style="margin-top:3px; flex-shrink:0;">
+                <span>銀行振込を完了済みです。このフォームは入金後の報告専用であることを確認しました。<span style="color:#ef4444;">*</span></span>
+              </label>
+            </div>
+
             <button type="submit" class="form-submit-button" id="submitButton">
               <span class="submit-text">📨 申し込みを送信</span>
               <span class="submit-loading" style="display: none;">送信中...</span>
@@ -1016,6 +1023,13 @@ function parseMainUmatanForDisplay(bettingLines, horses) {
       bankTransferForm.addEventListener('submit', async (e) => {
         e.preventDefault();
 
+        const paymentCompletedCheckbox = document.getElementById('paymentCompletedConfirm');
+        if (!paymentCompletedCheckbox || !paymentCompletedCheckbox.checked) {
+          const fm = document.getElementById('formMessage');
+          if (fm) { fm.textContent = '⚠️ 銀行振込完了後にチェックを入れてから送信してください。'; fm.className = 'form-message error'; fm.style.display = 'block'; }
+          return;
+        }
+
         const submitButton = document.getElementById('submitButton');
         const submitText = submitButton.querySelector('.submit-text');
         const submitLoading = submitButton.querySelector('.submit-loading');
@@ -1044,6 +1058,7 @@ function parseMainUmatanForDisplay(bettingLines, horses) {
           transferName: document.getElementById('fullName').value,  // お名前と同じ
           remarks: document.getElementById('remarks').value,
           productName: `${currentPlan} (¥${currentAmount.toLocaleString()}${periodText})`,
+          paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
           timestamp: new Date().toISOString()
         };
 

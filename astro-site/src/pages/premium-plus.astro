@@ -958,6 +958,12 @@ const LIST_PRICE = 98000;
           <textarea id="remarks" name="remarks" class="form-textarea" rows="3" placeholder="ご質問等ございましたらご記入ください"></textarea>
         </div>
 
+        <div class="form-group" style="margin: 16px 0;">
+          <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:0.9rem; line-height:1.5; text-align:left;">
+            <input type="checkbox" id="paymentCompletedConfirm" name="paymentCompletedConfirm" required style="margin-top:3px; flex-shrink:0;">
+            <span>銀行振込を完了済みです。このフォームは入金後の報告専用であることを確認しました。<span style="color:#ef4444;">*</span></span>
+          </label>
+        </div>
         <button type="submit" class="form-submit-button" id="submitButton">
           <span class="submit-text">📧 送信する</span>
           <span class="submit-loading" style="display: none;">送信中...</span>
@@ -1179,6 +1185,12 @@ const LIST_PRICE = 98000;
     // ── 銀行振込フォーム ────────────────────────────────────────
     document.getElementById('bankTransferForm').addEventListener('submit', async (event) => {
       event.preventDefault();
+        const paymentCompletedCheckbox = document.getElementById('paymentCompletedConfirm');
+        if (!paymentCompletedCheckbox || !paymentCompletedCheckbox.checked) {
+          const fm = document.getElementById('formMessage');
+          if (fm) { fm.textContent = '⚠️ 銀行振込完了後にチェックを入れてから送信してください。'; fm.className = 'form-message error'; fm.style.display = 'block'; }
+          return;
+        }
 
       const form = event.currentTarget;
       const submitButton = document.getElementById('submitButton');
@@ -1200,6 +1212,7 @@ const LIST_PRICE = 98000;
         transferName: document.getElementById('fullName').value,
         remarks: document.getElementById('remarks').value,
         productName: 'Premium Plus (¥68,000)',
+          paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
         timestamp: new Date().toISOString(),
       };
 
