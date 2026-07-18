@@ -192,3 +192,80 @@ test('Premium Annual - Campaign も planName=Premium / planType=Annual として
   assert.equal(confirmed.fields['PlanType'], 'Annual');
   assert.equal(confirmed.fields['有効期限'], '2027-07-10');
 });
+
+// ─── 三連複（買い切り永久権）の入金確認: フラグのみ付与・会員ランク不変・メール不変 ─────
+
+test('三連複購入の確認: LifetimeSanrenpuku=true のみ付与し 会員ランク/契約/メール状態を変更しない', () => {
+  const r = buildConfirmationFields({
+    requestedPlan: 'Premium Sanrenpuku',
+    requestedPlanType: 'Lifetime',
+    confirmedAt: new Date('2026-07-18T00:00:00Z'),
+  });
+  assert.ok(r, '確認フィールドが返る');
+  assert.equal(r.sanrenpuku, true);
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+  // 会員ランク・契約情報・**メール状態**は不変（キー自体を書かない）
+  for (const forbidden of ['プラン', 'PlanType', '有効期限', 'PaidAt', 'Status', 'WithdrawalRequested',
+                           'PaymentEmailSent', 'PaymentEmailStatus']) {
+    assert.ok(!(forbidden in r.fields), `三連複付与時に ${forbidden} を書いてはいけない`);
+  }
+  // 冪等性: 申込内容はクリア
+  assert.equal(r.fields['RequestedPlan'], '');
+  assert.equal(r.fields['RequestedPlanType'], '');
+  assert.equal(r.fields['RequestedAmount'], null);
+  // 書くのは LifetimeSanrenpuku + Requested* クリアの計4キーだけ（メール系は含まない）
+  assert.deepEqual(
+    Object.keys(r.fields).sort(),
+    ['LifetimeSanrenpuku', 'RequestedAmount', 'RequestedPlan', 'RequestedPlanType'].sort(),
+  );
+});
+
+test('三連複: PaymentEmailSent を絶対に書かない（メール未送信で true にしない）', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium Sanrenpuku', requestedPlanType: 'Lifetime', confirmedAt: new Date() });
+  assert.ok(!('PaymentEmailSent' in r.fields));
+});
+
+test('三連複: RequestedPlanType が空でも付与できる（Premium本体のPlanTypeを変えない＝planType非依存）', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium Sanrenpuku', requestedPlanType: '', confirmedAt: new Date() });
+  assert.ok(r, 'planType 無しでも三連複は付与される');
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+});
+
+test('三連複: 旧 Premium Combo は互換で同扱い（exact canonical 一致）', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium Combo', requestedPlanType: 'Lifetime', confirmedAt: new Date() });
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+  assert.ok(!('プラン' in r.fields));
+});
+
+test('通常の Premium 購入は従来どおり プラン/有効期限 を書く（三連複分岐に誤って入らない）', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium', requestedPlanType: 'Annual', confirmedAt: new Date('2026-07-18T00:00:00Z') });
+  assert.equal(r.fields['プラン'], 'Premium');
+  assert.equal(r.fields['Status'], 'active');
+  assert.ok(r.fields['有効期限']);
+  assert.ok(!('LifetimeSanrenpuku' in r.fields), '通常購入で三連複フラグを立ててはいけない');
+});
+
+test('不明プランは fail closed（会員ランクを推測で書かない）', () => {
+  assert.equal(buildConfirmationFields({ requestedPlan: 'GarbagePlanXYZ', requestedPlanType: 'Annual', confirmedAt: new Date() }), null);
+});
+
+test('通常購入で PlanType 欠落は fail closed（従来契約を維持）', () => {
+  assert.equal(buildConfirmationFields({ requestedPlan: 'Premium', requestedPlanType: '', confirmedAt: new Date() }), null);
+});
+
+// 申込フォームの契約: 三連複申込は RequestedPlan='Premium Sanrenpuku'（Lifetime 付き planType）を書く
+test('申込: 三連複の buildApplicationFields は RequestedPlan/RequestedPlanType を残す', () => {
+  const f = buildApplicationFields({ currentStatus: 'active', fullName: '氏名', planName: 'Premium Sanrenpuku', planType: 'Lifetime', amount: 78000 });
+  assert.equal(f['RequestedPlan'], 'Premium Sanrenpuku');
+  assert.equal(f['RequestedPlanType'], 'Lifetime');
+});
+
+// 実 CTA ラベル 'Premium Sanrenpuku Lifetime' が confirm に届いても正しく処理する（堅牢化）
+test('三連複: RequestedPlan="Premium Sanrenpuku Lifetime" でも フラグのみ付与・会員ランク/メール不変', () => {
+  const r = buildConfirmationFields({ requestedPlan: 'Premium Sanrenpuku Lifetime', requestedPlanType: 'Lifetime', confirmedAt: new Date() });
+  assert.ok(r);
+  assert.equal(r.fields['LifetimeSanrenpuku'], true);
+  for (const forbidden of ['プラン', 'PlanType', '有効期限', 'PaidAt', 'Status', 'PaymentEmailSent']) {
+    assert.ok(!(forbidden in r.fields), `${forbidden} を書いてはいけない`);
+  }
+});
