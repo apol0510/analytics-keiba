@@ -141,18 +141,28 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
   （＝ `AIRTABLE_BASE_ID` + `Customers`）は使わない。
 - **本番 Customers への fallback は禁止**。カナリア env 未設定なら `canaryTarget()` が throw し、
   Function は **503（fail closed）** を返す。本番 Base を代わりに使うことは一切しない。
-- **allowlist は運用規約ではなくコードで「ちょうど 1 件」を強制**（単一源 `canaryAuth.js` の
-  `authorizeCanaryRequest`）。`PAYMENT_EMAIL_CANARY_RECORD_IDS` を trim + 空要素除去した結果が
-  **0 件でも 2 件以上でも 403**。リクエストの recordId が**その唯一の許可 ID と完全一致**する場合のみ通す。
-  `includes` による複数許容は廃止。
+- **認証・allowlist 検証を body parse より先に行う（secret-first fail closed）**。単一源 `canaryAuth.js`
+  を 2 段に分割: `authorizeCanaryAccess`（secret + allowlist・**body に非依存**）→ 認証通過後にのみ
+  body を parse → `matchCanaryRecordId`（recordId 完全一致）。**未認証リクエストの body は parse しない**。
+  - 評価順: ① secret 未設定 → 503 / ② secret 不一致 → 403 / ③ allowlist が「ちょうど 1 件」でない
+    （0 件・2 件以上）→ 403 / ④ ここで初めて body parse（不正 JSON → 400）/ ⑤ recordId 未指定 → 400 /
+    ⑥ recordId が唯一の許可 ID と不一致 → 403。
+  - **未認証入力の構文エラーを外部へ区別して返さない**: 未認証（①②）や allowlist 不正（③）のときは
+    不正 JSON でも 400 ではなく認証段の 503/403 を返す。**不正 JSON が 400 になるのは「認証成功 +
+    allowlist exactly-one」を満たしたときだけ**。
+- **allowlist は運用規約ではなくコードで「ちょうど 1 件」を強制**。`PAYMENT_EMAIL_CANARY_RECORD_IDS` を
+  trim + 空要素除去した結果が **0 件でも 2 件以上でも 403**。`includes` による複数許容は廃止。
 - **拒否時に識別子を応答・ログへ出さない**。403 応答に呼び出し入力の recordId をエコーせず、
   拒否理由文字列にも recordId / secret / Base ID / Table ID を含めない。
+- **本番 Customers への fallback は禁止**（再掲）。カナリア env 未設定なら `canaryTarget()` が throw、
+  Function は **503**。本番 Base を代わりに使わない。
 - **通常 worker / reconciler / confirm-bank-payment は本番 Customers env を維持**（分離の影響を受けない）。
 - **ログ禁止値**: Base ID / Table ID / メールアドレス / secret / recordId は例外メッセージ・ログに出さない。
 - **実行前に明示承認が必須**、実行後は**テストレコードの後片付けが必須**（本番送信・本番 Airtable 変更は行わない）。
-- guard/test: `canaryAuth.test.mjs`（exactly-one・完全一致・recordId 非エコーの挙動）/
-  `paymentEmailDeps.canary.test.mjs`（fail closed・本番 fallback しない・URL がカナリア Base を指す）/
-  `paymentEmailDeps.canary.guard.test.mjs`（配線固定）。`test:bank-payment`→`check:safety` で CI 強制。
+- guard/test: `canaryAuth.test.mjs`（2 段認可・secret-first の body 非 parse・exactly-one・完全一致・
+  recordId 非エコー）/ `paymentEmailDeps.canary.test.mjs`（fail closed・本番 fallback しない・URL が
+  カナリア Base を指す）/ `paymentEmailDeps.canary.guard.test.mjs`（配線・順序固定）。
+  `test:bank-payment`→`check:safety` で CI 強制。
 
 ---
 
