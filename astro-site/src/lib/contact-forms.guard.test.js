@@ -48,13 +48,23 @@ for (const { file, covers } of FORM_FILES) {
     assert.ok(/!\s*emailEl\.value/.test(src), `${file}: email の空欄ガード(!emailEl.value)が無い`);
   });
 
-  // 2026-07-18: dashboard が user-plan に書いていたプレースホルダ 'お客様' を自動入力すると、
-  // 管理者宛メールが「お名前: お客様」で届き返信相手を特定できない。複製側でも必ず除外する。
-  t(`${covers}: プレースホルダ 'お客様' を氏名として入力しない`, () => {
+  // 2026-07-18: 'お客様' は実名ではない。user-plan に残っていても実名として扱わない
+  //（有料会員の実名を 'お客様' が上書きしないようにするための正規化）。
+  t(`${covers}: 'お客様' を実名として扱わない`, () => {
     const src = read(file);
     assert.ok(
       /===\s*['"]お客様['"]\s*\?\s*['"]{2}\s*:/.test(src),
       `${file}: 'お客様' を空にする正規化が無い（正本 contact-autofill.js の normalizeContactName と揃える）`,
+    );
+  });
+
+  // 2026-07-19: 氏名が必要なのは有料会員だけ。無料・未登録は氏名を持たないため
+  // 既定値 'お客様' を入れる（正本 contact-autofill.js の contactNameForInput と同一挙動）。
+  t(`${covers}: 氏名が無いときは 'お客様' を既定値にする`, () => {
+    const src = read(file);
+    assert.ok(
+      /\.value\s*=\s*(c|contact)\.name\s*\|\|\s*['"]お客様['"]/.test(src),
+      `${file}: 氏名が無いときの既定値 'お客様' が無い（正本 contactNameForInput と揃える）`,
     );
   });
 

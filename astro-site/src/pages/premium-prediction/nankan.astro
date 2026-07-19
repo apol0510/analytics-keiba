@@ -1398,7 +1398,9 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         var c = getLoggedInContact();
         var nameEl = document.getElementById('contactName');
         var emailEl = document.getElementById('contactEmail');
-        if (nameEl && !nameEl.value && c.name) nameEl.value = c.name;
+        // 氏名が必要なのは有料会員だけ。無料・未登録は氏名を持たないので 'お客様' を既定値にする。
+        // 正本: src/lib/contact-autofill.js の contactNameForInput / DEFAULT_CONTACT_NAME。
+        if (nameEl && !nameEl.value) nameEl.value = c.name || 'お客様';
         if (emailEl && !emailEl.value && c.email) emailEl.value = c.email;
     }
 

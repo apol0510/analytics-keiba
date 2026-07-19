@@ -1172,7 +1172,9 @@ const LIST_PRICE = 98000;
       [['fullName', 'email'], ['contactName', 'contactEmail']].forEach(([nameId, emailId]) => {
         const nameEl = document.getElementById(nameId);
         const emailEl = document.getElementById(emailId);
-        if (nameEl && !nameEl.value && contact.name) nameEl.value = contact.name;
+        // 氏名が必要なのは有料会員だけ。無料・未登録は氏名を持たないので 'お客様' を既定値にする。
+        // 正本: src/lib/contact-autofill.js の contactNameForInput / DEFAULT_CONTACT_NAME。
+        if (nameEl && !nameEl.value) nameEl.value = contact.name || 'お客様';
         if (emailEl && !emailEl.value && contact.email) emailEl.value = contact.email;
       });
     }

@@ -7,7 +7,13 @@
  * 実行: node src/lib/contact-autofill.test.js （astro-site 直下から）
  */
 import assert from 'assert';
-import { parseLoggedInContact, getLoggedInContact, normalizeContactName } from './contact-autofill.js';
+import {
+  parseLoggedInContact,
+  getLoggedInContact,
+  normalizeContactName,
+  contactNameForInput,
+  DEFAULT_CONTACT_NAME,
+} from './contact-autofill.js';
 
 let pass = 0, fail = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ✅ ${name}`); } catch (e) { fail++; console.error(`  ❌ ${name}\n     ${e.message}`); } };
@@ -100,6 +106,23 @@ t('normalizeContactName: 実名・非文字列は従来どおり', () => {
 t("parseLoggedInContact: name='お客様' は空・email は残す", () => {
   const r = parseLoggedInContact(JSON.stringify({ email: 'c@example.com', name: 'お客様' }));
   assert.deepStrictEqual(r, { name: '', email: 'c@example.com' });
+});
+
+// --- フォーム入力値: 有料=実名 / 無料・未登録='お客様'（2026-07-19 運用方針）---
+t("contactNameForInput: 実名があればそれを使う（有料会員）", () => {
+  assert.strictEqual(contactNameForInput('山田 太郎'), '山田 太郎');
+  assert.strictEqual(contactNameForInput('  花子  '), '花子');
+});
+
+t("contactNameForInput: 氏名が無ければ 'お客様'（無料・未登録）", () => {
+  assert.strictEqual(contactNameForInput(''), 'お客様');
+  assert.strictEqual(contactNameForInput('   '), 'お客様');
+  assert.strictEqual(contactNameForInput(undefined), 'お客様');
+  assert.strictEqual(contactNameForInput(null), 'お客様');
+  assert.strictEqual(contactNameForInput(42), 'お客様');
+  // 既存 localStorage に残る 'お客様' も同じ結果に収束する
+  assert.strictEqual(contactNameForInput('お客様'), 'お客様');
+  assert.strictEqual(DEFAULT_CONTACT_NAME, 'お客様');
 });
 
 console.log(`\ncontact-autofill.test.js: ${pass} passed, ${fail} failed`);
