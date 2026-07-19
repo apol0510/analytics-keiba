@@ -75,5 +75,40 @@ for (const { file, covers } of FORM_FILES) {
   });
 }
 
+// ── import 経路のフォーム（is:inline ではないので正本をそのまま使う）─────────────
+// /contact/ は無料会員・未登録が使う唯一の問い合わせ導線。複製ではなく
+// contact-autofill.js を import するため、上の複製 guard とは別に配線を固定する。
+const IMPORT_FORM_FILES = [
+  { file: 'src/pages/contact.astro', covers: '/contact/(無料・未登録)' },
+];
+
+for (const { file, covers } of IMPORT_FORM_FILES) {
+  t(`${covers}: 正本 contact-autofill.js を import している`, () => {
+    const src = read(file);
+    assert.ok(
+      /import\s*\{[^}]*contactNameForInput[^}]*\}\s*from\s*['"][^'"]*contact-autofill\.js['"]/.test(src),
+      `${file}: contactNameForInput の import が無い`,
+    );
+    assert.ok(
+      /import\s*\{[^}]*getLoggedInContact[^}]*\}\s*from\s*['"][^'"]*contact-autofill\.js['"]/.test(src),
+      `${file}: getLoggedInContact の import が無い`,
+    );
+  });
+
+  t(`${covers}: 自動入力を実行し、空欄のときだけ代入する`, () => {
+    const src = read(file);
+    assert.ok(/prefillContactFields\s*\(\)/.test(src), `${file}: prefillContactFields 呼び出しが無い`);
+    assert.ok(/contactNameForInput\(/.test(src), `${file}: contactNameForInput の呼び出しが無い`);
+    assert.ok(/!\s*nameEl\.value/.test(src), `${file}: name の空欄ガード(!nameEl.value)が無い`);
+    assert.ok(/!\s*emailEl\.value/.test(src), `${file}: email の空欄ガード(!emailEl.value)が無い`);
+  });
+
+  t(`${covers}: autocomplete 属性がある`, () => {
+    const src = read(file);
+    assert.ok(/autocomplete=["']name["']/.test(src), `${file}: autocomplete="name" が無い`);
+    assert.ok(/autocomplete=["']email["']/.test(src), `${file}: autocomplete="email" が無い`);
+  });
+}
+
 console.log(`\ncontact-forms.guard.test.js: ${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -19,12 +19,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
                 <div class="form-group">
                     <label for="name">お名前 <span class="required">*</span></label>
-                    <input type="text" id="name" name="name" required placeholder="例：山田 太郎">
+                    <input type="text" id="name" name="name" required autocomplete="name" placeholder="例：山田 太郎">
                 </div>
 
                 <div class="form-group">
                     <label for="email">メールアドレス <span class="required">*</span></label>
-                    <input type="email" id="email" name="email" required placeholder="例：yamada@example.com">
+                    <input type="email" id="email" name="email" required autocomplete="email" placeholder="例：yamada@example.com">
                 </div>
 
                 <div class="form-group">
@@ -360,12 +360,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </style>
 
     <script>
+        // 🔑 氏名・メールの自動入力。このページは is:inline ではない通常の <script> なので、
+        //    複製せず正本モジュールをそのまま import する（有料会員用モーダルは import
+        //    できないため同一ロジックを複製している）。
+        //    無料・未登録は氏名を持たないので contactNameForInput が 'お客様' を返す。
+        import { getLoggedInContact, contactNameForInput } from '../lib/contact-autofill.js';
+
         document.addEventListener('DOMContentLoaded', () => {
             const form = document.getElementById('contactForm');
             const formMessage = document.getElementById('formMessage');
             const submitBtn = form.querySelector('.submit-btn');
             const btnText = submitBtn.querySelector('.btn-text');
             const btnLoading = submitBtn.querySelector('.btn-loading');
+
+            // 空欄のときだけ初期値を入れる（ユーザーが入力済みの値は上書きしない）。
+            function prefillContactFields() {
+                const contact = getLoggedInContact();
+                const nameEl = document.getElementById('name');
+                const emailEl = document.getElementById('email');
+                if (nameEl && !nameEl.value) nameEl.value = contactNameForInput(contact.name);
+                if (emailEl && !emailEl.value && contact.email) emailEl.value = contact.email;
+            }
+            prefillContactFields();
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
