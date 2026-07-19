@@ -1381,7 +1381,11 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             if (typeof raw !== 'string' || !raw) return { name: '', email: '' };
             var data = JSON.parse(raw);
             if (!data || typeof data !== 'object' || Array.isArray(data)) return { name: '', email: '' };
-            var name = typeof data.name === 'string' ? data.name.trim() : '';
+            // 'お客様' は dashboard が既定値として user-plan に書いていた表示用プレースホルダ（実名ではない）。
+            // 自動入力すると管理者宛メールが「お名前: お客様」で届き返信できないため空として扱う。
+            // 正本: src/lib/contact-autofill.js の normalizeContactName / PLACEHOLDER_NAMES と同一挙動。
+            var rawName = typeof data.name === 'string' ? data.name.trim() : '';
+            var name = rawName === 'お客様' ? '' : rawName;
             var email = typeof data.email === 'string' ? data.email.trim() : '';
             return { name: name, email: email };
         } catch (e) {

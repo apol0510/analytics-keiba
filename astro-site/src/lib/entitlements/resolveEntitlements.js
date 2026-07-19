@@ -275,4 +275,43 @@ export function persistLifetimeForUser(incoming, existing) {
   return false; // 別ユーザー / 不明 → 継承しない（fail closed）
 }
 
+/**
+ * user-plan を保存する際に永続化すべき氏名を決める。
+ *
+ * 経緯: dashboard は customerData.name に表示用プレースホルダ 'お客様' を入れており、
+ * それをそのまま user-plan へ保存していたため、マジックリンク検証で取得した実名を
+ * 上書きして消していた。結果、問い合わせフォームの自動入力が「お客様」になり、
+ * 管理者宛メールから返信相手を特定できなかった（2026-07-18 報告）。
+ *
+ * persistLifetimeForUser と同じ「別ユーザーへ引き継がない」原則を適用する:
+ * - incoming に実名があればそれを採用
+ * - 無いときだけ、**同一ユーザー（email 一致）と証明できる場合に限り** 直近の user-plan 値を引き継ぐ
+ * - 別ユーザー / 不明 は空（前ユーザーの氏名を次ユーザーに見せない）
+ *
+ * @param {object|null} incoming 保存しようとする customerData（email, name?）
+ * @param {object|null} existing 既存 localStorage user-plan（別ユーザーの可能性がある古い値）
+ * @returns {string}
+ */
+export function persistNameForUser(incoming, existing) {
+  const inc = incoming || {};
+  const incName = normalizeCustomerName(inc.name);
+  if (incName) return incName;
+  const ex = existing || {};
+  const sameUser = inc.email && ex.email
+    && String(inc.email).trim().toLowerCase() === String(ex.email).trim().toLowerCase();
+  return sameUser ? normalizeCustomerName(ex.name) : '';
+}
+
+/**
+ * 氏名を正規化する。実名ではない表示用プレースホルダは空にする。
+ * src/lib/contact-autofill.js の normalizeContactName と同一基準（プレースホルダ 'お客様'）。
+ * @param {unknown} v
+ * @returns {string}
+ */
+export function normalizeCustomerName(v) {
+  if (typeof v !== 'string') return '';
+  const s = v.trim();
+  return s === 'お客様' ? '' : s;
+}
+
 export default resolveEntitlements;

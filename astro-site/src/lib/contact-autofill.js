@@ -18,6 +18,27 @@
  */
 
 /**
+ * 実名ではない「表示用プレースホルダ」。氏名として採用してはいけない値。
+ *
+ * 経緯: dashboard.astro が user-plan に `name: 'お客様'` を既定値として書き込んでいたため、
+ * 問い合わせフォームがこれを自動入力し、管理者宛メールが「お名前: お客様」で届いて
+ * 返信時に相手を特定できなかった（2026-07-18 報告）。dashboard 側は修正済みだが、
+ * **既存ブラウザの localStorage には 'お客様' が残り続ける**ため、読み出し側でも空として扱う。
+ */
+export const PLACEHOLDER_NAMES = ['お客様'];
+
+/**
+ * 氏名文字列を正規化する。前後空白を除去し、プレースホルダは空文字にする。
+ * @param {unknown} v
+ * @returns {string}
+ */
+export function normalizeContactName(v) {
+  if (typeof v !== 'string') return '';
+  const s = v.trim();
+  return PLACEHOLDER_NAMES.includes(s) ? '' : s;
+}
+
+/**
  * user-plan の生文字列を受け取り、氏名・メールを取り出す純粋関数。
  * @param {unknown} raw localStorage.getItem('user-plan') の戻り値
  * @returns {{ name: string, email: string }}
@@ -36,7 +57,7 @@ export function parseLoggedInContact(raw) {
     return { name: '', email: '' };
   }
 
-  const name = typeof data.name === 'string' ? data.name.trim() : '';
+  const name = normalizeContactName(data.name);
   const email = typeof data.email === 'string' ? data.email.trim() : '';
   return { name, email };
 }

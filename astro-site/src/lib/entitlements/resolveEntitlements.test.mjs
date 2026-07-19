@@ -4,6 +4,8 @@ import {
   resolveEntitlements,
   fromAirtableFields,
   fromClientUserPlan,
+  persistNameForUser,
+  normalizeCustomerName,
 } from './resolveEntitlements.js';
 
 const NOW = Date.parse('2026-07-18T00:00:00Z');
@@ -406,4 +408,41 @@ test('期限切れカードE: withdrawn / suspended / ForceLogout → 期限切�
   const forced = resolveClientView(upStr({ plan: 'Premium', forceLogout: true }), { validUntil: PAST }, NOW);
   assert.equal(forced.showPremiumExpiredCard, false);
   assert.equal(forced.entitlements.canLogin, false);
+});
+
+// ── persistNameForUser（2026-07-18: 問い合わせフォームの「お名前: お客様」対策）──────────
+// dashboard が customerData.name にプレースホルダ 'お客様' を入れて user-plan へ保存し、
+// マジックリンク検証で得た実名を潰していた。実名を保持しつつ、別ユーザーへは継承しない。
+
+test('persistNameForUser: incoming の実名を採用する', () => {
+  const r = persistNameForUser({ email: 'a@example.com', name: '山田 太郎' }, { email: 'a@example.com', name: '旧名' });
+  assert.equal(r, '山田 太郎');
+});
+
+test("persistNameForUser: incoming が 'お客様' なら実名を潰さず既存を維持（同一ユーザー）", () => {
+  const r = persistNameForUser({ email: 'a@example.com', name: 'お客様' }, { email: 'A@Example.com', name: '山田 太郎' });
+  assert.equal(r, '山田 太郎');
+});
+
+test('persistNameForUser: incoming が空でも同一ユーザーなら既存を引き継ぐ', () => {
+  const r = persistNameForUser({ email: 'a@example.com' }, { email: 'a@example.com', name: '花子' });
+  assert.equal(r, '花子');
+});
+
+test('persistNameForUser: 別ユーザーの氏名は継承しない（fail closed）', () => {
+  assert.equal(persistNameForUser({ email: 'b@example.com' }, { email: 'a@example.com', name: '山田 太郎' }), '');
+  assert.equal(persistNameForUser({ name: 'お客様' }, { email: 'a@example.com', name: '山田 太郎' }), '');
+  assert.equal(persistNameForUser(null, { email: 'a@example.com', name: '山田 太郎' }), '');
+});
+
+test("persistNameForUser: 既存も 'お客様' なら空（プレースホルダを保存し続けない）", () => {
+  assert.equal(persistNameForUser({ email: 'a@example.com' }, { email: 'a@example.com', name: 'お客様' }), '');
+});
+
+test('normalizeCustomerName: contact-autofill と同一基準', () => {
+  assert.equal(normalizeCustomerName('お客様'), '');
+  assert.equal(normalizeCustomerName('  お客様  '), '');
+  assert.equal(normalizeCustomerName('  山田 太郎  '), '山田 太郎');
+  assert.equal(normalizeCustomerName('お客様太郎'), 'お客様太郎');
+  assert.equal(normalizeCustomerName(undefined), '');
 });

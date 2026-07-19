@@ -48,6 +48,16 @@ for (const { file, covers } of FORM_FILES) {
     assert.ok(/!\s*emailEl\.value/.test(src), `${file}: email の空欄ガード(!emailEl.value)が無い`);
   });
 
+  // 2026-07-18: dashboard が user-plan に書いていたプレースホルダ 'お客様' を自動入力すると、
+  // 管理者宛メールが「お名前: お客様」で届き返信相手を特定できない。複製側でも必ず除外する。
+  t(`${covers}: プレースホルダ 'お客様' を氏名として入力しない`, () => {
+    const src = read(file);
+    assert.ok(
+      /===\s*['"]お客様['"]\s*\?\s*['"]{2}\s*:/.test(src),
+      `${file}: 'お客様' を空にする正規化が無い（正本 contact-autofill.js の normalizeContactName と揃える）`,
+    );
+  });
+
   t(`${covers}: autocomplete 属性がある`, () => {
     const src = read(file);
     assert.ok(/autocomplete=["']name["']/.test(src), `${file}: autocomplete="name" が無い`);

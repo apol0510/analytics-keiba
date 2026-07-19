@@ -126,7 +126,10 @@ exports.handler = async (event) => {
     console.log(`🎫 [send-magic-link] Token issued (paid): tokenPrefix=${tokenPrefix}, email=${email}`);
 
     const magicLink = `${SITE_BASE}/auth/verify?token=${encodeURIComponent(token)}`;
-    const customerName = record.fields.Name || record.fields['お名前'] || 'お客様';
+    // Airtable Customers の氏名フィールドは日本語の `氏名`（`Name` / `お名前` は存在しない）。
+    // 読み落としでログインメールの宛名が常に 'お客様' になっていた（2026-07-18 修正）。
+    // 氏名が空のレコードは従来どおり 'お客様' にフォールバックする。
+    const customerName = record.fields['氏名'] || record.fields.Name || record.fields['お名前'] || 'お客様';
 
     try {
       await sgMail.send({

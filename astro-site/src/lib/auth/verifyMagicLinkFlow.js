@@ -89,6 +89,9 @@ export async function runVerifyMagicLink(deps) {
     membership,
     payload: issued.payload,
     email: customer.fields?.Email ?? email,
-    name: customer.fields?.Name ?? customer.fields?.['お名前'] ?? '',
+    // Airtable Customers の氏名フィールドは日本語の `氏名`（`Name` / `お名前` は存在しない）。
+    // これを読み落としていたため常に空になり、dashboard の既定値 'お客様' が user-plan に残って
+    // 問い合わせフォームへ自動入力されていた（2026-07-18 修正）。旧名は将来のリネーム保険として残す。
+    name: customer.fields?.['氏名'] ?? customer.fields?.Name ?? customer.fields?.['お名前'] ?? '',
   };
 }

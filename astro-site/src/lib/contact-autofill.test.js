@@ -7,7 +7,7 @@
  * 実行: node src/lib/contact-autofill.test.js （astro-site 直下から）
  */
 import assert from 'assert';
-import { parseLoggedInContact, getLoggedInContact } from './contact-autofill.js';
+import { parseLoggedInContact, getLoggedInContact, normalizeContactName } from './contact-autofill.js';
 
 let pass = 0, fail = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ✅ ${name}`); } catch (e) { fail++; console.error(`  ❌ ${name}\n     ${e.message}`); } };
@@ -78,6 +78,28 @@ t('getLoggedInContact: getItem が例外を投げても空を返す', () => {
 t('getLoggedInContact: storage が不正でも空を返す', () => {
   assert.deepStrictEqual(getLoggedInContact({}), { name: '', email: '' });
   assert.deepStrictEqual(getLoggedInContact(null), { name: '', email: '' });
+});
+
+// --- プレースホルダ 'お客様' を実名として扱わない（2026-07-18 回帰防止） ---
+// dashboard が user-plan に書いていた既定値。自動入力すると管理者宛メールが
+// 「お名前: お客様」で届き、返信相手を特定できなくなる。
+t("normalizeContactName: 'お客様' は空にする", () => {
+  assert.strictEqual(normalizeContactName('お客様'), '');
+  assert.strictEqual(normalizeContactName('  お客様  '), '');
+});
+
+t('normalizeContactName: 実名・非文字列は従来どおり', () => {
+  assert.strictEqual(normalizeContactName('山田 太郎'), '山田 太郎');
+  assert.strictEqual(normalizeContactName('  花子  '), '花子');
+  // 'お客様' を含むだけの実名は消さない（完全一致のみ除外）
+  assert.strictEqual(normalizeContactName('お客様太郎'), 'お客様太郎');
+  assert.strictEqual(normalizeContactName(null), '');
+  assert.strictEqual(normalizeContactName(42), '');
+});
+
+t("parseLoggedInContact: name='お客様' は空・email は残す", () => {
+  const r = parseLoggedInContact(JSON.stringify({ email: 'c@example.com', name: 'お客様' }));
+  assert.deepStrictEqual(r, { name: '', email: 'c@example.com' });
 });
 
 console.log(`\ncontact-autofill.test.js: ${pass} passed, ${fail} failed`);

@@ -386,7 +386,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
     <!-- 簡略化された認証システム -->
     <script>
         // 権限判定の単一源（共通 resolver）。カード/CTA の表示可否は必ずこれ経由で決める。
-        import { resolveClientView, persistLifetimeForUser } from '../lib/entitlements/resolveEntitlements.js';
+        import { resolveClientView, persistLifetimeForUser, persistNameForUser } from '../lib/entitlements/resolveEntitlements.js';
 
         // localStorage の user-plan + 補助フラグから、共通 resolver で表示可否を得る。
         // 同じ判定式を dashboard 内へ再実装しないための唯一の入口。
@@ -448,7 +448,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         points: realPoints,
                         hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
                         registrationDate: userData.registeredAt,
-                        name: 'お客様'
+                        // 実名は verify-magic-link 由来で user-plan に入る。'お客様' で潰さない（プレースホルダは表示側で除外）。
+                        name: userData.name || ''
                     };
                     console.log('✅ getCustomerData 返却値:', result);
                     return result;
@@ -470,7 +471,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     plan: planUnderscore || 'Free',
                     points: realPoints,
                     hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
-                    name: 'お客様'
+                    name: ''
                 };
                 console.log('✅ getCustomerData 返却値（アンダースコア版）:', result);
                 return result;
@@ -488,7 +489,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     plan: plan,
                     points: realPoints,
                     hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
-                    name: 'お客様'
+                    name: ''
                 };
             }
 
@@ -739,7 +740,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         points: data.user.points,  // Functions から取得した実際のポイント
                         hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
                         registrationDate: data.user.registeredAt || data.user.lastLogin,
-                        name: 'お客様'
+                        name: ''
                     };
                     
                     setTimeout(() => {
@@ -787,6 +788,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             try { _existingUserPlan = JSON.parse(localStorage.getItem('user-plan') || '{}') || {}; } catch (e) {}
             const _toSave = Object.assign({}, customerData);
             _toSave.lifetimeSanrenpuku = persistLifetimeForUser(customerData, _existingUserPlan);
+            // ⚠️ 氏名も同じ原則で保存する。customerData.name は表示用の既定値でしかないため、
+            //    マジックリンク検証（verify-magic-link）が入れた実名を潰さない。
+            //    同一ユーザー(email一致)のときだけ直近値を引き継ぎ、別ユーザー/不明は空にする。
+            _toSave.name = persistNameForUser(customerData, _existingUserPlan);
             localStorage.setItem('user-plan', JSON.stringify(_toSave));
             console.log('💾 LocalStorageにuser-planデータ保存完了:', _toSave);
 
@@ -1781,13 +1786,13 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         points: typeof u.points === 'number' ? u.points : 0,
                         hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
                         registrationDate: u.registeredAt,
-                        name: 'お客様',
+                        name: u.name || '',
                     };
                 }
                 const email = localStorage.getItem('userEmail') || localStorage.getItem('user_email');
                 const plan = localStorage.getItem('userPlan') || localStorage.getItem('user_plan') || 'free';
                 if (email || plan !== 'free') {
-                    return { email: email || '', plan, points: 0, hasClaimedReward: false, name: 'お客様' };
+                    return { email: email || '', plan, points: 0, hasClaimedReward: false, name: '' };
                 }
             } catch (_) {}
             return null;

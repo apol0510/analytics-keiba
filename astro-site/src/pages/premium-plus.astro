@@ -1153,8 +1153,12 @@ const LIST_PRICE = 98000;
         if (typeof raw !== 'string' || !raw) return { name: '', email: '' };
         const data = JSON.parse(raw);
         if (!data || typeof data !== 'object' || Array.isArray(data)) return { name: '', email: '' };
+        // 'お客様' は dashboard が既定値として user-plan に書いていた表示用プレースホルダ（実名ではない）。
+        // 自動入力すると管理者宛メールが「お名前: お客様」で届き返信できないため空として扱う。
+        // 正本: src/lib/contact-autofill.js の normalizeContactName / PLACEHOLDER_NAMES と同一挙動。
+        const rawName = typeof data.name === 'string' ? data.name.trim() : '';
         return {
-          name: typeof data.name === 'string' ? data.name.trim() : '',
+          name: rawName === 'お客様' ? '' : rawName,
           email: typeof data.email === 'string' ? data.email.trim() : '',
         };
       } catch (error) {
