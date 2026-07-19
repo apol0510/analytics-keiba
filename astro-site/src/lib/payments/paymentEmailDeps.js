@@ -10,44 +10,60 @@ import { SUPPORT_EMAIL, FROM_EMAIL } from '../../../netlify/functions/config/ema
 
 const CUSTOMERS = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
-function airtableBase() {
+/** 本番 Customers の接続先（key / base / table）。 */
+function productionTarget() {
   const key = process.env.AIRTABLE_API_KEY;
   const base = process.env.AIRTABLE_BASE_ID;
   if (!key || !base) throw new Error('Airtable credentials missing');
-  return { key, base };
+  return { key, base, table: CUSTOMERS };
 }
 
-async function getRecord(recordId) {
-  const { key, base } = airtableBase();
-  const res = await fetch(`https://api.airtable.com/v0/${base}/${encodeURIComponent(CUSTOMERS)}/${recordId}`, {
-    headers: { Authorization: `Bearer ${key}` },
+/**
+ * カナリア専用の接続先。**専用 env のみ**を使い、本番 Customers へは絶対に fallback しない。
+ * 未設定なら throw（fail closed）。Base ID / Table ID は例外メッセージにも載せない。
+ */
+function canaryTarget() {
+  const key = process.env.AIRTABLE_API_KEY;
+  const base = process.env.PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID;
+  const table = process.env.PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID;
+  if (!key) throw new Error('Airtable API key missing');
+  if (!base || !table) throw new Error('canary airtable target not configured'); // 値は出さない（fail closed）
+  return { key, base, table };
+}
+
+async function getRecordFrom(target, recordId) {
+  const res = await fetch(`https://api.airtable.com/v0/${target.base}/${encodeURIComponent(target.table)}/${recordId}`, {
+    headers: { Authorization: `Bearer ${target.key}` },
   });
   if (!res.ok) return null;
   const j = await res.json();
   return { id: j.id, fields: j.fields || {} };
 }
 
-async function patchRecord(recordId, fields) {
-  const { key, base } = airtableBase();
-  const res = await fetch(`https://api.airtable.com/v0/${base}/${encodeURIComponent(CUSTOMERS)}/${recordId}`, {
+async function patchRecordFrom(target, recordId, fields) {
+  const res = await fetch(`https://api.airtable.com/v0/${target.base}/${encodeURIComponent(target.table)}/${recordId}`, {
     method: 'PATCH',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${target.key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields, typecast: true }),
   });
-  if (!res.ok) throw new Error(`Airtable PATCH ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Airtable PATCH ${res.status}`); // Base/Table/本文をログへ出さない
   return res.json();
 }
 
 /** unknown_after_attempt の一覧（reconciler 用）。 */
-async function listUnknownAfterAttempt() {
-  const { key, base } = airtableBase();
+async function listUnknownFrom(target) {
   const formula = `{PaymentEmailStatus} = 'unknown_after_attempt'`;
-  const url = `https://api.airtable.com/v0/${base}/${encodeURIComponent(CUSTOMERS)}?filterByFormula=${encodeURIComponent(formula)}&pageSize=50`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
+  const url = `https://api.airtable.com/v0/${target.base}/${encodeURIComponent(target.table)}?filterByFormula=${encodeURIComponent(formula)}&pageSize=50`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${target.key}` } });
   if (!res.ok) return [];
   const j = await res.json();
   return (j.records || []).map((r) => ({ id: r.id, fields: r.fields || {} }));
 }
+
+// 本番 Customers 用（admin-promote-customer.js / reconciler / worker が使う）。
+async function getRecord(recordId) { return getRecordFrom(productionTarget(), recordId); }
+async function patchRecord(recordId, fields) { return patchRecordFrom(productionTarget(), recordId, fields); }
+async function listUnknownAfterAttempt() { return listUnknownFrom(productionTarget()); }
 
 /** SendGrid Mail Send。custom_args に record_id / idempotency_key を載せる。throw せず結果を返す。 */
 async function sendMail({ to, recordId, idempotencyKey }) {
@@ -127,6 +143,21 @@ export function makeWorkerDeps() {
     hasApiKey: !!process.env.SENDGRID_API_KEY,
     getRecord, patchRecord, acquireLock, releaseLock, sendMail,
     log: (o) => console.log('[worker]', JSON.stringify(o)),
+  };
+}
+
+/**
+ * カナリア専用 worker deps。**専用 Base/Table のみ**を使う（本番 Customers へ fallback しない）。
+ * カナリア env 未設定なら canaryTarget() が throw して fail closed になる。
+ */
+export function makeCanaryWorkerDeps() {
+  const target = canaryTarget();
+  return {
+    hasApiKey: !!process.env.SENDGRID_API_KEY,
+    getRecord: (id) => getRecordFrom(target, id),
+    patchRecord: (id, f) => patchRecordFrom(target, id, f),
+    acquireLock, releaseLock, sendMail,
+    log: (o) => console.log('[canary-worker]', JSON.stringify(o)),
   };
 }
 

@@ -122,6 +122,35 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
 
 ---
 
+## カナリア Base/Table 分離（契約 / S4 非本番検証）
+
+非本番カナリア（`admin-canary-payment-email`）は **テスト専用 Airtable Base/Table のみ**を使い、
+**本番 Customers に構造的に触れない**。判定は単一源 `paymentEmailDeps.js` の `canaryTarget()` /
+`makeCanaryWorkerDeps()`。
+
+| env | 責務 |
+|---|---|
+| `PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID` | カナリア専用 Base ID（テスト用のみ） |
+| `PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID` | カナリア専用 Table ID（テスト用のみ） |
+| `PAYMENT_EMAIL_CANARY_RECORD_IDS` | 許可レコード allowlist（カンマ区切り。**1 件のみ**運用） |
+| `PAYMENT_CANARY_SECRET` | `x-canary-secret` ヘッダ認証 |
+
+**契約（不変条件）**:
+
+- **テスト用 Base/Table のみ**。`admin-canary` は `makeCanaryWorkerDeps()` を使い、本番 `makeWorkerDeps()`
+  （＝ `AIRTABLE_BASE_ID` + `Customers`）は使わない。
+- **本番 Customers への fallback は禁止**。カナリア env 未設定なら `canaryTarget()` が throw し、
+  Function は **503（fail closed）** を返す。本番 Base を代わりに使うことは一切しない。
+- **allowlist は 1 件のみ**。`PAYMENT_EMAIL_CANARY_RECORD_IDS` に完全一致する recordId 以外は 403。
+  空なら常に 403（通常顧客は構造的に指定不可）。
+- **通常 worker / reconciler / confirm-bank-payment は本番 Customers env を維持**（分離の影響を受けない）。
+- **ログ禁止値**: Base ID / Table ID / メールアドレス / secret は例外メッセージ・ログに出さない。
+- **実行前に明示承認が必須**、実行後は**テストレコードの後片付けが必須**（本番送信・本番 Airtable 変更は行わない）。
+- guard: `paymentEmailDeps.canary.test.mjs`（fail closed・本番 fallback しない・URL がカナリア Base を指す）
+  / `paymentEmailDeps.canary.guard.test.mjs`（配線固定）。`test:bank-payment`→`check:safety` で CI 強制。
+
+---
+
 ## cutover（D1）
 
 S1 Field → S2 Upstash/env → **S3 コード deploy（production は legacy のまま・旧 admin 無効化）** →
@@ -163,6 +192,8 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 | confirm v2（pending 同梱） | `netlify/functions/confirm-bank-payment.js` | S3 で改修 |
 | 送信 worker | `netlify/functions/payment-email-worker.js`（新規） | S3 |
 | カナリア専用 | `netlify/functions/admin-canary-payment-email.js`（新規） | S3 |
+| カナリア deps（Base/Table 分離・単一源） | `src/lib/payments/paymentEmailDeps.js`（`canaryTarget`/`makeCanaryWorkerDeps`） | S4 |
+| カナリア分離テスト | `src/lib/payments/paymentEmailDeps.canary{,.guard}.test.mjs` | S4 |
 | reconciler（Scheduled） | `netlify/functions/payment-email-reconciler.js`（新規） | S3 |
 | 手動昇格 | `netlify/functions/admin-promote-customer.js`（新規） | S3 |
 | Event Webhook | `netlify/functions/sendgrid-webhook.js`（拡張・署名検証） | S9 |

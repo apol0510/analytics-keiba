@@ -8,11 +8,13 @@
  * - PAYMENT_CANARY_SECRET 未設定 or 不一致なら 403（env 未設定の現状は全 403）
  * - recordId は PAYMENT_EMAIL_CANARY_RECORD_IDS（カンマ区切り allowlist）に含まれる 1 件のみ
  * - allowlist が空なら常に 403（=通常顧客は構造的に指定不可）
+ * - **カナリア専用 Base/Table（PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID / _TABLE_ID）のみ**を使い、
+ *   本番 Customers へは絶対に fallback しない。未設定なら 503（fail closed）。
  * - 1 回だけ（worker が attempt 上限・lease で多重を抑止）
  */
 
 import { runWorkerOnce } from '../../src/lib/payments/paymentEmailWorker.js';
-import { makeWorkerDeps } from '../../src/lib/payments/paymentEmailDeps.js';
+import { makeCanaryWorkerDeps } from '../../src/lib/payments/paymentEmailDeps.js';
 
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
@@ -36,11 +38,19 @@ exports.handler = async (event) => {
   if (!recordId) return json(400, { error: 'recordId required' });
   if (!allowlist.includes(recordId)) return json(403, { error: 'recordId not in canary allowlist', recordId });
 
+  // カナリア専用 Base/Table のみ。未設定なら fail closed（本番 Customers へ触れない）。
+  let deps;
   try {
-    const result = await runWorkerOnce({ recordId, now: Date.now(), deps: makeWorkerDeps() });
+    deps = makeCanaryWorkerDeps();
+  } catch {
+    return json(503, { error: 'canary airtable target not configured（本番 Customers へは fallback しない）' });
+  }
+
+  try {
+    const result = await runWorkerOnce({ recordId, now: Date.now(), deps });
     return json(200, { canary: true, ...result });
   } catch (e) {
-    console.error('[admin-canary-payment-email] error:', e);
+    console.error('[admin-canary-payment-email] error:', String(e && e.message));
     return json(500, { error: String(e && e.message) });
   }
 };
