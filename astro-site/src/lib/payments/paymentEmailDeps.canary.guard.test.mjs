@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const DEPS = readFileSync(here('./paymentEmailDeps.js'), 'utf8');
 const CANARY_FN = readFileSync(here('../../../netlify/functions/admin-canary-payment-email.js'), 'utf8');
+const AUTH = readFileSync(here('./canaryAuth.js'), 'utf8');
 
 test('guard: canaryTarget は専用 env のみを読む（本番 AIRTABLE_BASE_ID を読まない）', () => {
   const m = DEPS.match(/function canaryTarget\(\)\s*\{[\s\S]*?\n\}/);
@@ -53,8 +54,21 @@ test('guard: admin-canary はカナリア env 未設定なら 503 で fail close
     'makeCanaryWorkerDeps の失敗を 503 で fail closed していない');
 });
 
-test('guard: admin-canary は allowlist と secret の多重ガードを保持する', () => {
-  assert.ok(CANARY_FN.includes('PAYMENT_EMAIL_CANARY_RECORD_IDS'), 'allowlist env を読んでいない');
-  assert.ok(CANARY_FN.includes('PAYMENT_CANARY_SECRET'), 'secret ガードが無い');
-  assert.ok(CANARY_FN.includes('allowlist.includes(recordId)'), 'recordId の allowlist 照合が無い');
+test('guard: admin-canary は単一源 authorizeCanaryRequest に secret/allowlist/recordId を渡す', () => {
+  assert.ok(CANARY_FN.includes('authorizeCanaryRequest'), '認可の単一源を使っていない');
+  assert.ok(CANARY_FN.includes('PAYMENT_EMAIL_CANARY_RECORD_IDS'), 'allowlist env を渡していない');
+  assert.ok(CANARY_FN.includes('PAYMENT_CANARY_SECRET'), 'secret を渡していない');
+});
+
+test('guard: admin-canary は複数許容の includes 判定を持たない（exactly-one 化）', () => {
+  assert.ok(!/allowlist\.includes\(/.test(CANARY_FN),
+    '複数 ID を許容する includes 判定が残っている（exactly-one に反する）');
+});
+
+test('guard: exactly-one 強制と recordId 非エコーが単一源にある', () => {
+  assert.ok(/allowlist\.length !== 1/.test(AUTH), 'exactly-one（length !== 1）の強制が無い');
+  assert.ok(/recordId !== allowlist\[0\]/.test(AUTH), 'recordId の完全一致判定が無い');
+  // 不一致の 403 応答文字列に recordId を埋め込んでいない
+  assert.ok(!/error:\s*[`'"][^`'"]*\$\{?recordId/.test(AUTH),
+    '拒否理由に recordId をエコーしている（識別子露出）');
 });

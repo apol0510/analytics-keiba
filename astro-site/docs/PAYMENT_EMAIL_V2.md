@@ -132,7 +132,7 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
 |---|---|
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID` | カナリア専用 Base ID（テスト用のみ） |
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID` | カナリア専用 Table ID（テスト用のみ） |
-| `PAYMENT_EMAIL_CANARY_RECORD_IDS` | 許可レコード allowlist（カンマ区切り。**1 件のみ**運用） |
+| `PAYMENT_EMAIL_CANARY_RECORD_IDS` | 許可レコード allowlist（カンマ区切り。**ちょうど 1 件をコードで強制**） |
 | `PAYMENT_CANARY_SECRET` | `x-canary-secret` ヘッダ認証 |
 
 **契約（不変条件）**:
@@ -141,13 +141,18 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
   （＝ `AIRTABLE_BASE_ID` + `Customers`）は使わない。
 - **本番 Customers への fallback は禁止**。カナリア env 未設定なら `canaryTarget()` が throw し、
   Function は **503（fail closed）** を返す。本番 Base を代わりに使うことは一切しない。
-- **allowlist は 1 件のみ**。`PAYMENT_EMAIL_CANARY_RECORD_IDS` に完全一致する recordId 以外は 403。
-  空なら常に 403（通常顧客は構造的に指定不可）。
+- **allowlist は運用規約ではなくコードで「ちょうど 1 件」を強制**（単一源 `canaryAuth.js` の
+  `authorizeCanaryRequest`）。`PAYMENT_EMAIL_CANARY_RECORD_IDS` を trim + 空要素除去した結果が
+  **0 件でも 2 件以上でも 403**。リクエストの recordId が**その唯一の許可 ID と完全一致**する場合のみ通す。
+  `includes` による複数許容は廃止。
+- **拒否時に識別子を応答・ログへ出さない**。403 応答に呼び出し入力の recordId をエコーせず、
+  拒否理由文字列にも recordId / secret / Base ID / Table ID を含めない。
 - **通常 worker / reconciler / confirm-bank-payment は本番 Customers env を維持**（分離の影響を受けない）。
-- **ログ禁止値**: Base ID / Table ID / メールアドレス / secret は例外メッセージ・ログに出さない。
+- **ログ禁止値**: Base ID / Table ID / メールアドレス / secret / recordId は例外メッセージ・ログに出さない。
 - **実行前に明示承認が必須**、実行後は**テストレコードの後片付けが必須**（本番送信・本番 Airtable 変更は行わない）。
-- guard: `paymentEmailDeps.canary.test.mjs`（fail closed・本番 fallback しない・URL がカナリア Base を指す）
-  / `paymentEmailDeps.canary.guard.test.mjs`（配線固定）。`test:bank-payment`→`check:safety` で CI 強制。
+- guard/test: `canaryAuth.test.mjs`（exactly-one・完全一致・recordId 非エコーの挙動）/
+  `paymentEmailDeps.canary.test.mjs`（fail closed・本番 fallback しない・URL がカナリア Base を指す）/
+  `paymentEmailDeps.canary.guard.test.mjs`（配線固定）。`test:bank-payment`→`check:safety` で CI 強制。
 
 ---
 
