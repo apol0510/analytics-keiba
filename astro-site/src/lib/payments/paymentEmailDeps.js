@@ -19,14 +19,16 @@ function productionTarget() {
 }
 
 /**
- * カナリア専用の接続先。**専用 env のみ**を使い、本番 Customers へは絶対に fallback しない。
- * 未設定なら throw（fail closed）。Base ID / Table ID は例外メッセージにも載せない。
+ * カナリア専用の接続先。**専用 env のみ**を使い、本番 Customers / 本番キーへは絶対に fallback しない。
+ * - 認証キーは **PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY のみ**（本番 AIRTABLE_API_KEY は参照しない）。
+ * - Base/Table も専用 env のみ。
+ * いずれか未設定なら throw（fail closed）。key / Base ID / Table ID は例外メッセージにも載せない。
  */
 function canaryTarget() {
-  const key = process.env.AIRTABLE_API_KEY;
+  const key = process.env.PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY;
   const base = process.env.PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID;
   const table = process.env.PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID;
-  if (!key) throw new Error('Airtable API key missing');
+  if (!key) throw new Error('canary airtable api key not configured'); // 値は出さない（fail closed）
   if (!base || !table) throw new Error('canary airtable target not configured'); // 値は出さない（fail closed）
   return { key, base, table };
 }

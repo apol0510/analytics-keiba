@@ -124,12 +124,13 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
 
 ## カナリア Base/Table 分離（契約 / S4 非本番検証）
 
-非本番カナリア（`admin-canary-payment-email`）は **テスト専用 Airtable Base/Table のみ**を使い、
-**本番 Customers に構造的に触れない**。判定は単一源 `paymentEmailDeps.js` の `canaryTarget()` /
+非本番カナリア（`admin-canary-payment-email`）は **テスト専用 Airtable Base/Table + 専用 PAT のみ**を使い、
+**本番 Customers / 本番キーに構造的に触れない**。判定は単一源 `paymentEmailDeps.js` の `canaryTarget()` /
 `makeCanaryWorkerDeps()`。
 
 | env | 責務 |
 |---|---|
+| `PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY` | **カナリア専用 Airtable PAT**（テスト Base だけに read/write 権限）。本番 `AIRTABLE_API_KEY` は使わない |
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID` | カナリア専用 Base ID（テスト用のみ） |
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID` | カナリア専用 Table ID（テスト用のみ） |
 | `PAYMENT_EMAIL_CANARY_RECORD_IDS` | 許可レコード allowlist（カンマ区切り。**ちょうど 1 件をコードで強制**） |
@@ -137,10 +138,15 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
 
 **契約（不変条件）**:
 
-- **テスト用 Base/Table のみ**。`admin-canary` は `makeCanaryWorkerDeps()` を使い、本番 `makeWorkerDeps()`
-  （＝ `AIRTABLE_BASE_ID` + `Customers`）は使わない。
-- **本番 Customers への fallback は禁止**。カナリア env 未設定なら `canaryTarget()` が throw し、
-  Function は **503（fail closed）** を返す。本番 Base を代わりに使うことは一切しない。
+- **テスト用 Base/Table + 専用 PAT のみ**。`admin-canary` は `makeCanaryWorkerDeps()` を使い、本番 `makeWorkerDeps()`
+  （＝ `AIRTABLE_API_KEY` + `AIRTABLE_BASE_ID` + `Customers`）は使わない。
+- **カナリア認証キーは `PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY` のみ**。`canaryTarget()` は本番
+  `AIRTABLE_API_KEY` を一切参照せず、**本番キーへの fallback を禁止**。専用キー未設定なら throw → Function は 503。
+  - 専用 PAT は **テスト Base だけに read/write 権限**を持たせ、**本番 Base を PAT の resource に含めない**
+    （本番 `AIRTABLE_API_KEY` にテスト Base 権限を足す運用は採らない。理由: 本番キーがテスト Base 403 だった件の恒久分離）。
+  - 専用キー / Base ID / Table ID / recordId / メールを例外メッセージ・ログへ出さない。
+- **本番 Customers / 本番キーへの fallback は禁止**。カナリア env（key / Base / Table）いずれか未設定なら
+  `canaryTarget()` が throw し、Function は **503（fail closed）** を返す。本番 Base/キーを代わりに使うことは一切しない。
 - **認証・allowlist 検証を body parse より先に行う（secret-first fail closed）**。単一源 `canaryAuth.js`
   を 2 段に分割: `authorizeCanaryAccess`（secret + allowlist・**body に非依存**）→ 認証通過後にのみ
   body を parse → `matchCanaryRecordId`（recordId 完全一致）。**未認証リクエストの body は parse しない**。

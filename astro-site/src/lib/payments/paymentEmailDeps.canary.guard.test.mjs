@@ -14,27 +14,32 @@ const DEPS = readFileSync(here('./paymentEmailDeps.js'), 'utf8');
 const CANARY_FN = readFileSync(here('../../../netlify/functions/admin-canary-payment-email.js'), 'utf8');
 const AUTH = readFileSync(here('./canaryAuth.js'), 'utf8');
 
-test('guard: canaryTarget は専用 env のみを読む（本番 AIRTABLE_BASE_ID を読まない）', () => {
+test('guard: canaryTarget は専用 env のみを読む（本番 AIRTABLE_API_KEY / AIRTABLE_BASE_ID を読まない）', () => {
   const m = DEPS.match(/function canaryTarget\(\)\s*\{[\s\S]*?\n\}/);
   assert.ok(m, 'canaryTarget が見つからない');
   const body = m[0];
+  assert.ok(body.includes('PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY'), '専用 API キー env を読んでいない');
   assert.ok(body.includes('PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID'), '専用 Base env を読んでいない');
   assert.ok(body.includes('PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID'), '専用 Table env を読んでいない');
-  assert.ok(!body.includes('AIRTABLE_BASE_ID)') && !/process\.env\.AIRTABLE_BASE_ID/.test(body),
+  // 本番キー・本番 Base への fallback が無いこと（PAYMENT_EMAIL_CANARY_ 接頭辞を除いた素の参照を検出）
+  assert.ok(!/process\.env\.AIRTABLE_API_KEY/.test(body),
+    'canaryTarget が本番 AIRTABLE_API_KEY を参照している（本番キーへの fallback）');
+  assert.ok(!/process\.env\.AIRTABLE_BASE_ID/.test(body),
     'canaryTarget が本番 AIRTABLE_BASE_ID を参照している（fallback の疑い）');
   assert.ok(!body.includes('CUSTOMERS'), 'canaryTarget が本番 Customers テーブルを参照している');
 });
 
-test('guard: canaryTarget は未設定で throw する（fail closed）', () => {
+test('guard: canaryTarget は key / Base / Table 未設定で throw する（fail closed）', () => {
   const m = DEPS.match(/function canaryTarget\(\)\s*\{[\s\S]*?\n\}/);
+  assert.ok(/if \(!key\) throw/.test(m[0]), '専用 API キー未設定時に throw していない');
   assert.ok(/if \(!base \|\| !table\) throw/.test(m[0]), 'Base/Table 未設定時に throw していない');
 });
 
-test('guard: 例外メッセージに Base/Table の値を埋め込まない', () => {
+test('guard: 例外メッセージに key / Base / Table の値を埋め込まない', () => {
   const m = DEPS.match(/function canaryTarget\(\)\s*\{[\s\S]*?\n\}/);
-  // throw new Error(`...${base}...`) のような値の埋め込みが無いこと
-  assert.ok(!/throw new Error\(`[^`]*\$\{(base|table)\}/.test(m[0]),
-    '例外メッセージに Base/Table の値を埋め込んでいる（ログ漏洩）');
+  // throw new Error(`...${key|base|table}...`) のような値の埋め込みが無いこと
+  assert.ok(!/throw new Error\(`[^`]*\$\{(key|base|table)\}/.test(m[0]),
+    '例外メッセージに key/Base/Table の値を埋め込んでいる（ログ漏洩）');
 });
 
 test('guard: makeCanaryWorkerDeps は canaryTarget を使い、本番 deps と分離される', () => {
