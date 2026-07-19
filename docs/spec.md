@@ -15,6 +15,12 @@
 
 本書は既存文書を **置き換えない**。詳細は各ドメイン文書を参照し、本書は境界と全体像のみを定義する。
 
+> **重要（2026-07-20 時点）**: `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` の 3 文書は
+> **branch `docs/autonomous-project-workflow`（PR #143）上にのみ存在し、`main` には未マージ**である。
+> したがって現時点でリポジトリ恒久の正本ではなく、**PR がマージされて初めて正本として機能する**。
+> マージ前にこれらを「リポジトリの正本」として他文書から参照しないこと。
+> `CLAUDE.md` と `astro-site/docs/*.md` は main 上に存在する既存の正本である。
+
 ---
 
 ## 1. Purpose
@@ -22,8 +28,7 @@
 南関競馬（NANKAN）と中央競馬（JRA）を統合した **AI 予想コンテンツの Web 配信＋会員課金プラットフォーム**。
 
 - 本番 URL: `https://analytics.keiba.link/`（`CLAUDE.md` §本番 URL ルール）
-- 旧 URL: `https://nankan-analytics.keiba.link`（移行中）
-- 前身プロジェクト: `nankan-analytics`（段階的引退予定）
+- 旧ドメインからの移行途上（`README.md` は「移行中」表記のまま。301 切替の完了状況は 未確認）
 
 このリポジトリは **予想データの「消費側・表示側・課金側」** である。予想データの生成・入力そのものは行わない（§3 参照）。
 
@@ -110,7 +115,7 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 | 依存 | 用途 | 備考 |
 |---|---|---|
 | Netlify（Pro） | ホスティング / Functions / Blobs | Premium Plus 実績画像は Netlify Blobs 上（git に置かない） |
-| Airtable（Pro） | 顧客管理（Customers） | Base は `nankan-analytics` と共有。Automation 2 本が入金確認フローに関与 |
+| Airtable（Pro） | 顧客管理（Customers） | Automation 2 本が入金確認フローに関与。Base の共有範囲は 未確認 |
 | SendGrid | マジックリンク送信 / 確認メール / Marketing Campaigns | v2 では Event Webhook 併用設計 |
 | Google Gemini 2.5 Flash | AI 解説生成 | `@google/generative-ai` |
 | Stripe | 決済連携（`nankan-stripe-integration/`） | 現行 pricing 導線は銀行振込のみ案内 |
@@ -166,8 +171,7 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 - Premium Plus admin write は production 判定で hard block（commit `3b8c908`）
 - カナリア検証は **専用 Airtable Base / Table / PAT に完全分離**し production Customers に触れない（commit `924a9d0` / `e1e730c`）
 - Netlify サブドメイン（`*.netlify.app`）は Deploy Preview 専用。本番案内に使わない
-- 以下は本リポジトリ作業における **高リスク操作**（実施前に停止・報告が必要）:
-  production deploy / production env・secret 変更 / 本番メール・LINE・通知送信 / 本番 Airtable・Redis・Blobs・外部 API への書込み / workflow dispatch / PR merge / force push・履歴改変 / 課金・会員権限の本番変更
+- **高リスク操作の一覧と停止境界は `CLAUDE.md` §High-risk approval boundary が単一源**。本書では重複記載しない。
 
 ## 8. Completion Criteria
 
@@ -225,9 +229,10 @@ CI: `.github/workflows/safety-check.yml`（PR / push to main / workflow_dispatch
 
 - **`.env.example` が存在しない**。環境変数の完全な一覧・必須/任意の区別は証拠未確認。
 - `nankan-stripe-integration/` の現在の稼働状況（本番で使われているか、休止中か）は **証拠未確認**。`docs/PAYMENT_SYSTEM.md` は銀行振込をメインと記述し、`CLAUDE.md` は「現在 pricing は銀行振込のみを案内」としているが、Stripe 経路の停止/生存の明示的記録は未確認。
-- `nankan-analytics.keiba.link → analytics.keiba.link` の 301 切替が完了しているかは **未確定**（`README.md` / `CLAUDE.md` とも「移行中」表記のまま）。
-- `CLAUDE.md` §移行タスク（初期セットアップ）7 項目のうち、どこまで完了しているかの最新状態は **証拠未確認**（`NEXT_SESSION.md` は 2026-04-14 で更新停止）。
+- 旧ドメインから `analytics.keiba.link` への 301 切替が完了しているかは **未確定**（`README.md` は「移行中」表記のまま）。
+- `CLAUDE.md` §移行タスク（初期セットアップ）7 項目のうち、どこまで完了しているかの最新状態は **証拠未確認**（`NEXT_SESSION.md` は文書内の「最終更新」表記が 2026-04-14）。
 - 入金確認メール v2 のどの段階（worker / reconciler / Event Webhook / 段階有効化）が本番有効かは **未確定**。カナリア分離までのコミットは main にあるが、cutover 実行の記録は未確認。
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降の実装着手状況は **未確定**（同文書は「実装未着手」のまま）。
-- リポジトリに 80 以上のローカルブランチと多数の remote ブランチが残存しており、どれが生存 / 破棄対象かの棚卸し記録は **証拠未確認**。
-- `verify-project.sh` は前身プロジェクト `nankan-analytics` の期待値（旧パス・旧 remote）のままで、本リポジトリでは機能しない。意図的な残置か放置かは **証拠未確認**。
+- 滞留ブランチが多数残存しており、どれが生存 / 破棄対象かの棚卸し記録は **証拠未確認**（正確な本数も 未確認）。
+- `verify-project.sh` は **旧プロジェクト由来の期待値（旧パス・旧 remote）** を検証しており、本リポジトリでは常に失敗する。意図的な残置か放置かは **証拠未確認**。
+- 追跡下の lockfile が 3 つあり、うち `astro-site/astro-site/package-lock.json` は入れ子の重複。3 つとも npm 形式のため形式矛盾は無いが、入れ子が意図的かは **証拠未確認**（`CLAUDE.md` §Package manager）。

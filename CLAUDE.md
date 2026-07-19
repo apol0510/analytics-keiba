@@ -951,6 +951,13 @@ Claudeは本プロジェクトにおいて、単なる調査担当や途中監�
 ただし §🚨 AI作業ルール の「作業開始時に必ず明示（目的 / 変更対象ファイル / 完了条件）」と
 §🧭 修正対象範囲ルール の対象範囲明記義務は、連続実行中も省略しない。
 
+**連続実行の範囲限定（本節は無制限の権限を与えるものではない）**
+
+- 「通常push」は本タスクの作業branchへの push のみを指す。`main` / `master` への直接 push を許可するものではない。
+- 「テスト失敗の修正」は、本タスクの範囲内で原因が明確に特定でき、かつ後方互換性を壊さない場合に限る。
+  原因不明・範囲外・互換性に影響する場合は停止する。
+- 「Draft PR 作成まで自律実行」は、PR merge および本番反映の事前承認を意味しない。
+
 ### High-risk approval boundary
 
 次の操作は、直前でのみ停止し、実施内容・対象・影響・rollback手順・検証結果を一括報告する。
@@ -982,7 +989,7 @@ Netlify Build Hook 実行、Airtable Automation の変更、Netlify Blobs への
 - origin・branch・HEAD・対象日・会場・件数等の前提不一致
 - 未知の既存変更との競合 / merge conflict
 - test・lint・typecheck・buildの失敗を安全に解消できない（safety check の一時無効化は §🛡️ CI Safety Check により禁止）
-- 別リポジトリの仕様を誤って適用する可能性（特に `keiba-intelligence` / `nankan-analytics` / `keiba-data-shared-admin`）
+- 別リポジトリの仕様を誤って適用する可能性（特に `keiba-intelligence` / `keiba-data-shared-admin`）
 
 ### Repository isolation
 
@@ -1002,6 +1009,28 @@ git status --short
 横断変更が明示的に承認されたタスクでは、リポジトリごとに独立したbranch・commit・Draft PRを作成する。
 
 これは §keiba-intelligence との関係（独立運用、2026-05-23〜）の「自動的に横展開しない」方針と同一の考え方である。
+
+### Package manager
+
+- package manager は各リポジトリの正本に従う。全リポジトリ一律の npm / pnpm 強制はしない。
+- 正本の優先順位:
+  1. `package.json` の `packageManager` フィールド
+  2. lockfile
+  3. CI / workflow / deploy 設定
+  4. 既存の明示的なプロジェクト固有ルール
+- `package-lock.json` のみ → npm / `pnpm-lock.yaml` のみ → pnpm / `yarn.lock` のみ → yarn。
+- 複数 lockfile が併存する場合、または文書と実装・CI・lockfile が矛盾する場合は、
+  **依存変更を停止**し `docs/progress.md` へ記録する。どちらか一方を勝手に削除・変換しない。
+- lockfile を無断で別形式へ変換しない。
+- `npm install` / `pnpm install` 等を一律禁止も一律許可もしない。上記正本に従って判断する。
+
+本リポジトリの現状（2026-07-20 確認）: `packageManager` フィールドは未設定。追跡下の lockfile は
+`astro-site/package-lock.json` / `nankan-stripe-integration/package-lock.json` /
+`astro-site/astro-site/package-lock.json` の 3 つで **いずれも npm 形式**。CI（`.github/workflows/*.yml`）は
+`npm ci`、`netlify.toml` は `npm run build`。したがって本リポジトリの正本は **npm** であり、
+pnpm / yarn を要求する既存ルールは存在しない（形式の矛盾なし＝依存変更の停止条件には該当しない）。
+ただし `astro-site/astro-site/` の入れ子 lockfile は意図不明のため `docs/progress.md` の
+Open Questions に記録する。**独断で削除しない。**
 
 ### Progress maintenance
 

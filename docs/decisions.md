@@ -19,8 +19,8 @@ Accepted
 本リポジトリには `CLAUDE.md`（913 行）、`README.md`、`NEXT_SESSION.md`、`DAILY_UPDATE_PROCEDURES.md`、
 `docs/*.md`、`astro-site/docs/*.md` と多数の文書があるが、
 「仕様 / 進捗 / 設計判断」を一意に指す正本が定義されていなかった。
-`NEXT_SESSION.md` は 2026-04-14 で更新が止まっており、現在地の引き継ぎ文書として機能していない。
-一方 main では日次データ取込と機能 PR が継続し、open PR 3 件・未コミット 38 ファイルが並行している。
+`NEXT_SESSION.md` は文書内の「最終更新」表記が 2026-04-14 のままで、現在地の引き継ぎ文書として機能していない。
+一方 main では日次データ取込と機能 PR が継続し、未マージの open PR と作業中変更が並行していた（2026-07-20 観測）。
 
 ### Decision
 
@@ -55,9 +55,9 @@ Accepted
 
 ### Evidence
 
-- 本 PR（branch `docs/autonomous-project-workflow`、base `origin/main` = `1aed7df`）
-- `NEXT_SESSION.md`（最終更新 2026-04-14）
-- `CLAUDE.md` 既存構成
+- 本 PR #143（branch `docs/autonomous-project-workflow`、分岐時の base `origin/main` = `1aed7df`）
+- `NEXT_SESSION.md`（文書内の「最終更新」表記が 2026-04-14）
+- `CLAUDE.md` 既存構成（913 行 / 2026-07-20 確認）
 
 ---
 

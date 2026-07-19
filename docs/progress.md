@@ -46,17 +46,15 @@
 
 ## In Progress
 
-- **作業ツリー上の未コミット変更（38 ファイル）**: メイン checkout `/Users/user/Projects/analytics-keiba` が
-  ブランチ `fix/premium-plus-admin-secret-normalize`（HEAD `08edc5a`、`origin/main` から **33 commits behind / 0 ahead**）
-  の上に未コミットのまま置かれている。内容は決済メール v2 / entitlements / contact autofill / 各予想ページの横断修正など。
-  **本 PR の対象外であり、一切触れていない。**
-- 未追跡の新規実装: `astro-site/src/lib/entitlements/`（`resolveEntitlements.js` + テスト）、
-  `astro-site/src/lib/payments/paymentEmailDeps.canary{,.guard}.test.mjs`、
-  `astro-site/scripts/prune-ssr-function-data.mjs`
-- **未マージの open PR（3 件、2026-07-20 時点）**
+> 以下はいずれも **2026-07-20 時点の観測**であり、恒久仕様ではない。作業前に必ず現物を再確認すること。
+
+- **未マージの open PR（本 PR #143 を除き 3 件 / 2026-07-20 観測）**
   - #130 PR-A: 有料セッション共通ライブラリ（署名 Cookie）とテスト — `session-lib-pr-a`
   - #128 認証脆弱性の修正 + 問い合わせフォームの氏名/メール自動入力 — `worktree-secure-auth-and-contact-autofill`
   - #25 premium 本命/対抗/単穴に過去走表示を追加 — `feat/premium-jra-recent-races`（2026-05-26 起票、長期滞留）
+- **ユーザーのメイン checkout に作業中の未コミット変更あり（2026-07-20 観測）**: 内容は決済メール v2 /
+  entitlements / contact autofill / 予想ページ横断修正など。**本 PR の対象外であり一切触れていない。**
+  件数・ブランチ名・HEAD はその時々で変わるため本書には固定記載しない — `git status` で都度確認すること。
 
 ## Remaining
 
@@ -65,18 +63,18 @@
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降（穴馬抽出ロジック改善・表示改善）。同文書は「実装未着手」のまま
 - `check:prediction-integrity`（検査対象 0 件で失敗する既存問題）の原因調査 →
   `check:jra-nankan-parity` とあわせて `safety-check.yml` へ組込（`CLAUDE.md` PR-K・低優先度）
-- `nankan-analytics.keiba.link → analytics.keiba.link` の 301 切替完了確認（`README.md` は「移行中」表記のまま）
-- 滞留ブランチ（ローカル 80+ / remote 多数）の棚卸し
-- `verify-project.sh` が前身プロジェクト `nankan-analytics` の期待値のままである点の是正または明示的な廃止
+- 旧ドメインから `analytics.keiba.link` への 301 切替の完了確認（`README.md` は「移行中」表記のまま / 未確認）
+- 滞留ブランチの棚卸し（正確な本数は 未確認。作業時に `git branch -a` で数えること）
+- `verify-project.sh` が旧プロジェクト由来の期待値（旧パス・旧 remote）のままである点の是正または明示的な廃止
 
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
 
 1. `docs/spec.md` → 本書 → `docs/decisions.md` → `CLAUDE.md` を読む。
-2. `cd /Users/user/Projects/analytics-keiba && git status --short && git log --oneline -10` で現在地を確認する。
-   ブランチが `fix/premium-plus-admin-secret-normalize` のままで 38 ファイルが未コミットなら、
-   **ユーザーの作業中変更として扱い、勝手に commit / stash / reset しない**。
+2. `git status --short && git log --oneline -10` で現在地を確認する。
+   メイン checkout に未コミット変更が残っていた場合は、**ユーザーの作業中変更として扱い、
+   勝手に commit / stash / reset しない**。
 3. 作業対象を決める前に `gh pr list --state open` で滞留 PR を確認する。
 4. コードを触る場合は `cd astro-site && npm ci` の要否を確認し、`npm run check:safety` をベースラインとして先に実行する
    （既存失敗を「今回の退行」と誤認しないため）。
@@ -91,38 +89,31 @@
 
 ## Open Questions
 
-1. **メイン checkout の未コミット 38 ファイルをどう扱うか。** ブランチ `fix/premium-plus-admin-secret-normalize` は
-   `origin/main` から 33 commits behind で、変更内容はブランチ名（premium-plus admin secret 正規化）を大きく超えて
-   決済メール v2 / entitlements / contact autofill / 予想ページ横断修正に及ぶ。分割コミット方針・rebase 要否とも未確定。
-   **本 docs PR のスコープ外。**
+1. **ユーザーのメイン checkout に残る作業中変更をどう扱うか**（2026-07-20 観測）。変更内容が作業ブランチ名の
+   範囲を大きく超えており、分割コミット方針・rebase 要否とも未確定。**本 docs PR のスコープ外。**
 2. 入金確認メール v2 は現在どこまで本番有効か。状態機械コア・IO 側・カナリア分離までは main にあるが、
    cutover（D1）実行の記録は見当たらない。証拠未確認。
 3. open PR #25（2026-05-26 起票）は生かすのか閉じるのか。長期滞留の判断記録が無い。
 4. `nankan-stripe-integration/` は本番で稼働しているのか休止中なのか。証拠未確認。
-5. `nankan-analytics.keiba.link` からの 301 切替は完了しているのか。「移行中」表記が更新されていない。
-6. `CLAUDE.md` §移行タスク（初期セットアップ）7 項目の最新完了状況（`NEXT_SESSION.md` は 2026-04-14 で更新停止）。
+5. 旧ドメインからの 301 切替は完了しているのか。`README.md` の「移行中」表記が更新されていない。
+6. `CLAUDE.md` §移行タスク（初期セットアップ）7 項目の最新完了状況。
+   （`NEXT_SESSION.md` は文書内の「最終更新」表記が 2026-04-14 のまま。以降の内容更新は 未確認）
+7. `astro-site/astro-site/package-lock.json` の入れ子 lockfile が追跡下にある理由。意図的な残置か事故かは
+   証拠未確認。3 つとも npm 形式のため形式矛盾は無いが、**独断で削除しない**（`CLAUDE.md` §Package manager）。
+8. `verify-project.sh` は旧プロジェクト由来の期待値（旧パス・旧 remote）を検証しており、本リポジトリでは
+   常に失敗する。意図的な残置か放置かは証拠未確認。
 
 ## High-risk Operations Not Yet Executed
 
-本 PR では以下を **一切実行していない**。
-
-- production deploy / Netlify 本番ビルド起動 / Build Hook 実行
-- production 環境変数・secret の設定・変更・削除
-- 本番メール（SendGrid）・LINE・通知の送信
-- 本番 Airtable / Upstash Redis / Netlify Blobs / 外部 API への書込み
-- `workflow_dispatch` を含む GitHub Actions の手動実行
-- PR merge / データ削除 / rollback 困難な migration
-- force push / reset / stash / rebase / amend / checkout of existing branches / revert / 履歴改変
-- npm publish / registry 公開
-- メイン checkout（`/Users/user/Projects/analytics-keiba`）への一切の書込み
+本 PR は **`CLAUDE.md` §High-risk approval boundary に列挙された高リスク操作を一つも実行していない**
+（一覧は同節が単一源。本書では重複記載しない）。加えて、ユーザーのメイン checkout へは一切書込んでいない
+（作業は分離 worktree で実施）。変更は文書 4 ファイルのみで、ソースコード・workflow・lockfile は未変更。
 
 ## Repository State
 
-- **Repository**: `analytics-keiba`（作業は分離 worktree で実施。メイン checkout は `/Users/user/Projects/analytics-keiba`）
-- **Branch**: `docs/autonomous-project-workflow`（`origin/main` から分岐）
-- **HEAD**: `1aed7df98b2b2ffa2d32ac29c7e34a42f57d9fab`（= `origin/main`。`Daily auto-import: 2026-07-20 prediction [scheduled 23:00 JST]`）
-- **Origin**: `https://github.com/apol0510/analytics-keiba.git`
-- **Working tree**: 本ブランチは `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` / `CLAUDE.md` の 4 ファイルのみ変更。
-  メイン checkout はブランチ `fix/premium-plus-admin-secret-normalize`（HEAD `08edc5a` / origin/main から 33 behind・0 ahead）に
-  38 ファイルの未コミット変更あり — **本 PR は未接触**。
+- **Repository**: `analytics-keiba` / **Origin**: `https://github.com/apol0510/analytics-keiba.git`
+- **Branch**: `docs/autonomous-project-workflow`（`origin/main` から分岐 / PR #143）。作業は分離 worktree で実施。
+- **本ブランチの変更範囲**: `CLAUDE.md` / `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` の 4 ファイルのみ。
+  ソースコード・workflow・lockfile は未変更。
+- メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
 - **Last verified**: 2026-07-20
