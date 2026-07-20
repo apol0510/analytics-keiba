@@ -54,6 +54,7 @@ export const FAILURE_STAGE = Object.freeze({
   NO_API_KEY: 'no_api_key',
   NO_EMAIL: 'no_email',
   SENDER_UNVERIFIED: 'sender_unverified', // 送信元が AK 正式値でない（env 未設定/空/不一致）
+  SCHEMA_INCOMPLETE: 'schema_incomplete', // 送信後に書く必須フィールドが Airtable に無い（送信前に検出）
   PROVIDER_REJECTED: 'provider_rejected', // 4xx（429 を除く）
   PROVIDER_5XX: 'provider_5xx',           // 5xx / 429（再試行可）
   PROVIDER_EXCEPTION: 'provider_exception',
@@ -61,6 +62,20 @@ export const FAILURE_STAGE = Object.freeze({
   ACTIVITY_AMBIGUOUS: 'activity_ambiguous', // 複数件ヒット等
   ACTIVITY_HORIZON: 'activity_horizon',     // 保持期限超過で照合不能
 });
+
+/**
+ * **provider 受理後に書く必須フィールド**。1 つでも欠けると「送信したのに結果を書けない」
+ * （= 2026-07-20 カナリア事故）が起きるため、**SendGrid POST の前に存在を検証**する。
+ * 検証は deps.verifyWritableFields（read-only プローブ）が行う。
+ */
+export const REQUIRED_PROVIDER_RESULT_FIELDS = Object.freeze([
+  'PaymentEmailStatus',
+  'PaymentEmailAcceptedAt',
+  'PaymentEmailProviderMessageId',
+  'PaymentEmailFailureStage',
+  'PaymentEmailLastError',
+  'PaymentEmailSent',
+]);
 
 // ── チューニング定数（1 回の実測値で短縮しない。docs 参照）──────────────
 export const MAX_ATTEMPTS = 3;

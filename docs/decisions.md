@@ -725,3 +725,34 @@ AK の正式送信元は `support@keiba.link`（env `SENDGRID_FROM_EMAIL` も同
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §送信元契約（単一源 / 2026-07-20 追加）
 - `docs/progress.md` §決済メール v2 / S4 カナリア準備
 
+## 2026-07-20 — 送信前 schema preflight と provider 受理後の state write 失敗処理を必須化
+
+### 背景
+
+S4 カナリアで、テスト Base に provider 後に書くフィールドが無く、**SendGrid 送信後**の結果 PATCH が
+422 で失敗した。メールは実際に届いたが受理を記録できず `unknown_after_attempt` に滞留した。
+「設定漏れが、メールを送った後に顕在化する」という最悪の順序であり、本番で起きれば
+顧客にメールが届いたのに `PaymentEmailSent=false` のまま滞留する。
+
+### 決定
+
+1. **provider 後に書くフィールドの存在を、送信前に検証する**（`REQUIRED_PROVIDER_RESULT_FIELDS`）。
+   欠落・判定不能なら**レコードを変更せず・送信もせず** fail closed。
+2. 判定は **read-only プローブ**（List Records の `fields[]` に不明フィールドがあると 422 になる性質）。
+   - **Meta API に依存しない**（canary PAT は data scope のみで 403）
+   - **本番レコードへの試験書込みをしない**（no-op PATCH 方式は不採用）
+   - **カナリアと通常 worker で同一契約**
+3. **provider 受理後の PATCH 失敗は `STATE_WRITE_FAILED`** として扱い、`unknown_after_attempt` を維持。
+   自動再送せず、`providerAccepted` を返して受理事実を保持し、reconciler の対象として識別可能にする。
+4. worker のログから `recordId` を削除する。
+
+### 却下した代替案
+
+- **Meta API でスキーマ取得**: canary PAT が 403。権限追加は PAT の権限拡大を招くため不採用
+- **no-op PATCH でフィールド存在を確認**: 本番レコードへ試験書込みすることになるため不採用
+- **失敗時に pending へ戻す**: 送信済みメールの再送につながるため**明確に禁止**
+
+### 関連
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §送信前 schema preflight
+- `docs/progress.md` §決済メール v2 / S4 カナリア実行と事故
