@@ -235,12 +235,88 @@ AK の正式送信元は **`support@keiba.link`**。決済メール経路（カ�
 
 ---
 
+## B1 dispatcher / B2 reconciler schedule（2026-07-21・D1 前提実装）
+
+cutover 前提として、pending の自動送信（B1）と unknown_after_attempt の定期照合（B2）を配線する。
+**Airtable Automation を新たな必須依存にせず、Netlify Scheduled Function 方式**を採用した
+（理由は decisions.md 参照: A2 と新 Automation の同時管理を避け、gate/pause/A2 確認をコード側で
+fail-closed にでき、件数制限・順次処理・部分失敗をコードで明示できる）。
+
+### B1: `payment-email-dispatcher.js`（Netlify Scheduled Function 専用・5 分毎）
+
+- **`*/5 * * * *`**。`PaymentEmailStatus='pending'` を **filterByFormula + maxRecords で限定取得**し
+  （必要フィールドのみ・Email/氏名は取らない）、**1 実行最大 3 件**を worker コア（`runWorkerOnce`）へ
+  **HTTP を介さず同一プロセスで**渡す。超過分は次回へ（silent 打ち切りにしない）。
+- **Netlify Scheduled Functions は公開 URL から直接呼び出せない**（プラットフォームが遮断）。
+  よって Function は Scheduled 専用で **URL POST 用の認証分岐を持たない**。**手動確認は Netlify UI の
+  Functions 画面 →「Run now」**（Deploy Preview / branch deploy でのテスト用）。
+- **30 秒実行上限**への対応: 1 件の最悪経路は Airtable GET/PATCH/read-back + schema preflight +
+  Upstash lock + SendGrid POST + 結果 PATCH + lock 解放 で ~8 往復。**3 件でも安全マージン内**。
+  加えて **deadline guard（開始から 25 秒）**で、時間切れ前に新規レコードの処理開始を止める
+  （残りは次回スケジュールへ）。Function 自体が 30 秒で強制終了しても、record 単位 lock/fencing/
+  state machine が二重送信を防ぐ（lease 期限切れ / unknown_after_attempt は reconciler が確定）。
+- **fail-closed**: `validateEmailGates()` の mode が **v2-worker / v2-full 以外なら送信を一切開始しない**。
+  このモードは構造的に `flow=v2 ∧ workerSend ∧ pause=false ∧ a2DisabledConfirmed=true` を含むため、
+  **legacy / paused / v2-dry-run / A2 未確認では 0 件**。各レコードの送信可否（送信元契約・SENDGRID・
+  schema preflight・IdempotencyKey・eligible・lock+fencing）は `runWorkerOnce` が個別に fail-closed 判定。
+- **重複起動防止**: dispatch 単位ロック（Upstash `payemail:dispatch`）+ 各レコードの record 単位
+  lock+fencing の二重防御。**1 件失敗で他件を止めない**（例外は集計へ回して継続）。
+- **対象は pending のみ**。accepted / delivered / unknown_after_attempt / failed_terminal は
+  `runWorkerOnce` の lease 判定で弾かれる（dispatcher は再送を判断しない）。
+- 手動 POST は `x-worker-secret` 一致必須。Scheduled 起動（ヘッダ無し）は許可するが、送信の唯一の
+  防御は上記 gate（legacy では誰が叩いても 0 件）。
+- **PII 非出力**: 応答・ログは `listed/processed/byOutcome/errors` の件数のみ。recordId/Email/secret を出さない。
+
+### B2: `cron-payment-email-reconciler.js`（Scheduled 15 分毎）
+
+- **`*/15 * * * *`**。既存の手動 POST `payment-email-reconciler.js` は**変更せず**、Scheduled を
+  別ファイル `cron-payment-email-reconciler.js` へ分離。同じコア `reconcileUnknownBatch` を同一プロセスで呼ぶ。
+- Scheduled 版は**公開 URL から呼べない**（手動確認は Netlify UI「Run now」）。**明示認証つき手動 API が
+  必要な場合は既存の通常 Function `payment-email-reconciler.js`**（`x-worker-secret` 認証・URL POST 可）を使う。
+- **30 秒上限**対応: **1 実行最大 10 件**（Activity GET(+PATCH) が 1 件 ~2 往復）+ **deadline guard（25 秒）**。
+  timeout 接近時は新規レコードの照合を開始しない。書込み前に落ちれば状態は変わらない＝**再送されない**。
+- **書込みは mode=v2-full のときだけ**（それ以外は dryRun=true = no-op で「何を書くか」だけ算出）。
+  legacy / v2-dry-run / v2-worker では **write 0**。
+- 0 件判定は Activity が **HTTP 200 かつ messages=[]** のときのみ（4xx/5xx/timeout/parse 失敗は
+  unknown 維持）。判定は state machine（`classifyActivityResult`/`decideReconcile`）に集約。
+  idempotency_key 空は自動処理しない。
+- **重複起動防止**: reconcile 単位ロック（Upstash `payemail:reconcile`）。
+- **dispatcher（pending）と reconciler（unknown_after_attempt）は対象 status が異なり**、同一レコードを
+  競合処理しない。応答・ログは `count/byAction/dryRun` のみ（per-record id を返さない）。
+
+### schedule / 件数 / lock / retry / partial failure / rollback
+
+| 項目 | 値 |
+|---|---|
+| dispatcher schedule | `*/5 * * * *`（5 分） |
+| reconciler schedule | `*/15 * * * *`（15 分） |
+| Scheduled 実行上限 | **30 秒**（Netlify 公式仕様。超過は強制終了） |
+| dispatcher 1 実行上限 | **3 件**（30 秒に安全に収める・超過は次回） |
+| reconciler 1 実行上限 | **10 件** |
+| deadline guard | 開始から **25 秒**で新規レコード処理を開始しない（残りは次回） |
+| 呼出契約 | Scheduled のみ。**公開 URL 不可**。手動は Netlify UI「Run now」（reconciler の明示認証手動は既存 `payment-email-reconciler.js`） |
+| dispatcher lock | `payemail:dispatch`（+ record 単位 lock/fencing） |
+| reconciler lock | `payemail:reconcile` |
+| retry 禁止 | unknown_after_attempt は dispatcher が再送しない（reconciler の Activity 照合のみ） |
+| partial failure | 1 件失敗で残件継続・集計へ計上 |
+| rollback | env のみで即時無効化（gate を非送信モードへ戻す／`GLOBAL_PAUSE=true`）。コード常駐でも 0 件動作 |
+| observability | 非機密の件数集計のみ（PII/secret 非出力） |
+
+---
+
 ## cutover（D1）
 
 S1 Field → S2 Upstash/env → **S3 コード deploy（production は legacy のまま・旧 admin 無効化）** →
 S4 非本番検証（分離 Airtable）→ S5 preflight → **S6: 入口停止 → 未処理0確認 → A2 OFF（UI 目視）→
 v2 deploy（worker=false / reconciler=false）→ 新 deploy 到達確認 → カナリア専用 Function で1件** →
 S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有効化 → S9 Event Webhook → S10 文書。
+
+**承認境界（env フリップをまとめ、細かな停止を避ける）**:
+
+- **境界A**: 入口停止 → pending 0 確認 → A2 OFF 目視 → `A2_DISABLED_CONFIRMED=true` → **v2-dry-run**（flow=v2 / worker=false / reconciler=false）→ redeploy → read-only 確認。この時点で dispatcher/reconciler は **0 送信・0 書込み**（gate が dry-run）。
+- **境界B**: 新規カナリア 1 件（新 IdempotencyKey・テスト Base）→ dispatcher/reconciler が no-op であることを確認 → cleanup。
+- **境界C**: **worker=true**（v2-worker）→ dispatcher が pending を実顧客へ送信開始 → 最小監視 → rollback 判断。
+- **境界D**: **reconciler write=true**（v2-full）→ Scheduled 有効化済み → 最小監視。
 
 - **絶対条件**: A2(ON) と新 worker(送信可) を同時に成立させない。
 - 「60 秒待てば旧インスタンスが消えた」とは言わない。**本当の防御は入口停止**。
@@ -278,6 +354,10 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 | 状態機械（純粋関数・単一源） | `src/lib/payments/paymentEmailState.js` | S3 で実装 |
 | **送信元契約（単一源）** | `src/lib/payments/senderIdentity.js` | **2026-07-20 実装** |
 | **送信前 schema preflight / state write 失敗処理** | `paymentEmailState.js`（`REQUIRED_PROVIDER_RESULT_FIELDS`）/ `paymentEmailWorker.js` / `paymentEmailDeps.js`（`verifyWritableFieldsFrom`） | **2026-07-20 実装** |
+| **B1 dispatcher コア** | `src/lib/payments/paymentEmailDispatcher.js` | **2026-07-21 実装** |
+| **B1 dispatcher Function（Scheduled+手動）** | `netlify/functions/payment-email-dispatcher.js` | **2026-07-21 実装** |
+| **B2 reconciler Scheduled 配線** | `netlify/functions/cron-payment-email-reconciler.js` | **2026-07-21 実装** |
+| **dispatcher/lock deps** | `paymentEmailDeps.js`（`listPending`/`makeDispatcherDeps`/`makeSchedulerLockDeps`） | **2026-07-21 実装** |
 | 同テスト | `src/lib/payments/paymentEmailState.test.mjs` | S3 で実装 |
 | confirm v2（pending 同梱） | `netlify/functions/confirm-bank-payment.js` | S3 で改修 |
 | 送信 worker | `netlify/functions/payment-email-worker.js`（新規） | S3 |
