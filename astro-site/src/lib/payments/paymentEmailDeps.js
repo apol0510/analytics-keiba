@@ -6,7 +6,10 @@
  * この glue 自体はユニットテスト対象外（実接続の境界）。
  */
 
-import { SUPPORT_EMAIL, FROM_EMAIL } from '../../../netlify/functions/config/email-config.js';
+// 決済メール経路の送信元は senderIdentity.js が単一源。email-config.js の FROM_EMAIL
+// （noreply@keiba.link・ニュースレター等の別経路用）は **この経路では import しない**。
+import { SUPPORT_EMAIL } from '../../../netlify/functions/config/email-config.js';
+import { resolveVerifiedSender, hasVerifiedSender } from './senderIdentity.js';
 
 const CUSTOMERS = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
@@ -71,13 +74,17 @@ async function listUnknownAfterAttempt() { return listUnknownFrom(productionTarg
 async function sendMail({ to, recordId, idempotencyKey }) {
   const apiKey = process.env.SENDGRID_API_KEY;
   if (!apiKey) return { threw: true, error: 'no_api_key' };
+  // 送信元契約（単一源 senderIdentity.js）。未設定 / 空 / 不一致は **POST せず** fail closed。
+  // worker 側でも事前に弾くが、直接呼ばれても送らないよう二重化する（noreply へ落とさない）。
+  const sender = resolveVerifiedSender(process.env);
+  if (!sender.ok) return { threw: true, error: sender.reason }; // 値は載せない（reason コードのみ）
   try {
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         personalizations: [{ to: [{ email: to }] }],
-        from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
+        from: { email: sender.email, name: sender.name },
         reply_to: { email: SUPPORT_EMAIL },
         subject: '【KEIBA Analytics】ご入金を確認いたしました',
         content: [{ type: 'text/html', value: '<p>ご入金を確認いたしました。ご利用を開始いただけます。</p>' }],
@@ -143,6 +150,7 @@ async function releaseLock(key, token) {
 export function makeWorkerDeps() {
   return {
     hasApiKey: !!process.env.SENDGRID_API_KEY,
+    hasVerifiedSender: hasVerifiedSender(process.env),
     getRecord, patchRecord, acquireLock, releaseLock, sendMail,
     log: (o) => console.log('[worker]', JSON.stringify(o)),
   };
@@ -155,7 +163,9 @@ export function makeWorkerDeps() {
 export function makeCanaryWorkerDeps() {
   const target = canaryTarget();
   return {
+    // 送信元契約は通常 worker と**同一**（カナリアだけ別の送信元を使わない）。
     hasApiKey: !!process.env.SENDGRID_API_KEY,
+    hasVerifiedSender: hasVerifiedSender(process.env),
     getRecord: (id) => getRecordFrom(target, id),
     patchRecord: (id, f) => patchRecordFrom(target, id, f),
     acquireLock, releaseLock, sendMail,

@@ -102,6 +102,24 @@ test('worker: API key 無しは送信せず failed_terminal', async () => {
   assert.equal(record.fields.PaymentEmailStatus, EMAIL_STATUS.FAILED_TERMINAL);
 });
 
+test('worker: 送信元が AK 正式値でなければ送信せず failed_terminal（送信前 fail closed）', async () => {
+  const { deps, record, calls } = makeDeps({});
+  deps.hasVerifiedSender = false; // env 未設定 / 空 / noreply 等
+  await runWorkerOnce({ recordId: 'recW1', now: T0, deps });
+  assert.equal(calls.sendMail.length, 0, '送信元不一致なのに SendGrid を呼んでいる');
+  assert.equal(record.fields.PaymentEmailStatus, EMAIL_STATUS.FAILED_TERMINAL);
+  assert.equal(record.fields.PaymentEmailFailureStage, 'sender_unverified');
+  assert.notEqual(record.fields.PaymentEmailSent, true, '未送信なのに送信済みを立てている');
+});
+
+test('worker: 送信元が検証済みなら通常どおり送信する（カナリア経路も同じ deps 契約）', async () => {
+  const { deps, record, calls } = makeDeps({});
+  deps.hasVerifiedSender = true;
+  await runWorkerOnce({ recordId: 'recW1', now: T0, deps });
+  assert.equal(calls.sendMail.length, 1);
+  assert.equal(record.fields.PaymentEmailStatus, EMAIL_STATUS.ACCEPTED);
+});
+
 test('worker: read-back で token が奪われていたら送信しない（fencing）', async () => {
   // patch 後の getRecord が別 token を返すように仕込む
   const record = { id: 'recW1', fields: { PaymentEmailStatus: EMAIL_STATUS.PENDING, Email: 'x@example.com', PaymentEmailAttemptCount: 0 } };

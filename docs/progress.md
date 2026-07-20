@@ -56,6 +56,34 @@
   entitlements / contact autofill / 予想ページ横断修正など。**本 PR の対象外であり一切触れていない。**
   件数・ブランチ名・HEAD はその時々で変わるため本書には固定記載しない — `git status` で都度確認すること。
 
+### 決済メール v2 / S4 カナリア準備（2026-07-20・branch `ops/payment-email-v2-canary-pat`）
+
+**確定した事実（証拠付き）**
+
+- カナリア専用 Airtable PAT `PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY` を Netlify production / Functions scope に投入。
+  Production のみ非空・他 4 context は空・scope は functions のみ（API で確認。値は非表示）。
+- env 伝播のため Build Hook で production redeploy を 1 回実行 → published deploy `6a5d8a26fd3503000809b850`
+  （commit `e3f562b` / ready / 2026-07-20T02:39:43Z）。コード差分ゼロの env 伝播専用ビルド。
+- 専用 PAT でカナリア専用 Base/Table/Record へ **read-only GET 1 回 → HTTP 200（ACCESS_CONFIRMED）**。
+  本番 Base とは別 Base であることを事前照合済み。
+- **カナリア preflight で送信元不一致を検知**: 送信元が `noreply@keiba.link`（`email-config.js` の `FROM_EMAIL`）で、
+  AK 正式送信元 `support@keiba.link` と不一致。→ **カナリアを実行せず停止**し、送信元契約を実装
+  （`senderIdentity.js` / 詳細は `astro-site/docs/PAYMENT_EMAIL_V2.md` §送信元契約）。
+- **カナリアメールは未送信 / 本番 cutover は未実施**（gate mode は `legacy` のまま・通常 worker は 403 で送信不可）。
+- **`PaymentEmailIdempotencyKey` 空を検知**: テスト Record に冪等キーが無く、worker は生成しない実装のため、
+  この状態で送ると `custom_args.idempotency_key` が空になり **reconciler の Activity 照合が成立しない**。
+  → 送信前にテスト Record へ決定論的キーを PATCH する手順を実行承認に含める（未実行）。
+- **A2 の扱い**: 本番 Base の Automation A2 は **カナリア専用テスト Base へ構造的に到達しない**（Automation は Base 単位）。
+  ただし**テスト Base 内の Automation 有無は API で確定できない**ため、実送信直前に Airtable の
+  Automations 画面を目視確認する境界として残す。
+
+**次の実行承認に含める内容（すべて未実行）**
+
+1. テスト Record 1 件へ `PaymentEmailIdempotencyKey` を事前 PATCH（テスト Base 限定書込み）+ read-back
+2. `admin-canary-payment-email` を POST 1 回（対象 1 件 / 想定メール 1 通 / SendGrid API 送信 1 回）
+3. 送信後 read-only 確認（Record 状態 `accepted` / ProviderMessageId 非空 / 受信箱で送信元が support@keiba.link）
+4. テスト Record を初期状態（`pending` / AttemptCount 0 / 他クリア）へ戻す cleanup PATCH
+
 ## Remaining
 
 - 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**
@@ -91,8 +119,10 @@
 
 1. **ユーザーのメイン checkout に残る作業中変更をどう扱うか**（2026-07-20 観測）。変更内容が作業ブランチ名の
    範囲を大きく超えており、分割コミット方針・rebase 要否とも未確定。**本 docs PR のスコープ外。**
-2. 入金確認メール v2 は現在どこまで本番有効か。状態機械コア・IO 側・カナリア分離までは main にあるが、
-   cutover（D1）実行の記録は見当たらない。証拠未確認。
+2. ~~入金確認メール v2 は現在どこまで本番有効か~~ → **2026-07-20 に確定**。gate mode は `legacy`
+   （`validateEmailGates` violations=0）。confirm は legacy 経路、通常 worker / reconciler は無効。
+   **cutover（D1）は未実施・カナリアも未送信**。コード（状態機械 / worker / reconciler / canary / 送信元契約）は
+   deploy 済みだが、gate により本番送信経路としては動作していない。
 3. open PR #25（2026-05-26 起票）は生かすのか閉じるのか。長期滞留の判断記録が無い。
 4. `nankan-stripe-integration/` は本番で稼働しているのか休止中なのか。証拠未確認。
 5. 旧ドメインからの 301 切替は完了しているのか。`README.md` の「移行中」表記が更新されていない。

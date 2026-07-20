@@ -53,6 +53,7 @@ export const NO_AUTO_RESEND_STATUSES = Object.freeze([
 export const FAILURE_STAGE = Object.freeze({
   NO_API_KEY: 'no_api_key',
   NO_EMAIL: 'no_email',
+  SENDER_UNVERIFIED: 'sender_unverified', // 送信元が AK 正式値でない（env 未設定/空/不一致）
   PROVIDER_REJECTED: 'provider_rejected', // 4xx（429 を除く）
   PROVIDER_5XX: 'provider_5xx',           // 5xx / 429（再試行可）
   PROVIDER_EXCEPTION: 'provider_exception',
@@ -164,9 +165,11 @@ export function buildWriteAheadFields() {
  * providerAccepted は「整数 200〜299」のときだけ true（null / 非整数 / '202'文字列は false）。
  * @returns {{providerAttempted: boolean, providerAccepted: boolean, failureStage: string|null}}
  */
-export function evaluateMailOutcome({ hasApiKey, hasEmail, providerStatus, threw = false }) {
+export function evaluateMailOutcome({ hasApiKey, hasEmail, providerStatus, threw = false, hasVerifiedSender = true }) {
   if (!hasApiKey) return { providerAttempted: false, providerAccepted: false, failureStage: FAILURE_STAGE.NO_API_KEY };
   if (!hasEmail) return { providerAttempted: false, providerAccepted: false, failureStage: FAILURE_STAGE.NO_EMAIL };
+  // 送信元が AK 正式値でないなら **POST しない**（構成不備 = 恒久的 → terminal）。
+  if (!hasVerifiedSender) return { providerAttempted: false, providerAccepted: false, failureStage: FAILURE_STAGE.SENDER_UNVERIFIED };
   if (threw) return { providerAttempted: true, providerAccepted: false, failureStage: FAILURE_STAGE.PROVIDER_EXCEPTION };
 
   const s = providerStatus;

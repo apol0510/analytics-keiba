@@ -686,3 +686,42 @@ commit メッセージ以上の詳細な理由記録は無い。250MB 上限超�
 
 - commits `d75e7bf` / `d4a079b` / `77fbd58`
 - `astro-site/package.json` の `build` スクリプト
+
+## 2026-07-20 — 決済メールの送信元を `senderIdentity.js` に単一源化し、不一致は送信前 fail closed
+
+### 背景
+
+入金確認メール v2 の S4 カナリア実行前 preflight で、SendGrid payload の `from` が
+`email-config.js` の `FROM_EMAIL` = `noreply@keiba.link` であることを検知した。
+AK の正式送信元は `support@keiba.link`（env `SENDGRID_FROM_EMAIL` も同値）であり不一致。
+送信元不一致時は送信停止が既定方針のため、カナリアを実行せず停止した。
+
+### 決定
+
+- 決済メール経路の送信元は **`src/lib/payments/senderIdentity.js` を単一源**とする。
+- env `SENDGRID_FROM_EMAIL` が正式値 `support@keiba.link` と一致する場合のみ送信可
+  （正規化は repo 既存方針の `trim()` + `toLowerCase()`）。
+- **未設定 / 空 / 不一致は送信前に fail closed**（SendGrid へ POST しない）。
+- **`noreply@keiba.link` への fallback を持たない**。決済メール経路では `FROM_EMAIL` を import しない。
+- **カナリアと通常 worker は同一契約**を使う（カナリア専用の送信元 env は作らない）。
+- 送信元不一致は `failed_terminal`（構成不備は再試行で直らないため retryable にしない）。
+- 判定結果・ログ・エラーに env の値を含めない（reason コードのみ）。
+
+### 対象外（意図的に変更しない）
+
+- `confirm-bank-payment.js` / `send-payment-confirmation-auto.js` の legacy 送信（依然 noreply）。
+  **稼働中の本番経路**であり、fail closed 化は env drift 時に本番メールを止める副作用を持つため、
+  スコープを分けて別途判断する。
+- ニュースレター / マジックリンク等 11 Function（従来どおり別タスク）。
+
+### 検証
+
+`senderIdentity.test.mjs`（一致 / 正規化 / noreply / 他ブランド / 未設定 / 空 / 非文字列 / 値非漏洩）と
+`paymentEmailSender.guard.test.mjs`（配線固定: FROM_EMAIL 非 import / noreply 直書き禁止 /
+両 deps が同一契約 / terminal 扱い）。`test:bank-payment` → `check:safety` で CI 強制。
+
+### 関連
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §送信元契約（単一源 / 2026-07-20 追加）
+- `docs/progress.md` §決済メール v2 / S4 カナリア準備
+
