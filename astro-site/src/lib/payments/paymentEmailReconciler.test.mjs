@@ -103,3 +103,38 @@ test('batch: 複数レコードを集計（dry-run で書き込まない）', as
   assert.equal(r.byAction.accept, 2);
   assert.equal(calls.patch.length, 0); // dry-run
 });
+
+test('batch: maxRecords で 1 実行の件数を制限（30 秒上限対応）', async () => {
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    id: `recX${i}`,
+    fields: { PaymentEmailStatus: EMAIL_STATUS.UNKNOWN_AFTER_ATTEMPT, PaymentEmailIdempotencyKey: `k${i}`, PaymentEmailAttemptedAt: new Date(T0).toISOString(), PaymentEmailAttemptCount: 1 },
+  }));
+  const deps = {
+    listUnknownAfterAttempt: async () => many,
+    searchActivity: async () => ({ httpStatus: 200, messages: [] }), // 0 件（受理未確認）
+    patchRecord: async () => {},
+  };
+  const r = await reconcileUnknownBatch({ now: T0 + 120_000, dryRun: true, maxRecords: 10, deps });
+  assert.equal(r.count, 10, '件数上限が効いていない');
+  assert.equal(r.listed, 25, 'listed が実数を反映していない');
+});
+
+test('batch: deadline 到達後は新規レコードの照合を開始しない（timeout 時 unknown 維持）', async () => {
+  const many = Array.from({ length: 5 }, (_, i) => ({
+    id: `recY${i}`,
+    fields: { PaymentEmailStatus: EMAIL_STATUS.UNKNOWN_AFTER_ATTEMPT, PaymentEmailIdempotencyKey: `k${i}`, PaymentEmailAttemptedAt: new Date(T0).toISOString(), PaymentEmailAttemptCount: 1 },
+  }));
+  let searched = 0;
+  const deps = {
+    listUnknownAfterAttempt: async () => many,
+    searchActivity: async () => { searched += 1; return { httpStatus: 200, messages: [] }; },
+    patchRecord: async () => {},
+  };
+  let t = 1000;
+  const clock = () => { const v = t; t += 100; return v; };
+  const r = await reconcileUnknownBatch({ now: T0 + 120_000, dryRun: true, maxRecords: 10, deadlineAt: 1250, clock, deps });
+  assert.equal(r.deadlineStopped, true);
+  assert.ok(searched < 5, '時間切れ後も照合を続けている');
+  assert.ok(r.byAction.deadline_skipped >= 1, 'deadline_skipped が集計されていない');
+  // 照合しなかったレコードは unknown_after_attempt のまま（書込みしない）＝再送されない
+});

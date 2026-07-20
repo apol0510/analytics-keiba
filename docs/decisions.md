@@ -789,3 +789,24 @@ v2 では confirm-bank-payment が pending を書くだけで送信しない（w
 
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §B1 dispatcher / B2 reconciler schedule
 - `docs/progress.md` §D1 前提実装 B1・B2
+
+## 2026-07-21 — Scheduled 呼出契約と 30 秒上限への適合（B1/B2 補正）
+
+Netlify 公式仕様（一次情報）を確認: **Scheduled Functions は公開 URL から直接呼び出せない**
+（"You can't invoke scheduled functions directly with a URL."）／手動は UI「Run now」／**実行 30 秒上限**。
+
+### 決定
+
+- dispatcher を **Scheduled 専用**に単純化し、URL POST 用の認証分岐（`x-worker-secret`）を**削除**。
+  D1 に手動 dispatcher API は不要（単一レコード検証は canary、手動実行は UI「Run now」）。
+- **reconciler の明示認証つき手動 API は既存の通常 Function** `payment-email-reconciler.js` に残す
+  （Scheduled 版 `cron-payment-email-reconciler.js` とは別ファイルで分離）。
+- **30 秒上限**: dispatcher 上限を 10→**3 件**へ引き下げ、**deadline guard（25 秒）**を追加。
+  reconciler も **10 件上限 + deadline guard**。時間切れ前に新規レコード処理を開始せず、残りは次回へ。
+  処理途中で強制終了しても record 単位 lock/fencing/state machine が二重送信を防ぐ。
+- dispatch lock TTL は 90 秒（`SET NX EX 90`）で、実行上限 30 秒 < TTL 90 秒 < schedule 間隔 300 秒 の
+  関係により、stale lock は次回実行前に必ず失効し、同一実行内の重複も防ぐ。
+
+### 関連
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §B1/B2（Scheduled 専用・30 秒・deadline guard）

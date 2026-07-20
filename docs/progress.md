@@ -129,7 +129,10 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 - **B2 reconciler schedule**: `cron-payment-email-reconciler.js`（15 分）を追加。既存手動 POST は不変更。
   v2-full のときだけ write、それ以外 dry-run。reconcile ロックで重複起動防止。
 - Airtable Automation を新依存にしない方針（A2 と新 Automation の同時管理を避ける）。
-- guard/unit test 追加（dispatcher 10 + schedule guard 13）。`test:bank-payment` 192 pass / `check:safety` exit 0 / build 成功。
+- **Scheduled 呼出契約を Netlify 公式仕様に整合**（2026-07-21 補正）: 公開 URL 不可 → dispatcher を
+  Scheduled 専用化し URL POST 認証分岐を削除、手動は UI「Run now」。**30 秒上限**対応で dispatcher
+  上限 10→**3 件** + **deadline guard 25 秒**、reconciler も 10 件上限 + deadline guard。
+- guard/unit test 追加・更新。`test:bank-payment` 200 pass / `check:safety` exit 0 / build 成功。
 
 **次工程**: D1 cutover 本体（境界 A→D）。**高リスク・要承認**（A2 OFF / gate 変更 / worker 有効化 / 実顧客送信）。
 

@@ -124,3 +124,22 @@ test('dispatcher: 戻り値に PII（recordId / email）を含めない', async 
   assert.ok(!serialized.includes('recSECRET1'), '戻り値に recordId が含まれている');
   assert.ok(!serialized.includes('@'), '戻り値に email らしき値が含まれている');
 });
+
+test('dispatcher: deadline 到達後は新規レコードの処理を開始しない（残りは次回へ）', async () => {
+  const { deps, calls } = makeDeps({ pending: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }] });
+  // 1 件処理するごとに時刻が進む fake clock。2 件目開始前に deadline 超過。
+  let t = 1000;
+  const clock = () => { const v = t; t += 100; return v; };
+  const r = await dispatchPendingBatch({ now: T0, maxRecords: 10, deadlineAt: 1150, clock, deps });
+  assert.equal(r.deadlineStopped, true);
+  assert.ok(r.processed < 3, '時間切れなのに全件処理している');
+  assert.ok(r.byOutcome.deadline_skipped >= 1, 'deadline_skipped が集計されていない');
+  assert.ok(calls.runOne.length < 3, '時間切れ後に runOne を呼んでいる');
+});
+
+test('dispatcher: deadline 未指定なら時間制限なしで全件処理', async () => {
+  const { deps } = makeDeps({ pending: [{ id: 'r1' }, { id: 'r2' }] });
+  const r = await dispatchPendingBatch({ now: T0, maxRecords: 10, deps });
+  assert.equal(r.deadlineStopped, false);
+  assert.equal(r.processed, 2);
+});

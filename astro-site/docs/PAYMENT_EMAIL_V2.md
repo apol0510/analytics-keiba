@@ -242,11 +242,19 @@ cutover 前提として、pending の自動送信（B1）と unknown_after_attem
 （理由は decisions.md 参照: A2 と新 Automation の同時管理を避け、gate/pause/A2 確認をコード側で
 fail-closed にでき、件数制限・順次処理・部分失敗をコードで明示できる）。
 
-### B1: `payment-email-dispatcher.js`（Scheduled 5 分毎 + 認証済み手動 POST）
+### B1: `payment-email-dispatcher.js`（Netlify Scheduled Function 専用・5 分毎）
 
 - **`*/5 * * * *`**。`PaymentEmailStatus='pending'` を **filterByFormula + maxRecords で限定取得**し
-  （必要フィールドのみ・Email/氏名は取らない）、**1 実行最大 10 件**を worker コア（`runWorkerOnce`）へ
+  （必要フィールドのみ・Email/氏名は取らない）、**1 実行最大 3 件**を worker コア（`runWorkerOnce`）へ
   **HTTP を介さず同一プロセスで**渡す。超過分は次回へ（silent 打ち切りにしない）。
+- **Netlify Scheduled Functions は公開 URL から直接呼び出せない**（プラットフォームが遮断）。
+  よって Function は Scheduled 専用で **URL POST 用の認証分岐を持たない**。**手動確認は Netlify UI の
+  Functions 画面 →「Run now」**（Deploy Preview / branch deploy でのテスト用）。
+- **30 秒実行上限**への対応: 1 件の最悪経路は Airtable GET/PATCH/read-back + schema preflight +
+  Upstash lock + SendGrid POST + 結果 PATCH + lock 解放 で ~8 往復。**3 件でも安全マージン内**。
+  加えて **deadline guard（開始から 25 秒）**で、時間切れ前に新規レコードの処理開始を止める
+  （残りは次回スケジュールへ）。Function 自体が 30 秒で強制終了しても、record 単位 lock/fencing/
+  state machine が二重送信を防ぐ（lease 期限切れ / unknown_after_attempt は reconciler が確定）。
 - **fail-closed**: `validateEmailGates()` の mode が **v2-worker / v2-full 以外なら送信を一切開始しない**。
   このモードは構造的に `flow=v2 ∧ workerSend ∧ pause=false ∧ a2DisabledConfirmed=true` を含むため、
   **legacy / paused / v2-dry-run / A2 未確認では 0 件**。各レコードの送信可否（送信元契約・SENDGRID・
@@ -262,7 +270,11 @@ fail-closed にでき、件数制限・順次処理・部分失敗をコード�
 ### B2: `cron-payment-email-reconciler.js`（Scheduled 15 分毎）
 
 - **`*/15 * * * *`**。既存の手動 POST `payment-email-reconciler.js` は**変更せず**、Scheduled を
-  別ファイルへ分離。同じコア `reconcileUnknownBatch` を同一プロセスで呼ぶ。
+  別ファイル `cron-payment-email-reconciler.js` へ分離。同じコア `reconcileUnknownBatch` を同一プロセスで呼ぶ。
+- Scheduled 版は**公開 URL から呼べない**（手動確認は Netlify UI「Run now」）。**明示認証つき手動 API が
+  必要な場合は既存の通常 Function `payment-email-reconciler.js`**（`x-worker-secret` 認証・URL POST 可）を使う。
+- **30 秒上限**対応: **1 実行最大 10 件**（Activity GET(+PATCH) が 1 件 ~2 往復）+ **deadline guard（25 秒）**。
+  timeout 接近時は新規レコードの照合を開始しない。書込み前に落ちれば状態は変わらない＝**再送されない**。
 - **書込みは mode=v2-full のときだけ**（それ以外は dryRun=true = no-op で「何を書くか」だけ算出）。
   legacy / v2-dry-run / v2-worker では **write 0**。
 - 0 件判定は Activity が **HTTP 200 かつ messages=[]** のときのみ（4xx/5xx/timeout/parse 失敗は
@@ -278,7 +290,11 @@ fail-closed にでき、件数制限・順次処理・部分失敗をコード�
 |---|---|
 | dispatcher schedule | `*/5 * * * *`（5 分） |
 | reconciler schedule | `*/15 * * * *`（15 分） |
-| dispatcher 1 実行上限 | 10 件（超過は次回） |
+| Scheduled 実行上限 | **30 秒**（Netlify 公式仕様。超過は強制終了） |
+| dispatcher 1 実行上限 | **3 件**（30 秒に安全に収める・超過は次回） |
+| reconciler 1 実行上限 | **10 件** |
+| deadline guard | 開始から **25 秒**で新規レコード処理を開始しない（残りは次回） |
+| 呼出契約 | Scheduled のみ。**公開 URL 不可**。手動は Netlify UI「Run now」（reconciler の明示認証手動は既存 `payment-email-reconciler.js`） |
 | dispatcher lock | `payemail:dispatch`（+ record 単位 lock/fencing） |
 | reconciler lock | `payemail:reconcile` |
 | retry 禁止 | unknown_after_attempt は dispatcher が再送しない（reconciler の Activity 照合のみ） |

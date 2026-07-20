@@ -61,14 +61,20 @@ export async function reconcileOne({ record, now, dryRun = false, deps }) {
  * @param {object} p.deps  上記 + listUnknownAfterAttempt() -> [{id, fields}]
  * @returns {Promise<{count: number, byAction: Record<string, number>, results: any[]}>}
  */
-export async function reconcileUnknownBatch({ now, dryRun = false, deps }) {
-  const records = (await deps.listUnknownAfterAttempt()) || [];
+export async function reconcileUnknownBatch({ now, dryRun = false, maxRecords = 0, deadlineAt = null, clock = Date.now, deps }) {
+  const all = (await deps.listUnknownAfterAttempt()) || [];
+  // 30 秒上限に安全に収めるため、1 実行の処理件数を制限する（0 以下なら従来どおり全件）。
+  const records = Number.isInteger(maxRecords) && maxRecords > 0 ? all.slice(0, maxRecords) : all;
   const results = [];
   const byAction = {};
+  const pastDeadline = () => Number.isFinite(deadlineAt) && clock() >= deadlineAt;
+  let deadlineStopped = false;
   for (const record of records) {
+    // deadline guard: 時間切れ前に新規レコードの照合を開始しない（残りは次回へ）。
+    if (pastDeadline()) { deadlineStopped = true; byAction.deadline_skipped = (byAction.deadline_skipped || 0) + 1; continue; }
     const r = await reconcileOne({ record, now, dryRun, deps });
     results.push({ id: record.id, ...r });
     byAction[r.action] = (byAction[r.action] || 0) + 1;
   }
-  return { count: records.length, byAction, results };
+  return { count: records.length, listed: all.length, deadlineStopped, byAction, results };
 }

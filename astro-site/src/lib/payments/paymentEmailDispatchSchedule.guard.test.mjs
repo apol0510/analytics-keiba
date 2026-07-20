@@ -2,9 +2,9 @@
  * paymentEmailDispatchSchedule.guard.test.mjs — B1 dispatcher / B2 reconciler schedule の
  * 「配線」を実ファイル検査で固定する。
  *
- * D1 cutover の安全境界（A2 未停止・legacy では送信/書込み 0、gate fail-closed、HTTP 自己呼出しない、
- * PII 非出力、Scheduled 配線）が実装の書き換えで崩れないよう grep で固定する。
- * 加えて gate ロジック（validateEmailGates）で「legacy / dry-run では送信も書込みもしない」を実挙動で検証。
+ * Netlify Scheduled Functions の本番仕様（公開 URL から呼べない / 30 秒上限）と D1 の安全境界
+ * （A2 未停止・legacy では送信/書込み 0、gate fail-closed、HTTP 自己呼出しない、PII 非出力、
+ * deadline guard / 件数上限）を実装の書き換えで崩さないよう grep で固定する。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +17,7 @@ const DISPATCH_FN = readFileSync(here('../../../netlify/functions/payment-email-
 const RECON_CRON = readFileSync(here('../../../netlify/functions/cron-payment-email-reconciler.js'), 'utf8');
 const RECON_FN = readFileSync(here('../../../netlify/functions/payment-email-reconciler.js'), 'utf8');
 const CORE = readFileSync(here('./paymentEmailDispatcher.js'), 'utf8');
+const RECON_CORE = readFileSync(here('./paymentEmailReconciler.js'), 'utf8');
 
 // ── Scheduled 配線 ─────────────────────────────────────────────
 test('guard: dispatcher と reconciler cron が Scheduled 設定を持つ', () => {
@@ -24,11 +25,22 @@ test('guard: dispatcher と reconciler cron が Scheduled 設定を持つ', () =
   assert.ok(/export const config\s*=\s*\{[\s\S]*schedule:/.test(RECON_CRON), 'reconciler cron に schedule 設定が無い');
 });
 
-test('guard: 既存 reconciler の手動 POST 経路は壊さない（別ファイルで Scheduled 化）', () => {
-  assert.ok(/exports\.handler/.test(RECON_FN), '既存 reconciler の handler が変わっている');
+// ── 公開 URL 手動 POST を運用契約として残さない（Netlify 仕様: scheduled は URL 呼出不可）──
+test('guard: dispatcher は Scheduled 専用（URL POST 認証分岐を持たない）', () => {
+  assert.ok(!/x-worker-secret/i.test(DISPATCH_FN), 'dispatcher に URL POST 用の secret 認証が残っている');
+  assert.ok(!/httpMethod|request\.method|event\.headers|req\.headers/.test(DISPATCH_FN),
+    'dispatcher に HTTP メソッド/ヘッダ分岐（手動 POST 契約）が残っている');
+  assert.ok(!/手動\s*POST/.test(DISPATCH_FN), 'コメントに「手動 POST」運用契約が残っている');
+  assert.ok(/Run now/.test(DISPATCH_FN), '手動確認手順（Netlify UI Run now）が明記されていない');
+});
+
+test('guard: reconciler cron も Scheduled 専用（明示認証の手動経路は既存 Function へ分離）', () => {
+  // cron は request/headers/secret を「使わない」こと（コメント中の言及は許容・実コードのみ検査）。
+  assert.ok(!/request\.headers|event\.headers|WORKER_SECRET|providedSecret/.test(RECON_CRON),
+    'cron が URL POST 用の secret/ヘッダを消費している');
+  assert.ok(/exports\.handler/.test(RECON_FN), '既存 reconciler（手動認証 Function）が変わっている');
+  assert.ok(/x-worker-secret|X-Worker-Secret/.test(RECON_FN), '既存 reconciler が secret 認証を失っている');
   assert.ok(!/export const config/.test(RECON_FN), '既存 reconciler に schedule を混ぜている（手動経路と分離されていない）');
-  assert.ok(/payment-email-reconciler\.js/.test(RECON_CRON) || /reconcileUnknownBatch/.test(RECON_CRON),
-    'cron が reconciler コアを使っていない');
 });
 
 // ── gate fail-closed ───────────────────────────────────────────
@@ -41,10 +53,34 @@ test('guard: reconciler cron は v2-full のときだけ書き込む（それ以
   assert.ok(/dryRun = gate\.mode !== 'v2-full'/.test(RECON_CRON), 'v2-full 以外で書込みを許している');
 });
 
+// ── 30 秒上限: 件数上限 + deadline guard ───────────────────────
+test('guard: dispatcher は件数上限と deadline を worker コアへ渡す', () => {
+  assert.ok(/const MAX_RECORDS\s*=\s*\d+/.test(DISPATCH_FN), 'MAX_RECORDS が定数化されていない');
+  const m = DISPATCH_FN.match(/const MAX_RECORDS\s*=\s*(\d+)/);
+  assert.ok(Number(m[1]) <= 5, `dispatcher の件数上限が大きすぎる（30 秒制約）: ${m[1]}`);
+  assert.ok(/deadlineAt:\s*now \+ DEADLINE_MS/.test(DISPATCH_FN), 'deadline を渡していない');
+  assert.ok(/DEADLINE_MS\s*=\s*2[0-9]_?000/.test(DISPATCH_FN), 'deadline が 30 秒上限の安全マージンでない');
+});
+
+test('guard: dispatcher core は deadline 到達後に新規レコード処理を開始しない', () => {
+  assert.ok(/pastDeadline\(\)/.test(CORE), 'deadline guard が無い');
+  // deadline チェックがループ内・runOne 呼出より前にあること
+  const loopBody = CORE.slice(CORE.indexOf('for (const rec of records)'));
+  const iDeadline = loopBody.indexOf('pastDeadline()');
+  const iRun = loopBody.indexOf('deps.runOne');
+  assert.ok(iDeadline >= 0 && iDeadline < iRun, 'deadline チェックが runOne より後（時間切れ後も送ってしまう）');
+});
+
+test('guard: reconciler cron / core は件数上限と deadline を持つ', () => {
+  assert.ok(/const RECON_MAX\s*=\s*\d+/.test(RECON_CRON), 'reconciler の件数上限が定数化されていない');
+  assert.ok(/maxRecords: RECON_MAX/.test(RECON_CRON) && /deadlineAt:/.test(RECON_CRON), 'cron が上限/deadline を渡していない');
+  assert.ok(/pastDeadline\(\)/.test(RECON_CORE), 'reconciler core に deadline guard が無い');
+  assert.ok(/maxRecords[\s\S]*slice\(0, maxRecords\)/.test(RECON_CORE), 'reconciler core が件数制限していない');
+});
+
 // ── HTTP 自己呼出しない（同一プロセス実行）────────────────────────
 test('guard: dispatcher は自分の worker Function を HTTP で呼ばない（core を直接実行）', () => {
-  assert.ok(!/\.netlify\/functions\/payment-email-worker/.test(DISPATCH_FN + CORE),
-    'worker Function を HTTP 経由で呼んでいる');
+  assert.ok(!/\.netlify\/functions\/payment-email-worker/.test(DISPATCH_FN + CORE), 'worker Function を HTTP 経由で呼んでいる');
   assert.ok(!/fetch\(/.test(CORE), 'dispatcher core が fetch を持っている（実 IO は deps 経由のはず）');
 });
 
@@ -64,19 +100,19 @@ test('guard: dispatcher core / Function のログに recordId / Email を出さ�
   for (const [name, src] of [['core', CORE], ['dispatch-fn', DISPATCH_FN], ['recon-cron', RECON_CRON]]) {
     const logs = src.match(/(?:deps\.)?log\([\s\S]*?\)|console\.(log|error)\([\s\S]*?\)/g) || [];
     for (const l of logs) {
-      assert.ok(!/recordId|\.id\b|record\.id|Email/.test(l), `${name} のログに識別子/PII: ${l.slice(0, 80)}`);
+      assert.ok(!/recordId|record\.id|Email/.test(l), `${name} のログに識別子/PII: ${l.slice(0, 80)}`);
     }
   }
 });
 
-test('guard: reconciler cron / core は per-record id を応答へ返さない', () => {
+test('guard: reconciler cron は per-record id を応答へ返さない（集計のみ）', () => {
   assert.ok(!/results/.test(RECON_CRON), 'cron が per-record results を返している');
-  assert.ok(/count, byAction/.test(RECON_CRON), '集計のみを返していない');
+  assert.ok(/byAction/.test(RECON_CRON) && /count/.test(RECON_CRON), '集計のみを返していない');
 });
 
 // ── legacy / dry-run での実挙動（0 送信・0 書込み）──────────────
 test('挙動: legacy gate は送信モードでも書込みモードでもない', () => {
-  const legacy = validateEmailGates(parseGatesFromEnv({})); // 全 env 未設定 = legacy
+  const legacy = validateEmailGates(parseGatesFromEnv({}));
   assert.equal(legacy.mode, 'legacy');
   assert.ok(legacy.mode !== 'v2-worker' && legacy.mode !== 'v2-full', 'legacy が送信モードになっている');
 });
