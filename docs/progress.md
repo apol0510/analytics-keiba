@@ -118,6 +118,21 @@
 - テスト Base への不足フィールド追加（S1 の 14 フィールドとの突合）
 - 本 PR の merge / production deploy
 
+### 決済メール v2 / D1 前提実装 B1・B2（2026-07-21・branch `feat/payment-email-v2-dispatch-schedule`）
+
+cutover の env フリップだけでは「顧客に確認メールが届く」状態に到達できない（worker トリガー未配線・
+reconciler schedule 未配線）ため、その 2 件を実装。**production 未反映・env 変更 0・実顧客送信 0**。
+
+- **B1 dispatcher**: Netlify Scheduled Function（5 分）+ 認証済み手動 POST。pending を限定取得し
+  worker コアへ同一プロセスで渡す。gate が v2-worker/v2-full 以外は 0 送信（legacy/dry-run/A2 未確認で送らない）。
+  dispatch ロック + record 単位 lock/fencing の二重防御。1 実行 10 件上限。PII 非出力。
+- **B2 reconciler schedule**: `cron-payment-email-reconciler.js`（15 分）を追加。既存手動 POST は不変更。
+  v2-full のときだけ write、それ以外 dry-run。reconcile ロックで重複起動防止。
+- Airtable Automation を新依存にしない方針（A2 と新 Automation の同時管理を避ける）。
+- guard/unit test 追加（dispatcher 10 + schedule guard 13）。`test:bank-payment` 192 pass / `check:safety` exit 0 / build 成功。
+
+**次工程**: D1 cutover 本体（境界 A→D）。**高リスク・要承認**（A2 OFF / gate 変更 / worker 有効化 / 実顧客送信）。
+
 ## Remaining
 
 - 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**

@@ -756,3 +756,36 @@ S4 カナリアで、テスト Base に provider 後に書くフィールドが�
 
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §送信前 schema preflight
 - `docs/progress.md` §決済メール v2 / S4 カナリア実行と事故
+
+## 2026-07-21 — pending 送信は Netlify Scheduled dispatcher 方式（Airtable Automation に依存しない）
+
+### 背景
+
+v2 では confirm-bank-payment が pending を書くだけで送信しない（worker へ委譲）。しかし worker を
+起動する配線が無く、reconciler も Scheduled 化されていなかった。cutover の env フリップだけでは
+確認メールが 1 通も送られない状態だった（D1 前提の未実装 2 件）。
+
+### 決定
+
+- **B1: pending → 送信のトリガーは Netlify Scheduled Function（dispatcher）**。Airtable Automation を
+  新たな必須依存にしない。理由:
+  - A2 の ON/OFF と新 Automation の切替を同時管理すると運用事故が増える
+  - repo 内コード・テスト・deploy で配線を管理でき、gate/pause/A2 確認をコードで fail-closed にできる
+  - pending 限定取得・件数制限・順次処理・部分失敗の停止を明示できる
+- **HTTP で自分の worker Function を呼ばず、worker コアを同一プロセスで実行**（信頼性・単一プロセス lock）。
+- **B2: reconciler は既存手動 POST を壊さず、別ファイル `cron-payment-email-reconciler.js` で Scheduled 化**。
+- **schedule**: dispatcher `*/5`、reconciler `*/15`（安全側）。docs に明記。
+- **重複起動防止**: dispatcher / reconciler それぞれ dispatch/reconcile 単位の Upstash ロック。
+  record 単位 lock/fencing と二重防御。
+- **fail-closed の単一源は `validateEmailGates()`**。v2-worker/v2-full 以外では dispatcher は 0 送信、
+  reconciler は 0 書込み（legacy 現行本番では常に 0）。
+
+### 却下した代替案
+
+- **Airtable Automation を worker POST へ作り替える**: A2 との二重管理・運用事故増のため却下（B1 で不採用）。
+- **dispatcher が worker Function を HTTP で呼ぶ**: プロセス跨ぎで lock/信頼性が下がるため却下（core 直接実行）。
+
+### 関連
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §B1 dispatcher / B2 reconciler schedule
+- `docs/progress.md` §D1 前提実装 B1・B2

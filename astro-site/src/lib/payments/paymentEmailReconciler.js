@@ -43,7 +43,8 @@ export async function reconcileOne({ record, now, dryRun = false, deps }) {
 
   const decision = decideReconcile({ activity, attemptedAtMs, attemptCount, now, providerMessageId });
 
-  if (deps.log) deps.log({ at: 'reconcile', recordId: record.id, activity, action: decision.action, reason: decision.reason, dryRun });
+  // ログに recordId / Email / provider 応答本文を出さない（非機密の集計値のみ）。
+  if (deps.log) deps.log({ at: 'reconcile', activity, action: decision.action, reason: decision.reason, dryRun });
 
   if (dryRun || !decision.fields) {
     return { action: decision.action, reason: decision.reason, wouldWrite: decision.fields || null, dryRun: !!dryRun };

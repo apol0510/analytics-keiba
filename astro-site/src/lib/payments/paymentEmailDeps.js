@@ -10,6 +10,7 @@
 // （noreply@keiba.link・ニュースレター等の別経路用）は **この経路では import しない**。
 import { SUPPORT_EMAIL } from '../../../netlify/functions/config/email-config.js';
 import { resolveVerifiedSender, hasVerifiedSender } from './senderIdentity.js';
+import { runWorkerOnce } from './paymentEmailWorker.js';
 
 const CUSTOMERS = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
@@ -106,10 +107,30 @@ async function verifyWritableFieldsFrom(target, fieldNames) {
   }
 }
 
+/**
+ * pending の一覧（dispatcher 用）。**status=pending に限定し件数制限**して取得する。
+ * 全件走査はしない。必要フィールドだけ取得し、Email 等の PII は取り出さない。
+ * pending 判定は Airtable 側 filterByFormula で行い、取得後も id/fields のみ返す。
+ */
+async function listPendingFrom(target, limit) {
+  const cap = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 10;
+  const formula = `{PaymentEmailStatus} = 'pending'`;
+  // fields[] で必要最小限だけ取得（Email / 氏名は取らない）。maxRecords で上限を固定。
+  const fieldsQs = ['PaymentEmailStatus', 'PaymentEmailIdempotencyKey', 'PaymentEmailAttemptCount']
+    .map((n) => `fields%5B%5D=${encodeURIComponent(n)}`).join('&');
+  const url = `https://api.airtable.com/v0/${target.base}/${encodeURIComponent(target.table)}`
+    + `?filterByFormula=${encodeURIComponent(formula)}&maxRecords=${cap}&pageSize=${cap}&${fieldsQs}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${target.key}` } });
+  if (!res.ok) return []; // 取得失敗は 0 件（fail closed で送らない）
+  const j = await res.json();
+  return (j.records || []).map((r) => ({ id: r.id, fields: r.fields || {} }));
+}
+
 // 本番 Customers 用（admin-promote-customer.js / reconciler / worker が使う）。
 async function getRecord(recordId) { return getRecordFrom(productionTarget(), recordId); }
 async function patchRecord(recordId, fields) { return patchRecordFrom(productionTarget(), recordId, fields); }
 async function listUnknownAfterAttempt() { return listUnknownFrom(productionTarget()); }
+async function listPending(limit) { return listPendingFrom(productionTarget(), limit); }
 
 /** SendGrid Mail Send。custom_args に record_id / idempotency_key を載せる。throw せず結果を返す。 */
 async function sendMail({ to, recordId, idempotencyKey }) {
@@ -214,6 +235,24 @@ export function makeCanaryWorkerDeps() {
     // schema preflight も本番と同一契約（カナリアだけ検証を省かない）。
     verifyWritableFields: (names) => verifyWritableFieldsFrom(target, names),
     log: (o) => console.log('[canary-worker]', JSON.stringify(o)),
+  };
+}
+
+/**
+ * dispatcher 用の実 deps（B1）。pending 列挙 + worker コアの同一プロセス実行 + dispatch ロック。
+ * runOne は **worker コア（runWorkerOnce）を HTTP を介さず**直接実行する。
+ */
+export function makeSchedulerLockDeps() {
+  return { acquireLock, releaseLock };
+}
+
+export function makeDispatcherDeps() {
+  const workerDeps = makeWorkerDeps();
+  return {
+    acquireLock, releaseLock,
+    listPending,
+    runOne: (recordId, now) => runWorkerOnce({ recordId, now, deps: workerDeps }),
+    log: (o) => console.log('[dispatcher]', JSON.stringify(o)),
   };
 }
 
