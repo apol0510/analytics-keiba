@@ -65,15 +65,19 @@ export async function runWorkerOnce({ recordId, now, deps }) {
       return { ok: false, stage: 'fencing', reason: 'token_superseded' };
     }
 
-    // 3. 送信（api key / email 欠如は試行せず terminal）
+    // 3. 送信（api key / email 欠如 / 送信元不一致は試行せず terminal）
+    //    送信元は AK 正式値（support@keiba.link）のときだけ許可する。カナリアも通常 worker も
+    //    同じ契約（senderIdentity.js）を deps 経由で受け取る。noreply への fallback は無い。
     const hasApiKey = deps.hasApiKey !== false;
     const hasEmail = !!email;
+    const senderVerified = deps.hasVerifiedSender !== false;
     let mail = {};
-    if (hasApiKey && hasEmail) {
+    if (hasApiKey && hasEmail && senderVerified) {
       mail = await deps.sendMail({ to: email, recordId, idempotencyKey });
     }
     const outcome = evaluateMailOutcome({
-      hasApiKey, hasEmail, providerStatus: mail && mail.status, threw: !!(mail && mail.threw),
+      hasApiKey, hasEmail, hasVerifiedSender: senderVerified,
+      providerStatus: mail && mail.status, threw: !!(mail && mail.threw),
     });
     const decision = decideAfterProvider({
       outcome, now,

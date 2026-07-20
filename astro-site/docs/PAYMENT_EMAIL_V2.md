@@ -172,6 +172,31 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
 
 ---
 
+## 送信元契約（単一源 / 2026-07-20 追加）
+
+AK の正式送信元は **`support@keiba.link`**。決済メール経路（カナリア / 通常 worker）は
+**`src/lib/payments/senderIdentity.js` を単一源**として送信元を決定する。
+
+| 判定 | 挙動 |
+|---|---|
+| env `SENDGRID_FROM_EMAIL` が `support@keiba.link` と一致（trim + toLowerCase 後） | 送信可。payload の `from` は正規化済み正式値 |
+| 未設定 / 空 / 不一致（`noreply@keiba.link` を含む） | **送信前に fail closed**（SendGrid へ POST しない） |
+
+- **`noreply@keiba.link` への fallback は禁止**。`email-config.js` の `FROM_EMAIL`
+  （= noreply・ニュースレター等の別経路用）は決済メール経路で **import しない**。
+- **カナリアと通常 worker は同一契約**。カナリア専用の送信元 env は作らない。
+- 送信元不一致は `failure_stage=sender_unverified` → **`failed_terminal`**（retryable にしない。
+  構成不備は再試行で直らないため）。
+- 判定結果・ログ・エラーに **env の値を含めない**（reason コードのみ）。
+
+検証: `senderIdentity.test.mjs` / `paymentEmailSender.guard.test.mjs`（`test:bank-payment` → `check:safety`）
+
+> **経緯（2026-07-20）**: S4 カナリア実行前 preflight で、送信元が `noreply@keiba.link`
+> （`email-config.js` の `FROM_EMAIL` 定数）であることを検知。AK 正式送信元と不一致のため
+> **カナリアを実行せず停止**し、本契約を実装した。**カナリアメールは未送信**。
+
+---
+
 ## cutover（D1）
 
 S1 Field → S2 Upstash/env → **S3 コード deploy（production は legacy のまま・旧 admin 無効化）** →
@@ -199,8 +224,12 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 
 ## 別課題（本設計と分離・未解決）
 
-- **送信元不一致**: `email-config.js` の `FROM_EMAIL='noreply@keiba.link'` だが AK 正式送信元は
-  `support@keiba.link`（env `SENDGRID_FROM_EMAIL` も support）。11 Function に波及するため別タスク。
+- **送信元不一致（決済メール経路は 2026-07-20 に解決済み）**: `email-config.js` の
+  `FROM_EMAIL='noreply@keiba.link'` は残るが、**決済メール v2 経路は `senderIdentity.js` へ移行済み**
+  （上記「送信元契約」参照）。**未対応で残るのは legacy 経路**:
+  `confirm-bank-payment.js`（L59）/ `send-payment-confirmation-auto.js`（L342）は依然 `FROM_EMAIL`
+  = noreply で送信する。稼働中の本番経路のため本タスクでは変更していない（別タスク）。
+  ニュースレター / マジックリンク等の 11 Function も従来どおり別タスク。
 - **`/admin/send-payment-confirmation` + `send-payment-confirmation.js` は未使用だが到達可能**。
   誤操作すると A2 と合わせて 2 通。cutover 前に 410/redirect で無効化。`paypal-webhook.js` も同型。
 
@@ -209,6 +238,7 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 | 目的 | ファイル | 状態 |
 |---|---|---|
 | 状態機械（純粋関数・単一源） | `src/lib/payments/paymentEmailState.js` | S3 で実装 |
+| **送信元契約（単一源）** | `src/lib/payments/senderIdentity.js` | **2026-07-20 実装** |
 | 同テスト | `src/lib/payments/paymentEmailState.test.mjs` | S3 で実装 |
 | confirm v2（pending 同梱） | `netlify/functions/confirm-bank-payment.js` | S3 で改修 |
 | 送信 worker | `netlify/functions/payment-email-worker.js`（新規） | S3 |
