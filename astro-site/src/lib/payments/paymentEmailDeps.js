@@ -65,6 +65,47 @@ async function listUnknownFrom(target) {
   return (j.records || []).map((r) => ({ id: r.id, fields: r.fields || {} }));
 }
 
+/**
+ * **書込み先フィールドの存在確認（read-only プローブ）**。
+ *
+ * Airtable の List Records は `fields[]` に**存在しないフィールド名**が含まれると 422
+ * （UNKNOWN_FIELD_NAME）を返す。この性質を使い、**1 件も書かずに**必要フィールドの
+ * 有無を判定する。
+ *
+ * この方式を選ぶ理由:
+ * - **Meta API（schema.bases:read）権限に依存しない**。カナリア PAT は data scope のみで 403 になる
+ * - **本番レコードへの試験書込みをしない**（no-op PATCH 方式は採らない）
+ * - test Base / production Base で**同一の契約**（呼び出し側は deps 差し替えのみ）
+ *
+ * 欠落時は個別に二分せず、1 フィールドずつ確認して**欠落名の一覧**を返す（運用者が直せるように）。
+ * 判定不能（ネットワーク断・401/403 等）は **ok:false** とし fail closed にする。
+ * 応答本文・Base/Table・レコード値はログにも戻り値にも含めない。
+ */
+async function verifyWritableFieldsFrom(target, fieldNames) {
+  const base = `https://api.airtable.com/v0/${target.base}/${encodeURIComponent(target.table)}`;
+  const probe = async (names) => {
+    const qs = names.map((n) => `fields%5B%5D=${encodeURIComponent(n)}`).join('&');
+    const res = await fetch(`${base}?maxRecords=1&${qs}`, {
+      headers: { Authorization: `Bearer ${target.key}` },
+    });
+    return res.status; // 200 = 全て存在 / 422 = いずれか不明 / それ以外 = 判定不能
+  };
+  try {
+    const all = await probe(fieldNames);
+    if (all === 200) return { ok: true, missing: [] };
+    if (all !== 422) return { ok: false, missing: null, undetermined: true }; // fail closed
+    const missing = [];
+    for (const name of fieldNames) {
+      const one = await probe([name]);
+      if (one === 422) missing.push(name);
+      else if (one !== 200) return { ok: false, missing: null, undetermined: true };
+    }
+    return { ok: false, missing };
+  } catch {
+    return { ok: false, missing: null, undetermined: true }; // 判定不能 = fail closed
+  }
+}
+
 // 本番 Customers 用（admin-promote-customer.js / reconciler / worker が使う）。
 async function getRecord(recordId) { return getRecordFrom(productionTarget(), recordId); }
 async function patchRecord(recordId, fields) { return patchRecordFrom(productionTarget(), recordId, fields); }
@@ -152,6 +193,7 @@ export function makeWorkerDeps() {
     hasApiKey: !!process.env.SENDGRID_API_KEY,
     hasVerifiedSender: hasVerifiedSender(process.env),
     getRecord, patchRecord, acquireLock, releaseLock, sendMail,
+    verifyWritableFields: (names) => verifyWritableFieldsFrom(productionTarget(), names),
     log: (o) => console.log('[worker]', JSON.stringify(o)),
   };
 }
@@ -169,6 +211,8 @@ export function makeCanaryWorkerDeps() {
     getRecord: (id) => getRecordFrom(target, id),
     patchRecord: (id, f) => patchRecordFrom(target, id, f),
     acquireLock, releaseLock, sendMail,
+    // schema preflight も本番と同一契約（カナリアだけ検証を省かない）。
+    verifyWritableFields: (names) => verifyWritableFieldsFrom(target, names),
     log: (o) => console.log('[canary-worker]', JSON.stringify(o)),
   };
 }

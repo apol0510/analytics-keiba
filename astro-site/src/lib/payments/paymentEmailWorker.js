@@ -18,6 +18,7 @@
 
 import {
   decideLeaseAcquire, buildWriteAheadFields, evaluateMailOutcome, decideAfterProvider,
+  REQUIRED_PROVIDER_RESULT_FIELDS, FAILURE_STAGE, EMAIL_STATUS,
 } from './paymentEmailState.js';
 
 /**
@@ -44,6 +45,23 @@ export async function runWorkerOnce({ recordId, now, deps }) {
   const email = f.Email || '';
   const attemptCount = Number(f.PaymentEmailAttemptCount) || 0;
   const leaseUntilMs = f.PaymentEmailLeaseUntil ? Date.parse(f.PaymentEmailLeaseUntil) : null;
+
+  // 0. schema preflight（**何も書く前**・送信前に fail closed）。
+  //    provider 受理後に書くフィールドが 1 つでも欠けていると「送信したのに結果を書けない」
+  //    状態になる（2026-07-20 カナリア事故）。read-only プローブで存在を確認し、
+  //    欠落していれば **レコードを一切変更せず・SendGrid を呼ばず**に停止する。
+  if (typeof deps.verifyWritableFields === 'function') {
+    const probe = await deps.verifyWritableFields(REQUIRED_PROVIDER_RESULT_FIELDS);
+    if (!probe || probe.ok !== true) {
+      // 欠落フィールド名は運用者が直せるよう返す（Email / secret / recordId は含めない）。
+      return {
+        ok: false,
+        stage: 'schema',
+        reason: FAILURE_STAGE.SCHEMA_INCOMPLETE,
+        missingFields: (probe && probe.missing) || null,
+      };
+    }
+  }
 
   const lockKey = `payemail:${recordId}`;
   const lock = await deps.acquireLock(lockKey);
@@ -84,9 +102,27 @@ export async function runWorkerOnce({ recordId, now, deps }) {
       providerMessageId: (mail && mail.messageId) || null,
       lastError: (mail && mail.error) || null,
     });
-    await deps.patchRecord(recordId, decision.fields);
+    // provider 後の結果 PATCH。ここで失敗しても **provider 受理の事実を失わない**ことが要件。
+    try {
+      await deps.patchRecord(recordId, decision.fields);
+    } catch {
+      // レコードは write-ahead 済みの unknown_after_attempt のまま維持する（**自動再送しない**）。
+      // reconciler は unknown_after_attempt を拾い、idempotency_key で Activity 照合して確定できる。
+      // 例外本文は握りつぶす（Airtable の応答本文・フィールド値をログや戻り値へ出さない）。
+      if (deps.log) deps.log({ at: 'worker', stage: FAILURE_STAGE.STATE_WRITE_FAILED, providerAccepted: outcome.providerAccepted });
+      return {
+        ok: false,
+        stage: 'state_write',
+        reason: FAILURE_STAGE.STATE_WRITE_FAILED,
+        status: EMAIL_STATUS.UNKNOWN_AFTER_ATTEMPT, // 維持される状態
+        providerAccepted: outcome.providerAccepted, // 受理事実を呼び出し側へ返す
+        autoResend: false,
+        needsReconcile: true,
+      };
+    }
 
-    if (deps.log) deps.log({ at: 'worker', recordId, status: decision.status, providerAccepted: outcome.providerAccepted, failureStage: outcome.failureStage });
+    // recordId はログへ出さない（識別子を外部ログに残さない）。
+    if (deps.log) deps.log({ at: 'worker', status: decision.status, providerAccepted: outcome.providerAccepted, failureStage: outcome.failureStage });
     return { ok: true, status: decision.status, providerAccepted: outcome.providerAccepted };
   } finally {
     await deps.releaseLock(lockKey, token);

@@ -84,6 +84,40 @@
 3. 送信後 read-only 確認（Record 状態 `accepted` / ProviderMessageId 非空 / 受信箱で送信元が support@keiba.link）
 4. テスト Record を初期状態（`pending` / AttemptCount 0 / 他クリア）へ戻す cleanup PATCH
 
+### 決済メール v2 / S4 カナリア実行と事故（2026-07-20・branch `fix/payment-email-schema-preflight`）
+
+**カナリアは実行され、メールは実際に届いた。** 一方で結果を記録できず、恒久対策を実装した。
+
+**経緯（証拠付き）**
+
+- 送信元不一致（noreply）を検知 → `senderIdentity.js` を実装し PR #144 を merge（`f7485d9`）・本番反映済み
+- `PAYMENT_CANARY_SECRET` は `is_secret=true` のため API/CLI から平文取得不可 → **ローテーションし
+  ユーザーが UI 入力**（`2026-07-20T09:27:29Z`）→ Build Hook で redeploy（`cf8eefa`）
+- カナリア Function を 1 回実行 → **HTTP 500 `Airtable PATCH 422`**
+- **メール 1 通が実受信された**（本文「ご入金を確認いたしました。ご利用を開始いただけます。」）
+  → **送信元 support@keiba.link への統一が本番で機能していることの実証**でもある
+- レコードは `unknown_after_attempt` / AttemptCount=1 / ProviderMessageId 空 / AcceptedAt 未設定 /
+  PaymentEmailSent=false のまま滞留（**送信済み・結果永続化失敗**）
+- 原因: テスト Base に **provider 後に書くフィールドが不足**（`FIELD_MISSING`）。
+  Meta API は canary PAT では 403 のため、欠落フィールド名は未確定（UI 目視が必要）
+
+**恒久対策（本ブランチで実装）**
+
+1. **送信前 schema preflight** — `REQUIRED_PROVIDER_RESULT_FIELDS` の存在を lock/PATCH/送信より前に
+   read-only プローブ（List Records の `fields[]` 422 判定）で検証。欠落・判定不能は fail closed。
+   Meta API 権限に依存せず、本番レコードへ試験書込みもしない。カナリアと通常 worker で同一契約
+2. **provider 受理後の state write 失敗処理** — 結果 PATCH 失敗時に `unknown_after_attempt` を維持し、
+   `providerAccepted` / `autoResend:false` / `needsReconcile:true` を返す。自動再送しない。
+   ログから `recordId` を削除
+
+**未実施（承認待ち）**
+
+- **テスト Record の cleanup**（推奨は案 A: 監査保存 = accepted / Sent=true / AcceptedAt=実行時刻 /
+  FailureStage=state_write_failed / token・lease クリア / IdempotencyKey 保持）。
+  **単純な pending 戻しは再送リスクのため不可**
+- テスト Base への不足フィールド追加（S1 の 14 フィールドとの突合）
+- 本 PR の merge / production deploy
+
 ## Remaining
 
 - 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**

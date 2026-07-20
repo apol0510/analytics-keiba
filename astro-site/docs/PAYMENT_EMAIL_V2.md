@@ -197,6 +197,44 @@ AK の正式送信元は **`support@keiba.link`**。決済メール経路（カ�
 
 ---
 
+## 送信前 schema preflight（2026-07-20 カナリア事故の恒久対策）
+
+**事故**: S4 カナリアで、テスト Base に provider 後に書くフィールドが無く、**SendGrid 送信後**の
+結果 PATCH が 422 で失敗した。**メールは実際に届いたのに受理を記録できず** `unknown_after_attempt`
+で滞留した（不変条件 3「provider 受理後は最終的に受理事実を永続状態へ残す」が schema 不備では
+守れないことが実証された）。
+
+### 対策 1: 送信前に必須フィールドの存在を検証する
+
+`REQUIRED_PROVIDER_RESULT_FIELDS`（`paymentEmailState.js`）= provider 後に書く 6 フィールド
+（`PaymentEmailStatus` / `AcceptedAt` / `ProviderMessageId` / `FailureStage` / `LastError` / `Sent`）を、
+**ロック取得・PATCH・SendGrid POST のいずれよりも前**に検証する。欠落なら
+`stage='schema'` / `reason='schema_incomplete'` を返し、**レコードを一切変更せず・送信もしない**。
+
+判定方法は **read-only プローブ**（`deps.verifyWritableFields`）:
+
+- Airtable の List Records は `fields[]` に**存在しないフィールド名**が含まれると 422 を返す。
+  この性質で存在を判定する（**1 件も書かない**）
+- **Meta API（`schema.bases:read`）に依存しない**。カナリア PAT は data scope のみで Meta は 403
+- **本番レコードへの試験書込みをしない**（no-op PATCH 方式は採らない）
+- 判定不能（非 200 / 非 422 / 例外）は **fail closed**
+- **カナリアと通常 worker で同一契約**（カナリアだけ検証を省かない）
+
+### 対策 2: provider 受理後の state write 失敗を STATE_WRITE_FAILED として扱う
+
+結果 PATCH を try/catch で保護し、失敗時は:
+
+- レコードは write-ahead 済みの **`unknown_after_attempt` を維持**（`pending` へ戻さない＝**自動再送しない**）
+- 戻り値に `providerAccepted`（**受理事実を失わない**）/ `autoResend: false` / `needsReconcile: true`
+- reconciler が `unknown_after_attempt` を拾い、`idempotency_key` で Activity 照合して確定する
+- 例外オブジェクトは捕捉せず、**Airtable 応答本文を戻り値・ログへ出さない**
+- worker のログから **`recordId` を削除**（識別子を外部ログに残さない）
+
+検証: `paymentEmailWorker.test.mjs`（preflight 4 件 / state write 失敗 3 件）/
+`paymentEmailSchemaPreflight.guard.test.mjs`（配線固定 8 件）
+
+---
+
 ## cutover（D1）
 
 S1 Field → S2 Upstash/env → **S3 コード deploy（production は legacy のまま・旧 admin 無効化）** →
@@ -239,6 +277,7 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 |---|---|---|
 | 状態機械（純粋関数・単一源） | `src/lib/payments/paymentEmailState.js` | S3 で実装 |
 | **送信元契約（単一源）** | `src/lib/payments/senderIdentity.js` | **2026-07-20 実装** |
+| **送信前 schema preflight / state write 失敗処理** | `paymentEmailState.js`（`REQUIRED_PROVIDER_RESULT_FIELDS`）/ `paymentEmailWorker.js` / `paymentEmailDeps.js`（`verifyWritableFieldsFrom`） | **2026-07-20 実装** |
 | 同テスト | `src/lib/payments/paymentEmailState.test.mjs` | S3 で実装 |
 | confirm v2（pending 同梱） | `netlify/functions/confirm-bank-payment.js` | S3 で改修 |
 | 送信 worker | `netlify/functions/payment-email-worker.js`（新規） | S3 |
