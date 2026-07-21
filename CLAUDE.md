@@ -528,6 +528,27 @@ AI 総合指数として画面に出す数値は **`getHorseAiIndex(horse)` 1 �
 | 表示適用 | `src/pages/free-prediction/nankan.astro`, `premium-prediction/nankan.astro`, `free-prediction/jra.astro`, `premium-prediction/jra.astro`, `src/components/HorseMainCard.astro`, `src/components/RaceHorseSection.astro` |
 | 検証スクリプト | `astro-site/scripts/check-display-computer-index.mjs` |
 
+## 📨 SendGrid Event Webhook（署名検証 / fail closed・2026-07-21）
+
+`netlify/functions/sendgrid-webhook.js` は**公開 URL**で、書き込む `EmailBlacklist` は
+`newsletter-preview.js` が配信除外に使う**実運用の suppression list**。
+2026-07-21 に署名検証なしで稼働していた欠陥（任意アドレスを HARD_BOUNCE 登録できた）を fail closed 化した。
+
+### 触る前に必読
+
+契約・reason コード・本番反映順序の単一源は
+[`astro-site/docs/SENDGRID_WEBHOOK.md`](./astro-site/docs/SENDGRID_WEBHOOK.md)。
+
+### 絶対禁止
+
+- **「検証鍵が未設定なら検証を省略する」分岐を作らない**（鍵未設定も 403。素通り禁止）
+- **署名検証より前に body を parse しない / Airtable を叩かない**（`req.json()` 禁止・raw body で検証）
+- **署名検証を Function 内に再実装しない**（単一源 `src/lib/webhooks/sendgridSignature.js`）
+- **`filterByFormula` へ外部入力を直挿ししない**（`airtableFormula.js` の `equalsFormula` 経由）
+- **ログ・応答にメールアドレス / 鍵 / 署名 / Airtable 応答本文を出さない**（reason コードのみ）
+
+検証: `npm run test:webhooks`（`check:safety` に組込済み / CI で個別 step 実行）
+
 ## 🔑 ログイン（マジックリンク方式）
 
 `/login` でメール入力 → SendGrid 経由でリンク送信 → `/auth/verify?token=...` で検証 →
@@ -660,6 +681,7 @@ npm run check:display-index    # 全 predictions で 表示指数 == raw-1
 npm run check:horse-sections   # 全レースで 合計 == 出走頭数（不要馬セクション維持）
 npm run test:pricing-tiers     # /pricing/ のプラン別出し分け（Light 乗り換え価格の露出防止）
 npm run test:bank-payment      # 銀行振込 申込/入金確認フロー（入金前に昇格しない）
+npm run test:webhooks          # SendGrid Event Webhook 署名検証 fail closed（無認証 Airtable 書込みの遮断）
 npm run check:safety           # 上記を含む全 safety check を直列実行
 npm run verify:safety          # build → check:safety（push 前推奨）
 ```

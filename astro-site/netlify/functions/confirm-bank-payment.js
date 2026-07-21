@@ -27,7 +27,8 @@
  * 判定ロジックの単一源: src/lib/payments/bankPaymentFlow.js
  */
 
-import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
+import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
+import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js';
 import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
@@ -48,6 +49,13 @@ function jsonResponse(statusCode, body) {
 }
 
 async function sendMail({ apiKey, to, subject, html }) {
+  // 送信元は単一源 senderIdentity.js が決める（noreply への fallback 禁止）。
+  // 不一致 / 未設定は **SendGrid へ POST する前に fail closed**。理由コードのみを投げる（env の値は含めない）。
+  const sender = resolveVerifiedSender(process.env);
+  if (!sender.ok) {
+    throw new Error(`sender_unverified: ${sender.reason}`);
+  }
+
   const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
     headers: {
@@ -56,7 +64,7 @@ async function sendMail({ apiKey, to, subject, html }) {
     },
     body: JSON.stringify({
       personalizations: [{ to: [{ email: to }] }],
-      from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
+      from: { email: sender.email, name: sender.name },
       reply_to: { email: SUPPORT_EMAIL },
       subject,
       content: [{ type: 'text/html', value: html }]

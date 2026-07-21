@@ -9,7 +9,8 @@
  *   4. PaymentEmailSent を true に更新
  */
 
-import { SUPPORT_EMAIL, FROM_EMAIL } from './config/email-config.js';
+import { SUPPORT_EMAIL } from './config/email-config.js';
+import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -313,10 +314,18 @@ exports.handler = async (event, context) => {
     // Step 3: メール送信
     // ========================================
     const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
-    // FROM_EMAIL は email-config.js からインポート済み
 
     if (!SENDGRID_API_KEY) {
       throw new Error('SendGrid API key not configured');
+    }
+
+    // 送信元は単一源 senderIdentity.js が決める（noreply への fallback 禁止）。
+    // 不一致 / 未設定は **SendGrid へ POST する前に fail closed**。
+    // ここで throw すると Step 4 の PATCH まで到達しないため、PaymentEmailSent は false のまま
+    // （＝状態が「送ったことになる」ズレを作らない）。
+    const sender = resolveVerifiedSender(process.env);
+    if (!sender.ok) {
+      throw new Error(`sender_unverified: ${sender.reason}`);
     }
 
     // プラン別の情報を取得
@@ -339,7 +348,7 @@ exports.handler = async (event, context) => {
         to: [{ email: email }],
         subject: `【入金確認】KEIBA Analytics ${productName} - アクセス情報`
       }],
-      from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
+      from: { email: sender.email, name: sender.name },
       content: [{
         type: 'text/html',
         value: generateEmailHTML(fullName, email, productName, planType, expirationDate, paymentAmount, planInfo, japanTime)

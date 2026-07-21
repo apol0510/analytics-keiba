@@ -160,10 +160,37 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 
 **D1 cutover は完了。次 Phase 候補: Event Webhook（delivered/bounce 反映）。**
 
+### Webhook fail closed 化（Phase 0）+ legacy noreply 整理（2026-07-21・branch `feat/sendgrid-webhook-fail-closed`）
+
+次 Phase の依存関係を read-only 調査した結果、**S9 Event Webhook は現行運用上は不要**と判定
+（状態機械は `accepted` で終端し `decideWebhookEvent()` は実装済み・本番 pending/unknown/attempting は 0・
+新規 secret と SendGrid 管理画面操作にブロックされる）。一方、S9 が触る `sendgrid-webhook.js` に
+**Payment Email v2 とは無関係の既存欠陥**を検知したため、これを先に処理した。
+
+- **検知**: `sendgrid-webhook.js` が**署名検証・認証なしで公開稼働**。第三者が 1 回 POST するだけで
+  任意アドレスを `EmailBlacklist`（`newsletter-preview.js` が配信除外に使う実運用 suppression list）へ
+  HARD_BOUNCE 登録でき、**任意顧客をメルマガ配信対象から恒久除外**できた。
+  併せて formula injection（未エスケープ入力の `SEARCH()` 直挿し）と PII ログ出力も検知。
+- **対処（コードのみ・env 追加なし）**: 署名検証の単一源 `src/lib/webhooks/sendgridSignature.js` を新設し、
+  Function を fail closed 化（**鍵未設定も含め検証失敗は全て 403** / 検証成功後にのみ body を parse /
+  検証前に Airtable へ到達しない / `airtableFormula.js` 経由で injection 遮断 / ログから email 除去）。
+- **legacy noreply 整理**: `confirm-bank-payment.js` legacy 分岐と `send-payment-confirmation-auto.js` を
+  `senderIdentity.js` へ移行。**gate=legacy へ rollback しても送信元は support@keiba.link**。
+- **テスト**: `npm run test:webhooks` 新設（30 テスト）＋ sender guard に legacy 経路 5 テスト追加。
+  `check:safety` へ組込み、`safety-check.yml` に個別 step として `test:webhooks` / `test:bank-payment` を追加。
+- **検証結果**: `npm run check:safety` 全 21 ステップ green（最終 469 tests / fail 0）・`npm run build` 成功。
+- **本番影響**: SendGrid 側の Event Webhook は**未登録／無効**であることをユーザー確認済みのため、
+  deploy しても**機能損失ゼロ**（届いていないものを 403 にするだけ）。env 投入・管理画面操作とも不要。
+- **本 branch では Function 呼出・メール送信・Airtable 書込み・production deploy を一切行っていない。**
+
 ## Remaining
 
-- 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**
-- `paypal-webhook.js` / `send-payment-confirmation.js` の二重送信リスク修正（現在は両経路未使用のため実害なしと記録されている）
+- **S9 Event Webhook 本体**（`custom_args` 照合による `accepted` → `delivered`/`bounced`/`dropped` 反映・
+  イベント冪等・out-of-order）。Phase 0（署名検証 fail closed）完了により**新規 secret は増えない**。
+  有効化には SendGrid 管理画面での Event Webhook 登録 + Verification Key 発行 + Netlify env 投入が必要
+  （順序は `astro-site/docs/SENDGRID_WEBHOOK.md` §本番反映の順序）
+- `paypal-webhook.js` / `send-payment-confirmation.js` の二重送信リスク修正（現在は両経路未使用のため実害なしと記録されている）。
+  併せて両者に残る `FROM_EMAIL`（noreply）も、410 Gone / redirect による無効化と**同時に**処理する
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降（穴馬抽出ロジック改善・表示改善）。同文書は「実装未着手」のまま
 - `check:prediction-integrity`（検査対象 0 件で失敗する既存問題）の原因調査 →
   `check:jra-nankan-parity` とあわせて `safety-check.yml` へ組込（`CLAUDE.md` PR-K・低優先度）
@@ -188,8 +215,10 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 ## Blockers
 
 - 現時点で本ドキュメント基盤 PR に対する blocker はない。
-- コード側の実質的 blocker: 入金確認メール v2 の cutover は **本番メール送信・本番 Airtable 書込みを伴う高リスク操作**であり、
-  ユーザーの明示承認なしに実行できない。
+- ~~コード側の実質的 blocker: 入金確認メール v2 の cutover~~ → **2026-07-21 に D1 cutover 完了**（v2-full 稼働）。
+- S9 Event Webhook 本体の**有効化**は SendGrid 管理画面設定 + Verification Key 発行 + Netlify env 投入
+  （いずれもユーザー操作の高リスク境界）を要するため、明示承認なしに実行できない。
+  ただし **Phase 0（署名検証 fail closed）はコードのみで完了済み**であり、S9 実装自体はブロックされない。
 
 ## Open Questions
 
@@ -218,8 +247,9 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 ## Repository State
 
 - **Repository**: `analytics-keiba` / **Origin**: `https://github.com/apol0510/analytics-keiba.git`
-- **Branch**: `docs/autonomous-project-workflow`（`origin/main` から分岐 / PR #143）。作業は分離 worktree で実施。
-- **本ブランチの変更範囲**: `CLAUDE.md` / `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` の 4 ファイルのみ。
-  ソースコード・workflow・lockfile は未変更。
-- メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
-- **Last verified**: 2026-07-20
+- **Branch**: `feat/sendgrid-webhook-fail-closed`（`origin/main` = `a5a8427` から分岐）。作業は分離 worktree で実施。
+- **本ブランチの変更範囲**: `astro-site/src/lib/webhooks/**`（新規）/ `astro-site/netlify/functions/sendgrid-webhook.js` /
+  `confirm-bank-payment.js` / `send-payment-confirmation-auto.js` / `paymentEmailSender.guard.test.mjs` /
+  `astro-site/package.json` / `.github/workflows/safety-check.yml` / docs 3 ファイル。**lockfile は未変更。**
+- メイン checkout には**一切書込んでいない**（未コミット変更はユーザーの作業中変更として保全）。
+- **Last verified**: 2026-07-21

@@ -388,13 +388,37 @@ SendGrid Event Webhook（`accepted` → `delivered`/`bounced`/`dropped` 反映�
 → 次 Phase で `sendgrid-webhook.js` 拡張（署名検証・custom_args 照合・冪等・PII 非出力）+ テスト +
    SendGrid 側設定を実施する。それまで `PaymentEmailDeliveredAt` / `delivered` 系は未使用。
 
-## legacy noreply 経路の残課題（未解決・別タスク）
+### S9 前提工事（Phase 0）は 2026-07-21 に実施済み
+
+S9 の前提調査で、**`sendgrid-webhook.js` が署名検証・認証なしで公開稼働**しており、
+第三者が任意アドレスを `EmailBlacklist` へ HARD_BOUNCE 登録できる（= メルマガ配信対象から
+恒久除外できる）状態を検知した。S9 が触る対象ファイル・署名検証モジュールと同一のため、
+**先に fail closed 化を実施**した（署名検証単一源 / 鍵未設定は 403 / 検証前に body を parse しない /
+formula injection 遮断 / PII 非出力）。
+
+契約と本番反映順序は **`astro-site/docs/SENDGRID_WEBHOOK.md`** が単一源。
+S9 本体（`custom_args` 照合による Payment Email 状態への反映）は**引き続き未実装**。
+
+## legacy noreply 経路（2026-07-21 解消済み）
 
 `confirm-bank-payment.js` の **legacy 分岐**（`shouldConfirmUseV2=false` のとき）と
-`send-payment-confirmation-auto.js` は依然 `email-config.js` の `FROM_EMAIL`=`noreply@keiba.link` で送信する。
-現在 gate=v2-full のため confirm は v2 分岐（送信元は senderIdentity=support@keiba.link）を通り、
-legacy 分岐は通常発火しない。ただし gate を legacy へ rollback した場合は noreply 送信に戻る。
-恒久解消（legacy 経路も senderIdentity へ寄せる）は別タスク（稼働中経路のため慎重に）。
+`send-payment-confirmation-auto.js` は `email-config.js` の `FROM_EMAIL`=`noreply@keiba.link` で
+送信しており、**gate を legacy へ rollback すると noreply 送信に戻る**残課題だった。
+
+2026-07-21 に両ファイルを **`senderIdentity.js`（単一源）へ移行**し解消:
+
+- `FROM_EMAIL` の import を削除（guard テストで再混入を禁止）
+- `resolveVerifiedSender(process.env)` を **SendGrid へ POST する前**に呼び、
+  不一致 / 未設定なら `sender_unverified: <reason>` を throw して **fail closed**（理由コードのみ・env の値は含めない）
+- `send-payment-confirmation-auto.js` は fail closed が **Step 4 の PATCH より前**に起きるため、
+  送信できなかったのに `PaymentEmailSent=true` になるズレを作らない（順序も guard で固定）
+
+→ **gate=legacy へ rollback しても送信元は `support@keiba.link`**。本番 env
+`SENDGRID_FROM_EMAIL` が正式値であることは境界B カナリアの実受信で実証済み。
+
+> **未対応（別タスク・本 Phase のスコープ外）**: `send-payment-confirmation.js` と
+> `paypal-webhook.js` は依然 `FROM_EMAIL`（noreply）を使う。両者は「未使用だが到達可能」で
+> **410 Gone / redirect による無効化**が本来の対処のため、送信元だけ差し替える半端な修正はしない。
 
 ---
 
@@ -412,11 +436,11 @@ legacy 分岐は通常発火しない。ただし gate を legacy へ rollback �
 
 ## 別課題（本設計と分離・未解決）
 
-- **送信元不一致（決済メール経路は 2026-07-20 に解決済み）**: `email-config.js` の
-  `FROM_EMAIL='noreply@keiba.link'` は残るが、**決済メール v2 経路は `senderIdentity.js` へ移行済み**
-  （上記「送信元契約」参照）。**未対応で残るのは legacy 経路**:
-  `confirm-bank-payment.js`（L59）/ `send-payment-confirmation-auto.js`（L342）は依然 `FROM_EMAIL`
-  = noreply で送信する。稼働中の本番経路のため本タスクでは変更していない（別タスク）。
+- **送信元不一致（決済メール経路は解決済み）**: `email-config.js` の
+  `FROM_EMAIL='noreply@keiba.link'` は残るが、**決済メール経路は v2（2026-07-20）・legacy（2026-07-21）
+  とも `senderIdentity.js` へ移行済み**（上記「送信元契約」/「legacy noreply 経路」参照）。
+  **未対応で残るのは未使用の 2 経路**: `send-payment-confirmation.js` / `paypal-webhook.js`
+  （本来の対処は 410/redirect による無効化。下記参照）。
   ニュースレター / マジックリンク等の 11 Function も従来どおり別タスク。
 - **`/admin/send-payment-confirmation` + `send-payment-confirmation.js` は未使用だが到達可能**。
   誤操作すると A2 と合わせて 2 通。cutover 前に 410/redirect で無効化。`paypal-webhook.js` も同型。
