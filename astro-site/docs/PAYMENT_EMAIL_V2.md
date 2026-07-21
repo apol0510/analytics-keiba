@@ -375,6 +375,51 @@ A2 OFF のため Status→active の自動メールは発火しない。送信�
 1. `PAYMENT_EMAIL_GLOBAL_PAUSE=true` → redeploy（新規送信を即停止・A2 は再 ON しない）
 2. 必要なら `FLOW_VERSION=legacy` / `WORKER_SEND=false` / `RECONCILER_WRITE=false` → redeploy で legacy へ
 
+## 初の実顧客通過記録（2026-07-22・v2-full）
+
+D1 cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過**した。カナリア（テスト Base）ではなく
+**本番 Customers・実顧客・実メール**で不変条件が守られたことの確認。
+
+| 項目 | 実測 |
+|---|---|
+| ケース | 既存 Light 会員（Monthly / Status=active / 有効期限は経過済み）が銀行振込で **Premium Annual** へ乗り換え |
+| MK の手動操作 | **`PaymentConfirmed` にチェック 1 回のみ**（他フィールドは一切手動編集していない） |
+| confirm（v2 分岐）の PATCH | `プラン=Premium` / `PlanType=Annual` / `Status=active` / `有効期限=入金確認日 JST +1年` / `PaidAt` / **`PaymentEmailStatus=pending`** / `Requested*` クリア |
+| confirm の送信 | **なし**（`PaymentEmailSent` も書かない） |
+| 送信 | dispatcher（`*/5`）が pending を取得 → worker が **1 通だけ**送信（`support@keiba.link`） |
+| 終端 | `PaymentEmailStatus=accepted` / `PaymentEmailSent=true`（worker が互換出力として記録） |
+| 二重送信 | **なし**（A2 OFF のため Status→active で旧 Automation は発火しない） |
+| 所要 | チェック → `accepted` まで数分（dispatcher の 5 分周期内） |
+
+### この事例で実証された不変条件
+
+- **単一送信経路**: confirm は pending を作るだけ。送信は dispatcher→worker の 1 経路のみ。
+  旧設計（A2 ON）なら `Status→active` で A2 も発火し **2 通**届いていた経路である。
+- **冪等性**: 承認時に `Requested*` がクリアされ、`PaymentConfirmed` を再チェックしても
+  `buildV2ConfirmationFields` が `null`（fail closed）を返し**有効期限が二重延長されない**。
+- **legacy フラグの無害化**: 当該レコードには Light 購入時の **`PaymentEmailSent=true` が残っていた**が、
+  v2 の dispatcher は `PaymentEmailStatus='pending'` のみで対象を選ぶため**影響しなかった**
+  （「新ロジックは `PaymentEmailSent` を判断材料として一切読まない」が実運用で確認された）。
+- **送信元契約**: `support@keiba.link` で送信（noreply へ戻っていない）。
+
+### 運用メモ（同種の問い合わせへの回答）
+
+「自動化したのに何も起きない」という問い合わせの大半は、**`PaymentConfirmed` が未チェック**であることが原因。
+申込フォームは `Requested*` に退避するだけで権限を付与しない（未入金で昇格させないための fail closed）ため、
+**チェックが自動化の起点**である。以下は事故になるので行わない:
+
+- `プラン` / `PlanType` / `Status` / `有効期限` の手動編集（confirm が上書き前提で組み立てている）
+- `Status` を pending→active に手で変えてメールを起こそうとする（**A2 は OFF なので送信されない**）
+- `PaymentEmailStatus` の手動書き換え（二重送信防止の状態機械を壊す）
+- `pending` が数分続くことを異常と見なして `PaymentConfirmed` を外して入れ直す（再送されず、昇格もしない）
+
+`pending` のまま **10 分以上**動かない場合のみ異常。**自動再送を試さず**、gate 構成（`v2-full`）と
+Scheduled Function の稼働を read-only で確認する。
+
+> 本記録は read-only の Airtable GET のみで作成した（**書込み 0 / Function 直接呼出 0 / 手動メール送信 0 /
+> deploy 0**）。実際の昇格・送信はすべて本番の A1 → confirm → dispatcher → worker が自律実行した。
+> **顧客の Email / 氏名 / recordId は記録しない。**
+
 ## Event Webhook（S9）— 別 Phase・未実施
 
 SendGrid Event Webhook（`accepted` → `delivered`/`bounced`/`dropped` 反映）は **D1 cutover とは別 Phase** とし、
