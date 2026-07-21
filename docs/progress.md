@@ -136,6 +136,15 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 
 **次工程**: D1 cutover 本体（境界 A→D）。**高リスク・要承認**（A2 OFF / gate 変更 / worker 有効化 / 実顧客送信）。
 
+### D1 境界A 完了（2026-07-21・v2-dry-run 移行）
+
+- 入口停止（A1 OFF）→ pending 0 確認 → A2 OFF（MK 目視）→ env 5 本を v2-dry-run 構成へ
+  （Production/Functions のみ）→ Build Hook 1 回で redeploy（published `6a5ec2b9` / commit `cdf69b9`）。
+- gate mode = **v2-dry-run**（worker 送信不可・reconciler 書込み不可）。**実顧客送信 0 / Airtable 書込み 0**。
+- Scheduled は no-op（dispatcher=not_sending_mode 先行 return / reconciler=dryRun）。
+- rollback: FLOW_VERSION=legacy + redeploy。A2 は再 ON しない。
+- **次工程は境界B**（新 IdempotencyKey カナリア 1 件・要承認）。cutover 未完了。
+
 ## Remaining
 
 - 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**

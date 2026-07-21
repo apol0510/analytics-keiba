@@ -810,3 +810,13 @@ Netlify 公式仕様（一次情報）を確認: **Scheduled Functions は公開
 ### 関連
 
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §B1/B2（Scheduled 専用・30 秒・deadline guard）
+
+## 2026-07-21 — D1 境界A 実施（v2-dry-run 移行・実顧客送信なし）
+
+入口停止（A1 OFF）+ A2 OFF を先に行い（Airtable UI 手動・API 不可）、pending 0 を確認したうえで
+gate env 5 本を v2-dry-run 構成へ変更し redeploy した。**A2 OFF を先、env flip を後**の順序を厳守
+（A2 ON と worker 送信可の同時成立を絶対に作らない）。dry-run では worker 送信・reconciler 書込みとも
+無効で、実顧客送信 0。rollback は FLOW_VERSION=legacy + redeploy（A2 は再 ON しない）。
+worker 有効化（境界C）は実顧客送信を伴うため別承認。
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §D1 境界A 実施記録
