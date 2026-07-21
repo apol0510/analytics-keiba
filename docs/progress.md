@@ -145,6 +145,21 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 - rollback: FLOW_VERSION=legacy + redeploy。A2 は再 ON しない。
 - **次工程は境界B**（新 IdempotencyKey カナリア 1 件・要承認）。cutover 未完了。
 
+### D1 cutover 完了（2026-07-21・v2-full 稼働）
+
+境界 A→B→C→A1 再開→D を実施し、入金確認メール v2 を **v2-full で本番稼働**。
+
+- **PR #147 merged**（`2d501ed`）。境界B カナリア成功（実受信 1 通・support@keiba.link）。
+- 境界C: worker 有効化（gate=v2-worker）→ A1 再開（A2 OFF 維持）→ 境界D: reconciler write 有効化。
+- **最終 gate=v2-full** / published `6a5f0de0`（commit `2d501ed`）/ A1 ON / A2 OFF /
+  dispatcher `*/5`（3 件・deadline 25s）/ reconciler `*/15`（10 件・deadline 25s）/ 送信元 support@keiba.link。
+- 本番 pending/unknown/attempting **0**。**実顧客誤送信 0 / 二重送信 0 / 本番 Customers 破損 0**。
+- **Event Webhook（S9）は別 Phase・未実施**（SendGrid 署名検証キー + 管理画面設定が必要）。
+- **legacy noreply 経路**（confirm legacy 分岐 / send-payment-confirmation-auto）は残課題（別タスク）。
+- rollback（未実施・有効）: GLOBAL_PAUSE=true → redeploy、または FLOW_VERSION=legacy。
+
+**D1 cutover は完了。次 Phase 候補: Event Webhook（delivered/bounce 反映）。**
+
 ## Remaining
 
 - 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**
@@ -180,7 +195,7 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 
 1. **ユーザーのメイン checkout に残る作業中変更をどう扱うか**（2026-07-20 観測）。変更内容が作業ブランチ名の
    範囲を大きく超えており、分割コミット方針・rebase 要否とも未確定。**本 docs PR のスコープ外。**
-2. ~~入金確認メール v2 は現在どこまで本番有効か~~ → **2026-07-20 に確定**。gate mode は `legacy`
+2. ~~入金確認メール v2 は現在どこまで本番有効か~~ → **2026-07-21 に v2-full 稼働（D1 cutover 完了）**。旧記録: 2026-07-20 時点は `legacy`
    （`validateEmailGates` violations=0）。confirm は legacy 経路、通常 worker / reconciler は無効。
    **cutover（D1）は未実施・カナリアも未送信**。コード（状態機械 / worker / reconciler / canary / 送信元契約）は
    deploy 済みだが、gate により本番送信経路としては動作していない。

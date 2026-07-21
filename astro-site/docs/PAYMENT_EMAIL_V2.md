@@ -350,6 +350,54 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 
 ---
 
+## D1 cutover 完了記録（2026-07-21・v2-full 稼働）
+
+**入金確認メール v2 の cutover を完了。gate=v2-full 稼働。実顧客への誤送信・二重送信 0。**
+
+| 境界 | 実施 | 結果 |
+|---|---|---|
+| A2 OFF | Airtable Automation A2「入金確認メール自動送信」OFF（MK・維持） | 二重送信源を構造的に排除 |
+| 境界A | 入口停止（A1 OFF）→ pending 0 → A2 OFF → env v2-dry-run → redeploy | gate=v2-dry-run |
+| 境界B | 新 IdempotencyKey でカナリア 1 件（テスト Base・テスト宛先） | HTTP 200 / accepted / providerAccepted / **実受信 1 通**（support@keiba.link）。test record は accepted 監査終端 |
+| 境界C | `WORKER_SEND_ENABLED=true` → redeploy | gate=v2-worker / worker 送信 YES / reconciler write NO。pending 0 で dispatcher no-op |
+| A1 再開 | Airtable Automation A1「入金確認 → 有料プラン昇格」ON（A2 は OFF 維持） | 単一送信経路確立（confirm=pending 生成→dispatcher→worker 1 通。A2 OFF で二重送信なし） |
+| 境界D | `RECONCILER_WRITE_ENABLED=true` → redeploy | **gate=v2-full**（worker YES / reconciler write YES） |
+
+**最終状態（2026-07-21）**: published `6a5f0de0`（commit `2d501ed` = origin/main）/ gate=**v2-full** /
+A1 ON / A2 **OFF** / dispatcher schedule `*/5`（最大 3 件・deadline 25s）/ reconciler schedule `*/15`
+（最大 10 件・deadline 25s）/ 送信元 support@keiba.link / schema preflight 有効 / 本番 pending・unknown・
+attempting **0**。organic traffic が無い間は dispatcher/reconciler とも 0 件 no-op。
+
+**単一送信の保証**: confirm（v2 分岐）は `Status=active`+`pending` を書くが `PaymentEmailSent` を書かず送信もしない。
+A2 OFF のため Status→active の自動メールは発火しない。送信するのは dispatcher→worker の 1 経路のみ。
+
+**rollback**（cutover 後も有効・追加承認不要）:
+1. `PAYMENT_EMAIL_GLOBAL_PAUSE=true` → redeploy（新規送信を即停止・A2 は再 ON しない）
+2. 必要なら `FLOW_VERSION=legacy` / `WORKER_SEND=false` / `RECONCILER_WRITE=false` → redeploy で legacy へ
+
+## Event Webhook（S9）— 別 Phase・未実施
+
+SendGrid Event Webhook（`accepted` → `delivered`/`bounced`/`dropped` 反映）は **D1 cutover とは別 Phase** とし、
+本 cutover では未実施。理由:
+- **SendGrid 署名検証キー（新規 secret）の provision と SendGrid 管理画面の Event Webhook 設定**（ユーザー操作）が必要
+- spoof 拒否 / 二重イベント冪等性 / out-of-order / 署名検証 の新規実装 + テストを要する
+- 状態機械は `accepted`（provider 受理）と `delivered`（実配信）を**既に別状態として区別**しており、
+  webhook 無しでもレコードは `accepted` で正しく終端する（confirmation メール目的には十分）。
+  D1 完成条件に Event Webhook は含まれない。
+
+→ 次 Phase で `sendgrid-webhook.js` 拡張（署名検証・custom_args 照合・冪等・PII 非出力）+ テスト +
+   SendGrid 側設定を実施する。それまで `PaymentEmailDeliveredAt` / `delivered` 系は未使用。
+
+## legacy noreply 経路の残課題（未解決・別タスク）
+
+`confirm-bank-payment.js` の **legacy 分岐**（`shouldConfirmUseV2=false` のとき）と
+`send-payment-confirmation-auto.js` は依然 `email-config.js` の `FROM_EMAIL`=`noreply@keiba.link` で送信する。
+現在 gate=v2-full のため confirm は v2 分岐（送信元は senderIdentity=support@keiba.link）を通り、
+legacy 分岐は通常発火しない。ただし gate を legacy へ rollback した場合は noreply 送信に戻る。
+恒久解消（legacy 経路も senderIdentity へ寄せる）は別タスク（稼働中経路のため慎重に）。
+
+---
+
 ## legacy 管理経路の無効化（設計・cutover 時に実施）
 
 `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` は

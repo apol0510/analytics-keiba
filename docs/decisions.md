@@ -820,3 +820,25 @@ gate env 5 本を v2-dry-run 構成へ変更し redeploy した。**A2 OFF を�
 worker 有効化（境界C）は実顧客送信を伴うため別承認。
 
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §D1 境界A 実施記録
+
+## 2026-07-21 — D1 cutover 完了（v2-full 稼働）・Event Webhook は別 Phase
+
+境界 A（v2-dry-run）→ B（カナリア再検証・実受信 1 通）→ C（worker 有効化）→ A1 再開（A2 OFF 維持）→
+D（reconciler write 有効化）を順に実施し、入金確認メール v2 を **gate=v2-full** で本番稼働させた。
+
+### 確定事項
+
+- **単一送信の構造保証**: A2 OFF を維持し、confirm（v2 分岐）は pending を書くだけ・送信は dispatcher→worker
+  の 1 経路のみ。A2 ON と worker 送信可を同時成立させない原則を cutover 全体で厳守。
+- **A1 ON は worker 有効化の後**に実施（pending 生成より先に送信経路を用意）。
+- Scheduled は 30 秒上限に合わせ dispatcher 3 件 / reconciler 10 件 + deadline 25s。
+- **Event Webhook（S9）は別 Phase**。署名検証キー（新規 secret）+ SendGrid 管理画面設定 + spoof/冪等/
+  out-of-order 実装を要し、D1 完成条件に含まれない。accepted と delivered は状態機械で既に区別済みで、
+  webhook 無しでも accepted で正しく終端する。
+- **legacy noreply 経路は残課題**（別タスク）。gate=v2-full では confirm は v2 分岐（support@keiba.link）を通る。
+
+### rollback（有効・追加承認不要）
+
+GLOBAL_PAUSE=true → redeploy で新規送信即停止（A2 は再 ON しない）。必要なら FLOW_VERSION=legacy。
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §D1 cutover 完了記録 / §Event Webhook（別 Phase）

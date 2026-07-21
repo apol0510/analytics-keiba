@@ -230,7 +230,7 @@ CI: `.github/workflows/safety-check.yml`（PR / push to main / workflow_dispatch
 - `nankan-stripe-integration/` の現在の稼働状況（本番で使われているか、休止中か）は **証拠未確認**。`docs/PAYMENT_SYSTEM.md` は銀行振込をメインと記述し、`CLAUDE.md` は「現在 pricing は銀行振込のみを案内」としているが、Stripe 経路の停止/生存の明示的記録は未確認。
 - 旧ドメインから `analytics.keiba.link` への 301 切替が完了しているかは **未確定**（`README.md` は「移行中」表記のまま）。
 - `CLAUDE.md` §移行タスク（初期セットアップ）7 項目のうち、どこまで完了しているかの最新状態は **証拠未確認**（`NEXT_SESSION.md` は文書内の「最終更新」表記が 2026-04-14）。
-- 入金確認メール v2 のどの段階（worker / reconciler / Event Webhook / 段階有効化）が本番有効かは **未確定**。カナリア分離までのコミットは main にあるが、cutover 実行の記録は未確認。
+- 入金確認メール v2 は **2026-07-21 に v2-full で本番稼働（D1 cutover 完了）**。worker（dispatcher */5）+ reconciler（*/15）稼働・A1 ON・A2 OFF・送信元 support@keiba.link。**Event Webhook（delivered/bounce 反映）は別 Phase・未実施**。詳細正本: `astro-site/docs/PAYMENT_EMAIL_V2.md` §D1 cutover 完了記録。
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降の実装着手状況は **未確定**（同文書は「実装未着手」のまま）。
 - 滞留ブランチが多数残存しており、どれが生存 / 破棄対象かの棚卸し記録は **証拠未確認**（正確な本数も 未確認）。
 - `verify-project.sh` は **旧プロジェクト由来の期待値（旧パス・旧 remote）** を検証しており、本リポジトリでは常に失敗する。意図的な残置か放置かは **証拠未確認**。
