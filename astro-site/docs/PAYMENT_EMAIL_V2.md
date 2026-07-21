@@ -324,6 +324,32 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 
 ---
 
+## D1 境界A 実施記録（2026-07-21・v2-dry-run 移行完了）
+
+**実顧客メールは未送信。** 旧 A2 と新 worker の二重送信可能性を構造的に排除し、v2-dry-run へ移行した。
+
+| 項目 | 実施内容 |
+|---|---|
+| 実施日時 | 2026-07-21（env 更新 00:50 UTC / redeploy 00:53 UTC published） |
+| 入口停止 | Airtable Automation **A1「入金確認 → 有料プラン昇格」を OFF**（MK が UI で実施・可逆） |
+| pending 0 確認 | 入口停止後の本番 Customers: pending=0 / unknown_after_attempt=0 / attempting_pre_send=0（read-only 件数のみ） |
+| A2 OFF | Airtable Automation **A2「入金確認メール自動送信」を OFF**（MK が UI で実施・目視確認済み） |
+| env 変更 | `FLOW_VERSION=v2` / `WORKER_SEND_ENABLED=false` / `RECONCILER_WRITE_ENABLED=false` / `GLOBAL_PAUSE=false` / `A2_DISABLED_CONFIRMED=true`（Production / Functions scope のみ） |
+| published deploy | `6a5ec2b98f23960008abcde2`（commit `cdf69b9` / ready / created 00:52 = env 更新後） |
+| gate mode | **v2-dry-run**（ok=true / violations=[]） |
+| worker 送信 | **不可**（v2-worker/v2-full でない） |
+| reconciler 書込み | **不可**（v2-full でない → dryRun=true） |
+| 実顧客送信 | **0** |
+| Scheduled no-op | dispatcher は gate 判定で `not_sending_mode` を先に返し Airtable/送信へ到達しない。reconciler cron は dryRun=true で書込み 0（unknown 0 件） |
+
+**rollback（境界A）**: env を `FLOW_VERSION=legacy` へ戻す（+ redeploy）→ gate=legacy へ即復帰。
+**A2 は再 ON しない**（入口停止を維持したまま既存状態を確定させる方針）。
+
+**次工程**: 境界B（新 IdempotencyKey でカナリア 1 件 → dispatcher/reconciler の no-op 確認 → cleanup）。
+**cutover は未完了**（実顧客への worker 送信は境界C＝worker=true 以降）。
+
+---
+
 ## legacy 管理経路の無効化（設計・cutover 時に実施）
 
 `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` は
