@@ -17,9 +17,13 @@
 
 ## Current Phase
 
-**Phase: ドキュメント基盤整備（初版） / 並行して決済メール v2 と entitlements 系が in-flight**
+**Phase（2026-07-22 現在）: 入金確認メール v2 は cutover 完了・gate=v2-full で本番稼働中。
+次 Phase 候補は Event Webhook（S9・別 Phase・未着手）**
 
-- 本 PR（`docs/autonomous-project-workflow`）は **文書のみ**。ソースコードの挙動は一切変更していない。
+- 入金確認メール v2 は 2026-07-21 に D1 cutover 完了。2026-07-22 に実顧客 1 件の本番通過と、
+  PAT / secret ローテーション後のカナリア再検証を完了（詳細は §In Progress の日付別記録）。
+- 初版（2026-07-20）の Phase は「ドキュメント基盤整備」であり、その PR
+  （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
 
 ## Completed
@@ -46,7 +50,10 @@
 
 ## In Progress
 
-> 以下はいずれも **2026-07-20 時点の観測**であり、恒久仕様ではない。作業前に必ず現物を再確認すること。
+> 以下はいずれも **観測時点（各見出しの日付）のスナップショット**であり、恒久仕様ではない。作業前に必ず現物を再確認すること。
+> **本節の各記録は時系列で追記されており、後の日付の記録が前の記録を上書きする。**
+> 特に「cutover 未実施」「カナリア未送信」等の記述は **2026-07-20〜21 時点のもの**で、
+> **2026-07-21 の §D1 cutover 完了（v2-full 稼働）以降は該当しない**。現在地は §Current Phase を参照。
 
 - **未マージの open PR（本 PR #143 を除き 3 件 / 2026-07-20 観測）**
   - #130 PR-A: 有料セッション共通ライブラリ（署名 Cookie）とテスト — `session-lib-pr-a`
@@ -110,13 +117,16 @@
    `providerAccepted` / `autoResend:false` / `needsReconcile:true` を返す。自動再送しない。
    ログから `recordId` を削除
 
-**未実施（承認待ち）**
+**当時（2026-07-20）の未実施項目 → いずれも解消済み**
 
 - **テスト Record の cleanup**（推奨は案 A: 監査保存 = accepted / Sent=true / AcceptedAt=実行時刻 /
   FailureStage=state_write_failed / token・lease クリア / IdempotencyKey 保持）。
-  **単純な pending 戻しは再送リスクのため不可**
-- テスト Base への不足フィールド追加（S1 の 14 フィールドとの突合）
-- 本 PR の merge / production deploy
+  **単純な pending 戻しは再送リスクのため不可** → **方針どおり accepted 監査終端で運用中**
+  （2026-07-21 境界B / 2026-07-22 カナリア再検証）
+- テスト Base への不足フィールド追加（S1 の 14 フィールドとの突合）→ **完了**。
+  2026-07-22 の read-only プローブで、provider 結果 6 / lease・fencing 4 / reconciler 参照ぶんを含む
+  **契約フィールド全 13 個の存在を確認**（送信後 PATCH 422 は再発していない）
+- 本 PR の merge / production deploy → **完了**
 
 ### 決済メール v2 / D1 前提実装 B1・B2（2026-07-21・branch `feat/payment-email-v2-dispatch-schedule`）
 
@@ -160,10 +170,63 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 
 **D1 cutover は完了。次 Phase 候補: Event Webhook（delivered/bounce 反映）。**
 
+### 初の実顧客通過（2026-07-22・v2-full の本番実証）
+
+cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過**した（カナリアではなく本番 Customers・実メール）。
+
+- ケース: 既存 Light 会員（Monthly / active / 有効期限は経過済み）が銀行振込で **Premium Annual** へ乗り換え。
+- **MK の手動操作は `PaymentConfirmed` チェック 1 回のみ**。以降は A1 → confirm（v2 分岐）→ dispatcher（`*/5`）
+  → worker が自律実行し、**メール 1 通**（`support@keiba.link`）で `PaymentEmailStatus=accepted` に終端。
+- **実証された不変条件**: 単一送信経路（A2 OFF のため旧設計なら 2 通だった経路で 1 通）/ 冪等性
+  （`Requested*` クリアにより再チェックで二重延長しない）/ **legacy の `PaymentEmailSent=true` が残っていても
+  v2 は影響を受けない**（dispatcher は `PaymentEmailStatus` のみで対象選択）/ 送信元契約。
+- 記録は **read-only の Airtable GET のみ**で作成（書込み 0 / Function 直接呼出 0 / 手動メール送信 0 / deploy 0）。
+  顧客の Email / 氏名 / recordId は記録しない。
+- 詳細と運用メモ（同種問い合わせへの回答・やってはいけない操作）は
+  `astro-site/docs/PAYMENT_EMAIL_V2.md` §初の実顧客通過記録 が単一源。
+
+### カナリア再検証（2026-07-22・PAT / secret ローテーション後）
+
+カナリア経路の認証情報を 2 つとも更新したため、**新しい認証情報で経路が通ること**を再検証した。
+**コード変更 0 / gate env 変更 0 / 本番 Customers 非接触 / 実顧客送信 0。**
+
+- **ローテーション**: カナリア専用 Airtable PAT を **Regenerate**（旧値失効）、`PAYMENT_CANARY_SECRET` を
+  **ローテーション**。いずれも Netlify **Production / Functions** のみへ差し替え。値は MK のみが保持し、
+  会話・ログ・git・docs に残さない（検証は presence / context / scope / `updated_at` のみ）。
+- **env は deploy 後にしか runtime へ反映されない**ため、毎回
+  **env の `updated_at` < published deploy の `published_at`** を確認して機械的に判定した。
+  Build Hook（`analytics-keiba-auto-deploy` / branch=main）は **反映対象ごとに 1 回だけ**実行。
+  いずれも commit `238db1c` の**コード差分ゼロ deploy**（60 functions / env キー総数 35 は前後不変）。
+  最終 published deploy = **`6a6076887f64ee0008a1cac0` / `238db1c` / ready**。
+- **認証失敗 403 は送信処理に到達しない**ことを実測で確認（secret-first fail closed）。
+  旧 runtime への 2 回の POST は 403 で終わり、Record は `pending` / `AttemptCount=0` / lease・token 空のまま
+  **完全に不変**。試行回数も IdempotencyKey も消費していない。
+- **最終カナリアは exactly once で成功**。専用 Base / Table / Record 1 件（allowlist exactly-one・テスト Base の
+  Automation ON=0 件を UI 目視）に新 IdempotencyKey で `pending` 初期化 → 応答
+  `ok=true / status=accepted / providerAccepted=true` → **メール 1 通を実受信**
+  （`support@keiba.link` / `238db1c`＝PR #151 のログイン導線付き本文）。
+- **cleanup は `PaymentEmailLeaseUntil` / `PaymentEmailAttemptToken` の 2 項目のみ**（PATCH 1 回）。
+  worker は Upstash ロックしか解放しないためこの 2 つが残るのは仕様どおり。
+  **`pending` へは戻さず accepted 監査終端を維持**（status / AttemptCount / Sent / ProviderMessageId /
+  AcceptedAt / IdempotencyKey は read-back で不変を確認）。
+- **二重送信なし / 送信後 PATCH 422（2026-07-20 事故）の再発なし / 本番 Customers 書込み 0。**
+- **PR #149 は Draft 凍結を継続**（SendGrid 側の Event Webhook 登録状況・署名検証キーが未確認のため）。
+  次工程の Event Webhook 確認は**別 Phase**であり、本作業の承認境界に混ぜない。
+- 詳細は `astro-site/docs/PAYMENT_EMAIL_V2.md` §カナリア再検証（2026-07-22）が単一源。
+
 ## Remaining
 
-- 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**
-- `paypal-webhook.js` / `send-payment-confirmation.js` の二重送信リスク修正（現在は両経路未使用のため実害なしと記録されている）
+- ~~入金確認メール v2 の cutover（D1）~~ → **2026-07-21 に完了・gate=v2-full で本番稼働中**
+  （§D1 cutover 完了 / §初の実顧客通過 / §カナリア再検証）。**Remaining ではない。**
+- 入金確認メール v2 の **Event Webhook（S9）**: SendGrid 署名検証キーの provision + 管理画面設定 +
+  `sendgrid-webhook.js` 拡張（署名検証・custom_args 照合・冪等・PII 非出力）。**別 Phase・未実施**。
+  関連 PR #149 は SendGrid 側の登録状況が未確認のため **Draft 凍結中**
+- 入金確認メール v2 の **legacy noreply 経路**の是正（`confirm-bank-payment.js` の legacy 分岐 /
+  `send-payment-confirmation-auto.js` が `FROM_EMAIL=noreply@keiba.link` のまま）。
+  gate=v2-full では通常発火しないが、legacy へ rollback すると noreply 送信に戻る。**未実施・別タスク**
+- `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` の
+  **410 Gone / redirect 化**。**未実施**。両経路とも運用上未使用のため実害は無いが到達可能で、
+  誤操作すると自前送信が走る（`PaymentEmailSent` を立てないため、A2 を再 ON した場合は 2 通になる）
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降（穴馬抽出ロジック改善・表示改善）。同文書は「実装未着手」のまま
 - `check:prediction-integrity`（検査対象 0 件で失敗する既存問題）の原因調査 →
   `check:jra-nankan-parity` とあわせて `safety-check.yml` へ組込（`CLAUDE.md` PR-K・低優先度）
@@ -188,17 +251,22 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 ## Blockers
 
 - 現時点で本ドキュメント基盤 PR に対する blocker はない。
-- コード側の実質的 blocker: 入金確認メール v2 の cutover は **本番メール送信・本番 Airtable 書込みを伴う高リスク操作**であり、
-  ユーザーの明示承認なしに実行できない。
+- ~~コード側の実質的 blocker: 入金確認メール v2 の cutover~~ → **2026-07-21 に完了**（解消済み）。
+- 現在のコード側 blocker: 入金確認メール v2 の **Event Webhook（S9）** は、SendGrid の署名検証キー provision と
+  管理画面での Event Webhook 設定（**ユーザー操作**）が前提であり、それ無しには着手できない。
+  併せて、本番メール送信・本番 Airtable 書込み・production deploy・env 変更は引き続き
+  **ユーザーの明示承認なしに実行しない**（`CLAUDE.md` §High-risk approval boundary）。
 
 ## Open Questions
 
 1. **ユーザーのメイン checkout に残る作業中変更をどう扱うか**（2026-07-20 観測）。変更内容が作業ブランチ名の
    範囲を大きく超えており、分割コミット方針・rebase 要否とも未確定。**本 docs PR のスコープ外。**
-2. ~~入金確認メール v2 は現在どこまで本番有効か~~ → **2026-07-21 に v2-full 稼働（D1 cutover 完了）**。旧記録: 2026-07-20 時点は `legacy`
-   （`validateEmailGates` violations=0）。confirm は legacy 経路、通常 worker / reconciler は無効。
-   **cutover（D1）は未実施・カナリアも未送信**。コード（状態機械 / worker / reconciler / canary / 送信元契約）は
-   deploy 済みだが、gate により本番送信経路としては動作していない。
+2. ~~入金確認メール v2 は現在どこまで本番有効か~~ → **解決済み**。**2026-07-21 に D1 cutover 完了・gate=v2-full 稼働**
+   （A1 ON / A2 OFF / dispatcher `*/5` / reconciler `*/15` / 送信元 support@keiba.link）。
+   2026-07-22 に**実顧客 1 件の本番通過**と、**PAT / secret ローテーション後のカナリア再検証**も完了。
+   未着手として残るのは **Event Webhook（S9）と legacy noreply 経路**のみ（§Remaining）。
+   > 参考（当時の記録・現在は該当しない）: 2026-07-20 時点の gate は `legacy` で、confirm は legacy 経路、
+   > 通常 worker / reconciler は無効、カナリアも未送信だった。コードは deploy 済みだが gate で止まっていた。
 3. open PR #25（2026-05-26 起票）は生かすのか閉じるのか。長期滞留の判断記録が無い。
 4. `nankan-stripe-integration/` は本番で稼働しているのか休止中なのか。証拠未確認。
 5. 旧ドメインからの 301 切替は完了しているのか。`README.md` の「移行中」表記が更新されていない。
@@ -209,17 +277,25 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 8. `verify-project.sh` は旧プロジェクト由来の期待値（旧パス・旧 remote）を検証しており、本リポジトリでは
    常に失敗する。意図的な残置か放置かは証拠未確認。
 
-## High-risk Operations Not Yet Executed
+## High-risk Operations
 
-本 PR は **`CLAUDE.md` §High-risk approval boundary に列挙された高リスク操作を一つも実行していない**
-（一覧は同節が単一源。本書では重複記載しない）。加えて、ユーザーのメイン checkout へは一切書込んでいない
-（作業は分離 worktree で実施）。変更は文書 4 ファイルのみで、ソースコード・workflow・lockfile は未変更。
+高リスク操作の一覧は **`CLAUDE.md` §High-risk approval boundary が単一源**（本書では重複記載しない）。
+
+- **ドキュメント基盤 PR #143（2026-07-20）**: 高リスク操作を **一つも実行していない**。ユーザーのメイン
+  checkout へも書込まず（作業は分離 worktree）、変更は文書 4 ファイルのみ。
+- **2026-07-21〜22 の入金確認メール v2 作業**: cutover・env 変更・production deploy（Build Hook）・
+  実顧客へのメール送信は、**いずれもユーザーの明示承認を都度取得したうえで実施**した
+  （§D1 cutover 完了 / §カナリア再検証）。本 PR（#150）の変更自体は **docs のみ**で、
+  コード・env・workflow・lockfile は未変更。
 
 ## Repository State
 
 - **Repository**: `analytics-keiba` / **Origin**: `https://github.com/apol0510/analytics-keiba.git`
-- **Branch**: `docs/autonomous-project-workflow`（`origin/main` から分岐 / PR #143）。作業は分離 worktree で実施。
-- **本ブランチの変更範囲**: `CLAUDE.md` / `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` の 4 ファイルのみ。
+- **Branch（初版時）**: `docs/autonomous-project-workflow`（`origin/main` から分岐 / PR #143）。
+  変更範囲は `CLAUDE.md` / `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` の 4 ファイルのみ。
+- **Branch（本更新時）**: `docs/payment-email-v2-first-production-case`（PR #150 / Draft）。
+  変更範囲は `astro-site/docs/PAYMENT_EMAIL_V2.md` / `docs/progress.md` の **docs 2 ファイルのみ**。
+- 作業はいずれも**分離 worktree** で実施（ユーザーのメイン checkout へは書込まない）。
   ソースコード・workflow・lockfile は未変更。
 - メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
-- **Last verified**: 2026-07-20
+- **Last verified**: 2026-07-22

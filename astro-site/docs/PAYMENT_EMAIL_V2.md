@@ -348,6 +348,9 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 **次工程**: 境界B（新 IdempotencyKey でカナリア 1 件 → dispatcher/reconciler の no-op 確認 → cleanup）。
 **cutover は未完了**（実顧客への worker 送信は境界C＝worker=true 以降）。
 
+> ⚠️ 上記の「未完了」は **境界A 実施直後（2026-07-21）時点の記述**である。
+> **cutover はこの後、同日中に境界 B→C→D まで完了**した（次節 §D1 cutover 完了記録）。
+
 ---
 
 ## D1 cutover 完了記録（2026-07-21・v2-full 稼働）
@@ -375,6 +378,165 @@ A2 OFF のため Status→active の自動メールは発火しない。送信�
 1. `PAYMENT_EMAIL_GLOBAL_PAUSE=true` → redeploy（新規送信を即停止・A2 は再 ON しない）
 2. 必要なら `FLOW_VERSION=legacy` / `WORKER_SEND=false` / `RECONCILER_WRITE=false` → redeploy で legacy へ
 
+## 初の実顧客通過記録（2026-07-22・v2-full）
+
+D1 cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過**した。カナリア（テスト Base）ではなく
+**本番 Customers・実顧客・実メール**で不変条件が守られたことの確認。
+
+| 項目 | 実測 |
+|---|---|
+| ケース | 既存 Light 会員（Monthly / Status=active / 有効期限は経過済み）が銀行振込で **Premium Annual** へ乗り換え |
+| MK の手動操作 | **`PaymentConfirmed` にチェック 1 回のみ**（他フィールドは一切手動編集していない） |
+| confirm（v2 分岐）の PATCH | `プラン=Premium` / `PlanType=Annual` / `Status=active` / `有効期限=入金確認日 JST +1年` / `PaidAt` / **`PaymentEmailStatus=pending`** / `Requested*` クリア |
+| confirm の送信 | **なし**（`PaymentEmailSent` も書かない） |
+| 送信 | dispatcher（`*/5`）が pending を取得 → worker が **1 通だけ**送信（`support@keiba.link`） |
+| 終端 | `PaymentEmailStatus=accepted` / `PaymentEmailSent=true`（worker が互換出力として記録） |
+| 二重送信 | **なし**（A2 OFF のため Status→active で旧 Automation は発火しない） |
+| 所要 | チェック → `accepted` まで数分（dispatcher の 5 分周期内） |
+
+### この事例で実証された不変条件
+
+- **単一送信経路**: confirm は pending を作るだけ。送信は dispatcher→worker の 1 経路のみ。
+  旧設計（A2 ON）なら `Status→active` で A2 も発火し **2 通**届いていた経路である。
+- **冪等性**: 承認時に `Requested*` がクリアされ、`PaymentConfirmed` を再チェックしても
+  `buildV2ConfirmationFields` が `null`（fail closed）を返し**有効期限が二重延長されない**。
+- **legacy フラグの無害化**: 当該レコードには Light 購入時の **`PaymentEmailSent=true` が残っていた**が、
+  v2 の dispatcher は `PaymentEmailStatus='pending'` のみで対象を選ぶため**影響しなかった**
+  （「新ロジックは `PaymentEmailSent` を判断材料として一切読まない」が実運用で確認された）。
+- **送信元契約**: `support@keiba.link` で送信（noreply へ戻っていない）。
+
+### 運用メモ（同種の問い合わせへの回答）
+
+「自動化したのに何も起きない」という問い合わせの大半は、**`PaymentConfirmed` が未チェック**であることが原因。
+申込フォームは `Requested*` に退避するだけで権限を付与しない（未入金で昇格させないための fail closed）ため、
+**チェックが自動化の起点**である。以下は事故になるので行わない:
+
+- `プラン` / `PlanType` / `Status` / `有効期限` の手動編集（confirm が上書き前提で組み立てている）
+- `Status` を pending→active に手で変えてメールを起こそうとする（**A2 は OFF なので送信されない**）
+- `PaymentEmailStatus` の手動書き換え（二重送信防止の状態機械を壊す）
+- `pending` が数分続くことを異常と見なして `PaymentConfirmed` を外して入れ直す（再送されず、昇格もしない）
+
+`pending` のまま **10 分以上**動かない場合のみ異常。**自動再送を試さず**、gate 構成（`v2-full`）と
+Scheduled Function の稼働を read-only で確認する。
+
+> 本記録は read-only の Airtable GET のみで作成した（**書込み 0 / Function 直接呼出 0 / 手動メール送信 0 /
+> deploy 0**）。実際の昇格・送信はすべて本番の A1 → confirm → dispatcher → worker が自律実行した。
+> **顧客の Email / 氏名 / recordId は記録しない。**
+
+### 続報: 同じ事例からメール本文の欠陥が判明（2026-07-22 中に修正・本番反映済み）
+
+**状態機械としては完璧に動作したが、顧客体験は失敗していた。**
+この顧客は `accepted` 到達後に「ログインできない」と問い合わせてきた。原因は
+**入金確認メールにログイン導線が無かった**こと（本文が 1 行だけだった）。
+結果としてログインリンクを 9 回発行して迷わせている。
+
+**教訓**: 「不変条件がすべて守られた」ことと「顧客が使い始められた」ことは別問題である。
+送信成功を終端と見なさず、**受け取った人が次に何をするか**まで含めて設計する。
+
+恒久対策は §入金確認メールの本文契約（2026-07-22・ログイン導線の必須化）を参照
+（`238db1c` で本番反映済み）。
+
+---
+
+## カナリア再検証（2026-07-22・PAT / secret ローテーション後の実効性確認）
+
+カナリア経路の認証情報を 2 つとも更新したため、**新しい認証情報で経路が端から端まで動くこと**を
+再検証した。コード変更 0 / gate env 変更 0 / 本番 Customers 非接触。
+
+### 1. 何を・なぜローテーションしたか
+
+| 対象 | 操作 | 理由 |
+|---|---|---|
+| `PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY`（カナリア専用 Airtable PAT） | **Regenerate**（旧値失効）→ Netlify **Production / Functions** へ差し替え | 旧値の無効化。**本番 `AIRTABLE_API_KEY` とは別系統**である分離を維持したまま更新する |
+| `PAYMENT_CANARY_SECRET`（`x-canary-secret`） | **ローテーション** → Netlify **Production / Functions** へ差し替え | 同上。`is_secret=true` のため **API/CLI から平文取得できず、値は MK のみが保持**する |
+
+いずれも **値は会話・ログ・git・本書に残さない**。検証はすべて presence / context / scope / `updated_at` の
+メタデータのみで行った。
+
+### 2. env 反映は deploy 後にのみ runtime へ届く（判定方法を恒久化）
+
+Netlify の env は **値を変更しただけでは動作中の Function に反映されない**。反映は次の deploy 以降になる。
+そのため本作業では毎回、次の**時刻の前後関係**で機械的に判定した（推測しない）。
+
+```
+env の updated_at  <  published deploy の published_at   →  runtime は新しい値
+```
+
+| 反映対象 | env `updated_at` | Build Hook 実行 | published deploy | `published_at` | 判定 |
+|---|---|---|---|---|---|
+| カナリア専用 PAT | 2026-07-22T06:30:05Z | **1 回のみ** | `6a60680038d39a00083ff5d6` | 2026-07-22T06:50:46Z | ✅ 反映 |
+| `PAYMENT_CANARY_SECRET` | 2026-07-22T07:46:31Z | **1 回のみ** | **`6a6076887f64ee0008a1cac0`** | 2026-07-22T07:52:44Z | ✅ 反映 |
+
+- Build Hook は既存の `analytics-keiba-auto-deploy`（branch=main）を**各 1 回だけ**実行。**Hook URL は出力しない**。
+- どちらも **commit `238db1c`（= その時点の origin/main）でコード差分ゼロの env 伝播専用ビルド**。
+  60 functions deployed / deploy_time 67〜69 秒 / env キー総数 35 は前後で不変。
+- 最終 published deploy: **`6a6076887f64ee0008a1cac0` / commit `238db1c` / state=ready**。
+
+### 3. 認証失敗（403）は送信処理へ進まない — 実測で確認
+
+secret 差し替え前に旧 runtime へ投げた 2 回の POST は、いずれも **403** で終わった
+（1 回は zsh の `read -p` 非対応で secret が空のまま送信されたもの。zsh では `read -rs "VAR?prompt"` を使う）。
+
+`admin-canary-payment-email` は **secret-first fail closed**（認証・allowlist 検証を **body parse より前**に実行）
+のため、403 は `makeCanaryWorkerDeps()` / `runWorkerOnce()` に到達しない。実測でも **Record は完全に不変**だった:
+
+- `PaymentEmailStatus=pending` / `AttemptCount=0` / `Sent=false` を維持
+- `AttemptedAt` / `LeaseUntil` / `AttemptToken` すべて空 = **lease すら取得していない**
+- 試行回数を消費せず、`PaymentEmailIdempotencyKey`（新キー）は**未使用のまま有効**
+
+→ **認証段の 403 は「送信試行」ではない**。再実行にあたって IdempotencyKey を作り直す必要はない。
+
+### 4. 最終カナリア（exactly once）
+
+| 項目 | 実測 |
+|---|---|
+| 対象 | **カナリア専用 Base / Table / Record 1 件のみ**（allowlist **exactly-one** をコードで強制） |
+| テスト Base の Automation | **ON = 0 件**（MK が Airtable UI で目視確認。本番 A2 OFF は別 Base の話であり証明にならないため必須） |
+| 事前準備 | 新しい一意な `PaymentEmailIdempotencyKey` を採番して `pending` 初期化（PATCH 1 回 + read-back）。**過去キーは再利用しない** |
+| 実行 | `admin-canary-payment-email` を **exactly once**（応答 `canary=true` / `ok=true` / `status=accepted` / `providerAccepted=true`） |
+| メール | **1 通を実受信**（送信元 `support@keiba.link` / 本文は `238db1c`＝PR #151 のログイン導線付き版） |
+| 送信後 Record | `accepted` / `AttemptCount=1` / `Sent=true` / `ProviderMessageId` 記録あり / `AcceptedAt` 記録あり / 新キー保持 / `FailureStage`・`LastError`・`DeliveredAt` 空 |
+
+`DeliveredAt` が空なのは正常（Event Webhook は未実施のため `accepted` が正しい終端）。
+
+### 5. cleanup は lease / fencing の 2 項目だけ
+
+送信後、**`PaymentEmailLeaseUntil` と `PaymentEmailAttemptToken` だけが残る**ことを実測で確認した。
+これは仕様どおりの挙動で、worker の `finally` は **Upstash ロックのみ解放**し、Airtable 側の lease / fencing
+フィールドは `decideAfterProvider` の書込み対象外だからである。
+
+- cleanup PATCH は **1 回**、対象は **`PaymentEmailLeaseUntil` / `PaymentEmailAttemptToken` のみ**。
+- `PaymentEmailStatus` / `AttemptCount` / `Sent` / `ProviderMessageId` / `AcceptedAt` / `IdempotencyKey` は
+  **read-back で PATCH 前と同一であることを確認**（同値 PATCH もしない）。
+- **`pending` へは戻さない**。accepted 監査終端をそのまま維持する（pending 戻しは再送リスク）。
+
+**再送されないことの根拠（3 重）**:
+
+1. `accepted` ∈ `NO_AUTO_RESEND_STATUSES` → `decideLeaseAcquire` が `ineligible_state:accepted` を返し、
+   PATCH も SendGrid POST も発生しない
+2. reconciler は `unknown_after_attempt` 以外を即 skip する
+3. dispatcher は **本番 Base の pending しか列挙しない**（カナリア Record は別 Base で構造的に到達不能）
+
+### 6. 影響範囲（実測）
+
+| 項目 | 実測 |
+|---|---|
+| 本番 Customers | **接続 0 / 読取 0 / 書込み 0** |
+| メール | **1 通のみ**（MK 本人宛のテスト送信。追加送信 0） |
+| 二重送信 | **なし** |
+| 送信後 PATCH 422（2026-07-20 事故） | **再発なし**（送信前 schema preflight が有効に機能） |
+| gate env / Automation / SendGrid 設定 | **変更なし**（gate は `v2-full` のまま。カナリアは gate を参照しない独立経路） |
+| Airtable 書込み | カナリア専用 Base に **初期化 1 回 + cleanup 1 回**のみ |
+
+### 7. 運用上の注意（次回の再検証で繰り返さないために）
+
+- **env を変えたら必ず deploy**。値だけ差し替えて POST すると、旧値の runtime に対して投げることになり 403 になる。
+- **反映確認は `updated_at` < `published_at`** で行う。「たぶん反映された」と判断しない。
+- `PAYMENT_CANARY_SECRET` は `is_secret=true` で**取得できない**。POST は **MK 自身のターミナルで実行**し、
+  secret と recordId が画面へ出ない形（非エコー入力 + env からの取得）で叩く。応答 JSON には
+  recordId も ProviderMessageId も含まれないため、そのまま共有できる。
+- カナリア Base の Automation は **毎回 UI で目視**する（API で確定できない）。
+
 ## Event Webhook（S9）— 別 Phase・未実施
 
 SendGrid Event Webhook（`accepted` → `delivered`/`bounced`/`dropped` 反映）は **D1 cutover とは別 Phase** とし、
@@ -387,6 +549,12 @@ SendGrid Event Webhook（`accepted` → `delivered`/`bounced`/`dropped` 反映�
 
 → 次 Phase で `sendgrid-webhook.js` 拡張（署名検証・custom_args 照合・冪等・PII 非出力）+ テスト +
    SendGrid 側設定を実施する。それまで `PaymentEmailDeliveredAt` / `delivered` 系は未使用。
+
+**PR #149（`feat/sendgrid-webhook-fail-closed`）は Draft のまま凍結を継続する**（2026-07-22 時点）。
+SendGrid 側の Event Webhook の登録状況・署名検証キーの有無が**未確認**であり、
+署名検証を fail closed 化するコードだけを先に本番へ入れると、確認前の状態で挙動が変わりうるため。
+**カナリア再検証・env 反映 deploy とは別 Phase として扱い、同じ承認境界に混ぜない。**
+次工程は「SendGrid 管理画面で Event Webhook の登録状況と署名検証キーを read-only で確認する」ことから始める。
 
 ## legacy noreply 経路の残課題（未解決・別タスク）
 
