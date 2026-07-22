@@ -113,7 +113,7 @@ export function buildPaymentConfirmationEmail({ fullName, plan, planType, expira
       <p style="margin:0 0 16px;color:#e2e8f0;font-size:15px;line-height:1.9;">
         ${greeting}<br>
         この度は <strong style="color:#f8fafc;">${planText}</strong> をお申し込みいただき、誠にありがとうございます。<br>
-        ご入金の確認が取れましたので、<strong style="color:#7dd3fc;">ただいまより全ての機能をご利用いただけます。</strong>
+        ご入金の確認が取れましたので、<strong style="color:#7dd3fc;">ただいまよりご利用いただけます。</strong>
       </p>
 
       <table style="width:100%;border-collapse:collapse;background:#0f172a;border-radius:10px;padding:4px;margin:0 0 24px;">
@@ -179,7 +179,7 @@ export function buildPaymentConfirmationEmail({ fullName, plan, planType, expira
     '',
     clean(fullName) ? `${clean(fullName)} 様` : 'この度はありがとうございます。',
     `この度は ${clean(plan) || 'ご購入のプラン'} をお申し込みいただき、誠にありがとうございます。`,
-    'ご入金の確認が取れましたので、ただいまより全ての機能をご利用いただけます。',
+    'ご入金の確認が取れましたので、ただいまよりご利用いただけます。',
     '',
     '■ ご契約内容',
     `　プラン: ${clean(plan) || 'ご購入のプラン'}`,
