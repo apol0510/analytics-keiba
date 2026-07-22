@@ -550,6 +550,59 @@ SendGrid Event Webhook（`accepted` → `delivered`/`bounced`/`dropped` 反映�
 → 次 Phase で `sendgrid-webhook.js` 拡張（署名検証・custom_args 照合・冪等・PII 非出力）+ テスト +
    SendGrid 側設定を実施する。それまで `PaymentEmailDeliveredAt` / `delivered` 系は未使用。
 
+### S9 本体（2026-07-23 実装）— `accepted` → `delivered` / `bounced` / `dropped`
+
+**単一源**: 判定は `paymentEmailState.js` の `decideWebhookTransition()`、適用は
+`src/lib/payments/paymentEmailWebhook.js`。Function（`sendgrid-webhook.js`）は**配線のみ**で
+判定を再実装しない（guard で固定）。
+
+#### 対象イベントの選別
+
+worker は送信時に `custom_args: { record_id, idempotency_key, purpose: 'payment_confirmation_v2' }`
+を載せている。SendGrid はこれを各イベントの**トップレベル項目**として返すため、
+**`purpose` が一致するイベントだけ**を Payment Email 経路へ入れる。
+メルマガ等の bounce は従来どおり **suppression（`EmailBlacklist`）側だけ**が扱う（両者は独立）。
+
+#### 状態遷移の規則（順序非依存・重複耐性）
+
+SendGrid は exactly-once でも順序保証でもない。そこで:
+
+| 現在の状態 | delivered | bounce / dropped |
+|---|---|---|
+| `accepted` / `unknown_after_attempt` | → `delivered`（+ `PaymentEmailDeliveredAt`） | → `bounced` / `dropped` |
+| `delivered` | **no-op**（`already_delivered`） | **上書きする**（失敗の方が運用上有用） |
+| `bounced` / `dropped` | **不変**（吸収状態） | **不変**（吸収状態） |
+| `pending` / `attempting_pre_send` / `failed_*` / `needs_admin` / 空 | **触らない**（`unexpected_state:*`・fail closed） | 同左 |
+
+- **失敗は吸収状態・delivered は暫定**という 2 規則により、`delivered` と `bounce` が
+  **どちらの順で届いても最終状態は `bounced`** に収束する（順序非依存）。
+- 重複イベントは**同じ値の代入**になるため無害。よって **`sg_event_id` の保持が不要**＝
+  **Airtable の新規フィールドを増やさない**。
+- **限界**: `bounce` と `dropped` の相互順序は保存されない（先に届いた方が残る）。
+  どちらも失敗終端で運用判断は変わらないため許容する。
+
+#### fail closed の約束
+
+1. 署名検証を通ったイベントだけを渡す（検証の単一源は `sendgridSignature.js`）
+2. `record_id` / `idempotency_key` が欠けていたら **`getRecord` すら呼ばない**
+3. レコードの `PaymentEmailIdempotencyKey` と**完全一致**しなければ**書かない**
+   （再送で採番し直した後に古いイベントが届いても、過去の送信結果で上書きしない）
+4. Payment Email 反映が失敗しても **suppression 側を巻き添えにしない**（try/catch で隔離）
+5. **応答・ログは件数と reason のみ**（recordId / メールアドレス / 冪等キーを出さない）
+
+検証: `paymentEmailWebhook.test.mjs`（19 件）/ `sendgridWebhook.guard.test.mjs` の S9 配線 5 件
+（`test:bank-payment` / `test:webhooks` → `check:safety` で CI 強制）
+
+#### 有効化に必要な残作業（**未実施・要承認**）
+
+コードは本番へ入っても、**SendGrid 側で `delivered` イベントが未選択**のため
+`delivered` は届かない（＝`PaymentEmailDeliveredAt` は埋まらない）。
+一方 **`bounce` / `dropped` は既に選択済み**なので、**決済メールがバウンスした場合は
+本番 Customers の `PaymentEmailStatus` が `bounced` / `dropped` へ更新される**（これが S9 の目的）。
+
+`delivered` を反映させるには SendGrid の Event Webhook 設定で **Delivered を追加**する
+（設定変更＝高リスク境界・別承認）。
+
 ### S9 前提工事（Phase 0）は 2026-07-21 に実施済み
 
 S9 の前提調査で、**`sendgrid-webhook.js` が署名検証・認証なしで公開稼働**しており、

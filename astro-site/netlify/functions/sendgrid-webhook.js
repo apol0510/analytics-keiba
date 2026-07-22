@@ -27,6 +27,8 @@ import {
   resolveMaxSkewSec,
 } from '../../src/lib/webhooks/sendgridSignature.js';
 import { emailMatchFormula } from '../../src/lib/webhooks/airtableFormula.js';
+import { applyPaymentEmailEvents } from '../../src/lib/payments/paymentEmailWebhook.js';
+import { getRecord, patchRecord } from '../../src/lib/payments/paymentEmailDeps.js';
 
 config();
 
@@ -99,9 +101,31 @@ export default async (req) => {
       }
     }
 
+    // ── 4. Payment Email v2 の配信結果を反映（S9 本体）────────────────
+    // custom_args.purpose が一致するイベントだけを対象にする。判定は
+    // src/lib/payments/paymentEmailWebhook.js（純粋ロジックは paymentEmailState.js）に集約し、
+    // ここには再実装しない。suppression 側（上の processFailureEvent）とは独立で、
+    // 片方が失敗しても他方を止めない。
+    let paymentEmail = { targeted: 0, applied: 0, skipped: 0, errors: 0, byReason: {} };
+    try {
+      paymentEmail = await applyPaymentEmailEvents({
+        events,
+        now: Date.now(),
+        deps: { getRecord, patchRecord },
+      });
+    } catch {
+      // 集計に失敗しても suppression 側の結果は返す（例外本文はログへ出さない）
+      paymentEmail = { ...paymentEmail, errors: paymentEmail.errors + 1 };
+    }
+
     // 件数のみ（メールアドレス・recordId を出さない）
-    console.log('📨 [sendgrid-webhook] 処理完了:', { received: events.length, processed, failed });
-    return jsonResponse(200, { success: true, received: events.length, processed, failed });
+    console.log('📨 [sendgrid-webhook] 処理完了:', {
+      received: events.length,
+      processed,
+      failed,
+      paymentEmail,
+    });
+    return jsonResponse(200, { success: true, received: events.length, processed, failed, paymentEmail });
   } catch {
     console.error('❌ [sendgrid-webhook] 処理エラー');
     return jsonResponse(500, { error: 'Webhook processing failed' });
