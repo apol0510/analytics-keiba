@@ -68,9 +68,12 @@ Payment Email v2 が作った欠陥ではなく**以前から存在した欠陥*
 
 ## 本番反映の順序（高リスク境界・ユーザー操作）
 
-> ⚠️ **SendGrid 管理画面の現在の状態は未確認**（2026-07-22 時点）。
-> 「未登録／無効であることをユーザーが確認済み」と記載していたが、**その確認は行われていない**
-> （やり取りの読み違い）。断定を撤回し、以下は**間接証拠にもとづく推定**として扱う。
+> ✅ **2026-07-22: この順序どおりに実施完了**（§Phase 0 本番反映・Webhook 有効化 完了記録）。
+> 以下は当時の判断根拠と、今後同種の作業を行うときの手順として残す。
+>
+> ⚠️（当時）**SendGrid 管理画面の現在の状態は未確認**だった。「未登録／無効であることをユーザーが
+> 確認済み」と記載していたが、**その確認は行われていなかった**（やり取りの読み違い）。断定を撤回し、
+> 以下を**間接証拠にもとづく推定**として扱った。**その後 API で確認し 0 本登録が確定**している。
 
 ### 間接証拠（read-only・Airtable `EmailBlacklist`）
 
@@ -114,6 +117,79 @@ SendGrid 管理画面 → Settings → Mail Settings → **Event Webhook** の�
 
 **rollback**: SendGrid 側で Event Webhook を無効化する（env を消すと 403 になるだけで、
 「検証なしで受け付ける」状態には**戻せない／戻さない**）。
+
+---
+
+## Phase 0 本番反映・Webhook 有効化 完了記録（2026-07-22）
+
+上記「本番反映の順序」を**逆順にせず**実施し、**署名検証なしの公開受信窓を閉じた**。
+本番メール送信 0 通 / 手動 Airtable 書込み 0 件 / 本番 Customers 接続 0。
+
+### 実施した順序と結果
+
+| # | 実施 | 結果 |
+|---|---|---|
+| 0 | SendGrid 登録状況を **API で read-only 確認** | `GET /v3/user/webhooks/event/settings/all` = 200 / **登録 0 本**（`max_allowed=2`）。§間接証拠の推定が**確定**。「未確認のまま merge しない」条件を充足 |
+| 1 | **PR #149 を squash merge**（コードを先に本番へ） | merge commit **`137a348`**。この時点では鍵未設定のため受信側は**全リクエスト 403** |
+| 2 | SendGrid で Event Webhook を作成（**enabled OFF のまま Save**） | `AK Event Webhook` / Post URL は本番エンドポイントと一致 / **Signed Event Webhook = ON**（Verification Key 発行） |
+| 3 | `SENDGRID_WEBHOOK_VERIFICATION_KEY` を Netlify へ設定 | **Secret=true / Functions scope のみ / Production のみ**（他 context は空）。値は会話・ログ・git・本書のいずれにも残していない |
+| 4 | **production redeploy**（Build Hook 1 回・コード差分ゼロ） | published **`6a609fe22791d800080c2ff0`** / commit `137a348` / ready。**env の `updated_at` < deploy の `published_at`** を確認して runtime 反映を機械的に判定 |
+| 5 | SendGrid で **Enable endpoint を ON** | `enabled=true` / `signed=true` / URL 一致 / 対象イベントは **bounce・dropped・spam_report・unsubscribe の 4 つのみ**（`delivered` ほかは false のまま・追加していない） |
+| 6 | ~~Test Your Integration~~ | **実施しない方針**（下記） |
+
+### Test Integration を行わない判断（2026-07-22）
+
+**理由**: 現行実装では、テスト payload に `bounce` / `dropped` / `spamreport` / `unsubscribe` が
+含まれ**署名検証を通過した場合、本番 `EmailBlacklist` にダミーレコードが作成される**
+（`processFailureEvent` → `findExistingRecord` で不在 → `createNewRecord`）。
+`EmailBlacklist` は `newsletter-preview.js` が配信除外に使う**実運用の suppression list** であり、
+検証のために本番テーブルへダミーを書き込むことは避ける。
+
+- 公式ドキュメントは「example events の JSON 配列を POST する」「実データは含まない」とのみ記載で、
+  **どのイベント種別・どの宛先が含まれるかは未記載**（＝書込みが起きるか事前に確定できない）。
+- **代わりに organic event（実バウンス等）での実証を待つ**。実バウンスの記録は汚染ではなく
+  **本来復旧させたかった動作そのもの**である。
+- なお書込みが起きるのは**鍵が正しいときだけ**で、鍵不一致なら 403 で 1 バイトも書かない
+  （fail closed の self-limiting な性質）。
+
+### baseline（organic event 到達の判定基準 / 2026-07-22 read-only 取得）
+
+| 項目 | 値 |
+|---|---|
+| `sendgrid-webhook` の Function 到達（直近 24h） | **0 件** |
+| `EmailBlacklist` 総件数 | **11 件** |
+| Status 内訳 | HARD_BOUNCE **4** / SOFT_BOUNCE **7** |
+| `BounceCount` 合計 | **16** |
+| 2026 年の新規レコード | **0 件**（作成日は 2025-09-10: 3 / 09-21: 3 / 09-23: 5） |
+
+> ログ取得手段の妥当性は確認済み（同じ `netlify logs` コマンドで `payment-email-dispatcher` の
+> 定期実行ログは取得できる）。**「ログが見えない」のではなく「到達が 0 件」**である。
+
+### 未完了: 鍵一致の E2E 実証
+
+**Verification Key が正しいことは、まだエンドツーエンドで実証されていない。**
+
+- 設定時に「SendGrid の `public_key` == Netlify の値」をプログラム比較で一致確認済み。
+  ただしその後 env を **Secret 化**したため、**値の再照合はできない**（API から取得不可）。
+- 署名を自作しての検証は**不可能**（署名には SendGrid 側の秘密鍵が必要）。
+- 未署名リクエストの 403 は**鍵の正しさを何も証明しない**。
+- → **実証は organic event の到達を待つ**。
+
+### 次回確認（read-only のみ・書込みなし）
+
+```
+netlify logs --source functions --function sendgrid-webhook --since 24h
+# + EmailBlacklist の 総件数 / Status 内訳 / BounceCount 合計（メールアドレス・recordId は出力しない）
+```
+
+| 観測 | 判定 |
+|---|---|
+| `📨 処理完了: {received, processed, failed}` が出る | **署名検証 OK＝鍵一致が実証**（Phase 0 の完了条件） |
+| `🚫 署名検証 NG: verification_key_invalid` / `signature_mismatch` が**継続**する | **鍵不一致の疑い → 直ちに SendGrid 側で Enable endpoint を OFF**。SendGrid は最大 24 時間リトライするため、OFF で取りこぼしを止める。fail closed なので**誤書込みは発生しない** |
+| 総件数が 11 を超える / `BounceCount` 合計が 16 を超える | 実バウンスが正しく記録された（2025-09 以降止まっていた収集の復旧） |
+
+**S9 本体（`accepted` → `delivered` 反映）は未実装・別 Phase**。本 Function は `EmailBlacklist` のみを扱い、
+Payment Email の状態は 1 バイトも書かない。
 
 ## 検証
 

@@ -562,9 +562,26 @@ formula injection 遮断 / PII 非出力）。
 S9 本体（`custom_args` 照合による Payment Email 状態への反映）は**引き続き未実装**。
 
 この Phase 0 は **PR #149（`feat/sendgrid-webhook-fail-closed`）** で実装され、
-**2026-07-22 時点では Draft**。凍結理由だった「SendGrid 側の登録状況が未確認」は
-**同日 read-only で解消**した（下記）。カナリア再検証・env 反映 deploy とは
-**別の承認境界**として扱い、同じ承認に混ぜない。
+**2026-07-22 に squash merge（`137a348`）→ production 反映まで完了**した。
+凍結理由だった「SendGrid 側の登録状況が未確認」は同日 read-only で解消（下記）。
+カナリア再検証・env 反映 deploy とは**別の承認境界**として扱い、同じ承認に混ぜていない。
+
+#### Phase 0 の本番反映・Webhook 有効化（2026-07-22 完了）
+
+| 項目 | 状態 |
+|---|---|
+| コード | `137a348` を production 反映。published **`6a609fe22791d800080c2ff0` / ready** |
+| 受信側 | `sendgrid-webhook.js` は**署名検証必須の fail closed**（鍵未設定でも 403・省略分岐なし） |
+| 検証鍵 | `SENDGRID_WEBHOOK_VERIFICATION_KEY` = **Secret / Functions scope / Production のみ**・**runtime 反映済み**（env の `updated_at` < deploy の `published_at` で判定） |
+| SendGrid | 「AK Event Webhook」= **enabled=true / signed=true** / Post URL 一致 |
+| 対象イベント | **bounce / dropped / spam_report / unsubscribe のみ**。`delivered` ほかは false（S9 本体が未実装のため意図的に選ばない） |
+| Test Integration | **実施しない方針**。本番 `EmailBlacklist` にダミーが作られる可能性があるため、**organic event（実バウンス）で実証**する |
+| 鍵一致の E2E 実証 | **未完了**（到達 0 件）。env は Secret 化済みで値の再照合は不可、署名の自作も不可 |
+| 異常時 | `signature_mismatch` / `verification_key_invalid` が**継続**したら **SendGrid 側で Enable endpoint を直ちに OFF**（fail closed のため誤書込みは発生しない） |
+
+baseline（organic event 判定用）: Function 到達 **0 件（24h）** / `EmailBlacklist` **11 件**
+（HARD_BOUNCE 4 / SOFT_BOUNCE 7 / `BounceCount` 合計 **16** / 2026 年の新規 **0**）。
+詳細と次回確認手順は **`astro-site/docs/SENDGRID_WEBHOOK.md` §Phase 0 本番反映・Webhook 有効化 完了記録** が単一源。
 
 #### SendGrid 側の登録状況（2026-07-22・read-only で確定）
 
