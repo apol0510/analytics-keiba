@@ -441,3 +441,54 @@ legacy 分岐は通常発火しない。ただし gate を legacy へ rollback �
 | reconciler（Scheduled） | `netlify/functions/payment-email-reconciler.js`（新規） | S3 |
 | 手動昇格 | `netlify/functions/admin-promote-customer.js`（新規） | S3 |
 | Event Webhook | `netlify/functions/sendgrid-webhook.js`（拡張・署名検証） | S9 |
+
+---
+
+## 入金確認メールの本文契約（2026-07-22・ログイン導線の必須化）
+
+**事故**: v2 の本文は `<p>ご入金を確認いたしました。ご利用を開始いただけます。</p>` の 1 行だけで、
+**ログインへの導線が無かった**。入金直後の実顧客が「利用開始できます」と案内されながら入口が分からず、
+15 分で失効するログインリンクを **9 回連続で発行**して迷った（うち 2 回はログイン成功。残り 7 回は
+未使用のまま失効）。加えて、有料会員がマジックリンク方式であることが本文で説明されておらず、
+**入金確認メールの中にログインリンクを探して詰まる**構造だった。
+
+### 単一源
+
+本文は `src/lib/payments/paymentConfirmationEmail.js` の
+`buildPaymentConfirmationEmail()` が唯一の生成元。`paymentEmailDeps.js` の `sendMail` は
+**subject / html / text をこの戻り値からのみ取る**（Function 側で文字列を組み立てない・guard で固定）。
+
+### 本文に必ず含めるもの（guard テストで強制）
+
+| 要素 | 理由 |
+|---|---|
+| **ログインボタン + 生 URL の両方** | HTML が崩れる環境でも入口に到達できる |
+| **マジックリンク方式の説明**（別便で届く / 件名 `【KEIBA Analytics】ログインリンク` / 15 分で失効 / 迷惑メール確認） | 書かないと入金確認メール内にリンクを探して詰まる |
+| **「このメールにログインリンクは含まれていません」の明記** | 上記の探索を止める最短の一文 |
+| ウェルカム文言・契約内容（プラン / 期間） | 支払い直後の体験。事務連絡だけにしない |
+| サポート窓口 `support@keiba.link` | 詰まったときの出口 |
+
+### 実装上の制約
+
+- **差し込み値は必ず `escapeHtml()` を通す**（氏名 / プランは Airtable 由来の外部入力）。
+- **氏名は 600 件中 51 件しか埋まっていない**。空でも自然に読める文面にし、`お客様` を機械的に埋めない。
+- サイト URL は **env `MAGIC_LINK_BASE_URL`** から渡す（未設定時のみ `https://analytics.keiba.link`）。
+  `analytics.keiba.jp`（存在しない）/ Netlify サブドメインは本文へ書かない。
+- パーソナライズ値は **worker が取得済みの record から渡すだけ**（Airtable の追加読み取りをしない）。
+- **氏名 / プランをログへ出さない**（guard で固定）。
+- `text/plain` と `text/html` の両方を送る（プレーンテキスト環境でも導線が残る）。
+
+検証: `npm run test:bank-payment`（`paymentConfirmationEmail.test.mjs` 15 件 /
+`paymentConfirmationEmail.guard.test.mjs` 8 件）
+
+### 併せて修正した UI（同 PR）
+
+- `/login` と `/dashboard` の送信後メッセージが**エラーに読める**文言だった（実際は `showSuccess`）。
+  「✉️ ログインリンクを送信しました。件名 … を 15分以内 に / 最新の1通 / 迷惑メール」へ変更し**両画面で同一文言**に統一。
+- `/auth/verify` の失敗画面（期限切れ / 使用済み）に「**最新の1通を使う**」案内と
+  **「ログインリンクを再送する」ボタン**を追加。
+
+### 未対応（別タスク）
+
+有料セッションは **20 分（絶対上限 12 時間）**で失効するため、再ログインが頻発する構造は残っている。
+**PR-B2（refresh）** が本質的な解（既存バックログ）。本 PR はメール導線と文言のみを直している。

@@ -667,7 +667,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         showError('ログインリンクの送信に失敗しました。時間をおいて再度お試しください。');
                         return;
                     }
-                    showSuccess('有料会員のログインには、メールでお送りするログインリンクが必要です。メールをご確認ください。');
+                    // ⚠️ これは成功メッセージ。エラーに読める文言にしない（login.astro と同一文言に揃える）。
+                    showSuccess('✉️ ログインリンクを送信しました。件名「【KEIBA Analytics】ログインリンク」のメールを 15分以内 にお開きください。必ず最新の1通をご利用ください（届かない場合は迷惑メールフォルダもご確認ください）。');
                     return;
                 }
 
