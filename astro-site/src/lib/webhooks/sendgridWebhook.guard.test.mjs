@@ -117,3 +117,40 @@ test('guard: 許容ずれは env 上書き可能な単一源から取る', () =>
   assert.ok(/maxSkewSec:\s*resolveMaxSkewSec\(process\.env\)/.test(code),
     '許容ずれをハードコードしている（リトライ取りこぼしの調整余地が無い）');
 });
+
+// ── S9 本体（Payment Email v2 の配信結果反映）の配線固定 ──────────────
+
+test('guard: Payment Email 反映は単一源を import する（Function に再実装しない）', () => {
+  assert.ok(/import\s*\{[^}]*applyPaymentEmailEvents[^}]*\}\s*from\s*'[^']*paymentEmailWebhook\.js'/.test(CODE),
+    'applyPaymentEmailEvents を単一源から import していない');
+  assert.ok(!/decideWebhookEvent|decideWebhookTransition/.test(CODE),
+    'Function 内で状態遷移判定を直接呼んでいる（判定は paymentEmailWebhook.js 経由に限る）');
+  assert.ok(!/PaymentEmailStatus\s*:/.test(CODE),
+    'Function が PaymentEmailStatus を直接組み立てている（状態機械の外で書いている）');
+});
+
+test('guard: Payment Email 反映は署名検証を通過した後にだけ実行される', () => {
+  const verifyIdx = CODE.indexOf('if (!verification.ok)');
+  const applyIdx = CODE.indexOf('applyPaymentEmailEvents(');
+  assert.ok(verifyIdx > -1, '署名検証の失敗ガードが見つからない');
+  assert.ok(applyIdx > verifyIdx, '署名検証より前に Payment Email 反映へ到達しうる');
+});
+
+test('guard: Payment Email 反映は本番 Customers の deps を単一源から受け取る', () => {
+  assert.ok(/import\s*\{[^}]*getRecord[^}]*patchRecord[^}]*\}\s*from\s*'[^']*paymentEmailDeps\.js'/.test(CODE),
+    'Airtable アクセスを paymentEmailDeps.js 経由で受け取っていない（接続先が二重定義になる）');
+  assert.ok(!/AIRTABLE_CUSTOMERS_TABLE|['"]Customers['"]/.test(CODE),
+    'Function が Customers テーブル名を直接持っている');
+});
+
+test('guard: Payment Email 反映の失敗で suppression 側を巻き添えにしない', () => {
+  const m = CODE.match(/let paymentEmail[\s\S]*?applyPaymentEmailEvents\([\s\S]*?\n    \} catch \{/);
+  assert.ok(m, 'Payment Email 反映が try/catch で隔離されていない');
+});
+
+test('guard: 応答・ログに識別子を出さない（集計のみ）', () => {
+  assert.ok(/paymentEmail,?\s*\n?\s*\}\);/.test(CODE) || /paymentEmail\s*\}/.test(CODE),
+    '集計オブジェクトを返していない');
+  assert.ok(!/console\.log\([^)]*record_id/.test(CODE), 'ログに record_id を出している');
+  assert.ok(!/console\.log\([^)]*idempotency_key/.test(CODE), 'ログに冪等キーを出している');
+});

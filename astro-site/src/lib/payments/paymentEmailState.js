@@ -365,6 +365,53 @@ export function decideWebhookEvent({ event, now }) {
   return { status: next, fields };
 }
 
+/**
+ * **配信結果イベントを現在の状態へ適用してよいか**（S9 本体・純粋関数）。
+ *
+ * SendGrid は exactly-once でも順序保証でもない。同一イベントが複数回届くこと、
+ * `delivered` と `bounce` が**入れ替わって届く**ことがある。そこで:
+ *
+ * - **失敗（bounced / dropped）は吸収状態**とする。到達したらそれ以降は変えない。
+ * - **delivered は暫定**。あとから失敗が届いたら**失敗で上書きする**（失敗の方が運用上有用）。
+ * - この 2 つにより、`delivered` と `bounce` がどちらの順で届いても**最終状態は bounced** に収束する
+ *   （順序非依存）。同一イベントの重複適用も同じ値の代入になるため無害（`sg_event_id` の
+ *   保持は不要 = **Airtable の新規フィールドを増やさない**）。
+ * - 適用対象は `accepted` / `unknown_after_attempt` / `delivered` のみ。
+ *   `pending` / `attempting_pre_send` / `failed_*` / `needs_admin` / 空 は**送信途中または人手案件**
+ *   なので、webhook から上書きしない（**fail closed**）。
+ *
+ * **限界（docs に明記する）**: `bounce` と `dropped` の間の順序は保存されない
+ * （先に届いた方が残る）。どちらも失敗終端であり運用判断は変わらないため許容する。
+ *
+ * @param {object} p
+ * @param {string} p.currentStatus 現在の `PaymentEmailStatus`
+ * @param {string} p.event SendGrid のイベント種別（`delivered` / `bounce` / `dropped` / …）
+ * @param {number} p.now ms epoch
+ * @returns {{apply: boolean, reason: string, status?: string, fields?: Record<string, unknown>}}
+ */
+export function decideWebhookTransition({ currentStatus, event, now }) {
+  const decided = decideWebhookEvent({ event, now });
+  if (!decided.status) return { apply: false, reason: 'event_ignored' };
+
+  // 失敗終端は吸収（それ以上動かさない）
+  if (currentStatus === EMAIL_STATUS.BOUNCED || currentStatus === EMAIL_STATUS.DROPPED) {
+    return { apply: false, reason: 'failure_terminal_locked' };
+  }
+
+  if (currentStatus === EMAIL_STATUS.DELIVERED) {
+    // delivered の重複は no-op。失敗が来たときだけ上書きする。
+    if (decided.status === EMAIL_STATUS.DELIVERED) return { apply: false, reason: 'already_delivered' };
+    return { apply: true, reason: 'failure_overrides_delivered', status: decided.status, fields: decided.fields };
+  }
+
+  if (currentStatus === EMAIL_STATUS.ACCEPTED || currentStatus === EMAIL_STATUS.UNKNOWN_AFTER_ATTEMPT) {
+    return { apply: true, reason: 'from_accepted', status: decided.status, fields: decided.fields };
+  }
+
+  // pending / attempting_pre_send / failed_* / needs_admin / 空 → 触らない
+  return { apply: false, reason: `unexpected_state:${currentStatus || 'empty'}` };
+}
+
 // ── gate 構成の検証（fail closed）──────────────────────────────
 /** env 文字列 → boolean（'true'/'1'/'yes' を真とする）。 */
 export function parseBoolEnv(v) {

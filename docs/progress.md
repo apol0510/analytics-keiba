@@ -296,14 +296,36 @@ Airtable / Automation は無変更。実顧客への送信 0 / Airtable 書込�
   `test:bank-payment` → `check:safety` で CI 強制（**`package.json` は既存 glob で拾うため未変更**）。
 - 検証: `test:bank-payment` **236 pass / 0 fail** / `check:safety` **exit 0（469 tests・fail 0）** / `build` 成功。
 
+### S9 本体の実装（2026-07-23・`delivered` 有効化は未実施）
+
+**`accepted` → `delivered` / `bounced` / `dropped` の反映を実装した。** コードのみの変更で
+env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手動 Airtable 書込み 0。
+
+- **単一源**: 判定 `paymentEmailState.js#decideWebhookTransition()` / 適用
+  `src/lib/payments/paymentEmailWebhook.js`。Function は配線のみ（guard で固定）。
+- **対象選別**: worker が載せた `custom_args.purpose === 'payment_confirmation_v2'` のイベントだけ。
+  メルマガ等の bounce は従来どおり suppression（`EmailBlacklist`）側だけが扱う（両者独立・巻き添えなし）。
+- **順序非依存の設計**: 失敗（bounced/dropped）は**吸収状態**、`delivered` は**暫定**で失敗に上書きされる。
+  → `delivered` と `bounce` がどちらの順で届いても最終状態は `bounced` に収束。重複イベントは
+  同じ値の代入で無害なため **`sg_event_id` の保持が不要＝Airtable の新規フィールドを増やさない**。
+- **fail closed**: 識別子欠落は `getRecord` すら呼ばない / レコードの `PaymentEmailIdempotencyKey` と
+  完全一致しなければ書かない / `pending`・`attempting_pre_send`・`failed_*`・`needs_admin`・空は上書きしない /
+  ログと応答は件数と reason のみ（recordId・メール・キーを出さない）。
+- 検証: `test:bank-payment` **255 pass**（+19）/ `test:webhooks` **44 pass**（+5）/
+  `check:safety` **exit 0（469 tests・fail 0）** / `build` 成功。
+- **注意（本番反映時の挙動）**: `delivered` は SendGrid 側で**未選択のため届かない**が、
+  **`bounce` / `dropped` は選択済み**なので、決済メールがバウンスすると本番 Customers の
+  `PaymentEmailStatus` が更新される（S9 の目的どおり）。`delivered` の反映には
+  SendGrid 設定で **Delivered を追加**する必要がある（**別承認**）。
+
 ## Remaining
 
 - ~~入金確認メール v2 の cutover（D1）~~ → **2026-07-21 に完了・gate=v2-full で本番稼働中**
   （§D1 cutover 完了 / §初の実顧客通過 / §カナリア再検証）。**Remaining ではない。**
-- **S9 Event Webhook 本体**（`custom_args` 照合による `accepted` → `delivered`/`bounced`/`dropped` 反映・
-  イベント冪等・out-of-order）。**未実装**。Phase 0（署名検証 fail closed）は完了しており、
-  署名検証の単一源・検証鍵・Webhook 有効化まで済んでいるため**新規 secret も新規モジュールも増えない**。
-  実装時は `delivered` イベントの選択追加（現在は false）と、`decideWebhookEvent()` の配線が必要
+- ~~**S9 Event Webhook 本体**（`custom_args` 照合による `accepted` → `delivered`/`bounced`/`dropped` 反映・
+  イベント冪等・out-of-order）~~ → **2026-07-23 実装完了**（§S9 本体の実装）。
+  **残るのは SendGrid 側で `delivered` イベントを追加すること**（設定変更・別承認）。
+  追加するまで `PaymentEmailDeliveredAt` は埋まらない（`bounce` / `dropped` は選択済みのため反映される）
 - ~~Webhook fail closed 化（Phase 0）の本番反映~~ → **2026-07-22 完了**（PR #149 merge `137a348` /
   published `6a609fe22791d800080c2ff0`）。**Remaining ではない**
 - **Phase 0 の鍵一致 E2E 実証**: organic event（実バウンス等）の到達待ち。**到達 0 件**。
