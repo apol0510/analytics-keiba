@@ -347,8 +347,28 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 - **S9 の実データ確認（最後の 1 点）**: 決済確認メール（`purpose='payment_confirmation_v2'`）の
   `delivered` で `paymentEmail.applied: 1` になること。**次の実入金時に read-only 確認するだけ**でよく、
   こちらから起こす作業は無い
-- **`send-magic-link.js` がログにメールアドレスを平文出力している**（着手前から存在・今回の変更とは無関係）。
-  決済メール経路は PII 非出力を徹底しているため揃えるのが望ましいが、**独断で修正せず判断待ち**
+- **Function ログへのメールアドレス平文出力**（**低優先度・着手条件つきで据え置き / 2026-07-22 判断**）。
+  - **規模（実測 / origin/main）**: メールアドレスの値をログへ出しているのは **17 Function・約 61 箇所**。
+    多い順に `send-newsletter.js`(13) / `bank-transfer-application.js`(11) /
+    `send-payment-confirmation-auto.js`(4) / `send-magic-link.js`(4) / `expiry-*.js`(各4) /
+    `domain-protection.js`(4) / `auth-user.js`(3) / `login-rate-limiter.js`(3) ほか。
+    **決済メール v2 経路（`payment-email-worker` / `dispatcher` / `sendgrid-webhook`）は 0 箇所**
+    ＝ v2 以前からのリポジトリ全体の慣習であり、v2 が作った欠陥ではない。
+  - **1 ファイルだけ直しても意味がない**（16 本が残る）。逆に全 17 本の一括削除は差分が大きく、
+    ログは「あの顧客にメールが届いたか」の調査で実際に使っている運用資産のため、調査能力を落とす。
+  - **リスク評価（低）**: 露出先は Netlify の Function ログのみで閲覧者は実質 MK のみ。
+    トークンは `tokenPrefix`（8 桁）だけでフル値は出ておらず乗っ取りには使えない。
+    **log drain（ログの外部転送）の有無は Netlify API から確認できない** → 設定していれば
+    露出範囲が変わるため、**Netlify UI で一度確認する**こと（未確認事項）。
+  - **採る方針（着手時）**: 共通の `maskEmail()`（`a***@yahoo.co.jp` 形式）を 1 つ作り、
+    **認証・決済系の高感度な数本にだけ適用**する（`send-magic-link` / `verify-magic-link` /
+    `auth-user` / `login-rate-limiter` / `confirm-bank-payment` / `send-payment-confirmation-auto`）。
+    デバッグ性を保ったまま全文露出を止める。メルマガ系は対象外のまま残す。
+  - **着手条件（どれかを満たしたら実施）**:
+    ① 認証・決済まわりのコードを触る作業が発生したとき（ついでに実施）
+    ② **ログを他人と共有する必要が出たとき**（チーム招待 / サポート連携 / log drain 設定）← 実質的なトリガ
+    ③ 顧客データの取り扱いについて外部要件（監査・規約変更）が生じたとき
+  - 上記のいずれも無い間は**着手しない**。単独で急ぐ理由は無い。
 - ~~入金確認メール v2 の legacy noreply 経路の是正~~ → **2026-07-22 完了**（PR #149 で
   `confirm-bank-payment.js` legacy 分岐 / `send-payment-confirmation-auto.js` を `senderIdentity.js` へ移行・
   main 反映済み）。gate を legacy へ rollback しても送信元は `support@keiba.link`
