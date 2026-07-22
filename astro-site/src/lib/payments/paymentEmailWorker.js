@@ -91,7 +91,15 @@ export async function runWorkerOnce({ recordId, now, deps }) {
     const senderVerified = deps.hasVerifiedSender !== false;
     let mail = {};
     if (hasApiKey && hasEmail && senderVerified) {
-      mail = await deps.sendMail({ to: email, recordId, idempotencyKey });
+      // 本文のパーソナライズ値（追加の Airtable 読み取りはしない。取得済み record から渡すだけ）。
+      // **ログに出さないこと**（氏名 / プランは PII 相当）。
+      mail = await deps.sendMail({
+        to: email, recordId, idempotencyKey,
+        fullName: f['氏名'] || '',
+        plan: f['プラン'] || '',
+        planType: f.PlanType || '',
+        expiration: f['有効期限'] || '',
+      });
     }
     const outcome = evaluateMailOutcome({
       hasApiKey, hasEmail, hasVerifiedSender: senderVerified,

@@ -69,7 +69,7 @@ export const prerender = false;
     function fail(text: string) {
       root.classList.add('error');
       status.textContent = '認証失敗';
-      msg.innerHTML = `${text}<br><br><a href="/login/">もう一度ログインする</a>`;
+      msg.innerHTML = `${text}<br><br><a href="/login/" style="display:inline-block;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:8px;">ログインリンクを再送する</a>`;
     }
     function ok(text: string, redirectTo: string) {
       root.classList.add('success');
@@ -88,8 +88,8 @@ export const prerender = false;
       const data = await res.json();
 
       if (!res.ok) {
-        fail(data.error === 'Token expired' ? 'リンクの有効期限（15分）が切れています。'
-          : data.error === 'Token already used' ? 'このリンクは既に使用済みです。'
+        fail(data.error === 'Token expired' ? 'リンクの有効期限（15分）が切れています。<br>下のボタンから、もう一度ログインリンクを受け取ってください。<br><strong>届いた最新の1通</strong>を 15分以内 にお開きください。'
+          : data.error === 'Token already used' ? 'このリンクは既に使用済みです。<br>お手数ですが、もう一度ログインリンクを受け取ってください（<strong>最新の1通</strong>をご利用ください）。'
           : data.error === 'Token not found' ? '無効なトークンです。'
           : data.error === 'Customer not found' ? 'アカウントが見つかりません。'
           : 'エラーが発生しました。');
