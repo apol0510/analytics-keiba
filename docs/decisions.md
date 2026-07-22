@@ -842,3 +842,73 @@ D（reconciler write 有効化）を順に実施し、入金確認メール v2 �
 GLOBAL_PAUSE=true → redeploy で新規送信即停止（A2 は再 ON しない）。必要なら FLOW_VERSION=legacy。
 
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §D1 cutover 完了記録 / §Event Webhook（別 Phase）
+
+## 2026-07-21 — SendGrid Event Webhook を「fail closed 化（Phase 0）」から着手し、S9 本体より先行させる
+
+Payment Email v2 の次 Phase 候補（S9 Event Webhook / legacy noreply 整理）の依存関係を read-only 調査した結果、
+**S9 は現行運用上は不要**（状態機械は `accepted` で正しく終端し、`decideWebhookEvent()` は実装済み、
+本番 pending / unknown / attempting は 0）である一方、S9 が触る予定の `sendgrid-webhook.js` に
+**Payment Email v2 とは無関係の既存欠陥**が見つかった。
+
+### 検知した欠陥（既存・v2 が作ったものではない）
+
+- 公開 URL でありながら**署名検証・認証が一切無い**（repo 全体に署名検証コードが 1 件も存在しなかった）
+- POST body の `event.email` を信じて `EmailBlacklist` に create / PATCH する。
+  `EmailBlacklist` は `newsletter-preview.js` が配信除外に使う**実運用 suppression list**
+  → 第三者が 1 回 POST するだけで**任意顧客をメルマガ配信対象から恒久除外**できる
+- `filterByFormula=SEARCH("${email}", {Email})` が未エスケープの外部入力を formula へ直挿し（injection）
+- 受信メールアドレスを `console.log` に出力（PII）
+
+### 決定
+
+1. **S9 本体より先に fail closed 化（Phase 0）を実施する。** 対象ファイル・必要 secret・
+   署名検証モジュールが S9 と完全に同一であり、S9 の前提工事そのものであるため。
+2. **検証鍵未設定は「検証省略」ではなく 403。** 「鍵が無いときは素通り」分岐を作らない
+   （guard テストで構造的に禁止）。設定不備は 500 ではなく 403 とし、
+   「一時障害だから後で届く」という誤解を作らない。
+3. **検証成功後にのみ body を parse する。** 未検証入力へ構文エラー（400）を返さず認証段の 403 を返す
+   （カナリア認証で確立した secret-first fail closed と同一方針）。
+4. **署名検証は単一源** `src/lib/webhooks/sendgridSignature.js` に集約し、Function 側に再実装しない。
+5. **SendGrid 側 Event Webhook は未登録／無効**であることをユーザーが確認済みのため、
+   本変更の deploy は**機能損失ゼロ**（env 投入・SendGrid 管理画面操作とも不要）。
+6. **legacy noreply 整理を同シリーズで実施**（下記）。
+
+### 却下した選択肢
+
+- **S9 を先に実装する**: 新規 secret provision + SendGrid 管理画面設定（ユーザー操作 = 高リスク境界）に
+  ブロックされ、かつ現行運用上の課題を解いていない。無認証書込みを放置したまま機能追加することになる。
+- **鍵が未設定なら検証をスキップして従来通り受け付ける**: 欠陥をそのまま温存する。却下。
+- **Function 内で署名検証を実装する**: 検証ロジックが Function に閉じるとテスト不能・再混入検知不能。却下。
+
+### 関連
+
+- `astro-site/docs/SENDGRID_WEBHOOK.md`（契約・reason コード・本番反映順序の単一源）
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §Event Webhook（S9）
+
+## 2026-07-21 — legacy 決済メール経路も senderIdentity へ寄せる（noreply rollback 経路の解消）
+
+`confirm-bank-payment.js` の legacy 分岐と `send-payment-confirmation-auto.js` は
+`email-config.js` の `FROM_EMAIL`=`noreply@keiba.link` で送信しており、
+**gate を `FLOW_VERSION=legacy` へ rollback すると送信元が noreply へ戻る**残課題だった。
+
+### 決定
+
+- 両ファイルの `FROM_EMAIL` import を削除し、**`senderIdentity.js`（単一源）へ移行**。
+  不一致 / 未設定は **SendGrid へ POST する前に fail closed**（`sender_unverified: <reason>` を throw。
+  env の値は含めない）。
+- **fail closed で可用性が下がる懸念は成立しない**: 本番 `SENDGRID_FROM_EMAIL` が正式値
+  `support@keiba.link` であることは D1 境界B カナリアの実受信で実証済み。
+  よって legacy rollback 経路は fail closed 化後も機能する。この前提を guard テストで固定する。
+- `send-payment-confirmation-auto.js` の fail closed は **`PaymentEmailSent=true` を書く PATCH より前**に
+  起こす（未送信なのに送信済みになるズレを作らない）。順序も guard テストで固定。
+
+### スコープ外（意図的）
+
+`send-payment-confirmation.js` / `paypal-webhook.js` は依然 `FROM_EMAIL`（noreply）を使うが、
+両者は「未使用だが到達可能・誤操作で二重送信」であり、**本来の対処は 410 Gone / redirect による無効化**。
+送信元だけ差し替える半端な修正は行わない（別タスク）。
+
+### 関連
+
+- `astro-site/docs/PAYMENT_EMAIL_V2.md` §legacy noreply 経路（2026-07-21 解消済み）
+- `astro-site/src/lib/payments/paymentEmailSender.guard.test.mjs`（legacy 経路 5 テスト追加）

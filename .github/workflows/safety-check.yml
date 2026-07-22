@@ -18,6 +18,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-free-jra-date.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
       - 'astro-site/netlify/functions/**'
+      - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
       - '.github/workflows/safety-check.yml'
@@ -33,6 +34,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-free-jra-date.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
       - 'astro-site/netlify/functions/**'
+      - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
       - '.github/workflows/safety-check.yml'
@@ -114,3 +116,11 @@ jobs:
       - name: Verify 三連複 段階表示（初回表示日基準 4日目解禁 / 予告・結果・CTA 排他）
         working-directory: astro-site
         run: npm run test:sanrenpuku-cta
+
+      - name: Verify SendGrid Event Webhook 署名検証 fail closed（無認証 Airtable 書込みの遮断）
+        working-directory: astro-site
+        run: npm run test:webhooks
+
+      - name: Verify 決済メール送信元契約（legacy 経路含め noreply へ戻らない）
+        working-directory: astro-site
+        run: npm run test:bank-payment

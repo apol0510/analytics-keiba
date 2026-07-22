@@ -16,6 +16,13 @@ const WORKER = readFileSync(here('./paymentEmailWorker.js'), 'utf8');
 const SENDER = readFileSync(here('./senderIdentity.js'), 'utf8');
 const STATE = readFileSync(here('./paymentEmailState.js'), 'utf8');
 
+// legacy 経路（gate=legacy へ rollback したときに実際に送信する 2 ファイル）
+const CONFIRM = readFileSync(here('../../../netlify/functions/confirm-bank-payment.js'), 'utf8');
+const AUTO = readFileSync(here('../../../netlify/functions/send-payment-confirmation-auto.js'), 'utf8');
+
+/** コメント / JSDoc を除いた実コード。 */
+const stripComments = (src) => src.replace(/^\s*\*.*$/gm, '').replace(/^\s*\/\/.*$/gm, '');
+
 test('guard: 決済メール経路は email-config の FROM_EMAIL を import しない（noreply 混入の遮断）', () => {
   assert.ok(!/import\s*\{[^}]*\bFROM_EMAIL\b[^}]*\}\s*from\s*'[^']*email-config\.js'/.test(DEPS),
     'paymentEmailDeps.js が FROM_EMAIL を import している（noreply へ戻る経路）');
@@ -61,6 +68,62 @@ test('guard: 送信元契約は正式値 support@keiba.link のみを許可し f
   assert.ok(/OFFICIAL_FROM_EMAIL = 'support@keiba\.link'/.test(SENDER), '正式送信元が support@keiba.link でない');
   assert.ok(!/\|\|\s*'[^']*@/.test(SENDER), '送信元に || fallback が存在する');
   assert.ok(/SENDGRID_FROM_EMAIL/.test(SENDER), 'env SENDGRID_FROM_EMAIL を検証していない');
+});
+
+// ── legacy 経路（2026-07-21 追加）────────────────────────────────
+// gate=v2-full では通常発火しないが、FLOW_VERSION=legacy へ rollback すると
+// この 2 ファイルが実際に送信する。noreply へ戻る経路をここで塞ぐ。
+
+test('guard: legacy 経路も email-config の FROM_EMAIL を import しない', () => {
+  for (const [name, src] of [['confirm-bank-payment', CONFIRM], ['send-payment-confirmation-auto', AUTO]]) {
+    assert.ok(!/import\s*\{[^}]*\bFROM_EMAIL\b[^}]*\}\s*from\s*'[^']*email-config\.js'/.test(src),
+      `${name} が FROM_EMAIL を import している（rollback 時に noreply へ戻る）`);
+    assert.ok(!/\bFROM_EMAIL\b/.test(stripComments(src)),
+      `${name} のコード中に FROM_EMAIL 参照が残っている`);
+    assert.ok(!/noreply@/.test(stripComments(src)),
+      `${name} に noreply@ が直書きされている`);
+  }
+});
+
+test('guard: legacy 経路は senderIdentity で解決した from を使う', () => {
+  for (const [name, src] of [['confirm-bank-payment', CONFIRM], ['send-payment-confirmation-auto', AUTO]]) {
+    assert.ok(/from '[^']*senderIdentity\.js'/.test(src),
+      `${name} が送信元契約の単一源を import していない`);
+    assert.ok(/resolveVerifiedSender\(process\.env\)/.test(src),
+      `${name} が送信元を解決していない`);
+    assert.ok(/from:\s*\{\s*email:\s*sender\.email,\s*name:\s*sender\.name\s*\}/.test(src),
+      `${name} が解決済み送信元を from に使っていない`);
+  }
+});
+
+test('guard: legacy 経路は送信元未検証なら SendGrid へ POST する前に fail closed', () => {
+  for (const [name, src] of [['confirm-bank-payment', CONFIRM], ['send-payment-confirmation-auto', AUTO]]) {
+    const code = stripComments(src);
+    const senderIdx = code.indexOf('resolveVerifiedSender(process.env)');
+    const guardIdx = code.indexOf('if (!sender.ok)');
+    const postIdx = code.indexOf('api.sendgrid.com/v3/mail/send');
+    assert.ok(senderIdx > -1 && guardIdx > -1 && postIdx > -1, `${name}: 想定の構造が見つからない`);
+    assert.ok(senderIdx < guardIdx, `${name}: 解決前に fail closed 判定をしている`);
+    assert.ok(guardIdx < postIdx, `${name}: SendGrid へ POST した後に送信元を検証している`);
+    assert.ok(/throw new Error\(`sender_unverified: \$\{sender\.reason\}`\)/.test(code),
+      `${name}: fail closed で理由コードを投げていない`);
+  }
+});
+
+test('guard: legacy 経路の fail closed 理由に env の値を含めない', () => {
+  for (const [name, src] of [['confirm-bank-payment', CONFIRM], ['send-payment-confirmation-auto', AUTO]]) {
+    assert.ok(!/sender_unverified[^\n]*SENDGRID_FROM_EMAIL/.test(src),
+      `${name}: 例外に env の値を含めている`);
+  }
+});
+
+test('guard: legacy 送信失敗で PaymentEmailSent を true にしない（auto 経路の順序固定）', () => {
+  const code = stripComments(AUTO);
+  const guardIdx = code.indexOf('if (!sender.ok)');
+  const sentIdx = code.indexOf("'PaymentEmailSent': true");
+  assert.ok(guardIdx > -1 && sentIdx > -1, '想定の構造が見つからない');
+  assert.ok(guardIdx < sentIdx,
+    '送信元 fail closed より前に PaymentEmailSent=true を書いている（未送信なのに送信済みになる）');
 });
 
 test('guard: 送信元不一致は terminal 扱い（無限リトライで送信を試み続けない）', () => {

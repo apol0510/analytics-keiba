@@ -1,44 +1,110 @@
-// SendGrid Webhook受信エンドポイント
-// バウンス・配信失敗・スパム報告をリアルタイム処理
+/**
+ * SendGrid Event Webhook 受信エンドポイント（バウンス / ブロック / スパム報告 → EmailBlacklist）
+ *
+ * ⚠️ このエンドポイントは**公開 URL**であり、書き込む `EmailBlacklist` は
+ * `newsletter-preview.js` が配信除外に使う実運用の suppression list である。
+ * 署名検証を通らないリクエストで書き込ませてはならない（任意顧客を配信対象から
+ * 恒久除外できてしまう）。
+ *
+ * 恒久ルール（2026-07-21 fail closed 化）:
+ * 1. **署名検証を通ったリクエストだけを処理する**。検証は単一源
+ *    `src/lib/webhooks/sendgridSignature.js` に集約し、ここに再実装しない。
+ * 2. **検証鍵 `SENDGRID_WEBHOOK_VERIFICATION_KEY` が未設定なら 403**（素通り禁止）。
+ *    「鍵が無いときは検証を省略する」分岐を**絶対に作らない**。
+ * 3. **検証成功後にのみ body を parse する**（未検証入力を構文解析・処理しない）。
+ *    未検証リクエストには構文エラー（400）を返さず、認証段の 403 を返す。
+ * 4. **Airtable への書き込みは検証成功後にのみ発生する**。検証失敗時は 1 バイトも書かない。
+ * 5. **ログ・応答に PII / secret を出さない**（メールアドレス・署名・鍵・reason 以外の値）。
+ * 6. formula への外部入力は `airtableFormula.js` 経由（injection 遮断）。
+ */
 
 import { config } from 'dotenv';
+import {
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  verifySendgridEventWebhookSignature,
+  signatureFailureStatus,
+  resolveMaxSkewSec,
+} from '../../src/lib/webhooks/sendgridSignature.js';
+import { emailMatchFormula } from '../../src/lib/webhooks/airtableFormula.js';
+
 config();
 
-export default async (req, context) => {
-  console.log('📨 SendGrid Webhook受信開始');
+const BLACKLIST_TABLE = 'EmailBlacklist';
 
-  // POSTのみ受け付け
+function jsonResponse(status, body) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export default async (req) => {
+  // POST のみ
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return jsonResponse(405, { error: 'Method not allowed' });
   }
 
+  // ── 1. 署名検証（body parse より前・fail closed）────────────────────
+  // 署名対象は「timestamp + 受信したままの body」。再直列化した JSON では一致しないため
+  // ここで **必ず text() を使う**（req.json() を先に呼んではいけない）。
+  let rawBody;
   try {
-    const events = await req.json();
-    console.log(`📊 受信イベント数: ${events.length}`);
+    rawBody = await req.text();
+  } catch {
+    return jsonResponse(signatureFailureStatus(), { error: 'Forbidden', reason: 'body_missing' });
+  }
+
+  const verification = verifySendgridEventWebhookSignature({
+    publicKeyBase64: process.env.SENDGRID_WEBHOOK_VERIFICATION_KEY,
+    signatureBase64: req.headers.get(SIGNATURE_HEADER),
+    timestamp: req.headers.get(TIMESTAMP_HEADER),
+    rawBody,
+    maxSkewSec: resolveMaxSkewSec(process.env),
+  });
+
+  if (!verification.ok) {
+    // reason は固定コードのみ（署名・鍵・timestamp の値は出さない）
+    console.warn('🚫 [sendgrid-webhook] 署名検証 NG:', verification.reason);
+    return jsonResponse(signatureFailureStatus(), { error: 'Forbidden', reason: verification.reason });
+  }
+
+  // ── 2. 検証済み body の parse（ここで初めて構文エラーを 400 にする）──
+  let events;
+  try {
+    events = JSON.parse(rawBody);
+  } catch {
+    return jsonResponse(400, { error: 'Invalid JSON' });
+  }
+  if (!Array.isArray(events)) {
+    return jsonResponse(400, { error: 'Expected an array of events' });
+  }
+
+  // ── 3. 処理（Airtable 書込みはここから先だけ）────────────────────
+  try {
+    let processed = 0;
+    let failed = 0;
 
     for (const event of events) {
-      console.log(`🔍 イベント処理: ${event.event} - ${event.email}`);
+      if (!event || typeof event !== 'object') continue;
+      if (!shouldProcessEvent(event)) continue;
+      if (typeof event.email !== 'string' || event.email.trim() === '') continue;
 
-      // バウンス・配信失敗・スパム報告を処理
-      if (shouldProcessEvent(event)) {
+      try {
         await processFailureEvent(event);
+        processed += 1;
+      } catch {
+        // 1 件失敗で残件を止めない。例外本文はログへ出さない（PII/secret 混入の恐れ）
+        failed += 1;
       }
     }
 
-    return new Response(JSON.stringify({ success: true, processed: events.length }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-  } catch (error) {
-    console.error('❌ Webhook処理エラー:', error);
-    return new Response(JSON.stringify({ error: 'Webhook processing failed' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    // 件数のみ（メールアドレス・recordId を出さない）
+    console.log('📨 [sendgrid-webhook] 処理完了:', { received: events.length, processed, failed });
+    return jsonResponse(200, { success: true, received: events.length, processed, failed });
+  } catch {
+    console.error('❌ [sendgrid-webhook] 処理エラー');
+    return jsonResponse(500, { error: 'Webhook processing failed' });
   }
 };
 
@@ -58,17 +124,11 @@ function shouldProcessEvent(event) {
 // 配信失敗イベント処理
 async function processFailureEvent(event) {
   const email = event.email;
-  const eventType = event.event;
-  const reason = event.reason || '';
-  const timestamp = new Date(event.timestamp * 1000).toISOString();
-
-  console.log(`📧 配信失敗処理: ${email} - ${eventType} - ${reason}`);
-
-  // バウンス分析
   const bounceInfo = analyzeWebhookBounce(event);
-  console.log(`📊 バウンス分析結果:`, bounceInfo);
 
-  // Airtableに記録
+  // ログにメールアドレスを出さない（件数・種別のみ）
+  console.log('📧 [sendgrid-webhook] 配信失敗:', { event: event.event, type: bounceInfo.type, severity: bounceInfo.severity });
+
   await recordWebhookBounce(email, bounceInfo, event);
 }
 
@@ -76,7 +136,6 @@ async function processFailureEvent(event) {
 function analyzeWebhookBounce(event) {
   const eventType = event.event;
   const reason = (event.reason || '').toLowerCase();
-  const status = event.status || '';
 
   // Hard Bounce判定
   if (eventType === 'bounce') {
@@ -149,50 +208,53 @@ async function recordWebhookBounce(email, bounceInfo, originalEvent) {
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
-    console.log('⚠️ Airtable環境変数未設定');
+    console.log('⚠️ [sendgrid-webhook] Airtable 環境変数未設定');
     return;
   }
 
-  try {
-    // 既存レコード確認
-    const existingRecord = await findExistingRecord(email);
+  // 既存レコード確認 → 更新 or 新規作成
+  // **検索に失敗したときは何もしない（fail closed）**。「見つからなかった」と区別せずに
+  // 新規作成すると、Airtable の一時障害のたびに重複レコードが増える。
+  const lookup = await findExistingRecord(email);
+  if (!lookup.ok) {
+    console.log('⚠️ [sendgrid-webhook] 既存レコード検索に失敗（作成せずスキップ）');
+    return;
+  }
 
-    if (existingRecord) {
-      // 既存レコード更新
-      await updateExistingRecord(existingRecord, bounceInfo, originalEvent);
-    } else {
-      // 新規レコード作成
-      await createNewRecord(email, bounceInfo, originalEvent);
-    }
-
-  } catch (error) {
-    console.error('❌ Webhookバウンス記録エラー:', error.message);
+  if (lookup.record) {
+    await updateExistingRecord(lookup.record, bounceInfo);
+  } else {
+    await createNewRecord(email, bounceInfo, originalEvent);
   }
 }
 
-// 既存レコード検索
+/**
+ * 既存レコード検索（formula injection 遮断 + LOWER(TRIM()) 正規化一致）。
+ * @returns {{ok: true, record: object|null} | {ok: false}} ok=false は**判定不能**（作成もしない）
+ */
 async function findExistingRecord(email) {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
-  const searchUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/EmailBlacklist?filterByFormula=SEARCH("${email}", {Email})`;
+  const formula = emailMatchFormula(email);
+  const searchUrl =
+    `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BLACKLIST_TABLE}` +
+    `?filterByFormula=${encodeURIComponent(formula)}&maxRecords=1`;
 
-  const response = await fetch(searchUrl, {
-    headers: {
-      'Authorization': `Bearer ${AIRTABLE_API_KEY}`
-    }
-  });
-
-  if (response.ok) {
+  try {
+    const response = await fetch(searchUrl, {
+      headers: { 'Authorization': `Bearer ${AIRTABLE_API_KEY}` }
+    });
+    if (!response.ok) return { ok: false };
     const data = await response.json();
-    return data.records.length > 0 ? data.records[0] : null;
+    return { ok: true, record: data.records.length > 0 ? data.records[0] : null };
+  } catch {
+    return { ok: false };
   }
-
-  return null;
 }
 
 // 既存レコード更新
-async function updateExistingRecord(record, bounceInfo, originalEvent) {
+async function updateExistingRecord(record, bounceInfo) {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
@@ -214,7 +276,7 @@ async function updateExistingRecord(record, bounceInfo, originalEvent) {
     }
   };
 
-  const response = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/EmailBlacklist/${record.id}`, {
+  const response = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BLACKLIST_TABLE}/${record.id}`, {
     method: 'PATCH',
     headers: {
       'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
@@ -224,10 +286,10 @@ async function updateExistingRecord(record, bounceInfo, originalEvent) {
   });
 
   if (response.ok) {
-    console.log(`✅ 既存レコード更新成功: ${record.fields.Email} - Bounce Count: ${newBounceCount}`);
+    console.log('✅ [sendgrid-webhook] 既存レコード更新:', { bounceCount: newBounceCount, status: newStatus });
   } else {
-    const error = await response.text();
-    console.log(`❌ 既存レコード更新失敗: ${error}`);
+    // Airtable 応答本文はログへ出さない（メール等が含まれうる）
+    console.log('❌ [sendgrid-webhook] 既存レコード更新失敗:', response.status);
   }
 }
 
@@ -247,7 +309,7 @@ async function createNewRecord(email, bounceInfo, originalEvent) {
     }
   };
 
-  const response = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/EmailBlacklist`, {
+  const response = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BLACKLIST_TABLE}`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
@@ -257,10 +319,8 @@ async function createNewRecord(email, bounceInfo, originalEvent) {
   });
 
   if (response.ok) {
-    const result = await response.json();
-    console.log(`✅ 新規Webhookレコード作成成功: ${result.id}`);
+    console.log('✅ [sendgrid-webhook] 新規レコード作成');
   } else {
-    const error = await response.text();
-    console.log(`❌ 新規Webhookレコード作成失敗: ${error}`);
+    console.log('❌ [sendgrid-webhook] 新規レコード作成失敗:', response.status);
   }
 }

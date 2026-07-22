@@ -170,6 +170,36 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 
 **D1 cutover は完了。次 Phase 候補: Event Webhook（delivered/bounce 反映）。**
 
+### Webhook fail closed 化（Phase 0）+ legacy noreply 整理（2026-07-21・branch `feat/sendgrid-webhook-fail-closed`）
+
+次 Phase の依存関係を read-only 調査した結果、**S9 Event Webhook は現行運用上は不要**と判定
+（状態機械は `accepted` で終端し `decideWebhookEvent()` は実装済み・本番 pending/unknown/attempting は 0・
+新規 secret と SendGrid 管理画面操作にブロックされる）。一方、S9 が触る `sendgrid-webhook.js` に
+**Payment Email v2 とは無関係の既存欠陥**を検知したため、これを先に処理した。
+
+- **検知**: `sendgrid-webhook.js` が**署名検証・認証なしで公開稼働**。第三者が 1 回 POST するだけで
+  任意アドレスを `EmailBlacklist`（`newsletter-preview.js` が配信除外に使う実運用 suppression list）へ
+  HARD_BOUNCE 登録でき、**任意顧客をメルマガ配信対象から恒久除外**できた。
+  併せて formula injection（未エスケープ入力の `SEARCH()` 直挿し）と PII ログ出力も検知。
+- **対処（コードのみ・env 追加なし）**: 署名検証の単一源 `src/lib/webhooks/sendgridSignature.js` を新設し、
+  Function を fail closed 化（**鍵未設定も含め検証失敗は全て 403** / 検証成功後にのみ body を parse /
+  検証前に Airtable へ到達しない / `airtableFormula.js` 経由で injection 遮断 / ログから email 除去）。
+- **legacy noreply 整理**: `confirm-bank-payment.js` legacy 分岐と `send-payment-confirmation-auto.js` を
+  `senderIdentity.js` へ移行。**gate=legacy へ rollback しても送信元は support@keiba.link**。
+- **テスト**: `npm run test:webhooks` 新設（30 テスト）＋ sender guard に legacy 経路 5 テスト追加。
+  `check:safety` へ組込み、`safety-check.yml` に個別 step として `test:webhooks` / `test:bank-payment` を追加。
+- **検証結果**: `npm run check:safety` 全 21 ステップ green（最終 469 tests / fail 0）・`npm run build` 成功。
+- **本番影響**: **2026-07-22 に read-only で確定**。`GET /v3/user/webhooks/event/settings/all` = HTTP 200 /
+  **登録済み Event Webhook 0 本**（`max_allowed=2`）、Netlify の `SENDGRID_WEBHOOK_VERIFICATION_KEY` も**未設定**。
+  → 本変更を本番へ入れても **機能損失ゼロ**（届いていないものを 403 にするだけ）で、**env 投入は前提ではない**。
+  間接証拠（`EmailBlacklist` の webhook 由来レコードが 2025-09-21〜23 の 7 件のみで以降 10 ヶ月間 0 件）とも整合。
+  当初「未登録／無効をユーザー確認済み」と記載 → 2026-07-22 の監査で一度撤回（未確認だったため）→
+  **同日 API で確認し直して確定**、という経緯。
+- **監査で追加した是正（2026-07-22）**: ① timestamp 許容窓 10分→24時間（SendGrid のリトライを取りこぼさない・
+  env `SENDGRID_WEBHOOK_MAX_SKEW_SEC` で調整可）② Email 照合を `LOWER(TRIM())` 正規化へ（重複レコード防止）
+  ③ 既存レコード検索の失敗を「未登録」と混同しない fail closed（一時障害での重複作成を防ぐ）。
+- **本 branch では Function 呼出・メール送信・Airtable 書込み・production deploy を一切行っていない。**
+
 ### 初の実顧客通過（2026-07-22・v2-full の本番実証）
 
 cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過**した（カナリアではなく本番 Customers・実メール）。
@@ -210,23 +240,31 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
   **`pending` へは戻さず accepted 監査終端を維持**（status / AttemptCount / Sent / ProviderMessageId /
   AcceptedAt / IdempotencyKey は read-back で不変を確認）。
 - **二重送信なし / 送信後 PATCH 422（2026-07-20 事故）の再発なし / 本番 Customers 書込み 0。**
-- **PR #149 は Draft 凍結を継続**（SendGrid 側の Event Webhook 登録状況・署名検証キーが未確認のため）。
-  次工程の Event Webhook 確認は**別 Phase**であり、本作業の承認境界に混ぜない。
+- **PR #149 は Draft 維持**。凍結理由だった「SendGrid 側の Event Webhook 登録状況・署名検証キーが未確認」は
+  **2026-07-22 の read-only 調査で解消**（登録 0 本 / 鍵未設定を確認）。以降は
+  §Webhook fail closed 化（Phase 0）の deploy 順序に従う。Event Webhook の作成・有効化は
+  **別 Phase・別承認境界**であり、本作業の承認に混ぜない。
 - 詳細は `astro-site/docs/PAYMENT_EMAIL_V2.md` §カナリア再検証（2026-07-22）が単一源。
 
 ## Remaining
 
 - ~~入金確認メール v2 の cutover（D1）~~ → **2026-07-21 に完了・gate=v2-full で本番稼働中**
   （§D1 cutover 完了 / §初の実顧客通過 / §カナリア再検証）。**Remaining ではない。**
-- 入金確認メール v2 の **Event Webhook（S9）**: SendGrid 署名検証キーの provision + 管理画面設定 +
-  `sendgrid-webhook.js` 拡張（署名検証・custom_args 照合・冪等・PII 非出力）。**別 Phase・未実施**。
-  関連 PR #149 は SendGrid 側の登録状況が未確認のため **Draft 凍結中**
+- **S9 Event Webhook 本体**（`custom_args` 照合による `accepted` → `delivered`/`bounced`/`dropped` 反映・
+  イベント冪等・out-of-order）。**未実施**。Phase 0（署名検証 fail closed / PR #149）で署名検証の
+  単一源は用意済みのため**新規モジュールは増えない**。有効化には SendGrid 管理画面での
+  Event Webhook 登録 + Verification Key 発行 + Netlify env 投入が必要
+  （順序は `astro-site/docs/SENDGRID_WEBHOOK.md` §本番反映の順序）。
+  **2026-07-22 時点で Event Webhook の登録は 0 本・鍵は未設定**（read-only 確認済み）
+- **Webhook fail closed 化（Phase 0）の本番反映**: PR #149（Draft）で実装済み・**main 未反映**。
+  merge により署名検証なしの公開受信窓が閉じる。Event Webhook が 0 本のため機能損失はない
 - 入金確認メール v2 の **legacy noreply 経路**の是正（`confirm-bank-payment.js` の legacy 分岐 /
-  `send-payment-confirmation-auto.js` が `FROM_EMAIL=noreply@keiba.link` のまま）。
-  gate=v2-full では通常発火しないが、legacy へ rollback すると noreply 送信に戻る。**未実施・別タスク**
+  `send-payment-confirmation-auto.js`）。**PR #149 で `senderIdentity.js` へ移行済み・main 未反映**。
+  gate=v2-full では通常発火しないが、legacy へ rollback すると noreply 送信に戻るため解消が必要
 - `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` の
   **410 Gone / redirect 化**。**未実施**。両経路とも運用上未使用のため実害は無いが到達可能で、
-  誤操作すると自前送信が走る（`PaymentEmailSent` を立てないため、A2 を再 ON した場合は 2 通になる）
+  誤操作すると自前送信が走る（`PaymentEmailSent` を立てないため、A2 を再 ON した場合は 2 通になる）。
+  両者に残る `FROM_EMAIL`（noreply）も、410 化と**同時に**処理する（送信元だけ差し替える半端な修正はしない）
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降（穴馬抽出ロジック改善・表示改善）。同文書は「実装未着手」のまま
 - `check:prediction-integrity`（検査対象 0 件で失敗する既存問題）の原因調査 →
   `check:jra-nankan-parity` とあわせて `safety-check.yml` へ組込（`CLAUDE.md` PR-K・低優先度）
@@ -251,10 +289,12 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
 ## Blockers
 
 - 現時点で本ドキュメント基盤 PR に対する blocker はない。
-- ~~コード側の実質的 blocker: 入金確認メール v2 の cutover~~ → **2026-07-21 に完了**（解消済み）。
-- 現在のコード側 blocker: 入金確認メール v2 の **Event Webhook（S9）** は、SendGrid の署名検証キー provision と
-  管理画面での Event Webhook 設定（**ユーザー操作**）が前提であり、それ無しには着手できない。
-  併せて、本番メール送信・本番 Airtable 書込み・production deploy・env 変更は引き続き
+- ~~コード側の実質的 blocker: 入金確認メール v2 の cutover~~ → **2026-07-21 に完了**（v2-full 稼働・解消済み）。
+- S9 Event Webhook 本体の**有効化**は SendGrid 管理画面での Event Webhook 登録 + Verification Key 発行 +
+  Netlify env 投入（いずれも**ユーザー操作の高リスク境界**）を要するため、明示承認なしに実行できない。
+  ただし **Phase 0（署名検証 fail closed）はコードのみで完了済み**（PR #149・main 未反映）であり、
+  S9 実装自体はブロックされない。
+- 併せて、本番メール送信・本番 Airtable 書込み・production deploy・env 変更は引き続き
   **ユーザーの明示承認なしに実行しない**（`CLAUDE.md` §High-risk approval boundary）。
 
 ## Open Questions
@@ -293,9 +333,14 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
 - **Repository**: `analytics-keiba` / **Origin**: `https://github.com/apol0510/analytics-keiba.git`
 - **Branch（初版時）**: `docs/autonomous-project-workflow`（`origin/main` から分岐 / PR #143）。
   変更範囲は `CLAUDE.md` / `docs/spec.md` / `docs/progress.md` / `docs/decisions.md` の 4 ファイルのみ。
-- **Branch（本更新時）**: `docs/payment-email-v2-first-production-case`（PR #150 / Draft）。
+- **Branch（PR #150 / merged 2026-07-22）**: `docs/payment-email-v2-first-production-case`。
   変更範囲は `astro-site/docs/PAYMENT_EMAIL_V2.md` / `docs/progress.md` の **docs 2 ファイルのみ**。
-- 作業はいずれも**分離 worktree** で実施（ユーザーのメイン checkout へは書込まない）。
-  ソースコード・workflow・lockfile は未変更。
+- **Branch（本更新時 / PR #149・Draft）**: `feat/sendgrid-webhook-fail-closed`。
+  変更範囲は `astro-site/src/lib/webhooks/**`（新規）/ `astro-site/netlify/functions/sendgrid-webhook.js` /
+  `confirm-bank-payment.js` / `send-payment-confirmation-auto.js` / `paymentEmailSender.guard.test.mjs` /
+  `astro-site/package.json`（script 追加のみ）/ `.github/workflows/safety-check.yml` / docs。
+  **lockfile は未変更。** 2026-07-22 に `origin/main` を通常 merge して docs 2 ファイルの競合を解消。
+- 作業はいずれも**分離 worktree** で実施（ユーザーのメイン checkout へは書込まない。
+  未コミット変更はユーザーの作業中変更として保全）。
 - メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
 - **Last verified**: 2026-07-22
