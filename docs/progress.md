@@ -318,18 +318,37 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
   `PaymentEmailStatus` が更新される（S9 の目的どおり）。`delivered` の反映には
   SendGrid 設定で **Delivered を追加**する必要がある（**別承認**）。
 
+### S9 E2E 実証（2026-07-22・Phase 0 完了）
+
+**署名付き実イベントが本番エンドポイントで検証を通過し、正常処理された。鍵一致の実証が完了。**
+
+- 実証方法は **organic event**。Test Integration は本番 `EmailBlacklist` にダミーを作りうるため不採用。
+  `Delivered` を対象イベントへ追加したうえで、**マジックリンクを 1 通送信**して自然発生させた（承認済み・1 通のみ）。
+- 20:52:18Z 送信 → **20:52:43Z** に `sendgrid-webhook` が
+  `📨 処理完了: { received: 1, processed: 0, failed: 0, paymentEmail: { targeted: 0, applied: 0, skipped: 0, errors: 0 } }`
+  （Duration 104ms）。**`🚫 署名検証 NG` は 0 件**。
+- **同時に S9 の選別も実証**: `custom_args.purpose` を持たないマジックリンクを正しく対象外にし
+  （`targeted: 0`）、suppression 側も `delivered` を対象外（`processed: 0`）。
+- **副作用ゼロ**: `EmailBlacklist` は 11 件 / `BounceCount` 合計 16 / HARD 4・SOFT 7 で baseline のまま。
+  Customers への書込みも 0 件。env / deploy / SendGrid のその他設定は無変更。
+- **未実証は 1 点のみ**: 決済確認メールの `delivered` で `applied: 1` になること（次の実入金時に自然確認）。
+- 詳細は `astro-site/docs/SENDGRID_WEBHOOK.md` §完了: 鍵一致の E2E 実証 が単一源。
+
 ## Remaining
 
 - ~~入金確認メール v2 の cutover（D1）~~ → **2026-07-21 に完了・gate=v2-full で本番稼働中**
   （§D1 cutover 完了 / §初の実顧客通過 / §カナリア再検証）。**Remaining ではない。**
-- ~~**S9 Event Webhook 本体**（`custom_args` 照合による `accepted` → `delivered`/`bounced`/`dropped` 反映・
-  イベント冪等・out-of-order）~~ → **2026-07-23 実装完了**（§S9 本体の実装）。
-  **残るのは SendGrid 側で `delivered` イベントを追加すること**（設定変更・別承認）。
-  追加するまで `PaymentEmailDeliveredAt` は埋まらない（`bounce` / `dropped` は選択済みのため反映される）
+- ~~**S9 Event Webhook 本体**~~ → **2026-07-22 実装・本番反映完了**（PR #154 / `cd04d89`・§S9 本体の実装）。
+  SendGrid の `Delivered` イベント追加も**完了**。**Remaining ではない**
 - ~~Webhook fail closed 化（Phase 0）の本番反映~~ → **2026-07-22 完了**（PR #149 merge `137a348` /
   published `6a609fe22791d800080c2ff0`）。**Remaining ではない**
-- **Phase 0 の鍵一致 E2E 実証**: organic event（実バウンス等）の到達待ち。**到達 0 件**。
-  次回確認は Function ログと `EmailBlacklist` 件数の read-only 比較のみ（baseline は §S9 Phase 0 記載）
+- ~~**Phase 0 の鍵一致 E2E 実証**~~ → **2026-07-22 完了**（§S9 E2E 実証）。署名付き実イベントが
+  検証を通過し `📨 処理完了` を確認。**Remaining ではない**
+- **S9 の実データ確認（最後の 1 点）**: 決済確認メール（`purpose='payment_confirmation_v2'`）の
+  `delivered` で `paymentEmail.applied: 1` になること。**次の実入金時に read-only 確認するだけ**でよく、
+  こちらから起こす作業は無い
+- **`send-magic-link.js` がログにメールアドレスを平文出力している**（着手前から存在・今回の変更とは無関係）。
+  決済メール経路は PII 非出力を徹底しているため揃えるのが望ましいが、**独断で修正せず判断待ち**
 - ~~入金確認メール v2 の legacy noreply 経路の是正~~ → **2026-07-22 完了**（PR #149 で
   `confirm-bank-payment.js` legacy 分岐 / `send-payment-confirmation-auto.js` を `senderIdentity.js` へ移行・
   main 反映済み）。gate を legacy へ rollback しても送信元は `support@keiba.link`
