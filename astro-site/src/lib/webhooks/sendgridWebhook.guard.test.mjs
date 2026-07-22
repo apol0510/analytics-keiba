@@ -73,7 +73,8 @@ test('guard: Airtable 書込みは署名検証より後にしか現れない', (
 });
 
 test('guard: filterByFormula へ外部入力を直挿ししない（injection 遮断）', () => {
-  assert.ok(/equalsFormula\(/.test(CODE), 'formula 組立を単一源経由にしていない');
+  assert.ok(/emailMatchFormula\(/.test(CODE), 'formula 組立を単一源経由にしていない');
+  assert.ok(!/\{Email\}=/.test(CODE), '正規化なしの素の完全一致を使っている（重複レコードの原因）');
   assert.ok(!/SEARCH\(/.test(CODE), 'SEARCH（部分一致 + 直挿し）が復活している');
   // 外部入力（email）を URL / formula へ直挿ししていないこと
   assert.ok(!/\$\{\s*email\s*\}/.test(CODE), 'email を URL / formula へ直挿ししている');
@@ -99,4 +100,20 @@ test('guard: 失敗イベント種別の判定は従来どおり維持されて�
   for (const ev of ['bounce', 'blocked', 'dropped', 'spamreport', 'unsubscribe']) {
     assert.ok(new RegExp(`'${ev}'`).test(CODE), `失敗イベント ${ev} の判定が失われている`);
   }
+});
+
+test('guard: 既存レコード検索の失敗を「未登録」と混同しない（重複作成の防止）', () => {
+  const code = CODE;
+  assert.ok(/if \(!lookup\.ok\)/.test(code),
+    '検索失敗を判定していない（Airtable 一時障害のたびに重複レコードが増える）');
+  const failIdx = code.indexOf('if (!lookup.ok)');
+  const createIdx = code.indexOf('createNewRecord(email');
+  assert.ok(failIdx > -1 && createIdx > failIdx,
+    '検索失敗ガードより前に新規作成へ到達しうる');
+});
+
+test('guard: 許容ずれは env 上書き可能な単一源から取る', () => {
+  const code = CODE;
+  assert.ok(/maxSkewSec:\s*resolveMaxSkewSec\(process\.env\)/.test(code),
+    '許容ずれをハードコードしている（リトライ取りこぼしの調整余地が無い）');
 });

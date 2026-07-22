@@ -24,8 +24,9 @@ import {
   TIMESTAMP_HEADER,
   verifySendgridEventWebhookSignature,
   signatureFailureStatus,
+  resolveMaxSkewSec,
 } from '../../src/lib/webhooks/sendgridSignature.js';
-import { equalsFormula } from '../../src/lib/webhooks/airtableFormula.js';
+import { emailMatchFormula } from '../../src/lib/webhooks/airtableFormula.js';
 
 config();
 
@@ -59,6 +60,7 @@ export default async (req) => {
     signatureBase64: req.headers.get(SIGNATURE_HEADER),
     timestamp: req.headers.get(TIMESTAMP_HEADER),
     rawBody,
+    maxSkewSec: resolveMaxSkewSec(process.env),
   });
 
   if (!verification.ok) {
@@ -211,35 +213,44 @@ async function recordWebhookBounce(email, bounceInfo, originalEvent) {
   }
 
   // 既存レコード確認 → 更新 or 新規作成
-  const existingRecord = await findExistingRecord(email);
+  // **検索に失敗したときは何もしない（fail closed）**。「見つからなかった」と区別せずに
+  // 新規作成すると、Airtable の一時障害のたびに重複レコードが増える。
+  const lookup = await findExistingRecord(email);
+  if (!lookup.ok) {
+    console.log('⚠️ [sendgrid-webhook] 既存レコード検索に失敗（作成せずスキップ）');
+    return;
+  }
 
-  if (existingRecord) {
-    await updateExistingRecord(existingRecord, bounceInfo);
+  if (lookup.record) {
+    await updateExistingRecord(lookup.record, bounceInfo);
   } else {
     await createNewRecord(email, bounceInfo, originalEvent);
   }
 }
 
-// 既存レコード検索（formula injection 遮断・完全一致）
+/**
+ * 既存レコード検索（formula injection 遮断 + LOWER(TRIM()) 正規化一致）。
+ * @returns {{ok: true, record: object|null} | {ok: false}} ok=false は**判定不能**（作成もしない）
+ */
 async function findExistingRecord(email) {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
-  const formula = equalsFormula('Email', email);
+  const formula = emailMatchFormula(email);
   const searchUrl =
     `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BLACKLIST_TABLE}` +
     `?filterByFormula=${encodeURIComponent(formula)}&maxRecords=1`;
 
-  const response = await fetch(searchUrl, {
-    headers: { 'Authorization': `Bearer ${AIRTABLE_API_KEY}` }
-  });
-
-  if (response.ok) {
+  try {
+    const response = await fetch(searchUrl, {
+      headers: { 'Authorization': `Bearer ${AIRTABLE_API_KEY}` }
+    });
+    if (!response.ok) return { ok: false };
     const data = await response.json();
-    return data.records.length > 0 ? data.records[0] : null;
+    return { ok: true, record: data.records.length > 0 ? data.records[0] : null };
+  } catch {
+    return { ok: false };
   }
-
-  return null;
 }
 
 // 既存レコード更新

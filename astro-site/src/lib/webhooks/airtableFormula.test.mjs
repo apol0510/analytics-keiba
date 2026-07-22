@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formulaString, equalsFormula } from './airtableFormula.js';
+import { formulaString, equalsFormula, emailMatchFormula } from './airtableFormula.js';
 
 test('通常のメールアドレスはそのままリテラル化される', () => {
   assert.equal(formulaString('a@example.test'), '"a@example.test"');
@@ -47,4 +47,20 @@ test('equalsFormula にも注入入力を渡せる（エスケープされる）
   assert.ok(f.startsWith('{Email}="'));
   const inner = f.slice('{Email}="'.length, -1);
   assert.ok(!/(^|[^\\])"/.test(inner), 'エスケープされていないダブルクォートが残っている');
+});
+
+test('emailMatchFormula は LOWER(TRIM()) 正規化で比較する（重複レコード防止）', () => {
+  const f = emailMatchFormula('  A@Example.TEST  ');
+  assert.equal(f, 'LOWER(TRIM({Email}))="a@example.test"');
+});
+
+test('emailMatchFormula も注入入力をエスケープする', () => {
+  const f = emailMatchFormula('"} , OR(1,1) , LOWER(TRIM({Email}))="');
+  const inner = f.slice('LOWER(TRIM({Email}))="'.length, -1);
+  assert.ok(!/(^|[^\\])"/.test(inner), 'エスケープされていないダブルクォートが残っている');
+});
+
+test('emailMatchFormula は非文字列でも壊れない', () => {
+  assert.equal(emailMatchFormula(null), 'LOWER(TRIM({Email}))=""');
+  assert.equal(emailMatchFormula(undefined), 'LOWER(TRIM({Email}))=""');
 });

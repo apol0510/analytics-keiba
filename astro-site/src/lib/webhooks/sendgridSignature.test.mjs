@@ -18,6 +18,7 @@ import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
   DEFAULT_MAX_SKEW_SEC,
+  resolveMaxSkewSec,
 } from './sendgridSignature.js';
 
 const NOW_MS = 1_770_000_000_000; // 固定時刻（テストを時計に依存させない）
@@ -177,4 +178,38 @@ test('検証失敗は常に 403（設定不備を 500 にしない）', () => {
 test('ヘッダ名は SendGrid 仕様の小文字固定', () => {
   assert.equal(SIGNATURE_HEADER, 'x-twilio-email-event-webhook-signature');
   assert.equal(TIMESTAMP_HEADER, 'x-twilio-email-event-webhook-timestamp');
+});
+
+test('許容ずれの既定は 24 時間（SendGrid のリトライ地平を取りこぼさない）', () => {
+  assert.equal(DEFAULT_MAX_SKEW_SEC, 24 * 60 * 60);
+});
+
+test('24 時間以内のリトライ（元 timestamp 保持）は受理される', () => {
+  const { privateKey, publicKeyBase64 } = makeKeyPair();
+  const retryTs = String(Math.floor(NOW_MS / 1000) - 6 * 60 * 60); // 6 時間前に署名
+  const signatureBase64 = sign(privateKey, retryTs, BODY);
+
+  const r = verifySendgridEventWebhookSignature({
+    publicKeyBase64, signatureBase64, timestamp: retryTs, rawBody: BODY, nowMs: NOW_MS,
+  });
+  assert.deepEqual(r, { ok: true }, '24時間以内のリトライを弾いている（バウンス情報の恒久ロスト）');
+});
+
+test('24 時間を超える古い署名は拒否（リプレイ）', () => {
+  const { privateKey, publicKeyBase64 } = makeKeyPair();
+  const oldTs = String(Math.floor(NOW_MS / 1000) - (25 * 60 * 60));
+  const signatureBase64 = sign(privateKey, oldTs, BODY);
+
+  const r = verifySendgridEventWebhookSignature({
+    publicKeyBase64, signatureBase64, timestamp: oldTs, rawBody: BODY, nowMs: NOW_MS,
+  });
+  assert.equal(r.reason, SIGNATURE_REASON.TIMESTAMP_SKEW);
+});
+
+test('resolveMaxSkewSec は env で上書きでき、不正値は既定へ落とす', () => {
+  assert.equal(resolveMaxSkewSec({ SENDGRID_WEBHOOK_MAX_SKEW_SEC: '600' }), 600);
+  assert.equal(resolveMaxSkewSec({}), DEFAULT_MAX_SKEW_SEC);
+  for (const bad of ['abc', '', '0', '-5', undefined]) {
+    assert.equal(resolveMaxSkewSec({ SENDGRID_WEBHOOK_MAX_SKEW_SEC: bad }), DEFAULT_MAX_SKEW_SEC);
+  }
 });

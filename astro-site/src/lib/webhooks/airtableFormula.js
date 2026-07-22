@@ -41,3 +41,18 @@ export function formulaString(value) {
 export function equalsFormula(fieldName, value) {
   return `{${fieldName}}=${formulaString(value)}`;
 }
+
+/**
+ * メールアドレスの照合用 formula。**repo 共通方針の `LOWER(TRIM(...))` 正規化**で比較する
+ * （`auth-user.js` / `send-magic-link.js` / `bankPaymentFlow` と同一）。
+ *
+ * 素の `{Email}="..."` だと大文字小文字・前後空白の差で既存レコードを取り逃し、
+ * **更新すべきところで新規レコードを作ってしまう**（EmailBlacklist が二重化し、
+ * BounceCount の積み上げが分断されて HARD_BOUNCE 閾値に到達しなくなる）。
+ *
+ * @param {unknown} email 外部入力可
+ */
+export function emailMatchFormula(email) {
+  const normalized = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  return `LOWER(TRIM({Email}))=${formulaString(normalized)}`;
+}

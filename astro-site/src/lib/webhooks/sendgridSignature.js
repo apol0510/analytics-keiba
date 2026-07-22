@@ -27,8 +27,29 @@ import crypto from 'node:crypto';
 export const SIGNATURE_HEADER = 'x-twilio-email-event-webhook-signature';
 export const TIMESTAMP_HEADER = 'x-twilio-email-event-webhook-timestamp';
 
-/** timestamp の許容ずれ（秒）。リプレイ窓を絞る。 */
-export const DEFAULT_MAX_SKEW_SEC = 600;
+/**
+ * timestamp の許容ずれ（秒）。既定 **24 時間**。
+ *
+ * ⚠️ ここを短くしすぎてはいけない。SendGrid は配信に失敗した Event Webhook を
+ * **バックオフしながら最大 24 時間リトライ**する。リトライが元の timestamp / 署名を
+ * 保持したまま届く場合、窓が短いと**リトライ分を恒久的に取りこぼす**
+ * （= バウンス情報の欠落。デプロイ中の数分間の失敗が永久ロストになる）。
+ *
+ * 真正性の担保は**署名そのもの**であり、この窓は「大昔に捕捉された署名付き
+ * リクエストの再送」を弾くための補助的な防御に過ぎない。リプレイで起きうる実害は
+ * `BounceCount` の二重加算までで、署名鍵が漏れない限り任意アドレスの登録はできない。
+ * よって **可用性側（取りこぼさない）に倒す**。
+ *
+ * 運用上さらに絞りたい場合のみ env `SENDGRID_WEBHOOK_MAX_SKEW_SEC` で上書きする。
+ */
+export const DEFAULT_MAX_SKEW_SEC = 24 * 60 * 60;
+
+/** env から許容ずれを読む（不正値・未設定は既定値）。 */
+export function resolveMaxSkewSec(env = process.env) {
+  const raw = env && env.SENDGRID_WEBHOOK_MAX_SKEW_SEC;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_SKEW_SEC;
+}
 
 /** fail closed の理由コード（**値そのものは絶対に含めない**）。 */
 export const SIGNATURE_REASON = Object.freeze({

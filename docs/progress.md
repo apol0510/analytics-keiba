@@ -179,8 +179,14 @@ reconciler schedule 未配線）ため、その 2 件を実装。**production �
 - **テスト**: `npm run test:webhooks` 新設（30 テスト）＋ sender guard に legacy 経路 5 テスト追加。
   `check:safety` へ組込み、`safety-check.yml` に個別 step として `test:webhooks` / `test:bank-payment` を追加。
 - **検証結果**: `npm run check:safety` 全 21 ステップ green（最終 469 tests / fail 0）・`npm run build` 成功。
-- **本番影響**: SendGrid 側の Event Webhook は**未登録／無効**であることをユーザー確認済みのため、
-  deploy しても**機能損失ゼロ**（届いていないものを 403 にするだけ）。env 投入・管理画面操作とも不要。
+- **本番影響**: ⚠️ **SendGrid 管理画面の現在の状態は未確認**。当初「未登録／無効をユーザー確認済み」と
+  記載したが、**その確認は行われていない**（やり取りの読み違い。2026-07-22 の監査で撤回）。
+  間接証拠（`EmailBlacklist` の webhook 由来レコードが 2025-09-21〜23 の 7 件のみで以降 10 ヶ月間 0 件）から
+  **現在は無効の可能性が高い**が確定ではない。**merge 前に SendGrid 管理画面の確認が必須**
+  （有効だった場合はバウンス収集が止まるため、先に検証キー provision + Signature Verification ON が必要）。
+- **監査で追加した是正（2026-07-22）**: ① timestamp 許容窓 10分→24時間（SendGrid のリトライを取りこぼさない・
+  env `SENDGRID_WEBHOOK_MAX_SKEW_SEC` で調整可）② Email 照合を `LOWER(TRIM())` 正規化へ（重複レコード防止）
+  ③ 既存レコード検索の失敗を「未登録」と混同しない fail closed（一時障害での重複作成を防ぐ）。
 - **本 branch では Function 呼出・メール送信・Airtable 書込み・production deploy を一切行っていない。**
 
 ## Remaining
