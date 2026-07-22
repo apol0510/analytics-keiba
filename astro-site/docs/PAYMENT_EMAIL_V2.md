@@ -348,6 +348,9 @@ S7 worker=true（入口再開可）→ S8 reconciler write=true + Scheduled 有�
 **次工程**: 境界B（新 IdempotencyKey でカナリア 1 件 → dispatcher/reconciler の no-op 確認 → cleanup）。
 **cutover は未完了**（実顧客への worker 送信は境界C＝worker=true 以降）。
 
+> ⚠️ 上記の「未完了」は **境界A 実施直後（2026-07-21）時点の記述**である。
+> **cutover はこの後、同日中に境界 B→C→D まで完了**した（次節 §D1 cutover 完了記録）。
+
 ---
 
 ## D1 cutover 完了記録（2026-07-21・v2-full 稼働）
