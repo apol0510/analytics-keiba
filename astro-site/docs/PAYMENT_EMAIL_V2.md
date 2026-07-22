@@ -593,15 +593,20 @@ SendGrid は exactly-once でも順序保証でもない。そこで:
 検証: `paymentEmailWebhook.test.mjs`（19 件）/ `sendgridWebhook.guard.test.mjs` の S9 配線 5 件
 （`test:bank-payment` / `test:webhooks` → `check:safety` で CI 強制）
 
-#### 有効化に必要な残作業（**未実施・要承認**）
+#### 有効化の状況（2026-07-22 完了）
 
-コードは本番へ入っても、**SendGrid 側で `delivered` イベントが未選択**のため
-`delivered` は届かない（＝`PaymentEmailDeliveredAt` は埋まらない）。
-一方 **`bounce` / `dropped` は既に選択済み**なので、**決済メールがバウンスした場合は
-本番 Customers の `PaymentEmailStatus` が `bounced` / `dropped` へ更新される**（これが S9 の目的）。
+- コード: **本番反映済み**（PR #154 / `cd04d89`）
+- SendGrid 設定: **`Delivered` を追加済み**（他のイベント選択・URL・署名設定は無変更）。
+  対象は **bounce / delivered / dropped / spam_report / unsubscribe**
+- **本番動作を実証済み**: マジックリンク 1 通の `delivered` が届き、
+  `paymentEmail: { targeted: 0, applied: 0, skipped: 0, errors: 0 }` を確認。
+  `custom_args.purpose` を持たないメールを**正しく対象外にした**（＝選別が効いている）。
+  同時に suppression 側も `processed: 0`（`delivered` は対象外）で、**Airtable 書込みは 0 件**。
+- **未実証として残るのは 1 点**: 決済確認メール（`purpose='payment_confirmation_v2'`）の `delivered` で
+  `applied: 1` になること。**次の実入金時に自然に確認できる**（read-only 確認のみで足りる）。
 
-`delivered` を反映させるには SendGrid の Event Webhook 設定で **Delivered を追加**する
-（設定変更＝高リスク境界・別承認）。
+> `delivered` を全メールで受けるため**受信量は増える**が、`purpose` 不一致は `getRecord` にも到達せず
+> 即スキップするため **Airtable 書込みは増えない**。
 
 ### S9 前提工事（Phase 0）は 2026-07-21 に実施済み
 
@@ -627,13 +632,13 @@ S9 本体（`custom_args` 照合による Payment Email 状態への反映）は
 | 受信側 | `sendgrid-webhook.js` は**署名検証必須の fail closed**（鍵未設定でも 403・省略分岐なし） |
 | 検証鍵 | `SENDGRID_WEBHOOK_VERIFICATION_KEY` = **Secret / Functions scope / Production のみ**・**runtime 反映済み**（env の `updated_at` < deploy の `published_at` で判定） |
 | SendGrid | 「AK Event Webhook」= **enabled=true / signed=true** / Post URL 一致 |
-| 対象イベント | **bounce / dropped / spam_report / unsubscribe のみ**。`delivered` ほかは false（S9 本体が未実装のため意図的に選ばない） |
-| Test Integration | **実施しない方針**。本番 `EmailBlacklist` にダミーが作られる可能性があるため、**organic event（実バウンス）で実証**する |
-| 鍵一致の E2E 実証 | **未完了**（到達 0 件）。env は Secret 化済みで値の再照合は不可、署名の自作も不可 |
+| 対象イベント | **bounce / delivered / dropped / spam_report / unsubscribe**（`delivered` は S9 本体の実装後、2026-07-22 に追加）。processed / deferred / open / click / group_* は false |
+| Test Integration | **実施しない方針**。本番 `EmailBlacklist` にダミーが作られる可能性があるため、**organic event で実証**した |
+| 鍵一致の E2E 実証 | ✅ **完了（2026-07-22）**。マジックリンク 1 通の `delivered` が届き `📨 処理完了 { received: 1, ... errors: 0 }`＝**署名検証を通過**。詳細は `SENDGRID_WEBHOOK.md` §完了: 鍵一致の E2E 実証 |
 | 異常時 | `signature_mismatch` / `verification_key_invalid` が**継続**したら **SendGrid 側で Enable endpoint を直ちに OFF**（fail closed のため誤書込みは発生しない） |
 
-baseline（organic event 判定用）: Function 到達 **0 件（24h）** / `EmailBlacklist` **11 件**
-（HARD_BOUNCE 4 / SOFT_BOUNCE 7 / `BounceCount` 合計 **16** / 2026 年の新規 **0**）。
+実証時の副作用: **なし**。`EmailBlacklist` は **11 件 / `BounceCount` 合計 16 / HARD 4・SOFT 7** で
+baseline から変化なし、Customers への書込みも 0 件（`paymentEmail.targeted: 0`）。
 詳細と次回確認手順は **`astro-site/docs/SENDGRID_WEBHOOK.md` §Phase 0 本番反映・Webhook 有効化 完了記録** が単一源。
 
 #### SendGrid 側の登録状況（2026-07-22・read-only で確定）

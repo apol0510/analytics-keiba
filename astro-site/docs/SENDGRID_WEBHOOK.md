@@ -165,15 +165,39 @@ SendGrid 管理画面 → Settings → Mail Settings → **Event Webhook** の�
 > ログ取得手段の妥当性は確認済み（同じ `netlify logs` コマンドで `payment-email-dispatcher` の
 > 定期実行ログは取得できる）。**「ログが見えない」のではなく「到達が 0 件」**である。
 
-### 未完了: 鍵一致の E2E 実証
+### ✅ 完了: 鍵一致の E2E 実証（2026-07-22）
 
-**Verification Key が正しいことは、まだエンドツーエンドで実証されていない。**
+**署名付き実イベントが本番エンドポイントで検証を通過し、正常処理された。Phase 0 は完了。**
 
-- 設定時に「SendGrid の `public_key` == Netlify の値」をプログラム比較で一致確認済み。
-  ただしその後 env を **Secret 化**したため、**値の再照合はできない**（API から取得不可）。
-- 署名を自作しての検証は**不可能**（署名には SendGrid 側の秘密鍵が必要）。
-- 未署名リクエストの 403 は**鍵の正しさを何も証明しない**。
-- → **実証は organic event の到達を待つ**。
+実証方法は **organic event**（ダミーを本番 `EmailBlacklist` へ書き込む Test Integration は不採用）。
+`delivered` を対象イベントへ追加した後、**マジックリンクを 1 通送信**して自然発生させた。
+
+| 時刻（UTC） | 観測 |
+|---|---|
+| 20:52:18 | `send-magic-link` → SendGrid 送信成功（MK 本人宛・1 通） |
+| **20:52:43** | `sendgrid-webhook` → **`📨 処理完了: { received: 1, processed: 0, failed: 0, paymentEmail: { targeted: 0, applied: 0, skipped: 0, errors: 0 } }`**（Duration 104ms） |
+
+**このログが証明していること**:
+
+| 観測 | 意味 |
+|---|---|
+| `📨 処理完了` に到達 | **署名検証を通過**＝ `SENDGRID_WEBHOOK_VERIFICATION_KEY` が正しく、runtime にも反映されている |
+| `🚫 署名検証 NG` が 0 件 | 鍵不一致・timestamp skew・spoof なし |
+| `received: 1` | Delivered イベントが実際に届いた（設定追加が有効） |
+| `processed: 0` | suppression 側は `delivered` を対象外にしている（**設計どおり**。誤って `EmailBlacklist` へ書かない） |
+| `paymentEmail.targeted: 0` | S9 が `custom_args.purpose` で正しく選別し、マジックリンクを対象外にした（**設計どおり**） |
+| `errors: 0` | 本番で例外なく動作 |
+
+**副作用なし**: `EmailBlacklist` は **11 件 / `BounceCount` 合計 16 / HARD 4・SOFT 7** で baseline から
+変化なし。Customers への書込みも 0 件（`targeted: 0`）。
+
+> 経緯（残しておく判断根拠）: 設定時に「SendGrid の `public_key` == Netlify の値」をプログラム比較で
+> 一致確認したが、その後 env を **Secret 化**したため値の再照合は不可能になった。署名の自作も不可
+> （SendGrid 側の秘密鍵が必要）、未署名リクエストの 403 は鍵の正しさを何も証明しない。
+> **よって「実イベントの到達」以外に実証手段が無かった。**
+
+**未実証として残るのは 1 点だけ**: 決済確認メール（`custom_args.purpose='payment_confirmation_v2'`）の
+`delivered` が届いて `paymentEmail.applied: 1` になること。**次の実入金時に自然に確認できる**。
 
 ### 次回確認（read-only のみ・書込みなし）
 
@@ -188,7 +212,10 @@ netlify logs --source functions --function sendgrid-webhook --since 24h
 | `🚫 署名検証 NG: verification_key_invalid` / `signature_mismatch` が**継続**する | **鍵不一致の疑い → 直ちに SendGrid 側で Enable endpoint を OFF**。SendGrid は最大 24 時間リトライするため、OFF で取りこぼしを止める。fail closed なので**誤書込みは発生しない** |
 | 総件数が 11 を超える / `BounceCount` 合計が 16 を超える | 実バウンスが正しく記録された（2025-09 以降止まっていた収集の復旧） |
 
-**S9 本体（`accepted` → `delivered` 反映）は未実装・別 Phase**。本 Function は `EmailBlacklist` のみを扱い、
+~~**S9 本体（`accepted` → `delivered` 反映）は未実装・別 Phase**~~ → **2026-07-22 実装・本番反映済み**
+（`cd04d89` / 詳細は `PAYMENT_EMAIL_V2.md` §S9 本体）。以降、本 Function は `EmailBlacklist` に加えて
+`custom_args.purpose='payment_confirmation_v2'` のイベントのみ `PaymentEmailStatus` へ反映する。
+以下は Phase 0 時点の記述。本 Function は `EmailBlacklist` のみを扱い、
 Payment Email の状態は 1 バイトも書かない。
 
 ## 検証
