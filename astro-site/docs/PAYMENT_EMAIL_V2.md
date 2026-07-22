@@ -612,34 +612,53 @@ baseline（organic event 判定用）: Function 到達 **0 件（24h）** / `Ema
 → **gate=legacy へ rollback しても送信元は `support@keiba.link`**。本番 env
 `SENDGRID_FROM_EMAIL` が正式値であることは境界B カナリアの実受信で実証済み。
 
-> **未対応（別タスク・本 Phase のスコープ外）**: `send-payment-confirmation.js` と
-> `paypal-webhook.js` は依然 `FROM_EMAIL`（noreply）を使う。両者は「未使用だが到達可能」で
-> **410 Gone / redirect による無効化**が本来の対処のため、送信元だけ差し替える半端な修正はしない。
+> ~~**未対応（別タスク）**: `send-payment-confirmation.js` と `paypal-webhook.js` は依然
+> `FROM_EMAIL`（noreply）を使う~~ → **2026-07-22 に両者を 410 Gone 化して解消**。
+> 送信元だけ差し替える半端な修正ではなく、**経路そのものを無効化**した
+> （§legacy 管理経路の無効化）。両ファイルから SendGrid / Airtable / `fetch` を完全に除去済み。
 
 ---
 
-## legacy 管理経路の無効化（設計・cutover 時に実施）
+## legacy 管理経路の無効化（2026-07-22 実施済み・恒久 410）
 
 `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` は
-運用上未使用だが到達可能で、**誤操作すると自前送信 + A2 で 2 通**届く（`PaymentEmailSent` を立てないため）。
+運用上未使用だが到達可能で、**誤操作すると自前送信 + A2 で 2 通**届いた（`PaymentEmailSent` を
+立てないため）。**feature flag に依存した 403 では legacy 期間中の誤操作を防げない**ため、
+設計方針どおり**恒久 410 Gone** で無効化した。
 
-- **即時（コード変更前）**: 使用禁止を運用で明文化。`admin-promote-customer` 完成まで触らない。
-- **cutover 時（S3〜S6 のどこか・本タスクでは未実施）**:
-  - 推奨: 管理画面を新 `admin-promote-customer` 画面へ **redirect**、旧 Function は **410 Gone** を返す。
-  - **feature flag に依存した 403 だけでは legacy 期間中に誤操作可能**なので不十分（恒久 410 にする）。
-  - `paypal-webhook.js` は未使用を**コードコメント + 運用文書に明記**し、v2 対応完了まで有効化禁止。
-- 本タスクでは**旧 Function の挙動は変更しない**（cutover 時のアクションのため）。
+### 実施内容
+
+| 対象 | 変更後 |
+|---|---|
+| `netlify/functions/send-payment-confirmation.js` | **常に 410**（`{error:'Gone', reason:'legacy_route_removed'}`）。SendGrid / Airtable / fetch を**コードから完全に除去** |
+| `netlify/functions/paypal-webhook.js` | **常に 410**。Airtable SDK・SendGrid 送信・`Status='active'` 直書きを**除去** |
+| `src/pages/admin/send-payment-confirmation.astro` | 操作 UI を持たない**廃止案内ページ**（`noindex` / フォーム・fetch なし）。現行手順（`PaymentConfirmed` にチェック）とやってはいけない操作を明示 |
+
+- **redirect ではなく案内ページ**にした理由: 代替となる `admin-promote-customer` の**画面は存在しない**
+  （Function のみ）。存在しない URL へ redirect するより、現行手順を示す方が運用事故を減らせる。
+- 手動昇格が必要な場合は `netlify/functions/admin-promote-customer.js`（状態機械に沿って
+  `PaymentEmailStatus='pending'` を作る）を使う。**自前送信 + `Status` 直書きの経路は復活させない。**
+- `paypal-webhook.js` を将来復活させる場合の必須条件（署名検証 / 昇格は単一源経由 /
+  送信は状態機械へ委譲）はファイル冒頭のコメントに明記した。
+
+### guard
+
+`src/lib/payments/legacyPaymentRoutes.guard.test.mjs`（`test:bank-payment` → `check:safety` で CI 強制）:
+410 を返すこと / 成功ステータスの経路が無いこと / SendGrid・Airtable・`fetch` を持たないこと /
+`Status='active'`・`有効期限`・`PaymentEmailSent` を書かないこと / 旧 admin 画面が
+廃止済み Function を呼ばず、フォーム・fetch を持たないこと。
 
 ## 別課題（本設計と分離・未解決）
 
 - **送信元不一致（決済メール経路は解決済み）**: `email-config.js` の
   `FROM_EMAIL='noreply@keiba.link'` は残るが、**決済メール経路は v2（2026-07-20）・legacy（2026-07-21）
   とも `senderIdentity.js` へ移行済み**（上記「送信元契約」/「legacy noreply 経路」参照）。
-  **未対応で残るのは未使用の 2 経路**: `send-payment-confirmation.js` / `paypal-webhook.js`
-  （本来の対処は 410/redirect による無効化。下記参照）。
-  ニュースレター / マジックリンク等の 11 Function も従来どおり別タスク。
-- **`/admin/send-payment-confirmation` + `send-payment-confirmation.js` は未使用だが到達可能**。
-  誤操作すると A2 と合わせて 2 通。cutover 前に 410/redirect で無効化。`paypal-webhook.js` も同型。
+  ~~**未対応で残るのは未使用の 2 経路**: `send-payment-confirmation.js` / `paypal-webhook.js`~~
+  → **2026-07-22 に両者を 410 Gone 化して解消**（§legacy 管理経路の無効化）。
+  ニュースレター / マジックリンク等の 11 Function は従来どおり別タスク。
+- ~~**`/admin/send-payment-confirmation` + `send-payment-confirmation.js` は未使用だが到達可能**~~
+  → **解消済み**。Function は常に 410、admin 画面は操作 UI を持たない廃止案内ページ。
+  `paypal-webhook.js` も同様に 410 化済み。
 
 ## 実装ファイル
 

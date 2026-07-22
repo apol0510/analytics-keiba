@@ -1,5 +1,17 @@
 ---
-// 入金確認メール送信管理画面
+/**
+ * /admin/send-payment-confirmation — **廃止済み画面**
+ *
+ * 旧画面は `/.netlify/functions/send-payment-confirmation` を叩いて自前で確認メールを送っていた。
+ * その Function は `PaymentEmailSent` を立てないため、Automation A2 と合わせて**確認メールが 2 通**
+ * 届く事故が起きうる。2026-07-22 に Function を **410 Gone** へ変更したため、本画面も
+ * **操作 UI を持たない案内ページ**へ置き換えた（`astro-site/docs/PAYMENT_EMAIL_V2.md`
+ * §legacy 管理経路の無効化）。
+ *
+ * **この画面にフォーム・fetch を復活させないこと。** 配線は
+ * `src/lib/payments/legacyPaymentRoutes.guard.test.mjs` が固定している。
+ */
+export const prerender = false;
 ---
 
 <!DOCTYPE html>
@@ -7,357 +19,86 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>入金確認メール送信 - KEIBA Analytics</title>
+  <meta name="robots" content="noindex, nofollow">
+  <title>この画面は廃止されました - KEIBA Analytics</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: #0f172a;
+      color: #e2e8f0;
       min-height: 100vh;
-      padding: 20px;
+      padding: 24px;
+      line-height: 1.8;
     }
-
     .container {
-      max-width: 800px;
-      margin: 0 auto;
-      background: white;
+      max-width: 720px;
+      margin: 40px auto;
+      background: #1e293b;
+      border: 1px solid #334155;
       border-radius: 12px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-      padding: 40px;
+      padding: 32px;
     }
-
-    .header {
-      text-align: center;
-      margin-bottom: 40px;
-      padding-bottom: 20px;
-      border-bottom: 2px solid #e2e8f0;
-    }
-
-    .header h1 {
-      color: #1e293b;
-      font-size: 1.8rem;
-      margin-bottom: 10px;
-    }
-
-    .header p {
-      color: #64748b;
-      font-size: 0.95rem;
-    }
-
-    .form-section {
-      margin-bottom: 30px;
-    }
-
-    .form-section h2 {
-      color: #334155;
-      font-size: 1.2rem;
-      margin-bottom: 20px;
-      padding-left: 10px;
-      border-left: 4px solid #3b82f6;
-    }
-
-    .form-group {
-      margin-bottom: 20px;
-    }
-
-    .form-group label {
-      display: block;
-      color: #475569;
-      font-weight: bold;
-      margin-bottom: 8px;
-      font-size: 0.95rem;
-    }
-
-    .form-group input,
-    .form-group select {
-      width: 100%;
-      padding: 12px 15px;
-      border: 2px solid #e2e8f0;
-      border-radius: 8px;
-      font-size: 1rem;
-      transition: all 0.3s;
-    }
-
-    .form-group input:focus,
-    .form-group select:focus {
-      outline: none;
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-
-    .form-group .hint {
-      color: #64748b;
-      font-size: 0.85rem;
-      margin-top: 5px;
-    }
-
-    .button-group {
-      display: flex;
-      gap: 15px;
-      margin-top: 30px;
-    }
-
-    .btn {
-      flex: 1;
-      padding: 15px 30px;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: bold;
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: linear-gradient(135deg, #2563eb, #1d4ed8);
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-    }
-
-    .btn-secondary {
-      background: #f1f5f9;
-      color: #475569;
-    }
-
-    .btn-secondary:hover {
-      background: #e2e8f0;
-    }
-
-    .status-box {
-      margin-top: 30px;
-      padding: 20px;
-      border-radius: 8px;
-      display: none;
-    }
-
-    .status-box.success {
-      background: #d1fae5;
-      border: 2px solid #10b981;
-      color: #065f46;
-    }
-
-    .status-box.error {
-      background: #fee2e2;
-      border: 2px solid #ef4444;
-      color: #991b1b;
-    }
-
-    .status-box.loading {
-      background: #dbeafe;
-      border: 2px solid #3b82f6;
-      color: #1e40af;
-    }
-
-    .spinner {
+    h1 { font-size: 1.4rem; color: #f8fafc; margin-bottom: 8px; }
+    .badge {
       display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 3px solid rgba(255, 255, 255, 0.3);
-      border-radius: 50%;
-      border-top-color: #1e40af;
-      animation: spin 1s ease-in-out infinite;
+      background: #7f1d1d;
+      color: #fecaca;
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 16px;
     }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .info-box {
-      background: #f0f9ff;
-      border-left: 4px solid #0ea5e9;
-      padding: 15px;
-      border-radius: 8px;
-      margin-bottom: 30px;
-    }
-
-    .info-box h3 {
-      color: #0c4a6e;
-      font-size: 1rem;
-      margin-bottom: 10px;
-    }
-
-    .info-box ul {
-      color: #075985;
+    h2 { font-size: 1.05rem; color: #f1f5f9; margin: 24px 0 8px; }
+    p, li { color: #cbd5e1; font-size: 0.95rem; }
+    ol, ul { padding-left: 1.4em; }
+    li { margin-bottom: 6px; }
+    .note {
+      margin-top: 24px;
+      padding: 14px 16px;
+      background: #0b1220;
+      border-left: 3px solid #f59e0b;
+      border-radius: 6px;
       font-size: 0.9rem;
-      padding-left: 20px;
+      color: #fcd34d;
     }
-
-    .info-box li {
-      margin-bottom: 5px;
+    code {
+      background: #0b1220;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.88em;
+      color: #93c5fd;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="header">
-      <h1>💰 入金確認メール送信</h1>
-      <p>銀行振込の入金を確認した後、顧客に「ありがとうメール + ログイン情報」を送信します</p>
+    <span class="badge">廃止済み（2026-07-22）</span>
+    <h1>この管理画面は使用できません</h1>
+    <p>
+      旧「入金確認メール送信」画面は廃止しました。この画面から送信すると、Airtable の自動送信と重なって
+      <strong>同じお客様に確認メールが 2 通届く</strong>おそれがあったためです。
+      対応する Function も <code>410 Gone</code> を返します。
+    </p>
+
+    <h2>いまの手順（これだけです）</h2>
+    <ol>
+      <li>Airtable の Customers で対象レコードを開く</li>
+      <li><code>PaymentConfirmed</code> にチェックを入れる</li>
+      <li>あとは自動：プラン昇格 → 確認メール 1 通の送信まで自動で完了します（数分以内）</li>
+    </ol>
+
+    <h2>やってはいけないこと</h2>
+    <ul>
+      <li><code>プラン</code> / <code>PlanType</code> / <code>Status</code> / <code>有効期限</code> の手動編集</li>
+      <li><code>Status</code> を手で active に変えてメールを起こそうとすること（自動送信は OFF のため送られません）</li>
+      <li><code>PaymentEmailStatus</code> の手動書き換え（二重送信を防ぐ仕組みが壊れます）</li>
+    </ul>
+
+    <div class="note">
+      <code>pending</code> のまま 10 分以上動かない場合のみ異常です。再送を試さず、担当へご連絡ください。
     </div>
-
-    <div class="info-box">
-      <h3>📋 使用方法</h3>
-      <ul>
-        <li>銀行口座で入金を確認</li>
-        <li>下記のフォームに顧客情報を入力</li>
-        <li>「メール送信」ボタンをクリック</li>
-        <li>顧客に「入金ありがとう + ログイン情報」メールが自動送信されます</li>
-        <li>Airtable Record ID を入力すると、Statusが "pending" → "active" に自動更新されます</li>
-      </ul>
-    </div>
-
-    <form id="paymentConfirmationForm">
-      <div class="form-section">
-        <h2>顧客情報</h2>
-
-        <div class="form-group">
-          <label for="email">メールアドレス <span style="color: #ef4444;">*</span></label>
-          <input
-            type="email"
-            id="email"
-            name="email"
-            required
-            placeholder="example@example.com"
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="fullName">お名前 <span style="color: #ef4444;">*</span></label>
-          <input
-            type="text"
-            id="fullName"
-            name="fullName"
-            required
-            placeholder="山田 太郎"
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="productName">プラン <span style="color: #ef4444;">*</span></label>
-          <select id="productName" name="productName" required>
-            <option value="">-- 選択してください --</option>
-            <option value="Standard (¥5,980/月)">Standard (¥5,980/月)</option>
-            <option value="Premium (¥9,980/月)">Premium (¥9,980/月)</option>
-            <option value="Premium Sanrenpuku (¥19,820/月)">Premium Sanrenpuku (¥19,820/月)</option>
-            <option value="Premium Combo (¥24,800/月)">Premium Combo (¥24,800/月)</option>
-            <option value="Premium Plus (¥68,000/単品)">Premium Plus (¥68,000/単品)</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label for="transferAmount">入金金額</label>
-          <input
-            type="number"
-            id="transferAmount"
-            name="transferAmount"
-            placeholder="68000"
-          />
-          <div class="hint">※メールに表示されます（オプション）</div>
-        </div>
-
-        <div class="form-group">
-          <label for="airtableRecordId">Airtable Record ID</label>
-          <input
-            type="text"
-            id="airtableRecordId"
-            name="airtableRecordId"
-            placeholder="recXXXXXXXXXXXXXX"
-          />
-          <div class="hint">※入力すると、AirtableのStatusが "pending" → "active" に更新されます（オプション）</div>
-        </div>
-      </div>
-
-      <div class="button-group">
-        <button type="button" class="btn btn-secondary" onclick="resetForm()">
-          リセット
-        </button>
-        <button type="submit" class="btn btn-primary">
-          📧 メール送信
-        </button>
-      </div>
-    </form>
-
-    <div id="statusBox" class="status-box"></div>
   </div>
-
-  <script>
-    const form = document.getElementById('paymentConfirmationForm');
-    const statusBox = document.getElementById('statusBox');
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-
-      // フォームデータ取得
-      const formData = new FormData(form);
-      const data = {
-        email: formData.get('email'),
-        fullName: formData.get('fullName'),
-        productName: formData.get('productName'),
-        transferAmount: formData.get('transferAmount') || null,
-        airtableRecordId: formData.get('airtableRecordId') || null
-      };
-
-      // ローディング表示
-      showStatus('loading', '<span class="spinner"></span> メール送信中...');
-
-      try {
-        // Netlify Functionを呼び出し
-        const response = await fetch('/.netlify/functions/send-payment-confirmation', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(data)
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-          showStatus('success', `
-            ✅ メール送信成功！<br>
-            <strong>${data.email}</strong> に「入金ありがとう + ログイン情報」メールを送信しました。<br>
-            プラン: <strong>${data.productName}</strong>
-          `);
-
-          // フォームをリセット
-          form.reset();
-        } else {
-          throw new Error(result.message || 'メール送信に失敗しました');
-        }
-      } catch (error) {
-        showStatus('error', `
-          ❌ エラーが発生しました<br>
-          ${error.message}
-        `);
-      }
-    });
-
-    function showStatus(type, message) {
-      statusBox.className = `status-box ${type}`;
-      statusBox.innerHTML = message;
-      statusBox.style.display = 'block';
-
-      // 成功時は5秒後に自動的に非表示
-      if (type === 'success') {
-        setTimeout(() => {
-          statusBox.style.display = 'none';
-        }, 5000);
-      }
-    }
-
-    function resetForm() {
-      form.reset();
-      statusBox.style.display = 'none';
-    }
-  </script>
 </body>
 </html>
