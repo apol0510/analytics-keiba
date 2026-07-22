@@ -246,21 +246,52 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
   **別 Phase・別承認境界**であり、本作業の承認に混ぜない。
 - 詳細は `astro-site/docs/PAYMENT_EMAIL_V2.md` §カナリア再検証（2026-07-22）が単一源。
 
+### S9 Phase 0 本番反映 + Event Webhook 有効化（2026-07-22 完了・organic event 実証待ち）
+
+**署名検証なしの公開受信窓を閉じ、Event Webhook を有効化した。実顧客メール送信 0 / 手動 Airtable 書込み 0 /
+本番 Customers 接続 0。**
+
+- **PR #149 を squash merge**（merge commit **`137a348`**）→ production 反映
+  （published **`6a609fe22791d800080c2ff0`** / ready）。CI safety-check success。
+- 実施順序は「**コードを先に本番へ → その後 SendGrid 側を作成・有効化**」を厳守
+  （逆順にすると署名検証を持たない受信窓が晒される）。
+- SendGrid「AK Event Webhook」= **enabled=true / signed=true** / Post URL 一致 /
+  対象は **bounce・dropped・spam_report・unsubscribe のみ**（`delivered` ほかは false。S9 本体が
+  未実装のため意図的に選ばない）。
+- `SENDGRID_WEBHOOK_VERIFICATION_KEY` = **Secret=true / Functions scope / Production のみ**・
+  **runtime 反映済み**（env の `updated_at` < deploy の `published_at` で機械的に判定）。値は残さない。
+- **Test Integration は実施しない方針**。テスト payload が署名検証を通ると本番 `EmailBlacklist` に
+  ダミーが作られうる（`EmailBlacklist` は `newsletter-preview.js` が使う実運用 suppression list）。
+  → **organic event（実バウンス）で実証**する。実バウンスの記録は汚染ではなく復旧目的そのもの。
+- **鍵一致の E2E 実証は未完了**。到達 0 件。env は Secret 化済みで値の再照合は不可、
+  署名の自作も不可（SendGrid 側の秘密鍵が必要）。未署名 403 は鍵の正しさを証明しない。
+- **baseline（判定基準 / read-only 取得）**: Function 到達 **0 件（24h）** /
+  `EmailBlacklist` **11 件**（HARD_BOUNCE 4 / SOFT_BOUNCE 7 / `BounceCount` 合計 **16** /
+  2026 年の新規 **0**）。
+- **異常時**: `signature_mismatch` / `verification_key_invalid` が**継続**したら
+  **SendGrid 側で Enable endpoint を直ちに OFF**（最大 24h のリトライを止める）。
+  fail closed のため誤書込みは発生しない。Netlify 側の変更は不要。
+- **次回確認は read-only 比較のみ**: `netlify logs --source functions --function sendgrid-webhook --since 24h`
+  ＋ `EmailBlacklist` の 総件数 / Status 内訳 / `BounceCount` 合計（メールアドレス・recordId は出力しない）。
+- **S9 本体（`accepted` → `delivered` 反映）は未実装・別 Phase**。本 Function は `EmailBlacklist` のみを扱い、
+  Payment Email の状態は 1 バイトも書かない。
+- 詳細は `astro-site/docs/SENDGRID_WEBHOOK.md` §Phase 0 本番反映・Webhook 有効化 完了記録 が単一源。
+
 ## Remaining
 
 - ~~入金確認メール v2 の cutover（D1）~~ → **2026-07-21 に完了・gate=v2-full で本番稼働中**
   （§D1 cutover 完了 / §初の実顧客通過 / §カナリア再検証）。**Remaining ではない。**
 - **S9 Event Webhook 本体**（`custom_args` 照合による `accepted` → `delivered`/`bounced`/`dropped` 反映・
-  イベント冪等・out-of-order）。**未実施**。Phase 0（署名検証 fail closed / PR #149）で署名検証の
-  単一源は用意済みのため**新規モジュールは増えない**。有効化には SendGrid 管理画面での
-  Event Webhook 登録 + Verification Key 発行 + Netlify env 投入が必要
-  （順序は `astro-site/docs/SENDGRID_WEBHOOK.md` §本番反映の順序）。
-  **2026-07-22 時点で Event Webhook の登録は 0 本・鍵は未設定**（read-only 確認済み）
-- **Webhook fail closed 化（Phase 0）の本番反映**: PR #149（Draft）で実装済み・**main 未反映**。
-  merge により署名検証なしの公開受信窓が閉じる。Event Webhook が 0 本のため機能損失はない
-- 入金確認メール v2 の **legacy noreply 経路**の是正（`confirm-bank-payment.js` の legacy 分岐 /
-  `send-payment-confirmation-auto.js`）。**PR #149 で `senderIdentity.js` へ移行済み・main 未反映**。
-  gate=v2-full では通常発火しないが、legacy へ rollback すると noreply 送信に戻るため解消が必要
+  イベント冪等・out-of-order）。**未実装**。Phase 0（署名検証 fail closed）は完了しており、
+  署名検証の単一源・検証鍵・Webhook 有効化まで済んでいるため**新規 secret も新規モジュールも増えない**。
+  実装時は `delivered` イベントの選択追加（現在は false）と、`decideWebhookEvent()` の配線が必要
+- ~~Webhook fail closed 化（Phase 0）の本番反映~~ → **2026-07-22 完了**（PR #149 merge `137a348` /
+  published `6a609fe22791d800080c2ff0`）。**Remaining ではない**
+- **Phase 0 の鍵一致 E2E 実証**: organic event（実バウンス等）の到達待ち。**到達 0 件**。
+  次回確認は Function ログと `EmailBlacklist` 件数の read-only 比較のみ（baseline は §S9 Phase 0 記載）
+- ~~入金確認メール v2 の legacy noreply 経路の是正~~ → **2026-07-22 完了**（PR #149 で
+  `confirm-bank-payment.js` legacy 分岐 / `send-payment-confirmation-auto.js` を `senderIdentity.js` へ移行・
+  main 反映済み）。gate を legacy へ rollback しても送信元は `support@keiba.link`
 - `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` の
   **410 Gone / redirect 化**。**未実施**。両経路とも運用上未使用のため実害は無いが到達可能で、
   誤操作すると自前送信が走る（`PaymentEmailSent` を立てないため、A2 を再 ON した場合は 2 通になる）。
