@@ -10,6 +10,7 @@
 // （noreply@keiba.link・ニュースレター等の別経路用）は **この経路では import しない**。
 import { SUPPORT_EMAIL } from '../../../netlify/functions/config/email-config.js';
 import { resolveVerifiedSender, hasVerifiedSender } from './senderIdentity.js';
+import { buildPaymentConfirmationEmail } from './paymentConfirmationEmail.js';
 import { runWorkerOnce } from './paymentEmailWorker.js';
 
 const CUSTOMERS = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -133,13 +134,20 @@ async function listUnknownAfterAttempt() { return listUnknownFrom(productionTarg
 async function listPending(limit) { return listPendingFrom(productionTarget(), limit); }
 
 /** SendGrid Mail Send。custom_args に record_id / idempotency_key を載せる。throw せず結果を返す。 */
-async function sendMail({ to, recordId, idempotencyKey }) {
+async function sendMail({ to, recordId, idempotencyKey, fullName, plan, planType, expiration }) {
   const apiKey = process.env.SENDGRID_API_KEY;
   if (!apiKey) return { threw: true, error: 'no_api_key' };
   // 送信元契約（単一源 senderIdentity.js）。未設定 / 空 / 不一致は **POST せず** fail closed。
   // worker 側でも事前に弾くが、直接呼ばれても送らないよう二重化する（noreply へ落とさない）。
   const sender = resolveVerifiedSender(process.env);
   if (!sender.ok) return { threw: true, error: sender.reason }; // 値は載せない（reason コードのみ）
+
+  // 本文の単一源。**ログイン導線は必ずこの builder が入れる**（ここで文字列を組み立てない）。
+  const mail = buildPaymentConfirmationEmail({
+    fullName, plan, planType, expiration,
+    siteBase: process.env.MAGIC_LINK_BASE_URL, // 未設定なら builder が本番 URL をフォールバック
+  });
+
   try {
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
@@ -148,8 +156,12 @@ async function sendMail({ to, recordId, idempotencyKey }) {
         personalizations: [{ to: [{ email: to }] }],
         from: { email: sender.email, name: sender.name },
         reply_to: { email: SUPPORT_EMAIL },
-        subject: '【KEIBA Analytics】ご入金を確認いたしました',
-        content: [{ type: 'text/html', value: '<p>ご入金を確認いたしました。ご利用を開始いただけます。</p>' }],
+        subject: mail.subject,
+        content: [
+          // text/plain を先に置く（SendGrid は content 配列の順序で MIME を構成する）
+          { type: 'text/plain', value: mail.text },
+          { type: 'text/html', value: mail.html },
+        ],
         custom_args: { record_id: recordId, idempotency_key: idempotencyKey, purpose: 'payment_confirmation_v2' },
       }),
     });
