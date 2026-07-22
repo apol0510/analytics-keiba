@@ -277,6 +277,25 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
   Payment Email の状態は 1 バイトも書かない。
 - 詳細は `astro-site/docs/SENDGRID_WEBHOOK.md` §Phase 0 本番反映・Webhook 有効化 完了記録 が単一源。
 
+### legacy 管理経路の 410 化（2026-07-22 完了）
+
+**誤操作で確認メールが 2 通届く経路を、恒久 410 で塞いだ。** コードのみの変更で env / SendGrid /
+Airtable / Automation は無変更。実顧客への送信 0 / Airtable 書込み 0。
+
+- 対象は運用上未使用だが**到達可能**だった 3 つ:
+  `netlify/functions/send-payment-confirmation.js` / `netlify/functions/paypal-webhook.js` /
+  `src/pages/admin/send-payment-confirmation.astro`。
+- いずれも「自前で SendGrid を叩く + `Status='active'` を書く」が **`PaymentEmailSent` を立てない**ため、
+  Automation A2 が ON のとき **2 通**届いた。v2 の状態機械も経由しないため二重送信防止が効かない。
+- **feature flag による 403 では legacy 期間中の誤操作を防げない**ので、設計方針どおり**恒久 410 Gone**。
+  両 Function から **SendGrid / Airtable / `fetch` をコードごと除去**した（フラグで止めるのではなく経路を消す）。
+- 旧 admin 画面は **redirect ではなく廃止案内ページ**に置換（代替の `admin-promote-customer` は
+  Function のみで**画面が存在しない**ため）。現行手順（`PaymentConfirmed` にチェック）と
+  やってはいけない操作を明示し、`noindex` / フォーム・fetch なし。
+- guard `src/lib/payments/legacyPaymentRoutes.guard.test.mjs`（8 テスト）を追加し
+  `test:bank-payment` → `check:safety` で CI 強制（**`package.json` は既存 glob で拾うため未変更**）。
+- 検証: `test:bank-payment` **236 pass / 0 fail** / `check:safety` **exit 0（469 tests・fail 0）** / `build` 成功。
+
 ## Remaining
 
 - ~~入金確認メール v2 の cutover（D1）~~ → **2026-07-21 に完了・gate=v2-full で本番稼働中**
@@ -292,10 +311,8 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
 - ~~入金確認メール v2 の legacy noreply 経路の是正~~ → **2026-07-22 完了**（PR #149 で
   `confirm-bank-payment.js` legacy 分岐 / `send-payment-confirmation-auto.js` を `senderIdentity.js` へ移行・
   main 反映済み）。gate を legacy へ rollback しても送信元は `support@keiba.link`
-- `/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` の
-  **410 Gone / redirect 化**。**未実施**。両経路とも運用上未使用のため実害は無いが到達可能で、
-  誤操作すると自前送信が走る（`PaymentEmailSent` を立てないため、A2 を再 ON した場合は 2 通になる）。
-  両者に残る `FROM_EMAIL`（noreply）も、410 化と**同時に**処理する（送信元だけ差し替える半端な修正はしない）
+- ~~`/admin/send-payment-confirmation`（+ `send-payment-confirmation.js`）と `paypal-webhook.js` の
+  **410 Gone / redirect 化**~~ → **2026-07-22 完了**（§legacy 管理経路の 410 化）。**Remaining ではない**
 - `docs/dark-horse-picks-stability-plan.md` の Phase 3 以降（穴馬抽出ロジック改善・表示改善）。同文書は「実装未着手」のまま
 - `check:prediction-integrity`（検査対象 0 件で失敗する既存問題）の原因調査 →
   `check:jra-nankan-parity` とあわせて `safety-check.yml` へ組込（`CLAUDE.md` PR-K・低優先度）
