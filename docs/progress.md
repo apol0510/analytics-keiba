@@ -175,6 +175,35 @@ cutover 後、**初めて実顧客 1 件が v2 経路を端から端まで通過
 - 詳細と運用メモ（同種問い合わせへの回答・やってはいけない操作）は
   `astro-site/docs/PAYMENT_EMAIL_V2.md` §初の実顧客通過記録 が単一源。
 
+### カナリア再検証（2026-07-22・PAT / secret ローテーション後）
+
+カナリア経路の認証情報を 2 つとも更新したため、**新しい認証情報で経路が通ること**を再検証した。
+**コード変更 0 / gate env 変更 0 / 本番 Customers 非接触 / 実顧客送信 0。**
+
+- **ローテーション**: カナリア専用 Airtable PAT を **Regenerate**（旧値失効）、`PAYMENT_CANARY_SECRET` を
+  **ローテーション**。いずれも Netlify **Production / Functions** のみへ差し替え。値は MK のみが保持し、
+  会話・ログ・git・docs に残さない（検証は presence / context / scope / `updated_at` のみ）。
+- **env は deploy 後にしか runtime へ反映されない**ため、毎回
+  **env の `updated_at` < published deploy の `published_at`** を確認して機械的に判定した。
+  Build Hook（`analytics-keiba-auto-deploy` / branch=main）は **反映対象ごとに 1 回だけ**実行。
+  いずれも commit `238db1c` の**コード差分ゼロ deploy**（60 functions / env キー総数 35 は前後不変）。
+  最終 published deploy = **`6a6076887f64ee0008a1cac0` / `238db1c` / ready**。
+- **認証失敗 403 は送信処理に到達しない**ことを実測で確認（secret-first fail closed）。
+  旧 runtime への 2 回の POST は 403 で終わり、Record は `pending` / `AttemptCount=0` / lease・token 空のまま
+  **完全に不変**。試行回数も IdempotencyKey も消費していない。
+- **最終カナリアは exactly once で成功**。専用 Base / Table / Record 1 件（allowlist exactly-one・テスト Base の
+  Automation ON=0 件を UI 目視）に新 IdempotencyKey で `pending` 初期化 → 応答
+  `ok=true / status=accepted / providerAccepted=true` → **メール 1 通を実受信**
+  （`support@keiba.link` / `238db1c`＝PR #151 のログイン導線付き本文）。
+- **cleanup は `PaymentEmailLeaseUntil` / `PaymentEmailAttemptToken` の 2 項目のみ**（PATCH 1 回）。
+  worker は Upstash ロックしか解放しないためこの 2 つが残るのは仕様どおり。
+  **`pending` へは戻さず accepted 監査終端を維持**（status / AttemptCount / Sent / ProviderMessageId /
+  AcceptedAt / IdempotencyKey は read-back で不変を確認）。
+- **二重送信なし / 送信後 PATCH 422（2026-07-20 事故）の再発なし / 本番 Customers 書込み 0。**
+- **PR #149 は Draft 凍結を継続**（SendGrid 側の Event Webhook 登録状況・署名検証キーが未確認のため）。
+  次工程の Event Webhook 確認は**別 Phase**であり、本作業の承認境界に混ぜない。
+- 詳細は `astro-site/docs/PAYMENT_EMAIL_V2.md` §カナリア再検証（2026-07-22）が単一源。
+
 ## Remaining
 
 - 入金確認メール v2 の cutover（D1 手順：入口停止 → Automation A2 OFF 目視 → v2 deploy → カナリア1件 → 段階有効化）。**高リスク・未実行**
