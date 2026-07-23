@@ -28,9 +28,9 @@ export default async (request: Request) => {
 
   // Verify credentials
   // Username: keiba-admin
-  // Password: KEIBAsecure2026!
+  // Password: KeibaAdmin2026Plus
   const validUsername = 'keiba-admin';
-  const validPassword = 'KEIBAsecure2026!';
+  const validPassword = 'KeibaAdmin2026Plus';
 
   if (username === validUsername && password === validPassword) {
     // Authentication successful - allow access
