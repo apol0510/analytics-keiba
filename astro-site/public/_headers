@@ -1,13 +1,9 @@
 # /admin/* は Edge Function netlify/edge-functions/admin-auth.ts の Basic 認証
-# （keiba-admin）で保護する。ここに Basic-Auth を重ねると /admin に二重認証がかかり、
-# ブラウザは Authorization を1つしか送れないため必ず 401 になりログイン不能になる。
-# → /admin の Basic-Auth はこのファイルに置かない。
+# （keiba-admin）で保護する。ここに Basic-Auth を重ねると二重認証になり必ず 401 で
+# ログイン不能になるため、/admin の Basic-Auth はこのファイルに置かない。
 
-# 【一時遮断 2026-07-15】Premium Plus 存在秘匿。
-# premium-plus.astro は prerender=false + SSR verifyPlanAccess（非会員へ 404・商品情報を
-# 一切出さない）で保護済みだが、二重遮断として当面この Basic-Auth を維持する。
-# 解除するとサーバー側 SSR 認可のみが真実源になる（会員は閲覧可・非会員は 404）。
-/premium-plus
-  Basic-Auth: nankan-admin:NANKANsecure2025!
-/premium-plus/*
-  Basic-Auth: nankan-admin:NANKANsecure2025!
+# /premium-plus は premium-plus.astro の SSR verifyPlanAccess で保護する。
+#   許可プラン = Premium Sanrenpuku（三連複単体 + コンボ + lifetime）のみ。
+#   Premium(馬単) / Light / Free / 未ログイン / Cookie破損 / 鍵未設定 は 404（存在秘匿・
+#   商品名・価格・口座番号を一切描画しない / fail closed）。
+#   2026-07-15 の一時 Basic-Auth 遮断は、この SSR 認可の本番稼働により 2026-07-23 に解除。
