@@ -65,6 +65,15 @@ const ppFmtDate = (d) => {
     wd,
   };
 };
+// 受付日時の表示整形: 「YYYY年MM月DD日 HH:MM」へ正規化（手入力の 20260723 / YYYY-MM-DD 等も救済）。
+// 既に年月日表記ならそのまま。空なら開催日（spat 表記）にフォールバック。
+const ppFmtReceiptAt = (raw, fallbackSpat) => {
+  const s = String(raw || '').trim();
+  if (!s) return fallbackSpat;
+  if (/年.*月.*日/.test(s)) return s;
+  const m = s.match(/^(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})(?:[ T]+(\d{1,2}:\d{2}))?/);
+  return m ? `${m[1]}年${m[2]}月${m[3]}日${m[4] ? ' ' + m[4] : ''}` : s;
+};
 const ppCards = latestCards(ppResultsRaw, { limit: 8 }).map((c) => {
   const w = String(c.winnerCombo || '').split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
   return { ...c, w1: w[0], w2: w[1], w3: w[2], jd: ppFmtDate(c.date) };
@@ -956,7 +965,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                       <div class="chrome"></div>
                       <table class="recv"><tbody>
                         {c.receiptNo && <tr><td>受付番号</td><td>{c.receiptNo}</td></tr>}
-                        <tr><td>受付日時</td><td>{c.receiptAt || c.jd.spat}</td></tr>
+                        <tr><td>受付日時</td><td>{ppFmtReceiptAt(c.receiptAt, c.jd.spat)}</td></tr>
                         <tr><td>購入件数</td><td>1件</td></tr>
                       </tbody></table>
                       <table class="bet"><tbody>

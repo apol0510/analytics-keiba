@@ -33,11 +33,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="chk"><label><input type="checkbox" id="isHit" /> 的中</label>
           <span id="ptsPreview" class="pts">点数: — / 合計: —</span></div>
         <div><label>払戻/返還金額（的中時）</label><input type="number" id="payout" placeholder="132000" /></div>
-        <div><label>的中組合せ（的中時）</label><input type="text" id="hitCombo" placeholder="13→3→5" /></div>
+        <div class="wide"><label>的中組合せ（的中時・1着→2着→3着の馬番を選択）</label>
+          <div class="combo3">
+            <select id="hit1"></select><span class="arw">→</span>
+            <select id="hit2"></select><span class="arw">→</span>
+            <select id="hit3"></select>
+          </div>
+        </div>
         <div><label>払戻単価（的中時・任意）</label><input type="number" id="unitPayout" placeholder="132000" /></div>
         <div class="wide"><label>実スクショ画像パス（任意・後日）</label><input type="text" id="imageFile" placeholder="/premium-plus-proof/2026-07-22.png" /></div>
         <div><label>受付番号（任意・実スクショ通り）</label><input type="text" id="receiptNo" placeholder="0003" /></div>
-        <div><label>受付日時（任意・実スクショ通り）</label><input type="text" id="receiptAt" placeholder="2026年07月22日 18:02" /></div>
+        <div><label>受付日（任意・投票内容照会の日付）</label><input type="date" id="receiptDate" /></div>
+        <div><label>受付時刻（任意）</label><input type="time" id="receiptTime" /></div>
       </div>
       <div class="actions">
         <button id="save" class="primary">保存（追記 / 上書き）</button>
@@ -60,6 +67,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .grid .chk{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
     .grid .chk label{display:flex;align-items:center;gap:.5em;color:#e6edf7;margin:0;font-size:.95rem}
     .grid .chk input{width:auto}
+    .combo3{display:flex;align-items:center;gap:8px}
+    .combo3 select{flex:1}
+    .combo3 .arw{color:#f5c451;font-weight:700}
     .pts{color:#f5c451;font-size:.85rem}
     .actions{display:flex;gap:12px;margin-top:16px}
     .actions button{border:0;border-radius:10px;padding:11px 18px;font-weight:700;cursor:pointer}
@@ -78,6 +88,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('secret').addEventListener('change', () => sessionStorage.setItem('pprSecret', $('secret').value.trim()));
     // 既定日 = 今日
     try { $('date').value = new Date().toISOString().slice(0, 10); } catch {}
+
+    // 的中組合せ: 1着→2着→3着 の馬番セレクト（1〜18）を生成
+    ['hit1','hit2','hit3'].forEach((id, i) => {
+      const label = ['1着','2着','3着'][i];
+      $(id).innerHTML = `<option value="">${label}</option>` +
+        Array.from({ length: 18 }, (_, k) => `<option value="${k + 1}">${k + 1}</option>`).join('');
+    });
+    // 的中組合せ → "7-1-9"（3つ揃ったときのみ）
+    function hitCombo(){
+      const h = [$('hit1').value, $('hit2').value, $('hit3').value].filter(Boolean);
+      return h.length === 3 ? h.join('-') : '';
+    }
+    // 受付日 + 受付時刻 → "2026年07月23日 15:11"（受付日が無ければ送らない）
+    function receiptAt(){
+      const d = $('receiptDate').value; // YYYY-MM-DD
+      const t = $('receiptTime').value; // HH:MM
+      if (!d) return undefined;
+      const [y, m, day] = d.split('-');
+      return `${y}年${m}月${day}日${t ? ' ' + t : ''}`;
+    }
 
     function nums(s){ return (s||'').split(/[^0-9]+/).map(x=>parseInt(x,10)).filter(n=>n>=1&&n<=28); }
     function uniq(a){ const o=[]; for(const x of a) if(!o.includes(x)) o.push(x); return o; }
@@ -103,11 +133,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         third: $('third').value.trim(),
         isHit: $('isHit').checked,
         payout: $('payout').value.trim(),
-        hitCombo: $('hitCombo').value.trim(),
+        hitCombo: hitCombo(),
         unitPayout: $('unitPayout').value.trim(),
         imageFile: $('imageFile').value.trim() || undefined,
         receiptNo: $('receiptNo').value.trim() || undefined,
-        receiptAt: $('receiptAt').value.trim() || undefined,
+        receiptAt: receiptAt(),
       };
     }
     async function post(payload){
