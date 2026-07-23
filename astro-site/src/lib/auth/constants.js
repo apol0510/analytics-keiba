@@ -31,16 +31,19 @@ export const SESSION_COOKIE_NAME = 'ak_session';
  * v2 payload の sessionStart（初回ログイン時刻。refresh で引き継ぐ）を起点に、
  * now - sessionStart >= これ で refresh を拒否し、再度マジックリンク認証を要求する。
  * refresh をいくら繰り返してもこの上限は延長されない。
+ * 2026-07-24: 会員の再ログイン負担軽減のため 12時間 → 90日へ。idle TTL（30日）より長く
+ * 保ち、継続利用者は最大 90 日まで自動延長（各アクセスで refresh-session が Airtable を
+ * 再照会し、退会・期限切れは即失効する）。
  */
-export const ABSOLUTE_SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12時間
+export const ABSOLUTE_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90日
 
 /**
- * 有料セッションの絶対最大 TTL（ミリ秒）。
+ * 有料セッションの絶対最大 TTL（ミリ秒。単一 Cookie の idle 寿命の上限）。
  * expiresAt - issuedAt がこれを超える payload は発行時・検証時とも拒否する。
- * 短寿命セッション設計。PR-B の呼び出しミスで長期有料セッションを発行できないよう
- * ライブラリ側の絶対上限を 30 分に固定する（PR-B の通常 TTL は 20 分予定）。
+ * 2026-07-24: 通常 idle TTL（30日）に余裕を持たせた上限として 31日。
+ * （旧: 短寿命 30分。会員の再ログイン負担軽減のため延長）
  */
-export const MAX_SESSION_TTL_MS = 30 * 60 * 1000; // 30分
+export const MAX_SESSION_TTL_MS = 31 * 24 * 60 * 60 * 1000; // 31日
 
 /**
  * 時刻ズレ許容（ミリ秒）。未来すぎる issuedAt の判定にのみ使う。

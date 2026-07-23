@@ -12,8 +12,13 @@ import { createSessionV2 } from './session.js';
 import { serializeSessionCookie, serializeLogoutCookie } from './sessionCookie.js';
 import { MEMBER_TYPE } from './memberResolution.js';
 
-/** 有料セッションの通常 TTL（20 分）。絶対上限 30 分は PR-A ライブラリが強制。 */
-export const DEFAULT_SESSION_TTL_MS = 20 * 60 * 1000;
+/**
+ * 有料セッションの通常 idle TTL（Cookie 寿命）。
+ * 2026-07-24: 会員の再ログイン負担軽減のため 20分 → 30日へ。この期間アクセスが無ければ
+ * Cookie が失効し再ログインが必要。アクセスがあれば refresh-session が Airtable を再照会
+ * のうえ延長する（絶対上限 90日）。ライブラリ絶対上限 MAX_SESSION_TTL_MS(31日) の範囲内。
+ */
+export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const ISSUE_REJECT = Object.freeze({
   NOT_PAID: 'not_paid',

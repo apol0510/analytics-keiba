@@ -11,8 +11,9 @@
  *   - 署名済み Cookie の plan が allowedPlans に含まれるときのみ { ok:true }
  *
  * plan は発行時に Airtable から確定した値を署名して埋め込んでいる（クライアント改変不可）。
- * 鮮度は idle TTL 20 分 + refresh-session の Airtable 再照会で担保するため、
- * ページ表示ごとの Airtable 再照会は行わない（I/O ゼロ・高速）。
+ * 鮮度は「会員ページのクライアント keep-alive が表示のたびに refresh-session を叩き、
+ * Airtable を再照会して延長/失効させる」ことで担保する（2026-07-24: idle TTL は 30 日へ）。
+ * そのため SSR ゲート自身はページ表示ごとの Airtable 再照会は行わない（I/O ゼロ・高速）。
  */
 
 import { checkSecret } from './sessionCrypto.js';

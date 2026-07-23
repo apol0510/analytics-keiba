@@ -22,7 +22,7 @@ const OTHER_SECRET = 'test-only-different-hmac-key-DO-NOT-USE-IN-PROD-zyxwvut987
 const NOW = 1_750_000_000_000; // 固定 ms epoch（決定的テストのため Date.now は使わない）
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
-const DEFAULT_TTL = 20 * MINUTE; // 通常 TTL（絶対上限 30 分の範囲内）
+const DEFAULT_TTL = 20 * MINUTE; // テスト用固定 TTL（絶対上限 31 日の範囲内・任意の短寿命）
 const subtle = globalThis.crypto.subtle;
 
 function validPayload(over = {}) {
@@ -238,17 +238,17 @@ test('22. TTL 上限超過 → ttl_exceeded', () => {
   assert.equal(res.reason, PAYLOAD_REJECT.TTL_EXCEEDED);
 });
 
-// --- TTL 絶対上限（30 分）境界 ------------------------------------------
-// 絶対最大 TTL は 30 分。生成側（createSession）・検証側（外部 mintToken）の
+// --- TTL 絶対上限（31 日）境界 ------------------------------------------
+// 絶対最大 TTL は 31 日。生成側（createSession）・検証側（外部 mintToken）の
 // 両経路で、上限内は成功・超過は ttl_exceeded で拒否されること。
-assert.equal(MAX_SESSION_TTL_MS, 30 * MINUTE, 'MAX_SESSION_TTL_MS は 30 分であること');
+assert.equal(MAX_SESSION_TTL_MS, 31 * 24 * HOUR, 'MAX_SESSION_TTL_MS は 31 日であること');
 
 const TTL_BOUNDARY = [
   ['20分', 20 * MINUTE, true],
-  ['30分ちょうど', 30 * MINUTE, true],
-  ['30分+1ms', 30 * MINUTE + 1, false],
-  ['1時間', HOUR, false],
-  ['30日', 30 * 24 * HOUR, false],
+  ['30日', 30 * 24 * HOUR, true],
+  ['31日ちょうど', 31 * 24 * HOUR, true],
+  ['31日+1ms', 31 * 24 * HOUR + 1, false],
+  ['40日', 40 * 24 * HOUR, false],
 ];
 
 for (const [name, ttlMs, shouldPass] of TTL_BOUNDARY) {

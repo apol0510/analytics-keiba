@@ -37,8 +37,8 @@ test('paid 会員 → Cookie 発行 + verifySession で往復検証できる', a
   assert.match(res.cookie, /Secure/);
   assert.match(res.cookie, /SameSite=Lax/);
   assert.match(res.cookie, /Path=\//);
-  // Max-Age は 20 分 = 1200 秒
-  assert.match(res.cookie, /Max-Age=1200/);
+  // Max-Age は 30 日 = 2592000 秒（DEFAULT_SESSION_TTL_MS）
+  assert.match(res.cookie, /Max-Age=2592000/);
 
   const cookieVal = readSessionCookie(res.cookie.split(';')[0]);
   const v = await verifySession({ token: cookieVal, secret: TEST_SECRET, now: NOW, subtle });
@@ -51,7 +51,7 @@ test('paid 会員 → Cookie 発行 + verifySession で往復検証できる', a
 test('TTL は既定 20 分（expiresAt - issuedAt）', async () => {
   const res = await issuePaidSessionCookie({ membership: paidMember(), secret: TEST_SECRET, now: NOW, subtle });
   assert.equal(res.payload.expiresAt - res.payload.issuedAt, DEFAULT_SESSION_TTL_MS);
-  assert.equal(DEFAULT_SESSION_TTL_MS, 20 * 60 * 1000);
+  assert.equal(DEFAULT_SESSION_TTL_MS, 30 * 24 * 60 * 60 * 1000); // 30日
 });
 
 test('SessionVersion 欠落は 0 として payload に入る', async () => {

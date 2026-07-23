@@ -66,7 +66,7 @@ test('正常 token + paid → OK + Cookie（20分, 検証可能）', async () =>
   const r = await runVerifyMagicLink(deps);
   assert.equal(r.outcome, VERIFY_FLOW.OK);
   assert.match(r.cookie, /^ak_session=/);
-  assert.match(r.cookie, /Max-Age=1200/);
+  assert.match(r.cookie, /Max-Age=2592000/);
   // Cookie は markUsed の後に確定している（使用済み更新前に Cookie を返さない）
   assert.ok(calls.indexOf('markUsed') !== -1);
   assert.ok(calls.indexOf('markUsed') < calls.length);
@@ -75,7 +75,7 @@ test('正常 token + paid → OK + Cookie（20分, 検証可能）', async () =>
   const v = await verifySession({ token: val, secret: TEST_SECRET, now: NOW, subtle });
   assert.equal(v.ok, true);
   assert.equal(v.payload.plan, 'premium');
-  assert.equal(v.payload.expiresAt - v.payload.issuedAt, 20 * 60 * 1000);
+  assert.equal(v.payload.expiresAt - v.payload.issuedAt, 30 * 24 * 60 * 60 * 1000); // 30日
 });
 
 test('SessionVersion 欠落 → payload は 0', async () => {

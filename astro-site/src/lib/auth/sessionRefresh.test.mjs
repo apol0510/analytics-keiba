@@ -85,8 +85,8 @@ test('#1 v1 有効セッションを v2 へ移行できる（reissue）', async 
 
 test('#2 v1 期限切れは移行できない（verifySession で弾かれる）', async () => {
   const { token } = await issueV1Payload();
-  // idle 期限（20分）超過
-  const v = await verifySession({ token, secret: SECRET, now: NOW + 21 * MIN, subtle });
+  // idle 期限（DEFAULT_SESSION_TTL_MS）超過
+  const v = await verifySession({ token, secret: SECRET, now: NOW + DEFAULT_SESSION_TTL_MS + MIN, subtle });
   assert.equal(v.ok, false);
   assert.equal(v.reason, PAYLOAD_REJECT.EXPIRED);
 });
@@ -117,17 +117,18 @@ test('#5 新規 v2 は sessionStart === issuedAt', async () => {
 
 test('#6 v2 refresh 後も sessionStart が変わらない', async () => {
   const { payload } = await issueV2Payload(); // sessionStart = NOW
-  const refreshAt = NOW + 16 * MIN; // 残 TTL 4分（閾値5分以下）→ reissue
+  const refreshAt = NOW + DEFAULT_SESSION_TTL_MS - MIN; // idle 失効直前（閾値5分以下）→ reissue
   const d = decideRefresh({ payload, membership: paidMember(), now: refreshAt });
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
   assert.equal(d.sessionStart, NOW, 'sessionStart は初回のまま');
 });
 
-test('#7 複数回 refresh しても 12時間上限は延長されない', async () => {
+test('#7 複数回 refresh しても絶対上限は延長されない', async () => {
   let payload = (await issueV2Payload()).payload; // sessionStart = NOW
-  // 16分ごとに reissue を繰り返し、各回の sessionStart が NOW 固定であることを確認
-  for (let k = 1; k <= 5; k++) {
-    const at = NOW + k * 16 * MIN;
+  let issuedAt = NOW;
+  // 各 Cookie の idle 失効直前で reissue を繰り返し、各回の sessionStart が NOW 固定であることを確認
+  for (let k = 1; k <= 3; k++) {
+    const at = issuedAt + DEFAULT_SESSION_TTL_MS - MIN;
     const d = decideRefresh({ payload, membership: paidMember(), now: at });
     assert.equal(d.decision, REFRESH_DECISION.REISSUE);
     assert.equal(d.sessionStart, NOW, `refresh ${k} 回目でも sessionStart 不変`);
@@ -137,38 +138,39 @@ test('#7 複数回 refresh しても 12時間上限は延長されない', async
       sessionVersion: 0, now: at, ttlMs: d.ttlMs, sessionStart: d.sessionStart, subtle,
     });
     payload = built.payload;
+    issuedAt = at;
   }
-  // 12時間を跨いだ時点で reject
+  // 絶対上限を跨いだ時点で reject
   const past = NOW + ABSOLUTE_SESSION_TTL_MS + MIN;
   const d = decideRefresh({ payload, membership: paidMember(), now: past });
   assert.equal(d.decision, REFRESH_DECISION.REJECT);
   assert.equal(d.reason, REFRESH_REJECT.ABSOLUTE_EXPIRED);
 });
 
-test('#8 sessionStart から 11時間59分（範囲内）は refresh 可能', async () => {
+test('#8 絶対上限の直前（範囲内）は refresh 可能', async () => {
   const { payload } = await issueV2Payload();
-  const at = NOW + (12 * HOUR - MIN); // 11:59
+  const at = NOW + ABSOLUTE_SESSION_TTL_MS - MIN; // 絶対上限の 1 分前
   const d = decideRefresh({ payload, membership: paidMember(), now: at });
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
 });
 
-test('#9 sessionStart から 12時間ちょうどで拒否', async () => {
+test('#9 sessionStart から絶対上限ちょうどで拒否', async () => {
   const { payload } = await issueV2Payload();
-  const d = decideRefresh({ payload, membership: paidMember(), now: NOW + 12 * HOUR });
+  const d = decideRefresh({ payload, membership: paidMember(), now: NOW + ABSOLUTE_SESSION_TTL_MS });
   assert.equal(d.decision, REFRESH_DECISION.REJECT);
   assert.equal(d.reason, REFRESH_REJECT.ABSOLUTE_EXPIRED);
 });
 
-test('#10 sessionStart から 12時間超で拒否', async () => {
+test('#10 sessionStart から絶対上限超で拒否', async () => {
   const { payload } = await issueV2Payload();
-  const d = decideRefresh({ payload, membership: paidMember(), now: NOW + 12 * HOUR + MIN });
+  const d = decideRefresh({ payload, membership: paidMember(), now: NOW + ABSOLUTE_SESSION_TTL_MS + MIN });
   assert.equal(d.decision, REFRESH_DECISION.REJECT);
   assert.equal(d.reason, REFRESH_REJECT.ABSOLUTE_EXPIRED);
 });
 
-test('#11 refresh 後の expiresAt は現在時刻から 20分以内', async () => {
+test('#11 refresh 後の ttl は idle 上限（満額・絶対期限まで余裕あり）', async () => {
   const { payload } = await issueV2Payload();
-  const at = NOW + 16 * MIN;
+  const at = NOW + DEFAULT_SESSION_TTL_MS - MIN; // idle 失効直前・絶対期限まで余裕あり
   const d = decideRefresh({ payload, membership: paidMember(), now: at });
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
   assert.ok(d.ttlMs <= DEFAULT_SESSION_TTL_MS, 'ttl は idle 上限以内');
@@ -178,7 +180,7 @@ test('#11 refresh 後の expiresAt は現在時刻から 20分以内', async () 
 test('#12 refresh 後の expiresAt が absolute 期限を越えない', async () => {
   const { payload } = await issueV2Payload();
   // 絶対期限の 10 分前に refresh → ttl は残り 10 分に丸められる
-  const at = NOW + 12 * HOUR - 10 * MIN;
+  const at = NOW + ABSOLUTE_SESSION_TTL_MS - 10 * MIN;
   const d = decideRefresh({ payload, membership: paidMember(), now: at });
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
   assert.equal(d.ttlMs, 10 * MIN);
@@ -267,7 +269,7 @@ test('#17 plan 降格を旧 Cookie の plan で上書きしない（membership �
   const d = decideRefresh({
     payload,
     membership: paidMember({ normalizedPlan: 'light', venueAccess: ['jra'] }),
-    now: NOW + 16 * MIN,
+    now: NOW + DEFAULT_SESSION_TTL_MS - MIN,
   });
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
   assert.equal(d.plan, 'light', '再発行 plan は Airtable 最新（降格後）');
@@ -290,7 +292,7 @@ test('#18 free / Light を paid として再発行しない（free は membershi
 
 test('#19 reissue 後の Cookie 属性が維持される（HttpOnly/Secure/SameSite=Lax/Path=/）', async () => {
   const { payload } = await issueV2Payload();
-  const at = NOW + 16 * MIN;
+  const at = NOW + DEFAULT_SESSION_TTL_MS - MIN;
   const d = decideRefresh({ payload, membership: paidMember(), now: at });
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
   const issued = await issuePaidSessionCookie({
