@@ -1,0 +1,123 @@
+---
+export const prerender = true;
+// 認可: この画面は /admin/* の Basic-Auth 背後。POST は x-admin-secret + production を
+// premium-plus-results Function 側で検証する。secret はこのタブ限定（sessionStorage）。
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+<BaseLayout title="Premium Plus 結果入力（管理）">
+  <div class="ppr">
+    <h1>Premium Plus 結果入力</h1>
+    <p class="lead">配信した 1 鞍の結果を入力すると、git 台帳にコミット → Netlify 自動ビルド → <code>/premium-plus/</code> に反映されます（1 日 1 件・同日は上書き）。</p>
+
+    <div class="card">
+      <label>管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
+      <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
+    </div>
+
+    <div class="card">
+      <div class="grid">
+        <div><label>開催日</label><input type="date" id="date" /></div>
+        <div><label>サーキット</label>
+          <select id="circuit">
+            <option value="">自動（平日=南関 / 土日=中央）</option>
+            <option value="nankan">南関（SPAT4）</option>
+            <option value="chuo">中央（JRA）</option>
+          </select>
+        </div>
+        <div><label>会場</label><input type="text" id="venue" placeholder="大井 / 福島 など" /></div>
+        <div><label>レース番号</label><input type="number" id="raceNumber" min="1" max="12" placeholder="11" /></div>
+        <div class="wide"><label>レース名（任意）</label><input type="text" id="raceName" placeholder="東京スプリント など" /></div>
+        <div><label>1着（1頭）</label><input type="text" id="first" placeholder="13" /></div>
+        <div><label>2着（カンマ区切り）</label><input type="text" id="second" placeholder="3,4,5" /></div>
+        <div><label>3着（カンマ区切り）</label><input type="text" id="third" placeholder="3,4,5,9,11" /></div>
+        <div class="chk"><label><input type="checkbox" id="isHit" /> 的中</label>
+          <span id="ptsPreview" class="pts">点数: — / 合計: —</span></div>
+        <div><label>払戻/返還金額（的中時）</label><input type="number" id="payout" placeholder="132000" /></div>
+        <div><label>的中組合せ（的中時）</label><input type="text" id="hitCombo" placeholder="13→3→5" /></div>
+        <div><label>払戻単価（的中時・任意）</label><input type="number" id="unitPayout" placeholder="132000" /></div>
+        <div class="wide"><label>実スクショ画像パス（任意・後日）</label><input type="text" id="imageFile" placeholder="/premium-plus-proof/2026-07-22.png" /></div>
+      </div>
+      <div class="actions">
+        <button id="save" class="primary">保存（追記 / 上書き）</button>
+        <button id="del" class="danger">この日付を削除</button>
+      </div>
+      <pre id="out" class="out"></pre>
+    </div>
+  </div>
+
+  <style>
+    .ppr{max-width:820px;margin:0 auto;padding:24px 16px 80px;color:#e6edf7}
+    .ppr h1{font-size:1.4rem;margin:0 0 .3em}
+    .ppr .lead{color:#93a4bd;font-size:.9rem;margin:0 0 20px}
+    .ppr code{background:rgba(245,196,81,.1);color:#f5c451;padding:.1em .4em;border-radius:5px}
+    .card{background:#111c33;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:18px;margin-bottom:16px}
+    .card label{display:block;font-size:.78rem;color:#93a4bd;margin-bottom:.35em}
+    .card input,.card select{width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(148,163,184,.28);background:#0b1120;color:#e6edf7;font-size:.95rem}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+    .grid .wide{grid-column:1/-1}
+    .grid .chk{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .grid .chk label{display:flex;align-items:center;gap:.5em;color:#e6edf7;margin:0;font-size:.95rem}
+    .grid .chk input{width:auto}
+    .pts{color:#f5c451;font-size:.85rem}
+    .actions{display:flex;gap:12px;margin-top:16px}
+    .actions button{border:0;border-radius:10px;padding:11px 18px;font-weight:700;cursor:pointer}
+    .actions .primary{background:linear-gradient(180deg,#ffe08a,#f5c451 55%,#d99b1f);color:#3a2a05}
+    .actions .danger{background:transparent;border:1px solid rgba(248,113,113,.5);color:#f87171}
+    .out{margin-top:14px;background:#0b1120;border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:10px;color:#93a4bd;font-size:.8rem;white-space:pre-wrap;min-height:1.4em}
+    @media(max-width:560px){.grid{grid-template-columns:1fr}}
+  </style>
+
+  <script>
+    const API = '/.netlify/functions/premium-plus-results';
+    const $ = (id) => document.getElementById(id);
+    // secret はこのタブのみ
+    const savedSecret = sessionStorage.getItem('pprSecret');
+    if (savedSecret) $('secret').value = savedSecret;
+    $('secret').addEventListener('change', () => sessionStorage.setItem('pprSecret', $('secret').value.trim()));
+    // 既定日 = 今日
+    try { $('date').value = new Date().toISOString().slice(0, 10); } catch {}
+
+    function nums(s){ return (s||'').split(/[^0-9]+/).map(x=>parseInt(x,10)).filter(n=>n>=1&&n<=28); }
+    function uniq(a){ const o=[]; for(const x of a) if(!o.includes(x)) o.push(x); return o; }
+    function points(){
+      const F=uniq(nums($('first').value)), S=uniq(nums($('second').value)), T=uniq(nums($('third').value));
+      let n=0; for(const a of F) for(const b of S) for(const c of T) if(a!==b&&a!==c&&b!==c) n++;
+      return n;
+    }
+    function updatePreview(){
+      const p=points(); $('ptsPreview').textContent = p ? `点数: ${p} / 合計: ¥${(p*1000).toLocaleString()}` : '点数: — / 合計: —';
+    }
+    ['first','second','third'].forEach(id=>$(id).addEventListener('input',updatePreview));
+
+    function entry(){
+      return {
+        date: $('date').value.trim(),
+        circuit: $('circuit').value || undefined,
+        venue: $('venue').value.trim(),
+        raceNumber: $('raceNumber').value.trim(),
+        raceName: $('raceName').value.trim(),
+        first: $('first').value.trim(),
+        second: $('second').value.trim(),
+        third: $('third').value.trim(),
+        isHit: $('isHit').checked,
+        payout: $('payout').value.trim(),
+        hitCombo: $('hitCombo').value.trim(),
+        unitPayout: $('unitPayout').value.trim(),
+        imageFile: $('imageFile').value.trim() || undefined,
+      };
+    }
+    async function post(payload){
+      const secret = $('secret').value.trim();
+      if(!secret){ $('out').textContent='管理シークレットを入力してください'; return; }
+      $('out').textContent='送信中…';
+      try{
+        const res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':secret}, body:JSON.stringify(payload) });
+        const j = await res.json();
+        $('out').textContent = res.ok ? `✅ ${j.action} 完了: ${j.summary}（台帳 ${j.count} 件）\nNetlify ビルド後に /premium-plus/ へ反映されます` : `❌ ${res.status}: ${j.error||''} ${j.detail||''}`;
+      }catch(e){ $('out').textContent='❌ 通信エラー: '+e.message; }
+    }
+    $('save').addEventListener('click',()=>post({action:'upsert', entry:entry()}));
+    $('del').addEventListener('click',()=>{ if(confirm($('date').value+' を削除しますか？')) post({action:'remove', date:$('date').value.trim()}); });
+    updatePreview();
+  </script>
+</BaseLayout>
