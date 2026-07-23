@@ -36,6 +36,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div><label>的中組合せ（的中時）</label><input type="text" id="hitCombo" placeholder="13→3→5" /></div>
         <div><label>払戻単価（的中時・任意）</label><input type="number" id="unitPayout" placeholder="132000" /></div>
         <div class="wide"><label>実スクショ画像パス（任意・後日）</label><input type="text" id="imageFile" placeholder="/premium-plus-proof/2026-07-22.png" /></div>
+        <div><label>受付番号（任意・実スクショ通り）</label><input type="text" id="receiptNo" placeholder="0003" /></div>
+        <div><label>受付日時（任意・実スクショ通り）</label><input type="text" id="receiptAt" placeholder="2026年07月22日 18:02" /></div>
       </div>
       <div class="actions">
         <button id="save" class="primary">保存（追記 / 上書き）</button>
@@ -104,6 +106,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         hitCombo: $('hitCombo').value.trim(),
         unitPayout: $('unitPayout').value.trim(),
         imageFile: $('imageFile').value.trim() || undefined,
+        receiptNo: $('receiptNo').value.trim() || undefined,
+        receiptAt: $('receiptAt').value.trim() || undefined,
       };
     }
     async function post(payload){

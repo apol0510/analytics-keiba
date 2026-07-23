@@ -103,6 +103,11 @@ export function normalizeResult(input) {
     payout: isHit ? payout : 0,
     hitCombo: isHit && typeof input.hitCombo === 'string' ? input.hitCombo.trim() : '',
     unitPayout: isHit ? Math.max(0, toInt(input.unitPayout)) : 0,
+    // 投票内容照会の受付ヘッダ（そっくりカードの再現度用・任意）。管理者が実スクショから
+    // 受付番号 / 受付日時 をそのまま書き写す。未入力なら受付番号行は出さず、受付日時は
+    // 開催日にフォールバック（推測値を作らない）。購入件数は常に 1件（1日1鞍）。
+    receiptNo: typeof input.receiptNo === 'string' ? input.receiptNo.trim() : '',
+    receiptAt: typeof input.receiptAt === 'string' ? input.receiptAt.trim() : '',
     imageFile: typeof input.imageFile === 'string' && input.imageFile.trim() ? input.imageFile.trim() : null,
     legacy: toBool(input.legacy),
     uploadedAt: typeof input.uploadedAt === 'string' ? input.uploadedAt : '',

@@ -330,6 +330,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     .vref.jra .r2 .nav { width: 34px; height: 30px; border: 1px solid #444; border-radius: 5px; background: linear-gradient(to bottom, #2a2a2a, #111); color: #eee; text-align: center; line-height: 28px; font-size: 12px; }
     .vref.jra .r2 .c { flex: 1; text-align: center; color: #fff; }
     .vref.jra .r2 .c .d { font-size: 13px; font-weight: bold; }
+    .vref.jra .r2 .c .n { font-size: 20px; font-weight: bold; }
     .vref.jra .hl { padding: 8px 10px 10px; background: linear-gradient(to bottom, #1c1c1c, #232323); }
     .vref.jra .hlcard { background: #fff; border-radius: 6px; padding: 2px 14px; }
     .vref.jra .hlrow { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; font-size: 19px; font-weight: bold; color: #424242; }
@@ -354,6 +355,10 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     .vref.spat { background: #fff; border: 1px solid #cfcfcf; }
     .vref.spat .chrome { height: 86px; background-image: url('/premium-plus-proof/spat4-head.png'); background-size: 375px auto; }
     .vref.spat table { width: 100%; border-collapse: collapse; }
+    .vref.spat .recv td { border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; padding: 5px 8px; font-size: 14px; height: 28px; }
+    .vref.spat .recv tr:nth-child(odd) { background: #F1F8F8; }
+    .vref.spat .recv td:first-child { text-align: left; width: 40%; color: #000; }
+    .vref.spat .recv td:last-child { text-align: right; padding-right: 8px; }
     .vref.spat .bet th { height: 22px; font-size: 13px; color: #fff; text-shadow: #2D3642 0 -1px 0; text-align: center; font-weight: bold; border: 1px solid #999; border-top: none; background: linear-gradient(to bottom, #333 0%, #595959 12%, #7c7c7c 100%); }
     .vref.spat .bet td { border: 1px solid #ccc; font-size: 13px; padding: 5px 6px; vertical-align: top; }
     .vref.spat .bet .c1 { width: 40%; white-space: nowrap; text-align: left; }
@@ -949,6 +954,11 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                   {c.service === 'spat4' ? (
                     <div class="vref spat">
                       <div class="chrome"></div>
+                      <table class="recv"><tbody>
+                        {c.receiptNo && <tr><td>受付番号</td><td>{c.receiptNo}</td></tr>}
+                        <tr><td>受付日時</td><td>{c.receiptAt || c.jd.spat}</td></tr>
+                        <tr><td>購入件数</td><td>1件</td></tr>
+                      </tbody></table>
                       <table class="bet"><tbody>
                         <tr><th>レース/式別</th><th>馬/組番</th><th>投票金額</th></tr>
                         <tr>
@@ -962,7 +972,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                   ) : (
                     <div class="vref jra">
                       <div class="chrome"></div>
-                      <div class="r2"><span class="nav">◀</span><div class="c"><div class="d">{c.jd.full}</div></div><span class="nav">▶</span></div>
+                      <div class="r2"><span class="nav">◀</span><div class="c"><div class="d">{c.jd.full}</div>{c.receiptNo && <div class="n">受付番号：{c.receiptNo}</div>}</div><span class="nav">▶</span></div>
                       <div class="hl"><div class="hlcard">
                         <div class="hlrow"><span>合計購入金額</span><span>{c.stake.toLocaleString()}円</span></div>
                         <div class="hlrow back"><span>合計払戻金額</span><span>{(c.isHit ? c.payout : 0).toLocaleString()}円</span></div>
