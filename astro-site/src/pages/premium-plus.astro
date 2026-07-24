@@ -60,7 +60,7 @@ const LIST_PRICE = 98000;
 // 旧版（受付値なし・投票金額列なし）のまま残る drift への恒久対策。SPAT4/JRA カード描画
 // （recv 受付表 / 3列投票表 / (各◯円) / 的中額）を更新したら必ずこの文字列を bump して
 // SSR 関数の内容ハッシュを変え、確実にキャッシュミス＝関数再ビルドさせること（CLI deploy は使わない）。
-const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-3';
+const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-2';
 
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
 // 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
@@ -87,13 +87,7 @@ const ppFmtReceiptAt = (raw, fallbackSpat) => {
 };
 const ppCards = latestCards(ppResultsRaw, { limit: 8 }).map((c) => {
   const w = String(c.winnerCombo || '').split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
-  // 表示用の数値は必ず既定値で埋める（テンプレ側の .toLocaleString() が undefined で throw=500 に
-  // ならないための防御。Netlify のビルドキャッシュで page 新版 × lib 旧版が混在すると unitStake 等が
-  // 欠落しうるため、フロントマターで正規化しておく）。unitStake 未定義は 1000（UNIT_STAKE 既定）。
-  const unitStake = Number(c.unitStake) > 0 ? Number(c.unitStake) : 1000;
-  const stake = Number(c.stake) >= 0 ? Number(c.stake) : (Number(c.points) || 0) * unitStake;
-  const payout = Number(c.payout) >= 0 ? Number(c.payout) : 0;
-  return { ...c, unitStake, stake, payout, w1: w[0], w2: w[1], w3: w[2], jd: ppFmtDate(c.date) };
+  return { ...c, w1: w[0], w2: w[1], w3: w[2], jd: ppFmtDate(c.date) };
 });
 
 // --- 本日の1鞍ティザー（購入導線・買い目はロック） ---
