@@ -51,6 +51,13 @@ Astro.response.headers.set('Vary', 'Cookie');
 const PRICE = 68000;
 const LIST_PRICE = 98000;
 
+// SSR 関数キャッシュ bust 用テンプレート版。
+// Netlify の functions cache が古い premium-plus SSR バンドルを再利用し、投票内容照会カードが
+// 旧版（受付値なし・投票金額列なし）のまま残る drift への恒久対策。SPAT4/JRA カード描画
+// （recv 受付表 / 3列投票表 / (各◯円) / 的中額）を更新したら必ずこの文字列を bump して
+// SSR 関数の内容ハッシュを変え、確実にキャッシュミス＝関数再ビルドさせること（CLI deploy は使わない）。
+const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-1';
+
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
 // 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
 const ppStats = computeStats(ppResultsRaw);
@@ -111,6 +118,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
   <meta name="description" content="Premium Sanrenpuku 会員限定。1日1鞍・三連単フォーメーション。">
   <!-- 会員限定の非公開商品。検索結果に出さない（robots.txt でも Disallow） -->
   <meta name="robots" content="noindex, nofollow">
+  <meta name="pp-template-version" content={PP_TEMPLATE_VERSION}>
   <style>
     :root {
       --bg: #0b1120;
