@@ -23,6 +23,7 @@ export { computeStats, formatYen, formatShortDate, STATS_WINDOW, MIN_RATE_SAMPLE
 
 /** 1 点あたりの投票額（円）。合計金額 = 点数 × これ。 */
 export const UNIT_STAKE = 1000;
+// build-cache bust: 20260724-3 (page/lib 混在=500 対策・内容ハッシュ変更用)
 
 /** ページの実績カードに出す最大件数（最新から） */
 export const CARD_LIMIT = 8;
