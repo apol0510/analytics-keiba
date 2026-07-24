@@ -36,21 +36,17 @@ const access = await verifyPlanAccess({
 });
 if (!access.ok) {
   // 非会員には存在すら知らせない → 401/403 ではなく 404。商品情報は一切描画しない。
-  // X-PP-Template-Version: 配信中 SSR 関数のテンプレ版を非認証でも確認できる診断ヘッダ
-  // （どの版の関数が本番で稼働しているかを curl で断定するため。値に機密は含まない）。
   return new Response('Not Found', {
     status: 404,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'private, no-store',
-      'X-PP-Template-Version': PP_TEMPLATE_VERSION,
     },
   });
 }
 // 会員別レスポンス。CDN に共有キャッシュさせない。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 Astro.response.headers.set('Vary', 'Cookie');
-Astro.response.headers.set('X-PP-Template-Version', PP_TEMPLATE_VERSION);
 
 const PRICE = 68000;
 const LIST_PRICE = 98000;
@@ -60,7 +56,7 @@ const LIST_PRICE = 98000;
 // 旧版（受付値なし・投票金額列なし）のまま残る drift への恒久対策。SPAT4/JRA カード描画
 // （recv 受付表 / 3列投票表 / (各◯円) / 的中額）を更新したら必ずこの文字列を bump して
 // SSR 関数の内容ハッシュを変え、確実にキャッシュミス＝関数再ビルドさせること（CLI deploy は使わない）。
-const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-2';
+const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-1';
 
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
 // 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
