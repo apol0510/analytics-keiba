@@ -671,7 +671,7 @@ function getPlanInfo(productName, planType) {
   // Premium Plus
   if (productName.includes('Premium Plus') || productName.includes('Plus')) {
     return {
-      loginUrl: `${baseUrl}/premium-plus/`,
+      loginUrl: `${baseUrl}/premium-plus-v2/`,
       buttonText: 'Premium Plus ページにアクセス'
     };
   }
