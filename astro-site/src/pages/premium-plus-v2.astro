@@ -1,0 +1,91 @@
+---
+export const prerender = false;
+/**
+ * /premium-plus-v2/ — 投票内容照会カード「モック完全版」の検証ルート（独立実装）
+ *
+ * 目的: 本番 /premium-plus/ の SSR ページモジュールが Netlify のビルドキャッシュに固着して
+ * 旧テンプレのまま配信される問題を、**新規の独立ファイル経路**で回避して検証する。
+ *
+ * 制約:
+ * - 既存 `premium-plus.astro` のカードコードを import / 流用しない（固着モジュール経路を避ける）。
+ * - 認証条件は現行 /premium-plus/ と完全に同一（verifyPlanAccess = premium-sanrenpuku / premium-combo、
+ *   未認証・権限外は 404、Cookie/secret/会員判定仕様は不変）。
+ * - データは admin 保存済みの既存台帳（`premiumPlusResults.json` / `premiumPlusResults.js`）を
+ *   **read-only** で利用。admin 画面・保存 Function・JSON schema は変更しない。
+ * - 検証ルートのため CTA/モーダル等は持たない。既存 /premium-plus/ とは独立。
+ */
+import { verifyPlanAccess } from '../lib/auth/index.js';
+import ppResultsRaw from '../data/premiumPlusResults.json';
+import { latestCards } from '../lib/premiumPlusResults.js';
+import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusReceiptCardV2.astro';
+
+// --- SSR プラン認可（真実源・現行 /premium-plus/ と同一仕様） ---
+const access = await verifyPlanAccess({
+  cookieHeader: Astro.request.headers.get('cookie') || '',
+  secret: process.env.SESSION_SIGNING_SECRET,
+  now: Date.now(),
+});
+if (!access.ok) {
+  // 非会員には存在すら知らせない → 401/403 ではなく 404。商品情報は一切描画しない。
+  return new Response('Not Found', {
+    status: 404,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('Vary', 'Cookie');
+
+// 台帳（read-only）→ deriveCard 形状の配列。日付整形・防御正規化はコンポーネント側で自己完結。
+const ppCards = latestCards(ppResultsRaw, { limit: 8 });
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Premium Plus v2（検証）| KEIBA Analytics</title>
+  <meta name="robots" content="noindex, nofollow">
+  <!-- 検証用の一意マーカー: 実配信 HTML にこの版が出ているか grep で断定する -->
+  <meta name="pp-v2-marker" content="premium-plus-v2-mock-full-20260724">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background:
+        radial-gradient(1200px 600px at 50% -10%, rgba(245,196,81,.10), transparent 60%),
+        radial-gradient(900px 500px at 10% 20%, rgba(52,211,153,.05), transparent 55%),
+        #0b1120;
+      color: #e6edf7;
+      font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.75; -webkit-font-smoothing: antialiased; padding-bottom: 5rem;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 1.25rem; }
+    .v2-head { padding: 3rem 0 1.5rem; }
+    .v2-head h1 { font-size: clamp(1.35rem, 3.4vw, 1.9rem); font-weight: 800; }
+    .v2-head h1 .accent { color: #f5c451; }
+    .v2-head p { color: #93a4bd; font-size: .95rem; margin-top: .6rem; }
+    .v2-note { color: #6f819c; font-size: .78rem; margin-top: .5rem; }
+    .pp-cards { display: flex; flex-direction: column; gap: 20px; margin-top: 1.5rem; }
+    .v2-empty { color: #93a4bd; font-size: .9rem; text-align: center; padding: 2rem 0; }
+  </style>
+</head>
+<body>
+  <div class="container" data-ppv2="premium-plus-v2-mock-full-20260724">
+    <header class="v2-head">
+      <h1>配信した 1 鞍を、<span class="accent">投票内容照会</span>で公開。<span style="font-size:.6em;color:#6f819c;">（v2 検証）</span></h1>
+      <p>買い目は締切前に確定・公開。的中も、不的中も、配信した買い目のまま正直に出します。</p>
+      <p class="v2-note">※ 本ルートは表示検証用（/premium-plus-v2/）。既存 /premium-plus/ とは独立の新規モジュールです。データは既存台帳を read-only 利用。</p>
+    </header>
+
+    {ppCards.length === 0 ? (
+      <p class="v2-empty">配信実績を準備中です。</p>
+    ) : (
+      <div class="pp-cards">
+        {ppCards.map((c) => <PremiumPlusReceiptCardV2 card={c} />)}
+      </div>
+    )}
+  </div>
+</body>
+</html>

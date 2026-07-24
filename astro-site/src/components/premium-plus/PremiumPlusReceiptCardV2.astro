@@ -1,0 +1,246 @@
+---
+/**
+ * PremiumPlusReceiptCardV2.astro — 投票内容照会「そっくりカード」モック完全版（独立コンポーネント）
+ *
+ * 目的: 本番 /premium-plus/ の SSR ページモジュールが Netlify のビルドキャッシュで
+ * 旧版に固着している問題を、**新しい独立ファイル経路**で回避するための v2 実装。
+ *
+ * 制約（重要）:
+ * - `src/pages/premium-plus.astro` のカードコードを import / 流用しない（固着モジュール経路の回避）。
+ * - データは admin が保存した既存台帳（`premiumPlusResults.json` / `premiumPlusResults.js`）を
+ *   read-only で利用する。admin 画面・保存 Function・JSON schema は変更しない。
+ * - このコンポーネントは `card`（deriveCard 形状のオブジェクト）を1件受け取り自己完結で描画する。
+ *   日付整形・防御正規化はすべてここで行い、ルート側を薄く保つ。
+ *
+ * 防御:
+ * - `unitStake` 未定義でも 500 にせず 1000（UNIT_STAKE 既定）で描画。`stake`/`payout` も既定化。
+ * - `receiptNo` 未入力 → 受付番号行は出さない（SPAT4）/ 受付番号ラベル無し（JRA r2）。
+ * - `receiptAt` 未入力 → 受付日時は開催日にフォールバック（推測値を作らない）。
+ */
+const { card } = Astro.props;
+const c = card || {};
+
+const PP_WD = ['日', '月', '火', '水', '木', '金', '土'];
+function fmtDate(d) {
+  const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return { full: '', spat: '', short: '', wd: '' };
+  const y = Number(m[1]), mo = Number(m[2]), day = Number(m[3]);
+  const wd = PP_WD[new Date(Date.UTC(y, mo - 1, day)).getUTCDay()];
+  return {
+    full: `${y}年 ${mo}月${day}日(${wd})`,
+    spat: `${y}年${String(mo).padStart(2, '0')}月${String(day).padStart(2, '0')}日`,
+    short: `${mo}/${day}`,
+    wd,
+  };
+}
+// 手入力由来（"20260723 15:11" / "YYYY-MM-DD HH:MM" 等）も年月日へ正規化。空なら開催日にフォールバック。
+function fmtReceiptAt(raw, fallbackSpat) {
+  const s = String(raw || '').trim();
+  if (!s) return fallbackSpat;
+  if (/年.*月.*日/.test(s)) return s;
+  const m = s.match(/^(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})(?:[ T]+(\d{1,2}:\d{2}))?/);
+  return m ? `${m[1]}年${m[2]}月${m[3]}日${m[4] ? ' ' + m[4] : ''}` : s;
+}
+const yen = (n) => '¥' + Number(n || 0).toLocaleString('ja-JP');
+const jyen = (n) => Number(n || 0).toLocaleString('ja-JP') + '円';
+const toInts = (a) => (Array.isArray(a) ? a : []).map((x) => Number(x)).filter(Number.isFinite);
+const pad2 = (n) => { const v = Number(n) || 0; return v < 10 ? `0${v}` : `${v}`; };
+
+// --- 防御的正規化（旧 lib 混在でも throw しない） ---
+const unitStake = Number(c.unitStake) > 0 ? Number(c.unitStake) : 1000;
+const service = c.service === 'jra' ? 'jra' : 'spat4';
+const isHit = !!c.isHit;
+const first = toInts(c.first);
+const second = toInts(c.second);
+const third = toInts(c.third);
+const points = Number.isFinite(Number(c.points)) ? Number(c.points)
+  : first.length * second.length * third.length; // 概算（本来は排他組合せ数）
+const stake = Number(c.stake) >= 0 ? Number(c.stake) : points * unitStake;
+const payout = isHit && Number(c.payout) >= 0 ? Number(c.payout) : (isHit ? 0 : 0);
+const firstPad = Array.isArray(c.firstPad) && c.firstPad.length ? c.firstPad : first.map(pad2);
+const secondPad = Array.isArray(c.secondPad) && c.secondPad.length ? c.secondPad : second.map(pad2);
+const thirdPad = Array.isArray(c.thirdPad) && c.thirdPad.length ? c.thirdPad : third.map(pad2);
+const jd = fmtDate(c.date);
+const venue = typeof c.venue === 'string' ? c.venue : '';
+const raceNumber = c.raceNumber != null ? c.raceNumber : '';
+const raceLabel = (typeof c.raceLabel === 'string' && c.raceLabel) ? c.raceLabel : `${venue}${raceNumber ? `${raceNumber}R` : ''}`.trim();
+const raceName = typeof c.raceName === 'string' ? c.raceName : '';
+const receiptNo = typeof c.receiptNo === 'string' ? c.receiptNo.trim() : '';
+const receiptAtDisplay = fmtReceiptAt(c.receiptAt, jd.spat);
+const unitPayout = Number(c.unitPayout) > 0 ? Number(c.unitPayout) : payout;
+
+// 的中組合せ（勝った組）で当該馬番をハイライト
+const winner = String(c.winnerCombo || c.hitCombo || '');
+const wArr = winner.split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
+const w1 = wArr[0], w2 = wArr[1], w3 = wArr[2];
+const circuitCls = service === 'jra' ? 'ch' : 'nk';
+const circuitLabel = service === 'jra' ? '中央' : '南関';
+---
+
+<div class="pp-evi">
+  <div class="pp-evi-head">
+    <span class="pp-date">{jd.short}（{jd.wd}）</span>
+    <span class={`pp-circuit ${circuitCls}`}>{circuitLabel}</span>
+    <span class="pp-race">{raceLabel}</span>
+    {raceName && <span class="pp-rname">{raceName}</span>}
+    <span class="pp-spacer"></span>
+    <span class="pp-badge bet">三連単F・{points}点</span>
+    {isHit
+      ? <span class="pp-badge hit">✅ 的中 {yen(payout)}</span>
+      : <span class="pp-badge miss">× 不的中</span>}
+  </div>
+  <div class="pp-evi-body">
+    <div class="pp-left">
+      <div>
+        <div class="pp-flabel">配信した買い目</div>
+        <div class="pp-form">
+          <div class="pp-fcol"><div class="pp-ch">1着</div><div class="pp-chips"><span class={isHit && first[0] === w1 ? 'pp-num axis win' : 'pp-num axis'}>{first[0]}</span></div></div>
+          <div class="pp-arrow">→</div>
+          <div class="pp-fcol">
+            <div class="pp-ch">2着</div>
+            <div class="pp-chips">{second.map((n) => <span class={isHit && n === w2 ? 'pp-num win' : 'pp-num'}>{n}</span>)}</div>
+            <div class="pp-ch" style="margin-top:.5rem">3着</div>
+            <div class="pp-chips">{third.map((n) => <span class={isHit && n === w3 ? 'pp-num win' : 'pp-num'}>{n}</span>)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="pp-meta">
+        <div class="pp-mi"><span>投票額</span><b>{yen(stake)}</b></div>
+        <div class="pp-mi"><span>結果</span><b>{isHit ? winner : '—'}</b></div>
+        <div class="pp-mi"><span>払戻</span><b class={isHit ? 'pay' : ''}>{isHit ? yen(payout) : '—'}</b></div>
+      </div>
+    </div>
+    <div class="pp-right">
+      {service === 'spat4' ? (
+        <div class="vref spat">
+          <div class="chrome"></div>
+          <table class="recv"><tbody>
+            {receiptNo && <tr><td>受付番号</td><td>{receiptNo}</td></tr>}
+            <tr><td>受付日時</td><td>{receiptAtDisplay}</td></tr>
+            <tr><td>購入件数</td><td>1件</td></tr>
+          </tbody></table>
+          <table class="bet"><tbody>
+            <tr><th>レース/式別</th><th>馬/組番</th><th>投票金額</th></tr>
+            <tr>
+              <td class="c1">{jd.spat}<br><span class="race">{raceLabel}</span><br>三連単<br>フォーメーション</td>
+              <td class="c2"><b>1着:</b>{first.join(', ')}<br><b>2着:</b>{second.join(', ')}<br><b>3着:</b>{third.join(', ')}</td>
+              <td class="c3">(各{unitStake.toLocaleString()}円)<br>{stake.toLocaleString()}円<br>{isHit ? <span class="hit">的中 {payout.toLocaleString()}円</span> : <span class="miss">不的中</span>}</td>
+            </tr>
+          </tbody></table>
+          <div class="notes"><p>※前日発売で投票した結果は、レース開催日の投票内容照会にてご確認ください。</p></div>
+        </div>
+      ) : (
+        <div class="vref jra">
+          <div class="chrome"></div>
+          <div class="r2"><span class="nav">◀</span><div class="c"><div class="d">{jd.full}</div>{receiptNo && <div class="n">受付番号：{receiptNo}</div>}</div><span class="nav">▶</span></div>
+          <div class="hl"><div class="hlcard">
+            <div class="hlrow"><span>合計購入金額</span><span>{jyen(stake)}</span></div>
+            <div class="hlrow back"><span>合計払戻金額</span><span>{jyen(isHit ? payout : 0)}</span></div>
+          </div></div>
+          <div class="close">すべて閉じる<span class="acc">▲</span></div>
+          <div class="vh">001）{venue}（{jd.wd}）{raceNumber}R 3連単フォーメーション
+            <div class="l2">{isHit && <span class="hit">的中</span>}<span>購入金額:{jyen(stake)}</span><span class={isHit ? 'pay' : ''}>払戻金額:{jyen(isHit ? payout : 0)}</span></div>
+          </div>
+          <div class="dt">
+            <div class="row"><div class="lc">購入馬/組番</div><div class="rc"><div class="uma">
+              <div><span class="pf">1着：</span><span>{firstPad.join(',')}</span></div>
+              <div><span class="pf">2着：</span><span>{secondPad.join(',')}</span></div>
+              <div><span class="pf">3着：</span><span>{thirdPad.join(',')}</span></div>
+            </div></div></div>
+            <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:{unitStake.toLocaleString()}円</div><div>計:{stake.toLocaleString()}円</div></div></div>
+            {isHit && winner && (
+              <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{winner}</span><span>{unitPayout.toLocaleString()}円</span></div></div>
+            )}
+            <div class="row"><div class="lc">払戻/返還金額</div><div class={isHit ? 'rc red' : 'rc'}>{jyen(isHit ? payout : 0)}</div></div>
+          </div>
+          <div class="foot">© Japan Racing Association.</div>
+        </div>
+      )}
+    </div>
+  </div>
+</div>
+
+<style>
+  /* 自己完結（premium-plus.astro に依存しない）。色は premium-plus と同値の literal。 */
+  .pp-evi { --line: rgba(148,163,184,.16); --text: #e6edf7; --muted: #93a4bd; --gold: #f5c451; }
+  .pp-evi { background: linear-gradient(180deg, rgba(23,36,64,.9), rgba(14,24,48,1)); border: 1px solid rgba(148,163,184,.28); border-radius: 18px; overflow: hidden; }
+  .pp-evi-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; padding: 14px 18px; border-bottom: 1px solid var(--line); background: rgba(245,196,81,.03); }
+  .pp-date { font-weight: 700; }
+  .pp-race { color: var(--text); font-weight: 700; }
+  .pp-rname { color: var(--muted); font-size: .9rem; }
+  .pp-spacer { flex: 1; }
+  .pp-circuit { font-size: .66rem; font-weight: 700; padding: .2em .6em; border-radius: 6px; }
+  .pp-circuit.nk { color: #38bdf8; border: 1px solid rgba(56,189,248,.4); background: rgba(56,189,248,.08); }
+  .pp-circuit.ch { color: #c084fc; border: 1px solid rgba(192,132,252,.4); background: rgba(192,132,252,.08); }
+  .pp-badge { font-size: .72rem; padding: .35em .8em; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  .pp-badge.bet { color: #cbd5e1; border: 1px solid rgba(148,163,184,.28); background: rgba(148,163,184,.08); }
+  .pp-badge.hit { color: #06301f; background: linear-gradient(180deg, #4ade80, #0f9d6b); }
+  .pp-badge.miss { color: #e6edf7; border: 1px solid rgba(248,113,113,.4); background: rgba(248,113,113,.12); }
+  .pp-evi-body { display: grid; grid-template-columns: 1fr; gap: 0; }
+  @media (min-width: 860px) { .pp-evi-body { grid-template-columns: minmax(0,1fr) auto; } }
+  .pp-left { padding: 20px; display: flex; flex-direction: column; gap: 18px; border-bottom: 1px solid var(--line); }
+  @media (min-width: 860px) { .pp-left { border-bottom: 0; border-right: 1px solid var(--line); } }
+  .pp-flabel { font-size: .72rem; color: var(--muted); letter-spacing: .14em; margin-bottom: .9em; }
+  .pp-form { display: grid; grid-template-columns: auto auto 1fr; gap: .5rem .7rem; align-items: start; }
+  .pp-fcol { display: flex; flex-direction: column; gap: .5rem; }
+  .pp-ch { font-size: .64rem; color: #6f819c; text-align: center; }
+  .pp-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+  .pp-arrow { align-self: center; color: var(--gold); font-size: 1.1rem; padding-top: 1.1rem; }
+  .pp-num { width: 2.5em; height: 2.5em; display: grid; place-items: center; border-radius: 11px; font-weight: 700; font-size: 1.02rem; background: #111c33; border: 1px solid rgba(148,163,184,.28); color: var(--text); }
+  .pp-num.axis { background: linear-gradient(180deg, var(--gold), #d99b1f); color: #3a2a05; border-color: transparent; }
+  .pp-num.win { outline: 2px solid #34d399; outline-offset: 1px; }
+  .pp-meta { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; padding-top: .2rem; border-top: 1px dashed var(--line); font-size: .86rem; }
+  .pp-mi { display: flex; flex-direction: column; gap: .1em; }
+  .pp-mi span { color: #6f819c; font-size: .7rem; }
+  .pp-mi b { font-weight: 700; }
+  .pp-mi b.pay { color: var(--gold); font-size: 1.1rem; }
+  .pp-right { padding: 20px; display: flex; align-items: center; justify-content: center; background: repeating-linear-gradient(135deg, rgba(255,255,255,.012) 0 8px, transparent 8px 16px), rgba(6,11,22,.5); }
+
+  .vref { width: 375px; max-width: 100%; overflow: hidden; box-shadow: 0 16px 40px -20px rgba(0,0,0,.95); text-align: left; font-family: "ヒラギノ角ゴ Pro W3","Hiragino Kaku Gothic Pro","Hiragino Sans","メイリオ",Meiryo,sans-serif; color: #222; line-height: 1.4; }
+  .vref .chrome { width: 375px; max-width: 100%; background-repeat: no-repeat; background-position: 0 0; }
+  .vref.jra { background: #000; }
+  .vref.jra .chrome { height: 52px; background-image: url('/premium-plus-proof/jra-head.png'); background-size: 375px auto; }
+  .vref.jra .r2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 5px; background: linear-gradient(to bottom, #1c1c1c, #232323); }
+  .vref.jra .r2 .nav { width: 34px; height: 30px; border: 1px solid #444; border-radius: 5px; background: linear-gradient(to bottom, #2a2a2a, #111); color: #eee; text-align: center; line-height: 28px; font-size: 12px; }
+  .vref.jra .r2 .c { flex: 1; text-align: center; color: #fff; }
+  .vref.jra .r2 .c .d { font-size: 13px; font-weight: bold; }
+  .vref.jra .r2 .c .n { font-size: 20px; font-weight: bold; }
+  .vref.jra .hl { padding: 8px 10px 10px; background: linear-gradient(to bottom, #1c1c1c, #232323); }
+  .vref.jra .hlcard { background: #fff; border-radius: 6px; padding: 2px 14px; }
+  .vref.jra .hlrow { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; font-size: 19px; font-weight: bold; color: #424242; }
+  .vref.jra .hlrow + .hlrow { border-top: 1px solid #ddd; }
+  .vref.jra .hlrow.back { color: #b70000; }
+  .vref.jra .close { height: 40px; line-height: 40px; background: #555; color: #fff; font-size: 16px; font-weight: bold; text-align: center; border-bottom: 1px solid #fff; position: relative; }
+  .vref.jra .close .acc { position: absolute; right: 8px; top: 6px; width: 28px; height: 26px; border: 1px solid #666; border-radius: 4px; background: linear-gradient(to bottom, #3a3a3a, #1a1a1a); line-height: 26px; font-size: 11px; color: #ccc; }
+  .vref.jra .vh { background: #d0d0d0; color: #424242; font-size: 12px; font-weight: bold; line-height: 1.5; padding: 6px 6px; }
+  .vref.jra .vh .l2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; font-size: 11px; }
+  .vref.jra .vh .hit { background: #b70000; color: #fff; padding: 1px 6px; }
+  .vref.jra .vh .pay { color: #b70000; }
+  .vref.jra .dt { background: #fff; color: #222; font-size: 14px; }
+  .vref.jra .dt .row { display: grid; grid-template-columns: 33% 1fr; border-top: 1px solid #ccc; }
+  .vref.jra .dt .row:first-child { border-top: 0; }
+  .vref.jra .dt .lc { padding: 9px 8px; border-right: 1px solid #ccc; display: flex; align-items: center; font-weight: bold; }
+  .vref.jra .dt .rc { padding: 9px 12px; text-align: right; font-weight: bold; }
+  .vref.jra .dt .rc.split { display: flex; justify-content: space-between; gap: 10px; text-align: left; }
+  .vref.jra .dt .uma > div { display: flex; justify-content: space-between; gap: 10px; padding: 1px 0; }
+  .vref.jra .dt .uma .pf { font-weight: bold; }
+  .vref.jra .dt .rc.red { color: #b70000; }
+  .vref.jra .foot { background: #333; color: #fff; font-size: 10px; text-align: right; padding: 8px 10px; }
+  .vref.spat { background: #fff; border: 1px solid #cfcfcf; }
+  .vref.spat .chrome { height: 86px; background-image: url('/premium-plus-proof/spat4-head.png'); background-size: 375px auto; }
+  .vref.spat table { width: 100%; border-collapse: collapse; }
+  .vref.spat .recv td { border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; padding: 5px 8px; font-size: 14px; height: 28px; }
+  .vref.spat .recv tr:nth-child(odd) { background: #F1F8F8; }
+  .vref.spat .recv td:first-child { text-align: left; width: 40%; color: #000; }
+  .vref.spat .recv td:last-child { text-align: right; padding-right: 8px; }
+  .vref.spat .bet th { height: 22px; font-size: 13px; color: #fff; text-shadow: #2D3642 0 -1px 0; text-align: center; font-weight: bold; border: 1px solid #999; border-top: none; background: linear-gradient(to bottom, #333 0%, #595959 12%, #7c7c7c 100%); }
+  .vref.spat .bet td { border: 1px solid #ccc; font-size: 13px; padding: 5px 6px; vertical-align: top; }
+  .vref.spat .bet .c1 { width: 40%; white-space: nowrap; text-align: left; }
+  .vref.spat .bet .c2 { width: 30%; text-align: left; }
+  .vref.spat .bet .c3 { width: 30%; white-space: nowrap; text-align: right; padding-right: 7px; }
+  .vref.spat .bet .race { font-size: 20px; color: #1560d0; text-decoration: underline; }
+  .vref.spat .bet .c2 b { font-weight: bold; }
+  .vref.spat .bet .hit { color: #e60000; }
+  .vref.spat .notes { border-top: 7px solid #999; padding: 8px 8px 10px; font-size: 14px; color: #111; }
+  .vref.spat .notes p { margin: 0 0 5px; }
+</style>
