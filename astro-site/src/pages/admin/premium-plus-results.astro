@@ -30,6 +30,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div><label>1着（1頭）</label><input type="text" id="first" placeholder="13" /></div>
         <div><label>2着（カンマ区切り）</label><input type="text" id="second" placeholder="3,4,5" /></div>
         <div><label>3着（カンマ区切り）</label><input type="text" id="third" placeholder="3,4,5,9,11" /></div>
+        <div><label>1点あたりの購入金額</label>
+          <select id="unitStake">
+            <option value="100">各100円</option>
+            <option value="200">各200円</option>
+            <option value="300">各300円</option>
+            <option value="500">各500円</option>
+            <option value="1000" selected>各1,000円</option>
+            <option value="2000">各2,000円</option>
+            <option value="3000">各3,000円</option>
+            <option value="5000">各5,000円</option>
+            <option value="10000">各10,000円</option>
+          </select>
+        </div>
         <div class="chk"><label><input type="checkbox" id="isHit" /> 的中</label>
           <span id="ptsPreview" class="pts">点数: — / 合計: —</span></div>
         <div><label>払戻/返還金額（的中時）</label><input type="number" id="payout" placeholder="132000" /></div>
@@ -116,10 +129,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       let n=0; for(const a of F) for(const b of S) for(const c of T) if(a!==b&&a!==c&&b!==c) n++;
       return n;
     }
+    function unitStake(){ return parseInt($('unitStake').value, 10) || 1000; }
     function updatePreview(){
-      const p=points(); $('ptsPreview').textContent = p ? `点数: ${p} / 合計: ¥${(p*1000).toLocaleString()}` : '点数: — / 合計: —';
+      const p=points(); $('ptsPreview').textContent = p ? `点数: ${p} / 合計: ¥${(p*unitStake()).toLocaleString()}` : '点数: — / 合計: —';
     }
     ['first','second','third'].forEach(id=>$(id).addEventListener('input',updatePreview));
+    $('unitStake').addEventListener('change',updatePreview);
 
     function entry(){
       return {
@@ -131,6 +146,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         first: $('first').value.trim(),
         second: $('second').value.trim(),
         third: $('third').value.trim(),
+        unitStake: $('unitStake').value,
         isHit: $('isHit').checked,
         payout: $('payout').value.trim(),
         hitCombo: hitCombo(),

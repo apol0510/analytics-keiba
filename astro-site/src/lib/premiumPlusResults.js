@@ -89,6 +89,9 @@ export function normalizeResult(input) {
   const points = computePoints(first, second, third);
   const payout = Math.max(0, toInt(input.payout));
   const isHit = toBool(input.isHit) || payout > 0;
+  // 1 点あたりの購入金額（管理画面で選択）。未指定・不正は既定 UNIT_STAKE(1000)。
+  const unitStakeRaw = toInt(input.unitStake);
+  const unitStake = unitStakeRaw > 0 ? unitStakeRaw : UNIT_STAKE;
 
   return {
     date,
@@ -98,7 +101,8 @@ export function normalizeResult(input) {
     raceName: typeof input.raceName === 'string' ? input.raceName.trim() : '',
     first, second, third,
     points,
-    stake: points * UNIT_STAKE,
+    unitStake,
+    stake: points * unitStake,
     isHit,
     payout: isHit ? payout : 0,
     hitCombo: isHit && typeof input.hitCombo === 'string' ? input.hitCombo.trim() : '',

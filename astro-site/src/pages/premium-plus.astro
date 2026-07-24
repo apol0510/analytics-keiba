@@ -973,7 +973,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                         <tr>
                           <td class="c1">{c.jd.spat}<br><span class="race">{c.raceLabel}</span><br>三連単<br>フォーメーション</td>
                           <td class="c2"><b>1着:</b>{c.first.join(', ')}<br><b>2着:</b>{c.second.join(', ')}<br><b>3着:</b>{c.third.join(', ')}</td>
-                          <td class="c3">(各1,000円)<br>{c.stake.toLocaleString()}円<br>{c.isHit ? <span class="hit">的中 {c.payout.toLocaleString()}円</span> : <span class="miss">不的中</span>}</td>
+                          <td class="c3">(各{c.unitStake.toLocaleString()}円)<br>{c.stake.toLocaleString()}円<br>{c.isHit ? <span class="hit">的中 {c.payout.toLocaleString()}円</span> : <span class="miss">不的中</span>}</td>
                         </tr>
                       </tbody></table>
                       <div class="notes"><p>※前日発売で投票した結果は、レース開催日の投票内容照会にてご確認ください。</p></div>
@@ -996,7 +996,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                           <div><span class="pf">2着：</span><span>{c.secondPad.join(',')}</span></div>
                           <div><span class="pf">3着：</span><span>{c.thirdPad.join(',')}</span></div>
                         </div></div></div>
-                        <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:1,000円</div><div>計:{c.stake.toLocaleString()}円</div></div></div>
+                        <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:{c.unitStake.toLocaleString()}円</div><div>計:{c.stake.toLocaleString()}円</div></div></div>
                         {c.isHit && c.winnerCombo && (
                           <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{c.winnerCombo}</span><span>{(c.unitPayout || c.payout).toLocaleString()}円</span></div></div>
                         )}
