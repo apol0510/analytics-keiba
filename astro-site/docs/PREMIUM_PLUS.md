@@ -168,3 +168,39 @@ npm run seed:premium-plus                # 実行
   更新が止まると古い日付が本番に残り続けるため、Blobs 方式へ移行した。
 - `public/upsell-images/` 自体は `withdrawal-upsell.astro` がまだ参照しているため**残す**。
   `scripts/update-all-images.sh` は withdrawal-upsell 専用に縮小済み。
+
+## インシデント記録: 2026-07-24 `/premium-plus/` 本番 500 → rollback で復旧
+
+**要約**: 954880b の本番 deploy 後に `/premium-plus/` が SSR 500。365e184（防御的正規化＋lib キャッシュbust）を
+push・auto-deploy したが **500 は解消せず**。deploy `6a62eadd`（99d7b15）への **rollback（restore）で復旧**。
+
+| 項目 | 内容 |
+|---|---|
+| 障害開始 | 954880b deploy `6a62ee96…`（published 2026-07-24T04:49:21Z）以降 |
+| 影響範囲 | **`/premium-plus/` に限局**（`/`・`/dashboard`・`/pricing`・`/login` は 200 のまま。redirect loop・他ページ波及なし） |
+| 500 を確認した deploy | 954880b `6a62ee96…` / 365e184 `6a62f25d…`（**両 artifact とも permalink で 500 再現**＝本番エッジキャッシュ問題ではない） |
+| 修復試行 SHA | 365e184（`ppCards` で `unitStake/stake/payout` を既定値正規化＋`premiumPlusResults.js` に cache-bust マーカー＋`X-PP-Template-Version=-3`）。**効果なし**（artifact 自体が 500 継続） |
+| 復旧手段 | Netlify restore（rollback）で deploy **`6a62eadd809f6e0008684d14`（99d7b15）** を production 再公開（published 2026-07-24T05:20:19Z） |
+| 404 復帰時刻 | rollback 後、`/premium-plus/`（未認証）＝ **404** を 3 回連続確認（2026-07-24T05:20Z 台） |
+| authenticated 確認 | **未実施**（安全な既存テスト会員/認証 read-only 手段なし。cookie/token は扱わない方針） |
+| template version | 復旧 deploy(99d7b15) は `X-PP-Template-Version` を持たない版（500 版でもヘッダは render throw で消失していた）。`-3` は不採用（壊れた 365e184 の版） |
+| tests / build | 365e184 側で build OK・`test:premium-plus` 14・`test:premium-plus-media` 99 pass（ただし本番 500 は再現＝**テストが本番 SSR artifact drift を捕捉できていない**） |
+| production env 変更 | **0** |
+| data write | **0**（顧客/セッション/record 変更なし） |
+| rollback | **実施**（restore `6a62eadd`・ユーザー明示承認後） |
+
+**root cause の確定度**（証拠レベルを分離）:
+
+- **Confirmed**（直接証拠）: 各 deploy permalink で `99d7b15=404（正常）/ 954880b=500 / 365e184=500`。500 は premium-plus 限局。
+  500 応答に `X-PP-Template-Version` ヘッダなし＝**render フェーズの throw**（frontmatter で set 後に破棄）。365e184 の artifact 自体が 500。
+- **Supported hypothesis**（コード証拠のみ・直接証拠なし）: 365e184 は frontmatter で `c.unitStake/stake/payout` を正規化したが 500 が残る＝
+  throw はその経路とは別（旧 lib 由来の未定義シンボル / 別の `.toLocaleString()` 等）。commit 記載の「page 新版 × lib 旧版 混在」は状況と整合。
+- **Unconfirmed**: 機構が **Netlify build-cache module drift** そのものである、とは**断定しない**（正確な exception stack trace は本番 500 body 空・Netlify UI 関数ログが必要で未取得）。
+
+🔴 **重要な残リスク（恒久対策が未了）**: 本番は **main への push で自動 deploy**。現在 `origin/main` は依然 **365e184（壊れた版）**。
+**次に main へ push されると 365e184 系が再 deploy され `/premium-plus/` が再び 500 になる**。rollback は暫定復旧であり、
+**恒久解には main 上での実修正（正確な throw シンボルの特定 → 修正、またはキャッシュ無し再ビルドで drift 仮説の検証）が必要**。
+それらは本記録時点では未実施（別承認）。
+
+**未解決事項**: (a) 正確な exception stack trace（file:line・型）＝ Netlify UI 関数ログ要 / (b) throw する具体シンボル（unitStake 以外か）/
+(c) build-cache drift の直接立証 / (d) main の恒久修正。
