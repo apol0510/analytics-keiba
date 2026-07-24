@@ -204,3 +204,27 @@ push・auto-deploy したが **500 は解消せず**。deploy `6a62eadd`（99d7b
 
 **未解決事項**: (a) 正確な exception stack trace（file:line・型）＝ Netlify UI 関数ログ要 / (b) throw する具体シンボル（unitStake 以外か）/
 (c) build-cache drift の直接立証 / (d) main の恒久修正。
+
+### 追記: rollback が自動再 deploy で無効化 → 再 restore ＋ deploy lock で固定（2026-07-24）
+
+初回 rollback（`6a62eadd`/99d7b15・05:20:19Z 公開）で `/premium-plus` は 404 に復旧したが、**約 3 分後の 05:23:26Z に
+自動 production deploy `6a62f686`（commit 365e184・`manual:false`・title なし）が公開され rollback を上書き**、`/premium-plus` は 500 に逆戻りした。
+本サイトは **main を自動再 deploy する経路**（build hook / scheduled build。過去に "Deploy triggered by hook" 実績・`manual:false`）を持つため、
+lock なしの rollback は保持されない（docs branch の push は preview のみで production には無関係）。
+
+**恒久保持策（ユーザー承認・実施済み）**: `6a62eadd`（99d7b15）を**再 restore**（05:29:34Z 公開）し、**Netlify `lockDeploy` で固定**（`locked:true`）。
+lock により auto-publish が上書きしなくなり、`/premium-plus`=404・他ページ 200 を維持。
+
+| 項目 | 値 |
+|---|---|
+| 現行 live | `6a62eadd809f6e0008684d14`（99d7b15）・**locked:true** |
+| /premium-plus | 404（未認証・復旧・複数回連続） |
+| 自動再 deploy を無効化した deploy | `6a62f686`（365e184・auto・500） |
+| production env 変更 | 0（deploy lock は publish 制御・env/secret 不変） |
+| data write | 0 |
+
+🔴 **lock 中の副作用**: production の**自動更新が停止**する（lock 解除まで新しい正常な変更も配信されない）。
+これは **暫定**であり、**恒久解は main（`origin/main`=365e184）の実修正**（正確な throw シンボル特定→修正、
+またはキャッシュ無し再ビルドで build-cache drift 仮説を検証）＋ **修正確認後に lock 解除**が必要。**恒久修正は本記録時点で未実施（別承認）**。
+
+**次アクション（別承認）**: (1) main の恒久修正 → (2) 修正版の正常 deploy 確認 → (3) `unlockDeploy` で自動 deploy 復帰。
