@@ -45,7 +45,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </div>
         <div class="chk"><label><input type="checkbox" id="isHit" /> 的中</label>
           <span id="ptsPreview" class="pts">点数: — / 合計: —</span></div>
-        <div><label>払戻/返還金額（的中時）</label><input type="number" id="payout" placeholder="132000" /></div>
+        <div><label>払戻金額（合計・的中時）<small class="hint">実際に戻ってきた総額。カードの「払戻」に表示</small></label><input type="number" id="payout" placeholder="599000" /></div>
         <div class="wide"><label>的中組合せ（的中時・1着→2着→3着の馬番を選択）</label>
           <div class="combo3">
             <select id="hit1"></select><span class="arw">→</span>
@@ -53,11 +53,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <select id="hit3"></select>
           </div>
         </div>
-        <div><label>払戻単価（的中時・任意）</label><input type="number" id="unitPayout" placeholder="132000" /></div>
+        <div><label>払戻単価（1組あたり配当・任意）<small class="hint">JRAカードのみ表示。南関(SPAT4)は空欄でOK</small></label><input type="number" id="unitPayout" placeholder="（通常は空欄）" /></div>
         <div class="wide"><label>実スクショ画像パス（任意・後日）</label><input type="text" id="imageFile" placeholder="/premium-plus-proof/2026-07-22.png" /></div>
         <div><label>受付番号（任意・実スクショ通り）</label><input type="text" id="receiptNo" placeholder="0003" /></div>
-        <div><label>受付日（任意・投票内容照会の日付）</label><input type="date" id="receiptDate" /></div>
-        <div><label>受付時刻（任意）</label><input type="time" id="receiptTime" /></div>
+        <div><label>受付時刻（任意）<small class="hint">受付日は「開催日」と同じ扱い。時刻だけ選択</small></label><input type="time" id="receiptTime" /></div>
       </div>
       <div class="actions">
         <button id="save" class="primary">保存（追記 / 上書き）</button>
@@ -74,6 +73,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppr code{background:rgba(245,196,81,.1);color:#f5c451;padding:.1em .4em;border-radius:5px}
     .card{background:#111c33;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:18px;margin-bottom:16px}
     .card label{display:block;font-size:.78rem;color:#93a4bd;margin-bottom:.35em}
+    .card label .hint{display:block;font-weight:400;color:#6f819c;font-size:.7rem;margin-top:.2em;line-height:1.4}
     .card input,.card select{width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(148,163,184,.28);background:#0b1120;color:#e6edf7;font-size:.95rem}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
     .grid .wide{grid-column:1/-1}
@@ -113,9 +113,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const h = [$('hit1').value, $('hit2').value, $('hit3').value].filter(Boolean);
       return h.length === 3 ? h.join('-') : '';
     }
-    // 受付日 + 受付時刻 → "2026年07月23日 15:11"（受付日が無ければ送らない）
+    // 受付日時 = 開催日（date）＋ 受付時刻 → "2026年07月23日 15:11"（開催日が無ければ送らない）
     function receiptAt(){
-      const d = $('receiptDate').value; // YYYY-MM-DD
+      const d = $('date').value; // 開催日 YYYY-MM-DD（受付日と同じ扱い）
       const t = $('receiptTime').value; // HH:MM
       if (!d) return undefined;
       const [y, m, day] = d.split('-');
