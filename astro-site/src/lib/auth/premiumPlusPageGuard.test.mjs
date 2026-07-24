@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const PAGE = fileURLToPath(new URL('../../pages/premium-plus.astro', import.meta.url));
+const PAGE = fileURLToPath(new URL('../../pages/premium-plus/index.astro', import.meta.url));
 const src = readFileSync(PAGE, 'utf8');
 // フロントマター（最初の --- ... --- ブロック）だけを対象にする
 const fm = src.slice(0, src.indexOf('\n---', 3) + 4);

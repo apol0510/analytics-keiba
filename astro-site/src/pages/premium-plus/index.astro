@@ -23,10 +23,11 @@ export const prerender = false;
  *   ページに実績数値を**手書きしないこと**（旧版の「的中率78% / 平均配当¥281,340 /
  *   満足度4.9 / 継続率94%」は根拠のない固定値で、更新も止まっていた）
  */
-import AccessControl from '../components/AccessControl.astro';
-import { verifyPlanAccess } from '../lib/auth/index.js';
-import ppResultsRaw from '../data/premiumPlusResults.json';
-import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
+import AccessControl from '../../components/AccessControl.astro';
+import { verifyPlanAccess } from '../../lib/auth/index.js';
+import ppResultsRaw from '../../data/premiumPlusResults.json';
+import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../../lib/premiumPlusResults.js';
+import PremiumPlusReceiptCardV2 from '../../components/premium-plus/PremiumPlusReceiptCardV2.astro';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -51,12 +52,11 @@ Astro.response.headers.set('Vary', 'Cookie');
 const PRICE = 68000;
 const LIST_PRICE = 98000;
 
-// SSR 関数キャッシュ bust 用テンプレート版。
-// Netlify の functions cache が古い premium-plus SSR バンドルを再利用し、投票内容照会カードが
-// 旧版（受付値なし・投票金額列なし）のまま残る drift への恒久対策。SPAT4/JRA カード描画
-// （recv 受付表 / 3列投票表 / (各◯円) / 的中額）を更新したら必ずこの文字列を bump して
-// SSR 関数の内容ハッシュを変え、確実にキャッシュミス＝関数再ビルドさせること（CLI deploy は使わない）。
-const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-1';
+// テンプレート版マーカー（本番配信 HTML の <meta pp-template-version> で live 版を grep 断定する）。
+// 旧 premium-plus.astro は Netlify functions cache に固着し、投票内容照会カードが旧版（受付値なし・
+// 投票金額列なし）のまま残る drift があった。本ページは**新ファイル経路** premium-plus/index.astro へ
+// 移設し、カード描画を自己完結コンポーネント PremiumPlusReceiptCardV2 へ委譲することで固着経路を回避する。
+const PP_TEMPLATE_VERSION = 'promoted-index-v2card-20260724';
 
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
 // 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
@@ -72,19 +72,9 @@ const ppFmtDate = (d) => {
     wd,
   };
 };
-// 受付日時の表示整形: 「YYYY年MM月DD日 HH:MM」へ正規化（手入力の 20260723 / YYYY-MM-DD 等も救済）。
-// 既に年月日表記ならそのまま。空なら開催日（spat 表記）にフォールバック。
-const ppFmtReceiptAt = (raw, fallbackSpat) => {
-  const s = String(raw || '').trim();
-  if (!s) return fallbackSpat;
-  if (/年.*月.*日/.test(s)) return s;
-  const m = s.match(/^(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})(?:[ T]+(\d{1,2}:\d{2}))?/);
-  return m ? `${m[1]}年${m[2]}月${m[3]}日${m[4] ? ' ' + m[4] : ''}` : s;
-};
-const ppCards = latestCards(ppResultsRaw, { limit: 8 }).map((c) => {
-  const w = String(c.winnerCombo || '').split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
-  return { ...c, w1: w[0], w2: w[1], w3: w[2], jd: ppFmtDate(c.date) };
-});
+// カード描画は自己完結コンポーネント PremiumPlusReceiptCardV2 に委譲（受付日時整形・勝ち馬
+// ハイライト・防御正規化はコンポーネント側）。ここでは台帳を read-only で渡すだけ。
+const ppCards = latestCards(ppResultsRaw, { limit: 8 });
 
 // --- 本日の1鞍ティザー（購入導線・買い目はロック） ---
 // 会場サーキットは曜日から導出（平日=南関/SPAT4 ・ 土日=中央/JRA）。特定会場は伏せる（推測で会場名を書かない）。
@@ -933,90 +923,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         <p class="gallery-empty">配信実績を準備中です。近日公開します。</p>
       ) : (
         <div class="pp-cards">
-          {ppCards.map((c) => (
-            <div class="pp-evi">
-              <div class="pp-evi-head">
-                <span class="pp-date">{c.jd.short}（{c.jd.wd}）</span>
-                <span class={c.circuit === 'chuo' ? 'pp-circuit ch' : 'pp-circuit nk'}>{c.circuit === 'chuo' ? '中央' : '南関'}</span>
-                <span class="pp-race">{c.raceLabel}</span>
-                {c.raceName && <span class="pp-rname">{c.raceName}</span>}
-                <span class="pp-spacer"></span>
-                <span class="pp-badge bet">三連単F・{c.points}点</span>
-                {c.isHit
-                  ? <span class="pp-badge hit">✅ 的中 {formatYen(c.payout)}</span>
-                  : <span class="pp-badge miss">× 不的中</span>}
-              </div>
-              <div class="pp-evi-body">
-                <div class="pp-left">
-                  <div>
-                    <div class="pp-flabel">配信した買い目</div>
-                    <div class="pp-form">
-                      <div class="pp-fcol"><div class="pp-ch">1着</div><div class="pp-chips"><span class={c.isHit ? 'pp-num axis win' : 'pp-num axis'}>{c.first[0]}</span></div></div>
-                      <div class="pp-arrow">→</div>
-                      <div class="pp-fcol">
-                        <div class="pp-ch">2着</div>
-                        <div class="pp-chips">{c.second.map((n) => <span class={c.isHit && n === c.w2 ? 'pp-num win' : 'pp-num'}>{n}</span>)}</div>
-                        <div class="pp-ch" style="margin-top:.5rem">3着</div>
-                        <div class="pp-chips">{c.third.map((n) => <span class={c.isHit && n === c.w3 ? 'pp-num win' : 'pp-num'}>{n}</span>)}</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="pp-meta">
-                    <div class="pp-mi"><span>投票額</span><b>{formatYen(c.stake)}</b></div>
-                    <div class="pp-mi"><span>結果</span><b>{c.isHit ? c.winnerCombo : '—'}</b></div>
-                    <div class="pp-mi"><span>払戻</span><b class={c.isHit ? 'pay' : ''}>{c.isHit ? formatYen(c.payout) : '—'}</b></div>
-                  </div>
-                </div>
-                <div class="pp-right">
-                  {c.service === 'spat4' ? (
-                    <div class="vref spat">
-                      <div class="chrome"></div>
-                      <table class="recv"><tbody>
-                        {c.receiptNo && <tr><td>受付番号</td><td>{c.receiptNo}</td></tr>}
-                        <tr><td>受付日時</td><td>{ppFmtReceiptAt(c.receiptAt, c.jd.spat)}</td></tr>
-                        <tr><td>購入件数</td><td>1件</td></tr>
-                      </tbody></table>
-                      <table class="bet"><tbody>
-                        <tr><th>レース/式別</th><th>馬/組番</th><th>投票金額</th></tr>
-                        <tr>
-                          <td class="c1">{c.jd.spat}<br><span class="race">{c.raceLabel}</span><br>三連単<br>フォーメーション</td>
-                          <td class="c2"><b>1着:</b>{c.first.join(', ')}<br><b>2着:</b>{c.second.join(', ')}<br><b>3着:</b>{c.third.join(', ')}</td>
-                          <td class="c3">(各{c.unitStake.toLocaleString()}円)<br>{c.stake.toLocaleString()}円<br>{c.isHit ? <span class="hit">的中 {c.payout.toLocaleString()}円</span> : <span class="miss">不的中</span>}</td>
-                        </tr>
-                      </tbody></table>
-                      <div class="notes"><p>※前日発売で投票した結果は、レース開催日の投票内容照会にてご確認ください。</p></div>
-                    </div>
-                  ) : (
-                    <div class="vref jra">
-                      <div class="chrome"></div>
-                      <div class="r2"><span class="nav">◀</span><div class="c"><div class="d">{c.jd.full}</div>{c.receiptNo && <div class="n">受付番号：{c.receiptNo}</div>}</div><span class="nav">▶</span></div>
-                      <div class="hl"><div class="hlcard">
-                        <div class="hlrow"><span>合計購入金額</span><span>{c.stake.toLocaleString()}円</span></div>
-                        <div class="hlrow back"><span>合計払戻金額</span><span>{(c.isHit ? c.payout : 0).toLocaleString()}円</span></div>
-                      </div></div>
-                      <div class="close">すべて閉じる<span class="acc">▲</span></div>
-                      <div class="vh">001）{c.venue}（{c.jd.wd}）{c.raceNumber}R 3連単フォーメーション
-                        <div class="l2">{c.isHit && <span class="hit">的中</span>}<span>購入金額:{c.stake.toLocaleString()}円</span><span class={c.isHit ? 'pay' : ''}>払戻金額:{(c.isHit ? c.payout : 0).toLocaleString()}円</span></div>
-                      </div>
-                      <div class="dt">
-                        <div class="row"><div class="lc">購入馬/組番</div><div class="rc"><div class="uma">
-                          <div><span class="pf">1着：</span><span>{c.firstPad.join(',')}</span></div>
-                          <div><span class="pf">2着：</span><span>{c.secondPad.join(',')}</span></div>
-                          <div><span class="pf">3着：</span><span>{c.thirdPad.join(',')}</span></div>
-                        </div></div></div>
-                        <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:{c.unitStake.toLocaleString()}円</div><div>計:{c.stake.toLocaleString()}円</div></div></div>
-                        {c.isHit && c.winnerCombo && (
-                          <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{c.winnerCombo}</span><span>{(c.unitPayout || c.payout).toLocaleString()}円</span></div></div>
-                        )}
-                        <div class="row"><div class="lc">払戻/返還金額</div><div class={c.isHit ? 'rc red' : 'rc'}>{(c.isHit ? c.payout : 0).toLocaleString()}円</div></div>
-                      </div>
-                      <div class="foot">© Japan Racing Association.</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+          {ppCards.map((c) => <PremiumPlusReceiptCardV2 card={c} />)}
         </div>
       )}
 

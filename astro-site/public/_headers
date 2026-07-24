@@ -2,7 +2,7 @@
 # （keiba-admin）で保護する。ここに Basic-Auth を重ねると二重認証になり必ず 401 で
 # ログイン不能になるため、/admin の Basic-Auth はこのファイルに置かない。
 
-# /premium-plus は premium-plus.astro の SSR verifyPlanAccess で保護する。
+# /premium-plus は premium-plus/index.astro の SSR verifyPlanAccess で保護する。
 #   許可プラン = Premium Sanrenpuku（三連複単体 + コンボ + lifetime）のみ。
 #   Premium(馬単) / Light / Free / 未ログイン / Cookie破損 / 鍵未設定 は 404（存在秘匿・
 #   商品名・価格・口座番号を一切描画しない / fail closed）。

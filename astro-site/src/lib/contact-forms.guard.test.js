@@ -24,7 +24,7 @@ const read = (rel) => readFileSync(join(process.cwd(), rel), 'utf-8');
 // 対象フォーム実体（PremiumContactModal は dashboard + JRA の 2 フォームを兼ねる → 計 6 フォーム）
 const FORM_FILES = [
   { file: 'src/components/PremiumContactModal.astro', covers: 'dashboard + JRA(premium)' },
-  { file: 'src/pages/premium-plus.astro', covers: 'premium-plus' },
+  { file: 'src/pages/premium-plus/index.astro', covers: 'premium-plus' },
   { file: 'src/pages/premium-prediction/nankan.astro', covers: '南関(premium)' },
   { file: 'src/pages/premium-predictions-funabashi.astro', covers: '船橋(premium)' },
   { file: 'src/pages/premium-predictions-urawa.astro', covers: '浦和(premium)' },
