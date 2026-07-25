@@ -126,6 +126,7 @@ export function renderReceiptCardHtml(card) {
         </div></div>
         <div class="close">すべて閉じる<span class="acc">▲</span></div>
         <div class="vh">001）${esc(venue)}（${esc(jd.wd)}）${esc(raceNumber)}R 3連単フォーメーション
+          <span class="acc" aria-hidden="true">▲</span>
           <div class="l2">${isHit ? `<span class="hit">的中</span>` : ''}<span>購入金額:${esc(jyen(stake))}</span><span class="${isHit ? 'pay' : ''}">払戻金額:${esc(jyen(isHit ? payout : 0))}</span></div>
         </div>
         <div class="dt">
