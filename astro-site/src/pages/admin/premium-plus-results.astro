@@ -3,6 +3,8 @@ export const prerender = true;
 // 認可: この画面は /admin/* の Basic-Auth 背後。POST は x-admin-secret + production を
 // premium-plus-results Function 側で検証する。secret はこのタブ限定（sessionStorage）。
 import BaseLayout from '../../layouts/BaseLayout.astro';
+// カード CSS 単一源（本番 /premium-plus-v2/ と同一ルール）。プレビューを本番と同じ見た目にする。
+import '../../styles/premiumPlusReceiptCard.css';
 ---
 <BaseLayout title="Premium Plus 結果入力（管理）">
   <div class="ppr">
@@ -64,6 +66,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
       <pre id="out" class="out"></pre>
     </div>
+
+    <div class="card preview">
+      <div class="preview-head">プレビュー <small>本番 <code>/premium-plus-v2/</code> と同じ表示（中央=JRA / 南関=SPAT4 を自動判定）</small></div>
+      <div class="preview-stage">
+        <div id="cardPreview" class="pp-cards"></div>
+        <p id="previewHint" class="preview-hint">開催日・1着・2着・3着 を入力するとプレビューが表示されます。</p>
+      </div>
+    </div>
   </div>
 
   <style>
@@ -89,10 +99,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .actions .primary{background:linear-gradient(180deg,#ffe08a,#f5c451 55%,#d99b1f);color:#3a2a05}
     .actions .danger{background:transparent;border:1px solid rgba(248,113,113,.5);color:#f87171}
     .out{margin-top:14px;background:#0b1120;border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:10px;color:#93a4bd;font-size:.8rem;white-space:pre-wrap;min-height:1.4em}
+    .preview .preview-head{font-size:.9rem;font-weight:700;color:#e6edf7;margin-bottom:12px}
+    .preview .preview-head small{display:block;font-weight:400;color:#6f819c;font-size:.72rem;margin-top:.25em}
+    .preview .preview-stage{background:repeating-linear-gradient(135deg,rgba(255,255,255,.012) 0 8px,transparent 8px 16px),#0b1120;border:1px solid rgba(148,163,184,.14);border-radius:12px;padding:16px}
+    .preview .pp-cards{display:flex;flex-direction:column;gap:16px}
+    .preview .preview-hint{color:#6f819c;font-size:.82rem;text-align:center;padding:1.5rem 0;margin:0}
     @media(max-width:560px){.grid{grid-template-columns:1fr}}
   </style>
 
   <script>
+    // カードプレビューは本番と同じ単一源を再利用（値は deriveCard・見た目は renderReceiptCardHtml + 共有CSS）
+    import { deriveCard } from '../../lib/premiumPlusResults.js';
+    import { renderReceiptCardHtml } from '../../lib/premiumPlusReceiptCardView.js';
     const API = '/.netlify/functions/premium-plus-results';
     const $ = (id) => document.getElementById(id);
     // secret はこのタブのみ
@@ -133,8 +151,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function updatePreview(){
       const p=points(); $('ptsPreview').textContent = p ? `点数: ${p} / 合計: ¥${(p*unitStake()).toLocaleString()}` : '点数: — / 合計: —';
     }
-    ['first','second','third'].forEach(id=>$(id).addEventListener('input',updatePreview));
-    $('unitStake').addEventListener('change',updatePreview);
+    // カードのライブプレビュー: 本番と同じ deriveCard(entry()) を描画。買い目が未確定なら hint を出す。
+    function updateCardPreview(){
+      const el = $('cardPreview'), hint = $('previewHint');
+      let card = null;
+      try { card = deriveCard(entry()); } catch { card = null; }
+      if (!card) { el.innerHTML = ''; hint.style.display = 'block'; return; }
+      hint.style.display = 'none';
+      el.innerHTML = renderReceiptCardHtml(card);
+    }
+    function refreshAll(){ updatePreview(); updateCardPreview(); }
+    // フォーム内の全入力変化（text/number は input、select/checkbox/date/time は change）で再描画
+    const formGrid = document.querySelector('.grid');
+    formGrid.addEventListener('input', refreshAll);
+    formGrid.addEventListener('change', refreshAll);
 
     function entry(){
       return {
@@ -168,6 +198,6 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
     $('save').addEventListener('click',()=>post({action:'upsert', entry:entry()}));
     $('del').addEventListener('click',()=>{ if(confirm($('date').value+' を削除しますか？')) post({action:'remove', date:$('date').value.trim()}); });
-    updatePreview();
+    refreshAll();
   </script>
 </BaseLayout>
