@@ -133,6 +133,29 @@ test('ドリフト検知: 本番コンポーネントのレース明細ヘッダ
     'コンポーネントの vh に装飾三角が無い');
 });
 
+// 明細表の罫線は実機スクショ実測に合わせる（横罫線は左右 5px インセット / 縦罫線は .dt 内部のみ）。
+// .vh（灰色のレース概要）に罫線が生えると、縦線が白い表の外へ伸びて見える。
+test('明細表の罫線: 縦罫線は .dt 内だけ・.vh には罫線を置かない', () => {
+  const css = read('../styles/premiumPlusReceiptCard.css');
+  const rule = (sel) => (css.match(new RegExp(`\\${sel} \\{([^}]*)\\}`)) || [, ''])[1];
+  const vh = rule('.vref.jra .vh');
+  assert.ok(!/border(-top|-bottom|-left|-right)?\s*:/.test(vh), '.vh に border が付いている（縦罫線が灰色ヘッダーへ伸びる）');
+  assert.ok(/padding: 3px 5px 0/.test(rule('.vref.jra .dt')), '.dt の inset padding（3px 5px 0）が無い');
+  assert.ok(/border-bottom: 1px solid #c0c0c0/.test(rule('.vref.jra .dt .row')), '行境界の横罫線が .row の border-bottom でない');
+  assert.ok(!/border-top/.test(rule('.vref.jra .dt .row')), '.row に border-top が残っている（二重描画）');
+  assert.ok(/border-right: 1px solid #c0c0c0/.test(rule('.vref.jra .dt .lc')), '縦罫線が .lc の border-right でない');
+});
+
+// v2 ページは同じ .vref.jra ルールをページスコープで重複保持している。片方だけ直すと将来ドリフトする。
+test('CSS 同期: premium-plus-v2.astro の .vref.jra ルールが共有 CSS と一致', () => {
+  const norm = (s) => s.split('\n').map((l) => l.trim().replace(/\s+/g, ' ')).filter((l) => l.startsWith('.vref.jra'));
+  const shared = new Set(norm(read('../styles/premiumPlusReceiptCard.css')));
+  const page = new Set(norm(read('../pages/premium-plus-v2.astro')));
+  for (const r of shared) {
+    assert.ok(page.has(r), `premium-plus-v2.astro に同じルールが無い（ドリフト）: ${r.slice(0, 80)}`);
+  }
+});
+
 test('HTML エスケープ: 文字列フィールドの < > をエスケープする', () => {
   const card = deriveCard({
     date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
