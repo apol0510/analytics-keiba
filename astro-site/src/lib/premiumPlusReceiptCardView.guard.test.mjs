@@ -65,10 +65,13 @@ test('レンダラ整合: 中央(JRA) カードに本番の主要クラス/文�
   const html = renderReceiptCardHtml(card);
   for (const s of [
     'pp-circuit ch', '中央', 'class="vref jra"',
-    '合計購入金額', '合計払戻金額', '3連単フォーメーション', 'Japan Racing Association',
+    '合計購入金額', '合計払戻金額', '3連単フォーメーション', '払戻/返還金額',
   ]) {
     assert.ok(html.includes(s), `JRA プレビューに "${s}" が無い`);
   }
+  // フッター（© Japan Racing Association.）は削除済み。払戻/返還金額 行でカード終端。
+  assert.ok(!html.includes('Japan Racing Association'), 'JRA フッターが残っている（削除済みのはず）');
+  assert.ok(!html.includes('class="foot"'), 'foot 要素が残っている（削除済みのはず）');
 });
 
 test('HTML エスケープ: 文字列フィールドの < > をエスケープする', () => {

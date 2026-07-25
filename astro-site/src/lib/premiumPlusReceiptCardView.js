@@ -133,7 +133,6 @@ export function renderReceiptCardHtml(card) {
           ${isHit && winner ? `<div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>${esc(winner)}</span><span>${unitPayout.toLocaleString()}円</span></div></div>` : ''}
           <div class="row"><div class="lc">払戻/返還金額</div><div class="${isHit ? 'rc red' : 'rc'}">${esc(jyen(isHit ? payout : 0))}</div></div>
         </div>
-        <div class="foot">© Japan Racing Association.</div>
       </div>`;
 
   return `<div class="pp-evi">
