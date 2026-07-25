@@ -83,7 +83,11 @@ const ppFmtReceiptAt = (raw, fallbackSpat) => {
 };
 const ppCards = latestCards(ppResultsRaw, { limit: 8 }).map((c) => {
   const w = String(c.winnerCombo || '').split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
-  return { ...c, w1: w[0], w2: w[1], w3: w[2], jd: ppFmtDate(c.date) };
+  // 三連単の的中組合せは「1着→2着→3着」の順序付き。台帳は "7-1-9" で保存するが表示は矢印区切り。
+  // JRA 投票内容照会の「払戻単価」は 2 桁ゼロ埋め（06→01→04）なので vref jra 側は wDispPad を使う。
+  const wDisp = w.length >= 2 ? w.join('→') : String(c.winnerCombo || '');
+  const wDispPad = w.length >= 2 ? w.map((n) => (n < 10 ? `0${n}` : `${n}`)).join('→') : String(c.winnerCombo || '');
+  return { ...c, w1: w[0], w2: w[1], w3: w[2], wDisp, wDispPad, jd: ppFmtDate(c.date) };
 });
 
 // --- 本日の1鞍ティザー（購入導線・買い目はロック） ---
@@ -963,7 +967,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                   </div>
                   <div class="pp-meta">
                     <div class="pp-mi"><span>投票額</span><b>{formatYen(c.stake)}</b></div>
-                    <div class="pp-mi"><span>結果</span><b>{c.isHit ? c.winnerCombo : '—'}</b></div>
+                    <div class="pp-mi"><span>結果</span><b>{c.isHit ? c.wDisp : '—'}</b></div>
                     <div class="pp-mi"><span>払戻</span><b class={c.isHit ? 'pay' : ''}>{c.isHit ? formatYen(c.payout) : '—'}</b></div>
                   </div>
                 </div>
@@ -1006,7 +1010,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                         </div></div></div>
                         <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:{c.unitStake.toLocaleString()}円</div><div>計:{c.stake.toLocaleString()}円</div></div></div>
                         {c.isHit && c.winnerCombo && (
-                          <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{c.winnerCombo}</span><span>{(c.unitPayout || c.payout).toLocaleString()}円</span></div></div>
+                          <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{c.wDispPad}</span><span>{(c.unitPayout || c.payout).toLocaleString()}円</span></div></div>
                         )}
                         <div class="row"><div class="lc">払戻/返還金額</div><div class={c.isHit ? 'rc red' : 'rc'}>{(c.isHit ? c.payout : 0).toLocaleString()}円</div></div>
                       </div>

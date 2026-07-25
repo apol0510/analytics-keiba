@@ -83,6 +83,11 @@ export function renderReceiptCardHtml(card) {
   const winner = String(c.winnerCombo || c.hitCombo || '');
   const wArr = winner.split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
   const w1 = wArr[0], w2 = wArr[1], w3 = wArr[2];
+  // 三連単の的中組合せは「1着→2着→3着」の順序付き。管理画面は "7-1-9" で保存するが、
+  // 表示は必ず矢印区切りにする（`-` は馬連等の無順序券種に見えるため）。
+  // JRA 投票内容照会の「払戻単価」は 2 桁ゼロ埋め（06→01→04）なので vref jra 側は wDispPad を使う。
+  const wDisp = wArr.length >= 2 ? wArr.join('→') : winner;
+  const wDispPad = wArr.length >= 2 ? wArr.map(pad2).join('→') : winner;
   const circuitCls = service === 'jra' ? 'ch' : 'nk';
   const circuitLabel = service === 'jra' ? '中央' : '南関';
 
@@ -130,7 +135,7 @@ export function renderReceiptCardHtml(card) {
             <div><span class="pf">3着：</span><span>${esc(thirdPad.join(','))}</span></div>
           </div></div></div>
           <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:${unitStake.toLocaleString()}円</div><div>計:${stake.toLocaleString()}円</div></div></div>
-          ${isHit && winner ? `<div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>${esc(winner)}</span><span>${unitPayout.toLocaleString()}円</span></div></div>` : ''}
+          ${isHit && winner ? `<div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>${esc(wDispPad)}</span><span>${unitPayout.toLocaleString()}円</span></div></div>` : ''}
           <div class="row"><div class="lc">払戻/返還金額</div><div class="${isHit ? 'rc red' : 'rc'}">${esc(jyen(isHit ? payout : 0))}</div></div>
         </div>
       </div>`;
@@ -162,7 +167,7 @@ export function renderReceiptCardHtml(card) {
         </div>
         <div class="pp-meta">
           <div class="pp-mi"><span>投票額</span><b>${esc(yen(stake))}</b></div>
-          <div class="pp-mi"><span>結果</span><b>${isHit ? esc(winner) : '—'}</b></div>
+          <div class="pp-mi"><span>結果</span><b>${isHit ? esc(wDisp) : '—'}</b></div>
           <div class="pp-mi"><span>払戻</span><b class="${isHit ? 'pay' : ''}">${isHit ? esc(yen(payout)) : '—'}</b></div>
         </div>
       </div>

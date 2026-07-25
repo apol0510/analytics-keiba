@@ -74,6 +74,40 @@ test('レンダラ整合: 中央(JRA) カードに本番の主要クラス/文�
   assert.ok(!html.includes('class="foot"'), 'foot 要素が残っている（削除済みのはず）');
 });
 
+// 三連単は順序付き（1着→2着→3着）。台帳は "6-1-4" で保存するが、表示は矢印区切りに統一する。
+// JRA 投票内容照会の「払戻単価」は 2 桁ゼロ埋め（06→01→04）。
+test('的中組合せ表示: 中央(JRA) は 払戻単価=ゼロ埋め矢印 / 結果=矢印（ハイフン禁止）', () => {
+  const card = deriveCard({
+    date: '2026-07-18', circuit: 'chuo', venue: '福島', raceNumber: 11,
+    first: '6', second: '1,3,4', third: '1,3,4,9', unitStake: '1000',
+    isHit: true, payout: '1214000', unitPayout: '121400', hitCombo: '6-1-4', receiptNo: '0001',
+  });
+  const html = renderReceiptCardHtml(card);
+  assert.ok(html.includes('06→01→04'), '払戻単価が JRA 実画面表記（06→01→04）になっていない');
+  assert.ok(html.includes('<b>6→1→4</b>'), '左メタ「結果」が矢印区切りになっていない');
+  assert.ok(!html.includes('6-1-4'), '的中組合せが生のハイフン区切りのまま出力されている');
+});
+
+test('的中組合せ表示: 南関(SPAT4) の 結果 も矢印区切り', () => {
+  const card = deriveCard({
+    date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
+    first: '7', second: '1,3,9', third: '1,2,3,6,9', unitStake: '1000',
+    isHit: true, payout: '599000', hitCombo: '7-1-9',
+  });
+  const html = renderReceiptCardHtml(card);
+  assert.ok(html.includes('<b>7→1→9</b>'), '左メタ「結果」が矢印区切りになっていない');
+  assert.ok(!html.includes('7-1-9'), '的中組合せが生のハイフン区切りのまま出力されている');
+});
+
+// 本番コンポーネントは node から実行できないため、矢印表記の適用箇所を source で固定する。
+test('ドリフト検知: 本番コンポーネントも矢印表記の変数を使う', () => {
+  const component = read('../components/premium-plus/PremiumPlusReceiptCardV2.astro');
+  assert.ok(component.includes("wArr.join('→')"), 'コンポーネントに wDisp（矢印表記）が無い');
+  assert.ok(component.includes("wArr.map(pad2).join('→')"), 'コンポーネントに wDispPad（ゼロ埋め矢印）が無い');
+  assert.ok(component.includes('{isHit ? wDisp'), '結果 行が矢印表記を使っていない');
+  assert.ok(component.includes('<span>{wDispPad}</span>'), '払戻単価 行がゼロ埋め矢印を使っていない');
+});
+
 test('HTML エスケープ: 文字列フィールドの < > をエスケープする', () => {
   const card = deriveCard({
     date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
