@@ -108,6 +108,31 @@ test('ドリフト検知: 本番コンポーネントも矢印表記の変数を
   assert.ok(component.includes('<span>{wDispPad}</span>'), '払戻単価 行がゼロ埋め矢印を使っていない');
 });
 
+// 実画面（JRA 投票内容照会）はレース明細ヘッダー右端にもアコーディオン三角がある。装飾のみ（開閉なし）。
+test('JRA レース明細ヘッダー: 装飾アコーディオン三角が 1 個ある（SPAT4 には出さない）', () => {
+  const jra = renderReceiptCardHtml(deriveCard({
+    date: '2026-07-25', circuit: 'chuo', venue: '新潟', raceNumber: 8,
+    first: '6', second: '1,2,10', third: '1,2,7,8,10,11', unitStake: '1000',
+    isHit: true, payout: '697200', unitPayout: '69720', hitCombo: '6-10-2',
+  }));
+  const accCount = (jra.match(/class="acc"/g) || []).length;
+  assert.equal(accCount, 2, 'JRA カードの acc は「すべて閉じる」+ レース明細ヘッダーの 2 個であること');
+  assert.ok(/<div class="vh">[\s\S]*?<span class="acc" aria-hidden="true">▲<\/span>/.test(jra),
+    'レース明細ヘッダー内に装飾三角（aria-hidden）が無い');
+
+  const spat = renderReceiptCardHtml(deriveCard({
+    date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
+    first: '7', second: '1,3', third: '1,2,3',
+  }));
+  assert.ok(!spat.includes('class="acc"'), 'SPAT4 カードに acc が混入している');
+});
+
+test('ドリフト検知: 本番コンポーネントのレース明細ヘッダーにも装飾三角がある', () => {
+  const component = read('../components/premium-plus/PremiumPlusReceiptCardV2.astro');
+  assert.ok(/<div class="vh">[\s\S]*?<span class="acc" aria-hidden="true">▲<\/span>/.test(component),
+    'コンポーネントの vh に装飾三角が無い');
+});
+
 test('HTML エスケープ: 文字列フィールドの < > をエスケープする', () => {
   const card = deriveCard({
     date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
