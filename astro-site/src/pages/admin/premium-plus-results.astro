@@ -72,7 +72,7 @@ import '../../styles/premiumPlusReceiptCard.css';
       <div class="preview-head">プレビュー <small>本番 <code>/premium-plus-v2/</code> と同じ表示（中央=JRA / 南関=SPAT4 を自動判定）</small></div>
       <div class="preview-stage">
         <div id="cardPreview" class="pp-cards"></div>
-        <p id="previewHint" class="preview-hint">開催日・1着・2着・3着 を入力するとプレビューが表示されます。</p>
+        <p id="previewHint" class="preview-hint">サーキット（中央／南関）または開催日を選ぶと、カードの土台が表示されます。買い目を入れると追従します。</p>
       </div>
     </div>
     </div>
@@ -122,7 +122,7 @@ import '../../styles/premiumPlusReceiptCard.css';
 
   <script>
     // カードプレビューは本番と同じ単一源を再利用（値は deriveCard・見た目は renderReceiptCardHtml + 共有CSS）
-    import { deriveCard } from '../../lib/premiumPlusResults.js';
+    import { deriveCard, circuitFromDate, toHorseNumbers, computePoints, pad2, UNIT_STAKE } from '../../lib/premiumPlusResults.js';
     import { renderReceiptCardHtml } from '../../lib/premiumPlusReceiptCardView.js';
     const API = '/.netlify/functions/premium-plus-results';
     const $ = (id) => document.getElementById(id);
@@ -164,11 +164,42 @@ import '../../styles/premiumPlusReceiptCard.css';
     function updatePreview(){
       const p=points(); $('ptsPreview').textContent = p ? `点数: ${p} / 合計: ¥${(p*unitStake()).toLocaleString()}` : '点数: — / 合計: —';
     }
-    // カードのライブプレビュー: 本番と同じ deriveCard(entry()) を描画。買い目が未確定なら hint を出す。
+    // 買い目が未確定でも土台を見せる寛容プレビュー用カード。値ロジックは premiumPlusResults.js の
+    // 共通ヘルパー（circuitFromDate / toHorseNumbers / computePoints / pad2 / UNIT_STAKE）で本番と揃える。
+    function lenientCard(e){
+      const circuit = (e.circuit === 'chuo' || e.circuit === 'nankan') ? e.circuit : circuitFromDate(e.date);
+      const first = toHorseNumbers(e.first), second = toHorseNumbers(e.second), third = toHorseNumbers(e.third);
+      const points = computePoints(e.first, e.second, e.third);
+      const uStake = parseInt(e.unitStake, 10) > 0 ? parseInt(e.unitStake, 10) : UNIT_STAKE;
+      const pay = Math.max(0, parseInt(String(e.payout || '').replace(/[^\d]/g, ''), 10) || 0);
+      const isHit = !!e.isHit || pay > 0;
+      const rNum = parseInt(e.raceNumber, 10) || null;
+      return {
+        date: e.date || '', circuit, service: circuit === 'chuo' ? 'jra' : 'spat4',
+        venue: e.venue || '', raceNumber: rNum, raceName: e.raceName || '',
+        first, second, third, points, unitStake: uStake, stake: points * uStake,
+        isHit, payout: isHit ? pay : 0, hitCombo: e.hitCombo || '', winnerCombo: e.hitCombo || '',
+        unitPayout: isHit ? (parseInt(e.unitPayout, 10) || 0) : 0,
+        receiptNo: e.receiptNo || '', receiptAt: e.receiptAt || '',
+        firstPad: first.map(pad2), secondPad: second.map(pad2), thirdPad: third.map(pad2),
+        raceLabel: `${e.venue || ''}${rNum ? `${rNum}R` : ''}`.trim(),
+      };
+    }
+    // サーキット選択 or 開催日が決まった時点でプレビュー表示。買い目が揃えば deriveCard（本番一致）に切替。
+    function currentPreviewCard(){
+      const e = entry();
+      let strict = null;
+      try { strict = deriveCard(e); } catch { strict = null; }
+      if (strict) return strict; // 買い目まで揃った → 本番と完全一致の描画
+      const hasCircuit = e.circuit === 'chuo' || e.circuit === 'nankan';
+      const hasDate = /^\d{4}-\d{2}-\d{2}$/.test(e.date || '');
+      if (!hasCircuit && !hasDate) return null; // まだ中央/南関も日付も未確定 → hint
+      return lenientCard(e); // 土台を先に見せる（中央=JRA / 南関=SPAT4）
+    }
+    // カードのライブプレビュー。サーキット/開催日が決まった時点で土台を表示し、以後は入力に追従。
     function updateCardPreview(){
       const el = $('cardPreview'), hint = $('previewHint');
-      let card = null;
-      try { card = deriveCard(entry()); } catch { card = null; }
+      const card = currentPreviewCard();
       if (!card) { el.innerHTML = ''; hint.style.display = 'block'; return; }
       hint.style.display = 'none';
       el.innerHTML = renderReceiptCardHtml(card);
