@@ -16,7 +16,8 @@ import '../../styles/premiumPlusReceiptCard.css';
       <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
     </div>
 
-    <div class="card">
+    <div class="editor">
+    <div class="card form-card">
       <div class="grid">
         <div><label>開催日</label><input type="date" id="date" /></div>
         <div><label>サーキット</label>
@@ -74,10 +75,22 @@ import '../../styles/premiumPlusReceiptCard.css';
         <p id="previewHint" class="preview-hint">開催日・1着・2着・3着 を入力するとプレビューが表示されます。</p>
       </div>
     </div>
+    </div>
   </div>
 
   <style>
-    .ppr{max-width:820px;margin:0 auto;padding:24px 16px 80px;color:#e6edf7}
+    .ppr{max-width:1280px;margin:0 auto;padding:24px 16px 80px;color:#e6edf7}
+    /* 横並びエディタ: 左=入力 / 右=プレビュー固定。狭い画面は縦積み＋上部sticky。 */
+    .editor{display:grid;grid-template-columns:1fr;gap:16px 20px;align-items:start}
+    .editor .card{margin-bottom:0}
+    @media(min-width:1120px){
+      .editor{grid-template-columns:minmax(0,1fr) 700px}
+      .editor .preview{position:sticky;top:16px;align-self:start}
+    }
+    @media(max-width:1119px){
+      .editor .preview{position:sticky;top:0;z-index:5;max-height:52vh;overflow:auto;order:-1}
+    }
+    .editor .preview .preview-stage{overflow-x:auto}
     .ppr h1{font-size:1.4rem;margin:0 0 .3em}
     .ppr .lead{color:#93a4bd;font-size:.9rem;margin:0 0 20px}
     .ppr code{background:rgba(245,196,81,.1);color:#f5c451;padding:.1em .4em;border-radius:5px}
