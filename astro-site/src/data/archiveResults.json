@@ -6,16 +6,16 @@
       "川崎"
     ],
     "totalRaces": 12,
-    "hitRaces": 8,
-    "missRaces": 4,
-    "hitRate": 66.7,
+    "hitRaces": 9,
+    "missRaces": 3,
+    "hitRate": 75,
     "betAmount": 6000,
     "betPointsPerRace": 5,
     "totalBetPoints": 60,
     "totalInvestment": 6000,
-    "totalPayout": 15440,
-    "returnRate": 257.3,
-    "recoveryRate": 257.3,
+    "totalPayout": 13800,
+    "returnRate": 230,
+    "recoveryRate": 230,
     "races": [
       {
         "raceNumber": 1,
@@ -186,6 +186,39 @@
         "venue": "川崎",
         "result": {
           "first": {
+            "number": 7,
+            "name": "ゴールドカレラ"
+          },
+          "second": {
+            "number": 3,
+            "name": "デレチョ"
+          },
+          "third": {
+            "number": 2,
+            "name": "アイビーフレイア"
+          }
+        },
+        "bettingLines": [
+          "7↔1.2.3.4.5(抑え8)",
+          "4↔1.2.3.5.7(抑え8)"
+        ],
+        "isHit": true,
+        "hitLines": [
+          "7↔1.2.3.4.5(抑え8)"
+        ],
+        "umatan": {
+          "combination": "7-3",
+          "payout": 830
+        },
+        "betType": "馬単",
+        "betPoints": 5
+      },
+      {
+        "raceNumber": 7,
+        "raceName": "３歳",
+        "venue": "川崎",
+        "result": {
+          "first": {
             "number": 4,
             "name": "ヴェロオスキュラス"
           },
@@ -199,13 +232,12 @@
           }
         },
         "bettingLines": [
-          "7↔1.2.3.4.5(抑え8)",
-          "4↔1.2.3.5.7(抑え8)"
+          "4↔3.5.7.10.11(抑え1.6.8)",
+          "3↔4.5.7.10.11(抑え1.6.8)"
         ],
         "isHit": true,
         "hitLines": [
-          "7↔1.2.3.4.5(抑え8)",
-          "4↔1.2.3.5.7(抑え8)"
+          "4↔3.5.7.10.11(抑え1.6.8)"
         ],
         "umatan": {
           "combination": "4-7",
@@ -215,7 +247,7 @@
         "betPoints": 5
       },
       {
-        "raceNumber": 7,
+        "raceNumber": 8,
         "raceName": "３歳",
         "venue": "川崎",
         "result": {
@@ -233,11 +265,13 @@
           }
         },
         "bettingLines": [
-          "4↔3.5.7.10.11(抑え1.6.8)",
-          "3↔4.5.7.10.11(抑え1.6.8)"
+          "10↔1.4.5.9.11(抑え2.3.6.7.8)",
+          "1↔4.5.9.10.11(抑え2.3.6.7.8)"
         ],
-        "isHit": false,
-        "hitLines": [],
+        "isHit": true,
+        "hitLines": [
+          "1↔4.5.9.10.11(抑え2.3.6.7.8)"
+        ],
         "umatan": {
           "combination": "1-4",
           "payout": 1250
@@ -246,8 +280,8 @@
         "betPoints": 5
       },
       {
-        "raceNumber": 8,
-        "raceName": "３歳",
+        "raceNumber": 9,
+        "raceName": "雷光賞",
         "venue": "川崎",
         "result": {
           "first": {
@@ -264,12 +298,13 @@
           }
         },
         "bettingLines": [
-          "10↔1.4.5.9.11(抑え2.3.6.7.8)",
-          "1↔4.5.9.10.11(抑え2.3.6.7.8)"
+          "1↔2.4.5.9.10(抑え8.11.12)",
+          "4↔1.2.5.9.10(抑え8.11.12)"
         ],
         "isHit": true,
         "hitLines": [
-          "1↔4.5.9.10.11(抑え2.3.6.7.8)"
+          "1↔2.4.5.9.10(抑え8.11.12)",
+          "4↔1.2.5.9.10(抑え8.11.12)"
         ],
         "umatan": {
           "combination": "4-1",
@@ -279,8 +314,8 @@
         "betPoints": 5
       },
       {
-        "raceNumber": 9,
-        "raceName": "雷光賞",
+        "raceNumber": 10,
+        "raceName": "キリマンジェロ賞",
         "venue": "川崎",
         "result": {
           "first": {
@@ -297,13 +332,11 @@
           }
         },
         "bettingLines": [
-          "1↔2.4.5.9.10(抑え8.11.12)",
-          "4↔1.2.5.9.10(抑え8.11.12)"
+          "3↔1.4.6.8.9(抑え2.5.7)",
+          "8↔1.3.4.6.9(抑え2.5.7)"
         ],
-        "isHit": true,
-        "hitLines": [
-          "4↔1.2.5.9.10(抑え8.11.12)"
-        ],
+        "isHit": false,
+        "hitLines": [],
         "umatan": {
           "combination": "4-9",
           "payout": 3720
@@ -312,8 +345,8 @@
         "betPoints": 5
       },
       {
-        "raceNumber": 10,
-        "raceName": "キリマンジェロ賞",
+        "raceNumber": 11,
+        "raceName": "星火燎原賞",
         "venue": "川崎",
         "result": {
           "first": {
@@ -330,44 +363,13 @@
           }
         },
         "bettingLines": [
-          "3↔1.4.6.8.9(抑え2.5.7)",
-          "8↔1.3.4.6.9(抑え2.5.7)"
+          "3→1.5.6.7"
         ],
         "isHit": false,
         "hitLines": [],
         "umatan": {
           "combination": "5-7",
           "payout": 1080
-        },
-        "betType": "馬単",
-        "betPoints": 5
-      },
-      {
-        "raceNumber": 11,
-        "raceName": "星火燎原賞",
-        "venue": "川崎",
-        "result": {
-          "first": {
-            "number": 10,
-            "name": "ラーマ"
-          },
-          "second": {
-            "number": 2,
-            "name": "ジーティーカイソク"
-          },
-          "third": {
-            "number": 7,
-            "name": "ユメドリーム"
-          }
-        },
-        "bettingLines": [
-          "3→1.5.6.7"
-        ],
-        "isHit": false,
-        "hitLines": [],
-        "umatan": {
-          "combination": "10-2",
-          "payout": 2390
         },
         "betType": "馬単",
         "betPoints": 5
@@ -406,7 +408,7 @@
         "betPoints": 5
       }
     ],
-    "verifiedAt": "2026-07-27T15:25:26.090Z"
+    "verifiedAt": "2026-07-27T15:30:04.902Z"
   },
   {
     "date": "2026-07-23",
