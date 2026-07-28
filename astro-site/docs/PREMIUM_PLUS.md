@@ -69,9 +69,15 @@ PHASE 4 到達後の **OPEN / CLOSING / CLOSED**（JST 判定）を通す。
 判定の単一源は `src/lib/premiumPlus/premiumPlusRelease.js`。
 仕様・解禁手順・未決定事項は [`PREMIUM_PLUS_STAGED_RELEASE.md`](./PREMIUM_PLUS_STAGED_RELEASE.md) を参照。
 
-> ⚠️ **現状は三連複購入確定日時の正本が Airtable に無いため、全会員が PHASE 1（商品ページ 404）**。
-> 解禁には `SanrenpukuPaidAt` フィールド作成（schema 変更）か env `PREMIUM_PLUS_FUNNEL_ANCHOR`
-> 設定のいずれかが必要。どちらも未実行。
+販売対象は 2 つの入口を持つ（2026-07-29〜）:
+**ROUTE A** = Premium Sanrenpuku 購入者 / **ROUTE B** = 通常 Premium 会員で加入 30 日以上・三連複未購入。
+どちらも自動では販売可にならず、**管理者が会員ごとに手動選別**する
+（`PremiumPlusEligibility` = 販売可 / 保留 / 販売対象外。新規候補は必ず「保留」から）。
+管理画面: `/admin/premium-plus-eligibility`
+
+> ⚠️ **Airtable に Premium Plus 用フィールドが未作成のため、現状は全会員が PHASE 1（商品ページ 404）**。
+> 有効化には `SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 5 フィールドの作成（schema 変更）と
+> env `PREMIUM_PLUS_FIELDS_READY=1` が必要。どちらも未実行。
 
 ## 変更してはいけない前提
 

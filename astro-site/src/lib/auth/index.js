@@ -66,6 +66,7 @@ export { resolveEdgeGateMode } from './edgeGatePolicy.js';
 export {
   verifyPlanAccess,
   PREMIUM_PLUS_ALLOWED_PLANS,
+  PREMIUM_PLUS_CANDIDATE_PLANS,
   PAGE_ACCESS_REJECT,
 } from './pageAccess.js';
 

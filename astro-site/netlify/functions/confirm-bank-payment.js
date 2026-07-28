@@ -32,6 +32,11 @@ import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js'
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js';
 import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
+import {
+  buildSanrenpukuPlusInitFields,
+  assertOnlyPlusFields,
+  isPlusFieldsEnabled,
+} from '../../src/lib/premiumPlus/premiumPlusEligibility.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 
@@ -237,6 +242,41 @@ exports.handler = async (event) => {
       planType: confirmation.fields['PlanType'],
       expiration: confirmation.expiration
     });
+
+    // ── Step 4.5: Premium Plus 販売資格の初期化（三連複購入時のみ・best effort）──
+    // 三連複の昇格が成功した**後**に、Plus 専用フィールドだけを別 PATCH で書く。
+    //   - SanrenpukuPaidAt … Plus 段階公開の anchor（既に値があれば書き換えない）
+    //   - PremiumPlusEligibility='review' … 新規候補は必ず管理者確認待ち。自動 eligible にしない
+    //     （管理者が設定済みの eligible / blocked は上書きしない）
+    // ⚠️ ここが失敗しても昇格・メールを巻き戻さない（決済成功を最優先で保持する）。
+    //    フィールド未作成の本番で 422 を出さないよう PREMIUM_PLUS_FIELDS_READY で gate する。
+    const isSanrenpukuPromotion = confirmation.fields['LifetimeSanrenpuku'] === true;
+    if (isSanrenpukuPromotion && isPlusFieldsEnabled(process.env)) {
+      try {
+        const plusInit = buildSanrenpukuPlusInitFields({ fields, confirmedAt });
+        if (plusInit && assertOnlyPlusFields(plusInit.fields)) {
+          const plusRes = await fetch(
+            `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ fields: plusInit.fields, typecast: true })
+            }
+          );
+          if (plusRes.ok) {
+            console.log('✅ [confirm-bank-payment] Premium Plus 販売資格を初期化（review）:', { recordId });
+          } else {
+            // 昇格は成功済み。status のみ記録し、処理は継続する
+            console.warn('⚠️ [confirm-bank-payment] Premium Plus 初期化に失敗（昇格は完了済み）:', plusRes.status);
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ [confirm-bank-payment] Premium Plus 初期化で例外（昇格は完了済み）:', e.message);
+      }
+    }
 
     // ── Step 5: 入金確認メール ────────────────────────────
     // v2 では confirm は送信しない。pending を作り、送信 worker に委譲する

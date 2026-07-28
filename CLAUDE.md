@@ -455,10 +455,30 @@ PHASE 4 到達後は JST 時刻で **OPEN / CLOSING / CLOSED** を自動判定�
 - 権限は既存正本 `verifyPlanAccess`（ak_session）を再利用。独自の権限ロジックを作らない。
 - 仕様・解禁手順・未決定事項は `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`。
 
-> ⚠️ 三連複購入確定日時の正本が Airtable に無いため（`buildConfirmationFields()` の三連複分岐は
-> `PaidAt` を書かない）、**現状は全会員が PHASE 1**。解禁には `SanrenpukuPaidAt` フィールド作成
-> （production schema 変更）か env `PREMIUM_PLUS_FUNNEL_ANCHOR` 設定が必要。どちらも未実行。
-> **`PaidAt`（馬単の入金確認日）で代用しないこと**（既存 Premium 会員が購入直後に PHASE 4 へ飛ぶ）。
+### 💠 Premium Plus の販売対象（ROUTE A / B ＋ 管理者選別 / 2026-07-29〜）
+
+販売候補の入口は 2 つ。**どちらも自動では販売可にならない。**
+
+- **ROUTE A**: Premium Sanrenpuku 購入者（anchor = `SanrenpukuPaidAt`）
+- **ROUTE B**: 通常 Premium 会員で加入 30 日以上・三連複未購入（anchor = `PaidAt`）
+- 両立しない（三連複購入済みなら常に ROUTE A）
+
+**販売資格 `PremiumPlusEligibility` = `eligible`(販売可) / `review`(保留) / `blocked`(販売対象外)。**
+新規候補の初期値は必ず `review`。未設定・不正値・読取失敗も review 相当（fail closed）。
+管理画面 `/admin/premium-plus-eligibility` で管理者が選別する。
+
+- **自動で eligible / blocked にしない**（苦情・不的中・閲覧回数・KMA スコア等を理由にしない）
+- blocked にしても `Status` / `プラン` / `PlanType` / `有効期限` / `PaidAt` / `LifetimeSanrenpuku` /
+  `PaymentEmailSent` / `PaymentEmailStatus` は**絶対に変更しない**（allow-list で構造的に強制）
+- 資格変更でメール・LINE・通知は送らない。課金も昇格も起こさない
+- 三連複購入確定時の Plus 初期化は**昇格 PATCH の後・独立 PATCH・best effort**。
+  失敗しても昇格 / メール / LifetimeSanrenpuku を巻き戻さない
+- KMA は `PremiumPlusEligibility` を eligible へ変更してはいけない（マーケ対象 ≠ 販売許可）
+
+> ⚠️ Premium Plus 用フィールド（`SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 5 つ）は
+> **本番 Airtable に未作成**。そのため現状は全会員が PHASE 1（商品ページ 404）で、
+> Plus フィールドへの書き込みは `PREMIUM_PLUS_FIELDS_READY=1` が無いと無効（422 防止）。
+> **`PaidAt` を ROUTE A の anchor に流用しないこと**（既存 Premium 会員が購入直後に PHASE 4 へ飛ぶ）。
 
 ## 🧠 予想ロジック（スコア・役割決定）
 

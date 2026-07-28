@@ -53,7 +53,24 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
 
   test(`${name}: 段階公開の単一源を通す`, () => {
     assert.match(fm, /resolvePremiumPlusRelease\s*\(/);
-    assert.match(fm, /lookupSanrenpukuPaidAt\s*\(/);
+    assert.match(fm, /lookupCustomerFields\s*\(/);
+    // 会員状態は既存の権限正本を再利用するアダプタ経由（Plus 専用の権限判定を作らない）
+    assert.match(fm, /resolvePlusMemberFromFields\s*\(/);
+  });
+
+  test(`${name}: ROUTE B（通常 Premium）も入口に通し、可否は資格 + phase が決める`, () => {
+    assert.match(fm, /allowedPlans:\s*PREMIUM_PLUS_CANDIDATE_PLANS/);
+    // 入口を広げても eligibility/phase ゲートが後段にあること
+    const iAccess = fm.indexOf('PREMIUM_PLUS_CANDIDATE_PLANS');
+    const iGate = fm.indexOf('!ppRelease.showProductPage');
+    assert.ok(iAccess >= 0 && iGate > iAccess, '入口だけ広げて phase ゲートが無い');
+  });
+
+  test(`${name}: 会員判定を Plus 側で再実装していない`, () => {
+    // プラン文字列・期限・Status の直接判定をページに書かない（正本は resolveEntitlements）
+    assert.doesNotMatch(fm, /LifetimeSanrenpuku/);
+    assert.doesNotMatch(fm, /有効期限/);
+    assert.doesNotMatch(fm, /canViewSanrenpuku/);
   });
 
   test(`${name}: PHASE 3 未満は 404（段階公開を迂回できない）`, () => {
@@ -132,6 +149,63 @@ test('予告コンポーネント: 静的マークアップに商品名・価格
   assert.doesNotMatch(body, /href="\/premium-plus/);
   // 文言は SSR から取得する
   assert.match(body, /fetch\('\/api\/premium-plus-stage\.json'/);
+});
+
+// ── 決済 confirm（Plus 初期化が既存フローを壊さない）──────────────
+const CONFIRM_FN = read('../../../netlify/functions/confirm-bank-payment.js');
+const ADMIN_FN = read('../../../netlify/functions/premium-plus-eligibility.js');
+
+test('confirm: Plus 初期化は昇格 PATCH の成功後に、独立した PATCH で行う', () => {
+  const iPromote = CONFIRM_FN.indexOf('fields: confirmation.fields');
+  const iPlus = CONFIRM_FN.indexOf('buildSanrenpukuPlusInitFields({'); // import 行ではなく呼び出し
+  assert.ok(iPromote >= 0, '昇格 PATCH が見つからない');
+  assert.ok(iPlus > iPromote, 'Plus 初期化が昇格 PATCH より前にある');
+  // 同一 PATCH に混ぜない（混ぜると Plus フィールド起因で昇格ごと落ちる）
+  assert.doesNotMatch(CONFIRM_FN, /\.\.\.confirmation\.fields[\s\S]{0,80}PremiumPlusEligibility/);
+});
+
+test('confirm: Plus 初期化の失敗で昇格・メールを巻き戻さない', () => {
+  const seg = CONFIRM_FN.slice(CONFIRM_FN.indexOf('Step 4.5'), CONFIRM_FN.indexOf('Step 5'));
+  assert.match(seg, /try\s*\{/);
+  assert.match(seg, /catch/);
+  // 例外を再送出したり 500 を返したりしない
+  assert.doesNotMatch(seg, /throw\s/);
+  assert.doesNotMatch(seg, /return\s+jsonResponse\(/);
+});
+
+test('confirm: Plus 初期化は三連複昇格時のみ・env gate 付き', () => {
+  assert.match(CONFIRM_FN, /isSanrenpukuPromotion\s*&&\s*isPlusFieldsEnabled\(process\.env\)/);
+  assert.match(CONFIRM_FN, /confirmation\.fields\['LifetimeSanrenpuku'\] === true/);
+});
+
+test('confirm: 自動で eligible にしない（review 初期化のみ）', () => {
+  assert.doesNotMatch(stripComments(CONFIRM_FN), /['"]eligible['"]/);
+});
+
+// ── 管理 Function（販売資格だけを変える）──────────────────────────
+test('管理 Function: Plus 専用フィールド以外を書かない', () => {
+  const code = stripComments(ADMIN_FN);
+  assert.match(code, /assertOnlyPlusFields\s*\(/);
+  for (const f of ['プラン', '有効期限', 'LifetimeSanrenpuku', 'PaymentEmailSent', 'PaymentEmailStatus']) {
+    assert.doesNotMatch(code, new RegExp(`['"\`]${f}['"\`]\\s*:`), `${f} を書いている`);
+  }
+});
+
+test('管理 Function: 資格変更でメール・LINE・通知を送らない', () => {
+  assert.doesNotMatch(ADMIN_FN, /sendgrid|sendMail|mail\/send|line\/|notify/i);
+});
+
+test('管理 Function: 認可（x-admin-secret）と書き込み gate がある', () => {
+  assert.match(ADMIN_FN, /PREMIUM_PLUS_ADMIN_SECRET/);
+  assert.match(ADMIN_FN, /provided !== SECRET/);
+  assert.match(ADMIN_FN, /isPlusFieldsEnabled\(process\.env\)/);
+});
+
+test('管理 Function: 自動で eligible にする分岐が無い（管理者の明示操作のみ）', () => {
+  const code = stripComments(ADMIN_FN);
+  // 代入（= PP_ELIGIBILITY.ELIGIBLE）は禁止。比較（=== ...）は集計に使うので許可する
+  assert.doesNotMatch(code, /(?<![=!])=\s*PP_ELIGIBILITY\.ELIGIBLE/);
+  assert.match(code, /buildEligibilityUpdateFields\(/);
 });
 
 for (const [name, src] of Object.entries(SANRENPUKU_PAGES)) {

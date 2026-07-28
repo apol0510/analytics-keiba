@@ -1,0 +1,180 @@
+---
+export const prerender = true;
+// 認可: この画面は /admin/* の Basic-Auth（Edge Function）背後。POST は x-admin-secret を
+// premium-plus-eligibility Function 側で検証する。secret はこのタブ限定（sessionStorage）。
+//
+// この画面が変更するのは **Premium Plus の販売資格だけ**。
+// プラン / Status / 有効期限 / LifetimeSanrenpuku / メール状態は一切変更しない。
+// 資格変更でメール送信・課金・昇格は起きない（表示資格のみ）。
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+<BaseLayout title="Premium Plus 販売管理（管理）">
+  <div class="ppe">
+    <h1>Premium Plus 販売対象</h1>
+    <p class="lead">
+      Premium Plus を販売してよい会員を <b>管理者が手動で選別</b>します。
+      候補は自動で「販売可」になりません（新規候補は必ず <b>保留</b> から始まります）。
+      ここでの変更は <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
+    </p>
+
+    <div class="card">
+      <label>管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
+      <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="onlyReview" /> 保留（確認待ち）だけ表示</label>
+        <button id="reload" type="button">一覧を読み込む</button>
+      </div>
+      <p class="note" id="writeState"></p>
+    </div>
+
+    <div id="summary" class="summary"></div>
+    <div id="message" class="msg"></div>
+    <div id="list" class="list"></div>
+  </div>
+</BaseLayout>
+
+<style>
+  .ppe { max-width: 1080px; margin: 0 auto; padding: 1.5rem 1rem 4rem; color: #e6edf7; }
+  .ppe h1 { font-size: 1.4rem; margin: 0 0 .6rem; }
+  .lead { color: #93a4bd; font-size: .88rem; line-height: 1.8; margin: 0 0 1.2rem; }
+  .card { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+  .card label { display: block; font-size: .8rem; color: #93a4bd; margin-bottom: .35rem; }
+  .card input[type=password] { width: 100%; padding: .6rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; }
+  .row { display: flex; align-items: center; gap: 1rem; margin-top: .8rem; flex-wrap: wrap; }
+  .chk { display: flex; align-items: center; gap: .4rem; margin: 0; }
+  button { cursor: pointer; border: 0; border-radius: 8px; padding: .55rem 1rem; font-weight: 700; font-family: inherit; }
+  #reload { background: #f5c451; color: #2a1d02; }
+  .note { font-size: .76rem; color: #93a4bd; margin: .6rem 0 0; }
+  .summary { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .pill { background: #0d1729; border: 1px solid rgba(148,163,184,.2); border-radius: 999px; padding: .35rem .8rem; font-size: .78rem; }
+  .msg { font-size: .84rem; margin-bottom: 1rem; min-height: 1.2em; }
+  .msg.ok { color: #34d399; } .msg.err { color: #f87171; }
+  .list { display: grid; gap: .6rem; }
+  .item { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 10px; padding: .8rem 1rem; display: grid; gap: .5rem; }
+  .item .top { display: flex; gap: .8rem; align-items: baseline; flex-wrap: wrap; }
+  .item .em { font-weight: 700; }
+  .item .meta { font-size: .76rem; color: #93a4bd; display: flex; gap: .8rem; flex-wrap: wrap; }
+  .badge { font-size: .72rem; font-weight: 800; padding: .15rem .6rem; border-radius: 999px; }
+  .badge.eligible { background: rgba(52,211,153,.14); color: #34d399; }
+  .badge.review { background: rgba(245,196,81,.14); color: #f5c451; }
+  .badge.blocked { background: rgba(248,113,113,.14); color: #f87171; }
+  .acts { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .acts input { flex: 1 1 220px; min-width: 180px; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-size: .82rem; }
+  .acts button { font-size: .8rem; }
+  .b-eligible { background: #34d399; color: #05261a; }
+  .b-review { background: #f5c451; color: #2a1d02; }
+  .b-blocked { background: #f87171; color: #2a0707; }
+</style>
+
+<script is:inline>
+  (() => {
+    const API = '/.netlify/functions/premium-plus-eligibility';
+    const $ = (id) => document.getElementById(id);
+    const secretEl = $('secret');
+
+    const saved = sessionStorage.getItem('pp-admin-secret');
+    if (saved) secretEl.value = saved;
+    secretEl.addEventListener('change', () => sessionStorage.setItem('pp-admin-secret', secretEl.value));
+
+    function msg(text, kind) {
+      const el = $('message');
+      el.textContent = text;
+      el.className = 'msg' + (kind ? ' ' + kind : '');
+    }
+
+    async function call(payload) {
+      const secret = secretEl.value.trim();
+      if (!secret) { msg('管理シークレットを入力してください', 'err'); return null; }
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { msg(data.error || ('エラー: ' + res.status), 'err'); return null; }
+      return data;
+    }
+
+    const ROUTE_LABEL = { sanrenpuku: '三連複', premium_30d: 'Premium 30日', none: '対象外' };
+
+    function render(data) {
+      const c = data.counts || {};
+      $('summary').innerHTML = [
+        ['候補', c.total], ['保留', c.review], ['販売可', c.eligible], ['販売対象外', c.blocked],
+        ['ROUTE A(三連複)', c.routeA], ['ROUTE B(Premium30日)', c.routeB],
+      ].map(([k, v]) => `<span class="pill">${k}: <b>${v ?? 0}</b></span>`).join('');
+
+      $('writeState').textContent = data.writeEnabled
+        ? '書き込み: 有効'
+        : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。';
+
+      const list = $('list');
+      list.innerHTML = '';
+      for (const r of data.rows || []) {
+        const el = document.createElement('div');
+        el.className = 'item';
+
+        const top = document.createElement('div');
+        top.className = 'top';
+        const em = document.createElement('span');
+        em.className = 'em';
+        em.textContent = r.email || '(メール未設定)';
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + r.eligibility;
+        badge.textContent = r.eligibilityLabel;
+        top.appendChild(em); top.appendChild(badge);
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const days = r.daysSincePremium == null ? '—' : r.daysSincePremium + '日';
+        meta.textContent = [
+          'プラン: ' + (r.plan || '—'),
+          '三連複: ' + (r.hasSanrenpuku ? 'あり' : 'なし'),
+          'Premium経過: ' + days,
+          'route: ' + (ROUTE_LABEL[r.route] || r.route),
+          'phase: ' + r.phase,
+          r.updatedAt ? '更新: ' + String(r.updatedAt).slice(0, 10) : '',
+          r.reason ? 'メモ: ' + r.reason : '',
+        ].filter(Boolean).join('　/　');
+
+        const acts = document.createElement('div');
+        acts.className = 'acts';
+        const reason = document.createElement('input');
+        reason.placeholder = '内部メモ（管理者のみ・任意）';
+        reason.value = r.reason || '';
+        acts.appendChild(reason);
+        for (const [next, label, cls] of [
+          ['eligible', '販売可', 'b-eligible'],
+          ['review', '保留', 'b-review'],
+          ['blocked', '販売対象外', 'b-blocked'],
+        ]) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = cls;
+          b.textContent = label;
+          b.disabled = !data.writeEnabled;
+          b.addEventListener('click', async () => {
+            b.disabled = true;
+            const out = await call({ action: 'update', recordId: r.recordId, next, reason: reason.value });
+            b.disabled = false;
+            if (out) { msg(`更新しました: ${out.label}`, 'ok'); load(); }
+          });
+          acts.appendChild(b);
+        }
+
+        el.appendChild(top); el.appendChild(meta); el.appendChild(acts);
+        list.appendChild(el);
+      }
+      if (!(data.rows || []).length) list.innerHTML = '<p class="note">該当する候補はありません。</p>';
+      if (data.truncated) msg('件数が多いため一部のみ表示しています', 'err');
+    }
+
+    async function load() {
+      msg('読み込み中…');
+      const data = await call({ action: 'list', onlyReview: $('onlyReview').checked });
+      if (data) { msg(''); render(data); }
+    }
+
+    $('reload').addEventListener('click', load);
+  })();
+</script>

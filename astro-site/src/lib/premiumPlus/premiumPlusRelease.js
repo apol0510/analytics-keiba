@@ -52,6 +52,58 @@ export const PP_PHASE_START_DAY = Object.freeze({
   SALE: 10,
 });
 
+/**
+ * Premium Plus 販売資格（Premium Sanrenpuku 権限とは**独立**した Plus 専用の資格）。
+ * 正本は管理者の手動判断。システムが自動で eligible / blocked にしてはいけない。
+ */
+export const PP_ELIGIBILITY = Object.freeze({
+  /** 販売可 = 後続の段階公開・受付判定へ進める */
+  ELIGIBLE: 'eligible',
+  /** 保留 = 管理者確認待ち。購入 CTA を出さない（新規候補の初期値） */
+  REVIEW: 'review',
+  /** 販売対象外 = 何日経過しても購入 CTA を出さない */
+  BLOCKED: 'blocked',
+});
+
+/** 管理画面の表示名（「ブラックリスト」という語は使わない）。顧客画面には出さない。 */
+export const PP_ELIGIBILITY_LABEL = Object.freeze({
+  eligible: '販売可',
+  review: '保留',
+  blocked: '販売対象外',
+});
+
+/** Plus 販売候補のルート */
+export const PP_ROUTE = Object.freeze({
+  /** ROUTE A: Premium Sanrenpuku 購入者 */
+  SANRENPUKU: 'sanrenpuku',
+  /** ROUTE B: 通常 Premium 会員で、加入から一定期間 Sanrenpuku 未購入 */
+  PREMIUM_30D: 'premium_30d',
+  /** 対象外 */
+  NONE: 'none',
+});
+
+/** ROUTE B の経過日数しきい値（JST 暦日）。定数だけで調整できるようにする。 */
+export const PREMIUM_30D_DAYS = 30;
+
+/**
+ * 段階公開 phase の anchor をどう決めるか。
+ *   'later'    … 購入日と販売許可日の**遅い方**（既定・推奨）
+ *                 通常フロー（購入とほぼ同時に eligible）では購入日基準と同じ挙動になり、
+ *                 blocked → eligible の遅い解除では「解除日から PHASE 1」で段階的に見せられる。
+ *                 SanrenpukuPaidAt が無い既存会員も、管理者が eligible にした日を anchor にできる。
+ *   'purchase' … 購入確定日時のみ（案A）
+ *   'eligible' … 販売許可日のみ（案B）
+ */
+export const PP_PHASE_ANCHOR_MODE = 'later';
+
+/** Airtable Customers の Premium Plus 販売資格フィールド名（読む・管理画面だけが書く） */
+export const PP_ELIGIBILITY_FIELDS = Object.freeze({
+  STATUS: 'PremiumPlusEligibility',
+  REASON: 'PremiumPlusEligibilityReason',
+  UPDATED_AT: 'PremiumPlusEligibilityUpdatedAt',
+  UPDATED_BY: 'PremiumPlusEligibilityUpdatedBy',
+});
+
 /** 本日の受付ステータス（PHASE 4 到達後のみ意味を持つ） */
 export const PP_INTAKE = Object.freeze({
   OPEN: 'open',
@@ -86,9 +138,15 @@ export const PP_INTAKE_WINDOW = Object.freeze({
  * 文言はここが正本。ページ側にベタ書きしないこと。
  */
 export const PP_RELEASE_COPY = Object.freeze({
+  // ROUTE A（Premium Sanrenpuku 利用者向け）。既存コンセプトとの整合を維持する。
   teaser: Object.freeze({
     title: '新しい予想を準備しています',
     body: '全レースを広く狙うのではなく、その日の全開催から『1鞍だけ』を選ぶ、新しい予想を準備しています。',
+  }),
+  // ROUTE B（通常 Premium 会員・Sanrenpuku 未購入向け）。三連複購入者向けの文脈を前提にしない。
+  teaserPremium30d: Object.freeze({
+    title: '全レース型とは異なる、もうひとつの選択肢。',
+    body: '対象レースを増やすのではなく、その日の全開催から1鞍だけを選ぶ、新しい予想を準備しています。',
   }),
   preparing: Object.freeze({
     title: 'Premium Plus の受付準備中です',
@@ -238,19 +296,102 @@ export function computeIntakeStatus({ nowMs, circuit }) {
 }
 
 /**
- * 段階公開の最終判定。ページ / エンドポイントはこの戻り値だけを見て描画する。
+ * Premium Plus 販売資格を正規化する。
+ * 未設定 / 不正値 / 読取失敗は **review**（＝販売不可）へ倒す（fail closed）。
+ * blocked へ自動で倒さないのは、blocked が「管理者が明示的に付けた印」だから。
+ *
+ * @param {unknown} raw
+ * @returns {'eligible'|'review'|'blocked'}
+ */
+export function normalizeEligibility(raw) {
+  const v = (raw == null ? '' : String(raw)).trim().toLowerCase();
+  if (v === PP_ELIGIBILITY.ELIGIBLE) return PP_ELIGIBILITY.ELIGIBLE;
+  if (v === PP_ELIGIBILITY.BLOCKED) return PP_ELIGIBILITY.BLOCKED;
+  return PP_ELIGIBILITY.REVIEW;
+}
+
+/**
+ * Plus 販売候補の route を決める（STEP 2）。
+ *
+ * 二重ルートは作らない: Sanrenpuku 購入済みなら常に ROUTE A。
+ * ROUTE B は「有効な通常 Premium 会員 かつ Sanrenpuku 未購入 かつ 加入から 30 日以上」。
+ *
+ * @param {{ hasSanrenpuku:boolean, premiumActive:boolean, premiumPaidAtMs:number|null, nowMs:number }} input
+ * @returns {{ route:string, daysSincePremium:number|null }}
+ */
+export function resolvePlusRoute({ hasSanrenpuku, premiumActive, premiumPaidAtMs, nowMs }) {
+  if (hasSanrenpuku === true) return { route: PP_ROUTE.SANRENPUKU, daysSincePremium: null };
+
+  const days = isFiniteNumber(premiumPaidAtMs) ? jstDayDiff(premiumPaidAtMs, nowMs) : null;
+  if (premiumActive === true && days !== null && days >= PREMIUM_30D_DAYS) {
+    return { route: PP_ROUTE.PREMIUM_30D, daysSincePremium: days };
+  }
+  return { route: PP_ROUTE.NONE, daysSincePremium: days };
+}
+
+/**
+ * route と販売許可日から段階公開 anchor を決める（STEP 4）。
+ * 既定 'later' は「購入日と販売許可日の遅い方」。詳細は PP_PHASE_ANCHOR_MODE を参照。
+ *
+ * @param {{ route:string, sanrenpukuPaidAtMs?:number|null, premiumPaidAtMs?:number|null,
+ *           eligibleAtMs?:number|null, mode?:string }} input
+ * @returns {number|null} anchor（不明なら null = PHASE 1）
+ */
+export function resolvePhaseAnchorMs({ route, sanrenpukuPaidAtMs, premiumPaidAtMs, eligibleAtMs, mode }) {
+  const m = mode || PP_PHASE_ANCHOR_MODE;
+  let purchase = null;
+  if (route === PP_ROUTE.SANRENPUKU) purchase = isFiniteNumber(sanrenpukuPaidAtMs) ? sanrenpukuPaidAtMs : null;
+  else if (route === PP_ROUTE.PREMIUM_30D) purchase = isFiniteNumber(premiumPaidAtMs) ? premiumPaidAtMs : null;
+  const eligible = isFiniteNumber(eligibleAtMs) ? eligibleAtMs : null;
+
+  if (m === 'purchase') return purchase;
+  if (m === 'eligible') return eligible;
+  // 'later': 両方あれば遅い方 / 片方だけならそれ / どちらも無ければ null
+  if (purchase === null) return eligible;
+  if (eligible === null) return purchase;
+  return Math.max(purchase, eligible);
+}
+
+/** route に対応する予告文言を返す（対象外は null）。 */
+export function teaserCopyForRoute(route) {
+  if (route === PP_ROUTE.SANRENPUKU) return PP_RELEASE_COPY.teaser;
+  if (route === PP_ROUTE.PREMIUM_30D) return PP_RELEASE_COPY.teaserPremium30d;
+  return null;
+}
+
+/**
+ * 段階公開の最終判定（STEP 1〜7 の単一源）。ページ / エンドポイントはこの戻り値だけを見て描画する。
+ *
+ * 判定順:
+ *   1. 会員状態（呼び出し側が既存の権限正本から解決して渡す）
+ *   2. route（sanrenpuku / premium_30d / none）
+ *   3. PremiumPlusEligibility（eligible 以外は販売不可）
+ *   4. route 固有 anchor
+ *   5. phase
+ *   6. OPEN / CLOSING / CLOSED
+ *   7. purchaseEnabled
  *
  * @param {{
  *   hasSanrenpuku: boolean,
- *   paidAtMs: number|null,
+ *   sanrenpukuPaidAtMs?: number|null,
+ *   premiumActive?: boolean,
+ *   premiumPaidAtMs?: number|null,
+ *   eligibility?: unknown,     生値でよい（normalizeEligibility が正規化）
+ *   eligibleAtMs?: number|null 販売許可日（PremiumPlusEligibilityUpdatedAt 等）
  *   nowMs: number,
  *   circuit?: string,
+ *   anchorMode?: string,
+ *   paidAtMs?: number|null,    後方互換: sanrenpukuPaidAtMs の旧名
  * }} input
  * @returns {{
- *   allowed: boolean,        三連複会員か（false なら以下すべて false / 商品ページは 404）
+ *   allowed: boolean,        Plus 販売候補として扱えるか（false なら以下すべて false / 商品ページは 404）
+ *   route: string,
+ *   eligibility: string,
+ *   anchorMs: number|null,
  *   phase: number,
  *   daysSincePurchase: number|null,
- *   showTeaser: boolean,     三連複会員向け画面に予告を出すか（PHASE 2 以降）
+ *   daysSincePremium: number|null,
+ *   showTeaser: boolean,     予告を出すか（PHASE 2 以降）
  *   showProductPage: boolean 商品ページを描画してよいか（PHASE 3 以降。false = 404）
  *   showPurchaseCta: boolean 価格・購入 CTA を出すか（PHASE 4 のみ）
  *   purchaseEnabled: boolean 実際に申込操作を許可するか（PHASE 4 かつ CLOSED でない）
@@ -258,37 +399,85 @@ export function computeIntakeStatus({ nowMs, circuit }) {
  *   circuit: string
  * }}
  */
-export function resolvePremiumPlusRelease({ hasSanrenpuku, paidAtMs, nowMs, circuit }) {
+export function resolvePremiumPlusRelease(input) {
+  const {
+    hasSanrenpuku,
+    premiumActive = false,
+    premiumPaidAtMs = null,
+    eligibility,
+    eligibleAtMs = null,
+    nowMs,
+    circuit,
+    anchorMode,
+  } = input || {};
+  // 後方互換: 旧 paidAtMs は Sanrenpuku 購入確定日時
+  const sanrenpukuPaidAtMs = input && input.sanrenpukuPaidAtMs !== undefined
+    ? input.sanrenpukuPaidAtMs
+    : (input ? input.paidAtMs : null);
+
   const resolvedCircuit = circuit === PP_CIRCUIT.CHUO || circuit === PP_CIRCUIT.NANKAN
     ? circuit
     : circuitForJst(nowMs);
 
-  const denied = {
+  const normalizedEligibility = normalizeEligibility(eligibility);
+
+  const denied = (over = {}) => ({
     allowed: false,
+    route: PP_ROUTE.NONE,
+    eligibility: normalizedEligibility,
+    anchorMs: null,
     phase: PP_PHASE.LOCKED,
     daysSincePurchase: null,
+    daysSincePremium: null,
     showTeaser: false,
     showProductPage: false,
     showPurchaseCta: false,
     purchaseEnabled: false,
     intake: null,
     circuit: resolvedCircuit,
-  };
+    ...over,
+  });
 
-  if (hasSanrenpuku !== true) return denied;
-  if (!isFiniteNumber(nowMs)) return denied;
+  if (!isFiniteNumber(nowMs)) return denied();
 
-  const phase = computePhase({ paidAtMs, nowMs });
+  // STEP 2: route
+  const { route, daysSincePremium } = resolvePlusRoute({
+    hasSanrenpuku: hasSanrenpuku === true,
+    premiumActive: premiumActive === true,
+    premiumPaidAtMs,
+    nowMs,
+  });
+  if (route === PP_ROUTE.NONE) return denied({ daysSincePremium });
+
+  // STEP 3: 販売資格。eligible 以外は段階公開へ進めない（fail closed）
+  if (normalizedEligibility !== PP_ELIGIBILITY.ELIGIBLE) {
+    return denied({ route, daysSincePremium });
+  }
+
+  // STEP 4: anchor
+  const anchorMs = resolvePhaseAnchorMs({
+    route, sanrenpukuPaidAtMs, premiumPaidAtMs, eligibleAtMs, mode: anchorMode,
+  });
+
+  // STEP 5: phase
+  const phase = computePhase({ paidAtMs: anchorMs, nowMs });
+
+  // STEP 6: 受付ステータス
   const isSale = phase === PP_PHASE.SALE;
   const intake = isSale ? computeIntakeStatus({ nowMs, circuit: resolvedCircuit }) : null;
 
   return {
     allowed: true,
+    route,
+    eligibility: normalizedEligibility,
+    anchorMs,
     phase,
-    daysSincePurchase: isFiniteNumber(paidAtMs) ? jstDayDiff(paidAtMs, nowMs) : null,
+    daysSincePurchase: isFiniteNumber(anchorMs) ? jstDayDiff(anchorMs, nowMs) : null,
+    daysSincePremium,
     showTeaser: phase >= PP_PHASE.TEASER,
     showProductPage: phase >= PP_PHASE.PREVIEW,
     showPurchaseCta: isSale,
+    // STEP 7
     purchaseEnabled: isSale && intake !== PP_INTAKE.CLOSED,
     intake,
     circuit: resolvedCircuit,

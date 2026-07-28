@@ -32,9 +32,12 @@ const jst = (y, m, d, h = 0, mi = 0) => Date.UTC(y, m - 1, d, h, mi) - 9 * 60 * 
 const MON = (h, mi) => jst(2026, 7, 6, h, mi);
 const SAT = (h, mi) => jst(2026, 7, 11, h, mi);
 
+// ROUTE A（三連複購入者）で販売資格 eligible が済んでいる状態を既定にする。
+// eligibility を渡さない場合は review 扱い（fail closed）になることは別テストで固定する。
 const release = (over = {}) => resolvePremiumPlusRelease({
   hasSanrenpuku: true,
   paidAtMs: jst(2026, 7, 1, 12, 0),
+  eligibility: 'eligible',
   nowMs: MON(10, 0),
   ...over,
 });

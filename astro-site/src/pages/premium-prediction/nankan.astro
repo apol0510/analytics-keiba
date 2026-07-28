@@ -18,6 +18,7 @@ import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 import NankanHorseStatsPanel from '../../components/NankanHorseStatsPanel.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
+import PremiumPlusStageTeaser from '../../components/PremiumPlusStageTeaser.astro';
 
 // R1d-impl-v2c Step2: 連下/補欠 compact 近走の field 読み替え（entries 由来 / 既存 getDisplay 由来の両 shape 対応）。
 // 表示専用・正本順位不変・recentHorseHistories fallback 正本化しない・compact 維持・docs §34.24。
@@ -1268,6 +1269,12 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 </button>
             </div>
         </div>
+
+
+        {/* Premium Plus 段階公開 PHASE 2 の予告枠（ROUTE B: 通常 Premium 会員・三連複未購入）。
+            静的 HTML には文言もリンクも出さず、SSR の /api/premium-plus-stage.json から取得する。
+            対象外 / 販売資格なし / PHASE 1 は 404 で何も描画されない。 */}
+        <PremiumPlusStageTeaser />
 
     </AccessControl>
 

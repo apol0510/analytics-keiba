@@ -25,6 +25,25 @@ import { normalizePlan } from './planNormalization.js';
 // lifetimeSanrenpuku 会員も発行時 plan は 'premium-sanrenpuku' に正規化されるためここに含まれる。
 export const PREMIUM_PLUS_ALLOWED_PLANS = Object.freeze(['premium-sanrenpuku', 'premium-combo']);
 
+/**
+ * Premium Plus の**販売候補**になりうるプラン（ROUTE A + ROUTE B）。
+ *
+ * - ROUTE A: 三連複会員（premium-sanrenpuku / premium-combo）
+ * - ROUTE B: 通常 Premium 会員（premium / premium-predictions）で、加入から一定期間
+ *            三連複未購入の会員
+ *
+ * ⚠️ これは「Premium Plus を見せてよい」ことを意味しない。**入口の粗いふるい**であり、
+ *    実際の可否は Premium Plus 販売資格（PremiumPlusEligibility）と段階公開 phase が
+ *    決める（src/lib/premiumPlus/premiumPlusRelease.js）。ここを広げても、
+ *    eligibility が eligible でなければページは 404 のままになる（fail closed）。
+ */
+export const PREMIUM_PLUS_CANDIDATE_PLANS = Object.freeze([
+  'premium-sanrenpuku',
+  'premium-combo',
+  'premium',
+  'premium-predictions',
+]);
+
 export const PAGE_ACCESS_REJECT = Object.freeze({
   KEY_MISSING: 'key_missing',
   NO_COOKIE: 'no_cookie',

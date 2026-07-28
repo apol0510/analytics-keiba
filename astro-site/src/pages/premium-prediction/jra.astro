@@ -3,6 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import AccessControl from '../../components/AccessControl.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
+import PremiumPlusStageTeaser from '../../components/PremiumPlusStageTeaser.astro';
 import PremiumContactModal from '../../components/PremiumContactModal.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -1527,6 +1528,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
         <PremiumContactModal />
       </div>
     </section>
+
+        {/* Premium Plus 段階公開 PHASE 2 の予告枠（ROUTE B: 通常 Premium 会員・三連複未購入）。
+            静的 HTML には文言もリンクも出さず、SSR の /api/premium-plus-stage.json から取得する。
+            対象外 / 販売資格なし / PHASE 1 は 404 で何も描画されない。 */}
+        <PremiumPlusStageTeaser />
+
   </AccessControl>
 
   <!-- accordion 共通挙動: 内側 details 本文クリックで内側のみ閉じる / レース本文クリックで親レースを閉じる -->

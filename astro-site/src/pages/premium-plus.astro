@@ -24,17 +24,20 @@ export const prerender = false;
  *   満足度4.9 / 継続率94%」は根拠のない固定値で、更新も止まっていた）
  */
 import AccessControl from '../components/AccessControl.astro';
-import { verifyPlanAccess } from '../lib/auth/index.js';
+import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/index.js';
 import ppResultsRaw from '../data/premiumPlusResults.json';
 import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
 import { PP_RELEASE_COPY, resolvePremiumPlusRelease, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
-import { lookupSanrenpukuPaidAt } from '../lib/premiumPlus/purchaseAnchorLookup.js';
+import { resolvePlusMemberFromFields } from '../lib/premiumPlus/premiumPlusMember.js';
+import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
   cookieHeader: Astro.request.headers.get('cookie') || '',
   secret: process.env.SESSION_SIGNING_SECRET,
   now: Date.now(),
+  // ROUTE B（通常 Premium 会員）も入口に通す。実際の可否は下の販売資格 + phase が決める。
+  allowedPlans: PREMIUM_PLUS_CANDIDATE_PLANS,
 });
 if (!access.ok) {
   // 非会員には存在すら知らせない → 401/403 ではなく 404。商品情報は一切描画しない。
@@ -50,12 +53,17 @@ if (!access.ok) {
 // 旧経路のこのページからも段階公開を迂回できないよう、v2 と同じ判定を必ず通す。
 // 判定は premiumPlusRelease.js（純粋）に集約。購入確定日時が不明なら PHASE 1 = 404（fail closed）。
 const ppNow = Date.now();
-const { paidAtMs: ppPaidAtMs } = await lookupSanrenpukuPaidAt({
+const ppFields = await lookupCustomerFields({
   recordId: access.payload?.sub || null,
   env: process.env,
   now: ppNow,
 });
-const ppRelease = resolvePremiumPlusRelease({ hasSanrenpuku: true, paidAtMs: ppPaidAtMs, nowMs: ppNow });
+// 会員状態は既存の権限正本（resolveEntitlements）を再利用する。Plus 専用の権限判定は作らない。
+const ppMember = resolvePlusMemberFromFields(ppFields, {
+  nowMs: ppNow,
+  fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+});
+const ppRelease = resolvePremiumPlusRelease({ ...ppMember, nowMs: ppNow });
 if (!ppRelease.showProductPage) {
   return new Response('Not Found', {
     status: 404,
