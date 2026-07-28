@@ -1,0 +1,120 @@
+---
+/**
+ * PremiumPlusStageTeaser — Premium Plus 段階公開 PHASE 2 の「予告」枠
+ *
+ * ⚠️ 静的 HTML に Premium Plus の文言・商品名・価格・リンクを **一切書かない**。
+ *    三連複会員ページ（premium-sanrenpuku*.astro）は prerender=true の静的 HTML であり、
+ *    ここに予告文を直接書くと非会員がソースを見るだけで存在を知れてしまう。
+ *    そのため空のスロットだけを置き、文言は SSR の /api/premium-plus-stage.json から取得する
+ *    （非会員 / PHASE 1 は 404 → 何も描画されない）。
+ *
+ * この枠は「予告」だけを担当する:
+ *   - 金額を出さない
+ *   - 購入ボタンを出さない
+ *   - PHASE 2 では商品ページへのリンクも出さない（強制誘導しない）
+ *   - PHASE 3 以降のみ、控えめな導線リンクを 1 本だけ出す
+ */
+---
+
+<div id="ppStageSlot" class="pp-stage-slot" hidden></div>
+
+<style is:global>
+  .pp-stage-slot[hidden] { display: none; }
+
+  .pp-stage-card {
+    margin: 2.5rem auto 1rem;
+    max-width: 720px;
+    background: linear-gradient(180deg, #111c33, #0d1729);
+    border: 1px solid rgba(245, 196, 81, 0.28);
+    border-radius: 16px;
+    padding: 1.6rem 1.4rem;
+    color: #e6edf7;
+  }
+
+  .pp-stage-eyebrow {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #f5c451;
+    background: rgba(245, 196, 81, 0.08);
+    border: 1px solid rgba(245, 196, 81, 0.26);
+    border-radius: 999px;
+    padding: 4px 12px;
+    margin-bottom: 0.9rem;
+  }
+
+  .pp-stage-title {
+    font-size: 1.05rem;
+    font-weight: 800;
+    margin: 0 0 0.6rem;
+    color: #f5c451;
+  }
+
+  .pp-stage-body {
+    font-size: 0.92rem;
+    line-height: 1.9;
+    color: #cbd5e6;
+    margin: 0;
+  }
+
+  .pp-stage-link {
+    display: inline-block;
+    margin-top: 1.1rem;
+    font-size: 0.86rem;
+    font-weight: 700;
+    color: #f5c451;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(245, 196, 81, 0.5);
+    padding-bottom: 2px;
+  }
+
+  @media (max-width: 640px) {
+    .pp-stage-card { padding: 1.3rem 1.05rem; border-radius: 14px; }
+  }
+</style>
+
+<script is:inline>
+  (async () => {
+    const slot = document.getElementById('ppStageSlot');
+    if (!slot) return;
+    try {
+      const res = await fetch('/api/premium-plus-stage.json', { credentials: 'same-origin' });
+      if (!res.ok) return; // 404 = 非会員 / PHASE 1 → 何も出さない
+      const data = await res.json();
+      if (!data || !data.teaser) return;
+
+      const card = document.createElement('div');
+      card.className = 'pp-stage-card';
+
+      const eyebrow = document.createElement('span');
+      eyebrow.className = 'pp-stage-eyebrow';
+      eyebrow.textContent = '◆ 三連複会員の方へ';
+      card.appendChild(eyebrow);
+
+      const title = document.createElement('h3');
+      title.className = 'pp-stage-title';
+      title.textContent = data.teaser.title || '';
+      card.appendChild(title);
+
+      const body = document.createElement('p');
+      body.className = 'pp-stage-body';
+      body.textContent = data.teaser.body || '';
+      card.appendChild(body);
+
+      // PHASE 3 以降のみ導線リンク（PHASE 2 は productHref が null で出さない）
+      if (data.productHref) {
+        const link = document.createElement('a');
+        link.className = 'pp-stage-link';
+        link.href = data.productHref;
+        link.textContent = '内容を見る →';
+        card.appendChild(link);
+      }
+
+      slot.appendChild(card);
+      slot.hidden = false;
+    } catch {
+      // 取得失敗時は何も出さない（fail closed）
+    }
+  })();
+</script>

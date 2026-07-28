@@ -60,6 +60,19 @@ storage migration / 外部 DB 作成 / env 投入 / 実データ書込みは**�
 ---
 
 
+## 🚦 導線は段階公開（2026-07-28〜）
+
+Premium Sanrenpuku 購入直後に ¥68,000 の購入 CTA を見せない。
+**PHASE 1 非公開 → 2 予告 → 3 商品閲覧 → 4 受付解禁**の時間差導線と、
+PHASE 4 到達後の **OPEN / CLOSING / CLOSED**（JST 判定）を通す。
+
+判定の単一源は `src/lib/premiumPlus/premiumPlusRelease.js`。
+仕様・解禁手順・未決定事項は [`PREMIUM_PLUS_STAGED_RELEASE.md`](./PREMIUM_PLUS_STAGED_RELEASE.md) を参照。
+
+> ⚠️ **現状は三連複購入確定日時の正本が Airtable に無いため、全会員が PHASE 1（商品ページ 404）**。
+> 解禁には `SanrenpukuPaidAt` フィールド作成（schema 変更）か env `PREMIUM_PLUS_FUNNEL_ANCHOR`
+> 設定のいずれかが必要。どちらも未実行。
+
 ## 変更してはいけない前提
 
 | 前提 | 実装での担保 |

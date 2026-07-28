@@ -441,6 +441,25 @@ archiveResults の購入点数・回収率は仮回収率に応じた 3 段階�
 
 検証: `npm run test:premium-plus`（`check:safety` に組込済み）
 
+### 🚦 導線は段階公開（2026-07-28〜）
+
+Premium Sanrenpuku 購入直後に ¥68,000 の購入 CTA を出さない。
+**PHASE 1 非公開（商品ページ 404）→ 2 予告のみ → 3 商品閲覧可・CTA は「受付準備中」→ 4 受付解禁**。
+PHASE 4 到達後は JST 時刻で **OPEN / CLOSING / CLOSED** を自動判定し、CLOSED は購入操作不可
+（商品・実績の閲覧は可・404 にしない）。
+
+- 判定の単一源は `src/lib/premiumPlus/premiumPlusRelease.js`（純粋関数）。
+  **ページに日数条件・時刻条件を散在させない。**
+- phase の入力は「三連複権限 / 三連複購入確定日時 / 現在日時(JST) / 受付時刻」**のみ**。
+  **実績（的中・不的中）を入力にしない**（販売タイミングと結果を連動させない・guard テストで固定）。
+- 権限は既存正本 `verifyPlanAccess`（ak_session）を再利用。独自の権限ロジックを作らない。
+- 仕様・解禁手順・未決定事項は `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`。
+
+> ⚠️ 三連複購入確定日時の正本が Airtable に無いため（`buildConfirmationFields()` の三連複分岐は
+> `PaidAt` を書かない）、**現状は全会員が PHASE 1**。解禁には `SanrenpukuPaidAt` フィールド作成
+> （production schema 変更）か env `PREMIUM_PLUS_FUNNEL_ANCHOR` 設定が必要。どちらも未実行。
+> **`PaidAt`（馬単の入金確認日）で代用しないこと**（既存 Premium 会員が購入直後に PHASE 4 へ飛ぶ）。
+
 ## 🧠 予想ロジック（スコア・役割決定）
 
 本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の

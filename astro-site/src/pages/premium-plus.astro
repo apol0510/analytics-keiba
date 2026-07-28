@@ -27,6 +27,8 @@ import AccessControl from '../components/AccessControl.astro';
 import { verifyPlanAccess } from '../lib/auth/index.js';
 import ppResultsRaw from '../data/premiumPlusResults.json';
 import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
+import { PP_RELEASE_COPY, resolvePremiumPlusRelease, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
+import { lookupSanrenpukuPaidAt } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -44,6 +46,27 @@ if (!access.ok) {
     },
   });
 }
+// --- 段階公開（PHASE 1〜4）---
+// 旧経路のこのページからも段階公開を迂回できないよう、v2 と同じ判定を必ず通す。
+// 判定は premiumPlusRelease.js（純粋）に集約。購入確定日時が不明なら PHASE 1 = 404（fail closed）。
+const ppNow = Date.now();
+const { paidAtMs: ppPaidAtMs } = await lookupSanrenpukuPaidAt({
+  recordId: access.payload?.sub || null,
+  env: process.env,
+  now: ppNow,
+});
+const ppRelease = resolvePremiumPlusRelease({ hasSanrenpuku: true, paidAtMs: ppPaidAtMs, nowMs: ppNow });
+if (!ppRelease.showProductPage) {
+  return new Response('Not Found', {
+    status: 404,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+const ppIntake = intakeCopy(ppRelease.intake);
+
 // 会員別レスポンス。CDN に共有キャッシュさせない。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 Astro.response.headers.set('Vary', 'Cookie');
@@ -56,7 +79,7 @@ const LIST_PRICE = 98000;
 // 旧版（受付値なし・投票金額列なし）のまま残る drift への恒久対策。SPAT4/JRA カード描画
 // （recv 受付表 / 3列投票表 / (各◯円) / 的中額）を更新したら必ずこの文字列を bump して
 // SSR 関数の内容ハッシュを変え、確実にキャッシュミス＝関数再ビルドさせること（CLI deploy は使わない）。
-const PP_TEMPLATE_VERSION = 'vref-recv-3col-unitstake-20260724-1';
+const PP_TEMPLATE_VERSION = 'staged-release-phase-gate-20260728-1';
 
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
 // 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
@@ -114,7 +137,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
 ---
 
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-pp-phase={String(ppRelease.phase)} data-pp-purchase={ppRelease.purchaseEnabled ? '1' : '0'}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -555,6 +578,45 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
 
     .cta-sub { font-size: 0.8rem; color: var(--muted); margin-top: 1rem; }
 
+    /* ── 段階公開: 受付準備中 / 本日の受付ステータス ── */
+    .pp-preparing {
+      border: 1px dashed rgba(148, 163, 184, 0.38);
+      border-radius: 14px;
+      padding: 1.4rem 1.2rem;
+      text-align: center;
+      background: rgba(11, 17, 32, 0.5);
+    }
+    .pp-preparing-title { font-size: 1rem; font-weight: 800; color: var(--gold); margin: 0 0 0.5rem; }
+    .pp-preparing-body { font-size: 0.86rem; color: var(--muted); margin: 0; line-height: 1.8; }
+
+    .pp-intake {
+      margin: 0 auto 1.2rem;
+      max-width: 480px;
+      border-radius: 12px;
+      padding: 0.9rem 1rem;
+      border: 1px solid var(--line);
+      background: rgba(11, 17, 32, 0.55);
+    }
+    .pp-intake-title { font-size: 0.82rem; font-weight: 700; color: var(--muted); margin: 0 0 0.35rem; }
+    .pp-intake-status { font-size: 1rem; font-weight: 900; margin: 0; }
+    .pp-intake-note { font-size: 0.74rem; color: var(--muted); margin: 0.45rem 0 0; line-height: 1.7; }
+    .pp-intake.open { border-color: rgba(52, 211, 153, 0.4); }
+    .pp-intake.open .pp-intake-status { color: var(--green); }
+    .pp-intake.closing { border-color: rgba(245, 196, 81, 0.45); }
+    .pp-intake.closing .pp-intake-status { color: var(--gold); }
+    .pp-intake.closed { border-color: rgba(248, 113, 113, 0.4); }
+    .pp-intake.closed .pp-intake-title { color: var(--red); font-size: 1rem; font-weight: 900; }
+
+    .cta-button:disabled,
+    .today .extract:disabled,
+    .sticky-cta button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+      filter: grayscale(0.6);
+    }
+
     /* ── 声 ─────────────────────────────── */
     .voices { display: grid; gap: 1rem; }
 
@@ -849,9 +911,18 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
           </div>
         </div>
         <div class="today-r">
-          <div class="price"><span class="now">¥{PRICE.toLocaleString('ja-JP')}</span><span class="was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span></div>
-          <span class="tax">買い切り・追加課金なし</span>
-          <button class="extract" type="button" onclick="openBankModal()">🔓 本日の1鞍を抽出する</button>
+          {ppRelease.showPurchaseCta ? (
+            <>
+              <div class="price"><span class="now">¥{PRICE.toLocaleString('ja-JP')}</span><span class="was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span></div>
+              <span class="tax">買い切り・追加課金なし</span>
+              <button class="extract" type="button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>🔓 本日の1鞍を抽出する</button>
+            </>
+          ) : (
+            <div class="pp-preparing">
+              <p class="pp-preparing-title">{PP_RELEASE_COPY.preparing.title}</p>
+              <p class="pp-preparing-body">{PP_RELEASE_COPY.preparing.body}</p>
+            </div>
+          )}
         </div>
       </div>
       <p class="today-rule">🗓️ <span><b>平日は南関、土日は中央（JRA）。</b>中央と南関の開催が重なる日も、AI が全開催を横断して<b>ただ 1 鞍</b>だけを選びます。</span></p>
@@ -1128,21 +1199,38 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     <!-- ══ 価格・CTA ══ -->
     <section class="section">
       <div class="offer">
-        <span class="eyebrow">◆ Premium Sanrenpuku 会員 特別価格</span>
+        {ppRelease.showPurchaseCta ? (
+          <>
+            <span class="eyebrow">◆ Premium Sanrenpuku 会員 特別価格</span>
 
-        <div class="price-row">
-          <span class="price-was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span>
-          <span class="price-now">¥{PRICE.toLocaleString('ja-JP')}</span>
-        </div>
-        <p class="price-note">単品購入（サブスクリプションではありません）</p>
+            {ppIntake && (
+              <div class:list={['pp-intake', ppRelease.intake]}>
+                <p class="pp-intake-title">{ppIntake.title}</p>
+                {ppIntake.status !== ppIntake.title && <p class="pp-intake-status">{ppIntake.status}</p>}
+                {ppIntake.note && <p class="pp-intake-note">{ppIntake.note}</p>}
+              </div>
+            )}
 
-        <button class="cta-button" onclick="openBankModal()">
-          🏦 銀行振込で購入する
-        </button>
+            <div class="price-row">
+              <span class="price-was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span>
+              <span class="price-now">¥{PRICE.toLocaleString('ja-JP')}</span>
+            </div>
+            <p class="price-note">単品購入（サブスクリプションではありません）</p>
 
-        <p class="cta-sub">
-          入金確認後、AI が厳選した 1 鞍の買い目をお届けします。
-        </p>
+            <button class="cta-button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>
+              🏦 銀行振込で購入する
+            </button>
+
+            <p class="cta-sub">
+              入金確認後、AI が厳選した 1 鞍の買い目をお届けします。
+            </p>
+          </>
+        ) : (
+          <div class="pp-preparing">
+            <p class="pp-preparing-title">{PP_RELEASE_COPY.preparing.title}</p>
+            <p class="pp-preparing-body">{PP_RELEASE_COPY.preparing.body}</p>
+          </div>
+        )}
       </div>
 
       <div class="disclaimer">
@@ -1268,10 +1356,12 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
   </div>
 
   <!-- ══ モバイル固定 CTA ══ -->
-  <div class="sticky-cta">
-    <span class="p">¥{PRICE.toLocaleString('ja-JP')}</span>
-    <button onclick="openBankModal()">銀行振込で購入する</button>
-  </div>
+  {ppRelease.showPurchaseCta && (
+    <div class="sticky-cta">
+      <span class="p">¥{PRICE.toLocaleString('ja-JP')}</span>
+      <button onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>銀行振込で購入する</button>
+    </div>
+  )}
 
   <!-- ══ 銀行振込モーダル ══ -->
   <div class="modal" id="bankModal">
@@ -1448,7 +1538,12 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     })();
 
     // ── モーダル ───────────────────────────────────────────────
+    // 段階公開: PHASE 4 未満 / 本日の受付終了(CLOSED) では申込モーダルを開かせない。
+    // ボタンの disabled に加えた二重の防御（コンソールからの直接呼び出しも無効化）。
+    const PP_PURCHASE_ENABLED = document.documentElement.dataset.ppPurchase === '1';
+
     function openBankModal() {
+      if (!PP_PURCHASE_ENABLED) return;
       prefillContactFields();
       document.getElementById('bankModal').classList.add('active');
       document.body.style.overflow = 'hidden';

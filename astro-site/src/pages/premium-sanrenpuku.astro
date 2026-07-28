@@ -24,6 +24,8 @@ import AccordionClickClose from '../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
 // 【一時非表示 2026-07-15】Premium Plus CTA は存在秘匿が完成するまで出さない（下部の設置箇所を参照）
 // import PremiumPlusCta from '../components/PremiumPlusCta.astro';
+// 段階公開 PHASE 2 の予告枠（文言は SSR エンドポイントから取得。静的 HTML には出さない）
+import PremiumPlusStageTeaser from '../components/PremiumPlusStageTeaser.astro';
 import { processRaceData, generateSanrenpukuBets, getHorseConfidenceFromMark, normalizeHorseData } from '../lib/shared-prediction-logic.js';
 import { pickLatestNankanVenuesAndAdapt } from '../lib/adaptLatestPrediction.js';
 
@@ -258,6 +260,11 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
                 存在秘匿（サーバー側認可）が完成するまで出さない。
                 コンポーネント（src/components/PremiumPlusCta.astro）は削除せず保持する。
                 <PremiumPlusCta /> */}
+
+            {/* 段階公開 PHASE 2 の予告枠。静的 HTML には文言もリンクも出さず、
+                SSR の /api/premium-plus-stage.json（三連複会員のみ 200）から取得して描画する。
+                非会員 / PHASE 1 は 404 で何も描画されない。 */}
+            <PremiumPlusStageTeaser />
         </div>
 
         {/* 予想ページと同じアコーディオン挙動（過去走 details の開閉／レース折りたたみ） */}

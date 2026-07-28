@@ -12,6 +12,8 @@ import { getHorseAiIndex } from '../lib/shared-prediction-logic.js';
 import { convertToSanrenpukuYesterdayResultsJra } from '../lib/archive-utils.js';
 import { loadFeatureScores, venueCodeFromName } from '../lib/loadFeatureScores.js';
 import JraRaceHorseSection from '../components/JraRaceHorseSection.astro';
+// 段階公開 PHASE 2 の予告枠（文言は SSR エンドポイントから取得。静的 HTML には出さない）
+import PremiumPlusStageTeaser from '../components/PremiumPlusStageTeaser.astro';
 
 // 直近の三連複的中実績（archiveSanrenpukuResultsJra 由来・表示専用）
 const latestResult = convertToSanrenpukuYesterdayResultsJra();
@@ -260,6 +262,11 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
                     ))}
                 </>
             )}
+
+            {/* 段階公開 PHASE 2 の予告枠。静的 HTML には文言もリンクも出さず、
+                SSR の /api/premium-plus-stage.json（三連複会員のみ 200）から取得して描画する。
+                非会員 / PHASE 1 は 404 で何も描画されない。 */}
+            <PremiumPlusStageTeaser />
         </div>
     </AccessControl>
 </BaseLayout>
