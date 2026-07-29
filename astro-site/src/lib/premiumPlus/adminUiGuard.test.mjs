@@ -153,3 +153,36 @@ test('顧客データを URL に載せない（recordId をクエリに出さな
   assert.doesNotMatch(PAGE, /history\.(push|replace)State/);
   assert.doesNotMatch(PAGE, /\?record=/);
 });
+
+// ── スタイルが JS 生成要素にも適用されること（本番不具合の再発防止）──────
+// Astro の scoped style は `.cust[data-astro-cid-xxx]` へ変換される。カード・バッジ・
+// チップ・サマリーは JS で生成するため cid 属性が付かず、scoped のままだと**無効**になる。
+// そのため is:global にし、代わりに全セレクタを .ppe 名前空間へ閉じ込める。
+test('style は is:global（scoped だと JS 生成要素へ適用されない）', () => {
+  assert.match(PAGE, /<style is:global>/);
+  assert.doesNotMatch(PAGE, /<style>\s/);
+});
+
+test('全 CSS セレクタが .ppe 名前空間に閉じている（グローバル汚染の防止）', () => {
+  const style = PAGE.slice(PAGE.indexOf('<style is:global>'), PAGE.indexOf('</style>'));
+  const bad = [];
+  for (const raw of style.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('/*') || line.startsWith('}') || line.startsWith('@') || line.startsWith('<')) continue;
+    const m = line.match(/^([^{]+)\{/);
+    if (!m) continue;
+    for (const sel of m[1].split(',')) {
+      const s2 = sel.trim();
+      if (!s2) continue;
+      if (s2 === '.ppe' || s2.startsWith('.ppe ') || s2.startsWith('.ppe.') || s2.startsWith('.ppe[')) continue;
+      bad.push(s2);
+    }
+  }
+  assert.deepEqual(bad, [], '.ppe 名前空間の外にセレクタがある: ' + bad.join(' / '));
+});
+
+test('@media にセレクタ前置の誤りが無い', () => {
+  assert.doesNotMatch(PAGE, /\.ppe\s+@media/);
+  assert.match(PAGE, /@media \(max-width: 860px\)/);
+  assert.match(PAGE, /@media \(max-width: 640px\)/);
+});
