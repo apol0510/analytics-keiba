@@ -7,56 +7,99 @@ export const prerender = true;
 // プラン / Status / 有効期限 / LifetimeSanrenpuku / メール状態は一切変更しない。
 // 資格変更でメール送信・課金・昇格は起きない（表示資格のみ）。
 //
-// 2026-07-30: UI のみ刷新（カード化 / 状態バッジ / フィルター / Email 検索 / 操作の分離）。
-// 管理 Function の write 契約（action='update' の payload）と preview の read-only 契約は不変。
+// 2026-07-30: UI を「管理テーブル + 詳細操作パネル」型へ再設計（表示のみ）。
+//   - 一覧は 1 行 1 顧客のテーブル。**write ボタンは一覧に出さない**
+//   - write は詳細パネル内だけで行う（誤操作防止）
+//   - 管理 Function の write 契約（action='update' の payload）と preview の
+//     read-only 契約は不変
+//
+// ⚠️ style は必ず `is:global` + `.ppe` 名前空間で書くこと。
+//    Astro の scoped style は `.cust[data-astro-cid-xxx]` へ変換されるため、
+//    JS で生成する行・バッジ・ボタンには **一切適用されない**（2026-07-30 に本番で発生）。
 import BaseLayout from '../../layouts/BaseLayout.astro';
 ---
 <BaseLayout title="Premium Plus 販売管理（管理）">
   <div class="ppe">
     <header class="ppe-head">
-      <div>
+      <div class="ppe-head-l">
         <h1>Premium Plus 販売対象</h1>
         <p class="lead">
-          販売してよい会員を <b>管理者が手動で選別</b>します。候補は自動で「販売可」になりません
-          （新規候補は必ず <b>保留</b> から始まります）。変更されるのは
-          <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
+          販売してよい会員を <b>管理者が手動で選別</b>します。候補は自動で「販売可」になりません。
+          変更されるのは <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
         </p>
       </div>
-      <button id="reload" type="button" class="btn-reload">一覧を読み込む</button>
+      <div class="ppe-head-r">
+        <span class="conn-pill" id="connState">● 未接続</span>
+        <button type="button" id="connToggle" class="btn-ghost">管理接続設定</button>
+        <button type="button" id="reload" class="btn-primary">再読み込み</button>
+      </div>
     </header>
 
-    <details class="conn" id="connPanel">
-      <summary>
-        <span class="conn-title">管理接続</span>
-        <span class="conn-state" id="connState">未接続</span>
-      </summary>
-      <div class="conn-body">
-        <label for="secret">管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
-        <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
-        <p class="note" id="writeState"></p>
-      </div>
-    </details>
+    <div class="conn-body" id="connBody" hidden>
+      <label for="secret">管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
+      <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
+      <p class="note" id="writeState"></p>
+    </div>
 
-    <div id="summary" class="summary"></div>
+    <div class="sumbar" id="summary"></div>
+    <div class="sumsub" id="summarySub"></div>
 
     <div class="toolbar">
-      <div class="chips" id="filters" role="group" aria-label="状態で絞り込み"></div>
-      <div class="search">
-        <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
-        <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
-      </div>
+      <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+      <select id="fState" aria-label="状態で絞り込み">
+        <option value="all">すべての状態</option>
+        <option value="review">保留</option>
+        <option value="eligible">販売可（段階公開中・販売中）</option>
+        <option value="immediate">即時販売</option>
+        <option value="blocked">販売対象外</option>
+      </select>
+      <select id="fRoute" aria-label="Route で絞り込み">
+        <option value="all">すべての Route</option>
+        <option value="sanrenpuku">ROUTE A（三連複）</option>
+        <option value="premium_30d">ROUTE B（Premium 30日）</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
     </div>
 
     <p class="msg" id="message"></p>
     <p class="count" id="count"></p>
-    <div id="list" class="list"></div>
+
+    <div class="tablewrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th class="c-cust">顧客</th>
+            <th class="c-state">状態</th>
+            <th class="c-plan">プラン</th>
+            <th class="c-route">Route</th>
+            <th class="c-phase">PHASE</th>
+            <th class="c-eligible">販売許可日</th>
+            <th class="c-updated">最終更新</th>
+            <th class="c-ops">操作</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p class="empty" id="empty" hidden></p>
+    </div>
+
+    <!-- 詳細・操作パネル（write はここだけ） -->
+    <div id="dtBackdrop" class="dt-backdrop" hidden>
+      <aside class="dt-panel" role="dialog" aria-modal="true" aria-labelledby="dtTitle">
+        <div class="dt-head">
+          <h2 id="dtTitle">詳細・操作</h2>
+          <button type="button" id="dtClose" class="x" aria-label="閉じる">×</button>
+        </div>
+        <div id="dtBody" class="dt-body"></div>
+      </aside>
+    </div>
 
     <!-- 管理者プレビュー モーダル（read-only。実顧客セッションは作らない） -->
     <div id="pvBackdrop" class="pv-backdrop" hidden>
       <div class="pv-modal" role="dialog" aria-modal="true" aria-labelledby="pvTitle">
         <div class="pv-head">
           <h2 id="pvTitle">表示プレビュー</h2>
-          <button type="button" id="pvClose" class="pv-close" aria-label="閉じる">×</button>
+          <button type="button" id="pvClose" class="x" aria-label="閉じる">×</button>
         </div>
         <p class="pv-notice">管理者プレビュー / 実顧客には影響しません（読み取りのみ・ログインもメール送信もしません）</p>
         <div class="pv-controls">
@@ -70,141 +113,153 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 </BaseLayout>
 
 <style is:global>
-  .ppe { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 5rem; color: #e6edf7; }
+  /* ⚠️ is:global 必須。scoped だと JS 生成 DOM に適用されない。全セレクタを .ppe 配下へ。 */
+  .ppe { max-width: 1180px; margin: 0 auto; padding: 1.4rem 1rem 5rem; color: #e6edf7; }
 
-  /* ── ヘッダ ── */
-  .ppe .ppe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.1rem; }
-  .ppe .ppe-head h1 { font-size: 1.35rem; margin: 0 0 .5rem; }
-  .ppe .lead { color: #93a4bd; font-size: .84rem; line-height: 1.8; margin: 0; max-width: 68ch; }
-  .ppe .btn-reload { flex: 0 0 auto; background: #f5c451; color: #2a1d02; border: 0; border-radius: 9px; padding: .6rem 1.1rem; font-weight: 800; cursor: pointer; font-family: inherit; }
+  /* ── ヘッダ / 管理接続 ── */
+  .ppe .ppe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem; margin-bottom: 1rem; }
+  .ppe .ppe-head h1 { font-size: 1.3rem; margin: 0 0 .4rem; }
+  .ppe .lead { color: #93a4bd; font-size: .8rem; line-height: 1.75; margin: 0; max-width: 66ch; }
+  .ppe .ppe-head-r { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; flex-wrap: wrap; }
+  .ppe .conn-pill { font-size: .74rem; padding: .25rem .7rem; border-radius: 999px; background: rgba(148,163,184,.16); color: #93a4bd; white-space: nowrap; }
+  .ppe .conn-pill.ok { background: rgba(52,211,153,.14); color: #34d399; }
+  .ppe .btn-ghost { background: transparent; color: #93a4bd; border: 1px solid rgba(148,163,184,.28); border-radius: 8px; padding: .4rem .8rem; font-size: .78rem; cursor: pointer; font-family: inherit; }
+  .ppe .btn-primary { background: #f5c451; color: #2a1d02; border: 0; border-radius: 8px; padding: .45rem 1rem; font-weight: 800; font-size: .8rem; cursor: pointer; font-family: inherit; }
+  .ppe .conn-body { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .9rem 1rem; margin-bottom: 1rem; }
+  .ppe .conn-body[hidden] { display: none; }
+  .ppe .conn-body label { display: block; font-size: .74rem; color: #93a4bd; margin-bottom: .3rem; }
+  .ppe .conn-body input { width: 100%; max-width: 440px; padding: .5rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; }
+  .ppe .note { font-size: .72rem; color: #93a4bd; margin: .55rem 0 0; }
 
-  /* ── 管理接続（折りたたみ）── */
-  .ppe .conn { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 11px; margin-bottom: 1.1rem; }
-  .ppe .conn > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: .7rem; padding: .7rem 1rem; font-size: .84rem; }
-  .ppe .conn > summary::-webkit-details-marker { display: none; }
-  .ppe .conn > summary::before { content: '▸'; color: #93a4bd; transition: transform .15s; }
-  .ppe .conn[open] > summary::before { transform: rotate(90deg); }
-  .ppe .conn-title { font-weight: 700; }
-  .ppe .conn-state { font-size: .74rem; padding: .15rem .6rem; border-radius: 999px; background: rgba(148,163,184,.16); color: #93a4bd; }
-  .ppe .conn-state.ok { background: rgba(52,211,153,.14); color: #34d399; }
-  .ppe .conn-body { padding: 0 1rem 1rem; }
-  .ppe .conn-body label { display: block; font-size: .76rem; color: #93a4bd; margin-bottom: .35rem; }
-  .ppe .conn-body input { width: 100%; max-width: 460px; padding: .55rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; }
-  .ppe .note { font-size: .74rem; color: #93a4bd; margin: .6rem 0 0; }
-
-  /* ── サマリー ── */
-  .ppe .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: .6rem; margin-bottom: 1.2rem; }
-  .ppe .sum { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 11px; padding: .7rem .8rem; }
-  .ppe .sum .k { font-size: .72rem; color: #93a4bd; }
-  .ppe .sum .v { font-size: 1.5rem; font-weight: 900; line-height: 1.25; }
-  .ppe .sum.pri-immediate { border-color: rgba(245,196,81,.45); }
-  .ppe .sum.pri-immediate .v { color: #f5c451; }
-  .ppe .sum.pri-eligible { border-color: rgba(52,211,153,.4); }
-  .ppe .sum.pri-eligible .v { color: #34d399; }
-  .ppe .sum.pri-review { border-color: rgba(96,165,250,.4); }
-  .ppe .sum.pri-review .v { color: #60a5fa; }
-  .ppe .sum.sub { padding: .5rem .7rem; opacity: .78; }
-  .ppe .sum.sub .v { font-size: 1.05rem; }
+  /* ── サマリーバー（1 行・クリックでフィルター）── */
+  .ppe .sumbar { display: flex; align-items: center; gap: .2rem; flex-wrap: wrap; background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .5rem .7rem; margin-bottom: .5rem; }
+  .ppe .sumbar .s { display: flex; align-items: baseline; gap: .35rem; padding: .2rem .7rem; border-radius: 8px; cursor: pointer; background: transparent; border: 0; font-family: inherit; color: inherit; }
+  .ppe .sumbar .s:hover { background: rgba(148,163,184,.1); }
+  .ppe .sumbar .s .k { font-size: .74rem; color: #93a4bd; }
+  .ppe .sumbar .s .v { font-size: 1.05rem; font-weight: 900; }
+  .ppe .sumbar .s.immediate .v { color: #f5c451; }
+  .ppe .sumbar .s.eligible .v { color: #34d399; }
+  .ppe .sumbar .s.review .v { color: #60a5fa; }
+  .ppe .sumbar .s.blocked .v { color: #f87171; }
+  .ppe .sumbar .sep { color: rgba(148,163,184,.35); }
+  .ppe .sumsub { font-size: .74rem; color: #93a4bd; margin-bottom: 1rem; padding-left: .3rem; }
 
   /* ── ツールバー ── */
-  .ppe .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
-  .ppe .chips { display: flex; gap: .4rem; flex-wrap: wrap; }
-  .ppe .chip { background: #0d1729; border: 1px solid rgba(148,163,184,.24); color: #cbd5e6; border-radius: 999px; padding: .35rem .85rem; font-size: .78rem; cursor: pointer; font-family: inherit; }
-  .ppe .chip[aria-pressed='true'] { background: #f5c451; border-color: #f5c451; color: #2a1d02; font-weight: 800; }
-  .ppe .search { display: flex; align-items: center; gap: .8rem; }
-  .ppe .search input[type=search] { min-width: 220px; padding: .45rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; font-size: .84rem; }
-  .ppe .chk { display: flex; align-items: center; gap: .35rem; font-size: .78rem; color: #93a4bd; }
-  .ppe .msg { font-size: .84rem; min-height: 1.2em; margin: 0 0 .5rem; }
+  .ppe .toolbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
+  .ppe .toolbar input[type=search] { flex: 1 1 260px; min-width: 200px; padding: .45rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; font-size: .82rem; }
+  .ppe .toolbar select { padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; font-size: .8rem; }
+  .ppe .chk { display: flex; align-items: center; gap: .35rem; font-size: .76rem; color: #93a4bd; white-space: nowrap; }
+  .ppe .msg { font-size: .82rem; min-height: 1.1em; margin: 0 0 .3rem; }
   .ppe .msg.ok { color: #34d399; }
   .ppe .msg.err { color: #f87171; }
-  .ppe .count { font-size: .76rem; color: #93a4bd; margin: 0 0 .8rem; }
+  .ppe .count { font-size: .74rem; color: #93a4bd; margin: 0 0 .6rem; }
 
-  /* ── 顧客カード ── */
-  .ppe .list { display: grid; gap: .85rem; }
-  .ppe .cust { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 13px; overflow: hidden; }
-  .ppe .cust.is-immediate { border-color: rgba(245,196,81,.4); }
-  .ppe .cust.is-blocked { border-color: rgba(248,113,113,.3); }
-  .ppe .cust-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1.1rem; border-bottom: 1px solid rgba(148,163,184,.14); background: rgba(13,23,41,.6); }
-  .ppe .cust-email { font-weight: 700; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .ppe .badge { flex: 0 0 auto; font-size: .78rem; font-weight: 800; padding: .3rem .85rem; border-radius: 999px; white-space: nowrap; }
-  .ppe .badge.review { background: rgba(96,165,250,.16); color: #60a5fa; }
+  /* ── 一覧テーブル ── */
+  .ppe .tablewrap { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px; overflow: hidden; }
+  .ppe .tbl { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  .ppe .tbl thead th { text-align: left; font-size: .7rem; font-weight: 700; color: #93a4bd; padding: .55rem .8rem; border-bottom: 1px solid rgba(148,163,184,.2); background: rgba(13,23,41,.7); white-space: nowrap; }
+  .ppe .tbl tbody td { padding: .5rem .8rem; border-bottom: 1px solid rgba(148,163,184,.1); vertical-align: middle; }
+  .ppe .tbl tbody tr:last-child td { border-bottom: 0; }
+  .ppe .tbl tbody tr:hover { background: rgba(148,163,184,.06); }
+  .ppe .tbl td.c-ops { text-align: right; white-space: nowrap; }
+  .ppe .tbl td.c-cust { max-width: 22rem; }
+  .ppe .em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22rem; }
+  .ppe .muted { color: #6f819c; }
+  .ppe .btn-detail { background: #334155; color: #e6edf7; border: 0; border-radius: 7px; padding: .35rem .8rem; font-size: .76rem; font-weight: 700; cursor: pointer; font-family: inherit; white-space: nowrap; }
+  .ppe .btn-detail:hover { background: #475569; }
+  .ppe .empty { color: #93a4bd; font-size: .84rem; padding: 2rem 0; text-align: center; margin: 0; }
+  .ppe .empty[hidden] { display: none; }
+
+  /* ── 状態バッジ ── */
+  .ppe .badge { display: inline-block; font-size: .72rem; font-weight: 800; padding: .18rem .6rem; border-radius: 999px; white-space: nowrap; }
+  .ppe .badge.review { background: rgba(96,165,250,.18); color: #60a5fa; }
   .ppe .badge.staged { background: rgba(52,211,153,.14); color: #34d399; }
-  .ppe .badge.sale { background: rgba(52,211,153,.2); color: #34d399; }
+  .ppe .badge.sale { background: rgba(16,185,129,.3); color: #6ee7b7; }
   .ppe .badge.immediate { background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; }
-  .ppe .badge.blocked { background: rgba(248,113,113,.16); color: #f87171; }
+  .ppe .badge.blocked { background: rgba(248,113,113,.18); color: #f87171; }
 
-  .ppe .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .8rem 1rem; padding: 1rem 1.1rem; }
-  .ppe .fact .k { font-size: .7rem; color: #93a4bd; margin-bottom: .15rem; }
-  .ppe .fact .v { font-size: .88rem; font-weight: 700; overflow-wrap: anywhere; }
-  .ppe .fact .v.muted { color: #6f819c; font-weight: 400; }
-
-  .ppe .memo { margin: 0 1.1rem 1rem; background: rgba(11,17,32,.6); border-left: 3px solid rgba(245,196,81,.5); border-radius: 6px; padding: .55rem .8rem; font-size: .8rem; color: #cbd5e6; }
-  .ppe .memo .k { font-size: .7rem; color: #93a4bd; display: block; margin-bottom: .15rem; }
-
-  .ppe .ops { border-top: 1px solid rgba(148,163,184,.14); padding: .9rem 1.1rem 1.1rem; display: grid; gap: .8rem; }
-  .ppe .ops-row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
-  .ppe .ops-label { font-size: .7rem; color: #93a4bd; flex: 0 0 5.5rem; }
-  .ppe .ops-danger .ops-label { color: #f87171; }
-  .ppe .ops button { border: 0; border-radius: 9px; padding: .55rem 1rem; font-weight: 700; font-size: .82rem; cursor: pointer; font-family: inherit; }
+  /* ── 詳細・操作パネル ── */
+  .ppe .dt-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.7); z-index: 60; display: flex; justify-content: flex-end; }
+  .ppe .dt-backdrop[hidden] { display: none; }
+  .ppe .dt-panel { width: min(460px, 100%); height: 100%; overflow-y: auto; background: #0d1729; border-left: 1px solid rgba(148,163,184,.24); padding: 1.1rem 1.2rem 2.5rem; }
+  .ppe .dt-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .9rem; }
+  .ppe .dt-head h2 { font-size: 1rem; margin: 0; }
+  .ppe .x { background: transparent; border: 0; color: #93a4bd; font-size: 1.5rem; line-height: 1; padding: 0 .3rem; cursor: pointer; }
+  .ppe .dt-body { display: grid; gap: .9rem; }
+  .ppe .dt-email { font-weight: 700; font-size: .9rem; overflow-wrap: anywhere; margin-bottom: .4rem; }
+  .ppe .dt-sec { border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .8rem .9rem; background: #111c33; }
+  .ppe .dt-sec h3 { font-size: .72rem; color: #93a4bd; margin: 0 0 .55rem; font-weight: 700; }
+  .ppe .dt-sec.danger { border-color: rgba(248,113,113,.32); }
+  .ppe .dt-sec.danger h3 { color: #f87171; }
+  .ppe .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .8rem; margin: 0; }
+  .ppe .kv dt { color: #93a4bd; }
+  .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+  .ppe .memo-view { background: rgba(11,17,32,.6); border-left: 3px solid rgba(245,196,81,.5); border-radius: 6px; padding: .5rem .7rem; font-size: .78rem; color: #cbd5e6; margin-top: .6rem; }
+  .ppe .ops { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .ppe .ops button { border: 0; border-radius: 8px; padding: .5rem .9rem; font-weight: 700; font-size: .8rem; cursor: pointer; font-family: inherit; }
   .ppe .ops button[disabled] { opacity: .4; cursor: not-allowed; }
-  .ppe .b-preview { background: #334155; color: #e6edf7; }
+  .ppe .b-preview { background: #334155; color: #e6edf7; width: 100%; }
   .ppe .b-staged { background: #34d399; color: #05261a; }
   .ppe .b-review { background: #475569; color: #e6edf7; }
   .ppe .b-immediate { background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; box-shadow: 0 6px 18px -8px rgba(245,196,81,.8); }
   .ppe .b-blocked { background: transparent; color: #f87171; border: 1px solid rgba(248,113,113,.55) !important; }
-  .ppe .applied { font-size: .7rem; color: #6f819c; }
-  .ppe .memo-input { flex: 1 1 240px; min-width: 180px; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-size: .8rem; font-family: inherit; }
-  .ppe .empty { color: #93a4bd; font-size: .86rem; padding: 2rem 0; text-align: center; }
+  .ppe .applied { font-size: .7rem; color: #6f819c; align-self: center; }
+  .ppe .memo-input { width: 100%; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-size: .8rem; font-family: inherit; }
 
   /* ── プレビュー モーダル ── */
-  .ppe .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.74); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; z-index: 50; overflow-y: auto; }
+  .ppe .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.78); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; z-index: 70; overflow-y: auto; }
   .ppe .pv-backdrop[hidden] { display: none; }
-  .ppe .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(780px, 100%); padding: 1.2rem 1.3rem 1.6rem; }
+  .ppe .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(780px, 100%); padding: 1.1rem 1.2rem 1.6rem; }
   .ppe .pv-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .ppe .pv-head h2 { font-size: 1.05rem; margin: 0; }
-  .ppe .pv-close { background: transparent; border: 0; color: #93a4bd; font-size: 1.5rem; line-height: 1; padding: 0 .4rem; cursor: pointer; }
-  .ppe .pv-notice { font-size: .76rem; color: #f5c451; background: rgba(245,196,81,.08); border: 1px solid rgba(245,196,81,.26); border-radius: 8px; padding: .5rem .7rem; margin: .7rem 0 1rem; }
-  .ppe .pv-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .ppe .pv-controls label { font-size: .78rem; color: #93a4bd; display: flex; align-items: center; gap: .4rem; }
-  .ppe .pv-controls select { background: #0b1120; color: #e6edf7; border: 1px solid rgba(148,163,184,.28); border-radius: 8px; padding: .35rem .5rem; font-family: inherit; }
-  .ppe .pv-body { display: grid; gap: .9rem; }
-  .ppe .pv-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .6rem; }
-  .ppe .pv-top .cell { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .6rem .7rem; }
-  .ppe .pv-top .k { font-size: .68rem; color: #93a4bd; }
-  .ppe .pv-top .v { font-size: .95rem; font-weight: 800; margin-top: .15rem; }
-  .ppe .pv-sec { border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .8rem 1rem; background: #111c33; }
-  .ppe .pv-sec h3 { font-size: .78rem; color: #93a4bd; margin: 0 0 .5rem; font-weight: 700; }
-  .ppe .pv-kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .82rem; margin: 0; }
-  .ppe .pv-kv dt { color: #93a4bd; }
-  .ppe .pv-kv dd { margin: 0; font-weight: 700; }
-  .ppe .pv-mock { border: 1px dashed rgba(148,163,184,.35); border-radius: 10px; padding: 1rem; text-align: center; }
-  .ppe .pv-mock .pv-intake-t { font-size: .76rem; color: #93a4bd; }
-  .ppe .pv-mock .pv-intake-s { font-size: 1.05rem; font-weight: 900; margin: .25rem 0; }
-  .ppe .pv-mock .pv-intake-n { font-size: .72rem; color: #93a4bd; }
-  .ppe .pv-mock .pv-price { margin: .8rem 0 .5rem; font-weight: 900; color: #f5c451; }
-  .ppe .pv-mock .pv-cta { display: inline-block; border-radius: 10px; padding: .6rem 1.4rem; font-weight: 800; background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; }
-  .ppe .pv-mock .pv-cta.off { opacity: .45; filter: grayscale(.6); }
-  .ppe .pv-mock .pv-none { color: #93a4bd; font-size: .84rem; }
-  .ppe .pv-vis { font-size: .82rem; line-height: 1.7; margin: .8rem 0 0; }
+  .ppe .pv-head h2 { font-size: 1rem; margin: 0; }
+  .ppe .pv-notice { font-size: .74rem; color: #f5c451; background: rgba(245,196,81,.08); border: 1px solid rgba(245,196,81,.26); border-radius: 8px; padding: .45rem .7rem; margin: .6rem 0 .9rem; }
+  .ppe .pv-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
+  .ppe .pv-controls label { font-size: .76rem; color: #93a4bd; display: flex; align-items: center; gap: .4rem; }
+  .ppe .pv-controls select { background: #0b1120; color: #e6edf7; border: 1px solid rgba(148,163,184,.28); border-radius: 8px; padding: .3rem .5rem; font-family: inherit; }
+  .ppe .pv-body { display: grid; gap: .8rem; }
+  .ppe .pv-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: .5rem; }
+  .ppe .pv-top .cell { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .55rem .65rem; }
+  .ppe .pv-top .k { font-size: .66rem; color: #93a4bd; }
+  .ppe .pv-top .v { font-size: .92rem; font-weight: 800; margin-top: .12rem; }
+  .ppe .pv-sec { border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .8rem .9rem; background: #111c33; }
+  .ppe .pv-sec h3 { font-size: .74rem; color: #93a4bd; margin: 0 0 .5rem; font-weight: 700; }
+  .ppe .pv-mock { border: 1px dashed rgba(148,163,184,.35); border-radius: 10px; padding: .9rem; text-align: center; }
+  .ppe .pv-intake-t { font-size: .74rem; color: #93a4bd; }
+  .ppe .pv-intake-s { font-size: 1rem; font-weight: 900; margin: .2rem 0; }
+  .ppe .pv-intake-n { font-size: .7rem; color: #93a4bd; }
+  .ppe .pv-price { margin: .7rem 0 .45rem; font-weight: 900; color: #f5c451; }
+  .ppe .pv-cta { display: inline-block; border-radius: 10px; padding: .55rem 1.3rem; font-weight: 800; background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; }
+  .ppe .pv-cta.off { opacity: .45; filter: grayscale(.6); }
+  .ppe .pv-none { color: #93a4bd; font-size: .82rem; }
+  .ppe .pv-vis { font-size: .8rem; line-height: 1.7; margin: .7rem 0 0; }
   .ppe .yes { color: #34d399; }
   .ppe .no { color: #f87171; }
 
-  /* ── レスポンシブ ── */
- @media (max-width: 860px) {
-    .ppe .ppe-head { flex-direction: column; gap: .9rem; }
-    .ppe .btn-reload { align-self: stretch; }
-    .ppe .toolbar { flex-direction: column; align-items: stretch; }
-    .ppe .search { flex-direction: column; align-items: stretch; }
-    .ppe .search input[type=search] { min-width: 0; width: 100%; }
-  }
- @media (max-width: 640px) {
-    .ppe .cust-head { flex-direction: column; align-items: flex-start; gap: .5rem; }
-    .ppe .cust-email { max-width: 100%; }
-    .ppe .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .ppe .ops-row { flex-direction: column; align-items: stretch; }
-    .ppe .ops-label { flex: none; }
-    .ppe .ops button { width: 100%; }
-    .ppe .memo-input { width: 100%; }
+  /* ── モバイル: テーブル → 1 顧客 1 コンパクトカード（横スクロールさせない）── */
+  @media (max-width: 860px) {
+    .ppe .ppe-head { flex-direction: column; gap: .8rem; }
+    .ppe .ppe-head-r { width: 100%; }
+    .ppe .toolbar input[type=search] { flex: 1 1 100%; }
+    .ppe .tablewrap { background: transparent; border: 0; border-radius: 0; overflow: visible; }
+    .ppe .tbl { display: block; width: 100%; }
+    .ppe .tbl tbody { display: block; width: 100%; }
+    .ppe .tbl tr { display: block; width: 100%; }
+    .ppe .tbl td { display: block; width: 100%; }
+    .ppe .tbl thead { display: none; }
+    .ppe .tbl tbody tr { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px; margin-bottom: .6rem; padding: .7rem .85rem; }
+    .ppe .tbl tbody td { border: 0; padding: .15rem 0; }
+    .ppe .tbl tbody td::before { content: attr(data-label) '　'; color: #93a4bd; font-size: .7rem; }
+    .ppe .tbl tbody td.c-cust::before { content: ''; }
+    .ppe .tbl tbody td.c-state::before { content: ''; }
+    .ppe .tbl tbody td.c-ops::before { content: ''; }
+    .ppe .tbl tbody td.c-eligible { display: none; }
+    .ppe .tbl tbody td.c-updated { display: none; }
+    .ppe .tbl tbody td.c-cust { font-weight: 700; margin-bottom: .2rem; }
+    .ppe .tbl td.c-cust { max-width: 100%; }
+    .ppe .em { max-width: 100%; }
+    .ppe .tbl tbody td.c-ops { text-align: left; margin-top: .5rem; }
+    .ppe .btn-detail { width: 100%; padding: .5rem; }
+    .ppe .dt-panel { width: 100%; border-left: 0; }
   }
 </style>
 
@@ -223,11 +278,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     function setConn(ok) {
       const el = $('connState');
-      el.textContent = ok ? '管理API 接続済み' : '未接続';
-      el.className = 'conn-state' + (ok ? ' ok' : '');
-      if (ok) $('connPanel').open = false;
+      el.textContent = ok ? '● 管理API 接続済み' : '● 未接続';
+      el.className = 'conn-pill' + (ok ? ' ok' : '');
+      if (ok) $('connBody').hidden = true;
     }
-    if (!saved) $('connPanel').open = true;
+    if (!saved) $('connBody').hidden = false;
+    $('connToggle').addEventListener('click', () => { $('connBody').hidden = !$('connBody').hidden; });
 
     function msg(text, kind) {
       const el = $('message');
@@ -237,7 +293,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     async function call(payload) {
       const secret = secretEl.value.trim();
-      if (!secret) { msg('管理シークレットを入力してください', 'err'); $('connPanel').open = true; return null; }
+      if (!secret) { msg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return null; }
       const res = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
@@ -250,58 +306,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     // ── 状態の分類（表示・並び順・フィルター用。判定そのものは Function 側の単一源）──
-    const STATE = {
-      review:    { key: 'review',    label: '保留',        badge: 'review',    order: 1 },
-      staged:    { key: 'staged',    label: '段階公開中',   badge: 'staged',    order: 2 },
-      sale:      { key: 'sale',      label: '販売中',      badge: 'sale',      order: 2 },
-      immediate: { key: 'immediate', label: '即時販売',     badge: 'immediate', order: 3 },
-      blocked:   { key: 'blocked',   label: '販売対象外',   badge: 'blocked',   order: 4 },
-    };
     function classify(r) {
-      if (r.eligibility === 'blocked') return STATE.blocked;
-      if (r.eligibility !== 'eligible') return STATE.review;
-      if (r.overrideApplied) return STATE.immediate;
-      return r.phase === 4 ? STATE.sale : STATE.staged;
+      if (r.eligibility === 'blocked') return { key: 'blocked', badge: 'blocked', short: '販売対象外', order: 4 };
+      if (r.eligibility !== 'eligible') return { key: 'review', badge: 'review', short: '保留', order: 1 };
+      if (r.overrideApplied) return { key: 'immediate', badge: 'immediate', short: '即時販売', order: 3 };
+      if (r.phase === 4) return { key: 'sale', badge: 'sale', short: '販売中', order: 2 };
+      return { key: 'staged', badge: 'staged', short: 'PHASE ' + r.phase, order: 2 };
     }
+    const ROUTE_SHORT = { sanrenpuku: 'A', premium_30d: 'B', none: '—' };
     const ROUTE_LABEL = { sanrenpuku: 'A（三連複）', premium_30d: 'B（Premium 30日）', none: '対象外' };
     const fmtDate = (v) => (v ? String(v).slice(0, 10) : '—');
 
-    // ── フィルター ──
-    const FILTERS = [
-      { key: 'all', label: 'すべて' },
-      { key: 'review', label: '保留' },
-      { key: 'eligible', label: '販売可' },
-      { key: 'immediate', label: '即時販売' },
-      { key: 'blocked', label: '販売対象外' },
-      { key: 'routeA', label: 'ROUTE A' },
-      { key: 'routeB', label: 'ROUTE B' },
-    ];
-    let activeFilter = 'all';
     let lastData = null;
-
-    function buildFilters() {
-      const box = $('filters');
-      box.innerHTML = '';
-      for (const f of FILTERS) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'chip';
-        b.textContent = f.label;
-        b.dataset.filter = f.key;
-        b.setAttribute('aria-pressed', String(f.key === activeFilter));
-        b.addEventListener('click', () => { activeFilter = f.key; buildFilters(); render(); });
-        box.appendChild(b);
-      }
-    }
 
     function matches(r) {
       const st = classify(r).key;
-      if (activeFilter === 'review' && st !== 'review') return false;
-      if (activeFilter === 'eligible' && !(st === 'staged' || st === 'sale')) return false;
-      if (activeFilter === 'immediate' && st !== 'immediate') return false;
-      if (activeFilter === 'blocked' && st !== 'blocked') return false;
-      if (activeFilter === 'routeA' && r.route !== 'sanrenpuku') return false;
-      if (activeFilter === 'routeB' && r.route !== 'premium_30d') return false;
+      const fs = $('fState').value;
+      if (fs === 'review' && st !== 'review') return false;
+      if (fs === 'eligible' && !(st === 'staged' || st === 'sale')) return false;
+      if (fs === 'immediate' && st !== 'immediate') return false;
+      if (fs === 'blocked' && st !== 'blocked') return false;
+      const fr = $('fRoute').value;
+      if (fr !== 'all' && r.route !== fr) return false;
       const q = $('q').value.trim().toLowerCase();
       if (q && !String(r.email || '').toLowerCase().includes(q)) return false;
       return true;
@@ -312,149 +338,51 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const d = classify(a).order - classify(b).order;
         if (d !== 0) return d;
         const ua = String(a.updatedAt || ''), ub = String(b.updatedAt || '');
-        if (ua !== ub) return ub.localeCompare(ua); // 最終更新が新しい順
+        if (ua !== ub) return ub.localeCompare(ua);
         return String(a.email).localeCompare(String(b.email));
       });
     }
 
-    // ── サマリー ──
+    // ── サマリーバー（クリックでフィルター）──
     function renderSummary(c) {
-      const cards = [
-        ['即時販売', c.immediate, 'pri-immediate'],
-        ['販売可', c.eligible, 'pri-eligible'],
-        ['保留', c.review, 'pri-review'],
-        ['候補', c.total, ''],
-        ['販売対象外', c.blocked, ''],
-        ['ROUTE A', c.routeA, 'sub'],
-        ['ROUTE B', c.routeB, 'sub'],
+      const bar = $('summary');
+      bar.innerHTML = '';
+      const items = [
+        ['即時販売', c.immediate, 'immediate', 'immediate'],
+        ['販売可', c.eligible, 'eligible', 'eligible'],
+        ['保留', c.review, 'review', 'review'],
+        ['販売対象外', c.blocked, 'blocked', 'blocked'],
+        ['候補', c.total, '', 'all'],
       ];
-      $('summary').innerHTML = '';
-      for (const [k, v, cls] of cards) {
-        const d = document.createElement('div');
-        d.className = 'sum ' + cls;
-        const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
-        const vv = document.createElement('div'); vv.className = 'v'; vv.textContent = String(v ?? 0);
-        d.appendChild(kk); d.appendChild(vv);
-        $('summary').appendChild(d);
-      }
-    }
-
-    // ── 顧客カード ──
-    function fact(k, v, muted) {
-      const w = document.createElement('div'); w.className = 'fact';
-      const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
-      const vv = document.createElement('div'); vv.className = 'v' + (muted ? ' muted' : ''); vv.textContent = v;
-      w.appendChild(kk); w.appendChild(vv); return w;
-    }
-
-    function card(r, data) {
-      const st = classify(r);
-      const el = document.createElement('article');
-      el.className = 'cust is-' + st.key;
-
-      // 上部: Email + 状態バッジ
-      const head = document.createElement('div'); head.className = 'cust-head';
-      const em = document.createElement('div');
-      em.className = 'cust-email';
-      em.textContent = r.email || '(メール未設定)';
-      em.title = r.email || '';
-      const badge = document.createElement('span');
-      badge.className = 'badge ' + st.badge;
-      badge.textContent = r.state || st.label;
-      head.appendChild(em); head.appendChild(badge);
-
-      // 中段: ラベル付きの情報グリッド
-      const facts = document.createElement('div'); facts.className = 'facts';
-      facts.appendChild(fact('プラン', r.plan || '—'));
-      facts.appendChild(fact('三連複', r.hasSanrenpuku ? 'あり' : 'なし'));
-      facts.appendChild(fact('Route', ROUTE_LABEL[r.route] || r.route));
-      facts.appendChild(fact('PHASE', String(r.phase)));
-      facts.appendChild(fact('Premium経過', r.daysSincePremium == null ? '—' : r.daysSincePremium + ' 日', r.daysSincePremium == null));
-      facts.appendChild(fact('販売許可日', fmtDate(r.eligibleAt), !r.eligibleAt));
-      facts.appendChild(fact('最終更新', fmtDate(r.updatedAt), !r.updatedAt));
-
-      el.appendChild(head); el.appendChild(facts);
-
-      // 内部メモ（あるときだけ別枠）
-      if (r.reason) {
-        const memo = document.createElement('div'); memo.className = 'memo';
-        const k = document.createElement('span'); k.className = 'k'; k.textContent = '内部メモ（管理者のみ）';
-        memo.appendChild(k); memo.appendChild(document.createTextNode(r.reason));
-        el.appendChild(memo);
-      }
-
-      // 操作エリア
-      const ops = document.createElement('div'); ops.className = 'ops';
-      const memoInput = document.createElement('input');
-      memoInput.className = 'memo-input';
-      memoInput.placeholder = '内部メモ（管理者のみ・任意）';
-      memoInput.value = r.reason || '';
-
-      const buttons = [];
-      const mkBtn = (plusAction, label, cls, isCurrent, extraDisabled) => {
+      items.forEach((item, i) => {
+        const k = item[0], v = item[1], cls = item[2], filter = item[3];
+        if (i > 0) { const sp = document.createElement('span'); sp.className = 'sep'; sp.textContent = '|'; bar.appendChild(sp); }
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = cls;
-        b.textContent = label;
-        b.dataset.action = plusAction;
-        b.disabled = !data.writeEnabled || isCurrent || !!extraDisabled;
-        if (isCurrent) b.title = '現在この状態です（適用中）';
-        b.addEventListener('click', async () => {
-          if (b.dataset.busy === '1') return; // 二重クリック防止
-          if (plusAction === 'immediate') {
-            const ok = window.confirm(
-              'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
-              + '段階公開（PHASE 1→4）を飛ばして、いますぐ販売可能な状態にします。\n'
-              + '実行してよろしいですか？'
-            );
-            if (!ok) return;
-          }
-          b.dataset.busy = '1';
-          buttons.forEach((x) => { x.disabled = true; });
-          msg('更新中…');
-          const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: memoInput.value });
-          b.dataset.busy = '';
-          if (out) {
-            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : ''), 'ok');
-            load();
-          } else {
-            render(); // 失敗時は現在の状態でボタンを再構成する
-          }
-        });
-        buttons.push(b);
-        return b;
-      };
+        b.className = 's ' + cls;
+        b.title = k + 'で絞り込む';
+        const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k;
+        const vv = document.createElement('span'); vv.className = 'v'; vv.textContent = String(v == null ? 0 : v);
+        b.appendChild(kk); b.appendChild(vv);
+        b.addEventListener('click', () => { $('fState').value = filter; render(); });
+        bar.appendChild(b);
+      });
+      $('summarySub').textContent = 'ROUTE A（三連複） ' + (c.routeA == null ? 0 : c.routeA)
+        + '　/　ROUTE B（Premium 30日） ' + (c.routeB == null ? 0 : c.routeB);
+    }
 
-      const isImmediate = st.key === 'immediate';
-      const isStagedNow = r.eligibility === 'eligible' && !r.overrideApplied;
-
-      // 通常操作
-      const rowN = document.createElement('div'); rowN.className = 'ops-row';
-      const lbN = document.createElement('span'); lbN.className = 'ops-label'; lbN.textContent = '通常操作';
-      rowN.appendChild(lbN);
-      const pv = document.createElement('button');
-      pv.type = 'button'; pv.className = 'b-preview'; pv.textContent = '表示プレビュー';
-      pv.addEventListener('click', () => openPreview(r.recordId));
-      rowN.appendChild(pv);
-      rowN.appendChild(mkBtn('staged', '段階公開で販売可', 'b-staged', isStagedNow));
-      rowN.appendChild(mkBtn('review', '保留', 'b-review', r.eligibility === 'review'));
-      if (isStagedNow) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '段階公開で適用中'; rowN.appendChild(s); }
-
-      // 強い操作
-      const rowD = document.createElement('div'); rowD.className = 'ops-row ops-danger';
-      const lbD = document.createElement('span'); lbD.className = 'ops-label'; lbD.textContent = '強い操作';
-      rowD.appendChild(lbD);
-      rowD.appendChild(mkBtn('immediate', '今すぐ販売可', 'b-immediate', isImmediate, !data.overrideEnabled));
-      rowD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
-      if (isImmediate) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '即時販売を適用中'; rowD.appendChild(s); }
-
-      const rowM = document.createElement('div'); rowM.className = 'ops-row';
-      const lbM = document.createElement('span'); lbM.className = 'ops-label'; lbM.textContent = 'メモ';
-      rowM.appendChild(lbM); rowM.appendChild(memoInput);
-
-      ops.appendChild(rowN); ops.appendChild(rowD); ops.appendChild(rowM);
-      el.appendChild(ops);
-      return el;
+    // ── 一覧（テーブル。write ボタンは置かない）──
+    function td(cls, label, text, extraCls) {
+      const e = document.createElement('td');
+      e.className = cls;
+      if (label) e.setAttribute('data-label', label);
+      if (text !== undefined) {
+        const s = document.createElement('span');
+        if (extraCls) s.className = extraCls;
+        s.textContent = text;
+        e.appendChild(s);
+      }
+      return e;
     }
 
     function render() {
@@ -464,20 +392,54 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       $('writeState').textContent = (data.writeEnabled
         ? '書き込み: 有効'
         : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。')
-        + (data.overrideEnabled
-          ? ' / 今すぐ販売可: 利用可'
-          : ' / 今すぐ販売可: 無効（PremiumPlusReleaseOverride 未作成 / PREMIUM_PLUS_OVERRIDE_READY 未設定）');
+        + (data.overrideEnabled ? ' / 今すぐ販売可: 利用可' : ' / 今すぐ販売可: 無効（PREMIUM_PLUS_OVERRIDE_READY 未設定）');
 
       const rows = sortRows((data.rows || []).filter(matches));
-      const list = $('list');
-      list.innerHTML = '';
-      for (const r of rows) list.appendChild(card(r, data));
-      $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
-      if (!rows.length) {
-        const p = document.createElement('p'); p.className = 'empty';
-        p.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
-        list.appendChild(p);
+      const tb = $('rows');
+      tb.innerHTML = '';
+      for (const r of rows) {
+        const st = classify(r);
+        const tr = document.createElement('tr');
+
+        const c1 = td('c-cust', '', undefined);
+        const em = document.createElement('span');
+        em.className = 'em';
+        em.textContent = r.email || '(メール未設定)';
+        em.title = r.email || '';
+        c1.appendChild(em);
+        tr.appendChild(c1);
+
+        const c2 = document.createElement('td');
+        c2.className = 'c-state';
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + st.badge;
+        badge.textContent = st.short;
+        badge.title = r.state || st.short;
+        c2.appendChild(badge);
+        tr.appendChild(c2);
+
+        tr.appendChild(td('c-plan', 'プラン', r.plan || '—', r.plan ? '' : 'muted'));
+        tr.appendChild(td('c-route', 'Route', ROUTE_SHORT[r.route] || r.route));
+        tr.appendChild(td('c-phase', 'PHASE', String(r.phase)));
+        tr.appendChild(td('c-eligible', '販売許可日', fmtDate(r.eligibleAt), r.eligibleAt ? '' : 'muted'));
+        tr.appendChild(td('c-updated', '最終更新', fmtDate(r.updatedAt), r.updatedAt ? '' : 'muted'));
+
+        const c8 = document.createElement('td');
+        c8.className = 'c-ops';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-detail';
+        btn.textContent = '詳細・操作';
+        btn.addEventListener('click', () => openDetail(r.recordId));
+        c8.appendChild(btn);
+        tr.appendChild(c8);
+
+        tb.appendChild(tr);
       }
+      $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
+      const emp = $('empty');
+      emp.hidden = rows.length > 0;
+      emp.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
       if (data.truncated) msg('件数が多いため一部のみ表示しています', 'err');
     }
 
@@ -487,7 +449,130 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (data) { msg(''); lastData = data; render(); }
     }
 
-    // ── 管理者プレビュー（read-only）─────────────────────────────
+    // ── 詳細・操作パネル（write はここだけ）──
+    let dtRecordId = null;
+
+    function kvRow(dl, k, v, cls) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      if (cls) dd.className = cls;
+      dl.appendChild(dt); dl.appendChild(dd);
+    }
+
+    function renderDetail() {
+      const data = lastData;
+      const r = (data && (data.rows || []).find((x) => x.recordId === dtRecordId)) || null;
+      const body = $('dtBody');
+      body.innerHTML = '';
+      if (!r) { body.textContent = '対象が見つかりません。再読み込みしてください。'; return; }
+      const st = classify(r);
+
+      const head = document.createElement('div');
+      const em = document.createElement('div'); em.className = 'dt-email'; em.textContent = r.email || '(メール未設定)';
+      const b = document.createElement('span'); b.className = 'badge ' + st.badge; b.textContent = r.state || st.short;
+      head.appendChild(em); head.appendChild(b);
+      body.appendChild(head);
+
+      const info = document.createElement('div'); info.className = 'dt-sec';
+      const h1 = document.createElement('h3'); h1.textContent = '基本情報'; info.appendChild(h1);
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, 'プラン', r.plan || '—');
+      kvRow(dl, '三連複', r.hasSanrenpuku ? 'あり' : 'なし');
+      kvRow(dl, 'Route', ROUTE_LABEL[r.route] || r.route);
+      kvRow(dl, 'PHASE', String(r.phase));
+      kvRow(dl, 'Premium経過', r.daysSincePremium == null ? '—' : r.daysSincePremium + ' 日');
+      kvRow(dl, '販売許可日', fmtDate(r.eligibleAt));
+      kvRow(dl, '最終更新', fmtDate(r.updatedAt));
+      info.appendChild(dl);
+      if (r.reason) {
+        const memo = document.createElement('div'); memo.className = 'memo-view';
+        memo.textContent = '内部メモ: ' + r.reason;
+        info.appendChild(memo);
+      }
+      body.appendChild(info);
+
+      const pvSec = document.createElement('div'); pvSec.className = 'dt-sec';
+      const h2 = document.createElement('h3'); h2.textContent = '表示確認'; pvSec.appendChild(h2);
+      const pvBtn = document.createElement('button');
+      pvBtn.type = 'button'; pvBtn.className = 'b-preview'; pvBtn.textContent = '表示プレビュー';
+      pvBtn.addEventListener('click', () => openPreview(r.recordId));
+      const ops0 = document.createElement('div'); ops0.className = 'ops'; ops0.appendChild(pvBtn);
+      pvSec.appendChild(ops0);
+      body.appendChild(pvSec);
+
+      // メモ入力（write payload の reason に載せる）
+      const memoInput = document.createElement('input');
+      memoInput.className = 'memo-input';
+      memoInput.placeholder = '内部メモ（管理者のみ・任意）';
+      memoInput.value = r.reason || '';
+
+      const buttons = [];
+      const mkBtn = (plusAction, label, cls, isCurrent, extraDisabled) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = cls;
+        btn.textContent = label;
+        btn.dataset.action = plusAction;
+        btn.disabled = !data.writeEnabled || isCurrent || !!extraDisabled;
+        if (isCurrent) btn.title = '現在この状態です（適用中）';
+        btn.addEventListener('click', async () => {
+          if (btn.dataset.busy === '1') return; // 二重クリック防止
+          if (plusAction === 'immediate') {
+            const ok = window.confirm(
+              'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
+              + '段階公開（PHASE 1→4）を飛ばして、いますぐ販売可能な状態にします。\n'
+              + '実行してよろしいですか？'
+            );
+            if (!ok) return;
+          }
+          btn.dataset.busy = '1';
+          buttons.forEach((x) => { x.disabled = true; });
+          msg('更新中…');
+          const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: memoInput.value });
+          btn.dataset.busy = '';
+          if (out) {
+            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : ''), 'ok');
+            await load();
+          }
+          renderDetail(); // パネルを最新状態で再構成
+        });
+        buttons.push(btn);
+        return btn;
+      };
+
+      const isImmediate = st.key === 'immediate';
+      const isStagedNow = r.eligibility === 'eligible' && !r.overrideApplied;
+
+      const secN = document.createElement('div'); secN.className = 'dt-sec';
+      const h3 = document.createElement('h3'); h3.textContent = '通常操作'; secN.appendChild(h3);
+      const opsN = document.createElement('div'); opsN.className = 'ops';
+      opsN.appendChild(mkBtn('staged', '段階公開で販売可', 'b-staged', isStagedNow));
+      opsN.appendChild(mkBtn('review', '保留', 'b-review', r.eligibility === 'review'));
+      if (isStagedNow) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsN.appendChild(s); }
+      secN.appendChild(opsN);
+      body.appendChild(secN);
+
+      const secD = document.createElement('div'); secD.className = 'dt-sec danger';
+      const h4 = document.createElement('h3'); h4.textContent = '強い操作（本番の販売状態が変わります）'; secD.appendChild(h4);
+      const opsD = document.createElement('div'); opsD.className = 'ops';
+      opsD.appendChild(mkBtn('immediate', '今すぐ販売可', 'b-immediate', isImmediate, !data.overrideEnabled));
+      opsD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
+      if (isImmediate) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsD.appendChild(s); }
+      secD.appendChild(opsD);
+      body.appendChild(secD);
+
+      const secM = document.createElement('div'); secM.className = 'dt-sec';
+      const h5 = document.createElement('h3'); h5.textContent = '内部メモ'; secM.appendChild(h5);
+      secM.appendChild(memoInput);
+      body.appendChild(secM);
+    }
+
+    function openDetail(recordId) { dtRecordId = recordId; $('dtBackdrop').hidden = false; renderDetail(); }
+    function closeDetail() { $('dtBackdrop').hidden = true; dtRecordId = null; }
+    $('dtClose').addEventListener('click', closeDetail);
+    $('dtBackdrop').addEventListener('click', (e) => { if (e.target === $('dtBackdrop')) closeDetail(); });
+
+    // ── 管理者プレビュー（read-only）──
     let pvRecordId = null;
     let pvOptionsReady = false;
 
@@ -499,14 +584,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         o.textContent = it.label;
         sel.appendChild(o);
       }
-      sel.value = current ?? '';
-    }
-
-    function row(dl, k, v, cls) {
-      const dt = document.createElement('dt'); dt.textContent = k;
-      const dd = document.createElement('dd'); dd.textContent = String(v);
-      if (cls) dd.className = cls;
-      dl.appendChild(dt); dl.appendChild(dd);
+      sel.value = current == null ? '' : current;
     }
     const yn = (b) => (b ? 'はい' : 'いいえ');
     const ynCls = (b) => (b ? 'yes' : 'no');
@@ -516,7 +594,6 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const body = $('pvBody');
       body.innerHTML = '';
 
-      // 上部サマリー: 現在 PHASE / 受付 / 商品ページ / CTA / purchaseEnabled
       const top = document.createElement('div'); top.className = 'pv-top';
       const cell = (k, v, cls) => {
         const c = document.createElement('div'); c.className = 'cell';
@@ -524,11 +601,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const vv = document.createElement('div'); vv.className = 'v' + (cls ? ' ' + cls : ''); vv.textContent = v;
         c.appendChild(kk); c.appendChild(vv); top.appendChild(c);
       };
-      cell('現在 PHASE', 'PHASE ' + p.phase + (p.simulated.phaseDaysAgo === null ? '' : '（シミュ）'));
+      cell('PHASE', 'PHASE ' + p.phase + (p.simulated.phaseDaysAgo === null ? '' : '（シミュ）'));
       cell('受付状態', p.intakeStatus || '（PHASE 4 未満）');
       cell('商品ページ', p.showProductPage ? '表示 (200)' : '非表示 (404)', ynCls(p.showProductPage));
       cell('価格・CTA', p.showPurchaseCta ? '表示' : '非表示', ynCls(p.showPurchaseCta));
-      cell('purchaseEnabled', yn(p.purchaseEnabled), ynCls(p.purchaseEnabled));
+      cell('購入可否', yn(p.purchaseEnabled), ynCls(p.purchaseEnabled));
       body.appendChild(top);
 
       const mk = (title) => { const s = document.createElement('div'); s.className = 'pv-sec'; const h = document.createElement('h3'); h.textContent = title; s.appendChild(h); body.appendChild(s); return s; };
@@ -559,25 +636,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mock.appendChild(vis);
 
       const d1 = mk('判定');
-      const dl1 = document.createElement('dl'); dl1.className = 'pv-kv';
-      row(dl1, '評価時刻(JST)', p.evaluatedAtJst + (p.simulated.isSimulatedTime ? '（シミュレーション）' : ''));
-      row(dl1, 'route', p.route);
-      row(dl1, 'PremiumPlusEligibility', p.eligibility);
-      row(dl1, 'PremiumPlusReleaseOverride', p.releaseOverride || '(空)');
-      row(dl1, 'overrideApplied', yn(p.overrideApplied), ynCls(p.overrideApplied));
-      row(dl1, '状態', p.state);
-      row(dl1, 'anchor(JST)', p.anchorJst || '(なし)');
-      row(dl1, 'intake', p.intake || '(PHASE 4 未満)');
+      const dl1 = document.createElement('dl'); dl1.className = 'kv';
+      kvRow(dl1, '評価時刻(JST)', p.evaluatedAtJst + (p.simulated.isSimulatedTime ? '（シミュレーション）' : ''));
+      kvRow(dl1, 'route', p.route);
+      kvRow(dl1, 'PremiumPlusEligibility', p.eligibility);
+      kvRow(dl1, 'PremiumPlusReleaseOverride', p.releaseOverride || '(空)');
+      kvRow(dl1, 'overrideApplied', yn(p.overrideApplied), ynCls(p.overrideApplied));
+      kvRow(dl1, '状態', p.state);
+      kvRow(dl1, 'anchor(JST)', p.anchorJst || '(なし)');
+      kvRow(dl1, 'intake', p.intake || '(PHASE 4 未満)');
       d1.appendChild(dl1);
 
       const d2 = mk('表示フラグ');
-      const dl2 = document.createElement('dl'); dl2.className = 'pv-kv';
-      row(dl2, 'showTeaser', yn(p.showTeaser), ynCls(p.showTeaser));
-      row(dl2, 'showProductPage', yn(p.showProductPage), ynCls(p.showProductPage));
-      row(dl2, 'showPurchaseCta', yn(p.showPurchaseCta), ynCls(p.showPurchaseCta));
-      row(dl2, 'purchaseEnabled', yn(p.purchaseEnabled), ynCls(p.purchaseEnabled));
-      row(dl2, '商品ページ HTTP', p.productPageStatus);
-      if (p.canBrowseWhenClosed !== null) row(dl2, 'CLOSED でも閲覧可', yn(p.canBrowseWhenClosed), ynCls(p.canBrowseWhenClosed));
+      const dl2 = document.createElement('dl'); dl2.className = 'kv';
+      kvRow(dl2, 'showTeaser', yn(p.showTeaser), ynCls(p.showTeaser));
+      kvRow(dl2, 'showProductPage', yn(p.showProductPage), ynCls(p.showProductPage));
+      kvRow(dl2, 'showPurchaseCta', yn(p.showPurchaseCta), ynCls(p.showPurchaseCta));
+      kvRow(dl2, 'purchaseEnabled', yn(p.purchaseEnabled), ynCls(p.purchaseEnabled));
+      kvRow(dl2, '商品ページ HTTP', p.productPageStatus);
+      if (p.canBrowseWhenClosed !== null) kvRow(dl2, 'CLOSED でも閲覧可', yn(p.canBrowseWhenClosed), ynCls(p.canBrowseWhenClosed));
       d2.appendChild(dl2);
     }
 
@@ -599,21 +676,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       renderPreview(data);
     }
 
-    function openPreview(recordId) {
-      pvRecordId = recordId;
-      $('pvBackdrop').hidden = false;
-      refreshPreview();
-    }
+    function openPreview(recordId) { pvRecordId = recordId; $('pvBackdrop').hidden = false; refreshPreview(); }
     function closePreview() { $('pvBackdrop').hidden = true; pvRecordId = null; }
 
     $('pvClose').addEventListener('click', closePreview);
     $('pvBackdrop').addEventListener('click', (e) => { if (e.target === $('pvBackdrop')) closePreview(); });
     $('pvTime').addEventListener('change', refreshPreview);
     $('pvPhase').addEventListener('change', refreshPreview);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('pvBackdrop').hidden) closePreview(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!$('pvBackdrop').hidden) { closePreview(); return; }
+      if (!$('dtBackdrop').hidden) closeDetail();
+    });
 
     $('reload').addEventListener('click', load);
     $('q').addEventListener('input', render);
-    buildFilters();
+    $('fState').addEventListener('change', render);
+    $('fRoute').addEventListener('change', render);
   })();
 </script>

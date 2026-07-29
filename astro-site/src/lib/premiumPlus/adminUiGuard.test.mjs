@@ -2,20 +2,22 @@
  * adminUiGuard.test.mjs — Premium Plus 販売管理画面（/admin/premium-plus-eligibility/）の UI 契約
  *   node --test src/lib/premiumPlus/adminUiGuard.test.mjs
  *
- * UI 刷新で **write 契約 / preview 契約 / 安全機構**が壊れていないことを source レベルで固定する。
- * （画面は prerender=true の静的ページなので、配信 HTML = このソースそのもの）
+ * UI 再設計で **write 契約 / preview 契約 / 安全機構 / スタイル適用**が壊れていないことを固定する。
+ * （画面は prerender=true の静的ページなので、配信 HTML/JS = このソースそのもの）
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const PAGE = readFileSync(fileURLToPath(new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url)), 'utf8');
+const PAGE_URL = new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url);
+const PAGE = readFileSync(fileURLToPath(PAGE_URL), 'utf8');
+const STYLE = PAGE.slice(PAGE.indexOf('<style is:global>'), PAGE.indexOf('</style>'));
+const SCRIPT = PAGE.slice(PAGE.indexOf('<script is:inline>'));
 
-// ── API 契約（UI 刷新で payload を変えない）────────────────────────
+// ── API 契約（UI を変えても payload を変えない）──────────────────
 test('write payload が変わっていない（action/update の 4 キー）', () => {
   assert.match(PAGE, /call\(\{\s*action:\s*'update',\s*recordId:\s*r\.recordId,\s*plusAction,\s*reason:\s*memoInput\.value\s*\}\)/);
-  // 4 操作の値も不変
   for (const a of ["'staged'", "'immediate'", "'review'", "'blocked'"]) {
     assert.ok(PAGE.includes(a), `plusAction が無い: ${a}`);
   }
@@ -31,16 +33,14 @@ test('list / preview の payload が変わっていない', () => {
 test('管理者認証（x-admin-secret）と secret の非表示を維持', () => {
   assert.match(PAGE, /'x-admin-secret':\s*secret/);
   assert.match(PAGE, /type="password"\s+id="secret"/);
-  // secret を画面に描画しない
   assert.doesNotMatch(PAGE, /textContent\s*=\s*secret/);
   assert.doesNotMatch(PAGE, /innerHTML[^\n]*secret/);
 });
 
-// ── 安全機構（既存仕様の維持）────────────────────────────────────
+// ── 安全機構 ─────────────────────────────────────────────────────
 test('「今すぐ販売可」の確認ダイアログを維持', () => {
   assert.match(PAGE, /window\.confirm\(/);
   assert.match(PAGE, /この会員は即時PHASE 4となり、価格と購入CTAが表示されます。/);
-  // confirm は immediate のときだけ
   assert.match(PAGE, /if \(plusAction === 'immediate'\)\s*\{[\s\S]{0,120}window\.confirm/);
 });
 
@@ -50,51 +50,105 @@ test('二重送信防止を維持（busy フラグ + 行内ボタン一括 disab
 });
 
 test('fail closed: 書込 gate が無効ならボタンを押せない', () => {
-  assert.match(PAGE, /b\.disabled = !data\.writeEnabled \|\| isCurrent \|\| !!extraDisabled/);
+  assert.match(PAGE, /btn\.disabled = !data\.writeEnabled \|\| isCurrent \|\| !!extraDisabled/);
   assert.match(PAGE, /mkBtn\('immediate',[^)]*!data\.overrideEnabled\)/);
 });
 
-// ── 新 UI 要件 ───────────────────────────────────────────────────
-test('状態バッジ 5 種と分類ロジックがある', () => {
-  for (const k of ['review', 'staged', 'sale', 'immediate', 'blocked']) {
-    assert.ok(PAGE.includes(`.badge.${k}`), `バッジ CSS が無い: ${k}`);
+// ── 一覧はテーブル。write ボタンを露出させない ───────────────────
+test('一覧は 8 列のテーブル', () => {
+  for (const th of ['顧客', '状態', 'プラン', 'Route', 'PHASE', '販売許可日', '最終更新', '操作']) {
+    assert.ok(PAGE.includes('>' + th + '</th>'), `列が無い: ${th}`);
   }
-  assert.match(PAGE, /function classify\(r\)/);
-  assert.match(PAGE, /if \(r\.eligibility === 'blocked'\) return STATE\.blocked;/);
-  assert.match(PAGE, /if \(r\.overrideApplied\) return STATE\.immediate;/);
-  assert.match(PAGE, /return r\.phase === 4 \? STATE\.sale : STATE\.staged;/);
+  assert.match(PAGE, /<tbody id="rows">/);
+  assert.match(PAGE, /\$\('rows'\)/);
 });
 
-test('フィルター 7 種と Email 検索がある（クライアント側のみ）', () => {
-  for (const label of ['すべて', '保留', '販売可', '即時販売', '販売対象外', 'ROUTE A', 'ROUTE B']) {
-    assert.ok(PAGE.includes(`label: '${label}'`), `フィルターが無い: ${label}`);
+test('一覧の各行には「詳細・操作」ボタンだけを置く（write ボタンを出さない）', () => {
+  const iRender = SCRIPT.indexOf('function render()');
+  const iDetail = SCRIPT.indexOf('function renderDetail()');
+  assert.ok(iRender >= 0 && iDetail > iRender, 'render / renderDetail の順序が想定と違う');
+  const listPart = SCRIPT.slice(iRender, iDetail);
+  assert.match(listPart, /btn\.className = 'btn-detail'/);
+  assert.match(listPart, /openDetail\(r\.recordId\)/);
+  // 一覧側に write 系の生成が無い
+  assert.doesNotMatch(listPart, /mkBtn\(/, '一覧に操作ボタンを描画している');
+  assert.doesNotMatch(listPart, /action: 'update'/, '一覧から write できる');
+  assert.doesNotMatch(listPart, /window\.confirm/);
+});
+
+test('write は詳細パネル内だけで行う', () => {
+  const iDetail = SCRIPT.indexOf('function renderDetail()');
+  const detailPart = SCRIPT.slice(iDetail);
+  assert.match(detailPart, /action: 'update'/);
+  // update を発火する箇所はこの 1 か所だけ
+  assert.equal((SCRIPT.match(/action: 'update'/g) || []).length, 1);
+});
+
+// ── 状態バッジ ───────────────────────────────────────────────────
+test('状態バッジ 5 種（短いラベル）と分類ロジックがある', () => {
+  for (const k of ['review', 'staged', 'sale', 'immediate', 'blocked']) {
+    assert.ok(STYLE.includes(`.badge.${k}`), `バッジ CSS が無い: ${k}`);
   }
+  assert.match(PAGE, /function classify\(r\)/);
+  assert.match(PAGE, /short: '保留'/);
+  assert.match(PAGE, /short: 'PHASE ' \+ r\.phase/);
+  assert.match(PAGE, /short: '販売中'/);
+  assert.match(PAGE, /short: '即時販売'/);
+  assert.match(PAGE, /short: '販売対象外'/);
+  // 一覧では短いバッジ（長文の「段階公開中 PHASE 1」を一覧に出さない）
+  assert.doesNotMatch(PAGE, /'段階公開中 PHASE '/);
+});
+
+test('分類は eligibility → override → phase の順（サーバ判定に追従）', () => {
+  assert.match(PAGE, /if \(r\.eligibility === 'blocked'\)/);
+  assert.match(PAGE, /if \(r\.eligibility !== 'eligible'\)/);
+  assert.match(PAGE, /if \(r\.overrideApplied\)/);
+  assert.match(PAGE, /if \(r\.phase === 4\)/);
+});
+
+// ── 検索・フィルター ─────────────────────────────────────────────
+test('状態フィルター 5 種 + Route フィルター + Email 検索（クライアント側のみ）', () => {
+  for (const v of ['all', 'review', 'eligible', 'immediate', 'blocked']) {
+    assert.ok(PAGE.includes(`<option value="${v}">`), `状態フィルターが無い: ${v}`);
+  }
+  assert.ok(PAGE.includes('<option value="sanrenpuku">'));
+  assert.ok(PAGE.includes('<option value="premium_30d">'));
   assert.match(PAGE, /id="q"[^>]*placeholder="Email で検索"/);
   assert.match(PAGE, /String\(r\.email \|\| ''\)\.toLowerCase\(\)\.includes\(q\)/);
-  // 検索・フィルターは再描画のみ。API を呼ばない
+  // 再描画のみ。API を呼ばない
   assert.match(PAGE, /\$\('q'\)\.addEventListener\('input', render\)/);
+  assert.match(PAGE, /\$\('fState'\)\.addEventListener\('change', render\)/);
+  assert.match(PAGE, /\$\('fRoute'\)\.addEventListener\('change', render\)/);
   assert.doesNotMatch(PAGE, /addEventListener\('input',\s*load\)/);
 });
 
-test('並び順: 保留 → 販売可/段階公開中 → 即時販売 → 販売対象外、同群は最終更新の新しい順', () => {
-  assert.match(PAGE, /order:\s*1[\s\S]{0,200}order:\s*2[\s\S]{0,200}order:\s*2[\s\S]{0,200}order:\s*3[\s\S]{0,200}order:\s*4/);
+test('並び順: 保留 → 販売可/販売中 → 即時販売 → 販売対象外、同群は最終更新の新しい順', () => {
+  assert.match(PAGE, /order: 4[\s\S]{0,400}order: 1[\s\S]{0,400}order: 3[\s\S]{0,400}order: 2[\s\S]{0,400}order: 2/);
   assert.match(PAGE, /classify\(a\)\.order - classify\(b\)\.order/);
   assert.match(PAGE, /return ub\.localeCompare\(ua\);/);
 });
 
-test('顧客カード: ラベル付きの情報グリッド（1 行連結表示を使わない）', () => {
-  for (const k of ['プラン', '三連複', 'Route', 'PHASE', 'Premium経過', '販売許可日', '最終更新']) {
-    assert.ok(PAGE.includes(`fact('${k}'`), `情報項目が無い: ${k}`);
-  }
-  // 旧: 「プラン: … / 三連複: … / route: …」の 1 行連結を復活させない
-  assert.doesNotMatch(PAGE, /'プラン: '\s*\+/);
-  assert.doesNotMatch(PAGE, /join\('　\/　'\)/);
+// ── サマリーバー ─────────────────────────────────────────────────
+test('サマリーは 1 行バー・優先度順・クリックでフィルター', () => {
+  const i = (s) => PAGE.indexOf(s);
+  assert.ok(i("['即時販売', c.immediate") < i("['販売可', c.eligible"));
+  assert.ok(i("['販売可', c.eligible") < i("['保留', c.review"));
+  assert.ok(i("['保留', c.review") < i("['候補', c.total"));
+  assert.match(PAGE, /\$\('fState'\)\.value = filter/);
+  // ROUTE は補助表示（別行）
+  assert.match(PAGE, /summarySub/);
+  assert.match(PAGE, /ROUTE A（三連複）/);
 });
 
-test('操作を 通常 / 強い の 2 グループに分ける', () => {
-  assert.match(PAGE, /ops-label'[\s\S]{0,80}'通常操作'/);
-  assert.match(PAGE, /ops-label'[\s\S]{0,80}'強い操作'/);
-  assert.ok(PAGE.includes('ops-danger'), '危険操作グループが無い');
+// ── 詳細・操作パネル ─────────────────────────────────────────────
+test('詳細パネルに 基本情報 / 表示確認 / 通常操作 / 強い操作 / 内部メモ がある', () => {
+  for (const t of ['基本情報', '表示確認', '通常操作', '強い操作（本番の販売状態が変わります）', '内部メモ']) {
+    assert.ok(PAGE.includes(`textContent = '${t}'`), `セクションが無い: ${t}`);
+  }
+  for (const k of ['プラン', '三連複', 'Route', 'PHASE', 'Premium経過', '販売許可日', '最終更新']) {
+    assert.ok(PAGE.includes(`kvRow(dl, '${k}'`), `基本情報の項目が無い: ${k}`);
+  }
+  assert.ok(STYLE.includes('.dt-sec.danger'), '危険操作の視覚区別が無い');
 });
 
 test('現在の状態と同じ操作は disabled（適用中を明示）', () => {
@@ -103,70 +157,51 @@ test('現在の状態と同じ操作は disabled（適用中を明示）', () =>
   assert.match(PAGE, /mkBtn\('immediate',[^)]*isImmediate/);
   assert.match(PAGE, /mkBtn\('blocked',[^)]*r\.eligibility === 'blocked'\)/);
   assert.match(PAGE, /現在この状態です（適用中）/);
-  assert.ok(PAGE.includes('即時販売を適用中'));
-  assert.ok(PAGE.includes('段階公開で適用中'));
+  assert.ok(PAGE.includes("textContent = '適用中'"));
 });
 
-test('管理接続パネルは折りたたみ、接続済み表示がある', () => {
-  assert.match(PAGE, /<details class="conn"/);
-  assert.ok(PAGE.includes('管理API 接続済み'));
-  assert.match(PAGE, /id="reload"[^>]*class="btn-reload"/);
+test('管理接続は既定で閉じ、接続済みピルを出す', () => {
+  assert.match(PAGE, /id="connBody"[^>]*hidden/);
+  assert.ok(PAGE.includes('● 管理API 接続済み'));
+  assert.match(PAGE, /id="connToggle"/);
+  assert.match(PAGE, /id="reload"[^>]*class="btn-primary"/);
 });
 
-test('サマリーは優先度順（即時販売 / 販売可 / 保留 が先、ROUTE は補助）', () => {
-  const i = (s) => PAGE.indexOf(s);
-  assert.ok(i("['即時販売', c.immediate") < i("['販売可', c.eligible"));
-  assert.ok(i("['販売可', c.eligible") < i("['保留', c.review"));
-  assert.ok(i("['保留', c.review") < i("['ROUTE A', c.routeA"));
-  assert.match(PAGE, /\['ROUTE A', c\.routeA, 'sub'\]/);
-});
-
-test('表示プレビューを維持し、上部に要点をまとめる', () => {
+test('表示プレビューを維持し、上部に要点を横並びで出す', () => {
   assert.ok(PAGE.includes('表示プレビュー'));
   assert.ok(PAGE.includes('管理者プレビュー / 実顧客には影響しません'));
-  for (const k of ['現在 PHASE', '受付状態', '商品ページ', '価格・CTA', 'purchaseEnabled']) {
+  for (const k of ['PHASE', '受付状態', '商品ページ', '価格・CTA', '購入可否']) {
     assert.ok(PAGE.includes(`cell('${k}'`), `プレビュー要点が無い: ${k}`);
   }
+  assert.ok(STYLE.includes('.pv-top'), 'プレビュー上部の横並びカードが無い');
 });
 
 test('Email は省略表示 + title で全文を確認できる', () => {
-  assert.match(PAGE, /text-overflow:\s*ellipsis/);
+  assert.match(STYLE, /text-overflow:\s*ellipsis/);
   assert.match(PAGE, /em\.title = r\.email/);
 });
 
-test('レスポンシブ対応（狭い画面のブレークポイントがある）', () => {
-  assert.match(PAGE, /@media \(max-width: 860px\)/);
-  assert.match(PAGE, /@media \(max-width: 640px\)/);
+// ── モバイル ─────────────────────────────────────────────────────
+test('モバイルはテーブルをカード化し、横スクロールさせない', () => {
+  assert.match(STYLE, /@media \(max-width: 860px\)/);
+  assert.match(STYLE, /\.ppe \.tbl thead \{ display: none; \}/);
+  assert.match(STYLE, /\.ppe \.tbl tbody tr \{[^}]*border-radius/);
+  // 販売許可日・最終更新はモバイルで隠す（Email / 状態 / プラン・Route・PHASE / 操作 のみ）
+  assert.match(STYLE, /\.ppe \.tbl tbody td\.c-eligible \{ display: none; \}/);
+  assert.match(STYLE, /\.ppe \.tbl tbody td\.c-updated \{ display: none; \}/);
+  // 横スクロール用のラッパを持たない
+  assert.doesNotMatch(STYLE, /overflow-x:\s*(auto|scroll)/);
 });
 
-// ── read-only / 非破壊 ───────────────────────────────────────────
-test('画面から Customers を直接触らない（API 以外の書込経路が無い）', () => {
-  assert.doesNotMatch(PAGE, /api\.airtable\.com/);
-  assert.doesNotMatch(PAGE, /method:\s*'(PATCH|PUT|DELETE)'/);
-  // fetch は管理 Function のみ
-  const fetches = PAGE.match(/fetch\(([^)]*)/g) || [];
-  for (const f of fetches) assert.match(f, /API|premium-plus-eligibility/, `想定外の fetch: ${f}`);
-});
-
-test('顧客データを URL に載せない（recordId をクエリに出さない）', () => {
-  assert.doesNotMatch(PAGE, /location\.(search|href)\s*=/);
-  assert.doesNotMatch(PAGE, /history\.(push|replace)State/);
-  assert.doesNotMatch(PAGE, /\?record=/);
-});
-
-// ── スタイルが JS 生成要素にも適用されること（本番不具合の再発防止）──────
-// Astro の scoped style は `.cust[data-astro-cid-xxx]` へ変換される。カード・バッジ・
-// チップ・サマリーは JS で生成するため cid 属性が付かず、scoped のままだと**無効**になる。
-// そのため is:global にし、代わりに全セレクタを .ppe 名前空間へ閉じ込める。
+// ── スタイルが JS 生成 DOM にも適用されること（本番不具合の再発防止）──
 test('style は is:global（scoped だと JS 生成要素へ適用されない）', () => {
   assert.match(PAGE, /<style is:global>/);
   assert.doesNotMatch(PAGE, /<style>\s/);
 });
 
 test('全 CSS セレクタが .ppe 名前空間に閉じている（グローバル汚染の防止）', () => {
-  const style = PAGE.slice(PAGE.indexOf('<style is:global>'), PAGE.indexOf('</style>'));
   const bad = [];
-  for (const raw of style.split('\n')) {
+  for (const raw of STYLE.split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('/*') || line.startsWith('}') || line.startsWith('@') || line.startsWith('<')) continue;
     const m = line.match(/^([^{]+)\{/);
@@ -183,6 +218,34 @@ test('全 CSS セレクタが .ppe 名前空間に閉じている（グローバ
 
 test('@media にセレクタ前置の誤りが無い', () => {
   assert.doesNotMatch(PAGE, /\.ppe\s+@media/);
-  assert.match(PAGE, /@media \(max-width: 860px\)/);
-  assert.match(PAGE, /@media \(max-width: 640px\)/);
+  assert.match(STYLE, /@media \(max-width: 860px\)/);
+});
+
+test('ビルド後の生成 CSS に scoped 変換が残っていない（dist がある場合のみ）', (t) => {
+  const dist = fileURLToPath(new URL('../../../dist/assets/', import.meta.url));
+  if (!existsSync(dist)) return t.skip('dist 未生成（build 後に検証される）');
+  const file = readdirSync(dist).find((f) => f.startsWith('premium-plus-eligibility') && f.endsWith('.css'));
+  if (!file) return t.skip('管理画面 CSS が dist に無い');
+  const css = readFileSync(dist + file, 'utf8');
+  assert.doesNotMatch(css, /data-astro-cid/, 'scoped 変換されている（JS 生成 DOM にスタイルが当たらない）');
+  // JS で生成する要素のスタイルが実在する
+  for (const sel of ['.ppe .badge.immediate', '.ppe .btn-detail', '.ppe .tbl tbody td', '.ppe .dt-sec']) {
+    assert.ok(css.includes(sel), `生成 CSS に無い: ${sel}`);
+  }
+  // 名前空間の外へ漏れていない
+  assert.doesNotMatch(css, /(^|\})\.(badge|btn-detail|dt-sec|sumbar)[{.\[]/, 'グローバルへ漏れている');
+});
+
+// ── read-only / 非破壊 ───────────────────────────────────────────
+test('画面から Customers を直接触らない（API 以外の書込経路が無い）', () => {
+  assert.doesNotMatch(PAGE, /api\.airtable\.com/);
+  assert.doesNotMatch(PAGE, /method:\s*'(PATCH|PUT|DELETE)'/);
+  const fetches = PAGE.match(/fetch\(([^)]*)/g) || [];
+  for (const f of fetches) assert.match(f, /API|premium-plus-eligibility/, `想定外の fetch: ${f}`);
+});
+
+test('顧客データを URL に載せない（recordId をクエリに出さない）', () => {
+  assert.doesNotMatch(PAGE, /location\.(search|href)\s*=/);
+  assert.doesNotMatch(PAGE, /history\.(push|replace)State/);
+  assert.doesNotMatch(PAGE, /\?record=/);
 });
