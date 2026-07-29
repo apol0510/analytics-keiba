@@ -150,6 +150,62 @@ anchor に使うのは **`PremiumPlusEligibleAt` だけ**。監査用の
 blocked → eligible の再解除では、その**再解除日時**へ更新される（= そこから PHASE 1 で再開）。
 判定に必要な「変更前の資格」は管理 Function が Airtable から読み直す（クライアント申告は信用しない）。
 
+## 「今すぐ販売可」（段階公開 override）
+
+管理者が **特定会員だけ** 段階公開を飛ばして即 PHASE 4 にできる。既存の PHASE 1→4 は維持したまま、
+明示 override として実装する（**日時の偽装ではない**）。
+
+### フィールド
+
+`PremiumPlusReleaseOverride`（単一選択 / 空 or `phase4`）**1 つだけ**。
+監査は既存の `PremiumPlusEligibilityUpdatedAt` / `...UpdatedBy` を再利用し、
+`PremiumPlusReleaseOverrideAt` / `...UpdatedBy` は**作らない**（不要なスキーマ肥大を避ける）。
+
+> ⚠️ `PremiumPlusEligibleAt` や `SanrenpukuPaidAt` を過去日に書き換えて即時販売を実現しては
+> **いけない**。監査不能になり、override を外したときに戻せなくなる。
+
+### phase 判定の優先順位（この順序を変えない）
+
+| # | 条件 | 結果 |
+|---|---|---|
+| 1 | audience 不成立（route = none） | 非公開 |
+| 2 | `PremiumPlusEligibility != eligible` | 非公開（**override があっても**） |
+| 3 | 有効な `phase4` override | **PHASE 4** |
+| 4 | それ以外 | 通常の段階公開（anchor からの JST 暦日） |
+| 5 | PHASE 4 のとき | OPEN / CLOSING / CLOSED（override 経由でも同じ） |
+
+**override は eligibility の代替ではない。** review / blocked の会員が override だけで
+販売可能になることは構造的に起きない（guard テストで固定）。
+
+### 管理画面の 4 操作
+
+| ボタン | eligibility | override | EligibleAt |
+|---|---|---|---|
+| 段階公開で販売可 | eligible | **解除** | 非 eligible からの遷移時のみ now |
+| **今すぐ販売可** | eligible | **phase4** | 同上 |
+| 保留 | review | **解除** | touch しない |
+| 販売対象外 | blocked | **解除** | touch しない |
+
+- review / blocked へ落とすとき override を必ず解除する。残すと後で再 eligible にした瞬間に
+  「意図しない即時販売」が復活する
+- 即時販売 → 段階公開は **override だけ**解除。EligibleAt は書き換えないので、元の販売許可日から
+  通常の段階公開が再開する
+- 「今すぐ販売可」は `window.confirm` で
+  **「この会員は即時PHASE 4となり、価格と購入CTAが表示されます。」** を明示し、承諾後のみ write。
+  処理中は行内の全ボタンを disable（二重送信対策）
+- 状態表示は `describeReleaseState()` の単一源:
+  保留 / 段階公開中 PHASE 1〜3 / 販売中 PHASE 4 / 即時販売 / 販売対象外
+
+### schema 未作成時は fail closed
+
+override フィールドは eligibility 系より**後から**追加するため、gate を分けている
+（`isReleaseOverrideEnabled` = `PREMIUM_PLUS_FIELDS_READY=1` **かつ** `PREMIUM_PLUS_OVERRIDE_READY=1`）。
+
+- 無効の間は「今すぐ販売可」を **503** で拒否し、ボタンも disabled
+- 無効の間は override フィールドを **PATCH に含めない**（未作成フィールドを混ぜると 422 で
+  同じ PATCH の eligibility 更新まで巻き添えになる）
+- 読み取り側は未作成なら `undefined` → `null`（override なし）＝通常の段階公開
+
 ## 本日の受付ステータス（PHASE 4 到達後のみ）
 
 | 状態 | 表示 | 購入操作 |
@@ -174,7 +230,8 @@ nankan（平日 = 南関）: CLOSING 18:00 / CLOSED 20:00 JST
 
 ## Airtable フィールド（本番未作成・要承認）
 
-2026-07-29 時点で **以下 6 フィールドはいずれも本番 Customers に存在しない**（1440 件を read-only 実測）。
+2026-07-29 時点で **6 フィールドは作成済み**（read-only 実測）。
+`PremiumPlusReleaseOverride` の **1 つだけが未作成**（要承認）。
 
 | フィールド | 型 | 用途 |
 |---|---|---|
@@ -182,6 +239,7 @@ nankan（平日 = 南関）: CLOSING 18:00 / CLOSED 20:00 JST
 | `PremiumPlusEligibility` | 単一選択 `eligible` / `review` / `blocked` | 販売資格 |
 | `PremiumPlusEligibilityReason` | テキスト（200 字） | 管理者だけが見る内部メモ。**顧客画面に絶対に出さない** |
 | `PremiumPlusEligibleAt` | 日時 | **段階公開 anchor**。eligible への実遷移時のみ更新 |
+| `PremiumPlusReleaseOverride` | 単一選択 `phase4`（空 = override なし） | 「今すぐ販売可」。**未作成・要承認** |
 | `PremiumPlusEligibilityUpdatedAt` | 日時 | **監査専用**（phase には使わない） |
 | `PremiumPlusEligibilityUpdatedBy` | テキスト | 監査（操作者） |
 
@@ -332,8 +390,11 @@ KMA 側の変更は本作業の範囲外。
 - [x] route 別の予告文言
 - [x] テスト（fixture / mock のみ・本番データ不使用）
 - [x] 販売許可日 anchor を専用フィールド `PremiumPlusEligibleAt` へ分離（案A・監査日時と兼用しない）
-- [ ] **Airtable に 6 フィールドを作成**（承認待ち・本番 schema 変更）
-- [ ] **`PREMIUM_PLUS_FIELDS_READY=1` を production に設定**（承認待ち・本番 env 変更）
+- [x] Airtable に 6 フィールドを作成（2026-07-29 完了）
+- [x] `PREMIUM_PLUS_FIELDS_READY=1` を production に設定（2026-07-29 完了）
+- [x] 「今すぐ販売可」override のコード実装（コードのみ・本番未反映）
+- [ ] **Airtable に `PremiumPlusReleaseOverride` を作成**（承認待ち・本番 schema 変更）
+- [ ] **`PREMIUM_PLUS_OVERRIDE_READY=1` を production に設定**（承認待ち・本番 env 変更）
 - [ ] 既存 22 件の個別解禁（管理者操作）
 - [ ] 受付締切時刻の確定
 - [ ] main への push / production deploy（承認待ち）

@@ -193,7 +193,7 @@ test('管理 Function: Plus 専用フィールド以外を書かない', () => {
 
 test('管理 Function: 変更前の資格を Airtable から読んでから PATCH する（anchor 判定に必須）', () => {
   const code = stripComments(ADMIN_FN);
-  assert.match(code, /current:\s*currentFields\['PremiumPlusEligibility'\]/);
+  assert.match(code, /current:\s*currentFields\[PP_ELIGIBILITY_FIELDS\.STATUS\]/);
   const iGet = code.indexOf('currentFields');
   const iPatch = code.indexOf("method: 'PATCH'");
   assert.ok(iGet >= 0 && iGet < iPatch, '変更前の値を読まずに PATCH している');
@@ -232,7 +232,65 @@ test('管理 Function: 自動で eligible にする分岐が無い（管理者�
   const code = stripComments(ADMIN_FN);
   // 代入（= PP_ELIGIBILITY.ELIGIBLE）は禁止。比較（=== ...）は集計に使うので許可する
   assert.doesNotMatch(code, /(?<![=!])=\s*PP_ELIGIBILITY\.ELIGIBLE/);
-  assert.match(code, /buildEligibilityUpdateFields\(/);
+  assert.match(code, /buildAdminActionFields\(/);
+});
+
+// ── 「今すぐ販売可」（override）の配線 ────────────────────────────
+const ADMIN_PAGE = read('../../pages/admin/premium-plus-eligibility.astro');
+
+test('override: 3 面（premium-plus / premium-plus-v2 / stage API）が同じ単一源で判定する', () => {
+  // どれも member アダプタ + resolvePremiumPlusRelease を通す＝override も自動的に同じ扱いになる
+  for (const src of [...Object.values(PRODUCT_PAGES), ENDPOINT]) {
+    assert.match(src, /resolvePlusMemberFromFields\s*\(/);
+    assert.match(src, /resolvePremiumPlusRelease\s*\(\s*\{\s*\.\.\.\w+/, 'member をそのまま渡していない（override が落ちる）');
+  }
+  // ページ側に override の独自解釈を書かない
+  for (const src of Object.values(PRODUCT_PAGES)) {
+    assert.doesNotMatch(src, /phase4/);
+    assert.doesNotMatch(src, /ReleaseOverride/);
+  }
+});
+
+test('override: eligibility を迂回できない優先順位になっている', () => {
+  const code = stripComments(RELEASE_LIB);
+  const iElig = code.indexOf('normalizedEligibility !== PP_ELIGIBILITY.ELIGIBLE');
+  const iOverride = code.indexOf('overrideApplied =');
+  assert.ok(iElig >= 0 && iOverride > iElig, 'override 判定が eligibility ゲートより前にある');
+  assert.match(code, /overrideApplied \? PP_PHASE\.SALE : computePhase/);
+});
+
+test('override: 日時の偽装で実現していない（EligibleAt / SanrenpukuPaidAt を書き換えない）', () => {
+  const code = stripComments(read('./premiumPlusEligibility.js'));
+  const fn = code.slice(code.indexOf('export function buildAdminActionFields'));
+  assert.doesNotMatch(fn, /SANRENPUKU_PAID_AT_FIELD/);
+  assert.doesNotMatch(fn, /ELIGIBLE_AT/);
+});
+
+test('override: 管理 Function は 4 操作のみ受け付け、未有効なら 503', () => {
+  const code = stripComments(ADMIN_FN);
+  assert.match(code, /isReleaseOverrideEnabled\(process\.env\)/);
+  assert.match(code, /PP_ADMIN_ACTION\.IMMEDIATE\s*&&\s*!overrideFieldEnabled/);
+  assert.match(code, /return json\(503/);
+  assert.match(code, /buildAdminActionFields\(/);
+  // 変更前 override も Airtable から読む（クライアント申告を信用しない）
+  assert.match(code, /currentOverride:\s*currentFields\[PP_ELIGIBILITY_FIELDS\.OVERRIDE\]/);
+  assert.doesNotMatch(code, /currentOverride:\s*req\./);
+});
+
+test('override: 管理画面に確認ダイアログと二重送信対策がある', () => {
+  assert.match(ADMIN_PAGE, /window\.confirm\(/);
+  assert.match(ADMIN_PAGE, /この会員は即時PHASE 4となり、価格と購入CTAが表示されます。/);
+  assert.match(ADMIN_PAGE, /dataset\.busy === '1'\) return/);
+  assert.match(ADMIN_PAGE, /buttons\.forEach\(\(x\) => \{ x\.disabled = true; \}\)/);
+});
+
+test('override: 管理画面に 4 ボタンと日本語の状態表示がある', () => {
+  for (const label of ['段階公開で販売可', '今すぐ販売可', '保留', '販売対象外']) {
+    assert.ok(ADMIN_PAGE.includes(label), `ボタンが無い: ${label}`);
+  }
+  assert.match(ADMIN_PAGE, /r\.state/);
+  // 状態文言の単一源（describeReleaseState）を Function 側で使う
+  assert.match(ADMIN_FN, /describeReleaseState\(/);
 });
 
 for (const [name, src] of Object.entries(SANRENPUKU_PAGES)) {

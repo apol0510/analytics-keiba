@@ -3,7 +3,9 @@
  *
  * `/admin/premium-plus-eligibility` から呼ぶ。
  *   action='list'   … Plus 販売候補（ROUTE A / ROUTE B）を一覧で返す
- *   action='update' … 1 会員の販売資格を 販売可 / 保留 / 販売対象外 に変更する
+ *   action='update' … 1 会員の販売資格を変更する。plusAction は次の 4 つ:
+ *                     staged（段階公開で販売可）/ immediate（今すぐ販売可）/
+ *                     review（保留）/ blocked（販売対象外）
  *
  * 設計上の要点:
  * - **Premium Plus の販売資格だけ**を変更する。プラン / Status / 有効期限 / PaidAt /
@@ -20,14 +22,18 @@
 import {
   PP_ELIGIBILITY,
   PP_ELIGIBILITY_LABEL,
+  PP_ELIGIBILITY_FIELDS,
   PP_ROUTE,
+  describeReleaseState,
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
 import {
-  buildEligibilityUpdateFields,
+  buildAdminActionFields,
   assertOnlyPlusFields,
   isPlusFieldsEnabled,
+  isReleaseOverrideEnabled,
+  PP_ADMIN_ACTION,
 } from '../../src/lib/premiumPlus/premiumPlusEligibility.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -119,6 +125,9 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         eligibility,
         eligibilityLabel: PP_ELIGIBILITY_LABEL[eligibility],
         reason: fields['PremiumPlusEligibilityReason'] || '',
+        releaseOverride: release.releaseOverride || '',
+        overrideApplied: release.overrideApplied,
+        state: describeReleaseState(release),
         eligibleAt: fields['PremiumPlusEligibleAt'] || '',
         updatedAt: fields['PremiumPlusEligibilityUpdatedAt'] || '',
         updatedBy: fields['PremiumPlusEligibilityUpdatedBy'] || '',
@@ -145,8 +154,10 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       blocked: rows.filter((r) => r.eligibility === PP_ELIGIBILITY.BLOCKED).length,
       routeA: rows.filter((r) => r.route === PP_ROUTE.SANRENPUKU).length,
       routeB: rows.filter((r) => r.route === PP_ROUTE.PREMIUM_30D).length,
+      immediate: rows.filter((r) => r.overrideApplied).length,
     },
     writeEnabled: isPlusFieldsEnabled(process.env),
+    overrideEnabled: isReleaseOverrideEnabled(process.env),
     truncated,
   });
 }
@@ -171,14 +182,29 @@ async function handleUpdate({ KEY, BASE, now, req }) {
   if (!getRes.ok) return json(404, { error: 'Record not found' });
   const currentFields = (await getRes.json()).fields || {};
 
-  const built = buildEligibilityUpdateFields({
-    next: req.next,
-    current: currentFields['PremiumPlusEligibility'],
+  const overrideFieldEnabled = isReleaseOverrideEnabled(process.env);
+  const plusAction = String(req.plusAction || '').trim().toLowerCase();
+
+  // 「今すぐ販売可」は override フィールド未作成なら受け付けない（fail closed）
+  if (plusAction === PP_ADMIN_ACTION.IMMEDIATE && !overrideFieldEnabled) {
+    return json(503, {
+      error: '「今すぐ販売可」は未有効（PremiumPlusReleaseOverride 未作成 / PREMIUM_PLUS_OVERRIDE_READY 未設定）',
+      hint: 'Airtable に PremiumPlusReleaseOverride を作成後、env を 1 にしてください',
+    });
+  }
+
+  const built = buildAdminActionFields({
+    action: plusAction,
+    current: currentFields[PP_ELIGIBILITY_FIELDS.STATUS],
+    currentOverride: currentFields[PP_ELIGIBILITY_FIELDS.OVERRIDE],
     reason: req.reason,
     actor: req.actor || 'admin',
     now: new Date(now),
+    overrideFieldEnabled,
   });
-  if (!built) return json(400, { error: 'next は eligible / review / blocked のいずれかです' });
+  if (!built) {
+    return json(400, { error: 'plusAction は staged / immediate / review / blocked のいずれかです' });
+  }
 
   // PATCH 直前の最終防衛（Plus 専用フィールド以外が混ざっていないか）
   if (!assertOnlyPlusFields(built.fields)) return json(500, { error: 'field allow-list violation' });
@@ -195,13 +221,17 @@ async function handleUpdate({ KEY, BASE, now, req }) {
   }
 
   console.log('✅ [premium-plus-eligibility] 販売資格を更新:', {
-    recordId, next: built.next, eligibleAtUpdated: built.eligibleAtUpdated,
+    recordId, action: plusAction, next: built.next,
+    override: built.override, eligibleAtUpdated: built.eligibleAtUpdated,
   });
   return json(200, {
     success: true,
     recordId,
+    action: plusAction,
     next: built.next,
     label: PP_ELIGIBILITY_LABEL[built.next],
+    override: built.override,
+    overrideChanged: built.overrideChanged,
     // true のときだけ段階公開 anchor が動く（= PHASE 1 から見え始める）
     eligibleAtUpdated: built.eligibleAtUpdated,
   });

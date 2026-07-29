@@ -32,6 +32,7 @@ test('書けるのは Plus 専用フィールドだけ（禁止フィールド�
     'PremiumPlusEligibilityUpdatedAt',
     'PremiumPlusEligibilityUpdatedBy',
     'PremiumPlusEligibleAt',
+    'PremiumPlusReleaseOverride',
     'SanrenpukuPaidAt',
   ].sort());
 });

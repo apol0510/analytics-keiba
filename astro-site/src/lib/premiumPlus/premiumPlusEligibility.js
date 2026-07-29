@@ -23,8 +23,10 @@
 import {
   PP_ELIGIBILITY,
   PP_ELIGIBILITY_FIELDS,
+  PP_RELEASE_OVERRIDE,
   SANRENPUKU_PAID_AT_FIELDS,
   normalizeEligibility,
+  normalizeReleaseOverride,
 } from './premiumPlusRelease.js';
 
 /** 三連複購入確定日時の正本フィールド名（書き込みはこの 1 つだけ） */
@@ -36,9 +38,22 @@ export const PP_WRITABLE_FIELDS = Object.freeze([
   PP_ELIGIBILITY_FIELDS.STATUS,
   PP_ELIGIBILITY_FIELDS.REASON,
   PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT,
+  PP_ELIGIBILITY_FIELDS.OVERRIDE,
   PP_ELIGIBILITY_FIELDS.UPDATED_AT,
   PP_ELIGIBILITY_FIELDS.UPDATED_BY,
 ]);
+
+/** 管理画面の操作（この 4 つだけ） */
+export const PP_ADMIN_ACTION = Object.freeze({
+  /** 段階公開で販売可: eligible ＋ override 解除（PHASE 1 から開始） */
+  STAGED: 'staged',
+  /** 今すぐ販売可: eligible ＋ override='phase4'（即 PHASE 4） */
+  IMMEDIATE: 'immediate',
+  /** 保留 */
+  REVIEW: 'review',
+  /** 販売対象外 */
+  BLOCKED: 'blocked',
+});
 
 /** 絶対に触れてはいけないフィールド（テストと実行時の両方で検査する） */
 export const PP_FORBIDDEN_FIELDS = Object.freeze([
@@ -60,6 +75,18 @@ export const PP_REASON_MAX_LENGTH = 200;
  */
 export function isPlusFieldsEnabled(env) {
   return !!env && env.PREMIUM_PLUS_FIELDS_READY === '1';
+}
+
+/**
+ * `PremiumPlusReleaseOverride` フィールドへの書き込みが有効か。
+ *
+ * このフィールドは PremiumPlusEligibility 系（PREMIUM_PLUS_FIELDS_READY）より**後から**
+ * 追加するため、gate を分けている。未作成の本番へ含めて PATCH すると Airtable が 422 を返し、
+ * **同じ PATCH の eligibility 更新まで巻き添えで失敗する**ため、独立した gate が必要。
+ * 無効の間は override フィールドを PATCH に含めず、「今すぐ販売可」も受け付けない（fail closed）。
+ */
+export function isReleaseOverrideEnabled(env) {
+  return isPlusFieldsEnabled(env) && env.PREMIUM_PLUS_OVERRIDE_READY === '1';
 }
 
 /**
@@ -176,4 +203,73 @@ export function buildEligibilityUpdateFields({ next, current, reason, actor, now
 
   if (!assertOnlyPlusFields(out)) return null;
   return { fields: out, next: nextStatus, eligibleAtUpdated: isTransitionToEligible };
+}
+
+/**
+ * 管理画面の 4 操作 → PATCH フィールド。
+ *
+ * | 操作 | eligibility | override | EligibleAt |
+ * |---|---|---|---|
+ * | 段階公開で販売可 (staged)   | eligible | **解除** | 非 eligible からの遷移時のみ now |
+ * | 今すぐ販売可 (immediate)    | eligible | **phase4** | 同上 |
+ * | 保留 (review)              | review  | **解除** | touch しない |
+ * | 販売対象外 (blocked)        | blocked | **解除** | touch しない |
+ *
+ * - override は review / blocked へ落とすとき必ず解除する。残したままだと、後で再び
+ *   eligible にした瞬間に「意図しない即時販売」が復活してしまう。
+ * - 即時販売 → 段階公開へ戻すときは **override だけ**を消し、EligibleAt は書き換えない
+ *   （元の販売許可日から通常の段階公開が再開する）。
+ * - override フィールドが未作成（gate off）のときに immediate を要求されたら null を返す
+ *   （呼び出し側は 503 にする）。staged / review / blocked は override を PATCH に含めずに続行できる。
+ *
+ * @param {{
+ *   action: string,
+ *   current?: unknown,          変更前の PremiumPlusEligibility 生値
+ *   currentOverride?: unknown,  変更前の PremiumPlusReleaseOverride 生値
+ *   reason?: unknown,
+ *   actor?: unknown,
+ *   now: Date|number,
+ *   overrideFieldEnabled?: boolean, override フィールドが本番に存在するか
+ * }} input
+ * @returns {{ fields: Record<string, unknown>, next: string, override: string|null,
+ *             eligibleAtUpdated: boolean, overrideChanged: boolean }|null}
+ */
+export function buildAdminActionFields({
+  action, current, currentOverride, reason, actor, now, overrideFieldEnabled = false,
+}) {
+  const a = (action == null ? '' : String(action)).trim().toLowerCase();
+  const wantsImmediate = a === PP_ADMIN_ACTION.IMMEDIATE;
+
+  let nextStatus;
+  if (a === PP_ADMIN_ACTION.STAGED || wantsImmediate) nextStatus = PP_ELIGIBILITY.ELIGIBLE;
+  else if (a === PP_ADMIN_ACTION.REVIEW) nextStatus = PP_ELIGIBILITY.REVIEW;
+  else if (a === PP_ADMIN_ACTION.BLOCKED) nextStatus = PP_ELIGIBILITY.BLOCKED;
+  else return null; // 未知の操作は丸めずに拒否
+
+  // 「今すぐ販売可」は override フィールドが無ければ成立しない（fail closed）
+  if (wantsImmediate && !overrideFieldEnabled) return null;
+
+  const base = buildEligibilityUpdateFields({ next: nextStatus, current, reason, actor, now });
+  if (!base) return null;
+
+  const nextOverride = wantsImmediate ? PP_RELEASE_OVERRIDE.PHASE4 : null;
+  const prevOverride = normalizeReleaseOverride(currentOverride);
+  let overrideChanged = false;
+
+  if (overrideFieldEnabled && nextOverride !== prevOverride) {
+    // 解除は空文字で表現する（single select を未選択に戻す）
+    base.fields[PP_ELIGIBILITY_FIELDS.OVERRIDE] = nextOverride === null
+      ? PP_RELEASE_OVERRIDE.NONE
+      : nextOverride;
+    overrideChanged = true;
+  }
+
+  if (!assertOnlyPlusFields(base.fields)) return null;
+  return {
+    fields: base.fields,
+    next: base.next,
+    override: nextOverride,
+    eligibleAtUpdated: base.eligibleAtUpdated,
+    overrideChanged,
+  };
 }

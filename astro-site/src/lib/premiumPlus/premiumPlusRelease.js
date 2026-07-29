@@ -113,9 +113,27 @@ export const PP_ELIGIBILITY_FIELDS = Object.freeze({
   REASON: 'PremiumPlusEligibilityReason',
   /** 段階公開 anchor 用。eligible への実遷移時のみ更新する */
   ELIGIBLE_AT: 'PremiumPlusEligibleAt',
+  /** 段階公開を飛ばして即 PHASE 4 にする明示 override（空 or 'phase4'） */
+  OVERRIDE: 'PremiumPlusReleaseOverride',
   /** 監査専用。phase 判定に使わない */
   UPDATED_AT: 'PremiumPlusEligibilityUpdatedAt',
   UPDATED_BY: 'PremiumPlusEligibilityUpdatedBy',
+});
+
+/**
+ * 段階公開 override（「今すぐ販売可」）。
+ *
+ * ⚠️ override は **eligibility の代替ではない**。販売可否の正本はあくまで
+ *    PremiumPlusEligibility で、override は「eligible の人の phase 進行を飛ばす」だけ。
+ *    review / blocked の会員が override だけで販売可能になってはいけない。
+ *
+ * ⚠️ 日時の偽装で実現しない。`PremiumPlusEligibleAt` / `SanrenpukuPaidAt` を過去日に
+ *    書き換える方式は監査不能になるため禁止。専用の明示フラグで表現する。
+ */
+export const PP_RELEASE_OVERRIDE = Object.freeze({
+  NONE: '',
+  /** 即 PHASE 4（価格・購入 CTA 解禁。受付時間帯の OPEN/CLOSING/CLOSED は通常どおり適用） */
+  PHASE4: 'phase4',
 });
 
 /** 本日の受付ステータス（PHASE 4 到達後のみ意味を持つ） */
@@ -317,6 +335,18 @@ export function computeIntakeStatus({ nowMs, circuit }) {
  * @param {unknown} raw
  * @returns {'eligible'|'review'|'blocked'}
  */
+/**
+ * 段階公開 override を正規化する。
+ * 既知の値（'phase4'）以外・未設定・不正値はすべて **null（override なし）**（fail closed）。
+ *
+ * @param {unknown} raw
+ * @returns {'phase4'|null}
+ */
+export function normalizeReleaseOverride(raw) {
+  const v = (raw == null ? '' : String(raw)).trim().toLowerCase();
+  return v === PP_RELEASE_OVERRIDE.PHASE4 ? PP_RELEASE_OVERRIDE.PHASE4 : null;
+}
+
 export function normalizeEligibility(raw) {
   const v = (raw == null ? '' : String(raw)).trim().toLowerCase();
   if (v === PP_ELIGIBILITY.ELIGIBLE) return PP_ELIGIBILITY.ELIGIBLE;
@@ -376,14 +406,14 @@ export function teaserCopyForRoute(route) {
 /**
  * 段階公開の最終判定（STEP 1〜7 の単一源）。ページ / エンドポイントはこの戻り値だけを見て描画する。
  *
- * 判定順:
- *   1. 会員状態（呼び出し側が既存の権限正本から解決して渡す）
- *   2. route（sanrenpuku / premium_30d / none）
- *   3. PremiumPlusEligibility（eligible 以外は販売不可）
- *   4. route 固有 anchor
- *   5. phase
- *   6. OPEN / CLOSING / CLOSED
- *   7. purchaseEnabled
+ * 判定順（この優先順位を変えないこと）:
+ *   1. audience 不成立（会員状態・route が none）→ 非公開
+ *   2. PremiumPlusEligibility != eligible → 非公開
+ *      （review / blocked は override があっても**絶対に**公開しない）
+ *   3. 有効な phase4 override → PHASE 4（段階公開を飛ばす）
+ *   4. それ以外 → 通常の段階公開判定（anchor からの JST 暦日）
+ *   5. OPEN / CLOSING / CLOSED（PHASE 4 のときのみ。override 経由でも同じ）
+ *   6. purchaseEnabled
  *
  * @param {{
  *   hasSanrenpuku: boolean,
@@ -420,6 +450,7 @@ export function resolvePremiumPlusRelease(input) {
     premiumPaidAtMs = null,
     eligibility,
     eligibleAtMs = null,
+    releaseOverride,
     nowMs,
     circuit,
     anchorMode,
@@ -434,11 +465,14 @@ export function resolvePremiumPlusRelease(input) {
     : circuitForJst(nowMs);
 
   const normalizedEligibility = normalizeEligibility(eligibility);
+  const normalizedOverride = normalizeReleaseOverride(releaseOverride);
 
   const denied = (over = {}) => ({
     allowed: false,
     route: PP_ROUTE.NONE,
     eligibility: normalizedEligibility,
+    releaseOverride: normalizedOverride,
+    overrideApplied: false,
     anchorMs: null,
     phase: PP_PHASE.LOCKED,
     daysSincePurchase: null,
@@ -464,17 +498,20 @@ export function resolvePremiumPlusRelease(input) {
   if (route === PP_ROUTE.NONE) return denied({ daysSincePremium });
 
   // STEP 3: 販売資格。eligible 以外は段階公開へ進めない（fail closed）
+  // ⚠️ override があっても review / blocked は必ずここで打ち切る。
   if (normalizedEligibility !== PP_ELIGIBILITY.ELIGIBLE) {
     return denied({ route, daysSincePremium });
   }
 
-  // STEP 4: anchor
+  // STEP 4: anchor（override 時も監査・表示のため計算しておく。日時は改変しない）
   const anchorMs = resolvePhaseAnchorMs({
     route, sanrenpukuPaidAtMs, premiumPaidAtMs, eligibleAtMs, mode: anchorMode,
   });
 
   // STEP 5: phase
-  const phase = computePhase({ paidAtMs: anchorMs, nowMs });
+  // eligible かつ有効な phase4 override があるときだけ段階公開を飛ばす。
+  const overrideApplied = normalizedOverride === PP_RELEASE_OVERRIDE.PHASE4;
+  const phase = overrideApplied ? PP_PHASE.SALE : computePhase({ paidAtMs: anchorMs, nowMs });
 
   // STEP 6: 受付ステータス
   const isSale = phase === PP_PHASE.SALE;
@@ -484,6 +521,8 @@ export function resolvePremiumPlusRelease(input) {
     allowed: true,
     route,
     eligibility: normalizedEligibility,
+    releaseOverride: normalizedOverride,
+    overrideApplied,
     anchorMs,
     phase,
     daysSincePurchase: isFiniteNumber(anchorMs) ? jstDayDiff(anchorMs, nowMs) : null,
@@ -496,6 +535,22 @@ export function resolvePremiumPlusRelease(input) {
     intake,
     circuit: resolvedCircuit,
   };
+}
+
+/**
+ * 管理画面に出す「現在の状態」を日本語 1 行で返す（顧客向け画面には出さない）。
+ *
+ * @param {ReturnType<typeof resolvePremiumPlusRelease>} release
+ * @returns {string}
+ */
+export function describeReleaseState(release) {
+  const r = release || {};
+  if (r.eligibility === PP_ELIGIBILITY.BLOCKED) return '販売対象外';
+  if (r.eligibility !== PP_ELIGIBILITY.ELIGIBLE) return '保留';
+  if (!r.allowed) return '対象外（Plus 候補の条件を満たしていません）';
+  if (r.overrideApplied) return '即時販売';
+  if (r.phase === PP_PHASE.SALE) return '販売中 PHASE 4';
+  return `段階公開中 PHASE ${r.phase}`;
 }
 
 /**

@@ -16,6 +16,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       候補は自動で「販売可」になりません（新規候補は必ず <b>保留</b> から始まります）。
       ここでの変更は <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
     </p>
+    <p class="lead warn">
+      <b>「今すぐ販売可」</b>はその会員だけ段階公開を飛ばして <b>即 PHASE 4（価格・購入 CTA 表示）</b>にする操作です。
+      確認ダイアログでの承諾後にのみ実行されます。購入日や販売許可日を過去日に書き換えることはしません。
+    </p>
 
     <div class="card">
       <label>管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
@@ -61,6 +65,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .acts { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
   .acts input { flex: 1 1 220px; min-width: 180px; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-size: .82rem; }
   .acts button { font-size: .8rem; }
+  .lead.warn { color: #f5c451; }
+  .state { font-size: .8rem; font-weight: 800; }
+  .b-staged { background: #34d399; color: #05261a; }
+  .b-immediate { background: linear-gradient(135deg, #f5c451, #d99b1f); color: #2a1d02; }
+  .badge.immediate { background: rgba(245,196,81,.18); color: #f5c451; }
+  .acts button[disabled] { opacity: .45; cursor: not-allowed; }
   .b-eligible { background: #34d399; color: #05261a; }
   .b-review { background: #f5c451; color: #2a1d02; }
   .b-blocked { background: #f87171; color: #2a0707; }
@@ -101,12 +111,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const c = data.counts || {};
       $('summary').innerHTML = [
         ['候補', c.total], ['保留', c.review], ['販売可', c.eligible], ['販売対象外', c.blocked],
-        ['ROUTE A(三連複)', c.routeA], ['ROUTE B(Premium30日)', c.routeB],
+        ['ROUTE A(三連複)', c.routeA], ['ROUTE B(Premium30日)', c.routeB], ['即時販売', c.immediate],
       ].map(([k, v]) => `<span class="pill">${k}: <b>${v ?? 0}</b></span>`).join('');
 
-      $('writeState').textContent = data.writeEnabled
+      $('writeState').textContent = (data.writeEnabled
         ? '書き込み: 有効'
-        : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。';
+        : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。')
+        + (data.overrideEnabled
+          ? ' / 今すぐ販売可: 利用可'
+          : ' / 今すぐ販売可: 無効（PremiumPlusReleaseOverride 未作成 / PREMIUM_PLUS_OVERRIDE_READY 未設定）');
 
       const list = $('list');
       list.innerHTML = '';
@@ -120,9 +133,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         em.className = 'em';
         em.textContent = r.email || '(メール未設定)';
         const badge = document.createElement('span');
-        badge.className = 'badge ' + r.eligibility;
+        badge.className = 'badge ' + (r.overrideApplied ? 'immediate' : r.eligibility);
         badge.textContent = r.eligibilityLabel;
-        top.appendChild(em); top.appendChild(badge);
+        const state = document.createElement('span');
+        state.className = 'state';
+        state.textContent = r.state || '';
+        top.appendChild(em); top.appendChild(badge); top.appendChild(state);
 
         const meta = document.createElement('div');
         meta.className = 'meta';
@@ -134,6 +150,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           'route: ' + (ROUTE_LABEL[r.route] || r.route),
           'phase: ' + r.phase,
           r.eligibleAt ? '販売許可日(段階公開の起点): ' + String(r.eligibleAt).slice(0, 10) : '',
+          r.releaseOverride ? 'override: ' + r.releaseOverride : '',
           r.updatedAt ? '最終更新(監査): ' + String(r.updatedAt).slice(0, 10) : '',
           r.reason ? 'メモ: ' + r.reason : '',
         ].filter(Boolean).join('　/　');
@@ -144,8 +161,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         reason.placeholder = '内部メモ（管理者のみ・任意）';
         reason.value = r.reason || '';
         acts.appendChild(reason);
-        for (const [next, label, cls] of [
-          ['eligible', '販売可', 'b-eligible'],
+        const buttons = [];
+        for (const [plusAction, label, cls] of [
+          ['staged', '段階公開で販売可', 'b-staged'],
+          ['immediate', '今すぐ販売可', 'b-immediate'],
           ['review', '保留', 'b-review'],
           ['blocked', '販売対象外', 'b-blocked'],
         ]) {
@@ -153,13 +172,32 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           b.type = 'button';
           b.className = cls;
           b.textContent = label;
-          b.disabled = !data.writeEnabled;
+          b.disabled = !data.writeEnabled || (plusAction === 'immediate' && !data.overrideEnabled);
           b.addEventListener('click', async () => {
-            b.disabled = true;
-            const out = await call({ action: 'update', recordId: r.recordId, next, reason: reason.value });
-            b.disabled = false;
-            if (out) { msg(`更新しました: ${out.label}`, 'ok'); load(); }
+            if (b.dataset.busy === '1') return; // 二重クリック防止
+            if (plusAction === 'immediate') {
+              const ok = window.confirm(
+                'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
+                + '段階公開（PHASE 1→4）を飛ばして、いますぐ販売可能な状態にします。\n'
+                + '実行してよろしいですか？'
+              );
+              if (!ok) return;
+            }
+            // 処理中は行内の全ボタンを無効化（二重送信対策）
+            b.dataset.busy = '1';
+            buttons.forEach((x) => { x.disabled = true; });
+            msg('更新中…');
+            const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: reason.value });
+            b.dataset.busy = '';
+            if (out) {
+              msg(`更新しました: ${out.label}${out.override === 'phase4' ? '（即時販売）' : ''}`, 'ok');
+              load(); // 再読込で最新状態に置き換わる（ボタンも再生成される）
+            } else {
+              buttons.forEach((x) => { x.disabled = !data.writeEnabled || (x.dataset.action === 'immediate' && !data.overrideEnabled); });
+            }
           });
+          b.dataset.action = plusAction;
+          buttons.push(b);
           acts.appendChild(b);
         }
 

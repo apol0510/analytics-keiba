@@ -9,6 +9,7 @@
  *   - SanrenpukuPaidAt          … ROUTE A の anchor（三連複の購入確定日時）
  *   - PaidAt                    … ROUTE B の anchor（通常 Premium の入金確認日時）
  *   - PremiumPlusEligibility    … 販売資格（eligible / review / blocked）
+ *   - PremiumPlusReleaseOverride … 段階公開を飛ばす明示 override（空 or 'phase4'）
  *   - PremiumPlusEligibleAt     … 販売許可日（anchor mode 'later' で使う）
  *
  * ⚠️ anchor に使うのは `PremiumPlusEligibleAt` **だけ**。監査用の
@@ -22,6 +23,7 @@ import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolve
 import {
   PP_ELIGIBILITY_FIELDS,
   normalizeEligibility,
+  normalizeReleaseOverride,
   resolveSanrenpukuPaidAt,
   toPaidAtMs,
 } from './premiumPlusRelease.js';
@@ -37,6 +39,7 @@ import {
  *   premiumPaidAtMs: number|null,
  *   eligibility: string,
  *   eligibleAtMs: number|null,
+ *   releaseOverride: 'phase4'|null,
  *   anchorSource: 'field'|'anchor'|'none',
  * }}
  */
@@ -52,6 +55,7 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
       premiumPaidAtMs: null,
       eligibility: normalizeEligibility(undefined), // = review（fail closed）
       eligibleAtMs: null,
+      releaseOverride: null,
       anchorSource: 'none',
     };
   }
@@ -71,6 +75,8 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
     eligibility: normalizeEligibility(f[PP_ELIGIBILITY_FIELDS.STATUS]),
     // anchor は EligibleAt のみ。UpdatedAt（監査）は読まない。
     eligibleAtMs: toPaidAtMs(f[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT]),
+    // フィールド未作成なら undefined → normalize が null（override なし）にする（fail closed）
+    releaseOverride: normalizeReleaseOverride(f[PP_ELIGIBILITY_FIELDS.OVERRIDE]),
     anchorSource: srp.source,
   };
 }

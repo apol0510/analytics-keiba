@@ -475,6 +475,10 @@ PHASE 4 到達後は JST 時刻で **OPEN / CLOSING / CLOSED** を自動判定�
   失敗しても昇格 / メール / LifetimeSanrenpuku を巻き戻さない
 - KMA は `PremiumPlusEligibility` を eligible へ変更してはいけない（マーケ対象 ≠ 販売許可）
 
+- **「今すぐ販売可」** = `PremiumPlusReleaseOverride='phase4'`。**eligible の会員だけ**段階公開を飛ばして
+  即 PHASE 4 にする。判定順は ①audience ②eligibility ③override ④通常 phase で、
+  **review / blocked は override があっても非公開**。日時の偽装（EligibleAt / SanrenpukuPaidAt を
+  過去日に書換）で実現してはいけない。gate は `PREMIUM_PLUS_OVERRIDE_READY=1`（未設定なら 503・fail closed）
 - 段階公開 anchor は **`PremiumPlusEligibleAt`**（eligible への実遷移時のみ更新）。
   監査用 `PremiumPlusEligibilityUpdatedAt` を anchor に兼用しない
   （メモ編集・同一資格の再保存で phase が Day 0 に戻るため）
