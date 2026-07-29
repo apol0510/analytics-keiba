@@ -6,32 +6,50 @@ export const prerender = true;
 // この画面が変更するのは **Premium Plus の販売資格だけ**。
 // プラン / Status / 有効期限 / LifetimeSanrenpuku / メール状態は一切変更しない。
 // 資格変更でメール送信・課金・昇格は起きない（表示資格のみ）。
+//
+// 2026-07-30: UI のみ刷新（カード化 / 状態バッジ / フィルター / Email 検索 / 操作の分離）。
+// 管理 Function の write 契約（action='update' の payload）と preview の read-only 契約は不変。
 import BaseLayout from '../../layouts/BaseLayout.astro';
 ---
 <BaseLayout title="Premium Plus 販売管理（管理）">
   <div class="ppe">
-    <h1>Premium Plus 販売対象</h1>
-    <p class="lead">
-      Premium Plus を販売してよい会員を <b>管理者が手動で選別</b>します。
-      候補は自動で「販売可」になりません（新規候補は必ず <b>保留</b> から始まります）。
-      ここでの変更は <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
-    </p>
-    <p class="lead warn">
-      <b>「今すぐ販売可」</b>はその会員だけ段階公開を飛ばして <b>即 PHASE 4（価格・購入 CTA 表示）</b>にする操作です。
-      確認ダイアログでの承諾後にのみ実行されます。購入日や販売許可日を過去日に書き換えることはしません。
-    </p>
-
-    <div class="card">
-      <label>管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
-      <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
-      <div class="row">
-        <label class="chk"><input type="checkbox" id="onlyReview" /> 保留（確認待ち）だけ表示</label>
-        <button id="reload" type="button">一覧を読み込む</button>
+    <header class="ppe-head">
+      <div>
+        <h1>Premium Plus 販売対象</h1>
+        <p class="lead">
+          販売してよい会員を <b>管理者が手動で選別</b>します。候補は自動で「販売可」になりません
+          （新規候補は必ず <b>保留</b> から始まります）。変更されるのは
+          <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
+        </p>
       </div>
-      <p class="note" id="writeState"></p>
-    </div>
+      <button id="reload" type="button" class="btn-reload">一覧を読み込む</button>
+    </header>
+
+    <details class="conn" id="connPanel">
+      <summary>
+        <span class="conn-title">管理接続</span>
+        <span class="conn-state" id="connState">未接続</span>
+      </summary>
+      <div class="conn-body">
+        <label for="secret">管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
+        <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
+        <p class="note" id="writeState"></p>
+      </div>
+    </details>
 
     <div id="summary" class="summary"></div>
+
+    <div class="toolbar">
+      <div class="chips" id="filters" role="group" aria-label="状態で絞り込み"></div>
+      <div class="search">
+        <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
+      </div>
+    </div>
+
+    <p class="msg" id="message"></p>
+    <p class="count" id="count"></p>
+    <div id="list" class="list"></div>
 
     <!-- 管理者プレビュー モーダル（read-only。実顧客セッションは作らない） -->
     <div id="pvBackdrop" class="pv-backdrop" hidden>
@@ -48,75 +66,144 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div id="pvBody" class="pv-body"></div>
       </div>
     </div>
-    <div id="message" class="msg"></div>
-    <div id="list" class="list"></div>
   </div>
 </BaseLayout>
 
 <style>
-  .ppe { max-width: 1080px; margin: 0 auto; padding: 1.5rem 1rem 4rem; color: #e6edf7; }
-  .ppe h1 { font-size: 1.4rem; margin: 0 0 .6rem; }
-  .lead { color: #93a4bd; font-size: .88rem; line-height: 1.8; margin: 0 0 1.2rem; }
-  .card { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
-  .card label { display: block; font-size: .8rem; color: #93a4bd; margin-bottom: .35rem; }
-  .card input[type=password] { width: 100%; padding: .6rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; }
-  .row { display: flex; align-items: center; gap: 1rem; margin-top: .8rem; flex-wrap: wrap; }
-  .chk { display: flex; align-items: center; gap: .4rem; margin: 0; }
-  button { cursor: pointer; border: 0; border-radius: 8px; padding: .55rem 1rem; font-weight: 700; font-family: inherit; }
-  #reload { background: #f5c451; color: #2a1d02; }
-  .note { font-size: .76rem; color: #93a4bd; margin: .6rem 0 0; }
-  .summary { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .pill { background: #0d1729; border: 1px solid rgba(148,163,184,.2); border-radius: 999px; padding: .35rem .8rem; font-size: .78rem; }
-  .msg { font-size: .84rem; margin-bottom: 1rem; min-height: 1.2em; }
+  .ppe { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 5rem; color: #e6edf7; }
+
+  /* ── ヘッダ ── */
+  .ppe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.1rem; }
+  .ppe-head h1 { font-size: 1.35rem; margin: 0 0 .5rem; }
+  .lead { color: #93a4bd; font-size: .84rem; line-height: 1.8; margin: 0; max-width: 68ch; }
+  .btn-reload { flex: 0 0 auto; background: #f5c451; color: #2a1d02; border: 0; border-radius: 9px; padding: .6rem 1.1rem; font-weight: 800; cursor: pointer; font-family: inherit; }
+
+  /* ── 管理接続（折りたたみ）── */
+  .conn { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 11px; margin-bottom: 1.1rem; }
+  .conn > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: .7rem; padding: .7rem 1rem; font-size: .84rem; }
+  .conn > summary::-webkit-details-marker { display: none; }
+  .conn > summary::before { content: '▸'; color: #93a4bd; transition: transform .15s; }
+  .conn[open] > summary::before { transform: rotate(90deg); }
+  .conn-title { font-weight: 700; }
+  .conn-state { font-size: .74rem; padding: .15rem .6rem; border-radius: 999px; background: rgba(148,163,184,.16); color: #93a4bd; }
+  .conn-state.ok { background: rgba(52,211,153,.14); color: #34d399; }
+  .conn-body { padding: 0 1rem 1rem; }
+  .conn-body label { display: block; font-size: .76rem; color: #93a4bd; margin-bottom: .35rem; }
+  .conn-body input { width: 100%; max-width: 460px; padding: .55rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; }
+  .note { font-size: .74rem; color: #93a4bd; margin: .6rem 0 0; }
+
+  /* ── サマリー ── */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: .6rem; margin-bottom: 1.2rem; }
+  .sum { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 11px; padding: .7rem .8rem; }
+  .sum .k { font-size: .72rem; color: #93a4bd; }
+  .sum .v { font-size: 1.5rem; font-weight: 900; line-height: 1.25; }
+  .sum.pri-immediate { border-color: rgba(245,196,81,.45); }
+  .sum.pri-immediate .v { color: #f5c451; }
+  .sum.pri-eligible { border-color: rgba(52,211,153,.4); }
+  .sum.pri-eligible .v { color: #34d399; }
+  .sum.pri-review { border-color: rgba(96,165,250,.4); }
+  .sum.pri-review .v { color: #60a5fa; }
+  .sum.sub { padding: .5rem .7rem; opacity: .78; }
+  .sum.sub .v { font-size: 1.05rem; }
+
+  /* ── ツールバー ── */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
+  .chips { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .chip { background: #0d1729; border: 1px solid rgba(148,163,184,.24); color: #cbd5e6; border-radius: 999px; padding: .35rem .85rem; font-size: .78rem; cursor: pointer; font-family: inherit; }
+  .chip[aria-pressed='true'] { background: #f5c451; border-color: #f5c451; color: #2a1d02; font-weight: 800; }
+  .search { display: flex; align-items: center; gap: .8rem; }
+  .search input[type=search] { min-width: 220px; padding: .45rem .7rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-family: inherit; font-size: .84rem; }
+  .chk { display: flex; align-items: center; gap: .35rem; font-size: .78rem; color: #93a4bd; }
+  .msg { font-size: .84rem; min-height: 1.2em; margin: 0 0 .5rem; }
   .msg.ok { color: #34d399; } .msg.err { color: #f87171; }
-  .list { display: grid; gap: .6rem; }
-  .item { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 10px; padding: .8rem 1rem; display: grid; gap: .5rem; }
-  .item .top { display: flex; gap: .8rem; align-items: baseline; flex-wrap: wrap; }
-  .item .em { font-weight: 700; }
-  .item .meta { font-size: .76rem; color: #93a4bd; display: flex; gap: .8rem; flex-wrap: wrap; }
-  .badge { font-size: .72rem; font-weight: 800; padding: .15rem .6rem; border-radius: 999px; }
-  .badge.eligible { background: rgba(52,211,153,.14); color: #34d399; }
-  .badge.review { background: rgba(245,196,81,.14); color: #f5c451; }
-  .badge.blocked { background: rgba(248,113,113,.14); color: #f87171; }
-  .acts { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-  .acts input { flex: 1 1 220px; min-width: 180px; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-size: .82rem; }
-  .acts button { font-size: .8rem; }
-  .lead.warn { color: #f5c451; }
-  .state { font-size: .8rem; font-weight: 800; }
-  .b-staged { background: #34d399; color: #05261a; }
-  .b-immediate { background: linear-gradient(135deg, #f5c451, #d99b1f); color: #2a1d02; }
-  .badge.immediate { background: rgba(245,196,81,.18); color: #f5c451; }
-  .acts button[disabled] { opacity: .45; cursor: not-allowed; }
+  .count { font-size: .76rem; color: #93a4bd; margin: 0 0 .8rem; }
+
+  /* ── 顧客カード ── */
+  .list { display: grid; gap: .85rem; }
+  .cust { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 13px; overflow: hidden; }
+  .cust.is-immediate { border-color: rgba(245,196,81,.4); }
+  .cust.is-blocked { border-color: rgba(248,113,113,.3); }
+  .cust-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1.1rem; border-bottom: 1px solid rgba(148,163,184,.14); background: rgba(13,23,41,.6); }
+  .cust-email { font-weight: 700; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .badge { flex: 0 0 auto; font-size: .78rem; font-weight: 800; padding: .3rem .85rem; border-radius: 999px; white-space: nowrap; }
+  .badge.review { background: rgba(96,165,250,.16); color: #60a5fa; }
+  .badge.staged { background: rgba(52,211,153,.14); color: #34d399; }
+  .badge.sale { background: rgba(52,211,153,.2); color: #34d399; }
+  .badge.immediate { background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; }
+  .badge.blocked { background: rgba(248,113,113,.16); color: #f87171; }
+
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .8rem 1rem; padding: 1rem 1.1rem; }
+  .fact .k { font-size: .7rem; color: #93a4bd; margin-bottom: .15rem; }
+  .fact .v { font-size: .88rem; font-weight: 700; overflow-wrap: anywhere; }
+  .fact .v.muted { color: #6f819c; font-weight: 400; }
+
+  .memo { margin: 0 1.1rem 1rem; background: rgba(11,17,32,.6); border-left: 3px solid rgba(245,196,81,.5); border-radius: 6px; padding: .55rem .8rem; font-size: .8rem; color: #cbd5e6; }
+  .memo .k { font-size: .7rem; color: #93a4bd; display: block; margin-bottom: .15rem; }
+
+  .ops { border-top: 1px solid rgba(148,163,184,.14); padding: .9rem 1.1rem 1.1rem; display: grid; gap: .8rem; }
+  .ops-row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+  .ops-label { font-size: .7rem; color: #93a4bd; flex: 0 0 5.5rem; }
+  .ops-danger .ops-label { color: #f87171; }
+  .ops button { border: 0; border-radius: 9px; padding: .55rem 1rem; font-weight: 700; font-size: .82rem; cursor: pointer; font-family: inherit; }
+  .ops button[disabled] { opacity: .4; cursor: not-allowed; }
   .b-preview { background: #334155; color: #e6edf7; }
-  .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.72); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; z-index: 50; overflow-y: auto; }
+  .b-staged { background: #34d399; color: #05261a; }
+  .b-review { background: #475569; color: #e6edf7; }
+  .b-immediate { background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; box-shadow: 0 6px 18px -8px rgba(245,196,81,.8); }
+  .b-blocked { background: transparent; color: #f87171; border: 1px solid rgba(248,113,113,.55) !important; }
+  .applied { font-size: .7rem; color: #6f819c; }
+  .memo-input { flex: 1 1 240px; min-width: 180px; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.28); background: #0b1120; color: #e6edf7; font-size: .8rem; font-family: inherit; }
+  .empty { color: #93a4bd; font-size: .86rem; padding: 2rem 0; text-align: center; }
+
+  /* ── プレビュー モーダル ── */
+  .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.74); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; z-index: 50; overflow-y: auto; }
   .pv-backdrop[hidden] { display: none; }
-  .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(760px, 100%); padding: 1.2rem 1.3rem 1.6rem; }
+  .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(780px, 100%); padding: 1.2rem 1.3rem 1.6rem; }
   .pv-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .pv-head h2 { font-size: 1.05rem; margin: 0; }
-  .pv-close { background: transparent; color: #93a4bd; font-size: 1.4rem; line-height: 1; padding: 0 .4rem; }
+  .pv-close { background: transparent; border: 0; color: #93a4bd; font-size: 1.5rem; line-height: 1; padding: 0 .4rem; cursor: pointer; }
   .pv-notice { font-size: .76rem; color: #f5c451; background: rgba(245,196,81,.08); border: 1px solid rgba(245,196,81,.26); border-radius: 8px; padding: .5rem .7rem; margin: .7rem 0 1rem; }
   .pv-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
   .pv-controls label { font-size: .78rem; color: #93a4bd; display: flex; align-items: center; gap: .4rem; }
   .pv-controls select { background: #0b1120; color: #e6edf7; border: 1px solid rgba(148,163,184,.28); border-radius: 8px; padding: .35rem .5rem; font-family: inherit; }
   .pv-body { display: grid; gap: .9rem; }
+  .pv-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .6rem; }
+  .pv-top .cell { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .6rem .7rem; }
+  .pv-top .k { font-size: .68rem; color: #93a4bd; }
+  .pv-top .v { font-size: .95rem; font-weight: 800; margin-top: .15rem; }
   .pv-sec { border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .8rem 1rem; background: #111c33; }
-  .pv-sec h3 { font-size: .8rem; color: #93a4bd; margin: 0 0 .5rem; font-weight: 700; }
-  .pv-kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .82rem; }
+  .pv-sec h3 { font-size: .78rem; color: #93a4bd; margin: 0 0 .5rem; font-weight: 700; }
+  .pv-kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .82rem; margin: 0; }
   .pv-kv dt { color: #93a4bd; }
   .pv-kv dd { margin: 0; font-weight: 700; }
   .pv-mock { border: 1px dashed rgba(148,163,184,.35); border-radius: 10px; padding: 1rem; text-align: center; }
-  .pv-mock .pv-intake-t { font-size: .78rem; color: #93a4bd; }
+  .pv-mock .pv-intake-t { font-size: .76rem; color: #93a4bd; }
   .pv-mock .pv-intake-s { font-size: 1.05rem; font-weight: 900; margin: .25rem 0; }
-  .pv-mock .pv-intake-n { font-size: .74rem; color: #93a4bd; }
+  .pv-mock .pv-intake-n { font-size: .72rem; color: #93a4bd; }
   .pv-mock .pv-price { margin: .8rem 0 .5rem; font-weight: 900; color: #f5c451; }
   .pv-mock .pv-cta { display: inline-block; border-radius: 10px; padding: .6rem 1.4rem; font-weight: 800; background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; }
   .pv-mock .pv-cta.off { opacity: .45; filter: grayscale(.6); }
   .pv-mock .pv-none { color: #93a4bd; font-size: .84rem; }
-  .pv-vis { font-size: .84rem; line-height: 1.7; }
+  .pv-vis { font-size: .82rem; line-height: 1.7; margin: .8rem 0 0; }
   .yes { color: #34d399; } .no { color: #f87171; }
-  .b-eligible { background: #34d399; color: #05261a; }
-  .b-review { background: #f5c451; color: #2a1d02; }
-  .b-blocked { background: #f87171; color: #2a0707; }
+
+  /* ── レスポンシブ ── */
+  @media (max-width: 860px) {
+    .ppe-head { flex-direction: column; gap: .9rem; }
+    .btn-reload { align-self: stretch; }
+    .toolbar { flex-direction: column; align-items: stretch; }
+    .search { flex-direction: column; align-items: stretch; }
+    .search input[type=search] { min-width: 0; width: 100%; }
+  }
+  @media (max-width: 640px) {
+    .cust-head { flex-direction: column; align-items: flex-start; gap: .5rem; }
+    .cust-email { max-width: 100%; }
+    .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ops-row { flex-direction: column; align-items: stretch; }
+    .ops-label { flex: none; }
+    .ops button { width: 100%; }
+    .memo-input { width: 100%; }
+  }
 </style>
 
 <script is:inline>
@@ -127,7 +214,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     const saved = sessionStorage.getItem('pp-admin-secret');
     if (saved) secretEl.value = saved;
-    secretEl.addEventListener('change', () => sessionStorage.setItem('pp-admin-secret', secretEl.value));
+    secretEl.addEventListener('change', () => {
+      sessionStorage.setItem('pp-admin-secret', secretEl.value);
+      setConn(false);
+    });
+
+    function setConn(ok) {
+      const el = $('connState');
+      el.textContent = ok ? '管理API 接続済み' : '未接続';
+      el.className = 'conn-state' + (ok ? ' ok' : '');
+      if (ok) $('connPanel').open = false;
+    }
+    if (!saved) $('connPanel').open = true;
 
     function msg(text, kind) {
       const el = $('message');
@@ -137,26 +235,230 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     async function call(payload) {
       const secret = secretEl.value.trim();
-      if (!secret) { msg('管理シークレットを入力してください', 'err'); return null; }
+      if (!secret) { msg('管理シークレットを入力してください', 'err'); $('connPanel').open = true; return null; }
       const res = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { msg(data.error || ('エラー: ' + res.status), 'err'); return null; }
+      if (!res.ok) { msg(data.error || ('エラー: ' + res.status), 'err'); if (res.status === 403) setConn(false); return null; }
+      setConn(true);
       return data;
     }
 
-    const ROUTE_LABEL = { sanrenpuku: '三連複', premium_30d: 'Premium 30日', none: '対象外' };
+    // ── 状態の分類（表示・並び順・フィルター用。判定そのものは Function 側の単一源）──
+    const STATE = {
+      review:    { key: 'review',    label: '保留',        badge: 'review',    order: 1 },
+      staged:    { key: 'staged',    label: '段階公開中',   badge: 'staged',    order: 2 },
+      sale:      { key: 'sale',      label: '販売中',      badge: 'sale',      order: 2 },
+      immediate: { key: 'immediate', label: '即時販売',     badge: 'immediate', order: 3 },
+      blocked:   { key: 'blocked',   label: '販売対象外',   badge: 'blocked',   order: 4 },
+    };
+    function classify(r) {
+      if (r.eligibility === 'blocked') return STATE.blocked;
+      if (r.eligibility !== 'eligible') return STATE.review;
+      if (r.overrideApplied) return STATE.immediate;
+      return r.phase === 4 ? STATE.sale : STATE.staged;
+    }
+    const ROUTE_LABEL = { sanrenpuku: 'A（三連複）', premium_30d: 'B（Premium 30日）', none: '対象外' };
+    const fmtDate = (v) => (v ? String(v).slice(0, 10) : '—');
 
-    function render(data) {
-      const c = data.counts || {};
-      $('summary').innerHTML = [
-        ['候補', c.total], ['保留', c.review], ['販売可', c.eligible], ['販売対象外', c.blocked],
-        ['ROUTE A(三連複)', c.routeA], ['ROUTE B(Premium30日)', c.routeB], ['即時販売', c.immediate],
-      ].map(([k, v]) => `<span class="pill">${k}: <b>${v ?? 0}</b></span>`).join('');
+    // ── フィルター ──
+    const FILTERS = [
+      { key: 'all', label: 'すべて' },
+      { key: 'review', label: '保留' },
+      { key: 'eligible', label: '販売可' },
+      { key: 'immediate', label: '即時販売' },
+      { key: 'blocked', label: '販売対象外' },
+      { key: 'routeA', label: 'ROUTE A' },
+      { key: 'routeB', label: 'ROUTE B' },
+    ];
+    let activeFilter = 'all';
+    let lastData = null;
 
+    function buildFilters() {
+      const box = $('filters');
+      box.innerHTML = '';
+      for (const f of FILTERS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip';
+        b.textContent = f.label;
+        b.dataset.filter = f.key;
+        b.setAttribute('aria-pressed', String(f.key === activeFilter));
+        b.addEventListener('click', () => { activeFilter = f.key; buildFilters(); render(); });
+        box.appendChild(b);
+      }
+    }
+
+    function matches(r) {
+      const st = classify(r).key;
+      if (activeFilter === 'review' && st !== 'review') return false;
+      if (activeFilter === 'eligible' && !(st === 'staged' || st === 'sale')) return false;
+      if (activeFilter === 'immediate' && st !== 'immediate') return false;
+      if (activeFilter === 'blocked' && st !== 'blocked') return false;
+      if (activeFilter === 'routeA' && r.route !== 'sanrenpuku') return false;
+      if (activeFilter === 'routeB' && r.route !== 'premium_30d') return false;
+      const q = $('q').value.trim().toLowerCase();
+      if (q && !String(r.email || '').toLowerCase().includes(q)) return false;
+      return true;
+    }
+
+    function sortRows(rows) {
+      return [...rows].sort((a, b) => {
+        const d = classify(a).order - classify(b).order;
+        if (d !== 0) return d;
+        const ua = String(a.updatedAt || ''), ub = String(b.updatedAt || '');
+        if (ua !== ub) return ub.localeCompare(ua); // 最終更新が新しい順
+        return String(a.email).localeCompare(String(b.email));
+      });
+    }
+
+    // ── サマリー ──
+    function renderSummary(c) {
+      const cards = [
+        ['即時販売', c.immediate, 'pri-immediate'],
+        ['販売可', c.eligible, 'pri-eligible'],
+        ['保留', c.review, 'pri-review'],
+        ['候補', c.total, ''],
+        ['販売対象外', c.blocked, ''],
+        ['ROUTE A', c.routeA, 'sub'],
+        ['ROUTE B', c.routeB, 'sub'],
+      ];
+      $('summary').innerHTML = '';
+      for (const [k, v, cls] of cards) {
+        const d = document.createElement('div');
+        d.className = 'sum ' + cls;
+        const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+        const vv = document.createElement('div'); vv.className = 'v'; vv.textContent = String(v ?? 0);
+        d.appendChild(kk); d.appendChild(vv);
+        $('summary').appendChild(d);
+      }
+    }
+
+    // ── 顧客カード ──
+    function fact(k, v, muted) {
+      const w = document.createElement('div'); w.className = 'fact';
+      const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+      const vv = document.createElement('div'); vv.className = 'v' + (muted ? ' muted' : ''); vv.textContent = v;
+      w.appendChild(kk); w.appendChild(vv); return w;
+    }
+
+    function card(r, data) {
+      const st = classify(r);
+      const el = document.createElement('article');
+      el.className = 'cust is-' + st.key;
+
+      // 上部: Email + 状態バッジ
+      const head = document.createElement('div'); head.className = 'cust-head';
+      const em = document.createElement('div');
+      em.className = 'cust-email';
+      em.textContent = r.email || '(メール未設定)';
+      em.title = r.email || '';
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + st.badge;
+      badge.textContent = r.state || st.label;
+      head.appendChild(em); head.appendChild(badge);
+
+      // 中段: ラベル付きの情報グリッド
+      const facts = document.createElement('div'); facts.className = 'facts';
+      facts.appendChild(fact('プラン', r.plan || '—'));
+      facts.appendChild(fact('三連複', r.hasSanrenpuku ? 'あり' : 'なし'));
+      facts.appendChild(fact('Route', ROUTE_LABEL[r.route] || r.route));
+      facts.appendChild(fact('PHASE', String(r.phase)));
+      facts.appendChild(fact('Premium経過', r.daysSincePremium == null ? '—' : r.daysSincePremium + ' 日', r.daysSincePremium == null));
+      facts.appendChild(fact('販売許可日', fmtDate(r.eligibleAt), !r.eligibleAt));
+      facts.appendChild(fact('最終更新', fmtDate(r.updatedAt), !r.updatedAt));
+
+      el.appendChild(head); el.appendChild(facts);
+
+      // 内部メモ（あるときだけ別枠）
+      if (r.reason) {
+        const memo = document.createElement('div'); memo.className = 'memo';
+        const k = document.createElement('span'); k.className = 'k'; k.textContent = '内部メモ（管理者のみ）';
+        memo.appendChild(k); memo.appendChild(document.createTextNode(r.reason));
+        el.appendChild(memo);
+      }
+
+      // 操作エリア
+      const ops = document.createElement('div'); ops.className = 'ops';
+      const memoInput = document.createElement('input');
+      memoInput.className = 'memo-input';
+      memoInput.placeholder = '内部メモ（管理者のみ・任意）';
+      memoInput.value = r.reason || '';
+
+      const buttons = [];
+      const mkBtn = (plusAction, label, cls, isCurrent, extraDisabled) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = cls;
+        b.textContent = label;
+        b.dataset.action = plusAction;
+        b.disabled = !data.writeEnabled || isCurrent || !!extraDisabled;
+        if (isCurrent) b.title = '現在この状態です（適用中）';
+        b.addEventListener('click', async () => {
+          if (b.dataset.busy === '1') return; // 二重クリック防止
+          if (plusAction === 'immediate') {
+            const ok = window.confirm(
+              'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
+              + '段階公開（PHASE 1→4）を飛ばして、いますぐ販売可能な状態にします。\n'
+              + '実行してよろしいですか？'
+            );
+            if (!ok) return;
+          }
+          b.dataset.busy = '1';
+          buttons.forEach((x) => { x.disabled = true; });
+          msg('更新中…');
+          const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: memoInput.value });
+          b.dataset.busy = '';
+          if (out) {
+            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : ''), 'ok');
+            load();
+          } else {
+            render(); // 失敗時は現在の状態でボタンを再構成する
+          }
+        });
+        buttons.push(b);
+        return b;
+      };
+
+      const isImmediate = st.key === 'immediate';
+      const isStagedNow = r.eligibility === 'eligible' && !r.overrideApplied;
+
+      // 通常操作
+      const rowN = document.createElement('div'); rowN.className = 'ops-row';
+      const lbN = document.createElement('span'); lbN.className = 'ops-label'; lbN.textContent = '通常操作';
+      rowN.appendChild(lbN);
+      const pv = document.createElement('button');
+      pv.type = 'button'; pv.className = 'b-preview'; pv.textContent = '表示プレビュー';
+      pv.addEventListener('click', () => openPreview(r.recordId));
+      rowN.appendChild(pv);
+      rowN.appendChild(mkBtn('staged', '段階公開で販売可', 'b-staged', isStagedNow));
+      rowN.appendChild(mkBtn('review', '保留', 'b-review', r.eligibility === 'review'));
+      if (isStagedNow) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '段階公開で適用中'; rowN.appendChild(s); }
+
+      // 強い操作
+      const rowD = document.createElement('div'); rowD.className = 'ops-row ops-danger';
+      const lbD = document.createElement('span'); lbD.className = 'ops-label'; lbD.textContent = '強い操作';
+      rowD.appendChild(lbD);
+      rowD.appendChild(mkBtn('immediate', '今すぐ販売可', 'b-immediate', isImmediate, !data.overrideEnabled));
+      rowD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
+      if (isImmediate) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '即時販売を適用中'; rowD.appendChild(s); }
+
+      const rowM = document.createElement('div'); rowM.className = 'ops-row';
+      const lbM = document.createElement('span'); lbM.className = 'ops-label'; lbM.textContent = 'メモ';
+      rowM.appendChild(lbM); rowM.appendChild(memoInput);
+
+      ops.appendChild(rowN); ops.appendChild(rowD); ops.appendChild(rowM);
+      el.appendChild(ops);
+      return el;
+    }
+
+    function render() {
+      if (!lastData) return;
+      const data = lastData;
+      renderSummary(data.counts || {});
       $('writeState').textContent = (data.writeEnabled
         ? '書き込み: 有効'
         : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。')
@@ -164,104 +466,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           ? ' / 今すぐ販売可: 利用可'
           : ' / 今すぐ販売可: 無効（PremiumPlusReleaseOverride 未作成 / PREMIUM_PLUS_OVERRIDE_READY 未設定）');
 
+      const rows = sortRows((data.rows || []).filter(matches));
       const list = $('list');
       list.innerHTML = '';
-      for (const r of data.rows || []) {
-        const el = document.createElement('div');
-        el.className = 'item';
-
-        const top = document.createElement('div');
-        top.className = 'top';
-        const em = document.createElement('span');
-        em.className = 'em';
-        em.textContent = r.email || '(メール未設定)';
-        const badge = document.createElement('span');
-        badge.className = 'badge ' + (r.overrideApplied ? 'immediate' : r.eligibility);
-        badge.textContent = r.eligibilityLabel;
-        const state = document.createElement('span');
-        state.className = 'state';
-        state.textContent = r.state || '';
-        top.appendChild(em); top.appendChild(badge); top.appendChild(state);
-
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-        const days = r.daysSincePremium == null ? '—' : r.daysSincePremium + '日';
-        meta.textContent = [
-          'プラン: ' + (r.plan || '—'),
-          '三連複: ' + (r.hasSanrenpuku ? 'あり' : 'なし'),
-          'Premium経過: ' + days,
-          'route: ' + (ROUTE_LABEL[r.route] || r.route),
-          'phase: ' + r.phase,
-          r.eligibleAt ? '販売許可日(段階公開の起点): ' + String(r.eligibleAt).slice(0, 10) : '',
-          r.releaseOverride ? 'override: ' + r.releaseOverride : '',
-          r.updatedAt ? '最終更新(監査): ' + String(r.updatedAt).slice(0, 10) : '',
-          r.reason ? 'メモ: ' + r.reason : '',
-        ].filter(Boolean).join('　/　');
-
-        const acts = document.createElement('div');
-        acts.className = 'acts';
-        const reason = document.createElement('input');
-        reason.placeholder = '内部メモ（管理者のみ・任意）';
-        reason.value = r.reason || '';
-        acts.appendChild(reason);
-        const pv = document.createElement('button');
-        pv.type = 'button';
-        pv.className = 'b-preview';
-        pv.textContent = '表示プレビュー';
-        pv.addEventListener('click', () => openPreview(r.recordId));
-        acts.appendChild(pv);
-
-        const buttons = [];
-        for (const [plusAction, label, cls] of [
-          ['staged', '段階公開で販売可', 'b-staged'],
-          ['immediate', '今すぐ販売可', 'b-immediate'],
-          ['review', '保留', 'b-review'],
-          ['blocked', '販売対象外', 'b-blocked'],
-        ]) {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = cls;
-          b.textContent = label;
-          b.disabled = !data.writeEnabled || (plusAction === 'immediate' && !data.overrideEnabled);
-          b.addEventListener('click', async () => {
-            if (b.dataset.busy === '1') return; // 二重クリック防止
-            if (plusAction === 'immediate') {
-              const ok = window.confirm(
-                'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
-                + '段階公開（PHASE 1→4）を飛ばして、いますぐ販売可能な状態にします。\n'
-                + '実行してよろしいですか？'
-              );
-              if (!ok) return;
-            }
-            // 処理中は行内の全ボタンを無効化（二重送信対策）
-            b.dataset.busy = '1';
-            buttons.forEach((x) => { x.disabled = true; });
-            msg('更新中…');
-            const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: reason.value });
-            b.dataset.busy = '';
-            if (out) {
-              msg(`更新しました: ${out.label}${out.override === 'phase4' ? '（即時販売）' : ''}`, 'ok');
-              load(); // 再読込で最新状態に置き換わる（ボタンも再生成される）
-            } else {
-              buttons.forEach((x) => { x.disabled = !data.writeEnabled || (x.dataset.action === 'immediate' && !data.overrideEnabled); });
-            }
-          });
-          b.dataset.action = plusAction;
-          buttons.push(b);
-          acts.appendChild(b);
-        }
-
-        el.appendChild(top); el.appendChild(meta); el.appendChild(acts);
-        list.appendChild(el);
+      for (const r of rows) list.appendChild(card(r, data));
+      $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
+      if (!rows.length) {
+        const p = document.createElement('p'); p.className = 'empty';
+        p.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
+        list.appendChild(p);
       }
-      if (!(data.rows || []).length) list.innerHTML = '<p class="note">該当する候補はありません。</p>';
       if (data.truncated) msg('件数が多いため一部のみ表示しています', 'err');
     }
 
     async function load() {
       msg('読み込み中…');
       const data = await call({ action: 'list', onlyReview: $('onlyReview').checked });
-      if (data) { msg(''); render(data); }
+      if (data) { msg(''); lastData = data; render(); }
     }
 
     // ── 管理者プレビュー（read-only）─────────────────────────────
@@ -293,9 +514,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const body = $('pvBody');
       body.innerHTML = '';
 
+      // 上部サマリー: 現在 PHASE / 受付 / 商品ページ / CTA / purchaseEnabled
+      const top = document.createElement('div'); top.className = 'pv-top';
+      const cell = (k, v, cls) => {
+        const c = document.createElement('div'); c.className = 'cell';
+        const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+        const vv = document.createElement('div'); vv.className = 'v' + (cls ? ' ' + cls : ''); vv.textContent = v;
+        c.appendChild(kk); c.appendChild(vv); top.appendChild(c);
+      };
+      cell('現在 PHASE', 'PHASE ' + p.phase + (p.simulated.phaseDaysAgo === null ? '' : '（シミュ）'));
+      cell('受付状態', p.intakeStatus || '（PHASE 4 未満）');
+      cell('商品ページ', p.showProductPage ? '表示 (200)' : '非表示 (404)', ynCls(p.showProductPage));
+      cell('価格・CTA', p.showPurchaseCta ? '表示' : '非表示', ynCls(p.showPurchaseCta));
+      cell('purchaseEnabled', yn(p.purchaseEnabled), ynCls(p.purchaseEnabled));
+      body.appendChild(top);
+
       const mk = (title) => { const s = document.createElement('div'); s.className = 'pv-sec'; const h = document.createElement('h3'); h.textContent = title; s.appendChild(h); body.appendChild(s); return s; };
 
-      // 会員向けページの見え方（モック）
       const mock = mk('会員に見える表示（Premium Plus 商品ページ 相当）');
       const box = document.createElement('div'); box.className = 'pv-mock';
       if (!p.showProductPage) {
@@ -305,8 +540,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       } else {
         if (p.intakeStatus) {
           const t = document.createElement('div'); t.className = 'pv-intake-t'; t.textContent = p.intakeTitle || '';
-          const st = document.createElement('div'); st.className = 'pv-intake-s'; st.textContent = p.intakeStatus;
-          box.appendChild(t); box.appendChild(st);
+          const s2 = document.createElement('div'); s2.className = 'pv-intake-s'; s2.textContent = p.intakeStatus;
+          box.appendChild(t); box.appendChild(s2);
           if (p.intakeNote) { const nt = document.createElement('div'); nt.className = 'pv-intake-n'; nt.textContent = p.intakeNote; box.appendChild(nt); }
         }
         const pr = document.createElement('div'); pr.className = 'pv-price';
@@ -321,7 +556,6 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const vis = document.createElement('p'); vis.className = 'pv-vis'; vis.textContent = data.visibility || '';
       mock.appendChild(vis);
 
-      // 判定の内訳
       const d1 = mk('判定');
       const dl1 = document.createElement('dl'); dl1.className = 'pv-kv';
       row(dl1, '評価時刻(JST)', p.evaluatedAtJst + (p.simulated.isSimulatedTime ? '（シミュレーション）' : ''));
@@ -329,13 +563,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       row(dl1, 'PremiumPlusEligibility', p.eligibility);
       row(dl1, 'PremiumPlusReleaseOverride', p.releaseOverride || '(空)');
       row(dl1, 'overrideApplied', yn(p.overrideApplied), ynCls(p.overrideApplied));
-      row(dl1, 'PHASE', p.phase + (p.simulated.phaseDaysAgo === null ? '' : '（シミュレーション）'));
       row(dl1, '状態', p.state);
       row(dl1, 'anchor(JST)', p.anchorJst || '(なし)');
       row(dl1, 'intake', p.intake || '(PHASE 4 未満)');
       d1.appendChild(dl1);
 
-      // 表示フラグ
       const d2 = mk('表示フラグ');
       const dl2 = document.createElement('dl'); dl2.className = 'pv-kv';
       row(dl2, 'showTeaser', yn(p.showTeaser), ynCls(p.showTeaser));
@@ -379,5 +611,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('pvBackdrop').hidden) closePreview(); });
 
     $('reload').addEventListener('click', load);
+    $('q').addEventListener('input', render);
+    buildFilters();
   })();
 </script>
