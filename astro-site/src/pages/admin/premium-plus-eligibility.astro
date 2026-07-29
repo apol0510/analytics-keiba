@@ -32,6 +32,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     </div>
 
     <div id="summary" class="summary"></div>
+
+    <!-- 管理者プレビュー モーダル（read-only。実顧客セッションは作らない） -->
+    <div id="pvBackdrop" class="pv-backdrop" hidden>
+      <div class="pv-modal" role="dialog" aria-modal="true" aria-labelledby="pvTitle">
+        <div class="pv-head">
+          <h2 id="pvTitle">表示プレビュー</h2>
+          <button type="button" id="pvClose" class="pv-close" aria-label="閉じる">×</button>
+        </div>
+        <p class="pv-notice">管理者プレビュー / 実顧客には影響しません（読み取りのみ・ログインもメール送信もしません）</p>
+        <div class="pv-controls">
+          <label>時刻シミュレーション <select id="pvTime"></select></label>
+          <label>PHASE 表示確認 <select id="pvPhase"></select></label>
+        </div>
+        <div id="pvBody" class="pv-body"></div>
+      </div>
+    </div>
     <div id="message" class="msg"></div>
     <div id="list" class="list"></div>
   </div>
@@ -71,6 +87,33 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .b-immediate { background: linear-gradient(135deg, #f5c451, #d99b1f); color: #2a1d02; }
   .badge.immediate { background: rgba(245,196,81,.18); color: #f5c451; }
   .acts button[disabled] { opacity: .45; cursor: not-allowed; }
+  .b-preview { background: #334155; color: #e6edf7; }
+  .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.72); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; z-index: 50; overflow-y: auto; }
+  .pv-backdrop[hidden] { display: none; }
+  .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(760px, 100%); padding: 1.2rem 1.3rem 1.6rem; }
+  .pv-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .pv-head h2 { font-size: 1.05rem; margin: 0; }
+  .pv-close { background: transparent; color: #93a4bd; font-size: 1.4rem; line-height: 1; padding: 0 .4rem; }
+  .pv-notice { font-size: .76rem; color: #f5c451; background: rgba(245,196,81,.08); border: 1px solid rgba(245,196,81,.26); border-radius: 8px; padding: .5rem .7rem; margin: .7rem 0 1rem; }
+  .pv-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .pv-controls label { font-size: .78rem; color: #93a4bd; display: flex; align-items: center; gap: .4rem; }
+  .pv-controls select { background: #0b1120; color: #e6edf7; border: 1px solid rgba(148,163,184,.28); border-radius: 8px; padding: .35rem .5rem; font-family: inherit; }
+  .pv-body { display: grid; gap: .9rem; }
+  .pv-sec { border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .8rem 1rem; background: #111c33; }
+  .pv-sec h3 { font-size: .8rem; color: #93a4bd; margin: 0 0 .5rem; font-weight: 700; }
+  .pv-kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .82rem; }
+  .pv-kv dt { color: #93a4bd; }
+  .pv-kv dd { margin: 0; font-weight: 700; }
+  .pv-mock { border: 1px dashed rgba(148,163,184,.35); border-radius: 10px; padding: 1rem; text-align: center; }
+  .pv-mock .pv-intake-t { font-size: .78rem; color: #93a4bd; }
+  .pv-mock .pv-intake-s { font-size: 1.05rem; font-weight: 900; margin: .25rem 0; }
+  .pv-mock .pv-intake-n { font-size: .74rem; color: #93a4bd; }
+  .pv-mock .pv-price { margin: .8rem 0 .5rem; font-weight: 900; color: #f5c451; }
+  .pv-mock .pv-cta { display: inline-block; border-radius: 10px; padding: .6rem 1.4rem; font-weight: 800; background: linear-gradient(135deg,#f5c451,#d99b1f); color: #2a1d02; }
+  .pv-mock .pv-cta.off { opacity: .45; filter: grayscale(.6); }
+  .pv-mock .pv-none { color: #93a4bd; font-size: .84rem; }
+  .pv-vis { font-size: .84rem; line-height: 1.7; }
+  .yes { color: #34d399; } .no { color: #f87171; }
   .b-eligible { background: #34d399; color: #05261a; }
   .b-review { background: #f5c451; color: #2a1d02; }
   .b-blocked { background: #f87171; color: #2a0707; }
@@ -161,6 +204,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         reason.placeholder = '内部メモ（管理者のみ・任意）';
         reason.value = r.reason || '';
         acts.appendChild(reason);
+        const pv = document.createElement('button');
+        pv.type = 'button';
+        pv.className = 'b-preview';
+        pv.textContent = '表示プレビュー';
+        pv.addEventListener('click', () => openPreview(r.recordId));
+        acts.appendChild(pv);
+
         const buttons = [];
         for (const [plusAction, label, cls] of [
           ['staged', '段階公開で販売可', 'b-staged'],
@@ -213,6 +263,120 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const data = await call({ action: 'list', onlyReview: $('onlyReview').checked });
       if (data) { msg(''); render(data); }
     }
+
+    // ── 管理者プレビュー（read-only）─────────────────────────────
+    let pvRecordId = null;
+    let pvOptionsReady = false;
+
+    function fillOptions(sel, items, valueKey, current) {
+      if (sel.options.length) return;
+      for (const it of items) {
+        const o = document.createElement('option');
+        o.value = it[valueKey] === null ? '' : String(it[valueKey]);
+        o.textContent = it.label;
+        sel.appendChild(o);
+      }
+      sel.value = current ?? '';
+    }
+
+    function row(dl, k, v, cls) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      if (cls) dd.className = cls;
+      dl.appendChild(dt); dl.appendChild(dd);
+    }
+    const yn = (b) => (b ? 'はい' : 'いいえ');
+    const ynCls = (b) => (b ? 'yes' : 'no');
+
+    function renderPreview(data) {
+      const p = data.preview;
+      const body = $('pvBody');
+      body.innerHTML = '';
+
+      const mk = (title) => { const s = document.createElement('div'); s.className = 'pv-sec'; const h = document.createElement('h3'); h.textContent = title; s.appendChild(h); body.appendChild(s); return s; };
+
+      // 会員向けページの見え方（モック）
+      const mock = mk('会員に見える表示（Premium Plus 商品ページ 相当）');
+      const box = document.createElement('div'); box.className = 'pv-mock';
+      if (!p.showProductPage) {
+        const n = document.createElement('p'); n.className = 'pv-none';
+        n.textContent = p.showTeaser ? '商品ページ: 404（会員ページに予告カードのみ表示）' : '商品ページ: 404（予告も出ません）';
+        box.appendChild(n);
+      } else {
+        if (p.intakeStatus) {
+          const t = document.createElement('div'); t.className = 'pv-intake-t'; t.textContent = p.intakeTitle || '';
+          const st = document.createElement('div'); st.className = 'pv-intake-s'; st.textContent = p.intakeStatus;
+          box.appendChild(t); box.appendChild(st);
+          if (p.intakeNote) { const nt = document.createElement('div'); nt.className = 'pv-intake-n'; nt.textContent = p.intakeNote; box.appendChild(nt); }
+        }
+        const pr = document.createElement('div'); pr.className = 'pv-price';
+        pr.textContent = p.priceVisible ? '価格ブロック: 表示される' : '価格ブロック: 非表示（受付準備中）';
+        box.appendChild(pr);
+        const cta = document.createElement('span');
+        cta.className = 'pv-cta' + (p.ctaEnabled ? '' : ' off');
+        cta.textContent = p.showPurchaseCta ? (p.ctaEnabled ? '銀行振込で購入する（操作可）' : '銀行振込で購入する（操作不可）') : '受付準備中';
+        box.appendChild(cta);
+      }
+      mock.appendChild(box);
+      const vis = document.createElement('p'); vis.className = 'pv-vis'; vis.textContent = data.visibility || '';
+      mock.appendChild(vis);
+
+      // 判定の内訳
+      const d1 = mk('判定');
+      const dl1 = document.createElement('dl'); dl1.className = 'pv-kv';
+      row(dl1, '評価時刻(JST)', p.evaluatedAtJst + (p.simulated.isSimulatedTime ? '（シミュレーション）' : ''));
+      row(dl1, 'route', p.route);
+      row(dl1, 'PremiumPlusEligibility', p.eligibility);
+      row(dl1, 'PremiumPlusReleaseOverride', p.releaseOverride || '(空)');
+      row(dl1, 'overrideApplied', yn(p.overrideApplied), ynCls(p.overrideApplied));
+      row(dl1, 'PHASE', p.phase + (p.simulated.phaseDaysAgo === null ? '' : '（シミュレーション）'));
+      row(dl1, '状態', p.state);
+      row(dl1, 'anchor(JST)', p.anchorJst || '(なし)');
+      row(dl1, 'intake', p.intake || '(PHASE 4 未満)');
+      d1.appendChild(dl1);
+
+      // 表示フラグ
+      const d2 = mk('表示フラグ');
+      const dl2 = document.createElement('dl'); dl2.className = 'pv-kv';
+      row(dl2, 'showTeaser', yn(p.showTeaser), ynCls(p.showTeaser));
+      row(dl2, 'showProductPage', yn(p.showProductPage), ynCls(p.showProductPage));
+      row(dl2, 'showPurchaseCta', yn(p.showPurchaseCta), ynCls(p.showPurchaseCta));
+      row(dl2, 'purchaseEnabled', yn(p.purchaseEnabled), ynCls(p.purchaseEnabled));
+      row(dl2, '商品ページ HTTP', p.productPageStatus);
+      if (p.canBrowseWhenClosed !== null) row(dl2, 'CLOSED でも閲覧可', yn(p.canBrowseWhenClosed), ynCls(p.canBrowseWhenClosed));
+      d2.appendChild(dl2);
+    }
+
+    async function refreshPreview() {
+      if (!pvRecordId) return;
+      $('pvBody').textContent = '読み込み中…';
+      const data = await call({
+        action: 'preview',
+        recordId: pvRecordId,
+        atMin: $('pvTime').value === '' ? null : Number($('pvTime').value),
+        phaseDaysAgo: $('pvPhase').value === '' ? null : Number($('pvPhase').value),
+      });
+      if (!data) { $('pvBody').textContent = '取得に失敗しました'; return; }
+      if (!pvOptionsReady && data.options) {
+        fillOptions($('pvTime'), data.options.times, 'atMin', '');
+        fillOptions($('pvPhase'), data.options.phases, 'daysAgo', '');
+        pvOptionsReady = true;
+      }
+      renderPreview(data);
+    }
+
+    function openPreview(recordId) {
+      pvRecordId = recordId;
+      $('pvBackdrop').hidden = false;
+      refreshPreview();
+    }
+    function closePreview() { $('pvBackdrop').hidden = true; pvRecordId = null; }
+
+    $('pvClose').addEventListener('click', closePreview);
+    $('pvBackdrop').addEventListener('click', (e) => { if (e.target === $('pvBackdrop')) closePreview(); });
+    $('pvTime').addEventListener('change', refreshPreview);
+    $('pvPhase').addEventListener('change', refreshPreview);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('pvBackdrop').hidden) closePreview(); });
 
     $('reload').addEventListener('click', load);
   })();

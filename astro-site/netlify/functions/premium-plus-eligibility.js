@@ -6,6 +6,8 @@
  *   action='update' … 1 会員の販売資格を変更する。plusAction は次の 4 つ:
  *                     staged（段階公開で販売可）/ immediate（今すぐ販売可）/
  *                     review（保留）/ blocked（販売対象外）
+ *   action='preview'… 1 会員の Premium Plus 表示状態を read-only で解決して返す（管理者プレビュー）。
+ *                     **会員セッションを作らない / Cookie を触らない / 一切書き込まない。**
  *
  * 設計上の要点:
  * - **Premium Plus の販売資格だけ**を変更する。プラン / Status / 有効期限 / PaidAt /
@@ -28,6 +30,12 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import {
+  buildPreviewSnapshot,
+  describePreviewVisibility,
+  PP_PREVIEW_TIMES,
+  PP_PREVIEW_PHASES,
+} from '../../src/lib/premiumPlus/premiumPlusPreview.js';
 import {
   buildAdminActionFields,
   assertOnlyPlusFields,
@@ -79,6 +87,7 @@ exports.handler = async (event) => {
   try {
     if (action === 'list') return await handleList({ KEY, BASE, now, onlyReview: !!req.onlyReview });
     if (action === 'update') return await handleUpdate({ KEY, BASE, now, req });
+    if (action === 'preview') return await handlePreview({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -234,5 +243,43 @@ async function handleUpdate({ KEY, BASE, now, req }) {
     overrideChanged: built.overrideChanged,
     // true のときだけ段階公開 anchor が動く（= PHASE 1 から見え始める）
     eligibleAtUpdated: built.eligibleAtUpdated,
+  });
+}
+
+/**
+ * 管理者プレビュー（完全 read-only）。
+ *
+ * - Airtable は **GET のみ**。PATCH / POST / DELETE は一切行わない
+ * - 会員セッション（ak_session）を作らない・Cookie を返さない・メールを送らない
+ * - 判定は単一源（premiumPlusPreview → premiumPlusRelease）に委譲する
+ * - 応答に Email / 氏名などの PII を含めない
+ * - 時刻 / PHASE のシミュレーションはこの応答の中だけに閉じる（会員向けページには影響しない）
+ */
+async function handlePreview({ KEY, BASE, now, req }) {
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です' });
+
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${encodeURIComponent(recordId)}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!res.ok) return json(404, { error: 'Record not found' });
+  const fields = (await res.json()).fields || {};
+
+  const built = buildPreviewSnapshot({
+    fields,
+    nowMs: now,
+    atMin: req.atMin,
+    phaseDaysAgo: req.phaseDaysAgo,
+  });
+  if (!built.ok) {
+    return json(400, { error: `プレビュー条件が不正です: ${built.reason}` });
+  }
+
+  return json(200, {
+    preview: built.preview,
+    visibility: describePreviewVisibility(built.preview),
+    options: { times: PP_PREVIEW_TIMES, phases: PP_PREVIEW_PHASES },
+    // 管理者が誤解しないための明示
+    notice: '管理者プレビュー / 実顧客には影響しません',
   });
 }

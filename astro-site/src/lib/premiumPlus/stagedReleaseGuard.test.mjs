@@ -172,6 +172,63 @@ test('purchaseEnabled は CLOSED のときだけ false（override 経由でも�
   assert.match(stripComments(RELEASE_LIB), /purchaseEnabled:\s*isSale && intake !== PP_INTAKE\.CLOSED/);
 });
 
+// ── 管理者プレビュー（read-only・会員セッションを作らない）────────
+const PREVIEW_LIB = read('./premiumPlusPreview.js');
+
+test('プレビュー: 会員セッション / ログインリンク / メールを扱わない', () => {
+  for (const [name, src] of [['preview lib', PREVIEW_LIB], ['admin fn', ADMIN_FN], ['admin page', ADMIN_PAGE]]) {
+    const code = stripComments(src);
+    assert.doesNotMatch(code, /ak_session|issuePaidSessionCookie|serializeSessionCookie|createSession/i, `${name}: セッション発行`);
+    assert.doesNotMatch(code, /Set-Cookie|document\.cookie/i, `${name}: Cookie 操作`);
+    assert.doesNotMatch(code, /magic|send-magic-link|sendgrid|mail\/send/i, `${name}: ログインリンク/メール`);
+  }
+});
+
+test('プレビュー: 書き込み用フィールドを組み立てない（完全 read-only）', () => {
+  const code = stripComments(PREVIEW_LIB);
+  assert.doesNotMatch(code, /buildEligibilityUpdateFields|buildAdminActionFields|buildSanrenpukuPlusInitFields/);
+  assert.doesNotMatch(code, /method:\s*['"](POST|PATCH|PUT|DELETE)['"]/i);
+  // 判定は単一源に委譲する
+  assert.match(code, /resolvePremiumPlusRelease/);
+  assert.match(code, /resolvePlusMemberFromFields/);
+  assert.match(code, /describeReleaseState/);
+  assert.match(code, /intakeCopy/);
+});
+
+test('プレビュー: phase / intake 判定を複製していない', () => {
+  const code = stripComments(PREVIEW_LIB);
+  assert.doesNotMatch(code, /PP_PHASE_START_DAY\.\w+\s*<=|minutesOfDay/, 'phase/intake を自前計算している');
+  assert.doesNotMatch(code, /12\s*\*\s*60\s*\+\s*30|closedFromMin\s*=/, '受付境界を再定義している');
+});
+
+test('プレビュー: preview action は Airtable を GET しかしない', () => {
+  const fn = stripComments(ADMIN_FN);
+  const seg = fn.slice(fn.indexOf('async function handlePreview'));
+  assert.ok(seg.length > 0, 'handlePreview が無い');
+  assert.doesNotMatch(seg, /method:\s*['"](POST|PATCH|PUT|DELETE)['"]/i);
+  assert.match(seg, /buildPreviewSnapshot\(/);
+});
+
+test('プレビュー: 管理者認証（x-admin-secret）を必須にする', () => {
+  const fn = stripComments(ADMIN_FN);
+  const iAuth = fn.indexOf('provided !== SECRET');
+  const iPreview = fn.indexOf("action === 'preview'");
+  assert.ok(iAuth >= 0 && iPreview > iAuth, '認可チェックより前に preview 分岐がある');
+});
+
+test('プレビューの時刻 override が会員向け経路へ漏れていない', () => {
+  for (const [name, src] of [...Object.entries(PRODUCT_PAGES), ['stage API', ENDPOINT]]) {
+    const code = stripComments(src);
+    assert.doesNotMatch(code, /atMin|phaseDaysAgo|buildPreviewSnapshot|resolvePreviewNowMs/, `${name}: プレビュー用の入力を受け付けている`);
+    assert.match(code, /nowMs:\s*(ppNow|now)\b/, `${name}: 現在時刻以外で解決している`);
+  }
+});
+
+test('管理画面に「管理者プレビュー / 実顧客には影響しません」の明示がある', () => {
+  assert.match(ADMIN_PAGE, /管理者プレビュー \/ 実顧客には影響しません/);
+  assert.match(ADMIN_PAGE, /表示プレビュー/);
+});
+
 // ── 静的な三連複会員ページに Premium Plus を載せない ────────────────
 test('予告コンポーネント: 静的マークアップに商品名・価格・リンクを持たない', () => {
   const body = TEASER.slice(TEASER.indexOf('\n---', 3) + 4); // frontmatter の説明コメントを除く

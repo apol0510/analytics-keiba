@@ -42,6 +42,7 @@
 | 会員状態アダプタ（純粋） | `src/lib/premiumPlus/premiumPlusMember.js` | Airtable fields → 判定入力。**会員判定は既存正本 `entitlements/resolveEntitlements.js` を再利用** |
 | 書き込みフィールド（純粋） | `src/lib/premiumPlus/premiumPlusEligibility.js` | confirm / 管理画面が書く Plus 専用フィールドの組み立て |
 | 取得（唯一の I/O） | `src/lib/premiumPlus/purchaseAnchorLookup.js` | Customers を GET するだけ（書き込みなし） |
+| 管理者プレビュー（純粋） | `src/lib/premiumPlus/premiumPlusPreview.js` | 単一源の結果を read-only で整形。時刻 / PHASE シミュレーションを内包 |
 
 **ページ・コンポーネントに日数条件・時刻条件・プラン判定を書かないこと。**
 
@@ -351,6 +352,46 @@ read-only 実測（2026-07-29 / 1440 件・PII 非出力）:
   API も 503）。既存の管理画面を作り替えず、1 画面だけ追加している。
 
 Function: `netlify/functions/premium-plus-eligibility.js`（`action: 'list' | 'update'`）
+
+## 管理者プレビュー（表示確認・完全 read-only）
+
+`/admin/premium-plus-eligibility/` の各行の **「表示プレビュー」** ボタンでモーダルが開き、
+その会員に Premium Plus がどう見えるかを確認できる。
+
+### 絶対にやらない（安全要件）
+
+- 会員セッション（`ak_session`）の発行・なりすまし・Cookie 差し替え
+- magic login link の発行 / メール・LINE・通知の送信
+- Customers への書き込み（eligibility / override / EligibleAt / Payment 系すべて）
+
+Airtable は **GET のみ**。判定は既存の単一源（`resolvePlusMemberFromFields` →
+`resolvePremiumPlusRelease` → `describeReleaseState` / `intakeCopy`）へ委譲し、
+**プレビュー用に phase / intake を複製しない**（guard テストで固定）。
+
+### 見られる内容
+
+route / eligibility / override / overrideApplied / PHASE / 状態 / anchor /
+intake（4 状態の実文言）/ showTeaser / showProductPage / showPurchaseCta /
+purchaseEnabled / 価格ブロックの有無 / CTA の有効無効 / CLOSED 時の閲覧可否 /
+商品ページの HTTP（200 or 404）。**Email・氏名は返さない**（PII 非出力）。
+
+### シミュレーション（管理画面内に閉じる）
+
+| 種類 | 入力 | 内容 |
+|---|---|---|
+| 時刻 | `atMin`（JST の分・0〜1439） | 現在時刻 / 12:29 / 12:30 / 14:59 / 15:00 / 16:29 / 16:30 / 19:00。候補は `PP_INTAKE_SCHEDULE` から導出するので受付時刻を変えれば自動追従する |
+| PHASE | `phaseDaysAgo`（0〜3650） | anchor を N 日前にして PHASE 1〜4 の表示を確認。**anchor 系（SanrenpukuPaidAt / EligibleAt）だけ**を差し替え、`PaidAt`（ROUTE B の 30 日判定）は触らないので **route は変わらない** |
+
+どちらも `action='preview'` の応答内だけに作用する。会員向けページ / stage API は常に
+`Date.now()` と実データで解決するため影響しない（guard テストで固定）。
+**本番データ・EligibleAt・現在時刻は書き換えない。**
+
+UI には常に **「管理者プレビュー / 実顧客には影響しません」** を表示する。
+
+### 認可
+
+`/admin/*` の Basic-Auth（Edge Function）＋ `x-admin-secret`。認可チェックは `preview` 分岐より
+**前**にあり、未認証は 403（guard テストで順序を固定）。recordId は URL に載せずモーダル内で扱う。
 
 ## KMA（keiba-marketing-automation）との責務分離
 
