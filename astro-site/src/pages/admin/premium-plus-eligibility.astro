@@ -85,9 +85,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     <!-- 詳細・操作パネル（write はここだけ） -->
     <div id="dtBackdrop" class="dt-backdrop" hidden>
-      <aside class="dt-panel" role="dialog" aria-modal="true" aria-labelledby="dtTitle">
+      <aside class="dt-panel" id="dtPanel" role="dialog" aria-modal="true" aria-labelledby="dtTitle">
         <div class="dt-head">
-          <h2 id="dtTitle">詳細・操作</h2>
+          <div class="dt-head-l">
+            <button type="button" id="dtBack" class="btn-back">← 一覧へ戻る</button>
+            <h2 id="dtTitle">詳細・操作</h2>
+          </div>
           <button type="button" id="dtClose" class="x" aria-label="閉じる">×</button>
         </div>
         <div id="dtBody" class="dt-body"></div>
@@ -98,15 +101,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <div id="pvBackdrop" class="pv-backdrop" hidden>
       <div class="pv-modal" role="dialog" aria-modal="true" aria-labelledby="pvTitle">
         <div class="pv-head">
-          <h2 id="pvTitle">表示プレビュー</h2>
+          <div class="pv-head-l">
+            <button type="button" id="pvBack" class="btn-back">← 詳細へ戻る</button>
+            <h2 id="pvTitle">表示プレビュー</h2>
+          </div>
           <button type="button" id="pvClose" class="x" aria-label="閉じる">×</button>
         </div>
         <p class="pv-notice">管理者プレビュー / 実顧客には影響しません（読み取りのみ・ログインもメール送信もしません）</p>
         <div class="pv-controls">
-          <label>時刻シミュレーション <select id="pvTime"></select></label>
-          <label>PHASE 表示確認 <select id="pvPhase"></select></label>
+          <label class="ctl-main" for="pvPhase">段階公開の表示確認（PHASE 1〜4）
+            <select id="pvPhase"></select>
+          </label>
+          <label for="pvTime">受付時刻のシミュレーション
+            <select id="pvTime"></select>
+          </label>
         </div>
-        <div id="pvBody" class="pv-body"></div>
+        <p class="pv-hint" id="pvHint" hidden></p>
+        <div class="pv-scroll" id="pvScroll">
+          <div id="pvBody" class="pv-body"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -232,12 +245,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .badge.immediate { background: linear-gradient(135deg, var(--gold), var(--gold-2)); color: #2a1d02; border: 1px solid rgba(245,196,81,.7); }
   .ppe .badge.blocked { background-color: #2a1416; color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
 
-  /* ── 詳細・操作パネル ── */
-  .ppe .dt-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.7); z-index: 60; display: flex; justify-content: flex-end; }
+  /* ── 詳細・操作パネル ──
+     z-index はサイト共通ヘッダ（position: fixed / z-index: 1000）より上。
+     下だとパネル上部（タイトル・閉じる×）がヘッダに隠れ、閉じられなくなる（2026-07-30 本番で発生）。 */
+  .ppe .dt-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.7); z-index: 2000; display: flex; justify-content: flex-end; }
   .ppe .dt-backdrop[hidden] { display: none; }
-  .ppe .dt-panel { width: min(460px, 100%); height: 100%; overflow-y: auto; background: #0d1729; border-left: 1px solid rgba(148,163,184,.24); padding: 1.1rem 1.2rem 2.5rem; }
-  .ppe .dt-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .9rem; }
+  .ppe .dt-panel { width: min(460px, 100%); height: 100%; overflow-y: auto; overscroll-behavior: contain; background: #0d1729; border-left: 1px solid rgba(148,163,184,.24); padding: 0 1.2rem 2.5rem; }
+  /* 見出しと戻る/閉じるは常に見える位置に固定する（スクロールしても届く） */
+  .ppe .dt-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin: 0 0 .9rem; padding: .85rem 0 .7rem; background: #0d1729; border-bottom: 1px solid rgba(148,163,184,.18); }
+  .ppe .dt-head-l { display: flex; align-items: center; gap: .6rem; min-width: 0; }
   .ppe .dt-head h2 { font-size: 1rem; margin: 0; }
+  .ppe .btn-back { background-color: var(--nv-2); color: var(--ink-2); border-color: var(--line-2); border-radius: 9px; padding: .38rem .8rem; font-size: .76rem; font-weight: 700; white-space: nowrap; }
+  .ppe .btn-back:hover:not([disabled]) { background-color: var(--nv-3); border-color: rgba(96,165,250,.5); color: var(--ink); }
   .ppe .x { background-color: transparent; border-color: transparent; box-shadow: none; color: var(--muted); font-size: 1.4rem; line-height: 1; padding: 0 .35rem; }
   .ppe .x:hover:not([disabled]) { background-color: rgba(148,163,184,.14); border-color: transparent; color: var(--ink); }
   .ppe .dt-body { display: grid; gap: .9rem; }
@@ -265,16 +284,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .applied { font-size: .7rem; color: #6f819c; align-self: center; }
   .ppe .memo-input { width: 100%; padding: .5rem .65rem; font-size: .8rem; }
 
-  /* ── プレビュー モーダル ── */
-  .ppe .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.78); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; z-index: 70; overflow-y: auto; }
+  /* ── プレビュー モーダル ──
+     共通ヘッダ（z-index: 1000）より上。見出し・戻る・PHASE 切替は固定し、本文だけを内部スクロールさせる。 */
+  .ppe .pv-backdrop { position: fixed; inset: 0; background: rgba(3,7,18,.78); display: flex; align-items: center; justify-content: center; padding: 2vh 1rem; z-index: 2010; overflow: hidden; }
   .ppe .pv-backdrop[hidden] { display: none; }
-  .ppe .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(780px, 100%); padding: 1.1rem 1.2rem 1.6rem; }
-  .ppe .pv-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .ppe .pv-modal { background: #0d1729; border: 1px solid rgba(148,163,184,.24); border-radius: 14px; width: min(780px, 100%); max-height: 96vh; padding: 1.1rem 1.2rem 1.2rem; display: flex; flex-direction: column; overflow: hidden; }
+  .ppe .pv-head { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex: 0 0 auto; }
+  .ppe .pv-head-l { display: flex; align-items: center; gap: .6rem; min-width: 0; }
   .ppe .pv-head h2 { font-size: 1rem; margin: 0; }
-  .ppe .pv-notice { font-size: .74rem; color: #f5c451; background: rgba(245,196,81,.08); border: 1px solid rgba(245,196,81,.26); border-radius: 8px; padding: .45rem .7rem; margin: .6rem 0 .9rem; }
-  .ppe .pv-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
+  .ppe .pv-notice { font-size: .74rem; color: #f5c451; background: rgba(245,196,81,.08); border: 1px solid rgba(245,196,81,.26); border-radius: 8px; padding: .45rem .7rem; margin: .6rem 0 .8rem; flex: 0 0 auto; }
+  .ppe .pv-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .7rem; flex: 0 0 auto; }
   .ppe .pv-controls label { font-size: .76rem; color: #93a4bd; display: flex; align-items: center; gap: .4rem; }
   .ppe .pv-controls select { height: 30px; padding: 0 1.9rem 0 .6rem; font-size: .78rem; }
+  /* 段階公開の切替はプレビューの主操作。ここを見落として「404 のまま」と誤読されるため強調する */
+  .ppe .pv-controls .ctl-main { color: var(--gold); font-weight: 700; }
+  .ppe .pv-controls .ctl-main select { border-color: rgba(245,196,81,.55); font-weight: 700; color: var(--ink); }
+  .ppe .pv-hint { font-size: .76rem; line-height: 1.65; color: #cbd5e6; background: rgba(96,165,250,.08); border: 1px solid rgba(96,165,250,.28); border-radius: 8px; padding: .5rem .7rem; margin: 0 0 .8rem; flex: 0 0 auto; }
+  .ppe .pv-hint[hidden] { display: none; }
+  .ppe .pv-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   .ppe .pv-body { display: grid; gap: .8rem; }
   .ppe .pv-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: .5rem; }
   .ppe .pv-top .cell { background: #111c33; border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: .55rem .65rem; }
@@ -318,7 +345,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppe .em { max-width: 100%; }
     .ppe .tbl tbody td.c-ops { text-align: left; margin-top: .5rem; }
     .ppe .btn-detail { width: 100%; padding: .5rem; }
+    /* パネル / モーダルは全画面。上部の「戻る」に必ず届くようにする */
     .ppe .dt-panel { width: 100%; border-left: 0; }
+    .ppe .pv-backdrop { padding: 0; }
+    .ppe .pv-modal { width: 100%; max-height: 100%; height: 100%; border: 0; border-radius: 0; padding: .85rem .9rem 1rem; }
+    .ppe .pv-controls { gap: .55rem; }
+    .ppe .pv-controls label { flex: 1 1 100%; justify-content: space-between; }
+    .ppe .pv-controls select { flex: 0 1 62%; }
   }
 </style>
 
@@ -626,9 +659,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       body.appendChild(secM);
     }
 
-    function openDetail(recordId) { dtRecordId = recordId; $('dtBackdrop').hidden = false; renderDetail(); }
-    function closeDetail() { $('dtBackdrop').hidden = true; dtRecordId = null; }
+    // オーバーレイ表示中は背面の一覧をスクロールさせない（閉じたら必ず元に戻す）
+    function lockScroll() { document.body.style.overflow = 'hidden'; }
+    function unlockScroll() { document.body.style.overflow = ''; }
+
+    function openDetail(recordId) {
+      dtRecordId = recordId;
+      $('dtBackdrop').hidden = false;
+      lockScroll();
+      renderDetail();
+      $('dtPanel').scrollTop = 0;
+    }
+    function closeDetail() {
+      $('dtBackdrop').hidden = true;
+      dtRecordId = null;
+      if ($('pvBackdrop').hidden) unlockScroll();
+    }
     $('dtClose').addEventListener('click', closeDetail);
+    $('dtBack').addEventListener('click', closeDetail);
     $('dtBackdrop').addEventListener('click', (e) => { if (e.target === $('dtBackdrop')) closeDetail(); });
 
     // ── 管理者プレビュー（read-only）──
@@ -648,8 +696,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     const yn = (b) => (b ? 'はい' : 'いいえ');
     const ynCls = (b) => (b ? 'yes' : 'no');
 
+    // 「404 のまま」を誤読させないための説明。何を操作すれば表示されるかまで書く
+    function renderPreviewHint(p) {
+      const hint = $('pvHint');
+      let text = '';
+      if (!p.showProductPage) {
+        if (p.eligibility !== 'eligible') {
+          const label = p.eligibility === 'blocked' ? '販売対象外' : '保留';
+          text = 'この会員は「' + label + '」のため、PHASE を切り替えても商品ページは表示されません。'
+            + '先に詳細パネルで「段階公開で販売可」にする必要があります（PHASE の切替はプレビュー内だけの確認で、実データは変わりません）。';
+        } else if (p.simulated.phaseDaysAgo === null) {
+          text = '実データでは PHASE ' + p.phase + ' のため、会員にはまだ何も表示されません（正常です）。'
+            + '段階公開が進んだあとの見え方を確認するには、上の「段階公開の表示確認」で PHASE 2〜4 を選んでください。';
+        }
+      }
+      hint.textContent = text;
+      hint.hidden = !text;
+    }
+
     function renderPreview(data) {
       const p = data.preview;
+      renderPreviewHint(p);
       const body = $('pvBody');
       body.innerHTML = '';
 
@@ -719,6 +786,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     async function refreshPreview() {
       if (!pvRecordId) return;
+      $('pvHint').hidden = true;
       $('pvBody').textContent = '読み込み中…';
       const data = await call({
         action: 'preview',
@@ -735,10 +803,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       renderPreview(data);
     }
 
-    function openPreview(recordId) { pvRecordId = recordId; $('pvBackdrop').hidden = false; refreshPreview(); }
-    function closePreview() { $('pvBackdrop').hidden = true; pvRecordId = null; }
+    function openPreview(recordId) {
+      pvRecordId = recordId;
+      $('pvBackdrop').hidden = false;
+      lockScroll();
+      $('pvScroll').scrollTop = 0;
+      refreshPreview();
+    }
+    // 閉じると詳細パネルに戻る（詳細も閉じていれば一覧へ）
+    function closePreview() {
+      $('pvBackdrop').hidden = true;
+      pvRecordId = null;
+      if ($('dtBackdrop').hidden) unlockScroll();
+    }
 
     $('pvClose').addEventListener('click', closePreview);
+    $('pvBack').addEventListener('click', closePreview);
     $('pvBackdrop').addEventListener('click', (e) => { if (e.target === $('pvBackdrop')) closePreview(); });
     $('pvTime').addEventListener('change', refreshPreview);
     $('pvPhase').addEventListener('change', refreshPreview);

@@ -298,3 +298,74 @@ test('状態バッジはダーク背景ベース（白 pill を使わない）',
   }
   assert.match(STYLE, /\.ppe \.badge\.immediate \{[^}]*linear-gradient\(135deg, var\(--gold\)/);
 });
+
+// ── オーバーレイの到達性（2026-07-30 本番で「戻れない / 上部が隠れる / スクロール不可」が発生）──
+//   サイト共通ヘッダは BaseLayout で position: fixed / z-index: 1000。
+//   パネルとモーダルがそれより下だと、上部のタイトルと閉じる × がヘッダに隠れて操作不能になる。
+test('パネル / モーダルは共通ヘッダ（z-index:1000）より上に出す', () => {
+  const z = (sel) => {
+    const m = STYLE.match(new RegExp('\\.ppe \\' + sel + ' \\{([^}]*)\\}'));
+    assert.ok(m, `${sel} の定義が無い`);
+    const zi = m[1].match(/z-index:\s*(\d+)/);
+    assert.ok(zi, `${sel} に z-index が無い`);
+    return Number(zi[1]);
+  };
+  const dt = z('.dt-backdrop');
+  const pv = z('.pv-backdrop');
+  assert.ok(dt > 1000, `詳細パネルが共通ヘッダより下: z-index=${dt}`);
+  assert.ok(pv > 1000, `プレビューが共通ヘッダより下: z-index=${pv}`);
+  assert.ok(pv >= dt, 'プレビューが詳細パネルより下にある');
+});
+
+test('詳細パネルの見出し行は sticky で、戻る / 閉じるが常に届く', () => {
+  const m = STYLE.match(/\.ppe \.dt-head \{([^}]*)\}/);
+  assert.ok(m, '.dt-head の定義が無い');
+  assert.match(m[1], /position: sticky/);
+  assert.match(m[1], /top: 0/);
+  assert.match(m[1], /background: #[0-9a-f]{6}/i, 'sticky 見出しの背景が無い（本文が透けて重なる）');
+  assert.match(STYLE, /\.ppe \.dt-panel \{[^}]*overflow-y: auto/);
+});
+
+test('プレビューは本文だけを内部スクロールし、操作部は固定される', () => {
+  assert.match(STYLE, /\.ppe \.pv-modal \{[^}]*max-height: \d+vh/);
+  assert.match(STYLE, /\.ppe \.pv-modal \{[^}]*flex-direction: column/);
+  assert.match(STYLE, /\.ppe \.pv-scroll \{[^}]*overflow-y: auto/);
+  assert.match(STYLE, /\.ppe \.pv-scroll \{[^}]*min-height: 0/, 'flex 子要素の min-height:0 が無いとスクロールしない');
+  assert.match(PAGE, /<div class="pv-scroll" id="pvScroll">/);
+});
+
+test('戻るボタンが詳細・プレビューの両方にある（閉じる × だけに依存しない）', () => {
+  assert.match(PAGE, /id="dtBack" class="btn-back">← 一覧へ戻る/);
+  assert.match(PAGE, /id="pvBack" class="btn-back">← 詳細へ戻る/);
+  assert.match(PAGE, /\$\('dtBack'\)\.addEventListener\('click', closeDetail\)/);
+  assert.match(PAGE, /\$\('pvBack'\)\.addEventListener\('click', closePreview\)/);
+  // Esc と背景クリックも維持
+  assert.match(PAGE, /if \(e\.key !== 'Escape'\) return/);
+  assert.match(PAGE, /if \(e\.target === \$\('dtBackdrop'\)\) closeDetail\(\)/);
+});
+
+test('背面スクロール固定は閉じたときに必ず解除される', () => {
+  assert.match(PAGE, /function lockScroll\(\) \{ document\.body\.style\.overflow = 'hidden'; \}/);
+  assert.match(PAGE, /function unlockScroll\(\) \{ document\.body\.style\.overflow = ''; \}/);
+  // 片方を閉じてももう片方が開いていれば固定を維持する（解除漏れ・二重解除の両方を防ぐ）
+  assert.match(PAGE, /closeDetail\(\)[\s\S]{0,200}if \(\$\('pvBackdrop'\)\.hidden\) unlockScroll\(\)/);
+  assert.match(PAGE, /closePreview\(\)[\s\S]{0,200}if \(\$\('dtBackdrop'\)\.hidden\) unlockScroll\(\)/);
+});
+
+test('段階公開の切替が主操作として強調され、404 のときは操作方法を案内する', () => {
+  assert.match(PAGE, /class="ctl-main" for="pvPhase">段階公開の表示確認/);
+  assert.match(STYLE, /\.ppe \.pv-controls \.ctl-main \{[^}]*color: var\(--gold\)/);
+  assert.match(PAGE, /function renderPreviewHint\(p\)/);
+  assert.match(PAGE, /renderPreviewHint\(p\);/);
+  // eligible で実データが PHASE 1〜3 のとき → PHASE 切替を案内
+  assert.match(PAGE, /段階公開の表示確認」で PHASE 2〜4 を選んでください/);
+  // review / blocked のとき → PHASE を変えても表示されない理由を説明
+  assert.match(PAGE, /PHASE を切り替えても商品ページは表示されません/);
+  assert.match(PAGE, /実データは変わりません/);
+});
+
+test('プレビューの payload は変更しない（read-only 契約の維持）', () => {
+  assert.match(PAGE, /atMin:\s*\$\('pvTime'\)\.value === '' \? null : Number/);
+  assert.match(PAGE, /phaseDaysAgo:\s*\$\('pvPhase'\)\.value === '' \? null : Number/);
+  assert.doesNotMatch(PAGE, /renderPreviewHint[\s\S]{0,600}action:\s*'update'/);
+});
