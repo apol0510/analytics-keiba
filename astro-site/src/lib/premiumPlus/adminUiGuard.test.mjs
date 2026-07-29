@@ -249,3 +249,52 @@ test('顧客データを URL に載せない（recordId をクエリに出さな
   assert.doesNotMatch(PAGE, /history\.(push|replace)State/);
   assert.doesNotMatch(PAGE, /\?record=/);
 });
+
+// ── AK ダークテーマ（ブラウザ標準の白 UI を残さない）────────────
+test('button / select / input に既定のダーク背景と文字色がある', () => {
+  assert.match(STYLE, /\.ppe button,[\s\S]{0,80}\.ppe select,[\s\S]{0,80}\.ppe input,[\s\S]{0,80}\.ppe textarea \{[\s\S]{0,400}background-color: var\(--nv-2\)/);
+  assert.match(STYLE, /\.ppe select,[\s\S]{0,160}input\[type=search\][\s\S]{0,160}background-color: var\(--nv-0\)/);
+  assert.match(STYLE, /--nv-0:\s*#0b1120/);
+  assert.match(STYLE, /--gold:\s*#f5c451/);
+});
+
+test('主要ボタンに background と color の明示指定がある', () => {
+  for (const cls of ['.btn-primary', '.btn-detail', '.btn-ghost', '.b-preview', '.b-staged', '.b-review', '.b-immediate', '.b-blocked']) {
+    const m = STYLE.match(new RegExp('\\.ppe \\' + cls + ' \\{([^}]*)\\}'));
+    assert.ok(m, `${cls} の定義が無い`);
+    assert.match(m[1], /background(-color|-image|:)/, `${cls} に background 指定が無い`);
+    assert.match(m[1], /color:/, `${cls} に color 指定が無い`);
+  }
+});
+
+test('disabled でも白背景に戻らない', () => {
+  assert.match(STYLE, /\.ppe button\[disabled\] \{[^}]*background-color: var\(--nv-2\)/);
+  assert.match(STYLE, /\.ppe button\[disabled\] \{[^}]*cursor: not-allowed/);
+  assert.match(STYLE, /\.ppe button\[disabled\] \{[^}]*opacity/);
+});
+
+test('select は標準の白い外観を使わない（appearance 無効化 + 自前シェブロン）', () => {
+  assert.match(STYLE, /\.ppe select \{[\s\S]{0,400}appearance: none/);
+  assert.match(STYLE, /background-image: url\("data:image\/svg\+xml/);
+  assert.match(STYLE, /\.ppe select option \{[^}]*background-color/);
+});
+
+test('checkbox は accent-color で AK 配色に寄せる', () => {
+  assert.match(STYLE, /\.ppe input\[type=checkbox\] \{[^}]*accent-color: var\(--gold\)/);
+});
+
+test('白背景・黒文字の指定が混入していない', () => {
+  const white = STYLE.match(/(background(-color)?\s*:\s*(#fff\b|#ffffff|white|rgb\(255,\s*255,\s*255\)))/gi) || [];
+  assert.deepEqual(white, [], '白背景の指定がある: ' + white.join(' / '));
+  const black = STYLE.match(/color\s*:\s*(#000\b|#000000|black)\s*[;}]/gi) || [];
+  assert.deepEqual(black, [], '黒文字の指定がある: ' + black.join(' / '));
+});
+
+test('状態バッジはダーク背景ベース（白 pill を使わない）', () => {
+  for (const k of ['review', 'staged', 'sale', 'blocked']) {
+    const m = STYLE.match(new RegExp('\\.ppe \\.badge\\.' + k + ' \\{([^}]*)\\}'));
+    assert.ok(m, `badge.${k} が無い`);
+    assert.match(m[1], /background-color: #[0-9a-f]{6}/i, `badge.${k} がダーク背景でない`);
+  }
+  assert.match(STYLE, /\.ppe \.badge\.immediate \{[^}]*linear-gradient\(135deg, var\(--gold\)/);
+});

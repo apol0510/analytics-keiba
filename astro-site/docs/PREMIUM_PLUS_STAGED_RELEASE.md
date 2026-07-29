@@ -373,6 +373,29 @@ preview 契約・判定ロジックは不変）。**
   横スクロールはさせない。カードには Email / 状態 / プラン・Route・PHASE / `[詳細・操作]` だけ出す
   （販売許可日・最終更新は隠す）。詳細・操作は同じパネルで扱う
 
+### 配色（AK ダークテーマ）
+
+ブラウザ標準の白い button / select / checkbox を出さないため、`.ppe button, .ppe select,
+.ppe input, .ppe textarea` に**既定のダーク配色**を先に当てている。CSS 変数は `.ppe` に定義:
+`--nv-0 #0b1120`（入力欄）/ `--nv-1 #0d1729`（パネル）/ `--nv-2 #111c33`（既定ボタン）/
+`--nv-3 #1b2a47`（hover）/ `--gold #f5c451` / `--green #34d399` / `--red #f87171`。
+
+| 用途 | 配色 |
+|---|---|
+| 再読み込み / 詳細・操作 / 表示プレビュー | ダークブルー gradient + 薄いブルー border |
+| 管理接続設定 | ネイビー + slate 文字 |
+| 段階公開で販売可 | 深いグリーン gradient（蛍光にしない） |
+| **今すぐ販売可** | **ゴールド gradient**（Premium Plus の主要操作） |
+| 保留 | slate / blue-gray |
+| 販売対象外 | ダーク赤背景 + 赤 border/文字（**危険操作のみ赤**） |
+| disabled | 背景はダークのまま `opacity .42` / `cursor: not-allowed` |
+
+- `select` は `appearance: none` + 自前シェブロン（data URI SVG）。`option` にもダーク背景を指定
+- `checkbox` は `accent-color: var(--gold)`（独自実装せずブラウザ互換を優先）
+- focus は `outline: 2px solid rgba(245,196,81,.6)`（ゴールド）
+- 状態バッジはすべてダーク背景 + 淡色文字。即時販売のみゴールド gradient（**白 pill は禁止**）
+- guard が **白背景 `#fff`/`white`・黒文字 `#000` の指定が 1 つも無いこと**を固定
+
 > ⚠️ **スタイルは `<style is:global>` + 全セレクタ `.ppe` 名前空間で書くこと。**
 > Astro の scoped style は `.cust[data-astro-cid-xxx]` へ変換され、**JS で生成する行・バッジ・
 > ボタンには一切適用されない**（2026-07-30 に本番で発生）。guard テストで
