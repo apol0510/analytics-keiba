@@ -35,6 +35,7 @@ export const PP_WRITABLE_FIELDS = Object.freeze([
   SANRENPUKU_PAID_AT_FIELD,
   PP_ELIGIBILITY_FIELDS.STATUS,
   PP_ELIGIBILITY_FIELDS.REASON,
+  PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT,
   PP_ELIGIBILITY_FIELDS.UPDATED_AT,
   PP_ELIGIBILITY_FIELDS.UPDATED_BY,
 ]);
@@ -123,10 +124,28 @@ export function buildSanrenpukuPlusInitFields({ fields, confirmedAt }) {
  * 管理画面からの販売資格変更で書くフィールド。
  * 表示資格だけを変える。課金・昇格・メール・Status は一切変更しない。
  *
- * @param {{ next: unknown, reason?: unknown, actor?: unknown, now: Date|number }} input
- * @returns {{ fields: Record<string, unknown>, next: string }|null} 不正な next なら null
+ * ── PremiumPlusEligibleAt（段階公開 anchor）の更新規則 ─────────────────
+ *   **review / blocked → eligible の実遷移のときだけ** now を書く。
+ *   それ以外では **一切 touch しない**（Airtable の既存値がそのまま残る）:
+ *     - eligible → eligible の再保存（内部メモだけの変更を含む）
+ *     - eligible → blocked / review（解除前の許可日時を消さない）
+ *     - blocked → review など eligible を経由しない遷移
+ *   これにより「メモを直したら phase が Day 0 に戻る」事故を構造的に防ぐ。
+ *   blocked / review から再度 eligible にしたときは、その**再解除日時**へ更新される。
+ *
+ *   PremiumPlusEligibilityUpdatedAt は純粋な監査日時なので毎回更新する（phase には使わない）。
+ *
+ * @param {{
+ *   next: unknown,
+ *   current?: unknown,   変更前の PremiumPlusEligibility 生値（未設定なら review 相当）
+ *   reason?: unknown,
+ *   actor?: unknown,
+ *   now: Date|number,
+ * }} input
+ * @returns {{ fields: Record<string, unknown>, next: string, eligibleAtUpdated: boolean }|null}
+ *   不正な next なら null
  */
-export function buildEligibilityUpdateFields({ next, reason, actor, now }) {
+export function buildEligibilityUpdateFields({ next, current, reason, actor, now }) {
   const raw = (next == null ? '' : String(next)).trim().toLowerCase();
   // 未知の値を review に丸めない（管理操作は明示的な 3 値のみ受け付ける）
   if (raw !== PP_ELIGIBILITY.ELIGIBLE && raw !== PP_ELIGIBILITY.REVIEW && raw !== PP_ELIGIBILITY.BLOCKED) {
@@ -135,15 +154,26 @@ export function buildEligibilityUpdateFields({ next, reason, actor, now }) {
   const iso = toIso(now);
   if (!iso) return null;
 
+  const nextStatus = normalizeEligibility(raw);
+  const currentStatus = normalizeEligibility(current); // 未設定・不正値は review 相当
+
   const out = {
-    [PP_ELIGIBILITY_FIELDS.STATUS]: normalizeEligibility(raw),
+    [PP_ELIGIBILITY_FIELDS.STATUS]: nextStatus,
     [PP_ELIGIBILITY_FIELDS.UPDATED_AT]: iso,
     [PP_ELIGIBILITY_FIELDS.UPDATED_BY]: String(actor || 'admin').slice(0, 64),
   };
+
+  // eligible への「実遷移」だけが anchor を動かす
+  const isTransitionToEligible =
+    nextStatus === PP_ELIGIBILITY.ELIGIBLE && currentStatus !== PP_ELIGIBILITY.ELIGIBLE;
+  if (isTransitionToEligible) {
+    out[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT] = iso;
+  }
+
   if (reason !== undefined) {
     out[PP_ELIGIBILITY_FIELDS.REASON] = String(reason ?? '').slice(0, PP_REASON_MAX_LENGTH);
   }
 
   if (!assertOnlyPlusFields(out)) return null;
-  return { fields: out, next: out[PP_ELIGIBILITY_FIELDS.STATUS] };
+  return { fields: out, next: nextStatus, eligibleAtUpdated: isTransitionToEligible };
 }

@@ -133,7 +133,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           'Premium経過: ' + days,
           'route: ' + (ROUTE_LABEL[r.route] || r.route),
           'phase: ' + r.phase,
-          r.updatedAt ? '更新: ' + String(r.updatedAt).slice(0, 10) : '',
+          r.eligibleAt ? '販売許可日(段階公開の起点): ' + String(r.eligibleAt).slice(0, 10) : '',
+          r.updatedAt ? '最終更新(監査): ' + String(r.updatedAt).slice(0, 10) : '',
           r.reason ? 'メモ: ' + r.reason : '',
         ].filter(Boolean).join('　/　');
 

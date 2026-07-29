@@ -31,6 +31,7 @@ test('書けるのは Plus 専用フィールドだけ（禁止フィールド�
     'PremiumPlusEligibilityReason',
     'PremiumPlusEligibilityUpdatedAt',
     'PremiumPlusEligibilityUpdatedBy',
+    'PremiumPlusEligibleAt',
     'SanrenpukuPaidAt',
   ].sort());
 });
@@ -109,6 +110,100 @@ test('管理操作: 3 値それぞれへ変更でき、監査情報が付く', (
     assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.UPDATED_BY], 'admin');
     assert.equal(assertOnlyPlusFields(r.fields), true);
   }
+});
+
+// ── 段階公開 anchor（PremiumPlusEligibleAt）の更新規則 ─────────────
+// ⚠️ 監査日時（UpdatedAt）と兼用しない。兼用すると内部メモの編集で phase が Day 0 へ戻る。
+const LATER = new Date('2026-08-10T02:00:00.000Z');
+const EAT = PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT;
+const has = (fields, key) => Object.prototype.hasOwnProperty.call(fields, key);
+
+test('anchor: review → eligible の実遷移でだけ EligibleAt を書く', () => {
+  for (const current of [PP_ELIGIBILITY.REVIEW, PP_ELIGIBILITY.BLOCKED, undefined, null, '', 'ゴミ']) {
+    const r = buildEligibilityUpdateFields({ next: PP_ELIGIBILITY.ELIGIBLE, current, now: CONFIRMED });
+    assert.equal(r.eligibleAtUpdated, true, `current=${String(current)}`);
+    assert.equal(r.fields[EAT], CONFIRMED.toISOString());
+  }
+});
+
+test('anchor: eligible → eligible の再保存では EligibleAt を更新しない', () => {
+  const r = buildEligibilityUpdateFields({
+    next: PP_ELIGIBILITY.ELIGIBLE, current: PP_ELIGIBILITY.ELIGIBLE, now: LATER,
+  });
+  assert.equal(r.eligibleAtUpdated, false);
+  assert.equal(has(r.fields, EAT), false, 'EligibleAt を touch している（phase が Day 0 へ戻る）');
+  // 監査日時は更新してよい
+  assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.UPDATED_AT], LATER.toISOString());
+});
+
+test('anchor: eligible 会員の内部メモだけの変更で EligibleAt を更新しない', () => {
+  const r = buildEligibilityUpdateFields({
+    next: PP_ELIGIBILITY.ELIGIBLE, current: PP_ELIGIBILITY.ELIGIBLE,
+    reason: 'メモを直しただけ', now: LATER,
+  });
+  assert.equal(r.eligibleAtUpdated, false);
+  assert.equal(has(r.fields, EAT), false);
+  assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.REASON], 'メモを直しただけ');
+});
+
+test('anchor: eligible → blocked / review では EligibleAt を上書きしない', () => {
+  for (const next of [PP_ELIGIBILITY.BLOCKED, PP_ELIGIBILITY.REVIEW]) {
+    const r = buildEligibilityUpdateFields({ next, current: PP_ELIGIBILITY.ELIGIBLE, now: LATER });
+    assert.equal(r.eligibleAtUpdated, false, next);
+    assert.equal(has(r.fields, EAT), false, `${next} で EligibleAt を書いている`);
+  }
+});
+
+test('anchor: eligible を経由しない遷移（blocked → review）でも書かない', () => {
+  const r = buildEligibilityUpdateFields({
+    next: PP_ELIGIBILITY.REVIEW, current: PP_ELIGIBILITY.BLOCKED, now: LATER,
+  });
+  assert.equal(has(r.fields, EAT), false);
+});
+
+test('anchor: eligible → blocked → eligible は最後の解除日時になる', () => {
+  const first = buildEligibilityUpdateFields({
+    next: PP_ELIGIBILITY.ELIGIBLE, current: PP_ELIGIBILITY.REVIEW, now: CONFIRMED,
+  });
+  assert.equal(first.fields[EAT], CONFIRMED.toISOString());
+
+  const blocked = buildEligibilityUpdateFields({
+    next: PP_ELIGIBILITY.BLOCKED, current: PP_ELIGIBILITY.ELIGIBLE, now: LATER,
+  });
+  assert.equal(has(blocked.fields, EAT), false, 'blocked 化で解除日時を消してはいけない');
+
+  const again = buildEligibilityUpdateFields({
+    next: PP_ELIGIBILITY.ELIGIBLE, current: PP_ELIGIBILITY.BLOCKED, now: LATER,
+  });
+  assert.equal(again.eligibleAtUpdated, true);
+  assert.equal(again.fields[EAT], LATER.toISOString(), '再解除日時へ更新されていない');
+});
+
+test('anchor: 初期化（review）では EligibleAt を書かない', () => {
+  const r = buildSanrenpukuPlusInitFields({ fields: {}, confirmedAt: CONFIRMED });
+  assert.equal(has(r.fields, EAT), false, '初期 review で anchor を作ってはいけない');
+});
+
+test('anchor: confirm 再実行で EligibleAt が変わらない（そもそも書かない）', () => {
+  const existing = '2026-07-10T00:00:00.000Z';
+  for (const current of [PP_ELIGIBILITY.ELIGIBLE, PP_ELIGIBILITY.REVIEW, PP_ELIGIBILITY.BLOCKED]) {
+    const r = buildSanrenpukuPlusInitFields({
+      fields: {
+        [PP_ELIGIBILITY_FIELDS.STATUS]: current,
+        [EAT]: existing,
+        SanrenpukuPaidAt: '2026-07-01T00:00:00.000Z',
+      },
+      confirmedAt: LATER,
+    });
+    assert.equal(r, null, `${current}: 再実行で何も書かない`);
+  }
+});
+
+test('anchor: UpdatedAt（監査）と EligibleAt は別フィールド', () => {
+  assert.notEqual(PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT, PP_ELIGIBILITY_FIELDS.UPDATED_AT);
+  assert.equal(PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT, 'PremiumPlusEligibleAt');
+  assert.equal(PP_ELIGIBILITY_FIELDS.UPDATED_AT, 'PremiumPlusEligibilityUpdatedAt');
+  assert.ok(PP_WRITABLE_FIELDS.includes(PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT));
 });
 
 test('管理操作: 未知の値は丸めずに拒否する', () => {

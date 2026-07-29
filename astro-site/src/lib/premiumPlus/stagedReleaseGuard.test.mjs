@@ -191,6 +191,33 @@ test('管理 Function: Plus 専用フィールド以外を書かない', () => {
   }
 });
 
+test('管理 Function: 変更前の資格を Airtable から読んでから PATCH する（anchor 判定に必須）', () => {
+  const code = stripComments(ADMIN_FN);
+  assert.match(code, /current:\s*currentFields\['PremiumPlusEligibility'\]/);
+  const iGet = code.indexOf('currentFields');
+  const iPatch = code.indexOf("method: 'PATCH'");
+  assert.ok(iGet >= 0 && iGet < iPatch, '変更前の値を読まずに PATCH している');
+  // クライアント申告の current を信用しない
+  assert.doesNotMatch(code, /current:\s*req\./);
+});
+
+const MEMBER_LIB = read('./premiumPlusMember.js');
+
+test('anchor は EligibleAt のみ。監査用 UpdatedAt を phase に使わない', () => {
+  const code = stripComments(MEMBER_LIB);
+  assert.match(code, /eligibleAtMs:\s*toPaidAtMs\(f\[PP_ELIGIBILITY_FIELDS\.ELIGIBLE_AT\]\)/);
+  assert.doesNotMatch(code, /PP_ELIGIBILITY_FIELDS\.UPDATED_AT/);
+});
+
+test('EligibleAt は eligible への実遷移でだけ書く（再保存・メモ編集で phase を戻さない）', () => {
+  const code = stripComments(read('./premiumPlusEligibility.js'));
+  assert.match(code, /nextStatus === PP_ELIGIBILITY\.ELIGIBLE\s*&&\s*currentStatus !== PP_ELIGIBILITY\.ELIGIBLE/);
+  assert.match(code, /if \(isTransitionToEligible\)/);
+  // 初期化（review）で anchor を作らない
+  const init = code.slice(code.indexOf('buildSanrenpukuPlusInitFields'), code.indexOf('buildEligibilityUpdateFields'));
+  assert.doesNotMatch(init, /ELIGIBLE_AT/);
+});
+
 test('管理 Function: 資格変更でメール・LINE・通知を送らない', () => {
   assert.doesNotMatch(ADMIN_FN, /sendgrid|sendMail|mail\/send|line\/|notify/i);
 });

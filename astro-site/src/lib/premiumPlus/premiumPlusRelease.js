@@ -87,6 +87,9 @@ export const PREMIUM_30D_DAYS = 30;
 
 /**
  * 段階公開 phase の anchor をどう決めるか。
+ *   （販売許可日 = PremiumPlusEligibleAt。監査用 UpdatedAt ではない。UpdatedAt を anchor に
+ *     使うと、内部メモの編集や同じ資格の再保存で phase が Day 0 へ戻る）
+ *
  *   'later'    … 購入日と販売許可日の**遅い方**（既定・推奨）
  *                 通常フロー（購入とほぼ同時に eligible）では購入日基準と同じ挙動になり、
  *                 blocked → eligible の遅い解除では「解除日から PHASE 1」で段階的に見せられる。
@@ -96,10 +99,21 @@ export const PREMIUM_30D_DAYS = 30;
  */
 export const PP_PHASE_ANCHOR_MODE = 'later';
 
-/** Airtable Customers の Premium Plus 販売資格フィールド名（読む・管理画面だけが書く） */
+/**
+ * Airtable Customers の Premium Plus 販売資格フィールド名（読む・管理画面だけが書く）
+ *
+ * ⚠️ ELIGIBLE_AT と UPDATED_AT は**責務が違う**。兼用してはいけない。
+ *   - ELIGIBLE_AT … 段階公開 anchor。「eligible へ**実際に遷移した**日時」だけを持つ。
+ *                   内部メモだけの編集 / eligible → eligible の再保存 / blocked・review への
+ *                   変更では**更新しない**（更新すると phase が Day 0 へ戻ってしまう）。
+ *   - UPDATED_AT  … 純粋な監査日時。どの操作でも更新してよい（phase には一切使わない）。
+ */
 export const PP_ELIGIBILITY_FIELDS = Object.freeze({
   STATUS: 'PremiumPlusEligibility',
   REASON: 'PremiumPlusEligibilityReason',
+  /** 段階公開 anchor 用。eligible への実遷移時のみ更新する */
+  ELIGIBLE_AT: 'PremiumPlusEligibleAt',
+  /** 監査専用。phase 判定に使わない */
   UPDATED_AT: 'PremiumPlusEligibilityUpdatedAt',
   UPDATED_BY: 'PremiumPlusEligibilityUpdatedBy',
 });

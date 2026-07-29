@@ -76,7 +76,7 @@ PHASE 4 到達後の **OPEN / CLOSING / CLOSED**（JST 判定）を通す。
 管理画面: `/admin/premium-plus-eligibility`
 
 > ⚠️ **Airtable に Premium Plus 用フィールドが未作成のため、現状は全会員が PHASE 1（商品ページ 404）**。
-> 有効化には `SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 5 フィールドの作成（schema 変更）と
+> 有効化には `SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 6 フィールドの作成（schema 変更）と
 > env `PREMIUM_PLUS_FIELDS_READY=1` が必要。どちらも未実行。
 
 ## 変更してはいけない前提

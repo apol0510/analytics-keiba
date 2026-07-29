@@ -119,6 +119,7 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         eligibility,
         eligibilityLabel: PP_ELIGIBILITY_LABEL[eligibility],
         reason: fields['PremiumPlusEligibilityReason'] || '',
+        eligibleAt: fields['PremiumPlusEligibleAt'] || '',
         updatedAt: fields['PremiumPlusEligibilityUpdatedAt'] || '',
         updatedBy: fields['PremiumPlusEligibilityUpdatedBy'] || '',
         phase: release.phase,
@@ -162,8 +163,17 @@ async function handleUpdate({ KEY, BASE, now, req }) {
   const recordId = String(req.recordId || '').trim();
   if (!recordId) return json(400, { error: 'recordId が必要です' });
 
+  // 変更前の資格を Airtable から読む（クライアント申告は信用しない）。
+  // PremiumPlusEligibleAt を「eligible への実遷移のときだけ」更新するために必須。
+  const getRes = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!getRes.ok) return json(404, { error: 'Record not found' });
+  const currentFields = (await getRes.json()).fields || {};
+
   const built = buildEligibilityUpdateFields({
     next: req.next,
+    current: currentFields['PremiumPlusEligibility'],
     reason: req.reason,
     actor: req.actor || 'admin',
     now: new Date(now),
@@ -184,11 +194,15 @@ async function handleUpdate({ KEY, BASE, now, req }) {
     return json(502, { error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300) });
   }
 
-  console.log('✅ [premium-plus-eligibility] 販売資格を更新:', { recordId, next: built.next });
+  console.log('✅ [premium-plus-eligibility] 販売資格を更新:', {
+    recordId, next: built.next, eligibleAtUpdated: built.eligibleAtUpdated,
+  });
   return json(200, {
     success: true,
     recordId,
     next: built.next,
     label: PP_ELIGIBILITY_LABEL[built.next],
+    // true のときだけ段階公開 anchor が動く（= PHASE 1 から見え始める）
+    eligibleAtUpdated: built.eligibleAtUpdated,
   });
 }

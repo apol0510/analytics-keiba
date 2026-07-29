@@ -289,12 +289,12 @@ test('アダプタ: 通常 Premium（有効・三連複なし）→ ROUTE B の�
   assert.equal(r.route, PP_ROUTE.PREMIUM_30D);
 });
 
-test('アダプタ: PremiumPlusEligibility / UpdatedAt を読む', () => {
+test('アダプタ: PremiumPlusEligibility / EligibleAt を読む', () => {
   const m = resolvePlusMemberFromFields(
     {
       'プラン': 'Premium', 'Status': 'active', '有効期限': FUTURE, 'LifetimeSanrenpuku': true,
       'PremiumPlusEligibility': 'eligible',
-      'PremiumPlusEligibilityUpdatedAt': new Date(daysAgo(5)).toISOString(),
+      'PremiumPlusEligibleAt': new Date(daysAgo(5)).toISOString(),
       'SanrenpukuPaidAt': new Date(daysAgo(20)).toISOString(),
     },
     { nowMs: NOW }
@@ -328,6 +328,85 @@ test('アダプタ: 退会申請・停止アカウントは Plus 対象外', () 
     assert.equal(r.route, PP_ROUTE.NONE);
     assert.equal(r.allowed, false);
   }
+});
+
+// ── anchor は EligibleAt のみ / UpdatedAt（監査）を使わない ──────────
+const srpFields = (over = {}) => ({
+  'プラン': 'Premium', 'Status': 'active', '有効期限': FUTURE, 'LifetimeSanrenpuku': true,
+  'SanrenpukuPaidAt': new Date(daysAgo(300)).toISOString(),
+  'PremiumPlusEligibility': 'eligible',
+  ...over,
+});
+
+test('アダプタ: anchor は PremiumPlusEligibleAt から取る（UpdatedAt は読まない）', () => {
+  const m = resolvePlusMemberFromFields(srpFields({
+    'PremiumPlusEligibleAt': new Date(daysAgo(PP_PHASE_START_DAY.SALE)).toISOString(),
+    'PremiumPlusEligibilityUpdatedAt': new Date(NOW).toISOString(), // 直前にメモを更新した想定
+  }), { nowMs: NOW });
+  assert.equal(m.eligibleAtMs, daysAgo(PP_PHASE_START_DAY.SALE));
+});
+
+test('eligible 会員の内部メモ変更で phase が Day 0 へ戻らない', () => {
+  // 解除から 10 日経過して PHASE 4。その状態で「今日」メモだけ編集した（UpdatedAt=now）
+  const fields = srpFields({
+    'PremiumPlusEligibleAt': new Date(daysAgo(PP_PHASE_START_DAY.SALE)).toISOString(),
+    'PremiumPlusEligibilityUpdatedAt': new Date(NOW).toISOString(),
+    'PremiumPlusEligibilityReason': '問い合わせ対応中',
+  });
+  const r = resolvePremiumPlusRelease({ ...resolvePlusMemberFromFields(fields, { nowMs: NOW }), nowMs: NOW });
+  assert.equal(r.phase, PP_PHASE.SALE, 'メモ編集で phase が巻き戻っている');
+  assert.equal(r.daysSincePurchase, PP_PHASE_START_DAY.SALE);
+  assert.equal(r.showPurchaseCta, true);
+});
+
+test('同じ eligible で再保存しても anchor が変わらない（phase 維持）', () => {
+  const eligibleAt = new Date(daysAgo(PP_PHASE_START_DAY.PREVIEW)).toISOString();
+  const before = resolvePlusMemberFromFields(srpFields({ 'PremiumPlusEligibleAt': eligibleAt }), { nowMs: NOW });
+  // 再保存で UpdatedAt だけが動く（EligibleAt は builder が touch しない）
+  const after = resolvePlusMemberFromFields(srpFields({
+    'PremiumPlusEligibleAt': eligibleAt,
+    'PremiumPlusEligibilityUpdatedAt': new Date(NOW).toISOString(),
+    'PremiumPlusEligibilityUpdatedBy': 'admin',
+  }), { nowMs: NOW });
+  assert.equal(before.eligibleAtMs, after.eligibleAtMs);
+  assert.equal(
+    resolvePremiumPlusRelease({ ...before, nowMs: NOW }).phase,
+    resolvePremiumPlusRelease({ ...after, nowMs: NOW }).phase
+  );
+});
+
+test('eligible → blocked → eligible は最後の解除日時から PHASE 1 で再開する', () => {
+  // 300 日前に購入、10 日前に一度解除、今日 blocked を解いて再 eligible
+  const r = resolvePremiumPlusRelease({
+    ...resolvePlusMemberFromFields(srpFields({ 'PremiumPlusEligibleAt': new Date(NOW).toISOString() }), { nowMs: NOW }),
+    nowMs: NOW,
+  });
+  assert.equal(r.eligibility, PP_ELIGIBILITY.ELIGIBLE);
+  assert.equal(r.phase, PP_PHASE.LOCKED, '再解除直後は PHASE 1 から');
+  assert.equal(r.showProductPage, false);
+});
+
+test('review / blocked の UpdatedAt を anchor に使わない（販売資格が無ければそもそも進まない）', () => {
+  for (const status of [PP_ELIGIBILITY.REVIEW, PP_ELIGIBILITY.BLOCKED]) {
+    const m = resolvePlusMemberFromFields(srpFields({
+      'PremiumPlusEligibility': status,
+      // blocked/review にした日時（監査）だけがあり、EligibleAt は無い
+      'PremiumPlusEligibilityUpdatedAt': new Date(daysAgo(PP_PHASE_START_DAY.SALE)).toISOString(),
+    }), { nowMs: NOW });
+    assert.equal(m.eligibleAtMs, null, `${status}: UpdatedAt を anchor に拾っている`);
+    const r = resolvePremiumPlusRelease({ ...m, nowMs: NOW });
+    assert.equal(r.allowed, false);
+    assert.equal(r.showPurchaseCta, false);
+  }
+});
+
+test('EligibleAt が無くても購入日があれば ROUTE A は成立する（既存の挙動を壊さない）', () => {
+  const m = resolvePlusMemberFromFields(srpFields({
+    'SanrenpukuPaidAt': new Date(daysAgo(PP_PHASE_START_DAY.SALE)).toISOString(),
+  }), { nowMs: NOW });
+  assert.equal(m.eligibleAtMs, null);
+  const r = resolvePremiumPlusRelease({ ...m, nowMs: NOW });
+  assert.equal(r.phase, PP_PHASE.SALE);
 });
 
 // ── 実績と非連動 ─────────────────────────────────────────────

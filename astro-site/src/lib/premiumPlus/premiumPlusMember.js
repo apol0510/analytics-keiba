@@ -9,7 +9,11 @@
  *   - SanrenpukuPaidAt          … ROUTE A の anchor（三連複の購入確定日時）
  *   - PaidAt                    … ROUTE B の anchor（通常 Premium の入金確認日時）
  *   - PremiumPlusEligibility    … 販売資格（eligible / review / blocked）
- *   - PremiumPlusEligibilityUpdatedAt … 販売許可日（anchor mode 'later' で使う）
+ *   - PremiumPlusEligibleAt     … 販売許可日（anchor mode 'later' で使う）
+ *
+ * ⚠️ anchor に使うのは `PremiumPlusEligibleAt` **だけ**。監査用の
+ *    `PremiumPlusEligibilityUpdatedAt` は phase 判定に使わない（内部メモの編集や
+ *    同じ資格の再保存で更新されるため、anchor に使うと phase が Day 0 へ戻る）。
  *
  * fields が無い / 読めない場合は全て安全側（route 対象外・review）へ倒す。
  */
@@ -65,7 +69,8 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
     sanrenpukuPaidAtMs: srp.paidAtMs,
     premiumPaidAtMs: toPaidAtMs(f['PaidAt']),
     eligibility: normalizeEligibility(f[PP_ELIGIBILITY_FIELDS.STATUS]),
-    eligibleAtMs: toPaidAtMs(f[PP_ELIGIBILITY_FIELDS.UPDATED_AT]),
+    // anchor は EligibleAt のみ。UpdatedAt（監査）は読まない。
+    eligibleAtMs: toPaidAtMs(f[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT]),
     anchorSource: srp.source,
   };
 }

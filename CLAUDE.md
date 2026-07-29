@@ -475,7 +475,11 @@ PHASE 4 到達後は JST 時刻で **OPEN / CLOSING / CLOSED** を自動判定�
   失敗しても昇格 / メール / LifetimeSanrenpuku を巻き戻さない
 - KMA は `PremiumPlusEligibility` を eligible へ変更してはいけない（マーケ対象 ≠ 販売許可）
 
-> ⚠️ Premium Plus 用フィールド（`SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 5 つ）は
+- 段階公開 anchor は **`PremiumPlusEligibleAt`**（eligible への実遷移時のみ更新）。
+  監査用 `PremiumPlusEligibilityUpdatedAt` を anchor に兼用しない
+  （メモ編集・同一資格の再保存で phase が Day 0 に戻るため）
+
+> ⚠️ Premium Plus 用フィールド（`SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 6 つ）は
 > **本番 Airtable に未作成**。そのため現状は全会員が PHASE 1（商品ページ 404）で、
 > Plus フィールドへの書き込みは `PREMIUM_PLUS_FIELDS_READY=1` が無いと無効（422 防止）。
 > **`PaidAt` を ROUTE A の anchor に流用しないこと**（既存 Premium 会員が購入直後に PHASE 4 へ飛ぶ）。

@@ -128,8 +128,27 @@ Sanrenpuku 閲覧権限 / `PaymentEmailSent` / `PaymentEmailStatus` / `Requested
 | `eligible`（案B） | 販売許可日のみ | 常に解除日から段階公開。通常フローでも購入日を無視する |
 | **`later`（推奨・既定）** | **両者の遅い方** | 通常フロー（購入とほぼ同時に eligible）は案A と同じ。blocked→eligible の遅い解除は解除日から PHASE 1。**購入日が無い既存会員も、eligible にした日を anchor にできる** |
 
-`later` は追加フィールドを増やさない: 販売許可日は監査用の
-`PremiumPlusEligibilityUpdatedAt` をそのまま使う（`PremiumPlusEligibleAt` を別途作らない）。
+### 販売許可日は専用フィールド `PremiumPlusEligibleAt`（監査日時と兼用しない）
+
+anchor に使うのは **`PremiumPlusEligibleAt` だけ**。監査用の
+`PremiumPlusEligibilityUpdatedAt` を anchor に兼用してはいけない。
+
+> 兼用すると、内部メモの編集 / 同じ資格の再保存 / blocked・review への変更で日時が動き、
+> **段階公開 phase が意図せず Day 0 へ戻る**（例: PHASE 4 で販売中の会員のメモを直した瞬間に
+> 商品ページが 404 になる）。
+
+`PremiumPlusEligibleAt` の更新規則（`buildEligibilityUpdateFields`）:
+
+| 操作 | EligibleAt | UpdatedAt（監査） |
+|---|---|---|
+| review / blocked → **eligible**（実遷移） | **now へ更新** | 更新 |
+| eligible → eligible の再保存（メモだけの変更を含む） | **touch しない** | 更新 |
+| eligible → blocked / review | **touch しない**（解除前の値を残す） | 更新 |
+| blocked → review など eligible を経由しない遷移 | **touch しない** | 更新 |
+| 三連複購入時の初期化（review を入れる） | **書かない** | 更新 |
+
+blocked → eligible の再解除では、その**再解除日時**へ更新される（= そこから PHASE 1 で再開）。
+判定に必要な「変更前の資格」は管理 Function が Airtable から読み直す（クライアント申告は信用しない）。
 
 ## 本日の受付ステータス（PHASE 4 到達後のみ）
 
@@ -155,18 +174,20 @@ nankan（平日 = 南関）: CLOSING 18:00 / CLOSED 20:00 JST
 
 ## Airtable フィールド（本番未作成・要承認）
 
-2026-07-29 時点で **以下 5 フィールドはいずれも本番 Customers に存在しない**（1440 件を read-only 実測）。
+2026-07-29 時点で **以下 6 フィールドはいずれも本番 Customers に存在しない**（1440 件を read-only 実測）。
 
 | フィールド | 型 | 用途 |
 |---|---|---|
 | `SanrenpukuPaidAt` | 日時（ISO 文字列） | ROUTE A の anchor。三連複の**入金確認・権限付与が成功した**購入確定日時（申込日時ではない） |
 | `PremiumPlusEligibility` | 単一選択 `eligible` / `review` / `blocked` | 販売資格 |
 | `PremiumPlusEligibilityReason` | テキスト（200 字） | 管理者だけが見る内部メモ。**顧客画面に絶対に出さない** |
-| `PremiumPlusEligibilityUpdatedAt` | 日時 | 監査 ＋ anchor mode `later` の販売許可日 |
+| `PremiumPlusEligibleAt` | 日時 | **段階公開 anchor**。eligible への実遷移時のみ更新 |
+| `PremiumPlusEligibilityUpdatedAt` | 日時 | **監査専用**（phase には使わない） |
 | `PremiumPlusEligibilityUpdatedBy` | テキスト | 監査（操作者） |
 
 - 既存 Audit Log 機構は AK に無い（Payment Email v2 の状態列があるだけ）ため、
   UpdatedAt / UpdatedBy の 2 列で最小限の監査を持つ。履歴テーブルは作らない。
+- **EligibleAt と UpdatedAt は責務が違うので必ず別フィールドにする**（上の更新規則を参照）。
 - **`PaidAt` を ROUTE A の anchor に流用しない。** `PaidAt` は Light / Premium の
   会員ランク購入確定日時であり、既存 Premium 会員が後から三連複を買うと
   「馬単購入日」が anchor になって購入直後に PHASE 4 へ飛ぶ。
@@ -310,7 +331,8 @@ KMA 側の変更は本作業の範囲外。
 - [x] 管理画面（一覧 / 保留絞り込み / 3 ボタン / 内部メモ）
 - [x] route 別の予告文言
 - [x] テスト（fixture / mock のみ・本番データ不使用）
-- [ ] **Airtable に 5 フィールドを作成**（承認待ち・本番 schema 変更）
+- [x] 販売許可日 anchor を専用フィールド `PremiumPlusEligibleAt` へ分離（案A・監査日時と兼用しない）
+- [ ] **Airtable に 6 フィールドを作成**（承認待ち・本番 schema 変更）
 - [ ] **`PREMIUM_PLUS_FIELDS_READY=1` を production に設定**（承認待ち・本番 env 変更）
 - [ ] 既存 22 件の個別解禁（管理者操作）
 - [ ] 受付締切時刻の確定
