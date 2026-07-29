@@ -97,52 +97,75 @@ import '../../styles/premiumPlusReceiptCard.css';
     </div>
   </div>
 
-  <style>
+  <style is:global>
+    /* ── AK ダークテーマの既定値（ブラウザ標準の白 UI を出さない）──────────
+       button / select / input / textarea は必ずダークネイビー系。白背景へ戻さない。
+       ⚠️ 馬番チップ・的中組合せ option は JS 生成のため、style は is:global 必須。
+          scoped だと cid 属性が付かず一切適用されない（2026-07-30 に本番で発生）。 */
+    .ppr{--nv-0:#0b1120;--nv-2:#111c33;--nv-3:#1b2a47;--line-2:rgba(96,165,250,.28);--ink:#e6edf7;--ink-2:#cfe0ff;--muted:#93a4bd;--gold:#f5c451;--gold-2:#d99b1f}
+    .ppr button,.ppr select,.ppr input,.ppr textarea{font-family:inherit;color:var(--ink);background-color:var(--nv-2);border:1px solid var(--line-2);border-radius:8px;transition:background-color .12s ease,border-color .12s ease,box-shadow .12s ease,opacity .12s ease}
+    .ppr button{cursor:pointer}
+    .ppr button:hover:not([disabled]){background-color:var(--nv-3);border-color:rgba(96,165,250,.45)}
+    .ppr button[disabled]{opacity:.42;cursor:not-allowed;background-color:var(--nv-2)}
+    .ppr button:focus-visible,.ppr select:focus-visible,.ppr input:focus-visible,.ppr textarea:focus-visible{outline:2px solid rgba(245,196,81,.6);outline-offset:1px}
+    .ppr select,.ppr input[type=date],.ppr input[type=number],.ppr input[type=password],.ppr input[type=search],.ppr input[type=text]{background-color:var(--nv-0)}
+    .ppr input::placeholder{color:#64748b}
+    .ppr select{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%2393a4bd' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");background-repeat:no-repeat;background-position:right 10px center}
+    .ppr select option,.ppr select optgroup{background-color:#0d1729;color:var(--ink)}
+    .ppr input[type=checkbox]{accent-color:var(--gold);background-color:transparent;border:0;width:16px;height:16px}
+    /* date input のカレンダーアイコンを暗背景で見えるようにする */
+    .ppr input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.75)}
+
     .ppr{max-width:1280px;margin:0 auto;padding:24px 16px 80px;color:#e6edf7}
     /* 横並びエディタ: 左=入力 / 右=プレビュー固定。狭い画面は縦積み＋上部sticky。 */
-    .editor{display:grid;grid-template-columns:1fr;gap:16px 20px;align-items:start}
-    .editor .card{margin-bottom:0}
+    .ppr .editor{display:grid;grid-template-columns:1fr;gap:16px 20px;align-items:start}
+    .ppr .editor .card{margin-bottom:0}
     @media(min-width:1120px){
-      .editor{grid-template-columns:minmax(0,1fr) 700px}
-      .editor .preview{position:sticky;top:16px;align-self:start}
+      .ppr .editor{grid-template-columns:minmax(0,1fr) 700px}
+      .ppr .editor .preview{position:sticky;top:16px;align-self:start}
     }
     @media(max-width:1119px){
-      .editor .preview{position:sticky;top:0;z-index:5;max-height:52vh;overflow:auto;order:-1}
+      .ppr .editor .preview{position:sticky;top:0;z-index:5;max-height:52vh;overflow:auto;order:-1}
     }
-    .editor .preview .preview-stage{overflow-x:auto}
+    .ppr .editor .preview .preview-stage{overflow-x:auto}
     .ppr h1{font-size:1.4rem;margin:0 0 .3em}
     .ppr .lead{color:#93a4bd;font-size:.9rem;margin:0 0 20px}
     .ppr code{background:rgba(245,196,81,.1);color:#f5c451;padding:.1em .4em;border-radius:5px}
-    .card{background:#111c33;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:18px;margin-bottom:16px}
-    .card label{display:block;font-size:.78rem;color:#93a4bd;margin-bottom:.35em}
-    .card label .hint{display:block;font-weight:400;color:#6f819c;font-size:.7rem;margin-top:.2em;line-height:1.4}
-    .card input,.card select{width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(148,163,184,.28);background:#0b1120;color:#e6edf7;font-size:.95rem}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
-    .grid .wide{grid-column:1/-1}
-    .grid .chk{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
-    .grid .chk label{display:flex;align-items:center;gap:.5em;color:#e6edf7;margin:0;font-size:.95rem}
-    .grid .chk input{width:auto}
-    .combo3{display:flex;align-items:center;gap:8px}
-    .combo3 select{flex:1}
-    .combo3 .arw{color:#f5c451;font-weight:700}
+    .ppr .card{background:#111c33;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:18px;margin-bottom:16px}
+    .ppr .card label{display:block;font-size:.78rem;color:#93a4bd;margin-bottom:.35em}
+    .ppr .card label .hint{display:block;font-weight:400;color:#6f819c;font-size:.7rem;margin-top:.2em;line-height:1.4}
+    .ppr .card input,.ppr .card select{width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(148,163,184,.28);background:#0b1120;color:#e6edf7;font-size:.95rem}
+    .ppr .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+    .ppr .grid .wide{grid-column:1/-1}
+    .ppr .grid .chk{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .ppr .grid .chk label{display:flex;align-items:center;gap:.5em;color:#e6edf7;margin:0;font-size:.95rem}
+    .ppr .grid .chk input{width:auto}
+    .ppr .combo3{display:flex;align-items:center;gap:8px}
+    .ppr .combo3 select{flex:1}
+    .ppr .combo3 .arw{color:#f5c451;font-weight:700}
     /* 馬番チップピッカー（1着=単一 / 2着・3着=複数） */
-    .numpick{display:grid;grid-template-columns:repeat(9,1fr);gap:6px}
-    .numpick .chip{padding:8px 0;border-radius:8px;border:1px solid rgba(148,163,184,.28);background:#0b1120;color:#e6edf7;font-size:.95rem;font-weight:700;cursor:pointer;transition:all .08s}
-    .numpick .chip:hover{border-color:rgba(245,196,81,.5)}
-    .numpick .chip.on{background:linear-gradient(180deg,#ffe08a,#f5c451 55%,#d99b1f);color:#3a2a05;border-color:transparent}
-    @media(max-width:560px){.numpick{grid-template-columns:repeat(6,1fr)}}
-    .pts{color:#f5c451;font-size:.85rem}
-    .actions{display:flex;gap:12px;margin-top:16px}
-    .actions button{border:0;border-radius:10px;padding:11px 18px;font-weight:700;cursor:pointer}
-    .actions .primary{background:linear-gradient(180deg,#ffe08a,#f5c451 55%,#d99b1f);color:#3a2a05}
-    .actions .danger{background:transparent;border:1px solid rgba(248,113,113,.5);color:#f87171}
-    .out{margin-top:14px;background:#0b1120;border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:10px;color:#93a4bd;font-size:.8rem;white-space:pre-wrap;min-height:1.4em}
-    .preview .preview-head{font-size:.9rem;font-weight:700;color:#e6edf7;margin-bottom:12px}
-    .preview .preview-head small{display:block;font-weight:400;color:#6f819c;font-size:.72rem;margin-top:.25em}
-    .preview .preview-stage{background:repeating-linear-gradient(135deg,rgba(255,255,255,.012) 0 8px,transparent 8px 16px),#0b1120;border:1px solid rgba(148,163,184,.14);border-radius:12px;padding:16px}
-    .preview .pp-cards{display:flex;flex-direction:column;gap:16px}
-    .preview .preview-hint{color:#6f819c;font-size:.82rem;text-align:center;padding:1.5rem 0;margin:0}
-    @media(max-width:560px){.grid{grid-template-columns:1fr}}
+    .ppr .numpick{display:grid;grid-template-columns:repeat(9,1fr);gap:6px}
+    .ppr .numpick .chip{padding:8px 0;border-radius:8px;border:1px solid var(--line-2);background:linear-gradient(180deg,#16233c,#101a2e);color:var(--ink-2);font-size:.95rem;font-weight:700;cursor:pointer;transition:background .1s ease,border-color .1s ease,color .1s ease,box-shadow .1s ease}
+    .ppr .numpick .chip:hover:not([disabled]){background:linear-gradient(180deg,#1f3557,#17273f);border-color:rgba(96,165,250,.55);color:#fff}
+    .ppr .numpick .chip:focus-visible{outline:2px solid rgba(245,196,81,.7);outline-offset:1px}
+    .ppr .numpick .chip[disabled]{opacity:.4;cursor:not-allowed;background:linear-gradient(180deg,#16233c,#101a2e)}
+    .ppr .numpick .chip.on{background:linear-gradient(180deg,#ffe08a,#f5c451 55%,#d99b1f);color:#3a2a05;border-color:rgba(245,196,81,.9);box-shadow:0 4px 14px -6px rgba(245,196,81,.9)}
+    .ppr .numpick .chip.on:hover:not([disabled]){background:linear-gradient(180deg,#ffe9a6,#ffd469 55%,#e5a929);color:#3a2a05;border-color:#f5c451}
+    @media(max-width:560px){.ppr .numpick{grid-template-columns:repeat(6,1fr)}}
+    .ppr .pts{color:#f5c451;font-size:.85rem}
+    .ppr .actions{display:flex;gap:12px;margin-top:16px}
+    .ppr .actions button{border-radius:10px;padding:11px 18px;font-weight:700}
+    .ppr .actions .primary{background:linear-gradient(180deg,#ffe08a,#f5c451 55%,#d99b1f);color:#3a2a05;border-color:rgba(245,196,81,.8);box-shadow:0 8px 20px -12px rgba(245,196,81,.9)}
+    .ppr .actions .primary:hover:not([disabled]){background:linear-gradient(180deg,#ffe9a6,#ffd469 55%,#e5a929);border-color:#f5c451}
+    .ppr .actions .danger{background-color:#2a1416;border-color:rgba(248,113,113,.6);color:#fca5a5}
+    .ppr .actions .danger:hover:not([disabled]){background-color:#3a1a1d;border-color:rgba(248,113,113,.85)}
+    .ppr .out{margin-top:14px;background:#0b1120;border:1px solid rgba(148,163,184,.18);border-radius:8px;padding:10px;color:#93a4bd;font-size:.8rem;white-space:pre-wrap;min-height:1.4em}
+    .ppr .preview .preview-head{font-size:.9rem;font-weight:700;color:#e6edf7;margin-bottom:12px}
+    .ppr .preview .preview-head small{display:block;font-weight:400;color:#6f819c;font-size:.72rem;margin-top:.25em}
+    .ppr .preview .preview-stage{background:repeating-linear-gradient(135deg,rgba(255,255,255,.012) 0 8px,transparent 8px 16px),#0b1120;border:1px solid rgba(148,163,184,.14);border-radius:12px;padding:16px}
+    .ppr .preview .pp-cards{display:flex;flex-direction:column;gap:16px}
+    .ppr .preview .preview-hint{color:#6f819c;font-size:.82rem;text-align:center;padding:1.5rem 0;margin:0}
+    @media(max-width:560px){.ppr .grid{grid-template-columns:1fr}}
   </style>
 
   <script>
