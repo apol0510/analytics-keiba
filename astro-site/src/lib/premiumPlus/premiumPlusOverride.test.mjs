@@ -16,7 +16,7 @@ import {
   PP_RELEASE_OVERRIDE,
   PP_ROUTE,
   PP_INTAKE,
-  PP_INTAKE_WINDOW,
+  PP_INTAKE_SCHEDULE,
   normalizeReleaseOverride,
   describeReleaseState,
   resolvePremiumPlusRelease,
@@ -143,25 +143,26 @@ test('ROUTE B でも override は同じ優先順位で効く', () => {
 });
 
 // ── 受付時間帯（OPEN/CLOSING/CLOSED）との整合 ───────────────────
-test('override 経由の PHASE 4 でも既存の受付時間帯ロジックが適用される', () => {
-  const open = resolvePremiumPlusRelease(base({ releaseOverride: 'phase4', nowMs: jst(2026, 8, 3, 10, 0) }));
-  assert.equal(open.intake, PP_INTAKE.OPEN);
-  assert.equal(open.purchaseEnabled, true);
-
-  const closingMin = PP_INTAKE_WINDOW.nankan.closingFromMin;
-  const closing = resolvePremiumPlusRelease(base({
-    releaseOverride: 'phase4', nowMs: jst(2026, 8, 3, Math.floor(closingMin / 60), closingMin % 60),
-  }));
-  assert.equal(closing.intake, PP_INTAKE.CLOSING);
-  assert.equal(closing.purchaseEnabled, true);
-
-  const closedMin = PP_INTAKE_WINDOW.nankan.closedFromMin;
-  const closed = resolvePremiumPlusRelease(base({
-    releaseOverride: 'phase4', nowMs: jst(2026, 8, 3, Math.floor(closedMin / 60), closedMin % 60),
-  }));
+test('override 経由の PHASE 4 でも受付時間帯ロジックが同じに適用される', () => {
+  const at = (h, mi) => resolvePremiumPlusRelease(base({ releaseOverride: 'phase4', nowMs: jst(2026, 8, 3, h, mi) }));
+  assert.equal(at(12, 29).intake, PP_INTAKE.OPEN);
+  assert.equal(at(12, 29).purchaseEnabled, true);
+  assert.equal(at(12, 30).intake, PP_INTAKE.LIMITED);
+  assert.equal(at(12, 30).purchaseEnabled, true);
+  assert.equal(at(15, 0).intake, PP_INTAKE.CLOSING);
+  assert.equal(at(15, 0).purchaseEnabled, true);
+  const closed = at(16, 30);
   assert.equal(closed.intake, PP_INTAKE.CLOSED);
-  assert.equal(closed.purchaseEnabled, false, 'CLOSED では即時販売でも購入操作不可');
+  assert.equal(closed.purchaseEnabled, false, '16:30 以降は即時販売でも購入不可');
   assert.equal(closed.showProductPage, true, 'CLOSED でも商品・実績は閲覧可');
+  assert.equal(closed.phase, PP_PHASE.SALE);
+});
+
+test('16:30 以降に「今すぐ販売可」にしても purchaseEnabled=false', () => {
+  const r = resolvePremiumPlusRelease(base({ releaseOverride: 'phase4', nowMs: jst(2026, 8, 3, 17, 0) }));
+  assert.equal(r.overrideApplied, true);
+  assert.equal(r.phase, PP_PHASE.SALE);
+  assert.equal(r.purchaseEnabled, false);
 });
 
 // ── 管理画面の状態表示 ──────────────────────────────────────────

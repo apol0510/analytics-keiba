@@ -11,7 +11,7 @@ import {
   PP_PHASE_START_DAY,
   PP_INTAKE,
   PP_CIRCUIT,
-  PP_INTAKE_WINDOW,
+  PP_INTAKE_SCHEDULE,
   PP_RELEASE_COPY,
   SANRENPUKU_PAID_AT_FIELDS,
   jstParts,
@@ -207,35 +207,43 @@ test('phase は単調に進む（境界日で 1 段ずつ）', () => {
 });
 
 // ── 受付ステータス（OPEN / CLOSING / CLOSED）────────────────────────
-test('OPEN: 締切前は受付中（南関 = 平日）', () => {
-  const s = computeIntakeStatus({ nowMs: MON(10, 0), circuit: PP_CIRCUIT.NANKAN });
-  assert.equal(s, PP_INTAKE.OPEN);
+test('OPEN: 12:29 まで受付中（毎日共通・開催区分に依存しない）', () => {
+  assert.equal(computeIntakeStatus({ nowMs: MON(10, 0) }), PP_INTAKE.OPEN);
+  assert.equal(computeIntakeStatus({ nowMs: SAT(10, 0) }), PP_INTAKE.OPEN, '土日でも同じ');
 });
 
-test('CLOSING: 終了が近づく時間帯（南関 = 平日）', () => {
-  const { closingFromMin } = PP_INTAKE_WINDOW.nankan;
-  assert.equal(computeIntakeStatus({ nowMs: MON(Math.floor(closingFromMin / 60), closingFromMin % 60) }), PP_INTAKE.CLOSING);
+test('LIMITED: 12:30〜14:59 は残りわずか', () => {
+  assert.equal(computeIntakeStatus({ nowMs: MON(12, 30) }), PP_INTAKE.LIMITED);
+  assert.equal(computeIntakeStatus({ nowMs: SAT(14, 59) }), PP_INTAKE.LIMITED);
 });
 
-test('CLOSED: 締切以降（南関 = 平日）', () => {
-  const { closedFromMin } = PP_INTAKE_WINDOW.nankan;
-  assert.equal(computeIntakeStatus({ nowMs: MON(Math.floor(closedFromMin / 60), closedFromMin % 60) }), PP_INTAKE.CLOSED);
+test('CLOSING: 15:00〜16:29 はまもなく受付終了', () => {
+  assert.equal(computeIntakeStatus({ nowMs: MON(15, 0) }), PP_INTAKE.CLOSING);
+  assert.equal(computeIntakeStatus({ nowMs: SAT(16, 29) }), PP_INTAKE.CLOSING);
+});
+
+test('CLOSED: 16:30 以降は受付終了', () => {
+  assert.equal(computeIntakeStatus({ nowMs: MON(16, 30) }), PP_INTAKE.CLOSED);
   assert.equal(computeIntakeStatus({ nowMs: MON(23, 59) }), PP_INTAKE.CLOSED);
+  assert.equal(computeIntakeStatus({ nowMs: SAT(19, 0) }), PP_INTAKE.CLOSED, '土日でも同じ');
 });
 
-test('中央（土日）は南関と別の締切時刻を使う', () => {
-  const chuoClosed = PP_INTAKE_WINDOW.chuo.closedFromMin;
-  const h = Math.floor(chuoClosed / 60);
-  // 土曜の締切時刻 → CLOSED。同時刻でも平日（南関）はまだ OPEN/CLOSING。
-  assert.equal(computeIntakeStatus({ nowMs: SAT(h, 0) }), PP_INTAKE.CLOSED);
-  assert.notEqual(computeIntakeStatus({ nowMs: MON(h, 0) }), PP_INTAKE.CLOSED);
+test('開催区分（中央 / 南関）で受付時間が変わらない', () => {
+  for (const [h, mi] of [[10, 0], [13, 0], [15, 30], [17, 0], [21, 0]]) {
+    assert.equal(
+      computeIntakeStatus({ nowMs: MON(h, mi) }),
+      computeIntakeStatus({ nowMs: SAT(h, mi) }),
+      `${h}:${mi} で平日と土日の判定が違う`
+    );
+  }
+  // circuit を明示的に渡しても無視される（分岐は廃止済み）
+  assert.equal(computeIntakeStatus({ nowMs: MON(19, 0), circuit: 'nankan' }), PP_INTAKE.CLOSED);
+  assert.equal(computeIntakeStatus({ nowMs: MON(19, 0), circuit: 'chuo' }), PP_INTAKE.CLOSED);
 });
 
-test('JST 境界: 締切 1 分前は CLOSED でない / 締切ちょうどで CLOSED', () => {
-  const { closedFromMin } = PP_INTAKE_WINDOW.nankan;
-  const before = closedFromMin - 1;
-  assert.notEqual(computeIntakeStatus({ nowMs: MON(Math.floor(before / 60), before % 60) }), PP_INTAKE.CLOSED);
-  assert.equal(computeIntakeStatus({ nowMs: MON(Math.floor(closedFromMin / 60), closedFromMin % 60) }), PP_INTAKE.CLOSED);
+test('JST 境界: 16:29 は CLOSED でない / 16:30 ちょうどで CLOSED', () => {
+  assert.notEqual(computeIntakeStatus({ nowMs: MON(16, 29) }), PP_INTAKE.CLOSED);
+  assert.equal(computeIntakeStatus({ nowMs: MON(16, 30) }), PP_INTAKE.CLOSED);
 });
 
 test('受付時刻が不正なら CLOSED（売らない側に倒す）', () => {
@@ -245,8 +253,8 @@ test('受付時刻が不正なら CLOSED（売らない側に倒す）', () => {
 
 test('CLOSED: 購入操作は不可・商品と実績は閲覧可', () => {
   const paid = jst(2026, 7, 1, 12, 0);
-  const saleDay = 1 + PP_PHASE_START_DAY.SALE; // 2026-07-11（土）= 中央
-  const now = jst(2026, 7, saleDay, 23, 0);    // 締切後
+  const saleDay = 1 + PP_PHASE_START_DAY.SALE;
+  const now = jst(2026, 7, saleDay, 23, 0);    // 16:30 以降 = 締切後
   const r = release({ paidAtMs: paid, nowMs: now });
   assert.equal(r.phase, PP_PHASE.SALE);
   assert.equal(r.intake, PP_INTAKE.CLOSED);
@@ -264,10 +272,10 @@ test('指定文章がそのまま保持されている', () => {
   assert.equal(PP_RELEASE_COPY.preparing.title, 'Premium Plus の受付準備中です');
   assert.equal(PP_RELEASE_COPY.preparing.body, '受付開始時に、このページからお申し込みいただけます。');
   assert.equal(PP_RELEASE_COPY.intake.open.title, '本日のPremium Plus受付');
-  assert.equal(PP_RELEASE_COPY.intake.open.status, '現在受付中');
-  assert.equal(PP_RELEASE_COPY.intake.open.note, '受付状況は時間帯・申込状況により変動します。');
+  assert.equal(PP_RELEASE_COPY.intake.open.status, '本日分 受付中');
+  assert.equal(PP_RELEASE_COPY.intake.limited.status, '本日分 残りわずか');
   assert.equal(PP_RELEASE_COPY.intake.closing.title, '本日のPremium Plus受付');
-  assert.equal(PP_RELEASE_COPY.intake.closing.status, '受付終了が近づいています');
+  assert.equal(PP_RELEASE_COPY.intake.closing.status, '本日分 まもなく受付終了');
   assert.equal(PP_RELEASE_COPY.intake.closed.title, '本日分の受付は終了しました');
   assert.equal(PP_RELEASE_COPY.intake.closed.note, '次回受付時に、このページからお申し込みいただけます。');
 });
@@ -279,6 +287,7 @@ test('予告文言に金額が含まれない（PHASE 2 で価格を出さない
 
 test('intakeCopy: 状態に対応する文言を返す / それ以外は null', () => {
   assert.equal(intakeCopy(PP_INTAKE.OPEN), PP_RELEASE_COPY.intake.open);
+  assert.equal(intakeCopy(PP_INTAKE.LIMITED), PP_RELEASE_COPY.intake.limited);
   assert.equal(intakeCopy(PP_INTAKE.CLOSING), PP_RELEASE_COPY.intake.closing);
   assert.equal(intakeCopy(PP_INTAKE.CLOSED), PP_RELEASE_COPY.intake.closed);
   assert.equal(intakeCopy(null), null);

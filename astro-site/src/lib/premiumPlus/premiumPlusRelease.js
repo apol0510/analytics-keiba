@@ -136,10 +136,20 @@ export const PP_RELEASE_OVERRIDE = Object.freeze({
   PHASE4: 'phase4',
 });
 
-/** 本日の受付ステータス（PHASE 4 到達後のみ意味を持つ） */
+/**
+ * 本日の受付ステータス（PHASE 4 到達後のみ意味を持つ）。
+ *
+ * ⚠️ `limited`（残りわずか）は **時刻だけ**で決まる。販売件数・在庫・上限とは
+ *    一切連動させないこと（件数カウンタ・販売上限機能を追加してはいけない）。
+ */
 export const PP_INTAKE = Object.freeze({
+  /** 00:00〜12:29 JST */
   OPEN: 'open',
+  /** 12:30〜14:59 JST */
+  LIMITED: 'limited',
+  /** 15:00〜16:29 JST */
   CLOSING: 'closing',
+  /** 16:30〜23:59 JST（購入不可） */
   CLOSED: 'closed',
 });
 
@@ -150,19 +160,21 @@ export const PP_CIRCUIT = Object.freeze({
 });
 
 /**
- * 受付時刻の境界（JST・0:00 からの分）。
+ * 受付時刻の境界（JST・0:00 からの分）。**毎日共通**（2026-07-30 確定仕様）。
  *
- * ⚠️ 未決定（暫定値）: AK 内に Premium Plus の正式な締切時刻仕様は存在しない
- *    （grep で確認済み。docs / コードのどこにも受付締切の定義が無い）。
- *    推測で本番確定させないため、ここに定数として置いたうえで
- *    docs/PREMIUM_PLUS_STAGED_RELEASE.md に「未決定」として記録している。
- *    運用で確定したら **この定数と docs を同時に更新**すること。
+ *   00:00〜12:29 → open    「本日分 受付中」            購入可
+ *   12:30〜14:59 → limited 「本日分 残りわずか」        購入可
+ *   15:00〜16:29 → closing 「本日分 まもなく受付終了」  購入可
+ *   16:30〜23:59 → closed  「本日分の受付は終了しました」購入**不可**
  *
- * 中央（土日）は昼開催、南関（平日）は夜開催で締切が大きく違うためサーキット別に持つ。
+ * ⚠️ 開催区分（中央 / 南関 / 昼開催 / ナイター）による分岐は**廃止**した。
+ *    Premium Plus は曜日・会場に関わらずこの JST 共通時間だけを使う。
+ * ⚠️ `limited` は時刻のみで決まる。件数・在庫・販売上限と連動させない。
  */
-export const PP_INTAKE_WINDOW = Object.freeze({
-  chuo: Object.freeze({ closingFromMin: 13 * 60, closedFromMin: 15 * 60 }),
-  nankan: Object.freeze({ closingFromMin: 18 * 60, closedFromMin: 20 * 60 }),
+export const PP_INTAKE_SCHEDULE = Object.freeze({
+  limitedFromMin: 12 * 60 + 30, // 12:30
+  closingFromMin: 15 * 60,      // 15:00
+  closedFromMin: 16 * 60 + 30,  // 16:30
 });
 
 /**
@@ -187,12 +199,18 @@ export const PP_RELEASE_COPY = Object.freeze({
   intake: Object.freeze({
     open: Object.freeze({
       title: '本日のPremium Plus受付',
-      status: '現在受付中',
-      note: '受付状況は時間帯・申込状況により変動します。',
+      status: '本日分 受付中',
+      note: '',
+    }),
+    // 「残りわずか」は時間帯のみを表す。件数・在庫を示唆する注記は置かない。
+    limited: Object.freeze({
+      title: '本日のPremium Plus受付',
+      status: '本日分 残りわずか',
+      note: '',
     }),
     closing: Object.freeze({
       title: '本日のPremium Plus受付',
-      status: '受付終了が近づいています',
+      status: '本日分 まもなく受付終了',
       note: '',
     }),
     closed: Object.freeze({
@@ -237,7 +255,11 @@ export function jstDayDiff(fromMs, toMs) {
   return jstDayNumber(toMs) - jstDayNumber(fromMs);
 }
 
-/** JST の曜日からサーキットを導出（土日 = 中央 / 平日 = 南関）。 */
+/**
+ * JST の曜日からサーキットを導出（土日 = 中央 / 平日 = 南関）。
+ * ⚠️ 2026-07-30 以降、**受付時間帯の判定には使わない**（PHASE 4 の受付は JST 共通時間）。
+ *    戻り値の circuit は参考情報としてのみ保持する。
+ */
 export function circuitForJst(nowMs) {
   const p = jstParts(nowMs);
   if (!p) return PP_CIRCUIT.NANKAN; // 判定不能は平日扱い（締切が遅い側に倒さない＝下の closed 判定で安全側）
@@ -310,22 +332,22 @@ export function computePhase({ paidAtMs, nowMs }) {
 }
 
 /**
- * 本日の受付ステータスを JST 時刻から決める。
+ * 本日の受付ステータスを JST 時刻だけから決める（毎日共通・開催区分に依存しない）。
  * 時刻が不正なら CLOSED（fail closed = 売らない側）。
  *
- * @param {{ nowMs: number, circuit?: string }} input
+ * @param {{ nowMs: number }} input
  * @returns {string} PP_INTAKE の値
  */
-export function computeIntakeStatus({ nowMs, circuit }) {
+export function computeIntakeStatus({ nowMs }) {
   const p = jstParts(nowMs);
   if (!p) return PP_INTAKE.CLOSED;
-  const key = circuit === PP_CIRCUIT.CHUO || circuit === PP_CIRCUIT.NANKAN ? circuit : circuitForJst(nowMs);
-  const win = PP_INTAKE_WINDOW[key];
-  if (!win) return PP_INTAKE.CLOSED;
-  if (p.minutesOfDay >= win.closedFromMin) return PP_INTAKE.CLOSED;
-  if (p.minutesOfDay >= win.closingFromMin) return PP_INTAKE.CLOSING;
+  const m = p.minutesOfDay;
+  if (m >= PP_INTAKE_SCHEDULE.closedFromMin) return PP_INTAKE.CLOSED;
+  if (m >= PP_INTAKE_SCHEDULE.closingFromMin) return PP_INTAKE.CLOSING;
+  if (m >= PP_INTAKE_SCHEDULE.limitedFromMin) return PP_INTAKE.LIMITED;
   return PP_INTAKE.OPEN;
 }
+
 
 /**
  * Premium Plus 販売資格を正規化する。
@@ -440,7 +462,7 @@ export function teaserCopyForRoute(route) {
  *   showPurchaseCta: boolean 価格・購入 CTA を出すか（PHASE 4 のみ）
  *   purchaseEnabled: boolean 実際に申込操作を許可するか（PHASE 4 かつ CLOSED でない）
  *   intake: string|null      PHASE 4 のときのみ 'open'|'closing'|'closed'
- *   circuit: string
+ *   circuit: string   参考情報。受付時間帯の判定には使わない
  * }}
  */
 export function resolvePremiumPlusRelease(input) {
@@ -515,7 +537,7 @@ export function resolvePremiumPlusRelease(input) {
 
   // STEP 6: 受付ステータス
   const isSale = phase === PP_PHASE.SALE;
-  const intake = isSale ? computeIntakeStatus({ nowMs, circuit: resolvedCircuit }) : null;
+  const intake = isSale ? computeIntakeStatus({ nowMs }) : null;
 
   return {
     allowed: true,
@@ -559,6 +581,7 @@ export function describeReleaseState(release) {
  */
 export function intakeCopy(intake) {
   if (intake === PP_INTAKE.OPEN) return PP_RELEASE_COPY.intake.open;
+  if (intake === PP_INTAKE.LIMITED) return PP_RELEASE_COPY.intake.limited;
   if (intake === PP_INTAKE.CLOSING) return PP_RELEASE_COPY.intake.closing;
   if (intake === PP_INTAKE.CLOSED) return PP_RELEASE_COPY.intake.closed;
   return null;

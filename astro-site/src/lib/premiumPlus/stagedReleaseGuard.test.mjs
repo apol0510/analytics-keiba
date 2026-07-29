@@ -141,6 +141,37 @@ test('stage エンドポイント: 商品ページ URL は PHASE 3 以降だけ�
   assert.match(ENDPOINT, /release\.phase >= PP_PHASE\.PREVIEW \? PRODUCT_HREF : null/);
 });
 
+// ── PHASE 4 受付時間（2026-07-30 確定仕様）────────────────────────
+test('受付時間は単一源のみ。ページ・API に時刻分岐を重複実装しない', () => {
+  for (const [name, src] of [...Object.entries(PRODUCT_PAGES), ['stage API', ENDPOINT]]) {
+    const code = stripComments(src);
+    assert.doesNotMatch(code, /12:30|16:30|14:59|16:29/, `${name}: 時刻がベタ書きされている`);
+    assert.doesNotMatch(code, /computeIntakeStatus/, `${name}: 受付判定を自前で呼んでいる`);
+    assert.doesNotMatch(code, /PP_INTAKE_SCHEDULE/, `${name}: スケジュール定数を直接参照している`);
+    assert.doesNotMatch(code, /残りわずか|まもなく受付終了|本日分 受付中/, `${name}: 受付文言がベタ書きされている`);
+  }
+});
+
+test('受付判定は開催区分に依存しない（サーキット分岐の復活を禁止）', () => {
+  const code = stripComments(RELEASE_LIB);
+  const fn = code.slice(code.indexOf('export function computeIntakeStatus'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.doesNotMatch(body, /circuit|CHUO|NANKAN/, '受付判定にサーキット分岐が残っている');
+  assert.doesNotMatch(code, /PP_INTAKE_WINDOW/, '旧サーキット別スケジュールが残っている');
+});
+
+test('「残りわずか」を件数・在庫・販売上限と連動させない', () => {
+  const code = stripComments(RELEASE_LIB);
+  assert.doesNotMatch(code, /soldCount|remainingSlots|stock|inventory|capacity|quota|salesLimit|maxSales/i);
+  // limited の判定は時刻のみ（スケジュール定数以外の入力を持たない）
+  const fn = code.slice(code.indexOf('export function computeIntakeStatus'));
+  assert.match(fn.slice(0, fn.indexOf('\n}')), /PP_INTAKE_SCHEDULE\.limitedFromMin/);
+});
+
+test('purchaseEnabled は CLOSED のときだけ false（override 経由でも同じ）', () => {
+  assert.match(stripComments(RELEASE_LIB), /purchaseEnabled:\s*isSale && intake !== PP_INTAKE\.CLOSED/);
+});
+
 // ── 静的な三連複会員ページに Premium Plus を載せない ────────────────
 test('予告コンポーネント: 静的マークアップに商品名・価格・リンクを持たない', () => {
   const body = TEASER.slice(TEASER.indexOf('\n---', 3) + 4); // frontmatter の説明コメントを除く
