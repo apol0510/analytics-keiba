@@ -1,0 +1,467 @@
+---
+/**
+ * /offer/?t=<token> — 割引オファー専用の申込ページ
+ *
+ * ── ログイン不要・AccessControl を置かない（意図的）─────────────────
+ * 案内対象は「以前 AK を離れた顧客」で、**退会済みでログインできない人も含む**。
+ * AccessControl を置くと、いちばん申し込んでほしい相手が入れなくなる。
+ * 代わりに URL の HMAC トークンで本人性を担保し、送信時に
+ * 「offer の email と一致するか」をサーバー側で必ず検証する。
+ *
+ * ── 金額・プランは画面の値を信じない ────────────────────────────
+ * 表示は offer-lookup が返した値。申込は offer-application が**台帳から再取得**して
+ * 請求額を決めるので、DevTools で金額欄を書き換えても請求額は変わらない。
+ *
+ * ── 検索エンジンに載せない ─────────────────────────────────────
+ * noindex + robots.txt の Disallow: /offer/。顧客ごとの価格が公開情報になると
+ * 通常価格の顧客との不整合になるため。
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+export const prerender = true;
+---
+
+<BaseLayout title="特別価格のご案内" noindex={true}>
+  <main class="offer-page">
+    <!-- 読み込み中 -->
+    <section id="offerLoading" class="offer-card offer-card--center">
+      <div class="offer-spinner" aria-hidden="true"></div>
+      <p class="offer-muted">ご案内の内容を確認しています…</p>
+    </section>
+
+    <!-- トークンが無効 / 期限切れ / 申込済み -->
+    <section id="offerError" class="offer-card offer-card--center" style="display:none;">
+      <div class="offer-error-icon" aria-hidden="true">🔒</div>
+      <h1 class="offer-title">ご案内を表示できません</h1>
+      <p id="offerErrorMessage" class="offer-muted"></p>
+      <p class="offer-muted offer-small">
+        お心当たりがない場合や、お困りの場合は
+        <a href="mailto:support@keiba.link">support@keiba.link</a> までご連絡ください。
+      </p>
+    </section>
+
+    <!-- 有効なオファー -->
+    <section id="offerBody" style="display:none;">
+      <header class="offer-hero">
+        <div class="offer-badge">お客様専用のご案内</div>
+        <h1 class="offer-title">Premium プラン 特別価格のご案内</h1>
+        <p class="offer-lead">
+          いつも見送っていただいていた方に、今回だけの価格をご用意しました。<br class="offer-br">
+          このご案内はお客様専用で、他のお客様には表示されません。
+        </p>
+      </header>
+
+      <div class="offer-card offer-price-card">
+        <div class="offer-price-row">
+          <span class="offer-price-label">プラン</span>
+          <span class="offer-price-value" id="offerPlanLabel"></span>
+        </div>
+        <div class="offer-price-row">
+          <span class="offer-price-label">通常価格</span>
+          <span class="offer-price-strike" id="offerRegularPrice"></span>
+        </div>
+        <div class="offer-price-row offer-price-row--main">
+          <span class="offer-price-label">お客様のご案内価格</span>
+          <span class="offer-price-main" id="offerPrice"></span>
+        </div>
+        <div class="offer-price-note">
+          <span id="offerDiscountNote"></span>
+          <span id="offerExpiryNote" class="offer-expiry"></span>
+        </div>
+      </div>
+
+      <div class="offer-card">
+        <h2 class="offer-h2">🏦 お振込先</h2>
+        <dl class="offer-bank">
+          <div><dt>金融機関</dt><dd>三井住友銀行 洲本支店</dd></div>
+          <div><dt>口座番号</dt><dd>普通 5338892</dd></div>
+          <div><dt>口座名義</dt><dd>ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ</dd></div>
+          <div class="offer-bank-amount"><dt>お振込金額</dt><dd id="offerBankAmount"></dd></div>
+        </dl>
+        <ol class="offer-steps">
+          <li>上記口座へご案内価格をお振込みください</li>
+          <li>お振込後、下のフォームからご報告ください</li>
+          <li>入金確認が取れ次第、ログイン方法をメールでお送りします</li>
+        </ol>
+      </div>
+
+      <div class="offer-card">
+        <h2 class="offer-h2">💳 銀行振込完了の報告フォーム</h2>
+        <p class="offer-form-note">
+          ※ <strong>お振込を済ませてから</strong>ご送信ください。事前予約のフォームではありません。<br>
+          ※ ご案内メールを受け取った <strong id="offerMaskedEmail"></strong> のアドレスでご入力ください。
+        </p>
+
+        <!-- required はブラウザ検証に任せる（novalidate を付けない）。
+             チェックボックス・未来日はサーバーでも必ず再検証する -->
+        <form id="offerForm" class="offer-form">
+          <div class="offer-field">
+            <label for="offerFullName">お名前 <span class="offer-req">*</span></label>
+            <input type="text" id="offerFullName" required placeholder="山田 太郎" autocomplete="name">
+          </div>
+
+          <div class="offer-field">
+            <label for="offerEmail">メールアドレス <span class="offer-req">*</span></label>
+            <input type="email" id="offerEmail" required placeholder="example@email.com" autocomplete="email">
+            <p class="offer-hint">ご案内メールが届いたアドレスと同じものをご入力ください。</p>
+          </div>
+
+          <div class="offer-field">
+            <label for="offerTransferDate">振込完了日 <span class="offer-req">*</span></label>
+            <input type="date" id="offerTransferDate" required>
+            <p class="offer-hint">※ 未来の日付は指定できません。</p>
+          </div>
+
+          <div class="offer-field">
+            <label for="offerTransferName">振込名義人 <span class="offer-req">*</span></label>
+            <input type="text" id="offerTransferName" required placeholder="ヤマダ タロウ">
+            <p class="offer-hint">お名前と異なる名義でお振込の場合は、その名義をご入力ください。</p>
+          </div>
+
+          <div class="offer-field">
+            <label for="offerTransferAmount">振込金額 <span class="offer-req">*</span></label>
+            <input type="number" id="offerTransferAmount" required readonly>
+            <p class="offer-hint">ご案内価格が入力されています。</p>
+          </div>
+
+          <div class="offer-field">
+            <label for="offerRemarks">備考・ご要望</label>
+            <textarea id="offerRemarks" rows="3" placeholder="ご要望がありましたらご記入ください（任意）"></textarea>
+          </div>
+
+          <label class="offer-confirm">
+            <input type="checkbox" id="offerPaymentConfirm" required>
+            <span>銀行振込を完了済みです。このフォームは入金後の報告専用であることを確認しました。<span class="offer-req">*</span></span>
+          </label>
+
+          <button type="submit" class="offer-submit" id="offerSubmit">
+            <span class="offer-submit-text">📨 入金完了を報告する</span>
+            <span class="offer-submit-loading" style="display:none;">送信中…</span>
+          </button>
+
+          <p class="offer-message" id="offerMessage" style="display:none;"></p>
+        </form>
+      </div>
+
+      <div class="offer-card offer-warning">
+        <h2 class="offer-h2">⚠️ ご注意</h2>
+        <ul>
+          <li>ご案内価格は<strong>このご案内をお受け取りの方のみ</strong>の価格です</li>
+          <li>入金確認までは閲覧できません（確認後、メールでご案内します）</li>
+          <li>振込手数料はお客様のご負担となります</li>
+          <li>ご入金後のキャンセル・返金は承っておりません</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 送信完了 -->
+    <section id="offerDone" class="offer-card offer-card--center" style="display:none;">
+      <div class="offer-done-icon" aria-hidden="true">✅</div>
+      <h1 class="offer-title">お申し込みを受け付けました</h1>
+      <p class="offer-muted" id="offerDoneMessage"></p>
+      <p class="offer-muted offer-small">
+        入金の確認が取れ次第、ログイン方法をメールでお送りします。<br>
+        確認メールが届かない場合は <a href="mailto:support@keiba.link">support@keiba.link</a> までご連絡ください。
+      </p>
+    </section>
+  </main>
+</BaseLayout>
+
+<script is:inline>
+  (function () {
+    const yen = (n) => '¥' + Number(n || 0).toLocaleString('ja-JP');
+    const el = (id) => document.getElementById(id);
+    const jstToday = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+
+    const token = new URLSearchParams(location.search).get('t') || '';
+
+    function showError(message) {
+      el('offerLoading').style.display = 'none';
+      el('offerBody').style.display = 'none';
+      el('offerError').style.display = '';
+      el('offerErrorMessage').textContent = message;
+    }
+
+    function renderOffer(offer) {
+      el('offerPlanLabel').textContent = offer.planLabel + '（' + offer.termLabel + '）';
+      el('offerRegularPrice').textContent = yen(offer.regularPrice);
+      el('offerPrice').textContent = yen(offer.offerPrice);
+      el('offerBankAmount').textContent = yen(offer.offerPrice);
+      el('offerTransferAmount').value = offer.offerPrice;
+      el('offerDiscountNote').textContent = offer.discountAmount > 0
+        ? yen(offer.discountAmount) + 'お得（' + offer.discountPercent + '%OFF）'
+        : '';
+      el('offerExpiryNote').textContent = offer.expiresOn
+        ? '／ ' + offer.expiresOn + ' まで有効'
+          + (typeof offer.daysLeft === 'number' && offer.daysLeft <= 3 ? '（あと' + offer.daysLeft + '日）' : '')
+        : '';
+      el('offerMaskedEmail').textContent = offer.maskedEmail || '';
+
+      const dateInput = el('offerTransferDate');
+      dateInput.max = jstToday();
+      dateInput.value = jstToday();
+
+      el('offerLoading').style.display = 'none';
+      el('offerBody').style.display = '';
+    }
+
+    async function load() {
+      if (!token) {
+        showError('ご案内のリンクが正しくありません。メール内のリンクをもう一度お開きください。');
+        return;
+      }
+      try {
+        const res = await fetch('/.netlify/functions/offer-lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data && data.ok && data.offer) renderOffer(data.offer);
+        else showError((data && data.message) || 'ご案内の内容を確認できませんでした。');
+      } catch (_) {
+        showError('通信エラーが発生しました。時間をおいて再度お試しください。');
+      }
+    }
+
+    function setMessage(text, kind) {
+      const m = el('offerMessage');
+      m.textContent = text;
+      m.className = 'offer-message' + (kind ? ' offer-message--' + kind : '');
+      m.style.display = text ? '' : 'none';
+    }
+
+    function bindForm() {
+      const form = el('offerForm');
+      if (!form) return;
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const button = el('offerSubmit');
+        const label = button.querySelector('.offer-submit-text');
+        const loading = button.querySelector('.offer-submit-loading');
+
+        if (!el('offerPaymentConfirm').checked) {
+          setMessage('⚠️ 銀行振込完了後にチェックを入れてから送信してください。', 'error');
+          return;
+        }
+        const transferDate = el('offerTransferDate').value;
+        if (!transferDate) {
+          setMessage('⚠️ 振込完了日をご入力ください。', 'error');
+          return;
+        }
+        if (transferDate > jstToday()) {
+          setMessage('⚠️ 振込完了日に未来の日付は指定できません。', 'error');
+          return;
+        }
+
+        button.disabled = true;
+        label.style.display = 'none';
+        loading.style.display = 'inline';
+        setMessage('', null);
+
+        try {
+          const res = await fetch('/.netlify/functions/offer-application', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token,
+              fullName: el('offerFullName').value,
+              email: el('offerEmail').value,
+              transferDate,
+              transferName: el('offerTransferName').value || el('offerFullName').value,
+              transferAmount: el('offerTransferAmount').value,
+              remarks: el('offerRemarks').value,
+              paymentCompletedConfirm: el('offerPaymentConfirm').checked,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data && data.success) {
+            el('offerBody').style.display = 'none';
+            el('offerDone').style.display = '';
+            el('offerDoneMessage').textContent =
+              (data.productName ? data.productName + ' ' : '') + 'のお申し込みを受け付けました。';
+            return;
+          }
+          throw new Error((data && data.error) || '送信に失敗しました。');
+        } catch (err) {
+          setMessage('❌ ' + (err && err.message ? err.message : '送信に失敗しました。'), 'error');
+          button.disabled = false;
+          label.style.display = 'inline';
+          loading.style.display = 'none';
+        }
+      });
+    }
+
+    bindForm();
+    load();
+  })();
+</script>
+
+<style>
+  .offer-page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 2.5rem 1rem 4rem;
+    color: #e2e8f0;
+  }
+
+  .offer-hero { text-align: center; margin-bottom: 1.5rem; }
+
+  .offer-badge {
+    display: inline-block;
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    color: #93c5fd;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .offer-title { font-size: 1.55rem; margin: 0.8rem 0 0.6rem; line-height: 1.4; }
+  .offer-lead { color: #94a3b8; font-size: 0.95rem; line-height: 1.8; margin: 0; }
+  .offer-muted { color: #94a3b8; line-height: 1.8; }
+  .offer-small { font-size: 0.85rem; margin-top: 1rem; }
+  .offer-h2 { font-size: 1.05rem; margin: 0 0 0.9rem; }
+
+  .offer-card {
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 14px;
+    padding: 1.4rem;
+    margin-bottom: 1.1rem;
+  }
+  .offer-card--center { text-align: center; }
+
+  .offer-price-card { border-color: rgba(16, 185, 129, 0.4); }
+  .offer-price-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.2);
+  }
+  .offer-price-row--main { border-bottom: none; }
+  .offer-price-label { color: #94a3b8; font-size: 0.9rem; }
+  .offer-price-value { font-weight: 700; }
+  .offer-price-strike { color: #94a3b8; text-decoration: line-through; }
+  .offer-price-main { color: #34d399; font-size: 1.9rem; font-weight: 800; }
+  .offer-price-note {
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+    color: #fbbf24;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .offer-expiry { color: #94a3b8; }
+
+  .offer-bank { margin: 0 0 1rem; }
+  .offer-bank > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.2);
+  }
+  .offer-bank dt { color: #94a3b8; font-size: 0.85rem; margin: 0; }
+  .offer-bank dd { margin: 0; text-align: right; font-size: 0.95rem; word-break: break-all; }
+  .offer-bank-amount dd { color: #34d399; font-weight: 800; font-size: 1.15rem; }
+
+  .offer-steps { margin: 0; padding-left: 1.2rem; color: #cbd5e1; font-size: 0.9rem; line-height: 1.9; }
+
+  .offer-form-note {
+    font-size: 0.85rem;
+    color: #fcd34d;
+    background: rgba(251, 191, 36, 0.08);
+    border-left: 3px solid rgba(251, 191, 36, 0.6);
+    padding: 0.7rem 0.9rem;
+    border-radius: 6px;
+    line-height: 1.8;
+    margin: 0 0 1.1rem;
+  }
+
+  .offer-field { margin-bottom: 1rem; }
+  .offer-field label { display: block; font-size: 0.88rem; margin-bottom: 0.35rem; color: #cbd5e1; }
+  .offer-req { color: #f87171; }
+  .offer-field input,
+  .offer-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.7rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(2, 6, 23, 0.6);
+    color: #f1f5f9;
+    font-size: 1rem;
+    font-family: inherit;
+  }
+  .offer-field input:focus,
+  .offer-field textarea:focus { outline: 2px solid rgba(59, 130, 246, 0.55); outline-offset: 1px; }
+  .offer-field input[readonly] { color: #34d399; font-weight: 700; }
+  .offer-hint { font-size: 0.78rem; color: #94a3b8; margin: 0.35rem 0 0; line-height: 1.6; }
+
+  .offer-confirm {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    font-size: 0.87rem;
+    color: #cbd5e1;
+    line-height: 1.7;
+    background: rgba(2, 6, 23, 0.45);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    padding: 0.8rem;
+    margin: 1.1rem 0;
+  }
+  .offer-confirm input { margin-top: 0.2rem; flex-shrink: 0; }
+
+  .offer-submit {
+    width: 100%;
+    padding: 0.95rem;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+    font-size: 1.02rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .offer-submit:disabled { opacity: 0.6; cursor: default; }
+
+  .offer-message {
+    margin: 1rem 0 0;
+    padding: 0.75rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+  .offer-message--error {
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.4);
+    color: #fca5a5;
+  }
+
+  .offer-warning ul { margin: 0; padding-left: 1.2rem; color: #cbd5e1; font-size: 0.87rem; line-height: 1.9; }
+
+  .offer-error-icon, .offer-done-icon { font-size: 2.4rem; }
+
+  .offer-spinner {
+    width: 26px;
+    height: 26px;
+    margin: 0 auto 0.9rem;
+    border: 3px solid rgba(148, 163, 184, 0.25);
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: offer-spin 0.9s linear infinite;
+  }
+  @keyframes offer-spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 560px) {
+    .offer-title { font-size: 1.3rem; }
+    .offer-price-main { font-size: 1.6rem; }
+    .offer-br { display: none; }
+  }
+</style>

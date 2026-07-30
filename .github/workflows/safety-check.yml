@@ -19,6 +19,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
+      - 'astro-site/public/robots.txt'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
       - '.github/workflows/safety-check.yml'
@@ -35,6 +36,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
+      - 'astro-site/public/robots.txt'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
       - '.github/workflows/safety-check.yml'
@@ -137,7 +139,7 @@ jobs:
         working-directory: astro-site
         run: npm run test:comeback
 
-      - name: Verify 特典カタログ・割引オファー（価格が pricing と一致 / トークン検証）
+      - name: Verify 特典カタログ・割引オファー（価格が pricing と一致 / トークン検証 / 申込はフォーム値で請求額を決めない）
         working-directory: astro-site
         run: npm run test:promotions
 

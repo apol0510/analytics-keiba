@@ -258,12 +258,68 @@ offer を**読まない**（購入時にだけ読む）ので、専用テーブ�
 - 利用は `issued → redeemed` の**一方向遷移**。`redeemed` / `revoked` / `expired` は再利用不可
 - 昇格自体は既存フローの冪等性（承認時に `Requested*` をクリア）で守られている
 
-### 未実装（次フェーズ）
+---
 
-**申込ページ `/offer/?t=<token>` と、そこから既存 bank flow への受け渡しは未実装。**
-本 PR に含むのはモデル・トークン検証・発行までで、顧客向けページと
-`bank-transfer-application` への `RequestedPlan` 引き渡しは別 PR。
-（決済経路そのものを触るため、承認と本番検証を分けたい）
+## 5-2. 申込ページ `/offer/?t=<token>`（2026-07-30 実装）
+
+割引オファーを受け取った顧客が、**通常価格ではなくオファー価格で**銀行振込の申込を出す経路。
+昇格そのものは触らない（`PaymentConfirmed` → `confirm-bank-payment` が唯一の経路）。
+
+| 経路 | 役割 |
+|---|---|
+| `src/pages/offer/index.astro` | 静的シェル（`noindex` / robots `Disallow: /offer/`）。表示内容は API から取得 |
+| `netlify/functions/offer-lookup.js` | token → **表示してよい値だけ**返す（read-only。Customers を読まない） |
+| `netlify/functions/offer-application.js` | 申込を Customers の `Requested*` に退避 → offer を `redeemed` に → 通知メール |
+| `src/lib/promotions/offerIntake.js` | 判定の単一源（純粋）。プラン・請求額を offer から決める |
+| `src/lib/promotions/offerIntakeEmail.js` | 通知メールの文面（純粋・送信しない） |
+
+### 🔒 フォームの申告値でプラン・請求額を決めない（この phase の核）
+
+既存 `/pricing/` 経路は `productName` / `transferAmount` をフォームから受け取り、
+そこから planName / planType を導いている（同じ画面の JS が入れる値なので実害は無い）。
+**offer 経路は割引価格を扱うので、同じ作りにすると DevTools で
+「¥1,000 で Premium 買い切り」を自己申告できてしまう。**
+
+| Airtable | 出所 |
+|---|---|
+| `RequestedPlan` | offer 台帳の `PlanName` を `'Premium'` へ正規化した値（allowlist は `Premium` のみ） |
+| `RequestedPlanType` | offer 台帳の `PlanType`（空なら `BillingTerm` から復元） |
+| `RequestedAmount` | offer 台帳の **`OfferPrice`**（請求すべき金額） |
+| 申告された振込金額 | **Airtable に書かない**。管理者メールに載せるだけ |
+
+金額差異（申告 ≠ オファー価格）は**拒否せず警告**にする。既に振り込んだ人を締め出さないため。
+差異があれば管理者メールの**件名**に「金額差異あり」が付き、本文で通帳確認を促す。
+
+### 認証を置かない（意図的）
+
+案内対象には**退会済みでログインできない顧客が含まれる**。`AccessControl` を置くと
+いちばん申し込んでほしい相手が入れない。本人性は URL の HMAC トークン +
+「申込 email が offer の email と一致するか」のサーバー検証で担保する。
+
+### 書き込み順序（途中で失敗したときに一番マシな状態で止める）
+
+1. offer 台帳を read → `verifyOfferToken`（`claimedEmail` 付き）
+2. **Customers に `buildApplicationFields()` の戻り値を PATCH**（唯一の必須書き込み。失敗＝申込不成立で 502）
+3. offer を `redeemed` に更新（失敗しても申込は成立。二重申込は同じ `Requested*` の上書きになるだけ）
+4. 管理者メール → 申込者メール（失敗してもロールバックしない。Airtable が正本）
+
+対象 Customers レコードが見つからないときは**推測で新規作成しない**（409 + サポート案内）。
+offer は既存顧客にのみ発行されるため、見つからない = レコード削除等の異常。
+
+### 申込者メールに書かないこと
+
+「ご利用開始いただけます」「アクセスを開放しました」等、**権限が付いたと誤解させる表現は禁止**
+（権限は MK の入金確認まで付かない）。guard テストで固定している。
+
+### 検証
+
+`npm run test:promotions` に以下が入る（`check:safety` / CI 経由で実行）:
+
+- `offerIntake.test.mjs` — 申告金額を書き換えても請求額が offer 価格のままであること 他 22 本
+- `offerIntakeEmail.test.mjs` — 金額差異の警告 / 誤解表現の禁止 / HTML エスケープ
+- `offerIntakeFunction.guard.test.mjs` — Function 実装を grep して固定（lookup は read-only /
+  Customers への PATCH は単一源の戻り値のみ / 権限フィールド名がコードに現れない /
+  gate / 生トークンをログに出さない / ページの noindex・非ログイン）
 
 ---
 
@@ -365,8 +421,16 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 5. 三連複購入 CTA / Premium Plus が**開いていない**（無料特典で販売動線を配らない）
 6. 取り消し → 権利が消え、`RevokedAt` に日時が入り、課金列は変わらない
 
-⚠️ 割引オファーを実際に「買える」ようにするには §5 の未実装分（`/offer/` ページ）が必要。
-それまでは offer を発行しても、管理者が手動で案内するしかない。
+⚠️ 割引オファーの申込ページ（`/offer/?t=<token>`・§5-2）は **手順 3 / 4 の
+`COMEBACK_OFFER_TABLE_READY` と `PROMO_OFFER_SECRET` が揃うまで 503 で閉じている**。
+どちらか欠けた状態では、正しいトークンでもページに内容が出ず申込もできない（fail closed）。
+
+⚠️ 割引を使う場合の追加検証（手順 7 と同じタイミングで）:
+自分のテストアカウントへ割引 offer を 1 件発行 → 発行応答の URL を開く →
+金額・期限・伏せ字メールが出ることを確認 → 申込送信 → Airtable で
+`RequestedPlan=Premium` / `RequestedPlanType` / `RequestedAmount=オファー価格` /
+`Status` が active に**なっていない**ことを確認 → offer が `redeemed` になったことを確認 →
+最後に `PaymentConfirmed` を押して昇格 1 回だけ起きることを確認。
 
 ### rollback
 
@@ -384,6 +448,10 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 | **無料権利の単一源** | `src/lib/entitlements/promotionalGrants.js` |
 | **特典カタログ（価格・期間）** | `src/lib/promotions/promotionOfferCatalog.js` |
 | **割引オファー（台帳・トークン）** | `src/lib/promotions/promotionalOffer.js` |
+| **申込の判定（プラン・請求額）** | `src/lib/promotions/offerIntake.js` |
+| 申込通知メールの文面 | `src/lib/promotions/offerIntakeEmail.js` |
+| 申込ページ | `src/pages/offer/index.astro` |
+| 申込 API（read / write） | `netlify/functions/offer-lookup.js` / `offer-application.js` |
 | 案内文面の生成 | `src/lib/promotions/comebackEmailTemplate.js` |
 | 権限合成（閲覧） | `src/lib/entitlements/resolveEntitlements.js` |
 | 権限合成（ログイン） | `src/lib/auth/memberResolution.js` |
@@ -403,6 +471,9 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 - allowlist（`PROMO_WRITABLE_FIELDS` / `OFFER_WRITABLE_FIELDS`）を広げない
 - 退会フラグ・`ForceLogout` を特典付与の副作用で書き換えない
 - 割引 offer の発行で `プラン` / `PaymentConfirmed` / `有効期限` を書かない
+- **`/offer/` の申込でプラン・請求額をフォーム入力から決めない**（offer 台帳が唯一の出所）。
+  `offer-application.js` の Customers PATCH は `buildApplicationFields()` の戻り値のみ
+- `/offer/` に `AccessControl` を置かない（退会者が申し込めなくなる）
 - 特典付与とメール送信を 1 操作に結合しない
 - `canPurchaseSanrenpuku` / Premium Plus の `premiumActive` に無料特典を混ぜない
   （`paidPremiumActive` を使う）

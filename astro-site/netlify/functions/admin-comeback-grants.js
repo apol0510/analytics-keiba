@@ -83,7 +83,11 @@ const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧で返す最大件数（PII をむやみに大量送出しない） */
 const MAX_ROWS = 400;
 const MAX_PAGES = 40;
-/** 割引オファーの申込ページ（トークン付き URL。ページ実装は次フェーズ） */
+/**
+ * 割引オファーの申込ページ（トークン付き URL）。
+ * ページ実装 = `src/pages/offer/index.astro` + `offer-lookup` / `offer-application`。
+ * ここを変えるときは 3 か所（ページ・両 Function・案内メール）を必ず揃える。
+ */
 const OFFER_PATH = '/offer/';
 const SITE = 'https://analytics.keiba.link';
 

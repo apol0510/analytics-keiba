@@ -194,6 +194,8 @@ export function verifyOfferToken({ token, record, secret, nowMs, claimedEmail })
       planType: String(f.PlanType || ''),
       regularPrice: Number(f.RegularPrice) || 0,
       offerPrice,
+      term: String(f.BillingTerm || ''),
+      startsMs: Number.isFinite(Date.parse(String(f.StartsAt || ''))) ? Date.parse(String(f.StartsAt)) : null,
       expiresMs,
       customerRecordId: String(f.CustomerRecordId || ''),
     },
