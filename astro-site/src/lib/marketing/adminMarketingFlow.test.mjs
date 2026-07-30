@@ -23,7 +23,7 @@ import { clearProviderSuppressionCache } from './providerSuppression.js';
 const SECRET = 'test-secret';
 const ENV_KEYS = ['PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET', 'AIRTABLE_API_KEY',
   'AIRTABLE_BASE_ID', 'MARKETING_CAMPAIGN_ENABLED', 'NEWSLETTER_AUTOMATION_ENABLED',
-  'MARKETING_CAMPAIGN_DISPATCH_ENABLED', 'SENDGRID_API_KEY'];
+  'MARKETING_CAMPAIGN_DISPATCH_ENABLED', 'SENDGRID_API_KEY', 'NEWSLETTER_TEST_RECIPIENTS'];
 const savedEnv = {};
 let realFetch;
 
@@ -158,6 +158,7 @@ beforeEach(() => {
   delete process.env.MARKETING_CAMPAIGN_ENABLED;
   delete process.env.NEWSLETTER_AUTOMATION_ENABLED;
   delete process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED;
+  delete process.env.NEWSLETTER_TEST_RECIPIENTS;
   fakeSuppressed = ['bounced@example.com'];
   suppressionFails = false;
   clearProviderSuppressionCache(); // テスト間で suppression をキャッシュさせない
@@ -468,7 +469,7 @@ test('使用停止中のキャンペーンは理由付きで拒否される（dr
 
 test('キャンペーン一覧は停止中も理由付きで返す', async () => {
   const { body } = parse(await call({ action: 'campaigns' }));
-  assert.equal(body.campaigns.length, 6, '停止中が一覧から消えている');
+  assert.equal(body.campaigns.length, 7, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
   assert.equal(off.length, 2, '停止中が 2 本でない');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に理由が無い`);
@@ -478,6 +479,109 @@ test('停止中でも本文プレビューは確認できる（送信経路で�
   const { status, body } = parse(await call({ action: 'preview', campaignId: 'sanrenpuku-offer' }));
   assert.equal(status, 200);
   assert.ok(body.subject.includes('三連複'));
+});
+
+// ── 運用テスト専用カナリア（本番 gate 手前の検証経路）──────────────
+test('カナリア: env 未設定なら誰にも送れない（fail closed）', async () => {
+  delete process.env.NEWSLETTER_TEST_RECIPIENTS;
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec3'] }));
+  assert.equal(d.body.willSend, 0, 'env 未設定でカナリアが送れてしまう');
+  const reasons = Object.fromEntries(d.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.campaign_mismatch, 1);
+});
+
+test('カナリア: テスト受信者 1 名で selected=1 / willSend=1 / excluded=0', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'active@example.com';
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec3'] }));
+  assert.equal(d.status, 200);
+  assert.equal(d.body.selected, 1);
+  assert.equal(d.body.willSend, 1, 'テスト受信者へ送れない');
+  assert.equal(d.body.excluded, 0);
+  assert.deepEqual(d.body.excludedDetail, []);
+  assert.equal(d.body.sideEffects, 'none');
+});
+
+test('カナリア: 一般顧客を選んでも送信対象にならない', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'active@example.com';
+  // rec1 / rec2（期限切れの一般顧客）を選択
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec1', 'rec2'] }));
+  assert.equal(d.body.selected, 2);
+  assert.equal(d.body.willSend, 0, '一般顧客へテストメールが送られる');
+  const reasons = Object.fromEntries(d.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.campaign_mismatch, 2);
+});
+
+test('カナリア: env が複数でも選択レコード以外へ広がらない', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'active@example.com, light@example.com, free@example.com';
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec3'] }));
+  assert.equal(d.body.selected, 1, '選択していないレコードが対象に入っている');
+  assert.equal(d.body.willSend, 1);
+});
+
+test('カナリアもテスト受信者が suppression 該当なら送らない', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'bounced@example.com'; // AK blacklist(HARD) 該当
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec7'] }));
+  assert.equal(d.body.willSend, 0, 'テスト用だからと guard をバイパスしている');
+  const reasons = Object.fromEntries(d.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.blacklist, 1);
+});
+
+test('カナリアも配信停止のテスト受信者へは送らない', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'unsub@example.com';
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec6'] }));
+  assert.equal(d.body.willSend, 0);
+  const reasons = Object.fromEntries(d.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.unsubscribed, 1);
+});
+
+test('カナリアも 24 時間ガードの対象', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'active@example.com';
+  store.deliveries.push({
+    id: 'cd-recent',
+    fields: {
+      DeliveryKey: 'k-recent', EmailType: 'campaign', CampaignType: 'other:v1',
+      RecipientEmail: 'active@example.com', Status: 'sent', SentAt: new Date().toISOString(),
+    },
+  });
+  const d = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec3'] }));
+  assert.equal(d.body.willSend, 0);
+  const reasons = Object.fromEntries(d.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.recent_marketing_contact, 1);
+});
+
+test('カナリア: enqueue しても Customers write 0 / 実送信 0', async () => {
+  process.env.NEWSLETTER_TEST_RECIPIENTS = 'active@example.com';
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'marketing-canary', recordIds: ['rec3'] }));
+  const out = parse(await call({
+    action: 'send', campaignId: 'marketing-canary', recordIds: ['rec3'],
+    planFingerprint: dry.body.planFingerprint,
+  }));
+  assert.equal(out.status, 200);
+  assert.equal(out.body.queued, 1);
+  assert.equal(store.customerWrites, 0, 'Customers へ書き込んでいる');
+  assert.equal(store.mailSendCalls, 0, '実送信 API を呼んでいる');
+  assert.equal(store.scheduled.length, 1);
+  assert.equal(store.scheduled[0].fields.Status, 'PENDING');
+  assert.equal(store.scheduled[0].fields.TargetPlan, 'campaign:marketing-canary');
+  assert.equal(store.deliveries.length, 1);
+  assert.equal(store.deliveries[0].fields.CampaignType, 'marketing-canary:v1');
+  assert.equal(store.deliveries[0].fields.Status, 'queued');
+  // dispatcher gate は別なので、実送信はされない
+  assert.equal(out.body.dispatchEnabled, false);
+});
+
+test('カナリアは一覧で運用テスト専用と分かる', async () => {
+  const { body } = parse(await call({ action: 'campaigns' }));
+  const c = body.campaigns.find((x) => x.campaignId === 'marketing-canary');
+  assert.ok(c, 'カナリアが一覧に無い');
+  assert.equal(c.usable, true);
+  assert.equal(c.testOnly, true, '運用テスト専用の目印が無い');
+  assert.equal(c.extraAudience, 'marketing_canary_recipient');
+  // 他のキャンペーンは testOnly でない
+  for (const x of body.campaigns.filter((y) => y.campaignId !== 'marketing-canary')) {
+    assert.equal(x.testOnly, false, `${x.campaignId} が誤って運用テスト専用になっている`);
+  }
 });
 
 // ── Premium Plus 案内の追加絞り込み ──────────────────────────────

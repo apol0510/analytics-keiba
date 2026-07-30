@@ -76,6 +76,7 @@ import {
   buildBlacklistEmailSet,
   loadBlacklistEmails,
 } from '../../src/lib/newsletter/airtable-fetch.js';
+import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 
 const BRAND = 'analytics-keiba';
@@ -116,6 +117,18 @@ export function isMarketingSendEnabled(env) {
  */
 export function isDispatchEnabled(env) {
   return isMarketingDispatchEnabled(env);
+}
+
+/**
+ * env 由来の値をまとめて、キャンペーン固有条件の評価コンテキストを作る。
+ * 判定モジュール（campaignAudienceRules.js）は純粋なので、env はここでだけ読む。
+ *
+ * `NEWSLETTER_TEST_RECIPIENTS` は運用テスト専用カナリアの宛先ホワイトリスト（正本）。
+ * 未設定なら空 Set になり、カナリアは**誰にも送れない**（fail closed）。
+ */
+function buildAudienceContext(env) {
+  const parsed = parseTestRecipientsEnv(env && env.NEWSLETTER_TEST_RECIPIENTS);
+  return { testRecipients: new Set(parsed.recipients) };
 }
 
 /** AK の EmailBlacklist を HARD / SOFT に分けて読む（販促は SOFT も送らない側へ倒す） */
@@ -344,6 +357,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     campaign, selected, deliveredKeys,
     providerSuppressed: provider.ok ? provider.emails : null,
     softBounced: blacklist.soft,
+    audienceContext: buildAudienceContext(process.env),
     brand: BRAND, fromEmail, nowMs: now,
   });
   if (!plan.ok) {

@@ -127,6 +127,16 @@ test('既定選択が使用可能なキャンペーンになる', () => {
   assert.match(SCRIPT, /const firstUsable = mkCampaigns\.find\(\(c\) => c\.usable\)/);
 });
 
+test('運用テスト専用キャンペーンが顧客向けと区別して表示される', () => {
+  // 選択肢・説明・確認画面の 3 箇所で testOnly を反映する
+  assert.ok(SCRIPT.includes('c.testOnly'), '選択肢で運用テスト専用を示していない');
+  assert.ok(SCRIPT.includes('campaign.testOnly'), '確認画面で運用テスト専用を示していない');
+  assert.ok(SCRIPT.includes('運用テスト専用'), '文言が無い');
+  // 対象を手動で広げられないことが分かる説明
+  assert.ok(SCRIPT.includes('NEWSLETTER_TEST_RECIPIENTS'), 'ホワイトリスト正本を説明していない');
+  assert.ok(SCRIPT.includes('対象を手動で広げることはできません'), '手動で広げられない旨の説明が無い');
+});
+
 test('顧客データを URL に載せない', () => {
   const mktBlock = SCRIPT.slice(SCRIPT.indexOf('顧客マーケティング（AK 独自'));
   assert.equal(/location\.(href|search)\s*=/.test(mktBlock), false);

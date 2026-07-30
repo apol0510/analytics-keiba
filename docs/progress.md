@@ -17,6 +17,22 @@
 
 ## Current Phase
 
+**Phase（2026-07-30 現在・最新）: PR #172 は merge / production deploy 済み（`9ba1cf6`）。
+送信 gate は OFF のまま。次は運用テスト専用キャンペーン `marketing-canary` の PR。**
+
+- PR #172 merge commit **`9ba1cf6`** / Netlify production deploy **ready** / main CI **success**
+- production env は未変更: `MARKETING_CAMPAIGN_ENABLED` 未設定 /
+  `MARKETING_CAMPAIGN_DISPATCH_ENABLED` 未設定 / `NEWSLETTER_AUTOMATION_ENABLED=false`
+- deploy 後の実測: `ScheduledEmails` PENDING **0** / `CampaignDeliveries` **0** /
+  Customers の権限・決済・Plus 系カウンタ全一致（実送信 0・write 0）
+- **本番化前の最終 gate 確認で 1 項目が不成立だった**: 専用テスト受信者
+  （`NEWSLETTER_TEST_RECIPIENTS` の 1 件・Customers に実在・全 suppression 非該当）は
+  契約 active / プラン premium のため、使用可能な 4 キャンペーンの対象条件にどれも合致せず
+  dry-run が 1/1/0 にならなかった（enforce ルールが設計どおり機能した結果）。
+  → **案 B: 運用テスト専用キャンペーン `marketing-canary` を新設**（既存キャンペーンの
+  `audienceRule` はテスト都合で緩めない）。branch `feat/marketing-canary`。
+
+
 **Phase（2026-07-30 現在）: AK 顧客販売・マーケティング管理 Draft 実装。
 実送信は未有効（env 未設定・fail closed）で、production 操作は未実施。**
 
@@ -151,6 +167,23 @@ read-only レビューで 6 キャンペーンを点検し、同一 branch で�
   防がないため、別キャンペーンの連続送信を止める。dry-run / send / dispatch 直前の 3 箇所で判定。
   対象は `EmailType='campaign'` のみ（取引メールは含めない）
 - **version ロック**: 内容ハッシュをテストで固定し、version 据え置きの本文変更を検知
+
+#### 5. 運用テスト専用キャンペーン `marketing-canary`（2026-07-30 / branch `feat/marketing-canary`）
+
+配信基盤を安全に検証するための専用キャンペーン。**一般顧客には構造的に送れない。**
+
+- 対象は env **`NEWSLETTER_TEST_RECIPIENTS`** 一致者のみ（正本）。env 未設定なら **0 名**
+- 判定は `campaignAudienceRules.js` の `marketing_canary_recipient` に閉じ込め、
+  判定モジュールは純粋のまま（env は Function 層が `parseTestRecipientsEnv()` で正規化して
+  `context` で渡す）。`customerMarketingAudience.js` にテストロジックを混ぜない
+- **既存キャンペーンの `audienceRule` は一切変更していない**
+- テスト用でも guard をバイパスしない（suppression / blacklist / 配信停止 / 退会 / 停止 /
+  test / 不正メール / 重複 / 24h 頻度 / DeliveryKey / planFingerprint / dispatch 直前再検証）
+- dispatcher 側も送信直前に固有条件を再判定（キャンペーン不明なら送らない）
+- 管理画面は選択肢・説明・確認画面の 3 箇所に 🧪「運用テスト専用」を表示
+
+**本番データ read-only 実測**: テスト受信者 1 名のみ → **1/1/0** /
+一般顧客 50 名 → **willSend 0** / 両方同時 → **1 名のみ** / env 空 → **0 名**。
 
 #### 実施していない操作（重要）
 

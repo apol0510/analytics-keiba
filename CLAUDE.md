@@ -543,6 +543,10 @@ PHASE 4 到達後は **JST 時刻だけ**で受付状態を自動判定する（
   （氏名未登録が大多数のため「お客様 様」の二重敬称になる）。氏名あり `山田 様` / なし `お客様`
 - **CTA 先が確定しないキャンペーンは `enabled:false`。推測で URL を作らない**
   （`sanrenpuku-offer` は三連複の公開説明ページが無いため停止中）
+- 🧪 **`marketing-canary` は運用テスト専用**。対象は env `NEWSLETTER_TEST_RECIPIENTS`
+  一致者のみで、**一般顧客には構造的に送れない**（選択しても `campaign_mismatch`）。
+  env 未設定なら誰にも送れない（fail closed）。テスト用でも guard は一切バイパスしない。
+  **既存キャンペーンの `audienceRule` をテスト都合で緩めないこと**
 - 契約 × プランで決められない条件は `campaignAudienceRules.js` の `extraAudience` に閉じ込め、
   **`customerMarketingAudience.js` を Premium Plus 販売判定で汚さない**。
   `premium-plus-offer` は `eligible` かつ `showProductPage=true`（PHASE 3 以上）のみ対象

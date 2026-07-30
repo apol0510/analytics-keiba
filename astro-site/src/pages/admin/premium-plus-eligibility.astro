@@ -400,6 +400,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     padding: .85rem 1rem; margin-top: 1rem; }
   .ppe .campaign-box h2 { font-size: .9rem; margin: 0 0 .6rem; color: #e6edf7; }
   .ppe .camp-desc { font-size: .76rem; color: #93a4bd; line-height: 1.7; margin: .4rem 0 0; }
+  /* 運用テスト専用キャンペーン（顧客向けと混同させない） */
+  .ppe .testonly { margin: 0 0 .5rem; padding: .5rem .7rem; border-radius: 6px; font-size: .76rem; line-height: 1.6;
+    background: rgba(96,165,250,.1); border-left: 3px solid rgba(96,165,250,.6); color: #bfd4f5; font-weight: 700; }
   .ppe .exlist { margin: 0; padding-left: 1.1rem; font-size: .78rem; color: #cbd5e6; line-height: 1.9; }
   .ppe .exlist strong { color: #e6edf7; }
   .ppe .exlist .sub { padding-left: .9rem; font-size: .74rem; color: #93a4bd; line-height: 1.7; }
@@ -1104,8 +1107,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       for (const c of mkCampaigns) {
         const o = document.createElement('option');
         o.value = c.campaignId;
-        // 使用可否を選択肢の時点で分かるようにする（停止中は選べない）
-        o.textContent = (c.usable ? '' : '⛔ ') + c.name + '（v' + c.version + '）'
+        // 使用可否と「運用テスト専用」を選択肢の時点で分かるようにする
+        o.textContent = (c.usable ? '' : '⛔ ') + (c.testOnly ? '🧪 ' : '') + c.name + '（v' + c.version + '）'
+          + (c.testOnly ? ' — 運用テスト専用' : '')
           + (c.usable ? '' : ' — 使用停止中');
         o.disabled = !c.usable;
         if (!c.usable && c.disabledReason) o.title = c.disabledReason;
@@ -1138,6 +1142,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (rule.contracts && rule.contracts.length) limits.push('契約状態: ' + rule.contracts.join(' / '));
       if (rule.plans && rule.plans.length) limits.push('プラン: ' + rule.plans.join(' / '));
       if (c.extraAudience) limits.push('追加条件: ' + c.extraAudience);
+
+      // 運用テスト専用は顧客向けと混同しないよう最初に明示する
+      if (c.testOnly) {
+        const t = document.createElement('p');
+        t.className = 'testonly';
+        t.textContent = '🧪 運用テスト専用キャンペーンです。'
+          + 'NEWSLETTER_TEST_RECIPIENTS に登録されたテスト受信者にのみ送信され、'
+          + '一般顧客を選択しても送信対象になりません（対象を手動で広げることはできません）。';
+        el.appendChild(t);
+      }
 
       const line = document.createElement('span');
       line.textContent = c.description
@@ -1346,8 +1360,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const body = mkOpenModal('送信内容の確認');
 
       const head = document.createElement('div'); head.className = 'dt-sec';
-      const h = document.createElement('h3'); h.textContent = campaign.name + ' v' + campaign.version;
+      const h = document.createElement('h3');
+      h.textContent = (campaign.testOnly ? '🧪 ' : '') + campaign.name + ' v' + campaign.version;
       head.appendChild(h);
+      if (campaign.testOnly) {
+        const t = document.createElement('p'); t.className = 'testonly';
+        t.textContent = '🧪 運用テスト専用。テスト受信者以外は自動的に除外されます。';
+        head.appendChild(t);
+      }
       const dl = document.createElement('dl'); dl.className = 'kv';
       kvRow(dl, '件名', plan.subject);
       kvRow(dl, '選択', plan.selected + ' 名');

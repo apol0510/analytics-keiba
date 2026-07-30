@@ -79,6 +79,7 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 
 | campaignId | v | 状態 | 対象条件（すべて enforce） |
 |---|---|---|---|
+| `marketing-canary` | 1 | 🧪 **運用テスト専用** | `NEWSLETTER_TEST_RECIPIENTS` 一致者のみ |
 | `expired-comeback` | 2 | ✅ 使用可能 | 契約=expired |
 | `premium-renewal` | 2 | ✅ 使用可能 | 契約=expired/expiring_soon かつ Premium 系 |
 | `sanrenpuku-offer` | 2 | ⛔ **使用停止** | 契約=active/expiring_soon かつ Premium |
@@ -89,6 +90,33 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 各定義は `campaignId` / `version` / `name` / `description` / `subject` / `body` /
 `recommendedSegments` / `ctaUrl` / `ctaLabel` / `enabled` / `audienceRule` /
 （任意）`extraAudience` / `disabledReason` を持つ。
+
+### 🧪 `marketing-canary` は運用テスト専用（一般顧客には送れない）
+
+配信基盤（dry-run → enqueue → dispatch → 実送信）を安全に検証するための専用キャンペーン。
+**顧客向けの案内ではない。**
+
+- 対象は **env `NEWSLETTER_TEST_RECIPIENTS` に登録されたアドレスのみ**（これが正本）
+- 一般顧客は管理画面で選択しても `campaign_mismatch` で除外される。
+  **管理者が対象を手動で広げることはできない**
+- **env 未設定なら誰にも送れない**（fail closed）。Customers 側に email が無い場合も除外
+- email 比較は正規化（trim + lowercase）して行う
+- 本文に商品案内・価格・契約誘導を入れない（guard テストで禁止）
+- **テスト用だからといって guard をバイパスしない**。provider suppression / EmailBlacklist
+  (hard・soft) / 配信停止 / 退会 / 停止 / test / 不正メール / 重複 / 24h 頻度ガード /
+  DeliveryKey / planFingerprint / dispatch 直前再検証をすべて通常どおり適用する
+- 既存キャンペーンの `audienceRule` は**一切緩めていない**（テスト都合で商品条件を変えない）
+
+判定は `campaignAudienceRules.js` の `marketing_canary_recipient` に閉じ込める。
+判定モジュールは純粋なので env を直接読まず、Function 層が
+`newsletter/test-recipients.js` の `parseTestRecipientsEnv()` で正規化して `context` で渡す。
+`customerMarketingAudience.js` にはテスト用ロジックを一切入れない（guard テストで固定）。
+
+管理画面では選択肢・説明・確認画面の 3 箇所に 🧪「運用テスト専用」を表示する。
+
+> 本番データ実測（2026-07-30 / read-only）: テスト受信者 1 名のみ選択 → **1/1/0**。
+> 一般顧客 50 名を選択 → **willSend 0**。両方を同時選択 → **テスト受信者 1 名のみ**。
+> env を空にすると **0 名**。
 
 ### 使用停止の理由（2026-07-30 レビュー）
 

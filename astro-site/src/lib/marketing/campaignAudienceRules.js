@@ -25,6 +25,11 @@ import { resolvePremiumPlusRelease } from '../premiumPlus/premiumPlusRelease.js'
 export const EXTRA_AUDIENCE = Object.freeze({
   /** Premium Plus の商品ページを実際に閲覧できる会員だけ（eligible かつ PHASE 3 以上） */
   PREMIUM_PLUS_RELEASE: 'premium_plus_release',
+  /**
+   * 運用テスト専用: `NEWSLETTER_TEST_RECIPIENTS` に登録されたアドレスだけ。
+   * 一般顧客には**構造的に**送れない（管理者が一覧で誰を選んでも通らない）。
+   */
+  MARKETING_CANARY_RECIPIENT: 'marketing_canary_recipient',
 });
 
 /** 追加条件で外れたときの除外理由 */
@@ -33,24 +38,57 @@ export const CAMPAIGN_MISMATCH = 'campaign_mismatch';
 /**
  * キャンペーン固有の追加条件を評価する。
  *
+ * ⚠️ このモジュールは**純粋**（`process.env` を読まない）。env 由来の値は Function 層で読み、
+ *    `context` として渡すこと（例: テスト受信者ホワイトリスト）。
+ *
  * @param {{
  *   campaign: object,
  *   fields: object|null,   Airtable Customers の fields（Premium Plus 系フィールドを読む）
  *   nowMs: number,
+ *   context?: { testRecipients?: Set<string>|null },
  * }} input
  * @returns {{ ok: boolean, reason: string|null, detail: string|null }}
  *   追加条件が無いキャンペーンは常に ok:true
  */
-export function evaluateExtraAudience({ campaign, fields, nowMs } = {}) {
+export function evaluateExtraAudience({ campaign, fields, nowMs, context } = {}) {
   const key = campaign && campaign.extraAudience;
   if (!key) return { ok: true, reason: null, detail: null };
 
   if (key === EXTRA_AUDIENCE.PREMIUM_PLUS_RELEASE) {
     return evaluatePremiumPlusRelease({ fields, nowMs });
   }
+  if (key === EXTRA_AUDIENCE.MARKETING_CANARY_RECIPIENT) {
+    return evaluateCanaryRecipient({ fields, context });
+  }
 
   // 未知の追加条件は通さない（定義ミスで全員へ送るのを防ぐ）
   return { ok: false, reason: CAMPAIGN_MISMATCH, detail: `unknown_extra_audience:${key}` };
+}
+
+/**
+ * 運用テスト専用カナリアの対象か。
+ *
+ * 正本は **env `NEWSLETTER_TEST_RECIPIENTS`**（Function 層が
+ * `newsletter/test-recipients.js` の `parseTestRecipientsEnv` で正規化して渡す）。
+ *
+ * fail closed の徹底:
+ *   - env 未設定 / 空 / Set でない → **全員除外**（誰にも送れない）
+ *   - Customers 側に email が無い → 除外
+ *   - ホワイトリストに無い一般顧客 → 除外
+ *
+ * これにより管理者が一覧で誰を選んでも、テスト受信者以外へは構造的に送れない。
+ * **アドレスは戻り値にも入れない**（detail は理由の種別のみ）。
+ */
+function evaluateCanaryRecipient({ fields, context }) {
+  const allow = context && context.testRecipients;
+  if (!(allow instanceof Set) || allow.size === 0) {
+    return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'test_recipients_unset' };
+  }
+  const f = fields && typeof fields === 'object' ? fields : null;
+  const email = f ? String(f.Email ?? f.email ?? '').trim().toLowerCase() : '';
+  if (!email) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'no_email' };
+  if (!allow.has(email)) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'not_test_recipient' };
+  return { ok: true, reason: null, detail: null };
 }
 
 /**
