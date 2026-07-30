@@ -159,6 +159,14 @@ exports.handler = async (event) => {
           plan: displayPlanName(m.normalizedPlan),
           venueAccess: venue,
           lifetimeSanrenpuku: !!m.lifetimeSanrenpuku,
+          // この権限の根拠（'paid_contract' | 'promotional_grant'）。
+          // `plan` は閲覧権のティアなので、無料特典でも 'light' / 'premium' になる。
+          // **会員向け価格の出し分けに `plan` を使わせない**ための区別。
+          entitlementSource: m.entitlementSource,
+          // 会員向け価格（/pricing/ の乗り換え特典価格）の出し分け tier。
+          // **課金契約だけ**から算出する（無料特典では上がらない）。サーバーで決めて渡し、
+          // クライアントに「無料特典 → 有料会員価格」の推測をさせない。
+          pricingTier: result.pricingTier,
           nonAuthoritative: true,
           issuedAt: new Date(result.payload.issuedAt).toISOString(),
           expiresAt: new Date(result.payload.expiresAt).toISOString(),

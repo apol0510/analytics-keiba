@@ -253,7 +253,9 @@ export function resolveSendability({ fields, blacklistEmails }) {
  * }} input
  * @returns {{
  *   email: string, plan: string, contract: string, daysToExpiry: number|null,
- *   hasSanrenpuku: boolean, premiumActive: boolean, sendable: boolean, sendState: string,
+ *   hasSanrenpuku: boolean, premiumActive: boolean, lightActive: boolean,
+ *   promoPremiumActive: boolean, promoLightActive: boolean,
+ *   sendable: boolean, sendState: string,
  *   suppressionReasons: string[], history: object, segments: string[],
  * }}
  */
@@ -294,8 +296,14 @@ export function resolveCustomerMarketing({ fields, nowMs, blacklistEmails, histo
     contract,
     daysToExpiry,
     hasSanrenpuku: ent.canViewSanrenpuku === true,
-    premiumActive: ent.canViewPremium === true,
-    lightActive: ent.canViewLight === true && ent.canViewPremium !== true,
+    // ⚠️ **課金契約のみ**（`canViewPremium` は無料特典でも true になる）。
+    //    マーケティングは「何を買った人か」を扱う面なので、無料特典で
+    //    「支払済み」に見えてはいけない。無料特典は下の promo* で別軸として持つ。
+    premiumActive: ent.paidPremiumActive === true,
+    lightActive: ent.paidLightActive === true && ent.paidPremiumActive !== true,
+    /** カムバック等の無料特典（閲覧できるだけ。課金実績ではない） */
+    promoPremiumActive: ent.promo?.premiumActive === true,
+    promoLightActive: ent.promo?.lightActive === true,
     ...send,
     history: hist,
     segments,

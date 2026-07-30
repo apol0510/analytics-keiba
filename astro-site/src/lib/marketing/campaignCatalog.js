@@ -26,6 +26,10 @@
  */
 
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
+import {
+  buildComebackEmailContent,
+  DEFAULT_COMEBACK_COMBO,
+} from '../promotions/comebackEmailTemplate.js';
 
 const SITE = 'https://analytics.keiba.link';
 
@@ -55,6 +59,8 @@ export function buildSalutation(rawName) {
 export const CAMPAIGN_DISABLED_REASON = Object.freeze({
   NO_CTA: 'CTA 未設定のため利用不可（案内先ページが確定していません）',
   TEMPLATE_PLACEHOLDER: '本文が初期テンプレートのままのため利用不可（件名・本文・CTA を設定してください）',
+  /** 文面は完成しているが、前提となる運用がまだ整っていない下書き */
+  DRAFT: '下書き（前提となる運用が未成立のため利用不可）',
 });
 
 /**
@@ -241,6 +247,28 @@ export const CAMPAIGNS = Object.freeze([
       enforce: true,
     },
     enabled: true,
+  },
+  {
+    campaignId: 'comeback-offer',
+    version: 1,
+    name: 'カムバック案内（下書き）',
+    description: 'カムバック特典を付与済みの顧客へ案内する。本文は付与した特典から自動生成する。',
+    // ⚠️ 文面を手書きしない。**offer の内容から生成**する（金額・期間の書き間違いを防ぐ）。
+    //    ここに載るのは既定の組み合わせ（Light 永久無料 ＋ Premium 30日無料）で描いた版。
+    //    実際に送るときは管理画面で選んだ組み合わせのプレビューを確認してから使う。
+    ...(() => {
+      const c = buildComebackEmailContent(DEFAULT_COMEBACK_COMBO);
+      return { subject: c.subject, body: c.body, ctaLabel: c.ctaLabel, ctaUrl: c.ctaUrl };
+    })(),
+    recommendedSegments: ['contract:expired', 'contract:none'],
+    // 特典を付与した相手にだけ送る運用のため、契約状態では絞らない
+    //（付与済みかはカムバック特典タブで確認して選択する）。
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    // ⛔ 下書き。**特典付与フローが本番で有効化され、実際に付与を行ってから**有効化する。
+    //    付与前にこの文面を送ると、書いてある特典が実際には使えない。
+    enabled: false,
+    disabledReason: CAMPAIGN_DISABLED_REASON.DRAFT,
+    disabledDetail: '下書き（カムバック特典の付与フローが本番稼働し、対象へ実際に付与してから有効化する）',
   },
   {
     campaignId: 'general-announcement',

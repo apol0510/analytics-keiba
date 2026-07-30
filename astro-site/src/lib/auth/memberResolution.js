@@ -14,6 +14,36 @@
  *     複数解釈 / SessionVersion 異常 は `denied`
  *   - 期限切れ有料会員を Free として即時ログインさせない（`denied`）
  *   - SessionVersion 欠落・空は `0`。負数 / 非整数 / 異常型は `denied`
+ *
+ * ── 無料特典（promotional grant）の扱い（2026-07-30 追加）──────────────
+ * `promotionalGrants.js` の無料権利は **課金契約とは独立**にログイン権限を与える。
+ *   - Premium 無料権利が有効 → `paid('premium')`
+ *   - Light 無料権利が有効   → `paid('light')`
+ * 有料契約が有効なときは **有料側を優先**する（特典で契約プランを上書きしない）。
+ * 拒否ゲート（ForceLogout / 退会 / 停止 / SessionVersion 不正）は特典より**先**に評価する。
+ * 特典は権利を増やすだけで、減らさない。フィールドが無いレコードは従来と同じ判定。
+ *
+ * ── ⚠️ `memberType='paid'` は「支払済み」ではない（認可ラベル）─────────────
+ * この値は **「有料階層のセッションを発行してよいか」** だけを表す legacy な認可ラベルで、
+ * 課金実績を意味しない。消費者は以下の 6 か所しかなく、すべて認証経路の分岐である
+ * （2026-07-30 に repository 全体を grep して確認。課金・請求・契約更新の判定に使っている
+ *  consumer は 1 つも無い）:
+ *
+ *   1. `authPolicies.decideFreeLogin`      paid → マジックリンク必須（即時 Free ログインしない）
+ *   2. `authPolicies.shouldSendMagicLink`  paid のみリンク送信
+ *   3. `sessionIssuance.issuePaidSessionCookie`  paid のみ Cookie 発行
+ *   4. `sessionRefresh`                    paid のみ更新
+ *   5. `verifyMagicLinkFlow`               paid のみ検証成功
+ *   6. `auth-user` / `login.astro`         'free' 分岐の表示のみ
+ *
+ * **Cookie payload に memberType は入らない**（sub / plan / venueAccess / sessionVersion のみ）。
+ * 課金実績が前提の判定（Premium Plus 販売資格 / 三連複購入資格 / 契約状態のマーケ区分）は
+ * `resolveEntitlements` の `paidPremiumActive` / `paidLightActive`、または
+ * Airtable の課金フィールドを直接見ており、この値を参照していない。
+ *
+ * 将来 consumer を増やすときのために、根拠を `entitlementSource`
+ * （`paid_contract` / `promotional_grant` / `none`）で返す。**課金実績が要るなら
+ * memberType ではなくこちらを見ること。**
  */
 
 import {
@@ -22,6 +52,7 @@ import {
   normalizeVenueAccess,
   CANONICAL_VENUES,
 } from './planNormalization.js';
+import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 
 export const MEMBER_TYPE = Object.freeze({
   FREE: 'free',
@@ -30,6 +61,19 @@ export const MEMBER_TYPE = Object.freeze({
 });
 
 /** 判定理由コード（構造化。人間可読メッセージ・機密は含めない）。 */
+/**
+ * `memberType='paid'` の**根拠**。memberType 自体は変えずに、課金契約と無料特典を
+ * 構造的に見分けられるようにするための追加情報（セッション Cookie には入らない）。
+ */
+export const MEMBER_SOURCE = Object.freeze({
+  /** 通常購入の契約（プラン / 有効期限 / PlanType / LifetimeSanrenpuku） */
+  PAID_CONTRACT: 'paid_contract',
+  /** カムバック等の無料特典（promotional grant）。**支払い実績ではない** */
+  PROMOTIONAL_GRANT: 'promotional_grant',
+  /** 有料階層ではない（free / denied） */
+  NONE: 'none',
+});
+
 export const MEMBER_REASON = Object.freeze({
   CLEAR_FREE: 'clear_free',
   PENDING_PAYMENT_FREE: 'pending_payment_free',
@@ -45,6 +89,10 @@ export const MEMBER_REASON = Object.freeze({
   EXPIRED: 'expired',
   UNKNOWN_VENUE: 'unknown_venue',
   INVALID_NOW: 'invalid_now',
+  /** 無料特典（Premium 無料権利）で有料相当になった */
+  PROMO_PREMIUM_GRANT: 'promo_premium_grant',
+  /** 無料特典（Light 無料権利）で有料相当になった */
+  PROMO_LIGHT_GRANT: 'promo_light_grant',
 });
 
 // Airtable 上の停止系ステータス（大小・和英を吸収）。
@@ -111,6 +159,7 @@ function deny(reason, recordId, sessionVersion = 0, lifetimeSanrenpuku = false) 
     recordId: recordId ?? null,
     reason,
     lifetimeSanrenpuku,
+    entitlementSource: MEMBER_SOURCE.NONE,
   };
 }
 
@@ -123,10 +172,12 @@ function freeResult(recordId, sessionVersion, reason = MEMBER_REASON.CLEAR_FREE)
     recordId: recordId ?? null,
     reason,
     lifetimeSanrenpuku: false,
+    entitlementSource: MEMBER_SOURCE.NONE,
   };
 }
 
-function paidResult(plan, venues, recordId, sessionVersion, lifetimeSanrenpuku, reason) {
+function paidResult(plan, venues, recordId, sessionVersion, lifetimeSanrenpuku, reason,
+  entitlementSource = MEMBER_SOURCE.PAID_CONTRACT) {
   return {
     memberType: MEMBER_TYPE.PAID,
     normalizedPlan: plan,
@@ -135,6 +186,12 @@ function paidResult(plan, venues, recordId, sessionVersion, lifetimeSanrenpuku, 
     recordId: recordId ?? null,
     reason,
     lifetimeSanrenpuku,
+    /**
+     * この判定の根拠が **課金契約か無料特典か**。
+     * memberType='paid' は「有料階層のセッションを発行してよい」という認可ラベルであって
+     * 支払い実績ではないため、課金実績が前提の判定はこちらを見ること。
+     */
+    entitlementSource,
   };
 }
 
@@ -150,6 +207,7 @@ function paidResult(plan, venues, recordId, sessionVersion, lifetimeSanrenpuku, 
  *   recordId: string|null,
  *   reason: string,
  *   lifetimeSanrenpuku: boolean,
+ *   entitlementSource: 'paid_contract'|'promotional_grant'|'none',
  * }}
  */
 export function resolveMembership(input = {}) {
@@ -181,6 +239,26 @@ export function resolveMembership(input = {}) {
   const sessionVersion = sv.value;
 
   const lifetime = isTruthyFlag(readRaw(fields, ['LifetimeSanrenpuku', '三連複Lifetime']));
+
+  /**
+   * カムバック特典で有料相当になるか。
+   * 有効な有料契約があるときは呼ばれない（有料側を優先するため、free / 期限切れの分岐でのみ使う）。
+   * @returns {object|null} paidResult or deny(UNKNOWN_VENUE)、特典が無ければ null
+   */
+  const promoResult = () => {
+    const g = resolvePromotionalGrants(fields, now);
+    // 強い方を優先: Premium 無料権利 > Light 無料権利（Light は fallback ではなく独立プラン）
+    const plan = g.premium.active ? 'premium' : (g.light.active ? 'light' : null);
+    if (!plan) return null;
+    const v = resolveVenues(fields);
+    if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
+    return paidResult(
+      plan, v.venues, recordId, sessionVersion, lifetime,
+      plan === 'premium' ? MEMBER_REASON.PROMO_PREMIUM_GRANT : MEMBER_REASON.PROMO_LIGHT_GRANT,
+      // ⚠️ 支払い実績ではない。課金前提の判定はこの値で除外できる
+      MEMBER_SOURCE.PROMOTIONAL_GRANT,
+    );
+  };
 
   // --- plan（ティア）の解決（クライアント値は使わない） ---
   // ティアの正本は `プラン`（日本語）。`Plan`（英語）は読み取り互換の別名。
@@ -222,18 +300,19 @@ export function resolveMembership(input = {}) {
       if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
       return paidResult('premium-sanrenpuku', v.venues, recordId, sessionVersion, true, MEMBER_REASON.LIFETIME_SANRENPUKU);
     }
-    return freeResult(recordId, sessionVersion);
+    // 無料会員でもカムバック特典があれば有料相当（課金フィールドは一切見ていない）
+    return promoResult() || freeResult(recordId, sessionVersion);
   }
 
   // 有料プラン候補
   if (isPending) {
-    // 入金待ち → 有料化しない（Free 扱い。lifetime のみ例外）
+    // 入金待ち → 有料化しない（Free 扱い。lifetime / 特典のみ例外）
     if (lifetime) {
       const v = resolveVenues(fields);
       if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
       return paidResult('premium-sanrenpuku', v.venues, recordId, sessionVersion, true, MEMBER_REASON.LIFETIME_SANRENPUKU);
     }
-    return freeResult(recordId, sessionVersion, MEMBER_REASON.PENDING_PAYMENT_FREE);
+    return promoResult() || freeResult(recordId, sessionVersion, MEMBER_REASON.PENDING_PAYMENT_FREE);
   }
 
   const expiryRaw = readRaw(fields, ['有効期限', 'ValidUntil', 'ExpiryDate', 'ExpirationDate']);
@@ -244,7 +323,9 @@ export function resolveMembership(input = {}) {
       if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
       return paidResult('premium-sanrenpuku', v.venues, recordId, sessionVersion, true, MEMBER_REASON.LIFETIME_SANRENPUKU);
     }
-    return deny(MEMBER_REASON.EXPIRED, recordId, sessionVersion, lifetime);
+    // カムバック特典（Premium 無料期間 / Light 永久無料）があれば、期限切れでもその範囲で復帰する。
+    // ⚠️ 有料契約の `有効期限` は書き換えない。期限切れである事実はそのまま残る。
+    return promoResult() || deny(MEMBER_REASON.EXPIRED, recordId, sessionVersion, lifetime);
   }
 
   // 有効な有料会員
