@@ -83,6 +83,12 @@ export function renderReceiptCardHtml(card) {
   const winner = String(c.winnerCombo || c.hitCombo || '');
   const wArr = winner.split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
   const w1 = wArr[0], w2 = wArr[1], w3 = wArr[2];
+  // ⚠️ JRA 側の払戻表示（2026-07-30 指定）:
+  //    - 明細行のラベルは **「払戻金額」**（実物は「払戻/返還金額」だが AK では返還を扱わないため簡略化）
+  //    - 金額は**的中・不的中に関わらず常に赤**。不的中の `0円` も赤で出す
+  //    - `払戻金額:` のラベル部分は赤にしない（実物もラベルは黒・金額のみ赤）。
+  //      そのため値だけを `<span class="pay">` で包む。span 全体へ class を付けない
+  //
   // ⚠️ 投票内容照会（SPAT4 / JRA）の複製では、**不的中のとき「不的中」と書かない**。
   //    実物は的中行が単に存在しないだけで、否定表現を出す欄が無い（2026-07-30 実物照合）。
   //    そのため c3 セルは的中時だけ 3 行目を足し、不的中時は 2 行のままにする
@@ -134,7 +140,7 @@ export function renderReceiptCardHtml(card) {
         <div class="close">すべて閉じる<span class="acc">▲</span></div>
         <div class="vh">001）${esc(venue)}（${esc(jd.wd)}）${esc(raceNumber)}R 3連単フォーメーション
           <span class="acc" aria-hidden="true">▲</span>
-          <div class="l2">${isHit ? `<span class="hit">的中</span>` : ''}<span>購入金額:${esc(jyen(stake))}</span><span class="${isHit ? 'pay' : ''}">払戻金額:${esc(jyen(isHit ? payout : 0))}</span></div>
+          <div class="l2">${isHit ? `<span class="hit">的中</span>` : ''}<span>購入金額:${esc(jyen(stake))}</span><span>払戻金額:<span class="pay">${esc(jyen(isHit ? payout : 0))}</span></span></div>
         </div>
         <div class="dt">
           <div class="row"><div class="lc">購入馬/組番</div><div class="rc"><div class="uma">
@@ -144,7 +150,7 @@ export function renderReceiptCardHtml(card) {
           </div></div></div>
           <div class="row"><div class="lc">購入金額</div><div class="rc"><div>各:${unitStake.toLocaleString()}円</div><div>計:${stake.toLocaleString()}円</div></div></div>
           ${isHit && winner ? `<div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>${esc(wDispPad)}</span><span>${unitPayout.toLocaleString()}円</span></div></div>` : ''}
-          <div class="row"><div class="lc">払戻/返還金額</div><div class="${isHit ? 'rc red' : 'rc'}">${esc(jyen(isHit ? payout : 0))}</div></div>
+          <div class="row"><div class="lc">払戻金額</div><div class="rc red">${esc(jyen(isHit ? payout : 0))}</div></div>
         </div>
       </div>`;
 
