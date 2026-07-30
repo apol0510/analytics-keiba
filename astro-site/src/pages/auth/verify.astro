@@ -104,6 +104,17 @@ export const prerender = false;
       if (data.userPlan) {
         try {
           localStorage.setItem('user-plan', JSON.stringify(data.userPlan));
+          // ⚠️ 古い「期限切れ」フラグを必ず消す。
+          //    AccessControl は localStorage の isExpired / validUntil を見て
+          //    プランを強制的に Free に落とす（AccessControl.astro の有効期限チェック）。
+          //    サーバーが今この瞬間に「有料階層のセッションを発行してよい」と判定した以上、
+          //    過去に書かれた期限フラグでそれを上書きさせない。
+          //    これを消さないと、カムバック無料特典を付けた**期限切れ顧客**が
+          //    ログインできても画面上は Free のままになる（特典が機能しない）。
+          //    有効期限の表示値は、サーバー由来の user-plan から再度書かれる。
+          for (const k of ['isExpired', 'originalPlan', 'validUntil', 'expiryDate']) {
+            localStorage.removeItem(k);
+          }
         } catch (e) {
           console.warn('localStorage write failed', e);
         }

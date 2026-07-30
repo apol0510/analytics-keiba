@@ -310,7 +310,10 @@ export function resolveClientView(userPlanRaw, flags = {}, now = Date.now()) {
     // Premium 期限切れカード（予想リンクなし・再契約導線）。ログイン可能 かつ Premium 契約が期限切れのとき。
     // premiumExpired は「Premium tier かつ 期限切れ」。Free/Light は tier 非該当で false、
     // withdrawn/suspended/ForceLogout は canLogin=false で false（アクセス拒否側）。
-    showPremiumExpiredCard: e.canLogin && e.premiumExpired,
+    // ⚠️ **現在 Premium を閲覧できる間は出さない**。無料特典（Premium 無料期間）中は
+    //    契約が期限切れでも閲覧できるため、そのままだと「Premium 有効」カードと
+    //    「Premium 期限切れ」カードが同時に出て矛盾する。特典が切れれば自動的に復活する。
+    showPremiumExpiredCard: e.canLogin && e.premiumExpired && !e.canViewPremium,
     // 三連複カード（独立）
     showSanrenpukuCard: e.canViewSanrenpuku,
     // 三連複購入CTA

@@ -29,9 +29,19 @@
  *    resolveEntitlements が強い方を採用する（期限到来時に書き込みは発生しない）。
  *
  * ── 取り消し（revoke）の表現 ───────────────────────────────────────
- * grant 値そのものを消し（Lifetime=false / Until を空に）、RevokedAt / RevokeReason を残す。
+ * grant 値そのものを消し（Lifetime=false / Until を null に）、RevokedAt / RevokeReason を残す。
  * runtime を「値が無ければ権利が無い」という最も壊れにくい判定に保つため。
  * 値が残ったまま RevokedAt が新しい壊れたレコードは fail closed で権利なしと解釈する。
+ *
+ * ── 日時フィールドは Airtable の dateTime 型・クリアは `null` ─────────────
+ * `*GrantUntil` / `*GrantRevokedAt` / `*GrantedAt` は **dateTime 型**で作る
+ * （期限フィルタ・並べ替え・管理画面表示・将来の集計を正しく保つため）。
+ * dateTime 列を空にするときは **`null`** を送る。空文字 `''` は日付として解釈できず
+ * 422 になり得るうえ、同じ PATCH の他フィールドまで巻き添えで落ちる。
+ * 読み取り側 `toMs()` は `null` / `undefined` / `''` / ISO 文字列 / Date / 数値をすべて
+ * 安全に扱う（旧データに `''` が入っていても壊れない）。
+ * ⚠️ テキスト列（`*GrantRevokeReason` / `*GrantedBy` / `*GrantOp` / `ComebackGrantSource`）は
+ *    従来どおり `''` でクリアする。null 化を課金フィールドや既存列へ波及させない。
  */
 
 /** 無料付与できるティア（三連複は対象外。買い切り三連複とは別権利） */
@@ -281,13 +291,14 @@ export function buildGrantFields({
   const nowIso = new Date(nowMs).toISOString();
   const out = {
     [F.LIFETIME]: isLifetime,
-    // 無期限のときは終了時刻を持たない（両方に値があると解釈が割れる）
-    [F.UNTIL]: isLifetime ? '' : new Date(untilMs).toISOString(),
+    // 無期限のときは終了時刻を持たない（両方に値があると解釈が割れる）。
+    // dateTime 列のクリアは null（'' は日付として解釈できず 422 になり得る）
+    [F.UNTIL]: isLifetime ? null : new Date(untilMs).toISOString(),
     [F.GRANTED_AT]: nowIso,
     [F.GRANTED_BY]: String(actor || 'admin').slice(0, 64),
     [F.OP]: op,
     // 再付与時に古い取り消し記録を残さない（RevokedAt が新しいままだと fail closed で無効化される）
-    [F.REVOKED_AT]: '',
+    [F.REVOKED_AT]: null,
     [F.REVOKE_REASON]: '',
   };
   const src = String(source || '').slice(0, PROMO_TEXT_MAX_LENGTH);
@@ -323,7 +334,8 @@ export function buildRevokeFields({ tier, fields, now, actor, reason }) {
   const why = String(reason || '').slice(0, PROMO_TEXT_MAX_LENGTH);
   const out = {
     [F.LIFETIME]: false,
-    [F.UNTIL]: '',
+    // dateTime 列のクリアは null（'' を送らない）
+    [F.UNTIL]: null,
     [F.REVOKED_AT]: new Date(nowMs).toISOString(),
     [F.REVOKE_REASON]: why ? `${why}（${by}）` : `取り消し（${by}）`,
   };

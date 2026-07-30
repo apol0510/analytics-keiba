@@ -379,3 +379,82 @@ test('planCustomer は before / after を返す', () => {
   assert.match(t.after.text, /Light 永久無料/);
   assert.notEqual(t.before.text, t.after.text);
 });
+
+// ═══ Airtable へ送る PATCH payload に「日時 = 空文字」が無いこと ══════════
+//
+// 日時 4 フィールド（*GrantUntil / *GrantRevokedAt）は Airtable の dateTime 型で作る。
+// dateTime 列へ '' を送ると日付として解釈できず 422 になり得て、
+// **同じ PATCH の他フィールドまで巻き添えで失敗する**。クリアは必ず null。
+
+/** dateTime 型で作る 4 フィールド */
+const DATETIME_FIELDS = [L.UNTIL, P.UNTIL, L.REVOKED_AT, P.REVOKED_AT];
+
+function assertPayloadDatesNeverEmptyString(targets, label) {
+  let checked = 0;
+  for (const t of targets) {
+    const fields = t.grantFields || t.fields || {};
+    for (const k of DATETIME_FIELDS) {
+      if (!(k in fields)) continue;
+      checked += 1;
+      assert.notEqual(fields[k], '', `${label}: ${k} に空文字を送っている（null でクリアすること）`);
+      if (fields[k] !== null) {
+        assert.ok(Number.isFinite(Date.parse(String(fields[k]))),
+          `${label}: ${k} が dateTime として解釈できない値`);
+      }
+    }
+  }
+  assert.ok(checked > 0, `${label}: 日時フィールドが 1 つも含まれていない（テストの前提が壊れた）`);
+}
+
+test('dry-run / apply の PATCH payload: 日時フィールドは null か ISO のみ', () => {
+  // 無期限（Until を null でクリアする経路）
+  const lifetime = plan([LIGHT_LIFETIME], null, [cust('rec1', EXPIRED)]);
+  assert.equal(lifetime.counts.willGrant, 1);
+  assertPayloadDatesNeverEmptyString(lifetime.targets, 'grant(lifetime)');
+  assert.strictEqual(lifetime.targets[0].grantFields[L.UNTIL], null);
+
+  // 期限付き（Until に ISO を入れる経路）＋ 複合（1 顧客 1 PATCH）
+  const combo = plan([LIGHT_LIFETIME, PREMIUM_30D], null, [cust('rec1', EXPIRED)]);
+  assertPayloadDatesNeverEmptyString(combo.targets, 'grant(combo)');
+  assert.strictEqual(combo.targets[0].grantFields[L.UNTIL], null);
+  assert.ok(Number.isFinite(Date.parse(combo.targets[0].grantFields[P.UNTIL])));
+
+  // allowlist 検査も従来どおり通る（null を入れても壊れない）
+  assert.equal(assertPlanWritesOnlyGrantFields(combo.targets), true);
+});
+
+test('revoke の PATCH payload: Until は null / RevokedAt は ISO', () => {
+  const granted = {
+    ...EXPIRED,
+    [L.LIFETIME]: true, [L.UNTIL]: null, [L.GRANTED_AT]: iso(NOW - DAY), [L.OP]: OP,
+    [P.UNTIL]: iso(NOW + 20 * DAY), [P.GRANTED_AT]: iso(NOW - DAY), [P.OP]: OP,
+  };
+  const r = buildRevokePlan({
+    tiers: [PROMO_TIER.LIGHT, PROMO_TIER.PREMIUM], selected: [cust('rec1', granted)],
+    nowMs: NOW, actor: 'MK', reason: '誤付与',
+  });
+  assert.equal(r.counts.willRevoke, 1);
+  assertPayloadDatesNeverEmptyString(r.targets, 'revoke');
+  const f = r.targets[0].grantFields || r.targets[0].fields;
+  assert.strictEqual(f[L.UNTIL], null);
+  assert.strictEqual(f[P.UNTIL], null);
+  assert.ok(Number.isFinite(Date.parse(f[L.REVOKED_AT])));
+  assert.equal(assertPlanWritesOnlyGrantFields(r.targets), true);
+});
+
+test('null クリア後も dry-run → apply → revoke の判定が一貫する', () => {
+  const p = plan([LIGHT_LIFETIME], null, [cust('rec1', EXPIRED)]);
+  const applied = { ...EXPIRED, ...p.targets[0].grantFields };
+  // 付与後は権利あり
+  assert.equal(resolvePromotionalGrants(applied, NOW + DAY).light.active, true);
+  // 同じ operationId の再実行はスキップ（null クリアで冪等性が壊れていない）
+  const again = plan([LIGHT_LIFETIME], null, [cust('rec1', applied)], { nowMs: NOW + DAY });
+  assert.equal(again.counts.willGrant, 0);
+  assert.equal(again.counts.byReason[CB_SKIP.ALREADY_APPLIED], 1);
+  // 取り消すと権利が消える
+  const rv = buildRevokePlan({
+    tiers: [PROMO_TIER.LIGHT], selected: [cust('rec1', applied)], nowMs: NOW + 2 * DAY, actor: 'MK',
+  });
+  const revoked = { ...applied, ...(rv.targets[0].grantFields || rv.targets[0].fields) };
+  assert.equal(resolvePromotionalGrants(revoked, NOW + 3 * DAY).light.active, false);
+});

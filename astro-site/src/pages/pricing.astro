@@ -10,7 +10,13 @@ const planTierByToken = buildPlanTierByToken();
 <BaseLayout title="料金プラン" heroPreload={{ pc: "/images/ak-pricing-pc.webp", mobile: "/images/ak-pricing-mobile.webp" }}>
     <!-- プラン出し分け: カードが描画される前に <html> へ現在プランの tier を付ける。
          判定は CSS 側（下位カードの display:none）で行うため、ちらつきなく確定する。
-         define:vars は is:inline を含意するので、この script はパース時に同期実行される。 -->
+         define:vars は is:inline を含意するので、この script はパース時に同期実行される。
+
+         ⚠️ ここで出し分ける「Light 会員向け乗り換え特典価格」は **課金契約に紐づく価格資格**。
+            無料特典（promotional grant）で Light / Premium が見られるようになった顧客には
+            出さない。無料特典の顧客へ特別価格を出したいときは PromotionalOffer で
+            明示的に発行する（/offer/ 経路）。判定の単一源は
+            src/lib/pricing/pricingEligibility.js（サーバーで算出して user-plan.pricingTier に渡す）。 -->
     <script define:vars={{ planTierByToken }}>
       (function () {
         try {
@@ -22,10 +28,24 @@ const planTierByToken = buildPlanTierByToken();
 
           // dashboard.astro / AccessControl.astro と同じ取得順
           let raw = '';
+          let up = null;
           const stored = localStorage.getItem('user-plan');
           if (stored) {
-            try { raw = (JSON.parse(stored) || {}).plan || ''; } catch (_) {}
+            try { up = JSON.parse(stored) || null; } catch (_) {}
+            raw = (up && up.plan) || '';
           }
+
+          // 🔒 価格資格はサーバーが課金契約だけから決めた pricingTier を最優先で使う。
+          //    無料特典しか無い顧客は 0 になり、会員向け価格は出ない。
+          if (up && typeof up.pricingTier === 'number') {
+            if (up.pricingTier > 0) {
+              document.documentElement.setAttribute('data-plan-tier', String(up.pricingTier));
+            }
+            return; // サーバー判定があるならプラン名からの推測はしない
+          }
+          // 🔒 pricingTier が無い応答でも、根拠が無料特典と分かっているなら出し分けない
+          if (up && up.entitlementSource === 'promotional_grant') return;
+
           if (!raw) raw = localStorage.getItem('user_plan') || localStorage.getItem('userPlan') || '';
           if (!raw) return;
 
