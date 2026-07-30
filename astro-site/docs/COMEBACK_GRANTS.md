@@ -147,12 +147,31 @@ runtime を「値が無ければ権利が無い」という最も壊れにくい
 （promo Light / promo Premium / paid Premium / LifetimeSanrenpuku / 退会 / 停止 ×
 権限・Plus 販売資格・三連複購入資格・マーケ区分・Cookie payload）。
 
-### 既知の許容差分（要 MK 判断・コード修正はしていない）
+### 価格資格（`/pricing/` の会員向け価格）も grant では付かない
 
-- `/pricing/` のプラン別出し分けは localStorage の `user-plan`（**非権威**の表示用）を見るため、
-  **無料 Light 特典の顧客は Light 会員向けの乗り換え価格が見える**。
-  権限・販売資格には影響しない表示のみの差。「無料特典の人に Light 乗り換え価格を出すか」は
-  営業判断なので、変更する場合は別途指示すること。
+**grant は price eligibility を付与しない。**
+
+| 何 | 由来 |
+|---|---|
+| 閲覧できる範囲 | effective entitlement（`resolveEntitlements` / 無料特典で上がる） |
+| **会員向け通常特価**（Light 会員の乗り換え価格 ¥44,820 等） | **paid contract のみ**（`pricingEligibility.js`） |
+| その顧客だけの特別価格 | **PromotionalOffer**（`PromotionalOffers` テーブル → `/offer/?t=…`） |
+
+無料 Light 特典の顧客へ特別価格を出したい場合は、**PromotionalOffer で明示的に発行する**。
+「Light が見られるようになったから Light 会員価格も使える」は作らない。
+
+- 判定の単一源は `src/lib/pricing/pricingEligibility.js` の `resolvePaidPricingTier()`。
+  `canViewLight` / `canViewPremium`（無料特典で true になる）ではなく
+  **`paidLightActive` / `paidPremiumActive`** だけを見る
+- ログイン応答（`verify-magic-link` の `userPlan`）に**サーバーが算出した `pricingTier`** を載せ、
+  `/pricing/` はそれを最優先で使う。クライアントに「閲覧できる＝会員価格が使える」と
+  推測させない（`entitlementSource='promotional_grant'` のときは出し分け自体を行わない）
+- **実際の請求額に効く経路**（`bank-transfer-application`）では、会員限定価格
+  （`... - Campaign`）の申込に対して Airtable の課金契約を**サーバー側で再判定**する。
+  資格が確認できない場合も**申込は拒否せず**（振込済みの人を締め出さないため）、
+  管理者メールに警告を出して `PaymentConfirmed` の前に判断できるようにする。
+  この経路は Airtable を 1 バイトも書かず、金額も書き換えない
+- 検証: `npm run test:pricing-tiers`（`pricingEligibility.test.mjs` を含む）
 
 ### ログイン後にクライアントの古い期限フラグを消す（`/auth/verify`）
 

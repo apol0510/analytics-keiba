@@ -6,6 +6,7 @@
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -119,6 +120,47 @@ exports.handler = async (event, context) => {
       second: '2-digit'
     });
 
+    // ────────────────────────────────────────────────────────────
+    // 🔒 会員限定価格（/pricing/ の乗り換え特典価格 '... - Campaign'）の裏づけ確認
+    //
+    // 価格の出し分けは localStorage 由来の**非権威**情報で行われるため、
+    // 実際の請求額に効く申込では **Airtable の課金契約**を根拠に再判定する。
+    // 判定の単一源は src/lib/pricing/pricingEligibility.js
+    // （無料特典 = promotional grant では価格資格が上がらない）。
+    //
+    // ⚠️ 資格が確認できなくても申込は拒否しない。本フォームは「振込完了の報告」で、
+    //    既に送金した人を締め出すと事故になる。管理者メールに警告を出し、
+    //    MK が PaymentConfirmed を押す前に判断できるようにするだけ。
+    //    ここでは Airtable を 1 バイトも書かず、金額も書き換えない。
+    // 通常価格の申込では Airtable を追加照会しない（Campaign 価格のときだけ 1 回 GET）。
+    // ────────────────────────────────────────────────────────────
+    let memberPricingWarning = null;
+    try {
+      const preCheck = checkMemberOnlyPricing({ productName, fields: null });
+      if (preCheck.memberOnly) {
+        const KEY = process.env.AIRTABLE_API_KEY;
+        const BASE = process.env.AIRTABLE_BASE_ID;
+        let fields = null;
+        if (KEY && BASE) {
+          const url = `https://api.airtable.com/v0/${BASE}/Customers?filterByFormula=`
+            + encodeURIComponent(`LOWER(TRIM({Email})) = '${email.replace(/'/g, "\\'")}'`)
+            + '&maxRecords=1';
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` } });
+          if (res.ok) fields = ((await res.json()).records || [])[0]?.fields || null;
+        }
+        const verdict = checkMemberOnlyPricing({ productName, fields });
+        if (!verdict.eligible) {
+          memberPricingWarning = verdict.warning;
+          console.warn('⚠️ [bank-transfer] 会員限定価格の資格が確認できない申込:', {
+            email, productName, pricingTier: verdict.tier,
+          });
+        }
+      }
+    } catch (e) {
+      // 判定できないときは警告を出さない（申込を妨げない）
+      console.warn('⚠️ [bank-transfer] 会員限定価格の裏づけ確認に失敗:', e.message);
+    }
+
     // SendGrid API設定
     const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
     // FROM_EMAIL, ADMIN_EMAIL は email-config.js からインポート済み
@@ -206,6 +248,13 @@ exports.handler = async (event, context) => {
       </div>
       ` : ''}
     </div>
+
+    ${memberPricingWarning ? `
+    <div class="alert" style="background:#fee2e2;border-left-color:#ef4444;">
+      <h4 style="margin: 0 0 10px 0; color: #991b1b;">🔒 会員限定価格の確認が必要です</h4>
+      <div style="color:#7f1d1d;">${memberPricingWarning}</div>
+    </div>
+    ` : ''}
 
     <div class="alert">
       <h4 style="margin: 0 0 10px 0; color: #92400e;">⚠️ 対応必要事項</h4>

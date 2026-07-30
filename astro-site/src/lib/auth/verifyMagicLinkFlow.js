@@ -12,6 +12,7 @@
 
 import { checkSigningSecret, issuePaidSessionCookie } from './sessionIssuance.js';
 import { resolveMembership, MEMBER_TYPE } from './memberResolution.js';
+import { resolvePaidPricingTierFromFields } from '../pricing/pricingEligibility.js';
 
 export const VERIFY_FLOW = Object.freeze({
   SECRET_UNAVAILABLE: 'secret_unavailable', // 503
@@ -88,6 +89,12 @@ export async function runVerifyMagicLink(deps) {
     cookie: issued.cookie,
     membership,
     payload: issued.payload,
+    /**
+     * 会員向け価格（/pricing/ の乗り換え特典価格）の出し分け tier。
+     * **課金契約だけ**から算出する（無料特典では上がらない）。
+     * クライアントに「閲覧できる = 会員価格が使える」と推測させないため、サーバーで決めて渡す。
+     */
+    pricingTier: resolvePaidPricingTierFromFields(customer.fields, now),
     email: customer.fields?.Email ?? email,
     // Airtable Customers の氏名フィールドは日本語の `氏名`（`Name` / `お名前` は存在しない）。
     // これを読み落としていたため常に空になり、dashboard の既定値 'お客様' が user-plan に残って

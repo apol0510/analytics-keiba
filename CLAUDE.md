@@ -631,6 +631,9 @@ AK 判定では送信可能なのに SendGrid が suppress 済みの会員が 43
   （書き込みは特典専用 15 列 + `PromotionalOffers` テーブルの allowlist のみ）
 - **`LifetimeSanrenpuku` を流用しない**。三連複買い切りは別権利で、無料特典の影響を受けない。
   無料 Premium 特典で三連複購入資格・Premium Plus 販売資格を開かない
+- **grant は価格資格を付与しない**。会員向け通常特価（`/pricing/` の乗り換え価格）は
+  **paid contract 由来**（単一源 `src/lib/pricing/pricingEligibility.js`）、特別価格は
+  **PromotionalOffer 由来**。「閲覧できる＝会員価格が使える」は作らない
 - **メールと grant/offer を分離**。付与・発行の Function はメールを 1 通も送らない。
   案内はマーケティングタブから別操作で送る
 - **production gate は多段・既定 OFF**: `COMEBACK_GRANT_FIELDS_READY` /
