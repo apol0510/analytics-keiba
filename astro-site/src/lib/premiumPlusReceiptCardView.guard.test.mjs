@@ -65,11 +65,12 @@ test('レンダラ整合: 中央(JRA) カードに本番の主要クラス/文�
   const html = renderReceiptCardHtml(card);
   for (const s of [
     'pp-circuit ch', '中央', 'class="vref jra"',
-    '合計購入金額', '合計払戻金額', '3連単フォーメーション', '払戻/返還金額',
+    // 2026-07-30: 明細行のラベルは「払戻/返還金額」→「払戻金額」へ変更（AK は返還を扱わない）
+    '合計購入金額', '合計払戻金額', '3連単フォーメーション', '払戻金額',
   ]) {
     assert.ok(html.includes(s), `JRA プレビューに "${s}" が無い`);
   }
-  // フッター（© Japan Racing Association.）は削除済み。払戻/返還金額 行でカード終端。
+  // フッター（© Japan Racing Association.）は削除済み。払戻金額 行でカード終端。
   assert.ok(!html.includes('Japan Racing Association'), 'JRA フッターが残っている（削除済みのはず）');
   assert.ok(!html.includes('class="foot"'), 'foot 要素が残っている（削除済みのはず）');
 });
@@ -224,4 +225,61 @@ test('中央（JRA）側も不的中で否定表現を出さない', () => {
   const vref = html.slice(html.indexOf('<div class="vref'));
   assert.ok(!vref.includes('不的中'), 'JRA 複製に「不的中」が出力されている');
   assert.ok(!vref.includes('払戻単価'), '不的中なのに払戻単価行が出ている');
+});
+
+// ── JRA 払戻表示（2026-07-30 指定）────────────────────────────────
+const jraOf = (over = {}) => renderReceiptCardHtml(deriveCard({
+  date: '2026-07-18', circuit: 'jra', venue: '福島', raceNumber: 11,
+  first: '6', second: '1,3,4', third: '1,3,4,9', ...over,
+}));
+
+test('JRA 明細行のラベルは「払戻金額」（払戻/返還金額 にしない）', () => {
+  for (const html of [jraOf({ isHit: false }), jraOf({ isHit: true, payout: 1214000, winnerCombo: '6-1-4' })]) {
+    assert.ok(html.includes('<div class="lc">払戻金額</div>'), '明細行のラベルが「払戻金額」でない');
+    assert.ok(!html.includes('払戻/返還金額'), '「払戻/返還金額」が残っている');
+  }
+});
+
+test('JRA 払戻金額は不的中（0円）でも赤色で出す（2 箇所）', () => {
+  const html = jraOf({ isHit: false });
+  // 1) アコーディオン見出しの `払戻金額:0円`
+  assert.ok(html.includes('払戻金額:<span class="pay">0円</span>'),
+    '見出しの 0円 が赤（.pay）になっていない');
+  // 2) 明細行の払戻金額
+  assert.ok(html.includes('<div class="lc">払戻金額</div><div class="rc red">0円</div>'),
+    '明細行の 0円 が赤（.rc.red）になっていない');
+});
+
+test('JRA 払戻金額は的中時も同じ赤の付け方（条件分岐で色が消えない）', () => {
+  const html = jraOf({ isHit: true, payout: 1214000, winnerCombo: '6-1-4' });
+  assert.ok(/払戻金額:<span class="pay">1,214,000円<\/span>/.test(html), '見出しの金額が赤でない');
+  assert.ok(/<div class="lc">払戻金額<\/div><div class="rc red">1,214,000円<\/div>/.test(html), '明細行の金額が赤でない');
+});
+
+test('JRA「払戻金額:」のラベル自体は赤にしない（実物もラベルは黒）', () => {
+  const html = jraOf({ isHit: false });
+  assert.ok(!/<span class="pay">払戻金額:/.test(html), 'ラベルごと赤にしている');
+  assert.ok(!/class="[^"]*pay[^"]*">払戻金額/.test(html), 'ラベルを含む span に .pay が付いている');
+});
+
+test('JRA 合計払戻金額は従来どおり（.hlrow.back でラベルごと赤）', () => {
+  const html = jraOf({ isHit: false });
+  assert.ok(html.includes('<div class="hlrow back"><span>合計払戻金額</span><span>0円</span></div>'),
+    '合計払戻金額の構造が変わっている');
+});
+
+test('ドリフト検知: 本番コンポーネント / ページも払戻表示をそろえている', () => {
+  for (const rel of [
+    '../components/premium-plus/PremiumPlusReceiptCardV2.astro',
+    '../pages/premium-plus.astro',
+  ]) {
+    const src = read(rel);
+    assert.ok(!src.includes('払戻/返還金額'), `${rel}: 旧ラベル「払戻/返還金額」が残っている`);
+    assert.ok(/<div class="lc">払戻金額<\/div><div class="rc red">/.test(src),
+      `${rel}: 明細行の払戻金額が常時赤（rc red）になっていない`);
+    assert.ok(/払戻金額:<span class="pay">/.test(src),
+      `${rel}: 見出しの金額が常時赤（.pay）になっていない`);
+    assert.ok(!/class=\{[^}]*'pay'[^}]*\}>払戻金額/.test(src),
+      `${rel}: ラベルごと赤にする旧実装が残っている`);
+  }
 });

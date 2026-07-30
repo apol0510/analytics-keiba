@@ -145,7 +145,7 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
           <div class="close">すべて閉じる<span class="acc">▲</span></div>
           <div class="vh">001）{venue}（{jd.wd}）{raceNumber}R 3連単フォーメーション
             <span class="acc" aria-hidden="true">▲</span>
-            <div class="l2">{isHit && <span class="hit">的中</span>}<span>購入金額:{jyen(stake)}</span><span class={isHit ? 'pay' : ''}>払戻金額:{jyen(isHit ? payout : 0)}</span></div>
+            <div class="l2">{isHit && <span class="hit">的中</span>}<span>購入金額:{jyen(stake)}</span><span>払戻金額:<span class="pay">{jyen(isHit ? payout : 0)}</span></span></div>
           </div>
           <div class="dt">
             <div class="row"><div class="lc">購入馬/組番</div><div class="rc"><div class="uma">
@@ -157,7 +157,7 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
             {isHit && winner && (
               <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{wDispPad}</span><span>{unitPayout.toLocaleString()}円</span></div></div>
             )}
-            <div class="row"><div class="lc">払戻/返還金額</div><div class={isHit ? 'rc red' : 'rc'}>{jyen(isHit ? payout : 0)}</div></div>
+            <div class="row"><div class="lc">払戻金額</div><div class="rc red">{jyen(isHit ? payout : 0)}</div></div>
           </div>
         </div>
       )}

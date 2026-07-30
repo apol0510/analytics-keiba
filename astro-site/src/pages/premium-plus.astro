@@ -1081,7 +1081,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                       </div></div>
                       <div class="close">すべて閉じる<span class="acc">▲</span></div>
                       <div class="vh">001）{c.venue}（{c.jd.wd}）{c.raceNumber}R 3連単フォーメーション
-                        <div class="l2">{c.isHit && <span class="hit">的中</span>}<span>購入金額:{c.stake.toLocaleString()}円</span><span class={c.isHit ? 'pay' : ''}>払戻金額:{(c.isHit ? c.payout : 0).toLocaleString()}円</span></div>
+                        <div class="l2">{c.isHit && <span class="hit">的中</span>}<span>購入金額:{c.stake.toLocaleString()}円</span><span>払戻金額:<span class="pay">{(c.isHit ? c.payout : 0).toLocaleString()}円</span></span></div>
                       </div>
                       <div class="dt">
                         <div class="row"><div class="lc">購入馬/組番</div><div class="rc"><div class="uma">
@@ -1093,7 +1093,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                         {c.isHit && c.winnerCombo && (
                           <div class="row"><div class="lc">払戻単価</div><div class="rc split"><span>{c.wDispPad}</span><span>{(c.unitPayout || c.payout).toLocaleString()}円</span></div></div>
                         )}
-                        <div class="row"><div class="lc">払戻/返還金額</div><div class={c.isHit ? 'rc red' : 'rc'}>{(c.isHit ? c.payout : 0).toLocaleString()}円</div></div>
+                        <div class="row"><div class="lc">払戻金額</div><div class="rc red">{(c.isHit ? c.payout : 0).toLocaleString()}円</div></div>
                       </div>
                       <div class="foot">© Japan Racing Association.</div>
                     </div>
