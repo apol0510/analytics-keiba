@@ -211,16 +211,43 @@ SendGrid へ触れるのは suppression の **GET のみ**。送信キューを�
 
 | 操作 | 既存メール経路 | キャンペーン |
 |---|---|---|
-| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 送信される |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 専用 dispatcher からのみ送信可 |
 | `NEWSLETTER_AUTOMATION_ENABLED=true` のみ | 動く（従来どおり） | **送信されない** |
+| **両方 `true`** | 動く | **共有 executor からは送信されない** |
 
 - 専用 dispatcher `netlify/functions/marketing-campaign-dispatch.js` は
   `NEWSLETTER_AUTOMATION_ENABLED` を**読まない**
-- 共有 executor `execute-scheduled-emails-background.js` には
-  `canSharedExecutorSend()` を 1 箇所だけ追加し、**マーケティングジョブは専用ゲート無しでは
-  処理しない**（PENDING のまま残し、状態を書き換えない）。マーケティング以外のジョブには影響しない
 - マーケティングジョブの識別は既存フィールドのタグだけで行う（新フィールドを増やさない）:
   `CreatedBy='admin-marketing'` / `TargetPlan='campaign:<id>'` / `JobId='mkt-…'`
+
+### 🔒 共有 executor は marketing job を **常に** 送らない（2026-07-30 恒久化）
+
+当初は「専用ゲートが true なら共有 executor でも送れる」設計だったが、その場合
+`NEWSLETTER_AUTOMATION_ENABLED=true` ＋ `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` で
+**15 分毎の `cron-email-scheduler`（Netlify scheduled `*/15 * * * *`）→ 共有 executor 経由**で
+キャンペーンが飛ぶ。共有 executor は**固定宛先リストに対して per-recipient の送信直前再検証を
+行わない**ため、配信停止・バウンス・退会・24h 頻度・キャンペーン固有条件の再判定を素通りする。
+
+そこで **env に関係なく常に skip** する形へ変更した。
+
+```js
+export function canSharedExecutorSend(fields) {   // ← env を受け取らない
+  if (!isMarketingJob(fields)) return { allowed: true, reason: null };
+  return { allowed: false, reason: 'marketing_job_dedicated_dispatcher_only' };
+}
+```
+
+- **引数に env を持たせない。** 持たせると「env 次第で共有 executor から送れる」条件を
+  将来また作れてしまうため、構造的に不可能にしている（guard テストで
+  `canSharedExecutorSend.length === 1` と関数本体の env 非参照を固定）
+- 共有 executor 側も `canSharedExecutorSend(fields)` と呼ぶ（env を渡さない）
+- スキップ時はレコードの状態を**一切変えない**（PENDING のまま残る）
+- **マーケティング以外のジョブ（newsletter / step / race_main / expiry 等）の挙動は不変**
+
+**マーケティングジョブの唯一の実送信経路は `marketing-campaign-dispatch`。**
+この dispatcher だけが送信直前の per-recipient 再検証
+（provider suppression / EmailBlacklist / 配信停止 / 退会 / 24h 頻度 / extraAudience /
+campaign availability / Customers 存在）を行う。
 
 ### 🛡️ SendGrid suppression を毎回照合する（fail closed）
 

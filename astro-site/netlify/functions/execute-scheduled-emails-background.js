@@ -131,11 +131,12 @@ export default async function handler(request, context) {
       const { Subject, Content, Recipients, JobId } = fields;
 
       try {
-        // 🛡️ マーケティングキャンペーンのジョブは **専用ゲート**（MARKETING_CAMPAIGN_DISPATCH_ENABLED）
-        //    が true のときだけ処理する。NEWSLETTER_AUTOMATION_ENABLED を ON にしただけで
-        //    承認していないキャンペーンが飛ぶのを防ぐ（PENDING のまま残し、状態を変えない）。
+        // 🛡️ マーケティングキャンペーンのジョブは **env に関係なく常にここでスキップ**する。
+        //    共有 executor は固定宛先に対して per-recipient の送信直前再検証を行わないため、
+        //    キャンペーンの唯一の実送信経路は marketing-campaign-dispatch に固定する。
+        //    PENDING のまま残し、レコードの状態は一切変えない。
         //    ※ マーケティング以外のジョブには一切影響しない（allowed:true で素通り）。
-        const gate = canSharedExecutorSend(fields, process.env);
+        const gate = canSharedExecutorSend(fields);
         if (!gate.allowed) {
           console.log(`⏸️ [marketing-gate] キャンペーンジョブをスキップ: ${JobId} (${gate.reason})`);
           results.push({ jobId: JobId, status: 'skipped', reason: gate.reason });

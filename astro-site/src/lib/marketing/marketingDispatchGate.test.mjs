@@ -40,31 +40,67 @@ test('マーケティング以外のジョブは誤検知しない', () => {
   }
 });
 
-// ── 2 方向の独立性（本監査の中核）────────────────────────────────
-test('【方向1】マーケティング解禁が既存メール経路を解禁しない', () => {
-  const env = { MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' };
-  // マーケ専用ゲートは true だが、既存メールのマスタースイッチは触れていない
-  assert.equal(isMarketingDispatchEnabled(env), true);
-  assert.equal(env.NEWSLETTER_AUTOMATION_ENABLED, undefined,
-    'マーケ解禁が newsletter の global gate に依存している');
-  // 既存ジョブは（別の gate 配下なので）このゲートの影響を受けない
-  assert.equal(canSharedExecutorSend({ CreatedBy: 'step-enqueue' }, env).allowed, true);
-});
+// ── 共有 executor は marketing job を常に送らない（2026-07-30 恒久化）────────
+/** env の全組み合わせ。どれでも marketing job は共有 executor から送れてはいけない */
+const ENV_MATRIX = [
+  ['A: newsletter=true / dispatch=true', { NEWSLETTER_AUTOMATION_ENABLED: 'true', MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' }],
+  ['B: newsletter=true / dispatch=false', { NEWSLETTER_AUTOMATION_ENABLED: 'true', MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'false' }],
+  ['C: newsletter=false / dispatch=true', { NEWSLETTER_AUTOMATION_ENABLED: 'false', MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' }],
+  ['D: 両方未設定', {}],
+  ['E: 両方 true 相当の別表記', { NEWSLETTER_AUTOMATION_ENABLED: 'TRUE', MARKETING_CAMPAIGN_DISPATCH_ENABLED: '1' }],
+];
 
-test('【方向2】既存メール解禁だけではマーケティングジョブが送られない', () => {
-  const env = { NEWSLETTER_AUTOMATION_ENABLED: 'true' }; // 専用ゲートは未設定
-  const marketing = { CreatedBy: MARKETING_JOB_CREATED_BY, JobId: 'mkt-x-v1-abc-1' };
-  const gate = canSharedExecutorSend(marketing, env);
-  assert.equal(gate.allowed, false, 'newsletter 解禁でキャンペーンが飛んでいる');
-  assert.equal(gate.reason, 'marketing_dispatch_disabled');
-  assert.equal(isMarketingDispatchEnabled(env), false);
-});
+const MARKETING_JOBS = [
+  ['CreatedBy', { CreatedBy: MARKETING_JOB_CREATED_BY }],
+  ['TargetPlan', { TargetPlan: 'campaign:marketing-canary' }],
+  ['JobId', { JobId: 'mkt-marketing-canary-v1-abc-1' }],
+  ['全部そろい', { CreatedBy: MARKETING_JOB_CREATED_BY, TargetPlan: 'campaign:x', JobId: 'mkt-x-v1-a-1' }],
+];
 
-test('共有 executor はマーケティング以外のジョブを従来どおり処理する', () => {
-  for (const env of [{}, { NEWSLETTER_AUTOMATION_ENABLED: 'true' }, { MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' }]) {
-    assert.equal(canSharedExecutorSend({ CreatedBy: 'step-enqueue' }, env).allowed, true);
-    assert.equal(canSharedExecutorSend({}, env).allowed, true);
+test('【A/B/C】env のどの組み合わせでも共有 executor は marketing job を送らない', () => {
+  for (const [label, env] of ENV_MATRIX) {
+    for (const [jobLabel, fields] of MARKETING_JOBS) {
+      // env を渡しても渡さなくても結果は同じ（env で開く余地が無い）
+      for (const gate of [canSharedExecutorSend(fields), canSharedExecutorSend(fields, env)]) {
+        assert.equal(gate.allowed, false, `${label} × ${jobLabel}: 共有 executor から送れてしまう`);
+        assert.equal(gate.reason, 'marketing_job_dedicated_dispatcher_only');
+      }
+    }
   }
+});
+
+test('【D】非 marketing ジョブ（newsletter / step / race_main / expiry）の挙動は不変', () => {
+  const nonMarketing = [
+    { CreatedBy: 'step-enqueue', JobId: 'step-abc' },
+    { CreatedBy: 'admin', TargetPlan: 'premium' },
+    { CreatedBy: 'newsletter', JobId: 'nl-123' },
+    { CreatedBy: 'expiry-notification' },
+    { TargetPlan: 'all' },
+    {}, null, undefined,
+  ];
+  for (const [label, env] of ENV_MATRIX) {
+    for (const fields of nonMarketing) {
+      for (const gate of [canSharedExecutorSend(fields), canSharedExecutorSend(fields, env)]) {
+        assert.equal(gate.allowed, true, `${label}: 非 marketing ジョブが止まっている ${JSON.stringify(fields)}`);
+        assert.equal(gate.reason, null);
+      }
+    }
+  }
+});
+
+test('canSharedExecutorSend は env を一切参照しない（構造的に開けない）', () => {
+  // 引数として env を受け取らない = 将来 env 次第で開く条件を作れない
+  assert.equal(canSharedExecutorSend.length, 1, '引数が 1 個（fields のみ）でない');
+  const src = canSharedExecutorSend.toString();
+  for (const banned of ['env', 'process', 'DISPATCH_ENABLED', 'AUTOMATION_ENABLED']) {
+    assert.equal(src.includes(banned), false, `関数本体が ${banned} を参照している`);
+  }
+});
+
+test('専用ゲートは dispatcher 側の判定としては維持される', () => {
+  // 共有 executor では使わないが、marketing-campaign-dispatch の live 判定には必要
+  assert.equal(isMarketingDispatchEnabled({ MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' }), true);
+  assert.equal(isMarketingDispatchEnabled({}), false);
 });
 
 test('両ゲートとも "true" 以外は無効（fail closed）', () => {
@@ -177,6 +213,12 @@ test('返す status は CampaignDeliveries の許可値だけ', () => {
 // ── 共有 executor 側の配線（実ファイル）────────────────────────────
 const execSrc = readFileSync(
   fileURLToPath(new URL('../../../netlify/functions/execute-scheduled-emails-background.js', import.meta.url)), 'utf8');
+
+test('共有 executor はゲートへ env を渡さない（env で開く経路を残さない）', () => {
+  assert.equal(/canSharedExecutorSend\(fields,\s*process\.env\)/.test(execSrc), false,
+    '共有 executor がゲートへ env を渡している');
+  assert.match(execSrc, /canSharedExecutorSend\(fields\)/, 'ゲート呼び出しが fields のみでない');
+});
 
 test('共有 executor がゲートを呼び、通らないジョブは状態を変えずスキップする', () => {
   assert.ok(execSrc.includes('canSharedExecutorSend'), '共有 executor にゲートが入っていない');

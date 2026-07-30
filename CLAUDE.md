@@ -574,12 +574,19 @@ ON にすると滞留 `ScheduledEmails` の一斉送信と既存経路の同時�
 
 | 操作 | 既存メール経路 | キャンペーン |
 |---|---|---|
-| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 送信される |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 専用 dispatcher からのみ送信可 |
 | `NEWSLETTER_AUTOMATION_ENABLED=true` のみ | 動く（従来どおり） | **送信されない** |
+| **両方 `true`** | 動く | **共有 executor からは送信されない** |
 
 - 専用 dispatcher `marketing-campaign-dispatch.js` は `NEWSLETTER_AUTOMATION_ENABLED` を読まない
-- 共有 executor には `canSharedExecutorSend()` を 1 箇所追加。**マーケティングジョブは専用ゲート
-  無しでは処理しない**（PENDING のまま残す）。マーケ以外のジョブには影響しない
+- **共有 executor は marketing job を env に関係なく常に skip する**（2026-07-30 恒久化）。
+  `canSharedExecutorSend(fields)` は **env を引数に取らない**ため、env 次第で開く条件を
+  将来も作れない（guard テストで固定）。スキップ時はレコードの状態を変えない（PENDING のまま）
+  - 理由: `cron-email-scheduler` は Netlify scheduled（`*/15 * * * *`）で、
+    共有 executor は**固定宛先に対する per-recipient 送信直前再検証を持たない**。
+    両 env が true になると再検証なしでキャンペーンが飛ぶ
+  - **marketing job の唯一の実送信経路は `marketing-campaign-dispatch`**
+- マーケ以外のジョブ（newsletter / step / race_main / expiry）の挙動は**不変**
 - ジョブ識別は既存フィールドのタグのみ（`CreatedBy='admin-marketing'` /
   `TargetPlan='campaign:…'` / `JobId='mkt-…'`）。新フィールドを増やさない
 

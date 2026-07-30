@@ -66,16 +66,31 @@ export function isMarketingDispatchEnabled(env) {
 /**
  * 共有 executor（execute-scheduled-emails-background）がこのジョブを処理してよいか。
  *
- * マーケティングジョブは **専用ゲートが true のときだけ**処理を許す。
- * これにより「既存メール解禁のつもりで NEWSLETTER_AUTOMATION_ENABLED を ON にしたら、
- * 承認していないキャンペーンまで飛んだ」を構造的に防ぐ。
+ * ── マーケティングジョブは **常に** 共有 executor では送らない（2026-07-30 恒久化）──
+ * 以前は「専用ゲート `MARKETING_CAMPAIGN_DISPATCH_ENABLED` が true なら共有 executor でも
+ * 送れる」設計だったが、それだと
  *
+ *   NEWSLETTER_AUTOMATION_ENABLED=true ＋ MARKETING_CAMPAIGN_DISPATCH_ENABLED=true
+ *
+ * のときに、15 分毎の `cron-email-scheduler` → 共有 executor 経由でキャンペーンが飛ぶ。
+ * 共有 executor は**固定宛先リストに対して per-recipient の送信直前再検証を行わない**ため、
+ * 配信停止・バウンス・退会・24h 頻度・キャンペーン固有条件の再判定を素通りしてしまう。
+ *
+ * そこで **env に関係なく常に skip** する。マーケティングジョブの唯一の実送信経路は
+ * `marketing-campaign-dispatch`（送信直前再検証あり）に固定する。
+ *
+ * ⚠️ **この関数は env を受け取らない。** 引数を持たせると「env 次第で共有 executor から
+ *    送れる」条件を将来また作れてしまうため、構造的に不可能にしている（guard テストで固定）。
+ *
+ * ⚠️ マーケティング以外のジョブ（newsletter / step / race_main / expiry 等）の挙動は
+ *    一切変えない。常に `allowed: true` を返し、従来どおり共有 executor が処理する。
+ *
+ * @param {object|null} fields ScheduledEmails の fields
  * @returns {{ allowed: boolean, reason: string|null }}
  */
-export function canSharedExecutorSend(fields, env) {
+export function canSharedExecutorSend(fields) {
   if (!isMarketingJob(fields)) return { allowed: true, reason: null };
-  if (isMarketingDispatchEnabled(env)) return { allowed: true, reason: null };
-  return { allowed: false, reason: 'marketing_dispatch_disabled' };
+  return { allowed: false, reason: 'marketing_job_dedicated_dispatcher_only' };
 }
 
 /**
