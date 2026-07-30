@@ -17,6 +17,7 @@ import {
   resolveAudienceRecipients,
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
+import { canSharedExecutorSend } from '../../src/lib/marketing/marketingDispatchGate.js';
 
 // ScheduledEmails は AK 専用経路。LAZY_LOAD で受信者を解決する時の brand 既定値。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -130,6 +131,17 @@ export default async function handler(request, context) {
       const { Subject, Content, Recipients, JobId } = fields;
 
       try {
+        // 🛡️ マーケティングキャンペーンのジョブは **専用ゲート**（MARKETING_CAMPAIGN_DISPATCH_ENABLED）
+        //    が true のときだけ処理する。NEWSLETTER_AUTOMATION_ENABLED を ON にしただけで
+        //    承認していないキャンペーンが飛ぶのを防ぐ（PENDING のまま残し、状態を変えない）。
+        //    ※ マーケティング以外のジョブには一切影響しない（allowed:true で素通り）。
+        const gate = canSharedExecutorSend(fields, process.env);
+        if (!gate.allowed) {
+          console.log(`⏸️ [marketing-gate] キャンペーンジョブをスキップ: ${JobId} (${gate.reason})`);
+          results.push({ jobId: JobId, status: 'skipped', reason: gate.reason });
+          continue;
+        }
+
         // 🔍 LAZY_LOAD形式の解析
         let recipientList = [];
         let includeUnsubscribe = true;

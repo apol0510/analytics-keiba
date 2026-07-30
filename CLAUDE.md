@@ -497,10 +497,102 @@ PHASE 4 到達後は **JST 時刻だけ**で受付状態を自動判定する（
   監査用 `PremiumPlusEligibilityUpdatedAt` を anchor に兼用しない
   （メモ編集・同一資格の再保存で phase が Day 0 に戻るため）
 
-> ⚠️ Premium Plus 用フィールド（`SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 6 つ）は
-> **本番 Airtable に未作成**。そのため現状は全会員が PHASE 1（商品ページ 404）で、
-> Plus フィールドへの書き込みは `PREMIUM_PLUS_FIELDS_READY=1` が無いと無効（422 防止）。
+> ✅ Premium Plus 用フィールド（`SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 6 つ ＋
+> `PremiumPlusReleaseOverride`）は **本番 Airtable に作成済み**で、
+> `PREMIUM_PLUS_FIELDS_READY=1` / `PREMIUM_PLUS_OVERRIDE_READY=1` も production に設定済み
+> （2026-07-30 read-only 実測で確認。旧記述「未作成」は当時の状態）。
+> ただし `SanrenpukuPaidAt` は **全 1441 件で空**なので ROUTE A の anchor は
+> `PremiumPlusEligibleAt`（管理者が販売可にした日）に依存する。
 > **`PaidAt` を ROUTE A の anchor に流用しないこと**（既存 Premium 会員が購入直後に PHASE 4 へ飛ぶ）。
+
+### 🔍 管理画面の表示条件は公開条件と分ける（2026-07-30）
+
+管理画面 `/admin/premium-plus-eligibility` の一覧が、顧客向け公開判定
+`resolvePremiumPlusRelease()` の `route === none` をそのまま表示条件に流用していたため、
+**有効な Premium 会員でも `PaidAt` が空な旧会員が一覧から丸ごと消えていた**
+（`PaidAt` は 2026-07-10 の入金確認フロー刷新 `126b6a7` 以降しか書かれない）。
+
+- 表示条件の単一源は **`src/lib/premiumPlus/premiumPlusAdminAudience.js`**（表示専用）
+- 区分: `route_a` / `route_b` / `waiting_30d`（30 日未満・あと N 日）/
+  `anchor_missing`（`PaidAt` 未記録）/ `explicit`
+- **一覧に出すこと自体は販売資格を一切与えない。** eligible や phase4 override を付けても
+  route 未成立なら公開されない（fail closed・guard テストで固定）
+- 旧データ不足を**推測で埋めない**（`登録日` / `createdTime` / `有効期限` を anchor 代用にしない）
+- 詳細: `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`
+
+## 📣 AK 顧客販売・マーケティング管理（2026-07-30〜 / Draft）
+
+`/admin/premium-plus-eligibility` はタブ構成。**Premium Plus 販売資格**と
+**マーケティング対象**は別概念として扱う。詳細は
+`astro-site/docs/CUSTOMER_MARKETING.md` を参照。
+
+- **AK 独自機能。keiba-marketing-automation（KMA）とは統合しない。**
+  KMA の schema / env / 顧客 / 送信ロジックを AK へ混ぜない。同一 Base の
+  `CampaignDeliveries_MarketingAutomation` は KMA 側のテーブルで、AK は読み書きしない
+- 判定の単一源は **`src/lib/marketing/customerMarketingAudience.js`**。
+  `premiumPlusAdminAudience` を万能顧客抽出ロジックへ膨らませない
+- 契約状態は `active` / `expiring_soon`(14日) / `expired` / `none`(Free) / **`unknown`**。
+  有料 tier なのに期限も Status も手掛かりが無い legacy は **推測で確定しない**
+- **期限切れ会員はキャンペーン対象にできるが、Premium Plus 販売資格へ自動復活させない**
+- **メールを送っても `Status` / `プラン` / `PlanType` / `有効期限` / `LifetimeSanrenpuku` /
+  `PaymentConfirmed` は変更しない。**「無料◯日復活」等の権限付与は別 Phase
+- キャンペーン定義は `src/lib/marketing/campaignCatalog.js` に集約（件名・本文を散らさない）。
+  **本文を変えたら `version` を上げる**（DeliveryKey が変わり再送可能になる）。
+  version 据え置きの本文変更は `campaignCatalog.test.mjs` の**内容ハッシュ ロック**が検知する
+- 差し込みは **`{{salutation}}` のみ**＝**完成した宛名**。テンプレートで敬称を後付けしない
+  （氏名未登録が大多数のため「お客様 様」の二重敬称になる）。氏名あり `山田 様` / なし `お客様`
+- **CTA 先が確定しないキャンペーンは `enabled:false`。推測で URL を作らない**
+  （`sanrenpuku-offer` は三連複の公開説明ページが無いため停止中）
+- 契約 × プランで決められない条件は `campaignAudienceRules.js` の `extraAudience` に閉じ込め、
+  **`customerMarketingAudience.js` を Premium Plus 販売判定で汚さない**。
+  `premium-plus-offer` は `eligible` かつ `showProductPage=true`（PHASE 3 以上）のみ対象
+  （CTA 先 `/premium-plus/` は PHASE 3 未満で 404 のため）。判定は
+  `resolvePremiumPlusRelease()` へ委譲し **PHASE 計算を複製しない**
+- **キャンペーン横断の頻度ガード 24 時間**（`MARKETING_MIN_INTERVAL_MS`・hard safety floor）。
+  DeliveryKey は同一 campaign/version しか防がないため、別キャンペーンの連続送信を止める。
+  対象は `EmailType='campaign'` のみ（取引メールは含めない）。dry-run / send / dispatch 直前の
+  3 箇所で判定し、dispatch 時は**自ジョブの記録を除外**する
+- 送信は `admin-marketing.js` が **ScheduledEmails(PENDING) + CampaignDeliveries(queued) を作るだけ**。
+  SendGrid の**送信 API** を呼ぶコードを持たない（guard テストで固定。suppression の GET のみ可）
+- 三重ガード: 認可 `x-admin-secret` / キュー登録 `MARKETING_CAMPAIGN_ENABLED='true'`（既定 OFF）/
+  実送信 `MARKETING_CAMPAIGN_DISPATCH_ENABLED='true'`（既定 OFF）
+- 二重送信防止 4 層: DeliveryKey 冪等 upsert / 既送信突合 / dry-run の `planFingerprint`（不一致は 409）/
+  送信ゲート
+- 決済メール v2 のフィールド（`PaymentEmailSent` 等）は**読みも書きもしない**
+
+### ⚠️ `NEWSLETTER_AUTOMATION_ENABLED` をマーケティングのために ON にしない（2026-07-30）
+
+これは **AK の全メール自動化のマスタースイッチ**で、実測 16 Function が参照する
+（cron-email-scheduler / send-newsletter 系 / expiry 通知 / retry-failed-emails / step メール ほか）。
+ON にすると滞留 `ScheduledEmails` の一斉送信と既存経路の同時解禁を招く。
+
+マーケティングは**専用ゲート `MARKETING_CAMPAIGN_DISPATCH_ENABLED`** だけで解禁する。
+
+| 操作 | 既存メール経路 | キャンペーン |
+|---|---|---|
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 送信される |
+| `NEWSLETTER_AUTOMATION_ENABLED=true` のみ | 動く（従来どおり） | **送信されない** |
+
+- 専用 dispatcher `marketing-campaign-dispatch.js` は `NEWSLETTER_AUTOMATION_ENABLED` を読まない
+- 共有 executor には `canSharedExecutorSend()` を 1 箇所追加。**マーケティングジョブは専用ゲート
+  無しでは処理しない**（PENDING のまま残す）。マーケ以外のジョブには影響しない
+- ジョブ識別は既存フィールドのタグのみ（`CreatedBy='admin-marketing'` /
+  `TargetPlan='campaign:…'` / `JobId='mkt-…'`）。新フィールドを増やさない
+
+### 🛡️ SendGrid suppression を毎回照合する（fail closed）
+
+AK の `EmailBlacklist` は Event Webhook 稼働以降のイベントしか持たない。
+**2026-07-30 実測: SendGrid suppression 61 件に対し AK の実効除外は 4 件。
+AK 判定では送信可能なのに SendGrid が suppress 済みの会員が 43 名**（＋ソフトバウンス 4 名）。
+
+- `providerSuppression.js` が dry-run / send / dispatch のたびに SendGrid へ **GET** で照合
+- **取得に失敗したら送信計画を作らない**（503）。「確認できないから送る」を禁止
+- provider へは GET のみ（suppression の追加・削除をしない）
+- 販促メールは AK の **SOFT_BOUNCE も除外**する（取引メールとは基準を分ける）
+- 共有 executor は固定宛先ジョブの suppression を再チェックしないため、
+  専用 dispatcher が **1 通ごとに送信直前再検証**（`verifyBeforeSend`）を行う
+
+検証: `npm run test:marketing`（`check:safety` に組込済み）
 
 ## 🧠 予想ロジック（スコア・役割決定）
 
@@ -742,6 +834,7 @@ npm run check:display-index    # 全 predictions で 表示指数 == raw-1
 npm run check:horse-sections   # 全レースで 合計 == 出走頭数（不要馬セクション維持）
 npm run test:pricing-tiers     # /pricing/ のプラン別出し分け（Light 乗り換え価格の露出防止）
 npm run test:bank-payment      # 銀行振込 申込/入金確認フロー（入金前に昇格しない）
+npm run test:marketing         # 顧客マーケティング（対象判定/キャンペーン/送信計画・実送信なし）
 npm run test:webhooks          # SendGrid Event Webhook 署名検証 fail closed（無認証 Airtable 書込みの遮断）
 npm run check:safety           # 上記を含む全 safety check を直列実行
 npm run verify:safety          # build → check:safety（push 前推奨）

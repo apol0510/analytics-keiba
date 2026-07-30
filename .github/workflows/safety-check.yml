@@ -124,3 +124,11 @@ jobs:
       - name: Verify 決済メール送信元契約（legacy 経路含め noreply へ戻らない）
         working-directory: astro-site
         run: npm run test:bank-payment
+
+      - name: Verify Premium Plus 管理画面の表示条件（公開条件と分離 / 表示が販売資格を与えない）
+        working-directory: astro-site
+        run: npm run test:premium-plus-media
+
+      - name: Verify 顧客マーケティング（実送信なし / Customers 非書込 / 二重送信防止）
+        working-directory: astro-site
+        run: npm run test:marketing

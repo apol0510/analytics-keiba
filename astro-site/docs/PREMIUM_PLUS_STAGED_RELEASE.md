@@ -43,6 +43,7 @@
 | 書き込みフィールド（純粋） | `src/lib/premiumPlus/premiumPlusEligibility.js` | confirm / 管理画面が書く Plus 専用フィールドの組み立て |
 | 取得（唯一の I/O） | `src/lib/premiumPlus/purchaseAnchorLookup.js` | Customers を GET するだけ（書き込みなし） |
 | 管理者プレビュー（純粋） | `src/lib/premiumPlus/premiumPlusPreview.js` | 単一源の結果を read-only で整形。時刻 / PHASE シミュレーションを内包 |
+| **管理画面の表示条件（純粋）** | `src/lib/premiumPlus/premiumPlusAdminAudience.js` | 管理画面の一覧に**名前を出すか**だけを決める。公開判定とは別（下記） |
 
 **ページ・コンポーネントに日数条件・時刻条件・プラン判定を書かないこと。**
 
@@ -310,6 +311,46 @@ ROUTE B の anchor は既存の `PaidAt`（通常 Premium の入金確認日時�
 - `登録日` … 会員登録日であって Premium 加入日ではない。
 - `PremiumFirstPaidAt` を新設 … 精度は上がるが、上記のとおり遅れる方向のズレしか起きないため、
   現時点でスキーマを増やす価値が薄い。必要になったら追加する。
+
+### ⚠️ 公開条件と「管理画面の表示条件」を同じにしない（2026-07-30 集約）
+
+**事故**: 管理画面 `/admin/premium-plus-eligibility/` の list API が、公開判定
+`resolvePremiumPlusRelease()` の `route === none` をそのまま**一覧の表示条件**に流用していた。
+その結果、**有効な Premium 会員なのに `PaidAt` が空な旧会員が一覧から丸ごと消えて**いた
+（Airtable のビューには 11 名見えるのに管理画面は 3 名）。`PaidAt` は 2026-07-10 の入金確認
+フロー刷新（`126b6a7`）で初めて書かれるようになったフィールドで、それ以前に有料化した会員は
+構造的に持たない。**旧データが足りないこと**と**販売対象外であること**は別の話であり、
+前者を理由に人そのものが一覧から消えると、管理者はその会員の存在に気づけない。
+
+**恒久設計**: 2 つの判定を**別モジュール**に分ける。
+
+| 判定 | 単一源 | 決めること | 誰に影響するか |
+|---|---|---|---|
+| 公開（audience） | `premiumPlusRelease.js` | 顧客に何を見せるか | 顧客 |
+| レビュー候補の表示 | `premiumPlusAdminAudience.js` | 管理画面の一覧に名前を出すか | 管理者だけ |
+
+`resolveAdminCandidate()` が返す区分（表示専用・販売資格ではない）:
+
+| kind | 対象 | 販売可にした場合 |
+|---|---|---|
+| `route_a` / `route_b` | route 成立 | 段階公開が始まる |
+| `waiting_30d` | 有効 Premium・加入 30 日未満 | まだ公開されない（あと N 日を画面に表示） |
+| `anchor_missing` | 有効 Premium・`PaidAt` が空 | **公開されない**（画面に理由を明示） |
+| `explicit` | route 不成立だが資格設定済み | 管理者の判断の痕跡を消さないため表示 |
+
+**守るべき条件（guard テストで固定 / `premiumPlusAdminAudience.test.mjs`）:**
+
+- 一覧に出すこと自体が販売資格を一切与えない。`PremiumPlusEligibility` 未設定は review のまま
+- 新たに表示対象へ加えた会員は `resolvePremiumPlusRelease()` が `allowed:false`。
+  管理者が `eligible` や `phase4` override を付けても、route 未成立なら公開されない（fail closed）
+- 表示条件の判定に**推測の日付フォールバックを入れない**（`登録日` / `createdTime` / `有効期限`
+  を anchor 代用にしない。上記「採用しなかった代替案」と同じ理由）
+- Premium 会員でない層（Free / Light / 期限切れ / pending / 退会 / 停止 / test）は表示しない
+- list API はインラインで表示条件を再実装せず、必ずこのモジュールへ委譲する
+
+**残っている判断（未実施 / 要承認）**: `anchor_missing` の会員を実際に販売対象にするには
+Airtable の `PaidAt` を実際の入金確認日で補正する（Customers への write）必要がある。
+`PaidAt` を推測で埋めることも、route 判定から 30 日条件を外すこともしない。
 
 ### read path から書かない
 
