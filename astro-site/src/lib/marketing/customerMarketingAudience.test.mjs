@@ -95,11 +95,9 @@ test('resolveContractState は entitlements 未指定でも落ちない', () => 
 });
 
 // ── 送信可否（fail closed）──────────────────────────────────────
-test('配信停止・ブラックリスト・退会・停止・test は送信不可', () => {
+test('配信停止・ブラックリスト・停止・test は送信不可', () => {
   const cases = [
     [{ UnsubscribedAnalyticsKeiba: true }, MK_SUPPRESSION.UNSUBSCRIBED, undefined],
-    [{ WithdrawalRequested: true }, MK_SUPPRESSION.WITHDRAWN, undefined],
-    [{ Status: 'withdrawn' }, MK_SUPPRESSION.WITHDRAWN, undefined],
     [{ Status: 'suspended' }, MK_SUPPRESSION.SUSPENDED, undefined],
     [{ Status: 'test' }, MK_SUPPRESSION.TEST_ACCOUNT, undefined],
     [{ 'プラン': 'Test' }, MK_SUPPRESSION.TEST_ACCOUNT, undefined],
@@ -123,9 +121,84 @@ test('期限切れ会員はマーケティング送信可（販売資格とは�
 });
 
 test('複数の除外理由はすべて記録される（最初の 1 件で打ち切らない）', () => {
-  const m = resolve(base({ UnsubscribedAnalyticsKeiba: true, WithdrawalRequested: true }));
+  const m = resolve(base({ UnsubscribedAnalyticsKeiba: true, Status: 'suspended' }));
   assert.ok(m.suppressionReasons.includes(MK_SUPPRESSION.UNSUBSCRIBED));
-  assert.ok(m.suppressionReasons.includes(MK_SUPPRESSION.WITHDRAWN));
+  assert.ok(m.suppressionReasons.includes(MK_SUPPRESSION.SUSPENDED));
+});
+
+// ── 退会は課金停止であってメール拒否ではない（2026-07-30 業務定義）──────────
+// 根拠: process-withdrawal.js の退会受付メールが本人へ
+//       「メルマガは引き続き配信されます。配信停止をご希望の場合は…」と案内しており、
+//       退会処理は UnsubscribedAnalyticsKeiba を書かない。
+test('【1】Status=withdrawn 単独ではマーケティング送信可能', () => {
+  const m = resolve(base({ 'プラン': 'Premium', '有効期限': jstDate(-30), Status: 'withdrawn' }));
+  assert.equal(m.sendable, true, '退会だけで送信不可になっている');
+  assert.deepEqual(m.suppressionReasons, []);
+  assert.equal(m.withdrawn, true, '退会フラグが立っていない（表示に使う）');
+  assert.ok(m.segments.includes('withdrawn:yes'));
+});
+
+test('【1】WithdrawalRequested=true 単独でもマーケティング送信可能', () => {
+  const m = resolve(base({ 'プラン': 'Premium', '有効期限': jstDate(-30), WithdrawalRequested: true }));
+  assert.equal(m.sendable, true);
+  assert.deepEqual(m.suppressionReasons, []);
+  assert.equal(m.withdrawn, true);
+});
+
+test('退会系 Status（cancelled / 退会 / 解約 等）も送信可能・フラグは立つ', () => {
+  for (const status of ['withdrawn', 'cancelled', 'canceled', 'closed', '退会', '解約']) {
+    const m = resolve(base({ 'プラン': 'Premium', '有効期限': jstDate(-30), Status: status }));
+    assert.equal(m.sendable, true, `Status=${status} で送信不可になっている`);
+    assert.equal(m.withdrawn, true, `Status=${status} で退会フラグが立っていない`);
+  }
+});
+
+test('【2】退会 + 配信停止 → 送信不可（明示的なメール拒否は維持）', () => {
+  const m = resolve(base({ Status: 'withdrawn', UnsubscribedAnalyticsKeiba: true }));
+  assert.equal(m.sendable, false);
+  assert.deepEqual(m.suppressionReasons, [MK_SUPPRESSION.UNSUBSCRIBED]);
+  assert.equal(m.withdrawn, true);
+});
+
+test('【3】退会 + EmailBlacklist → 送信不可', () => {
+  const m = resolve(base({ Status: 'withdrawn' }), { blacklistEmails: new Set(['a@example.com']) });
+  assert.equal(m.sendable, false);
+  assert.deepEqual(m.suppressionReasons, [MK_SUPPRESSION.BLACKLIST]);
+});
+
+test('退会 + アカウント停止 → 送信不可（停止は AK が意図的に止めた相手）', () => {
+  const m = resolve(base({ Status: 'suspended', WithdrawalRequested: true }));
+  assert.equal(m.sendable, false);
+  assert.deepEqual(m.suppressionReasons, [MK_SUPPRESSION.SUSPENDED]);
+});
+
+test('退会 + メールアドレス不正 → 送信不可', () => {
+  assert.equal(resolve(base({ Status: 'withdrawn', Email: '' })).sendable, false);
+  assert.equal(resolve(base({ Status: 'withdrawn', Email: 'bad' })).sendable, false);
+});
+
+test('退会していない顧客の withdrawn フラグは false', () => {
+  const m = resolve(base({ 'プラン': 'Premium', '有効期限': jstDate(100) }));
+  assert.equal(m.withdrawn, false);
+  assert.equal(m.segments.includes('withdrawn:yes'), false);
+});
+
+test('退会は除外理由の定義から消えている（除外一覧に出さない）', () => {
+  assert.equal(Object.values(MK_SUPPRESSION).includes('withdrawn'), false,
+    'MK_SUPPRESSION に withdrawn が残っている');
+});
+
+test('summarizeSegments が退会者数と、うち送信可能数を別枠で数える', () => {
+  const list = [
+    resolve(base({ Status: 'withdrawn', 'プラン': 'Premium', '有効期限': jstDate(-1) })),
+    resolve(base({ Status: 'withdrawn', UnsubscribedAnalyticsKeiba: true })),
+    resolve(base({ 'プラン': 'Premium', '有効期限': jstDate(100) })),
+  ];
+  const s = summarizeSegments(list);
+  assert.equal(s.withdrawn.total, 2);
+  assert.equal(s.withdrawn.sendable, 1);
+  assert.equal(s.withdrawn.suppressed, 1);
+  assert.equal(s.suppression.withdrawn, undefined, '除外内訳に withdrawn が現れている');
 });
 
 test('resolveSendability は blacklist 未指定でも落ちない', () => {

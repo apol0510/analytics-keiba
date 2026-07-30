@@ -534,6 +534,14 @@ PHASE 4 到達後は **JST 時刻だけ**で受付状態を自動判定する（
 - 契約状態は `active` / `expiring_soon`(14日) / `expired` / `none`(Free) / **`unknown`**。
   有料 tier なのに期限も Status も手掛かりが無い legacy は **推測で確定しない**
 - **期限切れ会員はキャンペーン対象にできるが、Premium Plus 販売資格へ自動復活させない**
+- ⚠️ **退会は「課金停止」であって「メール拒否」ではない**（2026-07-30 業務定義）。
+  `Status='withdrawn'` / `WithdrawalRequested=true` を**マーケティング除外にしない**。
+  根拠: `process-withdrawal.js` の退会受付メールが本人へ「メルマガは引き続き配信されます。
+  配信停止をご希望の場合は…」と案内し、退会処理は `UnsubscribedAnalyticsKeiba` を書かない
+  （書くのは `WithdrawalRequested` / `WithdrawalDate` / `WithdrawalReason` / `有効期限` のみ）。
+  メールを止める意思表示は `UnsubscribedAnalyticsKeiba` ＋ provider suppression が担う。
+  退会は `withdrawn` フラグとして**表示・絞り込みにだけ**使い、契約欄に履歴として出す。
+  **`suspended` / `banned` は引き続き除外**（AK が意図的に止めた相手なので別扱い）
 - **メールを送っても `Status` / `プラン` / `PlanType` / `有効期限` / `LifetimeSanrenpuku` /
   `PaymentConfirmed` は変更しない。**「無料◯日復活」等の権限付与は別 Phase
 - キャンペーン定義は `src/lib/marketing/campaignCatalog.js` に集約（件名・本文を散らさない）。

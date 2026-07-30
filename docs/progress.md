@@ -17,6 +17,19 @@
 
 ## Current Phase
 
+**Phase（2026-07-30 現在・最新）: マーケティング基盤の end-to-end 検証は完了。
+送信 gate はクローズ済み。`withdrawn` 判定の業務定義修正を PR で待機中。**
+
+- カナリア実送信まで完了（テスト受信者 1 名へ 1 通・delivered）。その後
+  `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を **unset**（gate クローズ）
+- production env: 両 gate 未設定 / `NEWSLETTER_AUTOMATION_ENABLED=false`
+- **`withdrawn` は課金停止であってメール拒否ではない**という業務定義に合わせ、
+  マーケティング除外から分離（branch `fix/marketing-withdrawn-sendable`）。
+  根拠は `process-withdrawal.js` の退会受付メール文面（「メルマガは引き続き配信されます」）と、
+  退会処理が `UnsubscribedAnalyticsKeiba` を書かないこと。
+  本番実測で **37 名**が「除外: withdrawn」→「送信可能」へ（重複除外 0 名）。
+
+
 **Phase（2026-07-30 現在・最新）: マーケティング配信の本番検証が enqueue まで完了。
 実メール送信の直前で、共有 executor への依存を恒久修正中（branch `fix/marketing-dedicated-dispatcher-only`）。**
 

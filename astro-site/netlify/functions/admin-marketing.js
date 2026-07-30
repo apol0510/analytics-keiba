@@ -276,6 +276,8 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     planGroup: c.marketing.plan,
     daysToExpiry: c.marketing.daysToExpiry,
     hasSanrenpuku: c.marketing.hasSanrenpuku,
+    // 契約上の退会（課金停止）。**送信可否とは別軸**なので sendable とは独立して返す
+    withdrawn: c.marketing.withdrawn,
     sendable: c.marketing.sendable,
     suppressionReasons: c.marketing.suppressionReasons,
     premiumPlusEligibility: c.fields.PremiumPlusEligibility || '',

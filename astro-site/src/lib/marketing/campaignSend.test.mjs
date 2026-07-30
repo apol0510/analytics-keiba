@@ -69,17 +69,18 @@ test('送信可能な顧客だけが対象になり、除外は理由付きで�
   const p = plan([
     customer('r1'),
     customer('r2', { UnsubscribedAnalyticsKeiba: true }),
+    // 退会（課金停止）は除外理由にならない → r3 も送信対象
     customer('r3', { WithdrawalRequested: true }),
     customer('r4', { Email: '' }),
   ]);
   assert.equal(p.ok, true);
   assert.equal(p.counts.selected, 4);
-  assert.equal(p.counts.recipients, 1);
-  assert.equal(p.counts.excluded, 3);
+  assert.equal(p.counts.recipients, 2, '退会者が除外されている');
+  assert.equal(p.counts.excluded, 2);
   assert.equal(p.counts.byReason.unsubscribed, 1);
-  assert.equal(p.counts.byReason.withdrawn, 1);
+  assert.equal(p.counts.byReason.withdrawn, undefined, '退会が除外理由に出ている');
   assert.equal(p.counts.byReason.no_email, 1);
-  assert.equal(p.recipients[0].email, 'r1@example.com');
+  assert.deepEqual(p.recipients.map((r) => r.email).sort(), ['r1@example.com', 'r3@example.com']);
 });
 
 test('blacklist は対象から外れる', () => {

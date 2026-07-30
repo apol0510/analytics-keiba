@@ -52,7 +52,32 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 1 つでも該当したら送らない。理由は必ず件数表示する（黙って落とさない）。
 
 `no_email` / `invalid_email` / `unsubscribed`（`UnsubscribedAnalyticsKeiba`）/
-`blacklist`（`EmailBlacklist` の `HARD_BOUNCE` / `COMPLAINT`）/ `withdrawn` / `suspended` / `test_account`
+`blacklist`（`EmailBlacklist` の `HARD_BOUNCE` / `COMPLAINT`）/ `suspended` / `test_account`
+
+### ⚠️ 退会は「課金停止」であって「メール拒否」ではない（2026-07-30 業務定義）
+
+**`Status='withdrawn'` / `WithdrawalRequested=true` は送信除外にしない。**
+退会はクレジット継続課金を停止するための契約上の状態で、メール配信の拒否を意味しない。
+
+根拠（`netlify/functions/process-withdrawal.js`）:
+
+- 退会受付メールが会員本人へ「**メルマガは引き続き配信されます。配信停止をご希望の場合は
+  こちらから配信停止手続きを行ってください**」と案内している
+- 退会処理が書くのは `WithdrawalRequested` / `WithdrawalDate` / `WithdrawalReason` / `有効期限` のみで、
+  **`UnsubscribedAnalyticsKeiba` を書かない**
+- 処理内容も「Stripe 定期支払いの停止」「契約期間終了後は Free へ切替」＝課金・契約のみ
+
+退会者をマーケティングから外すことは、AK 自身が本人へ伝えた内容と矛盾する。
+**メールを止める意思表示は `UnsubscribedAnalyticsKeiba`（＋ provider suppression）が担う。**
+
+- 退会は `withdrawn: true` フラグと `withdrawn:yes` セグメントとして**表示・絞り込みにだけ**使う
+- 管理画面は契約欄に「退会」バッジを出し、送信列は「送信可能」と表示する
+  （契約状態と送信可否が別概念だと分かる UI）
+- `expired-comeback` の対象にもなる（会員権限・Premium・有効期限は**一切変更しない**）
+- **`suspended` / `banned` は引き続き除外**（AK 側が意図的に止めた相手なので別扱い）
+
+> 本番実測（2026-07-30 / read-only）: 旧判定で「除外: withdrawn」だった **37 名**が
+> 全員「送信可能」になった（unsubscribe / blacklist / provider suppression の重複該当は 0 名）。
 
 ### Premium Plus 資格・送信履歴
 

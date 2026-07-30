@@ -50,17 +50,26 @@ export const MK_SEND = Object.freeze({
 /**
  * 送信除外の理由。**すべて fail closed**（1 つでも該当したら送らない）。
  * 理由は preview / dry-run で必ず件数表示する（黙って落とさない）。
+ *
+ * ⚠️ **退会（Status='withdrawn' / WithdrawalRequested=true）は除外理由に含めない**（2026-07-30）。
+ *    退会は**クレジット継続課金を停止するための契約上の状態**であって、メール配信の拒否ではない。
+ *    根拠（`netlify/functions/process-withdrawal.js`）:
+ *      - 退会受付メールが会員本人に「**メルマガは引き続き配信されます。配信停止をご希望の場合は
+ *        こちらから配信停止手続きを行ってください**」と案内している
+ *      - 退会処理が書くのは `WithdrawalRequested` / `WithdrawalDate` / `WithdrawalReason` /
+ *        `有効期限` のみで、**`UnsubscribedAnalyticsKeiba` を書かない**
+ *      - 処理内容も「Stripe 定期支払いの停止」「契約期間終了後は Free へ切替」＝課金・契約のみ
+ *    退会者をマーケティングから外すことは、AK 自身が本人へ伝えた内容と矛盾する。
+ *    メールを止める意思表示は `UnsubscribedAnalyticsKeiba`（＋ provider suppression）が担う。
  */
 export const MK_SUPPRESSION = Object.freeze({
   NO_EMAIL: 'no_email',
   INVALID_EMAIL: 'invalid_email',
-  /** ブランド別 配信停止（UnsubscribedAnalyticsKeiba） */
+  /** ブランド別 配信停止（UnsubscribedAnalyticsKeiba）＝**唯一の明示的なメール拒否** */
   UNSUBSCRIBED: 'unsubscribed',
   /** EmailBlacklist（HARD_BOUNCE / COMPLAINT） */
   BLACKLIST: 'blacklist',
-  /** 退会申請済み / 退会 Status */
-  WITHDRAWN: 'withdrawn',
-  /** アカウント停止 */
+  /** アカウント停止（suspended / banned 等。AK 側が意図的に止めた相手） */
   SUSPENDED: 'suspended',
   /** テスト用アカウント（Status=test / プラン=Test） */
   TEST_ACCOUNT: 'test_account',
@@ -72,7 +81,6 @@ export const MK_SUPPRESSION_LABEL = Object.freeze({
   invalid_email: 'メールアドレス不正',
   unsubscribed: '配信停止',
   blacklist: 'バウンス/苦情リスト',
-  withdrawn: '退会',
   suspended: 'アカウント停止',
   test_account: 'テストアカウント',
 });
@@ -92,8 +100,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** 期限なしとみなす PlanType（Lifetime は期限で切れない） */
 const LIFETIME_PLAN_TYPE = 'lifetime';
 
-/** アカウント停止系 Status（resolveEntitlements の SUSPENDED_STATUS と同義の表示用） */
+/**
+ * 契約を終了した Status（**課金・契約の状態であってメール拒否ではない**）。
+ * 送信可否には使わず、`withdrawn` フラグとして表示にだけ使う。
+ */
 const WITHDRAWN_STATUS = new Set(['withdrawn', 'cancelled', 'canceled', 'closed', '退会', '解約']);
+/** アカウント停止系 Status（AK 側が意図的に止めた相手。こちらは送信除外を維持する） */
 const SUSPENDED_STATUS = new Set(['suspended', 'inactive', 'banned', 'disabled', '停止', '無効']);
 
 function jstDayNumber(ms) {
@@ -213,7 +225,9 @@ export function resolveSendability({ fields, blacklistEmails }) {
   if (email && blacklistEmails instanceof Set && blacklistEmails.has(email)) reasons.push(MK_SUPPRESSION.BLACKLIST);
 
   const status = String(firstNonEmpty(f.AccountStatus, f.Status) ?? '').trim().toLowerCase();
-  if (f.WithdrawalRequested === true || WITHDRAWN_STATUS.has(status)) reasons.push(MK_SUPPRESSION.WITHDRAWN);
+  // ⚠️ 退会（Status='withdrawn' / WithdrawalRequested=true）は**除外しない**。
+  //    課金停止の契約状態であってメール拒否ではない（詳細は MK_SUPPRESSION の注記）。
+  //    表示用に withdrawn フラグだけ返す。
   if (SUSPENDED_STATUS.has(status)) reasons.push(MK_SUPPRESSION.SUSPENDED);
 
   const planRaw = String(firstNonEmpty(f['プラン'], f.Plan) ?? '').trim().toLowerCase();
@@ -223,6 +237,8 @@ export function resolveSendability({ fields, blacklistEmails }) {
     sendable: reasons.length === 0,
     sendState: reasons.length === 0 ? MK_SEND.SENDABLE : MK_SEND.SUPPRESSED,
     suppressionReasons: reasons,
+    /** 契約上の退会（表示専用。送信可否には影響しない） */
+    withdrawn: f.WithdrawalRequested === true || WITHDRAWN_STATUS.has(status),
   };
 }
 
@@ -267,6 +283,8 @@ export function resolveCustomerMarketing({ fields, nowMs, blacklistEmails, histo
     `pp:${String(f.PremiumPlusEligibility || 'unset').trim().toLowerCase()}`,
     hist.sentCount > 0 ? 'history:sent' : 'history:never',
   ];
+  // 契約上の退会は**送信可否とは別軸**。絞り込み・表示のためにセグメントとして持つ。
+  if (send.withdrawn) segments.push('withdrawn:yes');
   if (daysSinceLastSent !== null && daysSinceLastSent <= RECENTLY_SENT_DAYS) segments.push('history:recent');
   for (const r of send.suppressionReasons) segments.push(`suppression:${r}`);
 
@@ -314,9 +332,17 @@ export function matchesMarketingFilter(m, filter = {}) {
 
 /** 顧客配列 → セグメント別件数（PII を含まない集計だけを返す）。 */
 export function summarizeSegments(list) {
-  const counts = { total: 0, contract: {}, plan: {}, marketing: {}, premiumPlus: {}, suppression: {} };
+  const counts = {
+    total: 0, contract: {}, plan: {}, marketing: {}, premiumPlus: {}, suppression: {},
+    // 契約上の退会者（送信可否とは別軸。うち何名が送信可能かも数える）
+    withdrawn: { total: 0, sendable: 0, suppressed: 0 },
+  };
   for (const m of list || []) {
     counts.total += 1;
+    if (m.withdrawn) {
+      counts.withdrawn.total += 1;
+      counts.withdrawn[m.sendable ? 'sendable' : 'suppressed'] += 1;
+    }
     counts.contract[m.contract] = (counts.contract[m.contract] || 0) + 1;
     counts.plan[m.plan] = (counts.plan[m.plan] || 0) + 1;
     counts.marketing[m.sendState] = (counts.marketing[m.sendState] || 0) + 1;

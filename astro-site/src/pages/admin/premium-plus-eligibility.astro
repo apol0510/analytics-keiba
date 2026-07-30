@@ -393,6 +393,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .contract.none { color: #6f819c; }
   .ppe .ok-txt { color: #6ee7b7; font-size: .74rem; }
   .ppe .ng-txt { color: #fca5a5; font-size: .74rem; }
+  /* 契約上の退会（課金停止）。送信可否とは別軸であることが分かるよう契約欄に置く */
+  .ppe .wd-badge { display: inline-block; margin-left: .35rem; font-size: .66rem; font-weight: 700;
+    padding: .1rem .4rem; border-radius: 4px; color: #cbd5e6;
+    background: rgba(148,163,184,.14); border: 1px solid rgba(148,163,184,.3); }
   .ppe .strong-ok { color: #6ee7b7; font-weight: 800; }
 
   /* ── キャンペーン操作 ── */
@@ -1222,10 +1226,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         bar.appendChild(b);
       });
       const sup = seg.suppression || {};
+      const wd = seg.withdrawn || {};
       $('mkSummarySub').textContent =
         '全顧客 ' + (mkData.totalCustomers || 0) + ' 名　/　除外内訳: '
-        + ['unsubscribed', 'blacklist', 'withdrawn', 'no_email', 'suspended', 'test_account']
-          .map((k) => (mkData.labels?.suppression?.[k] || k) + ' ' + (sup[k] || 0)).join('・');
+        + ['unsubscribed', 'blacklist', 'no_email', 'suspended', 'test_account']
+          .map((k) => (mkData.labels?.suppression?.[k] || k) + ' ' + (sup[k] || 0)).join('・')
+        // 退会は「除外」ではない。契約状態として別枠で件数を出す
+        + '　/　退会（課金停止）' + (wd.total || 0) + ' 名（うち送信可能 ' + (wd.sendable || 0) + ' 名）';
 
       const rows = mkVisibleRows();
       const tb = $('mkRows');
@@ -1256,9 +1263,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (r.name) { const nm = document.createElement('span'); nm.className = 'sub'; nm.textContent = r.name; c1.appendChild(nm); }
         tr.appendChild(c1);
 
+        // 契約状態と送信可否は別概念。退会（課金停止）は契約欄に履歴として出し、
+        // 送信可否には影響させない。
         const cCon = td('c-contract', '契約', CONTRACT_LABEL[r.contract] || r.contract);
         cCon.firstChild.className = 'contract ' + r.contract;
         if (r.daysToExpiry != null) cCon.firstChild.title = '期限まで ' + r.daysToExpiry + ' 日';
+        if (r.withdrawn) {
+          const wb = document.createElement('span');
+          wb.className = 'wd-badge';
+          wb.textContent = '退会';
+          wb.title = '課金停止（退会申請）。メール配信の可否とは別です';
+          cCon.appendChild(wb);
+        }
         tr.appendChild(cCon);
 
         tr.appendChild(td('c-plan', 'プラン', PLAN_LABEL[r.planGroup] || r.planGroup));

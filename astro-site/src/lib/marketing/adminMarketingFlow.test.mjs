@@ -197,14 +197,19 @@ test('期限切れ・Light・Free・legacy を含めて母集団に出る', asyn
   assert.equal(body.segments.contract.unknown, 1, '有効期限なし legacy が unknown で見える');
   assert.equal(body.segments.plan.light, 1);
   assert.equal(body.segments.plan.free, 1);
-  assert.equal(body.segments.marketing.suppressed, 3, '配信停止 / バウンス / 退会');
+  // 退会（rec8）は除外しない → suppressed は 配信停止 / バウンス の 2 名
+  assert.equal(body.segments.marketing.suppressed, 2, '配信停止 / バウンス');
+  assert.equal(body.segments.withdrawn.total, 1, '退会者が別枠で数えられていない');
+  assert.equal(body.segments.withdrawn.sendable, 1, '退会者が送信可能として数えられていない');
   assert.equal(store.writes.length, 0, '一覧取得で書き込みが発生している');
 });
 
 test('セグメント絞り込みが効く（期限切れ かつ 送信可能）', async () => {
   const { body } = parse(await call({ action: 'customers', contract: 'expired', marketing: 'sendable' }));
   const ids = body.rows.map((r) => r.recordId).sort();
-  assert.deepEqual(ids, ['rec1', 'rec2'], '除外対象が混ざっている');
+  // rec8 は Status=withdrawn だが課金停止なので送信可能
+  assert.deepEqual(ids, ['rec1', 'rec2', 'rec8'], '除外対象が混ざっている / 退会者が落ちている');
+  assert.equal(body.rows.find((r) => r.recordId === 'rec8').withdrawn, true, '退会フラグが返っていない');
   assert.equal(body.rows[0].sendable, true);
 });
 
@@ -213,7 +218,7 @@ test('除外者は理由付きで一覧に出る（消さずに見せる）', as
   const byId = Object.fromEntries(body.rows.map((r) => [r.recordId, r.suppressionReasons]));
   assert.deepEqual(byId.rec6, ['unsubscribed']);
   assert.deepEqual(byId.rec7, ['blacklist']);
-  assert.deepEqual(byId.rec8, ['withdrawn']);
+  assert.equal(byId.rec8, undefined, '退会者が除外一覧に出ている');
 });
 
 // ── キャンペーン / プレビュー ────────────────────────────────────
@@ -242,10 +247,11 @@ test('dry-run は送信対象と除外理由を確定し、何も書かない', 
   assert.equal(body.mode, 'dry-run');
   assert.equal(body.sideEffects, 'none');
   assert.equal(body.selected, 6);
-  assert.equal(body.willSend, 2, '送信対象は期限切れかつ送信可能な 2 名');
-  assert.equal(body.excluded, 4);
+  // 退会（rec8）は除外しないので 3 名（rec1 / rec2 / rec8）
+  assert.equal(body.willSend, 3, '送信対象は期限切れかつ送信可能な 3 名（退会者含む）');
+  assert.equal(body.excluded, 3);
   const reasons = Object.fromEntries(body.excludedDetail.map((e) => [e.reason, e.count]));
-  assert.deepEqual(reasons, { unsubscribed: 1, blacklist: 1, withdrawn: 1, contract_mismatch: 1 });
+  assert.deepEqual(reasons, { unsubscribed: 1, blacklist: 1, contract_mismatch: 1 });
   assert.ok(body.planFingerprint.length === 64);
   assert.equal(store.writes.length, 0, 'dry-run で書き込みが発生している');
 });
@@ -609,4 +615,90 @@ test('送信後は顧客一覧に送信履歴が反映される', async () => {
   const rec1 = body.rows.find((r) => r.recordId === 'rec1');
   assert.equal(rec1.sentCount, 1);
   assert.equal(rec1.lastCampaign, 'expired-comeback:v2');
+});
+
+// ── 退会（課金停止）とマーケティング配信の分離（2026-07-30 業務定義）──────────
+test('【6】退会顧客を expired-comeback へ選択 → 対象になる（willSend=1）', async () => {
+  // rec8: Status=withdrawn / 有効期限 2026-01-01（期限切れ）
+  const d = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec8'] }));
+  assert.equal(d.status, 200);
+  assert.equal(d.body.selected, 1);
+  assert.equal(d.body.willSend, 1, '退会顧客がカムバック対象から外れている');
+  assert.equal(d.body.excluded, 0);
+  assert.deepEqual(d.body.excludedDetail, []);
+});
+
+test('【2】退会 + 配信停止は引き続き除外', async () => {
+  // rec6 は配信停止。退会でなくても除外されることを確認（明示的なメール拒否は維持）
+  const d = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec6'] }));
+  assert.equal(d.body.willSend, 0);
+  assert.equal(d.body.excludedDetail[0].reason, 'unsubscribed');
+});
+
+test('【3/4】退会 + blacklist / provider suppression は引き続き除外', async () => {
+  // rec7 は AK blacklist(HARD) かつ provider suppression にも載っている
+  const d = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec7'] }));
+  assert.equal(d.body.willSend, 0);
+  const reasons = (d.body.excludedDetail || []).map((e) => e.reason);
+  assert.ok(reasons.includes('blacklist') || reasons.includes('provider_suppressed'), JSON.stringify(reasons));
+});
+
+test('【5】退会 + 24h 以内にマーケ送信済み → 除外', async () => {
+  store.deliveries.push({
+    id: 'cd-wd',
+    fields: {
+      DeliveryKey: 'k-wd', EmailType: 'campaign', CampaignType: 'other:v1',
+      RecipientEmail: 'gone@example.com', Status: 'sent', SentAt: new Date().toISOString(),
+    },
+  });
+  const d = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec8'] }));
+  assert.equal(d.body.willSend, 0, '24h ガードが効いていない');
+  assert.equal(d.body.excludedDetail[0].reason, 'recent_marketing_contact');
+});
+
+test('【7/8】退会顧客へ送っても Customers / 権限・契約フィールドへ書き込まない', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec8'] }));
+  const out = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec8'],
+    planFingerprint: dry.body.planFingerprint,
+  }));
+  assert.equal(out.body.queued, 1);
+  assert.equal(store.customerWrites, 0, 'Customers へ書き込んでいる');
+  // 書き込み先は CampaignDeliveries / ScheduledEmails のみ
+  for (const w of store.writes) {
+    assert.ok(/CampaignDeliveries|ScheduledEmails/.test(w.table), `想定外の書き込み先: ${w.table}`);
+  }
+  // 会員権限・契約フィールドを含む payload を作っていない
+  // ※ Status は ScheduledEmails / CampaignDeliveries 自身の列（PENDING / queued）なので対象外
+  const serialized = JSON.stringify(store.scheduled.concat(store.deliveries));
+  for (const f of ['プラン', 'PlanType', '有効期限', 'WithdrawalRequested',
+    'UnsubscribedAnalyticsKeiba', 'LifetimeSanrenpuku', 'PaidAt', 'AccountStatus']) {
+    assert.equal(serialized.includes(`"${f}"`), false, `${f} を書こうとしている`);
+  }
+  // Customers 由来の Status 値（withdrawn 等）を書いていないこと
+  assert.equal(serialized.includes('withdrawn'), false, 'Customers の Status 値を書いている');
+});
+
+test('【9】取引メール（step 等）の判定に影響しない', async () => {
+  // EmailType='step' の履歴はマーケの 24h ガードにも履歴集計にも入らない
+  store.deliveries.push({
+    id: 'cd-step-wd',
+    fields: {
+      DeliveryKey: 'k-step-wd', EmailType: 'step', StepSequenceId: 's1', StepNumber: 1,
+      RecipientEmail: 'gone@example.com', Status: 'sent', SentAt: new Date().toISOString(),
+    },
+  });
+  const d = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec8'] }));
+  assert.equal(d.body.willSend, 1, 'ステップメール履歴でマーケが止まっている');
+});
+
+test('一覧で退会は「送信可能」かつ契約側に退会フラグが立つ', async () => {
+  const { body } = parse(await call({ action: 'customers', contract: 'expired' }));
+  const rec8 = body.rows.find((r) => r.recordId === 'rec8');
+  assert.ok(rec8, '退会顧客が一覧に出ていない');
+  assert.equal(rec8.sendable, true, '送信可能になっていない');
+  assert.deepEqual(rec8.suppressionReasons, []);
+  assert.equal(rec8.withdrawn, true, '契約側の退会フラグが返っていない');
+  assert.equal(rec8.contract, 'expired', '契約状態は履歴として残す');
 });
