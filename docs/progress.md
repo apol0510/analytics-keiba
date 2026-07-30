@@ -17,6 +17,29 @@
 
 ## Current Phase
 
+**Phase（2026-07-30 現在・最新）: マーケティング配信の本番検証が enqueue まで完了。
+実メール送信の直前で、共有 executor への依存を恒久修正中（branch `fix/marketing-dedicated-dispatcher-only`）。**
+
+- production main `b383621`（PR #172 / #173 merge 済み・deploy ready）
+- production env: `MARKETING_CAMPAIGN_ENABLED=true` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` /
+  **`NEWSLETTER_AUTOMATION_ENABLED=false`**（未変更）
+- `marketing-canary` をテスト受信者 1 名へ **enqueue 済み**
+  （`ScheduledEmails` PENDING 1 / `CampaignDeliveries` queued 1 / **実メール 0**）
+- dispatcher `dryRun:true` = jobs 1 / verified 1 / willSend 1 / **skipped 0**
+- **未実施**: `marketing-campaign-dispatch` の `dryRun:false`（＝最初の実メール 1 通）
+
+### 発見: 共有 executor への依存（本 branch で恒久修正）
+
+`MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` にしたことで、共有
+`execute-scheduled-emails-background` 側のマーケ用ガードも通る構造になっていた。
+`cron-email-scheduler` は Netlify scheduled（`*/15 * * * *`）で動いており、
+`NEWSLETTER_AUTOMATION_ENABLED=true` になった瞬間に**再検証なしでキャンペーンが飛ぶ**
+（共有 executor は固定宛先に対する per-recipient 再検証を持たない）。
+
+→ `canSharedExecutorSend(fields)` を **env 非依存・常時 skip** へ変更し、引数から env を除去。
+marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に固定した。
+
+
 **Phase（2026-07-30 現在・最新）: PR #172 は merge / production deploy 済み（`9ba1cf6`）。
 送信 gate は OFF のまま。次は運用テスト専用キャンペーン `marketing-canary` の PR。**
 
