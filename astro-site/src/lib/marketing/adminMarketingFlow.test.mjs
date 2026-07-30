@@ -461,7 +461,7 @@ test('取引メール（step 等）は 24h ガードの対象に含めない', a
 // ── 使用停止キャンペーン ────────────────────────────────────────
 test('使用停止中のキャンペーンは理由付きで拒否される（dry-run も送信も）', async () => {
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
-  for (const id of ['sanrenpuku-offer', 'general-announcement']) {
+  for (const id of ['sanrenpuku-offer', 'general-announcement', 'comeback-offer']) {
     const dry = parse(await call({ action: 'dryRun', campaignId: id, recordIds: ['rec3'] }));
     assert.equal(dry.status, 409, `${id} が dry-run できてしまう`);
     assert.ok(dry.body.error.includes('使用停止中'), dry.body.error);
@@ -475,9 +475,9 @@ test('使用停止中のキャンペーンは理由付きで拒否される（dr
 
 test('キャンペーン一覧は停止中も理由付きで返す', async () => {
   const { body } = parse(await call({ action: 'campaigns' }));
-  assert.equal(body.campaigns.length, 7, '停止中が一覧から消えている');
+  assert.equal(body.campaigns.length, 8, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
-  assert.equal(off.length, 2, '停止中が 2 本でない');
+  assert.equal(off.length, 3, '停止中が 3 本でない');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に理由が無い`);
 });
 

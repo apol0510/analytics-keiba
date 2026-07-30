@@ -132,3 +132,11 @@ jobs:
       - name: Verify 顧客マーケティング（実送信なし / Customers 非書込 / 二重送信防止）
         working-directory: astro-site
         run: npm run test:marketing
+
+      - name: Verify カムバック特典（課金フィールド非書込 / メール送信なし / 冪等付与）
+        working-directory: astro-site
+        run: npm run test:comeback
+
+      - name: Verify 権限判定（無料特典と有料契約の分離 / Plus 販売資格不変）
+        working-directory: astro-site
+        run: npm run test:entitlements

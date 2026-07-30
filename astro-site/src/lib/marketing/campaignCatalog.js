@@ -55,6 +55,8 @@ export function buildSalutation(rawName) {
 export const CAMPAIGN_DISABLED_REASON = Object.freeze({
   NO_CTA: 'CTA 未設定のため利用不可（案内先ページが確定していません）',
   TEMPLATE_PLACEHOLDER: '本文が初期テンプレートのままのため利用不可（件名・本文・CTA を設定してください）',
+  /** 文面は完成しているが、前提となる運用がまだ整っていない下書き */
+  DRAFT: '下書き（前提となる運用が未成立のため利用不可）',
 });
 
 /**
@@ -241,6 +243,45 @@ export const CAMPAIGNS = Object.freeze([
       enforce: true,
     },
     enabled: true,
+  },
+  {
+    campaignId: 'comeback-offer',
+    version: 1,
+    name: 'カムバック特典のご案内（下書き）',
+    description: 'カムバック特典（Premium 30日無料 ＋ その後 Light 永久無料）を付与済みの顧客へ案内する。',
+    subject: '【KEIBA Analytics】現在の AI 予想を、30日間無料でお試しいただけます',
+    // ⚠️ 誇大表現にしない。「以前より良くなった」は事実ベース（何を変えたか）で書き、
+    //    的中率・回収率の数値は書かない（根拠のない数値は premiumPlusShowcase の教訓）。
+    // ⚠️ このメールは **特典を付与した顧客にだけ** 送る。付与前に送ると
+    //    「使えるはずのものが使えない」状態になる（付与とメールは別操作・別画面）。
+    body: [
+      '{{salutation}}',
+      '',
+      'KEIBA Analytics をご利用いただきありがとうございました。',
+      '',
+      'ご利用いただいていた頃から、予想の作り方そのものを見直しました。',
+      '本命・対抗・単穴の選定ロジックと買い目の組み方を作り直し、',
+      '前日の有料メインレース買い目と結果は、当たった日も外した日も毎日公開しています。',
+      '',
+      '現在の AI 予想をあらためて見ていただくため、',
+      'お客様のアカウントに以下をご用意しました。',
+      '',
+      '・Premium 30日間 無料',
+      '・その後も Light プランを無料で継続',
+      '',
+      'お手続きもお支払いも必要ありません。ログインするだけでご利用いただけます。',
+    ].join('\n'),
+    ctaLabel: 'ログインして予想を見る',
+    ctaUrl: `${SITE}/login/`,
+    recommendedSegments: ['contract:expired', 'contract:none'],
+    // 特典を付与した相手にだけ送る運用のため、契約状態では絞らない（付与済みかは
+    // カムバック特典タブで確認して選択する）。誤送信防止は「選択した相手だけに送る」で担保。
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    // ⛔ 下書き。**特典付与フローが本番で有効化され、実際に付与を行ってから**有効化する。
+    //    付与前にこの文面を送ると、書いてある特典が実際には使えない。
+    enabled: false,
+    disabledReason: CAMPAIGN_DISABLED_REASON.DRAFT,
+    disabledDetail: '下書き（カムバック特典の付与フローが本番稼働し、対象へ実際に付与してから有効化する）',
   },
   {
     campaignId: 'general-announcement',

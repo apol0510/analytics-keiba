@@ -17,9 +17,27 @@
  * 移行期の後方互換: 旧 Airtable プラン値 'Premium Sanrenpuku' / 'Premium Combo'（canonical
  * premium-sanrenpuku / premium-combo）を持つ既存レコードを、フラグ未設定でも三連複閲覧可とする
  * `legacySanrenpukuTierGrantsView`（既定 true）。データ移行完了後（PR4）に false へ倒して恒久除去できる。
+ *
+ * ── カムバック特典（promotional grant）の扱い（2026-07-30 追加）────────────
+ * 無料特典（Light 永久無料 / Premium 30日無料）は **課金契約とは別フィールド**で持つ
+ * （promotionalGrants.js）。ここでの合成規則は 1 つだけ:
+ *
+ *   **強い方を採用する。特典は権利を増やすだけで、減らさない。**
+ *
+ *   canViewPremium     = 有料 Premium 有効 **または** Premium 無料期間が有効
+ *   canViewLight       = 上記のいずれか **または** 有料 Light 有効 **または** Light 永久無料
+ *   canViewSanrenpuku  = 変更なし（三連複買い切りは特典の影響を受けない）
+ *   canPurchaseSanrenpuku = 変更なし（**有料** Premium 会員だけが購入資格を持つ。
+ *                          無料特典で購入資格を配らない）
+ *
+ * 「Premium 無料期間の終了後は Light 永久無料へ戻る」は状態遷移ではなく、上式から
+ * 自然に導かれる（trial が期限切れになると premium 側が false になり light だけが残る）。
+ *
+ * 特典フィールドが 1 つも無いレコードは従来と完全に同じ判定になる（fail closed）。
  */
 
 import { normalizePlan } from '../auth/planNormalization.js';
+import { resolvePromotionalGrants, PROMO_WRITABLE_FIELDS } from './promotionalGrants.js';
 
 // アカウント全体を拒否する Status（＝ログインも不可）。memberResolution.js の SUSPENDED_STATUS に
 // 揃え、ユーザー要件の明示状態（withdrawn / closed）を加える。'test' は下の isTestAccount で扱う。
@@ -126,10 +144,20 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   const premiumExpired = isPremiumTier && expired;
   if (premiumExpired) reasons.push('PREMIUM_EXPIRED');
 
+  // ── カムバック特典（無料。課金状態には一切影響しない）──────────────
+  // pending（入金待ち）でも特典は有効。特典は支払いと無関係に成立する権利であり、
+  // 逆に停止・退会・テストアカウントでは canLogin=false なので自動的に無効になる。
+  const grants = resolvePromotionalGrants(c.promoFields, nowMs);
+  const promoPremiumActive = canLogin && grants.premiumTrial.active;
+  const promoLightActive = canLogin && grants.lightLifetime.active;
+  if (promoPremiumActive) reasons.push('PROMO_PREMIUM_TRIAL');
+  if (promoLightActive) reasons.push('PROMO_LIGHT_LIFETIME');
+
   // ── 閲覧資格 ──────────────────────────────────────────
   const canViewFree = canLogin;
-  const canViewLight = canLogin && (lightActive || premiumActive); // Premium は Light を包含
-  const canViewPremium = premiumActive;
+  // Premium（有料 or 無料期間）は Light を包含。Light 永久無料も Light を開ける。
+  const canViewLight = canLogin && (lightActive || premiumActive || promoPremiumActive || promoLightActive);
+  const canViewPremium = premiumActive || promoPremiumActive;
 
   // 三連複閲覧: 原則 active AND LifetimeSanrenpuku=true（tier/Premium期限を見ない）。
   // 移行期のみ旧 tier(premium-sanrenpuku/combo) を Premium 有効中に限り許可。
@@ -137,7 +165,8 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   const canViewSanrenpuku = canLogin && (lifetime || legacyView);
 
   // ── 購入資格 ──────────────────────────────────────────
-  // 有効な Premium 会員 かつ 未所有 のときだけ三連複購入を提示。
+  // 有効な **有料** Premium 会員 かつ 未所有 のときだけ三連複購入を提示。
+  // 無料特典（Premium 30日無料）では購入資格を与えない（無料特典で販売資格を配らない）。
   const canPurchaseSanrenpuku = premiumActive && !lifetime && !LEGACY_SANRENPUKU_TIERS.has(tier);
 
   return {
@@ -152,7 +181,31 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
     // 参考情報（呼び出し側の表示・デバッグ用）
     tier,
     lifetimeSanrenpuku: lifetime,
+    /**
+     * **有料**契約だけで見た Premium 有効性（無料特典を含まない）。
+     * Premium Plus の販売資格判定など「課金実績が前提」の判定はこちらを使う。
+     * canViewPremium を使うと無料特典で販売動線が開いてしまう。
+     */
+    paidPremiumActive: premiumActive,
+    paidLightActive: lightActive,
+    /** カムバック特典の内訳（表示・管理画面用） */
+    promo: {
+      premiumTrialActive: promoPremiumActive,
+      premiumTrialUntilMs: grants.premiumTrial.untilMs,
+      lightLifetimeActive: promoLightActive,
+      inconsistent: grants.lightLifetime.inconsistent || grants.premiumTrial.inconsistent,
+    },
   };
+}
+
+/** Airtable fields から特典フィールドだけを抜き出す（他の値を entitlement 層へ持ち込まない） */
+function pickPromoFields(fields) {
+  const f = fields || {};
+  const out = {};
+  for (const k of PROMO_WRITABLE_FIELDS) {
+    if (f[k] !== undefined) out[k] = f[k];
+  }
+  return out;
 }
 
 /** Airtable の Customers fields から正規化 customer を作る adapter（サーバー側）。 */
@@ -173,6 +226,8 @@ export function fromAirtableFields(fields) {
     withdrawalRequested: read(['WithdrawalRequested']),
     forceLogout: read(['ForceLogout']),
     planType: read(['PlanType']),
+    // カムバック特典（未作成なら空 → 従来と同じ判定）
+    promoFields: pickPromoFields(f),
   };
 }
 

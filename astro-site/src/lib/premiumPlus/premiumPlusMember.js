@@ -68,8 +68,11 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
   return {
     // 三連複を保有しているか（買い切り永久権 or 移行期の旧 tier）
     hasSanrenpuku: ent.canViewSanrenpuku === true,
-    // 通常 Premium 契約が現在有効か（ROUTE B の前提）
-    premiumActive: ent.canViewPremium === true,
+    // 通常 Premium 契約が現在有効か（ROUTE B の前提）。
+    // ⚠️ `canViewPremium` ではなく **paidPremiumActive**（有料契約のみ）を使う。
+    //    カムバック特典（Premium 30日無料）は閲覧権であって課金実績ではないため、
+    //    これで Premium Plus の販売資格・ROUTE B が動いてはいけない。
+    premiumActive: ent.paidPremiumActive === true,
     sanrenpukuPaidAtMs: srp.paidAtMs,
     premiumPaidAtMs: toPaidAtMs(f['PaidAt']),
     eligibility: normalizeEligibility(f[PP_ELIGIBILITY_FIELDS.STATUS]),

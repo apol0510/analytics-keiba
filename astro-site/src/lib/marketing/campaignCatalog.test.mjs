@@ -90,7 +90,7 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
   const all = listCampaigns({ includeDisabled: true });
   assert.equal(all.length, CAMPAIGNS.length);
   const off = all.filter((c) => !c.usable);
-  assert.equal(off.length, 2, '停止中の本数が想定と違う');
+  assert.equal(off.length, 3, '停止中の本数が想定と違う');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に停止理由が無い`);
   for (const c of all.filter((x) => x.usable)) assert.equal(c.disabledReason, null);
 });
@@ -109,6 +109,8 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'premium-plus-offer': { version: 2, hash: '267556b6e0164a72' },
     'dormant-reactivation': { version: 2, hash: '72d0595d176a4819' },
     'general-announcement': { version: 1, hash: '41c37e1db8127b2f' },
+    // カムバック特典の案内（下書き / enabled=false）。特典付与フローの本番稼働後に有効化する。
+    'comeback-offer': { version: 1, hash: 'd5be33764048a3b6' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];

@@ -44,6 +44,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <nav class="tabs" role="tablist">
       <button type="button" class="tab on" id="tabSales" role="tab" aria-selected="true">💠 Premium Plus 販売</button>
       <button type="button" class="tab" id="tabMkt" role="tab" aria-selected="false">📣 顧客マーケティング</button>
+      <button type="button" class="tab" id="tabCb" role="tab" aria-selected="false">🎁 カムバック特典</button>
     </nav>
 
     <!-- ═══ タブ1: Premium Plus 販売資格（既存の安全設計を維持）═══ -->
@@ -190,6 +191,115 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="camp-desc" id="mkCampDesc"></p>
       </div>
     </section>
+
+    <!-- ═══ タブ3: カムバック特典（無料 entitlement の付与 / メールとは別機能）═══ -->
+    <section id="paneCb" hidden>
+      <p class="pane-lead">
+        以前 AK を離れた顧客へ<b>無料特典</b>を付与します。変更されるのは<b>特典専用フィールドだけ</b>で、
+        プラン・有効期限・入金状態・三連複買い切り・Premium Plus 販売資格は一切変更しません。
+        <b>この操作でメールは送信されません。</b>案内は付与後にマーケティングタブから別途送ってください。
+      </p>
+
+      <div class="sumbar" id="cbSummary"></div>
+      <div class="sumsub" id="cbSummarySub"></div>
+      <p class="note" id="cbGateState"></p>
+
+      <div class="toolbar">
+        <input type="search" id="cbQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <select id="cbContract" aria-label="契約状態">
+          <option value="all">契約状態: すべて</option>
+          <option value="expired">期限切れ</option>
+          <option value="expiring_soon">期限間近</option>
+          <option value="active">有効</option>
+          <option value="unknown">不明（legacy）</option>
+          <option value="none">契約なし（Free）</option>
+        </select>
+        <select id="cbPlan" aria-label="プラン">
+          <option value="all">プラン: すべて</option>
+          <option value="premium_sanrenpuku">Premium Sanrenpuku</option>
+          <option value="premium">Premium</option>
+          <option value="light">Light</option>
+          <option value="free">Free</option>
+        </select>
+        <select id="cbWithdrawn" aria-label="退会履歴">
+          <option value="all">退会履歴: すべて</option>
+          <option value="yes">退会あり</option>
+          <option value="no">退会なし</option>
+        </select>
+        <select id="cbPromo" aria-label="現在の特典">
+          <option value="all">現在の特典: すべて</option>
+          <option value="none">特典なし</option>
+          <option value="any">特典あり</option>
+          <option value="light_lifetime">Light 永久無料</option>
+          <option value="trial_active">Premium 無料期間中</option>
+          <option value="trial_expired">Premium 無料 終了</option>
+          <option value="inconsistent">⚠️ 特典データ不整合</option>
+        </select>
+        <select id="cbGrantable" aria-label="付与可否">
+          <option value="all">付与可否: すべて</option>
+          <option value="grantable">付与できる</option>
+          <option value="blocked">付与できない</option>
+        </select>
+        <select id="cbHistory" aria-label="送信履歴">
+          <option value="all">送信履歴: すべて</option>
+          <option value="never">未送信</option>
+          <option value="recent">最近送信済み</option>
+          <option value="sent">送信あり</option>
+        </select>
+        <button type="button" id="cbLoad" class="btn-primary">この条件で取得</button>
+      </div>
+
+      <div class="selbar">
+        <button type="button" id="cbSelAll" class="btn-ghost">表示中を全選択</button>
+        <button type="button" id="cbSelNone" class="btn-ghost">全解除</button>
+        <span class="selcount" id="cbSelCount">0 名を選択中</span>
+      </div>
+
+      <p class="msg" id="cbMessage"></p>
+      <p class="count" id="cbCount"></p>
+
+      <div class="tablewrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th class="c-chk"><span class="sr">選択</span></th>
+              <th class="c-cust">顧客</th>
+              <th class="c-contract">契約</th>
+              <th class="c-plan">プラン</th>
+              <th class="c-promo">現在の特典</th>
+              <th class="c-grantable">付与可否</th>
+            </tr>
+          </thead>
+          <tbody id="cbRows"></tbody>
+        </table>
+        <p class="empty" id="cbEmpty" hidden></p>
+      </div>
+
+      <div class="campaign-box">
+        <h2>特典</h2>
+        <div class="toolbar">
+          <select id="cbOffer" aria-label="特典"></select>
+          <button type="button" id="cbDryRun" class="btn-primary">変更内容を確認（dry-run）</button>
+          <button type="button" id="cbRevokeBtn" class="btn-ghost">特典を取り消す</button>
+          <button type="button" id="cbReconcileBtn" class="btn-ghost">前回操作の突合</button>
+        </div>
+        <p class="camp-desc" id="cbOfferDesc"></p>
+      </div>
+    </section>
+
+    <!-- カムバック特典: dry-run / 取り消し 確認モーダル -->
+    <div id="cbBackdrop" class="dt-backdrop" hidden>
+      <aside class="dt-panel" role="dialog" aria-modal="true" aria-labelledby="cbModalTitle">
+        <div class="dt-head">
+          <div class="dt-head-l">
+            <button type="button" id="cbModalBack" class="btn-back">← 一覧へ戻る</button>
+            <h2 id="cbModalTitle">確認</h2>
+          </div>
+          <button type="button" id="cbModalClose" class="x" aria-label="閉じる">×</button>
+        </div>
+        <div id="cbModalBody" class="dt-body"></div>
+      </aside>
+    </div>
 
     <!-- マーケティング: 本文プレビュー / dry-run 確認 モーダル -->
     <div id="mkBackdrop" class="dt-backdrop" hidden>
@@ -1086,19 +1196,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     let mkSendEnabled = false;         // live 送信が有効か（本番は既定 false）
     const mkSelected = new Set();      // 選択中の recordId
 
-    // ── タブ切替 ──
+    // ── タブ切替（販売 / マーケティング / カムバック特典）──
+    const TABS = [
+      ['sales', 'tabSales', 'paneSales'],
+      ['mkt', 'tabMkt', 'paneMkt'],
+      ['comeback', 'tabCb', 'paneCb'],
+    ];
     function showTab(which) {
-      const sales = which === 'sales';
-      $('paneSales').hidden = !sales;
-      $('paneMkt').hidden = sales;
-      $('tabSales').classList.toggle('on', sales);
-      $('tabMkt').classList.toggle('on', !sales);
-      $('tabSales').setAttribute('aria-selected', String(sales));
-      $('tabMkt').setAttribute('aria-selected', String(!sales));
-      if (!sales && mkCampaigns.length === 0) mkLoadCampaigns();
+      for (const [name, tabId, paneId] of TABS) {
+        const on = name === which;
+        $(paneId).hidden = !on;
+        $(tabId).classList.toggle('on', on);
+        $(tabId).setAttribute('aria-selected', String(on));
+      }
+      if (which === 'mkt' && mkCampaigns.length === 0) mkLoadCampaigns();
+      if (which === 'comeback' && cbOffers.length === 0) cbLoadOffers();
     }
     $('tabSales').addEventListener('click', () => showTab('sales'));
     $('tabMkt').addEventListener('click', () => showTab('mkt'));
+    $('tabCb').addEventListener('click', () => showTab('comeback'));
 
     // ── キャンペーンカタログ ──
     async function mkLoadCampaigns() {
@@ -1525,6 +1641,436 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !$('mkBackdrop').hidden) mkCloseModal();
+    });
+
+    // ══════════════════════════════════════════════════════════════
+    //  カムバック特典（無料 entitlement の付与）
+    //  ⚠️ メール送信とは別機能。ここから 1 通もメールを送らない。
+    //  ⚠️ 変更するのは特典専用フィールドのみ。課金・契約・Plus 販売資格は触らない。
+    // ══════════════════════════════════════════════════════════════
+    const CB_API = '/.netlify/functions/admin-comeback-grants';
+
+    let cbData = null;                 // 直近の customers 応答
+    let cbOffers = [];                 // オファーカタログ
+    let cbWriteEnabled = false;        // 実付与が有効か（本番は既定 false）
+    let cbLastOperationId = '';        // 直近の dry-run / 付与の操作 ID（再開・突合用）
+    const cbSelected = new Set();      // 選択中の recordId
+
+    function cbMsg(text, kind) {
+      const el = $('cbMessage');
+      el.textContent = text;
+      el.className = 'msg' + (kind ? ' ' + kind : '');
+    }
+
+    async function cbCall(payload) {
+      const secret = secretEl.value.trim();
+      if (!secret) { cbMsg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return null; }
+      const res = await fetch(CB_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // 503（gate 無効）/ 409（対象変化）/ 502（部分失敗）は理由をそのまま出す
+        cbMsg(data.error || ('エラー: ' + res.status), 'err');
+        if (data.howToRecover) cbMsg((data.error || '') + '　' + data.howToRecover, 'err');
+        return null;
+      }
+      return data;
+    }
+
+    async function cbLoadOffers() {
+      const data = await cbCall({ action: 'offers' });
+      if (!data) return;
+      cbOffers = data.offers || [];
+      cbWriteEnabled = !!data.writeEnabled;
+      const sel = $('cbOffer');
+      sel.innerHTML = '';
+      for (const o of cbOffers) {
+        const opt = document.createElement('option');
+        opt.value = o.offerId;
+        opt.textContent = o.name;
+        sel.appendChild(opt);
+      }
+      // 主要施策（複合オファー）を既定選択にする
+      if (cbOffers.some((o) => o.offerId === 'comeback_full')) sel.value = 'comeback_full';
+      cbRenderOfferDesc();
+      $('cbGateState').textContent = data.notice || '';
+      $('cbGateState').className = 'note' + (data.writeEnabled ? '' : ' off');
+    }
+
+    function cbCurrentOffer() {
+      return cbOffers.find((o) => o.offerId === $('cbOffer').value) || null;
+    }
+
+    function cbRenderOfferDesc() {
+      const o = cbCurrentOffer();
+      const el = $('cbOfferDesc');
+      el.textContent = o ? (o.description + '　【付与後】' + o.effect) : '';
+    }
+    $('cbOffer').addEventListener('change', cbRenderOfferDesc);
+
+    async function cbLoad() {
+      cbMsg('読み込み中…');
+      const data = await cbCall({
+        action: 'customers',
+        contract: $('cbContract').value,
+        plan: $('cbPlan').value,
+        withdrawn: $('cbWithdrawn').value,
+        promo: $('cbPromo').value,
+        grantable: $('cbGrantable').value,
+        history: $('cbHistory').value,
+      });
+      if (!data) return;
+      cbData = data;
+      cbWriteEnabled = !!data.writeEnabled;
+      cbMsg('');
+      cbRender();
+    }
+
+    function cbVisibleRows() {
+      const q = $('cbQ').value.trim().toLowerCase();
+      return (cbData?.rows || []).filter((r) => !q || String(r.email || '').toLowerCase().includes(q));
+    }
+
+    function cbRender() {
+      if (!cbData) return;
+      const s = cbData.summary || {};
+      const bar = $('cbSummary');
+      bar.innerHTML = '';
+      const items = [
+        ['期限切れ', s.contract?.expired || 0],
+        ['契約なし', s.contract?.none || 0],
+        ['退会あり', s.withdrawn || 0],
+        ['特典あり', (s.promo?.light || 0) + (s.promo?.trialActive || 0)],
+        ['付与できる', s.grantable || 0],
+      ];
+      items.forEach((it, i) => {
+        if (i > 0) { const sp = document.createElement('span'); sp.className = 'sep'; sp.textContent = '|'; bar.appendChild(sp); }
+        const b = document.createElement('span');
+        b.className = 's';
+        const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = it[0];
+        const vv = document.createElement('span'); vv.className = 'v'; vv.textContent = String(it[1]);
+        b.appendChild(kk); b.appendChild(vv);
+        bar.appendChild(b);
+      });
+      const p = s.promo || {};
+      $('cbSummarySub').textContent =
+        '全顧客 ' + (cbData.totalCustomers || 0) + ' 名　/　特典内訳: Light 永久無料 ' + (p.light || 0)
+        + '・Premium 無料期間中 ' + (p.trialActive || 0) + '・Premium 無料 終了 ' + (p.trialExpired || 0)
+        + (p.inconsistent ? '・⚠️ 不整合 ' + p.inconsistent : '');
+
+      const rows = cbVisibleRows();
+      const tb = $('cbRows');
+      tb.innerHTML = '';
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        if (!r.grantable) tr.className = 'row-suppressed';
+
+        const c0 = document.createElement('td');
+        c0.className = 'c-chk';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = cbSelected.has(r.recordId);
+        cb.disabled = !r.grantable; // 付与しても使えない相手は選べない（fail closed）
+        cb.setAttribute('aria-label', '選択');
+        cb.addEventListener('change', () => {
+          if (cb.checked) cbSelected.add(r.recordId); else cbSelected.delete(r.recordId);
+          cbRenderSelCount();
+        });
+        c0.appendChild(cb);
+        tr.appendChild(c0);
+
+        const c1 = td('c-cust', '', undefined);
+        const em = document.createElement('span');
+        em.className = 'em';
+        em.textContent = r.email || '(メール未設定)';
+        c1.appendChild(em);
+        if (r.name) { const nm = document.createElement('span'); nm.className = 'sub'; nm.textContent = r.name; c1.appendChild(nm); }
+        tr.appendChild(c1);
+
+        const cCon = td('c-contract', '契約', CONTRACT_LABEL[r.contract] || r.contract);
+        cCon.firstChild.className = 'contract ' + r.contract;
+        if (r.withdrawn) {
+          const wb = document.createElement('span');
+          wb.className = 'wd-badge';
+          wb.textContent = '退会';
+          wb.title = '課金停止（退会申請）。この状態ではログインできないため特典を付与しません';
+          cCon.appendChild(wb);
+        }
+        tr.appendChild(cCon);
+
+        tr.appendChild(td('c-plan', 'プラン', PLAN_LABEL[r.planGroup] || r.planGroup));
+        tr.appendChild(td('c-promo', '現在の特典', r.promoText,
+          r.promoInconsistent ? 'ng-txt' : (r.promoText === '特典なし' ? 'muted' : 'ok-txt')));
+        tr.appendChild(td('c-grantable', '付与可否',
+          r.grantable ? '付与できる' : ('付与不可: ' + (r.grantBlockedLabel || '')),
+          r.grantable ? 'ok-txt' : 'ng-txt'));
+
+        tb.appendChild(tr);
+      }
+
+      $('cbCount').textContent = '表示 ' + rows.length + ' 件 / 条件一致 ' + (cbData.matchedCount || 0) + ' 件'
+        + (cbData.truncated ? '（上限を超えたため一部のみ表示）' : '');
+      const emp = $('cbEmpty');
+      emp.hidden = rows.length > 0;
+      emp.textContent = '条件に一致する顧客はいません。';
+      cbRenderSelCount();
+    }
+
+    function cbRenderSelCount() {
+      $('cbSelCount').textContent = cbSelected.size + ' 名を選択中';
+    }
+
+    $('cbLoad').addEventListener('click', cbLoad);
+    $('cbQ').addEventListener('input', cbRender);
+    $('cbSelAll').addEventListener('click', () => {
+      for (const r of cbVisibleRows()) if (r.grantable) cbSelected.add(r.recordId);
+      cbRender();
+    });
+    $('cbSelNone').addEventListener('click', () => { cbSelected.clear(); cbRender(); });
+
+    // ── モーダル ──
+    function cbOpenModal(title) {
+      $('cbModalTitle').textContent = title;
+      $('cbBackdrop').hidden = false;
+      lockScroll();
+      $('cbModalBody').innerHTML = '';
+      return $('cbModalBody');
+    }
+    function cbCloseModal() {
+      $('cbBackdrop').hidden = true;
+      if ($('dtBackdrop').hidden && $('pvBackdrop').hidden && $('mkBackdrop').hidden) unlockScroll();
+    }
+    $('cbModalClose').addEventListener('click', cbCloseModal);
+    $('cbModalBack').addEventListener('click', cbCloseModal);
+    $('cbBackdrop').addEventListener('click', (e) => { if (e.target === $('cbBackdrop')) cbCloseModal(); });
+
+    // ── dry-run → 最終確認 → 付与 ──
+    $('cbDryRun').addEventListener('click', async () => {
+      const o = cbCurrentOffer();
+      if (!o) { cbMsg('特典を選択してください', 'err'); return; }
+      if (cbSelected.size === 0) { cbMsg('対象を選択してください', 'err'); return; }
+      cbMsg('変更内容を確認中…');
+      const plan = await cbCall({
+        action: 'dryRun', offerId: o.offerId, recordIds: [...cbSelected],
+        // 直前の操作をやり直す場合は同じ operationId を引き継ぐ（冪等な再開）
+        operationId: cbLastOperationId || undefined,
+      });
+      if (!plan) return;
+      cbLastOperationId = plan.operationId;
+      cbMsg('');
+      cbRenderConfirm(o, plan);
+    });
+
+    function cbRenderConfirm(offer, plan) {
+      const body = cbOpenModal('付与内容の確認');
+
+      const head = document.createElement('div'); head.className = 'dt-sec';
+      const h = document.createElement('h3'); h.textContent = offer.name;
+      head.appendChild(h);
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, '付与後', plan.effect);
+      kvRow(dl, '選択', plan.selected + ' 名');
+      kvRow(dl, '新規付与', plan.willGrant + ' 名', plan.willGrant > 0 ? 'strong-ok' : 'muted');
+      kvRow(dl, '対象外', plan.skipped + ' 名');
+      kvRow(dl, '操作 ID', plan.operationId);
+      head.appendChild(dl);
+      body.appendChild(head);
+
+      if (plan.skippedDetail && plan.skippedDetail.length) {
+        const sec = document.createElement('div'); sec.className = 'dt-sec';
+        const h2 = document.createElement('h3'); h2.textContent = '対象外の内訳'; sec.appendChild(h2);
+        const ul = document.createElement('ul'); ul.className = 'exlist';
+        for (const d of plan.skippedDetail) {
+          const li = document.createElement('li');
+          li.textContent = d.label + '　' + d.count + ' 名';
+          ul.appendChild(li);
+        }
+        sec.appendChild(ul);
+        body.appendChild(sec);
+      }
+
+      if (plan.preview && plan.preview.length) {
+        const sec = document.createElement('div'); sec.className = 'dt-sec';
+        const h2 = document.createElement('h3'); h2.textContent = '顧客ごとの変更（現在 → 付与後）'; sec.appendChild(h2);
+        const ul = document.createElement('ul'); ul.className = 'exlist';
+        for (const p of plan.preview) {
+          const li = document.createElement('li');
+          const strong = document.createElement('strong');
+          strong.textContent = p.email;
+          li.appendChild(strong);
+          const sub = document.createElement('ul'); sub.className = 'exlist sub';
+          const l1 = document.createElement('li'); l1.textContent = '現在: ' + p.before; sub.appendChild(l1);
+          const l2 = document.createElement('li'); l2.textContent = '付与後: ' + p.after; sub.appendChild(l2);
+          for (const part of (p.partial || [])) {
+            const l3 = document.createElement('li');
+            l3.textContent = '※ ' + part.grant + ' は付与しません（' + part.label + '）';
+            sub.appendChild(l3);
+          }
+          li.appendChild(sub);
+          ul.appendChild(li);
+        }
+        sec.appendChild(ul);
+        if (plan.previewTruncated) {
+          const note = document.createElement('p'); note.className = 'note';
+          note.textContent = '※ 表示は先頭 50 名のみです（付与は ' + plan.willGrant + ' 名すべてに行われます）。';
+          sec.appendChild(note);
+        }
+        body.appendChild(sec);
+      }
+
+      const sec3 = document.createElement('div'); sec3.className = 'dt-sec danger';
+      const h3 = document.createElement('h3'); h3.textContent = '付与'; sec3.appendChild(h3);
+      const state = document.createElement('p'); state.className = 'note';
+      state.textContent = plan.writeEnabled
+        ? '実行すると会員の閲覧権限が変わります。課金・入金状態・メールは変わりません。'
+        : '特典付与は無効（COMEBACK_GRANT_FIELDS_READY / COMEBACK_GRANT_ENABLED 未設定）です。実行できません。';
+      sec3.appendChild(state);
+      const mailNote = document.createElement('p'); mailNote.className = 'note';
+      mailNote.textContent = '📪 この操作でメールは送信されません。案内はマーケティングタブから別途送ってください。';
+      sec3.appendChild(mailNote);
+
+      const ops = document.createElement('div'); ops.className = 'ops';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'b-immediate';
+      btn.textContent = plan.willGrant + ' 名へ特典を付与する';
+      btn.disabled = !plan.writeEnabled || plan.willGrant === 0;
+      btn.addEventListener('click', async () => {
+        if (btn.dataset.busy === '1') return;      // 二重クリック防止
+        const ok = window.confirm(
+          offer.name + '\n\n'
+          + '対象: ' + plan.selected + ' 名\n'
+          + '新規付与: ' + plan.willGrant + ' 名\n'
+          + '対象外: ' + plan.skipped + ' 名\n\n'
+          + 'この内容で特典を付与しますか？（メールは送信されません）'
+        );
+        if (!ok) return;
+        btn.dataset.busy = '1';
+        btn.disabled = true;
+        btn.textContent = '付与中…';
+        const out = await cbCall({
+          action: 'grant',
+          offerId: offer.offerId,
+          recordIds: [...cbSelected],
+          operationId: plan.operationId,          // 冪等性の鍵（再実行しても二重付与しない）
+          planFingerprint: plan.planFingerprint,  // 対象が変わっていたら Function 側が中止する
+        });
+        btn.dataset.busy = '';
+        if (out) {
+          cbMsg(out.notice || ('付与しました: ' + out.granted + ' 名'), 'ok');
+          cbSelected.clear();
+          cbCloseModal();
+          await cbLoad();
+        } else {
+          btn.textContent = '再試行（同じ操作 ID で安全に再実行できます）';
+          btn.disabled = false;
+        }
+      });
+      ops.appendChild(btn);
+      sec3.appendChild(ops);
+      body.appendChild(sec3);
+    }
+
+    // ── 取り消し（promotional grant だけ）──
+    $('cbRevokeBtn').addEventListener('click', async () => {
+      if (cbSelected.size === 0) { cbMsg('取り消す対象を選択してください', 'err'); return; }
+      const types = [];
+      if (window.confirm('Light 永久無料を取り消しますか？\n（キャンセルすると Premium 無料期間だけを対象にします）')) {
+        types.push('light_lifetime');
+      }
+      if (window.confirm('Premium 無料期間を取り消しますか？')) types.push('premium_trial_30d');
+      if (types.length === 0) { cbMsg('取り消す特典が選択されていません', 'err'); return; }
+      const reason = window.prompt('取り消し理由（管理者メモ・任意）') || '';
+
+      const plan = await cbCall({
+        action: 'revokeDryRun', grantTypes: types, recordIds: [...cbSelected], reason,
+      });
+      if (!plan) return;
+
+      const body = cbOpenModal('取り消し内容の確認');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, '対象特典', (plan.grantLabels || []).join(' / '));
+      kvRow(dl, '選択', plan.selected + ' 名');
+      kvRow(dl, '取り消し', plan.willRevoke + ' 名', plan.willRevoke > 0 ? 'strong-ok' : 'muted');
+      kvRow(dl, '対象外', plan.skipped + ' 名');
+      sec.appendChild(dl);
+      const note = document.createElement('p'); note.className = 'note';
+      note.textContent = plan.notice || '';
+      sec.appendChild(note);
+      body.appendChild(sec);
+
+      if (plan.preview && plan.preview.length) {
+        const sec2 = document.createElement('div'); sec2.className = 'dt-sec';
+        const h2 = document.createElement('h3'); h2.textContent = '顧客ごとの変更'; sec2.appendChild(h2);
+        const ul = document.createElement('ul'); ul.className = 'exlist';
+        for (const p of plan.preview) {
+          const li = document.createElement('li');
+          li.textContent = p.email + '　' + p.before + ' → ' + p.after;
+          ul.appendChild(li);
+        }
+        sec2.appendChild(ul);
+        body.appendChild(sec2);
+      }
+
+      const sec3 = document.createElement('div'); sec3.className = 'dt-sec danger';
+      const ops = document.createElement('div'); ops.className = 'ops';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'b-blocked';
+      btn.textContent = plan.willRevoke + ' 名の特典を取り消す';
+      btn.disabled = !cbWriteEnabled || plan.willRevoke === 0;
+      btn.addEventListener('click', async () => {
+        if (btn.dataset.busy === '1') return;
+        if (!window.confirm('無料特典を取り消します。有料契約・三連複買い切りは変わりません。よろしいですか？')) return;
+        btn.dataset.busy = '1';
+        btn.disabled = true;
+        const out = await cbCall({
+          action: 'revoke', grantTypes: types, recordIds: [...cbSelected],
+          planFingerprint: plan.planFingerprint, reason,
+        });
+        btn.dataset.busy = '';
+        if (out) {
+          cbMsg('取り消しました: ' + out.revoked + ' 名', 'ok');
+          cbSelected.clear();
+          cbCloseModal();
+          await cbLoad();
+        } else {
+          btn.disabled = false;
+        }
+      });
+      ops.appendChild(btn);
+      sec3.appendChild(ops);
+      body.appendChild(sec3);
+    });
+
+    // ── 前回操作の突合（read-only）──
+    $('cbReconcileBtn').addEventListener('click', async () => {
+      const op = window.prompt('突合する操作 ID', cbLastOperationId || '') || '';
+      if (!op.trim()) return;
+      const data = await cbCall({
+        action: 'reconcile', operationId: op.trim(),
+        recordIds: cbSelected.size ? [...cbSelected] : undefined,
+      });
+      if (!data) return;
+      const body = cbOpenModal('前回操作の突合');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, '操作 ID', data.operationId);
+      kvRow(dl, '確認した顧客', data.total + ' 名');
+      kvRow(dl, '適用済み', data.applied + ' 名', 'strong-ok');
+      kvRow(dl, '未適用', data.missing + ' 名', data.missing > 0 ? 'ng-txt' : 'muted');
+      sec.appendChild(dl);
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = data.notice;
+      sec.appendChild(note);
+      body.appendChild(sec);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('cbBackdrop').hidden) cbCloseModal();
     });
   })();
 </script>
