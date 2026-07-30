@@ -134,8 +134,8 @@ export function renderReceiptCardHtml(card) {
         <div class="chrome"></div>
         <div class="r2"><span class="nav">◀</span><div class="c"><div class="d">${esc(jd.full)}</div>${receiptNo ? `<div class="n">受付番号：${esc(receiptNo)}</div>` : ''}</div><span class="nav">▶</span></div>
         <div class="hl"><div class="hlcard">
-          <div class="hlrow"><span>合計購入金額</span><span>${esc(jyen(stake))}</span></div>
-          <div class="hlrow back"><span>合計払戻金額</span><span>${esc(jyen(isHit ? payout : 0))}</span></div>
+          <div class="hlrow"><span>購入金額合計</span><span>${esc(jyen(stake))}</span></div>
+          <div class="hlrow back"><span>払戻金額合計</span><span>${esc(jyen(isHit ? payout : 0))}</span></div>
         </div></div>
         <div class="close">すべて閉じる<span class="acc">▲</span></div>
         <div class="vh">001）${esc(venue)}（${esc(jd.wd)}）${esc(raceNumber)}R 3連単フォーメーション
