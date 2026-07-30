@@ -18,14 +18,14 @@ export const prerender = true;
 //    JS で生成する行・バッジ・ボタンには **一切適用されない**（2026-07-30 に本番で発生）。
 import BaseLayout from '../../layouts/BaseLayout.astro';
 ---
-<BaseLayout title="Premium Plus 販売管理（管理）">
+<BaseLayout title="AK 顧客販売・マーケティング管理（管理）">
   <div class="ppe">
     <header class="ppe-head">
       <div class="ppe-head-l">
-        <h1>Premium Plus 販売対象</h1>
+        <h1>AK 顧客販売・マーケティング管理</h1>
         <p class="lead">
-          販売してよい会員を <b>管理者が手動で選別</b>します。候補は自動で「販売可」になりません。
-          変更されるのは <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
+          <b>Premium Plus 販売資格</b>と<b>マーケティング対象</b>は別概念です。
+          期限切れ会員はキャンペーンの対象にできますが、販売資格へは自動で入りません。
         </p>
       </div>
       <div class="ppe-head-r">
@@ -40,6 +40,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
       <p class="note" id="writeState"></p>
     </div>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab on" id="tabSales" role="tab" aria-selected="true">💠 Premium Plus 販売</button>
+      <button type="button" class="tab" id="tabMkt" role="tab" aria-selected="false">📣 顧客マーケティング</button>
+    </nav>
+
+    <!-- ═══ タブ1: Premium Plus 販売資格（既存の安全設計を維持）═══ -->
+    <section id="paneSales">
+    <p class="pane-lead">
+      販売してよい会員を <b>管理者が手動で選別</b>します。候補は自動で「販売可」になりません。
+      変更されるのは <b>Premium Plus の表示資格だけ</b>で、プラン・有効期限・メール・課金には影響しません。
+    </p>
 
     <div class="sumbar" id="summary"></div>
     <div class="sumsub" id="summarySub"></div>
@@ -87,6 +99,110 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <tbody id="rows"></tbody>
       </table>
       <p class="empty" id="empty" hidden></p>
+    </div>
+    </section>
+
+    <!-- ═══ タブ2: 顧客マーケティング（AK 独自機能 / KMA とは統合しない）═══ -->
+    <section id="paneMkt" hidden>
+      <p class="pane-lead">
+        契約状態を横断して顧客を選び、キャンペーンメールを送ります。
+        <b>この画面はプラン・有効期限・権限・Premium Plus 販売資格を一切変更しません。</b>
+        メールを送っても会員権限は復活しません。
+      </p>
+
+      <div class="sumbar" id="mkSummary"></div>
+      <div class="sumsub" id="mkSummarySub"></div>
+      <p class="note" id="mkSendState"></p>
+
+      <div class="toolbar">
+        <input type="search" id="mkQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <select id="mkContract" aria-label="契約状態">
+          <option value="all">契約状態: すべて</option>
+          <option value="active">有効</option>
+          <option value="expiring_soon">期限間近</option>
+          <option value="expired">期限切れ</option>
+          <option value="unknown">不明（legacy）</option>
+          <option value="none">契約なし（Free）</option>
+        </select>
+        <select id="mkPlan" aria-label="プラン">
+          <option value="all">プラン: すべて</option>
+          <option value="premium_sanrenpuku">Premium Sanrenpuku</option>
+          <option value="premium">Premium</option>
+          <option value="light">Light</option>
+          <option value="free">Free</option>
+        </select>
+        <select id="mkSendable" aria-label="マーケティング">
+          <option value="all">送信可否: すべて</option>
+          <option value="sendable">送信可能</option>
+          <option value="suppressed">送信除外</option>
+        </select>
+        <select id="mkPp" aria-label="Premium Plus 資格">
+          <option value="all">Plus 資格: すべて</option>
+          <option value="eligible">販売可</option>
+          <option value="review">保留</option>
+          <option value="blocked">販売対象外</option>
+          <option value="unset">未設定</option>
+        </select>
+        <select id="mkHistory" aria-label="送信履歴">
+          <option value="all">送信履歴: すべて</option>
+          <option value="never">未送信</option>
+          <option value="recent">最近送信済み</option>
+          <option value="sent">送信あり</option>
+        </select>
+        <button type="button" id="mkLoad" class="btn-primary">この条件で取得</button>
+      </div>
+
+      <div class="selbar">
+        <button type="button" id="mkSelAll" class="btn-ghost">表示中を全選択</button>
+        <button type="button" id="mkSelNone" class="btn-ghost">全解除</button>
+        <span class="selcount" id="mkSelCount">0 名を選択中</span>
+      </div>
+
+      <p class="msg" id="mkMessage"></p>
+      <p class="count" id="mkCount"></p>
+
+      <div class="tablewrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th class="c-chk"><span class="sr">選択</span></th>
+              <th class="c-cust">顧客</th>
+              <th class="c-contract">契約</th>
+              <th class="c-plan">プラン</th>
+              <th class="c-send">送信</th>
+              <th class="c-pp">Plus</th>
+              <th class="c-hist">送信履歴</th>
+            </tr>
+          </thead>
+          <tbody id="mkRows"></tbody>
+        </table>
+        <p class="empty" id="mkEmpty" hidden></p>
+      </div>
+
+      <div class="campaign-box">
+        <h2>キャンペーン</h2>
+        <div class="toolbar">
+          <select id="mkCampaign" aria-label="キャンペーン"></select>
+          <button type="button" id="mkPreview" class="btn-ghost">本文プレビュー</button>
+          <button type="button" id="mkDryRun" class="btn-primary">送信対象を確認（dry-run）</button>
+          <button type="button" id="mkHistoryBtn" class="btn-ghost">送信履歴</button>
+        </div>
+        <p class="camp-desc" id="mkCampDesc"></p>
+      </div>
+    </section>
+
+    <!-- マーケティング: 本文プレビュー / dry-run 確認 モーダル -->
+    <div id="mkBackdrop" class="dt-backdrop" hidden>
+      <aside class="dt-panel" role="dialog" aria-modal="true" aria-labelledby="mkModalTitle">
+        <div class="dt-head">
+          <div class="dt-head-l">
+            <button type="button" id="mkModalBack" class="btn-back">← 一覧へ戻る</button>
+            <h2 id="mkModalTitle">確認</h2>
+          </div>
+          <button type="button" id="mkModalClose" class="x" aria-label="閉じる">×</button>
+        </div>
+        <div id="mkModalBody" class="dt-body"></div>
+      </aside>
     </div>
 
     <!-- 詳細・操作パネル（write はここだけ） -->
@@ -251,6 +367,45 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .badge.immediate { background: linear-gradient(135deg, var(--gold), var(--gold-2)); color: #2a1d02; border: 1px solid rgba(245,196,81,.7); }
   .ppe .badge.blocked { background-color: #2a1416; color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
 
+  /* ── タブ（販売 / マーケティング）── */
+  .ppe .tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .9rem; border-bottom: 1px solid rgba(148,163,184,.18); }
+  .ppe .tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: #93a4bd;
+    font-size: .84rem; font-weight: 700; padding: .55rem .9rem; cursor: pointer; border-radius: 0; }
+  .ppe .tab:hover { color: #cbd5e6; }
+  .ppe .tab.on { color: #e6edf7; border-bottom-color: var(--gold); }
+  .ppe .pane-lead { font-size: .8rem; color: #93a4bd; line-height: 1.7; margin: 0 0 .9rem; }
+  .ppe .note.off { color: #f5c451; }
+  .ppe .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+  /* ── マーケティング: 選択バー ── */
+  .ppe .selbar { display: flex; align-items: center; gap: .5rem; margin: 0 0 .6rem; flex-wrap: wrap; }
+  .ppe .selcount { font-size: .78rem; font-weight: 700; color: #e6edf7; margin-left: auto; }
+  .ppe .tbl td.c-chk { width: 2.2rem; text-align: center; }
+  .ppe .tbl td.c-chk input { width: 16px; height: 16px; accent-color: #f5c451; cursor: pointer; }
+  .ppe .tbl td.c-chk input:disabled { cursor: not-allowed; opacity: .35; }
+  .ppe .tbl tbody tr.row-suppressed { opacity: .62; }
+  .ppe .em + .sub { display: block; font-size: .7rem; color: #6f819c; }
+  .ppe .contract { font-weight: 700; font-size: .76rem; }
+  .ppe .contract.active { color: #6ee7b7; }
+  .ppe .contract.expiring_soon { color: #f5c451; }
+  .ppe .contract.expired { color: #fca5a5; }
+  .ppe .contract.unknown { color: #93a4bd; }
+  .ppe .contract.none { color: #6f819c; }
+  .ppe .ok-txt { color: #6ee7b7; font-size: .74rem; }
+  .ppe .ng-txt { color: #fca5a5; font-size: .74rem; }
+  .ppe .strong-ok { color: #6ee7b7; font-weight: 800; }
+
+  /* ── キャンペーン操作 ── */
+  .ppe .campaign-box { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px;
+    padding: .85rem 1rem; margin-top: 1rem; }
+  .ppe .campaign-box h2 { font-size: .9rem; margin: 0 0 .6rem; color: #e6edf7; }
+  .ppe .camp-desc { font-size: .76rem; color: #93a4bd; line-height: 1.7; margin: .4rem 0 0; }
+  .ppe .exlist { margin: 0; padding-left: 1.1rem; font-size: .78rem; color: #cbd5e6; line-height: 1.9; }
+  .ppe .prev-subject { font-size: .86rem; font-weight: 700; color: #e6edf7; margin: 0; }
+  /* 実際のメール本文をそのまま出す枠。枠内の配色はメール側の HTML が決める
+     （管理 UI 側のダーク配色をここへ持ち込まない） */
+  .ppe .prev-frame { width: 100%; height: 22rem; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; }
+
   /* ── 候補区分（表示専用。販売資格ではないので badge とは別の弱い見た目にする）── */
   .ppe .kind { display: inline-block; font-size: .7rem; font-weight: 700; color: #93a4bd; white-space: nowrap; }
   .ppe .kind.waiting_30d { color: #cbd5e6; }
@@ -353,6 +508,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppe .tbl tbody td.c-ops::before { content: ''; }
     .ppe .tbl tbody td.c-eligible { display: none; }
     .ppe .tbl tbody td.c-updated { display: none; }
+    .ppe .tbl tbody td.c-chk::before { content: ''; }
+    .ppe .tbl tbody td.c-chk { width: 100%; text-align: left; margin-bottom: .3rem; }
+    .ppe .tab { flex: 1 1 auto; padding: .55rem .5rem; }
+    .ppe .selcount { margin-left: 0; width: 100%; }
+    .ppe .prev-frame { height: 60vh; }
     .ppe .tbl tbody td.c-cust { font-weight: 700; margin-bottom: .2rem; }
     .ppe .tbl td.c-cust { max-width: 100%; }
     .ppe .em { max-width: 100%; }
@@ -881,5 +1041,387 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('q').addEventListener('input', render);
     $('fState').addEventListener('change', render);
     $('fRoute').addEventListener('change', render);
+    $('fKind').addEventListener('change', render);
+
+    // ══════════════════════════════════════════════════════════════
+    //  顧客マーケティング（AK 独自 / KMA とは無関係）
+    //  この領域は Premium Plus の販売資格を一切変更しない。呼ぶ API も別。
+    // ══════════════════════════════════════════════════════════════
+    const MKT_API = '/.netlify/functions/admin-marketing';
+
+    function mkMsg(text, kind) {
+      const el = $('mkMessage');
+      el.textContent = text;
+      el.className = 'msg' + (kind ? ' ' + kind : '');
+    }
+
+    async function mkCall(payload) {
+      const secret = secretEl.value.trim();
+      if (!secret) { mkMsg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return null; }
+      const res = await fetch(MKT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // 503（送信無効）/ 409（対象変化）は理由をそのまま出す
+        mkMsg(data.error || ('エラー: ' + res.status), 'err');
+        return null;
+      }
+      return data;
+    }
+
+    let mkData = null;                 // 直近の customers 応答
+    let mkCampaigns = [];              // カタログ
+    let mkSendEnabled = false;         // live 送信が有効か（本番は既定 false）
+    const mkSelected = new Set();      // 選択中の recordId
+
+    // ── タブ切替 ──
+    function showTab(which) {
+      const sales = which === 'sales';
+      $('paneSales').hidden = !sales;
+      $('paneMkt').hidden = sales;
+      $('tabSales').classList.toggle('on', sales);
+      $('tabMkt').classList.toggle('on', !sales);
+      $('tabSales').setAttribute('aria-selected', String(sales));
+      $('tabMkt').setAttribute('aria-selected', String(!sales));
+      if (!sales && mkCampaigns.length === 0) mkLoadCampaigns();
+    }
+    $('tabSales').addEventListener('click', () => showTab('sales'));
+    $('tabMkt').addEventListener('click', () => showTab('mkt'));
+
+    // ── キャンペーンカタログ ──
+    async function mkLoadCampaigns() {
+      const data = await mkCall({ action: 'campaigns' });
+      if (!data) return;
+      mkCampaigns = data.campaigns || [];
+      mkSendEnabled = !!data.sendEnabled;
+      const sel = $('mkCampaign');
+      sel.innerHTML = '';
+      for (const c of mkCampaigns) {
+        const o = document.createElement('option');
+        o.value = c.campaignId;
+        o.textContent = c.name + '（v' + c.version + '）';
+        sel.appendChild(o);
+      }
+      renderCampDesc();
+      $('mkSendState').textContent = data.sendEnabled
+        ? (data.dispatchEnabled
+          ? '送信: 有効（送信基盤も有効。実際にメールが届きます）'
+          : '送信: キュー登録のみ有効（送信基盤 NEWSLETTER_AUTOMATION_ENABLED が無効のため実送信されません）')
+        : '送信: 無効（MARKETING_CAMPAIGN_ENABLED 未設定）。対象確認（dry-run）までは利用できます。';
+      $('mkSendState').className = 'note' + (data.sendEnabled ? '' : ' off');
+    }
+
+    function currentCampaign() {
+      const id = $('mkCampaign').value;
+      return mkCampaigns.find((c) => c.campaignId === id) || null;
+    }
+
+    function renderCampDesc() {
+      const c = currentCampaign();
+      const el = $('mkCampDesc');
+      if (!c) { el.textContent = ''; return; }
+      const rule = c.audienceRule || {};
+      const limits = [];
+      if (rule.contracts && rule.contracts.length) limits.push('契約状態: ' + rule.contracts.join(' / '));
+      if (rule.plans && rule.plans.length) limits.push('プラン: ' + rule.plans.join(' / '));
+      el.textContent = c.description
+        + (limits.length ? '　【対象条件】' + limits.join('・') + (rule.enforce ? '（条件外は自動で除外）' : '') : '');
+    }
+    $('mkCampaign').addEventListener('change', renderCampDesc);
+
+    // ── 顧客一覧 ──
+    async function mkLoad() {
+      mkMsg('読み込み中…');
+      const data = await mkCall({
+        action: 'customers',
+        contract: $('mkContract').value,
+        plan: $('mkPlan').value,
+        marketing: $('mkSendable').value,
+        premiumPlus: $('mkPp').value,
+        history: $('mkHistory').value,
+      });
+      if (!data) return;
+      mkData = data;
+      mkSendEnabled = !!data.sendEnabled;
+      mkMsg('');
+      mkRender();
+    }
+
+    const CONTRACT_LABEL = {
+      active: '有効', expiring_soon: '期限間近', expired: '期限切れ',
+      unknown: '不明', none: '契約なし',
+    };
+    const PLAN_LABEL = {
+      premium_sanrenpuku: '三連複', premium: 'Premium', light: 'Light', free: 'Free',
+    };
+
+    function mkVisibleRows() {
+      const q = $('mkQ').value.trim().toLowerCase();
+      return (mkData?.rows || []).filter((r) => !q || String(r.email || '').toLowerCase().includes(q));
+    }
+
+    function mkRender() {
+      if (!mkData) return;
+      const seg = mkData.segments || {};
+      const bar = $('mkSummary');
+      bar.innerHTML = '';
+      const items = [
+        ['有効', seg.contract?.active || 0],
+        ['期限間近', seg.contract?.expiring_soon || 0],
+        ['期限切れ', seg.contract?.expired || 0],
+        ['不明', seg.contract?.unknown || 0],
+        ['Free', seg.contract?.none || 0],
+        ['送信除外', seg.marketing?.suppressed || 0],
+      ];
+      items.forEach((it, i) => {
+        if (i > 0) { const sp = document.createElement('span'); sp.className = 'sep'; sp.textContent = '|'; bar.appendChild(sp); }
+        const b = document.createElement('span');
+        b.className = 's';
+        const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = it[0];
+        const vv = document.createElement('span'); vv.className = 'v'; vv.textContent = String(it[1]);
+        b.appendChild(kk); b.appendChild(vv);
+        bar.appendChild(b);
+      });
+      const sup = seg.suppression || {};
+      $('mkSummarySub').textContent =
+        '全顧客 ' + (mkData.totalCustomers || 0) + ' 名　/　除外内訳: '
+        + ['unsubscribed', 'blacklist', 'withdrawn', 'no_email', 'suspended', 'test_account']
+          .map((k) => (mkData.labels?.suppression?.[k] || k) + ' ' + (sup[k] || 0)).join('・');
+
+      const rows = mkVisibleRows();
+      const tb = $('mkRows');
+      tb.innerHTML = '';
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        if (!r.sendable) tr.className = 'row-suppressed';
+
+        const c0 = document.createElement('td');
+        c0.className = 'c-chk';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = mkSelected.has(r.recordId);
+        cb.disabled = !r.sendable; // 送信できない相手は選べない（fail closed）
+        cb.setAttribute('aria-label', '選択');
+        cb.addEventListener('change', () => {
+          if (cb.checked) mkSelected.add(r.recordId); else mkSelected.delete(r.recordId);
+          mkRenderSelCount();
+        });
+        c0.appendChild(cb);
+        tr.appendChild(c0);
+
+        const c1 = td('c-cust', '', undefined);
+        const em = document.createElement('span');
+        em.className = 'em';
+        em.textContent = r.email || '(メール未設定)';
+        c1.appendChild(em);
+        if (r.name) { const nm = document.createElement('span'); nm.className = 'sub'; nm.textContent = r.name; c1.appendChild(nm); }
+        tr.appendChild(c1);
+
+        const cCon = td('c-contract', '契約', CONTRACT_LABEL[r.contract] || r.contract);
+        cCon.firstChild.className = 'contract ' + r.contract;
+        if (r.daysToExpiry != null) cCon.firstChild.title = '期限まで ' + r.daysToExpiry + ' 日';
+        tr.appendChild(cCon);
+
+        tr.appendChild(td('c-plan', 'プラン', PLAN_LABEL[r.planGroup] || r.planGroup));
+
+        const sendText = r.sendable
+          ? '送信可能'
+          : '除外: ' + r.suppressionReasons.map((x) => (mkData.labels?.suppression?.[x] || x)).join('・');
+        tr.appendChild(td('c-send', '送信', sendText, r.sendable ? 'ok-txt' : 'ng-txt'));
+
+        tr.appendChild(td('c-pp', 'Plus', r.premiumPlusEligibility || '未設定',
+          r.premiumPlusEligibility ? '' : 'muted'));
+
+        tr.appendChild(td('c-hist', '送信履歴',
+          r.sentCount ? (r.sentCount + ' 回 / ' + fmtDate(r.lastSentAt)) : '—',
+          r.sentCount ? '' : 'muted'));
+
+        tb.appendChild(tr);
+      }
+
+      $('mkCount').textContent = '表示 ' + rows.length + ' 件 / 条件一致 ' + (mkData.matchedCount || 0) + ' 件'
+        + (mkData.truncated ? '（上限を超えたため一部のみ表示）' : '');
+      const emp = $('mkEmpty');
+      emp.hidden = rows.length > 0;
+      emp.textContent = '条件に一致する顧客はいません。';
+      if (mkData.truncated) mkMsg('条件一致が多いため一部のみ表示しています。条件を絞ってください。', 'err');
+      mkRenderSelCount();
+    }
+
+    function mkRenderSelCount() {
+      $('mkSelCount').textContent = mkSelected.size + ' 名を選択中';
+    }
+
+    $('mkLoad').addEventListener('click', mkLoad);
+    $('mkQ').addEventListener('input', mkRender);
+    $('mkSelAll').addEventListener('click', () => {
+      for (const r of mkVisibleRows()) if (r.sendable) mkSelected.add(r.recordId);
+      mkRender();
+    });
+    $('mkSelNone').addEventListener('click', () => { mkSelected.clear(); mkRender(); });
+
+    // ── モーダル（プレビュー / dry-run 確認）──
+    function mkOpenModal(title) {
+      $('mkModalTitle').textContent = title;
+      $('mkBackdrop').hidden = false;
+      lockScroll();
+      $('mkModalBody').innerHTML = '';
+      return $('mkModalBody');
+    }
+    function mkCloseModal() {
+      $('mkBackdrop').hidden = true;
+      if ($('dtBackdrop').hidden && $('pvBackdrop').hidden) unlockScroll();
+    }
+    $('mkModalClose').addEventListener('click', mkCloseModal);
+    $('mkModalBack').addEventListener('click', mkCloseModal);
+    $('mkBackdrop').addEventListener('click', (e) => { if (e.target === $('mkBackdrop')) mkCloseModal(); });
+
+    // ── 本文プレビュー ──
+    $('mkPreview').addEventListener('click', async () => {
+      const c = currentCampaign();
+      if (!c) { mkMsg('キャンペーンを選択してください', 'err'); return; }
+      const data = await mkCall({ action: 'preview', campaignId: c.campaignId, sampleName: '山田' });
+      if (!data) return;
+      const body = mkOpenModal('本文プレビュー');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const h = document.createElement('h3'); h.textContent = '件名'; sec.appendChild(h);
+      const sub = document.createElement('p'); sub.className = 'prev-subject'; sub.textContent = data.subject;
+      sec.appendChild(sub);
+      body.appendChild(sec);
+
+      const sec2 = document.createElement('div'); sec2.className = 'dt-sec';
+      const h2 = document.createElement('h3'); h2.textContent = '本文'; sec2.appendChild(h2);
+      const frame = document.createElement('iframe');
+      frame.className = 'prev-frame';
+      frame.setAttribute('sandbox', ''); // スクリプト実行なし
+      // 実際の受信環境に近い白地でメール本文だけを表示する（管理 UI の配色を混ぜない）
+      frame.srcdoc = '<body style="margin:0;background:#fff;">' + data.html + '</body>';
+      sec2.appendChild(frame);
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = data.notice;
+      sec2.appendChild(note);
+      body.appendChild(sec2);
+    });
+
+    // ── dry-run → 最終確認 → 送信 ──
+    $('mkDryRun').addEventListener('click', async () => {
+      const c = currentCampaign();
+      if (!c) { mkMsg('キャンペーンを選択してください', 'err'); return; }
+      if (mkSelected.size === 0) { mkMsg('送信対象を選択してください', 'err'); return; }
+      mkMsg('対象を確認中…');
+      const plan = await mkCall({
+        action: 'dryRun', campaignId: c.campaignId, recordIds: [...mkSelected],
+      });
+      if (!plan) return;
+      mkMsg('');
+      mkRenderConfirm(c, plan);
+    });
+
+    function mkRenderConfirm(campaign, plan) {
+      const body = mkOpenModal('送信内容の確認');
+
+      const head = document.createElement('div'); head.className = 'dt-sec';
+      const h = document.createElement('h3'); h.textContent = campaign.name + ' v' + campaign.version;
+      head.appendChild(h);
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, '件名', plan.subject);
+      kvRow(dl, '選択', plan.selected + ' 名');
+      kvRow(dl, '除外', plan.excluded + ' 名');
+      kvRow(dl, '実送信', plan.willSend + ' 名', plan.willSend > 0 ? 'strong-ok' : 'muted');
+      head.appendChild(dl);
+      body.appendChild(head);
+
+      if (plan.excludedDetail && plan.excludedDetail.length) {
+        const sec = document.createElement('div'); sec.className = 'dt-sec';
+        const h2 = document.createElement('h3'); h2.textContent = '除外の内訳'; sec.appendChild(h2);
+        const ul = document.createElement('ul'); ul.className = 'exlist';
+        for (const e of plan.excludedDetail) {
+          const li = document.createElement('li');
+          li.textContent = e.label + '　' + e.count + ' 名';
+          ul.appendChild(li);
+        }
+        sec.appendChild(ul);
+        body.appendChild(sec);
+      }
+
+      const sec3 = document.createElement('div'); sec3.className = 'dt-sec danger';
+      const h3 = document.createElement('h3'); h3.textContent = '送信'; sec3.appendChild(h3);
+      const state = document.createElement('p'); state.className = 'note';
+      state.textContent = plan.sendEnabled
+        ? (plan.dispatchEnabled
+          ? '送信基盤は有効です。実行すると実際にメールが配信されます。'
+          : '実行するとキューに登録されますが、送信基盤が無効なため実送信はされません。')
+        : '送信は無効（MARKETING_CAMPAIGN_ENABLED 未設定）です。実行できません。';
+      sec3.appendChild(state);
+
+      const ops = document.createElement('div'); ops.className = 'ops';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'b-immediate';
+      btn.textContent = plan.willSend + ' 名へ送信する';
+      btn.disabled = !plan.sendEnabled || plan.willSend === 0;
+      btn.addEventListener('click', async () => {
+        if (btn.dataset.busy === '1') return;      // 二重クリック防止
+        const ok = window.confirm(
+          campaign.name + ' v' + campaign.version + '\n\n'
+          + '送信対象: ' + plan.selected + ' 名\n'
+          + '除外: ' + plan.excluded + ' 名\n'
+          + '実送信: ' + plan.willSend + ' 名\n\n'
+          + 'この内容で送信しますか？'
+        );
+        if (!ok) return;
+        btn.dataset.busy = '1';
+        btn.disabled = true;
+        btn.textContent = '送信登録中…';
+        const out = await mkCall({
+          action: 'send',
+          campaignId: campaign.campaignId,
+          recordIds: [...mkSelected],
+          planFingerprint: plan.planFingerprint,   // 対象が変わっていたら Function 側が中止する
+        });
+        btn.dataset.busy = '';
+        if (out) {
+          mkMsg(out.notice || ('登録しました: ' + out.queued + ' 名'), 'ok');
+          mkSelected.clear();
+          mkCloseModal();
+          await mkLoad();
+        } else {
+          btn.textContent = '再試行';
+          btn.disabled = false;
+        }
+      });
+      ops.appendChild(btn);
+      sec3.appendChild(ops);
+      body.appendChild(sec3);
+    }
+
+    // ── 送信履歴 ──
+    $('mkHistoryBtn').addEventListener('click', async () => {
+      const data = await mkCall({ action: 'history' });
+      if (!data) return;
+      const body = mkOpenModal('キャンペーン送信履歴');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      if (!data.runs.length) {
+        sec.textContent = '送信履歴はまだありません。';
+      } else {
+        const ul = document.createElement('ul'); ul.className = 'exlist';
+        for (const r of data.runs) {
+          const li = document.createElement('li');
+          li.textContent = r.campaignType + '　登録 ' + r.queued + ' / 処理済 ' + r.sent
+            + ' / 失敗 ' + r.failed + ' / スキップ ' + r.skipped + '　' + fmtDate(r.lastAt);
+          ul.appendChild(li);
+        }
+        sec.appendChild(ul);
+      }
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = data.notice;
+      sec.appendChild(note);
+      body.appendChild(sec);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('mkBackdrop').hidden) mkCloseModal();
+    });
   })();
 </script>

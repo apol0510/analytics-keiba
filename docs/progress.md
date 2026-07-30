@@ -17,8 +17,19 @@
 
 ## Current Phase
 
-**Phase（2026-07-22 現在）: 入金確認メール v2 は cutover 完了・gate=v2-full で本番稼働中。
-次 Phase 候補は Event Webhook（S9・別 Phase・未着手）**
+**Phase（2026-07-30 現在）: AK 顧客販売・マーケティング管理 Draft 実装。
+実送信は未有効（env 未設定・fail closed）で、production 操作は未実施。**
+
+- ブランチ `fix/premium-plus-admin-review-candidates`（`origin/main` = `ba0dbc4` から分岐）。
+  **未 deploy**。production への push / deploy / env 変更 / Customers write / 実送信は**すべて未実施**。
+- 2 段階で進めた:
+  1. Premium Plus 管理画面の**表示漏れ修正**（`a39fc1a`）— 公開条件と管理画面の表示条件を分離
+  2. **顧客マーケティング管理の Draft 実装** — 契約状態を横断した顧客選択・キャンペーン・
+     preview・dry-run・送信キュー登録まで（実送信は env で閉じたまま）
+- 次の判断は「実送信を有効にするか」。有効化には §Blockers の承認が必要。
+
+> 前 Phase（2026-07-22 時点）: 入金確認メール v2 は cutover 完了・gate=v2-full で本番稼働中。
+> 次 Phase 候補は Event Webhook（S9・別 Phase・未着手）。この状態は現在も継続。
 
 - 入金確認メール v2 は 2026-07-21 に D1 cutover 完了。2026-07-22 に実顧客 1 件の本番通過と、
   PAT / secret ローテーション後のカナリア再検証を完了（詳細は §In Progress の日付別記録）。
@@ -51,6 +62,44 @@
 ## In Progress
 
 > 以下はいずれも **観測時点（各見出しの日付）のスナップショット**であり、恒久仕様ではない。作業前に必ず現物を再確認すること。
+
+### 2026-07-30: Premium Plus 管理画面の表示漏れ修正 → 顧客マーケティング管理 Draft
+
+**ブランチ**: `fix/premium-plus-admin-review-candidates`（`origin/main` = `ba0dbc4` から分岐・未 deploy）
+
+#### 1. 表示漏れの原因と修正（`a39fc1a`）
+
+- **事象**: Airtable ビューでは `PremiumPlusEligibility` 未設定の通常 Premium 会員が 11 名見えるのに、
+  管理画面 `/admin/premium-plus-eligibility/` の候補は 3 名だけだった。
+- **原因**: list API が顧客向け公開判定 `resolvePremiumPlusRelease()` の `route === none` を
+  **そのまま一覧の表示条件に流用**していた。ROUTE B は `PaidAt` を必須とするが、`PaidAt` は
+  2026-07-10 の入金確認フロー刷新（`126b6a7`）以降しか書かれず、実測 **13/1441 件**しか埋まっていない。
+- **read-only 実測（2026-07-30 / PII 非出力）**:
+  - 11 名の内訳: `PaidAt` あり 30 日未満 **7 名** / `PaidAt` 空の旧会員 **4 名**
+  - 三連複なしの有効 Premium で `PaidAt ≥ 30 日` は **全 1441 件中 0 件**
+    （＝ **ROUTE B は本番で一度も成立していない**）
+  - `SanrenpukuPaidAt` も **0/1441 件**
+- **修正**: 表示条件を専用の単一源 `premiumPlusAdminAudience.js` へ分離。
+  一覧 3 行 → 14 行（+11、ビューと一致）。新規表示分が顧客側へ公開された件数は **0**。
+
+#### 2. 顧客マーケティング管理 Draft（本セッション）
+
+- `/admin/premium-plus-eligibility/` をタブ化し「顧客マーケティング」を追加（AK 独自・**KMA と非統合**）
+- 追加: `src/lib/marketing/{customerMarketingAudience,campaignCatalog,campaignSend}.js` /
+  `netlify/functions/admin-marketing.js` / `astro-site/docs/CUSTOMER_MARKETING.md`
+- 期限切れ・Free・Light・legacy(`unknown`) を横断して segment 表示し、checkbox で複数選択 →
+  キャンペーン選択 → preview → dry-run（対象・除外理由・件数の確定）→ 最終確認 → 送信
+- 送信は **ScheduledEmails(PENDING) + CampaignDeliveries(queued) を作るだけ**。
+  SendGrid を直接呼ぶコードを持たない（guard テストで固定）
+- **Airtable schema 変更なし**（既存 `CampaignDeliveries` の `EmailType='campaign'` を使用）
+- 実送信は `MARKETING_CAMPAIGN_ENABLED`（未設定 = 503）と
+  `NEWSLETTER_AUTOMATION_ENABLED`（production = `false`）の二重 gate で閉じたまま
+
+#### 実施していない操作（重要）
+
+production deploy / push / env 変更 / Airtable schema 変更 / Customers write /
+campaign history write / 実メール送信 / 通知 / 権限変更 / PR merge / force push — **すべて未実施**。
+Airtable への通信は **GET のみ**。
 > **本節の各記録は時系列で追記されており、後の日付の記録が前の記録を上書きする。**
 > 特に「cutover 未実施」「カナリア未送信」等の記述は **2026-07-20〜21 時点のもの**で、
 > **2026-07-21 の §D1 cutover 完了（v2-full 稼働）以降は該当しない**。現在地は §Current Phase を参照。
@@ -405,6 +454,23 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
   S9 実装自体はブロックされない。
 - 併せて、本番メール送信・本番 Airtable 書込み・production deploy・env 変更は引き続き
   **ユーザーの明示承認なしに実行しない**（`CLAUDE.md` §High-risk approval boundary）。
+
+### 顧客マーケティングの実送信有効化（2026-07-30 / 未承認）
+
+Draft 実装は完了しているが、実送信は次の承認と操作が揃うまで**構造的に不可能**。順序を守ること。
+
+1. キャンペーン本文・件名・CTA の最終確認（`src/lib/marketing/campaignCatalog.js`）
+2. **production deploy**（現状ブランチは未 push・未 deploy）
+3. `MARKETING_CAMPAIGN_ENABLED=true` を Netlify production へ設定（キュー登録の解禁）
+4. 専用テスト受信者だけで dry-run → 送信し、`ScheduledEmails` / `CampaignDeliveries` を目視確認
+5. `NEWSLETTER_AUTOMATION_ENABLED=true`（**送信基盤の解禁。他のメール経路にも影響する**）
+
+3 と 5 は独立した env で、どちらか片方だけでは実送信されない。
+rollback は `MARKETING_CAMPAIGN_ENABLED` の unset（コード変更不要）。
+
+- **`SanrenpukuPaidAt` / `PaidAt` が空な会員の扱いは未決**。Premium Plus の販売対象にするには
+  Airtable の `PaidAt` を実際の入金確認日で補正する（Customers write）必要があり、未承認。
+  **推測で日付を作らない**方針は維持する。
 
 ## Open Questions
 
