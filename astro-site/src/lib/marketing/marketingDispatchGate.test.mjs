@@ -118,7 +118,7 @@ test('キュー登録ゲートと送信ゲートは別物（片方だけでは�
 });
 
 // ── 送信直前の再検証 ──────────────────────────────────────────
-const OK_SETS = { providerSuppressed: new Set(), blocked: new Set(), unsubscribed: new Set(), withdrawn: new Set() };
+const OK_SETS = { providerSuppressed: new Set(), blocked: new Set(), unsubscribed: new Set(), suspended: new Set() };
 
 test('通常の宛先は送信される', () => {
   const v = verifyBeforeSend({ email: 'a@example.com', ...OK_SETS });
@@ -134,12 +134,12 @@ test('【fail closed】provider suppression を確認できないときは 1 通
   }
 });
 
-test('キュー登録後に発生した配信停止・バウンス・退会を送信直前に捕まえる', () => {
+test('キュー登録後に発生した配信停止・バウンス・停止を送信直前に捕まえる', () => {
   const cases = [
     [{ providerSuppressed: new Set(['a@example.com']) }, 'provider_suppressed', 'skipped-blacklist'],
     [{ blocked: new Set(['a@example.com']) }, 'blacklist', 'skipped-blacklist'],
     [{ unsubscribed: new Set(['a@example.com']) }, 'unsubscribed', 'skipped-unsubscribed'],
-    [{ withdrawn: new Set(['a@example.com']) }, 'withdrawn', 'skipped-unsubscribed'],
+    [{ suspended: new Set(['a@example.com']) }, 'suspended', 'skipped-unsubscribed'],
   ];
   for (const [over, reason, status] of cases) {
     const v = verifyBeforeSend({ email: 'a@example.com', ...OK_SETS, ...over });

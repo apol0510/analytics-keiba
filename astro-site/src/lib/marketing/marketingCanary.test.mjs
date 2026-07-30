@@ -167,7 +167,6 @@ test('blacklist(hard/soft) / 配信停止 / 退会 / 停止 / test / 不正メ�
   const cases = [
     ['blacklist(hard)', {}, { blacklistEmails: new Set([TEST_ADDR]) }, 'blacklist'],
     ['配信停止', { UnsubscribedAnalyticsKeiba: true }, {}, 'unsubscribed'],
-    ['退会', { WithdrawalRequested: true }, {}, 'withdrawn'],
     ['停止', { Status: 'suspended' }, {}, 'suspended'],
     ['test アカウント', { Status: 'test' }, {}, 'test_account'],
   ];
@@ -182,6 +181,13 @@ test('blacklist(hard/soft) / 配信停止 / 退会 / 停止 / test / 不正メ�
   // 不正メール（env にも同じ値を入れて、除外が email 形式で起きることを確認）
   const bad = plan([customer('r1', 'not-an-email')], 'not-an-email');
   assert.equal(bad.counts.recipients, 0);
+});
+
+test('カナリアでも退会（課金停止）は除外しない', () => {
+  for (const over of [{ Status: 'withdrawn' }, { WithdrawalRequested: true }]) {
+    const p = plan([customer('r1', TEST_ADDR, over)]);
+    assert.equal(p.counts.recipients, 1, `退会 ${JSON.stringify(over)} で送信対象から外れている`);
+  }
 });
 
 test('24 時間以内に送信済みなら送らない（テスト用でも頻度ガードを効かせる）', () => {

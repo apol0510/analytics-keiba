@@ -170,7 +170,13 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
 
   const customers = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
   const unsubscribed = new Set();
-  const withdrawn = new Set();
+  /**
+   * AK 側が意図的に止めたアカウント（suspended / banned 等）。
+   * ⚠️ **退会（withdrawn / WithdrawalRequested）は含めない**。退会は課金停止の契約状態であって
+   *    メール拒否ではない（退会受付メールでも「メルマガは引き続き配信されます」と案内している）。
+   *    メールを止める意思表示は `UnsubscribedAnalyticsKeiba` と provider suppression が担う。
+   */
+  const suspended = new Set();
   /** 送信直前にキャンペーン固有条件を再判定するための email → fields */
   const fieldsByEmail = new Map();
   for (const r of customers) {
@@ -180,7 +186,7 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     fieldsByEmail.set(e, f);
     if (f.UnsubscribedAnalyticsKeiba === true) unsubscribed.add(e);
     const status = String(f.Status || '').trim().toLowerCase();
-    if (f.WithdrawalRequested === true || status === 'withdrawn' || status === 'cancelled') withdrawn.add(e);
+    if (['suspended', 'inactive', 'banned', 'disabled'].includes(status)) suspended.add(e);
   }
 
   // env 由来の値（テスト受信者ホワイトリスト）。判定モジュールは純粋なのでここで読む。
@@ -209,7 +215,7 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     const toSkip = [];
     for (const email of recipients.slice(0, MAX_PER_RUN)) {
       const v = verifyBeforeSend({
-        email, providerSuppressed: provider.emails, blocked, unsubscribed, withdrawn,
+        email, providerSuppressed: provider.emails, blocked, unsubscribed, suspended,
         recentContactAtMs, nowMs: now,
       });
       // キャンペーン固有条件（カナリアのテスト受信者・Premium Plus の PHASE 等）の再確認。

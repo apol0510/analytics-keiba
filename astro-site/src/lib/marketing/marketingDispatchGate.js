@@ -110,7 +110,7 @@ export function canSharedExecutorSend(fields) {
  *   providerSuppressed: Set<string>|null,  null = 確認できなかった → 送らない
  *   blocked?: Set<string>,                 AK EmailBlacklist（HARD/SOFT 両方）
  *   unsubscribed?: Set<string>,
- *   withdrawn?: Set<string>,
+ *   suspended?: Set<string>,   AK 側が意図的に止めたアカウント（**退会は含めない**）
  *   recentContactAtMs?: Map<string, number>|null,  他キャンペーンの最終送信日時
  *   nowMs?: number,
  * }} input
@@ -118,7 +118,7 @@ export function canSharedExecutorSend(fields) {
  *   status は CampaignDeliveries.Status に入れる値（skipped-* / queued）
  */
 export function verifyBeforeSend({
-  email, providerSuppressed, blocked, unsubscribed, withdrawn, recentContactAtMs, nowMs,
+  email, providerSuppressed, blocked, unsubscribed, suspended, recentContactAtMs, nowMs,
 }) {
   const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
   if (!e) return { send: false, status: 'skipped-duplicate', reason: 'no_email' };
@@ -130,7 +130,8 @@ export function verifyBeforeSend({
   if (providerSuppressed.has(e)) return { send: false, status: 'skipped-blacklist', reason: 'provider_suppressed' };
   if (blocked instanceof Set && blocked.has(e)) return { send: false, status: 'skipped-blacklist', reason: 'blacklist' };
   if (unsubscribed instanceof Set && unsubscribed.has(e)) return { send: false, status: 'skipped-unsubscribed', reason: 'unsubscribed' };
-  if (withdrawn instanceof Set && withdrawn.has(e)) return { send: false, status: 'skipped-unsubscribed', reason: 'withdrawn' };
+  // ⚠️ 退会（withdrawn）はここで止めない。課金停止の契約状態であってメール拒否ではない。
+  if (suspended instanceof Set && suspended.has(e)) return { send: false, status: 'skipped-unsubscribed', reason: 'suspended' };
 
   if (recentContactAtMs instanceof Map) {
     const last = recentContactAtMs.get(e);
