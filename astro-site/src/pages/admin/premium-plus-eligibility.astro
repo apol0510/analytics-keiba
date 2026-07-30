@@ -58,6 +58,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="sanrenpuku">ROUTE A（三連複）</option>
         <option value="premium_30d">ROUTE B（Premium 30日）</option>
       </select>
+      <select id="fKind" aria-label="候補区分で絞り込み">
+        <option value="all">すべての区分</option>
+        <option value="waiting_30d">ROUTE B 待機中</option>
+        <option value="anchor_missing">加入日データなし</option>
+      </select>
       <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
     </div>
 
@@ -72,6 +77,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <th class="c-state">状態</th>
             <th class="c-plan">プラン</th>
             <th class="c-route">Route</th>
+            <th class="c-kind">区分</th>
             <th class="c-phase">PHASE</th>
             <th class="c-eligible">販売許可日</th>
             <th class="c-updated">最終更新</th>
@@ -245,6 +251,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .badge.immediate { background: linear-gradient(135deg, var(--gold), var(--gold-2)); color: #2a1d02; border: 1px solid rgba(245,196,81,.7); }
   .ppe .badge.blocked { background-color: #2a1416; color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
 
+  /* ── 候補区分（表示専用。販売資格ではないので badge とは別の弱い見た目にする）── */
+  .ppe .kind { display: inline-block; font-size: .7rem; font-weight: 700; color: #93a4bd; white-space: nowrap; }
+  .ppe .kind.waiting_30d { color: #cbd5e6; }
+  .ppe .kind.anchor_missing { color: #f5c451; }
+  .ppe .blocker { margin: .6rem 0 0; padding: .5rem .7rem; border-radius: 6px; font-size: .76rem; line-height: 1.5;
+    background: rgba(245,196,81,.08); border-left: 3px solid rgba(245,196,81,.55); color: #f0d9a0; }
+
   /* ── 詳細・操作パネル ──
      z-index はサイト共通ヘッダ（position: fixed / z-index: 1000）より上。
      下だとパネル上部（タイトル・閉じる×）がヘッダに隠れ、閉じられなくなる（2026-07-30 本番で発生）。 */
@@ -407,6 +420,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
     const ROUTE_SHORT = { sanrenpuku: 'A', premium_30d: 'B', none: '—' };
     const ROUTE_LABEL = { sanrenpuku: 'A（三連複）', premium_30d: 'B（Premium 30日）', none: '対象外' };
+
+    // 候補区分（表示専用。販売資格ではない）。Function 側 premiumPlusAdminAudience.js の PP_CANDIDATE と対応。
+    const KIND_SHORT = {
+      route_a: 'A 成立', route_b: 'B 成立',
+      waiting_30d: '待機中', anchor_missing: '加入日なし',
+      explicit: '設定済み', none: '—',
+    };
+    function kindShort(r) {
+      const k = r.candidateKind || 'none';
+      if (k === 'waiting_30d' && r.daysUntilRouteB != null) return '待機中 あと' + r.daysUntilRouteB + '日';
+      return KIND_SHORT[k] || k;
+    }
     const fmtDate = (v) => (v ? String(v).slice(0, 10) : '—');
 
     let lastData = null;
@@ -420,6 +445,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (fs === 'blocked' && st !== 'blocked') return false;
       const fr = $('fRoute').value;
       if (fr !== 'all' && r.route !== fr) return false;
+      const fk = $('fKind').value;
+      if (fk !== 'all' && r.candidateKind !== fk) return false;
       const q = $('q').value.trim().toLowerCase();
       if (q && !String(r.email || '').toLowerCase().includes(q)) return false;
       return true;
@@ -460,7 +487,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         bar.appendChild(b);
       });
       $('summarySub').textContent = 'ROUTE A（三連複） ' + (c.routeA == null ? 0 : c.routeA)
-        + '　/　ROUTE B（Premium 30日） ' + (c.routeB == null ? 0 : c.routeB);
+        + '　/　ROUTE B（Premium 30日） ' + (c.routeB == null ? 0 : c.routeB)
+        + '　/　ROUTE B 待機中 ' + (c.waiting30d == null ? 0 : c.waiting30d)
+        + '　/　加入日データなし ' + (c.anchorMissing == null ? 0 : c.anchorMissing);
     }
 
     // ── 一覧（テーブル。write ボタンは置かない）──
@@ -512,6 +541,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
         tr.appendChild(td('c-plan', 'プラン', r.plan || '—', r.plan ? '' : 'muted'));
         tr.appendChild(td('c-route', 'Route', ROUTE_SHORT[r.route] || r.route));
+
+        // 区分（表示専用。route 未成立でレビュー対象に出している理由を明示する）
+        const cK = document.createElement('td');
+        cK.className = 'c-kind';
+        cK.setAttribute('data-label', '区分');
+        const kb = document.createElement('span');
+        kb.className = 'kind ' + (r.candidateKind || '');
+        kb.textContent = kindShort(r);
+        if (r.candidateNote) kb.title = r.candidateNote;
+        cK.appendChild(kb);
+        tr.appendChild(cK);
         tr.appendChild(td('c-phase', 'PHASE', String(r.phase)));
         tr.appendChild(td('c-eligible', '販売許可日', fmtDate(r.eligibleAt), r.eligibleAt ? '' : 'muted'));
         tr.appendChild(td('c-updated', '最終更新', fmtDate(r.updatedAt), r.updatedAt ? '' : 'muted'));
@@ -571,11 +611,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       kvRow(dl, 'プラン', r.plan || '—');
       kvRow(dl, '三連複', r.hasSanrenpuku ? 'あり' : 'なし');
       kvRow(dl, 'Route', ROUTE_LABEL[r.route] || r.route);
+      kvRow(dl, '候補区分', r.candidateLabel || '—');
       kvRow(dl, 'PHASE', String(r.phase));
-      kvRow(dl, 'Premium経過', r.daysSincePremium == null ? '—' : r.daysSincePremium + ' 日');
+      kvRow(dl, 'Premium経過', r.daysSincePremium == null ? '加入日（PaidAt）未記録' : r.daysSincePremium + ' 日',
+        r.daysSincePremium == null ? 'muted' : '');
       kvRow(dl, '販売許可日', fmtDate(r.eligibleAt));
       kvRow(dl, '最終更新', fmtDate(r.updatedAt));
       info.appendChild(dl);
+      // 一覧に出しても顧客側に出ない相手は、操作前にその理由を出す（空振りの操作をさせない）
+      if (r.releaseBlockedBy && r.candidateNote) {
+        const warn = document.createElement('p');
+        warn.className = 'blocker';
+        warn.textContent = '⚠️ ' + r.candidateNote;
+        info.appendChild(warn);
+      }
       if (r.reason) {
         const memo = document.createElement('div'); memo.className = 'memo-view';
         memo.textContent = '内部メモ: ' + r.reason;

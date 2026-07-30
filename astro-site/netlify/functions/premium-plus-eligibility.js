@@ -2,7 +2,10 @@
  * Premium Plus 販売対象の管理（管理画面専用）
  *
  * `/admin/premium-plus-eligibility` から呼ぶ。
- *   action='list'   … Plus 販売候補（ROUTE A / ROUTE B）を一覧で返す
+ *   action='list'   … Plus 販売候補を一覧で返す。**表示条件は公開条件と別**（premiumPlusAdminAudience.js）。
+ *                     ROUTE A / ROUTE B に加え、有効 Premium 会員で加入日（PaidAt）が無い旧会員・
+ *                     加入 30 日未満の会員も「管理者レビュー候補」として返す。
+ *                     一覧に出すこと自体は販売資格を一切与えない（eligibility は未設定のまま = 保留）。
  *   action='update' … 1 会員の販売資格を変更する。plusAction は次の 4 つ:
  *                     staged（段階公開で販売可）/ immediate（今すぐ販売可）/
  *                     review（保留）/ blocked（販売対象外）
@@ -43,6 +46,10 @@ import {
   isReleaseOverrideEnabled,
   PP_ADMIN_ACTION,
 } from '../../src/lib/premiumPlus/premiumPlusEligibility.js';
+import {
+  resolveAdminCandidate,
+  PP_CANDIDATE,
+} from '../../src/lib/premiumPlus/premiumPlusAdminAudience.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
@@ -114,9 +121,10 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       const member = resolvePlusMemberFromFields(fields, { nowMs: now });
       const release = resolvePremiumPlusRelease({ ...member, nowMs: now });
 
-      // Plus 候補（route あり）か、既に資格が設定済みのレコードだけを返す
-      const hasExplicitEligibility = !!fields['PremiumPlusEligibility'];
-      if (release.route === PP_ROUTE.NONE && !hasExplicitEligibility) continue;
+      // 一覧に出すかは**表示専用の単一源**が決める（公開判定 resolvePremiumPlusRelease とは別）。
+      // route が none でも「有効 Premium だが PaidAt が空な旧会員」を落とさないため。
+      const candidate = resolveAdminCandidate({ fields, member, release });
+      if (!candidate.listed) continue;
 
       const eligibility = member.eligibility;
       if (onlyReview && eligibility !== PP_ELIGIBILITY.REVIEW) continue;
@@ -131,6 +139,12 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         premiumActive: member.premiumActive,
         daysSincePremium: release.daysSincePremium,
         route: release.route,
+        // 一覧に出した理由（表示専用。販売資格ではない）
+        candidateKind: candidate.kind,
+        candidateLabel: candidate.label,
+        daysUntilRouteB: candidate.daysUntilRouteB,
+        releaseBlockedBy: candidate.releaseBlockedBy,
+        candidateNote: candidate.note,
         eligibility,
         eligibilityLabel: PP_ELIGIBILITY_LABEL[eligibility],
         reason: fields['PremiumPlusEligibilityReason'] || '',
@@ -164,6 +178,9 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       routeA: rows.filter((r) => r.route === PP_ROUTE.SANRENPUKU).length,
       routeB: rows.filter((r) => r.route === PP_ROUTE.PREMIUM_30D).length,
       immediate: rows.filter((r) => r.overrideApplied).length,
+      // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
+      waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
+      anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
     },
     writeEnabled: isPlusFieldsEnabled(process.env),
     overrideEnabled: isReleaseOverrideEnabled(process.env),
