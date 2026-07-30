@@ -1,83 +1,58 @@
 /**
- * comebackGrantPlan.js — カムバック特典の付与計画（純粋・I/O なし）
+ * comebackGrantPlan.js — カムバック施策の実行計画（純粋・I/O なし）
  *
- * 管理画面の「確認 → dry-run → 付与」で使う**対象確定ロジックの単一源**。
- * Function 側はこの結果をそのまま使い、独自に対象を足したり引いたりしてはいけない。
+ * 管理画面の「顧客選択 → Light 特典 → Premium 特典 → 価格/期間 → preview → dry-run → 確定」
+ * の**対象確定ロジックの単一源**。Function 側はこの結果をそのまま使い、独自に対象を
+ * 足したり引いたりしてはいけない。
  *
- * ── メール送信とは完全に別 ────────────────────────────────────────
- * このモジュールも Function も**メールを送らない**。特典付与とメール送信を 1 操作に
- * 結合しない（付与成功を根拠に、あとから管理者がキャンペーンを選んで送る）。
+ * ── 1 回の操作で 2 種類の結果が出る ──────────────────────────────
+ *   grant（無料）… Customers の特典フィールドへ書く＝**その場で閲覧権が増える**
+ *   offer（割引）… PromotionalOffers へ 1 行積む＝**権利は増えない**。購入条件だけ
+ *
+ * Light と Premium は独立に選べる。組み合わせ例:
+ *   Light 永久無料のみ / Light 永久無料 + Premium 30日無料 /
+ *   Light 永久無料 + Premium 年額50%OFF / Premium 買い切り50%OFF のみ …
  *
  * ── 原子性（Airtable にトランザクションが無い制約）───────────────────
- * 複合オファー（Premium 30日無料 ＋ Light 永久無料）は **2 つの独立 grant** だが、
- * どちらも **同じ Customers レコードの別フィールド**に書く。したがって
- * **1 顧客あたり 1 回の PATCH** で両方が同時に確定する ―― 顧客単位では原子的で、
- * 「片方だけ付いた」状態は構造上起きない。
- *
- * 原子性が保証できないのは **顧客をまたぐ範囲**（10 件ずつの PATCH のうち後半が
- * 落ちる等）。ここは次の 3 点で安全にする:
- *   1. すべての書き込みが同じ operationId を持つ
- *   2. 同じ operationId の再実行は各フィールドで `already_applied` として無視される
- *      → **何度でも安全に再実行できる**（冪等）
- *   3. 失敗時は「適用済み / 未適用」を件数で返し、同じ operationId で dry-run し直せば
- *      残りだけが対象になる（reconcile）
- *
- * ── 減らさない ────────────────────────────────────────────────
- * 計画は権利を**増やす**書き込みしか作らない。有効期限の短縮・プラン変更・
- * 課金フィールドの更新は allowlist（promotionalGrants.js）で構造的に不可能。
+ * Light grant と Premium grant は **同じ Customers レコードの別フィールド**なので
+ * **1 顧客あたり 1 PATCH** で同時に確定する（顧客単位では原子的）。
+ * 割引 offer は別テーブルなので、grant と offer の間は原子的にならない。
+ * そこで **grant → offer の順**で実行し、どちらも同じ operationId を持たせる。
+ *   - grant だけ入って offer が落ちた → 同じ operationId で再実行すれば offer だけ発行される
+ *   - offer は OfferKey で upsert なので重複行にならない
+ * つまり「途中で落ちても、同じ operationId でやり直せば必ず収束する」。
  */
 
 import { createHash } from 'node:crypto';
 import {
-  PROMO_GRANT,
-  PROMO_GRANT_LABEL,
+  PROMO_TIER,
+  PROMO_TIER_LABEL,
   PROMO_WRITABLE_FIELDS,
-  PREMIUM_TRIAL_DAYS,
   buildGrantFields,
   buildRevokeFields,
   resolvePromotionalGrants,
-  computeTrialUntilMs,
   describeGrantState,
   assertOnlyGrantFields,
   fmtDay,
 } from '../entitlements/promotionalGrants.js';
+import {
+  OFFER_KIND,
+  resolveOffer,
+  describeOffer,
+} from '../promotions/promotionOfferCatalog.js';
+import {
+  buildOfferRecord,
+  hasActiveOffer,
+  findOfferByKey,
+  computeOfferKey,
+} from '../promotions/promotionalOffer.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { normalizePlan } from '../auth/planNormalization.js';
-
-/**
- * 管理画面で選べるオファー。**3 つだけ**。
- * 内部では `grants` の独立した grant として扱う（複合オファー専用の状態を作らない）。
- */
-export const COMEBACK_OFFERS = Object.freeze([
-  {
-    offerId: 'light_lifetime',
-    name: 'Light 永久無料',
-    description: 'Light プランを期限なしで無料開放する。課金は発生せず、有料 Premium とは別枠。',
-    grants: [PROMO_GRANT.LIGHT_LIFETIME],
-  },
-  {
-    offerId: 'premium_trial_30d',
-    name: `Premium ${PREMIUM_TRIAL_DAYS}日無料`,
-    description: `付与時点から ${PREMIUM_TRIAL_DAYS} 日間、Premium を無料開放する。終了後は元の状態へ戻る。`,
-    grants: [PROMO_GRANT.PREMIUM_TRIAL_30D],
-  },
-  {
-    offerId: 'comeback_full',
-    name: `Premium ${PREMIUM_TRIAL_DAYS}日無料 ＋ Light 永久無料`,
-    description: `${PREMIUM_TRIAL_DAYS} 日間 Premium を無料開放し、終了後は Light 永久無料が残る。今回の主要カムバック施策。`,
-    grants: [PROMO_GRANT.PREMIUM_TRIAL_30D, PROMO_GRANT.LIGHT_LIFETIME],
-  },
-]);
-
-export function getOffer(offerId) {
-  const id = String(offerId ?? '').trim();
-  return COMEBACK_OFFERS.find((o) => o.offerId === id) || null;
-}
 
 /** 1 回の操作で扱える最大件数（暴走防止。超えたら計画自体を作らない） */
 export const MAX_GRANT_RECORDS = 200;
 
-/** Airtable の 1 リクエストあたりレコード数（batch PATCH の上限） */
+/** Airtable の 1 リクエストあたりレコード数（batch upsert / PATCH の上限） */
 export const RECORDS_PER_BATCH = 10;
 
 /** 対象外の理由（すべて dry-run で件数表示する。黙って落とさない） */
@@ -85,24 +60,29 @@ export const CB_SKIP = Object.freeze({
   UNKNOWN_CUSTOMER: 'unknown_customer',
   DATA_INCOMPLETE: 'data_incomplete',
   ACCOUNT_SUSPENDED: 'account_suspended',
+  /** 退会・強制ログアウト → ログインできないので**無料付与**はしない（割引 offer は可） */
   WITHDRAWAL_BLOCKED: 'withdrawal_blocked',
   ALREADY_GRANTED: 'already_granted',
   ALREADY_APPLIED: 'already_applied',
   PAID_STRONGER: 'paid_stronger',
+  ALREADY_OFFERED: 'already_offered',
   GRANT_INCONSISTENT: 'grant_inconsistent',
   NOT_GRANTED: 'not_granted',
+  NOTHING_SELECTED: 'nothing_selected',
 });
 
 export const CB_SKIP_LABEL = Object.freeze({
   unknown_customer: '顧客レコード不明',
   data_incomplete: 'データ不備（メールアドレス未登録/不正）',
   account_suspended: 'アカウント停止・テストアカウント',
-  withdrawal_blocked: '退会・強制ログアウトでログイン不可',
-  already_granted: '既に付与済み',
+  withdrawal_blocked: '退会・強制ログアウトのため無料付与は不可',
+  already_granted: '既に同等以上の特典を保有',
   already_applied: 'この操作で適用済み（再実行）',
-  paid_stronger: '有料 Premium が優先で変更不要',
+  paid_stronger: '有料契約が優先で変更不要',
+  already_offered: '有効な割引オファーを発行済み',
   grant_inconsistent: '特典データ不整合（要確認）',
   not_granted: '対象の特典を持っていない',
+  nothing_selected: '適用できる内容がない',
 });
 
 const SUSPENDED_STATUS = new Set(['suspended', 'inactive', 'banned', 'disabled', '停止', '無効']);
@@ -110,31 +90,57 @@ const WITHDRAWN_STATUS = new Set(['withdrawn', 'cancelled', 'canceled', 'closed'
 
 function statusOf(fields) {
   const f = fields || {};
-  const raw = f.AccountStatus ?? f.Status ?? '';
-  return String(raw).trim().toLowerCase();
+  return String(f.AccountStatus ?? f.Status ?? '').trim().toLowerCase();
 }
 
 function isTruthyFlag(v) {
-  return v === true || v === 1 || (typeof v === 'string' && ['true', '1', 'yes', 'checked', 'on'].includes(v.trim().toLowerCase()));
+  return v === true || v === 1
+    || (typeof v === 'string' && ['true', '1', 'yes', 'checked', 'on'].includes(v.trim().toLowerCase()));
 }
 
-/** 特典を付けても使えない相手か（fail closed）。付けてから気づくのではなく、事前に落とす。 */
+function emailOf(fields) {
+  return String((fields || {}).Email ?? '').trim().toLowerCase();
+}
+
+function hasValidEmail(fields) {
+  const e = emailOf(fields);
+  return !!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+}
+
+/**
+ * **無料付与**の可否。付けても使えない相手を事前に落とす（fail closed）。
+ * 退会・強制ログアウトはログイン自体が拒否されるため付与しない
+ * （退会フラグの解除は課金契約側の判断であり、特典付与の副作用にしない）。
+ */
 export function checkGrantable(fields) {
   const f = fields || {};
-  const email = String(f.Email ?? '').trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return { ok: false, reason: CB_SKIP.DATA_INCOMPLETE };
-  }
+  if (!hasValidEmail(f)) return { ok: false, reason: CB_SKIP.DATA_INCOMPLETE };
   const status = statusOf(f);
   const planRaw = String(f['プラン'] ?? f.Plan ?? '').trim().toLowerCase();
   if (SUSPENDED_STATUS.has(status) || status === 'test' || planRaw === 'test') {
     return { ok: false, reason: CB_SKIP.ACCOUNT_SUSPENDED };
   }
-  // 退会 / 強制ログアウトはログイン自体が拒否される（memberResolution の拒否ゲート）。
-  // 特典を書いても使えないので、**付与せず理由を出す**。退会フラグの解除は課金契約の
-  // 判断であり、この機能では**絶対に触らない**（PROMO_FORBIDDEN_FIELDS）。
   if (isTruthyFlag(f.WithdrawalRequested) || isTruthyFlag(f.ForceLogout) || WITHDRAWN_STATUS.has(status)) {
     return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
+  }
+  return { ok: true, reason: null };
+}
+
+/**
+ * **割引オファー**の可否。無料付与より条件がゆるい。
+ *
+ * 退会者にも発行してよい: 割引 offer は「購入条件」であり、支払い完了時に既存の
+ * 入金確認フロー（confirm-bank-payment）が退会フラグをリセットして昇格させる。
+ * つまり退会者が戻ってくる正規の導線として成立する。
+ * 停止・banned・テストアカウントは AK 側が意図的に止めた相手なので除外を維持する。
+ */
+export function checkOfferable(fields) {
+  const f = fields || {};
+  if (!hasValidEmail(f)) return { ok: false, reason: CB_SKIP.DATA_INCOMPLETE };
+  const status = statusOf(f);
+  const planRaw = String(f['プラン'] ?? f.Plan ?? '').trim().toLowerCase();
+  if (SUSPENDED_STATUS.has(status) || status === 'test' || planRaw === 'test') {
+    return { ok: false, reason: CB_SKIP.ACCOUNT_SUSPENDED };
   }
   return { ok: true, reason: null };
 }
@@ -149,7 +155,7 @@ function paidExpiryMs(fields) {
 }
 
 /**
- * 現在の状態を 1 行で説明する（管理画面の「現在」欄）。
+ * 現在の状態を説明する（管理画面の「現在」欄）。
  * 判定は既存の正本（resolveEntitlements / resolvePromotionalGrants）だけを使う。
  */
 export function describeCustomerState(fields, nowMs) {
@@ -158,133 +164,169 @@ export function describeCustomerState(fields, nowMs) {
   const grants = resolvePromotionalGrants(f, nowMs);
   const tier = normalizePlan(String(f['プラン'] ?? f.Plan ?? '').trim()) ?? 'free';
   const expiry = paidExpiryMs(f);
+  const planType = String(f.PlanType ?? '').trim().toLowerCase();
 
-  const paid = [];
-  if (ent.paidPremiumActive) paid.push(`有効 Premium${expiry ? `（〜${fmtDay(expiry)}）` : ''}`);
-  else if (ent.paidLightActive) paid.push(`有効 Light${expiry ? `（〜${fmtDay(expiry)}）` : ''}`);
-  else if (tier !== 'free' && expiry !== null) paid.push(`期限切れ ${tier === 'light' ? 'Light' : 'Premium'}${`（${fmtDay(expiry)}）`}`);
-  else if (tier !== 'free') paid.push(`${tier === 'light' ? 'Light' : 'Premium'}（期限不明）`);
-  else paid.push('無料会員');
+  let paid;
+  if (ent.paidPremiumActive) {
+    paid = planType === 'lifetime'
+      ? '有効 Premium（買い切り）'
+      : `有効 Premium${expiry ? `（〜${fmtDay(expiry)}）` : ''}`;
+  } else if (ent.paidLightActive) {
+    paid = `有効 Light${expiry ? `（〜${fmtDay(expiry)}）` : ''}`;
+  } else if (tier !== 'free' && expiry !== null) {
+    paid = `期限切れ ${tier === 'light' ? 'Light' : 'Premium'}（${fmtDay(expiry)}）`;
+  } else if (tier !== 'free') {
+    paid = `${tier === 'light' ? 'Light' : 'Premium'}（期限不明）`;
+  } else {
+    paid = '無料会員';
+  }
 
   const promo = describeGrantState(grants);
   return {
-    text: promo === '特典なし' ? paid[0] : `${paid[0]} ＋ ${promo}`,
-    paid: paid[0],
+    text: promo === '特典なし' ? paid : `${paid} ＋ ${promo}`,
+    paid,
     promo,
+    effectiveTier: ent.effectiveTier,
     canViewPremium: ent.canViewPremium,
     canViewLight: ent.canViewLight,
     canViewSanrenpuku: ent.canViewSanrenpuku,
     lifetimeSanrenpuku: ent.lifetimeSanrenpuku,
     paidPremiumActive: ent.paidPremiumActive,
     paidExpiryMs: expiry,
+    paidLifetime: planType === 'lifetime',
   };
 }
 
 /**
- * 1 顧客に対して、オファーのうち実際に書き込む grant を決める。
+ * 1 顧客に対して、選んだ Light / Premium 特典から実際に書く内容を決める。
  *
  * @returns {{
- *   recordId: string, email: string,
- *   applied: Array<{ grantType: string, untilMs: number|null }>,
- *   skippedParts: Array<{ grantType: string, reason: string }>,
- *   fields: object,          このレコードへ PATCH する特典フィールド（1 回で全部）
- *   before: object, after: object,
- *   skipped: string|null,    全パートが対象外ならその理由
+ *   recordId, email,
+ *   grantFields: object,            Customers へ 1 回で PATCH する特典フィールド
+ *   grantParts: Array<{tier, lifetime, untilMs, upgrade}>,
+ *   offer: object|null,             発行する割引 offer（resolveOffer の .offer）
+ *   partSkips: Array<{part, reason}>,
+ *   before, after, skipped: string|null,
  * }}
  */
-export function planCustomerGrant({ offer, recordId, fields, nowMs, operationId, actor, source }) {
+export function planCustomer({ recordId, fields, grantOffers, purchaseOffer, nowMs, operationId, actor, source, existingOffers }) {
   const f = fields || {};
   const before = describeCustomerState(f, nowMs);
-  const applied = [];
-  const skippedParts = [];
-  let merged = {};
+  const grantParts = [];
+  const partSkips = [];
+  let grantFields = {};
 
-  const grants = resolvePromotionalGrants(f, nowMs);
-  const trialEndMs = computeTrialUntilMs(nowMs);
+  const grantable = checkGrantable(f);
+  const offerable = checkOfferable(f);
 
-  for (const grantType of offer.grants) {
-    // 有料 Premium が trial 終了日より後まで有効なら、無料期間を足しても意味が無い（no-op）
-    if (grantType === PROMO_GRANT.PREMIUM_TRIAL_30D
-      && before.paidPremiumActive
-      && before.paidExpiryMs !== null
-      && before.paidExpiryMs >= trialEndMs) {
-      skippedParts.push({ grantType, reason: CB_SKIP.PAID_STRONGER });
-      continue;
-    }
-    // 有効期限が読めない有効 Premium も、短縮しないため触らない（fail closed）
-    if (grantType === PROMO_GRANT.PREMIUM_TRIAL_30D
-      && before.paidPremiumActive && before.paidExpiryMs === null) {
-      skippedParts.push({ grantType, reason: CB_SKIP.PAID_STRONGER });
-      continue;
+  // ── 無料付与（Light / Premium それぞれ独立に判定）──
+  for (const offer of grantOffers || []) {
+    if (!grantable.ok) { partSkips.push({ part: offer.targetTier, reason: grantable.reason }); continue; }
+
+    // 有料契約の方が強いなら書かない（権利を縮めない・意味の無い付与をしない）
+    if (offer.targetTier === PROMO_TIER.PREMIUM && before.paidPremiumActive) {
+      const grantEndMs = offer.isLifetime ? Infinity : nowMs + offer.duration * 86400000;
+      const paidEndMs = before.paidLifetime ? Infinity : (before.paidExpiryMs ?? Infinity);
+      if (paidEndMs >= grantEndMs) {
+        partSkips.push({ part: offer.targetTier, reason: CB_SKIP.PAID_STRONGER });
+        continue;
+      }
     }
 
-    const built = buildGrantFields({ grantType, fields: f, now: nowMs, operationId, actor, source });
-    if (!built) {
-      skippedParts.push({ grantType, reason: CB_SKIP.DATA_INCOMPLETE });
-      continue;
-    }
-    if (built.skipped) {
-      skippedParts.push({ grantType, reason: built.skipped });
-      continue;
-    }
-    merged = { ...merged, ...built.fields };
-    applied.push({ grantType, untilMs: built.effect.untilMs });
+    const built = buildGrantFields({
+      tier: offer.targetTier,
+      lifetime: offer.isLifetime,
+      durationDays: offer.duration,
+      fields: f, now: nowMs, operationId, actor, source,
+    });
+    if (!built) { partSkips.push({ part: offer.targetTier, reason: CB_SKIP.DATA_INCOMPLETE }); continue; }
+    if (built.skipped) { partSkips.push({ part: offer.targetTier, reason: built.skipped }); continue; }
+    grantFields = { ...grantFields, ...built.fields };
+    grantParts.push({ ...built.effect, offerId: offer.offerId, label: describeOffer(offer) });
   }
 
-  // 特典データが壊れている（値は残っているのに取り消し済み）レコードは自動修復しない
-  const inconsistent = grants.lightLifetime.inconsistent || grants.premiumTrial.inconsistent;
+  // ── 割引オファー（権利は増えない）──
+  let offerToIssue = null;
+  if (purchaseOffer) {
+    if (!offerable.ok) {
+      partSkips.push({ part: 'offer', reason: offerable.reason });
+    } else {
+      const offerKey = computeOfferKey({
+        operationId, offerId: purchaseOffer.offerId, version: purchaseOffer.version, customerRecordId: recordId,
+      });
+      if (findOfferByKey({ records: existingOffers, offerKey })) {
+        partSkips.push({ part: 'offer', reason: CB_SKIP.ALREADY_APPLIED });
+      } else if (hasActiveOffer({
+        records: existingOffers, offerId: purchaseOffer.offerId, customerRecordId: recordId, nowMs,
+      })) {
+        partSkips.push({ part: 'offer', reason: CB_SKIP.ALREADY_OFFERED });
+      } else {
+        offerToIssue = purchaseOffer;
+      }
+    }
+  }
 
-  const hasWrite = Object.keys(merged).length > 0;
-  const after = hasWrite ? describeCustomerState({ ...f, ...merged }, nowMs) : before;
+  const grants = resolvePromotionalGrants(f, nowMs);
+  const hasGrantWrite = Object.keys(grantFields).length > 0;
+  const after = hasGrantWrite ? describeCustomerState({ ...f, ...grantFields }, nowMs) : before;
 
   let skipped = null;
-  if (!hasWrite) {
-    // すべてのパートが落ちた理由のうち、最初のものを代表にする
-    skipped = skippedParts.length ? skippedParts[0].reason : CB_SKIP.ALREADY_GRANTED;
+  if (!hasGrantWrite && !offerToIssue) {
+    skipped = partSkips.length ? partSkips[0].reason : CB_SKIP.NOTHING_SELECTED;
   }
 
   return {
     recordId,
-    email: String(f.Email ?? '').trim().toLowerCase(),
-    applied,
-    skippedParts,
-    fields: merged,
+    email: emailOf(f),
+    grantFields,
+    grantParts,
+    offer: offerToIssue,
+    partSkips,
     before,
     after,
     skipped,
-    inconsistent,
+    inconsistent: grants.inconsistent,
   };
 }
 
 /**
- * 付与計画を確定する（純粋）。
+ * 実行計画を確定する（純粋）。
  *
  * @param {{
- *   offer: object,
+ *   grantOffers: object[],      無料付与する offer（resolveOffer の .offer。0〜2 件）
+ *   purchaseOffer: object|null, 発行する割引 offer（0〜1 件）
  *   selected: Array<{ recordId: string, fields: object|null }>,
+ *   existingOffers?: object[],  PromotionalOffers の既存行（重複発行の抑止）
  *   nowMs: number, operationId: string, actor?: string, source?: string,
  * }} input
- * @returns {{ ok: boolean, error?: string, targets: object[], skipped: object[],
- *   counts: object, planFingerprint: string }}
  */
-export function buildGrantPlan({ offer, selected, nowMs, operationId, actor, source }) {
+export function buildComebackPlan({
+  grantOffers, purchaseOffer, selected, existingOffers, nowMs, operationId, actor, source,
+}) {
   const empty = (error) => ({
     ok: false, error, targets: [], skipped: [],
-    counts: { selected: 0, willGrant: 0, skipped: 0, byReason: {} },
+    counts: { selected: 0, willGrant: 0, willOffer: 0, skipped: 0, byReason: {}, parts: {} },
     planFingerprint: '',
   });
-  if (!offer || !Array.isArray(offer.grants) || offer.grants.length === 0) return empty('unknown_offer');
+
+  const grants = (grantOffers || []).filter((o) => o && o.kind === OFFER_KIND.GRANT);
+  const purchase = purchaseOffer && purchaseOffer.kind === OFFER_KIND.PURCHASE ? purchaseOffer : null;
+  if (grants.length === 0 && !purchase) return empty('nothing_selected');
+  // 同じティアの無料付与を 2 つ選べない（どちらが勝つか曖昧になる）
+  if (grants.length === 2 && grants[0].targetTier === grants[1].targetTier) return empty('duplicate_tier');
   if (!Array.isArray(selected)) return empty('invalid_selection');
   if (!Number.isFinite(nowMs)) return empty('invalid_now');
   if (!String(operationId || '').trim()) return empty('missing_operation_id');
   if (selected.length === 0) return empty('empty_selection');
-  if (selected.length > MAX_GRANT_RECORDS) {
-    return empty(`too_many_records:${selected.length}>${MAX_GRANT_RECORDS}`);
-  }
+  if (selected.length > MAX_GRANT_RECORDS) return empty(`too_many_records:${selected.length}>${MAX_GRANT_RECORDS}`);
 
   const targets = [];
   const skipped = [];
   const byReason = {};
+  const parts = {
+    lightGrant: 0, premiumGrant: 0, purchaseOffer: 0,
+    partSkips: {},
+  };
   const seen = new Set();
   const note = (recordId, reason, detail) => {
     skipped.push({ recordId, reason, ...(detail || {}) });
@@ -298,28 +340,33 @@ export function buildGrantPlan({ offer, selected, nowMs, operationId, actor, sou
     if (seen.has(recordId)) continue; // 同一レコードの重複選択は 1 回にまとめる
     seen.add(recordId);
 
-    const grantable = checkGrantable(fields);
-    if (!grantable.ok) {
-      note(recordId, grantable.reason, { before: describeCustomerState(fields, nowMs) });
-      continue;
-    }
+    const planned = planCustomer({
+      recordId, fields, grantOffers: grants, purchaseOffer: purchase,
+      nowMs, operationId, actor, source, existingOffers,
+    });
 
-    const planned = planCustomerGrant({ offer, recordId, fields, nowMs, operationId, actor, source });
-    if (planned.inconsistent) {
-      // 不整合レコードは自動で上書きしない（管理者が個別に確認する）
-      note(recordId, CB_SKIP.GRANT_INCONSISTENT, { before: planned.before });
-      continue;
-    }
-    if (planned.skipped) {
-      note(recordId, planned.skipped, { before: planned.before });
-      continue;
-    }
-    if (!assertOnlyGrantFields(planned.fields)) {
+    // 特典データが壊れているレコードは自動で上書きしない（管理者が個別に確認する）
+    if (planned.inconsistent) { note(recordId, CB_SKIP.GRANT_INCONSISTENT, { before: planned.before }); continue; }
+    if (planned.skipped) { note(recordId, planned.skipped, { before: planned.before }); continue; }
+    if (Object.keys(planned.grantFields).length > 0 && !assertOnlyGrantFields(planned.grantFields)) {
       note(recordId, CB_SKIP.DATA_INCOMPLETE);
       continue;
     }
+
+    for (const p of planned.grantParts) {
+      if (p.tier === PROMO_TIER.LIGHT) parts.lightGrant += 1;
+      if (p.tier === PROMO_TIER.PREMIUM) parts.premiumGrant += 1;
+    }
+    if (planned.offer) parts.purchaseOffer += 1;
+    for (const s of planned.partSkips) {
+      const key = `${s.part}:${s.reason}`;
+      parts.partSkips[key] = (parts.partSkips[key] || 0) + 1;
+    }
     targets.push(planned);
   }
+
+  const willGrant = targets.filter((t) => Object.keys(t.grantFields).length > 0).length;
+  const willOffer = targets.filter((t) => t.offer).length;
 
   return {
     ok: true,
@@ -327,28 +374,30 @@ export function buildGrantPlan({ offer, selected, nowMs, operationId, actor, sou
     skipped,
     counts: {
       selected: selected.length,
-      willGrant: targets.length,
+      willGrant,
+      willOffer,
       skipped: skipped.length,
       byReason,
+      parts,
     },
-    planFingerprint: computeGrantPlanFingerprint({ offer, operationId, targets }),
+    planFingerprint: computePlanFingerprint({ grantOffers: grants, purchaseOffer: purchase, operationId, targets }),
   };
 }
 
 /**
  * 取り消し計画（promotional grant だけ）。
- * paid entitlement / LifetimeSanrenpuku は allowlist により構造的に触れない。
+ * paid contract / LifetimeSanrenpuku は allowlist により構造的に触れない。
  */
-export function buildRevokePlan({ grantTypes, selected, nowMs, actor, reason }) {
+export function buildRevokePlan({ tiers, selected, nowMs, actor, reason }) {
   const empty = (error) => ({
     ok: false, error, targets: [], skipped: [],
     counts: { selected: 0, willRevoke: 0, skipped: 0, byReason: {} },
     planFingerprint: '',
   });
-  const types = (Array.isArray(grantTypes) ? grantTypes : []).filter(
-    (t) => t === PROMO_GRANT.LIGHT_LIFETIME || t === PROMO_GRANT.PREMIUM_TRIAL_30D,
+  const list = (Array.isArray(tiers) ? tiers : []).filter(
+    (t) => t === PROMO_TIER.LIGHT || t === PROMO_TIER.PREMIUM,
   );
-  if (types.length === 0) return empty('unknown_grant_type');
+  if (list.length === 0) return empty('unknown_tier');
   if (!Array.isArray(selected) || selected.length === 0) return empty('empty_selection');
   if (!Number.isFinite(nowMs)) return empty('invalid_now');
   if (selected.length > MAX_GRANT_RECORDS) return empty(`too_many_records:${selected.length}>${MAX_GRANT_RECORDS}`);
@@ -357,37 +406,36 @@ export function buildRevokePlan({ grantTypes, selected, nowMs, actor, reason }) 
   const skipped = [];
   const byReason = {};
   const seen = new Set();
+  const note = (recordId, r, detail) => {
+    skipped.push({ recordId, reason: r, ...(detail || {}) });
+    byReason[r] = (byReason[r] || 0) + 1;
+  };
 
   for (const item of selected) {
     const recordId = item && item.recordId ? String(item.recordId) : '';
     const fields = item && item.fields;
-    if (!recordId || !fields) {
-      skipped.push({ recordId, reason: CB_SKIP.UNKNOWN_CUSTOMER });
-      byReason[CB_SKIP.UNKNOWN_CUSTOMER] = (byReason[CB_SKIP.UNKNOWN_CUSTOMER] || 0) + 1;
-      continue;
-    }
+    if (!recordId || !fields) { note(recordId, CB_SKIP.UNKNOWN_CUSTOMER); continue; }
     if (seen.has(recordId)) continue;
     seen.add(recordId);
 
     const before = describeCustomerState(fields, nowMs);
     let merged = {};
     const revoked = [];
-    for (const grantType of types) {
-      const built = buildRevokeFields({ grantType, fields, now: nowMs, actor, reason });
+    for (const tier of list) {
+      const built = buildRevokeFields({ tier, fields, now: nowMs, actor, reason });
       if (!built || built.skipped) continue;
       merged = { ...merged, ...built.fields };
-      revoked.push(grantType);
+      revoked.push(tier);
     }
     if (Object.keys(merged).length === 0 || !assertOnlyGrantFields(merged)) {
-      skipped.push({ recordId, reason: CB_SKIP.NOT_GRANTED, before });
-      byReason[CB_SKIP.NOT_GRANTED] = (byReason[CB_SKIP.NOT_GRANTED] || 0) + 1;
+      note(recordId, CB_SKIP.NOT_GRANTED, { before });
       continue;
     }
     targets.push({
       recordId,
-      email: String(fields.Email ?? '').trim().toLowerCase(),
+      email: emailOf(fields),
       revoked,
-      fields: merged,
+      grantFields: merged,
       before,
       after: describeCustomerState({ ...fields, ...merged }, nowMs),
     });
@@ -403,29 +451,30 @@ export function buildRevokePlan({ grantTypes, selected, nowMs, actor, reason }) 
       skipped: skipped.length,
       byReason,
     },
-    planFingerprint: computeGrantPlanFingerprint({
-      offer: { offerId: `revoke:${types.join('+')}`, grants: types },
-      operationId: 'revoke',
-      targets,
+    planFingerprint: computePlanFingerprint({
+      grantOffers: list.map((t) => ({ offerId: `revoke-${t}`, targetTier: t })),
+      purchaseOffer: null, operationId: 'revoke', targets,
     }),
   };
 }
 
 /**
  * dry-run → 実行の受け渡しトークン。
- * 対象集合・オファー・**書き込む内容そのもの**が 1 つでも変われば値が変わる。
+ * 対象集合・選んだ特典・**書き込む内容そのもの**が 1 つでも変われば値が変わる。
  * 実行はこのトークンが再計算値と一致しないと走らない（TOCTOU 防止）。
  *
- * ⚠️ 一部だけ適用されて失敗した場合、再 dry-run すると適用済みが `already_applied` で
- *    落ちるためトークンは当然変わる。**同じ operationId で dry-run し直して残りを実行する**
- *    のが正しい再開手順（冪等なので二重付与にならない）。
+ * ⚠️ 一部だけ適用されて失敗した場合、再 dry-run するとトークンは当然変わる。
+ *    **同じ operationId で dry-run し直して残りを実行する**のが正しい再開手順
+ *    （冪等なので二重付与・二重発行にならない）。
  */
-export function computeGrantPlanFingerprint({ offer, operationId, targets }) {
-  const rows = (targets || [])
-    .map((t) => `${t.recordId}:${(t.applied || t.revoked || []).map((a) => a.grantType || a).sort().join('+')}`)
-    .sort();
+export function computePlanFingerprint({ grantOffers, purchaseOffer, operationId, targets }) {
+  const rows = (targets || []).map((t) => {
+    const g = (t.grantParts || t.revoked || []).map((x) => x.tier || x).sort().join('+');
+    return `${t.recordId}:${g}:${t.offer ? t.offer.offerId : '-'}`;
+  }).sort();
   const seed = [
-    String(offer?.offerId || ''),
+    (grantOffers || []).map((o) => `${o.offerId}@${o.duration ?? (o.isLifetime ? 'inf' : '')}`).sort().join(','),
+    purchaseOffer ? `${purchaseOffer.offerId}@${purchaseOffer.offerPrice}` : '-',
     String(operationId || ''),
     String(rows.length),
     ...rows,
@@ -433,7 +482,7 @@ export function computeGrantPlanFingerprint({ offer, operationId, targets }) {
   return createHash('sha256').update(seed, 'utf8').digest('hex');
 }
 
-/** Airtable batch PATCH 用にレコードを分割する */
+/** Airtable batch 用にレコードを分割する */
 export function chunkTargets(targets, size = RECORDS_PER_BATCH) {
   const out = [];
   const list = targets || [];
@@ -442,47 +491,66 @@ export function chunkTargets(targets, size = RECORDS_PER_BATCH) {
 }
 
 /**
- * 実行後の突合（reconcile）。Airtable から読み直した fields を渡し、
+ * 実行後の突合（reconcile）。Airtable から読み直した fields / offer 行を渡し、
  * この operationId の書き込みが実際に入っているかを数える。
- *
- * @returns {{ applied: string[], missing: string[], counts: object }}
  */
-export function reconcileOperation({ operationId, records, nowMs }) {
+export function reconcileOperation({ operationId, records, offerRecords, nowMs }) {
   const op = String(operationId || '').trim();
   const applied = [];
   const missing = [];
   for (const rec of records || []) {
     const f = (rec && rec.fields) || {};
     const g = resolvePromotionalGrants(f, nowMs);
-    const hit = (op && g.lightLifetime.operationId === op) || (op && g.premiumTrial.operationId === op);
+    const hit = !!op && (g.light.operationId === op || g.premium.operationId === op);
     (hit ? applied : missing).push(rec.recordId || rec.id || '');
   }
+  const offersIssued = (offerRecords || []).filter(
+    (r) => String(r?.fields?.OperationId || '') === op,
+  ).length;
   return {
     applied,
     missing,
-    counts: { total: applied.length + missing.length, applied: applied.length, missing: missing.length },
+    counts: {
+      total: applied.length + missing.length,
+      applied: applied.length,
+      missing: missing.length,
+      offersIssued,
+    },
   };
 }
 
-/** 管理画面の「付与後」表示に使う短い説明（顧客向け文面ではない） */
-export function describeOfferEffect(offer, nowMs) {
-  if (!offer) return '';
-  const until = fmtDay(computeTrialUntilMs(nowMs));
-  const parts = offer.grants.map((g) => (
-    g === PROMO_GRANT.PREMIUM_TRIAL_30D
-      ? `Premium 無料 ${PREMIUM_TRIAL_DAYS} 日（〜${until}）`
-      : PROMO_GRANT_LABEL[g]
-  ));
-  return parts.join(' → その後 ');
-}
-
-/** Function 側が PATCH 直前に使う最終チェック（許可フィールド以外を 1 つでも含めば false） */
+/** PATCH 直前の最終チェック（特典フィールド以外を 1 つでも含めば false） */
 export function assertPlanWritesOnlyGrantFields(targets) {
   const allow = new Set(PROMO_WRITABLE_FIELDS);
   for (const t of targets || []) {
-    const keys = Object.keys(t.fields || {});
-    if (keys.length === 0) return false;
+    const keys = Object.keys(t.grantFields || {});
+    if (keys.length === 0) continue; // offer だけの対象は grant を書かない
     if (!keys.every((k) => allow.has(k))) return false;
   }
   return true;
 }
+
+/** offer 行を組み立てる（Function から呼ぶ薄いラッパー） */
+export function buildOfferRecordsForPlan({ targets, nowMs, operationId, source, ttlDays, secret }) {
+  const out = [];
+  for (const t of targets || []) {
+    if (!t.offer) continue;
+    const built = buildOfferRecord({
+      offer: t.offer,
+      customer: { recordId: t.recordId, email: t.email },
+      nowMs, operationId, source, ttlDays, secret,
+    });
+    if (built.error) continue; // 組み立てられないものは発行しない（fail closed）
+    out.push({ recordId: t.recordId, ...built });
+  }
+  return out;
+}
+
+/** 選択内容の要約（管理画面の見出し用） */
+export function describeSelection({ grantOffers, purchaseOffer }) {
+  const parts = (grantOffers || []).map((o) => describeOffer(o));
+  if (purchaseOffer) parts.push(describeOffer(purchaseOffer));
+  return parts.join(' ＋ ') || '（未選択）';
+}
+
+export { PROMO_TIER, PROMO_TIER_LABEL, resolveOffer, describeOffer };

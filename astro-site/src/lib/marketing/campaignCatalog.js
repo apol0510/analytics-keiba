@@ -26,6 +26,10 @@
  */
 
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
+import {
+  buildComebackEmailContent,
+  DEFAULT_COMEBACK_COMBO,
+} from '../promotions/comebackEmailTemplate.js';
 
 const SITE = 'https://analytics.keiba.link';
 
@@ -247,35 +251,18 @@ export const CAMPAIGNS = Object.freeze([
   {
     campaignId: 'comeback-offer',
     version: 1,
-    name: 'カムバック特典のご案内（下書き）',
-    description: 'カムバック特典（Premium 30日無料 ＋ その後 Light 永久無料）を付与済みの顧客へ案内する。',
-    subject: '【KEIBA Analytics】現在の AI 予想を、30日間無料でお試しいただけます',
-    // ⚠️ 誇大表現にしない。「以前より良くなった」は事実ベース（何を変えたか）で書き、
-    //    的中率・回収率の数値は書かない（根拠のない数値は premiumPlusShowcase の教訓）。
-    // ⚠️ このメールは **特典を付与した顧客にだけ** 送る。付与前に送ると
-    //    「使えるはずのものが使えない」状態になる（付与とメールは別操作・別画面）。
-    body: [
-      '{{salutation}}',
-      '',
-      'KEIBA Analytics をご利用いただきありがとうございました。',
-      '',
-      'ご利用いただいていた頃から、予想の作り方そのものを見直しました。',
-      '本命・対抗・単穴の選定ロジックと買い目の組み方を作り直し、',
-      '前日の有料メインレース買い目と結果は、当たった日も外した日も毎日公開しています。',
-      '',
-      '現在の AI 予想をあらためて見ていただくため、',
-      'お客様のアカウントに以下をご用意しました。',
-      '',
-      '・Premium 30日間 無料',
-      '・その後も Light プランを無料で継続',
-      '',
-      'お手続きもお支払いも必要ありません。ログインするだけでご利用いただけます。',
-    ].join('\n'),
-    ctaLabel: 'ログインして予想を見る',
-    ctaUrl: `${SITE}/login/`,
+    name: 'カムバック案内（下書き）',
+    description: 'カムバック特典を付与済みの顧客へ案内する。本文は付与した特典から自動生成する。',
+    // ⚠️ 文面を手書きしない。**offer の内容から生成**する（金額・期間の書き間違いを防ぐ）。
+    //    ここに載るのは既定の組み合わせ（Light 永久無料 ＋ Premium 30日無料）で描いた版。
+    //    実際に送るときは管理画面で選んだ組み合わせのプレビューを確認してから使う。
+    ...(() => {
+      const c = buildComebackEmailContent(DEFAULT_COMEBACK_COMBO);
+      return { subject: c.subject, body: c.body, ctaLabel: c.ctaLabel, ctaUrl: c.ctaUrl };
+    })(),
     recommendedSegments: ['contract:expired', 'contract:none'],
-    // 特典を付与した相手にだけ送る運用のため、契約状態では絞らない（付与済みかは
-    // カムバック特典タブで確認して選択する）。誤送信防止は「選択した相手だけに送る」で担保。
+    // 特典を付与した相手にだけ送る運用のため、契約状態では絞らない
+    //（付与済みかはカムバック特典タブで確認して選択する）。
     audienceRule: { contracts: [], plans: [], enforce: false },
     // ⛔ 下書き。**特典付与フローが本番で有効化され、実際に付与を行ってから**有効化する。
     //    付与前にこの文面を送ると、書いてある特典が実際には使えない。

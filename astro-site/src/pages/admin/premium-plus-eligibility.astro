@@ -276,11 +276,39 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
 
       <div class="campaign-box">
-        <h2>特典</h2>
+        <h2>特典の内容</h2>
+
+        <div class="offer-row">
+          <label class="offer-label" for="cbLightOffer">Light 特典（ベース）</label>
+          <select id="cbLightOffer" aria-label="Light 特典"></select>
+          <label class="offer-sub" for="cbLightDays" id="cbLightDaysWrap" hidden>
+            日数
+            <input type="number" id="cbLightDays" min="1" max="3650" step="1" value="30" />
+          </label>
+        </div>
+        <p class="offer-note">Light は<b>メイン買い目のみ閲覧できる独立プラン</b>です（Premium 終了後の代替ではありません）。</p>
+
+        <div class="offer-row">
+          <label class="offer-label" for="cbPremiumOffer">Premium 特典（上位・任意）</label>
+          <select id="cbPremiumOffer" aria-label="Premium 特典"></select>
+          <label class="offer-sub" for="cbPremiumDays" id="cbPremiumDaysWrap" hidden>
+            日数
+            <input type="number" id="cbPremiumDays" min="1" max="3650" step="1" value="30" />
+          </label>
+          <label class="offer-sub" for="cbPremiumPrice" id="cbPremiumPriceWrap" hidden>
+            特別価格（円）
+            <input type="number" id="cbPremiumPrice" min="1000" step="100" value="24900" />
+          </label>
+        </div>
+
+        <div class="price-box" id="cbPriceBox" hidden>
+          <dl class="kv" id="cbPriceKv"></dl>
+        </div>
+
         <div class="toolbar">
-          <select id="cbOffer" aria-label="特典"></select>
+          <button type="button" id="cbPreviewBtn" class="btn-ghost">案内文面プレビュー</button>
           <button type="button" id="cbDryRun" class="btn-primary">変更内容を確認（dry-run）</button>
-          <button type="button" id="cbRevokeBtn" class="btn-ghost">特典を取り消す</button>
+          <button type="button" id="cbRevokeBtn" class="btn-ghost">無料特典を取り消す</button>
           <button type="button" id="cbReconcileBtn" class="btn-ghost">前回操作の突合</button>
         </div>
         <p class="camp-desc" id="cbOfferDesc"></p>
@@ -513,6 +541,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .campaign-box { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px;
     padding: .85rem 1rem; margin-top: 1rem; }
   .ppe .campaign-box h2 { font-size: .9rem; margin: 0 0 .6rem; color: #e6edf7; }
+  .ppe .offer-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0 0 .5rem; }
+  .ppe .offer-label { min-width: 12rem; font-size: .78rem; color: #cbd5e6; font-weight: 700; }
+  .ppe .offer-sub { display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; color: #93a4bd; }
+  .ppe .offer-sub input { width: 7rem; }
+  .ppe .offer-note { margin: 0 0 .8rem; font-size: .72rem; color: #93a4bd; }
+  .ppe .price-box { background: #0d1626; border: 1px solid rgba(148,163,184,.16); border-radius: 9px;
+    padding: .6rem .8rem; margin: 0 0 .7rem; }
   .ppe .camp-desc { font-size: .76rem; color: #93a4bd; line-height: 1.7; margin: .4rem 0 0; }
   /* 運用テスト専用キャンペーン（顧客向けと混同させない） */
   .ppe .testonly { margin: 0 0 .5rem; padding: .5rem .7rem; border-radius: 6px; font-size: .76rem; line-height: 1.6;
@@ -524,6 +559,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 実際のメール本文をそのまま出す枠。枠内の配色はメール側の HTML が決める
      （管理 UI 側のダーク配色をここへ持ち込まない） */
   .ppe .prev-frame { width: 100%; height: 22rem; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; }
+  .ppe .prev-body { white-space: pre-wrap; word-break: break-word; font-size: .78rem; line-height: 1.8;
+    color: #dbe6f5; background: #0d1626; border: 1px solid rgba(148,163,184,.16); border-radius: 8px;
+    padding: .8rem; margin: .5rem 0 0; font-family: inherit; }
 
   /* ── 候補区分（表示専用。販売資格ではないので badge とは別の弱い見た目にする）── */
   .ppe .kind { display: inline-block; font-size: .7rem; font-weight: 700; color: #93a4bd; white-space: nowrap; }
@@ -1210,7 +1248,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $(tabId).setAttribute('aria-selected', String(on));
       }
       if (which === 'mkt' && mkCampaigns.length === 0) mkLoadCampaigns();
-      if (which === 'comeback' && cbOffers.length === 0) cbLoadOffers();
+      if (which === 'comeback' && !cbCatalog) cbLoadOffers();
     }
     $('tabSales').addEventListener('click', () => showTab('sales'));
     $('tabMkt').addEventListener('click', () => showTab('mkt'));
@@ -1651,9 +1689,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     const CB_API = '/.netlify/functions/admin-comeback-grants';
 
     let cbData = null;                 // 直近の customers 応答
-    let cbOffers = [];                 // オファーカタログ
-    let cbWriteEnabled = false;        // 実付与が有効か（本番は既定 false）
-    let cbLastOperationId = '';        // 直近の dry-run / 付与の操作 ID（再開・突合用）
+    let cbCatalog = null;              // 特典カタログ（Light / Premium無料 / Premium割引）
+    let cbWriteEnabled = false;        // 実行が有効か（本番は既定 false）
+    let cbLastOperationId = '';        // 直近の dry-run / 実行の操作 ID（再開・突合用）
     const cbSelected = new Set();      // 選択中の recordId
 
     function cbMsg(text, kind) {
@@ -1673,43 +1711,120 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // 503（gate 無効）/ 409（対象変化）/ 502（部分失敗）は理由をそのまま出す
-        cbMsg(data.error || ('エラー: ' + res.status), 'err');
-        if (data.howToRecover) cbMsg((data.error || '') + '　' + data.howToRecover, 'err');
+        cbMsg((data.error || ('エラー: ' + res.status)) + (data.howToRecover ? '　' + data.howToRecover : ''), 'err');
         return null;
       }
       return data;
     }
 
-    async function cbLoadOffers() {
-      const data = await cbCall({ action: 'offers' });
-      if (!data) return;
-      cbOffers = data.offers || [];
-      cbWriteEnabled = !!data.writeEnabled;
-      const sel = $('cbOffer');
+    function cbFillSelect(id, offers, noneLabel) {
+      const sel = $(id);
       sel.innerHTML = '';
-      for (const o of cbOffers) {
+      const none = document.createElement('option');
+      none.value = 'none';
+      none.textContent = noneLabel;
+      sel.appendChild(none);
+      for (const o of offers) {
         const opt = document.createElement('option');
         opt.value = o.offerId;
         opt.textContent = o.name;
+        opt.dataset.customDays = o.requiresCustomDays ? '1' : '';
+        opt.dataset.customPrice = o.requiresCustomPrice ? '1' : '';
+        opt.dataset.kind = o.kind;
+        opt.dataset.regularPrice = String(o.regularPrice);
         sel.appendChild(opt);
       }
-      // 主要施策（複合オファー）を既定選択にする
-      if (cbOffers.some((o) => o.offerId === 'comeback_full')) sel.value = 'comeback_full';
+    }
+
+    async function cbLoadOffers() {
+      const data = await cbCall({ action: 'offers' });
+      if (!data) return;
+      cbCatalog = data;
+      cbWriteEnabled = !!data.writeEnabled;
+
+      cbFillSelect('cbLightOffer', data.lightOffers, 'なし');
+      // Premium は「無料付与」と「割引購入」を 1 つのセレクトに分けて入れる（種類は option に持たせる）
+      const premium = [...data.premiumGrantOffers, ...data.premiumPurchaseOffers];
+      cbFillSelect('cbPremiumOffer', premium, 'なし');
+
+      // 主要施策を既定値に（Light 永久無料 ＋ Premium 30日無料）
+      if (data.lightOffers.some((o) => o.offerId === 'light-lifetime-free')) {
+        $('cbLightOffer').value = 'light-lifetime-free';
+      }
       cbRenderOfferDesc();
       $('cbGateState').textContent = data.notice || '';
       $('cbGateState').className = 'note' + (data.writeEnabled ? '' : ' off');
     }
 
-    function cbCurrentOffer() {
-      return cbOffers.find((o) => o.offerId === $('cbOffer').value) || null;
+    function cbSelectedOption(id) {
+      const sel = $(id);
+      return sel.options[sel.selectedIndex] || null;
     }
 
-    function cbRenderOfferDesc() {
-      const o = cbCurrentOffer();
-      const el = $('cbOfferDesc');
-      el.textContent = o ? (o.description + '　【付与後】' + o.effect) : '';
+    /** 選択内容 → API へ渡す payload（任意日数・任意価格を含む） */
+    function cbSelectionPayload() {
+      const light = $('cbLightOffer').value;
+      const premium = $('cbPremiumOffer').value;
+      const out = {};
+      if (light && light !== 'none') {
+        out.lightOfferId = light;
+        if (cbSelectedOption('cbLightOffer').dataset.customDays) {
+          out.lightCustomDays = Number($('cbLightDays').value);
+        }
+      }
+      if (premium && premium !== 'none') {
+        out.premiumOfferId = premium;
+        const opt = cbSelectedOption('cbPremiumOffer');
+        if (opt.dataset.customDays) out.premiumCustomDays = Number($('cbPremiumDays').value);
+        if (opt.dataset.customPrice) out.premiumCustomPrice = Number($('cbPremiumPrice').value);
+      }
+      return out;
     }
-    $('cbOffer').addEventListener('change', cbRenderOfferDesc);
+
+    /** 任意入力欄の出し分け＋価格の内訳表示 */
+    function cbRenderOfferDesc() {
+      const lightOpt = cbSelectedOption('cbLightOffer');
+      const premiumOpt = cbSelectedOption('cbPremiumOffer');
+      $('cbLightDaysWrap').hidden = !(lightOpt && lightOpt.dataset.customDays);
+      $('cbPremiumDaysWrap').hidden = !(premiumOpt && premiumOpt.dataset.customDays);
+      $('cbPremiumPriceWrap').hidden = !(premiumOpt && premiumOpt.dataset.customPrice);
+
+      // 価格の内訳（通常価格 / 割引 / 特別価格 / 無料）
+      const box = $('cbPriceBox');
+      const dl = $('cbPriceKv');
+      dl.innerHTML = '';
+      const isPurchase = premiumOpt && premiumOpt.dataset.kind === 'purchase_offer';
+      if (isPurchase) {
+        const regular = Number(premiumOpt.dataset.regularPrice) || 0;
+        const price = premiumOpt.dataset.customPrice
+          ? Number($('cbPremiumPrice').value)
+          : null;
+        kvRow(dl, '通常価格', '¥' + regular.toLocaleString());
+        if (price !== null) {
+          const off = regular > 0 ? Math.round((1 - price / regular) * 100) : 0;
+          kvRow(dl, '特別価格', '¥' + (price || 0).toLocaleString(), 'strong-ok');
+          kvRow(dl, '割引率', off + '%OFF');
+        } else {
+          kvRow(dl, '特別価格', 'dry-run で確定します');
+        }
+        kvRow(dl, '権限', '購入条件のみ（支払い完了まで権限は付与されません）');
+        box.hidden = false;
+      } else if (premiumOpt && premiumOpt.value !== 'none') {
+        kvRow(dl, '料金', '無料（課金は発生しません）', 'strong-ok');
+        box.hidden = false;
+      } else {
+        box.hidden = true;
+      }
+
+      const parts = [];
+      if (lightOpt && lightOpt.value !== 'none') parts.push('Light: ' + lightOpt.textContent);
+      if (premiumOpt && premiumOpt.value !== 'none') parts.push('Premium: ' + premiumOpt.textContent);
+      $('cbOfferDesc').textContent = parts.length ? parts.join('　/　') : '特典を選択してください。';
+    }
+    for (const id of ['cbLightOffer', 'cbPremiumOffer', 'cbLightDays', 'cbPremiumDays', 'cbPremiumPrice']) {
+      $(id).addEventListener('change', cbRenderOfferDesc);
+      $(id).addEventListener('input', cbRenderOfferDesc);
+    }
 
     async function cbLoad() {
       cbMsg('読み込み中…');
@@ -1847,37 +1962,86 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('cbModalBack').addEventListener('click', cbCloseModal);
     $('cbBackdrop').addEventListener('click', (e) => { if (e.target === $('cbBackdrop')) cbCloseModal(); });
 
-    // ── dry-run → 最終確認 → 付与 ──
+    // ── 文面プレビュー（送信しない）──
+    $('cbPreviewBtn').addEventListener('click', async () => {
+      const sel = cbSelectionPayload();
+      if (!sel.lightOfferId && !sel.premiumOfferId) { cbMsg('特典を選択してください', 'err'); return; }
+      const data = await cbCall({ action: 'preview', ...sel });
+      if (!data) return;
+      const body = cbOpenModal('案内文面プレビュー');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, '特典', data.selection);
+      kvRow(dl, '件名', data.subject);
+      sec.appendChild(dl);
+      const pre = document.createElement('pre');
+      pre.className = 'prev-body';
+      pre.textContent = data.body;
+      sec.appendChild(pre);
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = data.notice;
+      sec.appendChild(note);
+      body.appendChild(sec);
+    });
+
+    // ── dry-run → 最終確認 → 実行 ──
     $('cbDryRun').addEventListener('click', async () => {
-      const o = cbCurrentOffer();
-      if (!o) { cbMsg('特典を選択してください', 'err'); return; }
+      const sel = cbSelectionPayload();
+      if (!sel.lightOfferId && !sel.premiumOfferId) { cbMsg('特典を選択してください', 'err'); return; }
       if (cbSelected.size === 0) { cbMsg('対象を選択してください', 'err'); return; }
       cbMsg('変更内容を確認中…');
       const plan = await cbCall({
-        action: 'dryRun', offerId: o.offerId, recordIds: [...cbSelected],
+        action: 'dryRun', ...sel, recordIds: [...cbSelected],
         // 直前の操作をやり直す場合は同じ operationId を引き継ぐ（冪等な再開）
         operationId: cbLastOperationId || undefined,
       });
       if (!plan) return;
       cbLastOperationId = plan.operationId;
       cbMsg('');
-      cbRenderConfirm(o, plan);
+      cbRenderConfirm(sel, plan);
     });
 
-    function cbRenderConfirm(offer, plan) {
-      const body = cbOpenModal('付与内容の確認');
+    function cbRenderConfirm(sel, plan) {
+      const body = cbOpenModal('実行内容の確認');
 
       const head = document.createElement('div'); head.className = 'dt-sec';
-      const h = document.createElement('h3'); h.textContent = offer.name;
+      const h = document.createElement('h3'); h.textContent = plan.selection;
       head.appendChild(h);
       const dl = document.createElement('dl'); dl.className = 'kv';
-      kvRow(dl, '付与後', plan.effect);
       kvRow(dl, '選択', plan.selected + ' 名');
-      kvRow(dl, '新規付与', plan.willGrant + ' 名', plan.willGrant > 0 ? 'strong-ok' : 'muted');
+      kvRow(dl, '無料特典を付与', plan.willGrant + ' 名', plan.willGrant > 0 ? 'strong-ok' : 'muted');
+      if (plan.purchaseOffer) {
+        kvRow(dl, '割引オファーを発行', plan.willOffer + ' 名', plan.willOffer > 0 ? 'strong-ok' : 'muted');
+        kvRow(dl, '価格', '通常 ¥' + plan.purchaseOffer.regularPrice.toLocaleString()
+          + ' → ¥' + plan.purchaseOffer.offerPrice.toLocaleString()
+          + '（' + plan.purchaseOffer.discountPercent + '%OFF）');
+        kvRow(dl, '権限', '付与しません（支払い完了後に既存の入金確認フローが昇格します）');
+      }
       kvRow(dl, '対象外', plan.skipped + ' 名');
       kvRow(dl, '操作 ID', plan.operationId);
       head.appendChild(dl);
       body.appendChild(head);
+
+      // 内訳（Light 何件 / Premium 何件 / オファー何件）
+      const partsSec = document.createElement('div'); partsSec.className = 'dt-sec';
+      const ph = document.createElement('h3'); ph.textContent = '内訳'; partsSec.appendChild(ph);
+      const pul = document.createElement('ul'); pul.className = 'exlist';
+      const parts = plan.parts || {};
+      for (const [label, n] of [
+        ['Light 無料を新規付与', parts.lightGrant || 0],
+        ['Premium 無料を新規付与', parts.premiumGrant || 0],
+        ['割引オファーを発行', parts.purchaseOffer || 0],
+      ]) {
+        const li = document.createElement('li');
+        li.textContent = label + '　' + n + ' 名';
+        pul.appendChild(li);
+      }
+      for (const d of (plan.partSkipDetail || [])) {
+        const li = document.createElement('li');
+        li.textContent = d.partLabel + ' は付与しない（' + d.label + '）　' + d.count + ' 名';
+        pul.appendChild(li);
+      }
+      partsSec.appendChild(pul);
+      body.appendChild(partsSec);
 
       if (plan.skippedDetail && plan.skippedDetail.length) {
         const sec = document.createElement('div'); sec.className = 'dt-sec';
@@ -1904,10 +2068,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           const sub = document.createElement('ul'); sub.className = 'exlist sub';
           const l1 = document.createElement('li'); l1.textContent = '現在: ' + p.before; sub.appendChild(l1);
           const l2 = document.createElement('li'); l2.textContent = '付与後: ' + p.after; sub.appendChild(l2);
-          for (const part of (p.partial || [])) {
+          if (p.offer) {
             const l3 = document.createElement('li');
-            l3.textContent = '※ ' + part.grant + ' は付与しません（' + part.label + '）';
+            l3.textContent = '割引オファー: ' + p.offer + '（権限は付与されません）';
             sub.appendChild(l3);
+          }
+          for (const part of (p.partial || [])) {
+            const l4 = document.createElement('li');
+            l4.textContent = '※ ' + part.part + ' は付与しません（' + part.label + '）';
+            sub.appendChild(l4);
           }
           li.appendChild(sub);
           ul.appendChild(li);
@@ -1915,18 +2084,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         sec.appendChild(ul);
         if (plan.previewTruncated) {
           const note = document.createElement('p'); note.className = 'note';
-          note.textContent = '※ 表示は先頭 50 名のみです（付与は ' + plan.willGrant + ' 名すべてに行われます）。';
+          note.textContent = '※ 表示は先頭 50 名のみです（実行は対象全員に行われます）。';
           sec.appendChild(note);
         }
         body.appendChild(sec);
       }
 
       const sec3 = document.createElement('div'); sec3.className = 'dt-sec danger';
-      const h3 = document.createElement('h3'); h3.textContent = '付与'; sec3.appendChild(h3);
+      const h3 = document.createElement('h3'); h3.textContent = '実行'; sec3.appendChild(h3);
       const state = document.createElement('p'); state.className = 'note';
       state.textContent = plan.writeEnabled
-        ? '実行すると会員の閲覧権限が変わります。課金・入金状態・メールは変わりません。'
-        : '特典付与は無効（COMEBACK_GRANT_FIELDS_READY / COMEBACK_GRANT_ENABLED 未設定）です。実行できません。';
+        ? '実行すると無料特典は即時に反映されます。課金・入金状態・メールは変わりません。'
+        : '実行は無効（COMEBACK_GRANT_FIELDS_READY / COMEBACK_OFFER_TABLE_READY / COMEBACK_GRANT_ENABLED 未設定）です。';
       sec3.appendChild(state);
       const mailNote = document.createElement('p'); mailNote.className = 'note';
       mailNote.textContent = '📪 この操作でメールは送信されません。案内はマーケティングタブから別途送ってください。';
@@ -1936,31 +2105,34 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'b-immediate';
-      btn.textContent = plan.willGrant + ' 名へ特典を付与する';
-      btn.disabled = !plan.writeEnabled || plan.willGrant === 0;
+      const total = (plan.willGrant || 0) + (plan.willOffer || 0);
+      btn.textContent = '実行する（付与 ' + plan.willGrant + ' 名 / オファー ' + plan.willOffer + ' 名）';
+      btn.disabled = !plan.writeEnabled || total === 0;
       btn.addEventListener('click', async () => {
         if (btn.dataset.busy === '1') return;      // 二重クリック防止
         const ok = window.confirm(
-          offer.name + '\n\n'
+          plan.selection + '\n\n'
           + '対象: ' + plan.selected + ' 名\n'
-          + '新規付与: ' + plan.willGrant + ' 名\n'
+          + '無料特典を付与: ' + plan.willGrant + ' 名\n'
+          + '割引オファーを発行: ' + plan.willOffer + ' 名\n'
           + '対象外: ' + plan.skipped + ' 名\n\n'
-          + 'この内容で特典を付与しますか？（メールは送信されません）'
+          + 'この内容で実行しますか？（メールは送信されません）'
         );
         if (!ok) return;
         btn.dataset.busy = '1';
         btn.disabled = true;
-        btn.textContent = '付与中…';
+        btn.textContent = '実行中…';
         const out = await cbCall({
-          action: 'grant',
-          offerId: offer.offerId,
+          action: 'apply',
+          ...sel,
           recordIds: [...cbSelected],
           operationId: plan.operationId,          // 冪等性の鍵（再実行しても二重付与しない）
           planFingerprint: plan.planFingerprint,  // 対象が変わっていたら Function 側が中止する
         });
         btn.dataset.busy = '';
         if (out) {
-          cbMsg(out.notice || ('付与しました: ' + out.granted + ' 名'), 'ok');
+          cbMsg(out.notice || ('実行しました: 付与 ' + out.granted + ' 名 / オファー ' + out.offersIssued + ' 名'), 'ok');
+          if (out.offerTokens && out.offerTokens.length) cbRenderOfferTokens(out);
           cbSelected.clear();
           cbCloseModal();
           await cbLoad();
@@ -1974,32 +2146,49 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       body.appendChild(sec3);
     }
 
-    // ── 取り消し（promotional grant だけ）──
+    /** 発行した専用 URL（生トークンはこの応答にしか無い） */
+    function cbRenderOfferTokens(out) {
+      const body = cbOpenModal('発行した専用 URL');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const note = document.createElement('p'); note.className = 'note';
+      note.textContent = 'この URL は対象のお客様だけが利用できます（署名付き・メールアドレス一致が必要）。'
+        + '台帳にはハッシュしか保存されないため、この画面を閉じると再表示できません。';
+      sec.appendChild(note);
+      const ul = document.createElement('ul'); ul.className = 'exlist';
+      for (const t of out.offerTokens) {
+        const li = document.createElement('li');
+        li.textContent = t.url + '（〜' + String(t.expiresAt).slice(0, 10) + '）';
+        ul.appendChild(li);
+      }
+      sec.appendChild(ul);
+      body.appendChild(sec);
+    }
+
+    // ── 取り消し（無料権利だけ）──
     $('cbRevokeBtn').addEventListener('click', async () => {
       if (cbSelected.size === 0) { cbMsg('取り消す対象を選択してください', 'err'); return; }
-      const types = [];
-      if (window.confirm('Light 永久無料を取り消しますか？\n（キャンセルすると Premium 無料期間だけを対象にします）')) {
-        types.push('light_lifetime');
+      const tiers = [];
+      if (window.confirm('Light の無料権利を取り消しますか？\n（キャンセルすると Premium だけを対象にします）')) {
+        tiers.push('light');
       }
-      if (window.confirm('Premium 無料期間を取り消しますか？')) types.push('premium_trial_30d');
-      if (types.length === 0) { cbMsg('取り消す特典が選択されていません', 'err'); return; }
+      if (window.confirm('Premium の無料権利を取り消しますか？')) tiers.push('premium');
+      if (tiers.length === 0) { cbMsg('取り消す特典が選択されていません', 'err'); return; }
       const reason = window.prompt('取り消し理由（管理者メモ・任意）') || '';
 
       const plan = await cbCall({
-        action: 'revokeDryRun', grantTypes: types, recordIds: [...cbSelected], reason,
+        action: 'revokeDryRun', tiers, recordIds: [...cbSelected], reason,
       });
       if (!plan) return;
 
       const body = cbOpenModal('取り消し内容の確認');
       const sec = document.createElement('div'); sec.className = 'dt-sec';
       const dl = document.createElement('dl'); dl.className = 'kv';
-      kvRow(dl, '対象特典', (plan.grantLabels || []).join(' / '));
+      kvRow(dl, '対象', (plan.tierLabels || []).join(' / '));
       kvRow(dl, '選択', plan.selected + ' 名');
       kvRow(dl, '取り消し', plan.willRevoke + ' 名', plan.willRevoke > 0 ? 'strong-ok' : 'muted');
       kvRow(dl, '対象外', plan.skipped + ' 名');
       sec.appendChild(dl);
-      const note = document.createElement('p'); note.className = 'note';
-      note.textContent = plan.notice || '';
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = plan.notice || '';
       sec.appendChild(note);
       body.appendChild(sec);
 
@@ -2021,15 +2210,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'b-blocked';
-      btn.textContent = plan.willRevoke + ' 名の特典を取り消す';
+      btn.textContent = plan.willRevoke + ' 名の無料特典を取り消す';
       btn.disabled = !cbWriteEnabled || plan.willRevoke === 0;
       btn.addEventListener('click', async () => {
         if (btn.dataset.busy === '1') return;
-        if (!window.confirm('無料特典を取り消します。有料契約・三連複買い切りは変わりません。よろしいですか？')) return;
+        if (!window.confirm('無料特典を取り消します。有料契約・三連複買い切り・発行済みオファーは変わりません。よろしいですか？')) return;
         btn.dataset.busy = '1';
         btn.disabled = true;
         const out = await cbCall({
-          action: 'revoke', grantTypes: types, recordIds: [...cbSelected],
+          action: 'revoke', tiers, recordIds: [...cbSelected],
           planFingerprint: plan.planFingerprint, reason,
         });
         btn.dataset.busy = '';

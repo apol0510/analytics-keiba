@@ -1,50 +1,49 @@
 /**
- * promotionalGrants.js — カムバック特典（無料 entitlement）の単一源（純粋・I/O なし）
+ * promotionalGrants.js — 無料で付与した閲覧権（promotional grant）の単一源（純粋・I/O なし）
+ *
+ * ── 4 つの概念を混同しない ───────────────────────────────────────────
+ *   A. entitlement        実際に何を閲覧できるか（resolveEntitlements の出力）
+ *   B. paid contract      通常購入による契約（プラン / PlanType / 有効期限 / PaidAt / PaymentConfirmed）
+ *   C. promotional grant  **このモジュール**。無料で付与した閲覧権
+ *   D. promotional offer  割引価格・特別価格など「購入条件」（promotions/promotionOfferCatalog.js）
+ *
+ * C は権利そのもの、D は購入の条件。**D を作っても権利は 1 ミリも増えない**（支払い完了後に
+ * 既存の入金確認フローが B を更新して初めて権利になる）。
  *
  * ── なぜ課金フィールドに詰め込まないのか ───────────────────────────────
- * AK の有料契約は `プラン` / `PlanType` / `有効期限` / `Status` / `PaidAt` /
- * `PaymentConfirmed` が正本で、入金確認フロー（bankPaymentFlow.js）と
- * 決済メール v2 の状態機械がこれらを読み書きする。
- * 「無料で Premium を 30 日」を表現するために `有効期限` を書くと、
- *   - 無料なのに「支払済み」に見える（PaidAt / PaymentConfirmed と整合しない）
+ * 無料権利を `有効期限` / `プラン` に書くと、
+ *   - 無料なのに「支払済み」に見える（PaidAt / PaymentConfirmed と矛盾）
  *   - 既存の有料期限を上書きして**課金済みの権利を短縮**しうる
- *   - 期限切れ通知・再契約導線・回収レポートが無料特典を課金として数える
- * が同時に起きる。そこで **paid entitlement と promotional entitlement を別フィールドに
- * 完全分離**し、runtime では「強い方を採用する（減らさない）」だけにする。
+ *   - 期限切れ通知・再契約導線・売上集計が無料特典を課金として数える
+ * が同時に起きる。専用フィールドへ完全分離する。
  *
- * ── 表現する特典は 2 種類だけ ─────────────────────────────────────
- *   light_lifetime     … Light 永久無料（期限なし・課金なし）
- *   premium_trial_30d  … Premium 30 日無料（付与時刻 + 30 日）
- * 複合オファー（Premium 30日 → その後 Light 永久）は **2 つの独立 grant** であり、
- * 新しい 3 つ目の種別を作らない。「その後 Light」は runtime の優先順位から自然に導かれる
- * （trial 終了で premium が落ち、light_lifetime が残る）。専用の状態遷移を持たせない。
+ * ── grant は「ティア × 期間」の汎用モデル ─────────────────────────────
+ * 種別を `light_lifetime` / `premium_trial_30d` のように固定しない。
+ *   ティア（light / premium）× 期間（日数指定 or 無期限）
+ * の組み合わせだけで、Light 永久無料 / Light 30日無料 / Premium 30日無料 /
+ * Premium 年相当 / Premium 買い切り相当（無期限）まで全部表現する。
+ *
+ * ⚠️ Light は「Premium 終了後の fallback」ではない。**メイン買い目のみ閲覧できる独立した
+ *    低位プラン**であり、カムバック施策では最初から無料開放するベース特典。
+ *    Premium はその上に**追加で**乗る上位オファー。両方の権利が同時に存在し、
+ *    resolveEntitlements が強い方を採用する（期限到来時に書き込みは発生しない）。
  *
  * ── 取り消し（revoke）の表現 ───────────────────────────────────────
- * grant 値そのものを消し（Granted=false / Until を空に）、RevokedAt / RevokeReason を残す。
- * 「granted のまま revoked フラグを立てる」方式にしないのは、runtime 側が
- * **「値が無ければ権利が無い」**という最も壊れにくい判定でいられるようにするため。
- * それでも整合が崩れた（値が残ったまま RevokedAt が新しい）レコードは fail closed で
- * 権利なしと解釈する。
- *
- * ── 絶対に書かないフィールド ───────────────────────────────────────
- * PROMO_FORBIDDEN_FIELDS を参照。allowlist（PROMO_WRITABLE_FIELDS）で構造的に強制し、
- * PATCH 直前にも assertOnlyGrantFields で再確認する。
+ * grant 値そのものを消し（Lifetime=false / Until を空に）、RevokedAt / RevokeReason を残す。
+ * runtime を「値が無ければ権利が無い」という最も壊れにくい判定に保つため。
+ * 値が残ったまま RevokedAt が新しい壊れたレコードは fail closed で権利なしと解釈する。
  */
 
-/** 特典の種別（これ以外は作らない） */
-export const PROMO_GRANT = Object.freeze({
-  LIGHT_LIFETIME: 'light_lifetime',
-  PREMIUM_TRIAL_30D: 'premium_trial_30d',
+/** 無料付与できるティア（三連複は対象外。買い切り三連複とは別権利） */
+export const PROMO_TIER = Object.freeze({
+  LIGHT: 'light',
+  PREMIUM: 'premium',
 });
 
-/** 特典の表示名（管理画面用。顧客向け文面はキャンペーン側が持つ） */
-export const PROMO_GRANT_LABEL = Object.freeze({
-  light_lifetime: 'Light 永久無料',
-  premium_trial_30d: 'Premium 30日無料',
+export const PROMO_TIER_LABEL = Object.freeze({
+  light: 'Light',
+  premium: 'Premium',
 });
-
-/** Premium 無料期間の日数（変更はここだけ。呼び出し側に数値を書かない） */
-export const PREMIUM_TRIAL_DAYS = 30;
 
 /**
  * Airtable Customers に追加するフィールド名（正本）。
@@ -52,29 +51,34 @@ export const PREMIUM_TRIAL_DAYS = 30;
  *    （存在しないフィールドへ PATCH すると 422 で同じ PATCH の他の更新も巻き添えで落ちる）。
  */
 export const PROMO_FIELDS = Object.freeze({
-  /** Light 永久無料を保有しているか（checkbox） */
-  LIGHT_GRANTED: 'LightLifetimeGranted',
-  LIGHT_GRANTED_AT: 'LightLifetimeGrantedAt',
-  LIGHT_GRANTED_BY: 'LightLifetimeGrantedBy',
-  /** 付与オペレーション ID（冪等性の鍵） */
-  LIGHT_GRANT_OP: 'LightLifetimeGrantOp',
-  LIGHT_REVOKED_AT: 'LightLifetimeRevokedAt',
-  LIGHT_REVOKE_REASON: 'LightLifetimeRevokeReason',
-
-  /** Premium 無料期間の終了時刻（ISO。空 = 特典なし） */
-  TRIAL_UNTIL: 'PremiumTrialUntil',
-  TRIAL_GRANTED_AT: 'PremiumTrialGrantedAt',
-  TRIAL_GRANTED_BY: 'PremiumTrialGrantedBy',
-  TRIAL_GRANT_OP: 'PremiumTrialGrantOp',
-  TRIAL_REVOKED_AT: 'PremiumTrialRevokedAt',
-  TRIAL_REVOKE_REASON: 'PremiumTrialRevokeReason',
-
-  /** 施策名（どのカムバック施策で付与したか。共通 1 つ） */
+  light: Object.freeze({
+    LIFETIME: 'LightGrantLifetime',
+    UNTIL: 'LightGrantUntil',
+    GRANTED_AT: 'LightGrantedAt',
+    GRANTED_BY: 'LightGrantedBy',
+    OP: 'LightGrantOp',
+    REVOKED_AT: 'LightGrantRevokedAt',
+    REVOKE_REASON: 'LightGrantRevokeReason',
+  }),
+  premium: Object.freeze({
+    LIFETIME: 'PremiumGrantLifetime',
+    UNTIL: 'PremiumGrantUntil',
+    GRANTED_AT: 'PremiumGrantedAt',
+    GRANTED_BY: 'PremiumGrantedBy',
+    OP: 'PremiumGrantOp',
+    REVOKED_AT: 'PremiumGrantRevokedAt',
+    REVOKE_REASON: 'PremiumGrantRevokeReason',
+  }),
+  /** 施策名（どのカムバック施策で付与したか。ティア共通で 1 つ） */
   SOURCE: 'ComebackGrantSource',
 });
 
 /** このモジュールが Customers へ書いてよいフィールド（これ以外は構造的に禁止） */
-export const PROMO_WRITABLE_FIELDS = Object.freeze(Object.values(PROMO_FIELDS));
+export const PROMO_WRITABLE_FIELDS = Object.freeze([
+  ...Object.values(PROMO_FIELDS.light),
+  ...Object.values(PROMO_FIELDS.premium),
+  PROMO_FIELDS.SOURCE,
+]);
 
 /**
  * 絶対に触れてはいけないフィールド。
@@ -98,7 +102,11 @@ export const PROMO_FORBIDDEN_FIELDS = Object.freeze([
 /** 内部メモ（取り消し理由・施策名）の最大長 */
 export const PROMO_TEXT_MAX_LENGTH = 200;
 
+/** 無料付与できる最長日数（暴走防止。無期限は lifetime フラグで表現する） */
+export const MAX_GRANT_DAYS = 3650;
+
 const WRITABLE = new Set(PROMO_WRITABLE_FIELDS);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * 特典フィールドへの書き込みが有効か（本番 Airtable にフィールドを作るまで false）。
@@ -143,225 +151,203 @@ export function toMs(value) {
   return Number.isNaN(t) ? null : t;
 }
 
-function toIso(value) {
-  const ms = toMs(value);
-  return ms === null ? null : new Date(ms).toISOString();
-}
-
 function text(v) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/**
- * Premium 無料期間の終了時刻。
- *
- * **付与時刻 + 30 日（実時間）** で計算する。`有効期限`（JST 暦日の日付）とは別物なので
- * JST 丸めをしない ―― 丸めると「23:50 に付与した人だけ 1 日短い/長い」が生まれ、
- * かつ課金側の暦日計算（addOneYearJst）と紛らわしくなる。ISO 時刻をそのまま持つ。
- */
-export function computeTrialUntilMs(grantedAtMs, days = PREMIUM_TRIAL_DAYS) {
-  if (!Number.isFinite(grantedAtMs)) return null;
-  return grantedAtMs + days * 24 * 60 * 60 * 1000;
+function isTier(tier) {
+  return tier === PROMO_TIER.LIGHT || tier === PROMO_TIER.PREMIUM;
 }
 
 /**
- * Customers fields → 現在の特典状態（純粋・読み取りのみ）。
+ * 無料期間の終了時刻。
  *
- * fail closed の原則:
- *   - フィールドが無い / 読めない → 特典なし
- *   - 値が残っているのに RevokedAt の方が新しい（取り消しの書き込みが途中で落ちた等）
- *     → **特典なし**として扱い、inconsistent フラグで可視化する
- *
- * @param {object|null} fields
- * @param {number} [nowMs]
- * @returns {{
- *   lightLifetime: { active: boolean, grantedAtMs: number|null, grantedBy: string, operationId: string,
- *                    revokedAtMs: number|null, revokeReason: string, inconsistent: boolean },
- *   premiumTrial: { active: boolean, untilMs: number|null, grantedAtMs: number|null, grantedBy: string,
- *                   operationId: string, revokedAtMs: number|null, revokeReason: string,
- *                   inconsistent: boolean, expired: boolean, daysRemaining: number|null },
- *   source: string,
- *   hasAny: boolean,
- * }}
+ * **付与時刻 + N 日（実時間）** で計算する。`有効期限`（JST 暦日の日付）とは別物なので
+ * JST 丸めをしない ―― 丸めると「23:50 に付与した人だけ 1 日短い/長い」が生まれ、
+ * 課金側の暦日計算（addOneYearJst）とも紛らわしくなる。ISO 時刻をそのまま持つ。
  */
-export function resolvePromotionalGrants(fields, nowMs = Date.now()) {
-  const f = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {};
-  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+export function computeGrantUntilMs(grantedAtMs, days) {
+  if (!Number.isFinite(grantedAtMs)) return null;
+  if (!Number.isInteger(days) || days < 1 || days > MAX_GRANT_DAYS) return null;
+  return grantedAtMs + days * DAY_MS;
+}
 
-  // ── Light 永久無料 ──
-  const lightRaw = isTruthyFlag(f[PROMO_FIELDS.LIGHT_GRANTED]);
-  const lightGrantedAtMs = toMs(f[PROMO_FIELDS.LIGHT_GRANTED_AT]);
-  const lightRevokedAtMs = toMs(f[PROMO_FIELDS.LIGHT_REVOKED_AT]);
+/** 1 ティア分の状態を解く（内部） */
+function resolveTierGrant(fields, tier, now) {
+  const F = PROMO_FIELDS[tier];
+  const lifetimeRaw = isTruthyFlag(fields[F.LIFETIME]);
+  const untilMs = toMs(fields[F.UNTIL]);
+  const grantedAtMs = toMs(fields[F.GRANTED_AT]);
+  const revokedAtMs = toMs(fields[F.REVOKED_AT]);
   // 取り消し後に再付与した場合は GrantedAt > RevokedAt になるので有効のまま
-  const lightRevokedAfter = lightRevokedAtMs !== null
-    && (lightGrantedAtMs === null || lightRevokedAtMs >= lightGrantedAtMs);
-  const lightInconsistent = lightRaw && lightRevokedAfter;
-  const lightActive = lightRaw && !lightRevokedAfter;
-
-  // ── Premium 無料期間 ──
-  const trialUntilMs = toMs(f[PROMO_FIELDS.TRIAL_UNTIL]);
-  const trialGrantedAtMs = toMs(f[PROMO_FIELDS.TRIAL_GRANTED_AT]);
-  const trialRevokedAtMs = toMs(f[PROMO_FIELDS.TRIAL_REVOKED_AT]);
-  const trialRevokedAfter = trialRevokedAtMs !== null
-    && (trialGrantedAtMs === null || trialRevokedAtMs >= trialGrantedAtMs);
-  const trialInconsistent = trialUntilMs !== null && trialRevokedAfter;
-  const trialUsable = trialUntilMs !== null && !trialRevokedAfter;
-  const trialActive = trialUsable && trialUntilMs > now;
+  const revokedAfter = revokedAtMs !== null && (grantedAtMs === null || revokedAtMs >= grantedAtMs);
+  const hasValue = lifetimeRaw || untilMs !== null;
+  const inconsistent = hasValue && revokedAfter;
+  const usable = hasValue && !revokedAfter;
+  const active = usable && (lifetimeRaw || untilMs > now);
 
   return {
-    lightLifetime: {
-      active: lightActive,
-      grantedAtMs: lightGrantedAtMs,
-      grantedBy: text(f[PROMO_FIELDS.LIGHT_GRANTED_BY]),
-      operationId: text(f[PROMO_FIELDS.LIGHT_GRANT_OP]),
-      revokedAtMs: lightRevokedAtMs,
-      revokeReason: text(f[PROMO_FIELDS.LIGHT_REVOKE_REASON]),
-      inconsistent: lightInconsistent,
-    },
-    premiumTrial: {
-      active: trialActive,
-      untilMs: trialUsable ? trialUntilMs : null,
-      grantedAtMs: trialGrantedAtMs,
-      grantedBy: text(f[PROMO_FIELDS.TRIAL_GRANTED_BY]),
-      operationId: text(f[PROMO_FIELDS.TRIAL_GRANT_OP]),
-      revokedAtMs: trialRevokedAtMs,
-      revokeReason: text(f[PROMO_FIELDS.TRIAL_REVOKE_REASON]),
-      inconsistent: trialInconsistent,
-      expired: trialUsable && trialUntilMs <= now,
-      daysRemaining: trialActive ? Math.ceil((trialUntilMs - now) / (24 * 60 * 60 * 1000)) : null,
-    },
-    source: text(f[PROMO_FIELDS.SOURCE]),
-    hasAny: lightActive || trialActive,
+    tier,
+    active,
+    lifetime: usable && lifetimeRaw,
+    untilMs: usable && !lifetimeRaw ? untilMs : null,
+    /** 期間が終わった（無期限ではない grant の期限切れ） */
+    expired: usable && !lifetimeRaw && untilMs !== null && untilMs <= now,
+    daysRemaining: active && !lifetimeRaw && untilMs !== null
+      ? Math.ceil((untilMs - now) / DAY_MS) : null,
+    grantedAtMs,
+    grantedBy: text(fields[F.GRANTED_BY]),
+    operationId: text(fields[F.OP]),
+    revokedAtMs,
+    revokeReason: text(fields[F.REVOKE_REASON]),
+    inconsistent,
   };
 }
 
 /**
- * 特典を**付与**するときに書くフィールド。
+ * Customers fields → 現在の無料権利（純粋・読み取りのみ）。
  *
- * 冪等性:
- *   - 同じ operationId が既にそのフィールドへ入っていれば `skipped: 'already_applied'`
- *   - 既に有効な特典があれば `skipped: 'already_granted'`（Light は永久なので再付与しない）
- *   - どちらでもなければ fields を返す
+ * fail closed の原則:
+ *   - フィールドが無い / 読めない → 権利なし
+ *   - 値が残っているのに RevokedAt の方が新しい → **権利なし**として扱い inconsistent で可視化
  *
- * ⚠️ Premium trial は「既に有効な trial があるなら延長しない」。延長したい場合は
- *    先に revoke してから付与する（暗黙の延長で終了日が動く事故を防ぐ）。
- *
- * @param {{
- *   grantType: string, fields?: object|null, now: Date|number,
- *   operationId: string, actor?: string, source?: string, trialDays?: number,
- * }} input
- * @returns {{ fields: object, effect: object }|{ skipped: string }|null}
+ * @param {object|null} fields
+ * @param {number} [nowMs]
  */
-export function buildGrantFields({ grantType, fields, now, operationId, actor, source, trialDays }) {
-  const nowMs = toMs(now);
-  const op = text(operationId);
-  if (nowMs === null || !op) return null;
-  const nowIso = new Date(nowMs).toISOString();
-  const f = fields && typeof fields === 'object' ? fields : {};
-  const current = resolvePromotionalGrants(f, nowMs);
-  const by = String(actor || 'admin').slice(0, 64);
-  const src = String(source || '').slice(0, PROMO_TEXT_MAX_LENGTH);
-
-  if (grantType === PROMO_GRANT.LIGHT_LIFETIME) {
-    if (current.lightLifetime.operationId === op && current.lightLifetime.active) {
-      return { skipped: 'already_applied' };
-    }
-    if (current.lightLifetime.active) return { skipped: 'already_granted' };
-    const out = {
-      [PROMO_FIELDS.LIGHT_GRANTED]: true,
-      [PROMO_FIELDS.LIGHT_GRANTED_AT]: nowIso,
-      [PROMO_FIELDS.LIGHT_GRANTED_BY]: by,
-      [PROMO_FIELDS.LIGHT_GRANT_OP]: op,
-      // 再付与時に古い取り消し記録を残さない（RevokedAt が新しいままだと fail closed で無効化される）
-      [PROMO_FIELDS.LIGHT_REVOKED_AT]: '',
-      [PROMO_FIELDS.LIGHT_REVOKE_REASON]: '',
-    };
-    if (src) out[PROMO_FIELDS.SOURCE] = src;
-    if (!assertOnlyGrantFields(out)) return null;
-    return { fields: out, effect: { grantType, untilMs: null } };
-  }
-
-  if (grantType === PROMO_GRANT.PREMIUM_TRIAL_30D) {
-    if (current.premiumTrial.operationId === op && current.premiumTrial.untilMs !== null) {
-      return { skipped: 'already_applied' };
-    }
-    if (current.premiumTrial.active) return { skipped: 'already_granted' };
-    const untilMs = computeTrialUntilMs(nowMs, Number.isFinite(trialDays) ? trialDays : PREMIUM_TRIAL_DAYS);
-    if (untilMs === null) return null;
-    const out = {
-      [PROMO_FIELDS.TRIAL_UNTIL]: new Date(untilMs).toISOString(),
-      [PROMO_FIELDS.TRIAL_GRANTED_AT]: nowIso,
-      [PROMO_FIELDS.TRIAL_GRANTED_BY]: by,
-      [PROMO_FIELDS.TRIAL_GRANT_OP]: op,
-      [PROMO_FIELDS.TRIAL_REVOKED_AT]: '',
-      [PROMO_FIELDS.TRIAL_REVOKE_REASON]: '',
-    };
-    if (src) out[PROMO_FIELDS.SOURCE] = src;
-    if (!assertOnlyGrantFields(out)) return null;
-    return { fields: out, effect: { grantType, untilMs } };
-  }
-
-  return null; // 未知の種別は丸めずに拒否
+export function resolvePromotionalGrants(fields, nowMs = Date.now()) {
+  const f = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {};
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const light = resolveTierGrant(f, PROMO_TIER.LIGHT, now);
+  const premium = resolveTierGrant(f, PROMO_TIER.PREMIUM, now);
+  return {
+    light,
+    premium,
+    source: text(f[PROMO_FIELDS.SOURCE]),
+    hasAny: light.active || premium.active,
+    inconsistent: light.inconsistent || premium.inconsistent,
+  };
 }
 
 /**
- * 特典を**取り消す**ときに書くフィールド。
- * 取り消せるのは promotional grant だけ。paid entitlement / LifetimeSanrenpuku は
+ * 新しい付与が既存より強いか。
+ * 「強い方を採用する（権利を減らさない）」ため、弱い付与は skip して既存を維持する。
+ */
+export function isStrongerGrant(current, next) {
+  if (!current || !current.active) return true;
+  if (current.lifetime) return false;            // 無期限より強いものは無い
+  if (next.lifetime) return true;                // 期限付き → 無期限は強化
+  if (!Number.isFinite(next.untilMs)) return false;
+  if (!Number.isFinite(current.untilMs)) return false;
+  return next.untilMs > current.untilMs;         // 終了日が後ろへ伸びるときだけ強化
+}
+
+/**
+ * 無料権利を**付与**するときに書くフィールド。
+ *
+ * 冪等性:
+ *   - 同じ operationId が既にそのティアへ入っていれば `skipped: 'already_applied'`
+ *   - 既存の方が強い / 同等なら `skipped: 'already_granted'`（弱い付与で権利を縮めない）
+ *   - 強化になる場合だけ書く（`effect.upgrade = true`）
+ *
+ * @param {{
+ *   tier: string, lifetime?: boolean, durationDays?: number,
+ *   fields?: object|null, now: Date|number,
+ *   operationId: string, actor?: string, source?: string,
+ * }} input
+ * @returns {{ fields: object, effect: object }|{ skipped: string }|null}
+ */
+export function buildGrantFields({
+  tier, lifetime = false, durationDays, fields, now, operationId, actor, source,
+}) {
+  if (!isTier(tier)) return null;
+  const nowMs = toMs(now);
+  const op = text(operationId);
+  if (nowMs === null || !op) return null;
+
+  const isLifetime = lifetime === true;
+  const untilMs = isLifetime ? null : computeGrantUntilMs(nowMs, durationDays);
+  if (!isLifetime && untilMs === null) return null; // 日数が不正なら組み立てない（fail closed）
+
+  const f = fields && typeof fields === 'object' ? fields : {};
+  const current = resolvePromotionalGrants(f, nowMs)[tier];
+
+  if (current.operationId === op && (current.lifetime || current.untilMs !== null)) {
+    return { skipped: 'already_applied' };
+  }
+  const next = { lifetime: isLifetime, untilMs };
+  if (!isStrongerGrant(current, next)) return { skipped: 'already_granted' };
+
+  const F = PROMO_FIELDS[tier];
+  const nowIso = new Date(nowMs).toISOString();
+  const out = {
+    [F.LIFETIME]: isLifetime,
+    // 無期限のときは終了時刻を持たない（両方に値があると解釈が割れる）
+    [F.UNTIL]: isLifetime ? '' : new Date(untilMs).toISOString(),
+    [F.GRANTED_AT]: nowIso,
+    [F.GRANTED_BY]: String(actor || 'admin').slice(0, 64),
+    [F.OP]: op,
+    // 再付与時に古い取り消し記録を残さない（RevokedAt が新しいままだと fail closed で無効化される）
+    [F.REVOKED_AT]: '',
+    [F.REVOKE_REASON]: '',
+  };
+  const src = String(source || '').slice(0, PROMO_TEXT_MAX_LENGTH);
+  if (src) out[PROMO_FIELDS.SOURCE] = src;
+
+  if (!assertOnlyGrantFields(out)) return null;
+  return {
+    fields: out,
+    effect: { tier, lifetime: isLifetime, untilMs, upgrade: current.active === true },
+  };
+}
+
+/**
+ * 無料権利を**取り消す**ときに書くフィールド。
+ * 取り消せるのは promotional grant だけ。paid contract / LifetimeSanrenpuku は
  * allowlist により構造的に触れない。
  *
  * @returns {{ fields: object }|{ skipped: string }|null}
  */
-export function buildRevokeFields({ grantType, fields, now, actor, reason }) {
+export function buildRevokeFields({ tier, fields, now, actor, reason }) {
+  if (!isTier(tier)) return null;
   const nowMs = toMs(now);
   if (nowMs === null) return null;
-  const nowIso = new Date(nowMs).toISOString();
   const f = fields && typeof fields === 'object' ? fields : {};
-  const current = resolvePromotionalGrants(f, nowMs);
-  const why = String(reason || '').slice(0, PROMO_TEXT_MAX_LENGTH);
+  const current = resolvePromotionalGrants(f, nowMs)[tier];
+
+  // 値も取り消し記録も無ければ書くことが無い（期限切れの残骸は掃除できる）
+  const hasValue = current.lifetime || current.untilMs !== null || current.inconsistent;
+  if (!hasValue) return { skipped: 'not_granted' };
+
+  const F = PROMO_FIELDS[tier];
   const by = String(actor || 'admin').slice(0, 64);
-
-  if (grantType === PROMO_GRANT.LIGHT_LIFETIME) {
-    // 値も取り消し記録も無ければ書くことが無い
-    if (!current.lightLifetime.active && !current.lightLifetime.inconsistent) {
-      return { skipped: 'not_granted' };
-    }
-    const out = {
-      [PROMO_FIELDS.LIGHT_GRANTED]: false,
-      [PROMO_FIELDS.LIGHT_REVOKED_AT]: nowIso,
-      [PROMO_FIELDS.LIGHT_REVOKE_REASON]: why ? `${why}（${by}）` : `取り消し（${by}）`,
-    };
-    if (!assertOnlyGrantFields(out)) return null;
-    return { fields: out };
-  }
-
-  if (grantType === PROMO_GRANT.PREMIUM_TRIAL_30D) {
-    // 期限切れの trial も「値が残っている」なら掃除できる（active でなくても可）
-    if (current.premiumTrial.untilMs === null && !current.premiumTrial.inconsistent) {
-      return { skipped: 'not_granted' };
-    }
-    const out = {
-      [PROMO_FIELDS.TRIAL_UNTIL]: '',
-      [PROMO_FIELDS.TRIAL_REVOKED_AT]: nowIso,
-      [PROMO_FIELDS.TRIAL_REVOKE_REASON]: why ? `${why}（${by}）` : `取り消し（${by}）`,
-    };
-    if (!assertOnlyGrantFields(out)) return null;
-    return { fields: out };
-  }
-
-  return null;
+  const why = String(reason || '').slice(0, PROMO_TEXT_MAX_LENGTH);
+  const out = {
+    [F.LIFETIME]: false,
+    [F.UNTIL]: '',
+    [F.REVOKED_AT]: new Date(nowMs).toISOString(),
+    [F.REVOKE_REASON]: why ? `${why}（${by}）` : `取り消し（${by}）`,
+  };
+  if (!assertOnlyGrantFields(out)) return null;
+  return { fields: out };
 }
 
-/** 特典状態の短い説明（管理画面の「現在」「付与後」表示に使う） */
+/** 1 ティア分の説明（管理画面の「現在」「付与後」表示に使う） */
+export function describeTierGrant(g) {
+  if (!g || !g.active) {
+    if (g && g.expired) return `${PROMO_TIER_LABEL[g.tier]} 無料 終了（${fmtDay(g.untilMs)}）`;
+    return '';
+  }
+  const label = PROMO_TIER_LABEL[g.tier];
+  return g.lifetime
+    ? `${label} 永久無料`
+    : `${label} 無料（〜${fmtDay(g.untilMs)}・残り ${g.daysRemaining} 日）`;
+}
+
+/** 特典状態の短い説明 */
 export function describeGrantState(grants) {
   const g = grants || resolvePromotionalGrants(null);
-  const parts = [];
-  if (g.premiumTrial.active) {
-    parts.push(`Premium 無料（〜${fmtDay(g.premiumTrial.untilMs)}・残り ${g.premiumTrial.daysRemaining} 日）`);
-  } else if (g.premiumTrial.expired) {
-    parts.push(`Premium 無料 終了（${fmtDay(g.premiumTrial.untilMs)}）`);
-  }
-  if (g.lightLifetime.active) parts.push('Light 永久無料');
-  if (g.lightLifetime.inconsistent || g.premiumTrial.inconsistent) parts.push('⚠️ 特典データ不整合');
+  const parts = [describeTierGrant(g.premium), describeTierGrant(g.light)].filter(Boolean);
+  if (g.inconsistent) parts.push('⚠️ 特典データ不整合');
   return parts.length ? parts.join(' / ') : '特典なし';
 }
 

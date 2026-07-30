@@ -12,16 +12,21 @@
 
 import { resolveCustomerMarketing, matchesMarketingFilter } from '../marketing/customerMarketingAudience.js';
 import { resolvePromotionalGrants, describeGrantState } from '../entitlements/promotionalGrants.js';
-import { checkGrantable, describeCustomerState, CB_SKIP } from './comebackGrantPlan.js';
+import { checkGrantable, checkOfferable, describeCustomerState, CB_SKIP } from './comebackGrantPlan.js';
 
 /** 特典の保有状態（絞り込み用） */
 export const CB_PROMO_FILTER = Object.freeze({
   ALL: 'all',
   NONE: 'none',
   ANY: 'any',
-  LIGHT: 'light_lifetime',
-  TRIAL_ACTIVE: 'trial_active',
-  TRIAL_EXPIRED: 'trial_expired',
+  /** Light 無料権利あり（期限付き・無期限を問わない） */
+  LIGHT: 'light',
+  /** Light 永久無料 */
+  LIGHT_LIFETIME: 'light_lifetime',
+  /** Premium 無料権利あり */
+  PREMIUM: 'premium',
+  /** Premium 無料権利が終了した */
+  PREMIUM_ENDED: 'premium_ended',
   INCONSISTENT: 'inconsistent',
 });
 
@@ -44,23 +49,29 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
   const marketing = resolveCustomerMarketing({ fields: f, nowMs: now, blacklistEmails, history });
   const grants = resolvePromotionalGrants(f, now);
   const grantable = checkGrantable(f);
+  const offerable = checkOfferable(f);
   const state = describeCustomerState(f, now);
 
   return {
     marketing,
     grants,
-    /** 特典を付与できるか（停止・退会・データ不備は付与しても使えないので false） */
+    /** 無料付与できるか（停止・退会・データ不備は付与しても使えないので false） */
     grantable: grantable.ok,
     grantBlockedReason: grantable.reason,
+    /** 割引オファーを発行できるか（退会者にも発行可。支払い時に既存フローが復帰させる） */
+    offerable: offerable.ok,
+    offerBlockedReason: offerable.reason,
     stateText: state.text,
     paidText: state.paid,
+    effectiveTier: state.effectiveTier,
     promoText: describeGrantState(grants),
-    promoLight: grants.lightLifetime.active,
-    promoTrialActive: grants.premiumTrial.active,
-    promoTrialExpired: grants.premiumTrial.expired,
-    promoInconsistent: grants.lightLifetime.inconsistent || grants.premiumTrial.inconsistent,
+    promoLight: grants.light.active,
+    promoLightLifetime: grants.light.lifetime,
+    promoPremium: grants.premium.active,
+    promoPremiumEnded: grants.premium.expired,
+    promoInconsistent: grants.inconsistent,
     grantSource: grants.source,
-    grantOperationIds: [grants.lightLifetime.operationId, grants.premiumTrial.operationId].filter(Boolean),
+    grantOperationIds: [grants.light.operationId, grants.premium.operationId].filter(Boolean),
   };
 }
 
@@ -83,11 +94,13 @@ export function matchesComebackFilter(c, filter = {}) {
     if (f.withdrawn === 'no' && yes) return false;
   }
   if (f.promo && f.promo !== CB_PROMO_FILTER.ALL) {
-    if (f.promo === CB_PROMO_FILTER.NONE && (c.promoLight || c.promoTrialActive)) return false;
-    if (f.promo === CB_PROMO_FILTER.ANY && !(c.promoLight || c.promoTrialActive)) return false;
+    const hasAny = c.promoLight || c.promoPremium;
+    if (f.promo === CB_PROMO_FILTER.NONE && hasAny) return false;
+    if (f.promo === CB_PROMO_FILTER.ANY && !hasAny) return false;
     if (f.promo === CB_PROMO_FILTER.LIGHT && !c.promoLight) return false;
-    if (f.promo === CB_PROMO_FILTER.TRIAL_ACTIVE && !c.promoTrialActive) return false;
-    if (f.promo === CB_PROMO_FILTER.TRIAL_EXPIRED && !c.promoTrialExpired) return false;
+    if (f.promo === CB_PROMO_FILTER.LIGHT_LIFETIME && !c.promoLightLifetime) return false;
+    if (f.promo === CB_PROMO_FILTER.PREMIUM && !c.promoPremium) return false;
+    if (f.promo === CB_PROMO_FILTER.PREMIUM_ENDED && !c.promoPremiumEnded) return false;
     if (f.promo === CB_PROMO_FILTER.INCONSISTENT && !c.promoInconsistent) return false;
   }
   if (f.grantable && f.grantable !== CB_GRANTABLE_FILTER.ALL) {
@@ -106,7 +119,8 @@ export function summarizeComeback(list) {
     withdrawn: 0,
     grantable: 0,
     blocked: {},
-    promo: { none: 0, light: 0, trialActive: 0, trialExpired: 0, inconsistent: 0 },
+    offerable: 0,
+    promo: { none: 0, light: 0, lightLifetime: 0, premium: 0, premiumEnded: 0, inconsistent: 0 },
   };
   for (const c of list || []) {
     counts.total += 1;
@@ -117,11 +131,13 @@ export function summarizeComeback(list) {
     if (c.grantable) counts.grantable += 1;
     else counts.blocked[c.grantBlockedReason || CB_SKIP.DATA_INCOMPLETE] =
       (counts.blocked[c.grantBlockedReason || CB_SKIP.DATA_INCOMPLETE] || 0) + 1;
+    if (c.offerable) counts.offerable += 1;
     if (c.promoLight) counts.promo.light += 1;
-    if (c.promoTrialActive) counts.promo.trialActive += 1;
-    if (c.promoTrialExpired) counts.promo.trialExpired += 1;
+    if (c.promoLightLifetime) counts.promo.lightLifetime += 1;
+    if (c.promoPremium) counts.promo.premium += 1;
+    if (c.promoPremiumEnded) counts.promo.premiumEnded += 1;
     if (c.promoInconsistent) counts.promo.inconsistent += 1;
-    if (!c.promoLight && !c.promoTrialActive) counts.promo.none += 1;
+    if (!c.promoLight && !c.promoPremium) counts.promo.none += 1;
   }
   return counts;
 }

@@ -137,6 +137,10 @@ jobs:
         working-directory: astro-site
         run: npm run test:comeback
 
+      - name: Verify 特典カタログ・割引オファー（価格が pricing と一致 / トークン検証）
+        working-directory: astro-site
+        run: npm run test:promotions
+
       - name: Verify 権限判定（無料特典と有料契約の分離 / Plus 販売資格不変）
         working-directory: astro-site
         run: npm run test:entitlements

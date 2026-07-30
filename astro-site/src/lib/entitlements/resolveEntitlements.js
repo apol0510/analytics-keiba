@@ -18,20 +18,24 @@
  * premium-sanrenpuku / premium-combo）を持つ既存レコードを、フラグ未設定でも三連複閲覧可とする
  * `legacySanrenpukuTierGrantsView`（既定 true）。データ移行完了後（PR4）に false へ倒して恒久除去できる。
  *
- * ── カムバック特典（promotional grant）の扱い（2026-07-30 追加）────────────
- * 無料特典（Light 永久無料 / Premium 30日無料）は **課金契約とは別フィールド**で持つ
- * （promotionalGrants.js）。ここでの合成規則は 1 つだけ:
+ * ── 無料特典（promotional grant）の扱い（2026-07-30 追加）──────────────
+ * 無料で付与した閲覧権は **課金契約とは別フィールド**で持つ（promotionalGrants.js）。
+ * 合成規則は 1 つだけ:
  *
- *   **強い方を採用する。特典は権利を増やすだけで、減らさない。**
+ *   **強い権利を優先する。特典は権利を増やすだけで、減らさない。**
  *
- *   canViewPremium     = 有料 Premium 有効 **または** Premium 無料期間が有効
- *   canViewLight       = 上記のいずれか **または** 有料 Light 有効 **または** Light 永久無料
- *   canViewSanrenpuku  = 変更なし（三連複買い切りは特典の影響を受けない）
+ *   実効ティア: premium-sanrenpuku > premium > light > free
+ *
+ *   canViewPremium     = 有料 Premium 有効 **または** Premium 無料権利が有効
+ *   canViewLight       = 上記のいずれか **または** 有料 Light 有効 **または** Light 無料権利が有効
+ *   canViewSanrenpuku  = 変更なし（三連複買い切りは無料特典の影響を受けない）
  *   canPurchaseSanrenpuku = 変更なし（**有料** Premium 会員だけが購入資格を持つ。
  *                          無料特典で購入資格を配らない）
  *
- * 「Premium 無料期間の終了後は Light 永久無料へ戻る」は状態遷移ではなく、上式から
- * 自然に導かれる（trial が期限切れになると premium 側が false になり light だけが残る）。
+ * ⚠️ Light は「Premium 終了後の fallback」ではない。**メイン買い目のみ閲覧できる独立した
+ *    低位プラン**であり、Light 無料権利と Premium 無料権利は最初から**同時に存在**する。
+ *    Premium が終わると、既にある Light 権利が再び最上位になるだけ ―― 
+ *    **期限到来時に書き込みは一切発生しない**（純粋な時刻比較）。
  *
  * 特典フィールドが 1 つも無いレコードは従来と完全に同じ判定になる（fail closed）。
  */
@@ -148,10 +152,10 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   // pending（入金待ち）でも特典は有効。特典は支払いと無関係に成立する権利であり、
   // 逆に停止・退会・テストアカウントでは canLogin=false なので自動的に無効になる。
   const grants = resolvePromotionalGrants(c.promoFields, nowMs);
-  const promoPremiumActive = canLogin && grants.premiumTrial.active;
-  const promoLightActive = canLogin && grants.lightLifetime.active;
-  if (promoPremiumActive) reasons.push('PROMO_PREMIUM_TRIAL');
-  if (promoLightActive) reasons.push('PROMO_LIGHT_LIFETIME');
+  const promoPremiumActive = canLogin && grants.premium.active;
+  const promoLightActive = canLogin && grants.light.active;
+  if (promoPremiumActive) reasons.push('PROMO_PREMIUM_GRANT');
+  if (promoLightActive) reasons.push('PROMO_LIGHT_GRANT');
 
   // ── 閲覧資格 ──────────────────────────────────────────
   const canViewFree = canLogin;
@@ -190,11 +194,21 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
     paidLightActive: lightActive,
     /** カムバック特典の内訳（表示・管理画面用） */
     promo: {
-      premiumTrialActive: promoPremiumActive,
-      premiumTrialUntilMs: grants.premiumTrial.untilMs,
-      lightLifetimeActive: promoLightActive,
-      inconsistent: grants.lightLifetime.inconsistent || grants.premiumTrial.inconsistent,
+      premiumActive: promoPremiumActive,
+      premiumLifetime: grants.premium.lifetime,
+      premiumUntilMs: grants.premium.untilMs,
+      lightActive: promoLightActive,
+      lightLifetime: grants.light.lifetime,
+      lightUntilMs: grants.light.untilMs,
+      inconsistent: grants.inconsistent,
     },
+    /**
+     * 実効ティア（強い方を採用した結果）。
+     * premium-sanrenpuku > premium > light > free。
+     * ⚠️ 三連複は買い切り権（LifetimeSanrenpuku）で決まり、無料特典の影響を受けない。
+     */
+    effectiveTier: canViewSanrenpuku ? 'premium-sanrenpuku'
+      : (canViewPremium ? 'premium' : (canViewLight ? 'light' : 'free')),
   };
 }
 

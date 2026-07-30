@@ -15,10 +15,10 @@
  *   - 期限切れ有料会員を Free として即時ログインさせない（`denied`）
  *   - SessionVersion 欠落・空は `0`。負数 / 非整数 / 異常型は `denied`
  *
- * ── カムバック特典（無料 entitlement）の扱い（2026-07-30 追加）────────────
- * `promotionalGrants.js` の特典は **課金契約とは独立**にログイン権限を与える。
- *   - Premium 30日無料が有効 → `paid('premium')`
- *   - Light 永久無料が有効   → `paid('light')`
+ * ── 無料特典（promotional grant）の扱い（2026-07-30 追加）──────────────
+ * `promotionalGrants.js` の無料権利は **課金契約とは独立**にログイン権限を与える。
+ *   - Premium 無料権利が有効 → `paid('premium')`
+ *   - Light 無料権利が有効   → `paid('light')`
  * 有料契約が有効なときは **有料側を優先**する（特典で契約プランを上書きしない）。
  * 拒否ゲート（ForceLogout / 退会 / 停止 / SessionVersion 不正）は特典より**先**に評価する。
  * 特典は権利を増やすだけで、減らさない。フィールドが無いレコードは従来と同じ判定。
@@ -54,10 +54,10 @@ export const MEMBER_REASON = Object.freeze({
   EXPIRED: 'expired',
   UNKNOWN_VENUE: 'unknown_venue',
   INVALID_NOW: 'invalid_now',
-  /** カムバック特典（Premium 30日無料）で有料相当になった */
-  PROMO_PREMIUM_TRIAL: 'promo_premium_trial',
-  /** カムバック特典（Light 永久無料）で有料相当になった */
-  PROMO_LIGHT_LIFETIME: 'promo_light_lifetime',
+  /** 無料特典（Premium 無料権利）で有料相当になった */
+  PROMO_PREMIUM_GRANT: 'promo_premium_grant',
+  /** 無料特典（Light 無料権利）で有料相当になった */
+  PROMO_LIGHT_GRANT: 'promo_light_grant',
 });
 
 // Airtable 上の停止系ステータス（大小・和英を吸収）。
@@ -202,13 +202,14 @@ export function resolveMembership(input = {}) {
    */
   const promoResult = () => {
     const g = resolvePromotionalGrants(fields, now);
-    const plan = g.premiumTrial.active ? 'premium' : (g.lightLifetime.active ? 'light' : null);
+    // 強い方を優先: Premium 無料権利 > Light 無料権利（Light は fallback ではなく独立プラン）
+    const plan = g.premium.active ? 'premium' : (g.light.active ? 'light' : null);
     if (!plan) return null;
     const v = resolveVenues(fields);
     if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
     return paidResult(
       plan, v.venues, recordId, sessionVersion, lifetime,
-      plan === 'premium' ? MEMBER_REASON.PROMO_PREMIUM_TRIAL : MEMBER_REASON.PROMO_LIGHT_LIFETIME,
+      plan === 'premium' ? MEMBER_REASON.PROMO_PREMIUM_GRANT : MEMBER_REASON.PROMO_LIGHT_GRANT,
     );
   };
 

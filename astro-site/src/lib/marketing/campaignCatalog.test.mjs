@@ -109,8 +109,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'premium-plus-offer': { version: 2, hash: '267556b6e0164a72' },
     'dormant-reactivation': { version: 2, hash: '72d0595d176a4819' },
     'general-announcement': { version: 1, hash: '41c37e1db8127b2f' },
-    // カムバック特典の案内（下書き / enabled=false）。特典付与フローの本番稼働後に有効化する。
-    'comeback-offer': { version: 1, hash: 'd5be33764048a3b6' },
+    // カムバック案内（下書き / enabled=false）。本文は offer から自動生成する
+    // （comebackEmailTemplate.js）。**一度も送信していない**ため、生成ロジックを直したときは
+    // version を据え置いたままハッシュだけ更新してよい。有効化後は通常どおり version を上げる。
+    'comeback-offer': { version: 1, hash: 'bd591839d2068aa3' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
