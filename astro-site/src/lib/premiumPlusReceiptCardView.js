@@ -83,6 +83,13 @@ export function renderReceiptCardHtml(card) {
   const winner = String(c.winnerCombo || c.hitCombo || '');
   const wArr = winner.split(/[^0-9]+/).map((x) => parseInt(x, 10)).filter(Number.isFinite);
   const w1 = wArr[0], w2 = wArr[1], w3 = wArr[2];
+  // ⚠️ 投票内容照会（SPAT4 / JRA）の複製では、**不的中のとき「不的中」と書かない**。
+  //    実物は的中行が単に存在しないだけで、否定表現を出す欄が無い（2026-07-30 実物照合）。
+  //    そのため c3 セルは的中時だけ 3 行目を足し、不的中時は 2 行のままにする
+  //    （末尾の <br> も出さない。出すと空行が残り (各N円)/合計円 の上下余白が崩れる）。
+  //    `.c3` は vertical-align: middle なので、2 行になれば自動的に上下が等間隔になる。
+  //    ※ AK 独自ヘッダーの `× 不的中` バッジ（headBadge）は実績を正直に出す方針なので残す。
+  //
   // 三連単の的中組合せは「1着→2着→3着」の順序付き。管理画面は "7-1-9" で保存するが、
   // 表示は必ず矢印区切りにする（`-` は馬連等の無順序券種に見えるため）。
   // JRA 投票内容照会の「払戻単価」は 2 桁ゼロ埋め（06→01→04）なので vref jra 側は wDispPad を使う。
@@ -112,7 +119,7 @@ export function renderReceiptCardHtml(card) {
           <tr>
             <td class="c1">${esc(jd.spat)}<br><span class="race">${esc(raceLabel)}</span><br>三連単<br>フォーメーション</td>
             <td class="c2"><b>1着:</b>${first.join(', ')}<br><b>2着:</b>${second.join(', ')}<br><b>3着:</b>${third.join(', ')}</td>
-            <td class="c3">(各${unitStake.toLocaleString()}円)<br>${stake.toLocaleString()}円<br>${isHit ? `<span class="hit">的中 ${payout.toLocaleString()}円</span>` : `<span class="miss">不的中</span>`}</td>
+            <td class="c3">(各${unitStake.toLocaleString()}円)<br>${stake.toLocaleString()}円${isHit ? `<br><span class="hit">的中 ${payout.toLocaleString()}円</span>` : ''}</td>
           </tr>
         </tbody></table>
         <div class="notes"><p>※前日発売で投票した結果は、レース開催日の投票内容照会にてご確認ください。</p></div>
