@@ -66,7 +66,7 @@ test('レンダラ整合: 中央(JRA) カードに本番の主要クラス/文�
   for (const s of [
     'pp-circuit ch', '中央', 'class="vref jra"',
     // 2026-07-30: 明細行のラベルは「払戻/返還金額」→「払戻金額」へ変更（AK は返還を扱わない）
-    '合計購入金額', '合計払戻金額', '3連単フォーメーション', '払戻金額',
+    '購入金額合計', '払戻金額合計', '3連単フォーメーション', '払戻金額',
   ]) {
     assert.ok(html.includes(s), `JRA プレビューに "${s}" が無い`);
   }
@@ -262,10 +262,10 @@ test('JRA「払戻金額:」のラベル自体は赤にしない（実物もラ�
   assert.ok(!/class="[^"]*pay[^"]*">払戻金額/.test(html), 'ラベルを含む span に .pay が付いている');
 });
 
-test('JRA 合計払戻金額は従来どおり（.hlrow.back でラベルごと赤）', () => {
+test('JRA 払戻金額合計は .hlrow.back でラベルごと赤（構造は不変）', () => {
   const html = jraOf({ isHit: false });
-  assert.ok(html.includes('<div class="hlrow back"><span>合計払戻金額</span><span>0円</span></div>'),
-    '合計払戻金額の構造が変わっている');
+  assert.ok(html.includes(`<div class="hlrow back"><span>払戻金額合計</span><span>0円</span></div>`),
+    '払戻金額合計の構造が変わっている');
 });
 
 test('ドリフト検知: 本番コンポーネント / ページも払戻表示をそろえている', () => {
@@ -281,5 +281,36 @@ test('ドリフト検知: 本番コンポーネント / ページも払戻表示
       `${rel}: 見出しの金額が常時赤（.pay）になっていない`);
     assert.ok(!/class=\{[^}]*'pay'[^}]*\}>払戻金額/.test(src),
       `${rel}: ラベルごと赤にする旧実装が残っている`);
+  }
+});
+
+test('JRA ハイライトのラベルは「購入金額合計」「払戻金額合計」（2026-07-30 指定）', () => {
+  const html = jraOf({ isHit: false });
+  assert.ok(html.includes('<span>購入金額合計</span>'), '「購入金額合計」でない');
+  assert.ok(html.includes('<span>払戻金額合計</span>'), '「払戻金額合計」でない');
+  assert.ok(!html.includes('合計購入金額'), '旧ラベル「合計購入金額」が残っている');
+  assert.ok(!html.includes('合計払戻金額'), '旧ラベル「合計払戻金額」が残っている');
+});
+
+test('ラベル変更は JRA のみ（南関 SPAT4 には出さない）', () => {
+  const spat = renderReceiptCardHtml(deriveCard({
+    date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
+    first: '7', second: '1,3', third: '1,2,3',
+  }));
+  for (const s of ['購入金額合計', '払戻金額合計', '合計購入金額', '合計払戻金額']) {
+    assert.ok(!spat.includes(s), `SPAT4 カードに "${s}" が混入している`);
+  }
+});
+
+test('ドリフト検知: 本番コンポーネント / ページも新ラベルにそろえている', () => {
+  for (const rel of [
+    '../components/premium-plus/PremiumPlusReceiptCardV2.astro',
+    '../pages/premium-plus.astro',
+  ]) {
+    const src = read(rel);
+    assert.ok(src.includes('>購入金額合計<'), `${rel}: 「購入金額合計」でない`);
+    assert.ok(src.includes('>払戻金額合計<'), `${rel}: 「払戻金額合計」でない`);
+    assert.ok(!src.includes('合計購入金額'), `${rel}: 旧ラベルが残っている`);
+    assert.ok(!src.includes('合計払戻金額'), `${rel}: 旧ラベルが残っている`);
   }
 });

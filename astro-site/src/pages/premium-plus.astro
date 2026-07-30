@@ -1076,8 +1076,8 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                       <div class="chrome"></div>
                       <div class="r2"><span class="nav">◀</span><div class="c"><div class="d">{c.jd.full}</div>{c.receiptNo && <div class="n">受付番号：{c.receiptNo}</div>}</div><span class="nav">▶</span></div>
                       <div class="hl"><div class="hlcard">
-                        <div class="hlrow"><span>合計購入金額</span><span>{c.stake.toLocaleString()}円</span></div>
-                        <div class="hlrow back"><span>合計払戻金額</span><span>{(c.isHit ? c.payout : 0).toLocaleString()}円</span></div>
+                        <div class="hlrow"><span>購入金額合計</span><span>{c.stake.toLocaleString()}円</span></div>
+                        <div class="hlrow back"><span>払戻金額合計</span><span>{(c.isHit ? c.payout : 0).toLocaleString()}円</span></div>
                       </div></div>
                       <div class="close">すべて閉じる<span class="acc">▲</span></div>
                       <div class="vh">001）{c.venue}（{c.jd.wd}）{c.raceNumber}R 3連単フォーメーション
