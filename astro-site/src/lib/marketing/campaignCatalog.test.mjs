@@ -90,7 +90,7 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
   const all = listCampaigns({ includeDisabled: true });
   assert.equal(all.length, CAMPAIGNS.length);
   const off = all.filter((c) => !c.usable);
-  assert.ok(off.length >= 2, '停止中が返っていない');
+  assert.equal(off.length, 2, '停止中の本数が想定と違う');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に停止理由が無い`);
   for (const c of all.filter((x) => x.usable)) assert.equal(c.disabledReason, null);
 });
@@ -102,6 +102,7 @@ test('【version ロック】本文を変えたら version を上げる', () => 
   // version を据え置いたまま本文を変えると DeliveryKey が変わらず、
   // 既送信者へ修正版が二度と届かない。
   const LOCKED = {
+    'marketing-canary': { version: 1, hash: 'd7e12b0a9475db9c' },
     'expired-comeback': { version: 2, hash: 'ff62a4c49e8c6a52' },
     'premium-renewal': { version: 2, hash: '5359e6032c187938' },
     'sanrenpuku-offer': { version: 2, hash: '25ea78c0b425714e' },

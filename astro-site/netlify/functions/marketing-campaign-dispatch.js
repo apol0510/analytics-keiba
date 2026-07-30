@@ -41,6 +41,9 @@ import {
   fetchEmailBlacklistReadOnly,
   buildBlacklistEmailSet,
 } from '../../src/lib/newsletter/airtable-fetch.js';
+import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
+import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import { evaluateExtraAudience } from '../../src/lib/marketing/campaignAudienceRules.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 
 const BRAND = 'analytics-keiba';
@@ -168,14 +171,20 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
   const customers = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
   const unsubscribed = new Set();
   const withdrawn = new Set();
+  /** 送信直前にキャンペーン固有条件を再判定するための email → fields */
+  const fieldsByEmail = new Map();
   for (const r of customers) {
     const f = r.fields || {};
     const e = String(f.Email || '').trim().toLowerCase();
     if (!e) continue;
+    fieldsByEmail.set(e, f);
     if (f.UnsubscribedAnalyticsKeiba === true) unsubscribed.add(e);
     const status = String(f.Status || '').trim().toLowerCase();
     if (f.WithdrawalRequested === true || status === 'withdrawn' || status === 'cancelled') withdrawn.add(e);
   }
+
+  // env 由来の値（テスト受信者ホワイトリスト）。判定モジュールは純粋なのでここで読む。
+  const audienceContext = { testRecipients: new Set(parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients) };
 
   // 3) ジョブごとに 1 通ずつ再検証 → 送信
   const summary = { jobs: 0, verified: 0, sent: 0, failed: 0, skipped: 0, skippedByReason: {} };
@@ -191,6 +200,11 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     // このジョブ以外のキャンペーン配信から、受信者ごとの最終送信日時を作る
     const recentContactAtMs = buildRecentContactMap(campaignDeliveries, jobId);
 
+    // ジョブが属するキャンペーン（TargetPlan='campaign:<id>'）。
+    // キュー登録後に条件が変わっている可能性があるため、送信直前にも固有条件を再判定する。
+    const campaignId = String(f.TargetPlan || '').replace(/^campaign:/, '').trim();
+    const jobCampaign = campaignId ? getCampaign(campaignId) : null;
+
     const toSend = [];
     const toSkip = [];
     for (const email of recipients.slice(0, MAX_PER_RUN)) {
@@ -198,6 +212,27 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
         email, providerSuppressed: provider.emails, blocked, unsubscribed, withdrawn,
         recentContactAtMs, nowMs: now,
       });
+      // キャンペーン固有条件（カナリアのテスト受信者・Premium Plus の PHASE 等）の再確認。
+      // キャンペーンが使用停止化・env 変更などで条件を失っていたら送らない（fail closed）。
+      if (v.send) {
+        if (!jobCampaign) {
+          toSkip.push({ email, status: 'skipped-duplicate', reason: 'campaign_unavailable' });
+          summary.skipped += 1;
+          summary.skippedByReason.campaign_unavailable = (summary.skippedByReason.campaign_unavailable || 0) + 1;
+          summary.verified += 1;
+          continue;
+        }
+        const extra = evaluateExtraAudience({
+          campaign: jobCampaign, fields: fieldsByEmail.get(email) || null, nowMs: now, context: audienceContext,
+        });
+        if (!extra.ok) {
+          toSkip.push({ email, status: 'skipped-duplicate', reason: 'campaign_mismatch' });
+          summary.skipped += 1;
+          summary.skippedByReason.campaign_mismatch = (summary.skippedByReason.campaign_mismatch || 0) + 1;
+          summary.verified += 1;
+          continue;
+        }
+      }
       summary.verified += 1;
       if (v.send) toSend.push(email);
       else {

@@ -222,6 +222,15 @@ test('専用 dispatcher は頻度ガードを再計算し、自ジョブの記�
   assert.match(dispCode, /f\.EmailType/, 'campaign 以外を除外していない');
 });
 
+test('専用 dispatcher はキャンペーン固有条件も送信直前に再判定する', () => {
+  assert.ok(dispCode.includes('evaluateExtraAudience'), '固有条件の再判定が無い');
+  assert.ok(dispCode.includes('parseTestRecipientsEnv'), 'テスト受信者ホワイトリストを読んでいない');
+  // ジョブのキャンペーンを特定できないときは送らない
+  assert.match(dispCode, /if \(!jobCampaign\)[\s\S]{0,200}?campaign_unavailable/,
+    'キャンペーン不明のジョブを送ってしまう');
+  assert.ok(dispCode.includes('campaign_mismatch'), '条件外を skipped にしていない');
+});
+
 test('専用 dispatcher は送信直前に再検証し、Customers を書かない', () => {
   assert.ok(dispCode.includes('verifyBeforeSend'), '送信直前の再検証が無い');
   // Customers は GET のみ（PATCH/POST の対象に CUSTOMERS_TABLE を渡さない）

@@ -159,6 +159,7 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
  *   deliveredKeys?: Set<string>,   既に sent/queued の DeliveryKey
  *   providerSuppressed: Set<string>|null,  SendGrid suppression（null = 確認できなかった）
  *   softBounced?: Set<string>,     AK EmailBlacklist の SOFT_BOUNCE
+ *   audienceContext?: { testRecipients?: Set<string>|null },  env 由来の値（Function 層が渡す）
  *   brand?: string,
  *   fromEmail: string,
  *   nowMs: number,
@@ -172,7 +173,8 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
  * }}
  */
 export function buildCampaignPlan({
-  campaign, selected, deliveredKeys, providerSuppressed, softBounced, brand, fromEmail, nowMs,
+  campaign, selected, deliveredKeys, providerSuppressed, softBounced,
+  audienceContext, brand, fromEmail, nowMs,
 }) {
   const empty = (error) => ({
     ok: false, error, recipients: [], excluded: [],
@@ -224,7 +226,7 @@ export function buildCampaignPlan({
 
     // 2-b. キャンペーン固有の追加条件（Premium Plus の販売資格・PHASE 等）。
     //      判定は単一源へ委譲する（ここで PHASE を計算しない）。
-    const extra = evaluateExtraAudience({ campaign, fields: item.fields, nowMs });
+    const extra = evaluateExtraAudience({ campaign, fields: item.fields, nowMs, context: audienceContext });
     if (!extra.ok) { exclude(recordId, MK_EXCLUSION.CAMPAIGN_MISMATCH); continue; }
 
     const email = normalizeRecipientEmail(m.email || '');

@@ -67,6 +67,33 @@ export const CAMPAIGN_DISABLED_REASON = Object.freeze({
  */
 export const CAMPAIGNS = Object.freeze([
   {
+    campaignId: 'marketing-canary',
+    version: 1,
+    name: 'マーケティング配信カナリア',
+    description: '運用テスト専用。NEWSLETTER_TEST_RECIPIENTS に登録されたアドレスにのみ送信できる（一般顧客には送れない）。',
+    subject: '【KEIBA Analytics】配信テスト',
+    body: [
+      '{{salutation}}',
+      '',
+      'KEIBA Analytics の配信システム確認用メールです。',
+      '',
+      'このメールは運用テストのために送信されています。',
+      '通常のご案内ではありません。',
+    ].join('\n'),
+    // 商品案内・価格・契約誘導は入れない。CTA は仕組み上必須なのでトップのみ。
+    ctaLabel: 'サイトを見る',
+    ctaUrl: `${SITE}/`,
+    recommendedSegments: [],
+    // 契約状態・プランでは絞らない。**絞り込みは extraAudience が担う**
+    //（テスト受信者の契約状態は運用で変わりうるため、ここで条件を付けると検証できなくなる）
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    // 🛡️ env NEWSLETTER_TEST_RECIPIENTS 一致者のみ。env 未設定なら全員除外（fail closed）。
+    extraAudience: 'marketing_canary_recipient',
+    /** 運用テスト専用の目印。管理画面で顧客向けキャンペーンと区別して表示する */
+    testOnly: true,
+    enabled: true,
+  },
+  {
     campaignId: 'expired-comeback',
     version: 2,
     name: '期限切れ会員 カムバック',
@@ -291,6 +318,7 @@ export function listCampaigns({ includeDisabled = true } = {}) {
         recommendedSegments: c.recommendedSegments,
         audienceRule: c.audienceRule,
         extraAudience: c.extraAudience || null,
+        testOnly: c.testOnly === true,
         enabled: c.enabled === true,
         usable,
         disabledReason: usable ? null : (c.disabledReason || tpl.detail || tpl.reason || '利用不可'),
