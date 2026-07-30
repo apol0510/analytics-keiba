@@ -18,10 +18,12 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { handler } from '../../../netlify/functions/admin-marketing.js';
+import { clearProviderSuppressionCache } from './providerSuppression.js';
 
 const SECRET = 'test-secret';
 const ENV_KEYS = ['PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET', 'AIRTABLE_API_KEY',
-  'AIRTABLE_BASE_ID', 'MARKETING_CAMPAIGN_ENABLED', 'NEWSLETTER_AUTOMATION_ENABLED'];
+  'AIRTABLE_BASE_ID', 'MARKETING_CAMPAIGN_ENABLED', 'NEWSLETTER_AUTOMATION_ENABLED',
+  'MARKETING_CAMPAIGN_DISPATCH_ENABLED', 'SENDGRID_API_KEY'];
 const savedEnv = {};
 let realFetch;
 
@@ -51,16 +53,35 @@ function makeResponse(body, status = 200) {
   };
 }
 
+/** SendGrid suppression の偽レスポンス（bounce に 1 件だけ載せる） */
+let fakeSuppressed = ['bounced@example.com'];
+/** true にすると suppression 取得が失敗する（fail closed の検証用） */
+let suppressionFails = false;
+
 function installFakeAirtable() {
-  store = { deliveries: [], scheduled: [], writes: [], customerWrites: 0, sendgridCalls: 0 };
+  store = { deliveries: [], scheduled: [], writes: [], customerWrites: 0, mailSendCalls: 0, suppressionGets: 0 };
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     const method = (init.method || 'GET').toUpperCase();
 
+    // ── SendGrid ──
+    if (u.includes('api.sendgrid.com')) {
+      if (u.includes('/mail/send')) {
+        // 実送信 API が呼ばれたら事故。テストで必ず検出する。
+        store.mailSendCalls += 1;
+        throw new Error('実送信 API (mail/send) が呼ばれた');
+      }
+      if (u.includes('/v3/suppression/')) {
+        store.suppressionGets += 1;
+        if (suppressionFails) return makeResponse({ errors: ['boom'] }, 500);
+        const isBounces = u.includes('/bounces');
+        return makeResponse(isBounces ? fakeSuppressed.map((email) => ({ email })) : []);
+      }
+      return makeResponse([], 404);
+    }
+
     if (!u.includes('api.airtable.com')) {
-      // Airtable 以外（＝ SendGrid など）への通信は事故。テストで検出する。
-      store.sendgridCalls += 1;
-      throw new Error(`外部送信 API が呼ばれた: ${u}`);
+      throw new Error(`想定外の外部通信: ${u}`);
     }
     if (method !== 'GET') {
       store.writes.push({ table: u.split('/').pop().split('?')[0], method });
@@ -115,14 +136,20 @@ beforeEach(() => {
   delete process.env.MARKETING_ADMIN_SECRET;
   process.env.AIRTABLE_API_KEY = 'fake-key';
   process.env.AIRTABLE_BASE_ID = 'appFAKE';
+  process.env.SENDGRID_API_KEY = 'fake-sg-key';
   delete process.env.MARKETING_CAMPAIGN_ENABLED;
   delete process.env.NEWSLETTER_AUTOMATION_ENABLED;
+  delete process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED;
+  fakeSuppressed = ['bounced@example.com'];
+  suppressionFails = false;
+  clearProviderSuppressionCache(); // テスト間で suppression をキャッシュさせない
   realFetch = globalThis.fetch;
   installFakeAirtable();
 });
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  clearProviderSuppressionCache();
   for (const k of ENV_KEYS) {
     if (savedEnv[k] === undefined) delete process.env[k];
     else process.env[k] = savedEnv[k];
@@ -210,6 +237,45 @@ test('dry-run はメールアドレスを一覧返却しない（ドメイン集
   assert.deepEqual(body.recipientDomains, { 'example.com': 1 });
 });
 
+test('SendGrid で suppressed の宛先は dry-run で除外される（AK 台帳に無くても）', async () => {
+  // rec1 は AK 側では完全に送信可能。SendGrid だけが suppress している状態を作る。
+  fakeSuppressed = ['expired1@example.com'];
+  clearProviderSuppressionCache();
+  const { body } = parse(await call({
+    action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
+  }));
+  assert.equal(body.willSend, 1, 'provider suppressed の宛先を送信対象に数えている');
+  const reasons = Object.fromEntries(body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.provider_suppressed, 1);
+  assert.ok(store.suppressionGets > 0, 'provider へ問い合わせていない');
+  assert.equal(body.providerSuppression.available, true);
+});
+
+test('【fail closed】provider suppression を確認できないと dry-run 自体が 503', async () => {
+  suppressionFails = true;
+  clearProviderSuppressionCache();
+  const { status, body } = parse(await call({
+    action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'],
+  }));
+  assert.equal(status, 503, '確認できないまま送信計画を返している');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(store.writes.length, 0);
+});
+
+test('【fail closed】provider suppression を確認できないと send も 503・書き込みゼロ', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
+  suppressionFails = true;
+  clearProviderSuppressionCache();
+  const { status } = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'],
+    planFingerprint: dry.body.planFingerprint,
+  }));
+  assert.equal(status, 503);
+  assert.equal(store.deliveries.length, 0);
+  assert.equal(store.scheduled.length, 0);
+});
+
 test('選択なし / 未知キャンペーンは 400', async () => {
   assert.equal(parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: [] })).status, 400);
   assert.equal(parse(await call({ action: 'dryRun', campaignId: 'nope', recordIds: ['rec1'] })).status, 400);
@@ -257,7 +323,7 @@ test('有効化しても Customers は書かず、キューだけを作る', asy
   assert.equal(body.mode, 'queued');
   assert.equal(body.queued, 2);
   assert.equal(store.customerWrites, 0, 'Customers へ書き込んでいる');
-  assert.equal(store.sendgridCalls, 0, '外部送信 API を呼んでいる');
+  assert.equal(store.mailSendCalls, 0, "実送信 API を呼んでいる");
   assert.equal(store.scheduled.length, 1, 'ScheduledEmails ジョブが 1 本');
   assert.equal(store.scheduled[0].fields.Status, 'PENDING');
   assert.equal(store.scheduled[0].fields.CreatedBy, 'admin-marketing');

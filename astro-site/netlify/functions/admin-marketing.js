@@ -16,15 +16,22 @@
  * （EmailType='campaign'）だけを使う。
  *
  * ── このファイルは絶対にメールを送らない ─────────────────────────
- * SendGrid API を呼ぶコードを持たない（guard テストで固定）。send は
- * ScheduledEmails に PENDING ジョブを作るだけで、実際の送信は既存の
- * execute-scheduled-emails-background（NEWSLETTER_AUTOMATION_ENABLED 依存）が行う。
+ * SendGrid の**送信 API を呼ぶコードを持たない**（guard テストで固定）。send は
+ * ScheduledEmails に PENDING ジョブを作るだけで、実際の送信は別の dispatcher が行う。
+ * SendGrid へ触れるのは suppression の **GET のみ**（誤送信を防ぐための読み取り）。
  *
  * ── 三重ガード ────────────────────────────────────────────────
  *   1. 認可: x-admin-secret（MARKETING_ADMIN_SECRET があれば優先／無ければ PREMIUM_PLUS_ADMIN_SECRET）
  *   2. live enqueue: MARKETING_CAMPAIGN_ENABLED === 'true' でなければ 503（既定は無効）
- *   3. 実送信: NEWSLETTER_AUTOMATION_ENABLED === 'true' でなければ送信基盤側が no-op
+ *   3. 実送信: MARKETING_CAMPAIGN_DISPATCH_ENABLED === 'true' でなければ dispatcher が no-op
+ *      （**NEWSLETTER_AUTOMATION_ENABLED には依存しない**。マーケティングのために
+ *        既存メール経路のマスタースイッチを ON にしないための分離）
  *   さらに send は dry-run が返した planFingerprint 必須（母集団が変われば 409）。
+ *
+ * ── suppression は毎回 provider に問い合わせる ────────────────────
+ * AK の `EmailBlacklist` は Event Webhook 稼働以降のイベントしか持たない。実測（2026-07-30）で
+ * SendGrid suppression 61 件に対し AK の実効除外は 4 件、**42 名の乖離**があった。
+ * dry-run / send のたびに SendGrid の suppression を GET し、確認できなければ **中止**する。
  *
  * ── Customers へは一切書かない ───────────────────────────────────
  * 契約・権限・決済・Premium Plus 販売資格はこの Function の責務ではない。
@@ -56,7 +63,19 @@ import {
   MK_EXCLUSION_LABEL,
   MAX_RECIPIENTS_PER_SEND,
 } from '../../src/lib/marketing/campaignSend.js';
-import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js';
+import {
+  fetchProviderSuppression,
+  describeProviderSuppression,
+} from '../../src/lib/marketing/providerSuppression.js';
+import {
+  isMarketingEnqueueEnabled,
+  isMarketingDispatchEnabled,
+} from '../../src/lib/marketing/marketingDispatchGate.js';
+import {
+  fetchEmailBlacklistReadOnly,
+  buildBlacklistEmailSet,
+  loadBlacklistEmails,
+} from '../../src/lib/newsletter/airtable-fetch.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 
 const BRAND = 'analytics-keiba';
@@ -86,12 +105,34 @@ const authHeaders = (key) => ({ Authorization: `Bearer ${key}` });
 
 /** live enqueue（CampaignDeliveries / ScheduledEmails への書き込み）が有効か。既定は無効。 */
 export function isMarketingSendEnabled(env) {
-  return !!env && env.MARKETING_CAMPAIGN_ENABLED === 'true';
+  return isMarketingEnqueueEnabled(env);
 }
 
-/** 送信基盤（execute-scheduled-emails-background）が実際に送る状態か。 */
+/**
+ * キャンペーンの**実送信**が有効か。
+ * マーケティング専用ゲート（`MARKETING_CAMPAIGN_DISPATCH_ENABLED`）だけを見る。
+ * ⚠️ `NEWSLETTER_AUTOMATION_ENABLED`（全メール自動化のマスタースイッチ）には**依存しない**。
+ *    マーケティングのために既存メール経路まで解禁しないための分離。
+ */
 export function isDispatchEnabled(env) {
-  return !!env && env.NEWSLETTER_AUTOMATION_ENABLED === 'true';
+  return isMarketingDispatchEnabled(env);
+}
+
+/** AK の EmailBlacklist を HARD / SOFT に分けて読む（販促は SOFT も送らない側へ倒す） */
+async function loadBlacklistSets({ KEY, BASE }) {
+  try {
+    const records = await fetchEmailBlacklistReadOnly(BASE, KEY);
+    const hard = buildBlacklistEmailSet(records); // HARD_BOUNCE / COMPLAINT
+    const soft = new Set();
+    for (const r of records) {
+      const email = String(r?.fields?.Email || '').trim().toLowerCase();
+      const status = String(r?.fields?.Status || '').toUpperCase().trim();
+      if (email && !hard.has(email) && status) soft.add(email);
+    }
+    return { ok: true, hard, soft };
+  } catch {
+    return { ok: false, hard: new Set(), soft: new Set() };
+  }
 }
 
 async function fetchAll({ KEY, BASE, table, filterByFormula }) {
@@ -279,8 +320,28 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   }).catch(() => []);
   const deliveredKeys = new Set(priorDeliveries.map((r) => String(r.fields?.DeliveryKey || '')).filter(Boolean));
 
-  const plan = buildCampaignPlan({ campaign, selected, deliveredKeys, brand: BRAND, fromEmail, nowMs: now });
-  if (!plan.ok) return json(400, { error: `送信計画を作成できません: ${plan.error}` });
+  // 🛡️ SendGrid 側 suppression を毎回確認する。AK の EmailBlacklist は Webhook 稼働以降しか
+  //    持たないため、これが無いと provider では送れない相手を「送信対象」に数えてしまう。
+  //    取得できなければ計画を作らない（fail closed）。
+  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
+  const blacklist = await loadBlacklistSets({ KEY, BASE });
+
+  const plan = buildCampaignPlan({
+    campaign, selected, deliveredKeys,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    softBounced: blacklist.soft,
+    brand: BRAND, fromEmail, nowMs: now,
+  });
+  if (!plan.ok) {
+    if (plan.error === 'provider_suppression_unavailable') {
+      return json(503, {
+        error: 'SendGrid の配信停止リストを確認できないため中止しました（確認できないまま送信しません）',
+        detail: describeProviderSuppression(provider),
+        sideEffects: 'none',
+      });
+    }
+    return json(400, { error: `送信計画を作成できません: ${plan.error}` });
+  }
 
   const excludedDetail = Object.entries(plan.counts.byReason)
     .map(([reason, count]) => ({ reason, label: MK_EXCLUSION_LABEL[reason] || reason, count }))
@@ -307,6 +368,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
       recipientDomains: countDomains(plan.recipients),
       sendEnabled: isMarketingSendEnabled(process.env),
       dispatchEnabled: isDispatchEnabled(process.env),
+      providerSuppression: describeProviderSuppression(provider),
       notice: 'この時点では何も書き込んでいません。送信するには確認のうえ実行してください。',
     });
   }
@@ -374,7 +436,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     dispatchEnabled: isDispatchEnabled(process.env),
     notice: isDispatchEnabled(process.env)
       ? '送信キューへ登録しました。実送信は送信基盤が順次行います。'
-      : '送信キューへ登録しましたが、送信基盤は無効（NEWSLETTER_AUTOMATION_ENABLED != true）のため実送信されません。',
+      : '送信キューへ登録しましたが、キャンペーン送信は無効（MARKETING_CAMPAIGN_DISPATCH_ENABLED != true）のため実送信されません。',
   });
 }
 

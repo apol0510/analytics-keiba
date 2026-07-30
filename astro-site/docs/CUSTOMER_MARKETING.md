@@ -115,10 +115,11 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
   → execute-scheduled-emails-background が実送信（既存の送信基盤）
 ```
 
-### この Function は自分でメールを送らない
+### 管理画面の Function は自分でメールを送らない
 
-`admin-marketing.js` は **SendGrid API を呼ぶコードを持たない**（guard テストで固定）。
-送信キューを作るだけなので、この機能単体では 1 通も送れない。
+`admin-marketing.js` は **SendGrid の送信 API を呼ぶコードを持たない**（guard テストで固定）。
+SendGrid へ触れるのは suppression の **GET のみ**。送信キューを作るだけなので、
+この Function 単体では 1 通も送れない。
 
 ### 三重ガード
 
@@ -126,7 +127,67 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 |---|---|---|
 | 1 | 認可 `x-admin-secret`（`MARKETING_ADMIN_SECRET` 優先 / 無ければ `PREMIUM_PLUS_ADMIN_SECRET`） | secret 未設定なら機能ごと 503 |
 | 2 | live enqueue `MARKETING_CAMPAIGN_ENABLED === 'true'` | **未設定 = 503・書き込みゼロ** |
-| 3 | 実送信 `NEWSLETTER_AUTOMATION_ENABLED === 'true'`（既存の送信基盤側） | production は **false** |
+| 3 | 実送信 `MARKETING_CAMPAIGN_DISPATCH_ENABLED === 'true'`（マーケ専用） | **未設定 = 送信されない** |
+
+### ⚠️ `NEWSLETTER_AUTOMATION_ENABLED` に依存させない（2026-07-30 監査で是正）
+
+当初設計では実送信に `NEWSLETTER_AUTOMATION_ENABLED=true` が必要だった。しかしこれは
+**AK の全メール自動化のマスタースイッチ**で、実測 16 Function が参照している
+（`cron-email-scheduler` / `send-newsletter` 系 / `expiry-notification` /
+`expiry-warning-notification` / `retry-failed-emails` / step メール系 ほか）。
+マーケティングのために ON にすると、滞留 `ScheduledEmails` の一斉送信や期限通知・
+メルマガの同時解禁を招く。
+
+そこで **マーケティング専用ゲート `MARKETING_CAMPAIGN_DISPATCH_ENABLED`** を導入し、
+2 方向の独立性を guard テストで固定した。
+
+| 操作 | 既存メール経路 | キャンペーン |
+|---|---|---|
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 送信される |
+| `NEWSLETTER_AUTOMATION_ENABLED=true` のみ | 動く（従来どおり） | **送信されない** |
+
+- 専用 dispatcher `netlify/functions/marketing-campaign-dispatch.js` は
+  `NEWSLETTER_AUTOMATION_ENABLED` を**読まない**
+- 共有 executor `execute-scheduled-emails-background.js` には
+  `canSharedExecutorSend()` を 1 箇所だけ追加し、**マーケティングジョブは専用ゲート無しでは
+  処理しない**（PENDING のまま残し、状態を書き換えない）。マーケティング以外のジョブには影響しない
+- マーケティングジョブの識別は既存フィールドのタグだけで行う（新フィールドを増やさない）:
+  `CreatedBy='admin-marketing'` / `TargetPlan='campaign:<id>'` / `JobId='mkt-…'`
+
+### 🛡️ SendGrid suppression を毎回照合する（fail closed）
+
+AK の `EmailBlacklist` は **Event Webhook が動き始めて以降のイベントしか持たない**。
+過去分は SendGrid 側にしか無く、Webhook 同期では永久に埋まらない。
+
+**2026-07-30 read-only 実測:**
+
+| | 件数 |
+|---|---|
+| SendGrid suppression（bounces 58 / blocks 4） | **61** |
+| AK `EmailBlacklist` 全行 | 12（HARD_BOUNCE 4 / SOFT_BOUNCE 8） |
+| AK が実際に送信除外していた数 | **4** |
+| AK 判定では送信可能なのに SendGrid が suppress 済み | **43 名**（＋ソフトバウンス 4 名） |
+
+対策として `providerSuppression.js` が dry-run / send / dispatch のたびに
+SendGrid の suppression を **GET で照合**する。
+
+- 参照リスト: `bounces` / `blocks` / `spam_reports` / `invalid_emails` / `unsubscribes`
+- **1 つでも取得に失敗したら送信計画を作らない**（`provider_suppression_unavailable` → 503）。
+  「確認できないから送る」を構造的に禁止する
+- provider へは **GET のみ**。suppression の追加・削除はしない
+- 販促メールでは AK の **SOFT_BOUNCE も除外**する（取引メールとは基準を分ける）
+- 5 分キャッシュ。失敗はキャッシュしない
+
+### 🛡️ 送信直前の再検証
+
+共有 executor は **固定宛先リスト（explicit）のジョブに対して suppression を再チェックしない**
+（`Recipients.split(',')` するだけ）。キュー登録から実送信までの間に配信停止・バウンス・退会が
+起きても、そのまま送られてしまう。
+
+専用 dispatcher は 1 通ごとに `verifyBeforeSend()` で
+**provider suppression / EmailBlacklist / 配信停止 / 退会**を再判定し、
+該当したら送らずに `skipped-*` で台帳へ記録する。provider suppression を確認できない場合は
+**1 通も送らない**。
 
 ### 二重送信を防ぐ 4 層
 
@@ -165,10 +226,13 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 | マーケティング対象判定（純粋） | `src/lib/marketing/customerMarketingAudience.js` |
 | キャンペーン定義（単一源） | `src/lib/marketing/campaignCatalog.js` |
 | 送信対象確定・冪等性（純粋） | `src/lib/marketing/campaignSend.js` |
-| 管理 API（唯一の I/O） | `netlify/functions/admin-marketing.js` |
+| 送信ゲート・送信直前再検証（純粋） | `src/lib/marketing/marketingDispatchGate.js` |
+| SendGrid suppression 読み取り（GET のみ） | `src/lib/marketing/providerSuppression.js` |
+| 管理 API（キュー登録まで） | `netlify/functions/admin-marketing.js` |
+| **キャンペーン専用 dispatcher（実送信）** | `netlify/functions/marketing-campaign-dispatch.js` |
 | 管理画面 | `src/pages/admin/premium-plus-eligibility.astro`（マーケティングタブ） |
 | 既存の除外基盤（再利用） | `src/lib/newsletter/airtable-fetch.js` / `delivery-key.js` / `brand-config.js` |
-| 実送信（既存・本 Function は呼ぶだけ） | `netlify/functions/execute-scheduled-emails-background.js` |
+| 共有 executor（マーケジョブは専用ゲート必須） | `netlify/functions/execute-scheduled-emails-background.js` |
 
 検証: `npm run test:marketing`（`check:safety` に組込済み）
 
@@ -177,10 +241,31 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 実送信を有効にするには、次を**明示承認のうえ**順に行う。順序を守ること。
 
 1. 本文・件名・CTA の最終確認（`campaignCatalog.js`）
-2. `MARKETING_CAMPAIGN_ENABLED=true` を Netlify production へ設定（キュー登録の解禁）
-3. 専用テスト受信者だけを選んで dry-run → 送信し、キューと台帳を目視確認
-4. `NEWSLETTER_AUTOMATION_ENABLED=true`（**送信基盤の解禁。他のメール経路にも影響する**）
-5. 小さいセグメントで実送信を検証してから本番運用へ
+2. production deploy（PR のマージ）
+3. `MARKETING_CAMPAIGN_ENABLED=true` を Netlify production へ設定（**キュー登録**の解禁）
+4. 専用テスト受信者だけを選んで dry-run → 送信し、`ScheduledEmails` / `CampaignDeliveries` を目視確認
+5. `marketing-campaign-dispatch` を `dryRun:true` で叩き、再検証結果を確認
+6. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true`（**実送信**の解禁）
+7. `marketing-campaign-dispatch` を `dryRun:false` で実行
 
-rollback: `MARKETING_CAMPAIGN_ENABLED` を unset すれば、コード変更なしにキュー登録が止まる
-（既に PENDING のジョブは残るため、必要なら Airtable 上で Status を変更する）。
+**`NEWSLETTER_AUTOMATION_ENABLED` は触らない。** マーケティングの有効化に不要で、
+ON にすると既存メール経路まで解禁される。
+
+rollback:
+- `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を unset → 実送信が止まる（キューは残る）
+- `MARKETING_CAMPAIGN_ENABLED` を unset → キュー登録も止まる
+
+いずれもコード変更不要。
+
+## 10. 既知の残課題
+
+- **AK `EmailBlacklist` と SendGrid suppression の恒常的な乖離**は解消していない。
+  送信計画のたびに provider へ照会することで**誤送信は防いでいる**が、AK 台帳自体は古いまま。
+  過去分を AK へ取り込む backfill は別タスク（本番 write を伴うため未実施）。
+- **`unsubscribe` イベントの扱い**: `sendgrid-webhook.js` は `unsubscribe` を受けても
+  `Status='SOFT_BOUNCE'` 相当で `EmailBlacklist` に書き、`UnsubscribedAnalyticsKeiba` は立てない。
+  販促メールでは SOFT_BOUNCE も除外するため実害は無いが、
+  意味的には配信停止として扱うべき（別タスク）。
+  なお AK が送るメールの `List-Unsubscribe` は AK 自身の `unsubscribe` Function を指すため、
+  ワンクリック配信停止は AK 側に正しく記録される。
+- **provider 受理と実配信の区別**は現状のまま（`delivered` / `bounce` の反映は後続 Phase）。

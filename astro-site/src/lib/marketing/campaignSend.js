@@ -54,6 +54,10 @@ export const MK_FORBIDDEN_DELIVERY_FIELDS = Object.freeze(
 
 /** 除外理由（suppression 由来のものは MK_SUPPRESSION をそのまま使う） */
 export const MK_EXCLUSION = Object.freeze({
+  /** SendGrid 側で suppression 済み（bounce / block / spam / invalid / unsubscribe） */
+  PROVIDER_SUPPRESSED: 'provider_suppressed',
+  /** AK の EmailBlacklist に SOFT_BOUNCE として記録がある（販促メールでは送らない） */
+  SOFT_BOUNCE: 'soft_bounce',
   /** 既に同じ campaign/version で送信済み or 送信予約済み */
   ALREADY_DELIVERED: 'already_delivered',
   /** 同一アドレスが選択内で重複 */
@@ -68,6 +72,8 @@ export const MK_EXCLUSION = Object.freeze({
 
 export const MK_EXCLUSION_LABEL = Object.freeze({
   ...MK_SUPPRESSION_LABEL,
+  provider_suppressed: 'SendGrid 側で配信停止済み',
+  soft_bounce: 'ソフトバウンス履歴あり',
   already_delivered: '送信済み（同一キャンペーン）',
   duplicate: '重複アドレス',
   contract_mismatch: '契約状態が対象外',
@@ -120,10 +126,16 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
 /**
  * 送信対象を最終確定する（純粋関数）。
  *
+ * ⚠️ `providerSuppressed` は **必須**。SendGrid 側 suppression を確認できないまま送信計画を
+ *    作ってはいけない（AK の EmailBlacklist は Webhook 稼働以降の分しか持たず、実測で
+ *    42 名の乖離があった）。未指定・確認失敗のときは `ok:false` で計画自体を作らない。
+ *
  * @param {{
  *   campaign: object,
  *   selected: Array<{ recordId: string, fields: object, marketing: object }>,
  *   deliveredKeys?: Set<string>,   既に sent/queued の DeliveryKey
+ *   providerSuppressed: Set<string>|null,  SendGrid suppression（null = 確認できなかった）
+ *   softBounced?: Set<string>,     AK EmailBlacklist の SOFT_BOUNCE
  *   brand?: string,
  *   fromEmail: string,
  *   nowMs: number,
@@ -136,7 +148,9 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
  *   planFingerprint: string,
  * }}
  */
-export function buildCampaignPlan({ campaign, selected, deliveredKeys, brand, fromEmail, nowMs }) {
+export function buildCampaignPlan({
+  campaign, selected, deliveredKeys, providerSuppressed, softBounced, brand, fromEmail, nowMs,
+}) {
   const empty = (error) => ({
     ok: false, error, recipients: [], excluded: [],
     counts: { selected: 0, recipients: 0, excluded: 0, byReason: {} },
@@ -145,8 +159,11 @@ export function buildCampaignPlan({ campaign, selected, deliveredKeys, brand, fr
   if (!campaign || !campaign.campaignId) return empty('unknown_campaign');
   if (!Array.isArray(selected)) return empty('invalid_selection');
   if (!fromEmail) return empty('missing_from_email');
+  // provider suppression を確認できないまま計画を作らない（fail closed）
+  if (!(providerSuppressed instanceof Set)) return empty('provider_suppression_unavailable');
 
   const delivered = deliveredKeys instanceof Set ? deliveredKeys : new Set();
+  const soft = softBounced instanceof Set ? softBounced : new Set();
   const recipients = [];
   const excluded = [];
   const byReason = {};
@@ -176,11 +193,17 @@ export function buildCampaignPlan({ campaign, selected, deliveredKeys, brand, fr
       continue;
     }
 
-    // 3. 選択内の重複アドレス
     const email = normalizeRecipientEmail(m.email || '');
+
+    // 3. provider 側 suppression（AK の台帳より広い。ここが最後の砦ではなく最初の砦）
+    if (providerSuppressed.has(email)) { exclude(recordId, MK_EXCLUSION.PROVIDER_SUPPRESSED); continue; }
+    // 3-b. AK 台帳のソフトバウンス。販促メールは送らない側へ倒す（取引メールとは基準を分ける）
+    if (soft.has(email)) { exclude(recordId, MK_EXCLUSION.SOFT_BOUNCE); continue; }
+
+    // 4. 選択内の重複アドレス
     if (seenEmails.has(email)) { exclude(recordId, MK_EXCLUSION.DUPLICATE); continue; }
 
-    // 4. 既送信（同一 campaignId × version）
+    // 5. 既送信（同一 campaignId × version）
     const deliveryKey = computeCampaignDeliveryKey({ campaign, recipientEmail: email, brand, fromEmail });
     if (!deliveryKey) { exclude(recordId, MK_EXCLUSION.UNKNOWN_CUSTOMER); continue; }
     if (delivered.has(deliveryKey)) { exclude(recordId, MK_EXCLUSION.ALREADY_DELIVERED); continue; }

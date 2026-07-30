@@ -21,11 +21,14 @@ const src = readFileSync(fnPath, 'utf8');
 /** コメントを除いた実コード（説明文で guard が誤検知しないようにする） */
 const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-test('1. メール送信 API を呼ばない（送信は既存の送信基盤に委譲する）', () => {
-  for (const banned of ['sendgrid', 'api.sendgrid.com', 'mail/send', '@sendgrid', 'nodemailer', 'resend.com']) {
+test('1. メール送信 API を呼ばない（suppression の読み取りだけは許可）', () => {
+  for (const banned of ['mail/send', '@sendgrid', 'nodemailer', 'resend.com']) {
     assert.equal(code.toLowerCase().includes(banned.toLowerCase()), false, `${banned} を呼んでいる`);
   }
-  assert.equal(code.includes('SENDGRID_API_KEY'), false, 'SendGrid の鍵を読んでいる');
+  // SendGrid へ触れるのは suppression の GET のみ。送信 API のエンドポイントは持たない。
+  assert.equal(/api\.sendgrid\.com/.test(code), false, '直接 SendGrid のエンドポイントを組み立てている');
+  // 鍵は suppression 読み取りモジュールへ渡すためだけに参照する
+  assert.ok(code.includes('fetchProviderSuppression'), 'provider suppression を確認していない');
 });
 
 test('2. Customers を書き換えない（GET 以外の対象にしない）', () => {
@@ -76,7 +79,7 @@ test('4. 決済 / 権限 / Premium Plus 販売資格のフィールドを書か�
 });
 
 test('5. live 送信は既定 OFF（env が無ければ書き込みへ到達しない）', () => {
-  assert.ok(code.includes("MARKETING_CAMPAIGN_ENABLED === 'true'"), 'live gate が無い');
+  assert.ok(code.includes('isMarketingEnqueueEnabled'), 'live gate（キュー登録）が無い');
   assert.ok(code.includes('isMarketingSendEnabled(process.env)'), 'live gate を使っていない');
   // gate 判定より前に書き込みが起きないこと（gate → 書き込みの順序）
   const gateIdx = code.indexOf('if (live && !isMarketingSendEnabled');
@@ -121,6 +124,20 @@ test('10. モジュールとして読み込める（handler が公開されて�
   assert.equal(mod.isMarketingSendEnabled({ MARKETING_CAMPAIGN_ENABLED: 'false' }), false);
   assert.equal(mod.isMarketingSendEnabled({ MARKETING_CAMPAIGN_ENABLED: '1' }), false, "'true' 以外は無効");
   assert.equal(mod.isMarketingSendEnabled({ MARKETING_CAMPAIGN_ENABLED: 'true' }), true);
+});
+
+test('11. 実送信の判定が NEWSLETTER_AUTOMATION_ENABLED から独立している', async () => {
+  const mod = await import(fnPath);
   assert.equal(mod.isDispatchEnabled({}), false);
-  assert.equal(mod.isDispatchEnabled({ NEWSLETTER_AUTOMATION_ENABLED: 'true' }), true);
+  // 既存メールのマスタースイッチを ON にしてもキャンペーンは送信可にならない
+  assert.equal(mod.isDispatchEnabled({ NEWSLETTER_AUTOMATION_ENABLED: 'true' }), false,
+    'newsletter の global gate でキャンペーンが解禁されている');
+  // 専用ゲートだけで判定する
+  assert.equal(mod.isDispatchEnabled({ MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' }), true);
+});
+
+test('12. provider suppression を確認できないときは中止する（fail closed）', () => {
+  assert.ok(code.includes('provider_suppression_unavailable'), '確認失敗を検知していない');
+  assert.match(code, /return json\(503, \{\s*error: 'SendGrid の配信停止リストを確認できないため中止/,
+    '確認できないまま続行している');
 });

@@ -539,12 +539,44 @@ PHASE 4 到達後は **JST 時刻だけ**で受付状態を自動判定する（
 - キャンペーン定義は `src/lib/marketing/campaignCatalog.js` に集約（件名・本文を散らさない）。
   **本文を変えたら `version` を上げる**（DeliveryKey が変わり再送可能になる）
 - 送信は `admin-marketing.js` が **ScheduledEmails(PENDING) + CampaignDeliveries(queued) を作るだけ**。
-  SendGrid を直接呼ぶコードを持たない（guard テストで固定）
-- 三重ガード: 認可 `x-admin-secret` / live enqueue `MARKETING_CAMPAIGN_ENABLED='true'`（既定 OFF）/
-  実送信 `NEWSLETTER_AUTOMATION_ENABLED='true'`（production は false）
+  SendGrid の**送信 API** を呼ぶコードを持たない（guard テストで固定。suppression の GET のみ可）
+- 三重ガード: 認可 `x-admin-secret` / キュー登録 `MARKETING_CAMPAIGN_ENABLED='true'`（既定 OFF）/
+  実送信 `MARKETING_CAMPAIGN_DISPATCH_ENABLED='true'`（既定 OFF）
 - 二重送信防止 4 層: DeliveryKey 冪等 upsert / 既送信突合 / dry-run の `planFingerprint`（不一致は 409）/
-  送信基盤側 gate
+  送信ゲート
 - 決済メール v2 のフィールド（`PaymentEmailSent` 等）は**読みも書きもしない**
+
+### ⚠️ `NEWSLETTER_AUTOMATION_ENABLED` をマーケティングのために ON にしない（2026-07-30）
+
+これは **AK の全メール自動化のマスタースイッチ**で、実測 16 Function が参照する
+（cron-email-scheduler / send-newsletter 系 / expiry 通知 / retry-failed-emails / step メール ほか）。
+ON にすると滞留 `ScheduledEmails` の一斉送信と既存経路の同時解禁を招く。
+
+マーケティングは**専用ゲート `MARKETING_CAMPAIGN_DISPATCH_ENABLED`** だけで解禁する。
+
+| 操作 | 既存メール経路 | キャンペーン |
+|---|---|---|
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 送信される |
+| `NEWSLETTER_AUTOMATION_ENABLED=true` のみ | 動く（従来どおり） | **送信されない** |
+
+- 専用 dispatcher `marketing-campaign-dispatch.js` は `NEWSLETTER_AUTOMATION_ENABLED` を読まない
+- 共有 executor には `canSharedExecutorSend()` を 1 箇所追加。**マーケティングジョブは専用ゲート
+  無しでは処理しない**（PENDING のまま残す）。マーケ以外のジョブには影響しない
+- ジョブ識別は既存フィールドのタグのみ（`CreatedBy='admin-marketing'` /
+  `TargetPlan='campaign:…'` / `JobId='mkt-…'`）。新フィールドを増やさない
+
+### 🛡️ SendGrid suppression を毎回照合する（fail closed）
+
+AK の `EmailBlacklist` は Event Webhook 稼働以降のイベントしか持たない。
+**2026-07-30 実測: SendGrid suppression 61 件に対し AK の実効除外は 4 件。
+AK 判定では送信可能なのに SendGrid が suppress 済みの会員が 43 名**（＋ソフトバウンス 4 名）。
+
+- `providerSuppression.js` が dry-run / send / dispatch のたびに SendGrid へ **GET** で照合
+- **取得に失敗したら送信計画を作らない**（503）。「確認できないから送る」を禁止
+- provider へは GET のみ（suppression の追加・削除をしない）
+- 販促メールは AK の **SOFT_BOUNCE も除外**する（取引メールとは基準を分ける）
+- 共有 executor は固定宛先ジョブの suppression を再チェックしないため、
+  専用 dispatcher が **1 通ごとに送信直前再検証**（`verifyBeforeSend`）を行う
 
 検証: `npm run test:marketing`（`check:safety` に組込済み）
 

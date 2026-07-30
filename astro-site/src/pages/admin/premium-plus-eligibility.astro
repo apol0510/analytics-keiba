@@ -1108,8 +1108,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       renderCampDesc();
       $('mkSendState').textContent = data.sendEnabled
         ? (data.dispatchEnabled
-          ? '送信: 有効（送信基盤も有効。実際にメールが届きます）'
-          : '送信: キュー登録のみ有効（送信基盤 NEWSLETTER_AUTOMATION_ENABLED が無効のため実送信されません）')
+          ? '送信: 有効（キャンペーン配信も有効。実際にメールが届きます）'
+          : '送信: キュー登録のみ有効（MARKETING_CAMPAIGN_DISPATCH_ENABLED が無効のため実送信されません）')
         : '送信: 無効（MARKETING_CAMPAIGN_ENABLED 未設定）。対象確認（dry-run）までは利用できます。';
       $('mkSendState').className = 'note' + (data.sendEnabled ? '' : ' off');
     }
@@ -1351,10 +1351,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const state = document.createElement('p'); state.className = 'note';
       state.textContent = plan.sendEnabled
         ? (plan.dispatchEnabled
-          ? '送信基盤は有効です。実行すると実際にメールが配信されます。'
-          : '実行するとキューに登録されますが、送信基盤が無効なため実送信はされません。')
+          ? 'キャンペーン配信は有効です。実行すると実際にメールが配信されます。'
+          : '実行するとキューに登録されますが、キャンペーン配信が無効なため実送信はされません。')
         : '送信は無効（MARKETING_CAMPAIGN_ENABLED 未設定）です。実行できません。';
       sec3.appendChild(state);
+
+      // provider 側の配信停止をどれだけ確認できたかを明示する（確認できていないなら送らせない）
+      const ps = plan.providerSuppression;
+      if (ps) {
+        const psNote = document.createElement('p');
+        psNote.className = ps.available ? 'note' : 'blocker';
+        psNote.textContent = ps.available
+          ? `配信基盤の配信停止リスト ${ps.total} 件と照合済み`
+          : `⚠️ 配信基盤の配信停止リストを確認できませんでした（${ps.error}）。この状態では送信できません。`;
+        sec3.appendChild(psNote);
+      }
 
       const ops = document.createElement('div'); ops.className = 'ops';
       const btn = document.createElement('button');

@@ -42,8 +42,14 @@ function customer(recordId, over = {}, opts = {}) {
   return { recordId, fields, marketing: resolveCustomerMarketing({ fields, nowMs: NOW, ...opts }) };
 }
 
-const plan = (selected, campaign = general, deliveredKeys) =>
-  buildCampaignPlan({ campaign, selected, deliveredKeys, brand: 'analytics-keiba', fromEmail: FROM, nowMs: NOW });
+/** provider suppression は必須引数。既定は「空 Set（誰も suppress されていない）」 */
+const plan = (selected, campaign = general, deliveredKeys, opts = {}) =>
+  buildCampaignPlan({
+    campaign, selected, deliveredKeys,
+    providerSuppressed: opts.providerSuppressed === undefined ? new Set() : opts.providerSuppressed,
+    softBounced: opts.softBounced,
+    brand: 'analytics-keiba', fromEmail: FROM, nowMs: NOW,
+  });
 
 // ── 対象確定 ──────────────────────────────────────────────────
 test('送信可能な顧客だけが対象になり、除外は理由付きで数えられる', () => {
@@ -103,9 +109,50 @@ test('上限件数を超える計画は作らない', () => {
 });
 
 test('不正入力は計画を作らない（fail closed）', () => {
-  assert.equal(buildCampaignPlan({ campaign: null, selected: [], fromEmail: FROM, nowMs: NOW }).ok, false);
-  assert.equal(buildCampaignPlan({ campaign: general, selected: 'x', fromEmail: FROM, nowMs: NOW }).ok, false);
-  assert.equal(buildCampaignPlan({ campaign: general, selected: [], fromEmail: '', nowMs: NOW }).ok, false);
+  const base = { providerSuppressed: new Set(), fromEmail: FROM, nowMs: NOW };
+  assert.equal(buildCampaignPlan({ ...base, campaign: null, selected: [] }).ok, false);
+  assert.equal(buildCampaignPlan({ ...base, campaign: general, selected: 'x' }).ok, false);
+  assert.equal(buildCampaignPlan({ ...base, campaign: general, selected: [], fromEmail: '' }).ok, false);
+});
+
+// ── provider suppression（本監査の中核）──────────────────────────
+test('【fail closed】provider suppression を確認できないと計画自体を作らない', () => {
+  for (const bad of [undefined, null, [], 'x', new Map()]) {
+    const p = buildCampaignPlan({
+      campaign: general, selected: [customer('r1')], providerSuppressed: bad,
+      brand: 'analytics-keiba', fromEmail: FROM, nowMs: NOW,
+    });
+    assert.equal(p.ok, false, '確認できないまま送信計画を作っている');
+    assert.equal(p.error, 'provider_suppression_unavailable');
+    assert.equal(p.recipients.length, 0);
+  }
+});
+
+test('SendGrid 側で suppressed の宛先は除外される（AK 台帳に無くても）', () => {
+  const c = customer('r1');
+  assert.equal(c.marketing.sendable, true, 'AK 側の判定では送信可');
+  const p = plan([c], general, undefined, { providerSuppressed: new Set(['r1@example.com']) });
+  assert.equal(p.counts.recipients, 0);
+  assert.equal(p.counts.byReason[MK_EXCLUSION.PROVIDER_SUPPRESSED], 1);
+});
+
+test('provider suppression の照合は正規化して行う（大文字・空白の差で漏らさない）', () => {
+  const p = plan([customer('r1')], general, undefined, { providerSuppressed: new Set(['R1@Example.com'.toLowerCase()]) });
+  assert.equal(p.counts.byReason[MK_EXCLUSION.PROVIDER_SUPPRESSED], 1);
+});
+
+test('AK のソフトバウンス履歴も販促メールでは除外する', () => {
+  const p = plan([customer('r1')], general, undefined, { softBounced: new Set(['r1@example.com']) });
+  assert.equal(p.counts.recipients, 0);
+  assert.equal(p.counts.byReason[MK_EXCLUSION.SOFT_BOUNCE], 1);
+});
+
+test('除外の優先順: suppression → provider → soft → 重複 → 既送信', () => {
+  // 配信停止かつ provider suppressed なら、AK 側の理由（配信停止）が先に立つ
+  const both = customer('r1', { UnsubscribedAnalyticsKeiba: true });
+  const p = plan([both], general, undefined, { providerSuppressed: new Set(['r1@example.com']) });
+  assert.equal(p.counts.byReason.unsubscribed, 1);
+  assert.equal(p.counts.byReason[MK_EXCLUSION.PROVIDER_SUPPRESSED], undefined);
 });
 
 // ── 冪等性 ────────────────────────────────────────────────────
@@ -217,9 +264,13 @@ const sendSrc = readFileSync(fileURLToPath(new URL('./campaignSend.js', import.m
 const code = sendSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 test('送信計画モジュールはメールを送らない / Airtable を叩かない', () => {
-  for (const banned of ['fetch(', 'sendgrid', 'api.airtable.com', 'process.env']) {
+  // 表示ラベルに 'SendGrid' の語が出るのは正当なので、**API 呼び出しの形**で検査する
+  for (const banned of ['fetch(', 'api.sendgrid.com', 'api.airtable.com', 'process.env', 'mail/send']) {
     assert.equal(code.toLowerCase().includes(banned.toLowerCase()), false, `${banned} を含んでいる`);
   }
+  const imports = [...code.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(imports.filter((i) => i.includes('providerSuppression')), [],
+    '純粋モジュールが provider I/O を import している');
 });
 
 test('全キャンペーンで DeliveryKey が衝突しない', () => {

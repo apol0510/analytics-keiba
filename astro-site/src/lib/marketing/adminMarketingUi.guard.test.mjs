@@ -73,7 +73,20 @@ test('送信ボタンは無効時と 0 件で押せない / 二重クリック�
 test('送信有効/無効の状態を画面に明示する', () => {
   assert.ok(PAGE.includes('id="mkSendState"'));
   assert.ok(SCRIPT.includes('MARKETING_CAMPAIGN_ENABLED 未設定'));
-  assert.ok(SCRIPT.includes('実送信されません'), '送信基盤が無効なことを伝えていない');
+  assert.ok(SCRIPT.includes('MARKETING_CAMPAIGN_DISPATCH_ENABLED'), '専用配信ゲートの状態を伝えていない');
+  assert.ok(SCRIPT.includes('実送信されません'), '配信が無効なことを伝えていない');
+  // 既存メールのマスタースイッチ名を操作条件として画面に出さない（誤って ON にさせない）
+  assert.equal(SCRIPT.includes('NEWSLETTER_AUTOMATION_ENABLED'), false,
+    'マーケ画面が newsletter の global gate を条件として案内している');
+});
+
+test('provider 側の配信停止と照合できたかを確認画面に出す', () => {
+  assert.ok(SCRIPT.includes('plan.providerSuppression'), 'provider 照合状況を出していない');
+  assert.ok(SCRIPT.includes('配信基盤の配信停止リスト'));
+  assert.ok(SCRIPT.includes('この状態では送信できません'), '確認できない場合の警告が無い');
+  // ⚠️ この画面には Premium Plus のプレビュー guard（stagedReleaseGuard）が効いており、
+  //    ページ全体でメール送信基盤の固有名詞を禁止している。文言に製品名を書かないこと。
+  assert.equal(/sendgrid/i.test(SCRIPT), false, 'ページに送信基盤の固有名詞が入っている');
 });
 
 test('本文プレビューはサンドボックス iframe で表示する（スクリプト実行なし）', () => {

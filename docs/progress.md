@@ -95,11 +95,47 @@
 - 実送信は `MARKETING_CAMPAIGN_ENABLED`（未設定 = 503）と
   `NEWSLETTER_AUTOMATION_ENABLED`（production = `false`）の二重 gate で閉じたまま
 
+#### 3. 本番化前の最終監査と是正（2026-07-30 / PR #172 に追加）
+
+read-only 監査で **2 つの本番リスク**を検出し、同一 branch で是正した。
+
+**(1) SendGrid suppression と AK の乖離（誤送信リスク）**
+
+| | 件数 |
+|---|---|
+| SendGrid suppression（bounces 58 / blocks 4） | **61** |
+| AK `EmailBlacklist` 全行 | 12（HARD_BOUNCE 4 / SOFT_BOUNCE 8） |
+| AK が実際に送信除外していた数 | **4** |
+| AK 判定では送信可能だが SendGrid が suppress 済み | **43 名**（＋ソフトバウンス 4 名 = 計 47 名） |
+
+AK の台帳は Event Webhook 稼働以降のイベントしか持たず、過去分は同期されない
+（Webhook 自体は SendGrid 側で enabled・署名検証あり＝メモの「未登録」記述は古い）。
+→ `providerSuppression.js` を追加し、dry-run / send / dispatch のたびに SendGrid へ
+**GET で照合**。取得失敗時は **503 で中止**（確認できないまま送らない）。
+共有 executor は固定宛先ジョブを再チェックしないため、専用 dispatcher で
+**1 通ごとの送信直前再検証**も追加。
+
+**(2) `NEWSLETTER_AUTOMATION_ENABLED` の影響範囲**
+
+同フラグを参照する Function は **16**（cron-email-scheduler / send-newsletter 系 /
+expiry 通知 / retry-failed-emails / step メール ほか）。マーケティングのために ON にすると
+既存経路まで解禁される。
+※ 観測時点の `ScheduledEmails` は全 23 件で **PENDING 0 件**（SENT 21 / FAILED 2）。
+即時の滞留爆発は無いが、構造的リスクは残る。
+→ 専用ゲート **`MARKETING_CAMPAIGN_DISPATCH_ENABLED`** を導入し 2 方向の独立性を確保:
+マーケ解禁で既存経路は動かず、既存経路解禁でマーケは送られない（guard テストで固定）。
+
+**Netlify 設定の確定**: `production branch=main` / `allowed_branches=["main"]` /
+`stop_builds=false` / ignore コマンド無し
+→ **PR #172 の merge = main への push = production deploy 自動発火**。
+merge と deploy を別承認にするには `stop_builds` か `ignore` の設定変更が必要（production 設定変更＝未実施）。
+
 #### 実施していない操作（重要）
 
-production deploy / push / env 変更 / Airtable schema 変更 / Customers write /
-campaign history write / 実メール送信 / 通知 / 権限変更 / PR merge / force push — **すべて未実施**。
-Airtable への通信は **GET のみ**。
+production deploy / merge / env 変更 / Airtable schema 変更 / Customers write /
+campaign history write（CampaignDeliveries・ScheduledEmails への production write）/
+実メール送信 / 通知 / 権限変更 / force push・reset・rebase・amend — **すべて未実施**。
+Airtable・SendGrid への通信は **GET のみ**（SendGrid は suppression の読み取りのみ）。
 > **本節の各記録は時系列で追記されており、後の日付の記録が前の記録を上書きする。**
 > 特に「cutover 未実施」「カナリア未送信」等の記述は **2026-07-20〜21 時点のもの**で、
 > **2026-07-21 の §D1 cutover 完了（v2-full 稼働）以降は該当しない**。現在地は §Current Phase を参照。
@@ -460,13 +496,18 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 Draft 実装は完了しているが、実送信は次の承認と操作が揃うまで**構造的に不可能**。順序を守ること。
 
 1. キャンペーン本文・件名・CTA の最終確認（`src/lib/marketing/campaignCatalog.js`）
-2. **production deploy**（現状ブランチは未 push・未 deploy）
-3. `MARKETING_CAMPAIGN_ENABLED=true` を Netlify production へ設定（キュー登録の解禁）
+2. **PR #172 の merge**（＝ main への push ＝ **production deploy が自動発火する**）
+3. `MARKETING_CAMPAIGN_ENABLED=true` を Netlify production へ設定（**キュー登録**の解禁）
 4. 専用テスト受信者だけで dry-run → 送信し、`ScheduledEmails` / `CampaignDeliveries` を目視確認
-5. `NEWSLETTER_AUTOMATION_ENABLED=true`（**送信基盤の解禁。他のメール経路にも影響する**）
+5. `marketing-campaign-dispatch` を `dryRun:true` で叩き、送信直前再検証の結果を確認
+6. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true`（**実送信**の解禁）
+7. `marketing-campaign-dispatch` を `dryRun:false` で実行
 
-3 と 5 は独立した env で、どちらか片方だけでは実送信されない。
-rollback は `MARKETING_CAMPAIGN_ENABLED` の unset（コード変更不要）。
+**`NEWSLETTER_AUTOMATION_ENABLED` は触らない。** マーケティングの有効化に不要で、
+ON にすると既存メール経路（メルマガ・期限通知・再送・step）まで同時に解禁される。
+
+3 と 6 は独立した env で、どちらか片方だけでは実送信されない。
+rollback は該当 env の unset（コード変更不要）。
 
 - **`SanrenpukuPaidAt` / `PaidAt` が空な会員の扱いは未決**。Premium Plus の販売対象にするには
   Airtable の `PaidAt` を実際の入金確認日で補正する（Customers write）必要があり、未承認。
