@@ -123,6 +123,45 @@ test('空メールは送らない', () => {
   assert.equal(verifyBeforeSend({ ...OK_SETS }).send, false);
 });
 
+// ── 送信直前の頻度ガード再計算 ────────────────────────────────
+test('dry-run 後に別キャンペーンが送られていたら、送信直前で止める', () => {
+  const now = Date.now();
+  const recent = new Map([['a@example.com', now - 3600_000]]); // 1 時間前
+  const v = verifyBeforeSend({ email: 'a@example.com', ...OK_SETS, recentContactAtMs: recent, nowMs: now });
+  assert.equal(v.send, false, '24 時間以内なのに送っている');
+  assert.equal(v.reason, 'recent_marketing_contact');
+  assert.equal(v.status, 'skipped-frequency-cap');
+});
+
+test('24 時間より前の送信履歴なら送信直前でも通す', () => {
+  const now = Date.now();
+  const old = new Map([['a@example.com', now - 25 * 3600_000]]);
+  assert.equal(verifyBeforeSend({ email: 'a@example.com', ...OK_SETS, recentContactAtMs: old, nowMs: now }).send, true);
+});
+
+test('頻度ガードの照合はアドレスを正規化して行う', () => {
+  const now = Date.now();
+  const recent = new Map([['a@example.com', now - 1000]]);
+  assert.equal(verifyBeforeSend({ email: ' A@Example.COM ', ...OK_SETS, recentContactAtMs: recent, nowMs: now }).send, false);
+});
+
+test('履歴 Map が無ければ頻度ガードは働かない（他の判定は維持）', () => {
+  const now = Date.now();
+  assert.equal(verifyBeforeSend({ email: 'a@example.com', ...OK_SETS, nowMs: now }).send, true);
+  assert.equal(verifyBeforeSend({ email: 'a@example.com', ...OK_SETS, recentContactAtMs: null, nowMs: now }).send, true);
+});
+
+test('suppression の判定は頻度ガードより先（より重い理由を出す）', () => {
+  const now = Date.now();
+  const recent = new Map([['a@example.com', now - 1000]]);
+  const v = verifyBeforeSend({
+    email: 'a@example.com', ...OK_SETS,
+    providerSuppressed: new Set(['a@example.com']),
+    recentContactAtMs: recent, nowMs: now,
+  });
+  assert.equal(v.reason, 'provider_suppressed');
+});
+
 test('返す status は CampaignDeliveries の許可値だけ', () => {
   const allowed = new Set(['queued', 'sent', 'failed', 'skipped-unsubscribed', 'skipped-blacklist',
     'skipped-converted', 'skipped-frequency-cap', 'skipped-duplicate']);
@@ -173,6 +212,14 @@ test('専用 dispatcher は既定 dryRun で、live は専用ゲート必須', (
 
 test('専用 dispatcher はマーケティングジョブ以外を絶対に処理しない', () => {
   assert.match(dispCode, /\.filter\(\(r\) => isMarketingJob\(r\.fields\)\)/, 'ジョブ種別で絞っていない');
+});
+
+test('専用 dispatcher は頻度ガードを再計算し、自ジョブの記録を除外する', () => {
+  assert.ok(dispCode.includes('buildRecentContactMap'), '横断頻度の再計算が無い');
+  assert.match(dispCode, /recentContactAtMs,\s*nowMs: now/, 'verifyBeforeSend へ渡していない');
+  assert.match(dispCode, /if \(String\(f\.ScheduledEmailJobId \|\| ''\) === excludeJobId\) continue;/,
+    '自ジョブの配信記録を除外していない（自分で自分を止めてしまう）');
+  assert.match(dispCode, /f\.EmailType/, 'campaign 以外を除外していない');
 });
 
 test('専用 dispatcher は送信直前に再検証し、Customers を書かない', () => {

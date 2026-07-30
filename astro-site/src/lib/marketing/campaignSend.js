@@ -22,7 +22,8 @@
 import { createHash } from 'node:crypto';
 import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/delivery-key.js';
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
-import { matchesCampaignAudience } from './campaignCatalog.js';
+import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
+import { evaluateExtraAudience, CAMPAIGN_MISMATCH } from './campaignAudienceRules.js';
 
 /** このモジュールが CampaignDeliveries へ書いてよいフィールド（これ以外は構造的に禁止） */
 export const CD_WRITABLE_FIELDS = Object.freeze([
@@ -60,6 +61,10 @@ export const MK_EXCLUSION = Object.freeze({
   SOFT_BOUNCE: 'soft_bounce',
   /** 既に同じ campaign/version で送信済み or 送信予約済み */
   ALREADY_DELIVERED: 'already_delivered',
+  /** 直近 MARKETING_MIN_INTERVAL_MS 以内に別のキャンペーンを送っている */
+  RECENT_MARKETING_CONTACT: 'recent_marketing_contact',
+  /** キャンペーン固有の追加条件（Premium Plus の販売資格・PHASE 等）に合致しない */
+  CAMPAIGN_MISMATCH: CAMPAIGN_MISMATCH,
   /** 同一アドレスが選択内で重複 */
   DUPLICATE: 'duplicate',
   /** キャンペーンの想定対象と契約状態が合わない */
@@ -75,6 +80,8 @@ export const MK_EXCLUSION_LABEL = Object.freeze({
   provider_suppressed: 'SendGrid 側で配信停止済み',
   soft_bounce: 'ソフトバウンス履歴あり',
   already_delivered: '送信済み（同一キャンペーン）',
+  recent_marketing_contact: '最近マーケティング送信済み（24時間以内）',
+  campaign_mismatch: 'キャンペーン条件外',
   duplicate: '重複アドレス',
   contract_mismatch: '契約状態が対象外',
   plan_mismatch: 'プランが対象外',
@@ -83,6 +90,22 @@ export const MK_EXCLUSION_LABEL = Object.freeze({
 
 /** 1 回の送信で許可する最大件数（暴走防止。超えたら計画自体を作らない） */
 export const MAX_RECIPIENTS_PER_SEND = 500;
+
+/**
+ * キャンペーン横断の最短送信間隔（ms）。**hard safety floor = 24 時間。**
+ *
+ * DeliveryKey は同一 campaignId × version の重複しか防がない。別キャンペーン
+ * （例: expired-comeback と premium-renewal）は対象が重なるため、管理者が続けて
+ * 実行すると同じ人へ同日に複数通が届く。それを構造的に防ぐ。
+ *
+ * ⚠️ 対象は **AK のマーケティングキャンペーンだけ**（CampaignDeliveries の
+ *    EmailType='campaign'）。入金確認メール v2・問い合わせ・ステップメール等の
+ *    取引メールはこの間隔に含めない（含めると必要な連絡が止まる）。
+ *
+ * 変更するときはここだけを直す（呼び出し側に数値を書かない）。短縮は安全性を下げるため、
+ * 24 時間未満へは下げないこと。
+ */
+export const MARKETING_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /** ScheduledEmails 1 ジョブあたりの宛先数（既存 step 送信と同じ粒度に合わせる） */
 export const RECIPIENTS_PER_JOB = 100;
@@ -159,8 +182,14 @@ export function buildCampaignPlan({
   if (!campaign || !campaign.campaignId) return empty('unknown_campaign');
   if (!Array.isArray(selected)) return empty('invalid_selection');
   if (!fromEmail) return empty('missing_from_email');
+  // 使用停止中のキャンペーンは計画自体を作らない
+  if (!isCampaignUsable(campaign)) {
+    const tpl = isTemplateConfigured(campaign);
+    return empty(tpl.ok ? 'campaign_disabled' : tpl.reason);
+  }
   // provider suppression を確認できないまま計画を作らない（fail closed）
   if (!(providerSuppressed instanceof Set)) return empty('provider_suppression_unavailable');
+  if (!Number.isFinite(nowMs)) return empty('invalid_now');
 
   const delivered = deliveredKeys instanceof Set ? deliveredKeys : new Set();
   const soft = softBounced instanceof Set ? softBounced : new Set();
@@ -193,6 +222,11 @@ export function buildCampaignPlan({
       continue;
     }
 
+    // 2-b. キャンペーン固有の追加条件（Premium Plus の販売資格・PHASE 等）。
+    //      判定は単一源へ委譲する（ここで PHASE を計算しない）。
+    const extra = evaluateExtraAudience({ campaign, fields: item.fields, nowMs });
+    if (!extra.ok) { exclude(recordId, MK_EXCLUSION.CAMPAIGN_MISMATCH); continue; }
+
     const email = normalizeRecipientEmail(m.email || '');
 
     // 3. provider 側 suppression（AK の台帳より広い。ここが最後の砦ではなく最初の砦）
@@ -207,6 +241,12 @@ export function buildCampaignPlan({
     const deliveryKey = computeCampaignDeliveryKey({ campaign, recipientEmail: email, brand, fromEmail });
     if (!deliveryKey) { exclude(recordId, MK_EXCLUSION.UNKNOWN_CUSTOMER); continue; }
     if (delivered.has(deliveryKey)) { exclude(recordId, MK_EXCLUSION.ALREADY_DELIVERED); continue; }
+
+    // 6. キャンペーン横断の頻度ガード（別キャンペーンでも 24 時間以内は送らない）
+    if (isRecentMarketingContact({ lastSentAtMs: m.history && m.history.lastSentAtMs, nowMs })) {
+      exclude(recordId, MK_EXCLUSION.RECENT_MARKETING_CONTACT);
+      continue;
+    }
 
     seenEmails.add(email);
     recipients.push({
@@ -233,6 +273,44 @@ export function buildCampaignPlan({
     },
     planFingerprint: computePlanFingerprint({ campaign, recipients }),
   };
+}
+
+/**
+ * 直近にマーケティングキャンペーンを送っているか（横断頻度ガードの単一源）。
+ *
+ * 判定材料は **CampaignDeliveries（EmailType='campaign'）由来の最終送信日時だけ**。
+ * 取引メール（入金確認 v2 / 問い合わせ / ステップメール）は含めない。
+ *
+ * 日時が読めない場合は「送っていない」とみなす（送信を止めるのは実績がある時だけ。
+ * ここを fail closed にすると履歴の欠損で全員が永久に送れなくなる）。
+ *
+ * @param {{ lastSentAtMs: number|null|undefined, nowMs: number, minIntervalMs?: number }} input
+ */
+export function isRecentMarketingContact({ lastSentAtMs, nowMs, minIntervalMs = MARKETING_MIN_INTERVAL_MS }) {
+  if (!Number.isFinite(lastSentAtMs) || !Number.isFinite(nowMs)) return false;
+  const elapsed = nowMs - lastSentAtMs;
+  if (elapsed < 0) return true; // 未来日時 = データ不正。送らない側へ倒す
+  return elapsed < minIntervalMs;
+}
+
+/**
+ * キャンペーン定義の内容ハッシュ。
+ *
+ * 同じ campaignId × version のまま本文・件名・CTA を書き換えると、DeliveryKey が
+ * 変わらないため**直した内容が既送信者へ二度と届かない**。それを検知するために、
+ * テストで「version N の既知ハッシュ」を固定する。
+ * 中身を変えたらテストが落ち、version を上げるまで通らない。
+ */
+export function computeCampaignContentHash(campaign) {
+  const c = campaign || {};
+  const seed = [
+    String(c.campaignId ?? ''),
+    String(c.subject ?? ''),
+    String(c.body ?? ''),
+    String(c.ctaLabel ?? ''),
+    String(c.ctaUrl ?? ''),
+  ].join(' ');
+  return createHash('sha256').update(seed, 'utf8').digest('hex').slice(0, 16);
 }
 
 /**

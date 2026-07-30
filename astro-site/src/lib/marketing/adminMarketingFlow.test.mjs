@@ -38,6 +38,24 @@ const CUSTOMERS = [
   { id: 'rec7', fields: { Email: 'bounced@example.com', 'プラン': 'Premium', Status: 'active', '有効期限': '2026-01-01' } },
   { id: 'rec8', fields: { Email: 'gone@example.com', 'プラン': 'Premium', Status: 'withdrawn', '有効期限': '2026-01-01' } },
   { id: 'rec9', fields: { Email: 'legacy@example.com', 'プラン': 'Premium', Status: 'active' } }, // 有効期限なし = unknown
+  // Premium Plus 案内の追加絞り込み用: 三連複保有だが販売資格なし
+  {
+    id: 'rec10',
+    fields: {
+      Email: 'srp-noelig@example.com', 'プラン': 'Premium', PlanType: 'Annual',
+      Status: 'active', '有効期限': '2099-01-01', LifetimeSanrenpuku: true,
+    },
+  },
+  // 三連複保有 + eligible + PHASE 3 以上（販売許可から十分日数が経過）
+  {
+    id: 'rec11',
+    fields: {
+      Email: 'srp-elig@example.com', 'プラン': 'Premium', PlanType: 'Annual',
+      Status: 'active', '有効期限': '2099-01-01', LifetimeSanrenpuku: true,
+      PremiumPlusEligibility: 'eligible',
+      PremiumPlusEligibleAt: new Date(Date.now() - 30 * 86400000).toISOString(),
+    },
+  },
 ];
 const BLACKLIST = [{ id: 'b1', fields: { Email: 'bounced@example.com', Status: 'HARD_BOUNCE' } }];
 
@@ -331,8 +349,8 @@ test('有効化しても Customers は書かず、キューだけを作る', asy
   for (const d of store.deliveries) {
     assert.equal(d.fields.EmailType, 'campaign');
     assert.equal(d.fields.Status, 'queued');
-    assert.equal(d.fields.CampaignType, 'expired-comeback:v1');
-    assert.ok(d.fields.ScheduledEmailJobId.startsWith('mkt-expired-comeback-v1-'));
+    assert.equal(d.fields.CampaignType, 'expired-comeback:v2');
+    assert.ok(d.fields.ScheduledEmailJobId.startsWith('mkt-expired-comeback-v2-'));
   }
   // 送信基盤が無効なことを応答で明示する
   assert.equal(body.dispatchEnabled, false);
@@ -367,10 +385,115 @@ test('履歴はキャンペーン単位で集計される', async () => {
 
   const { body } = parse(await call({ action: 'history' }));
   assert.equal(body.runs.length, 1);
-  assert.equal(body.runs[0].campaignType, 'expired-comeback:v1');
+  assert.equal(body.runs[0].campaignType, 'expired-comeback:v2');
   assert.equal(body.runs[0].queued, 2);
   assert.equal(body.runs[0].sent, 0, 'provider 受理前に sent を数えている');
   assert.ok(body.notice.includes('実配信'));
+});
+
+// ── キャンペーン横断 頻度ガード（本番化前の必須条件）──────────────
+test('【24h ガード】連続クリックで 2 つ目のキャンペーンが fail closed になる', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+
+  // 1 通目: 期限切れカムバックを rec1 / rec2 へ送る
+  const dry1 = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'] }));
+  assert.equal(dry1.body.willSend, 2);
+  const send1 = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
+    planFingerprint: dry1.body.planFingerprint,
+  }));
+  assert.equal(send1.body.queued, 2);
+  const jobsAfterFirst = store.scheduled.length;
+  const deliveriesAfterFirst = store.deliveries.length;
+
+  // 2 通目: 続けて別キャンペーン（Premium 再契約）を同じ相手へ実行
+  clearProviderSuppressionCache();
+  const dry2 = parse(await call({ action: 'dryRun', campaignId: 'premium-renewal', recordIds: ['rec1', 'rec2'] }));
+  assert.equal(dry2.body.willSend, 0, '24 時間以内に 2 通目が送れてしまう');
+  const reasons = Object.fromEntries(dry2.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.recent_marketing_contact, 2);
+
+  // 送信を試みても 0 件で拒否され、キューは増えない
+  const send2 = parse(await call({
+    action: 'send', campaignId: 'premium-renewal', recordIds: ['rec1', 'rec2'],
+    planFingerprint: dry2.body.planFingerprint,
+  }));
+  assert.equal(send2.status, 400, '対象 0 件のまま送信されている');
+  assert.equal(store.scheduled.length, jobsAfterFirst, 'ジョブが増えている');
+  assert.equal(store.deliveries.length, deliveriesAfterFirst, '台帳が増えている');
+});
+
+test('【24h ガード】24 時間より前の送信履歴なら次のキャンペーンを送れる', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  // 25 時間前に別キャンペーンを送った履歴を台帳へ置く
+  store.deliveries.push({
+    id: 'cd-old',
+    fields: {
+      DeliveryKey: 'old-key', EmailType: 'campaign', CampaignType: 'other:v1',
+      RecipientEmail: 'expired1@example.com', Status: 'sent',
+      SentAt: new Date(Date.now() - 25 * 3600_000).toISOString(),
+    },
+  });
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
+  assert.equal(dry.body.willSend, 1, '24 時間経過後も送れなくなっている');
+});
+
+test('取引メール（step 等）は 24h ガードの対象に含めない', async () => {
+  // EmailType='step' の直近レコードがあっても、キャンペーンは送れる
+  store.deliveries.push({
+    id: 'cd-step',
+    fields: {
+      DeliveryKey: 'step-key', EmailType: 'step', StepSequenceId: 's1', StepNumber: 1,
+      RecipientEmail: 'expired1@example.com', Status: 'sent', SentAt: new Date().toISOString(),
+    },
+  });
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
+  assert.equal(dry.body.willSend, 1, 'ステップメールでキャンペーンが止まっている');
+});
+
+// ── 使用停止キャンペーン ────────────────────────────────────────
+test('使用停止中のキャンペーンは理由付きで拒否される（dry-run も送信も）', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  for (const id of ['sanrenpuku-offer', 'general-announcement']) {
+    const dry = parse(await call({ action: 'dryRun', campaignId: id, recordIds: ['rec3'] }));
+    assert.equal(dry.status, 409, `${id} が dry-run できてしまう`);
+    assert.ok(dry.body.error.includes('使用停止中'), dry.body.error);
+    assert.equal(dry.body.sideEffects, 'none');
+
+    const send = parse(await call({ action: 'send', campaignId: id, recordIds: ['rec3'], planFingerprint: 'x' }));
+    assert.equal(send.status, 409, `${id} が送信できてしまう`);
+  }
+  assert.equal(store.writes.length, 0);
+});
+
+test('キャンペーン一覧は停止中も理由付きで返す', async () => {
+  const { body } = parse(await call({ action: 'campaigns' }));
+  assert.equal(body.campaigns.length, 6, '停止中が一覧から消えている');
+  const off = body.campaigns.filter((c) => !c.usable);
+  assert.equal(off.length, 2, '停止中が 2 本でない');
+  for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に理由が無い`);
+});
+
+test('停止中でも本文プレビューは確認できる（送信経路ではないため）', async () => {
+  const { status, body } = parse(await call({ action: 'preview', campaignId: 'sanrenpuku-offer' }));
+  assert.equal(status, 200);
+  assert.ok(body.subject.includes('三連複'));
+});
+
+// ── Premium Plus 案内の追加絞り込み ──────────────────────────────
+test('Premium Plus 案内は eligible かつ PHASE 3 以上でないと送れない', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  // rec10: 三連複保有だが Premium Plus 資格なし → campaign_mismatch
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'premium-plus-offer', recordIds: ['rec10'] }));
+  assert.equal(dry.body.willSend, 0, '販売資格が無いのに Premium Plus 案内が送られる');
+  const reasons = Object.fromEntries(dry.body.excludedDetail.map((e) => [e.reason, e.count]));
+  assert.equal(reasons.campaign_mismatch, 1);
+});
+
+test('Premium Plus 案内は eligible かつ PHASE 3 到達なら送れる', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'premium-plus-offer', recordIds: ['rec11'] }));
+  assert.equal(dry.body.willSend, 1, 'PHASE 3 到達者へ送れない');
 });
 
 test('送信後は顧客一覧に送信履歴が反映される', async () => {
@@ -381,5 +504,5 @@ test('送信後は顧客一覧に送信履歴が反映される', async () => {
   const { body } = parse(await call({ action: 'customers', contract: 'expired' }));
   const rec1 = body.rows.find((r) => r.recordId === 'rec1');
   assert.equal(rec1.sentCount, 1);
-  assert.equal(rec1.lastCampaign, 'expired-comeback:v1');
+  assert.equal(rec1.lastCampaign, 'expired-comeback:v2');
 });

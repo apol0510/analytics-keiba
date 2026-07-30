@@ -100,6 +100,33 @@ test('除外理由が画面に必ず出る（黙って落とさない）', () =>
   assert.ok(SCRIPT.includes('r.suppressionReasons'), '一覧に除外理由を出していない');
 });
 
+test('dry-run 確認画面が除外を分類して出す', () => {
+  for (const label of [
+    'キャンペーン条件外', '配信停止・除外リスト', '最近マーケティング送信済み', '配信基盤の配信停止', 'その他',
+  ]) {
+    assert.ok(SCRIPT.includes(label), `除外分類「${label}」が無い`);
+  }
+  for (const reason of [
+    'campaign_mismatch', 'recent_marketing_contact', 'provider_suppressed', 'already_delivered',
+  ]) {
+    assert.ok(SCRIPT.includes(reason), `理由 ${reason} が分類に含まれていない`);
+  }
+  // 分類漏れが出ても件数を落とさない
+  assert.ok(SCRIPT.includes('未分類'), '未分類の受け皿が無い');
+});
+
+test('使用停止中のキャンペーンは選べず、理由が画面に出る', () => {
+  assert.match(SCRIPT, /o\.disabled = !c\.usable/, '停止中を選択不可にしていない');
+  assert.ok(SCRIPT.includes('使用停止中'), '停止中の表示が無い');
+  assert.ok(SCRIPT.includes('c.disabledReason'), '停止理由を出していない');
+  // dry-run 実行時にも停止中を弾く
+  assert.match(SCRIPT, /if \(!c\.usable\) \{ mkMsg\('使用停止中のキャンペーンです/);
+});
+
+test('既定選択が使用可能なキャンペーンになる', () => {
+  assert.match(SCRIPT, /const firstUsable = mkCampaigns\.find\(\(c\) => c\.usable\)/);
+});
+
 test('顧客データを URL に載せない', () => {
   const mktBlock = SCRIPT.slice(SCRIPT.indexOf('顧客マーケティング（AK 独自'));
   assert.equal(/location\.(href|search)\s*=/.test(mktBlock), false);

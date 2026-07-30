@@ -130,6 +130,28 @@ expiry 通知 / retry-failed-emails / step メール ほか）。マーケティ
 → **PR #172 の merge = main への push = production deploy 自動発火**。
 merge と deploy を別承認にするには `stop_builds` か `ignore` の設定変更が必要（production 設定変更＝未実施）。
 
+#### 4. キャンペーン本文・件名・CTA の本番化前レビューと是正（2026-07-30）
+
+read-only レビューで 6 キャンペーンを点検し、同一 branch で是正した。
+
+| campaignId | v | 状態 | 是正内容 |
+|---|---|---|---|
+| `expired-comeback` | 2 | ✅ | 宛名のみ修正（CTA 200 で維持） |
+| `premium-renewal` | 2 | ✅ | 期限切れ/期限間近どちらにも自然な中立表現へ。三連複買い切り権が失効したと読まれない注記を追加 |
+| `sanrenpuku-offer` | 2 | ⛔ 停止 | **三連複を説明・販売する公開ページが無い**（`/pricing/` に記載 0 件・購入導線は dashboard のモーダルのみ）。推測 URL を作らず `ctaUrl:''` で停止 |
+| `premium-plus-offer` | 2 | ✅ | `eligible` かつ PHASE 3 以上のみへ限定（CTA 先は PHASE 3 未満で 404）。**対象 11 名 → 2 名** |
+| `dormant-reactivation` | 2 | ✅ | 契約 none/expired へ enforce。課金継続中を機械的に除外。「長期」の根拠が無いため名称を「休眠・無料会員 再アプローチ」へ |
+| `general-announcement` | 1 | ⛔ 停止 | 本文が初期テンプレートのまま。`template_not_configured` で dry-run 自体を拒否 |
+
+**共通の是正**
+
+- **二重敬称の解消**: 差し込みを `{{salutation}}`（完成した宛名）へ変更。氏名あり `山田 様` /
+  氏名なし `お客様`。テンプレート側での敬称後付けを guard テストで禁止
+- **キャンペーン横断の頻度ガード（24 時間）**: DeliveryKey は同一 campaign/version の重複しか
+  防がないため、別キャンペーンの連続送信を止める。dry-run / send / dispatch 直前の 3 箇所で判定。
+  対象は `EmailType='campaign'` のみ（取引メールは含めない）
+- **version ロック**: 内容ハッシュをテストで固定し、version 据え置きの本文変更を検知
+
 #### 実施していない操作（重要）
 
 production deploy / merge / env 変更 / Airtable schema 変更 / Customers write /
@@ -495,7 +517,7 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 
 Draft 実装は完了しているが、実送信は次の承認と操作が揃うまで**構造的に不可能**。順序を守ること。
 
-1. キャンペーン本文・件名・CTA の最終確認（`src/lib/marketing/campaignCatalog.js`）
+1. ~~キャンペーン本文・件名・CTA の最終確認~~ → **2026-07-30 完了**（4 本が使用可能・2 本は使用停止）
 2. **PR #172 の merge**（＝ main への push ＝ **production deploy が自動発火する**）
 3. `MARKETING_CAMPAIGN_ENABLED=true` を Netlify production へ設定（**キュー登録**の解禁）
 4. 専用テスト受信者だけで dry-run → 送信し、`ScheduledEmails` / `CampaignDeliveries` を目視確認
@@ -512,6 +534,11 @@ rollback は該当 env の unset（コード変更不要）。
 - **`SanrenpukuPaidAt` / `PaidAt` が空な会員の扱いは未決**。Premium Plus の販売対象にするには
   Airtable の `PaidAt` を実際の入金確認日で補正する（Customers write）必要があり、未承認。
   **推測で日付を作らない**方針は維持する。
+- **三連複の案内先 URL が未確定**（`sanrenpuku-offer` は使用停止のまま）。
+  三連複を説明・販売する公開ページを用意するか、既存導線（dashboard のモーダル）を
+  CTA 先として許容するかの判断が必要。決まったら `ctaUrl` を設定し version を上げる。
+- **`general-announcement` の本文が未設定**（使用停止のまま）。用途が決まった時点で
+  本文を書き version を上げる。用途ごとに個別キャンペーンを追加する方が安全。
 
 ## Open Questions
 

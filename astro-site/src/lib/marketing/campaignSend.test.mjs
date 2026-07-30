@@ -27,13 +27,26 @@ import {
   CD_WRITABLE_FIELDS,
   MAX_RECIPIENTS_PER_SEND,
   RECIPIENTS_PER_JOB,
+  MARKETING_MIN_INTERVAL_MS,
+  isRecentMarketingContact,
 } from './campaignSend.js';
 import { getCampaign, CAMPAIGNS } from './campaignCatalog.js';
 import { resolveCustomerMarketing, MK_CONTRACT } from './customerMarketingAudience.js';
 
 const NOW = Date.UTC(2026, 7, 3, 1, 0);
 const FROM = 'noreply@keiba.link';
-const general = getCampaign('general-announcement');
+
+/**
+ * 送信計画のロジック検証にはカタログの方針（有効/無効・対象条件）を持ち込まない。
+ * 制限なし・有効なテスト用キャンペーンを使い、カタログ側の検証は campaignCatalog.test.mjs で行う。
+ */
+const general = Object.freeze({
+  campaignId: 'test-generic', version: 1, name: 'テスト用',
+  subject: 'テスト件名', body: '{{salutation}}\n\n本文',
+  ctaLabel: '詳細', ctaUrl: 'https://analytics.keiba.link/',
+  audienceRule: { contracts: [], plans: [], enforce: false },
+  enabled: true,
+});
 const comeback = getCampaign('expired-comeback');
 
 /** 顧客 1 件（Airtable fields → marketing 判定まで通す） */
@@ -153,6 +166,75 @@ test('除外の優先順: suppression → provider → soft → 重複 → 既�
   const p = plan([both], general, undefined, { providerSuppressed: new Set(['r1@example.com']) });
   assert.equal(p.counts.byReason.unsubscribed, 1);
   assert.equal(p.counts.byReason[MK_EXCLUSION.PROVIDER_SUPPRESSED], undefined);
+});
+
+// ── キャンペーン横断 頻度ガード（24 時間）────────────────────────
+test('24 時間以内に別キャンペーンを送っていたら除外する', () => {
+  const recent = customer('r1', {}, { history: { lastSentAtMs: NOW - 3 * 3600_000, sentCount: 1 } });
+  const p = plan([recent]);
+  assert.equal(p.counts.recipients, 0, '24 時間以内に 2 通目を送ろうとしている');
+  assert.equal(p.counts.byReason[MK_EXCLUSION.RECENT_MARKETING_CONTACT], 1);
+});
+
+test('24 時間の境界（ちょうど 24 時間経過は送れる）', () => {
+  const at = (ms) => plan([customer('r1', {}, { history: { lastSentAtMs: NOW - ms, sentCount: 1 } })]).counts.recipients;
+  assert.equal(at(MARKETING_MIN_INTERVAL_MS - 1000), 0, '24 時間未満で送っている');
+  assert.equal(at(MARKETING_MIN_INTERVAL_MS), 1);
+  assert.equal(at(MARKETING_MIN_INTERVAL_MS + 1000), 1);
+});
+
+test('hard safety floor は 24 時間（定数を下げていない）', () => {
+  assert.equal(MARKETING_MIN_INTERVAL_MS, 24 * 60 * 60 * 1000);
+});
+
+test('送信履歴が無い / 読めない場合は頻度ガードで止めない', () => {
+  assert.equal(plan([customer('r1')]).counts.recipients, 1);
+  for (const bad of [null, undefined, NaN, 'x']) {
+    assert.equal(isRecentMarketingContact({ lastSentAtMs: bad, nowMs: NOW }), false);
+  }
+});
+
+test('未来日時の送信履歴は不正として送らない側へ倒す', () => {
+  assert.equal(isRecentMarketingContact({ lastSentAtMs: NOW + 1000, nowMs: NOW }), true);
+});
+
+test('頻度ガードは既送信判定より後（同一キャンペーンは already_delivered が優先）', () => {
+  const c = customer('r1', {}, { history: { lastSentAtMs: NOW - 1000, sentCount: 1 } });
+  const first = plan([c]);
+  // 履歴があるので通常は recent_marketing_contact だが、同一キャンペーン既送信ならそちらを出す
+  const delivered = new Set([computeCampaignDeliveryKey({
+    campaign: general, recipientEmail: 'r1@example.com', brand: 'analytics-keiba', fromEmail: FROM,
+  })]);
+  const second = plan([c], general, delivered);
+  assert.equal(first.counts.byReason[MK_EXCLUSION.RECENT_MARKETING_CONTACT], 1);
+  assert.equal(second.counts.byReason[MK_EXCLUSION.ALREADY_DELIVERED], 1);
+});
+
+// ── キャンペーン固有の追加条件 ────────────────────────────────
+test('使用停止中のキャンペーンは計画を作らない', () => {
+  const disabled = { ...general, enabled: false };
+  const p = plan([customer('r1')], disabled);
+  assert.equal(p.ok, false);
+  assert.equal(p.error, 'campaign_disabled');
+  assert.equal(p.recipients.length, 0);
+});
+
+test('本文が初期テンプレートのままなら計画を作らない（fail closed）', () => {
+  const p = plan([customer('r1')], { ...general, isPlaceholderTemplate: true });
+  assert.equal(p.ok, false);
+  assert.equal(p.error, 'template_not_configured');
+});
+
+test('CTA URL 未設定なら計画を作らない', () => {
+  const p = plan([customer('r1')], { ...general, ctaUrl: '' });
+  assert.equal(p.ok, false);
+  assert.equal(p.error, 'cta_not_configured');
+});
+
+test('未知の extraAudience は全員除外（定義ミスで全員へ送らない）', () => {
+  const p = plan([customer('r1')], { ...general, extraAudience: 'does-not-exist' });
+  assert.equal(p.counts.recipients, 0);
+  assert.equal(p.counts.byReason[MK_EXCLUSION.CAMPAIGN_MISMATCH], 1);
 });
 
 // ── 冪等性 ────────────────────────────────────────────────────

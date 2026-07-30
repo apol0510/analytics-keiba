@@ -159,6 +159,12 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     if (e) blocked.add(e); // 販促メールは SOFT_BOUNCE も送らない
   }
 
+  // キャンペーン横断の最終送信日時（**このジョブ自身の記録は除く**。
+  // 自分の queued レコードを見て自分を止めてしまわないようにする）
+  const campaignDeliveries = await fetchAll({
+    KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
+  }).catch(() => []);
+
   const customers = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
   const unsubscribed = new Set();
   const withdrawn = new Set();
@@ -182,10 +188,16 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     if (recipients.length === 0) continue;
     summary.jobs += 1;
 
+    // このジョブ以外のキャンペーン配信から、受信者ごとの最終送信日時を作る
+    const recentContactAtMs = buildRecentContactMap(campaignDeliveries, jobId);
+
     const toSend = [];
     const toSkip = [];
     for (const email of recipients.slice(0, MAX_PER_RUN)) {
-      const v = verifyBeforeSend({ email, providerSuppressed: provider.emails, blocked, unsubscribed, withdrawn });
+      const v = verifyBeforeSend({
+        email, providerSuppressed: provider.emails, blocked, unsubscribed, withdrawn,
+        recentContactAtMs, nowMs: now,
+      });
       summary.verified += 1;
       if (v.send) toSend.push(email);
       else {
@@ -241,6 +253,30 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
       ? '再検証のみ。送信も書き込みもしていません。'
       : '送信直前に配信停止・バウンス・退会を再判定したうえで送信しました。',
   });
+}
+
+/**
+ * 受信者 → 「このジョブ以外の」キャンペーン最終送信日時。
+ * 自ジョブの queued レコードを含めると、自分自身を頻度ガードで止めてしまう。
+ */
+function buildRecentContactMap(deliveries, excludeJobId) {
+  const map = new Map();
+  for (const rec of deliveries || []) {
+    const f = rec.fields || {};
+    // 取引メール（step / race_main）は横断頻度に含めない。
+    // 取得クエリでも絞っているが、クエリ変更で崩れないようここでも判定する。
+    if (f.EmailType !== 'campaign') continue;
+    if (String(f.ScheduledEmailJobId || '') === excludeJobId) continue;
+    const status = String(f.Status || '');
+    if (status !== 'sent' && status !== 'queued') continue;
+    const email = String(f.RecipientEmail || '').trim().toLowerCase();
+    if (!email) continue;
+    const t = Date.parse(f.SentAt || f.QueuedAt || '');
+    if (!Number.isFinite(t)) continue;
+    const cur = map.get(email);
+    if (cur === undefined || t > cur) map.set(email, t);
+  }
+  return map;
 }
 
 /** SendGrid へ 1 通送る。成功なら true。本文・宛先はログへ出さない。 */

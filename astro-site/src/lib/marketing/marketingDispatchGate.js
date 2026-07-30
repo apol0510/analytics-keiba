@@ -22,6 +22,8 @@
  *   CreatedBy = 'admin-marketing' / TargetPlan = 'campaign:<campaignId>'
  */
 
+import { isRecentMarketingContact } from './campaignSend.js';
+
 /** マーケティングが作る ScheduledEmails ジョブの目印 */
 export const MARKETING_JOB_CREATED_BY = 'admin-marketing';
 export const MARKETING_TARGET_PLAN_PREFIX = 'campaign:';
@@ -83,17 +85,26 @@ export function canSharedExecutorSend(fields, env) {
  * 起きても、固定宛先リストを持つジョブは**そのまま送られてしまう**（共有 executor は
  * explicit な宛先リストに対して再チェックを行わない）。ここで必ず再判定する。
  *
+ * ⚠️ キャンペーン横断の頻度ガードもここで再計算する。dry-run 時点では 24 時間空いていても、
+ *    実送信までの間に別キャンペーンが送られている可能性があるため。
+ *    `recentContactAtMs` には**このジョブ自身の配信記録を含めない**こと
+ *    （自分の queued レコードを見て自分を止めてしまう）。
+ *
  * @param {{
  *   email: string,
  *   providerSuppressed: Set<string>|null,  null = 確認できなかった → 送らない
  *   blocked?: Set<string>,                 AK EmailBlacklist（HARD/SOFT 両方）
  *   unsubscribed?: Set<string>,
  *   withdrawn?: Set<string>,
+ *   recentContactAtMs?: Map<string, number>|null,  他キャンペーンの最終送信日時
+ *   nowMs?: number,
  * }} input
  * @returns {{ send: boolean, status: string, reason: string|null }}
  *   status は CampaignDeliveries.Status に入れる値（skipped-* / queued）
  */
-export function verifyBeforeSend({ email, providerSuppressed, blocked, unsubscribed, withdrawn }) {
+export function verifyBeforeSend({
+  email, providerSuppressed, blocked, unsubscribed, withdrawn, recentContactAtMs, nowMs,
+}) {
   const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
   if (!e) return { send: false, status: 'skipped-duplicate', reason: 'no_email' };
 
@@ -105,5 +116,12 @@ export function verifyBeforeSend({ email, providerSuppressed, blocked, unsubscri
   if (blocked instanceof Set && blocked.has(e)) return { send: false, status: 'skipped-blacklist', reason: 'blacklist' };
   if (unsubscribed instanceof Set && unsubscribed.has(e)) return { send: false, status: 'skipped-unsubscribed', reason: 'unsubscribed' };
   if (withdrawn instanceof Set && withdrawn.has(e)) return { send: false, status: 'skipped-unsubscribed', reason: 'withdrawn' };
+
+  if (recentContactAtMs instanceof Map) {
+    const last = recentContactAtMs.get(e);
+    if (isRecentMarketingContact({ lastSentAtMs: last, nowMs })) {
+      return { send: false, status: 'skipped-frequency-cap', reason: 'recent_marketing_contact' };
+    }
+  }
   return { send: true, status: 'queued', reason: null };
 }

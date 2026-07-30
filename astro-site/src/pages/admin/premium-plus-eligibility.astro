@@ -401,6 +401,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .campaign-box h2 { font-size: .9rem; margin: 0 0 .6rem; color: #e6edf7; }
   .ppe .camp-desc { font-size: .76rem; color: #93a4bd; line-height: 1.7; margin: .4rem 0 0; }
   .ppe .exlist { margin: 0; padding-left: 1.1rem; font-size: .78rem; color: #cbd5e6; line-height: 1.9; }
+  .ppe .exlist strong { color: #e6edf7; }
+  .ppe .exlist .sub { padding-left: .9rem; font-size: .74rem; color: #93a4bd; line-height: 1.7; }
   .ppe .prev-subject { font-size: .86rem; font-weight: 700; color: #e6edf7; margin: 0; }
   /* 実際のメール本文をそのまま出す枠。枠内の配色はメール側の HTML が決める
      （管理 UI 側のダーク配色をここへ持ち込まない） */
@@ -1102,9 +1104,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       for (const c of mkCampaigns) {
         const o = document.createElement('option');
         o.value = c.campaignId;
-        o.textContent = c.name + '（v' + c.version + '）';
+        // 使用可否を選択肢の時点で分かるようにする（停止中は選べない）
+        o.textContent = (c.usable ? '' : '⛔ ') + c.name + '（v' + c.version + '）'
+          + (c.usable ? '' : ' — 使用停止中');
+        o.disabled = !c.usable;
+        if (!c.usable && c.disabledReason) o.title = c.disabledReason;
         sel.appendChild(o);
       }
+      // 既定選択は使用可能なものにする（停止中が先頭でも選ばれないように）
+      const firstUsable = mkCampaigns.find((c) => c.usable);
+      if (firstUsable) sel.value = firstUsable.campaignId;
       renderCampDesc();
       $('mkSendState').textContent = data.sendEnabled
         ? (data.dispatchEnabled
@@ -1122,13 +1131,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function renderCampDesc() {
       const c = currentCampaign();
       const el = $('mkCampDesc');
-      if (!c) { el.textContent = ''; return; }
+      el.innerHTML = '';
+      if (!c) return;
       const rule = c.audienceRule || {};
       const limits = [];
       if (rule.contracts && rule.contracts.length) limits.push('契約状態: ' + rule.contracts.join(' / '));
       if (rule.plans && rule.plans.length) limits.push('プラン: ' + rule.plans.join(' / '));
-      el.textContent = c.description
+      if (c.extraAudience) limits.push('追加条件: ' + c.extraAudience);
+
+      const line = document.createElement('span');
+      line.textContent = c.description
         + (limits.length ? '　【対象条件】' + limits.join('・') + (rule.enforce ? '（条件外は自動で除外）' : '') : '');
+      el.appendChild(line);
+
+      // 使用停止中は理由を明示する（なぜ選べないのかを画面で完結させる）
+      if (!c.usable) {
+        const warn = document.createElement('p');
+        warn.className = 'blocker';
+        warn.textContent = '⛔ 使用停止中: ' + (c.disabledReason || '利用不可');
+        el.appendChild(warn);
+      }
     }
     $('mkCampaign').addEventListener('change', renderCampDesc);
 
@@ -1309,6 +1331,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('mkDryRun').addEventListener('click', async () => {
       const c = currentCampaign();
       if (!c) { mkMsg('キャンペーンを選択してください', 'err'); return; }
+      if (!c.usable) { mkMsg('使用停止中のキャンペーンです: ' + (c.disabledReason || ''), 'err'); return; }
       if (mkSelected.size === 0) { mkMsg('送信対象を選択してください', 'err'); return; }
       mkMsg('対象を確認中…');
       const plan = await mkCall({
@@ -1336,10 +1359,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (plan.excludedDetail && plan.excludedDetail.length) {
         const sec = document.createElement('div'); sec.className = 'dt-sec';
         const h2 = document.createElement('h3'); h2.textContent = '除外の内訳'; sec.appendChild(h2);
+
+        // 理由をグループへ束ねて出す（何がどれだけ落ちたかを分類で把握できるように）
+        const GROUPS = [
+          ['キャンペーン条件外', ['contract_mismatch', 'plan_mismatch', 'campaign_mismatch']],
+          ['配信停止・除外リスト', ['unsubscribed', 'blacklist', 'soft_bounce', 'withdrawn', 'suspended', 'test_account', 'no_email', 'invalid_email']],
+          ['最近マーケティング送信済み', ['recent_marketing_contact']],
+          ['配信基盤の配信停止', ['provider_suppressed']],
+          ['その他', ['already_delivered', 'duplicate', 'unknown_customer']],
+        ];
+        const byReason = {};
+        for (const e of plan.excludedDetail) byReason[e.reason] = e;
+
         const ul = document.createElement('ul'); ul.className = 'exlist';
-        for (const e of plan.excludedDetail) {
+        let shown = 0;
+        for (const g of GROUPS) {
+          const label = g[0], reasons = g[1];
+          const items = reasons.map((r) => byReason[r]).filter(Boolean);
+          if (items.length === 0) continue;
+          const total = items.reduce((s, e) => s + e.count, 0);
+          shown += total;
           const li = document.createElement('li');
-          li.textContent = e.label + '　' + e.count + ' 名';
+          const strong = document.createElement('strong');
+          strong.textContent = label + '　' + total + ' 名';
+          li.appendChild(strong);
+          const sub = document.createElement('ul'); sub.className = 'exlist sub';
+          for (const e of items) {
+            const li2 = document.createElement('li');
+            li2.textContent = e.label + '　' + e.count + ' 名';
+            sub.appendChild(li2);
+          }
+          li.appendChild(sub);
+          ul.appendChild(li);
+        }
+        // 分類に載らない理由が出ても件数を落とさない
+        if (shown < plan.excluded) {
+          const li = document.createElement('li');
+          li.textContent = '未分類　' + (plan.excluded - shown) + ' 名';
           ul.appendChild(li);
         }
         sec.appendChild(ul);

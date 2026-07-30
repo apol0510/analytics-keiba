@@ -537,7 +537,21 @@ PHASE 4 到達後は **JST 時刻だけ**で受付状態を自動判定する（
 - **メールを送っても `Status` / `プラン` / `PlanType` / `有効期限` / `LifetimeSanrenpuku` /
   `PaymentConfirmed` は変更しない。**「無料◯日復活」等の権限付与は別 Phase
 - キャンペーン定義は `src/lib/marketing/campaignCatalog.js` に集約（件名・本文を散らさない）。
-  **本文を変えたら `version` を上げる**（DeliveryKey が変わり再送可能になる）
+  **本文を変えたら `version` を上げる**（DeliveryKey が変わり再送可能になる）。
+  version 据え置きの本文変更は `campaignCatalog.test.mjs` の**内容ハッシュ ロック**が検知する
+- 差し込みは **`{{salutation}}` のみ**＝**完成した宛名**。テンプレートで敬称を後付けしない
+  （氏名未登録が大多数のため「お客様 様」の二重敬称になる）。氏名あり `山田 様` / なし `お客様`
+- **CTA 先が確定しないキャンペーンは `enabled:false`。推測で URL を作らない**
+  （`sanrenpuku-offer` は三連複の公開説明ページが無いため停止中）
+- 契約 × プランで決められない条件は `campaignAudienceRules.js` の `extraAudience` に閉じ込め、
+  **`customerMarketingAudience.js` を Premium Plus 販売判定で汚さない**。
+  `premium-plus-offer` は `eligible` かつ `showProductPage=true`（PHASE 3 以上）のみ対象
+  （CTA 先 `/premium-plus/` は PHASE 3 未満で 404 のため）。判定は
+  `resolvePremiumPlusRelease()` へ委譲し **PHASE 計算を複製しない**
+- **キャンペーン横断の頻度ガード 24 時間**（`MARKETING_MIN_INTERVAL_MS`・hard safety floor）。
+  DeliveryKey は同一 campaign/version しか防がないため、別キャンペーンの連続送信を止める。
+  対象は `EmailType='campaign'` のみ（取引メールは含めない）。dry-run / send / dispatch 直前の
+  3 箇所で判定し、dispatch 時は**自ジョブの記録を除外**する
 - 送信は `admin-marketing.js` が **ScheduledEmails(PENDING) + CampaignDeliveries(queued) を作るだけ**。
   SendGrid の**送信 API** を呼ぶコードを持たない（guard テストで固定。suppression の GET のみ可）
 - 三重ガード: 認可 `x-admin-secret` / キュー登録 `MARKETING_CAMPAIGN_ENABLED='true'`（既定 OFF）/

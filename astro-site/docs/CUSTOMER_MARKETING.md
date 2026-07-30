@@ -77,17 +77,31 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 
 単一源 `marketing/campaignCatalog.js`。**件名・本文を Function や画面へ散らさない。**
 
-| campaignId | 用途 | 対象条件（enforce） |
-|---|---|---|
-| `expired-comeback` | 期限切れ会員 カムバック | 契約=expired（強制） |
-| `premium-renewal` | Premium 再契約 | 契約=expired/expiring_soon かつ Premium 系（強制） |
-| `sanrenpuku-offer` | Premium Sanrenpuku 案内 | 契約=active/expiring_soon かつ Premium（強制） |
-| `premium-plus-offer` | Premium Plus 案内 | プラン=三連複保有（強制） |
-| `dormant-reactivation` | 長期休眠会員向け | 制限なし |
-| `general-announcement` | 汎用 | 制限なし |
+| campaignId | v | 状態 | 対象条件（すべて enforce） |
+|---|---|---|---|
+| `expired-comeback` | 2 | ✅ 使用可能 | 契約=expired |
+| `premium-renewal` | 2 | ✅ 使用可能 | 契約=expired/expiring_soon かつ Premium 系 |
+| `sanrenpuku-offer` | 2 | ⛔ **使用停止** | 契約=active/expiring_soon かつ Premium |
+| `premium-plus-offer` | 2 | ✅ 使用可能 | 三連複保有 **＋ 販売資格 eligible ＋ PHASE 3 以上** |
+| `dormant-reactivation` | 2 | ✅ 使用可能 | 契約=none/expired（**課金継続中は除外**） |
+| `general-announcement` | 1 | ⛔ **使用停止** | 制限なし |
 
 各定義は `campaignId` / `version` / `name` / `description` / `subject` / `body` /
-`recommendedSegments` / `ctaUrl` / `ctaLabel` / `enabled` / `audienceRule` を持つ。
+`recommendedSegments` / `ctaUrl` / `ctaLabel` / `enabled` / `audienceRule` /
+（任意）`extraAudience` / `disabledReason` を持つ。
+
+### 使用停止の理由（2026-07-30 レビュー）
+
+- **`sanrenpuku-offer`**: 三連複を**説明・販売する公開ページが存在しない**。
+  `/pricing/` の顧客可視領域に「三連複」の記載は 0 件（本番 HTML 実測）。実際の購入導線は
+  `dashboard.astro` の「三連複を追加」ボタン → モーダル（`showPurchaseCta = canPurchaseSanrenpuku`
+  でゲート・ログイン必須）。`/plan-upgrade-guide/` は旧プラン体系の説明で現行仕様と不一致。
+  → **推測で URL を作らず** `ctaUrl: ''` のまま停止。案内先が決まったら設定して version を上げる。
+- **`general-announcement`**: 本文が初期テンプレート（「お知らせがございます」のみ）。
+  `isPlaceholderTemplate: true` で `isTemplateConfigured()` が検知し、dry-run 自体を拒否する。
+
+停止中でも**本文プレビューは可能**（送信経路ではないため）。管理画面のセレクトでは選択不可になり、
+理由がその場に表示される。
 
 ### version の意味（冪等性の鍵）
 
@@ -95,13 +109,39 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 逆に言えば version を変えない限り同じ相手には二度と送られない。
 **本文を実質的に変更したら必ず version を上げること**（据え置くと直した内容が届かない）。
 
+これを事故防止のため**テストで固定**している。`campaignCatalog.test.mjs` の
+`【version ロック】` が `computeCampaignContentHash()`（subject / body / ctaLabel / ctaUrl の
+SHA-256 先頭 16 桁）を既知値と突き合わせる。本文を変えるとテストが落ち、
+**version を上げてロック表を更新するまで通らない**。
+
 ### 本文の決まり
 
-- 差し込みは `{{name}}` のみ。未解決の差し込みが残る本文は**描画しない**（fail closed）
+- 差し込みは **`{{salutation}}` のみ**。これは**完成した宛名**で、テンプレート側で
+  `{{salutation}} 様` のように敬称を後付けしてはいけない
+  （氏名未登録の会員が大多数のため、後付けすると「お客様 様」の二重敬称になる）
+  - 氏名あり → `山田 様` / 氏名なし → `お客様`
+  - HTML・テキスト双方で検証済み（`buildSalutation()` が単一源）
+- 未解決の差し込みが残る本文は**描画しない**（fail closed）
 - 氏名に `{}` `<>` が含まれる場合は名前として採用せず「お客様」へ倒す
 - **配信停止リンクを本文に書かない**。送信基盤が全通に配信停止リンクと
   `List-Unsubscribe` ヘッダを自動付与する（二重に出さない）
 - CTA URL は `https://analytics.keiba.link/` のみ（`analytics.keiba.jp` / `*.netlify.app` は guard で禁止）
+
+### キャンペーン固有の追加条件（`extraAudience`）
+
+契約状態 × プランだけでは決められない条件は `campaignAudienceRules.js` に閉じ込める。
+**`customerMarketingAudience.js` を Premium Plus 販売判定で汚さない。**
+
+`premium_plus_release`（`premium-plus-offer` が使用）:
+- CTA 先 `/premium-plus/` は段階公開の対象で、PHASE 3 未満・非 eligible では **404**
+- そのため `PremiumPlusEligibility === 'eligible'` **かつ** `showProductPage === true`
+  （PHASE 3 以上）の会員だけを対象にする
+- 判定は既存正本 `resolvePremiumPlusRelease()` へ委譲し、**PHASE 計算を複製しない**
+- PHASE 1/2・review・blocked・route none は `campaign_mismatch` として dry-run で除外
+- 未知の `extraAudience` 値は**全員除外**（定義ミスで全員へ送らない）
+
+> 本番データ実測（2026-07-30）: 三連複保有者 13 名のうち、この条件を満たすのは **2 名**。
+> 追加条件が無ければ残り 11 名は 404 に着地していた。
 
 ## 5. 送信の流れと安全設計
 
@@ -189,6 +229,23 @@ SendGrid の suppression を **GET で照合**する。
 該当したら送らずに `skipped-*` で台帳へ記録する。provider suppression を確認できない場合は
 **1 通も送らない**。
 
+### 🛡️ キャンペーン横断の頻度ガード（24 時間・hard safety floor）
+
+DeliveryKey は**同一 campaignId × version の重複しか防がない**。`expired-comeback` と
+`premium-renewal` のように対象が重なるキャンペーンを管理者が続けて実行すると、
+同じ人へ同日に複数通が届く。これを構造的に防ぐ。
+
+- 定数 `MARKETING_MIN_INTERVAL_MS = 24h`（`campaignSend.js` の 1 箇所のみ。**24 時間未満へ下げない**）
+- 判定材料は **`CampaignDeliveries`（`EmailType='campaign'`）の最終送信日時だけ**。
+  入金確認メール v2・問い合わせ・ステップメール等の**取引メールは含めない**
+  （含めると必要な連絡が止まる）
+- dry-run で `recent_marketing_contact` として理由付き除外
+- send でも同じ関数で再計算（dry-run と件数がズレない）
+- **dispatch 直前にも再検証**（`verifyBeforeSend`）。このとき**自ジョブの配信記録は除外**する
+  （自分の `queued` を見て自分を止めてしまわないため）。該当は `skipped-frequency-cap` で台帳へ記録
+- 履歴が読めない場合は**止めない**（ここを fail closed にすると履歴欠損で全員が永久に送れなくなる）。
+  未来日時はデータ不正として止める
+
 ### 二重送信を防ぐ 4 層
 
 1. **DeliveryKey** = `sha256(brand|marketing|campaignId|fixed|admin-selected|email|v{version}|fromEmail|campaign:id:vN)`
@@ -225,7 +282,8 @@ SendGrid の suppression を **GET で照合**する。
 |---|---|
 | マーケティング対象判定（純粋） | `src/lib/marketing/customerMarketingAudience.js` |
 | キャンペーン定義（単一源） | `src/lib/marketing/campaignCatalog.js` |
-| 送信対象確定・冪等性（純粋） | `src/lib/marketing/campaignSend.js` |
+| キャンペーン固有の追加条件（純粋） | `src/lib/marketing/campaignAudienceRules.js` |
+| 送信対象確定・冪等性・頻度ガード（純粋） | `src/lib/marketing/campaignSend.js` |
 | 送信ゲート・送信直前再検証（純粋） | `src/lib/marketing/marketingDispatchGate.js` |
 | SendGrid suppression 読み取り（GET のみ） | `src/lib/marketing/providerSuppression.js` |
 | 管理 API（キュー登録まで） | `netlify/functions/admin-marketing.js` |

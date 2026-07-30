@@ -211,8 +211,9 @@ export const handler = async (event) => {
 };
 
 function handleCampaigns() {
+  // 使用停止中のものも理由付きで返す（管理者が「なぜ使えないか」を画面で分かるように）
   return json(200, {
-    campaigns: listCampaigns(),
+    campaigns: listCampaigns({ includeDisabled: true }),
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),
     maxRecipients: MAX_RECIPIENTS_PER_SEND,
@@ -227,7 +228,8 @@ function handleCampaigns() {
 
 /** 本文プレビュー（Airtable も SendGrid も触らない完全ローカル処理） */
 function handlePreview({ req }) {
-  const campaign = getCampaign(req.campaignId);
+  // 停止中でも中身は確認できるようにする（送信経路ではないため）
+  const campaign = getCampaign(req.campaignId, { includeDisabled: true });
   if (!campaign) return json(400, { error: '未知のキャンペーンです' });
   const rendered = renderCampaign({ campaign, name: req.sampleName });
   if (!rendered) return json(500, { error: 'テンプレート描画に失敗しました' });
@@ -288,7 +290,19 @@ async function handleCustomers({ KEY, BASE, now, req }) {
  */
 async function handlePlan({ KEY, BASE, now, req, live }) {
   const campaign = getCampaign(req.campaignId);
-  if (!campaign) return json(400, { error: '未知のキャンペーンです' });
+  if (!campaign) {
+    // 停止中なら理由を返す（「未知」と区別する）
+    const disabled = getCampaign(req.campaignId, { includeDisabled: true });
+    if (disabled) {
+      return json(409, {
+        error: `このキャンペーンは使用停止中です: ${disabled.disabledReason || '利用不可'}`,
+        detail: disabled.disabledDetail || null,
+        campaignId: disabled.campaignId,
+        sideEffects: 'none',
+      });
+    }
+    return json(400, { error: '未知のキャンペーンです' });
+  }
 
   const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
   if (recordIds.length === 0) return json(400, { error: '送信対象が選択されていません' });
