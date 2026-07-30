@@ -145,7 +145,8 @@ test('Light 永久無料', () => {
     operationId: OP, actor: 'MK', source: 'comeback-2026-07',
   });
   assert.equal(r.fields[L.LIFETIME], true);
-  assert.equal(r.fields[L.UNTIL], '', '無期限なのに終了時刻を持っている');
+  // dateTime 列のクリアは null（'' は Airtable が日付として解釈できない）
+  assert.strictEqual(r.fields[L.UNTIL], null, '無期限なのに終了時刻を持っている');
   assert.equal(r.fields[L.OP], OP);
   assert.equal(r.fields[PROMO_FIELDS.SOURCE], 'comeback-2026-07');
   assert.equal(assertOnlyGrantFields(r.fields), true);
@@ -257,7 +258,7 @@ test('取り消しは特典フィールドだけを書く', () => {
     now: NOW, actor: 'MK', reason: '誤付与',
   });
   assert.equal(r.fields[L.LIFETIME], false);
-  assert.equal(r.fields[L.UNTIL], '');
+  assert.strictEqual(r.fields[L.UNTIL], null);
   assert.ok(String(r.fields[L.REVOKE_REASON]).includes('誤付与'));
   assert.equal(assertOnlyGrantFields(r.fields), true);
   assert.equal('プラン' in r.fields, false);
@@ -299,4 +300,95 @@ test('describeGrantState は状態を人が読める形で返す', () => {
   const t = describeGrantState(both);
   assert.match(t, /Premium 無料/);
   assert.match(t, /Light 永久無料/);
+});
+
+// ═══ 日時フィールドは dateTime 型・クリアは null（'' を送らない）═══════════
+
+/** dateTime 型で作る 4 フィールド（''を送ると 422 になり得るので null でクリアする） */
+const DATETIME_CLEARABLE = [L.UNTIL, P.UNTIL, L.REVOKED_AT, P.REVOKED_AT];
+
+/** payload に「日時フィールド = 空文字」が 1 つも無いこと */
+function assertNoEmptyStringDates(fields, label) {
+  for (const k of DATETIME_CLEARABLE) {
+    if (!(k in fields)) continue;
+    assert.notEqual(fields[k], '', `${label}: ${k} に空文字を送っている（dateTime 列は null でクリアする）`);
+  }
+}
+
+test('無期限付与: Until は null（空文字ではない）で、lifetime として有効', () => {
+  const r = buildGrantFields({ tier: PROMO_TIER.LIGHT, lifetime: true, fields: {}, now: NOW, operationId: OP });
+  assert.equal(r.fields[L.LIFETIME], true);
+  assert.strictEqual(r.fields[L.UNTIL], null, 'Until が null でない');
+  assert.strictEqual(r.fields[L.REVOKED_AT], null, 'RevokedAt が null でない');
+  assertNoEmptyStringDates(r.fields, 'grant(lifetime)');
+
+  const g = resolvePromotionalGrants(r.fields, NOW).light;
+  assert.equal(g.active, true);
+  assert.equal(g.lifetime, true);
+  assert.equal(g.untilMs, null);
+  // 遠い未来でも有効（無期限）
+  assert.equal(resolvePromotionalGrants(r.fields, NOW + 3650 * DAY).light.active, true);
+});
+
+test('期限付き付与: Until は ISO dateTime 文字列。期限内は有効・期限後は無効', () => {
+  const r = buildGrantFields({
+    tier: PROMO_TIER.PREMIUM, durationDays: 30, fields: {}, now: NOW, operationId: OP,
+  });
+  assert.equal(typeof r.fields[P.UNTIL], 'string');
+  assert.ok(Number.isFinite(Date.parse(r.fields[P.UNTIL])), 'ISO dateTime として解釈できない');
+  assert.strictEqual(r.fields[P.REVOKED_AT], null);
+  assertNoEmptyStringDates(r.fields, 'grant(30d)');
+
+  assert.equal(resolvePromotionalGrants(r.fields, NOW + 29 * DAY).premium.active, true);
+  assert.equal(resolvePromotionalGrants(r.fields, NOW + 31 * DAY).premium.active, false);
+});
+
+test('取り消し: Until=null / RevokedAt=ISO。再付与で RevokedAt が null に戻り再び有効', () => {
+  const granted = buildGrantFields({
+    tier: PROMO_TIER.LIGHT, lifetime: true, fields: {}, now: NOW, operationId: OP,
+  }).fields;
+
+  const revoked = buildRevokeFields({ tier: PROMO_TIER.LIGHT, fields: granted, now: NOW + DAY, actor: 'admin' });
+  assert.strictEqual(revoked.fields[L.UNTIL], null, '取り消しで Until に空文字を送っている');
+  assert.equal(revoked.fields[L.LIFETIME], false);
+  assert.ok(Number.isFinite(Date.parse(revoked.fields[L.REVOKED_AT])));
+  assertNoEmptyStringDates(revoked.fields, 'revoke');
+
+  const afterRevoke = { ...granted, ...revoked.fields };
+  assert.equal(resolvePromotionalGrants(afterRevoke, NOW + 2 * DAY).light.active, false);
+
+  // 再付与（別 operationId）→ RevokedAt が null で消え、権利が復活する
+  const regrant = buildGrantFields({
+    tier: PROMO_TIER.LIGHT, lifetime: true, fields: afterRevoke, now: NOW + 3 * DAY,
+    operationId: OP + '-2',
+  });
+  assert.strictEqual(regrant.fields[L.REVOKED_AT], null, '再付与で RevokedAt を null に戻していない');
+  assertNoEmptyStringDates(regrant.fields, 'regrant');
+  const after = { ...afterRevoke, ...regrant.fields };
+  assert.equal(resolvePromotionalGrants(after, NOW + 4 * DAY).light.active, true);
+});
+
+test('resolvePromotionalGrants は null / undefined / 空文字 / ISO / Date / 数値を安全に扱う', () => {
+  // null（新方式のクリア値）
+  assert.equal(resolvePromotionalGrants({ [L.UNTIL]: null, [L.LIFETIME]: false }, NOW).light.active, false);
+  // 旧データに残りうる空文字
+  assert.equal(resolvePromotionalGrants({ [L.UNTIL]: '', [L.LIFETIME]: false }, NOW).light.active, false);
+  // undefined（フィールド未作成）
+  assert.equal(resolvePromotionalGrants({}, NOW).light.active, false);
+  // ISO / Date / 数値はいずれも同じ結果
+  const until = NOW + 10 * DAY;
+  for (const v of [iso(until), new Date(until), until]) {
+    const g = resolvePromotionalGrants({ [L.UNTIL]: v }, NOW).light;
+    assert.equal(g.active, true, `${String(v)} を解釈できない`);
+    assert.equal(g.untilMs, until);
+  }
+  // null クリア済みなのに Lifetime だけ true → 無期限として有効（値が正）
+  assert.equal(resolvePromotionalGrants({ [L.LIFETIME]: true, [L.UNTIL]: null }, NOW).light.active, true);
+});
+
+test('テキスト列のクリアは従来どおり空文字（null 化を波及させない）', () => {
+  const r = buildGrantFields({ tier: PROMO_TIER.LIGHT, lifetime: true, fields: {}, now: NOW, operationId: OP });
+  assert.strictEqual(r.fields[L.REVOKE_REASON], '', 'テキスト列まで null にしている');
+  assert.equal(typeof r.fields[L.GRANTED_BY], 'string');
+  assert.equal(typeof r.fields[L.OP], 'string');
 });

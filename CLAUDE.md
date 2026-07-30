@@ -613,6 +613,33 @@ AK 判定では送信可能なのに SendGrid が suppress 済みの会員が 43
 
 検証: `npm run test:marketing`（`check:safety` に組込済み）
 
+## 🎁 カムバック施策（無料特典 + 割引オファー / 2026-07-30 追加・Draft）
+
+以前 AK を離れた顧客へ、**無料の閲覧権（grant）**と**その顧客専用の割引価格（offer）**を
+管理画面から設定する機能。詳細仕様・手順・rollback は
+`astro-site/docs/COMEBACK_GRANTS.md`（**正本**）を参照。
+
+### 触る前に守る原則
+
+- **grant ≠ paid contract**。無料特典は閲覧権を増やすだけで支払い実績を作らない。
+  `memberType='paid'` は「有料階層のセッションを発行してよい」という認可ラベルであって
+  課金判定ではない。課金実績が要る判定は `entitlementSource` / `paidPremiumActive` を見る
+- **offer ≠ entitlement**。割引オファーを発行しても権利は 1 ミリも増えない。
+  昇格は `PaymentConfirmed` → `confirm-bank-payment` が唯一の経路
+- **Payment 系を変更しない**。`プラン` / `PlanType` / `Status` / `有効期限` / `PaidAt` /
+  `PaymentConfirmed` / `PaymentEmailSent` / `WithdrawalRequested` は 1 バイトも書かない
+  （書き込みは特典専用 15 列 + `PromotionalOffers` テーブルの allowlist のみ）
+- **`LifetimeSanrenpuku` を流用しない**。三連複買い切りは別権利で、無料特典の影響を受けない。
+  無料 Premium 特典で三連複購入資格・Premium Plus 販売資格を開かない
+- **メールと grant/offer を分離**。付与・発行の Function はメールを 1 通も送らない。
+  案内はマーケティングタブから別操作で送る
+- **production gate は多段・既定 OFF**: `COMEBACK_GRANT_FIELDS_READY` /
+  `COMEBACK_OFFER_TABLE_READY` / `COMEBACK_GRANT_ENABLED` / `PROMO_OFFER_SECRET`。
+  Airtable のフィールド／テーブル作成が先（未作成のまま PATCH すると 422 で巻き添え失敗）
+
+検証: `npm run test:comeback` / `npm run test:promotions` / `npm run test:entitlements`
+（すべて `check:safety` と CI に組込済み）
+
 ## 🧠 予想ロジック（スコア・役割決定）
 
 本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の

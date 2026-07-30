@@ -55,16 +55,34 @@ Light 無料権利と Premium 無料権利は**同時に存在**する。Premium
 Light 永久無料 / Light 30日無料 / Premium 30日無料 / Premium 365日無料 /
 Premium 買い切り相当（無期限）まで全部表現する。
 
-| フィールド | 型 | 用途 |
-|---|---|---|
-| `LightGrantLifetime` / `PremiumGrantLifetime` | Checkbox | 無期限の無料権利 |
-| `LightGrantUntil` / `PremiumGrantUntil` | Date (ISO) | 期限付き無料権利の終了時刻（空 = なし） |
-| `LightGrantedAt` / `PremiumGrantedAt` | Date (ISO) | 付与日時 |
-| `LightGrantedBy` / `PremiumGrantedBy` | Text | 付与した管理者 |
-| `LightGrantOp` / `PremiumGrantOp` | Text | **operationId（冪等性の鍵）** |
-| `LightGrantRevokedAt` / `PremiumGrantRevokedAt` | Date (ISO) | 取り消し日時 |
-| `LightGrantRevokeReason` / `PremiumGrantRevokeReason` | Text | 取り消し理由 |
-| `ComebackGrantSource` | Text | 施策名（例 `comeback-2026-07`） |
+| フィールド | Airtable 型 | クリア値 | 用途 |
+|---|---|---|---|
+| `LightGrantLifetime` / `PremiumGrantLifetime` | Checkbox | `false` | 無期限の無料権利 |
+| `LightGrantUntil` / `PremiumGrantUntil` | **Date（時刻あり）** | **`null`** | 期限付き無料権利の終了時刻（無ければ権利なし） |
+| `LightGrantedAt` / `PremiumGrantedAt` | **Date（時刻あり）** | （常に値を書く） | 付与日時 |
+| `LightGrantedBy` / `PremiumGrantedBy` | Single line text | `''` | 付与した管理者 |
+| `LightGrantOp` / `PremiumGrantOp` | Single line text | `''` | **operationId（冪等性の鍵）** |
+| `LightGrantRevokedAt` / `PremiumGrantRevokedAt` | **Date（時刻あり）** | **`null`** | 取り消し日時 |
+| `LightGrantRevokeReason` / `PremiumGrantRevokeReason` | Long text | `''` | 取り消し理由 |
+| `ComebackGrantSource` | Single line text | `''` | 施策名（例 `comeback-2026-07`） |
+
+#### ⚠️ 日時フィールドは dateTime 型・クリアは `null`（テキスト型で作らない）
+
+`*GrantUntil` / `*GrantRevokedAt` / `*GrantedAt` の 6 つは **Airtable の Date 型（時刻を含む）**で作る。
+期限フィルタ・並べ替え・管理画面表示・将来の集計をフィールド型として正しく保つため、
+文字列型で代用しない。
+
+そのぶん**クリアは必ず `null`** で行う。空文字 `''` は日付として解釈できず 422 になり得て、
+**同じ PATCH に含まれる他のフィールドまで巻き添えで失敗する**（Light と Premium は
+1 PATCH で同時に書くので、片方の空文字が両方を落とす）。
+
+- 書き込み側は `promotionalGrants.js` の `buildGrantFields()` / `buildRevokeFields()` に閉じており、
+  この 4 つ（`*GrantUntil` / `*GrantRevokedAt`）へは `null` しか書かない
+- 読み取り側 `toMs()` は `null` / `undefined` / `''` / ISO 文字列 / `Date` / 数値をすべて解釈する
+  （旧データに `''` が残っていても壊れない）
+- **テキスト列は従来どおり `''` でクリアする。null 化を課金フィールドや既存列へ波及させない**
+- 検証: `promotionalGrants.test.mjs`（フィールド単位）/ `comebackGrantPlan.test.mjs`
+  （PATCH payload に日時の空文字が 1 つも無いこと）
 
 台帳テーブルではなく Customers のカラムにした理由:
 
@@ -80,7 +98,7 @@ Premium 買い切り相当（無期限）まで全部表現する。
 
 ### 取り消し
 
-値を消し（`Lifetime=false` / `Until` を空に）、`RevokedAt` / `RevokeReason` を残す。
+値を消し（`Lifetime=false` / `Until` を **`null`** に）、`RevokedAt` / `RevokeReason` を残す。
 runtime を「値が無ければ権利が無い」という最も壊れにくい判定に保つため。
 値が残ったまま `RevokedAt` の方が新しいレコードは **fail closed で権利なし**と解釈し、
 `inconsistent` として管理画面に出す（自動修復はしない）。
@@ -89,6 +107,61 @@ runtime を「値が無ければ権利が無い」という最も壊れにくい
 
 弱い付与は既存の権利を縮めない（`already_granted` でスキップ）。
 30日 → 無期限、30日 → 90日 のような**強化だけ**が書き込まれる。
+
+---
+
+## 3-2. `memberType='paid'` は「支払済み」ではない（横断監査 2026-07-30）
+
+無料特典を持つ顧客は `resolveMembership()` が `memberType: 'paid'` を返す。
+これは **「有料階層のセッションを発行してよいか」だけを表す認可ラベル**であって、
+支払い実績ではない。repository 全体を grep して consumer を確認した結果は以下。
+
+| # | consumer | 用途 | 課金判定か |
+|---|---|---|---|
+| 1 | `authPolicies.decideFreeLogin` | paid → マジックリンク必須（即時 Free ログインしない） | ✗ 認証経路 |
+| 2 | `authPolicies.shouldSendMagicLink` | paid のみログインリンク送信 | ✗ 認証経路 |
+| 3 | `sessionIssuance.issuePaidSessionCookie` | paid のみ Cookie 発行 | ✗ 認可 |
+| 4 | `sessionRefresh` | paid のみセッション更新 | ✗ 認可 |
+| 5 | `verifyMagicLinkFlow` | paid のみ検証成功 | ✗ 認可 |
+| 6 | `auth-user` / `login.astro` | `'free'` 分岐の表示 | ✗ 表示 |
+
+**課金判定に使っている consumer は 1 つも無い。** Cookie payload にも入らない
+（`sub` / `plan` / `venueAccess` / `sessionVersion` / `v` / 時刻のみ。テストで固定）。
+
+課金実績が前提の判定は、いずれも**別の値**を見ている:
+
+| 判定 | 参照している値 | 無料特典で開くか |
+|---|---|---|
+| Premium Plus 販売資格（ROUTE B） | `ent.paidPremiumActive` | **開かない** |
+| 三連複購入資格 | `ent.canPurchaseSanrenpuku`（有料 Premium のみ） | **開かない** |
+| マーケの契約区分 `contract` | `プラン` / `有効期限` / `Status` / `PlanType`（Airtable の課金列） | **変わらない** |
+| マーケの `premiumActive` / `lightActive` | `ent.paidPremiumActive` / `paidLightActive` | **立たない**（特典は `promoPremiumActive` / `promoLightActive` で別軸） |
+| 契約更新・期限通知・入金確認・PayPal | Airtable の課金列を直接読む（entitlement を読まない） | **無関係** |
+
+将来 consumer を増やすときのために、`resolveMembership()` は根拠を
+**`entitlementSource`**（`paid_contract` / `promotional_grant` / `none`）で返す。
+**課金実績が要るなら `memberType` ではなくこちらを見ること。**
+この値は Cookie に載らず、既存のセッション契約（payload の形）は変えていない。
+
+差分は `promotionalGrantSeparation.test.mjs` が 1 つの表として固定する
+（promo Light / promo Premium / paid Premium / LifetimeSanrenpuku / 退会 / 停止 ×
+権限・Plus 販売資格・三連複購入資格・マーケ区分・Cookie payload）。
+
+### 既知の許容差分（要 MK 判断・コード修正はしていない）
+
+- `/pricing/` のプラン別出し分けは localStorage の `user-plan`（**非権威**の表示用）を見るため、
+  **無料 Light 特典の顧客は Light 会員向けの乗り換え価格が見える**。
+  権限・販売資格には影響しない表示のみの差。「無料特典の人に Light 乗り換え価格を出すか」は
+  営業判断なので、変更する場合は別途指示すること。
+
+### ログイン後にクライアントの古い期限フラグを消す（`/auth/verify`）
+
+`AccessControl` は localStorage の `isExpired` / `validUntil` を見て**プランを Free に落とす**。
+カムバックの主対象は**期限切れ顧客**なので、この値が残っていると
+「サーバーはセッションを発行したのに画面は Free のまま」になり特典が機能しない。
+`src/pages/auth/verify.astro` は、サーバーがセッションを発行した直後に
+`isExpired` / `originalPlan` / `validUntil` / `expiryDate` を削除する。
+権限の真実源は Cookie（`ak_session`）であり、過去に書かれた非権威フラグでそれを上書きさせない。
 
 ---
 
@@ -250,18 +323,28 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 
 | # | 手順 | 承認 |
 |---|---|---|
-| 1 | Airtable Customers に §3 の 15 フィールドを作成 | 要 |
+| 1 | Airtable Customers に §3 の 15 フィールドを作成（**日時 6 つは Date 型・時刻あり**） | 要 |
 | 2 | Airtable に `PromotionalOffers` テーブルを作成（§5） | 要（割引を使う場合） |
 | 3 | `COMEBACK_GRANT_FIELDS_READY=1` / `COMEBACK_OFFER_TABLE_READY=1` を production に設定 → redeploy | 要 |
 | 4 | `PROMO_OFFER_SECRET`（32 文字以上のランダム）を production に設定 → redeploy | 要（割引を使う場合） |
 | 5 | 管理画面で dry-run（この時点で実行ボタンは無効） | — |
 | 6 | `COMEBACK_GRANT_ENABLED=true` を production に設定 → redeploy | 要 |
-| 7 | **1 名（自分のテストアカウント）で付与 → ログイン確認 → 取り消し** | — |
+| 7 | **1 名（自分のテストアカウント）で付与 → ログイン確認 → 取り消し**（下の確認項目を参照） | — |
 | 8 | 本番対象へ実行 | 要 |
 | 9 | 付与済みを確認してから案内キャンペーンを有効化して送信 | 要 |
 
 ⚠️ 順序を逆にしない。フィールド／テーブル未作成のまま PATCH すると Airtable は 422 / 404 を返し、
 **同じ操作の他の書き込みも巻き添えで失敗する**（Premium Plus 導入時と同じ罠）。
+
+**手順 7 で必ず見ること**（1 名のテストアカウントで）:
+
+1. 付与 PATCH が **422 にならない**（日時 6 列が Date 型で作られており、`null` クリアが通る）
+2. `LightGrantUntil` が **空**（無期限付与のとき）、`PremiumGrantUntil` に**日時が入る**（期限付き）
+3. 対象レコードの `プラン` / `有効期限` / `Status` / `PaidAt` / `PaymentConfirmed` /
+   `LifetimeSanrenpuku` / `PremiumPlus*` が **1 バイトも変わっていない**
+4. その顧客でログイン → **特典のティアで閲覧できる**（期限切れ表示のままにならない）
+5. 三連複購入 CTA / Premium Plus が**開いていない**（無料特典で販売動線を配らない）
+6. 取り消し → 権利が消え、`RevokedAt` に日時が入り、課金列は変わらない
 
 ⚠️ 割引オファーを実際に「買える」ようにするには §5 の未実装分（`/offer/` ページ）が必要。
 それまでは offer を発行しても、管理者が手動で案内するしかない。
