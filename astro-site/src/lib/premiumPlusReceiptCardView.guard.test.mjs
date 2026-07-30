@@ -165,3 +165,63 @@ test('HTML エスケープ: 文字列フィールドの < > をエスケープ�
   assert.ok(!html.includes('<script>x</script>'), 'raceName が生の <script> で出力されている（XSS）');
   assert.ok(html.includes('&lt;script&gt;'), 'raceName がエスケープされていない');
 });
+
+// ── 投票内容照会の複製に「不的中」を書かない（2026-07-30 実物照合）──────────
+// 実物の SPAT4 / JRA 投票内容照会には否定表現の欄が無く、的中しなかった行は**単に存在しない**。
+// 「不的中」と書くと実物と食い違い、複製としての信頼性が落ちる。
+const cardOf = (over = {}) => deriveCard({
+  date: '2026-07-23', circuit: 'nankan', venue: '大井', raceNumber: 2,
+  first: '7', second: '1,3', third: '1,2,3', ...over,
+});
+
+test('不的中: 投票内容照会の複製に「不的中」の文字を出さない', () => {
+  const html = renderReceiptCardHtml(cardOf({ isHit: false }));
+  const vref = html.slice(html.indexOf('<div class="vref'));
+  assert.ok(!vref.includes('不的中'), '複製部分に「不的中」が出力されている（実物には無い表現）');
+  assert.ok(!vref.includes('class="miss"'), 'レシート内に .miss 要素が残っている');
+});
+
+test('不的中: 投票金額セルは 2 行のまま（末尾の空行を作らない）', () => {
+  const html = renderReceiptCardHtml(cardOf({ isHit: false }));
+  const c3 = (html.match(/<td class="c3">([\s\S]*?)<\/td>/) || [, ''])[1];
+  assert.ok(c3.includes('(各'), '「(各N円)」が無い');
+  assert.ok(/\d,?\d*円$/.test(c3.trim()), `合計金額で終わっていない（末尾に空行が残る）: ${JSON.stringify(c3)}`);
+  assert.equal((c3.match(/<br>/g) || []).length, 1, '<br> は 1 個（2 行）であるべき');
+});
+
+test('的中: 3 行目に「的中 N円」を出す（従来どおり）', () => {
+  const html = renderReceiptCardHtml(cardOf({ isHit: true, payout: 222400, winnerCombo: '7-1-2' }));
+  const c3 = (html.match(/<td class="c3">([\s\S]*?)<\/td>/) || [, ''])[1];
+  assert.equal((c3.match(/<br>/g) || []).length, 2, '<br> は 2 個（3 行）であるべき');
+  assert.ok(/<span class="hit">的中 [\d,]+円<\/span>/.test(c3), '的中行が無い');
+});
+
+test('不的中の 2 行が上下等間隔になる（.c3 は vertical-align: middle）', () => {
+  const css = read('../styles/premiumPlusReceiptCard.css');
+  const c3 = (css.match(/\.vref\.spat \.bet \.c3 \{([^}]*)\}/) || [, ''])[1];
+  assert.ok(/vertical-align:\s*middle/.test(c3), '.c3 が vertical-align: middle でない（2 行時に上下余白が偏る）');
+});
+
+test('CSS 同期: .vref.spat .bet .c3 が全コピーで一致（片方だけ直さない）', () => {
+  const files = [
+    '../styles/premiumPlusReceiptCard.css',
+    '../components/premium-plus/PremiumPlusReceiptCardV2.astro',
+    '../pages/premium-plus.astro',
+    '../pages/premium-plus-v2.astro',
+  ];
+  const rules = files.map((f) => {
+    const m = read(f).match(/\.vref\.spat \.bet \.c3 \{([^}]*)\}/);
+    assert.ok(m, `${f} に .c3 ルールが無い`);
+    return m[1].split(';').map((s) => s.trim()).filter(Boolean).sort().join('; ');
+  });
+  for (let i = 1; i < rules.length; i += 1) {
+    assert.equal(rules[i], rules[0], `${files[i]} の .c3 が共有 CSS とドリフトしている`);
+  }
+});
+
+test('中央（JRA）側も不的中で否定表現を出さない', () => {
+  const html = renderReceiptCardHtml(cardOf({ circuit: 'jra', venue: '中山', isHit: false }));
+  const vref = html.slice(html.indexOf('<div class="vref'));
+  assert.ok(!vref.includes('不的中'), 'JRA 複製に「不的中」が出力されている');
+  assert.ok(!vref.includes('払戻単価'), '不的中なのに払戻単価行が出ている');
+});
