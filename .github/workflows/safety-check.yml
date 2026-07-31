@@ -143,6 +143,10 @@ jobs:
         working-directory: astro-site
         run: npm run test:promotions
 
+      - name: Verify 販売導線（三連複と Plus を同時表示しない / 段階表示維持 / UpsellTarget 1列のみ書込）
+        working-directory: astro-site
+        run: npm run test:upsell
+
       - name: Verify 権限判定（無料特典と有料契約の分離 / Plus 販売資格不変）
         working-directory: astro-site
         run: npm run test:entitlements

@@ -28,8 +28,8 @@ import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/inde
 import ppResultsRaw from '../data/premiumPlusResults.json';
 import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
 import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusReceiptCardV2.astro';
-import { PP_RELEASE_COPY, resolvePremiumPlusRelease, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
-import { resolvePlusMemberFromFields } from '../lib/premiumPlus/premiumPlusMember.js';
+import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
+import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 
 // --- SSR プラン認可（真実源） ---
@@ -61,12 +61,15 @@ const ppFields = await lookupCustomerFields({
   now: ppNow,
 });
 // 会員状態は既存の権限正本（resolveEntitlements）を再利用する。Plus 専用の権限判定は作らない。
-const ppMember = resolvePlusMemberFromFields(ppFields, {
+// 販売導線の選択（UpsellTarget）も同じ単一源で評価する。
+// sanrenpuku / none 指定の会員は商品ページ自体を開けない（2 商品を並べない・存在秘匿）。
+const ppUpsell = resolveUpsellForCustomer({
+  fields: ppFields,
   nowMs: ppNow,
   fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
 });
-const ppRelease = resolvePremiumPlusRelease({ ...ppMember, nowMs: ppNow });
-if (!ppRelease.showProductPage) {
+const ppRelease = ppUpsell.plusRelease;
+if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
   // PHASE 1 / 2 は商品ページ自体を公開しない。認可 NG と同じ 404（存在秘匿）。
   return new Response('Not Found', {
     status: 404,
