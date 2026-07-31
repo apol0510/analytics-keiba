@@ -323,6 +323,74 @@ offer は既存顧客にのみ発行されるため、見つからない = レ�
 
 ---
 
+## 5-3. 発行済みオファーの取り消し（誤発行の救済 / 2026-07-31 実装）
+
+管理画面「🎁 カムバック特典」タブ下部の **「発行済み割引オファー」**から、
+誤って発行したオファーを 1 件ずつ `Status=revoked` にする。
+
+> **以前は本番経路が無かった。** `buildOfferRevokeFields()` は実装済みだったが
+> **テストからしか呼ばれておらず**、admin の `revoke` / `revokeDryRun` は
+> **無料特典（grant）専用**だった。そのため誤発行を消すには Airtable を手で触るか
+> 使い捨てスクリプトを書くしかなく、allowlist 検証も操作記録も通らなかった。
+
+### revoke は「権利の変更」ではない
+
+割引オファーは §1 の **D（購入条件）**であって閲覧権ではない。したがって取り消しても:
+
+- **Customers は 1 バイトも書かない**（`customersWritten: 0` を応答で返す）。
+  `Status` / `プラン` / `PlanType` / `有効期限` / `PaymentConfirmed` / `PaidAt` /
+  `PaymentEmailSent` / `Requested*` / `LifetimeSanrenpuku` / promo grant /
+  `UpsellTarget` / `PremiumPlusEligibility` はすべて不変
+- **閲覧権も課金契約も動かない**（顧客から見て「特別価格の案内が使えなくなる」だけ）
+- **メールは送らない**（`emailSent: false`）。取り消しの通知は必要なら別途手動で
+
+### 操作は 3 段（いきなり書き込まない）
+
+| # | action | 何をするか |
+|---|---|---|
+| 1 | `offerList` | 台帳を一覧。**PII / 生トークン / `TokenHash` は返さない** |
+| 2 | `offerRevokeDryRun` | 対象 1 件の内容と可否を確定し `offerFingerprint` を返す（**書き込みなし**） |
+| 3 | `offerRevoke` | `offerFingerprint` 一致時のみ `Status` / `Notes` を書く |
+
+画面に出すのは オファー種別 / 対象ティア / 期間 / 通常価格 / オファー価格 / 状態 / 有効期限。
+**顧客のメールアドレス・氏名・トークンは表示しない**（誤発行の取り消しに PII は要らない）。
+
+### 取り消せる条件（すべて満たすときだけ）
+
+- レコードが存在する
+- **実効状態が `issued`**（`Status` 列だけでなく **`ExpiresAt` と現在時刻でも判定**する。
+  期限切れは台帳に書き戻されないため、`Status='issued'` のまま期限切れの行が普通に存在する）
+- `OperationId` / `CustomerRecordId` / `OfferKey` が dry-run 時と一致する
+- `offerFingerprint` が一致する（**不一致は 409 で 1 バイトも書かない**）
+
+**取り消せない**（fail closed・理由を必ず返す）: `redeemed` / `expired` / `revoked` /
+レコード不存在 / `OperationId` 不一致 / `CustomerRecordId` 不一致 / `OfferKey` 不一致 /
+有効期限が読めない。**二重 revoke は行わない**。
+UI 側でも `issued` 以外には**取り消しボタンを出さない**。
+
+### 取り消し後
+
+- **専用 URL（トークン）は再利用できない。** `verifyOfferToken` が
+  `not_issued:revoked` で落ち、`/offer/?t=…` は `state='revoked'` を返して
+  **オファー内容（価格）を一切返さない**。当然**申込もできない**
+- 台帳の行は**消さない**。`Status=revoked` ＋ `Notes` に取り消し時刻と理由を残し、
+  監査証跡とする（削除は別の高リスク操作。この機能からは行わない）
+- 同じ `operationId` で再発行すると `OfferKey` upsert により**同じ行が `issued` に戻る**。
+  意図せず復活させたくない場合は**新しい operationId で発行する**
+
+### gate
+
+`COMEBACK_OFFER_TABLE_READY`（台帳の存在）のみ。**`COMEBACK_GRANT_ENABLED` は要求しない。**
+取り消しは「配ってしまった購入条件を消す」**減算方向の安全操作**であり、発行を緊急停止した
+直後こそ実行したい。発行の kill switch で取り消しまで止めると、誤発行が消せないまま残る。
+
+### 検証
+
+`npm run test:promotions` … `offerRevokePlan.test.mjs`（14 本・状態遷移と fail closed）/
+`offerRevokeFunction.guard.test.mjs`（10 本・Function 実装を grep で固定）。
+`npm run test:comeback` … `adminComebackUi.guard.test.mjs` に UI 契約 6 本を追加。
+いずれも**違反を注入して落ちることを確認済み**（空振りしていない）。
+
 ## 6. 対象外の判定（dry-run で必ず件数を出す）
 
 | 理由 | 無料付与 | 割引オファー |
@@ -437,7 +505,7 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 - `netlify env:unset COMEBACK_GRANT_ENABLED --context production` → redeploy で実行を停止
   （既に付与した権利・発行済み offer は残る）
 - 付与済みの取り消しは管理画面の「無料特典を取り消す」（promotional grant だけを消す）
-- 発行済み offer の無効化は `buildOfferRevokeFields`（Status=revoked）
+- 発行済み offer の無効化は**管理画面の「発行済み割引オファー」から取り消す**（§5-3）
 
 ---
 
@@ -448,6 +516,7 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 | **無料権利の単一源** | `src/lib/entitlements/promotionalGrants.js` |
 | **特典カタログ（価格・期間）** | `src/lib/promotions/promotionOfferCatalog.js` |
 | **割引オファー（台帳・トークン）** | `src/lib/promotions/promotionalOffer.js` |
+| **オファー取り消しの判定（単一源）** | `src/lib/promotions/offerRevokePlan.js` |
 | **申込の判定（プラン・請求額）** | `src/lib/promotions/offerIntake.js` |
 | 申込通知メールの文面 | `src/lib/promotions/offerIntakeEmail.js` |
 | 申込ページ | `src/pages/offer/index.astro` |
@@ -471,6 +540,11 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 - allowlist（`PROMO_WRITABLE_FIELDS` / `OFFER_WRITABLE_FIELDS`）を広げない
 - 退会フラグ・`ForceLogout` を特典付与の副作用で書き換えない
 - 割引 offer の発行で `プラン` / `PaymentConfirmed` / `有効期限` を書かない
+- **offer の取り消しで Customers を読み書きしない**（`offerRevoke` は台帳の 1 行だけ）。
+  grant の取り消し（`revoke` / `tiers`）と経路を混ぜない
+- **offer 取り消しの Status / Notes を Function 内で組み立てない**。必ず
+  `offerRevokePlan.js` → `buildOfferRevokeFields()` を経由する
+- 取り消し済み offer のレコードを削除しない（監査証跡として残す）
 - **`/offer/` の申込でプラン・請求額をフォーム入力から決めない**（offer 台帳が唯一の出所）。
   `offer-application.js` の Customers PATCH は `buildApplicationFields()` の戻り値のみ
 - `/offer/` に `AccessControl` を置かない（退会者が申し込めなくなる）

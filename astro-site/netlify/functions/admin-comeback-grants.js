@@ -8,7 +8,15 @@
  *   action='dryRun'    … 付与・発行の対象と理由別件数、顧客ごとの before/after を確定（書き込みなし）
  *   action='apply'     … dry-run で確定した内容を実行する
  *   action='revokeDryRun' / action='revoke' … 無料権利の取り消し（promotional grant だけ）
+ *   action='offerList'   … 発行済み割引オファーの一覧（read-only。PII / token は返さない）
+ *   action='offerRevokeDryRun' … 割引オファー 1 件の取り消し内容を確定（書き込みなし）
+ *   action='offerRevoke' … 割引オファー 1 件を Status=revoked にする（Customers は触らない）
  *   action='reconcile' … operationId の適用状況を読み直して突合する（read-only）
+ *
+ * ── grant の取り消しと offer の取り消しを混ぜない ─────────────────
+ *   revoke / revokeDryRun      … Customers の**特典カラム**を消す（＝閲覧権が減る）
+ *   offerRevoke / ...DryRun    … PromotionalOffers の**1 行**だけ（＝購入条件が消えるだけ。
+ *                                閲覧権も課金契約も動かない）
  *
  * ── 3 つの概念を混同しない ────────────────────────────────────────
  *   promotional grant … 無料の閲覧権。Customers の特典フィールドへ書く
@@ -67,6 +75,12 @@ import {
   getOfferSecret,
   DEFAULT_OFFER_TTL_DAYS,
 } from '../../src/lib/promotions/promotionalOffer.js';
+import {
+  planOfferRevoke,
+  listOffersForRevoke,
+  computeOfferRevokeFingerprint,
+  OFFER_REVOKE_SKIP_LABEL,
+} from '../../src/lib/promotions/offerRevokePlan.js';
 import { buildComebackEmailContent } from '../../src/lib/promotions/comebackEmailTemplate.js';
 import {
   PROMO_TIER,
@@ -166,6 +180,9 @@ export const handler = async (event) => {
     if (action === 'apply') return await handlePlan({ KEY, BASE, now, req, live: true });
     if (action === 'revokeDryRun') return await handleRevoke({ KEY, BASE, now, req, live: false });
     if (action === 'revoke') return await handleRevoke({ KEY, BASE, now, req, live: true });
+    if (action === 'offerList') return await handleOfferList({ KEY, BASE, now, req });
+    if (action === 'offerRevokeDryRun') return await handleOfferRevoke({ KEY, BASE, now, req, live: false });
+    if (action === 'offerRevoke') return await handleOfferRevoke({ KEY, BASE, now, req, live: true });
     if (action === 'reconcile') return await handleReconcile({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
@@ -302,6 +319,156 @@ async function handleCustomers({ KEY, BASE, now, req }) {
 }
 
 /** dry-run（live=false）と 実行（live=true）の共通経路。対象確定は同じ関数で行う。 */
+/* ────────────────────────────────────────────────────────────────
+ * 割引オファーの取り消し（PromotionalOffers の 1 行だけ）
+ *
+ * grant revoke（handleRevoke）とは**別経路**。こちらは Customers を 1 バイトも読まないし
+ * 書かない。オファーは購入条件であって閲覧権ではないので、取り消しても権限は動かない。
+ *
+ * gate は `COMEBACK_OFFER_TABLE_READY` のみ（＝台帳が存在すること）。
+ * **`COMEBACK_GRANT_ENABLED` は要求しない**: 取り消しは「配ってしまった購入条件を消す」
+ * 減算方向の安全操作であり、発行を緊急停止した直後こそ実行したい。発行の kill switch で
+ * 取り消しまで止めると、誤発行が消せないまま残る。
+ * ──────────────────────────────────────────────────────────────── */
+
+/** 台帳の 1 行を取得する（見つからなければ null。404 を例外にしない） */
+async function fetchOfferRecord({ KEY, BASE, offerRecordId }) {
+  const url = `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(OFFERS_TABLE)}/${encodeURIComponent(offerRecordId)}`;
+  const res = await fetch(url, { headers: authHeaders(KEY) });
+  if (res.status === 404 || res.status === 403) return null;
+  if (!res.ok) throw new Error(`${OFFERS_TABLE} fetch failed: HTTP ${res.status}`);
+  return await res.json();
+}
+
+/** 発行済みオファーの一覧（read-only）。PII / TokenHash / 生トークンは返さない。 */
+async function handleOfferList({ KEY, BASE, now, req }) {
+  if (!isOfferTableEnabled(process.env)) {
+    return json(503, {
+      error: 'オファー台帳が未作成です（COMEBACK_OFFER_TABLE_READY 未設定）',
+      flag: 'COMEBACK_OFFER_TABLE_READY', sideEffects: 'none',
+    });
+  }
+  const records = await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []);
+  const rows = listOffersForRevoke({
+    records, nowMs: now,
+    customerRecordId: req.customerRecordId ? String(req.customerRecordId) : '',
+  });
+  const counts = rows.reduce((acc, r) => {
+    acc[r.status] = (acc[r.status] || 0) + 1;
+    return acc;
+  }, {});
+  return json(200, {
+    rows: rows.slice(0, MAX_ROWS),
+    total: rows.length,
+    truncated: rows.length > MAX_ROWS,
+    counts,
+    labels: { skip: OFFER_REVOKE_SKIP_LABEL },
+    notice: '取り消せるのは issued のオファーだけです。申込済み（redeemed）・期限切れ・取り消し済みは変更できません。',
+    ...gateState(),
+  });
+}
+
+/**
+ * 割引オファー 1 件の取り消し。
+ *
+ * dry-run: 対象を読み、取り消し可否と `offerFingerprint` を返す（書き込みなし）。
+ * 実行   : fingerprint を再計算して一致しなければ **409 で 1 バイトも書かない**。
+ *          書くのは `buildOfferRevokeFields()` の戻り値（Status / Notes）だけ。
+ */
+async function handleOfferRevoke({ KEY, BASE, now, req, live }) {
+  if (!isOfferTableEnabled(process.env)) {
+    return json(503, {
+      error: 'オファー台帳が未作成です（COMEBACK_OFFER_TABLE_READY 未設定）',
+      flag: 'COMEBACK_OFFER_TABLE_READY', sideEffects: 'none',
+    });
+  }
+
+  const offerRecordId = String(req.offerRecordId || '').trim();
+  if (!offerRecordId) return json(400, { error: '対象のオファーが指定されていません', sideEffects: 'none' });
+  // 1 件だけ。まとめて取り消す経路は作らない（誤操作の被害を 1 件に閉じ込める）
+  if (Array.isArray(req.offerRecordIds)) {
+    return json(400, { error: 'オファーの取り消しは 1 件ずつ行ってください', sideEffects: 'none' });
+  }
+
+  const reason = String(req.reason || '').slice(0, 150);
+  const expect = {};
+  if (req.operationId !== undefined) expect.operationId = String(req.operationId || '');
+  if (req.customerRecordId !== undefined) expect.customerRecordId = String(req.customerRecordId || '');
+  if (req.offerKey !== undefined) expect.offerKey = String(req.offerKey || '');
+
+  const record = await fetchOfferRecord({ KEY, BASE, offerRecordId });
+  const plan = planOfferRevoke({ record, nowMs: now, expect, reason });
+
+  if (!plan.ok) {
+    return json(record ? 409 : 404, {
+      error: `取り消せません: ${OFFER_REVOKE_SKIP_LABEL[plan.reason] || plan.reason}`,
+      reason: plan.reason,
+      offer: plan.offer,
+      sideEffects: 'none',
+    });
+  }
+
+  if (!live) {
+    return json(200, {
+      mode: 'dry-run',
+      sideEffects: 'none',
+      offer: plan.offer,
+      revocable: true,
+      offerFingerprint: plan.fingerprint,
+      willWriteFields: Object.keys(plan.fields),
+      notice: 'この時点では何も書き込んでいません。取り消しても顧客の閲覧権・課金契約・入金状態は変わりません（メールも送信されません）。',
+      ...gateState(),
+    });
+  }
+
+  // ── live: dry-run と同一の状態であることを検証（TOCTOU 防止）──
+  const token = String(req.offerFingerprint || '');
+  if (!token) return json(400, { error: 'dry-run の確認トークンが必要です', sideEffects: 'none' });
+  if (token !== plan.fingerprint) {
+    return json(409, {
+      error: 'オファーの状態が変化したため中止しました。もう一度 dry-run を実行してください。',
+      expected: plan.fingerprint.slice(0, 12),
+      got: token.slice(0, 12),
+      sideEffects: 'none',
+      howToRecover: '申込（redeemed）が入っていないかを確認してから、再度 dry-run → 取り消しを行ってください。',
+    });
+  }
+
+  if (!assertOnlyOfferFields(plan.fields)) {
+    return json(500, { error: 'offer field allow-list violation', sideEffects: 'none' });
+  }
+
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(OFFERS_TABLE)}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ records: [{ id: offerRecordId, fields: plan.fields }] }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error('❌ [admin-comeback-grants] Offer revoke failed:', res.status);
+    return json(502, {
+      error: 'オファーの取り消しに失敗しました（変更されていません）',
+      status: res.status, detail: detail.slice(0, 300),
+      sideEffects: 'none',
+    });
+  }
+  const out = await res.json().catch(() => ({}));
+  const after = (out.records && out.records[0]) || null;
+
+  console.log('✅ [admin-comeback-grants] オファー取り消し:', {
+    offerRecordId, offerId: plan.offer.offerId, operationId: plan.offer.operationId,
+  });
+
+  return json(200, {
+    mode: 'revoked',
+    offer: { ...plan.offer, status: OFFER_STATUS.REVOKED, rawStatus: OFFER_STATUS.REVOKED },
+    offerFingerprint: after ? computeOfferRevokeFingerprint({ record: after }) : null,
+    customersWritten: 0,
+    emailSent: false,
+    notice: '取り消しました。専用 URL は使えなくなります。顧客の閲覧権・課金契約・入金状態は変わっていません（メールも送信していません）。',
+  });
+}
+
 async function handlePlan({ KEY, BASE, now, req, live }) {
   const sel = resolveSelection(req);
   if (sel.error) return json(400, { error: `特典の指定が不正です: ${sel.error}`, detail: sel.offerId || null });
