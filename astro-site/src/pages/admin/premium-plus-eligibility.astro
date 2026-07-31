@@ -1662,6 +1662,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       const dl = document.createElement('dl'); dl.className = 'kv';
       kvRow(dl, '件名', plan.subject);
+      // 割引案内は「何をいくらで案内するか」を最終確認に出す（金額の取り違え防止）
+      const os = plan.offerSummary;
+      if (os) {
+        kvRow(dl, 'オファー種別', os.offerId);
+        kvRow(dl, '通常価格', '¥' + Number(os.regularPrice || 0).toLocaleString());
+        kvRow(dl, 'オファー価格',
+          '¥' + Number(os.offerPrice || 0).toLocaleString() + '（' + os.discountPercent + '%OFF）', 'strong-ok');
+        kvRow(dl, '有効期限（最短）',
+          os.earliestExpiresAt ? String(os.earliestExpiresAt).slice(0, 10) : '（有効なオファーなし）');
+        kvRow(dl, 'CTA', (os.ctaLabel || '') + ' → ' + os.ctaKind);
+        kvRow(dl, '発行済みオファー', os.liveOffers + ' 件（有効・期限内）');
+      }
       kvRow(dl, '選択', plan.selected + ' 名');
       kvRow(dl, '除外', plan.excluded + ' 名');
       kvRow(dl, '実送信', plan.willSend + ' 名', plan.willSend > 0 ? 'strong-ok' : 'muted');
@@ -1675,6 +1687,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         // 理由をグループへ束ねて出す（何がどれだけ落ちたかを分類で把握できるように）
         const GROUPS = [
           ['キャンペーン条件外', ['contract_mismatch', 'plan_mismatch', 'campaign_mismatch']],
+          ['割引オファー未発行・不一致', ['offer_missing', 'offer_ambiguous', 'offer_mismatch', 'offer_secret_unavailable']],
           ['配信停止・除外リスト', ['unsubscribed', 'blacklist', 'soft_bounce', 'withdrawn', 'suspended', 'test_account', 'no_email', 'invalid_email']],
           ['最近マーケティング送信済み', ['recent_marketing_contact']],
           ['配信基盤の配信停止', ['provider_suppressed']],

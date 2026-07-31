@@ -27,15 +27,15 @@ test('何も選ばれていなければ本文を作らない', () => {
 test('Light 永久無料のみ', () => {
   const c = buildComebackEmailContent({ grantOffers: [LIGHT_LIFETIME] });
   assert.match(c.subject, /Light/);
-  assert.match(c.body, /Light プランを \*\*無期限で無料\*\*/);
+  assert.match(c.body, /Light プランを無期限で無料/);
   assert.match(c.body, /メインレース買い目/, 'Light で何が見えるかを説明していない');
   assert.equal(c.body.includes('Premium'), false, '選んでいない Premium が本文に出ている');
 });
 
 test('Light 永久無料 ＋ Premium 30日無料（主要施策）', () => {
   const c = buildComebackEmailContent({ grantOffers: [LIGHT_LIFETIME, PREMIUM_30D] });
-  assert.match(c.body, /Light プランを \*\*無期限で無料\*\*/);
-  assert.match(c.body, /Premium プランを \*\*30日間 無料\*\*/);
+  assert.match(c.body, /Light プランを無期限で無料/);
+  assert.match(c.body, /Premium プランを30日間 無料/);
   assert.match(c.body, /期間終了後も Light プランは無料のまま/, 'Premium 終了後の状態を説明していない');
   assert.match(c.body, /お支払いも必要ありません/);
 });
@@ -48,7 +48,7 @@ test('割引 offer は通常価格と特別価格の両方を出す', () => {
     offerExpiresText: '2026-08-13',
   });
   assert.match(c.body, /通常 ¥49,800 のところ/);
-  assert.match(c.body, /\*\*¥24,900\*\*/);
+  assert.match(c.body, /¥24,900/);
   assert.match(c.body, /2026-08-13 までに/);
   assert.equal(c.ctaUrl, 'https://analytics.keiba.link/offer/?t=abc');
 
@@ -90,8 +90,8 @@ test('宛名プレースホルダは {{salutation}} だけ', () => {
 test('既定の組み合わせは Light 永久無料 ＋ Premium 30日無料', () => {
   const c = buildComebackEmailContent(DEFAULT_COMEBACK_COMBO);
   assert.ok(c);
-  assert.match(c.body, /Light プランを \*\*無期限で無料\*\*/);
-  assert.match(c.body, /Premium プランを \*\*30日間 無料\*\*/);
+  assert.match(c.body, /Light プランを無期限で無料/);
+  assert.match(c.body, /Premium プランを30日間 無料/);
 });
 
 test('yen は 3 桁区切り', () => {

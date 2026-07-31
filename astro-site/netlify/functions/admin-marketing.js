@@ -52,6 +52,8 @@ import {
   getCampaign,
   renderCampaign,
 } from '../../src/lib/marketing/campaignCatalog.js';
+import { requiresOfferUrl } from '../../src/lib/promotions/offerCampaignLink.js';
+import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import {
   buildCampaignPlan,
   buildDeliveryRecords,
@@ -355,18 +357,35 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
   const blacklist = await loadBlacklistSets({ KEY, BASE });
 
+  // 受信者ごとの申込 URL が要るキャンペーンだけ、割引オファー台帳を読む（read-only）。
+  // 生トークンは保存されていないが `signOfferToken` は決定的なので、鍵があれば再生成できる。
+  let offerRecords = null;
+  if (requiresOfferUrl(campaign)) {
+    offerRecords = await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => null);
+  }
+
   const plan = buildCampaignPlan({
     campaign, selected, deliveredKeys,
     providerSuppressed: provider.ok ? provider.emails : null,
     softBounced: blacklist.soft,
     audienceContext: buildAudienceContext(process.env),
     brand: BRAND, fromEmail, nowMs: now,
+    offerRecords, offerSecret: getOfferSecret(process.env),
   });
   if (!plan.ok) {
     if (plan.error === 'provider_suppression_unavailable') {
       return json(503, {
         error: 'SendGrid の配信停止リストを確認できないため中止しました（確認できないまま送信しません）',
         detail: describeProviderSuppression(provider),
+        sideEffects: 'none',
+      });
+    }
+    if (plan.error === 'offer_ledger_unavailable' || plan.error === 'offer_secret_unavailable') {
+      return json(503, {
+        error: '割引オファーの台帳または署名鍵を確認できないため中止しました（専用 URL を作れないまま送信しません）',
+        detail: plan.error === 'offer_secret_unavailable'
+          ? 'PROMO_OFFER_SECRET が未設定です'
+          : 'PromotionalOffers を読み取れませんでした（COMEBACK_OFFER_TABLE_READY / テーブルを確認してください）',
         sideEffects: 'none',
       });
     }
@@ -377,11 +396,33 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     .map(([reason, count]) => ({ reason, label: MK_EXCLUSION_LABEL[reason] || reason, count }))
     .sort((a, b) => b.count - a.count);
 
+  // 割引案内は「何をいくらで案内するのか」を最終確認に出す（金額の取り違え防止）。
+  // 有効期限は台帳の実値（受信者ごとに違いうるので最短を出す）。
+  const offerSummary = requiresOfferUrl(campaign) ? (() => {
+    const live = (offerRecords || [])
+      .filter((r) => String(r.fields?.OfferId || '') === String(campaign.offerId))
+      .map((r) => Date.parse(String(r.fields?.ExpiresAt || '')))
+      .filter((t) => Number.isFinite(t) && t > now);
+    return {
+      offerId: campaign.offerId,
+      regularPrice: campaign.regularPrice,
+      offerPrice: campaign.offerPrice,
+      discountPercent: campaign.regularPrice
+        ? Math.round((1 - campaign.offerPrice / campaign.regularPrice) * 100) : 0,
+      // CTA は受信者ごとに違うため、実 URL ではなく形だけを見せる
+      ctaLabel: campaign.ctaLabel,
+      ctaKind: 'お客様ごとの専用 URL（/offer/?t=…）',
+      earliestExpiresAt: live.length ? new Date(Math.min(...live)).toISOString() : null,
+      liveOffers: live.length,
+    };
+  })() : null;
+
   const summary = {
     campaignId: campaign.campaignId,
     campaignName: campaign.name,
     version: campaign.version,
     subject: campaign.subject,
+    offerSummary,
     selected: plan.counts.selected,
     excluded: plan.counts.excluded,
     willSend: plan.counts.recipients,

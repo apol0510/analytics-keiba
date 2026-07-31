@@ -24,6 +24,12 @@ import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/deliv
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
 import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
 import { evaluateExtraAudience, CAMPAIGN_MISMATCH } from './campaignAudienceRules.js';
+import {
+  linkOfferForRecipient,
+  requiresOfferUrl,
+  OFFER_LINK_SKIP,
+  OFFER_LINK_SKIP_LABEL,
+} from '../promotions/offerCampaignLink.js';
 
 /** このモジュールが CampaignDeliveries へ書いてよいフィールド（これ以外は構造的に禁止） */
 export const CD_WRITABLE_FIELDS = Object.freeze([
@@ -73,6 +79,11 @@ export const MK_EXCLUSION = Object.freeze({
   PLAN_MISMATCH: 'plan_mismatch',
   /** 選択された recordId が Customers に存在しない */
   UNKNOWN_CUSTOMER: 'unknown_customer',
+  /** 受信者ごとの申込 URL が必要なのに、有効な割引オファーが結び付かない */
+  OFFER_MISSING: OFFER_LINK_SKIP.MISSING,
+  OFFER_AMBIGUOUS: OFFER_LINK_SKIP.AMBIGUOUS,
+  OFFER_MISMATCH: OFFER_LINK_SKIP.MISMATCH,
+  OFFER_SECRET_UNAVAILABLE: OFFER_LINK_SKIP.NO_SECRET,
 });
 
 export const MK_EXCLUSION_LABEL = Object.freeze({
@@ -86,6 +97,7 @@ export const MK_EXCLUSION_LABEL = Object.freeze({
   contract_mismatch: '契約状態が対象外',
   plan_mismatch: 'プランが対象外',
   unknown_customer: '顧客レコード不明',
+  ...OFFER_LINK_SKIP_LABEL,
 });
 
 /** 1 回の送信で許可する最大件数（暴走防止。超えたら計画自体を作らない） */
@@ -175,6 +187,7 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
 export function buildCampaignPlan({
   campaign, selected, deliveredKeys, providerSuppressed, softBounced,
   audienceContext, brand, fromEmail, nowMs,
+  offerRecords, offerSecret,
 }) {
   const empty = (error) => ({
     ok: false, error, recipients: [], excluded: [],
@@ -192,6 +205,15 @@ export function buildCampaignPlan({
   // provider suppression を確認できないまま計画を作らない（fail closed）
   if (!(providerSuppressed instanceof Set)) return empty('provider_suppression_unavailable');
   if (!Number.isFinite(nowMs)) return empty('invalid_now');
+
+  // 受信者ごとの申込 URL が要るキャンペーンは、台帳と署名鍵が揃わなければ計画を作らない。
+  // （揃わないまま進むと全員 offer_missing になり、原因が理由別件数に埋もれる）
+  const needsOfferUrl = requiresOfferUrl(campaign);
+  const offerRows = Array.isArray(offerRecords) ? offerRecords : null;
+  if (needsOfferUrl) {
+    if (!offerRows) return empty('offer_ledger_unavailable');
+    if (!offerSecret) return empty('offer_secret_unavailable');
+  }
 
   const delivered = deliveredKeys instanceof Set ? deliveredKeys : new Set();
   const soft = softBounced instanceof Set ? softBounced : new Set();
@@ -250,12 +272,27 @@ export function buildCampaignPlan({
       continue;
     }
 
+    // 7. 受信者ごとの申込 URL（割引オファー案内だけ）
+    //    有効なオファーを持たない人には**送らない**。汎用 URL へフォールバックしない。
+    //    ここで落とすことで「オファー発行 → URL 確定 → 送信」の順序が構造的に守られる。
+    let offerUrl = null;
+    if (needsOfferUrl) {
+      const link = linkOfferForRecipient({
+        records: offerRows, customerRecordId: recordId, email,
+        campaign, secret: offerSecret, nowMs,
+      });
+      if (!link.ok) { exclude(recordId, link.reason); continue; }
+      offerUrl = link.url;
+    }
+
     seenEmails.add(email);
     recipients.push({
       recordId,
       email,
       name: (item.fields && (item.fields['氏名'] || '')) || '',
       deliveryKey,
+      // 生トークンは台帳にもキューにも保存しない。送信直前に再生成する前提の値。
+      offerUrl,
     });
   }
 

@@ -30,6 +30,18 @@ import {
   buildComebackEmailContent,
   DEFAULT_COMEBACK_COMBO,
 } from '../promotions/comebackEmailTemplate.js';
+import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
+import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
+
+/**
+ * カムバック割引案内が案内する条件。**オファーカタログの正本から取る**
+ * （価格をここに書き写すと `/pricing/` とズレる）。
+ */
+const COMEBACK_OFFER_TERMS = (() => {
+  const r = resolveOffer('premium-annual-half');
+  if (!r.ok) throw new Error(`campaignCatalog: premium-annual-half を解決できない (${r.error})`);
+  return r.offer;
+})();
 
 const SITE = 'https://analytics.keiba.link';
 
@@ -41,6 +53,18 @@ const SITE = 'https://analytics.keiba.link';
  *    氏名が無い会員が大多数のため、後付けすると「お客様 様」という二重敬称になる。
  */
 export const CAMPAIGN_PLACEHOLDERS = Object.freeze(['{{salutation}}']);
+
+/**
+ * **送信直前まで解決を遅らせる**プレースホルダ。
+ *
+ * 顧客ごとに違う値（割引オファーの専用 URL）は、キュー登録時点では確定させられない。
+ * そこで `ctaUrl` にだけこの印を残し、専用 dispatcher が 1 通ずつ差し替える。
+ *
+ * ⚠️ 使ってよいのは `requiresOfferUrl: true` のキャンペーンの **`ctaUrl` だけ**。
+ *    本文・件名に残った場合は `renderCampaign` が null を返して送信を止める。
+ *    解決されないまま送ると「誰も使えない URL」を配ることになる。
+ */
+export const CAMPAIGN_DEFERRED_PLACEHOLDERS = Object.freeze([OFFER_URL_PLACEHOLDER]);
 
 /** 氏名が空のときの呼びかけ（敬称を含む完成形） */
 export const NAME_FALLBACK = 'お客様';
@@ -250,25 +274,35 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'comeback-offer',
-    version: 1,
-    name: 'カムバック案内（下書き）',
-    description: 'カムバック特典を付与済みの顧客へ案内する。本文は付与した特典から自動生成する。',
-    // ⚠️ 文面を手書きしない。**offer の内容から生成**する（金額・期間の書き間違いを防ぐ）。
-    //    ここに載るのは既定の組み合わせ（Light 永久無料 ＋ Premium 30日無料）で描いた版。
-    //    実際に送るときは管理画面で選んだ組み合わせのプレビューを確認してから使う。
+    version: 2,
+    name: 'カムバック割引案内（専用URL）',
+    description: '発行済みの割引オファーを、その顧客だけが使える申込 URL 付きで案内する。',
+    // ⚠️ 文面を手書きしない。**offer カタログの価格から生成**する（書き間違いを防ぐ）。
+    //    CTA は受信者ごとに違うため、ここでは差し込み印だけを置き、
+    //    専用 dispatcher が 1 通ずつ本人の URL に差し替える（未解決なら送らない）。
     ...(() => {
-      const c = buildComebackEmailContent(DEFAULT_COMEBACK_COMBO);
+      const c = buildComebackEmailContent({
+        grantOffers: [],
+        purchaseOffer: COMEBACK_OFFER_TERMS,
+        offerUrl: OFFER_URL_PLACEHOLDER,
+      });
       return { subject: c.subject, body: c.body, ctaLabel: c.ctaLabel, ctaUrl: c.ctaUrl };
     })(),
+    /**
+     * 受信者ごとの申込 URL が**必須**。
+     * 有効なオファーを持たない人は dry-run で除外され、送信直前にも再確認される。
+     * これにより「オファー発行 → URL 確定 → 送信」の順序が構造的に守られる。
+     */
+    requiresOfferUrl: true,
+    /** 本文に書いた条件。受信者のオファーがこれと違えば `offer_mismatch` で除外する */
+    offerId: COMEBACK_OFFER_TERMS.offerId,
+    regularPrice: COMEBACK_OFFER_TERMS.regularPrice,
+    offerPrice: COMEBACK_OFFER_TERMS.offerPrice,
     recommendedSegments: ['contract:expired', 'contract:none'],
-    // 特典を付与した相手にだけ送る運用のため、契約状態では絞らない
-    //（付与済みかはカムバック特典タブで確認して選択する）。
+    // オファーを発行した相手にだけ送る運用なので、契約状態では絞らない。
+    // 実際の対象判定は「有効な割引オファーを持っているか」で行う（上の requiresOfferUrl）。
     audienceRule: { contracts: [], plans: [], enforce: false },
-    // ⛔ 下書き。**特典付与フローが本番で有効化され、実際に付与を行ってから**有効化する。
-    //    付与前にこの文面を送ると、書いてある特典が実際には使えない。
-    enabled: false,
-    disabledReason: CAMPAIGN_DISABLED_REASON.DRAFT,
-    disabledDetail: '下書き（カムバック特典の付与フローが本番稼働し、対象へ実際に付与してから有効化する）',
+    enabled: true,
   },
   {
     campaignId: 'general-announcement',
@@ -397,7 +431,7 @@ function escapeHtml(s) {
  * @param {{ campaign: object, name?: string }} input
  * @returns {{ subject: string, html: string, text: string }|null}
  */
-export function renderCampaign({ campaign, name } = {}) {
+export function renderCampaign({ campaign, name, offerUrl } = {}) {
   const c = campaign;
   if (!c || typeof c.subject !== 'string' || typeof c.body !== 'string') return null;
 
@@ -406,13 +440,35 @@ export function renderCampaign({ campaign, name } = {}) {
   const text = c.body.replace(/\{\{\s*salutation\s*\}\}/g, salutation);
   if (/\{\{|\}\}/.test(text) || /\{\{|\}\}/.test(c.subject)) return null; // 未解決の差し込みは送らない
 
+  // ── CTA の差し込み（受信者ごとの申込 URL）──────────────────────
+  //   requiresOfferUrl のキャンペーンは、URL が確定するまで**送れない**。
+  //   ここで null を返すことで「誰も使えない URL を配る」事故を止める。
+  const needsOffer = c.requiresOfferUrl === true;
+  let ctaUrl = typeof c.ctaUrl === 'string' ? c.ctaUrl : '';
+  if (offerUrl) {
+    if (/\{\{|\}\}/.test(String(offerUrl))) return null;   // URL 自体に差し込みが残っている
+    ctaUrl = ctaUrl.split(OFFER_URL_PLACEHOLDER).join(String(offerUrl));
+  }
+  if (ctaUrl.includes(OFFER_URL_PLACEHOLDER)) {
+    // 未解決のまま残ってよいのは「キュー登録時点の本文」だけ。
+    // dispatcher が差し替える前提なので、そのキャンペーンでのみ許す。
+    if (!needsOffer) return null;
+  } else if (needsOffer && !offerUrl) {
+    // requiresOfferUrl なのに差し込み印が消えている＝テンプレートの設定ミス
+    return null;
+  }
+  // 既知の差し込み印**以外**の `{{ }}` が CTA に残っていたら送らない
+  if (/\{\{|\}\}/.test(ctaUrl.split(OFFER_URL_PLACEHOLDER).join('')) || /\{\{|\}\}/.test(c.ctaLabel || '')) {
+    return null;
+  }
+
   const paragraphs = text.split('\n\n').map((block) => {
     const lines = block.split('\n').map((l) => escapeHtml(l)).join('<br />');
     return `<p style="margin:0 0 1em;line-height:1.8;">${lines}</p>`;
   }).join('\n');
 
-  const cta = c.ctaUrl
-    ? `<p style="margin:1.6em 0;"><a href="${escapeHtml(c.ctaUrl)}" style="display:inline-block;padding:12px 24px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">${escapeHtml(c.ctaLabel || '詳細を見る')}</a></p>`
+  const cta = ctaUrl
+    ? `<p style="margin:1.6em 0;"><a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:12px 24px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">${escapeHtml(c.ctaLabel || '詳細を見る')}</a></p>`
     : '';
 
   const html = [
@@ -424,7 +480,7 @@ export function renderCampaign({ campaign, name } = {}) {
     '</div>',
   ].filter(Boolean).join('\n');
 
-  const plainCta = c.ctaUrl ? `\n\n${c.ctaLabel || '詳細'}: ${c.ctaUrl}` : '';
+  const plainCta = ctaUrl ? `\n\n${c.ctaLabel || '詳細'}: ${ctaUrl}` : '';
   return { subject: c.subject, html, text: `${text}${plainCta}\n\n— KEIBA Analytics\n${SITE}` };
 }
 

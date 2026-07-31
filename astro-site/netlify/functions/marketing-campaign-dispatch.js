@@ -44,6 +44,12 @@ import {
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
 import { evaluateExtraAudience } from '../../src/lib/marketing/campaignAudienceRules.js';
+import {
+  linkOfferForRecipient,
+  requiresOfferUrl,
+  OFFER_URL_PLACEHOLDER,
+} from '../../src/lib/promotions/offerCampaignLink.js';
+import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 
 const BRAND = 'analytics-keiba';
@@ -179,11 +185,14 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
   const suspended = new Set();
   /** 送信直前にキャンペーン固有条件を再判定するための email → fields */
   const fieldsByEmail = new Map();
+  /** 割引オファーの突合に使う email → Customers recordId */
+  const recordIdByEmail = new Map();
   for (const r of customers) {
     const f = r.fields || {};
     const e = String(f.Email || '').trim().toLowerCase();
     if (!e) continue;
     fieldsByEmail.set(e, f);
+    recordIdByEmail.set(e, r.id);
     if (f.UnsubscribedAnalyticsKeiba === true) unsubscribed.add(e);
     const status = String(f.Status || '').trim().toLowerCase();
     if (['suspended', 'inactive', 'banned', 'disabled'].includes(status)) suspended.add(e);
@@ -191,6 +200,18 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
 
   // env 由来の値（テスト受信者ホワイトリスト）。判定モジュールは純粋なのでここで読む。
   const audienceContext = { testRecipients: new Set(parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients) };
+
+  // 割引オファー案内のジョブが 1 つでもあれば台帳を読む（read-only・1 回だけ）。
+  // 生トークンは保存されていないが `signOfferToken` は決定的なので、鍵があれば再生成できる。
+  const anyOfferJob = jobs.some((j) => {
+    const id = String(j.fields?.TargetPlan || '').replace(/^campaign:/, '').trim();
+    return id ? requiresOfferUrl(getCampaign(id)) : false;
+  });
+  const offerSecret = getOfferSecret(process.env);
+  let offerRecords = null;
+  if (anyOfferJob) {
+    offerRecords = await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => null);
+  }
 
   // 3) ジョブごとに 1 通ずつ再検証 → 送信
   const summary = { jobs: 0, verified: 0, sent: 0, failed: 0, skipped: 0, skippedByReason: {} };
@@ -210,6 +231,12 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     // キュー登録後に条件が変わっている可能性があるため、送信直前にも固有条件を再判定する。
     const campaignId = String(f.TargetPlan || '').replace(/^campaign:/, '').trim();
     const jobCampaign = campaignId ? getCampaign(campaignId) : null;
+
+    // 受信者ごとの申込 URL（割引オファー案内のみ）。台帳から**送信直前に再生成**する。
+    //   ・キューにもメールログにも生トークンを残さない
+    //   ・キュー登録後に redeemed / revoked / 期限切れになっていたら、その人には送らない
+    const needsOffer = requiresOfferUrl(jobCampaign);
+    const offerUrlByEmail = new Map();
 
     const toSend = [];
     const toSkip = [];
@@ -238,6 +265,26 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
           summary.verified += 1;
           continue;
         }
+        // 専用 URL が要るキャンペーンは、有効なオファーが無い相手には**送らない**。
+        // 汎用 URL へフォールバックしない（誰も使えない URL を配らないため）。
+        if (needsOffer) {
+          const link = linkOfferForRecipient({
+            records: offerRecords || [],
+            customerRecordId: recordIdByEmail.get(email) || '',
+            email,
+            campaign: jobCampaign,
+            secret: offerSecret,
+            nowMs: now,
+          });
+          if (!link.ok) {
+            toSkip.push({ email, status: 'skipped-duplicate', reason: link.reason });
+            summary.skipped += 1;
+            summary.skippedByReason[link.reason] = (summary.skippedByReason[link.reason] || 0) + 1;
+            summary.verified += 1;
+            continue;
+          }
+          offerUrlByEmail.set(email, link.url);
+        }
       }
       summary.verified += 1;
       if (v.send) toSend.push(email);
@@ -259,7 +306,22 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
 
     // 3-b) 1 通ずつ送る（個別送信。他受信者のアドレスが漏れない）
     for (const email of toSend) {
-      const ok = await sendOne({ SG, fromEmail, fromName, to: email, subject: f.Subject, html: f.Content });
+      let html = String(f.Content || '');
+      if (needsOffer) {
+        const url = offerUrlByEmail.get(email);
+        // ここまで来て URL が無い / 差し込みが残るのは実装不整合。**送らずに記録する**。
+        html = url ? html.split(OFFER_URL_PLACEHOLDER).join(url) : html;
+        if (!url || html.includes(OFFER_URL_PLACEHOLDER)) {
+          await patchDeliveriesByEmail({
+            KEY, BASE, jobId, now,
+            entries: [{ email, status: 'skipped-duplicate', reason: 'offer_url_unresolved' }],
+          });
+          summary.skipped += 1;
+          summary.skippedByReason.offer_url_unresolved = (summary.skippedByReason.offer_url_unresolved || 0) + 1;
+          continue;
+        }
+      }
+      const ok = await sendOne({ SG, fromEmail, fromName, to: email, subject: f.Subject, html });
       if (ok) summary.sent += 1; else summary.failed += 1;
       await patchDeliveriesByEmail({
         KEY, BASE, jobId, now,
