@@ -247,11 +247,11 @@ const analysis = firstVenue.mainRace.analysis;
                                                         <div class="horse-stats-row">
                                                             <div class="stat-block stat-score-block">
                                                                 <div class="stat-label">累積スコア</div>
-                                                                <div class="stat-value stat-score"><span class="masked-eval masked-num" aria-hidden="true">88</span><span class="stat-unit">pt</span></div>
+                                                                <div class="stat-value stat-score stat-value-masked"><span class="masked-eval masked-num" aria-hidden="true">88</span><span class="stat-unit">pt</span></div>
                                                             </div>
                                                             <div class="stat-block stat-index-block">
                                                                 <div class="stat-label">AI総合指数</div>
-                                                                <div class="stat-value stat-index"><span class="masked-eval masked-num" aria-hidden="true">88</span></div>
+                                                                <div class="stat-value stat-index stat-value-masked"><span class="masked-eval masked-num" aria-hidden="true">88</span></div>
                                                             </div>
                                                         </div>
 
@@ -755,6 +755,21 @@ const analysis = firstVenue.mainRace.analysis;
         -webkit-background-clip: initial;
         background-clip: initial;
         font-weight: 800;
+    }
+    /* 🛡️ モザイクを無効化しないための必須ルール（2026-07-31 本番不具合の恒久対策）
+       .stat-score / .stat-index は `background-clip: text` + `-webkit-text-fill-color: transparent`
+       で gradient 文字を描く。この**親が同じ文字をクリップして描画する**ため、子 span に
+       filter: blur() を掛けても「ぼけた文字の下に鮮明な gradient 文字が残り」マスクが破れる。
+       子側の -webkit-text-fill-color 上書き（.masked-num）だけでは親の描画は消せない。
+       → マスク表示のときは親の gradient 文字を使わず、通常のテキスト描画へ戻す。
+       ⚠️ .stat-score/.stat-index と同じ詳細度だと定義順に依存するため、
+          必ず 2 クラス（.stat-value.stat-value-masked）で上書きすること。 */
+    .stat-value.stat-value-masked {
+        background: none;
+        -webkit-background-clip: initial;
+        background-clip: initial;
+        -webkit-text-fill-color: currentColor;
+        color: #cbd5e1;
     }
     .masked-role-badge {
         display: inline-block;

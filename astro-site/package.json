@@ -32,6 +32,7 @@
     "sync:archive": "node scripts/syncArchiveResults.js",
     "check:display-index": "node scripts/check-display-computer-index.mjs",
     "check:horse-sections": "node scripts/check-free-prediction-horse-sections.mjs",
+    "check:free-mask": "node scripts/check-free-mask-effective.mjs",
     "check:no-raw-index": "node scripts/check-no-raw-computer-index-display.mjs",
     "check:differentiation": "node src/utils/adjustPrediction.differentiation.test.js",
     "check:ki-relics:jra": "node scripts/check-no-ki-relics-premium-jra.mjs",
@@ -64,7 +65,7 @@
     "test:webhooks": "node --test src/lib/webhooks/*.test.mjs",
     "upload:premium-plus": "node scripts/uploadPremiumPlusImage.mjs",
     "seed:premium-plus": "node scripts/seedPremiumPlusLegacy.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:auth-session",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:auth-session",
     "verify:safety": "npm run build && npm run check:safety"
   },
   "dependencies": {
