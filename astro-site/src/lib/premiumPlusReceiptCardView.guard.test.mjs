@@ -393,3 +393,78 @@ test('ドリフト検知: SPAT4 レシートの実装 3 か所すべてが同じ
     assert.ok(/isHit\s*&&/.test(c3), `${label}: c3 が「的中時だけ足す」形になっていない`);
   }
 });
+
+// ── JRA（中央）レシートも 3 実装で固定する（2026-07-31 追加）──────────
+// SPAT4 側で「片方だけ直す」ドリフトが実際に起きたため、JRA 側も同じ形で固定しておく。
+// JRA は否定表現を出さず「払戻金額 0円」で不的中を表す（実物どおり）。ここを崩さない。
+
+const JRA_SOURCES = [
+  ['premiumPlusReceiptCardView.js（管理画面）', './premiumPlusReceiptCardView.js'],
+  ['PremiumPlusReceiptCardV2.astro（本番 v2）', '../components/premium-plus/PremiumPlusReceiptCardV2.astro'],
+  ['premium-plus.astro（旧ページ）', '../pages/premium-plus.astro'],
+];
+
+/**
+ * JRA レシート領域だけを取り出す。
+ * 開始 = `<div class="vref jra">` / 終了 = 「払戻金額」明細行の直後（+400 字）。
+ * ⚠️ 窓を広げすぎると、ページ本文の「不的中」（FAQ・注記・ヘッダーバッジ）を
+ *    誤検知する。実際に調査時それで誤判定したので、終端は明細行に固定する。
+ */
+function jraVrefFrom(rel) {
+  const src = read(rel);
+  const start = src.indexOf('<div class="vref jra">');
+  assert.ok(start > 0, `${rel}: JRA レシートブロックが無い`);
+  const payRow = src.indexOf('lc">払戻金額</div>', start);
+  assert.ok(payRow > start, `${rel}: JRA の「払戻金額」明細行が無い`);
+  const block = src.slice(start, payRow + 400);
+  return block
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')  // Astro コメント
+    .replace(/^\s*\/\/.*$/gm, ' ')          // 行コメント
+    // 実装ごとの変数名の違いを吸収（旧ページは card オブジェクト経由）
+    .replace(/\bc\.isHit\b/g, 'isHit')
+    .replace(/\bc\.payout\b/g, 'payout')
+    .replace(/\bc\.winnerCombo\b/g, 'winner')
+    .replace(/\bc\.wDispPad\b/g, 'wDispPad');
+}
+
+test('JRA: 3 実装ともレシート内に否定表現（不的中 / .miss）を出さない', () => {
+  for (const [label, rel] of JRA_SOURCES) {
+    const jra = jraVrefFrom(rel);
+    assert.ok(!jra.includes('不的中'),
+      `${label}: JRA レシートに「不的中」がある（実物は「払戻金額 0円」で表す）`);
+    assert.ok(!/class="miss"/.test(jra), `${label}: JRA レシート内に .miss がある`);
+  }
+});
+
+test('JRA: 3 実装とも同じ固定ラベルを出す', () => {
+  const LABELS = ['購入金額合計', '払戻金額合計', 'すべて閉じる', '購入馬/組番', '払戻単価', '払戻金額'];
+  for (const [label, rel] of JRA_SOURCES) {
+    const jra = jraVrefFrom(rel);
+    for (const l of LABELS) {
+      assert.ok(jra.includes(l), `${label}: JRA レシートに「${l}」が無い`);
+    }
+  }
+});
+
+test('JRA: 的中バッジ・払戻単価行は「的中時だけ」出す', () => {
+  for (const [label, rel] of JRA_SOURCES) {
+    const jra = jraVrefFrom(rel);
+    // .l2 の「的中」バッジは isHit のときだけ
+    assert.ok(/isHit[\s\S]{0,40}class="hit">的中/.test(jra),
+      `${label}: 的中バッジが isHit 条件の下に無い（常時表示になっている）`);
+    // 払戻単価の行は「的中 かつ 的中組合せあり」のときだけ
+    assert.ok(/isHit\s*&&\s*winner/.test(jra),
+      `${label}: 払戻単価行の条件が「isHit && winner」でない`);
+  }
+});
+
+test('JRA: 払戻金額は 的中=payout / 不的中=0（否定表現ではなく金額で表す）', () => {
+  for (const [label, rel] of JRA_SOURCES) {
+    const jra = jraVrefFrom(rel);
+    const hits = jra.match(/isHit\s*\?\s*payout\s*:\s*0/g) || [];
+    // 合計行・明細行・(実装により) .l2 行で複数回出る
+    assert.ok(hits.length >= 2,
+      `${label}: 「isHit ? payout : 0」が ${hits.length} 箇所しかない（合計行と明細行の両方で使うべき）`);
+    assert.ok(/class="rc red"/.test(jra), `${label}: 払戻金額の赤字指定（.rc.red）が無い`);
+  }
+});
