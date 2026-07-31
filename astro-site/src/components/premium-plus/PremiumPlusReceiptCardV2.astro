@@ -129,7 +129,13 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
             <tr>
               <td class="c1">{jd.spat}<br><span class="race">{raceLabel}</span><br>三連単<br>フォーメーション</td>
               <td class="c2"><b>1着:</b>{first.join(', ')}<br><b>2着:</b>{second.join(', ')}<br><b>3着:</b>{third.join(', ')}</td>
-              <td class="c3">(各{unitStake.toLocaleString()}円)<br>{stake.toLocaleString()}円<br>{isHit ? <span class="hit">的中 {payout.toLocaleString()}円</span> : <span class="miss">不的中</span>}</td>
+              {/* ⚠️ 投票内容照会（SPAT4）の複製では、**不的中のとき「不的中」と書かない**。
+                     実物は的中行が存在しないだけで、否定表現を出す欄が無い（2026-07-30 実物照合）。
+                     的中時だけ 3 行目を足し、不的中は 2 行のまま（末尾の <br> も出さない。
+                     出すと空行が残り (各N円)/合計円 の上下余白が崩れる）。
+                     判定・文言は管理画面と同一（src/lib/premiumPlusReceiptCardView.js の c3 と一致させる）。
+                     ※ AK 独自ヘッダーの `× 不的中` バッジは実績を正直に出す方針なので残す。 */}
+              <td class="c3">(各{unitStake.toLocaleString()}円)<br>{stake.toLocaleString()}円{isHit && <Fragment><br><span class="hit">的中 {payout.toLocaleString()}円</span></Fragment>}</td>
             </tr>
           </tbody></table>
           <div class="notes"><p>※前日発売で投票した結果は、レース開催日の投票内容照会にてご確認ください。</p></div>
