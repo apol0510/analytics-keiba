@@ -211,6 +211,31 @@ export function resolveUpsellDisplay({ target, entitlements, plusRelease, sanren
 }
 
 /**
+ * `UpsellTarget` から Premium Plus 側へ渡す管理者フラグを導出する（**唯一の導出元**）。
+ *
+ * 顧客側（`resolveUpsellForCustomer`）と管理プレビュー（`premiumPlusPreview.js`）が
+ * **同じ導出**を使うためにここへ切り出す。呼び出し側で条件を書き直さないこと。
+ *
+ *   adminPlusTarget      … ROUTE B の「加入 30 日以上 / PaidAt あり」を免除するか
+ *                          （`UpsellTarget=plus` または `PremiumPlusReleaseOverride=phase4`）
+ *   adminPlusAuthorized  … 販売資格 review / 未設定を免除するか（**明示指定のときだけ**）
+ *
+ * ⚠️ `blocked` は免除しない。Airtable の `PremiumPlusEligibility` も書き換えない。
+ * ⚠️ auto / sanrenpuku / none では `adminPlusAuthorized` を立てない
+ *    （既存の自動判定の意味を変えないため）。
+ *
+ * @param {{ target: string, member?: { releaseOverride?: string|null } }} input
+ */
+export function resolvePlusAdminFlags({ target, member } = {}) {
+  const t = normalizeUpsellTarget(target);
+  const isPlus = t === UPSELL_TARGET.PLUS;
+  return {
+    adminPlusTarget: isPlus || (member && member.releaseOverride === 'phase4') === true,
+    adminPlusAuthorized: isPlus,
+  };
+}
+
+/**
  * Airtable の 1 レコードから販売導線を決める（純粋・I/O なし）。
  * サーバー側（API / 管理一覧）の唯一の入口。呼び出し側で判定を組み立て直さない。
  *
@@ -223,20 +248,9 @@ export function resolveUpsellForCustomer({ fields, nowMs = Date.now(), sanrenpuk
   const target = readUpsellTarget(fields);
   const entitlements = resolveEntitlements(fromAirtableFields(fields || {}), nowMs);
   const member = resolvePlusMemberFromFields(fields, { nowMs, fallbackAnchor });
-  // 「管理者が明示的に Plus を売ると決めた」と言える 2 通り:
-  //   1. UpsellTarget=plus（この機能）
-  //   2. PremiumPlusReleaseOverride=phase4（既存の「今すぐ販売可」）
-  // どちらも ROUTE B の「加入 30 日以上 / PaidAt あり」条件を免除する。
-  const adminPlusTarget = target === UPSELL_TARGET.PLUS || member.releaseOverride === 'phase4';
-  // 販売資格（PremiumPlusEligibility）の review / 未設定を免除できるのは
-  // **UpsellTarget=plus の明示指定だけ**。「販売CTA=Plus を選ぶ」= 管理者の販売許可とみなす。
-  // ⚠️ auto / sanrenpuku / none では免除しない（既存の自動判定の意味を変えない）。
-  // ⚠️ blocked は免除しない。Airtable の eligibility 値も書き換えない。
-  const adminPlusAuthorized = target === UPSELL_TARGET.PLUS;
   const plusRelease = resolvePremiumPlusRelease({
     ...member,
-    adminPlusTarget,
-    adminPlusAuthorized,
+    ...resolvePlusAdminFlags({ target, member }),
     nowMs,
   });
   const view = resolveUpsellDisplay({ target, entitlements, plusRelease, sanrenpukuStage });

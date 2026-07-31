@@ -35,6 +35,14 @@ import {
   resolvePremiumPlusRelease,
 } from './premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from './premiumPlusMember.js';
+import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
+import {
+  readUpsellTarget,
+  resolvePlusAdminFlags,
+  resolveUpsellDisplay,
+  describeUpsellDisplay,
+  UPSELL_TARGET_LABEL,
+} from '../upsell/upsellTarget.js';
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -125,7 +133,17 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
     eligibleAtMs: previewNow - days * DAY_MS,
   };
 
-  const release = resolvePremiumPlusRelease({ ...simulated, nowMs: previewNow });
+  // ⚠️ 販売導線（UpsellTarget）を無視すると、顧客側・管理一覧と食い違うプレビューになる。
+  //    フラグの導出は `resolvePlusAdminFlags`（唯一の導出元）を共有し、ここで書き直さない。
+  const target = readUpsellTarget(fields);
+  const release = resolvePremiumPlusRelease({
+    ...simulated,
+    ...resolvePlusAdminFlags({ target, member: simulated }),
+    nowMs: previewNow,
+  });
+  // 最終的な「顧客に何が見えるか」は顧客側と同じ resolver で決める（2 商品を並べない判定も含む）。
+  const entitlements = resolveEntitlements(fromAirtableFields(fields), previewNow);
+  const view = resolveUpsellDisplay({ target, entitlements, plusRelease: release });
   const intake = release.intake ? intakeCopy(release.intake) : null;
 
   const jst = new Date(previewNow + JST_OFFSET_MS);
@@ -148,6 +166,15 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
       eligibility: release.eligibility,
       releaseOverride: release.releaseOverride,
       overrideApplied: release.overrideApplied,
+      /** 管理者が UpsellTarget=plus を明示指定した結果、販売中として扱っているか */
+      adminSaleDirective: release.adminSaleDirective === true,
+
+      // 販売導線（設定値と実表示。管理一覧と同じ値になる）
+      upsellTarget: view.target,
+      upsellTargetLabel: UPSELL_TARGET_LABEL[view.target],
+      upsellChannel: view.channel,
+      upsellDisplay: describeUpsellDisplay(view),
+      upsellReason: view.reasonLabel,
 
       // 段階公開
       phase: release.phase,
@@ -162,17 +189,19 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
       intakeStatus: intake ? intake.status : null,
       intakeNote: intake ? intake.note : null,
 
-      // 会員向けページに何が出るか
-      showTeaser: release.showTeaser,
-      showProductPage: release.showProductPage,
-      showPurchaseCta: release.showPurchaseCta,
-      purchaseEnabled: release.purchaseEnabled,
+      // 会員向けページに何が出るか（**販売導線の選択を反映した最終値**）
+      showTeaser: view.plus.showTeaser,
+      showProductPage: view.plus.showProductPage,
+      showPurchaseCta: view.plus.showPurchaseCta,
+      purchaseEnabled: view.plus.purchaseEnabled,
+      // 三連複側（Plus と同時には出さない。段階は localStorage 由来のため未確定）
+      sanrenpukuAllowed: view.sanrenpuku.allowed,
 
       // 商品ページの見え方（価格の実額はページ側の定数が正本。ここでは有無だけを返す）
-      priceVisible: release.showPurchaseCta,
-      ctaEnabled: release.purchaseEnabled,
-      canBrowseWhenClosed: release.intake === PP_INTAKE.CLOSED ? release.showProductPage : null,
-      productPageStatus: release.showProductPage ? 200 : 404,
+      priceVisible: view.plus.showPurchaseCta,
+      ctaEnabled: view.plus.purchaseEnabled,
+      canBrowseWhenClosed: release.intake === PP_INTAKE.CLOSED ? view.plus.showProductPage : null,
+      productPageStatus: view.plus.showProductPage ? 200 : 404,
     },
   };
 }

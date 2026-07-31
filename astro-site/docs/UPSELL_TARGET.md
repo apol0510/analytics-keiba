@@ -120,6 +120,20 @@ review / 未設定なら Plus を出しません。免除は**明示指定のと
 | 主要導線 | `src/pages/dashboard.astro` |
 | 管理画面 | `src/pages/admin/premium-plus-eligibility.astro` + `netlify/functions/premium-plus-eligibility.js` |
 
+### 管理プレビューも同じ判定を通る
+
+`/admin/premium-plus-eligibility` の「表示プレビュー」（`action=preview`）は
+`premiumPlusPreview.js` → **`resolveUpsellDisplay`** を経由する。
+`UpsellTarget` から Plus 側フラグを導く処理は **`resolvePlusAdminFlags()` が唯一の導出元**で、
+顧客経路（`resolveUpsellForCustomer`）とプレビューが同じ関数を共有する。
+
+> 一覧の「実表示」・プレビュー・顧客側の 3 つが必ず一致する。
+> ズレると「管理画面では出ないのに顧客には出る（逆も）」が起きるため、
+> `upsellTarget.test.mjs` が 80 ケース以上で両者の結論一致を固定している。
+
+プレビューの戻り値には `upsellTarget` / `upsellChannel` / `upsellDisplay` /
+`upsellReason` / `adminSaleDirective` / `sanrenpukuAllowed` が含まれる。
+
 ### 顧客側の流れ
 
 1. ページが `/api/upsell.json` を **1 回だけ**取得（`upsellClient.js` が memoize）
