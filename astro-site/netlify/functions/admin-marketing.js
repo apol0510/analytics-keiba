@@ -52,7 +52,7 @@ import {
   getCampaign,
   renderCampaign,
 } from '../../src/lib/marketing/campaignCatalog.js';
-import { requiresOfferUrl } from '../../src/lib/promotions/offerCampaignLink.js';
+import { requiresOfferUrl, isLiveOffer } from '../../src/lib/promotions/offerCampaignLink.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import {
   buildCampaignPlan,
@@ -399,10 +399,13 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   // 割引案内は「何をいくらで案内するのか」を最終確認に出す（金額の取り違え防止）。
   // 有効期限は台帳の実値（受信者ごとに違いうるので最短を出す）。
   const offerSummary = requiresOfferUrl(campaign) ? (() => {
+    // ⚠️ OfferId だけで数えない。**revoked / redeemed / 期限切れを除外**する
+    //    （除外しないと「有効なオファーが 4 件」のような嘘の件数を最終確認に出してしまう）。
     const live = (offerRecords || [])
       .filter((r) => String(r.fields?.OfferId || '') === String(campaign.offerId))
+      .filter((r) => isLiveOffer({ record: r, nowMs: now }))
       .map((r) => Date.parse(String(r.fields?.ExpiresAt || '')))
-      .filter((t) => Number.isFinite(t) && t > now);
+      .filter((t) => Number.isFinite(t));
     return {
       offerId: campaign.offerId,
       regularPrice: campaign.regularPrice,
