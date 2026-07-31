@@ -314,3 +314,82 @@ test('ドリフト検知: 本番コンポーネント / ページも新ラベル
     assert.ok(!src.includes('合計払戻金額'), `${rel}: 旧ラベルが残っている`);
   }
 });
+
+// ── 本番コンポーネント側の同一性（2026-07-31 追加）────────────────────
+// 「不的中」を出さない修正が **JS レンダラ（管理画面）にだけ入り、
+//  本番の PremiumPlusReceiptCardV2.astro に入っていない**ドリフトが実際に発生した
+//  （管理画面では消えているのに /premium-plus-v2/ では「不的中」が出た）。
+//  以後は本番コンポーネントのソースも同じ性質で固定する。
+
+/**
+ * SPAT4 レシート部分のソース（AK 独自ヘッダーは含めない）。
+ * ⚠️ 同じレシートの実装が **3 か所**にある（コンポーネント / 旧ページ / 管理画面レンダラ）。
+ *    片方だけ直すドリフトが実際に起きたので、全部を同じ性質で固定する。
+ */
+const SPAT_SOURCES = [
+  ['PremiumPlusReceiptCardV2.astro', '../components/premium-plus/PremiumPlusReceiptCardV2.astro'],
+  ['premium-plus.astro（旧ページ）', '../pages/premium-plus.astro'],
+];
+
+function spatVrefFrom(rel) {
+  const src = read(rel);
+  const start = src.indexOf('<div class="vref spat">');
+  assert.ok(start > 0, `${rel}: SPAT4 レシートブロックが無い`);
+  const end = src.indexOf('<div class="vref jra">', start);
+  const block = src.slice(start, end > start ? end : undefined);
+  return block.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ');
+}
+
+function spatVrefSource() {
+  const src = read('../components/premium-plus/PremiumPlusReceiptCardV2.astro');
+  const start = src.indexOf('<div class="vref spat">');
+  assert.ok(start > 0, '本番コンポーネントに SPAT4 レシートブロックが無い');
+  const end = src.indexOf('<div class="vref jra">', start);
+  const block = src.slice(start, end > start ? end : undefined);
+  // 説明コメント（{/* … */}）は描画されないので検査対象から外す
+  return block.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ');
+}
+
+test('ドリフト検知: 本番コンポーネントのレシート内にも「不的中」を書かない', () => {
+  const vref = spatVrefSource();
+  assert.ok(!vref.includes('不的中'),
+    '本番コンポーネントのレシート複製に「不的中」がある（実物には無い表現。管理画面側と揃える）');
+  assert.ok(!/class="miss"/.test(vref),
+    '本番コンポーネントのレシート内に .miss 要素が残っている');
+});
+
+test('ドリフト検知: 本番コンポーネントの c3 も的中時だけ 3 行目を足す', () => {
+  const vref = spatVrefSource();
+  const c3 = (vref.match(/<td class="c3">([\s\S]*?)<\/td>/) || [, ''])[1];
+  assert.ok(c3, '本番コンポーネントに c3 セルが無い');
+  // 三項演算子で不的中側に何かを出す形（… ? … : …）になっていないこと
+  assert.ok(!/isHit\s*\?[\s\S]*?:\s*</.test(c3),
+    'c3 が三項演算子で不的中側にも要素を出している（的中時だけ足す形にする）');
+  assert.ok(/isHit\s*&&/.test(c3), 'c3 が「的中時だけ足す」形になっていない');
+  assert.ok(/的中 \{payout/.test(c3), '的中行の文言が無い');
+});
+
+test('ドリフト検知: 管理画面レンダラと本番コンポーネントの c3 が同じ構成', () => {
+  // 的中 → 3 行 / 不的中 → 2 行 が両方で成立すること（JS 側は実出力、Astro 側はソース形）
+  const missHtml = renderReceiptCardHtml(cardOf({ isHit: false }));
+  const missC3 = (missHtml.match(/<td class="c3">([\s\S]*?)<\/td>/) || [, ''])[1];
+  assert.equal((missC3.match(/<br>/g) || []).length, 1, 'JS 側: 不的中は 2 行');
+
+  const vref = spatVrefSource();
+  const c3 = (vref.match(/<td class="c3">([\s\S]*?)<\/td>/) || [, ''])[1];
+  // 固定の <br> は 1 個（(各N円) と 合計円 の間）。3 行目の <br> は的中分岐の内側にある
+  const outsideBr = c3.replace(/\{isHit[\s\S]*$/, '').match(/<br>/g) || [];
+  assert.equal(outsideBr.length, 1, 'Astro 側: 常に出る <br> は 1 個（＝不的中は 2 行）であるべき');
+});
+
+test('ドリフト検知: SPAT4 レシートの実装 3 か所すべてが同じ性質（不的中を書かない / 的中時だけ 3 行目）', () => {
+  for (const [label, rel] of SPAT_SOURCES) {
+    const vref = spatVrefFrom(rel);
+    assert.ok(!vref.includes('不的中'), `${label}: レシート複製に「不的中」がある`);
+    assert.ok(!/class="miss"/.test(vref), `${label}: レシート内に .miss がある`);
+    const c3 = (vref.match(/<td class="c3">([\s\S]*?)<\/td>/) || [, ''])[1];
+    assert.ok(c3, `${label}: c3 セルが無い`);
+    assert.ok(!/isHit\s*\?[\s\S]*?:\s*</.test(c3), `${label}: c3 が不的中側にも要素を出している`);
+    assert.ok(/isHit\s*&&/.test(c3), `${label}: c3 が「的中時だけ足す」形になっていない`);
+  }
+});

@@ -53,7 +53,7 @@
     "test:pricing-tiers": "node --test src/lib/pricing/*.test.mjs",
     "test:bank-payment": "node --test src/lib/payments/*.test.mjs",
     "test:entitlements": "node --test src/lib/entitlements/*.test.mjs",
-    "test:premium-plus": "node --test src/lib/premiumPlusShowcase.test.mjs",
+    "test:premium-plus": "node --test src/lib/premiumPlusShowcase.test.mjs src/lib/premiumPlusReceiptCardView.guard.test.mjs",
     "test:premium-plus-media": "node --test src/lib/premiumPlus/*.test.mjs",
     "test:marketing": "node --test src/lib/marketing/*.test.mjs",
     "test:comeback": "node --test src/lib/comeback/*.test.mjs",

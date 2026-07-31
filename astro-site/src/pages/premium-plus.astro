@@ -1069,7 +1069,9 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
                         <tr>
                           <td class="c1">{c.jd.spat}<br><span class="race">{c.raceLabel}</span><br>三連単<br>フォーメーション</td>
                           <td class="c2"><b>1着:</b>{c.first.join(', ')}<br><b>2着:</b>{c.second.join(', ')}<br><b>3着:</b>{c.third.join(', ')}</td>
-                          <td class="c3">(各{c.unitStake.toLocaleString()}円)<br>{c.stake.toLocaleString()}円<br>{c.isHit ? <span class="hit">的中 {c.payout.toLocaleString()}円</span> : <span class="miss">不的中</span>}</td>
+                          {/* 投票内容照会の複製に否定表現は出さない（実物に無い）。的中時だけ 3 行目を足す。
+                              判定・文言は PremiumPlusReceiptCardV2.astro / premiumPlusReceiptCardView.js と同一。 */}
+                          <td class="c3">(各{c.unitStake.toLocaleString()}円)<br>{c.stake.toLocaleString()}円{c.isHit && <Fragment><br><span class="hit">的中 {c.payout.toLocaleString()}円</span></Fragment>}</td>
                         </tr>
                       </tbody></table>
                       <div class="notes"><p>※前日発売で投票した結果は、レース開催日の投票内容照会にてご確認ください。</p></div>
