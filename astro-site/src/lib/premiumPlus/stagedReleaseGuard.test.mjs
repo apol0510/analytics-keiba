@@ -52,10 +52,15 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
   const fm = src.slice(0, src.indexOf('\n---', 3) + 4);
 
   test(`${name}: 段階公開の単一源を通す`, () => {
-    assert.match(fm, /resolvePremiumPlusRelease\s*\(/);
+    // 2026-07-31: 販売導線（UpsellTarget）と合成するため resolveUpsellForCustomer 経由になった。
+    // 内部で resolvePlusMemberFromFields → resolvePremiumPlusRelease を呼ぶ単一源であることは
+    // upsellTarget.js 側で固定している（ページが phase を再計算しないことがここでの要点）。
+    assert.match(fm, /resolveUpsellForCustomer\s*\(/);
     assert.match(fm, /lookupCustomerFields\s*\(/);
-    // 会員状態は既存の権限正本を再利用するアダプタ経由（Plus 専用の権限判定を作らない）
-    assert.match(fm, /resolvePlusMemberFromFields\s*\(/);
+    assert.match(fm, /const ppRelease = ppUpsell\.plusRelease;/);
+    // ページ側で phase / route を組み立て直さない
+    assert.doesNotMatch(fm, /computePhase\s*\(/);
+    assert.doesNotMatch(fm, /resolvePlusRoute\s*\(/);
   });
 
   test(`${name}: ROUTE B（通常 Premium）も入口に通し、可否は資格 + phase が決める`, () => {
@@ -74,7 +79,8 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
   });
 
   test(`${name}: PHASE 3 未満は 404（段階公開を迂回できない）`, () => {
-    assert.match(fm, /if\s*\(\s*!ppRelease\.showProductPage\s*\)/);
+    // 販売導線が plus でない会員も同じ 404（2 商品を並べない・存在秘匿）
+    assert.match(fm, /if\s*\(ppUpsell\.channel !== UPSELL_CHANNEL\.PLUS \|\| !ppRelease\.showProductPage\)/);
     const gate = fm.slice(fm.indexOf('!ppRelease.showProductPage'));
     assert.match(gate.slice(0, 400), /status:\s*404/);
     // 認可ゲートと同じく 401/403 は使わない（存在を漏らさない）
@@ -327,11 +333,15 @@ test('管理 Function: 自動で eligible にする分岐が無い（管理者�
 const ADMIN_PAGE = read('../../pages/admin/premium-plus-eligibility.astro');
 
 test('override: 3 面（premium-plus / premium-plus-v2 / stage API）が同じ単一源で判定する', () => {
-  // どれも member アダプタ + resolvePremiumPlusRelease を通す＝override も自動的に同じ扱いになる
+  // 3 面とも resolveUpsellForCustomer を通す。この中で member アダプタ →
+  // resolvePremiumPlusRelease({ ...member }) を呼ぶので override も自動的に同じ扱いになる。
   for (const src of [...Object.values(PRODUCT_PAGES), ENDPOINT]) {
-    assert.match(src, /resolvePlusMemberFromFields\s*\(/);
-    assert.match(src, /resolvePremiumPlusRelease\s*\(\s*\{\s*\.\.\.\w+/, 'member をそのまま渡していない（override が落ちる）');
+    assert.match(src, /resolveUpsellForCustomer\s*\(/, '単一源を経由していない');
+    assert.doesNotMatch(src, /resolvePremiumPlusRelease\s*\(/, 'ページ/API 側で release を組み立て直している');
   }
+  // 単一源の中身: member をそのまま渡している（override が落ちない）
+  const upsellLib = readFileSync(fileURLToPath(new URL('../upsell/upsellTarget.js', import.meta.url)), 'utf8');
+  assert.match(upsellLib, /resolvePremiumPlusRelease\(\{\s*\n?\s*\.\.\.member/, 'member をそのまま渡していない（override が落ちる）');
   // ページ側に override の独自解釈を書かない
   for (const src of Object.values(PRODUCT_PAGES)) {
     assert.doesNotMatch(src, /phase4/);

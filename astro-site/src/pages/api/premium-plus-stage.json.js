@@ -20,13 +20,9 @@
 export const prerender = false;
 
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
-import {
-  PP_PHASE,
-  resolvePremiumPlusRelease,
-  teaserCopyForRoute,
-} from '../../lib/premiumPlus/premiumPlusRelease.js';
-import { resolvePlusMemberFromFields } from '../../lib/premiumPlus/premiumPlusMember.js';
+import { PP_PHASE, teaserCopyForRoute } from '../../lib/premiumPlus/premiumPlusRelease.js';
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
+import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -53,11 +49,17 @@ export async function GET({ request }) {
     env: process.env,
     now,
   });
-  const member = resolvePlusMemberFromFields(fields, {
+  // 販売導線の選択（UpsellTarget）。**この会員に Plus を見せてよいか**をここで決める。
+  // sanrenpuku / none 指定の会員には Plus の予告も商品ページも出さない（2 商品を並べない）。
+  // 判定は単一源 upsellTarget.js。ページ側に条件を散らさない。
+  const upsell = resolveUpsellForCustomer({
+    fields,
     nowMs: now,
     fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
   });
-  const release = resolvePremiumPlusRelease({ ...member, nowMs: now });
+  if (upsell.channel !== UPSELL_CHANNEL.PLUS) return notFound();
+
+  const release = upsell.plusRelease;
 
   // PHASE 1 / 販売資格なし / route 対象外 は「まだ何も知らせない」＝存在秘匿を維持する。
   if (!release.showTeaser) return notFound();

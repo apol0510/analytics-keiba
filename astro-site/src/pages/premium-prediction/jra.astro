@@ -1477,7 +1477,11 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               //   サーバー Premium 開始日基準化は PR-C / PR-D 以降の認証強化フェーズで別対応（本スクリプトは認証コード非依存）。
               //   dismiss(ak-srp-cta-dismissed)・初回時刻(ak-umatan-first-seen) は南関ページと共有。
               import { isFunnelTarget, planSanrenpukuDisplay } from '../../lib/sanrenpuku/sanrenpukuCtaStage.js';
-              (function () {
+              // 販売導線の選択（UpsellTarget）。plus / none 指定なら三連複は出さない（2 商品を並べない）。
+              // 取得できないとき（未ログイン・API 不在）は true で従来どおり。
+              import { canShowSanrenpukuUpsell } from '../../lib/upsell/upsellClient.js';
+              (async function () {
+                if (!(await canShowSanrenpukuUpsell())) return;
                 var teaserEl = document.getElementById('sanrenpuku-teaser-section-jra');
                 var ctaEl = document.getElementById('sanrenpuku-cta-section-jra');
                 var resultEl = document.getElementById('sanrenpuku-yesterday-results'); // JRA も結果セクションを持つ（3日目以降に表示）

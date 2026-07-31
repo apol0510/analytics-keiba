@@ -119,7 +119,9 @@ export function resolveAdminCandidate({ fields, member, release } = {}) {
   });
 
   if (r.route === PP_ROUTE.SANRENPUKU) return out(PP_CANDIDATE.ROUTE_A);
-  if (r.route === PP_ROUTE.PREMIUM_30D) return out(PP_CANDIDATE.ROUTE_B);
+  // ROUTE C（管理者が UpsellTarget=plus / 今すぐ販売可 を指定した有効 Premium）も
+  // ROUTE B と同じ「販売対象」として一覧に出す。加入日条件を免除しているだけで扱いは同じ。
+  if (r.route === PP_ROUTE.PREMIUM_30D || r.route === PP_ROUTE.PREMIUM_ADMIN) return out(PP_CANDIDATE.ROUTE_B);
 
   // 管理者が既に何かを判断した相手は、route が崩れても一覧から消さない
   if (hasValue(f[PP_ELIGIBILITY_FIELDS.STATUS])) return out(PP_CANDIDATE.EXPLICIT);

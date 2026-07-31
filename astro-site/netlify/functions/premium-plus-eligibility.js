@@ -11,6 +11,9 @@
  *                     review（保留）/ blocked（販売対象外）
  *   action='preview'… 1 会員の Premium Plus 表示状態を read-only で解決して返す（管理者プレビュー）。
  *                     **会員セッションを作らない / Cookie を触らない / 一切書き込まない。**
+ *   action='setUpsell'… 販売導線（UpsellTarget: auto / sanrenpuku / plus / none）を 1 会員へ設定する。
+ *                     ⚠️ これは「**何を売る導線を見せるか**」だけ。販売資格（PremiumPlusEligibility）
+ *                     や会員権・決済には一切触れない。役割を混同しない。
  *
  * 設計上の要点:
  * - **Premium Plus の販売資格だけ**を変更する。プラン / Status / 有効期限 / PaidAt /
@@ -50,6 +53,16 @@ import {
   resolveAdminCandidate,
   PP_CANDIDATE,
 } from '../../src/lib/premiumPlus/premiumPlusAdminAudience.js';
+import {
+  UPSELL_TARGET,
+  UPSELL_TARGET_FIELD,
+  UPSELL_TARGET_LABEL,
+  normalizeUpsellTarget,
+  readUpsellTarget,
+  isUpsellFieldEnabled,
+  resolveUpsellForCustomer,
+  describeUpsellDisplay,
+} from '../../src/lib/upsell/upsellTarget.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
@@ -95,6 +108,7 @@ exports.handler = async (event) => {
     if (action === 'list') return await handleList({ KEY, BASE, now, onlyReview: !!req.onlyReview });
     if (action === 'update') return await handleUpdate({ KEY, BASE, now, req });
     if (action === 'preview') return await handlePreview({ KEY, BASE, now, req });
+    if (action === 'setUpsell') return await handleSetUpsell({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -119,7 +133,11 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     for (const rec of data.records || []) {
       const fields = rec.fields || {};
       const member = resolvePlusMemberFromFields(fields, { nowMs: now });
-      const release = resolvePremiumPlusRelease({ ...member, nowMs: now });
+      // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
+      // 区別できるように、両方を行に載せる。段階表示（何日目か）は localStorage 由来のため
+      // サーバーでは確定できず、'三連複（段階表示）' として返す。
+      const upsell = resolveUpsellForCustomer({ fields, nowMs: now });
+      const release = upsell.plusRelease;
 
       // 一覧に出すかは**表示専用の単一源**が決める（公開判定 resolvePremiumPlusRelease とは別）。
       // route が none でも「有効 Premium だが PaidAt が空な旧会員」を落とさないため。
@@ -147,6 +165,12 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         candidateNote: candidate.note,
         eligibility,
         eligibilityLabel: PP_ELIGIBILITY_LABEL[eligibility],
+        // 販売導線（設定値 / 実表示 / 理由）
+        upsellTarget: upsell.target,
+        upsellTargetLabel: UPSELL_TARGET_LABEL[upsell.target],
+        upsellChannel: upsell.channel,
+        upsellDisplay: describeUpsellDisplay(upsell),
+        upsellReason: upsell.reasonLabel,
         reason: fields['PremiumPlusEligibilityReason'] || '',
         releaseOverride: release.releaseOverride || '',
         overrideApplied: release.overrideApplied,
@@ -182,8 +206,15 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
     },
+    upsellCounts: {
+      auto: rows.filter((r) => r.upsellTarget === UPSELL_TARGET.AUTO).length,
+      sanrenpuku: rows.filter((r) => r.upsellTarget === UPSELL_TARGET.SANRENPUKU).length,
+      plus: rows.filter((r) => r.upsellTarget === UPSELL_TARGET.PLUS).length,
+      none: rows.filter((r) => r.upsellTarget === UPSELL_TARGET.NONE).length,
+    },
     writeEnabled: isPlusFieldsEnabled(process.env),
     overrideEnabled: isReleaseOverrideEnabled(process.env),
+    upsellEnabled: isUpsellFieldEnabled(process.env),
     truncated,
   });
 }
@@ -272,6 +303,74 @@ async function handleUpdate({ KEY, BASE, now, req }) {
  * - 応答に Email / 氏名などの PII を含めない
  * - 時刻 / PHASE のシミュレーションはこの応答の中だけに閉じる（会員向けページには影響しない）
  */
+/**
+ * 販売導線（UpsellTarget）を 1 会員へ設定する。
+ *
+ * ⚠️ 書くのは `UpsellTarget` **1 列だけ**。販売資格（PremiumPlusEligibility 系）も
+ *    会員権・決済フィールドも触らない。役割を混同しない。
+ * ⚠️ Airtable にフィールドを作るまでは 503（未作成フィールドへの PATCH は 422 になり、
+ *    同じ PATCH の他の更新まで巻き添えで失敗するため）。
+ */
+async function handleSetUpsell({ KEY, BASE, now, req }) {
+  if (!isUpsellFieldEnabled(process.env)) {
+    return json(503, {
+      error: '販売導線フィールドが未有効（UPSELL_TARGET_FIELD_READY 未設定）',
+      hint: `Airtable Customers に ${UPSELL_TARGET_FIELD}（単一選択: auto / sanrenpuku / plus / none）を作成後、env を 1 にしてください`,
+      sideEffects: 'none',
+    });
+  }
+
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です' });
+
+  const raw = String(req.upsellTarget ?? '').trim().toLowerCase();
+  if (!Object.values(UPSELL_TARGET).includes(raw)) {
+    return json(400, { error: 'upsellTarget は auto / sanrenpuku / plus / none のいずれかです' });
+  }
+  const next = normalizeUpsellTarget(raw);
+
+  // 対象の現状を読む（クライアント申告は信用しない）
+  const getRes = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!getRes.ok) return json(404, { error: 'Record not found' });
+  const currentFields = (await getRes.json()).fields || {};
+  const before = readUpsellTarget(currentFields);
+
+  // 三連複を保有済みの相手に sanrenpuku を指定しても CTA は出ない（再購入 CTA を出さない仕様）。
+  // 設定自体は拒否しないが、管理者へ必ず知らせる。
+  const preview = resolveUpsellForCustomer({ fields: { ...currentFields, [UPSELL_TARGET_FIELD]: next }, nowMs: now });
+  const warning = next === UPSELL_TARGET.SANRENPUKU && preview.entitlements.canViewSanrenpuku === true
+    ? 'この会員は三連複を保有済みのため、三連複 CTA は表示されません（再購入 CTA は出しません）'
+    : (preview.channel === 'none' && next !== UPSELL_TARGET.NONE
+      ? `指定しましたが、現在この会員には表示されません（理由: ${preview.reasonLabel}）`
+      : null);
+
+  const fields = { [UPSELL_TARGET_FIELD]: next };
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    method: 'PATCH',
+    headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields, typecast: true }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error('❌ [premium-plus-eligibility] UpsellTarget PATCH failed:', res.status);
+    return json(502, { error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300) });
+  }
+
+  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', { recordId, before, next });
+  return json(200, {
+    success: true,
+    recordId,
+    before,
+    upsellTarget: next,
+    upsellTargetLabel: UPSELL_TARGET_LABEL[next],
+    upsellDisplay: describeUpsellDisplay(preview),
+    upsellReason: preview.reasonLabel,
+    warning,
+  });
+}
+
 async function handlePreview({ KEY, BASE, now, req }) {
   const recordId = String(req.recordId || '').trim();
   if (!recordId) return json(400, { error: 'recordId が必要です' });

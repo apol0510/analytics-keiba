@@ -643,6 +643,24 @@ AK 判定では送信可能なのに SendGrid が suppress 済みの会員が 43
 検証: `npm run test:comeback` / `npm run test:promotions` / `npm run test:entitlements`
 （すべて `check:safety` と CI に組込済み）
 
+## 🛒 販売導線の制御（UpsellTarget / 2026-07-31 追加・未本番）
+
+Premium 会員に「三連複」と「Premium Plus」を**同時に見せない**ための会員別 CTA 制御。
+詳細仕様・Airtable フィールド・有効化手順は `astro-site/docs/UPSELL_TARGET.md`（**正本**）。
+
+- **`UpsellTarget` は販売導線の選択であり、会員権・決済・entitlement の正本ではない**。
+  値は `auto` / `sanrenpuku` / `plus` / `none`。**未設定は `auto`**（migration 不要）
+- **auto の三連複は既存の段階表示を維持**（1日目なし→2〜3日目 予告→4日目以降 CTA / dismiss 可）。
+  auto でも即時 CTA にしない。単一源は `src/lib/sanrenpuku/sanrenpukuCtaStage.js`
+- **三連複と Premium Plus を同時表示しない**。判定の単一源は `src/lib/upsell/upsellTarget.js`
+  （`resolveUpsellForCustomer` / `resolveUpsellDisplay`）。ページ側に条件を再実装しない
+- 明示指定でも**各商品固有の権限条件は再評価**する（保有済みへ三連複 CTA を出さない・
+  blocked へ Plus を出さない・Free/Light へ出さない・受付時間外は購入不可）
+- 書き込みは `UpsellTarget` **1 列だけ**。課金・権限フィールドは 1 バイトも書かない。
+  gate は `UPSELL_TARGET_FIELD_READY=1`（**未設定なら 503**・既定 OFF）
+
+検証: `npm run test:upsell`（`check:safety` に組込済み）
+
 ## 🧠 予想ロジック（スコア・役割決定）
 
 本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の

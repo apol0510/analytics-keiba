@@ -78,6 +78,14 @@ export const PP_ROUTE = Object.freeze({
   SANRENPUKU: 'sanrenpuku',
   /** ROUTE B: 通常 Premium 会員で、加入から一定期間 Sanrenpuku 未購入 */
   PREMIUM_30D: 'premium_30d',
+  /**
+   * ROUTE C: 管理者が販売導線として **Plus を明示指定**した有効 Premium 会員。
+   * ROUTE B の「加入 30 日以上」を満たさない（PaidAt が空な旧会員を含む）相手でも、
+   * 管理者が個別に選んだときだけ販売対象にする。
+   * ⚠️ 資格（PremiumPlusEligibility）と phase の判定は ROUTE B と同一。ここが飛ばすのは
+   *    「加入からの経過日数」条件だけで、blocked / review は従来どおり打ち切られる。
+   */
+  PREMIUM_ADMIN: 'premium_admin',
   /** 対象外 */
   NONE: 'none',
 });
@@ -385,10 +393,16 @@ export function normalizeEligibility(raw) {
  * @param {{ hasSanrenpuku:boolean, premiumActive:boolean, premiumPaidAtMs:number|null, nowMs:number }} input
  * @returns {{ route:string, daysSincePremium:number|null }}
  */
-export function resolvePlusRoute({ hasSanrenpuku, premiumActive, premiumPaidAtMs, nowMs }) {
+export function resolvePlusRoute({ hasSanrenpuku, premiumActive, premiumPaidAtMs, nowMs, adminPlusTarget }) {
   if (hasSanrenpuku === true) return { route: PP_ROUTE.SANRENPUKU, daysSincePremium: null };
 
   const days = isFiniteNumber(premiumPaidAtMs) ? jstDayDiff(premiumPaidAtMs, nowMs) : null;
+  // ROUTE C: 管理者が Plus を明示指定した有効 Premium 会員。
+  // 「PaidAt が無い / 30 日未満」だけを理由に塞がない（PaidAt は 2026-07-10 の
+  // 入金確認フロー刷新以降しか書かれておらず、旧会員は構造的に空のため）。
+  if (premiumActive === true && adminPlusTarget === true) {
+    return { route: PP_ROUTE.PREMIUM_ADMIN, daysSincePremium: days };
+  }
   if (premiumActive === true && days !== null && days >= PREMIUM_30D_DAYS) {
     return { route: PP_ROUTE.PREMIUM_30D, daysSincePremium: days };
   }
@@ -407,7 +421,9 @@ export function resolvePhaseAnchorMs({ route, sanrenpukuPaidAtMs, premiumPaidAtM
   const m = mode || PP_PHASE_ANCHOR_MODE;
   let purchase = null;
   if (route === PP_ROUTE.SANRENPUKU) purchase = isFiniteNumber(sanrenpukuPaidAtMs) ? sanrenpukuPaidAtMs : null;
-  else if (route === PP_ROUTE.PREMIUM_30D) purchase = isFiniteNumber(premiumPaidAtMs) ? premiumPaidAtMs : null;
+  else if (route === PP_ROUTE.PREMIUM_30D || route === PP_ROUTE.PREMIUM_ADMIN) {
+    purchase = isFiniteNumber(premiumPaidAtMs) ? premiumPaidAtMs : null;
+  }
   const eligible = isFiniteNumber(eligibleAtMs) ? eligibleAtMs : null;
 
   if (m === 'purchase') return purchase;
@@ -421,7 +437,7 @@ export function resolvePhaseAnchorMs({ route, sanrenpukuPaidAtMs, premiumPaidAtM
 /** route に対応する予告文言を返す（対象外は null）。 */
 export function teaserCopyForRoute(route) {
   if (route === PP_ROUTE.SANRENPUKU) return PP_RELEASE_COPY.teaser;
-  if (route === PP_ROUTE.PREMIUM_30D) return PP_RELEASE_COPY.teaserPremium30d;
+  if (route === PP_ROUTE.PREMIUM_30D || route === PP_ROUTE.PREMIUM_ADMIN) return PP_RELEASE_COPY.teaserPremium30d;
   return null;
 }
 
@@ -476,6 +492,8 @@ export function resolvePremiumPlusRelease(input) {
     nowMs,
     circuit,
     anchorMode,
+    /** 管理者が UpsellTarget=plus を明示指定しているか（ROUTE C の条件） */
+    adminPlusTarget = false,
   } = input || {};
   // 後方互換: 旧 paidAtMs は Sanrenpuku 購入確定日時
   const sanrenpukuPaidAtMs = input && input.sanrenpukuPaidAtMs !== undefined
@@ -516,6 +534,7 @@ export function resolvePremiumPlusRelease(input) {
     premiumActive: premiumActive === true,
     premiumPaidAtMs,
     nowMs,
+    adminPlusTarget: adminPlusTarget === true,
   });
   if (route === PP_ROUTE.NONE) return denied({ daysSincePremium });
 

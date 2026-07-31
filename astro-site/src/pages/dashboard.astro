@@ -144,6 +144,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                                 <span class="btn-text">三連複を追加</span>
                             </button>
                         </div>
+                        <!-- Premium Plus 導線（UpsellTarget=plus / auto かつ Plus 販売対象のときだけ）。
+                             三連複ブロックとは排他。商品名・価格は書かない（存在秘匿は SSR 側が担当）。 -->
+                        <div class="plan-change-section" id="plus-upsell-section" style="display: none;">
+                            <a class="plan-change-btn" id="plus-upsell-btn" href="/premium-plus-v2/">
+                                <span class="btn-icon">✨</span>
+                                <span class="btn-text">会員限定のご案内を見る</span>
+                            </a>
+                        </div>
                     </div>
 
 
@@ -1033,12 +1041,48 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             const planChangeSection = document.getElementById('plan-change-section');
             const planChangeBtn = document.getElementById('plan-change-btn');
 
-            // 購入CTA は共通 resolver（showPurchaseCta = canPurchaseSanrenpuku）で制御する。判定式を dashboard に再実装しない。
+            // 販売導線は単一源（/api/upsell.json → upsellTarget.js）が決める。
+            // ここでは「三連複」「Premium Plus」「なし」を**排他**で出し分けるだけ。
+            // 判定式（誰に何を売れるか）を dashboard に再実装しない。
+            applyUpsellSections(data);
+        }
+
+        /**
+         * 販売導線の出し分け（三連複 / Premium Plus / なし は排他）。
+         * window.__akUpsellChannel は /api/upsell.json の結果（未取得なら 'unknown'）。
+         * unknown のときは従来どおり三連複側の既存判定に従う（この機能の障害で導線を止めない）。
+         */
+        window.applyUpsellSections = applyUpsellSections;
+        function applyUpsellSections(data) {
+            const planChangeSection = document.getElementById('plan-change-section');
+            const planChangeBtn = document.getElementById('plan-change-btn');
+            const plusSection = document.getElementById('plus-upsell-section');
+            if (!planChangeSection || !planChangeBtn) return;
+            const channel = window.__akUpsellChannel || 'unknown';
+            const d = data || window.__akLastCustomerData || {};
+            window.__akLastCustomerData = d;
+
+            if (plusSection) plusSection.style.display = 'none';
+
+            if (channel === 'none') {
+                // 管理者が「表示しない」を指定：販売導線だけ止める（会員機能は変更しない）
+                planChangeSection.style.display = 'none';
+                return;
+            }
+            if (channel === 'plus') {
+                // Premium Plus だけを出す（三連複ボタンとは同時に出さない）
+                planChangeSection.style.display = 'none';
+                if (plusSection) plusSection.style.display = 'block';
+                return;
+            }
+
+            // sanrenpuku / unknown = 従来どおり
+            // 購入CTA は共通 resolver（showPurchaseCta = canPurchaseSanrenpuku）で制御する。
             if (getClientView().showPurchaseCta) {
                 // 有効な純Premium 会員で三連複未所有：三連複追加ボタン表示（完成条件1）
                 planChangeSection.style.display = 'block';
                 planChangeBtn.innerHTML = '<span class="btn-icon">➕</span><span class="btn-text">三連複を追加</span>';
-            } else if (isLightPlan(data.plan)) {
+            } else if (isLightPlan(d.plan)) {
                 // Light会員（旧 Standard / ライト 含む）：プランアップグレードボタン表示
                 planChangeSection.style.display = 'block';
                 planChangeBtn.innerHTML = '<span class="btn-icon">⬆️</span><span class="btn-text">プランアップグレード</span>';
@@ -5344,5 +5388,17 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
           });
         }
       });
+    </script>
+
+    <!-- 販売導線（三連複 / Premium Plus / なし）の取得。判定はサーバー側の単一源。
+         取得できないとき（未ログイン・API 不在）は 'unknown' のままで従来動作を維持する。 -->
+    <script>
+      import { getUpsellDecision } from '../lib/upsell/upsellClient.js';
+      (async () => {
+        const d = await getUpsellDecision();
+        window.__akUpsellChannel = d.channel;
+        // 会員データ描画より後に確定することがあるので、取得後にもう一度出し分ける
+        if (typeof window.applyUpsellSections === 'function') window.applyUpsellSections();
+      })();
     </script>
 </BaseLayout>

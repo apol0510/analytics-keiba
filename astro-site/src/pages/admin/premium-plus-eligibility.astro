@@ -76,6 +76,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="waiting_30d">ROUTE B 待機中</option>
         <option value="anchor_missing">加入日データなし</option>
       </select>
+      <select id="fUpsell" aria-label="販売CTA で絞り込み">
+        <option value="all">すべての販売CTA</option>
+        <option value="auto">自動</option>
+        <option value="sanrenpuku">三連複</option>
+        <option value="plus">Plus</option>
+        <option value="none">なし</option>
+      </select>
       <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
     </div>
 
@@ -91,6 +98,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <th class="c-plan">プラン</th>
             <th class="c-route">Route</th>
             <th class="c-kind">区分</th>
+            <th class="c-upsell">販売CTA</th>
+            <th class="c-display">実表示</th>
             <th class="c-phase">PHASE</th>
             <th class="c-eligible">販売許可日</th>
             <th class="c-updated">最終更新</th>
@@ -735,8 +744,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (r.phase === 4) return { key: 'sale', badge: 'sale', short: '販売中', order: 2 };
       return { key: 'staged', badge: 'staged', short: 'PHASE ' + r.phase, order: 2 };
     }
-    const ROUTE_SHORT = { sanrenpuku: 'A', premium_30d: 'B', none: '—' };
-    const ROUTE_LABEL = { sanrenpuku: 'A（三連複）', premium_30d: 'B（Premium 30日）', none: '対象外' };
+    const ROUTE_SHORT = { sanrenpuku: 'A', premium_30d: 'B', premium_admin: 'C', none: '—' };
+    const ROUTE_LABEL = {
+      sanrenpuku: 'A（三連複）', premium_30d: 'B（Premium 30日）',
+      premium_admin: 'C（管理者指定）', none: '対象外',
+    };
+
+    // 販売CTA（UpsellTarget）。Function 側 upsellTarget.js の UPSELL_TARGET と対応。
+    // ⚠️ 「何を売るか」の選択であり、販売資格（PremiumPlusEligibility）とは別概念。
+    const UPSELL_LABEL = { auto: '自動', sanrenpuku: '三連複', plus: 'Plus', none: 'なし' };
 
     // 候補区分（表示専用。販売資格ではない）。Function 側 premiumPlusAdminAudience.js の PP_CANDIDATE と対応。
     const KIND_SHORT = {
@@ -764,6 +780,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (fr !== 'all' && r.route !== fr) return false;
       const fk = $('fKind').value;
       if (fk !== 'all' && r.candidateKind !== fk) return false;
+      const fu = $('fUpsell').value;
+      if (fu !== 'all' && (r.upsellTarget || 'auto') !== fu) return false;
       const q = $('q').value.trim().toLowerCase();
       if (q && !String(r.email || '').toLowerCase().includes(q)) return false;
       return true;
@@ -869,6 +887,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (r.candidateNote) kb.title = r.candidateNote;
         cK.appendChild(kb);
         tr.appendChild(cK);
+        // 販売CTA（管理者が設定した値）と 実表示（顧客側で実際に見えるもの）を分けて出す
+        tr.appendChild(td('c-upsell', '販売CTA', UPSELL_LABEL[r.upsellTarget] || '自動',
+          (r.upsellTarget || 'auto') === 'auto' ? 'muted' : ''));
+        const cD = document.createElement('td');
+        cD.className = 'c-display';
+        cD.setAttribute('data-label', '実表示');
+        cD.textContent = r.upsellDisplay || '—';
+        if (r.upsellReason) cD.title = r.upsellReason;
+        if (!r.upsellDisplay || r.upsellDisplay === '表示なし') cD.classList.add('muted');
+        tr.appendChild(cD);
         tr.appendChild(td('c-phase', 'PHASE', String(r.phase)));
         tr.appendChild(td('c-eligible', '販売許可日', fmtDate(r.eligibleAt), r.eligibleAt ? '' : 'muted'));
         tr.appendChild(td('c-updated', '最終更新', fmtDate(r.updatedAt), r.updatedAt ? '' : 'muted'));
@@ -948,6 +976,63 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         info.appendChild(memo);
       }
       body.appendChild(info);
+
+      // ── 販売CTA（UpsellTarget）: 何を売る導線を見せるか ──────────────
+      // ⚠️ 販売資格（下の「通常操作」）とは別概念。ここは「見せる商品の選択」だけ。
+      const upSec = document.createElement('div'); upSec.className = 'dt-sec';
+      const uh = document.createElement('h3'); uh.textContent = '販売CTA'; upSec.appendChild(uh);
+      const uNote = document.createElement('p'); uNote.className = 'muted';
+      uNote.style.margin = '0 0 8px'; uNote.style.fontSize = '0.82rem';
+      uNote.textContent = '顧客に見せる販売導線を 1 つだけ選びます（会員権・販売資格は変わりません）。';
+      upSec.appendChild(uNote);
+
+      const uCur = document.createElement('dl'); uCur.className = 'kv';
+      kvRow(uCur, '現在の設定', UPSELL_LABEL[r.upsellTarget] || r.upsellTarget || '自動');
+      kvRow(uCur, '実表示', r.upsellDisplay || '—');
+      kvRow(uCur, '理由', r.upsellReason || '—', 'muted');
+      upSec.appendChild(uCur);
+
+      const uOps = document.createElement('div'); uOps.className = 'ops';
+      const uRadioName = 'upsell-' + r.recordId;
+      const uButtons = [];
+      for (const [value, label] of Object.entries(UPSELL_LABEL)) {
+        const lab = document.createElement('label');
+        lab.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-right:14px;font-size:0.9rem;';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = uRadioName;
+        radio.value = value;
+        radio.checked = (r.upsellTarget || 'auto') === value;
+        radio.disabled = !data.upsellEnabled;
+        // 三連複保有済みに「三連複」を選ばせない（再購入 CTA は出さない仕様）
+        if (value === 'sanrenpuku' && r.hasSanrenpuku) {
+          radio.disabled = true;
+          lab.title = 'この会員は三連複を保有済みのため選べません';
+        }
+        radio.addEventListener('change', async () => {
+          if (!radio.checked) return;
+          uButtons.forEach((x) => { x.disabled = true; });
+          msg('販売CTA を更新中…');
+          const out = await call({ action: 'setUpsell', recordId: r.recordId, upsellTarget: value });
+          if (out) {
+            msg('販売CTA を「' + (out.upsellTargetLabel || value) + '」に設定しました'
+              + (out.warning ? ' / ⚠️ ' + out.warning : ''), out.warning ? '' : 'ok');
+            await load();
+          }
+          renderDetail();
+        });
+        uButtons.push(radio);
+        lab.appendChild(radio);
+        lab.appendChild(document.createTextNode(label));
+        uOps.appendChild(lab);
+      }
+      upSec.appendChild(uOps);
+      if (!data.upsellEnabled) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ 販売CTA の変更は無効です（Airtable に UpsellTarget を作成し UPSELL_TARGET_FIELD_READY=1 を設定してください）。表示は「自動」として動作します。';
+        upSec.appendChild(w);
+      }
+      body.appendChild(upSec);
 
       const pvSec = document.createElement('div'); pvSec.className = 'dt-sec';
       const h2 = document.createElement('h3'); h2.textContent = '表示確認'; pvSec.appendChild(h2);
@@ -1198,6 +1283,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('q').addEventListener('input', render);
     $('fState').addEventListener('change', render);
     $('fRoute').addEventListener('change', render);
+    $('fUpsell').addEventListener('change', render);
     $('fKind').addEventListener('change', render);
 
     // ══════════════════════════════════════════════════════════════
