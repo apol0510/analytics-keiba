@@ -322,6 +322,42 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </div>
         <p class="camp-desc" id="cbOfferDesc"></p>
       </div>
+
+      <!--
+        発行済み割引オファーの管理（誤発行の取り消し）
+        オファーは「購入条件」であって閲覧権ではないため、取り消しても権限・課金は動かない。
+        無料特典の取り消し（上の「無料特典を取り消す」）とは別経路。
+      -->
+      <div class="campaign-box">
+        <h2>発行済み割引オファー</h2>
+        <p class="offer-note">
+          オファーは<b>購入条件</b>です。取り消しても<b>閲覧権・課金契約・入金状態は変わりません</b>（メールも送信されません）。
+          取り消せるのは <b>issued</b> だけで、<b>申込済み（redeemed）・期限切れ・取り消し済みは変更できません</b>。
+        </p>
+        <div class="toolbar">
+          <button type="button" id="cbOfferLoad" class="btn-ghost">発行済みオファーを読み込む</button>
+        </div>
+        <p class="count" id="cbOfferCount"></p>
+
+        <div class="tablewrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>オファー種別</th>
+                <th>対象</th>
+                <th>期間</th>
+                <th>通常価格</th>
+                <th>オファー価格</th>
+                <th>状態</th>
+                <th>有効期限</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="cbOfferRows"></tbody>
+          </table>
+          <p class="empty" id="cbOfferEmpty" hidden></p>
+        </div>
+      </div>
     </section>
 
     <!-- カムバック特典: dry-run / 取り消し 確認モーダル -->
@@ -2321,6 +2357,137 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       sec3.appendChild(ops);
       body.appendChild(sec3);
     });
+
+    // ── 発行済み割引オファーの取り消し（PromotionalOffers の 1 行だけ）──
+    //   無料特典の取り消し（cbRevokeBtn）とは別経路。権限・課金は 1 バイトも動かない。
+    //   PII / token / TokenHash は API が返さないので、画面にも出ない。
+    const OFFER_STATUS_LABEL = {
+      issued: '発行済み', redeemed: '申込済み', expired: '期限切れ', revoked: '取り消し済み',
+    };
+    const TIER_LABEL = { premium: 'Premium', light: 'Light' };
+    const TERM_LABEL = { annual: '年額', monthly: '月額', lifetime: '買い切り' };
+    const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+
+    async function cbOfferLoad() {
+      cbMsg('発行済みオファーを読み込み中…');
+      const data = await cbCall({ action: 'offerList' });
+      if (!data) return;
+      cbMsg('');
+      const tb = $('cbOfferRows');
+      tb.innerHTML = '';
+      for (const r of (data.rows || [])) {
+        const tr = document.createElement('tr');
+        if (!r.canRevoke) tr.className = 'row-suppressed';
+        tr.appendChild(td('', 'オファー種別', r.offerId));
+        tr.appendChild(td('', '対象', TIER_LABEL[r.targetTier] || r.targetTier));
+        tr.appendChild(td('', '期間', TERM_LABEL[r.billingTerm] || r.billingTerm));
+        tr.appendChild(td('', '通常価格', yen(r.regularPrice)));
+        tr.appendChild(td('', 'オファー価格', yen(r.offerPrice)));
+        tr.appendChild(td('', '状態', OFFER_STATUS_LABEL[r.status] || r.status,
+          r.status === 'issued' ? 'ok-txt' : 'muted'));
+        tr.appendChild(td('', '有効期限', String(r.expiresAt || '').slice(0, 10)));
+
+        const cOps = document.createElement('td');
+        // 誤操作防止: redeemed / expired / revoked にはボタン自体を出さない
+        if (r.canRevoke) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn-ghost';
+          btn.textContent = '取り消す';
+          btn.addEventListener('click', () => cbOfferRevokeStart(r));
+          cOps.appendChild(btn);
+        } else {
+          const sp = document.createElement('span');
+          sp.className = 'muted';
+          sp.textContent = '—';
+          cOps.appendChild(sp);
+        }
+        tr.appendChild(cOps);
+        tb.appendChild(tr);
+      }
+      const c = data.counts || {};
+      $('cbOfferCount').textContent = '合計 ' + (data.total || 0) + ' 件'
+        + '（発行済み ' + (c.issued || 0) + '・申込済み ' + (c.redeemed || 0)
+        + '・期限切れ ' + (c.expired || 0) + '・取り消し済み ' + (c.revoked || 0) + '）'
+        + (data.truncated ? ' ※一部のみ表示' : '');
+      const emp = $('cbOfferEmpty');
+      emp.hidden = (data.rows || []).length > 0;
+      emp.textContent = '発行済みのオファーはありません。';
+    }
+    $('cbOfferLoad').addEventListener('click', cbOfferLoad);
+
+    /** 手順: dry-run（対象確認）→ 最終実行。いきなり書き込まない。 */
+    async function cbOfferRevokeStart(row) {
+      const reason = window.prompt('取り消し理由（管理者メモ・任意）') || '';
+      const plan = await cbCall({
+        action: 'offerRevokeDryRun',
+        offerRecordId: row.offerRecordId,
+        // 対象の取り違えを Function 側でも検証させる
+        operationId: row.operationId,
+        customerRecordId: row.customerRecordId,
+        offerKey: row.offerKey,
+        reason,
+      });
+      if (!plan) return;
+
+      const o = plan.offer || {};
+      const body = cbOpenModal('割引オファーの取り消し');
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, 'オファー種別', o.offerId);
+      kvRow(dl, '対象', TIER_LABEL[o.targetTier] || o.targetTier);
+      kvRow(dl, '期間', TERM_LABEL[o.billingTerm] || o.billingTerm);
+      kvRow(dl, '通常価格', yen(o.regularPrice));
+      kvRow(dl, 'オファー価格', yen(o.offerPrice), 'strong-ok');
+      kvRow(dl, '状態', OFFER_STATUS_LABEL[o.status] || o.status);
+      kvRow(dl, '有効期限', String(o.expiresAt || '').slice(0, 10));
+      kvRow(dl, '操作 ID', o.operationId);
+      kvRow(dl, '書き込む項目', (plan.willWriteFields || []).join(' / '));
+      sec.appendChild(dl);
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = plan.notice || '';
+      sec.appendChild(note);
+      body.appendChild(sec);
+
+      const sec3 = document.createElement('div'); sec3.className = 'dt-sec danger';
+      const h3 = document.createElement('h3'); h3.textContent = '取り消しの実行'; sec3.appendChild(h3);
+      const warn = document.createElement('p'); warn.className = 'note';
+      warn.textContent = '取り消すと専用 URL は使えなくなります。閲覧権・課金契約・入金状態・メールは変わりません。';
+      sec3.appendChild(warn);
+
+      const ops = document.createElement('div'); ops.className = 'ops';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'b-blocked';
+      btn.textContent = 'このオファーを取り消す';
+      btn.addEventListener('click', async () => {
+        if (btn.dataset.busy === '1') return;
+        if (!window.confirm('このオファーを取り消します。よろしいですか？\n（顧客の権限・課金は変わりません）')) return;
+        btn.dataset.busy = '1';
+        btn.disabled = true;
+        btn.textContent = '取り消し中…';
+        const out = await cbCall({
+          action: 'offerRevoke',
+          offerRecordId: o.offerRecordId,
+          operationId: o.operationId,
+          customerRecordId: o.customerRecordId,
+          offerKey: o.offerKey,
+          offerFingerprint: plan.offerFingerprint,  // 状態が動いていたら Function 側が 409 で止める
+          reason,
+        });
+        btn.dataset.busy = '';
+        if (out) {
+          cbMsg(out.notice || 'オファーを取り消しました', 'ok');
+          cbCloseModal();
+          await cbOfferLoad();
+        } else {
+          btn.textContent = '再試行（もう一度 dry-run からやり直してください）';
+          btn.disabled = false;
+        }
+      });
+      ops.appendChild(btn);
+      sec3.appendChild(ops);
+      body.appendChild(sec3);
+    }
 
     // ── 前回操作の突合（read-only）──
     $('cbReconcileBtn').addEventListener('click', async () => {

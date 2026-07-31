@@ -136,3 +136,70 @@ test('画面文言が「権限は変えるがメール・課金は変えない�
   assert.ok(lead.includes('特典専用フィールドだけ'));
   assert.ok(lead.includes('Premium Plus 販売資格は一切変更しません'));
 });
+
+/* ── 発行済み割引オファーの取り消し UI（誤発行の救済） ──────────── */
+
+test('offer 取り消しは一覧 → dry-run → 最終実行の 3 段になっている', () => {
+  for (const id of ['cbOfferLoad', 'cbOfferRows', 'cbOfferCount', 'cbOfferEmpty']) {
+    assert.ok(PAGE.includes(`id="${id}"`), `${id} が無い`);
+  }
+  assert.ok(CB_BLOCK.includes("action: 'offerList'"));
+  assert.ok(CB_BLOCK.includes("action: 'offerRevokeDryRun'"));
+  assert.ok(CB_BLOCK.includes("action: 'offerRevoke'"));
+  // dry-run を経ずに実行できない（fingerprint を必ず渡す）
+  assert.ok(CB_BLOCK.includes('offerFingerprint: plan.offerFingerprint'));
+  // 実行前に確認ダイアログを出す
+  assert.ok(/このオファーを取り消します/.test(CB_BLOCK));
+  // 二重クリック防止
+  const start = CB_BLOCK.indexOf('async function cbOfferRevokeStart');
+  const body = CB_BLOCK.slice(start, CB_BLOCK.indexOf('前回操作の突合', start));
+  assert.ok(body.includes("btn.dataset.busy === '1'"), '二重クリック防止が無い');
+});
+
+test('取り消しボタンは issued にだけ出す（誤操作防止）', () => {
+  assert.ok(CB_BLOCK.includes('if (r.canRevoke)'), 'canRevoke で出し分けていない');
+  // canRevoke が false の行はボタンを作らず「—」を出す
+  const i = CB_BLOCK.indexOf('if (r.canRevoke)');
+  const seg = CB_BLOCK.slice(i, i + 700);
+  assert.ok(seg.includes("textContent = '取り消す'"));
+  assert.ok(seg.includes("sp.textContent = '—'"), 'ボタン以外の代替表示が無い');
+});
+
+test('要求された項目を表示する（種別 / 対象 / 期間 / 通常価格 / offer 価格 / 状態 / 期限）', () => {
+  const pane = PAGE.slice(PAGE.indexOf('発行済み割引オファー'));
+  for (const th of ['オファー種別', '対象', '期間', '通常価格', 'オファー価格', '状態', '有効期限']) {
+    assert.ok(pane.includes(`<th>${th}</th>`), `列 ${th} が無い`);
+  }
+  for (const k of ['offerId', 'targetTier', 'billingTerm', 'regularPrice', 'offerPrice', 'status', 'expiresAt']) {
+    assert.ok(CB_BLOCK.includes(`o.${k}`) || CB_BLOCK.includes(`r.${k}`), `${k} を表示していない`);
+  }
+});
+
+test('PII / token / TokenHash を画面に出さない', () => {
+  const start = CB_BLOCK.indexOf('発行済み割引オファーの取り消し');
+  const raw = CB_BLOCK.slice(start, CB_BLOCK.indexOf('前回操作の突合', start));
+  // 説明コメントで誤検知しないよう、実コードだけを見る
+  const body = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  for (const leak of ['.email', '.Email', 'TokenHash', 'tokenHash', '.token', '氏名', '.name']) {
+    assert.equal(body.includes(leak), false, `${leak} を表示している`);
+  }
+});
+
+test('offer 取り消しは「権限・課金・メールを変えない」と画面で明示する', () => {
+  const pane = PAGE.slice(PAGE.indexOf('発行済み割引オファー'));
+  assert.ok(pane.includes('購入条件'));
+  assert.ok(/閲覧権・課金契約・入金状態は変わりません/.test(pane));
+  assert.ok(/メールも送信されません/.test(pane));
+  assert.ok(/申込済み（redeemed）・期限切れ・取り消し済みは変更できません/.test(pane));
+});
+
+test('無料特典の取り消し（grant）と混同していない', () => {
+  // 既存の grant revoke はそのまま残っている
+  assert.ok(CB_BLOCK.includes("action: 'revokeDryRun'"));
+  assert.ok(CB_BLOCK.includes("action: 'revoke', tiers"));
+  // offer 取り消しは tiers を送らない
+  const start = CB_BLOCK.indexOf('async function cbOfferRevokeStart');
+  const body = CB_BLOCK.slice(start, CB_BLOCK.indexOf('前回操作の突合', start));
+  assert.equal(body.includes('tiers'), false, 'offer 取り消しに tiers が混ざっている');
+  assert.equal(body.includes('recordIds'), false, 'offer 取り消しに顧客 recordIds が混ざっている');
+});
