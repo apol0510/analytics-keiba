@@ -36,7 +36,14 @@ const projectRoot = join(__dirname, '..');
 // src/utils から正規化関数をインポート
 import { normalizeAndAdjust, isHorseNameBroken } from '../src/utils/normalizePrediction.js';
 // 2026-06-19: computer→racebook の真コンピ指数注入を race-scoped 馬番主キーで行う共通 helper
-import { buildRaceScopedComputerMap, injectSourceComputerIndexRaceScoped, assertInjectionSafe } from './lib/computerIndexMatch.mjs';
+import {
+  buildRaceScopedComputerMap,
+  injectSourceComputerIndexRaceScoped,
+  assertInjectionSafe,
+  classifyInjectionProblems,
+  parseRaceNumber,
+  toHorseNumber,
+} from './lib/computerIndexMatch.mjs';
 
 // メインレース10点ロジック + 通常レース本命軸双方向1行ロジック（共通モジュール）
 // 🔧 2026-05-18: 通常レース買い目を CLAUDE.md 仕様の generateRaceUmatanLines（双方向 ↔ 1行）に統一。
@@ -179,6 +186,159 @@ function injectSourceComputerIndex(sharedJSON, venueMap) {
 }
 
 /**
+ * stale read 吸収用の bounded retry 設定（2026-07-31）。
+ *
+ * 上限は「会場ごとの dispatch が連続したときの GitHub Contents API 伝播遅れ」を吸収する
+ * のに足りる範囲へ意図的に限定する。無制限 retry は禁止。
+ *   - 再取得は最大 3 回（初回含め最大 4 回取得）
+ *   - 待機は 5s → 10s → 20s、累計 35s を超えない
+ * 後続 dispatch が来ることを前提に成功扱いすることはしない。上限に達しても解消しなければ
+ * 従来どおり assertInjectionSafe で FAIL させる。
+ */
+export const STALE_JOIN_RETRY = Object.freeze({
+  maxRetries: 3,
+  backoffMs: Object.freeze([5000, 10000, 20000]),
+  maxTotalWaitMs: 35000,
+});
+
+/**
+ * 突合に使う key 空間（racebook / computer 双方の 会場・R・馬番）の短い指紋を作る。
+ * 再取得で実際に取得内容が変わったかをログで判別するための診断用。
+ * 秘密値・token・raw response は一切含めない（会場名 / R / 馬番のみを digest 化）。
+ */
+function computeJoinFingerprint(sharedJSON, venueMap) {
+  const parts = [];
+  const venues = Array.isArray(sharedJSON?.venues) ? sharedJSON.venues : (sharedJSON ? [sharedJSON] : []);
+  for (const v of venues) {
+    const venueName = v?.venue || v?.name || v?.track || '';
+    for (const r of (v?.races || [])) {
+      const rn = parseRaceNumber(r.raceNumber ?? r.raceInfo?.raceNumber);
+      const nums = (r.horses || [])
+        .map(h => toHorseNumber(h.horseNumber ?? h.number))
+        .filter(n => n != null)
+        .sort((a, b) => a - b);
+      parts.push(`RB|${venueName}|${rn}|${nums.join(',')}`);
+    }
+  }
+  if (venueMap) {
+    for (const [venueName, raceMap] of venueMap.entries()) {
+      for (const [rn, per] of raceMap.entries()) {
+        const nums = [...per.byNumber.keys()].sort((a, b) => a - b);
+        parts.push(`CP|${venueName}|${rn}|${nums.join(',')}`);
+      }
+    }
+  }
+  parts.sort();
+  return crypto.createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 12);
+}
+
+/**
+ * 予想本体（predictions → racebook）と computer JSON を取得し、真コンピ指数を注入して
+ * 安全条件を検証する。GitHub Contents API の結果整合性による一過性の不一致だけを
+ * bounded retry で吸収する。
+ *
+ * retry する条件（stale read で説明できる場合のみ）:
+ *   a. computer は見えているのに racebook 本体がまだ 1 件も見えない
+ *   b. 注入結果の問題が uncoveredHighCi のみ（ambiguous を伴わない）
+ *
+ * retry しない条件:
+ *   - ambiguous（computer ファイル内の馬番重複）= 単一ファイル内の実欠陥 → 即 FAIL
+ *   - racebook も computer も無い通常の未投入日 → 従来どおり skip
+ *
+ * retry は毎回 racebook / computer を再取得し、注入と安全条件を最初から再検証する
+ * （sleep だけで成功扱いにはしない）。上限到達後も解消しなければ従来どおり throw。
+ *
+ * @returns {Promise<{sharedJSON: object, stats: object|null}|null>} データ未投入なら null
+ */
+export async function resolveSharedJsonWithComputerIndex(date, category = 'jra', client = sharedClient, options = {}) {
+  const {
+    maxRetries = STALE_JOIN_RETRY.maxRetries,
+    backoffMs = STALE_JOIN_RETRY.backoffMs,
+    maxTotalWaitMs = STALE_JOIN_RETRY.maxTotalWaitMs,
+    sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  } = options;
+
+  let waitedMs = 0;
+  let prevFingerprint = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const base = backoffMs[Math.min(attempt - 1, backoffMs.length - 1)] ?? 0;
+      const wait = Math.max(0, Math.min(base, maxTotalWaitMs - waitedMs));
+      console.warn(`⏳ [STALE-RETRY] ${date}: ${wait}ms 待機して再取得します（${attempt}/${maxRetries} 回目）`);
+      await sleepImpl(wait);
+      waitedMs += wait;
+    }
+
+    // 優先順位1: predictions（従来） / 優先順位2: racebook（race-data-importer保存データ）
+    let sharedJSON = await fetchSharedPrediction(date, category, client);
+    if (!sharedJSON) {
+      console.log(`📡 [IMPORT] racebook配下をチェック`);
+      sharedJSON = await fetchRacebookData(date, category, client);
+    }
+
+    // computer JSON を併読みして sourceComputerIndex を注入（2026-05-14 追加）
+    const computerSourceMap = await buildSourceComputerIndexMap(date, category, client);
+    const hasComputer = !!(computerSourceMap && computerSourceMap.size > 0);
+
+    const fingerprint = computeJoinFingerprint(sharedJSON, computerSourceMap);
+    if (attempt > 0) {
+      const changed = fingerprint === prevFingerprint ? '変化なし' : '変化あり';
+      console.log(`   🔁 [STALE-RETRY] 取得内容 fingerprint=${fingerprint}（前回 ${prevFingerprint} / ${changed}）`);
+    }
+    prevFingerprint = fingerprint;
+
+    const canRetry = attempt < maxRetries && waitedMs < maxTotalWaitMs;
+
+    // (a) computer だけ見えて racebook が 1 件も無い → stale の疑い。再取得する。
+    //     上限到達後の最終挙動は従来どおり skip（成功終了）で据え置く＝契約変更なし。
+    if (!sharedJSON) {
+      if (hasComputer && canRetry) {
+        console.warn(`⚠️ [STALE-RETRY] ${date}: computer は取得できたが racebook 本体が 0 件。stale read の疑いがあるため再取得します`);
+        continue;
+      }
+      if (hasComputer) {
+        console.warn(`⚠️ [STALE-RETRY] ${date}: ${maxRetries} 回再取得しても racebook 本体が 0 件のままでした（computer のみ存在）。`);
+      }
+      return null;
+    }
+
+    // computer が無い日は従来どおり注入・検証をスキップ（既存挙動維持）
+    if (!hasComputer) return { sharedJSON, stats: null };
+
+    const stats = injectSourceComputerIndex(sharedJSON, computerSourceMap);
+    const verdict = classifyInjectionProblems(stats);
+
+    if (verdict.ok) {
+      if (attempt > 0) {
+        console.log(`✅ [STALE-RETRY] ${date}: ${attempt} 回目の再取得で突合が整合しました（一過性の stale read）`);
+      }
+      return { sharedJSON, stats };
+    }
+
+    // (b) uncoveredHighCi のみ → stale の疑い。再取得して最初から再検証する。
+    if (verdict.staleSuspect && canRetry) {
+      console.warn(
+        `⚠️ [STALE-RETRY] ${date}: 未対応ci≥45 が ${verdict.uncovered} 件。` +
+        `racebook 側の可視性遅れの疑いがあるため再取得して再判定します`
+      );
+      continue;
+    }
+
+    // ambiguous を含む場合、または上限到達 → 従来どおり fail-closed
+    if (!verdict.staleSuspect) {
+      console.error(`❌ [STALE-RETRY] ${date}: stale read では説明できない不整合（馬番重複 ${verdict.ambiguous} 件）のため再取得せず中止します`);
+    } else {
+      console.error(`❌ [STALE-RETRY] ${date}: ${attempt} 回の再取得後も未対応ci≥45 が ${verdict.uncovered} 件のため中止します`);
+    }
+    assertInjectionSafe(stats, { label: `IMPORT-JRA ${date}` });
+  }
+
+  // 到達しない（ループ内で必ず return / throw する）が、無言成功を防ぐための保険
+  throw new Error(`[IMPORT-JRA ${date}] 突合の再取得が上限に達しました（内部エラー）`);
+}
+
+/**
  * keiba-data-sharedからracebook JSONを取得（JRA用）
  */
 export async function fetchRacebookData(date, category = 'jra', client = sharedClient) {
@@ -277,28 +437,18 @@ export async function fetchRacebookData(date, category = 'jra', client = sharedC
 export async function importPrediction(date, venue = 'jra', client = sharedClient) {
   console.log(`\n━━━ ${date} 中央競馬予想データ取り込み開始 ━━━`);
 
-  // 優先順位1: predictions（従来）
-  let sharedJSON = await fetchSharedPrediction(date, venue, client);
-
-  // 優先順位2: racebook（race-data-importer保存データ）
-  if (!sharedJSON) {
-    console.log(`📡 [IMPORT] racebook配下をチェック`);
-    sharedJSON = await fetchRacebookData(date, venue, client);
-  }
+  // 取得（predictions → racebook）+ computer 併読み + 真コンピ指数注入 + 安全アサート。
+  // 【2026-05-14】computer JSON 併読みで sourceComputerIndex を注入
+  // 【2026-06-19】race-scoped 馬番主キー注入 + 安全アサート（真ci>=45の未対応/馬番重複なら import を FAIL）
+  // 【2026-07-31】GitHub Contents API の結果整合性による一過性不一致のみ bounded retry で吸収
+  const resolved = await resolveSharedJsonWithComputerIndex(date, venue, client);
 
   // 予想データがない場合はスキップ
-  if (!sharedJSON) {
+  if (!resolved) {
     console.log(`⏭️  予想データがないため、スキップします`);
     return null;
   }
-
-  // 【2026-05-14 追加】computer JSON を併読みして sourceComputerIndex を注入
-  // 【2026-06-19】race-scoped 馬番主キー注入 + 安全アサート（真ci>=45の未対応/馬番重複なら import を FAIL）
-  const computerSourceMap = await buildSourceComputerIndexMap(date, venue, client);
-  if (computerSourceMap && computerSourceMap.size > 0) {
-    const stats = injectSourceComputerIndex(sharedJSON, computerSourceMap);
-    assertInjectionSafe(stats, { label: `IMPORT-JRA ${date}` });
-  }
+  const sharedJSON = resolved.sharedJSON;
 
   // 複数会場対応：venues配列がある場合
   if (sharedJSON.venues && Array.isArray(sharedJSON.venues)) {

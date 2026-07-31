@@ -4,7 +4,7 @@
  * AK のテスト規約（node + assert、CI は check:safety 集約）に従う。
  */
 import assert from 'node:assert';
-import { buildRaceScopedComputerMap, injectSourceComputerIndexRaceScoped, normalizeHorseName, parseRaceNumber, toHorseNumber, assertInjectionSafe } from './computerIndexMatch.mjs';
+import { buildRaceScopedComputerMap, injectSourceComputerIndexRaceScoped, normalizeHorseName, parseRaceNumber, toHorseNumber, assertInjectionSafe, classifyInjectionProblems } from './computerIndexMatch.mjs';
 import { isHorseNameBroken } from '../../src/utils/normalizePrediction.js';
 import { isIneligibleHorse } from '../../src/utils/osaeClassification.js';
 
@@ -194,6 +194,27 @@ t('14. assertInjectionSafe: 健全なら通過', () => {
   const shared = { venues: [rbVenue('阪神', [{ rn: 11, horses: [{ number: 8, name: 'ポールセン', role: '補欠' }] }])] };
   const stats = injectSourceComputerIndexRaceScoped(shared, map, { isNameBroken: isHorseNameBroken });
   assert.doesNotThrow(() => assertInjectionSafe(stats));
+});
+
+// 15. classifyInjectionProblems: 健全 / stale 疑い / 実欠陥 の 3 分類
+t('15. classifyInjectionProblems: 健全は ok・retry 対象外', () => {
+  const v = classifyInjectionProblems({ ambiguous: 0, uncoveredHighCi: [] });
+  assert.deepStrictEqual(v, { ok: true, staleSuspect: false, uncovered: 0, ambiguous: 0 });
+});
+
+t('16. classifyInjectionProblems: uncoveredHighCi のみは staleSuspect', () => {
+  const v = classifyInjectionProblems({ ambiguous: 0, uncoveredHighCi: [{ ci: 60 }, { ci: 50 }] });
+  assert.strictEqual(v.ok, false);
+  assert.strictEqual(v.staleSuspect, true, 'racebook 側の可視性遅れは再取得で解消しうる');
+  assert.strictEqual(v.uncovered, 2);
+});
+
+t('17. classifyInjectionProblems: ambiguous を含むと staleSuspect にしない（即FAIL対象）', () => {
+  const onlyDup = classifyInjectionProblems({ ambiguous: 1, uncoveredHighCi: [] });
+  assert.strictEqual(onlyDup.ok, false);
+  assert.strictEqual(onlyDup.staleSuspect, false);
+  const both = classifyInjectionProblems({ ambiguous: 1, uncoveredHighCi: [{ ci: 60 }] });
+  assert.strictEqual(both.staleSuspect, false, '馬番重複を伴う場合は再取得で救済しない');
 });
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`);

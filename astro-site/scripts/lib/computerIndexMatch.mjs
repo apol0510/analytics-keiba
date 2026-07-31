@@ -219,3 +219,30 @@ export function assertInjectionSafe(stats, opts = {}) {
     );
   }
 }
+
+/**
+ * 注入 stats の問題を「再取得で解消しうるか」で分類する純関数（throw しない）。
+ *
+ * 背景（2026-07-31 一過性 FAIL）:
+ *   会場ごとの dispatch が短時間に連続すると、GitHub Contents API の結果整合性により
+ *   racebook 側だけが computer 側より遅れて見えることがある（2026-07-31 08:43 の run では
+ *   racebook 一覧に札幌1件しか現れず、直後に読んだ computer には中京/新潟が既に存在した）。
+ *   この状態では中京/新潟の全高 ci 馬が uncoveredHighCi となり、実データは正常なのに FAIL する。
+ *
+ * 分類基準:
+ *   - uncoveredHighCi のみ → racebook 側の可視性・内容が遅れている可能性がある（staleSuspect）。
+ *     一定回数だけ再取得して再判定してよい。解消しなければ従来どおり FAIL（fail-closed）。
+ *   - ambiguous（同一 computer ファイル内の馬番重複）→ ファイルは commit 単位で原子的であり、
+ *     再取得しても内容は変わらない。stale read では説明できない実データ欠陥なので即 FAIL。
+ *
+ * ここでは推測補完・閾値変更・強制注入を一切行わない（判定のみ）。
+ *
+ * @param {object} stats injectSourceComputerIndexRaceScoped の戻り値
+ * @returns {{ok:boolean, staleSuspect:boolean, uncovered:number, ambiguous:number}}
+ */
+export function classifyInjectionProblems(stats) {
+  const uncovered = Array.isArray(stats?.uncoveredHighCi) ? stats.uncoveredHighCi.length : 0;
+  const ambiguous = Number(stats?.ambiguous) > 0 ? Number(stats.ambiguous) : 0;
+  const ok = uncovered === 0 && ambiguous === 0;
+  return { ok, staleSuspect: !ok && ambiguous === 0 && uncovered > 0, uncovered, ambiguous };
+}
