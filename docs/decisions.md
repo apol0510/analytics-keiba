@@ -8,6 +8,75 @@
 
 ---
 
+## 2026-07-31 — JRA import の突合ゲートに stale read 限定の bounded retry を採用
+
+### Status
+
+Accepted
+
+### Context
+
+会場ごとの `prediction-updated` dispatch が短時間に連続すると、GitHub Contents API の結果整合性により
+**racebook 側だけが computer 側より遅れて見える**ことがある。この状態では実データが正常でも
+`assertInjectionSafe` が偽 FAIL する。
+
+実測（いずれも run ログが一次証拠）:
+
+| 日時 (UTC) | run | racebook 一覧の見え方 | 結果 |
+|---|---|---|---|
+| 2026-07-31 08:43:10 | `30617261216` | 札幌 1 件のみ | ❌ 未対応ci≥45 **266 件** で FAIL |
+| 2026-07-31 08:44:57 | `30617330461` | 中京・新潟・札幌 3 件 | ✅ 未対応 0 件で成功 |
+
+同型の FAIL は再発性がある（`30154336778` = 2026-07-26 分 123 件 / `30080087999` = 2026-07-25 分 121 件 /
+`29731809670` = 274 件）。さらに `29638377662`（2026-07-18）は **racebook 3 会場すべてが一覧に出ていた**にも
+かかわらず 19 件が未対応で、内訳は 小倉R9 #9-#18・小倉R12 #10-#14・函館R4 #14-#16 と**レース内の末尾馬番**に偏っていた。
+現在の shared では同レースの racebook / computer の頭数は一致している（小倉R9 = 18/18 等）。
+すなわち staleness は**一覧レベル（会場ファイルが見えない）だけでなく、内容レベル（古い版のファイルが返る）**でも起きる。
+
+いずれのケースも実データは最終的に整合しており、後続 dispatch の run が同じ入力で成功している。
+
+### Decision
+
+`assertInjectionSafe` の判定基準・閾値は**変更しない**。代わりに、
+「stale read で説明できる問題」に限って **racebook / computer を再取得して突合を最初からやり直す**
+bounded retry を JRA import に入れる。
+
+- 分類は純関数 `classifyInjectionProblems(stats)`（`scripts/lib/computerIndexMatch.mjs`）に切り出す。
+  - `uncoveredHighCi` のみ → `staleSuspect = true`（再取得対象）
+  - `ambiguous`（同一 computer ファイル内の馬番重複）を含む → `staleSuspect = false`。
+    **ファイルは commit 単位で原子的なので再取得しても内容は変わらない**＝実欠陥。retry せず即 FAIL。
+- retry 本体は `resolveSharedJsonWithComputerIndex()`（`scripts/importPredictionJra.js`）。
+  再取得は **最大 3 回**、待機は **5s → 10s → 20s（累計上限 35s）**。無制限 retry は禁止。
+- retry は毎回 racebook と computer を**両方**取り直し、注入と安全条件を最初から再検証する
+  （sleep だけで成功扱いにはしない）。一覧レベル・内容レベルどちらの staleness も同じ経路で吸収される。
+- **上限に達しても解消しなければ、従来と同一の例外・同一のメッセージで FAIL させる（fail-closed）。**
+  後続 dispatch が来ることを前提に成功扱いすることはしない。
+- 診断のため、取得内容の key 空間（会場・R・馬番のみ）の 12 桁 digest を再取得ごとにログへ出す。
+  raw response / token / Authorization は出さない。
+
+### Consequences
+
+- 一過性の可視性ズレでは import が落ちなくなる。正常時の追加コストは 0（retry 0 回）。
+- 真の不整合（馬番が対応しない・馬番重複）は従来どおり FAIL する。閾値も補完も変えていないため、
+  真コンピ指数>=45 の馬を黙って不要馬化する経路は増えない。
+- 最悪ケースで import が最大 35 秒延びる。
+- **「computer は存在するが racebook が 0 件」は FAIL へ変更した**（従来は skip = 成功終了）。
+  根拠: `importPredictionJra.js` を起動するのは `import-on-dispatch.yml` だけであり
+  （日次 cron `import-prediction-daily.yml` が呼ぶのは南関の `import:prediction`）、
+  その起動元は admin の**ペア揃いガードを通過した `prediction-updated`** か手動 `workflow_dispatch` である。
+  ペア揃いガードは racebook と computer の両方が shared に存在するときだけ dispatch するため、
+  再取得を尽くしてなお computer だけが見える状態は**構造上あり得ない＝異常**。
+  ここを成功終了にすると、その日の JRA 予想が緑のまま取り込まれない silent miss になる。
+  直近 14 run の実測でも JRA の import が skip 経路に入った例は無い。
+- **racebook も computer も無い通常の未投入日は従来どおり skip（成功終了）で据え置く。**
+  手動 `workflow_dispatch` の日付誤りや非開催日を赤くしないため。
+  computer ディレクトリはあるが対象日ファイルが 0 件の場合も同様に skip。
+- 南関 `importPrediction.js` は `assertInjectionSafe` を呼んでいないため対象外（本判断は JRA のみ）。
+- keiba-data-shared-admin 側の dispatch 設計は変更していない。AK 側の再取得だけで
+  一覧・内容の両 staleness を吸収できることをテストで固定したため。
+
+---
+
 ## 2026-07-20 — 自律完遂運用のための正本ドキュメント基盤を採用
 
 ### Status

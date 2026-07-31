@@ -115,6 +115,32 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
 
 > 以下はいずれも **観測時点（各見出しの日付）のスナップショット**であり、恒久仕様ではない。作業前に必ず現物を再確認すること。
 
+### 2026-07-31: JRA import の stale read 偽 FAIL 恒久対策（Draft PR）
+
+**ブランチ**: `fix/jra-import-stale-read-retry`（`origin/main` = `aa3ac39` から分岐・未 merge / 未 deploy）
+
+- **事象**: 2026-08-01 の JRA prediction import が run `30617261216` で FAIL
+  （`真コンピ指数>=45 の racebook 未対応 266 件`）。1 分 47 秒後の run `30617330461` は
+  同じ入力で成功（3 会場 36R・`sourceComputerIndex` 欠落 0・不要馬 0）。
+  **データ側は正常で、2026-08-01 の再保存・再 import は行っていない。**
+- **原因**: 会場ごとの dispatch 連続時に GitHub Contents API の結果整合性で racebook 側だけが遅れて見える。
+  失敗 run の racebook 一覧は札幌 1 件のみ、直後に読んだ computer には中京/新潟が既に存在した。
+- **対策**: `classifyInjectionProblems()` で stale 由来（`uncoveredHighCi` のみ）と実欠陥（`ambiguous`）を分離し、
+  stale 由来だけ **最大 3 回 / 累計 35 秒**の再取得＋再判定で吸収。上限到達後は従来と同一メッセージで FAIL。
+  詳細は `docs/decisions.md` の 2026-07-31 エントリ。
+- **追加判断（2026-07-31）**: 「computer は存在するが racebook 0 件」が再取得を尽くしても解消しない場合は
+  **skip（成功終了）ではなく FAIL** へ変更した。`importPredictionJra.js` の起動元は
+  `import-on-dispatch.yml`（ペア揃いガード通過後の `prediction-updated` / 手動 `workflow_dispatch`）だけで、
+  日次 cron `import-prediction-daily.yml` は南関の `import:prediction` を呼ぶ。よってこの状態は構造上あり得ず、
+  成功終了にすると当日の JRA 予想が緑のまま未取込になる。
+  racebook も computer も無い通常の未投入日は従来どおり skip で据え置き。
+- **検証**: `check:jra-stale-retry`（新設・13 件）と `check:jra-join`（17 件へ拡張）を `check:safety` に配線。
+  `check:safety` exit 0 / `npm run build` exit 0。
+- **未実施（停止境界）**: PR merge / `workflow_dispatch` / production deploy / shared PUT。
+- **付随して判明した既存の不備（本タスクでは修正しない）**:
+  - `npm run lint` は `eslint.config.*` が存在せず ESLint v9 で実行不能（origin/main 由来）。
+  - `npm run typecheck`（`astro check`）は `@astrojs/check` が依存に無く対話インストールを要求する。
+
 ### 2026-07-30: Premium Plus 管理画面の表示漏れ修正 → 顧客マーケティング管理 Draft
 
 **ブランチ**: `fix/premium-plus-admin-review-candidates`（`origin/main` = `ba0dbc4` から分岐・未 deploy）
