@@ -902,6 +902,7 @@ npm run import:results:jra
 npm run check:no-raw-index     # JSX に {horse.computerIndex} を直接出力していないか
 npm run check:display-index    # 全 predictions で 表示指数 == raw-1
 npm run check:horse-sections   # 全レースで 合計 == 出走頭数（不要馬セクション維持）
+npm run check:free-mask        # 無料版のモザイクが実際にぼける（gradient 文字で blur が無効化されない）
 npm run test:pricing-tiers     # /pricing/ のプラン別出し分け（Light 乗り換え価格の露出防止）
 npm run test:bank-payment      # 銀行振込 申込/入金確認フロー（入金前に昇格しない）
 npm run test:marketing         # 顧客マーケティング（対象判定/キャンペーン/送信計画・実送信なし）
@@ -919,7 +920,14 @@ npm run verify:safety          # build → check:safety（push 前推奨）
 1. **指数表示は必ず raw − 1**
    - `horse.computerIndex` / `horse.sourceComputerIndex` を JSX に直接埋めるのは禁止
    - 必ず `getDisplayComputerIndex` / `formatDisplayComputerIndex` 経由
-2. **全レースプレビューで全頭が分類される**
+2. **無料版のモザイクは「描画されて」初めてマスク**
+   - `.stat-score` / `.stat-index` の gradient 文字（`background-clip: text` +
+     `-webkit-text-fill-color: transparent`）の中では、子要素に `filter: blur()` を掛けても
+     **親が同じ文字をクリップ描画するため鮮明な文字が残る**（2026-07-31 本番不具合）
+   - マスク時は親に `stat-value-masked` を付け、gradient 文字を無効化する
+     （`.stat-value.stat-value-masked` の 2 クラスで上書き。同詳細度だと定義順依存になる）
+   - 検証: `npm run check:free-mask`（markup だけでなく打ち消し CSS の有無まで検査）
+3. **全レースプレビューで全頭が分類される**
    - 本命 / 対抗 / 単穴 / 連下 / 抑え / 不要馬 のいずれかに必ず分類
    - 表示合計 = 出走頭数
    - 不要馬セクションが消えないこと
