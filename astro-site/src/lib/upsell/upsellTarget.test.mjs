@@ -28,6 +28,9 @@ import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolve
 import { resolvePlusMemberFromFields } from '../premiumPlus/premiumPlusMember.js';
 import { resolvePremiumPlusRelease } from '../premiumPlus/premiumPlusRelease.js';
 import { planSanrenpukuDisplay } from '../sanrenpuku/sanrenpukuCtaStage.js';
+import { buildPreviewSnapshot } from '../premiumPlus/premiumPlusPreview.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const DAY = 24 * 60 * 60 * 1000;
 /** 2026-08-03 10:00 JST（受付時間内 = intake open） */
@@ -422,4 +425,97 @@ test('describeUpsellDisplay は設定値ではなく実表示を返す', () => {
     describeUpsellDisplay(view({ ...PREMIUM, ...IMMEDIATE }, { target: 'plus', dayNo: 9, nowMs: closed })),
     /受付時間外/,
   );
+});
+
+// ══ 管理プレビューが顧客側と同じ判定になっていること ══════════════════
+//
+// 一覧・顧客ページ・プレビューで UpsellTarget の判定がズレると、
+// 「管理画面では出ないのに顧客には出る（またはその逆）」が起きる。
+// プレビューは buildPreviewSnapshot 経由でも **同じ resolver** を通ることを固定する。
+
+test('23. preview が UpsellTarget を反映する（plus + eligibility 未設定 / review → Plus CTA）', () => {
+  for (const [label, extra] of [['未設定', {}], ['review', { PremiumPlusEligibility: 'review' }]]) {
+    const fields = { ...PREMIUM, ...extra, UpsellTarget: 'plus' };
+    const p = buildPreviewSnapshot({ fields, nowMs: NOW });
+    assert.equal(p.ok, true);
+    assert.equal(p.preview.upsellChannel, UPSELL_CHANNEL.PLUS, `${label}: preview の channel が違う`);
+    assert.equal(p.preview.route, 'premium_admin', `${label}: route が premium_admin でない`);
+    assert.equal(p.preview.showProductPage, true, `${label}: 商品ページが出ない`);
+    assert.equal(p.preview.showPurchaseCta, true, `${label}: 購入 CTA が出ない`);
+    assert.equal(p.preview.adminSaleDirective, true);
+    assert.equal(p.preview.productPageStatus, 200);
+    // eligibility の値は書き換えない（表示のためにデータを触らない）
+    assert.equal(p.preview.eligibility, 'review');
+  }
+});
+
+test('24. preview: plus + blocked → Plus 表示不可', () => {
+  const fields = { ...PREMIUM, PremiumPlusEligibility: 'blocked', UpsellTarget: 'plus' };
+  const p = buildPreviewSnapshot({ fields, nowMs: NOW });
+  assert.equal(p.preview.upsellChannel, UPSELL_CHANNEL.NONE);
+  assert.equal(p.preview.showPurchaseCta, false);
+  assert.equal(p.preview.showProductPage, false);
+  assert.equal(p.preview.productPageStatus, 404);
+});
+
+test('25. preview: Free / Light / 期限切れ Premium + plus → Plus 表示不可', () => {
+  for (const [label, base] of [['Light', LIGHT], ['Free', FREE],
+    ['期限切れ Premium', { ...PREMIUM, '有効期限': '2026-01-01' }]]) {
+    const p = buildPreviewSnapshot({ fields: { ...base, UpsellTarget: 'plus' }, nowMs: NOW });
+    assert.equal(p.preview.upsellChannel, UPSELL_CHANNEL.NONE, `${label}: Plus を出している`);
+    assert.equal(p.preview.showPurchaseCta, false, `${label}: 購入 CTA が出ている`);
+  }
+});
+
+test('26. preview: sanrenpuku / none 指定では Plus を出さない', () => {
+  const srp = buildPreviewSnapshot({ fields: { ...PREMIUM, UpsellTarget: 'sanrenpuku' }, nowMs: NOW });
+  assert.equal(srp.preview.upsellChannel, UPSELL_CHANNEL.SANRENPUKU);
+  assert.equal(srp.preview.showTeaser, false, 'Plus 予告が出ている');
+  assert.equal(srp.preview.showPurchaseCta, false);
+  assert.equal(srp.preview.sanrenpukuAllowed, true);
+
+  const none = buildPreviewSnapshot({ fields: { ...PREMIUM, ...IMMEDIATE, UpsellTarget: 'none' }, nowMs: NOW });
+  assert.equal(none.preview.upsellChannel, UPSELL_CHANNEL.NONE);
+  assert.equal(none.preview.showPurchaseCta, false);
+  assert.equal(none.preview.sanrenpukuAllowed, false);
+});
+
+test('27. preview と顧客側 resolver の結論が一致する（auto / plus / sanrenpuku / none × 資格）', () => {
+  const cases = [];
+  for (const target of [undefined, 'auto', 'plus', 'sanrenpuku', 'none']) {
+    for (const [label, extra] of [
+      ['eligibility 未設定', {}],
+      ['review', { PremiumPlusEligibility: 'review' }],
+      ['eligible', { PremiumPlusEligibility: 'eligible' }],
+      ['blocked', { PremiumPlusEligibility: 'blocked' }],
+      ['即時販売', IMMEDIATE],
+    ]) {
+      for (const [tier, base] of [['Premium', PREMIUM], ['三連複保有', SRP_HOLDER],
+        ['Light', LIGHT], ['Free', FREE]]) {
+        cases.push([`${tier}/${label}/${target ?? '未設定'}`,
+          target === undefined ? { ...base, ...extra } : { ...base, ...extra, UpsellTarget: target }]);
+      }
+    }
+  }
+  assert.ok(cases.length >= 80, 'ケース数が少なすぎる');
+  for (const [label, fields] of cases) {
+    const customer = resolveUpsellForCustomer({ fields, nowMs: NOW });
+    const p = buildPreviewSnapshot({ fields, nowMs: NOW });
+    assert.equal(p.ok, true, `${label}: preview が組み立てられない`);
+    assert.equal(p.preview.upsellChannel, customer.channel, `${label}: channel が不一致`);
+    assert.equal(p.preview.showPurchaseCta, customer.plus.showPurchaseCta, `${label}: showPurchaseCta が不一致`);
+    assert.equal(p.preview.showProductPage, customer.plus.showProductPage, `${label}: showProductPage が不一致`);
+    assert.equal(p.preview.showTeaser, customer.plus.showTeaser, `${label}: showTeaser が不一致`);
+    assert.equal(p.preview.purchaseEnabled, customer.plus.purchaseEnabled, `${label}: purchaseEnabled が不一致`);
+    assert.equal(p.preview.upsellDisplay, describeUpsellDisplay(customer), `${label}: 実表示ラベルが不一致`);
+  }
+});
+
+test('28. preview は Airtable へ書き込む形を一切持たない（read-only）', () => {
+  const src = readFileSync(fileURLToPath(new URL('../premiumPlus/premiumPlusPreview.js', import.meta.url)), 'utf8');
+  assert.equal(/method:\s*['"](POST|PATCH|PUT|DELETE)['"]/i.test(src), false, '書き込みメソッドがある');
+  assert.equal(/api\.airtable\.com/.test(src), false, 'Airtable を直接呼んでいる');
+  // フラグ導出を再実装していない（単一源を共有している）
+  assert.ok(/resolvePlusAdminFlags/.test(src), 'フラグ導出の単一源を使っていない');
+  assert.equal(/adminPlusAuthorized:\s*(true|target)/.test(src), false, 'フラグ導出を再実装している');
 });
