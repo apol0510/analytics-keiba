@@ -194,8 +194,8 @@ test('preview は選んだ特典から文面を生成し、送信しない', asy
     action: 'preview', ...FULL,
   }));
   assert.equal(status, 200);
-  assert.match(body.body, /Light プランを \*\*無期限で無料\*\*/);
-  assert.match(body.body, /Premium プランを \*\*30日間 無料\*\*/);
+  assert.match(body.body, /Light プランを無期限で無料/);
+  assert.match(body.body, /Premium プランを30日間 無料/);
   assert.match(body.notice, /送信しません/);
   assert.equal(store.mailCalls, 0);
   assert.equal(store.writes.length, 0);

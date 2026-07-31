@@ -19,6 +19,7 @@ import {
 } from './campaignCatalog.js';
 import { computeCampaignContentHash } from './campaignSend.js';
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
+import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 
 const REQUIRED_KEYS = [
   'campaignId', 'version', 'name', 'description', 'subject', 'body',
@@ -53,10 +54,59 @@ test('要望された初期キャンペーンがすべて存在する（停止�
 
 test('CTA URL は本番 URL ルールに従う（analytics.keiba.jp / netlify.app 禁止）', () => {
   for (const c of usable()) {
-    assert.ok(c.ctaUrl.startsWith('https://analytics.keiba.link/'), `${c.campaignId}: ${c.ctaUrl}`);
+    // 受信者ごとの申込 URL を使うキャンペーンは、送信直前に差し替える印だけを持つ。
+    // （URL 自体は台帳から生成され、生成側で SITE が固定されている）
+    if (c.requiresOfferUrl === true) {
+      assert.equal(c.ctaUrl, OFFER_URL_PLACEHOLDER,
+        `${c.campaignId}: 受信者ごとの URL は差し込み印だけを置くこと`);
+    } else {
+      assert.ok(c.ctaUrl.startsWith('https://analytics.keiba.link/'), `${c.campaignId}: ${c.ctaUrl}`);
+    }
     assert.equal(c.ctaUrl.includes('analytics.keiba.jp'), false);
     assert.equal(c.ctaUrl.includes('netlify.app'), false);
   }
+});
+
+test('受信者ごとの URL が要るキャンペーンは、URL 無しでは描画できない（fail closed）', () => {
+  const c = getCampaign('comeback-offer');
+  assert.ok(c, 'comeback-offer が送信経路から取得できない');
+  assert.equal(c.requiresOfferUrl, true);
+  // 本文に書いた条件（突合に使う）が揃っている
+  assert.equal(c.offerId, 'premium-annual-half');
+  assert.ok(Number.isInteger(c.offerPrice) && c.offerPrice > 0);
+  assert.ok(Number.isInteger(c.regularPrice) && c.regularPrice > c.offerPrice);
+
+  // キュー登録時点の描画では印が残る（dispatcher が差し替える前提）
+  const queued = renderCampaign({ campaign: c, name: 'テスト' });
+  assert.ok(queued, 'キュー登録用の描画に失敗');
+  assert.ok(queued.html.includes(OFFER_URL_PLACEHOLDER), '差し込み印が消えている');
+
+  // 実際の URL を渡すと解決され、印は残らない
+  const real = 'https://analytics.keiba.link/offer/?t=' + 'a'.repeat(32) + '.' + 'b'.repeat(32);
+  const sent = renderCampaign({ campaign: c, name: 'テスト', offerUrl: real });
+  assert.ok(sent);
+  assert.ok(sent.html.includes(real), '実 URL が入っていない');
+  assert.equal(sent.html.includes(OFFER_URL_PLACEHOLDER), false, '印が残っている');
+  assert.ok(sent.text.includes(real));
+
+  // 印が消えたテンプレート（設定ミス）は URL 無しで描画できない
+  const broken = { ...c, ctaUrl: 'https://analytics.keiba.link/pricing/' };
+  assert.equal(renderCampaign({ campaign: broken, name: 'テスト' }), null,
+    '汎用 URL へフォールバックして送れてしまう');
+
+  // URL 自体に差し込みが残っていたら送らない
+  assert.equal(renderCampaign({ campaign: c, name: 'テスト', offerUrl: 'https://x/{{t}}' }), null);
+});
+
+test('通常のキャンペーンは差し込み印を持てない（誤って未解決 URL を配らない）', () => {
+  for (const c of CAMPAIGNS) {
+    if (c.requiresOfferUrl === true) continue;
+    assert.equal(String(c.ctaUrl || '').includes(OFFER_URL_PLACEHOLDER), false,
+      `${c.campaignId}: requiresOfferUrl でないのに差し込み印がある`);
+  }
+  // requiresOfferUrl でないキャンペーンに印を入れても描画できない
+  const bad = { ...getCampaign('expired-comeback'), ctaUrl: OFFER_URL_PLACEHOLDER };
+  assert.equal(renderCampaign({ campaign: bad, name: 'テスト' }), null);
 });
 
 // ── 使用可否（本番化前レビューの結論を固定）──────────────────────
@@ -90,7 +140,7 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
   const all = listCampaigns({ includeDisabled: true });
   assert.equal(all.length, CAMPAIGNS.length);
   const off = all.filter((c) => !c.usable);
-  assert.equal(off.length, 3, '停止中の本数が想定と違う');
+  assert.equal(off.length, 2, '停止中の本数が想定と違う');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に停止理由が無い`);
   for (const c of all.filter((x) => x.usable)) assert.equal(c.disabledReason, null);
 });
@@ -109,10 +159,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'premium-plus-offer': { version: 2, hash: '267556b6e0164a72' },
     'dormant-reactivation': { version: 2, hash: '72d0595d176a4819' },
     'general-announcement': { version: 1, hash: '41c37e1db8127b2f' },
-    // カムバック案内（下書き / enabled=false）。本文は offer から自動生成する
-    // （comebackEmailTemplate.js）。**一度も送信していない**ため、生成ロジックを直したときは
-    // version を据え置いたままハッシュだけ更新してよい。有効化後は通常どおり version を上げる。
-    'comeback-offer': { version: 1, hash: 'bd591839d2068aa3' },
+    // カムバック割引案内。本文は offer カタログから自動生成する（comebackEmailTemplate.js）。
+    // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
+    // v1（下書き・grant 版 / 一度も送信していない）→ v2（割引 + 専用 URL）へ改版。
+    'comeback-offer': { version: 2, hash: '4c836f28efbdf1d7' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
@@ -212,13 +262,19 @@ test('未解決の差し込みが残る本文は描画しない（fail closed）
 });
 
 test('描画結果は subject / html / text をそろえて返す', () => {
+  const REAL_OFFER_URL = 'https://analytics.keiba.link/offer/?t=' + 'a'.repeat(32) + '.' + 'b'.repeat(32);
   for (const c of CAMPAIGNS) {
-    const r = renderCampaign({ campaign: c, name: 'テスト' });
+    // 受信者ごとの URL が要るものは、実 URL を与えた状態が「送信される形」
+    const offerUrl = c.requiresOfferUrl === true ? REAL_OFFER_URL : undefined;
+    const r = renderCampaign({ campaign: c, name: 'テスト', offerUrl });
     assert.ok(r, `${c.campaignId} の描画に失敗`);
     assert.equal(r.subject, c.subject);
-    assert.ok(r.html.includes(c.ctaUrl), 'HTML に CTA が無い');
-    assert.ok(r.text.includes(c.ctaUrl), 'テキストに CTA が無い');
+    const expectedCta = offerUrl || c.ctaUrl;
+    assert.ok(r.html.includes(expectedCta), 'HTML に CTA が無い');
+    assert.ok(r.text.includes(expectedCta), 'テキストに CTA が無い');
+    // 送信される形には差し込みが 1 つも残らない
     assert.equal(r.html.includes('{{'), false);
+    assert.equal(r.text.includes('{{'), false);
   }
 });
 

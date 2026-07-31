@@ -34,18 +34,24 @@ function termLabel(term) {
   return '';
 }
 
-/** 無料権利 1 件の説明行 */
+/**
+ * 無料権利 1 件の説明行。
+ *
+ * ⚠️ `**強調**` のような記法を使わない。本文はプレーンテキストとして
+ *    そのまま HTML へ埋め込まれる（`renderCampaign` は Markdown を解釈しない）ので、
+ *    アスタリスクが**そのまま顧客に見える**。
+ */
 function grantLine(offer) {
   const tier = offer.targetTier === PROMO_TIER.LIGHT ? 'Light プラン' : 'Premium プラン';
-  if (offer.isLifetime) return `・${tier}を **無期限で無料** でご利用いただけます`;
-  return `・${tier}を **${offer.duration}日間 無料** でご利用いただけます`;
+  if (offer.isLifetime) return `・${tier}を無期限で無料でご利用いただけます`;
+  return `・${tier}を${offer.duration}日間 無料でご利用いただけます`;
 }
 
-/** 割引 1 件の説明行 */
+/** 割引 1 件の説明行（同上・記法を使わない） */
 function purchaseLine(offer) {
   const t = termLabel(offer.term);
-  return `・Premium プラン（${t}）を 通常 ${yen(offer.regularPrice)} のところ `
-    + `**${yen(offer.offerPrice)}** でご利用いただけます`;
+  return `・Premium プラン（${t}）を、通常 ${yen(offer.regularPrice)} のところ `
+    + `${yen(offer.offerPrice)} でご利用いただけます`;
 }
 
 /**
@@ -72,17 +78,22 @@ export function buildComebackEmailContent({ grantOffers, purchaseOffer, offerUrl
       : `【KEIBA Analytics】${lead.targetTier === PROMO_TIER.LIGHT ? 'Light' : 'Premium'}プランを${lead.duration}日間 無料でご利用いただけます`)
     : '【KEIBA Analytics】Premium プランの特別価格のご案内';
 
+  // 受信者の契約状態を**断定しない**書き出しにする。
+  // 「ご利用いただきありがとうございました」は解約済みの人には自然だが、
+  // 三連複買い切り（LifetimeSanrenpuku）のように**今も有効な権利を持つ人**が読むと
+  // 「自分の権利が終わった」と誤読される。案内の対象は契約状態ではなく
+  // 「このオファーをお送りした方」なので、そう書く。
   const lines = [
     '{{salutation}}',
     '',
-    'KEIBA Analytics をご利用いただきありがとうございました。',
+    'KEIBA Analytics をご利用いただきありがとうございます。',
     '',
-    'ご利用いただいていた頃から、その後も継続的に改善を重ねてまいりました。',
+    'その後も継続的に改善を重ねてまいりました。',
     '本命・対抗・単穴の選定ロジックと買い目の組み方を見直し、',
     '前日の有料メインレース買い目と結果は、当たった日も外した日も毎日公開しています。',
     '',
-    '現在の KEIBA Analytics を改めてお試しいただきたく、',
-    'お客様にはこちらをご用意しました。',
+    '改めて現在の KEIBA Analytics をお試しいただきたく、',
+    'ご案内をお送りしました。',
     '',
   ];
 
@@ -96,7 +107,9 @@ export function buildComebackEmailContent({ grantOffers, purchaseOffer, offerUrl
   }
   if (purchase) {
     lines.push('');
+    lines.push('これはご案内であり、この時点ではお申し込みもお支払いも発生していません。');
     lines.push('特別価格でのお申し込みは、お客様専用のご案内ページからお進みください。');
+    lines.push('ご利用開始は、お振込の確認が取れた後に改めてご連絡いたします。');
     if (offerExpiresText) lines.push(`（${offerExpiresText} までにお手続きください）`);
   }
 
