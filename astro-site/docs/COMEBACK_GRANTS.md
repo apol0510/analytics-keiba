@@ -509,6 +509,160 @@ Light と Premium の無料権利は**同じ Customers レコードの別フィ�
 
 ---
 
+## 9-2. E-5（実顧客への初回配信）の判断資料 — 2026-07-31 実測
+
+E-5 ＝ §9 手順 8・9 に相当する「**実顧客へ割引オファーを発行し、案内メールを送る**」段階。
+**この節は実行前の判断資料**であり、記載の実行手順は**MK の承認を得てから**着手する。
+下記の数値は 2026-07-31 17:48 JST に**本番データを read-only で取得**したもの
+（Customers / `PromotionalOffers` / `CampaignDeliveries` / `EmailBlacklist` の GET と
+SendGrid suppression の GET のみ。書き込み・送信はゼロ）。
+
+### 母集団（本番実測 / 全 1,446 名）
+
+| 契約状態 | 人数 | プラン区分 | 人数 |
+|---|---|---|---|
+| `none`（Free） | 1,356 | free | 1,356 |
+| **`expired`** | **70** | premium | 53 |
+| `active` | 18 | premium_sanrenpuku | 21 |
+| `expiring_soon` | 2 | light | 16 |
+
+### 第一候補 `contract=expired`（70 名）の内訳
+
+| 項目 | 件数 |
+|---|---|
+| expired 総数 | **70** |
+| うち `WithdrawalRequested=true`（退会＝課金停止） | 31 |
+| うち 非退会 | 39 |
+| marketing sendable | **70**（suppression 0 件） |
+| unsubscribed / blacklist / suspended / test / メール不正・未登録 | **すべて 0** |
+| SendGrid `provider_suppressed` | **0**（全体では 62 件・うち 44 件は Free 層） |
+| soft bounce | 0 |
+| 頻度ガード `recent_marketing_contact`（24h） | 0 |
+| `already_delivered`（comeback-offer:v2） | 0 |
+| 有効な issued offer 保有 | 0 |
+| redeemed / revoked offer 履歴 | 0 / 0 |
+| promotional grant（無料特典）保有 | 0 |
+| `LifetimeSanrenpuku=true` | **0** |
+| 三連複を閲覧できる状態（`canViewSanrenpuku`） | 0 |
+| Premium Plus `eligible` | 0 |
+| `RequestedPlan` / `RequestedPlanType` / `RequestedAmount` あり | 0 |
+| `PaymentConfirmed=true` | 0 |
+| 有効な有料契約（`paidPremiumActive` / `paidLightActive`） | 0 / 0 |
+| `checkOfferable` = true | **70**（block 0） |
+| **最終 candidate** | **70** |
+
+プラン区分の内訳: premium 42 / premium_sanrenpuku 18 / light 10。
+期限切れからの経過日数: 0–30日 6 / 31–90日 11 / 91–180日 20 / 181–365日 33（1年超 0）。
+氏名は **70 名すべてに登録あり**（`{{salutation}}` が「お客様」に落ちない）。
+
+> ⚠️ プラン欄が `Premium Sanrenpuku` の 18 名も **`LifetimeSanrenpuku` フラグは false** で、
+> 現時点で三連複を閲覧できる者は 0 名。したがって本配信で
+> 「買い切り三連複の権利を失効させたと誤読される」リスクは**構造的に発生しない**
+> （フラグ保有者 1 名は `active` で candidate に含まれない）。
+
+### セグメント比較（なぜ expired なのか）
+
+| | セグメント | 人数 | 判定 |
+|---|---|---|---|
+| A | expired 全体 | 70 | ○ |
+| B | expired かつ sendable（退会者含む） | 70 | ○（A と同一） |
+| C | expired から契約・offer・申込途中・権利競合を除いた安全 subset | **70** | **○（A・B と完全一致）** |
+| D | contract `none`（Free 1,356） | — | **対象外**。有料契約の実績が無く「カムバック」ではない。suppression 52 件・provider 44 件が混ざり、初回配信のバウンス率を無意味に上げる |
+| E | plan `light`（16） | — | 対象外。うち 6 名は **有効な Light 契約**。期限切れ分は既に A に含まれる |
+| F | plan `premium`（53） | — | 対象外。うち 11 名は**有効な Premium 契約**。有効契約者へ年額半額を送ると既存契約の値引き要求・二重契約になる |
+| G | plan `premium_sanrenpuku`（21） | — | 対象外。3 名は有効契約・3 名は Premium Plus eligible。期限切れ分は A に含まれる |
+
+**A / B / C が完全一致したため、除外ロジックの選択は結果に影響しない。**
+「メール送信可能」と「この商品を売って安全」の 2 判定を別々に評価しても、
+今回はどちらも同じ 70 名になる。
+
+### offer 発行 dry-run（本番 `admin-comeback-grants` / 書き込み 0）
+
+- `action:'dryRun'` / `premiumOfferId:'premium-annual-half'` / recordIds 70 件
+- 結果: **selected 70 / willOffer 70 / willGrant 0 / skipped 0 / `sideEffects:'none'`**
+- `partSkips` 空（duplicate / ambiguous / already_offered / contract conflict / Requested* conflict /
+  PaymentConfirmed conflict / pricing mismatch すべて 0）
+- preview 全件で **`before` == `after`**（＝閲覧権は 1 ミリも増えない。仕様どおり）
+- gate: `fieldsReady` / `offerTableReady` / `writeEnabled` / `offerTokenReady` すべて true
+- **Customers write 0 / `PromotionalOffers` write 0 / grant 0 / メール 0**
+- `operationId` と `planFingerprint` は**実行直前に取り直す**（時間が経つと 409 で止まる設計）
+
+### campaign 想定 dry-run
+
+- **本番 `admin-marketing` の実 dry-run（offer 未発行の現状）**: selected 70 / **excluded 70
+  （全件 `offer_missing`）/ willSend 0**。`sendEnabled=false` / `dispatchEnabled=false`。
+  SendGrid suppression 取得は成功（62 件）＝ fail closed が空振りしていない。**これは正常**
+  （オファー発行 → URL 確定 → 送信の順序が構造的に守られている証拠）
+- **オファー発行後を想定したローカル再現**（本番の `buildCampaignPlan` に、発行済みと同じ形の
+  台帳行を合成して投入）: **willSend 70 / excluded 0**（suppression・頻度・重複・
+  contract・offer conflict すべて 0）
+- 配信キューは 1 ジョブ（`RECIPIENTS_PER_JOB=100`）、上限 `MAX_RECIPIENTS_PER_SEND=500`
+
+### 案内メール（本番コードから取得・`comeback-offer` v2）
+
+件名: `【KEIBA Analytics】Premium プランの特別価格のご案内`
+CTA: `特別価格の詳細を見る` → **受信者ごとの `/offer/?t=…`**（本文中は `{{offerUrl}}`、
+`marketing-campaign-dispatch` が 1 通ずつ差し替える）
+
+確認済み: ¥49,800 → ¥24,900（年額・50%OFF）/ `/pricing/` `/login/` へのフォールバック無し /
+個人名署名なし / `**` 記法なし / 「申込済み」「支払済み」「利用開始済み」と誤認させる表現なし /
+「ご利用開始は、お振込の確認が取れた後に」明記 / 三連複を含む既存権利を否定する記述なし。
+
+### 推奨（1 案）
+
+**`contract=expired` の 70 名へ `premium-annual-half`（¥49,800 → ¥24,900 / 年額）を、
+管理画面の絞り込みを使った 2 波で配信する。**
+
+| Wave | 対象（管理画面の絞り込み） | 人数 | タイミング |
+|---|---|---|---|
+| 1 | `contract=expired` × `退会=いいえ` | 39 | 承認後すぐ |
+| 2 | `contract=expired` × `退会=はい` | 31 | Wave 1 の delivered / bounce / complaint を確認した翌日以降 |
+
+- 70 名は 1 回で送れる規模だが、**初回の実顧客配信**であり、バウンス率・苦情率を
+  一度確認してから残りへ広げる。波の切り方を「退会の有無」にすると
+  **管理画面のフィルタだけで再現でき、手作業で行を選ばない**（誤選択事故を構造的に防ぐ）
+- 3 波以上に刻む価値は無い（母数 70・除外 0）。売上機会を無意味に遅らせない
+- 各 Wave で「offer 発行 dry-run → apply → campaign dry-run → 送信」を**その Wave 分だけ**行う
+  （オファーの有効期限は発行から 14 日なので、送らない分を先に発行しない）
+
+### E-5 で実際に発生する production write
+
+| 対象 | 内容 | 備考 |
+|---|---|---|
+| `PromotionalOffers` | Wave ごとに N 行 upsert（`OfferKey` 一意） | 権利は増えない。生トークンは apply 応答にのみ現れる |
+| `ScheduledEmails` | Wave ごとに 1 ジョブ（PENDING） | `CreatedBy='admin-marketing'` |
+| `CampaignDeliveries` | Wave ごとに N 行（`queued` → `sent`） | 冪等キー `DeliveryKey` |
+| Netlify env | `MARKETING_CAMPAIGN_ENABLED` → `MARKETING_CAMPAIGN_DISPATCH_ENABLED` の順に `true` | **変更のたびに Build Hook で redeploy**。終了後に**両方 unset して再閉鎖** |
+| **Customers** | **write 0** | 申込が来た時に `offer-application` が `Requested*` を書くのは**顧客の行動由来**であり、この配信の副作用ではない |
+
+`NEWSLETTER_AUTOMATION_ENABLED` は **触らない**（現在 `false`）。マーケティング送信は
+専用ゲート（`marketingDispatchGate.js`）で完全に独立しており、既存メール経路を解禁しない。
+
+### rollback（E-5）
+
+| 事象 | 対処 |
+|---|---|
+| 送信前に中止 | env を unset（`MARKETING_CAMPAIGN_DISPATCH_ENABLED` → `MARKETING_CAMPAIGN_ENABLED`）→ redeploy。キュー済みジョブは送信されない |
+| 誤発行した offer | 管理画面「発行済み割引オファー」から 1 件ずつ取り消し（§5-3）。Customers は不変 |
+| 発行そのものを緊急停止 | `COMEBACK_GRANT_ENABLED` を unset → redeploy（**取り消しは引き続き可能**） |
+| **送信済みメール** | **取り消せない**（唯一の不可逆。だから Wave 1 を先に確認する） |
+
+### 未解決（送信前に判断が要る 1 点）
+
+**案内メールに申込期限が書かれていない。** オファーの有効期限は発行から
+`DEFAULT_OFFER_TTL_DAYS = 14` 日で、期限後に `/offer/?t=…` は内容を返さない（fail closed）。
+本文へ期限行を入れるには `campaignCatalog` の version を 3 へ上げ、LOCKED ハッシュを更新して
+**deploy が必要**になる。今回は次のいずれかを選ぶ:
+
+1. **（推奨）v2 のまま送り、期限切れ後に申込希望が来た相手には個別に再発行する**
+   （dry-run → apply を 1 名分。数分の作業で、送信前の追加 deploy が要らない）
+2. 本文に期限を明記する（version 3 + ハッシュ更新 + deploy を E-5 の前段に足す）
+
+管理画面からの発行は TTL 14 日固定（UI は `offerTtlDays` を送らない）。
+延ばす場合は Function を直接呼ぶ必要がある（`MAX_OFFER_TTL_DAYS=90`）。
+
+---
+
 ## 10. 関連ファイル
 
 | 目的 | ファイル |
