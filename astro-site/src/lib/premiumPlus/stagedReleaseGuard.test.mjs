@@ -351,10 +351,35 @@ test('override: 3 面（premium-plus / premium-plus-v2 / stage API）が同じ�
 
 test('override: eligibility を迂回できない優先順位になっている', () => {
   const code = stripComments(RELEASE_LIB);
+  // blocked は最優先で打ち切る（override でも管理者の明示指定でも免除しない）
+  const iBlocked = code.indexOf('normalizedEligibility === PP_ELIGIBILITY.BLOCKED');
   const iElig = code.indexOf('normalizedEligibility !== PP_ELIGIBILITY.ELIGIBLE');
   const iOverride = code.indexOf('overrideApplied =');
-  assert.ok(iElig >= 0 && iOverride > iElig, 'override 判定が eligibility ゲートより前にある');
-  assert.match(code, /overrideApplied \? PP_PHASE\.SALE : computePhase/);
+  assert.ok(iBlocked >= 0, 'blocked の打ち切りが無い');
+  assert.ok(iElig > iBlocked, 'blocked より先に eligible 判定をしている');
+  assert.ok(iOverride > iElig, 'override 判定が eligibility ゲートより前にある');
+  // review / 未設定を免除できるのは **管理者の明示指定（UpsellTarget=plus）だけ**。
+  // override（今すぐ販売可）では免除しない＝ auto の意味を変えない。
+  assert.match(code, /const adminSaleDirective = adminPlusAuthorized === true;/);
+  assert.match(code, /!adminSaleDirective && normalizedEligibility !== PP_ELIGIBILITY\.ELIGIBLE/);
+  assert.doesNotMatch(code, /overrideApplied[^\n]*\|\|[^\n]*normalizedEligibility/,
+    'override が eligibility を迂回している');
+  // phase の即時化は override か明示指定のときだけ
+  assert.match(code, /\(overrideApplied \|\| adminSaleDirective\)\s*\n?\s*\? PP_PHASE\.SALE\s*\n?\s*: computePhase/);
+});
+
+test('明示指定（UpsellTarget=plus）は Airtable の eligibility 値を書き換えない', () => {
+  // resolver は判定上そう扱うだけ。フィールドへ書く経路はこのモジュールに存在しない。
+  const code = stripComments(RELEASE_LIB);
+  assert.doesNotMatch(code, /method:\s*['"]PATCH['"]/i);
+  assert.doesNotMatch(code, /api\.airtable\.com/);
+  // 管理 Function 側も eligibility を書かない（setUpsell は UpsellTarget 1 列のみ）
+  const fn = stripComments(ADMIN_FN);
+  const start = fn.indexOf('async function handleSetUpsell');
+  const end = fn.indexOf('async function handlePreview');
+  assert.ok(start > 0 && end > start);
+  const body = fn.slice(start, end);
+  assert.doesNotMatch(body, /PP_ELIGIBILITY_FIELDS/, 'setUpsell が販売資格フィールドを触っている');
 });
 
 test('override: 日時の偽装で実現していない（EligibleAt / SanrenpukuPaidAt を書き換えない）', () => {

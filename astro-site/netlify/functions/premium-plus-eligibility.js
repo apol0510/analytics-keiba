@@ -337,8 +337,11 @@ async function handleSetUpsell({ KEY, BASE, now, req }) {
   const currentFields = (await getRes.json()).fields || {};
   const before = readUpsellTarget(currentFields);
 
-  // 三連複を保有済みの相手に sanrenpuku を指定しても CTA は出ない（再購入 CTA を出さない仕様）。
-  // 設定自体は拒否しないが、管理者へ必ず知らせる。
+  // 設定は拒否しないが、**本当に表示されない場合だけ**理由を返す。
+  //   - 三連複を保有済みの相手に sanrenpuku を指定した（再購入 CTA を出さない仕様）
+  //   - blocked / Free・Light / 契約無効で Plus を出せない
+  // ⚠️ 「eligibility が未設定 / review」は警告にしない。UpsellTarget=plus の明示指定自体が
+  //    管理者の販売許可として扱われるため（二重操作をなくす）。
   const preview = resolveUpsellForCustomer({ fields: { ...currentFields, [UPSELL_TARGET_FIELD]: next }, nowMs: now });
   const warning = next === UPSELL_TARGET.SANRENPUKU && preview.entitlements.canViewSanrenpuku === true
     ? 'この会員は三連複を保有済みのため、三連複 CTA は表示されません（再購入 CTA は出しません）'

@@ -492,8 +492,17 @@ export function resolvePremiumPlusRelease(input) {
     nowMs,
     circuit,
     anchorMode,
-    /** 管理者が UpsellTarget=plus を明示指定しているか（ROUTE C の条件） */
+    /** 管理者が Plus を売ると決めているか（ROUTE C の条件。UpsellTarget=plus / 今すぐ販売可）*/
     adminPlusTarget = false,
+    /**
+     * 管理者が **販売導線として Plus を明示指定**しているか（`UpsellTarget=plus` のみ）。
+     * これは「Plus を売る」という管理者判断そのものなので、
+     *   - `PremiumPlusEligibility` が review / 未設定でも先へ進める（二重操作をなくす）
+     *   - 段階公開（PHASE 1→4）を待たずに販売中として扱う
+     * ⚠️ `blocked` は免除しない。Free / Light / 契約無効も免除しない（route で落ちる）。
+     * ⚠️ Airtable の `PremiumPlusEligibility` を書き換えることは**しない**（判定上の扱いだけ）。
+     */
+    adminPlusAuthorized = false,
   } = input || {};
   // 後方互換: 旧 paidAtMs は Sanrenpuku 購入確定日時
   const sanrenpukuPaidAtMs = input && input.sanrenpukuPaidAtMs !== undefined
@@ -523,6 +532,7 @@ export function resolvePremiumPlusRelease(input) {
     purchaseEnabled: false,
     intake: null,
     circuit: resolvedCircuit,
+    adminSaleDirective: false,
     ...over,
   });
 
@@ -538,9 +548,17 @@ export function resolvePremiumPlusRelease(input) {
   });
   if (route === PP_ROUTE.NONE) return denied({ daysSincePremium });
 
-  // STEP 3: 販売資格。eligible 以外は段階公開へ進めない（fail closed）
-  // ⚠️ override があっても review / blocked は必ずここで打ち切る。
-  if (normalizedEligibility !== PP_ELIGIBILITY.ELIGIBLE) {
+  // STEP 3: 販売資格。
+  // ⚠️ blocked は**何があっても**ここで打ち切る（明示指定でも override でも免除しない）。
+  if (normalizedEligibility === PP_ELIGIBILITY.BLOCKED) {
+    return denied({ route, daysSincePremium });
+  }
+  // 管理者が販売導線として Plus を明示指定しているときは、review / 未設定でも先へ進める。
+  // 「販売CTA=Plus を選ぶ」こと自体が管理者の販売許可であり、
+  // 別途 PremiumPlusEligibility=eligible を設定させる二重操作をなくすため。
+  // 明示指定が無い（auto / sanrenpuku / none）ときは従来どおり eligible 必須（fail closed）。
+  const adminSaleDirective = adminPlusAuthorized === true;
+  if (!adminSaleDirective && normalizedEligibility !== PP_ELIGIBILITY.ELIGIBLE) {
     return denied({ route, daysSincePremium });
   }
 
@@ -551,8 +569,14 @@ export function resolvePremiumPlusRelease(input) {
 
   // STEP 5: phase
   // eligible かつ有効な phase4 override があるときだけ段階公開を飛ばす。
+  // `PremiumPlusReleaseOverride=phase4`（既存の「今すぐ販売可」）は従来どおり。
+  // 管理者の明示指定（UpsellTarget=plus）も同じく段階公開を飛ばして販売中として扱う。
+  // ⚠️ overrideApplied は **Airtable のフィールド由来のときだけ** true（管理一覧の「即時販売」表示を
+  //    変えないため）。明示指定は adminSaleDirective として別に返す。
   const overrideApplied = normalizedOverride === PP_RELEASE_OVERRIDE.PHASE4;
-  const phase = overrideApplied ? PP_PHASE.SALE : computePhase({ paidAtMs: anchorMs, nowMs });
+  const phase = (overrideApplied || adminSaleDirective)
+    ? PP_PHASE.SALE
+    : computePhase({ paidAtMs: anchorMs, nowMs });
 
   // STEP 6: 受付ステータス
   const isSale = phase === PP_PHASE.SALE;
@@ -564,6 +588,8 @@ export function resolvePremiumPlusRelease(input) {
     eligibility: normalizedEligibility,
     releaseOverride: normalizedOverride,
     overrideApplied,
+    /** 管理者が販売導線として Plus を明示指定した結果、販売中として扱っているか */
+    adminSaleDirective,
     anchorMs,
     phase,
     daysSincePurchase: isFiniteNumber(anchorMs) ? jstDayDiff(anchorMs, nowMs) : null,
