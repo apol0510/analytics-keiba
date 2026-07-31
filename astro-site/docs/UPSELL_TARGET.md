@@ -75,14 +75,32 @@ dismiss は従来どおり localStorage で管理する。
 
 ### `plus`
 
-- 三連複の予告・CTA を**すべて出さない**
-- 有効 Premium / 三連複保有（Sanrenpuku・Combo）等、Plus の対象ティアへ表示する
-- **`PaidAt` から 30 日という条件だけを理由に塞がない**。
-  管理者が `plus` を明示指定した有効 Premium 会員は **ROUTE C（`premium_admin`）**として販売対象になる
-  （`PaidAt` は 2026-07-10 の入金確認フロー刷新以降しか書かれず、旧会員は構造的に空のため）
-- 一方で以下は**維持する**（明示指定でも免除しない）:
-  未ログイン fail closed / Free・Light への誤表示防止 / `blocked` / 受付時間（intake）/
-  `purchaseEnabled` / phase・release override / 商品ページ 404（存在秘匿）
+**「販売CTA = Premium Plus」を選ぶこと自体が、管理者による販売許可**です。
+別途 `PremiumPlusEligibility=eligible` を設定させる**二重操作をなくす**ため、
+`plus` の明示指定は次の 2 つを免除します。
+
+| 免除するもの | 理由 |
+|---|---|
+| `PremiumPlusEligibility` が **review / 未設定** | 「plus を選んだ」= 管理者が売ると決めた、と解釈する |
+| 段階公開の phase 進行（PHASE 1→4 待ち） | 同上。指定した時点で販売中として扱う |
+| `PaidAt` から 30 日（ROUTE B の条件） | `PaidAt` は 2026-07-10 の入金確認フロー刷新以降しか書かれず旧会員は構造的に空。<br>明示指定時は **ROUTE C（`premium_admin`）**として販売対象になる |
+
+**免除しないもの（必ず維持）**:
+
+- **`PremiumPlusEligibility=blocked`**（明示指定でも override でも**常に表示不可**）
+- **Free / Light**（対象ティアでない）
+- **Premium 契約が無効**（期限切れの通常 Premium は勝手に売らない）
+- 未ログイン fail closed / 受付時間（intake）・`purchaseEnabled` / 二重購入防止 /
+  商品ページ 404（存在秘匿）/ 三連複の同時表示禁止
+
+⚠️ **`UpsellTarget=plus` にしても Airtable の `PremiumPlusEligibility` は書き換えません。**
+resolver 上で「管理者の販売許可」として扱うだけで、既存データはそのまま保持します
+（`resolvePremiumPlusRelease` の戻り値 `adminSaleDirective` で区別でき、
+`overrideApplied` は従来どおり `PremiumPlusReleaseOverride` フィールド由来のときだけ true）。
+
+⚠️ **`auto` の意味は変えていません。** `auto` では従来どおり
+`PremiumPlusEligibility` / `PremiumPlusReleaseOverride` / route による自動判定を使い、
+review / 未設定なら Plus を出しません。免除は**明示指定のときだけ**です。
 
 ### `none`
 
@@ -126,6 +144,12 @@ dismiss は従来どおり localStorage で管理する。
 
 > 「設定した値」と「顧客側で実際に何が見えるか」を必ず区別して表示する。
 > 設定しても表示されない場合は理由を出す（空振りの操作をさせない）。
+
+**警告を出す条件**は「本当に表示できないとき」だけです（`blocked` / Free・Light /
+契約無効 / 三連複を保有済みなのに `sanrenpuku` を指定）。
+**`eligibility` が未設定・review であることを理由にした警告は出しません**
+（`plus` の明示指定がそのまま販売許可になるため）。原則として一覧の
+「販売CTA」と「実表示」は一致します。
 
 ## 7. Airtable フィールド（**未作成 / 承認待ち**）
 

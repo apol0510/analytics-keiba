@@ -656,6 +656,9 @@ Premium 会員に「三連複」と「Premium Plus」を**同時に見せない*
   （`resolveUpsellForCustomer` / `resolveUpsellDisplay`）。ページ側に条件を再実装しない
 - 明示指定でも**各商品固有の権限条件は再評価**する（保有済みへ三連複 CTA を出さない・
   blocked へ Plus を出さない・Free/Light へ出さない・受付時間外は購入不可）
+- **`plus` の明示指定＝管理者の販売許可**。`PremiumPlusEligibility` が review / 未設定でも
+  Plus を出す（二重操作をなくす）。ただし **`blocked` は常に不可**で、Airtable の
+  eligibility 値は**書き換えない**。`auto` の判定は従来どおり（免除は明示指定のときだけ）
 - 書き込みは `UpsellTarget` **1 列だけ**。課金・権限フィールドは 1 バイトも書かない。
   gate は `UPSELL_TARGET_FIELD_READY=1`（**未設定なら 503**・既定 OFF）
 

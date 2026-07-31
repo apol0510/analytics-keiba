@@ -227,11 +227,16 @@ export function resolveUpsellForCustomer({ fields, nowMs = Date.now(), sanrenpuk
   //   1. UpsellTarget=plus（この機能）
   //   2. PremiumPlusReleaseOverride=phase4（既存の「今すぐ販売可」）
   // どちらも ROUTE B の「加入 30 日以上 / PaidAt あり」条件を免除する。
-  // ⚠️ 資格（eligible 以外は打ち切り）と phase・受付時間の判定は免除しない。
   const adminPlusTarget = target === UPSELL_TARGET.PLUS || member.releaseOverride === 'phase4';
+  // 販売資格（PremiumPlusEligibility）の review / 未設定を免除できるのは
+  // **UpsellTarget=plus の明示指定だけ**。「販売CTA=Plus を選ぶ」= 管理者の販売許可とみなす。
+  // ⚠️ auto / sanrenpuku / none では免除しない（既存の自動判定の意味を変えない）。
+  // ⚠️ blocked は免除しない。Airtable の eligibility 値も書き換えない。
+  const adminPlusAuthorized = target === UPSELL_TARGET.PLUS;
   const plusRelease = resolvePremiumPlusRelease({
     ...member,
     adminPlusTarget,
+    adminPlusAuthorized,
     nowMs,
   });
   const view = resolveUpsellDisplay({ target, entitlements, plusRelease, sanrenpukuStage });

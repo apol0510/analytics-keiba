@@ -178,7 +178,8 @@ test('sanrenpuku 指定でも購入資格が無ければ出さない（Light / F
 // ══ plus 指定 ════════════════════════════════════════════════════
 
 test('5. active Premium + UpsellTarget=plus → 三連複を出さず Plus CTA のみ', () => {
-  const v = view({ ...PREMIUM, ...IMMEDIATE }, { target: 'plus', dayNo: 9 });
+  // ⚠️ eligibility も override も無い素の有効 Premium。明示指定だけで成立する（二重操作なし）
+  const v = view(PREMIUM, { target: 'plus', dayNo: 9 });
   assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(v.reason, UPSELL_REASON.ADMIN_PLUS);
   assert.equal(v.plus.showPurchaseCta, true, 'Plus CTA が出ていない');
@@ -188,23 +189,104 @@ test('5. active Premium + UpsellTarget=plus → 三連複を出さず Plus CTA �
   assertNeverBoth(v, 'plus 指定');
 });
 
-test('5-b. plus 指定は PaidAt が無くても Premium 契約が有効なら出せる（即時販売対象）', () => {
-  const noPaidAt = { ...PREMIUM, ...IMMEDIATE }; // PaidAt を持たない既存 Premium
+test('5-b. plus 指定は PaidAt が無くても Premium 契約が有効なら出せる', () => {
+  const noPaidAt = { ...PREMIUM }; // PaidAt を持たない既存 Premium
   assert.equal(noPaidAt.PaidAt, undefined);
   const v = view(noPaidAt, { target: 'plus', dayNo: 9 });
   assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(v.plus.showPurchaseCta, true, 'PaidAt 欠落だけを理由に塞いでいる');
 });
 
-test('8. 三連複保有済み + plus 指定 → Plus CTA=true', () => {
-  const v = view({ ...SRP_HOLDER, ...IMMEDIATE }, { target: 'plus', dayNo: 9 });
+// ══ 明示指定 = 管理者の販売許可（二重操作をなくす）════════════════
+
+test('16. plus 指定 + PremiumPlusEligibility 未設定 → Plus CTA=true（別途 eligible 設定を要求しない）', () => {
+  const v = view(PREMIUM, { target: 'plus', dayNo: 9 });
+  assert.equal(v.plus.showPurchaseCta, true, 'eligibility 未設定を理由に塞いでいる');
+  assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
+  assert.equal(v.reason, UPSELL_REASON.ADMIN_PLUS);
+  assertNeverBoth(v, 'plus / eligibility 未設定');
+});
+
+test('17. plus 指定 + eligibility=review → Plus CTA=true', () => {
+  const v = view({ ...PREMIUM, PremiumPlusEligibility: 'review' }, { target: 'plus', dayNo: 9 });
+  assert.equal(v.plus.showPurchaseCta, true, 'review を理由に塞いでいる');
+  assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
+});
+
+test('18. plus 指定 + eligibility=blocked → Plus CTA=false（明示指定でも免除しない）', () => {
+  const v = view({ ...PREMIUM, PremiumPlusEligibility: 'blocked' }, { target: 'plus', dayNo: 9 });
+  assert.equal(v.channel, UPSELL_CHANNEL.NONE);
+  assert.equal(v.reason, UPSELL_REASON.PLUS_NOT_ELIGIBLE);
+  assert.equal(v.plus.showPurchaseCta, false, 'blocked に Plus を売っている');
+  assert.equal(v.plus.showTeaser, false);
+  // blocked + override=phase4 でも通さない
+  const withOverride = view(
+    { ...PREMIUM, PremiumPlusEligibility: 'blocked', PremiumPlusReleaseOverride: 'phase4' },
+    { target: 'plus', dayNo: 9 },
+  );
+  assert.equal(withOverride.channel, UPSELL_CHANNEL.NONE);
+});
+
+test('19. plus 指定でも契約が無効なら出さない（Light / Free / 期限切れ Premium）', () => {
+  for (const [label, fields] of [
+    ['Light', LIGHT], ['Free', FREE],
+    ['期限切れ Premium', { ...PREMIUM, '有効期限': '2026-01-01' }],
+  ]) {
+    const v = view(fields, { target: 'plus', dayNo: 9 });
+    assert.equal(v.channel, UPSELL_CHANNEL.NONE, `${label} に Plus を売っている`);
+    assert.equal(v.plus.showPurchaseCta, false);
+  }
+  // 三連複の永久権を持つ特殊 tier は現行 entitlement に従う（保有していれば出せる）
+  const srp = view({ ...SRP_HOLDER }, { target: 'plus', dayNo: 9 });
+  assert.equal(srp.channel, UPSELL_CHANNEL.PLUS);
+});
+
+test('20. 明示指定でも受付時間制御は維持（16:30 以降は購入不可）', () => {
+  const closed = Date.parse('2026-08-03T08:00:00Z'); // JST 17:00
+  const v = view(PREMIUM, { target: 'plus', dayNo: 9, nowMs: closed });
+  assert.equal(v.plus.showPurchaseCta, true);
+  assert.equal(v.plus.purchaseEnabled, false, '受付時間外なのに購入できる');
+  assert.equal(v.plus.intake, 'closed');
+});
+
+test('21. auto の意味は変えない（eligibility 未設定なら従来どおり Plus を出さない）', () => {
+  const noElig = view(PREMIUM, { dayNo: 9 });
+  assert.equal(noElig.channel, UPSELL_CHANNEL.SANRENPUKU, 'auto で eligibility を免除している');
+  assert.equal(noElig.plus.showTeaser, false);
+  assert.equal(noElig.plus.showPurchaseCta, false);
+
+  // review も同じく従来どおり
+  const review = view({ ...PREMIUM, PremiumPlusEligibility: 'review' }, { dayNo: 9 });
+  assert.equal(review.channel, UPSELL_CHANNEL.SANRENPUKU);
+  assert.equal(review.plus.showPurchaseCta, false);
+
+  // eligible + override は従来どおり Plus
+  const eligible = view({ ...PREMIUM, ...IMMEDIATE }, { dayNo: 9 });
+  assert.equal(eligible.channel, UPSELL_CHANNEL.PLUS);
+  assert.equal(eligible.plus.showPurchaseCta, true);
+});
+
+test('22. 明示指定は Airtable の eligibility 値を書き換えない（判定上の扱いだけ）', () => {
+  const fields = { ...PREMIUM, PremiumPlusEligibility: 'review', UpsellTarget: 'plus' };
+  const snapshot = JSON.stringify(fields);
+  const v = resolveUpsellForCustomer({ fields, nowMs: NOW });
+  assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
+  assert.equal(JSON.stringify(fields), snapshot, '入力レコードを書き換えている');
+  // resolver の出力でも eligibility は review のまま（表示のために書き換えない）
+  assert.equal(v.plusRelease.eligibility, 'review');
+  assert.equal(v.plusRelease.adminSaleDirective, true);
+  assert.equal(v.plusRelease.overrideApplied, false, 'override フィールド由来の表示を汚染している');
+});
+
+test('8. 三連複保有済み + plus 指定 → Plus CTA=true（eligibility 設定なしでも）', () => {
+  const v = view(SRP_HOLDER, { target: 'plus', dayNo: 9 });
   assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(v.plus.showPurchaseCta, true);
   assert.equal(v.sanrenpuku.showCta, false);
 });
 
-test('9. Premium Combo + plus 指定 → Plus CTA=true', () => {
-  const v = view({ ...COMBO_HOLDER, ...IMMEDIATE }, { target: 'plus', dayNo: 9 });
+test('9. Premium Combo + plus 指定 → Plus CTA=true（eligibility 設定なしでも）', () => {
+  const v = view(COMBO_HOLDER, { target: 'plus', dayNo: 9 });
   assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(v.plus.showPurchaseCta, true);
 });
