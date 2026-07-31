@@ -291,14 +291,25 @@ export async function resolveSharedJsonWithComputerIndex(date, category = 'jra',
     const canRetry = attempt < maxRetries && waitedMs < maxTotalWaitMs;
 
     // (a) computer だけ見えて racebook が 1 件も無い → stale の疑い。再取得する。
-    //     上限到達後の最終挙動は従来どおり skip（成功終了）で据え置く＝契約変更なし。
+    //     上限到達後も解消しなければ FAIL させる。JRA の import は
+    //     `import-on-dispatch.yml`（`prediction-updated` = admin のペア揃いガード通過後、
+    //     または手動 workflow_dispatch）からのみ起動する。ペア揃いガードは racebook と computer が
+    //     両方 shared に存在するときだけ dispatch するため、「computer だけ存在する」状態は異常である。
+    //     ここを skip（成功終了）にすると、その日の JRA 予想が緑のまま取り込まれない。
+    //     racebook も computer も無い通常の未投入日は従来どおり skip（下の return null）。
     if (!sharedJSON) {
       if (hasComputer && canRetry) {
         console.warn(`⚠️ [STALE-RETRY] ${date}: computer は取得できたが racebook 本体が 0 件。stale read の疑いがあるため再取得します`);
         continue;
       }
       if (hasComputer) {
-        console.warn(`⚠️ [STALE-RETRY] ${date}: ${maxRetries} 回再取得しても racebook 本体が 0 件のままでした（computer のみ存在）。`);
+        console.error(`❌ [STALE-RETRY] ${date}: ${maxRetries} 回再取得しても racebook 本体が 0 件のままでした（computer のみ存在）`);
+        throw new Error(
+          `[IMPORT-JRA ${date}] computer JSON は取得できましたが racebook 本体が 0 件のままです` +
+          `（${maxRetries} 回再取得後）。admin のペア揃いガードは racebook と computer の両方が` +
+          `揃ったときだけ dispatch するため、この状態は異常です。黙って未取込のまま成功終了させないため` +
+          ` import を中止します（shared の racebook 保存状況を確認してください）。`
+        );
       }
       return null;
     }

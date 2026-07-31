@@ -60,8 +60,17 @@ bounded retry を JRA import に入れる。
 - 真の不整合（馬番が対応しない・馬番重複）は従来どおり FAIL する。閾値も補完も変えていないため、
   真コンピ指数>=45 の馬を黙って不要馬化する経路は増えない。
 - 最悪ケースで import が最大 35 秒延びる。
-- **意図的に変更しなかった点**: 「racebook が 0 件のまま」の最終挙動は従来どおり skip（正常終了）。
-  retry はするが、成功/失敗の契約は変えていない。未投入日を赤くしないため。
+- **「computer は存在するが racebook が 0 件」は FAIL へ変更した**（従来は skip = 成功終了）。
+  根拠: `importPredictionJra.js` を起動するのは `import-on-dispatch.yml` だけであり
+  （日次 cron `import-prediction-daily.yml` が呼ぶのは南関の `import:prediction`）、
+  その起動元は admin の**ペア揃いガードを通過した `prediction-updated`** か手動 `workflow_dispatch` である。
+  ペア揃いガードは racebook と computer の両方が shared に存在するときだけ dispatch するため、
+  再取得を尽くしてなお computer だけが見える状態は**構造上あり得ない＝異常**。
+  ここを成功終了にすると、その日の JRA 予想が緑のまま取り込まれない silent miss になる。
+  直近 14 run の実測でも JRA の import が skip 経路に入った例は無い。
+- **racebook も computer も無い通常の未投入日は従来どおり skip（成功終了）で据え置く。**
+  手動 `workflow_dispatch` の日付誤りや非開催日を赤くしないため。
+  computer ディレクトリはあるが対象日ファイルが 0 件の場合も同様に skip。
 - 南関 `importPrediction.js` は `assertInjectionSafe` を呼んでいないため対象外（本判断は JRA のみ）。
 - keiba-data-shared-admin 側の dispatch 設計は変更していない。AK 側の再取得だけで
   一覧・内容の両 staleness を吸収できることをテストで固定したため。

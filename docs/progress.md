@@ -128,7 +128,13 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
 - **対策**: `classifyInjectionProblems()` で stale 由来（`uncoveredHighCi` のみ）と実欠陥（`ambiguous`）を分離し、
   stale 由来だけ **最大 3 回 / 累計 35 秒**の再取得＋再判定で吸収。上限到達後は従来と同一メッセージで FAIL。
   詳細は `docs/decisions.md` の 2026-07-31 エントリ。
-- **検証**: `check:jra-stale-retry`（新設・12 件）と `check:jra-join`（17 件へ拡張）を `check:safety` に配線。
+- **追加判断（2026-07-31）**: 「computer は存在するが racebook 0 件」が再取得を尽くしても解消しない場合は
+  **skip（成功終了）ではなく FAIL** へ変更した。`importPredictionJra.js` の起動元は
+  `import-on-dispatch.yml`（ペア揃いガード通過後の `prediction-updated` / 手動 `workflow_dispatch`）だけで、
+  日次 cron `import-prediction-daily.yml` は南関の `import:prediction` を呼ぶ。よってこの状態は構造上あり得ず、
+  成功終了にすると当日の JRA 予想が緑のまま未取込になる。
+  racebook も computer も無い通常の未投入日は従来どおり skip で据え置き。
+- **検証**: `check:jra-stale-retry`（新設・13 件）と `check:jra-join`（17 件へ拡張）を `check:safety` に配線。
   `check:safety` exit 0 / `npm run build` exit 0。
 - **未実施（停止境界）**: PR merge / `workflow_dispatch` / production deploy / shared PUT。
 - **付随して判明した既存の不備（本タスクでは修正しない）**:

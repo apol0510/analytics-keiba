@@ -230,12 +230,16 @@ await t('7. computer 馬番重複 → retry せず即 FAIL', async () => {
   assert.deepStrictEqual(waits, []);
 });
 
-// 8. computer だけ見えて racebook が 0 件 → retry するが、最終挙動は従来どおり skip（契約変更なし）
-await t('8. racebook 0 件 + computer あり → retry 後も無ければ従来どおり skip(null)', async () => {
+// 8. computer だけ見えて racebook が 0 件 → retry 後も解消しなければ FAIL。
+//    JRA import はペア揃いガード通過後の dispatch からのみ起動するため、この状態は異常。
+//    skip（成功終了）にすると、その日の JRA 予想が緑のまま取り込まれない。
+await t('8. racebook 0 件 + computer あり → retry 後も無ければ FAIL（緑のまま未取込にしない）', async () => {
   const { client, calls } = makeFakeClient([{ racebook: null, computer: ALL3 }]);
   const { sleepImpl } = makeSleepRecorder();
-  const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
-  assert.strictEqual(res, null, '未投入日の成功終了という既存契約は変えない');
+  await assert.rejects(
+    () => resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl }),
+    /racebook 本体が 0 件のままです/,
+  );
   assert.strictEqual(calls.attempts, STALE_JOIN_RETRY.maxRetries + 1, '上限までは再取得を試みる');
 });
 
@@ -252,14 +256,23 @@ await t('8b. racebook 0 件 → retry 中に出現すれば PASS', async () => {
   assert.strictEqual(calls.attempts, 2);
 });
 
-// 9. racebook も computer も無い通常の未投入日 → retry せず skip
+// 9. racebook も computer も無い通常の未投入日 → retry せず skip（成功終了の契約を維持）
 await t('9. racebook / computer とも無し → retry せず skip(null)', async () => {
   const { client, calls } = makeFakeClient([{ racebook: null, computer: null }]);
   const { waits, sleepImpl } = makeSleepRecorder();
   const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
-  assert.strictEqual(res, null);
+  assert.strictEqual(res, null, '未投入日は従来どおり成功終了（手動 dispatch の日付誤りを赤くしない）');
   assert.strictEqual(calls.attempts, 1, '待つ理由がないので retry しない');
   assert.deepStrictEqual(waits, []);
+});
+
+// 9b. computer が空ディレクトリ（ファイル 0 件）で racebook も 0 件 → 未投入日として skip
+await t('9b. computer ディレクトリはあるが対象日ファイル無し + racebook 0 件 → skip(null)', async () => {
+  const { client, calls } = makeFakeClient([{ racebook: null, computer: [] }]);
+  const { sleepImpl } = makeSleepRecorder();
+  const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
+  assert.strictEqual(res, null, 'computer が実質存在しないなら異常扱いしない');
+  assert.strictEqual(calls.attempts, 1);
 });
 
 // 10. racebook ファイル内容が古い版（頭数不足）→ 再取得で完全版になれば PASS（2026-07-18 型）
