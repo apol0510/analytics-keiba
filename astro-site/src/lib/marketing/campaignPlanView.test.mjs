@@ -152,7 +152,7 @@ test('#11 #12 campaignId / version / subject / 識別子を返す', () => {
 test('#13 rollback 方法を必ず返す', () => {
   const mail = buildPlanView({ kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2', 'rec3'], rowsById, result: campaignResult, nowMs: NOW });
   assert.ok(mail.rollback.length >= 2);
-  assert.match(mail.rollback.join(' '), /送信済みメールは取り消せません/);
+  assert.match(mail.rollback.join(' '), /取り消し不能/);
 
   const grant = buildPlanView({
     kind: PLAN_KIND.GRANT_OFFER, selectedIds: ['rec1'], rowsById, nowMs: NOW,
@@ -182,15 +182,106 @@ test('特典・オファーの dry-run（skippedDetail / partSkips）も扱え�
   assert.equal(v.executable, true);
 });
 
-test('明細が無く集計だけの API 応答でも壊れない（detailAvailable=false）', () => {
+test('#1 集計だけで recordId 明細が無い → 実行不可・対象者一覧を作らない', () => {
   const v = buildPlanView({
     kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2'], rowsById, nowMs: NOW,
     result: { ...campaignResult, willSend: 1, excluded: 1, excludedRecords: undefined, excludedDetail: [{ reason: 'already_delivered', label: 'x', count: 1 }] },
   });
-  assert.equal(v.detailAvailable, false, '明細が無いのに「ある」と言っている');
-  assert.equal(v.reasonSummary[0].count, 1);
+  assert.equal(v.detailComplete, false, '確定できないのに確定扱いしている');
+  assert.equal(v.executable, false, '誰が対象か分からないのに実行可能にしている');
+  assert.equal(v.included.length, 0, '推測で対象者一覧を作っている');
+  assert.match(v.blockers.join(' '), /誰が対象か確定できません/);
+  // 件数は API の集計値をそのまま出してよい
   assert.equal(v.includedCount, 1);
-  assert.equal(v.executable, true, '集計だけでも実行可否は判断できる');
+  assert.equal(v.excludedCount, 1);
+  assert.equal(v.reasonSummary[0].count, 1);
+});
+
+test('#2 除外明細の件数が API 集計と一致しない → 実行不可', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2', 'rec3'], rowsById, nowMs: NOW,
+    result: { ...campaignResult, willSend: 1, excluded: 2, excludedRecords: [{ recordId: 'rec2', reason: 'duplicate' }] },
+  });
+  assert.equal(v.executable, false);
+  assert.equal(v.detailComplete, false);
+  assert.equal(v.included.length, 0);
+  assert.match(v.blockers.join(' '), /除外 2 件に対し明細 1 件/);
+});
+
+test('#3 除外明細に空 recordId → 実行不可', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2'], rowsById, nowMs: NOW,
+    result: { ...campaignResult, willSend: 1, excluded: 1, excludedRecords: [{ recordId: '', reason: 'duplicate' }] },
+  });
+  assert.equal(v.executable, false);
+  assert.match(v.blockers.join(' '), /recordId の無い行/);
+  assert.equal(v.included.length, 0);
+});
+
+test('#4 除外明細に重複 recordId → 実行不可', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2'], rowsById, nowMs: NOW,
+    result: {
+      ...campaignResult, willSend: 1, excluded: 2,
+      excludedRecords: [{ recordId: 'rec2', reason: 'duplicate' }, { recordId: 'rec2', reason: 'already_delivered' }],
+    },
+  });
+  assert.equal(v.executable, false);
+  assert.match(v.blockers.join(' '), /重複した recordId/);
+});
+
+test('#5 選択していない recordId が除外明細にある → 実行不可', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2'], rowsById, nowMs: NOW,
+    result: { ...campaignResult, willSend: 1, excluded: 1, excludedRecords: [{ recordId: 'recZZZ', reason: 'duplicate' }] },
+  });
+  assert.equal(v.executable, false);
+  assert.match(v.blockers.join(' '), /選択していない recordId/);
+  assert.equal(v.included.length, 0);
+});
+
+test('#6 選択 = 対象 + 除外 が一意に確定すれば実行可能', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2', 'rec3'], rowsById, result: campaignResult, nowMs: NOW,
+  });
+  assert.equal(v.detailComplete, true);
+  assert.equal(v.executable, true);
+  assert.equal(v.included.length + v.excluded.length, 3);
+  assert.equal(v.included.length, v.includedCount);
+  assert.equal(v.excluded.length, v.excludedCount);
+});
+
+test('除外 0 件なら明細が無くても確定できる（全員が対象）', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2'], rowsById, nowMs: NOW,
+    result: { ...campaignResult, willSend: 2, excluded: 0, excludedRecords: [] },
+  });
+  assert.equal(v.detailComplete, true);
+  assert.equal(v.executable, true);
+  assert.equal(v.included.length, 2);
+});
+
+test('特典側も明細が足りなければ実行不可（skippedDetail 欠落）', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.GRANT_OFFER, selectedIds: ['rec1', 'rec2'], rowsById, nowMs: NOW,
+    result: {
+      selection: 'Light 30日間 無料', willGrant: 1, willOffer: 0, skipped: 1,
+      skippedDetail: [], parts: { partSkips: { already_granted: 1 } }, sideEffects: 'none',
+    },
+  });
+  assert.equal(v.executable, false);
+  assert.equal(v.included.length, 0, '特典側で推測の対象者一覧を作っている');
+  assert.match(v.blockers.join(' '), /誰が対象か確定できません/);
+});
+
+test('確定できない場合でも、分かっている除外者は表示する', () => {
+  const v = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2', 'rec3'], rowsById, nowMs: NOW,
+    result: { ...campaignResult, willSend: 1, excluded: 2, excludedRecords: [{ recordId: 'rec2', reason: 'duplicate' }] },
+  });
+  assert.equal(v.excluded.length, 1);
+  assert.equal(v.excluded[0].recordId, 'rec2');
+  assert.equal(v.included.length, 0);
 });
 
 test('#20 機微値を持ち出さない', () => {
@@ -238,4 +329,17 @@ test('ブラウザで動かせる（node 専用モジュールを import しな�
   const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.equal(/from '\.\/campaignSend\.js'/.test(src), false, 'node:crypto に依存する campaignSend を import している');
   assert.equal(/node:crypto|node:fs|node:path/.test(src), false, 'node 専用モジュールを import している');
+});
+
+test('#3 rollback は実態どおり（キュー取消 API が無いことを隠さない）', () => {
+  const mail = buildPlanView({
+    kind: PLAN_KIND.CAMPAIGN, selectedIds: ['rec1', 'rec2', 'rec3'], rowsById, result: campaignResult, nowMs: NOW,
+  });
+  const text = mail.rollback.join(' ');
+  // 「配信しなければ良い」を取り消しと呼ばない
+  assert.match(text, /キューを取り消す機能は未実装/, 'キュー取消が可能であるかのように書いている');
+  assert.match(text, /PENDING/, 'キューが残ることを伝えていない');
+  assert.match(text, /取り消し不能/, '配信後が不可逆だと伝えていない');
+  assert.equal(/実配信を実行しなければ 1 通も送られません/.test(text), false,
+    '取り消しではない運用回避を rollback として書いている');
 });

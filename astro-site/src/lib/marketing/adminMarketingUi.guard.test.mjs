@@ -292,10 +292,30 @@ test('選択操作は純粋モジュールへ委譲する（画面でロジッ�
   assert.match(SCRIPT, /op: 'clear'/, '全解除が委譲されていない');
 });
 
-test('全選択は表示中かつ送信可能な相手だけを足す', () => {
-  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkSelAll')"), SCRIPT.indexOf("$('mkSelNone')"));
+test('選択は 全顧客 / 表示中のみ / 全解除 の 3 つに分かれる', () => {
+  for (const id of ['mkSelAllLoaded', 'mkSelAll', 'mkSelNone']) {
+    assert.ok(PAGE.includes('id="' + id + '"'), id + ' が無い');
+  }
+  // 文言が意味を取り違えさせないこと
+  assert.match(PAGE, /全顧客から選択/);
+  assert.match(PAGE, /表示中のみ選択/);
+  assert.match(PAGE, /全解除/);
+});
+
+test('「表示中のみ選択」は表示中かつ送信可能な相手だけを足す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkSelAll').addEventListener"), SCRIPT.indexOf("$('mkSelNone')"));
+  assert.match(block, /const visible = mkVisibleRows\(\)/, '表示中の行を使っていない');
   assert.match(block, /visibleIds: visible\.map/, '表示中以外を巻き込んでいる');
   assert.match(block, /selectableIds: visible\.filter\(\(r\) => r\.sendable\)/, '送信不可を選択対象にしている');
+});
+
+test('「全顧客から選択」は絞り込みに依存せず、件数を必ず知らせる', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkSelAllLoaded')"), SCRIPT.indexOf("$('mkSelAll').addEventListener"));
+  assert.match(block, /mkData && mkData\.rows/, '読み込み済みの全件を使っていない');
+  assert.equal(/mkVisibleRows\(\)/.test(block), false, '全顧客選択が表示中に依存している');
+  assert.match(block, /selectableIds: all\.filter\(\(r\) => r\.sendable\)/, '送信不可を足している');
+  assert.match(block, /全顧客から /, '大量選択を黙って行っている（件数表示が無い）');
+  assert.match(block, /updateSelection\(/, '選択更新を委譲していない');
 });
 
 test('絞り込みで見えなくなった選択を警告する', () => {

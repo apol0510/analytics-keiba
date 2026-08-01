@@ -153,30 +153,89 @@ export function buildPlanView(input = {}) {
     reasonCounts.set(str(code), (reasonCounts.get(str(code)) || 0) + num(n));
   }
 
-  const included = [];
-  const excluded = [];
-  for (const id of selectedIds.map(str)) {
-    const person = personOf(id, rowsById);
-    if (excludedById.has(id)) {
-      const { code, label } = excludedById.get(id);
-      excluded.push({ ...person, reasonCode: code, reasonLabel: labelFor(code, label), known: isKnownReason(code, label) });
-    } else {
-      included.push(person);
-    }
-  }
-
-  // API が明細を返さない場合、included の人数は API の件数を正とする
+  // ── 人物単位の対応が確定できるかを先に検証する（fail closed の核）──────
+  // 権威 API が recordId 付きの除外明細を返さない場合、"除外に載っていない = 対象" と
+  // みなすのは **推測**になる（集計だけでは誰が落ちたのか分からない）。
+  // その状態で「この人に実行されます」と出すと、実際には送られない相手を対象として
+  // 見せてしまうため、人物一覧そのものを出さない。
   const apiIncluded = kind === PLAN_KIND.CAMPAIGN
     ? num(result.willSend)
     : num(result.willGrant) + num(result.willOffer);
   const apiExcluded = kind === PLAN_KIND.CAMPAIGN ? num(result.excluded) : num(result.skipped);
-  const detailAvailable = excludedById.size > 0 || apiExcluded === 0;
+
+  const selectedSet = new Set(selectedIds.map(str).filter(Boolean));
+  const detailIssues = [];
+
+  // 明細に載った recordId の妥当性（空 / 重複 / 選択外）
+  const seen = new Set();
+  let emptyIds = 0;
+  let dupIds = 0;
+  let outsideIds = 0;
+  for (const item of rawExcluded) {
+    if (!item || !('recordId' in item)) continue;
+    const id = str(item.recordId);
+    if (!id) { emptyIds += 1; continue; }
+    if (seen.has(id)) { dupIds += 1; continue; }
+    seen.add(id);
+    if (!selectedSet.has(id)) outsideIds += 1;
+  }
+  if (emptyIds > 0) detailIssues.push(`除外明細に recordId の無い行が ${emptyIds} 件あります`);
+  if (dupIds > 0) detailIssues.push(`除外明細に重複した recordId が ${dupIds} 件あります`);
+  if (outsideIds > 0) detailIssues.push(`選択していない recordId が除外明細に ${outsideIds} 件あります`);
+
+  // 除外が 1 件でもあるのに、その人が特定できない場合は確定不能
+  if (apiExcluded > 0 && excludedById.size !== apiExcluded) {
+    detailIssues.push(
+      `除外者の明細を取得できないため、誰が対象か確定できません（除外 ${apiExcluded} 件に対し明細 ${excludedById.size} 件）`,
+    );
+  }
+  // 選択 = 対象 + 除外 が一意に割れるか
+  if (selectedSet.size !== selectedIds.length) {
+    detailIssues.push('選択に重複した recordId があります');
+  }
+  if (excludedById.size > 0 && selectedSet.size - excludedById.size !== apiIncluded) {
+    detailIssues.push(
+      `人物単位の内訳が API の件数と一致しません（選択 ${selectedSet.size} − 除外明細 ${excludedById.size} ≠ 対象 ${apiIncluded}）`,
+    );
+  }
+
+  /** 人物単位で「誰が対象／誰が除外」を確定できたか */
+  const detailComplete = detailIssues.length === 0
+    && (apiExcluded === 0 || excludedById.size === apiExcluded);
+
+  const included = [];
+  const excluded = [];
+  if (detailComplete) {
+    for (const id of selectedIds.map(str)) {
+      const person = personOf(id, rowsById);
+      if (excludedById.has(id)) {
+        const { code, label } = excludedById.get(id);
+        excluded.push({ ...person, reasonCode: code, reasonLabel: labelFor(code, label), known: isKnownReason(code, label) });
+      } else {
+        included.push(person);
+      }
+    }
+  } else {
+    // ⚠️ 確定できないので **included を作らない**（推測で「対象」と言わない）。
+    //    分かっている除外だけは出す（誰が落ちたかの手掛かりとして）。
+    for (const [id, v] of excludedById.entries()) {
+      if (!selectedSet.has(id)) continue;
+      excluded.push({
+        ...personOf(id, rowsById),
+        reasonCode: v.code, reasonLabel: labelFor(v.code, v.label), known: isKnownReason(v.code, v.label),
+      });
+    }
+  }
+
+  const detailAvailable = detailComplete;
 
   const summary = [...reasonCounts.entries()]
     .map(([code, count]) => ({ code, label: labelFor(code, apiLabels.get(code)), count, known: isKnownReason(code, apiLabels.get(code)) }))
     .sort((a, b) => b.count - a.count);
 
   // ── fail closed ──────────────────────────────────────────
+  // 人物単位の対応が確定できないなら実行不可（推測で対象を作らない）
+  for (const issue of detailIssues) blockers.push(issue);
   const unknown = summary.filter((s) => !s.known);
   if (unknown.length > 0) {
     blockers.push(`未知の除外理由があります（${unknown.map((u) => u.code).join('・')}）。理由を確認するまで実行しないでください。`);
@@ -224,7 +283,9 @@ export function buildPlanView(input = {}) {
     // 明細
     included,
     excluded,
-    /** 除外の明細が API から取れたか（取れないときは集計のみ表示する） */
+    /** 人物単位の対応（誰が対象・誰が除外）が確定できたか。false なら対象者一覧を出さない */
+    detailComplete,
+    /** 後方互換のための別名（旧: 明細が取れたか） */
     detailAvailable,
     reasonSummary: summary,
 
@@ -244,8 +305,12 @@ export function rollbackFor(kind, result = {}) {
   if (kind === PLAN_KIND.CAMPAIGN) {
     return [
       'キュー登録前: 操作は不要（まだ何も作られていません）',
-      'キュー登録後・配信前: 実配信を実行しなければ 1 通も送られません',
-      '配信後: 送信済みメールは取り消せません（DeliveryKey により同一 campaign×version の再送は自動で防がれます）',
+      // ⚠️ キューを取り消す API は存在しない（2026-08-01 実測）。
+      //    「配信しなければよい」は取り消しではないので、そう書かない。
+      'キュー登録後・配信前: **キューを取り消す機能は未実装**。ScheduledEmails に PENDING が残るため、'
+        + '実配信を行わない運用で止めるか、Airtable でジョブ行を手動で処理する必要があります',
+      '配信後: **取り消し不能**（送信済みメールは戻せません）。'
+        + '同一 campaign×version の重複送信は DeliveryKey が防ぎます',
     ];
   }
   const lines = [

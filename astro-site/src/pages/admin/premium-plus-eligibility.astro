@@ -194,7 +194,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
           <button type="button" id="mkColAll" class="btn-ghost btn-sm">詳細</button>
         </span>
-        <button type="button" id="mkSelAll" class="btn-ghost">表示中を全選択</button>
+        <button type="button" id="mkSelAllLoaded" class="btn-ghost">全顧客から選択</button>
+        <button type="button" id="mkSelAll" class="btn-ghost">表示中のみ選択</button>
         <button type="button" id="mkSelNone" class="btn-ghost">全解除</button>
         <span class="selcount" id="mkSelCount">0 名を選択中</span>
         <button type="button" id="mkSelList" class="btn-ghost btn-sm">選択中の一覧</button>
@@ -2031,7 +2032,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const panes = document.createElement('div');
       const TABS = [
         ['対象者 ' + view.included.length, () => {
-          const s = dossierSection(panes, 'この人に実行されます');
+          const s = dossierSection(panes, view.detailComplete ? 'この人に実行されます' : '対象者を確定できません');
+          if (!view.detailComplete) {
+            dossierRow(s, '⛔ 未確定', '権威 API から除外者の明細を取得できないため、誰が対象かを特定できません。推測で一覧を出しません。', 'ng');
+          }
           // 特典・オファーは「変更前 → 変更後」を dry-run の preview からそのまま出す
           const prevMap = new Map(((view.previews) || []).map((x) => [x.recordId, x]));
           if (view.included.length === 0) dossierRow(s, '—', '対象者はいません', 'ng');
@@ -2082,9 +2086,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           }
           dossierRow(s, 'operationId', view.operationId || view.planFingerprint || '—');
           dossierRow(s, '対象件数', view.includedCount + ' 名（除外 ' + view.excludedCount + ' 名 / 選択 ' + view.selectedCount + ' 名）');
-          dossierRow(s, '取り消し方法', view.rollback[0] || '—');
-          dossierRow(s, 'この操作の副作用', view.sideEffects, 'ok');
-          dossierRow(s, '現時点の副作用', view.sideEffects, 'ok');
+          dossierRow(s, '対象者一覧', view.detailComplete ? '確定（対象者タブを参照）' : '⛔ 未確定（誰が対象か特定できません）', view.detailComplete ? 'ok' : 'ng');
+          dossierRow(s, '取り消し方法', view.rollback.join(' / '));
+          dossierRow(s, 'この操作の副作用', view.sideEffects + '（dry-run のため本番は未変更）', 'ok');
           dossierRow(s, '本番変更', 'この確認では行われません（実行は各タブの確認 → 実行）', 'ok');
         }],
         ['rollback', () => {
@@ -2184,7 +2188,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     $('mkLoad').addEventListener('click', mkLoad);
     $('mkQ').addEventListener('input', mkRender);
-    // 選択の更新は純粋モジュールへ委譲（絞り込みを変えても選択が勝手に増えない）
+    // 選択の更新は純粋モジュールへ委譲（絞り込みを変えても選択が勝手に増えない）。
+    // 「全顧客から選択」= いま読み込んでいる全件（検索・絞り込みに依存しない）
+    // 「表示中のみ選択」= 画面に出ている行だけ
+    $('mkSelAllLoaded').addEventListener('click', () => {
+      const all = (mkData && mkData.rows) ? mkData.rows : [];
+      const before = mkSelected.size;
+      const next = window.__planView.updateSelection({
+        current: mkSelected,
+        visibleIds: all.map((r) => r.recordId),
+        selectableIds: all.filter((r) => r.sendable).map((r) => r.recordId),
+        op: 'add-visible',
+      });
+      mkSelected.clear();
+      for (const id of next) mkSelected.add(id);
+      mkRender();
+      // 大量選択を黙って行わない
+      mkMsg('全顧客から ' + (mkSelected.size - before) + ' 名を追加しました（合計 ' + mkSelected.size + ' 名 / 読み込み済み ' + all.length + ' 名中）');
+    });
+
     $('mkSelAll').addEventListener('click', () => {
       const visible = mkVisibleRows();
       const next = window.__planView.updateSelection({
@@ -2197,6 +2219,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkSelected.clear();
       for (const id of next) mkSelected.add(id);
       mkRender();
+      mkMsg('表示中から ' + mkSelected.size + ' 名を選択中です（表示 ' + visible.length + ' 名）');
     });
     $('mkSelNone').addEventListener('click', () => {
       const next = window.__planView.updateSelection({ current: mkSelected, op: 'clear' });

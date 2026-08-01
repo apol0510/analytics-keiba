@@ -595,6 +595,11 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     reason: String(e.reason || ''),
     label: MK_EXCLUSION_LABEL[e.reason] || String(e.reason || ''),
   }));
+  // 画面が「誰が対象か」を人物単位で確定してよいかを **サーバーが宣言する**。
+  // 明細が 1 件でも欠けていたら false にし、画面は対象者一覧を作らない（推測させない）。
+  const detailComplete = excludedRecords.length === plan.excluded.length
+    && excludedRecords.every((e) => e.recordId)
+    && new Set(excludedRecords.map((e) => e.recordId)).size === excludedRecords.length;
 
   // 割引案内は「何をいくらで案内するのか」を最終確認に出す（金額の取り違え防止）。
   // 有効期限は台帳の実値（受信者ごとに違いうるので最短を出す）。
@@ -631,6 +636,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     willSend: plan.counts.recipients,
     excludedDetail,
     excludedRecords,
+    detailComplete,
     planFingerprint: plan.planFingerprint,
   };
 
