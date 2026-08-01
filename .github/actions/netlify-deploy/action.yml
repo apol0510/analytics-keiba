@@ -3,7 +3,9 @@ description: >-
   Netlify Build Hook を POST して本番デプロイを起動する。
   GitHub Actions の bot push (GITHUB_TOKEN) は Netlify の GitHub 連携で
   デプロイされないことがあるため、自動取込コミット後に確実にデプロイを起こす目的。
-  secret 未設定時は何もしない（no-op）ので、設定前でも安全に置ける。
+  一過性の通信失敗（timeout / 429 / 5xx）は bounded retry で吸収し、
+  4xx などの設定不良は retry せず即失敗する。
+  secret 未設定時は既定で何もしない（no-op）ので、設定前でも安全に置ける。
 
 inputs:
   build-hook:
@@ -14,6 +16,35 @@ inputs:
     description: 'デプロイ理由（ログ用）'
     required: false
     default: 'auto-import'
+  commit-sha:
+    description: >-
+      デプロイ対象の commit SHA。指定すると、その commit の deploy が既に存在する場合は
+      POST せず成功扱いにする（同一 commit の重複 build 防止）。
+      再ビルドを必ず起こしたい用途（publish-drift の self-heal 等）では指定しないこと。
+      重複チェックには netlify-auth-token と site-id が必要。
+    required: false
+    default: ''
+  netlify-auth-token:
+    description: >-
+      Netlify Personal Access Token（任意）。site-id と併せて指定した場合のみ、
+      deploy の存在確認による重複 build 防止と、応答を失った POST の成否判定を行う。
+      未設定なら重複チェックは無効化され、retry のみ有効（従来どおりの動作）。
+    required: false
+    default: ''
+  site-id:
+    description: 'Netlify の Site ID（netlify-auth-token と併用）'
+    required: false
+    default: ''
+  max-attempts:
+    description: 'POST の最大試行回数（1〜5 にクランプ。既定 3）'
+    required: false
+    default: '3'
+  require-hook:
+    description: >-
+      true にすると build-hook 未設定を no-op ではなく失敗として扱う。
+      既定は false（従来どおり no-op）。
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -23,25 +54,9 @@ runs:
       env:
         NETLIFY_BUILD_HOOK: ${{ inputs.build-hook }}
         DEPLOY_REASON: ${{ inputs.reason }}
-      run: |
-        if [ -z "$NETLIFY_BUILD_HOOK" ]; then
-          echo "⏭️  NETLIFY_BUILD_HOOK が未設定のためデプロイトリガーをスキップ（no-op）"
-          echo "    → 自動デプロイを有効化するには Netlify Build Hook を作成し、"
-          echo "       GitHub secret 'NETLIFY_BUILD_HOOK' に登録してください。"
-          exit 0
-        fi
-        echo "🚀 Netlify デプロイをトリガー: ${DEPLOY_REASON}"
-        # URL 値はログに出さない（-w で HTTP コードのみ出力）
-        HTTP=$(curl -sS -o /tmp/nf_deploy_resp -w "%{http_code}" \
-          -X POST -d '{}' "$NETLIFY_BUILD_HOOK" || echo "000")
-        echo "   HTTP ${HTTP}"
-        case "$HTTP" in
-          2*)
-            echo "✅ Netlify ビルドを起動しました（数分後に本番反映）"
-            ;;
-          *)
-            echo "❌ Netlify ビルド起動に失敗 (HTTP ${HTTP})"
-            cat /tmp/nf_deploy_resp 2>/dev/null || true
-            exit 1
-            ;;
-        esac
+        DEPLOY_COMMIT_SHA: ${{ inputs.commit-sha }}
+        NETLIFY_API_TOKEN: ${{ inputs.netlify-auth-token }}
+        NETLIFY_SITE_ID: ${{ inputs.site-id }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        REQUIRE_HOOK: ${{ inputs.require-hook }}
+      run: bash "${GITHUB_ACTION_PATH}/trigger-netlify-deploy.sh"

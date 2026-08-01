@@ -129,12 +129,21 @@ jobs:
             exit 1
           fi
 
+      # push した commit を控える（重複 build 防止の照合キー。理由は import-on-dispatch.yml と同じ）
+      - name: Resolve deployed commit
+        id: deployed
+        if: steps.git-check.outputs.changed == 'true'
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Trigger Netlify deploy
         if: steps.git-check.outputs.changed == 'true'
         uses: ./.github/actions/netlify-deploy
         with:
           build-hook: ${{ secrets.NETLIFY_BUILD_HOOK }}
           reason: "daily prediction ${{ steps.date.outputs.date }}"
+          commit-sha: ${{ steps.deployed.outputs.sha }}
+          netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          site-id: ${{ secrets.NETLIFY_SITE_ID }}
 
       - name: Success notification
         if: steps.git-check.outputs.changed == 'true'

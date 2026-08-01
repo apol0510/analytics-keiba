@@ -89,6 +89,47 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
   （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
 
+## 2026-08-01 — Netlify build hook の接続 timeout を bounded retry で吸収（branch `fix/netlify-deploy-bounded-retry` / Draft PR・未 merge）
+
+**事象**: `Import Prediction (Dispatch)` run **30681507056**（2026-08-01 03:11 UTC / repository_dispatch / nankan）が
+最終 step `Trigger Netlify deploy` のみで失敗。`curl: (28) ... after 300706 ms` = api.netlify.com:443 への接続 timeout。
+
+**データ反映は成功していた**（read-only 確認・再実行なし）:
+
+| 確認項目 | 実測 |
+|---|---|
+| import step | 成功。`2026-08-02` nankan（source: racebook・FUN 1 会場 12R / 110 頭） |
+| import commit | **`7672c4a`** — `astro-site/src/data/predictions/2026-08-02-funabashi.json` **1 ファイルのみ**（+8098 行） |
+| Netlify deploy | **`6a6d640c26d26a0008fe9eaf`** / commit `7672c4a` / state `ready` / created 03:12:12Z / published 03:13:11Z |
+| deploy の起動元 | title が commit message ＝ **GitHub 連携の push デプロイ**。同時間帯に hook 由来 deploy（"Deploy triggered by hook: ..."）は無し |
+| 現在の published deploy | `6a6d6901c341510008b91ec7` / `b31df9c`（`7672c4a` を祖先に含む） |
+
+→ **build hook の再送は不要**と判定し、**再送していない**（重複 build を起こしていない）。
+timeout の発生位置は「build hook POST の TCP 接続確立」であり、import・commit・push・deploy のいずれでもない。
+
+**恒久対策（実装済み・未 merge）**: `.github/actions/netlify-deploy` を最小修正。
+
+- `trigger-netlify-deploy.sh` を新設し、bounded retry（上限 3 回・backoff 5s→15s→30s）を実装。
+  retry 対象は **curl exit 6/7/28/35/52/55/56 と HTTP 429 / 5xx のみ**。**4xx と未知エラーは retry せず即 FAIL**、
+  **retry 上限到達後も FAIL**（fail-closed 維持）。
+- `--connect-timeout 30` / `--max-time 90` を明示（従来は無指定＝ curl 既定の 300 秒待ち）。
+- 再送前に Netlify API で対象 commit の deploy 有無を確認し、既にあれば **POST せず成功扱い**（重複 build 防止）。
+  `NETLIFY_AUTH_TOKEN` / `NETLIFY_SITE_ID` が未設定なら自動的に無効化され、retry のみの従来動作に縮退する。
+- hook URL / token / response 本文をログに出さない（従来は失敗時に response 本文を `cat` していた）。
+- `check-publish-drift.yml` の self-heal だけは `commit-sha` を渡さない（同一 commit の再ビルドが目的のため）。
+
+**検証**: `npm run test:netlify-deploy`（`.github/actions/netlify-deploy/tests/run-tests.sh`）= **14 ケース / 33 assertion すべて pass**。
+実ネットワークへは出ない（curl をスタブへ差し替え）。workflow YAML 18 本の parse OK。
+
+**未実施（停止境界）**: PR merge / production deploy / secret 追加（`NETLIFY_AUTH_TOKEN` / `NETLIFY_SITE_ID`）/
+build hook URL の変更 / 対象 commit 以外の deploy 起動。
+
+**残（本タスク範囲外・記録のみ）**: build hook と GitHub 連携の**二重ビルドが常態化**している
+（例: 03:07:56 に同一 commit `1da3f4b` の hook 由来 deploy と push 由来 deploy が両方作成されている）。
+hook を廃止するか維持するかは別途判断。
+
+---
+
 ## Completed
 
 **このドキュメント基盤 PR で完了したこと（これのみ）**
