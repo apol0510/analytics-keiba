@@ -122,7 +122,12 @@ export default async (req) => {
     // 配信基盤の履歴は保持期間が短く、開封・クリックが数日で取得不能になる。
     // 届いたイベントを AK 側へ append-only で残すことで「反応なし」と「記録が消えた」を
     // 区別できるようにする。**env が true のときだけ書く**（既定は数えるだけ）。
-    let ledger = { enabled: false, received: events.length, accepted: 0, written: 0, rejected: {}, byResolution: {} };
+    let ledger = {
+      enabled: false, received: events.length, accepted: 0,
+      attempted: 0, written: 0, failed: 0, skipped: 0, deduped: 0,
+      batches: 0, failedBatches: 0, retryCount: 0,
+      rejected: {}, byResolution: {}, failureReasons: {},
+    };
     try {
       ledger = await applyEmailEventLedger({ events, now: Date.now() });
     } catch {
@@ -148,23 +153,28 @@ export default async (req) => {
 /**
  * 配信反応を恒久台帳へ積む（**既定 OFF**）。
  *
- * - 判定・正規化・冪等キー・PII 最小化は `emailEventLedger.js` が単一源。ここでは I/O だけ。
+ * - 判定・正規化・冪等キー・PII 最小化は `emailEventLedger.js` が単一源。
+ * - 書き込み（バッチ化・bounded retry・失敗の集計）は `emailEventLedgerWriter.js` が単一源。
+ *   ここは**環境変数の gate と依存の受け渡しだけ**を行う（再実装しない）。
  * - `EMAIL_EVENT_LEDGER_ENABLED !== 'true'` なら **1 バイトも書かない**（件数だけ数える）。
  * - 書き込みは `EventKey` をマージキーにした upsert。同じイベントが再送されても 1 行。
  * - 顧客・配信を一意に解決できないイベントも **保存はする**が
  *   `ResolutionStatus=unresolved` として顧客へは結び付けない（推測しない）。
+ * - **失敗を沈黙させない**。落ちた分は `failed` と `failureReasons`（固定の理由コード）に出す。
  */
 async function applyEmailEventLedger({ events, now }) {
   const {
     buildLedgerBatch, assertOnlyLedgerFields, isLedgerWriteEnabled, EMAIL_EVENTS_TABLE,
   } = await import('../../src/lib/webhooks/emailEventLedger.js');
+  const { writeLedgerRows } = await import('../../src/lib/webhooks/emailEventLedgerWriter.js');
   const { createHash } = await import('node:crypto');
   const hashFn = (s) => createHash('sha256').update(String(s), 'utf8').digest('hex');
 
   const batch = buildLedgerBatch({
     rawEvents: events,
     // 送信側が custom_args を刻むまで配信台帳の索引は空（= すべて unresolved）。
-    // 索引を渡すのは Phase 1b（送信側の刻印）が入ってから。
+    // 索引を渡すのは **Phase 1c**（送信側の刻印）が入ってから。
+    // 1b は Airtable テーブル作成 + env 投入（`docs/EMAIL_EVENT_LEDGER.md` §5 が段取りの単一源）。
     deliveryIndex: new Map(),
     receivedAtMs: now,
     hashFn,
@@ -172,33 +182,35 @@ async function applyEmailEventLedger({ events, now }) {
     createdBy: 'sendgrid-webhook',
   });
 
+  const base = {
+    received: batch.received,
+    accepted: batch.accepted,
+    rejected: batch.rejected,
+    byResolution: batch.byResolution,
+  };
+
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
   const enabled = isLedgerWriteEnabled(process.env) && !!AIRTABLE_API_KEY && !!AIRTABLE_BASE_ID;
   if (!enabled) {
     // 既定 OFF: 何が届いたかだけ返す（本番 write 0）
-    return { enabled: false, received: batch.received, accepted: batch.accepted, written: 0, rejected: batch.rejected, byResolution: batch.byResolution };
+    return {
+      enabled: false, ...base,
+      attempted: 0, written: 0, failed: 0, skipped: 0, deduped: 0,
+      batches: 0, failedBatches: 0, retryCount: 0, failureReasons: {},
+    };
   }
 
-  let written = 0;
-  for (const row of batch.rows) {
-    if (!assertOnlyLedgerFields(row.fields)) continue; // 許可列以外が混ざったら書かない
-    try {
-      const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${EMAIL_EVENTS_TABLE}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}`, 'Content-Type': 'application/json' },
-        // EventKey をマージキーにした upsert（再受信で行が増えない）
-        body: JSON.stringify({
-          performUpsert: { fieldsToMergeOn: ['EventKey'] },
-          records: [{ fields: row.fields }],
-        }),
-      });
-      if (res.ok) written += 1;
-    } catch {
-      // 1 件失敗で残件を止めない（例外本文はログへ出さない）
-    }
-  }
-  return { enabled: true, received: batch.received, accepted: batch.accepted, written, rejected: batch.rejected, byResolution: batch.byResolution };
+  const result = await writeLedgerRows({
+    rows: batch.rows,
+    apiKey: AIRTABLE_API_KEY,
+    baseId: AIRTABLE_BASE_ID,
+    table: EMAIL_EVENTS_TABLE,
+    isAllowedFields: assertOnlyLedgerFields,
+    fetchFn: fetch,
+  });
+
+  return { enabled: true, ...base, ...result };
 }
 
 // イベント処理判定
