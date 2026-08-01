@@ -164,7 +164,8 @@ async function applyEmailEventLedger({ events, now }) {
   const batch = buildLedgerBatch({
     rawEvents: events,
     // 送信側が custom_args を刻むまで配信台帳の索引は空（= すべて unresolved）。
-    // 索引を渡すのは Phase 1b（送信側の刻印）が入ってから。
+    // 索引を渡すのは **Phase 1c**（送信側の刻印）が入ってから。
+    // 1b は Airtable テーブル作成 + env 投入（`docs/EMAIL_EVENT_LEDGER.md` §5 が段取りの単一源）。
     deliveryIndex: new Map(),
     receivedAtMs: now,
     hashFn,
