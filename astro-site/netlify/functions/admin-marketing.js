@@ -3,6 +3,7 @@
  *
  * `/admin/premium-plus-eligibility` の「顧客マーケティング」タブから呼ぶ。
  *   action='customers' … セグメント条件に一致する顧客一覧＋全体のセグメント件数
+ *   action='customerDetail' … 1 顧客のカルテ（ログイン可否・到達性・特典/オファー・契約）
  *   action='campaigns' … キャンペーン定義（カタログ）と送信有効/無効の状態
  *   action='preview'   … 1 キャンペーンの件名・本文を描画して返す（送信しない）
  *   action='dryRun'    … 選択顧客に対する送信対象・除外理由・件数を確定する（書き込みなし）
@@ -80,9 +81,18 @@ import {
 } from '../../src/lib/newsletter/airtable-fetch.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
+import {
+  buildCustomerDossier,
+  summarizeMagicLinkLogins,
+  resolveLastLogin,
+  daysSinceLogin,
+  loginSegment,
+} from '../../src/lib/marketing/customerDossier.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
+/** マジックリンクの使用履歴（＝有料会員の実ログイン）。読み取りのみ。 */
+const AUTH_TOKENS_TABLE = 'AuthTokens';
 /** AK 自身のキャンペーン配信台帳。KMA の *_MarketingAutomation は使わない。 */
 const DELIVERIES_TABLE = 'CampaignDeliveries';
 const SCHEDULED_TABLE = 'ScheduledEmails';
@@ -171,12 +181,17 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
 }
 
 /** Customers + EmailBlacklist + 自分のキャンペーン履歴を読み、顧客ごとの判定を作る（read-only）。 */
-async function loadCustomerMarketing({ KEY, BASE, now }) {
-  const [customers, deliveries] = await Promise.all([
+async function loadCustomerMarketing({ KEY, BASE, now, withLogins = false }) {
+  const [customers, deliveries, tokens] = await Promise.all([
     fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE }),
     fetchAll({ KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'` })
       .catch(() => []), // 履歴が読めなくても一覧は出す（履歴なし扱い）
+    // ログイン列は補助情報。読めなくても一覧・送信判定は成立させる
+    withLogins
+      ? fetchAll({ KEY, BASE, table: AUTH_TOKENS_TABLE }).catch(() => [])
+      : Promise.resolve([]),
   ]);
+  const magicLogins = summarizeMagicLinkLogins(tokens);
   const { emails: blacklistEmails, status: blacklistStatus } =
     await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
   const history = summarizeHistory(deliveries);
@@ -187,10 +202,17 @@ async function loadCustomerMarketing({ KEY, BASE, now }) {
     const marketing = resolveCustomerMarketing({
       fields, nowMs: now, blacklistEmails, history: history.get(email),
     });
-    return { recordId: rec.id, fields, marketing };
+    const lastLogin = resolveLastLogin({ fields, magicLinkAtMs: magicLogins.get(email) ?? null });
+    return {
+      recordId: rec.id, record: rec, fields, marketing,
+      lastLogin, daysSinceLogin: daysSinceLogin(lastLogin, now),
+    };
   });
 
-  return { list, deliveries, blacklistStatus, blacklistSize: blacklistEmails.size };
+  return {
+    list, deliveries, magicLogins, blacklistStatus, blacklistSize: blacklistEmails.size,
+    blacklistEmails,
+  };
 }
 
 export const handler = async (event) => {
@@ -215,6 +237,7 @@ export const handler = async (event) => {
     if (action === 'campaigns') return handleCampaigns();
     if (action === 'preview') return handlePreview({ req });
     if (action === 'customers') return await handleCustomers({ KEY, BASE, now, req });
+    if (action === 'customerDetail') return await handleCustomerDetail({ KEY, BASE, now, req });
     if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
     if (action === 'history') return await handleHistory({ KEY, BASE });
@@ -259,13 +282,19 @@ function handlePreview({ req }) {
 }
 
 async function handleCustomers({ KEY, BASE, now, req }) {
-  const { list, blacklistStatus, blacklistSize } = await loadCustomerMarketing({ KEY, BASE, now });
+  const { list, blacklistStatus, blacklistSize } = await loadCustomerMarketing({
+    KEY, BASE, now, withLogins: true,
+  });
 
   const filter = {
     contract: req.contract, plan: req.plan, marketing: req.marketing,
     premiumPlus: req.premiumPlus, history: req.history,
   };
-  const matched = list.filter((c) => matchesMarketingFilter(c.marketing, filter));
+  // 最終ログインの絞り込みは既存フィルタと直交させる（判定モジュールを汚さない）
+  const wantLogin = String(req.lastLogin || '').trim();
+  const matched = list
+    .filter((c) => matchesMarketingFilter(c.marketing, filter))
+    .filter((c) => !wantLogin || loginSegment(c.daysSinceLogin) === wantLogin);
 
   const rows = matched.slice(0, MAX_ROWS).map((c) => ({
     recordId: c.recordId,
@@ -287,6 +316,12 @@ async function handleCustomers({ KEY, BASE, now, req }) {
       ? new Date(c.marketing.history.lastSentAtMs).toISOString() : '',
     lastCampaign: c.marketing.history.lastCampaignId || '',
     sentCount: c.marketing.history.sentCount,
+    // 最終ログイン（出所つき。どの記録由来かを画面で必ず併記する）
+    lastLoginAt: c.lastLogin.at || '',
+    lastLoginSource: c.lastLogin.source,
+    lastLoginSourceLabel: c.lastLogin.sourceLabel,
+    daysSinceLogin: c.daysSinceLogin,
+    loginSegment: loginSegment(c.daysSinceLogin),
   }));
 
   return json(200, {
@@ -296,6 +331,52 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     segments: summarizeSegments(list.map((c) => c.marketing)),
     totalCustomers: list.length,
     blacklist: { status: blacklistStatus, size: blacklistSize },
+    sendEnabled: isMarketingSendEnabled(process.env),
+    dispatchEnabled: isDispatchEnabled(process.env),
+  });
+}
+
+/**
+ * 1 顧客のカルテ（read-only）。
+ *
+ * 「なぜこの人はログインできないのか / なぜ送信対象外なのか / 何を持っているのか」を
+ * 1 リクエストで返す。判定は `customerDossier.js` へ委譲し、ここでは取得だけ行う。
+ * provider suppression は失敗しても **カルテ自体は返す**（`null`＝不明として表示させる）。
+ */
+async function handleCustomerDetail({ KEY, BASE, now, req }) {
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です' });
+
+  const { list, deliveries, magicLogins, blacklistEmails } =
+    await loadCustomerMarketing({ KEY, BASE, now, withLogins: true });
+  const hit = list.find((c) => c.recordId === recordId);
+  if (!hit) return json(404, { error: '該当する顧客が見つかりません' });
+
+  const email = String(hit.fields.Email || '').trim().toLowerCase();
+
+  // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
+  const blacklist = await loadBlacklistSets({ KEY, BASE });
+
+  const [offers, provider] = await Promise.all([
+    fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []),
+    fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
+  ]);
+
+  const dossier = buildCustomerDossier({
+    record: hit.record,
+    nowMs: now,
+    magicLinkAtMs: magicLogins.get(email) ?? null,
+    offerRecords: offers,
+    deliveryRecords: deliveries,
+    blacklistEmails: blacklist.hard.size ? blacklist.hard : blacklistEmails,
+    softBounceEmails: blacklist.soft,
+    providerSuppressed: provider && provider.ok ? provider.emails : null,
+    history: hit.marketing.history,
+  });
+
+  return json(200, {
+    dossier,
+    providerSuppression: describeProviderSuppression(provider),
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),
   });

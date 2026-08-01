@@ -15,6 +15,27 @@ async function loadAuthLib() {
   return import('../../src/lib/auth/index.js');
 }
 
+/**
+ * 最終ログインを記録する（**`LastLoginAt` 1 列だけ**・best-effort）。
+ *
+ * この Function が Customers を書き換えない原則の唯一の例外。
+ * 契約・課金・権限（プラン / 有効期限 / PaymentConfirmed など）には触れない。
+ * 失敗（列が未作成 = 422 / 権限 / 通信）は握りつぶし、**ログインの成否に影響させない**。
+ */
+async function recordLastLogin({ base, recordId, fields }) {
+  try {
+    if (!base || !recordId) return;
+    const { planLastLoginUpdate, assertOnlyLastLoginField } =
+      await import('../../src/lib/auth/lastLoginRecord.js');
+    const plan = planLastLoginUpdate({ fields: fields || {}, nowMs: Date.now() });
+    if (!plan.update) return;
+    if (!assertOnlyLastLoginField(plan.fields)) return; // 想定外の列が混ざったら書かない
+    await base('Customers').update([{ id: recordId, fields: plan.fields }]);
+  } catch (e) {
+    console.warn('⚠️ [last-login] 記録スキップ:', e?.message || 'unknown');
+  }
+}
+
 exports.handler = async (event) => {
   const request = { method: event.httpMethod };
   const headers = {
@@ -106,6 +127,9 @@ exports.handler = async (event) => {
       // （プラン名・有効期限・金額は伏せる。列挙対策として詳細は出さない）。
       const previousPlanEnded = membership.reason === MEMBER_REASON.EXPIRED
         || membership.reason === MEMBER_REASON.WITHDRAWAL_REQUESTED;
+      // 最終ログインの記録（**LastLoginAt 1 列だけ**・best-effort）。
+      // 契約・課金・権限の列には触れない。失敗してもログインは成立させる。
+      await recordLastLogin({ base, recordId: record.id, fields: record.fields });
       return {
         statusCode: 200,
         headers: jsonHeaders,

@@ -63,6 +63,28 @@ function venueString(venues) {
   return 'all';
 }
 
+/**
+ * 最終ログインを記録する（**`LastLoginAt` 1 列だけ**・best-effort）。
+ *
+ * ログイン経路が Customers を書き換えない原則の唯一の例外。
+ * 失敗（列が未作成 = 422 / 権限 / 通信）はすべて握りつぶす。
+ * **ログインの成否に影響させない**（記録は付随情報であり、認可ではない）。
+ */
+async function recordLastLogin({ table, recordId, fields }) {
+  try {
+    if (!table || !recordId) return;
+    const { planLastLoginUpdate, assertOnlyLastLoginField } =
+      await import('../../src/lib/auth/lastLoginRecord.js');
+    const plan = planLastLoginUpdate({ fields: fields || {}, nowMs: Date.now() });
+    if (!plan.update) return;
+    if (!assertOnlyLastLoginField(plan.fields)) return; // 想定外の列が混ざったら書かない
+    await table.update([{ id: recordId, fields: plan.fields }]);
+  } catch (e) {
+    // 列未作成（UNKNOWN_FIELD_NAME）を含め、記録失敗はログインを壊さない
+    console.warn('⚠️ [last-login] 記録スキップ:', e?.message || 'unknown');
+  }
+}
+
 exports.handler = async (event) => {
   const headers = corsHeaders(event);
 
@@ -90,6 +112,8 @@ exports.handler = async (event) => {
         .firstPage();
       return rows.length ? { id: rows[0].id, fields: rows[0].fields } : null;
     };
+    // 最終ログイン記録のために、確定した 1 件の fields を保持する（判定には使わない）
+    let lastCustomerFields = null;
     const findCustomer = async (email) => {
       const escaped = String(email).replace(/'/g, "\\'");
       const rows = await customersTable
@@ -101,6 +125,7 @@ exports.handler = async (event) => {
         console.warn(`⚠️ [verify-magic-link] 同一 Email で複数 Customers → fail closed (件数=${rows.length})`);
         return { conflict: true };
       }
+      lastCustomerFields = c.record ? c.record.fields : null;
       return c.record; // NONE→null / SINGLE→{ id, fields }
     };
     const markUsed = async (id) => {
@@ -148,6 +173,9 @@ exports.handler = async (event) => {
       case VERIFY_FLOW.OK: {
         const m = result.membership;
         const venue = venueString(m.venueAccess);
+        // 最終ログインの記録（**LastLoginAt 1 列だけ**・best-effort）。
+        // 失敗してもログインは成立させる（列が未作成の間は 422 になるが無視する）。
+        await recordLastLogin({ table: customersTable, recordId: m.recordId, fields: lastCustomerFields });
         // ログイン成功後はダッシュボード（マイページ）へ遷移する。
         // 予想ページへの導線はダッシュボード内から辿る。
         const redirectTo = '/dashboard/';
