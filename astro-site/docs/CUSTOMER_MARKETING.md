@@ -344,6 +344,46 @@ Airtable Customers には **以前から `最終ログイン`（dateTime）列�
 （詳細はカルテで確認する）。
 
 
+
+### 🧾 複数選択と実行前確認（2026-08-01 追加）
+
+複数名へ施策を打つとき、**誰が対象で誰がなぜ除外なのか**を実行前に必ず見せる。
+
+| 機能 | 単一源 | 内容 |
+|---|---|---|
+| 選択集合の更新 | `marketing/campaignPlanView.js` の `updateSelection()` | 「表示中のみ全選択」「全解除」。**recordId が正本**でメールは識別子にしない |
+| 画面外選択の検知 | 同 `offscreenSelection()` | 絞り込みで見えなくなった選択を警告表示 |
+| 実行前確認 | 同 `buildPlanView()` | dry-run 結果を 対象者 / 除外者 / 理由集計 / 実行内容 / rollback に整える |
+
+#### 判定はしない。整えるだけ
+
+対象・除外を決めるのは **既存の権威 API（dry-run）**。画面は結果に一覧の行情報を突き合わせるだけで、
+契約・送信可否・suppression・頻度・DeliveryKey を再判定しない（guard テストで固定）。
+
+#### fail closed
+
+- 除外理由に**未知のコードが 1 つでもあれば実行不可**（`executable=false`）
+- **選択 ≠ 対象 + 除外**なら実行不可（件数の辻褄が合わない）
+- 対象 0 名なら実行不可として明示
+- 「表示中を全選択」は**送信可能な相手だけ**を足す（`selectableIds`）
+
+#### ブラウザ安全（node 依存を持ち込まない）
+
+`campaignPlanView.js` は画面で動くため `campaignSend.js`（`node:crypto` に依存）を import しない。
+除外理由の日本語は **API が返した label を最優先**し、無い場合だけローカル表を使う。
+サーバー側にコードが増えたときの取りこぼしは、node 実行のテストで
+`MK_EXCLUSION_LABEL` と突き合わせて検知する。
+
+#### 実行前に必ず出す項目
+
+対象件数 / 対象者一覧 / 除外件数 / 除外者一覧 / 除外理由（集計＋明細）/
+campaignId:version / 件名 / オファー内容・価格・期限 / 特典内容 /
+operationId（メールは planFingerprint）/ 変更前 → 変更後 / rollback 方法 /
+現時点の副作用（dry-run は `none`）。
+
+> この確認画面から実行はしない（**dry-run 専用**）。実行は各タブの既存フロー
+> （確認 → 実行）に委ねる。新しい実行経路を増やさない。
+
 ### 管理画面の Function は自分でメールを送らない
 
 `admin-marketing.js` は **SendGrid の送信 API を呼ぶコードを持たない**（guard テストで固定）。

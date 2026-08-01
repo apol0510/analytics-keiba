@@ -197,6 +197,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <button type="button" id="mkSelAll" class="btn-ghost">表示中を全選択</button>
         <button type="button" id="mkSelNone" class="btn-ghost">全解除</button>
         <span class="selcount" id="mkSelCount">0 名を選択中</span>
+        <button type="button" id="mkSelList" class="btn-ghost btn-sm">選択中の一覧</button>
+        <span class="selwarn" id="mkSelWarn"></span>
       </div>
 
       <p class="msg" id="mkMessage"></p>
@@ -665,6 +667,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     background: rgba(148,163,184,.14); border: 1px solid rgba(148,163,184,.3); }
   .ppe .strong-ok { color: #6ee7b7; font-weight: 800; }
 
+  /* ── 実行前確認（対象者・除外者・理由）── */
+  .ppe .pv-head { font-size: .84rem; font-weight: 800; color: #e6edf7; padding: .4rem .6rem;
+    background: rgba(56,189,248,.12); border-radius: 6px; }
+  .ppe .pv-head.pv-blocked { background: rgba(248,113,113,.14); }
+  .ppe .pv-blocker { font-size: .76rem; color: #fca5a5; margin: .25rem 0; font-weight: 700; }
+  .ppe .pv-tabs { display: flex; flex-wrap: wrap; gap: .3rem; margin: .5rem 0 .3rem; }
+  .ppe .selwarn { font-size: .72rem; color: #fbbf24; }
+
   /* ── 推奨アクション ── */
   .ppe .rec { border-left: 3px solid #38bdf8; background: rgba(56,189,248,.07);
     border-radius: 6px; padding: .45rem .6rem; margin-bottom: .45rem; }
@@ -869,6 +879,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppe .pv-controls select { flex: 0 1 62%; }
   }
 </style>
+
+<script>
+  // 判定の単一源を画面から使うための橋渡し。**ここでロジックを書かない**
+  import {
+    buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
+  } from '../../lib/marketing/campaignPlanView.js';
+  window.__planView = { buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND };
+</script>
 
 <script is:inline>
   (() => {
@@ -1789,6 +1807,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     function mkRenderSelCount() {
       $('mkSelCount').textContent = mkSelected.size + ' 名を選択中';
+      // 絞り込みで見えなくなった選択を知らせる（見えないまま実行させない）
+      const PV = window.__planView;
+      const off = PV ? PV.offscreenSelection({ current: mkSelected, visibleIds: mkVisibleRows().map((r) => r.recordId) }) : [];
+      $('mkSelWarn').textContent = off.length ? '⚠️ うち ' + off.length + ' 名は現在の絞り込みに表示されていません' : '';
     }
 
     // ── 顧客カルテ（read-only）─────────────────────────────────────
@@ -1966,45 +1988,126 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (ids.length === 0) { $('mkActionState').textContent = '対象を選択してください。'; return; }
       $('mkActionState').textContent = '確認中…（書き込みは行いません）';
       try {
-        let data; let head;
+        const PV = window.__planView;
+        const rowsById = new Map((mkData && mkData.rows ? mkData.rows : []).map((r) => [r.recordId, r]));
+        let result; let planKind; let campaign = null;
         if (kind === 'campaign') {
-          const c = mkCampaigns.find((x) => x.campaignId === $('mkCampaign').value);
-          data = await mkCall({ action: 'dryRun', campaignId: c.campaignId, recordIds: ids });
-          head = c.name + '（v' + c.version + '）';
+          campaign = mkCampaigns.find((x) => x.campaignId === $('mkCampaign').value);
+          result = await mkCall({ action: 'dryRun', campaignId: campaign.campaignId, recordIds: ids });
+          planKind = PV.PLAN_KIND.CAMPAIGN;
         } else {
-          // 特典・オファーは カムバック特典タブの API（dry-run）を使う。実行はしない
-          const key = kind === 'premium-annual-half' ? 'premiumOfferId'
-            : kind.startsWith('premium-') ? 'premiumOfferId' : 'lightOfferId';
-          data = await cbCall({ action: 'dryRun', [key]: kind, recordIds: ids });
-          head = data && data.selection ? data.selection : kind;
+          const key = kind.startsWith('premium-') ? 'premiumOfferId' : 'lightOfferId';
+          result = await cbCall({ action: 'dryRun', [key]: kind, recordIds: ids });
+          planKind = PV.PLAN_KIND.GRANT_OFFER;
         }
-        if (!data) { $('mkActionState').textContent = '確認できませんでした。'; return; }
-        const s = dossierSection(box, '確認結果: ' + head + '（書き込みなし）');
-        dossierRow(s, '対象件数', String(ids.length));
-        if (kind === 'campaign') {
-          dossierRow(s, '送信できる', String(data.willSend ?? 0), 'ok');
-          dossierRow(s, '除外', String(data.excluded ?? 0));
-          for (const x of (data.excludedDetail || [])) dossierRow(s, '　' + (x.label || x.reason), String(x.count), 'sub-row');
-          dossierRow(s, '変更されるもの', 'ScheduledEmails / CampaignDeliveries のみ（Customers は不変）');
-          dossierRow(s, 'operationId', String(data.planFingerprint || '').slice(0, 16) + '…（planFingerprint）');
-          dossierRow(s, '取り消し方法', 'キュー登録前なら操作不要。登録後は実配信しなければ送信されません');
-        } else {
-          dossierRow(s, '付与できる', String(data.willGrant ?? 0), 'ok');
-          dossierRow(s, 'オファー発行', String(data.willOffer ?? 0), 'ok');
-          dossierRow(s, '除外', String(data.skipped ?? 0));
-          for (const [k, v] of Object.entries((data.parts && data.parts.partSkips) || {})) dossierRow(s, '　' + k, String(v), 'sub-row');
-          for (const pv of (data.preview || []).slice(0, 20)) {
-            dossierRow(s, '　変更前 → 変更後', (pv.before || '—') + ' → ' + (pv.after || '—'), 'sub-row');
-          }
-          dossierRow(s, 'operationId', String(data.operationId || '—'));
-          dossierRow(s, '取り消し方法', 'カムバック特典タブの「取り消し」から（Customers の契約・課金は不変）');
-        }
-        dossierRow(s, 'この操作の副作用', 'なし（dry-run）', 'ok');
-        $('mkActionState').textContent = '確認しました。実行は各タブの確認 → 実行から行ってください。';
+        if (!result) { $('mkActionState').textContent = '確認できませんでした。'; return; }
+        // 対象/除外の判定は API の結果をそのまま使う（画面では再判定しない）
+        const view = PV.buildPlanView({ kind: planKind, selectedIds: ids, rowsById, result, campaign, nowMs: Date.now() });
+        renderPlanView(box, view);
+        $('mkActionState').textContent = view.executable
+          ? '確認しました。実行は各タブの確認 → 実行から行ってください。'
+          : '⛔ この内容では実行できません: ' + view.blockers.join(' / ');
       } catch (e) {
         $('mkActionState').textContent = '確認に失敗しました: ' + (e && e.message ? e.message : 'unknown');
       }
     });
+
+    /** dry-run の結果を「実行前確認」の形で描く（タブ: 対象者 / 除外者 / 理由 / 実行内容 / rollback）*/
+    function renderPlanView(box, view) {
+      const head = document.createElement('div');
+      head.className = 'pv-head' + (view.executable ? '' : ' pv-blocked');
+      head.textContent = view.title
+        + '　選択 ' + view.selectedCount + ' / 対象 ' + view.includedCount + ' / 除外 ' + view.excludedCount;
+      box.appendChild(head);
+
+      const warn = document.createElement('p'); warn.className = 'tl-note'; warn.textContent = '⚠️ ' + view.warning;
+      box.appendChild(warn);
+      for (const b of view.blockers) {
+        const p2 = document.createElement('p'); p2.className = 'pv-blocker'; p2.textContent = '⛔ ' + b;
+        box.appendChild(p2);
+      }
+
+      const tabs = document.createElement('div'); tabs.className = 'pv-tabs';
+      const panes = document.createElement('div');
+      const TABS = [
+        ['対象者 ' + view.included.length, () => {
+          const s = dossierSection(panes, 'この人に実行されます');
+          // 特典・オファーは「変更前 → 変更後」を dry-run の preview からそのまま出す
+          const prevMap = new Map(((view.previews) || []).map((x) => [x.recordId, x]));
+          if (view.included.length === 0) dossierRow(s, '—', '対象者はいません', 'ng');
+          for (const p3 of view.included) {
+            dossierRow(s, (p3.name || p3.email || p3.recordId),
+              [p3.email, CONTRACT_LABEL[p3.contract] || p3.contract,
+                '閲覧: ' + [p3.access && p3.access.free && '無料', p3.access && p3.access.light && 'Light',
+                  p3.access && p3.access.premium && 'Premium', p3.access && p3.access.sanrenpuku && '三連複'].filter(Boolean).join('/'),
+                '最終ログイン: ' + (p3.lastLoginAt ? fmtDate(p3.lastLoginAt) : '記録なし'),
+                'オファー: ' + p3.liveOfferCount + ' 件',
+                '特典: ' + (p3.promoActive ? (p3.promoUntil ? '〜' + fmtDate(p3.promoUntil) : 'あり') : 'なし'),
+                '次回送信可: ' + (p3.nextSendableAt ? fmtDate(p3.nextSendableAt) : 'いま送れる'),
+              ].join(' / '), 'ok');
+            const pv = prevMap.get(p3.recordId);
+            if (pv) dossierRow(s, '　変更前 → 変更後', (pv.before || '—') + ' → ' + (pv.after || '—'), 'sub-row');
+          }
+        }],
+        ['除外者 ' + view.excluded.length, () => {
+          const s = dossierSection(panes, 'この人には実行されません');
+          if (!view.detailAvailable) dossierRow(s, '注意', '明細が取得できないため理由集計のみ表示します', 'ng');
+          for (const p4 of view.excluded) {
+            dossierRow(s, (p4.name || p4.email || p4.recordId),
+              p4.reasonLabel + '（' + p4.reasonCode + '）', p4.known ? '' : 'ng');
+          }
+        }],
+        ['除外理由', () => {
+          const s = dossierSection(panes, '除外理由の集計');
+          if (view.reasonSummary.length === 0) dossierRow(s, '—', '除外はありません', 'ok');
+          for (const r of view.reasonSummary) {
+            dossierRow(s, r.label + '（' + r.code + '）', r.count + ' 名', r.known ? '' : 'ng');
+          }
+        }],
+        ['実行内容', () => {
+          const s = dossierSection(panes, '実行すると何が起きるか');
+          if (view.campaignId) {
+            dossierRow(s, 'キャンペーンID', view.campaignId + ':v' + view.version);
+            dossierRow(s, '件名', view.subject || '—');
+          }
+          if (view.offer) {
+            dossierRow(s, 'オファー', (view.offer.offerId || '') + ' ¥'
+              + Number(view.offer.regularPrice || 0).toLocaleString() + ' → ¥'
+              + Number(view.offer.offerPrice || 0).toLocaleString());
+            if (view.offer.earliestExpiresAt) dossierRow(s, '有効期限（最短）', fmtDate(view.offer.earliestExpiresAt));
+          }
+          if (view.grants) {
+            if (view.grants.light) dossierRow(s, 'Light 特典', view.grants.light);
+            if (view.grants.premium) dossierRow(s, 'Premium 特典', view.grants.premium);
+          }
+          dossierRow(s, 'operationId', view.operationId || view.planFingerprint || '—');
+          dossierRow(s, '対象件数', view.includedCount + ' 名（除外 ' + view.excludedCount + ' 名 / 選択 ' + view.selectedCount + ' 名）');
+          dossierRow(s, '取り消し方法', view.rollback[0] || '—');
+          dossierRow(s, 'この操作の副作用', view.sideEffects, 'ok');
+          dossierRow(s, '現時点の副作用', view.sideEffects, 'ok');
+          dossierRow(s, '本番変更', 'この確認では行われません（実行は各タブの確認 → 実行）', 'ok');
+        }],
+        ['rollback', () => {
+          const s = dossierSection(panes, '取り消し方法');
+          for (const line of view.rollback) dossierRow(s, '・', line);
+        }],
+      ];
+      TABS.forEach(([label, render], i) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'btn-ghost btn-sm' + (i === 0 ? ' is-on' : '');
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          panes.innerHTML = '';
+          [...tabs.children].forEach((c) => c.classList.remove('is-on'));
+          b.classList.add('is-on');
+          render();
+        });
+        tabs.appendChild(b);
+      });
+      box.appendChild(tabs);
+      box.appendChild(panes);
+      TABS[0][1]();
+    }
 
     // ── 実配信（キューを配信基盤へ渡す）────────────────────────────
     const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
@@ -2081,11 +2184,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     $('mkLoad').addEventListener('click', mkLoad);
     $('mkQ').addEventListener('input', mkRender);
+    // 選択の更新は純粋モジュールへ委譲（絞り込みを変えても選択が勝手に増えない）
     $('mkSelAll').addEventListener('click', () => {
-      for (const r of mkVisibleRows()) if (r.sendable) mkSelected.add(r.recordId);
+      const visible = mkVisibleRows();
+      const next = window.__planView.updateSelection({
+        current: mkSelected,
+        visibleIds: visible.map((r) => r.recordId),
+        // 送信できない相手は選ばせない（UI 側でも fail closed）
+        selectableIds: visible.filter((r) => r.sendable).map((r) => r.recordId),
+        op: 'add-visible',
+      });
+      mkSelected.clear();
+      for (const id of next) mkSelected.add(id);
       mkRender();
     });
-    $('mkSelNone').addEventListener('click', () => { mkSelected.clear(); mkRender(); });
+    $('mkSelNone').addEventListener('click', () => {
+      const next = window.__planView.updateSelection({ current: mkSelected, op: 'clear' });
+      mkSelected.clear();
+      for (const id of next) mkSelected.add(id);
+      mkRender();
+    });
+    $('mkSelList').addEventListener('click', () => {
+      const body = mkOpenModal('選択中の顧客（' + mkSelected.size + ' 名）');
+      const byId = new Map((mkData && mkData.rows ? mkData.rows : []).map((r) => [r.recordId, r]));
+      const s = dossierSection(body, '選択は recordId で保持しています');
+      for (const id of mkSelected) {
+        const r = byId.get(id);
+        dossierRow(s, r ? (r.name || r.email || id) : id,
+          r ? (r.email + ' / ' + (CONTRACT_LABEL[r.contract] || r.contract)) : '（現在の絞り込みに表示されていません）',
+          r ? '' : 'ng');
+      }
+    });
 
     // ── モーダル（プレビュー / dry-run 確認）──
     function mkOpenModal(title) {

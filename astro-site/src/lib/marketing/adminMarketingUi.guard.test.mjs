@@ -46,8 +46,11 @@ test('一覧の checkbox 一括操作がそろっている', () => {
 });
 
 test('送信できない顧客は選択できない（UI 側でも fail closed）', () => {
+  // 行の checkbox は押せない
   assert.match(SCRIPT, /cb\.disabled = !r\.sendable/);
-  assert.match(SCRIPT, /if \(r\.sendable\) mkSelected\.add\(r\.recordId\)/, '全選択が除外者まで拾っている');
+  // 全選択も送信可能な相手だけを足す（判定は純粋モジュールへ selectableIds として渡す）
+  assert.match(SCRIPT, /selectableIds: visible\.filter\(\(r\) => r\.sendable\)/,
+    '全選択が除外者まで拾っている');
 });
 
 test('dry-run を経ずに送信できない（送信ボタンは確認画面の中だけ）', () => {
@@ -275,5 +278,73 @@ test('施策パネルは dry-run しか実行しない', () => {
   // 必要な表示項目
   for (const k of ['対象件数', '変更前 → 変更後', 'operationId', '取り消し方法', 'この操作の副作用']) {
     assert.ok(block.includes(k), `施策パネルに ${k} が無い`);
+  }
+});
+
+// =========================================================================
+// 複数選択と実行前確認（2026-08-01）
+// =========================================================================
+
+test('選択操作は純粋モジュールへ委譲する（画面でロジックを書かない）', () => {
+  assert.match(PAGE, /window\.__planView/, '判定モジュールを画面へ渡していない');
+  assert.match(PAGE, /campaignPlanView\.js/, 'campaignPlanView を読み込んでいない');
+  assert.match(SCRIPT, /updateSelection\(\{[\s\S]{0,400}op: 'add-visible'/, '表示中のみ全選択が委譲されていない');
+  assert.match(SCRIPT, /op: 'clear'/, '全解除が委譲されていない');
+});
+
+test('全選択は表示中かつ送信可能な相手だけを足す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkSelAll')"), SCRIPT.indexOf("$('mkSelNone')"));
+  assert.match(block, /visibleIds: visible\.map/, '表示中以外を巻き込んでいる');
+  assert.match(block, /selectableIds: visible\.filter\(\(r\) => r\.sendable\)/, '送信不可を選択対象にしている');
+});
+
+test('絞り込みで見えなくなった選択を警告する', () => {
+  assert.ok(PAGE.includes('id="mkSelWarn"'), '画面外選択の警告欄が無い');
+  assert.match(SCRIPT, /offscreenSelection\(/, '画面外選択を数えていない');
+  assert.match(SCRIPT, /現在の絞り込みに表示されていません/);
+});
+
+test('選択中の一覧を確認できる（recordId が正本と明示）', () => {
+  assert.ok(PAGE.includes('id="mkSelList"'));
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkSelList')"));
+  assert.match(block, /recordId で保持/, '識別子が recordId だと画面に出ていない');
+});
+
+test('実行前確認は 対象者 / 除外者 / 除外理由 / 実行内容 / rollback を出す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function renderPlanView'));
+  for (const tab of ['対象者 ', '除外者 ', '除外理由', '実行内容', 'rollback']) {
+    assert.ok(block.includes(tab), `${tab} タブが無い`);
+  }
+  assert.match(block, /この人に実行されます/, '対象になる理由の説明が無い');
+  assert.match(block, /この人には実行されません/, '除外の説明が無い');
+  assert.match(block, /view\.operationId \|\| view\.planFingerprint/, 'operationId を出していない');
+  assert.match(block, /view\.rollback/, 'rollback を出していない');
+  assert.match(block, /campaignId \+ ':v' \+ view\.version/, 'campaignId / version を出していない');
+});
+
+test('実行不可（未知理由・件数不一致）を画面で伝える', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkActionDry')"));
+  assert.match(block, /view\.executable/, '実行可否を見ていない');
+  assert.match(block, /この内容では実行できません/, '実行不可の表示が無い');
+  const render = SCRIPT.slice(SCRIPT.indexOf('function renderPlanView'));
+  assert.match(render, /pv-blocked/, '実行不可の視覚表現が無い');
+  assert.match(render, /view\.blockers/, '理由を出していない');
+});
+
+test('確認画面は dry-run しか呼ばない（実行系を持たない）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkActionDry')"), SCRIPT.indexOf('// ── 実配信'));
+  assert.match(block, /action: 'dryRun'/);
+  for (const forbidden of ["action: 'apply'", "action: 'send'", "action: 'revoke'", "action: 'offerRevoke'", 'dryRun: false']) {
+    assert.equal(block.includes(forbidden), false, `確認画面から ${forbidden} を呼んでいる`);
+  }
+  assert.match(block, /sideEffects/, '副作用の有無を出していない');
+});
+
+test('画面側で送信可否・契約条件を再判定しない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkActionDry')"), SCRIPT.indexOf('// ── 実配信'));
+  // 判定は API 結果をそのまま使う
+  assert.match(block, /buildPlanView\(\{ kind: planKind, selectedIds: ids, rowsById, result/);
+  for (const forbidden of ['MARKETING_MIN_INTERVAL', 'suppression.has', 'isLiveOffer(', 'resolveMembership(']) {
+    assert.equal(block.includes(forbidden), false, `画面で ${forbidden} を再実装している`);
   }
 });
