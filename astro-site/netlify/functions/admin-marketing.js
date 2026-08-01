@@ -481,7 +481,10 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
       available: activity.available,
       coveredMessages: activity.coveredMessages || 0,
       totalMessages: activity.totalMessages || 0,
-      note: activity.retentionNote || "取得できませんでした（反応が無かったという意味ではありません）",
+      // ⚠️ キー名は deliveryActivity.js の戻り値に合わせる（`note`）。
+      //    別名を読むと **取得できているのに「取得できませんでした」と表示**され、
+      //    「不明」と「反応なし」を区別するというこの機能の目的が壊れる。
+      note: activity.note || '取得できませんでした（反応が無かったという意味ではありません）',
     },
     providerSuppression: describeProviderSuppression(provider),
     sendEnabled: isMarketingSendEnabled(process.env),

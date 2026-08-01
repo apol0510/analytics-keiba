@@ -141,3 +141,33 @@ test('12. provider suppression を確認できないときは中止する（fail
   assert.match(code, /return json\(503, \{\s*error: 'SendGrid の配信停止リストを確認できないため中止/,
     '確認できないまま続行している');
 });
+
+// ── 反応の取得範囲を偽らない（2026-08-01）──────────────────────────
+// 取得できているのに「取得できませんでした」と出す/その逆は、
+// 「不明」と「反応なし」を区別するというこの機能の目的そのものを壊す。
+test('12. engagementSource の note は deliveryActivity の戻り値キーと一致する', async () => {
+  const mod = await import('./deliveryActivity.js');
+  // モジュールが返すキー名を実測し、Function 側が別名を読んでいないか確かめる
+  const result = await mod.fetchDeliveryActivity({ email: '', apiKey: '' });
+  assert.ok('note' in result, 'deliveryActivity が note を返さなくなった');
+  assert.equal('retentionNote' in result, false, 'retentionNote は使わない');
+
+  assert.match(code, /note:\s*activity\.note/, 'Function が activity.note を読んでいない');
+  assert.equal(/activity\.retentionNote/.test(code), false, '存在しないキーを読んでいる');
+});
+
+test('13. 取得できたときは「取得できませんでした」と表示しない', async () => {
+  const mod = await import('./deliveryActivity.js');
+  const fakeFetch = async (url) => {
+    if (String(url).includes('?limit=')) {
+      return { ok: true, status: 200, json: async () => ({ messages: [{ msg_id: 'm1', last_event_time: '2026-08-01T00:00:00Z', status: 'delivered', subject: 's' }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ events: [{ event_name: 'open', processed: '2026-08-01T00:01:00Z' }] }) };
+  };
+  const r = await mod.fetchDeliveryActivity({ email: 'a@b.co', apiKey: 'k', fetchImpl: fakeFetch });
+  assert.equal(r.available, true);
+  // 「全部ダメでした」を意味する固有文言が出ていないこと（『それ以前は取得できません』は正しい説明なので許す）
+  assert.equal(r.note.includes('取得できませんでした'), false, '取得できているのに失敗文言を出している');
+  assert.equal(r.note.includes('反応が無かったという意味ではありません'), false);
+  assert.match(r.note, /直近 1 通/);
+});
