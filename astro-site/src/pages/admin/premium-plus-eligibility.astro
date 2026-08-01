@@ -159,6 +159,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="recent">最近送信済み</option>
           <option value="sent">送信あり</option>
         </select>
+        <select id="mkLastLogin" aria-label="最終ログイン">
+          <option value="">最終ログイン: すべて</option>
+          <option value="login:30d">30日以内</option>
+          <option value="login:90d">31〜90日</option>
+          <option value="login:365d">91〜365日</option>
+          <option value="login:over365">1年以上前</option>
+          <option value="login:never">記録なし</option>
+        </select>
         <button type="button" id="mkLoad" class="btn-primary">この条件で取得</button>
       </div>
 
@@ -180,13 +188,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-contract">契約</th>
               <th class="c-plan">プラン</th>
               <th class="c-send">送信</th>
+              <th class="c-login">最終ログイン</th>
               <th class="c-pp">Plus</th>
               <th class="c-hist">送信履歴</th>
+              <th class="c-detail"><span class="sr">カルテ</span></th>
             </tr>
           </thead>
           <tbody id="mkRows"></tbody>
         </table>
         <p class="empty" id="mkEmpty" hidden></p>
+      </div>
+
+      <!-- 顧客カルテ（1 顧客の全状況・read-only） -->
+      <div class="dossier" id="mkDossier" hidden>
+        <div class="dossier-head">
+          <h2 id="mkDossierTitle">顧客カルテ</h2>
+          <button type="button" id="mkDossierClose" class="btn-ghost">閉じる</button>
+        </div>
+        <div id="mkDossierBody"></div>
       </div>
 
       <div class="campaign-box">
@@ -198,6 +217,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <button type="button" id="mkHistoryBtn" class="btn-ghost">送信履歴</button>
         </div>
         <p class="camp-desc" id="mkCampDesc"></p>
+      </div>
+
+      <!-- ═══ 実配信（キューを配信基盤へ渡す最後の一押し）═══ -->
+      <div class="campaign-box dispatch-box">
+        <h2>📮 実配信</h2>
+        <p class="note">
+          「送信」で作られたキューは、ここで配信するまで <b>1 通も送られません</b>。
+          配信の直前に、配信停止・バウンス・退会・24時間以内の重複・オファーの有効性を
+          1 通ずつ再判定します（該当者は送らず記録だけ残します）。
+        </p>
+        <div class="toolbar">
+          <button type="button" id="mkDispatchCheck" class="btn-ghost">配信内容を確認（送信しない）</button>
+          <button type="button" id="mkDispatchRun" class="btn-danger" disabled>実際に配信する</button>
+        </div>
+        <p class="note" id="mkDispatchState"></p>
+        <div id="mkDispatchResult"></div>
       </div>
     </section>
 
@@ -581,6 +616,31 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     padding: .1rem .4rem; border-radius: 4px; color: #cbd5e6;
     background: rgba(148,163,184,.14); border: 1px solid rgba(148,163,184,.3); }
   .ppe .strong-ok { color: #6ee7b7; font-weight: 800; }
+
+  /* ── 顧客カルテ ── */
+  .ppe .dossier { background: #0f1a2f; border: 1px solid rgba(148,163,184,.22); border-radius: 11px;
+    padding: .85rem 1rem; margin-top: 1rem; }
+  .ppe .dossier-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+    margin-bottom: .5rem; }
+  .ppe .dossier-head h2 { font-size: .9rem; margin: 0; color: #e6edf7; word-break: break-all; }
+  .ppe .d-sec { margin-top: .7rem; }
+  .ppe .d-sec h3 { font-size: .8rem; margin: 0 0 .35rem; color: #93c5fd; font-weight: 700; }
+  .ppe .d-row { display: flex; gap: .6rem; padding: .18rem 0; font-size: .78rem;
+    border-bottom: 1px dotted rgba(148,163,184,.14); }
+  .ppe .d-row.sub-row { font-size: .72rem; color: #94a3b8; border-bottom: none; }
+  .ppe .d-k { flex: 0 0 11rem; color: #94a3b8; }
+  .ppe .d-v { flex: 1 1 auto; color: #e6edf7; word-break: break-word; }
+  .ppe .d-row.ok .d-v { color: #6ee7b7; font-weight: 700; }
+  .ppe .d-row.ng .d-v { color: #fca5a5; font-weight: 700; }
+  .ppe .btn-sm { padding: .18rem .5rem; font-size: .72rem; }
+  .ppe .c-login .sub { display: block; font-size: .68rem; color: #94a3b8; }
+
+  /* ── 実配信（不可逆操作なので視覚的に区別する）── */
+  .ppe .dispatch-box { border-color: rgba(248,113,113,.35); }
+  .ppe .btn-danger { background: #b91c1c; color: #fff; border: 1px solid #ef4444;
+    border-radius: 7px; padding: .38rem .8rem; font-size: .8rem; font-weight: 700; cursor: pointer; }
+  .ppe .btn-danger:disabled { background: #4b5563; border-color: #6b7280; color: #cbd5e6;
+    cursor: not-allowed; opacity: .7; }
 
   /* ── キャンペーン操作 ── */
   .ppe .campaign-box { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px;
@@ -1458,6 +1518,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         marketing: $('mkSendable').value,
         premiumPlus: $('mkPp').value,
         history: $('mkHistory').value,
+        lastLogin: $('mkLastLogin').value,
       });
       if (!data) return;
       mkData = data;
@@ -1560,12 +1621,36 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           : '除外: ' + r.suppressionReasons.map((x) => (mkData.labels?.suppression?.[x] || x)).join('・');
         tr.appendChild(td('c-send', '送信', sendText, r.sendable ? 'ok-txt' : 'ng-txt'));
 
+        // 最終ログイン。**どの記録由来か**を必ず併記する（旧ポイント履歴は 2026-07-08 で更新停止）
+        const loginText = r.lastLoginAt
+          ? fmtDate(r.lastLoginAt) + (r.daysSinceLogin != null ? '（' + r.daysSinceLogin + '日前）' : '')
+          : '記録なし';
+        const cLogin = td('c-login', '最終ログイン', loginText, r.lastLoginAt ? '' : 'muted');
+        if (r.lastLoginSourceLabel) cLogin.firstChild.title = '出所: ' + r.lastLoginSourceLabel;
+        if (r.lastLoginSource === 'legacy_points') {
+          const lb = document.createElement('span');
+          lb.className = 'sub';
+          lb.textContent = '旧記録（〜7/8）';
+          cLogin.appendChild(lb);
+        }
+        tr.appendChild(cLogin);
+
         tr.appendChild(td('c-pp', 'Plus', r.premiumPlusEligibility || '未設定',
           r.premiumPlusEligibility ? '' : 'muted'));
 
         tr.appendChild(td('c-hist', '送信履歴',
           r.sentCount ? (r.sentCount + ' 回 / ' + fmtDate(r.lastSentAt)) : '—',
           r.sentCount ? '' : 'muted'));
+
+        const cDet = document.createElement('td');
+        cDet.className = 'c-detail';
+        const detBtn = document.createElement('button');
+        detBtn.type = 'button';
+        detBtn.className = 'btn-ghost btn-sm';
+        detBtn.textContent = 'カルテ';
+        detBtn.addEventListener('click', () => mkOpenDossier(r.recordId, r.email));
+        cDet.appendChild(detBtn);
+        tr.appendChild(cDet);
 
         tb.appendChild(tr);
       }
@@ -1582,6 +1667,196 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function mkRenderSelCount() {
       $('mkSelCount').textContent = mkSelected.size + ' 名を選択中';
     }
+
+    // ── 顧客カルテ（read-only）─────────────────────────────────────
+    function dossierRow(parent, label, value, cls) {
+      const dl = document.createElement('div');
+      dl.className = 'd-row' + (cls ? ' ' + cls : '');
+      const k = document.createElement('span'); k.className = 'd-k'; k.textContent = label;
+      const v = document.createElement('span'); v.className = 'd-v'; v.textContent = value;
+      dl.appendChild(k); dl.appendChild(v);
+      parent.appendChild(dl);
+      return dl;
+    }
+    function dossierSection(parent, title) {
+      const sec = document.createElement('section');
+      sec.className = 'd-sec';
+      const h = document.createElement('h3'); h.textContent = title;
+      sec.appendChild(h);
+      parent.appendChild(sec);
+      return sec;
+    }
+
+    async function mkOpenDossier(recordId, email) {
+      const box = $('mkDossier');
+      const body = $('mkDossierBody');
+      box.hidden = false;
+      $('mkDossierTitle').textContent = 'カルテ: ' + (email || recordId);
+      body.textContent = '読み込み中…';
+      box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      let data;
+      try {
+        data = await mkCall({ action: 'customerDetail', recordId });
+      } catch (e) {
+        body.textContent = '取得に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+        return;
+      }
+      const d = data.dossier;
+      body.innerHTML = '';
+
+      // ① ログイン
+      const s1 = dossierSection(body, '① ログイン');
+      dossierRow(s1, 'いまログインできるか', d.login.canLogin ? 'できる' : 'できない',
+        d.login.canLogin ? 'ok' : 'ng');
+      dossierRow(s1, '状態', d.login.label);
+      dossierRow(s1, 'ログイン方法',
+        d.login.loginMethod === 'link' ? 'メールで届くリンクを開く（有料階層）' : 'メールアドレス入力だけで入れる（無料）');
+      dossierRow(s1, 'セッションのプラン', d.login.sessionPlan || '—');
+      dossierRow(s1, '権限の根拠',
+        d.login.entitlementSource === 'promotional_grant' ? '無料特典（支払いではない）'
+          : d.login.entitlementSource === 'paid_contract' ? '課金契約' : '—');
+      dossierRow(s1, '最終ログイン',
+        (d.login.lastLogin.at ? fmtDate(d.login.lastLogin.at) : '記録なし')
+        + (d.login.daysSinceLogin != null ? '（' + d.login.daysSinceLogin + '日前）' : '')
+        + ' ／ 出所: ' + d.login.lastLogin.sourceLabel);
+
+      // ② メール到達性・送信履歴
+      const s2 = dossierSection(body, '② メール到達性・送信履歴');
+      dossierRow(s2, '送信可否', d.reachability.sendable ? '送信可能' : '送信除外',
+        d.reachability.sendable ? 'ok' : 'ng');
+      if (!d.reachability.sendable) {
+        dossierRow(s2, '除外理由', (d.reachability.suppressionReasons || []).join('・') || '—');
+      }
+      dossierRow(s2, '配信基盤の配信停止リスト',
+        d.reachability.providerSuppressed === null ? '確認できず（不明）'
+          : d.reachability.providerSuppressed ? '登録あり（送れない）' : 'なし',
+        d.reachability.providerSuppressed ? 'ng' : '');
+      dossierRow(s2, 'AK ブラックリスト', d.reachability.blacklisted ? 'あり' : 'なし');
+      dossierRow(s2, 'ソフトバウンス', d.reachability.softBounced ? 'あり' : 'なし');
+      dossierRow(s2, '配信停止', d.reachability.unsubscribed ? 'あり' : 'なし');
+      dossierRow(s2, 'キャンペーン送信',
+        d.delivery.sentCount ? (d.delivery.sentCount + ' 回 / 最終 ' + fmtDate(d.delivery.lastSentAt)) : '未送信');
+      for (const h of d.delivery.recent) {
+        dossierRow(s2, '　' + fmtDate(h.at), h.campaign + '（' + h.status + '）', 'sub-row');
+      }
+
+      // ③ 特典・オファー
+      const s3 = dossierSection(body, '③ 無料特典・割引オファー');
+      const gl = d.grantsAndOffers.promoLight;
+      const gp = d.grantsAndOffers.promoPremium;
+      dossierRow(s3, 'Light 無料特典',
+        gl.active ? (gl.lifetime ? '永久' : '〜' + fmtDate(gl.until)) : 'なし', gl.active ? 'ok' : '');
+      dossierRow(s3, 'Premium 無料特典',
+        gp.active ? (gp.lifetime ? '永久' : '〜' + fmtDate(gp.until)) : 'なし', gp.active ? 'ok' : '');
+      if (d.grantsAndOffers.promoInconsistent) {
+        dossierRow(s3, '⚠️ 特典データ', '矛盾あり（取消済みなのに値が残っている）', 'ng');
+      }
+      dossierRow(s3, '有効な割引オファー', String(d.grantsAndOffers.liveOfferCount));
+      for (const o of d.grantsAndOffers.offers) {
+        dossierRow(s3, '　' + o.offerId,
+          '¥' + (o.regularPrice || 0).toLocaleString() + ' → ¥' + (o.offerPrice || 0).toLocaleString()
+          + ' / ' + o.status + ' / 〜' + fmtDate(o.expiresAt) + (o.live ? '（有効）' : '（無効）'),
+          'sub-row');
+      }
+      dossierRow(s3, 'Premium Plus 資格', d.grantsAndOffers.premiumPlusEligibility || '未設定');
+
+      // ④ 契約・決済
+      const s4 = dossierSection(body, '④ 契約・決済');
+      dossierRow(s4, 'プラン', (d.contract.plan || '—') + (d.contract.planType ? ' / ' + d.contract.planType : ''));
+      dossierRow(s4, '契約状態', CONTRACT_LABEL[d.contract.contractState] || d.contract.contractState);
+      dossierRow(s4, '有効期限', d.contract.expiresAt ? fmtDate(d.contract.expiresAt) : '—');
+      dossierRow(s4, '退会', d.contract.withdrawn ? ('あり ' + fmtDate(d.contract.withdrawalDate)) : 'なし');
+      dossierRow(s4, '三連複 買い切り', d.contract.lifetimeSanrenpuku ? 'あり' : 'なし');
+      dossierRow(s4, '入金', d.contract.paymentConfirmed ? '確認済み' : '—');
+      dossierRow(s4, '入金日', d.contract.paidAt ? fmtDate(d.contract.paidAt) : '—');
+      if (d.contract.requested) {
+        dossierRow(s4, '申込中', d.contract.requested.plan + ' / ¥'
+          + (d.contract.requested.amount || 0).toLocaleString(), 'ng');
+      }
+      dossierRow(s4, '登録日', d.registeredAt ? fmtDate(d.registeredAt) : '—');
+
+      // ⑤ 閲覧できるもの
+      const s5 = dossierSection(body, '⑤ いま閲覧できるもの');
+      dossierRow(s5, '無料コンテンツ', d.access.canViewFree ? '閲覧可' : '不可', d.access.canViewFree ? 'ok' : '');
+      dossierRow(s5, 'Light', d.access.canViewLight ? '閲覧可' : '不可', d.access.canViewLight ? 'ok' : '');
+      dossierRow(s5, 'Premium', d.access.canViewPremium ? '閲覧可' : '不可', d.access.canViewPremium ? 'ok' : '');
+      dossierRow(s5, '三連複', d.access.canViewSanrenpuku ? '閲覧可' : '不可', d.access.canViewSanrenpuku ? 'ok' : '');
+    }
+
+    $('mkDossierClose').addEventListener('click', () => { $('mkDossier').hidden = true; });
+
+    // ── 実配信（キューを配信基盤へ渡す）────────────────────────────
+    const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
+    async function mkDispatchCall(dryRun) {
+      const secret = secretEl.value.trim();
+      if (!secret) { $('connBody').hidden = false; throw new Error('管理シークレットを入力してください'); }
+      const res = await fetch(DISPATCH_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify({ dryRun }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    function mkRenderDispatch(data, dryRun) {
+      const box = $('mkDispatchResult');
+      box.innerHTML = '';
+      const s = dossierSection(box, dryRun ? '確認結果（送信していません）' : '配信結果');
+      dossierRow(s, '対象ジョブ', String(data.jobs || 0));
+      dossierRow(s, '再検証した宛先', String(data.verified || 0));
+      dossierRow(s, dryRun ? '送信される見込み' : '送信済み',
+        String(dryRun ? (data.jobResults || []).reduce((a, j) => a + (j.willSend || 0), 0) : (data.sent || 0)),
+        'ok');
+      dossierRow(s, '送らない', String(dryRun
+        ? (data.jobResults || []).reduce((a, j) => a + (j.willSkip || 0), 0)
+        : (data.skipped || 0)));
+      const reasons = data.skippedByReason || {};
+      for (const k of Object.keys(reasons)) dossierRow(s, '　' + k, String(reasons[k]), 'sub-row');
+      if (data.failed) dossierRow(s, '失敗', String(data.failed), 'ng');
+      const sup = data.providerSuppression || {};
+      dossierRow(s, '配信基盤の配信停止リスト照合',
+        sup.available ? ('OK（' + (sup.total || 0) + ' 件）') : '確認できず（送信しません）',
+        sup.available ? '' : 'ng');
+    }
+
+    $('mkDispatchCheck').addEventListener('click', async () => {
+      const btn = $('mkDispatchCheck');
+      btn.disabled = true;
+      $('mkDispatchState').textContent = '確認中…';
+      try {
+        const data = await mkDispatchCall(true);
+        mkRenderDispatch(data, true);
+        const willSend = (data.jobResults || []).reduce((a, j) => a + (j.willSend || 0), 0);
+        $('mkDispatchState').textContent = data.jobs
+          ? '確認しました。この内容で配信できます。'
+          : '送信待ちのキューはありません。';
+        // 送る相手が 1 人もいないなら実行ボタンは開けない
+        $('mkDispatchRun').disabled = !(data.jobs && willSend > 0);
+      } catch (e) {
+        $('mkDispatchState').textContent = '確認に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+        $('mkDispatchRun').disabled = true;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $('mkDispatchRun').addEventListener('click', async () => {
+      const btn = $('mkDispatchRun');
+      if (!window.confirm('キューに入っているメールを実際に配信します。\n送信したメールは取り消せません。実行しますか？')) return;
+      btn.disabled = true;
+      $('mkDispatchState').textContent = '配信中…';
+      try {
+        const data = await mkDispatchCall(false);
+        mkRenderDispatch(data, false);
+        $('mkDispatchState').textContent = '配信しました（' + (data.sent || 0) + ' 通）。';
+      } catch (e) {
+        $('mkDispatchState').textContent = '配信に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+      }
+      // 二重配信防止: 実行後は必ず再確認からやり直す
+      btn.disabled = true;
+    });
 
     $('mkLoad').addEventListener('click', mkLoad);
     $('mkQ').addEventListener('input', mkRender);

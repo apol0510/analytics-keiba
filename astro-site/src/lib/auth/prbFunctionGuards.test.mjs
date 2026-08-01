@@ -122,6 +122,38 @@ test('login.astro: free ログイン時に有料時代の localStorage 残骸を
   assert.match(loginPage, /plan:\s*'free'/);
 });
 
+// --- ログイン経路の Customers 書き込みは LastLoginAt 1 列だけ（2026-08-01）---
+// 旧実装は有効期限の延長・ポイント付与を副作用で行い、退会者の期限が伸びる事故を起こした。
+// 「ログインで契約を書き換えない」原則は維持したまま、最終ログインの記録だけを例外にする。
+test('auth-user / verify-magic-link: Customers の**更新**は LastLoginAt に限定される', () => {
+  for (const [name, src] of [['auth-user', authUser], ['verify-magic-link', verifyMagic]]) {
+    const code = stripJs(src);
+    // 記録は専用モジュール経由（インラインで fields を組み立てない）
+    assert.match(code, /lastLoginRecord\.js/, `${name} が lastLoginRecord を経由していない`);
+    assert.match(code, /assertOnlyLastLoginField/, `${name} が書き込み列を検証していない`);
+
+    // Customers への update は「lastLoginRecord が組み立てた plan.fields」以外を渡さない。
+    // ※ 新規無料登録の create（'プラン':'Free' 等）は既存仕様なので対象外。
+    const updates = [...code.matchAll(/\.update\(/g)];
+    assert.ok(updates.length > 0, `${name} に update が 1 つも無い（guard が空振りしている）`);
+    for (const m of updates) {
+      const window = code.slice(m.index, m.index + 200);
+      const isLastLogin = /plan\.fields/.test(window);
+      // AuthTokens の Used 更新は認証の単回性のため許可（Customers への書き込みではない）
+      const isTokenConsume = /Used:\s*true/.test(window);
+      assert.ok(isLastLogin || isTokenConsume,
+        `${name} が LastLoginAt / AuthTokens.Used 以外を update している: ${window.slice(0, 90)}`);
+    }
+  }
+});
+
+test('lastLoginRecord: 書き込み対象の列名は 1 つだけ定義されている', () => {
+  const mod = raw(`${DIR}/lastLoginRecord.js`);
+  assert.match(mod, /export const LAST_LOGIN_FIELD = 'LastLoginAt'/);
+  // 他の Customers 列を書く余地を作らない
+  assert.equal(/PaymentConfirmed|有効期限|プラン|PlanType/.test(stripJs(mod)), false);
+});
+
 // --- send-magic-link: paid のみ送信 ---
 test('send-magic-link.js: paid のみ送信（shouldSendMagicLink 経由）', () => {
   assert.match(sendMagic, /shouldSendMagicLink/);

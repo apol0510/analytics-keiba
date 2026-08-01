@@ -147,3 +147,63 @@ test('マーケタブが Premium Plus 販売の説明文を書き換えていな
   assert.ok(PAGE.includes('候補は自動で「販売可」になりません'), '販売タブの注意書きが消えている');
   assert.ok(PAGE.includes('メールを送っても会員権限は復活しません'), 'マーケタブの注意書きが無い');
 });
+
+// =========================================================================
+// 実配信ボタン + 顧客カルテ（2026-08-01 / 管理画面だけで完結させる）
+// =========================================================================
+
+test('実配信は「確認 → 実行」の 2 段で、いきなり配信できない', () => {
+  assert.ok(PAGE.includes('mkDispatchCheck'), '配信内容の確認ボタンが無い');
+  assert.ok(PAGE.includes('mkDispatchRun'), '実配信ボタンが無い');
+  // 実行ボタンは既定で無効。確認に成功したときだけ開く
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled/, '実配信ボタンが最初から押せる');
+  assert.match(SCRIPT, /\$\('mkDispatchRun'\)\.disabled = !\(data\.jobs && willSend > 0\)/,
+    '送る相手が 0 人でも実配信ボタンが開く');
+});
+
+test('実配信は取り消せないことを確認ダイアログで伝える', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  assert.match(block, /window\.confirm\(/, '確認ダイアログが無い');
+  assert.match(block, /取り消せません/, '不可逆であることを伝えていない');
+});
+
+test('実配信の実行後は必ず再確認からやり直す（二重配信防止）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  // finally ではなく、成功・失敗どちらでも最後に無効化する
+  assert.match(block, /btn\.disabled = true;\s*\}\);/, '実行後に実配信ボタンが押せるまま');
+});
+
+test('実配信は専用 dispatcher を叩く（admin-marketing に送信させない）', () => {
+  assert.match(SCRIPT, /marketing-campaign-dispatch/, '専用 dispatcher を呼んでいない');
+  const mkt = SCRIPT.slice(SCRIPT.indexOf('顧客マーケティング（AK 独自'));
+  assert.equal(/MKT_API[\s\S]{0,200}dryRun:\s*false/.test(mkt), false,
+    'admin-marketing 側に実送信をさせようとしている');
+});
+
+test('配信結果に「送らなかった理由」が出る（黙って落とさない）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkRenderDispatch'));
+  assert.match(block, /skippedByReason/);
+  assert.match(block, /providerSuppression/, 'suppression 照合の可否を出していない');
+});
+
+test('顧客カルテは read-only の action だけを呼ぶ', () => {
+  assert.match(SCRIPT, /action: 'customerDetail'/, 'カルテ取得の action が無い');
+  const block = SCRIPT.slice(SCRIPT.indexOf('async function mkOpenDossier'));
+  const body = block.slice(0, block.indexOf("$('mkDossierClose')"));
+  // カルテ画面から更新系を呼ばない
+  for (const forbidden of ['action: \'send\'', 'action: \'apply\'', 'action: \'update\'', 'action: \'revoke\'']) {
+    assert.equal(body.includes(forbidden), false, `カルテから ${forbidden} を呼んでいる`);
+  }
+});
+
+test('最終ログインは出所を必ず併記する（旧記録と正規記録を混同させない）', () => {
+  assert.match(SCRIPT, /出所: /, '最終ログインの出所を出していない');
+  assert.match(SCRIPT, /legacy_points/, '旧ポイント履歴由来を区別していない');
+  assert.ok(PAGE.includes('id="mkLastLogin"'), '最終ログインの絞り込みが無い');
+});
+
+test('カルテに「無料特典は支払いではない」区別が出る', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('async function mkOpenDossier'));
+  assert.match(block, /promotional_grant/);
+  assert.match(block, /無料特典（支払いではない）/);
+});
