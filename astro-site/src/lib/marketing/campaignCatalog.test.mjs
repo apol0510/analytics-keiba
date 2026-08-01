@@ -152,7 +152,7 @@ test('【version ロック】本文を変えたら version を上げる', () => 
   // version を据え置いたまま本文を変えると DeliveryKey が変わらず、
   // 既送信者へ修正版が二度と届かない。
   const LOCKED = {
-    'marketing-canary': { version: 1, hash: 'd7e12b0a9475db9c' },
+    'marketing-canary': { version: 2, hash: 'd7e12b0a9475db9c' },
     'expired-comeback': { version: 2, hash: 'ff62a4c49e8c6a52' },
     'premium-renewal': { version: 2, hash: '5359e6032c187938' },
     'sanrenpuku-offer': { version: 2, hash: '25ea78c0b425714e' },
