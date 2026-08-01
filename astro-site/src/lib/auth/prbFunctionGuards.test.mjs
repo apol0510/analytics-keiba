@@ -97,6 +97,31 @@ test('auth-user.js: 無料経路のユーザー plan は固定 "free" のみ', (
   assert.equal(/plan:\s*normalizedPlan/.test(authUser), false);
 });
 
+// --- 契約終了（期限切れ / 退会申請）→ free ログイン（2026-08-01）---
+// 「入口だけ直して有料表示が漏れる」形を静的に禁止する。
+test('auth-user.js: 契約終了の案内はフラグのみで、プラン名・有効期限・金額を返さない', () => {
+  // 契約終了を伝えるのは真偽値だけ（列挙対策としても詳細を出さない）
+  assert.match(authUser, /previousPlanEnded/);
+  // Airtable の課金フィールドをレスポンスへ持ち出していない（コメントは対象外）
+  const code = stripJs(authUser);
+  for (const forbidden of [
+    /originalPlan/, /有効期限/, /expiryDate/, /PaymentConfirmed/, /PaidAt/,
+    /PaymentEmailSent/, /RequestedPlan/, /RequestedAmount/,
+  ]) {
+    assert.equal(forbidden.test(code), false, `auth-user が ${forbidden} を扱っている`);
+  }
+});
+
+test('login.astro: free ログイン時に有料時代の localStorage 残骸を消す', () => {
+  // AccessControl はこれらを見て有料 UI を出しうるので、無料確定時に必ず削除する
+  for (const key of ['isExpired', 'originalPlan', 'validUntil', 'lifetimeSanrenpuku', 'nankan_user', 'auth_data']) {
+    assert.match(loginPage, new RegExp(`'${key}'`), `login.astro が ${key} を掃除していない`);
+  }
+  assert.match(loginPage, /removeItem/);
+  // 保存する plan は 'free' 固定のまま（サーバー応答の plan 名を書かない）
+  assert.match(loginPage, /plan:\s*'free'/);
+});
+
 // --- send-magic-link: paid のみ送信 ---
 test('send-magic-link.js: paid のみ送信（shouldSendMagicLink 経由）', () => {
   assert.match(sendMagic, /shouldSendMagicLink/);

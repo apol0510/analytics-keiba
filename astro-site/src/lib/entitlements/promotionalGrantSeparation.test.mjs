@@ -178,16 +178,21 @@ test('memberType と entitlementSource: paid の根拠を区別できる', () =>
   assert.equal(srp.lifetimeSanrenpuku, true);
   assert.equal(srp.entitlementSource, MEMBER_SOURCE.PAID_CONTRACT);
 
-  // 拒否ゲートは特典より先
+  // 停止・強制ログアウトは特典より先（ログイン自体が不可）
   for (const f of [
-    { ...EXPIRED_PREMIUM, ...GRANT_LIGHT, WithdrawalRequested: true },
     { ...EXPIRED_PREMIUM, ...GRANT_LIGHT, Status: 'suspended' },
     { ...EXPIRED_PREMIUM, ...GRANT_LIGHT, ForceLogout: true },
   ]) {
     const r = member(f);
-    assert.equal(r.memberType, MEMBER_TYPE.DENIED, '停止/退会/強制ログアウトが特典で突破された');
+    assert.equal(r.memberType, MEMBER_TYPE.DENIED, '停止/強制ログアウトが特典で突破された');
     assert.equal(r.entitlementSource, MEMBER_SOURCE.NONE);
   }
+
+  // 退会申請は「無料会員としてログイン可・有料階層へは戻さない」（2026-08-01）
+  const withdrawn = member({ ...EXPIRED_PREMIUM, ...GRANT_LIGHT, WithdrawalRequested: true });
+  assert.equal(withdrawn.memberType, MEMBER_TYPE.FREE, '退会者がログインできない');
+  assert.equal(withdrawn.normalizedPlan, 'free', '退会者に元のプラン名が漏れている');
+  assert.equal(withdrawn.entitlementSource, MEMBER_SOURCE.NONE, '退会者が特典で有料階層へ戻った');
 
   // free / denied は none
   assert.equal(member({ Email: 'f@example.com', 'プラン': 'Free', Status: 'active' }).entitlementSource,

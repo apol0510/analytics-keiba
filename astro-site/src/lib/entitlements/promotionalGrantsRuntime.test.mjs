@@ -50,12 +50,14 @@ const PREMIUM_LIFETIME_GRANT = {
 
 // ═══ 前提: 特典なしの挙動が変わっていない ══════════════════════════════
 
-test('特典フィールドが無ければ従来と完全に同じ（期限切れ Premium は閲覧不可・ログイン拒否）', () => {
+test('特典フィールドが無ければ従来と同じ（期限切れ Premium は閲覧不可・無料ログインのみ）', () => {
   const e = E(EXPIRED_PREMIUM);
   assert.equal(e.canViewPremium, false);
   assert.equal(e.canViewLight, false);
   assert.equal(e.premiumExpired, true);
-  assert.equal(M(EXPIRED_PREMIUM).memberType, MEMBER_TYPE.DENIED);
+  // 2026-08-01: 期限切れは denied ではなく free（有料権限は付かない）
+  assert.equal(M(EXPIRED_PREMIUM).memberType, MEMBER_TYPE.FREE);
+  assert.equal(M(EXPIRED_PREMIUM).normalizedPlan, 'free');
   assert.equal(M(EXPIRED_PREMIUM).reason, MEMBER_REASON.EXPIRED);
 });
 
@@ -106,7 +108,10 @@ test('B. 無料期間が終わると Premium は消える（元の状態へ戻�
   const e = E(fields);
   assert.equal(e.canViewPremium, false);
   assert.equal(e.canViewLight, false);
-  assert.equal(M(fields).memberType, MEMBER_TYPE.DENIED, '終了後は期限切れ会員に戻る');
+  const after = M(fields);
+  assert.equal(after.memberType, MEMBER_TYPE.FREE, '終了後は期限切れ会員（＝無料会員）に戻る');
+  assert.equal(after.normalizedPlan, 'free', '特典終了後に有料プラン名が残っている');
+  assert.equal(after.reason, MEMBER_REASON.EXPIRED);
 });
 
 test('B. 有料 Premium が有効な会員の権利を縮めない', () => {
@@ -184,7 +189,7 @@ test('Premium Plus 販売資格は無料特典で動かない（premiumActive �
 
 // ═══ 拒否ゲートが優先される ══════════════════════════════════════════
 
-test('停止・退会・強制ログアウトは特典があっても権限を得ない', () => {
+test('停止・退会・強制ログアウトは特典があっても有料権限を得ない', () => {
   const grants = { ...LIGHT_GRANT, ...premiumGrant(NOW + 20 * DAY) };
   for (const bad of [
     { Status: 'suspended' },
@@ -197,8 +202,17 @@ test('停止・退会・強制ログアウトは特典があっても権限を�
     assert.equal(e.canLogin, false, `${JSON.stringify(bad)} で canLogin が true`);
     assert.equal(e.canViewPremium, false, `${JSON.stringify(bad)} で Premium が見える`);
     assert.equal(e.canViewLight, false, `${JSON.stringify(bad)} で Light が見える`);
-    assert.equal(M(fields).memberType, MEMBER_TYPE.DENIED, `${JSON.stringify(bad)} でログインできる`);
+    // 有料階層のセッションは絶対に出ない
+    assert.notEqual(M(fields).memberType, MEMBER_TYPE.PAID, `${JSON.stringify(bad)} で有料ログインできる`);
+    // denied は null / free は 'free'。どちらでも「有料プラン名は返らない」
+    assert.ok([null, 'free'].includes(M(fields).normalizedPlan),
+      `${JSON.stringify(bad)} で有料プラン名が返っている: ${M(fields).normalizedPlan}`);
   }
+  // 内訳: 停止・強制ログアウトは denied、退会申請だけ「無料会員としてログイン可」（2026-08-01）
+  const suspended = { ...EXPIRED_PREMIUM, ...grants, Status: 'suspended' };
+  const withdrawn = { ...EXPIRED_PREMIUM, ...grants, WithdrawalRequested: true };
+  assert.equal(M(suspended).memberType, MEMBER_TYPE.DENIED);
+  assert.equal(M(withdrawn).memberType, MEMBER_TYPE.FREE);
 });
 
 test('テストアカウントは閲覧権限を得ず、そもそも付与対象にならない', () => {
@@ -227,5 +241,7 @@ test('壊れた特典データ（取り消し済みなのに値が残る）で�
   };
   assert.equal(E(fields).canViewLight, false);
   assert.equal(E(fields).promo.inconsistent, true);
-  assert.equal(M(fields).memberType, MEMBER_TYPE.DENIED);
+  // 壊れた特典では有料階層にならない（期限切れ会員＝無料会員のまま）
+  assert.equal(M(fields).memberType, MEMBER_TYPE.FREE);
+  assert.equal(M(fields).normalizedPlan, 'free');
 });
