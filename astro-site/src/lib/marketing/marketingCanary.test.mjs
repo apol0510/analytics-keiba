@@ -48,7 +48,8 @@ const plan = (selected, envRaw = TEST_ADDR, opts = {}) => buildCampaignPlan({
 // ── 定義 ──────────────────────────────────────────────────────
 test('marketing-canary は使用可能で、運用テスト専用の目印を持つ', () => {
   assert.ok(canary, 'カナリアが取得できない');
-  assert.equal(canary.version, 1);
+  // 版番号は上げてよい（再送のための正規手段）。ここでは「正の整数であること」だけを固定する
+  assert.ok(Number.isInteger(canary.version) && canary.version >= 1, `version が不正: ${canary.version}`);
   assert.equal(canary.enabled, true);
   assert.equal(canary.testOnly, true, '運用テスト専用の目印が無い');
   assert.equal(isCampaignUsable(canary), true);

@@ -98,7 +98,12 @@ export const CAMPAIGN_DISABLED_REASON = Object.freeze({
 export const CAMPAIGNS = Object.freeze([
   {
     campaignId: 'marketing-canary',
-    version: 1,
+    // v1 → v2（2026-08-01）: **本文は 1 文字も変えていない**。
+    // 配信経路の検証をやり直すための版上げ。DeliveryKey は campaignId × version × email で
+    // 決まるため、v1 で送信済みのテスト受信者へも v2 なら再送できる
+    //（v1 のまま再実行すると `already_delivered` で拒否されるのが正しい挙動）。
+    // 運用テスト専用なので、この版上げは**実顧客向けキャンペーンに一切影響しない**。
+    version: 2,
     name: 'マーケティング配信カナリア',
     description: '運用テスト専用。NEWSLETTER_TEST_RECIPIENTS に登録されたアドレスにのみ送信できる（一般顧客には送れない）。',
     subject: '【KEIBA Analytics】配信テスト',

@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 
 import { handler } from '../../../netlify/functions/admin-marketing.js';
 import { clearProviderSuppressionCache } from './providerSuppression.js';
+import { getCampaign } from './campaignCatalog.js';
 
 const SECRET = 'test-secret';
 const ENV_KEYS = ['PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET', 'AIRTABLE_API_KEY',
@@ -571,7 +572,8 @@ test('カナリア: enqueue しても Customers write 0 / 実送信 0', async ()
   assert.equal(store.scheduled[0].fields.Status, 'PENDING');
   assert.equal(store.scheduled[0].fields.TargetPlan, 'campaign:marketing-canary');
   assert.equal(store.deliveries.length, 1);
-  assert.equal(store.deliveries[0].fields.CampaignType, 'marketing-canary:v1');
+  assert.equal(store.deliveries[0].fields.CampaignType,
+    `marketing-canary:v${getCampaign('marketing-canary').version}`);
   assert.equal(store.deliveries[0].fields.Status, 'queued');
   // dispatcher gate は別なので、実送信はされない
   assert.equal(out.body.dispatchEnabled, false);

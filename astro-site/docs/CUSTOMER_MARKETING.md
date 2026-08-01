@@ -104,7 +104,7 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 
 | campaignId | v | 状態 | 対象条件（すべて enforce） |
 |---|---|---|---|
-| `marketing-canary` | 1 | 🧪 **運用テスト専用** | `NEWSLETTER_TEST_RECIPIENTS` 一致者のみ |
+| `marketing-canary` | 2 | 🧪 **運用テスト専用** | `NEWSLETTER_TEST_RECIPIENTS` 一致者のみ |
 | `expired-comeback` | 2 | ✅ 使用可能 | 契約=expired |
 | `premium-renewal` | 2 | ✅ 使用可能 | 契約=expired/expiring_soon かつ Premium 系 |
 | `sanrenpuku-offer` | 2 | ⛔ **使用停止** | 契約=active/expiring_soon かつ Premium |
@@ -157,6 +157,11 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 理由がその場に表示される。
 
 ### version の意味（冪等性の鍵）
+
+> **実例（2026-08-01）**: 配信経路を本番で検証し直す際、テスト受信者が既に
+> `marketing-canary:v1` を受信済みだったため dry-run が `already_delivered` で `willSend 0` になった。
+> **本文を 1 文字も変えずに version だけ 1 → 2 へ上げて**再送した（DeliveryKey が変わる）。
+> LOCKED 表はハッシュ据え置きで version だけ更新する。運用テスト専用なので実顧客への影響はない。
 
 `version` を上げると DeliveryKey が変わり、**同じ人へもう一度送れる**ようになる。
 逆に言えば version を変えない限り同じ相手には二度と送られない。
