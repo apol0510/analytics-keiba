@@ -587,6 +587,20 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     .map(([reason, count]) => ({ reason, label: MK_EXCLUSION_LABEL[reason] || reason, count }))
     .sort((a, b) => b.count - a.count);
 
+  // 誰がなぜ除外されたかを **1 人ずつ**返す（集計だけでは「自分が選んだあの人」が分からない）。
+  // 判定は buildCampaignPlan が済ませたもので、ここでは形を変えるだけ（再判定しない）。
+  // PII は recordId と理由コードのみ（氏名・メールは画面が一覧から突き合わせる）。
+  const excludedRecords = plan.excluded.map((e) => ({
+    recordId: String(e.recordId || ''),
+    reason: String(e.reason || ''),
+    label: MK_EXCLUSION_LABEL[e.reason] || String(e.reason || ''),
+  }));
+  // 画面が「誰が対象か」を人物単位で確定してよいかを **サーバーが宣言する**。
+  // 明細が 1 件でも欠けていたら false にし、画面は対象者一覧を作らない（推測させない）。
+  const detailComplete = excludedRecords.length === plan.excluded.length
+    && excludedRecords.every((e) => e.recordId)
+    && new Set(excludedRecords.map((e) => e.recordId)).size === excludedRecords.length;
+
   // 割引案内は「何をいくらで案内するのか」を最終確認に出す（金額の取り違え防止）。
   // 有効期限は台帳の実値（受信者ごとに違いうるので最短を出す）。
   const offerSummary = requiresOfferUrl(campaign) ? (() => {
@@ -621,6 +635,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     excluded: plan.counts.excluded,
     willSend: plan.counts.recipients,
     excludedDetail,
+    excludedRecords,
+    detailComplete,
     planFingerprint: plan.planFingerprint,
   };
 
