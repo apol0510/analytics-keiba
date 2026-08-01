@@ -1936,6 +1936,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         head.appendChild(t);
       }
       const dl = document.createElement('dl'); dl.className = 'kv';
+      // 配信台帳の CampaignType と同じ表記。名前が似たキャンペーンの取り違えを防ぐ
+      kvRow(dl, 'キャンペーンID', campaign.campaignId + ':v' + campaign.version);
       kvRow(dl, '件名', plan.subject);
       // 割引案内は「何をいくらで案内するか」を最終確認に出す（金額の取り違え防止）
       const os = plan.offerSummary;
