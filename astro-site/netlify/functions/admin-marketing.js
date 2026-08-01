@@ -65,11 +65,13 @@ import {
   assertOnlyDeliveryFields,
   MK_EXCLUSION_LABEL,
   MAX_RECIPIENTS_PER_SEND,
+  MARKETING_MIN_INTERVAL_MS,
 } from '../../src/lib/marketing/campaignSend.js';
 import {
   fetchProviderSuppression,
   describeProviderSuppression,
 } from '../../src/lib/marketing/providerSuppression.js';
+import { fetchDeliveryActivity } from '../../src/lib/marketing/deliveryActivity.js';
 import {
   isMarketingEnqueueEnabled,
   isMarketingDispatchEnabled,
@@ -79,6 +81,7 @@ import {
   buildBlacklistEmailSet,
   loadBlacklistEmails,
 } from '../../src/lib/newsletter/airtable-fetch.js';
+import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import {
@@ -210,7 +213,7 @@ async function loadCustomerMarketing({ KEY, BASE, now, withLogins = false }) {
   });
 
   return {
-    list, deliveries, magicLogins, blacklistStatus, blacklistSize: blacklistEmails.size,
+    list, deliveries, tokens, magicLogins, blacklistStatus, blacklistSize: blacklistEmails.size,
     blacklistEmails,
   };
 }
@@ -285,16 +288,62 @@ async function handleCustomers({ KEY, BASE, now, req }) {
   const { list, blacklistStatus, blacklistSize } = await loadCustomerMarketing({
     KEY, BASE, now, withLogins: true,
   });
+  // 一覧のマーケ列に使う（読み取りのみ）。失敗しても一覧は出す
+  const offersAll = await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []);
+  const offersByCustomer = new Map();
+  for (const o of offersAll) {
+    const rid = String(o.fields?.CustomerRecordId || '');
+    const mail = String(o.fields?.Email || '').trim().toLowerCase();
+    for (const k of [rid, mail].filter(Boolean)) {
+      offersByCustomer.set(k, [...(offersByCustomer.get(k) || []), o]);
+    }
+  }
 
   const filter = {
     contract: req.contract, plan: req.plan, marketing: req.marketing,
     premiumPlus: req.premiumPlus, history: req.history,
   };
-  // 最終ログインの絞り込みは既存フィルタと直交させる（判定モジュールを汚さない）
+  // 最終ログイン・マーケ状態の絞り込みは既存フィルタと直交させる（判定モジュールを汚さない）。
+  // すべて AND で効く。条件は画面に件数とともに出す。
   const wantLogin = String(req.lastLogin || '').trim();
+  const wantOffer = String(req.offerState || '').trim();
+  const wantPromo = String(req.promoState || '').trim();
+  const wantFreq = String(req.frequency || '').trim();
   const matched = list
     .filter((c) => matchesMarketingFilter(c.marketing, filter))
-    .filter((c) => !wantLogin || loginSegment(c.daysSinceLogin) === wantLogin);
+    .filter((c) => !wantLogin || loginSegment(c.daysSinceLogin) === wantLogin)
+    .filter((c) => {
+      if (!wantOffer) return true;
+      const col = marketingColumns({ c, offersByCustomer, now });
+      if (wantOffer === 'live') return col.liveOfferCount > 0;
+      if (wantOffer === 'expiring7') {
+        if (!col.offerExpiresAt) return false;
+        const d = (Date.parse(col.offerExpiresAt) - now) / (24 * 60 * 60 * 1000);
+        return d >= 0 && d <= 7;
+      }
+      if (wantOffer === 'none') return col.liveOfferCount === 0;
+      return true;
+    })
+    .filter((c) => {
+      if (!wantPromo) return true;
+      const col = marketingColumns({ c, offersByCustomer, now });
+      if (wantPromo === 'active') return col.promoActive;
+      if (wantPromo === 'ending7') {
+        if (!col.promoActive || !col.promoUntil) return false;
+        const d = (Date.parse(col.promoUntil) - now) / (24 * 60 * 60 * 1000);
+        return d >= 0 && d <= 7;
+      }
+      if (wantPromo === 'none') return !col.promoActive;
+      return true;
+    })
+    .filter((c) => {
+      if (!wantFreq) return true;
+      const col = marketingColumns({ c, offersByCustomer, now });
+      // 'sendable-now' = 送信可能 かつ 24h 制限にかかっていない
+      if (wantFreq === 'sendable-now') return c.marketing.sendable === true && !col.nextSendableAt;
+      if (wantFreq === 'blocked') return !!col.nextSendableAt;
+      return true;
+    });
 
   const rows = matched.slice(0, MAX_ROWS).map((c) => ({
     recordId: c.recordId,
@@ -322,10 +371,19 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     lastLoginSourceLabel: c.lastLogin.sourceLabel,
     daysSinceLogin: c.daysSinceLogin,
     loginSegment: loginSegment(c.daysSinceLogin),
+    // ── マーケ運用列（すべて既存台帳の読み取り）──
+    ...marketingColumns({ c, offersByCustomer, now }),
   }));
 
   return json(200, {
     rows,
+    // 画面に「どの条件で何件か」を出すための控え（AND で適用）
+    appliedFilters: {
+      contract: filter.contract || "all", plan: filter.plan || "all",
+      marketing: filter.marketing || "all", premiumPlus: filter.premiumPlus || "all",
+      history: filter.history || "all", lastLogin: wantLogin || "all",
+      offerState: wantOffer || "all", promoState: wantPromo || "all", frequency: wantFreq || "all",
+    },
     matchedCount: matched.length,
     truncated: matched.length > rows.length,
     segments: summarizeSegments(list.map((c) => c.marketing)),
@@ -334,6 +392,44 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),
   });
+}
+
+/**
+ * 一覧のマーケ列（read-only）。判定は既存の単一源が出した結果を読むだけ。
+ * 反応（開封・クリック）は一覧では取得しない（配信基盤への問い合わせが顧客数ぶん必要になるため）。
+ * 画面には『カルテで確認』と出し、**0 件と誤読させない**。
+ */
+function marketingColumns({ c, offersByCustomer, now }) {
+  const email = String(c.fields.Email || '').trim().toLowerCase();
+  const mine = [
+    ...(offersByCustomer.get(c.recordId) || []),
+    ...(email ? (offersByCustomer.get(email) || []) : []),
+  ];
+  const uniq = [...new Map(mine.map((o) => [o.id, o])).values()];
+  const live = uniq.filter((o) => isLiveOffer({ record: o, nowMs: now }));
+  const soonest = live
+    .map((o) => Date.parse(String(o.fields?.ExpiresAt || '')))
+    .filter((x) => Number.isFinite(x))
+    .sort((a, b) => a - b)[0] ?? null;
+  const ent = resolveEntitlements(fromAirtableFields(c.fields), now);
+  const promo = ent.promo || {};
+  const grantUntil = [promo.lightUntilMs, promo.premiumUntilMs].filter((x) => Number.isFinite(x)).sort((a, b) => a - b)[0] ?? null;
+  const lastSentAtMs = c.marketing.history && c.marketing.history.lastSentAtMs;
+  const nextSendableAtMs = Number.isFinite(lastSentAtMs) ? lastSentAtMs + MARKETING_MIN_INTERVAL_MS : null;
+  return {
+    /** いま閲覧できる範囲（契約 + 無料特典の合算結果） */
+    access: {
+      free: ent.canViewFree === true, light: ent.canViewLight === true,
+      premium: ent.canViewPremium === true, sanrenpuku: ent.canViewSanrenpuku === true,
+    },
+    promoActive: (promo.lightActive === true) || (promo.premiumActive === true),
+    promoLifetime: (promo.lightLifetime === true) || (promo.premiumLifetime === true),
+    promoUntil: Number.isFinite(grantUntil) ? new Date(grantUntil).toISOString() : null,
+    liveOfferCount: live.length,
+    offerExpiresAt: Number.isFinite(soonest) ? new Date(soonest).toISOString() : null,
+    nextSendableAt: Number.isFinite(nextSendableAtMs) && nextSendableAtMs > now
+      ? new Date(nextSendableAtMs).toISOString() : null,
+  };
 }
 
 /**
@@ -347,7 +443,7 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   const recordId = String(req.recordId || '').trim();
   if (!recordId) return json(400, { error: 'recordId が必要です' });
 
-  const { list, deliveries, magicLogins, blacklistEmails } =
+  const { list, deliveries, tokens, magicLogins, blacklistEmails } =
     await loadCustomerMarketing({ KEY, BASE, now, withLogins: true });
   const hit = list.find((c) => c.recordId === recordId);
   if (!hit) return json(404, { error: '該当する顧客が見つかりません' });
@@ -357,15 +453,19 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
   const blacklist = await loadBlacklistSets({ KEY, BASE });
 
-  const [offers, provider] = await Promise.all([
+  const [offers, provider, activity] = await Promise.all([
     fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
+    fetchDeliveryActivity({ email, apiKey: process.env.SENDGRID_API_KEY }),
   ]);
 
   const dossier = buildCustomerDossier({
     record: hit.record,
     nowMs: now,
     magicLinkAtMs: magicLogins.get(email) ?? null,
+    tokenRecords: tokens,
+    activityEvents: activity.events,
+    activityAvailable: activity.available,
     offerRecords: offers,
     deliveryRecords: deliveries,
     blacklistEmails: blacklist.hard.size ? blacklist.hard : blacklistEmails,
@@ -376,6 +476,13 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
 
   return json(200, {
     dossier,
+    // 反応をどこまで取得できたか（画面で「不明」と「0 件」を区別させる）
+    engagementSource: {
+      available: activity.available,
+      coveredMessages: activity.coveredMessages || 0,
+      totalMessages: activity.totalMessages || 0,
+      note: activity.retentionNote || "取得できませんでした（反応が無かったという意味ではありません）",
+    },
     providerSuppression: describeProviderSuppression(provider),
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),

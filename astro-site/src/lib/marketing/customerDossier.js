@@ -27,6 +27,8 @@ import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolve
 import { resolveCustomerMarketing } from './customerMarketingAudience.js';
 import { isLiveOffer } from '../promotions/offerCampaignLink.js';
 import { LAST_LOGIN_FIELD } from '../auth/lastLoginRecord.js';
+import { buildCustomerTimeline, summarizeEngagement } from './customerTimeline.js';
+import { buildRecommendations } from './recommendedActions.js';
 
 const norm = (v) => String(v ?? '').trim().toLowerCase();
 const str = (v) => String(v ?? '').trim();
@@ -153,6 +155,7 @@ export function buildCustomerDossier(input = {}) {
     offerRecords = [], deliveryRecords = [],
     blacklistEmails = new Set(), softBounceEmails = new Set(),
     providerSuppressed = null, history = null,
+    tokenRecords = [], activityEvents = null, activityAvailable = false,
   } = input;
 
   const fields = (record && record.fields) || {};
@@ -206,6 +209,18 @@ export function buildCustomerDossier(input = {}) {
 
   // --- 無料特典（付与の生値ではなく resolveEntitlements の解釈を出す） ---
   const promo = entitlements.promo || {};
+
+  // ── 時系列履歴と推奨（どちらも read-only・判定は既存の単一源に委譲）──
+  const timeline = buildCustomerTimeline({
+    record, nowMs, offerRecords, deliveryRecords, tokenRecords, activityEvents, activityAvailable,
+  });
+  const engagement = summarizeEngagement({ events: timeline.events, available: timeline.limits.engagementAvailable });
+  const advice = buildRecommendations({
+    marketing: { ...marketing, premiumPlusEligibility: str(fields.PremiumPlusEligibility) },
+    entitlements, membership, offers,
+    engagement, daysSinceLogin: days,
+    lastSentAtMs: marketing.history && marketing.history.lastSentAtMs, nowMs,
+  });
 
   return {
     recordId,
@@ -283,6 +298,18 @@ export function buildCustomerDossier(input = {}) {
         }
         : null,
     },
+
+    /** ⑥ 時系列履歴（出所つき。取得できない情報は limits で明示） */
+    timeline: timeline.events,
+    timelineUnknownDate: timeline.unknownDateEvents,
+    timelineLimits: timeline.limits,
+
+    /** ⑦ 反応（取得できない期間は null。0 と表示しない） */
+    engagement,
+
+    /** ⑧ 推奨アクション（提案のみ・自動実行しない） */
+    recommendations: advice.recommendations,
+    sendableFrom: advice.sendableFrom,
 
     /** ⑤ 閲覧できるもの（判定の答え合わせ用） */
     access: {
