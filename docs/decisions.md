@@ -8,6 +8,57 @@
 
 ---
 
+## 2026-08-01 — Netlify build hook の POST に bounded retry と deploy 重複チェックを導入
+
+### Status
+
+Accepted（実装は branch `fix/netlify-deploy-bounded-retry` / Draft PR。merge は未実施）
+
+### Context
+
+2026-08-01 03:12 UTC の `Import Prediction (Dispatch)` run **30681507056** が
+最後の `Trigger Netlify deploy` step だけで失敗した。
+
+- import 自体は成功。commit **`7672c4a`**（`astro-site/src/data/predictions/2026-08-02-funabashi.json` の 1 ファイルのみ）を push 済み。
+- 失敗したのは build hook の POST。`curl: (28) Failed to connect to api.netlify.com port 443 after 300706 ms`
+  = **TCP 接続すら確立できないまま curl 既定の connect timeout（300 秒）で打ち切られた**。
+- 当時の action には `--connect-timeout` / `--max-time` / retry が**一つも無かった**ため、
+  1 回の接続失敗がそのまま job 失敗になった。
+- 一方 Netlify 側では、同 commit の production deploy **`6a6d640c26d26a0008fe9eaf`** が
+  03:12:12Z に作成され 03:13:11Z に published（state `ready`）していた。
+  タイトルが commit message（hook 経由なら "Deploy triggered by hook: ..."）であることから、
+  **GitHub 連携の push デプロイが別経路で成立していた**。データ反映に欠落は無い。
+
+つまり本番影響は無く、**壊れていたのは通知経路の頑健さだけ**だった。
+同時に、hook と GitHub 連携が両方走るため**同一 commit の二重ビルドが常態化している**ことも判明した。
+
+### Decision
+
+`.github/actions/netlify-deploy` を次の方針で最小修正する。
+
+1. **retry は一過性の失敗に限定する。** curl exit 6/7/28/35/52/55/56 と HTTP 429 / 5xx のみ。
+   HTTP 4xx（hook URL の誤り・失効などの設定不良）と未知エラーは **retry せず即 FAIL**。
+   上限 3 回（1〜5 でクランプ）、backoff 5s→15s→30s。上限到達後は FAIL のままにする（fail-closed を維持）。
+2. **timeout を明示する。** `--connect-timeout 30` / `--max-time 90`。curl 既定の 300 秒待ちを排除する。
+3. **再送前に deploy の有無を確認する。** `netlify-auth-token` + `site-id` が渡された場合のみ Netlify API を読み、
+   対象 commit の deploy（`error` / `rejected` を除く）が既にあれば **POST せず成功扱い**にする。
+   今回のように「POST は届いたが応答だけ失った」ケースで二重ビルドを防ぐのが目的。
+4. **self-heal は例外**。`check-publish-drift.yml` は同一 commit の再ビルドが目的なので `commit-sha` を渡さない。
+5. **秘匿値を出さない。** hook URL・token・response 本文はログに出さず、HTTP status と curl exit code だけ記録する。
+   （従来は失敗時に response 本文を `cat` していた。）
+
+### Consequences
+
+- Netlify API を使う重複チェックは **`NETLIFY_AUTH_TOKEN` / `NETLIFY_SITE_ID` secret が未設定のため現時点では無効**。
+  未設定なら自動的に「retry のみ」へ縮退し、従来と同じ挙動になる（workflow 側は既に配線済み）。
+  有効化には secret 追加＝**production secret 変更（要承認）**が必要。
+- `build-hook` 未設定時の no-op（exit 0）は**従来どおり維持**した。`require-hook: true` で FAIL に切り替えられる。
+  既定を FAIL にすると secret 未設定の環境で 4 workflow が一斉に落ちるため、既定は変えない。
+- 二重ビルド（hook + GitHub 連携）そのものの是非は**本 PR の対象外**。commit-sha を渡す 3 workflow では
+  結果的に hook 側が抑止されるが、hook を廃止するかどうかは別途判断する。
+
+---
+
 ## 2026-07-31 — JRA import の突合ゲートに stale read 限定の bounded retry を採用
 
 ### Status

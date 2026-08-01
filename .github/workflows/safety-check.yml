@@ -156,3 +156,6 @@ jobs:
       - name: Verify 権限判定（無料特典と有料契約の分離 / Plus 販売資格不変）
         working-directory: astro-site
         run: npm run test:entitlements
+
+      - name: Verify Netlify deploy trigger（一過性 timeout は retry / 4xx は即 FAIL / 重複 build なし）
+        run: bash .github/actions/netlify-deploy/tests/run-tests.sh

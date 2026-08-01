@@ -194,9 +194,21 @@ jobs:
             exit 1
           fi
 
+      # push した commit を控える（Netlify 側で同一 commit の deploy が既にあれば
+      # build hook を再送しないための照合キー。github.sha は dispatch 時点の SHA で
+      # 取込 commit とは別物なので使えない）
+      - name: Resolve deployed commit
+        id: deployed
+        if: steps.import.outputs.changed == 'true'
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Trigger Netlify deploy
         if: steps.import.outputs.changed == 'true'
         uses: ./.github/actions/netlify-deploy
         with:
           build-hook: ${{ secrets.NETLIFY_BUILD_HOOK }}
           reason: "prediction dispatch [${{ github.event.client_payload.category || github.event.inputs.category }}]"
+          commit-sha: ${{ steps.deployed.outputs.sha }}
+          # 未設定なら重複チェックは自動的に無効化される（retry のみ有効）
+          netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          site-id: ${{ secrets.NETLIFY_SITE_ID }}

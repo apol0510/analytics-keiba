@@ -62,12 +62,16 @@ jobs:
             echo "drift=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # self-heal は「同じ commit をもう一度ビルドし直す」ことが目的なので
+      # commit-sha は渡さない（渡すと既存 deploy を理由に POST が抑止され自己修復できない）
       - name: Self-heal — trigger Netlify deploy
         if: steps.compare.outputs.drift == 'true'
         uses: ./.github/actions/netlify-deploy
         with:
           build-hook: ${{ secrets.NETLIFY_BUILD_HOOK }}
           reason: "publish-drift self-heal (expected ${{ steps.latest.outputs.date }})"
+          netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          site-id: ${{ secrets.NETLIFY_SITE_ID }}
 
       - name: Report
         if: always()
