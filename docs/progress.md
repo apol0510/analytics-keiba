@@ -17,6 +17,29 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: 台帳 Phase 1b の Airtable テーブル作成は完了・検証済み。
+本番有効化の前に、書き込みの耐障害修正（バッチ化 + bounded retry + 失敗集計）を
+branch `fix/email-event-ledger-write-resilience` で実装。**既定 OFF・write 0 のまま**。**
+
+- **1a**: PR #199 merged（`8a493ce`）→ production published deploy `6a6dea8f3e8b850008a9ea74`（state ready）
+- **1b（テーブル）**: Airtable `EmailEvents` を作成・read-only 検証済み。
+  table id `tblWkaxu7p0MRuUwL` / **21 列一致** / primary field `EventKey`（singleLineText）/
+  `EventAt`・`ReceivedAt` は dateTime / 禁止列なし / **0 行（ベースライン）**
+- **1b（env）**: `EMAIL_EVENT_LEDGER_ENABLED` は **production UNSET のまま**（write 0）。
+  投入と redeploy は**未実施**（ユーザー承認待ち）
+- **本セッションの修正**: 初版の書き込みは「1 行 1 リクエストを逐次 PATCH し、
+  `res.ok` でなければ黙って捨てる」実装だった。台帳は復元不能なので、
+  ① 10 件/リクエストのバッチ upsert ② 429/5xx/timeout/transport への bounded retry
+  （403/404/422 は再試行しない）③ `attempted / written / failed / failureReasons` の
+  明示集計、へ作り直した。詳細は `astro-site/docs/EMAIL_EVENT_LEDGER.md` §3-2
+- **PR #200（comment-only / Phase 番号是正）は merge せず維持**。両者の関係:
+  - #200 は `emailEventLedger.js` と `sendgrid-webhook.js` の**コメント 2 箇所**を 1b → 1c へ是正
+  - 本 PR は `sendgrid-webhook.js` 側の**同じ箇所を含む形で書き直している**（是正済み）。
+    `emailEventLedger.js` のコメントは**本 PR では触っていない**ため、#200 固有の価値として残る
+  - したがって **#200 を先に merge → 本 PR を merge**（`sendgrid-webhook.js` の 1 hunk が
+    競合するので本 PR 側で解消）か、**本 PR を先に merge → #200 を `emailEventLedger.js` のみへ縮小**
+    のどちらか。**どちらでも本番挙動は不変**（コメントのみ）
+
 **Phase（2026-08-01 現在・最新）: メール配信反応の恒久台帳（`EmailEvents`）の Phase 1a を
 PR #199 で実装完了。既定 OFF・本番 write 0 のまま Ready for review。merge は未承認で停止中。**
 
@@ -727,12 +750,18 @@ Phase 1a（コード・テスト・docs）は PR #199 で完了。以降は**す
 
 | Phase | 内容 | 実行者 | リスク |
 |---|---|---|---|
-| **1a** | 純粋モジュール・テスト・受信側の配線（既定 OFF）・docs | 実装済み（PR #199・**merge 未承認**）| なし（write 0）|
-| **1b** | Airtable に `EmailEvents` を作成（列は `EMAIL_EVENT_LEDGER.md` の表）→ `EMAIL_EVENT_LEDGER_ENABLED=true` を production へ投入 → redeploy | **ユーザー** | 台帳への write 開始 |
+| **1a** | 純粋モジュール・テスト・受信側の配線（既定 OFF）・docs | **完了**（PR #199 merged `8a493ce` / production deploy ready）| なし（write 0）|
+| **1a-2** | 書き込みのバッチ化・bounded retry・失敗集計 | 実装済み（branch `fix/email-event-ledger-write-resilience`・**merge 未承認**）| なし（write 0）|
+| **1b（テーブル）** | Airtable `EmailEvents` 作成 | **完了**（2026-08-02 / `tblWkaxu7p0MRuUwL` / 21 列 / primary=EventKey / 0 行）| なし（env 未投入なので書かれない）|
+| **1b（env）** | `EMAIL_EVENT_LEDGER_ENABLED=true`（小文字 true / Functions scope / Production context）を投入 → **redeploy** | **ユーザー・未実施** | 台帳への write 開始 |
 | **1c** | 送信側で `custom_args`（delivery_key / campaign_id / customer_record_id）を刻む | 別 PR | 送信経路の変更 |
 | **1d** | 受信側へ配信索引を渡し `resolved` を有効化。集約列を追加 | 別 PR | 表示の変更 |
 
 - **1b を飛ばして 1c を先に入れない**（刻んでも保存先が無い）。
+- **env 投入は 1a-2（耐障害修正）の merge + deploy を先に済ませてから**。初版の書き込みは
+  失敗を沈黙させるため、有効化しても欠測に気付けない。
+- **有効化後の最初の確認は `accepted` と `written` の一致**（差＝欠測）。`failureReasons` に
+  `forbidden` / `not_found` / `unprocessable` が出たら設定不備なので即 unset して直す。
 - 台帳を止めるときは `EMAIL_EVENT_LEDGER_ENABLED` を unset → redeploy。
   受信は継続し、書き込みだけ止まる（コード変更不要）。
 - **台帳運用開始前のイベントは復元できない**。admin 表示では「未開封」と「取得不能」を必ず区別する。

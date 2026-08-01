@@ -74,6 +74,43 @@ raw payload。施策判断に不要で、漏えい時の被害が大きい。
 | 食い違い | 候補が複数／custom_args の顧客と台帳の顧客が不一致 → **`conflict`**（どちらも採らない）|
 | 解決不能 | `unresolved` として**保存はする**（事実は残す）が、顧客へは結び付けない |
 
+## 3-2. 書き込み経路（バッチ upsert + bounded retry / 2026-08-02 追加）
+
+台帳は **append-only で後から復元できない**。「落ちたのに黙って捨てる」実装は、
+欠測に気付けないまま事実が永久に失われることを意味する。書き込みは単一源
+**`src/lib/webhooks/emailEventLedgerWriter.js`**（I/O 注入・純粋にテスト可能）に集約する。
+
+| 論点 | 設計 | 定数 |
+|---|---|---|
+| バッチ化 | **10 レコード / 1 リクエスト**（Airtable upsert の上限）。1 行 1 リクエストにしない | `LEDGER_BATCH_SIZE=10` |
+| 送信前 dedupe | 同一 `EventKey` を**送る前に**畳む。同一リクエスト内に同じマージキーが 2 件あると**リクエストごと失敗する**ため | — |
+| 再試行する | **429 / 5xx / timeout / transport error のみ** | `LEDGER_MAX_ATTEMPTS=3`（初回 + 2 回）|
+| 再試行しない | **403 / 404 / 422 / 400**（権限不足・テーブル/列不足・型不一致＝叩いても直らない）| — |
+| backoff | 指数 + **上限で頭打ち**。`Retry-After` があれば優先するが上限は同じ | `200ms` → 上限 `2000ms` |
+| リクエスト timeout | `AbortSignal.timeout`（未対応環境では無指定） | `5000ms` |
+| 全体の締切 | 超過分は送らず `deadline_exceeded` として数える（Function 全体を道連れにしない）| `8000ms` |
+| 失敗の可視化 | **沈黙させない**。理由コード別に集計して応答・ログへ出す | 下表 |
+| 冪等性 | `EventKey` マージの upsert。provider のリトライ・再送で**行は増えない** | — |
+| 応答本文 | **読まない**（PII / secret 混入の遮断）。status と `Retry-After` のみ参照 | — |
+
+### 集計フィールド（Webhook 応答・ログの `ledger`）
+
+| キー | 意味 |
+|---|---|
+| `received` / `accepted` | 受信イベント数 / 台帳行として組み上がった数 |
+| `attempted` | 実際に送った行数（dedupe・列チェック後）|
+| `written` | 書き込み成功した行数 |
+| `failed` | 送ったが失敗した行数（**`attempted = written + failed`**）|
+| `skipped` | 許可列以外を含み送らなかった行数 |
+| `deduped` | 送信前に重複として畳んだ行数 |
+| `batches` / `failedBatches` | 送ったバッチ数 / 落ちたバッチ数 |
+| `retryCount` | 再試行した回数の合計 |
+| `failureReasons` | 理由コード → 件数。`rate_limited` / `server_error` / `timeout` / `transport_error` / `forbidden` / `not_found` / `unprocessable` / `bad_request` / `client_error` / `field_not_allowed` / `deadline_exceeded` / `unknown` |
+
+**運用の見方**: `accepted > written` なら欠測が起きている。`failureReasons` が
+`forbidden` / `not_found` / `unprocessable` を示す場合は**設定不備**（PAT 権限・テーブル名・列の型）で、
+再試行では直らない。`rate_limited` が続く場合はバッチが飽和している。
+
 ## 4. 署名検証
 
 Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）。
@@ -90,8 +127,9 @@ Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）
 
 | Phase | 内容 | リスク |
 |---|---|---|
-| **1a**（本 PR） | 純粋モジュール・テスト・受信側の配線（**既定 OFF**）・本書 | なし（write 0）|
-| **1b** | Airtable に `EmailEvents` を作成 → `EMAIL_EVENT_LEDGER_ENABLED=true` | 台帳への write 開始 |
+| **1a** | 純粋モジュール・テスト・受信側の配線（**既定 OFF**）・本書（PR #199 merged `8a493ce`）| なし（write 0）|
+| **1a-2**（本 PR） | 書き込みのバッチ化・bounded retry・失敗集計（§3-2）。**既定 OFF のまま** | なし（write 0）|
+| **1b** | Airtable に `EmailEvents` を作成（**2026-08-02 完了**: `tblWkaxu7p0MRuUwL` / 21 列 / primary=`EventKey` / 0 行）→ `EMAIL_EVENT_LEDGER_ENABLED=true` + redeploy（**未実施**）| 台帳への write 開始 |
 | **1c** | 送信側で `custom_args`（delivery_key / campaign_id / customer_record_id）を刻む | 送信経路の変更 |
 | **1d** | 受信側へ配信索引を渡し `resolved` を有効化。集約列を追加 | 表示の変更 |
 

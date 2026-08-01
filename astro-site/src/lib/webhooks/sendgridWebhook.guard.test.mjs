@@ -19,6 +19,12 @@ const FN = readFileSync(
 /** コメント / JSDoc を除いた実コード（禁止語検査の誤検知を避ける）。 */
 const CODE = FN.replace(/^\s*\*.*$/gm, '').replace(/^\s*\/\/.*$/gm, '');
 
+/** 台帳書き込みの単一源（バッチ化・bounded retry・失敗集計）。 */
+const WRITER = readFileSync(
+  fileURLToPath(new URL('./emailEventLedgerWriter.js', import.meta.url)),
+  'utf8'
+);
+
 test('guard: 署名検証は単一源 sendgridSignature.js を import して使う（再実装しない）', () => {
   assert.ok(/from '[^']*lib\/webhooks\/sendgridSignature\.js'/.test(FN),
     '署名検証の単一源を import していない');
@@ -159,11 +165,14 @@ test('guard: 応答・ログに識別子を出さない（集計のみ）', () =
 // ── 配信反応の恒久台帳（2026-08-01 / 既定 OFF）────────────────────
 test('guard: 台帳書き込みは env が true のときだけ（既定 OFF）', () => {
   assert.match(CODE, /isLedgerWriteEnabled\(process\.env\)/, 'env gate を通していない');
-  // gate を通らない経路で Airtable へ書いていないこと
+  // gate を通らない経路で書き込み経路へ到達しないこと
   const fn = CODE.slice(CODE.indexOf('async function applyEmailEventLedger'));
   const gateAt = fn.indexOf('const enabled =');
-  const writeAt = fn.indexOf("method: 'PATCH'");
-  assert.ok(gateAt > 0 && writeAt > gateAt, 'gate より前に書き込みがある');
+  const returnAt = fn.indexOf('if (!enabled)');
+  const writeAt = fn.indexOf('writeLedgerRows(');
+  assert.ok(gateAt > 0, 'gate が見つからない');
+  assert.ok(returnAt > gateAt, 'gate 直後に早期 return していない');
+  assert.ok(writeAt > returnAt, 'gate の早期 return より前に書き込みへ到達しうる');
 });
 
 test('guard: 台帳の判定・列組み立てを Function 側に再実装しない', () => {
@@ -177,7 +186,55 @@ test('guard: 台帳の判定・列組み立てを Function 側に再実装しな
 });
 
 test('guard: 台帳は EventKey をマージキーに upsert する（再受信で増えない）', () => {
-  assert.match(CODE, /fieldsToMergeOn: \['EventKey'\]/, '冪等な upsert になっていない');
+  // upsert の組み立ては書き込みの単一源（emailEventLedgerWriter.js）に集約されている
+  assert.match(WRITER, /fieldsToMergeOn: \['EventKey'\]/, '冪等な upsert になっていない');
+  assert.ok(!/fieldsToMergeOn/.test(CODE),
+    'Function 側で upsert 本文を組み立てている（書き込みは単一源に集約すること）');
+});
+
+test('guard: 台帳の書き込みは単一源 emailEventLedgerWriter.js に委譲する（Function に再実装しない）', () => {
+  assert.match(CODE, /emailEventLedgerWriter\.js/, '書き込みの単一源を経由していない');
+  assert.match(CODE, /writeLedgerRows\(/, '単一源の書き込み関数を呼んでいない');
+  // 台帳用の Airtable URL / リクエスト本文を Function 側で組み立てない
+  assert.ok(!/EMAIL_EVENTS_TABLE\}`/.test(CODE), 'Function が台帳の Airtable URL を組み立てている');
+  assert.ok(!/performUpsert/.test(CODE), 'Function が upsert 本文を組み立てている');
+});
+
+test('guard: 台帳の失敗を沈黙させない（集計を応答へ返す）', () => {
+  const fn = CODE.slice(CODE.indexOf('async function applyEmailEventLedger'));
+  for (const key of ['attempted', 'written', 'failed', 'failureReasons']) {
+    assert.ok(fn.includes(key), `台帳の集計 ${key} を返していない（失敗が観測できない）`);
+  }
+});
+
+// ── 書き込み単一源（emailEventLedgerWriter.js）の耐障害契約 ──────────
+test('guard(writer): 再試行は上限つきで、無限ループを持たない', () => {
+  assert.match(WRITER, /LEDGER_MAX_ATTEMPTS\s*=\s*\d+/, '試行回数の上限が定数化されていない');
+  assert.match(WRITER, /LEDGER_MAX_BACKOFF_MS\s*=\s*\d+/, 'backoff の上限が定数化されていない');
+  assert.ok(!/while\s*\(\s*true\s*\)/.test(WRITER), '無限ループがある');
+  assert.match(WRITER, /attempt <= LEDGER_MAX_ATTEMPTS/, '試行回数で打ち切っていない');
+});
+
+test('guard(writer): 恒久エラー（403 / 404 / 422 / 400）を再試行しない', () => {
+  for (const status of ['403', '404', '422', '400']) {
+    const re = new RegExp(`status === ${status}\\) return \\{[^}]*retryable: false`);
+    assert.match(WRITER, re, `${status} を再試行対象にしている`);
+  }
+  assert.match(WRITER, /status === 429\) return \{[^}]*retryable: true/, '429 を再試行していない');
+  assert.match(WRITER, /status >= 500\) return \{[^}]*retryable: true/, '5xx を再試行していない');
+});
+
+test('guard(writer): Airtable の応答本文・例外本文を読まない（PII / secret 混入の遮断）', () => {
+  const code = WRITER.replace(/^\s*\*.*$/gm, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/\.text\(\)/.test(code), '応答本文を読んでいる');
+  assert.ok(!/\.json\(\)/.test(code), '応答本文を読んでいる');
+  assert.ok(!/err\.message|error\.message/.test(code), '例外メッセージを扱っている');
+  assert.ok(!/console\.(log|warn|error)/.test(code), '書き込み層でログを出している（集計は呼び出し側で出す）');
+});
+
+test('guard(writer): バッチ上限は Airtable の 10 件を超えない', () => {
+  assert.match(WRITER, /LEDGER_BATCH_SIZE\s*=\s*10/, 'バッチ上限が 10 件ではない');
+  assert.match(WRITER, /Math\.min\(Number\(size\)[^)]*LEDGER_BATCH_SIZE\)/, 'バッチサイズの上限を強制していない');
 });
 
 test('guard: 台帳へ IP / User-Agent / 生 URL / 生アドレスを渡さない', () => {
