@@ -207,3 +207,73 @@ test('カルテに「無料特典は支払いではない」区別が出る', ()
   assert.match(block, /promotional_grant/);
   assert.match(block, /無料特典（支払いではない）/);
 });
+
+// =========================================================================
+// 顧客マーケティング運用画面（2026-08-01）
+// =========================================================================
+
+test('カルテに推奨アクションが出て、理由・使用データ・送信可否・最短日時を併記する', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('async function mkOpenDossier'));
+  assert.match(block, /推奨アクション（提案のみ・自動実行しません）/, '自動実行しない旨が無い');
+  for (const k of ['使用データ', '送信可否', '実行できる最短']) {
+    assert.ok(block.includes(k), `推奨に ${k} が出ていない`);
+  }
+  assert.match(block, /rec\.reason/, '推奨理由を描画していない');
+});
+
+test('推奨から直接 実行系 API を呼ばない（提案のみ）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("const s0 = dossierSection"), SCRIPT.indexOf("// ① ログイン"));
+  for (const forbidden of ["action: 'apply'", "action: 'send'", "action: 'revoke'", 'dryRun: false']) {
+    assert.equal(block.includes(forbidden), false, `推奨欄から ${forbidden} を呼んでいる`);
+  }
+});
+
+test('時系列履歴は出所を必ず併記し、取得できない情報を明示する', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("const s6 = dossierSection"));
+  assert.match(block, /e\.source/, '履歴に出所を出していない');
+  assert.match(block, /日時不明/, '日時が無い行の扱いが無い');
+  assert.match(block, /問い合わせ履歴/, '取得できない情報を明示していない');
+  assert.match(block, /台帳が無く取得できません/);
+  assert.match(block, /過去の契約は最新 1 件ぶんのみ/);
+});
+
+test('開封・クリックは取得可否を明示する（0 件と断定しない）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("const s6 = dossierSection"));
+  assert.match(block, /engagementSource/, '取得範囲を画面へ出していない');
+  assert.match(block, /開封・クリック: /);
+});
+
+test('一覧に運用列があり、狭い画面では主要列だけになる', () => {
+  for (const cls of ['c-access col-detail', 'c-promo col-detail', 'c-offer col-detail', 'c-next col-detail']) {
+    assert.ok(PAGE.includes(cls), `${cls} が無い`);
+  }
+  assert.match(PAGE, /data-colmode/, '列表示の切替が無い');
+  assert.match(PAGE, /#paneMkt\[data-colmode="?basic"?\] \.col-detail \{ display: none; \}/,
+    "主要列モードで詳細列を隠す CSS が無い");
+  assert.match(PAGE, /@media \(max-width: 720px\)[\s\S]{0,400}\.col-detail \{ display: none; \}/,
+    '狭い画面で詳細列を隠していない');
+});
+
+test('絞り込みは AND で、適用条件と件数を画面に出す', () => {
+  for (const id of ['mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']) {
+    assert.ok(PAGE.includes(`id="${id}"`), `${id} が無い`);
+  }
+  assert.match(SCRIPT, /offerState: \$\('mkOfferState'\)\.value/);
+  assert.match(SCRIPT, /promoState: \$\('mkPromoState'\)\.value/);
+  assert.match(SCRIPT, /frequency: \$\('mkFrequency'\)\.value/);
+  const applied = SCRIPT.slice(SCRIPT.indexOf('function renderApplied'));
+  assert.match(applied, /AND/, '条件の結合が AND だと分からない');
+  assert.match(applied, /該当 /, '該当件数を出していない');
+});
+
+test('施策パネルは dry-run しか実行しない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkActionDry')"), SCRIPT.indexOf('// ── 実配信'));
+  assert.match(block, /action: 'dryRun'/, 'dry-run を呼んでいない');
+  for (const forbidden of ["action: 'apply'", "action: 'send'", "action: 'revoke'", 'dryRun: false']) {
+    assert.equal(block.includes(forbidden), false, `施策パネルが ${forbidden} を実行する`);
+  }
+  // 必要な表示項目
+  for (const k of ['対象件数', '変更前 → 変更後', 'operationId', '取り消し方法', 'この操作の副作用']) {
+    assert.ok(block.includes(k), `施策パネルに ${k} が無い`);
+  }
+});

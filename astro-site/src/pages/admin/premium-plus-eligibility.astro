@@ -159,6 +159,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="recent">最近送信済み</option>
           <option value="sent">送信あり</option>
         </select>
+        <select id="mkOfferState" aria-label="割引オファー">
+          <option value="">オファー: すべて</option>
+          <option value="live">有効オファーあり</option>
+          <option value="expiring7">期限 7 日以内</option>
+          <option value="none">オファーなし</option>
+        </select>
+        <select id="mkPromoState" aria-label="無料特典">
+          <option value="">無料特典: すべて</option>
+          <option value="active">特典中</option>
+          <option value="ending7">終了 7 日以内</option>
+          <option value="none">特典なし</option>
+        </select>
+        <select id="mkFrequency" aria-label="送信タイミング">
+          <option value="">送信タイミング: すべて</option>
+          <option value="sendable-now">いま送れる</option>
+          <option value="blocked">24時間制限中</option>
+        </select>
         <select id="mkLastLogin" aria-label="最終ログイン">
           <option value="">最終ログイン: すべて</option>
           <option value="login:30d">30日以内</option>
@@ -170,7 +187,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <button type="button" id="mkLoad" class="btn-primary">この条件で取得</button>
       </div>
 
+      <p class="note" id="mkApplied"></p>
+
       <div class="selbar">
+        <span class="colmode">表示列:
+          <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
+          <button type="button" id="mkColAll" class="btn-ghost btn-sm">詳細</button>
+        </span>
         <button type="button" id="mkSelAll" class="btn-ghost">表示中を全選択</button>
         <button type="button" id="mkSelNone" class="btn-ghost">全解除</button>
         <span class="selcount" id="mkSelCount">0 名を選択中</span>
@@ -189,6 +212,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-plan">プラン</th>
               <th class="c-send">送信</th>
               <th class="c-login">最終ログイン</th>
+              <th class="c-access col-detail">閲覧権限</th>
+              <th class="c-promo col-detail">無料特典</th>
+              <th class="c-offer col-detail">オファー</th>
+              <th class="c-next col-detail">次回送信可</th>
               <th class="c-pp">Plus</th>
               <th class="c-hist">送信履歴</th>
               <th class="c-detail"><span class="sr">カルテ</span></th>
@@ -217,6 +244,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <button type="button" id="mkHistoryBtn" class="btn-ghost">送信履歴</button>
         </div>
         <p class="camp-desc" id="mkCampDesc"></p>
+      </div>
+
+      <!-- ═══ 施策パネル（選択顧客に対して何ができるか。dry-run で内容を確認する）═══ -->
+      <div class="campaign-box action-box">
+        <h2>🎯 施策パネル</h2>
+        <p class="note">
+          選択中の顧客に実行できる施策です。<b>ここから実行されるのは dry-run（確認）だけ</b>で、
+          付与・取消・送信は行いません。実行は各タブの既存フロー（確認 → 実行）から行ってください。
+        </p>
+        <div class="toolbar">
+          <select id="mkActionKind" aria-label="施策">
+            <option value="campaign">キャンペーンメール（選択中のキャンペーン）</option>
+            <option value="light-30d-free">Light 30日無料</option>
+            <option value="light-lifetime-free">Light 永久無料</option>
+            <option value="premium-30d-free">Premium 無料期間（30日）</option>
+            <option value="premium-annual-half">Premium 年額 割引オファー</option>
+          </select>
+          <button type="button" id="mkActionDry" class="btn-primary">内容を確認（dry-run）</button>
+        </div>
+        <p class="note" id="mkActionState"></p>
+        <div id="mkActionResult"></div>
       </div>
 
       <!-- ═══ 実配信（キューを配信基盤へ渡す最後の一押し）═══ -->
@@ -616,6 +664,38 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     padding: .1rem .4rem; border-radius: 4px; color: #cbd5e6;
     background: rgba(148,163,184,.14); border: 1px solid rgba(148,163,184,.3); }
   .ppe .strong-ok { color: #6ee7b7; font-weight: 800; }
+
+  /* ── 推奨アクション ── */
+  .ppe .rec { border-left: 3px solid #38bdf8; background: rgba(56,189,248,.07);
+    border-radius: 6px; padding: .45rem .6rem; margin-bottom: .45rem; }
+  .ppe .rec-warn { border-left-color: #fbbf24; background: rgba(251,191,36,.08); }
+  .ppe .rec-danger { border-left-color: #f87171; background: rgba(248,113,113,.09); }
+  .ppe .rec-title { font-size: .82rem; font-weight: 800; color: #e6edf7; }
+  .ppe .rec-why { font-size: .76rem; color: #cbd5e6; margin: .2rem 0 .3rem; line-height: 1.5; }
+  .ppe .rec-meta { display: flex; flex-wrap: wrap; gap: .35rem .8rem; font-size: .7rem; color: #94a3b8; }
+
+  /* ── マーケティング履歴 ── */
+  .ppe .tl-note { font-size: .72rem; color: #fbbf24; margin: 0 0 .4rem; line-height: 1.5; }
+  .ppe .tl-row { display: grid; grid-template-columns: 8.5rem 9rem 1fr auto; gap: .5rem;
+    font-size: .74rem; padding: .22rem 0; border-bottom: 1px dotted rgba(148,163,184,.14); align-items: baseline; }
+  .ppe .tl-row.tl-unknown { opacity: .75; }
+  .ppe .tl-when { color: #94a3b8; }
+  .ppe .tl-kind { color: #93c5fd; font-weight: 700; }
+  .ppe .tl-detail { color: #e6edf7; word-break: break-word; }
+  .ppe .tl-src { color: #64748b; font-size: .66rem; white-space: nowrap; }
+
+  /* ── 表示列の切替（狭い画面は主要列だけ）── */
+  .ppe .colmode { font-size: .72rem; color: #94a3b8; display: inline-flex; align-items: center; gap: .3rem; }
+  .ppe .btn-ghost.is-on { background: rgba(56,189,248,.18); border-color: rgba(56,189,248,.5); color: #e6edf7; }
+  .ppe #paneMkt[data-colmode=basic] .col-detail { display: none; }
+  .ppe .action-box { border-color: rgba(56,189,248,.35); }
+
+  @media (max-width: 720px) {
+    /* 狭い画面では詳細列を常に隠す（カルテで確認する） */
+    .ppe #paneMkt .col-detail { display: none; }
+    .ppe .tl-row { grid-template-columns: 1fr; gap: .1rem; }
+    .ppe .d-k { flex-basis: 7rem; }
+  }
 
   /* ── 顧客カルテ ── */
   .ppe .dossier { background: #0f1a2f; border: 1px solid rgba(148,163,184,.22); border-radius: 11px;
@@ -1519,13 +1599,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         premiumPlus: $('mkPp').value,
         history: $('mkHistory').value,
         lastLogin: $('mkLastLogin').value,
+        offerState: $('mkOfferState').value,
+        promoState: $('mkPromoState').value,
+        frequency: $('mkFrequency').value,
       });
       if (!data) return;
       mkData = data;
       mkSendEnabled = !!data.sendEnabled;
       mkMsg('');
       mkRender();
+      renderApplied(data);
     }
+
+    // 適用中の条件と件数を画面に出す（何で絞ったのか分からない状態を作らない）
+    function renderApplied(data) {
+      const f = data.appliedFilters || {};
+      const LBL = { contract: '契約', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
+        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファー', promoState: '無料特典', frequency: '送信タイミング' };
+      const parts = Object.entries(f).filter(([, v]) => v && v !== 'all').map(([k, v]) => (LBL[k] || k) + '=' + v);
+      $('mkApplied').textContent = '条件: ' + (parts.length ? parts.join(' AND ') : '指定なし（全件）')
+        + ' → 該当 ' + (data.matchedCount || 0) + ' 名';
+    }
+
+    // 列の表示切替（狭い画面では主要列だけ）
+    function setColMode(mode) {
+      document.getElementById('paneMkt').dataset.colmode = mode;
+      $('mkColBasic').classList.toggle('is-on', mode === 'basic');
+      $('mkColAll').classList.toggle('is-on', mode === 'all');
+    }
+    $('mkColBasic').addEventListener('click', () => setColMode('basic'));
+    $('mkColAll').addEventListener('click', () => setColMode('all'));
+    setColMode('basic');
 
     const CONTRACT_LABEL = {
       active: '有効', expiring_soon: '期限間近', expired: '期限切れ',
@@ -1635,6 +1739,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         }
         tr.appendChild(cLogin);
 
+        // ── 詳細列（狭い画面では非表示。カルテで確認できる）──
+        const acc = r.access || {};
+        const accText = [acc.free && "無料", acc.light && "Light", acc.premium && "Premium", acc.sanrenpuku && "三連複"].filter(Boolean).join("/") || "なし";
+        tr.appendChild(td("c-access col-detail", "閲覧権限", accText, acc.premium || acc.sanrenpuku ? "ok-txt" : ""));
+
+        const promoText = r.promoActive
+          ? (r.promoLifetime ? "無期限" : (r.promoUntil ? "〜" + fmtDate(r.promoUntil) : "期間不明"))
+          : "—";
+        tr.appendChild(td("c-promo col-detail", "無料特典", promoText, r.promoActive ? "ok-txt" : "muted"));
+
+        const offerText = r.liveOfferCount
+          ? r.liveOfferCount + " 件" + (r.offerExpiresAt ? "（〜" + fmtDate(r.offerExpiresAt) + "）" : "")
+          : "—";
+        tr.appendChild(td("c-offer col-detail", "オファー", offerText, r.liveOfferCount ? "ok-txt" : "muted"));
+
+        tr.appendChild(td("c-next col-detail", "次回送信可",
+          r.nextSendableAt ? fmtDate(r.nextSendableAt) + " 以降" : "いま送れる",
+          r.nextSendableAt ? "ng-txt" : "ok-txt"));
+
         tr.appendChild(td('c-pp', 'Plus', r.premiumPlusEligibility || '未設定',
           r.premiumPlusEligibility ? '' : 'muted'));
 
@@ -1703,6 +1826,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       const d = data.dossier;
       body.innerHTML = '';
+
+      // ⓪ 推奨アクション（提案のみ。ここから自動実行はしない）
+      const s0 = dossierSection(body, '★ 推奨アクション（提案のみ・自動実行しません）');
+      for (const rec of (d.recommendations || [])) {
+        const box = document.createElement('div');
+        box.className = 'rec rec-' + (rec.severity || 'info');
+        const h = document.createElement('div'); h.className = 'rec-title'; h.textContent = rec.title;
+        const why = document.createElement('p'); why.className = 'rec-why'; why.textContent = rec.reason;
+        box.appendChild(h); box.appendChild(why);
+        const meta = document.createElement('div'); meta.className = 'rec-meta';
+        const add = (k, v) => { const s = document.createElement('span'); s.textContent = k + ': ' + v; meta.appendChild(s); };
+        add('使用データ', (rec.dataUsed || []).join(' / ') || '—');
+        add('送信可否', rec.sendable === null ? '送信を伴わない' : (rec.sendable ? '送れる' : '送れない'));
+        add('実行できる最短', rec.earliestAt ? fmtDate(rec.earliestAt) : '—');
+        if (rec.campaignId) add('推奨キャンペーン', rec.campaignId);
+        if (rec.offerId) add('推奨施策', rec.offerId);
+        box.appendChild(meta);
+        s0.appendChild(box);
+      }
 
       // ① ログイン
       const s1 = dossierSection(body, '① ログイン');
@@ -1781,9 +1923,88 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       dossierRow(s5, 'Light', d.access.canViewLight ? '閲覧可' : '不可', d.access.canViewLight ? 'ok' : '');
       dossierRow(s5, 'Premium', d.access.canViewPremium ? '閲覧可' : '不可', d.access.canViewPremium ? 'ok' : '');
       dossierRow(s5, '三連複', d.access.canViewSanrenpuku ? '閲覧可' : '不可', d.access.canViewSanrenpuku ? 'ok' : '');
+
+      // ⑥ マーケティング履歴（新しい順・出所つき）
+      const s6 = dossierSection(body, '⑥ マーケティング履歴（新しい順）');
+      const lim = d.timelineLimits || {};
+      const notes = [];
+      notes.push('問い合わせ履歴: ' + (lim.inquiriesAvailable ? '取得可' : '台帳が無く取得できません'));
+      if (lim.contractHistoryIsSnapshotOnly) notes.push('過去の契約は最新 1 件ぶんのみ（履歴テーブルが無いため）');
+      if (lim.offerRevokeHasNoTimestamp) notes.push('オファー取消は日時が台帳に無いため末尾に表示');
+      const eng = (data.engagementSource || {});
+      notes.push('開封・クリック: ' + (eng.available ? eng.note : (eng.note || '取得できません')));
+      const noteEl = document.createElement('p'); noteEl.className = 'tl-note'; noteEl.textContent = '⚠️ ' + notes.join(' / ');
+      s6.appendChild(noteEl);
+
+      const rows = [...(d.timeline || []), ...(d.timelineUnknownDate || [])];
+      if (rows.length === 0) {
+        const empty = document.createElement('p'); empty.className = 'tl-note'; empty.textContent = '記録がありません。';
+        s6.appendChild(empty);
+      }
+      for (const e of rows) {
+        const row = document.createElement('div');
+        row.className = 'tl-row' + (e.atMs === null ? ' tl-unknown' : '');
+        const when = document.createElement('span'); when.className = 'tl-when';
+        when.textContent = e.at ? fmtDate(e.at) : '日時不明';
+        const kind = document.createElement('span'); kind.className = 'tl-kind'; kind.textContent = e.label;
+        const detail = document.createElement('span'); detail.className = 'tl-detail'; detail.textContent = e.detail || '';
+        const src = document.createElement('span'); src.className = 'tl-src';
+        src.textContent = e.source + (e.field ? '.' + e.field : '');
+        row.appendChild(when); row.appendChild(kind); row.appendChild(detail); row.appendChild(src);
+        s6.appendChild(row);
+      }
     }
 
     $('mkDossierClose').addEventListener('click', () => { $('mkDossier').hidden = true; });
+
+    // ── 施策パネル（dry-run のみ。実行系は既存フローに委ねる）───────────
+    $('mkActionDry').addEventListener('click', async () => {
+      const kind = $('mkActionKind').value;
+      const ids = [...mkSelected];
+      const box = $('mkActionResult');
+      box.innerHTML = '';
+      if (ids.length === 0) { $('mkActionState').textContent = '対象を選択してください。'; return; }
+      $('mkActionState').textContent = '確認中…（書き込みは行いません）';
+      try {
+        let data; let head;
+        if (kind === 'campaign') {
+          const c = mkCampaigns.find((x) => x.campaignId === $('mkCampaign').value);
+          data = await mkCall({ action: 'dryRun', campaignId: c.campaignId, recordIds: ids });
+          head = c.name + '（v' + c.version + '）';
+        } else {
+          // 特典・オファーは カムバック特典タブの API（dry-run）を使う。実行はしない
+          const key = kind === 'premium-annual-half' ? 'premiumOfferId'
+            : kind.startsWith('premium-') ? 'premiumOfferId' : 'lightOfferId';
+          data = await cbCall({ action: 'dryRun', [key]: kind, recordIds: ids });
+          head = data && data.selection ? data.selection : kind;
+        }
+        if (!data) { $('mkActionState').textContent = '確認できませんでした。'; return; }
+        const s = dossierSection(box, '確認結果: ' + head + '（書き込みなし）');
+        dossierRow(s, '対象件数', String(ids.length));
+        if (kind === 'campaign') {
+          dossierRow(s, '送信できる', String(data.willSend ?? 0), 'ok');
+          dossierRow(s, '除外', String(data.excluded ?? 0));
+          for (const x of (data.excludedDetail || [])) dossierRow(s, '　' + (x.label || x.reason), String(x.count), 'sub-row');
+          dossierRow(s, '変更されるもの', 'ScheduledEmails / CampaignDeliveries のみ（Customers は不変）');
+          dossierRow(s, 'operationId', String(data.planFingerprint || '').slice(0, 16) + '…（planFingerprint）');
+          dossierRow(s, '取り消し方法', 'キュー登録前なら操作不要。登録後は実配信しなければ送信されません');
+        } else {
+          dossierRow(s, '付与できる', String(data.willGrant ?? 0), 'ok');
+          dossierRow(s, 'オファー発行', String(data.willOffer ?? 0), 'ok');
+          dossierRow(s, '除外', String(data.skipped ?? 0));
+          for (const [k, v] of Object.entries((data.parts && data.parts.partSkips) || {})) dossierRow(s, '　' + k, String(v), 'sub-row');
+          for (const pv of (data.preview || []).slice(0, 20)) {
+            dossierRow(s, '　変更前 → 変更後', (pv.before || '—') + ' → ' + (pv.after || '—'), 'sub-row');
+          }
+          dossierRow(s, 'operationId', String(data.operationId || '—'));
+          dossierRow(s, '取り消し方法', 'カムバック特典タブの「取り消し」から（Customers の契約・課金は不変）');
+        }
+        dossierRow(s, 'この操作の副作用', 'なし（dry-run）', 'ok');
+        $('mkActionState').textContent = '確認しました。実行は各タブの確認 → 実行から行ってください。';
+      } catch (e) {
+        $('mkActionState').textContent = '確認に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+      }
+    });
 
     // ── 実配信（キューを配信基盤へ渡す）────────────────────────────
     const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
