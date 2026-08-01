@@ -8,9 +8,10 @@
 import { MEMBER_TYPE } from './memberResolution.js';
 
 export const FREE_LOGIN_OUTCOME = Object.freeze({
-  FREE: 'free',                       // 明確な無料会員 → 即時無料状態
+  // 無料会員 → 即時無料状態。**期限切れ・退会申請の元有料会員もここ**（plan は 'free' 固定）
+  FREE: 'free',
   REQUIRES_MAGIC_LINK: 'requires_magic_link', // 有料会員 → マジックリンク必須
-  DENIED: 'denied',                   // 退会/停止/期限切れ/判定不能 → 即時ログイン不可
+  DENIED: 'denied',                   // 停止/強制ログアウト/判定不能 → 即時ログイン不可
 });
 
 /**

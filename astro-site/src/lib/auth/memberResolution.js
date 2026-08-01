@@ -8,19 +8,38 @@
  *   - クライアントから送られた plan は **使わない**（引数に取らない）。
  *
  * 判定原則（fail closed）:
- *   - 明確な Free だけ `free`
  *   - 有効な有料会員だけ `paid`
- *   - 退会申請 / 強制ログアウト / 利用停止 / 期限切れ有料 / plan 欠落 / 未知 plan /
- *     複数解釈 / SessionVersion 異常 は `denied`
- *   - 期限切れ有料会員を Free として即時ログインさせない（`denied`）
+ *   - Free / **契約が終わった元有料会員**（期限切れ・退会申請）は `free`
+ *   - 強制ログアウト / 利用停止 / plan 欠落 / 未知 plan / 複数解釈 /
+ *     SessionVersion 異常 は `denied`
  *   - SessionVersion 欠落・空は `0`。負数 / 非整数 / 異常型は `denied`
+ *
+ * ── ⏰ 期限切れ・退会申請は `free`（2026-08-01 / 旧挙動の復元）────────────
+ * PR-B（`7c479db` / 2026-07-08）で期限切れ有料・退会申請を `denied` にしたが、これは
+ * **PR-B 以前の挙動からの意図しない後退**だった。旧 `auth-user.js` は期限切れでも 200 を返し
+ * 「有効期限が切れています。無料会員としてご利用いただけます。」と案内していた。
+ * `denied` にしたことで、元有料会員は**マイページ・保有ポイント・ポイント交換・
+ * 再契約導線のすべてに到達できなくなり**、退会確認メールの「契約期間終了後は自動的に
+ * Free プランに切り替わります」という案内とも矛盾していた（2026-08-01 に本番で 75 名該当）。
+ *
+ * そこで `free` へ戻す。**ただし旧挙動そのままではない**:
+ *   - 旧: `プラン` の値（Premium / Light 等）をそのまま返し、クライアントが期限を見て落としていた
+ *   - 新: **`normalizedPlan` は `'free'` 固定**。元のプラン名は返さない（権限判定に使わせない）
+ * `memberType='free'` なので `issuePaidSessionCookie` / `sessionRefresh` /
+ * `verifyMagicLinkFlow` / `shouldSendMagicLink` はいずれも通らず、**有料権限は 1 つも付かない**。
+ * Airtable の `プラン` / `有効期限` / `PaymentConfirmed` / `PaidAt` は**読むだけで書き換えない**。
+ *
+ * `reason` で `expired` / `withdrawal_requested` を区別できるので、呼び出し側は
+ * 「無料会員としてログインした」ことを案内できる（プラン名は伏せる）。
  *
  * ── 無料特典（promotional grant）の扱い（2026-07-30 追加）──────────────
  * `promotionalGrants.js` の無料権利は **課金契約とは独立**にログイン権限を与える。
  *   - Premium 無料権利が有効 → `paid('premium')`
  *   - Light 無料権利が有効   → `paid('light')`
  * 有料契約が有効なときは **有料側を優先**する（特典で契約プランを上書きしない）。
- * 拒否ゲート（ForceLogout / 退会 / 停止 / SessionVersion 不正）は特典より**先**に評価する。
+ * 拒否ゲート（ForceLogout / 停止 / SessionVersion 不正）は特典より**先**に評価する。
+ * 退会申請は拒否ではなく `free` だが、**特典より先**に評価する（退会者に無料特典で
+ * 有料権限を与えない）。
  * 特典は権利を増やすだけで、減らさない。フィールドが無いレコードは従来と同じ判定。
  *
  * ── ⚠️ `memberType='paid'` は「支払済み」ではない（認可ラベル）─────────────
@@ -80,12 +99,14 @@ export const MEMBER_REASON = Object.freeze({
   ACTIVE_PAID: 'active_paid',
   LIFETIME_SANRENPUKU: 'lifetime_sanrenpuku',
   FORCE_LOGOUT: 'force_logout',
+  /** 退会申請済み → `free`（課金停止であって利用禁止ではない） */
   WITHDRAWAL_REQUESTED: 'withdrawal_requested',
   STATUS_SUSPENDED: 'status_suspended',
   INVALID_SESSION_VERSION: 'invalid_session_version',
   MISSING_PLAN: 'missing_plan',
   UNKNOWN_PLAN: 'unknown_plan',
   PLAN_CONFLICT: 'plan_conflict',
+  /** 有料契約の期限切れ → `free`（元のプラン名は返さない） */
   EXPIRED: 'expired',
   UNKNOWN_VENUE: 'unknown_venue',
   INVALID_NOW: 'invalid_now',
@@ -163,6 +184,14 @@ function deny(reason, recordId, sessionVersion = 0, lifetimeSanrenpuku = false) 
   };
 }
 
+/**
+ * 無料会員の判定結果。
+ *
+ * ⚠️ **`normalizedPlan` は常に `'free'`**。期限切れ・退会申請の元有料会員でも、
+ * Airtable の `プラン`（Premium / Light / Premium Sanrenpuku 等）は**一切返さない**。
+ * 返してしまうと呼び出し側・クライアントがそれを権限判定に使えてしまう。
+ * `lifetimeSanrenpuku` も false 固定（三連複の永久権は有料判定側で `paid` として返る）。
+ */
 function freeResult(recordId, sessionVersion, reason = MEMBER_REASON.CLEAR_FREE) {
   return {
     memberType: MEMBER_TYPE.FREE,
@@ -225,9 +254,6 @@ export function resolveMembership(input = {}) {
   if (isTruthyFlag(readRaw(fields, ['ForceLogout']))) {
     return deny(MEMBER_REASON.FORCE_LOGOUT, recordId, sv.ok ? sv.value : 0);
   }
-  if (isTruthyFlag(readRaw(fields, ['WithdrawalRequested']))) {
-    return deny(MEMBER_REASON.WITHDRAWAL_REQUESTED, recordId, sv.ok ? sv.value : 0);
-  }
   const statusRaw = readRaw(fields, ['Status']);
   const status = statusRaw == null ? '' : String(statusRaw).trim().toLowerCase();
   if (SUSPENDED_STATUS.has(status)) {
@@ -237,6 +263,8 @@ export function resolveMembership(input = {}) {
     return deny(MEMBER_REASON.INVALID_SESSION_VERSION, recordId);
   }
   const sessionVersion = sv.value;
+
+  const withdrawn = isTruthyFlag(readRaw(fields, ['WithdrawalRequested']));
 
   const lifetime = isTruthyFlag(readRaw(fields, ['LifetimeSanrenpuku', '三連複Lifetime']));
 
@@ -277,6 +305,22 @@ export function resolveMembership(input = {}) {
   // 実効プラン: `プラン` を優先し、無ければ `Plan`
   const plan = jaPlan !== undefined ? jaPlan : enPlan;
 
+  if (plan === null) {
+    // 値はあるが未知（`Test` など）。退会・期限に関係なく判定不能として拒否する。
+    return deny(MEMBER_REASON.UNKNOWN_PLAN, recordId, sessionVersion, lifetime);
+  }
+
+  // 退会申請 = 課金の停止であって利用禁止ではない（退会確認メールも
+  // 「契約期間終了後は自動的に Free プランに切り替わります」と案内している）。
+  // 無料会員としてログインさせる。**有料権限は一切与えない**:
+  //   - plan は 'free' 固定（元の Premium / Light 等は返さない）
+  //   - lifetime / 無料特典（promotional grant）も見ない＝有料階層へ戻さない
+  //   - memberType='free' なので Cookie 発行・refresh・magic link はすべて通らない
+  // 判定不能（未知プラン）より後・その他すべてより先に評価する。
+  if (withdrawn) {
+    return freeResult(recordId, sessionVersion, MEMBER_REASON.WITHDRAWAL_REQUESTED);
+  }
+
   if (plan === undefined) {
     // plan フィールド自体が無い
     if (lifetime) {
@@ -285,10 +329,6 @@ export function resolveMembership(input = {}) {
       return paidResult('premium-sanrenpuku', v.venues, recordId, sessionVersion, true, MEMBER_REASON.LIFETIME_SANRENPUKU);
     }
     return deny(MEMBER_REASON.MISSING_PLAN, recordId, sessionVersion, lifetime);
-  }
-  if (plan === null) {
-    // 値はあるが未知
-    return deny(MEMBER_REASON.UNKNOWN_PLAN, recordId, sessionVersion, lifetime);
   }
 
   const isPending = PENDING_STATUS.has(status);
@@ -317,7 +357,8 @@ export function resolveMembership(input = {}) {
 
   const expiryRaw = readRaw(fields, ['有効期限', 'ValidUntil', 'ExpiryDate', 'ExpirationDate']);
   if (isExpiredDate(expiryRaw, now)) {
-    // 期限切れ有料 → Free に落とさず denied（lifetime のみ sanrenpuku を維持）
+    // 三連複の買い切り権（LifetimeSanrenpuku）は課金サイクルと無関係の永久権なので、
+    // base プランの期限切れでは失わせない。
     if (lifetime) {
       const v = resolveVenues(fields);
       if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
@@ -325,7 +366,11 @@ export function resolveMembership(input = {}) {
     }
     // カムバック特典（Premium 無料期間 / Light 永久無料）があれば、期限切れでもその範囲で復帰する。
     // ⚠️ 有料契約の `有効期限` は書き換えない。期限切れである事実はそのまま残る。
-    return promoResult() || deny(MEMBER_REASON.EXPIRED, recordId, sessionVersion, lifetime);
+    //
+    // 特典も無ければ **無料会員**（`denied` にしない）。元のプラン名は返さず 'free' 固定なので、
+    // Premium / Light / 三連複 / Premium Plus はいずれも閲覧できない。
+    // マイページ・保有ポイント・無料コンテンツ・再契約導線だけが使える状態になる。
+    return promoResult() || freeResult(recordId, sessionVersion, MEMBER_REASON.EXPIRED);
   }
 
   // 有効な有料会員

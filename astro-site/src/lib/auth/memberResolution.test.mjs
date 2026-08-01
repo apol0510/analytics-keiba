@@ -89,17 +89,6 @@ test('未知 plan 値 → denied(unknown_plan)', () => {
   assert.equal(r.reason, MEMBER_REASON.UNKNOWN_PLAN);
 });
 
-test('期限切れ有料 → denied(expired)（Free に落とさない）', () => {
-  const r = resolve({ 'プラン': 'Premium', Status: 'active', '有効期限': past });
-  assert.equal(r.memberType, MEMBER_TYPE.DENIED);
-  assert.equal(r.reason, MEMBER_REASON.EXPIRED);
-});
-
-test('WithdrawalRequested=true → denied', () => {
-  assert.equal(resolve({ 'プラン': 'Premium', Status: 'active', WithdrawalRequested: true }).reason, MEMBER_REASON.WITHDRAWAL_REQUESTED);
-  assert.equal(resolve({ 'プラン': 'Premium', Status: 'active', WithdrawalRequested: 1 }).memberType, MEMBER_TYPE.DENIED);
-});
-
 test('ForceLogout=true → denied', () => {
   assert.equal(resolve({ 'プラン': 'Premium', Status: 'active', ForceLogout: true }).reason, MEMBER_REASON.FORCE_LOGOUT);
   assert.equal(resolve({ 'プラン': 'Premium', Status: 'active', ForceLogout: 1 }).memberType, MEMBER_TYPE.DENIED);
@@ -168,6 +157,88 @@ test('resolveSessionVersion 単体', () => {
   assert.equal(resolveSessionVersion(-1).ok, false);
   assert.equal(resolveSessionVersion(2.5).ok, false);
   assert.equal(resolveSessionVersion('-3').ok, false);
+});
+
+// =========================================================================
+// 契約終了（期限切れ / 退会申請）→ 無料会員（2026-08-01 / PR-B の後退を復元）
+//
+// 旧 auth-user は期限切れでも 200 + 「無料会員としてご利用いただけます」だった。
+// PR-B で denied になり、元有料会員がマイページ・ポイント・再契約導線へ到達できなくなった。
+// ここでは「free になること」と「有料権限が 1 つも漏れないこと」を両方固定する。
+// =========================================================================
+
+const ENDED_CONTRACTS = [
+  ['期限切れ Premium', { 'プラン': 'Premium', Status: 'active', '有効期限': past }, MEMBER_REASON.EXPIRED],
+  ['期限切れ Light', { 'プラン': 'Light', Status: 'active', '有効期限': past }, MEMBER_REASON.EXPIRED],
+  ['期限切れ Premium Sanrenpuku（Lifetime なし）',
+    { 'プラン': 'Premium Sanrenpuku', Status: 'active', '有効期限': past, LifetimeSanrenpuku: false },
+    MEMBER_REASON.EXPIRED],
+  ['期限切れ Premium Plus', { 'プラン': 'Premium Plus', Status: 'active', '有効期限': past }, MEMBER_REASON.EXPIRED],
+  ['期限切れ（ExpirationDate 別名）', { 'プラン': 'Premium', ExpirationDate: past }, MEMBER_REASON.EXPIRED],
+  ['退会申請（期限内）', { 'プラン': 'Premium', Status: 'active', '有効期限': future, WithdrawalRequested: true },
+    MEMBER_REASON.WITHDRAWAL_REQUESTED],
+  ['退会申請（期限切れ）', { 'プラン': 'Premium', Status: 'active', '有効期限': past, WithdrawalRequested: true },
+    MEMBER_REASON.WITHDRAWAL_REQUESTED],
+  ['退会申請（数値フラグ 1）', { 'プラン': 'Light', Status: 'active', WithdrawalRequested: 1 },
+    MEMBER_REASON.WITHDRAWAL_REQUESTED],
+];
+
+for (const [name, fields, reason] of ENDED_CONTRACTS) {
+  test(`${name} → free（plan 'free' 固定・有料権限なし）`, () => {
+    const r = resolve(fields);
+    assert.equal(r.memberType, MEMBER_TYPE.FREE);
+    assert.equal(r.reason, reason);
+    // 元のプラン名を絶対に返さない（返すと権限判定に使われうる）
+    assert.equal(r.normalizedPlan, 'free');
+    assert.deepEqual(r.venueAccess, []);
+    assert.equal(r.lifetimeSanrenpuku, false);
+    assert.equal(r.entitlementSource, 'none');
+    // 値のどこにも Premium / Light 等の元プラン名が混ざっていないこと
+    // （キー名 `lifetimeSanrenpuku` に反応しないよう **値だけ**を見る）
+    const values = JSON.stringify(Object.values(r));
+    assert.ok(!/premium|light|sanrenpuku|combo|plus/i.test(values),
+      `plan 名が漏れている: ${values}`);
+  });
+}
+
+test('退会申請は無料特典（promotional grant）で有料へ戻らない', () => {
+  const r = resolve({
+    'プラン': 'Premium', Status: 'active', '有効期限': past, WithdrawalRequested: true,
+    PremiumGrantUntil: future, LightGrantLifetime: true,
+  });
+  assert.equal(r.memberType, MEMBER_TYPE.FREE);
+  assert.equal(r.reason, MEMBER_REASON.WITHDRAWAL_REQUESTED);
+  assert.equal(r.normalizedPlan, 'free');
+});
+
+test('期限切れでも UnsubscribedAnalyticsKeiba はログイン判定に影響しない（メール配信のみ）', () => {
+  const r = resolve({ 'プラン': 'Premium', Status: 'active', '有効期限': past, UnsubscribedAnalyticsKeiba: true });
+  assert.equal(r.memberType, MEMBER_TYPE.FREE);
+  const active = resolve({ 'プラン': 'Premium', Status: 'active', '有効期限': future, UnsubscribedAnalyticsKeiba: true });
+  assert.equal(active.memberType, MEMBER_TYPE.PAID);
+});
+
+test('契約終了でも 停止 / 強制ログアウト / 未知プランは denied のまま', () => {
+  assert.equal(resolve({ 'プラン': 'Premium', Status: 'suspended', '有効期限': past }).memberType, MEMBER_TYPE.DENIED);
+  assert.equal(resolve({ 'プラン': 'Premium', '有効期限': past, ForceLogout: true }).memberType, MEMBER_TYPE.DENIED);
+  assert.equal(resolve({ 'プラン': 'Premium', WithdrawalRequested: true, ForceLogout: true }).memberType, MEMBER_TYPE.DENIED);
+  assert.equal(resolve({ 'プラン': 'Test', Status: 'active' }).reason, MEMBER_REASON.UNKNOWN_PLAN);
+  assert.equal(resolve({ 'プラン': 'Test', Status: 'active', WithdrawalRequested: true }).reason,
+    MEMBER_REASON.UNKNOWN_PLAN, '未知プランは退会・期限に関係なく denied のまま');
+  assert.equal(resolve({ 'プラン': 'Test', Status: 'active', '有効期限': past }).memberType, MEMBER_TYPE.DENIED);
+});
+
+test('契約終了 free は Airtable の課金フィールドを結果へ持ち出さない', () => {
+  const r = resolve({
+    'プラン': 'Premium', PlanType: 'Annual', Status: 'active', '有効期限': past,
+    PaymentConfirmed: true, PaidAt: past, PaymentEmailSent: true, RequestedPlan: 'Premium Annual',
+  });
+  assert.equal(r.memberType, MEMBER_TYPE.FREE);
+  const keys = Object.keys(r).sort();
+  assert.deepEqual(keys, [
+    'entitlementSource', 'lifetimeSanrenpuku', 'memberType', 'normalizedPlan',
+    'reason', 'recordId', 'sessionVersion', 'venueAccess',
+  ]);
 });
 
 // =========================================================================

@@ -46,6 +46,69 @@
 [クライアント] redirectTo へ遷移（/premium-prediction/nankan/ など）
 ```
 
+## 会員判定（`resolveMembership` が単一源）
+
+ログイン可否は Airtable の値から `src/lib/auth/memberResolution.js` が決める。
+**クライアントから送られた plan は使わない。**
+
+| Customers の状態 | memberType | ログイン | 有料コンテンツ |
+|---|---|---|---|
+| Free | `free` | ✅ 即時 | ❌ |
+| 有効な有料契約 | `paid` | ✅ マジックリンク | ✅ |
+| 入金待ち（`Status=pending`） | `free` | ✅ 即時 | ❌ |
+| **有効期限切れ**（`reason=expired`） | **`free`** | **✅ 即時** | ❌ |
+| **退会申請**（`reason=withdrawal_requested`） | **`free`** | **✅ 即時** | ❌ |
+| `LifetimeSanrenpuku=true`（base 期限切れでも） | `paid` | ✅ マジックリンク | ✅ 三連複のみ |
+| 利用停止 / `ForceLogout` / 未知プラン（`Test` 等）/ plan 欠落 / 複数解釈 / SessionVersion 異常 | `denied` | ❌ 403 | ❌ |
+| `UnsubscribedAnalyticsKeiba=true` | 判定に**影響しない** | 状態どおり | 状態どおり |
+
+### ⏰ 期限切れ・退会申請を `free` に戻した経緯（2026-08-01）
+
+PR-B（`7c479db` / 2026-07-08）で期限切れ有料・退会申請を `denied` にしたが、これは
+**PR-B 以前の挙動からの意図しない後退**だった。旧 `auth-user.js` は期限切れでも 200 を返し
+「有効期限が切れています。無料会員としてご利用いただけます。」と案内していた。
+
+`denied` の間、元有料会員は理由の分からない 403
+（「このアカウントではログインできません」）に当たり、**マイページ・保有ポイント・
+ポイント交換・再契約導線のすべてに到達できなかった**。退会確認メールの
+「契約期間終了後は自動的に Free プランに切り替わります」という案内とも矛盾していた。
+2026-08-01 の本番実測では **75 名**（期限切れ 38 / 退会申請 37）が該当し、うち 67 名は
+カムバック割引案内メールの配信対象だった（＝メールを読んでログインすると必ず 403）。
+
+**旧挙動そのままには戻していない。**
+
+- 旧: `プラン` の値（Premium / Light 等）をそのまま返し、クライアント側で期限を見て落としていた
+- 新: **`normalizedPlan` は `'free'` 固定**。元のプラン名は返さない（権限判定に使わせない）
+
+`memberType='free'` なので `issuePaidSessionCookie` / `sessionRefresh` /
+`verifyMagicLinkFlow` / `shouldSendMagicLink` はいずれも通らず、**有料権限は 1 つも付かない**
+（`authPolicies.test.mjs` の通しテストで固定）。Airtable の
+`プラン` / `有効期限` / `PaymentConfirmed` / `PaidAt` / `PaymentEmailSent` は
+**読むだけで書き換えない**（この経路は Customers へ 1 バイトも書かない）。
+
+判定順（上から評価）:
+
+1. `ForceLogout` / 利用停止 / SessionVersion 異常 → `denied`
+2. プラン値が未知（`Test` 等）→ `denied`（退会・期限に関係なく）
+3. `WithdrawalRequested=true` → `free`（無料特典も見ない＝特典で有料へ戻さない）
+4. plan 欠落 → `LifetimeSanrenpuku` があれば三連複 `paid`、無ければ `denied`
+5. `Status=pending` → `free`
+6. 期限切れ → `LifetimeSanrenpuku` があれば三連複 `paid`、カムバック無料特典があればその範囲で `paid`、
+   どちらも無ければ **`free`**
+7. それ以外 → `paid`
+
+### 契約終了の案内（プラン名は出さない）
+
+`auth-user` は `previousPlanEnded: true`（真偽値のみ）を返し、`/login` が
+「以前のご契約は終了しているため、無料会員としてログインしました」と案内する。
+**プラン名・有効期限・金額は返さない**（メールアドレスだけで叩ける経路なので、
+契約内容の詳細を列挙させない）。
+
+無料ログイン時は、有料時代に書かれた `isExpired` / `originalPlan` / `validUntil` /
+`lifetimeSanrenpuku` / `nankan_user` / `auth_data` 等の localStorage 残骸を削除する。
+`AccessControl.astro` はこれらを見て有料 UI を出しうるため、
+**入口だけ直して表示が漏れる**状態を防ぐ。
+
 ## Airtable スキーマ
 
 ### Customers（既存・nankan-analytics 流用）

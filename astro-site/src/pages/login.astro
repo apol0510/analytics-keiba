@@ -267,16 +267,33 @@ export const prerender = true;
         showMessage('✉️ ログインリンクを送信しました。件名「【KEIBA Analytics】ログインリンク」のメールを 15分以内 にお開きください。必ず最新の1通をご利用ください（届かない場合は迷惑メールフォルダもご確認ください）。', 'success');
         return;
       }
-      // 無料会員 → 即時無料ログイン（plan は固定 'free' のみ保存・有料 Cookie とは分離）
+      // 無料会員 → 即時無料ログイン（plan は固定 'free' のみ保存・有料 Cookie とは分離）。
+      // 期限切れ・退会申請の元有料会員もここに来る（サーバー判定が free を返した場合のみ）。
       if (data.success && data.user && data.memberType === 'free') {
         try {
           localStorage.setItem('user-plan', JSON.stringify({ email, plan: 'free', nonAuthoritative: true }));
           localStorage.setItem('isLoggedIn', 'true');
           localStorage.setItem('userPlan', 'free');
           localStorage.setItem('userEmail', email);
+          // ⚠️ 有料時代に書かれた残骸を必ず消す。AccessControl はこれらを見て
+          //    プラン・会員状態を判断するため、残っていると無料セッションなのに
+          //    有料 UI が出る（＝入口だけ直して表示が漏れる）状態になりうる。
+          //    サーバーが「今この瞬間は無料会員」と判定した以上、過去の値で上書きさせない。
+          for (const k of [
+            'isExpired', 'originalPlan', 'validUntil', 'expiryDate',
+            'planType', 'lifetimeSanrenpuku', 'isWithdrawalRequested',
+            'nankan_user', 'auth_data',
+          ]) {
+            localStorage.removeItem(k);
+          }
         } catch (_) {}
-        showMessage('ログインしました。マイページへ移動します。', 'success');
-        setTimeout(() => { window.location.href = '/dashboard/'; }, 1500);
+        showMessage(
+          data.previousPlanEnded
+            ? '以前のご契約は終了しているため、無料会員としてログインしました。マイページへ移動します（ご利用の再開は料金ページから）。'
+            : 'ログインしました。マイページへ移動します。',
+          'success',
+        );
+        setTimeout(() => { window.location.href = '/dashboard/'; }, data.previousPlanEnded ? 3000 : 1500);
         return;
       }
       showMessage('エラーが発生しました。もう一度お試しください。', 'error');

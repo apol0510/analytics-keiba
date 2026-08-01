@@ -46,7 +46,7 @@ exports.handler = async (event) => {
 
     const authLib = await loadAuthLib();
     const {
-      resolveMembership, decideFreeLogin, FREE_LOGIN_OUTCOME,
+      resolveMembership, decideFreeLogin, FREE_LOGIN_OUTCOME, MEMBER_REASON,
       classifyCustomerMatches, CUSTOMER_LOOKUP,
     } = authLib;
 
@@ -99,7 +99,13 @@ exports.handler = async (event) => {
     console.log(`👤 [auth-user] decision=${decision.outcome} reason=${membership.reason} (email=${email})`);
 
     if (decision.outcome === FREE_LOGIN_OUTCOME.FREE) {
-      // 明確な無料会員 → 即時無料状態（固定 plan:'free' のみ・内部状態/ポイント/期限は返さない）
+      // 無料会員 → 即時無料状態（固定 plan:'free' のみ・内部状態/ポイント/期限は返さない）。
+      // 期限切れ・退会申請の元有料会員もここに来る（2026-08-01）。**プラン名は返さない**ので、
+      // クライアントが元の Premium / Light を権限判定に使うことはできない。
+      // 「契約が終わっている」ことだけを真偽値で伝え、再契約導線を案内できるようにする
+      // （プラン名・有効期限・金額は伏せる。列挙対策として詳細は出さない）。
+      const previousPlanEnded = membership.reason === MEMBER_REASON.EXPIRED
+        || membership.reason === MEMBER_REASON.WITHDRAWAL_REQUESTED;
       return {
         statusCode: 200,
         headers: jsonHeaders,
@@ -108,7 +114,10 @@ exports.handler = async (event) => {
           isNewUser: false,
           memberType: 'free',
           user: { email, plan: 'free' },
-          message: 'ログインしました。',
+          previousPlanEnded,
+          message: previousPlanEnded
+            ? '以前のご契約は終了しています。無料会員としてログインしました。'
+            : 'ログインしました。',
         }),
       };
     }
