@@ -118,19 +118,88 @@ export default async (req) => {
       paymentEmail = { ...paymentEmail, errors: paymentEmail.errors + 1 };
     }
 
+    // ── 5. 配信反応の恒久台帳（既定 OFF）────────────────────────────
+    // 配信基盤の履歴は保持期間が短く、開封・クリックが数日で取得不能になる。
+    // 届いたイベントを AK 側へ append-only で残すことで「反応なし」と「記録が消えた」を
+    // 区別できるようにする。**env が true のときだけ書く**（既定は数えるだけ）。
+    let ledger = { enabled: false, received: events.length, accepted: 0, written: 0, rejected: {}, byResolution: {} };
+    try {
+      ledger = await applyEmailEventLedger({ events, now: Date.now() });
+    } catch {
+      // 台帳が失敗しても suppression / 決済メールの結果は返す（例外本文はログへ出さない）
+      ledger = { ...ledger, errors: 1 };
+    }
+
     // 件数のみ（メールアドレス・recordId を出さない）
     console.log('📨 [sendgrid-webhook] 処理完了:', {
       received: events.length,
       processed,
       failed,
       paymentEmail,
+      ledger,
     });
-    return jsonResponse(200, { success: true, received: events.length, processed, failed, paymentEmail });
+    return jsonResponse(200, { success: true, received: events.length, processed, failed, paymentEmail, ledger });
   } catch {
     console.error('❌ [sendgrid-webhook] 処理エラー');
     return jsonResponse(500, { error: 'Webhook processing failed' });
   }
 };
+
+/**
+ * 配信反応を恒久台帳へ積む（**既定 OFF**）。
+ *
+ * - 判定・正規化・冪等キー・PII 最小化は `emailEventLedger.js` が単一源。ここでは I/O だけ。
+ * - `EMAIL_EVENT_LEDGER_ENABLED !== 'true'` なら **1 バイトも書かない**（件数だけ数える）。
+ * - 書き込みは `EventKey` をマージキーにした upsert。同じイベントが再送されても 1 行。
+ * - 顧客・配信を一意に解決できないイベントも **保存はする**が
+ *   `ResolutionStatus=unresolved` として顧客へは結び付けない（推測しない）。
+ */
+async function applyEmailEventLedger({ events, now }) {
+  const {
+    buildLedgerBatch, assertOnlyLedgerFields, isLedgerWriteEnabled, EMAIL_EVENTS_TABLE,
+  } = await import('../../src/lib/webhooks/emailEventLedger.js');
+  const { createHash } = await import('node:crypto');
+  const hashFn = (s) => createHash('sha256').update(String(s), 'utf8').digest('hex');
+
+  const batch = buildLedgerBatch({
+    rawEvents: events,
+    // 送信側が custom_args を刻むまで配信台帳の索引は空（= すべて unresolved）。
+    // 索引を渡すのは Phase 1b（送信側の刻印）が入ってから。
+    deliveryIndex: new Map(),
+    receivedAtMs: now,
+    hashFn,
+    verification: 'verified',
+    createdBy: 'sendgrid-webhook',
+  });
+
+  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+  const enabled = isLedgerWriteEnabled(process.env) && !!AIRTABLE_API_KEY && !!AIRTABLE_BASE_ID;
+  if (!enabled) {
+    // 既定 OFF: 何が届いたかだけ返す（本番 write 0）
+    return { enabled: false, received: batch.received, accepted: batch.accepted, written: 0, rejected: batch.rejected, byResolution: batch.byResolution };
+  }
+
+  let written = 0;
+  for (const row of batch.rows) {
+    if (!assertOnlyLedgerFields(row.fields)) continue; // 許可列以外が混ざったら書かない
+    try {
+      const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${EMAIL_EVENTS_TABLE}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}`, 'Content-Type': 'application/json' },
+        // EventKey をマージキーにした upsert（再受信で行が増えない）
+        body: JSON.stringify({
+          performUpsert: { fieldsToMergeOn: ['EventKey'] },
+          records: [{ fields: row.fields }],
+        }),
+      });
+      if (res.ok) written += 1;
+    } catch {
+      // 1 件失敗で残件を止めない（例外本文はログへ出さない）
+    }
+  }
+  return { enabled: true, received: batch.received, accepted: batch.accepted, written, rejected: batch.rejected, byResolution: batch.byResolution };
+}
 
 // イベント処理判定
 function shouldProcessEvent(event) {

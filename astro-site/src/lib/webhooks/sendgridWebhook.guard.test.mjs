@@ -149,8 +149,43 @@ test('guard: Payment Email 反映の失敗で suppression 側を巻き添えに�
 });
 
 test('guard: 応答・ログに識別子を出さない（集計のみ）', () => {
-  assert.ok(/paymentEmail,?\s*\n?\s*\}\);/.test(CODE) || /paymentEmail\s*\}/.test(CODE),
-    '集計オブジェクトを返していない');
+  // 応答に載せてよいのは **集計オブジェクトだけ**（識別子・アドレスを載せない）
+  assert.match(CODE, /return jsonResponse\(200, \{[^}]*paymentEmail/, 'paymentEmail の集計を返していない');
+  assert.match(CODE, /return jsonResponse\(200, \{[^}]*ledger/, '台帳の集計を返していない');
   assert.ok(!/console\.log\([^)]*record_id/.test(CODE), 'ログに record_id を出している');
   assert.ok(!/console\.log\([^)]*idempotency_key/.test(CODE), 'ログに冪等キーを出している');
+});
+
+// ── 配信反応の恒久台帳（2026-08-01 / 既定 OFF）────────────────────
+test('guard: 台帳書き込みは env が true のときだけ（既定 OFF）', () => {
+  assert.match(CODE, /isLedgerWriteEnabled\(process\.env\)/, 'env gate を通していない');
+  // gate を通らない経路で Airtable へ書いていないこと
+  const fn = CODE.slice(CODE.indexOf('async function applyEmailEventLedger'));
+  const gateAt = fn.indexOf('const enabled =');
+  const writeAt = fn.indexOf("method: 'PATCH'");
+  assert.ok(gateAt > 0 && writeAt > gateAt, 'gate より前に書き込みがある');
+});
+
+test('guard: 台帳の判定・列組み立てを Function 側に再実装しない', () => {
+  assert.match(CODE, /emailEventLedger\.js/, '単一源を経由していない');
+  assert.match(CODE, /buildLedgerBatch/);
+  assert.match(CODE, /assertOnlyLedgerFields/, '書き込み列を検証していない');
+  // 列名を Function に直書きしない
+  for (const col of ['EventType:', 'EmailHash:', 'UrlCategory:']) {
+    assert.equal(CODE.includes(col), false, `列 ${col} を Function 側で組み立てている`);
+  }
+});
+
+test('guard: 台帳は EventKey をマージキーに upsert する（再受信で増えない）', () => {
+  assert.match(CODE, /fieldsToMergeOn: \['EventKey'\]/, '冪等な upsert になっていない');
+});
+
+test('guard: 台帳へ IP / User-Agent / 生 URL / 生アドレスを渡さない', () => {
+  // 台帳関数の**本体だけ**を見る（後続の processFailureEvent を巻き込まない）
+  const from = CODE.indexOf('async function applyEmailEventLedger');
+  const to = CODE.indexOf('function shouldProcessEvent', from);
+  const fn = CODE.slice(from, to > from ? to : undefined);
+  for (const banned of ['event.ip', 'useragent', 'event.url', 'event.email']) {
+    assert.equal(fn.includes(banned), false, `${banned} を台帳経路で扱っている`);
+  }
 });

@@ -17,7 +17,21 @@
 
 ## Current Phase
 
-**Phase（2026-07-30 現在・最新）: マーケティング基盤の end-to-end 検証は完了。
+**Phase（2026-08-01 現在・最新）: メール配信反応の恒久台帳（`EmailEvents`）の Phase 1a を
+PR #199 で実装完了。既定 OFF・本番 write 0 のまま Ready for review。merge は未承認で停止中。**
+
+- 配信基盤の履歴は保持期間が短く（実測 3 日）、それ以前の開封・クリックは取得不能。
+  AK 側に残していないため「**反応が無かった**」と「**記録が消えた**」を永久に区別できない。
+  届いた Event Webhook を append-only の台帳へ残す土台を入れた。
+- 実装は **既定 OFF**。`EMAIL_EVENT_LEDGER_ENABLED !== 'true'`（または Airtable 認証情報が無い）なら
+  **1 バイトも書かない**（受信件数と rejected 理由を数えるだけ）。**production env は未設定＝write 0**。
+- Airtable `EmailEvents` テーブルは**未作成**。作成前に有効化しても upsert が非 ok を返すだけで
+  既存の suppression / 決済メール v2 の処理は巻き添えにしない（台帳呼び出しは try/catch で分離）。
+- 現状マーケ配信は `custom_args` を刻んでいないため、届くイベントは `email` しか手掛かりが無く
+  **すべて `unresolved`**（顧客へ結び付けない）。紐付けには送信側の刻印が別途必要。
+- 設計・列定義・有効化手順は `astro-site/docs/EMAIL_EVENT_LEDGER.md` が単一源。
+
+**Phase（2026-07-30 現在）: マーケティング基盤の end-to-end 検証は完了。
 送信 gate はクローズ済み。`withdrawn` 判定の業務定義修正を PR で待機中。**
 
 - カナリア実送信まで完了（テスト受信者 1 名へ 1 通・delivered）。その後
@@ -88,6 +102,63 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
 - 初版（2026-07-20）の Phase は「ドキュメント基盤整備」であり、その PR
   （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
+
+## 2026-08-01 — メール配信反応の恒久台帳 `EmailEvents` / Phase 1a（branch `feat/email-event-ledger` / PR #199・未 merge）
+
+**目的**: 配信基盤の Activity 保持は実測 3 日。AK 側にイベントを残していないため、
+過去の開封・クリックについて「反応が無かった」と「記録が消えた」を区別できない。
+署名検証つきで既に稼働している Event Webhook（Phase 0 / 2026-07-22）で届いたイベントを
+append-only の台帳へ残す土台を入れる。
+
+**調査で判明した前提（推測せず実測）**
+
+| 項目 | 実測 |
+|---|---|
+| Event Webhook | 署名検証つきで**既に本番稼働**（鍵未設定なら 403・write 0）|
+| 受信後の処理 | bounce/blocked/dropped/spamreport/unsubscribe → `EmailBlacklist`。**open/click は捨てていた** |
+| 決済メール v2 | `custom_args`（record_id / idempotency_key / purpose）を刻んでおり 1 通へ結び付く |
+| **マーケ配信** | **`custom_args` を刻んでいない**（`marketing-campaign-dispatch.js` の送信ペイロードに無い）|
+| 送信時の message id | **記録していない**（`CampaignDeliveries` に列が無い）|
+
+→ いま届くマーケ関連イベントは `email` しか手掛かりが無い。同一アドレスの重複 Customers が
+実在するため、**メール単独で顧客へ結び付けない**（`unresolved` として保存はするが結び付けない）。
+
+**採用 schema**: C（append-only 台帳 `EmailEvents` ＋ 集約の併用）。Phase 1 は台帳のみ。
+集約列（`CampaignDeliveries` 側）は台帳が動いてから。列定義・保存しない項目・rollback は
+`astro-site/docs/EMAIL_EVENT_LEDGER.md` が単一源。
+
+**変更ファイル（6 / base `origin/main`）**
+
+| ファイル | 内容 |
+|---|---|
+| `src/lib/webhooks/emailEventLedger.js` | 新規・純粋モジュール（正規化 / `EventKey` / 紐付け / PII 最小化 / 集計 / env gate）|
+| `src/lib/webhooks/emailEventLedger.test.mjs` | 新規 22 件 |
+| `src/lib/webhooks/sendgridWebhook.guard.test.mjs` | guard 4 件追加（env gate / 単一源経由 / upsert キー / PII を渡さない）|
+| `netlify/functions/sendgrid-webhook.js` | 受信側の配線（I/O のみ）。応答・ログへ `ledger`（件数と理由コードのみ）を追加 |
+| `astro-site/docs/EMAIL_EVENT_LEDGER.md` | 新規・設計と有効化手順 |
+| `astro-site/docs/CUSTOMER_MARKETING.md` | 「別タスク」記述を本設計へのリンクに差し替え |
+
+**検証（2026-08-01 / 分離 worktree `analytics-keiba-events`）**
+
+| 項目 | 結果 |
+|---|---|
+| `node --test src/lib/webhooks/*.test.mjs` | **70 pass / 0 fail** |
+| `npm run check:safety` | **EXIT=0**（519 pass / 0 fail）|
+| `npm run build` | **EXIT=0**（SSR 関数 prune 後 65.0MB / 250MB 上限）|
+| secret scan（PR 差分） | 検出 **0** |
+| `package.json` / lockfile / 依存 | **変更 0** |
+| CI（PR #199） | safety-check **pass** / Netlify deploy preview **pass** |
+| `origin/main` との競合 | 無し（`mergeable=MERGEABLE` / `mergeStateStatus=CLEAN`）|
+
+**本番影響**: merge しても **0**。`EMAIL_EVENT_LEDGER_ENABLED` は production 未設定で、
+gate を通らない限り台帳へ 1 バイトも書かない。既存 suppression / 決済メール v2 の分岐と
+Webhook の HTTP ステータス契約（200 / 403 / 500）は変更していない（応答 JSON にキーが 1 つ増えるのみ）。
+
+**注意（要判断・本 PR では未修正）**: コード内コメント
+（`emailEventLedger.js` 冒頭 / `sendgrid-webhook.js` の `applyEmailEventLedger`）は
+送信側の `custom_args` 刻印を「Phase 1b」と書いているが、`EMAIL_EVENT_LEDGER.md` の段取り表では
+**1b = Airtable テーブル作成 + env 投入 / 1c = 送信側の刻印**。番号の食い違いはコメント側にある。
+指示範囲外のためコードは変更していない（**挙動には影響しない**）。
 
 ## 2026-08-01 — Netlify build hook の接続 timeout を bounded retry で吸収（branch `fix/netlify-deploy-bounded-retry` / Draft PR・未 merge）
 
@@ -649,6 +720,23 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 - 併せて、本番メール送信・本番 Airtable 書込み・production deploy・env 変更は引き続き
   **ユーザーの明示承認なしに実行しない**（`CLAUDE.md` §High-risk approval boundary）。
 
+### メール配信反応の恒久台帳 `EmailEvents` の有効化（2026-08-01 / 未承認）
+
+Phase 1a（コード・テスト・docs）は PR #199 で完了。以降は**すべてユーザー操作**で、
+順序を守ること。**1b より前は 1 バイトも書かない。**
+
+| Phase | 内容 | 実行者 | リスク |
+|---|---|---|---|
+| **1a** | 純粋モジュール・テスト・受信側の配線（既定 OFF）・docs | 実装済み（PR #199・**merge 未承認**）| なし（write 0）|
+| **1b** | Airtable に `EmailEvents` を作成（列は `EMAIL_EVENT_LEDGER.md` の表）→ `EMAIL_EVENT_LEDGER_ENABLED=true` を production へ投入 → redeploy | **ユーザー** | 台帳への write 開始 |
+| **1c** | 送信側で `custom_args`（delivery_key / campaign_id / customer_record_id）を刻む | 別 PR | 送信経路の変更 |
+| **1d** | 受信側へ配信索引を渡し `resolved` を有効化。集約列を追加 | 別 PR | 表示の変更 |
+
+- **1b を飛ばして 1c を先に入れない**（刻んでも保存先が無い）。
+- 台帳を止めるときは `EMAIL_EVENT_LEDGER_ENABLED` を unset → redeploy。
+  受信は継続し、書き込みだけ止まる（コード変更不要）。
+- **台帳運用開始前のイベントは復元できない**。admin 表示では「未開封」と「取得不能」を必ず区別する。
+
 ### 顧客マーケティングの実送信有効化（2026-07-30 / 未承認）
 
 Draft 実装は完了しているが、実送信は次の承認と操作が揃うまで**構造的に不可能**。順序を守ること。
@@ -719,7 +807,13 @@ rollback は該当 env の unset（コード変更不要）。
   `confirm-bank-payment.js` / `send-payment-confirmation-auto.js` / `paymentEmailSender.guard.test.mjs` /
   `astro-site/package.json`（script 追加のみ）/ `.github/workflows/safety-check.yml` / docs。
   **lockfile は未変更。** 2026-07-22 に `origin/main` を通常 merge して docs 2 ファイルの競合を解消。
+- **Branch（本更新時 / PR #199・未 merge）**: `feat/email-event-ledger`（worktree
+  `/Users/user/Projects/analytics-keiba-events`）。base `main` / 検証時の `origin/main` は `1e04d91`。
+  変更範囲は `astro-site/src/lib/webhooks/emailEventLedger*.{js,test.mjs}`（新規）/
+  `sendgridWebhook.guard.test.mjs` / `astro-site/netlify/functions/sendgrid-webhook.js` /
+  `astro-site/docs/{EMAIL_EVENT_LEDGER,CUSTOMER_MARKETING}.md` / `docs/progress.md`。
+  **`package.json` / lockfile / workflow は未変更。** 競合なし（`MERGEABLE` / `CLEAN`）。
 - 作業はいずれも**分離 worktree** で実施（ユーザーのメイン checkout へは書込まない。
   未コミット変更はユーザーの作業中変更として保全）。
 - メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
-- **Last verified**: 2026-07-22
+- **Last verified**: 2026-08-01
