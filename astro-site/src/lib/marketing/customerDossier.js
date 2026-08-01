@@ -14,17 +14,19 @@
  *
  * | 出所 | 対象 | 期間 |
  * |---|---|---|
- * | `LastLoginAt` | 全員 | 2026-08-01 以降（本モジュール導入後）|
+ * | `最終ログイン`（既存列） | 全員 | 2026-08-01 以降（記録開始後）|
  * | `AuthTokens`（Used=true の最新） | 有料会員のみ | 2026-05-21 以降 |
  * | `最終ポイント付与日` | 全員 | 〜2026-07-08（旧ログインポイント運用の副産物）|
  *
- * `LastLoginAt` が未整備でも動く（フィールドが無ければ他の 2 つで埋める）。
+ * `最終ログイン` が空でも動く（値が無ければ他の 2 つで埋める）。列名は
+ * `auth/lastLoginRecord.js` の `LAST_LOGIN_FIELD` が単一源。
  */
 
 import { resolveMembership, MEMBER_TYPE, MEMBER_REASON } from '../auth/memberResolution.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolveCustomerMarketing } from './customerMarketingAudience.js';
 import { isLiveOffer } from '../promotions/offerCampaignLink.js';
+import { LAST_LOGIN_FIELD } from '../auth/lastLoginRecord.js';
 
 const norm = (v) => String(v ?? '').trim().toLowerCase();
 const str = (v) => String(v ?? '').trim();
@@ -37,7 +39,7 @@ const parse = (v) => {
 
 /** 最終ログインの出所（画面に必ず併記する） */
 export const LOGIN_SOURCE = Object.freeze({
-  /** Customers.LastLoginAt（2026-08-01 以降の正規の記録） */
+  /** Customers の既存列 `最終ログイン`（2026-08-01 以降の正規の記録） */
   FIELD: 'last_login_field',
   /** AuthTokens の使用済みトークン（有料会員のマジックリンク） */
   MAGIC_LINK: 'magic_link',
@@ -81,7 +83,8 @@ export const LOGIN_STATE_LABEL = Object.freeze({
  * @param {{ fields: object, magicLinkAtMs?: number|null }} input
  */
 export function resolveLastLogin({ fields = {}, magicLinkAtMs = null } = {}) {
-  const fieldAt = parse(fields.LastLoginAt);
+  // 列名は lastLoginRecord.js の定数を使う（書き込み側と表示側で必ず一致させる）
+  const fieldAt = parse(fields[LAST_LOGIN_FIELD]);
   // 旧運用は「日付のみ」。JST の日付として保存されていたので時刻は 00:00 として扱う
   const legacyAt = parse(fields['最終ポイント付与日']);
   const magicAt = Number.isFinite(magicLinkAtMs) ? magicLinkAtMs : null;

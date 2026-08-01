@@ -64,25 +64,27 @@ function venueString(venues) {
 }
 
 /**
- * 最終ログインを記録する（**`LastLoginAt` 1 列だけ**・best-effort）。
+ * 最終ログインを記録する（**既存列 `最終ログイン` 1 列だけ**・best-effort）。
  *
  * ログイン経路が Customers を書き換えない原則の唯一の例外。
- * 失敗（列が未作成 = 422 / 権限 / 通信）はすべて握りつぶす。
- * **ログインの成否に影響させない**（記録は付随情報であり、認可ではない）。
+ * 判定・throttle・失敗の握りつぶしは単一源 `lastLoginRecord.js` に集約している。
+ * **検証成功（VERIFY_FLOW.OK）のときだけ**呼ぶこと。
+ * 記録は付随情報であり認可ではないので、失敗してもログインは成立させる。
  */
-async function recordLastLogin({ table, recordId, fields }) {
-  try {
-    if (!table || !recordId) return;
-    const { planLastLoginUpdate, assertOnlyLastLoginField } =
-      await import('../../src/lib/auth/lastLoginRecord.js');
-    const plan = planLastLoginUpdate({ fields: fields || {}, nowMs: Date.now() });
-    if (!plan.update) return;
-    if (!assertOnlyLastLoginField(plan.fields)) return; // 想定外の列が混ざったら書かない
-    await table.update([{ id: recordId, fields: plan.fields }]);
-  } catch (e) {
-    // 列未作成（UNKNOWN_FIELD_NAME）を含め、記録失敗はログインを壊さない
-    console.warn('⚠️ [last-login] 記録スキップ:', e?.message || 'unknown');
+async function markLastLogin({ table, recordId, fields }) {
+  if (!table || !recordId) return { written: false, reason: 'no_target' };
+  const { recordLastLogin } = await import('../../src/lib/auth/lastLoginRecord.js');
+  const result = await recordLastLogin({
+    // 書き込みは注入。ここでは recordId 以外の対象を触れないようにする
+    update: (only) => table.update([{ id: recordId, fields: only }]),
+    fields: fields || {},
+    nowMs: Date.now(),
+  });
+  if (!result.written && result.reason === 'write_failed') {
+    // 列が無い（UNKNOWN_FIELD_NAME）を含め、記録失敗はログインを壊さない
+    console.warn('⚠️ [last-login] 記録スキップ:', result.error);
   }
+  return result;
 }
 
 exports.handler = async (event) => {
@@ -173,9 +175,9 @@ exports.handler = async (event) => {
       case VERIFY_FLOW.OK: {
         const m = result.membership;
         const venue = venueString(m.venueAccess);
-        // 最終ログインの記録（**LastLoginAt 1 列だけ**・best-effort）。
-        // 失敗してもログインは成立させる（列が未作成の間は 422 になるが無視する）。
-        await recordLastLogin({ table: customersTable, recordId: m.recordId, fields: lastCustomerFields });
+        // 最終ログインの記録（**既存列 `最終ログイン` 1 列だけ**・best-effort）。
+        // 失敗してもログインは成立させる。
+        await markLastLogin({ table: customersTable, recordId: m.recordId, fields: lastCustomerFields });
         // ログイン成功後はダッシュボード（マイページ）へ遷移する。
         // 予想ページへの導線はダッシュボード内から辿る。
         const redirectTo = '/dashboard/';

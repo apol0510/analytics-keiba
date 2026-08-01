@@ -14,6 +14,7 @@ import {
   LOGIN_SOURCE,
   LOGIN_SEGMENT,
 } from './customerDossier.js';
+import { LAST_LOGIN_FIELD } from '../auth/lastLoginRecord.js';
 
 const NOW = Date.parse('2026-08-01T02:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -26,9 +27,9 @@ const build = (fields, extra = {}) => buildCustomerDossier({ record: rec(fields)
 // 最終ログイン: 3 つの出所と優先順位
 // =========================================================================
 
-test('LastLoginAt があれば最優先で採用し、出所を明示する', () => {
+test('#11 「最終ログイン」列に値があれば最優先で採用し、出所を明示する', () => {
   const r = resolveLastLogin({
-    fields: { LastLoginAt: iso(NOW - 2 * DAY), '最終ポイント付与日': '2026-06-01' },
+    fields: { [LAST_LOGIN_FIELD]: iso(NOW - 2 * DAY), '最終ポイント付与日': '2026-06-01' },
     magicLinkAtMs: NOW - 10 * DAY,
   });
   assert.equal(r.source, LOGIN_SOURCE.FIELD);
@@ -38,7 +39,7 @@ test('LastLoginAt があれば最優先で採用し、出所を明示する', ()
   assert.ok(r.sources[LOGIN_SOURCE.LEGACY_POINTS]);
 });
 
-test('LastLoginAt が無ければマジックリンク → 旧ポイントの順に落ちる', () => {
+test('「最終ログイン」が空ならログインリンク履歴 → 旧ポイント履歴の順に落ちる', () => {
   const magic = resolveLastLogin({ fields: { '最終ポイント付与日': '2026-06-01' }, magicLinkAtMs: NOW - DAY });
   assert.equal(magic.source, LOGIN_SOURCE.MAGIC_LINK);
 
@@ -54,13 +55,13 @@ test('LastLoginAt が無ければマジックリンク → 旧ポイントの順
 
 test('新しい方ではなく信頼できる順で選ぶ（古い正規記録が新しい旧データに負けない）', () => {
   const r = resolveLastLogin({
-    fields: { LastLoginAt: iso(NOW - 100 * DAY), '最終ポイント付与日': '2026-07-31' },
+    fields: { [LAST_LOGIN_FIELD]: iso(NOW - 100 * DAY), '最終ポイント付与日': '2026-07-31' },
   });
   assert.equal(r.source, LOGIN_SOURCE.FIELD, '旧ポイント日付が正規記録を上書きしている');
 });
 
 test('経過日数とセグメント', () => {
-  assert.equal(daysSinceLogin(resolveLastLogin({ fields: { LastLoginAt: iso(NOW - 5 * DAY) } }), NOW), 5);
+  assert.equal(daysSinceLogin(resolveLastLogin({ fields: { [LAST_LOGIN_FIELD]: iso(NOW - 5 * DAY) } }), NOW), 5);
   assert.equal(daysSinceLogin(resolveLastLogin({ fields: {} }), NOW), null);
   assert.equal(loginSegment(0), LOGIN_SEGMENT.D30);
   assert.equal(loginSegment(30), LOGIN_SEGMENT.D30);
@@ -173,4 +174,32 @@ test('カルテはトークン等の機微値を持ち出さない', () => {
   const dump = JSON.stringify(d);
   assert.equal(/ok_secret_value|hash_secret_value|OfferKey|TokenHash/.test(dump), false,
     'カルテにオファーの鍵素材が含まれている');
+});
+
+test('#11 カルテでも「最終ログイン」列が他の代替情報より優先される', () => {
+  const d = build(
+    { Email: 'x@example.com', 'プラン': 'Free', [LAST_LOGIN_FIELD]: iso(NOW - DAY), '最終ポイント付与日': '2026-07-08' },
+    { magicLinkAtMs: NOW - 2 * DAY },
+  );
+  assert.equal(d.login.lastLogin.source, LOGIN_SOURCE.FIELD, '代替情報が正規記録を上書きしている');
+  assert.equal(d.login.lastLogin.at, iso(NOW - DAY));
+  assert.equal(d.login.lastLogin.sourceLabel, 'ログイン記録');
+  assert.equal(d.login.daysSinceLogin, 1);
+  // 内訳は 3 つとも返す（画面でどれが何日かを出せる）
+  assert.equal(d.login.lastLogin.sources[LOGIN_SOURCE.MAGIC_LINK], iso(NOW - 2 * DAY));
+  assert.ok(d.login.lastLogin.sources[LOGIN_SOURCE.LEGACY_POINTS]);
+});
+
+test('採用順は 最終ログイン → ログインリンク → 旧ポイント → 記録なし', () => {
+  const base = { Email: 'x@example.com', 'プラン': 'Free' };
+  assert.equal(build({ ...base, [LAST_LOGIN_FIELD]: iso(NOW - DAY) }).login.lastLogin.source, LOGIN_SOURCE.FIELD);
+  assert.equal(build(base, { magicLinkAtMs: NOW - DAY }).login.lastLogin.source, LOGIN_SOURCE.MAGIC_LINK);
+  assert.equal(build({ ...base, '最終ポイント付与日': '2026-06-01' }).login.lastLogin.source, LOGIN_SOURCE.LEGACY_POINTS);
+  assert.equal(build(base).login.lastLogin.source, LOGIN_SOURCE.NONE);
+});
+
+test('カルテは旧ポイント列を書き換えない前提の表示専用（値をそのまま読むだけ）', () => {
+  const d = build({ Email: 'x@example.com', 'プラン': 'Free', '最終ポイント付与日': '2026-06-01' });
+  assert.equal(d.login.lastLogin.sources[LOGIN_SOURCE.LEGACY_POINTS], '2026-06-01T00:00:00.000Z');
+  assert.equal(d.login.lastLogin.sourceLabel, '旧ポイント履歴（〜2026-07-08）');
 });
