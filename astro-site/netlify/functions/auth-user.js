@@ -16,24 +16,26 @@ async function loadAuthLib() {
 }
 
 /**
- * 最終ログインを記録する（**`LastLoginAt` 1 列だけ**・best-effort）。
+ * 最終ログインを記録する（**既存列 `最終ログイン` 1 列だけ**・best-effort）。
  *
  * この Function が Customers を書き換えない原則の唯一の例外。
- * 契約・課金・権限（プラン / 有効期限 / PaymentConfirmed など）には触れない。
- * 失敗（列が未作成 = 422 / 権限 / 通信）は握りつぶし、**ログインの成否に影響させない**。
+ * 契約・課金・権限（プラン / 有効期限 / PaymentConfirmed / grant 列など）には触れない。
+ * 判定・throttle・失敗の握りつぶしは単一源 `lastLoginRecord.js` に集約している。
+ * **ログイン成功後にだけ**呼ぶこと（認証失敗・事前判定では呼ばない）。
  */
-async function recordLastLogin({ base, recordId, fields }) {
-  try {
-    if (!base || !recordId) return;
-    const { planLastLoginUpdate, assertOnlyLastLoginField } =
-      await import('../../src/lib/auth/lastLoginRecord.js');
-    const plan = planLastLoginUpdate({ fields: fields || {}, nowMs: Date.now() });
-    if (!plan.update) return;
-    if (!assertOnlyLastLoginField(plan.fields)) return; // 想定外の列が混ざったら書かない
-    await base('Customers').update([{ id: recordId, fields: plan.fields }]);
-  } catch (e) {
-    console.warn('⚠️ [last-login] 記録スキップ:', e?.message || 'unknown');
+async function markLastLogin({ base, recordId, fields }) {
+  if (!base || !recordId) return { written: false, reason: 'no_target' };
+  const { recordLastLogin } = await import('../../src/lib/auth/lastLoginRecord.js');
+  const result = await recordLastLogin({
+    // 書き込みは注入。ここでは recordId 以外の対象を触れないようにする
+    update: (only) => base('Customers').update([{ id: recordId, fields: only }]),
+    fields: fields || {},
+    nowMs: Date.now(),
+  });
+  if (!result.written && result.reason === 'write_failed') {
+    console.warn('⚠️ [last-login] 記録スキップ:', result.error);
   }
+  return result;
 }
 
 exports.handler = async (event) => {
@@ -127,9 +129,9 @@ exports.handler = async (event) => {
       // （プラン名・有効期限・金額は伏せる。列挙対策として詳細は出さない）。
       const previousPlanEnded = membership.reason === MEMBER_REASON.EXPIRED
         || membership.reason === MEMBER_REASON.WITHDRAWAL_REQUESTED;
-      // 最終ログインの記録（**LastLoginAt 1 列だけ**・best-effort）。
-      // 契約・課金・権限の列には触れない。失敗してもログインは成立させる。
-      await recordLastLogin({ base, recordId: record.id, fields: record.fields });
+      // 最終ログインの記録（**既存列 `最終ログイン` 1 列だけ**・best-effort）。
+      // 契約・課金・特典の列には触れない。失敗してもログインは成立させる。
+      await markLastLogin({ base, recordId: record.id, fields: record.fields });
       return {
         statusCode: 200,
         headers: jsonHeaders,

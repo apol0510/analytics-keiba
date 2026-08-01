@@ -122,36 +122,63 @@ test('login.astro: free ログイン時に有料時代の localStorage 残骸を
   assert.match(loginPage, /plan:\s*'free'/);
 });
 
-// --- ログイン経路の Customers 書き込みは LastLoginAt 1 列だけ（2026-08-01）---
+// --- ログイン経路の Customers 書き込みは既存列「最終ログイン」1 列だけ（2026-08-01）---
 // 旧実装は有効期限の延長・ポイント付与を副作用で行い、退会者の期限が伸びる事故を起こした。
 // 「ログインで契約を書き換えない」原則は維持したまま、最終ログインの記録だけを例外にする。
-test('auth-user / verify-magic-link: Customers の**更新**は LastLoginAt に限定される', () => {
+test('auth-user / verify-magic-link: Customers の**更新**は「最終ログイン」に限定される', () => {
   for (const [name, src] of [['auth-user', authUser], ['verify-magic-link', verifyMagic]]) {
     const code = stripJs(src);
     // 記録は専用モジュール経由（インラインで fields を組み立てない）
     assert.match(code, /lastLoginRecord\.js/, `${name} が lastLoginRecord を経由していない`);
-    assert.match(code, /assertOnlyLastLoginField/, `${name} が書き込み列を検証していない`);
+    assert.match(code, /recordLastLogin/, `${name} が単一源の記録関数を使っていない`);
+    // 列名を Function 側に直書きしない（定数の単一源を迂回させない）
+    assert.equal(/['"]最終ログイン['"]\s*:/.test(code), false, `${name} が列名を直書きしている`);
 
-    // Customers への update は「lastLoginRecord が組み立てた plan.fields」以外を渡さない。
+    // Customers への update は「注入された 1 列だけの fields」以外を渡さない。
     // ※ 新規無料登録の create（'プラン':'Free' 等）は既存仕様なので対象外。
     const updates = [...code.matchAll(/\.update\(/g)];
     assert.ok(updates.length > 0, `${name} に update が 1 つも無い（guard が空振りしている）`);
     for (const m of updates) {
       const window = code.slice(m.index, m.index + 200);
-      const isLastLogin = /plan\.fields/.test(window);
+      // recordLastLogin から渡ってきた fields をそのまま流すだけ
+      const isLastLogin = /fields:\s*only\b/.test(window);
       // AuthTokens の Used 更新は認証の単回性のため許可（Customers への書き込みではない）
       const isTokenConsume = /Used:\s*true/.test(window);
       assert.ok(isLastLogin || isTokenConsume,
-        `${name} が LastLoginAt / AuthTokens.Used 以外を update している: ${window.slice(0, 90)}`);
+        `${name} が「最終ログイン」/ AuthTokens.Used 以外を update している: ${window.slice(0, 90)}`);
     }
   }
 });
 
-test('lastLoginRecord: 書き込み対象の列名は 1 つだけ定義されている', () => {
+test('auth-user / verify-magic-link: 記録はログイン成功後の 1 か所だけ', () => {
+  // 無料ログイン成功（FREE 分岐）の中でだけ呼ぶ
+  assert.match(authUser, /FREE_LOGIN_OUTCOME\.FREE[\s\S]{0,900}await markLastLogin/,
+    'auth-user が無料ログイン成功時に記録していない');
+  assert.equal((authUser.match(/await markLastLogin/g) || []).length, 1,
+    'auth-user に記録の呼び出しが複数ある（事前判定でも書いている恐れ）');
+  // 有料は検証成功（VERIFY_FLOW.OK）の中でだけ呼ぶ
+  assert.match(verifyMagic, /case VERIFY_FLOW\.OK[\s\S]{0,400}await markLastLogin/,
+    'verify-magic-link が検証成功時に記録していない');
+  assert.equal((verifyMagic.match(/await markLastLogin/g) || []).length, 1,
+    'verify-magic-link に記録の呼び出しが複数ある');
+});
+
+test('lastLoginRecord: 書き込む列名は既存列「最終ログイン」1 つだけ', () => {
   const mod = raw(`${DIR}/lastLoginRecord.js`);
-  assert.match(mod, /export const LAST_LOGIN_FIELD = 'LastLoginAt'/);
-  // 他の Customers 列を書く余地を作らない
-  assert.equal(/PaymentConfirmed|有効期限|プラン|PlanType/.test(stripJs(mod)), false);
+  assert.match(mod, /export const LAST_LOGIN_FIELD = '最終ログイン'/);
+  // 他の Customers 列を書く余地を作らない（コメントは除外して判定）
+  const code = stripJs(mod);
+  assert.equal(/PaymentConfirmed|有効期限|['"]プラン['"]|PlanType|LightGrant|PremiumGrant/.test(code), false);
+  // 旧記録（最終ポイント付与日）は読み取り専用。書き込み側には現れない
+  assert.equal(/最終ポイント付与日/.test(code), false, '旧ポイント列を書き込み側で扱っている');
+});
+
+test('カルテは書き込み側と同じ列名定数を使う（表示と記録がズレない）', () => {
+  const dossier = raw(`${DIR}/../marketing/customerDossier.js`);
+  assert.match(dossier, /import \{ LAST_LOGIN_FIELD \} from '\.\.\/auth\/lastLoginRecord\.js'/);
+  assert.match(dossier, /parse\(fields\[LAST_LOGIN_FIELD\]\)/);
+  // 列名を再定義していない
+  assert.equal(/['"]最終ログイン['"]\s*\]/.test(stripJs(dossier)), false, 'カルテが列名を直書きしている');
 });
 
 // --- send-magic-link: paid のみ送信 ---
