@@ -124,6 +124,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <div class="sumsub" id="mkSummarySub"></div>
       <p class="note" id="mkSendState"></p>
 
+      <div class="stepbar" id="mkSteps" aria-label="操作の順序">
+        <span class="stp" data-step="1">1 絞り込み</span>
+        <span class="stp" data-step="2">2 顧客を選ぶ</span>
+        <span class="stp" data-step="3">3 キャンペーン</span>
+        <span class="stp" data-step="4">4 送信対象の確認</span>
+        <span class="stp" data-step="5">5 登録・送信</span>
+        <span class="stp" data-step="6">6 状況・取消</span>
+      </div>
+
+      <div id="mkNotices" class="notices" aria-live="polite"></div>
+
+      <section class="step" data-step="1" aria-labelledby="mkStep1H">
+        <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む</h2>
       <div class="toolbar">
         <input type="search" id="mkQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
         <select id="mkContract" aria-label="契約状態">
@@ -146,6 +159,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="sendable">送信可能</option>
           <option value="suppressed">送信除外</option>
         </select>
+      </div>
+
+      <details class="filter-more" id="mkFilterMore">
+        <summary>詳細条件（Plus 資格 / 送信履歴 / オファー / 無料特典 / 送信タイミング / 最終ログイン）</summary>
+        <div class="toolbar">
         <select id="mkPp" aria-label="Premium Plus 資格">
           <option value="all">Plus 資格: すべて</option>
           <option value="eligible">販売可</option>
@@ -184,18 +202,30 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="login:over365">1年以上前</option>
           <option value="login:never">記録なし</option>
         </select>
+        </div>
+      </details>
+
+      <div class="toolbar filter-actions">
         <button type="button" id="mkLoad" class="btn-primary">この条件で取得</button>
+        <button type="button" id="mkFilterClear" class="btn-ghost">条件をクリア</button>
+        <span class="filter-count" id="mkFilterCount">適用中の条件: 0</span>
       </div>
 
       <p class="note" id="mkApplied"></p>
+      </section>
 
+      <section class="step" data-step="2" aria-labelledby="mkStep2H">
+        <h2 id="mkStep2H" class="step-h"><span class="step-n">2</span> 顧客を選択する
+          <span class="step-counts" id="mkStepCounts"></span>
+        </h2>
       <div class="selbar">
         <span class="colmode">表示列:
           <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
           <button type="button" id="mkColAll" class="btn-ghost btn-sm">詳細</button>
         </span>
-        <button type="button" id="mkSelAllLoaded" class="btn-ghost">全顧客から選択</button>
-        <button type="button" id="mkSelAll" class="btn-ghost">表示中のみ選択</button>
+        <button type="button" id="mkSelAll" class="btn-primary btn-sm">表示中を全選択</button>
+        <button type="button" id="mkSelAllLoaded" class="btn-ghost btn-sm btn-quiet"
+          title="取得済みの全顧客を選択します（誤操作しやすいため確認します）">全顧客から選択</button>
         <button type="button" id="mkSelNone" class="btn-ghost">全解除</button>
         <span class="selcount" id="mkSelCount">0 名を選択中</span>
         <button type="button" id="mkSelList" class="btn-ghost btn-sm">選択中の一覧</button>
@@ -228,6 +258,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </table>
         <p class="empty" id="mkEmpty" hidden></p>
       </div>
+      </section>
 
       <!-- 顧客カルテ（1 顧客の全状況・read-only） -->
       <div class="dossier" id="mkDossier" hidden>
@@ -238,17 +269,29 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div id="mkDossierBody"></div>
       </div>
 
-      <div class="campaign-box">
-        <h2>キャンペーン</h2>
-        <div class="toolbar">
-          <select id="mkCampaign" aria-label="キャンペーン"></select>
-          <button type="button" id="mkPreview" class="btn-ghost">本文プレビュー</button>
-          <button type="button" id="mkDryRun" class="btn-primary">送信対象を確認（dry-run）</button>
-          <button type="button" id="mkJobsBtn" class="btn-ghost">送信状況・取消</button>
-          <button type="button" id="mkHistoryBtn" class="btn-ghost">送信履歴</button>
+      <section class="step" data-step="3" aria-labelledby="mkStep3H">
+        <h2 id="mkStep3H" class="step-h"><span class="step-n">3</span> キャンペーンを選ぶ</h2>
+        <div class="campaign-box">
+          <div class="toolbar">
+            <select id="mkCampaign" aria-label="キャンペーン"></select>
+            <button type="button" id="mkPreview" class="btn-ghost">本文プレビュー</button>
+          </div>
+          <div class="camp-card" id="mkCampCard" hidden></div>
+          <p class="camp-desc" id="mkCampDesc"></p>
+          <div class="camp-preview" id="mkCampPreview" hidden></div>
         </div>
-        <p class="camp-desc" id="mkCampDesc"></p>
-      </div>
+      </section>
+
+      <section class="step" data-step="4" aria-labelledby="mkStep4H">
+        <h2 id="mkStep4H" class="step-h"><span class="step-n">4</span> 送信対象を確認（dry-run）</h2>
+        <div class="campaign-box">
+          <div class="toolbar">
+            <button type="button" id="mkDryRun" class="btn-primary">送信対象を確認（dry-run）</button>
+            <span class="dry-state" id="mkDryState">未確認</span>
+          </div>
+          <div class="dry-panel" id="mkDryPanel" hidden></div>
+        </div>
+      </section>
 
       <!-- ═══ 施策パネル（選択顧客に対して何ができるか。dry-run で内容を確認する）═══ -->
       <div class="campaign-box action-box">
@@ -271,9 +314,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div id="mkActionResult"></div>
       </div>
 
-      <!-- ═══ 実配信（キューを配信基盤へ渡す最後の一押し）═══ -->
+      <!-- ═══ Step 5: キュー登録 → 送信直前確認 → 最終送信 ═══ -->
+      <section class="step" data-step="5" aria-labelledby="mkStep5H">
+      <h2 id="mkStep5H" class="step-h"><span class="step-n">5</span> キュー登録・最終送信</h2>
       <div class="campaign-box dispatch-box">
-        <h2>📮 実配信</h2>
+        <h3 class="box-h">📮 実配信</h3>
         <p class="note">
           「送信」で作られたキューは、ここで配信するまで <b>1 通も送られません</b>。
           配信の直前に、配信停止・バウンス・退会・24時間以内の重複・オファーの有効性を
@@ -285,6 +330,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </div>
         <p class="note" id="mkDispatchState"></p>
         <div id="mkDispatchResult"></div>
+      </div>
+      </section>
+
+      <!-- ═══ Step 6: 送信状況・取消・結果確認 ═══ -->
+      <section class="step" data-step="6" aria-labelledby="mkStep6H">
+        <h2 id="mkStep6H" class="step-h"><span class="step-n">6</span> 送信状況・取消・結果確認</h2>
+        <div class="campaign-box">
+          <div class="toolbar">
+            <button type="button" id="mkJobsBtn" class="btn-ghost">送信状況・取消</button>
+            <button type="button" id="mkHistoryBtn" class="btn-ghost">送信履歴</button>
+          </div>
+          <p class="note">「送信済み」は配信基盤が受理した状態です。実際に届いたか（delivered）は顧客カルテ ⑥-2 の台帳で確認します。</p>
+        </div>
+      </section>
+
+      <!-- 追従する操作バー（現在地と次の操作を見失わないため）-->
+      <div class="stickybar" id="mkStickyBar" hidden>
+        <span class="sb-item" id="sbSel">0 名</span>
+        <span class="sb-item" id="sbCamp">キャンペーン未選択</span>
+        <span class="sb-item" id="sbDry">未確認</span>
+        <span class="sb-item" id="sbGate">gate: -</span>
+        <button type="button" class="btn-primary btn-sm" id="sbNext" disabled>次の操作</button>
       </div>
     </section>
 
@@ -880,6 +947,94 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppe .pv-controls label { flex: 1 1 100%; justify-content: space-between; }
     .ppe .pv-controls select { flex: 0 1 62%; }
   }
+
+  /* ═══ 操作順が分かる画面（Step 1〜6 / 2026-08-02）═══ */
+  .ppe .stepbar { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0 1rem; }
+  .ppe .stepbar .stp { font-size: .74rem; padding: .22rem .6rem; border-radius: 999px;
+    background: rgba(148,163,184,.10); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+  .ppe .stepbar .stp.is-done { color: var(--green); border-color: rgba(52,211,153,.35); }
+  .ppe .stepbar .stp.is-now { background: rgba(245,196,81,.16); color: var(--gold);
+    border-color: rgba(245,196,81,.45); font-weight: 700; }
+  .ppe .step { border-top: 1px solid var(--line); padding-top: .85rem; margin-top: 1.25rem; }
+  .ppe .step-h { display: flex; align-items: center; gap: .5rem; font-size: .95rem; margin: 0 0 .55rem; color: var(--ink); }
+  .ppe .step-n { display: inline-flex; align-items: center; justify-content: center; width: 1.45rem; height: 1.45rem;
+    border-radius: 50%; background: rgba(245,196,81,.18); color: var(--gold); font-size: .76rem; font-weight: 700; flex: none; }
+  .ppe .step-counts { margin-left: auto; font-size: .72rem; color: var(--muted); font-weight: 400; }
+  .ppe .box-h { font-size: .88rem; margin: 0 0 .4rem; color: var(--ink); }
+
+  .ppe .filter-more { margin: .4rem 0; }
+  .ppe .filter-more > summary { cursor: pointer; font-size: .76rem; color: var(--muted); padding: .3rem 0; }
+  .ppe .filter-actions { align-items: center; }
+  .ppe .filter-count { font-size: .72rem; color: var(--muted); }
+  .ppe .filter-count.is-on { color: var(--gold); font-weight: 700; }
+  .ppe .btn-quiet { opacity: .6; }
+  .ppe .btn-quiet:hover { opacity: 1; }
+
+  /* 通知（内容別） */
+  .ppe .notices { display: flex; flex-direction: column; gap: .35rem; margin: .5rem 0; }
+  .ppe .notice { display: flex; align-items: flex-start; gap: .5rem; padding: .5rem .7rem; border-radius: .4rem;
+    font-size: .78rem; border: 1px solid var(--line); background: rgba(148,163,184,.08); color: var(--ink); }
+  .ppe .notice-ok { border-color: rgba(52,211,153,.4); color: var(--green); }
+  .ppe .notice-warn { border-color: rgba(245,196,81,.4); color: var(--gold); }
+  .ppe .notice-err { border-color: rgba(248,113,113,.45); color: var(--red); }
+  .ppe .notice-d { font-weight: 400; color: var(--muted); }
+  .ppe .notice-x { margin-left: auto; background: none; border: 0; cursor: pointer; font-size: 1rem;
+    line-height: 1; color: var(--muted); }
+
+  /* dry-run パネル */
+  .ppe .dry-state { font-size: .74rem; color: var(--muted); }
+  .ppe .dry-state.is-ok { color: var(--green); font-weight: 700; }
+  .ppe .dry-state.is-stale { color: var(--gold); font-weight: 700; }
+  .ppe .dry-panel { margin-top: .6rem; border: 1px solid var(--line); border-radius: .5rem;
+    padding: .6rem .8rem; background: rgba(148,163,184,.06); }
+  .ppe .dp-row { display: flex; gap: .6rem; padding: .18rem 0; font-size: .78rem; }
+  .ppe .dp-k { flex: 0 0 9.5rem; color: var(--muted); }
+  .ppe .dp-v { flex: 1; color: var(--ink); }
+  .ppe .dp-row.is-ok .dp-v { color: var(--green); font-weight: 700; }
+  .ppe .dp-row.is-ng .dp-v { color: var(--red); font-weight: 700; }
+  .ppe .dp-ex { margin: .45rem 0; padding: .45rem .6rem; border: 1px dashed var(--line);
+    border-radius: .4rem; font-size: .74rem; color: var(--muted); }
+  .ppe .dp-ex ul { margin: .2rem 0 0 1rem; }
+
+  /* キャンペーンカード */
+  .ppe .camp-card { margin-top: .5rem; padding: .5rem .7rem; border: 1px solid var(--line);
+    border-radius: .5rem; background: rgba(148,163,184,.06); }
+  .ppe .camp-card.is-test { border-color: rgba(245,196,81,.45); }
+  .ppe .camp-meta { font-size: .72rem; color: var(--muted); margin-top: .25rem; }
+  .ppe .badge { display: inline-block; font-size: .68rem; padding: .1rem .45rem; border-radius: 999px; font-weight: 700; }
+  .ppe .b-normal { background: rgba(96,165,250,.16); color: #93c5fd; }
+  .ppe .b-test { background: rgba(245,196,81,.18); color: var(--gold); }
+  .ppe .b-ok { background: rgba(52,211,153,.16); color: var(--green); }
+  .ppe .b-warn { background: rgba(245,196,81,.18); color: var(--gold); }
+  .ppe .b-ng { background: rgba(248,113,113,.18); color: var(--red); }
+  .ppe .b-info { background: rgba(96,165,250,.16); color: #93c5fd; }
+  .ppe .b-muted { background: rgba(148,163,184,.14); color: var(--muted); }
+
+  /* 追従バー */
+  .ppe .stickybar { position: sticky; bottom: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center;
+    gap: .6rem; margin-top: 1rem; padding: .55rem .8rem; background: #0b1526; color: var(--ink);
+    border: 1px solid var(--line); border-radius: .5rem .5rem 0 0; font-size: .74rem; }
+  .ppe .stickybar .sb-item { white-space: nowrap; color: var(--muted); }
+  .ppe .stickybar #sbNext { margin-left: auto; }
+
+  /* 顧客表のヘッダー追従 */
+  .ppe .tablewrap { max-height: 60vh; overflow: auto; }
+  .ppe .tbl thead th { position: sticky; top: 0; z-index: 2; background: #111c33; }
+  .ppe .tbl tr.is-unsendable { opacity: .55; }
+
+  @media (max-width: 1024px) {
+    .ppe .dp-k { flex-basis: 7rem; }
+    .ppe .stepbar .stp { font-size: .68rem; padding: .18rem .45rem; }
+  }
+  @media (max-width: 720px) {
+    .ppe .step-h { flex-wrap: wrap; }
+    .ppe .step-counts { margin-left: 0; width: 100%; }
+    .ppe .dp-row { flex-direction: column; gap: .1rem; }
+    .ppe .dp-k { flex-basis: auto; }
+    .ppe .stickybar { font-size: .7rem; gap: .4rem; }
+    .ppe .stickybar #sbNext { margin-left: 0; width: 100%; }
+    .ppe .tablewrap { max-height: none; }
+  }
 </style>
 
 <script>
@@ -888,6 +1043,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
   } from '../../lib/marketing/campaignPlanView.js';
   window.__planView = { buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND };
+  // 操作順（押せる／押せないの根拠）も同じ方式で橋渡しする
+  import {
+    STEP, BLOCK, BLOCK_LABEL, computeSelectionFingerprint, isDryRunStale, resolveStep,
+    canDryRun, canEnqueue, canDispatchCheck, canDispatchSend,
+    groupCampaigns, buildSendConfirmation, resolveJobBadge, summarizeFilters, summarizeExclusions,
+  } from '../../lib/marketing/marketingConsoleFlow.js';
+  window.__mkFlow = {
+    STEP, BLOCK, BLOCK_LABEL, computeSelectionFingerprint, isDryRunStale, resolveStep,
+    canDryRun, canEnqueue, canDispatchCheck, canDispatchSend,
+    groupCampaigns, buildSendConfirmation, resolveJobBadge, summarizeFilters, summarizeExclusions,
+  };
 </script>
 
 <script is:inline>
@@ -1516,6 +1682,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     let mkSendEnabled = false;         // live 送信が有効か（本番は既定 false）
     const mkSelected = new Set();      // 選択中の recordId
 
+    /** 画面のフィルター値をまとめて読む（dry-run 失効判定にも使う） */
+    function mkCurrentFilters() {
+      const v = (id) => { const el = $(id); return el ? String(el.value || '') : ''; };
+      return {
+        q: v('mkQ'), contract: v('mkContract'), plan: v('mkPlan'), sendable: v('mkSendable'),
+        pp: v('mkPp'), history: v('mkHistory'), offer: v('mkOfferState'),
+        promo: v('mkPromoState'), frequency: v('mkFrequency'), lastLogin: v('mkLastLogin'),
+      };
+    }
+    const MK_FILTER_DEFAULTS = {
+      q: '', contract: 'all', plan: 'all', sendable: 'all', pp: 'all',
+      history: 'all', offer: 'all', promo: 'all', frequency: 'all', lastLogin: 'all',
+    };
+    /** 適用中の条件数を出す（今どれだけ絞っているかを見せる） */
+    function mkRenderFilterCount() {
+      const el = $('mkFilterCount');
+      if (!el) return;
+      const sum = flowApi().summarizeFilters(mkCurrentFilters(), MK_FILTER_DEFAULTS);
+      el.textContent = '適用中の条件: ' + sum.count;
+      el.classList.toggle('is-on', sum.count > 0);
+    }
+
     // ── タブ切替（販売 / マーケティング / カムバック特典）──
     const TABS = [
       ['sales', 'tabSales', 'paneSales'],
@@ -1539,9 +1727,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // ── キャンペーンカタログ ──
     async function mkLoadCampaigns() {
       const data = await mkCall({ action: 'campaigns' });
+      if (data) { mkState.sendEnabled = !!data.sendEnabled; mkState.dispatchEnabled = !!data.dispatchEnabled; }
       if (!data) return;
       mkCampaigns = data.campaigns || [];
       mkSendEnabled = !!data.sendEnabled;
+      mkState.sendEnabled = !!data.sendEnabled;
+      mkState.dispatchEnabled = !!data.dispatchEnabled;
+      mkState.loadedCount = (data.rows || []).length;
+      mkState.filters = mkCurrentFilters();
+      mkInvalidateDryRun('絞り込み条件が変わりました。');
+      mkSyncFlow();
       const sel = $('mkCampaign');
       sel.innerHTML = '';
       for (const c of mkCampaigns) {
@@ -1606,7 +1801,58 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         el.appendChild(warn);
       }
     }
-    $('mkCampaign').addEventListener('change', renderCampDesc);
+    // 条件クリア（全部戻して数え直す）
+    $('mkFilterClear')?.addEventListener('click', () => {
+      for (const [id, def] of Object.entries({
+        mkQ: '', mkContract: 'all', mkPlan: 'all', mkSendable: 'all', mkPp: 'all',
+        mkHistory: 'all', mkOfferState: 'all', mkPromoState: 'all', mkFrequency: 'all', mkLastLogin: 'all',
+      })) { const el = $(id); if (el) el.value = def; }
+      mkRenderFilterCount();
+      mkNotify('ok', '条件をクリアしました', 'もう一度「この条件で取得」を押してください。');
+    });
+    for (const id of ['mkQ', 'mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
+      'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']) {
+      $(id)?.addEventListener('change', mkRenderFilterCount);
+      $(id)?.addEventListener('input', mkRenderFilterCount);
+    }
+
+    $('mkCampaign').addEventListener('change', () => {
+      renderCampDesc();
+      const c = currentCampaign();
+      mkState.campaignId = c ? c.campaignId : '';
+      mkState.campaignVersion = c ? String(c.version) : '';
+      mkState.campaign = c || null;
+      // キャンペーンが変われば「確認した内容」は別物 → 失効させる
+      mkInvalidateDryRun('キャンペーンが変わりました。');
+      mkRenderCampCard(c);
+      mkSyncFlow();
+    });
+
+    /** キャンペーンカード（名前・version・対象条件・種別・実績・再送可否） */
+    function mkRenderCampCard(c) {
+      const card = $('mkCampCard');
+      if (!card) return;
+      card.innerHTML = '';
+      if (!c) { card.hidden = true; return; }
+      card.hidden = false;
+      card.className = 'camp-card' + (c.testOnly ? ' is-test' : '');
+      const kind = document.createElement('span');
+      kind.className = 'badge ' + (c.testOnly ? 'b-test' : 'b-normal');
+      kind.textContent = c.testOnly ? '🧪 運用テスト専用' : '通常配信';
+      card.appendChild(kind);
+      const title = document.createElement('b');
+      title.textContent = ' ' + c.name + ' v' + c.version;
+      card.appendChild(title);
+      const meta = document.createElement('div'); meta.className = 'camp-meta';
+      const stat = mkCampStats.get(c.campaignId + ':v' + c.version) || null;
+      meta.textContent = stat
+        ? ('送信済み ' + stat.sent + ' 名 / 最終送信 ' + (stat.lastAt ? fmtDate(stat.lastAt) : '—')
+          + ' / 同一 version の再送: 不可（version を上げれば可）')
+        : 'この version の送信実績はまだありません（再送制限なし）';
+      card.appendChild(meta);
+    }
+    /** campaignType → 実績（history から作る） */
+    const mkCampStats = new Map();
 
     // ── 顧客一覧 ──
     async function mkLoad() {
@@ -1709,6 +1955,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         cb.checked = mkSelected.has(r.recordId);
         cb.disabled = !r.sendable; // 送信できない相手は選べない（fail closed）
         cb.setAttribute('aria-label', '選択');
+        if (!r.sendable) {
+          // なぜ選べないのかをその場で分かるようにする（列を見に行かせない）
+          const why = (r.suppressionReasons || []).map((x) => (mkData.labels?.suppression?.[x] || x)).join('・');
+          cb.title = '選択できません: ' + (why || '送信除外');
+          tr.classList.add('is-unsendable');
+        }
         cb.addEventListener('change', () => {
           if (cb.checked) mkSelected.add(r.recordId); else mkSelected.delete(r.recordId);
           mkRenderSelCount();
@@ -1808,6 +2060,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     function mkRenderSelCount() {
+      // 選択が変われば「確認した母集団」とズレる → dry-run を失効させる
+      if (mkState.dryRun && flowApi().isDryRunStale({ dryRun: mkState.dryRun, current: { ...mkState, selectedIds: [...mkSelected] } })) {
+        mkInvalidateDryRun('選択した顧客が変わりました。');
+      }
+      mkSyncFlow();
       $('mkSelCount').textContent = mkSelected.size + ' 名を選択中';
       // 絞り込みで見えなくなった選択を知らせる（見えないまま実行させない）
       const PV = window.__planView;
@@ -2150,6 +2407,117 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     // ── 実配信（キューを配信基盤へ渡す）────────────────────────────
+
+    // ══════════════════════════════════════════════════════════════
+    //  操作順の管理（押せる／押せないの根拠は marketingConsoleFlow.js が単一源）
+    //  画面はここで判定を呼ぶだけ。判定を画面側に書き直さない。
+    // ══════════════════════════════════════════════════════════════
+    // 判定の単一源。module script（上の <script>）が window へ橋渡しする
+    const flowApi = () => window.__mkFlow;
+    /** 画面の現在状態。dry-run の指紋もここに持つ */
+    const mkState = {
+      loadedCount: 0, selectedIds: [], filters: {}, campaignId: '', campaignVersion: '',
+      campaign: null, dryRun: null, enqueued: false, dispatch: {}, busy: false,
+      sendEnabled: false, dispatchEnabled: false,
+    };
+
+    /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
+    function mkNotify(kind, text, detail) {
+      const box = $('mkNotices');
+      if (!box) return;
+      const el = document.createElement('div');
+      el.className = 'notice notice-' + kind;
+      const t = document.createElement('b'); t.textContent = text; el.appendChild(t);
+      if (detail) { const d = document.createElement('span'); d.className = 'notice-d'; d.textContent = detail; el.appendChild(d); }
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'notice-x'; x.textContent = '×';
+      x.addEventListener('click', () => el.remove());
+      el.appendChild(x);
+      box.prepend(el);
+      while (box.children.length > 4) box.lastChild.remove();
+    }
+
+    /** 現在の母集団から dry-run の指紋を作る（確認した対象と送る対象のズレを検知する） */
+    function mkFingerprint() {
+      return flowApi().computeSelectionFingerprint({
+        selectedIds: [...mkSelected], filters: mkState.filters,
+        campaignId: mkState.campaignId, campaignVersion: mkState.campaignVersion,
+      });
+    }
+
+    /** dry-run 結果を無効にする（選択・条件・キャンペーンが変わったとき） */
+    function mkInvalidateDryRun(why) {
+      if (!mkState.dryRun) return;
+      mkState.dryRun = null;
+      mkState.enqueued = false;
+      mkState.dispatch = {};
+      const panel = $('mkDryPanel');
+      if (panel) { panel.hidden = true; panel.innerHTML = ''; }
+      mkNotify('warn', '確認結果を無効にしました', why + ' もう一度 dry-run してください。');
+      mkSyncFlow();
+    }
+
+    /** 状態 → 画面（ボタンの活性・ステップ表示・sticky バー）を一括更新する */
+    function mkSyncFlow() {
+      mkState.selectedIds = [...mkSelected];
+      const st = { ...mkState, selectedIds: [...mkSelected] };
+      const step = flowApi().resolveStep(st);
+      for (const el of document.querySelectorAll('#mkSteps .stp')) {
+        const n = Number(el.dataset.step);
+        el.classList.toggle('is-now', n === step);
+        el.classList.toggle('is-done', n < step);
+      }
+      const apply = (id, verdict, labelWhenOk) => {
+        const btn = $(id);
+        if (!btn) return;
+        btn.disabled = !verdict.allowed;
+        btn.title = verdict.allowed ? (labelWhenOk || '') : (flowApi().BLOCK_LABEL[verdict.reason] || '');
+      };
+      apply('mkDryRun', flowApi().canDryRun(st));
+      apply('mkDispatchCheck', flowApi().canDispatchCheck(st));
+      apply('mkDispatchRun', flowApi().canDispatchSend(st));
+
+      const dry = $('mkDryState');
+      if (dry) {
+        const stale = mkState.dryRun ? flowApi().isDryRunStale({ dryRun: mkState.dryRun, current: st }) : true;
+        dry.textContent = !mkState.dryRun ? '未確認'
+          : stale ? '確認結果は無効（対象が変わりました）'
+            : '確認済み: 送信対象 ' + (mkState.dryRun.willSend || 0) + ' 名';
+        dry.className = 'dry-state ' + (!mkState.dryRun ? '' : stale ? 'is-stale' : 'is-ok');
+      }
+
+      // sticky バー（現在地と次の操作）
+      const bar = $('mkStickyBar');
+      if (bar) {
+        bar.hidden = false;
+        $('sbSel').textContent = mkSelected.size + ' 名を選択';
+        $('sbCamp').textContent = mkState.campaign
+          ? (mkState.campaign.name + ' v' + mkState.campaign.version + (mkState.campaign.testOnly ? '（テスト専用）' : ''))
+          : 'キャンペーン未選択';
+        $('sbDry').textContent = dry ? dry.textContent : '';
+        $('sbGate').textContent = 'gate: 登録' + (mkState.sendEnabled ? '可' : '不可') + ' / 配信' + (mkState.dispatchEnabled ? '可' : '不可');
+        const next = mkNextAction(st);
+        const nb = $('sbNext');
+        nb.textContent = next.label;
+        nb.disabled = !next.target;
+        nb.onclick = next.target ? () => { const t = $(next.target); if (t) { t.scrollIntoView({ block: 'center' }); t.focus?.(); } } : null;
+      }
+      const counts = $('mkStepCounts');
+      if (counts) counts.textContent = '取得 ' + mkState.loadedCount + ' 名 / 選択 ' + mkSelected.size + ' 名';
+    }
+
+    /** 次に押すべきものを 1 つだけ示す */
+    function mkNextAction(st) {
+      if (mkSelected.size === 0) return { label: '顧客を選ぶ', target: 'mkSelAll' };
+      if (!mkState.campaignId) return { label: 'キャンペーンを選ぶ', target: 'mkCampaign' };
+      const enq = flowApi().canEnqueue(st);
+      if (!enq.allowed && (enq.reason === 'no_dry_run' || enq.reason === 'dry_run_stale')) {
+        return { label: '送信対象を確認', target: 'mkDryRun' };
+      }
+      if (!mkState.enqueued) return { label: 'キュー登録へ', target: 'mkDryRun' };
+      if (!mkState.dispatch.check) return { label: '配信内容を確認', target: 'mkDispatchCheck' };
+      return { label: '実際に配信する', target: 'mkDispatchRun' };
+    }
+
     const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
     async function mkDispatchCall(dryRun) {
       const secret = secretEl.value.trim();
@@ -2197,7 +2565,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           ? '確認しました。この内容で配信できます。'
           : '送信待ちのキューはありません。';
         // 送る相手が 1 人もいないなら実行ボタンは開けない
-        $('mkDispatchRun').disabled = !(data.jobs && willSend > 0);
+        mkState.dispatch = { ...mkState.dispatch, check: { willSend, jobs: data.jobs } };
+        mkSyncFlow();
+        if (!(data.jobs && willSend > 0)) {
+          mkNotify('warn', '送信対象がありません', '送信待ちのジョブが無いか、再検証で全員除外されました。');
+        }
       } catch (e) {
         $('mkDispatchState').textContent = '確認に失敗しました: ' + (e && e.message ? e.message : 'unknown');
         $('mkDispatchRun').disabled = true;
@@ -2207,19 +2579,58 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     });
 
     $('mkDispatchRun').addEventListener('click', async () => {
+      const verdict = flowApi().canDispatchSend({ ...mkState, selectedIds: [...mkSelected] });
+      if (!verdict.allowed) { mkNotify('warn', '送信できません', flowApi().BLOCK_LABEL[verdict.reason]); return; }
+      const c = mkState.campaign || currentCampaign();
+      const operationId = 'send-' + Date.now().toString(36);
+      const conf = flowApi().buildSendConfirmation({
+        campaign: c, dryRun: mkState.dryRun, dispatchCheck: mkState.dispatch.check,
+        sendEnabled: mkState.sendEnabled, dispatchEnabled: mkState.dispatchEnabled, operationId,
+      });
+      // ① 内容を読ませる確認
+      const ok1 = window.confirm(
+        '【最終確認】実際にメールが届きます\n\n'
+        + 'キャンペーン: ' + conf.campaignName + ' v' + conf.version + '\n'
+        + '対象: ' + conf.audience + '\n'
+        + '選択 ' + conf.selected + ' 名 / 除外 ' + conf.excluded + ' 名 / 送信予定 ' + conf.willSend + ' 名\n'
+        + 'gate: 登録' + (conf.gate.enqueue ? '可' : '不可') + ' / 配信' + (conf.gate.dispatch ? '可' : '不可') + '\n'
+        + '取消できる段階: ' + conf.cancelable + '\n'
+        + conf.afterSend + '\n'
+        + conf.duplicateGuard + '\n\n'
+        + conf.effect + '\n\n続けますか？'
+      );
+      if (!ok1) return;
+      // ② 誤操作防止（人数を入力させる）
+      const typed = window.prompt('確認のため、送信予定人数「' + conf.willSend + '」を入力してください');
+      if (String(typed || '').trim() !== String(conf.willSend)) { mkNotify('warn', '送信を中止しました', '入力が一致しませんでした。'); return; }
+
       const btn = $('mkDispatchRun');
-      if (!window.confirm('キューに入っているメールを実際に配信します。\n送信したメールは取り消せません。実行しますか？')) return;
-      btn.disabled = true;
-      $('mkDispatchState').textContent = '配信中…';
+      if (btn.dataset.busy === '1') return;          // 二重クリックで二重送信しない
+      btn.dataset.busy = '1';
+      mkState.busy = true; mkSyncFlow();
+      $('mkDispatchState').textContent = conf.willSend + ' 通を送信中…';
       try {
         const data = await mkDispatchCall(false);
-        mkRenderDispatch(data, false);
-        $('mkDispatchState').textContent = '配信しました（' + (data.sent || 0) + ' 通）。';
+        mkState.busy = false;
+        btn.dataset.busy = '';
+        // 送信後は直前確認を無効化する。もう一度確認しない限り実配信ボタンは開かない
+        mkState.dispatch = { sent: true, result: data, check: null };
+        const failed = Number(data.failed) || 0;
+        if (failed > 0) {
+          mkNotify('warn', '一部が失敗しました（成功分は取り消しません）',
+            '送信 ' + data.sent + ' 通 / 失敗 ' + failed + ' 通。Step 6 の送信状況で理由を確認してください。');
+        } else {
+          mkNotify('ok', '送信しました', '送信 ' + data.sent + ' 通 / スキップ ' + (data.skipped || 0) + ' 通。実配信（delivered）は台帳で確認します。');
+        }
+        $('mkDispatchState').textContent = '送信 ' + data.sent + ' / スキップ ' + (data.skipped || 0) + ' / 失敗 ' + failed;
+        mkSyncFlow();
       } catch (e) {
-        $('mkDispatchState').textContent = '配信に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+        mkState.busy = false;
+        btn.dataset.busy = '';
+        mkSyncFlow();
+        mkNotify('err', '送信に失敗しました', '配信基盤へ到達できませんでした。Step 6 の送信状況で実際に送られたかを必ず確認してください。');
+        $('mkDispatchState').textContent = '';
       }
-      // 二重配信防止: 実行後は必ず再確認からやり直す
-      btn.disabled = true;
     });
 
     $('mkLoad').addEventListener('click', mkLoad);
@@ -2320,17 +2731,65 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // ── dry-run → 最終確認 → 送信 ──
     $('mkDryRun').addEventListener('click', async () => {
       const c = currentCampaign();
-      if (!c) { mkMsg('キャンペーンを選択してください', 'err'); return; }
-      if (!c.usable) { mkMsg('使用停止中のキャンペーンです: ' + (c.disabledReason || ''), 'err'); return; }
-      if (mkSelected.size === 0) { mkMsg('送信対象を選択してください', 'err'); return; }
+      const verdict = flowApi().canDryRun({ ...mkState, selectedIds: [...mkSelected] });
+      if (!verdict.allowed) { mkNotify('warn', '実行できません', flowApi().BLOCK_LABEL[verdict.reason]); return; }
+      if (!c.usable) { mkNotify('err', '使用停止中のキャンペーンです', c.disabledReason || ''); return; }
+      mkState.busy = true; mkSyncFlow();
       mkMsg('対象を確認中…');
       const plan = await mkCall({
         action: 'dryRun', campaignId: c.campaignId, recordIds: [...mkSelected],
       });
-      if (!plan) return;
+      mkState.busy = false;
+      if (!plan) { mkSyncFlow(); return; }
       mkMsg('');
+      // この結果が「どの母集団に対する確認か」を指紋で固定する
+      mkState.dryRun = {
+        fingerprint: mkFingerprint(),
+        selected: plan.selected, excluded: plan.excluded, willSend: plan.willSend,
+        excludedDetail: plan.excludedDetail, planFingerprint: plan.planFingerprint,
+      };
+      mkState.enqueued = false;
+      mkState.dispatch = {};
+      mkRenderDryPanel(c, plan);
+      mkSyncFlow();
       mkRenderConfirm(c, plan);
     });
+
+    /** dry-run の結果を主要パネルへ（確認 → 登録の判断材料を 1 か所に集める） */
+    function mkRenderDryPanel(c, plan) {
+      const panel = $('mkDryPanel');
+      if (!panel) return;
+      panel.hidden = false;
+      panel.innerHTML = '';
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); panel.appendChild(d);
+      };
+      row('キャンペーン', c.name + ' v' + c.version + (c.testOnly ? '（🧪 テスト専用）' : ''));
+      row('選択人数', plan.selected + ' 名');
+      row('送信対象', plan.willSend + ' 名', plan.willSend > 0 ? 'is-ok' : 'is-ng');
+      row('除外', plan.excluded + ' 名');
+      const ex = flowApi().summarizeExclusions(plan.excludedDetail || []);
+      if (ex.length) {
+        const box = document.createElement('div'); box.className = 'dp-ex';
+        const t = document.createElement('b'); t.textContent = '除外理由（送信できない理由。失敗ではありません）';
+        box.appendChild(t);
+        const ul = document.createElement('ul');
+        for (const e of ex) {
+          const li = document.createElement('li');
+          li.textContent = (window.__planView?.labelFor?.(e.reason) || e.reason) + ' … ' + e.count + ' 名';
+          ul.appendChild(li);
+        }
+        box.appendChild(ul); panel.appendChild(box);
+      }
+      row('gate', '登録' + (mkState.sendEnabled ? '可' : '不可') + ' / 配信' + (mkState.dispatchEnabled ? '可' : '不可'),
+        mkState.sendEnabled ? '' : 'is-ng');
+      row('二重送信防止', '同一 campaign×version×宛先は DeliveryKey で 1 通に固定（再実行しても増えない）');
+      row('確認 ID', String(plan.planFingerprint || '').slice(0, 12) + '…（対象が変わると無効）');
+      row('実行すると', 'キューに登録されます。ここではまだ 1 通も送られません。');
+    }
 
     function mkRenderConfirm(campaign, plan) {
       const body = mkOpenModal('送信内容の確認');
@@ -2461,9 +2920,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         });
         btn.dataset.busy = '';
         if (out) {
+          // 登録できた ＝ 次は「送信直前の確認」。ここではまだ 1 通も送られていない
+          mkState.enqueued = true;
+          mkState.dispatch = {};
+          mkNotify('ok', 'キューに登録しました（まだ送信されていません）',
+            (out.queued || 0) + ' 名分。Step 5 の「配信内容を確認」→「実際に配信する」で送信します。');
           mkMsg(out.notice || ('登録しました: ' + out.queued + ' 名'), 'ok');
           mkSelected.clear();
           mkCloseModal();
+          mkSyncFlow();
           await mkLoad();
         } else {
           btn.textContent = '再試行';
@@ -2518,9 +2983,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       for (const j of data.jobs) {
         const box = document.createElement('div'); box.className = 'tl-row';
         const head = document.createElement('div');
-        head.textContent = (j.campaignId || '(不明)') + (j.version ? ' v' + j.version : '')
-          + '　' + (JOB_STATUS_LABEL[j.status] || j.status)
-          + '　予定 ' + (j.scheduledFor ? fmtDate(j.scheduledFor) : '—');
+        const badge = flowApi().resolveJobBadge({ status: j.status, counts: j.counts });
+        const b = document.createElement('span');
+        b.className = 'badge b-' + badge.tone;
+        b.textContent = badge.label;
+        head.appendChild(b);
+        const ttl = document.createElement('b');
+        ttl.textContent = ' ' + (j.campaignId || '(不明)') + (j.version ? ' v' + j.version : '');
+        head.appendChild(ttl);
+        const when = document.createElement('span'); when.className = 'tl-src';
+        when.textContent = ' 作成 ' + (j.scheduledFor ? fmtDate(j.scheduledFor) : '—')
+          + ' / 実行者 admin-marketing / job ' + String(j.jobId || '').slice(-12);
+        head.appendChild(when);
         box.appendChild(head);
 
         const c = j.counts || {};
