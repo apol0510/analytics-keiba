@@ -1362,10 +1362,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .mfilter-btn[aria-expanded="true"] { border-color: var(--action-blue); }
   .ppe .mfilter-panel {
     position: absolute; z-index: 40; top: calc(100% + .3rem); left: 0;
-    min-width: 260px; max-height: 320px; overflow-y: auto;
+    min-width: 260px; max-width: calc(100vw - 1.5rem); max-height: 320px; overflow-y: auto;
     background: var(--nv-1); border: 1px solid var(--action-blue); border-radius: 10px;
     box-shadow: 0 12px 28px rgba(2,6,23,.55); padding: .35rem;
   }
+  /* 右端のフィルターは右揃え（画面外へ出さない）*/
+  .ppe .mfilter-panel.is-right { left: auto; right: 0; }
   .ppe .mfilter-list { display: flex; flex-direction: column; }
   .ppe .mfilter-row {
     display: flex; align-items: center; gap: .55rem; min-height: 44px;
@@ -2136,17 +2138,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         promo: s.mkPromoState, frequency: s.mkFrequency, lastLogin: s.mkLastLogin,
       };
     }
-    const MK_FILTER_DEFAULTS = {
-      q: '', contract: 'all', plan: 'all', sendable: 'all', pp: 'all',
-      history: 'all', offer: 'all', promo: 'all', frequency: 'all', lastLogin: 'all',
-    };
     /** 適用中の条件数を出す（今どれだけ絞っているかを見せる） */
     function mkRenderFilterCount() {
       const el = $('mkFilterCount');
       if (!el) return;
-      const sum = flowApi().summarizeFilters(mkCurrentFilters(), MK_FILTER_DEFAULTS);
-      el.textContent = '適用中の条件: ' + sum.count;
-      el.classList.toggle('is-on', sum.count > 0);
+      // チップと同じ数え方（**選んだ値の数**）にする。
+      // 項目数と値の数を並べて出すと、同じ画面に違う数字が出て混乱する。
+      let n = filterApi().countApplied(multiValues(MK_MULTI_IDS));
+      if (($('mkQ')?.value || '').trim()) n += 1;
+      el.textContent = '適用中の条件: ' + n + ' 件';
+      el.classList.toggle('is-on', n > 0);
     }
 
     // ── タブ切替（販売 / マーケティング / カムバック特典）──
@@ -3838,6 +3839,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       function open() {
         for (const [, o] of multiFilters) if (o !== state) o.panel.hidden = true;
         panel.hidden = false; btn.setAttribute('aria-expanded', 'true');
+        // 画面右端に近いフィルターは右揃えにする（はみ出して読めなくなるのを防ぐ）
+        panel.classList.remove('is-right');
+        if (panel.getBoundingClientRect().right > window.innerWidth - 8) panel.classList.add('is-right');
       }
       function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
       btn.addEventListener('click', () => (panel.hidden ? open() : close()));
@@ -4041,9 +4045,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (cond) {
           const selections = multiValues(CB_MULTI_IDS);
           const n = filterApi().countApplied(selections);
+          // 「項目」ではなく**選んだ値の数**なので件で数える（1 項目に複数値が入る）
           cond.textContent = cbState.filtersChanged
             ? '条件が変更されています（再表示してください）'
-            : '条件: ' + (n === 0 ? '指定なし' : n + ' 項目');
+            : '条件: ' + (n === 0 ? '指定なし' : n + ' 件');
           cond.classList.toggle('is-changed', !!cbState.filtersChanged);
         }
         // 確認状態は色でも分ける（未確認=黄 / 確認済み=緑 / 失効=オレンジ）
@@ -4254,7 +4259,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     // 画面表示時に複数選択へ変換する（既存 select はここで置き換わる）
-    document.addEventListener('DOMContentLoaded', () => { try { cbInitFilters(); mkInitFilters(); } catch (e) { /* 変換できなくても既存動作は壊さない */ } });
+    document.addEventListener('DOMContentLoaded', () => {
+      try {
+        cbInitFilters();
+        mkInitFilters();
+        // 初期表示でも「いまどの Step か」を出す（マーケティングは同期待ちで無色のままだった）
+        mkSyncFlow();
+        cbSync();
+      } catch (e) { /* 変換できなくても既存動作は壊さない */ }
+    });
 
     const CB_API = '/.netlify/functions/admin-comeback-grants';
 

@@ -473,7 +473,9 @@ test('guard(ui): フィルターは常時表示と詳細条件に分かれ、件
   assert.match(PAGE, /<details class="filter-more"/, '詳細条件が折りたためない');
   assert.match(PAGE, /id="mkFilterClear"/, '条件クリアが無い');
   assert.match(PAGE, /id="mkFilterCount"/, '適用中の条件数が無い');
-  assert.match(SCRIPT, /summarizeFilters\(/, '適用中フィルターを単一源で数えていない');
+  // 数え方はチップと同じ単一源（adminMultiFilter.countApplied）にそろえる。
+  // 「項目数」と「値の数」が同じ画面に並ぶと混乱するため summarizeFilters は使わない。
+  assert.match(SCRIPT, /filterApi\(\)\.countApplied\(multiValues\(MK_MULTI_IDS\)\)/, '適用中フィルターを単一源で数えていない');
   // 常時表示は 4 つ（Email / 契約 / プラン / 送信可否）だけ
   const head = PAGE.slice(PAGE.indexOf('id="mkStep1H"'), PAGE.indexOf('filter-more'));
   for (const id of ['mkQ', 'mkContract', 'mkPlan', 'mkSendable']) {

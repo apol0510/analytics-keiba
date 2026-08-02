@@ -95,6 +95,20 @@ test('guard(filter): メニューの操作性（幅・行高・最大高）を�
   assert.match(STYLE, /focus-visible/, 'キーボード操作の枠が無い');
 });
 
+test('guard(filter): 右端のメニューは右揃えにして画面外へ出さない', () => {
+  // 1280px 幅の実機で mkSendable のメニューが画面外へ出ていた（2026-08-02 目視確認で検出）
+  assert.match(SCRIPT, /panel\.classList\.add\('is-right'\)/, '右揃えへの切り替えが無い');
+  assert.match(SCRIPT, /window\.innerWidth/, '画面幅を見ていない');
+  assert.match(STYLE, /\.mfilter-panel\.is-right \{ left: auto; right: 0; \}/, '右揃えの見た目が無い');
+  assert.match(STYLE, /max-width: calc\(100vw - 1\.5rem\)/, '画面幅を超えないようにしていない');
+});
+
+test('guard(filter): 初期表示でも現在の Step が分かる', () => {
+  // マーケティングタブは同期が走るまで Step が無色のままだった
+  assert.match(SCRIPT, /mkInitFilters\(\);\s*\n\s*\/\/[^\n]*\n\s*mkSyncFlow\(\);/, '初期表示で Step を同期していない');
+  assert.match(SCRIPT, /cbSync\(\);\s*\n\s*\} catch/, '初期表示で Step を同期していない');
+});
+
 test('guard(filter): 絞り込みは折り返す（横スクロールを作らない）', () => {
   const mobile = STYLE.slice(STYLE.indexOf('@media (max-width: 900px)'));
   assert.equal(/overflow-x:\s*(auto|scroll)/.test(mobile), false, '横スクロールを作っている');
