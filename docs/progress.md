@@ -17,6 +17,23 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: Phase 1（1a〜1d）完了・本番稼働（`4bd4856` / deploy `6a6ea27f3e8b850008c31d5a`）。
+Phase 2（刻印付きカナリア 1 通の実地確認）の**準備のみ**完了。送信 gate は閉じたままで実メール 0。**
+
+- 事前確認スクリプト `npm run preflight:phase2-canary`（**read-only**）を追加。本番データに対して
+  **16 項目すべて ✅**（キャンペーンが testOnly / allowlist ちょうど 1 名 / Customers 該当 1 件 /
+  同一 DeliveryKey 0 件 / `marketing-canary:v2` の配信行 0 件 / PENDING 0 件 /
+  EmailEvents 2 件・resolved 0 件 / 両 gate 未設定）
+- exactly-one は 4 つの独立した仕組みで担保（allowlist fail closed / 対象 1 名 / DeliveryKey 冪等 /
+  送信経路 1 系統＝共有 executor は env 非依存で常時 skip）
+- 実行手順・期待増分・rollback は `astro-site/docs/EMAIL_EVENT_LEDGER.md` §5-2
+- **未実行**: env 変更 / gate 有効化 / 実メール送信 / Airtable write（すべてユーザー承認待ち）
+- **検証条件は件数ではなく「観測できた各イベントが `resolved` になること」**。EmailEvents の増分は
+  provider の挙動と受信者の操作（開封・クリック）に依存するため固定しない
+- **rollback に台帳行の削除を含めない**。送信後は gate を unset → redeploy で追加送信を止め、
+  `EmailEvents` は append-only のまま保持する（本番行の削除は別の高リスク承認境界）
+
+
 **Phase（2026-08-02 現在・最新）: Phase 1c まで本番反映済み（`b5946d4`）。
 Phase 1d（受信側の resolved 判定）を branch `feat/ledger-resolve-phase1d` で実装。
 **既存の EmailEvents 行は書き換えない**・本番挙動の変化は `resolved` が付き始めることだけ。**
