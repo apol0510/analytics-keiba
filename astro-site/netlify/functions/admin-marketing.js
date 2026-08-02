@@ -86,6 +86,18 @@ import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import {
+  buildJobView,
+  canCancelJob,
+  buildJobCancelFields,
+  buildDeliveryCancelFields,
+  isAlreadyCancelledBy,
+  selectCancelableDeliveries,
+  assertOnlyCancelFields,
+  JOB_CANCEL_WRITABLE_FIELDS,
+  DELIVERY_CANCEL_WRITABLE_FIELDS,
+  CANCEL_REJECT,
+} from '../../src/lib/marketing/marketingJobs.js';
+import {
   buildCustomerDossier,
   summarizeMagicLinkLogins,
   resolveLastLogin,
@@ -247,6 +259,8 @@ export const handler = async (event) => {
     if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
     if (action === 'history') return await handleHistory({ KEY, BASE });
+    if (action === 'jobs') return await handleJobs({ KEY, BASE });
+    if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [admin-marketing]', e.message);
@@ -443,6 +457,25 @@ function marketingColumns({ c, offersByCustomer, now }) {
  * - 取得できなければ `available:false`（画面では「0 件」ではなく**「取得不能」**として扱う）
  * - **1 バイトも書かない**（GET のみ）
  */
+/**
+ * 台帳の**未確定**イベント件数（read-only・顧客に紐づかないもの）。
+ *
+ * 顧客カルテでは resolved だけを本人の反応として数える。だが「未確定が何件あるか」を
+ * どこにも出さないと、**取りこぼしが起きていること自体**に気付けない。
+ * 顧客には結び付けず、参考値として件数だけ返す。
+ */
+async function fetchLedgerUnattributed({ KEY, BASE }) {
+  try {
+    const [unresolved, conflict] = await Promise.all([
+      fetchAll({ KEY, BASE, table: EMAIL_EVENTS_TABLE, filterByFormula: `{ResolutionStatus}='unresolved'` }),
+      fetchAll({ KEY, BASE, table: EMAIL_EVENTS_TABLE, filterByFormula: `{ResolutionStatus}='conflict'` }),
+    ]);
+    return { available: true, unresolved: unresolved.length, conflict: conflict.length };
+  } catch {
+    return { available: false, unresolved: null, conflict: null };
+  }
+}
+
 async function fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId }) {
   const id = String(customerRecordId || '').trim();
   // recordId 以外は formula へ入れない（injection 遮断）
@@ -478,13 +511,14 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
   const blacklist = await loadBlacklistSets({ KEY, BASE });
 
-  const [offers, provider, activity, ledger] = await Promise.all([
+  const [offers, provider, activity, ledger, ledgerUnattributed] = await Promise.all([
     fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
     fetchDeliveryActivity({ email, apiKey: process.env.SENDGRID_API_KEY }),
     // 恒久台帳（EmailEvents）。**read-only**・この顧客に確定した行だけを引く。
     // 取得できなければ available:false（画面では「0 件」ではなく「取得不能」）。
     fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId: recordId }),
+    fetchLedgerUnattributed({ KEY, BASE }),
   ]);
 
   const dossier = buildCustomerDossier({
@@ -520,6 +554,9 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
     ledgerSource: {
       available: ledger.available,
       rows: ledger.rows.length,
+      unresolvedTotal: ledgerUnattributed.unresolved,
+      conflictTotal: ledgerUnattributed.conflict,
+      unattributedAvailable: ledgerUnattributed.available,
       note: ledger.available
         ? '恒久台帳（EmailEvents）から集計。台帳の運用開始前のメールは記録がありません'
         : '恒久台帳を取得できませんでした（反応が無かったという意味ではありません）',
@@ -759,6 +796,109 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   });
 }
 
+/**
+ * 送信ジョブの状況（read-only）。
+ *
+ * 「いま何が送信待ちで、どれが失敗し、どれを取り消せるのか」を 1 リクエストで返す。
+ * 判定は `marketingJobs.js` に委譲し、ここでは取得だけ行う。
+ * ⚠️ **アドレスは返さない**（件数と理由コードだけ）。
+ */
+async function handleJobs({ KEY, BASE }) {
+  const [scheduled, deliveries] = await Promise.all([
+    fetchAll({ KEY, BASE, table: SCHEDULED_TABLE }).catch(() => []),
+    fetchAll({ KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'` }).catch(() => []),
+  ]);
+  const jobs = buildJobView({ jobRecords: scheduled, deliveryRecords: deliveries, isMarketingJob });
+  return json(200, {
+    jobs,
+    sendEnabled: isMarketingSendEnabled(process.env),
+    dispatchEnabled: isDispatchEnabled(process.env),
+    notice: isDispatchEnabled(process.env)
+      ? '送信が有効です。PENDING のジョブは dispatcher を実行したときに送信されます（自動実行はしません）。'
+      : 'キャンペーン配信は無効（MARKETING_CAMPAIGN_DISPATCH_ENABLED 未設定）。PENDING のままでは送信されません。',
+    cancelNote: 'PENDING のジョブだけ取り消せます。SENT / FAILED は送信済みの事実なので取り消せません。',
+  });
+}
+
+/**
+ * 送信予定（PENDING）ジョブの取消。
+ *
+ * - **PENDING 以外は取り消せない**（SENT / FAILED は送った事実。消さない）
+ * - 取り消すのは `ScheduledEmails.Status` と **queued の配信行だけ**。
+ *   `sent` の配信行には **1 バイトも触れない**
+ * - `operationId` 必須。同じ取消を 2 回実行しても 2 重に書かない（冪等）
+ * - 書き込み列は allow-list で固定する
+ */
+async function handleCancelJob({ KEY, BASE, now, req }) {
+  const jobId = String(req.jobId || '').trim();
+  const operationId = String(req.operationId || '').trim();
+  if (!jobId) return json(400, { error: 'jobId が必要です' });
+  if (!operationId) return json(400, { error: '操作 ID（operationId）が必要です' });
+  // formula へ外部入力を直挿ししない（識別子の形だけを許す）
+  if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(jobId) || !/^[A-Za-z0-9_.:-]{1,120}$/.test(operationId)) {
+    return json(400, { error: '識別子の形式が不正です' });
+  }
+
+  const scheduled = await fetchAll({
+    KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
+  }).catch(() => []);
+  const job = scheduled.find((r) => String(r.fields?.JobId || '') === jobId) || null;
+  if (!job) return json(404, { error: 'ジョブが見つかりません', reason: CANCEL_REJECT.NOT_FOUND });
+  if (!isMarketingJob(job.fields || {})) {
+    return json(403, { error: 'マーケティングジョブではありません', reason: CANCEL_REJECT.NOT_MARKETING });
+  }
+
+  // 冪等: 同じ操作 ID で既に取消済みなら、何も書かずに成功として返す
+  if (isAlreadyCancelledBy({ job, operationId })) {
+    return json(200, { cancelled: true, alreadyDone: true, jobId, sideEffects: 'none' });
+  }
+
+  const verdict = canCancelJob(job);
+  if (!verdict.ok) {
+    return json(409, {
+      error: verdict.reason === CANCEL_REJECT.ALREADY_SENT
+        ? '送信済みのジョブは取り消せません（メールは取り消せません）'
+        : '取り消せない状態です',
+      reason: verdict.reason,
+      sideEffects: 'none',
+    });
+  }
+
+  // 1) 送信待ちの配信行（queued のみ）を cancelled にする。**sent には触れない**
+  const deliveries = await fetchAll({
+    KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{ScheduledEmailJobId}='${jobId}'`,
+  }).catch(() => []);
+  const targets = selectCancelableDeliveries({ jobId, deliveryRecords: deliveries });
+  const deliveryFields = buildDeliveryCancelFields({ operationId, nowMs: now });
+  if (!deliveryFields || !assertOnlyCancelFields(deliveryFields, DELIVERY_CANCEL_WRITABLE_FIELDS)) {
+    return json(500, { error: 'field allow-list violation', sideEffects: 'none' });
+  }
+  let cancelledDeliveries = 0;
+  for (const rec of targets) {
+    const ok = await patchRecord({ KEY, BASE, table: DELIVERIES_TABLE, recordId: rec.id, fields: deliveryFields });
+    if (ok) cancelledDeliveries += 1;
+  }
+
+  // 2) ジョブ自体を CANCELLED にする（配信行を確定させた後）
+  const jobFields = buildJobCancelFields({ operationId, nowMs: now, previousNotes: job.fields?.Notes });
+  if (!jobFields || !assertOnlyCancelFields(jobFields, JOB_CANCEL_WRITABLE_FIELDS)) {
+    return json(500, { error: 'field allow-list violation', sideEffects: 'partial' });
+  }
+  const jobOk = await patchRecord({ KEY, BASE, table: SCHEDULED_TABLE, recordId: job.id, fields: jobFields });
+
+  console.log('🛑 [admin-marketing] ジョブ取消:', { jobId, cancelledDeliveries, jobOk });
+  return json(jobOk ? 200 : 500, {
+    cancelled: jobOk,
+    jobId,
+    cancelledDeliveries,
+    keptSent: deliveries.filter((r) => String(r.fields?.Status || '') === 'sent').length,
+    sideEffects: 'ScheduledEmails / CampaignDeliveries のみ',
+    notice: jobOk
+      ? '送信予定を取り消しました。送信済みの配信は取り消していません。'
+      : '取消に失敗しました。もう一度実行してください（同じ操作 ID なら二重には書きません）。',
+  });
+}
+
 async function handleHistory({ KEY, BASE }) {
   const deliveries = await fetchAll({ KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'` })
     .catch(() => []);
@@ -776,6 +916,20 @@ function countDomains(recipients) {
     out[d] = (out[d] || 0) + 1;
   }
   return out;
+}
+
+/**
+ * レコード 1 件の更新（取消でのみ使う）。
+ * 呼び出し側が allow-list で列を固定してから渡すこと。応答本文は読まない（PII 混入の遮断）。
+ */
+async function patchRecord({ KEY, BASE, table, recordId, fields }) {
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}/${recordId}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields, typecast: true }),
+  });
+  if (!res.ok) console.error(`❌ [admin-marketing] ${table} PATCH failed: HTTP ${res.status}`);
+  return res.ok;
 }
 
 async function createRecord({ KEY, BASE, table, fields }) {

@@ -244,6 +244,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <select id="mkCampaign" aria-label="キャンペーン"></select>
           <button type="button" id="mkPreview" class="btn-ghost">本文プレビュー</button>
           <button type="button" id="mkDryRun" class="btn-primary">送信対象を確認（dry-run）</button>
+          <button type="button" id="mkJobsBtn" class="btn-ghost">送信状況・取消</button>
           <button type="button" id="mkHistoryBtn" class="btn-ghost">送信履歴</button>
         </div>
         <p class="camp-desc" id="mkCampDesc"></p>
@@ -1981,6 +1982,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         dossierRow(s62, 'bounce / 配信停止 / 迷惑報告',
           String(le.bounced ?? 0) + ' / ' + String(le.unsubscribed ?? 0) + ' / ' + String(le.spamReported ?? 0));
       }
+      // 未確定（unresolved / conflict）は**この人の反応ではない**。件数だけ参考として出す。
+      // 出さないと「取りこぼしが起きていること自体」に気付けない。
+      if (led.unattributedAvailable) {
+        dossierRow(s62, '未確定イベント（全体・顧客未紐付）',
+          String(led.unresolvedTotal ?? 0) + ' 件 / 食い違い ' + String(led.conflictTotal ?? 0) + ' 件');
+      } else {
+        dossierRow(s62, '未確定イベント（全体）', '取得不能', 'ng');
+      }
       const ledNote = document.createElement('p'); ledNote.className = 'tl-note';
       ledNote.textContent = '⚠️ ' + (led.note || '') + '（⑥ の直近ぶんとは出所が異なります。'
         + '誰のものか確定していないイベントは、この人の反応として数えていません）';
@@ -2465,6 +2474,117 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       sec3.appendChild(ops);
       body.appendChild(sec3);
     }
+
+    // ── 送信状況（予定 / 送信済 / 失敗 / 取消）と取消操作 ──
+    // 「いま何が送信待ちか」「どれが失敗したか」「取り消せるのか」を 1 画面で出す。
+    // 送信は取り返しがつかないので、**止められる状態**を運用者に持たせる。
+    const JOB_STATUS_LABEL = {
+      PENDING: '送信待ち', SENT: '送信済み', FAILED: '失敗', CANCELLED: '取消済み',
+    };
+    const CANCEL_REASON_LABEL = {
+      already_sent: '送信済みのため取消不可（メールは取り消せません）',
+      already_failed: '送信を試行済みのため取消不可',
+      already_cancelled: '取消済み',
+      not_marketing_job: 'マーケティングジョブではない',
+      job_not_found: 'ジョブが見つからない',
+      unknown_status: '状態を判定できない',
+    };
+
+    async function mkRenderJobs() {
+      const data = await mkCall({ action: 'jobs' });
+      if (!data) return;
+      const body = mkOpenModal('キャンペーン送信状況');
+
+      // gate 状態は最初に出す。閉じているなら「なぜ送られないか」を明示する
+      const gate = document.createElement('div'); gate.className = 'dt-sec';
+      const gh = document.createElement('h3'); gh.textContent = '① 送信ゲート'; gate.appendChild(gh);
+      dossierRow(gate, 'キュー登録', data.sendEnabled ? '有効' : '無効（MARKETING_CAMPAIGN_ENABLED 未設定）',
+        data.sendEnabled ? 'ok' : 'ng');
+      dossierRow(gate, '実送信', data.dispatchEnabled ? '有効' : '無効（MARKETING_CAMPAIGN_DISPATCH_ENABLED 未設定）',
+        data.dispatchEnabled ? 'ok' : 'ng');
+      const gn = document.createElement('p'); gn.className = 'tl-note'; gn.textContent = '⚠️ ' + data.notice;
+      gate.appendChild(gn);
+      const auto = document.createElement('p'); auto.className = 'tl-note';
+      auto.textContent = '⚠️ ゲートが有効でも、この画面から実行しない限り自動送信はされません（定期実行に載っていません）。';
+      gate.appendChild(auto);
+      body.appendChild(gate);
+
+      const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const h = document.createElement('h3'); h.textContent = '② ジョブ一覧（新しい順）'; sec.appendChild(h);
+      if (!data.jobs.length) {
+        const p = document.createElement('p'); p.className = 'tl-note'; p.textContent = 'キャンペーンジョブはまだありません。';
+        sec.appendChild(p);
+      }
+      for (const j of data.jobs) {
+        const box = document.createElement('div'); box.className = 'tl-row';
+        const head = document.createElement('div');
+        head.textContent = (j.campaignId || '(不明)') + (j.version ? ' v' + j.version : '')
+          + '　' + (JOB_STATUS_LABEL[j.status] || j.status)
+          + '　予定 ' + (j.scheduledFor ? fmtDate(j.scheduledFor) : '—');
+        box.appendChild(head);
+
+        const c = j.counts || {};
+        const counts = document.createElement('div'); counts.className = 'tl-detail';
+        counts.textContent = '対象 ' + j.recipientCount + ' 名 ／ 送信待ち ' + (c.queued || 0)
+          + ' ／ 送信済 ' + (c.sent || 0) + ' ／ 失敗 ' + (c.failed || 0)
+          + ' ／ スキップ ' + (c.skipped || 0) + ' ／ 取消 ' + (c.cancelled || 0);
+        box.appendChild(counts);
+
+        // 失敗・スキップの理由は分類として出す（アドレスは出さない）
+        const reasons = Object.entries(j.errorReasons || {});
+        if (reasons.length) {
+          const rl = document.createElement('div'); rl.className = 'tl-detail';
+          rl.textContent = '理由: ' + reasons.map(([k, v]) => k + ' ' + v + ' 件').join(' / ');
+          box.appendChild(rl);
+        }
+
+        const ops = document.createElement('div'); ops.className = 'ops';
+        if (j.cancelable) {
+          const btn = document.createElement('button');
+          btn.type = 'button'; btn.className = 'b-immediate'; btn.textContent = '送信予定を取り消す';
+          btn.addEventListener('click', async () => {
+            if (btn.dataset.busy === '1') return;
+            // 二段階確認: 取消も取り返しの効く操作ではないため、内容を読ませてから実行する
+            const ok1 = window.confirm(
+              '送信予定を取り消します。\n\n'
+              + 'キャンペーン: ' + (j.campaignId || '') + (j.version ? ' v' + j.version : '') + '\n'
+              + '送信待ち: ' + (c.queued || 0) + ' 件\n'
+              + '送信済み: ' + (c.sent || 0) + ' 件（**取り消しません**）\n\n'
+              + '続けますか？'
+            );
+            if (!ok1) return;
+            const typed = window.prompt('確認のため CANCEL と入力してください');
+            if (String(typed || '').trim().toUpperCase() !== 'CANCEL') { mkMsg('取消を中止しました。', 'ng'); return; }
+            btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = '取消中…';
+            // 同じ取消を 2 回押しても 2 重に書かないための操作 ID
+            const operationId = 'cancel-' + j.jobId + '-' + Date.now().toString(36);
+            const out = await mkCall({ action: 'cancelJob', jobId: j.jobId, operationId });
+            btn.dataset.busy = '';
+            if (out && out.cancelled) {
+              mkMsg(out.notice || '取り消しました', 'ok');
+              mkCloseModal();
+              await mkRenderJobs();
+            } else {
+              btn.textContent = '再試行';
+              btn.disabled = false;
+            }
+          });
+          ops.appendChild(btn);
+        } else {
+          const p = document.createElement('span'); p.className = 'tl-src';
+          p.textContent = CANCEL_REASON_LABEL[j.cancelReason] || '取消不可';
+          ops.appendChild(p);
+        }
+        box.appendChild(ops);
+        sec.appendChild(box);
+      }
+      const note = document.createElement('p'); note.className = 'tl-note';
+      note.textContent = '⚠️ ' + data.cancelNote + ' 「送信済み」は配信基盤が受理した状態で、実際に届いたか（delivered）とは別です。';
+      sec.appendChild(note);
+      body.appendChild(sec);
+    }
+
+    $('mkJobsBtn').addEventListener('click', mkRenderJobs);
 
     // ── 送信履歴 ──
     $('mkHistoryBtn').addEventListener('click', async () => {

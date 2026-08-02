@@ -394,3 +394,44 @@ test('guard(ui): 未確定（unresolved / conflict）を顧客の反応として
   assert.equal(/unattributed[^;]*textContent|dossierRow\(s62, '未確定'/.test(SCRIPT), false,
     '未確定の件数をこの顧客の反応として表示している');
 });
+
+// ── 送信状況・取消 UI（運用機能 / 2026-08-02）──────────────────────
+test('guard(ui): 送信状況を開くボタンと描画がある', () => {
+  assert.match(PAGE, /id="mkJobsBtn"/, '送信状況を開く導線が無い');
+  assert.match(SCRIPT, /action: 'jobs'/, 'ジョブ一覧を取得していない');
+  assert.match(SCRIPT, /送信待ち|送信済み|失敗|取消済み/, 'ジョブの状態を表示していない');
+});
+
+test('guard(ui): gate の状態と「自動送信されない」ことを明示する', () => {
+  assert.match(SCRIPT, /MARKETING_CAMPAIGN_ENABLED 未設定/, 'キュー登録 gate の理由を出していない');
+  assert.match(SCRIPT, /MARKETING_CAMPAIGN_DISPATCH_ENABLED 未設定/, '実送信 gate の理由を出していない');
+  assert.match(SCRIPT, /自動送信はされません/, '自動送信されないことを明示していない');
+});
+
+test('guard(ui): 取消は二段階確認（確認ダイアログ + 文字入力）', () => {
+  const from = SCRIPT.indexOf('送信予定を取り消す');
+  const seg = SCRIPT.slice(from, from + 1600);
+  assert.match(seg, /window\.confirm\(/, '確認ダイアログが無い');
+  assert.match(seg, /window\.prompt\(/, '文字入力による確認が無い');
+  assert.match(seg, /CANCEL/, '確認文字列が無い');
+  assert.match(seg, /operationId/, '操作 ID を送っていない（再実行で二重に書ける）');
+});
+
+test('guard(ui): 送信済みは取消しないことを画面で明示する', () => {
+  assert.match(SCRIPT, /送信済みのため取消不可/, '取消不可の理由を出していない');
+  assert.match(SCRIPT, /取り消しません/, '送信済みを取り消さないと明示していない');
+});
+
+test('guard(ui): provider 受理と実配信を混同させない注記がある', () => {
+  assert.match(SCRIPT, /実際に届いたか（delivered）とは別/, '受理と配信の違いを説明していない');
+});
+
+test('guard(ui): 送信ボタンは gate 閉鎖時に無効化される（既存契約の維持）', () => {
+  assert.match(SCRIPT, /btn\.disabled = !plan\.sendEnabled \|\| plan\.willSend === 0/,
+    'gate 閉鎖時に送信ボタンを無効化していない');
+});
+
+test('guard(ui): カルテに未確定イベントの件数を出す（0 件と取得不能を区別）', () => {
+  assert.match(SCRIPT, /未確定イベント（全体・顧客未紐付）/, '未確定件数を出していない');
+  assert.match(SCRIPT, /led\.unattributedAvailable/, '取得可否を見ていない');
+});

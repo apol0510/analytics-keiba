@@ -109,6 +109,77 @@ Netlify 自動ビルド → https://analytics.keiba.link/
 
 Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 
+## マーケティング配信の運用（admin / 2026-08-02 完成）
+
+管理画面 `/admin/premium-plus-eligibility` の「顧客マーケティング」タブだけで、
+**対象選択 → 確認 → キュー登録 → 状況確認 → 取消**まで完結する。
+送信経路は `marketing-campaign-dispatch` の **1 系統のみ**。
+
+### 操作の流れ
+
+| # | 操作 | 画面 | 副作用 |
+|---|---|---|---|
+| 1 | 顧客を選択（segment / checkbox）| 顧客マーケティング | なし |
+| 2 | キャンペーンを選び **dry-run** | 施策パネル | **なし**（対象・除外・除外理由・planFingerprint を確認）|
+| 3 | 最終確認 → **送信キューへ登録** | 確認モーダル | `ScheduledEmails`(PENDING) + `CampaignDeliveries`(queued)。**メールは出ない** |
+| 4 | **送信状況・取消** で状態を確認 | 送信状況モーダル | なし |
+| 5 | 必要なら **PENDING を取消** | 同上 | `ScheduledEmails`→CANCELLED / **queued の配信行だけ** →cancelled |
+| 6 | dispatcher を実行（人が叩く）| API | **実メール送信**（gate が両方 true のときだけ）|
+
+### 送信ゲート（2 段・独立）
+
+| env | 役割 | 閉じているときの挙動 |
+|---|---|---|
+| `MARKETING_CAMPAIGN_ENABLED` | **キュー登録**の解禁 | 送信ボタンが無効化され、理由を画面に表示。API は 503 |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED` | **実送信**の解禁 | キューは作れるが 1 通も出ない。dispatcher は 503 |
+
+- **`NEWSLETTER_AUTOMATION_ENABLED` は無関係**（マーケ配信のために ON にしない）
+- **ゲートが両方 true でも、人が dispatcher を実行しない限り送られない**
+  （定期実行に登録していない。guard テストで固定）
+
+### 二重送信・誤送信を防ぐ構造
+
+| 防壁 | 内容 |
+|---|---|
+| `DeliveryKey` | campaignId × version × email × from の sha256。**同一版は 1 行**。再登録は `already_delivered` で除外 |
+| `planFingerprint` | dry-run で確定した母集団と違えば send が 409。**確認した対象以外へ送れない** |
+| 送信直前の再検証 | provider suppression / blacklist / 配信停止 / 退会 / 頻度キャップを 1 通ごとに再判定 |
+| custom_args 3 点 | 揃わなければ**送らない**（Phase 1c）。台帳と噛み合わない配信を作らない |
+| 経路の単一化 | 共有 executor は `canSharedExecutorSend` が **env 非依存で常時 skip** |
+| PENDING 限定 | dispatcher は PENDING のジョブしか処理しない。SENT は再送対象にならない |
+
+### 取消の原則
+
+- **PENDING のジョブだけ**取り消せる。**SENT / FAILED は取消不可**（送った事実は消さない）
+- 取り消すのは `ScheduledEmails.Status` と **`queued` の配信行だけ**。`sent` の行には触れない
+- `operationId` 必須。同じ取消を 2 回実行しても 2 重に書かない（冪等）
+- 書き込み列は allow-list（`Status` / `CompletedAt` / `Notes` / `SkippedAt` / `ErrorMessage`）に限定
+- 画面は **二段階確認**（内容確認ダイアログ ＋ `CANCEL` の文字入力）
+
+### 画面に出す情報
+
+- キャンペーン名 / version、対象人数、除外人数と理由、送信予定時刻
+- ゲート状態（両方）と、閉じている場合の**理由**
+- ジョブごとの 送信待ち / 送信済 / 失敗 / スキップ / 取消 の件数と**失敗理由の分類**
+- 取消可否と、不可の場合の理由
+- 顧客カルテ ⑥-2: 台帳由来の反応（`resolved` のみ本人の反応として集計）＋
+  **未確定（unresolved / conflict）の全体件数**（顧客には紐付けない参考値）
+
+⚠️ **「送信済み」は配信基盤が受理した状態**で、実配信（`delivered`）とは別。
+実配信は `EmailEvents` の台帳で確認する。
+
+### 関連ファイル
+
+| 目的 | ファイル |
+|---|---|
+| 対象・除外・DeliveryKey の単一源 | `src/lib/marketing/campaignSend.js` |
+| ゲート判定・送信直前再検証の単一源 | `src/lib/marketing/marketingDispatchGate.js` |
+| **ジョブ状況・取消の単一源** | `src/lib/marketing/marketingJobs.js` |
+| custom_args（刻印）の単一源 | `src/lib/marketing/campaignCustomArgs.js` |
+| admin API | `netlify/functions/admin-marketing.js` |
+| 送信経路（唯一） | `netlify/functions/marketing-campaign-dispatch.js` |
+| 画面 | `src/pages/admin/premium-plus-eligibility.astro` |
+
 ## 5. External Dependencies
 
 | 依存 | 用途 | 備考 |
