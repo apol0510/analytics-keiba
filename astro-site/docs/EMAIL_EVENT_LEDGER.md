@@ -261,6 +261,64 @@ open 数回 + click 0〜数回 ≒ **3〜8 イベント**。
 | テーブルごと廃止 | テーブル削除。`EmailBlacklist` / 決済メール v2 の経路には影響しない |
 | コードを戻す | 該当 PR を revert（受信 Function は Phase 0 の状態へ戻る）|
 
+## 5-2. Phase 2: 実地確認（刻印付きカナリア 1 通 / **未実行**）
+
+Phase 1 は「送れば紐付く」構造まで完成した。実際に **送信 → イベント → `resolved` → カルテ** が
+通ることを、**実顧客を使わず 1 通だけ**で確認する。事前確認は
+`npm run preflight:phase2-canary`（**read-only**）が機械的に行う。
+
+### exactly-one を支える 4 つの独立した仕組み
+
+| # | 仕組み | 効果 |
+|---|---|---|
+| 1 | `extraAudience: marketing_canary_recipient` | `NEWSLETTER_TEST_RECIPIENTS` 一致者以外は**構造的に対象外**。env 未設定なら全員除外（fail closed）|
+| 2 | allowlist が **ちょうど 1 名**（実測） | 対象が 1 名しか存在しない |
+| 3 | `DeliveryKey`（campaignId × version × email × from）| 同一版は 1 行しか作られず、再実行は `already_delivered` で除外される |
+| 4 | 送信経路が **1 系統**（`marketing-campaign-dispatch`）| 共有 executor は `canSharedExecutorSend` が **env 非依存で常時 skip**。A2 等の旧経路と同時送信できない |
+
+さらに送信直前に `verifyBeforeSend`（provider suppression / blacklist / 配信停止 / 退会 / 頻度）と
+Phase 1c の `buildCampaignCustomArgs`（3 点そろわなければ送らない）が二重に効く。
+
+### 実行手順（**すべてユーザー承認が要る高リスク境界**）
+
+| # | 操作 | 種別 |
+|---|---|---|
+| 0 | `npm run preflight:phase2-canary` | read-only（承認不要）|
+| 1 | `MARKETING_CAMPAIGN_ENABLED=true` を production へ → redeploy | **env 変更** |
+| 2 | admin でキャンペーン `marketing-canary` を選び **dry-run**（対象 1 名を確認）| read-only |
+| 3 | admin から **送信キューへ登録**（`ScheduledEmails` +1 / `CampaignDeliveries` +1 / **実メール 0**）| Airtable write |
+| 4 | `marketing-campaign-dispatch` を `dryRun:true` で実行（willSend=1 / skipped=0 を確認）| read-only |
+| 5 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` → redeploy | **env 変更** |
+| 6 | `marketing-campaign-dispatch` を `dryRun:false` で実行（**実メール 1 通**）| **本番送信** |
+| 7 | 受信メールを開く / CTA をクリック（open・click を発生させる）| — |
+| 8 | `EmailEvents` と admin カルテ ⑥-2 を read-only 検証 | read-only |
+| 9 | **両 gate を unset → redeploy（再閉鎖）** | env 変更 |
+
+**`NEWSLETTER_AUTOMATION_ENABLED` は触らない**（既存メール経路まで解禁されるため）。
+
+### 期待値（送信前 → 送信後）
+
+| テーブル | 前 | 後 |
+|---|---|---|
+| `ScheduledEmails` | 27 | **28**（PENDING → SENT）|
+| `CampaignDeliveries` | 71 | **72**（`marketing-canary:v2` / queued → sent）|
+| `Customers` | 1454 | **1454（不変）** |
+| `EmailEvents` | 2 | **+2〜6**（processed / delivered / open / click…）|
+| 新規 `EmailEvents` の `ResolutionStatus` | — | **すべて `resolved`** |
+| 新規行の `CustomerRecordId` / `CampaignId` | — | テスト受信者の recordId / `marketing-canary` |
+| admin カルテ ⑥-2 | 0 件 | 配信済み 1・開封/クリックは実操作ぶん |
+
+既存 2 行は `unresolved` のまま**変化しない**（刻印が無いため）。
+
+### rollback / 停止
+
+| 事象 | 対処 |
+|---|---|
+| 送信前に中止 | env を unset → redeploy（キューは PENDING のまま残るので `ScheduledEmails` の Status を CANCELLED にするか放置）|
+| 送信後 | メールは取り消せない。**gate を unset → redeploy** で以後の送信を止める |
+| 台帳が汚れた | `EmailEvents` の該当行を削除（append-only・他機能に影響なし）|
+| 二重送信の懸念 | 同一 `DeliveryKey` は 1 行しか作られず、再実行は `already_delivered`。**version を上げない限り再送されない** |
+
 ## 6. admin 表示のルール
 
 - **「未開封」と「取得不能」を必ず区別する。** 台帳が無い期間は 0 ではなく**不明**
