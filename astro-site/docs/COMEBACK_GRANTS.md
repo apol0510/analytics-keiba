@@ -415,6 +415,37 @@ UI 側でも `issued` 以外には**取り消しボタンを出さない**。
 
 ---
 
+## 6-2. 対象区分の絞り込み（複数選択 / 2026-08-02）
+
+管理画面の「対象区分」は**チェック式の複数選択**。既定は
+**期限切れ / 退会済み / 休眠** の 3 つが ON（＝カムバックの本来の宛先）。
+
+| 規則 | 内容 |
+|---|---|
+| 既定 | `CB_SEGMENT_DEFAULT = ['expired','withdrawn','dormant']` |
+| 「カムバック候補すべて」 | **選択肢ではなくプリセットボタン**（上の 3 つを一括 ON） |
+| 現有効会員 | **既定 OFF**。選ぶと必ず `ACTIVE_FILTER_WARNING` を出す |
+| 同じ項目内 | OR / 異なる項目間は AND / 未選択は条件なし |
+
+### 「区分」と「契約状態」が混ざっている点（重要）
+
+画面の対象区分は、**区分**（`withdrawn` / `dormant` = `classifyComebackSegment`）と
+**契約状態**（`expired` / `none` = `resolveCustomerMarketing`）が同居している。
+そのため `matchesComebackFilter` は **どちらかに当たれば通す**。
+契約状態だけで判定すると「退会済み」「休眠」を選んでも常に 0 件になる。
+
+- `resolveComebackCustomer()` は `segment` を返す（単一源は
+  `src/lib/entitlements/comebackAudience.js` の `classifyComebackSegment`）
+- 区分の再実装は禁止。ローカル判定を書かない
+
+### API 契約
+
+`admin-comeback-grants` の `customers` は条件を**配列**で受ける（旧形式の単一文字列も可）。
+`CB_FILTER_ALLOW` に無い値は **400**で、検証は **Airtable 読み込みより前**に行う。
+
+検証: `npm run test:comeback`（`comebackFilterSelection.test.mjs` /
+`adminComebackHandler.smoke.test.mjs`）
+
 ## 7. 原子性・冪等性・復旧
 
 ### 顧客単位では原子的

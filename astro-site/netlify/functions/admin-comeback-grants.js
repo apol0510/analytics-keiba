@@ -40,6 +40,7 @@
  *   さらに apply / revoke は dry-run が返した planFingerprint と operationId が必須。
  */
 
+import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
   evaluateComebackTarget,
   summarizeComebackAudience,
@@ -279,12 +280,25 @@ function handlePreview({ req, now }) {
   });
 }
 
+/** 絞り込みで受け付ける値（**ここに無い値は 400**。想定外の条件で顧客を抽出させない）*/
+const CB_FILTER_ALLOW = Object.freeze({
+  contract: ['expired', 'expiring_soon', 'active', 'unknown', 'none', 'withdrawn', 'dormant', 'candidates'],
+  plan: ['premium_sanrenpuku', 'premium', 'light', 'free', 'unknown'],
+  history: ['never', 'recent', 'sent'],
+  withdrawn: ['yes', 'no'],
+  promo: ['none', 'any', 'light', 'light_lifetime', 'premium', 'premium_ended', 'inconsistent'],
+  grantable: ['grantable', 'blocked'],
+});
+
 async function handleCustomers({ KEY, BASE, now, req }) {
+  // 複数選択は配列で受ける。旧形式（単一文字列）もそのまま通す
+  const filter = {};
+  for (const [key, allowed] of Object.entries(CB_FILTER_ALLOW)) {
+    const v = validateSelection(req[key], allowed, { key });
+    if (!v.ok) return json(400, { error: v.error });
+    filter[key] = v.values;
+  }
   const { list } = await loadCustomers({ KEY, BASE, now });
-  const filter = {
-    contract: req.contract, plan: req.plan, history: req.history,
-    withdrawn: req.withdrawn, promo: req.promo, grantable: req.grantable,
-  };
   const matched = list.filter((c) => matchesComebackFilter(c.view, filter));
 
   const rows = matched.slice(0, MAX_ROWS).map((c) => {

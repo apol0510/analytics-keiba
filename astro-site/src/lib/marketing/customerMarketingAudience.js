@@ -316,25 +316,39 @@ export function resolveCustomerMarketing({ fields, nowMs, blacklistEmails, histo
  * @param {object} m resolveCustomerMarketing の戻り値
  * @param {{ contract?: string, plan?: string, marketing?: string, premiumPlus?: string, history?: string }} filter
  */
+/**
+ * 選択（単一文字列でも配列でも受ける）を配列へ正規化する。
+ * **空 / 'all' は「条件なし」**、値があれば**同じ項目内は OR**。
+ */
+function selection(value) {
+  if (value === undefined || value === null) return [];
+  return (Array.isArray(value) ? value : [value])
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => x && x !== 'all');
+}
+
+/** 選ばれた値のいずれかに当たるか（未選択なら絞らない） */
+function anyOf(value, sel) {
+  if (sel.length === 0) return true;
+  return sel.includes(String(value ?? '').trim());
+}
+
 export function matchesMarketingFilter(m, filter = {}) {
   if (!m) return false;
   const f = filter || {};
-  const eq = (v, expected) => !expected || expected === 'all' || v === expected;
 
-  if (!eq(m.contract, f.contract)) return false;
-  if (!eq(m.plan, f.plan)) return false;
-  if (f.marketing && f.marketing !== 'all') {
-    if (f.marketing === MK_SEND.SENDABLE && !m.sendable) return false;
-    if (f.marketing === MK_SEND.SUPPRESSED && m.sendable) return false;
-  }
-  if (f.premiumPlus && f.premiumPlus !== 'all') {
-    if (!m.segments.includes(`pp:${f.premiumPlus}`)) return false;
-  }
-  if (f.history && f.history !== 'all') {
-    if (f.history === 'recent' && !m.segments.includes('history:recent')) return false;
-    if (f.history === 'never' && !m.segments.includes('history:never')) return false;
-    if (f.history === 'sent' && !m.segments.includes('history:sent')) return false;
-  }
+  if (!anyOf(m.contract, selection(f.contract))) return false;
+  if (!anyOf(m.plan, selection(f.plan))) return false;
+
+  const send = selection(f.marketing);
+  if (send.length && !anyOf(m.sendable ? MK_SEND.SENDABLE : MK_SEND.SUPPRESSED, send)) return false;
+
+  const pp = selection(f.premiumPlus);
+  if (pp.length && !pp.some((v) => m.segments.includes(`pp:${v}`))) return false;
+
+  const hist = selection(f.history);
+  if (hist.length && !hist.some((v) => m.segments.includes(`history:${v}`))) return false;
+
   return true;
 }
 
