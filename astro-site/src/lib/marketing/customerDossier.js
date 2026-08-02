@@ -29,6 +29,7 @@ import { isLiveOffer } from '../promotions/offerCampaignLink.js';
 import { LAST_LOGIN_FIELD } from '../auth/lastLoginRecord.js';
 import { buildCustomerTimeline, summarizeEngagement } from './customerTimeline.js';
 import { buildRecommendations } from './recommendedActions.js';
+import { summarizeCustomerEventsFromLedger } from '../webhooks/emailEventLedger.js';
 
 const norm = (v) => String(v ?? '').trim().toLowerCase();
 const str = (v) => String(v ?? '').trim();
@@ -156,6 +157,11 @@ export function buildCustomerDossier(input = {}) {
     blacklistEmails = new Set(), softBounceEmails = new Set(),
     providerSuppressed = null, history = null,
     tokenRecords = [], activityEvents = null, activityAvailable = false,
+    /**
+     * 恒久台帳 `EmailEvents` から取得した**この顧客の resolved 行**（read-only）。
+     * 取得できなかった場合は `ledgerAvailable:false` を渡すこと（**0 件と区別する**）。
+     */
+    ledgerRows = [], ledgerAvailable = false,
   } = input;
 
   const fields = (record && record.fields) || {};
@@ -215,6 +221,13 @@ export function buildCustomerDossier(input = {}) {
     record, nowMs, offerRecords, deliveryRecords, tokenRecords, activityEvents, activityAvailable,
   });
   const engagement = summarizeEngagement({ events: timeline.events, available: timeline.limits.engagementAvailable });
+
+  // 恒久台帳（EmailEvents）由来の反応。配信基盤の直近ぶん（engagement）とは**出所も期間も違う**ため
+  // 別フィールドで返す。`scoped:true`＝この顧客の resolved 行だけを取得しているので、
+  // 未確定（unresolved / conflict）の件数は **0 ではなく未計測 (null)** になる。
+  const ledgerEngagement = summarizeCustomerEventsFromLedger({
+    ledgerRows, customerRecordId: recordId, ledgerAvailable, scoped: true,
+  });
   const advice = buildRecommendations({
     marketing: { ...marketing, premiumPlusEligibility: str(fields.PremiumPlusEligibility) },
     entitlements, membership, offers,
@@ -304,8 +317,16 @@ export function buildCustomerDossier(input = {}) {
     timelineUnknownDate: timeline.unknownDateEvents,
     timelineLimits: timeline.limits,
 
-    /** ⑦ 反応（取得できない期間は null。0 と表示しない） */
+    /** ⑦ 反応（配信基盤の直近ぶん。保持が短く、取得できない期間は null。0 と表示しない） */
     engagement,
+
+    /**
+     * ⑦-2 反応（**恒久台帳 `EmailEvents` 由来**）。⑦ とは出所も期間も違うので混同しない。
+     * - `resolved` かつ `CustomerRecordId` 完全一致の行だけを数える
+     * - `unresolved` / `conflict` は**この人の反応として表示しない**
+     * - 台帳を引けなければ `available:false`（**0 件ではなく「取得不能」**）
+     */
+    ledgerEngagement,
 
     /** ⑧ 推奨アクション（提案のみ・自動実行しない） */
     recommendations: advice.recommendations,

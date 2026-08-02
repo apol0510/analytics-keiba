@@ -130,6 +130,8 @@ test('順不同・後追いイベント（delivered の後に bounce）を両方
 
 const delivery = { recordId: 'recDEL1', deliveryKey: 'dk_1', customerRecordId: 'recCUST1', campaignId: 'expired-comeback', campaignVersion: '2' };
 const index = new Map([['dk_1', delivery], ['recDEL1', delivery]]);
+/** Phase 1c 以降の完全な刻印（3 点そろい） */
+const fullArgs = { delivery_key: 'dk_1', campaign_delivery_id: 'recDEL1', customer_record_id: 'recCUST1' };
 
 test('custom_args が無ければ unresolved（メールだけで顧客へ結び付けない）', () => {
   const e = normalizeEvent(rawEvent()).event;
@@ -140,8 +142,8 @@ test('custom_args が無ければ unresolved（メールだけで顧客へ結び
   assert.equal(a.campaignDeliveryId, '');
 });
 
-test('delivery_key があり台帳に一致すれば resolved', () => {
-  const e = normalizeEvent(rawEvent({ delivery_key: 'dk_1' })).event;
+test('3 点（鍵・配信 recordId・顧客 recordId）が台帳と完全一致すれば resolved', () => {
+  const e = normalizeEvent(rawEvent(fullArgs)).event;
   const a = resolveAttribution({ event: e, deliveryIndex: index });
   assert.equal(a.status, RESOLUTION.RESOLVED);
   assert.equal(a.campaignDeliveryId, 'recDEL1');
@@ -149,8 +151,16 @@ test('delivery_key があり台帳に一致すれば resolved', () => {
   assert.equal(a.campaignId, 'expired-comeback');
 });
 
-test('delivery_key があっても台帳に無ければ unresolved（作らない）', () => {
-  const e = normalizeEvent(rawEvent({ delivery_key: 'dk_unknown' })).event;
+test('delivery_key だけでは resolved にしない（Phase 1d で厳格化）', () => {
+  const e = normalizeEvent(rawEvent({ delivery_key: 'dk_1' })).event;
+  const a = resolveAttribution({ event: e, deliveryIndex: index });
+  assert.equal(a.status, RESOLUTION.UNRESOLVED);
+  assert.equal(a.reason, 'incomplete_custom_args');
+  assert.equal(a.customerRecordId, '', '不完全な刻印で顧客を結び付けている');
+});
+
+test('3 点そろっていても台帳に無ければ unresolved（作らない）', () => {
+  const e = normalizeEvent(rawEvent({ ...fullArgs, delivery_key: 'dk_unknown', campaign_delivery_id: 'recNONE' })).event;
   const a = resolveAttribution({ event: e, deliveryIndex: index });
   assert.equal(a.status, RESOLUTION.UNRESOLVED);
   assert.equal(a.reason, 'delivery_not_found');
@@ -158,7 +168,7 @@ test('delivery_key があっても台帳に無ければ unresolved（作らな�
 });
 
 test('custom_args の顧客と台帳の顧客が食い違えば conflict（どちらも採らない）', () => {
-  const e = normalizeEvent(rawEvent({ delivery_key: 'dk_1', customer_record_id: 'recOTHER' })).event;
+  const e = normalizeEvent(rawEvent({ ...fullArgs, customer_record_id: 'recOTHER' })).event;
   const a = resolveAttribution({ event: e, deliveryIndex: index });
   assert.equal(a.status, RESOLUTION.CONFLICT);
   assert.equal(a.reason, 'customer_mismatch');
@@ -166,9 +176,9 @@ test('custom_args の顧客と台帳の顧客が食い違えば conflict（ど�
 });
 
 test('複数の配信候補が食い違えば conflict', () => {
-  const other = { recordId: 'recDEL2', deliveryKey: 'dk_1', customerRecordId: 'recCUST2' };
+  const other = { recordId: 'recDEL9', deliveryKey: 'dk_other', customerRecordId: 'recCUST2' };
   const idx = new Map([['dk_1', delivery], ['recDEL9', other]]);
-  const e = normalizeEvent(rawEvent({ delivery_key: 'dk_1', campaign_delivery_id: 'recDEL9' })).event;
+  const e = normalizeEvent(rawEvent({ ...fullArgs, campaign_delivery_id: 'recDEL9' })).event;
   const a = resolveAttribution({ event: e, deliveryIndex: idx });
   assert.equal(a.status, RESOLUTION.CONFLICT);
   assert.equal(a.reason, 'multiple_deliveries');

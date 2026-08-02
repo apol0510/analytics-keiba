@@ -171,3 +171,28 @@ test('13. 取得できたときは「取得できませんでした」と表示�
   assert.equal(r.note.includes('反応が無かったという意味ではありません'), false);
   assert.match(r.note, /直近 1 通/);
 });
+
+// ── 恒久台帳（EmailEvents）の read-only 配線（Phase 1d）─────────────
+test('guard: 台帳は read-only（GET のみ）で、この顧客の resolved 行だけを引く', () => {
+  assert.match(src, /async function fetchCustomerLedgerEvents/, '台帳取得の関数が無い');
+  const from = src.indexOf('async function fetchCustomerLedgerEvents');
+  const to = src.indexOf('\n/**', from + 10);
+  const fn = src.slice(from, to > from ? to : from + 1200);
+  assert.match(fn, /\{ResolutionStatus\}='resolved'/, 'resolved 以外も顧客の反応として引いている');
+  assert.match(fn, /\{CustomerRecordId\}='\$\{id\}'/, 'CustomerRecordId で絞っていない');
+  assert.match(fn, /\^rec\[A-Za-z0-9\]\{14\}\$/, 'recordId 形式を検証していない（formula injection）');
+  assert.equal(/method: 'PATCH'|method: 'POST'|method: 'DELETE'/.test(fn), false, '台帳へ書き込んでいる');
+});
+
+test('guard: 台帳を引けないときは 0 件ではなく「取得不能」として返す', () => {
+  assert.match(src, /ledgerSource: \{[\s\S]{0,400}available: ledger\.available/, '取得可否を画面へ返していない');
+  assert.match(src, /取得できませんでした（反応が無かったという意味ではありません）/,
+    '取得不能の注記が無い（0 件と混同する）');
+  assert.match(src, /return \{ rows: \[\], available: false \}/, '失敗時に available:false を返していない');
+});
+
+test('guard: 台帳テーブル名は受信側の単一源から取る', () => {
+  assert.match(src, /EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME.*emailEventLedger\.js/,
+    'テーブル名を admin 側で直書きしている');
+  assert.equal(/['"]EmailEvents['"]/.test(src), false, 'テーブル名のリテラルが admin 側にある');
+});

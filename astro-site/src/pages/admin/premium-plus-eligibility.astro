@@ -1959,6 +1959,33 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const noteEl = document.createElement('p'); noteEl.className = 'tl-note'; noteEl.textContent = '⚠️ ' + notes.join(' / ');
       s6.appendChild(noteEl);
 
+      // ⑥-2 メール反応（恒久台帳 EmailEvents）。⑥ の「直近ぶん」とは出所も期間も違うので別枠にする。
+      // resolved かつ CustomerRecordId 完全一致の行だけが集計対象で、
+      // 未確定（unresolved / conflict）はこの人の反応として表示しない。
+      const s62 = dossierSection(body, '⑥-2 メール反応（恒久台帳）');
+      const led = (data.ledgerSource || {});
+      const le = d.ledgerEngagement || {};
+      if (!led.available || le.available !== true) {
+        dossierRow(s62, '状態', '取得不能（反応が無かったという意味ではありません）', 'ng');
+      } else {
+        dossierRow(s62, '配信済み', String(le.delivered ?? 0) + ' 件');
+        dossierRow(s62, '開封', String(le.opens ?? 0) + ' 回');
+        dossierRow(s62, '初回開封', le.firstOpenAt ? fmtDate(le.firstOpenAt) : '—');
+        dossierRow(s62, '最終開封', le.lastOpenAt ? fmtDate(le.lastOpenAt) : '—');
+        dossierRow(s62, 'クリック', String(le.clicks ?? 0) + ' 回');
+        dossierRow(s62, '初回クリック', le.firstClickAt ? fmtDate(le.firstClickAt) : '—');
+        dossierRow(s62, '最終クリック', le.lastClickAt ? fmtDate(le.lastClickAt) : '—');
+        if ((le.clickCategories || []).length > 0) {
+          dossierRow(s62, 'クリック先', le.clickCategories.join(' / '));
+        }
+        dossierRow(s62, 'bounce / 配信停止 / 迷惑報告',
+          String(le.bounced ?? 0) + ' / ' + String(le.unsubscribed ?? 0) + ' / ' + String(le.spamReported ?? 0));
+      }
+      const ledNote = document.createElement('p'); ledNote.className = 'tl-note';
+      ledNote.textContent = '⚠️ ' + (led.note || '') + '（⑥ の直近ぶんとは出所が異なります。'
+        + '誰のものか確定していないイベントは、この人の反応として数えていません）';
+      s62.appendChild(ledNote);
+
       const rows = [...(d.timeline || []), ...(d.timelineUnknownDate || [])];
       if (rows.length === 0) {
         const empty = document.createElement('p'); empty.className = 'tl-note'; empty.textContent = '記録がありません。';

@@ -203,3 +203,56 @@ test('カルテは旧ポイント列を書き換えない前提の表示専用�
   assert.equal(d.login.lastLogin.sources[LOGIN_SOURCE.LEGACY_POINTS], '2026-06-01T00:00:00.000Z');
   assert.equal(d.login.lastLogin.sourceLabel, '旧ポイント履歴（〜2026-07-08）');
 });
+
+// ── 恒久台帳（EmailEvents）由来の反応（Phase 1d / read-only 配線）──────────
+test('カルテ: 台帳を引けなければ「取得不能」（0 件と区別する）', () => {
+  const d = buildCustomerDossier({
+    record: { id: 'recCUSTOMER000001', fields: { Email: 'a@example.com' } },
+    nowMs: Date.parse('2026-08-02T00:00:00Z'),
+    ledgerRows: [], ledgerAvailable: false,
+  });
+  assert.equal(d.ledgerEngagement.available, false);
+  assert.equal(d.ledgerEngagement.opens, null, '取得不能を 0 と表示している');
+  assert.equal(d.ledgerEngagement.clicks, null);
+});
+
+test('カルテ: resolved かつ本人の行だけを数える（他人・未確定は数えない）', () => {
+  const ev = (type, at, status, cust) => ({
+    fields: { EventType: type, EventAt: at, ResolutionStatus: status, CustomerRecordId: cust },
+  });
+  const me = 'recCUSTOMER000001';
+  const d = buildCustomerDossier({
+    record: { id: me, fields: { Email: 'a@example.com' } },
+    nowMs: Date.parse('2026-08-02T00:00:00Z'),
+    ledgerAvailable: true,
+    ledgerRows: [
+      ev('delivered', '2026-08-01T00:00:00.000Z', 'resolved', me),
+      ev('open', '2026-08-01T01:00:00.000Z', 'resolved', me),
+      ev('open', '2026-08-01T02:00:00.000Z', 'resolved', me),
+      ev('click', '2026-08-01T03:00:00.000Z', 'resolved', me),
+      ev('open', '2026-08-01T04:00:00.000Z', 'resolved', 'recCUSTOMER000009'), // 他人
+      ev('open', '2026-08-01T05:00:00.000Z', 'unresolved', ''),                // 未確定
+      ev('open', '2026-08-01T06:00:00.000Z', 'conflict', ''),                  // 食い違い
+    ],
+  });
+  const le = d.ledgerEngagement;
+  assert.equal(le.available, true);
+  assert.equal(le.delivered, 1);
+  assert.equal(le.opens, 2, '他人・未確定を数えている');
+  assert.equal(le.clicks, 1);
+  assert.equal(le.firstOpenAt, '2026-08-01T01:00:00.000Z');
+  assert.equal(le.lastOpenAt, '2026-08-01T02:00:00.000Z');
+  assert.equal(le.firstClickAt, '2026-08-01T03:00:00.000Z');
+  assert.equal(le.unattributed, null, 'この顧客だけを引いた集計で未確定件数を断定している');
+});
+
+test('カルテ: 台帳由来の反応は既存の直近ぶん（engagement）と別フィールド', () => {
+  const d = buildCustomerDossier({
+    record: { id: 'recCUSTOMER000001', fields: { Email: 'a@example.com' } },
+    nowMs: Date.parse('2026-08-02T00:00:00Z'),
+    ledgerAvailable: true,
+    ledgerRows: [{ fields: { EventType: 'open', EventAt: '2026-08-01T00:00:00.000Z', ResolutionStatus: 'resolved', CustomerRecordId: 'recCUSTOMER000001' } }],
+  });
+  assert.ok('engagement' in d && 'ledgerEngagement' in d, '2 つの出所が 1 つに混ざっている');
+  assert.notEqual(d.engagement, d.ledgerEngagement);
+});

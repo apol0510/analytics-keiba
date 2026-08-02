@@ -246,3 +246,36 @@ test('guard: 台帳へ IP / User-Agent / 生 URL / 生アドレスを渡さな�
     assert.equal(fn.includes(banned), false, `${banned} を台帳経路で扱っている`);
   }
 });
+
+// ── 配信索引と紐付け（Phase 1d）────────────────────────────────
+test('guard: 配信索引は単一源 emailEventDeliveryIndex.js から取る（Function に再実装しない）', () => {
+  assert.match(CODE, /emailEventDeliveryIndex\.js/, '索引の単一源を経由していない');
+  assert.match(CODE, /fetchDeliveryIndex\(/, '索引取得を呼んでいない');
+  // 台帳経路の本体だけを見る（suppression 側の EmailBlacklist 検索を巻き込まない）
+  const from = CODE.indexOf('async function applyEmailEventLedger');
+  const to = CODE.indexOf('function shouldProcessEvent', from);
+  const fn = CODE.slice(from, to > from ? to : undefined);
+  assert.equal(fn.includes('CampaignDeliveries'), false, 'Function が配信台帳のテーブル名を直接持っている');
+  assert.equal(fn.includes('filterByFormula'), false, 'Function が索引のクエリを組み立てている');
+});
+
+test('guard: 索引は gate ON のときだけ引く（既定 OFF では外部 I/O ゼロ）', () => {
+  const fn = CODE.slice(CODE.indexOf('async function applyEmailEventLedger'));
+  const gateAt = fn.indexOf('const enabled =');
+  const lookupAt = fn.indexOf('fetchDeliveryIndex(');
+  assert.ok(gateAt > 0 && lookupAt > gateAt, 'gate 判定より前に索引を引いている');
+  assert.match(fn, /enabled\s*\n?\s*\?\s*await fetchDeliveryIndex/, 'gate OFF でも索引を引いている');
+});
+
+test('guard: 索引を引けなくても受信処理を止めない（unresolved で保存する）', () => {
+  assert.match(CODE, /fetchDeliveryIndex\([\s\S]{0,300}\.catch\(/, '索引取得の失敗を握っていない');
+  assert.match(CODE, /deliveryIndex: lookup\.index/, '索引を台帳へ渡していない');
+});
+
+test('guard: 索引の集計に鍵・アドレス・recordId を出さない（件数のみ）', () => {
+  const m = CODE.match(/lookup: \{[^}]*\}/);
+  assert.ok(m, '索引の集計を返していない');
+  for (const banned of ['deliveryKey', 'index:', 'email', 'recordId']) {
+    assert.equal(m[0].includes(banned), false, `索引の集計に ${banned} を含めている`);
+  }
+});

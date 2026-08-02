@@ -368,3 +368,29 @@ test('画面側で送信可否・契約条件を再判定しない', () => {
     assert.equal(block.includes(forbidden), false, `画面で ${forbidden} を再実装している`);
   }
 });
+
+// ── 恒久台帳（EmailEvents）の表示（Phase 1d）─────────────────────
+test('guard(ui): 台帳由来の反応は専用セクションで、直近ぶんと混同しない', () => {
+  assert.match(SCRIPT, /⑥-2 メール反応（恒久台帳）/, '台帳由来の反応セクションが無い');
+  assert.match(SCRIPT, /d\.ledgerEngagement/, 'カルテの台帳集約を読んでいない');
+  assert.match(SCRIPT, /⑥ の直近ぶんとは出所が異なります/, '出所の違いを注記していない');
+});
+
+test('guard(ui): 台帳を引けないときは 0 件ではなく「取得不能」と出す', () => {
+  assert.match(SCRIPT, /取得不能（反応が無かったという意味ではありません）/,
+    '取得不能を 0 件として表示している');
+  assert.match(SCRIPT, /!led\.available \|\| le\.available !== true/, '取得可否を判定していない');
+});
+
+test('guard(ui): 開封・クリックの回数と初回・最終日時を出す', () => {
+  for (const label of ['開封', '初回開封', '最終開封', 'クリック', '初回クリック', '最終クリック']) {
+    assert.ok(SCRIPT.includes(`'${label}'`), `${label} を表示していない`);
+  }
+});
+
+test('guard(ui): 未確定（unresolved / conflict）を顧客の反応として出さない', () => {
+  assert.match(SCRIPT, /誰のものか確定していないイベントは、この人の反応として数えていません/,
+    '未確定の扱いを明示していない');
+  assert.equal(/unattributed[^;]*textContent|dossierRow\(s62, '未確定'/.test(SCRIPT), false,
+    '未確定の件数をこの顧客の反応として表示している');
+});
