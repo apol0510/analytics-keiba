@@ -123,7 +123,7 @@ test('使用停止中のキャンペーンは選べず、理由が画面に出�
   assert.ok(SCRIPT.includes('使用停止中'), '停止中の表示が無い');
   assert.ok(SCRIPT.includes('c.disabledReason'), '停止理由を出していない');
   // dry-run 実行時にも停止中を弾く
-  assert.match(SCRIPT, /if \(!c\.usable\) \{ mkMsg\('使用停止中のキャンペーンです/);
+  assert.match(SCRIPT, /!c\.usable[\s\S]{0,120}使用停止中のキャンペーンです/, '使用停止中の理由を出していない');
 });
 
 test('既定選択が使用可能なキャンペーンになる', () => {
@@ -160,8 +160,10 @@ test('実配信は「確認 → 実行」の 2 段で、いきなり配信でき
   assert.ok(PAGE.includes('mkDispatchRun'), '実配信ボタンが無い');
   // 実行ボタンは既定で無効。確認に成功したときだけ開く
   assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled/, '実配信ボタンが最初から押せる');
-  assert.match(SCRIPT, /\$\('mkDispatchRun'\)\.disabled = !\(data\.jobs && willSend > 0\)/,
-    '送る相手が 0 人でも実配信ボタンが開く');
+  // 可否は単一源（marketingConsoleFlow）が決める。確認結果を状態へ入れてから同期する
+  assert.match(SCRIPT, /canDispatchSend\(/, '実配信の可否を単一源で判定していない');
+  assert.match(SCRIPT, /check: \{ willSend, jobs: data\.jobs \}/,
+    '確認結果を状態へ保存していない（送る相手が 0 人でも押せてしまう）');
 });
 
 test('実配信は取り消せないことを確認ダイアログで伝える', () => {
@@ -172,8 +174,10 @@ test('実配信は取り消せないことを確認ダイアログで伝える',
 
 test('実配信の実行後は必ず再確認からやり直す（二重配信防止）', () => {
   const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
-  // finally ではなく、成功・失敗どちらでも最後に無効化する
-  assert.match(block, /btn\.disabled = true;\s*\}\);/, '実行後に実配信ボタンが押せるまま');
+  // 送信後は直前確認を捨てる → もう一度確認しない限り canDispatchSend が false になる
+  assert.match(block, /mkState\.dispatch = \{ sent: true, result: data, check: null \}/,
+    '実行後に直前確認を無効化していない（もう一度押せてしまう）');
+  assert.match(block, /btn\.dataset\.busy = '1'/, '二重クリック防止が無い');
 });
 
 test('実配信は専用 dispatcher を叩く（admin-marketing に送信させない）', () => {
@@ -434,4 +438,84 @@ test('guard(ui): 送信ボタンは gate 閉鎖時に無効化される（既存
 test('guard(ui): カルテに未確定イベントの件数を出す（0 件と取得不能を区別）', () => {
   assert.match(SCRIPT, /未確定イベント（全体・顧客未紐付）/, '未確定件数を出していない');
   assert.match(SCRIPT, /led\.unattributedAvailable/, '取得可否を見ていない');
+});
+
+// ── 操作順が分かる画面（2026-08-02 / UX 改善）─────────────────────
+test('guard(ui): Step 1〜6 の見出しと進行表示がある', () => {
+  assert.match(PAGE, /id="mkSteps"/, 'ステップ表示が無い');
+  for (const [n, label] of [[1, '対象顧客を絞り込む'], [2, '顧客を選択する'], [3, 'キャンペーンを選ぶ'],
+    [4, '送信対象を確認'], [5, 'キュー登録・最終送信'], [6, '送信状況・取消・結果確認']]) {
+    assert.ok(PAGE.includes(label), `Step ${n} の見出しが無い: ${label}`);
+    assert.ok(PAGE.includes(`data-step="${n}"`), `Step ${n} の節が無い`);
+  }
+  assert.match(SCRIPT, /resolveStep\(/, '現在地を単一源で判定していない');
+});
+
+test('guard(ui): 押せる／押せないの判定を画面側に再実装しない', () => {
+  for (const fn of ['canDryRun(', 'canEnqueue(', 'canDispatchCheck(', 'canDispatchSend(']) {
+    assert.ok(SCRIPT.includes(fn), `${fn} を使っていない`);
+  }
+  assert.match(SCRIPT, /window\.__mkFlow/, '判定の単一源を橋渡ししていない');
+  assert.match(SCRIPT, /BLOCK_LABEL\[/, '押せない理由を文言化していない');
+});
+
+test('guard(ui): 選択・条件・キャンペーンの変更で dry-run が失効する', () => {
+  assert.match(SCRIPT, /mkInvalidateDryRun\('選択した顧客が変わりました。'\)/, '選択変更で失効させていない');
+  assert.match(SCRIPT, /mkInvalidateDryRun\('絞り込み条件が変わりました。'\)/, '条件変更で失効させていない');
+  assert.match(SCRIPT, /mkInvalidateDryRun\('キャンペーンが変わりました。'\)/, 'キャンペーン変更で失効させていない');
+  assert.match(SCRIPT, /isDryRunStale\(/, '失効判定を単一源で行っていない');
+});
+
+test('guard(ui): フィルターは常時表示と詳細条件に分かれ、件数とクリアがある', () => {
+  assert.match(PAGE, /<details class="filter-more"/, '詳細条件が折りたためない');
+  assert.match(PAGE, /id="mkFilterClear"/, '条件クリアが無い');
+  assert.match(PAGE, /id="mkFilterCount"/, '適用中の条件数が無い');
+  assert.match(SCRIPT, /summarizeFilters\(/, '適用中フィルターを単一源で数えていない');
+  // 常時表示は 4 つ（Email / 契約 / プラン / 送信可否）だけ
+  const head = PAGE.slice(PAGE.indexOf('id="mkStep1H"'), PAGE.indexOf('filter-more'));
+  for (const id of ['mkQ', 'mkContract', 'mkPlan', 'mkSendable']) {
+    assert.ok(head.includes(id), `${id} が常時表示にない`);
+  }
+});
+
+test('guard(ui): 「表示中を全選択」を主要操作にし、全顧客選択は目立たせない', () => {
+  assert.match(PAGE, /id="mkSelAll" class="btn-primary btn-sm">表示中を全選択/, '主要操作になっていない');
+  assert.match(PAGE, /id="mkSelAllLoaded"[^>]*btn-quiet/, '全顧客選択が目立つままになっている');
+});
+
+test('guard(ui): 追従バーに現在地と次の操作を出す', () => {
+  assert.match(PAGE, /id="mkStickyBar"/, '追従バーが無い');
+  for (const id of ['sbSel', 'sbCamp', 'sbDry', 'sbGate', 'sbNext']) {
+    assert.ok(PAGE.includes(`id="${id}"`), `追従バーに ${id} が無い`);
+  }
+  assert.match(SCRIPT, /function mkNextAction\(/, '次の操作を示していない');
+});
+
+test('guard(ui): dry-run 結果を主要パネルにまとめて出す', () => {
+  assert.match(PAGE, /id="mkDryPanel"/, 'dry-run パネルが無い');
+  assert.match(SCRIPT, /function mkRenderDryPanel\(/, 'パネル描画が無い');
+  for (const label of ['選択人数', '送信対象', '除外', 'gate', '二重送信防止', '実行すると']) {
+    assert.ok(SCRIPT.includes(`'${label}'`) || SCRIPT.includes(`row('${label}`), `パネルに ${label} が無い`);
+  }
+  assert.match(SCRIPT, /除外理由（送信できない理由。失敗ではありません）/, '除外理由と失敗理由を区別していない');
+});
+
+test('guard(ui): 最終送信は必須項目つき二段階確認', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  assert.match(block, /buildSendConfirmation\(/, '確認内容を単一源で組み立てていない');
+  assert.match(block, /window\.confirm\(/, '確認ダイアログが無い');
+  assert.match(block, /window\.prompt\(/, '二段階目の確認が無い');
+  assert.match(block, /送信予定人数/, '人数入力による誤操作防止が無い');
+  assert.match(block, /実際にメールが届きます/, '実メールが届くことを伝えていない');
+});
+
+test('guard(ui): 通知は内容別に出し、internal error を素通しにしない', () => {
+  assert.match(PAGE, /id="mkNotices"/, '通知領域が無い');
+  assert.match(SCRIPT, /function mkNotify\(kind, text, detail\)/, '通知が内容別になっていない');
+  assert.match(SCRIPT, /送信に失敗しました[\s\S]{0,120}必ず確認してください/, 'エラー時に次の行動を示していない');
+});
+
+test('guard(ui): ジョブ状態はバッジで示し、部分失敗を成功と読ませない', () => {
+  assert.match(SCRIPT, /resolveJobBadge\(/, 'バッジ判定を単一源で行っていない');
+  assert.match(SCRIPT, /badge b-/, 'バッジを描画していない');
 });
