@@ -57,6 +57,15 @@ SendGrid 側の設定を read-only で実測した結果:
 実施する場合は ① Click Tracking を ON（**全メールの URL が書き換わる**）② Event Webhook に open/click を追加
 ③ `marketing-canary` を **v3** へ版上げ（v2 は `already_delivered` で再送されない）が必要。
 
+### 事前確認スクリプトの段階判定を修正（2026-08-02）
+
+`preflight:phase2-canary` は段階に関係なく「両 gate が未設定であること」を要求していたため、
+**手順どおり 1 つ目の gate を開けた直後に ❌** となり、正常な進行と異常が区別できなかった。
+gate の状態から `pre` / `enqueue` / `send` を自動判定し、その段階で成り立つべきことだけを検査する
+（`PHASE2_STAGE` で上書き可）。`enqueue` 段階では**実送信 gate が閉じていること**を必須にし、
+どの段階でも exactly-one の上限（配信行・PENDING）は検査し続ける。
+併せて直接実行時だけ main を走らせる形にし、段階判定を単体テストできるようにした。
+
 ### gate の再閉鎖（実効確認済み）
 
 - `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を **UNSET へ戻し redeploy**

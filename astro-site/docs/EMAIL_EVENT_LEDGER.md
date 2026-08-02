@@ -344,6 +344,23 @@ Phase 1c の `buildCampaignCustomArgs`（3 点そろわなければ送らない�
 ② Event Webhook に open / click を追加 ③ `marketing-canary` を **v3** へ版上げ（v2 は `already_delivered`）。
 **影響範囲が送信基盤全体に及ぶため、実施は別判断とする。**
 
+### 事前確認スクリプトの段階判定（2026-08-02 修正）
+
+`npm run preflight:phase2-canary` は **gate の状態から段階（stage）を自動判定**し、
+その段階で成り立つべきことだけを検査する（`PHASE2_STAGE` で明示指定も可）。
+
+| stage | 判定条件 | その段階で検査すること |
+|---|---|---|
+| `pre` | 両 gate 未設定 | 配信行 0 件 / PENDING 0 件 / resolved 0 件（**まだ何も始まっていない**）|
+| `enqueue` | `MARKETING_CAMPAIGN_ENABLED` のみ true | **実送信 gate が閉じている** / 配信行 1 行以下 / PENDING 1 件以下 / 対象がまだ未送信 |
+| `send` | 実送信 gate も true | 配信行が**ちょうど 1 行** / PENDING 1 件以下 / 対象の状態を表示 |
+
+修正前は段階に関係なく「両 gate が未設定であること」を要求していたため、
+**手順どおり 1 つ目の gate を開けた直後に ❌ となり、正常な進行と異常の区別がつかなかった**。
+
+なお `pre` 段階で `marketing-canary:v2` を再実行すると「配信行が既に 1 件ある」で ❌ になるが、
+これは**正しい**（v2 は送信済み。再実行するなら v3 へ版上げが必要）。
+
 ### 実行後の後始末（実施済み）
 
 `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を **UNSET → redeploy**
