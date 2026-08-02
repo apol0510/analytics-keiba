@@ -163,7 +163,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
 
       <details class="filter-more" id="mkFilterMore">
-        <summary>詳細条件（Plus 資格 / 送信履歴 / オファー / 無料特典 / 送信タイミング / 最終ログイン）</summary>
+        <summary>詳細条件（Plus 資格 / 送信履歴 / オファー / 無料付与 / 送信タイミング / 最終ログイン）</summary>
         <div class="toolbar">
         <select id="mkPp" aria-label="Premium Plus 資格">
           <option value="all">Plus 資格: すべて</option>
@@ -184,11 +184,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="expiring7">期限 7 日以内</option>
           <option value="none">オファーなし</option>
         </select>
-        <select id="mkPromoState" aria-label="無料特典">
-          <option value="">無料特典: すべて</option>
+        <select id="mkPromoState" aria-label="現在の無料付与">
+          <option value="">現在の無料付与: すべて</option>
           <option value="active">特典中</option>
           <option value="ending7">終了 7 日以内</option>
-          <option value="none">特典なし</option>
+          <option value="none">無料付与なし</option>
         </select>
         <select id="mkFrequency" aria-label="送信タイミング">
           <option value="">送信タイミング: すべて</option>
@@ -271,7 +271,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-send">送信</th>
               <th class="c-login">最終ログイン</th>
               <th class="c-access col-detail">閲覧権限</th>
-              <th class="c-promo col-detail">無料特典</th>
+              <th class="c-promo col-detail">現在の無料付与</th>
               <th class="c-offer col-detail">オファー</th>
               <th class="c-next col-detail">次回送信可</th>
               <th class="c-pp">Plus</th>
@@ -509,14 +509,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="yes">退会あり</option>
           <option value="no">退会なし</option>
         </select>
-        <select id="cbPromo" aria-label="現在の特典">
-          <option value="all">現在の特典: すべて</option>
-          <option value="none">特典なし</option>
-          <option value="any">特典あり</option>
+        <select id="cbGrantNow" aria-label="現在の無料付与">
+          <option value="all">現在の無料付与: すべて</option>
+          <option value="none">現在は無料付与なし</option>
+          <option value="light_period">Light 無料期間中</option>
           <option value="light_lifetime">Light 永久無料</option>
-          <option value="trial_active">Premium 無料期間中</option>
-          <option value="trial_expired">Premium 無料 終了</option>
-          <option value="inconsistent">⚠️ 特典データ不整合</option>
+          <option value="premium_period">Premium 無料期間中</option>
+          <option value="premium_lifetime">Premium 永久無料</option>
+          <option value="both">Light・Premium 両方が有効</option>
+          <option value="inconsistent">⚠️ 要確認（データ不整合）</option>
+        </select>
+        <select id="cbGrantHistory" aria-label="無料付与履歴">
+          <option value="all">無料付与履歴: すべて</option>
+          <option value="no_record">付与の記録なし</option>
+          <option value="light">Light の付与歴あり</option>
+          <option value="premium">Premium の付与歴あり</option>
+          <option value="both">Light・Premium 両方の付与歴あり</option>
+          <option value="ended">無料期間が終了済み</option>
+          <option value="revoked">取消・失効の記録あり</option>
+          <option value="inconsistent">⚠️ 要確認（記録が矛盾）</option>
+          <option value="unknown">履歴不明（記録が不完全）</option>
         </select>
         <select id="cbGrantable" aria-label="付与可否">
           <option value="all">付与可否: すべて</option>
@@ -564,7 +576,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-cust">顧客</th>
               <th class="c-contract">契約</th>
               <th class="c-plan">プラン</th>
-              <th class="c-promo">現在の特典</th>
+              <th class="c-promo">無料付与（現在 / 履歴）</th>
               <th class="c-grantable">付与可否</th>
             </tr>
           </thead>
@@ -1478,6 +1490,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .step-progress { font-size: 12px; color: var(--text-muted); margin-left: .4rem; }
   /* 条件を変えたまま再取得していないことを追従バーでも出す */
   .ppe .stickybar .sb-item.is-changed { color: var(--action-orange); font-weight: 700; }
+
+  /* ═══ 無料付与の表示（いま / これまで を 1 セルに分けて出す）═══ */
+  .ppe .fg-now { font-weight: 700; }
+  .ppe .fg-hist { font-size: .72rem; color: var(--text-muted); }
+  .ppe .fg-src { font-size: .7rem; color: var(--text-muted); }
+  .ppe .fg-why { font-size: .72rem; color: var(--action-orange); }
 
   /* ═══ 文面エディタ（今回送る分だけ編集する / 2026-08-03）═══ */
   .ppe .editor { margin-top: .7rem; border: 1px solid var(--border-soft); border-radius: 12px;
@@ -2653,7 +2671,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function renderApplied(data) {
       const f = data.appliedFilters || {};
       const LBL = { contract: '契約', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
-        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファー', promoState: '無料特典', frequency: '送信タイミング' };
+        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファー', promoState: '現在の無料付与', frequency: '送信タイミング' };
       const parts = Object.entries(f)
         .map(([k, v]) => [k, Array.isArray(v) ? v.join(' / ') : v])
         .filter(([, v]) => v && v !== 'all')
@@ -2799,7 +2817,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const promoText = r.promoActive
           ? (r.promoLifetime ? "無期限" : (r.promoUntil ? "〜" + fmtDate(r.promoUntil) : "期間不明"))
           : "—";
-        tr.appendChild(td("c-promo col-detail", "無料特典", promoText, r.promoActive ? "ok-txt" : "muted"));
+        tr.appendChild(td("c-promo col-detail", "現在の無料付与", promoText, r.promoActive ? "ok-txt" : "muted"));
 
         const offerText = r.liveOfferCount
           ? r.liveOfferCount + " 件" + (r.offerExpiresAt ? "（〜" + fmtDate(r.offerExpiresAt) + "）" : "")
@@ -3009,12 +3027,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
 
       // ③ 特典・オファー
-      const s3 = dossierSection(body, '③ 無料特典・割引オファー');
+      const s3 = dossierSection(body, '③ 無料付与・割引オファー');
       const gl = d.grantsAndOffers.promoLight;
       const gp = d.grantsAndOffers.promoPremium;
-      dossierRow(s3, 'Light 無料特典',
+      dossierRow(s3, 'Light 無料付与',
         gl.active ? (gl.lifetime ? '永久' : '〜' + fmtDate(gl.until)) : 'なし', gl.active ? 'ok' : '');
-      dossierRow(s3, 'Premium 無料特典',
+      dossierRow(s3, 'Premium 無料付与',
         gp.active ? (gp.lifetime ? '永久' : '〜' + fmtDate(gp.until)) : 'なし', gp.active ? 'ok' : '');
       if (d.grantsAndOffers.promoInconsistent) {
         dossierRow(s3, '⚠️ 特典データ', '矛盾あり（取消済みなのに値が残っている）', 'ng');
@@ -4524,7 +4542,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin'];
     const MK_MULTI_LABELS = {
       mkContract: '契約状態', mkPlan: 'プラン', mkSendable: '送信可否', mkPp: 'Plus 資格',
-      mkHistory: '送信履歴', mkOfferState: 'オファー', mkPromoState: '無料特典',
+      mkHistory: '送信履歴', mkOfferState: 'オファー', mkPromoState: '現在の無料付与',
       mkFrequency: '送信タイミング', mkLastLogin: '最終ログイン',
     };
     function mkInitFilters() {
@@ -4581,10 +4599,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     /** カムバックの絞り込みを複数選択へ変換する */
-    const CB_MULTI_IDS = ['cbContract', 'cbPlan', 'cbWithdrawn', 'cbPromo', 'cbGrantable', 'cbHistory'];
+    const CB_MULTI_IDS = ['cbContract', 'cbPlan', 'cbWithdrawn',
+      'cbGrantNow', 'cbGrantHistory', 'cbGrantable', 'cbHistory'];
     const CB_MULTI_LABELS = {
       cbContract: '対象区分', cbPlan: 'プラン', cbWithdrawn: '退会履歴',
-      cbPromo: '現在の特典', cbGrantable: '付与可否', cbHistory: '送信履歴',
+      // 「特典」という曖昧な語をやめ、**いま**と**これまで**を分ける
+      cbGrantNow: '現在の無料付与', cbGrantHistory: '無料付与履歴',
+      cbGrantable: '付与可否', cbHistory: '送信履歴',
     };
     function cbInitFilters() {
       for (const id of CB_MULTI_IDS) {
@@ -4836,7 +4857,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         contract: sel.cbContract,
         plan: sel.cbPlan,
         withdrawn: sel.cbWithdrawn,
-        promo: sel.cbPromo,
+        // 無料付与は「いま」と「これまで」を別条件で送る（項目間は AND）
+        currentGrant: sel.cbGrantNow,
+        grantHistory: sel.cbGrantHistory,
         grantable: sel.cbGrantable,
         history: sel.cbHistory,
       });
@@ -4868,7 +4891,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         ['期限切れ', s.contract?.expired || 0],
         ['契約なし', s.contract?.none || 0],
         ['退会あり', s.withdrawn || 0],
-        ['特典あり', (s.promo?.light || 0) + (s.promo?.trialActive || 0)],
+        ['無料付与あり', (s.promo?.light || 0) + (s.promo?.trialActive || 0)],
         ['付与できる', s.grantable || 0],
       ];
       items.forEach((it, i) => {
@@ -4927,8 +4950,33 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         tr.appendChild(cCon);
 
         tr.appendChild(td('c-plan', 'プラン', PLAN_LABEL[r.planGroup] || r.planGroup));
-        tr.appendChild(td('c-promo', '現在の特典', r.promoText,
-          r.promoInconsistent ? 'ng-txt' : (r.promoText === '特典なし' ? 'muted' : 'ok-txt')));
+        // 無料付与は「いま」と「これまで」を 1 セルに分けて出す（色だけに頼らない）
+        const fg = r.freeGrant || null;
+        const cell = document.createElement('td');
+        cell.className = 'c-promo';
+        cell.setAttribute('data-label', '無料付与');
+        const nowLine = document.createElement('div');
+        nowLine.className = 'fg-now ' + (fg && fg.conflicts && fg.conflicts.length ? 'ng-txt'
+          : (fg && fg.badges && fg.badges.some((x) => x.tone === 'ok') ? 'ok-txt' : 'muted'));
+        nowLine.textContent = (fg && fg.conflicts && fg.conflicts.length ? '⚠️ ' : '')
+          + (fg ? fg.current : (r.promoText || '—'));
+        cell.appendChild(nowLine);
+        const histLine = document.createElement('div');
+        histLine.className = 'fg-hist';
+        histLine.textContent = '履歴: ' + (fg ? fg.history : '—');
+        if (fg && fg.historyNote) histLine.title = fg.historyNote;
+        cell.appendChild(histLine);
+        if (fg && fg.source) {
+          const src = document.createElement('div');
+          src.className = 'fg-src'; src.textContent = '付与元: ' + fg.source;
+          cell.appendChild(src);
+        }
+        if (fg && fg.conflicts && fg.conflicts.length) {
+          const why = document.createElement('div');
+          why.className = 'fg-why'; why.textContent = fg.conflicts.join(' / ');
+          cell.appendChild(why);
+        }
+        tr.appendChild(cell);
         tr.appendChild(td('c-grantable', '付与可否',
           r.grantable ? '付与できる' : ('付与不可: ' + (r.grantBlockedLabel || '')),
           r.grantable ? 'ok-txt' : 'ng-txt'));

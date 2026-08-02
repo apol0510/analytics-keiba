@@ -129,6 +129,20 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 検証: `npm run test:marketing`（`adminMultiFilter.test.mjs` /
 `adminMultiFilterUi.guard.test.mjs` / `adminMarketingHandler.smoke.test.mjs`）
 
+## 2-3. 「特典」という語を使わない（2026-08-03）
+
+無料で配った閲覧権は **「無料付与」** と呼ぶ。フィルター・チップ・条件要約・追従バー・
+一覧・顧客カルテの表示から「特典」を外した（何を指すのか読み手によって割れるため）。
+
+- 顧客マーケティングの絞り込み「無料特典」→ **「現在の無料付与」**（値は変更なし）
+- 一覧の列「無料特典」→ **「現在の無料付与」**
+- 顧客カルテ「③ 無料特典・割引オファー」→ **「③ 無料付与・割引オファー」**
+- カムバック特典タブの「現在の特典」は廃止し、**現在の無料付与 / 無料付与履歴**の 2 つへ分離
+  （詳細は `COMEBACK_GRANTS.md` §6-3）
+
+判定の単一源は `src/lib/entitlements/freeGrantStatus.js`。**画面で Airtable の
+`*GrantLifetime` / `*GrantUntil` を直接読まない**（表示と検索が食い違うため。guard で検査）。
+
 ## 3. 販売管理とマーケティング管理の分離
 
 画面はタブで分ける。**API も別**（`premium-plus-eligibility` / `admin-marketing`）。

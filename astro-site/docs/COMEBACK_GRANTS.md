@@ -446,6 +446,68 @@ UI 側でも `issued` 以外には**取り消しボタンを出さない**。
 検証: `npm run test:comeback`（`comebackFilterSelection.test.mjs` /
 `adminComebackHandler.smoke.test.mjs`）
 
+## 6-3. 無料付与の「いま」と「これまで」（2026-08-03）
+
+管理画面にあった **「現在の特典」という 1 つの曖昧な絞り込みを廃止**し、
+次の 2 つへ分けた。判定の単一源は `src/lib/entitlements/freeGrantStatus.js`（純粋）。
+
+| 絞り込み | 何を見るか |
+|---|---|
+| **現在の無料付与** | いま閲覧できるか（`resolveCurrentFreeGrant`） |
+| **無料付与履歴** | 記録として残っているか（`resolveFreeGrantHistory`） |
+
+⚠️ 「現在有効か」と「過去に付与したか」を**混ぜない**。運用でよく使う
+「いまは付与なしだが、過去に配った人」は、この 2 つが分かれていないと作れない。
+
+### 現在の無料付与の区分
+
+`none` / `light_period` / `light_lifetime` / `premium_period` / `premium_lifetime` /
+`both` / `inconsistent`
+
+- `Lifetime=true` → 永久無料（**Premium 永久無料も既存フィールドで表現できる**）
+- `Until` が現在より未来 → 期間限定無料中。**現在時刻ちょうどは「終了」扱い**（送りすぎない側へ倒す）
+- `Lifetime=false` かつ `Until` なし → 現在は無料付与なし
+- Light と Premium が同時に有効 → `both` も立てる（1 顧客が複数区分に当たりうる）
+
+### 無料付与履歴の区分
+
+`no_record` / `light` / `premium` / `both` / `ended` / `revoked` / `inconsistent` / `unknown`
+
+- **`no_record` は「一度も付与していない」ではなく「この台帳に記録が無い」**。
+  フィールド運用開始前の付与・別経路の無料開放は証明できないため、断定しない
+- `*GrantOp` / `*GrantedBy` だけが残っていて種類も時期も確定できない場合は `unknown`（履歴不明）。
+  勝手に「付与歴あり」に倒さない
+
+### 判定に使う既存フィールド（すべて既存。schema 変更なし）
+
+`LightGrantLifetime` / `LightGrantUntil` / `LightGrantedAt` / `LightGrantedBy` /
+`LightGrantOp` / `LightGrantRevokedAt` / `LightGrantRevokeReason` と、
+同じ 7 つの `Premium*`、加えて `ComebackGrantSource`（ティア共通の施策名）。
+
+> ⚠️ 依頼書にあった `LightGrantBy` / `PremiumGrantBy` は**存在しない**。
+> 実フィールド名は `LightGrantedBy` / `PremiumGrantedBy`（`promotionalGrants.js` の `PROMO_FIELDS` が正本）。
+
+### 既存フィールドでは判定できないこと
+
+Customers は **ティアごとに最新 1 回分**しか持たない（再付与で上書きされる）。したがって:
+
+| 判定できる | 判定できない |
+|---|---|
+| 付与された事実 / 最後の付与日時 / 期間終了 / 取消 | **付与回数** / 2 回目以前の内容 / フィールド運用開始前の付与 |
+
+回数や履歴の時系列が要るようになったら、**別テーブル（追記専用の付与台帳）が必要**。
+本対応では作らない（現行フィールドで判定できる範囲に限定した）。
+
+### 不整合時の扱い（fail closed 維持）
+
+`validateFreeGrantConsistency()` が理由を返す。
+
+- 取消の記録より後に値が残っている → **権利を与えない**うえで「要確認」表示
+- 永久無料と期限が同時に設定されている → 「要確認」
+- 期限を読み取れない → 「要確認」
+
+**自動修復しない。** 一覧に理由を出し、選択・付与実行は既存の fail closed 方針のまま。
+
 ## 7. 原子性・冪等性・復旧
 
 ### 顧客単位では原子的

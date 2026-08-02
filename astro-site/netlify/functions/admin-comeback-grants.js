@@ -42,6 +42,11 @@
 
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
+  FREE_GRANT_NOW, FREE_GRANT_NOW_LABEL, FREE_GRANT_NOW_VALUES,
+  FREE_GRANT_HISTORY, FREE_GRANT_HISTORY_LABEL, FREE_GRANT_HISTORY_VALUES,
+  describeFreeGrantFilters, summarizeFreeGrants,
+} from '../../src/lib/entitlements/freeGrantStatus.js';
+import {
   evaluateComebackTarget,
   summarizeComebackAudience,
   canApplyComebackGrant,
@@ -222,6 +227,10 @@ function handleOffers() {
     offerTtlDays: DEFAULT_OFFER_TTL_DAYS,
     maxRecords: MAX_GRANT_RECORDS,
     labels: { skip: CB_SKIP_LABEL },
+    freeGrantFilters: {
+      current: FREE_GRANT_NOW_VALUES.map((v) => ({ value: v, label: FREE_GRANT_NOW_LABEL[v] })),
+      history: FREE_GRANT_HISTORY_VALUES.map((v) => ({ value: v, label: FREE_GRANT_HISTORY_LABEL[v] })),
+    },
     filters: {
       contract: Object.values(MK_CONTRACT),
       plan: Object.values(MK_PLAN),
@@ -286,7 +295,12 @@ const CB_FILTER_ALLOW = Object.freeze({
   plan: ['premium_sanrenpuku', 'premium', 'light', 'free', 'unknown'],
   history: ['never', 'recent', 'sent'],
   withdrawn: ['yes', 'no'],
+  /** 旧「現在の特典」。後方互換のため残す（画面は currentGrant / grantHistory を送る） */
   promo: ['none', 'any', 'light', 'light_lifetime', 'premium', 'premium_ended', 'inconsistent'],
+  /** いま有効な無料付与 */
+  currentGrant: [...FREE_GRANT_NOW_VALUES],
+  /** これまでの無料付与の記録 */
+  grantHistory: [...FREE_GRANT_HISTORY_VALUES],
   grantable: ['grantable', 'blocked'],
 });
 
@@ -315,6 +329,10 @@ async function handleCustomers({ KEY, BASE, now, req }) {
       effectiveTier: v.effectiveTier,
       stateText: v.stateText,
       paidText: v.paidText,
+      // 無料付与（「いま」と「これまで」を分けて返す。画面はこれをそのまま出す）
+      freeGrant: v.freeGrant,
+      currentGrantCodes: v.currentGrantCodes,
+      grantHistoryCodes: v.grantHistoryCodes,
       promoText: v.promoText,
       promoLight: v.promoLight,
       promoPremium: v.promoPremium,
@@ -332,6 +350,9 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     rows,
     matchedCount: matched.length,
     truncated: matched.length > rows.length,
+    // 何で絞ったのかを画面と同じ言葉で返す（表示と検索の食い違いを作らない）
+    freeGrantCondition: describeFreeGrantFilters({ now: filter.currentGrant, history: filter.grantHistory }),
+    freeGrantSummary: summarizeFreeGrants(matched.map((c) => c.view.freeGrant)),
     summary: summarizeComeback(list.map((c) => c.view)),
     totalCustomers: list.length,
     labels: { skip: CB_SKIP_LABEL },

@@ -17,6 +17,25 @@
 
 ## Current Phase
 
+**Phase（2026-08-03 現在・最新）: 無料付与の「いま」と「これまで」を分ける
+（branch `feat/free-grant-status`・Draft PR・merge 前）。**
+
+- 曖昧だった「現在の特典」フィルターを廃止し、**現在の無料付与** と **無料付与履歴** の 2 つへ分離。
+  これで「いまは付与なしだが過去に配った人」を 1 回の検索で作れる
+- 判定の単一源 `src/lib/entitlements/freeGrantStatus.js`（純粋）を追加。
+  UI・検索・集計がすべて同じ関数を通るため、表示と検索結果が食い違わない
+- **Airtable の schema 変更は無し**。既存の `*GrantLifetime` / `*GrantUntil` /
+  `*GrantedAt` / `*GrantedBy` / `*GrantOp` / `*GrantRevokedAt` / `*GrantRevokeReason` /
+  `ComebackGrantSource` だけで判定した
+- **判定できないことを明示**: Customers はティアごとに最新 1 回分しか持たないため、
+  付与回数・2 回目以前の内容・フィールド運用開始前の付与は証明できない。
+  よって記録が無い状態は「付与していない」ではなく **「付与の記録なし」** と表示する
+- 不整合（取消後に値が残る / 永久無料と期限の同時設定 / 期限が読めない）は
+  **自動修復せず**「要確認」と理由を一覧に出す（fail closed 維持）
+- 一覧は 1 セルに「現在」「履歴」「付与元」「不整合理由」を文言で出す（色だけに頼らない）
+- 「特典」という語を、フィルター・チップ・条件要約・追従バー・一覧・顧客カルテから外した
+
+
 **Phase（2026-08-03 現在・最新）: 送信ごとのキャンペーン文面編集
 （branch `feat/campaign-content-editor`・Draft PR・merge 前）。**
 
