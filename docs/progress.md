@@ -17,6 +17,26 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: 台帳 Phase 1b は本番稼働（実イベント 2 件を保存済み・PII なし）。
+Phase 1c（送信側の custom_args 刻印）を branch `feat/marketing-custom-args-phase1c` で実装。
+マーケ送信 gate は OFF のままで、merge・deploy しても本番の送信挙動は変わらない。**
+
+- **1b 完了**: production deploy `6a6e950eabbd67bec878b321`（published commit `394fae2` / ready）。
+  `EMAIL_EVENT_LEDGER_ENABLED` は production / functions scope で **PRESENT**
+- **本番実測（2026-08-02 10:03 / 10:07 JST）**: 自然発生の `delivered` **2 件**が `EmailEvents` へ保存された。
+  `VerificationStatus=verified` / `Provider=sendgrid` / `CreatedBy=sendgrid-webhook` /
+  `EmailHash` 32 桁 / **禁止列なし**（Email / IP / UserAgent / RawUrl / RawPayload）/
+  `ResolutionStatus=unresolved`・`ResolutionReason=no_custom_args`（**1c 前なので正常**）
+- 他テーブルは不変（`CampaignDeliveries` 71 / `ScheduledEmails` 27 / `EmailBlacklist` 15 /
+  `PromotionalOffers` 74）。`Customers` は 1453 → 1454（**自然な新規登録**。台帳とは無関係）
+- **1c 実装**: `campaignCustomArgs.js`（純粋）+ dispatcher 配線。権威データ
+  （`CampaignDeliveries`）から読むだけで **DeliveryKey を送信側で再生成しない**。
+  解決できない相手には**送らない**（fail closed）。契約と理由コードは
+  `astro-site/docs/EMAIL_EVENT_LEDGER.md` §3-3
+- **PR #200 の整理**: #201 で `sendgrid-webhook.js` 側は是正済み。#200 は競合を抱えた stale 状態のため、
+  `emailEventLedger.js` の 1 行だけを `origin/main` から作り直した **PR #202** を代替として作成
+  （#200 は close せず判断待ち）
+
 **Phase（2026-08-02 現在・最新）: 台帳 Phase 1b の Airtable テーブル作成は完了・検証済み。
 本番有効化の前に、書き込みの耐障害修正（バッチ化 + bounded retry + 失敗集計）を
 branch `fix/email-event-ledger-write-resilience` で実装。**既定 OFF・write 0 のまま**。**
@@ -754,7 +774,7 @@ Phase 1a（コード・テスト・docs）は PR #199 で完了。以降は**す
 | **1a-2** | 書き込みのバッチ化・bounded retry・失敗集計 | 実装済み（branch `fix/email-event-ledger-write-resilience`・**merge 未承認**）| なし（write 0）|
 | **1b（テーブル）** | Airtable `EmailEvents` 作成 | **完了**（2026-08-02 / `tblWkaxu7p0MRuUwL` / 21 列 / primary=EventKey / 0 行）| なし（env 未投入なので書かれない）|
 | **1b（env）** | `EMAIL_EVENT_LEDGER_ENABLED=true`（小文字 true / Functions scope / Production context）を投入 → **redeploy** | **ユーザー・未実施** | 台帳への write 開始 |
-| **1c** | 送信側で `custom_args`（delivery_key / campaign_id / customer_record_id）を刻む | 別 PR | 送信経路の変更 |
+| **1c** | 送信側で `custom_args` を刻む（`campaignCustomArgs.js` + dispatcher 配線）| **実装済み**（branch `feat/marketing-custom-args-phase1c`・**merge 未承認**）| 送信経路の変更（送信 gate は OFF のまま）|
 | **1d** | 受信側へ配信索引を渡し `resolved` を有効化。集約列を追加 | 別 PR | 表示の変更 |
 
 - **1b を飛ばして 1c を先に入れない**（刻んでも保存先が無い）。
