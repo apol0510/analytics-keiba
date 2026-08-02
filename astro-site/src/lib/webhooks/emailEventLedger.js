@@ -186,51 +186,72 @@ export function buildEventKey({ event, hashFn }) {
 }
 
 /**
- * イベントを配信・顧客へ結び付ける。**推測しない**。
+ * イベントを配信・顧客へ結び付ける。**推測しない**（Phase 1d で完全一致のみへ厳格化）。
+ *
+ * ── resolved になる条件（3 点すべて）──────────────────────────
+ * 送信側（Phase 1c）は `delivery_key` / `campaign_delivery_id` / `customer_record_id` を
+ * **必ず 3 つ揃えて**刻む。したがって受信側も 3 点が揃い、かつ配信台帳の実データと
+ * **完全一致**したときだけ `resolved` にする。
+ *
+ *   1. `delivery_key`         === `CampaignDeliveries.DeliveryKey`
+ *   2. `campaign_delivery_id` === `CampaignDeliveries` の recordId
+ *   3. `customer_record_id`   === `CampaignDeliveries.CustomerRecordId`
+ *
+ * 1 つでも欠ける・見つからない → `unresolved`（保存はする）。
+ * 値が食い違う・候補が複数 → `conflict`（**どちらも採らない**）。
+ * **メールアドレスでは絶対に結び付けない**（同一アドレスの重複 Customers が実在する）。
  *
  * @param {{ event: object, deliveryIndex?: Map<string, object> }} input
- *   deliveryIndex: DeliveryKey / recordId → { recordId, customerRecordId, campaignId, campaignVersion }
+ *   deliveryIndex: DeliveryKey / recordId → { recordId, deliveryKey, customerRecordId, campaignId, campaignVersion }
  */
 export function resolveAttribution({ event, deliveryIndex = new Map() } = {}) {
   const ca = (event && event.customArgs) || {};
-  const candidates = [];
+  const wantKey = str(ca.deliveryKey);
+  const wantDelivery = str(ca.campaignDeliveryId);
+  const wantCustomer = str(ca.customerRecordId);
 
-  if (ca.deliveryKey && deliveryIndex.has(ca.deliveryKey)) candidates.push(deliveryIndex.get(ca.deliveryKey));
-  if (ca.campaignDeliveryId && deliveryIndex.has(ca.campaignDeliveryId)) candidates.push(deliveryIndex.get(ca.campaignDeliveryId));
+  const unresolved = (reason) => ({
+    status: RESOLUTION.UNRESOLVED,
+    reason,
+    // 確定していない値を顧客・配信の列へ書かない（保存はするが結び付けない）
+    deliveryKey: wantKey,
+    campaignDeliveryId: '',
+    customerRecordId: '',
+    campaignId: str(ca.campaignId),
+    campaignVersion: str(ca.campaignVersion),
+  });
+  const conflict = (reason) => ({
+    status: RESOLUTION.CONFLICT, reason,
+    deliveryKey: wantKey, campaignDeliveryId: '', customerRecordId: '', campaignId: '', campaignVersion: '',
+  });
 
-  // 送信時の刻印だけを信頼する。email 単独では**結び付けない**
-  if (candidates.length === 0) {
-    return {
-      status: RESOLUTION.UNRESOLVED,
-      reason: ca.deliveryKey || ca.campaignDeliveryId ? 'delivery_not_found' : 'no_custom_args',
-      deliveryKey: ca.deliveryKey || '',
-      campaignDeliveryId: '',
-      customerRecordId: ca.customerRecordId || '',
-      campaignId: ca.campaignId || '',
-      campaignVersion: ca.campaignVersion || '',
-    };
-  }
+  // 刻印が 1 つでも欠けていれば結び付けない（1c 以前のイベントはここで止まる）
+  if (!wantKey && !wantDelivery && !wantCustomer) return unresolved('no_custom_args');
+  if (!wantKey || !wantDelivery || !wantCustomer) return unresolved('incomplete_custom_args');
 
-  // 複数の候補が食い違う場合は conflict（どちらかを選ばない）
-  const ids = new Set(candidates.map((c) => str(c.recordId)));
-  if (ids.size > 1) {
-    return { status: RESOLUTION.CONFLICT, reason: 'multiple_deliveries', deliveryKey: ca.deliveryKey || '', campaignDeliveryId: '', customerRecordId: '', campaignId: '', campaignVersion: '' };
-  }
+  const byKey = deliveryIndex.get(wantKey) || null;
+  const byId = deliveryIndex.get(wantDelivery) || null;
+  if (!byKey && !byId) return unresolved('delivery_not_found');
 
-  const hit = candidates[0];
-  // custom_args の顧客と台帳の顧客が食い違うなら結び付けない（誤紐付け防止）
-  if (ca.customerRecordId && str(hit.customerRecordId) && ca.customerRecordId !== str(hit.customerRecordId)) {
-    return { status: RESOLUTION.CONFLICT, reason: 'customer_mismatch', deliveryKey: ca.deliveryKey || '', campaignDeliveryId: '', customerRecordId: '', campaignId: '', campaignVersion: '' };
-  }
+  // 2 つの経路が別のレコードを指すなら、どちらが正しいか決められない
+  if (byKey && byId && str(byKey.recordId) !== str(byId.recordId)) return conflict('multiple_deliveries');
+  const hit = byKey || byId;
+  if (!hit) return unresolved('delivery_not_found');
+
+  // 3 点完全一致。1 つでもズレたら**採らない**
+  if (str(hit.deliveryKey) !== wantKey) return conflict('delivery_key_mismatch');
+  if (str(hit.recordId) !== wantDelivery) return conflict('campaign_delivery_mismatch');
+  if (str(hit.customerRecordId) !== wantCustomer) return conflict('customer_mismatch');
 
   return {
     status: RESOLUTION.RESOLVED,
     reason: '',
-    deliveryKey: str(hit.deliveryKey) || ca.deliveryKey || '',
+    deliveryKey: str(hit.deliveryKey),
     campaignDeliveryId: str(hit.recordId),
-    customerRecordId: str(hit.customerRecordId) || ca.customerRecordId || '',
-    campaignId: str(hit.campaignId) || ca.campaignId || '',
-    campaignVersion: str(hit.campaignVersion) || ca.campaignVersion || '',
+    customerRecordId: str(hit.customerRecordId),
+    // キャンペーンは配信台帳の値を正とする（custom_args は照合済みなので同値）
+    campaignId: str(hit.campaignId) || str(ca.campaignId),
+    campaignVersion: str(hit.campaignVersion) || str(ca.campaignVersion),
   };
 }
 
@@ -369,6 +390,42 @@ export function summarizeCustomerEvents({ ledgerRows = [], ledgerAvailable = fal
     unsubscribed: of(EVENT_TYPE.UNSUBSCRIBE).length + of(EVENT_TYPE.GROUP_UNSUBSCRIBE).length,
     spamReported: of(EVENT_TYPE.SPAMREPORT).length,
     clickCategories: cats,
+  };
+}
+
+/**
+ * 顧客カルテ用の集約。**台帳（`EmailEvents`）が正本**で、配信基盤の API は参照しない
+ * （保持 3 日で消えるものを正本にすると、過去が勝手に「反応なし」へ化ける）。
+ *
+ * - **`resolved` の行だけ**を顧客へ集計する。`unresolved` / `conflict` は
+ *   「誰のものか確定していない事実」なので、件数だけ返して顧客には結び付けない
+ * - 台帳が無い期間は 0 ではなく **`available:false`（不明）**
+ *
+ * @param {{ledgerRows: object[], customerRecordId: string, ledgerAvailable?: boolean}} input
+ */
+export function summarizeCustomerEventsFromLedger({ ledgerRows = [], customerRecordId, ledgerAvailable = false } = {}) {
+  const target = str(customerRecordId);
+  if (!ledgerAvailable || !target) {
+    return { ...summarizeCustomerEvents({ ledgerAvailable: false }), unattributed: 0, conflicts: 0 };
+  }
+  const rows = [];
+  let unattributed = 0;
+  let conflicts = 0;
+  for (const r of ledgerRows || []) {
+    const f = (r && r.fields) || {};
+    const status = lower(f.ResolutionStatus);
+    if (status === RESOLUTION.CONFLICT) { conflicts += 1; continue; }
+    if (status !== RESOLUTION.RESOLVED) { unattributed += 1; continue; }
+    // resolved でも顧客が違えばこの人の反応ではない
+    if (str(f.CustomerRecordId) !== target) continue;
+    rows.push(r);
+  }
+  return {
+    ...summarizeCustomerEvents({ ledgerRows: rows, ledgerAvailable: true }),
+    /** 誰のものか確定できていない行数（**この顧客の 0 件と混同しない**） */
+    unattributed,
+    /** 食い違いとして保存された行数 */
+    conflicts,
   };
 }
 

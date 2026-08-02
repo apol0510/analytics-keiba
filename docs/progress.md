@@ -17,6 +17,21 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: Phase 1c まで本番反映済み（`b5946d4`）。
+Phase 1d（受信側の resolved 判定）を branch `feat/ledger-resolve-phase1d` で実装。
+**既存の EmailEvents 行は書き換えない**・本番挙動の変化は `resolved` が付き始めることだけ。**
+
+- **1c 反映済み**: PR #202（`8bd07b7`）/ #203（`b5946d4`）merge・production deploy ready。
+  PR #200 は #202 を代替として close 済み
+- **1d 実装**: `emailEventDeliveryIndex.js`（read-only・I/O 注入）で `CampaignDeliveries` を
+  必要な鍵だけ GET し、`delivery_key` / `campaign_delivery_id` / `customer_record_id` の
+  **3 点完全一致**のときだけ `resolved`。不一致・複数候補は `conflict`、欠落・未発見は `unresolved`
+- **メールアドレスによる推測紐付けは 1d 以降も禁止**（同一アドレスの重複 Customers が実在）
+- 顧客カルテ用の集約は `summarizeCustomerEventsFromLedger()` が**台帳を正本**として計算
+  （`unresolved` は `unattributed` として別枠。0 件と混同しない）。admin 画面への配線は未着手
+- gate OFF のときは索引も引かない（外部 I/O ゼロ）。索引が引けなくても受信は止めない
+
+
 **Phase（2026-08-02 現在・最新）: 台帳 Phase 1b は本番稼働（実イベント 2 件を保存済み・PII なし）。
 Phase 1c（送信側の custom_args 刻印）を branch `feat/marketing-custom-args-phase1c` で実装。
 マーケ送信 gate は OFF のままで、merge・deploy しても本番の送信挙動は変わらない。**

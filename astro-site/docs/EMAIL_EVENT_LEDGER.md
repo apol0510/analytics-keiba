@@ -159,6 +159,53 @@ raw payload。施策判断に不要で、漏えい時の被害が大きい。
   1c 反映後のイベントは `custom_args` を持つので、1d で確定できる**候補**になる
 - **メールアドレス単独で顧客へ結び付けることは、1c 以降も禁止**（同一アドレスの重複 Customers が実在）
 
+## 3-4. 受信側の紐付け（Phase 1d / resolved 判定）
+
+送信側の刻印（§3-3）を **`CampaignDeliveries` の実データと突き合わせて**初めて `resolved` にする。
+刻印だけを信じると、偽装された custom_args で他人の反応を作れてしまう。
+索引は単一源 **`src/lib/webhooks/emailEventDeliveryIndex.js`**（read-only / I/O 注入）。
+
+### resolved の条件（**3 点すべて完全一致**）
+
+| # | custom_args | 照合先 |
+|---|---|---|
+| 1 | `delivery_key` | `CampaignDeliveries.DeliveryKey` |
+| 2 | `campaign_delivery_id` | `CampaignDeliveries` の recordId |
+| 3 | `customer_record_id` | `CampaignDeliveries.CustomerRecordId` |
+
+### resolved にしない場合
+
+| 状況 | 結果 | 理由コード |
+|---|---|---|
+| 刻印が 1 つも無い（1c 以前のイベント）| `unresolved` | `no_custom_args` |
+| 3 点のどれかが欠ける | `unresolved` | `incomplete_custom_args` |
+| 索引に見つからない / 索引を引けなかった | `unresolved` | `delivery_not_found` |
+| 鍵・配信 recordId・顧客 recordId のいずれかが台帳と違う | **`conflict`** | `delivery_key_mismatch` / `campaign_delivery_mismatch` / `customer_mismatch` |
+| 鍵と recordId が別レコードを指す | **`conflict`** | `multiple_deliveries` |
+| 同一 `DeliveryKey` に配信行が 2 行以上 | `unresolved`（索引に載せない）| `delivery_not_found` |
+
+- `unresolved` / `conflict` の行は**顧客列・配信列を書かない**（保存はするが結び付けない）
+- **メールアドレスでは絶対に結び付けない**（1d 以降も禁止）
+
+### 索引の引き方（本番 Webhook の負荷を上げない）
+
+- 刻印を持つイベントが 1 件も無ければ **1 リクエストも出さない**
+- `delivery_key`（sha256 hex のみ）を OR 条件にして **必要な行だけ GET**（全件走査しない）
+- 20 件/リクエストで chunk・1 受信あたり最大 100 鍵
+- 取得するのは `DeliveryKey` / `CustomerRecordId` / `CampaignType` / `Status` だけ（**宛先アドレスは取らない**）
+- **gate（`EMAIL_EVENT_LEDGER_ENABLED`）が OFF なら索引も引かない**（外部 I/O ゼロ）
+- 引けなくても受信処理は止めない（空の索引 = すべて `unresolved`）
+
+### 顧客カルテの集約は台帳が正本
+
+`summarizeCustomerEventsFromLedger()` が `EmailEvents` から集計する（配信基盤の API は参照しない。
+保持 3 日で消えるものを正本にすると、過去が勝手に「反応なし」へ化ける）。
+
+- **`resolved` の行だけ**を顧客へ集計する。`unresolved` は `unattributed`、
+  食い違いは `conflicts` として**別枠**で返す（この顧客の 0 件と混同しない）
+- 台帳が無い期間は 0 ではなく `available:false`（**不明**）
+- **既存の `EmailEvents` 行は書き換えない。** 1c 以前のイベントは刻印が無いので `unresolved` のまま残る
+
 ## 4. 署名検証
 
 Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）。
@@ -179,7 +226,7 @@ Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）
 | **1a-2**（本 PR） | 書き込みのバッチ化・bounded retry・失敗集計（§3-2）。**既定 OFF のまま** | なし（write 0）|
 | **1b** | Airtable に `EmailEvents` を作成（**2026-08-02 完了**: `tblWkaxu7p0MRuUwL` / 21 列 / primary=`EventKey` / 0 行）→ `EMAIL_EVENT_LEDGER_ENABLED=true` + redeploy（**未実施**）| 台帳への write 開始 |
 | **1c** | 送信側で `custom_args` を刻む（§3-3・**実装済み / merge 未承認**）| 送信経路の変更（送信 gate は OFF のまま）|
-| **1d** | 受信側へ配信索引を渡し `resolved` を有効化。集約列を追加 | 表示の変更 |
+| **1d** | 受信側へ配信索引を渡し `resolved` を有効化（§3-4・**実装済み / merge 未承認**）。集約列と admin 表示は未着手 | 表示の変更 |
 
 **1b より前は 1 バイトも書かない。** env 未設定・鍵未設定・列不足のいずれでも write 0。
 

@@ -167,15 +167,33 @@ async function applyEmailEventLedger({ events, now }) {
     buildLedgerBatch, assertOnlyLedgerFields, isLedgerWriteEnabled, EMAIL_EVENTS_TABLE,
   } = await import('../../src/lib/webhooks/emailEventLedger.js');
   const { writeLedgerRows } = await import('../../src/lib/webhooks/emailEventLedgerWriter.js');
+  const { fetchDeliveryIndex } = await import('../../src/lib/webhooks/emailEventDeliveryIndex.js');
   const { createHash } = await import('node:crypto');
   const hashFn = (s) => createHash('sha256').update(String(s), 'utf8').digest('hex');
 
+  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+  const enabled = isLedgerWriteEnabled(process.env) && !!AIRTABLE_API_KEY && !!AIRTABLE_BASE_ID;
+
+  // ── 配信索引（Phase 1d）─────────────────────────────────────
+  // 送信側（Phase 1c）が刻んだ delivery_key を **CampaignDeliveries の実データと突き合わせる**ため
+  // だけに read-only で引く。gate OFF のときは引かない（従来どおり外部 I/O ゼロ）。
+  // 刻印を持つイベントが無ければ 1 リクエストも出さない。
+  // 引けなかった場合は空の索引 = すべて unresolved（**推測で結び付けない**）。
+  const lookup = enabled
+    ? await fetchDeliveryIndex({
+      rawEvents: events,
+      apiKey: AIRTABLE_API_KEY,
+      baseId: AIRTABLE_BASE_ID,
+      fetchFn: fetch,
+    }).catch(() => ({ index: new Map(), lookedUp: 0, found: 0, requests: 0, ok: false }))
+    : { index: new Map(), lookedUp: 0, found: 0, requests: 0, ok: true };
+
   const batch = buildLedgerBatch({
     rawEvents: events,
-    // 送信側が custom_args を刻むまで配信台帳の索引は空（= すべて unresolved）。
-    // 索引を渡すのは **Phase 1c**（送信側の刻印）が入ってから。
-    // 1b は Airtable テーブル作成 + env 投入（`docs/EMAIL_EVENT_LEDGER.md` §5 が段取りの単一源）。
-    deliveryIndex: new Map(),
+    // 3 点（delivery_key / campaign_delivery_id / customer_record_id）が
+    // 配信台帳と完全一致したイベントだけが resolved になる。
+    deliveryIndex: lookup.index,
     receivedAtMs: now,
     hashFn,
     verification: 'verified',
@@ -187,11 +205,10 @@ async function applyEmailEventLedger({ events, now }) {
     accepted: batch.accepted,
     rejected: batch.rejected,
     byResolution: batch.byResolution,
+    // 索引の引き具合（件数のみ。鍵・アドレス・recordId は出さない）
+    lookup: { keys: lookup.lookedUp, found: lookup.found, requests: lookup.requests, ok: lookup.ok },
   };
 
-  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-  const enabled = isLedgerWriteEnabled(process.env) && !!AIRTABLE_API_KEY && !!AIRTABLE_BASE_ID;
   if (!enabled) {
     // 既定 OFF: 何が届いたかだけ返す（本番 write 0）
     return {
