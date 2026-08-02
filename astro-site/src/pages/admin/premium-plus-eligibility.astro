@@ -326,7 +326,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </p>
         <div class="toolbar">
           <button type="button" id="mkDispatchCheck" class="btn-ghost">配信内容を確認（送信しない）</button>
-          <button type="button" id="mkDispatchRun" class="btn-danger" disabled>実際に配信する</button>
+          <button type="button" id="mkDispatchRun" class="btn-danger" disabled>今すぐ送信</button>
         </div>
         <p class="note" id="mkDispatchState"></p>
         <div id="mkDispatchResult"></div>
@@ -1049,6 +1049,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     canDryRun, canEnqueue, canDispatchCheck, canDispatchSend,
     groupCampaigns, buildSendConfirmation, resolveJobBadge, summarizeFilters, summarizeExclusions,
   } from '../../lib/marketing/marketingConsoleFlow.js';
+  import {
+    SEND_BLOCK, SEND_BLOCK_LABEL, buildDispatchPreflight, canSendNow, verifySendPrecondition,
+    buildSendNowConfirmation, classifySendOutcome, summarizeSendResult,
+  } from '../../lib/marketing/marketingSendNow.js';
+  window.__mkSend = {
+    SEND_BLOCK, SEND_BLOCK_LABEL, buildDispatchPreflight, canSendNow, verifySendPrecondition,
+    buildSendNowConfirmation, classifySendOutcome, summarizeSendResult,
+  };
   window.__mkFlow = {
     STEP, BLOCK, BLOCK_LABEL, computeSelectionFingerprint, isDryRunStale, resolveStep,
     canDryRun, canEnqueue, canDispatchCheck, canDispatchSend,
@@ -2519,13 +2527,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
-    async function mkDispatchCall(dryRun) {
+    async function mkDispatchCall(dryRun, jobId) {
       const secret = secretEl.value.trim();
       if (!secret) { $('connBody').hidden = false; throw new Error('管理シークレットを入力してください'); }
       const res = await fetch(DISPATCH_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-        body: JSON.stringify({ dryRun }),
+        // jobId を渡すと、そのジョブだけが対象になる（他のキューを巻き込まない）
+        body: JSON.stringify(jobId ? { dryRun, jobId } : { dryRun }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
@@ -2565,7 +2574,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           ? '確認しました。この内容で配信できます。'
           : '送信待ちのキューはありません。';
         // 送る相手が 1 人もいないなら実行ボタンは開けない
-        mkState.dispatch = { ...mkState.dispatch, check: { willSend, jobs: data.jobs } };
+        // 「これから送る 1 件」を確定させる。1 件に特定できなければ送らせない
+        const preflight = sendApi().buildDispatchPreflight(data);
+        mkState.dispatch = { ...mkState.dispatch, check: { willSend, jobs: data.jobs }, preflight, raw: data };
+        if (!preflight.ok) {
+          mkNotify('warn', '送信できません', sendApi().SEND_BLOCK_LABEL[preflight.reason] || '');
+        }
         mkSyncFlow();
         if (!(data.jobs && willSend > 0)) {
           mkNotify('warn', '送信対象がありません', '送信待ちのジョブが無いか、再検証で全員除外されました。');
@@ -2578,60 +2592,123 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
     });
 
+    /** 送信系の判定の単一源（marketingSendNow.js） */
+    const sendApi = () => window.__mkSend;
+
     $('mkDispatchRun').addEventListener('click', async () => {
-      const verdict = flowApi().canDispatchSend({ ...mkState, selectedIds: [...mkSelected] });
-      if (!verdict.allowed) { mkNotify('warn', '送信できません', flowApi().BLOCK_LABEL[verdict.reason]); return; }
+      const btn = $('mkDispatchRun');
+      if (btn.dataset.busy === '1') return;                  // 二重クリックで 2 回走らせない
       const c = mkState.campaign || currentCampaign();
-      const operationId = 'send-' + Date.now().toString(36);
-      const conf = flowApi().buildSendConfirmation({
-        campaign: c, dryRun: mkState.dryRun, dispatchCheck: mkState.dispatch.check,
-        sendEnabled: mkState.sendEnabled, dispatchEnabled: mkState.dispatchEnabled, operationId,
+      const sendState = {
+        busy: mkState.busy, dispatchEnabled: mkState.dispatchEnabled,
+        dryRun: mkState.dryRun,
+        dryRunStale: mkState.dryRun ? flowApi().isDryRunStale({ dryRun: mkState.dryRun, current: { ...mkState, selectedIds: [...mkSelected] } }) : true,
+        enqueued: mkState.enqueued, preflight: mkState.dispatch.preflight,
+        sent: !!mkState.dispatch.sent, campaign: c,
+      };
+      const verdict = sendApi().canSendNow(sendState);
+      if (!verdict.allowed) { mkNotify('warn', '送信できません', sendApi().SEND_BLOCK_LABEL[verdict.reason] || ''); return; }
+
+      const operationId = 'send-' + (mkState.dispatch.preflight.jobId || 'job') + '-' + Date.now().toString(36);
+      const conf = sendApi().buildSendNowConfirmation({
+        campaign: c, dryRun: mkState.dryRun, preflight: mkState.dispatch.preflight,
+        dispatchEnabled: mkState.dispatchEnabled, sendEnabled: mkState.sendEnabled, operationId,
       });
-      // ① 内容を読ませる確認
+
+      // ① 内容を読ませる（何が起きるかを全部出す）
       const ok1 = window.confirm(
-        '【最終確認】実際にメールが届きます\n\n'
-        + 'キャンペーン: ' + conf.campaignName + ' v' + conf.version + '\n'
-        + '対象: ' + conf.audience + '\n'
-        + '選択 ' + conf.selected + ' 名 / 除外 ' + conf.excluded + ' 名 / 送信予定 ' + conf.willSend + ' 名\n'
+        '【今すぐ送信】' + conf.effect + '\n\n'
+        + 'キャンペーン: ' + conf.campaignName + ' v' + conf.version + '（' + conf.kind + '）\n'
+        + '宛先: ' + conf.audience + '\n'
+        + '選択 ' + conf.selected + ' 名 / 対象 ' + conf.targeted + ' 名 / 除外 ' + conf.excluded + ' 名\n'
+        + '実送信予定: ' + conf.willSend + ' 通\n'
+        + 'jobId: ' + conf.jobId + '\n'
+        + 'operationId: ' + conf.operationId + '\n'
         + 'gate: 登録' + (conf.gate.enqueue ? '可' : '不可') + ' / 配信' + (conf.gate.dispatch ? '可' : '不可') + '\n'
-        + '取消できる段階: ' + conf.cancelable + '\n'
-        + conf.afterSend + '\n'
-        + conf.duplicateGuard + '\n\n'
-        + conf.effect + '\n\n続けますか？'
+        + '二重送信防止: ' + conf.duplicateGuard + '\n'
+        + conf.afterSend + '\n\n続けますか？'
       );
       if (!ok1) return;
-      // ② 誤操作防止（人数を入力させる）
-      const typed = window.prompt('確認のため、送信予定人数「' + conf.willSend + '」を入力してください');
-      if (String(typed || '').trim() !== String(conf.willSend)) { mkNotify('warn', '送信を中止しました', '入力が一致しませんでした。'); return; }
 
-      const btn = $('mkDispatchRun');
-      if (btn.dataset.busy === '1') return;          // 二重クリックで二重送信しない
+      // ② 通常配信は送信予定人数の入力一致を必須にする
+      let typed = '';
+      if (conf.requiresTypedCount) {
+        typed = window.prompt('確認のため、実送信予定人数「' + conf.willSend + '」を入力してください') || '';
+      }
+
       btn.dataset.busy = '1';
       mkState.busy = true; mkSyncFlow();
-      $('mkDispatchState').textContent = conf.willSend + ' 通を送信中…';
+      $('mkDispatchState').textContent = '送信直前の再確認中…';
       try {
-        const data = await mkDispatchCall(false);
-        mkState.busy = false;
-        btn.dataset.busy = '';
-        // 送信後は直前確認を無効化する。もう一度確認しない限り実配信ボタンは開かない
-        mkState.dispatch = { sent: true, result: data, check: null };
-        const failed = Number(data.failed) || 0;
-        if (failed > 0) {
-          mkNotify('warn', '一部が失敗しました（成功分は取り消しません）',
-            '送信 ' + data.sent + ' 通 / 失敗 ' + failed + ' 通。Step 6 の送信状況で理由を確認してください。');
-        } else {
-          mkNotify('ok', '送信しました', '送信 ' + data.sent + ' 通 / スキップ ' + (data.skipped || 0) + ' 通。実配信（delivered）は台帳で確認します。');
+        // ③ 直前にもう一度 dryRun:true を取り、**同じ jobId・同じ内容**であることを確かめる
+        const latest = await mkDispatchCall(true, mkState.dispatch.preflight.jobId);
+        const pre = sendApi().verifySendPrecondition({
+          preflight: mkState.dispatch.preflight, latest,
+          confirmedCount: conf.willSend, typedCount: typed, campaign: c,
+        });
+        if (!pre.ok) {
+          mkState.busy = false; btn.dataset.busy = ''; mkSyncFlow();
+          mkNotify('warn', '送信を中止しました', sendApi().SEND_BLOCK_LABEL[pre.reason] || '');
+          $('mkDispatchState').textContent = '';
+          return;
         }
-        $('mkDispatchState').textContent = '送信 ' + data.sent + ' / スキップ ' + (data.skipped || 0) + ' / 失敗 ' + failed;
+
+        // ④ 実送信（既存 dispatcher のみ。対象は確認したジョブ 1 件に限定する）
+        $('mkDispatchState').textContent = conf.willSend + ' 通を送信中…';
+        const data = await mkDispatchCall(false, pre.jobId);
+        const res = sendApi().summarizeSendResult(data, { completedAt: new Date().toISOString() });
+        mkState.busy = false; btn.dataset.busy = '';
+        // 送信後は直前確認を破棄する（同じ画面から二度押せない）
+        mkState.dispatch = { sent: true, result: data, summary: res, check: null, preflight: null };
+        mkRenderSendResult(conf, res);
         mkSyncFlow();
+        if (res.outcome.key === 'PARTIAL' || res.outcome.key === 'FAILED') {
+          mkNotify('warn', res.outcome.label + 'で終了しました', res.partialNote || '失敗理由を確認してください。再送は自動では行いません。');
+        } else {
+          mkNotify('ok', '送信しました', res.sent + ' 通を配信基盤が受理しました。' + res.deliveredNote);
+        }
       } catch (e) {
-        mkState.busy = false;
-        btn.dataset.busy = '';
-        mkSyncFlow();
-        mkNotify('err', '送信に失敗しました', '配信基盤へ到達できませんでした。Step 6 の送信状況で実際に送られたかを必ず確認してください。');
+        mkState.busy = false; btn.dataset.busy = ''; mkSyncFlow();
+        mkNotify('err', '送信に失敗しました',
+          '配信基盤へ到達できませんでした。Step 6 の送信状況で、実際に送られたかを必ず確認してください（再送は自動では行いません）。');
         $('mkDispatchState').textContent = '';
       }
     });
+
+    /** 送信結果を画面内に出す（取消不可・部分成功・受理と配信の別を明示） */
+    function mkRenderSendResult(conf, res) {
+      const box = $('mkDispatchResult');
+      if (!box) return;
+      box.innerHTML = '';
+      const head = document.createElement('div');
+      const badge = document.createElement('span');
+      badge.className = 'badge b-' + res.outcome.tone;
+      badge.textContent = res.outcome.label;
+      head.appendChild(badge);
+      const t = document.createElement('b');
+      t.textContent = ' ' + conf.campaignName + ' v' + conf.version + '（' + conf.kind + '）';
+      head.appendChild(t);
+      box.appendChild(head);
+
+      const row = (k, v) => {
+        const d = document.createElement('div'); d.className = 'dp-row';
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      row('送信（provider 受理）', res.sent + ' 通');
+      row('スキップ', res.skipped + ' 通');
+      row('失敗', res.failed + ' 通');
+      row('ジョブ', conf.jobId + '（' + res.outcome.label + '）');
+      row('完了時刻', res.completedAt ? fmtDate(res.completedAt) : '—');
+      row('取消', res.cancelNote);
+      if (res.skippedReasons.length) {
+        row('除外理由', res.skippedReasons.map((x) => (window.__planView?.labelFor?.(x.reason) || x.reason) + ' ' + x.count + ' 件').join(' / '));
+      }
+      if (res.partialNote) row('部分成功の扱い', res.partialNote);
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = res.deliveredNote;
+      box.appendChild(note);
+    }
 
     $('mkLoad').addEventListener('click', mkLoad);
     $('mkQ').addEventListener('input', mkRender);

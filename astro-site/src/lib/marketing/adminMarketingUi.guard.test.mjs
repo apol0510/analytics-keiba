@@ -175,7 +175,7 @@ test('実配信は取り消せないことを確認ダイアログで伝える',
 test('実配信の実行後は必ず再確認からやり直す（二重配信防止）', () => {
   const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
   // 送信後は直前確認を捨てる → もう一度確認しない限り canDispatchSend が false になる
-  assert.match(block, /mkState\.dispatch = \{ sent: true, result: data, check: null \}/,
+  assert.match(block, /mkState\.dispatch = \{ sent: true, result: data, summary: res, check: null, preflight: null \}/,
     '実行後に直前確認を無効化していない（もう一度押せてしまう）');
   assert.match(block, /btn\.dataset\.busy = '1'/, '二重クリック防止が無い');
 });
@@ -502,11 +502,11 @@ test('guard(ui): dry-run 結果を主要パネルにまとめて出す', () => {
 
 test('guard(ui): 最終送信は必須項目つき二段階確認', () => {
   const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
-  assert.match(block, /buildSendConfirmation\(/, '確認内容を単一源で組み立てていない');
+  assert.match(block, /buildSendNowConfirmation\(/, '確認内容を単一源で組み立てていない');
   assert.match(block, /window\.confirm\(/, '確認ダイアログが無い');
   assert.match(block, /window\.prompt\(/, '二段階目の確認が無い');
-  assert.match(block, /送信予定人数/, '人数入力による誤操作防止が無い');
-  assert.match(block, /実際にメールが届きます/, '実メールが届くことを伝えていない');
+  assert.match(block, /実送信予定人数/, '人数入力による誤操作防止が無い');
+  assert.match(block, /conf\.effect/, '実メールが届くことを伝えていない');
 });
 
 test('guard(ui): 通知は内容別に出し、internal error を素通しにしない', () => {
@@ -518,4 +518,53 @@ test('guard(ui): 通知は内容別に出し、internal error を素通しにし
 test('guard(ui): ジョブ状態はバッジで示し、部分失敗を成功と読ませない', () => {
   assert.match(SCRIPT, /resolveJobBadge\(/, 'バッジ判定を単一源で行っていない');
   assert.match(SCRIPT, /badge b-/, 'バッジを描画していない');
+});
+
+// ── 「今すぐ送信」（2026-08-02 / 管理画面だけで完結）────────────────
+test('guard(ui): 最終送信ボタンは「今すぐ送信」で、既定は押せない', () => {
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled[^>]*>今すぐ送信|id="mkDispatchRun"[^>]*>今すぐ送信/, '「今すぐ送信」が無い');
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled/, '最初から押せる状態になっている');
+});
+
+test('guard(ui): 送信可否は marketingSendNow の判定に従う', () => {
+  assert.match(SCRIPT, /window\.__mkSend/, '送信判定の単一源を橋渡ししていない');
+  assert.match(SCRIPT, /canSendNow\(/, '送信可否を単一源で判定していない');
+  assert.match(SCRIPT, /SEND_BLOCK_LABEL\[/, '送れない理由を文言化していない');
+});
+
+test('guard(ui): 送信直前に jobId・内容の一致を再確認する', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  assert.match(block, /buildDispatchPreflight\(|mkState\.dispatch\.preflight/, '確認したジョブを保持していない');
+  assert.match(block, /await mkDispatchCall\(true, mkState\.dispatch\.preflight\.jobId\)/,
+    '送信直前に同じジョブで再確認していない');
+  assert.match(block, /verifySendPrecondition\(/, 'jobId・内容の一致を検証していない');
+  assert.match(block, /await mkDispatchCall\(false, pre\.jobId\)/, '実送信を確認済みジョブに限定していない');
+});
+
+test('guard(ui): 実送信は確認を通過した後にしか呼ばれない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  const verifyIdx = block.indexOf('verifySendPrecondition(');
+  const liveIdx = block.indexOf('mkDispatchCall(false');
+  assert.ok(verifyIdx > -1 && liveIdx > verifyIdx, '検証より前に実送信を呼んでいる');
+  const guardIdx = block.indexOf('if (!pre.ok)');
+  assert.ok(guardIdx > -1 && guardIdx < liveIdx, '検証失敗時に止めていない');
+});
+
+test('guard(ui): 二重クリックで live dispatcher が 2 回走らない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  assert.match(block, /if \(btn\.dataset\.busy === '1'\) return;/, '二重クリック防止が無い');
+  assert.match(block, /mkState\.busy = true/, '応答待ち中に他の送信操作を無効化していない');
+});
+
+test('guard(ui): 送信結果に sent / skipped / failed と取消不可を出す', () => {
+  assert.match(SCRIPT, /function mkRenderSendResult\(/, '結果表示が無い');
+  for (const label of ['送信（provider 受理）', 'スキップ', '失敗', '完了時刻', '取消']) {
+    assert.ok(SCRIPT.includes(`'${label}'`), `結果に ${label} が無い`);
+  }
+  assert.match(SCRIPT, /summarizeSendResult\(/, '結果の要約を単一源で作っていない');
+});
+
+test('guard(ui): 部分失敗を成功と読ませず、再送ボタンを自動表示しない', () => {
+  assert.match(SCRIPT, /res\.outcome\.key === 'PARTIAL' \|\| res\.outcome\.key === 'FAILED'/, '部分失敗を区別していない');
+  assert.equal(/再送する|自動再送/.test(SCRIPT), false, '再送ボタンを自動で出している');
 });

@@ -148,6 +148,34 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 - 送信後は直前確認を破棄する（もう一度確認しない限り再送ボタンは開かない）。
 - 通知は内容別（成功 / 注意 / エラー）で、エラー時は「何が起きたか」と「次に何をするか」を出す。
 
+### 「今すぐ送信」に到達できる唯一の順序（2026-08-02）
+
+判定の単一源は `src/lib/marketing/marketingSendNow.js`。**すべて満たすまでボタンは押せない。**
+
+| # | 条件 | 満たさない場合 |
+|---|---|---|
+| 1 | dry-run 実施済み・**失効していない** | `no_dry_run` / `dry_run_stale` |
+| 2 | キュー登録済み | `not_enqueued` |
+| 3 | dispatcher `dryRun:true` が成功し、**送信待ちジョブが 1 件に特定できる** | `no_preflight` / `job_not_unique` |
+| 4 | 送信対象 ≥ 1 通 | `no_recipients` |
+| 5 | 実配信 gate が有効 | `gate_closed` |
+| 6 | 実行中でない・未送信 | `busy` / `already_sent` |
+
+**送信の直前にもう一度 `dryRun:true` を取り**、確認したときと
+**同じ jobId・同じ内容（willSend / willSkip / total）**であることを検証する。
+違えば `job_mismatch` / `state_changed` で中止する（409 相当）。
+
+- 実送信は **確認したジョブ 1 件だけ**を対象にする（dispatcher の `jobId` 指定）
+- 通常配信は**実送信予定人数の入力一致**を必須にする（テスト専用は 1 通なので省略可）
+- 二重クリックは `busy` フラグで 1 回だけ実行。応答待ち中は全送信操作を無効化
+- 送信後は直前確認を破棄し、**同じ画面から二度押せない**
+
+### 送信結果の表示
+
+sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIAL / FAILED）/
+除外理由 / 完了時刻 /「送信済みのため取消不可」を画面内に出す。
+**部分成功は巻き戻さず、再送ボタンを自動表示しない。**
+
 ### 送信ゲート（2 段・独立）
 
 | env | 役割 | 閉じているときの挙動 |

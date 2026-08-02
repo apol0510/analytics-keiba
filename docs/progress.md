@@ -17,6 +17,22 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: 管理画面だけで「最終確認 → 今すぐ送信」まで完結する実装を
+branch `feat/admin-send-now` で用意（merge 前）。送信経路は増やさず、既存 dispatcher を再利用。**
+
+- UI 改善（PR #211 `4ad3c70`）は本番反映済み。Step 1〜6・追従バー・dry-run 失効が稼働
+- 今回: **「今すぐ送信」** を追加。到達条件は `marketingSendNow.js` が単一源で、
+  dry-run 実施済み・失効なし・キュー登録済み・dispatcher `dryRun:true` 成功・
+  **送信待ちジョブが 1 件に特定できる**・対象 ≥ 1・gate 有効・未送信、をすべて満たす場合のみ押せる
+- **送信直前に再度 `dryRun:true` を取り、同じ jobId・同じ内容であることを検証**してから実送信。
+  変わっていれば中止（409 相当）
+- 実送信は確認したジョブ 1 件に限定（dispatcher の jobId 指定）。二重クリックは 1 回だけ実行
+- 結果は画面内に sent（provider 受理）/ skipped / failed / 状態 / 除外理由 / 完了時刻 /
+  取消不可を表示。**部分成功は巻き戻さず、再送ボタンを自動表示しない**
+- dispatcher の**ハンドラを起動する煙試験**を追加（gate 閉鎖で 503・dryRun 既定 true・
+  PENDING 限定・マーケ以外を除外・jobId 限定・suppression 取得失敗で中止・無認証 403・PII なし）
+
+
 **Phase（2026-08-02 現在・最新）: 顧客マーケティング管理画面を**操作順が分かる UI**へ改善
 （branch `feat/admin-marketing-console-ux`・merge 前）。機能追加ではなく、
 **押せる順にしか進めない**構造と、確認結果の失効を入れた。**
