@@ -300,39 +300,88 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
 
       <section class="step" data-step="3" aria-labelledby="mkStep3H">
-        <h2 id="mkStep3H" class="step-h"><span class="step-n">3</span> キャンペーンを選ぶ</h2>
+        <h2 id="mkStep3H" class="step-h"><span class="step-n">3</span> キャンペーンと文面</h2>
         <div class="campaign-box">
           <div class="toolbar">
             <select id="mkCampaign" aria-label="キャンペーン"></select>
-            <button type="button" id="mkPreview" class="btn-ghost">本文プレビュー</button>
+            <span class="camp-meta" id="mkCampMeta"></span>
           </div>
           <div class="camp-card" id="mkCampCard" hidden></div>
           <p class="camp-desc" id="mkCampDesc"></p>
+
+          <!-- 今回送る文面（テンプレートを土台に、この送信の分だけ編集する）-->
+          <div class="editor" id="mkEditor">
+            <p class="editor-note">
+              テンプレートを読み込んでいます。<b>ここでの編集は今回送る分だけ</b>に反映され、
+              コード上の既定テンプレートは変わりません。
+            </p>
+
+            <label class="editor-label" for="mkSubject">件名</label>
+            <div class="editor-field">
+              <input type="text" id="mkSubject" class="editor-subject" autocomplete="off"
+                placeholder="件名を入力" aria-describedby="mkSubjectCount" />
+              <span class="editor-count" id="mkSubjectCount">0</span>
+            </div>
+
+            <label class="editor-label" for="mkBody">本文</label>
+            <div class="editor-field editor-field-body">
+              <textarea id="mkBody" class="editor-body" rows="16" spellcheck="false"
+                placeholder="本文を入力（HTML・URL は使えません）" aria-describedby="mkBodyCount"></textarea>
+              <span class="editor-count" id="mkBodyCount">0</span>
+            </div>
+
+            <div class="editor-tools">
+              <span class="editor-tools-label">差し込み:</span>
+              <span id="mkPlaceholders"></span>
+              <span class="editor-spacer"></span>
+              <button type="button" id="mkEditorReset" class="btn-ghost btn-sm">既定文面に戻す</button>
+              <button type="button" id="mkEditorExpand" class="btn-ghost btn-sm">⛶ 大きく編集</button>
+              <button type="button" id="mkPreview" class="btn-secondary btn-md">👁 完成プレビュー</button>
+            </div>
+            <p class="editor-hint" id="mkEditorHint"></p>
+            <div class="editor-errors" id="mkEditorErrors" hidden></div>
+          </div>
+
           <div class="camp-preview" id="mkCampPreview" hidden></div>
         </div>
       </section>
 
+      <!-- 本文を大きく編集するためのモーダル（同じ値を編集する。別状態を持たない）-->
+      <div class="pv-backdrop" id="mkEditorModal" hidden>
+        <div class="pv-modal" role="dialog" aria-modal="true" aria-labelledby="mkEditorModalH">
+          <div class="pv-modal-head">
+            <h3 id="mkEditorModalH">本文を編集</h3>
+            <button type="button" id="mkEditorModalClose" class="btn-back">閉じる</button>
+          </div>
+          <input type="text" id="mkSubjectBig" class="editor-subject" autocomplete="off" aria-label="件名" />
+          <textarea id="mkBodyBig" class="editor-body editor-body-big" rows="24" spellcheck="false" aria-label="本文"></textarea>
+          <p class="editor-hint" id="mkEditorBigHint"></p>
+        </div>
+      </div>
+
       <section class="step" data-step="4" aria-labelledby="mkStep4H">
         <h2 id="mkStep4H" class="step-h"><span class="step-n">4</span> 送信対象を確認（dry-run）</h2>
         <div class="campaign-box">
-          <div class="toolbar">
-            <button type="button" id="mkDryRun" class="btn-success btn-lg">✅ 送信対象を確認（dry-run）</button>
+            <div class="toolbar">
+            <button type="button" id="mkDryRun" class="btn-success btn-lg">✅ 文面と対象を確認（dry-run）</button>
             <span class="dry-state" id="mkDryState">未確認</span>
+            <span class="dry-state" id="mkContentState">文面: 未確認</span>
           </div>
           <div class="dry-panel" id="mkDryPanel" hidden></div>
         </div>
       </section>
 
       <!-- ═══ 施策パネル（選択顧客に対して何ができるか。dry-run で内容を確認する）═══ -->
-      <div class="campaign-box action-box">
-        <h2>🎯 施策パネル</h2>
+      <details class="campaign-box action-box" id="mkActionBox">
+        <summary class="action-summary">🎁 特典・オファーの下見（メール送信とは別）</summary>
         <p class="note">
-          選択中の顧客に実行できる施策です。<b>ここから実行されるのは dry-run（確認）だけ</b>で、
-          付与・取消・送信は行いません。実行は各タブの既存フロー（確認 → 実行）から行ってください。
+          選択中の顧客に<b>特典・割引オファー</b>を付けたらどうなるかを確認します。
+          <b>ここで実行されるのは dry-run（確認）だけ</b>で、付与・取消・送信は行いません。
+          実行はカムバック特典タブの「確認 → 実行」から行ってください。
+          <b>キャンペーンメールの確認は Step 4 が唯一の場所</b>です（結果が二重に出ないように分けています）。
         </p>
         <div class="toolbar">
           <select id="mkActionKind" aria-label="施策">
-            <option value="campaign">キャンペーンメール（選択中のキャンペーン）</option>
             <option value="light-30d-free">Light 30日無料</option>
             <option value="light-lifetime-free">Light 永久無料</option>
             <option value="premium-30d-free">Premium 無料期間（30日）</option>
@@ -353,7 +402,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="note" id="mkActionState"></p>
         <div id="cbAudience" class="dry-panel" hidden></div>
         <div id="mkActionResult"></div>
-      </div>
+      </details>
 
       <!-- ═══ Step 5: キュー登録 → 送信直前確認 → 最終送信 ═══ -->
       <section class="step" data-step="5" aria-labelledby="mkStep5H">
@@ -1430,7 +1479,50 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 条件を変えたまま再取得していないことを追従バーでも出す */
   .ppe .stickybar .sb-item.is-changed { color: var(--action-orange); font-weight: 700; }
 
+  /* ═══ 文面エディタ（今回送る分だけ編集する / 2026-08-03）═══ */
+  .ppe .editor { margin-top: .7rem; border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: .8rem .9rem; background: rgba(148,163,184,.05); }
+  .ppe .editor-note { font-size: .78rem; color: var(--text-muted); margin: 0 0 .6rem; }
+  .ppe .editor-label { display: block; font-size: .8rem; font-weight: 700; color: var(--text-main);
+    margin: .5rem 0 .25rem; }
+  .ppe .editor-field { position: relative; }
+  .ppe .editor-subject {
+    /* padding を含めて 100% に収める（枠からはみ出させない）*/
+    box-sizing: border-box;
+    width: 100%; height: 48px; font-size: 15px; font-weight: 700; padding: 0 5.5rem 0 .8rem;
+    background-color: var(--nv-0); color: var(--text-main);
+    border: 1px solid var(--action-blue); border-radius: 10px;
+  }
+  .ppe .editor-body {
+    box-sizing: border-box;
+    width: 100%; min-height: 320px; font-size: 15px; line-height: 1.9; padding: .7rem .8rem;
+    background-color: var(--nv-0); color: #eef4ff;
+    border: 1px solid var(--action-blue); border-radius: 10px; resize: vertical;
+    font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+  }
+  .ppe .editor-body-big { min-height: 60vh; }
+  .ppe .editor-subject:focus, .ppe .editor-body:focus { border-color: var(--action-yellow); }
+  .ppe .editor-count { position: absolute; right: .6rem; top: .5rem; font-size: 11px; color: var(--text-muted); }
+  .ppe .editor-field-body .editor-count { top: auto; bottom: .8rem; background: var(--nv-0); padding: 0 .3rem; }
+  .ppe .editor-count.is-long { color: var(--action-yellow); }
+  .ppe .editor-count.is-over { color: var(--action-red); font-weight: 700; }
+  .ppe .editor-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .55rem; }
+  .ppe .editor-tools-label { font-size: 12px; color: var(--text-muted); }
+  .ppe .editor-spacer { flex: 1 1 auto; }
+  .ppe .editor-hint { font-size: 12px; color: var(--text-muted); margin: .4rem 0 0; }
+  .ppe .editor-hint.is-edited { color: var(--action-yellow); font-weight: 700; }
+  .ppe .editor-errors { margin-top: .45rem; }
+  .ppe .editor-msg { font-size: .8rem; margin: .15rem 0; }
+  .ppe .editor-msg.is-err { color: var(--action-red); font-weight: 700; }
+  .ppe .editor-msg.is-warn { color: var(--action-yellow); }
+  .ppe .camp-meta.is-test { color: var(--action-orange); font-weight: 700; }
+  .ppe .action-summary { cursor: pointer; font-size: .9rem; font-weight: 700; color: var(--text-main);
+    padding: .3rem 0; }
+  .ppe .prev-text { white-space: pre-wrap; background: var(--nv-0); border: 1px solid var(--border-soft);
+    border-radius: 8px; padding: .6rem .7rem; font-size: .82rem; color: var(--text-main); }
+
   @media (max-width: 900px) {
+    .ppe .editor-body { min-height: 260px; }
     .ppe .stepbar { flex-wrap: wrap; }
     .ppe .stepbar .stp { min-width: 0; flex: 1 1 45%; min-height: 60px; }
     .ppe .btn-lg { min-height: 46px; font-size: 15px; padding: 0 18px; }
@@ -1488,6 +1580,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
     resolveCbStep, canSelectCustomers, canConfigureOffer, canReview, canApply,
     computeCbFingerprint, isCbDryStale, buildCbStickyView, segmentLabel,
+  };
+  // 文面編集（今回送る分だけ）。検証・失効判定はここが単一源
+  import {
+    normalizeDraft, defaultDraft, isDraftEdited, validateDraft, describeLength,
+    draftSignature, DRAFT_PLACEHOLDERS, SUBJECT_MAX, SUBJECT_RECOMMENDED, BODY_MAX,
+  } from '../../lib/marketing/campaignContentDraft.js';
+  import {
+    isContentConfirmed, acceptConfirmation, canSendContent, buildSendSummary,
+    SEND_BLOCK as CONTENT_BLOCK, SEND_BLOCK_LABEL as CONTENT_BLOCK_LABEL,
+    CONTENT_CHANGED_NOTICE, QUEUED_IMMUTABLE_NOTICE,
+  } from '../../lib/marketing/campaignEditorState.js';
+  window.__mkDraft = {
+    normalizeDraft, defaultDraft, isDraftEdited, validateDraft, describeLength,
+    draftSignature, DRAFT_PLACEHOLDERS, SUBJECT_MAX, SUBJECT_RECOMMENDED, BODY_MAX,
+    isContentConfirmed, acceptConfirmation, canSendContent, buildSendSummary,
+    CONTENT_BLOCK, CONTENT_BLOCK_LABEL, CONTENT_CHANGED_NOTICE, QUEUED_IMMUTABLE_NOTICE,
   };
   window.__mkState = { DRY_STATE, stApplyCampaigns, stDryRunFailed, stMaskEmail };
   window.__mkSend = {
@@ -2262,6 +2370,201 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       $(id)?.addEventListener('input', mkRenderFilterCount);
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  文面エディタ（今回送る分だけを編集する）
+    //  検証・失効判定の単一源は campaignContentDraft.js / campaignEditorState.js。
+    //  ここでは「読み込む・映す・伝える」だけを行う。
+    // ══════════════════════════════════════════════════════════════
+    const draftApi = () => window.__mkDraft;
+
+    /** 文面の状態。confirmed は dry-run が受理した文面（hash 付き） */
+    const mkContent = {
+      defaults: { subject: '', body: '' },   // テンプレートの既定文面
+      loadedFor: '',                          // 既定文面を読んだ campaignId:version
+      confirmed: null,                        // 確認済みの文面（サーバーの hash 付き）
+      acknowledged: false,                    // 最終確認のチェック
+      valid: false,
+      errors: [],
+      warnings: [],
+    };
+
+    /** いま編集欄にある文面 */
+    function mkDraft() {
+      return { subject: $('mkSubject')?.value || '', body: $('mkBody')?.value || '' };
+    }
+
+    /** 既定文面をサーバーから読む（本文の正本はコード。画面はコピーを編集する） */
+    async function mkLoadDefaults(campaign, { force = false } = {}) {
+      if (!campaign) return;
+      const key = campaign.campaignId + ':v' + campaign.version;
+      if (!force && mkContent.loadedFor === key) return;
+      const data = await mkCall({ action: 'preview', campaignId: campaign.campaignId });
+      if (!data || !data.defaults) return;
+      mkContent.defaults = { subject: data.defaults.subject || '', body: data.defaults.body || '' };
+      mkContent.loadedFor = key;
+      mkSetDraft(mkContent.defaults);
+      mkRenderPlaceholders(data.placeholders || draftApi().DRAFT_PLACEHOLDERS);
+      mkRenderEditorMeta(campaign);
+      // 読み込み前は「空欄＝エラー」の状態なので、読み込み後に必ず表示を更新する
+      mkSyncFlow();
+    }
+
+    /** 編集欄へ値を入れる（拡大モーダルと同じ値を共有する） */
+    function mkSetDraft(draft) {
+      if ($('mkSubject')) $('mkSubject').value = draft.subject || '';
+      if ($('mkBody')) $('mkBody').value = draft.body || '';
+      if ($('mkSubjectBig')) $('mkSubjectBig').value = draft.subject || '';
+      if ($('mkBodyBig')) $('mkBodyBig').value = draft.body || '';
+      mkValidateDraft({ silent: true });
+    }
+
+    /** 使える差し込みをボタンで出す（クリックでカーソル位置へ挿入） */
+    function mkRenderPlaceholders(list) {
+      const box = $('mkPlaceholders');
+      if (!box) return;
+      box.innerHTML = '';
+      for (const p of list) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'chip'; b.textContent = p.token + '（' + p.label + '）';
+        b.title = p.note || '';
+        b.addEventListener('click', () => mkInsertAtCursor(p.token));
+        box.appendChild(b);
+      }
+    }
+
+    /** 本文のカーソル位置へ差し込みを入れる */
+    function mkInsertAtCursor(token) {
+      const ta = ($('mkEditorModal') && !$('mkEditorModal').hidden) ? $('mkBodyBig') : $('mkBody');
+      if (!ta) return;
+      const start = ta.selectionStart ?? ta.value.length;
+      const end = ta.selectionEnd ?? start;
+      ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+      ta.selectionStart = ta.selectionEnd = start + token.length;
+      ta.focus();
+      mkSyncEditors(ta);
+    }
+
+    /** 通常欄 ⇔ 拡大モーダルの値を同期する（別の状態を持たない） */
+    function mkSyncEditors(source) {
+      const subject = (source === $('mkSubjectBig') || source === $('mkBodyBig'))
+        ? ($('mkSubjectBig')?.value || '') : ($('mkSubject')?.value || '');
+      const body = (source === $('mkSubjectBig') || source === $('mkBodyBig'))
+        ? ($('mkBodyBig')?.value || '') : ($('mkBody')?.value || '');
+      if ($('mkSubject')) $('mkSubject').value = subject;
+      if ($('mkBody')) $('mkBody').value = body;
+      if ($('mkSubjectBig')) $('mkSubjectBig').value = subject;
+      if ($('mkBodyBig')) $('mkBodyBig').value = body;
+      mkOnDraftChanged();
+    }
+
+    /** 文面が変わったとき: 検証 → 確認結果の失効 → ボタン再判定 */
+    function mkOnDraftChanged() {
+      mkValidateDraft({ silent: false });
+      if (mkContent.confirmed
+        && !draftApi().isContentConfirmed({ draft: mkDraft(), confirmed: mkContent.confirmed })) {
+        mkContent.acknowledged = false;
+        mkInvalidateDryRun(draftApi().CONTENT_CHANGED_NOTICE);
+      }
+      mkSyncFlow();
+    }
+
+    /** 検証結果を画面へ出す（文字数・エラー・警告） */
+    function mkValidateDraft({ silent = false } = {}) {
+      const api = draftApi();
+      if (!api) return;
+      const campaign = mkState.campaign || currentCampaign();
+      const draft = mkDraft();
+      const v = api.validateDraft({ campaign, draft });
+      mkContent.valid = v.ok;
+      mkContent.errors = v.errors;
+      mkContent.warnings = v.warnings;
+
+      const len = api.describeLength(draft);
+      const sc = $('mkSubjectCount');
+      if (sc) {
+        sc.textContent = len.subject.length + ' / ' + len.subject.max;
+        sc.className = 'editor-count' + (len.subject.over ? ' is-over' : (len.subject.long ? ' is-long' : ''));
+      }
+      const bc = $('mkBodyCount');
+      if (bc) {
+        bc.textContent = len.body.length + ' / ' + len.body.max + '（' + len.body.lines + ' 行）';
+        bc.className = 'editor-count' + (len.body.over ? ' is-over' : '');
+      }
+
+      const errBox = $('mkEditorErrors');
+      if (errBox) {
+        errBox.innerHTML = '';
+        const items = [
+          ...v.errors.map((t) => ['err', '⛔ ' + t]),
+          ...v.warnings.map((t) => ['warn', '⚠️ ' + t]),
+        ];
+        for (const [kind, text] of items) {
+          const p = document.createElement('p');
+          p.className = 'editor-msg is-' + kind;
+          p.textContent = text;
+          errBox.appendChild(p);
+        }
+        errBox.hidden = items.length === 0;
+      }
+
+      const hint = $('mkEditorHint');
+      if (hint) {
+        const edited = campaign ? api.isDraftEdited(
+          { subject: mkContent.defaults.subject, body: mkContent.defaults.body }, draft) : false;
+        hint.textContent = edited
+          ? '✏️ 既定文面から編集されています（今回送る分だけに反映されます）'
+          : 'テンプレートの既定文面のままです。';
+        hint.className = 'editor-hint' + (edited ? ' is-edited' : '');
+      }
+      if ($('mkEditorBigHint')) $('mkEditorBigHint').textContent = $('mkEditorHint')?.textContent || '';
+      if (!silent && !v.ok) mkContent.acknowledged = false;
+      return v;
+    }
+
+    /** キャンペーン名・version・種別を編集欄の上に出す */
+    function mkRenderEditorMeta(campaign) {
+      const el = $('mkCampMeta');
+      if (!el) return;
+      el.textContent = campaign
+        ? campaign.name + '　v' + campaign.version + '　' + (campaign.testOnly ? '🧪 運用テスト専用' : '通常配信')
+        : '';
+      el.className = 'camp-meta' + (campaign && campaign.testOnly ? ' is-test' : '');
+    }
+
+    // 入力のたびに検証と失効判定を通す
+    for (const id of ['mkSubject', 'mkBody', 'mkSubjectBig', 'mkBodyBig']) {
+      $(id)?.addEventListener('input', (e) => mkSyncEditors(e.target));
+    }
+    // 件名に改行を貼り付けられても 1 行に保つ（検証でも弾くが、入力段でも直す）
+    $('mkSubject')?.addEventListener('paste', () => setTimeout(() => {
+      const el = $('mkSubject');
+      if (el && /[\r\n]/.test(el.value)) { el.value = el.value.replace(/[\r\n]+/g, ' '); mkSyncEditors(el); }
+    }, 0));
+
+    $('mkEditorReset')?.addEventListener('click', () => {
+      mkSetDraft(mkContent.defaults);
+      mkOnDraftChanged();
+      mkNotify('ok', '既定文面に戻しました', 'テンプレートの件名・本文を読み直しました。');
+    });
+
+    $('mkEditorExpand')?.addEventListener('click', () => {
+      const m = $('mkEditorModal');
+      if (!m) return;
+      m.hidden = false;
+      lockScroll();
+      $('mkBodyBig')?.focus();
+    });
+    $('mkEditorModalClose')?.addEventListener('click', () => {
+      const m = $('mkEditorModal');
+      if (!m) return;
+      m.hidden = true;
+      unlockScroll();
+      mkOnDraftChanged();
+    });
+    $('mkEditorModal')?.addEventListener('click', (e) => {
+      if (e.target === $('mkEditorModal')) $('mkEditorModalClose').click();
+    });
+
     /** 選択欄の値を状態へ反映する（change でもプログラム選択でも必ずここを通す） */
     function mkApplyCampaignSelection() {
       const c = currentCampaign();
@@ -2269,6 +2572,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkState.campaignVersion = c ? String(c.version) : '';
       mkState.campaign = c || null;
       mkRenderCampCard(c);
+      mkRenderEditorMeta(c);
+      // 既定文面を編集欄へ読み込む（テンプレートは変えない。編集するのはコピー）
+      mkLoadDefaults(c);
       mkSyncFlow();
     }
 
@@ -2279,8 +2585,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkState.campaignVersion = c ? String(c.version) : '';
       mkState.campaign = c || null;
       // キャンペーンが変われば「確認した内容」は別物 → 失効させる
+      mkContent.confirmed = null;
+      mkContent.acknowledged = false;
       mkInvalidateDryRun('キャンペーンが変わりました。');
       mkRenderCampCard(c);
+      mkRenderEditorMeta(c);
+      // 別キャンペーンの既定文面を読み直す（前の編集内容は持ち越さない）
+      mkLoadDefaults(c, { force: true });
       mkSyncFlow();
     });
 
@@ -2808,35 +3119,41 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('mkDossierClose').addEventListener('click', () => { $('mkDossier').hidden = true; });
 
     // ── 施策パネル（dry-run のみ。実行系は既存フローに委ねる）───────────
+    /** 施策 dry-run の実行世代。古い応答が後から届いても描かない */
+    let mkActionSeq = 0;
     $('mkActionDry').addEventListener('click', async () => {
+      const btn = $('mkActionDry');
+      if (btn.dataset.busy === '1') return;        // 連打で結果が積み上がるのを防ぐ
       const kind = $('mkActionKind').value;
       const ids = [...mkSelected];
       const box = $('mkActionResult');
       box.innerHTML = '';
       if (ids.length === 0) { $('mkActionState').textContent = '対象を選択してください。'; return; }
+      const seq = ++mkActionSeq;
+      btn.dataset.busy = '1'; btn.disabled = true;
       $('mkActionState').textContent = '確認中…（書き込みは行いません）';
       try {
         const PV = window.__planView;
         const rowsById = new Map((mkData && mkData.rows ? mkData.rows : []).map((r) => [r.recordId, r]));
         let result; let planKind; let campaign = null;
-        if (kind === 'campaign') {
-          campaign = mkCampaigns.find((x) => x.campaignId === $('mkCampaign').value);
-          result = await mkCall({ action: 'dryRun', campaignId: campaign.campaignId, recordIds: ids });
-          planKind = PV.PLAN_KIND.CAMPAIGN;
-        } else {
-          const key = kind.startsWith('premium-') ? 'premiumOfferId' : 'lightOfferId';
-          result = await cbCall({ action: 'dryRun', [key]: kind, recordIds: ids });
-          planKind = PV.PLAN_KIND.GRANT_OFFER;
-        }
+        const key = kind.startsWith('premium-') ? 'premiumOfferId' : 'lightOfferId';
+        result = await cbCall({ action: 'dryRun', [key]: kind, recordIds: ids });
+        planKind = PV.PLAN_KIND.GRANT_OFFER;
+        if (seq !== mkActionSeq) return;          // 新しい確認が始まっている。古い結果は捨てる
         if (!result) { $('mkActionState').textContent = '確認できませんでした。'; return; }
         // 対象/除外の判定は API の結果をそのまま使う（画面では再判定しない）
         const view = PV.buildPlanView({ kind: planKind, selectedIds: ids, rowsById, result, campaign, nowMs: Date.now() });
+        box.innerHTML = '';                        // 常に最新の 1 件だけを出す
         renderPlanView(box, view);
         $('mkActionState').textContent = view.executable
-          ? '確認しました。実行は各タブの確認 → 実行から行ってください。'
+          ? '確認しました。実行はカムバック特典タブの確認 → 実行から行ってください。'
           : '⛔ この内容では実行できません: ' + view.blockers.join(' / ');
       } catch (e) {
-        $('mkActionState').textContent = '確認に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+        if (seq === mkActionSeq) {
+          $('mkActionState').textContent = '確認に失敗しました: ' + (e && e.message ? e.message : 'unknown');
+        }
+      } finally {
+        if (seq === mkActionSeq) { btn.dataset.busy = ''; btn.disabled = false; }
       }
     });
 
@@ -3028,6 +3345,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       apply('mkDryRun', flowApi().canDryRun(st));
       apply('mkDispatchCheck', flowApi().canDispatchCheck(st));
       apply('mkDispatchRun', flowApi().canDispatchSend(st));
+
+      // 文面の確認状態（編集したら送信系は押せない）
+      const content = draftApi().canSendContent({
+        campaign: mkState.campaign, draftValid: mkContent.valid,
+        draft: mkDraft(), confirmed: mkContent.confirmed,
+      });
+      if (!content.allowed) {
+        for (const id of ['mkDispatchCheck', 'mkDispatchRun']) {
+          const b3 = $(id);
+          if (b3) { b3.disabled = true; b3.title = draftApi().CONTENT_BLOCK_LABEL[content.reason] || ''; }
+        }
+      }
+      const cs = $('mkContentState');
+      if (cs) {
+        cs.textContent = content.allowed
+          ? '文面: 確認済み（hash ' + String(mkContent.confirmed.contentHash).slice(0, 12) + '）'
+          : '文面: ' + (draftApi().CONTENT_BLOCK_LABEL[content.reason] || '未確認');
+        cs.className = 'dry-state' + (content.allowed ? ' is-ok' : ' is-stale');
+      }
 
       const dry = $('mkDryState');
       if (dry) {
@@ -3366,8 +3702,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkNotify('info', '送信対象を確認しています…', '選択 ' + mkSelected.size + ' 名 / ' + (c.name || ''));
       let plan = null;
       try {
+        const draft = mkDraft();
         plan = await mkCall({
           action: 'dryRun', campaignId: c.campaignId, recordIds: [...mkSelected],
+          // 今回送る文面を一緒に確認する（確認した内容と送る内容を一致させる）
+          subject: draft.subject, body: draft.body,
         });
       } catch (e) {
         plan = null;
@@ -3395,7 +3734,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         fingerprint: mkFingerprint(),
         selected: plan.selected, excluded: plan.excluded, willSend: plan.willSend,
         excludedDetail: plan.excludedDetail, planFingerprint: plan.planFingerprint,
+        contentHash: plan.contentHash || '',
       };
+      // 確認できたのは**この文面**。以後、編集されたら送信操作を止める
+      mkContent.confirmed = draftApi().acceptConfirmation({
+        draft: { subject: plan.subject, body: plan.body },
+        contentHash: plan.contentHash, planFingerprint: plan.planFingerprint,
+      });
+      mkContent.acknowledged = false;
+      if (plan.contentEdited) {
+        mkNotify('info', '編集した文面で確認しました',
+          '内容 hash: ' + String(plan.contentHash || '').slice(0, 12) + '（この文面だけが送信されます）');
+      }
       mkState.enqueued = false;
       mkState.dispatch = {};
       mkRenderDryPanel(c, plan);
@@ -3470,8 +3820,34 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       kvRow(dl, '選択', plan.selected + ' 名');
       kvRow(dl, '除外', plan.excluded + ' 名');
       kvRow(dl, '実送信', plan.willSend + ' 名', plan.willSend > 0 ? 'strong-ok' : 'muted');
+      // 何を送るのかを hash まで出す（キュー登録後はこの内容で固定される）
+      kvRow(dl, '内容 hash', String(plan.contentHash || '').slice(0, 12)
+        + (plan.contentEdited ? '（今回だけ編集）' : '（既定文面）'));
       head.appendChild(dl);
       body.appendChild(head);
+
+      // 送る本文そのもの。**確認した文面**を完成形で出す（編集途中の値は使わない）
+      const secBody = document.createElement('div'); secBody.className = 'dt-sec';
+      const hb = document.createElement('h3'); hb.textContent = '送信する本文'; secBody.appendChild(hb);
+      if (plan.preview) {
+        const kv2 = document.createElement('dl'); kv2.className = 'kv';
+        kvRow(kv2, 'From', plan.preview.from);
+        kvRow(kv2, '宛名', plan.preview.salutation);
+        kvRow(kv2, 'CTA', (plan.preview.ctaLabel || '（なし）') + ' → ' + plan.preview.ctaKind);
+        kvRow(kv2, 'フッター', plan.preview.footer);
+        kvRow(kv2, '配信停止', plan.preview.unsubscribeNote);
+        secBody.appendChild(kv2);
+        const frame = document.createElement('iframe');
+        frame.className = 'prev-frame';
+        frame.setAttribute('sandbox', '');
+        frame.srcdoc = '<body style="margin:0;background:#fff;">' + plan.preview.html + '</body>';
+        secBody.appendChild(frame);
+      } else {
+        const pre = document.createElement('pre'); pre.className = 'prev-text';
+        pre.textContent = String(plan.body || '');
+        secBody.appendChild(pre);
+      }
+      body.appendChild(secBody);
 
       if (plan.excludedDetail && plan.excludedDetail.length) {
         const sec = document.createElement('div'); sec.className = 'dt-sec';
@@ -3541,16 +3917,46 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         sec3.appendChild(psNote);
       }
 
+      // 「表示されている件名・本文を、この対象者へ送信します」への同意（チェックまで送れない）
+      const ack = document.createElement('label'); ack.className = 'chk chk-danger';
+      const ackBox = document.createElement('input');
+      ackBox.type = 'checkbox'; ackBox.id = 'mkSendAck';
+      const ackText = document.createElement('span');
+      ackText.textContent = '表示されている件名・本文を、この対象者へ送信します';
+      ack.appendChild(ackBox); ack.appendChild(ackText);
+      sec3.appendChild(ack);
+      const irreversible = document.createElement('p');
+      irreversible.className = 'blocker';
+      irreversible.textContent = '⚠️ 送信後は取り消せません。実際の顧客へメールが届きます。';
+      sec3.appendChild(irreversible);
+
       const ops = document.createElement('div'); ops.className = 'ops';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'b-immediate';
       btn.textContent = plan.willSend + ' 名へ送信する';
-      btn.disabled = !plan.sendEnabled || plan.willSend === 0;
+      const syncAck = () => {
+        mkContent.acknowledged = ackBox.checked;
+        btn.disabled = !plan.sendEnabled || plan.willSend === 0 || !ackBox.checked;
+        btn.title = ackBox.checked ? '' : draftApi().CONTENT_BLOCK_LABEL[draftApi().CONTENT_BLOCK.NOT_ACKNOWLEDGED];
+      };
+      ackBox.addEventListener('change', syncAck);
+      btn.disabled = true;
       btn.addEventListener('click', async () => {
         if (btn.dataset.busy === '1') return;      // 二重クリック防止
+        // 押す瞬間にもう一度、文面が確認済みのものと同じか見る
+        const guard = draftApi().canSendContent({
+          campaign, draftValid: mkContent.valid, draft: mkDraft(),
+          confirmed: mkContent.confirmed, acknowledged: ackBox.checked, requireAck: true,
+        });
+        if (!guard.allowed) {
+          mkNotify('err', '送信できません', draftApi().CONTENT_BLOCK_LABEL[guard.reason] || '');
+          return;
+        }
         const ok = window.confirm(
-          campaign.name + ' v' + campaign.version + '\n\n'
+          campaign.name + ' v' + campaign.version + '\n'
+          + '件名: ' + String(plan.subject || '') + '\n'
+          + '内容 hash: ' + String(plan.contentHash || '').slice(0, 12) + '\n\n'
           + '送信対象: ' + plan.selected + ' 名\n'
           + '除外: ' + plan.excluded + ' 名\n'
           + '実送信: ' + plan.willSend + ' 名\n\n'
@@ -3565,6 +3971,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           campaignId: campaign.campaignId,
           recordIds: [...mkSelected],
           planFingerprint: plan.planFingerprint,   // 対象が変わっていたら Function 側が中止する
+          // 確認した文面そのもの。hash が合わなければ Function 側が 409 で止める
+          subject: mkContent.confirmed ? mkContent.confirmed.subject : undefined,
+          body: mkContent.confirmed ? mkContent.confirmed.body : undefined,
+          contentHash: mkContent.confirmed ? mkContent.confirmed.contentHash : undefined,
         });
         btn.dataset.busy = '';
         if (out) {
@@ -3641,9 +4051,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         head.appendChild(ttl);
         const when = document.createElement('span'); when.className = 'tl-src';
         when.textContent = ' 作成 ' + (j.scheduledFor ? fmtDate(j.scheduledFor) : '—')
-          + ' / 実行者 admin-marketing / job ' + String(j.jobId || '').slice(-12);
+          + (j.completedAt ? ' / 送信 ' + fmtDate(j.completedAt) : '')
+          + ' / 実行者 ' + (j.createdBy || 'admin-marketing')
+          + ' / job ' + String(j.jobId || '').slice(-12);
         head.appendChild(when);
         box.appendChild(head);
+
+        // 実際に送った（送る）件名と内容 hash。**後から編集できない記録**
+        const subj = document.createElement('div'); subj.className = 'tl-detail';
+        subj.textContent = '件名: ' + (j.subject || '（記録なし）')
+          + (j.contentHash ? '　内容 hash: ' + j.contentHash + (j.contentEdited ? '（今回だけ編集）' : '') : '');
+        box.appendChild(subj);
 
         const c = j.counts || {};
         const counts = document.createElement('div'); counts.className = 'tl-detail';
@@ -4833,6 +5251,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       btn.disabled = !plan.writeEnabled || total === 0;
       btn.addEventListener('click', async () => {
         if (btn.dataset.busy === '1') return;      // 二重クリック防止
+        // 押す瞬間にもう一度、文面が確認済みのものと同じか見る
+        const guard = draftApi().canSendContent({
+          campaign, draftValid: mkContent.valid, draft: mkDraft(),
+          confirmed: mkContent.confirmed, acknowledged: ackBox.checked, requireAck: true,
+        });
+        if (!guard.allowed) {
+          mkNotify('err', '送信できません', draftApi().CONTENT_BLOCK_LABEL[guard.reason] || '');
+          return;
+        }
         const ok = window.confirm(
           plan.selection + '\n\n'
           + '対象: ' + plan.selected + ' 名\n'

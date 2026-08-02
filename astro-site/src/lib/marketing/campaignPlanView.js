@@ -124,9 +124,14 @@ export function buildPlanView(input = {}) {
   const blockers = [];
 
   // ── 除外（理由つき）。API の形が 2 種類あるので、ここで 1 つに揃える ──
+  //   特典・オファー側は **skippedPreview が人物単位**（recordId つき）、
+  //   skippedDetail は理由ごとの集計。人物単位が取れるならそちらを使う。
+  //   ここを集計側だけ見ていたため、除外が 1 件でもあると常に
+  //   「誰が対象か確定できません」になっていた（2026-08-03 修正）。
   const rawExcluded = kind === PLAN_KIND.CAMPAIGN
     ? (result.excludedRecords || result.excludedDetail || [])
-    : (result.skippedDetail || []);
+    : ((result.skippedPreview && result.skippedPreview.length ? result.skippedPreview : null)
+      || result.skippedDetail || []);
 
   /** recordId → reason。API が明細を返さない場合は集計だけで表示する */
   const excludedById = new Map();

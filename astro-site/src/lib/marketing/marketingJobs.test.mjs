@@ -95,8 +95,17 @@ test('ジョブ一覧: マーケティングジョブ以外を出さない', () 
 
 test('parseJobCampaign: TargetPlan と Notes から campaign と version を取り出す', () => {
   assert.deepEqual(parseJobCampaign({ TargetPlan: 'campaign:premium-renewal', Notes: 'marketing campaign premium-renewal v3' }),
-    { campaignId: 'premium-renewal', version: '3' });
-  assert.deepEqual(parseJobCampaign({}), { campaignId: '', version: '' });
+    { campaignId: 'premium-renewal', version: '3', contentHash: '', contentEdited: false });
+  assert.deepEqual(parseJobCampaign({}), { campaignId: '', version: '', contentHash: '', contentEdited: false });
+});
+
+test('parseJobCampaign: 何を送ったかの内容 hash を Notes から読む', () => {
+  const withHash = parseJobCampaign({
+    TargetPlan: 'campaign:expired-comeback',
+    Notes: 'marketing campaign expired-comeback v2 content:0123456789ab edited',
+  });
+  assert.equal(withHash.contentHash, '0123456789ab');
+  assert.equal(withHash.contentEdited, true, '編集した文面であることを記録できていない');
 });
 
 // ── 取消の可否 ──────────────────────────────────────────────

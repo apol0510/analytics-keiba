@@ -343,3 +343,47 @@ test('#3 rollback は実態どおり（キュー取消 API が無いことを隠
   assert.equal(/実配信を実行しなければ 1 通も送られません/.test(text), false,
     '取り消しではない運用回避を rollback として書いている');
 });
+
+// ── 特典・オファー側の人物単位の除外明細（2026-08-03 修正）─────────────
+// skippedPreview（recordId つき）を使わないと、除外が 1 件でもある限り
+// 「誰が対象か確定できません」となり、確認画面が常に使えなくなる。
+
+test('特典・オファー: skippedPreview があれば誰が除外されたか確定できる', () => {
+  const rowsById = new Map([
+    ['rec1', { recordId: 'rec1', email: 'a@example.com', name: 'A' }],
+    ['rec2', { recordId: 'rec2', email: 'b@example.com', name: 'B' }],
+    ['rec3', { recordId: 'rec3', email: 'c@example.com', name: 'C' }],
+  ]);
+  const view = buildPlanView({
+    kind: PLAN_KIND.GRANT_OFFER,
+    selectedIds: ['rec1', 'rec2', 'rec3'],
+    rowsById,
+    result: {
+      willGrant: 2, willOffer: 0, skipped: 1,
+      skippedDetail: [{ reason: 'already_granted', label: '同じ無料特典を既に保有', count: 1 }],
+      skippedPreview: [{ recordId: 'rec3', reason: 'already_granted', label: '同じ無料特典を既に保有' }],
+    },
+    nowMs: Date.parse('2026-08-03T00:00:00Z'),
+  });
+  assert.equal(view.detailComplete, true, '人物単位で確定できていない');
+  assert.equal(view.included.length, 2);
+  assert.equal(view.excluded.length, 1);
+  assert.equal(view.excluded[0].recordId, 'rec3');
+  assert.equal(view.executable, true);
+});
+
+test('特典・オファー: 集計しか無ければ従来どおり確定不能（推測しない）', () => {
+  const view = buildPlanView({
+    kind: PLAN_KIND.GRANT_OFFER,
+    selectedIds: ['rec1', 'rec2'],
+    rowsById: new Map(),
+    result: {
+      willGrant: 1, willOffer: 0, skipped: 1,
+      skippedDetail: [{ reason: 'already_granted', label: '同じ無料特典を既に保有', count: 1 }],
+      skippedPreview: [],
+    },
+    nowMs: Date.parse('2026-08-03T00:00:00Z'),
+  });
+  assert.equal(view.detailComplete, false);
+  assert.equal(view.included.length, 0, '推測で対象者を作っている');
+});
