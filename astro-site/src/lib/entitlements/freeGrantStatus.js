@@ -73,6 +73,14 @@ export const FREE_GRANT_HISTORY_LABEL = Object.freeze({
   [FREE_GRANT_HISTORY.UNKNOWN]: '履歴不明（記録が不完全）',
 });
 
+/**
+ * 「今回の無料付与」の説明（画面へそのまま出す）。
+ * 判定本体は `grantEligibility.js` にあるが、あちらは `comebackGrantPlan` 経由で
+ * `node:crypto` に依存するため**ブラウザへは持ち込めない**。文言だけここに置く。
+ */
+export const GRANT_ELIGIBILITY_NOTE =
+  '今回の無料付与：現在の状態と既存の付与内容から、この操作を実行できるかを示します。';
+
 /** 不整合の理由コード → 画面にそのまま出す文言 */
 export const GRANT_CONFLICT = Object.freeze({
   REVOKED_BUT_VALUED: '取消の記録より後に有効な値が無い（取消後に値が残っている）',

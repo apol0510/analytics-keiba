@@ -96,3 +96,13 @@ test('smoke(cb): 旧「現在の特典」フィルターも受け付ける（後
   const { statusCode } = await invoke({ action: 'customers', promo: 'light' });
   assert.equal(statusCode, 200);
 });
+
+test('smoke(cb): 今回の無料付与は grantable / blocked / review を受け付ける', async () => {
+  stubFetch();
+  for (const v of [['grantable'], ['blocked'], ['review'], ['grantable', 'review']]) {
+    const { statusCode } = await invoke({ action: 'customers', grantable: v });
+    assert.equal(statusCode, 200, JSON.stringify(v));
+  }
+  const { statusCode } = await invoke({ action: 'customers', grantable: ['nonsense'] });
+  assert.equal(statusCode, 400, '許可値以外が通ってしまう');
+});

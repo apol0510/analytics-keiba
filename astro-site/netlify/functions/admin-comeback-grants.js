@@ -301,7 +301,8 @@ const CB_FILTER_ALLOW = Object.freeze({
   currentGrant: [...FREE_GRANT_NOW_VALUES],
   /** これまでの無料付与の記録 */
   grantHistory: [...FREE_GRANT_HISTORY_VALUES],
-  grantable: ['grantable', 'blocked'],
+  /** 今回の無料付与（この操作を実行できるか）。要確認を「不可」と混ぜない */
+  grantable: ['grantable', 'blocked', 'review'],
 });
 
 async function handleCustomers({ KEY, BASE, now, req }) {
@@ -337,6 +338,8 @@ async function handleCustomers({ KEY, BASE, now, req }) {
       promoLight: v.promoLight,
       promoPremium: v.promoPremium,
       promoInconsistent: v.promoInconsistent,
+      // 今回の無料付与（状態・理由コード・理由ラベル。UI と同じ値を使う）
+      eligibility: v.eligibility,
       grantable: v.grantable,
       grantBlockedReason: v.grantBlockedReason,
       grantBlockedLabel: v.grantBlockedReason ? (CB_SKIP_LABEL[v.grantBlockedReason] || v.grantBlockedReason) : '',

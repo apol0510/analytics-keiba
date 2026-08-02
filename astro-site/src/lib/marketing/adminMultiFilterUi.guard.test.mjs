@@ -126,7 +126,8 @@ test('guard(filter): Step の現在地は色だけでなくバッジと「Step n
 
 test('guard(filter): 追従バーに今の条件を出す', () => {
   assert.match(PAGE, /id="cbSbCond"/, '条件表示が無い');
-  assert.match(SCRIPT, /条件が変更されています/, '条件変更を知らせていない');
+  // 上部の案内と同じ長文は繰り返さず、追従バーは短い一言にする（2026-08-03）
+  assert.match(SCRIPT, /'未反映の条件変更あり'/, '条件変更を知らせていない');
 });
 
 test('guard(api): 許可値以外は 400（formula へ直結させない）', () => {

@@ -508,6 +508,55 @@ Customers は **ティアごとに最新 1 回分**しか持たない（再付�
 
 **自動修復しない。** 一覧に理由を出し、選択・付与実行は既存の fail closed 方針のまま。
 
+## 6-4. 「今回の無料付与」と通知の出し方（2026-08-03）
+
+### 3 つの項目を混同しない
+
+| 項目 | 意味 | 単一源 |
+|---|---|---|
+| 現在の無料付与 | 顧客の**現在状態** | `freeGrantStatus.resolveCurrentFreeGrant` |
+| 無料付与履歴 | **過去の記録** | `freeGrantStatus.resolveFreeGrantHistory` |
+| **今回の無料付与** | **この操作をいま実行できるか** | `grantEligibility.resolveGrantEligibility` |
+
+旧「付与可否（付与できる / 付与できない）」は何を指すのか曖昧だったため、
+**今回の無料付与**（今回付与できる / 現在の状態では付与できない / 要確認）へ変更した。
+画面には常に `今回の無料付与：現在の状態と既存の付与内容から、この操作を実行できるかを示します。` を出す。
+
+### 判定と理由（UI と API で同じ値）
+
+`resolveGrantEligibility()` は `{canGrant, status, reasonCode, reasonLabel, notes}` を返す。
+実行可否の正本は **dry-run と同じ `checkGrantable`**、理由コードも **`CB_SKIP` をそのまま**使うため、
+一覧・顧客詳細・フィルター・dry-run の除外理由が**同じ言葉**になる。
+
+| status | 例 | reasonCode |
+|---|---|---|
+| `blocked` | 付与不可：アカウント停止 / 退会 / メール未登録 | `account_suspended` / `withdrawal_blocked` / `data_incomplete` |
+| `blocked` | 付与不可：Light・Premium とも永久無料が有効 | `active_both` |
+| `review` | 要確認：取消状態と期限が不整合 | `revoked_conflict` |
+| `review` | 要確認：無料付与データ不整合 | `grant_inconsistent` |
+| `grantable` | 付与可能（注意つき） | `grantable` ＋ notes `active_light_period` 等 |
+
+> ⚠️ **「無料期間中だから付与不可」ではない。** より強い内容（期限が伸びる・無期限化）なら
+> 適用されるため（`isStrongerGrant`）、無料期間中は **注意つきの「付与可能」**。
+> 一方、Light・Premium とも永久無料ならどのティアへ出しても適用されないので `blocked`。
+> 実際に起きることへ合わせる（推測で不可を増やさない）。
+
+### 通知は種類ごとに 1 件（積み上げない）
+
+`cbNotify(kind, text, detail, key)` にキーを渡すと、同じキーの通知は**新規追加せず内容を更新**する。
+
+| キー | 出るとき | 消えるとき |
+|---|---|---|
+| `filter-stale` | 条件を変更（**オレンジの案内**。エラー色にしない） | 再取得したら自動で消える |
+| `filter-loading` | 取得中 | 取得完了 |
+| `filter-loaded` | 取得成功（緑） | 6 秒後に自動で消える |
+| `filter-error` | 取得失敗（赤） | 次の取得開始時 |
+
+- 条件変更の文言は **「検索条件が変わりました。／対象候補を再表示してください。」** の 1 件だけ
+- **追従バーは同じ長文を繰り返さない**。「未反映の条件変更あり」＋ 次の操作
+  「🔍 対象候補を再表示」だけを出す
+- × で閉じても、**さらに条件を変えたら**もう一度出す（未反映のまま実行させない）
+
 ## 7. 原子性・冪等性・復旧
 
 ### 顧客単位では原子的

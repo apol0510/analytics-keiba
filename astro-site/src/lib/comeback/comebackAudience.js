@@ -16,6 +16,9 @@ import {
   resolveCurrentFreeGrant, resolveFreeGrantHistory, formatFreeGrantSummary,
   matchesFreeGrantNow, matchesFreeGrantHistory,
 } from '../entitlements/freeGrantStatus.js';
+import {
+  resolveGrantEligibility, formatGrantEligibility, matchesGrantEligibility,
+} from '../entitlements/grantEligibility.js';
 import { classifyComebackSegment, SEGMENT } from '../entitlements/comebackAudience.js';
 import { checkGrantable, checkOfferable, describeCustomerState, CB_SKIP } from './comebackGrantPlan.js';
 
@@ -62,6 +65,14 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
     grants,
     /** 対象区分（期限切れ / 退会 / 休眠 / 現有効会員 / 不明）。単一源は entitlements/comebackAudience.js */
     segment: classifyComebackSegment({ fields: f, nowMs: now }),
+    /**
+     * 今回の無料付与（**この操作をいま実行できるか**）。
+     * 現在状態（freeGrant）・履歴（grantHistoryCodes）とは別項目。
+     */
+    eligibility: (() => {
+      const e = resolveGrantEligibility(f, now);
+      return { ...e, text: formatGrantEligibility(e) };
+    })(),
     /** 無料付与できるか（停止・退会・データ不備は付与しても使えないので false） */
     grantable: grantable.ok,
     grantBlockedReason: grantable.reason,
@@ -163,7 +174,8 @@ export function matchesComebackFilter(c, filter = {}) {
       if (!hit) return false;
     }
   }
-  if (!pick(c.grantable ? CB_GRANTABLE_FILTER.GRANTABLE : CB_GRANTABLE_FILTER.BLOCKED, f.grantable)) return false;
+  // 「今回の無料付与」。要確認（review）を付与不可と混ぜない
+  if (!matchesGrantEligibility(c.eligibility ? c.eligibility.status : null, f.grantable)) return false;
   return true;
 }
 

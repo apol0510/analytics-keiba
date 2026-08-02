@@ -530,10 +530,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="inconsistent">⚠️ 要確認（記録が矛盾）</option>
           <option value="unknown">履歴不明（記録が不完全）</option>
         </select>
-        <select id="cbGrantable" aria-label="付与可否">
-          <option value="all">付与可否: すべて</option>
-          <option value="grantable">付与できる</option>
-          <option value="blocked">付与できない</option>
+        <select id="cbGrantable" aria-label="今回の無料付与">
+          <option value="all">今回の無料付与: すべて</option>
+          <option value="grantable">今回付与できる</option>
+          <option value="blocked">現在の状態では付与できない</option>
+          <option value="review">要確認</option>
         </select>
         <select id="cbHistory" aria-label="送信履歴">
           <option value="all">送信履歴: すべて</option>
@@ -547,6 +548,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="preset-row" id="cbPresets" aria-label="よく使う条件">
           <span class="preset-label">よく使う条件:</span>
         </div>
+        <p class="filter-logic" id="cbGrantNote"></p>
         <div class="chip-row" id="cbChips" aria-label="適用中の条件"></div>
         <p class="filter-logic" id="cbLogicNote"></p>
         <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
@@ -577,7 +579,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-contract">契約</th>
               <th class="c-plan">プラン</th>
               <th class="c-promo">無料付与（現在 / 履歴）</th>
-              <th class="c-grantable">付与可否</th>
+              <th class="c-grantable">今回の無料付与</th>
             </tr>
           </thead>
           <tbody id="cbRows"></tbody>
@@ -1575,6 +1577,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     DRY_STATE, applyCampaigns as stApplyCampaigns, dryRunFailed as stDryRunFailed,
     maskEmail as stMaskEmail,
   } from '../../lib/marketing/marketingConsoleState.js';
+  import { GRANT_ELIGIBILITY_NOTE } from '../../lib/entitlements/freeGrantStatus.js';
   import {
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
@@ -1594,6 +1597,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     PLAN_VALUES, PLAN_LABELS,
   };
   window.__cbFlow = {
+    GRANT_ELIGIBILITY_NOTE,
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
     resolveCbStep, canSelectCustomers, canConfigureOffer, canReview, canApply,
@@ -4327,19 +4331,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     };
 
     /** 通知（内容別。gate や失効の理由をここに出す） */
-    function cbNotify(kind, text, detail) {
+    function cbNotify(kind, text, detail, key) {
       const box = $('cbNotices');
       if (!box) return;
-      const el = document.createElement('div');
+      // 同じ種類の通知を積み上げない。キー付きなら**常に最大 1 件**で、内容だけ差し替える
+      const id = String(key || '');
+      const existing = id ? box.querySelector('[data-notice-key="' + id + '"]') : null;
+      const el = existing || document.createElement('div');
       el.className = 'notice notice-' + kind;
+      if (id) el.dataset.noticeKey = id;
+      el.innerHTML = '';
       const t = document.createElement('b'); t.textContent = text; el.appendChild(t);
       if (detail) { const d = document.createElement('span'); d.className = 'notice-d'; d.textContent = detail; el.appendChild(d); }
       const x = document.createElement('button'); x.type = 'button'; x.className = 'notice-x'; x.textContent = '×';
-      x.addEventListener('click', () => el.remove());
+      x.addEventListener('click', () => {
+        el.remove();
+        // × で閉じたら「閉じた」ことを覚える。同じ状態では出し直さない
+        if (id) cbDismissed.add(id);
+      });
       el.appendChild(x);
-      box.prepend(el);
-      while (box.children.length > 4) box.lastChild.remove();
+      if (!existing) box.prepend(el);
+      while (box.children.length > 3) box.lastChild.remove();
+      return el;
     }
+
+    /** キー付き通知を消す（状態が解消したら自動で消える） */
+    function cbClearNotice(key) {
+      const box = $('cbNotices');
+      const el = box && box.querySelector('[data-notice-key="' + String(key) + '"]');
+      if (el) el.remove();
+      cbDismissed.delete(String(key));
+    }
+
+    /** × で閉じた通知のキー（同じ状態では出し直さない） */
+    const cbDismissed = new Set();
+
+    /** 通知キー（種類ごとに 1 件だけ） */
+    const CB_NOTICE = { STALE: 'filter-stale', LOADING: 'filter-loading', LOADED: 'filter-loaded', ERROR: 'filter-error' };
 
     /** いまの特典設定を読む */
     function cbCurrentOffer() {
@@ -4482,8 +4510,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           const selections = multiValues(CB_MULTI_IDS);
           const n = filterApi().countApplied(selections);
           // 「項目」ではなく**選んだ値の数**なので件で数える（1 項目に複数値が入る）
+          // 上部の案内と同じ長文を繰り返さない。ここは状態を一言だけ
           cond.textContent = cbState.filtersChanged
-            ? '条件が変更されています（再表示してください）'
+            ? '未反映の条件変更あり'
             : '条件: ' + (n === 0 ? '指定なし' : n + ' 件');
           cond.classList.toggle('is-changed', !!cbState.filtersChanged);
         }
@@ -4497,8 +4526,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         // 次の操作は 1 つだけ。段階で色を変える
         const next = $('cbSbNext');
         const tone = { 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger' }[step] || 'btn-primary';
-        next.className = 'btn-lg ' + tone;
-        next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '🚀 ' }[step] || '') + v.next;
+        // 条件を変えたままなら、次にやることは「再表示」ひとつ
+        if (cbState.filtersChanged) {
+          next.className = 'btn-lg btn-caution';
+          next.textContent = '🔍 対象候補を再表示';
+        } else {
+          next.className = 'btn-lg ' + tone;
+          next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '🚀 ' }[step] || '') + v.next;
+        }
       }
     }
 
@@ -4605,7 +4640,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       cbContract: '対象区分', cbPlan: 'プラン', cbWithdrawn: '退会履歴',
       // 「特典」という曖昧な語をやめ、**いま**と**これまで**を分ける
       cbGrantNow: '現在の無料付与', cbGrantHistory: '無料付与履歴',
-      cbGrantable: '付与可否', cbHistory: '送信履歴',
+      // 「今回この操作を実行できるか」。現在状態・履歴とは別項目
+      cbGrantable: '今回の無料付与', cbHistory: '送信履歴',
     };
     function cbInitFilters() {
       for (const id of CB_MULTI_IDS) {
@@ -4634,6 +4670,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       const note = $('cbLogicNote');
       if (note) note.textContent = filterApi().FILTER_LOGIC_NOTE;
+      // 現在状態 / 履歴 / 今回の可否は別物。取り違えないよう画面に書く
+      const gn = $('cbGrantNote');
+      if (gn) gn.textContent = cbApi().GRANT_ELIGIBILITY_NOTE || '';
       cbRenderChips();
     }
 
@@ -4690,8 +4729,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     /** 条件が変わったら一覧と確認結果を古い扱いにする */
     function cbMarkFilterChanged() {
       if (cbState.loaded) {
+        // 条件を変えるのは**通常の操作**。エラーではなくオレンジの案内を 1 件だけ出す。
+        // × で閉じても、**さらに条件を変えたら**もう一度出す（未反映のまま実行させない）。
         cbState.filtersChanged = true;
-        cbNotify('caution', '条件が変更されています', '「🔍 対象候補を表示」で再取得してください。');
+        cbDismissed.delete(CB_NOTICE.STALE);
+        cbNotify('caution', '検索条件が変わりました。', '対象候補を再表示してください。', CB_NOTICE.STALE);
       }
       cbInvalidate('対象条件が変わりました。');
       cbSync();
@@ -4850,6 +4892,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     async function cbLoad() {
       cbMsg('読み込み中…');
+      cbClearNotice(CB_NOTICE.ERROR);
+      cbNotify('info', '対象候補を更新しています…', '', CB_NOTICE.LOADING);
       // 複数選択は配列で送る（同じ項目内は OR / 未選択は条件なし）
       const sel = multiValues(CB_MULTI_IDS);
       const data = await cbCall({
@@ -4863,14 +4907,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         grantable: sel.cbGrantable,
         history: sel.cbHistory,
       });
-      if (!data) return;
+      cbClearNotice(CB_NOTICE.LOADING);
+      if (!data) {
+        // 失敗したときだけ赤。案内（オレンジ）は残したままにする
+        cbNotify('err', '対象候補を取得できませんでした', 'もう一度お試しください。', CB_NOTICE.ERROR);
+        cbMsg('');
+        return;
+      }
       cbData = data;
       // Step 1 完了。ここから Step 2 を操作できる
       cbState.filtersChanged = false;
       cbState.loaded = true;
       cbState.candidateCount = (data.rows || []).length;
+      // 条件変更の案内は役目を終えたので消す（再取得したら自動で消える）
+      cbClearNotice(CB_NOTICE.STALE);
       cbInvalidate('対象候補を取得し直しました。');
-      cbNotify('ok', '対象候補を表示しました', (data.rows || []).length + ' 名（現有効会員は既定で対象外）');
+      cbNotify('ok', '対象候補を表示しました', (data.rows || []).length + ' 名（現有効会員は既定で対象外）', CB_NOTICE.LOADED);
+      // 成功通知は積み上げない。短時間で自動的に消す
+      setTimeout(() => cbClearNotice(CB_NOTICE.LOADED), 6000);
       cbSync();
       cbWriteEnabled = !!data.writeEnabled;
       cbMsg('');
@@ -4892,7 +4946,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         ['契約なし', s.contract?.none || 0],
         ['退会あり', s.withdrawn || 0],
         ['無料付与あり', (s.promo?.light || 0) + (s.promo?.trialActive || 0)],
-        ['付与できる', s.grantable || 0],
+        ['今回付与できる', s.grantable || 0],
       ];
       items.forEach((it, i) => {
         if (i > 0) { const sp = document.createElement('span'); sp.className = 'sep'; sp.textContent = '|'; bar.appendChild(sp); }
@@ -4977,9 +5031,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           cell.appendChild(why);
         }
         tr.appendChild(cell);
-        tr.appendChild(td('c-grantable', '付与可否',
-          r.grantable ? '付与できる' : ('付与不可: ' + (r.grantBlockedLabel || '')),
-          r.grantable ? 'ok-txt' : 'ng-txt'));
+        // 今回の無料付与（実行できるか）。理由は API と同じラベルを出す
+        const el = r.eligibility || null;
+        const elText = el ? el.text : (r.grantable ? '付与可能' : ('付与不可：' + (r.grantBlockedLabel || '')));
+        const elTone = el
+          ? (el.status === 'grantable' ? 'ok-txt' : (el.status === 'review' ? 'warn-txt' : 'ng-txt'))
+          : (r.grantable ? 'ok-txt' : 'ng-txt');
+        tr.appendChild(td('c-grantable', '今回の無料付与', elText, elTone));
 
         tb.appendChild(tr);
       }
