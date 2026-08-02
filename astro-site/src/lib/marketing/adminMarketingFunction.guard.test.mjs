@@ -196,3 +196,55 @@ test('guard: 台帳テーブル名は受信側の単一源から取る', () => {
     'テーブル名を admin 側で直書きしている');
   assert.equal(/['"]EmailEvents['"]/.test(src), false, 'テーブル名のリテラルが admin 側にある');
 });
+
+// ── 送信状況・取消（運用機能 / 2026-08-02）────────────────────────
+test('guard: 取消は単一源 marketingJobs.js に委譲する（Function に再実装しない）', () => {
+  assert.match(src, /from '[^']*marketing\/marketingJobs\.js'/, '取消の単一源を import していない');
+  assert.match(src, /canCancelJob\(/, '取消可否の判定を単一源で行っていない');
+  assert.match(src, /buildJobCancelFields\(/);
+  assert.match(src, /selectCancelableDeliveries\(/, '取消対象の選別を単一源で行っていない');
+  assert.equal(/Status: 'CANCELLED'/.test(src), false, 'Function 側で取消の状態値を直書きしている');
+});
+
+test('guard: 取消は operationId 必須で冪等（同じ取消を 2 回書かない）', () => {
+  assert.match(src, /操作 ID（operationId）が必要です/, 'operationId 無しを拒否していない');
+  assert.match(src, /isAlreadyCancelledBy\(\{ job, operationId \}\)/, '実施済み判定をしていない');
+  const from = src.indexOf('async function handleCancelJob');
+  const seg = src.slice(from, from + 2500);
+  const idemIdx = seg.indexOf('isAlreadyCancelledBy');
+  const writeIdx = seg.indexOf('patchRecord(');
+  assert.ok(idemIdx > -1 && writeIdx > idemIdx, '冪等判定より前に書き込んでいる');
+});
+
+test('guard: 取消は sent の配信行に触れない', () => {
+  const from = src.indexOf('async function handleCancelJob');
+  const seg = src.slice(from, from + 2500);
+  assert.match(seg, /selectCancelableDeliveries\(/, '対象を絞らずに配信行を書き換えている');
+  assert.equal(/Status: 'sent'/.test(seg), false, '送信済みの状態を書き換えている');
+});
+
+test('guard: 取消の書き込みは allow-list を通す', () => {
+  assert.match(src, /assertOnlyCancelFields\(deliveryFields, DELIVERY_CANCEL_WRITABLE_FIELDS\)/);
+  assert.match(src, /assertOnlyCancelFields\(jobFields, JOB_CANCEL_WRITABLE_FIELDS\)/);
+});
+
+test('guard: 送信経路を増やさない（admin から SendGrid を直接叩かない）', () => {
+  for (const banned of ['mail/send', '@sendgrid', 'nodemailer', 'resend.com']) {
+    assert.equal(code.includes(banned), false, `admin が送信経路 ${banned} を持っている`);
+  }
+});
+
+test('guard: ジョブ一覧はマーケティングジョブだけを返す', () => {
+  assert.match(src, /buildJobView\(\{ jobRecords: scheduled, deliveryRecords: deliveries, isMarketingJob \}\)/,
+    'マーケティング以外のジョブを混ぜている');
+});
+
+test('guard: ジョブ一覧・取消の応答にアドレスを載せない', () => {
+  const from = src.indexOf('async function handleJobs');
+  const to = src.indexOf('async function handleHistory');
+  const seg = src.slice(from, to > from ? to : from + 3000);
+  // EmailType / ScheduledEmailJobId は列名なので誤検知しないよう、宛先そのものだけを見る
+  for (const banned of ['RecipientEmail', 'fields.Email', 'email:']) {
+    assert.equal(seg.includes(banned), false, `応答に ${banned} を載せている`);
+  }
+});

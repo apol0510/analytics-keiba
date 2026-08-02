@@ -17,6 +17,29 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: admin マーケティング送信の**通常運用機能**が揃った。
+対象選択 → 確認 → キュー登録 → **状況確認 → 取消**まで管理画面だけで完結する。
+送信ゲートは両方 UNSET のまま（実メール 0）。**
+
+### 今回追加した運用機能（branch `feat/admin-marketing-operations`）
+
+| 完成条件 | 実装 |
+|---|---|
+| 送信状況の確認（予定 / 送信済 / 失敗 / 取消）| admin API `jobs` + 画面「送信状況・取消」。件数と**失敗理由の分類**を表示 |
+| PENDING の取消 | admin API `cancelJob`。**PENDING だけ**取消可。`operationId` 必須で冪等 |
+| SENT は取消不可 | 画面に理由付きで明示（`already_sent`）。**sent の配信行には触れない** |
+| dispatcher 失敗の可視化 | 配信行の `ErrorMessage` を理由別に集計して表示 |
+| ゲート閉鎖時の挙動 | 理由（どの env が未設定か）を画面に出し、送信ボタンを無効化 |
+| 自動送信されないこと | dispatcher は**定期実行に未登録**（guard で固定）。共有 executor は env 非依存で常時 skip |
+| 台帳状態の確認 | 顧客カルテ ⑥-2 に **未確定（unresolved / conflict）の全体件数**を追加（顧客には紐付けない）|
+
+### 二重送信・誤送信を防ぐ構造（変更なし・テストで固定）
+
+`DeliveryKey`（同一版は 1 行）/ `planFingerprint`（確認した母集団以外へ送れない）/
+送信直前の再検証 / custom_args 3 点そろわなければ送らない / 送信経路は 1 系統 /
+dispatcher は PENDING のみ処理。
+
+
 **Phase（2026-08-02 現在・最新）: Phase 2 実施完了。刻印付きカナリア 1 通の本番送信で
 「送信 → イベント → resolved → admin カルテ」が実証された。送信 gate は再閉鎖済み（実効確認済み）。**
 
