@@ -480,7 +480,7 @@ test('guard(ui): フィルターは常時表示と詳細条件に分かれ、件
 });
 
 test('guard(ui): 「表示中を全選択」を主要操作にし、全顧客選択は目立たせない', () => {
-  assert.match(PAGE, /id="mkSelAll" class="btn-primary btn-sm">表示中を全選択/, '主要操作になっていない');
+  assert.match(PAGE, /id="mkSelAll" class="btn-warning btn-md">👥 表示中を全選択/, '主要操作になっていない');
   assert.match(PAGE, /id="mkSelAllLoaded"[^>]*btn-quiet/, '全顧客選択が目立つままになっている');
 });
 
@@ -523,7 +523,7 @@ test('guard(ui): ジョブ状態はバッジで示し、部分失敗を成功と
 
 // ── 「今すぐ送信」（2026-08-02 / 管理画面だけで完結）────────────────
 test('guard(ui): 最終送信ボタンは「今すぐ送信」で、既定は押せない', () => {
-  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled[^>]*>今すぐ送信|id="mkDispatchRun"[^>]*>今すぐ送信/, '「今すぐ送信」が無い');
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*>[^<]*今すぐ送信/, '「今すぐ送信」が無い');
   assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled/, '最初から押せる状態になっている');
 });
 
@@ -619,4 +619,173 @@ test('guard(ui): 「現有効会員を含める」は既定 OFF で警告つき'
 
 test('guard(ui): カムバックの対象区分を表示する場所がある', () => {
   assert.match(PAGE, /id="cbAudience"/, '対象区分の表示領域が無い');
+});
+
+// ── カムバック特典タブの Step UI（2026-08-02）───────────────────
+test('guard(cb): Step 1〜5 のカードとナビがある', () => {
+  assert.match(PAGE, /id="cbSteps"/, 'Step ナビが無い');
+  for (const [n, label] of [[1, '対象者を探す'], [2, '対象者を選ぶ'], [3, '付与する特典を決める'],
+    [4, '変更内容を確認する'], [5, '特典を付与する']]) {
+    assert.ok(PAGE.includes(label), `Step ${n} の見出しが無い: ${label}`);
+    assert.ok(PAGE.includes(`data-cbcard="${n}"`), `Step ${n} のカードが無い`);
+  }
+  assert.match(SCRIPT, /resolveCbStep\(/, '現在地を単一源で判定していない');
+  assert.match(SCRIPT, /classList\.toggle\('is-locked'/, '未到達 Step を操作不可にしていない');
+});
+
+test('guard(cb): 契約状態を「有効」ではなくカムバックの言葉で出す', () => {
+  // 検査対象はカムバックタブだけ（顧客マーケティングタブは有効会員も正当な対象）
+  const CB = PAGE.slice(PAGE.indexOf('id="paneCb"'), PAGE.indexOf('id="mkBackdrop"'));
+  assert.match(CB, /カムバック候補すべて/, '既定の選択肢が無い');
+  assert.match(CB, /現在有効な会員（通常は選択しない）/, '注意書きつきの表現になっていない');
+  assert.equal(/<option value="active">有効<\/option>/.test(CB), false, '「有効」のままの選択肢が残っている');
+  assert.match(CB, /value="active" class="opt-danger"/, '警告色になっていない');
+  assert.match(CB, /<optgroup/, '区切り線の下に置いていない');
+});
+
+test('guard(cb): 現有効会員を選んだら警告を出す', () => {
+  assert.match(SCRIPT, /ACTIVE_FILTER_WARNING/, '警告文を使っていない');
+  assert.match(SCRIPT, /v === 'active'/, '現有効会員の選択を検知していない');
+});
+
+test('guard(cb): 取得ボタンは「対象候補を表示」、確認は「付与内容を確認」', () => {
+  assert.match(PAGE, /id="cbLoad"[^>]*>[^<]*対象候補を表示/, '取得ボタンの文言が古い');
+  assert.match(PAGE, /id="cbDryRun"[^>]*>[^<]*付与内容を確認/, '確認ボタンの文言が古い');
+  assert.match(PAGE, /この時点では顧客データを変更しません/, '補足が無い');
+});
+
+test('guard(cb): 確認結果は条件・選択・特典の変更で失効する', () => {
+  assert.match(SCRIPT, /cbInvalidate\('対象条件が変わりました。'\)/, '条件変更で失効しない');
+  assert.match(SCRIPT, /cbInvalidate\('選択した顧客が変わりました。'\)/, '選択変更で失効しない');
+  assert.match(SCRIPT, /cbInvalidate\('特典の内容が変わりました。'\)/, '特典変更で失効しない');
+  assert.match(SCRIPT, /isCbDryStale\(/, '失効判定を単一源で行っていない');
+});
+
+test('guard(cb): 現有効会員の混入時は実行できない', () => {
+  assert.match(SCRIPT, /canApply\(cbState\)/, '実行可否を単一源で判定していない');
+  assert.match(SCRIPT, /現在有効な会員が含まれています/, '混入時の警告が無い');
+});
+
+test('guard(cb): 実行は人数入力つきの二段階確認', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('cbApplyBtn')"));
+  assert.match(block, /window\.confirm\(/, '確認ダイアログが無い');
+  assert.match(block, /window\.prompt\(/, '人数入力が無い');
+  assert.match(block, /付与予定人数/, '人数確認の文言が無い');
+  assert.match(block, /operationId: cbState\.dryRun\.operationId/, 'dry-run と同じ operationId を使っていない（冪等性）');
+});
+
+test('guard(cb): 変更しないもの・メール送信しないことを必ず出す', () => {
+  assert.match(SCRIPT, /UNCHANGED_NOTICE/, '変更しない項目の明示が無い');
+  assert.match(SCRIPT, /APPLY_EFFECT_NOTICE/, '実行の影響の明示が無い');
+  assert.match(PAGE, /この操作だけでは<b>メールを送信しません<\/b>/, '安全事項が無い');
+});
+
+test('guard(cb): 専用の追従バーに次の操作を 1 つだけ出す', () => {
+  assert.match(PAGE, /id="cbStickyBar"/, '追従バーが無い');
+  for (const id of ['cbSbLeft', 'cbSbOffer', 'cbSbReview', 'cbSbNext']) {
+    assert.ok(PAGE.includes(`id="${id}"`), `追従バーに ${id} が無い`);
+  }
+  assert.match(SCRIPT, /buildCbStickyView\(/, '表示内容を単一源で作っていない');
+});
+
+test('guard(cb): 特典は平文で要約し、内部用語を使わない', () => {
+  assert.match(SCRIPT, /describeOfferSelection\(/, '平文の要約が無い');
+  assert.equal(/Light 特典（ベース）/.test(PAGE), false, '内部用語（ベース）が残っている');
+  assert.equal(/Premium 特典（上位・任意）/.test(PAGE), false, '内部用語（上位・任意）が残っている');
+});
+
+test('guard(cb): 実行結果に人数・operationId・実行日時を出す', () => {
+  assert.match(SCRIPT, /function cbRenderApplyResult\(/, '結果表示が無い');
+  for (const label of ['付与できた人数', '除外', '失敗', '操作 ID', '実行日時']) {
+    assert.ok(SCRIPT.includes(`'${label}'`), `結果に ${label} が無い`);
+  }
+});
+
+// ── 配色とボタンの視認性（2026-08-02）─────────────────────────
+test('guard(design): 色の役割を CSS 変数で固定する（直書きを増やさない）', () => {
+  for (const token of ['--action-blue', '--action-green', '--action-yellow', '--action-orange',
+    '--action-red', '--action-purple', '--surface-raised', '--surface-active',
+    '--text-main', '--text-muted', '--border-soft', '--focus-ring']) {
+    assert.ok(PAGE.includes(`${token}:`), `デザイントークン ${token} が無い`);
+  }
+});
+
+test('guard(design): ボタンの階層（主要 / 補助 / 危険）が定義されている', () => {
+  for (const cls of ['.btn-lg', '.btn-md', '.btn-primary', '.btn-success', '.btn-warning',
+    '.btn-caution', '.btn-danger', '.btn-secondary', '.btn-purple']) {
+    assert.ok(PAGE.includes(`.ppe ${cls}`), `ボタン種別 ${cls} が無い`);
+  }
+  assert.match(PAGE, /\.ppe \.btn-lg \{[^}]*min-height: 50px/, '主要ボタンが大きくない');
+  assert.match(PAGE, /\.ppe \.btn-lg \{[^}]*font-size: 16px/, '主要ボタンの文字が小さい');
+});
+
+test('guard(design): 主要操作は大きく、意味の色とアイコンを持つ', () => {
+  for (const [id, cls, icon] of [
+    ['cbLoad', 'btn-lg', '🔍'], ['cbDryRun', 'btn-success', '✅'], ['cbApplyBtn', 'btn-danger', '🎁'],
+    ['mkLoad', 'btn-lg', '🔍'], ['mkDryRun', 'btn-success', '✅'], ['mkDispatchRun', 'btn-danger', '📩'],
+  ]) {
+    const m = PAGE.match(new RegExp(`id="${id}"[^>]*class="([^"]*)"[^>]*>([^<]*)`));
+    assert.ok(m, `${id} が見つからない`);
+    assert.ok(m[1].includes(cls), `${id} に ${cls} が無い: ${m[1]}`);
+    assert.ok(m[2].includes(icon), `${id} にアイコン ${icon} が無い: ${m[2]}`);
+  }
+});
+
+test('guard(design): 危険操作は赤系 + 警告アイコン + 無効時に aria-disabled', () => {
+  for (const id of ['cbApplyBtn', 'mkDispatchRun']) {
+    const m = PAGE.match(new RegExp(`<button[^>]*id="${id}"[^>]*>`));
+    assert.ok(m, `${id} が無い`);
+    assert.match(m[0], /btn-danger/, `${id} が危険操作の色でない`);
+    assert.match(m[0], /aria-disabled="true"/, `${id} に aria-disabled が無い`);
+  }
+  assert.match(PAGE, /id="cbApplyBtn"[^>]*>⚠️/, '危険操作に警告アイコンが無い');
+});
+
+test('guard(design): Step ナビは丸番号 + アイコン + 補足を持つ', () => {
+  assert.match(PAGE, /class="stp-n"/, '番号が強調されていない');
+  assert.match(PAGE, /class="stp-sub"/, '補足が無い');
+  assert.match(PAGE, /\.ppe \.stepbar \.stp \{[^}]*min-height: 72px/, 'Step カードの高さが足りない');
+  assert.match(PAGE, /\.ppe \.stepbar \.stp \.stp-n \{[^}]*font-size: 30px/, '番号が大きくない');
+});
+
+test('guard(design): 現在 / 完了 / 未到達を色と文言の両方で区別する', () => {
+  assert.match(PAGE, /\.ppe \.stepbar \.stp\.is-now[\s\S]{0,200}--action-yellow/, '現在の段階が黄系でない');
+  assert.match(PAGE, /\.ppe \.stepbar \.stp\.is-done[\s\S]{0,200}--action-green/, '完了が緑系でない');
+  assert.match(SCRIPT, /ここを操作してください/, '現在地の文言が無い');
+  assert.match(SCRIPT, /前の Step を完了してください/, '未到達の説明が無い');
+  assert.match(SCRIPT, /'✅ 完了'/, '完了の文言が無い');
+});
+
+test('guard(design): Step 5 は本番データが変わることを赤で明示する', () => {
+  assert.match(PAGE, /本番データが変更されます/, 'Step 5 の警告が無い');
+  assert.match(PAGE, /\.ppe \.cb-step\[data-cbcard="5"\]\.is-now[\s\S]{0,120}--action-red/, 'Step 5 が赤系でない');
+});
+
+test('guard(design): 追従バーの次操作は状態ごとに色が変わる', () => {
+  assert.match(SCRIPT, /\{ 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger'/,
+    '状態別の色分けが無い');
+  assert.match(PAGE, /\.ppe \.stickybar[\s\S]{0,200}border-top: 3px solid var\(--action-yellow\)/, '追従バーの上辺ラインが無い');
+  assert.match(PAGE, /#cbSbNext[\s\S]{0,120}min-height: 52px/, '次操作ボタンが大きくない');
+});
+
+test('guard(design): 通知は 5 種類を色 + アイコン + 左ボーダーで分ける', () => {
+  for (const cls of ['.notice-ok', '.notice-info', '.notice-warn', '.notice-caution', '.notice-err']) {
+    assert.ok(PAGE.includes(`.ppe ${cls}`), `通知 ${cls} が無い`);
+  }
+  assert.match(PAGE, /\.ppe \.notice \{[^}]*border-left-width: 5px/, '左ボーダーが無い');
+});
+
+test('guard(design): 危険設定はオレンジ枠で「通常は変更しません」と書く', () => {
+  assert.match(PAGE, /\.ppe \.danger-setting/, '危険設定のカードが無い');
+  assert.match(PAGE, /通常は変更しません/, '注意書きが無い');
+});
+
+test('guard(design): focus-visible が定義され、無効ボタンはカーソルでも分かる', () => {
+  assert.match(PAGE, /button:focus-visible[\s\S]{0,200}outline: 3px solid var\(--focus-ring\)/, 'focus 表示が弱い');
+  assert.match(PAGE, /button\[disabled\] \{[^}]*cursor: not-allowed/, '無効ボタンのカーソル指定が無い');
+});
+
+test('guard(design): 状態は色だけでなく文言でも分かる（区分バッジ）', () => {
+  assert.match(SCRIPT, /function cbSegmentBadge\(/, '区分バッジが無い');
+  assert.match(SCRIPT, /segmentLabel\(segment\)/, 'バッジに文言が無い（色だけになっている）');
 });
