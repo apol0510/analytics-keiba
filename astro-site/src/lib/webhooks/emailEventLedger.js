@@ -27,7 +27,8 @@
  *    （`marketing-campaign-dispatch.js` の送信ペイロードに custom_args が無い）。
  *    したがって現状の受信イベントは `email` しか手掛かりが無く、
  *    このモジュールは **`unresolved` として保存する**（顧客へは結び付けない）。
- *    紐付けを効かせるには送信側で custom_args を刻む変更が別途必要（Phase 1b）。
+ *    紐付けを効かせるには送信側で custom_args を刻む変更が別途必要
+ *    （**Phase 1c**。1b は Airtable テーブル作成 + env 投入。`docs/EMAIL_EVENT_LEDGER.md` §5 が段取りの単一源）。
  *
  * ── 個人情報は最小限 ──────────────────────────────────────
  * - **IP アドレス・User-Agent は保存しない**（施策判断に不要で、漏えい時の被害が大きい）
