@@ -75,6 +75,7 @@ import { fetchDeliveryActivity } from '../../src/lib/marketing/deliveryActivity.
 import {
   isMarketingEnqueueEnabled,
   isMarketingDispatchEnabled,
+  isMarketingJob,
 } from '../../src/lib/marketing/marketingDispatchGate.js';
 import {
   fetchEmailBlacklistReadOnly,
