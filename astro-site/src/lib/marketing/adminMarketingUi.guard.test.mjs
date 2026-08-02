@@ -265,9 +265,11 @@ test('絞り込みは AND で、適用条件と件数を画面に出す', () => 
   for (const id of ['mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']) {
     assert.ok(PAGE.includes(`id="${id}"`), `${id} が無い`);
   }
-  assert.match(SCRIPT, /offerState: \$\('mkOfferState'\)\.value/);
-  assert.match(SCRIPT, /promoState: \$\('mkPromoState'\)\.value/);
-  assert.match(SCRIPT, /frequency: \$\('mkFrequency'\)\.value/);
+  // 複数選択は配列で送る（同じ項目内は OR / 項目間は AND）
+  assert.match(SCRIPT, /offerState: sel\.mkOfferState/);
+  assert.match(SCRIPT, /promoState: sel\.mkPromoState/);
+  assert.match(SCRIPT, /frequency: sel\.mkFrequency/);
+  assert.match(SCRIPT, /const sel = multiValues\(MK_MULTI_IDS\)/, '複数選択の値を読んでいない');
   const applied = SCRIPT.slice(SCRIPT.indexOf('function renderApplied'));
   assert.match(applied, /AND/, '条件の結合が AND だと分からない');
   assert.match(applied, /該当 /, '該当件数を出していない');
@@ -471,7 +473,9 @@ test('guard(ui): フィルターは常時表示と詳細条件に分かれ、件
   assert.match(PAGE, /<details class="filter-more"/, '詳細条件が折りたためない');
   assert.match(PAGE, /id="mkFilterClear"/, '条件クリアが無い');
   assert.match(PAGE, /id="mkFilterCount"/, '適用中の条件数が無い');
-  assert.match(SCRIPT, /summarizeFilters\(/, '適用中フィルターを単一源で数えていない');
+  // 数え方はチップと同じ単一源（adminMultiFilter.countApplied）にそろえる。
+  // 「項目数」と「値の数」が同じ画面に並ぶと混乱するため summarizeFilters は使わない。
+  assert.match(SCRIPT, /filterApi\(\)\.countApplied\(multiValues\(MK_MULTI_IDS\)\)/, '適用中フィルターを単一源で数えていない');
   // 常時表示は 4 つ（Email / 契約 / プラン / 送信可否）だけ
   const head = PAGE.slice(PAGE.indexOf('id="mkStep1H"'), PAGE.indexOf('filter-more'));
   for (const id of ['mkQ', 'mkContract', 'mkPlan', 'mkSendable']) {
@@ -645,7 +649,7 @@ test('guard(cb): 契約状態を「有効」ではなくカムバックの言葉
 
 test('guard(cb): 現有効会員を選んだら警告を出す', () => {
   assert.match(SCRIPT, /ACTIVE_FILTER_WARNING/, '警告文を使っていない');
-  assert.match(SCRIPT, /v === 'active'/, '現有効会員の選択を検知していない');
+  assert.match(SCRIPT, /isActiveMemberIncluded\(selections\.cbContract\)/, '現有効会員の選択を検知していない');
 });
 
 test('guard(cb): 取得ボタンは「対象候補を表示」、確認は「付与内容を確認」', () => {

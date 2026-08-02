@@ -86,6 +86,20 @@ import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitleme
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
+import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
+
+/** 顧客一覧の絞り込みで受け付ける値（**ここに無い値は 400**）*/
+const MK_FILTER_ALLOW = Object.freeze({
+  contract: ['active', 'expiring_soon', 'expired', 'unknown', 'none'],
+  plan: ['premium_sanrenpuku', 'premium', 'light', 'free', 'unknown'],
+  marketing: ['sendable', 'suppressed'],
+  premiumPlus: ['eligible', 'review', 'blocked', 'unset'],
+  history: ['never', 'recent', 'sent'],
+  lastLogin: ['login:30d', 'login:90d', 'login:365d', 'login:over365', 'login:never'],
+  offerState: ['live', 'expiring7', 'none'],
+  promoState: ['active', 'ending7', 'none'],
+  frequency: ['sendable-now', 'blocked'],
+});
 import {
   buildJobView,
   canCancelJob,
@@ -303,6 +317,15 @@ function handlePreview({ req }) {
 }
 
 async function handleCustomers({ KEY, BASE, now, req }) {
+  // 複数選択は配列で受ける（旧形式の単一文字列も通す）。
+  // **許可値以外は 400**。想定外の条件で顧客を抽出させない。
+  // 検証は**読み込みより先**に行う（不正な条件で Airtable を読まない）。
+  const picked = {};
+  for (const [key, allowed] of Object.entries(MK_FILTER_ALLOW)) {
+    const v = validateSelection(req[key], allowed, { key });
+    if (!v.ok) return json(400, { error: v.error });
+    picked[key] = v.values;
+  }
   const { list, blacklistStatus, blacklistSize } = await loadCustomerMarketing({
     KEY, BASE, now, withLogins: true,
   });
@@ -318,50 +341,50 @@ async function handleCustomers({ KEY, BASE, now, req }) {
   }
 
   const filter = {
-    contract: req.contract, plan: req.plan, marketing: req.marketing,
-    premiumPlus: req.premiumPlus, history: req.history,
+    contract: picked.contract, plan: picked.plan, marketing: picked.marketing,
+    premiumPlus: picked.premiumPlus, history: picked.history,
   };
   // 最終ログイン・マーケ状態の絞り込みは既存フィルタと直交させる（判定モジュールを汚さない）。
-  // すべて AND で効く。条件は画面に件数とともに出す。
-  const wantLogin = String(req.lastLogin || '').trim();
-  const wantOffer = String(req.offerState || '').trim();
-  const wantPromo = String(req.promoState || '').trim();
-  const wantFreq = String(req.frequency || '').trim();
+  // **同じ項目内は OR / 項目間は AND**。条件は画面に件数とともに出す。
+  const wantLogin = picked.lastLogin;
+  const wantOffer = picked.offerState;
+  const wantPromo = picked.promoState;
+  const wantFreq = picked.frequency;
+  const offerHit = (want, col) => {
+    if (want === 'live') return col.liveOfferCount > 0;
+    if (want === 'expiring7') {
+      if (!col.offerExpiresAt) return false;
+      const d = (Date.parse(col.offerExpiresAt) - now) / (24 * 60 * 60 * 1000);
+      return d >= 0 && d <= 7;
+    }
+    if (want === 'none') return col.liveOfferCount === 0;
+    return false;
+  };
+  const promoHit = (want, col) => {
+    if (want === 'active') return col.promoActive;
+    if (want === 'ending7') {
+      if (!col.promoActive || !col.promoUntil) return false;
+      const d = (Date.parse(col.promoUntil) - now) / (24 * 60 * 60 * 1000);
+      return d >= 0 && d <= 7;
+    }
+    if (want === 'none') return !col.promoActive;
+    return false;
+  };
+  const freqHit = (want, c, col) => {
+    // 'sendable-now' = 送信可能 かつ 24h 制限にかかっていない
+    if (want === 'sendable-now') return c.marketing.sendable === true && !col.nextSendableAt;
+    if (want === 'blocked') return !!col.nextSendableAt;
+    return false;
+  };
   const matched = list
     .filter((c) => matchesMarketingFilter(c.marketing, filter))
-    .filter((c) => !wantLogin || loginSegment(c.daysSinceLogin) === wantLogin)
-    .filter((c) => {
-      if (!wantOffer) return true;
-      const col = marketingColumns({ c, offersByCustomer, now });
-      if (wantOffer === 'live') return col.liveOfferCount > 0;
-      if (wantOffer === 'expiring7') {
-        if (!col.offerExpiresAt) return false;
-        const d = (Date.parse(col.offerExpiresAt) - now) / (24 * 60 * 60 * 1000);
-        return d >= 0 && d <= 7;
-      }
-      if (wantOffer === 'none') return col.liveOfferCount === 0;
-      return true;
-    })
-    .filter((c) => {
-      if (!wantPromo) return true;
-      const col = marketingColumns({ c, offersByCustomer, now });
-      if (wantPromo === 'active') return col.promoActive;
-      if (wantPromo === 'ending7') {
-        if (!col.promoActive || !col.promoUntil) return false;
-        const d = (Date.parse(col.promoUntil) - now) / (24 * 60 * 60 * 1000);
-        return d >= 0 && d <= 7;
-      }
-      if (wantPromo === 'none') return !col.promoActive;
-      return true;
-    })
-    .filter((c) => {
-      if (!wantFreq) return true;
-      const col = marketingColumns({ c, offersByCustomer, now });
-      // 'sendable-now' = 送信可能 かつ 24h 制限にかかっていない
-      if (wantFreq === 'sendable-now') return c.marketing.sendable === true && !col.nextSendableAt;
-      if (wantFreq === 'blocked') return !!col.nextSendableAt;
-      return true;
-    });
+    .filter((c) => wantLogin.length === 0 || wantLogin.includes(loginSegment(c.daysSinceLogin)))
+    .filter((c) => wantOffer.length === 0
+      || wantOffer.some((w) => offerHit(w, marketingColumns({ c, offersByCustomer, now }))))
+    .filter((c) => wantPromo.length === 0
+      || wantPromo.some((w) => promoHit(w, marketingColumns({ c, offersByCustomer, now }))))
+    .filter((c) => wantFreq.length === 0
+      || wantFreq.some((w) => freqHit(w, c, marketingColumns({ c, offersByCustomer, now }))));
 
   const rows = matched.slice(0, MAX_ROWS).map((c) => ({
     recordId: c.recordId,
@@ -396,12 +419,10 @@ async function handleCustomers({ KEY, BASE, now, req }) {
   return json(200, {
     rows,
     // 画面に「どの条件で何件か」を出すための控え（AND で適用）
-    appliedFilters: {
-      contract: filter.contract || "all", plan: filter.plan || "all",
-      marketing: filter.marketing || "all", premiumPlus: filter.premiumPlus || "all",
-      history: filter.history || "all", lastLogin: wantLogin || "all",
-      offerState: wantOffer || "all", promoState: wantPromo || "all", frequency: wantFreq || "all",
-    },
+    // 未指定は "all"（＝条件なし）。指定があれば選ばれた値の配列をそのまま返す
+    appliedFilters: Object.fromEntries(
+      Object.entries(picked).map(([k, v]) => [k, v.length ? v : 'all'])
+    ),
     matchedCount: matched.length,
     truncated: matched.length > rows.length,
     segments: summarizeSegments(list.map((c) => c.marketing)),

@@ -83,6 +83,52 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
 
 `pp:eligible|review|blocked|unset` / `history:never|sent|recent`（30 日以内）
 
+## 2-2. 絞り込みは複数選択（配列契約 / 2026-08-02）
+
+管理画面の絞り込みは **チェック式の複数選択**。単一 select では
+「期限切れ **＋** 退会済み **＋** 休眠」「Premium **＋** Light」のような
+実務で必要な母集団が作れず、条件を変えながら 3 回取得する運用になっていた。
+
+### 論理
+
+- **同じ項目内は OR**（`プラン: Premium / Light` = どちらか）
+- **異なる項目間は AND**（`プラン: Premium` かつ `送信可否: 送信可能`）
+- **未選択（0 件）＝条件なし**。「すべて」はチェック項目に**しない**
+  （「すべて」を選択肢に混ぜると「すべて＋Light」のような無意味な状態が作れてしまう）
+
+判定の単一源は `src/lib/marketing/adminMultiFilter.js`（純粋・I/O なし）。
+画面は選択状態を持つだけで、正規化・件数・チップ・条件文はすべてこのモジュールが返す。
+
+### API 契約
+
+複数選択は**配列**で送る。旧形式（単一文字列）も受け付ける（後方互換）。
+
+```json
+{ "action": "customers", "contract": ["expired", "none"], "plan": ["premium", "light"] }
+```
+
+| 規則 | 内容 |
+|---|---|
+| 未指定 / 空配列 | 条件なし（絞らない）。`appliedFilters` には `"all"` を返す |
+| 許可値以外 | **400**（`MK_FILTER_ALLOW` / `CB_FILTER_ALLOW` に無い値） |
+| 検証の位置 | **Airtable 読み込みより前**。不正な条件で顧客データを読まない |
+| 件数上限 | 1 項目 20 値（`MAX_SELECTION`）。重複は 1 つに潰す |
+| formula | 受け取った値を `filterByFormula` に**直結しない**（全件取得後にコード側で絞る） |
+
+`appliedFilters` は選ばれた値の配列をそのまま返すため、画面は
+「何で絞った結果の何件か」を常に表示できる。
+
+### 画面
+
+- 適用中の条件は**チップ**で出し、1 件ずつ外せる（`条件をすべてクリア` も置く）
+- 「同じ項目内は『いずれか』、異なる項目間は『すべて一致』」を絞り込み欄に明記する
+- Step の現在地は色に加えて「現在の操作」バッジと `Step n / N` で示す
+- 追従バーに現在の条件件数を出し、条件を変えたまま再取得していない場合は
+  「条件が変更されています」と橙色で警告する
+
+検証: `npm run test:marketing`（`adminMultiFilter.test.mjs` /
+`adminMultiFilterUi.guard.test.mjs` / `adminMarketingHandler.smoke.test.mjs`）
+
 ## 3. 販売管理とマーケティング管理の分離
 
 画面はタブで分ける。**API も別**（`premium-plus-eligibility` / `admin-marketing`）。

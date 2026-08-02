@@ -124,6 +124,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <div class="sumsub" id="mkSummarySub"></div>
       <p class="note" id="mkSendState"></p>
 
+      <p class="step-progress" id="mkProgress" aria-live="polite">Step 1 / 6</p>
       <div class="stepbar" id="mkSteps" aria-label="操作の順序">
         <span class="stp" data-step="1"><b class="stp-n">1</b> 🔍 絞り込み<span class="stp-sub">対象を絞る</span></span>
         <span class="stp" data-step="2"><b class="stp-n">2</b> 👥 顧客を選ぶ<span class="stp-sub">宛先を決める</span></span>
@@ -211,6 +212,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <span class="filter-count" id="mkFilterCount">適用中の条件: 0</span>
       </div>
 
+      <div class="chip-row" id="mkChips" aria-label="適用中の条件"></div>
+      <p class="filter-logic" id="mkLogicNote"></p>
       <p class="note" id="mkApplied"></p>
       </section>
 
@@ -411,6 +414,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </ul>
       </div>
 
+      <p class="step-progress" id="cbProgress" aria-live="polite">Step 1 / 5</p>
       <div class="stepbar" id="cbSteps" aria-label="操作の順序">
         <span class="stp" data-cbstep="1"><b class="stp-n">1</b> 🔍 対象条件<span class="stp-sub">誰に配るかを絞る</span></span>
         <span class="stp" data-cbstep="2"><b class="stp-n">2</b> 👥 顧客選択<span class="stp-sub">対象者を選ぶ</span></span>
@@ -479,6 +483,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <button type="button" id="cbLoad" class="btn-primary btn-lg">🔍 対象候補を表示</button>
       </div>
 
+        <div class="preset-row" id="cbPresets" aria-label="よく使う条件">
+          <span class="preset-label">よく使う条件:</span>
+        </div>
+        <div class="chip-row" id="cbChips" aria-label="適用中の条件"></div>
+        <p class="filter-logic" id="cbLogicNote"></p>
         <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
       </section>
 
@@ -583,6 +592,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       <div class="stickybar" id="cbStickyBar" hidden>
         <span class="sb-item" id="cbSbLeft">候補 0 名 / 選択 0 名</span>
+        <span class="sb-item" id="cbSbCond">条件: 指定なし</span>
         <span class="sb-item" id="cbSbOffer">特典: 未設定</span>
         <span class="sb-item" id="cbSbReview">確認: 未確認</span>
         <button type="button" class="btn-primary btn-sm" id="cbSbNext">対象候補を表示</button>
@@ -1337,10 +1347,101 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .seg-active_member { color: #fca5a5; font-weight: 700; }
   .ppe .seg-unknown { color: #fdba74; }
 
+  /* ═══ 複数選択フィルター（チェック式 / 2026-08-02）═══
+     単一 select だと「期限切れ＋退会済み＋休眠」のような実務で必要な条件が作れない。
+     同じ項目内は OR、異なる項目間は AND。判定は adminMultiFilter.js が単一源。 */
+  .ppe .mfilter { position: relative; display: inline-block; }
+  .ppe .mfilter-btn {
+    min-height: 44px; font-size: 14px; font-weight: 700; padding: 0 .9rem;
+    max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ppe .mfilter-btn.is-on {
+    border-color: var(--action-yellow); color: var(--action-yellow);
+    background-color: rgba(245,196,81,.12);
+  }
+  .ppe .mfilter-btn[aria-expanded="true"] { border-color: var(--action-blue); }
+  .ppe .mfilter-panel {
+    position: absolute; z-index: 40; top: calc(100% + .3rem); left: 0;
+    min-width: 260px; max-width: calc(100vw - 1.5rem); max-height: 320px; overflow-y: auto;
+    background: var(--nv-1); border: 1px solid var(--action-blue); border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(2,6,23,.55); padding: .35rem;
+  }
+  /* 右端のフィルターは右揃え（画面外へ出さない）*/
+  .ppe .mfilter-panel.is-right { left: auto; right: 0; }
+  .ppe .mfilter-list { display: flex; flex-direction: column; }
+  .ppe .mfilter-row {
+    display: flex; align-items: center; gap: .55rem; min-height: 44px;
+    padding: 0 .55rem; border-radius: 8px; cursor: pointer;
+    color: var(--text-main); font-size: 14px;
+  }
+  .ppe .mfilter-row:hover { background: var(--surface-raised); }
+  .ppe .mfilter-row.is-on { background: rgba(245,196,81,.12); color: var(--action-yellow); font-weight: 700; }
+  .ppe .mfilter-row input[type=checkbox] { width: 18px; height: 18px; min-height: 0; accent-color: #f5c451; flex: none; }
+  .ppe .mfilter-ops {
+    display: flex; gap: .35rem; padding: .4rem .3rem .2rem; margin-top: .25rem;
+    border-top: 1px solid var(--border-soft); position: sticky; bottom: 0; background: var(--nv-1);
+  }
+  .ppe .mfilter-ops .btn-primary { margin-left: auto; }
+
+  /* 適用中の条件（1 件ずつ外せる）*/
+  .ppe .chip-row { display: flex; flex-wrap: wrap; gap: .35rem; margin: .45rem 0 .2rem; align-items: center; }
+  .ppe .chip {
+    min-height: 32px; font-size: 12px; font-weight: 700; padding: 0 .6rem; border-radius: 999px;
+    background-color: rgba(245,196,81,.14); border: 1px solid rgba(245,196,81,.45); color: var(--action-yellow);
+  }
+  .ppe .chip:hover:not([disabled]) { background-color: rgba(245,196,81,.24); }
+  .ppe .chip-clear { background-color: var(--surface-raised); border-color: var(--border-soft); color: var(--text-muted); }
+  .ppe .chip-count { font-size: 12px; color: var(--text-muted); margin-left: .2rem; }
+  .ppe .filter-logic { font-size: 12px; color: var(--text-muted); margin: .1rem 0 .4rem; }
+  .ppe .preset-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .3rem 0; }
+  .ppe .preset-label { font-size: 12px; color: var(--text-muted); }
+
+  /* 絞り込み欄は幅で折り返す（横スクロールを作らない）*/
+  .ppe .toolbar { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
+
+  /* ═══ Step カードの明度（未到達でも読める）═══ */
+  .ppe .cb-step, .ppe .step {
+    background: rgba(148,163,184,.05); border: 1px solid var(--border-soft);
+    border-left: 5px solid var(--border-soft); border-radius: 0 12px 12px 0;
+    padding: .85rem .9rem .9rem; margin-top: 1.1rem;
+  }
+  /* 未到達でも文字が読める明るさを残す（薄くしすぎない）*/
+  .ppe .cb-step.is-locked { opacity: .78; background: rgba(148,163,184,.04); }
+  .ppe .cb-step.is-locked .step-h { color: var(--text-muted); }
+  .ppe .cb-step.is-now, .ppe .step.is-now {
+    opacity: 1; border-left-color: var(--action-yellow);
+    background: linear-gradient(180deg, rgba(245,196,81,.13), rgba(245,196,81,.03));
+    box-shadow: 0 0 0 1px rgba(245,196,81,.25);
+  }
+  .ppe .cb-step.is-done, .ppe .step.is-done {
+    border-left-color: var(--action-green); background: rgba(16,185,129,.06);
+  }
+  .ppe .cb-step[data-cbcard="5"].is-now {
+    border-left-color: var(--action-red);
+    background: linear-gradient(180deg, rgba(239,68,68,.14), rgba(239,68,68,.03));
+    box-shadow: 0 0 0 1px rgba(239,68,68,.28);
+  }
+  /* 「現在の操作」バッジ（色だけで現在地を表さない）*/
+  .ppe .step-now-badge {
+    margin-left: auto; font-size: 12px; font-weight: 700; padding: .15rem .55rem;
+    border-radius: 999px; color: #2b1206; background: var(--action-yellow);
+  }
+  .ppe .step-progress { font-size: 12px; color: var(--text-muted); margin-left: .4rem; }
+  /* 条件を変えたまま再取得していないことを追従バーでも出す */
+  .ppe .stickybar .sb-item.is-changed { color: var(--action-orange); font-weight: 700; }
+
   @media (max-width: 900px) {
     .ppe .stepbar { flex-wrap: wrap; }
     .ppe .stepbar .stp { min-width: 0; flex: 1 1 45%; min-height: 60px; }
     .ppe .btn-lg { min-height: 46px; font-size: 15px; padding: 0 18px; }
+    /* 絞り込みは 1 列（横スクロールを作らない）*/
+    .ppe .toolbar > * { flex: 1 1 100%; }
+    .ppe .mfilter { display: block; }
+    .ppe .mfilter-btn { width: 100%; max-width: none; text-align: left; }
+    .ppe .mfilter-panel { position: static; min-width: 0; width: 100%; max-height: 260px; }
+  }
+  @media (min-width: 901px) and (max-width: 1100px) {
+    .ppe .toolbar > * { flex: 1 1 46%; }
   }
 </style>
 
@@ -1370,6 +1471,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     resolveCbStep, canSelectCustomers, canConfigureOffer, canReview, canApply,
     computeCbFingerprint, isCbDryStale, buildCbStickyView, segmentLabel,
   } from '../../lib/entitlements/comebackConsoleFlow.js';
+  import {
+    FILTER_LOGIC_NOTE, normalizeSelection, countApplied, buildChips, removeChip,
+    describeConditions, summarizeSelection, selectionsChanged, isActiveMemberIncluded,
+    CB_SEGMENT_VALUES, CB_SEGMENT_LABELS, CB_SEGMENT_DEFAULT, CB_SEGMENT_PRESETS,
+    PLAN_VALUES, PLAN_LABELS,
+  } from '../../lib/marketing/adminMultiFilter.js';
+  window.__mkFilter = {
+    FILTER_LOGIC_NOTE, normalizeSelection, countApplied, buildChips, removeChip,
+    describeConditions, summarizeSelection, selectionsChanged, isActiveMemberIncluded,
+    CB_SEGMENT_VALUES, CB_SEGMENT_LABELS, CB_SEGMENT_DEFAULT, CB_SEGMENT_PRESETS,
+    PLAN_VALUES, PLAN_LABELS,
+  };
   window.__cbFlow = {
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
@@ -2016,24 +2129,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     /** 画面のフィルター値をまとめて読む（dry-run 失効判定にも使う） */
     function mkCurrentFilters() {
-      const v = (id) => { const el = $(id); return el ? String(el.value || '') : ''; };
+      const q = $('mkQ') ? String($('mkQ').value || '') : '';
+      const s = multiValues(['mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
+        'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']);
       return {
-        q: v('mkQ'), contract: v('mkContract'), plan: v('mkPlan'), sendable: v('mkSendable'),
-        pp: v('mkPp'), history: v('mkHistory'), offer: v('mkOfferState'),
-        promo: v('mkPromoState'), frequency: v('mkFrequency'), lastLogin: v('mkLastLogin'),
+        q, contract: s.mkContract, plan: s.mkPlan, sendable: s.mkSendable,
+        pp: s.mkPp, history: s.mkHistory, offer: s.mkOfferState,
+        promo: s.mkPromoState, frequency: s.mkFrequency, lastLogin: s.mkLastLogin,
       };
     }
-    const MK_FILTER_DEFAULTS = {
-      q: '', contract: 'all', plan: 'all', sendable: 'all', pp: 'all',
-      history: 'all', offer: 'all', promo: 'all', frequency: 'all', lastLogin: 'all',
-    };
     /** 適用中の条件数を出す（今どれだけ絞っているかを見せる） */
     function mkRenderFilterCount() {
       const el = $('mkFilterCount');
       if (!el) return;
-      const sum = flowApi().summarizeFilters(mkCurrentFilters(), MK_FILTER_DEFAULTS);
-      el.textContent = '適用中の条件: ' + sum.count;
-      el.classList.toggle('is-on', sum.count > 0);
+      // チップと同じ数え方（**選んだ値の数**）にする。
+      // 項目数と値の数を並べて出すと、同じ画面に違う数字が出て混乱する。
+      let n = filterApi().countApplied(multiValues(MK_MULTI_IDS));
+      if (($('mkQ')?.value || '').trim()) n += 1;
+      el.textContent = '適用中の条件: ' + n + ' 件';
+      el.classList.toggle('is-on', n > 0);
     }
 
     // ── タブ切替（販売 / マーケティング / カムバック特典）──
@@ -2136,10 +2250,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
     // 条件クリア（全部戻して数え直す）
     $('mkFilterClear')?.addEventListener('click', () => {
-      for (const [id, def] of Object.entries({
-        mkQ: '', mkContract: 'all', mkPlan: 'all', mkSendable: 'all', mkPp: 'all',
-        mkHistory: 'all', mkOfferState: 'all', mkPromoState: 'all', mkFrequency: 'all', mkLastLogin: 'all',
-      })) { const el = $(id); if (el) el.value = def; }
+      const q = $('mkQ'); if (q) q.value = '';
+      for (const id of MK_MULTI_IDS) multiFilters.get(id)?.setValues([]);
+      mkRenderChips();
       mkRenderFilterCount();
       mkNotify('ok', '条件をクリアしました', 'もう一度「この条件で取得」を押してください。');
     });
@@ -2200,17 +2313,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // ── 顧客一覧 ──
     async function mkLoad() {
       mkMsg('読み込み中…');
+      // 複数選択は配列で送る（同じ項目内は OR / 未選択は条件なし）
+      const sel = multiValues(MK_MULTI_IDS);
       const data = await mkCall({
         action: 'customers',
-        contract: $('mkContract').value,
-        plan: $('mkPlan').value,
-        marketing: $('mkSendable').value,
-        premiumPlus: $('mkPp').value,
-        history: $('mkHistory').value,
-        lastLogin: $('mkLastLogin').value,
-        offerState: $('mkOfferState').value,
-        promoState: $('mkPromoState').value,
-        frequency: $('mkFrequency').value,
+        contract: sel.mkContract,
+        plan: sel.mkPlan,
+        marketing: sel.mkSendable,
+        premiumPlus: sel.mkPp,
+        history: sel.mkHistory,
+        lastLogin: sel.mkLastLogin,
+        offerState: sel.mkOfferState,
+        promoState: sel.mkPromoState,
+        frequency: sel.mkFrequency,
       });
       if (!data) return;
       mkData = data;
@@ -2228,7 +2343,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const f = data.appliedFilters || {};
       const LBL = { contract: '契約', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
         history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファー', promoState: '無料特典', frequency: '送信タイミング' };
-      const parts = Object.entries(f).filter(([, v]) => v && v !== 'all').map(([k, v]) => (LBL[k] || k) + '=' + v);
+      const parts = Object.entries(f)
+        .map(([k, v]) => [k, Array.isArray(v) ? v.join(' / ') : v])
+        .filter(([, v]) => v && v !== 'all')
+        .map(([k, v]) => (LBL[k] || k) + '=' + v);
       $('mkApplied').textContent = '条件: ' + (parts.length ? parts.join(' AND ') : '指定なし（全件）')
         + ' → 該当 ' + (data.matchedCount || 0) + ' 名';
     }
@@ -2881,6 +2999,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const n = Number(el.dataset.step);
         el.classList.toggle('is-now', n === step);
         el.classList.toggle('is-done', n < step);
+      }
+      const mkProg = $('mkProgress');
+      if (mkProg) mkProg.textContent = 'Step ' + step + ' / 6';
+      // 現在地はカードの色とバッジの両方で示す（色覚に依存しない）
+      for (const card of document.querySelectorAll('#paneMkt .step')) {
+        const n = Number(card.dataset.step);
+        card.classList.toggle('is-now', n === step);
+        card.classList.toggle('is-done', n < step);
+        let badge = card.querySelector('.step-now-badge');
+        if (n === step) {
+          if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'step-now-badge';
+            badge.textContent = '現在の操作';
+            card.querySelector('.step-h')?.appendChild(badge);
+          }
+        } else if (badge) {
+          badge.remove();
+        }
       }
       const apply = (id, verdict, labelWhenOk) => {
         const btn = $(id);
@@ -3604,6 +3741,140 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     //  ⚠️ 変更するのは特典専用フィールドのみ。課金・契約・Plus 販売資格は触らない。
     // ══════════════════════════════════════════════════════════════
     // ══════════════════════════════════════════════════════════════
+    //  複数選択フィルター（チェック式）
+    //  「すべて」か 1 項目しか選べないと、実際に使う条件（期限切れ＋退会済み＋休眠 /
+    //  Premium＋Light）が作れない。既存の <select> をチェック式へ置き換える。
+    //  判定は adminMultiFilter.js（純粋）が単一源。
+    // ══════════════════════════════════════════════════════════════
+    const filterApi = () => window.__mkFilter;
+    /** id → { values, labels, selected, button, panel } */
+    const multiFilters = new Map();
+
+    /**
+     * 既存の <select> を複数選択メニューへ変換する。
+     * - 元の select は残さず、同じ id を持つ非表示 input で値を引き継ぐ（既存コードの互換）
+     * - 「すべて」に相当する選択肢は**チェック項目にしない**（0 件＝条件なし）
+     */
+    function makeMultiFilter(selectId, opts = {}) {
+      const sel = document.getElementById(selectId);
+      if (!sel || sel.dataset.multi === '1') return null;
+      const label = opts.label || sel.getAttribute('aria-label') || selectId;
+      const items = [...sel.querySelectorAll('option')]
+        .map((o) => ({ value: o.value, label: o.textContent.trim().replace(/^[^:]+:\s*/, '') }))
+        .filter((o) => o.value && o.value !== 'all' && o.value !== 'candidates');
+
+      const wrap = document.createElement('div');
+      wrap.className = 'mfilter';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mfilter-btn btn-secondary btn-md';
+      btn.setAttribute('aria-expanded', 'false');
+      btn.setAttribute('aria-controls', selectId + 'Panel');
+      btn.textContent = label + ': 指定なし';
+
+      const panel = document.createElement('div');
+      panel.className = 'mfilter-panel';
+      panel.id = selectId + 'Panel';
+      panel.hidden = true;
+      panel.setAttribute('role', 'group');
+      panel.setAttribute('aria-label', label);
+
+      const list = document.createElement('div'); list.className = 'mfilter-list';
+      for (const it of items) {
+        const row = document.createElement('label');
+        row.className = 'mfilter-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = it.value;
+        const txt = document.createElement('span'); txt.textContent = it.label;
+        row.appendChild(cb); row.appendChild(txt);
+        cb.addEventListener('change', () => {
+          row.classList.toggle('is-on', cb.checked);
+          syncState(false);
+        });
+        list.appendChild(row);
+      }
+      panel.appendChild(list);
+
+      const ops = document.createElement('div'); ops.className = 'mfilter-ops';
+      const mkOp = (text, fn, cls) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = (cls || 'btn-ghost') + ' btn-sm'; b.textContent = text;
+        b.addEventListener('click', fn);
+        ops.appendChild(b);
+        return b;
+      };
+      mkOp('すべて選択', () => setValues(items.map((i) => i.value)));
+      mkOp('全解除', () => setValues([]));
+      mkOp('適用', () => { close(); if (opts.onApply) opts.onApply(); }, 'btn-primary');
+      panel.appendChild(ops);
+
+      wrap.appendChild(btn); wrap.appendChild(panel);
+      sel.replaceWith(wrap);
+
+      // 既存コードが値を読めるように、同じ id の hidden input を置く
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden'; hidden.id = selectId; hidden.value = '';
+      hidden.dataset.multi = '1';
+      wrap.appendChild(hidden);
+
+      const state = { id: selectId, label, items, selected: [], button: btn, panel, hidden };
+      multiFilters.set(selectId, state);
+
+      function setValues(values) {
+        const set = new Set(values);
+        for (const cb of list.querySelectorAll('input[type=checkbox]')) {
+          cb.checked = set.has(cb.value);
+          cb.closest('.mfilter-row').classList.toggle('is-on', cb.checked);
+        }
+        syncState(false);
+      }
+      function syncState(silent) {
+        state.selected = [...list.querySelectorAll('input[type=checkbox]')]
+          .filter((c) => c.checked).map((c) => c.value);
+        hidden.value = state.selected.join(',');
+        btn.textContent = label + ': ' + filterApi().summarizeSelection(state.selected, items.map((i) => i.value), '全' + label);
+        btn.classList.toggle('is-on', state.selected.length > 0);
+        if (!silent && opts.onChange) opts.onChange(state.selected);
+      }
+      function open() {
+        for (const [, o] of multiFilters) if (o !== state) o.panel.hidden = true;
+        panel.hidden = false; btn.setAttribute('aria-expanded', 'true');
+        // 画面右端に近いフィルターは右揃えにする（はみ出して読めなくなるのを防ぐ）
+        panel.classList.remove('is-right');
+        if (panel.getBoundingClientRect().right > window.innerWidth - 8) panel.classList.add('is-right');
+      }
+      function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+      btn.addEventListener('click', () => (panel.hidden ? open() : close()));
+      panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); btn.focus(); } });
+      state.setValues = setValues;
+      state.close = close;
+      syncState(true);
+      return state;
+    }
+
+    /** 外側クリックで閉じる */
+    document.addEventListener('click', (e) => {
+      for (const [, st] of multiFilters) {
+        if (!st.panel.hidden && !st.panel.contains(e.target) && e.target !== st.button) st.close();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') for (const [, st] of multiFilters) st.close();
+    });
+
+    /** いまの複数選択をまとめて読む */
+    function multiValues(ids) {
+      const out = {};
+      for (const id of ids) {
+        // 画面組み立て前に呼ばれても「条件なし」で返す（初期描画で落とさない）
+        let st = null;
+        try { st = multiFilters.get(id); } catch (e) { st = null; }
+        out[id] = st ? st.selected : [];
+      }
+      return out;
+    }
+
+    // ══════════════════════════════════════════════════════════════
     //  カムバック特典タブ: 操作順の管理
     //  押せる／押せないの根拠は comebackConsoleFlow.js（単一源）。画面は従うだけ。
     // ══════════════════════════════════════════════════════════════
@@ -3613,6 +3884,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       offer: { lightOffer: 'none', premiumOffer: 'none' },
       dryRun: null, dryStale: false, applied: false, busy: false,
       offerSummaryShort: '未設定',
+      /** 絞り込みを変えたまま再取得していない（一覧が古い） */
+      filtersChanged: false,
+      /** 現有効会員の警告を出したか（同じ警告を積み上げない） */
+      activeWarned: false,
     };
 
     /** 通知（内容別。gate や失効の理由をここに出す） */
@@ -3644,10 +3919,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     /** 確認結果の指紋（条件・選択・特典） */
     function cbFingerprint() {
       return cbApi().computeCbFingerprint({
-        filters: { contract: $('cbContract')?.value || '', plan: $('cbPlan')?.value || '',
-          withdrawn: $('cbWithdrawn')?.value || '', promo: $('cbPromo')?.value || '',
-          grantable: $('cbGrantable')?.value || '', history: $('cbHistory')?.value || '',
-          q: $('cbQ')?.value || '' },
+        filters: { ...multiValues(CB_MULTI_IDS), q: $('cbQ')?.value || '' },
         selectedIds: [...cbSelected],
         offer: cbCurrentOffer(),
       });
@@ -3670,10 +3942,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       cbState.offerSummaryShort = cbOfferShortLabel();
       if (cbState.dryRun) {
         cbState.dryStale = cbApi().isCbDryStale({ dryRun: cbState.dryRun, current: {
-          filters: { contract: $('cbContract')?.value || '', plan: $('cbPlan')?.value || '',
-            withdrawn: $('cbWithdrawn')?.value || '', promo: $('cbPromo')?.value || '',
-            grantable: $('cbGrantable')?.value || '', history: $('cbHistory')?.value || '',
-            q: $('cbQ')?.value || '' },
+          filters: { ...multiValues(CB_MULTI_IDS), q: $('cbQ')?.value || '' },
           selectedIds: [...cbSelected], offer: cbCurrentOffer(),
         } });
       }
@@ -3725,9 +3994,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         sum.hidden = cbSelected.size === 0;
       }
 
+      const prog = $('cbProgress');
+      if (prog) prog.textContent = 'Step ' + step + ' / 5';
+
       // 各カードに「いま何をすべきか」を出す（色だけに頼らない）
       for (const card of document.querySelectorAll('.cb-step')) {
         const n = Number(card.dataset.cbcard);
+        // 現在地はバッジでも示す（色覚に依存しない）
+        let badge = card.querySelector('.step-now-badge');
+        if (n === step) {
+          if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'step-now-badge';
+            badge.textContent = '現在の操作';
+            card.querySelector('.step-h')?.appendChild(badge);
+          }
+        } else if (badge) {
+          badge.remove();
+        }
         let hint = card.querySelector('.step-hint.js-hint');
         if (!hint) {
           hint = document.createElement('p');
@@ -3756,6 +4040,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         left.textContent = v.left;
         $('cbSbLeft').appendChild(left);
         $('cbSbOffer').textContent = v.offer;
+        // いま何で絞っているかを常に出す（条件を忘れたまま実行させない）
+        const cond = $('cbSbCond');
+        if (cond) {
+          const selections = multiValues(CB_MULTI_IDS);
+          const n = filterApi().countApplied(selections);
+          // 「項目」ではなく**選んだ値の数**なので件で数える（1 項目に複数値が入る）
+          cond.textContent = cbState.filtersChanged
+            ? '条件が変更されています（再表示してください）'
+            : '条件: ' + (n === 0 ? '指定なし' : n + ' 件');
+          cond.classList.toggle('is-changed', !!cbState.filtersChanged);
+        }
         // 確認状態は色でも分ける（未確認=黄 / 確認済み=緑 / 失効=オレンジ）
         $('cbSbReview').innerHTML = '';
         const rv = document.createElement('span');
@@ -3786,10 +4081,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     /** 条件を変えたら要約を出し、現有効会員なら警告する */
     function cbRenderFilterDesc() {
-      const v = $('cbContract')?.value || 'candidates';
-      const d = $('cbFilterDesc');
-      if (d) d.textContent = cbApi().describeContractFilter(v);
-      if (v === 'active') cbNotify('warn', '通常の対象ではありません', cbApi().ACTIVE_FILTER_WARNING);
+      // 説明はチップ描画側（cbRenderChips）が自然文で出す
+      cbRenderChips();
       cbInvalidate('対象条件が変わりました。');
       cbSync();
     }
@@ -3806,6 +4099,174 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       cbState.viewSelected = !cbState.viewSelected;
       $('cbViewSelected').textContent = cbState.viewSelected ? 'すべて表示' : '選択者のみ表示';
       cbRender();
+    });
+
+    /** 顧客マーケティングの絞り込みを複数選択へ変換する */
+    const MK_MULTI_IDS = ['mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
+      'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin'];
+    const MK_MULTI_LABELS = {
+      mkContract: '契約状態', mkPlan: 'プラン', mkSendable: '送信可否', mkPp: 'Plus 資格',
+      mkHistory: '送信履歴', mkOfferState: 'オファー', mkPromoState: '無料特典',
+      mkFrequency: '送信タイミング', mkLastLogin: '最終ログイン',
+    };
+    function mkInitFilters() {
+      for (const id of MK_MULTI_IDS) {
+        makeMultiFilter(id, {
+          label: MK_MULTI_LABELS[id],
+          onChange: () => { mkRenderChips(); mkInvalidateDryRun('絞り込み条件が変わりました。'); },
+          onApply: () => { mkRenderChips(); },
+        });
+      }
+      const note = $('mkLogicNote');
+      if (note) note.textContent = filterApi().FILTER_LOGIC_NOTE;
+      mkRenderChips();
+    }
+
+    function mkRenderChips() {
+      const box = $('mkChips');
+      if (!box) return;
+      const selections = multiValues(MK_MULTI_IDS);
+      const labels = {};
+      for (const id of MK_MULTI_IDS) {
+        const st = multiFilters.get(id);
+        labels[id] = Object.fromEntries((st?.items || []).map((i) => [i.value, i.label]));
+      }
+      box.innerHTML = '';
+      for (const c of filterApi().buildChips(selections, labels)) {
+        const el = document.createElement('button');
+        el.type = 'button'; el.className = 'chip';
+        el.textContent = c.label + ' ×';
+        el.title = MK_MULTI_LABELS[c.key] + ' から外す';
+        el.addEventListener('click', () => {
+          const st = multiFilters.get(c.key);
+          st?.setValues(st.selected.filter((v) => v !== c.value));
+          mkRenderChips();
+          mkInvalidateDryRun('絞り込み条件が変わりました。');
+        });
+        box.appendChild(el);
+      }
+      const n = filterApi().countApplied(selections);
+      if (n > 0) {
+        const clear = document.createElement('button');
+        clear.type = 'button'; clear.className = 'chip chip-clear';
+        clear.textContent = '条件をすべてクリア';
+        clear.addEventListener('click', () => {
+          for (const id of MK_MULTI_IDS) multiFilters.get(id)?.setValues([]);
+          mkRenderChips();
+        });
+        box.appendChild(clear);
+        const count = document.createElement('span');
+        count.className = 'chip-count'; count.textContent = n + ' 条件を適用中';
+        box.appendChild(count);
+      }
+      if ($('mkFilterCount')) mkRenderFilterCount();
+    }
+
+    /** カムバックの絞り込みを複数選択へ変換する */
+    const CB_MULTI_IDS = ['cbContract', 'cbPlan', 'cbWithdrawn', 'cbPromo', 'cbGrantable', 'cbHistory'];
+    const CB_MULTI_LABELS = {
+      cbContract: '対象区分', cbPlan: 'プラン', cbWithdrawn: '退会履歴',
+      cbPromo: '現在の特典', cbGrantable: '付与可否', cbHistory: '送信履歴',
+    };
+    function cbInitFilters() {
+      for (const id of CB_MULTI_IDS) {
+        makeMultiFilter(id, {
+          label: CB_MULTI_LABELS[id],
+          onChange: () => { cbRenderChips(); cbMarkFilterChanged(); },
+          onApply: () => { cbRenderChips(); cbMarkFilterChanged(); },
+        });
+      }
+      // 初期値: 期限切れ・退会済み・休眠（安全な候補だけ）
+      multiFilters.get('cbContract')?.setValues([...filterApi().CB_SEGMENT_DEFAULT]);
+
+      // プリセット（「カムバック候補すべて」は選択肢ではなくボタン）
+      const row = $('cbPresets');
+      if (row) {
+        for (const [key, p] of Object.entries(filterApi().CB_SEGMENT_PRESETS)) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'btn-ghost btn-sm'; b.dataset.preset = key;
+          b.textContent = p.label;
+          b.addEventListener('click', () => {
+            multiFilters.get('cbContract')?.setValues([...p.values]);
+            cbRenderChips(); cbMarkFilterChanged();
+          });
+          row.appendChild(b);
+        }
+      }
+      const note = $('cbLogicNote');
+      if (note) note.textContent = filterApi().FILTER_LOGIC_NOTE;
+      cbRenderChips();
+    }
+
+    /** 適用中の条件をチップで出す（1 件ずつ外せる） */
+    function cbRenderChips() {
+      const box = $('cbChips');
+      if (!box) return;
+      const selections = multiValues(CB_MULTI_IDS);
+      const labels = {};
+      for (const id of CB_MULTI_IDS) {
+        const st = multiFilters.get(id);
+        labels[id] = Object.fromEntries((st?.items || []).map((i) => [i.value, i.label]));
+      }
+      box.innerHTML = '';
+      const chips = filterApi().buildChips(selections, labels);
+      for (const c of chips) {
+        const el = document.createElement('button');
+        el.type = 'button'; el.className = 'chip';
+        el.textContent = c.label + ' ×';
+        el.title = CB_MULTI_LABELS[c.key] + ' から外す';
+        el.addEventListener('click', () => {
+          const st = multiFilters.get(c.key);
+          st?.setValues(st.selected.filter((v) => v !== c.value));
+          cbRenderChips(); cbMarkFilterChanged();
+        });
+        box.appendChild(el);
+      }
+      if (chips.length) {
+        const clear = document.createElement('button');
+        clear.type = 'button'; clear.className = 'chip chip-clear';
+        clear.textContent = '条件をすべてクリア';
+        clear.addEventListener('click', () => {
+          for (const id of CB_MULTI_IDS) multiFilters.get(id)?.setValues([]);
+          cbRenderChips(); cbMarkFilterChanged();
+        });
+        box.appendChild(clear);
+        const count = document.createElement('span');
+        count.className = 'chip-count';
+        count.textContent = filterApi().countApplied(selections) + ' 条件を適用中';
+        box.appendChild(count);
+      }
+      const desc = $('cbFilterDesc');
+      if (desc) desc.textContent = filterApi().describeConditions(selections, labels, CB_MULTI_IDS);
+
+      // 「現在有効な会員」は通常のカムバック対象ではない。選んだら必ず警告を出す
+      const hasActive = filterApi().isActiveMemberIncluded(selections.cbContract);
+      if (hasActive && !cbState.activeWarned) {
+        cbState.activeWarned = true;
+        cbNotify('warn', '通常の対象ではありません', cbApi().ACTIVE_FILTER_WARNING);
+      }
+      if (!hasActive) cbState.activeWarned = false;
+    }
+
+    /** 条件が変わったら一覧と確認結果を古い扱いにする */
+    function cbMarkFilterChanged() {
+      if (cbState.loaded) {
+        cbState.filtersChanged = true;
+        cbNotify('caution', '条件が変更されています', '「🔍 対象候補を表示」で再取得してください。');
+      }
+      cbInvalidate('対象条件が変わりました。');
+      cbSync();
+    }
+
+    // 画面表示時に複数選択へ変換する（既存 select はここで置き換わる）
+    document.addEventListener('DOMContentLoaded', () => {
+      try {
+        cbInitFilters();
+        mkInitFilters();
+        // 初期表示でも「いまどの Step か」を出す（マーケティングは同期待ちで無色のままだった）
+        mkSyncFlow();
+        cbSync();
+      } catch (e) { /* 変換できなくても既存動作は壊さない */ }
     });
 
     const CB_API = '/.netlify/functions/admin-comeback-grants';
@@ -3950,18 +4411,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     async function cbLoad() {
       cbMsg('読み込み中…');
+      // 複数選択は配列で送る（同じ項目内は OR / 未選択は条件なし）
+      const sel = multiValues(CB_MULTI_IDS);
       const data = await cbCall({
         action: 'customers',
-        contract: $('cbContract').value,
-        plan: $('cbPlan').value,
-        withdrawn: $('cbWithdrawn').value,
-        promo: $('cbPromo').value,
-        grantable: $('cbGrantable').value,
-        history: $('cbHistory').value,
+        contract: sel.cbContract,
+        plan: sel.cbPlan,
+        withdrawn: sel.cbWithdrawn,
+        promo: sel.cbPromo,
+        grantable: sel.cbGrantable,
+        history: sel.cbHistory,
       });
       if (!data) return;
       cbData = data;
       // Step 1 完了。ここから Step 2 を操作できる
+      cbState.filtersChanged = false;
       cbState.loaded = true;
       cbState.candidateCount = (data.rows || []).length;
       cbInvalidate('対象候補を取得し直しました。');

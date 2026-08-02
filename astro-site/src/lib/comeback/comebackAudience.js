@@ -12,6 +12,7 @@
 
 import { resolveCustomerMarketing, matchesMarketingFilter } from '../marketing/customerMarketingAudience.js';
 import { resolvePromotionalGrants, describeGrantState } from '../entitlements/promotionalGrants.js';
+import { classifyComebackSegment, SEGMENT } from '../entitlements/comebackAudience.js';
 import { checkGrantable, checkOfferable, describeCustomerState, CB_SKIP } from './comebackGrantPlan.js';
 
 /** 特典の保有状態（絞り込み用） */
@@ -55,6 +56,8 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
   return {
     marketing,
     grants,
+    /** 対象区分（期限切れ / 退会 / 休眠 / 現有効会員 / 不明）。単一源は entitlements/comebackAudience.js */
+    segment: classifyComebackSegment({ fields: f, nowMs: now }),
     /** 無料付与できるか（停止・退会・データ不備は付与しても使えないので false） */
     grantable: grantable.ok,
     grantBlockedReason: grantable.reason,
@@ -82,31 +85,73 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
  * @param {object} c resolveComebackCustomer の戻り値
  * @param {{ contract?, plan?, history?, withdrawn?, promo?, grantable? }} filter
  */
+/**
+ * 複数選択に対応した一致判定。
+ * **同じ項目内は OR / 未選択は条件なし**。旧形式（単一文字列）もそのまま動く。
+ */
+function pick(value, selection) {
+  const sel = selection === undefined || selection === null ? []
+    : (Array.isArray(selection) ? selection : [selection])
+      .map((x) => String(x ?? '').trim()).filter((x) => x && x !== 'all');
+  if (sel.length === 0) return true;
+  return sel.includes(String(value ?? '').trim());
+}
+
+/**
+ * 「カムバック候補すべて」に含める区分（**現有効会員を含めない**）。
+ * 画面のプリセットと同じ内訳。
+ */
+export const CB_CANDIDATE_SEGMENTS = Object.freeze([SEGMENT.EXPIRED, SEGMENT.WITHDRAWN, SEGMENT.DORMANT]);
+
+/**
+ * 対象区分の一致判定。
+ * 画面の「対象区分」は**区分**（退会済み・休眠）と**契約状態**（期限切れ・契約なし）が
+ * 混ざっているため、**どちらかに当たれば通す**。片方だけで判定すると
+ * 「退会済み」を選んでも 0 件になる。
+ */
+function matchesContractSelection(c, selection) {
+  const sel = selection === undefined || selection === null ? []
+    : (Array.isArray(selection) ? selection : [selection])
+      .map((x) => String(x ?? '').trim()).filter((x) => x && x !== 'all');
+  if (sel.length === 0) return true;
+  const want = new Set();
+  for (const v of sel) {
+    if (v === 'candidates') { for (const s of CB_CANDIDATE_SEGMENTS) want.add(s); continue; }
+    if (v === 'active') { want.add(SEGMENT.ACTIVE_MEMBER); want.add('active'); continue; }
+    want.add(v);
+  }
+  return want.has(String(c.segment ?? '')) || want.has(String(c.marketing?.contract ?? ''));
+}
+
 export function matchesComebackFilter(c, filter = {}) {
   if (!c) return false;
   const f = filter || {};
-  if (!matchesMarketingFilter(c.marketing, { contract: f.contract, plan: f.plan, history: f.history })) {
+  if (!matchesContractSelection(c, f.contract)) return false;
+  if (!matchesMarketingFilter(c.marketing, { plan: f.plan, history: f.history })) {
     return false;
   }
-  if (f.withdrawn && f.withdrawn !== 'all') {
-    const yes = c.marketing.withdrawn === true;
-    if (f.withdrawn === 'yes' && !yes) return false;
-    if (f.withdrawn === 'no' && yes) return false;
+  if (!pick(c.marketing.withdrawn === true ? 'yes' : 'no', f.withdrawn)) return false;
+  {
+    // 1 顧客が複数の特典状態に当たりうるため、選ばれた条件の**いずれか**を満たせば通す
+    const promoSel = f.promo === undefined || f.promo === null ? []
+      : (Array.isArray(f.promo) ? f.promo : [f.promo])
+        .map((x) => String(x ?? '').trim()).filter((x) => x && x !== CB_PROMO_FILTER.ALL);
+    if (promoSel.length > 0) {
+      const hasAny = c.promoLight || c.promoPremium;
+      const hit = promoSel.some((p) => {
+        if (p === CB_PROMO_FILTER.NONE) return !hasAny;
+        if (p === CB_PROMO_FILTER.ANY) return !!hasAny;
+        if (p === CB_PROMO_FILTER.LIGHT) return !!c.promoLight;
+        if (p === CB_PROMO_FILTER.LIGHT_LIFETIME) return !!c.promoLightLifetime;
+        if (p === CB_PROMO_FILTER.PREMIUM) return !!c.promoPremium;
+        if (p === CB_PROMO_FILTER.PREMIUM_ENDED) return !!c.promoPremiumEnded;
+        if (p === CB_PROMO_FILTER.INCONSISTENT) return !!c.promoInconsistent;
+        return false;
+      });
+      if (!hit) return false;
+    }
   }
-  if (f.promo && f.promo !== CB_PROMO_FILTER.ALL) {
-    const hasAny = c.promoLight || c.promoPremium;
-    if (f.promo === CB_PROMO_FILTER.NONE && hasAny) return false;
-    if (f.promo === CB_PROMO_FILTER.ANY && !hasAny) return false;
-    if (f.promo === CB_PROMO_FILTER.LIGHT && !c.promoLight) return false;
-    if (f.promo === CB_PROMO_FILTER.LIGHT_LIFETIME && !c.promoLightLifetime) return false;
-    if (f.promo === CB_PROMO_FILTER.PREMIUM && !c.promoPremium) return false;
-    if (f.promo === CB_PROMO_FILTER.PREMIUM_ENDED && !c.promoPremiumEnded) return false;
-    if (f.promo === CB_PROMO_FILTER.INCONSISTENT && !c.promoInconsistent) return false;
-  }
-  if (f.grantable && f.grantable !== CB_GRANTABLE_FILTER.ALL) {
-    if (f.grantable === CB_GRANTABLE_FILTER.GRANTABLE && !c.grantable) return false;
-    if (f.grantable === CB_GRANTABLE_FILTER.BLOCKED && c.grantable) return false;
-  }
+  if (!pick(c.grantable ? CB_GRANTABLE_FILTER.GRANTABLE : CB_GRANTABLE_FILTER.BLOCKED, f.grantable)) return false;
   return true;
 }
 

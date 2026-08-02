@@ -119,3 +119,44 @@ test('smoke: 認証が無ければ 403（誰でも叩けない）', async () => 
   const res = await mod.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ action: 'jobs' }) });
   assert.equal(res.statusCode, 403);
 });
+
+// ── 複数選択フィルター（配列契約）──────────────────────────────
+// 画面は条件を配列で送る。**許可値以外は 400 で止める**（想定外の条件で顧客を抽出させない）。
+
+test('smoke: customers は配列の条件を受け付ける（同項目 OR / 項目間 AND）', async () => {
+  stubFetch({});
+  const { statusCode, body } = await invoke({
+    action: 'customers',
+    contract: ['expired', 'none'],
+    plan: ['premium', 'light'],
+    lastLogin: ['login:30d', 'login:never'],
+  });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 160));
+  assert.deepEqual(body.appliedFilters.contract, ['expired', 'none']);
+  assert.deepEqual(body.appliedFilters.plan, ['premium', 'light']);
+  // 未指定は "all"（＝条件なし）
+  assert.equal(body.appliedFilters.marketing, 'all');
+});
+
+test('smoke: customers は旧形式（単一文字列）も受け付ける', async () => {
+  stubFetch({});
+  const { statusCode, body } = await invoke({ action: 'customers', contract: 'expired' });
+  assert.equal(statusCode, 200);
+  assert.deepEqual(body.appliedFilters.contract, ['expired']);
+});
+
+test('smoke: customers は許可値以外を 400 で拒否する', async () => {
+  const calls = stubFetch({});
+  const { statusCode, body } = await invoke({ action: 'customers', contract: ['expired', "' OR 1=1"] });
+  assert.equal(statusCode, 400);
+  assert.match(String(body.error || ''), /contract/);
+  assert.equal(calls.length, 0, '検証前に Airtable を読んでいる');
+});
+
+test('smoke: 同じ値を何度送っても 1 条件に潰れる（重複で件数を増やさない）', async () => {
+  stubFetch({});
+  const many = Array.from({ length: 40 }, () => 'expired');
+  const { statusCode, body } = await invoke({ action: 'customers', contract: many });
+  assert.equal(statusCode, 200);
+  assert.deepEqual(body.appliedFilters.contract, ['expired']);
+});
