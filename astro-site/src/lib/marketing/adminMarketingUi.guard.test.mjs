@@ -620,3 +620,83 @@ test('guard(ui): 「現有効会員を含める」は既定 OFF で警告つき'
 test('guard(ui): カムバックの対象区分を表示する場所がある', () => {
   assert.match(PAGE, /id="cbAudience"/, '対象区分の表示領域が無い');
 });
+
+// ── カムバック特典タブの Step UI（2026-08-02）───────────────────
+test('guard(cb): Step 1〜5 のカードとナビがある', () => {
+  assert.match(PAGE, /id="cbSteps"/, 'Step ナビが無い');
+  for (const [n, label] of [[1, '対象者を探す'], [2, '対象者を選ぶ'], [3, '付与する特典を決める'],
+    [4, '変更内容を確認する'], [5, '特典を付与する']]) {
+    assert.ok(PAGE.includes(label), `Step ${n} の見出しが無い: ${label}`);
+    assert.ok(PAGE.includes(`data-cbcard="${n}"`), `Step ${n} のカードが無い`);
+  }
+  assert.match(SCRIPT, /resolveCbStep\(/, '現在地を単一源で判定していない');
+  assert.match(SCRIPT, /classList\.toggle\('is-locked'/, '未到達 Step を操作不可にしていない');
+});
+
+test('guard(cb): 契約状態を「有効」ではなくカムバックの言葉で出す', () => {
+  // 検査対象はカムバックタブだけ（顧客マーケティングタブは有効会員も正当な対象）
+  const CB = PAGE.slice(PAGE.indexOf('id="paneCb"'), PAGE.indexOf('id="mkBackdrop"'));
+  assert.match(CB, /カムバック候補すべて/, '既定の選択肢が無い');
+  assert.match(CB, /現在有効な会員（通常は選択しない）/, '注意書きつきの表現になっていない');
+  assert.equal(/<option value="active">有効<\/option>/.test(CB), false, '「有効」のままの選択肢が残っている');
+  assert.match(CB, /value="active" class="opt-danger"/, '警告色になっていない');
+  assert.match(CB, /<optgroup/, '区切り線の下に置いていない');
+});
+
+test('guard(cb): 現有効会員を選んだら警告を出す', () => {
+  assert.match(SCRIPT, /ACTIVE_FILTER_WARNING/, '警告文を使っていない');
+  assert.match(SCRIPT, /v === 'active'/, '現有効会員の選択を検知していない');
+});
+
+test('guard(cb): 取得ボタンは「対象候補を表示」、確認は「付与内容を確認」', () => {
+  assert.match(PAGE, /id="cbLoad"[^>]*>対象候補を表示/, '取得ボタンの文言が古い');
+  assert.match(PAGE, /id="cbDryRun"[^>]*>付与内容を確認/, '確認ボタンの文言が古い');
+  assert.match(PAGE, /この時点では顧客データを変更しません/, '補足が無い');
+});
+
+test('guard(cb): 確認結果は条件・選択・特典の変更で失効する', () => {
+  assert.match(SCRIPT, /cbInvalidate\('対象条件が変わりました。'\)/, '条件変更で失効しない');
+  assert.match(SCRIPT, /cbInvalidate\('選択した顧客が変わりました。'\)/, '選択変更で失効しない');
+  assert.match(SCRIPT, /cbInvalidate\('特典の内容が変わりました。'\)/, '特典変更で失効しない');
+  assert.match(SCRIPT, /isCbDryStale\(/, '失効判定を単一源で行っていない');
+});
+
+test('guard(cb): 現有効会員の混入時は実行できない', () => {
+  assert.match(SCRIPT, /canApply\(cbState\)/, '実行可否を単一源で判定していない');
+  assert.match(SCRIPT, /現在有効な会員が含まれています/, '混入時の警告が無い');
+});
+
+test('guard(cb): 実行は人数入力つきの二段階確認', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('cbApplyBtn')"));
+  assert.match(block, /window\.confirm\(/, '確認ダイアログが無い');
+  assert.match(block, /window\.prompt\(/, '人数入力が無い');
+  assert.match(block, /付与予定人数/, '人数確認の文言が無い');
+  assert.match(block, /operationId: cbState\.dryRun\.operationId/, 'dry-run と同じ operationId を使っていない（冪等性）');
+});
+
+test('guard(cb): 変更しないもの・メール送信しないことを必ず出す', () => {
+  assert.match(SCRIPT, /UNCHANGED_NOTICE/, '変更しない項目の明示が無い');
+  assert.match(SCRIPT, /APPLY_EFFECT_NOTICE/, '実行の影響の明示が無い');
+  assert.match(PAGE, /この操作だけでは<b>メールを送信しません<\/b>/, '安全事項が無い');
+});
+
+test('guard(cb): 専用の追従バーに次の操作を 1 つだけ出す', () => {
+  assert.match(PAGE, /id="cbStickyBar"/, '追従バーが無い');
+  for (const id of ['cbSbLeft', 'cbSbOffer', 'cbSbReview', 'cbSbNext']) {
+    assert.ok(PAGE.includes(`id="${id}"`), `追従バーに ${id} が無い`);
+  }
+  assert.match(SCRIPT, /buildCbStickyView\(/, '表示内容を単一源で作っていない');
+});
+
+test('guard(cb): 特典は平文で要約し、内部用語を使わない', () => {
+  assert.match(SCRIPT, /describeOfferSelection\(/, '平文の要約が無い');
+  assert.equal(/Light 特典（ベース）/.test(PAGE), false, '内部用語（ベース）が残っている');
+  assert.equal(/Premium 特典（上位・任意）/.test(PAGE), false, '内部用語（上位・任意）が残っている');
+});
+
+test('guard(cb): 実行結果に人数・operationId・実行日時を出す', () => {
+  assert.match(SCRIPT, /function cbRenderApplyResult\(/, '結果表示が無い');
+  for (const label of ['付与できた人数', '除外', '失敗', '操作 ID', '実行日時']) {
+    assert.ok(SCRIPT.includes(`'${label}'`), `結果に ${label} が無い`);
+  }
+});

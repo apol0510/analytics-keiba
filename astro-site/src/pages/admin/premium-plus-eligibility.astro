@@ -401,19 +401,48 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <b>この操作でメールは送信されません。</b>案内は付与後にマーケティングタブから別途送ってください。
       </p>
 
-      <div class="sumbar" id="cbSummary"></div>
+      <div class="cb-lead">
+        <p class="cb-purpose">以前 AK を利用していた顧客へ、再利用のきっかけとなる無料特典を付与します。</p>
+        <ul class="cb-safety">
+          <li>現在有効な会員は<b>既定で対象外</b>です</li>
+          <li>この操作だけでは<b>メールを送信しません</b></li>
+          <li>プラン・課金状態・入金状態は<b>変更しません</b></li>
+          <li>案内メールは特典付与後に「顧客マーケティング」タブから別途送ります</li>
+        </ul>
+      </div>
+
+      <div class="stepbar" id="cbSteps" aria-label="操作の順序">
+        <span class="stp" data-cbstep="1">1 対象条件</span>
+        <span class="stp" data-cbstep="2">2 顧客選択</span>
+        <span class="stp" data-cbstep="3">3 特典設定</span>
+        <span class="stp" data-cbstep="4">4 内容確認</span>
+        <span class="stp" data-cbstep="5">5 実行</span>
+      </div>
+
+      <div id="cbNotices" class="notices" aria-live="polite"></div>
+
+      <section class="step cb-step" data-cbcard="1" aria-labelledby="cbStep1H">
+        <h2 id="cbStep1H" class="step-h"><span class="step-n">1</span> 対象者を探す</h2>
+        <p class="note">
+          カムバック特典は、以前 AK を利用していたものの、現在は有料権限が終了している顧客へ
+          再利用を促すための特典です。<b>現在有効な会員は通常対象に含まれません。</b>
+        </p>
+        <div class="sumbar" id="cbSummary"></div>
       <div class="sumsub" id="cbSummarySub"></div>
       <p class="note" id="cbGateState"></p>
 
       <div class="toolbar">
         <input type="search" id="cbQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
-        <select id="cbContract" aria-label="契約状態">
-          <option value="all">契約状態: すべて</option>
+        <select id="cbContract" aria-label="対象区分">
+          <option value="candidates">カムバック候補すべて</option>
           <option value="expired">期限切れ</option>
-          <option value="expiring_soon">期限間近</option>
-          <option value="active">有効</option>
-          <option value="unknown">不明（legacy）</option>
-          <option value="none">契約なし（Free）</option>
+          <option value="withdrawn">退会済み</option>
+          <option value="dormant">休眠・長期未ログイン</option>
+          <option value="none">無料会員・契約なし</option>
+          <option value="unknown">状態不明</option>
+          <optgroup label="──────────">
+            <option value="active" class="opt-danger">現在有効な会員（通常は選択しない）</option>
+          </optgroup>
         </select>
         <select id="cbPlan" aria-label="プラン">
           <option value="all">プラン: すべて</option>
@@ -447,12 +476,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="recent">最近送信済み</option>
           <option value="sent">送信あり</option>
         </select>
-        <button type="button" id="cbLoad" class="btn-primary">この条件で取得</button>
+        <button type="button" id="cbLoad" class="btn-primary">対象候補を表示</button>
       </div>
 
+        <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
+      </section>
+
+      <section class="step cb-step" data-cbcard="2" aria-labelledby="cbStep2H">
+        <h2 id="cbStep2H" class="step-h"><span class="step-n">2</span> 対象者を選ぶ
+          <span class="step-counts" id="cbStepCounts"></span>
+        </h2>
+        <p class="note" id="cbStep2Empty">Step 1 で条件を選び、「対象候補を表示」を押してください。</p>
+        <div class="dry-panel" id="cbAudienceSummary" hidden></div>
       <div class="selbar">
-        <button type="button" id="cbSelAll" class="btn-ghost">表示中を全選択</button>
-        <button type="button" id="cbSelNone" class="btn-ghost">全解除</button>
+        <button type="button" id="cbSelAll" class="btn-primary btn-sm">表示中の付与可能者を全選択</button>
+        <button type="button" id="cbSelNone" class="btn-ghost btn-sm">全解除</button>
+        <button type="button" id="cbViewSelected" class="btn-ghost btn-sm">選択者のみ表示</button>
         <span class="selcount" id="cbSelCount">0 名を選択中</span>
       </div>
 
@@ -476,11 +515,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="empty" id="cbEmpty" hidden></p>
       </div>
 
-      <div class="campaign-box">
-        <h2>特典の内容</h2>
+      </section>
+
+      <section class="step cb-step" data-cbcard="3" aria-labelledby="cbStep3H">
+        <h2 id="cbStep3H" class="step-h"><span class="step-n">3</span> 付与する特典を決める</h2>
+        <p class="note" id="cbStep3Lock">対象者を 1 名以上選ぶと設定できます。</p>
+        <p class="cb-offer-summary" id="cbOfferSummary" hidden></p>
+        <div class="campaign-box">
 
         <div class="offer-row">
-          <label class="offer-label" for="cbLightOffer">Light 特典（ベース）</label>
+          <label class="offer-label" for="cbLightOffer">Light 特典</label>
           <select id="cbLightOffer" aria-label="Light 特典"></select>
           <label class="offer-sub" for="cbLightDays" id="cbLightDaysWrap" hidden>
             日数
@@ -490,7 +534,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="offer-note">Light は<b>メイン買い目のみ閲覧できる独立プラン</b>です（Premium 終了後の代替ではありません）。</p>
 
         <div class="offer-row">
-          <label class="offer-label" for="cbPremiumOffer">Premium 特典（上位・任意）</label>
+          <label class="offer-label" for="cbPremiumOffer">Premium 特典</label>
           <select id="cbPremiumOffer" aria-label="Premium 特典"></select>
           <label class="offer-sub" for="cbPremiumDays" id="cbPremiumDaysWrap" hidden>
             日数
@@ -505,14 +549,42 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="price-box" id="cbPriceBox" hidden>
           <dl class="kv" id="cbPriceKv"></dl>
         </div>
+        </div>
+      </section>
 
+      <section class="step cb-step" data-cbcard="4" aria-labelledby="cbStep4H">
+        <h2 id="cbStep4H" class="step-h"><span class="step-n">4</span> 変更内容を確認する</h2>
+        <div class="toolbar">
+          <button type="button" id="cbDryRun" class="btn-primary">付与内容を確認</button>
+        </div>
+        <p class="note">この時点では顧客データを変更しません。</p>
+        <div class="dry-panel" id="cbReviewPanel" hidden></div>
+      </section>
+
+      <section class="step cb-step" data-cbcard="5" aria-labelledby="cbStep5H">
+        <h2 id="cbStep5H" class="step-h"><span class="step-n">5</span> 特典を付与する</h2>
+        <p class="note" id="cbStep5Lock">「付与内容を確認」に成功すると実行できます。</p>
+        <div class="toolbar">
+          <button type="button" id="cbApplyBtn" class="btn-danger" disabled>無料特典を付与する</button>
+        </div>
+        <div id="cbApplyResult"></div>
+      </section>
+
+      <div class="campaign-box cb-tools">
+        <h3 class="box-h">補助操作</h3>
         <div class="toolbar">
           <button type="button" id="cbPreviewBtn" class="btn-ghost">案内文面プレビュー</button>
-          <button type="button" id="cbDryRun" class="btn-primary">変更内容を確認（dry-run）</button>
           <button type="button" id="cbRevokeBtn" class="btn-ghost">無料特典を取り消す</button>
           <button type="button" id="cbReconcileBtn" class="btn-ghost">前回操作の突合</button>
         </div>
         <p class="camp-desc" id="cbOfferDesc"></p>
+      </div>
+
+      <div class="stickybar" id="cbStickyBar" hidden>
+        <span class="sb-item" id="cbSbLeft">候補 0 名 / 選択 0 名</span>
+        <span class="sb-item" id="cbSbOffer">特典: 未設定</span>
+        <span class="sb-item" id="cbSbReview">確認: 未確認</span>
+        <button type="button" class="btn-primary btn-sm" id="cbSbNext">対象候補を表示</button>
       </div>
 
       <!--
@@ -1108,6 +1180,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppe .tbl.is-compact thead th.c-chk, .ppe .tbl.is-compact tbody td.c-chk,
     .ppe .tbl.is-compact thead th.c-cust, .ppe .tbl.is-compact tbody td.c-cust { position: static; }
   }
+
+  /* ═══ カムバック特典タブ: Step 表示（2026-08-02）═══ */
+  .ppe .cb-lead { margin: .3rem 0 .8rem; }
+  .ppe .cb-purpose { font-size: .86rem; color: var(--ink); margin: 0 0 .3rem; }
+  .ppe .cb-safety { margin: 0; padding-left: 1.1rem; font-size: .76rem; color: var(--muted); }
+  .ppe .cb-safety li { margin: .1rem 0; }
+  .ppe .cb-step.is-locked { opacity: .45; }
+  .ppe .cb-step.is-locked .step-n { background: rgba(148,163,184,.16); color: var(--muted); }
+  .ppe .cb-step.is-now { border-top-color: rgba(245,196,81,.5); }
+  .ppe .cb-step.is-done .step-n::after { content: " ✓"; }
+  .ppe .cb-filter-desc { font-size: .78rem; color: var(--gold); margin: .35rem 0 0; }
+  .ppe .cb-offer-summary { font-size: .82rem; color: var(--ink); background: rgba(148,163,184,.08);
+    border: 1px solid var(--line); border-radius: .4rem; padding: .4rem .6rem; margin: .3rem 0; }
+  .ppe .opt-danger { color: var(--red); }
+  .ppe .cb-tools { margin-top: 1rem; }
+  .ppe .cb-row-locked { opacity: .55; }
+  .ppe .cb-row-reason { font-size: .7rem; color: var(--red); }
 </style>
 
 <script>
@@ -1130,6 +1219,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     DRY_STATE, applyCampaigns as stApplyCampaigns, dryRunFailed as stDryRunFailed,
     maskEmail as stMaskEmail,
   } from '../../lib/marketing/marketingConsoleState.js';
+  import {
+    CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
+    describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
+    resolveCbStep, canSelectCustomers, canConfigureOffer, canReview, canApply,
+    computeCbFingerprint, isCbDryStale, buildCbStickyView, segmentLabel,
+  } from '../../lib/entitlements/comebackConsoleFlow.js';
+  window.__cbFlow = {
+    CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
+    describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
+    resolveCbStep, canSelectCustomers, canConfigureOffer, canReview, canApply,
+    computeCbFingerprint, isCbDryStale, buildCbStickyView, segmentLabel,
+  };
   window.__mkState = { DRY_STATE, stApplyCampaigns, stDryRunFailed, stMaskEmail };
   window.__mkSend = {
     SEND_BLOCK, SEND_BLOCK_LABEL, buildDispatchPreflight, canSendNow, verifySendPrecondition,
@@ -3355,6 +3456,176 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     //  ⚠️ メール送信とは別機能。ここから 1 通もメールを送らない。
     //  ⚠️ 変更するのは特典専用フィールドのみ。課金・契約・Plus 販売資格は触らない。
     // ══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  カムバック特典タブ: 操作順の管理
+    //  押せる／押せないの根拠は comebackConsoleFlow.js（単一源）。画面は従うだけ。
+    // ══════════════════════════════════════════════════════════════
+    const cbApi = () => window.__cbFlow;
+    const cbState = {
+      loaded: false, candidateCount: 0, selectedCount: 0,
+      offer: { lightOffer: 'none', premiumOffer: 'none' },
+      dryRun: null, dryStale: false, applied: false, busy: false,
+      offerSummaryShort: '未設定',
+    };
+
+    /** 通知（内容別。gate や失効の理由をここに出す） */
+    function cbNotify(kind, text, detail) {
+      const box = $('cbNotices');
+      if (!box) return;
+      const el = document.createElement('div');
+      el.className = 'notice notice-' + kind;
+      const t = document.createElement('b'); t.textContent = text; el.appendChild(t);
+      if (detail) { const d = document.createElement('span'); d.className = 'notice-d'; d.textContent = detail; el.appendChild(d); }
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'notice-x'; x.textContent = '×';
+      x.addEventListener('click', () => el.remove());
+      el.appendChild(x);
+      box.prepend(el);
+      while (box.children.length > 4) box.lastChild.remove();
+    }
+
+    /** いまの特典設定を読む */
+    function cbCurrentOffer() {
+      return {
+        lightOffer: $('cbLightOffer')?.value || 'none',
+        lightDays: $('cbLightDays')?.value || '',
+        premiumOffer: $('cbPremiumOffer')?.value || 'none',
+        premiumDays: $('cbPremiumDays')?.value || '',
+        premiumPrice: $('cbPremiumPrice')?.value || '',
+      };
+    }
+
+    /** 確認結果の指紋（条件・選択・特典） */
+    function cbFingerprint() {
+      return cbApi().computeCbFingerprint({
+        filters: { contract: $('cbContract')?.value || '', plan: $('cbPlan')?.value || '',
+          withdrawn: $('cbWithdrawn')?.value || '', promo: $('cbPromo')?.value || '',
+          grantable: $('cbGrantable')?.value || '', history: $('cbHistory')?.value || '',
+          q: $('cbQ')?.value || '' },
+        selectedIds: [...cbSelected],
+        offer: cbCurrentOffer(),
+      });
+    }
+
+    /** 確認結果を失効させる */
+    function cbInvalidate(why) {
+      if (!cbState.dryRun) return;
+      cbState.dryStale = true;
+      const p = $('cbReviewPanel');
+      if (p) { p.hidden = true; p.innerHTML = ''; }
+      cbNotify('warn', '確認結果を無効にしました', why + ' もう一度「付与内容を確認」を押してください。');
+      cbSync();
+    }
+
+    /** 状態 → 画面（段階の強調・操作可否・追従バー） */
+    function cbSync() {
+      cbState.selectedCount = cbSelected.size;
+      cbState.offer = cbCurrentOffer();
+      cbState.offerSummaryShort = cbOfferShortLabel();
+      if (cbState.dryRun) {
+        cbState.dryStale = cbApi().isCbDryStale({ dryRun: cbState.dryRun, current: {
+          filters: { contract: $('cbContract')?.value || '', plan: $('cbPlan')?.value || '',
+            withdrawn: $('cbWithdrawn')?.value || '', promo: $('cbPromo')?.value || '',
+            grantable: $('cbGrantable')?.value || '', history: $('cbHistory')?.value || '',
+            q: $('cbQ')?.value || '' },
+          selectedIds: [...cbSelected], offer: cbCurrentOffer(),
+        } });
+      }
+      const step = cbApi().resolveCbStep(cbState);
+      for (const el of document.querySelectorAll('#cbSteps .stp')) {
+        const n = Number(el.dataset.cbstep);
+        el.classList.toggle('is-now', n === step);
+        el.classList.toggle('is-done', n < step);
+      }
+      // 未到達の段階は薄く・操作不可にする
+      for (const card of document.querySelectorAll('.cb-step')) {
+        const n = Number(card.dataset.cbcard);
+        const reached = n <= step;
+        card.classList.toggle('is-locked', !reached);
+        card.classList.toggle('is-now', n === step);
+        card.classList.toggle('is-done', n < step);
+        for (const c of card.querySelectorAll('button, select, input')) {
+          if (c.dataset.always === '1') continue;
+          c.disabled = !reached;
+        }
+      }
+      const dry = cbApi().canReview(cbState);
+      const btn = $('cbDryRun');
+      if (btn) { btn.disabled = !dry.allowed; btn.title = dry.allowed ? '' : (dry.reason || ''); }
+      const apply = cbApi().canApply(cbState);
+      const ab = $('cbApplyBtn');
+      if (ab) { ab.disabled = !apply.allowed; ab.title = apply.allowed ? '' : (apply.reason || ''); }
+      const lock5 = $('cbStep5Lock');
+      if (lock5) lock5.textContent = apply.allowed ? '確認済みです。実行できます。' : (apply.reason || '');
+      const lock3 = $('cbStep3Lock');
+      if (lock3) {
+        const cfg = cbApi().canConfigureOffer(cbState);
+        lock3.textContent = cfg.allowed ? '' : (cfg.reason || '');
+        lock3.hidden = cfg.allowed;
+      }
+      const empty2 = $('cbStep2Empty');
+      if (empty2) empty2.hidden = cbState.loaded;
+      const counts = $('cbStepCounts');
+      if (counts) counts.textContent = cbState.loaded ? ('候補 ' + cbState.candidateCount + ' 名 / 選択 ' + cbSelected.size + ' 名') : '';
+
+      const sum = $('cbOfferSummary');
+      if (sum) {
+        const text = cbApi().describeOfferSelection({
+          count: cbSelected.size,
+          lightLabel: cbOfferLabel('cbLightOffer'),
+          premiumLabel: cbOfferLabel('cbPremiumOffer'),
+        });
+        sum.textContent = text;
+        sum.hidden = cbSelected.size === 0;
+      }
+
+      const bar = $('cbStickyBar');
+      if (bar) {
+        bar.hidden = false;
+        const v = cbApi().buildCbStickyView(cbState);
+        $('cbSbLeft').textContent = v.left;
+        $('cbSbOffer').textContent = v.offer;
+        $('cbSbReview').textContent = v.review;
+        $('cbSbNext').textContent = v.next;
+      }
+    }
+
+    /** 選択肢のラベル（「付与しない」は空にする） */
+    function cbOfferLabel(id) {
+      const el = $(id);
+      if (!el || !el.value || el.value === 'none') return '';
+      return el.options[el.selectedIndex]?.textContent?.trim() || '';
+    }
+    function cbOfferShortLabel() {
+      const l = cbOfferLabel('cbLightOffer');
+      const p = cbOfferLabel('cbPremiumOffer');
+      if (!l && !p) return '未設定';
+      return (l || 'Light なし') + ' / ' + (p || 'Premium なし');
+    }
+
+    /** 条件を変えたら要約を出し、現有効会員なら警告する */
+    function cbRenderFilterDesc() {
+      const v = $('cbContract')?.value || 'candidates';
+      const d = $('cbFilterDesc');
+      if (d) d.textContent = cbApi().describeContractFilter(v);
+      if (v === 'active') cbNotify('warn', '通常の対象ではありません', cbApi().ACTIVE_FILTER_WARNING);
+      cbInvalidate('対象条件が変わりました。');
+      cbSync();
+    }
+    for (const id of ['cbContract', 'cbPlan', 'cbWithdrawn', 'cbPromo', 'cbGrantable', 'cbHistory', 'cbQ']) {
+      document.getElementById(id)?.addEventListener('change', cbRenderFilterDesc);
+    }
+    for (const id of ['cbLightOffer', 'cbLightDays', 'cbPremiumOffer', 'cbPremiumDays', 'cbPremiumPrice']) {
+      document.getElementById(id)?.addEventListener('change', () => {
+        cbInvalidate('特典の内容が変わりました。');
+        cbSync();
+      });
+    }
+    $('cbViewSelected')?.addEventListener('click', () => {
+      cbState.viewSelected = !cbState.viewSelected;
+      $('cbViewSelected').textContent = cbState.viewSelected ? 'すべて表示' : '選択者のみ表示';
+      cbRender();
+    });
+
     const CB_API = '/.netlify/functions/admin-comeback-grants';
 
     let cbData = null;                 // 直近の customers 応答
@@ -3508,6 +3779,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       });
       if (!data) return;
       cbData = data;
+      // Step 1 完了。ここから Step 2 を操作できる
+      cbState.loaded = true;
+      cbState.candidateCount = (data.rows || []).length;
+      cbInvalidate('対象候補を取得し直しました。');
+      cbNotify('ok', '対象候補を表示しました', (data.rows || []).length + ' 名（現有効会員は既定で対象外）');
+      cbSync();
       cbWriteEnabled = !!data.writeEnabled;
       cbMsg('');
       cbRender();
@@ -3604,6 +3881,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     function cbRenderSelCount() {
+      cbInvalidate('選択した顧客が変わりました。');
+      cbSync();
       $('cbSelCount').textContent = cbSelected.size + ' 名を選択中';
     }
 
@@ -3653,6 +3932,39 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     });
 
     // ── dry-run → 最終確認 → 実行 ──
+    /** 付与内容の確認結果を Step 4 のパネルへ出す */
+    function cbRenderReview(plan) {
+      const p = $('cbReviewPanel');
+      if (!p) return;
+      p.hidden = false;
+      p.innerHTML = '';
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); p.appendChild(d);
+      };
+      const aud = plan.audience || {};
+      row('選択人数', (plan.selected ?? cbSelected.size) + ' 名');
+      row('付与される人数', (plan.willGrant ?? aud.eligible ?? 0) + ' 名',
+        (plan.willGrant ?? aud.eligible ?? 0) > 0 ? 'is-ok' : 'is-ng');
+      row('除外', (plan.excluded ?? aud.excluded ?? 0) + ' 名');
+      row('現有効会員の混入', (aud.activeMembers ?? 0) + ' 名', (aud.activeMembers ?? 0) > 0 ? 'is-ng' : '');
+      const seg = aud.bySegment || {};
+      row('対象区分', Object.entries(seg).map(([k, n]) => cbApi().segmentLabel(k) + ' ' + n + ' 名').join(' / ') || '—');
+      const reasons = aud.byReason || {};
+      if (Object.keys(reasons).length) {
+        row('除外理由', Object.entries(reasons).map(([k, n]) => ((aud.reasonLabels || {})[k] || k) + ' ' + n + ' 名').join(' / '));
+      }
+      row('付与する特典', cbOfferShortLabel());
+      row('変更しないもの', cbApi().UNCHANGED_NOTICE);
+      if ((aud.activeMembers ?? 0) > 0) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⛔ 現在有効な会員が含まれています。対象から外すまで実行できません。';
+        p.appendChild(w);
+      }
+    }
+
     $('cbDryRun').addEventListener('click', async () => {
       const sel = cbSelectionPayload();
       if (!sel.lightOfferId && !sel.premiumOfferId) { cbMsg('特典を選択してください', 'err'); return; }
@@ -3663,11 +3975,95 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         // 直前の操作をやり直す場合は同じ operationId を引き継ぐ（冪等な再開）
         operationId: cbLastOperationId || undefined,
       });
-      if (!plan) return;
+      if (!plan) {
+        cbNotify('err', '付与内容を確認できませんでした', '条件・選択・管理シークレットを確認して、もう一度お試しください。');
+        cbSync();
+        return;
+      }
       cbLastOperationId = plan.operationId;
       cbMsg('');
+      // この確認が「どの条件・選択・特典に対するものか」を指紋で固定する
+      cbState.dryRun = {
+        fingerprint: cbFingerprint(),
+        willGrant: plan.willGrant, selected: plan.selected, excluded: plan.skipped,
+        activeMembers: (plan.audience && plan.audience.activeMembers) || 0,
+        operationId: plan.operationId, audience: plan.audience || null,
+      };
+      cbState.dryStale = false;
+      cbState.applied = false;
+      cbRenderReview({ ...plan, excluded: plan.skipped, audience: plan.audience });
+      const active = (plan.audience && plan.audience.activeMembers) || 0;
+      if (active > 0) {
+        cbNotify('err', '現在有効な会員が含まれています', active + ' 名。対象から外すまで実行できません。');
+      } else if ((plan.willGrant || 0) === 0) {
+        cbNotify('warn', '付与される顧客がいません', '除外理由を確認してください。');
+      } else {
+        cbNotify('ok', '確認しました', plan.willGrant + ' 名へ付与します。実行はまだしていません。');
+      }
+      cbSync();
       cbRenderConfirm(sel, plan);
     });
+
+    // ── Step 5: 特典を付与する（確認モーダル + 人数入力）────────────
+    $('cbApplyBtn')?.addEventListener('click', async () => {
+      const btn = $('cbApplyBtn');
+      if (btn.dataset.busy === '1') return;
+      const verdict = cbApi().canApply(cbState);
+      if (!verdict.allowed) { cbNotify('warn', '実行できません', verdict.reason || ''); return; }
+      const dry = cbState.dryRun;
+      const aud = dry.audience || {};
+      const seg = Object.entries(aud.bySegment || {})
+        .map(([k, n]) => cbApi().segmentLabel(k) + ' ' + n + ' 名').join(' / ') || '—';
+      const ok1 = window.confirm(
+        '【無料特典の付与】\n\n'
+        + '対象: ' + dry.willGrant + ' 名\n'
+        + '対象区分: ' + seg + '\n'
+        + '現有効会員: ' + (aud.activeMembers || 0) + ' 名\n'
+        + '特典: ' + cbOfferShortLabel() + '\n'
+        + cbApi().UNCHANGED_NOTICE + '\n'
+        + cbApi().APPLY_EFFECT_NOTICE + '\n\n続けますか？'
+      );
+      if (!ok1) return;
+      const typed = window.prompt('確認のため、付与予定人数「' + dry.willGrant + '」を入力してください') || '';
+      if (String(typed).trim() !== String(dry.willGrant)) {
+        cbNotify('warn', '実行を中止しました', '入力が一致しませんでした。');
+        return;
+      }
+      btn.dataset.busy = '1';
+      cbState.busy = true; cbSync();
+      const sel = cbSelectionPayload();
+      const out = await cbCall({
+        action: 'apply', ...sel, recordIds: [...cbSelected],
+        operationId: cbState.dryRun.operationId,   // dry-run と同じ ID（冪等）
+      });
+      cbState.busy = false; btn.dataset.busy = '';
+      if (!out) { cbNotify('err', '付与に失敗しました', '結果を「前回操作の突合」で確認してください。'); cbSync(); return; }
+      cbState.applied = true;
+      cbState.dryRun = null;
+      cbRenderApplyResult(out);
+      cbNotify('ok', '無料特典を付与しました', (out.granted ?? out.willGrant ?? 0) + ' 名。案内メールは別途送ってください。');
+      cbSync();
+    });
+
+    /** 実行結果（成功 / 除外 / 失敗 / operationId / 実行日時） */
+    function cbRenderApplyResult(out) {
+      const box = $('cbApplyResult');
+      if (!box) return;
+      box.innerHTML = '';
+      const row = (k, v) => {
+        const d = document.createElement('div'); d.className = 'dp-row';
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      box.className = 'dry-panel';
+      row('付与できた人数', String(out.granted ?? out.applied ?? 0) + ' 名');
+      row('除外', String(out.skipped ?? 0) + ' 名');
+      row('失敗', String(out.failed ?? 0) + ' 名');
+      row('操作 ID', String(out.operationId || cbLastOperationId || '—'));
+      row('実行日時', fmtDate(new Date().toISOString()));
+      row('変更しないもの', cbApi().UNCHANGED_NOTICE);
+    }
 
     function cbRenderConfirm(sel, plan) {
       const body = cbOpenModal('実行内容の確認');
