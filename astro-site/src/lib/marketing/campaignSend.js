@@ -354,14 +354,18 @@ export function computeCampaignContentHash(campaign) {
 
 /**
  * dry-run → send の受け渡しトークン。
- * 対象集合・キャンペーン・version のいずれかが変わればトークンも変わる。
+ * 対象集合・キャンペーン・version・**今回送る文面**のいずれかが変わればトークンも変わる。
  * send は管理画面から渡されたトークンが再計算値と一致しないと実行しない（TOCTOU 防止）。
+ *
+ * ⚠️ 文面（contentHash）を種に含めるのは、管理画面で件名・本文を編集できるようにしたため。
+ *    含めないと「確認した文面と違う文面が送られる」入れ替えが成立してしまう。
  */
 export function computePlanFingerprint({ campaign, recipients }) {
   const keys = (recipients || []).map((r) => r.deliveryKey).sort();
   const seed = [
     String(campaign?.campaignId || ''),
     `v${campaign?.version ?? ''}`,
+    `c${computeCampaignContentHash(campaign)}`,
     String(keys.length),
     ...keys,
   ].join('|');

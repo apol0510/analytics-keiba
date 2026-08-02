@@ -53,6 +53,16 @@ import {
   getCampaign,
   renderCampaign,
 } from '../../src/lib/marketing/campaignCatalog.js';
+import {
+  validateDraft,
+  applyDraft,
+  defaultDraft,
+  isDraftEdited,
+  PREVIEW_NAME,
+  SUBJECT_MAX,
+  BODY_MAX,
+  DRAFT_PLACEHOLDERS,
+} from '../../src/lib/marketing/campaignContentDraft.js';
 import { requiresOfferUrl, isLiveOffer } from '../../src/lib/promotions/offerCampaignLink.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import {
@@ -62,6 +72,7 @@ import {
   summarizeHistory,
   summarizeCampaignRuns,
   computePlanFingerprint,
+  computeCampaignContentHash,
   assertOnlyDeliveryFields,
   MK_EXCLUSION_LABEL,
   MAX_RECIPIENTS_PER_SEND,
@@ -300,18 +311,78 @@ function handleCampaigns() {
 }
 
 /** 本文プレビュー（Airtable も SendGrid も触らない完全ローカル処理） */
+/**
+ * 「今回送る文面」を確定する（下書きが無ければテンプレートそのまま）。
+ *
+ * ⚠️ カタログ（コード）は**書き換えない**。返すのは重ねた新しいオブジェクトだけ。
+ * 検証に落ちたら計画自体を作らない（空文字へ黙って置換しない）。
+ */
+function resolveDraft({ campaign, req }) {
+  const hasDraft = typeof req.subject === 'string' || typeof req.body === 'string';
+  if (!hasDraft) {
+    return { ok: true, campaign, edited: false, errors: [], warnings: [], draft: defaultDraft(campaign) };
+  }
+  const v = validateDraft({ campaign, draft: { subject: req.subject, body: req.body } });
+  if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings, edited: v.edited };
+  return {
+    ok: true,
+    campaign: applyDraft(campaign, v.draft),
+    edited: v.edited,
+    errors: [],
+    warnings: v.warnings,
+    draft: v.draft,
+  };
+}
+
+/**
+ * 完成形プレビュー。**送信と同じ `renderCampaign` を使う**（プレビュー専用の描画を持たない）。
+ * 配信停止リンクは dispatcher が全通に付けるので、ここでは「付く」という事実だけを返す。
+ */
+function buildPreview({ campaign, fromEmail }) {
+  const rendered = renderCampaign({ campaign, name: PREVIEW_NAME });
+  if (!rendered) return null;
+  const brandCfg = getBrandConfig(BRAND);
+  return {
+    from: `${brandCfg.defaultFromName || 'KEIBA Analytics'} <${fromEmail || brandCfg.defaultFromEmail}>`,
+    subject: rendered.subject,
+    salutation: `${PREVIEW_NAME} 様（氏名が無い会員は「お客様」）`,
+    html: rendered.html,
+    text: rendered.text,
+    ctaLabel: campaign.ctaLabel || '',
+    ctaKind: requiresOfferUrl(campaign)
+      ? 'お客様ごとの専用 URL（送信直前に 1 通ずつ差し替え）'
+      : (campaign.ctaUrl ? '固定 URL（テンプレートで設定・文面編集では変更できません）' : 'CTA なし'),
+    footer: 'KEIBA Analytics / https://analytics.keiba.link',
+    unsubscribeNote: '🚫 配信停止はこちら（送信時に自動付与。本文には書かない）',
+    sampleName: PREVIEW_NAME,
+  };
+}
+
 function handlePreview({ req }) {
   // 停止中でも中身は確認できるようにする（送信経路ではないため）
   const campaign = getCampaign(req.campaignId, { includeDisabled: true });
   if (!campaign) return json(400, { error: '未知のキャンペーンです' });
-  const rendered = renderCampaign({ campaign, name: req.sampleName });
-  if (!rendered) return json(500, { error: 'テンプレート描画に失敗しました' });
+  const check = resolveDraft({ campaign, req });
+  if (!check.ok) {
+    return json(400, { error: check.errors.join(' / '), errors: check.errors, sideEffects: 'none' });
+  }
+  const sending = check.campaign;
+  const preview = buildPreview({ campaign: sending, fromEmail: getBrandConfig(BRAND).defaultFromEmail });
+  if (!preview) return json(500, { error: 'テンプレート描画に失敗しました' });
   return json(200, {
     campaignId: campaign.campaignId,
     version: campaign.version,
-    subject: rendered.subject,
-    html: rendered.html,
-    text: rendered.text,
+    campaignName: campaign.name,
+    subject: preview.subject,
+    html: preview.html,
+    text: preview.text,
+    preview,
+    contentHash: computeCampaignContentHash(sending),
+    contentEdited: check.edited,
+    contentWarnings: check.warnings,
+    defaults: defaultDraft(campaign),
+    limits: { subjectMax: SUBJECT_MAX, bodyMax: BODY_MAX },
+    placeholders: DRAFT_PLACEHOLDERS,
     notice: 'プレビューのみ / 送信しません。配信停止リンクは送信時に自動付与されます。',
   });
 }
@@ -609,6 +680,21 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return json(400, { error: '未知のキャンペーンです' });
   }
 
+  // ── 今回送る文面（管理画面で編集された下書き）─────────────────
+  //   下書きが無ければテンプレートそのまま。**カタログは書き換えない**。
+  const check = resolveDraft({ campaign, req });
+  if (!check.ok) return json(400, { error: check.errors.join(' / '), errors: check.errors, sideEffects: 'none' });
+  const sending = check.campaign;      // 以降、描画・hash・fingerprint はすべてこれを使う
+  const contentHash = computeCampaignContentHash(sending);
+  // 画面が確認した文面と一致するか（別本文へのすり替えを止める）
+  if (req.contentHash && String(req.contentHash) !== contentHash) {
+    return json(409, {
+      error: '確認した文面と送ろうとしている文面が違います。もう一度確認してください。',
+      expected: contentHash.slice(0, 12), got: String(req.contentHash).slice(0, 12),
+      sideEffects: 'none',
+    });
+  }
+
   const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
   if (recordIds.length === 0) return json(400, { error: '送信対象が選択されていません' });
   if (recordIds.length > MAX_RECIPIENTS_PER_SEND * 2) {
@@ -653,7 +739,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   }
 
   const plan = buildCampaignPlan({
-    campaign, selected, deliveredKeys,
+    campaign: sending, selected, deliveredKeys,
     providerSuppressed: provider.ok ? provider.emails : null,
     softBounced: blacklist.soft,
     audienceContext: buildAudienceContext(process.env),
@@ -726,7 +812,12 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     campaignId: campaign.campaignId,
     campaignName: campaign.name,
     version: campaign.version,
-    subject: campaign.subject,
+    // 「今回送る」件名・本文（テンプレートではなく確定した文面）
+    subject: sending.subject,
+    body: sending.body,
+    contentHash,
+    contentEdited: check.edited,
+    contentWarnings: check.warnings,
     offerSummary,
     selected: plan.counts.selected,
     excluded: plan.counts.excluded,
@@ -742,6 +833,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
       mode: 'dry-run',
       sideEffects: 'none',
       ...summary,
+      // 完成形は**送信と同じレンダラー**で作る（プレビュー専用の描画を持たない）
+      preview: buildPreview({ campaign: sending, fromEmail }),
       // PII は最小限（宛先ドメインのみ）。個々のアドレスは一覧側で既に見えている。
       recipientDomains: countDomains(plan.recipients),
       sendEnabled: isMarketingSendEnabled(process.env),
@@ -764,7 +857,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   }
   if (plan.recipients.length === 0) return json(400, { error: '送信対象が 0 件です' });
 
-  const rendered = renderCampaign({ campaign, name: null }); // 1 ジョブ 1 本文（汎用呼びかけ）
+  const rendered = renderCampaign({ campaign: sending, name: null }); // 1 ジョブ 1 本文（汎用呼びかけ）
   if (!rendered) return json(500, { error: 'テンプレート描画に失敗しました' });
 
   // 1) ScheduledEmails に PENDING ジョブを作る（実送信は送信基盤が担当）
@@ -786,7 +879,9 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         JobId: jobId,
         RecipientCount: batch.length,
         TargetPlan: `campaign:${campaign.campaignId}`,
-        Notes: `marketing campaign ${campaign.campaignId} v${campaign.version}`,
+        // 何を送ったかを後から照合できるようにする（既存の Notes だけを使う）
+        Notes: `marketing campaign ${campaign.campaignId} v${campaign.version}`
+          + ` content:${contentHash.slice(0, 12)}${check.edited ? ' edited' : ''}`,
       },
     });
     for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId: created?.id || null });

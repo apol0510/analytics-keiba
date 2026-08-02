@@ -160,3 +160,86 @@ test('smoke: 同じ値を何度送っても 1 条件に潰れる（重複で件�
   assert.equal(statusCode, 200);
   assert.deepEqual(body.appliedFilters.contract, ['expired']);
 });
+
+// ── 文面編集（今回送る分だけ）の API 契約 ─────────────────────────
+// 「確認した文面だけが送れる」ことを、ハンドラを実際に呼んで確かめる。
+
+test('smoke: preview は既定文面・上限・差し込みを返す（送信はしない）', async () => {
+  const calls = stubFetch({});
+  const { statusCode, body } = await invoke({ action: 'preview', campaignId: 'marketing-canary' });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  assert.equal(typeof body.defaults.subject, 'string');
+  assert.ok(body.defaults.body.length > 0, '既定本文を返していない');
+  assert.equal(body.limits.subjectMax > 0, true);
+  assert.deepEqual(body.placeholders.map((p) => p.token), ['{{salutation}}']);
+  assert.ok(body.preview.html.includes('山田 様'), '完成形プレビューになっていない');
+  assert.equal(/unsubscribe/i.test(body.preview.html), false, '本文に配信停止リンクを入れている');
+  assert.equal(typeof body.contentHash, 'string');
+  assert.equal(body.contentEdited, false);
+  assert.equal(calls.length, 0, 'プレビューで外部 API を叩いている');
+});
+
+test('smoke: preview は編集した文面でも同じレンダラーで描く', async () => {
+  stubFetch({});
+  const { statusCode, body } = await invoke({
+    action: 'preview', campaignId: 'marketing-canary',
+    subject: '【KEIBA Analytics】編集した件名', body: '{{salutation}}\n\n編集した本文です。',
+  });
+  assert.equal(statusCode, 200);
+  assert.equal(body.subject, '【KEIBA Analytics】編集した件名');
+  assert.ok(body.preview.html.includes('編集した本文です。'));
+  assert.equal(body.contentEdited, true);
+});
+
+test('smoke: 危険な文面は 400（HTML / 未定義変数 / 空件名）', async () => {
+  stubFetch({});
+  const cases = [
+    { subject: '件名', body: '{{salutation}}\n<script>alert(1)</script>' },
+    { subject: '件名', body: '{{salutation}}\n{{plan}}' },
+    { subject: '   ', body: '{{salutation}}\n本文' },
+    { subject: '件名', body: '   ' },
+  ];
+  for (const c of cases) {
+    const { statusCode } = await invoke({ action: 'preview', campaignId: 'marketing-canary', ...c });
+    assert.equal(statusCode, 400, `${JSON.stringify(c)} が通ってしまう`);
+  }
+});
+
+test('smoke: 文面を変えると contentHash が変わる（同じなら同じ）', async () => {
+  stubFetch({});
+  const a = await invoke({ action: 'preview', campaignId: 'marketing-canary' });
+  const b = await invoke({ action: 'preview', campaignId: 'marketing-canary' });
+  assert.equal(a.body.contentHash, b.body.contentHash, '同じ文面で hash が変わる');
+  const c = await invoke({
+    action: 'preview', campaignId: 'marketing-canary',
+    subject: a.body.defaults.subject, body: `${a.body.defaults.body}\n\n追記`,
+  });
+  assert.notEqual(c.body.contentHash, a.body.contentHash, '文面を変えても hash が同じ');
+});
+
+test('smoke: 確認した文面と違う hash では送信登録しない（409・Airtable を読まない）', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const calls = stubFetch({});
+  const { statusCode, body } = await invoke({
+    action: 'send', campaignId: 'marketing-canary',
+    recordIds: ['rec1'], planFingerprint: 'x'.repeat(64),
+    subject: '件名', body: '{{salutation}}\n\n本文', contentHash: 'deadbeefdeadbeef',
+  });
+  delete process.env.MARKETING_CAMPAIGN_ENABLED;
+  assert.equal(statusCode, 409, JSON.stringify(body).slice(0, 200));
+  assert.match(String(body.error || ''), /文面/);
+  assert.equal(calls.length, 0, '文面を確かめる前に顧客データを読んでいる');
+});
+
+test('smoke: 検証に落ちる文面では送信登録に進めない（400・Airtable を読まない）', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const calls = stubFetch({});
+  const { statusCode } = await invoke({
+    action: 'send', campaignId: 'marketing-canary',
+    recordIds: ['rec1'], planFingerprint: 'x'.repeat(64),
+    subject: '件名', body: '{{salutation}}\n\n<script>x</script>', contentHash: 'whatever',
+  });
+  delete process.env.MARKETING_CAMPAIGN_ENABLED;
+  assert.equal(statusCode, 400);
+  assert.equal(calls.length, 0);
+});

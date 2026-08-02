@@ -56,9 +56,13 @@ export function parseJobCampaign(fields = {}) {
   const target = str(fields.TargetPlan).replace(/^campaign:/, '');
   const notes = str(fields.Notes);
   const m = /marketing campaign\s+([a-z0-9-]+)\s+v([0-9]+)/i.exec(notes);
+  // 何を送ったかの照合用。キュー登録時に Notes へ残した内容 hash を読む
+  const c = /content:([0-9a-f]{6,32})/i.exec(notes);
   return {
     campaignId: target || (m ? m[1] : ''),
     version: m ? m[2] : '',
+    contentHash: c ? c[1] : '',
+    contentEdited: /\bedited\b/.test(notes),
   };
 }
 
@@ -91,12 +95,17 @@ export function buildJobRow({ job, deliveries = [] }) {
   }
 
   const cancel = canCancelJob(job);
-  const { campaignId, version } = parseJobCampaign(f);
+  const { campaignId, version, contentHash, contentEdited } = parseJobCampaign(f);
   return {
     jobId,
     recordId: str(job && job.id),
     campaignId,
     version,
+    // 実際に送った（送る）件名と内容 hash。**後から書き換えない記録**
+    subject: str(f.Subject),
+    contentHash,
+    contentEdited,
+    createdBy: str(f.CreatedBy),
     status: str(f.Status) || JOB_STATUS.PENDING,
     scheduledFor: str(f.ScheduledFor) || null,
     completedAt: str(f.CompletedAt) || null,
