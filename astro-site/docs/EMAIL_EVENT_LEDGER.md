@@ -16,7 +16,7 @@ AK 側にイベントを保存していないため、いまは「反応が無�
 | 受信後の処理 | bounce / blocked / dropped / spamreport / unsubscribe → `EmailBlacklist` へ反映。**それ以外は捨てている** |
 | open / click | **保存していない**（配信基盤の API を都度参照するのみ・保持 3 日）|
 | 決済メール v2 | `custom_args`（`record_id` / `idempotency_key` / `purpose`）を刻んでおり、イベントを 1 通へ結び付けられる |
-| **マーケ配信** | **`custom_args` を刻んでいない**（`marketing-campaign-dispatch.js` の送信ペイロードに無い）|
+| **マーケ配信** | 2026-08-01 時点では刻んでいなかった → **Phase 1c で刻む実装を追加**（§3-3・merge 未承認）|
 | 送信時の message id | **記録していない**（`CampaignDeliveries` に列が無い）|
 
 ⚠️ したがって**いま届くマーケ関連イベントは `email` しか手掛かりが無い**。
@@ -31,7 +31,7 @@ AK 側にイベントを保存していないため、いまは「反応が無�
 | **C. 併用（採用）** | 事実は台帳に全部残し、表示は集約で速く出せる。集約が壊れても台帳から再計算できる |
 
 Phase 1 では **台帳（`EmailEvents`）だけ**を作る。集約列（`CampaignDeliveries` への
-`FirstOpenAt` / `OpenCount` 等）は台帳が動いてから追加する（Phase 1c）。
+`FirstOpenAt` / `OpenCount` 等）は台帳が動いてから追加する（**Phase 1d**）。
 
 ### `EmailEvents`（新規テーブル / 作成はユーザー操作）
 
@@ -111,6 +111,54 @@ raw payload。施策判断に不要で、漏えい時の被害が大きい。
 `forbidden` / `not_found` / `unprocessable` を示す場合は**設定不備**（PAT 権限・テーブル名・列の型）で、
 再試行では直らない。`rate_limited` が続く場合はバッチが飽和している。
 
+## 3-3. 送信側の刻印（Phase 1c / custom_args）
+
+受信したイベントを**推測せずに**顧客・配信へ結び付けるため、送信時に識別子を刻む。
+組み立ては単一源 **`src/lib/marketing/campaignCustomArgs.js`**（純粋）。
+
+### 契約（送信側と受信側で同じ綴り）
+
+| キー | 値 | 出所（権威データ）|
+|---|---|---|
+| `delivery_key` | sha256 hex 64 桁 | `CampaignDeliveries.DeliveryKey`（**送信側で再計算しない**）|
+| `campaign_delivery_id` | `rec` + 14 文字 | `CampaignDeliveries` の Airtable recordId（enqueue 後にしか存在しない）|
+| `customer_record_id` | `rec` + 14 文字 | `CampaignDeliveries.CustomerRecordId`（enqueue 時に確定した値）|
+| `campaign_id` | 小文字スラッグ | `CampaignDeliveries.CampaignType` の `<id>` 部 |
+| `campaign_version` | 数字 | 同 `v<n>` 部 |
+| `purpose` | `marketing_campaign` | 固定（決済メール v2 の `payment_confirmation_v2` と**必ず別値**）|
+
+- 受信側 `emailEventLedger.js` は `delivery_key` / `campaign_delivery_id` /
+  `customer_record_id` / `campaign_id` / `campaign_version` を**この綴りで読む**。
+  **片方だけ改名しない**（改名すると黙って `unresolved` に戻る）。
+- **入れない**: 生メールアドレス・氏名・token・OfferKey・URL・secret。
+  custom_args は provider 側に保存され、Webhook で戻り、台帳にも載るため。
+- 値は識別子文字（`A-Za-z0-9._:-`）のみ・128 文字以内。全体で 400B 未満
+  （provider 上限 10,000B に対して十分小さい）。
+
+### fail closed（送らない条件）
+
+| 条件 | 理由コード |
+|---|---|
+| ジョブの `CampaignDeliveries` 行が無い | `delivery_not_found` |
+| 同一アドレスに配信行が 2 行以上（どれが 1 通か確定できない）| `delivery_not_found`（索引から除外）|
+| `DeliveryKey` が sha256 hex でない | `delivery_key_invalid` |
+| 配信 recordId / 顧客 recordId が Airtable 形式でない | `campaign_delivery_id_invalid` / `customer_record_id_invalid` |
+| 送信直前に引いた顧客と配信台帳の顧客が食い違う | `customer_record_id_conflict` |
+| 配信行のキャンペーン（id / version）がジョブと違う | `campaign_mismatch` |
+| 配信行が既に `sent` | `already_sent`（二重送信防止）|
+| 値に空白・`@`・URL が混ざる / サイズ超過 | `value_not_safe` / `too_large` |
+
+該当者は**送信せず** `CampaignDeliveries` に `skipped-*` と理由を記録する。
+既存の suppression / unsubscribe / blacklist / 頻度 / audience / offer 有効性の判定は**変更していない**
+（custom_args の解決はそれらを通過した後にだけ走る）。
+
+### 有効範囲
+
+- **Phase 1c 反映後の新規送信にだけ効く。** 既存の `EmailEvents` 行は `unresolved` のまま**書き換えない**
+- `resolved` を実際に立てるのは **Phase 1d**（受信側へ配信索引を渡す）。
+  1c 反映後のイベントは `custom_args` を持つので、1d で確定できる**候補**になる
+- **メールアドレス単独で顧客へ結び付けることは、1c 以降も禁止**（同一アドレスの重複 Customers が実在）
+
 ## 4. 署名検証
 
 Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）。
@@ -130,7 +178,7 @@ Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）
 | **1a** | 純粋モジュール・テスト・受信側の配線（**既定 OFF**）・本書（PR #199 merged `8a493ce`）| なし（write 0）|
 | **1a-2**（本 PR） | 書き込みのバッチ化・bounded retry・失敗集計（§3-2）。**既定 OFF のまま** | なし（write 0）|
 | **1b** | Airtable に `EmailEvents` を作成（**2026-08-02 完了**: `tblWkaxu7p0MRuUwL` / 21 列 / primary=`EventKey` / 0 行）→ `EMAIL_EVENT_LEDGER_ENABLED=true` + redeploy（**未実施**）| 台帳への write 開始 |
-| **1c** | 送信側で `custom_args`（delivery_key / campaign_id / customer_record_id）を刻む | 送信経路の変更 |
+| **1c** | 送信側で `custom_args` を刻む（§3-3・**実装済み / merge 未承認**）| 送信経路の変更（送信 gate は OFF のまま）|
 | **1d** | 受信側へ配信索引を渡し `resolved` を有効化。集約列を追加 | 表示の変更 |
 
 **1b より前は 1 バイトも書かない。** env 未設定・鍵未設定・列不足のいずれでも write 0。

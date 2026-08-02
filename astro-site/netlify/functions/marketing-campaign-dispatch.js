@@ -51,6 +51,10 @@ import {
 } from '../../src/lib/promotions/offerCampaignLink.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
+import {
+  indexDeliveriesByRecipient,
+  buildCampaignCustomArgs,
+} from '../../src/lib/marketing/campaignCustomArgs.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -238,6 +242,15 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     const needsOffer = requiresOfferUrl(jobCampaign);
     const offerUrlByEmail = new Map();
 
+    /**
+     * 受信者 → この 1 通の配信レコード（enqueue 時に作られた CampaignDeliveries）。
+     * custom_args はここからしか読まない（**DeliveryKey を送信側で作り直さない**）。
+     * 行が無い＝配信台帳を作れていないので、その相手には**送らない**（fail closed）。
+     */
+    const deliveryByEmail = indexDeliveriesByRecipient(campaignDeliveries, jobId);
+    /** 受信者 → 刻む custom_args（解決できた相手だけ） */
+    const customArgsByEmail = new Map();
+
     const toSend = [];
     const toSkip = [];
     for (const email of recipients.slice(0, MAX_PER_RUN)) {
@@ -285,6 +298,24 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
           }
           offerUrlByEmail.set(email, link.url);
         }
+
+        // 配信 1 通を一意に指す識別子を刻む（Phase 1c）。
+        // 解決できない相手には**送らない**。紐付けできない配信を増やすと、
+        // 台帳に unresolved が積み上がり「反応が無かった」と区別できなくなる。
+        const ca = buildCampaignCustomArgs({
+          delivery: deliveryByEmail.get(email) || null,
+          customerRecordId: recordIdByEmail.get(email) || '',
+          campaignId: jobCampaign.campaignId,
+          campaignVersion: String(jobCampaign.version),
+        });
+        if (!ca.ok) {
+          toSkip.push({ email, status: 'skipped-duplicate', reason: ca.reason });
+          summary.skipped += 1;
+          summary.skippedByReason[ca.reason] = (summary.skippedByReason[ca.reason] || 0) + 1;
+          summary.verified += 1;
+          continue;
+        }
+        customArgsByEmail.set(email, ca.customArgs);
       }
       summary.verified += 1;
       if (v.send) toSend.push(email);
@@ -321,7 +352,18 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
           continue;
         }
       }
-      const ok = await sendOne({ SG, fromEmail, fromName, to: email, subject: f.Subject, html });
+      // ここまで来て custom_args が無いのは実装不整合。**送らずに記録する**（fail closed）
+      const customArgs = customArgsByEmail.get(email);
+      if (!customArgs) {
+        await patchDeliveriesByEmail({
+          KEY, BASE, jobId, now,
+          entries: [{ email, status: 'skipped-duplicate', reason: 'custom_args_unresolved' }],
+        });
+        summary.skipped += 1;
+        summary.skippedByReason.custom_args_unresolved = (summary.skippedByReason.custom_args_unresolved || 0) + 1;
+        continue;
+      }
+      const ok = await sendOne({ SG, fromEmail, fromName, to: email, subject: f.Subject, html, customArgs });
       if (ok) summary.sent += 1; else summary.failed += 1;
       await patchDeliveriesByEmail({
         KEY, BASE, jobId, now,
@@ -382,8 +424,14 @@ function buildRecentContactMap(deliveries, excludeJobId) {
   return map;
 }
 
-/** SendGrid へ 1 通送る。成功なら true。本文・宛先はログへ出さない。 */
-async function sendOne({ SG, fromEmail, fromName, to, subject, html }) {
+/**
+ * SendGrid へ 1 通送る。成功なら true。本文・宛先はログへ出さない。
+ *
+ * `customArgs` は**この 1 通を後から特定するための識別子だけ**（`campaignCustomArgs.js` が単一源）。
+ * Event Webhook がそのまま返してくるので、生アドレス・氏名・token・URL は絶対に入れない。
+ * 呼び出し側が解決できなかった相手はここへ来ない（fail closed）。
+ */
+async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs }) {
   // 配信停止リンクは共有 executor と同じ形式で必ず付ける（RFC 8058 ヘッダも）
   const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(to)}&brand=analytics-keiba`;
   const body = `${html}<hr style="border:0;border-top:1px solid #e5e7eb;margin:2em 0 1em;" />`
@@ -398,6 +446,8 @@ async function sendOne({ SG, fromEmail, fromName, to, subject, html }) {
         from: { email: fromEmail, name: fromName },
         subject,
         content: [{ type: 'text/html', value: body }],
+        // 配信 1 通の識別子（Phase 1c）。受信側 `emailEventLedger.js` が同じ綴りで読む
+        custom_args: customArgs,
         headers: {
           'List-Unsubscribe': `<${unsubscribeLink}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
           'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
