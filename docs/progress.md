@@ -17,6 +17,54 @@
 
 ## Current Phase
 
+**Phase（2026-08-02 現在・最新）: Phase 2 実施完了。刻印付きカナリア 1 通の本番送信で
+「送信 → イベント → resolved → admin カルテ」が実証された。送信 gate は再閉鎖済み（実効確認済み）。**
+
+### 実施内容と実測（2026-08-02 / production）
+
+| 段階 | 実測 |
+|---|---|
+| 送信 | `marketing-canary` **v2** を**テスト専用受信者 1 名**へ **exactly-one** で送信 |
+| dispatcher（live） | **jobs 1 / verified 1 / sent 1 / skipped 0 / failed 0** |
+| `ScheduledEmails` | 当該ジョブ PENDING → **SENT**（SentCount 1 / FailedCount 0）|
+| `CampaignDeliveries` | queued → **sent**（`marketing-canary:v2` 1 行 / SentAt 11:34:38 JST）|
+| **台帳** | 新規 `delivered` が **custom_args 3 点完全一致で `resolved`**（`DeliveryKey` / `CampaignDeliveryRecordId` / `CustomerRecordId` すべて配信台帳と一致・`CampaignId=marketing-canary` / v2）|
+| **admin カルテ ⑥-2** | **「配信済み 1」を本番表示**（`ledgerSource.available=true` / rows 1 / `unattributed`・`conflicts` は scoped のため null）|
+| PII | **禁止列 0**（Email / IP / UserAgent / RawUrl / RawPayload なし）。`EmailHash`（32 桁）のみ保持 |
+
+### 件数（送信後）
+
+| テーブル | 値 |
+|---|---|
+| `EmailEvents` | **3**（うち 1 件が resolved。既存 2 件は `unresolved/no_custom_args` のまま**不変**）|
+| `CampaignDeliveries` | **72** |
+| `ScheduledEmails` | **28** |
+| `Customers` | **1454（不変）** |
+
+### open / click が未検証な理由（**AK 側の実装起因ではない**）
+
+SendGrid 側の設定を read-only で実測した結果:
+
+| 設定 | 実測 |
+|---|---|
+| Event Webhook `enabled` | true（`delivered` / `bounce` / `dropped` / `spam_report` / `unsubscribe` = true）|
+| Event Webhook **`open`** | **false** ← 開封イベントが AK へ送られてこない |
+| Event Webhook **`click`** | **false** |
+| Tracking: Open | enabled: true（計測はしている）|
+| Tracking: **Click** | **enabled: false** ← クリックは計測自体が無効 |
+
+→ **open / click の検証は SendGrid 全体（決済メール等すべての送信）に影響する設定変更を伴うため、別判断とする。**
+実施する場合は ① Click Tracking を ON（**全メールの URL が書き換わる**）② Event Webhook に open/click を追加
+③ `marketing-canary` を **v3** へ版上げ（v2 は `already_delivered` で再送されない）が必要。
+
+### gate の再閉鎖（実効確認済み）
+
+- `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を **UNSET へ戻し redeploy**
+- **deploy ID `6a6eaf288672bf97c3b9c1be`** / state ready / **published commit `a596f4b`**
+- 実効確認: dispatcher を `dryRun:false` で叩いても **503（`MARKETING_CAMPAIGN_DISPATCH_ENABLED` 未設定）/ sideEffects: none**
+- 変更していない env: `EMAIL_EVENT_LEDGER_ENABLED`=true（台帳は稼働継続）/ `NEWSLETTER_AUTOMATION_ENABLED`=false
+
+
 **Phase（2026-08-02 現在・最新）: Phase 1（1a〜1d）完了・本番稼働（`4bd4856` / deploy `6a6ea27f3e8b850008c31d5a`）。
 Phase 2（刻印付きカナリア 1 通の実地確認）の**準備のみ**完了。送信 gate は閉じたままで実メール 0。**
 
