@@ -319,6 +319,37 @@ Phase 1c の `buildCampaignCustomArgs`（3 点そろわなければ送らない�
 | 台帳に想定外の行が入った | **削除しない。** 台帳は append-only のまま保持し、事実として残す。本番行の削除が必要になった場合は**別の高リスク承認境界**として改めて承認を取る |
 | 二重送信の懸念 | 同一 `DeliveryKey` は 1 行しか作られず、再実行は `already_delivered`。**version を上げない限り再送されない** |
 
+## 5-3. Phase 2 実施結果（2026-08-02 / **完了**）
+
+刻印付きカナリア 1 通を本番で送り、**送信 → イベント → `resolved` → admin カルテ**が通ることを実証した。
+
+| 検証項目 | 結果 |
+|---|---|
+| exactly-one | ✅ `sent 1 / skipped 0 / failed 0`（テスト専用受信者 1 名）|
+| 刻印（Phase 1c） | ✅ `delivery_key` / `campaign_delivery_id` / `customer_record_id` が配信台帳の値どおり |
+| **resolved 判定（Phase 1d）** | ✅ 新規 `delivered` が **3 点完全一致で `resolved`** |
+| 既存行 | ✅ 1c 以前の 2 行は `unresolved/no_custom_args` のまま**書き換えなし** |
+| PII | ✅ 禁止列 0・`EmailHash`（32 桁）のみ |
+| admin カルテ ⑥-2 | ✅ 「配信済み 1」を本番表示 |
+| 二重送信 | ✅ `DeliveryKey` 一致で再実行は `already_delivered`（行は増えない）|
+
+件数: `EmailEvents` 3 / `CampaignDeliveries` 72 / `ScheduledEmails` 28 / `Customers` 1454（不変）。
+
+### 未検証: open / click（**SendGrid 側の設定が理由。AK の実装起因ではない**）
+
+実測: Event Webhook の `open`=false / `click`=false、Tracking の Click=false（Open は true）。
+イベントが**そもそも送られてこない / 計測されていない**ため、AK 側では観測しようがない。
+
+検証するには ① **Click Tracking を ON**（⚠️ **全メールの URL が書き換わる**。決済メール等も対象）
+② Event Webhook に open / click を追加 ③ `marketing-canary` を **v3** へ版上げ（v2 は `already_delivered`）。
+**影響範囲が送信基盤全体に及ぶため、実施は別判断とする。**
+
+### 実行後の後始末（実施済み）
+
+`MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を **UNSET → redeploy**
+（deploy `6a6eaf288672bf97c3b9c1be` / published commit `a596f4b`）。
+dispatcher の `dryRun:false` が **503 / sideEffects none** を返すことまで確認した。
+
 ## 6. admin 表示のルール
 
 - **「未開封」と「取得不能」を必ず区別する。** 台帳が無い期間は 0 ではなく**不明**
