@@ -165,6 +165,16 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 - 顧客カルテ ⑥-2: 台帳由来の反応（`resolved` のみ本人の反応として集計）＋
   **未確定（unresolved / conflict）の全体件数**（顧客には紐付けない参考値）
 
+### Function に action を追加するときの必須手順（2026-08-02 の 500 を受けて）
+
+ソース文字列を検査する guard は「何が書かれているか」しか見ない。**import 漏れ・引数不一致は
+実行して初めて落ちる**（実際に `jobs` が本番 500 になった）。新しい action を足すときは
+**ハンドラを起動する煙試験を必ず 1 本足す**こと（`adminMarketingHandler.smoke.test.mjs`）。
+
+- `fetch` を差し替えてネットワークなしで `handler()` を呼ぶ
+- 200 が返ること、応答に**アドレスを載せないこと**、
+  書き込み系は**検証段階で PATCH を 1 回も出さないこと**を固定する
+
 ⚠️ **「送信済み」は配信基盤が受理した状態**で、実配信（`delivered`）とは別。
 実配信は `EmailEvents` の台帳で確認する。
 

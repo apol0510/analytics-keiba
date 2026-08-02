@@ -17,27 +17,68 @@
 
 ## Current Phase
 
-**Phase（2026-08-02 現在・最新）: admin マーケティング送信の**通常運用機能**が揃った。
-対象選択 → 確認 → キュー登録 → **状況確認 → 取消**まで管理画面だけで完結する。
-送信ゲートは両方 UNSET のまま（実メール 0）。**
+**Phase（2026-08-02 現在・最新）: admin マーケティング送信の通常運用機能が本番稼働
+（`c2f8a3f` / deploy `6a6ec3771ccbd800086d3fb8`）。送信ゲートは両方 UNSET＝実メール 0。**
 
-### 今回追加した運用機能（branch `feat/admin-marketing-operations`）
+### 追加した運用機能（PR #208 `1e5f814`）
 
-| 完成条件 | 実装 |
+対象選択 → dry-run → キュー登録 → **送信状況の確認** → **PENDING の取消** まで管理画面で完結する。
+
+| 機能 | 実装 |
 |---|---|
-| 送信状況の確認（予定 / 送信済 / 失敗 / 取消）| admin API `jobs` + 画面「送信状況・取消」。件数と**失敗理由の分類**を表示 |
-| PENDING の取消 | admin API `cancelJob`。**PENDING だけ**取消可。`operationId` 必須で冪等 |
-| SENT は取消不可 | 画面に理由付きで明示（`already_sent`）。**sent の配信行には触れない** |
-| dispatcher 失敗の可視化 | 配信行の `ErrorMessage` を理由別に集計して表示 |
-| ゲート閉鎖時の挙動 | 理由（どの env が未設定か）を画面に出し、送信ボタンを無効化 |
-| 自動送信されないこと | dispatcher は**定期実行に未登録**（guard で固定）。共有 executor は env 非依存で常時 skip |
-| 台帳状態の確認 | 顧客カルテ ⑥-2 に **未確定（unresolved / conflict）の全体件数**を追加（顧客には紐付けない）|
+| 送信状況（予定 / 送信済 / 失敗 / スキップ / 取消） | admin API `jobs`（read-only）+ 画面「送信状況・取消」|
+| dispatcher 失敗の可視化 | 配信行の `ErrorMessage` を理由別に集計（アドレスは持たない）|
+| PENDING の取消 | admin API `cancelJob`（`operationId` 必須・冪等・二段階確認）|
+| SENT は取消不可 | 画面に理由付きで明示。**`sent` の配信行には触れない** |
+| gate 閉鎖時の挙動 | どの env が未設定かを表示し、送信ボタンを無効化 |
+| 自動送信されない | dispatcher は定期実行に未登録（guard で固定）|
+| 台帳状態の確認 | カルテ ⑥-2 に未確定（unresolved / conflict）の全体件数 |
 
-### 二重送信・誤送信を防ぐ構造（変更なし・テストで固定）
+判定の単一源は `src/lib/marketing/marketingJobs.js`。運用手順は `docs/spec.md` の
+「マーケティング配信の運用（admin）」章。
 
-`DeliveryKey`（同一版は 1 行）/ `planFingerprint`（確認した母集団以外へ送れない）/
-送信直前の再検証 / custom_args 3 点そろわなければ送らない / 送信経路は 1 系統 /
-dispatcher は PENDING のみ処理。
+### 事故と是正: `jobs` が本番 500（2026-08-02・**当日中に解消**）
+
+**事象**: PR #208 の本番反映直後、`jobs`（送信状況）が **HTTP 500**。
+**原因**: `jobs` / `cancelJob` が `isMarketingJob` を使っているのに **import していなかった**
+（ReferenceError）。
+
+**影響範囲（実測）**
+
+| 項目 | 実測 |
+|---|---|
+| 影響 | 「送信状況・取消」画面が開けないだけ（**read-only 経路**）|
+| Airtable への書き込み | **0**（EmailEvents 5 / Customers 1454 / CampaignDeliveries 72 / ScheduledEmails 28 が不変）|
+| メール送信 | **0**（送信ゲートは両方 UNSET）|
+| 他の action | `customerDetail` 等は正常（カルテ ⑥-2 は本番で表示を確認）|
+
+**なぜ CI と guard を通り抜けたか**
+
+既存 guard は**ソース文字列の検査**で「何が書かれているか」しか見ておらず、
+**実行して初めて落ちる欠陥**（import 漏れ・引数不一致）を構造的に検知できなかった。
+`check:safety` も build もソースの静的検査で、ハンドラを起動していなかった。
+
+**是正（PR #209 `c2f8a3f`）**
+
+- `isMarketingJob` を import（1 行）
+- **ハンドラを実際に起動する煙試験**を追加（`adminMarketingHandler.smoke.test.mjs`）。
+  `fetch` を差し替えてネットワークなしで実行し、
+  `jobs` が 200 / 応答にアドレスを載せない / `cancelJob` は operationId 無しで 400（**書き込みに到達しない**）/
+  SENT を 409 で拒否し **PATCH を 1 回も出さない** / PENDING は queued の配信行とジョブだけ PATCH・
+  Customers 不変 / 無認証は 403 / admin が SendGrid を叩いたら落ちる、を固定
+- **回帰検知を実証**: import を外すと 3 件が落ち、戻すと 6 件すべて通ることを実測
+
+**教訓（次に同じ形で落ちないために）**
+
+Function に新しい action を足すときは、ソース検査の guard だけでなく
+**ハンドラを起動する煙試験を必ず 1 本足す**。静的検査は「書いてある」ことしか保証しない。
+
+**本番検証（`c2f8a3f` 反映後・read-only）**
+
+`jobs` = **HTTP 200** / gate は `sendEnabled:false` `dispatchEnabled:false` と理由を表示 /
+ジョブ 5 件（`marketing-canary` v1・v2、`comeback-offer` v2 ×3）がすべて **SENT・取消不可
+（`already_sent`）** / 応答にアドレスなし / 各テーブル件数は不変。
+
 
 
 **Phase（2026-08-02 現在・最新）: Phase 2 実施完了。刻印付きカナリア 1 通の本番送信で
