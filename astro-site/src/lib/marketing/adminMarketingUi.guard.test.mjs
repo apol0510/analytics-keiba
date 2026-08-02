@@ -480,7 +480,7 @@ test('guard(ui): フィルターは常時表示と詳細条件に分かれ、件
 });
 
 test('guard(ui): 「表示中を全選択」を主要操作にし、全顧客選択は目立たせない', () => {
-  assert.match(PAGE, /id="mkSelAll" class="btn-primary btn-sm">表示中を全選択/, '主要操作になっていない');
+  assert.match(PAGE, /id="mkSelAll" class="btn-warning btn-md">👥 表示中を全選択/, '主要操作になっていない');
   assert.match(PAGE, /id="mkSelAllLoaded"[^>]*btn-quiet/, '全顧客選択が目立つままになっている');
 });
 
@@ -523,7 +523,7 @@ test('guard(ui): ジョブ状態はバッジで示し、部分失敗を成功と
 
 // ── 「今すぐ送信」（2026-08-02 / 管理画面だけで完結）────────────────
 test('guard(ui): 最終送信ボタンは「今すぐ送信」で、既定は押せない', () => {
-  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled[^>]*>今すぐ送信|id="mkDispatchRun"[^>]*>今すぐ送信/, '「今すぐ送信」が無い');
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*>[^<]*今すぐ送信/, '「今すぐ送信」が無い');
   assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled/, '最初から押せる状態になっている');
 });
 
@@ -649,8 +649,8 @@ test('guard(cb): 現有効会員を選んだら警告を出す', () => {
 });
 
 test('guard(cb): 取得ボタンは「対象候補を表示」、確認は「付与内容を確認」', () => {
-  assert.match(PAGE, /id="cbLoad"[^>]*>対象候補を表示/, '取得ボタンの文言が古い');
-  assert.match(PAGE, /id="cbDryRun"[^>]*>付与内容を確認/, '確認ボタンの文言が古い');
+  assert.match(PAGE, /id="cbLoad"[^>]*>[^<]*対象候補を表示/, '取得ボタンの文言が古い');
+  assert.match(PAGE, /id="cbDryRun"[^>]*>[^<]*付与内容を確認/, '確認ボタンの文言が古い');
   assert.match(PAGE, /この時点では顧客データを変更しません/, '補足が無い');
 });
 
@@ -699,4 +699,93 @@ test('guard(cb): 実行結果に人数・operationId・実行日時を出す', (
   for (const label of ['付与できた人数', '除外', '失敗', '操作 ID', '実行日時']) {
     assert.ok(SCRIPT.includes(`'${label}'`), `結果に ${label} が無い`);
   }
+});
+
+// ── 配色とボタンの視認性（2026-08-02）─────────────────────────
+test('guard(design): 色の役割を CSS 変数で固定する（直書きを増やさない）', () => {
+  for (const token of ['--action-blue', '--action-green', '--action-yellow', '--action-orange',
+    '--action-red', '--action-purple', '--surface-raised', '--surface-active',
+    '--text-main', '--text-muted', '--border-soft', '--focus-ring']) {
+    assert.ok(PAGE.includes(`${token}:`), `デザイントークン ${token} が無い`);
+  }
+});
+
+test('guard(design): ボタンの階層（主要 / 補助 / 危険）が定義されている', () => {
+  for (const cls of ['.btn-lg', '.btn-md', '.btn-primary', '.btn-success', '.btn-warning',
+    '.btn-caution', '.btn-danger', '.btn-secondary', '.btn-purple']) {
+    assert.ok(PAGE.includes(`.ppe ${cls}`), `ボタン種別 ${cls} が無い`);
+  }
+  assert.match(PAGE, /\.ppe \.btn-lg \{[^}]*min-height: 50px/, '主要ボタンが大きくない');
+  assert.match(PAGE, /\.ppe \.btn-lg \{[^}]*font-size: 16px/, '主要ボタンの文字が小さい');
+});
+
+test('guard(design): 主要操作は大きく、意味の色とアイコンを持つ', () => {
+  for (const [id, cls, icon] of [
+    ['cbLoad', 'btn-lg', '🔍'], ['cbDryRun', 'btn-success', '✅'], ['cbApplyBtn', 'btn-danger', '🎁'],
+    ['mkLoad', 'btn-lg', '🔍'], ['mkDryRun', 'btn-success', '✅'], ['mkDispatchRun', 'btn-danger', '📩'],
+  ]) {
+    const m = PAGE.match(new RegExp(`id="${id}"[^>]*class="([^"]*)"[^>]*>([^<]*)`));
+    assert.ok(m, `${id} が見つからない`);
+    assert.ok(m[1].includes(cls), `${id} に ${cls} が無い: ${m[1]}`);
+    assert.ok(m[2].includes(icon), `${id} にアイコン ${icon} が無い: ${m[2]}`);
+  }
+});
+
+test('guard(design): 危険操作は赤系 + 警告アイコン + 無効時に aria-disabled', () => {
+  for (const id of ['cbApplyBtn', 'mkDispatchRun']) {
+    const m = PAGE.match(new RegExp(`<button[^>]*id="${id}"[^>]*>`));
+    assert.ok(m, `${id} が無い`);
+    assert.match(m[0], /btn-danger/, `${id} が危険操作の色でない`);
+    assert.match(m[0], /aria-disabled="true"/, `${id} に aria-disabled が無い`);
+  }
+  assert.match(PAGE, /id="cbApplyBtn"[^>]*>⚠️/, '危険操作に警告アイコンが無い');
+});
+
+test('guard(design): Step ナビは丸番号 + アイコン + 補足を持つ', () => {
+  assert.match(PAGE, /class="stp-n"/, '番号が強調されていない');
+  assert.match(PAGE, /class="stp-sub"/, '補足が無い');
+  assert.match(PAGE, /\.ppe \.stepbar \.stp \{[^}]*min-height: 72px/, 'Step カードの高さが足りない');
+  assert.match(PAGE, /\.ppe \.stepbar \.stp \.stp-n \{[^}]*font-size: 30px/, '番号が大きくない');
+});
+
+test('guard(design): 現在 / 完了 / 未到達を色と文言の両方で区別する', () => {
+  assert.match(PAGE, /\.ppe \.stepbar \.stp\.is-now[\s\S]{0,200}--action-yellow/, '現在の段階が黄系でない');
+  assert.match(PAGE, /\.ppe \.stepbar \.stp\.is-done[\s\S]{0,200}--action-green/, '完了が緑系でない');
+  assert.match(SCRIPT, /ここを操作してください/, '現在地の文言が無い');
+  assert.match(SCRIPT, /前の Step を完了してください/, '未到達の説明が無い');
+  assert.match(SCRIPT, /'✅ 完了'/, '完了の文言が無い');
+});
+
+test('guard(design): Step 5 は本番データが変わることを赤で明示する', () => {
+  assert.match(PAGE, /本番データが変更されます/, 'Step 5 の警告が無い');
+  assert.match(PAGE, /\.ppe \.cb-step\[data-cbcard="5"\]\.is-now[\s\S]{0,120}--action-red/, 'Step 5 が赤系でない');
+});
+
+test('guard(design): 追従バーの次操作は状態ごとに色が変わる', () => {
+  assert.match(SCRIPT, /\{ 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger'/,
+    '状態別の色分けが無い');
+  assert.match(PAGE, /\.ppe \.stickybar[\s\S]{0,200}border-top: 3px solid var\(--action-yellow\)/, '追従バーの上辺ラインが無い');
+  assert.match(PAGE, /#cbSbNext[\s\S]{0,120}min-height: 52px/, '次操作ボタンが大きくない');
+});
+
+test('guard(design): 通知は 5 種類を色 + アイコン + 左ボーダーで分ける', () => {
+  for (const cls of ['.notice-ok', '.notice-info', '.notice-warn', '.notice-caution', '.notice-err']) {
+    assert.ok(PAGE.includes(`.ppe ${cls}`), `通知 ${cls} が無い`);
+  }
+  assert.match(PAGE, /\.ppe \.notice \{[^}]*border-left-width: 5px/, '左ボーダーが無い');
+});
+
+test('guard(design): 危険設定はオレンジ枠で「通常は変更しません」と書く', () => {
+  assert.match(PAGE, /\.ppe \.danger-setting/, '危険設定のカードが無い');
+  assert.match(PAGE, /通常は変更しません/, '注意書きが無い');
+});
+
+test('guard(design): focus-visible が定義され、無効ボタンはカーソルでも分かる', () => {
+  assert.match(PAGE, /button:focus-visible[\s\S]{0,200}outline: 3px solid var\(--focus-ring\)/, 'focus 表示が弱い');
+  assert.match(PAGE, /button\[disabled\] \{[^}]*cursor: not-allowed/, '無効ボタンのカーソル指定が無い');
+});
+
+test('guard(design): 状態は色だけでなく文言でも分かる（区分バッジ）', () => {
+  assert.match(SCRIPT, /function cbSegmentBadge\(/, '区分バッジが無い');
+  assert.match(SCRIPT, /segmentLabel\(segment\)/, 'バッジに文言が無い（色だけになっている）');
 });

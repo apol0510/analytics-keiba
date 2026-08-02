@@ -125,12 +125,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <p class="note" id="mkSendState"></p>
 
       <div class="stepbar" id="mkSteps" aria-label="操作の順序">
-        <span class="stp" data-step="1">1 絞り込み</span>
-        <span class="stp" data-step="2">2 顧客を選ぶ</span>
-        <span class="stp" data-step="3">3 キャンペーン</span>
-        <span class="stp" data-step="4">4 送信対象の確認</span>
-        <span class="stp" data-step="5">5 登録・送信</span>
-        <span class="stp" data-step="6">6 状況・取消</span>
+        <span class="stp" data-step="1"><b class="stp-n">1</b> 🔍 絞り込み<span class="stp-sub">対象を絞る</span></span>
+        <span class="stp" data-step="2"><b class="stp-n">2</b> 👥 顧客を選ぶ<span class="stp-sub">宛先を決める</span></span>
+        <span class="stp" data-step="3"><b class="stp-n">3</b> 📝 キャンペーン<span class="stp-sub">送る内容</span></span>
+        <span class="stp" data-step="4"><b class="stp-n">4</b> ✅ 送信対象の確認<span class="stp-sub">dry-run</span></span>
+        <span class="stp" data-step="5"><b class="stp-n">5</b> 🚀 登録・送信<span class="stp-sub">実メールが届く</span></span>
+        <span class="stp" data-step="6"><b class="stp-n">6</b> 📊 状況・取消<span class="stp-sub">結果を見る</span></span>
       </div>
 
       <div id="mkNotices" class="notices" aria-live="polite"></div>
@@ -206,7 +206,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </details>
 
       <div class="toolbar filter-actions">
-        <button type="button" id="mkLoad" class="btn-primary">この条件で取得</button>
+        <button type="button" id="mkLoad" class="btn-primary btn-lg">🔍 この条件で取得</button>
         <button type="button" id="mkFilterClear" class="btn-ghost">条件をクリア</button>
         <span class="filter-count" id="mkFilterCount">適用中の条件: 0</span>
       </div>
@@ -223,7 +223,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
           <button type="button" id="mkColAll" class="btn-ghost btn-sm">詳細</button>
         </span>
-        <button type="button" id="mkSelAll" class="btn-primary btn-sm">表示中を全選択</button>
+        <button type="button" id="mkSelAll" class="btn-warning btn-md">👥 表示中を全選択</button>
         <button type="button" id="mkSelAllLoaded" class="btn-ghost btn-sm btn-quiet"
           title="取得済みの全顧客を選択します（誤操作しやすいため確認します）">全顧客から選択</button>
         <button type="button" id="mkSelNone" class="btn-ghost">全解除</button>
@@ -313,7 +313,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <h2 id="mkStep4H" class="step-h"><span class="step-n">4</span> 送信対象を確認（dry-run）</h2>
         <div class="campaign-box">
           <div class="toolbar">
-            <button type="button" id="mkDryRun" class="btn-primary">送信対象を確認（dry-run）</button>
+            <button type="button" id="mkDryRun" class="btn-success btn-lg">✅ 送信対象を確認（dry-run）</button>
             <span class="dry-state" id="mkDryState">未確認</span>
           </div>
           <div class="dry-panel" id="mkDryPanel" hidden></div>
@@ -337,8 +337,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           </select>
           <button type="button" id="mkActionDry" class="btn-primary">内容を確認（dry-run）</button>
         </div>
-        <details class="filter-more">
-          <summary>詳細設定（危険操作）</summary>
+        <details class="filter-more danger-setting">
+          <summary>⚠️ 詳細設定（通常は変更しません）</summary>
           <label class="chk chk-danger">
             <input type="checkbox" id="cbIncludeActive" />
             現有効会員を含める
@@ -363,8 +363,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           1 通ずつ再判定します（該当者は送らず記録だけ残します）。
         </p>
         <div class="toolbar">
-          <button type="button" id="mkDispatchCheck" class="btn-ghost">配信内容を確認（送信しない）</button>
-          <button type="button" id="mkDispatchRun" class="btn-danger" disabled>今すぐ送信</button>
+          <button type="button" id="mkDispatchCheck" class="btn-secondary btn-md">🔎 配信内容を確認（送信しない）</button>
+          <button type="button" id="mkDispatchRun" class="btn-danger btn-lg" disabled aria-disabled="true">⚠️ 📩 今すぐ送信</button>
         </div>
         <p class="note" id="mkDispatchState"></p>
         <div id="mkDispatchResult"></div>
@@ -412,11 +412,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
 
       <div class="stepbar" id="cbSteps" aria-label="操作の順序">
-        <span class="stp" data-cbstep="1">1 対象条件</span>
-        <span class="stp" data-cbstep="2">2 顧客選択</span>
-        <span class="stp" data-cbstep="3">3 特典設定</span>
-        <span class="stp" data-cbstep="4">4 内容確認</span>
-        <span class="stp" data-cbstep="5">5 実行</span>
+        <span class="stp" data-cbstep="1"><b class="stp-n">1</b> 🔍 対象条件<span class="stp-sub">誰に配るかを絞る</span></span>
+        <span class="stp" data-cbstep="2"><b class="stp-n">2</b> 👥 顧客選択<span class="stp-sub">対象者を選ぶ</span></span>
+        <span class="stp" data-cbstep="3"><b class="stp-n">3</b> 🎁 特典設定<span class="stp-sub">配る内容を決める</span></span>
+        <span class="stp" data-cbstep="4"><b class="stp-n">4</b> ✅ 内容確認<span class="stp-sub">変更前に確かめる</span></span>
+        <span class="stp" data-cbstep="5"><b class="stp-n">5</b> 🚀 実行<span class="stp-sub">本番データが変わる</span></span>
       </div>
 
       <div id="cbNotices" class="notices" aria-live="polite"></div>
@@ -476,7 +476,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="recent">最近送信済み</option>
           <option value="sent">送信あり</option>
         </select>
-        <button type="button" id="cbLoad" class="btn-primary">対象候補を表示</button>
+        <button type="button" id="cbLoad" class="btn-primary btn-lg">🔍 対象候補を表示</button>
       </div>
 
         <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
@@ -489,7 +489,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="note" id="cbStep2Empty">Step 1 で条件を選び、「対象候補を表示」を押してください。</p>
         <div class="dry-panel" id="cbAudienceSummary" hidden></div>
       <div class="selbar">
-        <button type="button" id="cbSelAll" class="btn-primary btn-sm">表示中の付与可能者を全選択</button>
+        <button type="button" id="cbSelAll" class="btn-warning btn-md">👥 表示中の付与可能者を全選択</button>
         <button type="button" id="cbSelNone" class="btn-ghost btn-sm">全解除</button>
         <button type="button" id="cbViewSelected" class="btn-ghost btn-sm">選択者のみ表示</button>
         <span class="selcount" id="cbSelCount">0 名を選択中</span>
@@ -555,7 +555,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <section class="step cb-step" data-cbcard="4" aria-labelledby="cbStep4H">
         <h2 id="cbStep4H" class="step-h"><span class="step-n">4</span> 変更内容を確認する</h2>
         <div class="toolbar">
-          <button type="button" id="cbDryRun" class="btn-primary">付与内容を確認</button>
+          <button type="button" id="cbDryRun" class="btn-success btn-lg">✅ 付与内容を確認</button>
         </div>
         <p class="note">この時点では顧客データを変更しません。</p>
         <div class="dry-panel" id="cbReviewPanel" hidden></div>
@@ -563,9 +563,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       <section class="step cb-step" data-cbcard="5" aria-labelledby="cbStep5H">
         <h2 id="cbStep5H" class="step-h"><span class="step-n">5</span> 特典を付与する</h2>
+        <p class="step-hint is-danger">⚠️ 本番データが変更されます（顧客の閲覧権限が変わります）</p>
         <p class="note" id="cbStep5Lock">「付与内容を確認」に成功すると実行できます。</p>
         <div class="toolbar">
-          <button type="button" id="cbApplyBtn" class="btn-danger" disabled>無料特典を付与する</button>
+          <button type="button" id="cbApplyBtn" class="btn-danger btn-lg" disabled aria-disabled="true">⚠️ 🎁 無料特典を付与する</button>
         </div>
         <div id="cbApplyResult"></div>
       </section>
@@ -1197,6 +1198,150 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .cb-tools { margin-top: 1rem; }
   .ppe .cb-row-locked { opacity: .55; }
   .ppe .cb-row-reason { font-size: .7rem; color: var(--red); }
+
+  /* ═══════════════════════════════════════════════════════════════
+     操作の意味を色で固定する（2026-08-02）
+     暗い画面の中で「次に押すもの」「危ないもの」を一目で分ける。
+     色だけに頼らず、アイコン・文言・枠でも区別する。
+     ═══════════════════════════════════════════════════════════════ */
+  .ppe {
+    /* 役割ごとの色。直書きを増やさず、ここだけを見れば意味が分かる状態にする */
+    --action-blue: #3b82f6;        /* 取得・再読み込み・詳細・戻る（通常操作）*/
+    --action-blue-dk: #1d4ed8;
+    --action-green: #10b981;       /* 安全に完了できる確定操作・成功 */
+    --action-green-dk: #047857;
+    --action-yellow: #f5c451;      /* 現在の段階・次の主要操作・確認待ち */
+    --action-yellow-dk: #b7791f;
+    --action-orange: #fb923c;      /* 実行前の強い注意・失効・危険設定 */
+    --action-orange-dk: #c2410c;
+    --action-red: #ef4444;         /* 本番データが変わる操作・不可逆・エラー */
+    --action-red-dk: #b91c1c;
+    --action-purple: #a78bfa;      /* 上位プラン・特典設定 */
+    --action-purple-dk: #6d28d9;
+    --surface-raised: #16233d;     /* カード（既定より一段明るい）*/
+    --surface-active: #1c2c4c;     /* 現在の段階のカード */
+    --text-main: #f1f5fb;
+    --text-muted: #93a4bd;
+    --border-soft: rgba(148,163,184,.22);
+    --focus-ring: rgba(245,196,81,.75);
+  }
+
+  /* ── ボタンの階層 ─────────────────────────────────────────
+     主要（btn-lg）は大きく明るく、補助は彩度を落とす。
+     危険操作は赤系 + 警告アイコン + 通常操作から離して置く。 */
+  .ppe .btn-lg {
+    min-height: 50px; padding: 0 26px; font-size: 16px; font-weight: 700;
+    border-radius: 11px; display: inline-flex; align-items: center; gap: .5rem;
+  }
+  .ppe .btn-md { min-height: 40px; padding: 0 16px; font-size: 14px; border-radius: 9px; }
+
+  .ppe .btn-primary,
+  .ppe .btn-blue { background-color: var(--action-blue-dk); border-color: var(--action-blue); color: var(--text-main); }
+  .ppe .btn-primary:hover:not([disabled]),
+  .ppe .btn-blue:hover:not([disabled]) { background-color: var(--action-blue); }
+
+  .ppe .btn-success { background-color: var(--action-green-dk); border-color: var(--action-green); color: var(--text-main); }
+  .ppe .btn-success:hover:not([disabled]) { background-color: var(--action-green); color: #06251b; }
+
+  .ppe .btn-warning { background-color: var(--action-yellow-dk); border-color: var(--action-yellow); color: var(--text-main); }
+  .ppe .btn-warning:hover:not([disabled]) { background-color: var(--action-yellow); color: #2a1e05; }
+
+  .ppe .btn-caution { background-color: var(--action-orange-dk); border-color: var(--action-orange); color: var(--text-main); }
+  .ppe .btn-caution:hover:not([disabled]) { background-color: var(--action-orange); color: #2b1206; }
+
+  .ppe .btn-danger,
+  .ppe .b-immediate { background-color: var(--action-red-dk); border-color: var(--action-red); color: var(--text-main); font-weight: 700; }
+  .ppe .btn-danger:hover:not([disabled]),
+  .ppe .b-immediate:hover:not([disabled]) { background-color: var(--action-red); }
+
+  .ppe .btn-purple { background-color: var(--action-purple-dk); border-color: var(--action-purple); color: var(--text-main); }
+  .ppe .btn-secondary { background-color: var(--surface-raised); border-color: var(--border-soft); color: var(--text-main); }
+
+  /* 押せない理由が分かるようにする（色だけに頼らない）*/
+  .ppe button[disabled] { cursor: not-allowed; filter: grayscale(.5); }
+  .ppe button:focus-visible,
+  .ppe select:focus-visible,
+  .ppe input:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+
+  /* ── Step ナビ（丸番号 + アイコン + 補足）───────────────── */
+  .ppe .stepbar { gap: .5rem; }
+  .ppe .stepbar .stp {
+    display: flex; flex-direction: column; justify-content: center; gap: .1rem;
+    min-height: 72px; min-width: 8.5rem; padding: .5rem .7rem; border-radius: 12px;
+    background: rgba(148,163,184,.07); border: 1px solid var(--border-soft);
+    color: var(--text-muted); font-size: 15px; opacity: .6;
+  }
+  .ppe .stepbar .stp .stp-n { font-size: 30px; font-weight: 700; line-height: 1; }
+  .ppe .stepbar .stp .stp-sub { font-size: 11px; }
+  .ppe .stepbar .stp.is-now {
+    opacity: 1; background: var(--surface-active); color: var(--text-main);
+    border-color: var(--action-yellow); box-shadow: inset 0 0 0 1px rgba(245,196,81,.35);
+  }
+  .ppe .stepbar .stp.is-now .stp-n { color: var(--action-yellow); }
+  .ppe .stepbar .stp.is-done {
+    opacity: 1; background: rgba(16,185,129,.10); color: var(--text-main); border-color: var(--action-green);
+  }
+  .ppe .stepbar .stp.is-done .stp-n { color: var(--action-green); }
+
+  /* ── Step カード ───────────────────────────────────────── */
+  .ppe .cb-step, .ppe .step { border-left: 5px solid transparent; padding-left: .8rem; border-radius: 0 10px 10px 0; }
+  .ppe .cb-step.is-now, .ppe .step.is-now {
+    border-left-color: var(--action-yellow); background: rgba(245,196,81,.05);
+  }
+  .ppe .cb-step.is-done { border-left-color: var(--action-green); }
+  .ppe .cb-step.is-locked { border-left-color: var(--border-soft); opacity: .42; }
+  .ppe .cb-step[data-cbcard="5"].is-now { border-left-color: var(--action-red); background: rgba(239,68,68,.06); }
+  .ppe .step-hint { font-size: .78rem; color: var(--action-yellow); margin: .1rem 0 .4rem; }
+  .ppe .step-hint.is-locked { color: var(--text-muted); }
+  .ppe .step-hint.is-danger { color: var(--action-red); font-weight: 700; }
+  .ppe .step-done-badge { margin-left: auto; font-size: .72rem; color: var(--action-green); font-weight: 700; }
+
+  /* ── 状態バッジ（区分・確認状態）──────────────────────── */
+  .ppe .tag { display: inline-flex; align-items: center; gap: .2rem; font-size: .72rem;
+    padding: .12rem .5rem; border-radius: 999px; border: 1px solid; font-weight: 700; }
+  .ppe .tag-blue { color: #93c5fd; border-color: rgba(59,130,246,.5); background: rgba(59,130,246,.12); }
+  .ppe .tag-green { color: #6ee7b7; border-color: rgba(16,185,129,.5); background: rgba(16,185,129,.12); }
+  .ppe .tag-yellow { color: var(--action-yellow); border-color: rgba(245,196,81,.5); background: rgba(245,196,81,.12); }
+  .ppe .tag-orange { color: #fdba74; border-color: rgba(251,146,60,.5); background: rgba(251,146,60,.12); }
+  .ppe .tag-red { color: #fca5a5; border-color: rgba(239,68,68,.55); background: rgba(239,68,68,.14); }
+  .ppe .tag-purple { color: #c4b5fd; border-color: rgba(167,139,250,.5); background: rgba(167,139,250,.12); }
+  .ppe .tag-slate { color: var(--text-muted); border-color: var(--border-soft); background: rgba(148,163,184,.10); }
+
+  /* ── 追従バー ─────────────────────────────────────────── */
+  .ppe .stickybar {
+    background: var(--surface-active); border-top: 3px solid var(--action-yellow);
+    box-shadow: 0 -6px 18px rgba(2,6,23,.45); padding: .6rem .9rem; font-size: .8rem;
+  }
+  .ppe .stickybar .sb-item { color: var(--text-main); }
+  .ppe .stickybar #cbSbNext, .ppe .stickybar #sbNext { min-height: 52px; font-size: 16px; font-weight: 700; padding: 0 22px; }
+
+  /* ── 通知（5 種・アイコン + 左ボーダー）──────────────────── */
+  .ppe .notice { border-left-width: 5px; font-size: .82rem; }
+  .ppe .notice-ok { border-color: var(--action-green); background: rgba(16,185,129,.10); color: #a7f3d0; }
+  .ppe .notice-info { border-color: var(--action-blue); background: rgba(59,130,246,.10); color: #bfdbfe; }
+  .ppe .notice-warn { border-color: var(--action-yellow); background: rgba(245,196,81,.10); color: #fde68a; }
+  .ppe .notice-caution { border-color: var(--action-orange); background: rgba(251,146,60,.12); color: #fed7aa; }
+  .ppe .notice-err { border-color: var(--action-red); background: rgba(239,68,68,.12); color: #fecaca; }
+
+  /* ── フォーム ─────────────────────────────────────────── */
+  .ppe .cb-step select, .ppe .cb-step input[type=search], .ppe .cb-step input[type=number],
+  .ppe .step select, .ppe .step input[type=search] { min-height: 44px; font-size: 14px; background-color: var(--nv-1); }
+  .ppe .danger-setting { border: 1px solid var(--action-orange); border-radius: 10px; padding: .5rem .7rem;
+    background: rgba(251,146,60,.07); }
+  .ppe .danger-setting > summary { color: var(--action-orange); font-weight: 700; }
+
+  /* ── カムバック: 区分の色（意味を固定）──────────────────── */
+  .ppe .seg-expired { color: #93c5fd; }
+  .ppe .seg-withdrawn { color: #c4b5fd; }
+  .ppe .seg-dormant { color: #fcd34d; }
+  .ppe .seg-active_member { color: #fca5a5; font-weight: 700; }
+  .ppe .seg-unknown { color: #fdba74; }
+
+  @media (max-width: 900px) {
+    .ppe .stepbar { flex-wrap: wrap; }
+    .ppe .stepbar .stp { min-width: 0; flex: 1 1 45%; min-height: 60px; }
+    .ppe .btn-lg { min-height: 46px; font-size: 15px; padding: 0 18px; }
+  }
 </style>
 
 <script>
@@ -2768,6 +2913,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $('sbGate').textContent = 'gate: 登録' + (mkState.sendEnabled ? '可' : '不可') + ' / 配信' + (mkState.dispatchEnabled ? '可' : '不可');
         const next = mkNextAction(st);
         const nb = $('sbNext');
+        const toneByStep = { 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger', 6: 'btn-primary' };
+        nb.className = 'btn-lg ' + (toneByStep[step] || 'btn-primary');
         nb.textContent = next.label;
         nb.disabled = !next.target;
         nb.onclick = next.target ? () => { const t = $(next.target); if (t) { t.scrollIntoView({ block: 'center' }); t.focus?.(); } } : null;
@@ -3578,14 +3725,49 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         sum.hidden = cbSelected.size === 0;
       }
 
+      // 各カードに「いま何をすべきか」を出す（色だけに頼らない）
+      for (const card of document.querySelectorAll('.cb-step')) {
+        const n = Number(card.dataset.cbcard);
+        let hint = card.querySelector('.step-hint.js-hint');
+        if (!hint) {
+          hint = document.createElement('p');
+          hint.className = 'step-hint js-hint';
+          card.querySelector('.step-h')?.insertAdjacentElement('afterend', hint);
+        }
+        if (n === step) {
+          hint.textContent = '👉 ここを操作してください';
+          hint.className = 'step-hint js-hint' + (n === 5 ? ' is-danger' : '');
+        } else if (n < step) {
+          hint.textContent = '✅ 完了';
+          hint.className = 'step-hint js-hint';
+        } else {
+          hint.textContent = '前の Step を完了してください';
+          hint.className = 'step-hint js-hint is-locked';
+        }
+      }
+
       const bar = $('cbStickyBar');
       if (bar) {
         bar.hidden = false;
         const v = cbApi().buildCbStickyView(cbState);
-        $('cbSbLeft').textContent = v.left;
+        $('cbSbLeft').innerHTML = '';
+        const left = document.createElement('span');
+        left.className = 'tag tag-yellow';
+        left.textContent = v.left;
+        $('cbSbLeft').appendChild(left);
         $('cbSbOffer').textContent = v.offer;
-        $('cbSbReview').textContent = v.review;
-        $('cbSbNext').textContent = v.next;
+        // 確認状態は色でも分ける（未確認=黄 / 確認済み=緑 / 失効=オレンジ）
+        $('cbSbReview').innerHTML = '';
+        const rv = document.createElement('span');
+        rv.className = 'tag ' + (v.review.includes('確認済み') ? 'tag-green'
+          : v.review.includes('失効') ? 'tag-orange' : 'tag-yellow');
+        rv.textContent = v.review;
+        $('cbSbReview').appendChild(rv);
+        // 次の操作は 1 つだけ。段階で色を変える
+        const next = $('cbSbNext');
+        const tone = { 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger' }[step] || 'btn-primary';
+        next.className = 'btn-lg ' + tone;
+        next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '🚀 ' }[step] || '') + v.next;
       }
     }
 
@@ -4046,6 +4228,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     });
 
     /** 実行結果（成功 / 除外 / 失敗 / operationId / 実行日時） */
+    /** 区分バッジ（色 + 文言。色だけで意味を表さない） */
+    function cbSegmentBadge(segment) {
+      const el = document.createElement('span');
+      const tone = {
+        expired: 'tag-blue', withdrawn: 'tag-purple', dormant: 'tag-yellow',
+        active_member: 'tag-red', unknown: 'tag-orange',
+      }[segment] || 'tag-slate';
+      el.className = 'tag ' + tone + ' seg-' + segment;
+      el.textContent = cbApi().segmentLabel(segment);
+      return el;
+    }
+
     function cbRenderApplyResult(out) {
       const box = $('cbApplyResult');
       if (!box) return;
