@@ -130,8 +130,9 @@ function finish(ctx) {
     console.log(`  ScheduledEmails: +1（Status=PENDING → SENT）`);
     console.log(`  CampaignDeliveries: +1（${ctx.campaign.campaignId}:v${ctx.campaign.version} / queued → sent）`);
     console.log(`  Customers: ±0（マーケ経路は Customers へ書かない）`);
-    console.log(`  EmailEvents: ${ctx.ledgerCount} → +2〜6（processed / delivered / open / click…）`);
-    console.log(`  すべての新規 EmailEvents: ResolutionStatus=resolved / CustomerRecordId=${ctx.customerRecordId}`);
+    console.log(`  EmailEvents: 現在 ${ctx.ledgerCount} 件。**増分は固定しない**`);
+    console.log(`    （provider が何を送るかに依存。open / click は受信者が開く・押した後の実観測）`);
+    console.log(`  検証条件: 観測できた**各**イベントが ResolutionStatus=resolved / CustomerRecordId=${ctx.customerRecordId}`);
     console.log(`  admin カルテ ⑥-2: 配信済み 1 / 開封・クリックは実際に開いた回数`);
   }
   console.log(ng.length === 0 ? '\n✅ 前提を満たしています（送信の承認へ進めます）' : `\n❌ ${ng.length} 件が未達。**送ってはいけません**`);

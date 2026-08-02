@@ -303,8 +303,8 @@ Phase 1c の `buildCampaignCustomArgs`（3 点そろわなければ送らない�
 | `ScheduledEmails` | 27 | **28**（PENDING → SENT）|
 | `CampaignDeliveries` | 71 | **72**（`marketing-canary:v2` / queued → sent）|
 | `Customers` | 1454 | **1454（不変）** |
-| `EmailEvents` | 2 | **+2〜6**（processed / delivered / open / click…）|
-| 新規 `EmailEvents` の `ResolutionStatus` | — | **すべて `resolved`** |
+| `EmailEvents` | 2 | **増分は固定しない**。provider が何を送るか（processed / delivered / deferred …）に依存し、`open` / `click` は**受信者が開く・押した後の実観測**。件数を先に決めない |
+| 新規 `EmailEvents` の `ResolutionStatus` | — | **観測できた各イベントが `resolved`**（件数ではなく、1 件ずつ 3 点一致で確定していることが検証条件）|
 | 新規行の `CustomerRecordId` / `CampaignId` | — | テスト受信者の recordId / `marketing-canary` |
 | admin カルテ ⑥-2 | 0 件 | 配信済み 1・開封/クリックは実操作ぶん |
 
@@ -315,8 +315,8 @@ Phase 1c の `buildCampaignCustomArgs`（3 点そろわなければ送らない�
 | 事象 | 対処 |
 |---|---|
 | 送信前に中止 | env を unset → redeploy（キューは PENDING のまま残るので `ScheduledEmails` の Status を CANCELLED にするか放置）|
-| 送信後 | メールは取り消せない。**gate を unset → redeploy** で以後の送信を止める |
-| 台帳が汚れた | `EmailEvents` の該当行を削除（append-only・他機能に影響なし）|
+| 送信後 | メールは取り消せない。**gate を unset → redeploy** で追加送信を止める（台帳の行はそのまま保持する）|
+| 台帳に想定外の行が入った | **削除しない。** 台帳は append-only のまま保持し、事実として残す。本番行の削除が必要になった場合は**別の高リスク承認境界**として改めて承認を取る |
 | 二重送信の懸念 | 同一 `DeliveryKey` は 1 行しか作られず、再実行は `already_delivered`。**version を上げない限り再送されない** |
 
 ## 6. admin 表示のルール

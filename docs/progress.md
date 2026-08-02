@@ -28,6 +28,10 @@ Phase 2（刻印付きカナリア 1 通の実地確認）の**準備のみ**完
   送信経路 1 系統＝共有 executor は env 非依存で常時 skip）
 - 実行手順・期待増分・rollback は `astro-site/docs/EMAIL_EVENT_LEDGER.md` §5-2
 - **未実行**: env 変更 / gate 有効化 / 実メール送信 / Airtable write（すべてユーザー承認待ち）
+- **検証条件は件数ではなく「観測できた各イベントが `resolved` になること」**。EmailEvents の増分は
+  provider の挙動と受信者の操作（開封・クリック）に依存するため固定しない
+- **rollback に台帳行の削除を含めない**。送信後は gate を unset → redeploy で追加送信を止め、
+  `EmailEvents` は append-only のまま保持する（本番行の削除は別の高リスク承認境界）
 
 
 **Phase（2026-08-02 現在・最新）: Phase 1c まで本番反映済み（`b5946d4`）。
