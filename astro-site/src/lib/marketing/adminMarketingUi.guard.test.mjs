@@ -175,7 +175,7 @@ test('実配信は取り消せないことを確認ダイアログで伝える',
 test('実配信の実行後は必ず再確認からやり直す（二重配信防止）', () => {
   const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
   // 送信後は直前確認を捨てる → もう一度確認しない限り canDispatchSend が false になる
-  assert.match(block, /mkState\.dispatch = \{ sent: true, result: data, check: null \}/,
+  assert.match(block, /mkState\.dispatch = \{ sent: true, result: data, summary: res, check: null, preflight: null \}/,
     '実行後に直前確認を無効化していない（もう一度押せてしまう）');
   assert.match(block, /btn\.dataset\.busy = '1'/, '二重クリック防止が無い');
 });
@@ -307,7 +307,8 @@ test('選択は 全顧客 / 表示中のみ / 全解除 の 3 つに分かれる
 });
 
 test('「表示中のみ選択」は表示中かつ送信可能な相手だけを足す', () => {
-  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkSelAll').addEventListener"), SCRIPT.indexOf("$('mkSelNone')"));
+  const at = SCRIPT.indexOf("$('mkSelAll').addEventListener");
+  const block = SCRIPT.slice(at, at + 900);
   assert.match(block, /const visible = mkVisibleRows\(\)/, '表示中の行を使っていない');
   assert.match(block, /visibleIds: visible\.map/, '表示中以外を巻き込んでいる');
   assert.match(block, /selectableIds: visible\.filter\(\(r\) => r\.sendable\)/, '送信不可を選択対象にしている');
@@ -461,7 +462,7 @@ test('guard(ui): 押せる／押せないの判定を画面側に再実装しな
 
 test('guard(ui): 選択・条件・キャンペーンの変更で dry-run が失効する', () => {
   assert.match(SCRIPT, /mkInvalidateDryRun\('選択した顧客が変わりました。'\)/, '選択変更で失効させていない');
-  assert.match(SCRIPT, /mkInvalidateDryRun\('絞り込み条件が変わりました。'\)/, '条件変更で失効させていない');
+  assert.match(SCRIPT, /mkInvalidateDryRun\('顧客一覧を取得し直しました。'\)/, '一覧の取り直しで失効させていない');
   assert.match(SCRIPT, /mkInvalidateDryRun\('キャンペーンが変わりました。'\)/, 'キャンペーン変更で失効させていない');
   assert.match(SCRIPT, /isDryRunStale\(/, '失効判定を単一源で行っていない');
 });
@@ -502,11 +503,11 @@ test('guard(ui): dry-run 結果を主要パネルにまとめて出す', () => {
 
 test('guard(ui): 最終送信は必須項目つき二段階確認', () => {
   const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
-  assert.match(block, /buildSendConfirmation\(/, '確認内容を単一源で組み立てていない');
+  assert.match(block, /buildSendNowConfirmation\(/, '確認内容を単一源で組み立てていない');
   assert.match(block, /window\.confirm\(/, '確認ダイアログが無い');
   assert.match(block, /window\.prompt\(/, '二段階目の確認が無い');
-  assert.match(block, /送信予定人数/, '人数入力による誤操作防止が無い');
-  assert.match(block, /実際にメールが届きます/, '実メールが届くことを伝えていない');
+  assert.match(block, /実送信予定人数/, '人数入力による誤操作防止が無い');
+  assert.match(block, /conf\.effect/, '実メールが届くことを伝えていない');
 });
 
 test('guard(ui): 通知は内容別に出し、internal error を素通しにしない', () => {
@@ -518,4 +519,104 @@ test('guard(ui): 通知は内容別に出し、internal error を素通しにし
 test('guard(ui): ジョブ状態はバッジで示し、部分失敗を成功と読ませない', () => {
   assert.match(SCRIPT, /resolveJobBadge\(/, 'バッジ判定を単一源で行っていない');
   assert.match(SCRIPT, /badge b-/, 'バッジを描画していない');
+});
+
+// ── 「今すぐ送信」（2026-08-02 / 管理画面だけで完結）────────────────
+test('guard(ui): 最終送信ボタンは「今すぐ送信」で、既定は押せない', () => {
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled[^>]*>今すぐ送信|id="mkDispatchRun"[^>]*>今すぐ送信/, '「今すぐ送信」が無い');
+  assert.match(PAGE, /id="mkDispatchRun"[^>]*disabled/, '最初から押せる状態になっている');
+});
+
+test('guard(ui): 送信可否は marketingSendNow の判定に従う', () => {
+  assert.match(SCRIPT, /window\.__mkSend/, '送信判定の単一源を橋渡ししていない');
+  assert.match(SCRIPT, /canSendNow\(/, '送信可否を単一源で判定していない');
+  assert.match(SCRIPT, /SEND_BLOCK_LABEL\[/, '送れない理由を文言化していない');
+});
+
+test('guard(ui): 送信直前に jobId・内容の一致を再確認する', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  assert.match(block, /buildDispatchPreflight\(|mkState\.dispatch\.preflight/, '確認したジョブを保持していない');
+  assert.match(block, /await mkDispatchCall\(true, mkState\.dispatch\.preflight\.jobId\)/,
+    '送信直前に同じジョブで再確認していない');
+  assert.match(block, /verifySendPrecondition\(/, 'jobId・内容の一致を検証していない');
+  assert.match(block, /await mkDispatchCall\(false, pre\.jobId\)/, '実送信を確認済みジョブに限定していない');
+});
+
+test('guard(ui): 実送信は確認を通過した後にしか呼ばれない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  const verifyIdx = block.indexOf('verifySendPrecondition(');
+  const liveIdx = block.indexOf('mkDispatchCall(false');
+  assert.ok(verifyIdx > -1 && liveIdx > verifyIdx, '検証より前に実送信を呼んでいる');
+  const guardIdx = block.indexOf('if (!pre.ok)');
+  assert.ok(guardIdx > -1 && guardIdx < liveIdx, '検証失敗時に止めていない');
+});
+
+test('guard(ui): 二重クリックで live dispatcher が 2 回走らない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("$('mkDispatchRun').addEventListener"));
+  assert.match(block, /if \(btn\.dataset\.busy === '1'\) return;/, '二重クリック防止が無い');
+  assert.match(block, /mkState\.busy = true/, '応答待ち中に他の送信操作を無効化していない');
+});
+
+test('guard(ui): 送信結果に sent / skipped / failed と取消不可を出す', () => {
+  assert.match(SCRIPT, /function mkRenderSendResult\(/, '結果表示が無い');
+  for (const label of ['送信（provider 受理）', 'スキップ', '失敗', '完了時刻', '取消']) {
+    assert.ok(SCRIPT.includes(`'${label}'`), `結果に ${label} が無い`);
+  }
+  assert.match(SCRIPT, /summarizeSendResult\(/, '結果の要約を単一源で作っていない');
+});
+
+test('guard(ui): 部分失敗を成功と読ませず、再送ボタンを自動表示しない', () => {
+  assert.match(SCRIPT, /res\.outcome\.key === 'PARTIAL' \|\| res\.outcome\.key === 'FAILED'/, '部分失敗を区別していない');
+  assert.equal(/再送する|自動再送/.test(SCRIPT), false, '再送ボタンを自動で出している');
+});
+
+// ── 一覧のコンパクト化とページング（2026-08-02）─────────────────
+test('guard(ui): 42 名でもページングで短く出す（25 / 50 / 100）', () => {
+  assert.match(PAGE, /id="mkPageSize"/, '表示件数の切替が無い');
+  for (const n of [25, 50, 100]) assert.ok(PAGE.includes(`value="${n}"`), `${n} 件が選べない`);
+  assert.match(PAGE, /id="mkPrevPage"|id="mkNextPage"/, 'ページ送りが無い');
+  assert.match(SCRIPT, /件中 .* 件|' 件中 '/, '「42 件中 1〜25 件」を出していない');
+  assert.match(SCRIPT, /function mkPageInfo\(/, 'ページ範囲の計算が無い');
+});
+
+test('guard(ui): 一覧は絞り込み → 検索 → 現在ページの順で切り出す（再帰しない）', () => {
+  assert.match(SCRIPT, /function mkScopedRows\(/, '絞り込みの母集合が無い');
+  assert.match(SCRIPT, /function mkSearchedRows\(/, '検索適用が無い');
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkVisibleRows('), SCRIPT.indexOf('function mkVisibleRows(') + 400);
+  assert.equal(/mkVisibleRows\(\)/.test(block.replace('function mkVisibleRows(', '')), false,
+    'mkVisibleRows が自分自身を呼んでいる（無限再帰）');
+});
+
+test('guard(ui): 選択者のみ / 送信可能のみで絞り込める', () => {
+  assert.match(PAGE, /id="mkViewMode"/, '絞り込み切替が無い');
+  for (const v of ['sendable', 'selected']) assert.ok(PAGE.includes(`value="${v}"`), `${v} が無い`);
+  assert.match(SCRIPT, /mkList\.view === 'selected'/, '選択者のみを実装していない');
+});
+
+test('guard(ui): 一覧の表示が変わったら dry-run を失効させる', () => {
+  assert.match(SCRIPT, /function mkChangeList\(/, '表示変更の入口が無い');
+  assert.match(SCRIPT, /mkInvalidateDryRun\('一覧の表示が変わりました。'\)/, 'ページ変更で失効させていない');
+});
+
+test('guard(ui): 一覧は行を詰めて表示し、選択列と顧客列を固定する', () => {
+  assert.match(PAGE, /\.ppe \.tbl\.is-compact td/, 'コンパクト表示の指定が無い');
+  assert.match(PAGE, /\.ppe \.tbl\.is-compact thead th\.c-chk[\s\S]{0,140}position: sticky/, '選択列が固定されていない');
+  assert.match(SCRIPT, /classList\.add\('is-compact'\)/, 'コンパクト表示を適用していない');
+});
+
+test('guard(ui): 取得結果の要約（該当 / 送信可能 / 送信不可 / 選択）を出す', () => {
+  assert.match(PAGE, /id="mkListSummary"/, '要約表示が無い');
+  assert.match(SCRIPT, /該当 ' \+ rows\.length \+ ' 名（送信可能/, '要約の内訳が無い');
+});
+
+// ── カムバックの対象区分（2026-08-02）───────────────────────────
+test('guard(ui): 「現有効会員を含める」は既定 OFF で警告つき', () => {
+  assert.match(PAGE, /id="cbIncludeActive"/, '危険操作のトグルが無い');
+  assert.equal(/id="cbIncludeActive"[^>]*checked/.test(PAGE), false, '既定で ON になっている');
+  assert.match(PAGE, /通常のカムバック施策では使用しません/, '警告文が無い');
+  assert.match(PAGE, /chk-danger/, '危険操作として見せていない');
+});
+
+test('guard(ui): カムバックの対象区分を表示する場所がある', () => {
+  assert.match(PAGE, /id="cbAudience"/, '対象区分の表示領域が無い');
 });

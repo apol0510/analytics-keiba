@@ -235,6 +235,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <p class="msg" id="mkMessage"></p>
       <p class="count" id="mkCount"></p>
 
+      <div class="listbar">
+        <span class="list-sum" id="mkListSummary">未取得</span>
+        <span class="spacer"></span>
+        <label class="lb">表示
+          <select id="mkPageSize" aria-label="表示件数">
+            <option value="25">25 件</option>
+            <option value="50">50 件</option>
+            <option value="100">100 件</option>
+          </select>
+        </label>
+        <label class="lb">絞り込み
+          <select id="mkViewMode" aria-label="一覧の絞り込み">
+            <option value="all">すべて</option>
+            <option value="sendable">送信可能のみ</option>
+            <option value="selected">選択者のみ</option>
+          </select>
+        </label>
+        <button type="button" id="mkPrevPage" class="btn-ghost btn-sm">前へ</button>
+        <span class="list-range" id="mkPageLabel">—</span>
+        <button type="button" id="mkNextPage" class="btn-ghost btn-sm">次へ</button>
+      </div>
+
       <div class="tablewrap">
         <table class="tbl">
           <thead>
@@ -257,6 +279,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <tbody id="mkRows"></tbody>
         </table>
         <p class="empty" id="mkEmpty" hidden></p>
+      </div>
+      <div class="listbar listbar-bottom">
+        <button type="button" id="mkSelAllBottom" class="btn-primary btn-sm">表示中を全選択</button>
+        <button type="button" id="mkSelNoneBottom" class="btn-ghost btn-sm">選択解除</button>
+        <span class="list-range" id="mkPageLabelBottom">—</span>
       </div>
       </section>
 
@@ -310,7 +337,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           </select>
           <button type="button" id="mkActionDry" class="btn-primary">内容を確認（dry-run）</button>
         </div>
+        <details class="filter-more">
+          <summary>詳細設定（危険操作）</summary>
+          <label class="chk chk-danger">
+            <input type="checkbox" id="cbIncludeActive" />
+            現有効会員を含める
+          </label>
+          <p class="blocker" id="cbIncludeActiveWarn" hidden>
+            ⚠️ 現在有効な会員も対象になります。通常のカムバック施策では使用しません。
+          </p>
+        </details>
         <p class="note" id="mkActionState"></p>
+        <div id="cbAudience" class="dry-panel" hidden></div>
         <div id="mkActionResult"></div>
       </div>
 
@@ -326,7 +364,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </p>
         <div class="toolbar">
           <button type="button" id="mkDispatchCheck" class="btn-ghost">配信内容を確認（送信しない）</button>
-          <button type="button" id="mkDispatchRun" class="btn-danger" disabled>実際に配信する</button>
+          <button type="button" id="mkDispatchRun" class="btn-danger" disabled>今すぐ送信</button>
         </div>
         <p class="note" id="mkDispatchState"></p>
         <div id="mkDispatchResult"></div>
@@ -977,6 +1015,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .notice-ok { border-color: rgba(52,211,153,.4); color: var(--green); }
   .ppe .notice-warn { border-color: rgba(245,196,81,.4); color: var(--gold); }
   .ppe .notice-err { border-color: rgba(248,113,113,.45); color: var(--red); }
+  .ppe .notice-info { border-color: rgba(148,163,184,.35); color: var(--ink); }
   .ppe .notice-d { font-weight: 400; color: var(--muted); }
   .ppe .notice-x { margin-left: auto; background: none; border: 0; cursor: pointer; font-size: 1rem;
     line-height: 1; color: var(--muted); }
@@ -1035,6 +1074,40 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     .ppe .stickybar #sbNext { margin-left: 0; width: 100%; }
     .ppe .tablewrap { max-height: none; }
   }
+
+  /* ═══ 一覧のコンパクト化（42 名を少ないスクロールで / 2026-08-02）═══ */
+  .ppe .listbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .4rem 0; font-size: .74rem; color: var(--muted); }
+  .ppe .listbar .spacer { flex: 1 1 auto; }
+  .ppe .listbar .lb { display: inline-flex; align-items: center; gap: .25rem; }
+  .ppe .listbar select { padding: .15rem .4rem; font-size: .74rem; }
+  .ppe .list-sum { color: var(--ink); font-weight: 700; }
+  .ppe .list-range { min-width: 9rem; text-align: center; }
+  .ppe .listbar-bottom { justify-content: flex-start; border-top: 1px solid var(--line); padding-top: .4rem; }
+
+  /* 行を詰めて 1 画面に多く出す */
+  .ppe .tbl.is-compact td, .ppe .tbl.is-compact th { padding: .28rem .4rem; font-size: .76rem; line-height: 1.25; }
+  .ppe .tbl.is-compact td.c-chk { width: 1.9rem; }
+  .ppe .tbl.is-compact .c-cust { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 左端の選択列と顧客列は固定して横スクロールでも見失わない */
+  .ppe .tbl.is-compact thead th.c-chk, .ppe .tbl.is-compact tbody td.c-chk { position: sticky; left: 0; z-index: 3; background: #111c33; }
+  .ppe .tbl.is-compact thead th.c-cust, .ppe .tbl.is-compact tbody td.c-cust { position: sticky; left: 1.9rem; z-index: 3; background: #111c33; }
+  .ppe .chk-danger { color: var(--red); font-weight: 700; }
+
+  /* カムバックの対象区分 */
+  .ppe .seg-row { display: flex; gap: .5rem; flex-wrap: wrap; margin: .3rem 0; }
+  .ppe .seg { font-size: .72rem; padding: .1rem .45rem; border-radius: 999px; background: rgba(148,163,184,.14); color: var(--muted); }
+  .ppe .seg.is-active-member { background: rgba(248,113,113,.18); color: var(--red); font-weight: 700; }
+
+  @media (max-width: 900px) {
+    /* 小画面は表をやめてコンパクトカードにする（主要 5 項目のみ） */
+    .ppe .tbl.is-compact thead { display: none; }
+    .ppe .tbl.is-compact tbody tr { display: grid; grid-template-columns: 1.6rem 1fr; gap: .1rem .4rem;
+      border: 1px solid var(--line); border-radius: .4rem; padding: .35rem .5rem; margin-bottom: .35rem; }
+    .ppe .tbl.is-compact tbody td { border: 0; padding: .1rem 0; }
+    .ppe .tbl.is-compact tbody td.col-detail { display: none; }
+    .ppe .tbl.is-compact thead th.c-chk, .ppe .tbl.is-compact tbody td.c-chk,
+    .ppe .tbl.is-compact thead th.c-cust, .ppe .tbl.is-compact tbody td.c-cust { position: static; }
+  }
 </style>
 
 <script>
@@ -1049,6 +1122,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     canDryRun, canEnqueue, canDispatchCheck, canDispatchSend,
     groupCampaigns, buildSendConfirmation, resolveJobBadge, summarizeFilters, summarizeExclusions,
   } from '../../lib/marketing/marketingConsoleFlow.js';
+  import {
+    SEND_BLOCK, SEND_BLOCK_LABEL, buildDispatchPreflight, canSendNow, verifySendPrecondition,
+    buildSendNowConfirmation, classifySendOutcome, summarizeSendResult,
+  } from '../../lib/marketing/marketingSendNow.js';
+  import {
+    DRY_STATE, applyCampaigns as stApplyCampaigns, dryRunFailed as stDryRunFailed,
+    maskEmail as stMaskEmail,
+  } from '../../lib/marketing/marketingConsoleState.js';
+  window.__mkState = { DRY_STATE, stApplyCampaigns, stDryRunFailed, stMaskEmail };
+  window.__mkSend = {
+    SEND_BLOCK, SEND_BLOCK_LABEL, buildDispatchPreflight, canSendNow, verifySendPrecondition,
+    buildSendNowConfirmation, classifySendOutcome, summarizeSendResult,
+  };
   window.__mkFlow = {
     STEP, BLOCK, BLOCK_LABEL, computeSelectionFingerprint, isDryRunStale, resolveStep,
     canDryRun, canEnqueue, canDispatchCheck, canDispatchSend,
@@ -1733,9 +1819,6 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkSendEnabled = !!data.sendEnabled;
       mkState.sendEnabled = !!data.sendEnabled;
       mkState.dispatchEnabled = !!data.dispatchEnabled;
-      mkState.loadedCount = (data.rows || []).length;
-      mkState.filters = mkCurrentFilters();
-      mkInvalidateDryRun('絞り込み条件が変わりました。');
       mkSyncFlow();
       const sel = $('mkCampaign');
       sel.innerHTML = '';
@@ -1753,6 +1836,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       // 既定選択は使用可能なものにする（停止中が先頭でも選ばれないように）
       const firstUsable = mkCampaigns.find((c) => c.usable);
       if (firstUsable) sel.value = firstUsable.campaignId;
+      // ⚠️ change イベントはプログラム選択では発火しない。
+      //    ここで状態へ入れないと「キャンペーン未選択」と判定され、
+      //    dry-run ボタンが永久に押せなくなる（2026-08-02 の不具合）。
+      mkApplyCampaignSelection();
       renderCampDesc();
       $('mkSendState').textContent = data.sendEnabled
         ? (data.dispatchEnabled
@@ -1816,6 +1903,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       $(id)?.addEventListener('input', mkRenderFilterCount);
     }
 
+    /** 選択欄の値を状態へ反映する（change でもプログラム選択でも必ずここを通す） */
+    function mkApplyCampaignSelection() {
+      const c = currentCampaign();
+      mkState.campaignId = c ? c.campaignId : '';
+      mkState.campaignVersion = c ? String(c.version) : '';
+      mkState.campaign = c || null;
+      mkRenderCampCard(c);
+      mkSyncFlow();
+    }
+
     $('mkCampaign').addEventListener('change', () => {
       renderCampDesc();
       const c = currentCampaign();
@@ -1871,10 +1968,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       });
       if (!data) return;
       mkData = data;
+      // 取得結果を状態へ反映（件数・条件・確認結果の失効）
+      mkApplyCustomersLoaded(data.rows || []);
       mkSendEnabled = !!data.sendEnabled;
       mkMsg('');
       mkRender();
       renderApplied(data);
+      mkRenderListSummary();
     }
 
     // 適用中の条件と件数を画面に出す（何で絞ったのか分からない状態を作らない）
@@ -1905,13 +2005,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       premium_sanrenpuku: '三連複', premium: 'Premium', light: 'Light', free: 'Free',
     };
 
+    /**
+     * 画面に**いま出ている行**（絞り込み → 検索 → 現在ページ）。
+     * 「表示中を全選択」もこの範囲だけを対象にする。
+     */
     function mkVisibleRows() {
-      const q = $('mkQ').value.trim().toLowerCase();
-      return (mkData?.rows || []).filter((r) => !q || String(r.email || '').toLowerCase().includes(q));
+      const info = mkPageInfo();
+      return mkSearchedRows().slice((info.page - 1) * mkList.pageSize, info.page * mkList.pageSize);
     }
 
     function mkRender() {
       if (!mkData) return;
+      document.querySelector('#paneMkt .tbl')?.classList.add('is-compact');
       const seg = mkData.segments || {};
       const bar = $('mkSummary');
       bar.innerHTML = '';
@@ -2059,7 +2164,72 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkRenderSelCount();
     }
 
+    /** 顧客一覧を取得したときの状態更新（件数・条件・確認結果の失効） */
+    function mkApplyCustomersLoaded(rows) {
+      mkState.loadedCount = Array.isArray(rows) ? rows.length : 0;
+      mkState.filters = mkCurrentFilters();
+      mkInvalidateDryRun('顧客一覧を取得し直しました。');
+      mkRenderFilterCount();
+      mkSyncFlow();
+    }
+
+    /** 一覧の表示状態（ページ・件数・絞り込み）。変わったら dry-run を失効させる */
+    const mkList = { page: 1, pageSize: 25, view: 'all' };
+
+    /** 絞り込み（すべて / 送信可能のみ / 選択者のみ）を適用した母集合 */
+    function mkScopedRows() {
+      const rows = (mkData?.rows || []);
+      if (mkList.view === 'selected') return rows.filter((r) => mkSelected.has(r.recordId));
+      if (mkList.view === 'sendable') return rows.filter((r) => r.sendable === true);
+      return rows;
+    }
+
+    /** 母集合に検索語を適用した行（ページ分割の前段） */
+    function mkSearchedRows() {
+      const q = $('mkQ').value.trim().toLowerCase();
+      return mkScopedRows().filter((r) => !q || String(r.email || '').toLowerCase().includes(q));
+    }
+
+    /** ページ範囲（「42 件中 1〜25 件」） */
+    function mkPageInfo() {
+      const total = mkSearchedRows().length;
+      const pages = Math.max(1, Math.ceil(total / mkList.pageSize));
+      const page = Math.min(Math.max(1, mkList.page), pages);
+      const from = total === 0 ? 0 : (page - 1) * mkList.pageSize + 1;
+      const to = Math.min(page * mkList.pageSize, total);
+      return { total, pages, page, from, to, label: total === 0 ? '0 件' : total + ' 件中 ' + from + '〜' + to + ' 件' };
+    }
+
+    /** 一覧の要約（該当 / 送信可能 / 送信不可 / 選択） */
+    function mkRenderListSummary() {
+      const rows = (mkData?.rows || []);   // 該当件数は取得した全件で数える
+      const sendable = rows.filter((r) => r.sendable === true).length;
+      const el = $('mkListSummary');
+      if (el) {
+        el.textContent = rows.length === 0 ? '未取得'
+          : '該当 ' + rows.length + ' 名（送信可能 ' + sendable + ' / 送信不可 ' + (rows.length - sendable) + '）　選択 ' + mkSelected.size + ' 名';
+      }
+      const info = mkPageInfo();
+      for (const id of ['mkPageLabel', 'mkPageLabelBottom']) { const x = $(id); if (x) x.textContent = info.label; }
+      const prev = $('mkPrevPage'); if (prev) prev.disabled = info.page <= 1;
+      const next = $('mkNextPage'); if (next) next.disabled = info.page >= info.pages;
+    }
+
+    /** 表示条件が変わったら確認結果を失効させて描画し直す */
+    function mkChangeList(patch) {
+      Object.assign(mkList, patch);
+      mkInvalidateDryRun('一覧の表示が変わりました。');
+      mkRender();
+    }
+    $('mkPageSize')?.addEventListener('change', () => mkChangeList({ pageSize: Number($('mkPageSize').value) || 25, page: 1 }));
+    $('mkViewMode')?.addEventListener('change', () => mkChangeList({ view: $('mkViewMode').value, page: 1 }));
+    $('mkPrevPage')?.addEventListener('click', () => mkChangeList({ page: Math.max(1, mkList.page - 1) }));
+    $('mkNextPage')?.addEventListener('click', () => mkChangeList({ page: mkList.page + 1 }));
+    $('mkSelAllBottom')?.addEventListener('click', () => $('mkSelAll').click());
+    $('mkSelNoneBottom')?.addEventListener('click', () => $('mkSelNone').click());
+
     function mkRenderSelCount() {
+      mkRenderListSummary();
       // 選択が変われば「確認した母集団」とズレる → dry-run を失効させる
       if (mkState.dryRun && flowApi().isDryRunStale({ dryRun: mkState.dryRun, current: { ...mkState, selectedIds: [...mkSelected] } })) {
         mkInvalidateDryRun('選択した顧客が変わりました。');
@@ -2519,13 +2689,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
-    async function mkDispatchCall(dryRun) {
+    async function mkDispatchCall(dryRun, jobId) {
       const secret = secretEl.value.trim();
       if (!secret) { $('connBody').hidden = false; throw new Error('管理シークレットを入力してください'); }
       const res = await fetch(DISPATCH_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-        body: JSON.stringify({ dryRun }),
+        // jobId を渡すと、そのジョブだけが対象になる（他のキューを巻き込まない）
+        body: JSON.stringify(jobId ? { dryRun, jobId } : { dryRun }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
@@ -2565,7 +2736,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           ? '確認しました。この内容で配信できます。'
           : '送信待ちのキューはありません。';
         // 送る相手が 1 人もいないなら実行ボタンは開けない
-        mkState.dispatch = { ...mkState.dispatch, check: { willSend, jobs: data.jobs } };
+        // 「これから送る 1 件」を確定させる。1 件に特定できなければ送らせない
+        const preflight = sendApi().buildDispatchPreflight(data);
+        mkState.dispatch = { ...mkState.dispatch, check: { willSend, jobs: data.jobs }, preflight, raw: data };
+        if (!preflight.ok) {
+          mkNotify('warn', '送信できません', sendApi().SEND_BLOCK_LABEL[preflight.reason] || '');
+        }
         mkSyncFlow();
         if (!(data.jobs && willSend > 0)) {
           mkNotify('warn', '送信対象がありません', '送信待ちのジョブが無いか、再検証で全員除外されました。');
@@ -2578,60 +2754,123 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
     });
 
+    /** 送信系の判定の単一源（marketingSendNow.js） */
+    const sendApi = () => window.__mkSend;
+
     $('mkDispatchRun').addEventListener('click', async () => {
-      const verdict = flowApi().canDispatchSend({ ...mkState, selectedIds: [...mkSelected] });
-      if (!verdict.allowed) { mkNotify('warn', '送信できません', flowApi().BLOCK_LABEL[verdict.reason]); return; }
+      const btn = $('mkDispatchRun');
+      if (btn.dataset.busy === '1') return;                  // 二重クリックで 2 回走らせない
       const c = mkState.campaign || currentCampaign();
-      const operationId = 'send-' + Date.now().toString(36);
-      const conf = flowApi().buildSendConfirmation({
-        campaign: c, dryRun: mkState.dryRun, dispatchCheck: mkState.dispatch.check,
-        sendEnabled: mkState.sendEnabled, dispatchEnabled: mkState.dispatchEnabled, operationId,
+      const sendState = {
+        busy: mkState.busy, dispatchEnabled: mkState.dispatchEnabled,
+        dryRun: mkState.dryRun,
+        dryRunStale: mkState.dryRun ? flowApi().isDryRunStale({ dryRun: mkState.dryRun, current: { ...mkState, selectedIds: [...mkSelected] } }) : true,
+        enqueued: mkState.enqueued, preflight: mkState.dispatch.preflight,
+        sent: !!mkState.dispatch.sent, campaign: c,
+      };
+      const verdict = sendApi().canSendNow(sendState);
+      if (!verdict.allowed) { mkNotify('warn', '送信できません', sendApi().SEND_BLOCK_LABEL[verdict.reason] || ''); return; }
+
+      const operationId = 'send-' + (mkState.dispatch.preflight.jobId || 'job') + '-' + Date.now().toString(36);
+      const conf = sendApi().buildSendNowConfirmation({
+        campaign: c, dryRun: mkState.dryRun, preflight: mkState.dispatch.preflight,
+        dispatchEnabled: mkState.dispatchEnabled, sendEnabled: mkState.sendEnabled, operationId,
       });
-      // ① 内容を読ませる確認
+
+      // ① 内容を読ませる（何が起きるかを全部出す）
       const ok1 = window.confirm(
-        '【最終確認】実際にメールが届きます\n\n'
-        + 'キャンペーン: ' + conf.campaignName + ' v' + conf.version + '\n'
-        + '対象: ' + conf.audience + '\n'
-        + '選択 ' + conf.selected + ' 名 / 除外 ' + conf.excluded + ' 名 / 送信予定 ' + conf.willSend + ' 名\n'
+        '【今すぐ送信】' + conf.effect + '\n\n'
+        + 'キャンペーン: ' + conf.campaignName + ' v' + conf.version + '（' + conf.kind + '）\n'
+        + '宛先: ' + conf.audience + '\n'
+        + '選択 ' + conf.selected + ' 名 / 対象 ' + conf.targeted + ' 名 / 除外 ' + conf.excluded + ' 名\n'
+        + '実送信予定: ' + conf.willSend + ' 通\n'
+        + 'jobId: ' + conf.jobId + '\n'
+        + 'operationId: ' + conf.operationId + '\n'
         + 'gate: 登録' + (conf.gate.enqueue ? '可' : '不可') + ' / 配信' + (conf.gate.dispatch ? '可' : '不可') + '\n'
-        + '取消できる段階: ' + conf.cancelable + '\n'
-        + conf.afterSend + '\n'
-        + conf.duplicateGuard + '\n\n'
-        + conf.effect + '\n\n続けますか？'
+        + '二重送信防止: ' + conf.duplicateGuard + '\n'
+        + conf.afterSend + '\n\n続けますか？'
       );
       if (!ok1) return;
-      // ② 誤操作防止（人数を入力させる）
-      const typed = window.prompt('確認のため、送信予定人数「' + conf.willSend + '」を入力してください');
-      if (String(typed || '').trim() !== String(conf.willSend)) { mkNotify('warn', '送信を中止しました', '入力が一致しませんでした。'); return; }
 
-      const btn = $('mkDispatchRun');
-      if (btn.dataset.busy === '1') return;          // 二重クリックで二重送信しない
+      // ② 通常配信は送信予定人数の入力一致を必須にする
+      let typed = '';
+      if (conf.requiresTypedCount) {
+        typed = window.prompt('確認のため、実送信予定人数「' + conf.willSend + '」を入力してください') || '';
+      }
+
       btn.dataset.busy = '1';
       mkState.busy = true; mkSyncFlow();
-      $('mkDispatchState').textContent = conf.willSend + ' 通を送信中…';
+      $('mkDispatchState').textContent = '送信直前の再確認中…';
       try {
-        const data = await mkDispatchCall(false);
-        mkState.busy = false;
-        btn.dataset.busy = '';
-        // 送信後は直前確認を無効化する。もう一度確認しない限り実配信ボタンは開かない
-        mkState.dispatch = { sent: true, result: data, check: null };
-        const failed = Number(data.failed) || 0;
-        if (failed > 0) {
-          mkNotify('warn', '一部が失敗しました（成功分は取り消しません）',
-            '送信 ' + data.sent + ' 通 / 失敗 ' + failed + ' 通。Step 6 の送信状況で理由を確認してください。');
-        } else {
-          mkNotify('ok', '送信しました', '送信 ' + data.sent + ' 通 / スキップ ' + (data.skipped || 0) + ' 通。実配信（delivered）は台帳で確認します。');
+        // ③ 直前にもう一度 dryRun:true を取り、**同じ jobId・同じ内容**であることを確かめる
+        const latest = await mkDispatchCall(true, mkState.dispatch.preflight.jobId);
+        const pre = sendApi().verifySendPrecondition({
+          preflight: mkState.dispatch.preflight, latest,
+          confirmedCount: conf.willSend, typedCount: typed, campaign: c,
+        });
+        if (!pre.ok) {
+          mkState.busy = false; btn.dataset.busy = ''; mkSyncFlow();
+          mkNotify('warn', '送信を中止しました', sendApi().SEND_BLOCK_LABEL[pre.reason] || '');
+          $('mkDispatchState').textContent = '';
+          return;
         }
-        $('mkDispatchState').textContent = '送信 ' + data.sent + ' / スキップ ' + (data.skipped || 0) + ' / 失敗 ' + failed;
+
+        // ④ 実送信（既存 dispatcher のみ。対象は確認したジョブ 1 件に限定する）
+        $('mkDispatchState').textContent = conf.willSend + ' 通を送信中…';
+        const data = await mkDispatchCall(false, pre.jobId);
+        const res = sendApi().summarizeSendResult(data, { completedAt: new Date().toISOString() });
+        mkState.busy = false; btn.dataset.busy = '';
+        // 送信後は直前確認を破棄する（同じ画面から二度押せない）
+        mkState.dispatch = { sent: true, result: data, summary: res, check: null, preflight: null };
+        mkRenderSendResult(conf, res);
         mkSyncFlow();
+        if (res.outcome.key === 'PARTIAL' || res.outcome.key === 'FAILED') {
+          mkNotify('warn', res.outcome.label + 'で終了しました', res.partialNote || '失敗理由を確認してください。再送は自動では行いません。');
+        } else {
+          mkNotify('ok', '送信しました', res.sent + ' 通を配信基盤が受理しました。' + res.deliveredNote);
+        }
       } catch (e) {
-        mkState.busy = false;
-        btn.dataset.busy = '';
-        mkSyncFlow();
-        mkNotify('err', '送信に失敗しました', '配信基盤へ到達できませんでした。Step 6 の送信状況で実際に送られたかを必ず確認してください。');
+        mkState.busy = false; btn.dataset.busy = ''; mkSyncFlow();
+        mkNotify('err', '送信に失敗しました',
+          '配信基盤へ到達できませんでした。Step 6 の送信状況で、実際に送られたかを必ず確認してください（再送は自動では行いません）。');
         $('mkDispatchState').textContent = '';
       }
     });
+
+    /** 送信結果を画面内に出す（取消不可・部分成功・受理と配信の別を明示） */
+    function mkRenderSendResult(conf, res) {
+      const box = $('mkDispatchResult');
+      if (!box) return;
+      box.innerHTML = '';
+      const head = document.createElement('div');
+      const badge = document.createElement('span');
+      badge.className = 'badge b-' + res.outcome.tone;
+      badge.textContent = res.outcome.label;
+      head.appendChild(badge);
+      const t = document.createElement('b');
+      t.textContent = ' ' + conf.campaignName + ' v' + conf.version + '（' + conf.kind + '）';
+      head.appendChild(t);
+      box.appendChild(head);
+
+      const row = (k, v) => {
+        const d = document.createElement('div'); d.className = 'dp-row';
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      row('送信（provider 受理）', res.sent + ' 通');
+      row('スキップ', res.skipped + ' 通');
+      row('失敗', res.failed + ' 通');
+      row('ジョブ', conf.jobId + '（' + res.outcome.label + '）');
+      row('完了時刻', res.completedAt ? fmtDate(res.completedAt) : '—');
+      row('取消', res.cancelNote);
+      if (res.skippedReasons.length) {
+        row('除外理由', res.skippedReasons.map((x) => (window.__planView?.labelFor?.(x.reason) || x.reason) + ' ' + x.count + ' 件').join(' / '));
+      }
+      if (res.partialNote) row('部分成功の扱い', res.partialNote);
+      const note = document.createElement('p'); note.className = 'note'; note.textContent = res.deliveredNote;
+      box.appendChild(note);
+    }
 
     $('mkLoad').addEventListener('click', mkLoad);
     $('mkQ').addEventListener('input', mkRender);
@@ -2734,14 +2973,38 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const verdict = flowApi().canDryRun({ ...mkState, selectedIds: [...mkSelected] });
       if (!verdict.allowed) { mkNotify('warn', '実行できません', flowApi().BLOCK_LABEL[verdict.reason]); return; }
       if (!c.usable) { mkNotify('err', '使用停止中のキャンペーンです', c.disabledReason || ''); return; }
+      // 押した瞬間に必ず表示を変える（無反応を作らない）
       mkState.busy = true; mkSyncFlow();
+      $('mkDryState').textContent = '確認中…';
+      $('mkDryState').className = 'dry-state';
       mkMsg('対象を確認中…');
-      const plan = await mkCall({
-        action: 'dryRun', campaignId: c.campaignId, recordIds: [...mkSelected],
-      });
+      mkNotify('info', '送信対象を確認しています…', '選択 ' + mkSelected.size + ' 名 / ' + (c.name || ''));
+      let plan = null;
+      try {
+        plan = await mkCall({
+          action: 'dryRun', campaignId: c.campaignId, recordIds: [...mkSelected],
+        });
+      } catch (e) {
+        plan = null;
+      }
       mkState.busy = false;
-      if (!plan) { mkSyncFlow(); return; }
+      if (!plan) {
+        // API 失敗でも必ず理由と次の操作を出す
+        $('mkDryState').textContent = '確認に失敗しました';
+        $('mkDryState').className = 'dry-state is-stale';
+        mkNotify('err', '送信対象を確認できませんでした',
+          '管理シークレット・ネットワーク・選択内容を確認して、もう一度お試しください。');
+        mkMsg('');
+        mkSyncFlow();
+        return;
+      }
       mkMsg('');
+      if ((Number(plan.willSend) || 0) === 0) {
+        mkNotify('warn', '対象者がいません',
+          '選択 ' + plan.selected + ' 名すべてが除外されました（除外 ' + plan.excluded + ' 名）。除外理由を確認してください。');
+      } else {
+        mkNotify('ok', '確認しました', '対象 ' + plan.willSend + ' 名 / 除外 ' + plan.excluded + ' 名');
+      }
       // この結果が「どの母集団に対する確認か」を指紋で固定する
       mkState.dryRun = {
         fingerprint: mkFingerprint(),

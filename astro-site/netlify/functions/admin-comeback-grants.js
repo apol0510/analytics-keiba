@@ -41,6 +41,13 @@
  */
 
 import {
+  evaluateComebackTarget,
+  summarizeComebackAudience,
+  canApplyComebackGrant,
+  SEGMENT_LABEL,
+  EXCLUDE_LABEL,
+} from '../../src/lib/entitlements/comebackAudience.js';
+import {
   buildComebackPlan,
   buildRevokePlan,
   buildOfferRecordsForPlan,
@@ -518,6 +525,33 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return { recordId: id, fields: hit ? hit.fields : null };
   });
 
+  // ── カムバックの対象区分（現有効会員は既定で対象外）────────────────
+  // 「戻ってきてほしい人」への施策なので、いま払って使っている会員には配らない。
+  // 明示許可 + 人数の入力一致があるときだけ通す（fail closed）。
+  const includeActiveMembers = req.includeActiveMembers === true;
+  const audience = selected.map((c) => evaluateComebackTarget({
+    fields: c.fields, nowMs: now, includeActiveMembers,
+  }));
+  const audienceSummary = summarizeComebackAudience(audience);
+  const verdict = canApplyComebackGrant({
+    summary: audienceSummary,
+    includeActiveMembers,
+    typedActiveCount: req.confirmedActiveCount,
+  });
+  if (live && !verdict.allowed) {
+    return json(409, {
+      error: verdict.reason === 'active_member'
+        ? '現在有効な会員が対象に含まれています。カムバック特典は既定で配れません。'
+        : verdict.reason === 'active_count_mismatch'
+          ? '現有効会員の人数確認が一致しません。'
+          : '対象者がいません。',
+      reason: verdict.reason,
+      audience: audienceSummary,
+      sideEffects: 'none',
+      hint: '通常は現有効会員を外してください。どうしても含める場合は「現有効会員を含める」を ON にし、人数を入力してください。',
+    });
+  }
+
   const plan = buildComebackPlan({
     grantOffers: sel.grantOffers,
     purchaseOffer: sel.purchaseOffer,
@@ -529,6 +563,16 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     source: req.source,
   });
   if (!plan.ok) return json(400, { error: `実行計画を作成できません: ${plan.error}` });
+
+  // 画面に出す対象区分（人数のみ。アドレスは含めない）
+  const audienceView = {
+    ...audienceSummary,
+    includeActiveMembers,
+    segmentLabels: SEGMENT_LABEL,
+    reasonLabels: EXCLUDE_LABEL,
+    blocked: !verdict.allowed,
+    blockedReason: verdict.reason,
+  };
 
   const summary = {
     selection: describeSelection(sel),
@@ -573,6 +617,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return json(200, {
       mode: 'dry-run',
       sideEffects: 'none',
+      // 対象区分（現有効会員の混入・除外理由）。人数だけでアドレスは含めない
+      audience: audienceView,
       ...summary,
       preview: plan.targets.slice(0, 50).map((t) => ({
         recordId: t.recordId,
