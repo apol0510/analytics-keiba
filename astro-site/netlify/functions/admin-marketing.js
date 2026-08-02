@@ -84,6 +84,7 @@ import {
 import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
+import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import {
   buildCustomerDossier,
   summarizeMagicLinkLogins,
@@ -99,6 +100,8 @@ const AUTH_TOKENS_TABLE = 'AuthTokens';
 /** AK 自身のキャンペーン配信台帳。KMA の *_MarketingAutomation は使わない。 */
 const DELIVERIES_TABLE = 'CampaignDeliveries';
 const SCHEDULED_TABLE = 'ScheduledEmails';
+/** 恒久台帳。テーブル名は受信側 `emailEventLedger.js` が単一源 */
+const EMAIL_EVENTS_TABLE = EMAIL_EVENTS_TABLE_NAME;
 /** 一覧で返す最大件数（PII をむやみに大量送出しない） */
 const MAX_ROWS = 400;
 const MAX_PAGES = 40;
@@ -433,6 +436,28 @@ function marketingColumns({ c, offersByCustomer, now }) {
 }
 
 /**
+ * 恒久台帳 `EmailEvents` から**この顧客に確定した行だけ**を read-only で引く。
+ *
+ * - `ResolutionStatus='resolved'` かつ `CustomerRecordId` 完全一致のみ。
+ *   `unresolved` / `conflict` は誰のものか確定していないので**顧客カルテに出さない**
+ * - 取得できなければ `available:false`（画面では「0 件」ではなく**「取得不能」**として扱う）
+ * - **1 バイトも書かない**（GET のみ）
+ */
+async function fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId }) {
+  const id = String(customerRecordId || '').trim();
+  // recordId 以外は formula へ入れない（injection 遮断）
+  if (!/^rec[A-Za-z0-9]{14}$/.test(id)) return { rows: [], available: false };
+  const formula = `AND({CustomerRecordId}='${id}', {ResolutionStatus}='resolved')`;
+  try {
+    const rows = await fetchAll({ KEY, BASE, table: EMAIL_EVENTS_TABLE, filterByFormula: formula });
+    return { rows, available: true };
+  } catch {
+    // テーブル未作成・権限不足・一時障害。**0 件と混同させない**
+    return { rows: [], available: false };
+  }
+}
+
+/**
  * 1 顧客のカルテ（read-only）。
  *
  * 「なぜこの人はログインできないのか / なぜ送信対象外なのか / 何を持っているのか」を
@@ -453,10 +478,13 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
   const blacklist = await loadBlacklistSets({ KEY, BASE });
 
-  const [offers, provider, activity] = await Promise.all([
+  const [offers, provider, activity, ledger] = await Promise.all([
     fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
     fetchDeliveryActivity({ email, apiKey: process.env.SENDGRID_API_KEY }),
+    // 恒久台帳（EmailEvents）。**read-only**・この顧客に確定した行だけを引く。
+    // 取得できなければ available:false（画面では「0 件」ではなく「取得不能」）。
+    fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId: recordId }),
   ]);
 
   const dossier = buildCustomerDossier({
@@ -472,6 +500,8 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
     softBounceEmails: blacklist.soft,
     providerSuppressed: provider && provider.ok ? provider.emails : null,
     history: hit.marketing.history,
+    ledgerRows: ledger.rows,
+    ledgerAvailable: ledger.available,
   });
 
   return json(200, {
@@ -485,6 +515,14 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
       //    別名を読むと **取得できているのに「取得できませんでした」と表示**され、
       //    「不明」と「反応なし」を区別するというこの機能の目的が壊れる。
       note: activity.note || '取得できませんでした（反応が無かったという意味ではありません）',
+    },
+    // 恒久台帳（EmailEvents）をどこまで引けたか。**「0 件」と「取得不能」を必ず区別させる**
+    ledgerSource: {
+      available: ledger.available,
+      rows: ledger.rows.length,
+      note: ledger.available
+        ? '恒久台帳（EmailEvents）から集計。台帳の運用開始前のメールは記録がありません'
+        : '恒久台帳を取得できませんでした（反応が無かったという意味ではありません）',
     },
     providerSuppression: describeProviderSuppression(provider),
     sendEnabled: isMarketingSendEnabled(process.env),

@@ -206,6 +206,21 @@ raw payload。施策判断に不要で、漏えい時の被害が大きい。
 - 台帳が無い期間は 0 ではなく `available:false`（**不明**）
 - **既存の `EmailEvents` 行は書き換えない。** 1c 以前のイベントは刻印が無いので `unresolved` のまま残る
 
+### admin 顧客カルテへの到達経路（read-only）
+
+`GET/POST /admin-marketing { action:customerDetail, recordId }` →
+`fetchCustomerLedgerEvents()` が `EmailEvents` を
+**`AND({CustomerRecordId}=rec…, {ResolutionStatus}=resolved)`** で引く（**GET のみ・write なし**）→
+`buildCustomerDossier({ ledgerRows, ledgerAvailable })` → `dossier.ledgerEngagement` →
+`/admin/premium-plus-eligibility` の顧客カルテ **⑥-2「メール反応（恒久台帳）」**。
+
+- 表示は 配信済み / 開封回数 / 初回・最終開封 / クリック回数 / 初回・最終クリック / クリック先分類 /
+  bounce・配信停止・迷惑報告
+- **⑥ の「直近ぶん」（provider API・保持 3 日）とは別セクション**。混同しないよう注記を出す
+- 取得できなければ **「取得不能（反応が無かったという意味ではありません）」**（0 件と書かない）
+- `unresolved` / `conflict` は**この顧客の反応として表示しない**。
+  この顧客だけを引く画面では未確定の件数は**未計測 (null)**（0 と断定しない）
+
 ## 4. 署名検証
 
 Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）。

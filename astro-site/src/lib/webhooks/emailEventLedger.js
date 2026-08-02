@@ -403,10 +403,12 @@ export function summarizeCustomerEvents({ ledgerRows = [], ledgerAvailable = fal
  *
  * @param {{ledgerRows: object[], customerRecordId: string, ledgerAvailable?: boolean}} input
  */
-export function summarizeCustomerEventsFromLedger({ ledgerRows = [], customerRecordId, ledgerAvailable = false } = {}) {
+export function summarizeCustomerEventsFromLedger({
+  ledgerRows = [], customerRecordId, ledgerAvailable = false, scoped = false,
+} = {}) {
   const target = str(customerRecordId);
   if (!ledgerAvailable || !target) {
-    return { ...summarizeCustomerEvents({ ledgerAvailable: false }), unattributed: 0, conflicts: 0 };
+    return { ...summarizeCustomerEvents({ ledgerAvailable: false }), unattributed: null, conflicts: null };
   }
   const rows = [];
   let unattributed = 0;
@@ -422,10 +424,14 @@ export function summarizeCustomerEventsFromLedger({ ledgerRows = [], customerRec
   }
   return {
     ...summarizeCustomerEvents({ ledgerRows: rows, ledgerAvailable: true }),
-    /** 誰のものか確定できていない行数（**この顧客の 0 件と混同しない**） */
-    unattributed,
-    /** 食い違いとして保存された行数 */
-    conflicts,
+    /**
+     * 誰のものか確定できていない行数（**この顧客の 0 件と混同しない**）。
+     * `scoped`（この顧客の resolved 行だけを取得した呼び出し）では **未計測 = null**。
+     * 0 と書くと「未確定の行は 1 件も無い」という別の意味になるため。
+     */
+    unattributed: scoped ? null : unattributed,
+    /** 食い違いとして保存された行数（`scoped` では未計測 = null）*/
+    conflicts: scoped ? null : conflicts,
   };
 }
 
