@@ -151,26 +151,29 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
 
 // ── 内容ハッシュ（version を上げずに本文を変える事故の検知）────────
 test('【version ロック】本文を変えたら version を上げる', () => {
-  // 本文・件名・CTA を変更するとこのハッシュが変わる。
-  // その場合は **version を上げてから** 下表を更新すること。
+  // 本文・件名・CTA・**見た目の固定値**・**シェルの版**のどれかを変えると
+  // このハッシュが変わる（＝届くメールが変わる）。
+  //
+  //   文面を変えた            → campaign の version を上げてから下表を更新
+  //   シェル（組み立て方）を変えた → MARKETING_EMAIL_SHELL_VERSION を上げて下表を更新
+  //     （全キャンペーンのハッシュが変わる。campaign の version は据え置きでよい。
+  //       DeliveryKey は campaignId × version × 受信者なので、再送は増えない）
   // version を据え置いたまま本文を変えると DeliveryKey が変わらず、
   // 既送信者へ修正版が二度と届かない。
   const LOCKED = {
-    'marketing-canary': { version: 2, hash: 'd7e12b0a9475db9c' },
-    'expired-comeback': { version: 2, hash: 'ff62a4c49e8c6a52' },
-    'premium-renewal': { version: 2, hash: '5359e6032c187938' },
-    'sanrenpuku-offer': { version: 2, hash: '25ea78c0b425714e' },
-    'premium-plus-offer': { version: 2, hash: '267556b6e0164a72' },
-    'dormant-reactivation': { version: 2, hash: '72d0595d176a4819' },
-    'general-announcement': { version: 1, hash: '41c37e1db8127b2f' },
+    'marketing-canary': { version: 2, hash: '162081596a79ea5a' },
+    'expired-comeback': { version: 2, hash: 'e6077db532e76564' },
+    'premium-renewal': { version: 2, hash: '1bfa299fb86a339c' },
+    'sanrenpuku-offer': { version: 2, hash: '59a115bc1933cb46' },
+    'premium-plus-offer': { version: 2, hash: '24d5b10d69335767' },
+    'dormant-reactivation': { version: 2, hash: '8bc34393b414464b' },
+    'general-announcement': { version: 1, hash: '7e6dc6ed7461489d' },
     // カムバック割引案内。本文は offer カタログから自動生成する（comebackEmailTemplate.js）。
     // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
-    // v1（下書き・grant 版 / 一度も送信していない）→ v2（割引 + 専用 URL）へ改版。
-    'comeback-offer': { version: 2, hash: '4c836f28efbdf1d7' },
-    // Light 30日無料を配り終えた人への案内。CTA は /dashboard/ 固定（本文に URL を書かない）。
+    'comeback-offer': { version: 2, hash: '86774177e753b2d4' },
     // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加。
     // 見た目が大きく変わるので version を上げ、DeliveryKey を v1 と分けた。
-    'comeback-light-30d-granted': { version: 2, hash: '0f0154a62a2d536b' },
+    'comeback-light-30d-granted': { version: 2, hash: '23e4b66cba221622' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];

@@ -476,15 +476,34 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
 - 管理画面の完成プレビューを **デスクトップ / モバイル幅 / テキスト版** の切替に。
   サンプル宛名とサンプル配信停止 URL で表示し、実顧客の情報は使わない
 
-**版管理の扱い**
+**版管理の扱い（2 軸）**
 
-`computeCampaignContentHash` に見た目の固定値を足したが、**設定されているキャンペーンだけ**
-種に加えるため、既存 8 本のハッシュは変わらない（内容を変えていないのにロックが落ちない）。
-シェル差し替えで全キャンペーンの見た目は変わるが、`comeback-light-30d-granted` 以外は
-文面が変わらないため version は据え置き（既に送った相手へ重複を出さないため）。
+届くメールは **campaign の version（文面）× シェルの版（組み立て方）** で決まる。
+当初シェルの版が hash に入っておらず、
+「dry-run で確認 → deploy でシェル変更 → 同じ hash のままキュー登録」で
+**確認したものと違うメールが積まれる**状態だったため、以下を入れた。
 
-**ルール（今後）**: 件名・本文・CTA・**見た目の固定値**のどれかを変えたら version を上げ、
-`campaignCatalog.test.mjs` の `LOCKED` を更新する。
+- `MARKETING_EMAIL_SHELL_VERSION`（現在 **1**）を `marketingEmailShell.js` に定義
+- `computeCampaignContentHash` の種に必ず含める（**全キャンペーンの hash が変わる**）
+- dry-run が `shellVersion` を返し、**送信時に一致を要求**（不一致は 409 / 未指定は 400）
+- 文面 hash も送信時は**必須**にした（従来は任意で、省けば検査を素通りできた）
+- ジョブの `Notes` に `shell:v<N>` を残し、**dispatcher が照合**。
+  版が違う / 印が無いジョブは **1 通も送らない**（`blocked: shell_version_mismatch`）。
+  送るには dry-run からやり直して積み直す
+
+DeliveryKey は `campaignId × version × 受信者`のままなので、
+**シェルの版を上げても既存キャンペーンが一斉再送可能になることはない**。
+
+**ルール（今後）**
+
+| 変えたもの | すること |
+|---|---|
+| 件名・本文・CTA・見た目の固定値 | campaign の `version` を上げ、`LOCKED` を更新 |
+| シェルのマークアップ・配色・差し替え印・text の組み立て | `MARKETING_EMAIL_SHELL_VERSION` を上げ、`LOCKED` と snapshot を更新。campaign の version は据え置きでよい |
+
+**`comeback-light-30d-granted` は v2 のままでよいか（再判定）**: **v2 のままでよい**。
+v2 はまだ 1 通も送っておらず（`CampaignDeliveries` に v2 の行が無い）、
+v3 へ上げても受け取る人にとっての違いは生まれない。シェルの版は別軸で管理する。
 
 **次の Phase: テンプレート展開**（すべて同じ文面へまとめない）
 

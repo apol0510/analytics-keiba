@@ -4564,6 +4564,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           subject: mkContent.confirmed ? mkContent.confirmed.subject : undefined,
           body: mkContent.confirmed ? mkContent.confirmed.body : undefined,
           contentHash: mkContent.confirmed ? mkContent.confirmed.contentHash : undefined,
+          // 確認したときの「組み立て方」の版。deploy でシェルが変わっていたら
+          // Function 側が 409 で止める（確認した内容と違うメールを送らない）
+          shellVersion: plan.shellVersion,
         });
         btn.dataset.busy = '';
         if (out) {

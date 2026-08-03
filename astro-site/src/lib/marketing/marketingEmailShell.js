@@ -27,6 +27,36 @@
  *    リンクは CTA ボタン 1 つに集約する。
  */
 
+/**
+ * ── シェルの版 ────────────────────────────────────────────────
+ * このファイルが出力する **HTML / text の構造そのもの**の版。
+ *
+ * campaign の `version` は「文面（件名・本文・特典・CTA）の版」で、
+ * こちらは「**組み立て方**の版」。両方が届くメールを決めるので、
+ * どちらか一方でも変われば受け取る人にとっては別物になる。
+ *
+ * ⚠️ **マークアップ・配色・差し替え印・text の組み立てを変えたら必ず上げること。**
+ *    上げないと、
+ *      - dry-run で確認した HTML と、deploy 後にキュー登録される HTML が食い違う
+ *      - `computeCampaignContentHash` が同じ値のまま、実際の中身だけ変わる
+ *    という「確認した内容と違うメールを送る」事故になる。
+ *
+ * 版を上げたときにすること:
+ *   1. `campaignCatalog.test.mjs` の LOCKED を更新（全キャンペーンのハッシュが変わる）
+ *   2. 送信待ち（PENDING）のジョブは**古い版で作られている**ので、
+ *      dispatcher が送信を拒否する。dry-run からやり直して積み直す
+ */
+export const MARKETING_EMAIL_SHELL_VERSION = 1;
+
+/** ジョブの Notes へ残す印（dispatcher がここから読んで照合する） */
+export const SHELL_VERSION_NOTE_PREFIX = 'shell:v';
+
+/** Notes からシェル版を読む。読めなければ null（＝古い形式 / 不明） */
+export function readShellVersionFromNote(note) {
+  const m = String(note ?? '').match(/shell:v(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
 /** 送信側が受信者ごとに差し替える印。**HTML と text の両方に必ず 1 つ入る** */
 export const UNSUBSCRIBE_PLACEHOLDER = '{{unsubscribeUrl}}';
 

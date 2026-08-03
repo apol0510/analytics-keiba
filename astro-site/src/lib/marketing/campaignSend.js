@@ -20,6 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { MARKETING_EMAIL_SHELL_VERSION } from './marketingEmailShell.js';
 import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/delivery-key.js';
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
 import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
@@ -361,7 +362,12 @@ export function computeCampaignContentHash(campaign) {
   const seedFull = presentation.some((v) => v !== '')
     ? `${seed} ${presentation.join(' ')}`
     : seed;
-  return createHash('sha256').update(seedFull, 'utf8').digest('hex').slice(0, 16);
+  // ── シェルの版も必ず種に入れる ────────────────────────────────
+  // 同じ campaign 定義でも、組み立て方（`marketingEmailShell.js`）が変われば
+  // 届く HTML は別物になる。版を入れないと「同じ hash なのに中身が違う」状態を
+  // 検知できず、dry-run で確認したものと違うメールを送ってしまう。
+  const withShell = `${seedFull} shell:v${MARKETING_EMAIL_SHELL_VERSION}`;
+  return createHash('sha256').update(withShell, 'utf8').digest('hex').slice(0, 16);
 }
 
 /**
