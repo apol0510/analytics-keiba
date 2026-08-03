@@ -808,3 +808,30 @@ test('guard(design): 状態は色だけでなく文言でも分かる（区分�
   assert.match(SCRIPT, /function cbSegmentBadge\(/, '区分バッジが無い');
   assert.match(SCRIPT, /segmentLabel\(segment\)/, 'バッジに文言が無い（色だけになっている）');
 });
+
+// ── 送信ジョブ一覧のレイアウト（2026-08-03 の縦組み不具合）──────────────
+
+test('guard(ui): ジョブ一覧は時系列のグリッドを流用しない（縦組み防止）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('async function mkRenderJobs'));
+  const body = block.slice(0, block.indexOf('async function ', 10) + 1 || 6000);
+  // .tl-row は顧客カルテ用の 4 カラムグリッド。ここで使うと「取り消す」ボタンの
+  // 列が幅を奪い、件数の列が潰れて 1 文字ずつ縦に折り返す
+  assert.equal(/className = 'tl-row'/.test(body), false, 'ジョブ一覧が .tl-row を流用している');
+  assert.match(body, /className = 'job-row'/, '専用クラスを使っていない');
+  assert.match(PAGE, /\.ppe \.job-row \{[^}]*display: block/, 'ジョブ行が縦積みになっていない');
+});
+
+test('guard(ui): 件数は項目ごとの要素に分ける（語の途中で折り返さない）', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('async function mkRenderJobs'));
+  assert.match(block.slice(0, 6000), /className = 'job-counts'/, '件数のまとまりが無い');
+  assert.match(block.slice(0, 6000), /className = 'job-count'/, '件数を項目ごとに分けていない');
+  // 1 つの長い文字列を作っていない（それが縦組みの原因だった）
+  assert.equal(/counts\.textContent = '対象 '/.test(block.slice(0, 6000)), false,
+    '件数を 1 つの文字列にまとめている');
+  assert.match(PAGE, /\.ppe \.job-count \{[^}]*white-space: nowrap/, '項目内で折り返してしまう');
+  assert.match(PAGE, /\.ppe \.job-counts \{[^}]*flex-wrap: wrap/, '項目の境目で折り返せない');
+});
+
+test('guard(ui): 取消ボタンは件数と同じ行に押し込まない', () => {
+  assert.match(PAGE, /\.ppe \.job-row \.ops \{[^}]*margin/, '操作を独立した行にしていない');
+});
