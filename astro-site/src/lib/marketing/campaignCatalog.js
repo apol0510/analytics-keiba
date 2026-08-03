@@ -154,6 +154,56 @@ export const CAMPAIGNS = Object.freeze([
     enabled: true,
   },
   {
+    /**
+     * Light 30日無料を**すでに付与した**成功者への案内。
+     *
+     * ── 他のカムバック文面と分けている理由 ────────────────────────
+     * 「期限切れカムバック」「Premium 再契約」「割引案内」は**これから何かを勧める**文面で、
+     * 申込・支払いの案内が要る。こちらは**もう権利を配り終えた**あとの通知なので、
+     * 申込も支払いも不要だと言い切る必要がある。同じ文面にまとめると
+     * 「無料と言いながら申込を促す」ちぐはぐな案内になる。
+     *
+     * ── 対象は契約状態ではなく「付与に成功したこと」で決まる ──────────
+     * 付与成功者は期限切れ・退会・休眠のいずれでもありうるので `enforce` はしない。
+     * 誰に送るかは `grantOperationId` の引き継ぎ（`comebackEmailHandoff.js`）が
+     * サーバー側で確定する。ここで契約条件を課すと、正しい相手が除外される。
+     *
+     * ⚠️ 本文に URL を書かない（`campaignContentDraft` が拒否する）。
+     *    案内先は CTA ボタン 1 つに固定し、本文編集で壊れないようにする。
+     */
+    campaignId: 'comeback-light-30d-granted',
+    version: 1,
+    name: 'Light 30日無料付与済み案内',
+    description: 'Light 30日無料を付与済みの顧客へ、申込不要で使えることを案内する。',
+    subject: '【KEIBA Analytics】Lightプランを30日間無料でご利用いただけます',
+    body: [
+      '{{salutation}}',
+      '',
+      '以前、KEIBA Analyticsをご利用いただき、ありがとうございました。',
+      '',
+      'KEIBA Analyticsはその後も改善を重ね、',
+      '予想ロジックや買い目の組み方、結果の見せ方などを見直してきました。',
+      '',
+      '改めて現在のサービスをお試しいただけるよう、',
+      'Lightプランを30日間無料でご利用いただけるようにいたしました。',
+      '',
+      'お申し込みやお支払いの手続きは必要ありません。',
+      'いつものメールアドレスでログインすると、すぐにご利用いただけます。',
+      '',
+      'Lightプランでは、各開催のメインレース買い目をご覧いただけます。',
+      '',
+      'この機会に、現在のKEIBA Analyticsをもう一度お試しいただけましたら幸いです。',
+      '',
+      'KEIBA Analytics',
+    ].join('\n'),
+    ctaLabel: 'KEIBA Analyticsにログイン',
+    ctaUrl: `${SITE}/dashboard/`,
+    recommendedSegments: [],
+    // 付与に成功したこと自体が対象条件。契約状態では絞らない
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    enabled: true,
+  },
+  {
     campaignId: 'premium-renewal',
     version: 2,
     name: 'Premium 再契約',

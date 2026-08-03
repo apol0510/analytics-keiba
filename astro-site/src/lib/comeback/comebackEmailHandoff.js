@@ -134,7 +134,7 @@ export function collectGrantedRecipients({ records, operationId, nowMs } = {}) {
  *           nowMs?: number }} input
  */
 export function buildHandoffTicket({
-  operationId, grantedCount, selectedCount, skippedCount, skippedDetail, nowMs,
+  operationId, grantedCount, selectedCount, skippedCount, skippedDetail, grantOffers, nowMs,
 } = {}) {
   const op = str(operationId);
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
@@ -142,6 +142,11 @@ export function buildHandoffTicket({
   return {
     operationId: op,
     grantedCount: granted,
+    // 何を配ったか（offerId だけ。案内文面の自動選択に使う）。PII は含まない
+    grantOffers: {
+      light: str(grantOffers && grantOffers.light) || null,
+      premium: str(grantOffers && grantOffers.premium) || null,
+    },
     selectedCount: num(selectedCount),
     // 「引き継がれない人数」＝ 選択したのに付与できなかった人。理由は PII なしの集計だけ
     notGrantedCount: num(skippedCount),
@@ -194,6 +199,10 @@ export function saveHandoff(storage, ticket) {
     storage.setItem(HANDOFF_STORAGE_KEY, JSON.stringify({
       operationId: str(ticket.operationId),
       grantedCount: num(ticket.grantedCount),
+      grantOffers: {
+        light: str(ticket.grantOffers && ticket.grantOffers.light) || null,
+        premium: str(ticket.grantOffers && ticket.grantOffers.premium) || null,
+      },
       notGrantedCount: num(ticket.notGrantedCount),
       notGrantedReasons: Array.isArray(ticket.notGrantedReasons) ? ticket.notGrantedReasons : [],
       issuedAtMs: num(ticket.issuedAtMs),

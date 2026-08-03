@@ -104,7 +104,10 @@ import {
   OFFER_REVOKE_SKIP_LABEL,
 } from '../../src/lib/promotions/offerRevokePlan.js';
 import { buildComebackEmailContent } from '../../src/lib/promotions/comebackEmailTemplate.js';
-import { buildHandoffTicket } from '../../src/lib/comeback/comebackEmailHandoff.js';
+import {
+  buildHandoffTicket, collectGrantedRecipients, validateHandoffResolution,
+  HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
+} from '../../src/lib/comeback/comebackEmailHandoff.js';
 import {
   PROMO_TIER,
   PROMO_TIER_LABEL,
@@ -275,6 +278,18 @@ function resolveSelection(req) {
   }
   if (grantOffers.length === 0 && !purchaseOffer) return { error: 'nothing_selected' };
   return { grantOffers, purchaseOffer };
+}
+
+/**
+ * 引き継ぎ票へ載せる「何を配ったか」（offerId だけ）。
+ * 案内文面を自動選択するのに使う。氏名・アドレス・件数以外の情報は入れない。
+ */
+function describeGrantOffers(sel) {
+  const byTier = (tier) => (sel.grantOffers || []).find((o) => o.targetTier === tier);
+  return {
+    light: byTier(PROMO_TIER.LIGHT)?.offerId || null,
+    premium: byTier(PROMO_TIER.PREMIUM)?.offerId || null,
+  };
 }
 
 /** 案内メールの文面プレビュー（Airtable にも SendGrid にも触らない・送信しない） */
@@ -528,8 +543,20 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const sel = resolveSelection(req);
   if (sel.error) return json(400, { error: `特典の指定が不正です: ${sel.error}`, detail: sel.offerId || null });
 
-  const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
-  if (recordIds.length === 0) return json(400, { error: '対象が選択されていません' });
+  // ── 対象の指定は 2 通り ─────────────────────────────────────────
+  //   recordIds         … 画面で選んだ相手（従来）
+  //   grantOperationId  … 付与成功者の引き継ぎ。**dry-run（下見）だけ**で使える
+  //
+  // ⚠️ live（実行）では引き継ぎを受け付けない。付与の実行は「画面で選んで確認した相手」
+  //    に限る（引き継ぎは既に配り終えた人の下見・案内のための導線であって、
+  //    そこから新しい付与を走らせる経路にはしない）。
+  const grantOperationId = live ? '' : String(req.grantOperationId || '').trim();
+  const recordIds = grantOperationId
+    ? []
+    : (Array.isArray(req.recordIds) ? req.recordIds.map(String) : []);
+  if (!grantOperationId && recordIds.length === 0) {
+    return json(400, { error: '対象が選択されていません' });
+  }
   if (recordIds.length > MAX_GRANT_RECORDS) {
     return json(400, { error: `選択が多すぎます（上限 ${MAX_GRANT_RECORDS} 件）` });
   }
@@ -567,8 +594,38 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return json(400, { error: 'operationId が必要です（dry-run の値をそのまま渡してください）' });
   }
 
-  const { byId, offers } = await loadCustomers({ KEY, BASE, now, withOffers: needsOfferWrite });
-  const selected = recordIds.map((id) => {
+  const { list, byId, offers } = await loadCustomers({ KEY, BASE, now, withOffers: needsOfferWrite });
+
+  // 引き継ぎの下見: 対象は**サーバーが Customers から再導出する**
+  // （admin-marketing と同じ単一源。クライアントの recordId は 1 つも使わない）
+  let handoffView = null;
+  let targetIds = recordIds;
+  if (grantOperationId) {
+    const resolved = collectGrantedRecipients({ records: list, operationId: grantOperationId, nowMs: now });
+    const verdict = validateHandoffResolution({
+      operationId: grantOperationId,
+      recordIds: resolved.recordIds,
+      latestGrantedAtMs: resolved.latestGrantedAtMs,
+      nowMs: now,
+    });
+    if (!verdict.ok) {
+      return json(verdict.reason === HANDOFF_BLOCK.EXPIRED ? 410 : 409, {
+        error: HANDOFF_BLOCK_LABEL[verdict.reason] || '引き継ぎを受け付けられません',
+        reason: verdict.reason,
+        grantOperationId,
+        sideEffects: 'none',
+      });
+    }
+    targetIds = resolved.recordIds;
+    handoffView = {
+      grantOperationId,
+      resolved: verdict.recipientCount,
+      byTier: resolved.byTier,
+      note: '付与に成功した顧客だけをサーバー側で確定しています（画面の選択は使っていません）。',
+    };
+  }
+
+  const selected = targetIds.map((id) => {
     const hit = byId.get(id);
     return { recordId: id, fields: hit ? hit.fields : null };
   });
@@ -665,6 +722,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return json(200, {
       mode: 'dry-run',
       sideEffects: 'none',
+      // 引き継ぎの下見のときだけ入る（件数のみ。PII なし）
+      handoff: handoffView,
       // 対象区分（現有効会員の混入・除外理由）。人数だけでアドレスは含めない
       audience: audienceView,
       ...summary,
@@ -740,6 +799,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
           selectedCount: plan.counts.selected,
           skippedCount: plan.counts.selected - granted.length,
           skippedDetail: summary.skippedDetail,
+          grantOffers: describeGrantOffers(sel),
           nowMs: now,
         }),
         howToRecover: '同じ operationId で dry-run → 実行を再実行してください（適用済みは自動的に除外されます）',
@@ -785,6 +845,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
           selectedCount: plan.counts.selected,
           skippedCount: plan.counts.skipped,
           skippedDetail: summary.skippedDetail,
+          grantOffers: describeGrantOffers(sel),
           nowMs: now,
         }),
         howToRecover: '同じ operationId で dry-run → 実行を再実行してください（付与済みは除外され、未発行のオファーだけが対象になります）',
@@ -802,13 +863,14 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     ...summary,
     granted: granted.length,
     offersIssued: issued.length,
-    // 案内メールへの引き継ぎ票（operationId と件数だけ。PII / recordId は載せない）
+    // 案内メールへの引き継ぎ票（operationId・件数・配った特典の offerId だけ。PII / recordId は載せない）
     handoff: buildHandoffTicket({
       operationId,
       grantedCount: granted.length,
       selectedCount: plan.counts.selected,
       skippedCount: plan.counts.skipped,
       skippedDetail: summary.skippedDetail,
+      grantOffers: describeGrantOffers(sel),
       nowMs: now,
     }),
     // 生トークンは**この応答にだけ**現れる（Airtable にはハッシュしか保存しない）。

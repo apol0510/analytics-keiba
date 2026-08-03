@@ -452,7 +452,73 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
   （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
 
-## 2026-08-03 — カムバック特典の「確認へ進む」と「本番付与」を分離（branch `fix/comeback-grant-action-clarity` / Draft PR・未 merge）
+## 2026-08-03 — Light 無料付与済み案内の文面・CTA・引き継ぎを整える（branch `fix/comeback-light-grant-email` / Draft PR・未 merge）
+
+**きっかけ**: 28 名へ無料付与したあと案内メールを作ろうとして、本番画面で 5 つの不整合が出た。
+
+| # | 症状 | 原因 |
+|---|---|---|
+| 1 | 今回に合う文面が無い | 既存はすべて「これから勧める」文面。**配り終えた後**の通知が無かった |
+| 2 | 本文に URL を書けないのに CTA が見えない | `listCampaigns` は `ctaLabel`/`ctaUrl` を返していたが**画面に出していなかった** |
+| 3 | dry-run で 28 名全員が「送信済み」除外 | 過去に送った別キャンペーンと同じ campaignId×version を選んでいた（DeliveryKey が同じ）|
+| 4 | 下見が「対象を選択してください」 | `mkActionDry` が `mkSelected` しか見ておらず引き継ぎを知らない |
+| 5 | 引き継ぎ帯が読めない | **未定義の CSS 変数**（`--ok-bg` 等）のフォールバックで明るい緑背景 + 明るい文字になっていた |
+
+**入れた変更**
+
+- `comeback-light-30d-granted` **v1** を追加（「Light 30日無料付与済み案内」）。
+  申込・支払い不要であることを明言する文面。**本文に URL を書かない**。
+  CTA = 「KEIBA Analyticsにログイン」→ `/dashboard/`（コード側の固定値）
+- 既定選択を `pickInitialCampaign()` へ委譲。**運用テスト専用カナリアは絶対に既定にしない**。
+  引き継ぎ中は配った特典に対応する文面を自動選択し、対応が無ければ
+  「対応テンプレート未設定」と出して手動選択を求める（近い文面を当てにいかない）
+- 引き継ぎ票に `grantOffers`（offerId だけ・PII なし）を載せ、文面の自動選択に使う
+- Step 3 に CTA のラベルとリンク先を read-only 表示。専用 URL キャンペーンは実 URL を出さない
+- dry-run 画面に `campaignId : vN` と「DeliveryKey は キャンペーン×版×受信者」を表示
+- 「特典・オファーの下見」を引き継ぎ対応に。`admin-comeback-grants` の **dry-run だけ**
+  `grantOperationId` を受け付け、`collectGrantedRecipients` で再導出（**live は従来どおり recordIds のみ**）
+- 引き継ぎ帯を実在トークン（`--action-green` / `--text-main`）へ。モバイル折り返しも追加
+- 引き継ぎ中は「取得 0 名 / 選択 0 名」を補助表示へ下げ、「引き継ぎ対象 N 名・再選択不要」を主表示に
+
+**⚠️ 未解決: operationId と付与内容の食い違い**
+
+依頼では「Light 30日無料を付与」とあったが、示された operationId は
+`cb-**light-lifetime-free**-2026-08-03-d1b34296`。`newOperationId()` は
+`cb-{先頭 offerId}-{日付}-{乱数}` なので、この ID は **Light 永久無料**を示す。
+実データ確認は本番顧客レコードの read になるため未実施。
+自動選択は `light-30d-free` のときだけ発火するので、**仮に永久無料でも 30日用文面は自動選択されない**
+（「対応テンプレート未設定」で手動選択を要求する）。送信前に実際の付与内容を確認すること。
+
+**⚠️ 引き継ぎの有効期限（2 時間）と再引き継ぎ**
+
+`HANDOFF_TTL_MS = 2h` を **付与時刻（`*GrantedAt`）基準**でサーバーが測る。超過すると
+admin-marketing / 下見とも 410 で止まり、`sessionStorage` の保存値も失効する。
+**期限切れ後に既存 operationId から引き継ぎ直す経路は現状無い**（read-only でも作れない）。
+
+読み取りだけなら `action: 'reconcile'` で `operationId` の適用状況（適用済み / 未適用の件数）を
+確認できるが、それを送信対象へ渡す導線は無い。別 PR 候補（本 PR では実装しない）:
+
+1. TTL の見直し（2h → 24h 程度）。定数 1 か所 + テスト更新で済む。文面作成に時間がかかる運用実態に合わせる
+2. 管理用の再引き継ぎ導線（`operationId` を入力して引き継ぎを作り直す。TTL 判定は残し、超過分は明示確認を要求）
+
+**別 PR 候補: 案内テンプレートの拡張（雑に 1 文面へまとめない）**
+
+| 付与内容 | 文面 | 状態 |
+|---|---|---|
+| Light 30日無料 付与済み | `comeback-light-30d-granted` v1 | **本 PR で完成** |
+| Light 永久無料 付与済み | 未作成 | 「30日間」と書けないので別文面が必要 |
+| Premium 期間限定 付与済み | 未作成 | 見られる範囲が Light と違う |
+| Premium 永久無料 付与済み | 未作成 | 同上 |
+| Light / Premium 両方 付与済み | 未作成 | 併記が要る |
+| 付与なしの一般カムバック | `expired-comeback` v2 ほか | 既存 |
+| Premium 再契約割引 | `premium-renewal` v2 | 既存 |
+| Premium Plus 案内 | `premium-plus-offer` v2 | 既存 |
+| 元プラン別の自動分岐 | 未着手 | 上記が揃ってから |
+
+追加するときは `GRANT_CAMPAIGN_BY_OFFER`（`comebackGrantCampaign.js`）へ 1 対 1 で登録する。
+登録しない限り自動選択されない（誤った文面を当てにいかない fail closed）。
+
+## 2026-08-03 — カムバック特典の「確認へ進む」と「本番付与」を分離（branch `fix/comeback-grant-action-clarity` / PR #218 merged `1c3de46`）
 
 **きっかけ**: カムバック特典タブに、本番付与に見えるボタンが 3 つ並んでいて区別できない、という指摘。
 
