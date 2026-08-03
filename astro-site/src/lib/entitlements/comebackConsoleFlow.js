@@ -191,7 +191,9 @@ export function buildCbStickyView(state = {}) {
     [CB_STEP.SELECT]: '顧客を選択',
     [CB_STEP.OFFER]: '特典を設定',
     [CB_STEP.REVIEW]: '付与内容を確認',
-    [CB_STEP.APPLY]: s.applied ? '実行結果を見る' : '無料特典を付与',
+    // 追従バーは**確認画面を開くだけ**。Step 5 本体と同じ文言にして、
+    // 「本番付与に見えるボタンが画面に複数ある」状態を作らない。
+    [CB_STEP.APPLY]: s.applied ? '付与結果を見る' : '付与内容の最終確認へ',
   };
   return {
     step,

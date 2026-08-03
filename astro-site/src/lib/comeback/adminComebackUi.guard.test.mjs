@@ -105,7 +105,8 @@ test('実行ボタンは gate OFF / 0 件では押せない', () => {
 test('dry-run を経ずに実行できない（fingerprint と operationId を必ず渡す）', () => {
   const applyCall = CB_BLOCK.slice(CB_BLOCK.indexOf("action: 'apply'"));
   assert.ok(applyCall.includes('planFingerprint: plan.planFingerprint'), 'fingerprint を渡していない');
-  assert.ok(applyCall.includes('operationId: plan.operationId'), 'operationId を渡していない');
+  // operationId は dry-run のものをそのまま使う（再実行しても二重付与しない）
+  assert.ok(applyCall.includes('operationId: cbState.dryRun.operationId'), 'operationId を渡していない');
 });
 
 test('二重クリック防止がある', () => {

@@ -671,13 +671,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="dry-panel" id="cbReviewPanel" hidden></div>
       </section>
 
+      <!--
+        Step 5 は**確認画面を開くだけ**。本番データを書き換えるのは
+        確認モーダルの最終ボタン 1 つだけ（`comebackApplyAction.js` が文言の単一源）。
+        ここを danger 色にすると「赤いボタンが画面に複数ある」状態に戻るので primary のまま。
+      -->
       <section class="step cb-step" data-cbcard="5" aria-labelledby="cbStep5H">
         <h2 id="cbStep5H" class="step-h"><span class="step-n">5</span> 特典を付与する</h2>
-        <p class="step-hint is-danger">⚠️ 本番データが変更されます（顧客の閲覧権限が変わります）</p>
-        <p class="note" id="cbStep5Lock">「付与内容を確認」に成功すると実行できます。</p>
+        <p class="step-hint" id="cbStep5Hint">まだ付与されません。対象人数と変更内容を確認画面で確認します。</p>
+        <p class="note" id="cbStep5Lock">「付与内容を確認」に成功すると最終確認へ進めます。</p>
         <div class="toolbar">
-          <button type="button" id="cbApplyBtn" class="btn-danger btn-lg" disabled aria-disabled="true">⚠️ 🎁 無料特典を付与する</button>
+          <button type="button" id="cbApplyBtn" class="btn-primary btn-lg" disabled aria-disabled="true"
+            aria-label="付与内容の最終確認を開く。この操作では付与しません">📋 付与内容の最終確認へ</button>
         </div>
+        <p class="note">本番データが変わるのは、確認画面のいちばん下にある付与ボタンだけです。</p>
         <div id="cbApplyResult"></div>
       </section>
 
@@ -697,7 +704,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <span class="sb-item" id="cbSbCond">条件: 指定なし</span>
         <span class="sb-item" id="cbSbOffer">特典: 未設定</span>
         <span class="sb-item" id="cbSbReview">確認: 未確認</span>
-        <button type="button" class="btn-primary btn-sm" id="cbSbNext">対象候補を表示</button>
+        <!--
+          スクロール補助。**別の操作ではない**（Step 5 では本体と同じ確認画面を開く）。
+          title / aria-label でもそれを明示する。
+        -->
+        <button type="button" class="btn-primary btn-sm" id="cbSbNext"
+          title="画面下部の補助バーです。Step 5 と同じ「付与内容の最終確認へ」を開きます（別の操作ではありません）。"
+          aria-label="画面下部の補助バーです。Step 5 と同じ「付与内容の最終確認へ」を開きます（別の操作ではありません）。">対象候補を表示</button>
       </div>
 
       <!--
@@ -743,7 +756,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="dt-head">
           <div class="dt-head-l">
             <button type="button" id="cbModalBack" class="btn-back">← 一覧へ戻る</button>
-            <h2 id="cbModalTitle">確認</h2>
+            <!-- 開いたときにここへフォーカスを移す（tabindex=-1 はプログラム移動用） -->
+            <h2 id="cbModalTitle" tabindex="-1">確認</h2>
           </div>
           <button type="button" id="cbModalClose" class="x" aria-label="閉じる">×</button>
         </div>
@@ -1413,7 +1427,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   }
   .ppe .cb-step.is-done { border-left-color: var(--action-green); }
   .ppe .cb-step.is-locked { border-left-color: var(--border-soft); opacity: .42; }
-  .ppe .cb-step[data-cbcard="5"].is-now { border-left-color: var(--action-red); background: rgba(239,68,68,.06); }
+  /* Step 5 は「最終確認へ進む」段階であって本番 write ではないので赤にしない。
+     赤は確認モーダルの付与ボタンだけに残す（赤いボタンを画面に複数置かない）。 */
+  .ppe .cb-step[data-cbcard="5"].is-now { border-left-color: var(--action-yellow); background: rgba(234,179,8,.06); }
   .ppe .step-hint { font-size: .78rem; color: var(--action-yellow); margin: .1rem 0 .4rem; }
   .ppe .step-hint.is-locked { color: var(--text-muted); }
   .ppe .step-hint.is-danger { color: var(--action-red); font-weight: 700; }
@@ -1530,9 +1546,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     border-left-color: var(--action-green); background: rgba(16,185,129,.06);
   }
   .ppe .cb-step[data-cbcard="5"].is-now {
-    border-left-color: var(--action-red);
-    background: linear-gradient(180deg, rgba(239,68,68,.14), rgba(239,68,68,.03));
-    box-shadow: 0 0 0 1px rgba(239,68,68,.28);
+    border-left-color: var(--action-yellow);
+    background: linear-gradient(180deg, rgba(234,179,8,.12), rgba(234,179,8,.03));
+    box-shadow: 0 0 0 1px rgba(234,179,8,.26);
   }
   /* 「現在の操作」バッジ（色だけで現在地を表さない）*/
   .ppe .step-now-badge {
@@ -1731,6 +1747,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     draftSignature, DRAFT_PLACEHOLDERS, SUBJECT_MAX, SUBJECT_RECOMMENDED, BODY_MAX,
     isContentConfirmed, acceptConfirmation, canSendContent, buildSendSummary,
     CONTENT_BLOCK, CONTENT_BLOCK_LABEL, CONTENT_CHANGED_NOTICE, QUEUED_IMMUTABLE_NOTICE,
+  };
+  // 「確認を開く」と「本番付与」の言葉・可否の単一源（画面に文言を直接書かない）
+  import {
+    OPEN_CONFIRM_LABEL, OPEN_CONFIRM_ICON, OPEN_CONFIRM_HINT, STICKY_SAME_ACTION_NOTE,
+    APPLY_WRITE_NOTICE, APPLY_MAIL_NOTICE, APPLY_HANDOFF_NOTICE,
+    APPLY_BUSY_LABEL, APPLY_DONE_LABEL, APPLY_BLOCK, APPLY_BLOCK_LABEL,
+    describeBenefits, buildApplyActionLabel, buildApplyActionAriaLabel,
+    canRunApply, buildApplySummaryRows,
+  } from '../../lib/comeback/comebackApplyAction.js';
+  window.__cbApply = {
+    OPEN_CONFIRM_LABEL, OPEN_CONFIRM_ICON, OPEN_CONFIRM_HINT, STICKY_SAME_ACTION_NOTE,
+    APPLY_WRITE_NOTICE, APPLY_MAIL_NOTICE, APPLY_HANDOFF_NOTICE,
+    APPLY_BUSY_LABEL, APPLY_DONE_LABEL, APPLY_BLOCK, APPLY_BLOCK_LABEL,
+    describeBenefits, buildApplyActionLabel, buildApplyActionAriaLabel,
+    canRunApply, buildApplySummaryRows,
   };
   // 無料付与 → 案内メールの引き継ぎ（対象の確定はサーバー。ここは保存と期限だけ）
   import {
@@ -4712,6 +4743,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     //  押せる／押せないの根拠は comebackConsoleFlow.js（単一源）。画面は従うだけ。
     // ══════════════════════════════════════════════════════════════
     const cbApi = () => window.__cbFlow;
+    // 「確認を開く」と「本番付与」の文言・可否の単一源（cbSync からも使うのでここで定義する）
+    const applyApi = () => window.__cbApply;
     const cbState = {
       loaded: false, candidateCount: 0, selectedCount: 0,
       offer: { lightOffer: 'none', premiumOffer: 'none' },
@@ -4830,7 +4863,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const ab = $('cbApplyBtn');
       if (ab) { ab.disabled = !apply.allowed; ab.title = apply.allowed ? '' : (apply.reason || ''); }
       const lock5 = $('cbStep5Lock');
-      if (lock5) lock5.textContent = apply.allowed ? '確認済みです。実行できます。' : (apply.reason || '');
+      // 「まだ変更されない」ことは常に出す（押せる状態でも消さない）
+      if (lock5) {
+        lock5.textContent = apply.allowed
+          ? '確認済みです。最終確認へ進めます（このボタンでは付与されません）。'
+          : (apply.reason || '');
+      }
+      const hint5 = $('cbStep5Hint');
+      if (hint5) hint5.textContent = applyApi().OPEN_CONFIRM_HINT;
       const lock3 = $('cbStep3Lock');
       if (lock3) {
         const cfg = cbApi().canConfigureOffer(cbState);
@@ -4920,14 +4960,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $('cbSbReview').appendChild(rv);
         // 次の操作は 1 つだけ。段階で色を変える
         const next = $('cbSbNext');
-        const tone = { 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger' }[step] || 'btn-primary';
+        // Step 5 でも danger にしない。追従バーは確認画面を開くだけで、
+        // 本番データを変えるのは確認モーダルの最終ボタンだけなので、赤は 1 つに保つ。
+        const tone = { 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-primary' }[step] || 'btn-primary';
         // 条件を変えたままなら、次にやることは「再表示」ひとつ
         if (cbState.filtersChanged) {
           next.className = 'btn-lg btn-caution';
           next.textContent = '🔍 対象候補を再表示';
         } else {
           next.className = 'btn-lg ' + tone;
-          next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '🚀 ' }[step] || '') + v.next;
+          // Step 5 のアイコンは本体ボタンと同じ 📋（同じ操作であることを見た目でも揃える）
+          next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '📋 ' }[step] || '') + v.next;
         }
       }
     }
@@ -5515,16 +5558,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('cbSelNone').addEventListener('click', () => { cbSelected.clear(); cbRender(); });
 
     // ── モーダル ──
+    /** モーダルを開いた元のボタン（閉じたらここへフォーカスを戻す） */
+    let cbModalOpener = null;
+
     function cbOpenModal(title) {
       $('cbModalTitle').textContent = title;
       $('cbBackdrop').hidden = false;
       lockScroll();
       $('cbModalBody').innerHTML = '';
+      // 開いたら見出しへフォーカスを移す（キーボード・読み上げの現在地を合わせる）
+      $('cbModalTitle').focus();
       return $('cbModalBody');
     }
     function cbCloseModal() {
       $('cbBackdrop').hidden = true;
       if ($('dtBackdrop').hidden && $('pvBackdrop').hidden && $('mkBackdrop').hidden) unlockScroll();
+      // 閉じたら開いたボタンへ戻す（どこを操作していたか見失わせない）
+      const back = cbModalOpener;
+      cbModalOpener = null;
+      if (back && typeof back.focus === 'function' && !back.disabled) back.focus();
     }
     $('cbModalClose').addEventListener('click', cbCloseModal);
     $('cbModalBack').addEventListener('click', cbCloseModal);
@@ -5637,6 +5689,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       };
       cbState.dryStale = false;
       cbState.applied = false;
+      // 確認モーダルは **Step 5 から明示的に開く**（dry-run では開かない）。
+      // dry-run＝「確認」、Step 5＝「最終確認へ」、モーダル最終ボタン＝「本番付与」と
+      // 段階を 1 対 1 に保つため、ここで書き込みボタン入りの画面を勝手に出さない。
+      cbState.dryPlan = plan;
+      cbState.drySel = sel;
       cbRenderReview({ ...plan, excluded: plan.skipped, audience: plan.audience });
       const active = (plan.audience && plan.audience.activeMembers) || 0;
       if (active > 0) {
@@ -5647,40 +5704,59 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         cbNotify('ok', '確認しました', plan.willGrant + ' 名へ付与します。実行はまだしていません。');
       }
       cbSync();
-      cbRenderConfirm(sel, plan);
     });
 
-    // ── Step 5: 特典を付与する（確認モーダル + 人数入力）────────────
-    $('cbApplyBtn')?.addEventListener('click', async () => {
-      const btn = $('cbApplyBtn');
-      if (btn.dataset.busy === '1') return;
+    // ── Step 5: 付与内容の最終確認へ（**確認画面を開くだけ・書き込みは一切しない**）──
+    //
+    // 本番付与を呼ぶのは `cbRunApply()` ただ 1 つで、確認モーダルの最終ボタンからしか
+    // 呼ばれない。Step 5 本体と追従バーは、どちらもこの関数で**同じ画面**を開くだけ。
+    // 「赤いボタンが画面に複数あって、どれが本番なのか分からない」を構造的に無くす。
+    function cbOpenApplyConfirm(opener) {
       const verdict = cbApi().canApply(cbState);
-      if (!verdict.allowed) { cbNotify('warn', '実行できません', verdict.reason || ''); return; }
-      const dry = cbState.dryRun;
-      const aud = dry.audience || {};
-      const seg = Object.entries(aud.bySegment || {})
-        .map(([k, n]) => cbApi().segmentLabel(k) + ' ' + n + ' 名').join(' / ') || '—';
-      const ok1 = window.confirm(
-        '【無料特典の付与】\n\n'
-        + '対象: ' + dry.willGrant + ' 名\n'
-        + '対象区分: ' + seg + '\n'
-        + '現有効会員: ' + (aud.activeMembers || 0) + ' 名\n'
-        + '特典: ' + cbOfferShortLabel() + '\n'
-        + cbApi().UNCHANGED_NOTICE + '\n'
-        + cbApi().APPLY_EFFECT_NOTICE + '\n\n続けますか？'
-      );
-      if (!ok1) return;
-      const typed = window.prompt('確認のため、付与予定人数「' + dry.willGrant + '」を入力してください') || '';
-      if (String(typed).trim() !== String(dry.willGrant)) {
-        cbNotify('warn', '実行を中止しました', '入力が一致しませんでした。');
+      if (!verdict.allowed) { cbNotify('warn', '最終確認へ進めません', verdict.reason || ''); return; }
+      if (!cbState.dryPlan) {
+        cbNotify('warn', '最終確認へ進めません', '先に「付与内容を確認」を押してください。');
         return;
       }
+      cbModalOpener = opener || null;
+      cbRenderConfirm(cbState.drySel || cbSelectionPayload(), cbState.dryPlan);
+    }
+
+    $('cbApplyBtn')?.addEventListener('click', () => cbOpenApplyConfirm($('cbApplyBtn')));
+
+    // 追従バーはスクロール補助。Step 5 では本体と**同じ**確認画面を開き、
+    // それ以外の段階では、いま操作すべきカードへ移動するだけ（書き込みは一切しない）。
+    $('cbSbNext')?.addEventListener('click', () => {
+      const step = cbApi().resolveCbStep(cbState);
+      if (step === cbApi().CB_STEP.APPLY) { cbOpenApplyConfirm($('cbSbNext')); return; }
+      const card = document.querySelector('.cb-step[data-cbcard="' + step + '"]');
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.querySelector('button:not([disabled]), select:not([disabled])')?.focus();
+    });
+
+    /**
+     * 本番付与の**唯一の実行経路**（確認モーダルの最終ボタンからだけ呼ぶ）。
+     *
+     * - `operationId` は dry-run のものをそのまま使う（再実行しても二重付与しない）
+     * - `planFingerprint` を必ず送る（対象が変わっていたら Function 側が 409 で中止する）
+     * - 完了後はこの確認から再実行できないようにする
+     * - 付与できた分の引き継ぎ票は、途中で止まった場合でも保持する（巻き戻さない）
+     *
+     * @param {HTMLButtonElement} btn 押された最終ボタン
+     * @param {object} plan dry-run が返した計画
+     * @param {object} sel 特典の選択内容
+     */
+    async function cbRunApply(btn, plan, sel) {
       btn.dataset.busy = '1';
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.textContent = applyApi().APPLY_BUSY_LABEL;
       cbState.busy = true; cbSync();
-      const sel = cbSelectionPayload();
       const res = await cbCallDetailed({
         action: 'apply', ...sel, recordIds: [...cbSelected],
         operationId: cbState.dryRun.operationId,   // dry-run と同じ ID（冪等）
+        planFingerprint: plan.planFingerprint,     // 対象が変わっていたら Function 側が中止する
       });
       const out = res.ok ? res.data : null;
       cbState.busy = false; btn.dataset.busy = '';
@@ -5696,19 +5772,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         } else {
           cbNotify('err', '付与に失敗しました', '結果を「前回操作の突合」で確認してください。');
         }
+        btn.disabled = false;
+        btn.removeAttribute('aria-disabled');
+        btn.textContent = '再試行（同じ操作 ID で安全に再実行できます）';
         cbSync();
         return;
       }
+      // 完了。**同じ確認からは二度と実行させない**
       cbState.applied = true;
       cbState.dryRun = null;
+      cbState.dryPlan = null;
       // 付与結果に付いてきた引き継ぎ票を保持する（メール工程はこれだけを受け取る）
       cbState.lastHandoff = out.handoff || null;
+      btn.textContent = applyApi().APPLY_DONE_LABEL;
       cbRenderApplyResult(out);
+      cbCloseModal();
+      if (out.offerTokens && out.offerTokens.length) cbRenderOfferTokens(out);
       cbNotify('ok', '無料特典を付与しました',
         (out.granted ?? out.willGrant ?? 0) + ' 名。メールはまだ送っていません。'
         + '「成功者へ案内メールを作成」から次の工程へ進めます。');
       cbSync();
-    });
+    }
 
     /** 実行結果（成功 / 除外 / 失敗 / operationId / 実行日時） */
     /** 区分バッジ（色 + 文言。色だけで意味を表さない） */
@@ -5778,7 +5862,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     function cbRenderConfirm(sel, plan) {
-      const body = cbOpenModal('実行内容の確認');
+      const body = cbOpenModal('付与内容の最終確認');
 
       const head = document.createElement('div'); head.className = 'dt-sec';
       const h = document.createElement('h3'); h.textContent = plan.selection;
@@ -5867,65 +5951,81 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         body.appendChild(sec);
       }
 
+      // ── ここから下だけが本番データを変更する ───────────────────────
+      // 画面内で danger 色を持つボタンは**このボタン 1 つだけ**にする。
       const sec3 = document.createElement('div'); sec3.className = 'dt-sec danger';
-      const h3 = document.createElement('h3'); h3.textContent = '実行'; sec3.appendChild(h3);
+      const h3 = document.createElement('h3'); h3.textContent = '本番データの変更'; sec3.appendChild(h3);
+
+      // 何がどれだけ変わるかを 1 画面で（項目の並びは単一源が決める）
+      const benefits = applyApi().describeBenefits({
+        lightLabel: cbOfferLabel('cbLightOffer'), premiumLabel: cbOfferLabel('cbPremiumOffer'),
+      });
+      const sumDl = document.createElement('dl'); sumDl.className = 'kv';
+      for (const r of applyApi().buildApplySummaryRows({
+        plan, audience: plan.audience, benefits, unchangedNotice: cbApi().UNCHANGED_NOTICE,
+      })) {
+        kvRow(sumDl, r.label, r.value, r.tone === 'ok' ? 'strong-ok' : r.tone === 'ng' ? 'ng-txt' : '');
+      }
+      sec3.appendChild(sumDl);
+
+      // 色だけに頼らず、文章でも「本番が変わる」ことを言う
+      const writeNote = document.createElement('p'); writeNote.className = 'blocker';
+      writeNote.textContent = '⚠️ ' + applyApi().APPLY_WRITE_NOTICE
+        + '（顧客の閲覧権限が変わります。プラン・課金・入金状態・Premium Plus 販売資格は変更しません）';
+      sec3.appendChild(writeNote);
+
+      const effect = document.createElement('p'); effect.className = 'note';
+      effect.textContent = cbApi().APPLY_EFFECT_NOTICE;
+      sec3.appendChild(effect);
       const state = document.createElement('p'); state.className = 'note';
       state.textContent = plan.writeEnabled
-        ? '実行すると無料特典は即時に反映されます。課金・入金状態・メールは変わりません。'
-        : '実行は無効（COMEBACK_GRANT_FIELDS_READY / COMEBACK_OFFER_TABLE_READY / COMEBACK_GRANT_ENABLED 未設定）です。';
+        ? '押すと無料特典が即時に反映されます。'
+        : applyApi().APPLY_BLOCK_LABEL[applyApi().APPLY_BLOCK.WRITE_DISABLED];
       sec3.appendChild(state);
       const mailNote = document.createElement('p'); mailNote.className = 'note';
-      mailNote.textContent = '📪 この操作でメールは送信されません。案内はマーケティングタブから別途送ってください。';
+      mailNote.textContent = '📪 ' + applyApi().APPLY_MAIL_NOTICE;
       sec3.appendChild(mailNote);
+      const handoffNote = document.createElement('p'); handoffNote.className = 'note';
+      handoffNote.textContent = '✉️ ' + applyApi().APPLY_HANDOFF_NOTICE;
+      sec3.appendChild(handoffNote);
 
       const ops = document.createElement('div'); ops.className = 'ops';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'b-immediate';
       const total = (plan.willGrant || 0) + (plan.willOffer || 0);
-      btn.textContent = '実行する（付与 ' + plan.willGrant + ' 名 / オファー ' + plan.willOffer + ' 名）';
+      const labelInput = {
+        willGrant: plan.willGrant, willOffer: plan.willOffer,
+        lightLabel: cbOfferLabel('cbLightOffer'), premiumLabel: cbOfferLabel('cbPremiumOffer'),
+      };
+      // 「実行する」ではなく、**何名に何をするのか**をボタン自身に書く
+      btn.textContent = applyApi().buildApplyActionLabel(labelInput);
+      btn.setAttribute('aria-label', applyApi().buildApplyActionAriaLabel(labelInput));
       btn.disabled = !plan.writeEnabled || total === 0;
+      if (btn.disabled) btn.setAttribute('aria-disabled', 'true');
       btn.addEventListener('click', async () => {
-        if (btn.dataset.busy === '1') return;      // 二重クリック防止
-        // 押す瞬間にもう一度、文面が確認済みのものと同じか見る
-        const guard = draftApi().canSendContent({
-          campaign, draftValid: mkContent.valid, draft: mkDraft(),
-          confirmed: mkContent.confirmed, acknowledged: ackBox.checked, requireAck: true,
+        if (btn.dataset.busy === '1') return;      // 二重クリック（Enter 連打）防止
+        const run = applyApi().canRunApply({
+          writeEnabled: plan.writeEnabled, willGrant: plan.willGrant, willOffer: plan.willOffer,
+          busy: cbState.busy, applied: cbState.applied,
         });
-        if (!guard.allowed) {
-          mkNotify('err', '送信できません', draftApi().CONTENT_BLOCK_LABEL[guard.reason] || '');
-          return;
-        }
+        if (!run.allowed) { cbNotify('warn', '付与できません', run.label); return; }
         const ok = window.confirm(
           plan.selection + '\n\n'
           + '対象: ' + plan.selected + ' 名\n'
           + '無料特典を付与: ' + plan.willGrant + ' 名\n'
           + '割引オファーを発行: ' + plan.willOffer + ' 名\n'
           + '対象外: ' + plan.skipped + ' 名\n\n'
-          + 'この内容で実行しますか？（メールは送信されません）'
+          + 'この内容で付与しますか？（メールは送信されません）'
         );
         if (!ok) return;
-        btn.dataset.busy = '1';
-        btn.disabled = true;
-        btn.textContent = '実行中…';
-        const out = await cbCall({
-          action: 'apply',
-          ...sel,
-          recordIds: [...cbSelected],
-          operationId: plan.operationId,          // 冪等性の鍵（再実行しても二重付与しない）
-          planFingerprint: plan.planFingerprint,  // 対象が変わっていたら Function 側が中止する
-        });
-        btn.dataset.busy = '';
-        if (out) {
-          cbMsg(out.notice || ('実行しました: 付与 ' + out.granted + ' 名 / オファー ' + out.offersIssued + ' 名'), 'ok');
-          if (out.offerTokens && out.offerTokens.length) cbRenderOfferTokens(out);
-          cbSelected.clear();
-          cbCloseModal();
-          await cbLoad();
-        } else {
-          btn.textContent = '再試行（同じ操作 ID で安全に再実行できます）';
-          btn.disabled = false;
+        const typed = window.prompt('確認のため、付与予定人数「' + plan.willGrant + '」を入力してください') || '';
+        if (String(typed).trim() !== String(plan.willGrant)) {
+          cbNotify('warn', '付与を中止しました', '入力が一致しませんでした。');
+          return;
         }
+        // 本番付与はここ 1 か所からしか呼ばない
+        await cbRunApply(btn, plan, sel);
       });
       ops.appendChild(btn);
       sec3.appendChild(ops);
