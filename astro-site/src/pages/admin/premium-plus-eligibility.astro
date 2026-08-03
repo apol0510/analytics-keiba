@@ -1070,6 +1070,29 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe #paneMkt[data-colmode=basic] .col-detail { display: none; }
   .ppe .action-box { border-color: rgba(56,189,248,.35); }
 
+  /* ── 送信ジョブ一覧 ──────────────────────────────────────────
+     時系列（.tl-row）のグリッドを流用すると列が潰れて縦組みになるため、
+     ここは**縦に積むだけ**にする。狭い画面でも同じ形で読める。 */
+  .ppe .job-row {
+    display: block; padding: .55rem 0; font-size: .74rem;
+    border-bottom: 1px dotted rgba(148,163,184,.14);
+  }
+  .ppe .job-row .job-head {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .5rem; margin: 0 0 .3rem;
+  }
+  .ppe .job-row .tl-detail { margin: .12rem 0; }
+  .ppe .job-counts {
+    display: flex; flex-wrap: wrap; gap: .2rem .85rem; margin: .25rem 0 0;
+  }
+  /* 項目の中では折り返さない（「送信待ち 28」が分断されないように）*/
+  .ppe .job-count { white-space: nowrap; color: #cbd5e1; }
+  .ppe .job-count .jc-k { color: #94a3b8; margin-right: .3rem; }
+  .ppe .job-count .jc-v { color: #e6edf7; }
+  .ppe .job-count.is-wait .jc-v { color: var(--action-yellow); }
+  .ppe .job-count.is-ok .jc-v { color: #6ee7b7; }
+  .ppe .job-count.is-ng .jc-v { color: #fca5a5; }
+  .ppe .job-row .ops { margin: .45rem 0 0; }
+
   @media (max-width: 720px) {
     /* 狭い画面では詳細列を常に隠す（カルテで確認する） */
     .ppe #paneMkt .col-detail { display: none; }
@@ -4638,8 +4661,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         sec.appendChild(p);
       }
       for (const j of data.jobs) {
-        const box = document.createElement('div'); box.className = 'tl-row';
-        const head = document.createElement('div');
+        // 顧客カルテの時系列（.tl-row）は 4 カラムのグリッド。ここで流用すると
+        // 「取り消す」ボタンの列が幅を奪い、件数の列が 0 幅近くまで潰れて
+        // **1 文字ずつ縦に折り返す**（2026-08-03 本番で発生）。専用クラスで縦に積む。
+        const box = document.createElement('div'); box.className = 'job-row';
+        const head = document.createElement('div'); head.className = 'job-head';
         const badge = flowApi().resolveJobBadge({ status: j.status, counts: j.counts });
         const b = document.createElement('span');
         b.className = 'badge b-' + badge.tone;
@@ -4663,10 +4689,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         box.appendChild(subj);
 
         const c = j.counts || {};
-        const counts = document.createElement('div'); counts.className = 'tl-detail';
-        counts.textContent = '対象 ' + j.recipientCount + ' 名 ／ 送信待ち ' + (c.queued || 0)
-          + ' ／ 送信済 ' + (c.sent || 0) + ' ／ 失敗 ' + (c.failed || 0)
-          + ' ／ スキップ ' + (c.skipped || 0) + ' ／ 取消 ' + (c.cancelled || 0);
+        // 1 つの長い文字列にすると、列が狭いときに文字単位で折り返して縦組みになる。
+        // 項目ごとの要素に分け、**折り返しは項目の境目でだけ**起きるようにする。
+        const counts = document.createElement('div'); counts.className = 'job-counts';
+        for (const [label, value, tone] of [
+          ['対象', j.recipientCount + ' 名', ''],
+          ['送信待ち', c.queued || 0, (c.queued || 0) > 0 ? 'is-wait' : ''],
+          ['送信済', c.sent || 0, (c.sent || 0) > 0 ? 'is-ok' : ''],
+          ['失敗', c.failed || 0, (c.failed || 0) > 0 ? 'is-ng' : ''],
+          ['スキップ', c.skipped || 0, ''],
+          ['取消', c.cancelled || 0, ''],
+        ]) {
+          const item = document.createElement('span');
+          item.className = 'job-count' + (tone ? ' ' + tone : '');
+          const k = document.createElement('span'); k.className = 'jc-k'; k.textContent = label;
+          const v = document.createElement('b'); v.className = 'jc-v'; v.textContent = String(value);
+          item.appendChild(k); item.appendChild(v);
+          counts.appendChild(item);
+        }
         box.appendChild(counts);
 
         // 失敗・スキップの理由は分類として出す（アドレスは出さない）
