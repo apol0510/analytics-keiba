@@ -153,3 +153,49 @@ test('smoke: 版の印が無い（古い形式の）ジョブも送らない', a
   assert.equal(body.jobResults[0].blocked, 'shell_version_mismatch');
   assert.equal(body.jobResults[0].jobShellVersion, null);
 });
+
+// =========================================================================
+// ジョブカードからの送信（2026-08-03）
+// jobId を固定して 1 回だけ送る。retry・二重クリックで二重送信しない。
+// =========================================================================
+
+const GATE_OPEN = { MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' };
+
+test('smoke: live は jobId 指定が必須（全件送信を許さない）', async () => {
+  const calls = stub({ scheduled: [job()] });
+  const { statusCode, body } = await invoke({ dryRun: false }, GATE_OPEN);
+  assert.equal(statusCode, 400, 'jobId 無しで実送信できてしまう');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(calls.sendgridSend, 0, 'メールを送っている');
+  assert.equal(calls.airtableWrites, 0, '書き込んでいる');
+});
+
+test('smoke: live は確認した人数（expectedWillSend）が必須', async () => {
+  const calls = stub({ scheduled: [job()] });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID }, GATE_OPEN);
+  assert.equal(statusCode, 400, '人数の確認なしで送れてしまう');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(calls.sendgridSend, 0, 'メールを送っている');
+  assert.equal(calls.airtableWrites, 0, '書き込んでいる');
+});
+
+test('smoke: 確認した人数と実際が違えば送らない（409 / 書き込みゼロ）', async () => {
+  const calls = stub({ scheduled: [job()] });
+  const { statusCode, body } = await invoke(
+    { dryRun: false, jobId: JOB_ID, expectedWillSend: 999 }, GATE_OPEN);
+  assert.equal(statusCode, 409, '人数が食い違っても送れてしまう');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(calls.sendgridSend, 0, 'メールを送っている');
+});
+
+test('smoke: dry-run はジョブ単位の内訳を返す', async () => {
+  stub({ scheduled: [job()] });
+  const { statusCode, body } = await invoke({ dryRun: true, jobId: JOB_ID });
+  assert.equal(statusCode, 200);
+  assert.equal(body.requestedJobId, JOB_ID, '対象ジョブをエコーしていない');
+  const r = body.jobResults[0];
+  for (const k of ['jobId', 'campaignId', 'version', 'shellVersion', 'contentHash',
+    'status', 'queued', 'willSend', 'willSkip', 'skipByReason']) {
+    assert.ok(k in r, `jobResults に ${k} が無い`);
+  }
+});

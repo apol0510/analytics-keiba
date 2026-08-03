@@ -452,6 +452,38 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
   （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
 
+## 2026-08-03 — 送信待ちジョブをカードから安全に送れるようにする（branch `feat/job-card-send` / Draft PR・未 merge）
+
+**きっかけ**: 実送信は Step 5（顧客を選ぶ → キャンペーンを選ぶ → dry-run → キュー登録 → 送信）
+の一本道にしか無く、**すでにキュー登録済みのジョブ**を送るのに顧客の再選択と dry-run の
+やり直しが要った。選び直した母集団がキュー登録時と違えばそもそも送れず、画面の選択状態に
+依存するため別の日・別の人が引き継げない。
+
+**入れたもの**
+
+- `src/lib/marketing/marketingJobSend.js`（新規・純粋）
+  確認結果の 1 件特定 / 押下可否 / 人数照合 / 結果まとめ。理由コードは固定
+- 送信状況モーダルの **PENDING カードに「配信内容を確認」→「今すぐ送信」** を追加
+  - 対象は**カードの jobId だけ**。顧客選択・絞り込み・キャンペーン選択を一切見ない
+  - 確認結果に queued / 実送信予定 / 除外 / 除外理由 / campaignId:v / shellVersion /
+    contentHash / suppression 照合可否 を表示
+- **API 側でも job 単位の冪等性**を保証
+  - このジョブの配信行が既に `sent` の相手は送信対象から外す（`already_sent_in_job`）
+    → 通信 retry・二重クリック・途中で落ちた再実行で二度送らない
+  - live は `jobId` **必須**（省略時の全件送信を禁止）
+  - live は `expectedWillSend` **必須**。確認時と人数が違えば **409**（書き込みゼロ）
+- 送信直前にもう一度 dry-run を取り、jobId / 人数 / contentHash / shellVersion が
+  確認時と同じであることを照合（違えば送らない）
+- 送信済み・失敗・取消済みのジョブは押せない。実行中は無効化、完了後は再送不可
+- 取消ボタンは従来どおり独立
+- 360px でボタンが縦積み・全幅（実描画で確認）
+
+**変えていないもの**: 認証方式（既存の `x-admin-secret`。新しい secret 依存を作らない）/
+suppression・配信停止・退会・頻度の送信直前再判定 / provider suppression の fail closed /
+Step 5 の既存フロー / 他キャンペーンの契約。
+
+**この作業では 28 名へ送っていない**（dispatcher 実行・キュー取消・再登録・Airtable write なし）。
+
 ## 2026-08-03 — キャンペーンメールを AK ブランドの HTML メールへ（branch `feat/marketing-html-email-templates` / Draft PR・未 merge）
 
 **きっかけ**: 送っているメールが `<div>` に段落を並べて青いボタンを 1 つ置いただけで、
