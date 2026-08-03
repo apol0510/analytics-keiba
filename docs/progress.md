@@ -480,26 +480,43 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
 - 引き継ぎ帯を実在トークン（`--action-green` / `--text-main`）へ。モバイル折り返しも追加
 - 引き継ぎ中は「取得 0 名 / 選択 0 名」を補助表示へ下げ、「引き継ぎ対象 N 名・再選択不要」を主表示に
 
-**⚠️ 未解決: operationId と付与内容の食い違い**
+**✅ 決着: operationId は付与内容を表さない（本番実測 2026-08-03）**
 
-依頼では「Light 30日無料を付与」とあったが、示された operationId は
-`cb-**light-lifetime-free**-2026-08-03-d1b34296`。`newOperationId()` は
-`cb-{先頭 offerId}-{日付}-{乱数}` なので、この ID は **Light 永久無料**を示す。
-実データ確認は本番顧客レコードの read になるため未実施。
-自動選択は `light-30d-free` のときだけ発火するので、**仮に永久無料でも 30日用文面は自動選択されない**
-（「対応テンプレート未設定」で手動選択を要求する）。送信前に実際の付与内容を確認すること。
+依頼では「Light 30日無料」、示された operationId は `cb-`**`light-lifetime-free`**`-2026-08-03-d1b34296`。
+本番 Customers を **read-only（GET のみ・15 リクエスト・1460 件走査・write 0）** で集計した結果:
 
-**⚠️ 引き継ぎの有効期限（2 時間）と再引き継ぎ**
+| 項目 | 値 |
+|---|---|
+| `LightGrantOp` 一致 | **28 件** |
+| `LightGrantLifetime` = true | **0 件** |
+| `LightGrantUntil` あり | **28 件**（全員 2026-09-02）|
+| `LightGrantRevokedAt` あり | **0 件** |
+| `LightGrantedAt` | 全員 2026-08-03T09:25:10.633Z |
+| Premium 側 | 0 件 |
 
-`HANDOFF_TTL_MS = 2h` を **付与時刻（`*GrantedAt`）基準**でサーバーが測る。超過すると
-admin-marketing / 下見とも 410 で止まり、`sessionStorage` の保存値も失効する。
-**期限切れ後に既存 operationId から引き継ぎ直す経路は現状無い**（read-only でも作れない）。
+→ **判定 B: 28 名すべて Light 30日無料**（8/3 付与 → 9/2 期限 = 30 日）。永久無料ではない。
 
-読み取りだけなら `action: 'reconcile'` で `operationId` の適用状況（適用済み / 未適用の件数）を
-確認できるが、それを送信対象へ渡す導線は無い。別 PR 候補（本 PR では実装しない）:
+**原因**: `operationId` は**最初の dry-run 時の選択で命名**され、`cbLastOperationId` として
+その後の選択変更後も引き継がれる（冪等な再開のための仕様）。
+先に `light-lifetime-free` で dry-run → 選択を `light-30d-free` に変えて実行、の順序で
+ID だけが古い名前のまま残った。**operationId を付与内容の根拠にしてはいけない。**
+付与内容の正本は Customers の `*GrantLifetime` / `*GrantUntil` / `*GrantedAt`。
 
-1. TTL の見直し（2h → 24h 程度）。定数 1 か所 + テスト更新で済む。文面作成に時間がかかる運用実態に合わせる
-2. 管理用の再引き継ぎ導線（`operationId` を入力して引き継ぎを作り直す。TTL 判定は残し、超過分は明示確認を要求）
+そのため再引き継ぎでは offerId を ID から読まず、**実データの期間から逆引き**する
+（`inferGrantOfferId`）。逆引きできない日数（31 日など）は `null` を返して自動選択しない。
+
+**引き継ぎの有効期限を 2 時間 → 24 時間へ**
+
+2 時間では、付与後に案内文面を用意して確認する間に失効した（実際に本件で失効）。
+24 時間なら「今日配って今日中に案内を出す」運用に収まる。期限を延ばしても
+対象は毎回サーバー再導出・使い切り・DeliveryKey による二重送信防止が効くため安全性は変わらない。
+
+**operationId からの再引き継ぎ（read-only）**
+
+`action: 'handoffLookup'` を追加。operationId を渡すと付与成功者を読み直し、
+**件数・付与種別・付与日時だけ**返す（PII / recordId は返さない）。
+GET しか投げず、再付与も取り消しもしない。存在しない ID / 0 件 / 期限切れは fail closed（400/409/410）。
+画面は 📣 顧客マーケティングタブ Step 2 の「🔁 操作 ID から引き継ぎ直す」から使う。
 
 **別 PR 候補: 案内テンプレートの拡張（雑に 1 文面へまとめない）**
 

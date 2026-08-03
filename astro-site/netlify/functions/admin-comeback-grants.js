@@ -12,6 +12,8 @@
  *   action='offerRevokeDryRun' … 割引オファー 1 件の取り消し内容を確定（書き込みなし）
  *   action='offerRevoke' … 割引オファー 1 件を Status=revoked にする（Customers は触らない）
  *   action='reconcile' … operationId の適用状況を読み直して突合する（read-only）
+ *   action='handoffLookup' … operationId から**付与成功者を再導出**し、件数・種別・付与日時
+ *                            だけを返す（read-only。PII / recordId は返さない）
  *
  * ── grant の取り消しと offer の取り消しを混ぜない ─────────────────
  *   revoke / revokeDryRun      … Customers の**特典カラム**を消す（＝閲覧権が減る）
@@ -210,6 +212,7 @@ export const handler = async (event) => {
     if (action === 'offerRevokeDryRun') return await handleOfferRevoke({ KEY, BASE, now, req, live: false });
     if (action === 'offerRevoke') return await handleOfferRevoke({ KEY, BASE, now, req, live: true });
     if (action === 'reconcile') return await handleReconcile({ KEY, BASE, now, req });
+    if (action === 'handoffLookup') return await handleHandoffLookup({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [admin-comeback-grants]', e.message);
@@ -993,6 +996,67 @@ async function handleReconcile({ KEY, BASE, now, req }) {
     notice: result.counts.missing === 0
       ? 'この操作の対象はすべて適用済みです。'
       : '未適用が残っています。同じ operationId で dry-run → 実行すると残りだけが対象になります。',
+  });
+}
+
+/**
+ * operationId から引き継ぎを作り直す（**read-only**）。
+ *
+ * ── なぜ要るか ────────────────────────────────────────────────
+ * 引き継ぎはブラウザの sessionStorage にしか無く、期限切れ・タブを閉じた・別タブ、の
+ * どれかで失われる。失われると「誰に配ったか」は Customers に残っているのに、
+ * 案内メールの対象へ渡す手段が無くなる（2026-08-03 の本番運用で実際に詰まった）。
+ *
+ * ── 安全側の約束 ──────────────────────────────────────────────
+ *   - **GET しかしない**。Customers も PromotionalOffers も 1 バイトも書かない
+ *   - 再付与しない（この経路から grant を作ることはできない）
+ *   - 返すのは件数・付与種別・付与日時だけ。**アドレス・氏名・recordId は返さない**
+ *   - 存在しない operationId / 付与 0 件 / 期限切れ は fail closed（409 / 410）
+ *   - operationId を書き換えても、その ID で実際に付与された人しか出てこない
+ */
+async function handleHandoffLookup({ KEY, BASE, now, req }) {
+  const operationId = String(req.operationId || '').trim();
+  if (!operationId) return json(400, { error: 'operationId が必要です', sideEffects: 'none' });
+
+  const { list } = await loadCustomers({ KEY, BASE, now });
+  const resolved = collectGrantedRecipients({ records: list, operationId, nowMs: now });
+  const verdict = validateHandoffResolution({
+    operationId,
+    recordIds: resolved.recordIds,
+    latestGrantedAtMs: resolved.latestGrantedAtMs,
+    nowMs: now,
+  });
+  if (!verdict.ok) {
+    return json(verdict.reason === HANDOFF_BLOCK.EXPIRED ? 410 : 409, {
+      error: HANDOFF_BLOCK_LABEL[verdict.reason] || '引き継ぎを作れません',
+      reason: verdict.reason,
+      operationId,
+      // 期限切れは「何件あったか」だけ伝える（探し直しの手がかり）
+      resolved: verdict.recipientCount,
+      sideEffects: 'none',
+    });
+  }
+
+  const describeKind = (k) => (k ? {
+    count: k.count,
+    lifetime: k.lifetime,
+    durationDays: k.durationDays,
+    mixed: k.mixed,
+    grantedAt: Number.isFinite(k.grantedAtMs) ? new Date(k.grantedAtMs).toISOString() : null,
+    until: Number.isFinite(k.untilMs) ? new Date(k.untilMs).toISOString() : null,
+  } : null);
+
+  return json(200, {
+    mode: 'handoff-lookup',
+    sideEffects: 'none',
+    operationId,
+    resolved: verdict.recipientCount,
+    byTier: resolved.byTier,
+    kinds: { light: describeKind(resolved.kinds.light), premium: describeKind(resolved.kinds.premium) },
+    grantedAt: Number.isFinite(resolved.latestGrantedAtMs)
+      ? new Date(resolved.latestGrantedAtMs).toISOString() : null,
+    expiresAt: new Date(verdict.expiresAtMs).toISOString(),
+    notice: '付与に成功した顧客だけを読み直しました。付与も取り消しも行っていません。',
   });
 }
 

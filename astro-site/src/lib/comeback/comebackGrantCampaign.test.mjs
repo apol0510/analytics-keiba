@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   GRANT_CAMPAIGN_BY_OFFER, GRANT_CAMPAIGN_BLOCK, GRANT_CAMPAIGN_BLOCK_LABEL,
   TEMPLATE_MISSING_NOTICE, recommendCampaignForGrant, pickInitialCampaign, describeCta,
+  inferGrantOfferId, buildGrantOffersFromKinds,
 } from './comebackGrantCampaign.js';
 import { getCampaign, listCampaigns } from '../marketing/campaignCatalog.js';
 
@@ -182,4 +183,64 @@ test('CTA 未設定でも落ちない', () => {
   assert.equal(d.url, '');
   assert.match(d.note, /設定されていません/);
   assert.equal(describeCta().label, '');
+});
+
+// =========================================================================
+// 実データからの逆引き（再引き継ぎ）
+// =========================================================================
+
+test('30 日付与 → light-30d-free → 専用キャンペーン', () => {
+  const offerId = inferGrantOfferId({ tier: 'light', lifetime: false, durationDays: 30 });
+  assert.equal(offerId, 'light-30d-free');
+  assert.equal(recommendCampaignForGrant({ light: offerId }).campaignId, 'comeback-light-30d-granted');
+});
+
+test('永久付与 → light-lifetime-free（対応文面は未設定なので自動選択しない）', () => {
+  const offerId = inferGrantOfferId({ tier: 'light', lifetime: true, durationDays: null });
+  assert.equal(offerId, 'light-lifetime-free');
+  assert.equal(recommendCampaignForGrant({ light: offerId }).campaignId, null);
+});
+
+test('混在は逆引きしない（違う条件の人へ同じ文面を送らない）', () => {
+  assert.equal(inferGrantOfferId({ tier: 'light', lifetime: null, durationDays: null, mixed: true }), null);
+});
+
+test('対応表に無い日数は逆引きしない（「近いから 30 日」にしない）', () => {
+  assert.equal(inferGrantOfferId({ tier: 'light', lifetime: false, durationDays: 31 }), null);
+  assert.equal(inferGrantOfferId({ tier: 'light', lifetime: false, durationDays: 7 }), null);
+  assert.equal(inferGrantOfferId({ tier: 'light', lifetime: false, durationDays: 90 }), 'light-90d-free');
+});
+
+test('Premium 側も逆引きできる', () => {
+  assert.equal(inferGrantOfferId({ tier: 'premium', lifetime: false, durationDays: 30 }), 'premium-30d-free');
+  assert.equal(inferGrantOfferId({ tier: 'premium', lifetime: true }), 'premium-lifetime-free');
+});
+
+test('壊れた入力では逆引きしない', () => {
+  assert.equal(inferGrantOfferId({}), null);
+  assert.equal(inferGrantOfferId(), null);
+  assert.equal(inferGrantOfferId({ tier: 'sanrenpuku', lifetime: true }), null);
+  assert.equal(inferGrantOfferId({ tier: 'light', lifetime: false, durationDays: NaN }), null);
+});
+
+test('kinds から引き継ぎ票の grantOffers を作る', () => {
+  const offers = buildGrantOffersFromKinds({
+    light: { lifetime: false, durationDays: 30, mixed: false },
+    premium: null,
+  });
+  assert.deepEqual(offers, { light: 'light-30d-free', premium: null });
+  // 逆引きできない tier は null（自動選択させない）
+  assert.deepEqual(
+    buildGrantOffersFromKinds({ light: { lifetime: false, durationDays: 45, mixed: false } }),
+    { light: null, premium: null },
+  );
+  assert.deepEqual(buildGrantOffersFromKinds({}), { light: null, premium: null });
+});
+
+test('本番実測（2026-08-03 / 28 名）の付与は 30 日として読める', () => {
+  // LightGrantedAt 2026-08-03T09:25:10Z → LightGrantUntil 2026-09-02 = 30 日
+  const kinds = { light: { count: 28, lifetime: false, durationDays: 30, mixed: false } };
+  const offers = buildGrantOffersFromKinds(kinds);
+  assert.equal(offers.light, 'light-30d-free');
+  assert.equal(recommendCampaignForGrant(offers).campaignId, 'comeback-light-30d-granted');
 });

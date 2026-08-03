@@ -105,6 +105,43 @@ export function pickInitialCampaign({ campaigns, handoff } = {}) {
 }
 
 /**
+ * 実データの grant から offerId を逆引きする（再引き継ぎで使う）。
+ *
+ * 付与時に選んだ offerId は Customers に保存されていない（保存するのは
+ * 期間・無期限・操作 ID だけ）。案内文面を選ぶために、**期間から逆に引く**。
+ *
+ * ⚠️ 該当が無ければ `null`。「近い日数だから 30 日扱い」はしない
+ *    （31 日付与に「30日間無料」と案内するような誤りを作らないため）。
+ *
+ * @param {{ tier: string, lifetime: boolean|null, durationDays: number|null, mixed?: boolean }} kind
+ */
+export function inferGrantOfferId(kind = {}) {
+  if (!kind || kind.mixed === true) return null;
+  const tier = str(kind.tier);
+  if (tier !== 'light' && tier !== 'premium') return null;
+  if (kind.lifetime === true) return tier === 'light' ? 'light-lifetime-free' : 'premium-lifetime-free';
+  if (kind.lifetime !== false) return null;                    // 判定できない
+  const days = Number(kind.durationDays);
+  if (!Number.isFinite(days)) return null;
+  const byDays = tier === 'light'
+    ? { 30: 'light-30d-free', 90: 'light-90d-free' }
+    : { 30: 'premium-30d-free', 365: 'premium-annual-free' };
+  return byDays[days] || null;                                 // 任意日数は逆引きしない
+}
+
+/**
+ * 再引き継ぎの応答（tier ごとの grant 種別）から、引き継ぎ票の `grantOffers` を作る。
+ * 逆引きできなかった tier は `null`（＝文面を自動選択しない）。
+ */
+export function buildGrantOffersFromKinds(kinds = {}) {
+  const pick = (tier) => {
+    const k = kinds && kinds[tier];
+    return k ? inferGrantOfferId({ ...k, tier }) : null;
+  };
+  return { light: pick('light'), premium: pick('premium') };
+}
+
+/**
  * CTA の表示内容（管理画面の read-only 表示用）。
  *
  * 受信者ごとに変わる専用 URL（割引オファー）は**実 URL を出さない**。

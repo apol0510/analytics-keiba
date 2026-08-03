@@ -253,6 +253,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         引き継ぎ中はここで顧客を選び直す必要がない（対象は送信のたびにサーバーが確定する）。
       -->
       <div class="handoff-bar" id="mkHandoffBar" hidden aria-live="polite"></div>
+      <!--
+        引き継ぎを失った（期限切れ・タブを閉じた・別タブ）ときの復旧。
+        operationId を入れると**サーバーが Customers から付与成功者を読み直す**。
+        read-only で、付与も取り消しもしない。
+      -->
+      <details class="filter-more" id="mkRehandoffBox">
+        <summary>🔁 操作 ID から引き継ぎ直す（付与済みの相手へ案内する）</summary>
+        <p class="note">
+          付与したときの<b>操作 ID</b>を入れると、その操作で<b>付与に成功した顧客だけ</b>を
+          サーバーが読み直します。<b>付与のやり直しは行いません</b>（読み取りだけです）。
+        </p>
+        <div class="toolbar">
+          <input type="text" id="mkRehandoffOp" class="editor-subject" autocomplete="off" spellcheck="false"
+            placeholder="例: cb-light-30d-free-2026-08-03-xxxxxxxx" aria-label="操作 ID" />
+          <button type="button" id="mkRehandoffBtn" class="btn-primary">引き継ぎ直す</button>
+        </div>
+        <p class="note" id="mkRehandoffState" aria-live="polite"></p>
+      </details>
       <div class="selbar">
         <span class="colmode">表示列:
           <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
@@ -1797,10 +1815,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   import {
     GRANT_CAMPAIGN_BLOCK, GRANT_CAMPAIGN_BLOCK_LABEL, TEMPLATE_MISSING_NOTICE,
     recommendCampaignForGrant, pickInitialCampaign, describeCta,
+    inferGrantOfferId, buildGrantOffersFromKinds,
   } from '../../lib/comeback/comebackGrantCampaign.js';
   window.__cbCampaign = {
     GRANT_CAMPAIGN_BLOCK, GRANT_CAMPAIGN_BLOCK_LABEL, TEMPLATE_MISSING_NOTICE,
     recommendCampaignForGrant, pickInitialCampaign, describeCta,
+    inferGrantOfferId, buildGrantOffersFromKinds,
   };
   // 無料付与 → 案内メールの引き継ぎ（対象の確定はサーバー。ここは保存と期限だけ）
   import {
@@ -3629,6 +3649,56 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       if (mkState.handoff && !pick.matchedGrant && pick.label) {
         mkNotify('warn', '送る文面を選んでください', pick.label);
+      }
+    }
+
+    /**
+     * 操作 ID から引き継ぎ直す（**read-only**）。
+     * サーバーが付与成功者を読み直し、件数・付与種別・付与日時を返す。
+     * 画面は recordId を受け取らないし、URL にも何も載せない。
+     */
+    async function mkRehandoff() {
+      const btn = $('mkRehandoffBtn');
+      if (btn.dataset.busy === '1') return;                  // 二重クリック防止
+      const op = $('mkRehandoffOp').value.trim();
+      const state = $('mkRehandoffState');
+      if (!op) { state.textContent = '操作 ID を入力してください。'; return; }
+      btn.dataset.busy = '1'; btn.disabled = true;
+      state.textContent = '付与成功者を読み直しています…（書き込みは行いません）';
+      try {
+        // カムバック側の read-only API（付与も取り消しもしない）
+        const out = await cbCallDetailed({ action: 'handoffLookup', operationId: op });
+        if (!out.ok || !out.data || !(Number(out.data.resolved) > 0)) {
+          const d = out.data || {};
+          state.textContent = (d.error || '引き継ぎを作れませんでした。')
+            + (d.reason === handoffApi().HANDOFF_BLOCK.EXPIRED
+              ? '（付与から時間が経ちすぎています）' : '');
+          return;
+        }
+        const d = out.data;
+        // 実データの付与種別から offerId を逆引きし、案内文面の自動選択に使う
+        const grantOffers = window.__cbCampaign.buildGrantOffersFromKinds(d.kinds || {});
+        const adopted = window.__mkHandoff.adopt({
+          operationId: d.operationId,
+          grantedCount: Number(d.resolved) || 0,
+          grantOffers,
+          notGrantedCount: 0,
+          notGrantedReasons: [],
+          issuedAtMs: Date.now(),
+          expiresAtMs: Date.parse(d.expiresAt) || (Date.now() + handoffApi().HANDOFF_TTL_MS),
+          canHandoff: true,
+        });
+        if (!adopted) { state.textContent = '引き継げませんでした。'; return; }
+        const k = (d.kinds && (d.kinds.light || d.kinds.premium)) || {};
+        const kindText = k.mixed ? '種別が混在（自動選択しません）'
+          : k.lifetime === true ? '永久無料'
+            : Number.isFinite(k.durationDays) ? (k.durationDays + '日無料') : '種別不明';
+        state.textContent = '引き継ぎました: ' + d.resolved + ' 名 / ' + kindText
+          + ' / 付与日時 ' + fmtDate(d.grantedAt) + '（付与のやり直しはしていません）';
+      } catch (e) {
+        state.textContent = '読み直しに失敗しました。管理シークレットと操作 ID を確認してください。';
+      } finally {
+        btn.dataset.busy = ''; btn.disabled = false;
       }
     }
 
@@ -6439,6 +6509,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !$('cbBackdrop').hidden) cbCloseModal();
     });
+
+    $('mkRehandoffBtn')?.addEventListener('click', mkRehandoff);
 
     // 画面を読み込み直しても、同じタブなら引き継ぎは続く（期限切れ・使用済みは復元しない）
     mkHandoffRestore();

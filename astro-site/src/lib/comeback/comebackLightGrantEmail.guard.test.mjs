@@ -175,3 +175,55 @@ test('suppression / 配信停止 / fail closed を維持', () => {
   assert.match(MARKETING_FN, /fetchProviderSuppression\(/, 'suppression を確認していない');
   assert.match(MARKETING_FN, /buildCampaignPlan\(/, '除外判定の単一源が消えている');
 });
+
+// ── 8. operationId からの再引き継ぎ（read-only）──────────────────
+
+test('再引き継ぎは read-only の専用 action を使う', () => {
+  assert.match(GRANTS_CODE, /action === 'handoffLookup'/, '再引き継ぎの入口が無い');
+  const fn = sliceFrom(GRANTS_FN, 'async function handleHandoffLookup(', 3000);
+  assert.match(fn, /collectGrantedRecipients\(/, 'サーバー再導出を使っていない');
+  assert.match(fn, /validateHandoffResolution\(/, '期限判定を委譲していない');
+  // 書き込みも再付与もしない
+  assert.equal(/method: 'PATCH'|method: 'POST'|buildComebackPlan\(/.test(fn), false, '書き込み/再付与している');
+  assert.match(fn, /sideEffects: 'none'/, '副作用なしを宣言していない');
+});
+
+test('再引き継ぎの応答に PII / recordId を載せない', () => {
+  const fn = sliceFrom(GRANTS_FN, 'async function handleHandoffLookup(', 3000);
+  const body = fn.slice(fn.indexOf('return json(200'));
+  for (const b of ['recordIds', 'Email', 'email', '氏名']) {
+    assert.equal(body.includes(b), false, `応答に ${b} を載せている`);
+  }
+  assert.match(body, /resolved: verdict\.recipientCount/, '件数を返していない');
+  assert.match(body, /grantedAt/, '付与日時を返していない');
+});
+
+test('存在しない operationId / 0 件 / 期限切れ は fail closed', () => {
+  const fn = sliceFrom(GRANTS_FN, 'async function handleHandoffLookup(', 3000);
+  assert.match(fn, /if \(!operationId\) return json\(400/, '空 ID を弾いていない');
+  assert.match(fn, /HANDOFF_BLOCK\.EXPIRED \? 410 : 409/, '期限切れ / 0 件で止めていない');
+});
+
+test('画面は operationId を URL へ載せず、recordId も受け取らない', () => {
+  const fn = sliceFrom(SCRIPT, 'async function mkRehandoff(', 2600);
+  assert.match(fn, /action: 'handoffLookup'/, '再引き継ぎ API を呼んでいない');
+  assert.equal(/URLSearchParams|location\.(href|search)\s*=/.test(fn), false, 'URL へ載せている');
+  assert.equal(/recordIds/.test(fn), false, 'recordId を扱っている');
+  assert.match(fn, /dataset\.busy === '1'/, '二重クリック防止が無い');
+  assert.match(fn, /buildGrantOffersFromKinds\(/, '付与種別から文面を決めていない');
+});
+
+test('再引き継ぎの導線が画面にあり、付与しないと明示する', () => {
+  assert.match(PAGE, /id="mkRehandoffOp"/, '操作 ID の入力欄が無い');
+  assert.match(PAGE, /id="mkRehandoffBtn"/, '実行ボタンが無い');
+  assert.match(PAGE, /付与のやり直しは行いません/, '再付与しないことを明示していない');
+});
+
+// ── 9. 期限（24 時間）────────────────────────────────────────────
+
+test('handoff TTL は 24 時間で、使い切り・別タブ不可は維持', () => {
+  const mod = read('./comebackEmailHandoff.js');
+  assert.match(mod, /HANDOFF_TTL_MS = 24 \* 60 \* 60 \* 1000/, 'TTL が 24 時間でない');
+  assert.match(mod, /ALREADY_QUEUED/, '使い切りの判定が消えている');
+  assert.match(mod, /sessionStorage/, 'タブ内限定の保存でなくなっている');
+});
