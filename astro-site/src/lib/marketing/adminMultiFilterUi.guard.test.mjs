@@ -105,7 +105,7 @@ test('guard(filter): 右端のメニューは右揃えにして画面外へ出�
 
 test('guard(filter): 初期表示でも現在の Step が分かる', () => {
   // マーケティングタブは同期が走るまで Step が無色のままだった
-  assert.match(SCRIPT, /mkInitFilters\(\);\s*\n\s*\/\/[^\n]*\n\s*mkSyncFlow\(\);/, '初期表示で Step を同期していない');
+  assert.match(SCRIPT, /mkInitFilters\(\);[\s\S]{0,200}?mkSyncFlow\(\);/, '初期表示で Step を同期していない');
   assert.match(SCRIPT, /cbSync\(\);\s*\n\s*\} catch/, '初期表示で Step を同期していない');
 });
 
@@ -140,4 +140,68 @@ test('guard(api): 許可値以外は 400（formula へ直結させない）', ()
   // 受け取った値をそのまま Airtable の formula に入れない
   assert.equal(/filterByFormula[^\n]*req\./.test(FN_CB), false, 'リクエスト値を formula に直結している');
   assert.equal(/filterByFormula[^\n]*req\./.test(FN_MK), false, 'リクエスト値を formula に直結している');
+});
+
+/* ── 説明性とレイアウト（2026-08-03）───────────────────────────── */
+
+test('guard(ui): Email 検索は補助機能として畳まれている', () => {
+  for (const id of ['q', 'mkQ', 'cbQ']) {
+    assert.match(PAGE, new RegExp(`<details class="email-search" id="${id}Box">`), `${id} が折りたたみでない`);
+    assert.equal(new RegExp(`<details class="email-search" id="${id}Box" open`).test(PAGE), false,
+      `${id} が初期から開いている`);
+    assert.ok(PAGE.includes(`id="${id}Badge"`), `${id} のバッジが無い`);
+    assert.ok(PAGE.includes(`id="${id}Clear"`), `${id} のクリアが無い`);
+  }
+  assert.match(PAGE, /特定の顧客をメールアドレスで探す場合だけ使用します。/, '用途の説明が無い');
+  assert.match(PAGE, /Email 条件あり/, '入力中のバッジ文言が無い');
+  const css = STYLE.slice(STYLE.indexOf('.ppe .email-search'));
+  assert.match(css, /max-width: 420px/, 'desktop で幅を制限していない');
+});
+
+test('guard(ui): Email 検索は入力があるとき開いたままバッジを出す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function initEmailSearch'), SCRIPT.indexOf('function initEmailSearch') + 900);
+  assert.match(block, /badge\.hidden = !has/, '入力有無でバッジを切り替えていない');
+  assert.match(block, /if \(has\) box\.open = true/, '検索中に閉じてしまう');
+  assert.match(SCRIPT, /for \(const id of \['q', 'mkQ', 'cbQ'\]\) initEmailSearch\(id\)/, '初期化していない');
+});
+
+test('guard(ui): 説明は単一源から作る（画面に文言を直書きしない）', () => {
+  assert.match(PAGE, /from '\.\.\/\.\.\/lib\/marketing\/filterDefinitions\.js'/, '定義を import していない');
+  assert.match(SCRIPT, /defsApi\(\)\.getFilterDefinition\(selectId\)/, '項目の説明を定義から取っていない');
+  assert.match(SCRIPT, /defsApi\(\)\.getOptionDefinition\(selectId, it\.value\)/, '選択肢の説明を定義から取っていない');
+  assert.match(SCRIPT, /defs\.optionLabel\(selectId, o\.value\)/, '表示名を定義から取っていない');
+});
+
+test('guard(ui): 説明ボタンはチェックを切り替えない・同時に 1 つだけ', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("info.className = 'info-btn'"), SCRIPT.indexOf("info.className = 'info-btn'") + 700);
+  assert.match(block, /e\.preventDefault\(\); e\.stopPropagation\(\);/, 'クリックがチェックへ伝わる');
+  assert.match(SCRIPT, /function openInfo\(anchor, title, text\)/, '説明を開く仕組みが無い');
+  assert.match(SCRIPT, /closeInfo\(\);\s*\n\s*el\.querySelector\('\.info-title'\)/, '同時に複数開ける');
+  assert.match(SCRIPT, /aria-expanded/, 'aria 対応が無い');
+});
+
+test('guard(ui): 説明は外側クリック・Esc で閉じ、画面外へはみ出さない', () => {
+  assert.match(SCRIPT, /if \(e\.key === 'Escape'\) closeInfo\(\)/, 'Esc で閉じない');
+  assert.match(SCRIPT, /if \(el\.contains\(e\.target\)[\s\S]{0,80}return;\s*\n\s*closeInfo\(\);/, '外側クリックで閉じない');
+  assert.match(SCRIPT, /Math\.min\(r\.left, window\.innerWidth - w - 8\)/, '右端ではみ出す');
+  assert.match(SCRIPT, /is-sheet/, 'スマホ用の表示が無い');
+});
+
+test('guard(ui): 説明の見た目（幅・コントラスト・スマホシート）', () => {
+  const css = STYLE.slice(STYLE.indexOf('.ppe .info-pop'));
+  assert.match(css, /width: 320px/, '説明の幅が指定されていない');
+  assert.match(css, /max-width: calc\(100vw - 16px\)/, '画面幅を超える');
+  assert.match(css, /z-index: 200/, '他のメニューより前面でない');
+  assert.match(STYLE, /\.ppe \.info-pop\.is-sheet/, 'スマホ用シートの見た目が無い');
+});
+
+test('guard(ui): 内部用語が画面の表示文言に残っていない', () => {
+  const CB = PAGE.slice(PAGE.indexOf('id="paneMkt"'), PAGE.indexOf('<style is:global>'));
+  for (const bad of ['不明（legacy）', '有効オファーあり', '期限 7 日以内', '特典中']) {
+    assert.equal(CB.includes(bad), false, `「${bad}」が残っている`);
+  }
+});
+
+test('guard(ui): 詳細条件の見出しが分かりやすい', () => {
+  assert.match(PAGE, /<summary>詳細な絞り込み条件<span class="filter-more-hint">送信履歴・オファー・無料付与・最終ログインなど<\/span><\/summary>/);
 });

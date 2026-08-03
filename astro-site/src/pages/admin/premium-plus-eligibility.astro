@@ -58,30 +58,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <div class="sumsub" id="summarySub"></div>
 
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+      <details class="email-search" id="qBox">
+          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="qBadge" hidden>Email 条件あり</span></summary>
+          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <div class="email-row">
+            <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <button type="button" id="qClear" class="btn-ghost btn-sm">クリア</button>
+          </div>
+        </details>
       <select id="fState" aria-label="状態で絞り込み">
         <option value="all">すべての状態</option>
-        <option value="review">保留</option>
-        <option value="eligible">販売可（段階公開中・販売中）</option>
-        <option value="immediate">即時販売</option>
+        <option value="review">保留（確認待ち）</option>
+        <option value="eligible">販売できる</option>
+        <option value="immediate">すぐ販売できる（個別許可）</option>
         <option value="blocked">販売対象外</option>
       </select>
       <select id="fRoute" aria-label="Route で絞り込み">
         <option value="all">すべての Route</option>
-        <option value="sanrenpuku">ROUTE A（三連複）</option>
-        <option value="premium_30d">ROUTE B（Premium 30日）</option>
+        <option value="sanrenpuku">三連複の購入から</option>
+        <option value="premium_30d">Premium 加入30日から</option>
       </select>
       <select id="fKind" aria-label="候補区分で絞り込み">
         <option value="all">すべての区分</option>
-        <option value="waiting_30d">ROUTE B 待機中</option>
-        <option value="anchor_missing">加入日データなし</option>
+        <option value="waiting_30d">Premium 30日待ち</option>
+        <option value="anchor_missing">加入日が不明</option>
       </select>
       <select id="fUpsell" aria-label="販売CTA で絞り込み">
         <option value="all">すべての販売CTA</option>
-        <option value="auto">自動</option>
-        <option value="sanrenpuku">三連複</option>
-        <option value="plus">Plus</option>
-        <option value="none">なし</option>
+        <option value="auto">自動で選ぶ</option>
+        <option value="sanrenpuku">三連複を案内</option>
+        <option value="plus">Premium Plus を案内</option>
+        <option value="none">案内しない</option>
       </select>
       <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
     </div>
@@ -139,69 +146,76 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <section class="step" data-step="1" aria-labelledby="mkStep1H">
         <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む</h2>
       <div class="toolbar">
-        <input type="search" id="mkQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <details class="email-search" id="mkQBox">
+          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="mkQBadge" hidden>Email 条件あり</span></summary>
+          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <div class="email-row">
+            <input type="search" id="mkQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <button type="button" id="mkQClear" class="btn-ghost btn-sm">クリア</button>
+          </div>
+        </details>
         <select id="mkContract" aria-label="契約状態">
           <option value="all">契約状態: すべて</option>
           <option value="active">有効</option>
-          <option value="expiring_soon">期限間近</option>
+          <option value="expiring_soon">期限が近い（14日以内）</option>
           <option value="expired">期限切れ</option>
-          <option value="unknown">不明（legacy）</option>
-          <option value="none">契約なし（Free）</option>
+          <option value="unknown">状態を判定できない旧データ</option>
+          <option value="none">契約なし（無料会員）</option>
         </select>
         <select id="mkPlan" aria-label="プラン">
           <option value="all">プラン: すべて</option>
-          <option value="premium_sanrenpuku">Premium Sanrenpuku</option>
+          <option value="premium_sanrenpuku">Premium 三連複</option>
           <option value="premium">Premium</option>
           <option value="light">Light</option>
-          <option value="free">Free</option>
+          <option value="free">無料会員</option>
         </select>
         <select id="mkSendable" aria-label="マーケティング">
           <option value="all">送信可否: すべて</option>
-          <option value="sendable">送信可能</option>
-          <option value="suppressed">送信除外</option>
+          <option value="sendable">送信できる</option>
+          <option value="suppressed">送信できない</option>
         </select>
       </div>
 
       <details class="filter-more" id="mkFilterMore">
-        <summary>詳細条件（Plus 資格 / 送信履歴 / オファー / 無料付与 / 送信タイミング / 最終ログイン）</summary>
+        <summary>詳細な絞り込み条件<span class="filter-more-hint">送信履歴・オファー・無料付与・最終ログインなど</span></summary>
         <div class="toolbar">
         <select id="mkPp" aria-label="Premium Plus 資格">
           <option value="all">Plus 資格: すべて</option>
-          <option value="eligible">販売可</option>
-          <option value="review">保留</option>
+          <option value="eligible">販売できる</option>
+          <option value="review">保留（確認待ち）</option>
           <option value="blocked">販売対象外</option>
           <option value="unset">未設定</option>
         </select>
         <select id="mkHistory" aria-label="送信履歴">
           <option value="all">送信履歴: すべて</option>
-          <option value="never">未送信</option>
-          <option value="recent">最近送信済み</option>
-          <option value="sent">送信あり</option>
+          <option value="never">送ったことがない</option>
+          <option value="recent">最近送った（30日以内）</option>
+          <option value="sent">送ったことがある</option>
         </select>
         <select id="mkOfferState" aria-label="割引オファー">
           <option value="">オファー: すべて</option>
-          <option value="live">有効オファーあり</option>
-          <option value="expiring7">期限 7 日以内</option>
+          <option value="live">申込可能なオファーあり</option>
+          <option value="expiring7">オファー期限が7日以内</option>
           <option value="none">オファーなし</option>
         </select>
         <select id="mkPromoState" aria-label="現在の無料付与">
           <option value="">現在の無料付与: すべて</option>
-          <option value="active">特典中</option>
-          <option value="ending7">終了 7 日以内</option>
+          <option value="active">無料利用権が有効</option>
+          <option value="ending7">無料期間が7日以内に終了</option>
           <option value="none">無料付与なし</option>
         </select>
         <select id="mkFrequency" aria-label="送信タイミング">
           <option value="">送信タイミング: すべて</option>
           <option value="sendable-now">いま送れる</option>
-          <option value="blocked">24時間制限中</option>
+          <option value="blocked">24時間の間隔制限中</option>
         </select>
         <select id="mkLastLogin" aria-label="最終ログイン">
           <option value="">最終ログイン: すべて</option>
           <option value="login:30d">30日以内</option>
-          <option value="login:90d">31〜90日</option>
-          <option value="login:365d">91〜365日</option>
+          <option value="login:90d">31〜90日前</option>
+          <option value="login:365d">91日〜1年前</option>
           <option value="login:over365">1年以上前</option>
-          <option value="login:never">記録なし</option>
+          <option value="login:never">ログイン記録なし</option>
         </select>
         </div>
       </details>
@@ -485,39 +499,46 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <p class="note" id="cbGateState"></p>
 
       <div class="toolbar">
-        <input type="search" id="cbQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <details class="email-search" id="cbQBox">
+          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="cbQBadge" hidden>Email 条件あり</span></summary>
+          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <div class="email-row">
+            <input type="search" id="cbQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <button type="button" id="cbQClear" class="btn-ghost btn-sm">クリア</button>
+          </div>
+        </details>
         <select id="cbContract" aria-label="対象区分">
           <option value="candidates">カムバック候補すべて</option>
           <option value="expired">期限切れ</option>
           <option value="withdrawn">退会済み</option>
-          <option value="dormant">休眠・長期未ログイン</option>
+          <option value="dormant">休眠（長期ログインなし）</option>
           <option value="none">無料会員・契約なし</option>
-          <option value="unknown">状態不明</option>
+          <option value="unknown">状態を判定できない</option>
           <optgroup label="──────────">
             <option value="active" class="opt-danger">現在有効な会員（通常は選択しない）</option>
           </optgroup>
         </select>
         <select id="cbPlan" aria-label="プラン">
           <option value="all">プラン: すべて</option>
-          <option value="premium_sanrenpuku">Premium Sanrenpuku</option>
+          <option value="premium_sanrenpuku">Premium 三連複</option>
           <option value="premium">Premium</option>
           <option value="light">Light</option>
-          <option value="free">Free</option>
+          <option value="free">無料会員</option>
         </select>
         <select id="cbWithdrawn" aria-label="退会履歴">
           <option value="all">退会履歴: すべて</option>
-          <option value="yes">退会あり</option>
-          <option value="no">退会なし</option>
+          <option value="yes">退会の記録あり</option>
+          <option value="no">退会の記録なし</option>
         </select>
         <select id="cbGrantNow" aria-label="現在の無料付与">
           <option value="all">現在の無料付与: すべて</option>
           <option value="none">現在は無料付与なし</option>
-          <option value="light_period">Light 無料期間中</option>
-          <option value="light_lifetime">Light 永久無料</option>
-          <option value="premium_period">Premium 無料期間中</option>
-          <option value="premium_lifetime">Premium 永久無料</option>
+          <option value="light_period">Light 無料（期間あり）</option>
+          <option value="light_lifetime">Light 無料（無期限）</option>
+          <option value="premium_period">Premium 無料（期間あり）</option>
+          <option value="premium_lifetime">Premium 無料（無期限）</option>
           <option value="both">Light・Premium 両方が有効</option>
-          <option value="inconsistent">⚠️ 要確認（データ不整合）</option>
+          <option value="inconsistent">⚠️ 要確認（データが矛盾）</option>
         </select>
         <select id="cbGrantHistory" aria-label="無料付与履歴">
           <option value="all">無料付与履歴: すべて</option>
@@ -528,7 +549,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="ended">無料期間が終了済み</option>
           <option value="revoked">取消・失効の記録あり</option>
           <option value="inconsistent">⚠️ 要確認（記録が矛盾）</option>
-          <option value="unknown">履歴不明（記録が不完全）</option>
+          <option value="unknown">履歴を確定できない</option>
         </select>
         <select id="cbGrantable" aria-label="今回の無料付与">
           <option value="all">今回の無料付与: すべて</option>
@@ -538,9 +559,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </select>
         <select id="cbHistory" aria-label="送信履歴">
           <option value="all">送信履歴: すべて</option>
-          <option value="never">未送信</option>
-          <option value="recent">最近送信済み</option>
-          <option value="sent">送信あり</option>
+          <option value="never">送ったことがない</option>
+          <option value="recent">最近送った（30日以内）</option>
+          <option value="sent">送ったことがある</option>
         </select>
         <button type="button" id="cbLoad" class="btn-primary btn-lg">🔍 対象候補を表示</button>
       </div>
@@ -1493,6 +1514,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 条件を変えたまま再取得していないことを追従バーでも出す */
   .ppe .stickybar .sb-item.is-changed { color: var(--action-orange); font-weight: 700; }
 
+  /* ═══ Email 個別検索（補助機能なので既定は畳む）═══ */
+  .ppe .email-search { max-width: 420px; border: 1px solid var(--border-soft); border-radius: 10px;
+    padding: .25rem .6rem; background: rgba(148,163,184,.05); }
+  .ppe .email-search[open] { padding-bottom: .6rem; }
+  .ppe .email-search.is-active { border-color: var(--action-yellow); }
+  .ppe .email-summary { cursor: pointer; font-size: .82rem; color: var(--text-main);
+    padding: .45rem 0; display: flex; align-items: center; gap: .4rem; }
+  .ppe .email-badge { font-size: 11px; font-weight: 700; padding: .1rem .45rem; border-radius: 999px;
+    color: #2b1206; background: var(--action-yellow); }
+  .ppe .email-note { font-size: 12px; color: var(--text-muted); margin: .1rem 0 .4rem; }
+  .ppe .email-row { display: flex; gap: .4rem; align-items: center; }
+  .ppe .email-row input[type=search] { flex: 1 1 auto; min-height: 40px; background-color: var(--nv-0); }
+  .ppe .filter-more-hint { font-size: 11px; color: var(--text-muted); margin-left: .5rem; }
+
+  /* ═══ 説明（ⓘ）。hover だけに頼らずタップでも読める ═══ */
+  .ppe .info-btn { background: none; border: 0; color: var(--action-blue); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: .2rem .3rem; min-height: 0; border-radius: 6px; }
+  .ppe .info-btn:hover { color: var(--action-yellow); background: rgba(148,163,184,.14); }
+  .ppe .mfilter-row .info-btn { margin-left: auto; }
+  .ppe .info-btn-head { align-self: center; }
+  .ppe .info-pop {
+    position: fixed; z-index: 200; width: 320px; max-width: calc(100vw - 16px);
+    background: #0d1729; color: #e6edf7; border: 1px solid rgba(96,165,250,.55);
+    border-radius: 12px; box-shadow: 0 16px 40px rgba(2,6,23,.6); padding: .7rem .8rem;
+    font-size: .82rem; line-height: 1.7;
+  }
+  .ppe .info-pop .info-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .3rem; }
+  .ppe .info-pop .info-title { font-size: .86rem; color: #f5c451; }
+  .ppe .info-pop .info-close { margin-left: auto; background: none; border: 0; color: #93a4bd;
+    font-size: 1.1rem; line-height: 1; cursor: pointer; }
+  .ppe .info-pop .info-body { margin: 0; color: #cbd5e6; }
+  /* スマホは画面下部のシート（読みやすさとタップのしやすさを優先）*/
+  .ppe .info-pop.is-sheet {
+    left: 0; right: 0; bottom: 0; top: auto; width: auto; max-width: none;
+    border-radius: 14px 14px 0 0; padding: 1rem 1.1rem 1.4rem; max-height: 60vh; overflow-y: auto;
+  }
+
   /* ═══ 無料付与の表示（いま / これまで を 1 セルに分けて出す）═══ */
   .ppe .fg-now { font-weight: 700; }
   .ppe .fg-hist { font-size: .72rem; color: var(--text-muted); }
@@ -1578,6 +1636,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     maskEmail as stMaskEmail,
   } from '../../lib/marketing/marketingConsoleState.js';
   import { GRANT_ELIGIBILITY_NOTE } from '../../lib/entitlements/freeGrantStatus.js';
+  // 絞り込みの表示名・説明の単一源（画面に文言を直接書かない）
+  import {
+    FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
+    getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
+  } from '../../lib/marketing/filterDefinitions.js';
+  window.__filterDefs = {
+    FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
+    getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
+  };
   import {
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
@@ -4187,8 +4254,76 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     //  判定は adminMultiFilter.js（純粋）が単一源。
     // ══════════════════════════════════════════════════════════════
     const filterApi = () => window.__mkFilter;
+    /** 表示名・説明の単一源 */
+    const defsApi = () => window.__filterDefs;
     /** id → { values, labels, selected, button, panel } */
     const multiFilters = new Map();
+
+    // ══════════════════════════════════════════════════════════════
+    //  説明ポップオーバー（hover だけに頼らない）
+    //  スマホ・タブレットでも読めるよう、**タップで開く**。同時に 1 つだけ。
+    // ══════════════════════════════════════════════════════════════
+    let infoOpener = null;
+    function infoBox() {
+      let el = document.getElementById('infoPop');
+      if (el) return el;
+      el = document.createElement('div');
+      el.id = 'infoPop';
+      el.className = 'info-pop';
+      el.setAttribute('role', 'dialog');
+      el.hidden = true;
+      el.innerHTML = '<div class="info-head"><b class="info-title"></b>'
+        + '<button type="button" class="info-close" aria-label="説明を閉じる">×</button></div>'
+        + '<p class="info-body"></p>';
+      el.querySelector('.info-close').addEventListener('click', closeInfo);
+      // 名前空間 .ppe の中へ入れる（CSS をグローバルへ漏らさない）
+      (document.querySelector('.ppe') || document.body).appendChild(el);
+      return el;
+    }
+
+    function closeInfo() {
+      const el = document.getElementById('infoPop');
+      if (el) el.hidden = true;
+      if (infoOpener) {
+        infoOpener.setAttribute('aria-expanded', 'false');
+        infoOpener = null;
+      }
+    }
+
+    /** 説明を開く（画面外へはみ出さない位置に置く） */
+    function openInfo(anchor, title, text) {
+      const el = infoBox();
+      // 同じボタンをもう一度押したら閉じる
+      if (!el.hidden && infoOpener === anchor) { closeInfo(); return; }
+      closeInfo();
+      el.querySelector('.info-title').textContent = title;
+      el.querySelector('.info-body').textContent = text;
+      el.hidden = false;
+      el.classList.toggle('is-sheet', window.innerWidth <= 900);
+      if (window.innerWidth > 900) {
+        const r = anchor.getBoundingClientRect();
+        const w = el.offsetWidth;
+        // 右端・下端からはみ出さないように寄せる
+        const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+        const top = r.bottom + 8 + el.offsetHeight > window.innerHeight
+          ? Math.max(8, r.top - el.offsetHeight - 8) : r.bottom + 8;
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+      } else {
+        el.style.left = ''; el.style.top = '';
+      }
+      anchor.setAttribute('aria-expanded', 'true');
+      el.setAttribute('aria-label', title);
+      infoOpener = anchor;
+    }
+
+    document.addEventListener('click', (e) => {
+      const el = document.getElementById('infoPop');
+      if (!el || el.hidden) return;
+      if (el.contains(e.target) || (infoOpener && infoOpener.contains(e.target))) return;
+      closeInfo();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInfo(); });
 
     /**
      * 既存の <select> を複数選択メニューへ変換する。
@@ -4199,9 +4334,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const sel = document.getElementById(selectId);
       if (!sel || sel.dataset.multi === '1') return null;
       const label = opts.label || sel.getAttribute('aria-label') || selectId;
+      const defs = defsApi();
       const items = [...sel.querySelectorAll('option')]
         .map((o) => ({ value: o.value, label: o.textContent.trim().replace(/^[^:]+:\s*/, '') }))
-        .filter((o) => o.value && o.value !== 'all' && o.value !== 'candidates');
+        .filter((o) => o.value && o.value !== 'all' && o.value !== 'candidates')
+        // 表示名は単一源（filterDefinitions）を優先する。無ければ option の文言のまま
+        .map((o) => ({ ...o, label: (defs && defs.optionLabel(selectId, o.value)) || o.label }));
 
       const wrap = document.createElement('div');
       wrap.className = 'mfilter';
@@ -4227,6 +4365,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         cb.type = 'checkbox'; cb.value = it.value;
         const txt = document.createElement('span'); txt.textContent = it.label;
         row.appendChild(cb); row.appendChild(txt);
+        // 選択肢の説明（ⓘ）。**押してもチェックは変わらない**
+        const od = defsApi() && defsApi().getOptionDefinition(selectId, it.value);
+        if (od && od.description) {
+          const info = document.createElement('button');
+          info.type = 'button'; info.className = 'info-btn';
+          info.textContent = 'ⓘ';
+          info.setAttribute('aria-label', it.label + ' の説明');
+          info.setAttribute('aria-expanded', 'false');
+          info.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();   // チェックを切り替えない
+            openInfo(info, it.label, od.description);
+          });
+          row.appendChild(info);
+        }
         cb.addEventListener('change', () => {
           row.classList.toggle('is-on', cb.checked);
           syncState(false);
@@ -4248,7 +4400,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkOp('適用', () => { close(); if (opts.onApply) opts.onApply(); }, 'btn-primary');
       panel.appendChild(ops);
 
-      wrap.appendChild(btn); wrap.appendChild(panel);
+      wrap.appendChild(btn);
+      // 項目そのものの説明（フィルター名の右のⓘ）
+      const fd = defsApi() && defsApi().getFilterDefinition(selectId);
+      if (fd && fd.description) {
+        const info = document.createElement('button');
+        info.type = 'button'; info.className = 'info-btn info-btn-head';
+        info.textContent = 'ⓘ';
+        info.setAttribute('aria-label', fd.label + ' の説明');
+        info.setAttribute('aria-expanded', 'false');
+        info.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          openInfo(info, fd.label, fd.description);
+        });
+        wrap.appendChild(info);
+      }
+      wrap.appendChild(panel);
       sel.replaceWith(wrap);
 
       // 既存コードが値を読めるように、同じ id の hidden input を置く
@@ -4301,6 +4468,32 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') for (const [, st] of multiFilters) st.close();
     });
+
+    /**
+     * Email 個別検索（補助機能）。
+     * 通常のセグメント検索と混同しないよう既定は閉じておき、
+     * **入力が残っているときだけ**「Email 条件あり」を出す。
+     */
+    function initEmailSearch(inputId) {
+      const box = document.getElementById(inputId + 'Box');
+      const input = document.getElementById(inputId);
+      const badge = document.getElementById(inputId + 'Badge');
+      const clear = document.getElementById(inputId + 'Clear');
+      if (!box || !input) return;
+      const sync = () => {
+        const has = String(input.value || '').trim() !== '';
+        if (badge) badge.hidden = !has;
+        box.classList.toggle('is-active', has);
+        if (has) box.open = true;   // 検索中は閉じない（条件が隠れないように）
+      };
+      input.addEventListener('input', sync);
+      clear?.addEventListener('click', () => {
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        sync();
+      });
+      sync();
+    }
 
     /** いまの複数選択をまとめて読む */
     function multiValues(ids) {
@@ -4744,6 +4937,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       try {
         cbInitFilters();
         mkInitFilters();
+        for (const id of ['q', 'mkQ', 'cbQ']) initEmailSearch(id);
         // 初期表示でも「いまどの Step か」を出す（マーケティングは同期待ちで無色のままだった）
         mkSyncFlow();
         cbSync();
