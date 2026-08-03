@@ -2779,10 +2779,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // 適用中の条件と件数を画面に出す（何で絞ったのか分からない状態を作らない）
     function renderApplied(data) {
       const f = data.appliedFilters || {};
-      const LBL = { contract: '契約', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
-        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファー', promoState: '現在の無料付与', frequency: '送信タイミング' };
+      const LBL = { contract: '契約状態', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
+        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファーの状態',
+        offerWindow: 'オファーの残り期間', promoState: '現在の無料付与', frequency: '送信タイミング' };
+      // 内部コードではなく利用者向けの表示名を出す（単一源の定義から引く）
+      const API_TO_FILTER = { contract: 'mkContract', plan: 'mkPlan', marketing: 'mkSendable',
+        premiumPlus: 'mkPp', history: 'mkHistory', lastLogin: 'mkLastLogin',
+        offerState: 'mkOfferState', offerWindow: 'mkOfferWindow',
+        promoState: 'mkPromoState', frequency: 'mkFrequency' };
+      const nameOf = (k, v) => {
+        const defs = defsApi();
+        const id = API_TO_FILTER[k];
+        return defs && id ? defs.optionLabel(id, v) : v;
+      };
       const parts = Object.entries(f)
-        .map(([k, v]) => [k, Array.isArray(v) ? v.join(' / ') : v])
+        .map(([k, v]) => [k, (Array.isArray(v) ? v : [v]).map((x) => nameOf(k, x)).join(' / ')])
         .filter(([, v]) => v && v !== 'all')
         .map(([k, v]) => (LBL[k] || k) + '=' + v);
       $('mkApplied').textContent = '条件: ' + (parts.length ? parts.join(' AND ') : '指定なし（全件）')
