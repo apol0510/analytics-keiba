@@ -67,7 +67,10 @@ test('guard: 文面の検証は Airtable を読む前に行う（不正な文面
 
 test('guard: プレビューは送信と同じレンダラーを使う（専用実装を作らない）', () => {
   const preview = FN.slice(FN.indexOf('function buildPreview'), FN.indexOf('function handlePreview'));
-  assert.match(preview, /renderCampaign\(\{ campaign, name: PREVIEW_NAME \}\)/, '別実装で描いている');
+  // 送信と同じ renderCampaign を使う（プレビュー用のサンプル値を渡すだけ）
+  assert.match(preview, /renderCampaign\(\{/, '別実装で描いている');
+  assert.match(preview, /name: PREVIEW_NAME/, 'サンプル宛名を使っていない');
+  assert.match(preview, /PREVIEW_UNSUBSCRIBE_URL/, 'プレビュー用の配信停止 URL を使っていない');
   assert.equal(/<p style=/.test(preview), false, 'プレビュー側で HTML を組み立てている');
 });
 

@@ -21,6 +21,10 @@ import { computeCampaignContentHash } from './campaignSend.js';
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 
+/** 送信直前に差し替わる印（描画時点で残っているのが正しい） */
+const DEFERRED = ['{{unsubscribeUrl}}', '{{grantExpiry}}', OFFER_URL_PLACEHOLDER];
+const stripDeferred = (v) => DEFERRED.reduce((acc, ph) => acc.split(ph).join(''), String(v));
+
 const REQUIRED_KEYS = [
   'campaignId', 'version', 'name', 'description', 'subject', 'body',
   'ctaLabel', 'ctaUrl', 'recommendedSegments', 'audienceRule', 'enabled',
@@ -164,7 +168,9 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     // v1（下書き・grant 版 / 一度も送信していない）→ v2（割引 + 専用 URL）へ改版。
     'comeback-offer': { version: 2, hash: '4c836f28efbdf1d7' },
     // Light 30日無料を配り終えた人への案内。CTA は /dashboard/ 固定（本文に URL を書かない）。
-    'comeback-light-30d-granted': { version: 1, hash: 'b1f72ec130f2ebcf' },
+    // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加。
+    // 見た目が大きく変わるので version を上げ、DeliveryKey を v1 と分けた。
+    'comeback-light-30d-granted': { version: 2, hash: '0f0154a62a2d536b' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
@@ -253,7 +259,9 @@ test('氏名由来の HTML / プレースホルダ注入が起きない', () => 
   // 差し込み記号を含む名前も採用しない
   const r2 = renderCampaign({ campaign: c, name: '{{salutation}}' });
   assert.ok(r2.text.startsWith(NAME_FALLBACK));
-  assert.equal(r2.html.includes('{{'), false);
+  // 送信直前に差し替わる印（配信停止・無料期限・専用 URL）だけは残ってよい。
+  // それ以外の `{{ }}` が残っていたら「解決されない差し込み」なので不可。
+  assert.equal(stripDeferred(r2.html).includes('{{'), false);
 });
 
 test('未解決の差し込みが残る本文は描画しない（fail closed）', () => {
@@ -274,9 +282,9 @@ test('描画結果は subject / html / text をそろえて返す', () => {
     const expectedCta = offerUrl || c.ctaUrl;
     assert.ok(r.html.includes(expectedCta), 'HTML に CTA が無い');
     assert.ok(r.text.includes(expectedCta), 'テキストに CTA が無い');
-    // 送信される形には差し込みが 1 つも残らない
-    assert.equal(r.html.includes('{{'), false);
-    assert.equal(r.text.includes('{{'), false);
+    // 送信直前の差し替え印を除けば、未解決の差し込みは 1 つも残らない
+    assert.equal(stripDeferred(r.html).includes('{{'), false);
+    assert.equal(stripDeferred(r.text).includes('{{'), false);
   }
 });
 

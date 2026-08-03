@@ -79,6 +79,9 @@ import {
   DRAFT_PLACEHOLDERS,
 } from '../../src/lib/marketing/campaignContentDraft.js';
 import { requiresOfferUrl, isLiveOffer } from '../../src/lib/promotions/offerCampaignLink.js';
+import {
+  PREVIEW_UNSUBSCRIBE_URL, describeGrantExpiry, plainTextFromMarketingHtml,
+} from '../../src/lib/marketing/marketingEmailShell.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import {
   buildCampaignPlan,
@@ -365,12 +368,22 @@ function resolveDraft({ campaign, req }) {
  * 配信停止リンクは dispatcher が全通に付けるので、ここでは「付く」という事実だけを返す。
  */
 function buildPreview({ campaign, fromEmail }) {
-  const rendered = renderCampaign({ campaign, name: PREVIEW_NAME });
+  // プレビューは**サンプル値**で完成形まで組み立てる。
+  // 実顧客の配信停止 URL も実際の期限も使わない（PII / 本番トークンを出さない）。
+  const rendered = renderCampaign({
+    campaign,
+    name: PREVIEW_NAME,
+    unsubscribeUrl: PREVIEW_UNSUBSCRIBE_URL,
+    expiryNote: campaign.showGrantExpiry === true
+      ? describeGrantExpiry({ durationDays: campaign.grantDurationDays })
+      : '',
+  });
   if (!rendered) return null;
   const brandCfg = getBrandConfig(BRAND);
   return {
     from: `${brandCfg.defaultFromName || 'KEIBA Analytics'} <${fromEmail || brandCfg.defaultFromEmail}>`,
     subject: rendered.subject,
+    preheader: campaign.preheader || '',
     salutation: `${PREVIEW_NAME} 様（氏名が無い会員は「お客様」）`,
     html: rendered.html,
     text: rendered.text,
@@ -379,7 +392,8 @@ function buildPreview({ campaign, fromEmail }) {
       ? 'お客様ごとの専用 URL（送信直前に 1 通ずつ差し替え）'
       : (campaign.ctaUrl ? '固定 URL（テンプレートで設定・文面編集では変更できません）' : 'CTA なし'),
     footer: 'KEIBA Analytics / https://analytics.keiba.link',
-    unsubscribeNote: '🚫 配信停止はこちら（送信時に自動付与。本文には書かない）',
+    unsubscribeNote: '配信停止リンクはメールのフッターに必ず入ります（送信時に受信者ごとの URL へ差し替え）。',
+    unsubscribePreviewUrl: PREVIEW_UNSUBSCRIBE_URL,
     sampleName: PREVIEW_NAME,
   };
 }

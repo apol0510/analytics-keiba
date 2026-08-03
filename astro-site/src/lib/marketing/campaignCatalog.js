@@ -31,6 +31,9 @@ import {
   DEFAULT_COMEBACK_COMBO,
 } from '../promotions/comebackEmailTemplate.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
+import {
+  renderMarketingEmail, UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
+} from './marketingEmailShell.js';
 import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
 
 /**
@@ -172,13 +175,17 @@ export const CAMPAIGNS = Object.freeze([
      *    案内先は CTA ボタン 1 つに固定し、本文編集で壊れないようにする。
      */
     campaignId: 'comeback-light-30d-granted',
-    version: 1,
+    // v1 → v2: 文面はほぼ同じだが、**共通 HTML シェルへ載せ替えて見た目が大きく変わった**。
+    // 受け取る人にとって別物なので version を上げる（DeliveryKey も分かれる）。
+    version: 2,
     name: 'Light 30日無料付与済み案内',
     description: 'Light 30日無料を付与済みの顧客へ、申込不要で使えることを案内する。',
-    subject: '【KEIBA Analytics】Lightプランを30日間無料でご利用いただけます',
+    subject: '【KEIBA Analytics】Lightプラン30日無料のご案内',
+    // 受信箱の一覧に出る一文。本文の冒頭を奪わないよう本文には表示しない
+    preheader: 'お申し込み不要。いつものメールアドレスで、すぐにご利用いただけます。',
+    badge: '30日間無料',
+    headline: 'Lightプランを30日間無料でご利用いただけます',
     body: [
-      '{{salutation}}',
-      '',
       '以前、KEIBA Analyticsをご利用いただき、ありがとうございました。',
       '',
       'KEIBA Analyticsはその後も改善を重ね、',
@@ -190,14 +197,23 @@ export const CAMPAIGNS = Object.freeze([
       'お申し込みやお支払いの手続きは必要ありません。',
       'いつものメールアドレスでログインすると、すぐにご利用いただけます。',
       '',
-      'Lightプランでは、各開催のメインレース買い目をご覧いただけます。',
-      '',
       'この機会に、現在のKEIBA Analyticsをもう一度お試しいただけましたら幸いです。',
-      '',
-      'KEIBA Analytics',
     ].join('\n'),
+    // 特典の中身は**固定**。管理者が本文を編集しても消えない
+    benefitTitle: 'Lightプラン（30日間無料）',
+    benefitItems: [
+      '各開催のメインレース買い目を閲覧できます',
+      'お支払いの手続きは必要ありません',
+      'ログインすればすぐにご利用いただけます',
+    ],
     ctaLabel: 'KEIBA Analyticsにログイン',
     ctaUrl: `${SITE}/dashboard/`,
+    ctaNote: 'お申し込み手続きは必要ありません。',
+    footerNote: 'このメールは、無料期間を設定させていただいたお客様へお送りしています。',
+    templateVariant: 'grant-notice',
+    // 受信者ごとの無料期間の終了日を出す（読めないときは日付を断定しない）
+    showGrantExpiry: true,
+    grantDurationDays: 30,
     recommendedSegments: [],
     // 付与に成功したこと自体が対象条件。契約状態では絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },
@@ -486,7 +502,9 @@ function escapeHtml(s) {
  * @param {{ campaign: object, name?: string }} input
  * @returns {{ subject: string, html: string, text: string }|null}
  */
-export function renderCampaign({ campaign, name, offerUrl } = {}) {
+export function renderCampaign({
+  campaign, name, offerUrl, unsubscribeUrl, expiryNote = '',
+} = {}) {
   const c = campaign;
   if (!c || typeof c.subject !== 'string' || typeof c.body !== 'string') return null;
 
@@ -517,26 +535,35 @@ export function renderCampaign({ campaign, name, offerUrl } = {}) {
     return null;
   }
 
-  const paragraphs = text.split('\n\n').map((block) => {
-    const lines = block.split('\n').map((l) => escapeHtml(l)).join('<br />');
-    return `<p style="margin:0 0 1em;line-height:1.8;">${lines}</p>`;
-  }).join('\n');
+  // ── 共通シェルで組み立てる ─────────────────────────────────────
+  // 本文（管理者が編集できる部分）以外は、すべてテンプレート側の固定値。
+  // 本文を編集しても、ブランド・特典・CTA・配信停止は消えない。
+  //
+  // 宛名は本文の先頭に置かず、シェルの宛名欄へ出す。本文に `{{salutation}}` が
+  // 残っている従来テンプレートとの互換のため、置換済みテキストの先頭行が
+  // 宛名と同じ場合はシェル側へ寄せて重複表示を避ける。
+  const bodyLines = text.replace(/\r\n?/g, '\n').split('\n');
+  const startsWithSalutation = bodyLines[0].trim() === salutation;
+  const bodyText = (startsWithSalutation ? bodyLines.slice(1) : bodyLines).join('\n').trim();
 
-  const cta = ctaUrl
-    ? `<p style="margin:1.6em 0;"><a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:12px 24px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">${escapeHtml(c.ctaLabel || '詳細を見る')}</a></p>`
-    : '';
+  const rendered = renderMarketingEmail({
+    salutation,
+    badge: c.badge || '',
+    headline: c.headline || '',
+    preheader: c.preheader || '',
+    body: bodyText,
+    benefit: c.benefitItems && c.benefitItems.length
+      ? { title: c.benefitTitle || '', items: c.benefitItems }
+      : null,
+    cta: { label: c.ctaLabel || '詳細を見る', url: ctaUrl },
+    ctaNote: c.ctaNote || '',
+    // 受信者ごとに違う終了日は印だけ置き、送信側が差し替える
+    expiryNote: expiryNote || (c.showGrantExpiry === true ? GRANT_EXPIRY_PLACEHOLDER : ''),
+    footerNote: c.footerNote || '',
+    unsubscribeUrl: unsubscribeUrl || UNSUBSCRIBE_PLACEHOLDER,
+  });
 
-  const html = [
-    '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Hiragino Sans\',sans-serif;color:#1f2937;max-width:600px;margin:0 auto;padding:16px;">',
-    paragraphs,
-    cta,
-    '<hr style="border:0;border-top:1px solid #e5e7eb;margin:2em 0 1em;" />',
-    '<p style="font-size:12px;color:#6b7280;margin:0;">KEIBA Analytics<br />' + escapeHtml(SITE) + '</p>',
-    '</div>',
-  ].filter(Boolean).join('\n');
-
-  const plainCta = ctaUrl ? `\n\n${c.ctaLabel || '詳細'}: ${ctaUrl}` : '';
-  return { subject: c.subject, html, text: `${text}${plainCta}\n\n— KEIBA Analytics\n${SITE}` };
+  return { subject: c.subject, html: rendered.html, text: rendered.text };
 }
 
 /**
