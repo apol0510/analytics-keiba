@@ -55,7 +55,7 @@ test('指摘された文言が置き換わっている', () => {
   assert.equal(optionLabel('mkPp', 'eligible'), '販売できる');
   assert.equal(optionLabel('mkPp', 'blocked'), '販売対象外');
   assert.equal(optionLabel('mkPp', 'review'), '保留（確認待ち）');
-  assert.equal(optionLabel('mkSendable', 'sendable'), '送信できる');
+  assert.equal(optionLabel('mkSendable', 'sendable'), 'メール送信可能');
   assert.equal(optionLabel('mkFrequency', 'blocked'), '24時間の間隔制限中');
 });
 
@@ -178,4 +178,39 @@ test('条件要約は自然文で、種類ごとにまとまっている', () =>
   assert.match(text, /利用期限まで7日以内/);
   assert.match(text, /の顧客を検索します。$/);
   assert.equal(describeConditionsNatural({}), '条件を指定していません（すべての顧客が対象です）。');
+});
+
+/* ── 通常運用の初期値（2026-08-03）─────────────────────────────── */
+
+test('送信可否の初期値は「メール送信可能」', () => {
+  const { defaultSelection, FILTER_DEFAULTS } = defsModule;
+  assert.deepEqual(defaultSelection('mkSendable'), ['sendable']);
+  assert.deepEqual(FILTER_DEFAULTS.mkSendable, ['sendable']);
+  // 「指定なし」は送信できない顧客も候補に入るので初期値にしない
+  assert.notDeepEqual(defaultSelection('mkSendable'), []);
+});
+
+test('Premium Plus 資格の初期値は「指定なし」', () => {
+  const { defaultSelection } = defsModule;
+  assert.deepEqual(defaultSelection('mkPp'), []);
+});
+
+test('送信可否以外は初期値なし（指定なし）', () => {
+  const { defaultSelection } = defsModule;
+  for (const id of Object.keys(FILTER_DEFINITIONS)) {
+    if (id === 'mkSendable') continue;
+    assert.deepEqual(defaultSelection(id), [], `${id} に初期値が入っている`);
+  }
+});
+
+test('Premium Plus 資格は検索条件であることを説明に書く', () => {
+  const d = getFilterDefinition('mkPp');
+  assert.match(d.description, /Premium Plus資格は検索条件です。選択しても販売資格は変更されません。/);
+  assert.equal(getOptionDefinition('mkPp', 'review').description,
+    '販売資格の確認待ちで、現在はPremium Plusを販売できません。メール送信だけでは販売対象になりません。');
+});
+
+test('通常運用の説明文がある', () => {
+  assert.equal(defsModule.ROUTINE_FILTER_NOTE,
+    '通常はメール送信可能な顧客を表示します。さらに絞り込む場合だけ追加条件を選択してください。');
 });

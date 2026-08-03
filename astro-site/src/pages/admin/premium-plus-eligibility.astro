@@ -145,6 +145,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       <section class="step" data-step="1" aria-labelledby="mkStep1H">
         <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む</h2>
+      <p class="routine-note" id="mkRoutineNote"></p>
       <div class="toolbar">
         <details class="email-search" id="mkQBox">
           <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="mkQBadge" hidden>Email 条件あり</span></summary>
@@ -1532,6 +1533,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .mfilter-cat.cat-history { color: #c4b5fd; border-color: rgba(167,139,250,.5); }
   .ppe .mfilter-cat.cat-extra { color: var(--text-muted); }
   .ppe .mfilter-cat.cat-action { color: #6ee7b7; border-color: rgba(16,185,129,.5); }
+  .ppe .routine-note { font-size: .8rem; color: var(--text-main); margin: .2rem 0 .5rem;
+    padding: .4rem .6rem; border-left: 3px solid var(--action-blue);
+    background: rgba(59,130,246,.08); border-radius: 0 6px 6px 0; }
   .ppe .condition-text { font-size: .8rem; color: var(--text-main); margin: .3rem 0 .1rem; }
   .ppe .condition-warn { font-size: .8rem; color: var(--action-orange); font-weight: 700; margin: .2rem 0; }
 
@@ -1662,11 +1666,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
     getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
     categoryLabel, dependencyOf, describeConditionsNatural, detectImpossibleCombination,
+    FILTER_DEFAULTS, ROUTINE_FILTER_NOTE, defaultSelection,
   } from '../../lib/marketing/filterDefinitions.js';
   window.__filterDefs = {
     FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
     getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
     categoryLabel, dependencyOf, describeConditionsNatural, detectImpossibleCombination,
+    FILTER_DEFAULTS, ROUTINE_FILTER_NOTE, defaultSelection,
   };
   import {
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
@@ -2470,10 +2476,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // 条件クリア（全部戻して数え直す）
     $('mkFilterClear')?.addEventListener('click', () => {
       const q = $('mkQ'); if (q) q.value = '';
-      for (const id of MK_MULTI_IDS) multiFilters.get(id)?.setValues([]);
+      // 完全な未指定にはしない（送信できない顧客まで候補へ戻さない）
+      mkApplyDefaults();
       mkRenderChips();
       mkRenderFilterCount();
-      mkNotify('ok', '条件をクリアしました', 'もう一度「この条件で取得」を押してください。');
+      mkNotify('ok', '通常運用の条件に戻しました',
+        '送信可否は「メール送信可能」、その他は指定なしです。もう一度「この条件で取得」を押してください。');
     });
     for (const id of ['mkQ', 'mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
       'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']) {
@@ -4478,7 +4486,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         state.selected = [...list.querySelectorAll('input[type=checkbox]')]
           .filter((c) => c.checked).map((c) => c.value);
         hidden.value = state.selected.join(',');
-        btn.textContent = label + ': ' + filterApi().summarizeSelection(state.selected, items.map((i) => i.value), '全' + label);
+        const only = state.selected.length === 1
+          ? (items.find((i) => i.value === state.selected[0]) || null) : null;
+        btn.textContent = label + ': ' + (only ? only.label
+          : filterApi().summarizeSelection(state.selected, items.map((i) => i.value), '全' + label));
         btn.classList.toggle('is-on', state.selected.length > 0);
         if (!silent && opts.onChange) opts.onChange(state.selected);
       }
@@ -4813,6 +4824,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkPromoState: '現在の無料付与',
       mkFrequency: '送信タイミング', mkLastLogin: '最終ログイン',
     };
+    /**
+     * 通常運用の初期値へ戻す。
+     * 「指定なし」は**送信できない顧客も候補に入る**ため、送信可否だけは既定で絞る。
+     */
+    function mkApplyDefaults() {
+      const defs = defsApi();
+      if (!defs) return;
+      for (const id of MK_MULTI_IDS) {
+        multiFilters.get(id)?.setValues(defs.defaultSelection(id));
+      }
+    }
+
     function mkInitFilters() {
       for (const id of MK_MULTI_IDS) {
         makeMultiFilter(id, {
@@ -4823,6 +4846,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       const note = $('mkLogicNote');
       if (note) note.textContent = filterApi().FILTER_LOGIC_NOTE;
+      const routine = $('mkRoutineNote');
+      if (routine && defsApi()) routine.textContent = defsApi().ROUTINE_FILTER_NOTE;
+      // 通常運用の初期値（送信可否 = メール送信可能）を最初から入れておく
+      mkApplyDefaults();
       mkRenderChips();
     }
 

@@ -48,7 +48,8 @@ import {
 const def = (label, description, options, extra = {}) => Object.freeze({
   label, description, options: Object.freeze(options), ...extra,
 });
-const opt = (value, label, description) => Object.freeze({ value, label, description });
+/** `phrase` は条件要約（自然文）で使う言い回し。省略時は label をそのまま使う */
+const opt = (value, label, description, phrase) => Object.freeze({ value, label, description, phrase: phrase || label });
 
 /**
  * 絞り込み定義。キーは画面の select id（＝複数選択の識別子）。
@@ -74,14 +75,16 @@ export const FILTER_DEFINITIONS = Object.freeze({
 
   mkSendable: def('送信可否',
     'メール配信停止・バウンス・ブラックリストなどを考慮した送信可否です。', [
-      opt('sendable', '送信できる', '配信停止・バウンス・除外リストのいずれにも該当しません。'),
-      opt('suppressed', '送信できない', '配信停止・バウンス・停止アカウントなどの理由で送信対象から外れます。'),
+      opt('sendable', 'メール送信可能', '配信停止・バウンス・除外リストのいずれにも該当しません。'),
+      opt('suppressed', 'メール送信不可', '配信停止・バウンス・停止アカウントなどの理由で送信対象から外れます。'),
     ], { category: FILTER_CATEGORY.STATE, apiKey: 'marketing' }),
 
   mkPp: def('Premium Plus 資格',
-    'Premium Plus の販売対象として扱えるかを示します。会員プランとは別判定です。', [
+    'Premium Plus の販売対象として扱えるかを示します。会員プランとは別判定です。'
+    + 'Premium Plus資格は検索条件です。選択しても販売資格は変更されません。', [
       opt('eligible', '販売できる', 'Premium Plus を案内・販売できる状態です。'),
-      opt('review', '保留（確認待ち）', '条件を満たすか確認が必要で、まだ販売対象にしていません。'),
+      opt('review', '保留（確認待ち）',
+        '販売資格の確認待ちで、現在はPremium Plusを販売できません。メール送信だけでは販売対象になりません。'),
       opt('blocked', '販売対象外', '販売しないと決めた顧客です。'),
       opt('unset', '未設定', '販売資格をまだ判定していません。'),
     ], { category: FILTER_CATEGORY.STATE, apiKey: 'premiumPlus' }),
@@ -325,7 +328,10 @@ export function describeConditionsNatural(selections = {}) {
     const list = (Array.isArray(values) ? values : [values])
       .map((v) => str(v)).filter((v) => v && v !== 'all');
     if (!d || list.length === 0) continue;
-    const names = list.map((v) => optionLabel(id, v));
+    const names = list.map((v) => {
+      const o = getOptionDefinition(id, v);
+      return o ? (o.phrase || o.label) : v;
+    });
     bucket[d.category || 'state'].push(names.join('または'));
   }
   const parts = [];
@@ -375,6 +381,24 @@ export function dependencyOf(filterId) {
   const d = getFilterDefinition(filterId);
   if (!d || !d.dependsOn) return null;
   return { filterId: d.dependsOn, value: d.dependsOnValue, note: d.relationNote || '' };
+}
+
+/**
+ * 通常運用の初期値。**「指定なし」＝送信できない顧客も候補に入る**ため、
+ * 送信可否だけは既定で「メール送信可能」に絞る（毎回選び直させない）。
+ * 「条件をクリア」も完全な未指定ではなく、ここへ戻す。
+ */
+export const FILTER_DEFAULTS = Object.freeze({
+  mkSendable: Object.freeze(['sendable']),
+});
+
+/** 通常運用の説明（絞り込み欄の先頭に出す） */
+export const ROUTINE_FILTER_NOTE =
+  '通常はメール送信可能な顧客を表示します。さらに絞り込む場合だけ追加条件を選択してください。';
+
+/** その項目の初期値（無ければ空＝指定なし） */
+export function defaultSelection(filterId) {
+  return [...(FILTER_DEFAULTS[str(filterId)] || [])];
 }
 
 export const FILTER_IDS = Object.freeze(Object.keys(FILTER_DEFINITIONS));

@@ -234,3 +234,32 @@ test('guard(ui): 条件要約は自然文で、矛盾は取得前に止める', 
     SCRIPT.indexOf('async function mkLoad() {') + 700);
   assert.match(load, /if \(conflicts\.length\)[\s\S]{0,160}return;/, '矛盾条件のまま取得している');
 });
+
+/* ── 通常運用の初期値（2026-08-03）─────────────────────────────── */
+
+test('guard(ui): 初期表示とクリアで通常運用の初期値へ戻す', () => {
+  assert.match(SCRIPT, /function mkApplyDefaults\(\)/, '初期値を戻す関数が無い');
+  assert.match(SCRIPT, /defs\.defaultSelection\(id\)/, '初期値を単一源から取っていない');
+  const init = SCRIPT.slice(SCRIPT.indexOf('function mkInitFilters'), SCRIPT.indexOf('function mkRenderChips'));
+  assert.match(init, /mkApplyDefaults\(\)/, '初期表示で初期値を入れていない');
+  const clear = SCRIPT.slice(SCRIPT.indexOf("$('mkFilterClear')"), SCRIPT.indexOf("$('mkFilterClear')") + 700);
+  assert.match(clear, /mkApplyDefaults\(\)/, 'クリアで完全な未指定へ戻している');
+  assert.equal(/for \(const id of MK_MULTI_IDS\) multiFilters\.get\(id\)\?\.setValues\(\[\]\)/.test(clear), false,
+    'クリアが全解除のままになっている');
+});
+
+test('guard(ui): 通常運用の説明を画面に出す', () => {
+  assert.match(PAGE, /id="mkRoutineNote"/, '説明の置き場所が無い');
+  assert.match(SCRIPT, /defsApi\(\)\.ROUTINE_FILTER_NOTE/, '説明を単一源から出していない');
+  assert.match(STYLE, /\.ppe \.routine-note/, '説明の見た目が無い');
+});
+
+test('guard(api): 顧客マーケティングは Premium Plus 資格を書き換えない', () => {
+  const fn = readFileSync(path.join(HERE, '../../../netlify/functions/admin-marketing.js'), 'utf8');
+  // PremiumPlus* への書き込みが 1 か所も無い（検索条件として読むだけ）
+  for (const field of ['PremiumPlusEligibility', 'PremiumPlusEligibleAt', 'PremiumPlusReleaseOverride']) {
+    assert.equal(new RegExp(`${field}\\s*:`).test(fn), false, `${field} を書き込んでいる`);
+  }
+  // Customers へ PATCH する経路自体が無い（書くのは ScheduledEmails / CampaignDeliveries だけ）
+  assert.equal(/table: ['"]Customers['"]/.test(fn), false, 'Customers を更新している');
+});
