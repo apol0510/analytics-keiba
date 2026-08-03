@@ -65,11 +65,19 @@ const str = (v) => String(v ?? '').trim();
  * 「確認した状態」を一意に表す指紋。
  * 選択顧客・フィルター・キャンペーンのどれかが変われば別の値になる。
  */
-export function computeSelectionFingerprint({ selectedIds = [], filters = {}, campaignId = '', campaignVersion = '' } = {}) {
+export function computeSelectionFingerprint({
+  selectedIds = [], filters = {}, campaignId = '', campaignVersion = '', handoff = null,
+} = {}) {
   const ids = [...selectedIds].map(str).filter(Boolean).sort();
   const keys = Object.keys(filters || {}).sort();
   const f = keys.map((k) => `${k}=${str(filters[k])}`).join('&');
-  return `${str(campaignId)}:v${str(campaignVersion)}|${f}|${ids.join(',')}`;
+  const base = `${str(campaignId)}:v${str(campaignVersion)}|${f}|${ids.join(',')}`;
+  // 引き継ぎ（カムバック無料付与の成功者）は画面に recordId を持たないため、
+  // **操作 ID と人数**を母集団の同一性として使う。引き継ぎを外す / 別の操作へ
+  // 差し替えると別の指紋になり、確認済み dry-run は失効する。
+  const h = handoff && str(handoff.operationId)
+    ? `handoff:${str(handoff.operationId)}:${str(handoff.grantedCount)}` : '';
+  return h ? `${base}|${h}` : base;
 }
 
 /** dry-run の結果が古くなっていないか（**確認した母集団と今の母集団が同じか**） */
@@ -94,9 +102,14 @@ function normalize(state) {
   const selectedIds = state.selectedIds || [];
   const dryRun = state.dryRun || null;
   const stale = dryRun ? isDryRunStale({ dryRun, current: state }) : true;
+  // 引き継ぎ中は「画面で何人選んだか」ではなく「サーバーが確定した付与成功者が何人か」を
+  // 対象人数として扱う。recordId は画面に持たない（持たせない）ため。
+  const handoff = state.handoff && str(state.handoff.operationId) ? state.handoff : null;
+  const handoffCount = handoff ? Number(handoff.grantedCount) || 0 : 0;
   return {
     selectedIds,
-    selectedCount: selectedIds.length,
+    handoff,
+    selectedCount: handoff ? handoffCount : selectedIds.length,
     loadedCount: Number(state.loadedCount) || 0,
     campaignId: str(state.campaignId),
     campaign: state.campaign || null,

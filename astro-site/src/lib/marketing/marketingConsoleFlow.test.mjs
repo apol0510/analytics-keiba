@@ -228,3 +228,56 @@ test('理由コードには必ず「何をすべきか」の文言がある', ()
     assert.ok(BLOCK_LABEL[code].length > 5);
   }
 });
+
+// =========================================================================
+// カムバック無料付与の引き継ぎ（2026-08-03）
+// 画面は recordId を持たないため、母集団の同一性は operationId と人数で表す。
+// =========================================================================
+
+const HANDOFF = { operationId: 'cb-light-lifetime-2026-08-03-abcd1234', grantedCount: 3 };
+const handoffState = (over = {}) => base({
+  selectedIds: [],          // 引き継ぎ中は画面で 1 人も選ばない
+  handoff: HANDOFF,
+  ...over,
+});
+
+test('引き継ぎ中は画面で 0 名選択でも dry-run できる（対象はサーバーが確定する）', () => {
+  assert.equal(canDryRun(handoffState()).allowed, true);
+  // 引き継ぎが無ければ従来どおり「選択なし」で止まる
+  assert.equal(canDryRun(base({ selectedIds: [] })).allowed, false);
+  assert.equal(canDryRun(base({ selectedIds: [] })).reason, BLOCK.NO_SELECTION);
+});
+
+test('引き継ぎ中の対象人数は付与成功者の人数を使う', () => {
+  const st = handoffState();
+  const dry = { fingerprint: computeSelectionFingerprint(st), selected: 3, excluded: 0, willSend: 3 };
+  assert.equal(canEnqueue({ ...st, dryRun: dry }).allowed, true);
+  // 付与成功 0 名の引き継ぎでは進めない
+  assert.equal(canDryRun(handoffState({ handoff: { ...HANDOFF, grantedCount: 0 } })).reason, BLOCK.NO_SELECTION);
+});
+
+test('引き継ぎは指紋に含まれる（差し替え・解除で dry-run が失効する）', () => {
+  const st = handoffState();
+  const dry = { fingerprint: computeSelectionFingerprint(st), selected: 3, excluded: 0, willSend: 3 };
+  assert.equal(isDryRunStale({ dryRun: dry, current: st }), false);
+  // 別の付与操作へ差し替えたら失効
+  assert.equal(isDryRunStale({
+    dryRun: dry, current: handoffState({ handoff: { ...HANDOFF, operationId: 'cb-other-9999' } }),
+  }), true);
+  // 引き継ぎを外したら失効
+  assert.equal(isDryRunStale({ dryRun: dry, current: handoffState({ handoff: null }) }), true);
+  // 人数が変わっても失効（付与が取り消された等）
+  assert.equal(isDryRunStale({
+    dryRun: dry, current: handoffState({ handoff: { ...HANDOFF, grantedCount: 2 } }),
+  }), true);
+});
+
+test('引き継ぎが無いときの指紋は従来と同じ（既存の確認結果を壊さない）', () => {
+  const st = base();
+  assert.equal(computeSelectionFingerprint(st), computeSelectionFingerprint({ ...st, handoff: null }));
+  assert.equal(computeSelectionFingerprint(st).includes('handoff:'), false);
+});
+
+test('引き継ぎ直後は「キャンペーンと文面」へ進む（顧客選択をやり直させない）', () => {
+  assert.equal(resolveStep(handoffState({ campaignId: '' })), STEP.CAMPAIGN);
+});

@@ -139,3 +139,50 @@ test('対象が 0 名なら実行できない', () => {
 test('「現有効会員を含める」には警告文がある', () => {
   assert.match(INCLUDE_ACTIVE_WARNING, /通常のカムバック施策では使用しません/);
 });
+
+// =========================================================================
+// AK の運用前提を仕様として固定する（docs/spec.md の正本と対応）
+// =========================================================================
+
+test('無料会員は「期限切れ」にならない（無料に期限という概念が無い）', () => {
+  // 有効期限が空の無料会員
+  assert.notEqual(seg({ プラン: 'Free', Status: 'none' }), SEGMENT.EXPIRED);
+  // 過去日が入っていても、無料である限り「期限切れ」とは呼ばない
+  assert.notEqual(seg({ プラン: 'Free', Status: 'none', 有効期限: '2020-01-01' }), SEGMENT.EXPIRED);
+  assert.notEqual(seg({ プラン: '', Status: '' }), SEGMENT.EXPIRED);
+  // Status だけが 'expired' の場合は元有料の記録として期限切れ扱い（無料の判定より前段）
+  assert.equal(seg({ プラン: 'Premium', Status: 'expired' }), SEGMENT.EXPIRED);
+});
+
+test('旧 Stripe の課金停止による退会者はカムバック対象（送信禁止ではない）', () => {
+  // 退会は「課金を止めた」状態であって、メール拒否の意思表示ではない
+  const withdrawn = { プラン: 'Premium', Status: 'withdrawn', WithdrawalRequested: true };
+  assert.equal(seg(withdrawn), SEGMENT.WITHDRAWN);
+  const v = evaluateComebackTarget({ fields: withdrawn, nowMs: NOW });
+  assert.equal(v.eligible, true, '退会者がカムバック対象から外れている');
+  assert.equal(v.reason, null);
+  assert.ok(DEFAULT_TARGET_SEGMENTS.includes(SEGMENT.WITHDRAWN));
+});
+
+test('本当に送ってはいけない相手（配信停止 / blacklist）は退会と区別して除外する', () => {
+  const base = { プラン: 'Premium', Status: 'withdrawn', WithdrawalRequested: true };
+  assert.equal(
+    evaluateComebackTarget({ fields: base, nowMs: NOW, unsubscribed: true }).reason, EXCLUDE.UNSUBSCRIBED);
+  assert.equal(
+    evaluateComebackTarget({ fields: base, nowMs: NOW, blacklisted: true }).reason, EXCLUDE.BLACKLISTED);
+  // 退会そのものは除外理由にならない
+  assert.equal(evaluateComebackTarget({ fields: base, nowMs: NOW }).reason, null);
+});
+
+test('休眠（長期未ログインの無料会員）はカムバック対象', () => {
+  const dormant = { プラン: 'Free', Status: 'none', 最終ログイン: '2025-01-01T00:00:00Z' };
+  assert.equal(seg(dormant), SEGMENT.DORMANT);
+  assert.equal(evaluateComebackTarget({ fields: dormant, nowMs: NOW }).eligible, true);
+});
+
+test('現在有効な有料会員は通常のカムバック対象外', () => {
+  const active = { プラン: 'Premium', Status: 'active', 有効期限: '2027-01-01' };
+  assert.equal(seg(active), SEGMENT.ACTIVE_MEMBER);
+  assert.equal(evaluateComebackTarget({ fields: active, nowMs: NOW }).eligible, false);
+  assert.equal(DEFAULT_TARGET_SEGMENTS.includes(SEGMENT.ACTIVE_MEMBER), false);
+});

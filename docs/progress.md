@@ -452,6 +452,45 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
   （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
 
+## 2026-08-03 — カムバック無料付与の成功者を案内メール工程へ引き継ぐ（branch `feat/comeback-email-handoff` / Draft PR・未 merge）
+
+**目的**: 無料付与のあと案内メールを送るには、マーケティングタブで同じ人を探して選び直す
+必要があった。数十名の再選択は現実的でなく、付与に失敗した人を混ぜる / 付与できた人を
+取りこぼす / Email 文字列で別レコードに当てる、が起きる。かといって「付与したら自動で
+メールも送る」にすると、2 つの副作用を 1 トランザクション扱いする事故を生む。
+
+**採った方式**: `operationId` を鍵にし、**対象は毎回サーバーが Customers から再導出する**。
+
+付与が成功すると Customers の `LightGrantOp` / `PremiumGrantOp` に操作 ID が書かれる。
+つまり**付与成功そのものが既に台帳**であり、成功者リストを別に保存する必要がない。
+引き継ぐのは operationId と件数だけ（PII なし・recordId なし・URL にも載せない）。
+Airtable のスキーマ変更も新しい保管場所も不要。
+
+| 案 | 判定 |
+|---|---|
+| sessionStorage に recordId 配列 | ✗ 任意注入できる・期限を持てない |
+| 新規 handoff token 台帳（Airtable / Blobs）| ✗ 保管場所とスキーマが増える |
+| **operationId ＋ サーバー再導出** | **✓ 採用**（最小かつ恒久的）|
+
+**満たした条件**
+
+- 付与とメールは内部処理として分離したまま（`admin-comeback-grants` は 1 通も送らない）
+- 全件成功 → 全員 / 一部成功 → 成功者だけ / 全件失敗 → 進めない（409・副作用なし）
+- 502 の途中終了でも「書き込めた分」は引き継げる（**巻き戻さない**）
+- recordId 改ざん耐性（引き継ぎ時はクライアントの `recordIds` を一切読まない）
+- 期限 2 時間（付与時刻基準・サーバー判定）/ 使い切り / 別タブでは引き継がない
+- suppression / 配信停止 / バウンス / 既送信 / キャンペーン固有条件は**従来と同じ経路**
+- 「案内文面プレビュー」を「送信予定文面の例」に改め、次工程へ接続（閲覧専用で終わらせない）
+
+**残課題 / 別 PR 候補**
+
+- **元プラン別のメール文面自動分岐**（Light / Premium / Premium Sanrenpuku で文面を出し分ける）。
+  本 PR の範囲外。現状は 1 つのキャンペーン文面を管理者が編集して送る。
+  着手する場合は `campaignCatalog.js` の版管理と `campaignContentDraft.js` の編集権限境界
+  （campaignId / version / audienceRule / CTA URL は編集不可）を壊さないこと。
+- 引き継ぎの TTL（2 時間）は運用実績が無い。短すぎる／長すぎるは実運用で見直す。
+- Deploy Preview での確認は **UI 導線と失効挙動まで**。本番顧客への付与・送信は未実施。
+
 ## 2026-08-01 — メール配信反応の恒久台帳 `EmailEvents` / Phase 1a（branch `feat/email-event-ledger` / PR #199・未 merge）
 
 **目的**: 配信基盤の Activity 保持は実測 3 日。AK 側にイベントを残していないため、
