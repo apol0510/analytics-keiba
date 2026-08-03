@@ -725,7 +725,7 @@ test('guard(design): ボタンの階層（主要 / 補助 / 危険）が定義�
 
 test('guard(design): 主要操作は大きく、意味の色とアイコンを持つ', () => {
   for (const [id, cls, icon] of [
-    ['cbLoad', 'btn-lg', '🔍'], ['cbDryRun', 'btn-success', '✅'], ['cbApplyBtn', 'btn-danger', '🎁'],
+    ['cbLoad', 'btn-lg', '🔍'], ['cbDryRun', 'btn-success', '✅'], ['cbApplyBtn', 'btn-primary', '📋'],
     ['mkLoad', 'btn-lg', '🔍'], ['mkDryRun', 'btn-success', '✅'], ['mkDispatchRun', 'btn-danger', '📩'],
   ]) {
     const m = PAGE.match(new RegExp(`id="${id}"[^>]*class="([^"]*)"[^>]*>([^<]*)`));
@@ -736,13 +736,17 @@ test('guard(design): 主要操作は大きく、意味の色とアイコンを�
 });
 
 test('guard(design): 危険操作は赤系 + 警告アイコン + 無効時に aria-disabled', () => {
-  for (const id of ['cbApplyBtn', 'mkDispatchRun']) {
+  for (const id of ['mkDispatchRun']) {
     const m = PAGE.match(new RegExp(`<button[^>]*id="${id}"[^>]*>`));
     assert.ok(m, `${id} が無い`);
     assert.match(m[0], /btn-danger/, `${id} が危険操作の色でない`);
     assert.match(m[0], /aria-disabled="true"/, `${id} に aria-disabled が無い`);
   }
-  assert.match(PAGE, /id="cbApplyBtn"[^>]*>⚠️/, '危険操作に警告アイコンが無い');
+  // カムバックの Step 5 は**確認画面を開くだけ**なので危険色にしない
+  const cbApply = PAGE.match(/<button[^>]*id="cbApplyBtn"[^>]*>/);
+  assert.ok(cbApply, 'cbApplyBtn が無い');
+  assert.equal(/btn-danger/.test(cbApply[0]), false, 'Step 5 が危険色のままになっている');
+  assert.match(cbApply[0], /aria-disabled="true"/, 'cbApplyBtn に aria-disabled が無い');
 });
 
 test('guard(design): Step ナビは丸番号 + アイコン + 補足を持つ', () => {
@@ -760,9 +764,14 @@ test('guard(design): 現在 / 完了 / 未到達を色と文言の両方で区�
   assert.match(SCRIPT, /'✅ 完了'/, '完了の文言が無い');
 });
 
-test('guard(design): Step 5 は本番データが変わることを赤で明示する', () => {
-  assert.match(PAGE, /本番データが変更されます/, 'Step 5 の警告が無い');
-  assert.match(PAGE, /\.ppe \.cb-step\[data-cbcard="5"\]\.is-now[\s\S]{0,120}--action-red/, 'Step 5 が赤系でない');
+test('guard(design): 本番データ変更の赤い警告は確認モーダルにだけ置く', () => {
+  // Step 5 は「まだ変更されない」ことを文章で伝える（赤にしない）
+  assert.match(PAGE, /まだ付与されません/, 'Step 5 に「まだ変更されない」旨が無い');
+  assert.equal(/\.ppe \.cb-step\[data-cbcard="5"\]\.is-now[\s\S]{0,120}--action-red/.test(PAGE), false,
+    'Step 5 が赤系のまま（本番 write ではないので赤にしない）');
+  // 本番 write の警告は確認モーダルの中に置く
+  assert.match(SCRIPT, /APPLY_WRITE_NOTICE/, '本番変更の明示が確認モーダルに無い');
+  assert.match(SCRIPT, /sec3\.className = 'dt-sec danger'/, '確認モーダルの実行区画が danger でない');
 });
 
 test('guard(design): 追従バーの次操作は状態ごとに色が変わる', () => {

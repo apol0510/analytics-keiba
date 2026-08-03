@@ -155,8 +155,9 @@ test('追従バーは候補・選択・特典・確認と「次の操作 1 つ�
   assert.equal(v.next, '付与内容を確認');
   assert.equal(buildCbStickyView(base({ loaded: false, selectedCount: 0 })).next, '対象候補を表示');
   assert.equal(buildCbStickyView(base({ selectedCount: 0 })).next, '顧客を選択');
-  assert.equal(buildCbStickyView(base({ dryRun: dryOk })).next, '無料特典を付与');
-  assert.equal(buildCbStickyView(base({ dryRun: dryOk, applied: true })).next, '実行結果を見る');
+  // 追従バーは**確認画面を開くだけ**。Step 5 本体と同じ文言でなければならない
+  assert.equal(buildCbStickyView(base({ dryRun: dryOk })).next, '付与内容の最終確認へ');
+  assert.equal(buildCbStickyView(base({ dryRun: dryOk, applied: true })).next, '付与結果を見る');
   assert.equal(buildCbStickyView(base({ dryRun: dryOk, dryStale: true })).review, '確認: 失効');
 });
 
@@ -171,4 +172,11 @@ test('区分の表示名が引ける', () => {
   assert.equal(segmentLabel(SEGMENT.EXPIRED), '期限切れ');
   assert.equal(segmentLabel(SEGMENT.ACTIVE_MEMBER), '現有効会員');
   assert.equal(segmentLabel('なにか'), '状態不明');
+});
+
+test('追従バーの次操作は本番付与を名乗らない（確認画面を開くだけ）', () => {
+  const next = buildCbStickyView(base({ dryRun: dryOk })).next;
+  // 「付与する」と確定形で名乗ってよいのは確認モーダルの最終ボタンだけ
+  assert.equal(/付与する$/.test(next), false, `追従バーが本番付与を名乗っている: ${next}`);
+  assert.match(next, /最終確認/, '確認画面を開くことが伝わらない');
 });
