@@ -192,11 +192,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <option value="recent">最近送った（30日以内）</option>
           <option value="sent">送ったことがある</option>
         </select>
-        <select id="mkOfferState" aria-label="割引オファー">
-          <option value="">オファー: すべて</option>
-          <option value="live">申込可能なオファーあり</option>
-          <option value="expiring7">オファー期限が7日以内</option>
-          <option value="none">オファーなし</option>
+        <select id="mkOfferState" aria-label="オファーの状態">
+          <option value="">オファーの状態: すべて</option>
+          <option value="live">現在申込みに使えるオファーあり</option>
+          <option value="redeemed">申込み済み（オファー利用済み）</option>
+          <option value="revoked">取り消したオファーのみ</option>
+          <option value="expired">期限切れのオファーのみ</option>
+          <option value="none">オファーの発行なし</option>
+          <option value="unknown">状態を確認できない</option>
+        </select>
+        <select id="mkOfferWindow" aria-label="オファーの残り期間">
+          <option value="">オファーの残り期間: すべて</option>
+          <option value="within7">利用期限まで7日以内</option>
+          <option value="over7">利用期限まで8日以上</option>
+          <option value="no_expiry">利用期限なし</option>
         </select>
         <select id="mkPromoState" aria-label="現在の無料付与">
           <option value="">現在の無料付与: すべて</option>
@@ -227,6 +236,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
 
       <div class="chip-row" id="mkChips" aria-label="適用中の条件"></div>
+      <p class="condition-text" id="mkConditionText" aria-live="polite"></p>
+      <p class="condition-warn" id="mkConditionWarn" hidden></p>
       <p class="filter-logic" id="mkLogicNote"></p>
       <p class="note" id="mkApplied"></p>
       </section>
@@ -1514,6 +1525,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 条件を変えたまま再取得していないことを追従バーでも出す */
   .ppe .stickybar .sb-item.is-changed { color: var(--action-orange); font-weight: 700; }
 
+  /* ═══ 条件の分類バッジ・自然文要約 ═══ */
+  .ppe .mfilter-cat { font-size: 10px; font-weight: 700; padding: .1rem .4rem; border-radius: 999px;
+    margin-right: .25rem; border: 1px solid var(--border-soft); color: var(--text-muted); }
+  .ppe .mfilter-cat.cat-state { color: #93c5fd; border-color: rgba(59,130,246,.5); }
+  .ppe .mfilter-cat.cat-history { color: #c4b5fd; border-color: rgba(167,139,250,.5); }
+  .ppe .mfilter-cat.cat-extra { color: var(--text-muted); }
+  .ppe .mfilter-cat.cat-action { color: #6ee7b7; border-color: rgba(16,185,129,.5); }
+  .ppe .condition-text { font-size: .8rem; color: var(--text-main); margin: .3rem 0 .1rem; }
+  .ppe .condition-warn { font-size: .8rem; color: var(--action-orange); font-weight: 700; margin: .2rem 0; }
+
   /* ═══ Email 個別検索（補助機能なので既定は畳む）═══ */
   .ppe .email-search { max-width: 420px; border: 1px solid var(--border-soft); border-radius: 10px;
     padding: .25rem .6rem; background: rgba(148,163,184,.05); }
@@ -1640,10 +1661,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   import {
     FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
     getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
+    categoryLabel, dependencyOf, describeConditionsNatural, detectImpossibleCombination,
   } from '../../lib/marketing/filterDefinitions.js';
   window.__filterDefs = {
     FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
     getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
+    categoryLabel, dependencyOf, describeConditionsNatural, detectImpossibleCombination,
   };
   import {
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
@@ -2327,11 +2350,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     /** 画面のフィルター値をまとめて読む（dry-run 失効判定にも使う） */
     function mkCurrentFilters() {
       const q = $('mkQ') ? String($('mkQ').value || '') : '';
-      const s = multiValues(['mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
-        'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']);
+      const s = multiValues(MK_MULTI_IDS);
       return {
         q, contract: s.mkContract, plan: s.mkPlan, sendable: s.mkSendable,
-        pp: s.mkPp, history: s.mkHistory, offer: s.mkOfferState,
+        pp: s.mkPp, history: s.mkHistory, offer: s.mkOfferState, offerWindow: s.mkOfferWindow,
         promo: s.mkPromoState, frequency: s.mkFrequency, lastLogin: s.mkLastLogin,
       };
     }
@@ -2712,6 +2734,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     // ── 顧客一覧 ──
     async function mkLoad() {
+      // 両立しない条件のまま取得しない（0 件の理由が分からなくなる）
+      const defs = defsApi();
+      const conflicts = defs ? defs.detectImpossibleCombination(multiValues(MK_MULTI_IDS)) : [];
+      if (conflicts.length) {
+        mkNotify('warn', '条件の組合せを確認してください', conflicts[0].message);
+        return;
+      }
       mkMsg('読み込み中…');
       // 複数選択は配列で送る（同じ項目内は OR / 未選択は条件なし）
       const sel = multiValues(MK_MULTI_IDS);
@@ -2724,6 +2753,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         history: sel.mkHistory,
         lastLogin: sel.mkLastLogin,
         offerState: sel.mkOfferState,
+        offerWindow: sel.mkOfferWindow,
         promoState: sel.mkPromoState,
         frequency: sel.mkFrequency,
       });
@@ -4403,6 +4433,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       wrap.appendChild(btn);
       // 項目そのものの説明（フィルター名の右のⓘ）
       const fd = defsApi() && defsApi().getFilterDefinition(selectId);
+      // 分類（現在状態 / 履歴 / 追加条件 / 操作可否）を短く添える。
+      // 種類の違う条件が同じ見た目で並ぶのを防ぐ
+      const catText = defsApi() ? defsApi().categoryLabel(selectId) : '';
+      if (catText) {
+        const cat = document.createElement('span');
+        cat.className = 'mfilter-cat cat-' + (fd && fd.category ? fd.category : 'state');
+        cat.textContent = catText;
+        wrap.insertBefore(cat, btn);
+      }
       if (fd && fd.description) {
         const info = document.createElement('button');
         info.type = 'button'; info.className = 'info-btn info-btn-head';
@@ -4767,10 +4806,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     /** 顧客マーケティングの絞り込みを複数選択へ変換する */
     const MK_MULTI_IDS = ['mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
-      'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin'];
+      'mkOfferState', 'mkOfferWindow', 'mkPromoState', 'mkFrequency', 'mkLastLogin'];
     const MK_MULTI_LABELS = {
       mkContract: '契約状態', mkPlan: 'プラン', mkSendable: '送信可否', mkPp: 'Plus 資格',
-      mkHistory: '送信履歴', mkOfferState: 'オファー', mkPromoState: '現在の無料付与',
+      mkHistory: '送信履歴', mkOfferState: 'オファーの状態', mkOfferWindow: 'オファーの残り期間',
+      mkPromoState: '現在の無料付与',
       mkFrequency: '送信タイミング', mkLastLogin: '最終ログイン',
     };
     function mkInitFilters() {
@@ -4786,9 +4826,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkRenderChips();
     }
 
+    /** 条件を自然文で出し、両立しない組合せは取得前に知らせる */
+    function mkRenderConditionSummary() {
+      const defs = defsApi();
+      if (!defs) return;
+      const selections = multiValues(MK_MULTI_IDS);
+      const sum = $('mkConditionText');
+      if (sum) sum.textContent = defs.describeConditionsNatural(selections);
+      const warn = $('mkConditionWarn');
+      if (warn) {
+        const problems = defs.detectImpossibleCombination(selections);
+        warn.textContent = problems.map((p) => p.message).join(' ');
+        warn.hidden = problems.length === 0;
+      }
+    }
+
     function mkRenderChips() {
       const box = $('mkChips');
       if (!box) return;
+      mkRenderConditionSummary();
       const selections = multiValues(MK_MULTI_IDS);
       const labels = {};
       for (const id of MK_MULTI_IDS) {

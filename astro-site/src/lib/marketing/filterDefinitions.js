@@ -18,6 +18,32 @@
  *    （変えると保存済みの条件・API 契約が壊れる）。
  */
 
+/**
+ * 絞り込みの種類。**違う種類を同じ意味に見える形で並べない**ための分類。
+ *   STATE   … いまどうなっているか（現在状態）
+ *   HISTORY … 過去に何があったか（記録）
+ *   EXTRA   … 状態を絞り込む追加条件（単独では母集団を作らないもの）
+ *   ACTION  … いまこの操作を実行できるか
+ */
+export const FILTER_CATEGORY = Object.freeze({
+  STATE: 'state',
+  HISTORY: 'history',
+  EXTRA: 'extra',
+  ACTION: 'action',
+});
+
+export const FILTER_CATEGORY_LABEL = Object.freeze({
+  [FILTER_CATEGORY.STATE]: '現在状態',
+  [FILTER_CATEGORY.HISTORY]: '履歴',
+  [FILTER_CATEGORY.EXTRA]: '追加条件',
+  [FILTER_CATEGORY.ACTION]: '操作可否',
+});
+
+import {
+  OFFER_STATE_LABEL, OFFER_STATE_DESCRIPTION,
+  OFFER_WINDOW_LABEL, OFFER_WINDOW_DESCRIPTION, OFFER_RELATION_NOTE,
+} from './offerFilterModel.js';
+
 /** 1 項目の定義を作る小さなヘルパ（形を揃えるためだけのもの） */
 const def = (label, description, options, extra = {}) => Object.freeze({
   label, description, options: Object.freeze(options), ...extra,
@@ -37,20 +63,20 @@ export const FILTER_DEFINITIONS = Object.freeze({
     opt('unknown', '状態を判定できない旧データ',
       '旧形式の顧客データで、現在の契約状態を確実に判定できません。送信前に個別確認してください。'),
     opt('none', '契約なし（無料会員）', '有料契約が確認できない無料会員です。'),
-  ], { apiKey: 'contract' }),
+  ], { category: FILTER_CATEGORY.STATE, apiKey: 'contract' }),
 
   mkPlan: def('プラン', '顧客に登録されている会員プランで絞り込みます。', [
     opt('premium_sanrenpuku', 'Premium 三連複', '三連複の買い切り権を持つ会員です。'),
     opt('premium', 'Premium', 'Premium プランの会員です。'),
     opt('light', 'Light', 'Light プランの会員です。'),
     opt('free', '無料会員', '有料プランの登録がありません。'),
-  ], { apiKey: 'plan' }),
+  ], { category: FILTER_CATEGORY.STATE, apiKey: 'plan' }),
 
   mkSendable: def('送信可否',
     'メール配信停止・バウンス・ブラックリストなどを考慮した送信可否です。', [
       opt('sendable', '送信できる', '配信停止・バウンス・除外リストのいずれにも該当しません。'),
       opt('suppressed', '送信できない', '配信停止・バウンス・停止アカウントなどの理由で送信対象から外れます。'),
-    ], { apiKey: 'marketing' }),
+    ], { category: FILTER_CATEGORY.STATE, apiKey: 'marketing' }),
 
   mkPp: def('Premium Plus 資格',
     'Premium Plus の販売対象として扱えるかを示します。会員プランとは別判定です。', [
@@ -58,33 +84,47 @@ export const FILTER_DEFINITIONS = Object.freeze({
       opt('review', '保留（確認待ち）', '条件を満たすか確認が必要で、まだ販売対象にしていません。'),
       opt('blocked', '販売対象外', '販売しないと決めた顧客です。'),
       opt('unset', '未設定', '販売資格をまだ判定していません。'),
-    ], { apiKey: 'premiumPlus' }),
+    ], { category: FILTER_CATEGORY.STATE, apiKey: 'premiumPlus' }),
 
   mkHistory: def('送信履歴', '過去に対象キャンペーンを送信した記録で絞り込みます。', [
     opt('never', '送ったことがない', 'この台帳にキャンペーン送信の記録がありません。'),
     opt('recent', '最近送った（30日以内）', '30 日以内にキャンペーンを送っています。'),
     opt('sent', '送ったことがある', '時期を問わず、送信の記録があります。'),
-  ], { apiKey: 'history' }),
+  ], { category: FILTER_CATEGORY.HISTORY, apiKey: 'history' }),
 
-  mkOfferState: def('割引オファー', '顧客に発行済みの割引・購入オファーの状態で絞り込みます。', [
-    opt('live', '申込可能なオファーあり',
-      '現在期限内で、顧客が申込に使用できる割引・購入オファーが発行されています。'),
-    opt('expiring7', 'オファー期限が7日以内',
-      '発行済みオファーの有効期限が、現在から 7 日以内に終了します。'),
-    opt('none', 'オファーなし', '現在利用できるオファーが発行されていません。'),
-  ], { apiKey: 'offerState' }),
+  // ⚠️ 「残り期間」は「使えるオファーあり」の**部分集合**。並列に並べると
+  //    違いが説明できないため、状態（排他）と残り期間（追加条件）へ分けた。
+  mkOfferState: def('オファーの状態', '顧客に発行済みの割引・購入オファーが、いまどうなっているかで絞り込みます。', [
+    opt('live', OFFER_STATE_LABEL.live, OFFER_STATE_DESCRIPTION.live),
+    opt('redeemed', OFFER_STATE_LABEL.redeemed, OFFER_STATE_DESCRIPTION.redeemed),
+    opt('revoked', OFFER_STATE_LABEL.revoked, OFFER_STATE_DESCRIPTION.revoked),
+    opt('expired', OFFER_STATE_LABEL.expired, OFFER_STATE_DESCRIPTION.expired),
+    opt('none', OFFER_STATE_LABEL.none, OFFER_STATE_DESCRIPTION.none),
+    opt('unknown', OFFER_STATE_LABEL.unknown, OFFER_STATE_DESCRIPTION.unknown),
+  ], { category: FILTER_CATEGORY.STATE, apiKey: 'offerState', exclusive: true, relationNote: OFFER_RELATION_NOTE }),
+
+  mkOfferWindow: def('オファーの残り期間',
+    'いま使えるオファーがある顧客を、有効期限の残りでさらに絞り込みます。', [
+      opt('within7', OFFER_WINDOW_LABEL.within7, OFFER_WINDOW_DESCRIPTION.within7),
+      opt('over7', OFFER_WINDOW_LABEL.over7, OFFER_WINDOW_DESCRIPTION.over7),
+      opt('no_expiry', OFFER_WINDOW_LABEL.no_expiry, OFFER_WINDOW_DESCRIPTION.no_expiry),
+    ], {
+      category: FILTER_CATEGORY.EXTRA, apiKey: 'offerWindow',
+      // 単独では母集団を作らない。必ず「使えるオファーあり」に限定される
+      dependsOn: 'mkOfferState', dependsOnValue: 'live', relationNote: OFFER_RELATION_NOTE,
+    }),
 
   mkPromoState: def('現在の無料付与',
     '現在有効な Light または Premium の無料利用権を示します。', [
       opt('active', '無料利用権が有効', 'いま無料で閲覧できる権利があります（購入とは別）。'),
       opt('ending7', '無料期間が7日以内に終了', '無料利用権の終了が 7 日以内に来ます。'),
       opt('none', '無料付与なし', '現在有効な無料利用権はありません。'),
-    ], { apiKey: 'promoState' }),
+    ], { category: FILTER_CATEGORY.STATE, apiKey: 'promoState' }),
 
   mkFrequency: def('送信タイミング', '最終送信日時や配信頻度制限に基づく状態です。', [
     opt('sendable-now', 'いま送れる', '送信可能で、24 時間の送信間隔制限にもかかっていません。'),
     opt('blocked', '24時間の間隔制限中', '直近 24 時間以内に送っているため、いまは送りません。'),
-  ], { apiKey: 'frequency' }),
+  ], { category: FILTER_CATEGORY.EXTRA, apiKey: 'frequency' }),
 
   mkLastLogin: def('最終ログイン', '顧客の最終ログインからの経過期間で絞り込みます。', [
     opt('login:30d', '30日以内', '直近 30 日以内にログインしています。'),
@@ -92,7 +132,7 @@ export const FILTER_DEFINITIONS = Object.freeze({
     opt('login:365d', '91日〜1年前', '3 か月以上 1 年以内にログインしています。'),
     opt('login:over365', '1年以上前', '1 年以上ログインしていません。'),
     opt('login:never', 'ログイン記録なし', 'ログインの記録が残っていません（記録開始前の可能性もあります）。'),
-  ], { apiKey: 'lastLogin' }),
+  ], { category: FILTER_CATEGORY.EXTRA, apiKey: 'lastLogin' }),
 
   // ── カムバック特典 ────────────────────────────────────────
   cbContract: def('対象区分', 'カムバックの宛先として、どの状態の顧客を探すかを選びます。', [
@@ -103,19 +143,19 @@ export const FILTER_DEFINITIONS = Object.freeze({
     opt('unknown', '状態を判定できない', '契約状態を確定できないため、付与の対象にはできません。'),
     opt('active', '現在有効な会員（通常は選択しない）',
       'いま料金を払って使っている会員です。カムバックの本来の宛先ではありません。'),
-  ], { apiKey: 'contract' }),
+  ], { category: FILTER_CATEGORY.STATE, apiKey: 'contract' }),
 
   cbPlan: def('プラン', '顧客に登録されている会員プランで絞り込みます。', [
     opt('premium_sanrenpuku', 'Premium 三連複', '三連複の買い切り権を持つ会員です。'),
     opt('premium', 'Premium', 'Premium プランの会員です。'),
     opt('light', 'Light', 'Light プランの会員です。'),
     opt('free', '無料会員', '有料プランの登録がありません。'),
-  ], { apiKey: 'plan' }),
+  ], { category: FILTER_CATEGORY.STATE, apiKey: 'plan' }),
 
   cbWithdrawn: def('退会履歴', '退会（課金停止）の申し出があったかで絞り込みます。', [
     opt('yes', '退会の記録あり', '退会・課金停止の記録があります。メール配信の可否とは別です。'),
     opt('no', '退会の記録なし', '退会の申し出は記録されていません。'),
-  ], { apiKey: 'withdrawn' }),
+  ], { category: FILTER_CATEGORY.HISTORY, apiKey: 'withdrawn' }),
 
   cbGrantNow: def('現在の無料付与',
     '現在有効な Light または Premium の無料利用権を示します。', [
@@ -127,7 +167,7 @@ export const FILTER_DEFINITIONS = Object.freeze({
       opt('both', 'Light・Premium 両方が有効', '2 つの無料利用権が同時に有効です。'),
       opt('inconsistent', '⚠️ 要確認（データが矛盾）',
         '取消の記録と期限が食い違うなど、無料付与のデータが矛盾しています。自動修復はしません。'),
-    ], { apiKey: 'currentGrant' }),
+    ], { category: FILTER_CATEGORY.STATE, apiKey: 'currentGrant' }),
 
   cbGrantHistory: def('無料付与履歴',
     '過去に無料利用権を付与・終了・取消した記録を示します。', [
@@ -141,7 +181,7 @@ export const FILTER_DEFINITIONS = Object.freeze({
       opt('inconsistent', '⚠️ 要確認（記録が矛盾）', '付与と取消の記録が食い違っています。'),
       opt('unknown', '履歴を確定できない',
         '操作の痕跡はありますが、種類や時期を確定できません。個別に確認してください。'),
-    ], { apiKey: 'grantHistory' }),
+    ], { category: FILTER_CATEGORY.HISTORY, apiKey: 'grantHistory' }),
 
   cbGrantable: def('今回の無料付与',
     '現在の状態と既存の無料付与から、今回の付与操作が可能かを示します。', [
@@ -150,13 +190,13 @@ export const FILTER_DEFINITIONS = Object.freeze({
         '停止・退会・メール未登録、または既に無期限の権利があるため、付与しても意味がありません。'),
       opt('review', '要確認',
         '無料付与のデータが矛盾しています。内容を確認するまで付与しません。'),
-    ], { apiKey: 'grantable' }),
+    ], { category: FILTER_CATEGORY.ACTION, apiKey: 'grantable' }),
 
   cbHistory: def('送信履歴', '過去に対象キャンペーンを送信した記録で絞り込みます。', [
     opt('never', '送ったことがない', 'この台帳にキャンペーン送信の記録がありません。'),
     opt('recent', '最近送った（30日以内）', '30 日以内にキャンペーンを送っています。'),
     opt('sent', '送ったことがある', '時期を問わず、送信の記録があります。'),
-  ], { apiKey: 'history' }),
+  ], { category: FILTER_CATEGORY.HISTORY, apiKey: 'history' }),
 
   // ── Premium Plus 販売 ────────────────────────────────────
   fState: def('販売状態', 'Premium Plus をいまこの顧客へ販売できるかの状態です。', [
@@ -164,24 +204,24 @@ export const FILTER_DEFINITIONS = Object.freeze({
     opt('eligible', '販売できる', '段階公開の対象、または販売中です。'),
     opt('immediate', 'すぐ販売できる（個別許可）', '管理者が個別に販売を許可しています。'),
     opt('blocked', '販売対象外', '販売しないと決めた顧客です。'),
-  ]),
+  ], { category: FILTER_CATEGORY.STATE }),
 
   fRoute: def('資格の成立経路', 'Premium Plus の販売資格が、どの条件で成立したかを示します。', [
     opt('sanrenpuku', '三連複の購入から', '三連複の買い切り購入により資格が成立しました。'),
     opt('premium_30d', 'Premium 加入30日から', 'Premium 加入から 30 日経過して資格が成立しました。'),
-  ]),
+  ], { category: FILTER_CATEGORY.STATE }),
 
   fKind: def('候補の区分', '販売資格が成立していない顧客を、その理由で分けて表示します。', [
     opt('waiting_30d', 'Premium 30日待ち', 'Premium 加入から 30 日の経過を待っています。'),
     opt('anchor_missing', '加入日が不明', '加入日のデータが無く、経過日数を数えられません。'),
-  ]),
+  ], { category: FILTER_CATEGORY.STATE }),
 
   fUpsell: def('販売する商品', 'この顧客に対して、どの商品を案内するかの設定です。', [
     opt('auto', '自動で選ぶ', '資格の状態に応じて案内内容を自動で決めます。'),
     opt('sanrenpuku', '三連複を案内', '三連複の購入を案内します。'),
     opt('plus', 'Premium Plus を案内', 'Premium Plus の購入を案内します。'),
     opt('none', '案内しない', '販売の案内を表示しません。'),
-  ]),
+  ], { category: FILTER_CATEGORY.EXTRA }),
 });
 
 /** Email 個別検索の説明（通常のセグメント検索と混同させない） */
@@ -272,6 +312,69 @@ export const FORBIDDEN_DISPLAY_WORDS = Object.freeze([
 export function findForbiddenWords(text) {
   const t = str(text);
   return FORBIDDEN_DISPLAY_WORDS.filter((w) => t.includes(w));
+}
+
+/**
+ * 条件を**自然文**で要約する（チップの羅列にしない）。
+ * 種類ごとにまとめ、包含関係を誤解させない語順で並べる。
+ */
+export function describeConditionsNatural(selections = {}) {
+  const bucket = { state: [], history: [], extra: [], action: [] };
+  for (const [id, values] of Object.entries(selections)) {
+    const d = getFilterDefinition(id);
+    const list = (Array.isArray(values) ? values : [values])
+      .map((v) => str(v)).filter((v) => v && v !== 'all');
+    if (!d || list.length === 0) continue;
+    const names = list.map((v) => optionLabel(id, v));
+    bucket[d.category || 'state'].push(names.join('または'));
+  }
+  const parts = [];
+  if (bucket.state.length) parts.push(bucket.state.join('で、'));
+  if (bucket.history.length) parts.push(`${bucket.history.join('で、')}の記録がある`);
+  if (bucket.extra.length) parts.push(bucket.extra.join('で、'));
+  if (bucket.action.length) parts.push(bucket.action.join('で、'));
+  if (parts.length === 0) return '条件を指定していません（すべての顧客が対象です）。';
+  // 「〜で、〜、かつ〜」の後は必ず「の顧客を検索します。」で閉じる（読み下せる文にする）
+  return `${parts.join('、かつ')}の顧客を検索します。`;
+}
+
+/**
+ * 選んだ条件が両立しないかを**取得前**に判定する。
+ * `dependsOn` を持つ項目は、依存先の値を選ばない限り母集団が空になる。
+ */
+export function detectImpossibleCombination(selections = {}) {
+  const problems = [];
+  for (const [id, d] of Object.entries(FILTER_DEFINITIONS)) {
+    if (!d.dependsOn) continue;
+    const mine = (Array.isArray(selections[id]) ? selections[id] : [selections[id]])
+      .map((v) => str(v)).filter((v) => v && v !== 'all');
+    if (mine.length === 0) continue;
+    const parent = (Array.isArray(selections[d.dependsOn]) ? selections[d.dependsOn] : [selections[d.dependsOn]])
+      .map((v) => str(v)).filter((v) => v && v !== 'all');
+    if (parent.length > 0 && !parent.includes(d.dependsOnValue)) {
+      const parentDef = getFilterDefinition(d.dependsOn);
+      problems.push({
+        filterId: id,
+        message: `この条件の組合せでは対象が存在しません：「${d.label}」は`
+          + `「${optionLabel(d.dependsOn, d.dependsOnValue)}」の顧客にだけ当てはまります。`
+          + `「${parentDef ? parentDef.label : d.dependsOn}」の指定を見直してください。`,
+      });
+    }
+  }
+  return problems;
+}
+
+/** 項目の分類（画面の見出し脇に出す短い語） */
+export function categoryLabel(filterId) {
+  const d = getFilterDefinition(filterId);
+  return d ? (FILTER_CATEGORY_LABEL[d.category] || '') : '';
+}
+
+/** 依存関係のある項目（画面で親を選ぶまで注意を出す） */
+export function dependencyOf(filterId) {
+  const d = getFilterDefinition(filterId);
+  if (!d || !d.dependsOn) return null;
+  return { filterId: d.dependsOn, value: d.dependsOnValue, note: d.relationNote || '' };
 }
 
 export const FILTER_IDS = Object.freeze(Object.keys(FILTER_DEFINITIONS));

@@ -205,3 +205,32 @@ test('guard(ui): 内部用語が画面の表示文言に残っていない', () 
 test('guard(ui): 詳細条件の見出しが分かりやすい', () => {
   assert.match(PAGE, /<summary>詳細な絞り込み条件<span class="filter-more-hint">送信履歴・オファー・無料付与・最終ログインなど<\/span><\/summary>/);
 });
+
+/* ── 条件の分類・オファー再設計・自然文要約（2026-08-03）───────────── */
+
+test('guard(ui): オファーは状態と残り期間の 2 つに分かれている', () => {
+  assert.match(PAGE, /<select id="mkOfferState" aria-label="オファーの状態">/, '状態フィルターが無い');
+  assert.match(PAGE, /<select id="mkOfferWindow" aria-label="オファーの残り期間">/, '残り期間フィルターが無い');
+  // 部分集合だった選択肢が状態側に残っていない
+  const mkt = PAGE.slice(PAGE.indexOf('id="paneMkt"'), PAGE.indexOf('id="paneCb"'));
+  assert.equal(/<option value="expiring7">/.test(mkt), false, '部分集合が状態に残っている');
+  assert.match(SCRIPT, /offerWindow: sel\.mkOfferWindow/, '残り期間を送っていない');
+  assert.match(SCRIPT, /'mkOfferState', 'mkOfferWindow'/, '複数選択の対象に入っていない');
+});
+
+test('guard(ui): 条件の分類バッジを出す', () => {
+  assert.match(SCRIPT, /defsApi\(\)\.categoryLabel\(selectId\)/, '分類を出していない');
+  assert.match(SCRIPT, /className = 'mfilter-cat cat-'/, '分類バッジのクラスが無い');
+  assert.match(STYLE, /\.ppe \.mfilter-cat/, '分類バッジの見た目が無い');
+});
+
+test('guard(ui): 条件要約は自然文で、矛盾は取得前に止める', () => {
+  assert.match(PAGE, /id="mkConditionText"/, '自然文の置き場所が無い');
+  assert.match(PAGE, /id="mkConditionWarn"/, '矛盾の警告欄が無い');
+  assert.match(SCRIPT, /defs\.describeConditionsNatural\(selections\)/, '自然文を作っていない');
+  assert.match(SCRIPT, /defs\.detectImpossibleCombination/, '矛盾を検出していない');
+  // mkLoadCampaigns と紛れないよう、顧客取得の関数だけを見る
+  const load = SCRIPT.slice(SCRIPT.indexOf('async function mkLoad() {'),
+    SCRIPT.indexOf('async function mkLoad() {') + 700);
+  assert.match(load, /if \(conflicts\.length\)[\s\S]{0,160}return;/, '矛盾条件のまま取得している');
+});
