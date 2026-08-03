@@ -43,10 +43,25 @@
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 
 /**
- * 引き継ぎの有効期間。**2 時間**。
- * 付与してすぐ案内する運用に足り、翌日の別操作と混ざるには短い。
+ * 引き継ぎの有効期間。**24 時間**。
+ *
+ * 当初は 2 時間だったが、2026-08-03 の本番運用で足りないことが分かった。
+ * 28 名へ付与したあと、案内文面を用意して確認する間に失効し、
+ * **既存 operationId から引き継ぎ直す経路も無かった**ため作業が止まった。
+ *
+ * 24 時間なら「今日配って今日中に案内を出す」という実際の運用に収まり、
+ * 翌日以降の別操作と混ざるほど長くもない。期限を延ばしても安全性は
+ * 以下で担保しているので、混線・二重送信は増えない:
+ *
+ *   - 対象は毎回サーバーが Customers から再導出する（画面の申告を信用しない）
+ *   - キュー登録した引き継ぎは**使い切り**（同じ相手へ再送するには取り直す）
+ *   - 二重送信は `campaignId × version × 受信者`（DeliveryKey）で従来どおり防ぐ
+ *   - `sessionStorage` はタブを閉じれば消え、別タブとは共有されない
+ *
+ * それでも期限切れになった場合は、管理画面から operationId を指定して
+ * **read-only で引き継ぎ直せる**（`handoffLookup`）。再付与はしない。
  */
-export const HANDOFF_TTL_MS = 2 * 60 * 60 * 1000;
+export const HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** ブラウザ側の一時保存キー（sessionStorage）。タブを閉じれば消える */
 export const HANDOFF_STORAGE_KEY = 'ak-comeback-email-handoff';
@@ -71,6 +86,7 @@ export const HANDOFF_BLOCK_LABEL = Object.freeze({
 
 const str = (v) => String(v ?? '').trim();
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const DAY_MS = 86400000;
 
 /**
  * この tier の grant が「この操作で実際に書き込まれ、いまも取り消されていない」か。
@@ -93,16 +109,19 @@ function isGrantedByOperation(tierGrant, operationId) {
  * @param {{ records: Array<{recordId?: string, id?: string, fields?: object}>,
  *           operationId: string, nowMs?: number }} input
  * @returns {{ recordIds: string[], latestGrantedAtMs: number|null,
- *             byTier: {light: number, premium: number} }}
+ *             byTier: {light: number, premium: number},
+ *             kinds: {light: object|null, premium: object|null} }}
  */
 export function collectGrantedRecipients({ records, operationId, nowMs } = {}) {
   const op = str(operationId);
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   const recordIds = [];
   const byTier = { light: 0, premium: 0 };
+  // 「何を配ったか」を実データから読む。行ごとに違えば mixed（＝自動判定しない）
+  const seen = { light: [], premium: [] };
   let latestGrantedAtMs = null;
 
-  if (!op) return { recordIds, latestGrantedAtMs, byTier };
+  if (!op) return { recordIds, latestGrantedAtMs, byTier, kinds: { light: null, premium: null } };
 
   for (const rec of records || []) {
     const fields = (rec && rec.fields) || null;
@@ -115,15 +134,55 @@ export function collectGrantedRecipients({ records, operationId, nowMs } = {}) {
     const id = str(rec.recordId) || str(rec.id);
     if (!id) continue;                                  // 識別子が無い行は引き継がない
     recordIds.push(id);
-    if (light) byTier.light += 1;
-    if (premium) byTier.premium += 1;
+    if (light) { byTier.light += 1; seen.light.push(g.light); }
+    if (premium) { byTier.premium += 1; seen.premium.push(g.premium); }
 
     for (const t of [light ? g.light : null, premium ? g.premium : null]) {
       if (!t || !Number.isFinite(t.grantedAtMs)) continue;
       if (latestGrantedAtMs === null || t.grantedAtMs > latestGrantedAtMs) latestGrantedAtMs = t.grantedAtMs;
     }
   }
-  return { recordIds, latestGrantedAtMs, byTier };
+  return {
+    recordIds, latestGrantedAtMs, byTier,
+    kinds: { light: summarizeGrantKind(seen.light), premium: summarizeGrantKind(seen.premium) },
+  };
+}
+
+/**
+ * 同じ操作で配った grant の「種類」を 1 つにまとめる。
+ *
+ * **行ごとに食い違っていたら `mixed: true` を返して自動判定させない**。
+ * 「だいたい 30 日」で案内文面を決めると、違う条件の人へ違う内容が届く。
+ *
+ * @param {Array<object>} grants 同一 tier・同一操作の grant 群
+ * @returns {{ count: number, lifetime: boolean|null, durationDays: number|null,
+ *             grantedAtMs: number|null, untilMs: number|null, mixed: boolean }|null}
+ */
+export function summarizeGrantKind(grants) {
+  const list = Array.isArray(grants) ? grants.filter(Boolean) : [];
+  if (list.length === 0) return null;
+
+  const lifetimes = new Set(list.map((g) => g.lifetime === true));
+  const grantedAt = list.map((g) => g.grantedAtMs).filter(Number.isFinite);
+  const until = list.map((g) => g.untilMs).filter(Number.isFinite);
+
+  // 付与日と終了日から日数を出す（同じ操作なら全員同じになるはず）
+  const days = new Set(list.map((g) => {
+    if (g.lifetime === true) return 'lifetime';
+    if (!Number.isFinite(g.untilMs) || !Number.isFinite(g.grantedAtMs)) return 'unknown';
+    return Math.round((g.untilMs - g.grantedAtMs) / DAY_MS);
+  }));
+
+  const mixed = lifetimes.size > 1 || days.size > 1 || days.has('unknown');
+  const only = [...days][0];
+  return {
+    count: list.length,
+    lifetime: mixed ? null : lifetimes.has(true),
+    durationDays: mixed || only === 'lifetime' || only === 'unknown' ? null : Number(only),
+    grantedAtMs: grantedAt.length ? Math.max(...grantedAt) : null,
+    untilMs: until.length ? Math.max(...until) : null,
+    mixed,
+  };
 }
 
 /**
@@ -134,7 +193,7 @@ export function collectGrantedRecipients({ records, operationId, nowMs } = {}) {
  *           nowMs?: number }} input
  */
 export function buildHandoffTicket({
-  operationId, grantedCount, selectedCount, skippedCount, skippedDetail, nowMs,
+  operationId, grantedCount, selectedCount, skippedCount, skippedDetail, grantOffers, nowMs,
 } = {}) {
   const op = str(operationId);
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
@@ -142,6 +201,11 @@ export function buildHandoffTicket({
   return {
     operationId: op,
     grantedCount: granted,
+    // 何を配ったか（offerId だけ。案内文面の自動選択に使う）。PII は含まない
+    grantOffers: {
+      light: str(grantOffers && grantOffers.light) || null,
+      premium: str(grantOffers && grantOffers.premium) || null,
+    },
     selectedCount: num(selectedCount),
     // 「引き継がれない人数」＝ 選択したのに付与できなかった人。理由は PII なしの集計だけ
     notGrantedCount: num(skippedCount),
@@ -194,6 +258,10 @@ export function saveHandoff(storage, ticket) {
     storage.setItem(HANDOFF_STORAGE_KEY, JSON.stringify({
       operationId: str(ticket.operationId),
       grantedCount: num(ticket.grantedCount),
+      grantOffers: {
+        light: str(ticket.grantOffers && ticket.grantOffers.light) || null,
+        premium: str(ticket.grantOffers && ticket.grantOffers.premium) || null,
+      },
       notGrantedCount: num(ticket.notGrantedCount),
       notGrantedReasons: Array.isArray(ticket.notGrantedReasons) ? ticket.notGrantedReasons : [],
       issuedAtMs: num(ticket.issuedAtMs),

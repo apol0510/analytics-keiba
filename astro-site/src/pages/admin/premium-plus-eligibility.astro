@@ -246,12 +246,31 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <section class="step" data-step="2" aria-labelledby="mkStep2H">
         <h2 id="mkStep2H" class="step-h"><span class="step-n">2</span> 顧客を選択する
           <span class="step-counts" id="mkStepCounts"></span>
+          <span class="step-counts-sub" id="mkStepCountsSub" hidden></span>
         </h2>
       <!--
         カムバック特典タブで無料付与に成功した顧客を引き継いでいる状態の帯。
         引き継ぎ中はここで顧客を選び直す必要がない（対象は送信のたびにサーバーが確定する）。
       -->
       <div class="handoff-bar" id="mkHandoffBar" hidden aria-live="polite"></div>
+      <!--
+        引き継ぎを失った（期限切れ・タブを閉じた・別タブ）ときの復旧。
+        operationId を入れると**サーバーが Customers から付与成功者を読み直す**。
+        read-only で、付与も取り消しもしない。
+      -->
+      <details class="filter-more" id="mkRehandoffBox">
+        <summary>🔁 操作 ID から引き継ぎ直す（付与済みの相手へ案内する）</summary>
+        <p class="note">
+          付与したときの<b>操作 ID</b>を入れると、その操作で<b>付与に成功した顧客だけ</b>を
+          サーバーが読み直します。<b>付与のやり直しは行いません</b>（読み取りだけです）。
+        </p>
+        <div class="toolbar">
+          <input type="text" id="mkRehandoffOp" class="editor-subject" autocomplete="off" spellcheck="false"
+            placeholder="例: cb-light-30d-free-2026-08-03-xxxxxxxx" aria-label="操作 ID" />
+          <button type="button" id="mkRehandoffBtn" class="btn-primary">引き継ぎ直す</button>
+        </div>
+        <p class="note" id="mkRehandoffState" aria-live="polite"></p>
+      </details>
       <div class="selbar">
         <span class="colmode">表示列:
           <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
@@ -955,15 +974,44 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .selbar { display: flex; align-items: center; gap: .5rem; margin: 0 0 .6rem; flex-wrap: wrap; }
 
   /* ── 無料付与からの引き継ぎ帯（色だけでなく文言でも状態が分かる）───────── */
+  /* CTA の read-only 表示（本文に URL を書かない代わりに、誘導先を必ず見せる）*/
+  .ppe .step-counts.is-handoff { color: #a7f3d0; font-weight: 800; }
+  .ppe .step-counts-sub { font-size: .72rem; color: var(--text-muted); margin-left: .5rem; }
+
+  .ppe .cta-box {
+    display: flex; align-items: center; gap: .45rem; flex-wrap: wrap;
+    margin: .35rem 0 .5rem; padding: .5rem .7rem;
+    border: 1px solid var(--border-soft); border-left: 3px solid var(--action-blue);
+    border-radius: 8px; background: var(--surface-raised); color: var(--text-main);
+  }
+  .ppe .cta-box .cta-h { font-size: .72rem; color: var(--text-muted); font-weight: 700; }
+  .ppe .cta-box .cta-label { font-size: .86rem; }
+  .ppe .cta-box .cta-arrow { color: var(--text-muted); }
+  .ppe .cta-box .cta-url { font-size: .8rem; color: var(--action-blue); word-break: break-all; }
+  .ppe .cta-box .cta-url.is-deferred { color: var(--text-muted); }
+  .ppe .cta-box .cta-note { font-size: .74rem; color: var(--text-muted); flex: 1 1 14rem; }
+  @media (max-width: 640px) {
+    .ppe .cta-box { flex-direction: column; align-items: flex-start; gap: .25rem; }
+  }
+
+  /* 引き継ぎ帯。以前は未定義の CSS 変数（--ok-bg 等）を参照していたため、
+     フォールバックの明るい緑背景 + ダークテーマの明るい文字で読めなくなっていた。
+     実在するトークンだけを使い、通知（.notice-ok）と同じ配色に揃える。 */
   .ppe .handoff-bar {
     display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
-    margin: 0 0 .7rem; padding: .6rem .8rem;
-    border: 1px solid var(--ok-bd, #86efac); border-left: 4px solid var(--ok-fg, #16a34a);
-    border-radius: 8px; background: var(--ok-bg, #f0fdf4);
+    margin: 0 0 .7rem; padding: .65rem .85rem;
+    border: 1px solid var(--action-green); border-left: 4px solid var(--action-green);
+    border-radius: 8px;
+    background: rgba(16,185,129,.12);
+    color: var(--text-main);
   }
-  .ppe .handoff-bar b { font-size: .92rem; }
-  .ppe .handoff-bar .hb-d { font-size: .86rem; font-weight: 700; }
-  .ppe .handoff-bar .hb-note { font-size: .78rem; opacity: .85; flex: 1 1 16rem; }
+  .ppe .handoff-bar b { font-size: .92rem; color: #a7f3d0; }
+  .ppe .handoff-bar .hb-d { font-size: .88rem; font-weight: 800; color: var(--text-main); }
+  .ppe .handoff-bar .hb-note { font-size: .78rem; color: var(--text-main); opacity: .92; flex: 1 1 16rem; }
+  @media (max-width: 640px) {
+    .ppe .handoff-bar { flex-direction: column; align-items: flex-start; gap: .35rem; }
+    .ppe .handoff-bar .hb-note { flex: 1 1 auto; }
+  }
   .ppe .selcount { font-size: .78rem; font-weight: 700; color: #e6edf7; margin-left: auto; }
   .ppe .tbl td.c-chk { width: 2.2rem; text-align: center; }
   .ppe .tbl td.c-chk input { width: 16px; height: 16px; accent-color: #f5c451; cursor: pointer; }
@@ -1763,6 +1811,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     describeBenefits, buildApplyActionLabel, buildApplyActionAriaLabel,
     canRunApply, buildApplySummaryRows,
   };
+  // 配った特典 → 案内文面の対応（テスト用文面を既定にしない / 近い文面を当てにいかない）
+  import {
+    GRANT_CAMPAIGN_BLOCK, GRANT_CAMPAIGN_BLOCK_LABEL, TEMPLATE_MISSING_NOTICE,
+    recommendCampaignForGrant, pickInitialCampaign, describeCta,
+    inferGrantOfferId, buildGrantOffersFromKinds,
+  } from '../../lib/comeback/comebackGrantCampaign.js';
+  window.__cbCampaign = {
+    GRANT_CAMPAIGN_BLOCK, GRANT_CAMPAIGN_BLOCK_LABEL, TEMPLATE_MISSING_NOTICE,
+    recommendCampaignForGrant, pickInitialCampaign, describeCta,
+    inferGrantOfferId, buildGrantOffersFromKinds,
+  };
   // 無料付与 → 案内メールの引き継ぎ（対象の確定はサーバー。ここは保存と期限だけ）
   import {
     HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL, HANDOFF_TTL_MS,
@@ -2475,9 +2534,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (!c.usable && c.disabledReason) o.title = c.disabledReason;
         sel.appendChild(o);
       }
-      // 既定選択は使用可能なものにする（停止中が先頭でも選ばれないように）
-      const firstUsable = mkCampaigns.find((c) => c.usable);
-      if (firstUsable) sel.value = firstUsable.campaignId;
+      // 既定選択は単一源が決める。
+      //   - 運用テスト専用（カナリア）は**絶対に既定にしない**
+      //   - 引き継ぎ中は、配った特典に対応する文面があればそれを選ぶ
+      //   - 対応が無ければ既定は入れつつ「対応テンプレート未設定」と伝える
+      const pick = window.__cbCampaign.pickInitialCampaign({
+        campaigns: mkCampaigns, handoff: mkState.handoff,
+      });
+      if (pick.campaignId) sel.value = pick.campaignId;
+      if (mkState.handoff && !pick.matchedGrant && pick.label) {
+        mkNotify('warn', '送る文面を選んでください', pick.label);
+      }
       // ⚠️ change イベントはプログラム選択では発火しない。
       //    ここで状態へ入れないと「キャンペーン未選択」と判定され、
       //    dry-run ボタンが永久に押せなくなる（2026-08-02 の不具合）。
@@ -2506,6 +2573,50 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (rule.contracts && rule.contracts.length) limits.push('契約状態: ' + rule.contracts.join(' / '));
       if (rule.plans && rule.plans.length) limits.push('プラン: ' + rule.plans.join(' / '));
       if (c.extraAudience) limits.push('追加条件: ' + c.extraAudience);
+
+      // ── CTA（本文に URL を書けない代わりに、どこへ誘導するかを必ず見せる）──
+      const cta = window.__cbCampaign.describeCta(c);
+      const ctaBox = document.createElement('div');
+      ctaBox.className = 'cta-box';
+      const ctaH = document.createElement('span'); ctaH.className = 'cta-h'; ctaH.textContent = 'CTAボタン';
+      ctaBox.appendChild(ctaH);
+      const ctaL = document.createElement('b'); ctaL.className = 'cta-label';
+      ctaL.textContent = cta.label || '（未設定）';
+      ctaBox.appendChild(ctaL);
+      const ctaArrow = document.createElement('span'); ctaArrow.className = 'cta-arrow'; ctaArrow.textContent = '→';
+      ctaBox.appendChild(ctaArrow);
+      if (cta.url) {
+        // read-only 表示。押して確認できるが、本文編集では壊れない固定値
+        const a = document.createElement('a');
+        a.className = 'cta-url';
+        a.href = cta.url; a.textContent = cta.url;
+        a.target = '_blank'; a.rel = 'noopener noreferrer';
+        ctaBox.appendChild(a);
+      } else {
+        const sp = document.createElement('span'); sp.className = 'cta-url is-deferred';
+        sp.textContent = cta.perRecipient ? 'お客様ごとの専用 URL' : '（未設定）';
+        ctaBox.appendChild(sp);
+      }
+      const ctaNote = document.createElement('span'); ctaNote.className = 'cta-note';
+      ctaNote.textContent = cta.note;
+      ctaBox.appendChild(ctaNote);
+      el.appendChild(ctaBox);
+
+      // 引き継ぎ中に、配った特典と文面が対応していない場合は必ず知らせる
+      if (mkState.handoff && mkState.handoff.grantOffers) {
+        const rec = window.__cbCampaign.recommendCampaignForGrant(mkState.handoff.grantOffers);
+        if (!rec.campaignId) {
+          const w = document.createElement('p'); w.className = 'blocker';
+          w.textContent = '⚠️ ' + rec.label;
+          el.appendChild(w);
+        } else if (rec.campaignId !== c.campaignId) {
+          const w = document.createElement('p'); w.className = 'blocker';
+          w.textContent = '⚠️ 引き継いだ付与内容に対応する文面は「'
+            + (mkCampaigns.find((x) => x.campaignId === rec.campaignId)?.name || rec.campaignId)
+            + '」です。いま選んでいる文面と違います。';
+          el.appendChild(w);
+        }
+      }
 
       // 運用テスト専用は顧客向けと混同しないよう最初に明示する
       if (c.testOnly) {
@@ -3320,10 +3431,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const btn = $('mkActionDry');
       if (btn.dataset.busy === '1') return;        // 連打で結果が積み上がるのを防ぐ
       const kind = $('mkActionKind').value;
-      const ids = [...mkSelected];
+      // 引き継ぎ中は画面選択を使わず、サーバーが付与成功者を再導出する（read-only）
+      const handoffOp = mkState.handoff ? mkState.handoff.operationId : '';
+      const ids = handoffOp ? [] : [...mkSelected];
       const box = $('mkActionResult');
       box.innerHTML = '';
-      if (ids.length === 0) { $('mkActionState').textContent = '対象を選択してください。'; return; }
+      if (!handoffOp && ids.length === 0) { $('mkActionState').textContent = '対象を選択してください。'; return; }
       const seq = ++mkActionSeq;
       btn.dataset.busy = '1'; btn.disabled = true;
       $('mkActionState').textContent = '確認中…（書き込みは行いません）';
@@ -3332,13 +3445,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const rowsById = new Map((mkData && mkData.rows ? mkData.rows : []).map((r) => [r.recordId, r]));
         let result; let planKind; let campaign = null;
         const key = kind.startsWith('premium-') ? 'premiumOfferId' : 'lightOfferId';
-        result = await cbCall({ action: 'dryRun', [key]: kind, recordIds: ids });
+        // 引き継ぎ中は recordId を 1 つも送らない（サーバー側で付与成功者を再導出）
+        result = await cbCall(handoffOp
+          ? { action: 'dryRun', [key]: kind, grantOperationId: handoffOp }
+          : { action: 'dryRun', [key]: kind, recordIds: ids });
         planKind = PV.PLAN_KIND.GRANT_OFFER;
         if (seq !== mkActionSeq) return;          // 新しい確認が始まっている。古い結果は捨てる
         if (!result) { $('mkActionState').textContent = '確認できませんでした。'; return; }
         // 対象/除外の判定は API の結果をそのまま使う（画面では再判定しない）
-        const view = PV.buildPlanView({ kind: planKind, selectedIds: ids, rowsById, result, campaign, nowMs: Date.now() });
+        const resolvedIds = handoffOp && result.handoff
+          ? new Array(Number(result.handoff.resolved) || 0).fill('handoff')
+          : ids;
+        const view = PV.buildPlanView({ kind: planKind, selectedIds: resolvedIds, rowsById, result, campaign, nowMs: Date.now() });
         box.innerHTML = '';                        // 常に最新の 1 件だけを出す
+        // 引き継ぎ中は「すでに配り終えた人の下見」であることを最初に言う
+        if (handoffOp) {
+          const h = document.createElement('p');
+          h.className = 'note';
+          h.textContent = '引き継ぎ中の付与成功者 ' + ((result.handoff && result.handoff.resolved) || 0) + ' 名の下見です。'
+            + 'この顧客には無料特典が付与済みで、ここでは何も書き込みません（追加のオファー発行もありません）。'
+            + 'メール送信とは別の操作です。';
+          box.appendChild(h);
+        }
         renderPlanView(box, view);
         $('mkActionState').textContent = view.executable
           ? '確認しました。実行はカムバック特典タブの確認 → 実行から行ってください。'
@@ -3484,17 +3612,94 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return false;
       }
       handoffApi().saveHandoff(sessionStorage, ticket);
-      mkState.handoff = { operationId: ticket.operationId, grantedCount: Number(ticket.grantedCount) };
+      mkState.handoff = {
+        operationId: ticket.operationId,
+        grantedCount: Number(ticket.grantedCount),
+        // 何を配ったか（案内文面の自動選択に使う。offerId だけで PII は無い）
+        grantOffers: ticket.grantOffers || null,
+      };
       // 引き継ぎは母集団の差し替えなので、直前の確認結果は必ず捨てる
       mkState.dryRun = null;
       mkState.enqueued = false;
       mkState.dispatch = {};
       mkSelected.clear();
       mkHandoffRender(ticket);
+      mkApplyHandoffCampaign();
       mkSyncFlow();
       mkNotify('ok', '付与成功者を引き継ぎました',
         Number(ticket.grantedCount) + ' 名。顧客を選び直す必要はありません。キャンペーンと文面を決めてください。');
       return true;
+    }
+
+    /**
+     * 引き継いだ付与内容に対応する文面へ選び直す。
+     * 対応が無ければ選択は変えず、「対応テンプレート未設定」を知らせて手動選択させる。
+     * **運用テスト専用（カナリア）へは絶対に切り替えない**（単一源がそもそも返さない）。
+     */
+    function mkApplyHandoffCampaign() {
+      if (!mkCampaigns.length) return;               // カタログ未取得。読み込み時に再実行される
+      const pick = window.__cbCampaign.pickInitialCampaign({
+        campaigns: mkCampaigns, handoff: mkState.handoff,
+      });
+      const sel = $('mkCampaign');
+      if (pick.campaignId && sel && sel.value !== pick.campaignId) {
+        sel.value = pick.campaignId;
+        mkApplyCampaignSelection();
+        renderCampDesc();
+      }
+      if (mkState.handoff && !pick.matchedGrant && pick.label) {
+        mkNotify('warn', '送る文面を選んでください', pick.label);
+      }
+    }
+
+    /**
+     * 操作 ID から引き継ぎ直す（**read-only**）。
+     * サーバーが付与成功者を読み直し、件数・付与種別・付与日時を返す。
+     * 画面は recordId を受け取らないし、URL にも何も載せない。
+     */
+    async function mkRehandoff() {
+      const btn = $('mkRehandoffBtn');
+      if (btn.dataset.busy === '1') return;                  // 二重クリック防止
+      const op = $('mkRehandoffOp').value.trim();
+      const state = $('mkRehandoffState');
+      if (!op) { state.textContent = '操作 ID を入力してください。'; return; }
+      btn.dataset.busy = '1'; btn.disabled = true;
+      state.textContent = '付与成功者を読み直しています…（書き込みは行いません）';
+      try {
+        // カムバック側の read-only API（付与も取り消しもしない）
+        const out = await cbCallDetailed({ action: 'handoffLookup', operationId: op });
+        if (!out.ok || !out.data || !(Number(out.data.resolved) > 0)) {
+          const d = out.data || {};
+          state.textContent = (d.error || '引き継ぎを作れませんでした。')
+            + (d.reason === handoffApi().HANDOFF_BLOCK.EXPIRED
+              ? '（付与から時間が経ちすぎています）' : '');
+          return;
+        }
+        const d = out.data;
+        // 実データの付与種別から offerId を逆引きし、案内文面の自動選択に使う
+        const grantOffers = window.__cbCampaign.buildGrantOffersFromKinds(d.kinds || {});
+        const adopted = window.__mkHandoff.adopt({
+          operationId: d.operationId,
+          grantedCount: Number(d.resolved) || 0,
+          grantOffers,
+          notGrantedCount: 0,
+          notGrantedReasons: [],
+          issuedAtMs: Date.now(),
+          expiresAtMs: Date.parse(d.expiresAt) || (Date.now() + handoffApi().HANDOFF_TTL_MS),
+          canHandoff: true,
+        });
+        if (!adopted) { state.textContent = '引き継げませんでした。'; return; }
+        const k = (d.kinds && (d.kinds.light || d.kinds.premium)) || {};
+        const kindText = k.mixed ? '種別が混在（自動選択しません）'
+          : k.lifetime === true ? '永久無料'
+            : Number.isFinite(k.durationDays) ? (k.durationDays + '日無料') : '種別不明';
+        state.textContent = '引き継ぎました: ' + d.resolved + ' 名 / ' + kindText
+          + ' / 付与日時 ' + fmtDate(d.grantedAt) + '（付与のやり直しはしていません）';
+      } catch (e) {
+        state.textContent = '読み直しに失敗しました。管理シークレットと操作 ID を確認してください。';
+      } finally {
+        btn.dataset.busy = ''; btn.disabled = false;
+      }
     }
 
     /** 引き継ぎを外す（通常の顧客選択へ戻す） */
@@ -3538,8 +3743,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function mkHandoffRestore() {
       const r = handoffApi().loadHandoff(sessionStorage, Date.now());
       if (r.ok) {
-        mkState.handoff = { operationId: r.handoff.operationId, grantedCount: Number(r.handoff.grantedCount) };
+        mkState.handoff = {
+          operationId: r.handoff.operationId,
+          grantedCount: Number(r.handoff.grantedCount),
+          grantOffers: r.handoff.grantOffers || null,
+        };
         mkHandoffRender(r.handoff);
+        mkApplyHandoffCampaign();
         return;
       }
       mkState.handoff = null;
@@ -3691,7 +3901,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         nb.onclick = next.target ? () => { const t = $(next.target); if (t) { t.scrollIntoView({ block: 'center' }); t.focus?.(); } } : null;
       }
       const counts = $('mkStepCounts');
-      if (counts) counts.textContent = '取得 ' + mkState.loadedCount + ' 名 / 選択 ' + mkSelected.size + ' 名';
+      if (counts) {
+        // 引き継ぎ中は画面選択を使わない。「取得 0 名 / 選択 0 名」を主表示にすると
+        // 異常に見えるので、引き継ぎ人数を主にして取得件数は補助へ下げる。
+        counts.textContent = mkState.handoff
+          ? '引き継ぎ対象 ' + mkState.handoff.grantedCount + ' 名（画面での再選択は不要）'
+          : '取得 ' + mkState.loadedCount + ' 名 / 選択 ' + mkSelected.size + ' 名';
+        counts.classList.toggle('is-handoff', !!mkState.handoff);
+      }
+      const sub = $('mkStepCountsSub');
+      if (sub) {
+        sub.hidden = !mkState.handoff;
+        sub.textContent = mkState.handoff
+          ? '（参考）取得 ' + mkState.loadedCount + ' 名 / 選択 ' + mkSelected.size + ' 名'
+            + '。対象は送信のたびにサーバーが確定します。'
+          : '';
+      }
     }
 
     /** 次に押すべきものを 1 つだけ示す */
@@ -4067,7 +4292,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         d.appendChild(a); d.appendChild(b); panel.appendChild(d);
       };
       row('キャンペーン', c.name + ' v' + c.version + (c.testOnly ? '（🧪 テスト専用）' : ''));
-      row('選択人数', plan.selected + ' 名');
+      // 「同一キャンペーン送信済み」で全員除外されたときに、何と衝突しているのかを読めるようにする
+      row('送信識別子', c.campaignId + ' : v' + c.version);
+      row('二重送信の判定', 'この キャンペーン × 版 × 受信者 の組でのみ「送信済み」と判定します（DeliveryKey）');
+      if (plan.handoff) {
+        row('引き継ぎ対象', (plan.handoff.resolved || 0) + ' 名（サーバーが付与成功者から確定）');
+      }
+      row(plan.handoff ? '対象人数' : '選択人数', plan.selected + ' 名');
       row('送信対象', plan.willSend + ' 名', plan.willSend > 0 ? 'is-ok' : 'is-ng');
       row('除外', plan.excluded + ' 名');
       const ex = flowApi().summarizeExclusions(plan.excludedDetail || []);
@@ -6278,6 +6509,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !$('cbBackdrop').hidden) cbCloseModal();
     });
+
+    $('mkRehandoffBtn')?.addEventListener('click', mkRehandoff);
 
     // 画面を読み込み直しても、同じタブなら引き継ぎは続く（期限切れ・使用済みは復元しない）
     mkHandoffRestore();

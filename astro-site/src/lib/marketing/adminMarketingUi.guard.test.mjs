@@ -126,8 +126,12 @@ test('使用停止中のキャンペーンは選べず、理由が画面に出�
   assert.match(SCRIPT, /!c\.usable[\s\S]{0,120}使用停止中のキャンペーンです/, '使用停止中の理由を出していない');
 });
 
-test('既定選択が使用可能なキャンペーンになる', () => {
-  assert.match(SCRIPT, /const firstUsable = mkCampaigns\.find\(\(c\) => c\.usable\)/);
+test('既定選択が使用可能なキャンペーンになる（運用テスト専用は既定にしない）', () => {
+  // 既定の決め方は単一源へ委譲する（画面で find を書かない）
+  assert.match(SCRIPT, /pickInitialCampaign\(\{/, '既定選択を単一源で決めていない');
+  assert.equal(/const firstUsable = mkCampaigns\.find\(\(c\) => c\.usable\)/.test(SCRIPT), false,
+    '「最初に使えるもの」を既定にしている（運用テスト専用が選ばれうる）');
+  assert.match(PAGE, /comebackGrantCampaign\.js/, '判定モジュールを読み込んでいない');
 });
 
 test('運用テスト専用キャンペーンが顧客向けと区別して表示される', () => {
@@ -370,7 +374,9 @@ test('確認画面は dry-run しか呼ばない（実行系を持たない）',
 test('画面側で送信可否・契約条件を再判定しない', () => {
   const block = SCRIPT.slice(SCRIPT.indexOf("$('mkActionDry')"), SCRIPT.indexOf('// ── 実配信'));
   // 判定は API 結果をそのまま使う
-  assert.match(block, /buildPlanView\(\{ kind: planKind, selectedIds: ids, rowsById, result/);
+  assert.match(block, /buildPlanView\(\{ kind: planKind, selectedIds: resolvedIds, rowsById, result/);
+  // 引き継ぎ中も対象の確定はサーバー（画面は recordId を送らない）
+  assert.match(block, /grantOperationId: handoffOp/, '引き継ぎの対象指定をサーバーへ委ねていない');
   for (const forbidden of ['MARKETING_MIN_INTERVAL', 'suppression.has', 'isLiveOffer(', 'resolveMembership(']) {
     assert.equal(block.includes(forbidden), false, `画面で ${forbidden} を再実装している`);
   }

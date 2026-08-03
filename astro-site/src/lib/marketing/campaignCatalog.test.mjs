@@ -163,6 +163,8 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
     // v1（下書き・grant 版 / 一度も送信していない）→ v2（割引 + 専用 URL）へ改版。
     'comeback-offer': { version: 2, hash: '4c836f28efbdf1d7' },
+    // Light 30日無料を配り終えた人への案内。CTA は /dashboard/ 固定（本文に URL を書かない）。
+    'comeback-light-30d-granted': { version: 1, hash: 'b1f72ec130f2ebcf' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];

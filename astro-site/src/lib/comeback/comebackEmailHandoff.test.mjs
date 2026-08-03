@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import {
   HANDOFF_TTL_MS, HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL, HANDOFF_STORAGE_KEY,
-  collectGrantedRecipients, buildHandoffTicket, validateHandoffResolution,
+  collectGrantedRecipients, summarizeGrantKind, buildHandoffTicket, validateHandoffResolution,
   saveHandoff, loadHandoff, markHandoffQueued, clearHandoff, describeHandoff, handoffNote,
 } from './comebackEmailHandoff.js';
 
@@ -307,7 +307,7 @@ test('要約に人数と残り時間を出し、アドレスは出さない', ()
   const t = buildHandoffTicket({ operationId: OP, grantedCount: 3, nowMs: NOW });
   const s = describeHandoff(t, NOW);
   assert.match(s, /付与成功 3 名/);
-  assert.match(s, /残り約 120 分/);
+  assert.match(s, /残り約 1440 分/);
   assert.equal(s.includes('@'), false);
   assert.equal(describeHandoff(null, NOW), '引き継ぎなし');
 });
@@ -315,4 +315,91 @@ test('要約に人数と残り時間を出し、アドレスは出さない', ()
 test('監査用の印は operationId だけを含む', () => {
   assert.equal(handoffNote(OP), `handoff:${OP}`);
   assert.equal(handoffNote(''), '');
+});
+
+
+// ── 期限（2026-08-03 に 2 時間 → 24 時間へ延長）────────────────────
+
+test('引き継ぎの有効期間は 24 時間', () => {
+  assert.equal(HANDOFF_TTL_MS, 24 * 60 * 60 * 1000);
+});
+
+test('24 時間以内なら引き継げる（当日中に案内を出す運用に収まる）', () => {
+  const grantedAtMs = NOW - 20 * 60 * 60 * 1000;      // 20 時間前の付与
+  const r = collectGrantedRecipients({
+    records: [grantedLight('recA', { grantedAtMs })], operationId: OP, nowMs: NOW,
+  });
+  const v = validateHandoffResolution({ ...r, operationId: OP, nowMs: NOW });
+  assert.equal(v.ok, true, '24 時間以内なのに失効している');
+});
+
+test('24 時間を過ぎたら失効する（無期限にはしない）', () => {
+  const grantedAtMs = NOW - 24 * 60 * 60 * 1000 - 60_000;
+  const r = collectGrantedRecipients({
+    records: [grantedLight('recA', { grantedAtMs })], operationId: OP, nowMs: NOW,
+  });
+  const v = validateHandoffResolution({ ...r, operationId: OP, nowMs: NOW });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, HANDOFF_BLOCK.EXPIRED);
+});
+
+test('期限を延ばしても使い切りと別タブ不可は変わらない', () => {
+  const s = fakeStorage();
+  saveHandoff(s, buildHandoffTicket({ operationId: OP, grantedCount: 2, nowMs: NOW }));
+  markHandoffQueued(s, ['job-1']);
+  assert.equal(loadHandoff(s, NOW).reason, HANDOFF_BLOCK.ALREADY_QUEUED, '使い切りが効いていない');
+  assert.equal(loadHandoff(fakeStorage(), NOW).reason, HANDOFF_BLOCK.NONE, '別タブから引き継げてしまう');
+});
+
+// ── 配った特典の種別（再引き継ぎで文面を選ぶために使う）──────────────
+
+test('30 日無料の付与を「30 日」と読む', () => {
+  const grantedAtMs = NOW - 60_000;
+  const records = [1, 2, 3].map((i) => ({
+    recordId: `rec${i}`,
+    fields: {
+      LightGrantUntil: new Date(grantedAtMs + 30 * 86400000).toISOString(),
+      LightGrantedAt: new Date(grantedAtMs).toISOString(),
+      LightGrantOp: OP,
+    },
+  }));
+  const r = collectGrantedRecipients({ records, operationId: OP, nowMs: NOW });
+  assert.equal(r.kinds.light.count, 3);
+  assert.equal(r.kinds.light.lifetime, false);
+  assert.equal(r.kinds.light.durationDays, 30);
+  assert.equal(r.kinds.light.mixed, false);
+});
+
+test('永久無料の付与を「無期限」と読む', () => {
+  const r = collectGrantedRecipients({
+    records: [grantedLight('recA'), grantedLight('recB')], operationId: OP, nowMs: NOW,
+  });
+  assert.equal(r.kinds.light.lifetime, true);
+  assert.equal(r.kinds.light.durationDays, null);
+  assert.equal(r.kinds.light.mixed, false);
+});
+
+test('種別が混在していたら mixed（自動判定させない）', () => {
+  const grantedAtMs = NOW - 60_000;
+  const records = [
+    grantedLight('recA', { grantedAtMs }),                       // 永久
+    {
+      recordId: 'recB',
+      fields: {
+        LightGrantUntil: new Date(grantedAtMs + 30 * 86400000).toISOString(),
+        LightGrantedAt: new Date(grantedAtMs).toISOString(),
+        LightGrantOp: OP,
+      },
+    },                                                            // 30 日
+  ];
+  const r = collectGrantedRecipients({ records, operationId: OP, nowMs: NOW });
+  assert.equal(r.kinds.light.mixed, true);
+  assert.equal(r.kinds.light.lifetime, null);
+  assert.equal(r.kinds.light.durationDays, null);
+});
+
+test('付与が無い tier は null', () => {
+  const r = collectGrantedRecipients({ records: [grantedLight('recA')], operationId: OP, nowMs: NOW });
+  assert.equal(r.kinds.premium, null);
+  assert.equal(summarizeGrantKind([]), null);
 });
