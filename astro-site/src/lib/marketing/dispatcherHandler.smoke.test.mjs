@@ -62,7 +62,9 @@ const job = (over = {}) => ({
     JobId: JOB_ID, Status: 'PENDING', CreatedBy: 'admin-marketing',
     TargetPlan: 'campaign:expired-comeback', Recipients: 'a@example.com',
     Subject: 'テスト', Content: '<p>本文</p>', RecipientCount: 1,
-    Notes: 'marketing campaign expired-comeback v2', ...over,
+    // dispatcher は「どの組み立て方で作った HTML か」を Notes から読む。
+    // 版が合わないジョブは送らないので、正常系の fixture には必ず入れる。
+    Notes: 'marketing campaign expired-comeback v2 shell:v1', ...over,
   },
 });
 
@@ -128,4 +130,26 @@ test('smoke: 応答にメールアドレスを載せない', async () => {
   stub({ scheduled: [job()] });
   const { body } = await invoke({ dryRun: true });
   assert.equal(/@[a-z0-9.-]+\.[a-z]{2,}/i.test(JSON.stringify(body)), false, '応答にアドレスが含まれる');
+});
+
+
+test('smoke: 組み立て方の版が合わないジョブは送らない（fail closed）', async () => {
+  // deploy でシェルが変わったあと、古い版で積まれたジョブが残っている状況
+  const calls = stub({ scheduled: [job({ Notes: 'marketing campaign expired-comeback v2 shell:v0' })] });
+  const { statusCode, body } = await invoke({ dryRun: true });
+  assert.equal(statusCode, 200);
+  assert.equal(body.jobs, 0, '版違いのジョブを処理している');
+  assert.equal(body.blockedJobs, 1, '版違いとして記録していない');
+  assert.equal(body.jobResults[0].blocked, 'shell_version_mismatch');
+  assert.equal(body.jobResults[0].willSend, 0);
+  assert.equal(calls.airtableWrites, 0, 'Airtable へ書き込んでいる');
+  assert.equal(calls.sendgridSend, 0, 'メールを送っている');
+});
+
+test('smoke: 版の印が無い（古い形式の）ジョブも送らない', async () => {
+  stub({ scheduled: [job({ Notes: 'marketing campaign expired-comeback v2' })] });
+  const { body } = await invoke({ dryRun: true });
+  assert.equal(body.jobs, 0);
+  assert.equal(body.jobResults[0].blocked, 'shell_version_mismatch');
+  assert.equal(body.jobResults[0].jobShellVersion, null);
 });

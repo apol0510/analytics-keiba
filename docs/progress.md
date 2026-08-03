@@ -452,6 +452,81 @@ marketing job の唯一の実送信経路を `marketing-campaign-dispatch` に�
   （`docs/autonomous-project-workflow`）は **文書のみ**でソースコードの挙動を変更していない。
 - 本体の開発は main 上で日次データ取込コミットと機能 PR が継続中。
 
+## 2026-08-03 — キャンペーンメールを AK ブランドの HTML メールへ（branch `feat/marketing-html-email-templates` / Draft PR・未 merge）
+
+**きっかけ**: 送っているメールが `<div>` に段落を並べて青いボタンを 1 つ置いただけで、
+特典の価値が伝わらない。参考として旧 NANKAN Analytics の HTML メールを提示された
+（構造だけ採用し、ブランド・URL・レース情報・旧配信変数は持ち込まない）。
+
+**入れたもの**
+
+- `src/lib/marketing/marketingEmailShell.js`（新規・純粋）
+  600px table / inline CSS / プリヘッダー / ブランドヘッダー / バッジ / 特典カード /
+  CTA / 補足 / フッター / 配信停止。**HTML と text/plain を同時生成**する
+- campaign に見た目の固定値を後方互換で追加:
+  `preheader` / `badge` / `headline` / `benefitTitle` / `benefitItems` / `ctaNote` /
+  `footerNote` / `templateVariant` / `showGrantExpiry` / `grantDurationDays`
+- `comeback-light-30d-granted` を **v1 → v2**（HTML 構造が変わるため）。
+  件名を「Lightプラン30日無料のご案内」に、特典カード 3 項目と終了日表示を追加
+- 配信停止を**シェルの一部**にし、`{{unsubscribeUrl}}` を送信直前に差し替える。
+  **差し替えられない本文は 1 通も送らない**（fail closed）
+- SendGrid へ **text/plain と text/html の 2 パート**を送る（従来は HTML のみ）
+- 無料期間の終了日は `{{grantExpiry}}` を受信者ごとに差し替え。**実際の
+  `LightGrantUntil` が正本**で、読めなければ「付与日から30日間」、それも無ければ何も言わない
+- 管理画面の完成プレビューを **デスクトップ / モバイル幅 / テキスト版** の切替に。
+  サンプル宛名とサンプル配信停止 URL で表示し、実顧客の情報は使わない
+
+**版管理の扱い（2 軸）**
+
+届くメールは **campaign の version（文面）× シェルの版（組み立て方）** で決まる。
+当初シェルの版が hash に入っておらず、
+「dry-run で確認 → deploy でシェル変更 → 同じ hash のままキュー登録」で
+**確認したものと違うメールが積まれる**状態だったため、以下を入れた。
+
+- `MARKETING_EMAIL_SHELL_VERSION`（現在 **1**）を `marketingEmailShell.js` に定義
+- `computeCampaignContentHash` の種に必ず含める（**全キャンペーンの hash が変わる**）
+- dry-run が `shellVersion` を返し、**送信時に一致を要求**（不一致は 409 / 未指定は 400）
+- 文面 hash も送信時は**必須**にした（従来は任意で、省けば検査を素通りできた）
+- ジョブの `Notes` に `shell:v<N>` を残し、**dispatcher が照合**。
+  版が違う / 印が無いジョブは **1 通も送らない**（`blocked: shell_version_mismatch`）。
+  送るには dry-run からやり直して積み直す
+
+DeliveryKey は `campaignId × version × 受信者`のままなので、
+**シェルの版を上げても既存キャンペーンが一斉再送可能になることはない**。
+
+**ルール（今後）**
+
+| 変えたもの | すること |
+|---|---|
+| 件名・本文・CTA・見た目の固定値 | campaign の `version` を上げ、`LOCKED` を更新 |
+| シェルのマークアップ・配色・差し替え印・text の組み立て | `MARKETING_EMAIL_SHELL_VERSION` を上げ、`LOCKED` と snapshot を更新。campaign の version は据え置きでよい |
+
+**`comeback-light-30d-granted` は v2 のままでよいか（再判定）**: **v2 のままでよい**。
+v2 はまだ 1 通も送っておらず（`CampaignDeliveries` に v2 の行が無い）、
+v3 へ上げても受け取る人にとっての違いは生まれない。シェルの版は別軸で管理する。
+
+**次の Phase: テンプレート展開**（すべて同じ文面へまとめない）
+
+| テンプレート | 状態 |
+|---|---|
+| Light 30日無料 付与済み | **本 PR で完成**（`comeback-light-30d-granted` v2）|
+| Light 永久無料 付与済み | 未作成（「30日間」と書けない）|
+| Premium 期間限定 付与済み | 未作成（閲覧範囲が Light と違う）|
+| Premium 永久無料 付与済み | 未作成 |
+| Light / Premium 両方 付与済み | 未作成（併記が要る）|
+| 付与なしの一般カムバック | 既存 `expired-comeback` v2（シェルへ載る）|
+| Premium 再契約 | 既存 `premium-renewal` v2 |
+| Premium Plus 案内 | 既存 `premium-plus-offer` v2 |
+| 成績レポート | 未着手 |
+| 開催前リマインド | 未着手 |
+| 無料会員 活性化 | 未着手 |
+| 休眠 再活性化 | 既存 `dormant-reactivation` v2 |
+
+追加時は `templateVariant` と `benefitItems` で内容を分け、
+`GRANT_CAMPAIGN_BY_OFFER`（`comebackGrantCampaign.js`）へ 1 対 1 で登録する。
+
+**28 名への送信は未実施**（キュー登録・送信・付与・Airtable write なし）。
+
 ## 2026-08-03 — Light 無料付与済み案内の文面・CTA・引き継ぎを整える（branch `fix/comeback-light-grant-email` / Draft PR・未 merge）
 
 **きっかけ**: 28 名へ無料付与したあと案内メールを作ろうとして、本番画面で 5 つの不整合が出た。

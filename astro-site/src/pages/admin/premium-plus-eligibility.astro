@@ -978,6 +978,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .step-counts.is-handoff { color: #a7f3d0; font-weight: 800; }
   .ppe .step-counts-sub { font-size: .72rem; color: var(--text-muted); margin-left: .5rem; }
 
+  .ppe .prev-tabs { margin: 0 0 .5rem; }
+  .ppe .prev-tabs .btn-ghost.is-on { background: var(--surface-active); border-color: var(--action-blue); color: var(--text-main); }
+  /* メール本体が自前で背景色を持つので、枠側では色を指定しない（管理 UI の暗色ルールを守る） */
+  .ppe .prev-frame { display: block; border: 1px solid var(--border-soft); border-radius: 6px; min-height: 60vh; margin: 0 auto; }
+
   .ppe .cta-box {
     display: flex; align-items: center; gap: .45rem; flex-wrap: wrap;
     margin: .35rem 0 .5rem; padding: .5rem .7rem;
@@ -4198,16 +4203,68 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       sec.appendChild(sub);
       body.appendChild(sec);
 
+      // ── プリヘッダー（受信箱の一覧に出る一文）──
+      if (data.preheader) {
+        const ph = document.createElement('p'); ph.className = 'note';
+        ph.textContent = '受信箱の一覧に出る一文: ' + data.preheader;
+        sec.appendChild(ph);
+      }
+
       const sec2 = document.createElement('div'); sec2.className = 'dt-sec';
       const h2 = document.createElement('h3'); h2.textContent = '本文'; sec2.appendChild(h2);
+
+      // 表示の切替（デスクトップ幅 / モバイル幅 / テキスト版）。
+      // 実際に届く形をそのまま見るため、同じ HTML を幅だけ変えて表示する。
+      const tabs = document.createElement('div'); tabs.className = 'toolbar prev-tabs';
       const frame = document.createElement('iframe');
       frame.className = 'prev-frame';
-      frame.setAttribute('sandbox', ''); // スクリプト実行なし
-      // 実際の受信環境に近い白地でメール本文だけを表示する（管理 UI の配色を混ぜない）
-      frame.srcdoc = '<body style="margin:0;background:#fff;">' + data.html + '</body>';
+      frame.setAttribute('sandbox', '');            // スクリプト実行なし
+      frame.setAttribute('title', 'メール本文のプレビュー');
+      const textBox = document.createElement('pre');
+      textBox.className = 'prev-body';
+      textBox.textContent = data.text || '';
+      textBox.hidden = true;
+
+      const showHtml = (width) => {
+        textBox.hidden = true; frame.hidden = false;
+        frame.style.width = width ? width + 'px' : '100%';
+        frame.style.maxWidth = '100%';
+        // 実際の受信環境に近い白地でメール本文だけを表示する（管理 UI の配色を混ぜない）
+        frame.srcdoc = '<body style="margin:0;">' + data.html + '</body>';
+      };
+      const modes = [
+        ['🖥 デスクトップ幅', () => showHtml(0)],
+        ['📱 モバイル幅（375px）', () => showHtml(375)],
+        ['📄 テキスト版', () => { frame.hidden = true; textBox.hidden = false; }],
+      ];
+      let current = 0;
+      const btns = modes.map(([label, fn], i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn-ghost btn-sm' + (i === 0 ? ' is-on' : '');
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          current = i;
+          btns.forEach((x, j) => x.classList.toggle('is-on', j === current));
+          fn();
+        });
+        tabs.appendChild(b);
+        return b;
+      });
+      sec2.appendChild(tabs);
       sec2.appendChild(frame);
+      sec2.appendChild(textBox);
+      showHtml(0);
+
       const note = document.createElement('p'); note.className = 'note'; note.textContent = data.notice;
       sec2.appendChild(note);
+      const unsub = document.createElement('p'); unsub.className = 'note';
+      unsub.textContent = data.unsubscribeNote || '';
+      sec2.appendChild(unsub);
+      const sample = document.createElement('p'); sample.className = 'note';
+      sample.textContent = 'プレビューはサンプル宛名「' + (data.sampleName || '山田') + '」と'
+        + 'サンプルの配信停止 URL で表示しています（実際のお客様の情報は使っていません）。';
+      sec2.appendChild(sample);
       body.appendChild(sec2);
     });
 
@@ -4507,6 +4564,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           subject: mkContent.confirmed ? mkContent.confirmed.subject : undefined,
           body: mkContent.confirmed ? mkContent.confirmed.body : undefined,
           contentHash: mkContent.confirmed ? mkContent.confirmed.contentHash : undefined,
+          // 確認したときの「組み立て方」の版。deploy でシェルが変わっていたら
+          // Function 側が 409 で止める（確認した内容と違うメールを送らない）
+          shellVersion: plan.shellVersion,
         });
         btn.dataset.busy = '';
         if (out) {

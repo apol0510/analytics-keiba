@@ -130,7 +130,8 @@ test('警告は送信を止めない（長い件名・宛名なし）', () => {
   });
   assert.equal(v.ok, true, v.errors.join('/'));
   assert.ok(v.warnings.includes(DRAFT_WARNING.SUBJECT_LONG));
-  assert.ok(v.warnings.includes(DRAFT_WARNING.NO_SALUTATION));
+  // 宛名はシェルが必ず出すので、本文に無くても警告しない
+  assert.equal(v.warnings.includes(DRAFT_WARNING.DUPLICATE_SALUTATION), false);
 });
 
 test('正規化: 改行コード・行末空白・空行の連打をそろえる', () => {
@@ -156,8 +157,10 @@ test('編集した文面は送信と同じレンダラーで描ける', () => {
   assert.equal(r.subject, '【KEIBA Analytics】確認');
   assert.ok(r.html.includes('山田 様'));
   assert.ok(r.html.includes('編集した本文'));
-  // 配信停止リンクは本文に含めない（送信基盤が付ける）
-  assert.equal(/unsubscribe/i.test(r.html), false);
+  // 配信停止は**シェルのフッター**にあり、受信者ごとの URL は送信時に差し替える。
+  // 管理者が編集した本文の側に配信停止 URL が混ざっていないことを見る。
+  assert.ok(r.html.includes('{{unsubscribeUrl}}'), 'フッターに差し替え印が無い');
+  assert.equal(/functions\/unsubscribe\?email=/.test(r.html), false, '本文に実 URL が入っている');
 });
 
 test('実在キャンペーンの既定文面をそのまま検証できる（テンプレートが自分の検証を通る）', () => {

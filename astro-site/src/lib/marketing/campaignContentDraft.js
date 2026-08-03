@@ -49,7 +49,9 @@ export const DRAFT_ERROR = Object.freeze({
 /** 警告コード（送信は止めないが、確認させたいもの） */
 export const DRAFT_WARNING = Object.freeze({
   SUBJECT_LONG: `件名が ${SUBJECT_RECOMMENDED} 文字を超えています。スマートフォンでは末尾が省略されます`,
-  NO_SALUTATION: '宛名の差し込み（{{salutation}}）がありません。呼びかけ無しで始まります',
+  // 宛名は共通シェルが本文の前に必ず出す（2026-08-03〜）。本文にも `{{salutation}}` を
+  // 書くと二重に出るため、**本文へ書いたときだけ**知らせる。
+  DUPLICATE_SALUTATION: '本文に宛名の差し込み（{{salutation}}）があります。宛名はメール上部に自動で入るため、本文からは外せます',
 });
 
 const str = (v) => String(v ?? '');
@@ -126,7 +128,7 @@ export function validateDraft({ campaign, draft } = {}) {
   if (unknown.length > 0) errors.push(`${DRAFT_ERROR.UNKNOWN_PLACEHOLDER}: ${unknown.join(' / ')}`);
   const leftover = `${d.subject}\n${d.body}`.replace(/\{\{[^{}]*\}\}/g, '');
   if (leftover.includes('{{') || leftover.includes('}}')) errors.push(DRAFT_ERROR.BROKEN_PLACEHOLDER);
-  if (!d.body.includes('{{salutation}}')) warnings.push(DRAFT_WARNING.NO_SALUTATION);
+  if (d.body.includes('{{salutation}}')) warnings.push(DRAFT_WARNING.DUPLICATE_SALUTATION);
 
   // ── HTML / URL（描画側でエスケープされるが、書けてしまう UI にしない）──
   if (HTML_LIKE.test(d.subject) || HTML_LIKE.test(d.body)) errors.push(DRAFT_ERROR.HTML_NOT_ALLOWED);

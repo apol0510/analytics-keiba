@@ -43,6 +43,11 @@ import {
 } from '../../src/lib/newsletter/airtable-fetch.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import {
+  UNSUBSCRIBE_PLACEHOLDER, applyUnsubscribeUrl, applyGrantExpiry,
+  describeGrantExpiry, plainTextFromMarketingHtml,
+  MARKETING_EMAIL_SHELL_VERSION, readShellVersionFromNote,
+} from '../../src/lib/marketing/marketingEmailShell.js';
 import { evaluateExtraAudience } from '../../src/lib/marketing/campaignAudienceRules.js';
 import {
   linkOfferForRecipient,
@@ -218,7 +223,11 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
   }
 
   // 3) ジョブごとに 1 通ずつ再検証 → 送信
-  const summary = { jobs: 0, verified: 0, sent: 0, failed: 0, skipped: 0, skippedByReason: {} };
+  const summary = {
+    jobs: 0, verified: 0, sent: 0, failed: 0, skipped: 0, skippedByReason: {},
+    // 組み立て方の版が合わずに送らなかったジョブ数
+    blockedJobs: 0,
+  };
   const jobResults = [];
 
   for (const job of jobs) {
@@ -226,6 +235,25 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     const jobId = String(f.JobId || '');
     const recipients = String(f.Recipients || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (recipients.length === 0) continue;
+
+    // ── 保存されている HTML は「積んだ時点の組み立て方」で作られている ──────
+    // その後 deploy でシェルが変わっていると、
+    //   ・差し替え印の名前が変わって配信停止を入れられない
+    //   ・text/plain の組み立てが保存済みマークアップと噛み合わない
+    // といったズレが起きる。**版が違うジョブは送らない**（fail closed）。
+    // 送りたい場合は dry-run からやり直して積み直す。
+    const jobShellVersion = readShellVersionFromNote(f.Notes);
+    if (jobShellVersion !== MARKETING_EMAIL_SHELL_VERSION) {
+      jobResults.push({
+        jobId, total: recipients.length, willSend: 0, willSkip: recipients.length,
+        blocked: 'shell_version_mismatch',
+        expectedShellVersion: MARKETING_EMAIL_SHELL_VERSION,
+        jobShellVersion,
+        note: 'このジョブは別の組み立て方で作られています。dry-run からやり直して積み直してください（送信していません）。',
+      });
+      summary.blockedJobs = (summary.blockedJobs || 0) + 1;
+      continue;
+    }
     summary.jobs += 1;
 
     // このジョブ以外のキャンペーン配信から、受信者ごとの最終送信日時を作る
@@ -363,7 +391,15 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
         summary.skippedByReason.custom_args_unresolved = (summary.skippedByReason.custom_args_unresolved || 0) + 1;
         continue;
       }
-      const ok = await sendOne({ SG, fromEmail, fromName, to: email, subject: f.Subject, html, customArgs });
+      // 無料期間の終了日は**実際の権限状態**から取る（本文の固定値で断定しない）
+      const cf = fieldsByEmail.get(email) || {};
+      const expiryNote = describeGrantExpiry({
+        expiresAt: cf.LightGrantUntil || cf.PremiumGrantUntil || '',
+        durationDays: jobCampaign && jobCampaign.grantDurationDays,
+      });
+      const ok = await sendOne({
+        SG, fromEmail, fromName, to: email, subject: f.Subject, html, customArgs, expiryNote,
+      });
       if (ok) summary.sent += 1; else summary.failed += 1;
       await patchDeliveriesByEmail({
         KEY, BASE, jobId, now,
@@ -431,12 +467,25 @@ function buildRecentContactMap(deliveries, excludeJobId) {
  * Event Webhook がそのまま返してくるので、生アドレス・氏名・token・URL は絶対に入れない。
  * 呼び出し側が解決できなかった相手はここへ来ない（fail closed）。
  */
-async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs }) {
-  // 配信停止リンクは共有 executor と同じ形式で必ず付ける（RFC 8058 ヘッダも）
+/**
+ * 1 通送る。**HTML と text/plain の 2 パート**を必ず送る。
+ *
+ * ── 配信停止は fail closed ────────────────────────────────────
+ * 本文シェルには `{{unsubscribeUrl}}` の印が必ず入っている。印が無い＝古い形式か
+ * 壊れた本文なので、**その 1 通は送らない**（配信停止できないメールを出さない）。
+ */
+async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs, expiryNote }) {
   const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(to)}&brand=analytics-keiba`;
-  const body = `${html}<hr style="border:0;border-top:1px solid #e5e7eb;margin:2em 0 1em;" />`
-    + `<p style="font-size:12px;text-align:center;">`
-    + `<a href="${unsubscribeLink}" style="color:#dc2626;text-decoration:underline;">🚫 配信停止はこちら</a></p>`;
+
+  // 受信者ごとの無料期間（読めなければ印ごと消える。嘘の期限を書かない）
+  const withExpiry = applyGrantExpiry(html, expiryNote);
+  // 配信停止 URL を差し込む。印が無ければ null → 送らない
+  const body = applyUnsubscribeUrl(withExpiry, unsubscribeLink);
+  if (!body) return false;
+
+  // 同じ内容の text/plain。自前マークアップからの変換なので取りこぼしが無い
+  const textBody = plainTextFromMarketingHtml(body);
+
   try {
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
@@ -445,7 +494,11 @@ async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs 
         personalizations: [{ to: [{ email: to }] }],
         from: { email: fromEmail, name: fromName },
         subject,
-        content: [{ type: 'text/html', value: body }],
+        // text/plain を先に置く（RFC 2046: 後ろほど優先度が高い）
+        content: [
+          { type: 'text/plain', value: textBody },
+          { type: 'text/html', value: body },
+        ],
         // 配信 1 通の識別子（Phase 1c）。受信側 `emailEventLedger.js` が同じ綴りで読む
         custom_args: customArgs,
         headers: {

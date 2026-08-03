@@ -21,6 +21,10 @@ import { computeCampaignContentHash } from './campaignSend.js';
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 
+/** 送信直前に差し替わる印（描画時点で残っているのが正しい） */
+const DEFERRED = ['{{unsubscribeUrl}}', '{{grantExpiry}}', OFFER_URL_PLACEHOLDER];
+const stripDeferred = (v) => DEFERRED.reduce((acc, ph) => acc.split(ph).join(''), String(v));
+
 const REQUIRED_KEYS = [
   'campaignId', 'version', 'name', 'description', 'subject', 'body',
   'ctaLabel', 'ctaUrl', 'recommendedSegments', 'audienceRule', 'enabled',
@@ -147,24 +151,29 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
 
 // ── 内容ハッシュ（version を上げずに本文を変える事故の検知）────────
 test('【version ロック】本文を変えたら version を上げる', () => {
-  // 本文・件名・CTA を変更するとこのハッシュが変わる。
-  // その場合は **version を上げてから** 下表を更新すること。
+  // 本文・件名・CTA・**見た目の固定値**・**シェルの版**のどれかを変えると
+  // このハッシュが変わる（＝届くメールが変わる）。
+  //
+  //   文面を変えた            → campaign の version を上げてから下表を更新
+  //   シェル（組み立て方）を変えた → MARKETING_EMAIL_SHELL_VERSION を上げて下表を更新
+  //     （全キャンペーンのハッシュが変わる。campaign の version は据え置きでよい。
+  //       DeliveryKey は campaignId × version × 受信者なので、再送は増えない）
   // version を据え置いたまま本文を変えると DeliveryKey が変わらず、
   // 既送信者へ修正版が二度と届かない。
   const LOCKED = {
-    'marketing-canary': { version: 2, hash: 'd7e12b0a9475db9c' },
-    'expired-comeback': { version: 2, hash: 'ff62a4c49e8c6a52' },
-    'premium-renewal': { version: 2, hash: '5359e6032c187938' },
-    'sanrenpuku-offer': { version: 2, hash: '25ea78c0b425714e' },
-    'premium-plus-offer': { version: 2, hash: '267556b6e0164a72' },
-    'dormant-reactivation': { version: 2, hash: '72d0595d176a4819' },
-    'general-announcement': { version: 1, hash: '41c37e1db8127b2f' },
+    'marketing-canary': { version: 2, hash: '162081596a79ea5a' },
+    'expired-comeback': { version: 2, hash: 'e6077db532e76564' },
+    'premium-renewal': { version: 2, hash: '1bfa299fb86a339c' },
+    'sanrenpuku-offer': { version: 2, hash: '59a115bc1933cb46' },
+    'premium-plus-offer': { version: 2, hash: '24d5b10d69335767' },
+    'dormant-reactivation': { version: 2, hash: '8bc34393b414464b' },
+    'general-announcement': { version: 1, hash: '7e6dc6ed7461489d' },
     // カムバック割引案内。本文は offer カタログから自動生成する（comebackEmailTemplate.js）。
     // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
-    // v1（下書き・grant 版 / 一度も送信していない）→ v2（割引 + 専用 URL）へ改版。
-    'comeback-offer': { version: 2, hash: '4c836f28efbdf1d7' },
-    // Light 30日無料を配り終えた人への案内。CTA は /dashboard/ 固定（本文に URL を書かない）。
-    'comeback-light-30d-granted': { version: 1, hash: 'b1f72ec130f2ebcf' },
+    'comeback-offer': { version: 2, hash: '86774177e753b2d4' },
+    // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加。
+    // 見た目が大きく変わるので version を上げ、DeliveryKey を v1 と分けた。
+    'comeback-light-30d-granted': { version: 2, hash: '23e4b66cba221622' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
@@ -253,7 +262,9 @@ test('氏名由来の HTML / プレースホルダ注入が起きない', () => 
   // 差し込み記号を含む名前も採用しない
   const r2 = renderCampaign({ campaign: c, name: '{{salutation}}' });
   assert.ok(r2.text.startsWith(NAME_FALLBACK));
-  assert.equal(r2.html.includes('{{'), false);
+  // 送信直前に差し替わる印（配信停止・無料期限・専用 URL）だけは残ってよい。
+  // それ以外の `{{ }}` が残っていたら「解決されない差し込み」なので不可。
+  assert.equal(stripDeferred(r2.html).includes('{{'), false);
 });
 
 test('未解決の差し込みが残る本文は描画しない（fail closed）', () => {
@@ -274,9 +285,9 @@ test('描画結果は subject / html / text をそろえて返す', () => {
     const expectedCta = offerUrl || c.ctaUrl;
     assert.ok(r.html.includes(expectedCta), 'HTML に CTA が無い');
     assert.ok(r.text.includes(expectedCta), 'テキストに CTA が無い');
-    // 送信される形には差し込みが 1 つも残らない
-    assert.equal(r.html.includes('{{'), false);
-    assert.equal(r.text.includes('{{'), false);
+    // 送信直前の差し替え印を除けば、未解決の差し込みは 1 つも残らない
+    assert.equal(stripDeferred(r.html).includes('{{'), false);
+    assert.equal(stripDeferred(r.text).includes('{{'), false);
   }
 });
 

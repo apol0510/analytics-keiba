@@ -20,6 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { MARKETING_EMAIL_SHELL_VERSION } from './marketingEmailShell.js';
 import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/delivery-key.js';
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
 import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
@@ -349,7 +350,24 @@ export function computeCampaignContentHash(campaign) {
     String(c.ctaLabel ?? ''),
     String(c.ctaUrl ?? ''),
   ].join(' ');
-  return createHash('sha256').update(seed, 'utf8').digest('hex').slice(0, 16);
+  // ── 見た目まわり（HTML シェルへ渡す固定値）も版管理の対象にする ──────
+  // ⚠️ **1 つでも設定されているときだけ**足す。設定していないキャンペーンの
+  //    ハッシュを変えてしまうと、内容を変えていないのに version ロックが落ちる。
+  const presentation = [
+    c.preheader, c.badge, c.headline, c.benefitTitle,
+    Array.isArray(c.benefitItems) ? c.benefitItems.join('\u0001') : '',
+    c.ctaNote, c.footerNote, c.templateVariant,
+    c.showGrantExpiry === true ? '1' : '', c.grantDurationDays,
+  ].map((v) => String(v ?? ''));
+  const seedFull = presentation.some((v) => v !== '')
+    ? `${seed} ${presentation.join(' ')}`
+    : seed;
+  // ── シェルの版も必ず種に入れる ────────────────────────────────
+  // 同じ campaign 定義でも、組み立て方（`marketingEmailShell.js`）が変われば
+  // 届く HTML は別物になる。版を入れないと「同じ hash なのに中身が違う」状態を
+  // 検知できず、dry-run で確認したものと違うメールを送ってしまう。
+  const withShell = `${seedFull} shell:v${MARKETING_EMAIL_SHELL_VERSION}`;
+  return createHash('sha256').update(withShell, 'utf8').digest('hex').slice(0, 16);
 }
 
 /**

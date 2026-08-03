@@ -284,8 +284,17 @@ test('専用 dispatcher は送信直前に再検証し、Customers を書かな�
 
 test('専用 dispatcher は配信停止リンクと List-Unsubscribe を必ず付ける', () => {
   assert.ok(dispCode.includes('List-Unsubscribe'), 'List-Unsubscribe ヘッダが無い');
-  assert.ok(dispCode.includes('配信停止はこちら'), '本文に配信停止リンクが無い');
   assert.ok(dispCode.includes('functions/unsubscribe?email='), 'AK の配信停止経路を使っていない');
+  // 配信停止はメールのフッター（共通シェル）にあり、受信者ごとに差し替える。
+  // 差し替えられない本文は**送らない**（配信停止できないメールを出さない）。
+  assert.ok(dispCode.includes('applyUnsubscribeUrl('), '単一源で差し替えていない');
+  assert.match(dispCode, /if \(!body\) return false;/, '差し替え失敗時に送信を止めていない');
+});
+
+test('専用 dispatcher は text/plain と text/html の 2 パートを送る', () => {
+  assert.ok(dispCode.includes("type: 'text/plain'"), 'text/plain パートが無い');
+  assert.ok(dispCode.includes("type: 'text/html'"), 'text/html パートが無い');
+  assert.ok(dispCode.includes('plainTextFromMarketingHtml('), 'テキスト版を単一源で作っていない');
 });
 
 test('専用 dispatcher は宛先を 1 通ずつ送る（他受信者のアドレスを露出しない）', () => {

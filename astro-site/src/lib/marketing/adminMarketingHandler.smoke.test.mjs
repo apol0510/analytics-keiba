@@ -173,7 +173,13 @@ test('smoke: preview は既定文面・上限・差し込みを返す（送信�
   assert.equal(body.limits.subjectMax > 0, true);
   assert.deepEqual(body.placeholders.map((p) => p.token), ['{{salutation}}']);
   assert.ok(body.preview.html.includes('山田 様'), '完成形プレビューになっていない');
-  assert.equal(/unsubscribe/i.test(body.preview.html), false, '本文に配信停止リンクを入れている');
+  // 配信停止はメールのフッターに必ず入る。プレビューでは**サンプル URL**で見せ、
+  // 実顧客ごとの配信停止 URL（functions/unsubscribe?email=…）は出さない。
+  assert.ok(body.preview.html.includes('配信を停止する'), 'フッターに配信停止が無い');
+  assert.ok(body.preview.html.includes(body.preview.unsubscribePreviewUrl), 'サンプル URL になっていない');
+  assert.equal(/functions\/unsubscribe\?email=/.test(body.preview.html), false,
+    'プレビューに実顧客の配信停止 URL を出している');
+  assert.equal(body.preview.html.includes('{{unsubscribeUrl}}'), false, '印が未解決のまま');
   assert.equal(typeof body.contentHash, 'string');
   assert.equal(body.contentEdited, false);
   assert.equal(calls.length, 0, 'プレビューで外部 API を叩いている');

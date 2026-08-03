@@ -121,12 +121,20 @@ test('候補が無ければ空を返す（適当に選ばない）', () => {
 test('Light 30日無料付与済み案内の既定文面', () => {
   const c = getCampaign('comeback-light-30d-granted');
   assert.ok(c, 'キャンペーンが存在しない');
-  assert.equal(c.version, 1);
+  // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加
+  assert.equal(c.version, 2);
   assert.equal(c.name, 'Light 30日無料付与済み案内');
-  assert.equal(c.subject, '【KEIBA Analytics】Lightプランを30日間無料でご利用いただけます');
+  assert.equal(c.subject, '【KEIBA Analytics】Lightプラン30日無料のご案内');
+  assert.equal(c.badge, '30日間無料');
+  assert.equal(c.headline, 'Lightプランを30日間無料でご利用いただけます');
+  assert.match(c.preheader, /お申し込み不要/);
+  assert.ok(Array.isArray(c.benefitItems) && c.benefitItems.length >= 3, '特典カードの項目が無い');
+  assert.equal(c.showGrantExpiry, true, '無料期間の終了日を出す設定になっていない');
+  assert.equal(c.grantDurationDays, 30);
   assert.match(c.body, /Lightプランを30日間無料でご利用いただけるようにいたしました/);
   assert.match(c.body, /お申し込みやお支払いの手続きは必要ありません/);
-  assert.match(c.body, /\{\{salutation\}\}/, '宛名の差し込みが無い');
+  // 宛名は共通シェルが本文の前に出す（本文には書かない）
+  assert.equal(c.body.includes('{{salutation}}'), false, '本文に宛名が二重に入っている');
   assert.equal(c.testOnly === true, false, 'テスト専用になっている');
   assert.equal(c.enabled, true);
 });
@@ -152,10 +160,12 @@ test('契約状態では絞らない（付与成功が対象条件）', () => {
 test('既存キャンペーンと campaignId が衝突しない（DeliveryKey が分かれる）', () => {
   const ids = CAMPAIGNS.map((c) => `${c.campaignId}:v${c.version}`);
   assert.equal(new Set(ids).size, ids.length, 'campaignId × version が重複している');
-  assert.ok(ids.includes('comeback-light-30d-granted:v1'));
-  // 過去に送った他キャンペーンとは別の鍵になる
+  assert.ok(ids.includes('comeback-light-30d-granted:v2'));
+  // v1 で送った相手へ v2 を送れる（DeliveryKey が別になる）
+  assert.equal(ids.includes('comeback-light-30d-granted:v1'), false, 'v1 が残っている');
+  // 過去に送った他キャンペーンとも別の鍵になる
   for (const other of ['expired-comeback:v2', 'comeback-offer:v2', 'premium-renewal:v2', 'dormant-reactivation:v2']) {
-    assert.notEqual('comeback-light-30d-granted:v1', other);
+    assert.notEqual('comeback-light-30d-granted:v2', other);
   }
 });
 

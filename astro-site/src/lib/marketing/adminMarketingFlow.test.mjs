@@ -296,6 +296,8 @@ test('【fail closed】provider suppression を確認できないと send も 50
   const { status } = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'],
     planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
   }));
   assert.equal(status, 503);
   assert.equal(store.deliveries.length, 0);
@@ -313,6 +315,8 @@ test('MARKETING_CAMPAIGN_ENABLED 未設定なら送信は 503・書き込みゼ�
   const { status, body } = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
     planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
   }));
   assert.equal(status, 503);
   assert.equal(body.sideEffects, 'none');
@@ -331,6 +335,8 @@ test('確認トークンが無い / 古いと送信しない（TOCTOU 防止）'
   const stale = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'],
     planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
   }));
   assert.equal(stale.status, 409);
   assert.equal(stale.body.sideEffects, 'none');
@@ -343,6 +349,8 @@ test('有効化しても Customers は書かず、キューだけを作る', asy
   const { status, body } = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
     planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
   }));
 
   assert.equal(status, 200);
@@ -368,7 +376,7 @@ test('有効化しても Customers は書かず、キューだけを作る', asy
 test('同じキャンペーンをもう一度送っても二重送信にならない', async () => {
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
   const dry1 = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'] }));
-  await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'], planFingerprint: dry1.body.planFingerprint });
+  await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'], planFingerprint: dry1.body.planFingerprint, contentHash: dry1.body.contentHash, shellVersion: dry1.body.shellVersion });
   const deliveriesAfterFirst = store.deliveries.length;
 
   // 2 回目: 台帳に queued があるので全員 already_delivered
@@ -380,6 +388,8 @@ test('同じキャンペーンをもう一度送っても二重送信になら�
   const send2 = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
     planFingerprint: dry2.body.planFingerprint,
+    contentHash: dry2.body.contentHash,
+    shellVersion: dry2.body.shellVersion,
   }));
   assert.equal(send2.status, 400, '対象 0 件で送信しようとしている');
   assert.equal(store.deliveries.length, deliveriesAfterFirst, '台帳が増えている');
@@ -389,7 +399,7 @@ test('同じキャンペーンをもう一度送っても二重送信になら�
 test('履歴はキャンペーン単位で集計される', async () => {
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
   const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'] }));
-  await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'], planFingerprint: dry.body.planFingerprint });
+  await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'], planFingerprint: dry.body.planFingerprint, contentHash: dry.body.contentHash, shellVersion: dry.body.shellVersion });
 
   const { body } = parse(await call({ action: 'history' }));
   assert.equal(body.runs.length, 1);
@@ -409,6 +419,8 @@ test('【24h ガード】連続クリックで 2 つ目のキャンペーンが 
   const send1 = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
     planFingerprint: dry1.body.planFingerprint,
+    contentHash: dry1.body.contentHash,
+    shellVersion: dry1.body.shellVersion,
   }));
   assert.equal(send1.body.queued, 2);
   const jobsAfterFirst = store.scheduled.length;
@@ -425,6 +437,8 @@ test('【24h ガード】連続クリックで 2 つ目のキャンペーンが 
   const send2 = parse(await call({
     action: 'send', campaignId: 'premium-renewal', recordIds: ['rec1', 'rec2'],
     planFingerprint: dry2.body.planFingerprint,
+    contentHash: dry2.body.contentHash,
+    shellVersion: dry2.body.shellVersion,
   }));
   assert.equal(send2.status, 400, '対象 0 件のまま送信されている');
   assert.equal(store.scheduled.length, jobsAfterFirst, 'ジョブが増えている');
@@ -563,6 +577,8 @@ test('カナリア: enqueue しても Customers write 0 / 実送信 0', async ()
   const out = parse(await call({
     action: 'send', campaignId: 'marketing-canary', recordIds: ['rec3'],
     planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
   }));
   assert.equal(out.status, 200);
   assert.equal(out.body.queued, 1);
@@ -611,7 +627,7 @@ test('Premium Plus 案内は eligible かつ PHASE 3 到達なら送れる', asy
 test('送信後は顧客一覧に送信履歴が反映される', async () => {
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
   const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
-  await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'], planFingerprint: dry.body.planFingerprint });
+  await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'], planFingerprint: dry.body.planFingerprint, contentHash: dry.body.contentHash, shellVersion: dry.body.shellVersion });
 
   const { body } = parse(await call({ action: 'customers', contract: 'expired' }));
   const rec1 = body.rows.find((r) => r.recordId === 'rec1');
@@ -664,6 +680,8 @@ test('【7/8】退会顧客へ送っても Customers / 権限・契約フィー�
   const out = parse(await call({
     action: 'send', campaignId: 'expired-comeback', recordIds: ['rec8'],
     planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
   }));
   assert.equal(out.body.queued, 1);
   assert.equal(store.customerWrites, 0, 'Customers へ書き込んでいる');
@@ -703,4 +721,67 @@ test('一覧で退会は「送信可能」かつ契約側に退会フラグが�
   assert.deepEqual(rec8.suppressionReasons, []);
   assert.equal(rec8.withdrawn, true, '契約側の退会フラグが返っていない');
   assert.equal(rec8.contract, 'expired', '契約状態は履歴として残す');
+});
+
+// =========================================================================
+// シェル（組み立て方）の版（2026-08-03）
+// dry-run で確認したあとに deploy でシェルが変わると、同じ campaign 定義でも
+// 届く HTML が別物になる。旧確認結果ではキュー登録させない。
+// =========================================================================
+
+test('dry-run はシェルの版を返す', async () => {
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
+  assert.equal(dry.status, 200);
+  assert.equal(typeof dry.body.shellVersion, 'number', 'シェルの版を返していない');
+  assert.ok(dry.body.shellVersion >= 1);
+});
+
+test('dry-run 後にシェルの版が変わったらキュー登録できない（旧確認結果は無効）', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'] }));
+
+  // deploy でシェルが更新された状況を、古い版を送ることで再現する
+  const stale = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'],
+    planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion - 1,
+  }));
+  assert.equal(stale.status, 409, '古い組み立て方のまま登録できてしまう');
+  assert.equal(stale.body.sideEffects, 'none');
+  assert.equal(store.scheduled.length, 0, 'キューへ積んでいる');
+  assert.equal(store.deliveries.length, 0);
+});
+
+test('シェルの版を渡さない送信は受け付けない（fail closed）', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
+  const noShell = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'],
+    planFingerprint: dry.body.planFingerprint, contentHash: dry.body.contentHash,
+  }));
+  assert.equal(noShell.status, 400);
+  assert.equal(store.scheduled.length, 0);
+
+  // 文面の hash を渡さない場合も同じく受け付けない
+  const noHash = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'],
+    planFingerprint: dry.body.planFingerprint, shellVersion: dry.body.shellVersion,
+  }));
+  assert.equal(noHash.status, 400);
+  assert.equal(store.scheduled.length, 0);
+});
+
+test('積んだジョブにシェルの版が残る（dispatcher が照合できる）', async () => {
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  const dry = parse(await call({ action: 'dryRun', campaignId: 'expired-comeback', recordIds: ['rec1'] }));
+  const sent = parse(await call({
+    action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1'],
+    planFingerprint: dry.body.planFingerprint,
+    contentHash: dry.body.contentHash,
+    shellVersion: dry.body.shellVersion,
+  }));
+  assert.equal(sent.status, 200);
+  assert.equal(store.scheduled.length, 1);
+  assert.match(store.scheduled[0].fields.Notes, /shell:v\d+/, 'Notes に組み立て方の版が無い');
 });

@@ -79,6 +79,10 @@ import {
   DRAFT_PLACEHOLDERS,
 } from '../../src/lib/marketing/campaignContentDraft.js';
 import { requiresOfferUrl, isLiveOffer } from '../../src/lib/promotions/offerCampaignLink.js';
+import {
+  PREVIEW_UNSUBSCRIBE_URL, describeGrantExpiry, plainTextFromMarketingHtml,
+  MARKETING_EMAIL_SHELL_VERSION, SHELL_VERSION_NOTE_PREFIX,
+} from '../../src/lib/marketing/marketingEmailShell.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import {
   buildCampaignPlan,
@@ -327,6 +331,7 @@ function handleCampaigns() {
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),
     maxRecipients: MAX_RECIPIENTS_PER_SEND,
+    shellVersion: MARKETING_EMAIL_SHELL_VERSION,
     labels: { exclusion: MK_EXCLUSION_LABEL, suppression: MK_SUPPRESSION_LABEL },
     filters: {
       contract: Object.values(MK_CONTRACT),
@@ -365,12 +370,22 @@ function resolveDraft({ campaign, req }) {
  * 配信停止リンクは dispatcher が全通に付けるので、ここでは「付く」という事実だけを返す。
  */
 function buildPreview({ campaign, fromEmail }) {
-  const rendered = renderCampaign({ campaign, name: PREVIEW_NAME });
+  // プレビューは**サンプル値**で完成形まで組み立てる。
+  // 実顧客の配信停止 URL も実際の期限も使わない（PII / 本番トークンを出さない）。
+  const rendered = renderCampaign({
+    campaign,
+    name: PREVIEW_NAME,
+    unsubscribeUrl: PREVIEW_UNSUBSCRIBE_URL,
+    expiryNote: campaign.showGrantExpiry === true
+      ? describeGrantExpiry({ durationDays: campaign.grantDurationDays })
+      : '',
+  });
   if (!rendered) return null;
   const brandCfg = getBrandConfig(BRAND);
   return {
     from: `${brandCfg.defaultFromName || 'KEIBA Analytics'} <${fromEmail || brandCfg.defaultFromEmail}>`,
     subject: rendered.subject,
+    preheader: campaign.preheader || '',
     salutation: `${PREVIEW_NAME} 様（氏名が無い会員は「お客様」）`,
     html: rendered.html,
     text: rendered.text,
@@ -379,7 +394,8 @@ function buildPreview({ campaign, fromEmail }) {
       ? 'お客様ごとの専用 URL（送信直前に 1 通ずつ差し替え）'
       : (campaign.ctaUrl ? '固定 URL（テンプレートで設定・文面編集では変更できません）' : 'CTA なし'),
     footer: 'KEIBA Analytics / https://analytics.keiba.link',
-    unsubscribeNote: '🚫 配信停止はこちら（送信時に自動付与。本文には書かない）',
+    unsubscribeNote: '配信停止リンクはメールのフッターに必ず入ります（送信時に受信者ごとの URL へ差し替え）。',
+    unsubscribePreviewUrl: PREVIEW_UNSUBSCRIBE_URL,
     sampleName: PREVIEW_NAME,
   };
 }
@@ -753,6 +769,26 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     });
   }
 
+  // ── シェル（組み立て方）の版が確認時と同じか ─────────────────────
+  // dry-run とキュー登録の間に deploy が入ると、同じ campaign 定義でも
+  // **違う HTML** が積まれてしまう。版を突き合わせて食い違いを止める。
+  if (live) {
+    if (!req.contentHash) {
+      return json(400, { error: '確認した文面の hash が必要です（dry-run からやり直してください）', sideEffects: 'none' });
+    }
+    const shellVersion = Number(req.shellVersion);
+    if (!Number.isFinite(shellVersion)) {
+      return json(400, { error: 'メールの組み立て版が必要です（dry-run からやり直してください）', sideEffects: 'none' });
+    }
+    if (shellVersion !== MARKETING_EMAIL_SHELL_VERSION) {
+      return json(409, {
+        error: '確認したあとにメールの組み立て方が更新されました。もう一度 dry-run で内容を確認してください。',
+        expected: MARKETING_EMAIL_SHELL_VERSION, got: shellVersion,
+        sideEffects: 'none',
+      });
+    }
+  }
+
   // ── 送信対象の指定（画面選択 or 無料付与成功者の引き継ぎ）────────────
   // 引き継ぎモードでは **クライアントの recordIds を読まない**。
   // 「誰に付与できたか」は Customers 側の事実であって、画面の申告ではないため。
@@ -927,6 +963,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     excludedRecords,
     detailComplete,
     planFingerprint: plan.planFingerprint,
+    // 確認した「組み立て方」の版。送信時にこの値の一致を要求する
+    shellVersion: MARKETING_EMAIL_SHELL_VERSION,
     // 引き継ぎモードのときだけ入る（件数と期限のみ。PII なし）
     handoff: handoffView,
   };
@@ -984,7 +1022,9 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         TargetPlan: `campaign:${campaign.campaignId}`,
         // 何を送ったかを後から照合できるようにする（既存の Notes だけを使う）
         // 引き継ぎ由来なら、どの付与操作から来たジョブかも残す（アドレスは入れない）
+        // dispatcher が読む: どの組み立て方で作った HTML か（版が違えば送らない）
         Notes: `marketing campaign ${campaign.campaignId} v${campaign.version}`
+          + ` ${SHELL_VERSION_NOTE_PREFIX}${MARKETING_EMAIL_SHELL_VERSION}`
           + ` content:${contentHash.slice(0, 12)}${check.edited ? ' edited' : ''}`
           + (grantOperationId ? ` ${handoffNote(grantOperationId)}` : ''),
       },
