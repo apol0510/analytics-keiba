@@ -835,3 +835,73 @@ test('guard(ui): 件数は項目ごとの要素に分ける（語の途中で折
 test('guard(ui): 取消ボタンは件数と同じ行に押し込まない', () => {
   assert.match(PAGE, /\.ppe \.job-row \.ops \{[^}]*margin/, '操作を独立した行にしていない');
 });
+
+// ── ジョブカードからの送信（2026-08-03）──────────────────────────
+
+test('guard(ui): 送信待ちカードに「確認 → 送信」がある', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'));
+  assert.ok(block.length > 500, '送信パネルが見つからない');
+  assert.match(block, /配信内容を確認/, '確認ボタンが無い');
+  assert.match(block, /このジョブを今すぐ送信/, '送信ボタンが無い');
+  // 送信待ち以外のカードには出さない
+  assert.match(SCRIPT, /SENDABLE_STATUS[\s\S]{0,80}mkBuildJobSendPanel/, '送信待ち以外にも出している');
+});
+
+test('guard(ui): 対象は jobId で固定し、画面の選択に依存しない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'), SCRIPT.indexOf('function mkRenderJobPreflight'));
+  assert.match(block, /mkDispatchCall\(true, job\.jobId\)/, '確認が jobId 指定でない');
+  assert.match(block, /mkDispatchCall\(false, job\.jobId, pre\.willSend\)/, '送信が jobId 指定でない');
+  // 顧客選択・絞り込み・キャンペーン選択を読まない
+  for (const forbidden of ['mkSelected', 'mkState.campaignId', 'currentCampaign(', 'mkState.filters']) {
+    assert.equal(block.includes(forbidden), false, `送信パネルが ${forbidden} に依存している`);
+  }
+});
+
+test('guard(ui): 判定は単一源に委譲する（画面で再実装しない）', () => {
+  assert.match(PAGE, /marketingJobSend\.js/, '判定モジュールを読み込んでいない');
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'), SCRIPT.indexOf('function mkRenderJobPreflight'));
+  for (const fn of ['buildJobPreflight(', 'canSendJob(', 'verifyJobSendPrecondition(', 'buildJobSendConfirmation(']) {
+    assert.ok(block.includes(fn), `${fn} を使っていない`);
+  }
+});
+
+test('guard(ui): 二重クリック・実行中・送信後の再実行を防ぐ', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'), SCRIPT.indexOf('function mkRenderJobPreflight'));
+  assert.match(block, /sendBtn\.dataset\.busy === '1'/, '二重クリック防止が無い');
+  assert.match(block, /sendBtn\.disabled = !verdict\.allowed/, '押せない状態を反映していない');
+  assert.match(block, /state\.sent = true/, '送信後の状態を持っていない');
+  assert.match(block, /送信済み（このカードからは再送できません）/, '完了後の表示が無い');
+});
+
+test('guard(ui): 人数入力を必須にし、直前に確認を取り直す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'), SCRIPT.indexOf('function mkRenderJobPreflight'));
+  assert.match(block, /window\.prompt\([^)]*送信予定人数/, '人数入力が無い');
+  assert.match(block, /const latest = await mkDispatchCall\(true, job\.jobId\)/, '直前の再確認が無い');
+  assert.match(block, /verifyJobSendPrecondition\(\{/, '照合していない');
+});
+
+test('guard(ui): 確認結果に必要な項目を出す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkRenderJobPreflight'), SCRIPT.indexOf('function mkRenderJobSendResult'));
+  for (const label of ['キャンペーン', '内容 hash', '組み立て版', 'キュー登録', '実送信予定', '除外', '除外理由']) {
+    assert.ok(block.includes(label), `確認結果に ${label} が無い`);
+  }
+  assert.match(block, /配信停止リストの照合/, 'suppression の可否を出していない');
+});
+
+test('guard(ui): 取消ボタンは独立したまま（送信と混ぜない）', () => {
+  assert.match(SCRIPT, /送信予定を取り消す/, '取消ボタンが消えている');
+  const panel = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'), SCRIPT.indexOf('function mkRenderJobPreflight'));
+  assert.equal(panel.includes("action: 'cancelJob'"), false, '送信パネルに取消を混ぜている');
+});
+
+test('guard(ui): 送信パネルはモバイルで縦積みになる', () => {
+  assert.match(PAGE, /@media \(max-width: 640px\) \{[\s\S]{0,300}\.ppe \.job-send-ops \{ flex-direction: column/,
+    'モバイルでの縦積み指定が無い');
+  assert.match(PAGE, /\.ppe \.job-send-ops button \{[^}]*min-height: 40px/, 'タップ領域が足りない');
+});
+
+test('guard(ui): secret をレスポンスや URL へ出さない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function mkBuildJobSendPanel'), SCRIPT.indexOf('function mkRenderJobSendResult'));
+  assert.equal(/secretEl|x-admin-secret/.test(block), false, '送信パネルが secret を直接扱っている');
+  assert.equal(/URLSearchParams|location\.(href|search)\s*=/.test(block), false, 'URL へ載せている');
+});

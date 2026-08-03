@@ -1070,6 +1070,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe #paneMkt[data-colmode=basic] .col-detail { display: none; }
   .ppe .action-box { border-color: rgba(56,189,248,.35); }
 
+  /* ── ジョブカードからの送信（確認 → 実行）────────────────────── */
+  .ppe .job-send {
+    margin: .5rem 0 .2rem; padding: .55rem .7rem;
+    border: 1px solid rgba(148,163,184,.22); border-left: 3px solid var(--action-yellow);
+    border-radius: 8px; background: rgba(234,179,8,.06);
+  }
+  .ppe .job-send-ops { display: flex; flex-wrap: wrap; gap: .45rem; }
+  .ppe .job-send-ops button { min-height: 40px; }
+  /* 行の見た目は既存の .dp-row / .dp-k / .dp-v をそのまま使う（重複定義しない） */
+  .ppe .job-send-result { margin: .5rem 0 0; }
+  @media (max-width: 640px) {
+    .ppe .job-send-ops { flex-direction: column; align-items: stretch; }
+    .ppe .job-send-ops button { width: 100%; }
+  }
+
   /* ── 送信ジョブ一覧 ──────────────────────────────────────────
      時系列（.tl-row）のグリッドを流用すると列が潰れて縦組みになるため、
      ここは**縦に積むだけ**にする。狭い画面でも同じ形で読める。 */
@@ -1765,6 +1780,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     SEND_BLOCK, SEND_BLOCK_LABEL, buildDispatchPreflight, canSendNow, verifySendPrecondition,
     buildSendNowConfirmation, classifySendOutcome, summarizeSendResult,
   } from '../../lib/marketing/marketingSendNow.js';
+  // 送信待ちジョブを**そのカードから**送るための判定（jobId 固定・画面の選択に依存しない）
+  import {
+    JOB_SEND_BLOCK, JOB_SEND_BLOCK_LABEL, SENDABLE_STATUS,
+    buildJobPreflight, canSendJob, verifyJobSendPrecondition,
+    buildJobSendConfirmation, summarizeJobSendResult,
+  } from '../../lib/marketing/marketingJobSend.js';
+  window.__mkJobSend = {
+    JOB_SEND_BLOCK, JOB_SEND_BLOCK_LABEL, SENDABLE_STATUS,
+    buildJobPreflight, canSendJob, verifyJobSendPrecondition,
+    buildJobSendConfirmation, summarizeJobSendResult,
+  };
   import {
     DRY_STATE, applyCampaigns as stApplyCampaigns, dryRunFailed as stDryRunFailed,
     maskEmail as stMaskEmail,
@@ -3961,14 +3987,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     const DISPATCH_API = '/.netlify/functions/marketing-campaign-dispatch';
-    async function mkDispatchCall(dryRun, jobId) {
+    async function mkDispatchCall(dryRun, jobId, expectedWillSend) {
       const secret = secretEl.value.trim();
       if (!secret) { $('connBody').hidden = false; throw new Error('管理シークレットを入力してください'); }
+      // jobId を渡すと、そのジョブだけが対象になる（他のキューを巻き込まない）。
+      // 実送信では確認した人数も添え、API 側でも食い違いを弾く。
+      const payload = jobId ? { dryRun, jobId } : { dryRun };
+      if (!dryRun && Number.isFinite(Number(expectedWillSend))) {
+        payload.expectedWillSend = Number(expectedWillSend);
+      }
       const res = await fetch(DISPATCH_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-        // jobId を渡すと、そのジョブだけが対象になる（他のキューを巻き込まない）
-        body: JSON.stringify(jobId ? { dryRun, jobId } : { dryRun }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
@@ -4635,6 +4666,209 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       unknown_status: '状態を判定できない',
     };
 
+    const jobSendApi = () => window.__mkJobSend;
+
+    /**
+     * 送信待ちジョブ 1 件の「配信内容を確認 → 今すぐ送信」パネル。
+     *
+     * ── 押せる順 ────────────────────────────────────────────────
+     *   配信内容を確認（dispatcher dryRun:true / 書き込みなし）
+     *     → 送信予定人数・除外理由・版・内容 hash を表示
+     *     → 「今すぐ送信」が押せるようになる
+     *     → 人数を入力して確定 → 直前にもう一度確認を取り直して照合
+     *     → 該当 jobId だけを 1 回だけ送る
+     *
+     * 二重クリック・再読込・通信 retry では二重送信しない
+     * （画面の busy ガード + API 側の job 単位の冪等性）。
+     */
+    function mkBuildJobSendPanel(job, jobsData) {
+      const api = jobSendApi();
+      const wrap = document.createElement('div');
+      wrap.className = 'job-send';
+
+      const state = { busy: false, preflight: null, sent: false };
+      const checkBtn = document.createElement('button');
+      const sendBtn = document.createElement('button');
+      const result = document.createElement('div');
+      // 行の見た目は Step 4 の確認パネルと同じ部品を使う（新しい見た目を増やさない）
+      result.className = 'job-send-result dry-panel';
+      result.hidden = true;
+      const msg = document.createElement('p');
+      msg.className = 'note';
+      msg.setAttribute('aria-live', 'polite');
+
+      const sync = () => {
+        const verdict = api.canSendJob({
+          busy: state.busy, dispatchEnabled: !!jobsData.dispatchEnabled,
+          status: job.status, preflight: state.preflight, sent: state.sent,
+        });
+        sendBtn.disabled = !verdict.allowed;
+        sendBtn.setAttribute('aria-disabled', String(!verdict.allowed));
+        sendBtn.title = verdict.allowed ? '' : (verdict.label || '');
+        checkBtn.disabled = state.busy || state.sent;
+      };
+
+      // ── ① 配信内容を確認（書き込みなし）──
+      checkBtn.type = 'button';
+      checkBtn.className = 'btn-success btn-md';
+      checkBtn.textContent = '✅ 配信内容を確認';
+      checkBtn.setAttribute('aria-label', 'このジョブの配信内容を確認する（送信はしません）');
+      checkBtn.addEventListener('click', async () => {
+        if (state.busy) return;
+        state.busy = true; sync();
+        msg.textContent = '確認中…（送信も書き込みもしていません）';
+        try {
+          const out = await mkDispatchCall(true, job.jobId);
+          const pf = api.buildJobPreflight(out, job.jobId);
+          state.preflight = pf;
+          mkRenderJobPreflight(result, pf, job);
+          msg.textContent = pf.ok
+            ? 'この内容で送信できます。人数を確認して「今すぐ送信」を押してください。'
+            : (api.JOB_SEND_BLOCK_LABEL[pf.reason] || '送信できません。');
+        } catch (e) {
+          state.preflight = null;
+          result.innerHTML = '';
+          msg.textContent = '確認できませんでした。管理シークレットとネットワークを確認してください。';
+        } finally {
+          state.busy = false; sync();
+        }
+      });
+
+      // ── ② 今すぐ送信（このジョブだけ・1 回だけ）──
+      sendBtn.type = 'button';
+      sendBtn.className = 'b-immediate';
+      sendBtn.textContent = '📩 このジョブを今すぐ送信';
+      sendBtn.disabled = true;
+      sendBtn.setAttribute('aria-disabled', 'true');
+      sendBtn.addEventListener('click', async () => {
+        if (state.busy || sendBtn.dataset.busy === '1') return;   // 二重クリック防止
+        const verdict = api.canSendJob({
+          busy: state.busy, dispatchEnabled: !!jobsData.dispatchEnabled,
+          status: job.status, preflight: state.preflight, sent: state.sent,
+        });
+        if (!verdict.allowed) { mkNotify('warn', '送信できません', verdict.label || ''); return; }
+
+        const operationId = 'jobsend-' + job.jobId + '-' + Date.now().toString(36);
+        const conf = api.buildJobSendConfirmation({ preflight: state.preflight, operationId });
+        const ok = window.confirm(
+          '【このジョブを送信】' + conf.effect + '\n\n'
+          + 'キャンペーン: ' + conf.campaign + '\n'
+          + 'job: ' + conf.jobId + '\n'
+          + '内容 hash: ' + conf.contentHash + ' / 組み立て版 v' + conf.shellVersion + '\n'
+          + '送信予定: ' + conf.willSend + ' 名（除外 ' + conf.willSkip + ' 名）\n\n'
+          + conf.reverify + '\n' + conf.failClosed + '\n' + conf.afterSend + '\n\n続けますか？'
+        );
+        if (!ok) return;
+        const typed = window.prompt('確認のため、送信予定人数「' + conf.willSend + '」を入力してください') || '';
+
+        sendBtn.dataset.busy = '1';
+        state.busy = true; sync();
+        sendBtn.textContent = '送信中…';
+        msg.textContent = '送信直前の再確認中…';
+        try {
+          // ③ 直前にもう一度確認を取り、同じジョブ・同じ内容であることを確かめる
+          const latest = await mkDispatchCall(true, job.jobId);
+          const pre = api.verifyJobSendPrecondition({
+            preflight: state.preflight, latest, typedCount: typed,
+          });
+          if (!pre.ok) {
+            msg.textContent = api.JOB_SEND_BLOCK_LABEL[pre.reason] || '送信を中止しました。';
+            mkNotify('warn', '送信を中止しました', api.JOB_SEND_BLOCK_LABEL[pre.reason] || '');
+            sendBtn.textContent = '📩 このジョブを今すぐ送信';
+            return;
+          }
+          // ④ 実送信。対象は jobId で固定し、確認した人数を API 側でも照合させる
+          msg.textContent = pre.willSend + ' 通を送信中…';
+          const out = await mkDispatchCall(false, job.jobId, pre.willSend);
+          if (!out) {
+            msg.textContent = '送信に失敗しました。送信状況を再読み込みして、実際に送られたかを必ず確認してください。';
+            sendBtn.textContent = '📩 このジョブを今すぐ送信';
+            return;
+          }
+          state.sent = true;
+          state.preflight = null;
+          const res = api.summarizeJobSendResult(out, job.jobId);
+          mkRenderJobSendResult(result, res);
+          sendBtn.textContent = '送信済み（このカードからは再送できません）';
+          msg.textContent = res.note;
+          mkNotify(res.outcome === 'SENT' ? 'ok' : 'warn', res.label,
+            '送信 ' + res.sent + ' / 失敗 ' + res.failed + ' / 除外 ' + res.skipped);
+        } catch (e) {
+          msg.textContent = '配信基盤へ到達できませんでした。送信状況を再読み込みして実際に送られたかを確認してください（自動では再送しません）。';
+        } finally {
+          sendBtn.dataset.busy = '';
+          state.busy = false; sync();
+        }
+      });
+
+      const bar = document.createElement('div');
+      bar.className = 'job-send-ops';
+      bar.appendChild(checkBtn);
+      bar.appendChild(sendBtn);
+      wrap.appendChild(bar);
+      wrap.appendChild(result);
+      wrap.appendChild(msg);
+      if (!jobsData.dispatchEnabled) {
+        const g = document.createElement('p'); g.className = 'note';
+        g.textContent = api.JOB_SEND_BLOCK_LABEL[api.JOB_SEND_BLOCK.GATE_CLOSED];
+        wrap.appendChild(g);
+      }
+      sync();
+      return wrap;
+    }
+
+    /** 確認結果（このジョブの内訳だけ。アドレスは出さない） */
+    function mkRenderJobPreflight(box, pf, job) {
+      box.innerHTML = '';
+      box.hidden = false;
+      const api = jobSendApi();
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = String(v);
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      if (!pf.ok) {
+        row('確認結果', api.JOB_SEND_BLOCK_LABEL[pf.reason] || '送信できません', 'is-ng');
+        if (pf.blocked) row('理由', pf.note || pf.blocked, 'is-ng');
+        if (pf.jobShellVersion !== undefined && pf.jobShellVersion !== null) {
+          row('ジョブの組み立て版', 'v' + pf.jobShellVersion + '（現在 v' + pf.expectedShellVersion + '）', 'is-ng');
+        }
+        return;
+      }
+      row('キャンペーン', pf.campaignId + (pf.version ? ' v' + pf.version : ''));
+      row('内容 hash', pf.contentHash || '（記録なし）');
+      row('組み立て版', pf.shellVersion === null ? '（印なし）' : 'v' + pf.shellVersion);
+      row('キュー登録', pf.queued + ' 名');
+      row('実送信予定', pf.willSend + ' 名', pf.willSend > 0 ? 'is-ok' : 'is-ng');
+      row('除外', pf.willSkip + ' 名');
+      const reasons = Object.entries(pf.skipByReason || {});
+      if (reasons.length) {
+        row('除外理由', reasons.map(([k, v]) => k + ' ' + v + ' 名').join(' / '));
+      }
+      const sup = pf.providerSuppression || {};
+      row('配信停止リストの照合', sup.available ? 'OK（' + (sup.total || 0) + ' 件）' : '確認できず（送信しません）',
+        sup.available ? '' : 'is-ng');
+    }
+
+    /** 送信結果（部分失敗を成功と読ませない） */
+    function mkRenderJobSendResult(box, res) {
+      box.innerHTML = '';
+      box.hidden = false;
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = String(v);
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      row('結果', res.label, res.outcome === 'SENT' ? 'is-ok' : 'is-ng');
+      row('送信', res.sent + ' 通', res.sent > 0 ? 'is-ok' : '');
+      row('失敗', res.failed + ' 通', res.failed > 0 ? 'is-ng' : '');
+      row('除外', res.skipped + ' 通');
+      const reasons = Object.entries(res.skipByReason || {});
+      if (reasons.length) row('除外理由', reasons.map(([k, v]) => k + ' ' + v + ' 名').join(' / '));
+    }
+
     async function mkRenderJobs() {
       const data = await mkCall({ action: 'jobs' });
       if (!data) return;
@@ -4755,6 +4989,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           ops.appendChild(p);
         }
         box.appendChild(ops);
+
+        // ── 送信待ちジョブは、このカードから確認 → 送信できる ─────────────
+        // 対象は**このカードの jobId だけ**。画面の顧客選択・絞り込み・
+        // キャンペーン選択には一切依存しない（別の日・別の人でも引き継げる）。
+        if (String(j.status || '').toUpperCase() === jobSendApi().SENDABLE_STATUS) {
+          box.appendChild(mkBuildJobSendPanel(j, data));
+        }
+
         sec.appendChild(box);
       }
       const note = document.createElement('p'); note.className = 'tl-note';

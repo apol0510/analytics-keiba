@@ -84,6 +84,12 @@ function json(statusCode, body) {
 
 const authHeaders = (key) => ({ Authorization: `Bearer ${key}` });
 
+/** ジョブの Notes に残した内容 hash（何を送るかの照合用。PII は含まない） */
+function readContentHashFromNote(note) {
+  const m = String(note ?? '').match(/content:([0-9a-f]{6,32})/i);
+  return m ? m[1] : '';
+}
+
 async function fetchAll({ KEY, BASE, table, filterByFormula }) {
   const out = [];
   let offset;
@@ -133,15 +139,34 @@ export const handler = async (event) => {
   if (!KEY || !BASE) return json(500, { error: 'Airtable 認証情報が未設定' });
   if (!dryRun && !SG) return json(503, { error: 'SENDGRID_API_KEY 未設定', sideEffects: 'none' });
 
+  // ── 実送信は「どのジョブを・何名へ」を明示したときだけ ──────────────
+  // jobId を省いた live 実行は、送信待ちのジョブを**全部**送ってしまう。
+  // 画面は必ずジョブを 1 件指定するので、指定が無い live は受け付けない。
+  const jobIdFilter = req.jobId ? String(req.jobId) : null;
+  if (!dryRun) {
+    if (!jobIdFilter) {
+      return json(400, { error: '送信するジョブ（jobId）を指定してください', sideEffects: 'none' });
+    }
+    if (!Number.isFinite(Number(req.expectedWillSend))) {
+      return json(400, {
+        error: '確認した送信予定人数（expectedWillSend）が必要です。先に配信内容を確認してください。',
+        sideEffects: 'none',
+      });
+    }
+  }
+
   try {
-    return await dispatch({ KEY, BASE, SG, dryRun, jobIdFilter: req.jobId ? String(req.jobId) : null });
+    return await dispatch({
+      KEY, BASE, SG, dryRun, jobIdFilter,
+      expectedWillSend: dryRun ? null : Number(req.expectedWillSend),
+    });
   } catch (e) {
     console.error('❌ [marketing-dispatch]', e.message);
     return json(500, { error: 'internal error' });
   }
 };
 
-async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
+async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null }) {
   const now = Date.now();
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
   const fromName = getBrandConfig(BRAND).defaultFromName;
@@ -279,9 +304,27 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     /** 受信者 → 刻む custom_args（解決できた相手だけ） */
     const customArgsByEmail = new Map();
 
+    // ── job 単位の冪等性 ─────────────────────────────────────────
+    // 通信 retry・二重クリック・途中で落ちた再実行で**同じ人へ二度送らない**。
+    // この ジョブ の配信行が既に `sent` なら、その相手はもう送り終えている。
+    const alreadySent = new Set(
+      (campaignDeliveries || [])
+        .filter((r) => String(r.fields?.ScheduledEmailJobId || '') === jobId
+          && String(r.fields?.Status || '') === 'sent')
+        .map((r) => String(r.fields?.RecipientEmail || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+
     const toSend = [];
     const toSkip = [];
     for (const email of recipients.slice(0, MAX_PER_RUN)) {
+      if (alreadySent.has(email)) {
+        // 既に送った相手。台帳を書き換える必要も無いので数えるだけ
+        summary.skipped += 1;
+        summary.skippedByReason.already_sent_in_job = (summary.skippedByReason.already_sent_in_job || 0) + 1;
+        summary.verified += 1;
+        continue;
+      }
       const v = verifyBeforeSend({
         email, providerSuppressed: provider.emails, blocked, unsubscribed, suspended,
         recentContactAtMs, nowMs: now,
@@ -354,9 +397,38 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
       }
     }
 
-    jobResults.push({ jobId, total: recipients.length, willSend: toSend.length, willSkip: toSkip.length });
+    // 除外理由はジョブ単位でも数える（画面はこのジョブの内訳だけを出す）
+    const skipByReason = {};
+    for (const e of toSkip) {
+      const r = String(e.reason || 'unknown');
+      skipByReason[r] = (skipByReason[r] || 0) + 1;
+    }
+    jobResults.push({
+      jobId,
+      campaignId: campaignId || '',
+      version: jobCampaign ? String(jobCampaign.version) : '',
+      shellVersion: jobShellVersion,
+      contentHash: readContentHashFromNote(f.Notes),
+      status: String(f.Status || ''),
+      // queued = まだ送っていない配信行。既に sent の分は対象から外している
+      queued: alreadySent.size > 0 ? recipients.length - alreadySent.size : recipients.length,
+      total: recipients.length,
+      willSend: toSend.length,
+      willSkip: toSkip.length,
+      alreadySent: alreadySent.size,
+      skipByReason,
+    });
 
     if (dryRun) continue;
+
+    // ── 実送信の直前ガード（確認した内容と食い違ったら送らない）──────
+    if (Number.isFinite(expectedWillSend) && toSend.length !== expectedWillSend) {
+      return json(409, {
+        error: '確認したときと送信対象の人数が変わりました。もう一度配信内容を確認してください。',
+        jobId, expected: expectedWillSend, got: toSend.length,
+        sideEffects: 'none',
+      });
+    }
 
     // 3-a) 送らない相手を台帳へ記録（送信前に確定させる）
     if (toSkip.length > 0) {
@@ -428,6 +500,8 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter }) {
     mode: dryRun ? 'dry-run' : 'live',
     sideEffects: dryRun ? 'none' : 'CampaignDeliveries / ScheduledEmails のみ',
     ...summary,
+    // 画面が「自分が指定したジョブの結果か」を確かめられるように返す
+    requestedJobId: jobIdFilter,
     jobResults,
     providerSuppression: describeProviderSuppression(provider),
     notice: dryRun
