@@ -27,6 +27,15 @@
  * SendGrid も ScheduledEmails も CampaignDeliveries も触らない（guard テストで固定）。
  * `preview` は文面を返すだけ。案内は付与・発行の完了後、管理者がマーケティングタブから送る。
  *
+ * ── 付与成功者をメール工程へ引き継ぐ（2026-08-03）────────────────────
+ * `apply` の応答に **`handoff`（引き継ぎ票）** を載せる。中身は operationId と件数だけで、
+ * アドレスも氏名も recordId も含めない。マーケティング側は この operationId を使い、
+ * **Customers を読み直して付与成功者を自分で導出する**（`comebackEmailHandoff.js`）。
+ * 付与が成功した行にだけ `LightGrantOp` / `PremiumGrantOp` が書かれるため、
+ * **失敗・skip した顧客は構造的に引き継がれない**。
+ * ⚠️ ここでメールを送るようになったわけではない。引き継ぎ票を返すだけで、
+ *    送信は従来どおり管理者がマーケティングタブで別操作として行う。
+ *
  * ── 課金・契約・販売資格を書き換えない ──────────────────────────────
  * 書き込むのは promotionalGrants.js / promotionalOffer.js の allowlist にあるフィールドだけ。
  * プラン / PlanType / Status / 有効期限 / PaidAt / PaymentConfirmed / PaymentEmailSent /
@@ -95,6 +104,7 @@ import {
   OFFER_REVOKE_SKIP_LABEL,
 } from '../../src/lib/promotions/offerRevokePlan.js';
 import { buildComebackEmailContent } from '../../src/lib/promotions/comebackEmailTemplate.js';
+import { buildHandoffTicket } from '../../src/lib/comeback/comebackEmailHandoff.js';
 import {
   PROMO_TIER,
   PROMO_TIER_LABEL,
@@ -722,6 +732,16 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         notAttempted: grantTargets.length - granted.length,
         offersIssued: 0,
         sideEffects: granted.length > 0 ? 'partial' : 'none',
+        // 途中で止まっても、**書き込めた分だけ**は案内メールへ引き継げる。
+        // 付与済みを巻き戻さないための導線であって、失敗分を送る導線ではない。
+        handoff: buildHandoffTicket({
+          operationId,
+          grantedCount: granted.length,
+          selectedCount: plan.counts.selected,
+          skippedCount: plan.counts.selected - granted.length,
+          skippedDetail: summary.skippedDetail,
+          nowMs: now,
+        }),
         howToRecover: '同じ operationId で dry-run → 実行を再実行してください（適用済みは自動的に除外されます）',
       });
     }
@@ -758,6 +778,15 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         granted: granted.length,
         offersIssued: issued.length,
         sideEffects: 'partial',
+        // 無料付与は完了しているので、案内メールへは引き継げる
+        handoff: buildHandoffTicket({
+          operationId,
+          grantedCount: granted.length,
+          selectedCount: plan.counts.selected,
+          skippedCount: plan.counts.skipped,
+          skippedDetail: summary.skippedDetail,
+          nowMs: now,
+        }),
         howToRecover: '同じ operationId で dry-run → 実行を再実行してください（付与済みは除外され、未発行のオファーだけが対象になります）',
       });
     }
@@ -773,6 +802,15 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     ...summary,
     granted: granted.length,
     offersIssued: issued.length,
+    // 案内メールへの引き継ぎ票（operationId と件数だけ。PII / recordId は載せない）
+    handoff: buildHandoffTicket({
+      operationId,
+      grantedCount: granted.length,
+      selectedCount: plan.counts.selected,
+      skippedCount: plan.counts.skipped,
+      skippedDetail: summary.skippedDetail,
+      nowMs: now,
+    }),
     // 生トークンは**この応答にだけ**現れる（Airtable にはハッシュしか保存しない）。
     // 案内メールの差し込みに使う。ログにも出さない。
     offerTokens: offerRows

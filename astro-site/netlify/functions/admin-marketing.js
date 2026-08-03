@@ -37,6 +37,21 @@
  * ── Customers へは一切書かない ───────────────────────────────────
  * 契約・権限・決済・Premium Plus 販売資格はこの Function の責務ではない。
  * 書き込むのは CampaignDeliveries と ScheduledEmails のみ（それも live gate 通過時だけ）。
+ *
+ * ── 送信対象の指定は 2 通り（2026-08-03）──────────────────────────
+ *   1) `recordIds`         … 画面で選んだ相手（従来）
+ *   2) `grantOperationId`  … カムバック無料付与の**成功者**を引き継ぐ
+ *
+ * (2) では**クライアントが送ってきた recordId を 1 つも使わない**。Customers を読み直し、
+ * その操作 ID が `LightGrantOp` / `PremiumGrantOp` に刻まれている行だけを対象にする
+ * （`comebackEmailHandoff.js` が単一源）。これにより
+ *   - 任意の recordId を注入しても対象にならない
+ *   - 付与に失敗・skip した顧客は構造的に混ざらない
+ *   - 取り消し済みの付与は対象から外れる
+ *   - 付与時刻から一定時間を過ぎた引き継ぎは失効する（fail closed）
+ * 除外判定（suppression / 配信停止 / バウンス / 既送信 / キャンペーン固有条件）は
+ * **従来と完全に同じ経路**を通る。引き継ぎは「誰を候補にするか」を決めるだけで、
+ * 送ってよいかどうかの判定は 1 ミリも緩めない。
  */
 
 import {
@@ -98,6 +113,11 @@ import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
+// カムバック無料付与の成功者を引き継ぐ判定（対象の導出・期限・監査印の単一源）
+import {
+  HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
+  collectGrantedRecipients, validateHandoffResolution, handoffNote,
+} from '../../src/lib/comeback/comebackEmailHandoff.js';
 import {
   resolveOfferState, matchesOfferState, matchesOfferWindow, formatOfferCell,
 } from '../../src/lib/marketing/offerFilterModel.js';
@@ -733,8 +753,16 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     });
   }
 
-  const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
-  if (recordIds.length === 0) return json(400, { error: '送信対象が選択されていません' });
+  // ── 送信対象の指定（画面選択 or 無料付与成功者の引き継ぎ）────────────
+  // 引き継ぎモードでは **クライアントの recordIds を読まない**。
+  // 「誰に付与できたか」は Customers 側の事実であって、画面の申告ではないため。
+  const grantOperationId = String(req.grantOperationId || '').trim();
+  const recordIds = grantOperationId
+    ? []
+    : (Array.isArray(req.recordIds) ? req.recordIds.map(String) : []);
+  if (!grantOperationId && recordIds.length === 0) {
+    return json(400, { error: '送信対象が選択されていません' });
+  }
   if (recordIds.length > MAX_RECIPIENTS_PER_SEND * 2) {
     return json(400, { error: `選択が多すぎます（上限 ${MAX_RECIPIENTS_PER_SEND} 件）` });
   }
@@ -754,7 +782,42 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
 
   const { list } = await loadCustomerMarketing({ KEY, BASE, now });
   const byId = new Map(list.map((c) => [c.recordId, c]));
-  const selected = recordIds.map((id) => byId.get(id) || { recordId: id, fields: null, marketing: null });
+
+  // 引き継ぎモード: 対象を Customers から**サーバーが導出する**（唯一の正）
+  let handoffView = null;
+  let targetIds = recordIds;
+  if (grantOperationId) {
+    const resolved = collectGrantedRecipients({ records: list, operationId: grantOperationId, nowMs: now });
+    const verdict = validateHandoffResolution({
+      operationId: grantOperationId,
+      recordIds: resolved.recordIds,
+      latestGrantedAtMs: resolved.latestGrantedAtMs,
+      nowMs: now,
+    });
+    if (!verdict.ok) {
+      // 期限切れは 410（もう使えない）、それ以外は 409（いまは使えない）
+      return json(verdict.reason === HANDOFF_BLOCK.EXPIRED ? 410 : 409, {
+        error: HANDOFF_BLOCK_LABEL[verdict.reason] || '引き継ぎを受け付けられません',
+        reason: verdict.reason,
+        grantOperationId,
+        sideEffects: 'none',
+      });
+    }
+    if (resolved.recordIds.length > MAX_RECIPIENTS_PER_SEND * 2) {
+      return json(400, { error: `引き継ぎ対象が多すぎます（上限 ${MAX_RECIPIENTS_PER_SEND} 件）` });
+    }
+    targetIds = resolved.recordIds;
+    // 画面に返すのは件数と期限だけ（アドレスも recordId も返さない）
+    handoffView = {
+      grantOperationId,
+      resolved: verdict.recipientCount,
+      byTier: resolved.byTier,
+      expiresAt: new Date(verdict.expiresAtMs).toISOString(),
+      note: '対象は無料付与が成功した顧客だけをサーバー側で確定しています（画面の選択は使っていません）。',
+    };
+  }
+
+  const selected = targetIds.map((id) => byId.get(id) || { recordId: id, fields: null, marketing: null });
 
   // 既送信突合（同一 campaignId:version）
   const priorDeliveries = await fetchAll({
@@ -864,6 +927,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     excludedRecords,
     detailComplete,
     planFingerprint: plan.planFingerprint,
+    // 引き継ぎモードのときだけ入る（件数と期限のみ。PII なし）
+    handoff: handoffView,
   };
 
   if (!live) {
@@ -918,8 +983,10 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         RecipientCount: batch.length,
         TargetPlan: `campaign:${campaign.campaignId}`,
         // 何を送ったかを後から照合できるようにする（既存の Notes だけを使う）
+        // 引き継ぎ由来なら、どの付与操作から来たジョブかも残す（アドレスは入れない）
         Notes: `marketing campaign ${campaign.campaignId} v${campaign.version}`
-          + ` content:${contentHash.slice(0, 12)}${check.edited ? ' edited' : ''}`,
+          + ` content:${contentHash.slice(0, 12)}${check.edited ? ' edited' : ''}`
+          + (grantOperationId ? ` ${handoffNote(grantOperationId)}` : ''),
       },
     });
     for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId: created?.id || null });

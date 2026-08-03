@@ -247,6 +247,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <h2 id="mkStep2H" class="step-h"><span class="step-n">2</span> 顧客を選択する
           <span class="step-counts" id="mkStepCounts"></span>
         </h2>
+      <!--
+        カムバック特典タブで無料付与に成功した顧客を引き継いでいる状態の帯。
+        引き継ぎ中はここで顧客を選び直す必要がない（対象は送信のたびにサーバーが確定する）。
+      -->
+      <div class="handoff-bar" id="mkHandoffBar" hidden aria-live="polite"></div>
       <div class="selbar">
         <span class="colmode">表示列:
           <button type="button" id="mkColBasic" class="btn-ghost btn-sm is-on">主要</button>
@@ -679,7 +684,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <div class="campaign-box cb-tools">
         <h3 class="box-h">補助操作</h3>
         <div class="toolbar">
-          <button type="button" id="cbPreviewBtn" class="btn-ghost">案内文面プレビュー</button>
+          <button type="button" id="cbPreviewBtn" class="btn-ghost"
+            title="実際に送る文面はメール作成工程で編集します">送信予定文面の例を見る</button>
           <button type="button" id="cbRevokeBtn" class="btn-ghost">無料特典を取り消す</button>
           <button type="button" id="cbReconcileBtn" class="btn-ghost">前回操作の突合</button>
         </div>
@@ -933,6 +939,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
   /* ── マーケティング: 選択バー ── */
   .ppe .selbar { display: flex; align-items: center; gap: .5rem; margin: 0 0 .6rem; flex-wrap: wrap; }
+
+  /* ── 無料付与からの引き継ぎ帯（色だけでなく文言でも状態が分かる）───────── */
+  .ppe .handoff-bar {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    margin: 0 0 .7rem; padding: .6rem .8rem;
+    border: 1px solid var(--ok-bd, #86efac); border-left: 4px solid var(--ok-fg, #16a34a);
+    border-radius: 8px; background: var(--ok-bg, #f0fdf4);
+  }
+  .ppe .handoff-bar b { font-size: .92rem; }
+  .ppe .handoff-bar .hb-d { font-size: .86rem; font-weight: 700; }
+  .ppe .handoff-bar .hb-note { font-size: .78rem; opacity: .85; flex: 1 1 16rem; }
   .ppe .selcount { font-size: .78rem; font-weight: 700; color: #e6edf7; margin-left: auto; }
   .ppe .tbl td.c-chk { width: 2.2rem; text-align: center; }
   .ppe .tbl td.c-chk input { width: 16px; height: 16px; accent-color: #f5c451; cursor: pointer; }
@@ -1714,6 +1731,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     draftSignature, DRAFT_PLACEHOLDERS, SUBJECT_MAX, SUBJECT_RECOMMENDED, BODY_MAX,
     isContentConfirmed, acceptConfirmation, canSendContent, buildSendSummary,
     CONTENT_BLOCK, CONTENT_BLOCK_LABEL, CONTENT_CHANGED_NOTICE, QUEUED_IMMUTABLE_NOTICE,
+  };
+  // 無料付与 → 案内メールの引き継ぎ（対象の確定はサーバー。ここは保存と期限だけ）
+  import {
+    HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL, HANDOFF_TTL_MS,
+    saveHandoff, loadHandoff, markHandoffQueued, clearHandoff, describeHandoff,
+  } from '../../lib/comeback/comebackEmailHandoff.js';
+  window.__cbHandoff = {
+    HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL, HANDOFF_TTL_MS,
+    saveHandoff, loadHandoff, markHandoffQueued, clearHandoff, describeHandoff,
   };
   window.__mkState = { DRY_STATE, stApplyCampaigns, stDryRunFailed, stMaskEmail };
   window.__mkSend = {
@@ -3408,6 +3434,108 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       loadedCount: 0, selectedIds: [], filters: {}, campaignId: '', campaignVersion: '',
       campaign: null, dryRun: null, enqueued: false, dispatch: {}, busy: false,
       sendEnabled: false, dispatchEnabled: false,
+      // カムバック無料付与からの引き継ぎ（operationId と人数だけ。recordId は持たない）
+      handoff: null,
+    };
+
+    /**
+     * ── 無料付与の成功者を引き継ぐ（受け入れ側）─────────────────────
+     * 引き継ぐのは **操作 ID と人数だけ**。誰が対象かは dry-run のたびに
+     * Function が Customers を読み直して確定する（画面は recordId を持たない）。
+     * ここで顧客を選び直させないことが、この導線の目的そのもの。
+     */
+    const handoffApi = () => window.__cbHandoff;
+
+    function mkHandoffAdopt(ticket) {
+      if (!ticket || !ticket.operationId || !(Number(ticket.grantedCount) > 0)) {
+        mkNotify('warn', '引き継げませんでした',
+          handoffApi().HANDOFF_BLOCK_LABEL[handoffApi().HANDOFF_BLOCK.NO_RECIPIENTS]);
+        return false;
+      }
+      handoffApi().saveHandoff(sessionStorage, ticket);
+      mkState.handoff = { operationId: ticket.operationId, grantedCount: Number(ticket.grantedCount) };
+      // 引き継ぎは母集団の差し替えなので、直前の確認結果は必ず捨てる
+      mkState.dryRun = null;
+      mkState.enqueued = false;
+      mkState.dispatch = {};
+      mkSelected.clear();
+      mkHandoffRender(ticket);
+      mkSyncFlow();
+      mkNotify('ok', '付与成功者を引き継ぎました',
+        Number(ticket.grantedCount) + ' 名。顧客を選び直す必要はありません。キャンペーンと文面を決めてください。');
+      return true;
+    }
+
+    /** 引き継ぎを外す（通常の顧客選択へ戻す） */
+    function mkHandoffRelease(quiet) {
+      handoffApi().clearHandoff(sessionStorage);
+      mkState.handoff = null;
+      mkState.dryRun = null;
+      mkState.enqueued = false;
+      mkState.dispatch = {};
+      mkHandoffRender(null);
+      mkSyncFlow();
+      if (!quiet) mkNotify('info', '引き継ぎを解除しました', '通常どおり顧客を選んで送信できます。');
+    }
+
+    /** 引き継ぎ中の帯（人数・操作 ID・期限・解除）。アドレスは出さない */
+    function mkHandoffRender(ticket) {
+      const box = $('mkHandoffBar');
+      if (!box) return;
+      box.innerHTML = '';
+      if (!ticket || !mkState.handoff) { box.hidden = true; return; }
+      box.hidden = false;
+      const t = document.createElement('b');
+      t.textContent = '🎁 カムバック無料付与の成功者を引き継ぎ中';
+      box.appendChild(t);
+      const d = document.createElement('span');
+      d.className = 'hb-d';
+      d.textContent = handoffApi().describeHandoff(ticket, Date.now());
+      box.appendChild(d);
+      const note = document.createElement('span');
+      note.className = 'hb-note';
+      note.textContent = '対象は送信のたびにサーバーが確定します（付与できなかった顧客は含まれません）。';
+      box.appendChild(note);
+      const off = document.createElement('button');
+      off.type = 'button'; off.className = 'btn-ghost btn-sm';
+      off.textContent = '引き継ぎを解除';
+      off.addEventListener('click', () => mkHandoffRelease(false));
+      box.appendChild(off);
+    }
+
+    /** 保存済みの引き継ぎを復元する（**同じタブの再読み込みに耐える**） */
+    function mkHandoffRestore() {
+      const r = handoffApi().loadHandoff(sessionStorage, Date.now());
+      if (r.ok) {
+        mkState.handoff = { operationId: r.handoff.operationId, grantedCount: Number(r.handoff.grantedCount) };
+        mkHandoffRender(r.handoff);
+        return;
+      }
+      mkState.handoff = null;
+      mkHandoffRender(null);
+      // 期限切れ・使用済みは黙って消さず、理由を 1 度だけ知らせてから捨てる
+      const B = handoffApi().HANDOFF_BLOCK;
+      if (r.reason === B.EXPIRED || r.reason === B.ALREADY_QUEUED || r.reason === B.MALFORMED) {
+        mkNotify('warn', '引き継ぎを使えません', handoffApi().HANDOFF_BLOCK_LABEL[r.reason]);
+        handoffApi().clearHandoff(sessionStorage);
+      }
+    }
+
+    /** 画面から Function へ渡す対象指定。引き継ぎ中は recordId を 1 つも送らない */
+    function mkTargetPayload() {
+      return mkState.handoff
+        ? { grantOperationId: mkState.handoff.operationId }
+        : { recordIds: [...mkSelected] };
+    }
+
+    // カムバック特典タブから呼ばれる入口（**マーケ側の関数をタブ越しに直接呼ばせない**）
+    window.__mkHandoff = {
+      adopt(ticket) {
+        const adopted = mkHandoffAdopt(ticket);
+        if (adopted) showTab('mkt');
+        return adopted;
+      },
+      open() { showTab('mkt'); },
     };
 
     /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
@@ -3430,6 +3558,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return flowApi().computeSelectionFingerprint({
         selectedIds: [...mkSelected], filters: mkState.filters,
         campaignId: mkState.campaignId, campaignVersion: mkState.campaignVersion,
+        handoff: mkState.handoff,
       });
     }
 
@@ -3837,12 +3966,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       $('mkDryState').textContent = '確認中…';
       $('mkDryState').className = 'dry-state';
       mkMsg('対象を確認中…');
-      mkNotify('info', '送信対象を確認しています…', '選択 ' + mkSelected.size + ' 名 / ' + (c.name || ''));
+      mkNotify('info', '送信対象を確認しています…',
+        (mkState.handoff
+          ? '付与成功者 ' + mkState.handoff.grantedCount + ' 名（引き継ぎ）'
+          : '選択 ' + mkSelected.size + ' 名') + ' / ' + (c.name || ''));
       let plan = null;
       try {
         const draft = mkDraft();
         plan = await mkCall({
-          action: 'dryRun', campaignId: c.campaignId, recordIds: [...mkSelected],
+          action: 'dryRun', campaignId: c.campaignId, ...mkTargetPayload(),
           // 今回送る文面を一緒に確認する（確認した内容と送る内容を一致させる）
           subject: draft.subject, body: draft.body,
         });
@@ -4107,7 +4239,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const out = await mkCall({
           action: 'send',
           campaignId: campaign.campaignId,
-          recordIds: [...mkSelected],
+          ...mkTargetPayload(),
           planFingerprint: plan.planFingerprint,   // 対象が変わっていたら Function 側が中止する
           // 確認した文面そのもの。hash が合わなければ Function 側が 409 で止める
           subject: mkContent.confirmed ? mkContent.confirmed.subject : undefined,
@@ -4122,6 +4254,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           mkNotify('ok', 'キューに登録しました（まだ送信されていません）',
             (out.queued || 0) + ' 名分。Step 5 の「配信内容を確認」→「実際に配信する」で送信します。');
           mkMsg(out.notice || ('登録しました: ' + out.queued + ' 名'), 'ok');
+          // 引き継ぎは**使い切り**。同じ成功者へもう一度送るには付与結果から取り直す
+          if (mkState.handoff) {
+            handoffApi().markHandoffQueued(sessionStorage, (out.jobs || []).map((j) => j.jobId));
+            mkNotify('info', 'この引き継ぎは使い切りました',
+              '同じ相手へもう一度送る場合は、カムバック特典タブの付与結果からあらためて引き継いでください。');
+            mkHandoffRelease(true);
+          }
           mkSelected.clear();
           mkCloseModal();
           mkSyncFlow();
@@ -4578,6 +4717,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       offer: { lightOffer: 'none', premiumOffer: 'none' },
       dryRun: null, dryStale: false, applied: false, busy: false,
       offerSummaryShort: '未設定',
+      /** 直近の付与実行が返した引き継ぎ票（operationId と人数だけ。PII は入らない） */
+      lastHandoff: null,
       /** 絞り込みを変えたまま再取得していない（一覧が古い） */
       filtersChanged: false,
       /** 現有効会員の警告を出したか（同じ警告を積み上げない） */
@@ -5069,6 +5210,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return data;
     }
 
+    /**
+     * 付与実行だけは**失敗応答の中身も要る**。
+     * 途中で止まった（502 partial）ときでも「書き込めた分」は実在するので、
+     * その成功者を案内メールへ引き継げるようにする。
+     * ⚠️ 巻き戻しはしない。付与は付与、メールはメールとして別に扱う。
+     */
+    async function cbCallDetailed(payload) {
+      const secret = secretEl.value.trim();
+      if (!secret) { cbMsg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return { ok: false, data: null }; }
+      const res = await fetch(CB_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        cbMsg((data.error || ('エラー: ' + res.status)) + (data.howToRecover ? '　' + data.howToRecover : ''), 'err');
+      }
+      return { ok: res.ok, data };
+    }
+
     function cbFillSelect(id, offers, noneLabel) {
       const sel = $(id);
       sel.innerHTML = '';
@@ -5368,17 +5530,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('cbModalBack').addEventListener('click', cbCloseModal);
     $('cbBackdrop').addEventListener('click', (e) => { if (e.target === $('cbBackdrop')) cbCloseModal(); });
 
-    // ── 文面プレビュー（送信しない）──
+    // ── 送信予定文面の「例」（送信しない・ここでは編集もしない）──
+    // 実際に送る件名・本文は**メール作成工程**で編集する。ここは特典の内容から
+    // 組み立てた例を見せるだけで、閲覧専用のまま終わらせずに次工程へ接続する。
     $('cbPreviewBtn').addEventListener('click', async () => {
       const sel = cbSelectionPayload();
       if (!sel.lightOfferId && !sel.premiumOfferId) { cbMsg('特典を選択してください', 'err'); return; }
       const data = await cbCall({ action: 'preview', ...sel });
       if (!data) return;
-      const body = cbOpenModal('案内文面プレビュー');
+      const body = cbOpenModal('送信予定文面の例');
       const sec = document.createElement('div'); sec.className = 'dt-sec';
+      const lead = document.createElement('p');
+      lead.className = 'note';
+      lead.textContent = 'これは特典内容から組み立てた**例**です。実際に送る件名・本文は '
+        + 'メール作成工程（顧客マーケティング）で編集し、そこで確定した文面だけが送信されます。';
+      sec.appendChild(lead);
       const dl = document.createElement('dl'); dl.className = 'kv';
       kvRow(dl, '特典', data.selection);
-      kvRow(dl, '件名', data.subject);
+      kvRow(dl, '件名の例', data.subject);
       sec.appendChild(dl);
       const pre = document.createElement('pre');
       pre.className = 'prev-body';
@@ -5386,6 +5555,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       sec.appendChild(pre);
       const note = document.createElement('p'); note.className = 'note'; note.textContent = data.notice;
       sec.appendChild(note);
+
+      // 閲覧専用で終わらせない: そのままメール作成工程へ渡す
+      const ops = document.createElement('div'); ops.className = 'toolbar';
+      const go = document.createElement('button');
+      go.type = 'button'; go.className = 'btn-primary';
+      go.textContent = '✉️ メール作成工程へ進む';
+      go.addEventListener('click', () => {
+        cbCloseModal();
+        // 付与実行済みなら成功者を引き継ぐ。まだなら工程を開くだけ（対象は空のまま）
+        if (cbState.lastHandoff && cbState.lastHandoff.canHandoff) window.__mkHandoff.adopt(cbState.lastHandoff);
+        else window.__mkHandoff.open();
+      });
+      ops.appendChild(go);
+      const hint = document.createElement('p'); hint.className = 'note';
+      hint.textContent = cbState.lastHandoff && cbState.lastHandoff.canHandoff
+        ? '直前の付与で成功した ' + cbState.lastHandoff.grantedCount + ' 名を引き継ぎます。'
+        : 'まだ付与を実行していないため、対象は引き継がれません（Step 5 の実行後に引き継げます）。';
+      sec.appendChild(ops);
+      sec.appendChild(hint);
       body.appendChild(sec);
     });
 
@@ -5490,16 +5678,35 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       btn.dataset.busy = '1';
       cbState.busy = true; cbSync();
       const sel = cbSelectionPayload();
-      const out = await cbCall({
+      const res = await cbCallDetailed({
         action: 'apply', ...sel, recordIds: [...cbSelected],
         operationId: cbState.dryRun.operationId,   // dry-run と同じ ID（冪等）
       });
+      const out = res.ok ? res.data : null;
       cbState.busy = false; btn.dataset.busy = '';
-      if (!out) { cbNotify('err', '付与に失敗しました', '結果を「前回操作の突合」で確認してください。'); cbSync(); return; }
+      if (!out) {
+        // 途中で止まっても、**書き込めた分**は取り消さずに引き継げるようにする
+        const partial = res.data && res.data.handoff && res.data.handoff.canHandoff ? res.data.handoff : null;
+        cbState.lastHandoff = partial;
+        if (partial) {
+          cbRenderApplyResult({ ...res.data, granted: partial.grantedCount });
+          cbNotify('warn', '途中で止まりましたが、付与できた分は残っています',
+            partial.grantedCount + ' 名は付与済みです（取り消していません）。'
+            + '残りは「前回操作の突合」で確認し、同じ操作 ID で再実行してください。');
+        } else {
+          cbNotify('err', '付与に失敗しました', '結果を「前回操作の突合」で確認してください。');
+        }
+        cbSync();
+        return;
+      }
       cbState.applied = true;
       cbState.dryRun = null;
+      // 付与結果に付いてきた引き継ぎ票を保持する（メール工程はこれだけを受け取る）
+      cbState.lastHandoff = out.handoff || null;
       cbRenderApplyResult(out);
-      cbNotify('ok', '無料特典を付与しました', (out.granted ?? out.willGrant ?? 0) + ' 名。案内メールは別途送ってください。');
+      cbNotify('ok', '無料特典を付与しました',
+        (out.granted ?? out.willGrant ?? 0) + ' 名。メールはまだ送っていません。'
+        + '「成功者へ案内メールを作成」から次の工程へ進めます。');
       cbSync();
     });
 
@@ -5527,12 +5734,47 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         d.appendChild(a); d.appendChild(b); box.appendChild(d);
       };
       box.className = 'dry-panel';
-      row('付与できた人数', String(out.granted ?? out.applied ?? 0) + ' 名');
-      row('除外', String(out.skipped ?? 0) + ' 名');
+      const ho = out.handoff || null;
+      const granted = Number(out.granted ?? out.applied ?? 0);
+      row('付与できた人数', String(granted) + ' 名');
+      row('付与できなかった人数', String(ho ? ho.notGrantedCount : (out.skipped ?? 0)) + ' 名');
+      // 理由は**件数の集計だけ**（誰が該当したかは出さない）
+      const reasons = (ho && ho.notGrantedReasons) || [];
+      if (reasons.length) {
+        row('付与できなかった理由', reasons.map((r) => (r.label || r.reason) + ' ' + r.count + ' 名').join(' / '));
+      }
       row('失敗', String(out.failed ?? 0) + ' 名');
       row('操作 ID', String(out.operationId || cbLastOperationId || '—'));
       row('実行日時', fmtDate(new Date().toISOString()));
       row('変更しないもの', cbApi().UNCHANGED_NOTICE);
+      row('メール', 'この操作でメールは送信されません（次の工程で作成します）');
+
+      // ── 次工程への導線（付与できた人だけを引き継ぐ）──────────────
+      const ops = document.createElement('div');
+      ops.className = 'toolbar cb-handoff-ops';
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'btn-primary btn-lg';
+      go.textContent = '✉️ 成功者へ案内メールを作成';
+      const canGo = !!(ho && ho.canHandoff);
+      go.disabled = !canGo;
+      go.setAttribute('aria-disabled', String(!canGo));
+      go.addEventListener('click', () => {
+        if (go.dataset.busy === '1') return;       // 二重クリックで 2 回引き継がない
+        go.dataset.busy = '1';
+        const adopted = window.__mkHandoff.adopt(ho);
+        if (!adopted) go.dataset.busy = '';
+      });
+      ops.appendChild(go);
+      box.appendChild(ops);
+
+      const hint = document.createElement('p');
+      hint.className = 'note';
+      hint.textContent = canGo
+        ? '付与できた ' + granted + ' 名だけを引き継ぎます。顧客を選び直す必要はありません。'
+          + '対象は送信のたびにサーバーが確定するため、付与できなかった顧客は含まれません。'
+        : '付与できた顧客がいないため、案内メールの作成へは進めません。';
+      box.appendChild(hint);
     }
 
     function cbRenderConfirm(sel, plan) {
@@ -5936,5 +6178,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !$('cbBackdrop').hidden) cbCloseModal();
     });
+
+    // 画面を読み込み直しても、同じタブなら引き継ぎは続く（期限切れ・使用済みは復元しない）
+    mkHandoffRestore();
   })();
 </script>
