@@ -17,6 +17,36 @@
 
 ## Current Phase
 
+### 管理画面の実データ確認は Deploy Preview で行う（2026-08-03）
+
+**ローカルの静的サーバー（`python3 -m http.server dist/`）では管理画面の実データ確認はできない。**
+`dist/` に `.netlify/functions` は含まれず、`/.netlify/functions/admin-*` は 501/404 になる。
+UI の挙動は fetch をスタブして確認できるが、**顧客取得・dry-run は確認できない**。
+
+| 確認したいこと | 手段 |
+|---|---|
+| UI の挙動（表示・開閉・失効・文言） | ビルド成果物 + fetch スタブ、または `netlify dev` |
+| 実データの取得（顧客一覧・dry-run） | **Deploy Preview**、または `netlify dev`（要 env） |
+
+#### Deploy Preview の env（2026-08-03 実測）
+
+- `PREMIUM_PLUS_ADMIN_SECRET` は **production 限定**だったため、preview の
+  `admin-marketing` / `admin-comeback-grants` は secret 入力の有無に関わらず
+  **HTTP 503 `管理用 secret 未設定（機能無効）`**（本番は secret 無しで 403）
+- `AIRTABLE_API_KEY` / `AIRTABLE_BASE_ID` は `contexts=all` で preview にも present
+- `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` /
+  `COMEBACK_GRANT_FIELDS_READY` / `COMEBACK_OFFER_TABLE_READY` は **production 限定**。
+  つまり **preview からは送信・キュー登録・無料付与が構造的に起きない**（読み取りのみ）
+
+#### env を preview へ足したときの注意
+
+- Netlify Functions は **deploy 時点の env を持つ**。env を追加しても既存 preview には反映されない
+- **空コミットでは preview は再ビルドされない**（`Canceled build due to no content change`）。
+  内容の変わるコミットが要る
+- rollback: `netlify env:unset PREMIUM_PLUS_ADMIN_SECRET --context deploy-preview`
+  （production の値には触れない）
+
+
 **Phase（2026-08-03 現在・最新）: 無料付与の「いま」と「これまで」を分ける
 （branch `feat/free-grant-status`・Draft PR・merge 前）。**
 
