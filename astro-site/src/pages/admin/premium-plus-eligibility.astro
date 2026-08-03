@@ -58,30 +58,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <div class="sumsub" id="summarySub"></div>
 
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+      <details class="email-search" id="qBox">
+          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="qBadge" hidden>Email 条件あり</span></summary>
+          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <div class="email-row">
+            <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <button type="button" id="qClear" class="btn-ghost btn-sm">クリア</button>
+          </div>
+        </details>
       <select id="fState" aria-label="状態で絞り込み">
         <option value="all">すべての状態</option>
-        <option value="review">保留</option>
-        <option value="eligible">販売可（段階公開中・販売中）</option>
-        <option value="immediate">即時販売</option>
+        <option value="review">保留（確認待ち）</option>
+        <option value="eligible">販売できる</option>
+        <option value="immediate">すぐ販売できる（個別許可）</option>
         <option value="blocked">販売対象外</option>
       </select>
       <select id="fRoute" aria-label="Route で絞り込み">
         <option value="all">すべての Route</option>
-        <option value="sanrenpuku">ROUTE A（三連複）</option>
-        <option value="premium_30d">ROUTE B（Premium 30日）</option>
+        <option value="sanrenpuku">三連複の購入から</option>
+        <option value="premium_30d">Premium 加入30日から</option>
       </select>
       <select id="fKind" aria-label="候補区分で絞り込み">
         <option value="all">すべての区分</option>
-        <option value="waiting_30d">ROUTE B 待機中</option>
-        <option value="anchor_missing">加入日データなし</option>
+        <option value="waiting_30d">Premium 30日待ち</option>
+        <option value="anchor_missing">加入日が不明</option>
       </select>
       <select id="fUpsell" aria-label="販売CTA で絞り込み">
         <option value="all">すべての販売CTA</option>
-        <option value="auto">自動</option>
-        <option value="sanrenpuku">三連複</option>
-        <option value="plus">Plus</option>
-        <option value="none">なし</option>
+        <option value="auto">自動で選ぶ</option>
+        <option value="sanrenpuku">三連複を案内</option>
+        <option value="plus">Premium Plus を案内</option>
+        <option value="none">案内しない</option>
       </select>
       <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
     </div>
@@ -138,70 +145,87 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       <section class="step" data-step="1" aria-labelledby="mkStep1H">
         <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む</h2>
+      <p class="routine-note" id="mkRoutineNote"></p>
       <div class="toolbar">
-        <input type="search" id="mkQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <details class="email-search" id="mkQBox">
+          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="mkQBadge" hidden>Email 条件あり</span></summary>
+          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <div class="email-row">
+            <input type="search" id="mkQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <button type="button" id="mkQClear" class="btn-ghost btn-sm">クリア</button>
+          </div>
+        </details>
         <select id="mkContract" aria-label="契約状態">
           <option value="all">契約状態: すべて</option>
           <option value="active">有効</option>
-          <option value="expiring_soon">期限間近</option>
+          <option value="expiring_soon">期限が近い（14日以内）</option>
           <option value="expired">期限切れ</option>
-          <option value="unknown">不明（legacy）</option>
-          <option value="none">契約なし（Free）</option>
+          <option value="unknown">状態を判定できない旧データ</option>
+          <option value="none">契約なし（無料会員）</option>
         </select>
         <select id="mkPlan" aria-label="プラン">
           <option value="all">プラン: すべて</option>
-          <option value="premium_sanrenpuku">Premium Sanrenpuku</option>
+          <option value="premium_sanrenpuku">Premium 三連複</option>
           <option value="premium">Premium</option>
           <option value="light">Light</option>
-          <option value="free">Free</option>
+          <option value="free">無料会員</option>
         </select>
         <select id="mkSendable" aria-label="マーケティング">
           <option value="all">送信可否: すべて</option>
-          <option value="sendable">送信可能</option>
-          <option value="suppressed">送信除外</option>
+          <option value="sendable">送信できる</option>
+          <option value="suppressed">送信できない</option>
         </select>
       </div>
 
       <details class="filter-more" id="mkFilterMore">
-        <summary>詳細条件（Plus 資格 / 送信履歴 / オファー / 無料特典 / 送信タイミング / 最終ログイン）</summary>
+        <summary>詳細な絞り込み条件<span class="filter-more-hint">送信履歴・オファー・無料付与・最終ログインなど</span></summary>
         <div class="toolbar">
         <select id="mkPp" aria-label="Premium Plus 資格">
           <option value="all">Plus 資格: すべて</option>
-          <option value="eligible">販売可</option>
-          <option value="review">保留</option>
+          <option value="eligible">販売できる</option>
+          <option value="review">保留（確認待ち）</option>
           <option value="blocked">販売対象外</option>
           <option value="unset">未設定</option>
         </select>
         <select id="mkHistory" aria-label="送信履歴">
           <option value="all">送信履歴: すべて</option>
-          <option value="never">未送信</option>
-          <option value="recent">最近送信済み</option>
-          <option value="sent">送信あり</option>
+          <option value="never">送ったことがない</option>
+          <option value="recent">最近送った（30日以内）</option>
+          <option value="sent">送ったことがある</option>
         </select>
-        <select id="mkOfferState" aria-label="割引オファー">
-          <option value="">オファー: すべて</option>
-          <option value="live">有効オファーあり</option>
-          <option value="expiring7">期限 7 日以内</option>
-          <option value="none">オファーなし</option>
+        <select id="mkOfferState" aria-label="オファーの状態">
+          <option value="">オファーの状態: すべて</option>
+          <option value="live">現在申込みに使えるオファーあり</option>
+          <option value="redeemed">申込み済み（オファー利用済み）</option>
+          <option value="revoked">取り消したオファーのみ</option>
+          <option value="expired">期限切れのオファーのみ</option>
+          <option value="none">オファーの発行なし</option>
+          <option value="unknown">状態を確認できない</option>
         </select>
-        <select id="mkPromoState" aria-label="無料特典">
-          <option value="">無料特典: すべて</option>
-          <option value="active">特典中</option>
-          <option value="ending7">終了 7 日以内</option>
-          <option value="none">特典なし</option>
+        <select id="mkOfferWindow" aria-label="オファーの残り期間">
+          <option value="">オファーの残り期間: すべて</option>
+          <option value="within7">利用期限まで7日以内</option>
+          <option value="over7">利用期限まで8日以上</option>
+          <option value="no_expiry">利用期限なし</option>
+        </select>
+        <select id="mkPromoState" aria-label="現在の無料付与">
+          <option value="">現在の無料付与: すべて</option>
+          <option value="active">無料利用権が有効</option>
+          <option value="ending7">無料期間が7日以内に終了</option>
+          <option value="none">無料付与なし</option>
         </select>
         <select id="mkFrequency" aria-label="送信タイミング">
           <option value="">送信タイミング: すべて</option>
           <option value="sendable-now">いま送れる</option>
-          <option value="blocked">24時間制限中</option>
+          <option value="blocked">24時間の間隔制限中</option>
         </select>
         <select id="mkLastLogin" aria-label="最終ログイン">
           <option value="">最終ログイン: すべて</option>
           <option value="login:30d">30日以内</option>
-          <option value="login:90d">31〜90日</option>
-          <option value="login:365d">91〜365日</option>
+          <option value="login:90d">31〜90日前</option>
+          <option value="login:365d">91日〜1年前</option>
           <option value="login:over365">1年以上前</option>
-          <option value="login:never">記録なし</option>
+          <option value="login:never">ログイン記録なし</option>
         </select>
         </div>
       </details>
@@ -213,6 +237,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
 
       <div class="chip-row" id="mkChips" aria-label="適用中の条件"></div>
+      <p class="condition-text" id="mkConditionText" aria-live="polite"></p>
+      <p class="condition-warn" id="mkConditionWarn" hidden></p>
       <p class="filter-logic" id="mkLogicNote"></p>
       <p class="note" id="mkApplied"></p>
       </section>
@@ -271,7 +297,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-send">送信</th>
               <th class="c-login">最終ログイン</th>
               <th class="c-access col-detail">閲覧権限</th>
-              <th class="c-promo col-detail">無料特典</th>
+              <th class="c-promo col-detail">現在の無料付与</th>
               <th class="c-offer col-detail">オファー</th>
               <th class="c-next col-detail">次回送信可</th>
               <th class="c-pp">Plus</th>
@@ -485,49 +511,69 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <p class="note" id="cbGateState"></p>
 
       <div class="toolbar">
-        <input type="search" id="cbQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+        <details class="email-search" id="cbQBox">
+          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="cbQBadge" hidden>Email 条件あり</span></summary>
+          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <div class="email-row">
+            <input type="search" id="cbQ" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <button type="button" id="cbQClear" class="btn-ghost btn-sm">クリア</button>
+          </div>
+        </details>
         <select id="cbContract" aria-label="対象区分">
           <option value="candidates">カムバック候補すべて</option>
           <option value="expired">期限切れ</option>
           <option value="withdrawn">退会済み</option>
-          <option value="dormant">休眠・長期未ログイン</option>
+          <option value="dormant">休眠（長期ログインなし）</option>
           <option value="none">無料会員・契約なし</option>
-          <option value="unknown">状態不明</option>
+          <option value="unknown">状態を判定できない</option>
           <optgroup label="──────────">
             <option value="active" class="opt-danger">現在有効な会員（通常は選択しない）</option>
           </optgroup>
         </select>
         <select id="cbPlan" aria-label="プラン">
           <option value="all">プラン: すべて</option>
-          <option value="premium_sanrenpuku">Premium Sanrenpuku</option>
+          <option value="premium_sanrenpuku">Premium 三連複</option>
           <option value="premium">Premium</option>
           <option value="light">Light</option>
-          <option value="free">Free</option>
+          <option value="free">無料会員</option>
         </select>
         <select id="cbWithdrawn" aria-label="退会履歴">
           <option value="all">退会履歴: すべて</option>
-          <option value="yes">退会あり</option>
-          <option value="no">退会なし</option>
+          <option value="yes">退会の記録あり</option>
+          <option value="no">退会の記録なし</option>
         </select>
-        <select id="cbPromo" aria-label="現在の特典">
-          <option value="all">現在の特典: すべて</option>
-          <option value="none">特典なし</option>
-          <option value="any">特典あり</option>
-          <option value="light_lifetime">Light 永久無料</option>
-          <option value="trial_active">Premium 無料期間中</option>
-          <option value="trial_expired">Premium 無料 終了</option>
-          <option value="inconsistent">⚠️ 特典データ不整合</option>
+        <select id="cbGrantNow" aria-label="現在の無料付与">
+          <option value="all">現在の無料付与: すべて</option>
+          <option value="none">現在は無料付与なし</option>
+          <option value="light_period">Light 無料（期間あり）</option>
+          <option value="light_lifetime">Light 無料（無期限）</option>
+          <option value="premium_period">Premium 無料（期間あり）</option>
+          <option value="premium_lifetime">Premium 無料（無期限）</option>
+          <option value="both">Light・Premium 両方が有効</option>
+          <option value="inconsistent">⚠️ 要確認（データが矛盾）</option>
         </select>
-        <select id="cbGrantable" aria-label="付与可否">
-          <option value="all">付与可否: すべて</option>
-          <option value="grantable">付与できる</option>
-          <option value="blocked">付与できない</option>
+        <select id="cbGrantHistory" aria-label="無料付与履歴">
+          <option value="all">無料付与履歴: すべて</option>
+          <option value="no_record">付与の記録なし</option>
+          <option value="light">Light の付与歴あり</option>
+          <option value="premium">Premium の付与歴あり</option>
+          <option value="both">Light・Premium 両方の付与歴あり</option>
+          <option value="ended">無料期間が終了済み</option>
+          <option value="revoked">取消・失効の記録あり</option>
+          <option value="inconsistent">⚠️ 要確認（記録が矛盾）</option>
+          <option value="unknown">履歴を確定できない</option>
+        </select>
+        <select id="cbGrantable" aria-label="今回の無料付与">
+          <option value="all">今回の無料付与: すべて</option>
+          <option value="grantable">今回付与できる</option>
+          <option value="blocked">現在の状態では付与できない</option>
+          <option value="review">要確認</option>
         </select>
         <select id="cbHistory" aria-label="送信履歴">
           <option value="all">送信履歴: すべて</option>
-          <option value="never">未送信</option>
-          <option value="recent">最近送信済み</option>
-          <option value="sent">送信あり</option>
+          <option value="never">送ったことがない</option>
+          <option value="recent">最近送った（30日以内）</option>
+          <option value="sent">送ったことがある</option>
         </select>
         <button type="button" id="cbLoad" class="btn-primary btn-lg">🔍 対象候補を表示</button>
       </div>
@@ -535,6 +581,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="preset-row" id="cbPresets" aria-label="よく使う条件">
           <span class="preset-label">よく使う条件:</span>
         </div>
+        <p class="filter-logic" id="cbGrantNote"></p>
         <div class="chip-row" id="cbChips" aria-label="適用中の条件"></div>
         <p class="filter-logic" id="cbLogicNote"></p>
         <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
@@ -564,8 +611,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               <th class="c-cust">顧客</th>
               <th class="c-contract">契約</th>
               <th class="c-plan">プラン</th>
-              <th class="c-promo">現在の特典</th>
-              <th class="c-grantable">付与可否</th>
+              <th class="c-promo">無料付与（現在 / 履歴）</th>
+              <th class="c-grantable">今回の無料付与</th>
             </tr>
           </thead>
           <tbody id="cbRows"></tbody>
@@ -1479,6 +1526,62 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 条件を変えたまま再取得していないことを追従バーでも出す */
   .ppe .stickybar .sb-item.is-changed { color: var(--action-orange); font-weight: 700; }
 
+  /* ═══ 条件の分類バッジ・自然文要約 ═══ */
+  .ppe .mfilter-cat { font-size: 10px; font-weight: 700; padding: .1rem .4rem; border-radius: 999px;
+    margin-right: .25rem; border: 1px solid var(--border-soft); color: var(--text-muted); }
+  .ppe .mfilter-cat.cat-state { color: #93c5fd; border-color: rgba(59,130,246,.5); }
+  .ppe .mfilter-cat.cat-history { color: #c4b5fd; border-color: rgba(167,139,250,.5); }
+  .ppe .mfilter-cat.cat-extra { color: var(--text-muted); }
+  .ppe .mfilter-cat.cat-action { color: #6ee7b7; border-color: rgba(16,185,129,.5); }
+  .ppe .routine-note { font-size: .8rem; color: var(--text-main); margin: .2rem 0 .5rem;
+    padding: .4rem .6rem; border-left: 3px solid var(--action-blue);
+    background: rgba(59,130,246,.08); border-radius: 0 6px 6px 0; }
+  .ppe .condition-text { font-size: .8rem; color: var(--text-main); margin: .3rem 0 .1rem; }
+  .ppe .condition-warn { font-size: .8rem; color: var(--action-orange); font-weight: 700; margin: .2rem 0; }
+
+  /* ═══ Email 個別検索（補助機能なので既定は畳む）═══ */
+  .ppe .email-search { max-width: 420px; border: 1px solid var(--border-soft); border-radius: 10px;
+    padding: .25rem .6rem; background: rgba(148,163,184,.05); }
+  .ppe .email-search[open] { padding-bottom: .6rem; }
+  .ppe .email-search.is-active { border-color: var(--action-yellow); }
+  .ppe .email-summary { cursor: pointer; font-size: .82rem; color: var(--text-main);
+    padding: .45rem 0; display: flex; align-items: center; gap: .4rem; }
+  .ppe .email-badge { font-size: 11px; font-weight: 700; padding: .1rem .45rem; border-radius: 999px;
+    color: #2b1206; background: var(--action-yellow); }
+  .ppe .email-note { font-size: 12px; color: var(--text-muted); margin: .1rem 0 .4rem; }
+  .ppe .email-row { display: flex; gap: .4rem; align-items: center; }
+  .ppe .email-row input[type=search] { flex: 1 1 auto; min-height: 40px; background-color: var(--nv-0); }
+  .ppe .filter-more-hint { font-size: 11px; color: var(--text-muted); margin-left: .5rem; }
+
+  /* ═══ 説明（ⓘ）。hover だけに頼らずタップでも読める ═══ */
+  .ppe .info-btn { background: none; border: 0; color: var(--action-blue); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: .2rem .3rem; min-height: 0; border-radius: 6px; }
+  .ppe .info-btn:hover { color: var(--action-yellow); background: rgba(148,163,184,.14); }
+  .ppe .mfilter-row .info-btn { margin-left: auto; }
+  .ppe .info-btn-head { align-self: center; }
+  .ppe .info-pop {
+    position: fixed; z-index: 200; width: 320px; max-width: calc(100vw - 16px);
+    background: #0d1729; color: #e6edf7; border: 1px solid rgba(96,165,250,.55);
+    border-radius: 12px; box-shadow: 0 16px 40px rgba(2,6,23,.6); padding: .7rem .8rem;
+    font-size: .82rem; line-height: 1.7;
+  }
+  .ppe .info-pop .info-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .3rem; }
+  .ppe .info-pop .info-title { font-size: .86rem; color: #f5c451; }
+  .ppe .info-pop .info-close { margin-left: auto; background: none; border: 0; color: #93a4bd;
+    font-size: 1.1rem; line-height: 1; cursor: pointer; }
+  .ppe .info-pop .info-body { margin: 0; color: #cbd5e6; }
+  /* スマホは画面下部のシート（読みやすさとタップのしやすさを優先）*/
+  .ppe .info-pop.is-sheet {
+    left: 0; right: 0; bottom: 0; top: auto; width: auto; max-width: none;
+    border-radius: 14px 14px 0 0; padding: 1rem 1.1rem 1.4rem; max-height: 60vh; overflow-y: auto;
+  }
+
+  /* ═══ 無料付与の表示（いま / これまで を 1 セルに分けて出す）═══ */
+  .ppe .fg-now { font-weight: 700; }
+  .ppe .fg-hist { font-size: .72rem; color: var(--text-muted); }
+  .ppe .fg-src { font-size: .7rem; color: var(--text-muted); }
+  .ppe .fg-why { font-size: .72rem; color: var(--action-orange); }
+
   /* ═══ 文面エディタ（今回送る分だけ編集する / 2026-08-03）═══ */
   .ppe .editor { margin-top: .7rem; border: 1px solid var(--border-soft); border-radius: 12px;
     padding: .8rem .9rem; background: rgba(148,163,184,.05); }
@@ -1557,6 +1660,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     DRY_STATE, applyCampaigns as stApplyCampaigns, dryRunFailed as stDryRunFailed,
     maskEmail as stMaskEmail,
   } from '../../lib/marketing/marketingConsoleState.js';
+  import { GRANT_ELIGIBILITY_NOTE } from '../../lib/entitlements/freeGrantStatus.js';
+  // 絞り込みの表示名・説明の単一源（画面に文言を直接書かない）
+  import {
+    FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
+    getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
+    categoryLabel, dependencyOf, describeConditionsNatural, detectImpossibleCombination,
+    FILTER_DEFAULTS, ROUTINE_FILTER_NOTE, defaultSelection,
+  } from '../../lib/marketing/filterDefinitions.js';
+  window.__filterDefs = {
+    FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
+    getFilterDefinition, getOptionDefinition, optionLabel, optionLabelMap, optionValues,
+    categoryLabel, dependencyOf, describeConditionsNatural, detectImpossibleCombination,
+    FILTER_DEFAULTS, ROUTINE_FILTER_NOTE, defaultSelection,
+  };
   import {
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
@@ -1576,6 +1693,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     PLAN_VALUES, PLAN_LABELS,
   };
   window.__cbFlow = {
+    GRANT_ELIGIBILITY_NOTE,
     CB_STEP, CB_STEP_LABEL, ACTIVE_FILTER_WARNING, UNCHANGED_NOTICE, APPLY_EFFECT_NOTICE,
     describeContractFilter, canSelectRow, hasOfferSelection, describeOfferSelection,
     resolveCbStep, canSelectCustomers, canConfigureOffer, canReview, canApply,
@@ -2238,11 +2356,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     /** 画面のフィルター値をまとめて読む（dry-run 失効判定にも使う） */
     function mkCurrentFilters() {
       const q = $('mkQ') ? String($('mkQ').value || '') : '';
-      const s = multiValues(['mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
-        'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']);
+      const s = multiValues(MK_MULTI_IDS);
       return {
         q, contract: s.mkContract, plan: s.mkPlan, sendable: s.mkSendable,
-        pp: s.mkPp, history: s.mkHistory, offer: s.mkOfferState,
+        pp: s.mkPp, history: s.mkHistory, offer: s.mkOfferState, offerWindow: s.mkOfferWindow,
         promo: s.mkPromoState, frequency: s.mkFrequency, lastLogin: s.mkLastLogin,
       };
     }
@@ -2359,10 +2476,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // 条件クリア（全部戻して数え直す）
     $('mkFilterClear')?.addEventListener('click', () => {
       const q = $('mkQ'); if (q) q.value = '';
-      for (const id of MK_MULTI_IDS) multiFilters.get(id)?.setValues([]);
+      // 完全な未指定にはしない（送信できない顧客まで候補へ戻さない）
+      mkApplyDefaults();
       mkRenderChips();
       mkRenderFilterCount();
-      mkNotify('ok', '条件をクリアしました', 'もう一度「この条件で取得」を押してください。');
+      mkNotify('ok', '通常運用の条件に戻しました',
+        '送信可否は「メール送信可能」、その他は指定なしです。もう一度「この条件で取得」を押してください。');
     });
     for (const id of ['mkQ', 'mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
       'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin']) {
@@ -2623,6 +2742,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     // ── 顧客一覧 ──
     async function mkLoad() {
+      // 両立しない条件のまま取得しない（0 件の理由が分からなくなる）
+      const defs = defsApi();
+      const conflicts = defs ? defs.detectImpossibleCombination(multiValues(MK_MULTI_IDS)) : [];
+      if (conflicts.length) {
+        mkNotify('warn', '条件の組合せを確認してください', conflicts[0].message);
+        return;
+      }
       mkMsg('読み込み中…');
       // 複数選択は配列で送る（同じ項目内は OR / 未選択は条件なし）
       const sel = multiValues(MK_MULTI_IDS);
@@ -2635,6 +2761,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         history: sel.mkHistory,
         lastLogin: sel.mkLastLogin,
         offerState: sel.mkOfferState,
+        offerWindow: sel.mkOfferWindow,
         promoState: sel.mkPromoState,
         frequency: sel.mkFrequency,
       });
@@ -2652,10 +2779,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // 適用中の条件と件数を画面に出す（何で絞ったのか分からない状態を作らない）
     function renderApplied(data) {
       const f = data.appliedFilters || {};
-      const LBL = { contract: '契約', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
-        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファー', promoState: '無料特典', frequency: '送信タイミング' };
+      const LBL = { contract: '契約状態', plan: 'プラン', marketing: '送信可否', premiumPlus: 'Plus 資格',
+        history: '送信履歴', lastLogin: '最終ログイン', offerState: 'オファーの状態',
+        offerWindow: 'オファーの残り期間', promoState: '現在の無料付与', frequency: '送信タイミング' };
+      // 内部コードではなく利用者向けの表示名を出す（単一源の定義から引く）
+      const API_TO_FILTER = { contract: 'mkContract', plan: 'mkPlan', marketing: 'mkSendable',
+        premiumPlus: 'mkPp', history: 'mkHistory', lastLogin: 'mkLastLogin',
+        offerState: 'mkOfferState', offerWindow: 'mkOfferWindow',
+        promoState: 'mkPromoState', frequency: 'mkFrequency' };
+      const nameOf = (k, v) => {
+        const defs = defsApi();
+        const id = API_TO_FILTER[k];
+        return defs && id ? defs.optionLabel(id, v) : v;
+      };
       const parts = Object.entries(f)
-        .map(([k, v]) => [k, Array.isArray(v) ? v.join(' / ') : v])
+        .map(([k, v]) => [k, (Array.isArray(v) ? v : [v]).map((x) => nameOf(k, x)).join(' / ')])
         .filter(([, v]) => v && v !== 'all')
         .map(([k, v]) => (LBL[k] || k) + '=' + v);
       $('mkApplied').textContent = '条件: ' + (parts.length ? parts.join(' AND ') : '指定なし（全件）')
@@ -2799,7 +2937,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const promoText = r.promoActive
           ? (r.promoLifetime ? "無期限" : (r.promoUntil ? "〜" + fmtDate(r.promoUntil) : "期間不明"))
           : "—";
-        tr.appendChild(td("c-promo col-detail", "無料特典", promoText, r.promoActive ? "ok-txt" : "muted"));
+        tr.appendChild(td("c-promo col-detail", "現在の無料付与", promoText, r.promoActive ? "ok-txt" : "muted"));
 
         const offerText = r.liveOfferCount
           ? r.liveOfferCount + " 件" + (r.offerExpiresAt ? "（〜" + fmtDate(r.offerExpiresAt) + "）" : "")
@@ -3009,12 +3147,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
 
       // ③ 特典・オファー
-      const s3 = dossierSection(body, '③ 無料特典・割引オファー');
+      const s3 = dossierSection(body, '③ 無料付与・割引オファー');
       const gl = d.grantsAndOffers.promoLight;
       const gp = d.grantsAndOffers.promoPremium;
-      dossierRow(s3, 'Light 無料特典',
+      dossierRow(s3, 'Light 無料付与',
         gl.active ? (gl.lifetime ? '永久' : '〜' + fmtDate(gl.until)) : 'なし', gl.active ? 'ok' : '');
-      dossierRow(s3, 'Premium 無料特典',
+      dossierRow(s3, 'Premium 無料付与',
         gp.active ? (gp.lifetime ? '永久' : '〜' + fmtDate(gp.until)) : 'なし', gp.active ? 'ok' : '');
       if (d.grantsAndOffers.promoInconsistent) {
         dossierRow(s3, '⚠️ 特典データ', '矛盾あり（取消済みなのに値が残っている）', 'ng');
@@ -4165,8 +4303,76 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     //  判定は adminMultiFilter.js（純粋）が単一源。
     // ══════════════════════════════════════════════════════════════
     const filterApi = () => window.__mkFilter;
+    /** 表示名・説明の単一源 */
+    const defsApi = () => window.__filterDefs;
     /** id → { values, labels, selected, button, panel } */
     const multiFilters = new Map();
+
+    // ══════════════════════════════════════════════════════════════
+    //  説明ポップオーバー（hover だけに頼らない）
+    //  スマホ・タブレットでも読めるよう、**タップで開く**。同時に 1 つだけ。
+    // ══════════════════════════════════════════════════════════════
+    let infoOpener = null;
+    function infoBox() {
+      let el = document.getElementById('infoPop');
+      if (el) return el;
+      el = document.createElement('div');
+      el.id = 'infoPop';
+      el.className = 'info-pop';
+      el.setAttribute('role', 'dialog');
+      el.hidden = true;
+      el.innerHTML = '<div class="info-head"><b class="info-title"></b>'
+        + '<button type="button" class="info-close" aria-label="説明を閉じる">×</button></div>'
+        + '<p class="info-body"></p>';
+      el.querySelector('.info-close').addEventListener('click', closeInfo);
+      // 名前空間 .ppe の中へ入れる（CSS をグローバルへ漏らさない）
+      (document.querySelector('.ppe') || document.body).appendChild(el);
+      return el;
+    }
+
+    function closeInfo() {
+      const el = document.getElementById('infoPop');
+      if (el) el.hidden = true;
+      if (infoOpener) {
+        infoOpener.setAttribute('aria-expanded', 'false');
+        infoOpener = null;
+      }
+    }
+
+    /** 説明を開く（画面外へはみ出さない位置に置く） */
+    function openInfo(anchor, title, text) {
+      const el = infoBox();
+      // 同じボタンをもう一度押したら閉じる
+      if (!el.hidden && infoOpener === anchor) { closeInfo(); return; }
+      closeInfo();
+      el.querySelector('.info-title').textContent = title;
+      el.querySelector('.info-body').textContent = text;
+      el.hidden = false;
+      el.classList.toggle('is-sheet', window.innerWidth <= 900);
+      if (window.innerWidth > 900) {
+        const r = anchor.getBoundingClientRect();
+        const w = el.offsetWidth;
+        // 右端・下端からはみ出さないように寄せる
+        const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+        const top = r.bottom + 8 + el.offsetHeight > window.innerHeight
+          ? Math.max(8, r.top - el.offsetHeight - 8) : r.bottom + 8;
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+      } else {
+        el.style.left = ''; el.style.top = '';
+      }
+      anchor.setAttribute('aria-expanded', 'true');
+      el.setAttribute('aria-label', title);
+      infoOpener = anchor;
+    }
+
+    document.addEventListener('click', (e) => {
+      const el = document.getElementById('infoPop');
+      if (!el || el.hidden) return;
+      if (el.contains(e.target) || (infoOpener && infoOpener.contains(e.target))) return;
+      closeInfo();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInfo(); });
 
     /**
      * 既存の <select> を複数選択メニューへ変換する。
@@ -4177,9 +4383,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const sel = document.getElementById(selectId);
       if (!sel || sel.dataset.multi === '1') return null;
       const label = opts.label || sel.getAttribute('aria-label') || selectId;
+      const defs = defsApi();
       const items = [...sel.querySelectorAll('option')]
         .map((o) => ({ value: o.value, label: o.textContent.trim().replace(/^[^:]+:\s*/, '') }))
-        .filter((o) => o.value && o.value !== 'all' && o.value !== 'candidates');
+        .filter((o) => o.value && o.value !== 'all' && o.value !== 'candidates')
+        // 表示名は単一源（filterDefinitions）を優先する。無ければ option の文言のまま
+        .map((o) => ({ ...o, label: (defs && defs.optionLabel(selectId, o.value)) || o.label }));
 
       const wrap = document.createElement('div');
       wrap.className = 'mfilter';
@@ -4205,6 +4414,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         cb.type = 'checkbox'; cb.value = it.value;
         const txt = document.createElement('span'); txt.textContent = it.label;
         row.appendChild(cb); row.appendChild(txt);
+        // 選択肢の説明（ⓘ）。**押してもチェックは変わらない**
+        const od = defsApi() && defsApi().getOptionDefinition(selectId, it.value);
+        if (od && od.description) {
+          const info = document.createElement('button');
+          info.type = 'button'; info.className = 'info-btn';
+          info.textContent = 'ⓘ';
+          info.setAttribute('aria-label', it.label + ' の説明');
+          info.setAttribute('aria-expanded', 'false');
+          info.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();   // チェックを切り替えない
+            openInfo(info, it.label, od.description);
+          });
+          row.appendChild(info);
+        }
         cb.addEventListener('change', () => {
           row.classList.toggle('is-on', cb.checked);
           syncState(false);
@@ -4226,7 +4449,31 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkOp('適用', () => { close(); if (opts.onApply) opts.onApply(); }, 'btn-primary');
       panel.appendChild(ops);
 
-      wrap.appendChild(btn); wrap.appendChild(panel);
+      wrap.appendChild(btn);
+      // 項目そのものの説明（フィルター名の右のⓘ）
+      const fd = defsApi() && defsApi().getFilterDefinition(selectId);
+      // 分類（現在状態 / 履歴 / 追加条件 / 操作可否）を短く添える。
+      // 種類の違う条件が同じ見た目で並ぶのを防ぐ
+      const catText = defsApi() ? defsApi().categoryLabel(selectId) : '';
+      if (catText) {
+        const cat = document.createElement('span');
+        cat.className = 'mfilter-cat cat-' + (fd && fd.category ? fd.category : 'state');
+        cat.textContent = catText;
+        wrap.insertBefore(cat, btn);
+      }
+      if (fd && fd.description) {
+        const info = document.createElement('button');
+        info.type = 'button'; info.className = 'info-btn info-btn-head';
+        info.textContent = 'ⓘ';
+        info.setAttribute('aria-label', fd.label + ' の説明');
+        info.setAttribute('aria-expanded', 'false');
+        info.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          openInfo(info, fd.label, fd.description);
+        });
+        wrap.appendChild(info);
+      }
+      wrap.appendChild(panel);
       sel.replaceWith(wrap);
 
       // 既存コードが値を読めるように、同じ id の hidden input を置く
@@ -4250,7 +4497,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         state.selected = [...list.querySelectorAll('input[type=checkbox]')]
           .filter((c) => c.checked).map((c) => c.value);
         hidden.value = state.selected.join(',');
-        btn.textContent = label + ': ' + filterApi().summarizeSelection(state.selected, items.map((i) => i.value), '全' + label);
+        const only = state.selected.length === 1
+          ? (items.find((i) => i.value === state.selected[0]) || null) : null;
+        btn.textContent = label + ': ' + (only ? only.label
+          : filterApi().summarizeSelection(state.selected, items.map((i) => i.value), '全' + label));
         btn.classList.toggle('is-on', state.selected.length > 0);
         if (!silent && opts.onChange) opts.onChange(state.selected);
       }
@@ -4279,6 +4529,32 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') for (const [, st] of multiFilters) st.close();
     });
+
+    /**
+     * Email 個別検索（補助機能）。
+     * 通常のセグメント検索と混同しないよう既定は閉じておき、
+     * **入力が残っているときだけ**「Email 条件あり」を出す。
+     */
+    function initEmailSearch(inputId) {
+      const box = document.getElementById(inputId + 'Box');
+      const input = document.getElementById(inputId);
+      const badge = document.getElementById(inputId + 'Badge');
+      const clear = document.getElementById(inputId + 'Clear');
+      if (!box || !input) return;
+      const sync = () => {
+        const has = String(input.value || '').trim() !== '';
+        if (badge) badge.hidden = !has;
+        box.classList.toggle('is-active', has);
+        if (has) box.open = true;   // 検索中は閉じない（条件が隠れないように）
+      };
+      input.addEventListener('input', sync);
+      clear?.addEventListener('click', () => {
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        sync();
+      });
+      sync();
+    }
 
     /** いまの複数選択をまとめて読む */
     function multiValues(ids) {
@@ -4309,19 +4585,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     };
 
     /** 通知（内容別。gate や失効の理由をここに出す） */
-    function cbNotify(kind, text, detail) {
+    function cbNotify(kind, text, detail, key) {
       const box = $('cbNotices');
       if (!box) return;
-      const el = document.createElement('div');
+      // 同じ種類の通知を積み上げない。キー付きなら**常に最大 1 件**で、内容だけ差し替える
+      const id = String(key || '');
+      const existing = id ? box.querySelector('[data-notice-key="' + id + '"]') : null;
+      const el = existing || document.createElement('div');
       el.className = 'notice notice-' + kind;
+      if (id) el.dataset.noticeKey = id;
+      el.innerHTML = '';
       const t = document.createElement('b'); t.textContent = text; el.appendChild(t);
       if (detail) { const d = document.createElement('span'); d.className = 'notice-d'; d.textContent = detail; el.appendChild(d); }
       const x = document.createElement('button'); x.type = 'button'; x.className = 'notice-x'; x.textContent = '×';
-      x.addEventListener('click', () => el.remove());
+      x.addEventListener('click', () => {
+        el.remove();
+        // × で閉じたら「閉じた」ことを覚える。同じ状態では出し直さない
+        if (id) cbDismissed.add(id);
+      });
       el.appendChild(x);
-      box.prepend(el);
-      while (box.children.length > 4) box.lastChild.remove();
+      if (!existing) box.prepend(el);
+      while (box.children.length > 3) box.lastChild.remove();
+      return el;
     }
+
+    /** キー付き通知を消す（状態が解消したら自動で消える） */
+    function cbClearNotice(key) {
+      const box = $('cbNotices');
+      const el = box && box.querySelector('[data-notice-key="' + String(key) + '"]');
+      if (el) el.remove();
+      cbDismissed.delete(String(key));
+    }
+
+    /** × で閉じた通知のキー（同じ状態では出し直さない） */
+    const cbDismissed = new Set();
+
+    /** 通知キー（種類ごとに 1 件だけ） */
+    const CB_NOTICE = { STALE: 'filter-stale', LOADING: 'filter-loading', LOADED: 'filter-loaded', ERROR: 'filter-error' };
 
     /** いまの特典設定を読む */
     function cbCurrentOffer() {
@@ -4464,8 +4764,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           const selections = multiValues(CB_MULTI_IDS);
           const n = filterApi().countApplied(selections);
           // 「項目」ではなく**選んだ値の数**なので件で数える（1 項目に複数値が入る）
+          // 上部の案内と同じ長文を繰り返さない。ここは状態を一言だけ
           cond.textContent = cbState.filtersChanged
-            ? '条件が変更されています（再表示してください）'
+            ? '未反映の条件変更あり'
             : '条件: ' + (n === 0 ? '指定なし' : n + ' 件');
           cond.classList.toggle('is-changed', !!cbState.filtersChanged);
         }
@@ -4479,8 +4780,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         // 次の操作は 1 つだけ。段階で色を変える
         const next = $('cbSbNext');
         const tone = { 1: 'btn-primary', 2: 'btn-warning', 3: 'btn-purple', 4: 'btn-success', 5: 'btn-danger' }[step] || 'btn-primary';
-        next.className = 'btn-lg ' + tone;
-        next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '🚀 ' }[step] || '') + v.next;
+        // 条件を変えたままなら、次にやることは「再表示」ひとつ
+        if (cbState.filtersChanged) {
+          next.className = 'btn-lg btn-caution';
+          next.textContent = '🔍 対象候補を再表示';
+        } else {
+          next.className = 'btn-lg ' + tone;
+          next.textContent = ({ 1: '🔍 ', 2: '👥 ', 3: '🎁 ', 4: '✅ ', 5: '🚀 ' }[step] || '') + v.next;
+        }
       }
     }
 
@@ -4521,12 +4828,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     /** 顧客マーケティングの絞り込みを複数選択へ変換する */
     const MK_MULTI_IDS = ['mkContract', 'mkPlan', 'mkSendable', 'mkPp', 'mkHistory',
-      'mkOfferState', 'mkPromoState', 'mkFrequency', 'mkLastLogin'];
+      'mkOfferState', 'mkOfferWindow', 'mkPromoState', 'mkFrequency', 'mkLastLogin'];
     const MK_MULTI_LABELS = {
       mkContract: '契約状態', mkPlan: 'プラン', mkSendable: '送信可否', mkPp: 'Plus 資格',
-      mkHistory: '送信履歴', mkOfferState: 'オファー', mkPromoState: '無料特典',
+      mkHistory: '送信履歴', mkOfferState: 'オファーの状態', mkOfferWindow: 'オファーの残り期間',
+      mkPromoState: '現在の無料付与',
       mkFrequency: '送信タイミング', mkLastLogin: '最終ログイン',
     };
+    /**
+     * 通常運用の初期値へ戻す。
+     * 「指定なし」は**送信できない顧客も候補に入る**ため、送信可否だけは既定で絞る。
+     */
+    function mkApplyDefaults() {
+      const defs = defsApi();
+      if (!defs) return;
+      for (const id of MK_MULTI_IDS) {
+        multiFilters.get(id)?.setValues(defs.defaultSelection(id));
+      }
+    }
+
     function mkInitFilters() {
       for (const id of MK_MULTI_IDS) {
         makeMultiFilter(id, {
@@ -4537,12 +4857,32 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       const note = $('mkLogicNote');
       if (note) note.textContent = filterApi().FILTER_LOGIC_NOTE;
+      const routine = $('mkRoutineNote');
+      if (routine && defsApi()) routine.textContent = defsApi().ROUTINE_FILTER_NOTE;
+      // 通常運用の初期値（送信可否 = メール送信可能）を最初から入れておく
+      mkApplyDefaults();
       mkRenderChips();
+    }
+
+    /** 条件を自然文で出し、両立しない組合せは取得前に知らせる */
+    function mkRenderConditionSummary() {
+      const defs = defsApi();
+      if (!defs) return;
+      const selections = multiValues(MK_MULTI_IDS);
+      const sum = $('mkConditionText');
+      if (sum) sum.textContent = defs.describeConditionsNatural(selections);
+      const warn = $('mkConditionWarn');
+      if (warn) {
+        const problems = defs.detectImpossibleCombination(selections);
+        warn.textContent = problems.map((p) => p.message).join(' ');
+        warn.hidden = problems.length === 0;
+      }
     }
 
     function mkRenderChips() {
       const box = $('mkChips');
       if (!box) return;
+      mkRenderConditionSummary();
       const selections = multiValues(MK_MULTI_IDS);
       const labels = {};
       for (const id of MK_MULTI_IDS) {
@@ -4581,10 +4921,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     /** カムバックの絞り込みを複数選択へ変換する */
-    const CB_MULTI_IDS = ['cbContract', 'cbPlan', 'cbWithdrawn', 'cbPromo', 'cbGrantable', 'cbHistory'];
+    const CB_MULTI_IDS = ['cbContract', 'cbPlan', 'cbWithdrawn',
+      'cbGrantNow', 'cbGrantHistory', 'cbGrantable', 'cbHistory'];
     const CB_MULTI_LABELS = {
       cbContract: '対象区分', cbPlan: 'プラン', cbWithdrawn: '退会履歴',
-      cbPromo: '現在の特典', cbGrantable: '付与可否', cbHistory: '送信履歴',
+      // 「特典」という曖昧な語をやめ、**いま**と**これまで**を分ける
+      cbGrantNow: '現在の無料付与', cbGrantHistory: '無料付与履歴',
+      // 「今回この操作を実行できるか」。現在状態・履歴とは別項目
+      cbGrantable: '今回の無料付与', cbHistory: '送信履歴',
     };
     function cbInitFilters() {
       for (const id of CB_MULTI_IDS) {
@@ -4613,6 +4957,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       const note = $('cbLogicNote');
       if (note) note.textContent = filterApi().FILTER_LOGIC_NOTE;
+      // 現在状態 / 履歴 / 今回の可否は別物。取り違えないよう画面に書く
+      const gn = $('cbGrantNote');
+      if (gn) gn.textContent = cbApi().GRANT_ELIGIBILITY_NOTE || '';
       cbRenderChips();
     }
 
@@ -4669,8 +5016,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     /** 条件が変わったら一覧と確認結果を古い扱いにする */
     function cbMarkFilterChanged() {
       if (cbState.loaded) {
+        // 条件を変えるのは**通常の操作**。エラーではなくオレンジの案内を 1 件だけ出す。
+        // × で閉じても、**さらに条件を変えたら**もう一度出す（未反映のまま実行させない）。
         cbState.filtersChanged = true;
-        cbNotify('caution', '条件が変更されています', '「🔍 対象候補を表示」で再取得してください。');
+        cbDismissed.delete(CB_NOTICE.STALE);
+        cbNotify('caution', '検索条件が変わりました。', '対象候補を再表示してください。', CB_NOTICE.STALE);
       }
       cbInvalidate('対象条件が変わりました。');
       cbSync();
@@ -4681,6 +5031,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       try {
         cbInitFilters();
         mkInitFilters();
+        for (const id of ['q', 'mkQ', 'cbQ']) initEmailSearch(id);
         // 初期表示でも「いまどの Step か」を出す（マーケティングは同期待ちで無色のままだった）
         mkSyncFlow();
         cbSync();
@@ -4829,6 +5180,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     async function cbLoad() {
       cbMsg('読み込み中…');
+      cbClearNotice(CB_NOTICE.ERROR);
+      cbNotify('info', '対象候補を更新しています…', '', CB_NOTICE.LOADING);
       // 複数選択は配列で送る（同じ項目内は OR / 未選択は条件なし）
       const sel = multiValues(CB_MULTI_IDS);
       const data = await cbCall({
@@ -4836,18 +5189,30 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         contract: sel.cbContract,
         plan: sel.cbPlan,
         withdrawn: sel.cbWithdrawn,
-        promo: sel.cbPromo,
+        // 無料付与は「いま」と「これまで」を別条件で送る（項目間は AND）
+        currentGrant: sel.cbGrantNow,
+        grantHistory: sel.cbGrantHistory,
         grantable: sel.cbGrantable,
         history: sel.cbHistory,
       });
-      if (!data) return;
+      cbClearNotice(CB_NOTICE.LOADING);
+      if (!data) {
+        // 失敗したときだけ赤。案内（オレンジ）は残したままにする
+        cbNotify('err', '対象候補を取得できませんでした', 'もう一度お試しください。', CB_NOTICE.ERROR);
+        cbMsg('');
+        return;
+      }
       cbData = data;
       // Step 1 完了。ここから Step 2 を操作できる
       cbState.filtersChanged = false;
       cbState.loaded = true;
       cbState.candidateCount = (data.rows || []).length;
+      // 条件変更の案内は役目を終えたので消す（再取得したら自動で消える）
+      cbClearNotice(CB_NOTICE.STALE);
       cbInvalidate('対象候補を取得し直しました。');
-      cbNotify('ok', '対象候補を表示しました', (data.rows || []).length + ' 名（現有効会員は既定で対象外）');
+      cbNotify('ok', '対象候補を表示しました', (data.rows || []).length + ' 名（現有効会員は既定で対象外）', CB_NOTICE.LOADED);
+      // 成功通知は積み上げない。短時間で自動的に消す
+      setTimeout(() => cbClearNotice(CB_NOTICE.LOADED), 6000);
       cbSync();
       cbWriteEnabled = !!data.writeEnabled;
       cbMsg('');
@@ -4868,8 +5233,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         ['期限切れ', s.contract?.expired || 0],
         ['契約なし', s.contract?.none || 0],
         ['退会あり', s.withdrawn || 0],
-        ['特典あり', (s.promo?.light || 0) + (s.promo?.trialActive || 0)],
-        ['付与できる', s.grantable || 0],
+        ['無料付与あり', (s.promo?.light || 0) + (s.promo?.trialActive || 0)],
+        ['今回付与できる', s.grantable || 0],
       ];
       items.forEach((it, i) => {
         if (i > 0) { const sp = document.createElement('span'); sp.className = 'sep'; sp.textContent = '|'; bar.appendChild(sp); }
@@ -4927,11 +5292,40 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         tr.appendChild(cCon);
 
         tr.appendChild(td('c-plan', 'プラン', PLAN_LABEL[r.planGroup] || r.planGroup));
-        tr.appendChild(td('c-promo', '現在の特典', r.promoText,
-          r.promoInconsistent ? 'ng-txt' : (r.promoText === '特典なし' ? 'muted' : 'ok-txt')));
-        tr.appendChild(td('c-grantable', '付与可否',
-          r.grantable ? '付与できる' : ('付与不可: ' + (r.grantBlockedLabel || '')),
-          r.grantable ? 'ok-txt' : 'ng-txt'));
+        // 無料付与は「いま」と「これまで」を 1 セルに分けて出す（色だけに頼らない）
+        const fg = r.freeGrant || null;
+        const cell = document.createElement('td');
+        cell.className = 'c-promo';
+        cell.setAttribute('data-label', '無料付与');
+        const nowLine = document.createElement('div');
+        nowLine.className = 'fg-now ' + (fg && fg.conflicts && fg.conflicts.length ? 'ng-txt'
+          : (fg && fg.badges && fg.badges.some((x) => x.tone === 'ok') ? 'ok-txt' : 'muted'));
+        nowLine.textContent = (fg && fg.conflicts && fg.conflicts.length ? '⚠️ ' : '')
+          + (fg ? fg.current : (r.promoText || '—'));
+        cell.appendChild(nowLine);
+        const histLine = document.createElement('div');
+        histLine.className = 'fg-hist';
+        histLine.textContent = '履歴: ' + (fg ? fg.history : '—');
+        if (fg && fg.historyNote) histLine.title = fg.historyNote;
+        cell.appendChild(histLine);
+        if (fg && fg.source) {
+          const src = document.createElement('div');
+          src.className = 'fg-src'; src.textContent = '付与元: ' + fg.source;
+          cell.appendChild(src);
+        }
+        if (fg && fg.conflicts && fg.conflicts.length) {
+          const why = document.createElement('div');
+          why.className = 'fg-why'; why.textContent = fg.conflicts.join(' / ');
+          cell.appendChild(why);
+        }
+        tr.appendChild(cell);
+        // 今回の無料付与（実行できるか）。理由は API と同じラベルを出す
+        const el = r.eligibility || null;
+        const elText = el ? el.text : (r.grantable ? '付与可能' : ('付与不可：' + (r.grantBlockedLabel || '')));
+        const elTone = el
+          ? (el.status === 'grantable' ? 'ok-txt' : (el.status === 'review' ? 'warn-txt' : 'ng-txt'))
+          : (r.grantable ? 'ok-txt' : 'ng-txt');
+        tr.appendChild(td('c-grantable', '今回の無料付与', elText, elTone));
 
         tb.appendChild(tr);
       }

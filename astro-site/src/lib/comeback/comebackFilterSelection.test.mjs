@@ -99,3 +99,62 @@ test('退会履歴・付与可否も複数選択で効く', () => {
   assert.equal(matchesComebackFilter(expired, { withdrawn: ['yes'] }), false);
   assert.equal(matchesComebackFilter(expired, { withdrawn: ['yes', 'no'] }), true);
 });
+
+// ── 無料付与: 「いま」と「これまで」を別条件で絞る（2026-08-03）─────────
+import { FREE_GRANT_NOW, FREE_GRANT_HISTORY } from '../entitlements/freeGrantStatus.js';
+
+const DAY_MS = 86400000;
+const at = (offsetDays) => new Date(NOW + offsetDays * DAY_MS).toISOString();
+
+/** いま Light 無料期間中 */
+const lightNow = view({ Email: 'g1@example.com', 'プラン': 'Free', Status: 'none',
+  LightGrantUntil: at(20), LightGrantedAt: at(-10) });
+/** いまは無し・過去に Light を配って期間終了 */
+const lightPast = view({ Email: 'g2@example.com', 'プラン': 'Free', Status: 'none',
+  LightGrantUntil: at(-5), LightGrantedAt: at(-35) });
+/** Premium 永久無料 */
+const premiumLifetime = view({ Email: 'g3@example.com', 'プラン': 'Free', Status: 'none',
+  PremiumGrantLifetime: true, PremiumGrantedAt: at(-2) });
+/** 付与の記録なし */
+const noRecord = view({ Email: 'g4@example.com', 'プラン': 'Free', Status: 'none' });
+
+test('現在の無料付与は複数選択 OR で絞れる', () => {
+  const f = { currentGrant: [FREE_GRANT_NOW.LIGHT_PERIOD, FREE_GRANT_NOW.PREMIUM_LIFETIME] };
+  assert.equal(matchesComebackFilter(lightNow, f), true);
+  assert.equal(matchesComebackFilter(premiumLifetime, f), true);
+  assert.equal(matchesComebackFilter(lightPast, f), false);
+  assert.equal(matchesComebackFilter(noRecord, f), false);
+});
+
+test('無料付与履歴は複数選択 OR で絞れる', () => {
+  const f = { grantHistory: [FREE_GRANT_HISTORY.LIGHT, FREE_GRANT_HISTORY.PREMIUM] };
+  assert.equal(matchesComebackFilter(lightPast, f), true);
+  assert.equal(matchesComebackFilter(premiumLifetime, f), true);
+  assert.equal(matchesComebackFilter(noRecord, f), false);
+});
+
+test('「いま無し × 過去あり」を AND で作れる（この組合せが目的）', () => {
+  const f = {
+    currentGrant: [FREE_GRANT_NOW.NONE],
+    grantHistory: [FREE_GRANT_HISTORY.LIGHT, FREE_GRANT_HISTORY.PREMIUM],
+  };
+  assert.equal(matchesComebackFilter(lightPast, f), true, '狙った母集団が作れない');
+  assert.equal(matchesComebackFilter(lightNow, f), false, 'いま有効な人が混ざる');
+  assert.equal(matchesComebackFilter(noRecord, f), false, '記録の無い人が混ざる');
+});
+
+test('無料付与の条件が空なら絞らない', () => {
+  for (const c of [lightNow, lightPast, premiumLifetime, noRecord]) {
+    assert.equal(matchesComebackFilter(c, { currentGrant: [], grantHistory: [] }), true);
+    assert.equal(matchesComebackFilter(c, {}), true);
+  }
+});
+
+test('現在有効かどうかと、過去に付与したかを取り違えない', () => {
+  assert.ok(lightPast.currentGrantCodes.includes(FREE_GRANT_NOW.NONE));
+  assert.ok(lightPast.grantHistoryCodes.includes(FREE_GRANT_HISTORY.LIGHT));
+  assert.ok(lightNow.currentGrantCodes.includes(FREE_GRANT_NOW.LIGHT_PERIOD));
+  // 表示（一覧の要約）と検索コードが同じ判定から出ている
+  assert.deepEqual(lightPast.freeGrant.currentCodes, lightPast.currentGrantCodes);
+  assert.deepEqual(lightNow.freeGrant.historyCodes, lightNow.grantHistoryCodes);
+});

@@ -12,6 +12,13 @@
 
 import { resolveCustomerMarketing, matchesMarketingFilter } from '../marketing/customerMarketingAudience.js';
 import { resolvePromotionalGrants, describeGrantState } from '../entitlements/promotionalGrants.js';
+import {
+  resolveCurrentFreeGrant, resolveFreeGrantHistory, formatFreeGrantSummary,
+  matchesFreeGrantNow, matchesFreeGrantHistory,
+} from '../entitlements/freeGrantStatus.js';
+import {
+  resolveGrantEligibility, formatGrantEligibility, matchesGrantEligibility,
+} from '../entitlements/grantEligibility.js';
 import { classifyComebackSegment, SEGMENT } from '../entitlements/comebackAudience.js';
 import { checkGrantable, checkOfferable, describeCustomerState, CB_SKIP } from './comebackGrantPlan.js';
 
@@ -58,6 +65,14 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
     grants,
     /** 対象区分（期限切れ / 退会 / 休眠 / 現有効会員 / 不明）。単一源は entitlements/comebackAudience.js */
     segment: classifyComebackSegment({ fields: f, nowMs: now }),
+    /**
+     * 今回の無料付与（**この操作をいま実行できるか**）。
+     * 現在状態（freeGrant）・履歴（grantHistoryCodes）とは別項目。
+     */
+    eligibility: (() => {
+      const e = resolveGrantEligibility(f, now);
+      return { ...e, text: formatGrantEligibility(e) };
+    })(),
     /** 無料付与できるか（停止・退会・データ不備は付与しても使えないので false） */
     grantable: grantable.ok,
     grantBlockedReason: grantable.reason,
@@ -67,6 +82,11 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
     stateText: state.text,
     paidText: state.paid,
     effectiveTier: state.effectiveTier,
+    // ── 無料付与（「いま」と「これまで」を分けて持つ）──
+    //   判定は freeGrantStatus.js が単一源。画面・検索・集計で同じ値を使う
+    freeGrant: formatFreeGrantSummary(f, now),
+    currentGrantCodes: resolveCurrentFreeGrant(f, now).codes,
+    grantHistoryCodes: resolveFreeGrantHistory(f, now).codes,
     promoText: describeGrantState(grants),
     promoLight: grants.light.active,
     promoLightLifetime: grants.light.lifetime,
@@ -131,8 +151,11 @@ export function matchesComebackFilter(c, filter = {}) {
     return false;
   }
   if (!pick(c.marketing.withdrawn === true ? 'yes' : 'no', f.withdrawn)) return false;
+  // ── 無料付与: 「いま」と「これまで」は**別々の条件**（混ぜない）──
+  if (!matchesFreeGrantNow(c.currentGrantCodes, f.currentGrant)) return false;
+  if (!matchesFreeGrantHistory(c.grantHistoryCodes, f.grantHistory)) return false;
   {
-    // 1 顧客が複数の特典状態に当たりうるため、選ばれた条件の**いずれか**を満たせば通す
+    // 旧「現在の特典」フィルター（後方互換）。1 顧客が複数の状態に当たりうるため OR で見る
     const promoSel = f.promo === undefined || f.promo === null ? []
       : (Array.isArray(f.promo) ? f.promo : [f.promo])
         .map((x) => String(x ?? '').trim()).filter((x) => x && x !== CB_PROMO_FILTER.ALL);
@@ -151,7 +174,8 @@ export function matchesComebackFilter(c, filter = {}) {
       if (!hit) return false;
     }
   }
-  if (!pick(c.grantable ? CB_GRANTABLE_FILTER.GRANTABLE : CB_GRANTABLE_FILTER.BLOCKED, f.grantable)) return false;
+  // 「今回の無料付与」。要確認（review）を付与不可と混ぜない
+  if (!matchesGrantEligibility(c.eligibility ? c.eligibility.status : null, f.grantable)) return false;
   return true;
 }
 

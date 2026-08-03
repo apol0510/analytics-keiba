@@ -126,9 +126,12 @@ test('現在 → 付与後 の before/after を表示する', () => {
 });
 
 test('要求されたフィルターがそろっている', () => {
-  for (const id of ['cbContract', 'cbPlan', 'cbWithdrawn', 'cbPromo', 'cbGrantable', 'cbHistory']) {
+  // 「現在の特典」は廃止し、**現在の無料付与**と**無料付与履歴**の 2 つへ分けた
+  for (const id of ['cbContract', 'cbPlan', 'cbWithdrawn',
+    'cbGrantNow', 'cbGrantHistory', 'cbGrantable', 'cbHistory']) {
     assert.ok(PAGE.includes(`id="${id}"`), `${id} フィルターが無い`);
   }
+  assert.equal(PAGE.includes('id="cbPromo"'), false, '曖昧な「現在の特典」が残っている');
 });
 
 test('画面文言が「権限は変えるがメール・課金は変えない」ことを明示する', () => {
@@ -202,4 +205,109 @@ test('無料特典の取り消し（grant）と混同していない', () => {
   const body = CB_BLOCK.slice(start, CB_BLOCK.indexOf('前回操作の突合', start));
   assert.equal(body.includes('tiers'), false, 'offer 取り消しに tiers が混ざっている');
   assert.equal(body.includes('recordIds'), false, 'offer 取り消しに顧客 recordIds が混ざっている');
+});
+
+/* ── 無料付与の表示・絞り込み（「特典」という曖昧な語を使わない）───────── */
+
+test('guard(grant): 現在の無料付与と履歴が別々の絞り込みになっている', () => {
+  const CB = PAGE.slice(PAGE.indexOf('id="paneCb"'), PAGE.indexOf('id="mkBackdrop"'));
+  assert.match(CB, /id="cbGrantNow" aria-label="現在の無料付与"/, '現在の無料付与フィルターが無い');
+  assert.match(CB, /id="cbGrantHistory" aria-label="無料付与履歴"/, '無料付与履歴フィルターが無い');
+  // 現在の区分（既存フィールドで表現できるものだけ）
+  for (const v of ['none', 'light_period', 'light_lifetime', 'premium_period', 'premium_lifetime', 'both', 'inconsistent']) {
+    assert.ok(CB.includes(`<option value="${v}">`), `現在の区分 ${v} が無い`);
+  }
+  // 履歴の区分
+  for (const v of ['no_record', 'light', 'premium', 'ended', 'revoked', 'unknown']) {
+    assert.ok(CB.includes(`<option value="${v}">`), `履歴の区分 ${v} が無い`);
+  }
+});
+
+test('guard(grant): 一覧・詳細・条件から「特典」という語を外している', () => {
+  const CB = PAGE.slice(PAGE.indexOf('id="paneCb"'), PAGE.indexOf('id="mkBackdrop"'));
+  assert.equal(/<th class="c-promo">現在の特典<\/th>/.test(CB), false, '一覧見出しが古い');
+  assert.match(CB, /<th class="c-promo">無料付与（現在 \/ 履歴）<\/th>/, '一覧見出しが新しくない');
+  assert.equal(SCRIPT.includes("CB_MULTI_LABELS = {\n      cbContract: '対象区分', cbPlan: 'プラン', cbWithdrawn: '退会履歴',\n      cbPromo:"), false);
+  assert.match(SCRIPT, /cbGrantNow: '現在の無料付与', cbGrantHistory: '無料付与履歴'/, 'チップのラベルが古い');
+});
+
+test('guard(grant): 取得は現在・履歴を別の配列で送る', () => {
+  assert.match(SCRIPT, /currentGrant: sel\.cbGrantNow/, '現在の無料付与を送っていない');
+  assert.match(SCRIPT, /grantHistory: sel\.cbGrantHistory/, '履歴を送っていない');
+  assert.equal(/promo: sel\.cbPromo/.test(SCRIPT), false, '廃止した条件を送り続けている');
+});
+
+test('guard(grant): 一覧は現在と履歴を文言で出す（色だけに頼らない）', () => {
+  assert.match(SCRIPT, /const fg = r\.freeGrant/, '判定結果をそのまま使っていない');
+  assert.match(SCRIPT, /'履歴: ' \+/, '履歴を出していない');
+  assert.match(SCRIPT, /fg-why/, '不整合の理由を出していない');
+  assert.match(SCRIPT, /付与元: /, '付与元を出していない');
+});
+
+test('guard(grant): 判定は単一源（画面に再実装しない）', () => {
+  // 画面側で Lifetime / Until を直接読んで判定していないこと
+  for (const forbidden of ['LightGrantUntil', 'PremiumGrantUntil', 'LightGrantLifetime', 'PremiumGrantLifetime']) {
+    assert.equal(SCRIPT.includes(forbidden), false, `画面が ${forbidden} を直接読んでいる`);
+  }
+});
+
+/* ── 通知の積み上がり防止と「今回の無料付与」（2026-08-03）───────────── */
+
+test('guard(notice): 同じ種類の通知はキーで 1 件に保つ', () => {
+  assert.match(SCRIPT, /function cbNotify\(kind, text, detail, key\)/, '通知にキーが無い');
+  assert.match(SCRIPT, /data-notice-key/, 'キーで既存通知を探していない');
+  assert.match(SCRIPT, /const existing = id \? box\.querySelector/, '同じキーを更新していない');
+  assert.match(SCRIPT, /function cbClearNotice\(/, '通知を消す手段が無い');
+  assert.match(SCRIPT, /CB_NOTICE = \{ STALE: 'filter-stale'/, '固定キーが無い');
+});
+
+test('guard(notice): 条件変更の案内は短文・オレンジ・1 件だけ', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function cbMarkFilterChanged'), SCRIPT.indexOf('function cbMarkFilterChanged') + 900);
+  assert.match(block, /cbNotify\('caution', '検索条件が変わりました。', '対象候補を再表示してください。', CB_NOTICE\.STALE\)/,
+    '文言またはキーが違う');
+  assert.equal(block.includes("'条件が変更されています'"), false, '古い長い文言が残っている');
+  // × で閉じても、さらに条件を変えたら出し直す（未反映のまま実行させないため）
+  assert.match(block, /cbDismissed\.delete\(CB_NOTICE\.STALE\)/, '閉じた後に二度と出なくなっている');
+});
+
+test('guard(notice): 再取得で案内が消え、成功・失敗の通知も 1 件だけ', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('async function cbLoad'), SCRIPT.indexOf('function cbVisibleRows'));
+  assert.match(block, /cbNotify\('info', '対象候補を更新しています…', '', CB_NOTICE\.LOADING\)/, '更新中の表示が無い');
+  assert.match(block, /cbClearNotice\(CB_NOTICE\.STALE\)/, '再取得で案内を消していない');
+  assert.match(block, /CB_NOTICE\.ERROR/, '失敗時のエラー通知が無い');
+  assert.match(block, /setTimeout\(\(\) => cbClearNotice\(CB_NOTICE\.LOADED\)/, '成功通知が残り続ける');
+});
+
+test('guard(notice): 追従バーは長文の警告を繰り返さない', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("const cond = $('cbSbCond')"), SCRIPT.indexOf("const cond = $('cbSbCond')") + 700);
+  assert.match(block, /'未反映の条件変更あり'/, '短い表現になっていない');
+  assert.equal(block.includes('対象候補を再表示してください'), false, '上部通知と同じ長文を繰り返している');
+  assert.match(SCRIPT, /next\.textContent = '🔍 対象候補を再表示'/, '次の操作が「再表示」になっていない');
+});
+
+test('guard(grant): 「今回の無料付与」の名称と選択肢', () => {
+  const CB = PAGE.slice(PAGE.indexOf('id="paneCb"'), PAGE.indexOf('id="mkBackdrop"'));
+  assert.match(CB, /id="cbGrantable" aria-label="今回の無料付与"/, 'フィルター名が古い');
+  assert.match(CB, /<option value="grantable">今回付与できる<\/option>/);
+  assert.match(CB, /<option value="blocked">現在の状態では付与できない<\/option>/);
+  assert.match(CB, /<option value="review">要確認<\/option>/);
+  assert.equal(/<option value="grantable">付与できる<\/option>/.test(CB), false, '曖昧な文言が残っている');
+  assert.equal(/<option value="blocked">付与できない<\/option>/.test(CB), false, '曖昧な文言が残っている');
+  assert.match(CB, /<th class="c-grantable">今回の無料付与<\/th>/, '一覧見出しが古い');
+});
+
+test('guard(grant): 付与不可の理由を一覧に出し、判定は API と同じ値を使う', () => {
+  assert.match(SCRIPT, /const el = r\.eligibility/, 'API の判定結果を使っていない');
+  assert.match(SCRIPT, /el\.status === 'review'/, '要確認を別扱いにしていない');
+  assert.match(SCRIPT, /GRANT_ELIGIBILITY_NOTE/, '3 つの違いを説明していない');
+  assert.match(PAGE, /id="cbGrantNote"/, '説明の置き場所が無い');
+});
+
+test('guard(grant): 現在状態・履歴・今回の可否が別項目として並ぶ', () => {
+  const CB = PAGE.slice(PAGE.indexOf('id="paneCb"'), PAGE.indexOf('id="mkBackdrop"'));
+  for (const id of ['cbGrantNow', 'cbGrantHistory', 'cbGrantable']) {
+    assert.ok(CB.includes(`id="${id}"`), `${id} が無い`);
+  }
+  assert.match(SCRIPT, /cbGrantNow: '現在の無料付与', cbGrantHistory: '無料付与履歴'/);
+  assert.match(SCRIPT, /cbGrantable: '今回の無料付与'/);
 });

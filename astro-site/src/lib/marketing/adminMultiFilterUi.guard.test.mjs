@@ -105,7 +105,7 @@ test('guard(filter): 右端のメニューは右揃えにして画面外へ出�
 
 test('guard(filter): 初期表示でも現在の Step が分かる', () => {
   // マーケティングタブは同期が走るまで Step が無色のままだった
-  assert.match(SCRIPT, /mkInitFilters\(\);\s*\n\s*\/\/[^\n]*\n\s*mkSyncFlow\(\);/, '初期表示で Step を同期していない');
+  assert.match(SCRIPT, /mkInitFilters\(\);[\s\S]{0,200}?mkSyncFlow\(\);/, '初期表示で Step を同期していない');
   assert.match(SCRIPT, /cbSync\(\);\s*\n\s*\} catch/, '初期表示で Step を同期していない');
 });
 
@@ -126,7 +126,8 @@ test('guard(filter): Step の現在地は色だけでなくバッジと「Step n
 
 test('guard(filter): 追従バーに今の条件を出す', () => {
   assert.match(PAGE, /id="cbSbCond"/, '条件表示が無い');
-  assert.match(SCRIPT, /条件が変更されています/, '条件変更を知らせていない');
+  // 上部の案内と同じ長文は繰り返さず、追従バーは短い一言にする（2026-08-03）
+  assert.match(SCRIPT, /'未反映の条件変更あり'/, '条件変更を知らせていない');
 });
 
 test('guard(api): 許可値以外は 400（formula へ直結させない）', () => {
@@ -139,4 +140,126 @@ test('guard(api): 許可値以外は 400（formula へ直結させない）', ()
   // 受け取った値をそのまま Airtable の formula に入れない
   assert.equal(/filterByFormula[^\n]*req\./.test(FN_CB), false, 'リクエスト値を formula に直結している');
   assert.equal(/filterByFormula[^\n]*req\./.test(FN_MK), false, 'リクエスト値を formula に直結している');
+});
+
+/* ── 説明性とレイアウト（2026-08-03）───────────────────────────── */
+
+test('guard(ui): Email 検索は補助機能として畳まれている', () => {
+  for (const id of ['q', 'mkQ', 'cbQ']) {
+    assert.match(PAGE, new RegExp(`<details class="email-search" id="${id}Box">`), `${id} が折りたたみでない`);
+    assert.equal(new RegExp(`<details class="email-search" id="${id}Box" open`).test(PAGE), false,
+      `${id} が初期から開いている`);
+    assert.ok(PAGE.includes(`id="${id}Badge"`), `${id} のバッジが無い`);
+    assert.ok(PAGE.includes(`id="${id}Clear"`), `${id} のクリアが無い`);
+  }
+  assert.match(PAGE, /特定の顧客をメールアドレスで探す場合だけ使用します。/, '用途の説明が無い');
+  assert.match(PAGE, /Email 条件あり/, '入力中のバッジ文言が無い');
+  const css = STYLE.slice(STYLE.indexOf('.ppe .email-search'));
+  assert.match(css, /max-width: 420px/, 'desktop で幅を制限していない');
+});
+
+test('guard(ui): Email 検索は入力があるとき開いたままバッジを出す', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf('function initEmailSearch'), SCRIPT.indexOf('function initEmailSearch') + 900);
+  assert.match(block, /badge\.hidden = !has/, '入力有無でバッジを切り替えていない');
+  assert.match(block, /if \(has\) box\.open = true/, '検索中に閉じてしまう');
+  assert.match(SCRIPT, /for \(const id of \['q', 'mkQ', 'cbQ'\]\) initEmailSearch\(id\)/, '初期化していない');
+});
+
+test('guard(ui): 説明は単一源から作る（画面に文言を直書きしない）', () => {
+  assert.match(PAGE, /from '\.\.\/\.\.\/lib\/marketing\/filterDefinitions\.js'/, '定義を import していない');
+  assert.match(SCRIPT, /defsApi\(\)\.getFilterDefinition\(selectId\)/, '項目の説明を定義から取っていない');
+  assert.match(SCRIPT, /defsApi\(\)\.getOptionDefinition\(selectId, it\.value\)/, '選択肢の説明を定義から取っていない');
+  assert.match(SCRIPT, /defs\.optionLabel\(selectId, o\.value\)/, '表示名を定義から取っていない');
+});
+
+test('guard(ui): 説明ボタンはチェックを切り替えない・同時に 1 つだけ', () => {
+  const block = SCRIPT.slice(SCRIPT.indexOf("info.className = 'info-btn'"), SCRIPT.indexOf("info.className = 'info-btn'") + 700);
+  assert.match(block, /e\.preventDefault\(\); e\.stopPropagation\(\);/, 'クリックがチェックへ伝わる');
+  assert.match(SCRIPT, /function openInfo\(anchor, title, text\)/, '説明を開く仕組みが無い');
+  assert.match(SCRIPT, /closeInfo\(\);\s*\n\s*el\.querySelector\('\.info-title'\)/, '同時に複数開ける');
+  assert.match(SCRIPT, /aria-expanded/, 'aria 対応が無い');
+});
+
+test('guard(ui): 説明は外側クリック・Esc で閉じ、画面外へはみ出さない', () => {
+  assert.match(SCRIPT, /if \(e\.key === 'Escape'\) closeInfo\(\)/, 'Esc で閉じない');
+  assert.match(SCRIPT, /if \(el\.contains\(e\.target\)[\s\S]{0,80}return;\s*\n\s*closeInfo\(\);/, '外側クリックで閉じない');
+  assert.match(SCRIPT, /Math\.min\(r\.left, window\.innerWidth - w - 8\)/, '右端ではみ出す');
+  assert.match(SCRIPT, /is-sheet/, 'スマホ用の表示が無い');
+});
+
+test('guard(ui): 説明の見た目（幅・コントラスト・スマホシート）', () => {
+  const css = STYLE.slice(STYLE.indexOf('.ppe .info-pop'));
+  assert.match(css, /width: 320px/, '説明の幅が指定されていない');
+  assert.match(css, /max-width: calc\(100vw - 16px\)/, '画面幅を超える');
+  assert.match(css, /z-index: 200/, '他のメニューより前面でない');
+  assert.match(STYLE, /\.ppe \.info-pop\.is-sheet/, 'スマホ用シートの見た目が無い');
+});
+
+test('guard(ui): 内部用語が画面の表示文言に残っていない', () => {
+  const CB = PAGE.slice(PAGE.indexOf('id="paneMkt"'), PAGE.indexOf('<style is:global>'));
+  for (const bad of ['不明（legacy）', '有効オファーあり', '期限 7 日以内', '特典中']) {
+    assert.equal(CB.includes(bad), false, `「${bad}」が残っている`);
+  }
+});
+
+test('guard(ui): 詳細条件の見出しが分かりやすい', () => {
+  assert.match(PAGE, /<summary>詳細な絞り込み条件<span class="filter-more-hint">送信履歴・オファー・無料付与・最終ログインなど<\/span><\/summary>/);
+});
+
+/* ── 条件の分類・オファー再設計・自然文要約（2026-08-03）───────────── */
+
+test('guard(ui): オファーは状態と残り期間の 2 つに分かれている', () => {
+  assert.match(PAGE, /<select id="mkOfferState" aria-label="オファーの状態">/, '状態フィルターが無い');
+  assert.match(PAGE, /<select id="mkOfferWindow" aria-label="オファーの残り期間">/, '残り期間フィルターが無い');
+  // 部分集合だった選択肢が状態側に残っていない
+  const mkt = PAGE.slice(PAGE.indexOf('id="paneMkt"'), PAGE.indexOf('id="paneCb"'));
+  assert.equal(/<option value="expiring7">/.test(mkt), false, '部分集合が状態に残っている');
+  assert.match(SCRIPT, /offerWindow: sel\.mkOfferWindow/, '残り期間を送っていない');
+  assert.match(SCRIPT, /'mkOfferState', 'mkOfferWindow'/, '複数選択の対象に入っていない');
+});
+
+test('guard(ui): 条件の分類バッジを出す', () => {
+  assert.match(SCRIPT, /defsApi\(\)\.categoryLabel\(selectId\)/, '分類を出していない');
+  assert.match(SCRIPT, /className = 'mfilter-cat cat-'/, '分類バッジのクラスが無い');
+  assert.match(STYLE, /\.ppe \.mfilter-cat/, '分類バッジの見た目が無い');
+});
+
+test('guard(ui): 条件要約は自然文で、矛盾は取得前に止める', () => {
+  assert.match(PAGE, /id="mkConditionText"/, '自然文の置き場所が無い');
+  assert.match(PAGE, /id="mkConditionWarn"/, '矛盾の警告欄が無い');
+  assert.match(SCRIPT, /defs\.describeConditionsNatural\(selections\)/, '自然文を作っていない');
+  assert.match(SCRIPT, /defs\.detectImpossibleCombination/, '矛盾を検出していない');
+  // mkLoadCampaigns と紛れないよう、顧客取得の関数だけを見る
+  const load = SCRIPT.slice(SCRIPT.indexOf('async function mkLoad() {'),
+    SCRIPT.indexOf('async function mkLoad() {') + 700);
+  assert.match(load, /if \(conflicts\.length\)[\s\S]{0,160}return;/, '矛盾条件のまま取得している');
+});
+
+/* ── 通常運用の初期値（2026-08-03）─────────────────────────────── */
+
+test('guard(ui): 初期表示とクリアで通常運用の初期値へ戻す', () => {
+  assert.match(SCRIPT, /function mkApplyDefaults\(\)/, '初期値を戻す関数が無い');
+  assert.match(SCRIPT, /defs\.defaultSelection\(id\)/, '初期値を単一源から取っていない');
+  const init = SCRIPT.slice(SCRIPT.indexOf('function mkInitFilters'), SCRIPT.indexOf('function mkRenderChips'));
+  assert.match(init, /mkApplyDefaults\(\)/, '初期表示で初期値を入れていない');
+  const clear = SCRIPT.slice(SCRIPT.indexOf("$('mkFilterClear')"), SCRIPT.indexOf("$('mkFilterClear')") + 700);
+  assert.match(clear, /mkApplyDefaults\(\)/, 'クリアで完全な未指定へ戻している');
+  assert.equal(/for \(const id of MK_MULTI_IDS\) multiFilters\.get\(id\)\?\.setValues\(\[\]\)/.test(clear), false,
+    'クリアが全解除のままになっている');
+});
+
+test('guard(ui): 通常運用の説明を画面に出す', () => {
+  assert.match(PAGE, /id="mkRoutineNote"/, '説明の置き場所が無い');
+  assert.match(SCRIPT, /defsApi\(\)\.ROUTINE_FILTER_NOTE/, '説明を単一源から出していない');
+  assert.match(STYLE, /\.ppe \.routine-note/, '説明の見た目が無い');
+});
+
+test('guard(api): 顧客マーケティングは Premium Plus 資格を書き換えない', () => {
+  const fn = readFileSync(path.join(HERE, '../../../netlify/functions/admin-marketing.js'), 'utf8');
+  // PremiumPlus* への書き込みが 1 か所も無い（検索条件として読むだけ）
+  for (const field of ['PremiumPlusEligibility', 'PremiumPlusEligibleAt', 'PremiumPlusReleaseOverride']) {
+    assert.equal(new RegExp(`${field}\\s*:`).test(fn), false, `${field} を書き込んでいる`);
+  }
+  // Customers へ PATCH する経路自体が無い（書くのは ScheduledEmails / CampaignDeliveries だけ）
+  assert.equal(/table: ['"]Customers['"]/.test(fn), false, 'Customers を更新している');
 });

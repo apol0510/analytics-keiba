@@ -63,3 +63,46 @@ test('smoke(cb): 条件なし（空配列）でも 200', async () => {
   const { statusCode } = await invoke({ action: 'customers', contract: [], plan: [] });
   assert.equal(statusCode, 200);
 });
+
+// ── 無料付与フィルター（配列契約・許可値外は 400）─────────────────
+test('smoke(cb): 現在の無料付与・履歴を配列で受け付ける', async () => {
+  stubFetch();
+  const { statusCode, body } = await invoke({
+    action: 'customers',
+    currentGrant: ['none'],
+    grantHistory: ['light', 'premium'],
+  });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  assert.equal(Array.isArray(body.rows), true);
+  assert.match(String(body.freeGrantCondition || ''), /付与歴あり/);
+  assert.equal(String(body.freeGrantCondition).includes('特典'), false, '曖昧な語が残っている');
+  assert.ok(body.freeGrantSummary && body.freeGrantSummary.now, '件数集計を返していない');
+});
+
+test('smoke(cb): 無料付与の許可値以外は 400（Airtable を読まない）', async () => {
+  const calls = stubFetch();
+  for (const payload of [
+    { currentGrant: ['none', 'nonsense'] },
+    { grantHistory: ['light', "' OR 1=1"] },
+  ]) {
+    const { statusCode } = await invoke({ action: 'customers', ...payload });
+    assert.equal(statusCode, 400, `${JSON.stringify(payload)} が通ってしまう`);
+  }
+  assert.equal(calls.length, 0, '検証前に顧客データを読んでいる');
+});
+
+test('smoke(cb): 旧「現在の特典」フィルターも受け付ける（後方互換）', async () => {
+  stubFetch();
+  const { statusCode } = await invoke({ action: 'customers', promo: 'light' });
+  assert.equal(statusCode, 200);
+});
+
+test('smoke(cb): 今回の無料付与は grantable / blocked / review を受け付ける', async () => {
+  stubFetch();
+  for (const v of [['grantable'], ['blocked'], ['review'], ['grantable', 'review']]) {
+    const { statusCode } = await invoke({ action: 'customers', grantable: v });
+    assert.equal(statusCode, 200, JSON.stringify(v));
+  }
+  const { statusCode } = await invoke({ action: 'customers', grantable: ['nonsense'] });
+  assert.equal(statusCode, 400, '許可値以外が通ってしまう');
+});

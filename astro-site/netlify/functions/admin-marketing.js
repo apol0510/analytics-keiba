@@ -98,6 +98,9 @@ import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
+import {
+  resolveOfferState, matchesOfferState, matchesOfferWindow, formatOfferCell,
+} from '../../src/lib/marketing/offerFilterModel.js';
 
 /** 顧客一覧の絞り込みで受け付ける値（**ここに無い値は 400**）*/
 const MK_FILTER_ALLOW = Object.freeze({
@@ -107,7 +110,10 @@ const MK_FILTER_ALLOW = Object.freeze({
   premiumPlus: ['eligible', 'review', 'blocked', 'unset'],
   history: ['never', 'recent', 'sent'],
   lastLogin: ['login:30d', 'login:90d', 'login:365d', 'login:over365', 'login:never'],
-  offerState: ['live', 'expiring7', 'none'],
+  // オファーは「状態（排他）」と「残り期間（追加条件）」の 2 軸。
+  // 旧 'expiring7' は互換のため受け付け、内部で offerWindow=within7 へ読み替える。
+  offerState: ['live', 'redeemed', 'revoked', 'expired', 'none', 'unknown', 'expiring7'],
+  offerWindow: ['within7', 'over7', 'no_expiry'],
   promoState: ['active', 'ending7', 'none'],
   frequency: ['sendable-now', 'blocked'],
 });
@@ -418,19 +424,25 @@ async function handleCustomers({ KEY, BASE, now, req }) {
   // 最終ログイン・マーケ状態の絞り込みは既存フィルタと直交させる（判定モジュールを汚さない）。
   // **同じ項目内は OR / 項目間は AND**。条件は画面に件数とともに出す。
   const wantLogin = picked.lastLogin;
-  const wantOffer = picked.offerState;
+  // 旧 'expiring7' は「使えるオファーあり × 残り 7 日以内」の意味だったので読み替える
+  const legacyExpiring = picked.offerState.includes('expiring7');
+  const wantOffer = picked.offerState.filter((v) => v !== 'expiring7');
+  if (legacyExpiring && !wantOffer.includes('live')) wantOffer.push('live');
+  const wantWindow = legacyExpiring && picked.offerWindow.length === 0
+    ? ['within7'] : picked.offerWindow;
   const wantPromo = picked.promoState;
   const wantFreq = picked.frequency;
-  const offerHit = (want, col) => {
-    if (want === 'live') return col.liveOfferCount > 0;
-    if (want === 'expiring7') {
-      if (!col.offerExpiresAt) return false;
-      const d = (Date.parse(col.offerExpiresAt) - now) / (24 * 60 * 60 * 1000);
-      return d >= 0 && d <= 7;
-    }
-    if (want === 'none') return col.liveOfferCount === 0;
-    return false;
-  };
+  // 状態は排他。判定は offerFilterModel（純粋）へ委ね、画面と同じ答えにする
+  const offerViewOf = (col) => resolveOfferState({
+    live: col.liveOfferCount,
+    redeemed: col.offerRedeemedCount || 0,
+    revoked: col.offerRevokedCount || 0,
+    expired: col.offerExpiredCount || 0,
+    total: col.offerTotalCount || 0,
+    available: col.offerLedgerAvailable !== false,
+    soonestExpiresAtMs: col.offerExpiresAt ? Date.parse(col.offerExpiresAt) : null,
+    nowMs: now,
+  });
   const promoHit = (want, col) => {
     if (want === 'active') return col.promoActive;
     if (want === 'ending7') {
@@ -451,7 +463,9 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     .filter((c) => matchesMarketingFilter(c.marketing, filter))
     .filter((c) => wantLogin.length === 0 || wantLogin.includes(loginSegment(c.daysSinceLogin)))
     .filter((c) => wantOffer.length === 0
-      || wantOffer.some((w) => offerHit(w, marketingColumns({ c, offersByCustomer, now }))))
+      || matchesOfferState(offerViewOf(marketingColumns({ c, offersByCustomer, now })).state, wantOffer))
+    .filter((c) => wantWindow.length === 0
+      || matchesOfferWindow(offerViewOf(marketingColumns({ c, offersByCustomer, now })), wantWindow))
     .filter((c) => wantPromo.length === 0
       || wantPromo.some((w) => promoHit(w, marketingColumns({ c, offersByCustomer, now }))))
     .filter((c) => wantFreq.length === 0
@@ -484,7 +498,17 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     daysSinceLogin: c.daysSinceLogin,
     loginSegment: loginSegment(c.daysSinceLogin),
     // ── マーケ運用列（すべて既存台帳の読み取り）──
-    ...marketingColumns({ c, offersByCustomer, now }),
+    ...(() => {
+      const col = marketingColumns({ c, offersByCustomer, now });
+      const view = resolveOfferState({
+        live: col.liveOfferCount, redeemed: col.offerRedeemedCount, revoked: col.offerRevokedCount,
+        expired: col.offerExpiredCount, total: col.offerTotalCount,
+        available: col.offerLedgerAvailable !== false,
+        soonestExpiresAtMs: col.offerExpiresAt ? Date.parse(col.offerExpiresAt) : null, nowMs: now,
+      });
+      // 画面はこの 1 つの答えを出す（状態と残り期間を別々に読み解かせない）
+      return { ...col, offerState: view.state, offerWindow: view.window, offerText: formatOfferCell(view) };
+    })(),
   }));
 
   return json(200, {
@@ -517,6 +541,15 @@ function marketingColumns({ c, offersByCustomer, now }) {
   ];
   const uniq = [...new Map(mine.map((o) => [o.id, o])).values()];
   const live = uniq.filter((o) => isLiveOffer({ record: o, nowMs: now }));
+  // 状態の内訳（排他区分の材料）。Status は issued / redeemed / expired / revoked
+  const statusOf = (o) => String(o.fields?.Status || '').trim().toLowerCase();
+  const redeemed = uniq.filter((o) => statusOf(o) === 'redeemed').length;
+  const revoked = uniq.filter((o) => statusOf(o) === 'revoked').length;
+  const expiredCount = uniq.filter((o) => {
+    if (statusOf(o) === 'expired') return true;
+    const e = Date.parse(String(o.fields?.ExpiresAt || ''));
+    return statusOf(o) === 'issued' && Number.isFinite(e) && e <= now;
+  }).length;
   const soonest = live
     .map((o) => Date.parse(String(o.fields?.ExpiresAt || '')))
     .filter((x) => Number.isFinite(x))
@@ -536,6 +569,11 @@ function marketingColumns({ c, offersByCustomer, now }) {
     promoLifetime: (promo.lightLifetime === true) || (promo.premiumLifetime === true),
     promoUntil: Number.isFinite(grantUntil) ? new Date(grantUntil).toISOString() : null,
     liveOfferCount: live.length,
+    offerRedeemedCount: redeemed,
+    offerRevokedCount: revoked,
+    offerExpiredCount: expiredCount,
+    offerTotalCount: uniq.length,
+    offerLedgerAvailable: true,
     offerExpiresAt: Number.isFinite(soonest) ? new Date(soonest).toISOString() : null,
     nextSendableAt: Number.isFinite(nextSendableAtMs) && nextSendableAtMs > now
       ? new Date(nextSendableAtMs).toISOString() : null,
