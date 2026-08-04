@@ -47,7 +47,36 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-03 現在・最新）: 無料付与の「いま」と「これまで」を分ける
+**Phase（2026-08-04 現在・最新）: 退会した元会員をカムバック施策の対象にできるようにする
+（branch `feat/comeback-withdrawn-grant`・Draft PR・merge 前・production 未反映）。**
+
+- **誤っていた判定**: `docs/spec.md` は「退会済み＝カムバック対象・付与できる・送れる」と
+  定めているのに、実装は 3 か所で退会者を締め出していた
+  （`checkGrantable` が弾く / `memberResolution` が特典より先に退会を評価 /
+  `resolveEntitlements` が `canLogin=false` で特典を無効化）。
+  実害として、元の対象者 65 名のうち**期限切れ 28 名だけ**が Light 30 日無料と
+  `comeback-light-30d-granted:v2` を受け取り、**退会済み 37 名は 1 人も対象にできなかった**
+- 判定の単一源 `src/lib/entitlements/comebackWithdrawnPolicy.js`（純粋）を追加。
+  **付与側（どの特典なら退会者へ出せるか）と権限側（その特典をログインで認めるか）を
+  同じ 1 ファイル**が決める。片方だけ直すと「付与できたのに使えない」が再発するため
+- 開けるのは `light-30d-free`（＝キャンペーン `comeback-light-30d-granted`）**だけ**。
+  Light・期間限定・30 日以内に限り、`WithdrawalRequested` は書き換えない。
+  Premium・三連複買い切り・購入資格は戻さず、期間が終われば自動的に無料会員へ戻る
+- **通常の無料付与は不変**（`checkGrantable` の既定は従来どおり退会者を弾く）
+- `ForceLogout` / 停止 / テスト / メール不正 / 配信停止 / suppression / blacklist は
+  この施策でも**緩めない**（`ForceLogout` は課金状態ではなく安全措置なので退会と同列にしない）
+- **同一メールアドレスの重複レコードは付与しない**。`auth/customerLookup` が重複を
+  CONFLICT として fail closed でログイン拒否するため、付与しても本人が使えないから。
+  `buildComebackPlan` が Customers 全体の重複アドレスを `duplicate_email` で除外する
+- production を read-only で再判定した実数（**書き込み 0 / GET のみ**）:
+  残り 37 名 → 付与可能 **36 名**（重複アドレス 1 名を除外）→ 送信可能 **36 名** →
+  付与後にログインで Light になる **36 名**。既存 28 名との重複 **0**
+- テスト 31 件追加（`comebackWithdrawnPolicy.test.mjs` 11 / `comebackWithdrawnGrant.test.mjs` 20）。
+  `check:safety` exit 0 / `npm run build` exit 0 / lib テスト 2939 pass・0 fail
+- **未実施**: PR merge / production deploy / 36 名への付与 / キュー登録 / 送信 /
+  Airtable write / `WithdrawalRequested` の変更
+
+**Phase（2026-08-03）: 無料付与の「いま」と「これまで」を分ける
 （branch `feat/free-grant-status`・Draft PR・merge 前）。**
 
 - 曖昧だった「現在の特典」フィルターを廃止し、**現在の無料付与** と **無料付与履歴** の 2 つへ分離。

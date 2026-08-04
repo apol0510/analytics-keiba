@@ -106,6 +106,7 @@ import {
   OFFER_REVOKE_SKIP_LABEL,
 } from '../../src/lib/promotions/offerRevokePlan.js';
 import { buildComebackEmailContent } from '../../src/lib/promotions/comebackEmailTemplate.js';
+import { isWithdrawnGrantAllowed } from '../../src/lib/entitlements/comebackWithdrawnPolicy.js';
 import {
   buildHandoffTicket, collectGrantedRecipients, validateHandoffResolution,
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
@@ -169,12 +170,18 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
   return out;
 }
 
-/** Customers（＋ offer 台帳）を読んで顧客ごとの判定を作る（read-only） */
-async function loadCustomers({ KEY, BASE, now, withOffers = false }) {
+/**
+ * Customers（＋ offer 台帳）を読んで顧客ごとの判定を作る（read-only）
+ *
+ * `allowWithdrawn` は**選ばれている無料付与がカムバックの Light 30 日無料のときだけ** true。
+ * 一覧の「今回付与できる」表示を dry-run の判定と一致させるために渡す
+ * （渡さなければ従来どおり退会者は「付与不可」と出る）。
+ */
+async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdrawn = false }) {
   const records = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
   const list = records.map((rec) => {
     const fields = rec.fields || {};
-    return { recordId: rec.id, fields, view: resolveComebackCustomer({ fields, nowMs: now }) };
+    return { recordId: rec.id, fields, view: resolveComebackCustomer({ fields, nowMs: now, allowWithdrawn }) };
   });
   // offer 台帳が未作成なら「既存 offer なし」として扱う（一覧・dry-run は動く）
   const offers = withOffers
@@ -341,7 +348,17 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     if (!v.ok) return json(400, { error: v.error });
     filter[key] = v.values;
   }
-  const { list } = await loadCustomers({ KEY, BASE, now });
+  // 選択中の無料付与（あれば）で「今回付与できる」の判定を dry-run と揃える。
+  // 未指定なら false＝従来どおり（退会者は「付与不可」と表示される）。
+  const selectedGrantIds = Array.isArray(req.grantOfferIds)
+    ? req.grantOfferIds.map((v) => String(v ?? '').trim()).filter(Boolean).slice(0, 4)
+    : [];
+  const allowWithdrawn = selectedGrantIds.some((offerId) => {
+    const r = resolveOffer(offerId, {});
+    return !!(r && r.ok && r.offer && isWithdrawnGrantAllowed(r.offer));
+  });
+
+  const { list } = await loadCustomers({ KEY, BASE, now, allowWithdrawn });
   const matched = list.filter((c) => matchesComebackFilter(c.view, filter));
 
   const rows = matched.slice(0, MAX_ROWS).map((c) => {
@@ -597,7 +614,12 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return json(400, { error: 'operationId が必要です（dry-run の値をそのまま渡してください）' });
   }
 
-  const { list, byId, offers } = await loadCustomers({ KEY, BASE, now, withOffers: needsOfferWrite });
+  // 選んだ無料付与がカムバックの Light 30 日無料なら、退会者も対象にできる
+  // （判断の単一源は comebackWithdrawnPolicy。ここでは offer をそのまま渡すだけ）
+  const allowWithdrawn = (sel.grantOffers || []).some((o) => isWithdrawnGrantAllowed(o));
+  const { list, byId, offers } = await loadCustomers({
+    KEY, BASE, now, withOffers: needsOfferWrite, allowWithdrawn,
+  });
 
   // 引き継ぎの下見: 対象は**サーバーが Customers から再導出する**
   // （admin-marketing と同じ単一源。クライアントの recordId は 1 つも使わない）
@@ -660,11 +682,22 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     });
   }
 
+  // Customers 全体で重複しているアドレス。重複していると
+  // `auth/customerLookup` がログインを CONFLICT で拒否するため、付与しても本人が使えない。
+  // **選択の中だけでなく全件から**作る（片方だけ選ばれていても検出するため）。
+  const emailCounts = new Map();
+  for (const c of list) {
+    const e = String(c.fields?.Email || '').trim().toLowerCase();
+    if (e) emailCounts.set(e, (emailCounts.get(e) || 0) + 1);
+  }
+  const duplicateEmails = new Set([...emailCounts].filter(([, n]) => n > 1).map(([e]) => e));
+
   const plan = buildComebackPlan({
     grantOffers: sel.grantOffers,
     purchaseOffer: sel.purchaseOffer,
     selected,
     existingOffers: offers,
+    duplicateEmails,
     nowMs: now,
     operationId,
     actor: String(req.actor || 'admin').slice(0, 64),

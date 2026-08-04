@@ -5891,6 +5891,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return sel.options[sel.selectedIndex] || null;
     }
 
+    /**
+     * いま選ばれている**無料付与**の offerId（0〜2 件）。
+     * 一覧の「今回付与できる」を dry-run と同じ基準で出すためにサーバーへ渡す。
+     * 未選択なら空配列＝従来どおりの判定。
+     */
+    function cbSelectedGrantOfferIds() {
+      const out = [];
+      for (const id of ['cbLightOffer', 'cbPremiumOffer']) {
+        const el = $(id);
+        const v = el ? String(el.value || '') : '';
+        if (v && v !== 'none') out.push(v);
+      }
+      return out;
+    }
+
     /** 選択内容 → API へ渡す payload（任意日数・任意価格を含む） */
     function cbSelectionPayload() {
       const light = $('cbLightOffer').value;
@@ -5972,6 +5987,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         grantHistory: sel.cbGrantHistory,
         grantable: sel.cbGrantable,
         history: sel.cbHistory,
+        // 選択中の特典を渡すと「今回付与できる」の判定が dry-run と揃う。
+        // カムバックの Light 30 日無料のときだけ退会者も「付与できる」と出る。
+        grantOfferIds: cbSelectedGrantOfferIds(),
       });
       cbClearNotice(CB_NOTICE.LOADING);
       if (!data) {

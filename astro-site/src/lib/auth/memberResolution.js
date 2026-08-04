@@ -72,6 +72,7 @@ import {
   CANONICAL_VENUES,
 } from './planNormalization.js';
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
+import { honorsLightGrantDespiteWithdrawal } from '../entitlements/comebackWithdrawnPolicy.js';
 
 export const MEMBER_TYPE = Object.freeze({
   FREE: 'free',
@@ -273,10 +274,14 @@ export function resolveMembership(input = {}) {
    * 有効な有料契約があるときは呼ばれない（有料側を優先するため、free / 期限切れの分岐でのみ使う）。
    * @returns {object|null} paidResult or deny(UNKNOWN_VENUE)、特典が無ければ null
    */
-  const promoResult = () => {
+  const promoResult = (restrictTier = null) => {
     const g = resolvePromotionalGrants(fields, now);
-    // 強い方を優先: Premium 無料権利 > Light 無料権利（Light は fallback ではなく独立プラン）
-    const plan = g.premium.active ? 'premium' : (g.light.active ? 'light' : null);
+    // 退会者は Light の期間限定特典しか認めない（下の withdrawn 分岐が指定する）。
+    // 指定されたティアだけを見る＝別ティアの特典が残っていても、それに引きずられない。
+    const plan = restrictTier
+      ? (g[restrictTier] && g[restrictTier].active ? restrictTier : null)
+      // 強い方を優先: Premium 無料権利 > Light 無料権利（Light は fallback ではなく独立プラン）
+      : (g.premium.active ? 'premium' : (g.light.active ? 'light' : null));
     if (!plan) return null;
     const v = resolveVenues(fields);
     if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
@@ -312,12 +317,23 @@ export function resolveMembership(input = {}) {
 
   // 退会申請 = 課金の停止であって利用禁止ではない（退会確認メールも
   // 「契約期間終了後は自動的に Free プランに切り替わります」と案内している）。
-  // 無料会員としてログインさせる。**有料権限は一切与えない**:
-  //   - plan は 'free' 固定（元の Premium / Light 等は返さない）
-  //   - lifetime / 無料特典（promotional grant）も見ない＝有料階層へ戻さない
-  //   - memberType='free' なので Cookie 発行・refresh・magic link はすべて通らない
+  // 契約由来の権限は返さない: plan は 'free' 固定・lifetime も見ない＝有料階層へ戻さない。
   // 判定不能（未知プラン）より後・その他すべてより先に評価する。
+  //
+  // ── 例外: カムバックで配った **期間限定 Light 無料特典** だけは認める ──────────
+  // 特典は課金契約とは独立に管理者が明示的に配る権利で、退会（＝課金停止）とは別軸。
+  // ここで無視すると「付与できたのにログインしても使えない」状態になり、
+  // 「Light 30 日無料を付与しました」という案内メールが嘘になる。
+  //
+  // 認めるのは `comebackWithdrawnPolicy` が許した形だけ:
+  //   期間限定 Light（永久無料は不可）／付与操作の記録あり／取消・不整合でない／ForceLogout でない
+  // 与えるのは Light の閲覧権だけで、`WithdrawalRequested` は書き換えない。
+  // 期間が切れれば自動的に下の free へ戻る（会員資格の自動復帰ではない）。
   if (withdrawn) {
+    if (honorsLightGrantDespiteWithdrawal({ fields, nowMs: now }).ok) {
+      const promo = promoResult('light');
+      if (promo) return promo;
+    }
     return freeResult(recordId, sessionVersion, MEMBER_REASON.WITHDRAWAL_REQUESTED);
   }
 

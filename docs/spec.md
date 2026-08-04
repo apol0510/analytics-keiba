@@ -336,6 +336,53 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 判定の単一源は `src/lib/entitlements/comebackAudience.js`。画面・Function に再実装しない。
 上記の前提は `src/lib/entitlements/comebackAudience.test.mjs` で固定してある。
 
+### 退会者への無料付与（2026-08-04 / この施策に限って開ける）
+
+上の表は「退会済み＝付与できる」と定めているが、**実装は 3 か所で退会者を締め出していた**。
+その結果、元の対象者 65 名のうち期限切れ 28 名だけが Light 30 日無料を受け取り、
+**退会済みの元有料会員 37 名は 1 人も対象にできなかった**。
+
+| 場所 | 何をしていたか |
+|---|---|
+| `comeback/comebackGrantPlan.checkGrantable` | 退会を `withdrawal_blocked` で弾く（付与できない）|
+| `auth/memberResolution` | 退会を無料特典より**先**に評価する（付与しても効かない）|
+| `entitlements/resolveEntitlements` | 退会で `canLogin=false` → 特典が常に無効 |
+
+判定の単一源は **`src/lib/entitlements/comebackWithdrawnPolicy.js`**。付与側と権限側の
+両方をこの 1 ファイルが決める（片方だけ直すと「付与できたのに使えない」が再発する）。
+
+#### 開けるのはこの形だけ
+
+| 条件 | 値 |
+|---|---|
+| 特典 | `light-30d-free`（キャンペーン `comeback-light-30d-granted` と 1 対 1）|
+| ティア | Light のみ（Premium は不可）|
+| 期間 | **期間限定のみ**・30 日以内（永久無料は不可）|
+| 権限側 | 期間内 / `LightGrantOp` あり / 取消・不整合でない |
+
+- 通常の無料付与（`checkGrantable` の既定）は**従来どおり退会者を弾く**
+- `WithdrawalRequested` / 退会日 / 課金履歴は**書き換えない**
+- 与えるのは Light の閲覧権だけ。**Premium・三連複買い切り・購入資格は戻さない**
+- 期間が終われば自動的に無料会員へ戻る（会員資格の自動復帰ではない）
+- 再入金・正式な再契約の復帰処理（`confirm-bank-payment`）とは無関係
+
+#### 緩めないもの（fail closed のまま）
+
+`ForceLogout` / アカウント停止 / テストアカウント / メール不正 /
+`UnsubscribedAnalyticsKeiba` / provider suppression / blacklist（hard・soft とも）。
+**`ForceLogout` は課金の状態ではなく安全上の措置**なので、退会と同列に扱わずこの施策でも弾く。
+
+#### 同一メールアドレスの重複レコードは付与しない
+
+`auth/customerLookup.classifyCustomerMatches` は同じアドレスが 2 件以上ある場合
+**CONFLICT として fail closed でログインを拒否する**。付与しても本人は使えず、
+「30 日無料を付与しました」という案内だけが嘘になるため、`buildComebackPlan` は
+**Customers 全体で重複しているアドレスを `duplicate_email` で除外**する
+（重複の解消＝レコード統合が先）。
+
+固定テスト: `src/lib/entitlements/comebackWithdrawnPolicy.test.mjs` /
+`src/lib/comeback/comebackWithdrawnGrant.test.mjs`
+
 ## 無料付与 → 案内メールの引き継ぎ（2026-08-03）
 
 無料付与の成功者を、**再検索・再選択せずに**案内メールの文面編集 → dry-run →
