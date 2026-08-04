@@ -48,7 +48,41 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 
 
 **Phase（2026-08-04 現在・最新）: 配信計測の正常化（開封・クリックを AK の台帳へ入れる）
-（branch `feat/crm-measurement-normalize`・Draft PR・merge 前・production 未反映）。**
+（**PR #230 merged `423c180`・production deploy `6a71a1fc9694db0008a1f99c` = state ready・公開中**）。**
+
+- **merge / deploy 記録**:
+
+  | 項目 | 値 |
+  |---|---|
+  | PR | #230（squash merge・force push / reset / rebase / amend なし） |
+  | merge SHA | `423c180`（merged 2026-08-04T08:25:30Z） |
+  | merge 前 origin/main | `b55f264` |
+  | production deploy | `6a71a1fc9694db0008a1f99c` / context=production / branch=main |
+  | deploy の commit | `423c180`（**merge 後の origin/main と一致**） |
+  | state / 公開 | `ready` / published 2026-08-04T08:26:40Z（site の published_deploy と一致）/ deploy_time 66s（実ビルド） |
+
+- **deploy 後の本番 read-only 確認（書き込み 0 / 送信 0 / env 変更 0）**:
+
+  | 確認 | 結果 |
+  |---|---|
+  | `/admin/premium-plus-eligibility/` 配信 HTML | HTTP 200。新コードが載っている（`ledgerDisplay` / `計測していません` / `計測状態を確認できません` / `計測の状態`） |
+  | 旧コード `le.opens ?? 0` / `le.clicks ?? 0` | **0 件**（計測無効時に「0」と断定する経路が本番から消えた） |
+  | delivered 等の確定値 | `配信済み` は従来どおり数値（計測状態に左右されない）ことをコードで確認 |
+  | inline JS の構文 | JS ブロック 2 件・構文エラー 0（JSON-LD 1 件も妥当）。**ブラウザでの console 実測は未実施**（下記） |
+  | `send-magic-link` の click opt-out | deploy 元 `423c180` に `clickTracking: { enable: false, enableText: false }` を確認 |
+  | `MARKETING_CLICK_TRACKING_ENABLED` | **(unset)**（production env・read-only 確認） |
+  | Event Webhook 設定 | **未変更**（`open=false` / `click=false` のまま） |
+  | テストメール | **送っていない** |
+
+  ⚠️ **未検証**: `admin-marketing` の応答に `measurement` / `ledgerDisplay` が実際に載るかは
+  管理シークレットが要るため本番で実行していない。ただし**万一載らなくても画面は
+  「—（計測状態を確認できません）」を出す**（`0` にはならない）ため、この Phase の目的は満たす。
+  ブラウザでの console error 実測も未実施（/admin は Basic 認証のモーダルが自動操作を止めるため）。
+
+- **次の停止境界（別承認が要る）**: ① Event Webhook の **`open` だけ**を有効化（外部サービス設定）
+  → ② カナリア 1 通のテスト実送信 → ③ `EmailEvents` に `open` が `resolved` で着弾するのを read-only 確認。
+  **`click` の有効化（`MARKETING_CLICK_TRACKING_ENABLED` の投入）はその後の別工程**。
+  手順・確認方法・rollback は `astro-site/docs/DELIVERY_MEASUREMENT.md`。
 
 - **目的**: 「開封 0」が**未開封なのか計測していないのか**を区別できない状態を終わらせる。
   2026-08-04 の配信は台帳では開封 0 だったが、provider 側では **15 名が開封**していた
@@ -1630,8 +1664,8 @@ rollback は該当 env の unset（コード変更不要）。
 - 作業はいずれも**分離 worktree** で実施（ユーザーのメイン checkout へは書込まない。
   未コミット変更はユーザーの作業中変更として保全）。
 - メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
-- **Branch（本更新時 / Draft PR・未 merge）**: `feat/crm-measurement-normalize`（worktree
-  `/Users/user/Projects/analytics-keiba-measure`）。base `main` / 分岐時の `origin/main` は `b55f264`。
+- **Branch（本更新時 / **PR #230 merged `423c180`・production 反映済み**）**: `feat/crm-measurement-normalize`
+  （worktree `/Users/user/Projects/analytics-keiba-measure`）。base `main` / 分岐時の `origin/main` は `b55f264`。
   変更範囲は `astro-site/src/lib/crm/**` / `astro-site/src/lib/marketing/marketingDispatchGate.js` /
   `astro-site/src/lib/webhooks/emailEventOpenClick.fixture.test.mjs`（新規）/
   `astro-site/netlify/functions/{admin-marketing,marketing-campaign-dispatch,send-magic-link}.js` /
