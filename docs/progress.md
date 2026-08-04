@@ -47,7 +47,28 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: カムバック施策を**特典カタログの宣言**で回せるようにする
+**Phase（2026-08-04 現在・最新）: Step 2 → Step 3 の循環（行き止まり）を解消する
+（branch `fix/comeback-step2-selectable`・Draft PR・merge 前・production 未反映）。**
+
+- **現象**: Step 2 は特典 未選択なのに、一覧判定が既定の「Light 永久無料」を基準にしていた。
+  退会・課金停止 37 名が全員「この特典では対象外」→ 付与可能者 0 名 →
+  「表示中の付与可能者を全選択」が効かず、顧客を選べないので **Step 3 へ進めない**
+- **判定を 2 軸に分離**（単一源は維持。`checkGrantable` が `checkSelectable` を内部で呼ぶ）:
+  `checkSelectable`（Step 2・**絶対除外だけ**）/ `checkGrantable`（Step 3 以降・特典依存）
+- `WithdrawalRequested` **だけ**を理由に Step 2 で選択不可にしない。
+  絶対除外は 重複メール / `ForceLogout` / 停止・テスト / メール不正 の 4 つ
+- **既定で特典を選ばない**（旧: Light 永久無料が既定＝暗黙の判定基準）。
+  未選択のうちは `grantEvaluated=false` で「Step 3 で特典を選ぶと判定します」と表示し、
+  追従バーも「特典: 未選択」
+- Step 3 で特典を決めた時点で選択済みを再判定し、対象外を**件数と理由付きで**外す
+  （`cbPruneSelectionForOffer`）。Step 4 dry-run・実行直前も同じ関数を通る
+- production read-only 実測: 退会・課金停止 37 → **Step 2 選択可能 36 / 選択不可 1（重複アドレスのみ）**、
+  **Step 3 で Light 30日無料 → 36 名維持**、退会者非対応の Light 永久無料 → 0 名（36 名が理由付きで対象外）、
+  Step 4 dry-run 36（一致）
+- テスト 2958 pass / 0 fail。check:safety・build とも exit 0。360px / 820px 確認済み
+- **未実施**: PR merge / production deploy / 36 名への付与 / キュー登録 / 送信 / Airtable write
+
+**Phase（2026-08-04）: カムバック施策を**特典カタログの宣言**で回せるようにする
 （branch `feat/comeback-policy-catalog`・Draft PR・merge 前・production 未反映）。**
 
 - **従来コード修正が必要だった理由**: 退会者へ配れるかを `offerId === 'light-30d-free'` の

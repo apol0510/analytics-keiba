@@ -166,19 +166,46 @@ test('offers は Light / Premium無料 / Premium割引 を分けて返す（既�
   assert.equal(body.regularPrice.premium_annual, 49800);
 });
 
-test('一覧は特典状態と付与可否を返し、退会は付与不可・オファーは可として出る', async () => {
+test('一覧は特典 未選択なら付与可否を判定せず、選択可否だけ返す', async () => {
+  // Step 1〜2 の時点では特典が決まっていない。ここで「まだ選んでいない特典」を
+  // 基準に判定すると、退会・課金停止が全員選べず Step 3 へ進めなくなる。
   const { status, body } = parse(await call({ action: 'customers' }));
   assert.equal(status, 200);
   assert.equal(body.totalCustomers, BASE_CUSTOMERS.length);
   const byId = Object.fromEntries(body.rows.map((r) => [r.recordId, r]));
-  assert.equal(byId.rec1.grantable, true);
-  assert.equal(byId.rec6.grantable, false, '退会者へ無料付与できることになっている');
-  assert.equal(byId.rec6.grantBlockedReason, 'withdrawal_blocked');
+
+  assert.equal(byId.rec1.grantEvaluated, false, '特典 未選択なのに判定している');
+  assert.equal(byId.rec1.selectable, true);
+  // 退会者も Step 2 では選べる（退会だけを理由に落とさない）
+  assert.equal(byId.rec6.selectable, true, '退会者が Step 2 で選べない');
+  assert.equal(byId.rec6.selectBlockedReason, null);
   assert.equal(byId.rec6.offerable, true, '退会者へ割引オファーも出せなくなっている');
-  assert.equal(byId.rec7.grantable, false);
+  // 絶対除外（停止アカウント）は特典に関係なく選べない
+  assert.equal(byId.rec7.selectable, false);
+  assert.equal(byId.rec7.selectBlockedReason, 'account_suspended');
   assert.equal(byId.rec7.offerable, false, '停止アカウントへオファーを出せてしまう');
   assert.equal(byId.rec1.promoText, '特典なし');
   assert.equal(store.writes.length, 0, '一覧で書き込みが発生した');
+});
+
+test('特典を選ぶと一覧が付与可否を判定する（退会者非対応なら対象外）', async () => {
+  const { body } = parse(await call({ action: 'customers', grantOfferIds: ['light-lifetime-free'] }));
+  const byId = Object.fromEntries(body.rows.map((r) => [r.recordId, r]));
+  assert.equal(byId.rec1.grantEvaluated, true);
+  assert.equal(byId.rec1.grantable, true);
+  assert.equal(byId.rec6.selectable, true, 'Step 2 の選択可否まで変わっている');
+  assert.equal(byId.rec6.grantable, false, '退会者へ無料付与できることになっている');
+  assert.equal(byId.rec6.grantBlockedReason, 'withdrawal_blocked');
+  assert.equal(store.writes.length, 0, '一覧で書き込みが発生した');
+});
+
+test('退会者を対象にできる特典を選ぶと、退会者が付与可能になる', async () => {
+  const { body } = parse(await call({ action: 'customers', grantOfferIds: ['light-30d-free'] }));
+  const byId = Object.fromEntries(body.rows.map((r) => [r.recordId, r]));
+  assert.equal(byId.rec6.grantEvaluated, true);
+  assert.equal(byId.rec6.grantable, true, '施策で許可した退会者が付与不可のまま');
+  assert.equal(byId.rec7.grantable, false, '停止アカウントまで通っている');
+  assert.equal(store.writes.length, 0);
 });
 
 test('特典の有無で絞り込める', async () => {

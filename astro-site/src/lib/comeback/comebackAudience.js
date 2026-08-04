@@ -20,7 +20,7 @@ import {
   resolveGrantEligibility, formatGrantEligibility, matchesGrantEligibility,
 } from '../entitlements/grantEligibility.js';
 import { classifyComebackSegment, SEGMENT } from '../entitlements/comebackAudience.js';
-import { checkGrantable, checkOfferable, describeCustomerState, CB_SKIP } from './comebackGrantPlan.js';
+import { checkGrantable, checkSelectable, checkOfferable, describeCustomerState, CB_SKIP, CB_SKIP_LABEL } from './comebackGrantPlan.js';
 
 /** 特典の保有状態（絞り込み用） */
 export const CB_PROMO_FILTER = Object.freeze({
@@ -48,21 +48,38 @@ export const CB_GRANTABLE_FILTER = Object.freeze({
 /**
  * 1 顧客の「カムバック特典タブ」表示行を作る（read-only）。
  *
- * `allowWithdrawn` は**選んでいる特典がカムバックの Light 30 日無料のときだけ** true。
- * 判断の単一源は `comebackWithdrawnPolicy.isWithdrawnGrantAllowed` で、ここは受け取るだけ。
- * 既定 false なので、指定しなければ従来どおり退会者は「付与不可」と表示される。
+ * ── 2 つの可否を**分けて**返す ──────────────────────────────────
+ *   `selectable`  Step 2 で候補として選んでよいか（**絶対除外だけ**・特典に依存しない）
+ *   `grantable`   Step 3 以降、いま選んでいる特典へ付与できるか（`offerSelected` が必要）
+ *
+ * 分けないと、特典を決める前の Step 2 で「まだ選んでいない特典」を基準に判定してしまい、
+ * 退会・課金停止の候補が全員選べず Step 3 へ進めなくなる。
+ *
+ * `allowWithdrawn` の判断の単一源は `entitlements/comebackPolicy.isWithdrawnAllowedForOffer`。
+ * ここは受け取るだけで、施策を解釈しない。
  *
  * @param {{ fields: object, nowMs: number, blacklistEmails?: Set<string>, history?: object,
- *           allowWithdrawn?: boolean }} input
+ *           allowWithdrawn?: boolean, duplicateEmail?: boolean, offerSelected?: boolean }} input
  */
-export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, history, allowWithdrawn, duplicateEmail } = {}) {
+export function resolveComebackCustomer({
+  fields, nowMs, blacklistEmails, history, allowWithdrawn, duplicateEmail, offerSelected,
+} = {}) {
   const f = fields && typeof fields === 'object' ? fields : {};
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   const grantOptions = { allowWithdrawn: allowWithdrawn === true, duplicateEmail: duplicateEmail === true };
+  /**
+   * 特典が決まっているか。**Step 2（特典 未選択）と Step 3 以降を区別する**ための旗。
+   * 未選択のまま `checkGrantable` の結果を「付与不可」と見せると、退会・課金停止の候補が
+   * 全員選べなくなり Step 3 へ進めない（本番で発生した行き止まり）。
+   */
+  const hasOffer = offerSelected === true;
 
   const marketing = resolveCustomerMarketing({ fields: f, nowMs: now, blacklistEmails, history });
   const grants = resolvePromotionalGrants(f, now);
-  const grantable = checkGrantable(f, grantOptions);
+  /** Step 2: 候補として選んでよいか（絶対除外だけ。退会は理由にしない） */
+  const selectable = checkSelectable(f, grantOptions);
+  /** Step 3 以降: いま選んでいる特典へ付与できるか（未選択なら判定しない） */
+  const grantable = hasOffer ? checkGrantable(f, grantOptions) : { ok: false, reason: null };
   const offerable = checkOfferable(f);
   const state = describeCustomerState(f, now);
 
@@ -76,10 +93,28 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
      * 現在状態（freeGrant）・履歴（grantHistoryCodes）とは別項目。
      */
     eligibility: (() => {
+      // 特典 未選択のうちは「Step 3 で判定」とだけ言う（勝手な基準で不可にしない）
+      if (!hasOffer) {
+        return selectable.ok
+          ? { canGrant: false, status: 'pending_offer', statusLabel: '特典を選ぶと判定します',
+              reasonCode: null, reasonLabel: '', notes: [], text: 'Step 3 で特典を選ぶと判定します' }
+          : { canGrant: false, status: 'blocked', statusLabel: '選択できません',
+              reasonCode: selectable.reason, reasonLabel: CB_SKIP_LABEL[selectable.reason] || '',
+              notes: [], text: '選択不可：' + (CB_SKIP_LABEL[selectable.reason] || selectable.reason) };
+      }
       const e = resolveGrantEligibility(f, now, grantOptions);
       return { ...e, text: formatGrantEligibility(e) };
     })(),
-    /** 無料付与できるか（停止・退会・データ不備は付与しても使えないので false） */
+    /**
+     * Step 2「候補として選択できるか」。**絶対除外だけ**で決まり、特典に依存しない。
+     * 退会・課金停止はここでは落とさない（施策次第で対象にできるため）。
+     */
+    selectable: selectable.ok,
+    selectBlockedReason: selectable.reason,
+    selectBlockedLabel: selectable.reason ? (CB_SKIP_LABEL[selectable.reason] || selectable.reason) : '',
+    /** 特典を選んでいるか（false なら下の grantable は「未判定」） */
+    grantEvaluated: hasOffer,
+    /** Step 3 以降「いま選んでいる特典へ付与できるか」。未選択なら false かつ理由 null */
     grantable: grantable.ok,
     grantBlockedReason: grantable.reason,
     /** 割引オファーを発行できるか（退会者にも発行可。支払い時に既存フローが復帰させる） */

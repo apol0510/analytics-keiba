@@ -149,6 +149,45 @@ function hasValidEmail(fields) {
 export function checkGrantable(fields, options = {}) {
   const f = fields || {};
   const allowWithdrawn = options && options.allowWithdrawn === true;
+
+  // ① どの施策でも変わらない絶対除外（＝Step 2 で選ばせない相手）
+  const base = checkSelectable(f, options);
+  if (!base.ok) return base;
+
+  // ② 施策によって変わる条件。ここだけが「特典を選ぶまで決まらない」
+  const withdrawn = isTruthyFlag(f.WithdrawalRequested) || WITHDRAWN_STATUS.has(statusOf(f));
+  if (withdrawn && !allowWithdrawn) {
+    return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
+  }
+  return { ok: true, reason: null };
+}
+
+/**
+ * **Step 2 で候補として選んでよいか**（＝どの施策を選んでも変わらない絶対除外だけ）。
+ *
+ * ── なぜ `checkGrantable` と分けるか ──────────────────────────────
+ * 付与できるかは**どの特典を選んだか**で変わる。ところが管理画面は
+ *
+ *   Step 1〜2 対象者を探す・選ぶ　→　Step 3 特典を決める
+ *
+ * の順なので、Step 2 の時点では特典が決まっていない。ここで `checkGrantable` を
+ * そのまま使うと「まだ選んでいない特典」を基準に判定してしまい、
+ * **退会・課金停止の 37 名が全員『対象外』→ 選択 0 名 → Step 3 へ進めない**という
+ * 行き止まりになる（実際に本番で発生）。
+ *
+ * そこで Step 2 は**絶対除外だけ**で判定する:
+ *   メールアドレス未登録・不正 / 同一アドレスの重複レコード /
+ *   アカウント停止・テストアカウント / `ForceLogout`
+ *
+ * ⚠️ **`WithdrawalRequested` だけを理由に選択不可にしない。**
+ *    退会は課金停止の状態であって、施策によっては対象にできる（`comebackPolicy` の宣言次第）。
+ *    その判定は Step 3 で特典が決まってから `checkGrantable` が行う。
+ *
+ * @param {object} fields Customers の fields
+ * @param {{ duplicateEmail?: boolean }} [options]
+ */
+export function checkSelectable(fields, options = {}) {
+  const f = fields || {};
   if (!hasValidEmail(f)) return { ok: false, reason: CB_SKIP.DATA_INCOMPLETE };
   if (options && options.duplicateEmail === true) {
     return { ok: false, reason: CB_SKIP.DUPLICATE_EMAIL };
@@ -160,10 +199,6 @@ export function checkGrantable(fields, options = {}) {
   }
   // 強制ログアウトは施策に関係なく常に拒否（安全措置は課金状態と別軸）
   if (isTruthyFlag(f.ForceLogout)) return { ok: false, reason: CB_SKIP.FORCE_LOGOUT_BLOCKED };
-  const withdrawn = isTruthyFlag(f.WithdrawalRequested) || WITHDRAWN_STATUS.has(status);
-  if (withdrawn && !allowWithdrawn) {
-    return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
-  }
   return { ok: true, reason: null };
 }
 

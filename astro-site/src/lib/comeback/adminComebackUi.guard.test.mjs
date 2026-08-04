@@ -92,9 +92,12 @@ test('一覧の checkbox 一括操作がそろっている', () => {
   assert.ok(CB_BLOCK.includes('cbSelected.add(r.recordId)'));
 });
 
-test('付与できない顧客は選択できない（UI 側でも fail closed）', () => {
-  assert.match(CB_BLOCK, /cb\.disabled = !r\.grantable/);
-  assert.match(CB_BLOCK, /if \(r\.grantable\) cbSelected\.add\(r\.recordId\)/, '全選択が付与不可まで拾っている');
+test('絶対除外の顧客は選択できない（UI 側でも fail closed）', () => {
+  // Step 2 は**絶対除外だけ**で選択可否を決める（退会・課金停止は選べる）。
+  // 特典ごとの可否は Step 3 で判定し、選択済みから外す。
+  assert.match(CB_BLOCK, /cb\.disabled = !r\.selectable/);
+  assert.match(CB_BLOCK, /if \(r\.selectable\) cbSelected\.add\(r\.recordId\)/, '全選択が選択不可まで拾っている');
+  assert.ok(CB_BLOCK.includes('cbPruneSelectionForOffer'), 'Step 3 の再判定が無い');
 });
 
 test('実行ボタンは gate OFF / 0 件では押せない', () => {
@@ -344,10 +347,26 @@ test('guard(withdrawn): 「今回付与できる」が何を基準にした数�
   assert.match(CB_BLOCK, /特典 未選択（退会・課金停止の方は付与不可として集計しています）/);
 });
 
-test('guard(withdrawn): 付与不可の行は選べない（UI と API を揃える）', () => {
-  assert.ok(CB_BLOCK.includes('cb.disabled = !r.grantable'), '付与不可の行が手動で選べてしまう');
-  assert.match(CB_BLOCK, /for \(const r of cbVisibleRows\(\)\) if \(r\.grantable\) cbSelected\.add/,
-    '全選択が付与可能者だけになっていない');
+test('guard(step2): 選択可否と付与可否を分け、Step 3 で再判定する', () => {
+  // ❌ 旧実装は Step 2 でも grantable（＝まだ選んでいない特典が基準）で判定し、
+  //    退会・課金停止が全員選べず Step 3 へ進めなかった
+  assert.ok(CB_BLOCK.includes('cb.disabled = !r.selectable'), '絶対除外以外まで選択不可にしている');
+  assert.match(CB_BLOCK, /for \(const r of cbVisibleRows\(\)\) if \(r\.selectable\) cbSelected\.add/,
+    '全選択が選択可能者だけになっていない');
+  // Step 3 で特典を決めたら、選択済みを施策条件で再判定して理由付きで外す
+  assert.ok(CB_BLOCK.includes('function cbPruneSelectionForOffer'), 'Step 3 の再判定が無い');
+  assert.match(CB_BLOCK, /この特典では対象外の .* 名を選択から外しました/, '外した件数を伝えていない');
+  assert.ok(CB_BLOCK.includes('grantEvaluated'), '特典 未選択と判定済みを区別していない');
+});
+
+test('guard(step2): 既定で特典を選ばない（暗黙の判定基準を作らない）', () => {
+  assert.equal(/\$\('cbLightOffer'\)\.value = 'light-lifetime-free'/.test(CB_BLOCK), false,
+    'Light 永久無料が既定で選ばれている');
+  assert.match(CB_BLOCK, /\$\('cbLightOffer'\)\.value = 'none'/);
+  assert.match(CB_BLOCK, /\$\('cbPremiumOffer'\)\.value = 'none'/);
+  // 未選択のときは「未選択」と言う（既定値の名前を出さない）
+  assert.match(CB_BLOCK, /if \(!l && !p\) return '未選択'/);
+  assert.ok(PAGE.includes('特典: 未選択'));
 });
 
 test('guard(counts): 対象人数・付与予定人数・送信予定人数を分けて出す', () => {

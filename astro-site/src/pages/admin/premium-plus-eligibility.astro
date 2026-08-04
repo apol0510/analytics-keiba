@@ -623,7 +623,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="note" id="cbStep2Empty">Step 1 で条件を選び、「対象候補を表示」を押してください。</p>
         <div class="dry-panel" id="cbAudienceSummary" hidden></div>
       <div class="selbar">
-        <button type="button" id="cbSelAll" class="btn-warning btn-md">👥 表示中の付与可能者を全選択</button>
+        <button type="button" id="cbSelAll" class="btn-warning btn-md">👥 表示中の候補を全選択</button>
         <button type="button" id="cbSelNone" class="btn-ghost btn-sm">全解除</button>
         <button type="button" id="cbViewSelected" class="btn-ghost btn-sm">選択者のみ表示</button>
         <span class="selcount" id="cbSelCount">0 名を選択中</span>
@@ -727,7 +727,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <div class="stickybar" id="cbStickyBar" hidden>
         <span class="sb-item" id="cbSbLeft">候補 0 名 / 選択 0 名</span>
         <span class="sb-item" id="cbSbCond">条件: 指定なし</span>
-        <span class="sb-item" id="cbSbOffer">特典: 未設定</span>
+        <span class="sb-item" id="cbSbOffer">特典: 未選択</span>
         <span class="sb-item" id="cbSbReview">確認: 未確認</span>
         <!--
           スクロール補助。**別の操作ではない**（Step 5 では本体と同じ確認画面を開く）。
@@ -5348,7 +5348,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       loaded: false, candidateCount: 0, selectedCount: 0,
       offer: { lightOffer: 'none', premiumOffer: 'none' },
       dryRun: null, dryStale: false, applied: false, busy: false,
-      offerSummaryShort: '未設定',
+      offerSummaryShort: '未選択',
       /** 直近の付与実行が返した引き継ぎ票（operationId と人数だけ。PII は入らない） */
       lastHandoff: null,
       /** 絞り込みを変えたまま再取得していない（一覧が古い） */
@@ -5583,7 +5583,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function cbOfferShortLabel() {
       const l = cbOfferLabel('cbLightOffer');
       const p = cbOfferLabel('cbPremiumOffer');
-      if (!l && !p) return '未設定';
+      // Step 3 で何も選んでいないうちは「未選択」と言う。
+      // 既定値の名前（Light 永久無料）を出すと、選んでいない特典が
+      // 判定基準に見えてしまう。
+      if (!l && !p) return '未選択';
       return (l || 'Light なし') + ' / ' + (p || 'Premium なし');
     }
 
@@ -5909,10 +5912,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const premium = [...data.premiumGrantOffers, ...data.premiumPurchaseOffers];
       cbFillSelect('cbPremiumOffer', premium, 'なし');
 
-      // 主要施策を既定値に（Light 永久無料 ＋ Premium 30日無料）
-      if (data.lightOffers.some((o) => o.offerId === 'light-lifetime-free')) {
-        $('cbLightOffer').value = 'light-lifetime-free';
-      }
+      // ⚠️ **既定で特典を選ばない**。既定値を入れると Step 2 の一覧が
+      //    「まだ選んでいない特典」を基準に判定され、退会・課金停止の候補が
+      //    全員「対象外」になって Step 3 へ進めなくなる（本番で発生）。
+      $('cbLightOffer').value = 'none';
+      $('cbPremiumOffer').value = 'none';
       cbRenderOfferDesc();
       $('cbGateState').textContent = data.notice || '';
       $('cbGateState').className = 'note' + (data.writeEnabled ? '' : ' off');
@@ -6048,11 +6052,47 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      * 全選択が 0 名なのに、手動チェックだけは通る、という食い違いが起きていた。
      */
     for (const id of ['cbLightOffer', 'cbPremiumOffer']) {
-      $(id).addEventListener('change', () => {
+      $(id).addEventListener('change', async () => {
         if (!cbData) return;                   // まだ一覧を出していないなら何もしない
         cbNotify('info', '選んだ特典に合わせて対象を判定し直しています…', '', CB_NOTICE.LOADING);
-        cbLoad();
+        await cbLoad();
+        cbPruneSelectionForOffer();
       });
+    }
+
+    /**
+     * Step 3 で特典を決めた時点で、**選択済みの顧客を施策の条件で再判定**する。
+     *
+     * Step 2 は絶対除外だけで選ばせるので、選択の中に「この特典では対象外」の人が
+     * 混ざりうる（例: 退会・課金停止の方に、退会者非対応の特典を選んだ場合）。
+     * ここで外し、**何人・なぜ外れたかを必ず件数付きで伝える**（黙って減らさない）。
+     * 実際に付与できるかは Step 4 dry-run と実行直前にも同じ単一源で再判定する。
+     */
+    function cbPruneSelectionForOffer() {
+      if (!cbData || cbSelected.size === 0) return;
+      const rows = cbData.rows || [];
+      if (!rows.some((r) => r.grantEvaluated)) return;   // 特典 未選択なら何もしない
+      const byId = new Map(rows.map((r) => [r.recordId, r]));
+      const dropped = {};
+      let removed = 0;
+      for (const id of [...cbSelected]) {
+        const r = byId.get(id);
+        if (!r || r.grantEvaluated !== true) continue;   // 一覧に無い行は触らない
+        if (r.grantable) continue;
+        cbSelected.delete(id);
+        removed += 1;
+        const label = r.grantBlockedLabel || r.selectBlockedLabel || 'この特典では対象外';
+        dropped[label] = (dropped[label] || 0) + 1;
+      }
+      if (removed === 0) {
+        cbNotify('ok', '選択中の' + cbSelected.size + ' 名はこの特典で付与できます', '', CB_NOTICE.LOADING);
+      } else {
+        const why = Object.entries(dropped).map(([k, n]) => k + ' ' + n + ' 名').join(' / ');
+        cbNotify('warn', 'この特典では対象外の ' + removed + ' 名を選択から外しました',
+          why + '。残り ' + cbSelected.size + ' 名です。', CB_NOTICE.LOADING);
+      }
+      cbRender();
+      cbSyncSticky();
     }
 
     async function cbLoad() {
@@ -6154,14 +6194,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       tb.innerHTML = '';
       for (const r of rows) {
         const tr = document.createElement('tr');
-        if (!r.grantable) tr.className = 'row-suppressed';
+        if (!r.selectable) tr.className = 'row-suppressed';
 
         const c0 = document.createElement('td');
         c0.className = 'c-chk';
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = cbSelected.has(r.recordId);
-        cb.disabled = !r.grantable; // 付与しても使えない相手は選べない（fail closed）
+        // Step 2 は**絶対除外だけ**で選択可否を決める（退会・課金停止は選べる）。
+        // 特典ごとの可否は Step 3 で判定し、選択済みから外す。
+        cb.disabled = !r.selectable;
         cb.setAttribute('aria-label', '選択');
         cb.addEventListener('change', () => {
           if (cb.checked) cbSelected.add(r.recordId); else cbSelected.delete(r.recordId);
@@ -6221,7 +6263,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const el = r.eligibility || null;
         const elText = el ? el.text : (r.grantable ? '付与可能' : ('付与不可：' + (r.grantBlockedLabel || '')));
         const elTone = el
-          ? (el.status === 'grantable' ? 'ok-txt' : (el.status === 'review' ? 'warn-txt' : 'ng-txt'))
+          ? (el.status === 'grantable' ? 'ok-txt'
+            : (el.status === 'review' ? 'warn-txt'
+              : (el.status === 'pending_offer' ? 'muted-txt' : 'ng-txt')))
           : (r.grantable ? 'ok-txt' : 'ng-txt');
         tr.appendChild(td('c-grantable', '今回の無料付与', elText, elTone));
 
@@ -6245,7 +6289,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('cbLoad').addEventListener('click', cbLoad);
     $('cbQ').addEventListener('input', cbRender);
     $('cbSelAll').addEventListener('click', () => {
-      for (const r of cbVisibleRows()) if (r.grantable) cbSelected.add(r.recordId);
+      for (const r of cbVisibleRows()) if (r.selectable) cbSelected.add(r.recordId);
       cbRender();
     });
     $('cbSelNone').addEventListener('click', () => { cbSelected.clear(); cbRender(); });
