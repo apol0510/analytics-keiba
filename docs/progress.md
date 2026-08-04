@@ -47,7 +47,35 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: 退会した元会員をカムバック施策の対象にできるようにする
+**Phase（2026-08-04 現在・最新）: カムバック施策を**特典カタログの宣言**で回せるようにする
+（branch `feat/comeback-policy-catalog`・Draft PR・merge 前・production 未反映）。**
+
+- **従来コード修正が必要だった理由**: 退会者へ配れるかを `offerId === 'light-30d-free'` の
+  例外で判定していた。施策を 1 つ増やすたびにコード修正 → PR → merge → deploy が要る
+- 判定材料を **`offer.comeback` の宣言**へ移し、単一源を
+  `src/lib/entitlements/comebackPolicy.js`（施策名を 1 つも知らない）に置き換えた。
+  `comebackWithdrawnPolicy.js` は削除。**新施策は カタログに `comeback: {...}` を書くだけ**
+- 宣言項目: audienceSegments / allowWithdrawn / grantTier / durationDays /
+  campaignId / campaignVersion / requiresSuccessfulGrant / restoresPaidContract /
+  preserveWithdrawalRequested / allowedEntitlements / forbiddenEntitlements。
+  `restoresPaidContract` は false 以外、`preserveWithdrawalRequested` は true 以外を受け付けない
+- 案内キャンペーンの対応表（`GRANT_CAMPAIGN_BY_OFFER`）も**宣言から自動生成**（手書きを廃止）
+- **報告された不整合を解消**: 対象区分「退会」で全行が「付与不可：退会・強制ログアウト」・
+  「付与可能者を全選択」0 名なのに手動チェックは通る、という食い違い。原因は
+  一覧（Step 1〜2）が施策を知らなかったこと。特典を選び直したら一覧を取り直すようにし、
+  **一覧・全選択・dry-run・実行がすべて `checkGrantable` を通る**ようにした
+- **退会と強制ログアウトを別の理由コードへ分離**（`withdrawal_blocked` /
+  `force_logout_blocked`）。`ForceLogout` は宣言でも緩められない
+- 重複メールも `checkGrantable` で弾くようにし、一覧でも選択不可にした
+- 管理画面: 区分名を「退会・課金停止」へ、配信停止と別だと常設表示、
+  選んだ特典の可否を自動表示、対象人数／付与予定人数／送信予定人数を分けて表示、
+  除外理由を件数付きで全部表示。360px / 820px 確認済み
+- production read-only 再判定: 残り 37 → **一覧 36 = dry-run 36 = 送信 36**（一致）。
+  除外は重複アドレス 1 名のみ。既存 28 名との重複 0
+- テスト 2953 pass / 0 fail（新規 21 + guard 6）。check:safety・build とも exit 0
+- **未実施**: PR merge / production deploy / 36 名への付与 / キュー登録 / 送信 / Airtable write
+
+**Phase（2026-08-04）: 退会した元会員をカムバック施策の対象にできるようにする
 （branch `feat/comeback-withdrawn-grant`・Draft PR・merge 前・production 未反映）。**
 
 - **誤っていた判定**: `docs/spec.md` は「退会済み＝カムバック対象・付与できる・送れる」と

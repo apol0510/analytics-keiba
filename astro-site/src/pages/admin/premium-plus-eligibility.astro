@@ -546,7 +546,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <select id="cbContract" aria-label="対象区分">
           <option value="candidates">カムバック候補すべて</option>
           <option value="expired">期限切れ</option>
-          <option value="withdrawn">退会済み</option>
+          <option value="withdrawn">退会・課金停止</option>
           <option value="dormant">休眠（長期ログインなし）</option>
           <option value="none">無料会員・契約なし</option>
           <option value="unknown">状態を判定できない</option>
@@ -608,7 +608,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <p class="filter-logic" id="cbGrantNote"></p>
         <div class="chip-row" id="cbChips" aria-label="適用中の条件"></div>
         <p class="filter-logic" id="cbLogicNote"></p>
-        <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
+        <p class="cb-filter-desc" id="cbFilterDesc">期限切れ・退会・課金停止・現在権限なしの顧客を検索します。現有効会員は除外します。</p>
+        <p class="cb-seg-note" id="cbSegNote">
+          <strong>「退会・課金停止」は送信対象です。</strong>
+          退会は課金を止めるための契約の状態で、<strong>メール配信停止とは別の判定</strong>です。
+          配信を止める意思表示は「配信停止」と配信基盤の停止リストが担い、そちらは常に除外します。
+        </p>
       </section>
 
       <section class="step cb-step" data-cbcard="2" aria-labelledby="cbStep2H">
@@ -716,6 +721,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <button type="button" id="cbReconcileBtn" class="btn-ghost">前回操作の突合</button>
         </div>
         <p class="camp-desc" id="cbOfferDesc"></p>
+        <p class="cb-withdrawn-avail" id="cbWithdrawnAvail" hidden></p>
       </div>
 
       <div class="stickybar" id="cbStickyBar" hidden>
@@ -1420,6 +1426,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .cb-step.is-now { border-top-color: rgba(245,196,81,.5); }
   .ppe .cb-step.is-done .step-n::after { content: " ✓"; }
   .ppe .cb-filter-desc { font-size: .78rem; color: var(--gold); margin: .35rem 0 0; }
+  /* 「退会・課金停止」が配信停止と別物であることの常設説明 */
+  .ppe .cb-seg-note {
+    font-size: .74rem; color: #c8d4e6; line-height: 1.75; margin: .4rem 0 0;
+    padding: .5rem .6rem; border-radius: 8px;
+    background: rgba(255, 255, 255, .04); border-left: 3px solid var(--gold);
+  }
+  .ppe .cb-seg-note strong { color: #fff; }
+  /* 選んだ特典が退会者へ配れるか（サーバー判定の表示） */
+  .ppe .cb-withdrawn-avail {
+    font-size: .74rem; line-height: 1.75; margin: .4rem 0 0;
+    padding: .5rem .6rem; border-radius: 8px; white-space: pre-wrap;
+    background: rgba(255, 255, 255, .04); border-left: 3px solid #4b5b73; color: #c8d4e6;
+  }
+  .ppe .cb-withdrawn-avail.ok { border-left-color: #3fa66a; }
+  .ppe .cb-withdrawn-avail.warn { border-left-color: #d9a441; }
+  .ppe .dp-note { font-size: .7rem; color: #93a4bd; line-height: 1.6; margin: .1rem 0 .35rem; }
+  @media (max-width: 640px) {
+    .ppe .cb-seg-note,
+    .ppe .cb-withdrawn-avail { font-size: .72rem; padding: .45rem .5rem; }
+  }
   .ppe .cb-offer-summary { font-size: .82rem; color: var(--ink); background: rgba(148,163,184,.08);
     border: 1px solid var(--line); border-radius: .4rem; padding: .4rem .6rem; margin: .3rem 0; }
   .ppe .opt-danger { color: var(--red); }
@@ -5862,6 +5888,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         opt.dataset.customPrice = o.requiresCustomPrice ? '1' : '';
         opt.dataset.kind = o.kind;
         opt.dataset.regularPrice = String(o.regularPrice);
+        // 退会・課金停止の方へ配れるか（判定はサーバー側の単一源。画面は結果を表示するだけ）
+        opt.dataset.withdrawnAllowed = o.withdrawnAllowed ? '1' : '';
+        opt.dataset.withdrawnLabel = o.withdrawnLabel || '';
+        opt.dataset.withdrawnNote = o.withdrawnNote || '';
+        opt.dataset.policyCampaign = o.policyCampaignLabel || '';
+        opt.dataset.policySegments = ((o.policy && o.policy.audienceSegments) || []).join(',');
         sel.appendChild(opt);
       }
     }
@@ -5965,10 +5997,62 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (lightOpt && lightOpt.value !== 'none') parts.push('Light: ' + lightOpt.textContent);
       if (premiumOpt && premiumOpt.value !== 'none') parts.push('Premium: ' + premiumOpt.textContent);
       $('cbOfferDesc').textContent = parts.length ? parts.join('　/　') : '特典を選択してください。';
+
+      cbRenderWithdrawnAvailability(lightOpt, premiumOpt);
+    }
+
+    /**
+     * 選んだ特典が「退会・課金停止」の方へ配れるかを出す。
+     * **判定はしない**（サーバーが特典カタログの宣言から出した結果を表示するだけ）。
+     * 対象区分に「退会・課金停止」を選んでいるのに配れない特典なら、はっきり警告する。
+     */
+    function cbRenderWithdrawnAvailability(lightOpt, premiumOpt) {
+      const box = $('cbWithdrawnAvail');
+      if (!box) return;
+      const chosen = [lightOpt, premiumOpt].filter((o) => o && o.value && o.value !== 'none');
+      const grants = chosen.filter((o) => o.dataset.kind !== 'purchase_offer');
+      if (grants.length === 0) { box.hidden = true; box.textContent = ''; return; }
+
+      const wantsWithdrawn = (multiValues(['cbContract']).cbContract || [])
+        .some((v) => v === 'withdrawn' || v === 'candidates');
+      const allowed = grants.filter((o) => o.dataset.withdrawnAllowed === '1');
+      const blocked = grants.filter((o) => o.dataset.withdrawnAllowed !== '1');
+
+      const lines = [];
+      for (const o of allowed) {
+        lines.push(`✅ ${o.textContent}：${o.dataset.withdrawnLabel || '退会・課金停止の方へも配れます'}`
+          + (o.dataset.withdrawnNote ? `\n　${o.dataset.withdrawnNote}` : '')
+          + (o.dataset.policyCampaign ? `\n　案内メール：${o.dataset.policyCampaign}` : ''));
+      }
+      for (const o of blocked) {
+        lines.push(`⚠️ ${o.textContent}：${o.dataset.withdrawnLabel || '退会・課金停止の方へは配れません'}`
+          + (o.dataset.withdrawnNote ? `\n　${o.dataset.withdrawnNote}` : ''));
+      }
+      if (wantsWithdrawn && blocked.length > 0) {
+        lines.push('※ 対象区分に「退会・課金停止」が入っています。この特典は該当者が確認の時点で除外されます（付与されません）。');
+      }
+      box.textContent = lines.join('\n');
+      box.className = 'cb-withdrawn-avail' + (blocked.length > 0 ? ' warn' : ' ok');
+      box.hidden = false;
     }
     for (const id of ['cbLightOffer', 'cbPremiumOffer', 'cbLightDays', 'cbPremiumDays', 'cbPremiumPrice']) {
       $(id).addEventListener('change', cbRenderOfferDesc);
       $(id).addEventListener('input', cbRenderOfferDesc);
+    }
+    /**
+     * 特典を選び直したら**一覧の「今回付与できる」を取り直す**。
+     *
+     * 付与できるかは特典によって変わる（退会・課金停止の方を対象にできるのは
+     * カタログで宣言した施策だけ）。取り直さないと、一覧の表示・「付与可能者を全選択」と
+     * dry-run の判定がズレる ―― 実際「退会・課金停止」を選ぶと全行が付与不可に見えて
+     * 全選択が 0 名なのに、手動チェックだけは通る、という食い違いが起きていた。
+     */
+    for (const id of ['cbLightOffer', 'cbPremiumOffer']) {
+      $(id).addEventListener('change', () => {
+        if (!cbData) return;                   // まだ一覧を出していないなら何もしない
+        cbNotify('info', '選んだ特典に合わせて対象を判定し直しています…', '', CB_NOTICE.LOADING);
+        cbLoad();
+      });
     }
 
     async function cbLoad() {
@@ -6020,6 +6104,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return (cbData?.rows || []).filter((r) => !q || String(r.email || '').toLowerCase().includes(q));
     }
 
+    /**
+     * 一覧の「今回付与できる」が**どの特典を前提にした数字か**を一文で返す。
+     * 特典未選択なら、退会・課金停止の方は付与不可として数えられていることを明示する。
+     */
+    function cbGrantBasisText() {
+      const opts = ['cbLightOffer', 'cbPremiumOffer']
+        .map((id) => cbSelectedOption(id))
+        .filter((o) => o && o.value && o.value !== 'none' && o.dataset.kind !== 'purchase_offer');
+      if (opts.length === 0) {
+        return '特典 未選択（退会・課金停止の方は付与不可として集計しています）';
+      }
+      return opts.map((o) => o.textContent
+        + (o.dataset.withdrawnAllowed === '1' ? '（退会・課金停止も対象）' : '（退会・課金停止は対象外）')).join(' + ');
+    }
+
     function cbRender() {
       if (!cbData) return;
       const s = cbData.summary || {};
@@ -6042,10 +6141,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         bar.appendChild(b);
       });
       const p = s.promo || {};
+      // 「今回付与できる」は**どの特典を選んでいるか**で変わる。何を基準に出した数字かを必ず添える
+      const basis = cbGrantBasisText();
       $('cbSummarySub').textContent =
         '全顧客 ' + (cbData.totalCustomers || 0) + ' 名　/　特典内訳: Light 永久無料 ' + (p.light || 0)
         + '・Premium 無料期間中 ' + (p.trialActive || 0) + '・Premium 無料 終了 ' + (p.trialExpired || 0)
-        + (p.inconsistent ? '・⚠️ 不整合 ' + p.inconsistent : '');
+        + (p.inconsistent ? '・⚠️ 不整合 ' + p.inconsistent : '')
+        + '　/　「今回付与できる」の基準: ' + basis;
 
       const rows = cbVisibleRows();
       const tb = $('cbRows');
@@ -6227,23 +6329,39 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (!p) return;
       p.hidden = false;
       p.innerHTML = '';
-      const row = (k, v, cls) => {
+      const row = (k, v, cls, note) => {
         const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
         const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
         const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
         d.appendChild(a); d.appendChild(b); p.appendChild(d);
+        if (note) {
+          const n = document.createElement('p'); n.className = 'dp-note'; n.textContent = note;
+          p.appendChild(n);
+        }
       };
       const aud = plan.audience || {};
-      row('選択人数', (plan.selected ?? cbSelected.size) + ' 名');
-      row('付与される人数', (plan.willGrant ?? aud.eligible ?? 0) + ' 名',
+      // 3 つの人数を**混ぜずに**出す（対象 → 付与予定 → 送信予定）
+      row('対象人数（選択）', (plan.selected ?? cbSelected.size) + ' 名');
+      row('付与予定人数', (plan.willGrant ?? aud.eligible ?? 0) + ' 名',
         (plan.willGrant ?? aud.eligible ?? 0) > 0 ? 'is-ok' : 'is-ng');
+      // 案内メールは**付与に成功した人だけ**が対象。付与予定がそのまま送信予定になる
+      row('送信予定人数（付与成功者のみ）', (plan.willGrant ?? 0) + ' 名',
+        '', 'この人数を引き継いだあと、メール工程で配信停止・停止リスト・24時間の間隔を再判定します。');
       row('除外', (plan.excluded ?? aud.excluded ?? 0) + ' 名');
       row('現有効会員の混入', (aud.activeMembers ?? 0) + ' 名', (aud.activeMembers ?? 0) > 0 ? 'is-ng' : '');
       const seg = aud.bySegment || {};
       row('対象区分', Object.entries(seg).map(([k, n]) => cbApi().segmentLabel(k) + ' ' + n + ' 名').join(' / ') || '—');
-      const reasons = aud.byReason || {};
+      // 除外理由は**必ず件数付きで全部出す**（黙って落とさない）
+      const reasons = plan.skippedDetail && plan.skippedDetail.length
+        ? Object.fromEntries(plan.skippedDetail.map((d) => [d.reason, d.count]))
+        : (aud.byReason || {});
+      const reasonLabels = plan.skippedDetail && plan.skippedDetail.length
+        ? Object.fromEntries(plan.skippedDetail.map((d) => [d.reason, d.label]))
+        : (aud.reasonLabels || {});
       if (Object.keys(reasons).length) {
-        row('除外理由', Object.entries(reasons).map(([k, n]) => ((aud.reasonLabels || {})[k] || k) + ' ' + n + ' 名').join(' / '));
+        row('除外理由', Object.entries(reasons)
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => (reasonLabels[k] || k) + ' ' + n + ' 名').join(' / '));
       }
       row('付与する特典', cbOfferShortLabel());
       row('変更しないもの', cbApi().UNCHANGED_NOTICE);

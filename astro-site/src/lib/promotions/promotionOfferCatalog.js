@@ -130,6 +130,24 @@ export const PROMOTION_OFFERS = Object.freeze([
     isFree: true,
     version: 1,
     enabled: true,
+    /**
+     * カムバック施策としての宣言（`entitlements/comebackPolicy.js` が読む唯一の入力）。
+     * **この block を書くだけ**で、管理画面の対象区分・退会者への可否・付与・
+     * ログイン権限・案内メールの引き継ぎがすべて揃う。コード修正は要らない。
+     */
+    comeback: {
+      audienceSegments: ['expired', 'withdrawn'],
+      allowWithdrawn: true,
+      grantTier: 'light',
+      durationDays: 30,
+      campaignId: 'comeback-light-30d-granted',
+      campaignVersion: 2,
+      requiresSuccessfulGrant: true,
+      restoresPaidContract: false,
+      preserveWithdrawalRequested: true,
+      allowedEntitlements: ['light'],
+      forbiddenEntitlements: ['premium', 'sanrenpuku', 'purchase'],
+    },
   },
   {
     offerId: 'light-90d-free',
@@ -361,6 +379,8 @@ export function listOffers({ tier, kind } = {}) {
       discountValue: o.discountValue,
       requiresCustomDays: o.requiresCustomDays === true,
       requiresCustomPrice: o.requiresCustomPrice === true,
+      /** カムバック施策の宣言（解釈は `entitlements/comebackPolicy.js`） */
+      comeback: o.comeback || null,
       version: o.version,
     }));
 }
@@ -474,6 +494,11 @@ export function resolveOffer(offerId, input = {}) {
       /** 購入条件のときだけ意味を持つ（既存 bank flow の語彙） */
       planType: def.kind === OFFER_KIND.PURCHASE ? (TERM_TO_PLAN_TYPE[def.term] || null) : null,
       planName: def.kind === OFFER_KIND.PURCHASE ? (TERM_TO_PLAN_NAME[def.term] || null) : null,
+      /**
+       * カムバック施策の宣言（あれば）。判定は `entitlements/comebackPolicy.js` に集約し、
+       * ここでは**定義をそのまま渡すだけ**（解釈しない）。
+       */
+      comeback: def.comeback || null,
     },
   };
 }

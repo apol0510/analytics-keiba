@@ -106,7 +106,7 @@ import {
   OFFER_REVOKE_SKIP_LABEL,
 } from '../../src/lib/promotions/offerRevokePlan.js';
 import { buildComebackEmailContent } from '../../src/lib/promotions/comebackEmailTemplate.js';
-import { isWithdrawnGrantAllowed } from '../../src/lib/entitlements/comebackWithdrawnPolicy.js';
+import { isWithdrawnAllowedForOffer, describeWithdrawnAvailability, CB_SEGMENT_LABEL, CB_SEGMENT_NOTE, listComebackPolicies } from '../../src/lib/entitlements/comebackPolicy.js';
 import {
   buildHandoffTicket, collectGrantedRecipients, validateHandoffResolution,
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
@@ -179,15 +179,34 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
  */
 async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdrawn = false }) {
   const records = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
+
+  // Customers 全体で重複しているアドレス。重複していると `auth/customerLookup` が
+  // CONFLICT で fail closed にしてログインを拒否するため、付与しても本人が使えない。
+  // **一覧・dry-run・実行が同じ判定になるよう、ここで 1 回だけ作って全員へ渡す。**
+  const emailCounts = new Map();
+  for (const rec of records) {
+    const e = String(rec.fields?.Email || '').trim().toLowerCase();
+    if (e) emailCounts.set(e, (emailCounts.get(e) || 0) + 1);
+  }
+  const duplicateEmails = new Set([...emailCounts].filter(([, n]) => n > 1).map(([e]) => e));
+
   const list = records.map((rec) => {
     const fields = rec.fields || {};
-    return { recordId: rec.id, fields, view: resolveComebackCustomer({ fields, nowMs: now, allowWithdrawn }) };
+    const email = String(fields.Email || '').trim().toLowerCase();
+    return {
+      recordId: rec.id,
+      fields,
+      view: resolveComebackCustomer({
+        fields, nowMs: now, allowWithdrawn,
+        duplicateEmail: !!email && duplicateEmails.has(email),
+      }),
+    };
   });
   // offer 台帳が未作成なら「既存 offer なし」として扱う（一覧・dry-run は動く）
   const offers = withOffers
     ? await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => [])
     : [];
-  return { list, byId: new Map(list.map((c) => [c.recordId, c])), offers };
+  return { list, byId: new Map(list.map((c) => [c.recordId, c])), offers, duplicateEmails };
 }
 
 export const handler = async (event) => {
@@ -236,13 +255,53 @@ function gateState() {
   };
 }
 
+/**
+ * 特典 1 件を UI 用に注釈する。
+ * **退会・課金停止の方へ配れるか**は特典カタログの宣言だけで決まる（判定は単一源へ委譲）。
+ */
+function annotateOffer(o) {
+  const a = describeWithdrawnAvailability(o);
+  return {
+    ...o,
+    withdrawnAllowed: a.allowed,
+    withdrawnLabel: a.label,
+    withdrawnNote: a.note,
+    // 画面には**整形済みの文字列**だけ渡す（送信 payload と紛れないように）
+    policyCampaignLabel: a.policy ? `${a.policy.campaignId}:v${a.policy.campaignVersion}` : '',
+    policy: a.policy
+      ? {
+        audienceSegments: a.policy.audienceSegments,
+        grantTier: a.policy.grantTier,
+        durationDays: a.policy.durationDays,
+        campaignId: a.policy.campaignId,
+        campaignVersion: a.policy.campaignVersion,
+        allowedEntitlements: a.policy.allowedEntitlements,
+        forbiddenEntitlements: a.policy.forbiddenEntitlements,
+      }
+      : null,
+  };
+}
+
 function handleOffers() {
   const gate = gateState();
   return json(200, {
     // Light（ベース特典）/ Premium 無料 / Premium 割引 を分けて返す（UI がそのまま 3 つの選択肢にする）
-    lightOffers: listOffers({ tier: PROMO_TIER.LIGHT, kind: OFFER_KIND.GRANT }),
-    premiumGrantOffers: listOffers({ tier: PROMO_TIER.PREMIUM, kind: OFFER_KIND.GRANT }),
+    lightOffers: listOffers({ tier: PROMO_TIER.LIGHT, kind: OFFER_KIND.GRANT }).map(annotateOffer),
+    premiumGrantOffers: listOffers({ tier: PROMO_TIER.PREMIUM, kind: OFFER_KIND.GRANT }).map(annotateOffer),
     premiumPurchaseOffers: listOffers({ tier: PROMO_TIER.PREMIUM, kind: OFFER_KIND.PURCHASE }),
+    // 対象区分の名前と意味（画面はこれをそのまま出す。文言をコピーしない）
+    segments: Object.entries(CB_SEGMENT_LABEL).map(([value, label]) => ({
+      value, label, note: CB_SEGMENT_NOTE[value] || '',
+    })),
+    // 宣言済みのカムバック施策（コード修正なしで増える）
+    comebackPolicies: listComebackPolicies().map((p) => ({
+      offerId: p.offerId,
+      audienceSegments: p.audienceSegments,
+      grantTier: p.grantTier,
+      durationDays: p.durationDays,
+      campaignId: p.campaignId,
+      campaignVersion: p.campaignVersion,
+    })),
     tiers: Object.values(PROMO_TIER).map((t) => ({ tier: t, label: PROMO_TIER_LABEL[t] })),
     regularPrice: REGULAR_PRICE,
     customDaysRange: CUSTOM_DAYS_RANGE,
@@ -355,7 +414,7 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     : [];
   const allowWithdrawn = selectedGrantIds.some((offerId) => {
     const r = resolveOffer(offerId, {});
-    return !!(r && r.ok && r.offer && isWithdrawnGrantAllowed(r.offer));
+    return !!(r && r.ok && r.offer && isWithdrawnAllowedForOffer(r.offer));
   });
 
   const { list } = await loadCustomers({ KEY, BASE, now, allowWithdrawn });
@@ -616,8 +675,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
 
   // 選んだ無料付与がカムバックの Light 30 日無料なら、退会者も対象にできる
   // （判断の単一源は comebackWithdrawnPolicy。ここでは offer をそのまま渡すだけ）
-  const allowWithdrawn = (sel.grantOffers || []).some((o) => isWithdrawnGrantAllowed(o));
-  const { list, byId, offers } = await loadCustomers({
+  const allowWithdrawn = (sel.grantOffers || []).some((o) => isWithdrawnAllowedForOffer(o));
+  const { list, byId, offers, duplicateEmails } = await loadCustomers({
     KEY, BASE, now, withOffers: needsOfferWrite, allowWithdrawn,
   });
 
@@ -681,16 +740,6 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
       hint: '通常は現有効会員を外してください。どうしても含める場合は「現有効会員を含める」を ON にし、人数を入力してください。',
     });
   }
-
-  // Customers 全体で重複しているアドレス。重複していると
-  // `auth/customerLookup` がログインを CONFLICT で拒否するため、付与しても本人が使えない。
-  // **選択の中だけでなく全件から**作る（片方だけ選ばれていても検出するため）。
-  const emailCounts = new Map();
-  for (const c of list) {
-    const e = String(c.fields?.Email || '').trim().toLowerCase();
-    if (e) emailCounts.set(e, (emailCounts.get(e) || 0) + 1);
-  }
-  const duplicateEmails = new Set([...emailCounts].filter(([, n]) => n > 1).map(([e]) => e));
 
   const plan = buildComebackPlan({
     grantOffers: sel.grantOffers,

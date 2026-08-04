@@ -312,3 +312,48 @@ test('guard(grant): 現在状態・履歴・今回の可否が別項目として
   assert.match(SCRIPT, /cbGrantNow: '現在の無料付与', cbGrantHistory: '無料付与履歴'/);
   assert.match(SCRIPT, /cbGrantable: '今回の無料付与'/);
 });
+
+// ═══ 退会・課金停止の扱い（2026-08-04）════════════════════════════════
+// 実際に起きた不整合: 対象区分「退会」で全行が付与不可・全選択 0 名なのに手動チェックは通る。
+
+test('guard(withdrawn): 区分名は「退会・課金停止」で、配信停止と別だと画面に書く', () => {
+  assert.ok(PAGE.includes('退会・課金停止'), '区分名が更新されていない');
+  assert.equal(PAGE.includes('<option value="withdrawn">退会済み</option>'), false, '旧ラベルが残っている');
+  assert.ok(PAGE.includes('cbSegNote'), '区分の説明ブロックが無い');
+  assert.match(PAGE, /メール配信停止とは別の判定/, '配信停止と別だと説明していない');
+});
+
+test('guard(withdrawn): 選んだ特典が退会者へ配れるかを画面に出す', () => {
+  assert.ok(PAGE.includes('cbWithdrawnAvail'), '可否の表示先が無い');
+  assert.ok(CB_BLOCK.includes('cbRenderWithdrawnAvailability'), '可否を描画していない');
+  // 判定はサーバー（単一源）の結果を読むだけ。画面で条件を再実装しない
+  assert.ok(CB_BLOCK.includes('withdrawnAllowed'), 'サーバー判定を読んでいない');
+  assert.equal(/WithdrawalRequested\s*===\s*true/.test(CB_BLOCK), false, '画面で退会判定を再実装している');
+  assert.equal(CB_BLOCK.includes('allowWithdrawn:'), false, '画面で許可条件を組み立てている');
+});
+
+test('guard(withdrawn): 特典を選び直したら一覧の付与可否を取り直す', () => {
+  // 取り直さないと 一覧・全選択 と dry-run の判定がズレる
+  assert.match(CB_BLOCK, /for \(const id of \['cbLightOffer', 'cbPremiumOffer'\]\)[\s\S]{0,400}cbLoad\(\)/,
+    '特典を変えても一覧を取り直していない');
+  assert.ok(CB_BLOCK.includes('grantOfferIds'), '選択中の特典をサーバーへ渡していない');
+});
+
+test('guard(withdrawn): 「今回付与できる」が何を基準にした数字か明示する', () => {
+  assert.ok(CB_BLOCK.includes('cbGrantBasisText'), '基準の表示が無い');
+  assert.match(CB_BLOCK, /特典 未選択（退会・課金停止の方は付与不可として集計しています）/);
+});
+
+test('guard(withdrawn): 付与不可の行は選べない（UI と API を揃える）', () => {
+  assert.ok(CB_BLOCK.includes('cb.disabled = !r.grantable'), '付与不可の行が手動で選べてしまう');
+  assert.match(CB_BLOCK, /for \(const r of cbVisibleRows\(\)\) if \(r\.grantable\) cbSelected\.add/,
+    '全選択が付与可能者だけになっていない');
+});
+
+test('guard(counts): 対象人数・付与予定人数・送信予定人数を分けて出す', () => {
+  for (const label of ['対象人数（選択）', '付与予定人数', '送信予定人数（付与成功者のみ）']) {
+    assert.ok(CB_BLOCK.includes(label), `${label} が無い`);
+  }
+  // 除外理由は件数付きで出す
+  assert.ok(CB_BLOCK.includes('skippedDetail'), '除外理由の内訳を使っていない');
+});

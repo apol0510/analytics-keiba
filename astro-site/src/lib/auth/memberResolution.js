@@ -72,7 +72,7 @@ import {
   CANONICAL_VENUES,
 } from './planNormalization.js';
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
-import { honorsLightGrantDespiteWithdrawal } from '../entitlements/comebackWithdrawnPolicy.js';
+import { honorsGrantDespiteWithdrawal } from '../entitlements/comebackPolicy.js';
 
 export const MEMBER_TYPE = Object.freeze({
   FREE: 'free',
@@ -320,18 +320,21 @@ export function resolveMembership(input = {}) {
   // 契約由来の権限は返さない: plan は 'free' 固定・lifetime も見ない＝有料階層へ戻さない。
   // 判定不能（未知プラン）より後・その他すべてより先に評価する。
   //
-  // ── 例外: カムバックで配った **期間限定 Light 無料特典** だけは認める ──────────
+  // ── 例外: カムバック施策として**宣言された**無料特典だけは認める ──────────
   // 特典は課金契約とは独立に管理者が明示的に配る権利で、退会（＝課金停止）とは別軸。
   // ここで無視すると「付与できたのにログインしても使えない」状態になり、
-  // 「Light 30 日無料を付与しました」という案内メールが嘘になる。
+  // 「無料で使えます」という案内メールが嘘になる。
   //
-  // 認めるのは `comebackWithdrawnPolicy` が許した形だけ:
-  //   期間限定 Light（永久無料は不可）／付与操作の記録あり／取消・不整合でない／ForceLogout でない
-  // 与えるのは Light の閲覧権だけで、`WithdrawalRequested` は書き換えない。
+  // 判定は `entitlements/comebackPolicy.js` が単一源。**施策名はここに書かない**
+  // （特典カタログの宣言に一致する形かどうかだけで決まる）。認めるのは:
+  //   宣言どおりのティア・期間内・宣言日数以内／付与操作の記録あり／
+  //   取消・不整合でない／`ForceLogout` でない
+  // 与えるのは宣言されたティアの閲覧権だけで、`WithdrawalRequested` は書き換えない。
   // 期間が切れれば自動的に下の free へ戻る（会員資格の自動復帰ではない）。
   if (withdrawn) {
-    if (honorsLightGrantDespiteWithdrawal({ fields, nowMs: now }).ok) {
-      const promo = promoResult('light');
+    const honored = honorsGrantDespiteWithdrawal({ fields, nowMs: now });
+    if (honored.ok) {
+      const promo = promoResult(honored.tier);
       if (promo) return promo;
     }
     return freeResult(recordId, sessionVersion, MEMBER_REASON.WITHDRAWAL_REQUESTED);

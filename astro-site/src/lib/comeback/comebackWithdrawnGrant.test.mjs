@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  buildComebackPlan, checkGrantable, planCustomer, CB_SKIP, reconcileOperation,
+  buildComebackPlan, checkGrantable, planCustomer, CB_SKIP, CB_SKIP_LABEL, reconcileOperation,
 } from './comebackGrantPlan.js';
 import { resolveComebackCustomer } from './comebackAudience.js';
 import { resolveOffer } from '../promotions/promotionOfferCatalog.js';
@@ -159,7 +159,7 @@ test('退会していない顧客の判定は一切変わらない', () => {
 
 test('ForceLogout・停止・テスト・メール不正は施策でも弾く', () => {
   const cases = [
-    ['ForceLogout', withdrawnMember({ ForceLogout: true }), CB_SKIP.WITHDRAWAL_BLOCKED],
+    ['ForceLogout', withdrawnMember({ ForceLogout: true }), CB_SKIP.FORCE_LOGOUT_BLOCKED],
     ['停止', withdrawnMember({ Status: 'suspended' }), CB_SKIP.ACCOUNT_SUSPENDED],
     ['テスト', withdrawnMember({ Status: 'test' }), CB_SKIP.ACCOUNT_SUSPENDED],
     ['テストプラン', withdrawnMember({ 'プラン': 'Test' }), CB_SKIP.ACCOUNT_SUSPENDED],
@@ -341,6 +341,60 @@ test('既に送信済みの相手へは案内メールを積まない（既存 2
   });
   assert.equal(again.counts.recipients, 0, '送信済みの相手へ再送しようとしている');
   assert.equal(again.counts.byReason.already_delivered, 1);
+});
+
+// ── 一覧 / 全選択 / dry-run が同じ判定になる ──────────────────
+// 実際に起きた不整合: 対象区分「退会」を選ぶと全行が「付与不可：退会・強制ログアウト」に
+// なり「付与可能者を全選択」が 0 名。なのに手動チェックだけは通り、dry-run では付与できた。
+
+test('一覧の grantable と dry-run の結果が一致する（施策を選んでいるとき）', () => {
+  const rows = [
+    { recordId: 'rec1', fields: withdrawnMember({ Email: 'a@example.com' }) },
+    { recordId: 'rec2', fields: withdrawnMember({ Email: 'b@example.com' }) },
+    { recordId: 'rec3', fields: withdrawnMember({ Email: 'c@example.com', ForceLogout: true }) },
+  ];
+  // 一覧側（Step 1〜2）: 施策の metadata で判定する
+  const listGrantable = rows.filter((r) => resolveComebackCustomer({
+    fields: r.fields, nowMs: NOW, allowWithdrawn: true,
+  }).grantable);
+  assert.equal(listGrantable.length, 2, '一覧で退会者が付与可能にならない');
+
+  // dry-run 側: 同じ 2 名が付与対象になる
+  const p = plan(rows);
+  assert.equal(p.counts.willGrant, 2);
+  assert.deepEqual(p.targets.map((t) => t.recordId).sort(), ['rec1', 'rec2']);
+  assert.equal(p.skipped[0].reason, CB_SKIP.FORCE_LOGOUT_BLOCKED);
+});
+
+test('施策を選んでいなければ一覧も dry-run も付与不可で一致する', () => {
+  const rows = [{ recordId: 'rec1', fields: withdrawnMember() }];
+  assert.equal(resolveComebackCustomer({ fields: rows[0].fields, nowMs: NOW }).grantable, false);
+  assert.equal(plan(rows, [LIGHT_LIFETIME]).counts.willGrant, 0);
+});
+
+test('重複メールは一覧でも選べない（dry-run と同じ理由）', () => {
+  const view = resolveComebackCustomer({
+    fields: withdrawnMember(), nowMs: NOW, allowWithdrawn: true, duplicateEmail: true,
+  });
+  assert.equal(view.grantable, false, '重複アドレスが一覧で選べてしまう');
+  assert.equal(view.grantBlockedReason, CB_SKIP.DUPLICATE_EMAIL);
+  assert.equal(view.eligibility.status, GRANT_ELIGIBILITY.BLOCKED);
+  assert.match(view.eligibility.text, /重複/);
+});
+
+test('退会と強制ログアウトは別の理由コード・別の表示にする', () => {
+  const wd = checkGrantable(withdrawnMember());
+  const fl = checkGrantable(withdrawnMember({ WithdrawalRequested: false, ForceLogout: true }));
+  assert.equal(wd.reason, CB_SKIP.WITHDRAWAL_BLOCKED);
+  assert.equal(fl.reason, CB_SKIP.FORCE_LOGOUT_BLOCKED);
+  assert.notEqual(wd.reason, fl.reason, '同じ理由コードにまとめられている');
+  assert.notEqual(CB_SKIP_LABEL[wd.reason], CB_SKIP_LABEL[fl.reason], '表示が同じ文言になっている');
+  assert.doesNotMatch(CB_SKIP_LABEL[wd.reason], /強制ログアウト/, '退会の説明に強制ログアウトが混ざっている');
+  assert.doesNotMatch(CB_SKIP_LABEL[fl.reason], /退会/, '強制ログアウトの説明に退会が混ざっている');
+
+  // ForceLogout は施策を許可しても通らない / 退会は許可すれば通る
+  assert.equal(checkGrantable(withdrawnMember({ ForceLogout: true }), { allowWithdrawn: true }).ok, false);
+  assert.equal(checkGrantable(withdrawnMember(), { allowWithdrawn: true }).ok, true);
 });
 
 // ── planCustomer 単体（offer ごとに判定が変わること）──────────
