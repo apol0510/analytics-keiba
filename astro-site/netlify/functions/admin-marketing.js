@@ -114,6 +114,10 @@ import {
 } from '../../src/lib/newsletter/airtable-fetch.js';
 import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
+import {
+  SEGMENT_IDS, SEGMENT_CATALOG_VERSION, evaluateSegment, SEG_EXCLUDE_LABEL,
+} from '../../src/lib/crm/audienceSegments.js';
+import { buildLastContactMap, readMeasurementSettings } from '../../src/lib/crm/segmentInputs.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
@@ -314,6 +318,7 @@ export const handler = async (event) => {
     if (action === 'customerDetail') return await handleCustomerDetail({ KEY, BASE, now, req });
     if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
+    if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1215,4 +1220,79 @@ async function upsertDeliveries({ KEY, BASE, records }) {
     });
     if (!res.ok) throw new Error(`${DELIVERIES_TABLE} upsert failed: HTTP ${res.status}`);
   }
+}
+
+
+/**
+ * 大規模セグメントの**件数だけ**を返す（read-only・書き込み 0）。
+ *
+ * ── 個人情報を返さない ────────────────────────────────────────
+ * AK 登録済みの無料ユーザーだけで約 1,300 名。外部保有リスト約 13,000 件を
+ * 取り込めば 14,000 件規模になる。一覧 API と同じ形で
+ * 顧客を返すと、**画面が固まるうえに個人情報を大量に送出**する。
+ * ここが返すのは 母数 / 送信候補 / 除外数 / 除外理由別件数 / 条件ハッシュ と、
+ * **匿名化した検証用サンプル（属性のみ）**だけ。宛先も recordId も返さない。
+ *
+ * ── 対象の正本はサーバー側 ────────────────────────────────────
+ * 画面から recordId 一覧を受け取らない。条件（segmentId）だけを受け取り、
+ * 対象はサーバーが評価する。
+ *
+ * ⚠️ 配信履歴の読み解きと配信基盤の設定取得は `crm/segmentInputs.js` に分離してある
+ *    （この Function に宛先列や SendGrid のエンドポイントを持ち込まないため）。
+ */
+async function handleSegments({ KEY, BASE, now, req }) {
+  const wanted = String(req.segmentId || '').trim();
+  if (wanted && !SEGMENT_IDS.includes(wanted)) {
+    return json(400, { error: '未知のセグメントです', sideEffects: 'none' });
+  }
+  const sampleSize = Number.isInteger(req.sampleSize) ? Math.min(req.sampleSize, 20) : 0;
+
+  const { list, blacklistEmails, deliveries } = await loadCustomerMarketing({ KEY, BASE, now });
+
+  // 除外の材料。**確認できないものは fail closed**（送らない側へ倒す）
+  const hard = blacklistEmails instanceof Set ? blacklistEmails : new Set();
+  const blRows = await fetchAll({ KEY, BASE, table: 'EmailBlacklist' }).catch(() => null);
+  const soft = new Set();
+  if (Array.isArray(blRows)) {
+    for (const row of blRows) {
+      const addr = String((row.fields || {}).Email || '').trim().toLowerCase();
+      if (addr) soft.add(addr);
+    }
+  }
+  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
+
+  const records = list.map((c) => ({ id: c.recordId, fields: c.fields }));
+  const shared = {
+    records, nowMs: now,
+    blacklistHard: hard, blacklistSoft: soft,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    lastContactAtMs: buildLastContactMap(deliveries),
+    sampleSize,
+  };
+  const ids = wanted ? [wanted] : SEGMENT_IDS;
+  const results = ids.map((id) => evaluateSegment({ ...shared, segmentId: id }));
+
+  // 計測状態（「0 件」と「計測していない」を画面で混同させないため一緒に返す）
+  const measurement = await readMeasurementSettings({ apiKey: process.env.SENDGRID_API_KEY });
+
+  return json(200, {
+    mode: 'segment-preview',
+    sideEffects: 'none',
+    catalogVersion: SEGMENT_CATALOG_VERSION,
+    evaluatedAt: new Date(now).toISOString(),
+    providerSuppression: provider.ok
+      ? { available: true, total: provider.total }
+      : { available: false, note: '配信基盤の停止リストを確認できないため、全員を送信不可として数えています' },
+    segments: results.map((r) => ({
+      segmentId: r.segmentId, segmentName: r.segmentName, description: r.description,
+      total: r.total, sendable: r.sendable, excluded: r.excluded,
+      byReason: r.byReason, byReasonLabeled: r.byReasonLabeled,
+      balanced: r.balanced, ignoredRecords: r.ignoredRecords,
+      conditionHash: r.conditionHash, requires: r.requires,
+      sample: r.sample,
+    })),
+    measurement,
+    notice: 'これは件数の下見です。**まだ送信対象は固定されていません**（キュー登録も送信もしていません）。',
+    labels: { exclude: SEG_EXCLUDE_LABEL },
+  });
 }

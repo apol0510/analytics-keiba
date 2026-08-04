@@ -905,3 +905,56 @@ test('guard(ui): secret をレスポンスや URL へ出さない', () => {
   assert.equal(/secretEl|x-admin-secret/.test(block), false, '送信パネルが secret を直接扱っている');
   assert.equal(/URLSearchParams|location\.(href|search)\s*=/.test(block), false, 'URL へ載せている');
 });
+
+// ═══ 送信ボタンは 1 操作で完結する（2026-08-04 の 36 名ジョブ）═══════════
+// 「◯名へ送信する」を押したのにキュー登録で止まり、ジョブが PENDING のまま
+// 残っていた。運用者は送ったつもりで画面を離れた。別画面・CLI・手動 dispatcher を
+// 要求しない設計に直したので、後退しないよう固定する。
+
+test('guard(send): 送信ボタンはキュー登録のあと送信まで実行する', () => {
+  assert.ok(SCRIPT.includes('function mkSendQueuedJobs'), '送信実行の関数が無い');
+  assert.match(SCRIPT, /const result = await mkSendQueuedJobs\(out\.jobs \|\| \[\]\)/,
+    'キュー登録後に送信を実行していない');
+  // 「まだ送信されていません」で終わる旧文言を残さない
+  assert.equal(SCRIPT.includes('キューに登録しました（まだ送信されていません）'), false,
+    'キュー登録で終わる旧実装のまま');
+  assert.equal(/Step 5 の「配信内容を確認」→「実際に配信する」で送信します/.test(SCRIPT), false,
+    '別操作を要求する案内が残っている');
+});
+
+test('guard(send): 実送信は jobId と確認人数を必ず添える（二重送信・取り違え防止）', () => {
+  const fn = SCRIPT.slice(SCRIPT.indexOf('async function mkSendQueuedJobs'), SCRIPT.indexOf('function mkRenderSendOutcome'));
+  assert.match(fn, /mkDispatchCall\(true, jobId\)/, 'ジョブ単位の確認をしていない');
+  assert.match(fn, /mkDispatchCall\(false, jobId, pre\.willSend\)/, '実送信に人数を添えていない');
+  assert.match(fn, /buildJobPreflight/, '判定の単一源を通していない');
+});
+
+test('guard(send): 送信対象 0 名なら実送信を呼ばない', () => {
+  const fn = SCRIPT.slice(SCRIPT.indexOf('async function mkSendQueuedJobs'), SCRIPT.indexOf('function mkRenderSendOutcome'));
+  assert.match(fn, /if \(pre\.willSend === 0\)[\s\S]{0,400}continue;/, '0 名でも送信を呼んでいる');
+});
+
+test('guard(send): 失敗を PENDING のまま放置せず、理由と再実行可否を出す', () => {
+  const fn = SCRIPT.slice(SCRIPT.indexOf('function mkRenderSendOutcome'), SCRIPT.indexOf('function mkExclusionLabel'));
+  assert.match(fn, /送信できませんでした（キュー登録は済んでいます）/, '失敗時の案内が無い');
+  assert.match(fn, /再実行できます/, '再実行できることを伝えていない');
+  assert.match(fn, /二重に送りません/, '再実行の安全性を伝えていない');
+  // 部分失敗を成功と読ませない
+  assert.match(fn, /一部は送れていません/);
+  assert.match(fn, /失敗分は自動で再送しません/);
+});
+
+test('guard(send): 受理と実配信を混同させない', () => {
+  const fn = SCRIPT.slice(SCRIPT.indexOf('function mkRenderSendOutcome'), SCRIPT.indexOf('function mkExclusionLabel'));
+  assert.match(fn, /配信基盤が受理した状態/, 'sent を配信完了と読ませている');
+});
+
+test('guard(send): ボタンの文言が実際の動作と一致する', () => {
+  assert.match(PAGE, /このボタンでキュー登録と送信まで完了します/);
+  assert.match(SCRIPT, /このままキュー登録して送信まで実行します/, '確認ダイアログが実態と違う');
+});
+
+test('guard(send): 除外理由の表示名はサーバーの単一源を使う', () => {
+  assert.match(SCRIPT, /mkLabels = data\.labels \|\| \{\}/, 'ラベルを受け取っていない');
+  assert.match(SCRIPT, /\(mkLabels && mkLabels\.exclusion\) \|\| \{\}/, '画面でラベルを再定義している');
+});
