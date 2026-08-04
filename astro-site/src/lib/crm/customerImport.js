@@ -35,6 +35,21 @@ export const KNOWN_COLUMNS = Object.freeze({
   note: '備考',
 });
 
+/**
+ * **判定には使うが、顧客レコードへは書かない**列。
+ *
+ * 2026-08-05 の実 CSV に `状態`（配信中のみ）と `エラーカウント数`（0/1/2）があった。
+ * これらは「取り込んでよい相手か」を決める材料なので**読む必要がある**が、
+ * AK に対応する列は無く、保存すると用途不明のデータが顧客レコードに残る。
+ * したがって **読むが書かない**を明示的な区分として持つ。
+ *
+ * ⚠️ `電話番号` はここにも入れない。**読みもしない**（AK は電話番号を取り込まない方針）。
+ */
+export const JUDGE_ONLY_COLUMNS = Object.freeze({
+  status: '状態（配信中 / 配信停止 など）',
+  error_count: '配信失敗回数',
+});
+
 /** 列名のゆらぎを吸収する（日本語ヘッダ・大文字・空白）*/
 const COLUMN_ALIASES = Object.freeze({
   email: ['email', 'mail', 'mailaddress', 'mail_address', 'メールアドレス', 'メール', 'アドレス', 'eメール'],
@@ -42,6 +57,9 @@ const COLUMN_ALIASES = Object.freeze({
   registered_at: ['registered_at', 'created_at', 'registerdate', '登録日', '登録日時', '作成日'],
   source: ['source', 'list', '取得元', '名簿', 'リスト名'],
   note: ['note', 'memo', '備考', 'メモ'],
+  // ── 判定にだけ使う列（顧客レコードへは書かない）──
+  status: ['status', '状態', 'ステータス', '配信状態', '購読状態'],
+  error_count: ['errorcount', 'エラーカウント数', 'エラーカウント', 'エラー回数', '配信エラー数'],
 });
 
 /** 1 行の判定結果 */
@@ -85,6 +103,14 @@ export const IMPORT_REASON = Object.freeze({
   DUPLICATE_IN_AK: 'duplicate_in_ak',
   ROLE_ADDRESS: 'role_address',
   ENCODING_BROKEN: 'encoding_broken',
+  /** 名簿側の状態が「送ってはいけない」（配信停止・退会・エラー等） */
+  SOURCE_STATUS_EXCLUDED: 'source_status_excluded',
+  /** 名簿側の状態が未知（推測で取り込まない） */
+  SOURCE_STATUS_UNKNOWN: 'source_status_unknown',
+  /** 旧配信基盤での配信失敗歴あり */
+  DELIVERY_ERROR_HISTORY: 'delivery_error_history',
+  /** 同じアドレスに違う氏名が複数ファイルにある */
+  NAME_CONFLICT: 'name_conflict',
   /** AK 側が意図的に止めた相手（suspended / banned / inactive） */
   SUSPENDED: 'suspended',
   /** テスト用アカウント（Status=test / プラン=test / 配信テスト受信者） */
@@ -113,6 +139,10 @@ export const IMPORT_REASON_LABEL = Object.freeze({
   test_account: 'テスト用アカウント',
   ambiguous_match: 'どの既存レコードに当てるか決められない',
   unsupported_row: '行として扱えない（列数が見出しと合わない等）',
+  source_status_excluded: '名簿側の状態が「送ってはいけない」',
+  source_status_unknown: '名簿側の状態が未知（確認が必要）',
+  delivery_error_history: '旧配信基盤で配信に失敗した履歴あり',
+  name_conflict: '複数ファイルで氏名が食い違う',
 });
 
 /** 共用アドレスの接頭辞。個人ではないので無料リストに入れない */
@@ -286,6 +316,12 @@ export function buildImportPreview(input = {}) {
   for (const row of rows) {
     // 見出しと列数が合わない行は**黙って捨てない**。人が見る側へ回す
     if (row && row.__unsupported === true) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.UNSUPPORTED_ROW); continue; }
+    // 名簿側の状態が「送ってはいけない」なら、AK の状態を見るまでもなく除外
+    if (row && row.__statusExcluded === true) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.SOURCE_STATUS_EXCLUDED); continue; }
+    // 未知の状態・氏名の食い違い・配信失敗歴は**推測で作らない**（人が決める）
+    if (row && row.__statusUnknown === true) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.SOURCE_STATUS_UNKNOWN); continue; }
+    if (row && row.__deliveryErrorHistory === true) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.DELIVERY_ERROR_HISTORY); continue; }
+    if (row && row.__nameConflict === true) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.NAME_CONFLICT); continue; }
     const email = normalizeEmail(row && (row.email ?? row.Email));
     if (!email) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.NO_EMAIL); continue; }
     if (!isValidEmail(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.INVALID_EMAIL); continue; }
