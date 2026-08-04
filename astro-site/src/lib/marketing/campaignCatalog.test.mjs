@@ -161,7 +161,9 @@ test('【version ロック】本文を変えたら version を上げる', () => 
   // version を据え置いたまま本文を変えると DeliveryKey が変わらず、
   // 既送信者へ修正版が二度と届かない。
   const LOCKED = {
-    'marketing-canary': { version: 2, hash: '162081596a79ea5a' },
+    // v2 → v3（2026-08-04）: 本文は不変（hash も不変）。Event Webhook の open 有効化直後の
+    // 着弾確認をやり直すための版上げ。運用テスト専用なので実顧客向けには影響しない
+    'marketing-canary': { version: 3, hash: '162081596a79ea5a' },
     'expired-comeback': { version: 2, hash: 'e6077db532e76564' },
     'premium-renewal': { version: 2, hash: '1bfa299fb86a339c' },
     'sanrenpuku-offer': { version: 2, hash: '59a115bc1933cb46' },
