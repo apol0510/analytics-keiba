@@ -163,6 +163,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="measure-box" id="mkMeasureBox" hidden></div>
       </section>
 
+      <!--
+        外部保有リストの取り込み（下見だけ）。
+        ⚠️ この領域は **1 件も書き込まない**。CSV を読んで件数を数えるだけ。
+           本番取り込みは別 Phase・別承認で、ボタンは常に disabled のまま置く。
+        ⚠️ 13,000 行を DOM へ描かない。出すのは件数と理由コードだけ。
+      -->
+      <section class="step imp-step" aria-labelledby="impH">
+        <h2 id="impH" class="step-h"><span class="step-n">＋</span> 外部顧客リストの取り込み（下見）</h2>
+        <p class="note">
+          別途お持ちの無料ユーザーリスト（CSV）を、<b>取り込まずに</b>下見します。
+          件数と除外理由だけを表示し、<b>メールアドレス・氏名・顧客 ID は画面にも通信にも出しません</b>。
+          <b>この操作では 1 件も取り込まれません。</b>
+        </p>
+        <div class="toolbar">
+          <input type="file" id="impFile" accept=".csv,text/csv,text/plain" aria-label="CSV ファイル" />
+          <button type="button" id="impPreview" class="btn-primary btn-md">下見する（取り込みません）</button>
+          <button type="button" id="impSpec" class="btn-ghost btn-sm">受け入れ仕様を見る</button>
+          <span class="note" id="impState" aria-live="polite"></span>
+        </div>
+        <p class="imp-warn" id="impNotImported">まだ取り込まれていません（下見のみ）。</p>
+        <div class="dry-panel" id="impResult" hidden></div>
+        <div class="toolbar imp-run-row">
+          <button type="button" id="impRun" class="btn-primary btn-md" disabled aria-disabled="true">
+            本番取り込みを実行（無効）
+          </button>
+          <span class="note">
+            本番取り込みは<b>別承認</b>が必要です。実 CSV の受領・書き込みの有効化・実行手順が決まるまで、このボタンは押せません。
+          </span>
+        </div>
+      </section>
+
       <section class="step" data-step="1" aria-labelledby="mkStep1H">
         <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む（個別に選ぶ）</h2>
       <p class="routine-note" id="mkRoutineNote"></p>
@@ -1056,10 +1087,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   }
   .ppe .measure-box.ok { border-left-color: #3fa66a; }
   .ppe .seg-sample { font-size: .72rem; color: #93a4bd; line-height: 1.7; margin: .3rem 0 0; }
+  /* 外部リスト取り込み（下見のみ）。書き込む領域と見分けがつくよう枠を変える */
+  .ppe .imp-step { border-left: 3px solid #9b7bd4; }
+  .ppe .imp-warn {
+    margin: .5rem 0 0; padding: .5rem .65rem; border-radius: 8px;
+    background: rgba(217,164,65,.12); border-left: 3px solid #d9a441;
+    font-size: .76rem; color: #f0d9a8;
+  }
+  .ppe .imp-run-row { margin-top: .6rem; align-items: center; }
+  .ppe .imp-run-row .btn-primary[disabled] { opacity: .45; cursor: not-allowed; }
+  .ppe .imp-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  .ppe .imp-table th, .ppe .imp-table td { padding: .3rem .4rem; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; }
+  .ppe .imp-table td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .ppe .imp-meta { font-size: .72rem; color: #93a4bd; line-height: 1.7; margin: .4rem 0 0; word-break: break-all; }
   @media (max-width: 640px) {
     .ppe .seg-step .toolbar { flex-direction: column; align-items: stretch; }
     .ppe .seg-step .toolbar > * { width: 100%; }
     .ppe .measure-box { font-size: .72rem; }
+    .ppe .imp-step .toolbar { flex-direction: column; align-items: stretch; }
+    .ppe .imp-step .toolbar > * { width: 100%; }
+    .ppe .imp-table { font-size: .74rem; }
   }
   /* 引き継ぎ復旧（通常フローでは隠す。対象 0 名のときだけ出す） */
   .ppe .handoff-recover {
@@ -4158,6 +4205,176 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     $('mkSegLoad')?.addEventListener('click', mkSegPreview);
+
+    // ── 外部顧客リストの取り込み（下見だけ）────────────────────────
+    // ⚠️ ここから書き込みは一切行わない。API 側にも取り込みの実行経路は無い。
+    // ⚠️ 13,000 行を DOM へ描かない。**件数と理由コードだけ**を表に出す。
+    //    CSV の中身（アドレス・氏名）はブラウザのメモリから出さず、API へは
+    //    base64 のまま渡して、返ってくるのは件数だけ。
+    const IMPORT_API = '/.netlify/functions/admin-customer-import';
+
+    async function impCall(payload) {
+      const secret = secretEl.value.trim();
+      if (!secret) { $('connBody').hidden = false; throw new Error('管理シークレットを入力してください'); }
+      const res = await fetch(IMPORT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    /** ファイル → base64（中身は画面に出さない） */
+    function impReadBase64(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onerror = () => reject(new Error('ファイルを読み取れませんでした'));
+        fr.onload = () => {
+          const buf = new Uint8Array(fr.result);
+          let bin = '';
+          const CHUNK = 0x8000;
+          for (let i = 0; i < buf.length; i += CHUNK) {
+            bin += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
+          }
+          resolve(btoa(bin));
+        };
+        fr.readAsArrayBuffer(file);
+      });
+    }
+
+    function impRow(tbody, label, value, cls) {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th'); th.textContent = label;
+      const td = document.createElement('td'); td.className = 'n' + (cls ? ' ' + cls : '');
+      td.textContent = value;
+      tr.appendChild(th); tr.appendChild(td); tbody.appendChild(tr);
+    }
+
+    function impRender(out) {
+      const box = $('impResult');
+      if (!box) return;
+      box.innerHTML = '';
+      box.hidden = false;
+
+      const c = out.counts || {};
+      const table = document.createElement('table');
+      table.className = 'imp-table';
+      const tbody = document.createElement('tbody');
+      impRow(tbody, '総行数', String(c.総行数 ?? 0));
+      impRow(tbody, '新規追加の候補', String(c.新規追加候補 ?? 0));
+      impRow(tbody, '既存更新の候補', String(c.既存更新候補 ?? 0));
+      impRow(tbody, '除外', String(c.除外 ?? 0));
+      impRow(tbody, '要確認', String(c.要確認 ?? 0));
+      table.appendChild(tbody);
+      box.appendChild(table);
+
+      if (c.balanced === false) {
+        const w = document.createElement('p');
+        w.className = 'blocker';
+        w.textContent = '⚠️ 母数と内訳の合計が一致しません。この下見は使えません。';
+        box.appendChild(w);
+      }
+
+      // 理由別（**コードとラベルだけ**。行の中身は出さない）
+      const reasons = out.reasonCounts || {};
+      const labels = out.reasonLabels || {};
+      const keys = Object.keys(reasons).sort((a, b) => reasons[b] - reasons[a]);
+      if (keys.length) {
+        const h = document.createElement('p');
+        h.className = 'imp-meta'; h.textContent = '除外・要確認の理由';
+        box.appendChild(h);
+        const t2 = document.createElement('table');
+        t2.className = 'imp-table';
+        const tb2 = document.createElement('tbody');
+        for (const k of keys) impRow(tb2, (labels[k] || k) + '（' + k + '）', String(reasons[k]));
+        t2.appendChild(tb2);
+        box.appendChild(t2);
+      }
+
+      const p = out.preview || {};
+      const ak = out.akSnapshot || {};
+      const meta = document.createElement('p');
+      meta.className = 'imp-meta';
+      meta.textContent = [
+        '文字コード: ' + (p.encoding || '不明'),
+        '読み取った列: ' + ((p.detectedColumns || []).join(' / ') || 'なし'),
+        '取り込まない列: ' + ((p.ignoredColumns || []).join(' / ') || 'なし'),
+        'AK 既存: ' + (ak.uniqueEmails ?? '—') + ' 件（重複 ' + (ak.duplicateEmails ?? '—') + ' 件）',
+        '下見 ID: ' + (p.importPreviewId || '—'),
+        '有効期限: ' + (p.expiresAt || '—'),
+        '指紋: ' + (p.summaryHash || '—'),
+        '書き込み: ' + (p.written || 'なし'),
+      ].join('\n');
+      box.appendChild(meta);
+
+      if (ak.providerSuppressionAvailable === false && ak.providerNote) {
+        const w = document.createElement('p');
+        w.className = 'blocker';
+        w.textContent = ak.providerNote;
+        box.appendChild(w);
+      }
+    }
+
+    $('impPreview')?.addEventListener('click', async () => {
+      const input = $('impFile');
+      const state = $('impState');
+      const file = input && input.files && input.files[0];
+      if (!file) { if (state) state.textContent = 'CSV ファイルを選んでください'; return; }
+      if (state) state.textContent = '読み取り中…（取り込みはしません）';
+      try {
+        const contentBase64 = await impReadBase64(file);
+        const out = await impCall({ action: 'previewCsv', contentBase64 });
+        if (out.ok === false) {
+          if (state) state.textContent = out.error || '読み取れませんでした';
+          const box = $('impResult');
+          if (box) {
+            box.hidden = false;
+            box.innerHTML = '';
+            const p = document.createElement('p');
+            p.className = 'blocker';
+            p.textContent = (out.error || '読み取れませんでした')
+              + ((out.missingColumns || []).length ? '（不足: ' + out.missingColumns.join(', ') + '）' : '');
+            box.appendChild(p);
+          }
+          return;
+        }
+        impRender(out);
+        if (state) state.textContent = '下見が終わりました（まだ取り込まれていません）';
+      } catch (e) {
+        if (state) state.textContent = e.message || '下見に失敗しました';
+      }
+    });
+
+    $('impSpec')?.addEventListener('click', async () => {
+      const state = $('impState');
+      try {
+        const spec = await impCall({ action: 'spec' });
+        const box = $('impResult');
+        if (!box) return;
+        box.hidden = false;
+        box.innerHTML = '';
+        const pre = document.createElement('p');
+        pre.className = 'imp-meta';
+        pre.textContent = [
+          '対応文字コード: ' + (spec.encodings || []).join(' / '),
+          '改行: ' + (spec.newlines || []).join(' / '),
+          '引用符: ' + (spec.quoting || ''),
+          '必須列: ' + (spec.requiredColumns || []).join(', '),
+          '任意列: ' + (spec.optionalColumns || []).map((o) => o.column).join(', '),
+          '知らない列: ' + (spec.unknownColumns || ''),
+          '上限: ' + Math.floor((spec.limits?.maxBytes || 0) / 1024 / 1024) + 'MB / '
+            + (spec.limits?.maxRows || 0).toLocaleString() + ' 行',
+          '下見の有効期間: ' + (spec.previewTtlMinutes || 0) + ' 分',
+          spec.notice || '',
+        ].join('\n');
+        box.appendChild(pre);
+        if (state) state.textContent = '受け入れ仕様を表示しました';
+      } catch (e) {
+        if (state) state.textContent = e.message || '仕様を取得できませんでした';
+      }
+    });
 
     /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
     function mkNotify(kind, text, detail) {
