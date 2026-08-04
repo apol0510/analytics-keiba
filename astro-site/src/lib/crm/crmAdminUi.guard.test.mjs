@@ -124,6 +124,40 @@ test('guard(ui): provider 側だけの数値は参考値と断る', () => {
   assert.match(PAGE, /配信基盤側だけで確認できた数値は「参考値」/);
 });
 
+// ── 顧客カルテ ⑥-2（恒久台帳）も同じ規則で出す ──────────────────
+// 2026-08-04: セグメント下見は「—」を出せるのに、カルテだけ `le.opens ?? 0` で
+// 「開封 0 回」と断定していた。Webhook が open を送っていないだけなのに
+// 「開かれていない」と読めてしまう（provider 側では 15 名が開封していた）。
+
+test('guard(ui): カルテの開封・クリックを生の 0 で断定しない', () => {
+  const i = PAGE.indexOf('⑥-2 メール反応（恒久台帳）');
+  assert.ok(i > -1, 'カルテの恒久台帳セクションが無い');
+  const block = PAGE.slice(i, i + 2600);
+  for (const bad of ['le.opens ?? 0', 'le.clicks ?? 0']) {
+    assert.equal(block.includes(bad), false, `${bad} で未計測を 0 と断定している`);
+  }
+  assert.match(block, /data\.measurement/, 'カルテが計測状態を参照していない');
+  assert.match(block, /計測していません|計測状態を確認できません/, '未計測の文言が無い');
+});
+
+test('guard(api): カルテ応答に計測状態を含める', () => {
+  const fn = sliceFrom(FN, 'async function handleCustomerDetail(', 6000);
+  assert.ok(fn, 'handleCustomerDetail が無い');
+  assert.match(fn, /readMeasurementSettings\(/, 'カルテで計測状態を読んでいない');
+  const body = fn.slice(fn.indexOf('return json(200'));
+  assert.match(body, /\bmeasurement,/, '応答に measurement を含めていない');
+  // 表示文言は単一源で決める（画面に判断を持ち出さない）
+  assert.match(body, /measuredCount\(measurement\.open/, '開封の表示を単一源で決めていない');
+  assert.match(body, /measuredCount\(measurement\.click/, 'クリックの表示を単一源で決めていない');
+});
+
+test('guard(ui): 確定している delivered まで隠さない', () => {
+  const i = PAGE.indexOf('⑥-2 メール反応（恒久台帳）');
+  const block = PAGE.slice(i, i + 2600);
+  // delivered は Webhook が届けている確定値。開封計測の状態で伏せてはいけない
+  assert.match(block, /'配信済み', String\(le\.delivered \?\? 0\)/, 'delivered を未計測扱いにしている');
+});
+
 // ── 既存フローの非回帰 ─────────────────────────────────────────
 
 test('guard(regression): 既存の小規模フローを壊していない', () => {

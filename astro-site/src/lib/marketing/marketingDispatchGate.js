@@ -64,6 +64,28 @@ export function isMarketingDispatchEnabled(env) {
 }
 
 /**
+ * マーケティング配信の **クリック計測**（本文リンクの書き換え）が有効か。既定 OFF。
+ *
+ * ── なぜ「配信基盤のアカウント設定」で有効化しないか ────────────────────
+ * アカウント全体の click tracking を ON にすると、**tracking を明示 opt-out していない
+ * 送信経路すべて**の本文リンクが書き換わる。実測（2026-08-04）で opt-out していない
+ * 経路には `send-magic-link`（ログインリンク）が含まれる。ログインリンクは
+ * **15 分・単回使用のトークン**なので、
+ *
+ *   - リンク検査ボット（企業ゲートウェイ等）が先読みしただけでトークンが消費され、
+ *     利用者がクリックしたときには**ログインできない**
+ *   - トークンが第三者のリダイレクタを経由する
+ *   - 本文に併記している「コピー用 URL」が配信基盤のドメインに変わり、偽装リンクに見える
+ *
+ * したがって**アカウント設定は触らず**、マーケティング配信の 1 通ごとの
+ * `tracking_settings.click_tracking` でのみ有効化する（per-message はアカウント設定より優先）。
+ * トランザクションメールは影響を受けない。
+ */
+export function isMarketingClickTrackingEnabled(env) {
+  return !!env && env.MARKETING_CLICK_TRACKING_ENABLED === 'true';
+}
+
+/**
  * 共有 executor（execute-scheduled-emails-background）がこのジョブを処理してよいか。
  *
  * ── マーケティングジョブは **常に** 共有 executor では送らない（2026-07-30 恒久化）──

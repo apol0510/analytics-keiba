@@ -157,5 +157,9 @@ jobs:
         working-directory: astro-site
         run: npm run test:entitlements
 
+      - name: Verify CRM 基盤（大規模セグメント / 計測の 0 と未計測を混同しない / ログインリンクを書き換えない）
+        working-directory: astro-site
+        run: npm run test:crm
+
       - name: Verify Netlify deploy trigger（一過性 timeout は retry / 4xx は即 FAIL / 重複 build なし）
         run: bash .github/actions/netlify-deploy/tests/run-tests.sh

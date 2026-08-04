@@ -47,8 +47,46 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: AK 専用 CRM の基盤（大規模セグメント + 計測状態 + 大規模配信の設計）
-（branch `feat/crm-segment-foundation`・Draft PR・merge 前・production 未反映）。**
+**Phase（2026-08-04 現在・最新）: 配信計測の正常化（開封・クリックを AK の台帳へ入れる）
+（branch `feat/crm-measurement-normalize`・Draft PR・merge 前・production 未反映）。**
+
+- **目的**: 「開封 0」が**未開封なのか計測していないのか**を区別できない状態を終わらせる。
+  2026-08-04 の配信は台帳では開封 0 だったが、provider 側では **15 名が開封**していた
+- **本番 read-only 実測（2026-08-04）**:
+
+  | ジョブ | 宛先 | CampaignDeliveries | EmailEvents（台帳） | provider 実測（参考値・保持 3 日） |
+  |---|---|---|---|---|
+  | `…-d9678b3d-1`（8/3 22:41Z） | 28 | 28 行すべて `sent` | delivered 28 / open **0 行** | 開封 **10 名** |
+  | `…-0f57abd4-1`（8/4 07:33Z＝JST 16:33） | 36 | 36 行すべて `sent` | delivered 36 / open **0 行** | 開封 **5 名** |
+  | 合計 | 64 | — | delivered 64 / bounce 0 | 開封 15 名 / 21 イベント / **クリック 0** |
+
+  計測設定: open tracking 有効 / **click tracking 無効** /
+  Event Webhook 有効・`delivered,bounce,dropped,spam_report,unsubscribe=true`・**`open=false, click=false`**
+- **原因**: Event Webhook が `open` を AK へ送らない設定。click は tracking 自体が無効。
+  取込側（`emailEventLedger.js`）は open/click を**既に完全に扱える**ので取込コードの変更は不要
+- **本 PR でやったこと**（設定変更・送信は**していない**）:
+  - 顧客カルテ ⑥-2 が `le.opens ?? 0` で「開封 0 回」と**断定していた**のを修正。
+    計測が有効なときだけ数値、無効なら「—（計測していません）」/ 不明なら別文言。
+    delivered / bounce / 配信停止 / 迷惑報告は**確定値なので隠さない**
+  - カルテ API（`handleCustomerDetail`）が計測状態を返すようにした（下見と同じ単一源）
+  - **アカウント全体の click tracking を使わない設計に確定**。マーケ配信の per-message
+    `tracking_settings` ＋ env ゲート `MARKETING_CLICK_TRACKING_ENABLED`（既定 OFF）に閉じ込め、
+    `send-magic-link` には明示的な opt-out を入れた（後述の理由）
+  - 手順書 `astro-site/docs/DELIVERY_MEASUREMENT.md`（変更前の記録・順序・rollback・確認方法）
+  - read-only 確認スクリプト `npm run check:measurement`（GET のみ・値は出さない）
+  - fixture テスト（設定変更後に届くはずの open/click の形を先に固定）＋ guard 2 種。
+    **CRM テストが `check:safety` に入っていなかった**ため `test:crm` を新設して組み込み
+- **なぜアカウント全体の click tracking を有効化しないか**: per-message で opt-out していない
+  送信経路すべての本文リンクが書き換わる。実測でその中に `send-magic-link`（**15 分・単回使用の
+  ログイントークン**）が含まれ、リンク検査ボットの先読みだけでトークンが消費されて
+  **本人がログインできなくなる**
+- **未実施（停止境界）**: 外部サービス設定変更（Webhook の open/click）／production env 変更
+  （`MARKETING_CLICK_TRACKING_ENABLED`）／テストメールの実送信／PR merge／deploy
+- **注意**: `netlify dev:exec` が返す secret 系 env は**マスクされる**（`****…==`）。
+  取得値をローカル検証してはいけない（署名鍵を「壊れている」と誤判定した前例あり・本番は正常）
+
+**Phase（2026-08-04）: AK 専用 CRM の基盤（大規模セグメント + 計測状態 + 大規模配信の設計）
+（branch `feat/crm-segment-foundation` / **PR #229 merged `b55f264`・production deploy 済み**）。**
 
 - **目的**: 既存の小規模フローを壊さずに、大規模配信の土台を作る。
   母集団は 3 つ ―― ① AK 登録済み 1,464 件（無料 1,374）／
@@ -70,24 +108,22 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 - **本番 read-only 実測**: Customers 1,464 件（一意 1,454）／無料 1,374 ／
   **無料セグメント: 母数 1,374 → 送信候補 1,296 / 除外 78**
   （停止リスト 39 / 重複 18 / テスト 6 / 直近送信 6 / soft 6 / hard 2 / 配信停止 1）
-- **現在地**: 基盤 Phase の Draft PR 完成。**production 未反映**
+- **現在地**: **PR #229 merged（`b55f264`）・production 反映済み**
 - **未完了**: **外部 13,000 件の実 CSV 受領・本番取り込み・顧客レコード作成（別承認まで行わない）** /
   snapshot の本番作成 / 親ジョブ・子バッチの実行系 / 成果集計の実データ配線 /
   Event Webhook の open・click 有効化（設定変更は未実施）
-- **停止理由**: Draft PR 完成が停止境界。merge・deploy・送信は未承認
-- **2026-08-04 の 36 名ジョブは PENDING のまま＝1 通も送られていない**（read-only で確定。
-  ScheduledEmails=PENDING / SentCount 0 / CampaignDeliveries 全 36 行 queued / SentAt 0 件 /
-  EmailEvents 0 件 / SendGrid Activity にも新規送信なし）。
-  原因は**判定 B: 送信ボタンがキュー登録だけで終わっていた**。「◯名へ送信する」を押しても
-  `action:'send'`（キュー登録）までで、実送信は送信状況の「今すぐ送信」を別途押す必要があった。
-  運用者は送ったつもりで画面を離れていた。
-  → **1 操作でキュー登録 → 送信 → 結果表示まで完結**するよう修正
-  （別画面・CLI・手動 dispatcher を要求しない）。ジョブごとに 確認 → 実送信（jobId + 確認人数つき）
-  を通すので、二重送信・取り違えは従来どおり防ぐ。失敗時は PENDING のまま放置せず、
-  理由と「送信状況から再実行できる（送信済みへは二重送信しない）」を表示する。
-  **36 名ジョブは未送信のまま**。送るかどうかは別途判断が要る
-- **未実施**: PR merge / production deploy / snapshot 本番作成 / 13,000 件のキュー登録 /
-  メール送信 / dispatcher 実行 / SendGrid 設定変更 / env 変更 / Airtable write
+- **36 名ジョブは 2026-08-04 16:33 JST（07:33Z）に送信済み**（read-only で確定。
+  ScheduledEmails `mkt-comeback-light-30d-granted-v2-0f57abd4-1` = `SENT` / RecipientCount 36 /
+  CampaignDeliveries 36 行すべて `sent` / EmailEvents delivered 36・bounce 0 /
+  SendGrid Activity でも 64 通すべて delivered）。
+  管理画面の表示（結果: 送信しました / 送信 36 通 / 失敗 0 / 除外 0 / 再送不可）と一致する。
+
+  > **訂正**: 本書の旧記述「36 名ジョブは PENDING のまま＝1 通も送られていない」は**古い**。
+  > 当時は送信ボタンがキュー登録だけで終わる不具合（判定 B）で PENDING に留まっており、
+  > `b55f264` で 1 操作（キュー登録 → 送信 → 結果表示）に修正したあと、実際に送信された。
+  > 修正内容自体は従来どおり: ジョブごとに 確認 → 実送信（jobId + 確認人数つき）を通すので
+  > 二重送信・取り違えは防ぐ。失敗時は理由と再実行手段を表示する。
+- **この Phase で未実施だったもの**: SendGrid 設定変更 / env 変更（→ 次 Phase「配信計測の正常化」へ引き継ぎ）
 
 **Phase（2026-08-04）: 管理画面の初期化が bridge 未読込で止まる不具合を直す
 （branch `fix/admin-bridge-init-order`・Draft PR・merge 前・production 未反映）。**
@@ -1594,4 +1630,13 @@ rollback は該当 env の unset（コード変更不要）。
 - 作業はいずれも**分離 worktree** で実施（ユーザーのメイン checkout へは書込まない。
   未コミット変更はユーザーの作業中変更として保全）。
 - メイン checkout の状態は §In Progress を参照（point-in-time 観測。本書に固定記載しない）。
-- **Last verified**: 2026-08-01
+- **Branch（本更新時 / Draft PR・未 merge）**: `feat/crm-measurement-normalize`（worktree
+  `/Users/user/Projects/analytics-keiba-measure`）。base `main` / 分岐時の `origin/main` は `b55f264`。
+  変更範囲は `astro-site/src/lib/crm/**` / `astro-site/src/lib/marketing/marketingDispatchGate.js` /
+  `astro-site/src/lib/webhooks/emailEventOpenClick.fixture.test.mjs`（新規）/
+  `astro-site/netlify/functions/{admin-marketing,marketing-campaign-dispatch,send-magic-link}.js` /
+  `astro-site/src/pages/admin/premium-plus-eligibility.astro` /
+  `astro-site/scripts/check-measurement-settings.mjs`（新規）/ `astro-site/package.json`（script 追加のみ）/
+  `.github/workflows/safety-check.yml`（step 追加のみ）/ docs 3 ファイル。**lockfile は未変更。**
+  外部サービス設定変更・production env 変更・メール実送信は**していない**（停止境界）。
+- **Last verified**: 2026-08-04
