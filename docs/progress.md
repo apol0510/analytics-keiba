@@ -75,6 +75,17 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   snapshot の本番作成 / 親ジョブ・子バッチの実行系 / 成果集計の実データ配線 /
   Event Webhook の open・click 有効化（設定変更は未実施）
 - **停止理由**: Draft PR 完成が停止境界。merge・deploy・送信は未承認
+- **2026-08-04 の 36 名ジョブは PENDING のまま＝1 通も送られていない**（read-only で確定。
+  ScheduledEmails=PENDING / SentCount 0 / CampaignDeliveries 全 36 行 queued / SentAt 0 件 /
+  EmailEvents 0 件 / SendGrid Activity にも新規送信なし）。
+  原因は**判定 B: 送信ボタンがキュー登録だけで終わっていた**。「◯名へ送信する」を押しても
+  `action:'send'`（キュー登録）までで、実送信は送信状況の「今すぐ送信」を別途押す必要があった。
+  運用者は送ったつもりで画面を離れていた。
+  → **1 操作でキュー登録 → 送信 → 結果表示まで完結**するよう修正
+  （別画面・CLI・手動 dispatcher を要求しない）。ジョブごとに 確認 → 実送信（jobId + 確認人数つき）
+  を通すので、二重送信・取り違えは従来どおり防ぐ。失敗時は PENDING のまま放置せず、
+  理由と「送信状況から再実行できる（送信済みへは二重送信しない）」を表示する。
+  **36 名ジョブは未送信のまま**。送るかどうかは別途判断が要る
 - **未実施**: PR merge / production deploy / snapshot 本番作成 / 13,000 件のキュー登録 /
   メール送信 / dispatcher 実行 / SendGrid 設定変更 / env 変更 / Airtable write
 

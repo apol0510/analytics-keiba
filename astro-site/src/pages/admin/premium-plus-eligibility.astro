@@ -2604,6 +2604,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     let mkData = null;                 // 直近の customers 応答
     let mkCampaigns = [];              // カタログ
+    let mkLabels = {};                 // 除外理由などの表示名（サーバーの単一源）
     let mkSendEnabled = false;         // live 送信が有効か（本番は既定 false）
     const mkSelected = new Set();      // 選択中の recordId
 
@@ -2655,6 +2656,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (data) { mkState.sendEnabled = !!data.sendEnabled; mkState.dispatchEnabled = !!data.dispatchEnabled; }
       if (!data) return;
       mkCampaigns = data.campaigns || [];
+      mkLabels = data.labels || {};
       mkSendEnabled = !!data.sendEnabled;
       mkState.sendEnabled = !!data.sendEnabled;
       mkState.dispatchEnabled = !!data.dispatchEnabled;
@@ -4304,6 +4306,101 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return data;
     }
 
+    /**
+     * キュー登録したジョブを**そのまま送信まで実行する**。
+     *
+     * ── なぜここでやるか ──────────────────────────────────────
+     * 「◯名へ送信する」を押したのにキュー登録で止まると、運用者は送ったつもりで
+     * 画面を離れ、ジョブが PENDING のまま残る（2026-08-04 の 36 名ジョブで実際に発生）。
+     * 別画面・CLI・手動 dispatcher を要求しない。**1 操作で完結させる**。
+     *
+     * ── 安全性は落とさない ────────────────────────────────────
+     * ジョブごとに「確認（dryRun）→ 実送信」を通す。実送信には jobId と
+     * 確認時の人数を必ず添えるので、
+     *   ・他のキューを巻き込まない
+     *   ・確認と人数が食い違えば API 側が 409 で止める（書き込みゼロ）
+     *   ・同じジョブで送信済みの相手は API 側が除外する（二重送信しない）
+     * 送信直前の配信停止・バウンス・退会・頻度の再判定も従来どおり働く。
+     */
+    async function mkSendQueuedJobs(jobs) {
+      const list = (jobs || []).map((j) => String(j && j.jobId ? j.jobId : '')).filter(Boolean);
+      const out = { attempted: 0, sent: 0, failed: 0, skipped: 0, byReason: {}, errors: [], jobs: list.length };
+      if (list.length === 0) {
+        out.errors.push('登録したジョブを特定できませんでした。送信状況から実行してください。');
+        return out;
+      }
+      for (const jobId of list) {
+        try {
+          // ① 確認（書き込みなし）。ここで実際に送る人数が決まる
+          const pre = jobSendApi().buildJobPreflight(await mkDispatchCall(true, jobId), jobId);
+          if (!pre.ok) {
+            out.errors.push(jobSendApi().JOB_SEND_BLOCK_LABEL[pre.reason] || '確認できませんでした');
+            continue;
+          }
+          if (pre.willSend === 0) {
+            out.skipped += pre.willSkip;
+            for (const [k, v] of Object.entries(pre.skipByReason || {})) {
+              out.byReason[k] = (out.byReason[k] || 0) + v;
+            }
+            continue;
+          }
+          // ② 実送信（確認した人数を添える。食い違えば API 側が止める）
+          out.attempted += pre.willSend;
+          const res = await mkDispatchCall(false, jobId, pre.willSend);
+          out.sent += Number(res.sent) || 0;
+          out.failed += Number(res.failed) || 0;
+          out.skipped += Number(res.skipped) || 0;
+          for (const [k, v] of Object.entries(res.skippedByReason || {})) {
+            out.byReason[k] = (out.byReason[k] || 0) + v;
+          }
+        } catch (e) {
+          out.errors.push(String((e && e.message) || '送信に失敗しました'));
+        }
+      }
+      return out;
+    }
+
+    /**
+     * 送信結果を出す。**成功・部分失敗・失敗を読み違えさせない**。
+     * 失敗しても PENDING のまま黙って放置せず、理由と再実行できることを伝える。
+     */
+    function mkRenderSendOutcome(r, enqueued) {
+      const queued = Number(enqueued && enqueued.queued) || 0;
+      const reasons = Object.entries(r.byReason || {})
+        .map(([k, v]) => (mkExclusionLabel(k) + ' ' + v + ' 名')).join(' / ');
+      const detail = 'キュー登録 ' + queued + ' 名 / 送信 ' + r.sent + ' 名'
+        + (r.failed ? ' / 失敗 ' + r.failed + ' 名' : '')
+        + (r.skipped ? ' / 送らなかった ' + r.skipped + ' 名' : '')
+        + (reasons ? '（' + reasons + '）' : '');
+
+      if (r.errors.length > 0 && r.sent === 0) {
+        mkNotify('err', '送信できませんでした（キュー登録は済んでいます）',
+          r.errors.join(' / ') + '。' + detail
+          + '。送信状況の該当ジョブから「配信内容を確認」→「今すぐ送信」で再実行できます'
+          + '（送信済みの相手へは二重に送りません）。');
+        return;
+      }
+      if (r.failed > 0 || r.errors.length > 0) {
+        mkNotify('warn', r.sent + ' 名へ送信しました（一部は送れていません）',
+          detail + (r.errors.length ? ' / ' + r.errors.join(' / ') : '')
+          + '。失敗分は自動で再送しません。送信状況から再実行できます。');
+        return;
+      }
+      if (r.sent === 0) {
+        mkNotify('warn', '送信対象がありませんでした',
+          detail + '。全員が送信直前の再判定で除外されました。');
+        return;
+      }
+      mkNotify('ok', r.sent + ' 名へ送信しました', detail
+        + '。「送信済み」は配信基盤が受理した状態です。実際に届いたかは送信状況で確認できます。');
+    }
+
+    /** 除外理由コード → 表示名（API が返すラベルを優先） */
+    function mkExclusionLabel(code) {
+      const labels = (mkLabels && mkLabels.exclusion) || {};
+      return labels[code] || code;
+    }
+
     function mkRenderDispatch(data, dryRun) {
       const box = $('mkDispatchResult');
       box.innerHTML = '';
@@ -4868,7 +4965,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       sec3.appendChild(ack);
       const irreversible = document.createElement('p');
       irreversible.className = 'blocker';
-      irreversible.textContent = '⚠️ 送信後は取り消せません。実際の顧客へメールが届きます。';
+      irreversible.textContent = '⚠️ このボタンでキュー登録と送信まで完了します。'
+        + '送信後は取り消せません。実際の顧客へメールが届きます。';
       sec3.appendChild(irreversible);
 
       const ops = document.createElement('div'); ops.className = 'ops';
@@ -4901,12 +4999,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           + '送信対象: ' + plan.selected + ' 名\n'
           + '除外: ' + plan.excluded + ' 名\n'
           + '実送信: ' + plan.willSend + ' 名\n\n'
-          + 'この内容で送信しますか？'
+          + 'このままキュー登録して送信まで実行します。送信後は取り消せません。\n'
+          + '実行しますか？'
         );
         if (!ok) return;
         btn.dataset.busy = '1';
         btn.disabled = true;
-        btn.textContent = '送信登録中…';
+        btn.textContent = 'キュー登録中…';
         const out = await mkCall({
           action: 'send',
           campaignId: campaign.campaignId,
@@ -4922,23 +5021,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         });
         btn.dataset.busy = '';
         if (out) {
-          // 登録できた ＝ 次は「送信直前の確認」。ここではまだ 1 通も送られていない
           mkState.enqueued = true;
           mkState.dispatch = {};
-          mkNotify('ok', 'キューに登録しました（まだ送信されていません）',
-            (out.queued || 0) + ' 名分。Step 5 の「配信内容を確認」→「実際に配信する」で送信します。');
-          mkMsg(out.notice || ('登録しました: ' + out.queued + ' 名'), 'ok');
           // 引き継ぎは**使い切り**。同じ成功者へもう一度送るには付与結果から取り直す
           if (mkState.handoff) {
             handoffApi().markHandoffQueued(sessionStorage, (out.jobs || []).map((j) => j.jobId));
-            mkNotify('info', 'この引き継ぎは使い切りました',
-              '同じ相手へもう一度送る場合は、カムバック特典タブの付与結果からあらためて引き継いでください。');
             mkHandoffRelease(true);
           }
+
+          // ── ここで**続けて送信まで行う** ────────────────────────────
+          // 「◯名へ送信する」を押したら、キュー登録で止めない。
+          // 以前はここで終わっており、運用者は送ったつもりなのにジョブが
+          // PENDING のまま残っていた（2026-08-04 の 36 名ジョブ）。
+          btn.textContent = '送信中…';
+          const result = await mkSendQueuedJobs(out.jobs || []);
+          btn.dataset.busy = '';
+
           mkSelected.clear();
           mkCloseModal();
           mkSyncFlow();
           await mkLoad();
+          mkRenderSendOutcome(result, out);
         } else {
           btn.textContent = '再試行';
           btn.disabled = false;
