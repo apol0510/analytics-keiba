@@ -48,7 +48,7 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 
 
 **Phase（2026-08-05 現在・最新）: 実 CSV 3 ファイルに合わせた取り込み規則の確定と本番 write path
-（branch `feat/customer-import-write`・Draft PR・merge 前・production 未反映）。**
+（**PR #233 merged `7de7e74`・production deploy `6a71e6a531d919000874b180` = state ready・公開中**）。**
 
 - **目的**: 実データに合わせて規則を確定し、**安全な本番 write path** を Draft PR まで作る。
   初回は **CREATE のみ**・**最大 100 件**・**既存 1,158 件は更新しない**。
@@ -87,8 +87,43 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   列があるときだけ書き、無ければ `Source` に出所とバッチを埋め込む（rollback の隔離キー）。
 - **二重ゲート**: `CUSTOMER_IMPORT_WRITE_ENABLED=true` ＋ 確認文字列 `IMPORT <batchId> <件数>`。
   片方でも欠ければ書き込み 0。初回は 100 件上限（101 以上は `over_limit`）。
-- **現在地**: Draft PR 完成。**production 未反映・本番 write 未実施・env は unset のまま**
-- **停止理由**: PR merge / deploy / env 投入 / 実取り込み はいずれも未承認
+- **運用判断（2026-08-05 / ユーザー決定）**:
+  - `エラーカウント数 ≥1` の **78 件は REVIEW_REQUIRED のまま維持**（CREATE に含めない）
+  - Airtable に `CreatedBy` / `ImportBatchId` / `ImportedAt` 列は**今回は追加しない**
+  - 初回のバッチ追跡は **`Source = customer-import:<batchId>`** を使う
+
+- **merge / deploy 記録**:
+
+  | 項目 | 値 |
+  |---|---|
+  | PR | #233（squash merge・force push / reset / rebase / amend なし） |
+  | merge SHA | `7de7e74`（merged 2026-08-04T13:18:27Z） |
+  | merge 前 origin/main | `3e6ae4c`（分岐点 `97cd0b4` から南関の自動取込のみ前進。crm / functions は無変更） |
+  | changed files | **14 件**（新規 8 / 変更 6）。lockfile・workflow・package.json は無変更 |
+  | production deploy | `6a71e6a531d919000874b180` / commit `7de7e74` / **ready**・published 13:19:31Z / deploy_time 60s |
+
+- **deploy 後の本番 read-only 確認（Airtable write 0 / Customers 作成 0 / メール 0 / 実 CSV 未送信）**:
+
+  | 確認 | 結果 |
+  |---|---|
+  | `CUSTOMER_IMPORT_WRITE_ENABLED` | **(unset)** |
+  | `run`（env 不足） | **403 `write_disabled` / `written: 0`** |
+  | `run`（確認文字列なし・101 件指定） | いずれも **403**（ゲートより先へ進まない） |
+  | secret 不一致 / GET / 未知 action | 403 / 405 / 400 |
+  | 下見側 `action:'run'` | **501**・`writeEnabled: false`（書き込み経路が無いまま） |
+  | **Customers 件数（実行前後）** | **1,466 → 1,466（一致＝書き込み 0 を実測）** |
+  | `plan`（合成 1 行 CSV） | 200 / `sideEffects: none` / `writeEnabled: false` / 確認文字列 `IMPORT imp-2026-08-04-001 1` を提示 |
+  | 書き込む列（本番実測） | `Email` / `氏名` / `プラン` / `ポイント` / `Source` のみ |
+  | 監査列 | **「列が無いので書かない」**（判断どおり Airtable schema は未変更） |
+  | 管理画面 | 初回方針 6 点を明示・`impRun` は `disabled` + `aria-disabled` / **クリック配線なし** |
+
+  ⚠️ gate 到達の確認には **合成 1 行 CSV**（`example.invalid`）を使い、**実 CSV は本番へ送っていない**。
+
+- **現在地**: **本番反映済み。write は二重ゲートで停止したまま（env unset）・実取り込み未実施**
+- **次の停止境界**: **初回 100 件の実取り込み**。実行には
+  ① `CUSTOMER_IMPORT_WRITE_ENABLED=true` の投入（**実行後に必ず unset**）
+  ② 確認文字列 `IMPORT <batchId> <件数>` の入力 の両方が要る。
+  rollback（隔離）・削除（別承認）とも**未実施**
 
 **Phase（2026-08-04）: 外部 13,000 件の取り込み基盤（下見まで / 本番 write は未配線）
 （**PR #232 merged `46f2ecc`・production deploy `6a71d222360fc900082ef050` = state ready・公開中**）。**
