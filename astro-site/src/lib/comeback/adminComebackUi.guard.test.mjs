@@ -393,3 +393,53 @@ test('guard(withdrawn): 画面に見える区分名がすべて「退会・課�
   assert.ok(def.includes('退会・課金停止'), 'フィルター定義の区分名が古い');
   assert.ok(def.includes('メール配信停止とは別'), '配信停止と別だと説明していない');
 });
+
+// ═══ 付与 → 案内メールの自動引き継ぎ（2026-08-04）══════════════════════
+
+test('guard(handoff): 付与成功後は自動で引き継ぐ（operationId を手入力させない）', () => {
+  // 付与応答の引き継ぎ票をそのまま渡し、マーケティングタブへ自動遷移する
+  assert.match(CB_BLOCK, /if \(out\.handoff && out\.handoff\.canHandoff\)[\s\S]{0,120}window\.__mkHandoff\.adopt\(out\.handoff\)/,
+    '付与後に自動で引き継いでいない');
+  // 完了メッセージ（人数 + 次に何をするか）
+  assert.match(CB_BLOCK, /名の付与が完了しました。案内メール作成へ進みます/);
+});
+
+test('guard(handoff): 引き継ぎ直後に「何を・何名」を伝える', () => {
+  assert.match(PAGE, /の付与成功者.*名を引き継ぎました/, '引き継ぎ後の案内が無い');
+  assert.ok(PAGE.includes('mkHandoffGrantLabel'), '付与内容の表示名を出していない');
+});
+
+test('guard(handoff): 直近の付与成功者を 1 クリックで復元できる', () => {
+  assert.ok(PAGE.includes('mkRecoverBtn'), '復旧ボタンが無い');
+  assert.ok(PAGE.includes('直近の付与成功者を引き継ぐ'));
+  assert.match(PAGE, /action: 'handoffLatest'/, 'サーバーに直近操作を特定させていない');
+  // 通常フローでは出さない（引き継ぎ中でも選択中でもないときだけ）
+  assert.match(PAGE, /const idle = !mkState\.handoff && mkSelected\.size === 0/);
+});
+
+test('guard(handoff): operationId を画面・URL へ出さない', () => {
+  // 復旧口の応答からは operationId を表示に使わない
+  assert.equal(/mkRecoverState\.textContent\s*=\s*[^;]*operationId/.test(PAGE), false,
+    '復旧メッセージに operationId を出している');
+  // URL へ載せない（history 操作で対象や ID を渡していない）
+  assert.equal(/history\.(pushState|replaceState)[\s\S]{0,200}(operationId|recordIds)/.test(PAGE), false,
+    'URL に内部 ID を載せている');
+  // localStorage には保存しない（sessionStorage のみ）
+  assert.equal(/localStorage\.setItem\([^)]*[Hh]andoff/.test(PAGE), false,
+    'localStorage に引き継ぎを保存している');
+});
+
+test('guard(handoff): 対象の正本はサーバー側の再導出（recordId を送らない）', () => {
+  assert.match(PAGE, /return mkState\.handoff\s*\n?\s*\? \{ grantOperationId: mkState\.handoff\.operationId \}/,
+    '引き継ぎ中に recordId を送っている');
+});
+
+test('guard(handoff): 手動 operationId は復旧用に格下げする', () => {
+  assert.match(PAGE, /うまくいかないとき: 操作 ID を指定して引き継ぎ直す/, '手動導線が通常フローのまま');
+  assert.match(PAGE, /2 つ以上前の付与操作/, 'いつ使うのかを書いていない');
+});
+
+test('guard(handoff): キュー登録したら引き継ぎを使い切る', () => {
+  assert.match(PAGE, /markHandoffQueued\(sessionStorage, \(out\.jobs \|\| \[\]\)\.map/,
+    'キュー登録後に使い切りの印を付けていない');
+});

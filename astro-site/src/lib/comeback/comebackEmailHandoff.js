@@ -325,14 +325,92 @@ export function clearHandoff(storage) {
 }
 
 /**
- * 画面の見出し用の要約（人数と期限だけ。アドレスも recordId も出さない）。
+ * 画面の見出し用の要約（人数と期限だけ）。
+ *
+ * ⚠️ **operationId は出さない。** 運用者が読む必要はなく、画面に出すと
+ *    スクリーンショットやログへ内部 ID が残る。アドレス・recordId も当然出さない。
  */
 export function describeHandoff(handoff, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   if (!handoff || !str(handoff.operationId)) return '引き継ぎなし';
   const left = num(handoff.expiresAtMs) - now;
   const mins = left > 0 ? Math.ceil(left / 60000) : 0;
-  return `付与成功 ${num(handoff.grantedCount)} 名（操作 ${str(handoff.operationId)} / 残り約 ${mins} 分）`;
+  return `付与成功 ${num(handoff.grantedCount)} 名（引き継ぎ期限まで約 ${mins} 分）`;
+}
+
+/**
+ * **直近の付与操作**を実データから 1 つ選ぶ（純粋・read-only）。
+ *
+ * ── なぜ要るか ────────────────────────────────────────────────
+ * 付与直後の自動引き継ぎは sessionStorage に載る。しかし
+ *   ・別タブ / 別ウィンドウで開き直した
+ *   ・ブラウザを閉じた
+ *   ・付与だけ先に済ませてあとで案内を作る
+ * といった場合、引き継ぎ票が手元に無い。そのとき運用者へ
+ * **operationId を探して手入力させるのは現実的でない**（内部 ID を人が扱う理由がない）。
+ *
+ * そこで「直近の付与操作」をサーバーが実データから特定する。人が入力するものは何も無い。
+ *
+ * ── 安全側の決まり ────────────────────────────────────────────
+ * - 選ぶのは **`*GrantedAt` が最も新しい 1 操作だけ**。過去の操作は掘り起こさない
+ * - TTL（既定 24 時間）を過ぎた操作は候補にしない
+ * - 取消済み・不整合の行はその操作の人数に数えない（`collectGrantedRecipients` と同じ基準）
+ * - 戻り値に **アドレス・氏名・recordId を含めない**
+ *
+ * @param {{ records: Array<{recordId?: string, id?: string, fields?: object}>,
+ *           nowMs?: number, ttlMs?: number }} input
+ * @returns {{ ok: boolean, reason: string|null, operationId: string|null,
+ *             grantedCount: number, latestGrantedAtMs: number|null, expiresAtMs: number|null }}
+ */
+export function pickLatestGrantOperation({ records, nowMs, ttlMs } = {}) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : HANDOFF_TTL_MS;
+  const rows = Array.isArray(records) ? records : [];
+  const no = (reason) => ({
+    ok: false, reason, operationId: null, grantedCount: 0,
+    latestGrantedAtMs: null, expiresAtMs: null,
+  });
+
+  // 操作 ID ごとに「最も新しい付与時刻」を集める（tier をまたいで 1 操作として見る）
+  const latestByOp = new Map();
+  for (const rec of rows) {
+    const f = (rec && rec.fields) || {};
+    const grants = resolvePromotionalGrants(f, now);
+    for (const tier of ['light', 'premium']) {
+      const g = grants[tier];
+      if (!isGrantedByOperation(g, str(g && g.operationId))) continue;
+      const op = str(g.operationId);
+      if (!op) continue;
+      const at = Number.isFinite(g.grantedAtMs) ? g.grantedAtMs : null;
+      if (at === null) continue;                       // いつの操作か分からないものは選ばない
+      const cur = latestByOp.get(op);
+      if (cur === undefined || at > cur) latestByOp.set(op, at);
+    }
+  }
+  if (latestByOp.size === 0) return no(HANDOFF_BLOCK.NONE);
+
+  let bestOp = null;
+  let bestAt = -Infinity;
+  for (const [op, at] of latestByOp) {
+    if (at > bestAt) { bestAt = at; bestOp = op; }
+  }
+  if (!bestOp) return no(HANDOFF_BLOCK.NONE);
+
+  const expiresAtMs = bestAt + ttl;
+  if (now >= expiresAtMs) return no(HANDOFF_BLOCK.EXPIRED);
+
+  // 人数は既存の単一源で数え直す（ここで独自に数えない）
+  const resolved = collectGrantedRecipients({ records: rows, operationId: bestOp, nowMs: now });
+  if (resolved.recordIds.length === 0) return no(HANDOFF_BLOCK.NO_RECIPIENTS);
+
+  return {
+    ok: true,
+    reason: null,
+    operationId: bestOp,
+    grantedCount: resolved.recordIds.length,
+    latestGrantedAtMs: resolved.latestGrantedAtMs ?? bestAt,
+    expiresAtMs,
+  };
 }
 
 /**

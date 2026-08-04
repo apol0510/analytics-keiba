@@ -109,6 +109,7 @@ import { buildComebackEmailContent } from '../../src/lib/promotions/comebackEmai
 import { isWithdrawnAllowedForOffer, describeWithdrawnAvailability, CB_SEGMENT_LABEL, CB_SEGMENT_NOTE, listComebackPolicies } from '../../src/lib/entitlements/comebackPolicy.js';
 import {
   buildHandoffTicket, collectGrantedRecipients, validateHandoffResolution,
+  pickLatestGrantOperation,
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
 } from '../../src/lib/comeback/comebackEmailHandoff.js';
 import {
@@ -239,6 +240,7 @@ export const handler = async (event) => {
     if (action === 'offerRevoke') return await handleOfferRevoke({ KEY, BASE, now, req, live: true });
     if (action === 'reconcile') return await handleReconcile({ KEY, BASE, now, req });
     if (action === 'handoffLookup') return await handleHandoffLookup({ KEY, BASE, now, req });
+    if (action === 'handoffLatest') return await handleHandoffLatest({ KEY, BASE, now });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [admin-comeback-grants]', e.message);
@@ -1149,6 +1151,64 @@ async function handleHandoffLookup({ KEY, BASE, now, req }) {
       ? new Date(resolved.latestGrantedAtMs).toISOString() : null,
     expiresAt: new Date(verdict.expiresAtMs).toISOString(),
     notice: '付与に成功した顧客だけを読み直しました。付与も取り消しも行っていません。',
+  });
+}
+
+/**
+ * **直近の付与操作**から引き継ぎを作る（read-only）。
+ *
+ * 付与直後の自動引き継ぎ（sessionStorage）が手元に無いとき ―― 別タブで開いた、
+ * ブラウザを閉じた、付与だけ先に済ませた ―― の復旧口。
+ * **運用者に operationId を探させない**のが目的なので、入力は何も受け取らない。
+ *
+ * 対象の確定は `handoffLookup` と同じ単一源を通り、
+ * **アドレス・氏名・recordId は 1 つも返さない**。書き込みも一切しない。
+ */
+async function handleHandoffLatest({ KEY, BASE, now }) {
+  const { list } = await loadCustomers({ KEY, BASE, now });
+  const latest = pickLatestGrantOperation({ records: list, nowMs: now });
+  if (!latest.ok) {
+    return json(latest.reason === HANDOFF_BLOCK.EXPIRED ? 410 : 404, {
+      error: HANDOFF_BLOCK_LABEL[latest.reason] || '引き継げる付与操作がありません',
+      reason: latest.reason,
+      sideEffects: 'none',
+    });
+  }
+
+  // 件数・種別は既存の単一源で読み直す（ここで独自に数えない）
+  const resolved = collectGrantedRecipients({ records: list, operationId: latest.operationId, nowMs: now });
+  const verdict = validateHandoffResolution({
+    operationId: latest.operationId,
+    recordIds: resolved.recordIds,
+    latestGrantedAtMs: resolved.latestGrantedAtMs,
+    nowMs: now,
+  });
+  if (!verdict.ok) {
+    return json(verdict.reason === HANDOFF_BLOCK.EXPIRED ? 410 : 409, {
+      error: HANDOFF_BLOCK_LABEL[verdict.reason] || '引き継ぎを作れません',
+      reason: verdict.reason,
+      sideEffects: 'none',
+    });
+  }
+
+  const describeKind = (k) => (k ? {
+    count: k.count, lifetime: k.lifetime, durationDays: k.durationDays, mixed: k.mixed,
+    grantedAt: Number.isFinite(k.grantedAtMs) ? new Date(k.grantedAtMs).toISOString() : null,
+    until: Number.isFinite(k.untilMs) ? new Date(k.untilMs).toISOString() : null,
+  } : null);
+
+  return json(200, {
+    mode: 'handoff-latest',
+    sideEffects: 'none',
+    // ⚠️ 画面には出さない。dry-run で対象を再導出するための鍵としてだけ使う
+    operationId: latest.operationId,
+    resolved: verdict.recipientCount,
+    byTier: resolved.byTier,
+    kinds: { light: describeKind(resolved.kinds.light), premium: describeKind(resolved.kinds.premium) },
+    grantedAt: Number.isFinite(resolved.latestGrantedAtMs)
+      ? new Date(resolved.latestGrantedAtMs).toISOString() : null,
+    expiresAt: new Date(verdict.expiresAtMs).toISOString(),
+    notice: '直近の付与操作から、付与に成功した顧客だけを読み直しました。付与も取り消しも行っていません。',
   });
 }
 
