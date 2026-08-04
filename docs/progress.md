@@ -47,7 +47,24 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: 付与成功者を自動で案内メール工程へ引き継ぐ
+**Phase（2026-08-04 現在・最新）: 管理画面の初期化が bridge 未読込で止まる不具合を直す
+（branch `fix/admin-bridge-init-order`・Draft PR・merge 前・production 未反映）。**
+
+- **本番の実挙動で発見**（PR #227 デプロイ後のコンソール）:
+  `TypeError: Cannot read properties of undefined (reading 'loadHandoff')`
+- 原因は**script の実行順**。この画面は
+  `<script>`（ES module・**defer**）が `window.__*` bridge を張り、
+  `<script is:inline>`（classic・**解析時に即実行**）が UI 本体を動かす。
+  inline の初期化末尾から `window.__cbHandoff` を**同期で**触っており、必ず undefined だった
+- 影響（**#227 以前から存在**）: 例外で初期化の残りが止まり、
+  ① **再読み込み時の引き継ぎ復元が動かない** ② #227 で足した**引き継ぎ復旧バーが表示されない**
+- 修正: 初期化を `DOMContentLoaded` 後（module 実行後）へ回す `mkAfterBridgesReady` を追加。
+  あわせて `handoffApi()` を null 許容にし、bridge が無くても**例外で画面を止めない**
+- 再発防止 guard 3 件を追加。**事故を注入すると落ちることを確認済み**（空振りしていない）
+- テスト 2993 pass / 0 fail。check:safety・build とも exit 0
+- **未実施**: PR merge / production deploy / 付与 / キュー登録 / 送信
+
+**Phase（2026-08-04）: 付与成功者を自動で案内メール工程へ引き継ぐ
 （branch `feat/comeback-auto-handoff`・Draft PR・merge 前・production 未反映）。**
 
 - **現象**: 36 名へ付与したあとマーケティング画面の対象が 0 名。運用者が

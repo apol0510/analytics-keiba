@@ -3708,15 +3708,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      * Function が Customers を読み直して確定する（画面は recordId を持たない）。
      * ここで顧客を選び直させないことが、この導線の目的そのもの。
      */
-    const handoffApi = () => window.__cbHandoff;
+    /**
+     * 引き継ぎ判定モジュールへの橋渡し。**未定義でも例外にしない**。
+     * ここで throw すると初期化の残り全部が止まり、画面のあちこちが無言で死ぬ
+     * （本番で実際に起きた）。使えないときは「引き継ぎ無し」として素通りさせる。
+     */
+    const handoffApi = () => window.__cbHandoff || null;
 
     function mkHandoffAdopt(ticket) {
-      if (!ticket || !ticket.operationId || !(Number(ticket.grantedCount) > 0)) {
-        mkNotify('warn', '引き継げませんでした',
-          handoffApi().HANDOFF_BLOCK_LABEL[handoffApi().HANDOFF_BLOCK.NO_RECIPIENTS]);
+      const api = handoffApi();
+      if (!api) {                       // bridge 未読込。黙って失敗せず、理由を出す
+        mkNotify('err', '引き継げませんでした', '画面の読み込みが完了していません。再読み込みしてください。');
         return false;
       }
-      handoffApi().saveHandoff(sessionStorage, ticket);
+      if (!ticket || !ticket.operationId || !(Number(ticket.grantedCount) > 0)) {
+        mkNotify('warn', '引き継げませんでした',
+          api.HANDOFF_BLOCK_LABEL[api.HANDOFF_BLOCK.NO_RECIPIENTS]);
+        return false;
+      }
+      api.saveHandoff(sessionStorage, ticket);
       mkState.handoff = {
         operationId: ticket.operationId,
         grantedCount: Number(ticket.grantedCount),
@@ -3903,7 +3913,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       box.appendChild(t);
       const d = document.createElement('span');
       d.className = 'hb-d';
-      d.textContent = handoffApi().describeHandoff(ticket, Date.now());
+      d.textContent = handoffApi() ? handoffApi().describeHandoff(ticket, Date.now()) : '';
       box.appendChild(d);
       const note = document.createElement('span');
       note.className = 'hb-note';
@@ -3919,7 +3929,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     /** 保存済みの引き継ぎを復元する（**同じタブの再読み込みに耐える**） */
     function mkHandoffRestore() {
-      const r = handoffApi().loadHandoff(sessionStorage, Date.now());
+      const api = handoffApi();
+      if (!api) {                       // bridge 未読込。復元はできないが画面は生かす
+        mkState.handoff = null;
+        mkHandoffRender(null);
+        return;
+      }
+      const r = api.loadHandoff(sessionStorage, Date.now());
       if (r.ok) {
         mkState.handoff = {
           operationId: r.handoff.operationId,
@@ -3933,10 +3949,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       mkState.handoff = null;
       mkHandoffRender(null);
       // 期限切れ・使用済みは黙って消さず、理由を 1 度だけ知らせてから捨てる
-      const B = handoffApi().HANDOFF_BLOCK;
+      const B = api.HANDOFF_BLOCK;
       if (r.reason === B.EXPIRED || r.reason === B.ALREADY_QUEUED || r.reason === B.MALFORMED) {
-        mkNotify('warn', '引き継ぎを使えません', handoffApi().HANDOFF_BLOCK_LABEL[r.reason]);
-        handoffApi().clearHandoff(sessionStorage);
+        mkNotify('warn', '引き継ぎを使えません', api.HANDOFF_BLOCK_LABEL[r.reason]);
+        api.clearHandoff(sessionStorage);
       }
     }
 
@@ -7141,7 +7157,32 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('mkRehandoffBtn')?.addEventListener('click', mkRehandoff);
     $('mkRecoverBtn')?.addEventListener('click', mkRecoverLatestHandoff);
 
-    // 画面を読み込み直しても、同じタブなら引き継ぎは続く（期限切れ・使用済みは復元しない）
-    mkHandoffRestore();
+    /**
+     * bridge（`window.__cb*` / `window.__mk*`）が揃ってから走らせる初期化。
+     *
+     * ⚠️ **この画面は 2 種類の script でできている**:
+     *   `<script>`（ES module）… 判定モジュールを import して `window.__*` へ橋渡しする。**defer 実行**
+     *   `<script is:inline>`（classic）… UI 本体。**解析時に即実行**
+     *
+     * つまり inline の末尾で `window.__cbHandoff` を触ると **必ず undefined** になる。
+     * 実際、本番で初期化が
+     *   TypeError: Cannot read properties of undefined (reading 'loadHandoff')
+     * で止まり、**再読み込み時の引き継ぎ復元と引き継ぎ復旧バーの表示が動いていなかった**。
+     *
+     * module script は `DOMContentLoaded` より前に実行されるので、ここで待てば必ず揃う。
+     * 既に発火済みでも動くよう readyState を見てから登録する。
+     */
+    function mkAfterBridgesReady(fn) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', fn, { once: true });
+      } else {
+        fn();
+      }
+    }
+
+    mkAfterBridgesReady(() => {
+      // 画面を読み込み直しても、同じタブなら引き継ぎは続く（期限切れ・使用済みは復元しない）
+      mkHandoffRestore();
+    });
   })();
 </script>
