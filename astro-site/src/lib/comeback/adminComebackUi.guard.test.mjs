@@ -443,3 +443,39 @@ test('guard(handoff): キュー登録したら引き継ぎを使い切る', () =
   assert.match(PAGE, /markHandoffQueued\(sessionStorage, \(out\.jobs \|\| \[\]\)\.map/,
     'キュー登録後に使い切りの印を付けていない');
 });
+
+// ═══ script の実行順（本番で初期化が止まった事故）════════════════════
+// この画面は `<script>`（ES module・defer）が `window.__*` を張り、
+// `<script is:inline>`（classic・解析時に即実行）が UI 本体を動かす。
+// inline の初期化から bridge を**同期で**触ると必ず undefined になる。
+
+test('guard(init): 初期化は bridge が揃ってから走らせる', () => {
+  // 初期化の入口が DOMContentLoaded 待ちになっていること
+  assert.ok(PAGE.includes('function mkAfterBridgesReady'), 'bridge 待ちの入口が無い');
+  assert.match(PAGE, /document\.addEventListener\('DOMContentLoaded', fn, \{ once: true \}\)/);
+  assert.match(PAGE, /mkAfterBridgesReady\(\(\) => \{[\s\S]{0,200}mkHandoffRestore\(\);/,
+    '引き継ぎ復元が bridge 待ちになっていない');
+});
+
+test('guard(init): 初期化の末尾で bridge を同期に触らない', () => {
+  // inline script の最後の 1 ブロック（即時実行関数の閉じ際）を見る
+  const tail = SCRIPT.slice(-1800);
+  for (const bridge of ['__cbHandoff', '__cbCampaign', '__cbApply', '__mkFlow', '__planView']) {
+    assert.equal(new RegExp(`window\\.${bridge}\\s*\\.`).test(tail), false,
+      `初期化末尾で window.${bridge} を同期参照している`);
+  }
+  // 復元の呼び出しは 1 か所だけで、必ず bridge 待ちの中にあること
+  const calls = [...SCRIPT.matchAll(/mkHandoffRestore\(\);/g)];
+  assert.equal(calls.length, 1, 'mkHandoffRestore() の呼び出しが複数ある');
+  const before = SCRIPT.slice(Math.max(0, calls[0].index - 200), calls[0].index);
+  assert.match(before, /mkAfterBridgesReady\(\(\) => \{/, 'bridge 待ちの外で復元を呼んでいる');
+});
+
+test('guard(init): bridge が無くても例外で画面を止めない', () => {
+  assert.match(PAGE, /const handoffApi = \(\) => window\.__cbHandoff \|\| null;/,
+    'bridge 未定義で例外になる書き方のまま');
+  // 復元・描画・採用のいずれも null チェックを持つ
+  assert.match(PAGE, /function mkHandoffRestore\(\) \{\s*\n\s*const api = handoffApi\(\);\s*\n\s*if \(!api\)/);
+  assert.match(PAGE, /function mkHandoffAdopt\(ticket\) \{\s*\n\s*const api = handoffApi\(\);\s*\n\s*if \(!api\)/);
+  assert.match(PAGE, /handoffApi\(\) \? handoffApi\(\)\.describeHandoff/);
+});
