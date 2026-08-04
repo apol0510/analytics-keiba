@@ -47,7 +47,27 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: Step 2 → Step 3 の循環（行き止まり）を解消する
+**Phase（2026-08-04 現在・最新）: 付与成功者を自動で案内メール工程へ引き継ぐ
+（branch `feat/comeback-auto-handoff`・Draft PR・merge 前・production 未反映）。**
+
+- **現象**: 36 名へ付与したあとマーケティング画面の対象が 0 名。運用者が
+  「操作 ID から引き継ぎ直す」を開き、内部 ID を探して手入力する必要があった
+- 付与が 1 名以上成功したら**応答の引き継ぎ票を自動採用 → タブ自動遷移 → 対象・
+  キャンペーンを自動セット**。手入力は通常フローから消えた
+- 引き継ぎを失った場合（別タブ・ブラウザを閉じた・付与だけ先に実施）は
+  **「🎁 直近の付与成功者を引き継ぐ」1 クリック**で復元。新 read-only API
+  `handoffLatest` は**入力を受け取らず**、実データから最新の 1 操作を特定する
+  （新純粋関数 `pickLatestGrantOperation`）
+- 手動 operationId 導線は「うまくいかないとき」へ格下げ（2 つ以上前の操作用）
+- **`operationId` を画面に出さない**（`describeHandoff` から削除）。URL・localStorage にも載せない。
+  票に入るのは人数と offerId だけで、対象の正本は毎回サーバーが再導出する
+- production read-only 確認: 付与操作は 3 つ（36 名 / 28 名 / 1 名）あり、
+  **直近の 36 名操作を一意に特定**できた。案内キャンペーンは
+  `comeback-light-30d-granted:v2` が自動選択され、施策の宣言と一致
+- テスト 2988 pass / 0 fail（新規 22 + guard 8）。check:safety・build とも exit 0。360px / 820px 確認済み
+- **未実施**: PR merge / production deploy / 本番付与 / キュー登録 / 送信 / Airtable write
+
+**Phase（2026-08-04）: Step 2 → Step 3 の循環（行き止まり）を解消する
 （branch `fix/comeback-step2-selectable`・Draft PR・merge 前・production 未反映）。**
 
 - **現象**: Step 2 は特典 未選択なのに、一覧判定が既定の「Light 永久無料」を基準にしていた。

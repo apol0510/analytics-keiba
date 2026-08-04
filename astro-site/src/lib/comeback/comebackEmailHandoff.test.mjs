@@ -307,8 +307,10 @@ test('要約に人数と残り時間を出し、アドレスは出さない', ()
   const t = buildHandoffTicket({ operationId: OP, grantedCount: 3, nowMs: NOW });
   const s = describeHandoff(t, NOW);
   assert.match(s, /付与成功 3 名/);
-  assert.match(s, /残り約 1440 分/);
+  assert.match(s, /期限まで約 1440 分/);
   assert.equal(s.includes('@'), false);
+  // 内部 ID を画面に出さない（スクリーンショット・ログに残さない）
+  assert.equal(s.includes(OP), false, 'operationId が要約に出ている');
   assert.equal(describeHandoff(null, NOW), '引き継ぎなし');
 });
 

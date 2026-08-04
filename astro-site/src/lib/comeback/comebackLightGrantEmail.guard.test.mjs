@@ -189,13 +189,32 @@ test('再引き継ぎは read-only の専用 action を使う', () => {
 });
 
 test('再引き継ぎの応答に PII / recordId を載せない', () => {
-  const fn = sliceFrom(GRANTS_FN, 'async function handleHandoffLookup(', 3000);
-  const body = fn.slice(fn.indexOf('return json(200'));
-  for (const b of ['recordIds', 'Email', 'email', '氏名']) {
-    assert.equal(body.includes(b), false, `応答に ${b} を載せている`);
+  // 2 つの引き継ぎ経路（操作 ID 指定 / 直近の付与操作）を**どちらも**確かめる
+  for (const entry of ['async function handleHandoffLookup(', 'async function handleHandoffLatest(']) {
+    const fn = sliceFrom(GRANTS_FN, entry, 3000);
+    const start = fn.indexOf('return json(200');
+    const body = fn.slice(start, fn.indexOf('\n}', start));
+    for (const b of ['recordIds', 'Email', 'email', '氏名']) {
+      assert.equal(body.includes(b), false, `${entry} の応答に ${b} を載せている`);
+    }
+    assert.match(body, /resolved: verdict\.recipientCount/, `${entry} が件数を返していない`);
+    assert.match(body, /grantedAt/, `${entry} が付与日時を返していない`);
   }
-  assert.match(body, /resolved: verdict\.recipientCount/, '件数を返していない');
-  assert.match(body, /grantedAt/, '付与日時を返していない');
+});
+
+test('直近の付与操作からの引き継ぎも read-only で fail closed', () => {
+  const fn = sliceFrom(GRANTS_FN, 'async function handleHandoffLatest(', 3000);
+  // 入力を受け取らない（運用者に operationId を探させない）
+  assert.equal(/handleHandoffLatest\(\{ KEY, BASE, now \}\)/.test(GRANTS_FN), true,
+    '直近引き継ぎが入力を受け取っている');
+  assert.match(fn, /pickLatestGrantOperation\(/, '単一源を使っていない');
+  assert.match(fn, /HANDOFF_BLOCK\.EXPIRED \? 410 : 404/, '見つからない / 期限切れで止めていない');
+  assert.match(fn, /validateHandoffResolution\(/, 'サーバー側の受け入れ判定を通していない');
+  assert.match(fn, /sideEffects: 'none'/, '副作用なしを明示していない');
+  // 書き込み系を呼ばない
+  for (const w of ['patchRecord', 'upsert', 'createRecord', 'sendgrid']) {
+    assert.equal(fn.toLowerCase().includes(w.toLowerCase()), false, `${w} を呼んでいる`);
+  }
 });
 
 test('存在しない operationId / 0 件 / 期限切れ は fail closed', () => {
