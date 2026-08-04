@@ -541,10 +541,29 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 
 #### rollback（初回は削除しない）
 
-対象は `Source = "customer-import:<batchId>"` の行だけ。**既定は隔離**
-（配信対象から外す。削除しない＝履歴を消さない）。
-**削除は別の高リスク操作**で、作成直後に外部参照・メール送信・会員利用が
-一切ないことを確認できた場合にのみ、別承認で行う。
+対象は `Source = "customer-import:<batchId>"` の行だけ。**既定は隔離**（削除しない＝履歴を消さない）。
+
+**A. 隔離（既定・推奨）**
+
+1. Airtable で `Source = "customer-import:<batchId>"` を絞り込み、件数が実行件数と一致するか確認
+2. `プラン` は `Free` のまま据え置く（**課金・特典フィールドは元々空**なので触らない）
+3. 配信対象から外す（キャンペーンのセグメント条件で `Source` のこの値を除外する）
+4. 記録として残す。**レコードは消さない**
+
+**B. 削除（別の高リスク操作・別承認）**
+
+作成直後で、次を**すべて証明できた場合にのみ**実施する:
+
+- そのバッチのアドレスへ**メールを 1 通も送っていない**
+  （`CampaignDeliveries` / `ScheduledEmails` / `EmailEvents` に該当バッチ由来の行が無い）
+- **会員として利用されていない**（`最終ログイン` が空・`認証トークン` が未発行）
+- **外部から参照されていない**（`StepEnrollments` などのリンクが空）
+
+手順: 上記 3 点を read-only で確認 → 件数を記録 → `Source` 一致の行だけを削除 →
+削除後の件数が「実行前の Customers 件数」に戻ることを突合。
+
+⚠️ **削除はコードから行わない。** 実行 Function に DELETE の綴りを持たせない（guard で固定）。
+Airtable 画面での手作業に限る。**現時点で rollback は未実施。**
 
 書き込みゲート **`CUSTOMER_IMPORT_WRITE_ENABLED`（既定 OFF）**。
 `admin-customer-import.js`（下見）には**書き込み経路が存在しない**（`action:'run'` は 501）。
