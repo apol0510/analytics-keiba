@@ -48,15 +48,21 @@ export const CB_GRANTABLE_FILTER = Object.freeze({
 /**
  * 1 顧客の「カムバック特典タブ」表示行を作る（read-only）。
  *
- * @param {{ fields: object, nowMs: number, blacklistEmails?: Set<string>, history?: object }} input
+ * `allowWithdrawn` は**選んでいる特典がカムバックの Light 30 日無料のときだけ** true。
+ * 判断の単一源は `comebackWithdrawnPolicy.isWithdrawnGrantAllowed` で、ここは受け取るだけ。
+ * 既定 false なので、指定しなければ従来どおり退会者は「付与不可」と表示される。
+ *
+ * @param {{ fields: object, nowMs: number, blacklistEmails?: Set<string>, history?: object,
+ *           allowWithdrawn?: boolean }} input
  */
-export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, history } = {}) {
+export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, history, allowWithdrawn } = {}) {
   const f = fields && typeof fields === 'object' ? fields : {};
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const grantOptions = { allowWithdrawn: allowWithdrawn === true };
 
   const marketing = resolveCustomerMarketing({ fields: f, nowMs: now, blacklistEmails, history });
   const grants = resolvePromotionalGrants(f, now);
-  const grantable = checkGrantable(f);
+  const grantable = checkGrantable(f, grantOptions);
   const offerable = checkOfferable(f);
   const state = describeCustomerState(f, now);
 
@@ -70,7 +76,7 @@ export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, histor
      * 現在状態（freeGrant）・履歴（grantHistoryCodes）とは別項目。
      */
     eligibility: (() => {
-      const e = resolveGrantEligibility(f, now);
+      const e = resolveGrantEligibility(f, now, grantOptions);
       return { ...e, text: formatGrantEligibility(e) };
     })(),
     /** 無料付与できるか（停止・退会・データ不備は付与しても使えないので false） */

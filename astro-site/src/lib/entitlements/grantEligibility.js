@@ -89,13 +89,20 @@ function selection(value) {
 /**
  * 「今回この顧客へ無料付与できるか」を 1 つの答えにする。
  *
+ * ── `allowWithdrawn`（既定 false）────────────────────────────────
+ * カムバックの Light 30 日無料を選んでいるときだけ true を渡す。判断の単一源は
+ * `comeback/comebackWithdrawnPolicy.isWithdrawnGrantAllowed`。ここでは受け取った
+ * 値を `checkGrantable` へそのまま渡すだけで、独自に施策を判定しない。
+ *
  * @param {object|null} fields Customers の fields
  * @param {number} [nowMs]
+ * @param {{ allowWithdrawn?: boolean }} [options]
  * @returns {{canGrant: boolean, status: string, reasonCode: string, reasonLabel: string,
  *            notes: Array<{code: string, label: string}>, statusLabel: string}}
  */
-export function resolveGrantEligibility(fields, nowMs = Date.now()) {
+export function resolveGrantEligibility(fields, nowMs = Date.now(), options = {}) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const allowWithdrawn = options && options.allowWithdrawn === true;
   const f = fields && typeof fields === 'object' ? fields : null;
   const out = (status, reasonCode, reasonLabel, notes = []) => ({
     canGrant: status === GRANT_ELIGIBILITY.GRANTABLE,
@@ -111,7 +118,7 @@ export function resolveGrantEligibility(fields, nowMs = Date.now()) {
   }
 
   // ① 実行可否の正本（dry-run と同じ関数・同じ理由コード）
-  const base = checkGrantable(f);
+  const base = checkGrantable(f, { allowWithdrawn });
   if (!base.ok) {
     const code = base.reason;
     return out(GRANT_ELIGIBILITY.BLOCKED, code, BLOCKED_LABEL[code] || `付与不可：${CB_SKIP_LABEL[code] || code}`);

@@ -136,12 +136,14 @@ test('offer 行は allowlist を通り、生トークンは行に入らない', 
 
 test('除外は理由別に必ず数える', () => {
   const p = plan([LIGHT_LIFETIME, PREMIUM_30D], null, [
-    cust('rec1', EXPIRED),                                  // 付与
-    cust('recX', null),                                     // 不明
-    cust('rec2', { ...EXPIRED, Email: '' }),                // データ不備
-    cust('rec3', { ...EXPIRED, Status: 'suspended' }),      // 停止
-    cust('rec4', { ...EXPIRED, WithdrawalRequested: true }),// 退会
-    cust('rec5', { ...EXPIRED, Status: 'test' }),           // テスト
+    // ⚠️ アドレスは全員別にする。同一アドレスは duplicate_email で落ちる別の規則なので、
+    //    ここで混ぜると「理由別に数える」検証にならない
+    cust('rec1', { ...EXPIRED, Email: 'a1@example.com' }),                     // 付与
+    cust('recX', null),                                                     // 不明
+    cust('rec2', { ...EXPIRED, Email: '' }),                                // データ不備
+    cust('rec3', { ...EXPIRED, Email: 'a3@example.com', Status: 'suspended' }), // 停止
+    cust('rec4', { ...EXPIRED, Email: 'a4@example.com', WithdrawalRequested: true }), // 退会
+    cust('rec5', { ...EXPIRED, Email: 'a5@example.com', Status: 'test' }),      // テスト
   ]);
   assert.equal(p.counts.willGrant, 1);
   assert.equal(p.counts.skipped, 5);

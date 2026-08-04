@@ -48,6 +48,7 @@ import {
 } from '../promotions/promotionalOffer.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { normalizePlan } from '../auth/planNormalization.js';
+import { isWithdrawnGrantAllowed } from '../entitlements/comebackWithdrawnPolicy.js';
 
 /** 1 回の操作で扱える最大件数（暴走防止。超えたら計画自体を作らない） */
 export const MAX_GRANT_RECORDS = 200;
@@ -69,6 +70,8 @@ export const CB_SKIP = Object.freeze({
   GRANT_INCONSISTENT: 'grant_inconsistent',
   NOT_GRANTED: 'not_granted',
   NOTHING_SELECTED: 'nothing_selected',
+  /** 同じメールアドレスの別レコードを既に処理済み（1 人へ 2 回付与しない） */
+  DUPLICATE_EMAIL: 'duplicate_email',
 });
 
 export const CB_SKIP_LABEL = Object.freeze({
@@ -83,6 +86,7 @@ export const CB_SKIP_LABEL = Object.freeze({
   grant_inconsistent: '特典データ不整合（要確認）',
   not_granted: '対象の特典を持っていない',
   nothing_selected: '適用できる内容がない',
+  duplicate_email: '同一メールアドレスの別レコードを処理済み',
 });
 
 const SUSPENDED_STATUS = new Set(['suspended', 'inactive', 'banned', 'disabled', '停止', '無効']);
@@ -109,18 +113,36 @@ function hasValidEmail(fields) {
 
 /**
  * **無料付与**の可否。付けても使えない相手を事前に落とす（fail closed）。
- * 退会・強制ログアウトはログイン自体が拒否されるため付与しない
- * （退会フラグの解除は課金契約側の判断であり、特典付与の副作用にしない）。
+ *
+ * ── `allowWithdrawn` について（既定は false のまま）──────────────────
+ * 通常の無料付与では、退会・強制ログアウトは従来どおり弾く。
+ *
+ * ただし**カムバック施策の Light 30 日無料に限り**、退会者を対象にできる。
+ * AK の `WithdrawalRequested` は旧 Stripe の課金を止めるための状態で、利用禁止でも
+ * メール拒否でもない（`docs/spec.md`「カムバック施策の対象条件」も退会済み＝対象と定めている）。
+ * どの付与なら開けてよいかの判断は `comebackWithdrawnPolicy.isWithdrawnGrantAllowed`
+ * が単一源で、呼び出し側は**付与 1 件ごとに**評価した結果だけをここへ渡す。
+ *
+ * ⚠️ `allowWithdrawn: true` でも **`ForceLogout` は必ず弾く**。強制ログアウトは
+ *    課金の状態ではなく安全上の措置なので、退会と同列に扱わない。
+ *    アカウント停止・テストアカウント・メール不正も従来どおり弾く。
+ *
+ * @param {object} fields Customers の fields
+ * @param {{ allowWithdrawn?: boolean }} [options]
  */
-export function checkGrantable(fields) {
+export function checkGrantable(fields, options = {}) {
   const f = fields || {};
+  const allowWithdrawn = options && options.allowWithdrawn === true;
   if (!hasValidEmail(f)) return { ok: false, reason: CB_SKIP.DATA_INCOMPLETE };
   const status = statusOf(f);
   const planRaw = String(f['プラン'] ?? f.Plan ?? '').trim().toLowerCase();
   if (SUSPENDED_STATUS.has(status) || status === 'test' || planRaw === 'test') {
     return { ok: false, reason: CB_SKIP.ACCOUNT_SUSPENDED };
   }
-  if (isTruthyFlag(f.WithdrawalRequested) || isTruthyFlag(f.ForceLogout) || WITHDRAWN_STATUS.has(status)) {
+  // 強制ログアウトは施策に関係なく常に拒否（安全措置は課金状態と別軸）
+  if (isTruthyFlag(f.ForceLogout)) return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
+  const withdrawn = isTruthyFlag(f.WithdrawalRequested) || WITHDRAWN_STATUS.has(status);
+  if (withdrawn && !allowWithdrawn) {
     return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
   }
   return { ok: true, reason: null };
@@ -216,11 +238,13 @@ export function planCustomer({ recordId, fields, grantOffers, purchaseOffer, now
   const partSkips = [];
   let grantFields = {};
 
-  const grantable = checkGrantable(f);
   const offerable = checkOfferable(f);
 
   // ── 無料付与（Light / Premium それぞれ独立に判定）──
+  //   付与できるかは**付与内容ごと**に変わる。カムバックの Light 30 日無料だけが
+  //   退会者を対象にできるので、offer 単位で `allowWithdrawn` を評価する。
   for (const offer of grantOffers || []) {
+    const grantable = checkGrantable(f, { allowWithdrawn: isWithdrawnGrantAllowed(offer) });
     if (!grantable.ok) { partSkips.push({ part: offer.targetTier, reason: grantable.reason }); continue; }
 
     // 有料契約の方が強いなら書かない（権利を縮めない・意味の無い付与をしない）
@@ -297,11 +321,13 @@ export function planCustomer({ recordId, fields, grantOffers, purchaseOffer, now
  *   purchaseOffer: object|null, 発行する割引 offer（0〜1 件）
  *   selected: Array<{ recordId: string, fields: object|null }>,
  *   existingOffers?: object[],  PromotionalOffers の既存行（重複発行の抑止）
+ *   duplicateEmails?: Set<string>,  Customers 全体で 2 件以上ある正規化 email
  *   nowMs: number, operationId: string, actor?: string, source?: string,
  * }} input
  */
 export function buildComebackPlan({
-  grantOffers, purchaseOffer, selected, existingOffers, nowMs, operationId, actor, source,
+  grantOffers, purchaseOffer, selected, existingOffers, duplicateEmails,
+  nowMs, operationId, actor, source,
 }) {
   const empty = (error) => ({
     ok: false, error, targets: [], skipped: [],
@@ -328,6 +354,14 @@ export function buildComebackPlan({
     partSkips: {},
   };
   const seen = new Set();
+  /**
+   * 既に処理したメールアドレス。**同一人物が複数レコードを持つ**ことがあり
+   * （本番実測: 1453 アドレスに対し 1463 レコード）、レコード単位の重複排除だけでは
+   * 1 人へ 2 回付与し、案内メールも 2 通届きうる。**アドレス単位でも 1 回に絞る**。
+   */
+  const seenEmails = new Set();
+  /** Customers 全体で重複しているアドレス（呼び出し側が全件から作って渡す） */
+  const dupAcrossCustomers = duplicateEmails instanceof Set ? duplicateEmails : new Set();
   const note = (recordId, reason, detail) => {
     skipped.push({ recordId, reason, ...(detail || {}) });
     byReason[reason] = (byReason[reason] || 0) + 1;
@@ -339,6 +373,18 @@ export function buildComebackPlan({
     if (!recordId || !fields) { note(recordId, CB_SKIP.UNKNOWN_CUSTOMER); continue; }
     if (seen.has(recordId)) continue; // 同一レコードの重複選択は 1 回にまとめる
     seen.add(recordId);
+
+    // 2 件目以降は理由付きで落とす（黙って消さない＝dry-run の件数に必ず出る）。
+    // ⚠️ アドレスを「確保」するのは**実際に対象になったときだけ**（下の targets.push の直前）。
+    //    先に確保すると、停止・データ不備で落ちるレコードが先頭にあるだけで、
+    //    同じアドレスの正常なレコードまで重複扱いで落ちてしまう。
+    const email = emailOf(fields);
+    if (email && seenEmails.has(email)) { note(recordId, CB_SKIP.DUPLICATE_EMAIL); continue; }
+    // Customers 全体で同じアドレスが 2 件以上ある人は**そもそも付与しない**。
+    // ログインは重複アドレスを CONFLICT として fail closed で拒否する
+    // （`auth/customerLookup.classifyCustomerMatches`）ので、付与しても本人は使えず、
+    // 「30 日無料を付与しました」という案内だけが嘘になる。レコード統合が先。
+    if (email && dupAcrossCustomers.has(email)) { note(recordId, CB_SKIP.DUPLICATE_EMAIL); continue; }
 
     const planned = planCustomer({
       recordId, fields, grantOffers: grants, purchaseOffer: purchase,
@@ -362,6 +408,7 @@ export function buildComebackPlan({
       const key = `${s.part}:${s.reason}`;
       parts.partSkips[key] = (parts.partSkips[key] || 0) + 1;
     }
+    if (email) seenEmails.add(email); // ここで初めてアドレスを確保する
     targets.push(planned);
   }
 
