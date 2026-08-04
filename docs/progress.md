@@ -74,6 +74,11 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   | Event Webhook 設定 | **未変更**（`open=false` / `click=false` のまま） |
   | テストメール | **送っていない** |
 
+  ℹ️ 本記録をコミットした `docs/` だけの push は、Netlify で
+  **`Canceled build due to no content change`（state=error 表示）**になる。`docs/` は
+  site ディレクトリ（`astro-site`）の外なのでビルド内容が変わらないため。**失敗ではない**。
+  公開中の deploy は `423c180` のまま変わらない。
+
   ⚠️ **未検証**: `admin-marketing` の応答に `measurement` / `ledgerDisplay` が実際に載るかは
   管理シークレットが要るため本番で実行していない。ただし**万一載らなくても画面は
   「—（計測状態を確認できません）」を出す**（`0` にはならない）ため、この Phase の目的は満たす。
