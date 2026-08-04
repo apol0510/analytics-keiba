@@ -143,8 +143,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       <div id="mkNotices" class="notices" aria-live="polite"></div>
 
+      <!--
+        大規模セグメントの下見（read-only）。
+        約 1,300 名の無料ユーザー、将来 13,000 名規模を **1 件も DOM へ描画せず**
+        件数だけ見る。個別に顧客を選ぶ下の一覧とは別物なので、はっきり分ける。
+      -->
+      <section class="step seg-step" aria-labelledby="mkSegH">
+        <h2 id="mkSegH" class="step-h"><span class="step-n">◎</span> セグメントの下見（大規模）</h2>
+        <p class="note">
+          大きなまとまりの<b>人数だけ</b>を確認します。顧客一覧は表示しません（個人情報を画面へ出しません）。
+          <b>まだ送信対象は固定されていません。</b>
+        </p>
+        <div class="toolbar">
+          <select id="mkSegSelect" aria-label="セグメント"></select>
+          <button type="button" id="mkSegLoad" class="btn-primary btn-md">人数を数える（送信しません）</button>
+          <span class="note" id="mkSegState" aria-live="polite"></span>
+        </div>
+        <div class="dry-panel" id="mkSegResult" hidden></div>
+        <div class="measure-box" id="mkMeasureBox" hidden></div>
+      </section>
+
       <section class="step" data-step="1" aria-labelledby="mkStep1H">
-        <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む</h2>
+        <h2 id="mkStep1H" class="step-h"><span class="step-n">1</span> 対象顧客を絞り込む（個別に選ぶ）</h2>
       <p class="routine-note" id="mkRoutineNote"></p>
       <div class="toolbar">
         <details class="email-search" id="mkQBox">
@@ -1027,6 +1047,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     color: var(--text-main);
   }
   .ppe .handoff-bar b { font-size: .92rem; color: #a7f3d0; }
+  /* 大規模セグメントの下見（個別選択と見分けがつくよう枠を変える） */
+  .ppe .seg-step { border-left: 3px solid #5b8def; }
+  .ppe .measure-box {
+    margin: .5rem 0 0; padding: .55rem .65rem; border-radius: 10px;
+    background: rgba(255,255,255,.04); border-left: 3px solid #d9a441;
+    font-size: .74rem; line-height: 1.75; color: #c8d4e6; white-space: pre-wrap;
+  }
+  .ppe .measure-box.ok { border-left-color: #3fa66a; }
+  .ppe .seg-sample { font-size: .72rem; color: #93a4bd; line-height: 1.7; margin: .3rem 0 0; }
+  @media (max-width: 640px) {
+    .ppe .seg-step .toolbar { flex-direction: column; align-items: stretch; }
+    .ppe .seg-step .toolbar > * { width: 100%; }
+    .ppe .measure-box { font-size: .72rem; }
+  }
   /* 引き継ぎ復旧（通常フローでは隠す。対象 0 名のときだけ出す） */
   .ppe .handoff-recover {
     display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
@@ -3972,6 +4006,130 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       },
       open() { showTab('mkt'); },
     };
+
+    // ══ 大規模セグメントの下見（read-only）══════════════════════════
+    // **13,000 件規模を DOM へ描画しない**。件数と除外理由だけを受け取って出す。
+    // 個別に顧客を選ぶ既存の一覧（Step 1〜2）とは別物として扱う。
+
+    let mkSegLoaded = false;
+
+    /** セグメント一覧を埋める（初回だけ。サーバーが持つ定義をそのまま出す） */
+    async function mkSegInit() {
+      const sel = $('mkSegSelect');
+      if (!sel || mkSegLoaded) return;
+      const out = await mkCall({ action: 'segments', sampleSize: 0 });
+      if (!out || !Array.isArray(out.segments)) return;
+      sel.innerHTML = '';
+      for (const s of out.segments) {
+        const o = document.createElement('option');
+        o.value = s.segmentId;
+        o.textContent = s.segmentName + '（' + s.sendable + ' 名）';
+        o.title = s.description || '';
+        sel.appendChild(o);
+      }
+      mkSegLoaded = true;
+      mkRenderMeasurement(out.measurement);
+    }
+
+    /** 選んだセグメントの件数を数える（送信もキュー登録もしない） */
+    async function mkSegPreview() {
+      const btn = $('mkSegLoad');
+      const state = $('mkSegState');
+      if (!btn || btn.dataset.busy === '1') return;
+      btn.dataset.busy = '1'; btn.disabled = true;
+      state.textContent = '数えています…（送信もキュー登録もしません）';
+      try {
+        const out = await mkCall({
+          action: 'segments', segmentId: $('mkSegSelect').value, sampleSize: 5,
+        });
+        if (!out || !Array.isArray(out.segments) || !out.segments[0]) {
+          state.textContent = '数えられませんでした。管理シークレットを確認してください。';
+          return;
+        }
+        mkRenderSegment(out.segments[0], out);
+        mkRenderMeasurement(out.measurement);
+        state.textContent = '';
+      } finally {
+        btn.dataset.busy = ''; btn.disabled = false;
+      }
+    }
+
+    /** 件数だけを描く。**顧客 1 件も DOM へ出さない** */
+    function mkRenderSegment(seg, out) {
+      const box = $('mkSegResult');
+      if (!box) return;
+      box.innerHTML = '';
+      box.hidden = false;
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      row('セグメント', seg.segmentName);
+      row('母数', seg.total + ' 名');
+      row('送信できる人数', seg.sendable + ' 名', seg.sendable > 0 ? 'is-ok' : 'is-ng');
+      row('除外', seg.excluded + ' 名');
+      const reasons = Object.entries(seg.byReasonLabeled || {});
+      row('除外理由', reasons.length
+        ? reasons.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
+      row('対象条件', seg.description || '—');
+      row('条件のハッシュ', String(seg.conditionHash || '—'));
+      row('最終計算日時', out.evaluatedAt || '—');
+      if (seg.balanced !== true) {
+        row('⚠️ 検算', '母数と内訳が一致しません（数え方を確認してください）', 'is-ng');
+      }
+      if (seg.ignoredRecords && (seg.ignoredRecords.duplicateEmail || seg.ignoredRecords.noEmail)) {
+        row('母数に入れなかった行',
+          '重複アドレス ' + (seg.ignoredRecords.duplicateEmail || 0) + ' 行 / アドレス無し '
+          + (seg.ignoredRecords.noEmail || 0) + ' 行');
+      }
+      // 検証用サンプルは**属性だけ**（アドレス・氏名・recordId は受け取っていない）
+      if (Array.isArray(seg.sample) && seg.sample.length) {
+        const p = document.createElement('p');
+        p.className = 'seg-sample';
+        p.textContent = '検証用サンプル（匿名・属性のみ）: '
+          + seg.sample.map((s) => `${s.plan}/${s.contract}/${s.segment}`).join('、');
+        box.appendChild(p);
+      }
+      const notice = document.createElement('p');
+      notice.className = 'blocker';
+      notice.textContent = out.notice || 'まだ送信対象は固定されていません。';
+      box.appendChild(notice);
+      if (out.providerSuppression && out.providerSuppression.available === false) {
+        const w = document.createElement('p');
+        w.className = 'blocker';
+        w.textContent = out.providerSuppression.note;
+        box.appendChild(w);
+      }
+    }
+
+    /**
+     * 計測状態。**「0 件」と「計測していない」を必ず区別して出す**。
+     * 2026-08-04 の配信では、実際は 9 名開封していたのに台帳は 0 だった。
+     */
+    function mkRenderMeasurement(m) {
+      const box = $('mkMeasureBox');
+      if (!box || !m) return;
+      const lines = [
+        '開封の計測: ' + m.openLabel,
+        'クリックの計測: ' + m.clickLabel,
+      ];
+      if (Array.isArray(m.reasons) && m.reasons.length) {
+        lines.push('理由: ' + m.reasons.join(' / '));
+      }
+      if (m.open !== 'enabled' || m.click !== 'enabled') {
+        lines.push('※ 計測していない指標は「0」ではなく「—」と表示します。0 と未計測を混同しません。');
+      }
+      if (m.providerOnly) {
+        lines.push('※ 配信基盤側だけで確認できた数値は「参考値」として扱います。');
+      }
+      box.textContent = lines.join('\n');
+      box.className = 'measure-box' + (m.open === 'enabled' && m.click === 'enabled' ? ' ok' : '');
+      box.hidden = false;
+    }
+
+    $('mkSegLoad')?.addEventListener('click', mkSegPreview);
 
     /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
     function mkNotify(kind, text, detail) {
@@ -7183,6 +7341,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     mkAfterBridgesReady(() => {
       // 画面を読み込み直しても、同じタブなら引き継ぎは続く（期限切れ・使用済みは復元しない）
       mkHandoffRestore();
+      // セグメントの選択肢はサーバーの定義をそのまま出す（画面で条件を組み立てない）
+      mkSegInit().catch(() => {});
     });
   })();
 </script>

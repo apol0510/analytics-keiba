@@ -47,7 +47,31 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: 管理画面の初期化が bridge 未読込で止まる不具合を直す
+**Phase（2026-08-04 現在・最新）: AK 専用 CRM の基盤（大規模セグメント + 計測状態 + 大規模配信の設計）
+（branch `feat/crm-segment-foundation`・Draft PR・merge 前・production 未反映）。**
+
+- **目的**: 既存の小規模フローを壊さずに、約 13,000 件を安全に抽出・段階配信・成果追跡できる土台を作る
+- **完成条件**: 大規模セグメントを read-only で集計できる / 13,000 件を DOM へ描画しない /
+  PII・recordId を画面へ出さない / open・click の「0 件」と「計測無効」を区別する /
+  snapshot・分割配信・段階配信の設計が固定される / **本番送信機能は未実装のまま**
+- **完了済み**:
+  - 新モジュール 5 本（`src/lib/crm/`）: セグメント集計 / snapshot / 分割・段階配信 /
+    計測状態 / 成果追跡。すべて純粋（I/O なし）
+  - read-only API `action:'segments'`（件数・除外理由・条件ハッシュ・匿名サンプルのみ）
+  - 管理画面に「セグメントの下見（大規模）」を追加（個別選択と明確に分離）
+  - 計測状態の表示（0 と未計測を混同しない）
+  - テスト 3063 pass / 0 fail（新規 72）。check:safety・build とも exit 0。360px / 820px 確認済み
+- **本番 read-only 実測**: Customers 1,464 件（一意 1,454）／無料 1,374 ／
+  **無料セグメント: 母数 1,374 → 送信候補 1,296 / 除外 78**
+  （停止リスト 39 / 重複 18 / テスト 6 / 直近送信 6 / soft 6 / hard 2 / 配信停止 1）
+- **現在地**: 基盤 Phase の Draft PR 完成。**production 未反映**
+- **未完了**: snapshot の本番作成 / 親ジョブ・子バッチの実行系 / 成果集計の実データ配線 /
+  Event Webhook の open・click 有効化（設定変更は未実施）
+- **停止理由**: Draft PR 完成が停止境界。merge・deploy・送信は未承認
+- **未実施**: PR merge / production deploy / snapshot 本番作成 / 13,000 件のキュー登録 /
+  メール送信 / dispatcher 実行 / SendGrid 設定変更 / env 変更 / Airtable write
+
+**Phase（2026-08-04）: 管理画面の初期化が bridge 未読込で止まる不具合を直す
 （branch `fix/admin-bridge-init-order`・Draft PR・merge 前・production 未反映）。**
 
 - **本番の実挙動で発見**（PR #227 デプロイ後のコンソール）:

@@ -302,6 +302,82 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | 送信経路（唯一） | `netlify/functions/marketing-campaign-dispatch.js` |
 | 画面 | `src/pages/admin/premium-plus-eligibility.astro` |
 
+## AK 専用 CRM の責務（2026-08-04 / 大規模化の土台）
+
+`/admin/premium-plus-eligibility/` は **AK 専用の「顧客販売・マーケティング管理」**。
+将来 13,000 件規模の配信に耐えるため、責務を 5 つに分けて扱う。
+
+| 領域 | 何を扱うか | 触ってよいもの |
+|---|---|---|
+| 顧客 | 契約状態・プラン・区分・送信可否 | 読むだけ |
+| カムバック特典 | 無料付与（promotional grant）| 特典フィールドのみ |
+| キャンペーン | 文面・version・contentHash | カタログ定義 |
+| 配送 | snapshot / 親ジョブ / 子バッチ / 再送 | ScheduledEmails・CampaignDeliveries |
+| 成果 | delivered / open / click / ログイン / 購入 | 読むだけ |
+
+既存 URL と Premium Plus 販売資格管理は維持する。
+
+### 大規模セグメント（単一源: `src/lib/crm/audienceSegments.js`）
+
+**13,000 件をブラウザへ描画しない。** 画面へ返すのは
+母数 / 送信候補 / 除外数 / 除外理由別件数 / 対象条件 / 最終計算日時 / 条件ハッシュ /
+**匿名化した検証用サンプル（属性のみ・20 件まで）** だけ。
+
+数え方の約束（崩れたらテストが落ちる）:
+
+1. 母数は**一意メールアドレス**（レコード数ではない）
+2. 同じアドレスの 2 件目以降は母数にも除外にも入れない（別枠で報告）
+3. **母数 = 送信候補 + 除外合計** が常に成立する
+4. 判定材料が欠ければ**送らない側へ倒す**（配信基盤の停止リストを読めなければ全員除外）
+5. 除外は理由別に必ず数える
+
+対象条件の正本は**サーバー側**。クライアントが送る recordId 一覧を正本にしない。
+
+### Audience Snapshot（単一源: `src/lib/crm/audienceSnapshot.js`）
+
+送信前に対象を固定する。**減るのは許す、増えるのは許さない。**
+
+- 改ざん検知（整合性ハッシュ）／期限切れ・使用済み・別キャンペーンでの再利用を拒否
+- 個人情報を持たない（件数と条件だけ）
+- 送信直前に配信停止・有料化・バウンスを再判定し、**snapshot の件数を超えて送らない**
+- キュー登録したら使い切り（同一 snapshot × campaign version の二重登録を禁止）
+
+### 分割配信・段階配信（単一源: `src/lib/crm/batchPlan.js`）
+
+親ジョブ + 子バッチ（既定 500 / 上限 1,000）。受信者単位の二重送信防止は従来どおり DeliveryKey。
+
+- 同時に 2 バッチを走らせない／送信済みバッチは二度と実行しない（再開時の二重送信防止）
+- 一時停止は**現バッチ完了後**／未送信は取消可／**送信済みは取消不可**
+- 段階: 管理者テスト → 500 → 24〜48h 観測 → 1,000 → 2,000 単位 → 残り
+- 異常停止の閾値は**設定値**（コードに直書きしない）。production での変更は別承認
+
+### 計測状態モデル（単一源: `src/lib/crm/deliveryMeasurement.js`）
+
+**「0 件」と「計測していない」を必ず区別する。**
+2026-08-04 の 28 名配信では、実際は 9 名開封していたのに AK 台帳は 0 だった。
+
+- `enabled` / `disabled` / `unknown` の 3 状態。tracking と Webhook の**両方**そろって `enabled`
+- 無効・不明のときは数値を返さない（`null` ＋「—（計測していません）」）
+- unique 人数と event 件数を分ける／provider 受理・delivered・opened を分ける
+- provider 側だけで確認した値は**参考値**と明示
+- 台帳と provider の件数差は異常停止の判断材料にする
+
+#### EmailEvents を正本にするために必要な設定変更（**未実施**）
+
+| 変更 | 現在 | 必要な値 |
+|---|---|---|
+| Event Webhook の `open` | false | true |
+| Event Webhook の `click` | false | true |
+| click tracking | 無効 | 有効（本文リンクを書き換えるので文面確認が要る）|
+
+検証条件: 設定変更後にテスト送信 → `EmailEvents` に `open` が入る →
+unique 人数が provider 側の値と一致する。**この PR では変更しない**（承認と手順を別に取る）。
+
+### 成果追跡（単一源: `src/lib/crm/campaignOutcome.js`）
+
+因果を断定せず **direct / correlated / unknown** の 3 段階で示す。
+click 計測が無効な現状では direct は観測できないため、その事実も一緒に返す。
+
 ## カムバック施策の対象条件（正本 / 2026-08-03）
 
 「カムバック」は **戻ってきてほしい人** への施策であり、いま払って使っている会員に配るものではない。
