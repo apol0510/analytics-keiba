@@ -260,6 +260,18 @@ async function handleRun({ req, KEY, BASE, now }) {
     existingEmails: new Set(ctx.facts.existing),
     maxWrites: gate.willCreate,
     deps: {
+      // まとめ書き（Airtable は 1 リクエスト 10 件まで）。
+      // 1 件ずつだと 100 件で約 35 秒かかり、同期 Function の上限を超えて
+      // 「作成済みだけ残って結果が返らない」状態になるため、既定はこちら。
+      createRecords: async (fieldsArray) => {
+        const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ records: fieldsArray.map((fields) => ({ fields })) }),
+        });
+        return { ok: res.ok, status: res.status };
+      },
+      // まとめ書きが失敗したチャンクを 1 件ずつ切り分けるための経路
       createRecord: async (fields) => {
         const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`, {
           method: 'POST',
@@ -275,6 +287,7 @@ async function handleRun({ req, KEY, BASE, now }) {
   console.log('✅ [customer-import] 実行完了:', {
     batchId: ctx.batchId, created: result.created,
     skippedExisting: result.skippedExisting, failed: result.failed,
+    bulkRequests: result.bulkRequests, singleRequests: result.singleRequests,
   });
 
   return json(200, {
@@ -284,6 +297,8 @@ async function handleRun({ req, KEY, BASE, now }) {
     skippedExisting: result.skippedExisting,
     skippedAlreadyDone: result.skippedDone,
     failed: result.failed,
+    bulkRequests: result.bulkRequests,
+    singleRequests: result.singleRequests,
     reconciliation: result.reconciliation,
     audit: result.audit,   // rowKey のハッシュのみ（PII なし）
     rollbackHint: `Source = "customer-import:${ctx.batchId}" の行が対象です。`,

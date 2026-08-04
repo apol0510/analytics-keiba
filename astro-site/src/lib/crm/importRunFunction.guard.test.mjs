@@ -27,9 +27,24 @@ test('guard: 実行 Function は既存レコードを更新しない（PATCH を
   assert.equal(/method:\s*['"]PATCH['"]/.test(code), false, 'PATCH を組み立てている');
   assert.equal(/method:\s*['"]PUT['"]/.test(code), false);
   assert.equal(/method:\s*['"]DELETE['"]/.test(code), false, '削除を組み立てている');
-  // 作成は 1 経路だけ
+  // 作成は「まとめ書き」と「1 件ずつ（切り分け用）」の 2 経路だけ。
+  // どちらも Customers への POST で、更新系は持たない。
   const posts = code.match(/method:\s*['"]POST['"]/g) || [];
-  assert.equal(posts.length, 1, `作成経路が ${posts.length} 箇所ある（1 箇所に保つ）`);
+  assert.equal(posts.length, 2, `作成経路が ${posts.length} 箇所ある（まとめ書き + 切り分け用の 2 箇所）`);
+  assert.match(RUN, /createRecords: async \(fieldsArray\)/, 'まとめ書きの経路が無い');
+  assert.match(RUN, /createRecord: async \(fields\)/, '切り分け用の 1 件書き込みが無い');
+});
+
+test('guard: まとめ書きは Airtable の上限 10 件を超えない', () => {
+  assert.match(EXEC, /export const CREATE_CHUNK_SIZE = 10;/);
+  assert.match(EXEC, /Math\.min\(size, CREATE_CHUNK_SIZE\)/, 'チャンク上限を上書きできてしまう');
+});
+
+test('guard: 許可外の列があれば 1 件も書かない（部分書き込みを作らない）', () => {
+  assert.match(EXEC, /if \(blocked > 0\) \{/, '許可列違反で全体を止めていない');
+  const i = EXEC.indexOf('if (blocked > 0) {');
+  const j = EXEC.indexOf('Phase 2');
+  assert.ok(i > -1 && j > i, '許可列の検査が書き込みより後ろにある');
 });
 
 test('guard: 実行 Function はメールを送らない', () => {
@@ -80,7 +95,8 @@ test('guard: 課金・特典・決済・電話番号・登録日を書けない'
 test('guard: 冪等キーと直前再判定を必ず通る', () => {
   assert.match(EXEC, /done\.has\(rowKey\)/, '冪等キーを見ていない');
   assert.match(EXEC, /existing\.has\(email\)/, '書き込み直前の再判定が無い');
-  assert.match(EXEC, /created >= limit/, '上限の検査が無い');
+  // 上限は**書き込む前**（適格判定の段階）で切る。まとめ書きへ計画より多く渡さないため
+  assert.match(EXEC, /accepted\.length >= limit/, '上限の検査が無い');
 });
 
 test('guard: 429/5xx だけ再試行する', () => {

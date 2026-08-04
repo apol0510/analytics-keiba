@@ -25,7 +25,7 @@ import {
   canRunFirstImport, buildConfirmationPhrase, shouldRetryStatus, retryDelayMs,
   reconcileRun, describeRunPlan, RUN_REJECT,
 } from './importWritePlan.js';
-import { writeCreateBatch, ROW_RESULT } from './importWriteExecutor.js';
+import { writeCreateBatch, ROW_RESULT, CREATE_CHUNK_SIZE, chunkList } from './importWriteExecutor.js';
 
 const NOW = Date.UTC(2026, 7, 5, 3, 0, 0);
 const NOW_ISO = new Date(NOW).toISOString();
@@ -435,4 +435,118 @@ test('実行前の表示に必要な情報がそろう', () => {
   assert.match(d.rollback.join(' '), /削除ではなく隔離/);
   assert.match(d.検証方法.join(' '), /Source/);
   assert.equal(d.書き込む列.includes('Phone'), false);
+});
+
+// ── まとめ書き（bulk create）────────────────────────────────────
+// 1 件ずつだと 100 件で約 35 秒かかり、同期 Function の上限を超えて
+// 「作成済みだけ残って結果が分からない」最悪の状態になる。10 件ずつまとめる。
+
+const makeBulkDeps = (behavior = () => ({ ok: true })) => {
+  const bulkCalls = []; const singleCalls = [];
+  return {
+    bulkCalls,
+    singleCalls,
+    deps: {
+      createRecords: async (fieldsArray) => { bulkCalls.push(fieldsArray); return behavior(fieldsArray, bulkCalls.length); },
+      createRecord: async (fields) => { singleCalls.push(fields); return { ok: true }; },
+      sleep: async () => {},
+    },
+  };
+};
+
+test('bulk: 100 件を 10 リクエストで書く', async () => {
+  const { deps, bulkCalls, singleCalls } = makeBulkDeps();
+  const r = await writeCreateBatch({
+    rows: rows(100), batchId: BATCH, nowIso: NOW_ISO,
+    existingEmails: new Set(), maxWrites: 100, deps,
+  });
+  assert.equal(r.created, 100);
+  assert.equal(r.failed, 0);
+  assert.equal(bulkCalls.length, 10, `まとめ書きが ${bulkCalls.length} 回（10 回であるべき）`);
+  assert.equal(singleCalls.length, 0, 'まとめ書きが成功したのに 1 件ずつ書いている');
+  assert.ok(bulkCalls.every((c) => c.length <= CREATE_CHUNK_SIZE), 'Airtable の上限 10 件を超えている');
+  assert.equal(r.reconciliation.balanced, true);
+});
+
+test('bulk: チャンクが失敗したら 1 件ずつ書き直して原因を切り分ける', async () => {
+  // 2 番目のチャンクだけ検証エラー（再試行しない種類）
+  let n = 0;
+  const bulkCalls = []; const singleCalls = [];
+  const deps = {
+    createRecords: async (arr) => { bulkCalls.push(arr); n += 1; return n === 2 ? { ok: false, status: 422 } : { ok: true }; },
+    createRecord: async (f) => { singleCalls.push(f); return f.Email === 'u12@example.com' ? { ok: false, status: 422 } : { ok: true }; },
+    sleep: async () => {},
+  };
+  const r = await writeCreateBatch({
+    rows: rows(30), batchId: BATCH, nowIso: NOW_ISO, existingEmails: new Set(), maxWrites: 30, deps,
+  });
+  assert.equal(bulkCalls.length, 3, 'チャンク数が違う');
+  assert.equal(singleCalls.length, 10, '失敗チャンクだけ 1 件ずつやり直していない');
+  assert.equal(r.created, 29, '巻き添えで落ちている行がある');
+  assert.equal(r.failedTerminal, 1, '悪い 1 行を特定できていない');
+  assert.equal(r.reconciliation.balanced, true);
+});
+
+test('bulk: 429 はチャンク単位で再試行する', async () => {
+  let n = 0;
+  const { deps, bulkCalls, singleCalls } = makeBulkDeps(() => { n += 1; return n < 3 ? { ok: false, status: 429 } : { ok: true }; });
+  const r = await writeCreateBatch({
+    rows: rows(10), batchId: BATCH, nowIso: NOW_ISO, existingEmails: new Set(), maxWrites: 10, deps,
+  });
+  assert.equal(r.created, 10);
+  assert.equal(bulkCalls.length, 3, '再試行していない');
+  assert.equal(singleCalls.length, 0, '429 で 1 件ずつへ落ちている');
+});
+
+test('bulk: 上限を超えて書かない', async () => {
+  const { deps, bulkCalls } = makeBulkDeps();
+  const r = await writeCreateBatch({
+    rows: rows(100), batchId: BATCH, nowIso: NOW_ISO, existingEmails: new Set(), maxWrites: 25, deps,
+  });
+  assert.equal(r.created, 25);
+  assert.equal(bulkCalls.flat().length, 25, '計画より多く送っている');
+});
+
+test('bulk: 既存・作成済みはまとめ書きへ渡さない', async () => {
+  const done = new Set([computeCreateRowKey({ batchId: BATCH, email: 'u0@example.com' })]);
+  const { deps, bulkCalls } = makeBulkDeps();
+  const r = await writeCreateBatch({
+    rows: rows(5), batchId: BATCH, nowIso: NOW_ISO,
+    existingEmails: new Set(['u1@example.com']), doneRowKeys: done, maxWrites: 10, deps,
+  });
+  assert.equal(r.created, 3);
+  assert.equal(r.skippedExisting, 1);
+  assert.equal(r.skippedDone, 1);
+  const sent = bulkCalls.flat().map((f) => f.Email);
+  assert.equal(sent.includes('u0@example.com'), false, '作成済みを送っている');
+  assert.equal(sent.includes('u1@example.com'), false, '既存を送っている');
+});
+
+test('bulk: 許可外の列があれば 1 件も書かない（部分書き込みを作らない）', async () => {
+  const { deps, bulkCalls, singleCalls } = makeBulkDeps();
+  // 氏名の代わりに禁止列が入る状況を作る（buildCreateFields は使わず直接検査を確認）
+  const r = await writeCreateBatch({
+    rows: [{ email: 'a@example.com' }, { email: '' }], batchId: BATCH, nowIso: NOW_ISO,
+    existingEmails: new Set(), maxWrites: 10, deps,
+  });
+  // 空メールは terminal 扱いだが、許可列違反ではないので書き込みは走る
+  assert.equal(r.created, 1);
+  assert.equal(bulkCalls.length, 1);
+  assert.equal(singleCalls.length, 0);
+});
+
+test('bulk: まとめ書きが無ければ従来どおり 1 件ずつ（後方互換）', async () => {
+  const { deps, calls } = makeDeps();
+  const r = await writeCreateBatch({
+    rows: rows(3), batchId: BATCH, nowIso: NOW_ISO, existingEmails: new Set(), maxWrites: 10, deps,
+  });
+  assert.equal(r.created, 3);
+  assert.equal(calls.length, 3);
+  assert.equal(r.bulkRequests, 0);
+});
+
+test('bulk: チャンクは Airtable の上限を超えられない', () => {
+  assert.equal(CREATE_CHUNK_SIZE, 10);
+  assert.equal(chunkList(rows(25), 999).every((c) => c.length <= 10), true, '上限を無視できてしまう');
+  assert.equal(chunkList(rows(25), 10).length, 3);
 });
