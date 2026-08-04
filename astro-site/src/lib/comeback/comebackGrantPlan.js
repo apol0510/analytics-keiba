@@ -48,7 +48,7 @@ import {
 } from '../promotions/promotionalOffer.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { normalizePlan } from '../auth/planNormalization.js';
-import { isWithdrawnGrantAllowed } from '../entitlements/comebackWithdrawnPolicy.js';
+import { isWithdrawnAllowedForOffer } from '../entitlements/comebackPolicy.js';
 
 /** 1 回の操作で扱える最大件数（暴走防止。超えたら計画自体を作らない） */
 export const MAX_GRANT_RECORDS = 200;
@@ -61,8 +61,16 @@ export const CB_SKIP = Object.freeze({
   UNKNOWN_CUSTOMER: 'unknown_customer',
   DATA_INCOMPLETE: 'data_incomplete',
   ACCOUNT_SUSPENDED: 'account_suspended',
-  /** 退会・強制ログアウト → ログインできないので**無料付与**はしない（割引 offer は可） */
+  /**
+   * 退会（`WithdrawalRequested`）→ 既定では無料付与しない。
+   * **施策が `allowWithdrawn` を宣言していれば付与できる**（割引 offer は常に可）。
+   */
   WITHDRAWAL_BLOCKED: 'withdrawal_blocked',
+  /**
+   * 強制ログアウト（`ForceLogout`）→ **常に**無料付与しない。
+   * 退会（課金の状態）とは別軸の**安全上の措置**なので、施策の宣言では緩められない。
+   */
+  FORCE_LOGOUT_BLOCKED: 'force_logout_blocked',
   ALREADY_GRANTED: 'already_granted',
   ALREADY_APPLIED: 'already_applied',
   PAID_STRONGER: 'paid_stronger',
@@ -78,7 +86,8 @@ export const CB_SKIP_LABEL = Object.freeze({
   unknown_customer: '顧客レコード不明',
   data_incomplete: 'データ不備（メールアドレス未登録/不正）',
   account_suspended: 'アカウント停止・テストアカウント',
-  withdrawal_blocked: '退会・強制ログアウトのため無料付与は不可',
+  withdrawal_blocked: '退会のため無料付与は不可（この特典では退会者を対象にしていません）',
+  force_logout_blocked: '強制ログアウトのため無料付与は不可',
   already_granted: '既に同等以上の特典を保有',
   already_applied: 'この操作で適用済み（再実行）',
   paid_stronger: '有料契約が優先で変更不要',
@@ -117,30 +126,40 @@ function hasValidEmail(fields) {
  * ── `allowWithdrawn` について（既定は false のまま）──────────────────
  * 通常の無料付与では、退会・強制ログアウトは従来どおり弾く。
  *
- * ただし**カムバック施策の Light 30 日無料に限り**、退会者を対象にできる。
+ * ただし**カタログで `allowWithdrawn` を宣言した施策**では、退会者を対象にできる。
  * AK の `WithdrawalRequested` は旧 Stripe の課金を止めるための状態で、利用禁止でも
  * メール拒否でもない（`docs/spec.md`「カムバック施策の対象条件」も退会済み＝対象と定めている）。
- * どの付与なら開けてよいかの判断は `comebackWithdrawnPolicy.isWithdrawnGrantAllowed`
+ * どの付与なら開けてよいかの判断は `entitlements/comebackPolicy.isWithdrawnAllowedForOffer`
  * が単一源で、呼び出し側は**付与 1 件ごとに**評価した結果だけをここへ渡す。
  *
  * ⚠️ `allowWithdrawn: true` でも **`ForceLogout` は必ず弾く**。強制ログアウトは
  *    課金の状態ではなく安全上の措置なので、退会と同列に扱わない。
+ *    理由コードも `force_logout_blocked` と `withdrawal_blocked` で**分ける**
+ *    （同じ表示にまとめると「施策で許可すれば通るのか」が読めない）。
  *    アカウント停止・テストアカウント・メール不正も従来どおり弾く。
  *
+ * ── `duplicateEmail`（既定 false）────────────────────────────────
+ * Customers 全体で同じアドレスが 2 件以上ある人。`auth/customerLookup` が重複を
+ * CONFLICT として fail closed でログイン拒否するため、付与しても本人が使えない。
+ * **一覧・dry-run・実行のすべてがこの 1 関数を通る**ようにするため、ここで判定する。
+ *
  * @param {object} fields Customers の fields
- * @param {{ allowWithdrawn?: boolean }} [options]
+ * @param {{ allowWithdrawn?: boolean, duplicateEmail?: boolean }} [options]
  */
 export function checkGrantable(fields, options = {}) {
   const f = fields || {};
   const allowWithdrawn = options && options.allowWithdrawn === true;
   if (!hasValidEmail(f)) return { ok: false, reason: CB_SKIP.DATA_INCOMPLETE };
+  if (options && options.duplicateEmail === true) {
+    return { ok: false, reason: CB_SKIP.DUPLICATE_EMAIL };
+  }
   const status = statusOf(f);
   const planRaw = String(f['プラン'] ?? f.Plan ?? '').trim().toLowerCase();
   if (SUSPENDED_STATUS.has(status) || status === 'test' || planRaw === 'test') {
     return { ok: false, reason: CB_SKIP.ACCOUNT_SUSPENDED };
   }
   // 強制ログアウトは施策に関係なく常に拒否（安全措置は課金状態と別軸）
-  if (isTruthyFlag(f.ForceLogout)) return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
+  if (isTruthyFlag(f.ForceLogout)) return { ok: false, reason: CB_SKIP.FORCE_LOGOUT_BLOCKED };
   const withdrawn = isTruthyFlag(f.WithdrawalRequested) || WITHDRAWN_STATUS.has(status);
   if (withdrawn && !allowWithdrawn) {
     return { ok: false, reason: CB_SKIP.WITHDRAWAL_BLOCKED };
@@ -231,7 +250,7 @@ export function describeCustomerState(fields, nowMs) {
  *   before, after, skipped: string|null,
  * }}
  */
-export function planCustomer({ recordId, fields, grantOffers, purchaseOffer, nowMs, operationId, actor, source, existingOffers }) {
+export function planCustomer({ recordId, fields, grantOffers, purchaseOffer, nowMs, operationId, actor, source, existingOffers, duplicateEmail }) {
   const f = fields || {};
   const before = describeCustomerState(f, nowMs);
   const grantParts = [];
@@ -241,10 +260,13 @@ export function planCustomer({ recordId, fields, grantOffers, purchaseOffer, now
   const offerable = checkOfferable(f);
 
   // ── 無料付与（Light / Premium それぞれ独立に判定）──
-  //   付与できるかは**付与内容ごと**に変わる。カムバックの Light 30 日無料だけが
-  //   退会者を対象にできるので、offer 単位で `allowWithdrawn` を評価する。
+  //   付与できるかは**付与内容ごと**に変わる。退会者を対象にできるのは
+  //   カタログで `allowWithdrawn` を宣言した施策だけなので、offer 単位で評価する。
   for (const offer of grantOffers || []) {
-    const grantable = checkGrantable(f, { allowWithdrawn: isWithdrawnGrantAllowed(offer) });
+    const grantable = checkGrantable(f, {
+      allowWithdrawn: isWithdrawnAllowedForOffer(offer),
+      duplicateEmail: duplicateEmail === true,
+    });
     if (!grantable.ok) { partSkips.push({ part: offer.targetTier, reason: grantable.reason }); continue; }
 
     // 有料契約の方が強いなら書かない（権利を縮めない・意味の無い付与をしない）
@@ -383,12 +405,13 @@ export function buildComebackPlan({
     // Customers 全体で同じアドレスが 2 件以上ある人は**そもそも付与しない**。
     // ログインは重複アドレスを CONFLICT として fail closed で拒否する
     // （`auth/customerLookup.classifyCustomerMatches`）ので、付与しても本人は使えず、
-    // 「30 日無料を付与しました」という案内だけが嘘になる。レコード統合が先。
-    if (email && dupAcrossCustomers.has(email)) { note(recordId, CB_SKIP.DUPLICATE_EMAIL); continue; }
-
+    // 「無料で使えます」という案内だけが嘘になる。レコード統合が先。
+    // 判定は checkGrantable に集約してあるので、ここでは**その事実を渡すだけ**
+    // （一覧・dry-run・実行がすべて同じ関数を通る）。
     const planned = planCustomer({
       recordId, fields, grantOffers: grants, purchaseOffer: purchase,
       nowMs, operationId, actor, source, existingOffers,
+      duplicateEmail: !!email && dupAcrossCustomers.has(email),
     });
 
     // 特典データが壊れているレコードは自動で上書きしない（管理者が個別に確認する）

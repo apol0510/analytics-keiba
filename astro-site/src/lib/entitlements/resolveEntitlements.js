@@ -42,7 +42,7 @@
 
 import { normalizePlan } from '../auth/planNormalization.js';
 import { resolvePromotionalGrants, PROMO_WRITABLE_FIELDS } from './promotionalGrants.js';
-import { honorsLightGrantDespiteWithdrawal } from './comebackWithdrawnPolicy.js';
+import { honorsGrantDespiteWithdrawal } from './comebackPolicy.js';
 
 // アカウント全体を拒否する Status（＝ログインも不可）。memberResolution.js の SUSPENDED_STATUS に
 // 揃え、ユーザー要件の明示状態（withdrawn / closed）を加える。'test' は下の isTestAccount で扱う。
@@ -130,19 +130,26 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   if (suspended) reasons.push('STATUS_SUSPENDED');
   if (isTestAccount) reasons.push('TEST_ACCOUNT');
 
-  // ── 退会者でも、カムバックの**期間限定 Light 無料特典**だけは有効にする ────────
+  // ── 退会者でも、**カムバック施策として宣言された**無料特典だけは有効にする ────────
   // 退会は課金停止の状態であって利用禁止ではない（`auth/memberResolution` も同じ判断で
   // 退会者を無料会員としてログインさせている）。ここで特典を無効にすると
-  // 「付与したのに使えない」ズレが生まれるため、判定を `comebackWithdrawnPolicy` へ揃える。
+  // 「付与したのに使えない」ズレが生まれるため、判定を `comebackPolicy` へ揃える。
   //
-  // ⚠️ 開けるのは Light の閲覧権だけ。**契約由来の権限は 1 つも戻さない**:
+  // ⚠️ 開けるのは施策が `allowedEntitlements` に宣言した権利だけ。
+  //    **契約由来の権限は 1 つも戻さない**:
   //   - `paidEffective` は `accountUsable` のままなので有料 Premium / Light は無効
-  //   - 三連複買い切り・Premium 無料特典・購入資格も下で `accountUsable` に固定
-  const withdrawnPromoHonored = withdrawal && !forceLogout && !suspended && !isTestAccount
-    && honorsLightGrantDespiteWithdrawal({ fields: c.promoFields, nowMs }).ok;
-  if (withdrawnPromoHonored) reasons.push('WITHDRAWN_PROMO_LIGHT_HONORED');
+  //   - 三連複買い切り・購入資格も下で `accountUsable` に固定
+  const withdrawnHonor = (withdrawal && !forceLogout && !suspended && !isTestAccount)
+    ? honorsGrantDespiteWithdrawal({ fields: c.promoFields, nowMs })
+    : { ok: false, allowedEntitlements: [] };
+  const withdrawnPromoHonored = withdrawnHonor.ok === true;
+  /** 退会者へ開いてよい権利（施策の宣言そのまま。宣言が無ければ空＝何も開かない） */
+  const honoredEntitlements = new Set(withdrawnPromoHonored ? withdrawnHonor.allowedEntitlements : []);
+  if (withdrawnPromoHonored) reasons.push('WITHDRAWN_PROMO_GRANT_HONORED');
 
   const canLogin = accountUsable || withdrawnPromoHonored;
+  /** その権利を「いま見てよいか」。退会者は施策の宣言に含まれるものだけ通す。 */
+  const mayOpen = (entitlement) => (accountUsable ? true : honoredEntitlements.has(entitlement));
 
   // pending は登録済みだが有料権限未確定＝Free 扱い（有料判定に入れない）。
   const paidEffective = accountUsable && !pending;
@@ -165,10 +172,9 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   // pending（入金待ち）でも特典は有効。特典は支払いと無関係に成立する権利であり、
   // 逆に停止・退会・テストアカウントでは canLogin=false なので自動的に無効になる。
   const grants = resolvePromotionalGrants(c.promoFields, nowMs);
-  // Premium 無料特典は `accountUsable`（＝退会者を含まない）に固定する。
-  // 退会者へ開けるのは Light だけ（`withdrawnPromoHonored` の但し書き）。
-  const promoPremiumActive = accountUsable && grants.premium.active;
-  const promoLightActive = canLogin && grants.light.active;
+  // 退会者は施策が宣言した権利だけ（`mayOpen`）。退会していなければ従来どおり。
+  const promoPremiumActive = mayOpen('premium') && grants.premium.active;
+  const promoLightActive = mayOpen('light') && grants.light.active;
   if (promoPremiumActive) reasons.push('PROMO_PREMIUM_GRANT');
   if (promoLightActive) reasons.push('PROMO_LIGHT_GRANT');
 
@@ -181,9 +187,9 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   // 三連複閲覧: 原則 active AND LifetimeSanrenpuku=true（tier/Premium期限を見ない）。
   // 移行期のみ旧 tier(premium-sanrenpuku/combo) を Premium 有効中に限り許可。
   const legacyView = legacySanrenpukuTierGrantsView && LEGACY_SANRENPUKU_TIERS.has(tier) && premiumActive;
-  // ⚠️ `canLogin` ではなく `accountUsable`。Light 無料特典を認めた退会者へ
-  //    三連複買い切りの閲覧権まで戻さない（契約由来の権利は復帰させない）。
-  const canViewSanrenpuku = accountUsable && (lifetime || legacyView);
+  // ⚠️ 三連複買い切りは**購入した権利**なので、施策の宣言では開けない。
+  //    無料特典を認めた退会者にも戻さない（契約由来の権利は復帰させない）。
+  const canViewSanrenpuku = mayOpen('sanrenpuku') && (lifetime || legacyView);
 
   // ── 購入資格 ──────────────────────────────────────────
   // 有効な **有料** Premium 会員 かつ 未所有 のときだけ三連複購入を提示。

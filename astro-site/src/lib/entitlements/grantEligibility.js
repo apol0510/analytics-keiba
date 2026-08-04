@@ -74,7 +74,9 @@ export const GRANT_REASON_LABEL = Object.freeze({
 const BLOCKED_LABEL = Object.freeze({
   [CB_SKIP.DATA_INCOMPLETE]: '付与不可：メールアドレス未登録・不正',
   [CB_SKIP.ACCOUNT_SUSPENDED]: '付与不可：アカウント停止・テストアカウント',
-  [CB_SKIP.WITHDRAWAL_BLOCKED]: '付与不可：退会・強制ログアウト',
+  [CB_SKIP.WITHDRAWAL_BLOCKED]: '付与不可：退会（この特典は退会者を対象にしていません）',
+  [CB_SKIP.FORCE_LOGOUT_BLOCKED]: '付与不可：強制ログアウト',
+  [CB_SKIP.DUPLICATE_EMAIL]: '付与不可：同一メールアドレスの重複レコード（ログインできません）',
   [CB_SKIP.UNKNOWN_CUSTOMER]: '付与不可：顧客レコード不明',
 });
 
@@ -103,6 +105,7 @@ function selection(value) {
 export function resolveGrantEligibility(fields, nowMs = Date.now(), options = {}) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   const allowWithdrawn = options && options.allowWithdrawn === true;
+  const duplicateEmail = options && options.duplicateEmail === true;
   const f = fields && typeof fields === 'object' ? fields : null;
   const out = (status, reasonCode, reasonLabel, notes = []) => ({
     canGrant: status === GRANT_ELIGIBILITY.GRANTABLE,
@@ -118,7 +121,7 @@ export function resolveGrantEligibility(fields, nowMs = Date.now(), options = {}
   }
 
   // ① 実行可否の正本（dry-run と同じ関数・同じ理由コード）
-  const base = checkGrantable(f, { allowWithdrawn });
+  const base = checkGrantable(f, { allowWithdrawn, duplicateEmail });
   if (!base.ok) {
     const code = base.reason;
     return out(GRANT_ELIGIBILITY.BLOCKED, code, BLOCKED_LABEL[code] || `付与不可：${CB_SKIP_LABEL[code] || code}`);

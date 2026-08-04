@@ -55,10 +55,10 @@ export const CB_GRANTABLE_FILTER = Object.freeze({
  * @param {{ fields: object, nowMs: number, blacklistEmails?: Set<string>, history?: object,
  *           allowWithdrawn?: boolean }} input
  */
-export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, history, allowWithdrawn } = {}) {
+export function resolveComebackCustomer({ fields, nowMs, blacklistEmails, history, allowWithdrawn, duplicateEmail } = {}) {
   const f = fields && typeof fields === 'object' ? fields : {};
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-  const grantOptions = { allowWithdrawn: allowWithdrawn === true };
+  const grantOptions = { allowWithdrawn: allowWithdrawn === true, duplicateEmail: duplicateEmail === true };
 
   const marketing = resolveCustomerMarketing({ fields: f, nowMs: now, blacklistEmails, history });
   const grants = resolvePromotionalGrants(f, now);

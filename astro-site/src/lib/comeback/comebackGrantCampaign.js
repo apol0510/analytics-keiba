@@ -24,10 +24,15 @@
 /**
  * 付与した特典 → 案内キャンペーン。
  * **1 対 1 で対応が取れるものだけ**を載せる（近いものを当てにいかない）。
+ *
+ * ⚠️ 手書きの表ではなく、**特典カタログの施策宣言（`offer.comeback.campaignId`）から作る**。
+ *    施策を 1 つ足したら案内キャンペーンも自動で結び付くので、ここを直す必要はない。
  */
-export const GRANT_CAMPAIGN_BY_OFFER = Object.freeze({
-  'light-30d-free': 'comeback-light-30d-granted',
-});
+import { listComebackPolicies } from '../entitlements/comebackPolicy.js';
+
+export const GRANT_CAMPAIGN_BY_OFFER = Object.freeze(
+  Object.fromEntries(listComebackPolicies().map((p) => [p.offerId, p.campaignId])),
+);
 
 /** 自動選択できない理由（固定コード） */
 export const GRANT_CAMPAIGN_BLOCK = Object.freeze({
