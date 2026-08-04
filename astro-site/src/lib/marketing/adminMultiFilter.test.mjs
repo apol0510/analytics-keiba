@@ -107,7 +107,7 @@ test('チップは 1 件ずつ外せる', () => {
 
 test('条件を自然文で要約する', () => {
   const t = describeConditions(sel, labels, ['contractStates', 'plans']);
-  assert.match(t, /期限切れ・退会済み・休眠・長期未ログイン/);
+  assert.match(t, /期限切れ・退会・課金停止・休眠・長期未ログイン/);
   assert.match(t, /Premium・Light/);
   assert.match(t, /検索します。$/);
   assert.match(describeConditions({}, labels), /条件を指定していません/);

@@ -34,7 +34,7 @@ export const CB_STEP_LABEL = Object.freeze({
 export const CB_CONTRACT_OPTIONS = Object.freeze([
   { value: 'candidates', label: 'カムバック候補すべて', danger: false },
   { value: 'expired', label: '期限切れ', danger: false },
-  { value: 'withdrawn', label: '退会済み', danger: false },
+  { value: 'withdrawn', label: '退会・課金停止', danger: false },
   { value: 'dormant', label: '休眠・長期未ログイン', danger: false },
   { value: 'none', label: '無料会員・契約なし', danger: false },
   { value: 'unknown', label: '状態不明', danger: false },
@@ -61,7 +61,7 @@ export function describeContractFilter(value) {
     case 'none': return '無料会員・契約のない顧客を検索します。現有効会員は除外します。';
     case 'unknown': return '契約状態を確定できない顧客を検索します。付与の対象にはできません。';
     default:
-      return '期限切れ・退会済み・現在権限なしの顧客を検索します。現有効会員は除外します。';
+      return '期限切れ・退会・課金停止・現在権限なしの顧客を検索します。現有効会員は除外します。';
   }
 }
 

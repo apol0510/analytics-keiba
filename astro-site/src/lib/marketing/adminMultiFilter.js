@@ -129,7 +129,7 @@ export const CB_SEGMENT_VALUES = Object.freeze(['expired', 'withdrawn', 'dormant
 
 export const CB_SEGMENT_LABELS = Object.freeze({
   expired: '期限切れ',
-  withdrawn: '退会済み',
+  withdrawn: '退会・課金停止',
   dormant: '休眠・長期未ログイン',
   none: '無料会員・契約なし',
   unknown: '状態不明',
@@ -145,7 +145,7 @@ export const CB_SEGMENT_DEFAULT = Object.freeze(['expired', 'withdrawn', 'dorman
 export const CB_SEGMENT_PRESETS = Object.freeze({
   standard: { label: '標準候補', values: ['expired', 'withdrawn', 'dormant'] },
   expired: { label: '期限切れ中心', values: ['expired'] },
-  withdrawn: { label: '退会済み中心', values: ['withdrawn'] },
+  withdrawn: { label: '退会・課金停止 中心', values: ['withdrawn'] },
   dormant: { label: '休眠中心', values: ['dormant'] },
   all: { label: '全候補', values: [...CB_SEGMENT_VALUES] },
   clear: { label: 'クリア', values: [] },
