@@ -84,9 +84,31 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   「—（計測状態を確認できません）」を出す**（`0` にはならない）ため、この Phase の目的は満たす。
   ブラウザでの console error 実測も未実施（/admin は Basic 認証のモーダルが自動操作を止めるため）。
 
-- **次の停止境界（別承認が要る）**: ① Event Webhook の **`open` だけ**を有効化（外部サービス設定）
-  → ② カナリア 1 通のテスト実送信 → ③ `EmailEvents` に `open` が `resolved` で着弾するのを read-only 確認。
-  **`click` の有効化（`MARKETING_CLICK_TRACKING_ENABLED` の投入）はその後の別工程**。
+- **開封計測の有効化と着弾確認 — 完了（2026-08-04）**:
+
+  | 段階 | 結果 |
+  |---|---|
+  | Event Webhook の `open` を有効化 | **MK が実施**。`open=true` / `click=false` / `updated_date=2026-08-04`。webhook は 1 件のみ（`AK Event Webhook` id `aca90150-…`）で、他フラグ・通知先 URL(64 文字)・署名用公開鍵(124 文字) は**変更なし**を read-only 確認 |
+  | 計測判定 | `npm run check:measurement` → **開封=計測中** / クリック=計測していません（意図どおり） |
+  | 台帳への着弾 | **実顧客の開封で確認**（カナリア不要だった）。`comeback-light-30d-granted` v2 の開封が `EmailEvents` へ `EventType=open` / **`ResolutionStatus=resolved`** / `CustomerRecordId`・`CampaignDeliveryRecordId` 設定済み / `VerificationStatus=verified` / `CreatedBy=sendgrid-webhook` で記録。**遅延 9 秒**（EventAt 09:27:59Z → ReceivedAt 09:28:08Z） |
+  | 管理画面 API | `action:'customerDetail'`（read-only）で `measurement.open="enabled"` / `ledgerDisplay.opens={value:1,text:"1 回",measured:true}` / `ledgerDisplay.clicks={value:null,text:"—（計測していません）"}` を確認。**前回「未検証」と記録した項目はこれで解消** |
+
+  fixture テスト（`emailEventOpenClick.fixture.test.mjs`）が固定した形と実データが一致した。
+
+- **カナリア（PR #231）は close・未 merge**: `marketing-canary` を v2→v3 へ版上げする PR を用意したが、
+  **送信前に実配信で着弾が確認できた**ため merge・deploy・送信のいずれも行わずに close（`mergedAt=null`）。
+  版上げが必要だった理由: `DeliveryKey` は `campaignId × version × 受信者`（**日付非依存**）で、
+  唯一のテスト受信者は v1（7/30）・v2（8/2）とも受信済み → v2 のままでは `already_delivered` で
+  正しく拒否される。**再度カナリアを送る必要が出たら、同じ版上げをやり直せばよい**
+  （`campaignCatalog.js` の version ＋ `campaignCatalog.test.mjs` の LOCKED を更新。本文を変えなければ hash は不変）。
+
+- **次の停止境界（別承認が要る）**:
+  1. **click 計測（別工程）**: アカウント全体の click tracking は**有効化しない**。
+     `MARKETING_CLICK_TRACKING_ENABLED=true`（production env）＋再デプロイ → カナリア（要 version 上げ）で
+     本文リンクを押して `UrlCategory` が入り、`UrlPath` にクエリが**入らない**ことを確認。
+     現状は unset のままで、画面は「—（計測していません）」を出す
+  2. **外部 13,000 件の取り込み基盤**: 実 CSV の受領・下見 API・承認・少数バッチ。
+     判定モジュール `customerImport.js` は #229 で実装済み。**実行系は未実装**
   手順・確認方法・rollback は `astro-site/docs/DELIVERY_MEASUREMENT.md`。
 
 - **目的**: 「開封 0」が**未開封なのか計測していないのか**を区別できない状態を終わらせる。
@@ -150,7 +172,8 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 - **現在地**: **PR #229 merged（`b55f264`）・production 反映済み**
 - **未完了**: **外部 13,000 件の実 CSV 受領・本番取り込み・顧客レコード作成（別承認まで行わない）** /
   snapshot の本番作成 / 親ジョブ・子バッチの実行系 / 成果集計の実データ配線 /
-  Event Webhook の open・click 有効化（設定変更は未実施）
+  ~~Event Webhook の open 有効化~~ → **2026-08-04 に有効化・着弾確認まで完了**（次 Phase 参照）。
+  **`click` は未実施のまま**（別工程）
 - **36 名ジョブは 2026-08-04 16:33 JST（07:33Z）に送信済み**（read-only で確定。
   ScheduledEmails `mkt-comeback-light-30d-granted-v2-0f57abd4-1` = `SENT` / RecipientCount 36 /
   CampaignDeliveries 36 行すべて `sent` / EmailEvents delivered 36・bounce 0 /
@@ -1678,4 +1701,8 @@ rollback は該当 env の unset（コード変更不要）。
   `astro-site/scripts/check-measurement-settings.mjs`（新規）/ `astro-site/package.json`（script 追加のみ）/
   `.github/workflows/safety-check.yml`（step 追加のみ）/ docs 3 ファイル。**lockfile は未変更。**
   外部サービス設定変更・production env 変更・メール実送信は**していない**（停止境界）。
+- **Branch（closed・未 merge）**: `chore/marketing-canary-v3`（PR #231 / `8ac2204`）。
+  カナリア再送のための版上げだったが**送信前に実配信で着弾確認できたため close**。
+  branch は remote / local とも削除済み（必要になったら同じ版上げをやり直す）。
+- **作業 worktree**: `/Users/user/Projects/analytics-keiba-measure` は本 Phase 完了時に撤去済み。
 - **Last verified**: 2026-08-04
