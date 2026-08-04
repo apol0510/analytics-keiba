@@ -47,7 +47,56 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: 配信計測の正常化（開封・クリックを AK の台帳へ入れる）
+**Phase（2026-08-04 現在・最新）: 外部 13,000 件の取り込み基盤（下見まで / 本番 write は未配線）
+（branch `feat/customer-import-preview`・Draft PR・merge 前・production 未反映）。**
+
+- **目的**: `/admin/premium-plus-eligibility/` から、ユーザーが別途保有する
+  **AK 無料ユーザー約 13,000 件**を、個人情報流出・重複登録・誤送信なしで取り込める基盤を作る。
+  **この 13,000 件は AK 本番 `Customers`（1,464 件）とは別物**で、まだ AK へ入っていない
+- **完成条件**: 実 CSV を渡さなくても 13,000 件規模の下見が fixture で通る /
+  管理画面で件数と除外理由を確認できる / PII を画面・API・ログへ出さない /
+  本番 write は無効 / 既存機能が非回帰 / tests・build・CI green
+- **完了済み**:
+  - `src/lib/crm/csvParse.js`（新規）— UTF-8 / BOM / Shift_JIS、CRLF・LF・CR、RFC 4180 の引用符、
+    空行無視、列順不同、全角空白・ゼロ幅除去、上限 8MB / 60,000 行 / 64 列。
+    **MIME も拡張子も信用せず中身だけで判定**。UTF-16 は受け付けない。復号失敗は止める
+  - `src/lib/crm/customerImport.js`（拡張）— 理由コードを追加
+    （`hard_bounce` / `soft_bounce` / `suspended` / `test_account` / `ambiguous_match` / `unsupported_row`）。
+    正式名 `CREATE_CANDIDATE` / `UPDATE_CANDIDATE` / `EXCLUDED` / `REVIEW_REQUIRED` を追加。
+    **#229 の既存の綴り・戻り値は据え置き**（既存テストは無改変で通る）
+  - `src/lib/crm/importPreview.js`（新規）— `importPreviewId` / `fileHash` /
+    `normalizedHeaderHash`（列順に依存しない）/ `rowCount` / `classificationCounts` /
+    `reasonCounts` / `parserVersion` / `ruleVersion` / `createdAt` / `expiresAt`（30 分）/ `summaryHash`。
+    ファイル差し替え・列変更・件数の書き換え・版の更新・期限切れを**すべて拒否**
+  - `src/lib/crm/importJobPlan.js`（新規）— 親ジョブ + 子バッチ（既定 200 / 100〜500）、
+    作成と更新を別バッチ、冪等キー、同時実行禁止、失敗のみ再試行、pause/resume、
+    未実行のみ取消、計画超過の検算、`CreatedBy` / `ImportBatchId` / `ImportedAt`、監査ログ、rollback 手順。
+    **`CUSTOMER_IMPORT_WRITE_ENABLED`（既定 OFF）で、実行経路自体を未配線**
+  - `netlify/functions/admin-customer-import.js`（新規）— `action:'spec'` と `action:'previewCsv'` のみ。
+    **書き込みの綴りを 1 つも持たない**（guard で固定）。`action:'run'` は 501
+  - 管理画面に「外部顧客リストの取り込み（下見）」を追加。**件数と理由コードだけ**を表示し、
+    本番取込ボタンは常に `disabled`（クリック配線も無い）
+- **fixture 実測（合成データ・実在アドレスなし / 738KB・13,012 行 / 読み取り 52ms）**:
+
+  | 分類 | 件数 |
+  |---|---|
+  | `CREATE_CANDIDATE` | 12,680 |
+  | `UPDATE_CANDIDATE` | 130 |
+  | `EXCLUDED` | 202 |
+  | `REVIEW_REQUIRED` | 0 |
+  | **合計 = 母数** | **13,012（`balanced: true`）** |
+
+  理由別: `paid_member` 65 / `unsubscribed` 65 / `hard_bounce` 26 /
+  `invalid_email` 19 / `no_email` 15 / `duplicate_in_file` 12。
+  応答にアドレス・氏名・recordId が含まれないことをテストで固定。
+  別 fixture で `suspended` / `test_account` / `ambiguous_match` / `duplicate_in_ak` /
+  `unsupported_row` / `role_address` / `provider_suppressed`（fail closed）も検証
+- **現在地**: Draft PR 完成。**production 未反映・実 CSV 未受領・本番 write 未実施**
+- **未完了**: 実 CSV の受領と列の確定 / 本番 preview の保存先決定 /
+  write path の配線（Airtable 作成・更新）/ 取り込み後の段階配信
+- **停止理由**: 実 CSV の受領が次の停止境界。merge・deploy・write はいずれも未承認
+
+**Phase（2026-08-04）: 配信計測の正常化（開封・クリックを AK の台帳へ入れる）
 （**PR #230 merged `423c180`・production deploy `6a71a1fc9694db0008a1f99c` = state ready・公開中**）。**
 
 - **merge / deploy 記録**:
@@ -1701,6 +1750,14 @@ rollback は該当 env の unset（コード変更不要）。
   `astro-site/scripts/check-measurement-settings.mjs`（新規）/ `astro-site/package.json`（script 追加のみ）/
   `.github/workflows/safety-check.yml`（step 追加のみ）/ docs 3 ファイル。**lockfile は未変更。**
   外部サービス設定変更・production env 変更・メール実送信は**していない**（停止境界）。
+- **Branch（本更新時 / Draft PR・未 merge）**: `feat/customer-import-preview`（worktree
+  `/Users/user/Projects/analytics-keiba-import`）。base `main` / 分岐時の `origin/main` は `ef4873b`。
+  変更範囲は `astro-site/src/lib/crm/**`（新規 4 / 拡張 1）/
+  `astro-site/netlify/functions/admin-customer-import.js`（新規）/
+  `astro-site/src/pages/admin/premium-plus-eligibility.astro` / docs 2 ファイル。
+  **`package.json` / lockfile / workflow はいずれも未変更**
+  （新テストは既存の `test:crm`（`src/lib/crm/*.test.mjs`）と CI step に自動で乗る）。
+  実 CSV 未受領 / 本番 write 未実施 / production 未反映。
 - **Branch（closed・未 merge）**: `chore/marketing-canary-v3`（PR #231 / `8ac2204`）。
   カナリア再送のための版上げだったが**送信前に実配信で着弾確認できたため close**。
   branch は remote / local とも削除済み（必要になったら同じ版上げをやり直す）。

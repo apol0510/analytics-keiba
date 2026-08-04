@@ -403,11 +403,98 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 > ⚠️ `netlify dev:exec` が返す secret 系 env は**マスクされる**（`****…==`）。
 > 取得した値をローカルで検証しないこと（署名鍵を「壊れている」と誤判定した前例がある）。
 
-### 外部リストの取り込み（単一源: `src/lib/crm/customerImport.js`）
+### 外部リストの取り込み（下見: 実装済み / 本番 write: 未配線）
 
-**外部保有の約 13,000 件を将来安全に取り込む。** 取り込みは戻しにくいので、
-**書き込む前にすべて分かる**状態を先に作る。実 CSV の受領・本番取り込み・
-顧客レコード作成は**別承認**まで行わない。
+**外部 13,000 件は「ユーザーが別途保有する AK 無料ユーザーのリスト」**であって、
+**AK 本番 `Customers`（1,464 件）とは別物**。まだ AK へ取り込んでいない。
+取り込みは戻しにくいので、**書き込む前にすべて分かる**状態を先に作る。
+実 CSV の受領・本番取り込み・顧客レコード作成は**別承認**まで行わない。
+
+| 層 | 単一源 | 状態 |
+|---|---|---|
+| CSV を読む（文字コード・引用符・改行・列名） | `src/lib/crm/csvParse.js` | 実装済み |
+| 誰を入れる / 入れないの判定 | `src/lib/crm/customerImport.js` | 実装済み |
+| 下見の固定（改ざん・期限・差し替えの拒否） | `src/lib/crm/importPreview.js` | 実装済み |
+| 実行モデル（親ジョブ / 子バッチ / 冪等 / 戻し方） | `src/lib/crm/importJobPlan.js` | **設計のみ・write 未配線** |
+| 下見 API（read-only） | `netlify/functions/admin-customer-import.js` | 実装済み（`action:'previewCsv'`） |
+| 画面 | `/admin/premium-plus-eligibility/` の「外部顧客リストの取り込み（下見）」 | 実装済み・本番取込ボタンは **disabled** |
+
+#### 読み取りの受け入れ仕様（`csvParse.js`）
+
+- 文字コード: **UTF-8 / UTF-8 BOM 付き / Shift_JIS（CP932）**。
+  MIME も拡張子も信用せず**中身だけ**で判定する。UTF-16 は受け付けない（推測で読まない）。
+  復号に失敗したら**止める**（文字化けのまま取り込まない）
+- 改行: CRLF / LF / CR のいずれでも同じ結果
+- 引用符: RFC 4180（引用符内のカンマ・改行・`""`）
+- 空行は行数に数えない / 列の順番は不同でよい / 前後空白・**全角空白**・ゼロ幅文字を落とす
+- 上限: **8MB / 60,000 行 / 64 列**（13,000 行を十分に収める）
+- 列数が見出しより多い行は**捨てずに `unsupported_row` として要確認**へ回す
+- 知らない列は**取り込まない**。名前だけを件数と一緒に報告する
+
+#### 列（実 CSV 受領後に確定する）
+
+必須は **`email` のみ**。任意は `name` / `registered_at` / `source` / `note`。
+列名のゆらぎ（日本語ヘッダ・大文字小文字・空白・全角）は `customerImport.js` の
+**別名表 `COLUMN_ALIASES` で吸収**する。**実 CSV の列を推測で固定しない** —
+旧会員区分などの列が来たら、別名表と `KNOWN_COLUMNS` を増やして対応する。
+
+#### 分類（母数 = 全分類の合計）
+
+| 正式名 | 意味 |
+|---|---|
+| `CREATE_CANDIDATE` | AK に無い → 新規追加の候補 |
+| `UPDATE_CANDIDATE` | AK にある → 更新の候補（既存の値は壊さない） |
+| `EXCLUDED` | 取り込まない |
+| `REVIEW_REQUIRED` | 人が決める |
+
+理由コード（固定・綴りを変えない）:
+`missing_email`（`no_email`）/ `invalid_email` / `duplicate_in_file` / `duplicate_in_ak` /
+`paid_member` / `unsubscribed` / `hard_bounce` / `soft_bounce` / `spam_reported` /
+`provider_suppressed` / `suspended` / `test_account` / `ambiguous_match` /
+`role_address` / `unsupported_row` / `encoding_broken`
+
+**AK 側に同一アドレスの複数レコードがある場合は自動統合しない。** `REVIEW_REQUIRED` へ隔離する。
+配信基盤の停止リストを確認できないときは**全員を要確認へ倒す**（fail closed）。
+
+#### 下見の固定（`importPreview.js`）
+
+下見 1 回につき `importPreviewId` / `fileHash` / `normalizedHeaderHash`（**列順に依存しない**）/
+`rowCount` / `classificationCounts` / `reasonCounts` / `parserVersion` / `ruleVersion` /
+`createdAt` / `expiresAt`（既定 30 分）/ `summaryHash` を作る。実行時に照合し、
+**ファイル差し替え・列構成の変更・件数の書き換え・規則やパーサーの更新・期限切れ**は
+すべて拒否する（fail closed）。**この記録にアドレス・氏名・行の中身は入らない。**
+
+> 本番の preview 保存先（Airtable / Blobs）は**まだ決めない**。実 CSV 受領後に決める。
+
+#### 本番取り込みの実行モデル（`importJobPlan.js`・**未配線**）
+
+親ジョブ + 子バッチ（既定 200 / 100〜500）。**作成と更新は別バッチ**（戻し方が違う）。
+
+- 行ごとの冪等キー `sha256(import:batchId:email)` で**同じ行を二度書かない**（アドレスは復元不能）
+- 同時に 2 バッチを走らせない / 送信済みバッチは二度と実行しない
+- **失敗したバッチだけ**再試行する（成功行を巻き込まない）
+- 一時停止は現バッチ完了後 / 未実行だけ取消可 / **書き込み済みは取消不可**
+- 計画（下見の 作成候補 + 更新候補）を**超えて書けない**。毎回検算する
+- 取り込んだ行に `CreatedBy=customer-import` / `ImportBatchId` / `ImportedAt` を刻む
+- 監査ログはハッシュのみ（アドレス・氏名を入れない）
+- 戻すのは**削除ではなく印を外す**方向。**取り込みと配信を同じ操作にしない**
+
+書き込みゲート **`CUSTOMER_IMPORT_WRITE_ENABLED`（既定 OFF）**。
+現状 `admin-customer-import.js` に**取り込みの実行経路は存在しない**（`action:'run'` は 501）。
+
+#### 出さない情報（PII 非露出）
+
+API 応答・画面・ログ・エラーのいずれにも
+**メールアドレス / 氏名 / recordId / 行の中身**を出さない。返すのは
+件数・理由コード・ハッシュ・列名だけ。13,000 行を DOM へ描画しない。
+
+#### 承認境界
+
+実 CSV の受領・実 CSV 内容の読み取り・本番 preview 保存・Airtable write・
+Customers の作成/更新・import 実行・production env 変更・production deploy・
+PR merge は**すべて別承認**。
+
+（以下は #229 時点の設計メモ。上の表と重複する部分は上を正とする）
 
 #### 受け付ける形
 

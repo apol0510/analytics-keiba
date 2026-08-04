@@ -52,19 +52,47 @@ export const ROW_VERDICT = Object.freeze({
   REVIEW: 'review',           // 人が見て決める
 });
 
-/** 除外・要確認の理由（固定コード） */
+/**
+ * 判定の**正式名**（画面・API・監査ログで使う）。内部値（new/update/…）は
+ * #229 から使っている短い綴りで、既存の呼び出しを壊さないために残す。
+ * 外向きの表記はこちらに統一する。
+ */
+export const VERDICT_CANONICAL = Object.freeze({
+  new: 'CREATE_CANDIDATE',
+  update: 'UPDATE_CANDIDATE',
+  exclude: 'EXCLUDED',
+  review: 'REVIEW_REQUIRED',
+});
+
+/**
+ * 除外・要確認の理由（固定コード）。
+ *
+ * ⚠️ **コードの綴りは変えない**。画面・監査ログ・突合に使うため、増やすことはあっても
+ *    既存の値を書き換えない（過去の記録が読めなくなる）。
+ */
 export const IMPORT_REASON = Object.freeze({
   NO_EMAIL: 'no_email',
   INVALID_EMAIL: 'invalid_email',
   DUPLICATE_IN_FILE: 'duplicate_in_file',
   UNSUBSCRIBED: 'unsubscribed',
+  /** hard/soft を区別できないとき用（後方互換）。区別できるなら下 2 つを使う */
   BLACKLISTED: 'blacklisted',
+  HARD_BOUNCE: 'hard_bounce',
+  SOFT_BOUNCE: 'soft_bounce',
   SPAM_REPORTED: 'spam_reported',
   PROVIDER_SUPPRESSED: 'provider_suppressed',
   PAID_MEMBER: 'paid_member',
   DUPLICATE_IN_AK: 'duplicate_in_ak',
   ROLE_ADDRESS: 'role_address',
   ENCODING_BROKEN: 'encoding_broken',
+  /** AK 側が意図的に止めた相手（suspended / banned / inactive） */
+  SUSPENDED: 'suspended',
+  /** テスト用アカウント（Status=test / プラン=test / 配信テスト受信者） */
+  TEST_ACCOUNT: 'test_account',
+  /** どの既存レコードに当てるか決められない（同一アドレスが複数など） */
+  AMBIGUOUS_MATCH: 'ambiguous_match',
+  /** 見出しと列数が合わない等、行として扱えない */
+  UNSUPPORTED_ROW: 'unsupported_row',
 });
 
 export const IMPORT_REASON_LABEL = Object.freeze({
@@ -79,6 +107,12 @@ export const IMPORT_REASON_LABEL = Object.freeze({
   duplicate_in_ak: 'AK 側に同一アドレスの重複レコードがある',
   role_address: '共用・自動応答用のアドレス（info@ など）',
   encoding_broken: '文字化けの疑い',
+  hard_bounce: '届かないアドレス（hard bounce）',
+  soft_bounce: '一時的に届かなかったアドレス（soft bounce）',
+  suspended: 'AK 側で停止したアカウント',
+  test_account: 'テスト用アカウント',
+  ambiguous_match: 'どの既存レコードに当てるか決められない',
+  unsupported_row: '行として扱えない（列数が見出しと合わない等）',
 });
 
 /** 共用アドレスの接頭辞。個人ではないので無料リストに入れない */
@@ -209,8 +243,13 @@ function normalizeHeader(raw) {
  *   duplicateInAk?: Set<string>,            // AK 側で重複しているアドレス
  *   paidEmails?: Set<string>,               // 現役有料会員
  *   unsubscribedEmails?: Set<string>,
- *   blacklistEmails?: Set<string>,
+ *   blacklistEmails?: Set<string>,          // hard/soft を区別しない場合（後方互換）
+ *   hardBounceEmails?: Set<string>,         // 区別できる場合はこちら
+ *   softBounceEmails?: Set<string>,
  *   spamEmails?: Set<string>,
+ *   testEmails?: Set<string>,               // テスト用アカウント・配信テスト受信者
+ *   suspendedEmails?: Set<string>,          // AK 側が意図的に止めた相手
+ *   ambiguousEmails?: Set<string>,          // 既存レコードを一意に決められない
  *   providerSuppressed?: Set<string>|null,  // null = 確認できない → fail closed
  *   batchId: string,
  *   nowMs?: number,
@@ -223,7 +262,12 @@ export function buildImportPreview(input = {}) {
   const paid = setOf(input.paidEmails);
   const unsub = setOf(input.unsubscribedEmails);
   const black = setOf(input.blacklistEmails);
+  const hardBounce = setOf(input.hardBounceEmails);
+  const softBounce = setOf(input.softBounceEmails);
   const spam = setOf(input.spamEmails);
+  const testAccounts = setOf(input.testEmails);
+  const suspended = setOf(input.suspendedEmails);
+  const ambiguous = setOf(input.ambiguousEmails);
   const provider = input.providerSuppressed instanceof Set ? input.providerSuppressed : null;
   const batchId = str(input.batchId);
   const now = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
@@ -240,6 +284,8 @@ export function buildImportPreview(input = {}) {
   };
 
   for (const row of rows) {
+    // 見出しと列数が合わない行は**黙って捨てない**。人が見る側へ回す
+    if (row && row.__unsupported === true) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.UNSUPPORTED_ROW); continue; }
     const email = normalizeEmail(row && (row.email ?? row.Email));
     if (!email) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.NO_EMAIL); continue; }
     if (!isValidEmail(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.INVALID_EMAIL); continue; }
@@ -254,13 +300,21 @@ export function buildImportPreview(input = {}) {
     // 送ってはいけない相手は取り込まない（取り込んでから除外するより安全）
     if (unsub.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.UNSUBSCRIBED); continue; }
     if (black.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.BLACKLISTED); continue; }
+    // hard / soft を分けて渡せるなら理由も分ける（どちらも取り込まない）
+    if (hardBounce.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.HARD_BOUNCE); continue; }
+    if (softBounce.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.SOFT_BOUNCE); continue; }
     if (spam.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.SPAM_REPORTED); continue; }
+    // AK 側が意図的に止めた相手・テスト用アカウントは無料リストとして足さない
+    if (suspended.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.SUSPENDED); continue; }
+    if (testAccounts.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.TEST_ACCOUNT); continue; }
     if (provider === null) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.PROVIDER_SUPPRESSED); continue; }
     if (provider.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.PROVIDER_SUPPRESSED); continue; }
     // 有料会員を「無料リスト」として取り込まない（プランを壊す事故のもと）
     if (paid.has(email)) { mark(ROW_VERDICT.EXCLUDE, IMPORT_REASON.PAID_MEMBER); continue; }
-    // AK 側が既に重複している人は、統合してからでないと足せない
+    // AK 側が既に重複している人は、統合してからでないと足せない。**自動統合はしない**
     if (dupAk.has(email)) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.DUPLICATE_IN_AK); continue; }
+    // どの既存レコードに当てるか決められない（共用アドレス扱い等）も人が見る
+    if (ambiguous.has(email)) { mark(ROW_VERDICT.REVIEW, IMPORT_REASON.AMBIGUOUS_MATCH); continue; }
 
     if (existing.has(email)) mark(ROW_VERDICT.UPDATE, null);
     else mark(ROW_VERDICT.NEW, null);
@@ -284,6 +338,18 @@ export function buildImportPreview(input = {}) {
     ),
     /** 総行数 = 新規 + 更新 + 除外 + 要確認。崩れていたら数え方が壊れている */
     balanced: total === decided,
+    /**
+     * 外向きの正式名での集計（画面・API・監査ログはこちらを使う）。
+     * 内部の短い綴り（new/update/…）と**同じ数**であることをテストで固定する。
+     */
+    classificationCounts: {
+      [VERDICT_CANONICAL.new]: counts[ROW_VERDICT.NEW],
+      [VERDICT_CANONICAL.update]: counts[ROW_VERDICT.UPDATE],
+      [VERDICT_CANONICAL.exclude]: counts[ROW_VERDICT.EXCLUDE],
+      [VERDICT_CANONICAL.review]: counts[ROW_VERDICT.REVIEW],
+    },
+    /** 理由コード別（ラベルではなくコード。監査・突合に使う） */
+    reasonCounts: { ...byReason },
     /** 冪等性の鍵。同じ batchId × 同じアドレスなら常に同じ値（アドレスは復元できない） */
     rowKeyCount: rowKeys.length,
     rowKeySample: rowKeys.slice(0, 3),
