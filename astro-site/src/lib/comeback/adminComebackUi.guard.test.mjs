@@ -357,3 +357,20 @@ test('guard(counts): 対象人数・付与予定人数・送信予定人数を�
   // 除外理由は件数付きで出す
   assert.ok(CB_BLOCK.includes('skippedDetail'), '除外理由の内訳を使っていない');
 });
+
+test('guard(withdrawn): 画面に見える区分名がすべて「退会・課金停止」で揃っている', async () => {
+  // ⚠️ 対象区分の**見えるラベル**は `<select>` ではなく複数選択ウィジェットが作る。
+  //    本番で「退会済み」のまま残っていた事故があるので、生成元を全部固定する。
+  const { CB_SEGMENT_LABELS, CB_SEGMENT_PRESETS } = await import('../marketing/adminMultiFilter.js');
+  const { CB_CONTRACT_OPTIONS, describeContractFilter } = await import('../entitlements/comebackConsoleFlow.js');
+  const { FILTER_DEFINITIONS } = await import('../marketing/filterDefinitions.js');
+
+  assert.equal(CB_SEGMENT_LABELS.withdrawn, '退会・課金停止');
+  assert.match(CB_SEGMENT_PRESETS.withdrawn.label, /退会・課金停止/);
+  assert.equal(CB_CONTRACT_OPTIONS.find((o) => o.value === 'withdrawn').label, '退会・課金停止');
+  assert.match(describeContractFilter([]), /退会・課金停止/);
+
+  const def = JSON.stringify(FILTER_DEFINITIONS);
+  assert.ok(def.includes('退会・課金停止'), 'フィルター定義の区分名が古い');
+  assert.ok(def.includes('メール配信停止とは別'), '配信停止と別だと説明していない');
+});
