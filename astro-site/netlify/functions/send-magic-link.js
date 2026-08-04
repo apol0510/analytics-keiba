@@ -136,6 +136,16 @@ exports.handler = async (event) => {
         to: email,
         from: FROM_EMAIL,
         subject: '【KEIBA Analytics】ログインリンク',
+        // ⚠️ クリック計測は**絶対に有効化しない**（2026-08-04 恒久化 / guard テストで固定）。
+        // このメールのリンクは 15 分・単回使用のログイントークンを含む。書き換えると
+        //   1. リンク検査ボットの先読みでトークンが消費され、本人がログインできない
+        //   2. トークンが第三者のリダイレクタを経由する
+        //   3. 併記しているコピー用 URL が別ドメインになり偽装リンクに見える
+        // 配信基盤のアカウント設定を後から ON にされても、この per-message 指定が優先される。
+        trackingSettings: {
+          clickTracking: { enable: false, enableText: false },
+          openTracking: { enable: false },
+        },
         html: `
 <div style="font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8fafc;">
   <div style="background-color: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">

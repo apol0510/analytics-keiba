@@ -91,6 +91,40 @@ export function resolveMeasurementState(settings = {}) {
 }
 
 /**
+ * 台帳の件数 1 つを、計測状態に応じて**出してよい数値かどうか**まで含めて返す。
+ *
+ * `summarizeDelivery()` はキャンペーン単位の集計用だが、顧客カルテのように
+ * **1 件ずつの内訳を出す画面**でも同じ判断が要る。両方で同じ規則を使うため、
+ * ここを単一源にする（画面側で `?? 0` と書くと未計測が 0 に化ける）。
+ *
+ * @param {string} state MEASURE のいずれか
+ * @param {number|null|undefined} value 台帳側の件数
+ * @param {string} [unit] '回' / '件' など。付けると text に添える
+ * @returns {{ state: string, value: number|null, text: string, measured: boolean }}
+ */
+export function measuredCount(state, value, unit = '') {
+  const ok = canShowCount(state);
+  const n = num(value);
+  return {
+    state,
+    value: ok ? n : null,
+    text: ok ? `${n}${unit ? ` ${unit}` : ''}`
+      : (state === MEASURE.DISABLED ? NOT_MEASURED_TEXT : UNKNOWN_TEXT),
+    measured: ok,
+  };
+}
+
+/**
+ * 計測状態に依存しない指標（delivered / bounce / 配信停止 / 迷惑報告）かどうか。
+ *
+ * Event Webhook が届けている種別は**開封・クリックと無関係に数えてよい**。
+ * これを区別しないと「計測していないので全部 —」となり、確定している事実まで隠れる。
+ */
+export const ALWAYS_MEASURED_METRICS = Object.freeze([
+  'delivered', 'bounced', 'unsubscribed', 'spamReported',
+]);
+
+/**
  * 1 キャンペーン分の配信結果をまとめる。
  * **計測が有効でない指標は数値を返さない**（null）。0 を返さないのが肝。
  *

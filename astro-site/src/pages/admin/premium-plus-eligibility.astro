@@ -3518,15 +3518,41 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (!led.available || le.available !== true) {
         dossierRow(s62, '状態', '取得不能（反応が無かったという意味ではありません）', 'ng');
       } else {
+        // 計測状態で「0」を出してよいかを決める。**台帳に open 行が無いのは
+        // 「開かれていない」ではなく「Webhook が open を送っていない」**ことがある
+        // （2026-08-04 の配信は実際そうで、provider 側では 15 名が開封していた）。
+        const meas = data.measurement || null;
+        const measured = (kind) => !!meas && meas[kind] === 'enabled';
+        const notMeasuredText = (kind) => (!meas || meas[kind] === 'unknown')
+          ? '—（計測状態を確認できません）' : '—（計測していません）';
+        // 件数の文言は API が単一源（deliveryMeasurement.measuredCount）で決めたものを使う。
+        // 画面で 0 を作らない（`?? 0` を書いた瞬間に未計測が 0 に化ける）。
+        const disp = data.ledgerDisplay || {};
+        const countRow = (label, kind, key) => {
+          const cell = disp[key] || null;
+          dossierRow(s62, label,
+            cell ? cell.text : notMeasuredText(kind),
+            cell && cell.measured ? '' : 'ng');
+        };
+        const timeRow = (label, kind, at) => {
+          dossierRow(s62, label,
+            measured(kind) ? (at ? fmtDate(at) : '—') : notMeasuredText(kind));
+        };
+        // delivered / bounce / 配信停止 / 迷惑報告は open・click の設定と無関係に届いている
         dossierRow(s62, '配信済み', String(le.delivered ?? 0) + ' 件');
-        dossierRow(s62, '開封', String(le.opens ?? 0) + ' 回');
-        dossierRow(s62, '初回開封', le.firstOpenAt ? fmtDate(le.firstOpenAt) : '—');
-        dossierRow(s62, '最終開封', le.lastOpenAt ? fmtDate(le.lastOpenAt) : '—');
-        dossierRow(s62, 'クリック', String(le.clicks ?? 0) + ' 回');
-        dossierRow(s62, '初回クリック', le.firstClickAt ? fmtDate(le.firstClickAt) : '—');
-        dossierRow(s62, '最終クリック', le.lastClickAt ? fmtDate(le.lastClickAt) : '—');
-        if ((le.clickCategories || []).length > 0) {
+        countRow('開封', 'open', 'opens');
+        timeRow('初回開封', 'open', le.firstOpenAt);
+        timeRow('最終開封', 'open', le.lastOpenAt);
+        countRow('クリック', 'click', 'clicks');
+        timeRow('初回クリック', 'click', le.firstClickAt);
+        timeRow('最終クリック', 'click', le.lastClickAt);
+        if (measured('click') && (le.clickCategories || []).length > 0) {
           dossierRow(s62, 'クリック先', le.clickCategories.join(' / '));
+        }
+        if (meas && (meas.open !== 'enabled' || meas.click !== 'enabled')) {
+          dossierRow(s62, '計測の状態',
+            '開封: ' + meas.openLabel + ' / クリック: ' + meas.clickLabel
+            + ((meas.reasons || []).length ? '（' + meas.reasons.join(' / ') + '）' : ''), 'ng');
         }
         dossierRow(s62, 'bounce / 配信停止 / 迷惑報告',
           String(le.bounced ?? 0) + ' / ' + String(le.unsubscribed ?? 0) + ' / ' + String(le.spamReported ?? 0));

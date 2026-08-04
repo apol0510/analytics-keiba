@@ -371,20 +371,37 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 
 - `enabled` / `disabled` / `unknown` の 3 状態。tracking と Webhook の**両方**そろって `enabled`
 - 無効・不明のときは数値を返さない（`null` ＋「—（計測していません）」）
+- **1 件ずつの内訳（顧客カルテ）でも同じ規則を使う**。`measuredCount()` が単一源で、
+  画面で `?? 0` と書くことを禁じる（2026-08-04: カルテだけ「開封 0 回」と断定していた）
+- delivered / bounce / 配信停止 / 迷惑報告は **開封計測の状態に関係なく数値**（Webhook が届けている確定値）
 - unique 人数と event 件数を分ける／provider 受理・delivered・opened を分ける
 - provider 側だけで確認した値は**参考値**と明示
 - 台帳と provider の件数差は異常停止の判断材料にする
 
-#### EmailEvents を正本にするために必要な設定変更（**未実施**）
+#### EmailEvents を正本にするために必要な設定変更（**未実施 / 手順は確定済み**）
 
-| 変更 | 現在 | 必要な値 |
-|---|---|---|
-| Event Webhook の `open` | false | true |
-| Event Webhook の `click` | false | true |
-| click tracking | 無効 | 有効（本文リンクを書き換えるので文面確認が要る）|
+手順書の単一源は **`astro-site/docs/DELIVERY_MEASUREMENT.md`**（変更前の記録・順序・rollback を含む）。
+確認コマンドは `npm run check:measurement`（GET のみ）。
 
-検証条件: 設定変更後にテスト送信 → `EmailEvents` に `open` が入る →
-unique 人数が provider 側の値と一致する。**この PR では変更しない**（承認と手順を別に取る）。
+| 変更 | 種別 | 現在（2026-08-04 実測） | 必要な値 |
+|---|---|---|---|
+| Event Webhook の `open` | 外部サービス設定 | false | true |
+| Event Webhook の `click` | 外部サービス設定 | false | true |
+| マーケ配信のクリック計測 | production env | 未設定 | `MARKETING_CLICK_TRACKING_ENABLED=true` |
+| **アカウント全体の click tracking** | — | 無効 | **無効のまま。触らない** |
+
+**アカウント全体の click tracking は有効化しない。** 有効にすると、per-message で opt-out して
+いない送信経路すべての本文リンクが書き換わる。実測でその中に `send-magic-link`（**15 分・
+単回使用のログイントークン**）が含まれ、リンク検査ボットの先読みだけでトークンが消費されて
+**本人がログインできなくなる**。代わりにマーケ配信の 1 通ごとの `tracking_settings` で有効化する
+（per-message はアカウント設定より優先）。ログインメールには明示的な opt-out を入れてある。
+
+検証条件: 設定変更後にカナリア 1 通を送る → `EmailEvents` に `open` が `resolved` で入る →
+顧客カルテ ⑥-2 が「—（計測していません）」から数値へ変わる。
+期待する行の形は `src/lib/webhooks/emailEventOpenClick.fixture.test.mjs` が正本。
+
+> ⚠️ `netlify dev:exec` が返す secret 系 env は**マスクされる**（`****…==`）。
+> 取得した値をローカルで検証しないこと（署名鍵を「壊れている」と誤判定した前例がある）。
 
 ### 外部リストの取り込み（単一源: `src/lib/crm/customerImport.js`）
 

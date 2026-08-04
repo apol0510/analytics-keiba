@@ -30,6 +30,7 @@
 
 import {
   isMarketingDispatchEnabled,
+  isMarketingClickTrackingEnabled,
   isMarketingJob,
   verifyBeforeSend,
 } from '../../src/lib/marketing/marketingDispatchGate.js';
@@ -471,6 +472,9 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
       });
       const ok = await sendOne({
         SG, fromEmail, fromName, to: email, subject: f.Subject, html, customArgs, expiryNote,
+        // クリック計測は**この経路だけ**・env で明示的に有効化したときだけ（既定 OFF）。
+        // 配信基盤のアカウント設定は触らない（ログインリンクまで書き換わるため）。
+        clickTracking: isMarketingClickTrackingEnabled(process.env),
       });
       if (ok) summary.sent += 1; else summary.failed += 1;
       await patchDeliveriesByEmail({
@@ -548,7 +552,7 @@ function buildRecentContactMap(deliveries, excludeJobId) {
  * 本文シェルには `{{unsubscribeUrl}}` の印が必ず入っている。印が無い＝古い形式か
  * 壊れた本文なので、**その 1 通は送らない**（配信停止できないメールを出さない）。
  */
-async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs, expiryNote }) {
+async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs, expiryNote, clickTracking }) {
   const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(to)}&brand=analytics-keiba`;
 
   // 受信者ごとの無料期間（読めなければ印ごと消える。嘘の期限を書かない）
@@ -575,6 +579,15 @@ async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs,
         ],
         // 配信 1 通の識別子（Phase 1c）。受信側 `emailEventLedger.js` が同じ綴りで読む
         custom_args: customArgs,
+        // 計測は**この 1 通の設定として**指定する（アカウント設定より per-message が優先）。
+        // click は既定 OFF。ON にすると本文リンクが配信基盤のリダイレクタへ書き換わるため、
+        // 有効化は env（MARKETING_CLICK_TRACKING_ENABLED）による明示操作だけに限る。
+        // ⚠️ ここを `true` 固定にしないこと。固定するとトランザクション経路と同じ
+        //    「アカウント全体で ON」と実質同じ危険（ログインリンク書き換え）に近づく。
+        tracking_settings: {
+          click_tracking: { enable: clickTracking === true, enable_text: clickTracking === true },
+          open_tracking: { enable: true },
+        },
         headers: {
           'List-Unsubscribe': `<${unsubscribeLink}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
           'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',

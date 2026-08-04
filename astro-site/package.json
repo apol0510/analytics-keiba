@@ -64,9 +64,11 @@
     "test:upsell": "node --test src/lib/upsell/*.test.mjs",
     "test:contact-subject": "node --test src/lib/contact/*.test.mjs",
     "test:webhooks": "node --test src/lib/webhooks/*.test.mjs",
+    "test:crm": "node --test src/lib/crm/*.test.mjs",
+    "check:measurement": "node scripts/check-measurement-settings.mjs",
     "upload:premium-plus": "node scripts/uploadPremiumPlusImage.mjs",
     "seed:premium-plus": "node scripts/seedPremiumPlusLegacy.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:auth-session",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:crm && npm run test:auth-session",
     "verify:safety": "npm run build && npm run check:safety",
     "preflight:phase2-canary": "node scripts/phase2-canary-preflight.mjs"
   },

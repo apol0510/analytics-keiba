@@ -20,7 +20,8 @@ import {
 } from './batchPlan.js';
 import {
   MEASURE, resolveMeasurementState, summarizeDelivery, canShowCount,
-  compareLedgerWithProvider, NOT_MEASURED_TEXT,
+  compareLedgerWithProvider, NOT_MEASURED_TEXT, UNKNOWN_TEXT,
+  measuredCount, ALWAYS_MEASURED_METRICS,
 } from './deliveryMeasurement.js';
 import { buildOutcomeReport, ATTRIBUTION, canCompare } from './campaignOutcome.js';
 
@@ -328,6 +329,55 @@ test('provider 受理と delivered を分ける', () => {
   const d = summarizeDelivery({ sent: 30, delivered: 28, measurement: resolveMeasurementState({}) });
   assert.equal(d.sentAccepted, 30);
   assert.equal(d.delivered, 28);
+});
+
+// ── 1 件ずつの内訳（顧客カルテ）でも同じ規則を使う ────────────────
+// 2026-08-04: キャンペーン集計は「—」を出せるのに、顧客カルテだけ
+// `le.opens ?? 0` で「開封 0 回」と断定していた。同じ規則を単一源から使わせる。
+
+test('カルテの 1 件表示: 計測無効なら数値を出さない', () => {
+  const m = resolveMeasurementState({
+    openTracking: { enabled: true }, clickTracking: { enabled: false },
+    eventWebhook: { enabled: true, open: false, click: false },
+  });
+  const opens = measuredCount(m.open, 0, '回');
+  assert.equal(opens.value, null, '未計測なのに 0 を数値で返している');
+  assert.equal(opens.text, NOT_MEASURED_TEXT);
+  assert.equal(opens.measured, false);
+  // 台帳に行があっても同じ（値があること自体が計測の証明にはならない）
+  assert.equal(measuredCount(m.click, 3, '回').value, null);
+});
+
+test('カルテの 1 件表示: 計測有効なら 0 を 0 として出す', () => {
+  const m = resolveMeasurementState({
+    openTracking: { enabled: true }, clickTracking: { enabled: true },
+    eventWebhook: { enabled: true, open: true, click: true },
+  });
+  assert.deepEqual(
+    { v: measuredCount(m.open, 0, '回').value, t: measuredCount(m.open, 0, '回').text },
+    { v: 0, t: '0 回' },
+  );
+  assert.equal(measuredCount(m.open, 2, '回').text, '2 回');
+});
+
+test('カルテの 1 件表示: 不明は「無効」と別の文言にする', () => {
+  const m = resolveMeasurementState({});
+  assert.equal(measuredCount(m.open, 0, '回').text, UNKNOWN_TEXT);
+  assert.notEqual(UNKNOWN_TEXT, NOT_MEASURED_TEXT);
+});
+
+test('delivered / bounce は開封計測の状態に左右されない', () => {
+  // Webhook が届けている種別は確定した事実。開封が未計測でも隠さない
+  for (const k of ['delivered', 'bounced', 'unsubscribed', 'spamReported']) {
+    assert.ok(ALWAYS_MEASURED_METRICS.includes(k), `${k} を常時計測から外している`);
+  }
+  const m = resolveMeasurementState({
+    openTracking: { enabled: true }, clickTracking: { enabled: false },
+    eventWebhook: { enabled: true, open: false, click: false },
+  });
+  const d = summarizeDelivery({ sent: 36, delivered: 36, bounce: 0, measurement: m });
+  assert.equal(d.delivered, 36, '確定している delivered まで隠している');
+  assert.equal(d.openedUnique.value, null);
 });
 
 test('台帳と provider の食い違いを検知する', () => {

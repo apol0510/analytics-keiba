@@ -118,6 +118,7 @@ import {
   SEGMENT_IDS, SEGMENT_CATALOG_VERSION, evaluateSegment, SEG_EXCLUDE_LABEL,
 } from '../../src/lib/crm/audienceSegments.js';
 import { buildLastContactMap, readMeasurementSettings } from '../../src/lib/crm/segmentInputs.js';
+import { measuredCount } from '../../src/lib/crm/deliveryMeasurement.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
@@ -683,7 +684,7 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
   const blacklist = await loadBlacklistSets({ KEY, BASE });
 
-  const [offers, provider, activity, ledger, ledgerUnattributed] = await Promise.all([
+  const [offers, provider, activity, ledger, ledgerUnattributed, measurement] = await Promise.all([
     fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
     fetchDeliveryActivity({ email, apiKey: process.env.SENDGRID_API_KEY }),
@@ -691,6 +692,10 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
     // 取得できなければ available:false（画面では「0 件」ではなく「取得不能」）。
     fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId: recordId }),
     fetchLedgerUnattributed({ KEY, BASE }),
+    // 計測状態。**開封・クリックの「0」を数値として出してよいか**をここで決める。
+    // これを渡さないと、Webhook が open を送っていないだけなのに
+    // カルテが「開封 0 回」と断定してしまう（2026-08-04 に実際そうなっていた）。
+    readMeasurementSettings({ apiKey: process.env.SENDGRID_API_KEY }),
   ]);
 
   const dossier = buildCustomerDossier({
@@ -734,6 +739,15 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
         : '恒久台帳を取得できませんでした（反応が無かったという意味ではありません）',
     },
     providerSuppression: describeProviderSuppression(provider),
+    // 計測状態（セグメント下見と同じ単一源）。カルテの開封・クリックは
+    // **これが enabled のときだけ数値**。無効・不明なら「—（計測していません）」。
+    measurement,
+    // 開封・クリックの**表示文字列そのもの**を単一源（`measuredCount`）で決める。
+    // 画面側で `?? 0` と書くと未計測が 0 に化けるため、判断を画面へ持ち出さない。
+    ledgerDisplay: {
+      opens: measuredCount(measurement.open, (dossier.ledgerEngagement || {}).opens, '回'),
+      clicks: measuredCount(measurement.click, (dossier.ledgerEngagement || {}).clicks, '回'),
+    },
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),
   });
