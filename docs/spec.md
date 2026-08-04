@@ -390,11 +390,32 @@ preserveWithdrawalRequested=true / allowed=[light] / forbidden=[premium, sanrenp
 **CONFLICT として fail closed でログインを拒否する**。付与しても本人は使えないので、
 `checkGrantable` が `duplicate_email` で弾く（レコード統合が先）。
 
-#### 一覧・全選択・dry-run・実行は同じ判定を通る
+#### Step 2「選べるか」と Step 3「付与できるか」を分ける
 
-Step 1〜2 の一覧も `checkGrantable` を通す（`resolveComebackCustomer({allowWithdrawn, duplicateEmail})`）。
-特典を選び直したら一覧を取り直すので、**表示・「付与可能者を全選択」・dry-run・実行が常に一致する**。
-以前は一覧が施策を知らず、全行「付与不可」・全選択 0 名なのに手動チェックだけ通る不整合があった。
+管理画面は **Step 1〜2 対象者を探す・選ぶ → Step 3 特典を決める** の順なので、
+Step 2 の時点では特典が決まっていない。ここで `checkGrantable` をそのまま使うと
+「まだ選んでいない特典」を基準に判定してしまい、**退会・課金停止の候補が全員
+「対象外」→ 選択 0 名 → Step 3 へ進めない**という行き止まりになる（本番で発生）。
+
+| 関数 | いつ使うか | 何で決まるか |
+|---|---|---|
+| `checkSelectable(fields, {duplicateEmail})` | **Step 2**（候補として選べるか）| **絶対除外だけ**：メール未登録・不正 / 同一アドレスの重複 / 停止・テスト / `ForceLogout` |
+| `checkGrantable(fields, {allowWithdrawn, duplicateEmail})` | **Step 3 以降**（この特典へ付与できるか）| 上記 ＋ 退会の可否（施策の宣言次第）|
+
+`checkGrantable` は内部で `checkSelectable` を呼ぶので、**判定は 1 本のまま**。
+
+- **`WithdrawalRequested` だけを理由に Step 2 で選択不可にしない**
+- 特典 未選択のうちは `grantEvaluated=false` で「Step 3 で特典を選ぶと判定します」と表示し、
+  勝手な基準で「付与不可」と出さない
+- **既定で特典を選ばない**（旧実装は Light 永久無料が既定で、それが暗黙の判定基準になっていた）。
+  追従バーも Step 3 未選択なら「特典: 未選択」
+- Step 3 で特典を決めた時点で選択済みを再判定し、対象外を**件数と理由付きで**外す
+  （`cbPruneSelectionForOffer`）。黙って減らさない
+- Step 4 dry-run と実行直前も同じ `checkGrantable` を通る
+
+本番実測（read-only）: 退会・課金停止 37 名 → **Step 2 選択可能 36 / 選択不可 1（重複アドレスのみ）**、
+**Step 3 で Light 30 日無料を選ぶと 36 名が付与可能のまま維持**、
+退会者非対応の Light 永久無料を選ぶと 0 名（36 名が理由付きで対象外）。
 
 固定テスト: `src/lib/entitlements/comebackPolicy.test.mjs` /
 `src/lib/comeback/comebackWithdrawnGrant.test.mjs` /

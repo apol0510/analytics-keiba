@@ -77,8 +77,19 @@ test('一覧の「今回付与できる」も施策を選んだときだけ変�
   assert.equal(resolveGrantEligibility(f, NOW).status, GRANT_ELIGIBILITY.BLOCKED, '既定で付与可能になっている');
   assert.equal(resolveGrantEligibility(f, NOW, { allowWithdrawn: true }).status, GRANT_ELIGIBILITY.GRANTABLE);
 
-  assert.equal(resolveComebackCustomer({ fields: f, nowMs: NOW }).grantable, false);
-  assert.equal(resolveComebackCustomer({ fields: f, nowMs: NOW, allowWithdrawn: true }).grantable, true);
+  // 特典 未選択のうちは判定しない（Step 2 では選べる）
+  const pending = resolveComebackCustomer({ fields: f, nowMs: NOW });
+  assert.equal(pending.grantEvaluated, false);
+  assert.equal(pending.selectable, true, 'Step 2 で退会者が選べない');
+  assert.equal(pending.eligibility.status, 'pending_offer');
+
+  // 特典を選んだら施策の条件で判定する
+  assert.equal(resolveComebackCustomer({
+    fields: f, nowMs: NOW, offerSelected: true,
+  }).grantable, false, '退会者非対応の特典で付与可能になっている');
+  assert.equal(resolveComebackCustomer({
+    fields: f, nowMs: NOW, offerSelected: true, allowWithdrawn: true,
+  }).grantable, true);
 });
 
 // ── 2. 付与した特典がログインで効く ────────────────────────────
@@ -355,7 +366,7 @@ test('一覧の grantable と dry-run の結果が一致する（施策を選ん
   ];
   // 一覧側（Step 1〜2）: 施策の metadata で判定する
   const listGrantable = rows.filter((r) => resolveComebackCustomer({
-    fields: r.fields, nowMs: NOW, allowWithdrawn: true,
+    fields: r.fields, nowMs: NOW, allowWithdrawn: true, offerSelected: true,
   }).grantable);
   assert.equal(listGrantable.length, 2, '一覧で退会者が付与可能にならない');
 
@@ -366,20 +377,47 @@ test('一覧の grantable と dry-run の結果が一致する（施策を選ん
   assert.equal(p.skipped[0].reason, CB_SKIP.FORCE_LOGOUT_BLOCKED);
 });
 
-test('施策を選んでいなければ一覧も dry-run も付与不可で一致する', () => {
+test('退会者非対応の特典を選ぶと一覧も dry-run も対象外で一致する', () => {
   const rows = [{ recordId: 'rec1', fields: withdrawnMember() }];
-  assert.equal(resolveComebackCustomer({ fields: rows[0].fields, nowMs: NOW }).grantable, false);
+  const v = resolveComebackCustomer({ fields: rows[0].fields, nowMs: NOW, offerSelected: true });
+  assert.equal(v.selectable, true, 'Step 2 では選べるべき');
+  assert.equal(v.grantable, false);
+  assert.equal(v.grantBlockedReason, CB_SKIP.WITHDRAWAL_BLOCKED);
   assert.equal(plan(rows, [LIGHT_LIFETIME]).counts.willGrant, 0);
 });
 
+test('Step 2 は退会だけを理由に選択不可にしない', () => {
+  const v = resolveComebackCustomer({ fields: withdrawnMember(), nowMs: NOW });
+  assert.equal(v.selectable, true);
+  assert.equal(v.selectBlockedReason, null);
+  // 絶対除外はどれも Step 2 で落とす
+  for (const [over, reason] of [
+    [{ ForceLogout: true }, CB_SKIP.FORCE_LOGOUT_BLOCKED],
+    [{ Status: 'suspended' }, CB_SKIP.ACCOUNT_SUSPENDED],
+    [{ 'プラン': 'Test' }, CB_SKIP.ACCOUNT_SUSPENDED],
+    [{ Email: 'not-an-email' }, CB_SKIP.DATA_INCOMPLETE],
+  ]) {
+    const r = resolveComebackCustomer({ fields: withdrawnMember(over), nowMs: NOW });
+    assert.equal(r.selectable, false, JSON.stringify(over) + ' が Step 2 で選べてしまう');
+    assert.equal(r.selectBlockedReason, reason);
+  }
+});
+
 test('重複メールは一覧でも選べない（dry-run と同じ理由）', () => {
-  const view = resolveComebackCustomer({
-    fields: withdrawnMember(), nowMs: NOW, allowWithdrawn: true, duplicateEmail: true,
+  // 重複アドレスは**特典を選ぶ前から**選択不可（絶対除外）
+  const pending = resolveComebackCustomer({
+    fields: withdrawnMember(), nowMs: NOW, duplicateEmail: true,
   });
-  assert.equal(view.grantable, false, '重複アドレスが一覧で選べてしまう');
+  assert.equal(pending.selectable, false, '重複アドレスが Step 2 で選べてしまう');
+  assert.equal(pending.selectBlockedReason, CB_SKIP.DUPLICATE_EMAIL);
+  assert.match(pending.eligibility.text, /同一メールアドレス/);
+
+  const view = resolveComebackCustomer({
+    fields: withdrawnMember(), nowMs: NOW, allowWithdrawn: true, duplicateEmail: true, offerSelected: true,
+  });
+  assert.equal(view.grantable, false, '重複アドレスが付与可能になっている');
   assert.equal(view.grantBlockedReason, CB_SKIP.DUPLICATE_EMAIL);
   assert.equal(view.eligibility.status, GRANT_ELIGIBILITY.BLOCKED);
-  assert.match(view.eligibility.text, /重複/);
 });
 
 test('退会と強制ログアウトは別の理由コード・別の表示にする', () => {

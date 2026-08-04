@@ -177,7 +177,7 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
  * 一覧の「今回付与できる」表示を dry-run の判定と一致させるために渡す
  * （渡さなければ従来どおり退会者は「付与不可」と出る）。
  */
-async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdrawn = false }) {
+async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdrawn = false, offerSelected = false }) {
   const records = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
 
   // Customers 全体で重複しているアドレス。重複していると `auth/customerLookup` が
@@ -197,7 +197,7 @@ async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdraw
       recordId: rec.id,
       fields,
       view: resolveComebackCustomer({
-        fields, nowMs: now, allowWithdrawn,
+        fields, nowMs: now, allowWithdrawn, offerSelected,
         duplicateEmail: !!email && duplicateEmails.has(email),
       }),
     };
@@ -417,7 +417,9 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     return !!(r && r.ok && r.offer && isWithdrawnAllowedForOffer(r.offer));
   });
 
-  const { list } = await loadCustomers({ KEY, BASE, now, allowWithdrawn });
+  const { list } = await loadCustomers({
+    KEY, BASE, now, allowWithdrawn, offerSelected: selectedGrantIds.length > 0,
+  });
   const matched = list.filter((c) => matchesComebackFilter(c.view, filter));
 
   const rows = matched.slice(0, MAX_ROWS).map((c) => {
@@ -444,6 +446,12 @@ async function handleCustomers({ KEY, BASE, now, req }) {
       promoInconsistent: v.promoInconsistent,
       // 今回の無料付与（状態・理由コード・理由ラベル。UI と同じ値を使う）
       eligibility: v.eligibility,
+      // Step 2「候補として選べるか」。**絶対除外だけ**で決まり、特典に依存しない
+      selectable: v.selectable,
+      selectBlockedReason: v.selectBlockedReason,
+      selectBlockedLabel: v.selectBlockedLabel,
+      // Step 3 以降「いま選んでいる特典へ付与できるか」（未選択なら grantEvaluated=false）
+      grantEvaluated: v.grantEvaluated,
       grantable: v.grantable,
       grantBlockedReason: v.grantBlockedReason,
       grantBlockedLabel: v.grantBlockedReason ? (CB_SKIP_LABEL[v.grantBlockedReason] || v.grantBlockedReason) : '',
@@ -678,6 +686,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const allowWithdrawn = (sel.grantOffers || []).some((o) => isWithdrawnAllowedForOffer(o));
   const { list, byId, offers, duplicateEmails } = await loadCustomers({
     KEY, BASE, now, withOffers: needsOfferWrite, allowWithdrawn,
+    // dry-run / 実行の時点では特典は必ず決まっている
+    offerSelected: (sel.grantOffers || []).length > 0,
   });
 
   // 引き継ぎの下見: 対象は**サーバーが Customers から再導出する**

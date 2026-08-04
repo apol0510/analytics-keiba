@@ -198,7 +198,7 @@ export function buildCbStickyView(state = {}) {
   return {
     step,
     left: `候補 ${Number(state.candidateCount) || 0} 名 / 選択 ${s.selectedCount} 名`,
-    offer: `特典: ${String(state.offerSummaryShort || '未設定')}`,
+    offer: `特典: ${String(state.offerSummaryShort || '未選択')}`,
     review: state.applied ? '確認: 実行済み'
       : !state.dryRun ? '確認: 未確認'
         : state.dryStale === true ? '確認: 失効' : '確認: 確認済み',
