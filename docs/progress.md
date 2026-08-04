@@ -119,11 +119,47 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 
   ⚠️ gate 到達の確認には **合成 1 行 CSV**（`example.invalid`）を使い、**実 CSV は本番へ送っていない**。
 
-- **現在地**: **本番反映済み。write は二重ゲートで停止したまま（env unset）・実取り込み未実施**
-- **次の停止境界**: **初回 100 件の実取り込み**。実行には
-  ① `CUSTOMER_IMPORT_WRITE_ENABLED=true` の投入（**実行後に必ず unset**）
-  ② 確認文字列 `IMPORT <batchId> <件数>` の入力 の両方が要る。
-  rollback（隔離）・削除（別承認）とも**未実施**
+### ✅ 初回カナリア取り込み 10 件 — 実施完了（2026-08-04・ユーザー承認済み）
+
+**外部リストから AK 本番 Customers へ初めて書き込んだ。** 承認範囲は 10 件のみ。
+
+| 項目 | 値 |
+|---|---|
+| ImportBatchId | **`imp-2026-08-04-001`** |
+| Source（追跡・rollback キー） | **`customer-import:imp-2026-08-04-001`** |
+| 確認文字列 | `IMPORT imp-2026-08-04-001 10` |
+| run 要求 | **exactly 1 回**（HTTP 200 / 10.8 秒）・**再送なし** |
+| created / failed | **10 / 0** |
+| skippedExisting / skippedAlreadyDone | 0 / 0 |
+| reconciliation | `planned 10 = created 10`・**`balanced: true`**・`withinPlan: true` |
+| Customers 総数 | **1,466 → 1,476**（+10） |
+| Source 一致件数 | **10** |
+
+**作成内容の検証（read-only・全 10 件）**: `プラン=Free` / `ポイント=0` / `Email` あり /
+`氏名` は 9 件（一意に決まったもののみ）。
+**`Status` / `PlanType` / `有効期限` / `PaidAt` / `PaymentConfirmed` / `LightGrantUntil` /
+`PremiumGrantUntil` / `LifetimeSanrenpuku` / `UnsubscribedAnalyticsKeiba` / `Phone` /
+`AudienceType` / `Brand` は全件空**。`登録日` は Airtable が createdTime で自動付与。
+**同一メール重複の組数は 10 組のまま（実行前と同数）＝今回作成分に重複なし。**
+
+**ゲート運用**:
+
+| 段階 | 操作 | 結果 |
+|---|---|---|
+| 事前 | read-only plan + 13 項目の gate | 全通過（writeEnabled=false のまま） |
+| 開放 | `CUSTOMER_IMPORT_WRITE_ENABLED=true`（production）+ **deploy 1 回**（Build Hook / `6a71ebac28df11000803947b`） | writeEnabled=true を実測 |
+| 実行 | `action:'run'` × 1 | created 10 |
+| 閉鎖 | **env unset** + **deploy 1 回**（`6a71ec6c2d46640008d9da38`） | **env unset / run は 403 `write_disabled` / `written: 0`** を実測 |
+
+- **UPDATE_CANDIDATE 1,158 件は 1 件も更新していない**（PATCH 経路が存在しない）
+- **EXCLUDED 33 / REVIEW_REQUIRED 94 も書き込み対象外**
+- **メール送信 0**（実行 Function に送信経路なし）／**Airtable schema 変更 0**／**削除 0**
+- 実行中の per-row 再試行は 429/5xx 用の設計だが、**今回は全件 1 回で成功**（再試行の発生なし）
+
+- **現在地**: **カナリア 10 件が本番に存在。write ゲートは再閉鎖済み（env unset）**
+- **次の停止境界**: **2 回目以降の取り込み**（残り CREATE 候補 14,484 件）。
+  実行には再び ① env 投入 + deploy ② 確認文字列 の二重ゲートが要る。
+  **rollback（隔離・削除とも）未実施。**
 
 **Phase（2026-08-04）: 外部 13,000 件の取り込み基盤（下見まで / 本番 write は未配線）
 （**PR #232 merged `46f2ecc`・production deploy `6a71d222360fc900082ef050` = state ready・公開中**）。**
