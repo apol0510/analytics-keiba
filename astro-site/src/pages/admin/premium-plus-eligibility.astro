@@ -183,6 +183,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <span class="note" id="impState" aria-live="polite"></span>
         </div>
         <p class="imp-warn" id="impNotImported">まだ取り込まれていません（下見のみ）。</p>
+        <ul class="imp-policy">
+          <li><b>初回は新規作成のみ</b>です（CREATE のみ）。</li>
+          <li>すでに AK にいる方（下見の「既存更新候補」）は <b>1 件も更新しません</b>。</li>
+          <li>AK 側の重複は<b>再判定</b>して除外します（自動統合はしません）。</li>
+          <li>1 回の実行は<b>最大 100 件</b>の試験取り込みです。</li>
+          <li>実行には<b>別承認</b>（書き込みの有効化 + 確認文字列）が必要です。</li>
+          <li><b>現在は書き込み無効</b>のため、このボタンは押せません。</li>
+        </ul>
         <div class="dry-panel" id="impResult" hidden></div>
         <div class="toolbar imp-run-row">
           <button type="button" id="impRun" class="btn-primary btn-md" disabled aria-disabled="true">
@@ -1093,6 +1101,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     margin: .5rem 0 0; padding: .5rem .65rem; border-radius: 8px;
     background: rgba(217,164,65,.12); border-left: 3px solid #d9a441;
     font-size: .76rem; color: #f0d9a8;
+  }
+  .ppe .imp-policy {
+    margin: .5rem 0 0; padding: .5rem .65rem .5rem 1.4rem; border-radius: 8px;
+    background: rgba(255,255,255,.04); border-left: 3px solid #9b7bd4;
+    font-size: .75rem; line-height: 1.9; color: #c8d4e6;
   }
   .ppe .imp-run-row { margin-top: .6rem; align-items: center; }
   .ppe .imp-run-row .btn-primary[disabled] { opacity: .45; cursor: not-allowed; }

@@ -47,7 +47,50 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-04 現在・最新）: 外部 13,000 件の取り込み基盤（下見まで / 本番 write は未配線）
+**Phase（2026-08-05 現在・最新）: 実 CSV 3 ファイルに合わせた取り込み規則の確定と本番 write path
+（branch `feat/customer-import-write`・Draft PR・merge 前・production 未反映）。**
+
+- **目的**: 実データに合わせて規則を確定し、**安全な本番 write path** を Draft PR まで作る。
+  初回は **CREATE のみ**・**最大 100 件**・**既存 1,158 件は更新しない**。
+- **🔴 発見した不具合（本 PR で修正）**: `admin-customer-import.js` の
+  「現役の有料会員を取り込まない」判定が**一度も動いていなかった**。
+  `resolveCustomerMarketing()` が返すのは `plan` なのに `mk.planGroup` を見ており、
+  `undefined` 比較で条件が常に false だった。8/4 の下見で `paid_member: 0` と出たのは
+  「有料会員が居なかった」のではなく**判定が動いていなかった**という意味。
+  → 純粋モジュール `importAkFacts.js` へ切り出し、契約（plan×contract）と
+  権利（`premiumActive` / `lightActive`）の**両方**で判定。テストで固定。
+  修正後の実測は **`paid_member` 12 件**（AK の現役有料 21 名のうち 12 名が CSV に含まれていた）。
+- **状態列の実測**: file1 の `状態` は **「配信中」1 種のみ**（6,160 件 / 空欄 0）。
+  `エラーカウント数` は 0/1/2（**≥1 が 78 件**）。→ 既知ラベル表を単一源にし、
+  **未知ラベルは REVIEW_REQUIRED**（fail closed）。配信失敗歴 ≥1 も REVIEW_REQUIRED。
+- **3 ファイル統合規則**: 正本は**統合後の正規化一意メール**（ファイル日時で優先順位を決めない）。
+  file2 は file3 に完全包含・file1 のうち file3 に無いのは 109 件。
+  氏名は**空欄補完のみ**、**食い違いは自動決定せず REVIEW_REQUIRED**（実測 1 件）。
+  電話番号・エラーカウント数は取り込まない。
+- **実 CSV 適用結果（read-only / write 0）**:
+
+  | 分類 | 件数 |
+  |---|---|
+  | 母数（統合後の一意アドレス） | **15,779** |
+  | `CREATE_CANDIDATE` | **14,494** |
+  | `UPDATE_CANDIDATE`（**更新しない**） | **1,158** |
+  | `EXCLUDED` | 33 |
+  | `REVIEW_REQUIRED` | 94 |
+  | 合計 = 母数 | ✅ `balanced: true` |
+
+  理由別: `delivery_error_history` 78 / `provider_suppressed` 19 / **`paid_member` 12** /
+  `role_address` 8 / `duplicate_in_ak` 7 / `soft_bounce` 1 / `test_account` 1 / `name_conflict` 1
+- **Airtable 実スキーマにもとづく新規レコード**: `Email` / `プラン=Free` / `ポイント=0` /
+  `Source=customer-import:<batchId>` / `氏名`（一意に決まるときだけ）。
+  **`登録日` は createdTime（計算フィールド）なので書けない**。
+  **`CreatedBy` / `ImportBatchId` / `ImportedAt` は Customers に存在しない**ため、
+  列があるときだけ書き、無ければ `Source` に出所とバッチを埋め込む（rollback の隔離キー）。
+- **二重ゲート**: `CUSTOMER_IMPORT_WRITE_ENABLED=true` ＋ 確認文字列 `IMPORT <batchId> <件数>`。
+  片方でも欠ければ書き込み 0。初回は 100 件上限（101 以上は `over_limit`）。
+- **現在地**: Draft PR 完成。**production 未反映・本番 write 未実施・env は unset のまま**
+- **停止理由**: PR merge / deploy / env 投入 / 実取り込み はいずれも未承認
+
+**Phase（2026-08-04）: 外部 13,000 件の取り込み基盤（下見まで / 本番 write は未配線）
 （**PR #232 merged `46f2ecc`・production deploy `6a71d222360fc900082ef050` = state ready・公開中**）。**
 
 - **目的**: `/admin/premium-plus-eligibility/` から、ユーザーが別途保有する

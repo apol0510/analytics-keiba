@@ -34,10 +34,11 @@ import {
 import {
   isCustomerImportWriteEnabled, describeImportRollback, DEFAULT_BATCH_SIZE,
 } from '../../src/lib/crm/importJobPlan.js';
+import { FIRST_RUN_MAX_ROWS } from '../../src/lib/crm/importWritePlan.js';
 import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
-import { resolveCustomerMarketing, MK_PLAN } from '../../src/lib/marketing/customerMarketingAudience.js';
-import { checkSelectable } from '../../src/lib/comeback/comebackGrantPlan.js';
+import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
+import { mergeImportFiles, toPreviewRows } from '../../src/lib/crm/importMergePlan.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 
 const CUSTOMERS_TABLE = 'Customers';
@@ -75,51 +76,6 @@ async function fetchAllReadOnly({ KEY, BASE, table }) {
     if (offset && pages >= MAX_PAGES) break;
   } while (offset);
   return out;
-}
-
-/**
- * AK 側の事実を「アドレスの集合」に落とす。**呼び出し元へ集合は返さない**
- *（この関数の外へ出るのは件数だけ）。
- */
-function buildAkFacts({ records, nowMs, blacklistHard, blacklistSoft, testRecipients }) {
-  const existing = new Set();
-  const seen = new Map();          // email -> 出現回数（AK 側の重複検出）
-  const duplicateInAk = new Set();
-  const paid = new Set();
-  const unsubscribed = new Set();
-  const suspended = new Set();
-  const testAccounts = new Set();
-
-  for (const rec of records) {
-    const f = (rec && rec.fields) || {};
-    const email = normalizeEmail(f.Email);
-    if (!email) continue;
-    existing.add(email);
-    seen.set(email, (seen.get(email) || 0) + 1);
-    if (seen.get(email) > 1) duplicateInAk.add(email);
-
-    const mk = resolveCustomerMarketing({ fields: f, nowMs, blacklistEmails: blacklistHard });
-    // 現役の有料会員を「無料リスト」として取り込まない
-    if (mk.planGroup && mk.planGroup !== MK_PLAN.FREE && mk.contract === 'active') paid.add(email);
-    if (mk.suppressionReasons && mk.suppressionReasons.includes('unsubscribed')) unsubscribed.add(email);
-
-    // 停止・テストは既存の単一源で判定する（施策側と基準をそろえる）
-    const sel = checkSelectable(f, { duplicateEmail: false });
-    if (!sel.ok && sel.reason === 'account_suspended') {
-      const status = String(f.Status ?? '').trim().toLowerCase();
-      const plan = String(f['プラン'] ?? f.Plan ?? '').trim().toLowerCase();
-      if (status === 'test' || plan === 'test') testAccounts.add(email);
-      else suspended.add(email);
-    }
-  }
-  for (const t of testRecipients || []) {
-    const e = normalizeEmail(t);
-    if (e) testAccounts.add(e);
-  }
-  return {
-    existing, duplicateInAk, paid, unsubscribed, suspended, testAccounts,
-    hardBounce: blacklistHard, softBounce: blacklistSoft,
-  };
 }
 
 /** AK の EmailBlacklist を HARD / SOFT に分ける（`admin-marketing.js` と同じ考え方） */
@@ -287,6 +243,145 @@ async function handlePreviewCsv({ req, KEY, BASE, now }) {
   });
 }
 
+/**
+ * 複数ファイルをまとめて下見する（実運用は 3 ファイル同時）。**書き込みなし**。
+ *
+ * 1 ファイルずつ見ると「ファイル間の重複」が分からず、同じ人を 2 回作りかねない。
+ * ここで**アドレス単位に統合してから**分類する（統合後は 1 アドレス 1 行）。
+ */
+async function handlePreviewFiles({ req, KEY, BASE, now }) {
+  const files = Array.isArray(req.files) ? req.files : [];
+  if (files.length === 0) return json(400, { error: 'CSV が指定されていません' });
+  if (files.length > 10) return json(400, { error: 'ファイルが多すぎます（10 個まで）' });
+
+  const parsedFiles = [];
+  let totalBytes = 0;
+  for (const f of files) {
+    const name = String(f && f.name ? f.name : '').slice(0, 80);
+    let bytes;
+    try { bytes = new Uint8Array(Buffer.from(String(f && f.contentBase64 || ''), 'base64')); }
+    catch { return json(400, { error: 'ファイルを読み取れませんでした', file: name }); }
+    totalBytes += bytes.length;
+    if (bytes.length === 0) return json(400, { error: CSV_ERROR_LABEL.empty_file, file: name });
+    if (totalBytes > MAX_FILE_BYTES) return json(413, { error: CSV_ERROR_LABEL.file_too_large });
+
+    const parsed = buildImportRows({ bytes, mapColumnsFn: mapColumns });
+    if (!parsed.ok) {
+      return json(400, {
+        mode: 'import-preview-files', sideEffects: 'none', ok: false, file: name,
+        error: CSV_ERROR_LABEL[parsed.error] || '必須列（メールアドレス）が見つかりません',
+        errorCode: parsed.error || null, missingColumns: parsed.missing || [],
+        encoding: parsed.encoding || null,
+      });
+    }
+    parsedFiles.push({ name, bytes, parsed });
+  }
+
+  // ── 統合（アドレス単位。氏名は空欄補完のみ・食い違いは要確認）──
+  const merged = mergeImportFiles({
+    files: parsedFiles.map((p) => ({
+      name: p.name,
+      rows: p.parsed.rows,
+      hasStatusColumn: (p.parsed.detectedColumns || []).includes('status'),
+    })),
+  });
+
+  const [records, blacklist, provider] = await Promise.all([
+    fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
+    loadBlacklistSets({ KEY, BASE }),
+    fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
+  ]);
+  const testRecipients = parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients;
+  const facts = buildAkFacts({
+    records, nowMs: now, blacklistHard: blacklist.hard, blacklistSoft: blacklist.soft, testRecipients,
+  });
+
+  const batchId = buildBatchId({ dateIso: new Date(now).toISOString(), seq: 1 });
+  const preview = buildImportPreview({
+    rows: toPreviewRows(merged.entries),
+    existingEmails: facts.existing,
+    duplicateInAk: facts.duplicateInAk,
+    paidEmails: facts.paid,
+    unsubscribedEmails: facts.unsubscribed,
+    hardBounceEmails: facts.hardBounce,
+    softBounceEmails: facts.softBounce,
+    suspendedEmails: facts.suspended,
+    testEmails: facts.testAccounts,
+    providerSuppressed: provider && provider.ok ? provider.emails : null,
+    batchId,
+    nowMs: now,
+  });
+
+  const fileHashes = parsedFiles.map((p) => hashBytes(p.bytes));
+  const combinedFileHash = hashBytes(new TextEncoder().encode(fileHashes.join('|')));
+  const combinedHeaderHash = hashBytes(
+    new TextEncoder().encode(parsedFiles.map((p) => p.parsed.headerHash).join('|')),
+  ).slice(0, 16);
+
+  const record = buildPreviewRecord({
+    importPreviewId: buildPreviewId({ fileHash: combinedFileHash, createdAtMs: now }),
+    fileHash: combinedFileHash,
+    normalizedHeaderHash: combinedHeaderHash,
+    rowCount: preview.総行数,
+    classificationCounts: preview.classificationCounts,
+    reasonCounts: preview.reasonCounts,
+    parserVersion: parsedFiles[0].parsed.parserVersion,
+    encoding: [...new Set(parsedFiles.map((p) => p.parsed.encoding))].join(','),
+    detectedColumns: [...new Set(parsedFiles.flatMap((p) => p.parsed.detectedColumns))],
+    ignoredColumns: [...new Set(parsedFiles.flatMap((p) => p.parsed.ignoredColumns))],
+    createdAtMs: now,
+  });
+
+  // ⚠️ 応答は**件数・ハッシュ・列名だけ**
+  return json(200, {
+    mode: 'import-preview-files',
+    sideEffects: 'none',
+    ok: true,
+    written: 'なし（まだ取り込まれていません）',
+    files: parsedFiles.map((p, i) => ({
+      name: p.name,
+      bytes: p.bytes.length,
+      rowCount: p.parsed.rowCount,
+      encoding: p.parsed.encoding,
+      detectedColumns: p.parsed.detectedColumns,
+      ignoredColumns: p.parsed.ignoredColumns,
+      fileHash: fileHashes[i],
+    })),
+    mergeStats: merged.stats,
+    preview: describePreview(record),
+    counts: {
+      母数: preview.総行数,
+      新規追加候補: preview.新規追加,
+      既存更新候補: preview.既存更新,
+      除外: preview.除外,
+      要確認: preview.要確認,
+      balanced: preview.balanced,
+    },
+    classificationCounts: preview.classificationCounts,
+    reasonCounts: preview.reasonCounts,
+    reasonLabels: Object.fromEntries(
+      Object.keys(preview.reasonCounts || {}).map((k) => [k, IMPORT_REASON_LABEL[k] || k]),
+    ),
+    verdictLabels: VERDICT_CANONICAL,
+    akSnapshot: {
+      customers: records.length,
+      uniqueEmails: facts.existing.size,
+      duplicateEmails: facts.duplicateInAk.size,
+      activePaid: facts.paid.size,
+      blacklistAvailable: blacklist.ok,
+      providerSuppressionAvailable: !!(provider && provider.ok),
+    },
+    firstRun: {
+      作成のみ: true,
+      更新しない既存: preview.既存更新,
+      上限: FIRST_RUN_MAX_ROWS,
+      writeEnabled: isCustomerImportWriteEnabled(process.env),
+      note: '初回は CREATE のみ・最大 100 件。既存 Customers は 1 件も更新しません。',
+    },
+    rollback: describeImportRollback(batchId),
+  });
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json(200, {});
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method Not Allowed' });
@@ -307,6 +402,7 @@ export const handler = async (event) => {
   try {
     if (action === 'spec') return handleSpec();
     if (action === 'previewCsv') return await handlePreviewCsv({ req, KEY, BASE, now });
+    if (action === 'previewFiles') return await handlePreviewFiles({ req, KEY, BASE, now });
     // 取り込みの実行はこの Function に**存在しない**（別 Phase・別承認）
     if (action === 'run' || action === 'import') {
       return json(501, {

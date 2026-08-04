@@ -59,7 +59,10 @@ const previewResponseBody = () => {
   const fn = FN.slice(i);
   const r = fn.indexOf('return json(200, {');
   assert.ok(r > -1, '下見の応答が無い');
-  return fn.slice(r, fn.indexOf('\n};', r));
+  // この return 文だけを見る（次の関数まで拾うと別の処理を誤検知する）
+  const end = fn.indexOf('\n  });', r);
+  assert.ok(end > r, '応答の終端が見つからない');
+  return fn.slice(r, end);
 };
 
 // ── 1. 下見 API は read-only ──────────────────────────────────

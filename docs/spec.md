@@ -466,6 +466,48 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 
 > 本番の preview 保存先（Airtable / Blobs）は**まだ決めない**。実 CSV 受領後に決める。
 
+#### 実 CSV 3 ファイルにもとづく確定規則（2026-08-05）
+
+実ファイルの read-only 集計で決めた。**推測で列を固定していない**。
+
+| ファイル | 文字コード | 行数 | 読む列 | 取り込まない列 |
+|---|---|---|---|---|
+| 1 | UTF-8 (BOM) | 6,160 | `error_count` / `status` / `name` / `email` | 電話番号 |
+| 2 | UTF-8 (BOM) | 9,621 | `email` | — |
+| 3 | **Shift_JIS** | 15,688 | `email` / `name` | 電話番号 |
+
+- **`状態` 列は実データでは「配信中」1 種のみ**（6,160 件 / 空欄 0）。
+  既知ラベル表（`importStatusRules.js`）を単一源にし、**知らないラベルは REVIEW_REQUIRED**（fail closed）。
+  送ってはいけないラベル（配信停止 / 退会 / 解除 / 受信拒否 / 無効 / エラー / バウンス 等）は EXCLUDED。
+- **`エラーカウント数` は列として取り込まない**が、**≥1 は REVIEW_REQUIRED**（実測 78 件）。
+  閾値は `ERROR_COUNT_REVIEW_THRESHOLD`。0 にすると失敗歴を無視する（運用判断）。
+- **`電話番号` は読みもしない**（AK に取り込まない方針）。
+- **統合の正本は「3 ファイル統合後の正規化一意メール」**（ファイル日時では優先順位を決めない）。
+  実測: file2 は file3 に完全包含 / file1 のうち file3 に無いのは 109 件。
+- **氏名は空欄を埋めるときだけ**使う。既存 AK 顧客の氏名は上書きしない。
+  複数ファイルで**氏名が食い違うものは自動決定せず REVIEW_REQUIRED**（実測 1 件）。
+
+#### 初回取り込みポリシー（`importWritePlan.js`）
+
+**初回は CREATE_CANDIDATE の新規作成だけ。** UPDATE_CANDIDATE（実測 1,158 件）は 1 件も更新しない。
+
+新規レコードに書く列（**Airtable の実スキーマにもとづく**）:
+
+| 列 | 値 | 根拠 |
+|---|---|---|
+| `Email` | 正規化済みアドレス | 全 1,466 件が保有 |
+| `プラン` | `Free` | singleSelect の選択肢。全件が保有（Free 1,370） |
+| `ポイント` | `0` | 全件が保有 |
+| `Source` | `customer-import:<batchId>` | singleLineText。**rollback の隔離キー** |
+| `氏名` | 一意に決まったときだけ | 決められなければ書かない |
+| `CreatedBy` / `ImportBatchId` / `ImportedAt` | **列が実在するときだけ** | 現在 Customers に**存在しない** |
+
+**書かない**（`CREATE_FORBIDDEN_FIELDS` で構造的に禁止）: `Status` / `PlanType` / `有効期限` /
+`PaidAt` / `PaymentConfirmed` / `Light*Grant*` / `Premium*Grant*` / `LifetimeSanrenpuku` /
+`UnsubscribedAnalyticsKeiba` / `Phone` / **`登録日`（createdTime＝計算フィールドなので書けない）**。
+
+> free 会員は `Status` 空が通常（1,466 件中 1,421 件が空）。**active を入れない。**
+
 #### 本番取り込みの実行モデル（`importJobPlan.js`・**未配線**）
 
 親ジョブ + 子バッチ（既定 200 / 100〜500）。**作成と更新は別バッチ**（戻し方が違う）。
@@ -479,8 +521,53 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 - 監査ログはハッシュのみ（アドレス・氏名を入れない）
 - 戻すのは**削除ではなく印を外す**方向。**取り込みと配信を同じ操作にしない**
 
+#### 実行の二重ゲート（`importWritePlan.canRunFirstImport`）
+
+**両方そろわなければ 1 件も書かない**（fail closed）:
+
+1. `CUSTOMER_IMPORT_WRITE_ENABLED=true`（production は**未設定のまま**）
+2. 実行時の確認文字列 `IMPORT <batchId> <件数>` — **バッチと件数に紐づくので使い回せない**
+
+加えて **初回は 1 回 100 件まで**（`FIRST_RUN_MAX_ROWS`）。101 件以上の指定は `over_limit` で拒否。
+
+#### 書き込みの手順（`importWriteExecutor.js`・I/O 注入でテスト可能）
+
+- 書き込み**直前**に Customers を取り直し、下見のあとに増えたアドレスを弾く
+- 行ごとの冪等キー `sha256(import-create:batchId:email)` で同じ行を二度作らない
+- **429 / 5xx だけ**再試行（指数バックオフ・最大 3 回）。**検証エラー（4xx）は再試行しない**
+- 1 件失敗しても他行を続行し、成功 / 除外 / 失敗を**行ごとに記録して突合**する
+- 許可列以外が 1 つでも混ざったら**そのバッチを止める**
+- 監査ログは rowKey のハッシュのみ（アドレス・氏名を残さない）
+
+#### rollback（初回は削除しない）
+
+対象は `Source = "customer-import:<batchId>"` の行だけ。**既定は隔離**（削除しない＝履歴を消さない）。
+
+**A. 隔離（既定・推奨）**
+
+1. Airtable で `Source = "customer-import:<batchId>"` を絞り込み、件数が実行件数と一致するか確認
+2. `プラン` は `Free` のまま据え置く（**課金・特典フィールドは元々空**なので触らない）
+3. 配信対象から外す（キャンペーンのセグメント条件で `Source` のこの値を除外する）
+4. 記録として残す。**レコードは消さない**
+
+**B. 削除（別の高リスク操作・別承認）**
+
+作成直後で、次を**すべて証明できた場合にのみ**実施する:
+
+- そのバッチのアドレスへ**メールを 1 通も送っていない**
+  （`CampaignDeliveries` / `ScheduledEmails` / `EmailEvents` に該当バッチ由来の行が無い）
+- **会員として利用されていない**（`最終ログイン` が空・`認証トークン` が未発行）
+- **外部から参照されていない**（`StepEnrollments` などのリンクが空）
+
+手順: 上記 3 点を read-only で確認 → 件数を記録 → `Source` 一致の行だけを削除 →
+削除後の件数が「実行前の Customers 件数」に戻ることを突合。
+
+⚠️ **削除はコードから行わない。** 実行 Function に DELETE の綴りを持たせない（guard で固定）。
+Airtable 画面での手作業に限る。**現時点で rollback は未実施。**
+
 書き込みゲート **`CUSTOMER_IMPORT_WRITE_ENABLED`（既定 OFF）**。
-現状 `admin-customer-import.js` に**取り込みの実行経路は存在しない**（`action:'run'` は 501）。
+`admin-customer-import.js`（下見）には**書き込み経路が存在しない**（`action:'run'` は 501）。
+実行は別 Function `admin-customer-import-run.js`（`plan` / `run`）に分離する。
 
 #### 出さない情報（PII 非露出）
 
