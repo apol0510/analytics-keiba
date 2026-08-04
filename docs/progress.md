@@ -156,7 +156,7 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 - **メール送信 0**（実行 Function に送信経路なし）／**Airtable schema 変更 0**／**削除 0**
 - 実行中の per-row 再試行は 429/5xx 用の設計だが、**今回は全件 1 回で成功**（再試行の発生なし）
 
-### 2 回目（100 件）の準備 — まとめ書き実装（branch `feat/customer-import-bulk-create`・Draft PR・未 merge）
+### 2 回目（100 件）の準備 — まとめ書き実装（**PR #234 merged `9f9e0e9`・production deploy `6a71f76577a80500085f4d0c` = ready・公開中**）
 
 **2 回目の実行前 gate で「100 件はタイムアウトする」ことを実測で検知し、実行前に停止した。**
 
@@ -178,6 +178,11 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 初回 10 件は健全（Source 一致 10 / 全件 Free・ポイント 0 / 課金・特典・Status 空 / 重複なし）/
 Customers 1,476 / 新バッチ `imp-2026-08-04-002`（同一 Source の既存 0）/ 3 ファイル hash 一致 /
 **CREATE_CANDIDATE 残数 14,484**（初回 10 件が UPDATE 側 1,168 へ移動）。
+
+**deploy 後の read-only 検証（2026-08-04 / 書き込み 0・実 CSV 未送信）**:
+`CUSTOMER_IMPORT_WRITE_ENABLED`=unset / `plan` の `writeEnabled`=false /
+`run`=**403 `write_disabled`・`written: 0`** / Customers **1,476**（初回カナリアのみ）/
+初回 Source 一致 **10** / 新 Source（`…-002`）**0 件**。gate 確認は合成 1 行 CSV で実施。
 
 - **現在地**: **カナリア 10 件が本番に存在。write ゲートは再閉鎖済み（env unset）**
 - **次の停止境界**: **2 回目以降の取り込み**（残り CREATE 候補 14,484 件）。
