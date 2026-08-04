@@ -48,7 +48,7 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 
 
 **Phase（2026-08-04 現在・最新）: 外部 13,000 件の取り込み基盤（下見まで / 本番 write は未配線）
-（branch `feat/customer-import-preview`・Draft PR・merge 前・production 未反映）。**
+（**PR #232 merged `46f2ecc`・production deploy `6a71d222360fc900082ef050` = state ready・公開中**）。**
 
 - **目的**: `/admin/premium-plus-eligibility/` から、ユーザーが別途保有する
   **AK 無料ユーザー約 13,000 件**を、個人情報流出・重複登録・誤送信なしで取り込める基盤を作る。
@@ -91,10 +91,38 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   応答にアドレス・氏名・recordId が含まれないことをテストで固定。
   別 fixture で `suspended` / `test_account` / `ambiguous_match` / `duplicate_in_ak` /
   `unsupported_row` / `role_address` / `provider_suppressed`（fail closed）も検証
-- **現在地**: Draft PR 完成。**production 未反映・実 CSV 未受領・本番 write 未実施**
+- **merge / deploy 記録**:
+
+  | 項目 | 値 |
+  |---|---|
+  | PR | #232（squash merge・force push / reset / rebase / amend なし） |
+  | merge SHA | `46f2ecc`（merged 2026-08-04T11:50:57Z） |
+  | merge 前 origin/main | `ef4873b` |
+  | production deploy | `6a71d222360fc900082ef050` / context=production / branch=main |
+  | deploy の commit | `46f2ecc`（**merge 後の origin/main と一致**） |
+  | state / 公開 | `ready`・site の published_deploy と一致 |
+
+- **deploy 後の本番 read-only 確認（CSV 未送信 / 書き込み 0 / メール 0 / env 変更 0）**:
+
+  | 確認 | 結果 |
+  |---|---|
+  | `admin-customer-import` `action:'spec'` | HTTP 200 / `sideEffects:'none'` / 必須列 `email` / 任意 4 列 / 上限 8MB・60,000 行 / `parserVersion=csv-1` / `ruleVersion=import-rule-1` / TTL 30 分 |
+  | `action:'run'`（取り込み実行） | **HTTP 501** / `writeEnabled:false`（書き込み経路が本番に存在しない） |
+  | secret 不一致 / GET | **403** / **405**（入口は閉じている） |
+  | `CUSTOMER_IMPORT_WRITE_ENABLED` | **(unset)** |
+  | 管理画面 | 「外部顧客リストの取り込み（下見）」が配信され、`impRun` は `disabled` + `aria-disabled="true"`。**クリック配線なし**を実配信 HTML で確認 |
+  | 画面の inline JS | 構文エラー 0（JS ブロック 2 件） |
+  | 既存機能の非回帰 | `mkSegLoad` / `mkRenderMeasurement` / `ledgerDisplay` / `cbDryRun` / `mkRecoverBtn` すべて配信 HTML に存在 |
+
+  ⚠️ **`previewCsv` は本番で実行していない**（実 CSV 未受領のため。合成 CSV も送っていない）。
+  下見の実挙動はローカルのスモークテスト（ネットワーク遮断・9 件）で確認済み。
+
+- **現在地**: **本番反映済み。ただし下見は「使える状態にした」だけで、実 CSV は未受領・本番 write は未実施**
 - **未完了**: 実 CSV の受領と列の確定 / 本番 preview の保存先決定 /
   write path の配線（Airtable 作成・更新）/ 取り込み後の段階配信
-- **停止理由**: 実 CSV の受領が次の停止境界。merge・deploy・write はいずれも未承認
+- **次の停止境界**: **実 CSV の受領**。以降 ① 下見の本番実行（read-only）→ ② preview 保存先の決定 →
+  ③ write path 配線と `CUSTOMER_IMPORT_WRITE_ENABLED` 投入 → ④ 少数バッチでの実取り込み、
+  の順に**個別承認**を取る
 
 **Phase（2026-08-04）: 配信計測の正常化（開封・クリックを AK の台帳へ入れる）
 （**PR #230 merged `423c180`・production deploy `6a71a1fc9694db0008a1f99c` = state ready・公開中**）。**
@@ -1750,7 +1778,7 @@ rollback は該当 env の unset（コード変更不要）。
   `astro-site/scripts/check-measurement-settings.mjs`（新規）/ `astro-site/package.json`（script 追加のみ）/
   `.github/workflows/safety-check.yml`（step 追加のみ）/ docs 3 ファイル。**lockfile は未変更。**
   外部サービス設定変更・production env 変更・メール実送信は**していない**（停止境界）。
-- **Branch（本更新時 / Draft PR・未 merge）**: `feat/customer-import-preview`（worktree
+- **Branch（**PR #232 merged `46f2ecc`・production 反映済み**）**: `feat/customer-import-preview`（worktree
   `/Users/user/Projects/analytics-keiba-import`）。base `main` / 分岐時の `origin/main` は `ef4873b`。
   変更範囲は `astro-site/src/lib/crm/**`（新規 4 / 拡張 1）/
   `astro-site/netlify/functions/admin-customer-import.js`（新規）/
