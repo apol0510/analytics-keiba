@@ -260,3 +260,156 @@ export async function finalizeCanary(runner) {
 }
 
 export default createCanaryRunner;
+
+// ── run 結果の永続化（**取り逃しても復元できるようにする**）──────
+//
+// ⚠️ 直前の顧客取込 canary では run の HTTP 応答を出力処理ミスで失い、
+//    各検証項目の PASS/FAIL を証明できなかった。run exactly 1・retry 0 では
+//    やり直しが効かないので、**HTTP 応答 / Redis result / Function ログ**の
+//    3 経路で同じ結果を復元できるようにする。
+
+/** result の schema 版。**不一致は PASS 扱いにしない** */
+export const RESULT_SCHEMA_VERSION = 1;
+
+/** result はデータ prefix 内に置く（通常 cleanup で一緒に消える） */
+export const resultKey = (id) => `${dataPrefix(id)}result`;
+
+/** result に入れてはいけないもの（構造的な最後の砦） */
+const FORBIDDEN_RESULT_KEYS = [
+  'url', 'URL', 'token', 'TOKEN', 'secret', 'Secret', 'value', 'values',
+  'email', 'Email', 'hash', 'stack', 'headers', 'header', 'customer', 'Customer',
+];
+
+/**
+ * result に URL / token / Redis 値 / アドレス / hash 全文 / stack が
+ * 混ざっていないか。**混ざっていたら保存しない**。
+ */
+export function assertResultSafe(obj) {
+  const seen = new Set();
+  const walk = (v) => {
+    if (!v || typeof v !== 'object') return true;
+    if (seen.has(v)) return true;
+    seen.add(v);
+    for (const [k, val] of Object.entries(v)) {
+      if (FORBIDDEN_RESULT_KEYS.includes(k)) return false;
+      if (typeof val === 'string') {
+        if (/@[a-z0-9.-]+\.[a-z]{2,}/i.test(val)) return false;      // アドレス
+        if (/^[a-f0-9]{32,}$/i.test(val)) return false;               // hash 全文
+        if (/https?:\/\//i.test(val)) return false;                   // URL
+        if (/\n\s+at\s/.test(val)) return false;                      // stack trace
+      }
+      if (!walk(val)) return false;
+    }
+    return true;
+  };
+  return walk(obj);
+}
+
+/**
+ * 保存する結果サマリー（**PII なし**）。
+ * Phase 0 は latencyMs まで、Phase 1 は name / ok / errorCode まで。
+ */
+export function buildResultSummary({
+  canaryId, phase0, phase1, cleanup, stats, startedAt, finishedAt,
+  outOfNamespaceCount, retryCount, runCount,
+}) {
+  const p0 = (phase0?.checks || []).map((c) => ({
+    name: str(c.name), ok: c.ok === true,
+    latencyMs: int(String(c.detail || '').replace(/[^0-9]/g, '')) || null,
+    errorCode: c.ok === true ? null : (str(c.errorCode) || 'check_failed'),
+  }));
+  const p1 = (phase1?.checks || []).map((c) => ({
+    name: str(c.name), ok: c.ok === true,
+    errorCode: c.ok === true ? null : (str(c.errorCode) || 'check_failed'),
+  }));
+  const allOk = p0.every((c) => c.ok) && p1.every((c) => c.ok)
+    && int(cleanup?.remaining) === 0 && int(outOfNamespaceCount) === 0
+    && int(runCount) === 1 && int(retryCount) === 0;
+
+  return {
+    schemaVersion: RESULT_SCHEMA_VERSION,
+    canaryId: str(canaryId),
+    completed: true,
+    overallOk: allOk,
+    startedAt: str(startedAt),
+    finishedAt: str(finishedAt),
+    commandCount: int(stats?.commands),
+    keyCount: int(stats?.keysTouched),
+    phase0: p0,
+    phase1: p1,
+    cleanup: {
+      found: int(cleanup?.found), deleted: int(cleanup?.deleted),
+      remaining: int(cleanup?.remaining),
+    },
+    outOfNamespaceCount: int(outOfNamespaceCount),
+    retryCount: int(retryCount),
+    runCount: int(runCount),
+  };
+}
+
+/** 復元した result が信用できるか。**駄目なら PASS 扱いにしない** */
+export const RESULT_REJECT = Object.freeze({
+  UNAVAILABLE: 'result_unavailable',
+  INVALID: 'result_invalid',
+  SCHEMA_MISMATCH: 'result_schema_mismatch',
+});
+
+export function validateResult(raw) {
+  if (raw === null || raw === undefined || raw === '') {
+    return { ok: false, code: RESULT_REJECT.UNAVAILABLE };
+  }
+  let r;
+  if (typeof raw === 'string') {
+    try { r = JSON.parse(raw); } catch { return { ok: false, code: RESULT_REJECT.INVALID }; }
+  } else { r = raw; }
+  if (!r || typeof r !== 'object') return { ok: false, code: RESULT_REJECT.INVALID };
+  if (int(r.schemaVersion) !== RESULT_SCHEMA_VERSION) {
+    return { ok: false, code: RESULT_REJECT.SCHEMA_MISMATCH, got: int(r.schemaVersion) };
+  }
+  for (const f of ['canaryId', 'overallOk', 'phase0', 'phase1', 'commandCount', 'runCount', 'retryCount']) {
+    if (r[f] === undefined) return { ok: false, code: RESULT_REJECT.INVALID, missing: f };
+  }
+  if (!Array.isArray(r.phase0) || !Array.isArray(r.phase1)) {
+    return { ok: false, code: RESULT_REJECT.INVALID, missing: 'checks' };
+  }
+  return { ok: true, result: r };
+}
+
+/** 3 経路（HTTP / Redis result / Function ログ）の一致確認 */
+export function compareResultPaths({ http, stored, log }) {
+  const names = (r) => [...((r?.phase0 || []).map((c) => c.name)), ...((r?.phase1 || []).map((c) => c.name))];
+  const oks = (r) => [...((r?.phase0 || []).map((c) => c.ok)), ...((r?.phase1 || []).map((c) => c.ok))];
+  const problems = [];
+  if (!http) problems.push('http_missing');
+  if (!stored) problems.push('stored_missing');
+  if (!log) problems.push('log_missing');
+  if (http && stored) {
+    if (http.overallOk !== stored.overallOk) problems.push('overallOk_mismatch:http_vs_stored');
+    if (names(http).join('|') !== names(stored).join('|')) problems.push('check_names_mismatch:http_vs_stored');
+    if (oks(http).join('|') !== oks(stored).join('|')) problems.push('check_oks_mismatch:http_vs_stored');
+  }
+  if (http && log) {
+    if (http.overallOk !== log.overallOk) problems.push('overallOk_mismatch:http_vs_log');
+    const logNames = (log.checks || []).map((c) => c.name);
+    if (logNames.length !== names(http).length) problems.push('check_count_mismatch:http_vs_log');
+    else if (logNames.join('|') !== names(http).join('|')) problems.push('check_names_mismatch:http_vs_log');
+  }
+  return { agree: problems.length === 0, problems };
+}
+
+/** Function ログ 1 行（**canaryId 全文・key・値・URL/token を出さない**） */
+export function buildLogLine(result) {
+  const id = str(result?.canaryId);
+  return {
+    event: 'marketing_automation_redis_canary_result',
+    canaryIdSuffix: id ? id.slice(-8) : null,
+    overallOk: result?.overallOk === true,
+    checks: [
+      ...((result?.phase0 || []).map((c) => ({ name: c.name, ok: c.ok }))),
+      ...((result?.phase1 || []).map((c) => ({ name: c.name, ok: c.ok }))),
+    ],
+    commandCount: int(result?.commandCount),
+    retryCount: int(result?.retryCount),
+    runCount: int(result?.runCount),
+  };
+}

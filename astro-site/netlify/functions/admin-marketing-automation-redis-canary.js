@@ -27,6 +27,8 @@ import {
   buildCanaryId, buildRunConfirmation, buildFinalizeConfirmation, isValidCanaryId,
   canaryPrefix, dataPrefix, markerKey, CanaryGuardError, CANARY_STOP,
   MAX_CANARY_KEYS, MAX_REDIS_COMMANDS, CANARY_TTL_SEC, MARKER_TTL_SEC,
+  buildResultSummary, assertResultSafe, validateResult, buildLogLine,
+  resultKey, RESULT_SCHEMA_VERSION,
 } from '../../src/lib/marketing/automationRedisCanary.js';
 
 export const CANARY_GATE_ENV = 'MARKETING_AUTOMATION_REDIS_CANARY_ENABLED';
@@ -112,15 +114,45 @@ async function handleRun({ req, now }) {
     out.phase0 = { ok: p0.ok, checks: p0.checks, dbsize参考値: p0.dbsize };
     const p1 = await runPhase1({ runner, now });
     out.phase1 = { ok: p1.ok, checks: p1.checks };
-    const clean = await cleanupCanary(runner);
-    out.cleanup = clean;
-    out.canary残存 = { データ: clean.remaining, 墓標: 1 };
+    // ⚠️ **cleanup しない。** run の応答を取り逃しても復元できるよう、
+    //    まず結果を Redis へ保存し、3 経路の一致を確認してから別 action で cleanup する。
+    const finishedAt = new Date(Date.now()).toISOString();
+    const summary = buildResultSummary({
+      canaryId, phase0: p0, phase1: p1,
+      cleanup: { found: 0, deleted: 0, remaining: 0 },   // cleanup はまだ行わない
+      stats: runner.stats(), startedAt: new Date(now).toISOString(), finishedAt,
+      outOfNamespaceCount: 0, retryCount: 0, runCount: 1,
+    });
+    if (!assertResultSafe(summary)) {
+      out.ok = false; out.resultSaved = false; out.resultError = 'result_unsafe';
+      out.stats = runner.stats();
+      return json(500, out);
+    }
+    let resultSaved = false;
+    try {
+      await runner.run(['SET', resultKey(canaryId), JSON.stringify(summary), 'EX', String(CANARY_TTL_SEC)]);
+      resultSaved = true;
+    } catch (e) {
+      // ⚠️ 保存に失敗したら **overall 成功にしない**（復元経路が欠ける）
+      out.resultError = e.code || 'result_save_failed';
+    }
+    out.resultSaved = resultSaved;
+    out.result = summary;
+
+    // ⚠️ 3 経路目。**PII なし・canaryId 全文を出さない** 1 行 JSON
+    try { console.log(JSON.stringify(buildLogLine(summary))); } catch { /* ログ失敗で止めない */ }
+
     out.stats = runner.stats();
-    // 合否は canary prefix の残存 0 で決める（DBSIZE は参考値）
-    out.ok = p0.ok && p1.ok && clean.remaining === 0;
+    out.ok = p0.ok && p1.ok && resultSaved && summary.overallOk === true;
     out.notice = out.ok
-      ? 'Phase 0 / Phase 1 すべて通過。データキーは削除済み（墓標のみ TTL 付きで残ります）。'
-      : '未達があります。次へ進まないでください。';
+      ? 'Phase 0 / Phase 1 すべて通過。**結果を Redis へ保存済み**。3 経路の一致を確認してから cleanup してください。'
+      : '未達があります。cleanup せず status と Function ログを取得してください。';
+    out.次の手順 = [
+      '1) この HTTP 応答を専用ファイルへ保存（-o と -w を混ぜない）',
+      '2) action:"status" で保存済み result を取得し、HTTP 応答と一致を確認',
+      '3) Function ログの 1 行 JSON で overallOk とチェック数を確認',
+      '4) 3 経路が一致してから action:"cleanup"',
+    ];
     return json(200, out);
   } catch (e) {
     try { out.cleanup = await cleanupCanary(runner); }
@@ -140,9 +172,33 @@ async function handleStatus({ req }) {
   try {
     const m = await runner.run(['EXISTS', markerKey(canaryId)]);
     const found = await scanCanaryKeys(runner);   // ⚠️ 数えるだけ・削除しない
+
+    // 保存済み result を復元する。**無い / 壊れている / schema 違いは PASS 扱いにしない**
+    let raw = null;
+    try { raw = (await runner.run(['GET', resultKey(canaryId)])).result; }
+    catch { raw = null; }
+    const v = validateResult(raw);
+
     return json(200, {
       mode: 'mkauto-canary-status', sideEffects: 'none', canaryId,
-      実行済み: Number(m.result) === 1, 残存キー数: found.length, stats: runner.stats(),
+      run実行済み: Number(m.result) === 1,
+      result保存済み: v.ok,
+      resultProblem: v.ok ? null : v.code,
+      schemaVersion: v.ok ? v.result.schemaVersion : null,
+      期待schemaVersion: RESULT_SCHEMA_VERSION,
+      overallOk: v.ok ? v.result.overallOk === true : false,
+      checks: v.ok ? [
+        ...v.result.phase0.map((c) => ({ name: c.name, ok: c.ok, errorCode: c.errorCode, latencyMs: c.latencyMs })),
+        ...v.result.phase1.map((c) => ({ name: c.name, ok: c.ok, errorCode: c.errorCode })),
+      ] : [],
+      commandCount: v.ok ? v.result.commandCount : null,
+      retryCount: v.ok ? v.result.retryCount : null,
+      runCount: v.ok ? v.result.runCount : null,
+      データ残存数: found.length,
+      墓標: Number(m.result) === 1,
+      stats: runner.stats(),
+      notice: v.ok ? '保存済み result を復元しました。'
+        : 'result を復元できません。**PASS と判定しないでください。**',
     });
   } catch (e) { return json(e instanceof CanaryGuardError ? 409 : 503, guardBody(e)); }
 }

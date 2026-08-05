@@ -395,3 +395,217 @@ test('guard: 管理 UI / scheduler / enqueue を持ち込んでいない', () =>
     }
   }
 });
+
+// ── run 結果の永続化（取り逃しても復元できる）──────────────────
+
+import {
+  RESULT_SCHEMA_VERSION, RESULT_REJECT, resultKey, buildResultSummary,
+  assertResultSafe, validateResult, compareResultPaths, buildLogLine,
+} from './automationRedisCanary.js';
+
+const okPhase0 = { checks: [{ name: 'PING', ok: true, detail: '12ms' }, { name: 'EVAL return 1', ok: true, detail: '9ms' }] };
+const okPhase1 = { checks: [{ name: '1. SET NX', ok: true }, { name: '3c. CONFLICT', ok: true }] };
+const mkSummary = (over = {}) => buildResultSummary({
+  canaryId: ID, phase0: okPhase0, phase1: okPhase1,
+  cleanup: { found: 0, deleted: 0, remaining: 0 },
+  stats: { commands: 30, keysTouched: 6 },
+  startedAt: '2026-08-06T03:00:00.000Z', finishedAt: '2026-08-06T03:00:05.000Z',
+  outOfNamespaceCount: 0, retryCount: 0, runCount: 1, ...over,
+});
+
+test('result はデータ prefix 内に置く（cleanup で一緒に消える）', () => {
+  assert.equal(resultKey(ID), `${dataPrefix(ID)}result`);
+  assert.ok(resultKey(ID).startsWith(canaryPrefix(ID)));
+});
+
+test('result schema に必要項目が揃う', () => {
+  const r = mkSummary();
+  for (const f of ['schemaVersion', 'canaryId', 'completed', 'overallOk', 'startedAt', 'finishedAt',
+    'commandCount', 'keyCount', 'phase0', 'phase1', 'cleanup', 'outOfNamespaceCount',
+    'retryCount', 'runCount']) {
+    assert.ok(f in r, `${f} が無い`);
+  }
+  assert.equal(r.schemaVersion, RESULT_SCHEMA_VERSION);
+  assert.equal(r.overallOk, true);
+  assert.equal(r.phase0[0].latencyMs, 12, 'latencyMs を拾えていない');
+  assert.equal(r.phase1[0].errorCode, null);
+});
+
+test('どれか 1 つでも false なら overallOk=false に集約する', () => {
+  assert.equal(mkSummary({ phase1: { checks: [{ name: 'x', ok: false }] } }).overallOk, false);
+  assert.equal(mkSummary({ phase0: { checks: [{ name: 'PING', ok: false }] } }).overallOk, false);
+  assert.equal(mkSummary({ cleanup: { remaining: 1 } }).overallOk, false);
+  assert.equal(mkSummary({ outOfNamespaceCount: 1 }).overallOk, false, 'prefix 外操作を見逃す');
+  assert.equal(mkSummary({ retryCount: 1 }).overallOk, false, 'retry を見逃す');
+  assert.equal(mkSummary({ runCount: 2 }).overallOk, false, 'run 回数を見逃す');
+  // 失敗チェックには errorCode が入る
+  assert.equal(mkSummary({ phase1: { checks: [{ name: 'x', ok: false }] } }).phase1[0].errorCode, 'check_failed');
+});
+
+test('result に URL / token / アドレス / hash 全文 / stack を入れない', () => {
+  assert.equal(assertResultSafe(mkSummary()), true);
+  assert.equal(assertResultSafe({ ...mkSummary(), url: 'https://x.invalid' }), false);
+  assert.equal(assertResultSafe({ ...mkSummary(), token: 'abc' }), false);
+  assert.equal(assertResultSafe({ ...mkSummary(), note: 'a@b.invalid' }), false);
+  assert.equal(assertResultSafe({ ...mkSummary(), note: 'a'.repeat(64) }), false, 'hash 全文を見逃す');
+  assert.equal(assertResultSafe({ ...mkSummary(), note: 'https://example.invalid/x' }), false);
+  assert.equal(assertResultSafe({ ...mkSummary(), note: 'Error\n    at foo' }), false, 'stack を見逃す');
+});
+
+test('result が無い / 壊れている / schema 違いは PASS 扱いにしない', () => {
+  assert.equal(validateResult(null).code, RESULT_REJECT.UNAVAILABLE);
+  assert.equal(validateResult('').code, RESULT_REJECT.UNAVAILABLE);
+  assert.equal(validateResult('{not json').code, RESULT_REJECT.INVALID);
+  assert.equal(validateResult(JSON.stringify({ ...mkSummary(), schemaVersion: 999 })).code,
+    RESULT_REJECT.SCHEMA_MISMATCH);
+  const { phase0, ...noPhase } = mkSummary();
+  assert.equal(validateResult(JSON.stringify(noPhase)).code, RESULT_REJECT.INVALID);
+  assert.equal(validateResult(JSON.stringify(mkSummary())).ok, true);
+});
+
+test('3 経路（HTTP / Redis result / ログ）の一致を判定する', () => {
+  const http = mkSummary();
+  const stored = mkSummary();
+  const log = buildLogLine(http);
+  assert.equal(compareResultPaths({ http, stored, log }).agree, true);
+  // 欠落
+  assert.deepEqual(compareResultPaths({ http, stored: null, log }).problems, ['stored_missing']);
+  assert.deepEqual(compareResultPaths({ http, stored, log: null }).problems, ['log_missing']);
+  // overallOk 不一致
+  const bad = { ...stored, overallOk: false };
+  assert.ok(compareResultPaths({ http, stored: bad, log }).problems.includes('overallOk_mismatch:http_vs_stored'));
+  // チェック件数不一致
+  const shortLog = { ...log, checks: log.checks.slice(0, 1) };
+  assert.ok(compareResultPaths({ http, stored, log: shortLog }).problems.includes('check_count_mismatch:http_vs_log'));
+});
+
+test('Function ログは canaryId 全文・key・値・URL/token を出さない', () => {
+  const line = buildLogLine(mkSummary());
+  const json = JSON.stringify(line);
+  assert.equal(line.event, 'marketing_automation_redis_canary_result');
+  assert.equal(line.canaryIdSuffix, ID.slice(-8));
+  assert.equal(json.includes(ID), false, 'canaryId 全文が出ている');
+  assert.equal(json.includes('ak:marketing-automation'), false, 'Redis key が出ている');
+  assert.equal(/https?:\/\//.test(json), false);
+  assert.equal(/@[a-z0-9.-]+\.[a-z]{2,}/i.test(json), false);
+  assert.equal(/[a-f0-9]{32,}/i.test(json), false, 'hash 全文が出ている');
+  assert.equal(line.retryCount, 0);
+  assert.equal(line.runCount, 1);
+  // 1 行に収まる
+  assert.equal(json.includes('\n'), false);
+});
+
+test('handler: run は result を保存し、cleanup せず、ログを 1 行出す', async () => {
+  const { handler, CANARY_GATE_ENV } = await import(
+    '../../../netlify/functions/admin-marketing-automation-redis-canary.js');
+  const r = fakeRedis();
+  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+  const prevLog = console.log;
+  const logs = [];
+  globalThis.fetch = async (_url, opt) => {
+    const args = JSON.parse(opt.body);
+    const result = await r.cmd(args);
+    return { ok: true, json: async () => ({ result }) };
+  };
+  console.log = (...a) => { logs.push(a.join(' ')); };
+  process.env.PREMIUM_PLUS_ADMIN_SECRET = 'sec';
+  process.env[CANARY_GATE_ENV] = 'true';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
+  try {
+    const res = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'run', canaryId: ID, confirmation: buildRunConfirmation(ID) }),
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.equal(body.resultSaved, true, 'result を保存していない');
+    assert.equal(body.ok, true, JSON.stringify(body.phase1?.checks?.filter((c) => !c.ok)));
+    assert.equal(body.result.schemaVersion, RESULT_SCHEMA_VERSION);
+    assert.equal(body.result.runCount, 1);
+    assert.equal(body.result.retryCount, 0);
+    // ⚠️ run は cleanup しない（3 経路の一致確認まで result を残す）
+    assert.equal(r.store.has(resultKey(ID)), true, 'run が result を消した');
+    assert.equal(body.cleanup, undefined, 'run が cleanup している');
+
+    // 構造化ログが 1 行 JSON で出ている
+    const line = logs.find((l) => l.includes('marketing_automation_redis_canary_result'));
+    assert.ok(line, '構造化ログが無い');
+    const parsed = JSON.parse(line);
+    assert.equal(parsed.overallOk, true);
+    assert.equal(parsed.checks.length, body.result.phase0.length + body.result.phase1.length);
+    assert.equal(line.includes(ID), false, 'ログに canaryId 全文');
+
+    // status から復元でき、HTTP 応答と一致する
+    const st = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'status', canaryId: ID }),
+    });
+    const sb = JSON.parse(st.body);
+    assert.equal(sb['result保存済み'], true, 'status が result を復元できない');
+    assert.equal(sb.overallOk, true);
+    assert.equal(sb.checks.length, parsed.checks.length, 'status と ログでチェック数が違う');
+    assert.equal(sb['run実行済み'], true);
+    assert.equal(sb.commandCount, body.result.commandCount);
+    assert.equal(sb.retryCount, 0);
+
+    // 3 経路の一致
+    const cmp = compareResultPaths({ http: body.result, stored: { ...body.result }, log: parsed });
+    assert.equal(cmp.agree, true, JSON.stringify(cmp.problems));
+
+    // cleanup で result も消える
+    const cl = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'cleanup', canaryId: ID }),
+    });
+    assert.equal(JSON.parse(cl.body).cleanup.remaining, 0);
+    assert.equal(r.store.has(resultKey(ID)), false, 'cleanup が result を残した');
+    assert.equal(r.store.has(markerKey(ID)), true, 'cleanup が墓標を消した');
+
+    // cleanup 後は status が result を復元できない → PASS 扱いにしない
+    const st2 = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'status', canaryId: ID }),
+    });
+    const sb2 = JSON.parse(st2.body);
+    assert.equal(sb2['result保存済み'], false);
+    assert.equal(sb2.overallOk, false, 'result 無しで PASS になっている');
+    assert.equal(sb2.resultProblem, RESULT_REJECT.UNAVAILABLE);
+  } finally {
+    globalThis.fetch = prevFetch; console.log = prevLog;
+    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
+    Object.assign(process.env, prev);
+  }
+});
+
+test('handler: result 保存に失敗したら overall 成功にしない', async () => {
+  const { handler, CANARY_GATE_ENV } = await import(
+    '../../../netlify/functions/admin-marketing-automation-redis-canary.js');
+  const r = fakeRedis();
+  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+  const prevLog = console.log; console.log = () => {};
+  globalThis.fetch = async (_url, opt) => {
+    const args = JSON.parse(opt.body);
+    // result の保存だけ失敗させる
+    if (args[0] === 'SET' && String(args[1]).endsWith('d:result')) return { ok: false, status: 500 };
+    const result = await r.cmd(args);
+    return { ok: true, json: async () => ({ result }) };
+  };
+  process.env.PREMIUM_PLUS_ADMIN_SECRET = 'sec';
+  process.env[CANARY_GATE_ENV] = 'true';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
+  try {
+    const res = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'run', canaryId: ID, confirmation: buildRunConfirmation(ID) }),
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(body.resultSaved, false);
+    assert.equal(body.ok, false, 'result 保存失敗なのに成功扱い');
+  } finally {
+    globalThis.fetch = prevFetch; console.log = prevLog;
+    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
+    Object.assign(process.env, prev);
+  }
+});
