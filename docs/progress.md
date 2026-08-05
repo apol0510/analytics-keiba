@@ -51,7 +51,102 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 Draft PR まで実装。**本番送信 0 / production env 変更 0 / production deploy 0 / Airtable schema 変更 0 /
 Customers への書き込み 0。** プリセットは全て初期 OFF で、有効化・実行は配線していない。**
 
-### 🆕 AK 専用メルマガ自動化 — Phase A（2026-08-06・Draft PR）
+### 🆕 AK 専用メルマガ自動化 — Phase B（永続化・scheduler・enqueue 共通化）
+
+**Phase A（監査・設計・dry-run）に続き、永続化と実行系を実装した。**
+production deploy 0 / production Redis write 0 / Airtable write 0 / 実送信 0 / 新規 env 投入 0。
+
+#### Redis キー設計（AK 専用 prefix）と正本の範囲
+
+すべて `ak:marketing-automation:` 配下。**他用途の鍵空間へ触れない**
+（`payemail:*` / `customer-import:*` / KMA）。prefix 外は `assertKey` が構造的に拒否する。
+
+| 鍵 | 用途 |
+|---|---|
+| `ak:marketing-automation:def:<automationId>` | AutomationDefinition |
+| `ak:marketing-automation:run:<runId>` | AutomationRun |
+| `ak:marketing-automation:lock:<automationId>` | scheduler の claim |
+| `ak:marketing-automation:recipient:<runId>:<sha256>` | 受信者 claim |
+| `ak:marketing-automation:index:active` | ACTIVE 索引 |
+| `ak:marketing-automation:fence` | fencing token |
+
+**正本の範囲を明確化した:**
+
+- **Redis が正本** … 自動化の**設定と進行**（Definition / Run / claim / lock）
+- **Airtable が正本** … **送信の事実**（ScheduledEmails / CampaignDeliveries / EmailEvents）
+
+「送ったかどうか」を Redis で判断しない。Redis が消えても送信済みの事実は Airtable に残り、
+二重送信の最終防壁は `CampaignDeliveries.DeliveryKey` の冪等 upsert 側にある。
+
+**PII を保存しない。** 受信者は**正規化メールの sha256 だけ**を鍵に使い、値は状態と件数のみ。
+許可外の項目は保存前に落ち、許可項目に紛れた PII（文字列中のアドレスを含む）は拒否する。
+
+#### atomic 性・lost-update 対策
+
+- Definition 更新は **`configVersion` 付き CAS**（Lua）。競合したら書かずに例外
+- scheduler claim は **`SET NX EX`** + **fencing token**（`INCR`）
+- 書き込み直前に `verifyClaim` で所有権を再確認。**stale scheduler は enqueue しない**
+- 同一 `automationId` + JST 配信回 → **runId は決定的**（`auto:<id>:<JST 暦日>`）
+- 同一 runId の二重開始は **`SET NX` で atomic に拒否**
+- recipient claim は `runId + 正規化メール sha256` で一意
+- Redis 到達不能 / 応答不明 / CAS 不一致 / lock 状態不明 は**必ず例外にして伝播**（fail-closed）
+
+#### scheduler（`cron-marketing-automation.js`・**production では常時無効**）
+
+**3 ゲートが全て true でなければ Redis にも Airtable にも接続しない**:
+`MARKETING_AUTOMATION_SCHEDULER_ENABLED` / `MARKETING_CAMPAIGN_ENABLED` /
+`MARKETING_CAMPAIGN_DISPATCH_ENABLED`。
+Phase B では**新規 env を production へ設定しない**ので、常に 1 番目で止まる。
+ゲート判定は store 初期化より前にあり、実際に叩いても Redis 呼び出し 0 であることをテストで実測。
+
+責務: ACTIVE 取得 → JST/quiet hours 判定 → due だけ claim → snapshot 再評価 →
+drift 検知（snapshot 増加 / campaignVersion 変更 / contentHash 変更）→ 安全なら enqueue 候補 →
+**1 tick の automation 数（3）と件数（500）に上限**。上限超過は**切り捨てず停止**する。
+
+#### enqueue 共通化
+
+`marketingEnqueueContract.js` を新設し、**管理画面の手動送信と自動配信が同じ関数**で
+ScheduledEmails の行を作るようにした。既存 `admin-marketing.js` もこの契約経由へ切り替え済み。
+
+**やっていないこと（禁止事項）**: 内部 HTTP で admin-marketing を呼ぶ / ScheduledEmails を別形式で作る /
+dispatcher を直接起動する / 送信 API を直接呼ぶ / 既存と違う deliveryKey を作る。
+JobId は既存の `mkt-` 接頭辞を保ち、既存 dispatcher の判定から外れない。
+自動化由来のジョブは Notes に `auto:` / `run:` / `op:` / `snap:` を刻む（**アドレスは入れない**）。
+
+> ⚠️ 既存 guard 2 件（書き込み payload 検査・スナップショット保存検査）は payload が
+> 契約モジュールへ移ったことで一度落ちた。**性質は変わっていない**ため、検査対象を
+> 契約モジュールへ追随させて復旧した（緩めていない）。marketing 全 925 pass で確認済み。
+
+#### 配信直前の再判定
+
+enqueue 時点だけでなく **dispatcher 直前にもう一度**、既存 AK ルールで判定する
+（配信停止 / hard・soft bounce / 送信不可 / テストアカウント / 現在のプラン・有効期限 /
+キャンペーン不整合 / 既送信 deliveryKey）。外れていたら**送らず除外理由を残す**。
+
+#### 突合（reconciliation）
+
+**Redis Run counters / recipient claims / ScheduledEmails / CampaignDeliveries / EmailEvents** の
+5 系統を突合。不一致は `BLOCKED`、失敗残りは `PARTIAL` とし**自動続行しない**。
+provider 受理と実配信を混同せず、受理数が queued を超えたら BLOCKED。**送信済みは再送しない**。
+
+#### テスト
+
+`src/lib/marketing` **925 pass / 0 fail**（Phase B 新規 38）。build 成功。回帰: payments 255 pass。
+
+CAS 競合 / scheduler 二重起動 / fencing token / stale scheduler / Redis timeout・応答不明 /
+run 二重開始 / recipient 二重 claim / 同一 JST 日 run 重複 / quiet hours 境界 / DST 非依存 /
+maxRecipients 超過 / dry-run 後の対象増加 / campaignVersion 変更 / contentHash 変更 /
+配信直前の有料化・配信停止・bounce 除外 / SENT 取消拒否 / reconciliation 不一致 /
+PII 非保存 / KMA 混入なし / 送信経路 1 本 / **ゲート未設定時の Redis 接続 0**。
+
+#### Phase B で配線していないもの
+
+実 enqueue（契約は用意済み・呼び出しは未配線）/ scheduler の本番有効化 /
+設定 UI の保存操作。**新規 env は production へ 1 つも設定していない。**
+
+---
+
+### 🆕 AK 専用メルマガ自動化 — Phase A### 🆕 AK 専用メルマガ自動化 — Phase A（2026-08-06・Draft PR）
 
 **KMA を AK へ統合しない。** tenant / 顧客 / キャンペーン / 送信元 / 配信停止 / 台帳 / env /
 Redis / Airtable / 料金 / UI は**一切持ち込まない**。KMA から参考にしたのは

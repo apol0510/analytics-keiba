@@ -29,10 +29,21 @@ test('guard: 送る文面は下書きを重ねた campaign から作る（テン
 });
 
 test('guard: キュー登録は描画済みスナップショットを保存する', () => {
-  const block = FN.slice(FN.indexOf('table: SCHEDULED_TABLE'), FN.indexOf('CampaignDeliveries を DeliveryKey'));
-  assert.match(block, /Subject: rendered\.subject/, '件名のスナップショットを保存していない');
-  assert.match(block, /Content: rendered\.html/, '本文のスナップショットを保存していない');
-  assert.match(block, /content:\$\{contentHash/, '内容 hash を残していない');
+  // ⚠️ ジョブの形は **共通契約モジュール** が単一源（手動送信と自動配信で同じ行）。
+  //    呼び出し側が「描画済みの subject / html」を渡していること、
+  //    契約側がそれを ScheduledEmails の列へ載せていることを両方見る。
+  const CONTRACT = readFileSync(path.join(HERE, './marketingEnqueueContract.js'), 'utf8');
+  // ⚠️ import 行にも同名が出るので、**呼び出し箇所**（`const jobFields =`）から切り出す
+  const callAt = FN.indexOf('const jobFields = buildScheduledEmailFields({');
+  assert.ok(callAt > -1, '共通契約の呼び出しが見つからない');
+  const call = FN.slice(callAt, FN.indexOf('assertOnlyScheduledFields(jobFields)', callAt));
+  assert.match(call, /subject: rendered\.subject/, '件名のスナップショットを渡していない');
+  assert.match(call, /html: rendered\.html/, '本文のスナップショットを渡していない');
+  assert.match(CONTRACT, /Subject: str\(subject\)/, '契約が件名を保存していない');
+  assert.match(CONTRACT, /Content: String\(html \?\? ''\)/, '契約が本文を保存していない');
+  // 内容 hash は Notes に残す（契約側が単一源）
+  assert.match(CONTRACT, /content:\$\{str\(contentHash\)/, '内容 hash を残していない');
+  assert.match(FN, /contentHash,/, '呼び出し側が contentHash を渡していない');
 });
 
 test('guard: dispatcher は保存済みスナップショットで送る（再描画しない）', () => {
