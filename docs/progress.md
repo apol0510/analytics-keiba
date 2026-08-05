@@ -47,9 +47,9 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-05 現在・最新）: 外部リストの本番取り込みが 2 バッチ完了（10 + 100 = 110 件）。
-write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
-`run` は 403 `write_disabled` を実測）。残り CREATE 候補 14,384 件。**
+**Phase（2026-08-05 現在・最新）: 外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
+Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
+`run` は 403 `write_disabled` を実測）。残り CREATE 候補 14,284 件。**
 
 **（土台）実 CSV 3 ファイルに合わせた取り込み規則の確定と本番 write path
 （**PR #233 merged `7de7e74`・production deploy `6a71e6a531d919000874b180` = state ready・公開中**）。**
@@ -245,6 +245,72 @@ Customers 1,476 / 新バッチ `imp-2026-08-04-002`（同一 Source の既存 0�
   **CREATE 候補 14,384**・更新しない既存 **1,268**（= 1,168 + 今回 100 が UPDATE 側へ移動）/
   除外 33 / 要確認 94 / 母数 15,779（**母数と除外・要確認は不変**）
 - **次の停止境界**: **3 回目以降の取り込み**（残り CREATE 候補 **14,384 件**）。
+  実行には再び ① env 投入 + deploy ② 確認文字列 の二重ゲートが要る。
+  **rollback（隔離・削除とも）未実施。**
+
+### ✅ 3 回目 取り込み 100 件 — 実施完了（2026-08-05・ユーザー承認済み）
+
+**2 回目と同一手順で 100 件を 1 回の run で完了。** 承認範囲は 100 件のみ。
+
+| 項目 | 値 |
+|---|---|
+| ImportBatchId | **`imp-2026-08-05-003`** |
+| Source（追跡・rollback キー） | **`customer-import:imp-2026-08-05-003`** |
+| 確認文字列 | `IMPORT imp-2026-08-05-003 100` |
+| run 要求 | **exactly 1 回**（HTTP 200 / **12.4 秒**）・**再送 0（retry 0）** |
+| created / failed | **100 / 0** |
+| skippedExisting / skippedAlreadyDone | 0 / 0 |
+| bulkRequests / singleRequests | **10 / 0**（まとめ書きのみ・1 件ずつの切り分けは発生せず） |
+| reconciliation | `planned 100 = created 100`・**`balanced: true`**・`withinPlan: true` |
+| Customers 総数 | **1,576 → 1,676**（+100） |
+| Source 一致件数 | 今回 **100** / 初回 **10**（不変）/ 2 回目 **100**（不変）＝ 取り込み由来 **210** |
+
+**実行直前 gate（read-only・書き込み 0・env 未変更）: 40 項目中 39 通過 → 1 件は受理**。
+唯一の不一致は **公開 SHA が `7a82589`（origin/main は `4a190bc`）** で、原因は 2 回目の
+docs コミットの auto-deploy が **`Canceled build due to no content change`** で終わっていたこと。
+`7a82589 → 4a190bc` の差分は **`docs/progress.md` 1 ファイルのみ・コード差分 0** で、
+公開コードが `9f9e0e9` の子孫かつ byte 同一であることを git 差分で実測したうえで
+**ユーザー承認により通過扱い**とした。なお **Build Hook 経由の deploy では `4a190bc` が
+実際にビルドされ、公開 SHA と origin/main は一致した**（Build Hook は content 変化なしでもビルドする）。
+
+**作成内容の検証（read-only・全 100 件）**: `プラン=Free` / `ポイント=0` / `Email` 全件非空 /
+`Source` は全件今回バッチ。**allow-list 外の列は 1 つも書かれていない**（列名を全数走査）。
+`PlanType` / `Status` / `有効期限` / `PaidAt` / `PaymentConfirmed` / `Light*Grant*` /
+`Premium*Grant*` / `LifetimeSanrenpuku` / `UnsubscribedAnalyticsKeiba` / `Phone` /
+`ForceLogout` / `AccessEnabled` / `WithdrawalRequested` は**全件未設定**。
+**同一メール重複の組数は 10 組のまま（増加 0）**。
+**今回 100 件に有料プラン 0 件・退会フラグ 0 件**（現有料会員 90 件は実行前後で不変）。
+
+**ゲート運用（2 回目と同一）**:
+
+| 段階 | 操作 | 結果 |
+|---|---|---|
+| 事前 | read-only gate 40 項目 | 39 通過 + 1 受理（`writeEnabled=false` のまま・書き込み 0） |
+| 開放 | `CUSTOMER_IMPORT_WRITE_ENABLED=true`（production）+ **deploy 1 回**（Build Hook / `6a72a571bc45280008b3f7c7`） | `writeEnabled=true` を実測 |
+| 実行 | `action:'run'` × **1**（`count=100` / 再送なし） | created 100 |
+| 閉鎖 | **env unset** + **deploy 1 回**（`6a72a60a93d8a00007aadc04`） | **run は 403 `write_disabled` / `written: 0`** を実測 |
+
+- **UPDATE_CANDIDATE 1,268 件は 1 件も更新していない**（実行 Function に PATCH 経路が存在しないことを
+  ソースで機械確認）
+- **EXCLUDED 33 / REVIEW_REQUIRED 94 も書き込み対象外**（実行前後で不変）
+- **メール送信 0**（**SendGrid Activity API で直近 1 時間の送信 0 件を実測**）
+- **Airtable schema 変更 0** / **削除 0** / **rollback 未実施**
+- **閉鎖後の read-only 実測**: `plan` は `writeEnabled=false` /
+  **CREATE 候補 14,284**・更新しない既存 **1,368**（= 1,268 + 今回 100 が UPDATE 側へ移動）/
+  除外 33 / 要確認 94 / 母数 15,779（**母数・除外・要確認は 3 バッチを通じて不変**）
+
+**取り込みの累計**
+
+| バッチ | 件数 | Customers |
+|---|---|---|
+| `imp-2026-08-04-001` | 10 | 1,466 → 1,476 |
+| `imp-2026-08-04-002` | 100 | 1,476 → 1,576 |
+| `imp-2026-08-05-003` | 100 | 1,576 → **1,676** |
+| **累計** | **210** | 残り CREATE 候補 **14,284** |
+
+- **現在地**: **取り込み由来 210 件が本番に存在**。
+  **write ゲートは再閉鎖済み（env unset + deploy 済み・403 `write_disabled` 実測）**
+- **次の停止境界**: **4 回目以降の取り込み**（残り CREATE 候補 **14,284 件**）。
   実行には再び ① env 投入 + deploy ② 確認文字列 の二重ゲートが要る。
   **rollback（隔離・削除とも）未実施。**
 
