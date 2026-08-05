@@ -176,6 +176,32 @@ test('guard: 例外の中身を応答へ返さない', () => {
   assert.match(c, /internal error/);
 });
 
+// ── BLOCKED（設計未完了のため write 経路を封じている）────────────
+
+test('guard: start / step は kill-switch で構造的に封じられている', () => {
+  assert.match(JOB_FN, /if \(action === 'start' \|\| action === 'step'\) \{/, 'kill-switch が無い');
+  assert.match(JOB_FN, /code: 'blocked_by_design'/);
+  // ⚠️ kill-switch は **Blobs store の初期化・書き込みより前**にあること
+  const blockAt = JOB_FN.indexOf("action === 'start' || action === 'step'");
+  const connectAt = JOB_FN.indexOf('connectLambda(event)');
+  const startAt = JOB_FN.indexOf('return await handleStart(');
+  const stepAt = JOB_FN.indexOf('return await handleStep(');
+  assert.ok(blockAt > -1 && blockAt < connectAt, 'kill-switch が Blobs 初期化より後ろにある');
+  assert.ok(blockAt < startAt && blockAt < stepAt, 'kill-switch が実行分岐より後ろにある');
+});
+
+test('guard: BLOCKED の理由と解決方針がコードに残っている', () => {
+  assert.match(JOB_FN, /【BLOCKED】/);
+  assert.match(JOB_FN, /Upstash Redis/, '解決方針が書かれていない');
+  assert.match(JOB_FN, /docs\/decisions\.md/, 'ADR への参照が無い');
+});
+
+test('guard: plan（read-only）は封じない', () => {
+  const blockAt = JOB_FN.indexOf("action === 'start' || action === 'step'");
+  const planAt = JOB_FN.indexOf("if (action === 'plan')");
+  assert.ok(planAt > -1 && planAt < blockAt, 'plan が kill-switch より後ろにある（下見まで止まる）');
+});
+
 // ── 画面 ──────────────────────────────────────────────────────
 
 test('guard(ui): 旧・単発の本番取込ボタンは無効のまま（ジョブへ移行した）', () => {

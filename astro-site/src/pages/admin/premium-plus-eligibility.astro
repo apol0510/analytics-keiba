@@ -232,6 +232,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <button type="button" id="impJobResume" class="btn-primary btn-md" disabled aria-disabled="true">再開する</button>
           <button type="button" id="impJobCancel" class="btn-ghost btn-md" disabled aria-disabled="true">取り消す</button>
         </div>
+        <p class="imp-warn">
+          <b>【BLOCKED】このジョブの書き込みは設計未完了のため停止中です。</b>
+          同時実行を fail-closed で拒否できず、親ジョブが正本になっていないため、
+          <b>開始・再開を押しても API 側が 403 で断ります</b>（下見と進捗表示だけ使えます）。
+          正本と排他を Upstash Redis へ移す設計の承認待ちです（docs/decisions.md 2026-08-05）。
+        </p>
         <p class="imp-warn" id="impJobGateWarn" hidden>
           書き込みゲートが閉じています（CUSTOMER_IMPORT_WRITE_ENABLED）。<b>開始できません。</b>
         </p>

@@ -47,9 +47,59 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-05 現在・最新）: 残り 14,284 件を安全に処理する恒久方式（親ジョブ + 子バッチ）を
-Draft PR まで実装。**本番 env 変更・production deploy・本番 Airtable 書き込みは 1 件も行っていない。**
-（下の「大量取り込みの恒久方式」参照）**
+**Phase（2026-08-05 現在・最新）: 大量取り込みの恒久方式は PR #235（Draft）まで実装したが、
+必須条件 2 件を満たせず **write 経路は BLOCKED**。正本と排他を Upstash Redis へ置き換える
+ADR（`docs/decisions.md` 2026-08-05）を Proposed で起票し、**承認待ちで停止**している。
+本番 env 変更・production deploy・本番 Airtable 書き込みは 1 件も行っていない。**
+
+### 🚫 BLOCKED — 大量取り込みジョブの write 経路（2026-08-05）
+
+PR #235 の差分を再監査した結果、**必須条件 2 件が未達**であることを確認した。
+これらは運用で回避すべきものではなく、**設計で閉じる**。
+
+| # | 未達の必須条件 | 実態 |
+|---|---|---|
+| 1 | **同時実行を fail-closed で拒否** | Netlify Blobs は last-write-wins。`onlyIfNew` / `onlyIfMatch` は best-effort（premium-plus canary #13 で実 lost-update 確認）。**リースは排他にならない** |
+| 2 | **親 ImportJob が正本** | 正本を Airtable の `Source` 件数に置いたが、**snapshot / 失敗 / 未処理 / cancel 境界 / operationId を完全には復元できない** |
+
+加えて、**Customers 直前照合だけでは TOCTOU が閉じない**。2 つの実行が同時に同じアドレスを
+「まだ無い」と読めば両方が作成しうる。
+
+> **「実績のある単発 run と同じ露出だから運用で閉じる」という整理は不採用とする。**
+> 現在の Blobs 非正本方式を、本番 write 可能な完成形として扱わない。
+
+#### 停止の範囲
+
+- **停止**: ジョブ経路の本番 write（`start` / `step` の書き込み）
+- **停止しない**: `plan`（read-only）・管理画面の下見/進捗表示・状態機械・eligibility・runner・テスト
+  （いずれも Redis 版でそのまま再利用できる）
+- **無変更**: 実績のある単発 100 件経路（`admin-customer-import-run.js` / `importWriteExecutor.js`）
+
+#### 解決方針（ADR: `docs/decisions.md` 2026-08-05・**Proposed / 未承認**）
+
+**正本と排他を Upstash Redis へ移す。** Upstash は AK の既存基盤で、入金確認メール v2 の
+dispatcher / worker / reconciler が `SET NX EX` + `INCR` fencing token で**本番稼働中**
+（`src/lib/payments/paymentEmailDeps.js`）。production env に
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` が secret-flagged で設定済み。
+
+- 親 ImportJob の正本を **Redis** に置く
+- 子バッチ claim を `SET NX EX` + fencing token で **atomic** に取る
+- **行単位の一意制約** `SET NX importrow:<batchId>:<sha256(email)>` を作成の**前**に取り、
+  **at-most-once 作成**を成立させて TOCTOU を閉じる（100 件を `EVAL` で 1 往復）
+- **新規外部サービス・env 追加・schema 変更・migration・追加費用はいずれも不要**
+
+検討した代替案（Airtable 専用テーブル / GitHub Contents API CAS / 新規 Postgres）と
+判定理由は ADR の「Alternatives Considered」に記載。
+**Airtable 専用テーブル案は成立しない**（transaction も unique 制約も CAS も無く、schema 変更が必要）。
+
+#### 残る限界（承認前に把握しておくこと）
+
+**literal exactly-once は保証しない。** claim 後・create 前にクラッシュすると
+「claim 済み・未作成」が残る。これは**重複ではなく取りこぼし**（安全側）で、
+reconciler が claim と Airtable を突合して解放する。
+既存方針（`2026-07-16 入金確認メール v2`：exactly-once を目標としない）と整合する。
+
+（以下は BLOCKED 前に実装した内容の記録。**write 経路は上記のとおり停止中**。）
 
 **（前段）外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
 Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
@@ -77,12 +127,12 @@ Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_
 - 子バッチ上限 **100 件**（`Math.min` で緩められない）/ Airtable 書き込みは **10 件ずつ**
 - **ジョブ記録に PII を保存しない**（`assertNoPii` が構造的に拒否・保存前に必ず通る）
 
-#### ⚠️ 正直に書いておく制約
+#### ⚠️ この制約が BLOCKED の理由になった（2026-08-05 追記）
 
-**strong な排他は現在の基盤では提供できない。** 2 つの実行が同時に同じアドレスを
-「まだ無い」と読めば二重作成が起こりうる（TOCTOU）。これは**実績のある単発 run 経路と同じ露出**で、
-運用は「同時に 2 つ動かさない」（画面は逐次実行 + リース 90 秒で拒否）で閉じる。
-リースは best-effort の多重防御であって保証ではない、と `importJobModel.js` 冒頭にも明記した。
+当初この節は「strong な排他は現基盤では提供できない。単発 run と同じ露出なので運用で閉じる」と
+記録していた。**この整理は取り下げた。** write 経路の完成形として不適格であり、
+上の「🚫 BLOCKED」のとおり **Upstash Redis の行単位 `SET NX` で設計として閉じる**方針に変更した。
+Blobs ベースの `importJobStore.js` は破棄予定。
 
 #### 追加・変更したファイル
 
@@ -124,11 +174,12 @@ Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_
 
 #### 未了（別承認の高リスク境界）
 
+- **write 経路は BLOCKED**（上記）。ADR 承認 → Redis 版 claim の実装 → その後に本番検討
 - **本番での実行**（env 投入 + production deploy + 実書き込み）は**未実施**
-- Blobs store は**本番で 1 度も読み書きしていない**。初回は少量（子バッチ 1〜2 個）で
-  実挙動を確認してから残りを流すこと
-- `PREMIUM_PLUS_STORAGE_SAFE` のような hard block はジョブ store には掛けていない
-  （画像と違い**競合しないキー設計**にしてあるが、本番確認は別途必要）
+- Blobs store は**本番で 1 度も読み書きしていない**（**破棄予定**なので今後も使わない）
+- Redis 版になったら、初回は少量（子バッチ 1〜2 個）で claim の実挙動と
+  reconciliation（Redis claim 数 / Airtable `Source` 件数 / job counters の 3 点突合）を
+  確認してから残りを流すこと
 
 **（土台）実 CSV 3 ファイルに合わせた取り込み規則の確定と本番 write path
 （**PR #233 merged `7de7e74`・production deploy `6a71e6a531d919000874b180` = state ready・公開中**）。**

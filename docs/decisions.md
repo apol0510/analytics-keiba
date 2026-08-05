@@ -8,6 +8,102 @@
 
 ---
 
+## 2026-08-05 — 大量取り込みの正本と排他に Upstash Redis を採用する（Blobs 非正本方式は不採用）
+
+### Status
+
+**Proposed（未承認・未実装）**。PR #235（Draft）の write 経路は **BLOCKED** として停止中。
+本 ADR が承認されるまで、取り込みジョブの本番 write は行わない。
+
+### Context
+
+残り 14,284 件の取り込みを親ジョブ + 子バッチ方式で実装した（PR #235）。
+その設計は **Netlify Blobs をジョブ記録に使い、正本は Airtable（`Source` 件数）** とし、
+二重作成の防止を「子バッチ直前の Customers 実在判定」に委ねていた。
+
+この方式は**必須条件を 2 つ満たせない**ことが確認された:
+
+1. **同時実行を fail-closed で保証できない。**
+   Netlify Blobs は同一キー競合が last-write-wins で、`onlyIfNew` / `onlyIfMatch` も
+   best-effort（premium-plus canary #13 で実 lost-update を確認）。リースは排他にならない。
+2. **親 ImportJob が正本になっていない。**
+   `Customers` の `Source` 件数だけでは、**snapshot / 失敗 / 未処理 / cancel 境界 /
+   operationId** を完全には復元できない。
+
+さらに、Customers 直前照合だけでは **TOCTOU** が閉じない。2 つの実行が同時に同じアドレスを
+「まだ無い」と読めば、両方が作成しうる。「実績のある単発 run と同じ露出だから運用で閉じる」
+という整理は、**write 経路の完成形としては不採用**とする。
+
+### Decision
+
+**取り込みジョブの正本と排他に Upstash Redis を採用する。**
+
+- **親 ImportJob の正本を Redis に置く**（Airtable / Blobs ではない）
+- 子バッチ claim は `SET NX EX` + `INCR` の fencing token で **atomic** に取る
+- **行単位の一意制約**を `SET NX importrow:<batchId>:<sha256(email)>` で持ち、
+  作成の**前**に claim する。これにより **at-most-once 作成**が成立し TOCTOU が閉じる
+  （100 件を `EVAL`（Lua）で 1 往復 claim する）
+- Netlify Blobs をジョブ記録に使う方式（PR #235 の `importJobStore.js`）は**破棄**する
+
+### Rationale
+
+**Upstash Redis は AK の既存基盤であり、すでに本番の write path で稼働している。**
+入金確認メール v2 の dispatcher / worker / reconciler が `SET NX EX` + `INCR` の
+fencing token でロックを取っている（`src/lib/payments/paymentEmailDeps.js`）。
+
+そのため本案は **新規外部サービス・env 追加・schema 変更・migration・追加費用のいずれも不要**で、
+停止条件（schema 変更 / 外部サービス設定変更）に触れずに強一貫な排他を得られる。
+
+検討した代替案は「Alternatives Considered」に示す。**Airtable 専用テーブル案は成立しない**
+（Airtable に transaction も unique 制約も CAS も無く、加えて schema 変更が必要）。
+
+### Alternatives Considered
+
+| 案 | 子バッチ claim の atomic 性 | 行単位の一意制約 | 追加要件 | 判定 |
+|---|---|---|---|---|
+| **A. Upstash Redis（既存）** | ◎ `SET NX EX` + fencing | ◎ 行キー `SET NX` | **なし** | **採用** |
+| B. Airtable 専用テーブル | ✗ CAS/transaction 無し | ✗ unique 制約が無い | schema 変更（停止条件） | 却下 |
+| C. GitHub Contents API の CAS | ○ `sha` 前提条件で 409 | ✗ 14,284 コミットは非現実的 | 別ブランチ運用 | 補助のみ |
+| D. 新規 Postgres（Neon / Supabase） | ◎ transaction + `FOR UPDATE SKIP LOCKED` | ◎ `UNIQUE(batchId, emailHash)` | 新サービス + env + migration | 将来の選択肢 |
+
+- **B が成立しない根拠**: PAT に `schema.bases:write` が無くフィールド追加すら UI 手動
+  （`reference: Airtable Customers アクセス`）。Airtable API に条件付き更新が無い。
+- **C**: `PUT /repos/.../contents/{path}` の `sha` 前提条件は真の CAS で、git 履歴が監査証跡になる。
+  ただし **1 claim = 1 commit** で行単位の一意制約が作れず、main へのコミットは Netlify build を誘発する。
+  **ジョブ単位の監査台帳としては優秀**なので、将来の補助として残す。
+- **D** が最も正統（関係的な台帳・厳密な制約）。ただし新たな単一障害点と運用対象が増えるため、
+  A で必要十分な間は採らない。**A で不足が出たときの移行先**として記録する。
+
+### Consequences
+
+- 取り込みジョブが **Upstash Redis へ依存**する（入金確認メール v2 と同じ依存先）。
+  Redis の可用性が取り込みの単一障害点になる
+- **PR #235 の `importJobStore.js`（Blobs）は破棄**され、Redis 版の claim / 正本モジュールへ置き換わる。
+  状態機械・eligibility・runner・管理画面・テストは**そのまま再利用できる**
+- **literal exactly-once は保証しない**（既存方針 `2026-07-16 入金確認メール v2` と整合）。
+  claim 後・create 前にクラッシュすると「claim 済み・未作成」が残る。
+  これは**重複ではなく取りこぼし**（安全側）で、reconciler が claim と Airtable を突合して解放する
+- Redis が消失しても **重複は発生しない**（Customers 実在判定が第二防御として残る）。
+  失われるのは進捗の精度であり、劣化方向が安全側であることを設計の前提とする
+- Upstash のコマンド課金が増える（`EVAL` 1 往復 / 100 件 → 14,284 件で約 143 往復 + 補助操作）
+
+### Revisit Conditions
+
+- 行単位 `SET NX` を入れてなお二重作成が観測されたとき
+- 取り込みの監査台帳として**関係的なクエリ**が必要になったとき（→ D へ移行）
+- Upstash Redis が入金確認フローと取り込みの**共通の単一障害点**として問題化したとき
+
+### Evidence
+
+- `src/lib/payments/paymentEmailDeps.js`（`acquireLock` = `INCR` + `SET NX EX 90`）
+- `astro-site/docs/PAYMENT_EMAIL_V2.md`（Upstash + fencing token の確定方針）
+- 本書 `2026-07-16 — 入金確認メール v2`（Upstash 採用・exactly-once を目標としない）
+- `netlify env:list --context production` に `UPSTASH_REDIS_REST_URL` /
+  `UPSTASH_REDIS_REST_TOKEN` が **secret-flagged で設定済み**（値は CLI からマスクされる）
+- PR #235 / `src/lib/crm/importJobModel.js` 冒頭（Blobs が正本になれない理由）
+
+---
+
 ## 2026-08-01 — Netlify build hook の POST に bounded retry と deploy 重複チェックを導入
 
 ### Status

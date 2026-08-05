@@ -402,6 +402,32 @@ export const handler = async (event) => {
     // plan は Blobs を使わない（read-only の下見なので store 初期化も不要）
     if (action === 'plan') return await handlePlan({ req, KEY, BASE, now });
 
+    // ⚠️【BLOCKED】書き込み経路は設計未完了のため**構造的に封じている**。
+    //   現行の Blobs 非正本方式では次の 2 点を満たせないことが確認された:
+    //     1. 同時実行を fail-closed で拒否できない（Blobs は last-write-wins・onlyIf* は best-effort）
+    //     2. 親 ImportJob が正本になっていない（snapshot / 失敗 / 未処理 / cancel 境界 /
+    //        operationId を Airtable の Source 件数だけでは復元できない）
+    //   Customers 直前照合だけでは TOCTOU が閉じないため、「運用で閉じる」整理は採らない。
+    //   → 正本と排他を Upstash Redis へ移す（行単位 SET NX で at-most-once 作成）。
+    //     ADR: docs/decisions.md「2026-08-05 — 大量取り込みの正本と排他に Upstash Redis を採用する」
+    //   この kill-switch は ADR 承認と Redis 版 claim の実装が済むまで**外さない**。
+    if (action === 'start' || action === 'step') {
+      return json(403, {
+        mode: `import-job-${action}`,
+        written: 0,
+        error: '取り込みジョブの書き込みは設計未完了のため停止中です（BLOCKED）。',
+        code: 'blocked_by_design',
+        blocked: {
+          理由: [
+            '同時実行を fail-closed で拒否できない（Netlify Blobs は last-write-wins）',
+            '親 ImportJob が正本になっていない（snapshot / 失敗 / 未処理 / cancel 境界 / operationId を復元できない）',
+          ],
+          解決方針: '正本と排他を Upstash Redis へ移し、行単位 SET NX で at-most-once 作成にする',
+          ADR: 'docs/decisions.md 2026-08-05（Proposed・未承認）',
+        },
+      });
+    }
+
     // Blobs は classic Function では event から初期化しないと使えない
     connectLambda(event);
     const store = blobJobStore();
