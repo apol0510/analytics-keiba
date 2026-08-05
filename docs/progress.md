@@ -52,6 +52,65 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 ADR（`docs/decisions.md` 2026-08-05）を Proposed で起票し、**承認待ちで停止**している。
 本番 env 変更・production deploy・本番 Airtable 書き込みは 1 件も行っていない。**
 
+### ⛔ Redis canary Phase 0 / Phase 1 — **実行不能（アクセス経路が無い）**（2026-08-05）
+
+ADR は承認されたが、**Phase 0 / Phase 1 は実行できなかった。** 原因は権限ではなく設計どおりの秘匿:
+
+| 事実 | 値 |
+|---|---|
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` の `is_secret` | **`true`**（Netlify は作成後に値を返さない） |
+| scope | **`functions` のみ**（builds に配られない） |
+| 値を持つ context | **`production` のみ**（`dev` / `branch-deploy` / `deploy-preview` / `dev-server` は空） |
+| ローカル `.env` / シェル環境変数 | **無し**（`.env.production` にも `UPSTASH` 行は 0 件） |
+
+`netlify env:get` / `env:list --json` / `getEnvVars` API のいずれも **16 桁マスク + 末尾 4 桁**しか返さない。
+
+**したがって production Upstash へ到達できるのは production の Function だけ**であり、
+Phase 0（PING / DBSIZE / EVAL）すら、次のどちらかが無いと実行できない:
+
+1. **canary Function の production deploy** — 今回の承認範囲外（production deploy 禁止）
+2. **実行者による認証情報の提供**（Upstash コンソールから取得）
+
+`deploy-preview` context には値が無いため、**Deploy Preview 経由でも到達できない**。
+
+#### 実施したこと
+
+- 上記アクセス経路の調査（read-only。Redis へは **1 コマンドも送っていない**）
+- Phase 0 / Phase 1 を**そのまま実行できる canary スクリプト**を用意:
+  `astro-site/scripts/canary-import-redis.mjs`
+  - 承認された 12 検証項目をすべて実装
+  - 書き込みは **`customer-import:canary:<canaryId>:*` のみ**。接頭辞外へ触れようとしたら即停止
+  - **本番キーに触れない**ため `acquireGlobalLock()`（`customer-import:lock:global` /
+    `customer-import:fence` 固定）は**呼ばず**、Lua 本文だけを canary キーで検証する
+    （fencing token の単調増加も **canary 専用 fence キー**で確認する）
+  - URL / token / キー内容 / PII を出力しない。異常時は cleanup して停止し、再試行しない
+  - 認証情報が無ければ **Redis へ 1 コマンドも送らずに終了**する（実測済み）
+
+#### 実行方法（secret を transcript に出さない手順）
+
+リポジトリ外に env ファイルを作り、パスを渡す:
+
+```
+# ~/.ak-upstash.env （リポジトリ外・git 管理外）
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+```
+
+```
+node astro-site/scripts/canary-import-redis.mjs ~/.ak-upstash.env
+```
+
+#### Upstash の plan / quota / rate limit
+
+**確認不能。** Upstash コンソールおよび Upstash 管理 API の認証情報を保持していないため、
+CLI からは確認できない。Phase 2 に進む前に**コンソールでの確認が必要**。
+
+#### ADR の Status
+
+**Proposed のまま据え置く。** Phase 1 を通していないため `Accepted` にはしない。
+
+---
+
 ### 🚫 BLOCKED — 大量取り込みジョブの write 経路（2026-08-05）
 
 PR #235 の差分を再監査した結果、**必須条件 2 件が未達**であることを確認した。
