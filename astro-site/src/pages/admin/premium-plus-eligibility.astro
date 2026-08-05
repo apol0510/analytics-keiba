@@ -198,8 +198,71 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           </button>
           <span class="note">
             本番取り込みは<b>別承認</b>が必要です。実 CSV の受領・書き込みの有効化・実行手順が決まるまで、このボタンは押せません。
+            大量取り込みは下の「取り込みジョブ」を使います（この単発ボタンは使いません）。
           </span>
         </div>
+      </section>
+
+      <!--
+        取り込みジョブ（親ジョブ + 子バッチ）。
+        ⚠️ 残り 14,284 件を 1 回 100 件の手動実行で回すと約 143 回になるため、
+           **開始は 1 回**にして内部で 100 件以下の子バッチへ分割する。
+        ⚠️ 1 呼び出し = 子バッチ 1 つ。画面が逐次呼び直す（**並行に走らせない**）。
+        ⚠️ 書き込みゲート（CUSTOMER_IMPORT_WRITE_ENABLED）が閉じていれば開始できない。
+        ⚠️ 画面に出すのは件数と状態だけ。**アドレス・氏名・顧客 ID は出さない。**
+      -->
+      <section class="step imp-step" aria-labelledby="impJobH">
+        <h2 id="impJobH" class="step-h"><span class="step-n">＋</span> 外部顧客リストの取り込みジョブ（大量）</h2>
+        <p class="note">
+          残りの取り込み対象を、<b>100 件以下の子バッチ</b>へ自動で分割して進めます。
+          開始は 1 回だけで、途中で止まっても<b>続きから再開</b>できます。
+          作るのは<b>新規のみ</b>で、すでに AK にいる方は <b>1 件も更新しません</b>。
+        </p>
+        <div class="toolbar">
+          <input type="file" id="impJobFile" accept=".csv,text/csv,text/plain" multiple aria-label="CSV ファイル（複数可）" />
+          <input type="text" id="impJobBatchId" placeholder="ImportBatchId（例 imp-2026-08-05-004）" aria-label="ImportBatchId" />
+          <button type="button" id="impJobPlan" class="btn-ghost btn-md">下見する（取り込みません）</button>
+          <span class="note" id="impJobState" aria-live="polite"></span>
+        </div>
+        <div class="dry-panel" id="impJobPlanResult" hidden></div>
+
+        <div class="toolbar">
+          <input type="text" id="impJobConfirm" placeholder="確認文字列（下見に表示されます）" aria-label="確認文字列" />
+          <button type="button" id="impJobStart" class="btn-primary btn-md" disabled aria-disabled="true">開始する</button>
+          <button type="button" id="impJobResume" class="btn-primary btn-md" disabled aria-disabled="true">再開する</button>
+          <button type="button" id="impJobCancel" class="btn-ghost btn-md" disabled aria-disabled="true">取り消す</button>
+        </div>
+        <p class="imp-warn" id="impJobGateWarn" hidden>
+          書き込みゲートが閉じています（CUSTOMER_IMPORT_WRITE_ENABLED）。<b>開始できません。</b>
+        </p>
+
+        <div class="imp-job-progress" id="impJobProgress" hidden>
+          <div class="imp-job-bar"><span id="impJobBarFill"></span></div>
+          <dl class="imp-job-stats">
+            <div><dt>jobId</dt><dd id="impJobIdV">-</dd></div>
+            <div><dt>ImportBatchId</dt><dd id="impJobBatchV">-</dd></div>
+            <div><dt>Source</dt><dd id="impJobSourceV">-</dd></div>
+            <div><dt>状態</dt><dd id="impJobStatusV">-</dd></div>
+            <div><dt>対象総数</dt><dd id="impJobTotalV">-</dd></div>
+            <div><dt>処理済み</dt><dd id="impJobAttemptedV">-</dd></div>
+            <div><dt>作成済み</dt><dd id="impJobCreatedV">-</dd></div>
+            <div><dt>既存スキップ</dt><dd id="impJobSkippedV">-</dd></div>
+            <div><dt>失敗</dt><dd id="impJobFailedV">-</dd></div>
+            <div><dt>残件数</dt><dd id="impJobRemainingV">-</dd></div>
+            <div><dt>進捗率</dt><dd id="impJobPctV">-</dd></div>
+            <div><dt>現在の子バッチ</dt><dd id="impJobChildV">-</dd></div>
+            <div><dt>最終更新時刻</dt><dd id="impJobUpdatedV">-</dd></div>
+          </dl>
+          <p class="note" id="impJobRollback"></p>
+        </div>
+
+        <ul class="imp-policy">
+          <li>子バッチは<b>最大 100 件</b>、Airtable への書き込みは<b>10 件ずつ</b>です。</li>
+          <li>子バッチのたびに既存アドレスを<b>取り直して再判定</b>します（二重作成しません）。</li>
+          <li><b>完了したジョブは再実行できません。</b>取り消しても<b>作成済みの行は消しません</b>。</li>
+          <li>戻すときは <b>Source 単位の隔離</b>（削除ではありません）。</li>
+          <li>このジョブは<b>メールを 1 通も送りません</b>。</li>
+        </ul>
       </section>
 
       <section class="step" data-step="1" aria-labelledby="mkStep1H">
@@ -1113,6 +1176,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .imp-table th, .ppe .imp-table td { padding: .3rem .4rem; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; }
   .ppe .imp-table td.n { text-align: right; font-variant-numeric: tabular-nums; }
   .ppe .imp-meta { font-size: .72rem; color: #93a4bd; line-height: 1.7; margin: .4rem 0 0; word-break: break-all; }
+  /* 取り込みジョブの進捗（件数と状態だけ。明細は出さない） */
+  .ppe .imp-job-progress {
+    margin: .6rem 0 0; padding: .6rem .7rem; border-radius: 8px;
+    background: rgba(255,255,255,.04); border-left: 3px solid #6fb3ff;
+  }
+  .ppe .imp-job-bar {
+    height: 8px; border-radius: 999px; background: rgba(255,255,255,.1); overflow: hidden;
+  }
+  .ppe .imp-job-bar > span {
+    display: block; height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, #6fb3ff, #9b7bd4); transition: width .3s ease;
+  }
+  .ppe .imp-job-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .3rem .8rem; margin: .6rem 0 0; font-size: .74rem;
+  }
+  .ppe .imp-job-stats div { display: flex; justify-content: space-between; gap: .5rem; }
+  .ppe .imp-job-stats dt { color: #93a4bd; }
+  .ppe .imp-job-stats dd {
+    margin: 0; color: #e6edf7; font-variant-numeric: tabular-nums; word-break: break-all; text-align: right;
+  }
   @media (max-width: 640px) {
     .ppe .seg-step .toolbar { flex-direction: column; align-items: stretch; }
     .ppe .seg-step .toolbar > * { width: 100%; }
@@ -4386,6 +4470,189 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (state) state.textContent = '受け入れ仕様を表示しました';
       } catch (e) {
         if (state) state.textContent = e.message || '仕様を取得できませんでした';
+      }
+    });
+
+    // ── 取り込みジョブ（親ジョブ + 子バッチ）──────────────────────
+    // ⚠️ 1 呼び出し = 子バッチ 1 つ。**必ず逐次**（await で直列）に呼ぶ。
+    //    並行に走らせると同じアドレスを同時に「まだ無い」と読む危険がある。
+    // ⚠️ 画面へ出すのは件数と状態だけ。アドレス・氏名は出さない。
+    const IMPORT_JOB_API = '/.netlify/functions/admin-customer-import-job';
+    let impJobFiles = [];       // { name, contentBase64 } … 画面には出さない
+    let impJobRunning = false;  // 逐次実行中フラグ（二重起動を止める）
+
+    async function impJobCall(payload) {
+      const secret = secretEl.value.trim();
+      if (!secret) { $('connBody').hidden = false; throw new Error('管理シークレットを入力してください'); }
+      const res = await fetch(IMPORT_JOB_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { const e = new Error(data.error || ('HTTP ' + res.status)); e.code = data.code; e.data = data; throw e; }
+      return data;
+    }
+
+    async function impJobLoadFiles() {
+      const input = $('impJobFile');
+      const list = (input && input.files) ? Array.from(input.files) : [];
+      if (!list.length) throw new Error('CSV ファイルを選んでください');
+      const out = [];
+      for (const f of list) out.push({ name: f.name, contentBase64: await impReadBase64(f) });
+      impJobFiles = out;
+      return out;
+    }
+
+    const impJobBatchId = () => ($('impJobBatchId')?.value || '').trim();
+
+    function impJobSetButtons({ canStart, canResume, canCancel }) {
+      for (const [id, on] of [['impJobStart', canStart], ['impJobResume', canResume], ['impJobCancel', canCancel]]) {
+        const b = $(id);
+        if (!b) continue;
+        b.disabled = !on;
+        b.setAttribute('aria-disabled', String(!on));
+      }
+    }
+
+    /** 進捗を描く。**件数と状態だけ** */
+    function impJobRenderProgress(job, rollback) {
+      const box = $('impJobProgress');
+      if (!box || !job) return;
+      box.hidden = false;
+      const set = (id, v) => { const el = $(id); if (el) el.textContent = String(v ?? '-'); };
+      set('impJobIdV', job.jobId);
+      set('impJobBatchV', job.ImportBatchId);
+      set('impJobSourceV', job.Source);
+      set('impJobStatusV', job.status);
+      set('impJobTotalV', (job['対象総数'] || 0).toLocaleString());
+      set('impJobAttemptedV', (job['処理済み'] || 0).toLocaleString());
+      set('impJobCreatedV', (job['作成済み'] || 0).toLocaleString());
+      set('impJobSkippedV', (job['既存スキップ'] || 0).toLocaleString());
+      set('impJobFailedV', (job['失敗'] || 0).toLocaleString());
+      set('impJobRemainingV', (job['残件数'] || 0).toLocaleString());
+      set('impJobPctV', (job['進捗率'] ?? 0) + '%');
+      set('impJobChildV', job['現在の子バッチ'] ?? ('完了 ' + (job['完了した子バッチ'] || 0) + ' / ' + (job['子バッチ数'] || 0)));
+      set('impJobUpdatedV', job['最終更新'] || '-');
+      const fill = $('impJobBarFill');
+      if (fill) fill.style.width = Math.min(100, Number(job['進捗率'] || 0)) + '%';
+      if (rollback) {
+        const r = $('impJobRollback');
+        if (r) r.textContent = '戻すとき: ' + (rollback.steps || []).join(' / ');
+      }
+      // **完了後は再実行不可**。取消・失敗も同じ
+      const finished = !job['再実行可能'];
+      impJobSetButtons({ canStart: false, canResume: !finished, canCancel: !finished });
+    }
+
+    // 下見（read-only・書き込み 0）
+    $('impJobPlan')?.addEventListener('click', async () => {
+      const state = $('impJobState');
+      try {
+        if (!impJobBatchId()) throw new Error('ImportBatchId を入力してください');
+        if (state) state.textContent = '下見中…（取り込みはしません）';
+        await impJobLoadFiles();
+        const out = await impJobCall({ action: 'plan', files: impJobFiles, batchId: impJobBatchId() });
+        const box = $('impJobPlanResult');
+        if (box) {
+          box.hidden = false;
+          box.innerHTML = '';
+          const pre = document.createElement('p');
+          pre.className = 'imp-meta';
+          const p = out.plan || {};
+          pre.textContent = [
+            'jobId: ' + p.jobId,
+            'ImportBatchId: ' + p.ImportBatchId,
+            'Source: ' + p.Source,
+            '対象総数: ' + (p['対象総数'] || 0).toLocaleString() + ' 件',
+            '子バッチ数: ' + p['子バッチ数'] + '（1 バッチ最大 ' + p['子バッチ上限'] + ' 件 / まとめ書き ' + p['まとめ書き（1リクエスト）'] + ' 件）',
+            '書き込む列: ' + (p['書き込む列'] || []).join(', '),
+            '停止リスト: ' + p['停止リスト取得'],
+            '確認文字列: ' + out.confirmationPhrase,
+            out.notice || '',
+          ].join('\n');
+          box.appendChild(pre);
+        }
+        // 書き込みゲートが閉じていれば**開始させない**
+        const warn = $('impJobGateWarn');
+        if (warn) warn.hidden = out.writeEnabled === true;
+        impJobSetButtons({ canStart: out.writeEnabled === true, canResume: false, canCancel: false });
+        if (state) state.textContent = out.writeEnabled === true
+          ? '下見が終わりました（まだ 1 件も作成していません）'
+          : '下見が終わりました。書き込みゲートが閉じているため開始できません。';
+      } catch (e) {
+        if (state) state.textContent = e.message || '下見に失敗しました';
+      }
+    });
+
+    /** 完了まで子バッチを**逐次**進める */
+    async function impJobDrive() {
+      const state = $('impJobState');
+      if (impJobRunning) { if (state) state.textContent = 'すでに実行中です'; return; }
+      impJobRunning = true;
+      impJobSetButtons({ canStart: false, canResume: false, canCancel: true });
+      try {
+        for (;;) {
+          const out = await impJobCall({ action: 'step', files: impJobFiles, batchId: impJobBatchId() });
+          impJobRenderProgress(out.job, out.rollback);
+          const j = out.job || {};
+          if (state) {
+            state.textContent = '子バッチ完了: 作成 ' + (j['作成済み'] || 0).toLocaleString()
+              + ' / 残り ' + (j['残件数'] || 0).toLocaleString();
+          }
+          if (out['完了'] === true || !j['再実行可能']) break;
+          if ((out.child && out.child.failed > 0)) {
+            if (state) state.textContent += '（失敗が出たので止めました。内容を確認してください）';
+            break;
+          }
+        }
+      } catch (e) {
+        if (state) state.textContent = e.message || '子バッチに失敗しました（続きから再開できます）';
+        try {
+          const s = await impJobCall({ action: 'status', batchId: impJobBatchId() });
+          impJobRenderProgress(s.job, s.rollback);
+        } catch { /* 状態取得に失敗しても実行は止める */ }
+      } finally {
+        impJobRunning = false;
+      }
+    }
+
+    $('impJobStart')?.addEventListener('click', async () => {
+      const state = $('impJobState');
+      try {
+        const confirmation = ($('impJobConfirm')?.value || '').trim();
+        if (!confirmation) throw new Error('確認文字列を入力してください');
+        if (state) state.textContent = 'ジョブを開始しています…';
+        const out = await impJobCall({
+          action: 'start', files: impJobFiles, batchId: impJobBatchId(), confirmation,
+        });
+        impJobRenderProgress(out.job, out.rollback);
+        if (state) state.textContent = 'ジョブを開始しました。子バッチを進めます…';
+        await impJobDrive();
+      } catch (e) {
+        if (state) state.textContent = e.message || '開始できませんでした';
+      }
+    });
+
+    $('impJobResume')?.addEventListener('click', async () => {
+      const state = $('impJobState');
+      try {
+        if (!impJobFiles.length) await impJobLoadFiles();
+        if (state) state.textContent = '続きから再開します…';
+        await impJobDrive();
+      } catch (e) {
+        if (state) state.textContent = e.message || '再開できませんでした';
+      }
+    });
+
+    $('impJobCancel')?.addEventListener('click', async () => {
+      const state = $('impJobState');
+      try {
+        const out = await impJobCall({ action: 'cancel', batchId: impJobBatchId() });
+        impJobRenderProgress(out.job, out.rollback);
+        if (state) state.textContent = out.note || '取り消しました（作成済みの行は残ります）';
+      } catch (e) {
+        if (state) state.textContent = e.message || '取り消せませんでした';
       }
     });
 

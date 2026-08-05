@@ -47,9 +47,88 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-05 現在・最新）: 外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
+**Phase（2026-08-05 現在・最新）: 残り 14,284 件を安全に処理する恒久方式（親ジョブ + 子バッチ）を
+Draft PR まで実装。**本番 env 変更・production deploy・本番 Airtable 書き込みは 1 件も行っていない。**
+（下の「大量取り込みの恒久方式」参照）**
+
+**（前段）外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
 Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
 `run` は 403 `write_disabled` を実測）。残り CREATE 候補 14,284 件。**
+
+### 🧱 大量取り込みの恒久方式（親ジョブ + 子バッチ）— Draft PR（2026-08-05）
+
+**手動で約 143 回 run する方式は採らない。** 管理者は 1 回だけ開始し、内部で 100 件以下の
+子バッチへ分割して進める。`FIRST_RUN_MAX_ROWS` を引き上げて単一の同期 Function で大量処理する
+案は**採用しない**（26 秒上限を超えると「作成済みだけ残って結果が返らない」最悪の状態になる）。
+
+#### 設計の要点
+
+- **1 呼び出し = 子バッチ 1 つ**。100 件は実測 9〜13 秒で 26 秒上限に収まる。
+  進捗が常に確定した状態で保存され、途中で切れても宙ぶらりんにならない
+- **正本は Airtable、ジョブ記録ではない**。Netlify Blobs は last-write-wins で
+  `onlyIfNew` / `onlyIfMatch` も best-effort（premium-plus canary #13 で実 lost-update 確認）。
+  Airtable に CAS は無く、ImportJobs テーブル新設は schema 変更なので**採らない**
+  - 二重作成を防ぐのは **Customers 側のアドレス実在判定**（子バッチ直前に取り直す）
+  - 進捗の正本も **`Source = customer-import:<batchId>` の実件数**。`status` で毎回突合
+  - `cursor` は速く再開するための目印にすぎず、巻き戻っても結果は変わらない
+- **状態**: `PLANNED` / `RUNNING` / `PARTIAL` / `COMPLETED` / `FAILED` / `CANCELLED`。
+  完了・取消・失敗は**再実行できない**。取消は未処理分だけ止め、**作成済みは消さない**
+- **二重ゲートは開始と続行の両方**に掛かる（env + 確認文字列 `IMPORT-JOB <batchId> <総数>`）
+- 子バッチ上限 **100 件**（`Math.min` で緩められない）/ Airtable 書き込みは **10 件ずつ**
+- **ジョブ記録に PII を保存しない**（`assertNoPii` が構造的に拒否・保存前に必ず通る）
+
+#### ⚠️ 正直に書いておく制約
+
+**strong な排他は現在の基盤では提供できない。** 2 つの実行が同時に同じアドレスを
+「まだ無い」と読めば二重作成が起こりうる（TOCTOU）。これは**実績のある単発 run 経路と同じ露出**で、
+運用は「同時に 2 つ動かさない」（画面は逐次実行 + リース 90 秒で拒否）で閉じる。
+リースは best-effort の多重防御であって保証ではない、と `importJobModel.js` 冒頭にも明記した。
+
+#### 追加・変更したファイル
+
+| 目的 | ファイル |
+|---|---|
+| 親ジョブの状態機械（cursor / 突合 / rollback） | `src/lib/crm/importJobModel.js`（新規） |
+| 作成対象の判定（決定的な並び・除外集合） | `src/lib/crm/importEligibility.js`（新規） |
+| 子バッチ 1 つの実行 | `src/lib/crm/importJobRunner.js`（新規） |
+| ジョブの保存（Blobs・**正本ではない**） | `src/lib/crm/importJobStore.js`（新規） |
+| ジョブ API（plan / start / step / status / cancel） | `netlify/functions/admin-customer-import-job.js`（新規） |
+| 管理画面（進捗・開始 / 再開 / 取消） | `src/pages/admin/premium-plus-eligibility.astro` |
+
+**実績のある単発経路 `admin-customer-import-run.js` / `importWriteExecutor.js` は 1 行も変更していない。**
+書き込みは executor を再利用し、ジョブ側で独自のチャンク処理を再実装していない（guard で固定）。
+
+#### テスト
+
+`node --test src/lib/crm/*.test.mjs` = **305 pass / 0 fail**（うち新規 59）。
+
+- 14,284 件 → 子バッチ 143 個（最後は 84 件）に正しく分割される
+- 100 件が 10 件 × 10 リクエストのまとめ書きになる（チャンク列を実測）
+- 子バッチ途中失敗 → 1 件ずつ切り分けへ落ち、成功分は残る
+- 例外で落ちてもリースが外れ `PARTIAL` で再開できる
+- timeout 後に cursor が巻き戻っても**二重作成されない**（既存判定で全件 skip）
+- 同一 job の二重開始を拒否（ゲートと store の両方）／既存ジョブを上書きしない
+- 同一子バッチの再送で書き込みが 1 回も走らない
+- 既存化したアドレスの直前除外／除外集合 10 種
+- failed 混在時の reconciliation（`balanced` / `withinPlan` / Airtable 実測との一致）
+- cancel 後に進めない／`COMPLETED` 後に進めない
+- UPDATE・除外・要確認が 1 件も書かれない／書く列は allow-list の 5 列だけ
+- メール送信経路が存在しない（構造 guard）
+- 画面 guard: 必須の進捗項目・既定 disabled・ゲート閉時は開始不可・完了後は再実行不可・逐次実行
+
+#### 検証
+
+`npm run build` 成功（SSR 関数 64.7MB / 250MB 上限）。
+`npm run lint`（eslint 設定が repo に無く実行不能）と `npm run typecheck`（`@astrojs/check` 未導入）は
+**本 PR 以前から実行できない状態**で、今回の変更が原因ではない。代わりに `node --check` を全新規ファイルへ実施。
+
+#### 未了（別承認の高リスク境界）
+
+- **本番での実行**（env 投入 + production deploy + 実書き込み）は**未実施**
+- Blobs store は**本番で 1 度も読み書きしていない**。初回は少量（子バッチ 1〜2 個）で
+  実挙動を確認してから残りを流すこと
+- `PREMIUM_PLUS_STORAGE_SAFE` のような hard block はジョブ store には掛けていない
+  （画像と違い**競合しないキー設計**にしてあるが、本番確認は別途必要）
 
 **（土台）実 CSV 3 ファイルに合わせた取り込み規則の確定と本番 write path
 （**PR #233 merged `7de7e74`・production deploy `6a71e6a531d919000874b180` = state ready・公開中**）。**

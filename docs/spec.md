@@ -415,9 +415,16 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | CSV を読む（文字コード・引用符・改行・列名） | `src/lib/crm/csvParse.js` | 実装済み |
 | 誰を入れる / 入れないの判定 | `src/lib/crm/customerImport.js` | 実装済み |
 | 下見の固定（改ざん・期限・差し替えの拒否） | `src/lib/crm/importPreview.js` | 実装済み |
-| 実行モデル（親ジョブ / 子バッチ / 冪等 / 戻し方） | `src/lib/crm/importJobPlan.js` | **設計のみ・write 未配線** |
+| 実行モデル（親ジョブ / 子バッチ / 冪等 / 戻し方）の下敷き | `src/lib/crm/importJobPlan.js` | 設計・定数（一部を job 側で再利用） |
+| **親ジョブの状態機械（PLANNED〜CANCELLED / cursor / 突合）** | `src/lib/crm/importJobModel.js` | 実装済み |
+| **作成対象の判定（決定的な並び・除外集合）** | `src/lib/crm/importEligibility.js` | 実装済み |
+| **子バッチ 1 つの実行** | `src/lib/crm/importJobRunner.js` | 実装済み |
+| **ジョブの保存（Netlify Blobs・正本ではない）** | `src/lib/crm/importJobStore.js` | 実装済み |
 | 下見 API（read-only） | `netlify/functions/admin-customer-import.js` | 実装済み（`action:'previewCsv'`） |
-| 画面 | `/admin/premium-plus-eligibility/` の「外部顧客リストの取り込み（下見）」 | 実装済み・本番取込ボタンは **disabled** |
+| 単発実行 API（1 回 100 件） | `netlify/functions/admin-customer-import-run.js` | 実装済み・本番 3 バッチ 210 件で実績 |
+| **ジョブ API（開始 1 回・子バッチ分割）** | `netlify/functions/admin-customer-import-job.js` | 実装済み・**本番未実行** |
+| 画面 | `/admin/premium-plus-eligibility/` の「外部顧客リストの取り込み（下見）」 | 実装済み・単発の本番取込ボタンは **disabled のまま** |
+| **画面（大量取り込み）** | 同ページの「外部顧客リストの取り込みジョブ（大量）」 | 実装済み・**書き込みゲートが閉じていれば開始不可** |
 
 #### 読み取りの受け入れ仕様（`csvParse.js`）
 
@@ -520,6 +527,61 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 - 取り込んだ行に `CreatedBy=customer-import` / `ImportBatchId` / `ImportedAt` を刻む
 - 監査ログはハッシュのみ（アドレス・氏名を入れない）
 - 戻すのは**削除ではなく印を外す**方向。**取り込みと配信を同じ操作にしない**
+
+#### 大量取り込みの親ジョブ（`importJobModel.js` / `admin-customer-import-job.js`）
+
+残り 14,284 件を 1 回 100 件の単発 run で処理すると**約 143 回**になる。人が 143 回ゲートを
+開け閉めするのは現実的でないので、**管理者は 1 回だけ開始し、内部で 100 件以下の子バッチへ
+分割**する。単純に `FIRST_RUN_MAX_ROWS` を引き上げて単一の同期 Function で大量処理する案は
+採らない（26 秒上限を超えると「作成済みだけ残って結果が返らない」最悪の状態になるため）。
+
+**1 呼び出し = 子バッチ 1 つ。** 100 件は実測 9〜13 秒で 26 秒上限に収まり、
+進捗が常に確定した状態で保存される。画面が完了まで**逐次**呼び直す（並行に走らせない）。
+
+| 状態 | 意味 |
+|---|---|
+| `PLANNED` | 開始済み。**まだ 1 件も書いていない** |
+| `RUNNING` | 子バッチを処理中 |
+| `PARTIAL` | 失敗が混ざって終わった / 例外で中断した。**続きから再開できる** |
+| `COMPLETED` | 対象を書き終えた。**再実行できない** |
+| `FAILED` | 続行不能で終了。**再実行できない** |
+| `CANCELLED` | 取り消した。**作成済みは消さない**・再実行できない |
+
+##### ⚠️ 正本は Airtable であって、ジョブ記録ではない
+
+Netlify Blobs は同一キー競合が **last-write-wins** で、`onlyIfNew` / `onlyIfMatch` も
+best-effort でしかない（premium-plus canary #13 で実 lost-update を確認・
+`docs/PREMIUM_PLUS_STORAGE_DESIGN.md`）。Airtable 側に CAS は無く、ImportJobs テーブルの
+新設は **schema 変更**にあたるため採らない。そこで**安全性をジョブ記録の一貫性に依存させない**:
+
+1. **二重作成を防ぐのは Customers 側のアドレス実在判定**（子バッチ直前に取り直す）。
+   すでに作った行は Customers に居るので、同じ子バッチをもう一度流しても
+   `skippedExisting` になるだけで**増えない**
+2. **進捗の正本も Customers**（`Source = customer-import:<batchId>` の件数）。
+   ジョブ記録が壊れても Airtable から再構成できる。`status` は毎回この実測と突合する
+3. `cursor` は**やり直しを速くするためだけ**の目印。巻き戻っても結果は変わらない
+4. 排他リース（既定 90 秒）は **best-effort の多重防御**。これ単独では同時実行を防げない
+
+> **残る競合**: 2 つの実行が**同時に**同じアドレスを「まだ無い」と読んだ場合は二重作成が
+> 起こりうる（TOCTOU）。これは実績のある単発 run 経路と**同じ露出**であり、
+> 運用は「同時に 2 つ動かさない」（画面は逐次実行 + リースで拒否）で閉じる。
+> **strong な排他は現在の基盤では提供できない**ことを明示しておく。
+
+##### ジョブの二重ゲート（`canStartImportJob` / `canStepImportJob`）
+
+1. `CUSTOMER_IMPORT_WRITE_ENABLED=true`（**開始と続行の両方**に掛かる）
+2. 開始時の確認文字列 `IMPORT-JOB <batchId> <対象総数>` — 総数に紐づくので使い回せない
+
+加えて fail closed で断るもの: 停止リストが取れない / 開始時と違う CSV（指紋不一致）/
+リース保持中 / 完了・取消・失敗のジョブ / 計画総数に到達済み / 同じ batchId のジョブが既にある。
+
+##### 子バッチの分割
+
+| 項目 | 値 |
+|---|---|
+| 子バッチの上限 | **100 件**（`JOB_CHILD_MAX_ROWS = FIRST_RUN_MAX_ROWS`。`Math.min` で緩められない） |
+| Airtable への書き込み | **10 件ずつ**（`CREATE_CHUNK_SIZE`。executor をそのまま再利用） |
+| 14,284 件のとき | 子バッチ **143 個**（最後の 1 個は 84 件） |
 
 #### 実行の二重ゲート（`importWritePlan.canRunFirstImport`）
 
