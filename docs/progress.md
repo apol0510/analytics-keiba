@@ -47,6 +47,93 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
+**Phase（2026-08-06 現在・最新）: AK 専用メルマガ自動化 Phase A（read-only 監査 + 設計 + dry-run）を
+Draft PR まで実装。**本番送信 0 / production env 変更 0 / production deploy 0 / Airtable schema 変更 0 /
+Customers への書き込み 0。** プリセットは全て初期 OFF で、有効化・実行は配線していない。**
+
+### 🆕 AK 専用メルマガ自動化 — Phase A（2026-08-06・Draft PR）
+
+**KMA を AK へ統合しない。** tenant / 顧客 / キャンペーン / 送信元 / 配信停止 / 台帳 / env /
+Redis / Airtable / 料金 / UI は**一切持ち込まない**。KMA から参考にしたのは
+**状態機械・冪等性・quiet hours・再試行・取消・監査という一般設計だけ**で、
+実装・データ・設定の正本は**すべて AK 内**。guard テストで KMA 由来の識別子混入を固定している。
+
+#### read-only 監査でわかった既存基盤（再利用する）
+
+| 役割 | 既存の正本 |
+|---|---|
+| ジョブ正本 | `ScheduledEmails` |
+| 1 通ごとの正本 | `CampaignDeliveries` |
+| 受信者単位の冪等キー | `newsletter/delivery-key.js`（`extraKey` を持つ） |
+| 配信可否（配信停止・バウンス・停止・テスト） | `marketing/customerMarketingAudience.js` |
+| キャンペーン固有条件 | `marketing/campaignAudienceRules.js` |
+| 文面・version・contentHash | `marketing/campaignCatalog.js` |
+| enqueue（送信はしない） | `netlify/functions/admin-marketing.js` |
+| 実送信ゲート | `MARKETING_CAMPAIGN_DISPATCH_ENABLED`（既存メール経路と独立） |
+
+**新しい配信基盤は作らない。** 自動化は「いつ・誰に・どのキャンペーンを」を決めるだけで、
+enqueue と送信は上記の既存経路にそのまま乗る。**送信経路は 1 本のまま**。
+
+#### 追加したもの（すべて新規ファイル）
+
+| 目的 | ファイル |
+|---|---|
+| プリセット定義（**全て初期 OFF**） | `src/lib/marketing/automationCatalog.js` |
+| 状態機械・quiet hours・冪等キー | `src/lib/marketing/automationModel.js` |
+| 対象判定・snapshot 指紋 | `src/lib/marketing/automationEligibility.js` |
+| 管理 API（list / preview=dry-run / status） | `netlify/functions/admin-marketing-automation.js` |
+| 管理画面「自動配信（下見のみ）」 | `src/pages/admin/premium-plus-eligibility.astro` |
+
+#### プリセット 7 件（すべて初期 OFF）
+
+`expiry-d7` / `expiry-d0` / `comeback-d7` / `comeback-d30` /
+`free-to-light` / `light-to-premium` / `manual-condition`
+
+**誕生日トリガーは実装していない。** `Customers` に生年月日フィールドが無く、
+現行 schema では安全に判定できないため **設計候補（`DEFERRED_TRIGGERS`）として分離**した
+（実装には Airtable schema 変更が必要）。未入金フォローも同様に分離している。
+
+#### 状態機械
+
+`DRAFT` / `ACTIVE` / `PAUSED` / `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED`。
+遷移は allow-list で固定し、`ACTIVE` 以外へ移ると `enabled` が落ちる。
+終端（COMPLETED / FAILED / CANCELLED）は自動実行しない。
+
+実行単位は `AutomationDefinition` → `AutomationRun` → **既存 `ScheduledEmails`** → `EmailEvent`。
+
+#### 冪等性・snapshot
+
+- `automationRunId = auto:<automationId>:<JST 暦日>` … **同一自動化・同一暦日は同じ ID**
+  （scheduler が重複起動しても配信回は 1 つ）
+- `operationId = <runId>#<試行番号>`
+- `recipientKey = <runId>|<正規化メール>` … 既存 `computeDeliveryKey` の `extraKey` へ渡す前提。
+  **新しい鍵体系を作らない**
+- snapshot 指紋は**正規化アドレスの sha256 を並べて畳む**（アドレスを復元できない）。
+  dry-run と本実行で**増えていたら停止**（減っているだけなら安全側として進む）
+
+#### 安全要件の実装状況
+
+- dry-run 必須（`requireDryRun`）／実行前に対象 snapshot を固定
+- 本番送信ゲートが閉じていれば **fail-closed**（dry-run は送信しないのでゲート非依存）
+- quiet hours（既定 21:00-8:00 JST・日をまたぐ帯に対応）／最大送信件数超過で停止
+- 取消は**未送信だけ**。`SENT` は取消も再送もしない。成功した登録を失敗へ巻き戻さない
+- 除外は**既存 AK ルールをそのまま通す**（自動化側で再実装しない）
+- **会員昇格・PaymentConfirmed・Status・PlanType・有効期限・特典を書く経路が無い**
+  （Airtable へ GET しか出さない。guard で固定）
+
+#### Phase A で配線していないもの
+
+`enable` / `run` / `cancel` / `pause` は **501**（`not_wired_phase_a`）。
+設定の永続化先（AK 専用 prefix の Redis を想定）と実行の配線は **Phase B**。
+
+#### テスト
+
+`src/lib/marketing` **887 pass / 0 fail**（新規 61 = flow 38 + guard 23）。build 成功。
+
+同一 run 二重開始 / scheduler 重複起動 / 同一 recipient 二重登録 / dispatcher 再実行 /
+配信前の有料化 / 配信停止 / バウンス / quiet hours / 最大件数超過 / dry-run と本実行の snapshot 差 /
+一部登録失敗 / 取消と SENT / 会員状態を変えない / **KMA 混入 guard** / 送信経路が 1 つだけ。
+
 **Phase（2026-08-05 現在・最新）: 外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
 Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
 `run` は 403 `write_disabled` を実測）。残り CREATE 候補 14,284 件。**
