@@ -291,11 +291,61 @@ test('guard(fn): 管理シークレット必須', () => {
   assert.match(FN, /provided !== SECRET\) return json\(403/);
 });
 
-test('guard(fn): 既定は無効（env が無ければ常時 403）', () => {
-  assert.match(FN, /CUSTOMER_IMPORT_CANARY_ENABLED !== 'true'/);
-  const gateAt = FN.indexOf("CUSTOMER_IMPORT_CANARY_ENABLED !== 'true'");
-  const secretAt = FN.indexOf('const SECRET =');
-  assert.ok(gateAt > -1 && gateAt < secretAt, 'kill-switch が認証より後ろにある');
+test('guard(fn): preview / run は enabled=true のときだけ許可', () => {
+  assert.match(FN, /const enabled = process\.env\.CUSTOMER_IMPORT_CANARY_ENABLED === 'true';/);
+  const i = FN.indexOf("if (action === 'preview' || action === 'run')");
+  assert.ok(i > -1, 'preview/run のゲートが無い');
+  const body = FN.slice(i, i + 300);
+  assert.match(body, /if \(!enabled\)/, 'enabled=false で拒否していない');
+  assert.match(body, /canary_disabled/);
+});
+
+test('guard(fn): finalize は enabled=false / unset のときだけ許可（true なら 403）', () => {
+  const i = FN.indexOf("if (action === 'finalize')");
+  assert.ok(i > -1, 'finalize のゲートが無い');
+  const body = FN.slice(i, i + 400);
+  assert.match(body, /if \(enabled\)/, 'enabled=true で拒否していない');
+  assert.match(body, /canary_still_enabled/);
+  assert.equal(/if \(!enabled\)/.test(body), false, 'finalize の条件が逆になっている');
+});
+
+test('guard(fn): status / cleanup は enabled の値に関係なく使える', () => {
+  // 個別ゲートは preview/run と finalize のみ。status/cleanup は素通り
+  const gates = [...FN.matchAll(/if \(action === '([a-z|' ]+)'\) \{\n    if \((!?)enabled\)/g)];
+  const gated = gates.map((m) => m[1]).join(' ');
+  assert.equal(gated.includes('status'), false, 'status に env ゲートが掛かっている');
+  assert.equal(gated.includes('cleanup'), false, 'cleanup に env ゲートが掛かっている');
+});
+
+test('guard(fn): env ゲートは Redis 初期化より前にある', () => {
+  const previewGate = FN.indexOf("if (action === 'preview' || action === 'run')");
+  const finalizeGate = FN.indexOf("if (action === 'finalize')");
+  const dispatch = FN.indexOf("if (action === 'preview') return handlePreview");
+  // ゲートは dispatch より前 = ハンドラ（createCanaryRunner / redisCmd）へ到達しない
+  assert.ok(previewGate > -1 && previewGate < dispatch, 'preview/run ゲートが dispatch より後ろ');
+  assert.ok(finalizeGate > -1 && finalizeGate < dispatch, 'finalize ゲートが dispatch より後ろ');
+  // ゲート本体に Redis 呼び出しが無い
+  const gateRegion = FN.slice(previewGate, dispatch);
+  for (const bad of ['createCanaryRunner', 'redisCmd', 'await']) {
+    assert.equal(gateRegion.includes(bad), false, `ゲート内で ${bad} を使っている`);
+  }
+});
+
+test('guard(fn): すべての action で管理シークレット必須（status/cleanup/finalize 含む）', () => {
+  const secretAt = FN.indexOf('provided !== SECRET');
+  const previewGate = FN.indexOf("if (action === 'preview' || action === 'run')");
+  const dispatch = FN.indexOf("if (action === 'preview') return handlePreview");
+  assert.ok(secretAt > -1 && secretAt < previewGate, '認証が action ゲートより後ろ');
+  assert.ok(secretAt < dispatch, '認証が dispatch より後ろ');
+});
+
+test('guard(fn): finalize は「env 無効化後にしか通らない」ことが構造で保証される', () => {
+  // finalize ハンドラへ到達する経路は、enabled が false のときだけ
+  const i = FN.indexOf("if (action === 'finalize')");
+  const j = FN.indexOf("if (action === 'finalize') return await handleFinalize");
+  assert.ok(i > -1 && j > i, 'finalize の dispatch がゲートより前にある');
+  const between = FN.slice(i, j);
+  assert.match(between, /canary_still_enabled/, '有効時に finalize を拒否していない');
 });
 
 test('guard(fn): action は preview / run / status / cleanup だけ', () => {
@@ -489,4 +539,137 @@ test('guard: canary Function が使う env は UPSTASH と canary gate だけ', 
     'CUSTOMER_IMPORT_CANARY_ENABLED', 'MARKETING_ADMIN_SECRET',
     'PREMIUM_PLUS_ADMIN_SECRET', 'UPSTASH_REDIS_REST_TOKEN', 'UPSTASH_REDIS_REST_URL',
   ], '想定外の env を参照している');
+});
+
+// ── handler の実挙動（env ゲートを実際に叩いて確かめる）─────────
+// ⚠️ fetch を差し替えて **Redis へ 1 回も出ていないこと**まで確認する。
+
+const { handler } = await import('../../../netlify/functions/admin-customer-import-redis-canary.js');
+
+const SECRET_ENV = 'PREMIUM_PLUS_ADMIN_SECRET';
+const SECRET_VAL = 'test-secret-value';
+
+/** handler を叩く。Redis 呼び出し回数も返す */
+async function call({ action, enabled, secret = SECRET_VAL, canaryId, confirmation, method = 'POST' }) {
+  const prevEnabled = process.env.CUSTOMER_IMPORT_CANARY_ENABLED;
+  const prevSecret = process.env[SECRET_ENV];
+  const prevUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const prevTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const prevFetch = globalThis.fetch;
+
+  if (enabled === undefined) delete process.env.CUSTOMER_IMPORT_CANARY_ENABLED;
+  else process.env.CUSTOMER_IMPORT_CANARY_ENABLED = enabled;
+  process.env[SECRET_ENV] = SECRET_VAL;
+  process.env.UPSTASH_REDIS_REST_URL = 'https://example.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'x';
+
+  let redisCalls = 0;
+  globalThis.fetch = async () => { redisCalls += 1; return { ok: true, json: async () => ({ result: null }) }; };
+
+  try {
+    const res = await handler({
+      httpMethod: method,
+      headers: secret === null ? {} : { 'x-admin-secret': secret },
+      body: JSON.stringify({ action, canaryId, confirmation }),
+    });
+    return { status: res.statusCode, body: JSON.parse(res.body), redisCalls };
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevEnabled === undefined) delete process.env.CUSTOMER_IMPORT_CANARY_ENABLED;
+    else process.env.CUSTOMER_IMPORT_CANARY_ENABLED = prevEnabled;
+    if (prevSecret === undefined) delete process.env[SECRET_ENV]; else process.env[SECRET_ENV] = prevSecret;
+    if (prevUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL; else process.env.UPSTASH_REDIS_REST_URL = prevUrl;
+    if (prevTok === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN; else process.env.UPSTASH_REDIS_REST_TOKEN = prevTok;
+  }
+}
+
+const VALID_ID = '20260805030000-a1b2c3d4';
+
+test('handler: enabled=unset なら preview / run は 403（Redis 非接触）', async () => {
+  for (const action of ['preview', 'run']) {
+    const r = await call({ action, enabled: undefined, canaryId: VALID_ID });
+    assert.equal(r.status, 403, `${action} が拒否されていない`);
+    assert.equal(r.body.code, 'canary_disabled');
+    assert.equal(r.redisCalls, 0, `${action} が Redis を叩いた`);
+  }
+});
+
+test('handler: enabled=false でも preview / run は 403', async () => {
+  for (const action of ['preview', 'run']) {
+    const r = await call({ action, enabled: 'false', canaryId: VALID_ID });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.code, 'canary_disabled');
+    assert.equal(r.redisCalls, 0);
+  }
+});
+
+test('handler: enabled=true では finalize が 403（墓標を消させない）', async () => {
+  const r = await call({
+    action: 'finalize', enabled: 'true',
+    canaryId: VALID_ID, confirmation: `REDIS-CANARY-FINALIZE ${VALID_ID}`,
+  });
+  assert.equal(r.status, 403, 'canary 有効中に finalize が通ってしまう');
+  assert.equal(r.body.code, 'canary_still_enabled');
+  assert.equal(r.redisCalls, 0, 'finalize が Redis を叩いた');
+});
+
+test('handler: enabled=unset なら finalize はゲートを通過する（確認文字列の検査まで進む）', async () => {
+  // 確認文字列を誤らせる → ゲートは通過し 409 まで到達する＝env ゲートで弾かれていない証拠
+  const r = await call({ action: 'finalize', enabled: undefined, canaryId: VALID_ID, confirmation: 'WRONG' });
+  assert.equal(r.status, 409, `env 無効時に finalize が 403 のまま（status=${r.status}）`);
+  assert.equal(r.body.code, 'confirmation_mismatch');
+  assert.equal(r.redisCalls, 0);
+});
+
+test('handler: enabled=unset でも status / cleanup は利用できる', async () => {
+  for (const action of ['status', 'cleanup']) {
+    // canaryId 不正 → 400（＝env ゲートで 403 になっていない）
+    const r = await call({ action, enabled: undefined, canaryId: 'bad' });
+    assert.equal(r.status, 400, `${action} が env ゲートで弾かれている（status=${r.status}）`);
+    assert.equal(r.redisCalls, 0);
+  }
+});
+
+test('handler: enabled=true でも status / cleanup は利用できる', async () => {
+  for (const action of ['status', 'cleanup']) {
+    const r = await call({ action, enabled: 'true', canaryId: 'bad' });
+    assert.equal(r.status, 400, `${action} が拒否されている`);
+  }
+});
+
+test('handler: 管理シークレットが無ければ全 action で 403（Redis 非接触）', async () => {
+  for (const action of ['preview', 'run', 'status', 'cleanup', 'finalize']) {
+    for (const enabled of [undefined, 'true']) {
+      const r = await call({ action, enabled, secret: null, canaryId: VALID_ID });
+      assert.equal(r.status, 403, `${action}/${enabled} が認証なしで通った`);
+      assert.equal(r.body.error, 'Forbidden');
+      assert.equal(r.redisCalls, 0);
+    }
+  }
+});
+
+test('handler: 誤ったシークレットも拒否する', async () => {
+  const r = await call({ action: 'preview', enabled: 'true', secret: 'wrong' });
+  assert.equal(r.status, 403);
+  assert.equal(r.body.error, 'Forbidden');
+});
+
+test('handler: GET は 405（POST のみ）', async () => {
+  const r = await call({ action: 'preview', enabled: 'true', method: 'GET' });
+  assert.equal(r.status, 405);
+  assert.equal(r.redisCalls, 0);
+});
+
+test('handler: preview は Redis へ 1 回も出ない（enabled=true でも）', async () => {
+  const r = await call({ action: 'preview', enabled: 'true' });
+  assert.equal(r.status, 200);
+  assert.equal(r.redisCalls, 0, 'preview が Redis を叩いた');
+  assert.match(r.body.canaryId, /^\d{14}-[a-f0-9]{8}$/);
+  assert.equal(r.body.sideEffects, 'none');
+});
+
+test('handler: canaryId はサーバー側生成で毎回変わる', async () => {
+  const a = await call({ action: 'preview', enabled: 'true' });
+  const b = await call({ action: 'preview', enabled: 'true' });
+  assert.notEqual(a.body.canaryId, b.body.canaryId);
 });

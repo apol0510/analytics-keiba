@@ -25,44 +25,86 @@ scope は `functions`・値を持つ context は `production` だけ。作成後
 ## 安全装置
 
 - **POST のみ**（GET は 405）＋ `x-admin-secret`
-- **`CUSTOMER_IMPORT_CANARY_ENABLED=true` が無ければ常時 403**（認証より手前・Redis 初期化より前）
+- **`preview` / `run` は `CUSTOMER_IMPORT_CANARY_ENABLED=true` のときだけ許可**（無効なら 403）。
+  ゲートは **Redis 初期化より前**（下の「action 別ゲート」を参照）
 - `canaryId` は**サーバー側生成**（`^\d{14}-[a-f0-9]{8}$` 以外は拒否）
 - `run` は確認文字列 **`REDIS-CANARY <canaryId>`** 必須
 - **1 canaryId につき run はちょうど 1 回**（墓標を `SET NX`。timeout でも再実行不可）
 - `preview` は **Redis へ一切接続しない**（同期関数で runner も `await` も持たない）
 - URL / token / Redis の値 / メール / hash 全文を**返さない・ログにも出さない**
 
-## production deploy は **3 回で固定**（条件分岐なし）
+## action 別ゲート（**窓を作らない順序**）
 
-env 変更は **redeploy 必須**として扱う（Netlify CLI の警告 + AK 実績: 入金確認メール v2 の
-各境界はすべて `env 変更 → redeploy`）。
+| action | `enabled=true` | `enabled=false` / unset |
+|---|---|---|
+| `preview` / `run` | 許可 | **403** `canary_disabled` |
+| `status` / `cleanup` | 許可 | 許可 |
+| `finalize` | **403** `canary_still_enabled` | 許可 |
 
-| # | source | env 状態 | deploy 方法 | 確認 | rollback |
+**すべての action で `x-admin-secret` 必須。** ゲートは **Redis 初期化より前**に判定する。
+
+> ### なぜ finalize を逆向きに塞ぐのか
+>
+> env 変更は **redeploy して初めて production Function へ反映される**。
+> したがって `finalize → env unset → deploy` の順にすると、
+> **墓標が消えているのに run がまだ有効**な時間帯が生まれ、
+> その deploy が失敗すれば有効なまま残る。
+>
+> そこで `finalize` は **`enabled` が false / unset のときだけ**通す。
+> 墓標を消せるのは「env を unset し、その反映 deploy が完了した後」だけになり、
+> **その時点で run は必ず 403**。窓が構造的に生じない。
+
+## production deploy は **4 回で固定**（条件分岐なし）
+
+| # | source | SHA | env | 方法 | rollback |
 |---|---|---|---|---|---|
-| **D1** | 本 branch の固定 SHA | `CANARY_ENABLED` **unset** | `netlify deploy --build --prod --context production` | Function が存在し `preview` が **403** | main を Build Hook で 1 回 |
-| **D2** | **D1 と同じ固定 SHA** | `CANARY_ENABLED=true` 設定**後** | 同上（再 deploy） | `preview` が **200** | main を Build Hook で 1 回 |
-| **D3** | `origin/main` の固定 HEAD | **unset 済み** | **Build Hook**（AK 標準） | Function が **404** / env unset / 公開 SHA が origin/main | — |
+| **D1** | `chore/customer-import-redis-canary` | 固定 SHA | `CANARY_ENABLED` **unset** | `netlify deploy --build --prod --context production` | main を Build Hook 1 回 |
+| **D2** | **同 branch・同 SHA** | 同一 | `=true` 設定**後** | 同上 | env unset → D3 |
+| **D3** | **同 branch・同 SHA** | **unset 後** | 同上 | main を Build Hook 1 回 |
+| **D4** | `main` | **実行直前に再取得した origin/main HEAD** | 3 つとも unset | **Build Hook**（AK 標準） | — |
 
 **順序は fail-closed**（コードが先・env が後）。**Function 未配備で env を true にしない。**
 
-> ⚠️ 手動 deploy は `commit_ref` が origin/main と一致しない deploy を作る。
-> AK は過去に手動 deploy を使っていない。**D3 で必ず origin/main へ戻す。**
+### 事前 gate（D1 の前に必ず確認）
+
+- repo / branch / HEAD / working tree
+- PR #236 HEAD = 固定 SHA、CI green
+- **origin/main HEAD を実行直前に再取得して固定**
+- production env: `CUSTOMER_IMPORT_CANARY_ENABLED` / `CUSTOMER_IMPORT_WRITE_ENABLED` /
+  `CUSTOMER_IMPORT_JOB_ENABLED` が**すべて unset**
+- 日次 Build Hook や他の deploy が進行中でない
+- rollback 用の main Build Hook が使える
 
 ## 実行手順
 
-1. **D1** → `action:'preview'` が **403** であることを確認
+1. **D1**（コード配備・env unset）
+   → `preview` と `run` が **403 `canary_disabled`** / Redis write **0**
 2. `netlify env:set CUSTOMER_IMPORT_CANARY_ENABLED true --context production`
-3. **D2**（同じ SHA を再 deploy）→ `preview` が **200** であることを確認
-4. `preview` で **canaryId を発行**（Redis 非接触）
+3. **D2**（同一 SHA を再 deploy）
+   → `preview` **200**
+4. `preview` で **canaryId 発行**（Redis 非接触）
 5. `run` を **exactly 1 回**（`REDIS-CANARY <canaryId>`）
-6. `status` で結果と残存を確認
-7. `cleanup` → **canary データ prefix 残存 0**（墓標は残る＝再実行は拒否されたまま）
-8. `finalize`（`REDIS-CANARY-FINALIZE <canaryId>`）→ **墓標も 0**
-9. `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production`
-10. **D3** → `preview` が **404**・env unset・公開 SHA が origin/main を確認
+6. `status` で結果確認
+7. `cleanup` → **データ prefix 残存 0 / 墓標 1 件残存**
+8. `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production`
+9. **D3**（同一 SHA を再 deploy。**Function は残したまま無効状態を反映**）
+   → `preview` / `run` が **403** であることを確認
+10. **`finalize` を exactly 1 回**（`REDIS-CANARY-FINALIZE <canaryId>`）
+    → **データ prefix 0 / 墓標 0**
+11. 再度 `preview` / `run` が **403** であることを確認
+12. **D4**（実行直前に再取得した origin/main HEAD を Build Hook で 1 回）
+    → Function **404** / 3 つの env すべて unset / 公開 SHA 復帰 / canary 残存 0
 
-**Redis 異常・cleanup 異常が出たら追加 run をしない。** 残存キーは prefix からの相対名
-（値・PII なし）だけを報告して停止する。
+### D1〜D3 の間に origin/main が進んだ場合
+
+- **D4 の戻し先は決め打ちにせず、最新の origin/main を再確認する**
+- 想定外のコード変更が入っていたら **D4 の前に停止して差分を報告**
+- canary の無効化を優先する必要があるときは、**まず D3 で 403 に戻す**
+
+### 異常時
+
+`run` / `cleanup` / Redis が異常なら **追加 run をしない**。
+env 閉鎖（unset → D3）を優先し、残存キーは prefix からの相対名（値・PII なし）だけ報告する。
 
 ## 墓標と「残存 0」の両立
 
@@ -71,8 +113,10 @@ env 変更は **redeploy 必須**として扱う（Netlify CLI の警告 + AK �
 | 検証データ `customer-import:canary:<id>:` | **削除**（残存 0） | 残存 0 を再確認 |
 | 実行済み墓標 `customer-import:canary-run:<id>` | **残す**（再実行を拒否） | **削除**（最終 0） |
 
-`finalize` は **Function 無効化の直前に 1 度だけ**。墓標を消した後は Redis 側で
-同一 canaryId の再実行を拒否できないため、直ちに手順 9・10 へ進むこと。
+`finalize` は **env を無効化し、その反映 deploy（D3）を終えた後にしか通らない**（有効なら 403）。
+そのため墓標を消す時点で `run` は必ず 403 で、**「墓標が無いのに run できる時間帯」は生じない**。
+D3 が失敗した場合は Function が有効なまま残るが、その状態では `finalize` が 403 で拒否されるので
+墓標は消えない（＝ exactly-once は保たれたまま）。復帰は main の Build Hook 1 回。
 
 ## DBSIZE の扱い
 

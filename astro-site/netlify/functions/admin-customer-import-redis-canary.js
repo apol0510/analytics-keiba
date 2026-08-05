@@ -23,9 +23,20 @@
  *   - 最大キー数 32 / 最大コマンド数 150 を超えたら即停止
  *   - canary キーには **TTL 15 分**（cleanup 漏れでも自動消滅）
  *
+ * ── action 別ゲート（**窓を作らない順序**）────────────────────
+ *   | action          | enabled=true | enabled=false / unset |
+ *   |-----------------|--------------|-----------------------|
+ *   | preview / run   | 許可         | **403**               |
+ *   | status/cleanup  | 許可         | 許可                  |
+ *   | finalize        | **403**      | 許可                  |
+ *
+ *   `finalize`（墓標の削除）は **env を無効化し、その反映 deploy を終えた後**にしか通らない。
+ *   これにより「墓標が無いのに run できる時間帯」が構造的に生じない。
+ *   env 変更は **redeploy 必須**（Netlify の仕様・AK の実績）なので、
+ *   無効化は「env unset → 反映 deploy」で初めて成立する。
+ *
  * ── 使い終わったら ────────────────────────────────────────────
- *   `CUSTOMER_IMPORT_CANARY_ENABLED=true` が無ければ **常時 403**（既定は無効）。
- *   検証完了後は env を消す（deploy 不要で無効化）。その後コードごと削除する。
+ *   env を unset → 反映 deploy（ここで run は 403）→ finalize → コードごと削除 deploy。
  */
 
 import { randomBytes } from 'node:crypto';
@@ -251,11 +262,7 @@ export const handler = async (event) => {
   // ⚠️ GET 不可。POST のみ
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method Not Allowed' });
 
-  // ⚠️ 既定は無効。env が無ければ**常時 403**（使い終わったら env を消すだけで無効化できる）
-  if (process.env.CUSTOMER_IMPORT_CANARY_ENABLED !== 'true') {
-    return json(403, { error: 'canary は無効です（CUSTOMER_IMPORT_CANARY_ENABLED）。', code: 'canary_disabled' });
-  }
-
+  // ⚠️ **すべての action で管理シークレット必須**（status / cleanup / finalize も含む）
   const SECRET = process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET;
   if (!SECRET) return json(503, { error: '管理用 secret 未設定（機能無効）' });
   const provided = event.headers?.['x-admin-secret'] || event.headers?.['X-Admin-Secret'];
@@ -265,6 +272,36 @@ export const handler = async (event) => {
   try { req = JSON.parse(event.body || '{}'); } catch { return json(400, { error: 'Invalid JSON' }); }
   const action = req.action || 'preview';
   const now = Date.now();
+  const enabled = process.env.CUSTOMER_IMPORT_CANARY_ENABLED === 'true';
+
+  // ── action 別ゲート（**Redis 初期化より前**）─────────────────
+  //
+  // ⚠️ ここが「墓標を消した瞬間に run できてしまう窓」を塞ぐ核心。
+  //    `finalize` は **env が無効化され、それが deploy で反映された後**にしか通らない。
+  //    つまり墓標を消す時点で run/preview は必ず 403 になっている。
+  //
+  //   | action          | enabled=true | enabled=false / unset |
+  //   |-----------------|--------------|-----------------------|
+  //   | preview / run   | 許可         | **403**               |
+  //   | status/cleanup  | 許可         | 許可                  |
+  //   | finalize        | **403**      | 許可                  |
+  //
+  if (action === 'preview' || action === 'run') {
+    if (!enabled) {
+      return json(403, {
+        error: 'canary は無効です（CUSTOMER_IMPORT_CANARY_ENABLED）。', code: 'canary_disabled', action,
+      });
+    }
+  }
+  if (action === 'finalize') {
+    if (enabled) {
+      // ⚠️ 有効なまま墓標を消すと、run が通る状態で exactly-once が失われる
+      return json(403, {
+        error: 'finalize は canary を無効化した後にのみ実行できます（CUSTOMER_IMPORT_CANARY_ENABLED を unset し、その反映 deploy を終えてから）。',
+        code: 'canary_still_enabled', action,
+      });
+    }
+  }
 
   try {
     if (action === 'preview') return handlePreview({ now });
