@@ -8,6 +8,81 @@
 
 ---
 
+## 2026-08-05 — Redis canary は専用 Function で行う（secret をローカルへ持ち出さない）
+
+### Status
+
+**Proposed（未承認・未 deploy）**。canary Function は実装済みだが production deploy はしていない。
+`CUSTOMER_IMPORT_CANARY_ENABLED` が無ければ**常時 403**（既定は無効）。
+
+### Context
+
+Redis 版取り込みの Phase 0 / Phase 1 canary を実行しようとしたが、
+`UPSTASH_REDIS_REST_URL` / `_TOKEN` は Netlify の **secret（`is_secret: true`）**で、
+scope は `functions`・値を持つ context は `production` のみ。
+`netlify env:get` / `env:list --json` / `getEnvVars` API はいずれも**マスク値しか返さない**。
+`deploy-preview` context には値が無く、Deploy Preview 経由でも到達できない。
+
+**production Upstash へ到達できるのは production の Function だけ**という結論になった。
+
+### Decision
+
+**secret を Netlify の外へ持ち出さない。** ローカルへ認証情報を取得する方式は**採らない**。
+代わりに **専用 canary Function**（`admin-customer-import-redis-canary.js`）を置き、
+Function 内部だけで secret を使う。
+
+- **POST のみ**・AK 管理シークレット（`x-admin-secret`）必須
+- action は **`preview` / `run` / `status` / `cleanup`** の 4 つだけ
+- **`CUSTOMER_IMPORT_CANARY_ENABLED=true` が無ければ常時 403**（既定は無効）
+- canaryId は**サーバー側生成**。`run` には確認文字列 `REDIS-CANARY <canaryId>` が要る
+- **1 つの canaryId につき run はちょうど 1 回**（実行済みマーカーを `SET NX`）。
+  timeout しても同じ canaryId では再実行できない
+- 書き込み・削除は **`customer-import:canary:<canaryId>:` 配下だけ**。
+  `createCanaryRunner` が prefix 外を**構造的に拒否**する
+- **全キー列挙（`KEYS`）を禁止**。走査は `SCAN MATCH <prefix>*` のみ
+- 上限固定: **最大キー数 32 / 最大コマンド数 150**。canary キーには **TTL 15 分**
+- **Airtable に触れない。メールを送らない**（依存が存在しない）
+- URL / token / Redis の値 / メール / hash 全文を**返さない・ログにも出さない**
+
+### Rationale
+
+secret をローカルへコピーすると、transcript・シェル履歴・ファイルに残る経路が増え、
+失効・ローテーションの管理対象も増える。Netlify の secret 境界を保ったまま検証できるなら、
+そちらが安全側。canary Function は**使い終わったら env を消すだけで無効化**でき（deploy 不要）、
+その後コードごと削除できる。
+
+### Alternatives Considered
+
+| 案 | 判定 |
+|---|---|
+| **専用 canary Function** | **採用**（secret が Netlify 外へ出ない） |
+| ローカルへ認証情報を取得して実行 | 却下（secret の持ち出し。利用者が明示的に不採用と判断） |
+| Deploy Preview で実行 | **不可能**（`deploy-preview` context に値が無い） |
+| 既存 Function に canary action を相乗り | 却下（取り込み本体の攻撃面を広げる。無効化も難しくなる） |
+
+### Consequences
+
+- **production deploy が 2 回必要**（① canary Function 投入 ② 検証後の削除）。
+  env の投入・削除は deploy 不要
+- 一時的に production へ「Redis を触れる Function」が存在する。
+  そのため **既定無効（403）+ 管理シークレット + 確認文字列 + exactly-once + 名前空間 guard**
+  の多層で塞ぐ
+- Lua 本文の正しさを**実 Redis で確認できる**ようになる（テストの fake では確認できない部分）
+
+### Revisit Conditions
+
+- canary Function が想定外に長く production へ残ったとき（削除 deploy を先送りしない）
+- 同種の検証が再び必要になったとき（使い捨てではなく恒久 canary にするかを再判断）
+
+### Evidence
+
+- `getEnvVars` API の実測: `UPSTASH_*` は `is_secret: true` / scope `functions` /
+  値を持つ context は `production` のみ
+- `astro-site/netlify/functions/admin-customer-import-redis-canary.js`
+- `astro-site/src/lib/crm/importRedisCanary.js` / `importRedisCanary.test.mjs`（27 tests）
+
+---
+
 ## 2026-08-05 — 大量取り込みの正本と排他に Upstash Redis を採用する（Blobs 非正本方式は不採用）
 
 ### Status

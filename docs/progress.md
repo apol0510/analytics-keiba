@@ -86,19 +86,55 @@ Phase 0（PING / DBSIZE / EVAL）すら、次のどちらかが無いと実行�
   - URL / token / キー内容 / PII を出力しない。異常時は cleanup して停止し、再試行しない
   - 認証情報が無ければ **Redis へ 1 コマンドも送らずに終了**する（実測済み）
 
-#### 実行方法（secret を transcript に出さない手順）
+#### 採用した方式: 専用 canary Function（secret を Netlify 外へ出さない）
 
-リポジトリ外に env ファイルを作り、パスを渡す:
+**ローカルへ認証情報を取得する方式は不採用**（利用者判断）。
+代わりに **専用 canary Function** を置き、Function 内部だけで secret を使う。
+ADR: `docs/decisions.md`「2026-08-05 — Redis canary は専用 Function で行う」
 
-```
-# ~/.ak-upstash.env （リポジトリ外・git 管理外）
-UPSTASH_REDIS_REST_URL=...
-UPSTASH_REDIS_REST_TOKEN=...
-```
+| 項目 | 値 |
+|---|---|
+| Function | `netlify/functions/admin-customer-import-redis-canary.js` |
+| 認証 | **POST のみ** + `x-admin-secret`（AK 管理シークレット） |
+| 有効化 | **`CUSTOMER_IMPORT_CANARY_ENABLED=true` が無ければ常時 403**（既定は無効） |
+| action | `preview` / `run` / `status` / `cleanup` の 4 つだけ |
+| canaryId | **サーバー側生成**（`preview` で発行。`^\d{14}-[a-f0-9]{8}$` 以外は拒否） |
+| 確認文字列 | **`REDIS-CANARY <canaryId>`** |
+| 実行回数 | **1 canaryId につき run はちょうど 1 回**（実行済みマーカーを `SET NX`） |
+| 名前空間 | `customer-import:canary:<canaryId>:` 配下**のみ**。外は構造的に拒否 |
+| 最大キー数 | **32** |
+| 最大コマンド数 | **150** |
+| canary キー TTL | **900 秒（15 分）** — cleanup 漏れでも自動消滅 |
+| 実行済みマーカー TTL | 86,400 秒（24 時間） |
 
-```
-node astro-site/scripts/canary-import-redis.mjs ~/.ak-upstash.env
-```
+**触れないキー**: `customer-import:lock:global` / `customer-import:fence` /
+`customer-import:email:*` / `customer-import:job:*` / `payemail:*`（テストで固定）。
+**全キー列挙（`KEYS`）は禁止**。走査は `SCAN MATCH <prefix>*` のみ。
+**Airtable に触れない。メールを送らない**（依存が存在しない）。
+
+#### production deploy 予定回数: **2 回**
+
+| # | 目的 | env 操作 |
+|---|---|---|
+| 1 | canary Function を投入 | 直後に `CUSTOMER_IMPORT_CANARY_ENABLED=true` を投入（**deploy 不要**） |
+| 2 | 検証後に canary Function を**削除** | 先に env を削除（**deploy 不要**）→ その後コード削除 deploy |
+
+**env の投入・削除は deploy 不要**（Function は毎回 `process.env` を読む）。
+したがって「無効化」は env 削除で**即時**行え、コード削除 deploy は後追いでよい。
+
+#### 無効化・rollback
+
+- **即時無効化**: `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production`
+  → 以後すべて 403（deploy 不要）
+- **コード削除**: Function と `importRedisCanary.js` を削除して deploy（2 回目）
+- **canary キーの掃除**: `action:'cleanup'`。TTL 15 分で自動消滅もする
+- **rollback**: canary は Airtable も本番 Redis キーも変更しないため、
+  巻き戻す対象が無い。env 削除で完全に止まる
+
+#### 旧: ローカル実行用スクリプト
+
+`astro-site/scripts/canary-import-redis.mjs` は**ローカル実行方式の名残**。
+本方式（Function）を採用したため**使わない**。参考として残置。
 
 #### Upstash の plan / quota / rate limit
 
