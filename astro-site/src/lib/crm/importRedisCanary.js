@@ -21,6 +21,20 @@
 /** canary の名前空間。ここから外れたら書かない */
 export const CANARY_ROOT = 'customer-import:canary:';
 
+/**
+ * 実行済み墓標の名前空間。**データとは別の prefix** に置く。
+ *
+ * ── なぜ分けるか ──────────────────────────────────────────────
+ * 「cleanup 後に prefix 残存 0」と「同一 canaryId を再実行させない」を**両立**させるため。
+ * 墓標をデータと同じ prefix に置くと、残存 0 にするには墓標も消すことになり、
+ * **同じ canaryId を再実行できてしまう**。逆に残すと残存 0 にならない。
+ * そこで墓標は別 prefix に置き、
+ *   - `cleanup`  … データを消す。**ROOT 残存 0**（墓標は残るので再実行は塞がれたまま）
+ *   - `finalize` … 墓標を消す。**最終的に両方 0**（Function 無効化の直前に 1 度だけ）
+ * とする。
+ */
+export const CANARY_MARKER_ROOT = 'customer-import:canary-run:';
+
 /** 1 回の canary で作ってよいキーの上限 */
 export const MAX_CANARY_KEYS = 32;
 
@@ -85,8 +99,10 @@ export function buildCanaryId({ nowIso, randomHex }) {
 export const canaryPrefix = (canaryId) => `${CANARY_ROOT}${str(canaryId)}:`;
 /** 検証データ用（cleanup で消す） */
 export const dataPrefix = (canaryId) => `${canaryPrefix(canaryId)}d:`;
-/** 実行済みマーカー（cleanup では消さない。TTL で自動消滅） */
-export const runMarkerKey = (canaryId) => `${canaryPrefix(canaryId)}__run__`;
+/** 実行済み墓標（**別 prefix**。cleanup では消さず、finalize でだけ消す） */
+export const runMarkerKey = (canaryId) => `${CANARY_MARKER_ROOT}${str(canaryId)}`;
+/** finalize に必要な確認文字列（cleanup とは別の合言葉） */
+export const buildFinalizeConfirmation = (canaryId) => `REDIS-CANARY-FINALIZE ${str(canaryId)}`;
 
 /** 実行に必要な確認文字列 */
 export const buildCanaryConfirmation = (canaryId) => `REDIS-CANARY ${str(canaryId)}`;
@@ -106,14 +122,20 @@ export function createCanaryRunner({ cmd, canaryId, maxKeys, maxCommands } = {})
   if (!isValidCanaryId(canaryId)) throw new CanaryGuardError(CANARY_STOP.OUT_OF_NAMESPACE, 'bad_canary_id');
 
   const prefix = canaryPrefix(canaryId);
+  const marker = runMarkerKey(canaryId);
   const keyLimit = Number.isFinite(maxKeys) ? maxKeys : MAX_CANARY_KEYS;
   const cmdLimit = Number.isFinite(maxCommands) ? maxCommands : MAX_REDIS_COMMANDS;
 
   const state = { commands: 0, keysTouched: new Set(), latencies: [] };
 
-  /** このキーを触ってよいか。**prefix 外なら必ず例外** */
+  /**
+   * このキーを触ってよいか。**この 2 つ以外なら必ず例外**:
+   *   - `customer-import:canary:<canaryId>:` 配下
+   *   - `customer-import:canary-run:<canaryId>`（墓標。**完全一致のみ**）
+   */
   const assertKey = (key) => {
     const k = str(key);
+    if (k === marker) return k;
     if (!k.startsWith(prefix)) throw new CanaryGuardError(CANARY_STOP.OUT_OF_NAMESPACE, k.slice(0, 48));
     return k;
   };
@@ -158,6 +180,9 @@ export function createCanaryRunner({ cmd, canaryId, maxKeys, maxCommands } = {})
   return {
     prefix,
     dataPrefix: dataPrefix(canaryId),
+    /** cleanup / 残存確認の走査対象（ROOT 全体。d: 以外の取りこぼしも拾う） */
+    rootPrefix: prefix,
+    markerKey: marker,
     state,
     assertKey,
     run,
@@ -297,13 +322,16 @@ export async function runPhase1({ runner, lua, now, emailClaimKeyFn, emailHashFn
   return { checks, ok: checks.every((c) => c.ok) };
 }
 
-/** canary データキーを **SCAN で数えるだけ**（削除しない・prefix 限定） */
+/**
+ * canary キーを **SCAN で数えるだけ**（削除しない）。
+ * 走査対象は **ROOT 全体**（`d:` 以外に取りこぼしがあっても拾う）。**墓標は別 prefix なので含まない。**
+ */
 export async function scanCanaryKeys(runner) {
   const found = [];
   let cursor = '0';
   let guard = 0;
   do {
-    const res = await runner.run(['SCAN', cursor, 'MATCH', `${runner.dataPrefix}*`, 'COUNT', '100']);
+    const res = await runner.run(['SCAN', cursor, 'MATCH', `${runner.rootPrefix}*`, 'COUNT', '100']);
     const [next, keys] = res.result || ['0', []];
     cursor = String(next);
     for (const k of (keys || [])) found.push(k);
@@ -331,7 +359,37 @@ export async function cleanupCanary(runner) {
     deleted,
     remaining: left.length,
     // ⚠️ キー名は prefix を除いた末尾だけ（値・PII は出さない）
-    remainingSuffixes: left.map((k) => String(k).slice(runner.dataPrefix.length)).slice(0, 20),
+    remainingSuffixes: left.map((k) => String(k).slice(runner.rootPrefix.length)).slice(0, 20),
+    markerRetained: true,
+    note: 'データキーのみ削除しました。実行済み墓標は別 prefix に残っているため、同じ canaryId は再実行できません。',
+  };
+}
+
+/**
+ * **最後の 1 回だけ**呼ぶ後始末。墓標も消して残存を完全に 0 にする。
+ *
+ * ⚠️ 墓標を消すと同じ canaryId が再実行可能になる。したがって finalize は
+ *    **Function を無効化する直前**に実行すること（手順で担保する）。
+ *    再実行しても canary 名前空間しか触らないため本番への影響は無いが、
+ *    exactly-once の保証は finalize 時点で終了する。
+ */
+export async function finalizeCanary(runner) {
+  // 1) データ残りが無いことを先に確認（あれば消す）
+  const clean = await cleanupCanary(runner);
+  if (clean.remaining > 0) {
+    return { finalized: false, reason: 'data_remaining', cleanup: clean };
+  }
+  // 2) 墓標を削除
+  runner.assertKey(runner.markerKey);
+  await runner.run(['DEL', runner.markerKey]);
+  const stillThere = Number((await runner.run(['EXISTS', runner.markerKey])).result) === 1;
+  const rootLeft = await scanCanaryKeys(runner);
+  return {
+    finalized: !stillThere && rootLeft.length === 0,
+    markerRemaining: stillThere ? 1 : 0,
+    rootRemaining: rootLeft.length,
+    cleanup: clean,
+    note: '墓標も削除しました。以後この canaryId の再実行を Redis では拒否できません。直ちに Function を無効化してください。',
   };
 }
 

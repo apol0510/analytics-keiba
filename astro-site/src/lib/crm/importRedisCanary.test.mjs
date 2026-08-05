@@ -10,9 +10,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  createCanaryRunner, runPhase0, runPhase1, cleanupCanary, scanCanaryKeys,
-  buildCanaryId, buildCanaryConfirmation, isValidCanaryId,
-  canaryPrefix, dataPrefix, runMarkerKey,
+  createCanaryRunner, runPhase0, runPhase1, cleanupCanary, scanCanaryKeys, finalizeCanary,
+  buildCanaryId, buildCanaryConfirmation, buildFinalizeConfirmation, isValidCanaryId,
+  canaryPrefix, dataPrefix, runMarkerKey, CANARY_MARKER_ROOT,
   CanaryGuardError, CANARY_STOP, PROTECTED_KEYS,
   MAX_CANARY_KEYS, MAX_REDIS_COMMANDS, CANARY_TTL_SEC,
 } from './importRedisCanary.js';
@@ -192,7 +192,7 @@ test('Phase 1 が触るキーは canary prefix 配下だけ', async () => {
     if (op === 'EXPIRE') return 1;
     if (op === 'GET') return store.get(a[1]) ?? null;
     if (op === 'DEL') { store.delete(a[1]); return 1; }
-    if (op === 'SCAN') return ['0', [...store.keys()].filter((k) => k.startsWith(D))];
+    if (op === 'SCAN') { const mi = a.indexOf('MATCH'); const pat = String(a[mi + 1]).replace(/\*$/, ''); return ['0', [...store.keys()].filter((k) => k.startsWith(pat))]; }
     if (op === 'DBSIZE') return store.size;
     if (op === 'EVAL') {
       const script = a[1];
@@ -260,7 +260,7 @@ test('Phase 1 が触るキーは canary prefix 配下だけ', async () => {
 });
 
 test('cleanup は prefix 外のキーを消さない', async () => {
-  const r = recorder((a) => (a[0] === 'SCAN' ? ['0', [`${D}a`, 'customer-import:email:evil']] : 1));
+  const r = recorder((a) => (a[0] === 'SCAN' ? ['0', [`${D}a`, 'customer-import:email:evil']] : 1));   // prefix 外を混ぜる
   const runner = createCanaryRunner({ cmd: r.cmd, canaryId: CANARY_ID });
   await assert.rejects(() => cleanupCanary(runner),
     (e) => e instanceof CanaryGuardError && e.code === CANARY_STOP.OUT_OF_NAMESPACE);
@@ -277,7 +277,7 @@ test('cleanup の残存報告は prefix を除いた末尾だけ（値・PII を
   const runner = createCanaryRunner({ cmd: r.cmd, canaryId: CANARY_ID });
   const clean = await cleanupCanary(runner);
   assert.equal(clean.remaining, 1);
-  assert.deepEqual(clean.remainingSuffixes, ['stuck']);
+  assert.deepEqual(clean.remainingSuffixes, ['d:stuck']);   // ROOT からの相対
   assert.equal(clean.remainingSuffixes[0].includes('customer-import'), false);
 });
 
@@ -301,7 +301,7 @@ test('guard(fn): 既定は無効（env が無ければ常時 403）', () => {
 
 test('guard(fn): action は preview / run / status / cleanup だけ', () => {
   const actions = [...FN.matchAll(/action === '([a-z]+)'/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(actions)].sort(), ['cleanup', 'preview', 'run', 'status']);
+  assert.deepEqual([...new Set(actions)].sort(), ['cleanup', 'finalize', 'preview', 'run', 'status']);
 });
 
 test('guard(fn): run には確認文字列と exactly-once マーカーが要る', () => {
@@ -342,4 +342,110 @@ test('guard(fn): status は削除しない', () => {
   assert.equal(body.includes('cleanupCanary'), false, 'status が cleanup を呼んでいる');
   assert.match(body, /scanCanaryKeys/);
   assert.match(body, /sideEffects: 'none'/);
+});
+
+
+// ── 墓標（別 prefix）と finalize ──────────────────────────────
+
+test('墓標はデータとは別の prefix に置かれる', () => {
+  assert.equal(runMarkerKey(CANARY_ID), `${CANARY_MARKER_ROOT}${CANARY_ID}`);
+  assert.equal(runMarkerKey(CANARY_ID).startsWith(canaryPrefix(CANARY_ID)), false,
+    '墓標がデータ prefix 配下にある（cleanup 残存 0 と再実行拒否を両立できない）');
+});
+
+test('runner は墓標キーだけは完全一致で許可し、似た名前は拒否する', async () => {
+  const r = recorder(() => 1);
+  const runner = createCanaryRunner({ cmd: r.cmd, canaryId: CANARY_ID });
+  await runner.run(['SET', runMarkerKey(CANARY_ID), 'x', 'NX', 'EX', '60']);   // 通る
+  for (const bad of [`${CANARY_MARKER_ROOT}OTHER`, `${CANARY_MARKER_ROOT}${CANARY_ID}:extra`,
+    CANARY_MARKER_ROOT, `${CANARY_MARKER_ROOT}${CANARY_ID}x`]) {
+    await assert.rejects(() => runner.run(['DEL', bad]),
+      (e) => e instanceof CanaryGuardError, `${bad} を許可している`);
+  }
+});
+
+test('cleanup は墓標を消さない（再実行拒否を維持する）', async () => {
+  const store = new Map([[`${D}a`, '1'], [runMarkerKey(CANARY_ID), 'marker']]);
+  const r = recorder((a) => {
+    if (a[0] === 'SCAN') { const mi = a.indexOf('MATCH'); const pat = String(a[mi + 1]).replace(/\*$/, '');
+      return ['0', [...store.keys()].filter((k) => k.startsWith(pat))]; }
+    if (a[0] === 'DEL') { store.delete(a[1]); return 1; }
+    return 1;
+  });
+  const runner = createCanaryRunner({ cmd: r.cmd, canaryId: CANARY_ID });
+  const clean = await cleanupCanary(runner);
+  assert.equal(clean.remaining, 0, 'canary prefix 残存 0 になっていない');
+  assert.equal(store.has(runMarkerKey(CANARY_ID)), true, 'cleanup が墓標を消した');
+  assert.equal(clean.markerRetained, true);
+});
+
+test('finalize は墓標も消して残存を完全に 0 にする', async () => {
+  const store = new Map([[`${D}a`, '1'], [runMarkerKey(CANARY_ID), 'marker']]);
+  const r = recorder((a) => {
+    if (a[0] === 'SCAN') { const mi = a.indexOf('MATCH'); const pat = String(a[mi + 1]).replace(/\*$/, '');
+      return ['0', [...store.keys()].filter((k) => k.startsWith(pat))]; }
+    if (a[0] === 'DEL') { store.delete(a[1]); return 1; }
+    if (a[0] === 'EXISTS') return store.has(a[1]) ? 1 : 0;
+    return 1;
+  });
+  const runner = createCanaryRunner({ cmd: r.cmd, canaryId: CANARY_ID });
+  const fin = await finalizeCanary(runner);
+  assert.equal(fin.finalized, true);
+  assert.equal(fin.markerRemaining, 0);
+  assert.equal(fin.rootRemaining, 0);
+  assert.equal(store.size, 0, '最終残存が 0 でない');
+});
+
+test('データが残っていたら finalize しない（墓標を先に消さない）', async () => {
+  const store = new Map([[`${D}stuck`, '1'], [runMarkerKey(CANARY_ID), 'marker']]);
+  const r = recorder((a) => {
+    if (a[0] === 'SCAN') { const mi = a.indexOf('MATCH'); const pat = String(a[mi + 1]).replace(/\*$/, '');
+      return ['0', [...store.keys()].filter((k) => k.startsWith(pat))]; }
+    if (a[0] === 'DEL') return 1;   // 削除に失敗する状況を模擬（消えない）
+    if (a[0] === 'EXISTS') return store.has(a[1]) ? 1 : 0;
+    return 1;
+  });
+  const runner = createCanaryRunner({ cmd: r.cmd, canaryId: CANARY_ID });
+  const fin = await finalizeCanary(runner);
+  assert.equal(fin.finalized, false);
+  assert.equal(fin.reason, 'data_remaining');
+  assert.equal(store.has(runMarkerKey(CANARY_ID)), true, 'データが残っているのに墓標を消した');
+});
+
+test('finalize には専用の確認文字列が要る', () => {
+  assert.equal(buildFinalizeConfirmation(CANARY_ID), `REDIS-CANARY-FINALIZE ${CANARY_ID}`);
+  assert.notEqual(buildFinalizeConfirmation(CANARY_ID), buildCanaryConfirmation(CANARY_ID));
+});
+
+// ── preview の安全性 ──────────────────────────────────────────
+
+test('guard(fn): preview は Redis へ一切接続しない（同期関数で runner を作らない）', () => {
+  const i = FN.indexOf('function handlePreview');
+  assert.ok(i > -1, 'handlePreview が無い');
+  const body = FN.slice(i, FN.indexOf('\n}', i) + 2);
+  // async でない = await が無い = Redis 呼び出しが構造的に不可能
+  assert.equal(/^async function handlePreview/.test(FN.slice(i - 6)), false, 'preview が async になっている');
+  for (const bad of ['createCanaryRunner', 'redisCmd', 'await', 'runner', 'runMarkerKey']) {
+    assert.equal(body.includes(bad), false, `preview が ${bad} を使っている`);
+  }
+  assert.match(body, /sideEffects: 'none'/);
+});
+
+test('guard(fn): preview は run marker を作らない', () => {
+  const previewAt = FN.indexOf('function handlePreview');
+  const runAt = FN.indexOf('async function handleRun');
+  const markerAt = FN.indexOf('runMarkerKey(canaryId)');
+  assert.ok(markerAt > runAt, 'run marker の生成が run より前にある');
+  assert.ok(markerAt > previewAt && markerAt > runAt, 'preview 側で marker を作っている');
+});
+
+// ── DBSIZE は参考値 ───────────────────────────────────────────
+
+test('guard(fn): 合否判定に DBSIZE を使わない（参考値扱い）', () => {
+  const i = FN.indexOf('out.ok = p0.ok');
+  assert.ok(i > -1, '合否判定が見つからない');
+  const line = FN.slice(i, FN.indexOf('\n', i));
+  assert.equal(/dbsize/i.test(line), false, '合否判定に DBSIZE が入っている');
+  assert.match(line, /clean\.remaining === 0/, '残存 0 を合否に使っていない');
+  assert.match(FN, /参考値/, 'DBSIZE を参考値と明記していない');
 });

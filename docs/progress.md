@@ -76,15 +76,6 @@ Phase 0（PING / DBSIZE / EVAL）すら、次のどちらかが無いと実行�
 #### 実施したこと
 
 - 上記アクセス経路の調査（read-only。Redis へは **1 コマンドも送っていない**）
-- Phase 0 / Phase 1 を**そのまま実行できる canary スクリプト**を用意:
-  `astro-site/scripts/canary-import-redis.mjs`
-  - 承認された 12 検証項目をすべて実装
-  - 書き込みは **`customer-import:canary:<canaryId>:*` のみ**。接頭辞外へ触れようとしたら即停止
-  - **本番キーに触れない**ため `acquireGlobalLock()`（`customer-import:lock:global` /
-    `customer-import:fence` 固定）は**呼ばず**、Lua 本文だけを canary キーで検証する
-    （fencing token の単調増加も **canary 専用 fence キー**で確認する）
-  - URL / token / キー内容 / PII を出力しない。異常時は cleanup して停止し、再試行しない
-  - 認証情報が無ければ **Redis へ 1 コマンドも送らずに終了**する（実測済み）
 
 #### 採用した方式: 専用 canary Function（secret を Netlify 外へ出さない）
 
@@ -112,29 +103,89 @@ ADR: `docs/decisions.md`「2026-08-05 — Redis canary は専用 Function で行
 **全キー列挙（`KEYS`）は禁止**。走査は `SCAN MATCH <prefix>*` のみ。
 **Airtable に触れない。メールを送らない**（依存が存在しない）。
 
-#### production deploy 予定回数: **2 回**
+#### production 配備方式（調査で確定・2026-08-05）
 
-| # | 目的 | env 操作 |
-|---|---|---|
-| 1 | canary Function を投入 | 直後に `CUSTOMER_IMPORT_CANARY_ENABLED=true` を投入（**deploy 不要**） |
-| 2 | 検証後に canary Function を**削除** | 先に env を削除（**deploy 不要**）→ その後コード削除 deploy |
+**`netlify deploy --build --prod --context production` をブランチ worktree から実行する**（CLI 手動 deploy）。
 
-**env の投入・削除は deploy 不要**（Function は毎回 `process.env` を読む）。
-したがって「無効化」は env 削除で**即時**行え、コード削除 deploy は後追いでよい。
+他の手段が使えない理由を read-only で確認した:
+
+| 手段 | 判定 |
+|---|---|
+| Build Hook | **不可**。hook は `main` に紐づく。ブランチを production へは出せない |
+| Deploy Preview / Branch Deploy | **到達しても無意味**。`deploy-preview` / `branch-deploy` context には `UPSTASH_*` の値が無く、canary は `upstash_not_configured` で fail closed |
+| 既存 preview deploy を production へ publish | **不可**。その deploy は preview context の env で作られており、production の secret を持たない |
+| PR merge / main へ直接 push | **禁止**（今回の制約） |
+
+> ⚠️ AK は**過去に手動 deploy を 1 度も使っていない**（直近 12 deploy はすべて `manual: false`）。
+> CLI 手動 deploy は **`commit_ref` が origin/main と一致しない** deploy を作る。
+> これは「公開 SHA == origin/main」という従来の前提を一時的に破る。**復帰は main の Build Hook 1 回**。
+
+#### env 反映の契約（**「deploy 不要」の記述は撤回**）
+
+以前この文書に書いた「Function は毎回 `process.env` を読むので env 変更に deploy は不要」は**誤り**。撤回する。
+
+- Netlify CLI は `env:set` / `env:unset` のたびに
+  **`Changes will require a redeploy to take effect on any deployed versions`** と表示する
+- **AK 自身の実績も「env 変更 → redeploy」**:
+  - 入金確認メール v2 の各境界（A / C / D）はすべて `env 変更 → redeploy`
+    （`PAYMENT_EMAIL_V2.md`: 「env 更新 00:50 UTC / redeploy 00:53 UTC published」）
+  - rollback も `GLOBAL_PAUSE=true → redeploy`、`PAYMENT_CONFIRM_SECRET unset → Build Hook で 1 回ビルド`
+- したがって **env を変えたら必ず redeploy する**前提で手順を組む
+
+#### production deploy 総回数: **最大 3 回（最小 2 回）**
+
+**順序は fail-closed**（コードが先・env が後）。**Function 未配備の状態で env を true にしない。**
+
+| # | source branch | source SHA | env 状態 | deploy 方法 | 期待される公開 SHA | rollback |
+|---|---|---|---|---|---|---|
+| **D1** | `feat/customer-import-job` | 本 PR HEAD | `CANARY_ENABLED` **未設定** | `netlify deploy --build --prod --context production` | 手動 deploy（`commit_ref` は origin/main と不一致）| main の Build Hook 1 回 |
+| **D2** | 同上 | 同上 | `CANARY_ENABLED=true` を投入**後** | 同上（env 反映のための再 deploy） | 同上 | main の Build Hook 1 回 |
+| **D3** | `main` | `origin/main` HEAD | `CANARY_ENABLED` **削除済み** | **Build Hook**（AK 標準） | `origin/main` HEAD | — |
+
+- **D1 の時点では canary は 403**（env が無い）。安全側で着地する
+- **D2 は条件付き**。D1 + env 投入の直後に `action:'preview'` を叩き、
+  **200 が返れば env は反映済みなので D2 は不要**（＝ deploy 2 回で済む）。
+  403 のままなら D2 を実行する。**推測せず実測で決める**
+- **D3 で canary Function は消える**。main には canary Function が存在しないため、
+  main を 1 回ビルドするだけで**コードごと本番から消える**（削除用の特別な commit は不要）
+- したがって**最終状態**: production env に `CANARY_ENABLED` 無し / production code に canary Function 無し /
+  import job の kill-switch は main 側に存在しない（**本 PR 未 merge のため、そもそも本番に無い**）
+
+#### run exactly 1 から無効化までの手順
+
+1. **D1**（コード配備・env 無し）→ `preview` が **403** であることを確認
+2. `netlify env:set CUSTOMER_IMPORT_CANARY_ENABLED true --context production`
+3. `preview` を叩く → **200 なら D2 不要 / 403 なら D2 を実行**
+4. `preview` で **canaryId を発行**（Redis へは触れない）
+5. `run` を **exactly 1 回**（確認文字列 `REDIS-CANARY <canaryId>`）
+6. `cleanup` → **canary prefix 残存 0** を確認（墓標は残る＝再実行は塞がれたまま）
+7. `finalize`（確認文字列 `REDIS-CANARY-FINALIZE <canaryId>`）→ **墓標も削除し残存を完全に 0**
+8. `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production`
+9. **D3**（main を Build Hook で 1 回ビルド）→ canary Function が本番から消える
+
+> **7 → 8 は続けて行う。** finalize で墓標を消した後は、Redis 側で同一 canaryId の再実行を
+> 拒否できない（再実行しても canary 名前空間しか触らないので本番影響は無いが、
+> exactly-once の保証はそこで終わる）。
+
+#### 墓標と「残存 0」の両立
+
+「cleanup 後に残存 0」と「同一 canaryId を再実行させない」は、**墓標を別 prefix に置く**ことで両立させた。
+
+| キー | prefix | cleanup | finalize |
+|---|---|---|---|
+| 検証データ | `customer-import:canary:<id>:` | **削除**（残存 0） | 残存 0 を再確認 |
+| 実行済み墓標 | `customer-import:canary-run:<id>` | **残す**（再実行を拒否） | **削除**（最終的に 0） |
+
+`cleanup` 時点で「canary prefix 残存 0」が成立し、かつ墓標が残るので再実行は拒否される。
+`finalize` は Function 無効化の直前に 1 度だけ呼び、**両方 0** にする。
 
 #### 無効化・rollback
 
-- **即時無効化**: `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production`
-  → 以後すべて 403（deploy 不要）
-- **コード削除**: Function と `importRedisCanary.js` を削除して deploy（2 回目）
-- **canary キーの掃除**: `action:'cleanup'`。TTL 15 分で自動消滅もする
-- **rollback**: canary は Airtable も本番 Redis キーも変更しないため、
-  巻き戻す対象が無い。env 削除で完全に止まる
-
-#### 旧: ローカル実行用スクリプト
-
-`astro-site/scripts/canary-import-redis.mjs` は**ローカル実行方式の名残**。
-本方式（Function）を採用したため**使わない**。参考として残置。
+- **即時無効化**: `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production` **＋ redeploy**
+  （env だけでは反映されない前提。確実に止めるなら **D3 = main の Build Hook 1 回**が最短）
+- **最も確実な rollback**: **main を Build Hook で 1 回ビルド**。
+  main には canary Function が無いので、コードも env 依存も一括で消える
+- canary は Airtable も本番 Redis キーも変更しないため、データ面の巻き戻しは不要
 
 #### Upstash の plan / quota / rate limit
 

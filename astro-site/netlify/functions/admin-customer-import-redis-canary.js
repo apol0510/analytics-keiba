@@ -30,8 +30,8 @@
 
 import { randomBytes } from 'node:crypto';
 import {
-  createCanaryRunner, runPhase0, runPhase1, cleanupCanary, scanCanaryKeys,
-  buildCanaryId, buildCanaryConfirmation, isValidCanaryId,
+  createCanaryRunner, runPhase0, runPhase1, cleanupCanary, scanCanaryKeys, finalizeCanary,
+  buildCanaryId, buildCanaryConfirmation, buildFinalizeConfirmation, isValidCanaryId,
   canaryPrefix, dataPrefix, runMarkerKey,
   CanaryGuardError, CANARY_STOP,
   MAX_CANARY_KEYS, MAX_REDIS_COMMANDS, CANARY_TTL_SEC, RUN_MARKER_TTL_SEC,
@@ -149,14 +149,19 @@ async function handleRun({ req, now }) {
     const clean = await cleanupCanary(runner);
     out.cleanup = clean;
 
+    // ⚠️ DBSIZE は**参考値**。他の AK 機能（入金確認メール等）が同時に Redis へ書く
+    //    可能性があるため、実行前と一致しないだけで異常とは断定しない。
+    //    正本の判定は「canary prefix の作成数・削除数・残存 0」。
     const dbsizeAfter = Number((await runner.run(['DBSIZE'])).result);
-    out.dbsize = { before: p0.dbsize, after: dbsizeAfter, 差: dbsizeAfter - p0.dbsize };
-    // 実行済みマーカー 1 件だけは意図的に残す（再実行を塞ぐため。TTL で自動消滅）
-    out.dbsize.想定差 = 1;
-    out.既存キー影響なし = (dbsizeAfter - p0.dbsize) === 1 && clean.remaining === 0;
+    out.dbsize = {
+      before: p0.dbsize, after: dbsizeAfter, 差: dbsizeAfter - p0.dbsize,
+      注記: '参考値。他機能の同時書き込みで変動しうるため合否判定には使わない。墓標 1 件は意図的に残る。',
+    };
+    out.canary残存 = { データ: clean.remaining, 墓標: 1 };
 
     out.stats = runner.stats();
-    out.ok = p0.ok && p1.ok && clean.remaining === 0 && out.既存キー影響なし;
+    // 合否は canary prefix の残存 0 で決める（DBSIZE は使わない）
+    out.ok = p0.ok && p1.ok && clean.remaining === 0;
     out.notice = out.ok
       ? 'Phase 0 / Phase 1 すべて通過。canary データキーは削除済み（実行済みマーカーのみ TTL 付きで残ります）。'
       : '未達があります。Phase 2 へ進まないでください。';
@@ -196,6 +201,32 @@ async function handleStatus({ req }) {
   }
 }
 
+/** 最後の後始末。墓標も消して残存を完全に 0 にする（Function 無効化の直前に 1 回） */
+async function handleFinalize({ req }) {
+  const canaryId = String(req.canaryId || '').trim();
+  if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
+  if (String(req.confirmation || '').trim() !== buildFinalizeConfirmation(canaryId)) {
+    return json(409, {
+      error: 'finalize の確認文字列が一致しません。', code: CANARY_STOP.CONFIRMATION_MISMATCH,
+      confirmationPhrase: buildFinalizeConfirmation(canaryId),
+    });
+  }
+  let runner;
+  try { runner = createCanaryRunner({ cmd: redisCmd, canaryId }); }
+  catch (e) { return json(400, guardBody(e)); }
+  try {
+    const fin = await finalizeCanary(runner);
+    return json(200, {
+      mode: 'redis-canary-finalize', canaryId, finalize: fin,
+      残存: { データ: fin.rootRemaining ?? null, 墓標: fin.markerRemaining ?? null },
+      warning: '墓標を消したため、この canaryId の再実行を Redis では拒否できません。直ちに CUSTOMER_IMPORT_CANARY_ENABLED を削除してください。',
+      stats: runner.stats(),
+    });
+  } catch (e) {
+    return json(e instanceof CanaryGuardError ? 409 : 503, guardBody(e));
+  }
+}
+
 async function handleCleanup({ req }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
@@ -207,7 +238,7 @@ async function handleCleanup({ req }) {
     return json(200, {
       mode: 'redis-canary-cleanup', canaryId, cleanup: clean,
       note: clean.remaining === 0
-        ? 'canary データキーは残っていません（実行済みマーカーは TTL で自動消滅します）。'
+        ? 'canary prefix の残存 0。実行済み墓標は別 prefix に残るため再実行は拒否されます（finalize で消します）。'
         : '残存があります。追加 run はせず、内容を確認してください。',
       stats: runner.stats(),
     });
@@ -241,6 +272,7 @@ export const handler = async (event) => {
     if (action === 'run') return await handleRun({ req, now });
     if (action === 'status') return await handleStatus({ req });
     if (action === 'cleanup') return await handleCleanup({ req });
+    if (action === 'finalize') return await handleFinalize({ req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     // ⚠️ 例外の中身をそのまま返さない（URL / token が混ざりうる）
