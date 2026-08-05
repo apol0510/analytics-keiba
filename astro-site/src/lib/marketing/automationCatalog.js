@@ -97,7 +97,7 @@ export const AUTOMATION_PRESETS = Object.freeze([
     name: '期限切れ 7 日後カムバック',
     description: '有効期限から 7 日後に、復帰のご案内を 1 通送る。',
     trigger: { kind: TRIGGER_KIND.DAYS_AFTER_EXPIRY, days: 7 },
-    campaignId: 'comeback',
+    campaignId: 'expired-comeback',
     audienceRule: { contracts: [MK_CONTRACT.EXPIRED], plans: [], enforce: true },
     ...AUTOMATION_DEFAULTS,
   },
@@ -106,7 +106,7 @@ export const AUTOMATION_PRESETS = Object.freeze([
     name: '期限切れ 30 日後カムバック',
     description: '有効期限から 30 日後に、復帰のご案内を 1 通送る。',
     trigger: { kind: TRIGGER_KIND.DAYS_AFTER_EXPIRY, days: 30 },
-    campaignId: 'comeback',
+    campaignId: 'expired-comeback',
     audienceRule: { contracts: [MK_CONTRACT.EXPIRED], plans: [], enforce: true },
     ...AUTOMATION_DEFAULTS,
   },
@@ -115,7 +115,11 @@ export const AUTOMATION_PRESETS = Object.freeze([
     name: 'Free 会員へ Light 案内',
     description: 'Free 会員へ Light プランのご案内を送る。',
     trigger: { kind: TRIGGER_KIND.PLAN_STATE },
-    campaignId: 'light-trial',
+    // ⚠️ Free → Light の汎用案内に**そのまま使える既存キャンペーンが無い**。
+    //    `comeback-light-30d-granted` は「無料付与済み」を前提にした文面なので、
+    //    付与が成功した相手にしか送ってはいけない（誤送信になる）。
+    //    そこで既定は未選択にし、**管理者が画面で選ぶ**まで ACTIVE 化できないようにする。
+    campaignId: null,
     audienceRule: { contracts: [], plans: [MK_PLAN.FREE], enforce: true },
     ...AUTOMATION_DEFAULTS,
   },

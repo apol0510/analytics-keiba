@@ -25,16 +25,25 @@
  */
 
 import {
-  listAutomationPresets, getAutomationPreset, DEFERRED_TRIGGERS, validateAutomationPresets,
-} from '../../src/lib/marketing/automationCatalog.js';
-import {
-  buildAutomationDefinition, buildAutomationRunId, buildRecipientKey, buildRun,
-  summarizeAutomation, canStartRun, jstDateString, isQuietHours,
-} from '../../src/lib/marketing/automationModel.js';
-import {
-  buildAudience, computeAudienceFingerprint,
-} from '../../src/lib/marketing/automationEligibility.js';
+  createAutomationAdminApi, isWriteEnabled, WRITE_ACTIONS, WRITE_GATE_ENV,
+} from '../../src/lib/marketing/automationAdminApi.js';
+import { createAutomationStore } from '../../src/lib/marketing/automationStore.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
+
+/** Upstash REST（AK 既存 env のみ。KMA とキー空間を共有しない） */
+function redisCmd(args) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return Promise.reject(new Error('upstash_not_configured'));
+  return fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`upstash_http_${res.status}`);
+    return (await res.json()).result;
+  });
+}
 
 const CUSTOMERS_TABLE = 'Customers';
 const MAX_PAGES = 60;
@@ -71,105 +80,6 @@ async function fetchAllReadOnly({ KEY, BASE, table }) {
   return out;
 }
 
-// ── list（read-only）────────────────────────────────────────────
-function handleList({ now }) {
-  const v = validateAutomationPresets();
-  return json(200, {
-    mode: 'automation-list',
-    sideEffects: 'none',
-    presets: listAutomationPresets(),
-    /** 現行 schema で安全に判定できないもの（実装せず設計候補として分離） */
-    設計候補: DEFERRED_TRIGGERS,
-    定義の健全性: v,
-    送信ゲート: {
-      'live enqueue（MARKETING_CAMPAIGN_ENABLED）': process.env.MARKETING_CAMPAIGN_ENABLED === 'true',
-      '実送信（MARKETING_CAMPAIGN_DISPATCH_ENABLED）': process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED === 'true',
-    },
-    今日: jstDateString(now),
-    notice: 'Phase A は dry-run までです。プリセットはすべて初期 OFF で、有効化・実行は配線していません。',
-  });
-}
-
-// ── preview（dry-run。1 通も送らない・1 行も書かない）───────────
-async function handlePreview({ req, KEY, BASE, now }) {
-  const preset = getAutomationPreset(req.automationId);
-  if (!preset) return json(400, { error: '未知の automationId です。' });
-
-  const definition = {
-    ...buildAutomationDefinition({ preset, overrides: req.overrides || {}, nowIso: new Date(now).toISOString() }),
-    // dry-run の判定に使うだけ。**永続化しない**
-    status: 'DRAFT',
-  };
-
-  const occurrenceDate = jstDateString(now);
-  const automationRunId = buildAutomationRunId({ automationId: definition.automationId, occurrenceDate });
-
-  const [records, blacklistRecords] = await Promise.all([
-    fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
-    fetchEmailBlacklistReadOnly(BASE, KEY).catch(() => []),
-  ]);
-  const blacklistEmails = buildBlacklistEmailSet(blacklistRecords || []);
-
-  const audience = buildAudience({
-    records, definition, nowMs: now, blacklistEmails,
-    buildKey: (email) => buildRecipientKey({ automationRunId, email }),
-  });
-
-  const fingerprint = computeAudienceFingerprint({
-    automationId: definition.automationId,
-    occurrenceDate,
-    campaignId: definition.campaignId,
-    emails: audience.recipients.map((r) => r.email),
-  });
-
-  const run = buildRun({
-    automationId: definition.automationId, occurrenceDate,
-    snapshot: fingerprint, plannedCount: audience.recipients.length,
-    dryRun: true, nowIso: new Date(now).toISOString(),
-  });
-
-  // 本実行するならどう判定されるか（**実行はしない**）
-  const wouldRun = canStartRun({
-    env: process.env, definition: { ...definition, status: 'ACTIVE', enabled: true },
-    nowMs: now, dryRun: false,
-    dryRunSnapshot: fingerprint, currentSnapshot: fingerprint,
-    plannedCount: audience.recipients.length,
-  });
-
-  return json(200, {
-    mode: 'automation-preview',
-    sideEffects: 'none',
-    dryRun: true,
-    automationId: definition.automationId,
-    automationRunId,
-    occurrenceDate,
-    campaignId: definition.campaignId,
-    snapshotFingerprint: fingerprint,
-    件数: audience.counts,
-    除外理由: audience.skipped,
-    上限: definition.maxSendsPerRun,
-    quietHours: definition.quietHours,
-    静音時間帯か: isQuietHours({ nowMs: now, quietHours: definition.quietHours }),
-    本実行の可否: { allowed: wouldRun.allowed, reason: wouldRun.reason, label: wouldRun.label },
-    run,
-    notice: '**1 通も送っていません。1 行も書いていません。** これは対象の下見です。',
-  });
-}
-
-// ── status（read-only）──────────────────────────────────────────
-function handleStatus({ req, now }) {
-  const preset = getAutomationPreset(req.automationId);
-  if (!preset) return json(400, { error: '未知の automationId です。' });
-  const definition = buildAutomationDefinition({ preset, overrides: {}, nowIso: new Date(now).toISOString() });
-  return json(200, {
-    mode: 'automation-status',
-    sideEffects: 'none',
-    automation: summarizeAutomation({ definition, lastRun: null, plannedCount: 0, nextRunAt: null }),
-    実行履歴: [],
-    notice: 'Phase A では実行履歴を永続化していません（設定の保存と実行は Phase B）。',
-  });
-}
-
 export const handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json(200, {});
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method Not Allowed' });
@@ -179,30 +89,62 @@ export const handler = async (event) => {
   const provided = event.headers?.['x-admin-secret'] || event.headers?.['X-Admin-Secret'];
   if (provided !== SECRET) return json(403, { error: 'Forbidden' });
 
-  const KEY = process.env.AIRTABLE_API_KEY;
-  const BASE = process.env.AIRTABLE_BASE_ID;
-  if (!KEY || !BASE) return json(500, { error: 'Airtable 認証情報が未設定' });
-
   let req;
   try { req = JSON.parse(event.body || '{}'); } catch { return json(400, { error: 'Invalid JSON' }); }
   const action = req.action || 'list';
   const now = Date.now();
 
-  try {
-    if (action === 'list') return handleList({ now });
-    if (action === 'preview') return await handlePreview({ req, KEY, BASE, now });
-    if (action === 'status') return handleStatus({ req, now });
+  // ══ production write のハードゲート ══════════════════════════
+  // ⚠️ **Redis store を初期化する前**に弾く（接続 0）。
+  //    UI で隠すだけでは足りないので、API を直接叩かれても必ずここで止まる。
+  if (WRITE_ACTIONS.includes(action) && !isWriteEnabled(process.env)) {
+    return json(403, {
+      mode: `automation-${action}`,
+      ok: false,
+      code: 'write_blocked',
+      error: '本番自動配信は未有効です（管理者による書き込みが無効化されています）。',
+      必要なenv: WRITE_GATE_ENV,
+      接続: { redis: false, airtable: false },
+      sideEffects: 'none',
+    });
+  }
 
-    // ⚠️ Phase A では有効化・実行・取消を配線しない（設定の永続化が未承認のため）
-    if (action === 'enable' || action === 'run' || action === 'cancel' || action === 'pause') {
-      return json(501, {
-        mode: `automation-${action}`,
-        error: 'Phase A では未配線です（dry-run まで）。',
-        code: 'not_wired_phase_a',
-        次に必要な承認: '自動化設定の永続化先（AK 専用 Redis prefix）と、実行の配線',
-      });
+  const KEY = process.env.AIRTABLE_API_KEY;
+  const BASE = process.env.AIRTABLE_BASE_ID;
+  if (!KEY || !BASE) return json(500, { error: 'Airtable 認証情報が未設定' });
+
+  // Redis は**設定されているときだけ**組み立てる（未設定なら store=null で fail-closed 表示）
+  const hasRedis = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+  const store = hasRedis ? createAutomationStore({ cmd: redisCmd }) : null;
+
+  const api = createAutomationAdminApi({
+    store, env: process.env, now: () => now,
+    loadCustomers: () => fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
+    loadBlacklist: () => fetchEmailBlacklistReadOnly(BASE, KEY)
+      .then((r) => buildBlacklistEmailSet(r || [])).catch(() => new Set()),
+  });
+
+  try {
+    let out;
+    if (action === 'list') out = await api.list();
+    else if (action === 'get') out = await api.get({ automationId: req.automationId });
+    else if (action === 'preview') out = await api.preview({ automationId: req.automationId, overrides: req.overrides });
+    else if (action === 'runs') out = await api.runs({ automationId: req.automationId });
+    else if (action === 'run-detail') out = await api.runDetail({ runId: req.runId });
+    else if (action === 'status') out = await api.status({ automationId: req.automationId });
+    else if (action === 'create') out = await api.create({ presetId: req.presetId, overrides: req.overrides });
+    else if (action === 'update') out = await api.update({ automationId: req.automationId, expectedVersion: req.expectedVersion, overrides: req.overrides });
+    else if (action === 'activate') out = await api.activate({ automationId: req.automationId, expectedVersion: req.expectedVersion, snapshotFingerprint: req.snapshotFingerprint });
+    else if (action === 'pause') out = await api.pause({ automationId: req.automationId, expectedVersion: req.expectedVersion });
+    else if (action === 'cancel') out = await api.cancel({ automationId: req.automationId, expectedVersion: req.expectedVersion, queueSnapshot: req.queueSnapshot });
+    else return json(400, { error: `未知の action: ${action}` });
+
+    if (out && out.ok === false) {
+      const status = out.code === 'store_unavailable' ? 503
+        : (out.code === 'not_found' ? 404 : 409);
+      return json(status, out);
     }
-    return json(400, { error: `未知の action: ${action}` });
+    return json(200, out);
   } catch (e) {
     // ⚠️ 例外の中身をそのまま返さない（顧客データが混ざりうる）
     console.error('❌ [marketing-automation] 処理に失敗しました');

@@ -211,55 +211,77 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
            自動化は独自の配信基盤を持たない。
       -->
       <section class="step auto-step" aria-labelledby="autoH">
-        <h2 id="autoH" class="step-h"><span class="step-n">⏱</span> 自動配信（下見のみ）</h2>
+        <h2 id="autoH" class="step-h"><span class="step-n">⏱</span> 自動配信</h2>
         <p class="note">
-          条件と配信時刻を決めておけば、対象者の抽出から配信までを自動で行うための設定です。
-          <b>現在は下見（dry-run）だけ</b>が使えます。プリセットは<b>すべて OFF</b>で、
-          管理者が明示的に有効化するまで<b>自動実行されません</b>。
+          条件と配信時刻を決めておけば、対象者の抽出から配信までを自動で行う設定です。
+          プリセットは<b>すべて OFF</b>で、管理者が明示的に有効化するまで<b>自動実行されません</b>。
         </p>
-        <p class="imp-warn">
-          <b>【Phase A】有効化・手動実行・取消は未配線です。</b>
-          押しても API が 501 を返します。下見と対象件数の確認だけ行えます。
+        <p class="imp-warn" id="autoBlockedNote">
+          <b>本番自動配信は未有効です。</b>
+          編集内容の入力と下見（dry-run）はできますが、<b>保存・ACTIVE 化・一時停止・取消はできません</b>。
+          ボタンを迂回して API を直接呼んでも <b>403</b> で拒否されます。
         </p>
+
         <div class="toolbar">
           <button type="button" id="autoList" class="btn-ghost btn-md">自動化一覧を読み込む</button>
+          <select id="autoPick" aria-label="自動化を選ぶ"><option value="">自動化を選択…</option></select>
           <span class="note" id="autoState" aria-live="polite"></span>
         </div>
         <div class="dry-panel" id="autoListResult" hidden></div>
 
+        <!-- 設定フォーム（プリセット / 名前 / campaign / 実行条件 / quiet hours / 最大件数） -->
+        <div class="auto-panel">
+          <dl class="auto-stats">
+            <div><dt>プリセット</dt><dd id="autoPresetV">-</dd></div>
+            <div><dt>名前</dt><dd><input type="text" id="autoName" aria-label="名前" /></dd></div>
+            <div><dt>campaign</dt><dd><select id="autoCampaign" aria-label="campaign"><option value="">選択…</option></select></dd></div>
+            <div><dt>campaignVersion</dt><dd id="autoCampVerV">-</dd></div>
+            <div><dt>contentHash</dt><dd id="autoHashV">-</dd></div>
+            <div><dt>実行条件</dt><dd id="autoTriggerV">-</dd></div>
+            <div><dt>除外条件</dt><dd id="autoExcludeV">既存 AK ルール（配信停止 / バウンス / 停止 / テスト）</dd></div>
+            <div><dt>実行日時・繰り返し</dt><dd><input type="text" id="autoSchedule" placeholder="daily" aria-label="実行日時・繰り返し" /></dd></div>
+            <div><dt>timezone</dt><dd>Asia/Tokyo（固定）</dd></div>
+            <div><dt>quiet hours</dt><dd><input type="number" id="autoQuietStart" min="0" max="23" aria-label="quiet hours 開始" /> - <input type="number" id="autoQuietEnd" min="0" max="23" aria-label="quiet hours 終了" /> JST</dd></div>
+            <div><dt>最大件数</dt><dd><input type="number" id="autoMax" min="1" aria-label="最大件数" /></dd></div>
+            <div><dt>特典・昇格</dt><dd>行いません（付与・昇格・決済変更なし）</dd></div>
+          </dl>
+        </div>
+
         <div class="toolbar">
-          <select id="autoPick" aria-label="自動化を選ぶ"><option value="">自動化を選択…</option></select>
           <button type="button" id="autoPreview" class="btn-primary btn-md">下見する（送信しません）</button>
-          <button type="button" id="autoEnable" class="btn-ghost btn-md" disabled aria-disabled="true">有効化（未配線）</button>
-          <button type="button" id="autoRun" class="btn-ghost btn-md" disabled aria-disabled="true">手動実行（未配線）</button>
-          <button type="button" id="autoPause" class="btn-ghost btn-md" disabled aria-disabled="true">一時停止（未配線）</button>
-          <button type="button" id="autoCancel" class="btn-ghost btn-md" disabled aria-disabled="true">取消（未配線）</button>
+          <button type="button" id="autoSave" class="btn-ghost btn-md" disabled aria-disabled="true">保存（未有効）</button>
+          <button type="button" id="autoActivate" class="btn-ghost btn-md" disabled aria-disabled="true">ACTIVE 化（未有効）</button>
+          <button type="button" id="autoPause" class="btn-ghost btn-md" disabled aria-disabled="true">一時停止（未有効）</button>
+          <button type="button" id="autoCancel" class="btn-ghost btn-md" disabled aria-disabled="true">取消（未有効）</button>
         </div>
 
         <div class="auto-panel" id="autoPreviewResult" hidden>
           <dl class="auto-stats">
-            <div><dt>automationId</dt><dd id="autoIdV">-</dd></div>
             <div><dt>状態</dt><dd id="autoStatusV">-</dd></div>
             <div><dt>次回実行日時</dt><dd id="autoNextV">-</dd></div>
+            <div><dt>snapshot 件数</dt><dd id="autoSnapCountV">-</dd></div>
+            <div><dt>snapshot 指紋</dt><dd id="autoSnapFpV">-</dd></div>
             <div><dt>対象予定人数</dt><dd id="autoTargetV">-</dd></div>
             <div><dt>母数</dt><dd id="autoTotalV">-</dd></div>
             <div><dt>除外</dt><dd id="autoSkipV">-</dd></div>
-            <div><dt>送信済み</dt><dd id="autoSentV">-</dd></div>
-            <div><dt>失敗</dt><dd id="autoFailV">-</dd></div>
-            <div><dt>最大送信件数</dt><dd id="autoMaxV">-</dd></div>
-            <div><dt>quiet hours</dt><dd id="autoQuietV">-</dd></div>
-            <div><dt>使用テンプレート</dt><dd id="autoTplV">-</dd></div>
-            <div><dt>contentHash</dt><dd id="autoHashV">-</dd></div>
-            <div><dt>前回実行結果</dt><dd id="autoLastV">-</dd></div>
+            <div><dt>最終実行結果</dt><dd id="autoLastV">-</dd></div>
+            <div><dt>queued</dt><dd id="autoQueuedV">-</dd></div>
+            <div><dt>excluded</dt><dd id="autoExcludedV">-</dd></div>
+            <div><dt>failed</dt><dd id="autoFailedV">-</dd></div>
+            <div><dt>blocked</dt><dd id="autoBlockedV">-</dd></div>
+            <div><dt>reconciliation</dt><dd id="autoReconV">-</dd></div>
           </dl>
           <p class="note" id="autoSkipReasons"></p>
           <p class="note" id="autoWouldRun"></p>
         </div>
 
+        <div class="dry-panel" id="autoRuns" hidden></div>
+
         <ul class="imp-policy">
-          <li>この画面の操作は<b>1 通も送らず、1 行も書きません</b>（下見だけです）。</li>
+          <li>この画面の下見は<b>1 通も送らず、1 行も書きません</b>。</li>
           <li>プリセットは<b>すべて初期 OFF</b>。明示的に有効化するまで自動実行しません。</li>
-          <li>実行前に必ず<b>下見（dry-run）</b>で対象を固定します。増えていたら<b>再承認</b>が必要です。</li>
+          <li>ACTIVE 化には<b>下見の snapshot</b>が必要です。campaign の版・本文が変わっていたら拒否します。</li>
+          <li>取消は<b>未送信（PENDING）だけ</b>。<b>SENT は取消も再送もしません</b>。</li>
           <li>配信停止・バウンス・停止アカウント・テストアカウントは<b>既存の判定</b>で除外します。</li>
           <li><b>会員状態・決済・特典は一切変更しません</b>（書き込む経路がありません）。</li>
           <li>送信経路は<b>既存の 1 本だけ</b>。自動化は独自の配信基盤を持ちません。</li>
@@ -4485,43 +4507,82 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return data;
     }
 
+    /** write ゲートが開いているかを反映する（**UI で隠すだけにしない**） */
+    function autoApplyWriteGate(enabled) {
+      for (const id of ['autoSave', 'autoActivate', 'autoPause', 'autoCancel']) {
+        const b = $(id);
+        if (!b) continue;
+        b.disabled = !enabled;
+        b.setAttribute('aria-disabled', String(!enabled));
+      }
+      const note = $('autoBlockedNote');
+      if (note) note.hidden = !!enabled;
+    }
+
+    let autoSnapshot = null;   // 直近 dry-run の指紋（ACTIVE 化に必要）
+
     $('autoList')?.addEventListener('click', async () => {
       const state = $('autoState');
       try {
         if (state) state.textContent = '読み込み中…（送信しません）';
         const out = await autoCall({ action: 'list' });
+        autoApplyWriteGate(out.writeEnabled === true);
         const sel = $('autoPick');
         if (sel) {
           sel.innerHTML = '<option value="">自動化を選択…</option>';
           for (const p of (out.presets || [])) {
             const o = document.createElement('option');
-            o.value = p.automationId;
-            o.textContent = p.name + '（' + p.automationId + '）';
+            o.value = p.automationId; o.textContent = p.name;
             sel.appendChild(o);
           }
         }
         const box = $('autoListResult');
         if (box) {
-          box.hidden = false;
-          box.innerHTML = '';
+          box.hidden = false; box.innerHTML = '';
           const pre = document.createElement('p');
           pre.className = 'imp-meta';
-          const g = out['送信ゲート'] || {};
           pre.textContent = [
             '自動化: ' + (out.presets || []).length + ' 件（すべて初期 OFF）',
             ...(out.presets || []).map((p) => '  - ' + p.name + ' / ' + JSON.stringify(p.trigger)
               + ' / 上限 ' + p['既定']['1回の上限'] + ' / ' + p['既定'].quietHours),
             '設計候補（現行 schema では実装しない）: ' + (out['設計候補'] || []).map((d) => d.id).join(', '),
-            'live enqueue: ' + g['live enqueue（MARKETING_CAMPAIGN_ENABLED）'],
-            '実送信ゲート: ' + g['実送信（MARKETING_CAMPAIGN_DISPATCH_ENABLED）'],
-            out.notice || '',
+            '保存先: ' + (out.保存先 && out.保存先.ok ? '接続できました' : '接続できません（表示できる保存済み設定はありません）'),
+            '本番書き込み: ' + (out.writeEnabled ? '有効' : '未有効'),
           ].join('\n');
           box.appendChild(pre);
         }
-        if (state) state.textContent = '読み込みました（まだ何も送っていません）';
+        if (state) state.textContent = '読み込みました';
       } catch (e) {
         if (state) state.textContent = e.message || '読み込みに失敗しました';
       }
+    });
+
+    // プリセットを選んだら設定フォームへ反映する
+    $('autoPick')?.addEventListener('change', async () => {
+      const id = ($('autoPick')?.value || '').trim();
+      if (!id) return;
+      try {
+        const out = await autoCall({ action: 'preview', automationId: id });
+        const set = (k, v) => { const el = $(k); if (el) el.textContent = String(v ?? '-'); };
+        const val = (k, v) => { const el = $(k); if (el) el.value = v ?? ''; };
+        set('autoPresetV', id);
+        set('autoTriggerV', JSON.stringify(out.campaign ? out.campaign : {}) === '{}' ? '-' : '');
+        set('autoTriggerV', JSON.stringify((out && out.trigger) || {}));
+        val('autoName', id);
+        val('autoSchedule', 'daily');
+        val('autoQuietStart', out.quietHours?.start ?? 21);
+        val('autoQuietEnd', out.quietHours?.end ?? 8);
+        val('autoMax', out['上限'] ?? 200);
+        const camp = $('autoCampaign');
+        if (camp && out.campaign) {
+          camp.innerHTML = '';
+          const o = document.createElement('option');
+          o.value = out.campaign.campaignId; o.textContent = out.campaign.campaignId;
+          camp.appendChild(o);
+        }
+        set('autoCampVerV', out.campaign?.campaignVersion ?? '-');
+        set('autoHashV', String(out.campaign?.contentHash || '-').slice(0, 16) + '…');
+      } catch { /* 一覧の読み込み前は無視する */ }
     });
 
     $('autoPreview')?.addEventListener('click', async () => {
@@ -4531,23 +4592,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (!id) throw new Error('自動化を選んでください');
         if (state) state.textContent = '下見中…（送信しません）';
         const out = await autoCall({ action: 'preview', automationId: id });
+        autoSnapshot = out.snapshotFingerprint || null;
         const set = (k, v) => { const el = $(k); if (el) el.textContent = String(v ?? '-'); };
         const c = out['件数'] || {};
         $('autoPreviewResult').hidden = false;
-        set('autoIdV', out.automationId);
         set('autoStatusV', 'DRAFT（未有効化）');
-        set('autoNextV', out.occurrenceDate + '（本日分の下見）');
+        set('autoNextV', out.occurrenceDate);
+        set('autoSnapCountV', (out.snapshotCount ?? 0).toLocaleString());
+        set('autoSnapFpV', String(out.snapshotFingerprint || '-').slice(0, 16) + '…');
         set('autoTargetV', (c['対象'] ?? 0).toLocaleString());
         set('autoTotalV', (c['母数'] ?? 0).toLocaleString());
         set('autoSkipV', (c['除外'] ?? 0).toLocaleString());
-        set('autoSentV', '0（未実行）');
-        set('autoFailV', '0（未実行）');
-        set('autoMaxV', out['上限']);
-        set('autoQuietV', (out.quietHours?.start ?? '-') + ':00-' + (out.quietHours?.end ?? '-') + ':00 JST'
-          + (out['静音時間帯か'] ? '（現在は静音中）' : ''));
-        set('autoTplV', out.campaignId || '(手動指定)');
-        set('autoHashV', String(out.snapshotFingerprint || '').slice(0, 16) + '…');
-        set('autoLastV', '実行履歴なし（Phase A）');
+        set('autoLastV', '実行履歴なし');
+        for (const k of ['autoQueuedV', 'autoExcludedV', 'autoFailedV', 'autoBlockedV']) set(k, '0（未実行）');
+        set('autoReconV', '-（未実行）');
         const reasons = out['除外理由'] || {};
         const r = $('autoSkipReasons');
         if (r) {
@@ -4555,18 +4613,45 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           r.textContent = parts.length ? '除外理由の内訳 — ' + parts.join(' / ') : '除外はありません。';
         }
         const w = $('autoWouldRun');
-        if (w) {
-          const wr = out['本実行の可否'] || {};
-          w.textContent = wr.allowed
-            ? '本実行の条件は満たしています（ただし Phase A では実行を配線していません）。'
-            : '本実行はできません — ' + (wr.label || wr.reason || '');
-        }
+        if (w) w.textContent = out['静音時間帯か'] ? '現在は静音時間帯です（実行されません）。' : '';
         if (state) state.textContent = '下見が終わりました（1 通も送っていません）';
       } catch (e) {
         if (state) state.textContent = e.message || '下見に失敗しました';
       }
     });
 
+    // 保存系。**未有効なら API が 403 を返す**ので、その内容をそのまま表示する
+    async function autoWrite(action, extra) {
+      const state = $('autoState');
+      const id = ($('autoPick')?.value || '').trim();
+      try {
+        if (!id) throw new Error('自動化を選んでください');
+        const out = await autoCall({ action, automationId: id, presetId: id, ...(extra || {}) });
+        if (state) state.textContent = action + ' を実行しました';
+        return out;
+      } catch (e) {
+        const d = e.data || {};
+        if (state) {
+          state.textContent = d.code === 'write_blocked'
+            ? '本番自動配信は未有効のため拒否されました（API 403）'
+            : (e.message || action + ' に失敗しました');
+        }
+        return null;
+      }
+    }
+
+    $('autoSave')?.addEventListener('click', () => autoWrite('create', {
+      overrides: {
+        name: ($('autoName')?.value || '').trim(),
+        campaignId: ($('autoCampaign')?.value || '').trim() || undefined,
+        schedule: ($('autoSchedule')?.value || '').trim(),
+        maxRecipients: Number($('autoMax')?.value || 0),
+        quietHours: { start: Number($('autoQuietStart')?.value || 21), end: Number($('autoQuietEnd')?.value || 8) },
+      },
+    }));
+    $('autoActivate')?.addEventListener('click', () => autoWrite('activate', { expectedVersion: '1', snapshotFingerprint: autoSnapshot }));
+    $('autoPause')?.addEventListener('click', () => autoWrite('pause', { expectedVersion: '1' }));
+    $('autoCancel')?.addEventListener('click', () => autoWrite('cancel', { expectedVersion: '1' }));
 
     /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
     function mkNotify(kind, text, detail) {

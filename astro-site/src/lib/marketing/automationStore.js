@@ -78,6 +78,8 @@ export const DEF_FIELDS = Object.freeze([
   'automationId', 'presetId', 'name', 'status', 'campaignId', 'campaignVersion',
   'schedule', 'timezone', 'quietHours', 'maxRecipients', 'trigger', 'audience',
   'createdAt', 'updatedAt', 'configVersion', 'lastRunAt', 'nextRunAt',
+  // 保存時に固定するキャンペーンの版・本文（ACTIVE 化時の drift 検知に使う）
+  'shellVersion', 'contentHash', 'snapshotFingerprint',
 ]);
 
 /** Run に保存してよい項目 */

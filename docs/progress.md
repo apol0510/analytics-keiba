@@ -51,7 +51,74 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 Draft PR まで実装。**本番送信 0 / production env 変更 0 / production deploy 0 / Airtable schema 変更 0 /
 Customers への書き込み 0。** プリセットは全て初期 OFF で、有効化・実行は配線していない。**
 
-### 🆕 AK 専用メルマガ自動化 — Phase B（永続化・scheduler・enqueue 共通化）
+### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）
+
+**管理画面だけで Definition の作成・編集・保存・有効化・一時停止・取消・履歴確認まで
+操作できるコードを完成させた。** ただし production では**ハードゲートで全 write を拒否**し、
+Redis / Airtable への接続 0 を維持している。
+
+#### 管理 API（`admin-marketing-automation.js`）
+
+`list` / `get` / `preview` / `runs` / `run-detail` / `status` / `create` / `update` /
+`activate` / `pause` / `cancel` の 11 action。判断は `automationAdminApi.js`（I/O 注入）に集約し、
+テストは **fake Redis だけ**で全経路を通せる。
+
+**production write のハードゲート**: `create` / `update` / `activate` / `pause` / `cancel` は
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED=true` でなければ **Redis store 初期化より前に 403**。
+handler を実際に叩いて **Redis 呼び出し 0** を実測している。
+**production にこの env は設定していない。**
+
+read 系は Redis 未設定・到達不能のとき**推測データを返さず** `store_unavailable` を明示する。
+
+#### campaign の固定と再承認
+
+campaign は `campaignCatalog.js` が正本で、**自由入力で存在しない ID は保存できない**。
+保存時に `campaignId` / `campaignVersion` / `shellVersion` / `contentHash` を固定し、
+保存後に版か本文が変わっていたら **ACTIVE 化を拒否**して再 dry-run と再保存を要求する。
+
+> ⚠️ プリセットの campaignId 2 件が実在しないカタログ ID（`comeback` / `light-trial`）を
+> 指していた誤りをテストが検出し、実在する `expired-comeback` へ修正した。
+> `free-to-light` は**そのまま使える既存キャンペーンが無い**ため既定を未選択にした
+> （`comeback-light-30d-granted` は「無料付与済み」前提の文面なので、
+> 付与が成功した相手にしか送ってはいけない＝誤送信になる）。
+
+#### pause / cancel
+
+Redis 側の Definition / Run 状態変更まで実装。**Airtable への実取消は次 Phase までハードブロック**。
+cancel は計画だけを返す: `PENDING 取消予定` / `SENT 取消不可` / `処理中` /
+`rollback 不可（送信済み）`。**SENT を取消対象にしない**。
+
+#### 管理画面
+
+プリセット / 名前 / campaign 選択 / campaignVersion / contentHash / 実行条件 / 除外条件 /
+実行日時・繰り返し / timezone（Asia/Tokyo 固定）/ quiet hours / 最大件数 / dry-run /
+snapshot 件数・指紋 / 保存 / ACTIVE 化 / 一時停止 / 取消 / 次回実行日時 / 最終実行結果 /
+run 履歴 / queued・excluded・failed・blocked / reconciliation を表示。
+
+**未有効時**は入力と dry-run はできるが保存系ボタンは disabled、
+「本番自動配信は未有効」を明示し、**API を直接叩かれても 403**（UI で隠すだけにしない）。
+
+#### scheduler は本番登録しない
+
+`netlify.toml` に schedule を**追加していない**（テストで登録が無いことを固定）。
+`MARKETING_AUTOMATION_SCHEDULER_ENABLED` はコード上のゲートのみで production env 追加なし。
+
+#### テスト
+
+`src/lib/marketing` **949 pass / 0 fail**（Phase B-2 新規 24）。build 成功。回帰 payments 255 pass。
+
+> ⚠️ Phase A の guard 6 件が Phase B の実装（write 配線・UI 刷新・Upstash の POST）と
+> 食い違って落ちた。**性質は変えず**、検査対象と条件を Phase B の実態へ追随させて復旧した
+> （Airtable への書き込みだけを見る / 「未配線」を「配線済みだがゲートで塞ぐ」へ など）。
+
+> ⚠️ テストが実バグを 2 件検出した:
+> ① preset に既定 campaign が無い場合、管理者が指定した**存在しない campaignId を保存できた**
+> ② 固定した `shellVersion` / `contentHash` が保存項目の allow-list に無く**永続化されなかった**。
+> どちらも修正済み。
+
+---
+
+### 🆕 AK 専用メルマガ自動化 — Phase B### 🆕 AK 専用メルマガ自動化 — Phase B（永続化・scheduler・enqueue 共通化）
 
 **Phase A（監査・設計・dry-run）に続き、永続化と実行系を実装した。**
 production deploy 0 / production Redis write 0 / Airtable write 0 / 実送信 0 / 新規 env 投入 0。
