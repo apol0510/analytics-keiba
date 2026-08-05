@@ -75,18 +75,27 @@ PR #235 の差分を再監査した結果、**必須条件 2 件が未達**で�
   （いずれも Redis 版でそのまま再利用できる）
 - **無変更**: 実績のある単発 100 件経路（`admin-customer-import-run.js` / `importWriteExecutor.js`）
 
-#### 解決方針（ADR: `docs/decisions.md` 2026-08-05・**Proposed / 未承認**）
+#### 解決方針（ADR: `docs/decisions.md` 2026-08-05・**Proposed / 未承認**）— **実装済み**
 
-**正本と排他を Upstash Redis へ移す。** Upstash は AK の既存基盤で、入金確認メール v2 の
+**正本と排他を Upstash Redis へ移した。** Upstash は AK の既存基盤で、入金確認メール v2 の
 dispatcher / worker / reconciler が `SET NX EX` + `INCR` fencing token で**本番稼働中**
 （`src/lib/payments/paymentEmailDeps.js`）。production env に
-`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` が secret-flagged で設定済み。
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` が secret-flagged で設定済み
+（値は CLI でマスクされるため、ローカルからの疎通確認は**していない**）。
 
-- 親 ImportJob の正本を **Redis** に置く
-- 子バッチ claim を `SET NX EX` + fencing token で **atomic** に取る
-- **行単位の一意制約** `SET NX importrow:<batchId>:<sha256(email)>` を作成の**前**に取り、
-  **at-most-once 作成**を成立させて TOCTOU を閉じる（100 件を `EVAL` で 1 往復）
-- **新規外部サービス・env 追加・schema 変更・migration・追加費用はいずれも不要**
+- **グローバルロック**（AK 全体で write ジョブ 1 つ）を `SET NX EX` + fencing token で取る。
+  **job 単位ではないので異なる `batchId` 同士の競合も拒否**。取れなければ Airtable を読まない・書かない
+- **行 claim は `batchId` で区切らず、正規化メールに対してグローバル**:
+  `customer-import:email:<sha256(normalizedEmail)>`。
+  `ownerJobId` / `batchId` / `operationId` / `fencingToken` / `state` / `claimedAt` / `expiresAt` を保持
+  - ⚠️ 旧案の `importrow:<batchId>:<hash>` は**異なる batchId が同じメールを同時 claim できる**ため破棄
+- **書き込み直前にロック所有権と fencing token を再検証**し、失っていたら create しない
+- **claim は作成確認まで解放しない。回収は reconciler だけ**が 4 条件
+  （Customers に同メール無し / 同 Source 無し / 期限切れ / 旧 fencing token が失効）を確認して行う
+- snapshot は **chunk 分割**（500 件ずつ）して固定し、指紋で差し替えを検知
+- 突合は **4 点**（Redis counters / Redis claim 状態 / Airtable Source 件数 /
+  Customers 全体の重複メール数）。不一致なら **PARTIAL または BLOCKED** へ遷移し**自動続行しない**
+- **新規外部サービス・env 追加・schema 変更・migration は不要**
 
 検討した代替案（Airtable 専用テーブル / GitHub Contents API CAS / 新規 Postgres）と
 判定理由は ADR の「Alternatives Considered」に記載。
@@ -94,10 +103,15 @@ dispatcher / worker / reconciler が `SET NX EX` + `INCR` fencing token で**本
 
 #### 残る限界（承認前に把握しておくこと）
 
-**literal exactly-once は保証しない。** claim 後・create 前にクラッシュすると
-「claim 済み・未作成」が残る。これは**重複ではなく取りこぼし**（安全側）で、
-reconciler が claim と Airtable を突合して解放する。
-既存方針（`2026-07-16 入金確認メール v2`：exactly-once を目標としない）と整合する。
+- **保証するのは「Redis が正常なときの at-most-once claim」であって literal exactly-once ではない。**
+  claim 後・create 前にクラッシュすると「claim 済み・未作成」が残る。
+  これは**重複ではなく取りこぼし**（安全側）で、reconciler が 4 条件を確認して回収する
+- **Redis が異常なときは新規 Airtable 書き込みを全面停止する（fail-closed）。**
+  到達不能 / Lua 結果不明 / lock 状態不明 / 正本が読めない / claim 不整合 / データ欠損の疑い、
+  いずれも 503 で止める。**Customers 実在判定は第二防御であり、同時実行排他の代替ではない**
+- **Upstash の現行プラン・残クォータ・レート上限は未確認。** 実行前に確認すること
+- **Lua スクリプトの本文はテストで実行していない**（サーバ側でしか動かないため、
+  fake は識別子で分岐して意味論を JS で再現している）。Lua 本文の正しさは **Redis canary** で確認する
 
 （以下は BLOCKED 前に実装した内容の記録。**write 経路は上記のとおり停止中**。）
 

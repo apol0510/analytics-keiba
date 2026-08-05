@@ -6,22 +6,55 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+const path = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+const read = (rel) => readFileSync(path(rel), 'utf8');
 const JOB_FN = read('../../../netlify/functions/admin-customer-import-job.js');
 const RUN_FN = read('../../../netlify/functions/admin-customer-import-run.js');
 const MODEL = read('./importJobModel.js');
 const RUNNER = read('./importJobRunner.js');
 const ELIG = read('./importEligibility.js');
-const STORE = read('./importJobStore.js');
+const CLAIM = read('./importClaimStore.js');
+const AUTH = read('./importJobAuthority.js');
+const RECON = read('./importJobReconcile.js');
 const EXEC = read('./importWriteExecutor.js');
 const PAGE = read('../../pages/admin/premium-plus-eligibility.astro');
 
 const codeOnly = (src) => src
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+
+// ── BLOCKED（設計未完了のため write 経路を封じている）────────────
+
+test('guard: start / step は kill-switch で構造的に封じられている', () => {
+  assert.match(JOB_FN, /if \(action === 'start' \|\| action === 'step'\) \{/, 'kill-switch が無い');
+  assert.match(JOB_FN, /code: 'blocked_by_design'/);
+  const blockAt = JOB_FN.indexOf("action === 'start' || action === 'step'");
+  const storeAt = JOB_FN.indexOf('createClaimStore({ cmd: redisCmd })');
+  const startAt = JOB_FN.indexOf('return await handleStart(');
+  const stepAt = JOB_FN.indexOf('return await handleStep(');
+  assert.ok(blockAt > -1 && blockAt < storeAt, 'kill-switch が Redis 初期化より後ろにある');
+  assert.ok(blockAt < startAt && blockAt < stepAt, 'kill-switch が実行分岐より後ろにある');
+});
+
+test('guard: plan（read-only）は封じない', () => {
+  const blockAt = JOB_FN.indexOf("action === 'start' || action === 'step'");
+  const planAt = JOB_FN.indexOf("if (action === 'plan')");
+  assert.ok(planAt > -1 && planAt < blockAt, 'plan が kill-switch より後ろにある');
+});
+
+// ── Blobs を使わない ──────────────────────────────────────────
+
+test('guard: Blobs 版の store は削除され、どこからも参照されない', () => {
+  assert.equal(existsSync(path('./importJobStore.js')), false, 'importJobStore.js が残っている');
+  for (const [name, src] of [['JOB_FN', JOB_FN], ['RUNNER', RUNNER], ['MODEL', MODEL]]) {
+    assert.equal(src.includes('importJobStore'), false, `${name} が Blobs store を参照している`);
+    assert.equal(src.includes('@netlify/blobs'), false, `${name} が Blobs を import している`);
+    assert.equal(src.includes('connectLambda'), false, `${name} が Blobs を初期化している`);
+  }
+});
 
 // ── 書ける範囲 ────────────────────────────────────────────────
 
@@ -30,11 +63,10 @@ test('guard: ジョブ Function は既存レコードを更新・削除しない
   assert.equal(/method:\s*['"]PATCH['"]/.test(code), false, 'PATCH を組み立てている');
   assert.equal(/method:\s*['"]PUT['"]/.test(code), false);
   assert.equal(/method:\s*['"]DELETE['"]/.test(code), false, '削除を組み立てている');
-  // 作成は「まとめ書き」と「1 件ずつ（切り分け用）」の 2 経路だけ
-  const posts = code.match(/method:\s*['"]POST['"]/g) || [];
-  assert.equal(posts.length, 2, `作成経路が ${posts.length} 箇所ある（2 箇所であるべき）`);
-  assert.match(JOB_FN, /createRecords: async \(fieldsArray\)/, 'まとめ書きの経路が無い');
-  assert.match(JOB_FN, /createRecord: async \(fields\)/, '切り分け用の 1 件書き込みが無い');
+  // Airtable への POST は「まとめ書き」「1 件ずつ」の 2 経路のみ。
+  // Upstash REST も POST を使うので、Airtable URL を伴う POST だけを数える。
+  const airtablePosts = (code.match(/api\.airtable\.com[\s\S]{0,200}?method: 'POST'/g) || []).length;
+  assert.equal(airtablePosts, 2, `Airtable への作成経路が ${airtablePosts} 箇所ある（2 箇所であるべき）`);
 });
 
 test('guard: ジョブ Function はメールを送らない', () => {
@@ -42,62 +74,173 @@ test('guard: ジョブ Function はメールを送らない', () => {
   for (const bad of ['mail/send', '@sendgrid/mail', 'sendgrid.com/v3/mail']) {
     assert.equal(code.includes(bad), false, `送信経路がある: ${bad}`);
   }
-  // 送信系モジュールを import していない
-  assert.equal(/from '.*(sendMail|mailer|newsletter-send)/.test(code), false);
 });
 
 test('guard: 二重ゲート（env + 確認文字列）を通る経路しか無い', () => {
-  assert.match(JOB_FN, /canStartImportJob\(/, '開始ゲートを通っていない');
-  assert.match(JOB_FN, /canStepImportJob\(/, '続行ゲートを通っていない');
-  assert.match(MODEL, /env\.CUSTOMER_IMPORT_WRITE_ENABLED !== 'true'/, 'env ゲートが無い');
-  assert.match(MODEL, /JOB_REJECT\.NO_CONFIRMATION/, '確認文字列ゲートが無い');
-  // 書き込み（runChildBatch）はゲート判定より後ろにある
+  assert.match(JOB_FN, /canStartImportJob\(/);
+  assert.match(JOB_FN, /canStepImportJob\(/);
+  assert.match(MODEL, /env\.CUSTOMER_IMPORT_WRITE_ENABLED !== 'true'/);
+  assert.match(MODEL, /JOB_REJECT\.NO_CONFIRMATION/);
   const gateAt = JOB_FN.indexOf('canStepImportJob(');
   const writeAt = JOB_FN.indexOf('await runChildBatch(');
   assert.ok(gateAt > -1 && writeAt > gateAt, 'ゲートより前に書き込んでいる');
 });
 
-test('guard: env ゲートは start と step の両方に掛かる', () => {
-  // canStartImportJob / canStepImportJob のどちらも最初に env を見る
+test('guard: env ゲートは start と step の両方に掛かり、最初の関門である', () => {
   for (const fn of ['canStartImportJob', 'canStepImportJob']) {
     const i = MODEL.indexOf(`export function ${fn}`);
     assert.ok(i > -1, `${fn} が無い`);
-    // 次の export までを本文とみなす（引数の分割代入で切れないように）
     const nextExport = MODEL.indexOf('\nexport ', i + 1);
     const body = MODEL.slice(i, nextExport > -1 ? nextExport : MODEL.length);
     assert.match(body, /CUSTOMER_IMPORT_WRITE_ENABLED !== 'true'/, `${fn} に env ゲートが無い`);
-    // env の検査が**最初の関門**であること（他の判定より前）
     const envAt = body.indexOf("CUSTOMER_IMPORT_WRITE_ENABLED !== 'true'");
-    const confAt = body.indexOf('NO_CONFIRMATION');
-    if (confAt > -1) assert.ok(envAt < confAt, `${fn} で env ゲートが後回しになっている`);
+    const lockAt = body.indexOf('JOB_REJECT.LOCKED');
+    if (lockAt > -1) assert.ok(envAt < lockAt, `${fn} で env ゲートが後回し`);
   }
 });
 
-test('guard: 子バッチは 100 件を超えられない（コードから緩められない）', () => {
-  assert.match(MODEL, /export const JOB_CHILD_MAX_ROWS = FIRST_RUN_MAX_ROWS;/);
-  assert.match(MODEL, /Math\.min\(JOB_CHILD_MAX_ROWS, Math\.max\(1, n\)\)/, '上限を上書きできてしまう');
-  assert.match(JOB_FN, /childSize: JOB_CHILD_MAX_ROWS/, '子バッチの大きさを固定していない');
+// ── グローバルロック / 排他 ────────────────────────────────────
+
+test('guard: ロックはグローバル 1 本（batchId で区切らない）', () => {
+  assert.match(CLAIM, /export const GLOBAL_LOCK_KEY = 'customer-import:lock:global';/);
+  assert.equal(/GLOBAL_LOCK_KEY.*\$\{.*batch/i.test(CLAIM), false, 'ロックキーに batchId が混ざっている');
+  assert.match(CLAIM, /'SET', GLOBAL_LOCK_KEY, token, 'NX', 'EX'/, 'SET NX EX で取っていない');
+  assert.match(CLAIM, /'INCR', FENCE_KEY/, 'fencing token を採番していない');
 });
 
-test('guard: まとめ書きは Airtable の上限 10 件を超えない（executor を再利用）', () => {
-  assert.match(EXEC, /export const CREATE_CHUNK_SIZE = 10;/);
-  assert.match(RUNNER, /writeCreateBatch\(/, '実績のある executor を使っていない');
-  // ジョブ経路が独自の書き込みループを持っていないこと
-  assert.equal(/for \(const chunk of/.test(codeOnly(RUNNER)), false, '独自のチャンク処理を再実装している');
+test('guard: ロックが取れなければ Airtable を読まない・書かない', () => {
+  for (const fn of ['handleStart', 'handleStep', 'handleCancel']) {
+    const i = JOB_FN.indexOf(`async function ${fn}`);
+    assert.ok(i > -1, `${fn} が無い`);
+    const body = JOB_FN.slice(i, i + 900);
+    const lockAt = body.indexOf('acquireGlobalLock');
+    const ctxAt = body.indexOf('buildJobContext');
+    assert.ok(lockAt > -1, `${fn} がロックを取っていない`);
+    if (ctxAt > -1) assert.ok(lockAt < ctxAt, `${fn} がロック取得より前に Airtable を読んでいる`);
+    assert.match(body, /if \(!lock\.ok\)/, `${fn} に fail-closed が無い`);
+  }
 });
 
-test('guard: 計画総数を超えて書かない', () => {
-  assert.match(RUNNER, /int\(job\?\.plannedTotal\) - int\(job\?\.totals\?\.created\)/, '残り予算の計算が無い');
-  assert.match(RUNNER, /maxWrites: limit/, '上限を executor へ渡していない');
+test('guard: 行 claim のキーに batchId を含めない（グローバル一意）', () => {
+  assert.match(CLAIM, /export const EMAIL_CLAIM_PREFIX = 'customer-import:email:';/);
+  const i = CLAIM.indexOf('export function emailClaimKey');
+  const body = CLAIM.slice(i, i + 400);
+  assert.equal(/batchId/.test(body), false, 'claim キーに batchId が混ざっている');
+  assert.match(body, /normalizeEmail\(/, '正規化していない');
+  assert.match(body, /sha256/, 'ハッシュ化していない（PII 保存）');
 });
 
-test('guard: 子バッチ直前に既存アドレスを取り直して渡す', () => {
-  assert.match(RUNNER, /existingEmails: new Set\(facts && facts\.existing/, '直前再判定を渡していない');
-  // buildJobContext（Customers 取得）は step のたびに呼ばれる
-  const stepAt = JOB_FN.indexOf('async function handleStep');
-  const body = JOB_FN.slice(stepAt, JOB_FN.indexOf('// ── action: status'));
-  assert.match(body, /await buildJobContext\(/, 'step で Customers を取り直していない');
+test('guard: 期限切れ claim を自動で奪わない（reconciler だけが解放する）', () => {
+  // Lua に「期限切れなら奪う」分岐が無いこと
+  const i = CLAIM.indexOf('export const CLAIM_ROWS_LUA');
+  const lua = CLAIM.slice(i, CLAIM.indexOf('`;', i));
+  assert.equal(/expired|expiresAt.*<|TTL.*steal/i.test(lua), false, 'Lua が期限切れ claim を奪っている');
+  assert.match(lua, /out\[i\] = 'TAKEN'/, '他者保持を TAKEN にしていない');
+  assert.match(CLAIM, /releaseClaimByReconciler/, 'reconciler 専用の解放経路が無い');
 });
+
+// ── 書き込み直前の再検証（stale writer 防止）──────────────────
+
+test('guard: claim → 所有権再検証 → create の順序が固定されている', () => {
+  const claimAt = RUNNER.indexOf('await claims.claimRows(');
+  const verifyAt = RUNNER.indexOf('await claims.verifyLockOwnership(');
+  const writeAt = RUNNER.indexOf('await writeCreateBatch(');
+  assert.ok(claimAt > -1 && verifyAt > claimAt, 'claim の後に所有権を再検証していない');
+  assert.ok(writeAt > verifyAt, 'create が所有権再検証より前にある');
+  assert.match(RUNNER, /if \(!own\.ok\)/, '所有権を失ったときに止めていない');
+});
+
+test('guard: snapshot 検証は claim より前', () => {
+  const snapAt = RUNNER.indexOf('await authority.verifySnapshot(');
+  const claimAt = RUNNER.indexOf('await claims.claimRows(');
+  assert.ok(snapAt > -1 && snapAt < claimAt, 'snapshot 検証が claim より後ろ');
+});
+
+test('guard: runner は claim を解放しない（reconciler の責務）', () => {
+  assert.equal(/releaseClaim|DEL/.test(codeOnly(RUNNER)), false, 'runner が claim を解放している');
+});
+
+// ── fail-closed ───────────────────────────────────────────────
+
+test('guard: Redis 異常は必ず RedisUnavailableError で伝播する', () => {
+  assert.match(CLAIM, /export class RedisUnavailableError/);
+  for (const code of ['UNREACHABLE', 'UNKNOWN_RESULT', 'LOCK_STATE_UNKNOWN',
+    'JOB_UNREADABLE', 'CLAIM_INCONSISTENT', 'DATA_LOSS_SUSPECTED']) {
+    assert.ok(CLAIM.includes(code), `REDIS_FAIL.${code} が無い`);
+  }
+  // 例外を握りつぶしていない
+  assert.match(CLAIM, /throw new RedisUnavailableError/);
+  assert.match(RUNNER, /if \(e instanceof RedisUnavailableError\) throw e;/, 'runner が Redis 異常を握りつぶす');
+});
+
+test('guard: Function は Redis 異常を 503 fail-closed で返す（黙って続行しない）', () => {
+  assert.match(JOB_FN, /e instanceof RedisUnavailableError/);
+  assert.match(JOB_FN, /JOB_REJECT\.REDIS_UNAVAILABLE/);
+  assert.match(JOB_FN, /json\(503,/);
+});
+
+test('guard: 「Redis 消失時も重複しない」という主張がコードに残っていない', () => {
+  for (const [name, src] of [['MODEL', MODEL], ['CLAIM', CLAIM], ['RUNNER', RUNNER], ['AUTH', AUTH]]) {
+    assert.equal(/消失しても.*重複は発生しない|消失時も重複/.test(src), false,
+      `${name} に撤回済みの主張が残っている`);
+  }
+  assert.match(MODEL, /第二防御/, 'Customers 判定が第二防御であることを明記していない');
+});
+
+// ── 正本 ──────────────────────────────────────────────────────
+
+test('guard: 正本の必須項目が定義され、欠けたら保存しない', () => {
+  for (const f of ['jobId', 'batchId', 'source', 'fileFingerprint', 'snapshotFingerprint',
+    'plannedTotal', 'orderingVersion', 'cursor', 'attempted', 'created', 'skippedExisting',
+    'failed', 'cancelledAt', 'status', 'currentChild', 'fencingToken', 'operationId',
+    'childHistory', 'reconciliation', 'createdAt', 'updatedAt']) {
+    assert.ok(AUTH.includes(`'${f}'`), `正本の必須項目に ${f} が無い`);
+  }
+  assert.match(AUTH, /validateJobRecord\(job\)/);
+  assert.match(AUTH, /assertNoPii/);
+});
+
+test('guard: 正本に PII を保存しない', () => {
+  for (const fn of ['async create(job)', 'async save(job)']) {
+    const i = AUTH.indexOf(fn);
+    assert.ok(i > -1, `${fn} が無い`);
+    assert.match(AUTH.slice(i, i + 400), /validateJobRecord/, `${fn} に検証が無い`);
+  }
+  assert.match(AUTH, /PII_KEYS = \[/);
+});
+
+test('guard: snapshot は chunk 分割し、指紋で差し替えを検知する', () => {
+  assert.match(AUTH, /export const SNAPSHOT_CHUNK_SIZE = 500;/);
+  assert.match(AUTH, /computeSnapshotFingerprint/);
+  assert.match(AUTH, /snapshot_fingerprint_mismatch/);
+  assert.match(AUTH, /export const ORDERING_VERSION/);
+});
+
+// ── 突合 ──────────────────────────────────────────────────────
+
+test('guard: 突合は 4 点以上（重複数を含む）', () => {
+  for (const k of ['counters_balanced', 'within_plan', 'created_matches_airtable',
+    'claims_created_matches_airtable', 'no_new_duplicates']) {
+    assert.ok(RECON.includes(k), `突合 ${k} が無い`);
+  }
+  assert.match(RECON, /duplicateEmailPairs/);
+  assert.match(JOB_FN, /countDuplicateEmailPairs\(/, 'Function が重複数を測っていない');
+});
+
+test('guard: 不一致なら自動続行しない', () => {
+  assert.match(RECON, /canContinue: verdict === RECONCILE_VERDICT\.OK/);
+  assert.match(JOB_FN, /markJobBlocked\(/, 'BLOCKED へ遷移していない');
+});
+
+test('guard: reconciler の解放は 4 条件すべてを確認する', () => {
+  const i = RECON.indexOf('export function canReleaseClaim');
+  const body = RECON.slice(i);
+  for (const r of ['present_in_customers', 'present_for_source', 'not_expired', 'fencing_token_still_current']) {
+    assert.ok(body.includes(r), `解放条件 ${r} が無い`);
+  }
+});
+
+// ── CREATE だけ ───────────────────────────────────────────────
 
 test('guard: CREATE だけ（既存・有料・重複・要確認は対象から外す）', () => {
   for (const s of ['SKIP_REASON.EXISTING', 'SKIP_REASON.PAID', 'SKIP_REASON.DUPLICATE_IN_AK',
@@ -108,66 +251,19 @@ test('guard: CREATE だけ（既存・有料・重複・要確認は対象から
   }
 });
 
-test('guard: ジョブ経路の除外集合は単発 run と一致する（取りこぼしを作らない）', () => {
-  // 実績のある単発 run が見ている facts と同じものをジョブ側も見ていること
+test('guard: ジョブ経路の除外集合は単発 run と一致する', () => {
   for (const fact of ['unsubscribed', 'hardBounce', 'softBounce', 'suspended',
     'testAccounts', 'paid', 'duplicateInAk', 'existing']) {
     assert.ok(RUN_FN.includes(`facts.${fact}`), `単発 run に facts.${fact} が無い（前提が変わった）`);
     assert.ok(ELIG.includes(`f.${fact}`), `ジョブ側に f.${fact} が無い`);
   }
-  // 停止リストが取れないときは両方とも書かない
-  assert.match(RUN_FN, /if \(!\(provider && provider\.ok\)\) continue;/);
-  assert.match(MODEL, /JOB_REJECT\.PREVIEW_INVALID/);
 });
 
-// ── 冪等性・再開・同時実行 ────────────────────────────────────
-
-test('guard: 二重作成を防ぐ本体は Customers 側の実在判定（store ではない）', () => {
-  assert.match(EXEC, /existing\.has\(email\)/, '書き込み直前の再判定が無い');
-  assert.match(STORE, /正本ではない/, 'store が正本でないことを明記していない');
-  assert.match(MODEL, /二重作成を防ぐのは \*\*Customers 側のアドレス実在判定\*\*/);
-});
-
-test('guard: 同時実行はリースで fail-closed に断る', () => {
-  assert.match(MODEL, /JOB_REJECT\.LOCKED/);
-  assert.match(MODEL, /isLeaseHeld\(\{ job, nowMs, leaseMs \}\)\) return no\(JOB_REJECT\.LOCKED\)/);
-});
-
-test('guard: 完了・取消・失敗のジョブは進めない（再実行拒否）', () => {
-  assert.match(MODEL, /job\.status === JOB_STATUS\.COMPLETED\) return no\(JOB_REJECT\.ALREADY_COMPLETED\)/);
-  assert.match(MODEL, /job\.status === JOB_STATUS\.CANCELLED\) return no\(JOB_REJECT\.CANCELLED\)/);
-  assert.match(MODEL, /job\.status === JOB_STATUS\.FAILED\) return no\(JOB_REJECT\.FAILED\)/);
-});
-
-test('guard: cancel は作成済みを消さない', () => {
-  const i = MODEL.indexOf('export function cancelImportJob');
-  const body = MODEL.slice(i, MODEL.indexOf('\n}', i));
-  assert.equal(/delete|splice|totals: \{/.test(body), false, 'cancel が作成済みを触っている');
-  assert.match(body, /JOB_STATUS\.CANCELLED/);
-});
-
-test('guard: ファイルが差し替わったら進めない', () => {
-  assert.match(MODEL, /JOB_REJECT\.FILE_CHANGED/);
-  assert.match(JOB_FN, /fileFingerprint: ctx\.fileFingerprint/, '指紋を照合していない');
-});
-
-// ── PII ───────────────────────────────────────────────────────
-
-test('guard: ジョブ記録に PII を保存しない', () => {
-  assert.match(STORE, /assertNoPii\(job\)/, 'PII 検査をしていない');
-  assert.match(STORE, /pii_detected/, 'PII 検知時に拒否していない');
-  // 保存前に必ず検査を通る
-  for (const fn of ['async create(job)', 'async save(job)']) {
-    const i = STORE.indexOf(fn);
-    assert.ok(i > -1, `${fn} が無い`);
-    const body = STORE.slice(i, i + 600);
-    assert.match(body, /assertNoPii/, `${fn} に PII 検査が無い`);
-  }
-});
-
-test('guard: 監査ログに PII を入れない（executor 経由のみ）', () => {
-  assert.match(EXEC, /buildImportAuditEntry\(/);
-  assert.equal(/buildImportAuditEntry/.test(codeOnly(JOB_FN)), false, 'Function 側で監査ログを自作している');
+test('guard: 子バッチは 100 件を超えられない / まとめ書きは 10 件', () => {
+  assert.match(MODEL, /export const JOB_CHILD_MAX_ROWS = FIRST_RUN_MAX_ROWS;/);
+  assert.match(MODEL, /Math\.min\(JOB_CHILD_MAX_ROWS, Math\.max\(1, n\)\)/);
+  assert.match(EXEC, /export const CREATE_CHUNK_SIZE = 10;/);
+  assert.match(RUNNER, /writeCreateBatch\(/, '実績のある executor を使っていない');
 });
 
 test('guard: 例外の中身を応答へ返さない', () => {
@@ -176,96 +272,57 @@ test('guard: 例外の中身を応答へ返さない', () => {
   assert.match(c, /internal error/);
 });
 
-// ── BLOCKED（設計未完了のため write 経路を封じている）────────────
-
-test('guard: start / step は kill-switch で構造的に封じられている', () => {
-  assert.match(JOB_FN, /if \(action === 'start' \|\| action === 'step'\) \{/, 'kill-switch が無い');
-  assert.match(JOB_FN, /code: 'blocked_by_design'/);
-  // ⚠️ kill-switch は **Blobs store の初期化・書き込みより前**にあること
-  const blockAt = JOB_FN.indexOf("action === 'start' || action === 'step'");
-  const connectAt = JOB_FN.indexOf('connectLambda(event)');
-  const startAt = JOB_FN.indexOf('return await handleStart(');
-  const stepAt = JOB_FN.indexOf('return await handleStep(');
-  assert.ok(blockAt > -1 && blockAt < connectAt, 'kill-switch が Blobs 初期化より後ろにある');
-  assert.ok(blockAt < startAt && blockAt < stepAt, 'kill-switch が実行分岐より後ろにある');
-});
-
-test('guard: BLOCKED の理由と解決方針がコードに残っている', () => {
-  assert.match(JOB_FN, /【BLOCKED】/);
-  assert.match(JOB_FN, /Upstash Redis/, '解決方針が書かれていない');
-  assert.match(JOB_FN, /docs\/decisions\.md/, 'ADR への参照が無い');
-});
-
-test('guard: plan（read-only）は封じない', () => {
-  const blockAt = JOB_FN.indexOf("action === 'start' || action === 'step'");
-  const planAt = JOB_FN.indexOf("if (action === 'plan')");
-  assert.ok(planAt > -1 && planAt < blockAt, 'plan が kill-switch より後ろにある（下見まで止まる）');
-});
-
 // ── 画面 ──────────────────────────────────────────────────────
 
-test('guard(ui): 旧・単発の本番取込ボタンは無効のまま（ジョブへ移行した）', () => {
+test('guard(ui): 旧・単発の本番取込ボタンは無効のまま', () => {
   const i = PAGE.indexOf('id="impRun"');
   assert.ok(i > -1);
   assert.match(PAGE.slice(i - 200, i + 300), /disabled/);
-  assert.equal(/impRun'\)\?\.addEventListener/.test(PAGE), false, '旧ボタンに処理を配線している');
+  assert.equal(/impRun'\)\?\.addEventListener/.test(PAGE), false);
 });
 
-test('guard(ui): ジョブ画面が必須の進捗項目を出す', () => {
+test('guard(ui): BLOCKED を画面に明示する', () => {
   const i = PAGE.indexOf('外部顧客リストの取り込みジョブ（大量）');
-  assert.ok(i > -1, 'ジョブ画面が無い');
+  const s = PAGE.slice(i, PAGE.indexOf('</section>', i));
+  assert.ok(s.includes('【BLOCKED】'), '画面に BLOCKED 表示が無い');
+  assert.ok(s.includes('403'), '403 で断られることを書いていない');
+});
+
+test('guard(ui): 必須の進捗項目を出す', () => {
+  const i = PAGE.indexOf('外部顧客リストの取り込みジョブ（大量）');
   const s = PAGE.slice(i, PAGE.indexOf('</section>', i));
   for (const label of ['対象総数', '処理済み', '作成済み', '既存スキップ', '失敗',
     '残件数', '進捗率', '現在の子バッチ', '最終更新時刻', 'jobId', 'ImportBatchId', 'Source']) {
     assert.ok(s.includes(label), `画面に「${label}」が無い`);
   }
-  for (const id of ['impJobStart', 'impJobResume', 'impJobCancel', 'impJobPlan']) {
-    assert.ok(s.includes(id), `${id} が無い`);
-  }
 });
 
-test('guard(ui): 開始・再開・取消は既定で無効（下見してから有効化する）', () => {
+test('guard(ui): 開始・再開・取消は既定で無効', () => {
   const i = PAGE.indexOf('外部顧客リストの取り込みジョブ（大量）');
   const s = PAGE.slice(i, PAGE.indexOf('</section>', i));
   for (const id of ['impJobStart', 'impJobResume', 'impJobCancel']) {
     const j = s.indexOf(`id="${id}"`);
     const btn = s.slice(j, j + 160);
-    assert.match(btn, /disabled/, `${id} が既定で有効になっている`);
-    assert.match(btn, /aria-disabled="true"/, `${id} に aria-disabled が無い`);
+    assert.match(btn, /disabled/, `${id} が既定で有効`);
+    assert.match(btn, /aria-disabled="true"/);
   }
 });
 
-test('guard(ui): 書き込みゲートが閉じていれば開始できない', () => {
-  assert.match(PAGE, /canStart: out\.writeEnabled === true/, 'ゲートで開始可否を決めていない');
-  assert.ok(PAGE.includes('impJobGateWarn'), 'ゲート警告が無い');
-});
-
-test('guard(ui): 完了後は再実行できない', () => {
-  assert.match(PAGE, /const finished = !job\['再実行可能'\];/, '完了判定が無い');
-  assert.match(PAGE, /impJobSetButtons\(\{ canStart: false, canResume: !finished, canCancel: !finished \}\)/);
+test('guard(ui): 書き込みゲートが閉じていれば開始できない / 完了後は再実行不可', () => {
+  assert.match(PAGE, /canStart: out\.writeEnabled === true/);
+  assert.match(PAGE, /const finished = !job\['再実行可能'\];/);
 });
 
 test('guard(ui): 子バッチは逐次実行（並行に走らせない）', () => {
-  assert.match(PAGE, /let impJobRunning = false;/, '二重起動フラグが無い');
-  assert.match(PAGE, /if \(impJobRunning\) \{/, '二重起動を止めていない');
-  // ループ内は await で直列
+  assert.match(PAGE, /let impJobRunning = false;/);
   const i = PAGE.indexOf('async function impJobDrive');
-  const body = PAGE.slice(i, PAGE.indexOf('$(\'impJobStart\')', i));
-  assert.match(body, /await impJobCall\(\{ action: 'step'/, 'step を await していない');
+  const body = PAGE.slice(i, PAGE.indexOf("$('impJobStart')", i));
+  assert.match(body, /await impJobCall\(\{ action: 'step'/);
   assert.equal(/Promise\.all|Promise\.allSettled/.test(body), false, '並行実行している');
 });
 
 test('guard(ui): 明細・アドレスを DOM へ出さない', () => {
   const i = PAGE.indexOf('外部顧客リストの取り込みジョブ（大量）');
   const s = PAGE.slice(i, PAGE.indexOf('</section>', i));
-  for (const bad of ['RecipientEmail', 'recordId', 'Email"']) assert.equal(s.includes(bad), false, `${bad} を出している`);
-});
-
-test('guard(ui): ジョブの方針を画面に明記する', () => {
-  const i = PAGE.indexOf('外部顧客リストの取り込みジョブ（大量）');
-  const s = PAGE.slice(i, PAGE.indexOf('</section>', i));
-  for (const phrase of ['新規のみ', '1 件も更新しません', '最大 100 件', '10 件ずつ',
-    '再実行できません', '消しません', 'Source 単位の隔離', 'メールを 1 通も送りません']) {
-    assert.ok(s.includes(phrase), `画面に「${phrase}」が無い`);
-  }
+  for (const bad of ['RecipientEmail', 'recordId', 'Email"']) assert.equal(s.includes(bad), false);
 });

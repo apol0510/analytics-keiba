@@ -419,10 +419,12 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | **親ジョブの状態機械（PLANNED〜CANCELLED / cursor / 突合）** | `src/lib/crm/importJobModel.js` | 実装済み |
 | **作成対象の判定（決定的な並び・除外集合）** | `src/lib/crm/importEligibility.js` | 実装済み |
 | **子バッチ 1 つの実行** | `src/lib/crm/importJobRunner.js` | 実装済み |
-| **ジョブの保存（Netlify Blobs・正本ではない）** | `src/lib/crm/importJobStore.js` | 実装済み |
+| **排他とグローバル行 claim（Redis）** | `src/lib/crm/importClaimStore.js` | 実装済み |
+| **親ジョブの正本 + snapshot（Redis）** | `src/lib/crm/importJobAuthority.js` | 実装済み |
+| **4 点突合と reconciler の解放条件** | `src/lib/crm/importJobReconcile.js` | 実装済み |
 | 下見 API（read-only） | `netlify/functions/admin-customer-import.js` | 実装済み（`action:'previewCsv'`） |
 | 単発実行 API（1 回 100 件） | `netlify/functions/admin-customer-import-run.js` | 実装済み・本番 3 バッチ 210 件で実績 |
-| **ジョブ API（開始 1 回・子バッチ分割）** | `netlify/functions/admin-customer-import-job.js` | 実装済み・**本番未実行** |
+| **ジョブ API（開始 1 回・子バッチ分割）** | `netlify/functions/admin-customer-import-job.js` | 実装済み・**start/step は kill-switch で 403**（BLOCKED） |
 | 画面 | `/admin/premium-plus-eligibility/` の「外部顧客リストの取り込み（下見）」 | 実装済み・単発の本番取込ボタンは **disabled のまま** |
 | **画面（大量取り込み）** | 同ページの「外部顧客リストの取り込みジョブ（大量）」 | 実装済み・**書き込みゲートが閉じていれば開始不可** |
 
@@ -547,25 +549,49 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | `FAILED` | 続行不能で終了。**再実行できない** |
 | `CANCELLED` | 取り消した。**作成済みは消さない**・再実行できない |
 
-##### ⚠️ 正本は Airtable であって、ジョブ記録ではない
+##### 正本と排他は Upstash Redis（Blobs 方式は破棄）
 
 Netlify Blobs は同一キー競合が **last-write-wins** で、`onlyIfNew` / `onlyIfMatch` も
 best-effort でしかない（premium-plus canary #13 で実 lost-update を確認・
-`docs/PREMIUM_PLUS_STORAGE_DESIGN.md`）。Airtable 側に CAS は無く、ImportJobs テーブルの
-新設は **schema 変更**にあたるため採らない。そこで**安全性をジョブ記録の一貫性に依存させない**:
+`docs/PREMIUM_PLUS_STORAGE_DESIGN.md`）。**リースは排他にならない**。
+また Airtable の `Source` 件数だけでは **snapshot / 失敗 / 未処理 / cancel 境界 /
+operationId** を復元できず、ImportJobs テーブルの新設は **schema 変更**にあたる。
 
-1. **二重作成を防ぐのは Customers 側のアドレス実在判定**（子バッチ直前に取り直す）。
-   すでに作った行は Customers に居るので、同じ子バッチをもう一度流しても
-   `skippedExisting` になるだけで**増えない**
-2. **進捗の正本も Customers**（`Source = customer-import:<batchId>` の件数）。
-   ジョブ記録が壊れても Airtable から再構成できる。`status` は毎回この実測と突合する
-3. `cursor` は**やり直しを速くするためだけ**の目印。巻き戻っても結果は変わらない
-4. 排他リース（既定 90 秒）は **best-effort の多重防御**。これ単独では同時実行を防げない
+そこで **Upstash Redis**（AK の既存基盤・入金確認メール v2 で本番稼働中）を採る:
 
-> **残る競合**: 2 つの実行が**同時に**同じアドレスを「まだ無い」と読んだ場合は二重作成が
-> 起こりうる（TOCTOU）。これは実績のある単発 run 経路と**同じ露出**であり、
-> 運用は「同時に 2 つ動かさない」（画面は逐次実行 + リースで拒否）で閉じる。
-> **strong な排他は現在の基盤では提供できない**ことを明示しておく。
+1. **グローバルロック** `customer-import:lock:global` を `SET NX EX` + `INCR` fencing token で取る。
+   **AK 全体で write ジョブは同時に 1 つ**。job 単位ではないので**異なる `batchId` 同士の競合も拒否**する。
+   **取れなければ Airtable を一切読まない・書かない**
+2. **行 claim は正規化メールに対してグローバル**: `customer-import:email:<sha256(normalizedEmail)>`。
+   **`batchId` で区切らない**（区切ると別 batchId が同じメールを同時 claim できてしまう）。
+   作成の**前**に `EVAL`（Lua）で 100 件を 1 往復 atomic 取得する
+3. **親 ImportJob の正本は Redis**。snapshot は chunk 分割（500 件ずつ）して固定し、
+   `snapshotFingerprint` で開始後の差し替えを検知する
+4. Customers の実在判定は **第二防御**。**同時実行排他の代替ではない**
+
+###### 不変条件（順序を崩さない）
+
+グローバルロック → 正本読み込み → snapshot 検証 → 子バッチ claim →
+**行 claim（Lua）** → **書き込み直前にロック所有権と fencing token を再検証** →
+所有権を失っていたら **create しない** → create 成功を確認した行だけ `CREATED` へ。
+
+**claim は Airtable で作成済みと確認できるまで解放しない。** 回収は reconciler だけが、
+次を**すべて**確認してから行う: Customers に同メールが無い / 同 `Source` の行が無い /
+claim が期限切れ / 旧 fencing token が現在値より古い。
+
+###### 保証すること・しないこと
+
+- **保証**: Redis が正常なときの **at-most-once claim**（＝二重作成が起きない）
+- **保証しない**: literal exactly-once。claim 後・create 前のクラッシュは
+  「claim 済み・未作成」を残す。これは**重複ではなく取りこぼし**（安全側）で reconciler が回収する
+- **Redis 異常時は新規 Airtable 書き込みを全面停止（fail-closed）**:
+  到達不能 / Lua 結果不明 / lock 状態不明 / 正本が読めない / claim 不整合 / データ欠損の疑い
+
+###### 突合は 4 点（不一致なら自動続行しない）
+
+Redis job counters / Redis 行 claim 状態 / Airtable `Source` 件数 /
+**Customers 全体の正規化メール重複数**。
+説明できない不一致は `BLOCKED`、claim 済み・未作成が残るときは `PARTIAL` とし、**進めない**。
 
 ##### ジョブの二重ゲート（`canStartImportJob` / `canStepImportJob`）
 

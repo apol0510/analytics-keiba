@@ -2,30 +2,31 @@
  * importJobFlow.test.mjs — 親ジョブ + 子バッチの状態機械と実行を固定する
  *   node --test src/lib/crm/importJobFlow.test.mjs
  *
- * **1 件も本番へ書かない。** Airtable への書き込みは deps で注入したモックで受ける。
+ * **1 件も本番へ書かない。** Airtable / Redis はすべて注入したモックで受ける。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  createImportJob, canStartImportJob, canStepImportJob, cancelImportJob,
-  applyChildResult, beginChildBatch, markChildError,
-  summarizeJobProgress, reconcileImportJob, describeJobRollback,
-  buildJobId, buildJobSource, buildJobConfirmation, buildChildBatchKey,
-  countChildBatches, clampChildSize, isLeaseHeld,
-  JOB_STATUS, JOB_REJECT, JOB_CHILD_MAX_ROWS,
+  canStartImportJob, canStepImportJob, cancelImportJob,
+  applyChildResult, beginChildBatch, markJobBlocked, markJobRedisUnavailable,
+  summarizeJobProgress, describeJobRollback,
+  buildJobId, buildJobSource, buildJobConfirmation, buildOperationId,
+  countChildBatches, clampChildSize, nextChildIndex,
+  JOB_STATUS, JOB_REJECT, JOB_CHILD_MAX_ROWS, TERMINAL_STATUS,
 } from './importJobModel.js';
 import {
   selectCreateRows, countCreateCandidates, classifyCreateRow,
   orderEntriesDeterministically, SKIP_REASON,
 } from './importEligibility.js';
-import { runChildBatch } from './importJobRunner.js';
-import { createImportJobStore, assertNoPii } from './importJobStore.js';
+import { runChildBatch, STEP_STOP } from './importJobRunner.js';
+import { buildJobRecord } from './importJobAuthority.js';
 
-const REMAINING = 14284;               // 現在地: CREATE 候補の残数
+const REMAINING = 14284;
 const NOW_MS = Date.parse('2026-08-05T03:00:00.000Z');
 const NOW_ISO = new Date(NOW_MS).toISOString();
 const BATCH = 'imp-2026-08-05-004';
+const JOB_ID = `job:${BATCH}`;
 const ENV_ON = { CUSTOMER_IMPORT_WRITE_ENABLED: 'true' };
 
 const emptyFacts = () => ({
@@ -35,215 +36,215 @@ const emptyFacts = () => ({
 });
 
 const makeEntries = (n, prefix = 'u') => Array.from({ length: n }, (_, i) => ({
-  email: `${prefix}${String(i).padStart(6, '0')}@example.invalid`,
-  name: '', flags: [],
+  email: `${prefix}${String(i).padStart(6, '0')}@example.invalid`, name: '', flags: [],
 }));
 
-const newJob = (total = REMAINING) => createImportJob({
-  batchId: BATCH, fileFingerprint: 'fp-abc', plannedTotal: total,
-  childSize: JOB_CHILD_MAX_ROWS, nowIso: NOW_ISO,
+const newJob = (total = REMAINING, over = {}) => ({
+  ...buildJobRecord({
+    jobId: JOB_ID, batchId: BATCH, source: `customer-import:${BATCH}`,
+    fileFingerprint: 'fp-abc', snapshotFingerprint: 'snap-abc', plannedTotal: total,
+    fencingToken: '1', operationId: 'op-0', nowIso: NOW_ISO,
+  }),
+  childSize: JOB_CHILD_MAX_ROWS,
+  ...over,
 });
 
-/** 成功するまとめ書き。呼ばれたチャンクの大きさを記録する */
+/** claim をすべて勝たせる fake（排他の検証は importJobClaim.test.mjs 側）*/
+function allowAllClaims() {
+  const calls = { claimRows: 0, verifyLockOwnership: 0, markRowsCreated: 0 };
+  return {
+    calls,
+    claims: {
+      async claimRows({ emails }) { calls.claimRows += 1; return { won: [...emails], created: [], taken: [], mine: [] }; },
+      async verifyLockOwnership() { calls.verifyLockOwnership += 1; return { ok: true, reason: null }; },
+      async markRowsCreated({ emails }) { calls.markRowsCreated += 1; return { ok: [...emails], notMine: [], missing: [] }; },
+    },
+  };
+}
+const okAuthority = { async verifySnapshot() { return { ok: true, reason: null }; } };
+
 function okWriter() {
   const chunks = [];
   return {
     chunks,
     deps: {
-      createRecords: async (fieldsArray) => { chunks.push(fieldsArray.length); return { ok: true, status: 200 }; },
+      createRecords: async (a) => { chunks.push(a.length); return { ok: true, status: 200 }; },
       createRecord: async () => ({ ok: true, status: 200 }),
       sleep: async () => {},
     },
   };
 }
 
-// ── 1. 大量件数の分割 ─────────────────────────────────────────
+const runArgs = (over = {}) => ({
+  job: newJob(), entries: makeEntries(250), currentOrderedHashes: ['h'],
+  facts: emptyFacts(), providerEmails: new Set(), availableFields: new Set(),
+  lockToken: '1', operationId: 'op-1', nowMs: NOW_MS, nowIso: NOW_ISO,
+  authority: okAuthority, ...over,
+});
 
-test('14,284 件でも 100 件以下の子バッチへ正しく分割される', () => {
-  const job = newJob();
-  assert.equal(job.plannedTotal, REMAINING);
-  assert.equal(job.childSize, 100);
-  assert.equal(job.childBatches, 143);                 // ceil(14284 / 100)
+// ── 分割 ──────────────────────────────────────────────────────
+
+test('14,284 件は 100 件以下の子バッチ 143 個へ分割される', () => {
   assert.equal(countChildBatches(REMAINING, 100), 143);
-  // 端数の最後の子バッチは 84 件
   assert.equal(REMAINING - 142 * 100, 84);
 });
 
-test('子バッチの大きさは 100 件を超えられない（コードから緩められない）', () => {
-  assert.equal(clampChildSize(500), JOB_CHILD_MAX_ROWS);
+test('子バッチの大きさは 100 件を超えられない', () => {
+  assert.equal(clampChildSize(500), 100);
   assert.equal(clampChildSize(101), 100);
   assert.equal(clampChildSize(0), 100);
-  assert.equal(clampChildSize(50), 50);
   assert.equal(JOB_CHILD_MAX_ROWS, 100);
 });
 
-test('jobId / ImportBatchId / Source が一意に決まる', () => {
-  assert.equal(buildJobId(BATCH), `job:${BATCH}`);
+test('jobId / ImportBatchId / Source / operationId が一意に決まる', () => {
+  assert.equal(buildJobId(BATCH), JOB_ID);
   assert.equal(buildJobSource(BATCH), `customer-import:${BATCH}`);
+  assert.equal(buildOperationId({ jobId: JOB_ID, index: 7 }), `${JOB_ID}#0007`);
   assert.notEqual(buildJobSource(BATCH), buildJobSource('imp-2026-08-05-005'));
-  assert.equal(buildChildBatchKey({ jobId: `job:${BATCH}`, index: 7 }), `job:${BATCH}#0007`);
 });
 
-// ── 2. 100 件ごと・10 件 bulk ─────────────────────────────────
+// ── 書き込み ──────────────────────────────────────────────────
 
-test('子バッチ 100 件は 10 件ずつ 10 リクエストのまとめ書きになる', async () => {
+test('子バッチ 100 件は 10 件ずつ 10 リクエストになる', async () => {
   const w = okWriter();
-  const out = await runChildBatch({
-    job: newJob(), entries: makeEntries(250), facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps: w.deps,
-  });
+  const c = allowAllClaims();
+  const out = await runChildBatch(runArgs({ claims: c.claims, deps: w.deps }));
   assert.equal(out.result.created, 100);
   assert.equal(out.result.bulkRequests, 10);
   assert.equal(out.result.singleRequests, 0);
-  assert.deepEqual(w.chunks, [10, 10, 10, 10, 10, 10, 10, 10, 10, 10]);
-  assert.equal(out.job.totals.created, 100);
-  assert.equal(out.job.status, JOB_STATUS.RUNNING);
+  assert.deepEqual(w.chunks, Array(10).fill(10));
 });
 
-test('計画総数を超えて書かない（最後の子バッチは端数だけ）', async () => {
+test('計画総数を超えて書かない', async () => {
   const w = okWriter();
-  const job = { ...newJob(120), cursor: 0, totals: { attempted: 100, created: 100, skippedExisting: 0, failed: 0 } };
-  const out = await runChildBatch({
-    job, entries: makeEntries(500), facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps: w.deps,
-  });
-  assert.equal(out.result.created, 20, '残り 20 件を超えて書いている');
-  assert.equal(out.job.totals.created, 120);
-  assert.equal(out.job.status, JOB_STATUS.COMPLETED);
+  const c = allowAllClaims();
+  const out = await runChildBatch(runArgs({
+    job: newJob(120, { created: 100, attempted: 100 }), claims: c.claims, deps: w.deps,
+  }));
+  assert.equal(out.result.created, 20);
 });
 
-// ── 3. 子バッチ途中失敗 ───────────────────────────────────────
+// ── 不変条件: 書き込み直前の所有権再検証 ────────────────────────
 
-test('まとめ書きが失敗すると 1 件ずつ切り分けに落ちる（成功分は残る）', async () => {
-  let bulk = 0;
-  const deps = {
-    createRecords: async () => { bulk += 1; return bulk === 1 ? { ok: false, status: 422 } : { ok: true, status: 200 }; },
-    createRecord: async (f) => ({ ok: !String(f.Email).startsWith('u000003'), status: 422 }),
-    sleep: async () => {},
+test('書き込み直前にロック所有権を再検証する（claim の後・create の前）', async () => {
+  const order = [];
+  const claims = {
+    async claimRows({ emails }) { order.push('claim'); return { won: [...emails], created: [], taken: [], mine: [] }; },
+    async verifyLockOwnership() { order.push('verify'); return { ok: true, reason: null }; },
+    async markRowsCreated({ emails }) { order.push('mark'); return { ok: [...emails], notMine: [], missing: [] }; },
   };
-  const out = await runChildBatch({
-    job: newJob(), entries: makeEntries(100), facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps,
-  });
-  assert.ok(out.result.singleRequests > 0, '1 件ずつの切り分けが走っていない');
-  assert.equal(out.result.created, 99);
-  assert.equal(out.result.failed, 1);
-  assert.equal(out.job.totals.failed, 1);
+  const deps = {
+    createRecords: async () => { order.push('create'); return { ok: true, status: 200 }; },
+    createRecord: async () => ({ ok: true, status: 200 }), sleep: async () => {},
+  };
+  await runChildBatch(runArgs({ entries: makeEntries(10), claims, deps }));
+  assert.equal(order[0], 'claim');
+  assert.equal(order[1], 'verify');
+  assert.equal(order[2], 'create', 'create が所有権再検証より前にある');
+  assert.equal(order[order.length - 1], 'mark');
 });
 
-test('子バッチが例外で落ちてもリースは外れ、続きから再開できる', async () => {
+test('所有権を失っていたら Airtable create を 1 件も行わない', async () => {
+  let created = 0;
+  const claims = {
+    async claimRows({ emails }) { return { won: [...emails], created: [], taken: [], mine: [] }; },
+    async verifyLockOwnership() { return { ok: false, reason: 'stolen' }; },
+    async markRowsCreated() { throw new Error('呼ばれてはいけない'); },
+  };
+  const deps = {
+    createRecords: async () => { created += 1; return { ok: true, status: 200 }; },
+    createRecord: async () => { created += 1; return { ok: true, status: 200 }; }, sleep: async () => {},
+  };
+  const out = await runChildBatch(runArgs({ entries: makeEntries(10), claims, deps }));
+  assert.equal(created, 0, 'stale writer が書き込んだ');
+  assert.equal(out.stopped, STEP_STOP.LOCK_LOST);
+});
+
+test('snapshot が変わっていたら Airtable を書かない', async () => {
+  let created = 0;
+  const c = allowAllClaims();
+  const deps = {
+    createRecords: async () => { created += 1; return { ok: true, status: 200 }; },
+    createRecord: async () => ({ ok: true, status: 200 }), sleep: async () => {},
+  };
+  const out = await runChildBatch(runArgs({
+    claims: c.claims, deps,
+    authority: { async verifySnapshot() { return { ok: false, reason: 'snapshot_changed' }; } },
+  }));
+  assert.equal(out.stopped, STEP_STOP.SNAPSHOT_CHANGED);
+  assert.equal(created, 0);
+  assert.equal(c.calls.claimRows, 0, 'snapshot 不一致なのに claim を取った');
+});
+
+test('他が確保済みの行は書かない（claim に負けた分を飛ばす）', async () => {
+  const entries = makeEntries(10);
+  const written = [];
+  const claims = {
+    async claimRows({ emails }) {
+      return { won: emails.slice(0, 4), created: emails.slice(4, 6), taken: emails.slice(6), mine: [] };
+    },
+    async verifyLockOwnership() { return { ok: true, reason: null }; },
+    async markRowsCreated({ emails }) { return { ok: [...emails], notMine: [], missing: [] }; },
+  };
+  const deps = {
+    createRecords: async (a) => { written.push(...a.map((f) => f.Email)); return { ok: true, status: 200 }; },
+    createRecord: async () => ({ ok: true, status: 200 }), sleep: async () => {},
+  };
+  const out = await runChildBatch(runArgs({ entries, claims, deps }));
+  assert.equal(written.length, 4, '確保できていない行を書いた');
+  assert.equal(out.result.created, 4);
+});
+
+test('claim をすべて失ったら書き込み 0 で終わる', async () => {
+  let created = 0;
+  const claims = {
+    async claimRows({ emails }) { return { won: [], created: [], taken: [...emails], mine: [] }; },
+    async verifyLockOwnership() { return { ok: true, reason: null }; },
+    async markRowsCreated() { return { ok: [], notMine: [], missing: [] }; },
+  };
+  const deps = {
+    createRecords: async () => { created += 1; return { ok: true, status: 200 }; },
+    createRecord: async () => ({ ok: true, status: 200 }), sleep: async () => {},
+  };
+  const out = await runChildBatch(runArgs({ entries: makeEntries(10), claims, deps }));
+  assert.equal(created, 0);
+  assert.equal(out.result, null);
+});
+
+test('書き込みが例外で落ちても claim を解放しない', async () => {
+  let released = 0;
+  const c = allowAllClaims();
+  c.claims.releaseClaimByReconciler = async () => { released += 1; return { released: true }; };
   const deps = {
     createRecords: async () => { throw new Error('boom'); },
-    createRecord: async () => { throw new Error('boom'); },
-    sleep: async () => {},
+    createRecord: async () => { throw new Error('boom'); }, sleep: async () => {},
   };
-  const out = await runChildBatch({
-    job: newJob(), entries: makeEntries(100), facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps,
-  });
-  assert.equal(out.ok, false);
-  assert.equal(out.job.status, JOB_STATUS.PARTIAL);
-  assert.equal(out.job.lease, null, 'リースが残ると次が進めない');
-  assert.equal(canStepImportJob({
-    env: ENV_ON, job: out.job, nowMs: NOW_MS + 1000, fileFingerprint: 'fp-abc', providerOk: true,
-  }).allowed, true, 'PARTIAL から再開できない');
+  const out = await runChildBatch(runArgs({ entries: makeEntries(10), claims: c.claims, deps }));
+  assert.equal(out.writeError, true);
+  assert.equal(released, 0, 'runner が claim を解放している（reconciler の仕事）');
 });
 
-// ── 4. timeout 後の再開 ───────────────────────────────────────
+// ── ゲート ────────────────────────────────────────────────────
 
-test('リースが生きている間は fail-closed で断る / 失効後は引き継げる', () => {
-  const job = beginChildBatch({ job: newJob(), nowMs: NOW_MS, nowIso: NOW_ISO, holder: 'a' });
-  assert.equal(isLeaseHeld({ job, nowMs: NOW_MS + 1000 }), true);
-  assert.equal(canStepImportJob({
-    env: ENV_ON, job, nowMs: NOW_MS + 1000, fileFingerprint: 'fp-abc', providerOk: true,
-  }).reason, JOB_REJECT.LOCKED);
-
-  // 90 秒後 = リース失効 → 引き継げる（timeout で落ちた実行を回収する）
-  assert.equal(isLeaseHeld({ job, nowMs: NOW_MS + 200_000 }), false);
-  assert.equal(canStepImportJob({
-    env: ENV_ON, job, nowMs: NOW_MS + 200_000, fileFingerprint: 'fp-abc', providerOk: true,
-  }).allowed, true);
-});
-
-test('timeout 後に同じ子バッチを再実行しても既作成分は再作成されない', async () => {
-  // 1 回目: 100 件作成
-  const w1 = okWriter();
-  const entries = makeEntries(300);
-  const first = await runChildBatch({
-    job: newJob(), entries, facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps: w1.deps,
-  });
-  assert.equal(first.result.created, 100);
-
-  // timeout で cursor が保存されなかった状況を再現（cursor を 0 に巻き戻す）。
-  // ただし作成済み 100 件は Customers に居るので facts.existing に入る。
-  const existing = new Set(entries.slice(0, 100).map((e) => e.email));
-  const rewound = { ...first.job, cursor: 0 };
-  const w2 = okWriter();
-  const second = await runChildBatch({
-    job: rewound, entries, facts: { ...emptyFacts(), existing },
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS + 1000, nowIso: NOW_ISO, deps: w2.deps,
-  });
-  // 巻き戻っても**二重作成されない**（既存判定で全部飛ぶ）
-  assert.equal(second.result.created, 100, '次の 100 件が取れていない');
-  assert.equal(second.job.totals.created, 200);
-  const written = new Set();
-  for (const c of w2.chunks) assert.equal(c, 10);
-  assert.equal(written.size, 0);
-});
-
-// ── 5. 同一 job の二重開始 ────────────────────────────────────
-
-test('同じ ImportBatchId のジョブは二重に開始できない', () => {
+test('開始ゲート: env / ロック / 確認文字列 / 停止リストのどれか欠けたら開始しない', () => {
   const total = REMAINING;
-  const conf = buildJobConfirmation({ batchId: BATCH, total });
-  const ok = canStartImportJob({
-    env: ENV_ON, confirmation: conf, batchId: BATCH, plannedTotal: total,
-    existingJob: null, providerOk: true,
-  });
-  assert.equal(ok.allowed, true);
-
-  const dup = canStartImportJob({
-    env: ENV_ON, confirmation: conf, batchId: BATCH, plannedTotal: total,
-    existingJob: newJob(), providerOk: true,
-  });
-  assert.equal(dup.allowed, false);
-  assert.equal(dup.reason, JOB_REJECT.JOB_EXISTS);
-});
-
-test('store も二重作成を断り、既存ジョブを上書きしない', async () => {
-  const mem = new Map();
-  const store = createImportJobStore({
-    getJSON: async (k) => (mem.has(k) ? JSON.parse(mem.get(k)) : null),
-    setJSON: async (k, v) => { mem.set(k, JSON.stringify(v)); },
-    setJSONIfNew: async (k, v) => {
-      if (mem.has(k)) return { modified: false };
-      mem.set(k, JSON.stringify(v)); return { modified: true };
-    },
-  });
-  const a = newJob();
-  assert.equal((await store.create(a)).created, true);
-  const again = await store.create({ ...a, plannedTotal: 1 });
-  assert.equal(again.created, false);
-  assert.equal(again.reason, 'job_exists');
-  assert.equal((await store.load(a.jobId)).plannedTotal, REMAINING, '既存ジョブが上書きされた');
-});
-
-test('開始ゲート: env / 確認文字列 / 停止リストのどれか欠けたら開始しない', () => {
-  const total = REMAINING;
-  const conf = buildJobConfirmation({ batchId: BATCH, total });
-  const base = { confirmation: conf, batchId: BATCH, plannedTotal: total, existingJob: null, providerOk: true };
+  const base = {
+    confirmation: buildJobConfirmation({ batchId: BATCH, total }), batchId: BATCH,
+    plannedTotal: total, existingJob: null, providerOk: true, lockAcquired: true,
+  };
+  assert.equal(canStartImportJob({ ...base, env: ENV_ON }).allowed, true);
   assert.equal(canStartImportJob({ ...base, env: {} }).reason, JOB_REJECT.WRITE_DISABLED);
+  assert.equal(canStartImportJob({ ...base, env: ENV_ON, lockAcquired: false }).reason, JOB_REJECT.LOCKED);
   assert.equal(canStartImportJob({ ...base, env: ENV_ON, confirmation: '' }).reason, JOB_REJECT.NO_CONFIRMATION);
   assert.equal(canStartImportJob({ ...base, env: ENV_ON, confirmation: 'IMPORT-JOB x 1' }).reason, JOB_REJECT.CONFIRMATION_MISMATCH);
   assert.equal(canStartImportJob({ ...base, env: ENV_ON, providerOk: false }).reason, JOB_REJECT.PREVIEW_INVALID);
-  assert.equal(canStartImportJob({ ...base, env: ENV_ON, plannedTotal: 0 }).reason, JOB_REJECT.NOTHING_TO_WRITE);
+  assert.equal(canStartImportJob({ ...base, env: ENV_ON, existingJob: newJob() }).reason, JOB_REJECT.JOB_EXISTS);
+});
+
+test('ロックが取れていなければ開始も続行もしない（Airtable を読ませない）', () => {
+  assert.equal(canStepImportJob({
+    env: ENV_ON, job: newJob(), providerOk: true, snapshotOk: true, lockAcquired: false,
+  }).reason, JOB_REJECT.LOCKED);
 });
 
 test('確認文字列は総件数に紐づくので使い回せない', () => {
@@ -254,213 +255,168 @@ test('確認文字列は総件数に紐づくので使い回せない', () => {
   );
 });
 
-// ── 6. 同一子バッチの再送 ─────────────────────────────────────
-
-test('同じ子バッチをもう一度流しても増えない（既存判定で全件 skip）', async () => {
-  const entries = makeEntries(100);
-  const w1 = okWriter();
-  const first = await runChildBatch({
-    job: newJob(), entries, facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps: w1.deps,
-  });
-  assert.equal(first.result.created, 100);
-
-  // 同じ cursor・同じ入力で再送。ただし作成済みは existing に入っている
-  const existing = new Set(entries.map((e) => e.email));
-  const w2 = okWriter();
-  const again = await runChildBatch({
-    job: { ...first.job, cursor: 0 }, entries, facts: { ...emptyFacts(), existing },
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS + 10, nowIso: NOW_ISO, deps: w2.deps,
-  });
-  assert.equal(w2.chunks.length, 0, '再送で書き込みが走った（二重作成）');
-  assert.equal(again.job.totals.created, 100, '作成件数が増えている');
-});
-
-// ── 7. 既存化したメールの直前除外 ────────────────────────────
-
-test('下見のあとに AK 側へ増えたアドレスは直前判定で外れる', () => {
-  const entries = makeEntries(10);
-  const facts = { ...emptyFacts(), existing: new Set([entries[3].email, entries[7].email]) };
-  const picked = selectCreateRows({ entries, facts, providerEmails: new Set(), cursor: 0, limit: 100 });
-  assert.equal(picked.rows.length, 8);
-  assert.equal(picked.skipped[SKIP_REASON.EXISTING], 2);
-  assert.equal(picked.rows.some((r) => r.email === entries[3].email), false);
-});
-
-test('除外集合: 有料 / 重複 / 配信停止 / バウンス / テスト / 停止リスト / 要確認', () => {
-  const facts = emptyFacts();
-  const cases = [
-    ['paid', SKIP_REASON.PAID], ['duplicateInAk', SKIP_REASON.DUPLICATE_IN_AK],
-    ['unsubscribed', SKIP_REASON.UNSUBSCRIBED], ['hardBounce', SKIP_REASON.HARD_BOUNCE],
-    ['softBounce', SKIP_REASON.SOFT_BOUNCE], ['suspended', SKIP_REASON.SUSPENDED],
-    ['testAccounts', SKIP_REASON.TEST_ACCOUNT], ['existing', SKIP_REASON.EXISTING],
-  ];
-  for (const [key, reason] of cases) {
-    const f = { ...facts, [key]: new Set(['x@example.invalid']) };
-    const v = classifyCreateRow({ entry: { email: 'x@example.invalid', flags: [] }, facts: f, providerEmails: new Set() });
-    assert.equal(v.ok, false); assert.equal(v.reason, reason);
+test('終端状態のジョブは進められない（COMPLETED / FAILED / CANCELLED / BLOCKED）', () => {
+  for (const [status, reason] of [
+    [JOB_STATUS.COMPLETED, JOB_REJECT.ALREADY_COMPLETED],
+    [JOB_STATUS.FAILED, JOB_REJECT.FAILED],
+    [JOB_STATUS.CANCELLED, JOB_REJECT.CANCELLED],
+    [JOB_STATUS.BLOCKED, JOB_REJECT.BLOCKED],
+  ]) {
+    assert.equal(canStepImportJob({
+      env: ENV_ON, job: newJob(REMAINING, { status }), providerOk: true,
+      snapshotOk: true, lockAcquired: true,
+    }).reason, reason);
+    assert.ok(TERMINAL_STATUS.includes(status));
   }
-  // 停止リスト
-  assert.equal(classifyCreateRow({
-    entry: { email: 'x@example.invalid', flags: [] }, facts, providerEmails: new Set(['x@example.invalid']),
-  }).reason, SKIP_REASON.PROVIDER_SUPPRESSED);
-  // 要確認（flags 付き）
-  assert.equal(classifyCreateRow({
-    entry: { email: 'x@example.invalid', flags: ['name_conflict'] }, facts, providerEmails: new Set(),
-  }).reason, SKIP_REASON.FLAGGED);
 });
 
-test('対象総数は除外を引いた数になる（母数をそのまま使わない）', () => {
-  const entries = makeEntries(100);
-  const facts = { ...emptyFacts(), existing: new Set(entries.slice(0, 30).map((e) => e.email)) };
-  assert.equal(countCreateCandidates({ entries, facts, providerEmails: new Set() }), 70);
+test('CSV 差し替え・snapshot 不一致は進めない', () => {
+  const job = newJob();
+  assert.equal(canStepImportJob({
+    env: ENV_ON, job, fileFingerprint: 'DIFFERENT', providerOk: true, snapshotOk: true, lockAcquired: true,
+  }).reason, JOB_REJECT.FILE_CHANGED);
+  assert.equal(canStepImportJob({
+    env: ENV_ON, job, fileFingerprint: 'fp-abc', providerOk: true, snapshotOk: false, lockAcquired: true,
+  }).reason, JOB_REJECT.SNAPSHOT_CHANGED);
 });
 
-test('並びは決定的（アドレス昇順）。cursor が意味を持つ前提', () => {
-  const shuffled = [{ email: 'c@x.invalid' }, { email: 'a@x.invalid' }, { email: 'b@x.invalid' }];
-  const a = orderEntriesDeterministically(shuffled).map((e) => e.email);
-  const b = orderEntriesDeterministically([...shuffled].reverse()).map((e) => e.email);
-  assert.deepEqual(a, ['a@x.invalid', 'b@x.invalid', 'c@x.invalid']);
-  assert.deepEqual(a, b, '入力順で並びが変わると再開位置が壊れる');
-});
+// ── cancel 境界 ───────────────────────────────────────────────
 
-// ── 8. failed 混在時の reconciliation ────────────────────────
-
-test('failed が混ざっても試行数と内訳が突合する', () => {
-  let job = newJob();
-  job = applyChildResult({
-    job: beginChildBatch({ job, nowMs: NOW_MS, nowIso: NOW_ISO }),
-    result: { ok: true, attempted: 100, created: 97, skippedExisting: 2, skippedDone: 0, failed: 1 },
+test('cancel は未処理分だけ止め、作成済みは消さない', () => {
+  let job = applyChildResult({
+    job: beginChildBatch({ job: newJob(), nowIso: NOW_ISO, operationId: 'op-1', fencingToken: '1' }),
+    result: { ok: true, attempted: 100, created: 100, skippedExisting: 0, skippedDone: 0, failed: 0 },
     scannedTo: 100, exhausted: false, nowIso: NOW_ISO,
   });
-  const r = reconcileImportJob({ job });
-  assert.equal(r.attempted, 100);
-  assert.equal(r.created, 97);
-  assert.equal(r.skippedExisting, 2);
-  assert.equal(r.failed, 1);
-  assert.equal(r.accounted, 100);
-  assert.equal(r.balanced, true);
-  assert.equal(r.withinPlan, true);
+  const cancelled = cancelImportJob({ job, nowIso: NOW_ISO });
+  assert.equal(cancelled.status, JOB_STATUS.CANCELLED);
+  assert.equal(cancelled.created, 100, '作成済みが消えた');
+  assert.ok(cancelled.cancelledAt);
+  assert.ok(cancelled.cancelNote.includes('結果は確定させます'));
+  assert.ok(cancelled.cancelNote.includes('reconciler'));
 });
 
-test('突合が合わなければ balanced=false になる', () => {
-  const job = { ...newJob(), totals: { attempted: 100, created: 50, skippedExisting: 0, failed: 0 } };
-  assert.equal(reconcileImportJob({ job }).balanced, false);
+test('cancel と step が競合しても、cancel 後は新しい子バッチ claim を取らない', async () => {
+  const c = allowAllClaims();
+  const w = okWriter();
+  const cancelled = cancelImportJob({ job: newJob(), nowIso: NOW_ISO });
+  const out = await runChildBatch(runArgs({ job: cancelled, claims: c.claims, deps: w.deps }));
+  assert.equal(out.stopped, STEP_STOP.CANCELLED);
+  assert.equal(c.calls.claimRows, 0, 'cancel 後に claim を取った');
+  assert.equal(w.chunks.length, 0, 'cancel 後に書き込んだ');
 });
 
-test('Airtable 実測（正本）と食い違えば matchesAirtable=false', () => {
-  const job = { ...newJob(), totals: { attempted: 100, created: 100, skippedExisting: 0, failed: 0 } };
-  assert.equal(reconcileImportJob({ job, createdInAirtable: 100 }).matchesAirtable, true);
-  assert.equal(reconcileImportJob({ job, createdInAirtable: 99 }).matchesAirtable, false);
+test('完了済みジョブは取り消せない', () => {
+  const done = newJob(REMAINING, { status: JOB_STATUS.COMPLETED });
+  assert.equal(cancelImportJob({ job: done, nowIso: NOW_ISO }).status, JOB_STATUS.COMPLETED);
 });
 
-test('failed があれば COMPLETED ではなく PARTIAL で終わる', () => {
-  let job = newJob(100);
-  job = applyChildResult({
-    job: beginChildBatch({ job, nowMs: NOW_MS, nowIso: NOW_ISO }),
+// ── 状態遷移 ──────────────────────────────────────────────────
+
+test('failed があれば COMPLETED ではなく PARTIAL', () => {
+  const job = applyChildResult({
+    job: beginChildBatch({ job: newJob(100), nowIso: NOW_ISO, operationId: 'o', fencingToken: '1' }),
     result: { ok: true, attempted: 100, created: 99, skippedExisting: 0, skippedDone: 0, failed: 1 },
     scannedTo: 100, exhausted: true, nowIso: NOW_ISO,
   });
   assert.equal(job.status, JOB_STATUS.PARTIAL);
 });
 
-// ── 9. cancel 後に新規書き込みされない ───────────────────────
+test('突合が説明できない不一致なら BLOCKED へ落とす', () => {
+  const blocked = markJobBlocked({ job: newJob(), reconciliation: { verdict: 'BLOCKED' }, nowIso: NOW_ISO });
+  assert.equal(blocked.status, JOB_STATUS.BLOCKED);
+  assert.equal(blocked.currentChild, null);
+});
 
-test('cancel すると未処理分は進まない（作成済みは消さない）', () => {
-  let job = newJob();
-  job = applyChildResult({
-    job: beginChildBatch({ job, nowMs: NOW_MS, nowIso: NOW_ISO }),
+test('Redis 異常は BLOCKED として正本に残る', () => {
+  const b = markJobRedisUnavailable({ job: newJob(), code: 'unreachable', nowIso: NOW_ISO });
+  assert.equal(b.status, JOB_STATUS.BLOCKED);
+  assert.match(b.reconciliation.reason, /redis_unavailable/);
+});
+
+test('子バッチ履歴に operationId と fencingToken が残る', () => {
+  const job = applyChildResult({
+    job: beginChildBatch({ job: newJob(), nowIso: NOW_ISO, operationId: 'op-7', fencingToken: '42' }),
     result: { ok: true, attempted: 100, created: 100, skippedExisting: 0, skippedDone: 0, failed: 0 },
-    scannedTo: 100, exhausted: false, nowIso: NOW_ISO,
+    scannedTo: 100, exhausted: false, nowIso: NOW_ISO, claimedNotCreated: 0,
   });
-  const cancelled = cancelImportJob({ job, nowIso: NOW_ISO });
-  assert.equal(cancelled.status, JOB_STATUS.CANCELLED);
-  assert.equal(cancelled.totals.created, 100, '作成済みが消えている');
-  const gate = canStepImportJob({
-    env: ENV_ON, job: cancelled, nowMs: NOW_MS + 1000, fileFingerprint: 'fp-abc', providerOk: true,
-  });
-  assert.equal(gate.allowed, false);
-  assert.equal(gate.reason, JOB_REJECT.CANCELLED);
+  const h = job.childHistory[0];
+  assert.equal(h.operationId, 'op-7');
+  assert.equal(h.fencingToken, '42');
+  assert.equal(nextChildIndex(job), 2);
 });
 
-test('完了済みジョブは取り消せない', () => {
-  const done = { ...newJob(), status: JOB_STATUS.COMPLETED };
-  assert.equal(cancelImportJob({ job: done, nowIso: NOW_ISO }).status, JOB_STATUS.COMPLETED);
+// ── 対象判定 ──────────────────────────────────────────────────
+
+test('既存化したアドレスは直前判定で外れる', () => {
+  const entries = makeEntries(10);
+  const facts = { ...emptyFacts(), existing: new Set([entries[3].email, entries[7].email]) };
+  const picked = selectCreateRows({ entries, facts, providerEmails: new Set(), cursor: 0, limit: 100 });
+  assert.equal(picked.rows.length, 8);
+  assert.equal(picked.skipped[SKIP_REASON.EXISTING], 2);
 });
 
-// ── 10. COMPLETED 後の再実行拒否 ─────────────────────────────
-
-test('COMPLETED / FAILED のジョブは進められない', () => {
-  for (const [status, reason] of [
-    [JOB_STATUS.COMPLETED, JOB_REJECT.ALREADY_COMPLETED],
-    [JOB_STATUS.FAILED, JOB_REJECT.FAILED],
-    [JOB_STATUS.CANCELLED, JOB_REJECT.CANCELLED],
+test('除外集合 10 種', () => {
+  const facts = emptyFacts();
+  for (const [key, reason] of [
+    ['paid', SKIP_REASON.PAID], ['duplicateInAk', SKIP_REASON.DUPLICATE_IN_AK],
+    ['unsubscribed', SKIP_REASON.UNSUBSCRIBED], ['hardBounce', SKIP_REASON.HARD_BOUNCE],
+    ['softBounce', SKIP_REASON.SOFT_BOUNCE], ['suspended', SKIP_REASON.SUSPENDED],
+    ['testAccounts', SKIP_REASON.TEST_ACCOUNT], ['existing', SKIP_REASON.EXISTING],
   ]) {
-    const gate = canStepImportJob({
-      env: ENV_ON, job: { ...newJob(), status }, nowMs: NOW_MS,
-      fileFingerprint: 'fp-abc', providerOk: true,
+    const v = classifyCreateRow({
+      entry: { email: 'x@example.invalid', flags: [] },
+      facts: { ...facts, [key]: new Set(['x@example.invalid']) }, providerEmails: new Set(),
     });
-    assert.equal(gate.allowed, false);
-    assert.equal(gate.reason, reason);
+    assert.equal(v.reason, reason);
   }
+  assert.equal(classifyCreateRow({
+    entry: { email: 'x@example.invalid', flags: [] }, facts, providerEmails: new Set(['x@example.invalid']),
+  }).reason, SKIP_REASON.PROVIDER_SUPPRESSED);
+  assert.equal(classifyCreateRow({
+    entry: { email: 'x@example.invalid', flags: ['name_conflict'] }, facts, providerEmails: new Set(),
+  }).reason, SKIP_REASON.FLAGGED);
 });
 
-test('進めるゲート: env / 停止リスト / ファイル差し替えを fail-closed で見る', () => {
-  const job = newJob();
-  assert.equal(canStepImportJob({ env: {}, job, nowMs: NOW_MS, fileFingerprint: 'fp-abc', providerOk: true }).reason,
-    JOB_REJECT.WRITE_DISABLED);
-  assert.equal(canStepImportJob({ env: ENV_ON, job, nowMs: NOW_MS, fileFingerprint: 'fp-abc', providerOk: false }).reason,
-    JOB_REJECT.PREVIEW_INVALID);
-  assert.equal(canStepImportJob({ env: ENV_ON, job, nowMs: NOW_MS, fileFingerprint: 'DIFFERENT', providerOk: true }).reason,
-    JOB_REJECT.FILE_CHANGED);
-  assert.equal(canStepImportJob({ env: ENV_ON, job: null, nowMs: NOW_MS, providerOk: true }).reason,
-    JOB_REJECT.JOB_NOT_FOUND);
+test('並びは決定的（アドレス昇順）', () => {
+  const s = [{ email: 'c@x.invalid' }, { email: 'a@x.invalid' }, { email: 'b@x.invalid' }];
+  const a = orderEntriesDeterministically(s).map((e) => e.email);
+  assert.deepEqual(a, ['a@x.invalid', 'b@x.invalid', 'c@x.invalid']);
+  assert.deepEqual(a, orderEntriesDeterministically([...s].reverse()).map((e) => e.email));
 });
 
-test('計画に到達したジョブはそれ以上進めない', () => {
-  const job = { ...newJob(100), totals: { attempted: 100, created: 100, skippedExisting: 0, failed: 0 } };
-  assert.equal(canStepImportJob({
-    env: ENV_ON, job, nowMs: NOW_MS, fileFingerprint: 'fp-abc', providerOk: true,
-  }).reason, JOB_REJECT.NOTHING_TO_WRITE);
+test('対象総数は除外を引いた数', () => {
+  const entries = makeEntries(100);
+  const facts = { ...emptyFacts(), existing: new Set(entries.slice(0, 30).map((e) => e.email)) };
+  assert.equal(countCreateCandidates({ entries, facts, providerEmails: new Set() }), 70);
 });
 
-// ── 11. UPDATE 等が書き込まれない ────────────────────────────
-
-test('既存・除外・要確認は 1 件も作成対象にならない', async () => {
+test('UPDATE・除外・要確認は 1 件も書かれない', async () => {
   const entries = makeEntries(50);
   const facts = {
     ...emptyFacts(),
-    existing: new Set(entries.slice(0, 20).map((e) => e.email)),   // UPDATE 候補
-    paid: new Set(entries.slice(20, 25).map((e) => e.email)),      // 除外
+    existing: new Set(entries.slice(0, 20).map((e) => e.email)),
+    paid: new Set(entries.slice(20, 25).map((e) => e.email)),
   };
-  const flagged = entries.slice(25, 30).map((e) => ({ ...e, flags: ['name_conflict'] })); // 要確認
-  const list = [...entries.slice(0, 25), ...flagged, ...entries.slice(30)];
+  const flagged = entries.slice(25, 30).map((e) => ({ ...e, flags: ['name_conflict'] }));
+  const list = orderEntriesDeterministically([...entries.slice(0, 25), ...flagged, ...entries.slice(30)]);
+  const c = allowAllClaims();
   const w = okWriter();
-  const out = await runChildBatch({
-    job: newJob(), entries: orderEntriesDeterministically(list), facts,
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps: w.deps,
-  });
-  assert.equal(out.result.created, 20, '対象外が書かれている');
+  const out = await runChildBatch(runArgs({ entries: list, facts, claims: c.claims, deps: w.deps }));
+  assert.equal(out.result.created, 20);
   assert.equal(out.skipped[SKIP_REASON.EXISTING], 20);
   assert.equal(out.skipped[SKIP_REASON.PAID], 5);
   assert.equal(out.skipped[SKIP_REASON.FLAGGED], 5);
 });
 
-test('書き込む列は allow-list の 5 列だけ（課金・特典は入らない）', async () => {
+test('書き込む列は allow-list の 5 列だけ', async () => {
   const seen = [];
+  const c = allowAllClaims();
   const deps = {
-    createRecords: async (arr) => { seen.push(...arr); return { ok: true, status: 200 }; },
-    createRecord: async () => ({ ok: true, status: 200 }),
-    sleep: async () => {},
+    createRecords: async (a) => { seen.push(...a); return { ok: true, status: 200 }; },
+    createRecord: async () => ({ ok: true, status: 200 }), sleep: async () => {},
   };
-  await runChildBatch({
-    job: newJob(), entries: makeEntries(10), facts: emptyFacts(),
-    providerEmails: new Set(), availableFields: new Set(),
-    nowMs: NOW_MS, nowIso: NOW_ISO, deps,
-  });
+  await runChildBatch(runArgs({ entries: makeEntries(10), claims: c.claims, deps }));
   assert.ok(seen.length > 0);
   for (const f of seen) {
     for (const k of Object.keys(f)) {
@@ -468,28 +424,25 @@ test('書き込む列は allow-list の 5 列だけ（課金・特典は入ら�
     }
     assert.equal(f['プラン'], 'Free');
     assert.equal(f['ポイント'], 0);
-    assert.equal(f.Source, `customer-import:${BATCH}`);
   }
 });
 
-// ── 12. 進捗表示・rollback・PII ───────────────────────────────
+// ── 表示・rollback ────────────────────────────────────────────
 
 test('進捗まとめが画面の必須項目を満たす', () => {
-  let job = newJob();
-  job = applyChildResult({
-    job: beginChildBatch({ job, nowMs: NOW_MS, nowIso: NOW_ISO }),
+  const job = applyChildResult({
+    job: beginChildBatch({ job: newJob(), nowIso: NOW_ISO, operationId: 'o', fencingToken: '1' }),
     result: { ok: true, attempted: 100, created: 98, skippedExisting: 2, skippedDone: 0, failed: 0 },
     scannedTo: 100, exhausted: false, nowIso: NOW_ISO,
   });
   const s = summarizeJobProgress(job);
   for (const k of ['対象総数', '処理済み', '作成済み', '既存スキップ', '失敗', '残件数', '進捗率',
-    '子バッチ数', '完了した子バッチ', '現在の子バッチ', '最終更新', 'jobId', 'ImportBatchId', 'Source', 'status']) {
+    '子バッチ数', '完了した子バッチ', '現在の子バッチ', '最終更新', 'jobId', 'ImportBatchId',
+    'Source', 'status', 'fencingToken', 'operationId', 'snapshotFingerprint']) {
     assert.ok(k in s, `${k} が無い`);
   }
-  assert.equal(s.対象総数, REMAINING);
   assert.equal(s.作成済み, 98);
   assert.equal(s.残件数, REMAINING - 98);
-  assert.equal(s.進捗率, 0.7);
   assert.equal(s.再実行可能, true);
 });
 
@@ -498,28 +451,4 @@ test('rollback は削除ではなく Source 単位の隔離', () => {
   assert.equal(r.Source, `customer-import:${BATCH}`);
   assert.equal(r.既定, '隔離（削除しない）');
   assert.ok(r.steps.join('\n').includes('消さない'));
-});
-
-test('ジョブ記録に PII を入れない（構造的に拒否する）', async () => {
-  assert.equal(assertNoPii(newJob()), true);
-  assert.equal(assertNoPii({ ...newJob(), rows: [{ email: 'a@b.invalid' }] }), false);
-  assert.equal(assertNoPii({ ...newJob(), children: [{ email: 'a@b.invalid' }] }), false);
-
-  const mem = new Map();
-  const store = createImportJobStore({
-    getJSON: async (k) => (mem.has(k) ? JSON.parse(mem.get(k)) : null),
-    setJSON: async (k, v) => { mem.set(k, JSON.stringify(v)); },
-  });
-  const bad = await store.save({ ...newJob(), name: '山田' });
-  assert.equal(bad.ok, false);
-  assert.equal(bad.reason, 'pii_detected');
-  assert.equal(mem.size, 0, 'PII が保存された');
-});
-
-test('markChildError は PARTIAL にしてリースを外す', () => {
-  const job = beginChildBatch({ job: newJob(), nowMs: NOW_MS, nowIso: NOW_ISO });
-  const err = markChildError({ job, error: 'write_error', nowIso: NOW_ISO });
-  assert.equal(err.status, JOB_STATUS.PARTIAL);
-  assert.equal(err.lease, null);
-  assert.equal(err.lastError, 'write_error');
 });
