@@ -162,6 +162,74 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
+### 🆕 見込み客プール（外部 CSV 1 万数千件の扱い）— Draft PR・2026-08-06
+
+**外部 CSV のアドレスを Airtable Customers へ入れない。** 反応した人だけを昇格させ、
+反応が無いまま数回送ったら**登録せずに配信対象から外す**。
+
+#### なぜ分けるか
+
+未反応のアドレスまで顧客台帳へ入れると、顧客数・セグメント・集計が薄まり、
+「顧客」と「まだ顧客でない人」の区別が消える。配信停止・バウンスの管理対象も無駄に膨らむ。
+
+#### 状態機械（`prospectPolicy.js`）
+
+```
+NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録──▶ PROMOTED
+                │
+                ├─ 3 回 無反応 ─────────────▶ EXHAUSTED（登録しない・以後送らない）
+                └─ bounce / 苦情 / 配信停止 ─▶ SUPPRESSED（即時・復活しない）
+```
+
+反応とみなすのは **open / click だけ**（`delivered` は反応ではない）。同一相手への最小間隔 **3 日**。
+**除外は反応より優先**で、苦情の後に開封しても戻さない。
+
+#### 保存先（`prospectStore.js`）— ⚠️ PII の扱いの例外
+
+Redis の **`ak:prospect:` 配下だけ**メールアドレスを保存する（送るのに要るため）。代わりに
+**キーは `sha256(email)`** / **一覧・ログ・集計にアドレスを出さない** /
+EXHAUSTED・SUPPRESSED は **TTL で自動的に消える**、という制約を課した。
+他の名前空間へアドレスを書く禁止は従来どおり（テストで固定）。
+
+#### 重複登録・二重送信を防ぐ 3 層
+
+1. 取り込み時と送信時の**両方**で Customers のアドレス集合と突き合わせる（Customers が正）
+2. 同じ配信回で同じ相手を 2 度入れない（`deliveryKey`）
+3. Customers と prospect に同じ人が居たら **Customers を優先**して prospect 側を落とす
+
+#### 昇格
+
+反応済みだけを Customers へ **CREATE 1 件**。書く列は取り込みと**同じ allow-list**
+（`Email` / `プラン=Free` / `ポイント` / `Source`）で、課金・権利・配信停止の列は 1 つも書かない。
+下見の件数と実行時の件数が食い違ったら**書かない**（TOCTOU）。
+
+#### 即時除外（`sendgrid-webhook.js`）
+
+bounce / 苦情 / 配信停止 / dropped で **即 SUPPRESSED**。**既定 OFF**
+（`MARKETING_PROSPECT_EVENTS_ENABLED`）。失敗しても webhook は 200 を返す（再送を招かない）。
+
+#### 毎日の配信への合流（`automationTickPlan.js`）
+
+承認済み snapshot と現在の対象を突き合わせ、Customers 由来と prospect 由来を 1 本にまとめ、
+上限超過は**切り捨てず中止**して既存 enqueue 契約の形にする。
+prospect の送信回数は **enqueue 成功後**に記録する（失敗した回で諦めない）。
+
+#### ゲート（いずれも production 未設定）
+
+| env | 何が開くか |
+|---|---|
+| `MARKETING_PROSPECT_WRITE_ENABLED` | 取り込み・昇格・手動除外（**Customers への登録**） |
+| `MARKETING_PROSPECT_EVENTS_ENABLED` | webhook から prospect への反映 |
+| `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` | 自動化の設定変更 |
+| `MARKETING_AUTOMATION_SCHEDULER_ENABLED` + `..._DISPATCH_ARMED` | 実配信 |
+
+#### あわせて B-3 を修正
+
+実行履歴が当日分しか引けなかったのを **直近 30 日（最大 90 日）**へ。runId が決定的なので索引は増やさない。
+
+テスト: marketing **1,008 pass**（prospect 新規 32）/ webhooks 132 / CRM 246 /
+`check:safety` 519 / build 通過。**production env 変更 0 / 実送信 0 / Airtable write 0。**
+
 ### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）
 
 **管理画面だけで Definition の作成・編集・保存・有効化・一時停止・取消・履歴確認まで
