@@ -14,7 +14,7 @@ import {
   defKey, ACTIVE_INDEX_KEY, AUTO_ROOT, DEF_FIELDS, assertNoPii,
   CAS_LUA, EXPECTED_CAS_SHA256, luaSha256, DefCanaryError, DEF_FAIL,
   resultKey, RESULT_SCHEMA_VERSION, assertResultSafe, validateResult, compareResultPaths,
-  runMarkKey,
+  runMarkKey, normalizeCheckList, verifyThreePaths,
 } from './automationDefCanaryStore.js';
 
 const FN = readFileSync(fileURLToPath(
@@ -202,6 +202,91 @@ test('結果に URL / token / アドレス / キー / hash / stack が入るな�
       (e) => e instanceof DefCanaryError && e.code === DEF_FAIL.PII_DETECTED);
   }
   assert.equal(r.store.size, 0);
+});
+
+test('check 配列は {name, ok} のみ受理し、空・型違い・重複名を弾く', () => {
+  assert.deepEqual(normalizeCheckList([{ name: 'a', ok: true }]).checks, [{ name: 'a', ok: true }]);
+  assert.equal(normalizeCheckList([]).reason, 'missing_checks');
+  assert.equal(normalizeCheckList(null).reason, 'missing_checks');
+  assert.equal(normalizeCheckList('a').reason, 'missing_checks');
+  assert.equal(normalizeCheckList(['a']).reason, 'invalid_check');
+  assert.equal(normalizeCheckList([{ name: '', ok: true }]).reason, 'invalid_check');
+  assert.equal(normalizeCheckList([{ name: 'a', ok: 'true' }]).reason, 'invalid_check');
+  assert.equal(normalizeCheckList([{ name: 'a' }]).reason, 'invalid_check');
+  const dup = normalizeCheckList([{ name: 'a', ok: true }, { name: 'a', ok: false }]);
+  assert.equal(dup.reason, 'duplicate_check_name');
+  assert.equal(dup.detail, 'a');
+});
+
+test('verifyThreePaths は件数・順序・name・ok・overallOk の完全一致だけを通す', () => {
+  const stored = {
+    overallOk: true,
+    checks: [{ name: '1. 作成', ok: true }, { name: '2. get', ok: true }, { name: '3. update', ok: true }],
+  };
+  const same = () => ({ overallOk: true, checks: stored.checks.map((c) => ({ ...c })) });
+  const run = (http, log) => verifyThreePaths({
+    stored, paths: [{ label: 'http', ...http }, { label: 'log', ...log }],
+  });
+
+  // 完全一致のみ ok
+  const ok = run(same(), same());
+  assert.equal(ok.ok, true);
+  assert.equal(ok.checkCount, 3);
+  assert.deepEqual(ok.comparedPaths, ['http', 'log']);
+
+  // 件数不足 / 過剰
+  assert.equal(run({ overallOk: true, checks: stored.checks.slice(0, 2) }, same()).reason,
+    'check_count_mismatch');
+  assert.equal(run(same(), {
+    overallOk: true, checks: [...stored.checks, { name: '4. 余分', ok: true }],
+  }).reason, 'check_count_mismatch');
+
+  // ⚠️ **順序違い**は件数が同じでも不一致
+  const reordered = { overallOk: true, checks: [stored.checks[1], stored.checks[0], stored.checks[2]] };
+  const r1 = run(reordered, same());
+  assert.equal(r1.reason, 'check_name_mismatch');
+  assert.equal(r1.path, 'http');
+
+  // name 違い / ok 違い
+  assert.equal(run(same(), {
+    overallOk: true, checks: [{ name: '1. 作成', ok: true }, { name: '2. GET', ok: true }, stored.checks[2]],
+  }).reason, 'check_name_mismatch');
+  const r2 = run(same(), {
+    overallOk: true, checks: [stored.checks[0], { name: '2. get', ok: false }, stored.checks[2]],
+  });
+  assert.equal(r2.reason, 'check_ok_mismatch');
+  assert.equal(r2.path, 'log');
+
+  // overallOk 違い
+  assert.equal(run({ ...same(), overallOk: false }, same()).reason, 'overall_ok_mismatch');
+
+  // 欠落・重複・型違い
+  assert.equal(run({ overallOk: true, checks: null }, same()).reason, 'missing_checks');
+  assert.equal(run({ overallOk: true, checks: [] }, same()).reason, 'missing_checks');
+  assert.equal(run({ overallOk: 'true', checks: stored.checks }, same()).reason, 'invalid_overall_ok');
+  assert.equal(run({
+    overallOk: true, checks: [stored.checks[0], stored.checks[0], stored.checks[2]],
+  }, same()).reason, 'duplicate_check_name');
+
+  // 保存結果側が壊れていても通さない
+  assert.equal(verifyThreePaths({ stored: { overallOk: true, checks: [] }, paths: [same()] }).path, 'stored');
+  assert.equal(verifyThreePaths({ stored, paths: [] }).reason, 'missing_checks');
+});
+
+test('件数と boolean だけの照合では通らない', () => {
+  const stored = {
+    overallOk: true,
+    checks: [{ name: 'a', ok: true }, { name: 'b', ok: true }],
+  };
+  // 件数も overallOk も合っているが、name が違う偽の checks
+  const fake = { overallOk: true, checks: [{ name: 'x', ok: true }, { name: 'y', ok: true }] };
+  assert.equal(verifyThreePaths({
+    stored, paths: [{ label: 'http', ...fake }, { label: 'log', ...fake }],
+  }).ok, false);
+  // checks を渡さず boolean と件数だけ主張しても通らない
+  assert.equal(verifyThreePaths({
+    stored, paths: [{ label: 'http', overallOk: true, checks: undefined }],
+  }).reason, 'missing_checks');
 });
 
 test('3 経路の突合は件数・名前・ok・overallOk の差を検知する', () => {
@@ -457,28 +542,75 @@ test('handler: run が全 check を通し、Definition を残したままにす�
     assert.equal(JSON.parse(noProof.body).code, 'paths_not_verified');
     assert.equal(r.store.has(defKey(AUTO_ID)), true, '未検証なのに削除された');
 
-    // 食い違う値を渡しても拒否される
-    const wrong = await handler({
+    // ⚠️ boolean と件数だけの主張では通らない（checks 無し）
+    const countOnly = await handler({
       httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
       body: JSON.stringify({
         action: 'cleanup', canaryId: ID,
-        httpOverallOk: true, logOverallOk: false, checkCount: body.checks.length,
+        httpOverallOk: true, logOverallOk: true, checkCount: body.checks.length,
       }),
     });
-    assert.equal(wrong.statusCode, 409);
+    assert.equal(countOnly.statusCode, 409);
+    assert.equal(JSON.parse(countOnly.body).code, 'paths_not_verified');
+    assert.equal(r.store.has(defKey(AUTO_ID)), true, 'boolean だけで削除された');
+
+    const httpChecks = body.checks.map((c) => ({ name: c.name, ok: c.ok }));
+    const logChecks = parsed.checks.map((c) => ({ name: c.name, ok: c.ok }));
+
+    // 順序を入れ替えただけでも拒否される
+    const shuffled = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({
+        action: 'cleanup', canaryId: ID,
+        httpOverallOk: body.overallOk, httpChecks: [httpChecks[1], httpChecks[0], ...httpChecks.slice(2)],
+        logOverallOk: parsed.overallOk, logChecks,
+      }),
+    });
+    assert.equal(shuffled.statusCode, 409);
+    assert.equal(JSON.parse(shuffled.body)['不一致'].reason, 'check_name_mismatch');
     assert.equal(r.store.has(defKey(AUTO_ID)), true);
 
-    // 3 経路一致を渡した cleanup で canary 残存 0（**墓標は残る**）
+    // check 名が重複していても拒否される
+    const dup = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({
+        action: 'cleanup', canaryId: ID,
+        httpOverallOk: body.overallOk, httpChecks,
+        logOverallOk: parsed.overallOk,
+        logChecks: [logChecks[0], logChecks[0], ...logChecks.slice(2)],
+      }),
+    });
+    assert.equal(dup.statusCode, 409);
+    assert.equal(JSON.parse(dup.body)['不一致'].reason, 'duplicate_check_name');
+    assert.equal(r.store.has(defKey(AUTO_ID)), true);
+
+    // ok を 1 つ書き換えただけでも拒否される
+    const flipped = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({
+        action: 'cleanup', canaryId: ID,
+        httpOverallOk: body.overallOk, httpChecks,
+        logOverallOk: parsed.overallOk,
+        logChecks: logChecks.map((c, i) => (i === 2 ? { ...c, ok: !c.ok } : c)),
+      }),
+    });
+    assert.equal(flipped.statusCode, 409);
+    assert.equal(JSON.parse(flipped.body)['不一致'].reason, 'check_ok_mismatch');
+    assert.equal(r.store.has(defKey(AUTO_ID)), true);
+
+    // 3 経路の完全一致を渡した cleanup で canary 残存 0（**墓標は残る**）
     const cl = await handler({
       httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
       body: JSON.stringify({
         action: 'cleanup', canaryId: ID,
-        httpOverallOk: body.overallOk, logOverallOk: parsed.overallOk,
-        checkCount: body.checks.length,
+        httpOverallOk: body.overallOk, httpChecks,
+        logOverallOk: parsed.overallOk, logChecks,
       }),
     });
     const cb = JSON.parse(cl.body);
-    assert.equal(cb.pathsVerified, true);
+    assert.equal(cb.pathsVerified, true, JSON.stringify(cb['不一致'] || cb.code));
+    assert.equal(cb['照合'].checkCount, body.checks.length);
+    assert.deepEqual(cb['照合']['経路'], ['http', 'log']);
     assert.equal(cb['canary残存0'], true);
     assert.equal(cb['結果残存'], false);
     assert.equal(cb['墓標維持'], true, 'cleanup が墓標を消した');
@@ -539,7 +671,9 @@ test('handler: 結果を復元できないとき cleanup は拒否し、finalize
     const cl = await handler({
       httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
       body: JSON.stringify({
-        action: 'cleanup', canaryId: ID, httpOverallOk: true, logOverallOk: true, checkCount: 10,
+        action: 'cleanup', canaryId: ID,
+        httpOverallOk: true, httpChecks: [{ name: '1. 作成', ok: true }],
+        logOverallOk: true, logChecks: [{ name: '1. 作成', ok: true }],
       }),
     });
     assert.equal(cl.statusCode, 409);
@@ -669,6 +803,25 @@ test('guard: ゲートは Redis client 初期化より前', () => {
   for (const bad of ['createDefCanaryStore', 'redisCmd', 'await']) {
     assert.equal(region.includes(bad), false, `ゲート内で ${bad} を使っている`);
   }
+});
+
+test('guard: cleanup ゲートは checks 完全一致に依存し、boolean/件数照合へ戻っていない', () => {
+  const gate = FN.slice(FN.indexOf('async function handleCleanup'), FN.indexOf('async function handleFinalize'));
+  // checks を受け取り、共通の完全一致判定へ渡している
+  for (const need of ['verifyThreePaths', 'req.httpChecks', 'req.logChecks',
+    'req.httpOverallOk', 'req.logOverallOk']) {
+    assert.ok(gate.includes(need), `${need} が無い`);
+  }
+  // 件数だけの照合へ退行していない
+  assert.equal(/req\.checkCount/.test(gate), false, 'checkCount 照合へ戻っている');
+  assert.equal(/checks\.length\s*===\s*req\./.test(gate), false, '件数だけで通している');
+  // 検証より前に削除していない
+  const verdictAt = gate.indexOf('verifyThreePaths');
+  for (const del of ['store.del()', 'store.delResult()', 'store.indexRemove()']) {
+    assert.ok(gate.indexOf(del) > verdictAt, `${del} が検証より前にある`);
+  }
+  // 墓標は消さない
+  assert.equal(gate.includes('delRunMark'), false, 'cleanup が墓標を消している');
 });
 
 test('guard: 実 campaign を使わない固定ダミー', () => {

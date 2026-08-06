@@ -23,7 +23,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   createDefCanaryStore, compareIndexExcludingCanary, canaryAutomationId,
-  DefCanaryError, DEF_FAIL, RESULT_SCHEMA_VERSION,
+  DefCanaryError, DEF_FAIL, RESULT_SCHEMA_VERSION, verifyThreePaths,
 } from '../../src/lib/marketing/automationDefCanaryStore.js';
 
 export const DEF_CANARY_GATE_ENV = 'MARKETING_AUTOMATION_DEF_CANARY_ENABLED';
@@ -272,8 +272,9 @@ async function handleStatus({ req }) {
  * **墓標は残す**（消すのは env を閉じた後の finalize）。
  *
  * ⚠️ **3 経路の一致を確認する前に実行できない。**
- *   呼び出し側が HTTP 応答とログで観測した `httpOverallOk` / `logOverallOk` / `checkCount` を
- *   渡し、**保存済み結果と突き合わせて一致した場合にのみ**削除する。
+ *   呼び出し側は HTTP 応答と Function ログから **`checks[{name, ok}]` をそのまま**渡す。
+ *   Redis 保存結果と **件数・順序・name・ok・overallOk のすべてが一致**した場合にのみ削除する。
+ *   **boolean と件数だけの照合は受け付けない。**
  *   結果が復元できない場合は cleanup せず、env 閉鎖 → finalize で回収する。
  */
 async function handleCleanup({ req }) {
@@ -293,21 +294,23 @@ async function handleCleanup({ req }) {
       });
     }
     const stored = restored.result;
-    const claimed = {
-      httpOverallOk: req.httpOverallOk, logOverallOk: req.logOverallOk, checkCount: req.checkCount,
-    };
-    const agree = typeof claimed.httpOverallOk === 'boolean'
-      && typeof claimed.logOverallOk === 'boolean'
-      && Number.isInteger(claimed.checkCount)
-      && claimed.httpOverallOk === stored.overallOk
-      && claimed.logOverallOk === stored.overallOk
-      && claimed.checkCount === stored.checks.length;
-    if (!agree) {
+    // ⚠️ **件数・順序・name・ok・overallOk の完全一致**を要求する。
+    //    boolean と件数だけの照合では通さない。
+    const verdict = verifyThreePaths({
+      stored,
+      paths: [
+        { label: 'http', overallOk: req.httpOverallOk, checks: req.httpChecks },
+        { label: 'log', overallOk: req.logOverallOk, checks: req.logChecks },
+      ],
+    });
+    if (!verdict.ok) {
       return json(409, {
         mode: 'def-canary-cleanup', canaryId, code: 'paths_not_verified',
-        error: '3 経路の一致を確認できていないため cleanup しません。',
-        required: 'httpOverallOk(boolean) / logOverallOk(boolean) / checkCount(integer) を、'
-          + 'HTTP 応答と Function ログで観測した値どおりに渡してください。',
+        error: '3 経路の完全一致を確認できないため cleanup しません。',
+        不一致: { path: verdict.path, reason: verdict.reason, detail: verdict.detail },
+        required: 'httpChecks / logChecks に、HTTP 応答と Function ログの checks[{name, ok}] を '
+          + '**順序どおりそのまま**渡し、httpOverallOk / logOverallOk も観測値どおりに渡してください。'
+          + '（件数や boolean だけの照合では通りません）',
         storedOverallOk: stored.overallOk, storedCheckCount: stored.checks.length,
       });
     }
@@ -325,6 +328,10 @@ async function handleCleanup({ req }) {
     return json(200, {
       mode: 'def-canary-cleanup', canaryId, automationId: store.automationId,
       pathsVerified: true,
+      照合: {
+        経路: verdict.comparedPaths, checkCount: verdict.checkCount,
+        overallOk: verdict.overallOk, 一致範囲: '件数・順序・name・ok・overallOk',
+      },
       Definition残存: stillDef,
       結果残存: stillResult,
       墓標残存: markKept,

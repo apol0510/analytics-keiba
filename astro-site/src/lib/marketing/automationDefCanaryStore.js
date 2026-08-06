@@ -148,6 +148,77 @@ export function validateResult(raw, { canaryId } = {}) {
   return { ok: true, result: parsed };
 }
 
+/**
+ * check 配列を正規化する。**`{name, ok}` の配列であること**を要求し、
+ * 空・要素の型違い・**重複した check 名**は受理しない（順序は保つ）。
+ */
+export function normalizeCheckList(list) {
+  if (!Array.isArray(list) || list.length === 0) return { ok: false, reason: 'missing_checks' };
+  const checks = []; const seen = new Set();
+  for (const c of list) {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) return { ok: false, reason: 'invalid_check' };
+    if (typeof c.name !== 'string' || c.name.trim() === '') return { ok: false, reason: 'invalid_check' };
+    if (typeof c.ok !== 'boolean') return { ok: false, reason: 'invalid_check' };
+    if (seen.has(c.name)) return { ok: false, reason: 'duplicate_check_name', detail: c.name };
+    seen.add(c.name);
+    checks.push({ name: c.name, ok: c.ok });
+  }
+  return { ok: true, checks };
+}
+
+/**
+ * 3 経路（Redis 保存結果 / HTTP 応答 / Function ログ）の**完全一致**を検証する。
+ *
+ * ⚠️ **boolean と件数だけの照合は禁止。** 件数・**順序**・`name`・`ok`・`overallOk` の
+ *   すべてが一致した場合にのみ `ok:true`。1 つでも違えば不一致として扱う。
+ * ⚠️ 欠落（配列でない / 空）・**重複した check 名**も不一致として扱う。
+ *
+ * @param {{stored, paths: Array<{label, overallOk, checks}>}} args
+ */
+export function verifyThreePaths({ stored, paths } = {}) {
+  const s = normalizeCheckList(stored && stored.checks);
+  if (!s.ok) return { ok: false, reason: s.reason, path: 'stored', detail: s.detail || null };
+  if (typeof (stored && stored.overallOk) !== 'boolean') {
+    return { ok: false, reason: 'invalid_overall_ok', path: 'stored', detail: null };
+  }
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return { ok: false, reason: 'missing_checks', path: 'input', detail: null };
+  }
+
+  for (const p of paths) {
+    const label = (p && p.label) || 'unknown';
+    if (typeof (p && p.overallOk) !== 'boolean') {
+      return { ok: false, reason: 'invalid_overall_ok', path: label, detail: null };
+    }
+    const n = normalizeCheckList(p.checks);
+    if (!n.ok) return { ok: false, reason: n.reason, path: label, detail: n.detail || null };
+
+    if (n.checks.length !== s.checks.length) {
+      return {
+        ok: false, reason: 'check_count_mismatch', path: label,
+        detail: `${n.checks.length} != ${s.checks.length}`,
+      };
+    }
+    // 件数が同じでも、**順序 / name / ok** が 1 つでも違えば不一致
+    for (let i = 0; i < s.checks.length; i += 1) {
+      if (n.checks[i].name !== s.checks[i].name) {
+        return { ok: false, reason: 'check_name_mismatch', path: label, detail: `index ${i}` };
+      }
+      if (n.checks[i].ok !== s.checks[i].ok) {
+        return { ok: false, reason: 'check_ok_mismatch', path: label, detail: `index ${i}` };
+      }
+    }
+    if (p.overallOk !== stored.overallOk) {
+      return { ok: false, reason: 'overall_ok_mismatch', path: label, detail: null };
+    }
+  }
+  return {
+    ok: true, reason: null, path: null, detail: null,
+    checkCount: s.checks.length, overallOk: stored.overallOk,
+    comparedPaths: paths.map((p) => p.label),
+  };
+}
+
 /** HTTP 応答・保存結果・ログ行が**同じ run の同じ判定**かを突き合わせる */
 export function compareResultPaths(a, b) {
   const norm = (r) => (r && Array.isArray(r.checks))

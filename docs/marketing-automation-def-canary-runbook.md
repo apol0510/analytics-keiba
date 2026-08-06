@@ -67,16 +67,37 @@ Definition の `EXISTS` 確認は二重の副次ガードとして残す。
 > 墓標を消すのは **env を無効化し、その反映 deploy を終えた後の `finalize`** だけ。
 > → 「墓標が無いのに run できる時間帯」が生じない。
 
-### cleanup は 3 経路一致の前に実行できない（構造ゲート）
+### cleanup は 3 経路の完全一致の前に実行できない（構造ゲート）
 
-`cleanup` は保存済み結果を読み、呼び出し側が渡す観測値と突き合わせてからでないと削除しない。
+`cleanup` は保存済み結果を読み、**HTTP 応答と Function ログの `checks[{name, ok}]` をそのまま**
+受け取って突き合わせてからでないと削除しない。
+
+**渡すもの**（HTTP 応答・ログの値を加工せず、順序どおりに）:
+
+| フィールド | 内容 |
+|---|---|
+| `httpOverallOk` / `httpChecks` | `run.json` の `overallOk` と `checks`（`{name, ok}` の配列） |
+| `logOverallOk` / `logChecks` | Function ログ 1 行 JSON の `overallOk` と `checks` |
+
+**一致判定は完全一致のみ**。Redis 保存結果に対して **件数・順序・`name`・`ok`・`overallOk` の
+すべて**が一致した場合だけ削除する。
 
 | 状況 | 応答 | 削除 |
 |---|---|---|
 | 結果を復元できない / 壊れている / schema 違い / 別 run | `409` `result_unavailable` 等 | **しない** |
-| `httpOverallOk` / `logOverallOk` / `checkCount` 未指定・不一致 | `409` `paths_not_verified` | **しない** |
-| 3 つとも保存済み結果と一致 | `200` `pathsVerified=true` | する（墓標は残す） |
+| `checks` 欠落・空・型違い | `409` `paths_not_verified`（`missing_checks` / `invalid_check`） | **しない** |
+| **check 名の重複** | `409` `paths_not_verified`（`duplicate_check_name`） | **しない** |
+| 件数違い | `409`（`check_count_mismatch`） | **しない** |
+| **順序違い・name 違い** | `409`（`check_name_mismatch`） | **しない** |
+| `ok` が 1 つでも違う | `409`（`check_ok_mismatch`） | **しない** |
+| `overallOk` 違い | `409`（`overall_ok_mismatch`） | **しない** |
+| 3 経路が完全一致 | `200` `pathsVerified=true` | する（**墓標は残す**） |
 
+> ⚠️ **boolean と件数だけの照合は禁止・かつ受け付けない。**
+> `httpOverallOk` / `logOverallOk` / `checkCount` だけを渡しても `paths_not_verified` になる。
+> 「件数と overallOk は合うが中身が違う」偽の一致を構造的に排除するため。
+
+不一致の内訳は応答の `不一致` に `{path, reason, detail}` で返る（`detail` は違反した index / check 名）。
 結果が復元できないときは **cleanup せず、env 閉鎖 → 反映 deploy → `finalize` で回収**する。
 
 ⚠️ `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は**今回追加・変更しない**（Function が参照もしない）。
@@ -114,7 +135,8 @@ run exactly 1・retry 0 ではやり直しが効かないので、**同じ判定
 | 2 | **Redis result** | `ak:marketing-automation:def-canary:<canaryId>:result` を `status` が復元 |
 | 3 | **Function ログ** | run 完了時の 1 行 JSON（`marketing_automation_def_canary_result`） |
 
-3 経路とも `overallOk` と `checks[].name` / `ok` を同じ形で持つ（`compareResultPaths` で突合できる）。
+3 経路とも `overallOk` と `checks[{name, ok}]` を**同じ順序・同じ形**で持つ。
+突合は `verifyThreePaths`（件数・順序・`name`・`ok`・`overallOk` の完全一致 / 重複名は不可）。
 `status` は result が**無い / 壊れている / schema 違い / 別 run のもの**なら
 `result_unavailable` / `result_invalid` / `result_schema_mismatch` を返し、**PASS 扱いにしない**。
 保存内容に URL / token / Redis 値 / アドレス / hash 全文 / stack は入らない（`assertResultSafe` が拒否）。
@@ -159,11 +181,41 @@ netlify logs --source functions \
   --function admin-marketing-automation-def-canary --since 30m \
   | tee "$CANARY_DIR/function.log"
 
-# 5) ⚠️ 3 経路の一致を**目で確認してから** cleanup。観測値をそのまま渡す
-#    （食い違う値・未指定なら Function が 409 paths_not_verified で削除を拒否する）
+# 5) ⚠️ 3 経路の完全一致を確認してから cleanup。
+#    HTTP 応答とログの checks[{name, ok}] を**加工せず・順序どおり**渡す。
+#    （欠落・件数違い・順序違い・name/ok 違い・重複名・boolean だけの主張は
+#      すべて 409 paths_not_verified で削除を拒否される）
+
+# 5-1) ログ 1 行 JSON を取り出す（引数は環境変数で渡す）
+LOG_FILE="$CANARY_DIR/function.log" OUT="$CANARY_DIR/log-result.json" node -e '
+  const fs = require("fs");
+  const log = fs.readFileSync(process.env.LOG_FILE, "utf8").split("\n")
+    .map((l) => { const i = l.indexOf("{"); return i < 0 ? null : l.slice(i); })
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((o) => o && o.event === "marketing_automation_def_canary_result").pop();
+  if (!log) { console.error("ログ 1 行 JSON が見つかりません"); process.exit(1); }
+  fs.writeFileSync(process.env.OUT, JSON.stringify(log, null, 2));
+'
+
+# 5-2) HTTP 応答とログから checks をそのまま組み立てる（値の書き換えはしない）
+RUN_FILE="$CANARY_DIR/run.json" LOG_RESULT="$CANARY_DIR/log-result.json" \
+CID="$CID" OUT="$CANARY_DIR/cleanup-req.json" node -e '
+  const fs = require("fs");
+  const http = JSON.parse(fs.readFileSync(process.env.RUN_FILE, "utf8"));
+  const log  = JSON.parse(fs.readFileSync(process.env.LOG_RESULT, "utf8"));
+  const pick = (a) => a.map((c) => ({ name: c.name, ok: c.ok }));
+  fs.writeFileSync(process.env.OUT, JSON.stringify({
+    action: "cleanup", canaryId: process.env.CID,
+    httpOverallOk: http.overallOk, httpChecks: pick(http.checks),
+    logOverallOk: log.overallOk,  logChecks:  pick(log.checks),
+  }));
+'
+# 送る中身を目で確認してから投げる
+cat "$CANARY_DIR/cleanup-req.json"
+
 CL_HTTP=$(curl -sS -o "$CANARY_DIR/cleanup.json" -w '%{http_code}' \
   -X POST "$URL" -H 'Content-Type: application/json' -H "x-admin-secret: $SECRET" \
-  -d "{\"action\":\"cleanup\",\"canaryId\":\"$CID\",\"httpOverallOk\":true,\"logOverallOk\":true,\"checkCount\":10}")
+  --data-binary @"$CANARY_DIR/cleanup-req.json")
 echo "cleanup HTTP=$CL_HTTP"
 ```
 
@@ -180,8 +232,8 @@ echo "cleanup HTTP=$CL_HTTP"
    （墓標が立つので、以後この canaryId では再 run できない）
 5. `status` → 保存済み result を復元し、`run.json` と `overallOk` / チェック名 / 件数 / ok が一致
 6. **Function ログ**の 1 行 JSON でも一致を確認
-7. **3 経路が一致してから** `cleanup`（観測値を渡す）
-   → `pathsVerified=true` / `canary残存0=true` / **`墓標維持=true`**
+7. **3 経路が完全一致してから** `cleanup`（HTTP 応答とログの `checks[{name, ok}]` をそのまま渡す）
+   → `pathsVerified=true` / `照合.checkCount` が観測値と一致 / `canary残存0=true` / **`墓標維持=true`**
 8. `netlify env:unset MARKETING_AUTOMATION_DEF_CANARY_ENABLED --context production`
 9. **D3** → `preview` / `run` が **403** → `finalize`
    → `finalized=true`（Definition 0 / 結果 0 / **墓標 0** / index 除去済 / 他 member 不変）
@@ -193,11 +245,12 @@ echo "cleanup HTTP=$CL_HTTP"
 - `run` が **HTTP 200** / 応答 `overallOk=true` / `resultSaved=true`
 - `status` の `結果復元=true` かつ result `overallOk=true` / `墓標残存=true`
 - Function ログ `overallOk=true`
-- **3 経路のチェック名・件数・ok・overallOk が一致**
+- **3 経路が完全一致**（件数・**順序**・`name`・`ok`・`overallOk`。重複 check 名が無いこと）
 - 9 項目（10 チェック）が**すべて ok=true**
 - `runCount=1` / `retryCount=0` / 許可キー外の操作 **0**
 - `indexOtherMembers.same=true` かつ `added=0` / `removed=0`（**0 件でも複数件でも完全一致**）
-- cleanup 後 `pathsVerified=true` / `canary残存0=true` / **`墓標維持=true`**
+- cleanup 後 `pathsVerified=true` / `照合.一致範囲` が「件数・順序・name・ok・overallOk」/
+  `canary残存0=true` / **`墓標維持=true`**
 - cleanup 後に `run` を投げたら **`409 already_run`**（墓標が効いている確認・副作用なし）
 - finalize 後 `finalized=true`（**墓標含め残存 0**）
 
