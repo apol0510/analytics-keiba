@@ -204,6 +204,28 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
+### 🚧 段階開放の preflight を整備（2026-08-07・read-only / 実行はまだ）
+
+`docs/marketing-automation-release-runbook.md` の末尾に、開放直前に毎回見る節を追加した。
+**production env 変更 0 / 本番 write 0 / 実送信 0 / deploy 0。**
+
+- **env と write 経路の対応表**（開けたときに何が書けるようになるか）。
+  production の状態は `env:list --json` を正とする（`env:get` は折り返しで誤判定しやすい）
+- **各段の合格条件・停止条件・rollback**を S2〜S5 / P2〜P4 で固定
+- **P2 少数 canary の実行前チェックリスト**（実顧客を使わない / 3〜5 件 /
+  Customers・抑止台帳・blacklist との照合 / 作成される Redis キー / 冪等性 / cleanup / 想定件数）
+- **監視指標を数字だけで定義**（prospect 状態別 / ScheduledEmails PENDING / Customers 増加 /
+  写しの件数と鮮度 / 送信数 / error 数）。PII は出さない
+
+#### 確認した事実（2026-08-07・read-only）
+
+| 項目 | 結果 |
+|---|---|
+| 開放用 env 7 種 | **すべて UNSET**（`MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` のみ既存で true） |
+| Customers へ書ける経路 | **P2（手動 `promote`）と P4（自動）だけ**。S2〜S5 は Redis と ScheduledEmails まで |
+| P4 の再検証（fake） | ENGAGED → CREATE 成功 → PROMOTED / CREATE 失敗 → ENGAGED 維持 → 再試行 / 同時実行でも 1 件 / 写し stale で fail-closed — **すべて pass** |
+| ローカル全スイート | marketing 1,044 / B-4・B-5 17 / `check:safety` 519 — **すべて pass** |
+
 ### ✅ Scheduled Function 起動確認（2026-08-06・read-only）
 
 `28705ce` が production で ready の状態で、両 scheduled function のログを read-only で確認した。

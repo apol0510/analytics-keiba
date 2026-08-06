@@ -285,3 +285,123 @@ cron が ScheduledEmails の PENDING 行を作るには
 - 設計と blocker の記録: `docs/marketing-automation-preprod-audit.md`
 - 見込み客プールの設計: `docs/spec.md`「見込み客プール（外部リスト）」/ `docs/decisions.md` 2026-08-06
 - 進捗の正本: `docs/progress.md`
+
+---
+
+# 段階開放 preflight（2026-08-07 作成・read-only 調査に基づく）
+
+開放の**直前**に毎回この節を上から確認する。**1 つでも合わなければ開けない。**
+
+## env と、開けたときに到達可能になる write 経路
+
+production の状態は `netlify env:list --context production --json` で確認する
+（`env:get` は応答が折り返して誤判定しやすい。**`env:list --json` を正とする**）。
+
+| 段 | env | production | 開けると到達可能になる write |
+|---|---|---|---|
+| S2 | `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` | **UNSET** | 自動化 Definition の `create` / `update` / `activate` / `pause` / `cancel`（**Redis のみ**。Airtable へは書かない） |
+| S4 | `MARKETING_AUTOMATION_SCHEDULER_ENABLED` | **UNSET** | scheduler が Redis へ接続し `claim` / `createRun` を書く（**ScheduledEmails はまだ作らない**） |
+| S4.5 | `MARKETING_AUTOMATION_ENQUEUE_ENABLED` | **UNSET** | **ScheduledEmails の PENDING 行**を作る + prospect の送信回数を記録 |
+| S5 | `MARKETING_AUTOMATION_DISPATCH_ARMED` | **UNSET** | 当日ぶんの武装（日付一致）。ここまで揃うと**実配信が起きる** |
+| P2 | `MARKETING_PROSPECT_WRITE_ENABLED` | **UNSET** | `intake`（Redis）/ `promote`（**Customers へ CREATE**）/ `suppress` / `purge` |
+| P3 | `MARKETING_PROSPECT_EVENTS_ENABLED` | **UNSET** | webhook が prospect の状態を Redis へ書く（**Airtable へは書かない**） |
+| P4 | `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` | **UNSET** | `cron-prospect-worker` が **Customers へ CREATE**（自動） |
+| 既存 | `MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` | **SET(true)** | 既存機能のもの。**触らない** |
+
+> ⚠️ **Customers へ書けるようになるのは P2（手動）と P4（自動）だけ。**
+> S2〜S5 は Redis と ScheduledEmails までで、Customers には触れない。
+
+## 各段の合格条件・停止条件・rollback
+
+| 段 | 合格条件 | 停止条件（1 つでも該当したら閉じる） | rollback |
+|---|---|---|---|
+| S2 | `create` 200 / `get` が保存内容を返す / `list` に出る / 送信 0 / Customers 件数不変 | `store_unavailable` が出る / `list` に出ない / Customers が増えた | `env:unset` + 反映 deploy。保存済みは DRAFT なので動かない |
+| S3 | `activate` 200 / `承認したsnapshot` に件数と暦日 / 翌 tick も `gates_closed` | `snapshot_mismatch` が続く / `campaign_drift` | 管理画面から `pause` |
+| S4 | `ran:false` / `未設定のゲート` が `DISPATCH_ARMED` と `ENQUEUE_ENABLED` だけ / 接続 0 | 接続が `true` になる / `claim` が積み上がる | `env:unset` + 反映 deploy |
+| S4.5 | tick が `enqueue_disabled` を出さなくなる / ScheduledEmails が **0 のまま**（武装前） | 武装前に ScheduledEmails が増えた | `env:unset` + 反映 deploy |
+| S5 | 送信数 ≤ `maxRecipients` / `reconciliation.verdict === 'OK'` / Customers write 0 | `reconciliation` が `BLOCKED` / 想定を超える送信 | `DISPATCH_ARMED` を unset（**翌日には日付不一致で自動的に閉じる**）。**送信済みは取り消せない** |
+| P2 | `intake` の内訳が意図どおり / Customers 件数**不変** | Customers が増えた / `台帳で復活拒否` が想定外 | `env:unset`。取り込んだ prospect は `suppress` + `purge` で消せる |
+| P3 | 開封した相手が `ENGAGED` になる / Airtable write 0 | Airtable が増える | `env:unset` |
+| P4 | CREATE 成功数 = PROMOTED 数 / 同一相手が 2 回登録されない | 失敗が続く / 重複が出た | `env:unset`。**作成済みの Customers 行は消さない**（Airtable 側で確認してから手当て） |
+
+---
+
+# P2 少数 canary 実行計画（**実行前チェックリスト**）
+
+**本番への取り込みはまだ行わない。** 開放が承認されたときに、この順で実施する。
+
+## 使うアドレス
+
+- **実顧客は使わない。** `canary+<n>@example.invalid` 形式の**到達しないアドレス**を **3〜5 件**
+- 実在ドメインを使わない（送信が起きても外部へ出ない）
+- 氏名・その他の個人情報は入れない（`intake` は `email` だけを見る）
+
+## 実行前チェック
+
+| # | 確認 | 期待 |
+|---|---|---|
+| 1 | `MARKETING_PROSPECT_WRITE_ENABLED` 以外の automation env | **すべて UNSET** |
+| 2 | 顧客写しの鮮度 | `status` が 200 / `件数` が想定内 / `更新不要` |
+| 3 | Customers 件数（開始値） | 記録しておく（**canary 後に不変**であること） |
+| 4 | prospect 件数（開始値） | `送信候補` / `反応済み未登録` / `永久除外` を記録 |
+| 5 | 使うアドレスが **Customers に無い** | `lookup` で `not_found`（重複登録を作らない） |
+| 6 | 使うアドレスが **抑止台帳に無い** | `intake` の応答で `permanently_blocked` が 0 |
+| 7 | 使うアドレスが **blacklist に無い** | `intake` の応答で `unsubscribe` が 0 |
+
+## 作成される Redis キー（`ak:prospect:` 配下のみ）
+
+| キー | 件数 | 内容 |
+|---|---|---|
+| `ak:prospect:p:<sha256(email)>` | 投入件数ぶん | prospect 1 件（**配信中のみアドレスを持つ**） |
+| `ak:prospect:index:active` | 1（member が増える） | 送信候補の集合 |
+
+**この段階では `blocked:` / `index:blocked` / `promo-lock:` は作られない。**
+Airtable / ScheduledEmails へは**一切書かない**。
+
+## 冪等性
+
+- 同じ CSV を 2 回投入しても `addIfAbsent` が既存を上書きしないので **件数は増えない**
+- 抑止台帳に載った相手は**再投入しても復活しない**
+- `intake` の応答 `実際に追加` が 2 回目に **0** になることで確認できる
+
+## cleanup（canary 後）
+
+1. 各アドレスに `suppress`（`reason: 'manual'`）→ 台帳へ載り、送信候補から外れる
+2. `purge` → `ak:prospect:p:<hash>` が消える（**生アドレスが消える**）
+3. `status` で `送信候補` が開始値に戻り、`永久除外` が +投入件数 になることを確認
+
+> ⚠️ **台帳（`blocked:`）は残す設計**。消すと再取り込みで復活してしまう。
+> canary 用アドレスが台帳に残ることは**正常**。
+
+## 想定件数
+
+| 項目 | 想定 |
+|---|---|
+| 投入 | **3〜5 件** |
+| `実際に追加` | 投入件数と同じ |
+| Customers の増加 | **0** |
+| ScheduledEmails の増加 | **0** |
+| 送信 | **0** |
+
+---
+
+# 段階開放後に見る監視指標（**数字だけ**）
+
+PII・メールアドレス・Redis の値は出さない。**件数と時刻だけ**を見る。
+
+| 指標 | 取得元 | 正常 |
+|---|---|---|
+| prospect 状態別件数（`送信候補` / `反応済み未登録` / `永久除外`） | 管理画面「件数を確認」 | 意図した増減のみ |
+| ScheduledEmails の PENDING 件数 | 既存の送信状況画面 | 武装前は **0**。武装後は `queued` と一致 |
+| Customers の増加数 | 開始値との差 | P2 では **0**。P4 では昇格数と一致 |
+| 顧客写しの件数 | `cron-prospect-worker` ログの `写し.件数` | Customers 件数と概ね一致 |
+| 顧客写しの鮮度 | 同 `写し.経過秒` | **21,600 秒未満**。超え続けるなら更新が失敗している |
+| 送信数 | 既存の配信ジョブ | `maxRecipients` を超えない |
+| error 数 | 両 cron ログの `level=error` と `errors: []` | **0** |
+| 自動昇格の結果 | `cron-prospect-worker` ログ `昇格.登録 / 失敗 / 取り合い` | `失敗` が続かない |
+
+### 異常の見分け方
+
+- `写し.契機: snapshot_missing` が**毎回**出る → 写しの保存が失敗している
+- `昇格.失敗` が減らない → Airtable 側の拒否（列・権限）を疑う
+- `索引の掃除.removed` が毎回出る → 索引を壊す書き込み経路がある
