@@ -1,6 +1,7 @@
 # メルマガ自動化 段階開放 runbook
 
-対象: `feat/marketing-automation`（PR #237、squash `ba93eda` で main 反映済み・production deploy 済み）。
+対象: メルマガ自動化（PR #237 / squash `ba93eda`）と **見込み客プール**（PR #241 / squash `37090c0`）。
+どちらも main 反映・production deploy 済み。
 **コードは本番にあるが、env が全て閉じているため何も起きない状態**からの開放手順。
 
 > この文書は**開放の順序と、各段で何を観測してから次へ進むか**を先に決めておくためのもの。
@@ -14,6 +15,10 @@
 | `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` | **unset** |
 | `MARKETING_AUTOMATION_SCHEDULER_ENABLED` | **unset** |
 | `MARKETING_AUTOMATION_DISPATCH_ARMED` | **unset** |
+| `MARKETING_AUTOMATION_ENQUEUE_ENABLED` | **unset** |
+| `MARKETING_PROSPECT_WRITE_ENABLED` | **unset** |
+| `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` | **unset** |
+| `MARKETING_PROSPECT_EVENTS_ENABLED` | **unset** |
 | `MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` | true（**既存機能のもの。触らない**） |
 | Redis `index:active` | 空（`list` 実測 `保存済み: []`） |
 | cron 公開 URL | 403 / 本文 0 バイト（scheduled function） |
@@ -63,9 +68,9 @@ Netlify が渡していない可能性がある（fail-closed で安全側だが
 
 ## S2: 管理 write の開放（Definition の作成・保存まで。**ACTIVE 化しない**）
 
-⚠️ **前提**: 下の「C-2 の制約」を先に読むこと。**Customers が約 4,000 件を超えると
-`preview`（dry-run）が Function のタイムアウトに達する**。取り込みが進む前に済ませるか、
-先に C-2 を直す。
+⚠️ **前提**: 顧客一覧の**写しが作られていること**（下の「顧客一覧の写し」を先に読む）。
+写しが無い / 古いと dry-run と ACTIVE 化は **fail-closed で 503** になる。
+（C-2 は PR #241 で解消済み。**件数を理由に急ぐ必要は無い**。）
 
 ```bash
 netlify env:set MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED true --context production
@@ -186,27 +191,66 @@ netlify env:set MARKETING_AUTOMATION_DISPATCH_ARMED 2026-08-XX --context product
 
 - S1 で **invocation が確認できていない**
 - `reconciliation` が `BLOCKED` のまま
-- Customers が **4,000 件を超えていて C-2 未対応**（`preview` がタイムアウトする）
+- **顧客一覧の写しが無い / 古い**（dry-run と ACTIVE 化が fail-closed で止まる）
 - 直近に campaign の版か本文を変えた（`campaign_drift` で ACTIVE 化が弾かれる／
   弾かれないなら**検査が壊れている**ので調査）
 
-## C-2 の制約（**S2 の前に必ず読む**）
+## 顧客一覧の写し（**S2 の前に必ず読む**）
 
-`preview`（dry-run）は Customers を**全件・逐次**取得する。本番実測:
+かつて `preview`（dry-run）は Customers を**全件・逐次**取得しており、本番実測 1,678 件で
+3.5〜7.6 秒。同期 Function の上限 10 秒に対し **約 4,000 件でタイムアウト域**だった（C-2）。
 
-| Customers | ページ数 | 実測 |
+**PR #241（`37090c0`）で解消済み。** 走査は `cron-prospect-worker`
+（**Scheduled Function・10 分ごと**）だけが行い、同期側は Redis の写し
+（`ak:customer-snapshot:`）を読む。件数に依らず速い。
+
+| | |
+|---|---|
+| 写しの作り方 | 管理画面「顧客一覧の写しを更新（依頼）」→ **Redis に依頼札が立つだけ**。次の tick（最大 10 分）が拾って作る |
+| 公開 URL から起動 | **できない**（scheduled function への HTTP は Netlify が 403） |
+| 写しが無い / 古い（6 時間）/ 壊れている | **fail-closed で 503**（古い対象で送らせない） |
+
+**S2 の前に写しを 1 度作り、`prospect status` / `preview` が 200 で返ることを確認する。**
+
+## 見込み客プール（外部リスト）の開放
+
+自動配信（S1〜S5）とは**別の鍵**で開ける。順序は次のとおり。
+
+| 段 | 内容 | 動かす env |
 |---|---|---|
-| 1,678 件（2026-08-06） | 17 | **7.6 s（cold）/ 3.5 s（warm）** |
+| P1 | 写しを作る（上記）＋ `status` / `preview` が 200 | なし |
+| P2 | CSV を**少数**取り込む（既存顧客・除外済みは入らないことを確認） | `MARKETING_PROSPECT_WRITE_ENABLED` |
+| P3 | webhook から反応を拾えることを確認（開封 1 件で ENGAGED になる） | `MARKETING_PROSPECT_EVENTS_ENABLED` |
+| P4 | 反応者の**自動登録**（Customers へ CREATE） | `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` |
 
-Netlify の同期 Function のタイムアウトは既定 **10 秒**。
-**約 4,000 件（40 ページ）でタイムアウト域に入る。**
-外部無料ユーザーの取り込み（残り約 14,000 件）が完了すると **158 ページ ≒ 30〜70 秒**となり、
-`preview` は**必ず失敗する**。
+### P2〜P4 の合格条件
 
-→ 取り込み完了前に S2〜S3 を済ませるか、**先に C-2 を直す**
-（詳細は `docs/marketing-automation-preprod-audit.md` の「B-3 / B-4 / C-2 の read-only 監査」）。
+- **P2**: `intake` の応答で「既存顧客」「台帳で復活拒否」が意図どおり。Customers の件数が**変わらない**
+- **P3**: 開封した相手が `lookup` で `ENGAGED` になる。**Airtable は書かれていない**
+- **P4**: `cron-prospect-worker` のログで **CREATE 成功数 = PROMOTED 数**。
+  同じ相手が **2 回登録されていない**（`promotedRecordId` が 1 つ）。
+  失敗が出たら **ENGAGED のまま**残っていること（次の tick で再試行される）
+
+### rollback
+
+いずれも `env:unset` + 反映 deploy。**既に Customers へ作られた行は消さない**
+（重複が出た場合は Airtable 側で確認してから手当てする）。
+
+## S5 の前に: enqueue の開放
+
+cron が ScheduledEmails の PENDING 行を作るには
+**`MARKETING_AUTOMATION_ENQUEUE_ENABLED=true`** も要る（S4 と S5 の間で開ける）。
+開けていなければ tick は計画までで止まり、`skipped.enqueue_disabled` が記録される。
+
+## 残っている既知の課題（開放前に把握しておく）
+
+| # | 内容 | 影響 |
+|---|---|---|
+| B-4 | `activate` / `cancel` の索引更新が 2 段 | 誤送信にはならないが、`get` は ACTIVE なのに `list` に出ない食い違いが起きうる |
+| B-5 | run キーに TTL が無い | 容量は小さいが、保持期間が決まっていない |
 
 ## 関連
 
 - 設計と blocker の記録: `docs/marketing-automation-preprod-audit.md`
+- 見込み客プールの設計: `docs/spec.md`「見込み客プール（外部リスト）」/ `docs/decisions.md` 2026-08-06
 - 進捗の正本: `docs/progress.md`

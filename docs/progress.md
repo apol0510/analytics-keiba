@@ -67,7 +67,11 @@ merge 後の本番実測: cron 公開 URL は **403 / 本文 0 バイト**（sch
 **初回 schedule（JST 10:00 / cron `0 1 * * *`）のログ確認は未実施**。
 確認内容は `docs/marketing-automation-release-runbook.md` の S1。
 
-### 🚧 段階開放 runbook と残件の read-only 監査（2026-08-06）
+### 🚧 段階開放 runbook と残件の read-only 監査（2026-08-06・**C-2 / B-3 は解消済み**）
+
+> **2026-08-06 追記**: 本節は監査時点の記録。**C-2 と B-3 は PR #241（`37090c0`）で解消**した。
+> 未解決は **B-4（索引更新の 2 段）/ B-5（run キーの TTL）** の 2 件。
+> 段階開放 runbook も見込み客プールを含む形へ更新済み。
 
 - **[`docs/marketing-automation-release-runbook.md`](./marketing-automation-release-runbook.md)** を新設。
   S0（現状）→ S1（schedule 起動確認・env 変更なし）→ S2（管理 write）→ S3（ACTIVE 化）→
@@ -80,9 +84,13 @@ merge 後の本番実測: cron 公開 URL は **403 / 本文 0 バイト**（sch
 Netlify 同期 Function のタイムアウトは既定 10 秒なので、**約 4,000 件でタイムアウト域**、
 外部取り込み完了後の **15,800 件では 30〜70 秒で確実に失敗**する。
 `activate` も同じ経路で再計算するため、**自動化を一切操作できなくなる**（壊れ方は fail-closed で安全側）。
-→ **取り込み完了前に S2〜S3 を済ませるか、先に C-2 を直す。**
+
+> **✅ 解消（PR #241 / `37090c0`）**: 走査を **Scheduled Function**（`cron-prospect-worker`）へ移し、
+> 同期側は Redis の写し（`ak:customer-snapshot:`）を読むだけにした。件数に依らず速く、
+> 写しが無い / 古い / 壊れているときは fail-closed。**取り込み件数を理由に急ぐ必要は無くなった。**
 
 B-3 は「Redis に run は残っているのに当日分しか引いていない」だけで、決定的 runId の `MGET` で足りる。
+> **✅ 解消（PR #241）**: `runs` を **直近 30 日（最大 90 日）**へ拡張。索引は増やしていない。
 B-4 は誤送信には繋がらないが、`activate` の途中失敗で **`get` は ACTIVE / `list` に出ない**という
 A-1 と同種の食い違いを生む（`markActive` を先にするのが最小の対策）。
 新たに B-5（run キーに TTL が無い）/ B-6（本番 `index:active` が空＝開放前の基準点）を記録。
@@ -196,7 +204,7 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
-### 🆕 見込み客プール（外部 CSV 1 万数千件の扱い）— Draft PR・2026-08-06
+### ✅ 見込み客プール（外部 CSV 1 万数千件の扱い）— **main 反映済み**（2026-08-06 / PR #241 squash `37090c0`）
 
 **外部 CSV のアドレスを Airtable Customers へ入れない。** 反応した人だけを昇格させ、
 反応が無いまま数回送ったら**登録せずに配信対象から外す**。
