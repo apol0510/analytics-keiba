@@ -47,9 +47,84 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
-**Phase（2026-08-06 現在・最新）: AK 専用メルマガ自動化 Phase A（read-only 監査 + 設計 + dry-run）を
-Draft PR まで実装。**本番送信 0 / production env 変更 0 / production deploy 0 / Airtable schema 変更 0 /
-Customers への書き込み 0。** プリセットは全て初期 OFF で、有効化・実行は配線していない。**
+**Phase（2026-08-06 現在・最新）: AK 専用メルマガ自動化は Phase A / B / B-2 を Draft PR #237 まで実装し、
+永続化層（Redis primitive と Definition 保存・CAS）を本番で canary 実証済み。**
+本番送信 0 / 実顧客接触 0 / Airtable read・write 0 / Airtable schema 変更 0 /
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
+**PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
+
+### 🚧 管理 UI / API の production 導入前監査（2026-08-06・**未解決 blocker あり**）
+
+read-only 監査を実施。詳細は **[`docs/marketing-automation-preprod-audit.md`](./marketing-automation-preprod-audit.md)**。
+**結論: このままでは production へ入れられない。** 送信事故の危険は低い（全経路が fail-closed 側で止まる）が、
+**「ACTIVE にしても動かない」「dry-run で確かめた対象と実行対象が一致しない」**という状態の食い違いが残る。
+
+blocker 6 件（うち 2 件は fake Redis で**再現確認済み**）:
+
+| # | 内容 |
+|---|---|
+| A-1 🔁 | `enabled` が `DEF_FIELDS` に無く保存されない → 保存後は `isDue` が永久に `not_active`。UI は ACTIVE と表示する |
+| A-2 🔁 | `snapshotCount` も保存されない → `detectDrift` が**対象が減っても** `snapshot_grew` で常に発火 |
+| A-3 | `snapshotFingerprint` を保存しているのに scheduler が照合していない |
+| A-4 | ACTIVE のまま `update` でき、`activate` の「snapshot 必須 + drift 検査」を迂回できる |
+| A-5 | `cron-marketing-automation` に**認証が無い**（schedule 未登録＝公開 HTTP Function） |
+| A-6 | `MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` は**既に production で true**（実測）。防御は実質 env 1 枚 |
+
+correctness 4 件のうち **B-1 は進行中の外部取り込み完了で必ず顕在化する**:
+Customers 取得が `MAX_PAGES=60`（6,000 件）で**黙って打ち切る**ため、
+約 15,800 件になると先頭 6,000 件だけで対象集合を計算し、しかもエラーにならない。
+
+**開放条件**: A-1〜A-3 の修正完了まで `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` を production へ設定しない。
+A-5 の解決まで `MARKETING_AUTOMATION_SCHEDULER_ENABLED` を production へ設定しない。
+
+### ✅ 永続化層の本番 canary — Definition 保存 canary **PASS**（2026-08-06 / PR #239）
+
+**PR #237 が使う Definition 保存・取得・CAS が、本番 Upstash 上で意図どおり動くことを実証した。**
+PR #237 の未 merge 差分全体を production へ入れないため、`origin/main` 基点の**最小 canary branch**
+（PR #239 `chore/marketing-automation-def-canary`、新規 4 ファイルのみ・既存変更 0）を作って実行し、
+**merge せず close** した。canary Function は本番から撤収済み（`main` にこの Function は存在しない）。
+
+#### 実証できたこと
+
+| 対象 | 結果 |
+|---|---|
+| **CAS Lua**（PR #237 の `automationStore.js` から改変せず抽出。sha256 `e07dc3cf…`） | 新規作成 / version 一致更新 **OK** / **不一致は CONFLICT で上書きされない** |
+| Definition のライフサイクル | 作成 → get → CAS 更新 → pause(PAUSED) → cancel(CANCELLED) → index 追加・除去 → 削除 が一連で成立 |
+| `index:active`（共有キー） | canary 以外の member は **完全一致**（before 0 → after 0 / added 0 / removed 0） |
+| 墓標（`SET NX`） | **cleanup 後も再 run を構造的に拒否**（`409 already_run`・副作用 0） |
+| 3 経路の結果復元 | HTTP 応答 / Redis result / Function ログが**完全一致**（件数・順序・name・ok・overallOk） |
+
+run は **exactly 1 / retry 0**、10 チェック全 PASS、`resultSaved=true`、commands 16、latency avg 199ms（max 652ms）。
+
+#### deploy と env（4 回で固定・すべて実施済み）
+
+| # | 内容 | 確認 |
+|---|---|---|
+| D1 | 固定 SHA + env unset | Function 存在・`preview`/`run` **403** `def_canary_disabled`・Redis 非接触 |
+| D2 | 同 SHA + `ENABLED=true` | `preview` 200 → `run` ×1 → 3 経路一致 → cleanup（**墓標維持**） |
+| D3 | 同 SHA + env unset | `preview`/`run` **403** → `finalize` → **墓標含め残存 0** |
+| D4 | `main` を Build Hook で 1 回 | 公開 SHA `a787c03` / canary Function **404** / トップ 200 |
+
+`MARKETING_AUTOMATION_DEF_CANARY_ENABLED` は実行後に unset 済み。
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は**この canary で参照も追加もしていない**。
+
+#### 先行: Redis primitive canary **PASS**（PR #238・同じく merge せず終了）
+
+専用 prefix 内だけで `SET NX` 排他 / fencing token 単調増加 / CAS Lua / 所有権再検証 /
+prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition canary はその一段上として、
+**本番と同じキー空間**（`def:*` と `index:active`）で確かめたもの。
+
+#### 運用上の注意（実測で判明）
+
+- **`netlify logs:function` は live stream 専用**（deprecated）で、実行済み run のログを返さない。
+  過去ログは `netlify logs --source functions --function <name> --since <t> --json` で取得し、
+  JSON Lines の各行の文字列フィールド内に埋まった 1 行 JSON を走査して抽出する
+- Netlify CLI は **git worktree から `base` を解決できない**。deploy は通常 clone から行う
+
+#### まだ実証していないこと
+
+`run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
+未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
 ### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）
 
