@@ -527,9 +527,20 @@ test('guard: ゲート判定は store 初期化より前にある', () => {
 });
 
 test('guard: scheduler はメールを送らず Customers も書かない', () => {
-  for (const bad of ['mail/send', '@sendgrid/mail', 'api.airtable.com', "method: 'PATCH'"]) {
+  // ⚠️ 2026-08-06: enqueue を配線したので Airtable への POST は**持つ**ようになった。
+  //    ただし作ってよいのは **ScheduledEmails の PENDING 行だけ**で、
+  //    送信 API を呼ばない・Customers を書かない・更新削除しない、は変わらない。
+  for (const bad of ['mail/send', '@sendgrid/mail', "method: 'PATCH'", "method: 'DELETE'"]) {
     assert.equal(CRON.includes(bad), false, `${bad} を持っている`);
   }
+  // Airtable へ触るのは ScheduledEmails のみ（**コメントではなく実コード**で判定）
+  const code = CRON.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+  const tables = [...code.matchAll(/encodeURIComponent\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(tables)], ['ScheduledEmails'], '他のテーブルを触っている');
+  assert.equal(code.includes('Customers'), false, 'Customers を実コードで参照している');
+  // enqueue は専用 env が開くまで動かない
+  assert.match(CRON, /MARKETING_AUTOMATION_ENQUEUE_ENABLED === 'true'/);
 });
 
 test('guard: scheduler は AK 専用 prefix しか使わない', () => {

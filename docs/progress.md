@@ -162,6 +162,127 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
+### 🆕 見込み客プール（外部 CSV 1 万数千件の扱い）— Draft PR・2026-08-06
+
+**外部 CSV のアドレスを Airtable Customers へ入れない。** 反応した人だけを昇格させ、
+反応が無いまま数回送ったら**登録せずに配信対象から外す**。
+
+#### なぜ分けるか
+
+未反応のアドレスまで顧客台帳へ入れると、顧客数・セグメント・集計が薄まり、
+「顧客」と「まだ顧客でない人」の区別が消える。配信停止・バウンスの管理対象も無駄に膨らむ。
+
+#### 状態機械（`prospectPolicy.js`）
+
+```
+NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録──▶ PROMOTED
+                │
+                ├─ 3 回 無反応 ─────────────▶ EXHAUSTED（登録しない・以後送らない）
+                └─ bounce / 苦情 / 配信停止 ─▶ SUPPRESSED（即時・復活しない）
+```
+
+反応とみなすのは **open / click だけ**（`delivered` は反応ではない）。同一相手への最小間隔 **3 日**。
+**除外は反応より優先**で、苦情の後に開封しても戻さない。
+
+#### 保存先（`prospectStore.js`）— ⚠️ PII の扱いの例外
+
+Redis の **`ak:prospect:` 配下だけ**メールアドレスを保存する（送るのに要るため）。代わりに
+**キーは `sha256(email)`** / **一覧・ログ・集計にアドレスを出さない**、という制約を課した。
+他の名前空間へアドレスを書く禁止は従来どおり（テストで固定）。
+
+#### ⚠️ 永続抑止台帳（TTL で消さない）
+
+除外・打ち切りを **TTL で消すのは誤り**だった。消えると **CSV を入れ直したときに配信対象として
+復活する**。そこで `ak:prospect:blocked:<sha256>` に **TTL なしの台帳**を置く。
+
+| | |
+|---|---|
+| 台帳が持つもの | `hash` / `kind`（suppressed / exhausted）/ `reason` / `at` / `sends`。**アドレスは持たない** |
+| 生アドレスを持つもの | `ak:prospect:p:<hash>` の**配信中のレコードだけ** |
+| 抑止後 | `purge()` で**レコードごと削除できる**（生アドレスが消える）。台帳は残るので復活しない |
+| 取り込み時 | **hash で台帳と突き合わせ**、載っていれば追加しない（`permanently_blocked`） |
+
+#### 重複登録・二重送信を防ぐ 3 層
+
+1. 取り込み時と送信時の**両方**で Customers のアドレス集合と突き合わせる（Customers が正）
+2. 同じ配信回で同じ相手を 2 度入れない（`deliveryKey`）
+3. Customers と prospect に同じ人が居たら **Customers を優先**して prospect 側を落とす
+
+#### 昇格は**自動**（open / click 検知後）
+
+反応した人は **`cron-prospect-worker`（10 分ごとの scheduled function）が自動で** Customers へ登録する。
+
+| 段階 | 何が起きるか |
+|---|---|
+| webhook が open / click を受ける | prospect を **ENGAGED** にする（Airtable へは書かない） |
+| 次の tick | `promo-lock:<hash>` を `SET NX` で 1 つだけ取り、**Customers へ CREATE 1 件** |
+| 成功 | **そのときだけ** PROMOTED にし、`promotedRecordId` を残す |
+| **失敗** | **ENGAGED のまま**残し、権利を返す → **次の tick で再試行**。二重登録しない |
+
+書く列は取り込みと**同じ allow-list**（`Email` / `プラン=Free` / `ポイント` / `Source`）で、
+課金・権利・配信停止の列は 1 つも書かない。写しが使えないときは**登録しない**
+（既存顧客との重複を判定できないため）。
+管理画面の「反応した人を登録」は **手動の救済・再実行**用で、自動側と同じ `promo-lock` を取る。
+
+#### 即時除外（`sendgrid-webhook.js`）
+
+bounce / 苦情 / 配信停止 / dropped で **即 SUPPRESSED**。**既定 OFF**
+（`MARKETING_PROSPECT_EVENTS_ENABLED`）。失敗しても webhook は 200 を返す（再送を招かない）。
+
+#### 毎日の配信への合流（`automationTickPlan.js` + cron 配線）
+
+承認済み snapshot と現在の対象を突き合わせ、Customers 由来と prospect 由来を 1 本にまとめ、
+上限超過は**切り捨てず中止**して既存 enqueue 契約の形にする。
+**cron から `planTickDelivery` → enqueue まで正式に配線した**。
+作るのは **ScheduledEmails の PENDING 行だけ**で、実送信は既存 dispatcher（送信経路は 1 本のまま）。
+prospect の送信回数は **enqueue 成功後**に記録する（失敗した回で諦めない）。
+enqueue は **`MARKETING_AUTOMATION_ENQUEUE_ENABLED=true` のときだけ**動く。
+
+#### ⚠️ C-2 の修正（全件走査を同期 Function から追い出す）
+
+dry-run と ACTIVE 化が Customers を全件・逐次取っており、**約 4,000 件でタイムアウト域**、
+15,800 件では確実に失敗していた。走査を **Background Function**
+（`refresh-customer-snapshot-background`・15 分まで）へ移し、
+同期側は **Redis の写し**（`ak:customer-snapshot:`）を読むだけにした。
+
+- 写しは chunk（2,000 件）で保存し、**meta は最後に更新**する（半端な写しを読ませない）
+- 写しが**無い / 古い（既定 6 時間）/ 壊れている**ときは **503 で fail-closed**
+- 走査が途中で失敗したら **meta を更新しない**（古い写しのまま残す方が安全）
+
+⚠️ **公開 URL から走査を起動させない。** 走査は **scheduled function**
+（`cron-prospect-worker`）だけが行い、HTTP 起動は Netlify が拒否する。
+管理画面の「写しを更新」は **認証済み管理 API が Redis に依頼札を立てるだけ**で、
+次の tick（最大 10 分）が拾って更新する。公開 background function は**削除した**。
+
+#### ゲート（いずれも production 未設定）
+
+| env | 何が開くか |
+|---|---|
+| `MARKETING_PROSPECT_WRITE_ENABLED` | 取り込み・昇格・手動除外（**Customers への登録**） |
+| `MARKETING_PROSPECT_EVENTS_ENABLED` | webhook から prospect への反映 |
+| `MARKETING_AUTOMATION_ENQUEUE_ENABLED` | cron からの enqueue（ScheduledEmails の行作成） |
+| `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` | 反応者の**自動** Customers 登録 |
+| `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` | 自動化の設定変更 |
+| `MARKETING_AUTOMATION_SCHEDULER_ENABLED` + `..._DISPATCH_ARMED` | 実配信 |
+
+#### あわせて B-3 を修正
+
+実行履歴が当日分しか引けなかったのを **直近 30 日（最大 90 日）**へ。runId が決定的なので索引は増やさない。
+
+#### 管理画面（`/admin/premium-plus-eligibility/`）
+
+見込み客パネルを追加。**CSV 取込 / 件数確認 / 配信の下見 / 昇格の下見 / 1 件の状態
+（送信回数・反応・除外）/ 昇格 / 手動除外 / 除外済みアドレスの削除 / 顧客写しの更新**を 1 画面で。
+保存系ボタンは**初期 disabled**で、`writeEnabled` に連動し、`prospect_write_blocked` を受けたら即座に閉じる。
+昇格は**下見の件数を渡す**ので、食い違えば API 側が拒否する。
+
+E2E テスト: **CSV 取込 → 3 回無反応 → 永久除外 → purge → 再取込でも復活しない** /
+**取込 → 送信 → open 検知 → 自動登録（2 回目は二重登録しない）** /
+**Airtable 失敗 → ENGAGED のまま → 次回に再試行して 1 件だけ登録**。
+
+テスト: marketing **1,027 pass**（prospect 新規 51）/ webhooks 132 / CRM 246 /
+`check:safety` 519 / build 通過。**production env 変更 0 / 実送信 0 / Airtable write 0。**
+
 ### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）
 
 **管理画面だけで Definition の作成・編集・保存・有効化・一時停止・取消・履歴確認まで

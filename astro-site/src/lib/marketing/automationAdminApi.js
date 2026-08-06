@@ -32,6 +32,10 @@ import { MARKETING_EMAIL_SHELL_VERSION } from './marketingEmailShell.js';
 /** production write を開けるゲート（Phase B では production 未設定） */
 export const WRITE_GATE_ENV = 'MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED';
 
+/** 実行履歴で遡る既定日数と上限（B-3: 当日だけでは振り返りができない） */
+export const RUNS_HISTORY_DAYS = 30;
+export const RUNS_HISTORY_MAX_DAYS = 90;
+
 /** write を伴う action（**store 初期化より前**にゲートで弾く） */
 export const WRITE_ACTIONS = Object.freeze(['create', 'update', 'activate', 'pause', 'cancel']);
 export const READ_ACTIONS = Object.freeze(['list', 'get', 'preview', 'runs', 'run-detail', 'status']);
@@ -246,19 +250,27 @@ export function createAutomationAdminApi(deps = {}) {
       };
     },
 
-    async runs({ automationId }) {
+    /**
+     * 実行履歴。**当日だけでなく直近 N 日**を引く。
+     * runId は `<automationId>#<YYYY-MM-DD>` と決定的なので、
+     * 索引を増やさずに日付を組み立てて引ける（B-3）。
+     */
+    async runs({ automationId, days }) {
+      const span = Math.min(Math.max(int(days) || RUNS_HISTORY_DAYS, 1), RUNS_HISTORY_MAX_DAYS);
       const res = await guardStore(async () => {
-        const today = jstDateString(nowMs);
-        const ids = [today];
         const out = [];
-        for (const d of ids) {
+        for (let i = 0; i < span; i += 1) {
+          const d = jstDateString(nowMs - i * 86400000);
           const r = await store.loadRun(buildAutomationRunId({ automationId, occurrenceDate: d }));
           if (r) out.push(r);
         }
         return out;
       });
       if (res && res.ok === false) return res;
-      return { ok: true, mode: 'automation-runs', sideEffects: 'none', runs: res };
+      return {
+        ok: true, mode: 'automation-runs', sideEffects: 'none',
+        遡った日数: span, runs: res,
+      };
     },
 
     async runDetail({ runId }) {
