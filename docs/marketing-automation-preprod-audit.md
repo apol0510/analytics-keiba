@@ -506,3 +506,17 @@ export const config = { schedule: '0 1 * * *' };   // UTC 01:00 = JST 10:00
 - **既存 cron 2 つも v2 + config 方式**であること（前提が変わったら気づけるように）
 - `netlify.toml` に二重登録していないこと
 - cron 式の JST 換算が 10 時で quiet hours の外であること
+
+### 統一後の Deploy Preview 実測（v2 + `export const config`）
+
+| 対象 | POST | GET | 詐称 `x-netlify-event` 付き |
+|---|---|---|---|
+| `cron-marketing-automation` | **403 / 0 バイト / text-plain** | **403 / 0 バイト** | **403 / 0 バイト** |
+| `cron-payment-email-reconciler`（既存） | 403 / 0 バイト | — | — |
+
+**既存 scheduled function と完全に同じ見え方**になり、`export const config` による
+schedule 登録が効いていることを確認した（v1 のときは自前の 404 JSON が返っていた）。
+
+> この確認は **登録の有無を見分ける手順**として再利用できる。
+> 公開 URL へ POST し、**本文 0 バイトの text/plain 403** ならプラットフォーム拒否＝登録済み、
+> **自前の JSON が返る**なら未登録（通常の公開 Function のまま）。
