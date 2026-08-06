@@ -187,9 +187,20 @@ NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録─�
 #### 保存先（`prospectStore.js`）— ⚠️ PII の扱いの例外
 
 Redis の **`ak:prospect:` 配下だけ**メールアドレスを保存する（送るのに要るため）。代わりに
-**キーは `sha256(email)`** / **一覧・ログ・集計にアドレスを出さない** /
-EXHAUSTED・SUPPRESSED は **TTL で自動的に消える**、という制約を課した。
+**キーは `sha256(email)`** / **一覧・ログ・集計にアドレスを出さない**、という制約を課した。
 他の名前空間へアドレスを書く禁止は従来どおり（テストで固定）。
+
+#### ⚠️ 永続抑止台帳（TTL で消さない）
+
+除外・打ち切りを **TTL で消すのは誤り**だった。消えると **CSV を入れ直したときに配信対象として
+復活する**。そこで `ak:prospect:blocked:<sha256>` に **TTL なしの台帳**を置く。
+
+| | |
+|---|---|
+| 台帳が持つもの | `hash` / `kind`（suppressed / exhausted）/ `reason` / `at` / `sends`。**アドレスは持たない** |
+| 生アドレスを持つもの | `ak:prospect:p:<hash>` の**配信中のレコードだけ** |
+| 抑止後 | `purge()` で**レコードごと削除できる**（生アドレスが消える）。台帳は残るので復活しない |
+| 取り込み時 | **hash で台帳と突き合わせ**、載っていれば追加しない（`permanently_blocked`） |
 
 #### 重複登録・二重送信を防ぐ 3 層
 
@@ -208,11 +219,25 @@ EXHAUSTED・SUPPRESSED は **TTL で自動的に消える**、という制約を
 bounce / 苦情 / 配信停止 / dropped で **即 SUPPRESSED**。**既定 OFF**
 （`MARKETING_PROSPECT_EVENTS_ENABLED`）。失敗しても webhook は 200 を返す（再送を招かない）。
 
-#### 毎日の配信への合流（`automationTickPlan.js`）
+#### 毎日の配信への合流（`automationTickPlan.js` + cron 配線）
 
 承認済み snapshot と現在の対象を突き合わせ、Customers 由来と prospect 由来を 1 本にまとめ、
 上限超過は**切り捨てず中止**して既存 enqueue 契約の形にする。
+**cron から `planTickDelivery` → enqueue まで正式に配線した**。
+作るのは **ScheduledEmails の PENDING 行だけ**で、実送信は既存 dispatcher（送信経路は 1 本のまま）。
 prospect の送信回数は **enqueue 成功後**に記録する（失敗した回で諦めない）。
+enqueue は **`MARKETING_AUTOMATION_ENQUEUE_ENABLED=true` のときだけ**動く。
+
+#### ⚠️ C-2 の修正（全件走査を同期 Function から追い出す）
+
+dry-run と ACTIVE 化が Customers を全件・逐次取っており、**約 4,000 件でタイムアウト域**、
+15,800 件では確実に失敗していた。走査を **Background Function**
+（`refresh-customer-snapshot-background`・15 分まで）へ移し、
+同期側は **Redis の写し**（`ak:customer-snapshot:`）を読むだけにした。
+
+- 写しは chunk（2,000 件）で保存し、**meta は最後に更新**する（半端な写しを読ませない）
+- 写しが**無い / 古い（既定 6 時間）/ 壊れている**ときは **503 で fail-closed**
+- 走査が途中で失敗したら **meta を更新しない**（古い写しのまま残す方が安全）
 
 #### ゲート（いずれも production 未設定）
 
@@ -220,6 +245,7 @@ prospect の送信回数は **enqueue 成功後**に記録する（失敗した�
 |---|---|
 | `MARKETING_PROSPECT_WRITE_ENABLED` | 取り込み・昇格・手動除外（**Customers への登録**） |
 | `MARKETING_PROSPECT_EVENTS_ENABLED` | webhook から prospect への反映 |
+| `MARKETING_AUTOMATION_ENQUEUE_ENABLED` | cron からの enqueue（ScheduledEmails の行作成） |
 | `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` | 自動化の設定変更 |
 | `MARKETING_AUTOMATION_SCHEDULER_ENABLED` + `..._DISPATCH_ARMED` | 実配信 |
 
@@ -227,7 +253,14 @@ prospect の送信回数は **enqueue 成功後**に記録する（失敗した�
 
 実行履歴が当日分しか引けなかったのを **直近 30 日（最大 90 日）**へ。runId が決定的なので索引は増やさない。
 
-テスト: marketing **1,008 pass**（prospect 新規 32）/ webhooks 132 / CRM 246 /
+#### 管理画面（`/admin/premium-plus-eligibility/`）
+
+見込み客パネルを追加。**CSV 取込 / 件数確認 / 配信の下見 / 昇格の下見 / 1 件の状態
+（送信回数・反応・除外）/ 昇格 / 手動除外 / 除外済みアドレスの削除 / 顧客写しの更新**を 1 画面で。
+保存系ボタンは**初期 disabled**で、`writeEnabled` に連動し、`prospect_write_blocked` を受けたら即座に閉じる。
+昇格は**下見の件数を渡す**ので、食い違えば API 側が拒否する。
+
+テスト: marketing **1,020 pass**（prospect 新規 44）/ webhooks 132 / CRM 246 /
 `check:safety` 519 / build 通過。**production env 変更 0 / 実送信 0 / Airtable write 0。**
 
 ### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）

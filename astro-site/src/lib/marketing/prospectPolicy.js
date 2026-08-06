@@ -219,11 +219,14 @@ export function evaluateForPromotion({ prospect, isCustomer }) {
  *          existingEmails:Set<string>, blacklistEmails:Set<string>, nowMs, batchId}} args
  */
 export function planProspectIntake({
-  rows, customerEmails, existingEmails, blacklistEmails, nowMs, batchId,
+  rows, customerEmails, existingEmails, blacklistEmails, blockedHashes, hashFn, nowMs, batchId,
 } = {}) {
   const customers = customerEmails instanceof Set ? customerEmails : new Set();
   const existing = existingEmails instanceof Set ? existingEmails : new Set();
   const blacklist = blacklistEmails instanceof Set ? blacklistEmails : new Set();
+  // ⚠️ 永続抑止台帳（hash の集合）。**再取り込みで復活させない**
+  const blocked = blockedHashes instanceof Set ? blockedHashes : new Set();
+  const hash = typeof hashFn === 'function' ? hashFn : null;
 
   const add = []; const skipped = {}; const seen = new Set();
   const bump = (r) => { skipped[r] = (skipped[r] || 0) + 1; };
@@ -236,6 +239,8 @@ export function planProspectIntake({
     // ⚠️ 既存顧客は入れない（Customers が正本）
     if (customers.has(email)) { bump(SKIP_REASON.ALREADY_CUSTOMER); continue; }
     if (existing.has(email)) { bump('already_prospect'); continue; }
+    // ⚠️ 台帳照合は**アドレスではなく hash**で行う（台帳は hash しか持たない）
+    if (hash && blocked.has(hash(email))) { bump('permanently_blocked'); continue; }
     if (blacklist.has(email)) { bump(SUPPRESS_REASON.UNSUBSCRIBE); continue; }
     add.push(buildProspect({ email, nowMs, batchId, source: 'csv' }));
   }

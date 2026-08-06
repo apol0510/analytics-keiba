@@ -17,9 +17,14 @@ import {
   planProspectIntake, summarizeProspects,
 } from './prospectPolicy.js';
 import {
-  createProspectStore, emailHash, prospectKey, PROSPECT_ROOT,
-  ACTIVE_INDEX, ENGAGED_INDEX, PROSPECT_FIELDS, ProspectStoreError, ttlForState,
+  createProspectStore, emailHash, prospectKey, blockedKey, PROSPECT_ROOT,
+  ACTIVE_INDEX, ENGAGED_INDEX, BLOCKED_INDEX, PROSPECT_FIELDS, BLOCKED_FIELDS,
+  ProspectStoreError, ttlForState, BLOCK_KIND,
 } from './prospectStore.js';
+import {
+  createSnapshotStore, evaluateSnapshot, buildChunks, SnapshotError,
+  SNAPSHOT_FAIL, SNAPSHOT_ROOT, META_KEY,
+} from './customerSnapshotCache.js';
 import {
   buildProspectAudience, mergeAudiences, planPromotions, planProspectEventUpdates,
 } from './prospectPipeline.js';
@@ -271,7 +276,7 @@ test('キーは sha256 でアドレスを含まない / 名前空間の外は拒
   assert.equal(s.assertKey(ACTIVE_INDEX), ACTIVE_INDEX);
 });
 
-test('保存項目は allow-list のみ / 状態に応じた TTL', async () => {
+test('保存項目は allow-list のみ / prospect レコードに TTL を付けない', async () => {
   const r = fakeRedis();
   const s = createProspectStore({ cmd: r.cmd });
   await s.addIfAbsent({ ...buildProspect({ email: 'a@example.invalid', nowMs: NOW }), 余計な列: 'x' });
@@ -279,9 +284,10 @@ test('保存項目は allow-list のみ / 状態に応じた TTL', async () => {
   for (const k of Object.keys(saved)) assert.ok(PROSPECT_FIELDS.includes(k), `${k} を保存している`);
   assert.equal(saved['余計な列'], undefined);
 
-  assert.equal(ttlForState(PROSPECT_STATE.SENDING), null);
-  assert.ok(ttlForState(PROSPECT_STATE.EXHAUSTED) > 0);
-  assert.ok(ttlForState(PROSPECT_STATE.SUPPRESSED) > ttlForState(PROSPECT_STATE.EXHAUSTED));
+  // ⚠️ TTL で消すと CSV 再取り込みで復活する。**どの状態でも TTL は付けない**
+  for (const st of Object.values(PROSPECT_STATE)) assert.equal(ttlForState(st), null, st);
+  const setCalls = r.calls.filter((c) => c[0] === 'SET' && String(c[1]).includes(':p:'));
+  for (const c of setCalls) assert.equal(c.includes('EX'), false, 'prospect に TTL を付けている');
 });
 
 test('索引は状態と必ず揃う（送信候補・反応済み）', async () => {
@@ -497,4 +503,185 @@ test('summarizeProspects はアドレスを含まない', () => {
   assert.equal(JSON.stringify(s).includes('@'), false);
   assert.equal(s.合計, 2);
   assert.equal(s.反応済み, 1);
+});
+
+
+// ── 永続抑止台帳（最優先修正）────────────────────────────────
+
+test('除外・打ち切りは TTL で消えず、台帳へ hash と理由・日時が残る', async () => {
+  const r = fakeRedis();
+  const s = createProspectStore({ cmd: r.cmd });
+  const email = 'a@example.invalid';
+  const h = emailHash(email);
+
+  await s.addIfAbsent(buildProspect({ email, nowMs: NOW }));
+  await s.recordSuppression({ email, nowMs: NOW, reason: SUPPRESS_REASON.COMPLAINT });
+
+  const entry = await s.loadBlocked(h);
+  assert.ok(entry, '台帳に載っていない');
+  assert.equal(entry.hash, h);
+  assert.equal(entry.kind, BLOCK_KIND.SUPPRESSED);
+  assert.equal(entry.reason, SUPPRESS_REASON.COMPLAINT);
+  assert.ok(entry.at, '日時が無い');
+  // ⚠️ 台帳にアドレスを持たない
+  for (const k of Object.keys(entry)) assert.ok(BLOCKED_FIELDS.includes(k), `${k} を保存している`);
+  assert.equal(JSON.stringify(entry).includes('@'), false, '台帳にアドレスが入っている');
+  // ⚠️ 台帳キーに TTL を付けない
+  const setCall = r.calls.find((c) => c[0] === 'SET' && c[1] === blockedKey(h));
+  assert.equal(setCall.includes('EX'), false, '台帳に TTL を付けている');
+});
+
+test('無反応 3 回の打ち切りも台帳へ載る', async () => {
+  const r = fakeRedis();
+  const s = createProspectStore({ cmd: r.cmd });
+  const email = 'a@example.invalid';
+  await s.addIfAbsent(buildProspect({ email, nowMs: NOW }));
+  for (let i = 1; i <= MAX_SENDS_WITHOUT_ENGAGEMENT; i += 1) {
+    await s.recordSend({ email, nowMs: day(i * 3), runId: `r${i}` });
+  }
+  const entry = await s.loadBlocked(emailHash(email));
+  assert.equal(entry.kind, BLOCK_KIND.EXHAUSTED);
+  assert.equal(entry.sends, MAX_SENDS_WITHOUT_ENGAGEMENT);
+  assert.equal(await s.isBlocked(emailHash(email)), true);
+});
+
+test('CSV を入れ直しても台帳に載っている相手は復活しない', async () => {
+  const r = fakeRedis();
+  const s = createProspectStore({ cmd: r.cmd });
+  const email = 'a@example.invalid';
+  await s.addIfAbsent(buildProspect({ email, nowMs: NOW }));
+  await s.recordSuppression({ email, nowMs: NOW, reason: SUPPRESS_REASON.BOUNCE });
+  // レコードごと消しても（生アドレスを削除しても）台帳は残る
+  await s.purge(emailHash(email));
+  assert.equal(await s.load(email), null, 'レコードが残っている');
+  assert.equal(await s.isBlocked(emailHash(email)), true, '台帳が消えた');
+
+  const again = await s.addIfAbsent(buildProspect({ email, nowMs: day(30) }));
+  assert.equal(again.added, false, '再取り込みで復活した');
+  assert.equal(again.blocked, true);
+  assert.deepEqual(await s.activeHashes(), [], '送信候補へ戻った');
+});
+
+test('取り込み計画も台帳（hash）と突き合わせる', () => {
+  const blockedHashes = new Set([emailHash('blocked@example.invalid')]);
+  const plan = planProspectIntake({
+    rows: [{ email: 'blocked@example.invalid' }, { email: 'ok@example.invalid' }],
+    customerEmails: new Set(), existingEmails: new Set(), blacklistEmails: new Set(),
+    blockedHashes, hashFn: emailHash, nowMs: NOW, batchId: 'b2',
+  });
+  assert.equal(plan.add.length, 1);
+  assert.equal(plan.add[0].email, 'ok@example.invalid');
+  assert.equal(plan.skipped.permanently_blocked, 1);
+});
+
+test('生アドレスを持つのは配信中のレコードだけ。除外後は削除できる', async () => {
+  const r = fakeRedis();
+  const s = createProspectStore({ cmd: r.cmd });
+  const email = 'a@example.invalid';
+  await s.addIfAbsent(buildProspect({ email, nowMs: NOW }));
+  assert.ok(JSON.stringify(r.store.get(prospectKey(emailHash(email)))).includes(email));
+
+  // 抑止前は削除できない（配信中のものを消さない）
+  assert.equal((await s.purge(emailHash(email))).purged, false);
+
+  await s.recordSuppression({ email, nowMs: NOW, reason: 'manual' });
+  assert.equal((await s.purge(emailHash(email))).purged, true);
+  assert.equal(r.store.has(prospectKey(emailHash(email))), false, '生アドレスが残っている');
+  assert.equal(r.store.has(blockedKey(emailHash(email))), true, '台帳まで消えた');
+});
+
+test('件数に永久除外が出る', async () => {
+  const r = fakeRedis();
+  const s = createProspectStore({ cmd: r.cmd });
+  await s.addIfAbsent(buildProspect({ email: 'a@example.invalid', nowMs: NOW }));
+  await s.addIfAbsent(buildProspect({ email: 'b@example.invalid', nowMs: NOW }));
+  await s.recordSuppression({ email: 'b@example.invalid', nowMs: NOW, reason: 'bounce' });
+  const c = await s.counts();
+  assert.deepEqual(c, { 送信候補: 1, 反応済み未登録: 0, 永久除外: 1 });
+});
+
+// ── C-2: 顧客一覧の写し ───────────────────────────────────────
+
+test('写しは chunk へ分けて保存し、meta を最後に更新する', async () => {
+  const r = fakeRedis();
+  const s = createSnapshotStore({ cmd: r.cmd });
+  const emails = Array.from({ length: 4500 }, (_, i) => `u${i}@example.invalid`);
+  const meta = await s.save({ emails, nowMs: NOW, generation: 'g1' });
+  assert.equal(meta.count, 4500);
+  assert.equal(meta.chunks, 3);        // 2000 件ずつ
+  // meta の SET は最後
+  const setKeys = r.calls.filter((c) => c[0] === 'SET').map((c) => c[1]);
+  assert.equal(setKeys[setKeys.length - 1], META_KEY, 'meta を先に書いている');
+
+  const set = await s.loadEmailSet({ nowMs: NOW });
+  assert.equal(set.size, 4500);
+  assert.equal(set.has('u0@example.invalid'), true);
+});
+
+test('写しが無い / 古い / 壊れていれば使わせない（fail-closed）', async () => {
+  assert.equal(evaluateSnapshot({ meta: null, nowMs: NOW }).reason, SNAPSHOT_FAIL.MISSING);
+  assert.equal(evaluateSnapshot({ meta: { builtAt: 'x', count: 1, chunks: 1 }, nowMs: NOW }).reason,
+    SNAPSHOT_FAIL.CORRUPT);
+  assert.equal(evaluateSnapshot({
+    meta: { builtAt: new Date(NOW - 7 * 3600 * 1000).toISOString(), count: 1, chunks: 1 }, nowMs: NOW,
+  }).reason, SNAPSHOT_FAIL.STALE);
+  assert.equal(evaluateSnapshot({
+    meta: { builtAt: new Date(NOW - 60 * 1000).toISOString(), count: 1, chunks: 1 }, nowMs: NOW,
+  }).ok, true);
+
+  const r = fakeRedis();
+  const s = createSnapshotStore({ cmd: r.cmd });
+  await assert.rejects(() => s.loadEmailSet({ nowMs: NOW }),
+    (e) => e instanceof SnapshotError && e.code === SNAPSHOT_FAIL.MISSING);
+});
+
+test('写しの名前空間の外は拒否 / chunk は重複を畳んで並べる', () => {
+  const s = createSnapshotStore({ cmd: async () => 'OK' });
+  assert.throws(() => s.assertKey('ak:prospect:p:x'), (e) => e instanceof SnapshotError);
+  assert.equal(s.assertKey(`${SNAPSHOT_ROOT}meta`), `${SNAPSHOT_ROOT}meta`);
+  const { chunks, count } = buildChunks(['B@x.invalid', 'a@x.invalid', 'A@X.invalid']);
+  assert.equal(count, 2);
+  assert.deepEqual(chunks[0], ['a@x.invalid', 'b@x.invalid']);
+});
+
+test('件数が meta と合わなければ壊れているとみなす', async () => {
+  const r = fakeRedis();
+  const s = createSnapshotStore({ cmd: r.cmd });
+  await s.save({ emails: ['a@x.invalid', 'b@x.invalid'], nowMs: NOW, generation: 'g1' });
+  // meta の count だけ書き換える
+  const meta = JSON.parse(r.store.get(META_KEY));
+  r.store.set(META_KEY, JSON.stringify({ ...meta, count: 99 }));
+  await assert.rejects(() => s.loadEmailSet({ nowMs: NOW }),
+    (e) => e instanceof SnapshotError && e.code === SNAPSHOT_FAIL.CORRUPT);
+});
+
+// ── cron の配線 ───────────────────────────────────────────────
+
+test('guard: cron の enqueue は専用 env が開くまで動かない', () => {
+  const CRON = readFileSync(fileURLToPath(
+    new URL('../../../netlify/functions/cron-marketing-automation.js', import.meta.url)), 'utf8');
+  assert.match(CRON, /MARKETING_AUTOMATION_ENQUEUE_ENABLED === 'true'/);
+  // 送信回数の記録は enqueue の後
+  const enqAt = CRON.indexOf('const res = await fetch(`https://api.airtable.com');
+  const recAt = CRON.indexOf('prospectStore.recordSend');
+  assert.ok(enqAt > -1 && recAt > enqAt, '送信回数を enqueue より先に数えている');
+  // 写しが使えなければ計画を作らない
+  assert.match(CRON, /SnapshotError/);
+});
+
+test('guard: 管理画面に見込み客パネルがあり、保存系は初期 disabled', () => {
+  const UI2 = readFileSync(fileURLToPath(
+    new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url)), 'utf8');
+  // CSV 取込 / 件数 / 下見 / 反応 / 昇格 / 除外 / 履歴（状態）の入口がある
+  for (const id of ['prCsv', 'prStatus', 'prPreview', 'prPromoPreview', 'prLookupBtn',
+    'prIntake', 'prPromote', 'prSuppress', 'prPurge', 'prSnapshot']) {
+    assert.ok(UI2.includes(`id="${id}"`), `${id} が無い`);
+  }
+  for (const id of ['prIntake', 'prPromote', 'prSuppress', 'prPurge']) {
+    assert.match(UI2, new RegExp(`id="${id}"[^>]*disabled`), `${id} が初期 disabled でない`);
+  }
+  assert.match(UI2, /function prApplyGate\(enabled\)/);
+  assert.match(UI2, /data\.code === 'prospect_write_blocked'\) prApplyGate\(false\)/);
+  // 昇格は下見の件数を渡す（TOCTOU）
+  assert.match(UI2, /action: 'promote', confirmCount: n/);
 });

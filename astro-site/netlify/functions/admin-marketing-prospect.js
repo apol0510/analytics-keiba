@@ -20,6 +20,7 @@ import {
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { normalizeEmail } from '../../src/lib/marketing/prospectPolicy.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
+import { createSnapshotStore, SnapshotError } from '../../src/lib/marketing/customerSnapshotCache.js';
 
 const CUSTOMERS_TABLE = 'Customers';
 /** 上限に達したら**黙って打ち切らず失敗させる**（対象が不完全なまま進めない） */
@@ -61,7 +62,18 @@ function redisCmd(args) {
   });
 }
 
-/** Customers は **Email 列だけ**取る（アドレス以外を持ち出さない・転送量も減る） */
+/**
+ * Customers のアドレス集合は **Redis の写しから読む**（C-2）。
+ * 同期 Function で全件走査するとタイムアウトするため、走査は
+ * `refresh-customer-snapshot-background` に任せてある。
+ * 写しが**無い / 古い**ときは **fail-closed**（古い対象で判断させない）。
+ */
+async function loadCustomerEmailsFromSnapshot({ nowMs }) {
+  const store = createSnapshotStore({ cmd: redisCmd });
+  return store.loadEmailSet({ nowMs });
+}
+
+/** 直接走査版（**使わない**。写しが作れない環境の切り分け用に残す） */
 async function fetchCustomerEmails({ KEY, BASE }) {
   const emails = new Set();
   let offset; let pages = 0;
@@ -140,7 +152,7 @@ export const handler = async (event) => {
 
   const api = createProspectAdminApi({
     store, env: process.env, now: () => now,
-    loadCustomerEmails: () => fetchCustomerEmails({ KEY, BASE }),
+    loadCustomerEmails: () => loadCustomerEmailsFromSnapshot({ nowMs: now }),
     loadBlacklist: () => fetchEmailBlacklistReadOnly(BASE, KEY)
       .then((r) => buildBlacklistEmailSet(r || [])).catch(() => new Set()),
     createCustomers: (fieldsList) => createCustomers({ KEY, BASE, fieldsList }),
@@ -156,6 +168,7 @@ export const handler = async (event) => {
     else if (action === 'intake') out = await api.intake({ rows: req.rows, batchId: req.batchId });
     else if (action === 'promote') out = await api.promote({ batchId: req.batchId, confirmCount: req.confirmCount });
     else if (action === 'suppress') out = await api.suppress({ email: req.email, reason: req.reason });
+    else if (action === 'purge') out = await api.purge({ limit: req.limit });
     else return json(400, { error: `未知の action: ${action}` });
 
     if (out && out.ok === false) {
@@ -165,6 +178,15 @@ export const handler = async (event) => {
     }
     return json(200, out);
   } catch (e) {
+    // 写しが無い / 古い / 壊れている → **判断させない**（送信も登録もしない）
+    if (e instanceof SnapshotError) {
+      return json(503, {
+        ok: false, code: e.code,
+        error: '顧客一覧の写しが使えません（未作成または古い）。先に写しを更新してください。',
+        更新方法: 'refresh-customer-snapshot-background を実行',
+        sideEffects: 'none',
+      });
+    }
     if (e instanceof CustomerFetchTruncatedError) {
       return json(503, {
         ok: false, code: e.code,

@@ -10,14 +10,23 @@
  *   - キーは `sha256(email)`。**キー名からアドレスは復元できない**
  *   - 値の中にだけ平文アドレスを持つ（送信に必要な最小限）
  *   - **一覧 API・ログ・管理画面の集計にアドレスを出さない**（件数と状態だけ）
- *   - 反応が無いまま上限に達したら `EXHAUSTED` にし、**TTL で自動的に消える**
+ *   - 抑止・打ち切りの後は **`purge()` で生アドレスごと削除できる**
+ *     （復活防止は hash だけの永続台帳が担う）
  * という制約を課す。他の名前空間へアドレスを書くことは従来どおり禁止。
  *
  * ── キー ──────────────────────────────────────────────────────
- *   ak:prospect:p:<sha256(email)>   … prospect 1 件（アドレスを含む）
- *   ak:prospect:index:active        … 送信候補の集合（member は sha256）
- *   ak:prospect:index:engaged       … 反応済み・未昇格の集合（昇格待ち行列）
- *   ak:prospect:stats               … 件数の集計（表示用・アドレスなし）
+ *   ak:prospect:p:<sha256(email)>    … prospect 1 件（**配信中だけ**アドレスを持つ）
+ *   ak:prospect:index:active         … 送信候補の集合（member は sha256）
+ *   ak:prospect:index:engaged        … 反応済み・未昇格の集合（昇格待ち行列）
+ *   ak:prospect:blocked:<sha256>     … **永続抑止台帳**（除外・打ち切り。TTL なし・アドレスなし）
+ *   ak:prospect:index:blocked        … 抑止済みの hash 集合（取り込み時の照合用）
+ *
+ * ── ⚠️ 抑止台帳は消さない ─────────────────────────────────────
+ * 除外（bounce / 苦情 / 配信停止）と打ち切り（無反応 N 回）は **TTL を付けない**。
+ * 消えると **CSV を再取り込みしたときに配信対象として復活してしまう**。
+ * 台帳が持つのは `sha256(email)` と理由・日時だけで、**生アドレスは持たない**。
+ * 生アドレスを持つのは `ak:prospect:p:` の**配信中のレコードだけ**で、
+ * 抑止・打ち切りの後は `purge()` で**削除してよい**（台帳が残るので復活しない）。
  *
  * ⚠️ `ak:marketing-automation:` / `payemail:` / `customer-import:` / KMA の
  *    名前空間へは**一切触らない**（`assertKey` が構造的に拒否）。
@@ -34,15 +43,18 @@ export const ACTIVE_INDEX = `${PROSPECT_ROOT}index:active`;
 export const ENGAGED_INDEX = `${PROSPECT_ROOT}index:engaged`;
 export const STATS_KEY = `${PROSPECT_ROOT}stats`;
 
-/** 反応が無いまま終わった prospect を残し続けない（JST 1 年） */
-export const EXHAUSTED_TTL_SEC = 365 * 24 * 3600;
-/** 除外は再取り込みで復活させないため、長めに残す */
-export const SUPPRESSED_TTL_SEC = 3 * 365 * 24 * 3600;
+/** 抑止の種別（台帳に残る理由） */
+export const BLOCK_KIND = Object.freeze({ SUPPRESSED: 'suppressed', EXHAUSTED: 'exhausted' });
 
 export const emailHash = (email) =>
   createHash('sha256').update(normalizeEmail(email), 'utf8').digest('hex');
 
 export const prospectKey = (hash) => `${PROSPECT_ROOT}p:${hash}`;
+export const blockedKey = (hash) => `${PROSPECT_ROOT}blocked:${hash}`;
+export const BLOCKED_INDEX = `${PROSPECT_ROOT}index:blocked`;
+
+/** 抑止台帳に保存してよい項目。**アドレスを含めない** */
+export const BLOCKED_FIELDS = Object.freeze(['hash', 'kind', 'reason', 'at', 'sends', 'source']);
 
 /** 保存してよい項目（**これ以外は 1 つも書かない**） */
 export const PROSPECT_FIELDS = Object.freeze([
@@ -72,10 +84,18 @@ const pick = (obj, allow) => {
   return out;
 };
 
-/** 状態に応じた TTL（ENGAGED / SENDING は消さない） */
-export function ttlForState(state) {
-  if (state === PROSPECT_STATE.EXHAUSTED) return EXHAUSTED_TTL_SEC;
-  if (state === PROSPECT_STATE.SUPPRESSED) return SUPPRESSED_TTL_SEC;
+/**
+ * ⚠️ **prospect レコードに TTL は付けない。**
+ * 以前は EXHAUSTED / SUPPRESSED を TTL で消していたが、消えると
+ * **CSV 再取り込みで配信対象として復活する**。抑止は台帳（TTL なし）が担い、
+ * レコード側は `purge()` で明示的に消す（そのとき生アドレスも消える）。
+ */
+export function ttlForState() { return null; }
+
+/** その状態は抑止台帳へ載せるべきか */
+export function blockKindForState(state) {
+  if (state === PROSPECT_STATE.SUPPRESSED) return BLOCK_KIND.SUPPRESSED;
+  if (state === PROSPECT_STATE.EXHAUSTED) return BLOCK_KIND.EXHAUSTED;
   return null;
 }
 
@@ -93,7 +113,7 @@ export function createProspectStore({ cmd } = {}) {
     return k;
   };
 
-  const OPS = ['GET', 'SET', 'DEL', 'EXISTS', 'SADD', 'SREM', 'SMEMBERS', 'SCARD', 'MGET', 'EXPIRE'];
+  const OPS = ['GET', 'SET', 'DEL', 'EXISTS', 'SADD', 'SREM', 'SMEMBERS', 'SCARD', 'MGET', 'SISMEMBER'];
   const call = async (args, failCode) => {
     const op = String(args[0] || '').toUpperCase();
     if (!OPS.includes(op)) throw new ProspectStoreError(STORE_FAIL.OUT_OF_NAMESPACE, `unsupported_op:${op}`);
@@ -126,13 +146,29 @@ export function createProspectStore({ cmd } = {}) {
     else await call(['SREM', ENGAGED_INDEX, hash]);
   };
 
+  /** 抑止台帳へ載せる（**TTL なし・アドレスなし**・冪等） */
+  const block = async (hash, { kind, reason, at, sends }) => {
+    const entry = pick({ hash, kind, reason, at, sends, source: 'prospect' }, BLOCKED_FIELDS);
+    await call(['SET', blockedKey(hash), JSON.stringify(entry)]);
+    await call(['SADD', BLOCKED_INDEX, hash]);
+    return entry;
+  };
+
   const write = async (hash, next) => {
     const d = pick(next, PROSPECT_FIELDS);
-    const ttl = ttlForState(d.state);
-    const args = ['SET', prospectKey(hash), JSON.stringify(d)];
-    if (ttl) { args.push('EX', String(ttl)); }
-    await call(args);
+    // ⚠️ TTL は付けない（消えると再取り込みで復活する）
+    await call(['SET', prospectKey(hash), JSON.stringify(d)]);
     await syncIndexes(hash, d);
+    // 抑止・打ち切りに入ったら**必ず台帳へ**（レコードを消しても残る）
+    const kind = blockKindForState(d.state);
+    if (kind) {
+      await block(hash, {
+        kind,
+        reason: d.suppressedReason || (kind === BLOCK_KIND.EXHAUSTED ? 'no_engagement' : 'unknown'),
+        at: d.suppressedAt || d.lastSentAt || new Date().toISOString(),
+        sends: d.sends,
+      });
+    }
     return d;
   };
 
@@ -157,13 +193,42 @@ export function createProspectStore({ cmd } = {}) {
       }).filter(Boolean);
     },
 
-    /** 新規追加。**既にあれば上書きしない**（送信回数・除外を消さないため） */
+    /**
+     * 新規追加。**既にあれば上書きしない**（送信回数・除外を消さないため）。
+     * ⚠️ **抑止台帳に載っている相手は復活させない**（CSV 再取り込みでも戻らない）。
+     */
     async addIfAbsent(prospect) {
       const hash = emailHash(prospect.email);
+      if (await this.isBlocked(hash)) return { added: false, blocked: true, prospect: null };
       const cur = await this.loadByHash(hash);
       if (cur) return { added: false, prospect: cur };
       const saved = await write(hash, prospect);
       return { added: true, prospect: saved };
+    },
+
+    /** 抑止台帳に載っているか（hash で照合。アドレスは要らない） */
+    async isBlocked(hash) {
+      return Number(await call(['EXISTS', blockedKey(hash)])) === 1;
+    },
+    async loadBlocked(hash) {
+      return parse(await call(['GET', blockedKey(hash)], STORE_FAIL.DATA_CORRUPT));
+    },
+    async blockedHashes() {
+      const raw = await call(['SMEMBERS', BLOCKED_INDEX], STORE_FAIL.INDEX_UNAVAILABLE);
+      if (!Array.isArray(raw)) throw new ProspectStoreError(STORE_FAIL.INDEX_UNAVAILABLE, 'not_array');
+      return raw.map(String);
+    },
+
+    /**
+     * 抑止・打ち切り済みの prospect レコードを消す（**生アドレスを消す**）。
+     * 台帳は残るので、以後の取り込みでも復活しない。
+     */
+    async purge(hash) {
+      if (!(await this.isBlocked(hash))) return { purged: false, reason: 'not_blocked' };
+      await call(['DEL', prospectKey(hash)]);
+      await call(['SREM', ACTIVE_INDEX, hash]);
+      await call(['SREM', ENGAGED_INDEX, hash]);
+      return { purged: true };
     },
 
     async recordSend({ email, nowMs, runId, maxSends }) {
@@ -214,9 +279,15 @@ export function createProspectStore({ cmd } = {}) {
 
     /** 表示用の件数。**アドレスを返さない** */
     async counts() {
-      const active = Number(await call(['SCARD', ACTIVE_INDEX], STORE_FAIL.INDEX_UNAVAILABLE));
-      const engaged = Number(await call(['SCARD', ENGAGED_INDEX], STORE_FAIL.INDEX_UNAVAILABLE));
-      return { 送信候補: Number.isFinite(active) ? active : 0, 反応済み未登録: Number.isFinite(engaged) ? engaged : 0 };
+      const n = async (k) => {
+        const v = Number(await call(['SCARD', k], STORE_FAIL.INDEX_UNAVAILABLE));
+        return Number.isFinite(v) ? v : 0;
+      };
+      return {
+        送信候補: await n(ACTIVE_INDEX),
+        反応済み未登録: await n(ENGAGED_INDEX),
+        永久除外: await n(BLOCKED_INDEX),
+      };
     },
 
     stats: () => ({ commands: state.commands, keysTouched: state.keysTouched.size }),

@@ -23,7 +23,7 @@ import { buildProspectAudience, planPromotions } from './prospectPipeline.js';
 import { ProspectStoreError, emailHash } from './prospectStore.js';
 
 export const PROSPECT_WRITE_GATE_ENV = 'MARKETING_PROSPECT_WRITE_ENABLED';
-export const PROSPECT_WRITE_ACTIONS = Object.freeze(['intake', 'promote', 'suppress']);
+export const PROSPECT_WRITE_ACTIONS = Object.freeze(['intake', 'promote', 'suppress', 'purge']);
 export const PROSPECT_READ_ACTIONS = Object.freeze(['status', 'preview', 'lookup', 'promotion-preview']);
 
 export const PROSPECT_REJECT = Object.freeze({
@@ -170,18 +170,22 @@ export function createProspectAdminApi(deps = {}) {
           if (!e) continue;
           if (await store.load(e)) existing.add(e);
         }
+        // ⚠️ 永続抑止台帳と突き合わせる（CSV 再取り込みでも復活させない）
+        const blockedHashes = new Set(await store.blockedHashes());
         const plan = planProspectIntake({
           rows: list, customerEmails, existingEmails: existing,
-          blacklistEmails: blacklist, nowMs, batchId,
+          blacklistEmails: blacklist, blockedHashes, hashFn: emailHash, nowMs, batchId,
         });
-        let added = 0;
+        let added = 0; let blockedAtWrite = 0;
         for (const p of plan.add) {
           const r = await store.addIfAbsent(p);
           if (r.added) added += 1;
+          else if (r.blocked) blockedAtWrite += 1;
         }
         return {
           ok: true, mode: 'prospect-intake',
-          件数: { ...plan, 実際に追加: added }, 除外理由: plan.skipped,
+          件数: { ...plan, 実際に追加: added, 台帳で復活拒否: blockedAtWrite },
+          除外理由: plan.skipped,
         };
       });
     },
@@ -230,6 +234,29 @@ export function createProspectAdminApi(deps = {}) {
         });
         if (!r.ok) return reject(PROSPECT_REJECT.NOT_FOUND);
         return { ok: true, mode: 'prospect-suppress', 変更: r.changed, 状態: r.prospect.state };
+      });
+    },
+
+    /**
+     * 抑止・打ち切り済みレコードの**生アドレスを消す**。台帳は残るので復活しない。
+     * 一度に消す件数を絞り、残りは次回に回す（大量削除で詰まらせない）。
+     */
+    async purge({ limit }) {
+      const cap = Math.min(Math.max(Number(limit) || 500, 1), 2000);
+      return guard(async () => {
+        const hashes = await store.blockedHashes();
+        let purged = 0; let alreadyGone = 0;
+        for (const h of hashes.slice(0, cap)) {
+          const rec = await store.loadByHash(h);
+          if (!rec) { alreadyGone += 1; continue; }
+          const r = await store.purge(h);
+          if (r.purged) purged += 1;
+        }
+        return {
+          ok: true, mode: 'prospect-purge',
+          件数: { 台帳: hashes.length, 今回削除: purged, 既に無し: alreadyGone, 上限: cap },
+          notice: '台帳（hash と理由）は残ります。以後の取り込みでも復活しません。',
+        };
       });
     },
 

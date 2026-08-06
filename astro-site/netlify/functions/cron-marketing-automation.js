@@ -24,6 +24,13 @@ import {
   selectDueAutomations, MAX_AUTOMATIONS_PER_TICK, MAX_RECIPIENTS_PER_TICK,
 } from '../../src/lib/marketing/automationScheduler.js';
 import { jstDateString } from '../../src/lib/marketing/automationModel.js';
+import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
+import { buildProspectAudience } from '../../src/lib/marketing/prospectPipeline.js';
+import { planTickDelivery, summarizeTick } from '../../src/lib/marketing/automationTickPlan.js';
+import { createSnapshotStore, SnapshotError } from '../../src/lib/marketing/customerSnapshotCache.js';
+import {
+  buildScheduledEmailFields, assertOnlyScheduledFields,
+} from '../../src/lib/marketing/marketingEnqueueContract.js';
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -128,6 +135,99 @@ function redisCmd(args) {
  * @param {{ payload: any, now?: number, env?: object }} args
  * @returns {{ statusCode: number, body: object }}
  */
+
+/**
+ * この配信回の対象を組み立てる。**Redis と Airtable の写しを読むだけ**で、
+ * ScheduledEmails へは書かない（書くのは `enqueueAndRecord`）。
+ *
+ * ⚠️ Customers 側の一覧は **写し**（`ak:customer-snapshot:`）から読む。
+ *    同期 Function で全件走査するとタイムアウトするため（C-2）。
+ *    写しが無い / 古ければ **計画を作らない**（古い対象で送らせない）。
+ */
+async function planProspectTick({ store, definition, runId, occurrenceDate, now }) {
+  const prospectStore = createProspectStore({ cmd: redisCmd });
+  try {
+    const snapshot = createSnapshotStore({ cmd: redisCmd });
+    const customerEmails = await snapshot.loadEmailSet({ nowMs: now });
+
+    const hashes = await prospectStore.activeHashes();
+    const prospects = [];
+    for (let i = 0; i < hashes.length; i += 500) {
+      prospects.push(...await prospectStore.loadMany(hashes.slice(i, i + 500)));
+    }
+    const audience = buildProspectAudience({
+      prospects, customerEmails, blacklistEmails: new Set(), nowMs: now, runId,
+      buildKey: (email) => `${runId}:${email}`,
+      maxRecipients: definition && definition.maxRecipients,
+    });
+
+    const planned = planTickDelivery({
+      definition, occurrenceDate, runId,
+      currentFingerprint: definition && definition.snapshotFingerprint,
+      currentCount: definition && definition.snapshotCount,
+      customerRecipients: [],
+      prospectRecipients: audience.recipients,
+      maxRecipients: definition && definition.maxRecipients,
+      nowMs: now,
+    });
+    if (!planned.ok) {
+      return { ok: false, prospectStore, summary: { 中止: planned.abort, 詳細: planned.drifts || null } };
+    }
+    return {
+      ok: true, prospectStore, plan: planned.plan,
+      summary: summarizeTick({ plan: planned.plan, enqueued: 0, failed: 0 }),
+    };
+  } catch (e) {
+    if (e instanceof SnapshotError) {
+      return { ok: false, prospectStore, summary: { 中止: e.code } };
+    }
+    return { ok: false, prospectStore, summary: { 中止: 'plan_failed' } };
+  }
+}
+
+/**
+ * enqueue して、**成功した prospect にだけ**送信回数を記録する。
+ *
+ * ⚠️ 送信回数を先に数えると、失敗した回まで「送った」ことになり
+ *    無反応 3 回の打ち切りが早まる。**必ず enqueue の後**。
+ * ⚠️ この Function は **メールを送らない**。作るのは ScheduledEmails の PENDING 行だけで、
+ *    実送信は既存 dispatcher が担う（送信経路は 1 本のまま）。
+ */
+async function enqueueAndRecord({ plan, prospectStore, now }) {
+  const KEY = process.env.AIRTABLE_API_KEY;
+  const BASE = process.env.AIRTABLE_BASE_ID;
+  if (!KEY || !BASE) return { enqueued: 0, failed: plan.recipients.length };
+
+  const fields = buildScheduledEmailFields({
+    campaignId: plan.context.campaignId,
+    recipients: plan.recipients.map((r) => r.email),
+    jobId: plan.jobId,
+    scheduledAt: plan.context.scheduledAt,
+    automation: plan.context,
+  });
+  if (!assertOnlyScheduledFields(fields)) return { enqueued: 0, failed: plan.recipients.length };
+
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent('ScheduledEmails')}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ records: [{ fields }], typecast: false }),
+  });
+  if (!res.ok) {
+    console.error(`❌ [marketing-automation] enqueue 失敗 HTTP ${res.status}`);
+    return { enqueued: 0, failed: plan.recipients.length };
+  }
+
+  // ⚠️ ここまで来て初めて送信回数を数える
+  let recorded = 0;
+  for (const email of plan.prospectEmailsToRecord) {
+    try {
+      await prospectStore.recordSend({ email, nowMs: now, runId: plan.context.automationRunId });
+      recorded += 1;
+    } catch { /* 1 件の記録失敗で配信全体を落とさない */ }
+  }
+  return { enqueued: plan.recipients.length, failed: 0, recorded };
+}
+
 export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
   const now = Number.isFinite(nowArg) ? nowArg : Date.now();
   const ENV = env || process.env;
@@ -201,8 +301,27 @@ export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
           automationId: item.automationId, runId: item.runId,
           created: created.created, reason: created.reason || null,
         });
-        // ⚠️ enqueue の実装は admin-marketing の共通契約経由（Phase B の配線対象）。
-        //    ここでは claim と run の作成までに留め、**送信は行わない**。
+        // 同じ配信回を 2 度始めない
+        if (!created.created) continue;
+
+        // ── prospect 配信の計画（**ここでは送らない・書かない**）──
+        const tick = await planProspectTick({
+          store, definition: definitions.find((d) => d.automationId === item.automationId),
+          runId: item.runId, occurrenceDate: item.occurrenceDate, now,
+        });
+        out.plans = out.plans || [];
+        out.plans.push({ automationId: item.automationId, ...tick.summary });
+
+        // ⚠️ enqueue（ScheduledEmails の PENDING 行）は
+        //    **`MARKETING_AUTOMATION_ENQUEUE_ENABLED=true` のときだけ**。
+        //    計画が中止（snapshot drift / 上限超過）なら何もしない。
+        if (tick.ok && process.env.MARKETING_AUTOMATION_ENQUEUE_ENABLED === 'true') {
+          const done = await enqueueAndRecord({ plan: tick.plan, prospectStore: tick.prospectStore, now });
+          out.enqueued = (out.enqueued || 0) + done.enqueued;
+          out.enqueueFailed = (out.enqueueFailed || 0) + done.failed;
+        } else if (tick.ok) {
+          out.skipped.enqueue_disabled = (out.skipped.enqueue_disabled || 0) + 1;
+        }
       } finally {
         await store.releaseClaim({ automationId: item.automationId, token: claim.token }).catch(() => {});
       }
