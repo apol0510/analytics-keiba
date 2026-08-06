@@ -350,3 +350,68 @@ merge は未実施。** 新しい env（`MARKETING_AUTOMATION_DISPATCH_ARMED`）
   Redis が**設定済みで到達不能**なときは `store_unavailable` で止まる（production は後者に該当）
 - ⚠️ `PREMIUM_PLUS_ADMIN_SECRET` は **deploy-preview にも設定済み**だった
   （progress.md の 2026-08-03 の記述「production 限定 → preview は 503」は**現状と異なる**）
+
+
+## A-5 の再々修正（2026-08-06・Scheduled Function 方式へ）
+
+専用 secret 方式（`MARKETING_AUTOMATION_CRON_SECRET` + `x-cron-secret`）は**撤回**し、
+**Netlify Scheduled Function** に変更した。
+
+### なぜ変えたか
+
+secret 方式は「公開 HTTP Function のまま鍵で守る」設計で、鍵の配布・保管・ローテーションが
+運用の負債になる。**HTTP 経路そのものを塞げば鍵は要らない。**
+
+### 変更点
+
+| 項目 | secret 方式 | Scheduled Function 方式 |
+|---|---|---|
+| 配備 | 公開 HTTP Function | **`netlify.toml` で schedule 登録 → scheduled function** |
+| 外部 HTTP | 到達する（鍵で拒否） | **Netlify が 404**。到達しない |
+| 鍵 | `MARKETING_AUTOMATION_CRON_SECRET` / `x-cron-secret` | **廃止**（コードから完全に削除） |
+| 起動元 | 外部トリガー（GitHub Actions 等）が必要 | **Netlify のスケジューラ** |
+| 二次確認 | timingSafeEqual による鍵照合 | scheduled 実行の形（`next_run` 付き本文）でなければ **404** |
+
+```toml
+[functions."cron-marketing-automation"]
+  schedule = "0 1 * * *"
+```
+
+### schedule 時刻（JST 換算）
+
+cron 式は **UTC**。`0 1 * * *` = **毎日 JST 10:00**（UTC+9）。
+自動化の quiet hours は **21:00–08:00 JST** なので、その外側の午前中に置いた。
+既存の cron も同じ流儀（`cron-expiry-check` は `0 9 * * *` = JST 18:00）。
+
+> ⚠️ **リポジトリ内の流儀の差**: 既存 3 つの cron（`cron-email-scheduler` /
+> `cron-expiry-check` / `cron-payment-email-reconciler`）は **コード内の
+> `export const config = { schedule }`** で登録している。本件は指示に従い
+> `netlify.toml` 側で登録した。**登録場所が 2 か所に分かれる**ので、
+> 統一するなら別途方針決定が要る（機能上はどちらも有効）。
+
+### 副作用 0 の多層構造
+
+1. **schedule 未登録** → そもそも起動されない
+2. **外部 HTTP** → Netlify が 404（到達しない）／到達しても handler が **404**
+3. **env 未開放** → `gates_closed` で `接続 {redis:false, airtable:false}` / `sideEffects:'none'`
+   - `MARKETING_AUTOMATION_SCHEDULER_ENABLED=true`
+   - `MARKETING_AUTOMATION_DISPATCH_ARMED=<当日の JST 日付>`（**翌日には自動的に閉じる**）
+   - 既存の `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED`
+
+### 回帰テスト
+
+- **外部 HTTP 形状では起動できない**: `httpMethod` / `rawUrl` / `rawQuery` /
+  `queryStringParameters` のいずれかを持つイベントは拒否。`next_run` を偽装して添えても、
+  `x-netlify-event: schedule` を足しても通らない
+- **handler は 404 を返し Redis へ接続しない**（ゲート全開の状態でも起動経路で止まる）。
+  応答に env 名・ゲート状況を**出さない**
+- **schedule 実行でも env 未開放なら副作用 0**（`gates_closed` / 接続 0）
+- **構造 guard**: `MARKETING_AUTOMATION_CRON_SECRET` / `x-cron-secret` / `authorizeInvocation` /
+  `timingSafeEqual` / 管理 secret / `x-netlify-event` が**実コードに残っていない**こと
+- **netlify.toml の登録**と、cron 式の **JST 換算が 10 時**で quiet hours の外であること
+
+### 残るリスク（明示）
+
+`isScheduledInvocation` は Netlify が scheduled 実行で `next_run` を含む本文を渡す前提。
+**この前提が崩れると 404 のまま実行されない**（fail-closed で安全側だが、機能は止まる）。
+初回に env を開けたときは、**Function ログで実際に起動したかを必ず確認**すること。

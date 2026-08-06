@@ -65,7 +65,7 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 | A-2 | `snapshotCount` / `snapshotOccurrenceDate` を永続化。承認済み snapshot が無ければ件数比較へ進まず `snapshot_missing` |
 | A-3 | `verifySnapshotBeforeDispatch()` を新設し、**実行直前に指紋・件数・暦日・campaign 版・本文**を照合 |
 | A-4 | ACTIVE 中の `update` を `active_locked` で拒否。`update` は承認済み snapshot を破棄 |
-| A-5 | `authorizeInvocation()` を新設。**全呼び出しで専用 secret 必須**（`MARKETING_AUTOMATION_CRON_SECRET` + `x-cron-secret`・`timingSafeEqual`）。詐称可能な `x-netlify-event` / `isScheduled` は**認証根拠にしない**。管理画面の secret とも共用しない。**認可はゲート判定・Redis / Airtable 初期化より前**で、ゲート状況すら無認証では返さない |
+| A-5 | **Netlify Scheduled Function 方式**へ変更（`netlify.toml` の `[functions."cron-marketing-automation"] schedule = "0 1 * * *"` = **JST 10:00**）。scheduled function は**公開 URL からの HTTP が 404** になるため外部から起動できず、**専用 secret は廃止**（コードから完全削除）。多層防御として、scheduled 実行の形（`next_run` 付き本文）でないイベントは handler が **404**。判定は**ゲート・Redis / Airtable 初期化より前** |
 | A-6 | 自動化専用ゲートを 2 つ要求（`SCHEDULER_ENABLED` + `DISPATCH_ARMED=<当日 JST 日付>`）。**日付一致なので翌日に自動的に閉じる** |
 | B-1 | ページ上限で黙って `break` するのをやめ、`customers_truncated`（503）で**失敗させる**。上限も 60 → 300 ページ |
 | B-2 | `preview` は**保存済み Definition を基準**にする（preset は保存済みが無いときだけ） |

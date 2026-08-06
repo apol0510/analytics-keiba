@@ -285,9 +285,12 @@ test('run 履歴を取得できる', async () => {
 
 // ── scheduler は本番登録しない ────────────────────────────────
 
-test('guard: scheduler の schedule が netlify.toml に登録されていない', () => {
-  assert.equal(TOML.includes('cron-marketing-automation'), false, 'scheduler が本番登録されている');
-  assert.equal(/\[functions\."cron-marketing-automation"\]/.test(TOML), false);
+test('guard: scheduler は Scheduled Function として登録され、env で閉じている', () => {
+  // ⚠️ 方針変更（2026-08-06）: 公開 HTTP Function をやめ **Scheduled Function** にした。
+  //    schedule を登録することで Netlify 側が HTTP 起動を 404 にする（外部から叩けない）。
+  //    「登録しない」ことではなく「**登録した上で env で閉じる**」ことを固定する。
+  assert.match(TOML, /\[functions\."cron-marketing-automation"\]/);
+  assert.match(TOML, /schedule\s*=\s*"[^"]+"/);
 });
 
 // ── 画面 ──────────────────────────────────────────────────────

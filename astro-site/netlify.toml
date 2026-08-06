@@ -90,6 +90,20 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+
+# ── メルマガ自動化 scheduler（Scheduled Function）─────────────────
+# ⚠️ schedule を登録することで **Netlify の scheduled function** になり、
+#    公開 URL からの HTTP 起動は Netlify 側で **404** になる（外部から叩けない）。
+#    これが「外部から起動させない」ことの一次的な保証。専用 secret は廃止した。
+# ⚠️ cron 式は **UTC**。JST = UTC+9 なので `0 1 * * *` = **毎日 JST 10:00**。
+#    自動化の quiet hours は 21:00-08:00 JST なので、その外側の午前中に置く。
+# ⚠️ 実際に処理へ進むには、さらに env のゲートが要る（登録しただけでは副作用 0）:
+#      MARKETING_AUTOMATION_SCHEDULER_ENABLED=true
+#      MARKETING_AUTOMATION_DISPATCH_ARMED=<当日の JST 日付>
+#      MARKETING_CAMPAIGN_ENABLED / MARKETING_CAMPAIGN_DISPATCH_ENABLED
+#    いずれも production 未設定のため、現状は起動しても何もしない。
+[functions."cron-marketing-automation"]
+  schedule = "0 1 * * *"
   # 注: SSR 関数肥大化（250MB 超）対策は netlify.toml の included_files では効かない
   # （@astrojs/netlify は nodeBundler:'none' + includedFiles:['**/*'] で関数ディレクトリを
   # そのまま zip するため、config の除外が反映されない）。代わりに build スクリプト末尾の

@@ -17,7 +17,7 @@ import {
 } from './automationScheduler.js';
 import { createAutomationAdminApi, API_REJECT, pinCampaign } from './automationAdminApi.js';
 import {
-  readGates, authorizeInvocation, ARMED_ENV, CRON_SECRET_ENV, CRON_SECRET_HEADER,
+  readGates, isScheduledInvocation, ARMED_ENV,
 } from '../../../netlify/functions/cron-marketing-automation.js';
 
 const ADMIN_FN = readFileSync(fileURLToPath(
@@ -284,121 +284,123 @@ test('ACTIVE 化の申告が対象集合の変化後なら通らない（顧客�
 
 // ── A-5: cron の認可 ──────────────────────────────────────────
 
-test('A-5: cron は全呼び出しで専用 secret を要求する', () => {
-  const env = { [CRON_SECRET_ENV]: 'cron-sec' };
-  assert.equal(authorizeInvocation({ event: { headers: {} }, env }).code, 'forbidden');
-  assert.equal(authorizeInvocation({ event: { headers: { [CRON_SECRET_HEADER]: 'wrong' } }, env }).code, 'forbidden');
-  // 長さ違いでも落ちずに false
-  assert.equal(authorizeInvocation({ event: { headers: { [CRON_SECRET_HEADER]: 'x' } }, env }).ok, false);
-  const ok = authorizeInvocation({ event: { headers: { [CRON_SECRET_HEADER]: 'cron-sec' } }, env });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.via, 'secret');
-  // secret 未設定なら誰も実行できない（fail-closed）
-  assert.equal(authorizeInvocation({
-    event: { headers: { [CRON_SECRET_HEADER]: 'cron-sec' } }, env: {},
-  }).code, 'secret_not_configured');
+const SCHED = { body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) };
+
+test('A-5: scheduled 実行の形だけを受け付ける', () => {
+  assert.equal(isScheduledInvocation(SCHED), true);
+  assert.equal(isScheduledInvocation({ body: { next_run: '2026-08-07T01:00:00.000Z' } }), true);
+  // 本文が無い / next_run が無い / 空
+  for (const ev of [{}, { body: '{}' }, { body: 'not json' }, { body: JSON.stringify({ next_run: '' }) },
+    { body: null }, null, undefined, 'x']) {
+    assert.equal(isScheduledInvocation(ev), false, `受け付けた: ${JSON.stringify(ev)}`);
+  }
 });
 
-test('A-5: 詐称された schedule ヘッダでは通らない', () => {
-  const env = { [CRON_SECRET_ENV]: 'cron-sec' };
-  // ⚠️ 呼び出し元が自称する印は認証根拠にしない
+test('A-5: 外部 HTTP の形をしたイベントは起動できない', () => {
+  // ⚠️ HTTP 形状の痕跡があるものはすべて拒否する
   for (const ev of [
-    { headers: { 'x-netlify-event': 'schedule' } },
-    { headers: { 'X-Netlify-Event': 'SCHEDULE' } },
-    { headers: { 'x-netlify-event': 'schedule', 'user-agent': 'Netlify' } },
-    { headers: {}, isScheduled: true },
-    { headers: { 'x-netlify-event': 'schedule' }, isScheduled: true },
-    { headers: { 'x-netlify-event': 'schedule', [CRON_SECRET_HEADER]: 'wrong' } },
+    { httpMethod: 'POST', headers: {}, body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
+    { httpMethod: 'GET', body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
+    { rawUrl: 'https://analytics.keiba.link/.netlify/functions/cron-marketing-automation',
+      body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
+    { rawQuery: 'a=1', body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
+    { queryStringParameters: {}, body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
   ]) {
-    const r = authorizeInvocation({ event: ev, env });
-    assert.equal(r.ok, false, `詐称ヘッダで通った: ${JSON.stringify(ev)}`);
-    assert.equal(r.code, 'forbidden');
+    assert.equal(isScheduledInvocation(ev), false, `HTTP 形状で通った: ${JSON.stringify(ev)}`);
   }
-  // 正しい secret があれば、schedule ヘッダの有無に関係なく通る
-  assert.equal(authorizeInvocation({
-    event: { headers: { 'x-netlify-event': 'schedule', [CRON_SECRET_HEADER]: 'cron-sec' } }, env,
-  }).ok, true);
+  // 詐称ヘッダを足しても通らない
+  assert.equal(isScheduledInvocation({
+    httpMethod: 'POST', headers: { 'x-netlify-event': 'schedule' },
+    body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }),
+  }), false);
 });
 
-test('A-5: 管理画面の secret では cron を起動できない（鍵を共用しない）', () => {
-  const env = {
-    [CRON_SECRET_ENV]: 'cron-sec',
-    PREMIUM_PLUS_ADMIN_SECRET: 'admin-sec', MARKETING_ADMIN_SECRET: 'mk-sec',
-  };
-  for (const h of [
-    { 'x-admin-secret': 'admin-sec' },
-    { 'x-admin-secret': 'mk-sec' },
-    { [CRON_SECRET_HEADER]: 'admin-sec' },
-    { [CRON_SECRET_HEADER]: 'mk-sec' },
-  ]) {
-    assert.equal(authorizeInvocation({ event: { headers: h }, env }).ok, false,
-      `管理 secret で通った: ${JSON.stringify(h)}`);
-  }
-  // 専用 env が無ければ他の secret へフォールバックしない
-  assert.equal(authorizeInvocation({
-    event: { headers: { 'x-admin-secret': 'admin-sec' } },
-    env: { PREMIUM_PLUS_ADMIN_SECRET: 'admin-sec', MARKETING_ADMIN_SECRET: 'mk-sec' },
-  }).code, 'secret_not_configured');
-});
-
-test('A-5: 認証コードは他 secret を参照していない（構造）', () => {
-  const CRON = readFileSync(fileURLToPath(
-    new URL('../../../netlify/functions/cron-marketing-automation.js', import.meta.url)), 'utf8');
-  // コメントを除いた実コードだけを見る（禁止語が説明文に出るのは許す）
-  const code = CRON.replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
-  const fn = code.slice(code.indexOf('export function authorizeInvocation'),
-    code.indexOf('function redisCmd'));
-  for (const bad of ['PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET',
-    'x-netlify-event', 'isScheduled', 'x-admin-secret']) {
-    assert.equal(fn.includes(bad), false, `${bad} を認証根拠にしている`);
-    // ファイル全体でも、実コードとしては参照しない
-    assert.equal(code.includes(bad), false, `${bad} を実コードで参照している`);
-  }
-  // 一定時間比較を使う
-  assert.match(code, /timingSafeEqual/);
-  assert.match(code, /CRON_SECRET_ENV = 'MARKETING_AUTOMATION_CRON_SECRET'/);
-});
-
-test('A-5: handler は認可前に Redis へ接続しない', async () => {
+test('A-5: handler は外部 HTTP 形状に 404 を返し、Redis へ接続しない', async () => {
   const { handler } = await import('../../../netlify/functions/cron-marketing-automation.js');
   const prevFetch = globalThis.fetch; const prev = { ...process.env };
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
-  process.env.PREMIUM_PLUS_ADMIN_SECRET = 'sec';
-  process.env[CRON_SECRET_ENV] = 'cron-sec';
+  // ゲートは全開にしておく（それでも起動経路で止まることを見る）
   process.env.MARKETING_AUTOMATION_SCHEDULER_ENABLED = 'true';
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
   process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED = 'true';
+  process.env[ARMED_ENV] = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
   process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
   process.env.UPSTASH_REDIS_REST_TOKEN = 't';
   try {
-    // 無認証
-    const res = await handler({ headers: {} });
-    assert.equal(res.statusCode, 403);
-    // ⚠️ 詐称された schedule ヘッダでも接続しない
-    const spoof = await handler({ headers: { 'x-netlify-event': 'schedule' }, isScheduled: true });
-    assert.equal(spoof.statusCode, 403);
-    // ⚠️ 管理画面の secret でも通らない
-    const wrongKey = await handler({ headers: { 'x-admin-secret': 'sec' } });
-    assert.equal(wrongKey.statusCode, 403);
-    assert.equal(calls, 0, '無認証・詐称なのに接続した');
-    // ゲートの設定状況も出さない
-    for (const r of [res, spoof, wrongKey]) {
-      assert.equal(String(r.body).includes('MARKETING_CAMPAIGN_ENABLED'), false);
+    for (const ev of [
+      { httpMethod: 'POST', headers: {}, body: '{}' },
+      { httpMethod: 'POST', headers: { 'x-netlify-event': 'schedule' }, body: JSON.stringify({ next_run: 'x' }) },
+      { httpMethod: 'GET', headers: {} },
+      {},
+    ]) {
+      const res = await handler(ev);
+      assert.equal(res.statusCode, 404, `404 でない: ${JSON.stringify(ev)}`);
+      // 存在も設定状況も知らせない
+      const body = String(res.body);
+      assert.equal(body.includes('MARKETING_'), false, 'env 名を漏らしている');
+      assert.equal(body.includes('gates_closed'), false, 'ゲート状況を漏らしている');
     }
-
-    // 専用 secret 未設定なら 503（Redis へは触れない）
-    delete process.env[CRON_SECRET_ENV];
-    const unset = await handler({ headers: { [CRON_SECRET_HEADER]: 'cron-sec' } });
-    assert.equal(unset.statusCode, 503);
-    assert.equal(JSON.parse(unset.body).reason, 'secret_not_configured');
-    assert.equal(calls, 0, 'secret 未設定なのに接続した');
+    assert.equal(calls, 0, '外部 HTTP 形状なのに接続した');
   } finally {
     globalThis.fetch = prevFetch;
     for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
     Object.assign(process.env, prev);
   }
+});
+
+test('A-5: schedule 実行でも env 未開放なら副作用 0', async () => {
+  const { handler } = await import('../../../netlify/functions/cron-marketing-automation.js');
+  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
+  for (const k of ['MARKETING_AUTOMATION_SCHEDULER_ENABLED', ARMED_ENV]) delete process.env[k];
+  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
+  process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED = 'true';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
+  try {
+    const res = await handler(SCHED);
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.equal(body.ran, false);
+    assert.equal(body.reason, 'gates_closed');
+    assert.equal(body.sideEffects, 'none');
+    assert.deepEqual(body['接続'], { redis: false, airtable: false });
+    assert.equal(calls, 0, 'ゲート閉なのに接続した');
+  } finally {
+    globalThis.fetch = prevFetch;
+    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
+    Object.assign(process.env, prev);
+  }
+});
+
+test('A-5: 専用 secret の仕組みを残していない（構造）', () => {
+  const CRON = readFileSync(fileURLToPath(
+    new URL('../../../netlify/functions/cron-marketing-automation.js', import.meta.url)), 'utf8');
+  const code = CRON.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+  for (const bad of ['MARKETING_AUTOMATION_CRON_SECRET', 'x-cron-secret', 'CRON_SECRET_HEADER',
+    'authorizeInvocation', 'timingSafeEqual',
+    'PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET', 'x-admin-secret',
+    'x-netlify-event', 'isScheduled:']) {
+    assert.equal(code.includes(bad), false, `${bad} が実コードに残っている`);
+  }
+});
+
+test('A-5: netlify.toml に scheduled function として登録されている', () => {
+  const TOML = readFileSync(fileURLToPath(
+    new URL('../../../netlify.toml', import.meta.url)), 'utf8');
+  assert.match(TOML, /\[functions\."cron-marketing-automation"\]/);
+  const m = /\[functions\."cron-marketing-automation"\][\s\S]*?schedule\s*=\s*"([^"]+)"/.exec(TOML);
+  assert.ok(m, 'schedule が無い');
+  // ⚠️ cron 式は UTC。JST = UTC+9 で quiet hours（21:00-08:00 JST）の外側であること
+  const [minute, hour] = m[1].split(/\s+/);
+  assert.match(minute, /^\d+$/, '分が固定値でない');
+  assert.match(hour, /^\d+$/, '時が固定値でない');
+  const jstHour = (Number(hour) + 9) % 24;
+  assert.equal(jstHour, 10, `JST ${jstHour} 時になっている（想定は 10 時）`);
+  assert.ok(jstHour >= 8 && jstHour < 21, 'quiet hours の中に入っている');
 });
 
 // ── A-6: 単一 env 依存にしない ────────────────────────────────
