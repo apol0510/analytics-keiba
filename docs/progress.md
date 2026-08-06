@@ -208,11 +208,21 @@ Redis の **`ak:prospect:` 配下だけ**メールアドレスを保存する（
 2. 同じ配信回で同じ相手を 2 度入れない（`deliveryKey`）
 3. Customers と prospect に同じ人が居たら **Customers を優先**して prospect 側を落とす
 
-#### 昇格
+#### 昇格は**自動**（open / click 検知後）
 
-反応済みだけを Customers へ **CREATE 1 件**。書く列は取り込みと**同じ allow-list**
-（`Email` / `プラン=Free` / `ポイント` / `Source`）で、課金・権利・配信停止の列は 1 つも書かない。
-下見の件数と実行時の件数が食い違ったら**書かない**（TOCTOU）。
+反応した人は **`cron-prospect-worker`（10 分ごとの scheduled function）が自動で** Customers へ登録する。
+
+| 段階 | 何が起きるか |
+|---|---|
+| webhook が open / click を受ける | prospect を **ENGAGED** にする（Airtable へは書かない） |
+| 次の tick | `promo-lock:<hash>` を `SET NX` で 1 つだけ取り、**Customers へ CREATE 1 件** |
+| 成功 | **そのときだけ** PROMOTED にし、`promotedRecordId` を残す |
+| **失敗** | **ENGAGED のまま**残し、権利を返す → **次の tick で再試行**。二重登録しない |
+
+書く列は取り込みと**同じ allow-list**（`Email` / `プラン=Free` / `ポイント` / `Source`）で、
+課金・権利・配信停止の列は 1 つも書かない。写しが使えないときは**登録しない**
+（既存顧客との重複を判定できないため）。
+管理画面の「反応した人を登録」は **手動の救済・再実行**用で、自動側と同じ `promo-lock` を取る。
 
 #### 即時除外（`sendgrid-webhook.js`）
 
@@ -239,6 +249,11 @@ dry-run と ACTIVE 化が Customers を全件・逐次取っており、**約 4,
 - 写しが**無い / 古い（既定 6 時間）/ 壊れている**ときは **503 で fail-closed**
 - 走査が途中で失敗したら **meta を更新しない**（古い写しのまま残す方が安全）
 
+⚠️ **公開 URL から走査を起動させない。** 走査は **scheduled function**
+（`cron-prospect-worker`）だけが行い、HTTP 起動は Netlify が拒否する。
+管理画面の「写しを更新」は **認証済み管理 API が Redis に依頼札を立てるだけ**で、
+次の tick（最大 10 分）が拾って更新する。公開 background function は**削除した**。
+
 #### ゲート（いずれも production 未設定）
 
 | env | 何が開くか |
@@ -246,6 +261,7 @@ dry-run と ACTIVE 化が Customers を全件・逐次取っており、**約 4,
 | `MARKETING_PROSPECT_WRITE_ENABLED` | 取り込み・昇格・手動除外（**Customers への登録**） |
 | `MARKETING_PROSPECT_EVENTS_ENABLED` | webhook から prospect への反映 |
 | `MARKETING_AUTOMATION_ENQUEUE_ENABLED` | cron からの enqueue（ScheduledEmails の行作成） |
+| `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` | 反応者の**自動** Customers 登録 |
 | `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` | 自動化の設定変更 |
 | `MARKETING_AUTOMATION_SCHEDULER_ENABLED` + `..._DISPATCH_ARMED` | 実配信 |
 
@@ -260,7 +276,11 @@ dry-run と ACTIVE 化が Customers を全件・逐次取っており、**約 4,
 保存系ボタンは**初期 disabled**で、`writeEnabled` に連動し、`prospect_write_blocked` を受けたら即座に閉じる。
 昇格は**下見の件数を渡す**ので、食い違えば API 側が拒否する。
 
-テスト: marketing **1,020 pass**（prospect 新規 44）/ webhooks 132 / CRM 246 /
+E2E テスト: **CSV 取込 → 3 回無反応 → 永久除外 → purge → 再取込でも復活しない** /
+**取込 → 送信 → open 検知 → 自動登録（2 回目は二重登録しない）** /
+**Airtable 失敗 → ENGAGED のまま → 次回に再試行して 1 件だけ登録**。
+
+テスト: marketing **1,027 pass**（prospect 新規 51）/ webhooks 132 / CRM 246 /
 `check:safety` 519 / build 通過。**production env 変更 0 / 実送信 0 / Airtable write 0。**
 
 ### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）

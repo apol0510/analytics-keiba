@@ -27,6 +27,12 @@ import { createHash } from 'node:crypto';
 
 export const SNAPSHOT_ROOT = 'ak:customer-snapshot:';
 export const META_KEY = `${SNAPSHOT_ROOT}meta`;
+/**
+ * 更新の**依頼札**。認証済みの管理 API だけが立て、scheduled function が拾って消す。
+ * ⚠️ 公開 URL から更新を「開始」させないための仕組み（起動経路は schedule だけ）。
+ */
+export const REFRESH_REQUEST_KEY = `${SNAPSHOT_ROOT}refresh-request`;
+export const REFRESH_REQUEST_TTL_SEC = 3600;
 export const chunkKey = (gen, i) => `${SNAPSHOT_ROOT}emails:${gen}:${i}`;
 
 /** 1 chunk あたりの件数。**Upstash の 1 値サイズに収まる範囲** */
@@ -117,6 +123,18 @@ export function createSnapshotStore({ cmd } = {}) {
     assertKey,
 
     async loadMeta() { return parse(await call(['GET', META_KEY])); },
+
+    /** 管理 API から「次の tick で更新して」と依頼する（**更新そのものは行わない**） */
+    async requestRefresh({ nowMs, by }) {
+      const req = {
+        requestedAt: new Date(Number(nowMs) || Date.now()).toISOString(),
+        by: String(by || 'admin'),
+      };
+      await call(['SET', REFRESH_REQUEST_KEY, JSON.stringify(req), 'EX', String(REFRESH_REQUEST_TTL_SEC)]);
+      return req;
+    },
+    async loadRefreshRequest() { return parse(await call(['GET', REFRESH_REQUEST_KEY])); },
+    async clearRefreshRequest() { await call(['DEL', REFRESH_REQUEST_KEY]); },
 
     /**
      * アドレス集合を読む。**meta が古ければ読まない**（古い対象で送らせない）。

@@ -24,7 +24,7 @@ import { ProspectStoreError, emailHash } from './prospectStore.js';
 
 export const PROSPECT_WRITE_GATE_ENV = 'MARKETING_PROSPECT_WRITE_ENABLED';
 export const PROSPECT_WRITE_ACTIONS = Object.freeze(['intake', 'promote', 'suppress', 'purge']);
-export const PROSPECT_READ_ACTIONS = Object.freeze(['status', 'preview', 'lookup', 'promotion-preview']);
+export const PROSPECT_READ_ACTIONS = Object.freeze(['status', 'preview', 'lookup', 'promotion-preview', 'request-snapshot-refresh']);
 
 export const PROSPECT_REJECT = Object.freeze({
   WRITE_BLOCKED: 'prospect_write_blocked',
@@ -190,7 +190,29 @@ export function createProspectAdminApi(deps = {}) {
       });
     },
 
-    /** 反応した prospect を Airtable Customers へ登録する */
+    /**
+     * 顧客一覧の写しの更新を**依頼する**（更新そのものは scheduled function が行う）。
+     * ⚠️ 公開 URL から更新を開始させないため、ここは**札を立てるだけ**。
+     */
+    async requestSnapshotRefresh({ snapshot }) {
+      if (!snapshot) return reject(PROSPECT_REJECT.STORE_UNAVAILABLE, { 接続: { redis: false } });
+      const meta = await snapshot.loadMeta().catch(() => null);
+      const req = await snapshot.requestRefresh({ nowMs, by: 'admin' });
+      return {
+        ok: true, mode: 'prospect-request-snapshot-refresh', sideEffects: 'redis-flag-only',
+        依頼: req,
+        現在の写し: meta ? { 件数: meta.count, builtAt: meta.builtAt } : null,
+        notice: '次の定期実行（最大 10 分）で更新されます。**この API は更新を実行しません。**',
+      };
+    },
+
+    /**
+     * 反応した prospect を Airtable Customers へ登録する。
+     *
+     * ⚠️ 通常は **scheduled function（`cron-prospect-worker`）が自動で行う**。
+     *    ここは **手動の救済・再実行**（自動が止まっているとき / 失敗が残ったとき）用。
+     *    自動側と同じ `promo-lock` を取るので、**同時に走っても二重登録しない**。
+     */
     async promote({ batchId, confirmCount }) {
       return guard(async () => {
         const hashes = await store.engagedHashes();
@@ -208,17 +230,33 @@ export function createProspectAdminApi(deps = {}) {
         if (plan.promote.length === 0) {
           return { ok: true, mode: 'prospect-promote', 件数: plan.counts, 作成: 0 };
         }
-        const created = await createCustomers(plan.promote.map((p) => p.fields));
-        // 作成できたものだけ PROMOTED にする（失敗は次回に持ち越す）
+        // ⚠️ 自動昇格と取り合わないよう、1 件ずつ権利を取る
+        const claimed = []; let contended = 0;
+        for (const p of plan.promote) {
+          if (p.hash && !(await store.claimPromotion(p.hash))) { contended += 1; continue; }
+          claimed.push(p);
+        }
+        if (claimed.length === 0) {
+          return { ok: true, mode: 'prospect-promote', 件数: plan.counts, 作成: 0, 取り合い: contended };
+        }
+        const created = await createCustomers(claimed.map((p) => p.fields));
+        // ⚠️ **作成できたものだけ** PROMOTED にする。失敗は ENGAGED のまま次回へ
         let marked = 0;
-        for (let i = 0; i < plan.promote.length; i += 1) {
-          if (created && created.okIndexes instanceof Set && !created.okIndexes.has(i)) continue;
-          await store.recordPromotion({ email: plan.promote[i].email, nowMs });
+        for (let i = 0; i < claimed.length; i += 1) {
+          if (created && created.okIndexes instanceof Set && !created.okIndexes.has(i)) {
+            if (claimed[i].hash) await store.releasePromotionClaim(claimed[i].hash).catch(() => {});
+            continue;
+          }
+          await store.recordPromotion({
+            email: claimed[i].email, nowMs,
+            recordId: created && created.recordIds ? created.recordIds[i] : null,
+          });
           marked += 1;
         }
         return {
           ok: true, mode: 'prospect-promote',
           件数: plan.counts, 作成: created ? created.created : 0, 状態更新: marked,
+          取り合い: contended, 用途: '手動の救済・再実行（通常は自動で登録されます）',
           除外理由: plan.skipped,
         };
       });

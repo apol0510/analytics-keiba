@@ -51,6 +51,12 @@ export const emailHash = (email) =>
 
 export const prospectKey = (hash) => `${PROSPECT_ROOT}p:${hash}`;
 export const blockedKey = (hash) => `${PROSPECT_ROOT}blocked:${hash}`;
+/**
+ * 昇格の取り合い防止。**`SET NX` で 1 つだけ通す**ので、
+ * 自動昇格と管理画面の手動昇格が同時に走っても Customers を二重に作らない。
+ */
+export const promoLockKey = (hash) => `${PROSPECT_ROOT}promo-lock:${hash}`;
+export const PROMO_LOCK_TTL_SEC = 300;
 export const BLOCKED_INDEX = `${PROSPECT_ROOT}index:blocked`;
 
 /** 抑止台帳に保存してよい項目。**アドレスを含めない** */
@@ -59,7 +65,7 @@ export const BLOCKED_FIELDS = Object.freeze(['hash', 'kind', 'reason', 'at', 'se
 /** 保存してよい項目（**これ以外は 1 つも書かない**） */
 export const PROSPECT_FIELDS = Object.freeze([
   'email', 'state', 'sends', 'lastSentAt', 'lastRunId',
-  'engagedAt', 'engagedKind', 'promotedAt', 'suppressedAt', 'suppressedReason',
+  'engagedAt', 'engagedKind', 'promotedAt', 'promotedRecordId', 'suppressedAt', 'suppressedReason',
   'addedAt', 'batchId', 'source',
 ]);
 
@@ -257,13 +263,30 @@ export function createProspectStore({ cmd } = {}) {
       return { ok: true, changed: true, prospect: await write(hash, r.prospect) };
     },
 
-    async recordPromotion({ email, nowMs }) {
+    /**
+     * ⚠️ **Airtable への作成が成功した後にだけ**呼ぶ。
+     * 失敗したら ENGAGED のままにして次回に持ち越す（作られていないのに
+     * PROMOTED にすると、その相手は二度と登録されない）。
+     */
+    async recordPromotion({ email, nowMs, recordId }) {
       const hash = emailHash(email);
       const cur = await this.loadByHash(hash);
       if (!cur) return { ok: false, reason: 'not_found' };
       const next = applyPromotion({ prospect: cur, nowMs });
+      if (recordId) next.promotedRecordId = String(recordId);
       return { ok: true, prospect: await write(hash, next) };
     },
+
+    /** 昇格の権利を 1 つだけ取る（自動と手動の二重登録を防ぐ） */
+    async claimPromotion(hash, ttlSec) {
+      const res = await call([
+        'SET', promoLockKey(hash), '1', 'NX', 'EX', String(ttlSec || PROMO_LOCK_TTL_SEC),
+      ]);
+      if (res === 'OK') return true;
+      if (res === null) return false;
+      throw new ProspectStoreError(STORE_FAIL.UNKNOWN_RESULT, 'claim_promotion');
+    },
+    async releasePromotionClaim(hash) { await call(['DEL', promoLockKey(hash)]); },
 
     /** 送信候補の hash 一覧。**応答が配列でなければ fail-closed** */
     async activeHashes() {

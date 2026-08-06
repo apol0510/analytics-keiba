@@ -23,8 +23,9 @@ import {
 } from './prospectStore.js';
 import {
   createSnapshotStore, evaluateSnapshot, buildChunks, SnapshotError,
-  SNAPSHOT_FAIL, SNAPSHOT_ROOT, META_KEY,
+  SNAPSHOT_FAIL, SNAPSHOT_ROOT, META_KEY, REFRESH_REQUEST_KEY,
 } from './customerSnapshotCache.js';
+import { promoteEngaged, AUTO_PROMOTE_ENV } from '../../../netlify/functions/cron-prospect-worker.js';
 import {
   buildProspectAudience, mergeAudiences, planPromotions, planProspectEventUpdates,
 } from './prospectPipeline.js';
@@ -46,7 +47,10 @@ function fakeRedis(seed = {}) {
     calls.push(a);
     const [op, key] = a;
     if (op === 'GET') return store.has(key) ? store.get(key) : null;
-    if (op === 'SET') { store.set(key, a[2]); return 'OK'; }
+    if (op === 'SET') {
+      if (a.includes('NX') && store.has(key)) return null;   // NX 失敗
+      store.set(key, a[2]); return 'OK';
+    }
     if (op === 'DEL') { store.delete(key); return 1; }
     if (op === 'EXISTS') return store.has(key) ? 1 : 0;
     if (op === 'SADD') { const s = store.get(key) || new Set(); s.add(a[2]); store.set(key, s); return 1; }
@@ -684,4 +688,209 @@ test('guard: 管理画面に見込み客パネルがあり、保存系は初期 
   assert.match(UI2, /data\.code === 'prospect_write_blocked'\) prApplyGate\(false\)/);
   // 昇格は下見の件数を渡す（TOCTOU）
   assert.match(UI2, /action: 'promote', confirmCount: n/);
+});
+
+
+// ── 自動昇格（open/click 検知 → Customers へ冪等登録）─────────
+
+/** Airtable の CREATE を模した fake（失敗させられる） */
+function fakeAirtable({ failFirst = 0 } = {}) {
+  const created = []; let calls = 0;
+  const fetchImpl = async (url, opt) => {
+    if (!String(url).includes('api.airtable.com')) throw new Error('想定外の宛先');
+    calls += 1;
+    if (calls <= failFirst) return { ok: false, status: 500, json: async () => ({}) };
+    const body = JSON.parse(opt.body);
+    const recs = body.records.map((r, i) => ({ id: `rec${created.length + i}`, fields: r.fields }));
+    created.push(...recs.map((r) => r.fields.Email));
+    return { ok: true, json: async () => ({ records: recs }) };
+  };
+  return { fetchImpl, created, calls: () => calls };
+}
+
+async function seedSnapshot(r, emails, nowMs) {
+  const snap = createSnapshotStore({ cmd: r.cmd });
+  await snap.save({ emails, nowMs, generation: `g${nowMs}` });
+  return snap;
+}
+
+/** 時計を進めながら同じ Redis を使う管理 API を作る */
+function apiAt(r, snap, nowMs, createCustomers) {
+  return createProspectAdminApi({
+    store: createProspectStore({ cmd: r.cmd }),
+    env: { MARKETING_PROSPECT_WRITE_ENABLED: 'true' }, now: () => nowMs,
+    loadCustomerEmails: () => snap.loadEmailSet({ nowMs }),
+    loadBlacklist: async () => new Set(),
+    createCustomers: createCustomers || (async () => { throw new Error('登録してはいけない'); }),
+    availableFields: null,
+  });
+}
+
+test('E2E: CSV 取込 → 3 回無反応 → 永久除外され、再取込でも復活しない', async () => {
+  const r = fakeRedis();
+  const snap = await seedSnapshot(r, ['existing@example.invalid'], NOW);
+  const store = createProspectStore({ cmd: r.cmd });
+
+  // 1) 取り込み（既存顧客は入らない）
+  const intake = await apiAt(r, snap, NOW).intake({
+    rows: [{ email: 'quiet@example.invalid' }, { email: 'existing@example.invalid' }],
+    batchId: 'e2e',
+  });
+  assert.equal(intake['件数']['実際に追加'], 1);
+  assert.equal(intake['除外理由'][SKIP_REASON.ALREADY_CUSTOMER], 1);
+
+  // 2) 3 回送る（毎回 3 日空け、写しも同じ時刻で作り直す）
+  for (let i = 1; i <= MAX_SENDS_WITHOUT_ENGAGEMENT; i += 1) {
+    const t = day((i - 1) * MIN_DAYS_BETWEEN_SENDS);
+    await seedSnapshot(r, ['existing@example.invalid'], t);
+    const pv = await apiAt(r, createSnapshotStore({ cmd: r.cmd }), t).preview({ runId: `run${i}` });
+    assert.equal(pv['件数']['対象'], 1, `${i} 回目の対象`);
+    await store.recordSend({ email: 'quiet@example.invalid', nowMs: t, runId: `run${i}` });
+  }
+
+  // 3) 打ち切られ、配信対象から消え、台帳に載る
+  const after = await store.load('quiet@example.invalid');
+  assert.equal(after.state, PROSPECT_STATE.EXHAUSTED);
+  assert.deepEqual(await store.activeHashes(), []);
+  const led = await store.loadBlocked(emailHash('quiet@example.invalid'));
+  assert.equal(led.kind, BLOCK_KIND.EXHAUSTED);
+  const late = day(MAX_SENDS_WITHOUT_ENGAGEMENT * MIN_DAYS_BETWEEN_SENDS);
+  await seedSnapshot(r, ['existing@example.invalid'], late);
+  const apiLate = apiAt(r, createSnapshotStore({ cmd: r.cmd }), late);
+  assert.equal((await apiLate.preview({ runId: 'run9' }))['件数']['対象'], 0);
+
+  // 4) Airtable へは 1 件も登録されていない
+  const promo = await apiLate.promotionPreview({ batchId: 'e2e' });
+  assert.equal(promo['件数']['登録予定'], 0);
+
+  // 5) 生アドレスを消しても、CSV を入れ直して復活しない
+  await apiLate.purge({ limit: 100 });
+  assert.equal(await store.load('quiet@example.invalid'), null);
+  const again = await apiLate.intake({ rows: [{ email: 'quiet@example.invalid' }], batchId: 'e2e-2' });
+  assert.equal(again['件数']['実際に追加'], 0);
+  assert.equal(again['除外理由'].permanently_blocked, 1);
+  assert.deepEqual(await store.activeHashes(), []);
+});
+
+test('E2E: 取込 → 送信 → open 検知 → 自動で Customers へ 1 件だけ登録される', async () => {
+  const r = fakeRedis();
+  const snap = await seedSnapshot(r, ['existing@example.invalid'], NOW);
+  const store = createProspectStore({ cmd: r.cmd });
+  const at = fakeAirtable();
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = at.fetchImpl;
+  try {
+    // 取り込み → 送信
+    await store.addIfAbsent(buildProspect({ email: 'hot@example.invalid', nowMs: NOW }));
+    await store.recordSend({ email: 'hot@example.invalid', nowMs: NOW, runId: 'run1' });
+
+    // webhook 相当: open を受けて ENGAGED
+    const { updates } = planProspectEventUpdates({
+      events: [{ email: 'hot@example.invalid', event: 'open' }], classify: classifyEvent,
+    });
+    for (const u of updates) await store.recordEngagement({ email: u.email, nowMs: NOW + 3600000, kind: u.kind });
+    assert.equal((await store.load('hot@example.invalid')).state, PROSPECT_STATE.ENGAGED);
+
+    // 定期実行が自動で登録する
+    const res = await promoteEngaged({ store, snapshot: snap, KEY: 'k', BASE: 'b', now: NOW + 3600000 });
+    assert.equal(res.登録, 1, JSON.stringify(res));
+    assert.deepEqual(at.created, ['hot@example.invalid']);
+
+    const p = await store.load('hot@example.invalid');
+    assert.equal(p.state, PROSPECT_STATE.PROMOTED);
+    assert.ok(p.promotedRecordId, 'recordId を残していない');
+    assert.deepEqual(await store.engagedHashes(), [], '昇格待ちに残っている');
+
+    // ⚠️ もう一度回しても二重登録しない
+    const again = await promoteEngaged({ store, snapshot: snap, KEY: 'k', BASE: 'b', now: NOW + 7200000 });
+    assert.equal(again.登録, 0);
+    assert.equal(at.created.length, 1, '二重登録した');
+  } finally { globalThis.fetch = prevFetch; }
+});
+
+test('E2E: Airtable が失敗したら ENGAGED のまま残り、次回に再試行して二重登録しない', async () => {
+  const r = fakeRedis();
+  const snap = await seedSnapshot(r, [], NOW);
+  const store = createProspectStore({ cmd: r.cmd });
+  const at = fakeAirtable({ failFirst: 1 });
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = at.fetchImpl;
+  try {
+    await store.addIfAbsent(buildProspect({ email: 'retry@example.invalid', nowMs: NOW }));
+    await store.recordEngagement({ email: 'retry@example.invalid', nowMs: NOW, kind: 'open' });
+
+    const first = await promoteEngaged({ store, snapshot: snap, KEY: 'k', BASE: 'b', now: NOW });
+    assert.equal(first.失敗, 1);
+    assert.equal(first.登録, 0);
+    // ⚠️ 作られていないのに PROMOTED にしない
+    const p = await store.load('retry@example.invalid');
+    assert.equal(p.state, PROSPECT_STATE.ENGAGED, '作成失敗なのに PROMOTED になった');
+    assert.deepEqual(await store.engagedHashes(), [emailHash('retry@example.invalid')]);
+
+    const second = await promoteEngaged({ store, snapshot: snap, KEY: 'k', BASE: 'b', now: NOW + 3600000 });
+    assert.equal(second.登録, 1);
+    assert.equal(at.created.length, 1, '再試行で二重登録した');
+    assert.equal((await store.load('retry@example.invalid')).state, PROSPECT_STATE.PROMOTED);
+  } finally { globalThis.fetch = prevFetch; }
+});
+
+test('自動と手動が同時でも二重登録しない（promo-lock）', async () => {
+  const r = fakeRedis();
+  const store = createProspectStore({ cmd: r.cmd });
+  const h = emailHash('x@example.invalid');
+  assert.equal(await store.claimPromotion(h), true);
+  assert.equal(await store.claimPromotion(h), false, '2 つ目が権利を取れた');
+  await store.releasePromotionClaim(h);
+  assert.equal(await store.claimPromotion(h), true);
+});
+
+test('写しが使えないときは自動登録しない（重複判定ができないため）', async () => {
+  const r = fakeRedis();
+  const store = createProspectStore({ cmd: r.cmd });
+  const snap = createSnapshotStore({ cmd: r.cmd });   // 写し未作成
+  await store.addIfAbsent(buildProspect({ email: 'a@example.invalid', nowMs: NOW }));
+  await store.recordEngagement({ email: 'a@example.invalid', nowMs: NOW, kind: 'open' });
+  await assert.rejects(
+    () => promoteEngaged({ store, snapshot: snap, KEY: 'k', BASE: 'b', now: NOW }),
+    (e) => e instanceof SnapshotError,
+  );
+});
+
+// ── 写し更新の起動経路 ────────────────────────────────────────
+
+test('管理 API は写しの更新を依頼するだけ（自分では走査しない）', async () => {
+  const r = fakeRedis();
+  const snap = createSnapshotStore({ cmd: r.cmd });
+  const api = createProspectAdminApi({
+    store: createProspectStore({ cmd: r.cmd }), env: {}, now: () => NOW,
+    loadCustomerEmails: async () => new Set(), loadBlacklist: async () => new Set(),
+    createCustomers: async () => { throw new Error('呼んではいけない'); },
+  });
+  const prevFetch = globalThis.fetch;
+  let outbound = 0;
+  globalThis.fetch = async () => { outbound += 1; return { ok: true, json: async () => ({}) }; };
+  try {
+    const res = await api.requestSnapshotRefresh({ snapshot: snap });
+    assert.equal(res.ok, true);
+    assert.equal(res.sideEffects, 'redis-flag-only');
+    assert.equal(outbound, 0, '管理 API が自分で走査した');
+    assert.ok(r.store.has(REFRESH_REQUEST_KEY), '依頼札が立っていない');
+  } finally { globalThis.fetch = prevFetch; }
+});
+
+test('guard: 写し更新は scheduled function だけが実行する（公開 URL から起動できない）', () => {
+  const WORKER = readFileSync(fileURLToPath(
+    new URL('../../../netlify/functions/cron-prospect-worker.js', import.meta.url)), 'utf8');
+  // schedule 登録があり、v1 の handler を持たない（持つと schedule が登録されない）
+  assert.match(WORKER, /export const config = \{[\s\S]*schedule:/);
+  assert.equal(/export const handler\s*=/.test(WORKER), false, 'v1 形式が残っている');
+  assert.match(WORKER, /export default async function handler/);
+  // 公開の background function は残っていない
+  assert.throws(() => readFileSync(fileURLToPath(
+    new URL('../../../netlify/functions/refresh-customer-snapshot-background.js', import.meta.url))));
+  // 自動登録は専用 env が開くまで動かない
+  assert.equal(AUTO_PROMOTE_ENV, 'MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED');
+  assert.match(WORKER, /process\.env\[AUTO_PROMOTE_ENV\] !== 'true'/);
+  // Airtable は CREATE と GET のみ
+  assert.equal(/method:\s*'(PATCH|PUT|DELETE)'/.test(WORKER), false);
 });

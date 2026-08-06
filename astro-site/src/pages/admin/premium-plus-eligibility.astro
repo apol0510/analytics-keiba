@@ -234,13 +234,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
              顧客台帳へ入れない。**保存系ボタンは env が開くまで disabled**。 -->
         <h3 class="sub-h">見込み客プール（外部リスト）</h3>
         <p class="imp-meta">
-          1 回でも開封・クリックした人だけを顧客台帳へ登録します。
+          1 回でも開封・クリックした人は<strong>自動で</strong>顧客台帳へ登録されます（定期実行）。
+          下の「反応した人を登録」は<strong>手動の救済・再実行</strong>用です。
           3 回送って無反応なら登録せず、以後の配信対象から永久に外します
           （除外は台帳に残り、CSV を入れ直しても復活しません）。
         </p>
 
         <div class="toolbar">
-          <button type="button" id="prSnapshot" class="btn-ghost btn-md">顧客一覧の写しを更新</button>
+          <button type="button" id="prSnapshot" class="btn-ghost btn-md">顧客一覧の写しを更新（依頼）</button>
           <button type="button" id="prStatus" class="btn-ghost btn-md">件数を確認</button>
           <button type="button" id="prPreview" class="btn-primary btn-md">配信の下見（送信しません）</button>
           <button type="button" id="prPromoPreview" class="btn-ghost btn-md">昇格の下見（登録しません）</button>
@@ -267,7 +268,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="toolbar">
           <button type="button" id="prLookupBtn" class="btn-ghost btn-md">状態を見る</button>
           <button type="button" id="prIntake" class="btn-ghost btn-md" disabled aria-disabled="true">CSV を取り込む（未有効）</button>
-          <button type="button" id="prPromote" class="btn-ghost btn-md" disabled aria-disabled="true">反応した人を登録（未有効）</button>
+          <button type="button" id="prPromote" class="btn-ghost btn-md" disabled aria-disabled="true">反応した人を登録（手動救済・未有効）</button>
           <button type="button" id="prSuppress" class="btn-ghost btn-md" disabled aria-disabled="true">この 1 件を除外（未有効）</button>
           <button type="button" id="prPurge" class="btn-ghost btn-md" disabled aria-disabled="true">除外済みのアドレスを削除（未有効）</button>
         </div>
@@ -4736,7 +4737,6 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     // ── 見込み客プール ────────────────────────────────────────
     const PR_API = '/.netlify/functions/admin-marketing-prospect';
-    const SNAPSHOT_API = '/.netlify/functions/refresh-customer-snapshot-background';
     async function prCall(payload) {
       const secret = (($('secret') || {}).value || '').trim();
       if (!secret) throw new Error('管理シークレットを入力してください');
@@ -4791,17 +4791,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       } catch (e) { prSay(e.message || '確認に失敗しました'); }
     });
 
+    // ⚠️ 更新そのものは定期実行が行う。ここは**依頼を出すだけ**
+    //    （公開 URL から重い全件走査を起こさせないため）
     $('prSnapshot')?.addEventListener('click', async () => {
       try {
-        prSay('顧客一覧の写しを更新中…（数分かかることがあります）');
-        const secret = (($('secret') || {}).value || '').trim();
-        const res = await fetch(SNAPSHOT_API, {
-          method: 'POST', headers: { 'x-admin-secret': secret },
-        });
-        prSay(res.ok || res.status === 202
-          ? '写しの更新を開始しました。完了後にもう一度 下見してください。'
-          : '写しの更新を開始できませんでした（HTTP ' + res.status + '）');
-      } catch (e) { prSay(e.message || '写しの更新に失敗しました'); }
+        prSay('写しの更新を依頼中…');
+        const o = await prCall({ action: 'request-snapshot-refresh' });
+        prShow(o);
+        prSay('更新を依頼しました。次の定期実行（最大 10 分）で反映されます。');
+      } catch (e) { prSay(e.message || '依頼に失敗しました'); }
     });
 
     $('prPreview')?.addEventListener('click', async () => {

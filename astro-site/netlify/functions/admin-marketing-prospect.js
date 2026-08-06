@@ -99,6 +99,7 @@ async function fetchCustomerEmails({ KEY, BASE }) {
 async function createCustomers({ KEY, BASE, fieldsList }) {
   let created = 0;
   const okIndexes = new Set();
+  const recordIds = [];
   for (let i = 0; i < fieldsList.length; i += 10) {
     const chunk = fieldsList.slice(i, i + 10);
     const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`, {
@@ -112,11 +113,11 @@ async function createCustomers({ KEY, BASE, fieldsList }) {
       continue;
     }
     const data = await res.json();
-    const n = (data.records || []).length;
-    for (let j = 0; j < n; j += 1) okIndexes.add(i + j);
-    created += n;
+    const recs = data.records || [];
+    for (let j = 0; j < recs.length; j += 1) { okIndexes.add(i + j); recordIds[i + j] = recs[j].id; }
+    created += recs.length;
   }
-  return { created, okIndexes };
+  return { created, okIndexes, recordIds };
 }
 
 export const handler = async (event) => {
@@ -149,6 +150,7 @@ export const handler = async (event) => {
 
   const hasRedis = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
   const store = hasRedis ? createProspectStore({ cmd: redisCmd }) : null;
+  const snapshot = hasRedis ? createSnapshotStore({ cmd: redisCmd }) : null;
 
   const api = createProspectAdminApi({
     store, env: process.env, now: () => now,
@@ -169,6 +171,7 @@ export const handler = async (event) => {
     else if (action === 'promote') out = await api.promote({ batchId: req.batchId, confirmCount: req.confirmCount });
     else if (action === 'suppress') out = await api.suppress({ email: req.email, reason: req.reason });
     else if (action === 'purge') out = await api.purge({ limit: req.limit });
+    else if (action === 'request-snapshot-refresh') out = await api.requestSnapshotRefresh({ snapshot });
     else return json(400, { error: `未知の action: ${action}` });
 
     if (out && out.ok === false) {
