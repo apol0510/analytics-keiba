@@ -133,7 +133,10 @@ run exactly 1・retry 0 ではやり直しが効かないので、**同じ判定
 |---|---|---|
 | 1 | **HTTP 応答** | `run` の戻り値（専用ファイルへ `-o`） |
 | 2 | **Redis result** | `ak:marketing-automation:def-canary:<canaryId>:result` を `status` が復元 |
-| 3 | **Function ログ** | run 完了時の 1 行 JSON（`marketing_automation_def_canary_result`） |
+| 3 | **Function ログ** | run 完了時の 1 行 JSON（`marketing_automation_def_canary_result`）を `netlify logs --source functions --function <name> --since <t> --json` で取得し、JSON Lines から抽出 |
+
+⚠️ `netlify logs:function` は **live stream 専用**（deprecated）で、実行済みの run のログは取れない。
+必ず `netlify logs --since ...` を使い、`--since` は run の時刻を含む幅にする（実測は 40m で取得できた）。
 
 3 経路とも `overallOk` と `checks[{name, ok}]` を**同じ順序・同じ形**で持つ。
 突合は `verifyThreePaths`（件数・順序・`name`・`ok`・`overallOk` の完全一致 / 重複名は不可）。
@@ -176,25 +179,48 @@ ST_HTTP=$(curl -sS -o "$CANARY_DIR/status.json" -w '%{http_code}' \
   -d "{\"action\":\"status\",\"canaryId\":\"$CID\"}")
 echo "status HTTP=$ST_HTTP"
 
-# 4) Function ログ（3 経路目）
+# 4) Function ログ（3 経路目）— **--json で JSON Lines として保存する**
+#    ⚠️ `netlify logs:function` は live stream 専用で**過去の実行を返さない**（deprecated）。
+#       run 済みのログを取るには必ず `netlify logs --since ...` を使う。
 netlify logs --source functions \
-  --function admin-marketing-automation-def-canary --since 30m \
-  | tee "$CANARY_DIR/function.log"
+  --function admin-marketing-automation-def-canary --since 40m --json \
+  > "$CANARY_DIR/function.log" 2> "$CANARY_DIR/function.err"
+echo "log lines=$(wc -l < "$CANARY_DIR/function.log")"
 
 # 5) ⚠️ 3 経路の完全一致を確認してから cleanup。
 #    HTTP 応答とログの checks[{name, ok}] を**加工せず・順序どおり**渡す。
 #    （欠落・件数違い・順序違い・name/ok 違い・重複名・boolean だけの主張は
 #      すべて 409 paths_not_verified で削除を拒否される）
 
-# 5-1) ログ 1 行 JSON を取り出す（引数は環境変数で渡す）
+# 5-1) JSON Lines から対象 event を抽出する（引数は環境変数で渡す）
+#      各行は JSON オブジェクトで、canary の 1 行 JSON は**その文字列フィールドの中**にある。
+#      行そのものが JSON の場合にも当たるよう、両方を走査する。
 LOG_FILE="$CANARY_DIR/function.log" OUT="$CANARY_DIR/log-result.json" node -e '
   const fs = require("fs");
-  const log = fs.readFileSync(process.env.LOG_FILE, "utf8").split("\n")
-    .map((l) => { const i = l.indexOf("{"); return i < 0 ? null : l.slice(i); })
-    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-    .filter((o) => o && o.event === "marketing_automation_def_canary_result").pop();
-  if (!log) { console.error("ログ 1 行 JSON が見つかりません"); process.exit(1); }
-  fs.writeFileSync(process.env.OUT, JSON.stringify(log, null, 2));
+  const EVENT = "marketing_automation_def_canary_result";
+  const lines = fs.readFileSync(process.env.LOG_FILE, "utf8").split("\n").filter(Boolean);
+  const found = [];
+  for (const line of lines) {
+    let outer = null; try { outer = JSON.parse(line); } catch {}
+    const texts = [];
+    if (outer && typeof outer === "object") {
+      for (const v of Object.values(outer)) if (typeof v === "string") texts.push(v);
+    }
+    texts.push(line);
+    for (const t of texts) {
+      const i = t.indexOf("{");
+      if (i < 0) continue;
+      try { const o = JSON.parse(t.slice(i)); if (o && o.event === EVENT) found.push(o); } catch {}
+    }
+  }
+  console.log("raw lines:", lines.length, "/ canary result lines:", found.length);
+  if (found.length !== 1) {
+    console.error(found.length === 0
+      ? "ログ 1 行 JSON が見つかりません（--since を広げて再取得。run はしない）"
+      : "canary result 行が複数あります（canaryIdSuffix で run のものを特定すること）");
+    process.exit(1);
+  }
+  fs.writeFileSync(process.env.OUT, JSON.stringify(found[0], null, 2));
 '
 
 # 5-2) HTTP 応答とログから checks をそのまま組み立てる（値の書き換えはしない）
