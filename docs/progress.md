@@ -75,8 +75,9 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `_computeSnapshot()` の 1 経路に集約し、`activate` は申告値を鵜呑みにせず**再計算して照合**する
 （不一致は `snapshot_mismatch`）。
 
-**Deploy Preview（env 全閉鎖）で実測**: cron は無認証・**詐称 schedule ヘッダ**・当て推量 secret の
-いずれも 503（接続 0）。管理 API は secret 無しで 403、secret 有りでも `create` / `activate` は
+**Deploy Preview（env 全閉鎖）で実測**: cron は **Scheduled Function 化により公開 URL から
+起動できない**（POST / GET / 詐称ヘッダ付きのいずれも **Netlify 層の 403・本文 0 バイト**で、
+コードに到達しない）。管理 API は secret 無しで 403、secret 有りでも `create` / `activate` は
 **403 `write_blocked`（Redis / Airtable 接続 0）**。`list` は `writeEnabled:false` + `store_unavailable`、
 `get` は 503（推測データを返さない）、dry-run は Customers 1,677 件を最後まで取得して成功。
 管理画面は Basic-Auth の 401。

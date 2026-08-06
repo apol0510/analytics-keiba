@@ -415,3 +415,40 @@ cron 式は **UTC**。`0 1 * * *` = **毎日 JST 10:00**（UTC+9）。
 `isScheduledInvocation` は Netlify が scheduled 実行で `next_run` を含む本文を渡す前提。
 **この前提が崩れると 404 のまま実行されない**（fail-closed で安全側だが、機能は止まる）。
 初回に env を開けたときは、**Function ログで実際に起動したかを必ず確認**すること。
+
+
+## Scheduled Function 方式の Deploy Preview 実測（2026-08-06）
+
+`deploy-preview-237` で確認。**production deploy なし・env 変更なし・書き込みなし。**
+
+### 外部 HTTP から起動できない（実測）
+
+| 呼び方 | 結果 |
+|---|---|
+| `POST /.netlify/functions/cron-marketing-automation` | **403 / 本文 0 バイト / `content-type: text/plain` / `server: Netlify`** |
+| `GET` 同上 | **403**（同上） |
+| 詐称 `x-netlify-event: schedule` 付き POST | **403**（同上） |
+
+**これは Netlify のプラットフォーム層の拒否**であり、Function のコードには到達していない
+（到達していれば自前の `404 {"error":"Not Found"}` が `application/json` で返る）。
+比較用に、schedule 未登録の通常 Function（`admin-marketing-automation`）は
+自前の `{"error":"Forbidden"}` を返す。
+
+→ **`netlify.toml` の schedule 登録が効いており、公開 URL からは起動できない**ことを確認。
+既存の scheduled function（`cron-payment-email-reconciler`）も同じ 403 の見え方で、挙動が一致している。
+
+### Deploy Preview では schedule 実行されない
+
+- Netlify のスケジューラが実行するのは**公開中の production デプロイ**のみで、Deploy Preview は対象外
+- Function ログを照会したところ、**invocation は 0 件**（preview / production とも）
+
+> ⚠️ ただし schedule は `0 1 * * *`（UTC 01:00 = JST 10:00）で、確認時刻は UTC 05:0x。
+> **次の発火時刻をまたいでいない**ため、「発火しなかった」ことの積極的な証拠にはならない。
+> 依拠しているのは上記の仕様と、preview が公開デプロイでないという事実。
+> **production へ入れた後の初回 JST 10:00 に、Function ログで実際の起動を必ず確認すること。**
+
+### 副作用 0 の確認
+
+env は production / deploy-preview の**両方で unset**（`MARKETING_AUTOMATION_SCHEDULER_ENABLED` /
+`MARKETING_AUTOMATION_DISPATCH_ARMED`）。仮に起動しても `gates_closed` /
+`接続 {redis:false, airtable:false}` / `sideEffects:'none'` で止まる（ローカルテストで実測）。
