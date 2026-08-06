@@ -478,7 +478,7 @@ const CRON = readFileSync(
 );
 
 test('guard: ゲート未設定なら Redis / Airtable へ接続しない', async () => {
-  const { readGates, handler, ARMED_ENV } = await import('../../../netlify/functions/cron-marketing-automation.js');
+  const { readGates, handler, ARMED_ENV, CRON_SECRET_ENV, CRON_SECRET_HEADER } = await import('../../../netlify/functions/cron-marketing-automation.js');
   const NOWMS = Date.parse('2026-08-06T05:00:00.000Z');
   const TODAY = '2026-08-06';
   assert.equal(readGates({}, NOWMS).allOpen, false);
@@ -505,8 +505,12 @@ test('guard: ゲート未設定なら Redis / Airtable へ接続しない', asyn
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
   try {
-    // 認可は通した上で（スケジュール実行相当）、ゲートが閉じていることを確かめる
-    const res = await handler({ headers: { 'x-netlify-event': 'schedule' } });
+    // ⚠️ 認可は**専用 secret のみ**（schedule ヘッダは詐称できるので根拠にしない）。
+    //    認可を通した上で、ゲートが閉じていることを確かめる
+    const prevEnv = process.env[CRON_SECRET_ENV];
+    process.env[CRON_SECRET_ENV] = 'cron-sec';
+    const res = await handler({ headers: { [CRON_SECRET_HEADER]: 'cron-sec' } });
+    if (prevEnv === undefined) delete process.env[CRON_SECRET_ENV]; else process.env[CRON_SECRET_ENV] = prevEnv;
     const body = JSON.parse(res.body);
     assert.equal(res.statusCode, 200);
     assert.equal(body.ran, false);

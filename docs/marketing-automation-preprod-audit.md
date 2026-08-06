@@ -231,7 +231,7 @@ blocker 6 件と correctness 4 件のうち影響のあるものを一括修正�
 | A-2 | `snapshotCount` と `snapshotOccurrenceDate` を永続化。`detectDrift` は**承認済み snapshot が無ければ件数比較へ進まず** `snapshot_missing` | 対象が 42 → 40 に減っても `snapshot_grew` にならない |
 | A-3 | `verifySnapshotBeforeDispatch()` を新設。実行直前に**指紋・件数・暦日・campaign 版・本文**を突き合わせ、1 つでも違えば enqueue しない | 件数が同じでも指紋違いで `snapshot_fingerprint_changed`。承認と違う暦日で `snapshot_stale` |
 | A-4 | ACTIVE 中の `update` を `active_locked` で拒否（PAUSED / DRAFT 経由を要求）。`update` は**承認済み snapshot を破棄**する | ACTIVE のまま trigger を変えられない。PAUSED で変更すると `snapshotFingerprint` が `null` になる |
-| A-5 | `authorizeInvocation()` を新設。**Netlify のスケジュール実行**か **`x-admin-secret` 一致**のときだけ実行。secret 未設定なら誰も実行できない。認可は**ゲート判定より前**で、ゲートの設定状況すら無認証では返さない | 無認証は 403 かつ Redis 接続 0。応答に env 名を含めない |
+| A-5 | `authorizeInvocation()` を新設。**全呼び出しで専用 secret 必須**（`MARKETING_AUTOMATION_CRON_SECRET` + `x-cron-secret`）。認可は**ゲート判定・Redis / Airtable 初期化より前**で、ゲートの設定状況すら無認証では返さない | 無認証・詐称ヘッダ・管理 secret のいずれも 403 かつ Redis 接続 0。secret 未設定は 503 |
 | A-6 | 既存 2 env（本番で既に true）に依存せず、**自動化専用のゲートを 2 つ**要求: `MARKETING_AUTOMATION_SCHEDULER_ENABLED=true` と `MARKETING_AUTOMATION_DISPATCH_ARMED=<当日 JST 日付>`。後者は**日付一致**なので翌日に自動的に閉じる | 既存 2 つが true でも当日武装が無ければ `allOpen:false`。翌日になると閉じる |
 | B-1 | ページ上限で `break` するのをやめ、`CustomerFetchTruncatedError` で**失敗させる**（上限も 60 → 300 ページへ）。API は 503 `customers_truncated` を返し `sideEffects: 'none'` | offset が尽きない応答で 503 + `customers_truncated` |
 | B-2 | `preview` は**保存済み Definition を基準**にし、preset は保存済みが無いときだけ使う。応答に `基準` / `configVersion` / `status` / `未保存の変更あり` を返す | 保存済みの上限 7 が dry-run に反映される |
@@ -260,3 +260,49 @@ dry-run 後に対象が増えた状態で承認しようとすると `snapshot_m
 
 **production deploy / env 変更 / Redis write / Airtable read・write / メール送信 / 実顧客接触 /
 merge は未実施。** 新しい env（`MARKETING_AUTOMATION_DISPATCH_ARMED`）も**production へ設定していない**。
+
+
+## A-5 の再修正（2026-08-06・詐称可能な根拠を排除）
+
+初回修正では **Netlify のスケジュール実行を `x-netlify-event: schedule` / `event.isScheduled`
+で判定**していた。これは**外部から自由に付けられるヘッダ**であり、
+`curl -H 'x-netlify-event: schedule'` を送るだけで認証を迂回できる。**認証根拠として不適切**だった。
+
+### 変更点
+
+| 項目 | 修正前 | 修正後 |
+|---|---|---|
+| 認証根拠 | schedule ヘッダ **または** `x-admin-secret` | **専用 secret のみ**（例外経路なし） |
+| env | `MARKETING_ADMIN_SECRET` / `PREMIUM_PLUS_ADMIN_SECRET` を流用 | **`MARKETING_AUTOMATION_CRON_SECRET`（専用）** |
+| ヘッダ | `x-admin-secret`（管理画面と共用） | **`x-cron-secret`（専用）** |
+| 比較 | `!==` | `timingSafeEqual`（長さ違いも一定時間） |
+| 未設定時 | 他 secret へフォールバック | **フォールバックしない**。503 `secret_not_configured` |
+
+**鍵を用途ごとに分ける**のが目的。管理画面の secret を知っている人が自動配信の tick まで
+起こせる状態を作らない（漏洩時の影響範囲を切る）。
+
+### 回帰テスト（`automationBlockerFixes.test.mjs`）
+
+- **詐称された schedule ヘッダで通らない**: `x-netlify-event: schedule` / 大文字小文字違い /
+  `user-agent: Netlify` 併用 / `event.isScheduled: true` / それらと誤った secret の組み合わせ —
+  **すべて 403**
+- **管理画面の secret では起動できない**: `x-admin-secret: <管理 secret>` も
+  `x-cron-secret: <管理 secret>` も通らない
+- **専用 env が無ければ他 secret へフォールバックしない**: 503 `secret_not_configured`
+- **handler レベル**でも、無認証 / 詐称 / 管理 secret / secret 未設定のいずれでも
+  **Redis へのリクエスト 0**（fetch 呼び出し回数を実測）
+- **構造 guard**: 認証コードが `x-netlify-event` / `isScheduled` / `PREMIUM_PLUS_ADMIN_SECRET` /
+  `MARKETING_ADMIN_SECRET` / `x-admin-secret` を**実コードで参照していない**こと、
+  `timingSafeEqual` を使っていることを固定
+
+### 運用上の帰結（要判断・未決）
+
+**この設計では Netlify 内蔵のスケジュール実行から呼べない**（スケジュール起動に任意ヘッダを
+付けられないため）。開放時は次のどちらかを選ぶ必要がある。
+
+1. **外部トリガー**（GitHub Actions など）から `x-cron-secret` を付けて叩く
+2. `netlify.toml` に schedule 登録し、**Netlify のスケジュール実行専用**にする
+   （scheduled function は HTTP から呼べないので、そもそも公開エンドポイントでなくなる）。
+   ただし現行テストは「schedule を登録しない」ことを固定しているため、**方針決定が先**
+
+いずれも **production env / `netlify.toml` は未変更**。

@@ -16,7 +16,9 @@ import {
   isDue, detectDrift, DRIFT, verifySnapshotBeforeDispatch,
 } from './automationScheduler.js';
 import { createAutomationAdminApi, API_REJECT, pinCampaign } from './automationAdminApi.js';
-import { readGates, authorizeInvocation, ARMED_ENV } from '../../../netlify/functions/cron-marketing-automation.js';
+import {
+  readGates, authorizeInvocation, ARMED_ENV, CRON_SECRET_ENV, CRON_SECRET_HEADER,
+} from '../../../netlify/functions/cron-marketing-automation.js';
 
 const ADMIN_FN = readFileSync(fileURLToPath(
   new URL('../../../netlify/functions/admin-marketing-automation.js', import.meta.url)), 'utf8');
@@ -282,15 +284,80 @@ test('ACTIVE 化の申告が対象集合の変化後なら通らない（顧客�
 
 // ── A-5: cron の認可 ──────────────────────────────────────────
 
-test('A-5: cron は無認証で実行できない', () => {
-  const env = { PREMIUM_PLUS_ADMIN_SECRET: 'sec' };
-  assert.equal(authorizeInvocation({ event: { headers: {} }, env }).ok, false);
-  assert.equal(authorizeInvocation({ event: { headers: { 'x-admin-secret': 'wrong' } }, env }).ok, false);
-  assert.equal(authorizeInvocation({ event: { headers: { 'x-admin-secret': 'sec' } }, env }).ok, true);
-  // Netlify のスケジュール実行は許可
-  assert.equal(authorizeInvocation({ event: { headers: { 'x-netlify-event': 'schedule' } }, env }).via, 'schedule');
-  // secret 未設定なら誰も実行できない
-  assert.equal(authorizeInvocation({ event: { headers: { 'x-admin-secret': 'sec' } }, env: {} }).code, 'secret_not_configured');
+test('A-5: cron は全呼び出しで専用 secret を要求する', () => {
+  const env = { [CRON_SECRET_ENV]: 'cron-sec' };
+  assert.equal(authorizeInvocation({ event: { headers: {} }, env }).code, 'forbidden');
+  assert.equal(authorizeInvocation({ event: { headers: { [CRON_SECRET_HEADER]: 'wrong' } }, env }).code, 'forbidden');
+  // 長さ違いでも落ちずに false
+  assert.equal(authorizeInvocation({ event: { headers: { [CRON_SECRET_HEADER]: 'x' } }, env }).ok, false);
+  const ok = authorizeInvocation({ event: { headers: { [CRON_SECRET_HEADER]: 'cron-sec' } }, env });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.via, 'secret');
+  // secret 未設定なら誰も実行できない（fail-closed）
+  assert.equal(authorizeInvocation({
+    event: { headers: { [CRON_SECRET_HEADER]: 'cron-sec' } }, env: {},
+  }).code, 'secret_not_configured');
+});
+
+test('A-5: 詐称された schedule ヘッダでは通らない', () => {
+  const env = { [CRON_SECRET_ENV]: 'cron-sec' };
+  // ⚠️ 呼び出し元が自称する印は認証根拠にしない
+  for (const ev of [
+    { headers: { 'x-netlify-event': 'schedule' } },
+    { headers: { 'X-Netlify-Event': 'SCHEDULE' } },
+    { headers: { 'x-netlify-event': 'schedule', 'user-agent': 'Netlify' } },
+    { headers: {}, isScheduled: true },
+    { headers: { 'x-netlify-event': 'schedule' }, isScheduled: true },
+    { headers: { 'x-netlify-event': 'schedule', [CRON_SECRET_HEADER]: 'wrong' } },
+  ]) {
+    const r = authorizeInvocation({ event: ev, env });
+    assert.equal(r.ok, false, `詐称ヘッダで通った: ${JSON.stringify(ev)}`);
+    assert.equal(r.code, 'forbidden');
+  }
+  // 正しい secret があれば、schedule ヘッダの有無に関係なく通る
+  assert.equal(authorizeInvocation({
+    event: { headers: { 'x-netlify-event': 'schedule', [CRON_SECRET_HEADER]: 'cron-sec' } }, env,
+  }).ok, true);
+});
+
+test('A-5: 管理画面の secret では cron を起動できない（鍵を共用しない）', () => {
+  const env = {
+    [CRON_SECRET_ENV]: 'cron-sec',
+    PREMIUM_PLUS_ADMIN_SECRET: 'admin-sec', MARKETING_ADMIN_SECRET: 'mk-sec',
+  };
+  for (const h of [
+    { 'x-admin-secret': 'admin-sec' },
+    { 'x-admin-secret': 'mk-sec' },
+    { [CRON_SECRET_HEADER]: 'admin-sec' },
+    { [CRON_SECRET_HEADER]: 'mk-sec' },
+  ]) {
+    assert.equal(authorizeInvocation({ event: { headers: h }, env }).ok, false,
+      `管理 secret で通った: ${JSON.stringify(h)}`);
+  }
+  // 専用 env が無ければ他の secret へフォールバックしない
+  assert.equal(authorizeInvocation({
+    event: { headers: { 'x-admin-secret': 'admin-sec' } },
+    env: { PREMIUM_PLUS_ADMIN_SECRET: 'admin-sec', MARKETING_ADMIN_SECRET: 'mk-sec' },
+  }).code, 'secret_not_configured');
+});
+
+test('A-5: 認証コードは他 secret を参照していない（構造）', () => {
+  const CRON = readFileSync(fileURLToPath(
+    new URL('../../../netlify/functions/cron-marketing-automation.js', import.meta.url)), 'utf8');
+  // コメントを除いた実コードだけを見る（禁止語が説明文に出るのは許す）
+  const code = CRON.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+  const fn = code.slice(code.indexOf('export function authorizeInvocation'),
+    code.indexOf('function redisCmd'));
+  for (const bad of ['PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET',
+    'x-netlify-event', 'isScheduled', 'x-admin-secret']) {
+    assert.equal(fn.includes(bad), false, `${bad} を認証根拠にしている`);
+    // ファイル全体でも、実コードとしては参照しない
+    assert.equal(code.includes(bad), false, `${bad} を実コードで参照している`);
+  }
+  // 一定時間比較を使う
+  assert.match(code, /timingSafeEqual/);
+  assert.match(code, /CRON_SECRET_ENV = 'MARKETING_AUTOMATION_CRON_SECRET'/);
 });
 
 test('A-5: handler は認可前に Redis へ接続しない', async () => {
@@ -299,17 +366,34 @@ test('A-5: handler は認可前に Redis へ接続しない', async () => {
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
   process.env.PREMIUM_PLUS_ADMIN_SECRET = 'sec';
+  process.env[CRON_SECRET_ENV] = 'cron-sec';
   process.env.MARKETING_AUTOMATION_SCHEDULER_ENABLED = 'true';
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
   process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED = 'true';
   process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
   process.env.UPSTASH_REDIS_REST_TOKEN = 't';
   try {
+    // 無認証
     const res = await handler({ headers: {} });
     assert.equal(res.statusCode, 403);
-    assert.equal(calls, 0, '無認証なのに接続した');
+    // ⚠️ 詐称された schedule ヘッダでも接続しない
+    const spoof = await handler({ headers: { 'x-netlify-event': 'schedule' }, isScheduled: true });
+    assert.equal(spoof.statusCode, 403);
+    // ⚠️ 管理画面の secret でも通らない
+    const wrongKey = await handler({ headers: { 'x-admin-secret': 'sec' } });
+    assert.equal(wrongKey.statusCode, 403);
+    assert.equal(calls, 0, '無認証・詐称なのに接続した');
     // ゲートの設定状況も出さない
-    assert.equal(String(res.body).includes('MARKETING_CAMPAIGN_ENABLED'), false);
+    for (const r of [res, spoof, wrongKey]) {
+      assert.equal(String(r.body).includes('MARKETING_CAMPAIGN_ENABLED'), false);
+    }
+
+    // 専用 secret 未設定なら 503（Redis へは触れない）
+    delete process.env[CRON_SECRET_ENV];
+    const unset = await handler({ headers: { [CRON_SECRET_HEADER]: 'cron-sec' } });
+    assert.equal(unset.statusCode, 503);
+    assert.equal(JSON.parse(unset.body).reason, 'secret_not_configured');
+    assert.equal(calls, 0, 'secret 未設定なのに接続した');
   } finally {
     globalThis.fetch = prevFetch;
     for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];

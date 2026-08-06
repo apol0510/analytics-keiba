@@ -24,6 +24,7 @@ import {
   selectDueAutomations, MAX_AUTOMATIONS_PER_TICK, MAX_RECIPIENTS_PER_TICK,
 } from '../../src/lib/marketing/automationScheduler.js';
 import { jstDateString } from '../../src/lib/marketing/automationModel.js';
+import { timingSafeEqual } from 'node:crypto';
 
 function json(statusCode, body) {
   return {
@@ -70,33 +71,51 @@ export function readGates(env, nowMs) {
 }
 
 /**
- * ⚠️ **外部から無認証で起動させない。**
+ * ⚠️ **外部から無認証で起動させない。全呼び出しで専用 secret を要求する。**
  *
  * この Function は `netlify.toml` に schedule を登録していないため通常の公開 HTTP Function
  * として配備される。認証が無ければ、ゲートを開けた瞬間に誰でも tick を起動できてしまう。
  *
- * 許可するのは次のどちらか:
- *   - Netlify の**スケジュール実行**（`event.headers['x-netlify-event'] === 'schedule'` /
- *     Netlify が付ける schedule 由来の呼び出し）
- *   - `x-admin-secret` が管理用 secret と一致する**手動実行**
+ * ── 認証根拠にしてはいけないもの ──────────────────────────────
+ * `x-netlify-event` / `event.isScheduled` などの**呼び出し元が自称する印は使わない**。
+ * ヘッダは外部から自由に付けられるため、`x-netlify-event: schedule` を送るだけで
+ * 認証を迂回できてしまう（**詐称可能なものを信頼しない**）。
  *
- * secret が未設定なら**誰も実行できない**（fail-closed）。
+ * ── 唯一の根拠 ────────────────────────────────────────────────
+ * **専用 env `MARKETING_AUTOMATION_CRON_SECRET`** と、リクエストヘッダ
+ * `x-cron-secret` の一致だけ。例外経路は無い。
+ *
+ * ⚠️ `PREMIUM_PLUS_ADMIN_SECRET` / `MARKETING_ADMIN_SECRET` とは**共用しない**。
+ *    管理画面の secret を知っている人が自動配信の tick まで起こせる状態を作らない
+ *    （用途ごとに鍵を分け、漏洩時の影響範囲を切る）。
+ *
+ * secret 未設定なら**誰も実行できない**（fail-closed で 503）。
  */
+export const CRON_SECRET_ENV = 'MARKETING_AUTOMATION_CRON_SECRET';
+export const CRON_SECRET_HEADER = 'x-cron-secret';
+
+/** 長さの違いも含めて一定時間で比較する */
+function secretEquals(a, b) {
+  const x = Buffer.from(String(a ?? ''), 'utf8');
+  const y = Buffer.from(String(b ?? ''), 'utf8');
+  if (x.length !== y.length) {
+    // 長さが違っても比較時間を揃える（結果は必ず false）
+    timingSafeEqual(x, x);
+    return false;
+  }
+  return timingSafeEqual(x, y);
+}
+
 export function authorizeInvocation({ event, env }) {
   const e = env || {};
   const headers = (event && event.headers) || {};
   const get = (k) => headers[k] ?? headers[String(k).toLowerCase()] ?? headers[String(k).toUpperCase()];
 
-  // Netlify のスケジュール実行（本文に next_run が入る / schedule ヘッダが付く）
-  const isSchedule = String(get('x-netlify-event') || '').toLowerCase() === 'schedule'
-    || (event && event.isScheduled === true);
-  if (isSchedule) return { ok: true, via: 'schedule' };
-
-  const SECRET = e.MARKETING_ADMIN_SECRET || e.PREMIUM_PLUS_ADMIN_SECRET;
+  const SECRET = e[CRON_SECRET_ENV];
+  // ⚠️ 未設定なら誰も実行できない。**他の secret へフォールバックしない**
   if (!SECRET) return { ok: false, code: 'secret_not_configured' };
-  const provided = get('x-admin-secret');
-  if (provided !== SECRET) return { ok: false, code: 'forbidden' };
-  return { ok: true, via: 'manual' };
+  if (!secretEquals(get(CRON_SECRET_HEADER), SECRET)) return { ok: false, code: 'forbidden' };
+  return { ok: true, via: 'secret' };
 }
 
 /** Upstash REST（AK 既存 env のみ。KMA とキー空間を共有しない） */
@@ -117,8 +136,9 @@ function redisCmd(args) {
 export const handler = async (event) => {
   const now = Date.now();
 
-  // ══ 認可（**ゲート判定より前・接続より前**）══════════════════════
+  // ══ 認可（**ゲート判定より前・Redis / Airtable 初期化より前**）══
   // ⚠️ ゲートの設定状況すら無認証では見せない（開示も攻撃の下準備になる）
+  // ⚠️ ここより上で store も Airtable も**一度も組み立てない**
   const auth = authorizeInvocation({ event, env: process.env });
   if (!auth.ok) {
     return json(auth.code === 'secret_not_configured' ? 503 : 403, {
