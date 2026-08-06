@@ -1032,3 +1032,67 @@ Payment Email v2 の次 Phase 候補（S9 Event Webhook / legacy noreply 整理�
 
 - `astro-site/docs/PAYMENT_EMAIL_V2.md` §legacy noreply 経路（2026-07-21 解消済み）
 - `astro-site/src/lib/payments/paymentEmailSender.guard.test.mjs`（legacy 経路 5 テスト追加）
+
+---
+
+## 2026-08-06 — 外部リストは Customers へ入れず「見込み客プール」で扱い、反応者だけ自動昇格する
+
+### 背景
+
+外部 CSV の 1 万数千件を Airtable Customers へ取り込む方式で進めていたが、
+**未反応のアドレスまで顧客台帳に入る**と顧客数・セグメント・集計が薄まり、
+「顧客」と「まだ顧客でない人」の区別が消える。配信停止・バウンスの管理対象も無駄に膨らむ。
+
+### 決定
+
+1. **外部 CSV は Customers へ入れない。** Redis の見込み客プール（`ak:prospect:`）で扱う
+2. **1 回でも open / click した人だけ**を Customers へ昇格させる（`プラン=Free`）
+3. **3 回送って無反応なら登録せず**、以後の配信対象から**永久に**外す
+4. 昇格は **10 分ごとの Scheduled Function（`cron-prospect-worker`）が自動**で行う。
+   管理画面の「昇格」は**手動の救済・再実行**用途
+
+### 抑止は TTL で消さない（最重要）
+
+除外（bounce / 苦情 / 配信停止）と打ち切り（無反応 3 回）は
+`ak:prospect:blocked:<sha256>` に **TTL なし**で残す。**TTL で消すと CSV を入れ直したときに
+配信対象として復活する。** 台帳が持つのは `hash` / `kind` / `reason` / `at` / `sends` だけで、
+**アドレスは持たない**。生アドレスを持つのは配信中のレコードだけで、抑止後は削除してよい。
+
+### PII の扱いを 1 か所だけ緩める
+
+AK の Redis は原則 PII を保存しないが、**送るには本人のアドレスが要る**一方、
+反応前は Customers へ入れない方針なので他に置き場が無い。そこで
+**`ak:prospect:` 配下に限って**アドレスの保存を許し、代わりに
+キーは `sha256(email)` / 一覧・ログ・集計にアドレスを出さない / 抑止後は削除できる、
+という制約を課した。他の名前空間へアドレスを書く禁止は従来どおり。
+
+### 二重登録を防ぐ
+
+- 取り込み時と送信時の**両方**で Customers のアドレス集合と突合（Customers が正）
+- 昇格は `promo-lock:<hash>` を **`SET NX`** で 1 つだけ取る（自動と手動が同時でも 1 件）
+- **Airtable の CREATE が成功したときだけ** PROMOTED にし、`promotedRecordId` を残す
+- 失敗したら **ENGAGED のまま + claim 解放** → 次の tick で再試行
+
+### 走査は Scheduled Function だけが行う
+
+同期 Function で Customers を全件走査すると**約 4,000 件でタイムアウト域**に入り、
+15,800 件では確実に失敗する（本番実測 1,678 件で 3.5〜7.6 秒 / 上限 10 秒）。
+走査を Scheduled Function へ移し、同期側は Redis の写し（`ak:customer-snapshot:`）を読む。
+
+**公開 URL から走査を起動させない。** scheduled function への HTTP は Netlify が 403 で拒否する。
+管理画面の「写しを更新」は**認証済み管理 API が Redis に依頼札を立てるだけ**で、
+次の tick が拾う。公開 background function 方式は**採用しない**（誰でも重い走査を起こせるため）。
+
+### 却下した選択肢
+
+| 案 | 却下理由 |
+|---|---|
+| 全件を Customers へ取り込む | 顧客台帳が薄まる。配信停止・バウンス管理が膨らむ |
+| 抑止に TTL を付ける | 消えると CSV 再取り込みで復活する（本件の最重要欠陥） |
+| 公開 Background Function で走査 | 公開 URL から誰でも重い走査を起こせる |
+| webhook 内で Airtable へ登録 | webhook の応答が遅れ、配信基盤の再送を招く |
+| 送信回数を enqueue 前に数える | 失敗した回まで数え、無反応 3 回の打ち切りが早まる |
+
+### 関連
+
+`docs/spec.md`「見込み客プール」/ `docs/progress.md` / PR #241
