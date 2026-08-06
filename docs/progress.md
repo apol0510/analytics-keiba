@@ -75,7 +75,16 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `_computeSnapshot()` の 1 経路に集約し、`activate` は申告値を鵜呑みにせず**再計算して照合**する
 （不一致は `snapshot_mismatch`）。
 
-テスト: marketing **970 pass**、payments 246 pass、CRM 246 pass、`check:safety` 519 pass、build 通過。
+**Deploy Preview（env 全閉鎖）で実測**: cron は無認証・**詐称 schedule ヘッダ**・当て推量 secret の
+いずれも 503（接続 0）。管理 API は secret 無しで 403、secret 有りでも `create` / `activate` は
+**403 `write_blocked`（Redis / Airtable 接続 0）**。`list` は `writeEnabled:false` + `store_unavailable`、
+`get` は 503（推測データを返さない）、dry-run は Customers 1,677 件を最後まで取得して成功。
+管理画面は Basic-Auth の 401。
+
+> ⚠️ `PREMIUM_PLUS_ADMIN_SECRET` は **deploy-preview にも設定済み**だった。
+> 本書の 2026-08-03 の記述「production 限定 → preview は 503」は現状と異なる。
+
+テスト: marketing **973 pass**、payments 246 pass、CRM 246 pass、`check:safety` 519 pass、build 通過。
 **production deploy / env 変更 / Redis・Airtable write / メール送信 / merge は未実施。**
 新 env `MARKETING_AUTOMATION_DISPATCH_ARMED` も production 未設定。
 

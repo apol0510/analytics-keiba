@@ -306,3 +306,47 @@ merge は未実施。** 新しい env（`MARKETING_AUTOMATION_DISPATCH_ARMED`）
    ただし現行テストは「schedule を登録しない」ことを固定しているため、**方針決定が先**
 
 いずれも **production env / `netlify.toml` は未変更**。
+
+
+## env 全閉鎖時の挙動確認（Deploy Preview / 2026-08-06）
+
+`deploy-preview-237` で実測。**production deploy なし・env 変更なし・書き込みなし。**
+自動化系 env は production / deploy-preview の**両方で unset** であることを事前に確認した
+（`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` / `..._CRON_SECRET` / `..._SCHEDULER_ENABLED` /
+`..._DISPATCH_ARMED`）。
+
+### cron（`cron-marketing-automation`）
+
+| 呼び方 | 結果 |
+|---|---|
+| 無認証 | **503** `secret_not_configured` / `接続: {redis:false, airtable:false}` |
+| **詐称** `x-netlify-event: schedule` + `isScheduled:true` | **503**（同上・通らない） |
+| 当て推量の `x-cron-secret` | **503**（専用 env 未設定なので誰も通らない） |
+
+→ **詐称ヘッダで素通りしないこと**を本番同等のランタイムで確認。応答にゲートの env 名は出ない。
+
+### 管理 API（`admin-marketing-automation`）
+
+| 呼び方 | 結果 |
+|---|---|
+| secret 無し（`list` / `preview` / `create`） | **403** `Forbidden` |
+| secret 有り `list` | **200** / `writeEnabled: false` / プリセット 7 件 / `保存先: store_unavailable` / `保存済み: null` |
+| secret 有り `get` | **503** `store_unavailable`（**推測データを返さない**） |
+| secret 有り `preview`（dry-run） | **200** / `基準: 'preset'` / `dryRun: true` / `sideEffects: 'none'` / 母数 **1,677** 件・対象 0・除外 1,677 |
+| secret 有り **`create`** | **403** `write_blocked` / `接続: {redis:false, airtable:false}` / `sideEffects: 'none'` |
+| secret 有り **`activate`** | **403** `write_blocked`（同上） |
+
+### 管理画面
+
+`/admin/premium-plus-eligibility` は **401 Authentication required**（`/admin/*` の Basic-Auth Edge Function）。
+
+### 分かったこと
+
+- **write は env 全閉鎖で確実に止まる**。`create` / `activate` とも Redis / Airtable へ接続する前に 403
+- **read は推測しない**。Redis 未設定の preview では `list` の `保存先` と `get` が `store_unavailable`
+- **dry-run は動く**。Customers **1,677 件**を最後まで取得できており（17 ページ / 上限 300）、
+  B-1 の fail-closed 化は通常運用を壊していない
+- Redis が**未設定**のとき `preview` は preset を基準に dry-run し、応答の `基準` にそれを明示する。
+  Redis が**設定済みで到達不能**なときは `store_unavailable` で止まる（production は後者に該当）
+- ⚠️ `PREMIUM_PLUS_ADMIN_SECRET` は **deploy-preview にも設定済み**だった
+  （progress.md の 2026-08-03 の記述「production 限定 → preview は 503」は**現状と異なる**）
