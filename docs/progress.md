@@ -204,6 +204,49 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
+### ✅ Scheduled Function 起動確認（2026-08-06・read-only）
+
+`28705ce` が production で ready の状態で、両 scheduled function のログを read-only で確認した。
+**production env 変更 0 / Airtable write 0 / ScheduledEmails 作成 0 / 実送信 0。**
+
+#### `cron-prospect-worker`（`*/10 * * * *`）— **起動している**
+
+| | |
+|---|---|
+| 起動実績 | **09:10〜12:30 UTC の 21 回連続**（10 分間隔・欠落なし） |
+| level 分布 | **info 42 / error 0**。`errors: []` が空でない行 **0**、失敗マーカー **0** |
+| 昇格 | 毎回 `実行: false` / `reason: auto_promote_disabled`（`MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` 未設定） |
+| 写し | 初回 09:10 に `契機: snapshot_missing` で作成。以後は `更新不要`（6 時間で再作成） |
+
+#### ⚠️ **顧客写しは既に自動作成されていた**（P1 は実施済み）
+
+**09:10 UTC の初回 tick が、写しが無いことを検知して自動的に作った。**
+
+```
+写し: { 件数: 1668, chunks: 1, pages: 17, 契機: 'snapshot_missing' }
+```
+
+- Airtable は **GET のみ**（17 ページ / Email 列だけ）。**write 0**
+- Redis へは `ak:customer-snapshot:meta` と `ak:customer-snapshot:emails:<gen>:0` を書いた
+- **つまり本番 Redis write は 0 ではなくなっている。** 写しの作成・更新は
+  設計上どの env でもゲートしていない（読み手を fail-closed にするために必要なため）
+- 以後は 6 時間ごとに自動更新される（次回 ≈ 15:10 UTC）
+
+> **記録**: 「本番 Redis write 0 を維持」という運用前提と、
+> 「写しはゲート無しで自動生成する」という実装が食い違っていた。
+> 影響は `ak:customer-snapshot:` 配下のみで、顧客データ・配信・課金には触れていない。
+> **P1（顧客 snapshot 初回作成）は改めて実行する必要が無い。**
+
+#### `cron-marketing-automation`（`0 1 * * *` = JST 10:00）— **未起動（時刻前）**
+
+- 直近 24h の invocation で **handler の出力（`marketing-automation-scheduler`）は 0 件**。
+  記録されているのは公開 URL への 403 確認時の platform 行のみ
+- schedule 登録は `export const config = { schedule: '0 1 * * *' }`。
+  `netlify.toml` に二重登録なし（`cron-` を含む行 0）
+- **初回起動は 2026-08-07 01:00 UTC（JST 10:00）**。それまでは未起動が正常
+- 起動したら `ran:false` / `reason:"gates_closed"` / `接続 {redis:false, airtable:false}` /
+  `sideEffects:'none'` を確認する（runbook S1）
+
 ### ✅ 残件 B-4 / B-5 を解消（2026-08-06・Draft PR #242）
 
 監査で残していた 2 件を直した。**production env 変更 0 / 本番 write 0 / 実送信 0。**
