@@ -25,12 +25,11 @@ import {
 } from '../../src/lib/marketing/automationScheduler.js';
 import { jstDateString } from '../../src/lib/marketing/automationModel.js';
 
-function json(statusCode, body) {
-  return {
-    statusCode,
+function json(status, body) {
+  return new Response(JSON.stringify(body), {
+    status,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
-    body: JSON.stringify(body),
-  };
+  });
 }
 
 /**
@@ -77,6 +76,11 @@ export function readGates(env, nowMs) {
  * この Function は **scheduled function** として配備される
  * （既存の `cron-email-scheduler` / `cron-expiry-check` /
  *   `cron-payment-email-reconciler` と同じ登録方法に揃えている）。
+ *
+ * ⚠️ **`export const config` が効くのは Netlify Functions v2 形式だけ。**
+ *    v1 形式（`export const handler = async (event) => ({ statusCode, body })`）で書くと
+ *    schedule が登録されず、**公開 HTTP Function のまま配備される**（Deploy Preview で実測）。
+ *    そのため本 Function は既存 cron と同じ **v2 形式**（`export default` + `Response`）で書く。
  * scheduled function の公開 URL への HTTP リクエストは **Netlify が 404 を返す**ので、
  * そもそも外部からは到達できない。**これが唯一の起動経路の保証**。
  *
@@ -92,16 +96,15 @@ export function readGates(env, nowMs) {
  *
  * ⚠️ 応答は **404**。存在や設定状況を外へ知らせない。
  */
-export function isScheduledInvocation(event) {
-  if (!event || typeof event !== 'object') return false;
-  // HTTP 形状の痕跡があるものは外部リクエストとして扱う
-  if (event.httpMethod || event.rawUrl || event.rawQuery || event.queryStringParameters) return false;
-  // Netlify が scheduled 実行で渡す本文（{ next_run }）を要求する
-  let body = event.body;
+export function isScheduledPayload(payload) {
+  let body = payload;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch { return false; }
   }
-  if (!body || typeof body !== 'object') return false;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  // HTTP 形状の痕跡があるものは外部リクエストとして扱う（v1 形式の event が来た場合も弾く）
+  if (body.httpMethod || body.rawUrl || body.rawQuery || body.queryStringParameters) return false;
+  // Netlify が scheduled 実行で渡す本文（{ next_run }）を要求する
   return typeof body.next_run === 'string' && body.next_run.trim() !== '';
 }
 
@@ -120,23 +123,29 @@ function redisCmd(args) {
   });
 }
 
-export const handler = async (event) => {
-  const now = Date.now();
+/**
+ * 実処理。**テストからはここを直接呼ぶ**（HTTP の器を挟まない）。
+ * @param {{ payload: any, now?: number, env?: object }} args
+ * @returns {{ statusCode: number, body: object }}
+ */
+export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
+  const now = Number.isFinite(nowArg) ? nowArg : Date.now();
+  const ENV = env || process.env;
 
   // ══ 起動経路の確認（**ゲート判定より前・Redis / Airtable 初期化より前**）══
-  // ⚠️ 一次的な保証は Netlify 側（scheduled function は HTTP から 404）。
-  //    ここは多層防御で、scheduled 実行の形をしていないイベントを実行しない。
+  // ⚠️ 一次的な保証は Netlify 側（scheduled function は公開 URL から起動できない）。
+  //    ここは多層防御で、scheduled 実行の形をしていない呼び出しを実行しない。
   // ⚠️ ここより上で store も Airtable も**一度も組み立てない**
-  if (!isScheduledInvocation(event)) {
-    // 存在も設定状況も知らせない（プラットフォームの 404 と同じ見え方にする）
-    return json(404, { error: 'Not Found' });
+  if (!isScheduledPayload(payload)) {
+    // 存在も設定状況も知らせない
+    return { statusCode: 404, body: { error: 'Not Found' } };
   }
 
   // ══ ハードゲート（**Redis / Airtable へ触れる前**）══════════════
-  const gates = readGates(process.env, now);
+  const gates = readGates(ENV, now);
   if (!gates.allOpen) {
     // ⚠️ ここで return するため、store も Airtable も**一度も初期化されない**
-    return json(200, {
+    return { statusCode: 200, body: {
       mode: 'marketing-automation-scheduler',
       ran: false,
       reason: 'gates_closed',
@@ -144,7 +153,7 @@ export const handler = async (event) => {
       接続: { redis: false, airtable: false },
       sideEffects: 'none',
       notice: 'ゲートが閉じているため何もしていません（Redis / Airtable へ接続していません）。',
-    });
+    } };
   }
 
   // ── ここから先は 3 ゲートが全て開いているときだけ ──
@@ -198,19 +207,28 @@ export const handler = async (event) => {
         await store.releaseClaim({ automationId: item.automationId, token: claim.token }).catch(() => {});
       }
     }
-    return json(200, out);
+    return { statusCode: 200, body: out };
   } catch (e) {
     // ⚠️ Redis が信用できないときは fail-closed（次回に持ち越す）
     if (e instanceof AutomationStoreError) {
       console.error('❌ [marketing-automation] Redis 異常で中止:', e.code);
-      return json(503, { ...out, ran: false, reason: 'store_unavailable', code: e.code });
+      return { statusCode: 503, body: { ...out, ran: false, reason: 'store_unavailable', code: e.code } };
     }
     console.error('❌ [marketing-automation] 処理に失敗しました');
-    return json(500, { error: 'internal error' });
+    return { statusCode: 500, body: { error: 'internal error' } };
   }
-};
+}
 
-export default handler;
+/**
+ * Netlify Functions **v2** のエントリ。`export const config` が効くのはこの形式だけ。
+ * scheduled 実行では本文に `{ next_run }` が入る。
+ */
+export default async function handler(req) {
+  let payload = null;
+  try { payload = await req.json(); } catch { payload = null; }
+  const { statusCode, body } = await runScheduledTick({ payload, now: Date.now(), env: process.env });
+  return json(statusCode, body);
+}
 
 // Netlify Scheduled Functions 設定
 // ⚠️ cron は **UTC**。JST = UTC+9 なので `0 1 * * *` = **毎日 JST 10:00**。

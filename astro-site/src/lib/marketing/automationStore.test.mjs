@@ -478,7 +478,7 @@ const CRON = readFileSync(
 );
 
 test('guard: ゲート未設定なら Redis / Airtable へ接続しない', async () => {
-  const { readGates, handler, ARMED_ENV } = await import('../../../netlify/functions/cron-marketing-automation.js');
+  const { readGates, runScheduledTick, ARMED_ENV } = await import('../../../netlify/functions/cron-marketing-automation.js');
   const NOWMS = Date.parse('2026-08-06T05:00:00.000Z');
   const TODAY = '2026-08-06';
   assert.equal(readGates({}, NOWMS).allOpen, false);
@@ -505,10 +505,13 @@ test('guard: ゲート未設定なら Redis / Airtable へ接続しない', asyn
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
   try {
-    // ⚠️ Scheduled Function 方式。scheduled 実行の形（next_run 付き本文）で叩き、
+    // ⚠️ Scheduled Function（v2）方式。scheduled 実行の本文（{ next_run }）で叩き、
     //    ゲートが閉じていることを確かめる
-    const res = await handler({ body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) });
-    const body = JSON.parse(res.body);
+    const res = await runScheduledTick({
+      payload: { next_run: '2026-08-07T01:00:00.000Z' },
+      env: { MARKETING_CAMPAIGN_ENABLED: 'true', MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' },
+    });
+    const body = res.body;
     assert.equal(res.statusCode, 200);
     assert.equal(body.ran, false);
     assert.equal(body.reason, 'gates_closed');

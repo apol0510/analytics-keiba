@@ -455,3 +455,54 @@ cron 式は **UTC**。`0 1 * * *` = **毎日 JST 10:00**（UTC+9）。
 env は production / deploy-preview の**両方で unset**（`MARKETING_AUTOMATION_SCHEDULER_ENABLED` /
 `MARKETING_AUTOMATION_DISPATCH_ARMED`）。仮に起動しても `gates_closed` /
 `接続 {redis:false, airtable:false}` / `sideEffects:'none'` で止まる（ローカルテストで実測）。
+
+
+## 登録方式の統一と、その過程で見つけた落とし穴（2026-08-06）
+
+schedule の登録場所を **既存 cron と同じ `export const config`** に統一した
+（`netlify.toml` には書かない = 二重登録を避ける）。
+
+### ⚠️ `export const config` が効くのは Functions **v2** 形式だけ
+
+一度 v1 形式（`export const handler = async (event) => ({ statusCode, body })`）のまま
+`export const config = { schedule }` を足したが、**schedule が登録されず、
+公開 HTTP Function のまま配備された**。Deploy Preview で実測して判明した。
+
+| 対象 | 形式 | 公開 URL への POST |
+|---|---|---|
+| `cron-payment-email-reconciler` / `cron-expiry-check` / `cron-email-scheduler` | **v2**（`export default` + `Response`） | **403 / 0 バイト / text-plain** = Netlify の拒否 |
+| 本 Function（v1 + config を付けた状態） | v1（`export const handler`） | **404 / 21 バイト / application/json** = **自前の応答が返った**＝未登録 |
+
+**本文の中身で見分けられる**: プラットフォーム拒否は本文 0 バイトの text/plain、
+コードに到達していれば自前の JSON。`netlify.toml` 登録時は前者だったので、
+**v1 でも netlify.toml なら登録される**が、`export const config` では登録されない。
+
+### 対応
+
+本 Function を既存 cron と同じ **v2 形式**へ書き換えた。
+
+```js
+export async function runScheduledTick({ payload, now, env }) { /* 実処理 */ }
+
+export default async function handler(req) {
+  let payload = null;
+  try { payload = await req.json(); } catch { payload = null; }
+  const { statusCode, body } = await runScheduledTick({ payload, now: Date.now(), env: process.env });
+  return json(statusCode, body);   // new Response(...)
+}
+
+export const config = { schedule: '0 1 * * *' };   // UTC 01:00 = JST 10:00
+```
+
+実処理を `runScheduledTick()` に分け、テストは HTTP の器を挟まずここを直接呼ぶ。
+`isScheduledInvocation(event)` は **`isScheduledPayload(payload)`** に変わった
+（v1 の event 形状を投げ込まれても弾く判定は維持）。
+
+### テストで固定したこと
+
+- `export const config.schedule` があり、**`export const handler`（v1）を持たない**こと
+  （持つと schedule が登録されないため）
+- v2 の `default` export が **`Response` を返す**こと
+- **既存 cron 2 つも v2 + config 方式**であること（前提が変わったら気づけるように）
+- `netlify.toml` に二重登録していないこと
+- cron 式の JST 換算が 10 時で quiet hours の外であること

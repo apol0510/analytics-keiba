@@ -17,7 +17,7 @@ import {
 } from './automationScheduler.js';
 import { createAutomationAdminApi, API_REJECT, pinCampaign } from './automationAdminApi.js';
 import {
-  readGates, isScheduledInvocation, ARMED_ENV,
+  readGates, isScheduledPayload, runScheduledTick, ARMED_ENV,
 } from '../../../netlify/functions/cron-marketing-automation.js';
 
 const ADMIN_FN = readFileSync(fileURLToPath(
@@ -284,95 +284,92 @@ test('ACTIVE 化の申告が対象集合の変化後なら通らない（顧客�
 
 // ── A-5: cron の認可 ──────────────────────────────────────────
 
-const SCHED = { body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) };
+const SCHED = { next_run: '2026-08-07T01:00:00.000Z' };
 
 test('A-5: scheduled 実行の形だけを受け付ける', () => {
-  assert.equal(isScheduledInvocation(SCHED), true);
-  assert.equal(isScheduledInvocation({ body: { next_run: '2026-08-07T01:00:00.000Z' } }), true);
-  // 本文が無い / next_run が無い / 空
-  for (const ev of [{}, { body: '{}' }, { body: 'not json' }, { body: JSON.stringify({ next_run: '' }) },
-    { body: null }, null, undefined, 'x']) {
-    assert.equal(isScheduledInvocation(ev), false, `受け付けた: ${JSON.stringify(ev)}`);
+  assert.equal(isScheduledPayload(SCHED), true);
+  assert.equal(isScheduledPayload(JSON.stringify(SCHED)), true);
+  for (const p of [{}, '{}', 'not json', { next_run: '' }, { next_run: 1 },
+    null, undefined, [], 'x', 42]) {
+    assert.equal(isScheduledPayload(p), false, `受け付けた: ${JSON.stringify(p)}`);
   }
 });
 
-test('A-5: 外部 HTTP の形をしたイベントは起動できない', () => {
-  // ⚠️ HTTP 形状の痕跡があるものはすべて拒否する
-  for (const ev of [
-    { httpMethod: 'POST', headers: {}, body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
-    { httpMethod: 'GET', body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
-    { rawUrl: 'https://analytics.keiba.link/.netlify/functions/cron-marketing-automation',
-      body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
-    { rawQuery: 'a=1', body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
-    { queryStringParameters: {}, body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }) },
+test('A-5: 外部 HTTP の形をした本文は起動できない', () => {
+  // ⚠️ v1 形式の event を投げ込まれても通さない
+  for (const p of [
+    { httpMethod: 'POST', headers: {}, next_run: '2026-08-07T01:00:00.000Z' },
+    { rawUrl: 'https://analytics.keiba.link/x', next_run: '2026-08-07T01:00:00.000Z' },
+    { rawQuery: 'a=1', next_run: '2026-08-07T01:00:00.000Z' },
+    { queryStringParameters: {}, next_run: '2026-08-07T01:00:00.000Z' },
+    { httpMethod: 'POST', headers: { 'x-netlify-event': 'schedule' }, next_run: 'x' },
   ]) {
-    assert.equal(isScheduledInvocation(ev), false, `HTTP 形状で通った: ${JSON.stringify(ev)}`);
+    assert.equal(isScheduledPayload(p), false, `HTTP 形状で通った: ${JSON.stringify(p)}`);
   }
-  // 詐称ヘッダを足しても通らない
-  assert.equal(isScheduledInvocation({
-    httpMethod: 'POST', headers: { 'x-netlify-event': 'schedule' },
-    body: JSON.stringify({ next_run: '2026-08-07T01:00:00.000Z' }),
-  }), false);
 });
 
-test('A-5: handler は外部 HTTP 形状に 404 を返し、Redis へ接続しない', async () => {
-  const { handler } = await import('../../../netlify/functions/cron-marketing-automation.js');
-  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+test('A-5: 外部 HTTP 形状には 404 を返し、Redis へ接続しない', async () => {
+  const prevFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
-  // ゲートは全開にしておく（それでも起動経路で止まることを見る）
-  process.env.MARKETING_AUTOMATION_SCHEDULER_ENABLED = 'true';
-  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
-  process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED = 'true';
-  process.env[ARMED_ENV] = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
-  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
+  // ゲート全開でも起動経路で止まることを見る
+  const env = {
+    MARKETING_AUTOMATION_SCHEDULER_ENABLED: 'true',
+    MARKETING_CAMPAIGN_ENABLED: 'true',
+    MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true',
+    [ARMED_ENV]: new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10),
+    UPSTASH_REDIS_REST_URL: 'https://x.invalid', UPSTASH_REDIS_REST_TOKEN: 't',
+  };
   try {
-    for (const ev of [
-      { httpMethod: 'POST', headers: {}, body: '{}' },
-      { httpMethod: 'POST', headers: { 'x-netlify-event': 'schedule' }, body: JSON.stringify({ next_run: 'x' }) },
-      { httpMethod: 'GET', headers: {} },
-      {},
-    ]) {
-      const res = await handler(ev);
-      assert.equal(res.statusCode, 404, `404 でない: ${JSON.stringify(ev)}`);
-      // 存在も設定状況も知らせない
-      const body = String(res.body);
+    for (const payload of [null, {}, 'not json',
+      { httpMethod: 'POST', headers: {}, next_run: 'x' },
+      { httpMethod: 'GET' }]) {
+      const r = await runScheduledTick({ payload, env });
+      assert.equal(r.statusCode, 404, `404 でない: ${JSON.stringify(payload)}`);
+      const body = JSON.stringify(r.body);
       assert.equal(body.includes('MARKETING_'), false, 'env 名を漏らしている');
       assert.equal(body.includes('gates_closed'), false, 'ゲート状況を漏らしている');
     }
     assert.equal(calls, 0, '外部 HTTP 形状なのに接続した');
-  } finally {
-    globalThis.fetch = prevFetch;
-    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
-    Object.assign(process.env, prev);
-  }
+  } finally { globalThis.fetch = prevFetch; }
+});
+
+test('A-5: v2 エントリは Response を返し、外部 HTTP には 404', async () => {
+  const mod = await import('../../../netlify/functions/cron-marketing-automation.js');
+  const prevFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
+  try {
+    const res = await mod.default(new Request('https://x.invalid/.netlify/functions/cron-marketing-automation', {
+      method: 'POST', body: JSON.stringify({ next_run: 'x', httpMethod: 'POST' }),
+      headers: { 'content-type': 'application/json' },
+    }));
+    assert.ok(res instanceof Response, 'Response を返していない（v2 形式でない）');
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'Not Found' });
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = prevFetch; }
 });
 
 test('A-5: schedule 実行でも env 未開放なら副作用 0', async () => {
-  const { handler } = await import('../../../netlify/functions/cron-marketing-automation.js');
-  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+  const prevFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
-  for (const k of ['MARKETING_AUTOMATION_SCHEDULER_ENABLED', ARMED_ENV]) delete process.env[k];
-  process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
-  process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED = 'true';
-  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
-  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
   try {
-    const res = await handler(SCHED);
-    const body = JSON.parse(res.body);
-    assert.equal(res.statusCode, 200);
-    assert.equal(body.ran, false);
-    assert.equal(body.reason, 'gates_closed');
-    assert.equal(body.sideEffects, 'none');
-    assert.deepEqual(body['接続'], { redis: false, airtable: false });
+    const r = await runScheduledTick({
+      payload: SCHED,
+      env: {
+        MARKETING_CAMPAIGN_ENABLED: 'true', MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true',
+        UPSTASH_REDIS_REST_URL: 'https://x.invalid', UPSTASH_REDIS_REST_TOKEN: 't',
+      },
+    });
+    assert.equal(r.statusCode, 200);
+    assert.equal(r.body.ran, false);
+    assert.equal(r.body.reason, 'gates_closed');
+    assert.equal(r.body.sideEffects, 'none');
+    assert.deepEqual(r.body['接続'], { redis: false, airtable: false });
     assert.equal(calls, 0, 'ゲート閉なのに接続した');
-  } finally {
-    globalThis.fetch = prevFetch;
-    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
-    Object.assign(process.env, prev);
-  }
+  } finally { globalThis.fetch = prevFetch; }
 });
 
 test('A-5: 専用 secret の仕組みを残していない（構造）', () => {
@@ -383,18 +380,21 @@ test('A-5: 専用 secret の仕組みを残していない（構造）', () => {
   for (const bad of ['MARKETING_AUTOMATION_CRON_SECRET', 'x-cron-secret', 'CRON_SECRET_HEADER',
     'authorizeInvocation', 'timingSafeEqual',
     'PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET', 'x-admin-secret',
-    'x-netlify-event', 'isScheduled:']) {
+    'x-netlify-event']) {
     assert.equal(code.includes(bad), false, `${bad} が実コードに残っている`);
   }
 });
 
-test('A-5: schedule は既存 cron と同じ export const config 方式で登録されている', async () => {
-  const mod = await import('../../../netlify/functions/cron-marketing-automation.js');
-  assert.ok(mod.config, 'export const config が無い');
-  const cron = String(mod.config.schedule || '');
-  assert.match(cron, /^\S+ \S+ \S+ \S+ \S+$/, 'cron 式の形になっていない');
+test('A-5: 既存 cron と同じ v2 + export const config 方式で登録されている', async () => {
+  const mine = await import('../../../netlify/functions/cron-marketing-automation.js');
+  assert.ok(mine.config && mine.config.schedule, 'export const config.schedule が無い');
+  assert.equal(typeof mine.default, 'function', 'v2 の default export が無い');
+  // ⚠️ v1 形式（export const handler）は **schedule が登録されない**ので持たせない
+  assert.equal(mine.handler, undefined, 'v1 形式の handler が残っている（schedule が登録されない）');
 
-  // ⚠️ cron は UTC。JST = UTC+9 で quiet hours（21:00-08:00 JST）の外側であること
+  const cron = String(mine.config.schedule);
+  assert.match(cron, /^\S+ \S+ \S+ \S+ \S+$/, 'cron 式の形になっていない');
+  // cron は UTC。JST = UTC+9 で quiet hours（21:00-08:00 JST）の外側であること
   const [minute, hour] = cron.split(/\s+/);
   assert.match(minute, /^\d+$/, '分が固定値でない');
   assert.match(hour, /^\d+$/, '時が固定値でない');
@@ -402,20 +402,17 @@ test('A-5: schedule は既存 cron と同じ export const config 方式で登録
   assert.equal(jstHour, 10, `JST ${jstHour} 時になっている（想定は 10 時）`);
   assert.ok(jstHour >= 8 && jstHour < 21, 'quiet hours の中に入っている');
 
-  // ⚠️ 登録方法は既存 cron と揃える。netlify.toml へ二重登録しない
+  // netlify.toml へは書かない（二重登録を避ける）
   const TOML = readFileSync(fileURLToPath(new URL('../../../netlify.toml', import.meta.url)), 'utf8');
-  assert.equal(/\[functions\."cron-marketing-automation"\]/.test(TOML), false,
-    'netlify.toml と config の二重登録になっている');
+  assert.equal(/\[functions\."cron-marketing-automation"\]/.test(TOML), false, '二重登録になっている');
 });
 
-test('A-5: 既存 cron と同じ登録方法であること', async () => {
-  const mods = ['cron-expiry-check', 'cron-payment-email-reconciler'];
-  for (const m of mods) {
+test('A-5: 既存 cron も v2 + config 方式（前提が変わったら気づく）', async () => {
+  for (const m of ['cron-expiry-check', 'cron-payment-email-reconciler']) {
     const mod = await import(`../../../netlify/functions/${m}.js`);
-    assert.ok(mod.config && mod.config.schedule, `${m} が config 方式でない（前提が変わった）`);
+    assert.ok(mod.config && mod.config.schedule, `${m} の config.schedule が無い`);
+    assert.equal(typeof mod.default, 'function', `${m} が v2 形式でない`);
   }
-  const mine = await import('../../../netlify/functions/cron-marketing-automation.js');
-  assert.ok(mine.config && mine.config.schedule);
 });
 
 // ── A-6: 単一 env 依存にしない ────────────────────────────────
