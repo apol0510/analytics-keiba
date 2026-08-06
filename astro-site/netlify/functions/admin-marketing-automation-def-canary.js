@@ -118,10 +118,24 @@ async function handleRun({ req, now }) {
   const out = { mode: 'def-canary-run', canaryId, automationId: store.automationId };
 
   try {
-    // 0) 既に存在しないこと（exactly once）
+    // 0) ⚠️ **run exactly 1 の構造保証**。墓標を SET NX で 1 回だけ取る。
+    //    Definition を cleanup で消した後でも、墓標が残っている限り再 run できない。
+    let claimed;
+    try { claimed = await store.claimRun(nowIso); }
+    catch (e) { return json(503, { ...out, ...guardBody(e) }); }
+    if (claimed !== true) {
+      return json(409, {
+        ...out, error: 'この canaryId は既に run 済みです（墓標あり）。', code: DEF_FAIL.ALREADY_RUN,
+        howToInspect: 'status で保存済み結果を復元してください。再 run はしないこと。',
+      });
+    }
+
+    // 0b) 念のため Definition が無いことも確認（墓標と二重）
     if (await store.exists()) {
       return json(409, { ...out, error: 'この canaryId の Definition が既に存在します。', code: 'already_exists' });
     }
+    // ⚠️ index:active が空である前提は置かない。既存 member が何件でも、
+    //    実行前後で canary 以外が**完全一致**することだけを要求する。
     const indexBefore = await store.indexMembers();
 
     // 1) 作成（expectedVersion='' = まだ無いはず）
@@ -178,10 +192,14 @@ async function handleRun({ req, now }) {
     const cmp = compareIndexExcludingCanary({
       before: indexBefore, after: idxAfterRemove, canaryMember: store.automationId,
     });
-    add('9. index の他 member を変えていない', cmp.same, `${cmp.beforeCount} -> ${cmp.afterCount}`);
+    add('9. index の他 member を変えていない', cmp.same,
+      `${cmp.beforeCount} -> ${cmp.afterCount} (+${cmp.addedCount}/-${cmp.removedCount})`);
 
     out.checks = checks;
-    out.indexOtherMembers = { before: cmp.beforeCount, after: cmp.afterCount, same: cmp.same };
+    out.indexOtherMembers = {
+      before: cmp.beforeCount, after: cmp.afterCount, same: cmp.same,
+      added: cmp.addedCount, removed: cmp.removedCount,
+    };
     out.ok = checks.every((c) => c.ok);
     // 3 経路をそのまま突き合わせられるよう、保存結果・ログと同じキー名も持たせる
     out.overallOk = out.ok;
@@ -230,10 +248,12 @@ async function handleStatus({ req }) {
     const def = await store.load();
     const members = await store.indexMembers();
     const restored = await store.loadResult();
+    const mark = await store.runMarkExists();
     return json(200, {
       mode: 'def-canary-status', sideEffects: 'none', canaryId,
       automationId: store.automationId,
       Definition残存: def !== null,
+      墓標残存: mark,
       status: def ? def.status : null,
       configVersion: def ? def.configVersion : null,
       'index:active に含まれる': members.includes(store.automationId),
@@ -247,7 +267,15 @@ async function handleStatus({ req }) {
   } catch (e) { return json(e instanceof DefCanaryError ? 409 : 503, guardBody(e)); }
 }
 
-/** cleanup: canary Definition を削除し index からも除去する */
+/**
+ * cleanup: canary Definition・結果・index の canary member **だけ**を削除する。
+ * **墓標は残す**（消すのは env を閉じた後の finalize）。
+ *
+ * ⚠️ **3 経路の一致を確認する前に実行できない。**
+ *   呼び出し側が HTTP 応答とログで観測した `httpOverallOk` / `logOverallOk` / `checkCount` を
+ *   渡し、**保存済み結果と突き合わせて一致した場合にのみ**削除する。
+ *   結果が復元できない場合は cleanup せず、env 閉鎖 → finalize で回収する。
+ */
 async function handleCleanup({ req }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
@@ -255,28 +283,70 @@ async function handleCleanup({ req }) {
   try { store = createDefCanaryStore({ cmd: redisCmd, canaryId }); }
   catch (e) { return json(400, guardBody(e)); }
   try {
+    // ── 3 経路一致ゲート（削除より前・read only）──
+    const restored = await store.loadResult();
+    if (!restored.ok) {
+      return json(409, {
+        mode: 'def-canary-cleanup', canaryId, code: restored.reason,
+        error: '保存済み結果を復元できないため cleanup しません。',
+        howToProceed: 'env を閉じ、反映 deploy 後に finalize で回収してください。',
+      });
+    }
+    const stored = restored.result;
+    const claimed = {
+      httpOverallOk: req.httpOverallOk, logOverallOk: req.logOverallOk, checkCount: req.checkCount,
+    };
+    const agree = typeof claimed.httpOverallOk === 'boolean'
+      && typeof claimed.logOverallOk === 'boolean'
+      && Number.isInteger(claimed.checkCount)
+      && claimed.httpOverallOk === stored.overallOk
+      && claimed.logOverallOk === stored.overallOk
+      && claimed.checkCount === stored.checks.length;
+    if (!agree) {
+      return json(409, {
+        mode: 'def-canary-cleanup', canaryId, code: 'paths_not_verified',
+        error: '3 経路の一致を確認できていないため cleanup しません。',
+        required: 'httpOverallOk(boolean) / logOverallOk(boolean) / checkCount(integer) を、'
+          + 'HTTP 応答と Function ログで観測した値どおりに渡してください。',
+        storedOverallOk: stored.overallOk, storedCheckCount: stored.checks.length,
+      });
+    }
+
+    // ── ここから削除（**墓標は消さない**）──
     const before = await store.indexMembers();
     await store.indexRemove();
     await store.del();
     await store.delResult();
     const stillDef = await store.exists();
     const stillResult = await store.resultExists();
+    const markKept = await store.runMarkExists();
     const after = await store.indexMembers();
     const cmp = compareIndexExcludingCanary({ before, after, canaryMember: store.automationId });
     return json(200, {
       mode: 'def-canary-cleanup', canaryId, automationId: store.automationId,
+      pathsVerified: true,
       Definition残存: stillDef,
       結果残存: stillResult,
+      墓標残存: markKept,
       'index:active に含まれる': after.includes(store.automationId),
-      index他member: { before: cmp.beforeCount, after: cmp.afterCount, same: cmp.same },
-      残存0: stillDef === false && stillResult === false
+      index他member: {
+        before: cmp.beforeCount, after: cmp.afterCount, same: cmp.same,
+        added: cmp.addedCount, removed: cmp.removedCount,
+      },
+      // ⚠️ 墓標は**残っているのが正**。finalize まで再 run を塞ぐ
+      canary残存0: stillDef === false && stillResult === false
         && !after.includes(store.automationId) && cmp.same,
+      墓標維持: markKept === true,
       stats: store.stats(),
     });
   } catch (e) { return json(e instanceof DefCanaryError ? 409 : 503, guardBody(e)); }
 }
 
-/** finalize: 最終確認（削除済みであることの確認のみ。追加の破壊操作はしない） */
+/**
+ * finalize: **墓標を含めて**すべて削除し、最終残存 0 を確認する。
+ * env を無効化し、その反映 deploy を終えた後にしか通らない（ゲートは handler 側）。
+ * → 墓標を消す時点で `run` は必ず 403 なので、「墓標が無いのに run できる時間帯」が生じない。
+ */
 async function handleFinalize({ req }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
@@ -287,19 +357,28 @@ async function handleFinalize({ req }) {
   try { store = createDefCanaryStore({ cmd: redisCmd, canaryId }); }
   catch (e) { return json(400, guardBody(e)); }
   try {
-    // 残っていれば消す（冪等）
+    // 残っていれば消す（冪等）。**墓標もここで初めて消す**
+    const before = await store.indexMembers();
     await store.indexRemove();
     await store.del();
     await store.delResult();
+    await store.delRunMark();
     const stillDef = await store.exists();
     const stillResult = await store.resultExists();
-    const members = await store.indexMembers();
-    const inIndex = members.includes(store.automationId);
+    const stillMark = await store.runMarkExists();
+    const after = await store.indexMembers();
+    const inIndex = after.includes(store.automationId);
+    const cmp = compareIndexExcludingCanary({ before, after, canaryMember: store.automationId });
     return json(200, {
       mode: 'def-canary-finalize', canaryId, automationId: store.automationId,
-      finalized: stillDef === false && stillResult === false && inIndex === false,
-      Definition残存: stillDef, 結果残存: stillResult, 'index:active に含まれる': inIndex,
-      index他member数: members.filter((m) => m !== store.automationId).length,
+      finalized: stillDef === false && stillResult === false
+        && stillMark === false && inIndex === false && cmp.same,
+      Definition残存: stillDef, 結果残存: stillResult, 墓標残存: stillMark,
+      'index:active に含まれる': inIndex,
+      index他member: {
+        before: cmp.beforeCount, after: cmp.afterCount, same: cmp.same,
+        added: cmp.addedCount, removed: cmp.removedCount,
+      },
       stats: store.stats(),
     });
   } catch (e) { return json(e instanceof DefCanaryError ? 409 : 503, guardBody(e)); }

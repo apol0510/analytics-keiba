@@ -33,6 +33,13 @@ export const canaryAutomationId = (canaryId) => `canary-${canaryId}`;
 export const resultKey = (canaryId) => `${AUTO_ROOT}def-canary:${canaryId}:result`;
 export const RESULT_SCHEMA_VERSION = 1;
 export const RESULT_TTL_SEC = 86400;
+/**
+ * run の墓標。**`SET NX` で 1 回しか取れない**ことで run exactly 1 を構造保証する。
+ * `cleanup` では消さず、env を閉じた後の `finalize` でだけ消す。
+ * → 「墓標が無いのに run できる時間帯」を作らない。
+ */
+export const runMarkKey = (canaryId) => `${AUTO_ROOT}def-canary:${canaryId}:run`;
+export const RUN_MARK_TTL_SEC = 86400;
 
 export const DEF_FIELDS = Object.freeze([
   'automationId', 'presetId', 'name', 'status', 'campaignId', 'campaignVersion',
@@ -93,6 +100,8 @@ export const DEF_FAIL = Object.freeze({
   RESULT_UNAVAILABLE: 'result_unavailable',
   RESULT_INVALID: 'result_invalid',
   RESULT_SCHEMA_MISMATCH: 'result_schema_mismatch',
+  INDEX_UNAVAILABLE: 'index_unavailable',
+  ALREADY_RUN: 'already_run',
 });
 
 /**
@@ -170,12 +179,13 @@ export function createDefCanaryStore({ cmd, canaryId } = {}) {
   const autoId = canaryAutomationId(canaryId);
   const myDefKey = defKey(autoId);
   const myResultKey = resultKey(canaryId);
+  const myRunMarkKey = runMarkKey(canaryId);
   const state = { commands: 0, keysTouched: new Set(), latencies: [] };
 
-  /** canary の def キー / index キー / canary 結果キー以外は拒否 */
+  /** canary の def キー / index キー / canary 結果キー / canary 墓標キー以外は拒否 */
   const assertKey = (key) => {
     const k = String(key ?? '');
-    if (k === myDefKey || k === ACTIVE_INDEX_KEY || k === myResultKey) return k;
+    if (k === myDefKey || k === ACTIVE_INDEX_KEY || k === myResultKey || k === myRunMarkKey) return k;
     throw new DefCanaryError(DEF_FAIL.OUT_OF_NAMESPACE, k.slice(0, 48));
   };
   /** index の member は canary の 1 つだけ */
@@ -209,7 +219,21 @@ export function createDefCanaryStore({ cmd, canaryId } = {}) {
 
   return {
     automationId: autoId, defKey: myDefKey, indexKey: ACTIVE_INDEX_KEY,
-    resultKey: myResultKey, state, assertKey,
+    resultKey: myResultKey, runMarkKey: myRunMarkKey, state, assertKey,
+
+    /**
+     * run の権利を **1 回だけ** 取る（`SET NX`）。
+     * 取れなければ `false` = 既に run 済み。**Definition を消しても再 run できない。**
+     */
+    async claimRun(stamp) {
+      const res = await call(['SET', myRunMarkKey, String(stamp ?? '1'), 'NX', 'EX', String(RUN_MARK_TTL_SEC)]);
+      if (res === 'OK' || (res && res.result === 'OK')) return true;
+      if (res === null) return false;      // NX 失敗 = 既に存在する
+      throw new DefCanaryError(DEF_FAIL.UNKNOWN_RESULT, 'claim_run');
+    },
+    async runMarkExists() { return Number(await call(['EXISTS', myRunMarkKey])) === 1; },
+    /** 墓標の削除は **env を閉じた後の finalize でのみ**呼ぶ */
+    async delRunMark() { await call(['DEL', myRunMarkKey]); },
 
     async load() {
       const raw = await call(['GET', myDefKey], DEF_FAIL.DATA_CORRUPT);
@@ -247,9 +271,18 @@ export function createDefCanaryStore({ cmd, canaryId } = {}) {
     async delResult() { await call(['DEL', myResultKey]); },
     async resultExists() { return Number(await call(['EXISTS', myResultKey])) === 1; },
 
+    /**
+     * `index:active` の member 一覧。
+     * ⚠️ **配列でない / 文字列以外が混ざる応答は fail-closed**。
+     * 空配列（member 0 件）は正常。空を `[]` へ丸めて握りつぶさない。
+     */
     async indexMembers() {
-      const raw = await call(['SMEMBERS', ACTIVE_INDEX_KEY]);
-      return Array.isArray(raw) ? raw : [];
+      const raw = await call(['SMEMBERS', ACTIVE_INDEX_KEY], DEF_FAIL.INDEX_UNAVAILABLE);
+      if (!Array.isArray(raw)) throw new DefCanaryError(DEF_FAIL.INDEX_UNAVAILABLE, 'not_array');
+      if (raw.some((m) => typeof m !== 'string')) {
+        throw new DefCanaryError(DEF_FAIL.INDEX_UNAVAILABLE, 'non_string_member');
+      }
+      return raw;
     },
     async indexAdd() { await call(['SADD', ACTIVE_INDEX_KEY, autoId]); },
     async indexRemove() { await call(['SREM', ACTIVE_INDEX_KEY, autoId]); },
@@ -265,13 +298,27 @@ export function createDefCanaryStore({ cmd, canaryId } = {}) {
 }
 
 /**
- * `index:active` の他 member が変わっていないか。
- * canary の member を除いた集合が**実行前と一致**していなければ異常。
+ * `index:active` の canary 以外の member が**実行前後で完全一致**しているか。
+ *
+ * ⚠️ **既存 member が 0 件でも複数件でも同じ厳密さで比較する**（空だから安全、とはしない）。
+ *   件数一致ではなく**集合そのものの一致**を見る。1 つでも増減・入替があれば `same=false`。
+ * ⚠️ before / after が配列でなければ `same=false`（fail-closed）。
  */
 export function compareIndexExcludingCanary({ before, after, canaryMember }) {
-  const strip = (a) => [...new Set((a || []).filter((m) => m !== canaryMember))].sort();
+  if (!Array.isArray(before) || !Array.isArray(after)) {
+    return { same: false, reason: DEF_FAIL.INDEX_UNAVAILABLE, beforeCount: null, afterCount: null,
+      addedCount: null, removedCount: null };
+  }
+  const strip = (a) => new Set(a.filter((m) => m !== canaryMember).map(String));
   const b = strip(before); const c = strip(after);
-  return { same: b.join('|') === c.join('|'), beforeCount: b.length, afterCount: c.length };
+  const removed = [...b].filter((m) => !c.has(m));
+  const added = [...c].filter((m) => !b.has(m));
+  const same = removed.length === 0 && added.length === 0;
+  return {
+    same, reason: same ? null : DEF_FAIL.INDEX_CHANGED,
+    beforeCount: b.size, afterCount: c.size,
+    removedCount: removed.length, addedCount: added.length,
+  };
 }
 
 export default createDefCanaryStore;

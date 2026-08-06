@@ -14,6 +14,7 @@ import {
   defKey, ACTIVE_INDEX_KEY, AUTO_ROOT, DEF_FIELDS, assertNoPii,
   CAS_LUA, EXPECTED_CAS_SHA256, luaSha256, DefCanaryError, DEF_FAIL,
   resultKey, RESULT_SCHEMA_VERSION, assertResultSafe, validateResult, compareResultPaths,
+  runMarkKey,
 } from './automationDefCanaryStore.js';
 
 const FN = readFileSync(fileURLToPath(
@@ -27,12 +28,17 @@ const AUTO_ID = canaryAutomationId(ID);
 function fakeRedis(seed = {}) {
   const store = new Map(Object.entries(seed));
   const state = { fail: null, unknown: false };
+  const calls = [];
   const cmd = async (args) => {
+    calls.push(args);
     if (state.fail) throw new Error(state.fail);
     if (state.unknown) return undefined;
     const [op, key] = args;
     if (op === 'GET') return store.has(key) ? store.get(key) : null;
-    if (op === 'SET') { store.set(key, args[2]); return 'OK'; }
+    if (op === 'SET') {
+      if (args.includes('NX') && store.has(key)) return null;   // NX 失敗
+      store.set(key, args[2]); return 'OK';
+    }
     if (op === 'DEL') { store.delete(key); return 1; }
     if (op === 'EXISTS') return store.has(key) ? 1 : 0;
     if (op === 'SADD') { const s = store.get(key) || new Set(); s.add(args[2]); store.set(key, s); return 1; }
@@ -49,7 +55,7 @@ function fakeRedis(seed = {}) {
     }
     throw new Error('unsupported ' + op);
   };
-  return { cmd, state, store };
+  return { cmd, state, store, calls };
 }
 
 const def = (over = {}) => ({
@@ -94,8 +100,8 @@ test('canary の def キーと index 以外は触れない', async () => {
     'ak:marketing-automation:run:x', 'ak:marketing-automation:recipient:r:h',
     'ak:marketing-automation:lock:x', 'ak:marketing-automation:fence',
     'ak:marketing-automation:canary:x', 'payemail:dispatch', 'customer-import:lock:global', 'kma:t',
-    // 別 canaryId の結果キーも触らない
-    resultKey('20260806040000-ffffffff'),
+    // 別 canaryId の結果キー・墓標も触らない
+    resultKey('20260806040000-ffffffff'), runMarkKey('20260806040000-ffffffff'),
   ]) {
     assert.throws(() => s.assertKey(k),
       (e) => e instanceof DefCanaryError && e.code === DEF_FAIL.OUT_OF_NAMESPACE, `${k} を許可`);
@@ -103,7 +109,44 @@ test('canary の def キーと index 以外は触れない', async () => {
   assert.equal(s.assertKey(defKey(AUTO_ID)), defKey(AUTO_ID));
   assert.equal(s.assertKey(ACTIVE_INDEX_KEY), ACTIVE_INDEX_KEY);
   assert.equal(s.assertKey(resultKey(ID)), resultKey(ID));
+  assert.equal(s.assertKey(runMarkKey(ID)), runMarkKey(ID));
   assert.equal(r.store.size, 0);
+});
+
+// ── run 墓標（run exactly 1 の構造保証）────────────────────────
+
+test('墓標キーは def: の外の canary 専用 prefix', () => {
+  assert.equal(runMarkKey(ID), `ak:marketing-automation:def-canary:${ID}:run`);
+  assert.equal(runMarkKey(ID).startsWith(`${AUTO_ROOT}def:`), false);
+  assert.notEqual(runMarkKey(ID), resultKey(ID));
+});
+
+test('claimRun は SET NX で 1 回しか取れない', async () => {
+  const r = fakeRedis();
+  const s = createDefCanaryStore({ cmd: r.cmd, canaryId: ID });
+  assert.equal(await s.claimRun('2026-08-06T03:00:00.000Z'), true);
+  assert.equal(await s.claimRun('2026-08-06T03:00:01.000Z'), false, '2 回目が取れた');
+  assert.equal(await s.runMarkExists(), true);
+  // TTL 付きで書いていること
+  const setCall = r.calls.find((c) => c[0] === 'SET' && c[1] === runMarkKey(ID));
+  assert.ok(setCall.includes('NX') && setCall.includes('EX'), 'NX / EX が無い');
+});
+
+test('墓標は cleanup では消えず、finalize でだけ消える', async () => {
+  const r = fakeRedis();
+  const s = createDefCanaryStore({ cmd: r.cmd, canaryId: ID });
+  await s.claimRun('x');
+  await s.del(); await s.delResult();               // cleanup 相当（墓標に触れない）
+  assert.equal(await s.runMarkExists(), true, 'cleanup 相当で墓標が消えた');
+  assert.equal(await s.claimRun('y'), false, '墓標があるのに再 run できた');
+  await s.delRunMark();                             // finalize 相当
+  assert.equal(await s.runMarkExists(), false);
+});
+
+test('claimRun の応答が不明なら fail-closed', async () => {
+  const s = createDefCanaryStore({ cmd: async () => 'WAT', canaryId: ID });
+  await assert.rejects(() => s.claimRun('x'),
+    (e) => e instanceof DefCanaryError && e.code === DEF_FAIL.UNKNOWN_RESULT);
 });
 
 // ── 結果の保存・復元（取り逃し対策）────────────────────────────
@@ -227,22 +270,54 @@ test('index 追加・除去と最終削除で残存 0', async () => {
   assert.equal(await s.load(), null);
 });
 
-test('index の他 member を変えていないことを突合できる', () => {
-  const before = ['expiry-d7', 'comeback-d7'];
-  const after = ['expiry-d7', 'comeback-d7'];
-  assert.equal(compareIndexExcludingCanary({ before, after, canaryMember: AUTO_ID }).same, true);
-  // canary を足しても他 member は不変
-  assert.equal(compareIndexExcludingCanary({
-    before, after: [...after, AUTO_ID], canaryMember: AUTO_ID,
-  }).same, true);
-  // 他 member が消えたら検知
-  assert.equal(compareIndexExcludingCanary({
-    before, after: ['expiry-d7'], canaryMember: AUTO_ID,
-  }).same, false);
-  // 他 member が増えても検知
-  assert.equal(compareIndexExcludingCanary({
-    before, after: [...after, 'unexpected'], canaryMember: AUTO_ID,
-  }).same, false);
+test('index の他 member を 0 件でも複数件でも完全一致で突合する', () => {
+  const cmp = (before, after) => compareIndexExcludingCanary({ before, after, canaryMember: AUTO_ID });
+
+  // 0 件 → 0 件（空でも「安全だから素通し」にしない）
+  assert.equal(cmp([], []).same, true);
+  assert.equal(cmp([], [AUTO_ID]).same, true, 'canary だけ増えたのは正常');
+  assert.equal(cmp([], ['unexpected']).same, false, '空から増えたのを見逃した');
+  assert.equal(cmp(['x'], []).same, false, '空になったのを見逃した');
+
+  // 複数件 → 完全一致のみ true
+  const many = ['expiry-d7', 'comeback-d7', 'free-to-light'];
+  assert.equal(cmp(many, [...many].reverse()).same, true, '順序差で false になった');
+  assert.equal(cmp(many, [...many, AUTO_ID]).same, true);
+  assert.equal(cmp(many, ['expiry-d7', 'comeback-d7']).same, false);      // 減少
+  assert.equal(cmp(many, [...many, 'unexpected']).same, false);           // 増加
+  assert.equal(cmp(many, ['expiry-d7', 'comeback-d7', 'swapped']).same, false); // 入替
+
+  // 増減の内訳を返す
+  const swapped = cmp(many, ['expiry-d7', 'comeback-d7', 'swapped']);
+  assert.equal(swapped.removedCount, 1);
+  assert.equal(swapped.addedCount, 1);
+  assert.equal(swapped.reason, DEF_FAIL.INDEX_CHANGED);
+
+  // 配列でない入力は fail-closed
+  assert.equal(cmp(null, many).same, false);
+  assert.equal(cmp(many, undefined).same, false);
+  assert.equal(cmp(many, 'expiry-d7').reason, DEF_FAIL.INDEX_UNAVAILABLE);
+});
+
+test('index の取得失敗・不正応答は fail-closed', async () => {
+  for (const bad of [null, undefined, 'expiry-d7', 42, { members: [] }, ['ok', 7]]) {
+    const s = createDefCanaryStore({
+      cmd: async (args) => (args[0] === 'SMEMBERS' ? bad : 'OK'), canaryId: ID,
+    });
+    await assert.rejects(() => s.indexMembers(),
+      (e) => e instanceof DefCanaryError
+        && [DEF_FAIL.INDEX_UNAVAILABLE, DEF_FAIL.UNKNOWN_RESULT].includes(e.code),
+      `${JSON.stringify(bad)} を受理した`);
+  }
+  // 通信断も fail-closed
+  const down = createDefCanaryStore({
+    cmd: async () => { throw new Error('ETIMEDOUT'); }, canaryId: ID,
+  });
+  await assert.rejects(() => down.indexMembers(),
+    (e) => e instanceof DefCanaryError && e.code === DEF_FAIL.INDEX_UNAVAILABLE);
+  // 空配列は正常（member 0 件）
+  const empty = createDefCanaryStore({ cmd: async () => [], canaryId: ID });
+  assert.deepEqual(await empty.indexMembers(), []);
 });
 
 test('既存の他 Definition・index member に影響しない', async () => {
@@ -370,20 +445,148 @@ test('handler: run が全 check を通し、Definition を残したままにす�
     assert.equal(sb['index:active に含まれる'], false);
     assert.equal(sb.index他member数, 1);
     assert.equal(sb['結果復元'], true, sb['結果復元不能理由']);
+    assert.equal(sb['墓標残存'], true);
     assert.equal(compareResultPaths(body, sb.result).same, true, 'HTTP と保存結果が食い違う');
 
-    // cleanup で残存 0（結果キーも消える）
-    const cl = await handler({
+    // ⚠️ 3 経路一致を渡さない cleanup は拒否される（削除も起きない）
+    const noProof = await handler({
       httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
       body: JSON.stringify({ action: 'cleanup', canaryId: ID }),
     });
+    assert.equal(noProof.statusCode, 409);
+    assert.equal(JSON.parse(noProof.body).code, 'paths_not_verified');
+    assert.equal(r.store.has(defKey(AUTO_ID)), true, '未検証なのに削除された');
+
+    // 食い違う値を渡しても拒否される
+    const wrong = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({
+        action: 'cleanup', canaryId: ID,
+        httpOverallOk: true, logOverallOk: false, checkCount: body.checks.length,
+      }),
+    });
+    assert.equal(wrong.statusCode, 409);
+    assert.equal(r.store.has(defKey(AUTO_ID)), true);
+
+    // 3 経路一致を渡した cleanup で canary 残存 0（**墓標は残る**）
+    const cl = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({
+        action: 'cleanup', canaryId: ID,
+        httpOverallOk: body.overallOk, logOverallOk: parsed.overallOk,
+        checkCount: body.checks.length,
+      }),
+    });
     const cb = JSON.parse(cl.body);
-    assert.equal(cb['残存0'], true);
+    assert.equal(cb.pathsVerified, true);
+    assert.equal(cb['canary残存0'], true);
     assert.equal(cb['結果残存'], false);
+    assert.equal(cb['墓標維持'], true, 'cleanup が墓標を消した');
+    assert.equal(cb.index他member.same, true);
     assert.equal(r.store.has(defKey(AUTO_ID)), false);
     assert.equal(r.store.has(resultKey(ID)), false);
+    assert.equal(r.store.has(runMarkKey(ID)), true, 'cleanup が墓標を消した');
     assert.deepEqual([...r.store.get('ak:marketing-automation:index:active')], ['expiry-d7'],
       '他 member を壊した');
+
+    // cleanup 後でも墓標があるので再 run できない
+    const reRun = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'run', canaryId: ID, confirmation: `DEF-CANARY ${ID}` }),
+    });
+    assert.equal(reRun.statusCode, 409);
+    assert.equal(JSON.parse(reRun.body).code, DEF_FAIL.ALREADY_RUN);
+    assert.equal(r.store.has(defKey(AUTO_ID)), false, '再 run が Definition を作った');
+
+    // finalize は canary 無効時のみ。墓標まで消えて最終残存 0
+    delete process.env[DEF_CANARY_GATE_ENV];
+    const fin = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'finalize', canaryId: ID, confirmation: `DEF-CANARY-FINALIZE ${ID}` }),
+    });
+    const fb = JSON.parse(fin.body);
+    assert.equal(fb.finalized, true);
+    assert.equal(fb['墓標残存'], false);
+    assert.equal(fb.index他member.same, true);
+    assert.equal(r.store.has(runMarkKey(ID)), false);
+    assert.deepEqual([...r.store.get('ak:marketing-automation:index:active')], ['expiry-d7']);
+  } finally {
+    globalThis.fetch = prevFetch; console.log = prevLog;
+    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
+    Object.assign(process.env, prev);
+  }
+});
+
+test('handler: 結果を復元できないとき cleanup は拒否し、finalize で回収できる', async () => {
+  const { handler, DEF_CANARY_GATE_ENV } = await import(
+    '../../../netlify/functions/admin-marketing-automation-def-canary.js');
+  // 結果キーだけ失われ、Definition と墓標が残った状態
+  const r = fakeRedis({
+    [defKey(AUTO_ID)]: JSON.stringify(def()),
+    [runMarkKey(ID)]: '2026-08-06T03:00:00.000Z',
+    'ak:marketing-automation:index:active': new Set(['expiry-d7', AUTO_ID]),
+  });
+  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+  globalThis.fetch = async (_u, opt) => {
+    const result = await r.cmd(JSON.parse(opt.body));
+    return { ok: true, json: async () => ({ result }) };
+  };
+  process.env.PREMIUM_PLUS_ADMIN_SECRET = 'sec';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
+  delete process.env[DEF_CANARY_GATE_ENV];
+  try {
+    const cl = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({
+        action: 'cleanup', canaryId: ID, httpOverallOk: true, logOverallOk: true, checkCount: 10,
+      }),
+    });
+    assert.equal(cl.statusCode, 409);
+    assert.equal(JSON.parse(cl.body).code, DEF_FAIL.RESULT_UNAVAILABLE);
+    assert.equal(r.store.has(defKey(AUTO_ID)), true, '復元不能なのに削除された');
+
+    // env 閉鎖後の finalize なら回収できる
+    const fin = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'finalize', canaryId: ID, confirmation: `DEF-CANARY-FINALIZE ${ID}` }),
+    });
+    const fb = JSON.parse(fin.body);
+    assert.equal(fb.finalized, true);
+    assert.equal(r.store.has(defKey(AUTO_ID)), false);
+    assert.equal(r.store.has(runMarkKey(ID)), false);
+    assert.deepEqual([...r.store.get('ak:marketing-automation:index:active')], ['expiry-d7']);
+  } finally {
+    globalThis.fetch = prevFetch;
+    for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];
+    Object.assign(process.env, prev);
+  }
+});
+
+test('handler: 既存 member が 0 件でも run は成立する（空前提を置かない）', async () => {
+  const { handler, DEF_CANARY_GATE_ENV } = await import(
+    '../../../netlify/functions/admin-marketing-automation-def-canary.js');
+  const r = fakeRedis();   // index:active が存在しない = member 0 件
+  const prevFetch = globalThis.fetch; const prev = { ...process.env };
+  const prevLog = console.log; console.log = () => {};
+  globalThis.fetch = async (_u, opt) => {
+    const result = await r.cmd(JSON.parse(opt.body));
+    return { ok: true, json: async () => ({ result }) };
+  };
+  process.env.PREMIUM_PLUS_ADMIN_SECRET = 'sec';
+  process.env[DEF_CANARY_GATE_ENV] = 'true';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://x.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 't';
+  try {
+    const res = await handler({
+      httpMethod: 'POST', headers: { 'x-admin-secret': 'sec' },
+      body: JSON.stringify({ action: 'run', canaryId: ID, confirmation: `DEF-CANARY ${ID}` }),
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(body.overallOk, true, JSON.stringify(body.checks?.filter((c) => !c.ok)));
+    assert.equal(body.indexOtherMembers.before, 0);
+    assert.equal(body.indexOtherMembers.after, 0);
+    assert.equal(body.indexOtherMembers.same, true);
   } finally {
     globalThis.fetch = prevFetch; console.log = prevLog;
     for (const k of Object.keys(process.env)) if (!(k in prev)) delete process.env[k];

@@ -13,7 +13,7 @@ scheduler・enqueue 共通化・`admin-marketing.js` の変更・Airtable 処理
 
 | | |
 |---|---|
-| 書き込む | `ak:marketing-automation:def:canary-<canaryId>` のみ / `ak:marketing-automation:index:active` の **canary member 1 つだけ** / `ak:marketing-automation:def-canary:<canaryId>:result`（結果・TTL 24h） |
+| 書き込む | `ak:marketing-automation:def:canary-<canaryId>` のみ / `ak:marketing-automation:index:active` の **canary member 1 つだけ** / `ak:marketing-automation:def-canary:<canaryId>:result`（結果・TTL 24h） / `ak:marketing-automation:def-canary:<canaryId>:run`（**墓標**・TTL 24h） |
 | **触らない** | 他の `def:*` / `run:*` / `recipient:*` / `lock:*` / `fence` / `canary:*` / `payemail:*` / `customer-import:*` / KMA 系 |
 | 依存しない | Airtable / Customers / ScheduledEmails / CampaignDeliveries / メール送信（import が存在しない） |
 
@@ -27,9 +27,13 @@ URL / token / Redis の値 / hash 全文は応答にもログにも出さない�
 ### `index:active` は共有キー
 
 `index:active` だけは**他の Definition と共有**する。SADD / SREM は canary member 1 つに限定し、
-実行前後で `compareIndexExcludingCanary` により**他の member が 1 つも変わっていないこと**を突き合わせる。
-なお main にメルマガ自動化本体は存在しないので、本番の `index:active` は**現時点で空のはず**である
-（空でなければ想定外 → 中止する）。
+実行前後で `compareIndexExcludingCanary` により **canary 以外の member が完全一致すること**を突き合わせる。
+
+- **既存 member の件数に前提を置かない。** 0 件でも複数件でも同じ厳密さで比較する
+  （「空だから安全」という素通しはしない）。件数一致ではなく**集合そのものの一致**を見る。
+  1 つでも増減・入替があれば `same=false` で不合格。増減の内訳は `added` / `removed` に出る。
+- **取得失敗・不正応答は fail-closed。** `SMEMBERS` が配列でない / 文字列以外を含む / 通信断のときは
+  `index_unavailable` で中断し、**空配列へ丸めない**。before / after が配列でなければ `same=false`。
 
 ## 検証対象が PR #237 と同一であること
 
@@ -47,10 +51,33 @@ URL / token / Redis の値 / hash 全文は応答にもログにも出さない�
 
 **すべての action で `x-admin-secret` 必須。POST のみ。** ゲートは **Redis client 初期化より前**。
 
-> 二重実行の防止は**墓標ではなく canary Definition 自身**が担う。`run` は最初に
-> `EXISTS` を確認し、既にあれば `409 already_exists` で止まる。
-> `cleanup` 後は再 run が可能になるため、**cleanup は 3 経路一致を確認した後にだけ行い、
-> その直後に env を閉じる**。`finalize`（残存 0 の最終確認）は env 無効化の反映後にしか通らない。
+### run exactly 1 の構造保証（墓標）
+
+`run` は最初に **墓標 `def-canary:<canaryId>:run` を `SET NX` で 1 回だけ**取る。
+取れなければ `409 already_run` で即停止する（Definition の作成にも Redis の書き込みにも進まない）。
+Definition の `EXISTS` 確認は二重の副次ガードとして残す。
+
+| 段階 | 墓標 | 再 run |
+|---|---|---|
+| `run` 直後 | **あり** | 不可（`already_run`） |
+| `cleanup` 後 | **あり（消さない）** | 不可（`already_run`） |
+| `finalize` 後 | なし | **その時点で env は無効 = `run` は 403** |
+
+> `cleanup` は Definition・結果・index の canary member **だけ**を消し、**墓標は残す**。
+> 墓標を消すのは **env を無効化し、その反映 deploy を終えた後の `finalize`** だけ。
+> → 「墓標が無いのに run できる時間帯」が生じない。
+
+### cleanup は 3 経路一致の前に実行できない（構造ゲート）
+
+`cleanup` は保存済み結果を読み、呼び出し側が渡す観測値と突き合わせてからでないと削除しない。
+
+| 状況 | 応答 | 削除 |
+|---|---|---|
+| 結果を復元できない / 壊れている / schema 違い / 別 run | `409` `result_unavailable` 等 | **しない** |
+| `httpOverallOk` / `logOverallOk` / `checkCount` 未指定・不一致 | `409` `paths_not_verified` | **しない** |
+| 3 つとも保存済み結果と一致 | `200` `pathsVerified=true` | する（墓標は残す） |
+
+結果が復元できないときは **cleanup せず、env 閉鎖 → 反映 deploy → `finalize` で回収**する。
 
 ⚠️ `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は**今回追加・変更しない**（Function が参照もしない）。
 
@@ -62,7 +89,7 @@ env 変更は **redeploy 必須**として扱う（Netlify の仕様・AK の実
 |---|---|---|---|---|
 | **D1** | 本 branch の固定 SHA | `ENABLED` **unset** | `netlify deploy --build --prod --context production` | Function 存在・`preview`/`run` が **403** |
 | **D2** | **同 SHA** | `ENABLED=true` 設定後 | 同上 | `preview` **200** → `run` ×1 → `status` → `cleanup` |
-| **D3** | **同 SHA** | **unset 後** | 同上 | `preview`/`run` **403** → `finalize` ×1 → 残存 0 |
+| **D3** | **同 SHA** | **unset 後** | 同上 | `preview`/`run` **403** → `finalize` ×1 → **墓標含め残存 0** |
 | **D4** | `main` | 追加 env なし | **Build Hook** | Function **404** / 公開 SHA が origin/main |
 
 ⚠️ Netlify CLI は git worktree で `base` を解決できないため、**通常 clone から実行する**。
@@ -71,7 +98,10 @@ env 変更は **redeploy 必須**として扱う（Netlify の仕様・AK の実
 
 repo / branch / HEAD / working tree clean / CI green / origin/main HEAD を実行直前に再取得 /
 `MARKETING_AUTOMATION_DEF_CANARY_ENABLED` と `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` が
-**ともに unset** / 他 deploy 非進行 / Build Hook 可用 / `index:active` が空。
+**ともに unset** / 他 deploy 非進行 / Build Hook 可用。
+
+⚠️ **`index:active` の中身は事前条件にしない。** 空でも複数件でも実行してよい。
+要求するのは「実行前後で canary 以外の member が完全一致すること」だけ。
 
 ## 結果の 3 経路（取り逃し対策）
 
@@ -90,7 +120,7 @@ run exactly 1・retry 0 ではやり直しが効かないので、**同じ判定
 保存内容に URL / token / Redis 値 / アドレス / hash 全文 / stack は入らない（`assertResultSafe` が拒否）。
 
 **`run` は cleanup しない。** result は `cleanup` / `finalize` で消えるので、
-**3 経路の一致を確認するまで `cleanup` を実行しない。**
+**3 経路の一致を確認するまで `cleanup` を実行しない**（Function 側でも構造的に拒否する）。
 
 ## curl の出力分離（**body と HTTP status を同じファイルへ混ぜない**）
 
@@ -128,6 +158,13 @@ echo "status HTTP=$ST_HTTP"
 netlify logs --source functions \
   --function admin-marketing-automation-def-canary --since 30m \
   | tee "$CANARY_DIR/function.log"
+
+# 5) ⚠️ 3 経路の一致を**目で確認してから** cleanup。観測値をそのまま渡す
+#    （食い違う値・未指定なら Function が 409 paths_not_verified で削除を拒否する）
+CL_HTTP=$(curl -sS -o "$CANARY_DIR/cleanup.json" -w '%{http_code}' \
+  -X POST "$URL" -H 'Content-Type: application/json' -H "x-admin-secret: $SECRET" \
+  -d "{\"action\":\"cleanup\",\"canaryId\":\"$CID\",\"httpOverallOk\":true,\"logOverallOk\":true,\"checkCount\":10}")
+echo "cleanup HTTP=$CL_HTTP"
 ```
 
 **禁止**: `curl -o file -w '%{http_code}'` の出力を**同じファイルへ**書くこと（前回これで JSON を壊した）。
@@ -140,31 +177,38 @@ netlify logs --source functions \
 2. `netlify env:set MARKETING_AUTOMATION_DEF_CANARY_ENABLED true --context production`
 3. **D2** → `preview` **200** → canaryId 発行（Redis 非接触）
 4. `run` を **exactly 1 回**（`DEF-CANARY <canaryId>`）・**retry 0** → `run.json` の parse 成功を確認
+   （墓標が立つので、以後この canaryId では再 run できない）
 5. `status` → 保存済み result を復元し、`run.json` と `overallOk` / チェック名 / 件数 / ok が一致
 6. **Function ログ**の 1 行 JSON でも一致を確認
-7. **3 経路が一致してから** `cleanup`（`残存0=true`）
+7. **3 経路が一致してから** `cleanup`（観測値を渡す）
+   → `pathsVerified=true` / `canary残存0=true` / **`墓標維持=true`**
 8. `netlify env:unset MARKETING_AUTOMATION_DEF_CANARY_ENABLED --context production`
-9. **D3** → `preview` / `run` が **403** → `finalize` → `finalized=true`（Definition 0 / 結果 0 / index 除去済）
+9. **D3** → `preview` / `run` が **403** → `finalize`
+   → `finalized=true`（Definition 0 / 結果 0 / **墓標 0** / index 除去済 / 他 member 不変）
 10. **D4** → Function **404** / 公開 SHA 復帰
 11. すべて確認できてから一時ファイルを削除
 
 ### 合格条件（**すべて満たさなければ PASS にしない**）
 
 - `run` が **HTTP 200** / 応答 `overallOk=true` / `resultSaved=true`
-- `status` の `結果復元=true` かつ result `overallOk=true`
+- `status` の `結果復元=true` かつ result `overallOk=true` / `墓標残存=true`
 - Function ログ `overallOk=true`
 - **3 経路のチェック名・件数・ok・overallOk が一致**
 - 9 項目（10 チェック）が**すべて ok=true**
 - `runCount=1` / `retryCount=0` / 許可キー外の操作 **0**
-- `indexOtherMembers.same=true`（他 member 不変）
-- cleanup 後 `残存0=true`、finalize 後 `finalized=true`
+- `indexOtherMembers.same=true` かつ `added=0` / `removed=0`（**0 件でも複数件でも完全一致**）
+- cleanup 後 `pathsVerified=true` / `canary残存0=true` / **`墓標維持=true`**
+- cleanup 後に `run` を投げたら **`409 already_run`**（墓標が効いている確認・副作用なし）
+- finalize 後 `finalized=true`（**墓標含め残存 0**）
 
 ### 3 経路のいずれかが欠落・不一致のとき
 
 - **成功と判定しない**
-- **追加 run をしない**
+- **追加 run をしない**（墓標があるので構造的にもできない）
 - `status` と Function ログの取得を続ける
-- 復元できなければ **env 閉鎖 → cleanup → finalize → main 復帰**まで行い、**canary 未達**として報告する
+- **`cleanup` は実行しない**（Function 側でも `409` で拒否される）
+- 復元できなければ **env 閉鎖 → 反映 deploy → `finalize` → main 復帰**まで行い、
+  **canary 未達**として報告する
 
 ## canary 項目（run の 10 チェック）
 
@@ -176,7 +220,7 @@ netlify logs --source functions \
 6. pause（PAUSED へ遷移）できる
 7. cancel（CANCELLED へ遷移）できる
 8. `index:active` から除去できる
-9. `index` の他 member を変えていない
+9. `index` の canary 以外の member が**完全一致**（0 件でも複数件でも同じ厳密さ）
 
 ## Function の削除
 
