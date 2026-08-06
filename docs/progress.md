@@ -53,6 +53,40 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
 **PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
 
+### ✅ メルマガ自動化 main 反映（2026-08-06・PR #237 squash `ba93eda`）
+
+**production deploy 済み。env が全て閉じているため本番の挙動は変わらない**
+（送信 0 / Redis・Airtable write 0 / 実顧客接触 0 / env 変更 0）。
+
+merge 後の本番実測: cron 公開 URL は **403 / 本文 0 バイト**（scheduled function）、
+管理 API の write は **403**、管理画面は 401、主要ページは全て 200、
+`cron-marketing-automation` / `admin-marketing-automation` の invocation **0 件**。
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` / `..._SCHEDULER_ENABLED` /
+`..._DISPATCH_ARMED` は **production 未設定のまま**。
+
+**初回 schedule（JST 10:00 / cron `0 1 * * *`）のログ確認は未実施**。
+確認内容は `docs/marketing-automation-release-runbook.md` の S1。
+
+### 🚧 段階開放 runbook と残件の read-only 監査（2026-08-06）
+
+- **[`docs/marketing-automation-release-runbook.md`](./marketing-automation-release-runbook.md)** を新設。
+  S0（現状）→ S1（schedule 起動確認・env 変更なし）→ S2（管理 write）→ S3（ACTIVE 化）→
+  S4（scheduler・当日武装なし）→ S5（初回実配信）の 5 段。各段に合格条件と rollback を明記。
+  **env 変更は redeploy が要る / 1 段につき env 1 つ / 合格条件を満たさなければ閉じる。**
+- 残件 B-3 / B-4 / C-2 を本番実測つきで再監査（`marketing-automation-preprod-audit.md` 末尾）。
+
+**⚠️ C-2 を「運用品質」から格上げ**: `preview`（dry-run）は Customers を全件・逐次取得する。
+本番実測で **1,678 件 = 17 ページで 7.65 s（cold）/ 3.48 s（warm）**。
+Netlify 同期 Function のタイムアウトは既定 10 秒なので、**約 4,000 件でタイムアウト域**、
+外部取り込み完了後の **15,800 件では 30〜70 秒で確実に失敗**する。
+`activate` も同じ経路で再計算するため、**自動化を一切操作できなくなる**（壊れ方は fail-closed で安全側）。
+→ **取り込み完了前に S2〜S3 を済ませるか、先に C-2 を直す。**
+
+B-3 は「Redis に run は残っているのに当日分しか引いていない」だけで、決定的 runId の `MGET` で足りる。
+B-4 は誤送信には繋がらないが、`activate` の途中失敗で **`get` は ACTIVE / `list` に出ない**という
+A-1 と同種の食い違いを生む（`markActive` を先にするのが最小の対策）。
+新たに B-5（run キーに TTL が無い）/ B-6（本番 `index:active` が空＝開放前の基準点）を記録。
+
 ### ✅ 導入前監査の blocker を一括修正（2026-08-06・PR #237）
 
 監査で挙げた blocker 6 件と correctness の主要 2 件を修正し、回帰テスト
