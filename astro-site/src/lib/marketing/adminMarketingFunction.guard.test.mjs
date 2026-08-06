@@ -59,7 +59,15 @@ test('3. KMA のテーブル / env を使わない（統合しない）', () => 
 test('4. 決済 / 権限 / Premium Plus 販売資格のフィールドを書かない（読み取りは可）', () => {
   // 書き込み payload は `fields: { ... }` リテラルだけ。その中身に禁止名が無いことを見る。
   // （表示のために プラン / PremiumPlusEligibility を **読む** のは正当なので全文検索はしない）
-  const payloads = [...code.matchAll(/fields:\s*\{([\s\S]*?)\n\s{6}\},/g)].map((m) => m[1]);
+  // ⚠️ ScheduledEmails の payload は **共通契約モジュール** へ抽出済み
+  //    （手動送信と自動配信で同じ行を作るため）。検査対象も追随させる。
+  const CONTRACT = readFileSync(
+    fileURLToPath(new URL('./marketingEnqueueContract.js', import.meta.url)), 'utf8',
+  );
+  const payloads = [
+    ...[...code.matchAll(/fields:\s*\{([\s\S]*?)\n\s{6}\},/g)].map((m) => m[1]),
+    ...[...CONTRACT.matchAll(/return \{([\s\S]*?)\n\s{2}\};/g)].map((m) => m[1]),
+  ];
   assert.ok(payloads.length > 0, '書き込み payload を検出できない（テストの前提が壊れた）');
   for (const p of payloads) {
     // 「キーとして」現れていないかを見る（TargetPlan のような別カラムに部分一致させない）

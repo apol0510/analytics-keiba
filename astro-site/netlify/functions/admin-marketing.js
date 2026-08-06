@@ -55,6 +55,9 @@
  */
 
 import {
+  buildJobId, buildJobNotes, buildScheduledEmailFields, assertOnlyScheduledFields,
+} from '../../src/lib/marketing/marketingEnqueueContract.js';
+import {
   resolveCustomerMarketing,
   matchesMarketingFilter,
   summarizeSegments,
@@ -1026,28 +1029,33 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const batches = chunkRecipients(plan.recipients);
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i];
-    const jobId = `mkt-${campaign.campaignId}-v${campaign.version}-${plan.planFingerprint.slice(0, 8)}-${i + 1}`;
-    const created = await createRecord({
-      KEY, BASE, table: SCHEDULED_TABLE,
-      fields: {
-        Subject: rendered.subject,
-        Content: rendered.html,
-        Recipients: batch.map((r) => r.email).join(', '),
-        ScheduledFor: new Date(now).toISOString(),
-        Status: 'PENDING',
-        CreatedBy: 'admin-marketing',
-        JobId: jobId,
-        RecipientCount: batch.length,
-        TargetPlan: `campaign:${campaign.campaignId}`,
-        // 何を送ったかを後から照合できるようにする（既存の Notes だけを使う）
-        // 引き継ぎ由来なら、どの付与操作から来たジョブかも残す（アドレスは入れない）
-        // dispatcher が読む: どの組み立て方で作った HTML か（版が違えば送らない）
-        Notes: `marketing campaign ${campaign.campaignId} v${campaign.version}`
-          + ` ${SHELL_VERSION_NOTE_PREFIX}${MARKETING_EMAIL_SHELL_VERSION}`
-          + ` content:${contentHash.slice(0, 12)}${check.edited ? ' edited' : ''}`
-          + (grantOperationId ? ` ${handoffNote(grantOperationId)}` : ''),
-      },
+    // ⚠️ ジョブの形は **共通契約** が単一源（手動送信と自動配信で同じ行を作る）。
+    //    ここで独自に組み立てない（形がズレると dispatcher の扱いが変わる）。
+    const jobId = buildJobId({
+      campaignId: campaign.campaignId, version: campaign.version,
+      fingerprint: plan.planFingerprint, index: i + 1,
     });
+    const jobFields = buildScheduledEmailFields({
+      subject: rendered.subject,
+      html: rendered.html,
+      emails: batch.map((r) => r.email),
+      scheduledAtIso: new Date(now).toISOString(),
+      jobId,
+      campaignId: campaign.campaignId,
+      // 何を送ったかを後から照合できるようにする（既存の Notes だけを使う）
+      // 引き継ぎ由来なら、どの付与操作から来たジョブかも残す（アドレスは入れない）
+      // dispatcher が読む: どの組み立て方で作った HTML か（版が違えば送らない）
+      notes: buildJobNotes({
+        campaignId: campaign.campaignId,
+        campaignVersion: campaign.version,
+        shellVersionNote: `${SHELL_VERSION_NOTE_PREFIX}${MARKETING_EMAIL_SHELL_VERSION}`,
+        contentHash,
+        edited: check.edited,
+        handoffNote: grantOperationId ? handoffNote(grantOperationId) : '',
+      }),
+    });
+    if (!assertOnlyScheduledFields(jobFields)) return json(500, { error: 'field allow-list violation' });
+    const created = await createRecord({ KEY, BASE, table: SCHEDULED_TABLE, fields: jobFields });
     for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId: created?.id || null });
     jobs.push({ jobId, recipientCount: batch.length, recordId: created?.id || null });
   }

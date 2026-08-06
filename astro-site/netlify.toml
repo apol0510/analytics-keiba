@@ -90,6 +90,7 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+
   # 注: SSR 関数肥大化（250MB 超）対策は netlify.toml の included_files では効かない
   # （@astrojs/netlify は nodeBundler:'none' + includedFiles:['**/*'] で関数ディレクトリを
   # そのまま zip するため、config の除外が反映されない）。代わりに build スクリプト末尾の

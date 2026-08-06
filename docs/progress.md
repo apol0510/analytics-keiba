@@ -47,6 +47,366 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
   （production の値には触れない）
 
 
+**Phase（2026-08-06 現在・最新）: AK 専用メルマガ自動化は Phase A / B / B-2 を Draft PR #237 まで実装し、
+永続化層（Redis primitive と Definition 保存・CAS）を本番で canary 実証済み。**
+本番送信 0 / 実顧客接触 0 / Airtable read・write 0 / Airtable schema 変更 0 /
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
+**PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
+
+### ✅ 導入前監査の blocker を一括修正（2026-08-06・PR #237）
+
+監査で挙げた blocker 6 件と correctness の主要 2 件を修正し、回帰テスト
+`src/lib/marketing/automationBlockerFixes.test.mjs`（21 件）で固定した。
+詳細は [`docs/marketing-automation-preprod-audit.md` の「修正の記録」](./marketing-automation-preprod-audit.md#修正の記録2026-08-06)。
+
+| # | 対応 |
+|---|---|
+| A-1 | `enabled` を永続化し、さらに `loadDefinition` が **`status` から導出し直す**（正本は `status`）。ACTIVE 化した Definition が保存後も `due` になる |
+| A-2 | `snapshotCount` / `snapshotOccurrenceDate` を永続化。承認済み snapshot が無ければ件数比較へ進まず `snapshot_missing` |
+| A-3 | `verifySnapshotBeforeDispatch()` を新設し、**実行直前に指紋・件数・暦日・campaign 版・本文**を照合 |
+| A-4 | ACTIVE 中の `update` を `active_locked` で拒否。`update` は承認済み snapshot を破棄 |
+| A-5 | **Netlify Scheduled Function 方式**へ変更（既存 cron と同じ **Functions v2 形式 + `export const config = { schedule: '0 1 * * *' }`** = **JST 10:00**。`netlify.toml` へは書かず二重登録を避ける。⚠️ **`export const config` が効くのは v2 形式だけ**で、v1 形式のままだと schedule が登録されず公開 HTTP Function になる — Deploy Preview で実測して判明し、v2 へ書き換えた）。scheduled function は**公開 URL からの HTTP が 404** になるため外部から起動できず、**専用 secret は廃止**（コードから完全削除）。多層防御として、scheduled 実行の形（`next_run` 付き本文）でないイベントは handler が **404**。判定は**ゲート・Redis / Airtable 初期化より前** |
+| A-6 | 自動化専用ゲートを 2 つ要求（`SCHEDULER_ENABLED` + `DISPATCH_ARMED=<当日 JST 日付>`）。**日付一致なので翌日に自動的に閉じる** |
+| B-1 | ページ上限で黙って `break` するのをやめ、`customers_truncated`（503）で**失敗させる**。上限も 60 → 300 ページ |
+| B-2 | `preview` は**保存済み Definition を基準**にする（preset は保存済みが無いときだけ） |
+| C-1 | UI はどの応答でも `writeEnabled` を反映し直し、`write_blocked` で即座に閉じる。`configVersion` の固定値送信を廃止し、設定変更で承認済み指紋を破棄 |
+
+**dry-run・保存・実行が同じ対象集合を使う**ようになった。対象集合の組み立ては
+`_computeSnapshot()` の 1 経路に集約し、`activate` は申告値を鵜呑みにせず**再計算して照合**する
+（不一致は `snapshot_mismatch`）。
+
+**Deploy Preview（env 全閉鎖）で実測**: cron は **Scheduled Function 化により公開 URL から
+起動できない**（POST / GET / 詐称ヘッダ付きのいずれも **Netlify 層の 403・本文 0 バイト**で、
+コードに到達しない）。管理 API は secret 無しで 403、secret 有りでも `create` / `activate` は
+**403 `write_blocked`（Redis / Airtable 接続 0）**。`list` は `writeEnabled:false` + `store_unavailable`、
+`get` は 503（推測データを返さない）、dry-run は Customers 1,677 件を最後まで取得して成功。
+管理画面は Basic-Auth の 401。
+
+> ⚠️ `PREMIUM_PLUS_ADMIN_SECRET` は **deploy-preview にも設定済み**だった。
+> 本書の 2026-08-03 の記述「production 限定 → preview は 503」は現状と異なる。
+
+テスト: marketing **973 pass**、payments 246 pass、CRM 246 pass、`check:safety` 519 pass、build 通過。
+**production deploy / env 変更 / Redis・Airtable write / メール送信 / merge は未実施。**
+新 env `MARKETING_AUTOMATION_DISPATCH_ARMED` も production 未設定。
+
+### 🚧 管理 UI / API の production 導入前監査（2026-08-06・**修正済み**）
+
+read-only 監査を実施。詳細は **[`docs/marketing-automation-preprod-audit.md`](./marketing-automation-preprod-audit.md)**。
+**結論: このままでは production へ入れられない。** 送信事故の危険は低い（全経路が fail-closed 側で止まる）が、
+**「ACTIVE にしても動かない」「dry-run で確かめた対象と実行対象が一致しない」**という状態の食い違いが残る。
+
+blocker 6 件（うち 2 件は fake Redis で**再現確認済み**）:
+
+| # | 内容 |
+|---|---|
+| A-1 🔁 | `enabled` が `DEF_FIELDS` に無く保存されない → 保存後は `isDue` が永久に `not_active`。UI は ACTIVE と表示する |
+| A-2 🔁 | `snapshotCount` も保存されない → `detectDrift` が**対象が減っても** `snapshot_grew` で常に発火 |
+| A-3 | `snapshotFingerprint` を保存しているのに scheduler が照合していない |
+| A-4 | ACTIVE のまま `update` でき、`activate` の「snapshot 必須 + drift 検査」を迂回できる |
+| A-5 | `cron-marketing-automation` に**認証が無い**（schedule 未登録＝公開 HTTP Function） |
+| A-6 | `MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` は**既に production で true**（実測）。防御は実質 env 1 枚 |
+
+correctness 4 件のうち **B-1 は進行中の外部取り込み完了で必ず顕在化する**:
+Customers 取得が `MAX_PAGES=60`（6,000 件）で**黙って打ち切る**ため、
+約 15,800 件になると先頭 6,000 件だけで対象集合を計算し、しかもエラーにならない。
+
+**開放条件**: A-1〜A-3 の修正完了まで `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` を production へ設定しない。
+A-5 の解決まで `MARKETING_AUTOMATION_SCHEDULER_ENABLED` を production へ設定しない。
+
+### ✅ 永続化層の本番 canary — Definition 保存 canary **PASS**（2026-08-06 / PR #239）
+
+**PR #237 が使う Definition 保存・取得・CAS が、本番 Upstash 上で意図どおり動くことを実証した。**
+PR #237 の未 merge 差分全体を production へ入れないため、`origin/main` 基点の**最小 canary branch**
+（PR #239 `chore/marketing-automation-def-canary`、新規 4 ファイルのみ・既存変更 0）を作って実行し、
+**merge せず close** した。canary Function は本番から撤収済み（`main` にこの Function は存在しない）。
+
+#### 実証できたこと
+
+| 対象 | 結果 |
+|---|---|
+| **CAS Lua**（PR #237 の `automationStore.js` から改変せず抽出。sha256 `e07dc3cf…`） | 新規作成 / version 一致更新 **OK** / **不一致は CONFLICT で上書きされない** |
+| Definition のライフサイクル | 作成 → get → CAS 更新 → pause(PAUSED) → cancel(CANCELLED) → index 追加・除去 → 削除 が一連で成立 |
+| `index:active`（共有キー） | canary 以外の member は **完全一致**（before 0 → after 0 / added 0 / removed 0） |
+| 墓標（`SET NX`） | **cleanup 後も再 run を構造的に拒否**（`409 already_run`・副作用 0） |
+| 3 経路の結果復元 | HTTP 応答 / Redis result / Function ログが**完全一致**（件数・順序・name・ok・overallOk） |
+
+run は **exactly 1 / retry 0**、10 チェック全 PASS、`resultSaved=true`、commands 16、latency avg 199ms（max 652ms）。
+
+#### deploy と env（4 回で固定・すべて実施済み）
+
+| # | 内容 | 確認 |
+|---|---|---|
+| D1 | 固定 SHA + env unset | Function 存在・`preview`/`run` **403** `def_canary_disabled`・Redis 非接触 |
+| D2 | 同 SHA + `ENABLED=true` | `preview` 200 → `run` ×1 → 3 経路一致 → cleanup（**墓標維持**） |
+| D3 | 同 SHA + env unset | `preview`/`run` **403** → `finalize` → **墓標含め残存 0** |
+| D4 | `main` を Build Hook で 1 回 | 公開 SHA `a787c03` / canary Function **404** / トップ 200 |
+
+`MARKETING_AUTOMATION_DEF_CANARY_ENABLED` は実行後に unset 済み。
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は**この canary で参照も追加もしていない**。
+
+#### 先行: Redis primitive canary **PASS**（PR #238・同じく merge せず終了）
+
+専用 prefix 内だけで `SET NX` 排他 / fencing token 単調増加 / CAS Lua / 所有権再検証 /
+prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition canary はその一段上として、
+**本番と同じキー空間**（`def:*` と `index:active`）で確かめたもの。
+
+#### 運用上の注意（実測で判明）
+
+- **`netlify logs:function` は live stream 専用**（deprecated）で、実行済み run のログを返さない。
+  過去ログは `netlify logs --source functions --function <name> --since <t> --json` で取得し、
+  JSON Lines の各行の文字列フィールド内に埋まった 1 行 JSON を走査して抽出する
+- Netlify CLI は **git worktree から `base` を解決できない**。deploy は通常 clone から行う
+
+#### まだ実証していないこと
+
+`run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
+未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
+
+### 🆕 AK 専用メルマガ自動化 — Phase B-2（管理 UI・管理 API・write ゲート）
+
+**管理画面だけで Definition の作成・編集・保存・有効化・一時停止・取消・履歴確認まで
+操作できるコードを完成させた。** ただし production では**ハードゲートで全 write を拒否**し、
+Redis / Airtable への接続 0 を維持している。
+
+#### 管理 API（`admin-marketing-automation.js`）
+
+`list` / `get` / `preview` / `runs` / `run-detail` / `status` / `create` / `update` /
+`activate` / `pause` / `cancel` の 11 action。判断は `automationAdminApi.js`（I/O 注入）に集約し、
+テストは **fake Redis だけ**で全経路を通せる。
+
+**production write のハードゲート**: `create` / `update` / `activate` / `pause` / `cancel` は
+`MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED=true` でなければ **Redis store 初期化より前に 403**。
+handler を実際に叩いて **Redis 呼び出し 0** を実測している。
+**production にこの env は設定していない。**
+
+read 系は Redis 未設定・到達不能のとき**推測データを返さず** `store_unavailable` を明示する。
+
+#### campaign の固定と再承認
+
+campaign は `campaignCatalog.js` が正本で、**自由入力で存在しない ID は保存できない**。
+保存時に `campaignId` / `campaignVersion` / `shellVersion` / `contentHash` を固定し、
+保存後に版か本文が変わっていたら **ACTIVE 化を拒否**して再 dry-run と再保存を要求する。
+
+> ⚠️ プリセットの campaignId 2 件が実在しないカタログ ID（`comeback` / `light-trial`）を
+> 指していた誤りをテストが検出し、実在する `expired-comeback` へ修正した。
+> `free-to-light` は**そのまま使える既存キャンペーンが無い**ため既定を未選択にした
+> （`comeback-light-30d-granted` は「無料付与済み」前提の文面なので、
+> 付与が成功した相手にしか送ってはいけない＝誤送信になる）。
+
+#### pause / cancel
+
+Redis 側の Definition / Run 状態変更まで実装。**Airtable への実取消は次 Phase までハードブロック**。
+cancel は計画だけを返す: `PENDING 取消予定` / `SENT 取消不可` / `処理中` /
+`rollback 不可（送信済み）`。**SENT を取消対象にしない**。
+
+#### 管理画面
+
+プリセット / 名前 / campaign 選択 / campaignVersion / contentHash / 実行条件 / 除外条件 /
+実行日時・繰り返し / timezone（Asia/Tokyo 固定）/ quiet hours / 最大件数 / dry-run /
+snapshot 件数・指紋 / 保存 / ACTIVE 化 / 一時停止 / 取消 / 次回実行日時 / 最終実行結果 /
+run 履歴 / queued・excluded・failed・blocked / reconciliation を表示。
+
+**未有効時**は入力と dry-run はできるが保存系ボタンは disabled、
+「本番自動配信は未有効」を明示し、**API を直接叩かれても 403**（UI で隠すだけにしない）。
+
+#### scheduler は本番登録しない
+
+`netlify.toml` に schedule を**追加していない**（テストで登録が無いことを固定）。
+`MARKETING_AUTOMATION_SCHEDULER_ENABLED` はコード上のゲートのみで production env 追加なし。
+
+#### テスト
+
+`src/lib/marketing` **949 pass / 0 fail**（Phase B-2 新規 24）。build 成功。回帰 payments 255 pass。
+
+> ⚠️ Phase A の guard 6 件が Phase B の実装（write 配線・UI 刷新・Upstash の POST）と
+> 食い違って落ちた。**性質は変えず**、検査対象と条件を Phase B の実態へ追随させて復旧した
+> （Airtable への書き込みだけを見る / 「未配線」を「配線済みだがゲートで塞ぐ」へ など）。
+
+> ⚠️ テストが実バグを 2 件検出した:
+> ① preset に既定 campaign が無い場合、管理者が指定した**存在しない campaignId を保存できた**
+> ② 固定した `shellVersion` / `contentHash` が保存項目の allow-list に無く**永続化されなかった**。
+> どちらも修正済み。
+
+---
+
+### 🆕 AK 専用メルマガ自動化 — Phase B### 🆕 AK 専用メルマガ自動化 — Phase B（永続化・scheduler・enqueue 共通化）
+
+**Phase A（監査・設計・dry-run）に続き、永続化と実行系を実装した。**
+production deploy 0 / production Redis write 0 / Airtable write 0 / 実送信 0 / 新規 env 投入 0。
+
+#### Redis キー設計（AK 専用 prefix）と正本の範囲
+
+すべて `ak:marketing-automation:` 配下。**他用途の鍵空間へ触れない**
+（`payemail:*` / `customer-import:*` / KMA）。prefix 外は `assertKey` が構造的に拒否する。
+
+| 鍵 | 用途 |
+|---|---|
+| `ak:marketing-automation:def:<automationId>` | AutomationDefinition |
+| `ak:marketing-automation:run:<runId>` | AutomationRun |
+| `ak:marketing-automation:lock:<automationId>` | scheduler の claim |
+| `ak:marketing-automation:recipient:<runId>:<sha256>` | 受信者 claim |
+| `ak:marketing-automation:index:active` | ACTIVE 索引 |
+| `ak:marketing-automation:fence` | fencing token |
+
+**正本の範囲を明確化した:**
+
+- **Redis が正本** … 自動化の**設定と進行**（Definition / Run / claim / lock）
+- **Airtable が正本** … **送信の事実**（ScheduledEmails / CampaignDeliveries / EmailEvents）
+
+「送ったかどうか」を Redis で判断しない。Redis が消えても送信済みの事実は Airtable に残り、
+二重送信の最終防壁は `CampaignDeliveries.DeliveryKey` の冪等 upsert 側にある。
+
+**PII を保存しない。** 受信者は**正規化メールの sha256 だけ**を鍵に使い、値は状態と件数のみ。
+許可外の項目は保存前に落ち、許可項目に紛れた PII（文字列中のアドレスを含む）は拒否する。
+
+#### atomic 性・lost-update 対策
+
+- Definition 更新は **`configVersion` 付き CAS**（Lua）。競合したら書かずに例外
+- scheduler claim は **`SET NX EX`** + **fencing token**（`INCR`）
+- 書き込み直前に `verifyClaim` で所有権を再確認。**stale scheduler は enqueue しない**
+- 同一 `automationId` + JST 配信回 → **runId は決定的**（`auto:<id>:<JST 暦日>`）
+- 同一 runId の二重開始は **`SET NX` で atomic に拒否**
+- recipient claim は `runId + 正規化メール sha256` で一意
+- Redis 到達不能 / 応答不明 / CAS 不一致 / lock 状態不明 は**必ず例外にして伝播**（fail-closed）
+
+#### scheduler（`cron-marketing-automation.js`・**production では常時無効**）
+
+**3 ゲートが全て true でなければ Redis にも Airtable にも接続しない**:
+`MARKETING_AUTOMATION_SCHEDULER_ENABLED` / `MARKETING_CAMPAIGN_ENABLED` /
+`MARKETING_CAMPAIGN_DISPATCH_ENABLED`。
+Phase B では**新規 env を production へ設定しない**ので、常に 1 番目で止まる。
+ゲート判定は store 初期化より前にあり、実際に叩いても Redis 呼び出し 0 であることをテストで実測。
+
+責務: ACTIVE 取得 → JST/quiet hours 判定 → due だけ claim → snapshot 再評価 →
+drift 検知（snapshot 増加 / campaignVersion 変更 / contentHash 変更）→ 安全なら enqueue 候補 →
+**1 tick の automation 数（3）と件数（500）に上限**。上限超過は**切り捨てず停止**する。
+
+#### enqueue 共通化
+
+`marketingEnqueueContract.js` を新設し、**管理画面の手動送信と自動配信が同じ関数**で
+ScheduledEmails の行を作るようにした。既存 `admin-marketing.js` もこの契約経由へ切り替え済み。
+
+**やっていないこと（禁止事項）**: 内部 HTTP で admin-marketing を呼ぶ / ScheduledEmails を別形式で作る /
+dispatcher を直接起動する / 送信 API を直接呼ぶ / 既存と違う deliveryKey を作る。
+JobId は既存の `mkt-` 接頭辞を保ち、既存 dispatcher の判定から外れない。
+自動化由来のジョブは Notes に `auto:` / `run:` / `op:` / `snap:` を刻む（**アドレスは入れない**）。
+
+> ⚠️ 既存 guard 2 件（書き込み payload 検査・スナップショット保存検査）は payload が
+> 契約モジュールへ移ったことで一度落ちた。**性質は変わっていない**ため、検査対象を
+> 契約モジュールへ追随させて復旧した（緩めていない）。marketing 全 925 pass で確認済み。
+
+#### 配信直前の再判定
+
+enqueue 時点だけでなく **dispatcher 直前にもう一度**、既存 AK ルールで判定する
+（配信停止 / hard・soft bounce / 送信不可 / テストアカウント / 現在のプラン・有効期限 /
+キャンペーン不整合 / 既送信 deliveryKey）。外れていたら**送らず除外理由を残す**。
+
+#### 突合（reconciliation）
+
+**Redis Run counters / recipient claims / ScheduledEmails / CampaignDeliveries / EmailEvents** の
+5 系統を突合。不一致は `BLOCKED`、失敗残りは `PARTIAL` とし**自動続行しない**。
+provider 受理と実配信を混同せず、受理数が queued を超えたら BLOCKED。**送信済みは再送しない**。
+
+#### テスト
+
+`src/lib/marketing` **925 pass / 0 fail**（Phase B 新規 38）。build 成功。回帰: payments 255 pass。
+
+CAS 競合 / scheduler 二重起動 / fencing token / stale scheduler / Redis timeout・応答不明 /
+run 二重開始 / recipient 二重 claim / 同一 JST 日 run 重複 / quiet hours 境界 / DST 非依存 /
+maxRecipients 超過 / dry-run 後の対象増加 / campaignVersion 変更 / contentHash 変更 /
+配信直前の有料化・配信停止・bounce 除外 / SENT 取消拒否 / reconciliation 不一致 /
+PII 非保存 / KMA 混入なし / 送信経路 1 本 / **ゲート未設定時の Redis 接続 0**。
+
+#### Phase B で配線していないもの
+
+実 enqueue（契約は用意済み・呼び出しは未配線）/ scheduler の本番有効化 /
+設定 UI の保存操作。**新規 env は production へ 1 つも設定していない。**
+
+---
+
+### 🆕 AK 専用メルマガ自動化 — Phase A### 🆕 AK 専用メルマガ自動化 — Phase A（2026-08-06・Draft PR）
+
+**KMA を AK へ統合しない。** tenant / 顧客 / キャンペーン / 送信元 / 配信停止 / 台帳 / env /
+Redis / Airtable / 料金 / UI は**一切持ち込まない**。KMA から参考にしたのは
+**状態機械・冪等性・quiet hours・再試行・取消・監査という一般設計だけ**で、
+実装・データ・設定の正本は**すべて AK 内**。guard テストで KMA 由来の識別子混入を固定している。
+
+#### read-only 監査でわかった既存基盤（再利用する）
+
+| 役割 | 既存の正本 |
+|---|---|
+| ジョブ正本 | `ScheduledEmails` |
+| 1 通ごとの正本 | `CampaignDeliveries` |
+| 受信者単位の冪等キー | `newsletter/delivery-key.js`（`extraKey` を持つ） |
+| 配信可否（配信停止・バウンス・停止・テスト） | `marketing/customerMarketingAudience.js` |
+| キャンペーン固有条件 | `marketing/campaignAudienceRules.js` |
+| 文面・version・contentHash | `marketing/campaignCatalog.js` |
+| enqueue（送信はしない） | `netlify/functions/admin-marketing.js` |
+| 実送信ゲート | `MARKETING_CAMPAIGN_DISPATCH_ENABLED`（既存メール経路と独立） |
+
+**新しい配信基盤は作らない。** 自動化は「いつ・誰に・どのキャンペーンを」を決めるだけで、
+enqueue と送信は上記の既存経路にそのまま乗る。**送信経路は 1 本のまま**。
+
+#### 追加したもの（すべて新規ファイル）
+
+| 目的 | ファイル |
+|---|---|
+| プリセット定義（**全て初期 OFF**） | `src/lib/marketing/automationCatalog.js` |
+| 状態機械・quiet hours・冪等キー | `src/lib/marketing/automationModel.js` |
+| 対象判定・snapshot 指紋 | `src/lib/marketing/automationEligibility.js` |
+| 管理 API（list / preview=dry-run / status） | `netlify/functions/admin-marketing-automation.js` |
+| 管理画面「自動配信（下見のみ）」 | `src/pages/admin/premium-plus-eligibility.astro` |
+
+#### プリセット 7 件（すべて初期 OFF）
+
+`expiry-d7` / `expiry-d0` / `comeback-d7` / `comeback-d30` /
+`free-to-light` / `light-to-premium` / `manual-condition`
+
+**誕生日トリガーは実装していない。** `Customers` に生年月日フィールドが無く、
+現行 schema では安全に判定できないため **設計候補（`DEFERRED_TRIGGERS`）として分離**した
+（実装には Airtable schema 変更が必要）。未入金フォローも同様に分離している。
+
+#### 状態機械
+
+`DRAFT` / `ACTIVE` / `PAUSED` / `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED`。
+遷移は allow-list で固定し、`ACTIVE` 以外へ移ると `enabled` が落ちる。
+終端（COMPLETED / FAILED / CANCELLED）は自動実行しない。
+
+実行単位は `AutomationDefinition` → `AutomationRun` → **既存 `ScheduledEmails`** → `EmailEvent`。
+
+#### 冪等性・snapshot
+
+- `automationRunId = auto:<automationId>:<JST 暦日>` … **同一自動化・同一暦日は同じ ID**
+  （scheduler が重複起動しても配信回は 1 つ）
+- `operationId = <runId>#<試行番号>`
+- `recipientKey = <runId>|<正規化メール>` … 既存 `computeDeliveryKey` の `extraKey` へ渡す前提。
+  **新しい鍵体系を作らない**
+- snapshot 指紋は**正規化アドレスの sha256 を並べて畳む**（アドレスを復元できない）。
+  dry-run と本実行で**増えていたら停止**（減っているだけなら安全側として進む）
+
+#### 安全要件の実装状況
+
+- dry-run 必須（`requireDryRun`）／実行前に対象 snapshot を固定
+- 本番送信ゲートが閉じていれば **fail-closed**（dry-run は送信しないのでゲート非依存）
+- quiet hours（既定 21:00-8:00 JST・日をまたぐ帯に対応）／最大送信件数超過で停止
+- 取消は**未送信だけ**。`SENT` は取消も再送もしない。成功した登録を失敗へ巻き戻さない
+- 除外は**既存 AK ルールをそのまま通す**（自動化側で再実装しない）
+- **会員昇格・PaymentConfirmed・Status・PlanType・有効期限・特典を書く経路が無い**
+  （Airtable へ GET しか出さない。guard で固定）
+
+#### Phase A で配線していないもの
+
+`enable` / `run` / `cancel` / `pause` は **501**（`not_wired_phase_a`）。
+設定の永続化先（AK 専用 prefix の Redis を想定）と実行の配線は **Phase B**。
+
+#### テスト
+
+`src/lib/marketing` **887 pass / 0 fail**（新規 61 = flow 38 + guard 23）。build 成功。
+
+同一 run 二重開始 / scheduler 重複起動 / 同一 recipient 二重登録 / dispatcher 再実行 /
+配信前の有料化 / 配信停止 / バウンス / quiet hours / 最大件数超過 / dry-run と本実行の snapshot 差 /
+一部登録失敗 / 取消と SENT / 会員状態を変えない / **KMA 混入 guard** / 送信経路が 1 つだけ。
+
 **Phase（2026-08-05 現在・最新）: 外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
 Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
 `run` は 403 `write_disabled` を実測）。残り CREATE 候補 14,284 件。**
