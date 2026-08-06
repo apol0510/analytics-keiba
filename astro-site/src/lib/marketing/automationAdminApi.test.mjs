@@ -285,12 +285,16 @@ test('run 履歴を取得できる', async () => {
 
 // ── scheduler は本番登録しない ────────────────────────────────
 
-test('guard: scheduler は Scheduled Function として登録され、env で閉じている', () => {
+test('guard: scheduler は Scheduled Function として登録され、env で閉じている', async () => {
   // ⚠️ 方針変更（2026-08-06）: 公開 HTTP Function をやめ **Scheduled Function** にした。
-  //    schedule を登録することで Netlify 側が HTTP 起動を 404 にする（外部から叩けない）。
+  //    schedule 登録により Netlify 側が HTTP 起動を拒否する（外部から叩けない）。
   //    「登録しない」ことではなく「**登録した上で env で閉じる**」ことを固定する。
-  assert.match(TOML, /\[functions\."cron-marketing-automation"\]/);
-  assert.match(TOML, /schedule\s*=\s*"[^"]+"/);
+  // ⚠️ 登録方法は既存 cron に合わせて **export const config**。netlify.toml へは書かない
+  //    （二重登録を避ける）。
+  const cron = await import('../../../netlify/functions/cron-marketing-automation.js');
+  assert.ok(cron.config && cron.config.schedule, 'export const config.schedule が無い');
+  assert.equal(/\[functions\."cron-marketing-automation"\]/.test(TOML), false,
+    'netlify.toml と二重登録になっている');
 });
 
 // ── 画面 ──────────────────────────────────────────────────────

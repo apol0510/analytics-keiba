@@ -73,8 +73,10 @@ export function readGates(env, nowMs) {
  * ⚠️ **Scheduled Function 方式。外部 HTTP からは起動できない。**
  *
  * ── 一次的な保証は Netlify のプラットフォーム側 ──────────────────
- * `netlify.toml` の `[functions."cron-marketing-automation"] schedule` により、
- * この Function は **scheduled function** として配備される。
+ * このファイル末尾の `export const config = { schedule }` により、
+ * この Function は **scheduled function** として配備される
+ * （既存の `cron-email-scheduler` / `cron-expiry-check` /
+ *   `cron-payment-email-reconciler` と同じ登録方法に揃えている）。
  * scheduled function の公開 URL への HTTP リクエストは **Netlify が 404 を返す**ので、
  * そもそも外部からは到達できない。**これが唯一の起動経路の保証**。
  *
@@ -209,3 +211,16 @@ export const handler = async (event) => {
 };
 
 export default handler;
+
+// Netlify Scheduled Functions 設定
+// ⚠️ cron は **UTC**。JST = UTC+9 なので `0 1 * * *` = **毎日 JST 10:00**。
+//    自動化の quiet hours は 21:00-08:00 JST なので、その外側の午前中に置く。
+// ⚠️ この登録により scheduled function になり、公開 URL への HTTP は Netlify 側で拒否される。
+// ⚠️ 登録しただけでは副作用 0。処理へ進むには env のゲートが要る:
+//      MARKETING_AUTOMATION_SCHEDULER_ENABLED=true
+//      MARKETING_AUTOMATION_DISPATCH_ARMED=<当日の JST 日付>
+//      MARKETING_CAMPAIGN_ENABLED / MARKETING_CAMPAIGN_DISPATCH_ENABLED
+//    いずれも production 未設定のため、現状は起動しても何もしない。
+export const config = {
+  schedule: '0 1 * * *',
+};

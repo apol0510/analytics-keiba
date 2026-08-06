@@ -366,15 +366,17 @@ secret 方式は「公開 HTTP Function のまま鍵で守る」設計で、鍵�
 
 | 項目 | secret 方式 | Scheduled Function 方式 |
 |---|---|---|
-| 配備 | 公開 HTTP Function | **`netlify.toml` で schedule 登録 → scheduled function** |
+| 配備 | 公開 HTTP Function | **`export const config = { schedule }` で登録 → scheduled function** |
 | 外部 HTTP | 到達する（鍵で拒否） | **Netlify が 404**。到達しない |
 | 鍵 | `MARKETING_AUTOMATION_CRON_SECRET` / `x-cron-secret` | **廃止**（コードから完全に削除） |
 | 起動元 | 外部トリガー（GitHub Actions 等）が必要 | **Netlify のスケジューラ** |
 | 二次確認 | timingSafeEqual による鍵照合 | scheduled 実行の形（`next_run` 付き本文）でなければ **404** |
 
-```toml
-[functions."cron-marketing-automation"]
-  schedule = "0 1 * * *"
+```js
+// netlify/functions/cron-marketing-automation.js 末尾
+export const config = {
+  schedule: '0 1 * * *',
+};
 ```
 
 ### schedule 時刻（JST 換算）
@@ -383,11 +385,12 @@ cron 式は **UTC**。`0 1 * * *` = **毎日 JST 10:00**（UTC+9）。
 自動化の quiet hours は **21:00–08:00 JST** なので、その外側の午前中に置いた。
 既存の cron も同じ流儀（`cron-expiry-check` は `0 9 * * *` = JST 18:00）。
 
-> ⚠️ **リポジトリ内の流儀の差**: 既存 3 つの cron（`cron-email-scheduler` /
-> `cron-expiry-check` / `cron-payment-email-reconciler`）は **コード内の
-> `export const config = { schedule }`** で登録している。本件は指示に従い
-> `netlify.toml` 側で登録した。**登録場所が 2 か所に分かれる**ので、
-> 統一するなら別途方針決定が要る（機能上はどちらも有効）。
+> **登録方法（2026-08-06 統一）**: 既存 3 つの cron（`cron-email-scheduler` /
+> `cron-expiry-check` / `cron-payment-email-reconciler`）と同じく、
+> **コード内の `export const config = { schedule }`** で登録する。
+> 一度 `netlify.toml` 側へ書いたが、**登録場所が 2 か所に分かれる**のを避けるため
+> 既存の流儀へ統一した。`netlify.toml` には**書かない**（二重登録を避ける）。
+> テストが「config に schedule がある」「netlify.toml に無い」の両方を固定している。
 
 ### 副作用 0 の多層構造
 
@@ -434,7 +437,7 @@ cron 式は **UTC**。`0 1 * * *` = **毎日 JST 10:00**（UTC+9）。
 比較用に、schedule 未登録の通常 Function（`admin-marketing-automation`）は
 自前の `{"error":"Forbidden"}` を返す。
 
-→ **`netlify.toml` の schedule 登録が効いており、公開 URL からは起動できない**ことを確認。
+→ **schedule 登録が効いており、公開 URL からは起動できない**ことを確認。
 既存の scheduled function（`cron-payment-email-reconciler`）も同じ 403 の見え方で、挙動が一致している。
 
 ### Deploy Preview では schedule 実行されない

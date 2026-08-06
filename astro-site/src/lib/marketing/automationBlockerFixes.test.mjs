@@ -388,19 +388,34 @@ test('A-5: 専用 secret の仕組みを残していない（構造）', () => {
   }
 });
 
-test('A-5: netlify.toml に scheduled function として登録されている', () => {
-  const TOML = readFileSync(fileURLToPath(
-    new URL('../../../netlify.toml', import.meta.url)), 'utf8');
-  assert.match(TOML, /\[functions\."cron-marketing-automation"\]/);
-  const m = /\[functions\."cron-marketing-automation"\][\s\S]*?schedule\s*=\s*"([^"]+)"/.exec(TOML);
-  assert.ok(m, 'schedule が無い');
-  // ⚠️ cron 式は UTC。JST = UTC+9 で quiet hours（21:00-08:00 JST）の外側であること
-  const [minute, hour] = m[1].split(/\s+/);
+test('A-5: schedule は既存 cron と同じ export const config 方式で登録されている', async () => {
+  const mod = await import('../../../netlify/functions/cron-marketing-automation.js');
+  assert.ok(mod.config, 'export const config が無い');
+  const cron = String(mod.config.schedule || '');
+  assert.match(cron, /^\S+ \S+ \S+ \S+ \S+$/, 'cron 式の形になっていない');
+
+  // ⚠️ cron は UTC。JST = UTC+9 で quiet hours（21:00-08:00 JST）の外側であること
+  const [minute, hour] = cron.split(/\s+/);
   assert.match(minute, /^\d+$/, '分が固定値でない');
   assert.match(hour, /^\d+$/, '時が固定値でない');
   const jstHour = (Number(hour) + 9) % 24;
   assert.equal(jstHour, 10, `JST ${jstHour} 時になっている（想定は 10 時）`);
   assert.ok(jstHour >= 8 && jstHour < 21, 'quiet hours の中に入っている');
+
+  // ⚠️ 登録方法は既存 cron と揃える。netlify.toml へ二重登録しない
+  const TOML = readFileSync(fileURLToPath(new URL('../../../netlify.toml', import.meta.url)), 'utf8');
+  assert.equal(/\[functions\."cron-marketing-automation"\]/.test(TOML), false,
+    'netlify.toml と config の二重登録になっている');
+});
+
+test('A-5: 既存 cron と同じ登録方法であること', async () => {
+  const mods = ['cron-expiry-check', 'cron-payment-email-reconciler'];
+  for (const m of mods) {
+    const mod = await import(`../../../netlify/functions/${m}.js`);
+    assert.ok(mod.config && mod.config.schedule, `${m} が config 方式でない（前提が変わった）`);
+  }
+  const mine = await import('../../../netlify/functions/cron-marketing-automation.js');
+  assert.ok(mine.config && mine.config.schedule);
 });
 
 // ── A-6: 単一 env 依存にしない ────────────────────────────────
