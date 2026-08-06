@@ -242,12 +242,19 @@ cron が ScheduledEmails の PENDING 行を作るには
 **`MARKETING_AUTOMATION_ENQUEUE_ENABLED=true`** も要る（S4 と S5 の間で開ける）。
 開けていなければ tick は計画までで止まり、`skipped.enqueue_disabled` が記録される。
 
-## 残っている既知の課題（開放前に把握しておく）
+## 既知の課題（**すべて対応済み**）
 
-| # | 内容 | 影響 |
+| # | 内容 | 状態 |
 |---|---|---|
-| B-4 | `activate` / `cancel` の索引更新が 2 段 | 誤送信にはならないが、`get` は ACTIVE なのに `list` に出ない食い違いが起きうる |
-| B-5 | run キーに TTL が無い | 容量は小さいが、保持期間が決まっていない |
+| B-4 | `activate` / `cancel` の索引更新が 2 段 | ✅ **解消**（PR #242）。CAS と索引を 1 回の Lua で更新し、tick の先頭で `reconcileActiveIndex()` が収束させる |
+| B-5 | run キーに TTL が無い | ✅ **解消**（PR #242）。run 本体は 120 日 TTL、二重開始の判定は **TTL の無い墓標**（`run-mark:`） |
+
+### 運用で見るところ
+
+- tick の応答に **`索引の掃除`** が出たら、古い不整合を掃除した記録（`removed` / `missing`）。
+  毎回出続けるなら**書き込み側を疑う**
+- run の保持は **120 日**。履歴表示（既定 30 日 / 最大 90 日）より長い。
+  120 日より前の run を見たいときは Function ログを使う
 
 ## 関連
 

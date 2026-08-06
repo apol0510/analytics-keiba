@@ -204,6 +204,46 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
+### ✅ 残件 B-4 / B-5 を解消（2026-08-06・Draft PR #242）
+
+監査で残していた 2 件を直した。**production env 変更 0 / 本番 write 0 / 実送信 0。**
+
+#### B-4: 本体と索引を 1 回の Lua で更新する
+
+`saveDefinition`（CAS）→ `markActive`（SADD）の **2 段**が途中で落ちると、
+**`get` は ACTIVE なのに `list` に出ない**（scheduler も拾わない）食い違いが起きえた。
+
+- CAS の Lua を **KEYS 2 本**（def キー + `index:active`）へ拡張し、**同じ Lua の中で** `SADD` / `SREM`。
+  Redis の Lua は単一のアトミック実行なので**片方だけ進まない**
+- 索引は **`status` から導出**（呼び出し側が `markActive` を呼ぶ必要が無い）
+- `reconcileActiveIndex()` を新設し **tick の先頭で毎回実行**。
+  ACTIVE でない / 本体が無い member を索引から外す
+- **収束は外す方向だけ**（送る側へ倒さない）。ACTIVE なのに索引に無いものは次の保存で自動的に入る
+- `markActive` / `unmarkActive` は**冪等な補助として残す**（既存の呼び出しはそのまま動く）
+
+> 監査時の推奨は「`markActive` を先にする」だったが、順序を変えても **2 段であること自体は変わらず**
+> 「索引にあるが DRAFT」という別の食い違いが残る。Lua で 1 回にすれば**どちらも起きない**。
+
+#### B-5: run の保持期間と、TTL 切れ後の二重開始防止
+
+TTL を付けるだけでは、**TTL 切れの後に同じ runId で二重開始できてしまう**
+（二重開始の判定が run 本体の `SET NX` だったため）。
+
+- `RUN_TTL_SEC = 120 日`。表示は既定 30 日 / **最大 90 日**なので**表示・監査より短くしない**。
+  更新のたびに張り直す
+- 二重開始の判定を **`run-mark:<runId>` の `SET NX`（TTL 無し）**へ移した。
+  run 本体の有無に依存しないので、TTL 切れでも二度目は通らない
+- 墓標の値は `1` だけ。`runId` は `<automationId>#<YYYY-MM-DD>` で **PII を含まない**
+- 旧データ（TTL 無し・墓標無し）はそのまま読め、更新すれば TTL が付く（**後方互換**）
+
+TTL の大小関係 `lock 300 秒 < claim 7 日 < run 120 日 < 墓標（無期限）` をテストで固定。
+
+#### テスト
+
+`automationRunIndex.test.mjs` **17 件**（原子性 / 途中失敗 / 再実行 / 同時実行 / 旧データの収束 /
+TTL の整合 / TTL 切れ後の二重開始拒否 / 後方互換 / 構造 guard）。
+marketing **1,044 pass** / prospect 51 / webhooks 132 / CRM 246 / `check:safety` 519 / build 成功。
+
 ### ✅ 見込み客プール（外部 CSV 1 万数千件の扱い）— **main 反映済み**（2026-08-06 / PR #241 squash `37090c0`）
 
 **外部 CSV のアドレスを Airtable Customers へ入れない。** 反応した人だけを昇格させ、

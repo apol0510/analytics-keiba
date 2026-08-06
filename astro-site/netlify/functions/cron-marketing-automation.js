@@ -270,6 +270,15 @@ export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
   };
 
   try {
+    // ⚠️ B-4: 索引と status の食い違いを**毎 tick で収束させる**。
+    //    `saveDefinition` が原子的に揃えるので新しい不整合は生まれないが、
+    //    この修正より前のデータ・手作業の痕跡をここで掃除する。
+    //    **送る側へは倒さない**（索引から外すだけ）。
+    try {
+      const rec = await store.reconcileActiveIndex();
+      if (rec.removed > 0 || rec.missing > 0) out.索引の掃除 = rec;
+    } catch { out.errors.push('reconcile_failed'); }
+
     const activeIds = await store.listActive();
     const definitions = [];
     for (const id of activeIds) {

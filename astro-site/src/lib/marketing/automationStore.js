@@ -37,6 +37,13 @@ export const FOREIGN_PREFIXES = Object.freeze([
 export const autoKey = Object.freeze({
   def: (automationId) => `${AUTO_ROOT}def:${automationId}`,
   run: (runId) => `${AUTO_ROOT}run:${runId}`,
+  /**
+   * 完了した run の**最小抑止キー**（B-5）。
+   * run 本体には保持期間の TTL を付けるが、TTL 切れの後に同じ runId で
+   * **二重に開始されない**ようにするため、`0`/`1` だけの墓標を別に持つ。
+   * `runId` は `<automationId>#<YYYY-MM-DD>` で **PII を含まない**。
+   */
+  runMark: (runId) => `${AUTO_ROOT}run-mark:${runId}`,
   lock: (automationId) => `${AUTO_ROOT}lock:${automationId}`,
   recipient: (runId, emailHash) => `${AUTO_ROOT}recipient:${runId}:${emailHash}`,
   activeIndex: () => `${AUTO_ROOT}index:active`,
@@ -72,6 +79,19 @@ export const STORE_FAIL = Object.freeze({
 export const LOCK_TTL_SEC = 300;
 /** recipient claim の TTL（配信回が終われば不要になる） */
 export const CLAIM_TTL_SEC = 7 * 24 * 3600;
+
+/**
+ * run 本体の保持期間（B-5）。
+ *
+ * ⚠️ **表示・監査に要る期間より短くしてはいけない。**
+ *   - 実行履歴の表示は既定 30 日 / 最大 90 日（`RUNS_HISTORY_MAX_DAYS`）
+ *   - 突合・問い合わせ対応の余裕を足して **120 日**
+ * TTL 切れの後に同じ runId で二重開始されないことは、TTL の無い
+ * **`run-mark`（墓標）**が保証する（run 本体の有無に依存しない）。
+ */
+export const RUN_TTL_SEC = 120 * 24 * 3600;
+/** 墓標は消さない。**消すと TTL 切れの run が再開できてしまう** */
+export const RUN_MARK_TTL_SEC = null;
 
 /** Definition に保存してよい項目（**PII を持ち込ませない**） */
 export const DEF_FIELDS = Object.freeze([
@@ -151,7 +171,39 @@ export function createAutomationStore(deps = {}) {
     return res;
   };
 
-  /** 自分の値のときだけ書き換える CAS（Lua） */
+  /**
+   * ⚠️ **B-4: 本体の更新と索引の更新を 1 つの Lua で行う。**
+   *
+   * 以前は `saveDefinition`（CAS）→ `markActive`（SADD）の 2 段で、
+   * 後者が落ちると **`get` は ACTIVE なのに `list` に出ない**（かつ scheduler も拾わない）
+   * という食い違いが起きえた。Redis の Lua は**単一のアトミック実行**なので、
+   * CAS が通ったその場で索引まで揃える。
+   *
+   *   KEYS[1] = def キー / KEYS[2] = active 索引
+   *   ARGV[1] = 保存する JSON / ARGV[2] = expectedVersion
+   *   ARGV[3] = automationId  / ARGV[4] = '1'（索引に入れる）/ '0'（外す）
+   *
+   * **索引は status から導出**するので、呼び出し側が別途 `markActive` を呼ぶ必要はない
+   * （後方互換のため `markActive` / `unmarkActive` は残すが、冪等な補助でしかない）。
+   */
+  const CAS_WITH_INDEX_LUA = `
+local cur = redis.call('GET', KEYS[1])
+if cur then
+  local v = string.match(cur, '"configVersion":(%d+)')
+  if v ~= ARGV[2] then return 'CONFLICT' end
+elseif ARGV[2] ~= '' then
+  return 'MISSING'
+end
+redis.call('SET', KEYS[1], ARGV[1])
+if ARGV[4] == '1' then
+  redis.call('SADD', KEYS[2], ARGV[3])
+else
+  redis.call('SREM', KEYS[2], ARGV[3])
+end
+return 'OK'
+`;
+
+  /** 自分の値のときだけ書き換える CAS（Lua）。索引を伴わない用途に残す */
   const CAS_LUA = `
 local cur = redis.call('GET', KEYS[1])
 if not cur then
@@ -205,15 +257,22 @@ return 'OK'
      * version 付き CAS。**取り違えたら書かない**。
      * `expectedVersion` が空文字なら「まだ無いはず」として新規作成する。
      */
+    /**
+     * ⚠️ **本体と索引を同時に更新する**（B-4）。索引は `status` から導出する。
+     * 途中で落ちても「本体だけ ACTIVE」「索引だけ残る」は起きない。
+     */
     async saveDefinition({ definition, expectedVersion }) {
       const d = pick(definition, DEF_FIELDS);
       if (!assertNoPii(d)) throw new AutomationStoreError(STORE_FAIL.PII_DETECTED, 'definition');
       const next = { ...d, configVersion: Number(d.configVersion) || 1 };
+      const shouldIndex = next.status === 'ACTIVE' ? '1' : '0';
       const res = await call([
-        'EVAL', CAS_LUA, '1', autoKey.def(definition.automationId),
+        'EVAL', CAS_WITH_INDEX_LUA, '2',
+        autoKey.def(definition.automationId), autoKey.activeIndex(),
         JSON.stringify(next), String(expectedVersion ?? ''),
+        String(definition.automationId), shouldIndex,
       ], STORE_FAIL.CAS_CONFLICT);
-      if (res === 'OK') return { ok: true, definition: next };
+      if (res === 'OK') return { ok: true, definition: next, indexed: shouldIndex === '1' };
       if (res === 'CONFLICT') throw new AutomationStoreError(STORE_FAIL.CAS_CONFLICT, definition.automationId);
       if (res === 'MISSING') return { ok: false, reason: 'missing' };
       throw new AutomationStoreError(STORE_FAIL.UNKNOWN_RESULT, String(res));
@@ -223,8 +282,35 @@ return 'OK'
       const raw = await call(['SMEMBERS', autoKey.activeIndex()]);
       return Array.isArray(raw) ? raw : [];
     },
+    /**
+     * ⚠️ 後方互換のために残す**冪等な補助**。`saveDefinition` が索引まで揃えるので、
+     * 通常は呼ばなくてよい（呼んでも結果は変わらない）。
+     */
     async markActive(automationId) { await call(['SADD', autoKey.activeIndex(), automationId]); },
     async unmarkActive(automationId) { await call(['SREM', autoKey.activeIndex(), automationId]); },
+
+    /**
+     * 索引と `status` の食い違いを**再実行で必ず収束**させる（B-4）。
+     *
+     * `saveDefinition` が原子的に揃えるので新しい不整合は生まれないが、
+     * **この修正より前に書かれたデータ**や、手作業で触られた場合に備える。
+     * 索引に居るのに ACTIVE でないものを外す。**送る側へは倒さない**
+     * （索引に足す方向はしない。ACTIVE なのに索引に無いものは、
+     *   次の保存・状態遷移で自動的に入る）。
+     *
+     * @returns {{checked, removed, kept, missing}}
+     */
+    async reconcileActiveIndex() {
+      const ids = await this.listActive();
+      let removed = 0; let kept = 0; let missing = 0;
+      for (const id of ids) {
+        const d = await this.loadDefinition(id);
+        if (!d) { await this.unmarkActive(id); missing += 1; continue; }
+        if (d.status !== 'ACTIVE') { await this.unmarkActive(id); removed += 1; continue; }
+        kept += 1;
+      }
+      return { checked: ids.length, removed, kept, missing };
+    },
 
     // ── lock + fencing token（scheduler の claim）──────────────
     async nextFencingToken() {
@@ -265,22 +351,41 @@ return 'OK'
       return parse(await call(['GET', autoKey.run(runId)]), 'run');
     },
 
-    /** 同一 runId の**二重開始を atomic に拒否**する */
+    /**
+     * 同一 runId の**二重開始を atomic に拒否**する。
+     *
+     * ⚠️ **B-5: 二重開始の判定は run 本体ではなく墓標（`run-mark`）で行う。**
+     * run 本体には保持期間（120 日）の TTL を付けるため、TTL 切れの後に
+     * 本体の `SET NX` だけで判定すると**同じ runId をもう一度開始できてしまう**。
+     * 墓標は TTL を付けないので、何年経っても二度目は通らない。
+     * 墓標が持つのは `1` だけで、**PII を含まない**（runId は automationId + 暦日）。
+     */
     async createRun(run) {
       const r = pick(run, RUN_FIELDS);
       if (!assertNoPii(r)) throw new AutomationStoreError(STORE_FAIL.PII_DETECTED, 'run');
-      const res = await call(['SET', autoKey.run(run.runId), JSON.stringify(r), 'NX'],
-        STORE_FAIL.UNKNOWN_RESULT);
-      if (res === 'OK') return { created: true, run: r };
-      if (res === null) return { created: false, reason: 'duplicate_run' };
-      throw new AutomationStoreError(STORE_FAIL.UNKNOWN_RESULT, String(res));
+
+      // 1) 墓標を取る（**これが二重開始の唯一の判定**）
+      const mark = await call(['SET', autoKey.runMark(run.runId), '1', 'NX'], STORE_FAIL.UNKNOWN_RESULT);
+      if (mark === null) return { created: false, reason: 'duplicate_run' };
+      if (mark !== 'OK') throw new AutomationStoreError(STORE_FAIL.UNKNOWN_RESULT, String(mark));
+
+      // 2) 本体を書く（TTL 付き）。**墓標を取れた後なので NX は不要**
+      //    （TTL 切れで本体だけ消えていた場合も、ここで作り直せる）
+      await call(['SET', autoKey.run(run.runId), JSON.stringify(r), 'EX', String(RUN_TTL_SEC)]);
+      return { created: true, run: r };
     },
 
+    /** 更新のたびに保持期間を張り直す（**表示期間より短くしない**） */
     async saveRun(run) {
       const r = pick(run, RUN_FIELDS);
       if (!assertNoPii(r)) throw new AutomationStoreError(STORE_FAIL.PII_DETECTED, 'run');
-      await call(['SET', autoKey.run(run.runId), JSON.stringify(r)]);
+      await call(['SET', autoKey.run(run.runId), JSON.stringify(r), 'EX', String(RUN_TTL_SEC)]);
       return { ok: true };
+    },
+
+    /** その runId は既に開始済みか（墓標で判定。本体の TTL に依存しない） */
+    async runStarted(runId) {
+      return Number(await call(['EXISTS', autoKey.runMark(runId)])) === 1;
     },
 
     // ── recipient claim（同一 run で 1 人 1 回）────────────────

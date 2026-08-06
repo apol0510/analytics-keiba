@@ -302,6 +302,16 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | 送信経路（唯一） | `netlify/functions/marketing-campaign-dispatch.js` |
 | 画面 | `src/pages/admin/premium-plus-eligibility.astro` |
 
+## メルマガ自動化の Redis 不変条件（2026-08-06）
+
+| 不変条件 | どう守るか |
+|---|---|
+| `index:active` は **`status === 'ACTIVE'` と一致する** | `saveDefinition` が **CAS と索引を 1 回の Lua**（KEYS 2 本）で更新する。tick の先頭で `reconcileActiveIndex()` が古い不整合を収束させる（**外す方向だけ**） |
+| 同じ `runId` を**二度開始しない** | `run-mark:<runId>` の `SET NX`（**TTL 無し**）。run 本体の TTL 切れに依存しない |
+| run の保持期間 | `RUN_TTL_SEC = 120 日`。履歴表示（既定 30 日 / 最大 90 日）より長い |
+| TTL の大小 | `lock 300 秒 < recipient claim 7 日 < run 120 日 < 墓標（無期限）` |
+| PII | Redis に保存するアドレスは **`ak:prospect:` 配下だけ**。`run-mark` は `runId`（automationId + 暦日）のみ |
+
 ## 見込み客プール（外部リスト・2026-08-06）
 
 外部 CSV の 1 万数千件は **Airtable Customers へ入れない**。Redis の見込み客プールで扱い、
