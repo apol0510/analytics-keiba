@@ -198,12 +198,15 @@ test('version 不一致の更新は拒否する', async () => {
 test('DRAFT → ACTIVE → PAUSED → ACTIVE → CANCELLED を通す', async () => {
   const { api } = mkApi();
   await api.create({ presetId: 'comeback-d7' });
-  const a = await api.activate({ automationId: 'comeback-d7', expectedVersion: '1', snapshotFingerprint: 'fp' });
-  assert.equal(a.ok, true);
+  // ⚠️ activate は申告された指紋を鵜呑みにせず**再計算して照合**するので、
+  //    dry-run で得た指紋を渡す（固定文字列では通らないのが正しい）
+  const fp = async () => (await api.preview({ automationId: 'comeback-d7' })).snapshotFingerprint;
+  const a = await api.activate({ automationId: 'comeback-d7', expectedVersion: '1', snapshotFingerprint: await fp() });
+  assert.equal(a.ok, true, JSON.stringify(a));
   assert.equal(a.definition.status, AUTOMATION_STATUS.ACTIVE);
   const p = await api.pause({ automationId: 'comeback-d7', expectedVersion: String(a.definition.configVersion) });
   assert.equal(p.definition.status, AUTOMATION_STATUS.PAUSED);
-  const a2 = await api.activate({ automationId: 'comeback-d7', expectedVersion: String(p.definition.configVersion), snapshotFingerprint: 'fp' });
+  const a2 = await api.activate({ automationId: 'comeback-d7', expectedVersion: String(p.definition.configVersion), snapshotFingerprint: await fp() });
   assert.equal(a2.definition.status, AUTOMATION_STATUS.ACTIVE);
   const c = await api.cancel({ automationId: 'comeback-d7', expectedVersion: String(a2.definition.configVersion) });
   assert.equal(c.definition.status, AUTOMATION_STATUS.CANCELLED);

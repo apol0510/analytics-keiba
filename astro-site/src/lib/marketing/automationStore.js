@@ -78,8 +78,14 @@ export const DEF_FIELDS = Object.freeze([
   'automationId', 'presetId', 'name', 'status', 'campaignId', 'campaignVersion',
   'schedule', 'timezone', 'quietHours', 'maxRecipients', 'trigger', 'audience',
   'createdAt', 'updatedAt', 'configVersion', 'lastRunAt', 'nextRunAt',
+  // ⚠️ `enabled` は scheduler の `isDue` が見る。**保存しないと ACTIVE でも永久に動かない**
+  //    （UI は ACTIVE と表示するのに scheduler は not_active、という食い違いになる）
+  'enabled',
   // 保存時に固定するキャンペーンの版・本文（ACTIVE 化時の drift 検知に使う）
-  'shellVersion', 'contentHash', 'snapshotFingerprint',
+  'shellVersion', 'contentHash',
+  // ⚠️ dry-run で確定した対象。**指紋と件数は両方保存する**。
+  //    件数が無いと `detectDrift` の比較対象が 0 になり、対象が減っても snapshot_grew で常に弾かれる
+  'snapshotFingerprint', 'snapshotCount', 'snapshotOccurrenceDate',
 ]);
 
 /** Run に保存してよい項目 */
@@ -184,8 +190,15 @@ return 'OK'
     assertKey,
 
     // ── Definition（Redis が正本）──────────────────────────────
+    /**
+     * ⚠️ `enabled` は **`status` から導出し直す**（正本は `status`）。
+     * 保存もしているが、旧レコードや手直しで両者がズレても
+     * 「UI は ACTIVE / scheduler は not_active」の食い違いを起こさせない。
+     */
     async loadDefinition(automationId) {
-      return parse(await call(['GET', autoKey.def(automationId)]), 'definition');
+      const d = parse(await call(['GET', autoKey.def(automationId)]), 'definition');
+      if (!d) return d;
+      return { ...d, enabled: d.status === 'ACTIVE' };
     },
 
     /**

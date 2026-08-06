@@ -4503,7 +4503,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { const e = new Error(data.error || ('HTTP ' + res.status)); e.data = data; throw e; }
+      // ⚠️ **どの応答でも** write ゲートの状態を反映し直す（一覧を読んだ直後だけにしない）
+      if (typeof data.writeEnabled === 'boolean') autoApplyWriteGate(data.writeEnabled);
+      if (!res.ok) {
+        // 拒否されたら即座に閉じる（開いたままの見た目を残さない）
+        if (data.code === 'write_blocked') autoApplyWriteGate(false);
+        const e = new Error(data.error || ('HTTP ' + res.status)); e.data = data; throw e;
+      }
       return data;
     }
 
@@ -4520,6 +4526,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     let autoSnapshot = null;   // 直近 dry-run の指紋（ACTIVE 化に必要）
+    let autoVersion = null;    // 保存済みの configVersion（**固定値を送らない**）
+
+    /**
+     * ⚠️ 設定を触ったら **dry-run の指紋を捨てる**。
+     * 残すと「変更前に確かめた対象」で ACTIVE 化を申請してしまう
+     * （API 側も再計算して照合するので通らないが、UI で誤解を作らない）。
+     */
+    function autoInvalidateSnapshot() {
+      if (autoSnapshot === null) return;
+      autoSnapshot = null;
+      const el = $('autoSnapFpV');
+      if (el) el.textContent = '-（設定を変更したため再度 下見してください）';
+      const state = $('autoState');
+      if (state) state.textContent = '設定が変わりました。もう一度 下見してから ACTIVE 化してください。';
+    }
+    for (const id of ['autoName', 'autoCampaign', 'autoSchedule', 'autoMax', 'autoQuietStart', 'autoQuietEnd']) {
+      $(id)?.addEventListener('input', autoInvalidateSnapshot);
+      $(id)?.addEventListener('change', autoInvalidateSnapshot);
+    }
 
     $('autoList')?.addEventListener('click', async () => {
       const state = $('autoState');
@@ -4593,10 +4618,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (state) state.textContent = '下見中…（送信しません）';
         const out = await autoCall({ action: 'preview', automationId: id });
         autoSnapshot = out.snapshotFingerprint || null;
+        autoVersion = out.configVersion ?? null;
         const set = (k, v) => { const el = $(k); if (el) el.textContent = String(v ?? '-'); };
         const c = out['件数'] || {};
         $('autoPreviewResult').hidden = false;
-        set('autoStatusV', 'DRAFT（未有効化）');
+        set('autoStatusV', (out.status || 'DRAFT') + (out['基準'] === 'saved' ? '（保存済み設定で下見）' : '（未保存・雛形で下見）'));
         set('autoNextV', out.occurrenceDate);
         set('autoSnapCountV', (out.snapshotCount ?? 0).toLocaleString());
         set('autoSnapFpV', String(out.snapshotFingerprint || '-').slice(0, 16) + '…');
@@ -4649,9 +4675,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         quietHours: { start: Number($('autoQuietStart')?.value || 21), end: Number($('autoQuietEnd')?.value || 8) },
       },
     }));
-    $('autoActivate')?.addEventListener('click', () => autoWrite('activate', { expectedVersion: '1', snapshotFingerprint: autoSnapshot }));
-    $('autoPause')?.addEventListener('click', () => autoWrite('pause', { expectedVersion: '1' }));
-    $('autoCancel')?.addEventListener('click', () => autoWrite('cancel', { expectedVersion: '1' }));
+    /** ⚠️ configVersion を固定値で送らない（更新のたびに増えるので必ず衝突する） */
+    const autoExpected = () => String(autoVersion ?? '');
+    $('autoActivate')?.addEventListener('click', () => {
+      if (!autoSnapshot) {
+        const state = $('autoState');
+        if (state) state.textContent = '先に 下見 を実行して対象を確定してください。';
+        return;
+      }
+      autoWrite('activate', { expectedVersion: autoExpected(), snapshotFingerprint: autoSnapshot });
+    });
+    $('autoPause')?.addEventListener('click', () => autoWrite('pause', { expectedVersion: autoExpected() }));
+    $('autoCancel')?.addEventListener('click', () => autoWrite('cancel', { expectedVersion: autoExpected() }));
 
     /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
     function mkNotify(kind, text, detail) {

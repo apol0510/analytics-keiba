@@ -53,7 +53,33 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
 **PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
 
-### 🚧 管理 UI / API の production 導入前監査（2026-08-06・**未解決 blocker あり**）
+### ✅ 導入前監査の blocker を一括修正（2026-08-06・PR #237）
+
+監査で挙げた blocker 6 件と correctness の主要 2 件を修正し、回帰テスト
+`src/lib/marketing/automationBlockerFixes.test.mjs`（21 件）で固定した。
+詳細は [`docs/marketing-automation-preprod-audit.md` の「修正の記録」](./marketing-automation-preprod-audit.md#修正の記録2026-08-06)。
+
+| # | 対応 |
+|---|---|
+| A-1 | `enabled` を永続化し、さらに `loadDefinition` が **`status` から導出し直す**（正本は `status`）。ACTIVE 化した Definition が保存後も `due` になる |
+| A-2 | `snapshotCount` / `snapshotOccurrenceDate` を永続化。承認済み snapshot が無ければ件数比較へ進まず `snapshot_missing` |
+| A-3 | `verifySnapshotBeforeDispatch()` を新設し、**実行直前に指紋・件数・暦日・campaign 版・本文**を照合 |
+| A-4 | ACTIVE 中の `update` を `active_locked` で拒否。`update` は承認済み snapshot を破棄 |
+| A-5 | `authorizeInvocation()` を新設。スケジュール実行か `x-admin-secret` 一致のみ。**認可はゲート判定より前**で、ゲート状況すら無認証では返さない |
+| A-6 | 自動化専用ゲートを 2 つ要求（`SCHEDULER_ENABLED` + `DISPATCH_ARMED=<当日 JST 日付>`）。**日付一致なので翌日に自動的に閉じる** |
+| B-1 | ページ上限で黙って `break` するのをやめ、`customers_truncated`（503）で**失敗させる**。上限も 60 → 300 ページ |
+| B-2 | `preview` は**保存済み Definition を基準**にする（preset は保存済みが無いときだけ） |
+| C-1 | UI はどの応答でも `writeEnabled` を反映し直し、`write_blocked` で即座に閉じる。`configVersion` の固定値送信を廃止し、設定変更で承認済み指紋を破棄 |
+
+**dry-run・保存・実行が同じ対象集合を使う**ようになった。対象集合の組み立ては
+`_computeSnapshot()` の 1 経路に集約し、`activate` は申告値を鵜呑みにせず**再計算して照合**する
+（不一致は `snapshot_mismatch`）。
+
+テスト: marketing **970 pass**、payments 246 pass、CRM 246 pass、`check:safety` 519 pass、build 通過。
+**production deploy / env 変更 / Redis・Airtable write / メール送信 / merge は未実施。**
+新 env `MARKETING_AUTOMATION_DISPATCH_ARMED` も production 未設定。
+
+### 🚧 管理 UI / API の production 導入前監査（2026-08-06・**修正済み**）
 
 read-only 監査を実施。詳細は **[`docs/marketing-automation-preprod-audit.md`](./marketing-automation-preprod-audit.md)**。
 **結論: このままでは production へ入れられない。** 送信事故の危険は低い（全経路が fail-closed 側で止まる）が、

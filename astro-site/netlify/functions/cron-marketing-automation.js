@@ -33,21 +33,70 @@ function json(statusCode, body) {
   };
 }
 
-/** ⚠️ 3 ゲートが揃わなければ**何にも接続しない** */
-export function readGates(env) {
+/**
+ * ⚠️ ゲートが揃わなければ**何にも接続しない**。
+ *
+ * `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` は
+ * **既存機能のために production で既に true**。この 2 つを数に入れると
+ * 「3 重ゲート」は見かけだけで、実際は env 1 つで自動配信が生きてしまう。
+ * そこで **この自動化のためだけの独立したゲートを 2 つ**要求する:
+ *
+ *   1. `MARKETING_AUTOMATION_SCHEDULER_ENABLED=true` … scheduler を動かす意思
+ *   2. `MARKETING_AUTOMATION_DISPATCH_ARMED=<今日の JST 日付>` … **当日ぶんの明示的な武装**
+ *
+ * 2 は日付一致を要求するので、置きっぱなしにしても翌日には自動的に閉じる。
+ * さらに既存の 2 つ（live enqueue / dispatch）も従来どおり必要。
+ */
+export const ARMED_ENV = 'MARKETING_AUTOMATION_DISPATCH_ARMED';
+
+export function readGates(env, nowMs) {
   const e = env || {};
   const scheduler = e.MARKETING_AUTOMATION_SCHEDULER_ENABLED === 'true';
   const liveEnqueue = e.MARKETING_CAMPAIGN_ENABLED === 'true';
   const dispatch = e.MARKETING_CAMPAIGN_DISPATCH_ENABLED === 'true';
+  // 当日 JST 日付と一致するときだけ武装（前日の設定が残っていても翌日は閉じる）
+  const today = jstDateString(Number.isFinite(nowMs) ? nowMs : Date.now());
+  const armed = String(e[ARMED_ENV] || '').trim() === today;
   return {
-    scheduler, liveEnqueue, dispatch,
-    allOpen: scheduler && liveEnqueue && dispatch,
+    scheduler, liveEnqueue, dispatch, armed, today,
+    allOpen: scheduler && liveEnqueue && dispatch && armed,
     missing: [
       !scheduler ? 'MARKETING_AUTOMATION_SCHEDULER_ENABLED' : null,
+      !armed ? `${ARMED_ENV}(=${today})` : null,
       !liveEnqueue ? 'MARKETING_CAMPAIGN_ENABLED' : null,
       !dispatch ? 'MARKETING_CAMPAIGN_DISPATCH_ENABLED' : null,
     ].filter(Boolean),
   };
+}
+
+/**
+ * ⚠️ **外部から無認証で起動させない。**
+ *
+ * この Function は `netlify.toml` に schedule を登録していないため通常の公開 HTTP Function
+ * として配備される。認証が無ければ、ゲートを開けた瞬間に誰でも tick を起動できてしまう。
+ *
+ * 許可するのは次のどちらか:
+ *   - Netlify の**スケジュール実行**（`event.headers['x-netlify-event'] === 'schedule'` /
+ *     Netlify が付ける schedule 由来の呼び出し）
+ *   - `x-admin-secret` が管理用 secret と一致する**手動実行**
+ *
+ * secret が未設定なら**誰も実行できない**（fail-closed）。
+ */
+export function authorizeInvocation({ event, env }) {
+  const e = env || {};
+  const headers = (event && event.headers) || {};
+  const get = (k) => headers[k] ?? headers[String(k).toLowerCase()] ?? headers[String(k).toUpperCase()];
+
+  // Netlify のスケジュール実行（本文に next_run が入る / schedule ヘッダが付く）
+  const isSchedule = String(get('x-netlify-event') || '').toLowerCase() === 'schedule'
+    || (event && event.isScheduled === true);
+  if (isSchedule) return { ok: true, via: 'schedule' };
+
+  const SECRET = e.MARKETING_ADMIN_SECRET || e.PREMIUM_PLUS_ADMIN_SECRET;
+  if (!SECRET) return { ok: false, code: 'secret_not_configured' };
+  const provided = get('x-admin-secret');
+  if (provided !== SECRET) return { ok: false, code: 'forbidden' };
+  return { ok: true, via: 'manual' };
 }
 
 /** Upstash REST（AK 既存 env のみ。KMA とキー空間を共有しない） */
@@ -68,8 +117,21 @@ function redisCmd(args) {
 export const handler = async (event) => {
   const now = Date.now();
 
+  // ══ 認可（**ゲート判定より前・接続より前**）══════════════════════
+  // ⚠️ ゲートの設定状況すら無認証では見せない（開示も攻撃の下準備になる）
+  const auth = authorizeInvocation({ event, env: process.env });
+  if (!auth.ok) {
+    return json(auth.code === 'secret_not_configured' ? 503 : 403, {
+      mode: 'marketing-automation-scheduler',
+      ran: false,
+      reason: auth.code,
+      接続: { redis: false, airtable: false },
+      sideEffects: 'none',
+    });
+  }
+
   // ══ ハードゲート（**Redis / Airtable へ触れる前**）══════════════
-  const gates = readGates(process.env);
+  const gates = readGates(process.env, now);
   if (!gates.allOpen) {
     // ⚠️ ここで return するため、store も Airtable も**一度も初期化されない**
     return json(200, {
@@ -89,6 +151,7 @@ export const handler = async (event) => {
   const out = {
     mode: 'marketing-automation-scheduler',
     ran: true,
+    起動経路: auth.via,
     今日: today,
     namespace: AUTO_ROOT,
     上限: { automations: MAX_AUTOMATIONS_PER_TICK, recipients: MAX_RECIPIENTS_PER_TICK },

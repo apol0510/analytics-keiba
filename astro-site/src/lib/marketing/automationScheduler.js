@@ -39,6 +39,11 @@ export const DRIFT = Object.freeze({
   SNAPSHOT_GREW: 'snapshot_grew',
   CAMPAIGN_VERSION_CHANGED: 'campaign_version_changed',
   CONTENT_HASH_CHANGED: 'content_hash_changed',
+  /** dry-run 時の対象集合と中身が違う（件数が同じでも入れ替わっていれば発火） */
+  SNAPSHOT_FINGERPRINT_CHANGED: 'snapshot_fingerprint_changed',
+  /** 承認済み snapshot が無い / 別の暦日のものしか無い */
+  SNAPSHOT_MISSING: 'snapshot_missing',
+  SNAPSHOT_STALE: 'snapshot_stale',
 });
 
 const str = (v) => String(v ?? '').trim();
@@ -49,9 +54,10 @@ const int = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
  */
 export function isDue({ definition, nowMs }) {
   if (!definition) return { due: false, reason: SKIP_TICK.NOT_ACTIVE };
-  if (definition.status !== 'ACTIVE' || definition.enabled !== true) {
-    return { due: false, reason: SKIP_TICK.NOT_ACTIVE };
-  }
+  // ⚠️ 正本は `status`。`enabled` は導出値なので、**明示的に false のときだけ**追加で止める。
+  //    （かつては `enabled !== true` を要求していたが、保存時に落ちて永久に動かなかった）
+  if (definition.status !== 'ACTIVE') return { due: false, reason: SKIP_TICK.NOT_ACTIVE };
+  if (definition.enabled === false) return { due: false, reason: SKIP_TICK.NOT_ACTIVE };
   if (isQuietHours({ nowMs, quietHours: definition.quietHours })) {
     return { due: false, reason: SKIP_TICK.QUIET_HOURS };
   }
@@ -89,6 +95,22 @@ export function selectDueAutomations({ definitions, nowMs, maxAutomations }) {
 export function detectDrift({ dryRun, current }) {
   const d = dryRun || {}; const c = current || {};
   const drifts = [];
+
+  // ⚠️ 承認済み snapshot が無ければ**件数比較へ進まない**。
+  //    件数だけを見ると「保存されていない = 0 件」を「増えた」と誤読してしまう。
+  if (!str(d.snapshotFingerprint) || !Number.isFinite(Number(d.snapshotCount))) {
+    drifts.push(DRIFT.SNAPSHOT_MISSING);
+    return { ok: false, drifts };
+  }
+  // 承認した暦日と実行しようとしている暦日が違えば、対象は作り直しになる
+  if (str(d.snapshotOccurrenceDate) && str(c.occurrenceDate)
+      && str(d.snapshotOccurrenceDate) !== str(c.occurrenceDate)) {
+    drifts.push(DRIFT.SNAPSHOT_STALE);
+  }
+  // **中身の一致が本体**。件数が同じでも入れ替わっていれば止める
+  if (str(c.snapshotFingerprint) && str(d.snapshotFingerprint) !== str(c.snapshotFingerprint)) {
+    drifts.push(DRIFT.SNAPSHOT_FINGERPRINT_CHANGED);
+  }
   if (int(c.snapshotCount) > int(d.snapshotCount)) drifts.push(DRIFT.SNAPSHOT_GREW);
   if (str(d.campaignVersion) && str(d.campaignVersion) !== str(c.campaignVersion)) {
     drifts.push(DRIFT.CAMPAIGN_VERSION_CHANGED);
@@ -97,6 +119,42 @@ export function detectDrift({ dryRun, current }) {
     drifts.push(DRIFT.CONTENT_HASH_CHANGED);
   }
   return { ok: drifts.length === 0, drifts };
+}
+
+/**
+ * **配信直前の snapshot 照合**（実行のゲート）。
+ *
+ * 保存済み Definition（= 承認された内容）と、いま計算し直した対象集合を突き合わせる。
+ * `detectDrift` を必ず通し、**1 つでも drift があれば enqueue しない**。
+ * `expectedFingerprint` が未確定・不一致なら **fail-closed**（送らない側へ倒す）。
+ *
+ * @param {{definition, currentFingerprint, currentCount, currentCampaignVersion,
+ *          currentContentHash, occurrenceDate}} args
+ */
+export function verifySnapshotBeforeDispatch({
+  definition, currentFingerprint, currentCount,
+  currentCampaignVersion, currentContentHash, occurrenceDate,
+}) {
+  const d = definition || {};
+  const drift = detectDrift({
+    dryRun: {
+      snapshotFingerprint: d.snapshotFingerprint,
+      snapshotCount: d.snapshotCount,
+      snapshotOccurrenceDate: d.snapshotOccurrenceDate,
+      campaignVersion: d.campaignVersion,
+      contentHash: d.contentHash,
+    },
+    current: {
+      snapshotFingerprint: currentFingerprint,
+      snapshotCount: currentCount,
+      campaignVersion: currentCampaignVersion,
+      contentHash: currentContentHash,
+      occurrenceDate,
+    },
+  });
+  if (!drift.ok) return { ok: false, drifts: drift.drifts, reason: drift.drifts[0] };
+  // ここまで来たら「承認した集合そのもの」であることが確定している
+  return { ok: true, drifts: [], reason: null, snapshotFingerprint: str(currentFingerprint) };
 }
 
 /**

@@ -4,7 +4,10 @@
 実施日 2026-08-06。**read-only 監査**（production deploy 0 / env 変更 0 / Redis・Airtable write 0 /
 メール送信 0 / merge 0）。永続化層は PR #239 の本番 canary で **PASS** 済み（別記録）。
 
-## 結論
+> **2026-08-06 追記: blocker はすべて修正済み。** 対応内容は末尾
+> [「修正の記録」](#修正の記録2026-08-06)を参照。以下の指摘本文は**修正前の状態**の記録として残す。
+
+## 結論（監査時点）
 
 **このままでは production へ入れられない。** 送信事故の危険は低い（全経路が fail-closed 側で止まる）が、
 **「ACTIVE にしても動かない」「dry-run で確かめた対象と実行対象が一致しない」**という
@@ -153,14 +156,19 @@ UI の「run 履歴」は昨日以前を表示できない。
 
 ## C. 運用・可観測性
 
-### C-1. 管理 UI の保存系ボタンはマークアップで常時 disabled
+### C-1. 管理 UI の write 連動 ※**監査時の記述に誤りがあった**
 
-`autoSave` / `autoActivate` / `autoPause` / `autoCancel` は HTML で `disabled` 固定で、
-`writeEnabled` を参照して有効化するコードが無い。
+> ⚠️ **訂正（2026-08-06）**: 当初「`writeEnabled` を参照して有効化するコードが無い」と書いたが、
+> これは**誤り**。`autoApplyWriteGate(out.writeEnabled === true)` が `list` の応答で
+> 呼ばれており、連動そのものは実装されていた。以下は再調査後の正しい指摘。
 
-**影響**: `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` を開けても**管理画面からは操作できず**、
-API 直叩きが唯一の手段になる。「管理画面だけで操作できる」という Phase B-2 の目標は未達。
-（安全側の実装ではあるが、**導入時に必ず躓く**ので開放前に配線が要る）
+実際の弱点は次の 3 点だった。
+
+1. write ゲートの反映が**「自動化一覧を読み込む」を押したときだけ**で、他の応答では更新されない
+   （拒否された後も開いた見た目が残る）
+2. `activate` / `pause` / `cancel` が **`expectedVersion: '1'` を固定値で送っている**。
+   configVersion は更新のたびに増えるので、2 回目以降は必ず `version_conflict` になる
+3. dry-run 後に設定を触っても**承認済み指紋がそのまま残る**（古い対象で ACTIVE 化を申請してしまう）
 
 ### C-2. `preview` は read だが Customers 全件走査
 
@@ -207,3 +215,48 @@ write ゲートの対象外で、1 回で最大 60 リクエスト。連打す�
 production deploy / env 変更 / Redis write / Airtable read・write / メール送信 / 実顧客接触 /
 PR の merge — **いずれも未実施**。env は `netlify env:get` による**読み取りのみ**。
 再現確認は fake Redis のみで、外部 I/O は発生していない。
+
+
+---
+
+# 修正の記録（2026-08-06）
+
+blocker 6 件と correctness 4 件のうち影響のあるものを一括修正した。
+回帰テストは `src/lib/marketing/automationBlockerFixes.test.mjs`（21 件）で、
+本書の A-1〜A-6 / B-1〜B-2 / C-1 に 1 対 1 で対応する。
+
+| # | 対応 | 検証 |
+|---|---|---|
+| A-1 | `DEF_FIELDS` に `enabled` を追加。さらに `loadDefinition` が **`status` から `enabled` を導出し直す**（正本は `status`）。`isDue` は `status` を正、`enabled === false` のときだけ追加で止める | 保存 → 読み戻し後に `isDue` が `due:true`。`status=PAUSED` なのに `enabled:true` で保存しても読み戻しは `false` |
+| A-2 | `snapshotCount` と `snapshotOccurrenceDate` を永続化。`detectDrift` は**承認済み snapshot が無ければ件数比較へ進まず** `snapshot_missing` | 対象が 42 → 40 に減っても `snapshot_grew` にならない |
+| A-3 | `verifySnapshotBeforeDispatch()` を新設。実行直前に**指紋・件数・暦日・campaign 版・本文**を突き合わせ、1 つでも違えば enqueue しない | 件数が同じでも指紋違いで `snapshot_fingerprint_changed`。承認と違う暦日で `snapshot_stale` |
+| A-4 | ACTIVE 中の `update` を `active_locked` で拒否（PAUSED / DRAFT 経由を要求）。`update` は**承認済み snapshot を破棄**する | ACTIVE のまま trigger を変えられない。PAUSED で変更すると `snapshotFingerprint` が `null` になる |
+| A-5 | `authorizeInvocation()` を新設。**Netlify のスケジュール実行**か **`x-admin-secret` 一致**のときだけ実行。secret 未設定なら誰も実行できない。認可は**ゲート判定より前**で、ゲートの設定状況すら無認証では返さない | 無認証は 403 かつ Redis 接続 0。応答に env 名を含めない |
+| A-6 | 既存 2 env（本番で既に true）に依存せず、**自動化専用のゲートを 2 つ**要求: `MARKETING_AUTOMATION_SCHEDULER_ENABLED=true` と `MARKETING_AUTOMATION_DISPATCH_ARMED=<当日 JST 日付>`。後者は**日付一致**なので翌日に自動的に閉じる | 既存 2 つが true でも当日武装が無ければ `allOpen:false`。翌日になると閉じる |
+| B-1 | ページ上限で `break` するのをやめ、`CustomerFetchTruncatedError` で**失敗させる**（上限も 60 → 300 ページへ）。API は 503 `customers_truncated` を返し `sideEffects: 'none'` | offset が尽きない応答で 503 + `customers_truncated` |
+| B-2 | `preview` は**保存済み Definition を基準**にし、preset は保存済みが無いときだけ使う。応答に `基準` / `configVersion` / `status` / `未保存の変更あり` を返す | 保存済みの上限 7 が dry-run に反映される |
+| C-1 | UI は**どの応答でも** `writeEnabled` を反映し直し、`write_blocked` を受けたら即座に閉じる。`configVersion` の固定値送信をやめ、dry-run 前の ACTIVE 化を UI 側でも止め、設定変更時に承認済み指紋を破棄する | マークアップ初期値 disabled / `expectedVersion: '1'` の固定値が無いこと |
+
+## dry-run・保存・実行で同じ対象集合を使う
+
+対象集合の組み立てを **`_computeSnapshot()` の 1 経路**に集約した。
+
+1. **dry-run**（`preview`）… 保存済み Definition から `_computeSnapshot` で対象と指紋を出す
+2. **保存**（`activate`）… 管理者の申告値を鵜呑みにせず、**同じ `_computeSnapshot` で再計算**して
+   一致した場合のみ ACTIVE 化し、**指紋・件数・暦日**を固定する（不一致は `snapshot_mismatch`）
+3. **実行**（scheduler）… `verifySnapshotBeforeDispatch` で保存値と再計算値を突き合わせ、
+   1 つでも違えば enqueue しない
+
+dry-run 後に対象が増えた状態で承認しようとすると `snapshot_mismatch` で止まることを回帰テストで固定した。
+
+## 残っている項目（blocker ではない）
+
+- **B-3** `runs` が当日の runId しか見ない（履歴は 1 日分）
+- **B-4** 状態変更と索引更新が 2 段（`activate` は送らない側 / `cancel` は索引が汚れる）
+- **C-2** `preview` の Customers 全件走査（連打でレート制限に触れうる）
+- **C-3** secret 比較が時間非依存でない / CORS `*`（既存 AK 全体と同様）
+
+## この修正で行っていないこと
+
+**production deploy / env 変更 / Redis write / Airtable read・write / メール送信 / 実顧客接触 /
+merge は未実施。** 新しい env（`MARKETING_AUTOMATION_DISPATCH_ARMED`）も**production へ設定していない**。

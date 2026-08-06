@@ -46,6 +46,10 @@ export const API_REJECT = Object.freeze({
   VERSION_CONFLICT: 'version_conflict',
   NO_SNAPSHOT: 'no_snapshot',
   RUNNING: 'running',
+  /** ACTIVE のまま設定を書き換えさせない（dry-run 統制の迂回を塞ぐ） */
+  ACTIVE_LOCKED: 'active_locked',
+  /** 承認しようとしている snapshot が、いまの設定の dry-run 結果と違う */
+  SNAPSHOT_MISMATCH: 'snapshot_mismatch',
 });
 
 export const API_REJECT_LABEL = Object.freeze({
@@ -58,6 +62,8 @@ export const API_REJECT_LABEL = Object.freeze({
   version_conflict: '他の操作で更新されています。読み直してからやり直してください。',
   no_snapshot: '先に dry-run を実行して対象を確定してください。',
   running: '実行中の自動化は変更できません。',
+  active_locked: '稼働中は設定を変更できません。先に一時停止してから変更してください。',
+  snapshot_mismatch: '対象がいまの設定の dry-run 結果と一致しません。もう一度 dry-run してから承認してください。',
 });
 
 const str = (v) => String(v ?? '').trim();
@@ -147,23 +153,22 @@ export function createAutomationAdminApi(deps = {}) {
       if (!res) return reject(API_REJECT.NOT_FOUND);
       return {
         ok: true, mode: 'automation-get', sideEffects: 'none',
+        writeEnabled: isWriteEnabled(env),
+        configVersion: res.configVersion,
         definition: res,
         campaign整合: checkCampaignDrift(res),
         summary: summarizeAutomation({ definition: res, lastRun: null, plannedCount: 0 }),
       };
     },
 
-    async preview({ automationId, overrides }) {
-      const preset = getAutomationPreset(automationId);
-      if (!preset) return reject(API_REJECT.NOT_FOUND);
-      const definition = buildAutomationDefinition({ preset, overrides: overrides || {}, nowIso });
-      const pinned = pinCampaign(definition.campaignId);
-      if (definition.campaignId && !pinned.ok) return reject(API_REJECT.UNKNOWN_CAMPAIGN);
-
+    /**
+     * dry-run / 保存 / 実行で**同じ対象集合**を使うための単一経路。
+     * ここ以外で対象集合を組み立てない（別ロジックが増えると snapshot がズレる）。
+     */
+    async _computeSnapshot({ definition }) {
       const occurrenceDate = jstDateString(nowMs);
       const runId = buildAutomationRunId({ automationId: definition.automationId, occurrenceDate });
       const [records, blacklist] = await Promise.all([loadCustomers(), loadBlacklist()]);
-
       const audience = buildAudience({
         records, definition, nowMs, blacklistEmails: blacklist,
         buildKey: (email) => buildRecipientKey({ automationRunId: runId, email }),
@@ -173,12 +178,67 @@ export function createAutomationAdminApi(deps = {}) {
         campaignId: definition.campaignId, emails: audience.recipients.map((r) => r.email),
       });
       return {
-        ok: true, mode: 'automation-preview', sideEffects: 'none', dryRun: true,
-        automationId: definition.automationId, automationRunId: runId, occurrenceDate,
-        campaign: pinned.ok ? pinned : null,
+        occurrenceDate, runId, audience,
         snapshotFingerprint: fingerprint,
         snapshotCount: audience.recipients.length,
-        件数: audience.counts, 除外理由: audience.skipped,
+      };
+    },
+
+    /**
+     * 対象の解決。**保存済みがあればそれが基準**で、preset は新規作成のときだけ使う。
+     * （preset を基準にすると、update 後の実設定と dry-run が食い違う）
+     */
+    async _resolveDefinition({ automationId, overrides }) {
+      const stored = store ? await store.loadDefinition(automationId) : null;
+      if (stored) {
+        const o = overrides || {};
+        return {
+          源: 'saved', stored,
+          definition: {
+            ...stored,
+            ...(o.name !== undefined ? { name: str(o.name) } : {}),
+            ...(o.quietHours !== undefined ? { quietHours: o.quietHours } : {}),
+            ...(o.maxRecipients !== undefined ? { maxRecipients: int(o.maxRecipients) } : {}),
+            ...(o.schedule !== undefined ? { schedule: str(o.schedule) } : {}),
+            ...(o.trigger !== undefined ? { trigger: o.trigger } : {}),
+            ...(o.campaignId !== undefined ? { campaignId: str(o.campaignId) } : {}),
+          },
+        };
+      }
+      const preset = getAutomationPreset(automationId);
+      if (!preset) return null;
+      return {
+        源: 'preset', stored: null,
+        definition: buildAutomationDefinition({ preset, overrides: overrides || {}, nowIso }),
+      };
+    },
+
+    async preview({ automationId, overrides }) {
+      // store が使えないなら**推測しない**（preset で代用すると保存済みと食い違う）
+      if (store) {
+        const probe = await guardStore(async () => store.loadDefinition(automationId));
+        if (probe && probe.ok === false) return probe;
+      }
+      const resolved = await this._resolveDefinition({ automationId, overrides });
+      if (!resolved) return reject(API_REJECT.NOT_FOUND);
+      const { definition } = resolved;
+      const pinned = pinCampaign(definition.campaignId);
+      if (definition.campaignId && !pinned.ok) return reject(API_REJECT.UNKNOWN_CAMPAIGN);
+
+      const snap = await this._computeSnapshot({ definition });
+      return {
+        ok: true, mode: 'automation-preview', sideEffects: 'none', dryRun: true,
+        automationId: definition.automationId, automationRunId: snap.runId,
+        occurrenceDate: snap.occurrenceDate,
+        基準: resolved.源,
+        writeEnabled: isWriteEnabled(env),
+        configVersion: resolved.stored ? resolved.stored.configVersion : null,
+        status: resolved.stored ? resolved.stored.status : 'DRAFT',
+        未保存の変更あり: resolved.源 === 'saved' && !!overrides && Object.keys(overrides).length > 0,
+        campaign: pinned.ok ? pinned : null,
+        snapshotFingerprint: snap.snapshotFingerprint,
+        snapshotCount: snap.snapshotCount,
+        件数: snap.audience.counts, 除外理由: snap.audience.skipped,
         上限: definition.maxRecipients ?? definition.maxSendsPerRun,
         quietHours: definition.quietHours,
         静音時間帯か: isQuietHours({ nowMs, quietHours: definition.quietHours }),
@@ -247,6 +307,13 @@ export function createAutomationAdminApi(deps = {}) {
         const cur = await store.loadDefinition(automationId);
         if (!cur) return reject(API_REJECT.NOT_FOUND);
         if (cur.status === AUTOMATION_STATUS.RUNNING) return reject(API_REJECT.RUNNING);
+        // ⚠️ **ACTIVE のまま設定を書き換えさせない。**
+        //    許すと「dry-run で承認した snapshot」を保ったまま対象条件だけ広げられ、
+        //    activate に置いた統制（snapshot 必須 + campaign drift 検査）を迂回できる。
+        //    変更は PAUSED / DRAFT を経由させ、再 dry-run と再承認を必須にする。
+        if (cur.status === AUTOMATION_STATUS.ACTIVE) {
+          return reject(API_REJECT.ACTIVE_LOCKED, { status: cur.status, 手順: '一時停止 → 変更 → dry-run → ACTIVE 化' });
+        }
         if (str(expectedVersion) !== str(cur.configVersion)) return reject(API_REJECT.VERSION_CONFLICT);
 
         const o = overrides || {};
@@ -268,6 +335,9 @@ export function createAutomationAdminApi(deps = {}) {
           ...(o.trigger !== undefined ? { trigger: o.trigger } : {}),
           ...pinnedFields,
           timezone: 'Asia/Tokyo',
+          // ⚠️ 設定を変えたら**承認済み snapshot を捨てる**。
+          //    残すと、変更前に承認した対象で ACTIVE 化できてしまう。
+          snapshotFingerprint: null, snapshotCount: null, snapshotOccurrenceDate: null,
           configVersion: int(cur.configVersion) + 1,
           updatedAt: nowIso,
         };
@@ -277,26 +347,53 @@ export function createAutomationAdminApi(deps = {}) {
       });
     },
 
-    /** ACTIVE 化。**snapshot 未確認・campaign 不整合では通さない** */
+    /**
+     * ACTIVE 化。**snapshot 未確認・campaign 不整合では通さない。**
+     *
+     * ⚠️ 管理者が申告した `snapshotFingerprint` を鵜呑みにせず、
+     *    **保存済み Definition から対象集合を計算し直して一致を確認**する。
+     *    dry-run / 保存 / 実行がすべて同じ経路（`_computeSnapshot`）を通る。
+     */
     async activate({ automationId, expectedVersion, snapshotFingerprint }) {
-      return guardStore(async () => {
-        const cur = await store.loadDefinition(automationId);
-        if (!cur) return reject(API_REJECT.NOT_FOUND);
-        if (str(expectedVersion) !== str(cur.configVersion)) return reject(API_REJECT.VERSION_CONFLICT);
-        if (!canTransition(cur.status, AUTOMATION_STATUS.ACTIVE)) {
-          return reject(API_REJECT.INVALID_TRANSITION, { from: cur.status, to: 'ACTIVE' });
-        }
-        if (!str(snapshotFingerprint)) return reject(API_REJECT.NO_SNAPSHOT);
-        const drift = checkCampaignDrift(cur);
-        if (!drift.ok) return reject(drift.code, { drift: drift.drift || null });
+      const cur = await guardStore(async () => store.loadDefinition(automationId));
+      if (cur && cur.ok === false) return cur;
+      if (!cur) return reject(API_REJECT.NOT_FOUND);
+      if (str(expectedVersion) !== str(cur.configVersion)) return reject(API_REJECT.VERSION_CONFLICT);
+      if (!canTransition(cur.status, AUTOMATION_STATUS.ACTIVE)) {
+        return reject(API_REJECT.INVALID_TRANSITION, { from: cur.status, to: 'ACTIVE' });
+      }
+      if (!str(snapshotFingerprint)) return reject(API_REJECT.NO_SNAPSHOT);
+      const drift = checkCampaignDrift(cur);
+      if (!drift.ok) return reject(drift.code, { drift: drift.drift || null });
 
+      // ⚠️ 申告値と**再計算値**を突き合わせる（Airtable/Redis への書き込みより前）
+      const snap = await this._computeSnapshot({ definition: cur });
+      if (str(snapshotFingerprint) !== str(snap.snapshotFingerprint)) {
+        return reject(API_REJECT.SNAPSHOT_MISMATCH, {
+          申告: str(snapshotFingerprint).slice(0, 12),
+          再計算: str(snap.snapshotFingerprint).slice(0, 12),
+          再計算件数: snap.snapshotCount,
+        });
+      }
+
+      return guardStore(async () => {
         const t = transition({ definition: cur, to: AUTOMATION_STATUS.ACTIVE, nowIso });
         if (!t.ok) return reject(API_REJECT.INVALID_TRANSITION, { reason: t.reason });
-        const next = { ...t.definition, configVersion: int(cur.configVersion) + 1, snapshotFingerprint };
+        const next = {
+          ...t.definition,
+          configVersion: int(cur.configVersion) + 1,
+          // 指紋だけでなく**件数と暦日も固定**する（実行直前の照合に全部要る）
+          snapshotFingerprint: snap.snapshotFingerprint,
+          snapshotCount: snap.snapshotCount,
+          snapshotOccurrenceDate: snap.occurrenceDate,
+        };
         const res = await store.saveDefinition({ definition: next, expectedVersion: str(cur.configVersion) });
         if (!res.ok) return reject(API_REJECT.VERSION_CONFLICT);
         await store.markActive(automationId);
-        return { ok: true, mode: 'automation-activate', definition: res.definition };
+        return {
+          ok: true, mode: 'automation-activate', definition: res.definition,
+          承認したsnapshot: { 件数: snap.snapshotCount, 暦日: snap.occurrenceDate },
+        };
       });
     },
 

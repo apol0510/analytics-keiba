@@ -323,7 +323,8 @@ test('timezone は固定オフセットで判定する（DST に依存しない�
 // ── drift 検知 ────────────────────────────────────────────────
 
 test('snapshot 増加 / campaignVersion 変更 / contentHash 変更を検知する', () => {
-  const base = { snapshotCount: 10, campaignVersion: '3', contentHash: 'abc' };
+  // ⚠️ 承認済み snapshot（指紋 + 件数）が無いと件数比較へ進まない仕様なので、指紋を持たせる
+  const base = { snapshotFingerprint: 'fp', snapshotCount: 10, campaignVersion: '3', contentHash: 'abc' };
   assert.equal(detectDrift({ dryRun: base, current: base }).ok, true);
   assert.deepEqual(detectDrift({ dryRun: base, current: { ...base, snapshotCount: 11 } }).drifts, [DRIFT.SNAPSHOT_GREW]);
   assert.deepEqual(detectDrift({ dryRun: base, current: { ...base, campaignVersion: '4' } }).drifts, [DRIFT.CAMPAIGN_VERSION_CHANGED]);
@@ -477,25 +478,35 @@ const CRON = readFileSync(
 );
 
 test('guard: ゲート未設定なら Redis / Airtable へ接続しない', async () => {
-  const { readGates, handler } = await import('../../../netlify/functions/cron-marketing-automation.js');
-  assert.equal(readGates({}).allOpen, false);
-  assert.equal(readGates({ MARKETING_AUTOMATION_SCHEDULER_ENABLED: 'true' }).allOpen, false);
+  const { readGates, handler, ARMED_ENV } = await import('../../../netlify/functions/cron-marketing-automation.js');
+  const NOWMS = Date.parse('2026-08-06T05:00:00.000Z');
+  const TODAY = '2026-08-06';
+  assert.equal(readGates({}, NOWMS).allOpen, false);
+  assert.equal(readGates({ MARKETING_AUTOMATION_SCHEDULER_ENABLED: 'true' }, NOWMS).allOpen, false);
   assert.equal(readGates({
     MARKETING_AUTOMATION_SCHEDULER_ENABLED: 'true',
     MARKETING_CAMPAIGN_ENABLED: 'true',
-  }).allOpen, false, '2 つでも開いてしまう');
+  }, NOWMS).allOpen, false, '2 つでも開いてしまう');
+  // ⚠️ 既存 2 env は本番で既に true。**自動化専用の当日武装**が無ければ開かない
   assert.equal(readGates({
     MARKETING_AUTOMATION_SCHEDULER_ENABLED: 'true',
     MARKETING_CAMPAIGN_ENABLED: 'true',
     MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true',
-  }).allOpen, true);
+  }, NOWMS).allOpen, false, '当日武装なしで開いてしまう');
+  assert.equal(readGates({
+    MARKETING_AUTOMATION_SCHEDULER_ENABLED: 'true',
+    MARKETING_CAMPAIGN_ENABLED: 'true',
+    MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true',
+    [ARMED_ENV]: TODAY,
+  }, NOWMS).allOpen, true);
 
   // 実際に叩いても Redis へ 1 回も出ない
   const prevFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ result: null }) }; };
   try {
-    const res = await handler({});
+    // 認可は通した上で（スケジュール実行相当）、ゲートが閉じていることを確かめる
+    const res = await handler({ headers: { 'x-netlify-event': 'schedule' } });
     const body = JSON.parse(res.body);
     assert.equal(res.statusCode, 200);
     assert.equal(body.ran, false);

@@ -46,7 +46,21 @@ function redisCmd(args) {
 }
 
 const CUSTOMERS_TABLE = 'Customers';
-const MAX_PAGES = 60;
+/**
+ * ⚠️ 上限に達したら**黙って打ち切らず失敗させる**。
+ * 以前は 60 ページ（6,000 件）で `break` して黙って返していた。外部無料ユーザーの
+ * 取り込みで Customers が 15,000 件規模になると、**先頭 6,000 件だけで対象集合・件数・
+ * 指紋を計算し、しかもエラーにならない**。過小な対象で dry-run が通り、そのまま承認されうる。
+ */
+const MAX_PAGES = 300;
+export class CustomerFetchTruncatedError extends Error {
+  constructor(pages, count) {
+    super('customers_truncated');
+    this.name = 'CustomerFetchTruncatedError';
+    this.code = 'customers_truncated';
+    this.pages = pages; this.count = count;
+  }
+}
 
 function json(statusCode, body) {
   return {
@@ -75,7 +89,8 @@ async function fetchAllReadOnly({ KEY, BASE, table }) {
     const data = await res.json();
     out.push(...(data.records || []));
     offset = data.offset; pages += 1;
-    if (offset && pages >= MAX_PAGES) break;
+    // ⚠️ まだ続きがあるのに上限に達した = 対象集合が不完全。**返さずに落とす**
+    if (offset && pages >= MAX_PAGES) throw new CustomerFetchTruncatedError(pages, out.length);
   } while (offset);
   return out;
 }
@@ -146,6 +161,16 @@ export const handler = async (event) => {
     }
     return json(200, out);
   } catch (e) {
+    // 顧客一覧が途中までしか取れていない場合は、**過小な対象で先へ進ませない**
+    if (e instanceof CustomerFetchTruncatedError) {
+      console.error('❌ [marketing-automation] 顧客一覧が上限で打ち切られました');
+      return json(503, {
+        ok: false, code: e.code,
+        error: '顧客一覧を最後まで取得できませんでした。対象が不完全なため中止しました。',
+        取得ページ数: e.pages, 取得件数: e.count, 上限: MAX_PAGES,
+        sideEffects: 'none',
+      });
+    }
     // ⚠️ 例外の中身をそのまま返さない（顧客データが混ざりうる）
     console.error('❌ [marketing-automation] 処理に失敗しました');
     return json(500, { error: 'internal error' });

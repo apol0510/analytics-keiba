@@ -178,9 +178,9 @@ test('guard: 応答にアドレスを含めない（件数と理由コードだ�
   const i = API.indexOf('async preview(');
   const body = API.slice(i, API.indexOf('async runs(', i));
   // recipients（アドレスを含む配列）をそのまま返していない
-  assert.equal(/recipients:\s*audience\.recipients/.test(body), false, 'アドレス配列を返している');
-  assert.match(body, /件数: audience\.counts/);
-  assert.match(body, /除外理由: audience\.skipped/);
+  assert.equal(/recipients:\s*(snap\.)?audience\.recipients/.test(body), false, 'アドレス配列を返している');
+  assert.match(body, /件数: (snap\.)?audience\.counts/);
+  assert.match(body, /除外理由: (snap\.)?audience\.skipped/);
 });
 
 // ── 画面 ──────────────────────────────────────────────────────
