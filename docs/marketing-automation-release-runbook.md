@@ -206,11 +206,35 @@ netlify env:set MARKETING_AUTOMATION_DISPATCH_ARMED 2026-08-XX --context product
 
 | | |
 |---|---|
-| 写しの作り方 | 管理画面「顧客一覧の写しを更新（依頼）」→ **Redis に依頼札が立つだけ**。次の tick（最大 10 分）が拾って作る |
+| 写しの作り方 | **手動作成は不要**。`cron-prospect-worker` が **写しが無い / 6 時間より古い**ときに**自動で作り直す**（2026-08-06 の実測: 初回 tick が `snapshot_missing` を検知して自動生成） |
+| 早めたいとき | 管理画面「顧客一覧の写しを更新（依頼）」→ **Redis に依頼札が立つだけ**。次の tick（最大 10 分）が拾って作る |
 | 公開 URL から起動 | **できない**（scheduled function への HTTP は Netlify が 403） |
 | 写しが無い / 古い（6 時間）/ 壊れている | **fail-closed で 503**（古い対象で送らせない） |
 
-**S2 の前に写しを 1 度作り、`prospect status` / `preview` が 200 で返ることを確認する。**
+### ⚠️ **全閉鎖でも `ak:customer-snapshot:` だけは Redis write が発生する**
+
+写しの生成・更新は **どの env でもゲートしていない**。読み手（dry-run / ACTIVE 化 /
+prospect の照合）を fail-closed にするために、写しが無いと何も判断できなくなるため。
+**自動化・見込み客の env が全て未設定でも、10 分ごとの tick が写しの鮮度を見て、
+必要なら Airtable から読み直して Redis へ書く。**
+
+| | |
+|---|---|
+| Airtable | **GET のみ**（`Email` 列だけ・ページング）。**write は 1 度も発生しない** |
+| Redis | `ak:customer-snapshot:meta` と `ak:customer-snapshot:emails:<gen>:<i>` を書く |
+| 配信系 write との区別 | **これは配信ではなくキャッシュ更新**。ScheduledEmails / CampaignDeliveries / Customers には触れない |
+| 頻度 | 6 時間ごと（`SNAPSHOT_MAX_AGE_SEC`）。tick は 10 分ごとだが、鮮度内なら `更新不要` で何もしない |
+
+> 「本番 Redis write 0」を条件にする場面では、**この名前空間だけは例外**として扱うこと。
+> 止めたい場合は scheduled function 自体を外す必要があり、そうすると
+> dry-run も ACTIVE 化も fail-closed で止まる（**現時点では止めない方針**）。
+
+### P1 でやること（作成ではなく確認）
+
+1. 管理画面「件数を確認」→ `status` が **200**
+2. 「配信の下見」→ `preview` が **200**（`snapshot_missing` / `snapshot_stale` が出ないこと）
+3. `cron-prospect-worker` のログで `写し` の **件数**と**経過秒**が妥当なこと
+   （`更新不要: true` が続いていれば健全。`契機: snapshot_missing` が毎回出るなら異常）
 
 ## 見込み客プール（外部リスト）の開放
 
@@ -218,7 +242,7 @@ netlify env:set MARKETING_AUTOMATION_DISPATCH_ARMED 2026-08-XX --context product
 
 | 段 | 内容 | 動かす env |
 |---|---|---|
-| P1 | 写しを作る（上記）＋ `status` / `preview` が 200 | なし |
+| P1 | **写しの存在・鮮度・件数を確認**（作成は自動。下記参照）＋ `status` / `preview` が 200 | なし |
 | P2 | CSV を**少数**取り込む（既存顧客・除外済みは入らないことを確認） | `MARKETING_PROSPECT_WRITE_ENABLED` |
 | P3 | webhook から反応を拾えることを確認（開封 1 件で ENGAGED になる） | `MARKETING_PROSPECT_EVENTS_ENABLED` |
 | P4 | 反応者の**自動登録**（Customers へ CREATE） | `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` |

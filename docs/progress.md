@@ -237,6 +237,19 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 > 影響は `ak:customer-snapshot:` 配下のみで、顧客データ・配信・課金には触れていない。
 > **P1（顧客 snapshot 初回作成）は改めて実行する必要が無い。**
 
+#### 仕様として確定させたこと
+
+| 項目 | 内容 |
+|---|---|
+| 生成の契機 | **ゲート無し**。`cron-prospect-worker` が 10 分ごとに鮮度を見て、**無い / 6 時間より古い**なら作り直す |
+| Airtable | **GET のみ**（`Email` 列だけ）。**write は 1 度も発生しない** |
+| Redis | `ak:customer-snapshot:meta` と `ak:customer-snapshot:emails:<gen>:<i>` |
+| 配信系 write との区別 | **配信ではなくキャッシュ更新**。ScheduledEmails / CampaignDeliveries / Customers に触れない |
+| 運用上の言い方 | **「全閉鎖でも snapshot 名前空間だけは Redis write が発生する」**と明記して扱う |
+| 止めるか | **止めない**（止めると dry-run も ACTIVE 化も fail-closed で動かなくなる）。今回はコード変更しない |
+
+runbook の **P1 を「初回作成」から「存在・鮮度・件数の確認」へ変更**した。
+
 #### `cron-marketing-automation`（`0 1 * * *` = JST 10:00）— **未起動（時刻前）**
 
 - 直近 24h の invocation で **handler の出力（`marketing-automation-scheduler`）は 0 件**。
@@ -246,6 +259,26 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 - **初回起動は 2026-08-07 01:00 UTC（JST 10:00）**。それまでは未起動が正常
 - 起動したら `ran:false` / `reason:"gates_closed"` / `接続 {redis:false, airtable:false}` /
   `sideEffects:'none'` を確認する（runbook S1）
+
+##### 初回起動の実測
+
+**未実施（時刻前）。** 確認時点は UTC 2026-08-06 15:38（JST 2026-08-07 00:38）で、
+初回は **UTC 2026-08-07 01:00（JST 10:00）**。約 9.4 時間後。
+
+確認する項目（read-only）:
+
+| 項目 | 期待 |
+|---|---|
+| scheduled invocation | **1 回**（時刻が 01:00 UTC 付近） |
+| `isScheduledPayload` 判定 | 通る（`next_run` を含む本文が渡る） |
+| gate | `scheduler` / `armed` / `enqueue` すべて **closed** |
+| Redis / Airtable 接続 | **開始しない**（`接続 {redis:false, airtable:false}`） |
+| ScheduledEmails 作成 | **0** |
+| `sideEffects` | `'none'` |
+| error | **0** |
+
+⚠️ **invocation が 0 件だった場合**は `next_run` 前提が崩れている可能性があり、
+その場合も **env は開けず**、原因調査を先に行う（コード修正が要るなら別 branch / 別 Draft PR）。
 
 ### ✅ 残件 B-4 / B-5 を解消（2026-08-06・Draft PR #242）
 
