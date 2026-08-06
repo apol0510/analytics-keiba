@@ -229,6 +229,52 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </div>
         <div class="dry-panel" id="autoListResult" hidden></div>
 
+        <!-- ── 見込み客プール（外部 CSV）─────────────────────────────
+             反応した人だけ Customers へ登録する。未反応のアドレスは
+             顧客台帳へ入れない。**保存系ボタンは env が開くまで disabled**。 -->
+        <h3 class="sub-h">見込み客プール（外部リスト）</h3>
+        <p class="imp-meta">
+          1 回でも開封・クリックした人は<strong>自動で</strong>顧客台帳へ登録されます（定期実行）。
+          下の「反応した人を登録」は<strong>手動の救済・再実行</strong>用です。
+          3 回送って無反応なら登録せず、以後の配信対象から永久に外します
+          （除外は台帳に残り、CSV を入れ直しても復活しません）。
+        </p>
+
+        <div class="toolbar">
+          <button type="button" id="prSnapshot" class="btn-ghost btn-md">顧客一覧の写しを更新（依頼）</button>
+          <button type="button" id="prStatus" class="btn-ghost btn-md">件数を確認</button>
+          <button type="button" id="prPreview" class="btn-primary btn-md">配信の下見（送信しません）</button>
+          <button type="button" id="prPromoPreview" class="btn-ghost btn-md">昇格の下見（登録しません）</button>
+        </div>
+
+        <dl class="auto-stats" id="prCounts" hidden>
+          <div><dt>送信候補</dt><dd id="prActiveV">-</dd></div>
+          <div><dt>反応済み・未登録</dt><dd id="prEngagedV">-</dd></div>
+          <div><dt>永久除外</dt><dd id="prBlockedV">-</dd></div>
+          <div><dt>今日の配信対象</dt><dd id="prTargetV">-</dd></div>
+          <div><dt>昇格予定</dt><dd id="prPromoV">-</dd></div>
+        </dl>
+        <p class="imp-meta" id="prSkip"></p>
+
+        <div class="field-row">
+          <label for="prCsv">CSV（1 行 1 メールアドレス。ヘッダ <code>email</code> 可）</label>
+          <textarea id="prCsv" rows="4" placeholder="a@example.com&#10;b@example.com"></textarea>
+        </div>
+        <div class="field-row">
+          <label for="prLookup">1 件の状態を見る（送信回数・反応・除外）</label>
+          <input type="email" id="prLookup" placeholder="address@example.com" />
+        </div>
+
+        <div class="toolbar">
+          <button type="button" id="prLookupBtn" class="btn-ghost btn-md">状態を見る</button>
+          <button type="button" id="prIntake" class="btn-ghost btn-md" disabled aria-disabled="true">CSV を取り込む（未有効）</button>
+          <button type="button" id="prPromote" class="btn-ghost btn-md" disabled aria-disabled="true">反応した人を登録（手動救済・未有効）</button>
+          <button type="button" id="prSuppress" class="btn-ghost btn-md" disabled aria-disabled="true">この 1 件を除外（未有効）</button>
+          <button type="button" id="prPurge" class="btn-ghost btn-md" disabled aria-disabled="true">除外済みのアドレスを削除（未有効）</button>
+        </div>
+        <p class="imp-meta" id="prState">—</p>
+        <div class="dry-panel" id="prResult" hidden></div>
+
         <!-- 設定フォーム（プリセット / 名前 / campaign / 実行条件 / quiet hours / 最大件数） -->
         <div class="auto-panel">
           <dl class="auto-stats">
@@ -4687,6 +4733,149 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     });
     $('autoPause')?.addEventListener('click', () => autoWrite('pause', { expectedVersion: autoExpected() }));
     $('autoCancel')?.addEventListener('click', () => autoWrite('cancel', { expectedVersion: autoExpected() }));
+
+
+    // ── 見込み客プール ────────────────────────────────────────
+    const PR_API = '/.netlify/functions/admin-marketing-prospect';
+    async function prCall(payload) {
+      const secret = (($('secret') || {}).value || '').trim();
+      if (!secret) throw new Error('管理シークレットを入力してください');
+      const res = await fetch(PR_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      // write ゲートの状態はどの応答でも反映し直す
+      if (typeof data.writeEnabled === 'boolean') prApplyGate(data.writeEnabled);
+      if (!res.ok) {
+        if (data.code === 'prospect_write_blocked') prApplyGate(false);
+        const e = new Error(data.error || ('HTTP ' + res.status)); e.data = data; throw e;
+      }
+      return data;
+    }
+    function prApplyGate(enabled) {
+      for (const id of ['prIntake', 'prPromote', 'prSuppress', 'prPurge']) {
+        const b = $(id);
+        if (!b) continue;
+        b.disabled = !enabled;
+        b.setAttribute('aria-disabled', String(!enabled));
+      }
+    }
+    const prSay = (t) => { const el = $('prState'); if (el) el.textContent = t; };
+    const prShow = (o) => {
+      const box = $('prResult');
+      if (!box) return;
+      box.hidden = false;
+      box.textContent = JSON.stringify(o, null, 1);
+    };
+    /** CSV を行に割る（ヘッダ email があれば飛ばす） */
+    function prParseCsv(text) {
+      return String(text || '').split(/\r?\n/)
+        .map((l) => l.split(',')[0].trim())
+        .filter((e) => e && e.toLowerCase() !== 'email')
+        .map((email) => ({ email }));
+    }
+
+    $('prStatus')?.addEventListener('click', async () => {
+      try {
+        prSay('確認中…');
+        const o = await prCall({ action: 'status' });
+        $('prCounts').hidden = false;
+        const set = (k, v) => { const el = $(k); if (el) el.textContent = String(v ?? '-'); };
+        set('prActiveV', (o['件数']['送信候補'] ?? 0).toLocaleString());
+        set('prEngagedV', (o['件数']['反応済み未登録'] ?? 0).toLocaleString());
+        set('prBlockedV', (o['件数']['永久除外'] ?? 0).toLocaleString());
+        prShow(o['設定']);
+        prSay('確認しました（書き込みはしていません）');
+      } catch (e) { prSay(e.message || '確認に失敗しました'); }
+    });
+
+    // ⚠️ 更新そのものは定期実行が行う。ここは**依頼を出すだけ**
+    //    （公開 URL から重い全件走査を起こさせないため）
+    $('prSnapshot')?.addEventListener('click', async () => {
+      try {
+        prSay('写しの更新を依頼中…');
+        const o = await prCall({ action: 'request-snapshot-refresh' });
+        prShow(o);
+        prSay('更新を依頼しました。次の定期実行（最大 10 分）で反映されます。');
+      } catch (e) { prSay(e.message || '依頼に失敗しました'); }
+    });
+
+    $('prPreview')?.addEventListener('click', async () => {
+      try {
+        prSay('下見中…（1 通も送りません）');
+        const o = await prCall({ action: 'preview' });
+        $('prCounts').hidden = false;
+        const el = $('prTargetV'); if (el) el.textContent = (o['件数']['対象'] ?? 0).toLocaleString();
+        const sk = $('prSkip');
+        if (sk) {
+          const parts = Object.entries(o['除外理由'] || {}).map(([k, v]) => k + ': ' + v);
+          sk.textContent = parts.length ? '除外の内訳 — ' + parts.join(' / ') : '除外はありません。';
+        }
+        prShow(o['件数']);
+        prSay('下見が終わりました（1 通も送っていません）');
+      } catch (e) { prSay(e.message || '下見に失敗しました'); }
+    });
+
+    $('prPromoPreview')?.addEventListener('click', async () => {
+      try {
+        prSay('昇格の下見中…（1 行も書きません）');
+        const o = await prCall({ action: 'promotion-preview' });
+        $('prCounts').hidden = false;
+        const el = $('prPromoV'); if (el) el.textContent = (o['件数']['登録予定'] ?? 0).toLocaleString();
+        prShow({ 件数: o['件数'], 書き込む列: o['書き込む列'] });
+        prSay('昇格の下見が終わりました（Airtable へ 1 行も書いていません）');
+      } catch (e) { prSay(e.message || '昇格の下見に失敗しました'); }
+    });
+
+    $('prLookupBtn')?.addEventListener('click', async () => {
+      try {
+        const email = ($('prLookup')?.value || '').trim();
+        if (!email) throw new Error('アドレスを入力してください');
+        prShow(await prCall({ action: 'lookup', email }));
+        prSay('状態を表示しました');
+      } catch (e) { prSay(e.message || '見つかりませんでした'); }
+    });
+
+    $('prIntake')?.addEventListener('click', async () => {
+      try {
+        const rows = prParseCsv($('prCsv')?.value);
+        if (rows.length === 0) throw new Error('CSV が空です');
+        prSay(rows.length + ' 件を取り込み中…');
+        prShow(await prCall({ action: 'intake', rows, batchId: 'prospect-' + new Date().toISOString().slice(0, 10) }));
+        prSay('取り込みました（既存顧客・除外済みは入りません）');
+      } catch (e) { prSay(e.message || '取り込みに失敗しました'); }
+    });
+
+    $('prPromote')?.addEventListener('click', async () => {
+      try {
+        // ⚠️ 下見の件数と一致しなければ API 側が拒否する
+        const pv = await prCall({ action: 'promotion-preview' });
+        const n = pv['件数']['登録予定'] ?? 0;
+        if (n === 0) { prSay('登録対象がありません'); return; }
+        prSay(n + ' 件を顧客台帳へ登録中…');
+        prShow(await prCall({ action: 'promote', confirmCount: n }));
+        prSay('登録しました');
+      } catch (e) { prSay(e.message || '登録に失敗しました'); }
+    });
+
+    $('prSuppress')?.addEventListener('click', async () => {
+      try {
+        const email = ($('prLookup')?.value || '').trim();
+        if (!email) throw new Error('除外するアドレスを入力してください');
+        prShow(await prCall({ action: 'suppress', email, reason: 'manual' }));
+        prSay('除外しました（台帳に残るので再取り込みでも復活しません）');
+      } catch (e) { prSay(e.message || '除外に失敗しました'); }
+    });
+
+    $('prPurge')?.addEventListener('click', async () => {
+      try {
+        prSay('除外済みアドレスを削除中…');
+        prShow(await prCall({ action: 'purge', limit: 500 }));
+        prSay('削除しました（台帳の hash と理由は残ります）');
+      } catch (e) { prSay(e.message || '削除に失敗しました'); }
+    });
 
     /** 通知（内容別に色分けし、「何をすべきか」まで書く） */
     function mkNotify(kind, text, detail) {

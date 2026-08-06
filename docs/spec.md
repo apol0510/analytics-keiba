@@ -302,6 +302,79 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | 送信経路（唯一） | `netlify/functions/marketing-campaign-dispatch.js` |
 | 画面 | `src/pages/admin/premium-plus-eligibility.astro` |
 
+## 見込み客プール（外部リスト・2026-08-06）
+
+外部 CSV の 1 万数千件は **Airtable Customers へ入れない**。Redis の見込み客プールで扱い、
+**1 回でも open / click した人だけ**を Customers へ昇格させる。
+反応が無いまま 3 回送ったら**登録せず、以後の配信対象から永久に外す**。
+
+### 状態機械（単一源 `src/lib/marketing/prospectPolicy.js`）
+
+```
+NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録──▶ PROMOTED
+                │
+                ├─ 3 回 無反応 ─────────────▶ EXHAUSTED（登録しない）
+                └─ bounce / 苦情 / 配信停止 ─▶ SUPPRESSED（即時）
+```
+
+- 反応とみなすのは **open / click だけ**（`delivered` は反応ではない）
+- 同一相手への最小間隔 **3 日**
+- **除外は反応より優先**。苦情の後に開封しても戻さない
+
+### ⚠️ 永続抑止台帳（TTL を付けない）
+
+`ak:prospect:blocked:<sha256>` に **TTL なし**で `hash` / `kind` / `reason` / `at` / `sends` を残す。
+**TTL で消すと CSV を入れ直したときに配信対象として復活する。**
+台帳は**アドレスを持たない**。生アドレスを持つのは `ak:prospect:p:` の**配信中のレコードだけ**で、
+抑止後は `purge()` で削除してよい（台帳が残るので復活しない）。取り込みは **hash で台帳と突合**する。
+
+### 反応者は自動で登録される
+
+`netlify/functions/cron-prospect-worker.js`（**10 分ごとの Scheduled Function**）が、
+ENGAGED を Customers へ **CREATE 1 件**する。
+
+| 仕組み | 目的 |
+|---|---|
+| `promo-lock:<hash>` の `SET NX` | 自動と手動（管理画面）の**二重登録を防ぐ** |
+| **CREATE 成功時だけ** PROMOTED | 作られていないのに完了扱いにしない |
+| 失敗時は **ENGAGED 維持 + claim 解放** | 次の tick で**再試行**する |
+| 写しが使えなければ**登録しない** | 既存顧客との重複を判定できないため |
+
+書く列は取り込みと**同じ allow-list**（`Email` / `プラン=Free` / `ポイント` / `Source`）。
+課金・権利・配信停止の列は 1 つも書かない。`PATCH` / `DELETE` の経路を持たない。
+
+### 顧客一覧の写し（同期 Function をタイムアウトさせない）
+
+dry-run と ACTIVE 化が Customers を全件・逐次取ると、**約 4,000 件でタイムアウト域**、
+15,800 件では確実に失敗する。走査は **Scheduled Function だけ**が行い、
+同期側は Redis の写し（`ak:customer-snapshot:`）を読む。
+
+- **公開 URL から走査を起動できない**（scheduled function への HTTP は Netlify が 403）
+- 管理画面の「写しを更新」は **認証済み管理 API が Redis に依頼札を立てるだけ**。
+  次の tick が拾う（管理 API は自分で走査しない）
+- 写しが**無い / 古い（6 時間）/ 壊れている**ときは **fail-closed**
+
+### 単一源
+
+| 目的 | ファイル |
+|---|---|
+| 状態機械・判定 | `src/lib/marketing/prospectPolicy.js` |
+| 保存（Redis / 台帳 / claim） | `src/lib/marketing/prospectStore.js` |
+| 配信対象・昇格計画・イベント反映 | `src/lib/marketing/prospectPipeline.js` |
+| 顧客一覧の写し | `src/lib/marketing/customerSnapshotCache.js` |
+| 管理 API の中身 | `src/lib/marketing/prospectAdminApi.js` |
+| 管理 API | `netlify/functions/admin-marketing-prospect.js` |
+| 自動処理（昇格・写し更新） | `netlify/functions/cron-prospect-worker.js` |
+| 配信計画（customer + prospect） | `src/lib/marketing/automationTickPlan.js` |
+| 画面 | `src/pages/admin/premium-plus-eligibility.astro` |
+
+### ゲート（いずれも production 未設定）
+
+`MARKETING_PROSPECT_WRITE_ENABLED`（取込・手動昇格・除外・削除）/
+`MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED`（**自動登録**）/
+`MARKETING_PROSPECT_EVENTS_ENABLED`（webhook からの反映）/
+`MARKETING_AUTOMATION_ENQUEUE_ENABLED`（cron からの enqueue）
+
 ## AK 専用 CRM の責務（2026-08-04 / 大規模化の土台）
 
 `/admin/premium-plus-eligibility/` は **AK 専用の「顧客販売・マーケティング管理」**。

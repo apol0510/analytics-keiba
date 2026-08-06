@@ -29,6 +29,9 @@ import {
 import { emailMatchFormula } from '../../src/lib/webhooks/airtableFormula.js';
 import { applyPaymentEmailEvents } from '../../src/lib/payments/paymentEmailWebhook.js';
 import { getRecord, patchRecord } from '../../src/lib/payments/paymentEmailDeps.js';
+import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
+import { classifyEvent } from '../../src/lib/marketing/prospectPolicy.js';
+import { planProspectEventUpdates } from '../../src/lib/marketing/prospectPipeline.js';
 
 config();
 
@@ -135,6 +138,14 @@ export default async (req) => {
       ledger = { ...ledger, errors: 1 };
     }
 
+    // ── 6. 見込み客プールへの反映（既定 OFF）────────────────────────
+    let prospect = { enabled: false, engaged: 0, suppressed: 0, notFound: 0, errors: 0 };
+    try {
+      prospect = await applyProspectEvents({ events, now: Date.now() });
+    } catch {
+      prospect = { ...prospect, errors: 1 };
+    }
+
     // 件数のみ（メールアドレス・recordId を出さない）
     console.log('📨 [sendgrid-webhook] 処理完了:', {
       received: events.length,
@@ -142,8 +153,9 @@ export default async (req) => {
       failed,
       paymentEmail,
       ledger,
+      prospect,
     });
-    return jsonResponse(200, { success: true, received: events.length, processed, failed, paymentEmail, ledger });
+    return jsonResponse(200, { success: true, received: events.length, processed, failed, paymentEmail, ledger, prospect });
   } catch {
     console.error('❌ [sendgrid-webhook] 処理エラー');
     return jsonResponse(500, { error: 'Webhook processing failed' });
@@ -162,6 +174,47 @@ export default async (req) => {
  *   `ResolutionStatus=unresolved` として顧客へは結び付けない（推測しない）。
  * - **失敗を沈黙させない**。落ちた分は `failed` と `failureReasons`（固定の理由コード）に出す。
  */
+/**
+ * 見込み客プールへイベントを反映する（**既定 OFF**）。
+ *
+ * ⚠️ 反応（open / click）は状態を ENGAGED にするだけで、**Airtable へは書かない**
+ *    （昇格は管理画面から明示的に行う）。除外（bounce / 苦情 / 配信停止）は**即時**。
+ * ⚠️ Redis の `ak:prospect:` 配下のみ。既存の台帳・決済メール処理には触れない。
+ * ⚠️ ここが失敗しても webhook 全体は 200 を返す（配信基盤の再送を招かない）。
+ */
+async function applyProspectEvents({ events, now }) {
+  const out = { enabled: false, engaged: 0, suppressed: 0, notFound: 0, errors: 0 };
+  if (process.env.MARKETING_PROSPECT_EVENTS_ENABLED !== 'true') return out;
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return out;
+  out.enabled = true;
+
+  const store = createProspectStore({
+    cmd: (args) => fetch(process.env.UPSTASH_REDIS_REST_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`upstash_http_${r.status}`);
+      return (await r.json()).result;
+    }),
+  });
+
+  const { updates } = planProspectEventUpdates({ events, classify: classifyEvent });
+  for (const u of updates) {
+    try {
+      const r = u.action === 'suppress'
+        ? await store.recordSuppression({ email: u.email, nowMs: now, reason: u.reason })
+        : await store.recordEngagement({ email: u.email, nowMs: now, kind: u.kind });
+      if (!r.ok) { out.notFound += 1; continue; }
+      if (u.action === 'suppress') out.suppressed += 1; else if (r.changed) out.engaged += 1;
+    } catch { out.errors += 1; }
+  }
+  return out;
+}
+
 async function applyEmailEventLedger({ events, now }) {
   const {
     buildLedgerBatch, assertOnlyLedgerFields, isLedgerWriteEnabled, EMAIL_EVENTS_TABLE,
