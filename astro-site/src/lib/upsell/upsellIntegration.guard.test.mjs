@@ -181,6 +181,17 @@ test('7-c. 説明モジュールは判定を再実装しない（純粋・read-o
   assert.ok(/resolveUpsellForCustomer/.test(explain), '単一源を経由していない');
 });
 
+test('7-c-2. 管理画面は経過日数の文言を自前で決めない（未記録の決め打ちを禁止）', () => {
+  // ROUTE A は daysSincePremium が常に null。ページ側で null == 未記録 と決め打ちすると
+  // PaidAt を持つ三連複会員に「データ欠損」と誤表示される（2026-08-07 の表示不備）。
+  const code = strip(adminPage);
+  assert.ok(!/daysSincePremium == null \?\s*'[^']*未記録/.test(code),
+    'null を「未記録」と決め打ちしている');
+  assert.ok(!/未記録/.test(code), '経過日数の文言をページに直書きしている');
+  // 文言は単一源から受け取る
+  assert.ok(/daysSincePremiumText/.test(code), '単一源の文言を使っていない');
+});
+
 test('7-d. targetOverride は管理経路だけ。顧客向けページ/API では使わない', () => {
   for (const [name, src] of [
     ['upsell.json', upsellApi], ['stage API', stageApi],

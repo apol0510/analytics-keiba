@@ -166,8 +166,12 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
       hasSanrenpuku: member.hasSanrenpuku,
       premiumActive: member.premiumActive,
       daysSincePremium: release.daysSincePremium,
-      // 経過日数が取れないときに推測しない（PaidAt は旧会員で構造的に空）
-      daysSincePremiumText: describeDaysSincePremium(release.daysSincePremium),
+      // 経過日数が取れないときに推測しない。ROUTE A の null（判定対象外）と
+      // PaidAt 欠損の null は意味が違うので、route と PaidAt の有無を渡して区別させる。
+      daysSincePremiumText: describeDaysSincePremium(release.daysSincePremium, {
+        route: release.route,
+        hasPaidAt: member.premiumPaidAtMs !== null && member.premiumPaidAtMs !== undefined,
+      }),
 
       // 販売対象・資格
       route: release.route,
