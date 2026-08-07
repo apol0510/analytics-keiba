@@ -1467,6 +1467,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
   .ppe .memo-view { background: rgba(11,17,32,.6); border-left: 3px solid rgba(245,196,81,.5); border-radius: 6px; padding: .5rem .7rem; font-size: .78rem; color: #cbd5e6; margin-top: .6rem; }
+  /* 三連複保有バッジ。プラン名を書き換えず、隣に添えて一目で分かるようにする */
+  .ppe .srp-badge {
+    display: inline-block; margin-left: .4rem; padding: 1px 7px;
+    font-size: .68rem; font-weight: 700; line-height: 1.6; white-space: nowrap;
+    color: #7ee0c0; background: rgba(126,224,192,.10);
+    border: 1px solid rgba(126,224,192,.42); border-radius: 999px;
+  }
+  /* 旧プランで Premium 期限切れ＝現在は閲覧不可。保有と同じ色に見せない */
+  .ppe .srp-badge.off {
+    color: #9fb0c9; background: rgba(159,176,201,.10); border-color: rgba(159,176,201,.35);
+  }
+  .ppe .srp-note { font-size: .74rem; color: #9fb0c9; line-height: 1.7; margin-top: -.2rem; }
+
   /* 「自動」の判定ルール（既定は畳んでおき、必要なときだけ開く） */
   .ppe .auto-rules { margin-top: .6rem; font-size: .78rem; color: #9fb0c9; }
   .ppe .auto-rules summary { cursor: pointer; color: #cbd5e6; }
@@ -2371,7 +2384,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         c2.appendChild(badge);
         tr.appendChild(c2);
 
-        tr.appendChild(td('c-plan', 'プラン', r.plan || '—', r.plan ? '' : 'muted'));
+        // プラン列: プラン名はそのまま。三連複保有者にはバッジを添える。
+        // ⚠️ 「プラン=Premium + LifetimeSanrenpuku=true」は三連複購入者だが、
+        //    プラン名だけでは分からない。旧形式（プラン=Premium Sanrenpuku）と
+        //    同じバッジで見分けられるようにする（文言の正本は sanrenpukuDisplay.js）。
+        const cP = document.createElement('td');
+        cP.className = 'c-plan';
+        cP.setAttribute('data-label', 'プラン');
+        const pn = document.createElement('span');
+        pn.textContent = r.plan || '—';
+        if (!r.plan) pn.className = 'muted';
+        cP.appendChild(pn);
+        if (r.sanrenpukuBadge) {
+          const sb = document.createElement('span');
+          sb.className = 'srp-badge' + (r.sanrenpukuBasis === 'legacy_expired' ? ' off' : '');
+          sb.textContent = r.sanrenpukuBadge;
+          if (r.sanrenpukuNote) sb.title = r.sanrenpukuNote;
+          cP.appendChild(sb);
+        }
+        tr.appendChild(cP);
         tr.appendChild(td('c-route', 'Route', ROUTE_SHORT[r.route] || r.route));
 
         // 区分（表示専用。route 未成立でレビュー対象に出している理由を明示する）
@@ -2450,8 +2481,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const info = document.createElement('div'); info.className = 'dt-sec';
       const h1 = document.createElement('h3'); h1.textContent = '基本情報'; info.appendChild(h1);
       const dl = document.createElement('dl'); dl.className = 'kv';
+      // 「プラン（会員ランク）」と「三連複（買い切りの entitlement）」は別概念なので
+      // 必ず別項目として出す。三連複は保有の**根拠と寿命**まで日本語で示す。
       kvRow(dl, 'プラン', r.plan || '—');
-      kvRow(dl, '三連複', r.hasSanrenpuku ? 'あり' : 'なし');
+      kvRow(dl, '三連複', r.sanrenpukuLabel || (r.hasSanrenpuku ? '保有' : 'なし'),
+        r.hasSanrenpuku ? '' : 'muted');
+      if (r.sanrenpukuNote) {
+        const dt = document.createElement('dt'); dt.textContent = '';
+        const dd = document.createElement('dd'); dd.className = 'srp-note';
+        dd.textContent = r.sanrenpukuNote;
+        dl.appendChild(dt); dl.appendChild(dd);
+      }
       kvRow(dl, 'Route', ROUTE_LABEL[r.route] || r.route);
       kvRow(dl, '候補区分', r.candidateLabel || '—');
       kvRow(dl, 'PHASE', String(r.phase));
@@ -2489,7 +2529,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       // 判断材料 → 自動判定 → 現在の設定 → 実表示 の順に並べる。
       // 「今なぜこの CTA が出ているのか」をこのブロックだけで読み切れるようにする。
       const uCur = document.createElement('dl'); uCur.className = 'kv';
-      kvRow(uCur, '三連複保有', r.hasSanrenpuku ? 'あり' : 'なし');
+      kvRow(uCur, '三連複保有', r.sanrenpukuLabel || (r.hasSanrenpuku ? '保有' : 'なし'));
       kvRow(uCur, 'ROUTE', r.routeLabel || ROUTE_LABEL[r.route] || r.route || '対象外');
       kvRow(uCur, 'Premium加入からの経過', r.daysSincePremiumText || '—',
         r.daysSincePremium == null ? 'muted' : '');
@@ -2773,7 +2813,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const dl1 = document.createElement('dl'); dl1.className = 'kv';
       kvRow(dl1, '評価時刻(JST)', p.evaluatedAtJst + (p.simulated.isSimulatedTime ? '（シミュレーション）' : ''));
       kvRow(dl1, 'route', p.routeLabel ? p.routeLabel + '（' + p.route + '）' : p.route);
-      kvRow(dl1, '三連複保有', p.hasSanrenpuku ? 'あり' : 'なし');
+      kvRow(dl1, '三連複', p.sanrenpukuLabel || (p.hasSanrenpuku ? '保有' : 'なし'),
+        p.hasSanrenpuku ? '' : 'muted');
       kvRow(dl1, 'Premium加入からの経過', p.daysSincePremiumText || '—',
         p.daysSincePremium == null ? 'muted' : '');
       kvRow(dl1, '顧客に表示されるCTA', p.upsellChannelLabel || '—');

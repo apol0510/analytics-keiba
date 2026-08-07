@@ -205,3 +205,40 @@ test('7-d. targetOverride は管理経路だけ。顧客向けページ/API で�
   assert.ok(/targetOverride === undefined\s*\n?\s*\?\s*readUpsellTarget\(fields\)/.test(lib),
     '未指定時に fields を読むフォールバックが無い');
 });
+
+// ── 8. 三連複保有が一覧・詳細から一目で分かる ─────────────────────
+test('8. 一覧のプラン列に三連複バッジを添える（プラン名は書き換えない）', () => {
+  const code = strip(adminPage);
+  assert.ok(/r\.sanrenpukuBadge/.test(code), '一覧にバッジを出していない');
+  assert.ok(/srp-badge/.test(code), 'バッジのクラスが無い');
+  // プラン名そのものを差し替えていない（列の意味を変えない）
+  assert.ok(/pn\.textContent = r\.plan \|\| '—'/.test(code), 'プラン名を書き換えている');
+  // 文言はサーバー由来。バッジ/ラベルの値をページで組み立てない
+  //（項目名としての '三連複保有' は kvRow のラベルなので対象外）
+  assert.ok(/sb\.textContent = r\.sanrenpukuBadge/.test(code), 'バッジ文言をページで作っている');
+  assert.ok(!/textContent\s*=\s*'(三連複保有|永久保有|保有（旧プラン）)'/.test(code),
+    'バッジ/ラベルの値をページに直書きしている');
+});
+
+test('8-b. 詳細は「プラン」と「三連複」を別項目で出す', () => {
+  const code = strip(adminPage);
+  assert.ok(/kvRow\(dl, 'プラン'/.test(code), '「プラン」項目が無い');
+  assert.ok(/kvRow\(dl, '三連複'/.test(code), '「三連複」項目が無い');
+  assert.ok(/r\.sanrenpukuLabel/.test(code), '三連複の意味が分かるラベルを使っていない');
+  assert.ok(/r\.sanrenpukuNote/.test(code), '根拠・寿命の説明を出していない');
+  // 旧実装の「あり/なし」だけに戻っていない
+  assert.ok(!/kvRow\(dl, '三連複', r\.hasSanrenpuku \? 'あり' : 'なし'\)/.test(code),
+    '「あり/なし」だけの表示に戻っている');
+});
+
+test('8-c. 一覧 API が表示用の値を返し、判定は権限正本に委ねる', () => {
+  const code = strip(adminFn);
+  assert.ok(/describeSanrenpukuHolding\(/.test(code), '表示の単一源を通していない');
+  assert.ok(/resolveEntitlements\(fromAirtableFields\(fields\), now\)/.test(code),
+    '権限正本を通していない');
+  for (const key of ['sanrenpukuBadge', 'sanrenpukuLabel', 'sanrenpukuNote', 'sanrenpukuBasis']) {
+    assert.ok(code.includes(key), `一覧 API が ${key} を返していない`);
+  }
+  // 管理 Function 側で三連複の保有条件を書き直していない
+  assert.ok(!/LifetimeSanrenpuku\s*===\s*true/.test(code), '保有判定を再実装している');
+});
