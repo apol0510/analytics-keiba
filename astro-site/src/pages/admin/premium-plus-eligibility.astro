@@ -2606,9 +2606,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       //    実際にどこに何が出るかを操作者に見せる（文言と実動作を食い違わせない）。
       const noteWhere = document.createElement('p'); noteWhere.className = 'imp-meta';
       noteWhere.textContent = '会員に見えるもの: /premium-plus/ が開けるようになり、'
-        + '価格と申込ボタンが出ます。三連複ページ（/premium-sanrenpuku/）に出るのは'
-        + '「予告枠のリンク」だけです（購入 CTA 本体は 2026-07-15 から存在秘匿のため非表示）。'
-        + '会員がそのリンクに気づかない場合、案内は別途必要です。';
+        + '価格と申込ボタンが出て購入できます。'
+        + '三連複ページ（/premium-sanrenpuku/）の販売導線は段階公開の設計どおりで、'
+        + 'この操作では変わりません（予告枠のリンクのみ）。'
+        + '会員がそのリンクに気づかない場合は、別途ご案内ください。';
       secD.appendChild(noteD);
       const opsD = document.createElement('div'); opsD.className = 'ops';
       opsD.appendChild(mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate, !data.overrideEnabled));

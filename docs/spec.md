@@ -321,7 +321,7 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 ### 検証は一連で行う（画面の状態だけを見ない）
 
 ```
-管理操作 → 保存値 → 公開判定 → CTA 表示 → purchaseEnabled
+管理操作 → 保存値 → 公開判定 → 商品ページの可否 → purchaseEnabled
 ```
 
 **強い操作語**（「即時販売」「送信」「昇格」「販売可」）は、この全段を **E2E で確認**する。
@@ -335,8 +335,14 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 ### 再発防止
 
 この種のズレは**運用者の手動監査を前提にせず、自動テストと仕様で検知**する。
-恒久的な回帰条件は `src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs`
-（**「管理画面で即時販売を選ぶと、その顧客の公開側 CTA が即座に表示され購入可能になる」**）。
+恒久的な回帰条件は `src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs`:
+
+管理画面で「今すぐ販売可」を確定 → `PremiumPlusReleaseOverride = 'phase4'` →
+   公開判定 `phase = 4` → `showProductPage = true` → `purchaseEnabled = true` →
+   **本人が `/premium-plus/` で購入できる**
+
+`showPurchaseCta` は公開判定の値として確認してよいが、
+**「三連複ページに強い CTA が即座に出ること」は完成条件にしない**。
 
 ## Premium Plus の「即時販売」（2026-08-07 明文化）
 
@@ -346,7 +352,7 @@ PHASE 4（販売中）にする**操作。単に `PremiumPlusEligibility = eligi
 | 操作 | 書く値 | 会員に起きること |
 |---|---|---|
 | 段階公開で販売可（staged） | `eligible` + override **解除** | 販売資格は付くが、**PHASE 1→4 の待機日数が経過するまで買えない** |
-| **今すぐ販売可（immediate）** | `eligible` + **`PremiumPlusReleaseOverride = 'phase4'`** | **即座に** PHASE 4。`showProductPage` / `showPurchaseCta` / `purchaseEnabled` すべて true |
+| **今すぐ販売可（immediate）** | `eligible` + **`PremiumPlusReleaseOverride = 'phase4'`** | **即座に** PHASE 4。`/premium-plus/` を開けて**購入できる**（`showProductPage` / `purchaseEnabled` が true） |
 | 保留（review）/ 販売対象外（blocked） | 該当状態 + override **必ず解除** | 売らない。override を残すと再 eligible 化で即時販売が復活するため |
 
 ### 守るべき性質
@@ -359,7 +365,7 @@ PHASE 4（販売中）にする**操作。単に `PremiumPlusEligibility = eligi
 - **他会員に波及しない**（判定は 1 レコードだけを見る）
 - **同義の新規フィールドを増やさない**（既存 `PremiumPlusReleaseOverride` が正本）
 
-### ⚠️ PHASE 4 にしても「三連複ページに購入ボタンが出る」わけではない
+### 三連複ページの販売導線は段階公開設計のまま（即時販売はこれを変えない）
 
 `PremiumPlusCta.astro` は **2026-07-15 から `premium-sanrenpuku.astro` でコメントアウト**されている
 （prerender + クライアント AccessControl のため、置くと商品名とリンクが未ログイン者の HTML に載る＝存在秘匿が破れる）。
@@ -369,7 +375,8 @@ PHASE 4 の会員に実際に見えるのは:
 1. `/premium-plus/` が開ける（価格・申込ボタンあり）
 2. 三連複ページの **`PremiumPlusStageTeaser`（予告枠リンク）**のみ（SSR API 経由で会員だけに描画）
 
-**強い購入 CTA を出したい場合は、存在秘匿を壊さない実装（SSR 化）が別途必要。**
+即時販売が保証するのは **商品ページのアクセスと購入可否**であって、
+**三連複ページに新しい強い CTA を出すことではない**（導線は既存設計を維持する）。
 管理画面はこの実態を操作前に表示する（文言と実動作を食い違わせない）。
 
 ### 単一源

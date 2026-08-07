@@ -1,5 +1,5 @@
 /**
- * premiumPlusImmediateSale.test.mjs — 「即時販売」= **今すぐ CTA を出して買える**を固定する
+ * premiumPlusImmediateSale.test.mjs — 「即時販売」= **今すぐ商品ページで買える**を固定する
  *   node --test src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs
  *
  * ── なぜこのテストが要るか ────────────────────────────────────
@@ -7,7 +7,15 @@
  * （PHASE 1→4）が残ったまま「反応が無い」と見える事故が起きた。
  * ここでは **顧客に見えるのと同じ経路**（`buildPreviewSnapshot` → 顧客側 resolver）で、
  *   - 「今すぐ販売可」＝ `PremiumPlusReleaseOverride = 'phase4'` を確定した瞬間に
- *     **その会員だけ** PHASE 4 相当（CTA 表示・購入可）になる
+ *     **その会員だけ** PHASE 4 相当になり、**`/premium-plus/` を開けて購入できる**
+ *
+ * ⚠️ **恒久的な回帰条件はこの連鎖**:
+ *     「今すぐ販売可」確定 → `override='phase4'` → `phase=4`
+ *       → `showProductPage=true` → `purchaseEnabled=true` → 本人が `/premium-plus/` で購入できる
+ *
+ * ⚠️ **三連複ページの teaser / CTA は既存の段階公開設計を維持する。**
+ *    即時販売を理由に「新しい強い CTA を即時表示する」ことは**要件に含めない**。
+ *    `showPurchaseCta` は公開判定の値として確認するが、**完成条件にはしない**。
  *   - route は**その会員本来のもの**を保つ
  *   - override が無ければ**従来の段階公開のまま**
  *   - 保留 / 販売対象外は override があっても**売らせない**
@@ -15,6 +23,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { buildPreviewSnapshot } from './premiumPlusPreview.js';
 import { buildAdminActionFields, PP_ADMIN_ACTION } from './premiumPlusEligibility.js';
@@ -65,28 +75,33 @@ const immediateFields = (current) => {
 
 // ══ 1. 即時販売を確定したら、その場で買える ═══════════════════
 
-test('PHASE 3 の三連複会員 → 即時販売 → 即 PHASE 4 / CTA / 購入可', () => {
+test('【恒久回帰条件】PHASE 3 の三連複会員 → 今すぐ販売可 → /premium-plus/ で購入できる', () => {
   const before = view(sanrenpuku());
   assert.equal(before.phase, PP_PHASE.PREVIEW, '前提: 待機中（PHASE 3）');
-  assert.equal(before.showPurchaseCta, false, '前提: CTA はまだ出ていない');
+  assert.equal(before.purchaseEnabled, false, '前提: まだ買えない');
 
-  const after = view(immediateFields(sanrenpuku()));
-  assert.equal(after.phase, PP_PHASE.SALE);
-  assert.equal(after.showProductPage, true);
-  assert.equal(after.showPurchaseCta, true);
-  assert.equal(after.purchaseEnabled, true);
+  // 管理操作 → 保存値
+  const saved = immediateFields(sanrenpuku());
+  assert.equal(saved[PP_ELIGIBILITY_FIELDS.OVERRIDE], PP_RELEASE_OVERRIDE.PHASE4);
+
+  // 保存値 → 公開判定 → 商品ページの可否 → 購入可否
+  const after = view(saved);
+  assert.equal(after.phase, PP_PHASE.SALE, 'phase=4');
+  assert.equal(after.showProductPage, true, '/premium-plus/ を開ける');
+  assert.equal(after.purchaseEnabled, true, '購入できる');
   // ⚠️ route は本人本来のものを保つ
   assert.equal(after.route, PP_ROUTE.SANRENPUKU);
+  // 公開判定値としては true になる（ただし三連複ページの強い CTA を保証するものではない）
+  assert.equal(after.showPurchaseCta, true);
 });
 
 test('Premium 会員（加入 5 日 = 30 日未達）でも 即時販売で買える', () => {
   const before = view(premium());
-  assert.equal(before.showPurchaseCta, false, '前提: まだ売らない');
+  assert.equal(before.purchaseEnabled, false, '前提: まだ売らない');
 
   const after = view(immediateFields(premium()));
   assert.equal(after.phase, PP_PHASE.SALE);
   assert.equal(after.showProductPage, true);
-  assert.equal(after.showPurchaseCta, true);
   assert.equal(after.purchaseEnabled, true);
   // 管理者が明示指定したときの route（三連複ではないので premium 側）
   assert.equal(after.route, PP_ROUTE.PREMIUM_ADMIN);
@@ -98,10 +113,23 @@ test('即時販売は EligibleAt / PaidAt の待機より優先される', () =>
   assert.equal(staged.phase, PP_PHASE.LOCKED);
   assert.equal(staged.showPurchaseCta, false);
 
-  // 同じ日でも即時販売なら PHASE 4
+  // 同じ日でも即時販売なら PHASE 4（＝商品ページで買える）
   const now = view(immediateFields(sanrenpuku({ PremiumPlusEligibleAt: daysAgo(0) })));
   assert.equal(now.phase, PP_PHASE.SALE);
-  assert.equal(now.showPurchaseCta, true);
+  assert.equal(now.showProductPage, true);
+  assert.equal(now.purchaseEnabled, true);
+});
+
+test('三連複ページの販売導線は即時販売で変わらない（段階公開設計を維持）', () => {
+  // ⚠️ 即時販売が保証するのは商品ページの可否と購入可否。
+  //    三連複ページに「新しい強い CTA を即時表示する」ことは要件に含めない。
+  const PAGE = readFileSync(fileURLToPath(
+    new URL('../../pages/premium-sanrenpuku.astro', import.meta.url)), 'utf8');
+  // 予告枠（段階公開に従う）は残す
+  assert.match(PAGE, /<PremiumPlusStageTeaser \/>/);
+  // 強い CTA 本体は有効化しない（存在秘匿の設計を勝手に変えない）
+  assert.equal(/^\s*import PremiumPlusCta/m.test(PAGE), false,
+    '即時販売を理由に強い CTA を有効化してはいけない');
 });
 
 // ══ 2. 既存フィールドだけを使う ═══════════════════════════════
@@ -170,7 +198,7 @@ test('即時販売でも受付終了時刻は同じに効く（16:30 以降は�
   const closed = Date.parse('2026-08-07T08:00:00.000Z');   // JST 17:00
   const p = view(immediateFields(sanrenpuku()), closed);
   assert.equal(p.phase, PP_PHASE.SALE, 'PHASE は 4 のまま');
-  assert.equal(p.showPurchaseCta, true, 'CTA は出る');
+  assert.equal(p.showProductPage, true, '商品ページは開ける');
   assert.equal(p.purchaseEnabled, false, '購入は受付時間外なので不可');
 });
 
@@ -181,7 +209,7 @@ test('同じ操作を繰り返しても結果が変わらない（冪等）', ()
   const twice = immediateFields(once);
   assert.equal(twice[PP_ELIGIBILITY_FIELDS.OVERRIDE], PP_RELEASE_OVERRIDE.PHASE4);
   const a = view(once); const b = view(twice);
-  for (const k of ['phase', 'route', 'showProductPage', 'showPurchaseCta', 'purchaseEnabled']) {
+  for (const k of ['phase', 'route', 'showProductPage', 'purchaseEnabled']) {
     assert.equal(b[k], a[k], `${k} が 2 回目で変わった`);
   }
   // 2 回目は override を PATCH に含めない（無駄な書き込みをしない）
@@ -198,8 +226,8 @@ test('他の顧客には影響しない（判定は 1 レコードだけを見�
   const other = sanrenpuku();            // 何も操作していない別会員
   const otherStillStaged = view(other);
   assert.equal(otherStillStaged.phase, PP_PHASE.PREVIEW);
-  assert.equal(otherStillStaged.showPurchaseCta, false, '別会員まで売れる状態になった');
-  assert.equal(view(target).showPurchaseCta, true);
+  assert.equal(otherStillStaged.purchaseEnabled, false, '別会員まで売れる状態になった');
+  assert.equal(view(target).purchaseEnabled, true);
 });
 
 // ══ 7. schema 未準備なら fail closed ═════════════════════════
@@ -214,18 +242,18 @@ test('override フィールドが無ければ「今すぐ販売可」は成立�
 
 // ══ 8. 画面の文言が動作と一致している ════════════════════════
 
-test('管理画面の文言が「CTA 表示・購入可」を明示している', async () => {
-  const { readFileSync } = await import('node:fs');
-  const { fileURLToPath } = await import('node:url');
+test('管理画面の文言が「即時に購入できる」ことを明示している', () => {
   const PAGE = readFileSync(fileURLToPath(
     new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url)), 'utf8');
 
   // 即時販売の説明に「CTA」「購入」が入っている
   assert.match(PAGE, /今すぐ販売可（CTA表示・購入可）/);
   assert.match(PAGE, /即座に PHASE 4（販売中）にします/);
-  // ⚠️ 「どこに何が出るか」を操作者に見せる（三連複ページの購入 CTA は非表示のまま）
-  assert.match(PAGE, /三連複ページ（\/premium-sanrenpuku\/）に出るのは/);
-  assert.match(PAGE, /購入 CTA 本体は 2026-07-15 から存在秘匿のため非表示/);
+  // ⚠️ 「どこに何が出るか」を操作者に見せる。
+  //    三連複ページの導線は段階公開設計のままで、この操作では変わらないと明示する。
+  assert.match(PAGE, /価格と申込ボタンが出て購入できます/);
+  assert.match(PAGE, /三連複ページ（\/premium-sanrenpuku\/）の販売導線は段階公開の設計どおり/);
+  assert.match(PAGE, /この操作では変わりません/);
   // 段階公開の側は「今日は買えない」と明示する
   assert.match(PAGE, /段階公開で販売可（CTAは待機後）/);
   assert.match(PAGE, /今日は買えません/);
