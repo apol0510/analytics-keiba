@@ -63,6 +63,7 @@ import {
   resolveUpsellForCustomer,
   describeUpsellDisplay,
 } from '../../src/lib/upsell/upsellTarget.js';
+import { explainUpsell, UPSELL_AUTO_RULE_TEXT } from '../../src/lib/upsell/upsellExplain.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
@@ -136,7 +137,10 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
       // 区別できるように、両方を行に載せる。段階表示（何日目か）は localStorage 由来のため
       // サーバーでは確定できず、'三連複（段階表示）' として返す。
-      const upsell = resolveUpsellForCustomer({ fields, nowMs: now });
+      // 「自動ならどうなるか」も併せて求める（管理者が手動指定中でも比較できるようにする）。
+      // explain が内部で resolveUpsellForCustomer を呼ぶので、ここで二重に解決しない。
+      const explain = explainUpsell({ fields, nowMs: now });
+      const upsell = explain.effectiveView;
       const release = upsell.plusRelease;
 
       // 一覧に出すかは**表示専用の単一源**が決める（公開判定 resolvePremiumPlusRelease とは別）。
@@ -171,6 +175,17 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         upsellChannel: upsell.channel,
         upsellDisplay: describeUpsellDisplay(upsell),
         upsellReason: upsell.reasonLabel,
+        // 具体的な理由と「自動ならどうなるか」（管理画面の詳細で並べて出す）
+        upsellReasonText: explain.reasonText,
+        upsellChannelLabel: explain.channelLabel,
+        upsellIsManual: explain.isManual,
+        upsellAutoChannel: explain.autoChannel,
+        upsellAutoChannelLabel: explain.autoChannelLabel,
+        upsellAutoDisplay: explain.autoDisplay,
+        upsellAutoReasonText: explain.autoReasonText,
+        upsellDiffersFromAuto: explain.differsFromAuto,
+        daysSincePremiumText: explain.daysSincePremiumText,
+        routeLabel: explain.routeLabel,
         reason: fields['PremiumPlusEligibilityReason'] || '',
         releaseOverride: release.releaseOverride || '',
         overrideApplied: release.overrideApplied,
@@ -215,6 +230,8 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     writeEnabled: isPlusFieldsEnabled(process.env),
     overrideEnabled: isReleaseOverrideEnabled(process.env),
     upsellEnabled: isUpsellFieldEnabled(process.env),
+    // 「自動」の意味を管理画面に常設するための文言（正本は upsellExplain.js）
+    upsellAutoRules: UPSELL_AUTO_RULE_TEXT,
     truncated,
   });
 }

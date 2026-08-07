@@ -918,6 +918,50 @@ Step 2 の時点では特典が決まっていない。ここで `checkGrantable
 `src/lib/comeback/comebackWithdrawnGrant.test.mjs` /
 `src/lib/comeback/adminComebackUi.guard.test.mjs`
 
+## 販売CTA の自動判定を管理画面で確認する（2026-08-07）
+
+管理者が **「今なぜこの CTA が出ているのか」を管理画面だけで読み切れる**ようにする。
+判定そのものは変更しない — しきい値・優先順位・fail closed 条件は従来どおり。
+
+### 管理画面（`/admin/premium-plus-eligibility` の詳細パネル）に出すもの
+
+| 項目 | 内容 |
+|---|---|
+| 三連複保有 | あり / なし |
+| ROUTE | A（三連複購入者）/ B（Premium 30日）/ C（管理者指定）/ 対象外 |
+| Premium加入からの経過 | 日数。`PaidAt` が無ければ **「加入日（PaidAt）が未記録」**（日数を捏造しない）|
+| **自動判定CTA** | `UpsellTarget` を無視して auto で解決した結果（三連複 / Plus / なし）|
+| **自動判定の理由** | 具体的な 1 文。ROUTE B なら「Premium加入から30日以上経過（42日）・三連複未購入のため Plus を自動表示」|
+| 現在の設定 | Airtable `UpsellTarget`（自動 / 三連複 / Plus / なし）|
+| 顧客に表示されるCTA | 最終結果（顧客側 resolver と同一）|
+| 実表示の理由 | 具体的な 1 文 |
+
+手動指定が自動判定と違う結果になっているときは、その旨を明示する。
+
+### 「自動」の意味（管理画面に常設）
+
+1. Plus の販売条件が成立している → **Plus のみ**表示
+2. それ以外で三連複を購入できる → **三連複のみ**表示
+3. どちらでもなく Plus の予告段階 → **Plus の予告のみ**表示
+4. **2 商品を同時に表示することはない**
+
+### 手動上書き
+
+`自動 / 三連複 / Plus / なし` の 4 択（従来どおり・単一選択）。
+**明示指定でも各商品の販売資格・契約状態・blocked 等の fail closed 条件は再評価する**
+（保有済みへの三連複 CTA / blocked への Plus CTA は手動でも出ない）。
+
+### 実装の分担（判定と説明を混ぜない）
+
+- 判定の正本: `src/lib/upsell/upsellTarget.js` / `src/lib/premiumPlus/premiumPlusRelease.js`
+- **説明の生成: `src/lib/upsell/upsellExplain.js`（純粋・read-only）**。
+  しきい値も優先順位も持たず、既存 resolver の戻り値を日本語にするだけ
+- 「自動ならどうなるか」は `resolveUpsellForCustomer({ ..., targetOverride: 'auto' })` で求める。
+  **`targetOverride` は管理経路専用**。顧客向けページ / API では使わない（guard テストで固定）
+
+固定テスト: `src/lib/upsell/upsellExplain.test.mjs` /
+`src/lib/upsell/upsellIntegration.guard.test.mjs`
+
 ## 無料付与 → 案内メールの引き継ぎ（2026-08-03 / 自動化は 2026-08-04）
 
 ### 付与が成功したら**自動で**引き継ぐ（2026-08-04）
