@@ -190,15 +190,36 @@ export const PP_INTAKE_SCHEDULE = Object.freeze({
  * 文言はここが正本。ページ側にベタ書きしないこと。
  */
 export const PP_RELEASE_COPY = Object.freeze({
+  // ── 予告枠（PremiumPlusStageTeaser）─────────────────────────────
+  // 待機中（PHASE 2 / PHASE 3）と開通後（PHASE 4）で文言を分ける。
+  // PHASE 4 に「準備しています」が出ると、閲覧・購入できる会員に「まだ買えない」と
+  // 伝わってしまう（2026-08-07 事故）。逆に PHASE 4 でも予告枠は予告枠のままとし、
+  // 「お申し込み受付中」「今すぐ購入」等の営業的な強調は置かない（静かな導線を維持）。
+  // `linkLabel` は導線リンクの文字列。コンポーネント側にベタ書きしない。
+
   // ROUTE A（Premium Sanrenpuku 利用者向け）。既存コンセプトとの整合を維持する。
   teaser: Object.freeze({
     title: '新しい予想を準備しています',
     body: '全レースを広く狙うのではなく、その日の全開催から『1鞍だけ』を選ぶ、新しい予想を準備しています。',
+    linkLabel: '内容を見る →',
   }),
   // ROUTE B（通常 Premium 会員・Sanrenpuku 未購入向け）。三連複購入者向けの文脈を前提にしない。
   teaserPremium30d: Object.freeze({
     title: '全レース型とは異なる、もうひとつの選択肢。',
     body: '対象レースを増やすのではなく、その日の全開催から1鞍だけを選ぶ、新しい予想を準備しています。',
+    linkLabel: '内容を見る →',
+  }),
+  // PHASE 4（閲覧・購入が開通済み）の ROUTE A。待機中の文から「準備しています」だけを外す。
+  teaserOpen: Object.freeze({
+    title: '新しい予想をご用意しました',
+    body: '全レースを広く狙うのではなく、その日の全開催から『1鞍だけ』を選ぶ予想です。',
+    linkLabel: '詳細を見る →',
+  }),
+  // PHASE 4 の ROUTE B。ROUTE A と同じく「準備しています」だけを外す。
+  teaserPremium30dOpen: Object.freeze({
+    title: '全レース型とは異なる、もうひとつの選択肢。',
+    body: '対象レースを増やすのではなく、その日の全開催から1鞍だけを選ぶ予想です。',
+    linkLabel: '詳細を見る →',
   }),
   preparing: Object.freeze({
     title: 'Premium Plus の受付準備中です',
@@ -434,10 +455,21 @@ export function resolvePhaseAnchorMs({ route, sanrenpukuPaidAtMs, premiumPaidAtM
   return Math.max(purchase, eligible);
 }
 
-/** route に対応する予告文言を返す（対象外は null）。 */
-export function teaserCopyForRoute(route) {
-  if (route === PP_ROUTE.SANRENPUKU) return PP_RELEASE_COPY.teaser;
-  if (route === PP_ROUTE.PREMIUM_30D || route === PP_ROUTE.PREMIUM_ADMIN) return PP_RELEASE_COPY.teaserPremium30d;
+/**
+ * route + phase に対応する予告文言を返す（対象外は null）。
+ *
+ * phase を渡さない場合は**待機中**の文言を返す（後方互換）。PHASE 4 の文言を出すには
+ * 呼び出し側が release.phase を渡すこと。判定は「PHASE 4 かどうか」だけで、
+ * 受付時間（intake）や購入可否では文言を変えない — 予告枠は受付状態を語らない。
+ */
+export function teaserCopyForRoute(route, phase) {
+  const open = phase === PP_PHASE.SALE;
+  if (route === PP_ROUTE.SANRENPUKU) {
+    return open ? PP_RELEASE_COPY.teaserOpen : PP_RELEASE_COPY.teaser;
+  }
+  if (route === PP_ROUTE.PREMIUM_30D || route === PP_ROUTE.PREMIUM_ADMIN) {
+    return open ? PP_RELEASE_COPY.teaserPremium30dOpen : PP_RELEASE_COPY.teaserPremium30d;
+  }
   return null;
 }
 
