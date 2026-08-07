@@ -2455,7 +2455,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       kvRow(dl, 'Route', ROUTE_LABEL[r.route] || r.route);
       kvRow(dl, '候補区分', r.candidateLabel || '—');
       kvRow(dl, 'PHASE', String(r.phase));
-      kvRow(dl, 'Premium経過', r.daysSincePremium == null ? '加入日（PaidAt）未記録' : r.daysSincePremium + ' 日',
+      // ⚠️ daysSincePremium == null を「未記録」と決め打ちしない。
+      //    ROUTE A は判定対象外で常に null になる（PaidAt があっても）。
+      //    文言の正本は upsellExplain.js の describeDaysSincePremium。
+      kvRow(dl, 'Premium経過', r.daysSincePremiumText || '—',
         r.daysSincePremium == null ? 'muted' : '');
       kvRow(dl, '販売許可日', fmtDate(r.eligibleAt));
       kvRow(dl, '最終更新', fmtDate(r.updatedAt));
