@@ -70,7 +70,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="all">すべての状態</option>
         <option value="review">保留（確認待ち）</option>
         <option value="eligible">販売できる</option>
-        <option value="immediate">すぐ販売できる（個別許可）</option>
+        <option value="immediate">即時販売（CTA表示・購入可）</option>
         <option value="blocked">販売対象外</option>
       </select>
       <select id="fRoute" aria-label="Route で絞り込み">
@@ -2581,8 +2581,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       const secN = document.createElement('div'); secN.className = 'dt-sec';
       const h3 = document.createElement('h3'); h3.textContent = '通常操作'; secN.appendChild(h3);
+      // ⚠️ 「販売可にした＝すぐ買える」ではない。待機日数が残ることを操作前に明示する
+      const noteN = document.createElement('p'); noteN.className = 'imp-meta';
+      noteN.textContent = '段階公開で販売可: 販売資格を与えます。価格と購入CTAは段階公開'
+        + '（PHASE 1→4）の待機日数が経過してから表示されます。今日は買えません。';
+      secN.appendChild(noteN);
       const opsN = document.createElement('div'); opsN.className = 'ops';
-      opsN.appendChild(mkBtn('staged', '段階公開で販売可', 'b-staged', isStagedNow));
+      opsN.appendChild(mkBtn('staged', '段階公開で販売可（CTAは待機後）', 'b-staged', isStagedNow));
       opsN.appendChild(mkBtn('review', '保留', 'b-review', r.eligibility === 'review'));
       if (isStagedNow) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsN.appendChild(s); }
       secN.appendChild(opsN);
@@ -2590,8 +2595,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       const secD = document.createElement('div'); secD.className = 'dt-sec danger';
       const h4 = document.createElement('h3'); h4.textContent = '強い操作（本番の販売状態が変わります）'; secD.appendChild(h4);
+      // ⚠️ 即時販売＝「今すぐ販売CTAを表示し購入可能にする」。eligible 化や候補入りとは違う
+      const noteD = document.createElement('p'); noteD.className = 'imp-meta';
+      noteD.textContent = '今すぐ販売可（即時販売）: 段階公開の待機日数を飛ばし、'
+        + 'この会員にだけ 即座に PHASE 4（販売中）にします。'
+        + '単に「販売可（eligible）」にするのとは違い、本日中に購入できます。'
+        + '受付時間帯（16:30 以降）は購入不可のままです。';
+      secD.appendChild(noteD);
+      // ⚠️ 「PHASE 4 にした＝三連複ページに購入ボタンが出る」ではない。
+      //    実際にどこに何が出るかを操作者に見せる（文言と実動作を食い違わせない）。
+      const noteWhere = document.createElement('p'); noteWhere.className = 'imp-meta';
+      noteWhere.textContent = '会員に見えるもの: /premium-plus/ が開けるようになり、'
+        + '価格と申込ボタンが出ます。三連複ページ（/premium-sanrenpuku/）に出るのは'
+        + '「予告枠のリンク」だけです（購入 CTA 本体は 2026-07-15 から存在秘匿のため非表示）。'
+        + '会員がそのリンクに気づかない場合、案内は別途必要です。';
+      secD.appendChild(noteD);
       const opsD = document.createElement('div'); opsD.className = 'ops';
-      opsD.appendChild(mkBtn('immediate', '今すぐ販売可', 'b-immediate', isImmediate, !data.overrideEnabled));
+      opsD.appendChild(mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate, !data.overrideEnabled));
       opsD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
       if (isImmediate) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsD.appendChild(s); }
       secD.appendChild(opsD);

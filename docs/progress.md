@@ -53,6 +53,47 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
 **PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
 
+### 🔎 Premium Plus「即時販売」の実態調査と文言修正（2026-08-07・Draft PR）
+
+**発端**: ある三連複会員が Premium Plus に反応しない。「CTA が見えていればクリックするはずの人」との指摘。
+
+#### 分かったこと（read-only 調査）
+
+| # | 事実 |
+|---|---|
+| 1 | **「即時販売」の仕組みは既に正しく動く**。`PremiumPlusReleaseOverride = 'phase4'` で段階公開を飛ばし、PHASE 4（CTA 表示・購入可）になる。route は本人本来のものを保つ |
+| 2 | **該当者には既に override=phase4 が設定済み**（2026-07-30 admin 操作）。顧客側判定は `phase=4 / showProductPage=true / showPurchaseCta=true / purchaseEnabled=true / 受付中` |
+| 3 | **`PremiumPlusCta` は 2026-07-15 からコメントアウト**（存在秘匿のため）。三連複ページに出るのは `PremiumPlusStageTeaser` の**予告枠リンクだけ** |
+| 4 | クリック計測は**全経路で無効**（`MARKETING_CLICK_TRACKING_ENABLED` 未設定 / 共有 executor はハードコードで無効 / サイト側にも計測なし）。**「押したか」はデータで追えない** |
+| 5 | 表示状態と override の突合（read-only・PII 非出力）: `PremiumPlusEligibility` 設定済み **3 件はすべて override=phase4**。**不整合 0 件** |
+
+→ **「反応がない」の説明**: 販売状態は正しく開いているが、**強い購入 CTA は site 側で意図的に非表示**で、
+導線は予告枠リンクのみ。気づかれていない可能性が高い。
+
+#### 直したこと（文言と実動作の一致）
+
+管理画面の操作が「何を起こすか」「会員に何が見えるか」を操作前に明示するようにした。
+
+- ボタン: `段階公開で販売可` → **`段階公開で販売可（CTAは待機後）`** / `今すぐ販売可` → **`今すぐ販売可（CTA表示・購入可）`**
+- 一覧フィルタ: `すぐ販売できる（個別許可）` → **`即時販売（CTA表示・購入可）`**
+- 通常操作の説明: 「販売資格を与えるだけ。**今日は買えません**」
+- 強い操作の説明: 「待機日数を飛ばして即 PHASE 4」＋**どこに何が出るか**
+  （`/premium-plus/` は開ける／三連複ページは**予告枠リンクだけ**／購入 CTA 本体は非表示）
+
+**判定ロジック・フィールドは変更していない**（既存 override が正本。新しい列は増やさない）。
+
+#### テスト
+
+`premiumPlusImmediateSale.test.mjs` **13 件**を新設。顧客に見えるのと同じ経路で、
+PHASE 3 の三連複会員 → 即時販売 → 即 PHASE 4 / CTA / 購入可・route 維持、
+Premium 会員（30 日未満）でも同様、override なしなら段階公開のまま、
+保留 / 販売対象外 / 契約無効は override があっても売らない、受付時間帯は不変、
+冪等（2 回目は override を PATCH に含めない）、他顧客に波及しない、
+schema 未準備なら fail closed、管理画面の文言が実動作と一致、を固定。
+
+premiumPlus 全体 **407 pass** / `check:safety` 519 pass / build 成功。
+**本番 Airtable write 0 / production env 変更 0 / deploy 0 / 送信 0。**
+
 ### ✅ メルマガ自動化 main 反映（2026-08-06・PR #237 squash `ba93eda`）
 
 **production deploy 済み。env が全て閉じているため本番の挙動は変わらない**

@@ -312,6 +312,49 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | TTL の大小 | `lock 300 秒 < recipient claim 7 日 < run 120 日 < 墓標（無期限）` |
 | PII | Redis に保存するアドレスは **`ak:prospect:` 配下だけ**。`run-mark` は `runId`（automationId + 暦日）のみ |
 
+## Premium Plus の「即時販売」（2026-08-07 明文化）
+
+管理画面の**「今すぐ販売可」＝即時販売**は、**その会員だけ段階公開の待機日数を飛ばして
+PHASE 4（販売中）にする**操作。単に `PremiumPlusEligibility = eligible` にするのとは違う。
+
+| 操作 | 書く値 | 会員に起きること |
+|---|---|---|
+| 段階公開で販売可（staged） | `eligible` + override **解除** | 販売資格は付くが、**PHASE 1→4 の待機日数が経過するまで買えない** |
+| **今すぐ販売可（immediate）** | `eligible` + **`PremiumPlusReleaseOverride = 'phase4'`** | **即座に** PHASE 4。`showProductPage` / `showPurchaseCta` / `purchaseEnabled` すべて true |
+| 保留（review）/ 販売対象外（blocked） | 該当状態 + override **必ず解除** | 売らない。override を残すと再 eligible 化で即時販売が復活するため |
+
+### 守るべき性質
+
+- **route は本人本来のもの**を保つ（三連複会員は `sanrenpuku` のまま。Premium は `premium_admin`）
+- **override は待機より優先**（`PremiumPlusEligibleAt` / `PaidAt` からの日数計算を飛ばす）
+- **売ってはいけない状態は override でも売らない**（review / blocked / 契約無効）
+- **受付時間帯は変えない**（16:30 以降は `purchaseEnabled=false`）
+- **冪等**（同じ操作を繰り返しても結果が同じ。2 回目は override を PATCH に含めない）
+- **他会員に波及しない**（判定は 1 レコードだけを見る）
+- **同義の新規フィールドを増やさない**（既存 `PremiumPlusReleaseOverride` が正本）
+
+### ⚠️ PHASE 4 にしても「三連複ページに購入ボタンが出る」わけではない
+
+`PremiumPlusCta.astro` は **2026-07-15 から `premium-sanrenpuku.astro` でコメントアウト**されている
+（prerender + クライアント AccessControl のため、置くと商品名とリンクが未ログイン者の HTML に載る＝存在秘匿が破れる）。
+
+PHASE 4 の会員に実際に見えるのは:
+
+1. `/premium-plus/` が開ける（価格・申込ボタンあり）
+2. 三連複ページの **`PremiumPlusStageTeaser`（予告枠リンク）**のみ（SSR API 経由で会員だけに描画）
+
+**強い購入 CTA を出したい場合は、存在秘匿を壊さない実装（SSR 化）が別途必要。**
+管理画面はこの実態を操作前に表示する（文言と実動作を食い違わせない）。
+
+### 単一源
+
+| 目的 | ファイル |
+|---|---|
+| 公開判定 | `src/lib/premiumPlus/premiumPlusRelease.js` |
+| 管理操作 → 書く値 | `src/lib/premiumPlus/premiumPlusEligibility.js`（`buildAdminActionFields`） |
+| 顧客に見えるものの再現 | `src/lib/premiumPlus/premiumPlusPreview.js`（`buildPreviewSnapshot`） |
+| 規約の固定 | `src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs` |
+
 ## 見込み客プール（外部リスト・2026-08-06）
 
 外部 CSV の 1 万数千件は **Airtable Customers へ入れない**。Redis の見込み客プールで扱い、
