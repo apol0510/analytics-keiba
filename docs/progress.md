@@ -2765,6 +2765,37 @@ Netlify のログにはランタイムの `Duration:` 行しか残らず、レ�
 今回の抜けは「閉じたが記録しなかった」ではなく「閉じていなかった」ため、
 **閉鎖の実測（dispatcher `dryRun:false` が 503）まで確認して初めて完了とする**。
 
+## cron の早期 return を観測可能にする（2026-08-08 / PR・未 merge）
+
+2026-08-07 の初回起動確認で判明した「合格条件がログから検証できない」問題を塞ぐ。
+
+`cron-marketing-automation` の早期 return 2 経路（404 / 200 `gates_closed`）は
+どちらも `console.log` を呼ばず、Netlify のログには `Duration:` 行しか残らなかった。
+そのため **「gates_closed で正常」と「`next_run` を受け取れず機能が死んでいる」を
+外形から区別できなかった**（どちらも副作用 0 だが、後者は env を開けても永久に動かない）。
+
+### 変更（観測性のみ）
+
+- 早期 return の 2 経路に構造化ログを 1 行ずつ追加。目印は **`[marketing-automation]`**
+- **env の値は 1 つも出さない**。出すのは判定結果と**未設定 env の名前**だけ
+- **404 経路のログはゲートの設定状況を書かない**（設定を漏らさない方針を維持）
+- ログ出力が失敗しても処理は止めない（`try/catch`）
+- **レスポンス本文は一字も変えていない**。`runScheduledTick` に `log` 引数を足しただけで、
+  未指定なら `console.log` に落ちる（本番の挙動は従来どおり）
+
+### 判定の使い方
+
+| ログの `reason` | 判定 |
+|---|---|
+| `gates_closed` | **合格**。仕組みは正常で、env を開ければ動く |
+| `not_scheduled_payload` | **不合格**。`next_run` を受け取れていない。S2 へ進まず原因調査 |
+
+固定テスト: `src/lib/marketing/automationTickLog.test.mjs`（13 件）。
+経路を無言に戻すと fail することを確認済み。
+
+**次の観測機会は JST 10:00（UTC 01:00）の次回スケジュール起動。**
+deploy 後にそこを待って `reason` を確認する。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
