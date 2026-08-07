@@ -120,6 +120,27 @@ Sanrenpuku 閲覧権限 / `PaymentEmailSent` / `PaymentEmailStatus` / `Requested
 
 **商品ページ本文は共通**（入口の差分だけで対応。本文は変更しない）。
 
+### 予告文言は phase でも分ける（2026-08-07 追加）
+
+`teaserCopyForRoute(route, phase)` は **route と phase の両方**で文言を決める。
+
+| phase | 文言 | 導線リンク |
+|---|---|---|
+| **2 / 3（待機中）** | 「…新しい予想を**準備しています**」（従来どおり・変更しない） | PHASE 2 は無し / PHASE 3 は `内容を見る →` |
+| **4（開通済み）** | 「準備しています」を**出さない**。ROUTE A =「新しい予想をご用意しました」 | `詳細を見る →` |
+
+- **背景（事故）**: 2026-08-07 まで文言が route だけで決まっており、override 等で PHASE 4
+  （閲覧・購入が開通済み）になった会員にも「準備しています」が出続けていた。ある会員は
+  8 日間購入可能だったのに、画面上は「まだ買えない」と読める状態だった。
+- **トーン制約**: PHASE 4 でも**予告枠は予告枠のまま**。「お申し込み受付中」「今すぐ購入」等の
+  営業的な強調表現・スタイル変更・クラス追加は入れない。差し替わるのは**文字列だけ**。
+- **受付時間（intake）では文言を変えない**。予告枠は受付状態を語らない（CLOSED 表示は商品ページの役割）。
+- `linkLabel` も単一源（`PP_RELEASE_COPY`）が持つ。`PremiumPlusStageTeaser.astro` に
+  ラベルをベタ書きしない。ラベルが空ならリンクごと出さない（fail closed）。
+- phase 未指定・不正値は**待機中**の文言に倒す（fail closed）。
+
+検証: `src/lib/premiumPlus/premiumPlusTeaserCopy.test.mjs`（`check:safety` に組込済み）
+
 ## anchor（購入日基準 vs 販売許可日基準）
 
 `PP_PHASE_ANCHOR_MODE`（既定 **`'later'`**）で切り替える定数。

@@ -70,7 +70,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="all">すべての状態</option>
         <option value="review">保留（確認待ち）</option>
         <option value="eligible">販売できる</option>
-        <option value="immediate">すぐ販売できる（個別許可）</option>
+        <option value="immediate">即時販売（CTA表示・購入可）</option>
         <option value="blocked">販売対象外</option>
       </select>
       <select id="fRoute" aria-label="Route で絞り込み">
@@ -1467,6 +1467,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
   .ppe .memo-view { background: rgba(11,17,32,.6); border-left: 3px solid rgba(245,196,81,.5); border-radius: 6px; padding: .5rem .7rem; font-size: .78rem; color: #cbd5e6; margin-top: .6rem; }
+  /* 「自動」の判定ルール（既定は畳んでおき、必要なときだけ開く） */
+  .ppe .auto-rules { margin-top: .6rem; font-size: .78rem; color: #9fb0c9; }
+  .ppe .auto-rules summary { cursor: pointer; color: #cbd5e6; }
+  .ppe .auto-rules ul { margin: .45rem 0 0; padding-left: 1.2rem; line-height: 1.75; }
   .ppe .ops { display: flex; gap: .5rem; flex-wrap: wrap; }
   .ppe .ops button { border-radius: 9px; padding: .5rem .95rem; font-weight: 700; font-size: .8rem; }
   .ppe .b-preview { background: linear-gradient(180deg, #1f3557, #17273f); color: #cfe0ff; border-color: rgba(96,165,250,.38); width: 100%; }
@@ -2479,11 +2483,47 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       uNote.textContent = '顧客に見せる販売導線を 1 つだけ選びます（会員権・販売資格は変わりません）。';
       upSec.appendChild(uNote);
 
+      // 判断材料 → 自動判定 → 現在の設定 → 実表示 の順に並べる。
+      // 「今なぜこの CTA が出ているのか」をこのブロックだけで読み切れるようにする。
       const uCur = document.createElement('dl'); uCur.className = 'kv';
+      kvRow(uCur, '三連複保有', r.hasSanrenpuku ? 'あり' : 'なし');
+      kvRow(uCur, 'ROUTE', r.routeLabel || ROUTE_LABEL[r.route] || r.route || '対象外');
+      kvRow(uCur, 'Premium加入からの経過', r.daysSincePremiumText || '—',
+        r.daysSincePremium == null ? 'muted' : '');
+      kvRow(uCur, '自動判定CTA', r.upsellAutoChannelLabel || '—');
+      kvRow(uCur, '自動判定の理由', r.upsellAutoReasonText || r.upsellReason || '—', 'muted');
       kvRow(uCur, '現在の設定', UPSELL_LABEL[r.upsellTarget] || r.upsellTarget || '自動');
+      kvRow(uCur, '顧客に表示されるCTA', r.upsellChannelLabel || '—');
       kvRow(uCur, '実表示', r.upsellDisplay || '—');
-      kvRow(uCur, '理由', r.upsellReason || '—', 'muted');
+      kvRow(uCur, '実表示の理由', r.upsellReasonText || r.upsellReason || '—', 'muted');
       upSec.appendChild(uCur);
+
+      // 手動指定が自動判定と違う結果になっているときだけ、その旨を明示する
+      if (r.upsellIsManual && r.upsellDiffersFromAuto) {
+        const d = document.createElement('p');
+        d.className = 'blocker';
+        d.textContent = 'ℹ️ 手動指定により、自動判定（' + (r.upsellAutoChannelLabel || '—')
+          + '）とは異なる CTA（' + (r.upsellChannelLabel || '—') + '）を表示しています。';
+        upSec.appendChild(d);
+      }
+
+      // 「自動」を選んだときに何が起きるかを常設で明示する（正本は upsellExplain.js）
+      const rules = (lastData && lastData.upsellAutoRules) || [];
+      if (rules.length) {
+        const rd = document.createElement('details');
+        rd.className = 'auto-rules';
+        const rs = document.createElement('summary');
+        rs.textContent = '「自動」の判定ルール';
+        rd.appendChild(rs);
+        const ul = document.createElement('ul');
+        for (const line of rules) {
+          const li = document.createElement('li');
+          li.textContent = line;
+          ul.appendChild(li);
+        }
+        rd.appendChild(ul);
+        upSec.appendChild(rd);
+      }
 
       const uOps = document.createElement('div'); uOps.className = 'ops';
       const uRadioName = 'upsell-' + r.recordId;
@@ -2581,8 +2621,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       const secN = document.createElement('div'); secN.className = 'dt-sec';
       const h3 = document.createElement('h3'); h3.textContent = '通常操作'; secN.appendChild(h3);
+      // ⚠️ 「販売可にした＝すぐ買える」ではない。待機日数が残ることを操作前に明示する
+      const noteN = document.createElement('p'); noteN.className = 'imp-meta';
+      noteN.textContent = '段階公開で販売可: 販売資格を与えます。価格と購入CTAは段階公開'
+        + '（PHASE 1→4）の待機日数が経過してから表示されます。今日は買えません。';
+      secN.appendChild(noteN);
       const opsN = document.createElement('div'); opsN.className = 'ops';
-      opsN.appendChild(mkBtn('staged', '段階公開で販売可', 'b-staged', isStagedNow));
+      opsN.appendChild(mkBtn('staged', '段階公開で販売可（CTAは待機後）', 'b-staged', isStagedNow));
       opsN.appendChild(mkBtn('review', '保留', 'b-review', r.eligibility === 'review'));
       if (isStagedNow) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsN.appendChild(s); }
       secN.appendChild(opsN);
@@ -2590,8 +2635,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       const secD = document.createElement('div'); secD.className = 'dt-sec danger';
       const h4 = document.createElement('h3'); h4.textContent = '強い操作（本番の販売状態が変わります）'; secD.appendChild(h4);
+      // ⚠️ 即時販売＝「今すぐ販売CTAを表示し購入可能にする」。eligible 化や候補入りとは違う
+      const noteD = document.createElement('p'); noteD.className = 'imp-meta';
+      noteD.textContent = '今すぐ販売可（即時販売）: 段階公開の待機日数を飛ばし、'
+        + 'この会員にだけ 即座に PHASE 4（販売中）にします。'
+        + '単に「販売可（eligible）」にするのとは違い、本日中に購入できます。'
+        + '受付時間帯（16:30 以降）は購入不可のままです。';
+      secD.appendChild(noteD);
+      // ⚠️ 「PHASE 4 にした＝三連複ページに購入ボタンが出る」ではない。
+      //    実際にどこに何が出るかを操作者に見せる（文言と実動作を食い違わせない）。
+      const noteWhere = document.createElement('p'); noteWhere.className = 'imp-meta';
+      noteWhere.textContent = '会員に見えるもの: /premium-plus/ が開けるようになり、'
+        + '価格と申込ボタンが出て購入できます。'
+        + '三連複ページ（/premium-sanrenpuku/）の販売導線は段階公開の設計どおりで、'
+        + 'この操作では変わりません（予告枠のリンクのみ）。'
+        + '会員がそのリンクに気づかない場合は、別途ご案内ください。';
+      secD.appendChild(noteD);
       const opsD = document.createElement('div'); opsD.className = 'ops';
-      opsD.appendChild(mkBtn('immediate', '今すぐ販売可', 'b-immediate', isImmediate, !data.overrideEnabled));
+      opsD.appendChild(mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate, !data.overrideEnabled));
       opsD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
       if (isImmediate) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsD.appendChild(s); }
       secD.appendChild(opsD);
@@ -2708,7 +2769,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const d1 = mk('判定');
       const dl1 = document.createElement('dl'); dl1.className = 'kv';
       kvRow(dl1, '評価時刻(JST)', p.evaluatedAtJst + (p.simulated.isSimulatedTime ? '（シミュレーション）' : ''));
-      kvRow(dl1, 'route', p.route);
+      kvRow(dl1, 'route', p.routeLabel ? p.routeLabel + '（' + p.route + '）' : p.route);
+      kvRow(dl1, '三連複保有', p.hasSanrenpuku ? 'あり' : 'なし');
+      kvRow(dl1, 'Premium加入からの経過', p.daysSincePremiumText || '—',
+        p.daysSincePremium == null ? 'muted' : '');
+      kvRow(dl1, '顧客に表示されるCTA', p.upsellChannelLabel || '—');
+      kvRow(dl1, 'CTA の理由', p.upsellReasonText || p.upsellReason || '—', 'muted');
       kvRow(dl1, 'PremiumPlusEligibility', p.eligibility);
       kvRow(dl1, 'PremiumPlusReleaseOverride', p.releaseOverride || '(空)');
       kvRow(dl1, 'overrideApplied', yn(p.overrideApplied), ynCls(p.overrideApplied));

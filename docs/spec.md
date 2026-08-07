@@ -312,6 +312,82 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 | TTL の大小 | `lock 300 秒 < recipient claim 7 日 < run 120 日 < 墓標（無期限）` |
 | PII | Redis に保存するアドレスは **`ak:prospect:` 配下だけ**。`run-mark` は `runId`（automationId + 暦日）のみ |
 
+## 管理操作の完成条件（2026-08-07 恒久ルール）
+
+管理画面から**本番の顧客体験を変える操作**（販売状態・送信・特典付与・昇格）は、
+**文言と公開側の最終挙動が一致して初めて完成**とする。実装・テスト・CI が green でも、
+**運用者が通常理解する意味と挙動がズレていれば未完成**。
+
+### 検証は一連で行う（画面の状態だけを見ない）
+
+```
+管理操作 → 保存値 → 公開判定 → 商品ページの可否 → purchaseEnabled
+```
+
+**強い操作語**（「即時販売」「送信」「昇格」「販売可」）は、この全段を **E2E で確認**する。
+保存値が正しいことや、管理一覧の表示が変わったことをもって完成としない。
+
+### dry-run / preview の要件
+
+本番書き込み前の確認画面は、**「この操作後に顧客から何が見えるか」を明示**できること。
+保存されるフィールド値の羅列で終わらせない。
+
+### 再発防止
+
+この種のズレは**運用者の手動監査を前提にせず、自動テストと仕様で検知**する。
+恒久的な回帰条件は `src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs`:
+
+管理画面で「今すぐ販売可」を確定 → `PremiumPlusReleaseOverride = 'phase4'` →
+   公開判定 `phase = 4` → `showProductPage = true` → `purchaseEnabled = true` →
+   **本人が `/premium-plus/` で購入できる**
+
+`showPurchaseCta` は公開判定の値として確認してよいが、
+**「三連複ページに強い CTA が即座に出ること」は完成条件にしない**。
+
+## Premium Plus の「即時販売」（2026-08-07 明文化）
+
+管理画面の**「今すぐ販売可」＝即時販売**は、**その会員だけ段階公開の待機日数を飛ばして
+PHASE 4（販売中）にする**操作。単に `PremiumPlusEligibility = eligible` にするのとは違う。
+
+| 操作 | 書く値 | 会員に起きること |
+|---|---|---|
+| 段階公開で販売可（staged） | `eligible` + override **解除** | 販売資格は付くが、**PHASE 1→4 の待機日数が経過するまで買えない** |
+| **今すぐ販売可（immediate）** | `eligible` + **`PremiumPlusReleaseOverride = 'phase4'`** | **即座に** PHASE 4。`/premium-plus/` を開けて**購入できる**（`showProductPage` / `purchaseEnabled` が true） |
+| 保留（review）/ 販売対象外（blocked） | 該当状態 + override **必ず解除** | 売らない。override を残すと再 eligible 化で即時販売が復活するため |
+
+### 守るべき性質
+
+- **route は本人本来のもの**を保つ（三連複会員は `sanrenpuku` のまま。Premium は `premium_admin`）
+- **override は待機より優先**（`PremiumPlusEligibleAt` / `PaidAt` からの日数計算を飛ばす）
+- **売ってはいけない状態は override でも売らない**（review / blocked / 契約無効）
+- **受付時間帯は変えない**（16:30 以降は `purchaseEnabled=false`）
+- **冪等**（同じ操作を繰り返しても結果が同じ。2 回目は override を PATCH に含めない）
+- **他会員に波及しない**（判定は 1 レコードだけを見る）
+- **同義の新規フィールドを増やさない**（既存 `PremiumPlusReleaseOverride` が正本）
+
+### 三連複ページの販売導線は段階公開設計のまま（即時販売はこれを変えない）
+
+`PremiumPlusCta.astro` は **2026-07-15 から `premium-sanrenpuku.astro` でコメントアウト**されている
+（prerender + クライアント AccessControl のため、置くと商品名とリンクが未ログイン者の HTML に載る＝存在秘匿が破れる）。
+
+PHASE 4 の会員に実際に見えるのは:
+
+1. `/premium-plus/` が開ける（価格・申込ボタンあり）
+2. 三連複ページの **`PremiumPlusStageTeaser`（予告枠リンク）**のみ（SSR API 経由で会員だけに描画）
+
+即時販売が保証するのは **商品ページのアクセスと購入可否**であって、
+**三連複ページに新しい強い CTA を出すことではない**（導線は既存設計を維持する）。
+管理画面はこの実態を操作前に表示する（文言と実動作を食い違わせない）。
+
+### 単一源
+
+| 目的 | ファイル |
+|---|---|
+| 公開判定 | `src/lib/premiumPlus/premiumPlusRelease.js` |
+| 管理操作 → 書く値 | `src/lib/premiumPlus/premiumPlusEligibility.js`（`buildAdminActionFields`） |
+| 顧客に見えるものの再現 | `src/lib/premiumPlus/premiumPlusPreview.js`（`buildPreviewSnapshot`） |
+| 規約の固定 | `src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs` |
+
 ## 見込み客プール（外部リスト・2026-08-06）
 
 外部 CSV の 1 万数千件は **Airtable Customers へ入れない**。Redis の見込み客プールで扱い、
@@ -841,6 +917,50 @@ Step 2 の時点では特典が決まっていない。ここで `checkGrantable
 固定テスト: `src/lib/entitlements/comebackPolicy.test.mjs` /
 `src/lib/comeback/comebackWithdrawnGrant.test.mjs` /
 `src/lib/comeback/adminComebackUi.guard.test.mjs`
+
+## 販売CTA の自動判定を管理画面で確認する（2026-08-07）
+
+管理者が **「今なぜこの CTA が出ているのか」を管理画面だけで読み切れる**ようにする。
+判定そのものは変更しない — しきい値・優先順位・fail closed 条件は従来どおり。
+
+### 管理画面（`/admin/premium-plus-eligibility` の詳細パネル）に出すもの
+
+| 項目 | 内容 |
+|---|---|
+| 三連複保有 | あり / なし |
+| ROUTE | A（三連複購入者）/ B（Premium 30日）/ C（管理者指定）/ 対象外 |
+| Premium加入からの経過 | 日数。`PaidAt` が無ければ **「加入日（PaidAt）が未記録」**（日数を捏造しない）|
+| **自動判定CTA** | `UpsellTarget` を無視して auto で解決した結果（三連複 / Plus / なし）|
+| **自動判定の理由** | 具体的な 1 文。ROUTE B なら「Premium加入から30日以上経過（42日）・三連複未購入のため Plus を自動表示」|
+| 現在の設定 | Airtable `UpsellTarget`（自動 / 三連複 / Plus / なし）|
+| 顧客に表示されるCTA | 最終結果（顧客側 resolver と同一）|
+| 実表示の理由 | 具体的な 1 文 |
+
+手動指定が自動判定と違う結果になっているときは、その旨を明示する。
+
+### 「自動」の意味（管理画面に常設）
+
+1. Plus の販売条件が成立している → **Plus のみ**表示
+2. それ以外で三連複を購入できる → **三連複のみ**表示
+3. どちらでもなく Plus の予告段階 → **Plus の予告のみ**表示
+4. **2 商品を同時に表示することはない**
+
+### 手動上書き
+
+`自動 / 三連複 / Plus / なし` の 4 択（従来どおり・単一選択）。
+**明示指定でも各商品の販売資格・契約状態・blocked 等の fail closed 条件は再評価する**
+（保有済みへの三連複 CTA / blocked への Plus CTA は手動でも出ない）。
+
+### 実装の分担（判定と説明を混ぜない）
+
+- 判定の正本: `src/lib/upsell/upsellTarget.js` / `src/lib/premiumPlus/premiumPlusRelease.js`
+- **説明の生成: `src/lib/upsell/upsellExplain.js`（純粋・read-only）**。
+  しきい値も優先順位も持たず、既存 resolver の戻り値を日本語にするだけ
+- 「自動ならどうなるか」は `resolveUpsellForCustomer({ ..., targetOverride: 'auto' })` で求める。
+  **`targetOverride` は管理経路専用**。顧客向けページ / API では使わない（guard テストで固定）
+
+固定テスト: `src/lib/upsell/upsellExplain.test.mjs` /
+`src/lib/upsell/upsellIntegration.guard.test.mjs`
 
 ## 無料付与 → 案内メールの引き継ぎ（2026-08-03 / 自動化は 2026-08-04）
 

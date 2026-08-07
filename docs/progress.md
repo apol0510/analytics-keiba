@@ -53,6 +53,64 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
 **PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
 
+### 🔎 Premium Plus「即時販売」の実態調査と文言修正（2026-08-07・Draft PR）
+
+**発端**: ある三連複会員が Premium Plus に反応しない。「CTA が見えていればクリックするはずの人」との指摘。
+
+#### 分かったこと（read-only 調査）
+
+| # | 事実 |
+|---|---|
+| 1 | **「即時販売」の仕組みは既に正しく動く**。`PremiumPlusReleaseOverride = 'phase4'` で段階公開を飛ばし、PHASE 4（CTA 表示・購入可）になる。route は本人本来のものを保つ |
+| 2 | **該当者には既に override=phase4 が設定済み**（2026-07-30 admin 操作）。顧客側判定は `phase=4 / showProductPage=true / showPurchaseCta=true / purchaseEnabled=true / 受付中` |
+| 3 | **`PremiumPlusCta` は 2026-07-15 からコメントアウト**（存在秘匿のため）。三連複ページに出るのは `PremiumPlusStageTeaser` の**予告枠リンクだけ** |
+| 4 | クリック計測は**全経路で無効**（`MARKETING_CLICK_TRACKING_ENABLED` 未設定 / 共有 executor はハードコードで無効 / サイト側にも計測なし）。**「押したか」はデータで追えない** |
+| 5 | 表示状態と override の突合（read-only・PII 非出力）: `PremiumPlusEligibility` 設定済み **3 件はすべて override=phase4**。**不整合 0 件** |
+
+→ **「反応がない」の説明**: 販売状態は正しく開いており `/premium-plus/` で購入できる。
+三連複ページの導線は**設計どおり予告枠リンクのみ**（強い CTA は存在秘匿のため非表示）なので、
+リンクに気づかれていない可能性が高い。**導線の強化は段階公開設計の変更として別途判断する。**
+
+#### 決定（再発防止・恒久ルール）
+
+`docs/decisions.md` 2026-08-07 に記録。要点:
+
+- **管理画面の文言と本番挙動の意味一致を完成条件にする**（ズレていればコードが正しくても未完成）
+- **強い操作語**（即時販売 / 送信 / 昇格 / 販売可）は
+  **管理操作 → 保存値 → 公開判定 → 商品ページの可否 → `purchaseEnabled`** を **E2E で確認**する
+- **「即時販売」= 確定時点で即 PHASE 4 相当**にし、**`/premium-plus/` のアクセスと購入を即時可能**にする
+  （eligible 化でも段階公開開始でもない）。
+  **三連複ページの teaser / CTA は既存の段階公開設計を維持**し、強い CTA の即時表示は要件に含めない
+- dry-run / preview は**「この操作後に顧客から何が見えるか」を明示**する設計を優先
+- 恒久的な回帰条件: **「今すぐ販売可」確定 → `override=phase4` → `phase=4` →
+  `showProductPage=true` → `purchaseEnabled=true` → 本人が `/premium-plus/` で購入できる**
+  （`showPurchaseCta` は公開判定値として確認するが、三連複ページの強い CTA は完成条件にしない）
+- **今後は運用者の手動監査を前提にせず、自動テストと仕様で検知する**
+
+#### 直したこと（文言と実動作の一致）
+
+管理画面の操作が「何を起こすか」「会員に何が見えるか」を操作前に明示するようにした。
+
+- ボタン: `段階公開で販売可` → **`段階公開で販売可（CTAは待機後）`** / `今すぐ販売可` → **`今すぐ販売可（CTA表示・購入可）`**
+- 一覧フィルタ: `すぐ販売できる（個別許可）` → **`即時販売（CTA表示・購入可）`**
+- 通常操作の説明: 「販売資格を与えるだけ。**今日は買えません**」
+- 強い操作の説明: 「待機日数を飛ばして即 PHASE 4」＋**どこに何が出るか**
+  （`/premium-plus/` は開ける／三連複ページは**予告枠リンクだけ**／購入 CTA 本体は非表示）
+
+**判定ロジック・フィールドは変更していない**（既存 override が正本。新しい列は増やさない）。
+
+#### テスト
+
+`premiumPlusImmediateSale.test.mjs` **13 件**を新設。顧客に見えるのと同じ経路で、
+PHASE 3 の三連複会員 → 即時販売 → 即 PHASE 4 / CTA / 購入可・route 維持、
+Premium 会員（30 日未満）でも同様、override なしなら段階公開のまま、
+保留 / 販売対象外 / 契約無効は override があっても売らない、受付時間帯は不変、
+冪等（2 回目は override を PATCH に含めない）、他顧客に波及しない、
+schema 未準備なら fail closed、管理画面の文言が実動作と一致、を固定。
+
+premiumPlus 全体 **407 pass** / `check:safety` 519 pass / build 成功。
+**本番 Airtable write 0 / production env 変更 0 / deploy 0 / 送信 0。**
+
 ### ✅ メルマガ自動化 main 反映（2026-08-06・PR #237 squash `ba93eda`）
 
 **production deploy 済み。env が全て閉じているため本番の挙動は変わらない**
@@ -2570,6 +2628,30 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 - 滞留ブランチの棚卸し（正確な本数は 未確認。作業時に `git branch -a` で数えること）
 - `verify-project.sh` が旧プロジェクト由来の期待値（旧パス・旧 remote）のままである点の是正または明示的な廃止
 
+## 販売CTA の自動判定理由を管理画面に表示（2026-08-07 / PR #247 `aa7f983` merge 済み・本番反映済み）
+
+**判定ロジックは変更していない。** read-only 監査で ROUTE B の 30 日判定・三連複未購入判定・
+auto の優先順位・`UpsellTarget` の保存/読取・顧客側 resolver との一致をすべて確認し、
+既に正しかったため既存コードには手を入れていない（しきい値 `PREMIUM_30D_DAYS = 30` も不変）。
+
+追加したのは**説明レイヤーだけ**:
+
+- `src/lib/upsell/upsellExplain.js`（新規・純粋・read-only）
+  自動判定 CTA / 具体的な理由文 / 判断材料（三連複保有・ROUTE・経過日数）を組み立てる。
+  しきい値も優先順位も持たず、既存 resolver の戻り値を日本語化するだけ
+- `resolveUpsellForCustomer` に `targetOverride`（**管理経路専用**・既定は従来どおり）を追加。
+  「auto ならどうなるか」を手動指定中でも求められるようにするため
+- 管理 Function の一覧応答に 自動判定 / 具体的理由 / 経過日数テキスト / ROUTE ラベルを追加
+- 管理画面の詳細パネルと表示プレビューに上記を表示。「自動」の判定ルールも常設
+
+**経過日数を捏造しない**: `PaidAt` が空の旧会員は「加入日（PaidAt）が未記録」と明示し、
+「30 日未達」と区別する。
+
+テスト: `upsellExplain.test.mjs`（20 件・新規）/ `upsellIntegration.guard.test.mjs`（+4 件）。
+`npm run test:upsell` 71 pass / `test:premium-plus-media` 423 pass / `check:safety` exit 0 / build 成功。
+
+**本番実顧客の監査（read-only・PII 非出力）**: 別途記載（下記「High-risk Operations」参照）。
+Airtable write 0 / env 変更 0 / deploy 0 / メール送信 0。
 ## Scheduled Function 初回起動確認（2026-08-07・read-only 完了 / 合格判定は保留）
 
 `cron-marketing-automation`（`export const config = { schedule: '0 1 * * *' }` = JST 10:00）の
