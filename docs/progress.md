@@ -2530,6 +2530,31 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 - 滞留ブランチの棚卸し（正確な本数は 未確認。作業時に `git branch -a` で数えること）
 - `verify-project.sh` が旧プロジェクト由来の期待値（旧パス・旧 remote）のままである点の是正または明示的な廃止
 
+## 販売CTA の自動判定理由を管理画面に表示（2026-08-07 / PR #247・未 merge）
+
+**判定ロジックは変更していない。** read-only 監査で ROUTE B の 30 日判定・三連複未購入判定・
+auto の優先順位・`UpsellTarget` の保存/読取・顧客側 resolver との一致をすべて確認し、
+既に正しかったため既存コードには手を入れていない（しきい値 `PREMIUM_30D_DAYS = 30` も不変）。
+
+追加したのは**説明レイヤーだけ**:
+
+- `src/lib/upsell/upsellExplain.js`（新規・純粋・read-only）
+  自動判定 CTA / 具体的な理由文 / 判断材料（三連複保有・ROUTE・経過日数）を組み立てる。
+  しきい値も優先順位も持たず、既存 resolver の戻り値を日本語化するだけ
+- `resolveUpsellForCustomer` に `targetOverride`（**管理経路専用**・既定は従来どおり）を追加。
+  「auto ならどうなるか」を手動指定中でも求められるようにするため
+- 管理 Function の一覧応答に 自動判定 / 具体的理由 / 経過日数テキスト / ROUTE ラベルを追加
+- 管理画面の詳細パネルと表示プレビューに上記を表示。「自動」の判定ルールも常設
+
+**経過日数を捏造しない**: `PaidAt` が空の旧会員は「加入日（PaidAt）が未記録」と明示し、
+「30 日未達」と区別する。
+
+テスト: `upsellExplain.test.mjs`（20 件・新規）/ `upsellIntegration.guard.test.mjs`（+4 件）。
+`npm run test:upsell` 71 pass / `test:premium-plus-media` 423 pass / `check:safety` exit 0 / build 成功。
+
+**本番実顧客の監査（read-only・PII 非出力）**: 別途記載（下記「High-risk Operations」参照）。
+Airtable write 0 / env 変更 0 / deploy 0 / メール送信 0。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

@@ -242,10 +242,17 @@ export function resolvePlusAdminFlags({ target, member } = {}) {
  * ⚠️ `adminPlusTarget` をここで渡すのが要点。管理者が Plus を明示指定した有効 Premium は、
  *    `PaidAt` が空でも（ROUTE C として）販売対象になる。資格・phase・受付時間の判定は不変。
  *
- * @param {{ fields: object|null, nowMs?: number, sanrenpukuStage?: object, fallbackAnchor?: unknown }} input
+ * `targetOverride` は **管理画面の説明生成専用**（`upsellExplain.js` が「auto ならどうなるか」を
+ * 求めるために使う）。未指定なら従来どおり fields の `UpsellTarget` を読む。顧客向け経路では
+ * 渡さないこと（guard テストで固定）。Airtable への書き込みは一切発生しない。
+ *
+ * @param {{ fields: object|null, nowMs?: number, sanrenpukuStage?: object, fallbackAnchor?: unknown,
+ *          targetOverride?: unknown }} input
  */
-export function resolveUpsellForCustomer({ fields, nowMs = Date.now(), sanrenpukuStage, fallbackAnchor } = {}) {
-  const target = readUpsellTarget(fields);
+export function resolveUpsellForCustomer({ fields, nowMs = Date.now(), sanrenpukuStage, fallbackAnchor, targetOverride } = {}) {
+  const target = targetOverride === undefined
+    ? readUpsellTarget(fields)
+    : normalizeUpsellTarget(targetOverride);
   const entitlements = resolveEntitlements(fromAirtableFields(fields || {}), nowMs);
   const member = resolvePlusMemberFromFields(fields, { nowMs, fallbackAnchor });
   const plusRelease = resolvePremiumPlusRelease({

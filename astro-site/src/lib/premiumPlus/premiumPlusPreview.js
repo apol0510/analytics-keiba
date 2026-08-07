@@ -43,6 +43,12 @@ import {
   describeUpsellDisplay,
   UPSELL_TARGET_LABEL,
 } from '../upsell/upsellTarget.js';
+import {
+  describeUpsellReasonText,
+  describeDaysSincePremium,
+  UPSELL_CHANNEL_LABEL,
+  ROUTE_LABEL,
+} from '../upsell/upsellExplain.js';
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -160,9 +166,12 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
       hasSanrenpuku: member.hasSanrenpuku,
       premiumActive: member.premiumActive,
       daysSincePremium: release.daysSincePremium,
+      // 経過日数が取れないときに推測しない（PaidAt は旧会員で構造的に空）
+      daysSincePremiumText: describeDaysSincePremium(release.daysSincePremium),
 
       // 販売対象・資格
       route: release.route,
+      routeLabel: ROUTE_LABEL[release.route] || release.route,
       eligibility: release.eligibility,
       releaseOverride: release.releaseOverride,
       overrideApplied: release.overrideApplied,
@@ -173,8 +182,11 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
       upsellTarget: view.target,
       upsellTargetLabel: UPSELL_TARGET_LABEL[view.target],
       upsellChannel: view.channel,
+      upsellChannelLabel: UPSELL_CHANNEL_LABEL[view.channel] || view.channel,
       upsellDisplay: describeUpsellDisplay(view),
       upsellReason: view.reasonLabel,
+      // 「なぜそうなったか」を具体化した 1 文（管理一覧の詳細と同じ生成器）
+      upsellReasonText: describeUpsellReasonText(view, release),
 
       // 段階公開
       phase: release.phase,

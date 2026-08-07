@@ -138,3 +138,59 @@ test('6. 管理画面は「設定値」と「実表示」を分けて出し、�
   assert.ok(/plusAction/.test(adminPage), '既存の販売資格操作が消えている');
   assert.ok(/今すぐ販売可/.test(adminPage));
 });
+
+// ── 7. 「今なぜこの CTA が出ているのか」を管理画面で読み切れる ──────
+test('7. 管理画面の詳細に 自動判定CTA / 理由 / 判断材料 / 実表示 が揃っている', () => {
+  for (const label of [
+    '三連複保有', 'ROUTE', 'Premium加入からの経過',
+    '自動判定CTA', '自動判定の理由',
+    '現在の設定', '顧客に表示されるCTA', '実表示の理由',
+  ]) {
+    assert.ok(adminPage.includes(label), `詳細パネルに「${label}」が無い`);
+  }
+  // 「自動」の意味を明記する（文言の正本は upsellExplain.js）
+  assert.ok(/upsellAutoRules/.test(adminPage), '「自動」の判定ルールを表示していない');
+  assert.ok(/「自動」の判定ルール/.test(adminPage));
+});
+
+test('7-b. 一覧 API が 自動判定と実表示の両方を返す', () => {
+  const code = strip(adminFn);
+  assert.ok(/explainUpsell\(/.test(code), '説明生成の単一源を通していない');
+  for (const key of [
+    'upsellAutoChannel', 'upsellAutoReasonText', 'upsellReasonText',
+    'upsellIsManual', 'upsellDiffersFromAuto', 'daysSincePremiumText', 'routeLabel',
+  ]) {
+    assert.ok(code.includes(key), `一覧 API が ${key} を返していない`);
+  }
+  assert.ok(/upsellAutoRules:\s*UPSELL_AUTO_RULE_TEXT/.test(code), '「自動」の説明文言を配っていない');
+  // 説明は判定を再実装しない（しきい値をここに書かない）
+  assert.ok(!/PREMIUM_30D_DAYS\s*=/.test(code), '管理 Function がしきい値を再定義している');
+});
+
+test('7-c. 説明モジュールは判定を再実装しない（純粋・read-only）', () => {
+  const explain = strip(read('./upsellExplain.js'));
+  // しきい値・優先順位を持たない（既存 resolver から受け取るだけ）
+  assert.ok(!/PREMIUM_30D_DAYS\s*=\s*\d/.test(explain), 'しきい値を再定義している');
+  assert.ok(!/>=\s*30\b/.test(explain), '30 日判定を複製している');
+  assert.ok(!/canPurchaseSanrenpuku|canViewSanrenpuku|paidPremiumActive/.test(explain),
+    '会員判定を再実装している');
+  // 書き込み・I/O を持たない
+  assert.ok(!/method:\s*['"](POST|PATCH|PUT|DELETE)['"]/i.test(explain), '書き込みを行っている');
+  assert.ok(!/fetch\(|api\.airtable\.com/.test(explain), 'I/O を持っている');
+  // 判定は単一源へ委譲する
+  assert.ok(/resolveUpsellForCustomer/.test(explain), '単一源を経由していない');
+});
+
+test('7-d. targetOverride は管理経路だけ。顧客向けページ/API では使わない', () => {
+  for (const [name, src] of [
+    ['upsell.json', upsellApi], ['stage API', stageApi],
+    ['premium-plus-v2', plusV2], ['premium-plus', plusV1],
+    ['dashboard', dashboard], ['premium-prediction/jra', jra], ['premium-prediction/nankan', nankan],
+  ]) {
+    assert.ok(!/targetOverride/.test(strip(src)), `${name}: 顧客向け経路で targetOverride を使っている`);
+  }
+  // 既定（未指定）では従来どおり fields の UpsellTarget を読む
+  const lib = strip(read('./upsellTarget.js'));
+  assert.ok(/targetOverride === undefined\s*\n?\s*\?\s*readUpsellTarget\(fields\)/.test(lib),
+    '未指定時に fields を読むフォールバックが無い');
+});
