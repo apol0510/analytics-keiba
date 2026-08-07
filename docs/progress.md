@@ -262,6 +262,104 @@ prefix 外操作の拒否 / fail-closed / 残存 0 を実証済み。Definition 
 `run:*` / `recipient:*` / `lock:*` / `fence` を**実運用の並行実行で**使う経路（scheduler・enqueue）は
 未検証。Airtable への実書き込み・実送信も未実証。**これらは管理 UI / API の導入前監査の対象。**
 
+### 🚧 段階開放の preflight を整備（2026-08-07・read-only / 実行はまだ）
+
+`docs/marketing-automation-release-runbook.md` の末尾に、開放直前に毎回見る節を追加した。
+**production env 変更 0 / 本番 write 0 / 実送信 0 / deploy 0。**
+
+- **env と write 経路の対応表**（開けたときに何が書けるようになるか）。
+  production の状態は `env:list --json` を正とする（`env:get` は折り返しで誤判定しやすい）
+- **各段の合格条件・停止条件・rollback**を S2〜S5 / P2〜P4 で固定
+- **P2 少数 canary の実行前チェックリスト**（実顧客を使わない / 3〜5 件 /
+  Customers・抑止台帳・blacklist との照合 / 作成される Redis キー / 冪等性 / cleanup / 想定件数）
+- **監視指標を数字だけで定義**（prospect 状態別 / ScheduledEmails PENDING / Customers 増加 /
+  写しの件数と鮮度 / 送信数 / error 数）。PII は出さない
+
+#### 確認した事実（2026-08-07・read-only）
+
+| 項目 | 結果 |
+|---|---|
+| 開放用 env 7 種 | **すべて UNSET**（`MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` のみ既存で true） |
+| Customers へ書ける経路 | **P2（手動 `promote`）と P4（自動）だけ**。S2〜S5 は Redis と ScheduledEmails まで |
+| P4 の再検証（fake） | ENGAGED → CREATE 成功 → PROMOTED / CREATE 失敗 → ENGAGED 維持 → 再試行 / 同時実行でも 1 件 / 写し stale で fail-closed — **すべて pass** |
+| ローカル全スイート | marketing 1,044 / B-4・B-5 17 / `check:safety` 519 — **すべて pass** |
+
+### ✅ Scheduled Function 起動確認（2026-08-06・read-only）
+
+`28705ce` が production で ready の状態で、両 scheduled function のログを read-only で確認した。
+**production env 変更 0 / Airtable write 0 / ScheduledEmails 作成 0 / 実送信 0。**
+
+#### `cron-prospect-worker`（`*/10 * * * *`）— **起動している**
+
+| | |
+|---|---|
+| 起動実績 | **09:10〜12:30 UTC の 21 回連続**（10 分間隔・欠落なし） |
+| level 分布 | **info 42 / error 0**。`errors: []` が空でない行 **0**、失敗マーカー **0** |
+| 昇格 | 毎回 `実行: false` / `reason: auto_promote_disabled`（`MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED` 未設定） |
+| 写し | 初回 09:10 に `契機: snapshot_missing` で作成。以後は `更新不要`（6 時間で再作成） |
+
+#### ⚠️ **顧客写しは既に自動作成されていた**（P1 は実施済み）
+
+**09:10 UTC の初回 tick が、写しが無いことを検知して自動的に作った。**
+
+```
+写し: { 件数: 1668, chunks: 1, pages: 17, 契機: 'snapshot_missing' }
+```
+
+- Airtable は **GET のみ**（17 ページ / Email 列だけ）。**write 0**
+- Redis へは `ak:customer-snapshot:meta` と `ak:customer-snapshot:emails:<gen>:0` を書いた
+- **つまり本番 Redis write は 0 ではなくなっている。** 写しの作成・更新は
+  設計上どの env でもゲートしていない（読み手を fail-closed にするために必要なため）
+- 以後は 6 時間ごとに自動更新される（次回 ≈ 15:10 UTC）
+
+> **記録**: 「本番 Redis write 0 を維持」という運用前提と、
+> 「写しはゲート無しで自動生成する」という実装が食い違っていた。
+> 影響は `ak:customer-snapshot:` 配下のみで、顧客データ・配信・課金には触れていない。
+> **P1（顧客 snapshot 初回作成）は改めて実行する必要が無い。**
+
+#### 仕様として確定させたこと
+
+| 項目 | 内容 |
+|---|---|
+| 生成の契機 | **ゲート無し**。`cron-prospect-worker` が 10 分ごとに鮮度を見て、**無い / 6 時間より古い**なら作り直す |
+| Airtable | **GET のみ**（`Email` 列だけ）。**write は 1 度も発生しない** |
+| Redis | `ak:customer-snapshot:meta` と `ak:customer-snapshot:emails:<gen>:<i>` |
+| 配信系 write との区別 | **配信ではなくキャッシュ更新**。ScheduledEmails / CampaignDeliveries / Customers に触れない |
+| 運用上の言い方 | **「全閉鎖でも snapshot 名前空間だけは Redis write が発生する」**と明記して扱う |
+| 止めるか | **止めない**（止めると dry-run も ACTIVE 化も fail-closed で動かなくなる）。今回はコード変更しない |
+
+runbook の **P1 を「初回作成」から「存在・鮮度・件数の確認」へ変更**した。
+
+#### `cron-marketing-automation`（`0 1 * * *` = JST 10:00）— **未起動（時刻前）**
+
+- 直近 24h の invocation で **handler の出力（`marketing-automation-scheduler`）は 0 件**。
+  記録されているのは公開 URL への 403 確認時の platform 行のみ
+- schedule 登録は `export const config = { schedule: '0 1 * * *' }`。
+  `netlify.toml` に二重登録なし（`cron-` を含む行 0）
+- **初回起動は 2026-08-07 01:00 UTC（JST 10:00）**。それまでは未起動が正常
+- 起動したら `ran:false` / `reason:"gates_closed"` / `接続 {redis:false, airtable:false}` /
+  `sideEffects:'none'` を確認する（runbook S1）
+
+##### 初回起動の実測
+
+**未実施（時刻前）。** 確認時点は UTC 2026-08-06 15:38（JST 2026-08-07 00:38）で、
+初回は **UTC 2026-08-07 01:00（JST 10:00）**。約 9.4 時間後。
+
+確認する項目（read-only）:
+
+| 項目 | 期待 |
+|---|---|
+| scheduled invocation | **1 回**（時刻が 01:00 UTC 付近） |
+| `isScheduledPayload` 判定 | 通る（`next_run` を含む本文が渡る） |
+| gate | `scheduler` / `armed` / `enqueue` すべて **closed** |
+| Redis / Airtable 接続 | **開始しない**（`接続 {redis:false, airtable:false}`） |
+| ScheduledEmails 作成 | **0** |
+| `sideEffects` | `'none'` |
+| error | **0** |
+
+⚠️ **invocation が 0 件だった場合**は `next_run` 前提が崩れている可能性があり、
+その場合も **env は開けず**、原因調査を先に行う（コード修正が要るなら別 branch / 別 Draft PR）。
+
 ### ✅ 残件 B-4 / B-5 を解消（2026-08-06・Draft PR #242）
 
 監査で残していた 2 件を直した。**production env 変更 0 / 本番 write 0 / 実送信 0。**
@@ -2530,7 +2628,7 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 - 滞留ブランチの棚卸し（正確な本数は 未確認。作業時に `git branch -a` で数えること）
 - `verify-project.sh` が旧プロジェクト由来の期待値（旧パス・旧 remote）のままである点の是正または明示的な廃止
 
-## 販売CTA の自動判定理由を管理画面に表示（2026-08-07 / PR #247・未 merge）
+## 販売CTA の自動判定理由を管理画面に表示（2026-08-07 / PR #247 `aa7f983` merge 済み・本番反映済み）
 
 **判定ロジックは変更していない。** read-only 監査で ROUTE B の 30 日判定・三連複未購入判定・
 auto の優先順位・`UpsellTarget` の保存/読取・顧客側 resolver との一致をすべて確認し、
@@ -2554,6 +2652,48 @@ auto の優先順位・`UpsellTarget` の保存/読取・顧客側 resolver と�
 
 **本番実顧客の監査（read-only・PII 非出力）**: 別途記載（下記「High-risk Operations」参照）。
 Airtable write 0 / env 変更 0 / deploy 0 / メール送信 0。
+## Scheduled Function 初回起動確認（2026-08-07・read-only 完了 / 合格判定は保留）
+
+`cron-marketing-automation`（`export const config = { schedule: '0 1 * * *' }` = JST 10:00）の
+**初回スケジュール起動を実測で確認**した。ただし runbook の合格条件は**検証できなかった**。
+
+### 確認できたこと
+
+| 項目 | 実測 |
+|---|---|
+| 初回スケジュール起動 | **`2026-08-07T01:00:40.662Z`（JST 10:00:40）に invocation 1 件** |
+| 実行時間 | `Duration 79.69 ms` / `Init 345.03 ms` |
+| error / warn ログ（7 日） | **0 件** |
+| `ScheduledEmails` | PENDING **0**（不変）|
+| `CampaignDeliveries` | 最終 SentAt **2026-08-04T07:33:12.873Z から不変** |
+| メール送信 | **0** |
+
+production 投入は `2026-08-06T05:41:59Z` なので **2026-08-07 01:00 が最初のスケジュール機会**。
+そこで確実に起動しており、**schedule 登録は機能している**。
+
+7 日分の履歴に現れる `2026-08-06 04:37 / 05:24` の invocation 群は、
+`feat/marketing-automation` の **Deploy Preview**（04:34:42 / 05:22:30 ready）に対する
+当時の検証呼び出しで、production のスケジュール起動ではない。
+
+### ⚠️ 合格条件が検証できない（runbook の欠陥を発見）
+
+`runScheduledTick` の早期 return 2 経路は **どちらも `console.log` を呼ばない**:
+
+- `!isScheduledPayload(payload)` → **404**（無言）
+- `!gates.allOpen` → **200 `reason: 'gates_closed'`**（無言）
+
+Netlify のログにはランタイムの `Duration:` 行しか残らず、レスポンス本文は残らない。
+よって `ran` / `reason` / `接続` / `sideEffects` は**観測不能**で、
+**「gates_closed で正常」と「404 で機能が死んでいる」を外形から区別できない**。
+
+どちらでも副作用 0 なので危険はない（Airtable 側でも enqueue 0 を実測）。
+だが S2 の判断材料としては不十分なため、**合格とは扱わず S2 へ進まない**。
+
+### 必要な修正（未実施・要承認）
+
+早期 return の 2 経路へ構造化ログを 1 行ずつ追加する（secret・PII なし）。
+これで 2 経路をログだけで区別でき、runbook の合格条件が検証可能になる。
+**コード変更 + production deploy を伴う**ため別承認とする。
 
 ## メール送信 gate の再閉鎖（2026-08-07・承認済み・実施完了）
 
