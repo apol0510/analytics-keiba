@@ -107,8 +107,8 @@
       card.appendChild(body);
 
       // PHASE 3 以降のみ導線リンク（PHASE 2 は productHref が null で出さない）。
-      // ラベルも SSR 由来（PHASE 3 = 内容を見る / PHASE 4 = 詳細を見る）。
-      // ここに文言をベタ書きしない。ラベルが無ければリンクごと出さない（fail closed）。
+      // ラベルも SSR 由来。ここに文言をベタ書きしない（この script は is:inline のため
+      // コメントごと未ログイン者の HTML に載る）。ラベルが無ければリンクごと出さない。
       const linkLabel = typeof data.teaser.linkLabel === 'string' ? data.teaser.linkLabel.trim() : '';
       if (data.productHref && linkLabel) {
         const link = document.createElement('a');

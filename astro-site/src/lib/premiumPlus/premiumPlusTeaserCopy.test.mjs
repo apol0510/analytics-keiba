@@ -147,12 +147,29 @@ test('stage API は route と phase の両方を渡している', () => {
 });
 
 test('コンポーネントは導線ラベルを SSR から受け取る（ベタ書きしない）', () => {
-  const body = TEASER_BODY;
-  assert.match(body, /data\.teaser\.linkLabel/);
-  // 旧実装のベタ書きラベルが戻っていない
-  assert.doesNotMatch(body, /内容を見る|詳細を見る|ページへ移動/);
+  assert.match(TEASER_BODY, /data\.teaser\.linkLabel/);
   // ラベルが無ければリンクごと出さない（空リンクを作らない）
-  assert.match(body, /if \(data\.productHref && linkLabel\)/);
+  assert.match(TEASER_BODY, /if \(data\.productHref && linkLabel\)/);
+});
+
+/**
+ * `<script is:inline>` は **コメントごと**静的 HTML に載り、未ログイン者にも見える
+ * （premium-sanrenpuku.astro は prerender=true）。2026-08-07 に「PHASE 3 = 内容を見る /
+ * PHASE 4 = 詳細を見る」という説明コメントがそのまま本番 HTML へ出た。
+ * よって**コメントを落とさない生のテンプレート本体**で文言の混入を検査する。
+ */
+test('テンプレート本体（コメント含む）に予告文言が一切現れない', () => {
+  const raw = TEASER.slice(TEASER.indexOf('\n---', 3) + 4);
+  for (const key of ['teaser', 'teaserPremium30d', 'teaserOpen', 'teaserPremium30dOpen']) {
+    for (const [field, value] of Object.entries(PP_RELEASE_COPY[key])) {
+      assert.ok(
+        !raw.includes(value),
+        `${key}.${field} の文言がテンプレートに載っている（未ログイン者に見える）: ${value}`
+      );
+    }
+  }
+  // 部分一致でも拾う（コメント内での言及を含む）
+  assert.doesNotMatch(raw, /内容を見る|詳細を見る|ページへ移動|準備しています|ご用意しました/);
 });
 
 test('コンポーネントは phase 別の分岐を自前で持たない（判定は単一源のみ）', () => {
