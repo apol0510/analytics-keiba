@@ -64,7 +64,9 @@ export async function GET({ request }) {
   // PHASE 1 / 販売資格なし / route 対象外 は「まだ何も知らせない」＝存在秘匿を維持する。
   if (!release.showTeaser) return notFound();
 
-  const teaser = teaserCopyForRoute(release.route);
+  // 文言は route + phase で決まる。PHASE 2/3（待機中）は「準備しています」、
+  // PHASE 4（開通済み）は用意済みであることを静かに伝える文言＋導線ラベルを返す。
+  const teaser = teaserCopyForRoute(release.route, release.phase);
   if (!teaser) return notFound();
 
   return new Response(JSON.stringify({

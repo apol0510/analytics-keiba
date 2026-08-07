@@ -13,6 +13,10 @@
  *   - 購入ボタンを出さない
  *   - PHASE 2 では商品ページへのリンクも出さない（強制誘導しない）
  *   - PHASE 3 以降のみ、控えめな導線リンクを 1 本だけ出す
+ *
+ * 文言（タイトル / 本文 / リンクラベル）は phase 別に SSR が決める。PHASE 4（開通済み）でも
+ * この枠は予告枠のままで、営業的な強調表現やスタイル変更は持ち込まない。
+ * 差し替わるのは文字列だけ（正本は premiumPlusRelease.js の PP_RELEASE_COPY）。
  */
 ---
 
@@ -102,12 +106,15 @@
       body.textContent = data.teaser.body || '';
       card.appendChild(body);
 
-      // PHASE 3 以降のみ導線リンク（PHASE 2 は productHref が null で出さない）
-      if (data.productHref) {
+      // PHASE 3 以降のみ導線リンク（PHASE 2 は productHref が null で出さない）。
+      // ラベルも SSR 由来（PHASE 3 = 内容を見る / PHASE 4 = 詳細を見る）。
+      // ここに文言をベタ書きしない。ラベルが無ければリンクごと出さない（fail closed）。
+      const linkLabel = typeof data.teaser.linkLabel === 'string' ? data.teaser.linkLabel.trim() : '';
+      if (data.productHref && linkLabel) {
         const link = document.createElement('a');
         link.className = 'pp-stage-link';
         link.href = data.productHref;
-        link.textContent = '内容を見る →';
+        link.textContent = linkLabel;
         card.appendChild(link);
       }
 
