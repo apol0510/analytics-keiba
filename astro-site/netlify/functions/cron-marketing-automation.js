@@ -228,7 +228,27 @@ async function enqueueAndRecord({ plan, prospectStore, now }) {
   return { enqueued: plan.recipients.length, failed: 0, recorded };
 }
 
-export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
+/** 早期 return のログに載せる目印。ログ検索の入口になるので変えない。 */
+export const TICK_LOG_TAG = '[marketing-automation]';
+
+/**
+ * 早期 return の観測ログ。
+ *
+ * ⚠️ **secret も PII も載せない。** 出すのは判定結果と**未設定の env 名**だけで、
+ *    env の値は 1 つも出さない（`gates.missing` は名前の配列）。
+ *
+ * なぜ要るか（2026-08-07）: 早期 return の 2 経路はレスポンス本文を返すだけで
+ * ログを出さなかったため、Netlify のログには `Duration:` 行しか残らず、
+ * **「gates_closed で正常に止まっている」と「next_run を受け取れず機能が死んでいる」を
+ * 外形から区別できなかった**。どちらも副作用 0 だが、後者は env を開けても永久に動かない。
+ */
+function logTick(log, payload) {
+  try {
+    (typeof log === 'function' ? log : console.log)(TICK_LOG_TAG, JSON.stringify(payload));
+  } catch { /* ログ失敗で処理を止めない */ }
+}
+
+export async function runScheduledTick({ payload, now: nowArg, env, log } = {}) {
   const now = Number.isFinite(nowArg) ? nowArg : Date.now();
   const ENV = env || process.env;
 
@@ -237,7 +257,14 @@ export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
   //    ここは多層防御で、scheduled 実行の形をしていない呼び出しを実行しない。
   // ⚠️ ここより上で store も Airtable も**一度も組み立てない**
   if (!isScheduledPayload(payload)) {
-    // 存在も設定状況も知らせない
+    // 呼び出し元へは存在も設定状況も知らせない（404 のまま）。
+    // ログは**サーバー側にだけ**残す。ゲートの状態は載せない（設定状況を書かない）。
+    logTick(log, {
+      ran: false,
+      reason: 'not_scheduled_payload',
+      接続: { redis: false, airtable: false },
+      sideEffects: 'none',
+    });
     return { statusCode: 404, body: { error: 'Not Found' } };
   }
 
@@ -245,7 +272,7 @@ export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
   const gates = readGates(ENV, now);
   if (!gates.allOpen) {
     // ⚠️ ここで return するため、store も Airtable も**一度も初期化されない**
-    return { statusCode: 200, body: {
+    const body = {
       mode: 'marketing-automation-scheduler',
       ran: false,
       reason: 'gates_closed',
@@ -253,7 +280,16 @@ export async function runScheduledTick({ payload, now: nowArg, env } = {}) {
       接続: { redis: false, airtable: false },
       sideEffects: 'none',
       notice: 'ゲートが閉じているため何もしていません（Redis / Airtable へ接続していません）。',
-    } };
+    };
+    // 値ではなく**未設定の env 名**だけを出す（runbook の合格条件をログで確認できるようにする）
+    logTick(log, {
+      ran: false,
+      reason: 'gates_closed',
+      未設定のゲート: gates.missing,
+      接続: { redis: false, airtable: false },
+      sideEffects: 'none',
+    });
+    return { statusCode: 200, body };
   }
 
   // ── ここから先は 3 ゲートが全て開いているときだけ ──

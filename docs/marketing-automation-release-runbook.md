@@ -76,43 +76,33 @@ production への投入は `2026-08-06T05:41:59Z`（01:00 UTC より後）なの
 | `payment-email-dispatcher` | 1,184 ms | Airtable |
 | `cron-payment-email-reconciler` | 1,234 ms | Airtable |
 
-### ⚠️ 合格条件がログから検証できない（runbook の欠陥）
+### 合格条件はログで確認する（2026-08-08 に観測可能化）
 
-**`ran` / `reason` / `接続` / `sideEffects` はログに出力されない。**
-`runScheduledTick` の早期 return 2 経路はいずれも `console.log` を呼ばず、
-レスポンス本文を返すだけだから:
+早期 return の 2 経路に構造化ログを 1 行ずつ追加した。目印は **`[marketing-automation]`**。
 
-- `!isScheduledPayload(payload)` → **404**（無言）
-- `!gates.allOpen` → **200 `reason: 'gates_closed'`**（無言）
+```bash
+netlify logs --source functions --function cron-marketing-automation --since 24h --json
+```
 
-Netlify のログに残るのはランタイムの `Duration:` 行だけで、レスポンス本文は残らない。
-したがって上記の合格条件は**現状の実装では観測不能**であり、
-**この 2 経路を外形から区別できない**:
-
-| 実際の挙動 | 意味 | 危険度 |
+| 実際の挙動 | ログ | 意味 |
 |---|---|---|
-| 200 `gates_closed` | 仕組みは正常。env を開ければ動く | 問題なし |
-| 404（`next_run` を受け取れていない）| fail-closed で安全側だが、**env を開けても永久に動かない**（機能が静かに死ぬ）| 要修正 |
+| 200 | `{"ran":false,"reason":"gates_closed","未設定のゲート":[...],"接続":{"redis":false,"airtable":false},"sideEffects":"none"}` | **合格**。仕組みは正常で、env を開ければ動く |
+| 404 | `{"ran":false,"reason":"not_scheduled_payload","接続":{...},"sideEffects":"none"}` | **不合格**。`next_run` を受け取れておらず、env を開けても動かない。原因調査へ |
 
-**どちらでも副作用 0 なので運用上の危険はない**が、S2 へ進む判断材料としては不十分。
+- **ログに env の値は 1 つも出さない。** 出すのは判定結果と**未設定 env の名前**だけ
+- **404 経路のログはゲートの設定状況を書かない**（設定を漏らさない方針を維持）
+- ログ出力が失敗しても処理は止まらない
+- **レスポンス本文は変えていない**（観測性だけの変更）
 
-#### 必要な修正（未実施・要承認）
+固定テスト: `src/lib/marketing/automationTickLog.test.mjs`（13 件。
+経路を無言に戻すと fail することを確認済み）。
 
-早期 return の 2 経路に**構造化ログを 1 行ずつ**足す。secret も PII も出さない:
+#### それまでの経緯（2026-08-07）
 
-```
-console.log('[marketing-automation]', JSON.stringify({ ran:false, reason:'gates_closed', missing: gates.missing }));
-console.log('[marketing-automation]', JSON.stringify({ ran:false, reason:'not_scheduled_payload' }));
-```
-
-これでログだけで 2 経路を区別でき、本 runbook の合格条件が検証可能になる。
-**コード変更 + production deploy が必要**なので、実施は別承認とする。
-
-#### それまでの S2 判断
-
-**`gates_closed` を確認できるまで S2（管理 write の開放）へ進まない。**
-invocation は取れているので runbook 下記の「1 件も無いとき」の調査には該当しないが、
-**`reason` を確認できていない以上、合格とは扱わない。**
+初回起動そのものは確認できた（下記「実測結果」）が、当時は 2 経路とも `console.log` を
+呼ばず、Netlify のログに `Duration:` 行しか残らなかった。そのため
+「gates_closed で正常」と「404 で機能が死んでいる」を区別できず、
+上記の合格条件が**検証不能**だった。本ログ追加でその穴を塞いだ。
 
 ### invocation が 1 件も無いとき
 
