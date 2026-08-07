@@ -64,6 +64,8 @@ import {
   describeUpsellDisplay,
 } from '../../src/lib/upsell/upsellTarget.js';
 import { explainUpsell, UPSELL_AUTO_RULE_TEXT } from '../../src/lib/upsell/upsellExplain.js';
+import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
+import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpukuDisplay.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
@@ -142,6 +144,8 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       const explain = explainUpsell({ fields, nowMs: now });
       const upsell = explain.effectiveView;
       const release = upsell.plusRelease;
+      // 表示用（判定はしない）。canViewSanrenpuku は権限正本の値をそのまま使う。
+      const srp = describeSanrenpukuHolding(resolveEntitlements(fromAirtableFields(fields), now));
 
       // 一覧に出すかは**表示専用の単一源**が決める（公開判定 resolvePremiumPlusRelease とは別）。
       // route が none でも「有効 Premium だが PaidAt が空な旧会員」を落とさないため。
@@ -158,6 +162,13 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         plan: fields['プラン'] || '',
         planType: fields['PlanType'] || '',
         hasSanrenpuku: member.hasSanrenpuku,
+        // 三連複保有の**表示**（判定は resolveEntitlements が正本。ここは日本語化のみ）。
+        // 「プラン=Premium + LifetimeSanrenpuku=true」の現行形式と
+        // 「プラン=Premium Sanrenpuku」の旧形式を、一覧で同じバッジで見分けられるようにする。
+        sanrenpukuBadge: srp.badge,
+        sanrenpukuLabel: srp.label,
+        sanrenpukuNote: srp.note,
+        sanrenpukuBasis: srp.basis,
         premiumActive: member.premiumActive,
         daysSincePremium: release.daysSincePremium,
         route: release.route,

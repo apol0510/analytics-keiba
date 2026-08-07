@@ -49,6 +49,7 @@ import {
   UPSELL_CHANNEL_LABEL,
   ROUTE_LABEL,
 } from '../upsell/upsellExplain.js';
+import { describeSanrenpukuHolding } from '../entitlements/sanrenpukuDisplay.js';
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -150,6 +151,7 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
   // 最終的な「顧客に何が見えるか」は顧客側と同じ resolver で決める（2 商品を並べない判定も含む）。
   const entitlements = resolveEntitlements(fromAirtableFields(fields), previewNow);
   const view = resolveUpsellDisplay({ target, entitlements, plusRelease: release });
+  const srp = describeSanrenpukuHolding(entitlements);
   const intake = release.intake ? intakeCopy(release.intake) : null;
 
   const jst = new Date(previewNow + JST_OFFSET_MS);
@@ -164,6 +166,10 @@ export function buildPreviewSnapshot({ fields, nowMs, atMin, phaseDaysAgo }) {
 
       // 会員状態（既存の権限正本 resolveEntitlements 由来）
       hasSanrenpuku: member.hasSanrenpuku,
+      // 「プラン=Premium + LifetimeSanrenpuku=true」も三連複購入者だと分かる表現にする
+      //（判定は entitlements が正本。ここは日本語化のみ）
+      sanrenpukuLabel: srp.label,
+      sanrenpukuNote: srp.note,
       premiumActive: member.premiumActive,
       daysSincePremium: release.daysSincePremium,
       // 経過日数が取れないときに推測しない。ROUTE A の null（判定対象外）と
