@@ -60,10 +60,30 @@ export const UPSELL_AUTO_RULE_TEXT = Object.freeze([
   '2 商品を同時に表示することはありません',
 ]);
 
-/** 経過日数の表示文字列。取れないときは推測しない。 */
-export function describeDaysSincePremium(days) {
-  if (typeof days !== 'number' || !Number.isFinite(days)) return '加入日（PaidAt）が未記録';
-  return `${days} 日`;
+/**
+ * 経過日数の表示文字列。取れないときは推測しない。
+ *
+ * ⚠️ `daysSincePremium = null` には**意味の異なる 2 通り**がある。混同しないこと。
+ *   1. ROUTE A（三連複保有）… `resolvePlusRoute` が最初に短絡して常に null を返す。
+ *      三連複保有者に「Premium 加入からの 30 日」は無関係なので**判定対象外**であって、
+ *      PaidAt が無いという意味ではない（実データでは PaidAt があるのに null になる）。
+ *   2. PaidAt が本当に無い … 2026-07-10 の入金確認フロー刷新より前の会員は構造的に空。
+ *
+ * 1 を「未記録」と表示すると、データ欠損だと誤読させる（2026-08-07 の表示不備）。
+ *
+ * @param {number|null} days   `resolvePremiumPlusRelease().daysSincePremium`
+ * @param {{ route?: string, hasPaidAt?: boolean }} [opts]
+ */
+export function describeDaysSincePremium(days, opts = {}) {
+  const { route, hasPaidAt } = opts || {};
+  if (route === PP_ROUTE.SANRENPUKU) {
+    return 'ROUTE A（三連複保有）のため判定対象外';
+  }
+  if (typeof days === 'number' && Number.isFinite(days)) return `${days} 日`;
+  // ROUTE A 以外で日数が出ないのは PaidAt が読めないとき。
+  // PaidAt があるのに算出できない場合は、その事実をそのまま出す（未記録と言い切らない）。
+  if (hasPaidAt === true) return '加入日（PaidAt）はあるが経過日数を算出できません';
+  return '加入日（PaidAt）が未記録';
 }
 
 /** 経過日数を理由文へ差し込む断片（null のときは日数を語らない）。 */
@@ -157,6 +177,10 @@ function describePlusBlockReason(rel) {
 /** 売れる商品が 1 つも無い理由。 */
 function describeNothingToSell(rel) {
   const days = rel.daysSincePremium;
+  // ROUTE A は経過日数を見ないので、null を PaidAt 欠損として語らない
+  if (rel.route === PP_ROUTE.SANRENPUKU) {
+    return '販売できる商品がありません（三連複は保有済み／Plus は販売条件が未成立）';
+  }
   if (typeof days !== 'number' || !Number.isFinite(days)) {
     return '販売できる商品がありません（加入日（PaidAt）が未記録のため経過日数は判定できません）';
   }
@@ -213,7 +237,14 @@ export function explainUpsell({ fields, nowMs = Date.now(), fallbackAnchor } = {
     hasSanrenpuku: effective.member ? effective.member.hasSanrenpuku === true : false,
     premiumActive: effective.member ? effective.member.premiumActive === true : false,
     daysSincePremium: rel.daysSincePremium ?? null,
-    daysSincePremiumText: describeDaysSincePremium(rel.daysSincePremium),
+    // ROUTE A の null（判定対象外）と PaidAt 欠損の null を区別するため、両方を渡す
+    hasPaidAt: !!(effective.member && effective.member.premiumPaidAtMs !== null
+      && effective.member.premiumPaidAtMs !== undefined),
+    daysSincePremiumText: describeDaysSincePremium(rel.daysSincePremium, {
+      route: rel.route,
+      hasPaidAt: !!(effective.member && effective.member.premiumPaidAtMs !== null
+        && effective.member.premiumPaidAtMs !== undefined),
+    }),
     route: rel.route || PP_ROUTE.NONE,
     routeLabel: ROUTE_LABEL[rel.route] || rel.route || '対象外',
     phase: Number(rel.phase) || 0,

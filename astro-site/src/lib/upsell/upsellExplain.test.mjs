@@ -227,11 +227,95 @@ test('PaidAt 未記録なら日数を作らず「未記録」と明示する', (
   assert.doesNotMatch(e.autoReasonText, /加入から\s*\d+\s*日/, '存在しない経過日数を出している');
 });
 
-test('describeDaysSincePremium: 数値以外はすべて「未記録」', () => {
+test('describeDaysSincePremium: 数値以外は「未記録」（ROUTE A 以外）', () => {
   assert.equal(describeDaysSincePremium(0), '0 日');
   assert.equal(describeDaysSincePremium(30), '30 日');
   for (const v of [null, undefined, NaN, Infinity, '30', {}]) {
     assert.match(describeDaysSincePremium(v), /未記録/, `v=${String(v)}`);
+  }
+});
+
+// ── 6-b. ROUTE A の null を「未記録」と言わない（2026-08-07 の表示不備）──
+//
+// resolvePlusRoute は ROUTE A で最初に短絡し daysSincePremium を **常に null** で返す。
+// 三連複保有者に「Premium 加入からの 30 日」は無関係だからで、PaidAt が無いという意味ではない。
+// 本番の ROUTE A 3 件のうち 2 件は PaidAt を持っているのに「未記録」と表示されていた。
+test('ROUTE A は PaidAt があっても null になる（既存仕様の確認）', () => {
+  const fields = sanrenpukuMember({ PaidAt: daysAgo(200) });
+  const e = explainUpsell({ fields, nowMs: NOW });
+  assert.equal(e.route, PP_ROUTE.SANRENPUKU);
+  assert.equal(e.daysSincePremium, null, 'ROUTE A は経過日数を返さない');
+  assert.equal(e.hasPaidAt, true, 'PaidAt は存在する');
+});
+
+test('ROUTE A + PaidAtあり → 「未記録」と表示しない', () => {
+  const e = explainUpsell({ fields: sanrenpukuMember({ PaidAt: daysAgo(200) }), nowMs: NOW });
+  assert.doesNotMatch(e.daysSincePremiumText, /未記録/, 'データ欠損だと誤読させている');
+});
+
+test('ROUTE A + PaidAtなし でも「未記録」と表示しない（判定対象外が理由）', () => {
+  const e = explainUpsell({ fields: sanrenpukuMember(), nowMs: NOW });
+  assert.equal(e.hasPaidAt, false);
+  assert.doesNotMatch(e.daysSincePremiumText, /未記録/);
+});
+
+test('ROUTE A は「判定対象外」であることを明示する', () => {
+  for (const fields of [sanrenpukuMember({ PaidAt: daysAgo(200) }), sanrenpukuMember()]) {
+    const e = explainUpsell({ fields, nowMs: NOW });
+    assert.match(e.daysSincePremiumText, /ROUTE A/);
+    assert.match(e.daysSincePremiumText, /判定対象外/);
+  }
+  assert.match(describeDaysSincePremium(null, { route: PP_ROUTE.SANRENPUKU }), /判定対象外/);
+  // ROUTE A では日数の有無に関わらず対象外（数値が来ても日数を語らない）
+  assert.match(describeDaysSincePremium(99, { route: PP_ROUTE.SANRENPUKU }), /判定対象外/);
+});
+
+test('ROUTE B + PaidAtなし → 「未記録」を維持する', () => {
+  const fields = premiumMember(null, { PremiumPlusEligibility: 'eligible' });
+  const e = explainUpsell({ fields, nowMs: NOW });
+  assert.notEqual(e.route, PP_ROUTE.SANRENPUKU);
+  assert.equal(e.hasPaidAt, false);
+  assert.match(e.daysSincePremiumText, /未記録/);
+  assert.doesNotMatch(e.daysSincePremiumText, /判定対象外/);
+});
+
+test('ROUTE B + PaidAtあり → 経過日数を表示する', () => {
+  const fields = premiumMember(42, {
+    PremiumPlusEligibility: 'eligible',
+    PremiumPlusEligibleAt: daysAgo(42),
+  });
+  const e = explainUpsell({ fields, nowMs: NOW });
+  assert.equal(e.route, PP_ROUTE.PREMIUM_30D);
+  assert.equal(e.hasPaidAt, true);
+  assert.equal(e.daysSincePremiumText, '42 日');
+});
+
+test('ROUTE A の「販売できる商品がない」理由も PaidAt 欠損と言わない', () => {
+  const text = describeUpsellReasonText(
+    { reason: UPSELL_REASON.NOTHING_TO_SELL, reasonLabel: '' },
+    { route: PP_ROUTE.SANRENPUKU, daysSincePremium: null, phase: 4 }
+  );
+  assert.doesNotMatch(text, /未記録/);
+  assert.match(text, /保有済み/);
+});
+
+test('この修正で顧客側 resolver の結果は変わらない（説明レイヤーのみ）', () => {
+  const cases = [
+    sanrenpukuMember({ PaidAt: daysAgo(200) }),
+    sanrenpukuMember(),
+    sanrenpukuMember({ PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(20) }),
+    premiumMember(null, { PremiumPlusEligibility: 'eligible' }),
+    premiumMember(42, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(42) }),
+  ];
+  for (const fields of cases) {
+    const e = explainUpsell({ fields, nowMs: NOW });
+    const customer = resolveUpsellForCustomer({ fields, nowMs: NOW });
+    assert.equal(e.channel, customer.channel);
+    assert.equal(e.reason, customer.reason);
+    assert.equal(e.route, customer.plusRelease.route);
+    assert.equal(e.phase, customer.plusRelease.phase);
+    // 判定値そのもの（表示文字列ではない）は不変
+    assert.equal(e.daysSincePremium, customer.plusRelease.daysSincePremium ?? null);
   }
 });
 

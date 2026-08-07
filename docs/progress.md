@@ -2695,6 +2695,76 @@ Netlify のログにはランタイムの `Duration:` 行しか残らず、レ�
 これで 2 経路をログだけで区別でき、runbook の合格条件が検証可能になる。
 **コード変更 + production deploy を伴う**ため別承認とする。
 
+## メール送信 gate の再閉鎖（2026-08-07・承認済み・実施完了）
+
+2026-08-04 の実配信（`comeback-light-30d-granted:v2` / 36 名）のあと、
+`MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` が
+**開いたまま残っていた**（本書に閉鎖記録が無く、実測で開放を確認）。
+この repo の運用は「送信のたびに開けて即閉じる」なので、**運用手順の抜け**として再閉鎖した。
+
+### 実施前の read-only 監査（緊急事故ではないと判定）
+
+| 確認 | 結果 |
+|---|---|
+| `ScheduledEmails` PENDING | **0**（総 30 = SENT 28 / FAILED 2）|
+| 実送信待ちジョブ | **0**（dispatcher `dryRun:true` = `jobs: 0` / `sideEffects: none`）|
+| `CampaignDeliveries` queued | **0**（総 136 = sent 135 / skipped-duplicate 1）|
+| 最終実送信 | **2026-08-04T07:33:12Z（JST 16:33）** |
+| dispatcher の自動発火経路 | **なし**（`netlify.toml` 未登録 / `export const config` 無し / 呼び出し元 0 件 / 共有 executor は `canSharedExecutorSend` が env 非依存で常時 skip）|
+| `cron-marketing-automation`（`0 1 * * *`）| `MARKETING_AUTOMATION_SCHEDULER_ENABLED` / `..._DISPATCH_ARMED` とも **UNSET** で no-op。かつメールを送らず PENDING 行を作るだけ |
+
+→ **PENDING 0 かつ自動実送信経路なし**。ただし `cron-marketing-automation` の 4 段ガードのうち
+2 段が常時解除された状態だったため、運用どおり閉じる判断とした。
+
+### 実施内容（production deploy は exactly 1 回）
+
+| 手順 | 実測 |
+|---|---|
+| `netlify env:unset MARKETING_CAMPAIGN_ENABLED --context production` | 完了 |
+| `netlify env:unset MARKETING_CAMPAIGN_DISPATCH_ENABLED --context production` | 完了 |
+| 正式 Build Hook `analytics-keiba-auto-deploy`（id `6a0d4bd4…`）を curl POST | **HTTP 200・1 回のみ**（retry なし）|
+| production deploy | **`6a75bce2bb8b2d0008cb8aa4` / state ready / commit `63965d6`** |
+| 基準時刻（09:40:51Z）以降の production deploy 件数 | **1 件**（＝ exactly 1 回を実測）|
+
+### deploy 後の read-only 検証（すべて期待どおり）
+
+| 検証 | 結果 |
+|---|---|
+| `MARKETING_CAMPAIGN_ENABLED` | **UNSET** |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED` | **UNSET** |
+| `ScheduledEmails` PENDING | **0** |
+| dispatcher `dryRun:false` | **503 fail-closed**（`MARKETING_CAMPAIGN_DISPATCH_ENABLED 未設定` / `sent` キー無し＝送信処理に入っていない）|
+| dispatcher `dryRun:true` | **200 / `jobs: 0` / `sideEffects: none`** |
+| `CampaignDeliveries` | 136 件・`queued 0`・最終 SentAt **2026-08-04T07:33:12.873Z から不変**（＝実送信 0）|
+| `admin-marketing` の `segments` | **200**（dry-run / 一覧 / プレビュー / 履歴は継続利用可）|
+
+**巻き添えなし**: `NEWSLETTER_AUTOMATION_ENABLED=false` / `STEP_EMAIL_AUTOMATION_ENABLED=false` /
+`EMAIL_EVENT_LEDGER_ENABLED=true` / `PAYMENT_EMAIL_WORKER_SEND_ENABLED=true` /
+`PAYMENT_EMAIL_RECONCILER_WRITE_ENABLED=true` / `COMEBACK_GRANT_ENABLED=true` /
+`PREMIUM_PLUS_FIELDS_READY=1` / `PREMIUM_PLUS_OVERRIDE_READY=1` / `UPSELL_TARGET_FIELD_READY=1`
+はいずれも変更していない（env 総数 45）。
+
+> ℹ️ Customers 総数は監査時 1,680 → 実施後 1,681（+1）。本作業は Airtable へ **GET しか行っていない**
+> （dispatcher は 503 で Airtable 到達前に停止）。無料登録の自然増、および本書上部に既出の
+> 「総件数の揺れ（未解明・継続観察）」の範囲であり、本作業に起因しない。
+
+### 止まる機能 / 影響しない機能
+
+- **止まる**: 管理画面からのキャンペーン キュー登録（503）/ dispatcher の実送信（503）
+- **影響しない**: 決済確認メール（`payment-email-dispatcher` / 別 gate）/ マジックリンク /
+  `EmailEvents` 台帳 / 無料特典の付与 / マーケ画面の dry-run・一覧・プレビュー・履歴
+
+### 再開手順 / rollback
+
+`netlify env:set MARKETING_CAMPAIGN_ENABLED true --context production --scope functions --force`
+（実送信まで行うなら `MARKETING_CAMPAIGN_DISPATCH_ENABLED` も）→ 正式 Build Hook を curl POST。
+**コード変更は不要。** `netlify deploy --build --prod` は `/premium-plus` に 401 regression を
+生むため使わない。
+
+**恒久ルール**: 実配信のたびに開け、**送信完了後は必ず同じ手順で閉じ、本書へ記録する**。
+今回の抜けは「閉じたが記録しなかった」ではなく「閉じていなかった」ため、
+**閉鎖の実測（dispatcher `dryRun:false` が 503）まで確認して初めて完了とする**。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

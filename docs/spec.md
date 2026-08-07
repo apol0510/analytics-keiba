@@ -929,7 +929,7 @@ Step 2 の時点では特典が決まっていない。ここで `checkGrantable
 |---|---|
 | 三連複保有 | あり / なし |
 | ROUTE | A（三連複購入者）/ B（Premium 30日）/ C（管理者指定）/ 対象外 |
-| Premium加入からの経過 | 日数。`PaidAt` が無ければ **「加入日（PaidAt）が未記録」**（日数を捏造しない）|
+| Premium加入からの経過 | 日数 / ROUTE A は **「ROUTE A（三連複保有）のため判定対象外」** / それ以外で `PaidAt` が無ければ **「加入日（PaidAt）が未記録」**（下記）|
 | **自動判定CTA** | `UpsellTarget` を無視して auto で解決した結果（三連複 / Plus / なし）|
 | **自動判定の理由** | 具体的な 1 文。ROUTE B なら「Premium加入から30日以上経過（42日）・三連複未購入のため Plus を自動表示」|
 | 現在の設定 | Airtable `UpsellTarget`（自動 / 三連複 / Plus / なし）|
@@ -944,6 +944,22 @@ Step 2 の時点では特典が決まっていない。ここで `checkGrantable
 2. それ以外で三連複を購入できる → **三連複のみ**表示
 3. どちらでもなく Plus の予告段階 → **Plus の予告のみ**表示
 4. **2 商品を同時に表示することはない**
+
+### `daysSincePremium = null` は 2 通りある（混同禁止）
+
+`resolvePlusRoute` は **ROUTE A で最初に短絡し、`daysSincePremium` を常に `null`** で返す。
+三連複保有者に「Premium 加入からの 30 日」は無関係だからで、**`PaidAt` が無いという意味ではない**。
+
+| null の理由 | 表示 |
+|---|---|
+| ROUTE A（三連複保有）＝ 判定対象外 | 「ROUTE A（三連複保有）のため判定対象外」 |
+| `PaidAt` が本当に無い（2026-07-10 の入金確認フロー刷新より前の会員）| 「加入日（PaidAt）が未記録」 |
+
+`null` を一律「未記録」と表示すると、`PaidAt` を持つ三連複会員に**データ欠損だと誤読させる**
+（2026-08-07 の表示不備。本番 ROUTE A 3 件のうち 2 件が該当していた）。
+
+文言の正本は `describeDaysSincePremium(days, { route, hasPaidAt })`。
+**管理画面側で `daysSincePremium == null` から文言を決め打ちしない**（guard テストで禁止）。
 
 ### 手動上書き
 
