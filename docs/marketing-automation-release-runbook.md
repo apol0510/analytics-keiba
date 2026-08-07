@@ -52,6 +52,68 @@ netlify logs --source functions --function cron-marketing-automation --since 2h 
 - `未設定のゲート` に `MARKETING_AUTOMATION_SCHEDULER_ENABLED` と
   `MARKETING_AUTOMATION_DISPATCH_ARMED(=<当日>)` が並ぶ
 
+### 実測結果（2026-08-07・read-only）
+
+| 確認 | 結果 |
+|---|---|
+| **初回スケジュール起動** | **`2026-08-07T01:00:40.662Z`（JST 10:00:40）に invocation 1 件** ✅ |
+| 実行時間 | `Duration: 79.69 ms` / `Init Duration: 345.03 ms`（コールドスタート）|
+| error / warn ログ（7 日） | **0 件**（`store_unavailable` / `internal error` / `enqueue 失敗` のいずれにも到達していない）|
+| `ScheduledEmails` | 30 件・**PENDING 0**（起動前後で不変）|
+| `CampaignDeliveries` | 136 件・最終 SentAt **2026-08-04T07:33:12.873Z から不変** |
+| メール送信 | **0** |
+
+production への投入は `2026-08-06T05:41:59Z`（01:00 UTC より後）なので、
+**2026-08-07 01:00 が最初のスケジュール機会**であり、そこで確実に起動している。
+→ **schedule 登録は機能している。**
+
+同時刻の他 cron との比較（Redis / Airtable へ触れていない傍証）:
+
+| Function | Duration | 接続 |
+|---|---|---|
+| `cron-marketing-automation` | **79.69 ms** | （下記のとおり未確認だが、この速さは I/O 無しと整合）|
+| `cron-prospect-worker` | 486 ms | Redis + Airtable 写し |
+| `payment-email-dispatcher` | 1,184 ms | Airtable |
+| `cron-payment-email-reconciler` | 1,234 ms | Airtable |
+
+### ⚠️ 合格条件がログから検証できない（runbook の欠陥）
+
+**`ran` / `reason` / `接続` / `sideEffects` はログに出力されない。**
+`runScheduledTick` の早期 return 2 経路はいずれも `console.log` を呼ばず、
+レスポンス本文を返すだけだから:
+
+- `!isScheduledPayload(payload)` → **404**（無言）
+- `!gates.allOpen` → **200 `reason: 'gates_closed'`**（無言）
+
+Netlify のログに残るのはランタイムの `Duration:` 行だけで、レスポンス本文は残らない。
+したがって上記の合格条件は**現状の実装では観測不能**であり、
+**この 2 経路を外形から区別できない**:
+
+| 実際の挙動 | 意味 | 危険度 |
+|---|---|---|
+| 200 `gates_closed` | 仕組みは正常。env を開ければ動く | 問題なし |
+| 404（`next_run` を受け取れていない）| fail-closed で安全側だが、**env を開けても永久に動かない**（機能が静かに死ぬ）| 要修正 |
+
+**どちらでも副作用 0 なので運用上の危険はない**が、S2 へ進む判断材料としては不十分。
+
+#### 必要な修正（未実施・要承認）
+
+早期 return の 2 経路に**構造化ログを 1 行ずつ**足す。secret も PII も出さない:
+
+```
+console.log('[marketing-automation]', JSON.stringify({ ran:false, reason:'gates_closed', missing: gates.missing }));
+console.log('[marketing-automation]', JSON.stringify({ ran:false, reason:'not_scheduled_payload' }));
+```
+
+これでログだけで 2 経路を区別でき、本 runbook の合格条件が検証可能になる。
+**コード変更 + production deploy が必要**なので、実施は別承認とする。
+
+#### それまでの S2 判断
+
+**`gates_closed` を確認できるまで S2（管理 write の開放）へ進まない。**
+invocation は取れているので runbook 下記の「1 件も無いとき」の調査には該当しないが、
+**`reason` を確認できていない以上、合格とは扱わない。**
+
 ### invocation が 1 件も無いとき
 
 **env を開けない。** `isScheduledPayload` が要求する `next_run` 付き本文を

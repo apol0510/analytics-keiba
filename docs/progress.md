@@ -2570,6 +2570,49 @@ env / SendGrid 設定 / Automation は無変更。実顧客への送信 0 / 手�
 - 滞留ブランチの棚卸し（正確な本数は 未確認。作業時に `git branch -a` で数えること）
 - `verify-project.sh` が旧プロジェクト由来の期待値（旧パス・旧 remote）のままである点の是正または明示的な廃止
 
+## Scheduled Function 初回起動確認（2026-08-07・read-only 完了 / 合格判定は保留）
+
+`cron-marketing-automation`（`export const config = { schedule: '0 1 * * *' }` = JST 10:00）の
+**初回スケジュール起動を実測で確認**した。ただし runbook の合格条件は**検証できなかった**。
+
+### 確認できたこと
+
+| 項目 | 実測 |
+|---|---|
+| 初回スケジュール起動 | **`2026-08-07T01:00:40.662Z`（JST 10:00:40）に invocation 1 件** |
+| 実行時間 | `Duration 79.69 ms` / `Init 345.03 ms` |
+| error / warn ログ（7 日） | **0 件** |
+| `ScheduledEmails` | PENDING **0**（不変）|
+| `CampaignDeliveries` | 最終 SentAt **2026-08-04T07:33:12.873Z から不変** |
+| メール送信 | **0** |
+
+production 投入は `2026-08-06T05:41:59Z` なので **2026-08-07 01:00 が最初のスケジュール機会**。
+そこで確実に起動しており、**schedule 登録は機能している**。
+
+7 日分の履歴に現れる `2026-08-06 04:37 / 05:24` の invocation 群は、
+`feat/marketing-automation` の **Deploy Preview**（04:34:42 / 05:22:30 ready）に対する
+当時の検証呼び出しで、production のスケジュール起動ではない。
+
+### ⚠️ 合格条件が検証できない（runbook の欠陥を発見）
+
+`runScheduledTick` の早期 return 2 経路は **どちらも `console.log` を呼ばない**:
+
+- `!isScheduledPayload(payload)` → **404**（無言）
+- `!gates.allOpen` → **200 `reason: 'gates_closed'`**（無言）
+
+Netlify のログにはランタイムの `Duration:` 行しか残らず、レスポンス本文は残らない。
+よって `ran` / `reason` / `接続` / `sideEffects` は**観測不能**で、
+**「gates_closed で正常」と「404 で機能が死んでいる」を外形から区別できない**。
+
+どちらでも副作用 0 なので危険はない（Airtable 側でも enqueue 0 を実測）。
+だが S2 の判断材料としては不十分なため、**合格とは扱わず S2 へ進まない**。
+
+### 必要な修正（未実施・要承認）
+
+早期 return の 2 経路へ構造化ログを 1 行ずつ追加する（secret・PII なし）。
+これで 2 経路をログだけで区別でき、runbook の合格条件が検証可能になる。
+**コード変更 + production deploy を伴う**ため別承認とする。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
