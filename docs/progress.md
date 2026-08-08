@@ -3087,6 +3087,48 @@ build 後 `dist/premium-sanrenpuku-jra/index.html` が**生成されない**こ�
 B の 10 件を、データ依存の小さい順に SSR 化する。
 各回で SSR 関数サイズを計測し、250MB に対する余裕を記録すること。
 
+## 有料ページ SSR 化 Batch 1（2026-08-08 / PR・未 merge）
+
+`#257` のパイロットに続き、**B 群 10 件のうち低リスクな 2 件**をサーバー側認可へ移した。
+
+| ページ | 行数 | requiredPlan | eager glob |
+|---|---|---|---|
+| `premium-select.astro` | 1,701 | `premium` | `/src/data/predictions/*.json`（南関 root）|
+| `premium-sanrenpuku.astro` | 1,661 | `Premium Sanrenpuku` | 同上 |
+
+**この 2 件を先に選んだ理由**: glob 先の南関 root 予想 JSON は
+**prune で保持され、既に `prediction/[slug].astro`（SSR）経由でバンドル済み**。
+新規に載る質量がほぼ無い。
+
+### SSR function size（毎回計測）
+
+| 時点 | サイズ | 250MB への余裕 |
+|---|---|---|
+| `#257` merge 後（main）| 69.7 MB | 180.3 MB |
+| **Batch 1 適用後** | **70.0 MB** | **180.0 MB** |
+
+増分 **+0.3 MB**。南関 root データが既にバンドル済みという想定が実測で裏付けられた。
+
+### B 群の残りと分割計画（依存データ量順）
+
+| Batch | ページ | eager glob | 想定リスク |
+|---|---|---|---|
+| ~~1~~ | ~~`premium-select` / `premium-sanrenpuku`~~ | 南関 root（済）| **完了** |
+| 2 | `light-predictions{,-urawa,-funabashi}` | 南関 root | 低（同上）|
+| 3 | `premium-predictions-{urawa,funabashi}` | 南関 root | 低 |
+| 4 | `premium-prediction/jra`（glob 無し）/ `premium-prediction/nankan` | 南関 root | 中（5,052 行の大物）|
+| 5 | `light-predictions-jra` | **`predictions/jra/**`（23 MB・現在 prune 対象）** | **高** |
+
+⚠️ **Batch 5 が唯一の重い案件**。`predictions/jra` は現在 prune で SSR 関数から
+削除されているが、`import.meta.glob(eager)` は JSON を JS チャンクへ**インライン化**するため、
+SSR 化すると prune が効かず約 23 MB がそのまま載る。着手前にデータ読込方式
+（eager → lazy / API 経由）の再設計を検討すること。
+
+### guard
+
+SSR 化した 2 件を `CLIENT_ONLY_PAID_PAGES_KNOWN` から削除。
+消し忘れると `authSecurity.guard` が fail する仕組みなので、リストは常に実態と一致する。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
