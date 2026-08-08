@@ -121,6 +121,14 @@ jobs:
         working-directory: astro-site
         run: npm run test:auth-security
 
+      - name: Verify SSR 実行時データの保持ポリシー
+        working-directory: astro-site
+        run: npm run test:ssr-retention
+
+      - name: Verify prune 後の SSR 成果物に実行時データが残っている
+        working-directory: astro-site
+        run: npm run check:ssr-runtime-data
+
       - name: Verify 穴馬抽出の当日データ選定（過去日 fallback なし 回帰テスト）
         working-directory: astro-site
         run: npm run test:dark-horse
