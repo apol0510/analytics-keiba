@@ -8,6 +8,227 @@
 
 ---
 
+## 2026-08-05 — Redis canary は専用 Function で行う（secret をローカルへ持ち出さない）
+
+### Status
+
+**Proposed（未承認・未 deploy）**。canary Function は実装済みだが production deploy はしていない。
+`CUSTOMER_IMPORT_CANARY_ENABLED` が無ければ**常時 403**（既定は無効）。
+
+### Context
+
+Redis 版取り込みの Phase 0 / Phase 1 canary を実行しようとしたが、
+`UPSTASH_REDIS_REST_URL` / `_TOKEN` は Netlify の **secret（`is_secret: true`）**で、
+scope は `functions`・値を持つ context は `production` のみ。
+`netlify env:get` / `env:list --json` / `getEnvVars` API はいずれも**マスク値しか返さない**。
+`deploy-preview` context には値が無く、Deploy Preview 経由でも到達できない。
+
+**production Upstash へ到達できるのは production の Function だけ**という結論になった。
+
+### Decision
+
+**secret を Netlify の外へ持ち出さない。** ローカルへ認証情報を取得する方式は**採らない**。
+代わりに **専用 canary Function**（`admin-customer-import-redis-canary.js`）を置き、
+Function 内部だけで secret を使う。
+
+- **POST のみ**・AK 管理シークレット（`x-admin-secret`）必須
+- action は **`preview` / `run` / `status` / `cleanup`** の 4 つだけ
+- **`CUSTOMER_IMPORT_CANARY_ENABLED=true` が無ければ常時 403**（既定は無効）
+- canaryId は**サーバー側生成**。`run` には確認文字列 `REDIS-CANARY <canaryId>` が要る
+- **1 つの canaryId につき run はちょうど 1 回**（実行済みマーカーを `SET NX`）。
+  timeout しても同じ canaryId では再実行できない
+- 書き込み・削除は **`customer-import:canary:<canaryId>:` 配下だけ**。
+  `createCanaryRunner` が prefix 外を**構造的に拒否**する
+- **全キー列挙（`KEYS`）を禁止**。走査は `SCAN MATCH <prefix>*` のみ
+- 上限固定: **最大キー数 32 / 最大コマンド数 150**。canary キーには **TTL 15 分**
+- **Airtable に触れない。メールを送らない**（依存が存在しない）
+- URL / token / Redis の値 / メール / hash 全文を**返さない・ログにも出さない**
+
+### Rationale
+
+secret をローカルへコピーすると、transcript・シェル履歴・ファイルに残る経路が増え、
+失効・ローテーションの管理対象も増える。Netlify の secret 境界を保ったまま検証できるなら、
+そちらが安全側。canary Function は**使い終わったら env を消すだけで無効化**でき（deploy 不要）、
+その後コードごと削除できる。
+
+### Alternatives Considered
+
+| 案 | 判定 |
+|---|---|
+| **専用 canary Function** | **採用**（secret が Netlify 外へ出ない） |
+| ローカルへ認証情報を取得して実行 | 却下（secret の持ち出し。利用者が明示的に不採用と判断） |
+| Deploy Preview で実行 | **不可能**（`deploy-preview` context に値が無い） |
+| 既存 Function に canary action を相乗り | 却下（取り込み本体の攻撃面を広げる。無効化も難しくなる） |
+
+### Consequences
+
+- **production deploy が 2 回必要**（① canary Function 投入 ② 検証後の削除）。
+  env の投入・削除は deploy 不要
+- 一時的に production へ「Redis を触れる Function」が存在する。
+  そのため **既定無効（403）+ 管理シークレット + 確認文字列 + exactly-once + 名前空間 guard**
+  の多層で塞ぐ
+- Lua 本文の正しさを**実 Redis で確認できる**ようになる（テストの fake では確認できない部分）
+
+### Revisit Conditions
+
+- canary Function が想定外に長く production へ残ったとき（削除 deploy を先送りしない）
+- 同種の検証が再び必要になったとき（使い捨てではなく恒久 canary にするかを再判断）
+
+### Evidence
+
+- `getEnvVars` API の実測: `UPSTASH_*` は `is_secret: true` / scope `functions` /
+  値を持つ context は `production` のみ
+- `astro-site/netlify/functions/admin-customer-import-redis-canary.js`
+- `astro-site/src/lib/crm/importRedisCanary.js` / `importRedisCanary.test.mjs`（27 tests）
+
+---
+
+## 2026-08-05 — 大量取り込みの正本と排他に Upstash Redis を採用する（Blobs 非正本方式は不採用）
+
+### Status
+
+**Proposed（未承認・未実装）**。PR #235（Draft）の write 経路は **BLOCKED** として停止中。
+本 ADR が承認されるまで、取り込みジョブの本番 write は行わない。
+
+### Context
+
+残り 14,284 件の取り込みを親ジョブ + 子バッチ方式で実装した（PR #235）。
+その設計は **Netlify Blobs をジョブ記録に使い、正本は Airtable（`Source` 件数）** とし、
+二重作成の防止を「子バッチ直前の Customers 実在判定」に委ねていた。
+
+この方式は**必須条件を 2 つ満たせない**ことが確認された:
+
+1. **同時実行を fail-closed で保証できない。**
+   Netlify Blobs は同一キー競合が last-write-wins で、`onlyIfNew` / `onlyIfMatch` も
+   best-effort（premium-plus canary #13 で実 lost-update を確認）。リースは排他にならない。
+2. **親 ImportJob が正本になっていない。**
+   `Customers` の `Source` 件数だけでは、**snapshot / 失敗 / 未処理 / cancel 境界 /
+   operationId** を完全には復元できない。
+
+さらに、Customers 直前照合だけでは **TOCTOU** が閉じない。2 つの実行が同時に同じアドレスを
+「まだ無い」と読めば、両方が作成しうる。「実績のある単発 run と同じ露出だから運用で閉じる」
+という整理は、**write 経路の完成形としては不採用**とする。
+
+### Decision
+
+**取り込みジョブの正本と排他に Upstash Redis を採用する。**
+
+- **親 ImportJob の正本を Redis に置く**（Airtable / Blobs ではない）。
+  `jobId` / `batchId` / `Source` / `fileFingerprint` / `snapshotFingerprint` /
+  `plannedTotal` / `orderingVersion` / `cursor` / `attempted` / `created` /
+  `skippedExisting` / `failed` / `cancelledAt` / `status` / `currentChild` /
+  `fencingToken` / `operationId` / 子バッチ履歴 / `reconciliation` /
+  `createdAt` / `updatedAt` を永続化する。**PII は保存せずメールは sha256 のみ**
+- **AK 全体で同時に走れる write ジョブを 1 つに限定するグローバルロック**を
+  `SET NX EX` + `INCR` の fencing token で取る。**job 単位ではなくグローバル**なので
+  異なる `batchId` 同士の競合も拒否する。**取得できなければ Airtable を一切読まない・書かない**
+- **行単位の claim は `batchId` で区切らず、正規化メールに対してグローバルに張る**:
+  `customer-import:email:<sha256(normalizedEmail)>`。
+  `ownerJobId` / `batchId` / `operationId` / `fencingToken` /
+  `state`(CLAIMED / CREATED / RELEASE_PENDING) / `claimedAt` / `expiresAt` を保持する。
+  100 件を `EVAL`（Lua）で 1 往復 claim する
+- **snapshot は chunk 分割**して固定する（単一 JSON に詰めない）。
+  `snapshotFingerprint` で開始後の CSV / 順序の差し替えを検知する
+- **書き込み直前にロック所有権と fencing token を再検証**し、失っていたら create しない
+- **claim は Airtable で作成済みと確認できるまで解放しない。回収は reconciler だけが行う**
+- Netlify Blobs をジョブ記録に使う方式（PR #235 の `importJobStore.js`）は**破棄**する
+
+#### 不変条件（この順序を崩さない）
+
+1. グローバルロック取得（失敗なら Airtable に触れない）
+2. ジョブ正本を読む（読めなければ fail-closed）
+3. snapshot 指紋を検証（不一致なら進めない）
+4. 子バッチ claim（`operationId`）を確定
+5. 行 claim を Lua で atomic 取得（**期限切れでも他者の claim を奪わない**）
+6. **書き込み直前にロック所有権と fencing token を再検証**
+7. 所有権を失っていたら **Airtable create を行わない**
+8. create 成功を確認した行だけ claim を `CREATED` へ進める
+9. claim 済み・未作成の回収は **reconciler だけ**が、次を**すべて**確認してから行う:
+   Customers に同メールが無い / 同 Source の行が無い / claim が期限切れ /
+   旧 fencing token が現在値より古い
+
+### Rationale
+
+**Upstash Redis は AK の既存基盤であり、すでに本番の write path で稼働している。**
+入金確認メール v2 の dispatcher / worker / reconciler が `SET NX EX` + `INCR` の
+fencing token でロックを取っている（`src/lib/payments/paymentEmailDeps.js`）。
+
+そのため本案は **新規外部サービス・env 追加・schema 変更・migration のいずれも不要**で、
+停止条件（schema 変更 / 外部サービス設定変更）に触れずに強一貫な排他を得られる。
+
+> **費用は「不要」と断定しない。** 現行の Upstash プラン・残クォータ・レート上限は
+> **未確認**（コンソール未参照）。14,284 件では `EVAL` 約 143 往復に加えてロック・正本・
+> snapshot の操作が乗るため、**実行前にプランとクォータを確認すること**。
+
+検討した代替案は「Alternatives Considered」に示す。**Airtable 専用テーブル案は成立しない**
+（Airtable に transaction も unique 制約も CAS も無く、加えて schema 変更が必要）。
+
+### Alternatives Considered
+
+| 案 | 子バッチ claim の atomic 性 | **行単位のグローバル一意** | 追加要件 | 判定 |
+|---|---|---|---|---|
+| **A. Upstash Redis（既存）** | ◎ `SET NX EX` + fencing | ◎ 正規化メール 1 キー（batchId 非依存） | env / schema / サービス変更なし（**費用は要確認**） | **採用** |
+| B. Airtable 専用テーブル | ✗ CAS/transaction 無し | ✗ unique 制約が無い | schema 変更（停止条件） | 却下 |
+| C. GitHub Contents API の CAS | ○ `sha` 前提条件で 409 | ✗ 14,284 コミットは非現実的 | 別ブランチ運用 | 補助のみ |
+| D. 新規 Postgres（Neon / Supabase） | ◎ transaction + `FOR UPDATE SKIP LOCKED` | ◎ `UNIQUE(emailHash)` | 新サービス + env + migration | 将来の選択肢 |
+
+> **claim を `batchId` で区切らない理由**: `importrow:<batchId>:<hash>` のように区切ると、
+> **異なる `batchId` が同じメールを同時に claim できてしまい**、二重作成が閉じない。
+> したがってキーは正規化メールに対して **1 本**にする。
+
+- **B が成立しない根拠**: PAT に `schema.bases:write` が無くフィールド追加すら UI 手動
+  （`reference: Airtable Customers アクセス`）。Airtable API に条件付き更新が無い。
+- **C**: `PUT /repos/.../contents/{path}` の `sha` 前提条件は真の CAS で、git 履歴が監査証跡になる。
+  ただし **1 claim = 1 commit** で行単位の一意制約が作れず、main へのコミットは Netlify build を誘発する。
+  **ジョブ単位の監査台帳としては優秀**なので、将来の補助として残す。
+- **D** が最も正統（関係的な台帳・厳密な制約）。ただし新たな単一障害点と運用対象が増えるため、
+  A で必要十分な間は採らない。**A で不足が出たときの移行先**として記録する。
+
+### Consequences
+
+- 取り込みジョブが **Upstash Redis へ依存**する（入金確認メール v2 と同じ依存先）。
+  Redis の可用性が取り込みの単一障害点になる
+- **PR #235 の `importJobStore.js`（Blobs）は破棄**され、Redis 版の claim / 正本モジュールへ置き換わる。
+  状態機械・eligibility・runner・管理画面・テストは**そのまま再利用できる**
+- **保証するのは「Redis が正常なときの at-most-once claim」であって、literal exactly-once ではない**
+  （既存方針 `2026-07-16 入金確認メール v2` と整合）。
+  claim 後・create 前にクラッシュすると「claim 済み・未作成」が残る。
+  これは**重複ではなく取りこぼし**（安全側）で、reconciler が 4 条件を確認して回収する
+- **Redis が異常なときは新規 Airtable 書き込みを全面停止する（fail-closed）。**
+  対象は次のすべて: 到達できない / Lua 結果が不明 / lock 状態を確認できない /
+  ジョブ正本を読めない / claim 整合性が崩れた / データ消失が疑われる。
+  **Customers 実在判定は第二防御であり、同時実行排他の代替ではない。**
+- Upstash のコマンド数が増える（`EVAL` 約 143 往復 + ロック・正本・snapshot の操作）。
+  **プランとクォータは未確認のため、実行前に確認すること**
+
+### Revisit Conditions
+
+- 行単位 claim を入れてなお二重作成が観測されたとき
+- 取り込みの監査台帳として**関係的なクエリ**が必要になったとき（→ D へ移行）
+- Upstash Redis が入金確認フローと取り込みの**共通の単一障害点**として問題化したとき
+- Upstash のクォータ・レート上限が 14,284 件の処理に足りないと判明したとき
+
+#### D（Postgres）へ移行する条件
+
+次のいずれかに該当したら、Neon / Supabase の Postgres へ移す:
+
+- claim と作成を**同一トランザクション**で確定させる必要が出たとき
+  （Redis と Airtable は別システムなので、両者にまたがる原子性は作れない）
+- `UNIQUE(batchId, emailHash)` のような**宣言的制約**で守りたくなったとき
+- ジョブ・行単位の監査を**関係的に検索**したくなったとき（期間・状態・原因での集計）
+- Redis の TTL / 永続化設定に依存せず、**恒久的な台帳**として残す必要が出たとき
+
+### Evidence
+
+- `src/lib/payments/paymentEmailDeps.js`（`acquireLock` = `INCR` + `SET NX EX 90`）
+- `astro-site/docs/PAYMENT_EMAIL_V2.md`（Upstash + fencing token の確定方針）
+- 本書 `2026-07-16 — 入金確認メール v2`（Upstash 採用・exactly-once を目標としない）
+- `netlify env:list --context production` に `UPSTASH_REDIS_REST_URL` /
+  `UPSTASH_REDIS_REST_TOKEN` が **secret-flagged で設定済み**（値は CLI からマスクされる）
+- PR #235 / `src/lib/crm/importJobModel.js` 冒頭（Blobs が正本になれない理由）
+
+---
+
 ## 2026-08-01 — Netlify build hook の POST に bounded retry と deploy 重複チェックを導入
 
 ### Status
