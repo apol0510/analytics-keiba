@@ -34,12 +34,21 @@ import {
 const NOW = Date.parse('2026-08-07T01:00:00.000Z'); // JST 10:00（cron の発火時刻）
 const SCHEDULED = { next_run: '2026-08-08T01:00:00.000Z' };
 
-/** ログを捕まえるスパイ。 */
+/**
+ * ログを捕まえるスパイ。
+ * 本番は `console.log(line)` を**直接**呼ぶ（detach 禁止）ので、受け取るのは 1 本の文字列。
+ */
 function spy() {
   const lines = [];
   return { lines, log: (...args) => lines.push(args) };
 }
-const parsed = (lines) => lines.map(([tag, json]) => ({ tag, body: JSON.parse(json) }));
+/** `'[marketing-automation] {json}'` を tag と body に割る。 */
+const parsed = (lines) => lines.map((args) => {
+  assert.equal(args.length, 1, 'ログは 1 引数の文字列で出す（複数引数にしない）');
+  const line = String(args[0]);
+  const i = line.indexOf(' ');
+  return { tag: line.slice(0, i), body: JSON.parse(line.slice(i + 1)) };
+});
 
 /** 全ゲートが閉じた env（production の現状と同じ形）。 */
 const CLOSED_ENV = {};
@@ -186,4 +195,30 @@ test('ログに env オブジェクトを丸ごと渡していない', () => {
 
 test('ログの目印は安定している（検索の入口）', () => {
   assert.equal(TICK_LOG_TAG, '[marketing-automation]');
+});
+
+// ── 7. 空ログ退行の再発防止（2026-08-08）──────────────────────
+//
+// 2026-08-08 01:00:52Z の本番起動で message='' となり、変更前は出ていたランタイムの
+// `Duration:` 行まで消えた。原因は `console.log` を detach して呼んでいたこと
+// （Netlify Lambda は console を差し替えているためレシーバを失う）。
+test('console.log を detach して呼ばない（空ログ退行の再発防止）', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../../netlify/functions/cron-marketing-automation.js', import.meta.url)), 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // `(... ? ... : console.log)(...)` / `const f = console.log` の形を禁止
+  assert.doesNotMatch(code, /\?[^\n]*console\.log\s*\)\s*\(/, 'console.log を detach して呼んでいる');
+  assert.doesNotMatch(code, /=\s*console\.log\s*[;,\n]/, 'console.log を変数へ代入している');
+  // 直接呼び出しであること
+  assert.match(code, /else console\.log\(line\);/, 'console.log を直接呼んでいない');
+});
+
+test('ログは 1 行 1 レコード（引数 1 本の文字列に畳む）', async () => {
+  const s = spy();
+  await runScheduledTick({ payload: SCHEDULED, now: NOW, env: CLOSED_ENV, log: s.log });
+  assert.equal(s.lines.length, 1);
+  assert.equal(s.lines[0].length, 1, '複数引数で出している');
+  const line = String(s.lines[0][0]);
+  assert.ok(line.startsWith(TICK_LOG_TAG + ' '), '目印が行頭に無い');
+  assert.equal(line.includes('\n'), false, '1 レコードが複数行になっている');
+  assert.doesNotThrow(() => JSON.parse(line.slice(TICK_LOG_TAG.length + 1)), '本体が JSON でない');
 });

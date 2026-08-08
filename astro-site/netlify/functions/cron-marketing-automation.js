@@ -243,8 +243,17 @@ export const TICK_LOG_TAG = '[marketing-automation]';
  * 外形から区別できなかった**。どちらも副作用 0 だが、後者は env を開けても永久に動かない。
  */
 function logTick(log, payload) {
+  // ⚠️ `console.log` を**参照だけ取り出して呼ばない**（`(cond ? log : console.log)(...)` は禁止）。
+  //    Netlify Lambda はログ収集のため console を差し替えており、detach して呼ぶと
+  //    レシーバを失って **空のログレコード**になる。
+  //    2026-08-08 01:00:52Z の起動で実際に message='' となり、変更前は出ていた
+  //    ランタイムの `Duration:` 行まで消えた（同時刻の他 cron は正常に出力されていた）。
+  // ⚠️ 引数は**1 本の文字列**に畳む。複数引数はログ収集側の整形に依存するため、
+  //    1 行 = 1 レコードを自分で保証する。
+  const line = `${TICK_LOG_TAG} ${JSON.stringify(payload)}`;
   try {
-    (typeof log === 'function' ? log : console.log)(TICK_LOG_TAG, JSON.stringify(payload));
+    if (typeof log === 'function') log(line);
+    else console.log(line);
   } catch { /* ログ失敗で処理を止めない */ }
 }
 
