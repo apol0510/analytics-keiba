@@ -30,7 +30,7 @@
 
 import { randomBytes } from 'node:crypto';
 import {
-  createCanaryRunner, runPhase0, runPhase1, cleanupCanary, scanCanaryKeys, finalizeCanary,
+  createCanaryRunner, runPhase0, runPhase1, runPhase2, cleanupCanary, scanCanaryKeys, finalizeCanary,
   buildCanaryId, buildCanaryConfirmation, buildFinalizeConfirmation, isValidCanaryId,
   canaryPrefix, dataPrefix, runMarkerKey,
   CanaryGuardError, CANARY_STOP,
@@ -40,9 +40,10 @@ import {
   CLAIM_ROWS_LUA, MARK_CREATED_LUA, VERIFY_LOCK_LUA, RELEASE_LOCK_LUA,
   emailClaimKey, emailHash,
 } from '../../src/lib/crm/importClaimStore.js';
+import { SAVE_FENCED_LUA } from '../../src/lib/crm/importJobAuthority.js';
 import { canReleaseClaim } from '../../src/lib/crm/importJobReconcile.js';
 
-const LUA = { CLAIM_ROWS_LUA, MARK_CREATED_LUA, VERIFY_LOCK_LUA, RELEASE_LOCK_LUA };
+const LUA = { CLAIM_ROWS_LUA, MARK_CREATED_LUA, VERIFY_LOCK_LUA, RELEASE_LOCK_LUA, SAVE_FENCED_LUA };
 
 function json(statusCode, body) {
   return {
@@ -145,6 +146,12 @@ async function handleRun({ req, now }) {
     });
     out.phase1 = { ok: p1.ok, checks: p1.checks };
 
+    // Phase 2: SAVE_FENCED_LUA を実 Redis で検証する。
+    // fake は識別子で分岐して意味論を再現しているだけなので、**Lua 本文が
+    // Upstash 上で本当に同じ判定をするか**はここでしか確かめられない。
+    const p2 = await runPhase2({ runner, lua: LUA, now });
+    out.phase2 = { ok: p2.ok, checks: p2.checks };
+
     // cleanup は成功・失敗どちらでも行う
     const clean = await cleanupCanary(runner);
     out.cleanup = clean;
@@ -161,10 +168,10 @@ async function handleRun({ req, now }) {
 
     out.stats = runner.stats();
     // 合否は canary prefix の残存 0 で決める（DBSIZE は使わない）
-    out.ok = p0.ok && p1.ok && clean.remaining === 0;
+    out.ok = p0.ok && p1.ok && p2.ok && clean.remaining === 0;
     out.notice = out.ok
-      ? 'Phase 0 / Phase 1 すべて通過。canary データキーは削除済み（実行済みマーカーのみ TTL 付きで残ります）。'
-      : '未達があります。Phase 2 へ進まないでください。';
+      ? 'Phase 0 / 1 / 2 すべて通過。canary データキーは削除済み（実行済みマーカーのみ TTL 付きで残ります）。'
+      : '未達があります。本実行へ進まないでください。';
     return json(200, out);
   } catch (e) {
     // ⚠️ 失敗しても cleanup は行う。追加 run はしない

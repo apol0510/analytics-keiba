@@ -326,6 +326,93 @@ export async function runPhase1({ runner, lua, now, emailClaimKeyFn, emailHashFn
  * canary キーを **SCAN で数えるだけ**（削除しない）。
  * 走査対象は **ROOT 全体**（`d:` 以外に取りこぼしがあっても拾う）。**墓標は別 prefix なので含まない。**
  */
+/**
+ * Phase 2（`SAVE_FENCED_LUA` の実 Redis 検証）。
+ *
+ * fake では「識別子で分岐して意味論を JS で再現」しているだけなので、
+ * **Lua 本文が Upstash の Redis で本当に同じ判定をするか**はここでしか分からない。
+ *
+ * ⚠️ 使うキーは canary 専用 prefix の `job:*` のみ。**本番の正本キー
+ *    (`customer-import:job:<jobId>`) には触れない**（`runner.assertKey` が構造的に拒否）。
+ * ⚠️ jobId / operationId も canary 専用。実 batchId は 1 つも使わない。
+ *
+ * @param {{ runner, lua: { SAVE_FENCED_LUA: string }, now: number }} input
+ */
+export async function runPhase2({ runner, lua, now }) {
+  const checks = [];
+  const add = (name, ok, detail) => checks.push({ name, ok, detail: detail ?? null });
+  const ttl = String(CANARY_TTL_SEC);
+  const nowIso = new Date(now).toISOString();
+
+  // canary 専用の正本キー（本番 jobId とは prefix ごと別物）
+  const K = runner.dkey('job:fenced');
+  const KMissing = runner.dkey('job:absent');
+
+  /** 正本 JSON（PII は入れない。canary 専用 jobId / operationId のみ） */
+  const rec = (token, created, tag) => JSON.stringify({
+    jobId: `canary:${runner.canaryId}`,
+    batchId: `canary-${runner.canaryId}`,
+    operationId: `canary:${runner.canaryId}#${tag}`,
+    fencingToken: String(token),
+    created, status: 'RUNNING', updatedAt: tag,
+  });
+
+  const save = async (key, token, created, tag) => {
+    const r = await runner.run(['EVAL', lua.SAVE_FENCED_LUA, '1', key, rec(token, created, tag), String(token)]);
+    return r.result;
+  };
+  const read = async (key) => {
+    const r = await runner.run(['GET', key]);
+    try { return JSON.parse(r.result); } catch { return null; }
+  };
+
+  // ── 1. 正本が無ければ MISSING（黙って新規作成しない）──
+  const miss = await save(KMissing, 5, 0, 'miss');
+  add('1. 正本が無ければ MISSING', miss === 'MISSING');
+  const missExists = Number((await runner.run(['EXISTS', KMissing])).result);
+  add('1b. MISSING のとき何も書かない', missExists === 0);
+
+  // 初期正本を置く（token=5）
+  await runner.run(['SET', K, rec(5, 0, 'init'), 'EX', ttl]);
+
+  // ── 2. 同じ token → 保存できる ──
+  const same = await save(K, 5, 10, 'same');
+  const afterSame = await read(K);
+  add('2. 同じ token は保存できる', same === 'OK' && afterSame && afterSame.created === 10);
+
+  // ── 3. より新しい token → 保存できる ──
+  const newer = await save(K, 9, 20, 'newer');
+  const afterNewer = await read(K);
+  add('3. より新しい token は保存できる', newer === 'OK' && afterNewer && afterNewer.created === 20);
+
+  // ── 4. 古い token → STALE で拒否され、正本が汚れない ──
+  const older = await save(K, 3, 999, 'older');
+  const afterOlder = await read(K);
+  add('4. 古い token は STALE で拒否', older === 'STALE');
+  add('4b. 拒否時に正本が書き換わらない', afterOlder && afterOlder.created === 20 && afterOlder.updatedAt === 'newer');
+
+  // ── 5. lost update シナリオ（実 Redis 上）──
+  //     A(token=1) が保存前に止まる → lease 失効 → B(token=2) が保存 → A が復帰
+  const KL = runner.dkey('job:lostupdate');
+  await runner.run(['SET', KL, rec(1, 0, 'base'), 'EX', ttl]);
+  const bSave = await save(KL, 2, 20, 'B');        // worker B が先に保存
+  const aLate = await save(KL, 1, 10, 'A');        // worker A が復帰して古い token で保存
+  const finalRec = await read(KL);
+  add('5a. B(token=2) の保存は成功する', bSave === 'OK');
+  add('5b. A(token=1) の遅れた保存は拒否される', aLate === 'STALE');
+  add('5c. B の正本が保持される（lost update が起きない）',
+    finalRec && finalRec.created === 20 && finalRec.updatedAt === 'B');
+
+  // ── 6. fencingToken を持たない正本は上書きできる（後方互換）──
+  //     旧形式が残っていても保存を止めない（stored が読めなければ CAS しない）
+  const KNo = runner.dkey('job:notoken');
+  await runner.run(['SET', KNo, JSON.stringify({ jobId: 'canary', created: 0 }), 'EX', ttl]);
+  const noTok = await save(KNo, 1, 7, 'compat');
+  add('6. fencingToken を持たない正本は上書きできる（後方互換）', noTok === 'OK');
+
+  return { checks, ok: checks.every((c) => c.ok), at: nowIso };
+}
+
 export async function scanCanaryKeys(runner) {
   const found = [];
   let cursor = '0';
