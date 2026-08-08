@@ -29,7 +29,7 @@
  */
 
 import { verifyPlanAccess } from './pageAccess.js';
-import { lookupCustomerFields } from '../premiumPlus/purchaseAnchorLookup.js';
+import { lookupCustomerFieldsResult } from '../premiumPlus/purchaseAnchorLookup.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 
 /**
@@ -97,13 +97,30 @@ function denyResponse(notFound) {
  * }} input
  * @returns {Promise<{ ok: boolean, response: Response|null, reason: string, entitlements: object|null }>}
  */
+/**
+ * lookup の戻り値を正規化する。
+ *
+ * 新契約: `{ ok:true, fields }` / `{ ok:false, reason:'not_found'|'unavailable' }`
+ * 旧契約: `fields | null`（差し替えテストや既存呼び出しの互換）
+ *
+ * ⚠️ 旧契約の `null` は**区別できない**ので `not_found` として扱う。
+ *    認可経路は必ず新契約（`lookupCustomerFieldsResult`）を使うこと。
+ */
+export function normalizeLookupResult(v) {
+  if (!v) return { ok: false, reason: 'not_found' };
+  if (v.ok === true && v.fields && typeof v.fields === 'object') return { ok: true, fields: v.fields };
+  if (v.ok === false && typeof v.reason === 'string') return { ok: false, reason: v.reason };
+  if (typeof v === 'object') return { ok: true, fields: v };   // 旧契約
+  return { ok: false, reason: 'not_found' };
+}
+
 export async function gatePaidPage({
   request,
   requiredPlan,
   env,
   now = Date.now(),
   notFound = false,
-  lookup = lookupCustomerFields,
+  lookup = lookupCustomerFieldsResult,
 } = {}) {
   const flag = resolveEntitlementFlag(requiredPlan);
   const deny = (reason) => ({ ok: false, reason, response: denyResponse(notFound), entitlements: null });
@@ -126,13 +143,19 @@ export async function gatePaidPage({
   if (!sub) return deny('no_subject');
 
   // ── 2. 権利判定（Airtable の正本。買い切り・無料特典もここで効く）──
-  let fields = null;
+  // ⚠️ **一時障害と「会員が存在しない」を区別する。**
+  //    どちらも通さない（fail closed）が、理由コードを分けないと障害が観測できない。
+  //    2026-08-08 の障害では、Airtable の一時障害が customer_not_found に潰れており、
+  //    さらに失敗が 10 分キャッシュされて有効会員が締め出されていた。
+  let looked = null;
   try {
-    fields = await lookup({ recordId: sub, env, now });
+    looked = await lookup({ recordId: sub, env, now });
   } catch {
-    return deny('lookup_failed'); // 引けなければ通さない（fail closed）
+    return deny('lookup_failed');
   }
-  if (!fields) return deny('customer_not_found');
+  const r = normalizeLookupResult(looked);
+  if (!r.ok) return deny(r.reason === 'not_found' ? 'customer_not_found' : 'lookup_unavailable');
+  const fields = r.fields;
 
   const ent = resolveEntitlements(fromAirtableFields(fields), now);
   if (ent[flag] !== true) return deny('entitlement_denied');
