@@ -30,6 +30,70 @@ const fnDataDir = join(fnRoot, 'src', 'data');
 let failed = 0;
 const ng = (m) => { console.error(`  ❌ ${m}`); failed += 1; };
 const ok = (m) => console.log(`  ✅ ${m}`);
+// 取込ラグ（予想だけ先に届き、featureScores/horseHistories が後追い）は日常的に起きる。
+// 表示専用データはフォールバックがあり**ページは描画できる**ので fail にはしない。
+// 「どの保持日でも引けない」= prune で消えた場合だけ fail にする。
+const warn = (m) => console.log(`  ⚠️  ${m}`);
+
+/** artifact のサブツリーに残っている日付（新しい順）と、日付→会場コード一覧 */
+async function retainedByDate(sub, datePattern, codePattern) {
+  const dir = join(fnDataDir, sub);
+  const files = await listFiles(dir);
+  const map = new Map();
+  for (const f of files) {
+    const d = datePattern.exec(f)?.[1];
+    if (!d) continue;
+    const code = codePattern ? codePattern.exec(f)?.[1] : null;
+    if (!map.has(d)) map.set(d, new Set());
+    if (code) map.get(d).add(code);
+  }
+  return { dates: [...map.keys()].sort().reverse(), codes: map };
+}
+
+/** ソース (src/data) 側に、その日付のファイルが何件あるか */
+async function sourceCountFor(sub, date) {
+  const dir = join(projectRoot, 'src', 'data', sub, ...date.split('-').slice(0, 2));
+  const files = await listFiles(dir);
+  return files.filter((f) => f.startsWith(`${date}-`)).length;
+}
+
+/**
+ * 表示専用 loader の検査。要求日で引けなかったときは **ソースと突き合わせて**
+ * 「取込ラグ」と「prune が消した」を区別する。この区別が無いと、
+ * prune のバグが取込ラグに紛れて素通りする。
+ *
+ *  - 要求日で引ける                       → ok
+ *  - 引けない × ソースにも無い            → warn（取込ラグ。ページは描画できる）
+ *  - 引けない × **ソースには在る**        → ng（prune が消した＝退行）
+ */
+async function probeDisplayData({ label, sub, datePattern, codePattern, wantDate, wantCodes, load }) {
+  const { dates, codes } = await retainedByDate(sub, datePattern, codePattern);
+  if (dates.length === 0) return ng(`${label}: ${sub} に日付付きファイルが 0 → prune で消えている`);
+
+  const tryDate = (d, only) => {
+    // 要求日は「実際に出走する会場」で検査する（会場の取りこぼしを見逃さない）。
+    // 他日は成果物の実在会場で代用する（その日どこが開催だったか分からないため）。
+    const cs = only && only.length ? only : [...(codes.get(d) || [])];
+    if (cs.length === 0) return null;
+    const missing = cs.filter((c) => !load(d, c));
+    return missing.length === 0 ? cs : null;
+  };
+
+  const hit = tryDate(wantDate, wantCodes);
+  if (hit) return ok(`${label}: ${wantDate} × ${hit.join('/')} OK`);
+
+  const inSource = await sourceCountFor(sub, wantDate);
+  if (inSource > 0) {
+    return ng(`${label}: ${wantDate} 分はソースに ${inSource} 件あるのに成果物から引けない`
+      + ' → prune が消した（退行）');
+  }
+  const alt = dates.find((d) => d !== wantDate && tryDate(d));
+  if (alt) {
+    return warn(`${label}: ${wantDate} 分はソースにも未取込（取込ラグ）。${alt} は引けるので prune は健全。`
+      + ' 表示はフォールバックへ落ちるがページは描画できる');
+  }
+  ng(`${label}: 保持している ${dates.length} 開催日のどれでも引けない → prune で消えている`);
+}
 
 async function listFiles(dir) {
   const out = [];
@@ -87,33 +151,39 @@ async function probeJraChain() {
   }
   if (!date || venueNames.length === 0) return ng('JRA: date/venue を特定できず後続 loader を検査できない');
 
-  // featureScores（表示専用だが、欠けると特徴量が全馬 null になる）
+  // featureScores / horseHistories は**表示専用**（欠けてもフォールバックで描画できる）。
+  // 予想本体と別便で届くため、最新日だけ未取込という状態が日常的に起きる。
   try {
     const { loadFeatureScores, venueCodeFromName } = await lib('loadFeatureScores.js');
-    for (const name of venueNames) {
-      const code = venueCodeFromName('jra', name);
-      if (!code) { ng(`loadFeatureScores(jra): venueCode 不明 name=${name}`); continue; }
-      const fs6 = loadFeatureScores('jra', date, code);
-      if (!fs6) ng(`loadFeatureScores(jra, ${date}, ${code}): null → 特徴量が引けない`);
-      else ok(`loadFeatureScores(jra, ${date}, ${code}): OK`);
-    }
+    const wantCodes = venueNames.map((n) => venueCodeFromName('jra', n));
+    if (wantCodes.some((c) => !c)) ng(`loadFeatureScores(jra): venueCode 不明 ${venueNames.join('/')}`);
+    await probeDisplayData({
+      label: 'loadFeatureScores(jra)',
+      sub: 'featureScores/jra',
+      datePattern: /^(\d{4}-\d{2}-\d{2})-[A-Z]+\.json$/,
+      codePattern: /^\d{4}-\d{2}-\d{2}-([A-Z]+)\.json$/,
+      wantDate: date,
+      wantCodes,
+      load: (d, c) => loadFeatureScores('jra', d, c),
+    });
   } catch (e) {
     ng(`loadFeatureScores(jra) の実行に失敗: ${e.message}`);
   }
 
-  // horseHistories（近走表示の元）
   try {
-    const { jraVenueCodeFromName, loadHorseHistoriesForVenue, buildHorseNameIndex } =
-      await lib('loadHorseHistoriesJra.js');
-    for (const name of venueNames) {
-      const code = jraVenueCodeFromName(name);
-      if (!code) { ng(`loadHorseHistoriesForVenue: venueCode 不明 name=${name}`); continue; }
-      const json = loadHorseHistoriesForVenue(date, code);
-      if (!json) { ng(`loadHorseHistoriesForVenue(${date}, ${code}): null → 近走が引けない`); continue; }
-      const idx = buildHorseNameIndex(json);
-      if (!idx || idx.size === 0) ng(`buildHorseNameIndex(${date}, ${code}): 0 件`);
-      else ok(`loadHorseHistoriesForVenue(${date}, ${code}): ${idx.size} 頭`);
-    }
+    const { jraVenueCodeFromName, loadHorseHistoriesForVenue, buildHorseNameIndex } = await lib('loadHorseHistoriesJra.js');
+    await probeDisplayData({
+      label: 'loadHorseHistoriesForVenue',
+      sub: 'horseHistories/jra',
+      datePattern: /^(\d{4}-\d{2}-\d{2})-[A-Z]+\.json$/,
+      codePattern: /^\d{4}-\d{2}-\d{2}-([A-Z]+)\.json$/,
+      wantDate: date,
+      wantCodes: venueNames.map((n) => jraVenueCodeFromName(n)).filter(Boolean),
+      load: (d, c) => {
+        const json = loadHorseHistoriesForVenue(d, c);
+        return json ? buildHorseNameIndex(json)?.size > 0 : false;
+      },
+    });
   } catch (e) {
     ng(`loadHorseHistoriesForVenue の実行に失敗: ${e.message}`);
   }
@@ -153,30 +223,61 @@ async function probeNankanChain() {
     const code = venueCodeFromName('nankan', venueName);
     if (!code) return ng(`NANKAN: venueCode 不明 name=${venueName}`);
 
-    const fs6 = loadFeatureScores('nankan', date, code);
-    if (!fs6) ng(`loadFeatureScores(nankan, ${date}, ${code}): null → 特徴量が引けない`);
-    else ok(`loadFeatureScores(nankan, ${date}, ${code}): OK`);
+    await probeDisplayData({
+      label: 'loadFeatureScores(nankan)',
+      sub: 'featureScores/nankan',
+      datePattern: /^(\d{4}-\d{2}-\d{2})-[A-Z]+\.json$/,
+      codePattern: /^\d{4}-\d{2}-\d{2}-([A-Z]+)\.json$/,
+      wantDate: date,
+      wantCodes: [code],
+      load: (d, c) => loadFeatureScores('nankan', d, c),
+    });
 
     // horseStats はレース単位。artifact に残っている当日ファイルから raceNo/horseNumber を取り、
-    // ページと同じ引数形で loader を実行する。
-    const statsDir = join(fnDataDir, 'horseStats', 'nankan', ...date.split('-').slice(0, 2));
-    let statsFile = null;
-    try {
-      const cand = (await readdir(statsDir)).filter((f) => f.startsWith(`${date}-${code}-R`));
-      statsFile = cand.sort()[0] || null;
-    } catch { /* ディレクトリごと無い */ }
-    if (!statsFile) {
-      ng(`horseStats/nankan: ${date}-${code}-R*.json が artifact に無い → 南関の馬データ注入が空になる`);
-    } else {
-      const sj = JSON.parse(await readFile(join(statsDir, statsFile), 'utf-8'));
+    // ページと同じ引数形（date/venue/raceNo/horseNumber）で loader を実行する。
+    const { loadHorseStatsNankan } = await lib('loadHorseStatsNankan.js');
+    const statsRoot = join(fnDataDir, 'horseStats', 'nankan');
+    const all = await listFiles(statsRoot);
+    const PAT = /^(\d{4}-\d{2}-\d{2})-([A-Z]+)-R(\d{2})\.json$/;
+
+    const runOne = async (fileName) => {
+      const m = PAT.exec(fileName);
+      if (!m) return false;
+      const [, d, v] = m;
+      const dir = join(statsRoot, ...d.split('-').slice(0, 2));
+      const sj = JSON.parse(await readFile(join(dir, fileName), 'utf-8'));
       const raceNo = Number(sj.raceNo);
       const horseNumber = sj.horses?.[0]?.horseNumber;
-      const { loadHorseStatsNankan } = await lib('loadHorseStatsNankan.js');
-      const r = loadHorseStatsNankan({ date, venue: code, raceNo, horseNumber });
-      if (!r || r.ok !== true || !r.horseStats) {
-        ng(`loadHorseStatsNankan(${date}, ${code}, R${raceNo}, #${horseNumber}): 取得失敗 reason=${r?.reason ?? r?.errors?.join('/')}`);
+      if (horseNumber == null) return false;
+      const r = loadHorseStatsNankan({ date: d, venue: v, raceNo, horseNumber });
+      return r?.ok === true && !!r.horseStats
+        ? `${d} ${v} R${raceNo} #${horseNumber}` : false;
+    };
+
+    const wanted = all.filter((f) => f.startsWith(`${date}-${code}-R`)).sort();
+    const srcRaces = await sourceCountFor('horseStats/nankan', date);
+    if (wanted.length > 0 && srcRaces > 0 && wanted.length < srcRaces) {
+      ng(`loadHorseStatsNankan: ${date}-${code} がソース ${srcRaces} レースに対し成果物 ${wanted.length} レース`
+        + ' → prune がレース単位で取りこぼしている');
+    }
+    const hit = wanted.length ? await runOne(wanted[0]) : false;
+    if (hit) {
+      ok(`loadHorseStatsNankan: ${hit} OK`);
+    } else {
+      const inSource = await sourceCountFor('horseStats/nankan', date);
+      if (inSource > 0) {
+        ng(`loadHorseStatsNankan: ${date}-${code} 分はソースに ${inSource} 件あるのに成果物から引けない`
+          + ' → prune が消した（退行）');
       } else {
-        ok(`loadHorseStatsNankan(${date}, ${code}, R${raceNo}, #${horseNumber}): OK`);
+        const others = all.filter((f) => PAT.test(f) && !f.startsWith(`${date}-`)).sort().reverse();
+        let alt = false;
+        for (const f of others) { alt = await runOne(f); if (alt) break; }
+        if (alt) {
+          warn(`loadHorseStatsNankan: ${date}-${code} 分はソースにも未取込（取込ラグ）。${alt} は引けるので prune は健全。`
+            + ' 表示はフォールバックへ落ちるがページは描画できる');
+        } else {
+          ng('loadHorseStatsNankan: 保持しているどの開催日でも引けない → prune で消えている');
+        }
       }
     }
   } catch (e) {

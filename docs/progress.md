@@ -3444,9 +3444,19 @@ rollback は該当 env の unset（コード変更不要）。
   JRA は予想の最新日・実在会場を loader から導出して後続 loader に渡す（会場取りこぼしを検知）。
   NANKAN は予想本体が `import.meta.glob(eager)` でバンドルへ焼き込まれるため、
   **ソース側最新日**を要求日とみなし、その日付で artifact 側を引けるか検査する。
-  - **退行 4 シナリオで fail を実測**: ①featureScores/jra 最新日削除 ②predictions/jra 全削除
+  - **「取込ラグ」と「prune が消した」を成果物とソースの突き合わせで区別する**。
+    予想本体だけ先に届き featureScores / horseHistories が後追いになる状態は日常的に起きるため、
+    それを fail にすると CI が毎日赤くなり guard の無効化圧力になる。判定は次のとおり:
+    要求日で引ける → OK / 引けない **かつソースにも無い** → warn（描画はフォールバックで継続）/
+    引けない **のにソースには在る** → **fail（prune の退行）**。
+    要求日の会場は「実際に出走する会場」で検査し、会場・レース単位の取りこぼしも fail にする。
+  - **退行 6 シナリオで fail を実測**: ①featureScores/jra 最新日削除 ②predictions/jra 全削除
     （= 2026-08-08 の実障害そのもの）③horseStats/nankan 最新日削除 ④horseHistories/jra 1 会場削除。
-    ①は従来の存在確認では**素通りしていた**（他日付のファイルが残るため）。
+    ⑤horseHistories/jra 1 会場削除 ⑥horseStats/nankan 1 レース削除。
+    ①③⑤⑥は従来の存在確認では**素通りしていた**（他日付・他会場のファイルが残るため）。
+    加えて**取込ラグは warn で通過**することも実測（ソース・成果物の両方に無いケース）。
+    実際、本 PR の CI 初回実行で `2026-08-09` の予想だけが先に取り込まれた状態を検出し、
+    この区別が無いと誤検知になることが分かったため severity を分けた。
 - **Batch 5（`light-predictions-jra.astro`）**: `import.meta.glob(eager)` + `pickLatestJraPrediction`
   を既存 runtime loader `loadJraVenuesForDisplay({ injectHistories:false })` へ置換し、
   `prerender=false` + `gatePaidPage(requiredPlan='standard')` を適用。
