@@ -2,7 +2,7 @@
  * admin-customer-import-redis-canary.js — 取り込みジョブ Redis 版の Phase 0 / Phase 1 canary
  *
  * ── なぜ Function なのか ──────────────────────────────────────
- * `UPSTASH_REDIS_REST_URL` / `_TOKEN` は Netlify の **secret（`is_secret: true`）**で、
+ * `CANARY_UPSTASH_REDIS_REST_URL` / `_TOKEN` は Netlify の **secret（`is_secret: true`）**で、
  * scope は `functions`・値を持つ context は `production` だけ。作成後は API でも CLI でも
  * 値を取り出せない。**secret を Netlify の外へ持ち出さずに** production Redis を検証する
  * 唯一の方法が、この専用 Function を production へ置いて叩くこと。
@@ -42,6 +42,7 @@ import {
 } from '../../src/lib/crm/importClaimStore.js';
 import { SAVE_FENCED_LUA } from '../../src/lib/crm/importJobAuthority.js';
 import { canReleaseClaim } from '../../src/lib/crm/importJobReconcile.js';
+import { isProductionContext } from '../../src/lib/auth/originPolicy.js';
 
 const LUA = { CLAIM_ROWS_LUA, MARK_CREATED_LUA, VERIFY_LOCK_LUA, RELEASE_LOCK_LUA, SAVE_FENCED_LUA };
 
@@ -59,11 +60,46 @@ function json(statusCode, body) {
   };
 }
 
+/**
+ * canary が接続してよい Redis の認証情報。
+ *
+ * ⚠️ **本番の `UPSTASH_REDIS_REST_URL` / `_TOKEN` は読まない。**
+ *    canary 専用の別インスタンスを別の env 名で渡す。名前を分けることで、
+ *    「production context に env を入れ忘れた／間違えた」ときでも
+ *    **構造的に本番 Redis へ到達できない**（本番の名前を参照するコードが無い）。
+ */
+export const CANARY_REDIS_URL_ENV = 'CANARY_UPSTASH_REDIS_REST_URL';
+export const CANARY_REDIS_TOKEN_ENV = 'CANARY_UPSTASH_REDIS_REST_TOKEN';
+
+/** 本番 Redis の env 名。**参照するのは「一致していないか」の検査だけ。** */
+const PROD_REDIS_URL_ENV = 'UPSTASH_REDIS_REST_URL';
+
+/**
+ * canary を動かしてよい実行環境か。
+ *
+ * - production context では**常に拒否**（`isProductionContext` は未設定・未知値も本番扱い）
+ * - canary 専用 env が無ければ拒否
+ * - canary の URL が本番の URL と**一致していたら拒否**（env の貼り間違い検知）
+ *
+ * @param {Record<string, string|undefined>} env
+ * @returns {{ ok: boolean, code: string|null }}
+ */
+export function checkCanaryIsolation(env = {}) {
+  if (isProductionContext(env.CONTEXT)) return { ok: false, code: 'production_context' };
+  const url = env[CANARY_REDIS_URL_ENV];
+  const token = env[CANARY_REDIS_TOKEN_ENV];
+  if (!url || !token) return { ok: false, code: 'canary_redis_not_configured' };
+  const prodUrl = env[PROD_REDIS_URL_ENV];
+  if (prodUrl && String(prodUrl) === String(url)) return { ok: false, code: 'canary_points_at_production' };
+  return { ok: true, code: null };
+}
+
 /** Upstash REST。**URL / token をレスポンスにもログにも出さない** */
 async function redisCmd(args) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) throw new Error('upstash_not_configured');
+  const iso = checkCanaryIsolation(process.env);
+  if (!iso.ok) throw new Error(`canary_isolation_${iso.code}`);
+  const url = process.env[CANARY_REDIS_URL_ENV];
+  const token = process.env[CANARY_REDIS_TOKEN_ENV];
   const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -262,6 +298,15 @@ export const handler = async (event) => {
   // ⚠️ 既定は無効。env が無ければ**常時 403**（使い終わったら env を消すだけで無効化できる）
   if (process.env.CUSTOMER_IMPORT_CANARY_ENABLED !== 'true') {
     return json(403, { error: 'canary は無効です（CUSTOMER_IMPORT_CANARY_ENABLED）。', code: 'canary_disabled' });
+  }
+
+  // ⚠️ **隔離の最終ガード**。production context / 本番 Redis を指す設定では 1 コマンドも送らない。
+  const isolation = checkCanaryIsolation(process.env);
+  if (!isolation.ok) {
+    return json(403, {
+      error: 'canary は非本番 context の専用 Redis でのみ実行できます。',
+      code: isolation.code,
+    });
   }
 
   const SECRET = process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET;
