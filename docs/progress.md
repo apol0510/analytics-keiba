@@ -3209,6 +3209,82 @@ SSR 化した 2 件を `CLIENT_ONLY_PAID_PAGES_KNOWN` から削除。
 | A（サーバー側認可）| **10** |
 | B（client-side gate のみ）| **1**（`light-predictions-jra` のみ）|
 
+## SSR 化で prune しすぎた退行の修正（2026-08-08 / PR・未 merge）
+
+### 何が起きていたか
+
+有料ページを SSR 化した（`#257` / `#259` / `#261`）ことで、**ビルド時**に読んでいた
+`src/data` を**リクエスト時**に読むようになった。ところが
+`prune-ssr-function-data.mjs` は SSR 関数バンドルから重いサブツリーを
+**ディレクトリごと削除**していたため、**認可を通った有料会員に
+「本日の予想データがありません」が出る**状態になっていた。
+
+**500 にならず静かに空表示になる**ため外形監視では検出できず、
+検証も未認証（302）しか見ていなかったので気づけなかった。
+
+| ページ | 影響 |
+|---|---|
+| `premium-sanrenpuku-jra`（#257）| 🔴 本体データ欠落 |
+| `premium-prediction/jra`（#261）| 🔴 本体データ欠落 |
+| `premium-prediction/nankan`（#261）| 🟡 `featureScores` 欠落 |
+| `light-predictions`（#259）| 🟡 `horseStats/nankan` 欠落 |
+
+### loader ごとの必要ファイル集合（コードから確定）
+
+| loader | パス | 必要な単位 |
+|---|---|---|
+| `loadJraVenuesForDisplay` / `premium-prediction/jra` 内蔵 | `predictions/jra/YYYY/MM/YYYY-MM-DD.json` | 全走査して**最新日**の 1 ファイル（`venues[]` を内包＝複数会場も 1 ファイル）|
+| `loadFeatureScores(cat,date,venue)` | `featureScores/{jra,nankan}/YYYY/MM/{date}-{CODE}.json` | **日付 × 開催会場ごとに 1 ファイル** |
+| `loadHorseHistoriesForVenue(date,venue)` | `horseHistories/jra/YYYY/MM/{date}-{CODE}.json` | 同上 |
+| `loadHorseStatsNankan` | `horseStats/nankan/YYYY/MM/{date}-{VENUE}-R{NN}.json` | **日付 × 会場 × レース** |
+
+→ 「最新 1 ファイル」では**会場別・レース別を取りこぼす**。保持は**日付単位**にする必要がある。
+
+### 修正（A 案）
+
+`prune-ssr-function-data.mjs` を「全削除」から「**必要最小集合だけ残す**」へ変更した。
+ポリシーは `src/lib/ssr/runtimeDataRetention.js`（純粋）に分離。
+
+- **実行時に読むサブツリー**（上表 5 種）は **直近 `KEEP_DATES=3` 開催日分**を残す。
+  残す日付は**バンドル内に実在するファイル名から導出**（決め打ちしない）
+- **実行時に読まないもの**（`computer` / `horseStats/jra`）は従来どおり全削除
+- 命名規則から外れるファイルは**消さない**（fail safe）／間引き後 0 件なら **build を失敗**させる
+- **データ schema・consumer contract・自動 import フローは一切変更していない**。
+  消しているのは SSR 関数バンドル内のコピーだけで、リポジトリの `src/data` は無傷
+
+### SSR function size
+
+| 時点 | サイズ | 250MB への余裕 |
+|---|---|---|
+| 修正前（`#261` 時点）| 71.9 MB | 178.1 MB |
+| **修正後** | **94.8 MB** | **155.2 MB** |
+
++22.9 MB。内訳は `horseHistories/jra` 11.3 / `featureScores/jra` 5.7 /
+`horseStats/nankan` 3.3 / `predictions/jra` 1.9 / `featureScores/nankan` 0.8 MB。
+上限に対して **62% の余裕**を維持。
+
+### ローカル runtime 検証（本番データ・実顧客を使わない）
+
+SSR 成果物を `cwd` に見立てて loader を実行し、**認可後に空表示へ落ちない**ことを実証。
+
+```
+loadJraVenuesForDisplay: error=なし / date=2026-08-08 / venues=3 / races=36 → hasData 相当 true
+loadFeatureScores(jra, 2026-08-08, CHU): 取得（races=12）
+loadHorseHistoriesForVenue(2026-08-08, CHU): 取得
+```
+
+### CI guard 2 本
+
+- `test:ssr-retention`（10 件）— ポリシーの単体テスト。日付単位の取りこぼし・
+  最新 1 日決め打ち・全削除への逆戻りを検知
+- **`check:ssr-runtime-data`** — **ビルド成果物そのもの**を検査。各サブツリーの残存、
+  `loadJraVenuesForDisplay` が実際に venues/races を返すこと、250MB 未満を確認。
+  `verify:safety` と workflow の個別 step に配線。
+  `predictions/jra` を消して**実際に fail することを確認済み**
+
+⚠️ **教訓**: ポリシーの単体テストだけでは足りない。2026-08-08 の退行は
+「**ビルド成果物に何が残ったかを見ていなかった**」ことで見逃された。成果物を直接見る guard を持つ。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
