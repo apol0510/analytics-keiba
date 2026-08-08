@@ -33,7 +33,7 @@ import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
 import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
-import { orderEntriesDeterministically, countCreateCandidates } from '../../src/lib/crm/importEligibility.js';
+import { orderEntriesDeterministically, countCreateCandidates, summarizeImportPlan } from '../../src/lib/crm/importEligibility.js';
 import {
   canStartImportJob, canStepImportJob, cancelImportJob, beginChildBatch, applyChildResult,
   markJobBlocked, markJobRedisUnavailable, summarizeJobProgress, describeJobRollback,
@@ -44,7 +44,7 @@ import {
   createClaimStore, emailHash, RedisUnavailableError, LOCK_TTL_MS,
 } from '../../src/lib/crm/importClaimStore.js';
 import {
-  createJobAuthority, buildJobRecord, ORDERING_VERSION,
+  createJobAuthority, buildJobRecord, ORDERING_VERSION, computeSnapshotFingerprint,
 } from '../../src/lib/crm/importJobAuthority.js';
 import { runChildBatch } from '../../src/lib/crm/importJobRunner.js';
 import { reconcileImportJob, RECONCILE_VERDICT } from '../../src/lib/crm/importJobReconcile.js';

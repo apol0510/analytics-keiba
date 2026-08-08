@@ -120,4 +120,51 @@ export function countCreateCandidates({ entries, facts, providerEmails } = {}) {
   return n;
 }
 
+/**
+ * 本実行前の内訳を出す（**read-only・件数だけ**。アドレス・氏名は返さない）。
+ *
+ * `countCreateCandidates` と**同じ `classifyCreateRow`** を通すので、
+ * 「CREATE の数」と「内訳の合計」は必ず一致する（別ロジックが混ざらない）。
+ *
+ * @returns {{ total, create, skippedByReason, existing, excluded, reviewRequired,
+ *             duplicateInCsv }}
+ */
+export function summarizeImportPlan({ entries, facts, providerEmails } = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const skippedByReason = {};
+  let create = 0;
+  const seen = new Set();
+  let duplicateInCsv = 0;
+
+  for (const entry of list) {
+    const email = String(entry?.email || '').trim().toLowerCase();
+    if (email) {
+      if (seen.has(email)) duplicateInCsv += 1;
+      else seen.add(email);
+    }
+    const v = classifyCreateRow({ entry, facts, providerEmails });
+    if (v.ok) create += 1;
+    else skippedByReason[v.reason] = (skippedByReason[v.reason] || 0) + 1;
+  }
+
+  const n = (k) => skippedByReason[k] || 0;
+  // 要確認（人が見る）と、機械的に除外するものを分ける
+  const reviewRequired = n(SKIP_REASON.FLAGGED);
+  const existing = n(SKIP_REASON.EXISTING);
+  const excluded = n(SKIP_REASON.NO_EMAIL) + n(SKIP_REASON.UNSUBSCRIBED)
+    + n(SKIP_REASON.HARD_BOUNCE) + n(SKIP_REASON.SOFT_BOUNCE) + n(SKIP_REASON.SUSPENDED)
+    + n(SKIP_REASON.TEST_ACCOUNT) + n(SKIP_REASON.PAID) + n(SKIP_REASON.DUPLICATE_IN_AK)
+    + n(SKIP_REASON.PROVIDER_SUPPRESSED);
+
+  return {
+    total: list.length,
+    create,
+    skippedByReason,
+    existing,
+    excluded,
+    reviewRequired,
+    duplicateInCsv,
+  };
+}
+
 export default selectCreateRows;
