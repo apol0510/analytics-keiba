@@ -2796,6 +2796,67 @@ Netlify のログにはランタイムの `Duration:` 行しか残らず、レ�
 **次の観測機会は JST 10:00（UTC 01:00）の次回スケジュール起動。**
 deploy 後にそこを待って `reason` を確認する。
 
+## cron の観測ログが空になっていた（2026-08-08 / 自己起因の退行・PR 未 merge）
+
+### 何が起きたか
+
+PR #252（早期 return の構造化ログ追加）を 2026-08-07 23:14Z に本番反映した直後、
+翌 01:00 の起動でログが **`message: ''`（空）** になった。
+さらに、**変更前は出ていたランタイムの `Duration:` 行まで消えた**。
+
+```
+2026-08-07T01:00:40.662Z | 'Duration: 79.69 ms  Memory Usage: 89 MB  Init Duration: 345.03 ms'  ← 変更前
+2026-08-08T01:00:52.001Z | ''                                                                     ← 変更後
+```
+
+取り込み遅延ではない。同じ 01:00 台に `cron-prospect-worker` / `cron-email-scheduler` /
+`payment-email-dispatcher` は日本語を含む全ログが正常に取れており、
+3 分後に再取得しても 1 行のまま・error/warn も 0 件だった。
+この function について 2026-08-07 → 08 で変わったのは #252 だけ。
+
+### 原因
+
+```js
+// ❌ これをやった
+(typeof log === 'function' ? log : console.log)(TICK_LOG_TAG, JSON.stringify(payload));
+```
+
+**`console.log` を参照だけ取り出して呼んでいた。** Netlify Lambda はログ収集のため
+console を差し替えており、detach して呼ぶとレシーバを失って空レコードになる。
+正常に出ている他の cron はいずれも `console.log(...)` を直接呼んでいる。
+
+### 対処
+
+```js
+// ✅ 直接・1 引数の文字列で呼ぶ
+const line = `${TICK_LOG_TAG} ${JSON.stringify(payload)}`;
+if (typeof log === 'function') log(line);
+else console.log(line);
+```
+
+引数も 1 本の文字列へ畳んだ（複数引数はログ収集側の整形に依存するため、
+1 行 = 1 レコードを自分で保証する）。
+
+### 再発防止
+
+`automationTickLog.test.mjs` に guard を 2 件追加:
+- `console.log` を detach して呼ぶ形（`(… ? … : console.log)(…)` / 変数代入）を禁止
+- ログが 1 引数・単一行・JSON 本体であることを固定
+
+**退行を戻すと 8 件 fail する**ことを確認済み。
+
+### 影響
+
+**観測性のみ。副作用は 0 のまま**（gate 4 種すべて UNSET / `ScheduledEmails` PENDING 0 / 送信 0）。
+ただし **S1（初回起動の合格判定）は未達**。`reason` を確認できていないため S2 へ進まない。
+次の判定機会は本 PR を反映した後の **JST 10:00（UTC 01:00）**。
+
+### 教訓
+
+**本番のログ出力を変えたら、次の実行で「出ているか」まで確認して初めて完了。**
+テストは「logTick が呼ばれること」を見ていたが、**本番のログ基盤で実際に文字列が残るか**は
+検証できていなかった。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
