@@ -40,15 +40,32 @@ export function clearAnchorCache() {
  * @returns {Promise<object|null>}
  */
 export async function lookupCustomerFields(input) {
+  const r = await lookupCustomerFieldsResult(input);
+  return r.ok ? r.fields : null;
+}
+
+/**
+ * `lookupCustomerFields` の理由付き版。**認可に使う側はこちらを使うこと。**
+ *
+ * ⚠️ **失敗を絶対にキャッシュしない。**
+ *    2026-08-08 の障害: Airtable の一時障害（429 / タイムアウト）で null が返り、
+ *    それが 10 分キャッシュされたため、**有効な有料会員が 10 分間 302 /login** になった。
+ *    キャッシュ鍵は recordId なので、**マジックリンクで入り直しても回復しない**。
+ *    利用者は繰り返しログインを試み、負荷が増えて 429 がさらに出る悪循環になった。
+ *
+ * @returns {Promise<{ok:true, fields:object} | {ok:false, reason:'not_found'|'unavailable'}>}
+ */
+export async function lookupCustomerFieldsResult(input) {
   const { recordId, env = {}, now = Date.now(), fetchImpl } = input || {};
-  if (!recordId || typeof recordId !== 'string') return null;
+  if (!recordId || typeof recordId !== 'string') return { ok: false, reason: 'not_found' };
 
   const cached = cache.get(recordId);
-  if (cached && cached.expiresAt > now) return cached.fields;
+  if (cached && cached.expiresAt > now) return { ok: true, fields: cached.fields };
 
-  const fields = await fetchCustomerFields({ recordId, env, fetchImpl });
-  cache.set(recordId, { fields, expiresAt: now + ANCHOR_CACHE_TTL_MS });
-  return fields;
+  const r = await fetchCustomerFields({ recordId, env, fetchImpl });
+  // ✅ 成功したときだけ入れる。失敗（not_found / unavailable）は入れない。
+  if (r.ok) cache.set(recordId, { fields: r.fields, expiresAt: now + ANCHOR_CACHE_TTL_MS });
+  return r;
 }
 
 /**
@@ -76,11 +93,11 @@ async function fetchCustomerFields({ recordId, env, fetchImpl }) {
   const apiKey = env.AIRTABLE_API_KEY;
   const baseId = env.AIRTABLE_BASE_ID;
   const table = env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
-  if (!recordId || typeof recordId !== 'string') return null;
-  if (!apiKey || !baseId) return null;
+  if (!recordId || typeof recordId !== 'string') return { ok: false, reason: 'not_found' };
+  if (!apiKey || !baseId) return { ok: false, reason: 'unavailable' };
 
   const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
-  if (!doFetch) return null;
+  if (!doFetch) return { ok: false, reason: 'unavailable' };
 
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), ANCHOR_LOOKUP_TIMEOUT_MS) : null;
@@ -90,12 +107,17 @@ async function fetchCustomerFields({ recordId, env, fetchImpl }) {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: controller ? controller.signal : undefined,
     });
-    if (!res || !res.ok) return null;
+    if (!res) return { ok: false, reason: 'unavailable' };
+    // 404 = レコードが本当に無い。それ以外の非 2xx は**一時障害**として区別する。
+    if (res.status === 404) return { ok: false, reason: 'not_found' };
+    if (!res.ok) return { ok: false, reason: 'unavailable' };
     const json = await res.json();
-    return json && typeof json.fields === 'object' ? json.fields : null;
+    return json && typeof json.fields === 'object'
+      ? { ok: true, fields: json.fields }
+      : { ok: false, reason: 'not_found' };
   } catch {
-    // 通信障害 / タイムアウト / JSON 破損。理由も内容もログしない（fail closed）。
-    return null;
+    // 通信障害 / タイムアウト / JSON 破損。内容はログしない（fail closed）。
+    return { ok: false, reason: 'unavailable' };
   } finally {
     if (timer) clearTimeout(timer);
   }
