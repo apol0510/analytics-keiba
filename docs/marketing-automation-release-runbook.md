@@ -85,11 +85,19 @@ netlify logs --source functions --function cron-marketing-automation --since 24h
 ```
 
 > ⚠️ **ログが `message: ''`（空）で出るときは実装側の不具合を疑う。**
-> 2026-08-08 01:00:52Z の起動で実際に空レコードになり、変更前は出ていたランタイムの
-> `Duration:` 行まで消えた（同時刻の他 cron は正常）。原因は `console.log` を
-> **detach して呼んでいた**こと（Netlify Lambda は console を差し替えているため
-> レシーバを失う）。**`console.log` は必ず直接・1 引数の文字列で呼ぶ。**
-> 再発防止は `automationTickLog.test.mjs` の guard で固定済み。
+> 2026-08-08 01:00:52Z の起動について、当時は空レコードになったと記録した。
+> **ただしこの断定は現在の事実と一致しない。** 2026-08-08 09:20Z に同じ起動を
+> 再取得したところ `Duration:` 行と `[marketing-automation] {"ran":false,
+> "reason":"gates_closed",...,"sideEffects":"none"}` の **2 レコードが取得でき、
+> 空レコードは 0 件**だった。したがって **root cause は未確定**であり、
+> `console.log` の detach を原因と断定しない。
+> 一方で「`console.log` を必ず直接・1 引数の文字列で呼ぶ」という規約自体は
+> 避けるべき書き方を排除するもので、原因究明とは独立に維持する
+> （guard は `automationTickLog.test.mjs`）。
+>
+> **注記**: この起動 (01:00:52Z) は PR #254 の merge (2026-08-08 01:42Z) **より前**で、
+> 修正前コードが動いている。**修正後の初回 scheduled fire は 2026-08-09 01:00Z
+> （JST 10:00）**であり、そこで初めて修正後の挙動を観測できる。
 
 | 実際の挙動 | ログ | 意味 |
 |---|---|---|
