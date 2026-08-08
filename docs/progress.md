@@ -53,6 +53,222 @@ UI の挙動は fetch をスタブして確認できるが、**顧客取得・dr
 `MARKETING_AUTOMATION_ADMIN_WRITE_ENABLED` は production 未設定 / scheduler 未登録。
 **PR #237 は未 merge・Draft のまま。次は「管理 UI / API の production 導入前監査」。**
 
+**大量取り込み（PR #235）の状態（2026-08-05 時点の記録・最新ではない）: 大量取り込みの恒久方式は PR #235（Draft）まで実装したが、
+必須条件 2 件を満たせず **write 経路は BLOCKED**。正本と排他を Upstash Redis へ置き換える
+ADR（`docs/decisions.md` 2026-08-05）を Proposed で起票し、**承認待ちで停止**している。
+本番 env 変更・production deploy・本番 Airtable 書き込みは 1 件も行っていない。**
+
+### ⛔ Redis canary Phase 0 / Phase 1 — **実行不能（アクセス経路が無い）**（2026-08-05）
+
+ADR は承認されたが、**Phase 0 / Phase 1 は実行できなかった。** 原因は権限ではなく設計どおりの秘匿:
+
+| 事実 | 値 |
+|---|---|
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` の `is_secret` | **`true`**（Netlify は作成後に値を返さない） |
+| scope | **`functions` のみ**（builds に配られない） |
+| 値を持つ context | **`production` のみ**（`dev` / `branch-deploy` / `deploy-preview` / `dev-server` は空） |
+| ローカル `.env` / シェル環境変数 | **無し**（`.env.production` にも `UPSTASH` 行は 0 件） |
+
+`netlify env:get` / `env:list --json` / `getEnvVars` API のいずれも **16 桁マスク + 末尾 4 桁**しか返さない。
+
+**したがって production Upstash へ到達できるのは production の Function だけ**であり、
+Phase 0（PING / DBSIZE / EVAL）すら、次のどちらかが無いと実行できない:
+
+1. **canary Function の production deploy** — 今回の承認範囲外（production deploy 禁止）
+2. **実行者による認証情報の提供**（Upstash コンソールから取得）
+
+`deploy-preview` context には値が無いため、**Deploy Preview 経由でも到達できない**。
+
+#### 実施したこと
+
+- 上記アクセス経路の調査（read-only。Redis へは **1 コマンドも送っていない**）
+
+#### 採用した方式: 専用 canary Function（secret を Netlify 外へ出さない）
+
+**ローカルへ認証情報を取得する方式は不採用**（利用者判断）。
+代わりに **専用 canary Function** を置き、Function 内部だけで secret を使う。
+ADR: `docs/decisions.md`「2026-08-05 — Redis canary は専用 Function で行う」
+
+| 項目 | 値 |
+|---|---|
+| Function | `netlify/functions/admin-customer-import-redis-canary.js` |
+| 認証 | **POST のみ** + `x-admin-secret`（AK 管理シークレット） |
+| 有効化 | **`CUSTOMER_IMPORT_CANARY_ENABLED=true` が無ければ常時 403**（既定は無効） |
+| action | `preview` / `run` / `status` / `cleanup` の 4 つだけ |
+| canaryId | **サーバー側生成**（`preview` で発行。`^\d{14}-[a-f0-9]{8}$` 以外は拒否） |
+| 確認文字列 | **`REDIS-CANARY <canaryId>`** |
+| 実行回数 | **1 canaryId につき run はちょうど 1 回**（実行済みマーカーを `SET NX`） |
+| 名前空間 | `customer-import:canary:<canaryId>:` 配下**のみ**。外は構造的に拒否 |
+| 最大キー数 | **32** |
+| 最大コマンド数 | **150** |
+| canary キー TTL | **900 秒（15 分）** — cleanup 漏れでも自動消滅 |
+| 実行済みマーカー TTL | 86,400 秒（24 時間） |
+
+**触れないキー**: `customer-import:lock:global` / `customer-import:fence` /
+`customer-import:email:*` / `customer-import:job:*` / `payemail:*`（テストで固定）。
+**全キー列挙（`KEYS`）は禁止**。走査は `SCAN MATCH <prefix>*` のみ。
+**Airtable に触れない。メールを送らない**（依存が存在しない）。
+
+#### production 配備方式（調査で確定・2026-08-05）
+
+**`netlify deploy --build --prod --context production` をブランチ worktree から実行する**（CLI 手動 deploy）。
+
+他の手段が使えない理由を read-only で確認した:
+
+| 手段 | 判定 |
+|---|---|
+| Build Hook | **不可**。hook は `main` に紐づく。ブランチを production へは出せない |
+| Deploy Preview / Branch Deploy | **到達しても無意味**。`deploy-preview` / `branch-deploy` context には `UPSTASH_*` の値が無く、canary は `upstash_not_configured` で fail closed |
+| 既存 preview deploy を production へ publish | **不可**。その deploy は preview context の env で作られており、production の secret を持たない |
+| PR merge / main へ直接 push | **禁止**（今回の制約） |
+
+> ⚠️ AK は**過去に手動 deploy を 1 度も使っていない**（直近 12 deploy はすべて `manual: false`）。
+> CLI 手動 deploy は **`commit_ref` が origin/main と一致しない** deploy を作る。
+> これは「公開 SHA == origin/main」という従来の前提を一時的に破る。**復帰は main の Build Hook 1 回**。
+
+#### env 反映の契約（**「deploy 不要」の記述は撤回**）
+
+以前この文書に書いた「Function は毎回 `process.env` を読むので env 変更に deploy は不要」は**誤り**。撤回する。
+
+- Netlify CLI は `env:set` / `env:unset` のたびに
+  **`Changes will require a redeploy to take effect on any deployed versions`** と表示する
+- **AK 自身の実績も「env 変更 → redeploy」**:
+  - 入金確認メール v2 の各境界（A / C / D）はすべて `env 変更 → redeploy`
+    （`PAYMENT_EMAIL_V2.md`: 「env 更新 00:50 UTC / redeploy 00:53 UTC published」）
+  - rollback も `GLOBAL_PAUSE=true → redeploy`、`PAYMENT_CONFIRM_SECRET unset → Build Hook で 1 回ビルド`
+- したがって **env を変えたら必ず redeploy する**前提で手順を組む
+
+#### production deploy 総回数: **最大 3 回（最小 2 回）**
+
+**順序は fail-closed**（コードが先・env が後）。**Function 未配備の状態で env を true にしない。**
+
+| # | source branch | source SHA | env 状態 | deploy 方法 | 期待される公開 SHA | rollback |
+|---|---|---|---|---|---|---|
+| **D1** | `feat/customer-import-job` | 本 PR HEAD | `CANARY_ENABLED` **未設定** | `netlify deploy --build --prod --context production` | 手動 deploy（`commit_ref` は origin/main と不一致）| main の Build Hook 1 回 |
+| **D2** | 同上 | 同上 | `CANARY_ENABLED=true` を投入**後** | 同上（env 反映のための再 deploy） | 同上 | main の Build Hook 1 回 |
+| **D3** | `main` | `origin/main` HEAD | `CANARY_ENABLED` **削除済み** | **Build Hook**（AK 標準） | `origin/main` HEAD | — |
+
+- **D1 の時点では canary は 403**（env が無い）。安全側で着地する
+- **D2 は条件付き**。D1 + env 投入の直後に `action:'preview'` を叩き、
+  **200 が返れば env は反映済みなので D2 は不要**（＝ deploy 2 回で済む）。
+  403 のままなら D2 を実行する。**推測せず実測で決める**
+- **D3 で canary Function は消える**。main には canary Function が存在しないため、
+  main を 1 回ビルドするだけで**コードごと本番から消える**（削除用の特別な commit は不要）
+- したがって**最終状態**: production env に `CANARY_ENABLED` 無し / production code に canary Function 無し /
+  import job の kill-switch は main 側に存在しない（**本 PR 未 merge のため、そもそも本番に無い**）
+
+#### run exactly 1 から無効化までの手順
+
+1. **D1**（コード配備・env 無し）→ `preview` が **403** であることを確認
+2. `netlify env:set CUSTOMER_IMPORT_CANARY_ENABLED true --context production`
+3. `preview` を叩く → **200 なら D2 不要 / 403 なら D2 を実行**
+4. `preview` で **canaryId を発行**（Redis へは触れない）
+5. `run` を **exactly 1 回**（確認文字列 `REDIS-CANARY <canaryId>`）
+6. `cleanup` → **canary prefix 残存 0** を確認（墓標は残る＝再実行は塞がれたまま）
+7. `finalize`（確認文字列 `REDIS-CANARY-FINALIZE <canaryId>`）→ **墓標も削除し残存を完全に 0**
+8. `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production`
+9. **D3**（main を Build Hook で 1 回ビルド）→ canary Function が本番から消える
+
+> **7 → 8 は続けて行う。** finalize で墓標を消した後は、Redis 側で同一 canaryId の再実行を
+> 拒否できない（再実行しても canary 名前空間しか触らないので本番影響は無いが、
+> exactly-once の保証はそこで終わる）。
+
+#### 墓標と「残存 0」の両立
+
+「cleanup 後に残存 0」と「同一 canaryId を再実行させない」は、**墓標を別 prefix に置く**ことで両立させた。
+
+| キー | prefix | cleanup | finalize |
+|---|---|---|---|
+| 検証データ | `customer-import:canary:<id>:` | **削除**（残存 0） | 残存 0 を再確認 |
+| 実行済み墓標 | `customer-import:canary-run:<id>` | **残す**（再実行を拒否） | **削除**（最終的に 0） |
+
+`cleanup` 時点で「canary prefix 残存 0」が成立し、かつ墓標が残るので再実行は拒否される。
+`finalize` は Function 無効化の直前に 1 度だけ呼び、**両方 0** にする。
+
+#### 無効化・rollback
+
+- **即時無効化**: `netlify env:unset CUSTOMER_IMPORT_CANARY_ENABLED --context production` **＋ redeploy**
+  （env だけでは反映されない前提。確実に止めるなら **D3 = main の Build Hook 1 回**が最短）
+- **最も確実な rollback**: **main を Build Hook で 1 回ビルド**。
+  main には canary Function が無いので、コードも env 依存も一括で消える
+- canary は Airtable も本番 Redis キーも変更しないため、データ面の巻き戻しは不要
+
+#### Upstash の plan / quota / rate limit
+
+**確認不能。** Upstash コンソールおよび Upstash 管理 API の認証情報を保持していないため、
+CLI からは確認できない。Phase 2 に進む前に**コンソールでの確認が必要**。
+
+#### ADR の Status
+
+**Proposed のまま据え置く。** Phase 1 を通していないため `Accepted` にはしない。
+
+---
+
+### 🚫 BLOCKED — 大量取り込みジョブの write 経路（2026-08-05）
+
+PR #235 の差分を再監査した結果、**必須条件 2 件が未達**であることを確認した。
+これらは運用で回避すべきものではなく、**設計で閉じる**。
+
+| # | 未達の必須条件 | 実態 |
+|---|---|---|
+| 1 | **同時実行を fail-closed で拒否** | Netlify Blobs は last-write-wins。`onlyIfNew` / `onlyIfMatch` は best-effort（premium-plus canary #13 で実 lost-update 確認）。**リースは排他にならない** |
+| 2 | **親 ImportJob が正本** | 正本を Airtable の `Source` 件数に置いたが、**snapshot / 失敗 / 未処理 / cancel 境界 / operationId を完全には復元できない** |
+
+加えて、**Customers 直前照合だけでは TOCTOU が閉じない**。2 つの実行が同時に同じアドレスを
+「まだ無い」と読めば両方が作成しうる。
+
+> **「実績のある単発 run と同じ露出だから運用で閉じる」という整理は不採用とする。**
+> 現在の Blobs 非正本方式を、本番 write 可能な完成形として扱わない。
+
+#### 停止の範囲
+
+- **停止**: ジョブ経路の本番 write（`start` / `step` の書き込み）
+- **停止しない**: `plan`（read-only）・管理画面の下見/進捗表示・状態機械・eligibility・runner・テスト
+  （いずれも Redis 版でそのまま再利用できる）
+- **無変更**: 実績のある単発 100 件経路（`admin-customer-import-run.js` / `importWriteExecutor.js`）
+
+#### 解決方針（ADR: `docs/decisions.md` 2026-08-05・**Proposed / 未承認**）— **実装済み**
+
+**正本と排他を Upstash Redis へ移した。** Upstash は AK の既存基盤で、入金確認メール v2 の
+dispatcher / worker / reconciler が `SET NX EX` + `INCR` fencing token で**本番稼働中**
+（`src/lib/payments/paymentEmailDeps.js`）。production env に
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` が secret-flagged で設定済み
+（値は CLI でマスクされるため、ローカルからの疎通確認は**していない**）。
+
+- **グローバルロック**（AK 全体で write ジョブ 1 つ）を `SET NX EX` + fencing token で取る。
+  **job 単位ではないので異なる `batchId` 同士の競合も拒否**。取れなければ Airtable を読まない・書かない
+- **行 claim は `batchId` で区切らず、正規化メールに対してグローバル**:
+  `customer-import:email:<sha256(normalizedEmail)>`。
+  `ownerJobId` / `batchId` / `operationId` / `fencingToken` / `state` / `claimedAt` / `expiresAt` を保持
+  - ⚠️ 旧案の `importrow:<batchId>:<hash>` は**異なる batchId が同じメールを同時 claim できる**ため破棄
+- **書き込み直前にロック所有権と fencing token を再検証**し、失っていたら create しない
+- **claim は作成確認まで解放しない。回収は reconciler だけ**が 4 条件
+  （Customers に同メール無し / 同 Source 無し / 期限切れ / 旧 fencing token が失効）を確認して行う
+- snapshot は **chunk 分割**（500 件ずつ）して固定し、指紋で差し替えを検知
+- 突合は **4 点**（Redis counters / Redis claim 状態 / Airtable Source 件数 /
+  Customers 全体の重複メール数）。不一致なら **PARTIAL または BLOCKED** へ遷移し**自動続行しない**
+- **新規外部サービス・env 追加・schema 変更・migration は不要**
+
+検討した代替案（Airtable 専用テーブル / GitHub Contents API CAS / 新規 Postgres）と
+判定理由は ADR の「Alternatives Considered」に記載。
+**Airtable 専用テーブル案は成立しない**（transaction も unique 制約も CAS も無く、schema 変更が必要）。
+
+#### 残る限界（承認前に把握しておくこと）
+
+- **保証するのは「Redis が正常なときの at-most-once claim」であって literal exactly-once ではない。**
+  claim 後・create 前にクラッシュすると「claim 済み・未作成」が残る。
+  これは**重複ではなく取りこぼし**（安全側）で、reconciler が 4 条件を確認して回収する
+- **Redis が異常なときは新規 Airtable 書き込みを全面停止する（fail-closed）。**
+  到達不能 / Lua 結果不明 / lock 状態不明 / 正本が読めない / claim 不整合 / データ欠損の疑い、
+  いずれも 503 で止める。**Customers 実在判定は第二防御であり、同時実行排他の代替ではない**
+- **Upstash の現行プラン・残クォータ・レート上限は未確認。** 実行前に確認すること
+- **Lua スクリプトの本文はテストで実行していない**（サーバ側でしか動かないため、
+  fake は識別子で分岐して意味論を JS で再現している）。Lua 本文の正しさは **Redis canary** で確認する
+
+（以下は BLOCKED 前に実装した内容の記録。**write 経路は上記のとおり停止中**。）
+
+**（前段）外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
+
 ### 🔎 Premium Plus「即時販売」の実態調査と文言修正（2026-08-07・Draft PR）
 
 **発端**: ある三連複会員が Premium Plus に反応しない。「CTA が見えていればクリックするはずの人」との指摘。
@@ -769,6 +985,82 @@ enqueue と送信は上記の既存経路にそのまま乗る。**送信経路�
 **Phase（2026-08-05 現在・最新）: 外部リストの本番取り込みが 3 バッチ完了（10 + 100 + 100 = 210 件・
 Customers 1,676）。write ゲートは再閉鎖済み（`CUSTOMER_IMPORT_WRITE_ENABLED` unset + deploy 済み・
 `run` は 403 `write_disabled` を実測）。残り CREATE 候補 14,284 件。**
+
+### 🧱 大量取り込みの恒久方式（親ジョブ + 子バッチ）— Draft PR（2026-08-05）
+
+**手動で約 143 回 run する方式は採らない。** 管理者は 1 回だけ開始し、内部で 100 件以下の
+子バッチへ分割して進める。`FIRST_RUN_MAX_ROWS` を引き上げて単一の同期 Function で大量処理する
+案は**採用しない**（26 秒上限を超えると「作成済みだけ残って結果が返らない」最悪の状態になる）。
+
+#### 設計の要点
+
+- **1 呼び出し = 子バッチ 1 つ**。100 件は実測 9〜13 秒で 26 秒上限に収まる。
+  進捗が常に確定した状態で保存され、途中で切れても宙ぶらりんにならない
+- **正本は Airtable、ジョブ記録ではない**。Netlify Blobs は last-write-wins で
+  `onlyIfNew` / `onlyIfMatch` も best-effort（premium-plus canary #13 で実 lost-update 確認）。
+  Airtable に CAS は無く、ImportJobs テーブル新設は schema 変更なので**採らない**
+  - 二重作成を防ぐのは **Customers 側のアドレス実在判定**（子バッチ直前に取り直す）
+  - 進捗の正本も **`Source = customer-import:<batchId>` の実件数**。`status` で毎回突合
+  - `cursor` は速く再開するための目印にすぎず、巻き戻っても結果は変わらない
+- **状態**: `PLANNED` / `RUNNING` / `PARTIAL` / `COMPLETED` / `FAILED` / `CANCELLED`。
+  完了・取消・失敗は**再実行できない**。取消は未処理分だけ止め、**作成済みは消さない**
+- **二重ゲートは開始と続行の両方**に掛かる（env + 確認文字列 `IMPORT-JOB <batchId> <総数>`）
+- 子バッチ上限 **100 件**（`Math.min` で緩められない）/ Airtable 書き込みは **10 件ずつ**
+- **ジョブ記録に PII を保存しない**（`assertNoPii` が構造的に拒否・保存前に必ず通る）
+
+#### ⚠️ この制約が BLOCKED の理由になった（2026-08-05 追記）
+
+当初この節は「strong な排他は現基盤では提供できない。単発 run と同じ露出なので運用で閉じる」と
+記録していた。**この整理は取り下げた。** write 経路の完成形として不適格であり、
+上の「🚫 BLOCKED」のとおり **Upstash Redis の行単位 `SET NX` で設計として閉じる**方針に変更した。
+Blobs ベースの `importJobStore.js` は破棄予定。
+
+#### 追加・変更したファイル
+
+| 目的 | ファイル |
+|---|---|
+| 親ジョブの状態機械（cursor / 突合 / rollback） | `src/lib/crm/importJobModel.js`（新規） |
+| 作成対象の判定（決定的な並び・除外集合） | `src/lib/crm/importEligibility.js`（新規） |
+| 子バッチ 1 つの実行 | `src/lib/crm/importJobRunner.js`（新規） |
+| ジョブの保存（Blobs・**正本ではない**） | `src/lib/crm/importJobStore.js`（新規） |
+| ジョブ API（plan / start / step / status / cancel） | `netlify/functions/admin-customer-import-job.js`（新規） |
+| 管理画面（進捗・開始 / 再開 / 取消） | `src/pages/admin/premium-plus-eligibility.astro` |
+
+**実績のある単発経路 `admin-customer-import-run.js` / `importWriteExecutor.js` は 1 行も変更していない。**
+書き込みは executor を再利用し、ジョブ側で独自のチャンク処理を再実装していない（guard で固定）。
+
+#### テスト
+
+`node --test src/lib/crm/*.test.mjs` = **305 pass / 0 fail**（うち新規 59）。
+
+- 14,284 件 → 子バッチ 143 個（最後は 84 件）に正しく分割される
+- 100 件が 10 件 × 10 リクエストのまとめ書きになる（チャンク列を実測）
+- 子バッチ途中失敗 → 1 件ずつ切り分けへ落ち、成功分は残る
+- 例外で落ちてもリースが外れ `PARTIAL` で再開できる
+- timeout 後に cursor が巻き戻っても**二重作成されない**（既存判定で全件 skip）
+- 同一 job の二重開始を拒否（ゲートと store の両方）／既存ジョブを上書きしない
+- 同一子バッチの再送で書き込みが 1 回も走らない
+- 既存化したアドレスの直前除外／除外集合 10 種
+- failed 混在時の reconciliation（`balanced` / `withinPlan` / Airtable 実測との一致）
+- cancel 後に進めない／`COMPLETED` 後に進めない
+- UPDATE・除外・要確認が 1 件も書かれない／書く列は allow-list の 5 列だけ
+- メール送信経路が存在しない（構造 guard）
+- 画面 guard: 必須の進捗項目・既定 disabled・ゲート閉時は開始不可・完了後は再実行不可・逐次実行
+
+#### 検証
+
+`npm run build` 成功（SSR 関数 64.7MB / 250MB 上限）。
+`npm run lint`（eslint 設定が repo に無く実行不能）と `npm run typecheck`（`@astrojs/check` 未導入）は
+**本 PR 以前から実行できない状態**で、今回の変更が原因ではない。代わりに `node --check` を全新規ファイルへ実施。
+
+#### 未了（別承認の高リスク境界）
+
+- **write 経路は BLOCKED**（上記）。ADR 承認 → Redis 版 claim の実装 → その後に本番検討
+- **本番での実行**（env 投入 + production deploy + 実書き込み）は**未実施**
+- Blobs store は**本番で 1 度も読み書きしていない**（**破棄予定**なので今後も使わない）
+- Redis 版になったら、初回は少量（子バッチ 1〜2 個）で claim の実挙動と
+  reconciliation（Redis claim 数 / Airtable `Source` 件数 / job counters の 3 点突合）を
+  確認してから残りを流すこと
 
 **（土台）実 CSV 3 ファイルに合わせた取り込み規則の確定と本番 write path
 （**PR #233 merged `7de7e74`・production deploy `6a71e6a531d919000874b180` = state ready・公開中**）。**
