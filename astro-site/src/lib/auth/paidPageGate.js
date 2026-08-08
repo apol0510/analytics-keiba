@@ -31,6 +31,9 @@
 import { verifyPlanAccess } from './pageAccess.js';
 import { lookupCustomerFieldsResult } from '../premiumPlus/purchaseAnchorLookup.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
+// ⚠️ このファイルは標準出力への書き出しを持たない（staticGuards が禁止。payload/secret 漏洩防止）。
+//    出力してよい形は observability 側が単独で決める。
+import { logPaidGateDeny } from '../observability/paidGateLog.js';
 
 /**
  * 入口（door）で通す canonical plan。**ここで権利を判定しない。**
@@ -123,7 +126,10 @@ export async function gatePaidPage({
   lookup = lookupCustomerFieldsResult,
 } = {}) {
   const flag = resolveEntitlementFlag(requiredPlan);
-  const deny = (reason) => ({ ok: false, reason, response: denyResponse(notFound), entitlements: null });
+  const deny = (reason) => {
+    logPaidGateDeny(reason, requiredPlan);
+    return { ok: false, reason, response: denyResponse(notFound), entitlements: null };
+  };
 
   // 設定ミスで全開にしない
   if (!flag) return deny('unknown_required_plan');
