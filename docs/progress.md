@@ -2857,6 +2857,42 @@ else console.log(line);
 テストは「logTick が呼ばれること」を見ていたが、**本番のログ基盤で実際に文字列が残るか**は
 検証できていなかった。
 
+## 滞留 PR の棚卸し（2026-08-08 / read-only・close も merge もしていない）
+
+open だった 8 件を read-only で調査し、3 区分に整理した。**実際の close / merge は未実施。**
+
+### CLOSE 候補（4 件・superseded / 目的達成済み）
+
+| PR | 根拠（実測） |
+|---|---|
+| **#238** Redis primitive canary | 本書に「**Redis primitive canary PASS（PR #238・同じく merge せず終了）**」と既に記録あり。使い捨ての検証ハーネスで目的達成済み |
+| **#236** customer-import Redis canary | 同型の使い捨て canary。本番取り込みカナリア（`imp-2026-08-04-001` / 10 件）が完了し、`src/lib/crm/` に本実装が揃っている |
+| **#130** PR-A 有料セッション共通ライブラリ | **#131 の別実装が採用済み**。main に `src/lib/auth/session.js` / `sessionCookie.js` / `sessionCrypto.js` / `sessionIssuance.js` / `sessionPayload.js` / `sessionRefresh.js` が揃い、HMAC・timing-safe 検証も実装済み。#130 は `src/lib/session/` 配置の不採用案 |
+| **#25** premium JRA 過去走表示 | **実装済み**。`premium-prediction/jra.astro` に `formatRecentVenue` import・`recentRacesFromHistories` フォールバック・`recent-race-venue` ブロック 4 箇所（`<details>` 折りたたみ構造も PR の設計どおり）|
+
+### BLOCKED（2 件）
+
+| PR | 判断 |
+|---|---|
+| **#235** 大量取り込み 親ジョブ + 子バッチ | **作り直しが現実的。** `importJobPlan.js` は main にあるが `importClaimStore.js` / `importJobAuthority.js` / `importEligibility.js` は無い。CONFLICTING・main が 42 commits 先行。残り 14,284 件の取り込みという**目的自体は生きている** |
+| **#128** 認証脆弱性修正 + contact autofill | **中身は main に着地済み。** ①`auth-user.js` は有料会員へ `requiresMagicLink: true` を返し plan 名・内部状態を返さない ②クライアント権限昇格 backdoor（`window.set*Plan` 系）は main に **0 件** ③`contact-autofill.js` / `contact-forms.guard.test.js` も main にあり。**別経路（#131/#132 等）で解決済みとみて close 可能**だが、「脆弱性」表題のため最終判断は MK に委ねる |
+
+### docs 候補（2 件・**そのまま merge しない**）
+
+| PR | 判断 |
+|---|---|
+| **#157** 2026-07-24 `/premium-plus/` 500 インシデント | **stale**。「`origin/main` が壊れた版のまま」という残リスク節が当時前提（main は 149 commits 進み解消済み）。→ **恒久的に有効な事実だけ**を抜き出して `PREMIUM_PLUS.md` へ再構成 |
+| **#189** E-5 判断資料 | **stale**。実行前の判断資料だが E-5 は 2026-07-31 に**実施済み**。母集団 1,446 名も現在 1,682 名。→ **実績を本番から取り直して** `COMEBACK_GRANTS.md` へ記録 |
+
+### 本 PR で救出した内容
+
+- `PREMIUM_PLUS.md`: 2026-07-24 インシデントの経緯と**恒久的な教訓 4 点**
+  （ヘッダ有無による throw フェーズの切り分け / permalink での artifact 切り分け /
+  **ローカル green は本番 SSR の健全性を保証しない** / root cause は未確定のまま）
+- `COMEBACK_GRANTS.md`: E-5 の**実績**（`comeback-offer` 配信 70 行 = sent 69 / skipped-duplicate 1、
+  すべて 2026-07-31、`PromotionalOffers` 残存 0）と運用ルール 4 点。
+  **母集団のスナップショット値は書き写さない**方針も明記
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

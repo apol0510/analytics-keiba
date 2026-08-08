@@ -167,6 +167,39 @@ npm run seed:premium-plus                # 実行
 
 **シークレットの値そのものを CLAUDE.md / commit / ログに書かないこと。**
 
+## インシデント記録: 2026-07-24 `/premium-plus/` 本番 500 → rollback で復旧
+
+> PR #157 から**恒久的に有効な事実だけ**を抜き出して再構成した（2026-08-08）。
+> 当時の「残リスク」節は `origin/main` が壊れた版だった前提のもので、
+> 既に解消しているため持ち込まない。
+
+**要約**: `954880b` の deploy 後に `/premium-plus/` が SSR 500。
+修復コミット `365e184` を push しても**解消せず**、
+deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧**した。
+
+| 項目 | 内容 |
+|---|---|
+| 影響範囲 | **`/premium-plus/` に限局**（`/`・`/dashboard`・`/pricing`・`/login` は 200。redirect loop なし）|
+| 500 を確認した deploy | `954880b` / `365e184` の**両 artifact とも permalink で 500 再現** = 本番エッジキャッシュ問題ではない |
+| 復旧手段 | Netlify restore で `6a62eadd`（`99d7b15`）を再公開（2026-07-24T05:20:19Z）|
+| 復旧確認 | 未認証 `/premium-plus/` = **404** を 3 回連続確認 |
+| production env 変更 / data write | **0 / 0** |
+
+### 恒久的に有効な教訓
+
+1. **500 応答に `X-PP-Template-Version` ヘッダが無い = render フェーズの throw。**
+   frontmatter で set したヘッダが破棄されているかどうかが、
+   frontmatter で落ちたのか render で落ちたのかの切り分けになる。
+2. **deploy permalink で artifact 単体を叩けば、エッジキャッシュ問題と切り分けられる。**
+   復旧を急ぐ前にこれを取ると、rollback 先の判断が確実になる。
+3. ⚠️ **テストが本番 SSR artifact の drift を捕捉できない。**
+   当時 build OK・`test:premium-plus` 14 件・`test:premium-plus-media` 99 件が pass していたのに
+   本番 artifact は 500 だった。**ローカル green は本番 SSR の健全性を保証しない。**
+   SSR ページを触ったら deploy 後に実 URL を叩いて確認する。
+4. **root cause は未確定のまま。** 「page 新版 × lib 旧版の混在」はコード証拠のみの仮説で、
+   exception stack trace（本番 500 は body 空）は取得できていない。
+   Netlify build-cache の module drift だと**断定はしていない**。
+
 ## 関連ファイル
 
 | 目的 | ファイル |
