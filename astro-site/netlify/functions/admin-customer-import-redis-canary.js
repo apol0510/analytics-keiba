@@ -14,6 +14,11 @@
  *
  * ⚠️ 手順・合否条件・後始末は `docs/customer-import-canary-runbook.md` を参照。
  *
+ * ── 実行実績 ────────────────────────────────────────────────
+ * 2026-08-08 に隔離 Upstash に対して実行し、Phase 0 (3/3) / Phase 1 (19/19) /
+ * Phase 2 (10/10) がすべて PASS。cleanup 残存 0、finalize で墓標を含め完全 0。
+ * 実行後に deploy-preview の env 3 件は撤収済み（この Function は既定で 403）。
+ *
  * ⚠️ **この Function は Airtable に触れない。メールを送らない。**（依存が存在しない）
  * ⚠️ **書き込み・削除は `customer-import:canary:<canaryId>:` 配下だけ。**
  *    `customer-import:lock:global` / `customer-import:fence` / `customer-import:email:*` /
