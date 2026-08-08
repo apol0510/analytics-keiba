@@ -163,13 +163,51 @@ test('結果を応答に載せる（Automation / 運用者が失敗に気づけ�
   assert.match(code, /\.\.\.\(isSanrenpukuPromotion \? \{/);
 });
 
-test('ログに secret / メール / 氏名を出さない', () => {
+test('ログに識別子を一切載せない（secret / PII / recordId）', () => {
   const code = strip(CONFIRM_FN);
-  const i = code.indexOf('SANRENPUKU_PLUS_INIT_TAG');
-  const seg = code.slice(i, i + 400);
-  for (const bad of ['AIRTABLE_API_KEY', 'SENDGRID_API_KEY', 'CONFIRM_SECRET', 'email', 'fullName', '氏名']) {
+  // ログ行を組み立てている箇所だけを切り出す
+  const i = code.indexOf('const line = `${SANRENPUKU_PLUS_INIT_TAG}');
+  assert.ok(i >= 0, 'ログ組み立て箇所が見つからない');
+  const seg = code.slice(i, code.indexOf('`;', i) + 2);
+  for (const bad of [
+    'AIRTABLE_API_KEY', 'SENDGRID_API_KEY', 'CONFIRM_SECRET', 'PAYMENT_CONFIRM_SECRET',
+    'recordId', 'email', 'inputEmail', 'fullName', '氏名', 'Email',
+    'fields[', 'confirmation.fields', 'requestData',
+  ]) {
     assert.ok(!seg.includes(bad), `ログに ${bad} を含めている`);
   }
+});
+
+test('ログの中身は outcome / sanrenpukuPaidAtRecorded / promotion の 3 つだけ', () => {
+  const code = strip(CONFIRM_FN);
+  const i = code.indexOf('const line = `${SANRENPUKU_PLUS_INIT_TAG}');
+  assert.ok(i >= 0, 'ログ組み立て箇所が見つからない');
+  const seg = code.slice(i, code.indexOf('`;', i) + 2);
+  // `key: value` と shorthand（`key,`）の**両方**を拾う。
+  // shorthand を拾わないと `recordId,` のような追加をすり抜ける。
+  const body = seg.slice(seg.indexOf('{') + 1, seg.lastIndexOf('}'));
+  const keys = body
+    .split('\n')
+    .map((l) => l.replace(/\/\/.*$/, '').trim())
+    .filter(Boolean)
+    .map((l) => {
+      const m = l.match(/^([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|,\s*$|$)/);
+      return m ? m[1] : null;
+    })
+    .filter(Boolean);
+  assert.deepEqual(
+    [...new Set(keys)].sort(),
+    ['outcome', 'promotion', 'sanrenpukuPaidAtRecorded'],
+    `ログのキーが想定と違う: ${JSON.stringify(keys)}`
+  );
+});
+
+test('個別の追跡は応答で行う（recordId は応答にだけ載る）', () => {
+  const code = strip(CONFIRM_FN);
+  // 応答には recordId がある（Automation が対象を特定できる）
+  assert.match(code, /return jsonResponse\(200, \{[\s\S]{0,200}recordId,/);
+  // ただしログには無い（上のテストで固定済み）
+  assert.match(code, /sanrenpukuPlusInit: plusInitOutcome/);
 });
 
 // ── 5. env gate は維持（未作成フィールドへ PATCH しない）──────

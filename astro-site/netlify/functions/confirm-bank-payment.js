@@ -305,10 +305,12 @@ exports.handler = async (event) => {
       plusInitOutcome = 'gate_closed';
     }
     if (isSanrenpukuPromotion) {
-      // 構造化ログ（secret も PII も出さない。recordId は運用上の追跡に必要なので残す既存方針に従う）
+      // 構造化ログ。**識別子を一切載せない**（secret / PII / recordId / メール / 氏名すべて）。
+      // 観測に必要なのは「どういう結果になったか」だけで、誰かの特定は不要。
+      // ⚠️ 個別の追跡が要るときは**応答**（`sanrenpukuPlusInit` / `sanrenpukuPaidAtRecorded`）を見る。
+      //    応答は Airtable Automation にしか渡らず、recordId も同じ応答に含まれている。
       const ok = plusInitOutcome === 'recorded' || plusInitOutcome === 'nothing_to_write';
       const line = `${SANRENPUKU_PLUS_INIT_TAG} ${JSON.stringify({
-        recordId,
         outcome: plusInitOutcome,
         sanrenpukuPaidAtRecorded: plusPaidAtRecorded,
         promotion: 'kept', // 昇格は常に保持する（この PATCH の失敗で巻き戻さない）

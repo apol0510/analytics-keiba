@@ -2883,7 +2883,10 @@ else console.log(line);
 - 結果を必ず 1 つ確定させる: `recorded` / `nothing_to_write` / `gate_closed` /
   `failed_http_<status>` / `failed_error`
 - 構造化ログ **`[sanrenpuku-plus-init]`**（成功 `console.log` / 失敗 `console.warn`）。
-  secret・メール・氏名は出さない
+  **識別子を一切載せない**（secret / PII / recordId / メール / 氏名すべて）。
+  中身は `outcome` / `sanrenpukuPaidAtRecorded` / `promotion` の 3 つだけで、
+  guard がキー集合と禁止識別子の両方を固定する（shorthand 追加もすり抜けない）。
+  **個別の追跡が要るときは応答を見る**（recordId は応答にだけ載り、宛先は Airtable Automation）
 - `confirm-bank-payment` の応答に `sanrenpukuPlusInit` / `sanrenpukuPaidAtRecorded` を追加。
   **三連複購入のときだけ**載せるので通常購入の応答形は変わらない
 - **昇格 PATCH・env gate・冪等性・書き込むフィールドは一切変更していない**
