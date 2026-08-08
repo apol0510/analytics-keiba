@@ -230,6 +230,26 @@ async function handlePlan({ req, KEY, BASE, now }) {
       書き込む列: CREATE_ALLOWED_FIELDS.filter((f) => !OPTIONAL_AUDIT_FIELDS.includes(f) || have.has(f)),
       停止リスト取得: ctx.providerOk ? '取得できた' : '取得できない（実行しない）',
       現在の重複メール組数: countDuplicateEmailPairs(ctx.records),
+      // ── 本実行前の内訳（read-only・件数のみ。アドレス・氏名は返さない）──
+      //    countCreateCandidates と**同じ classifyCreateRow** を通すので、
+      //    CREATE の数と内訳の合計は必ず一致する（別ロジックが混ざらない）。
+      内訳: (() => {
+        const sum = summarizeImportPlan({
+          entries: ctx.entries, facts: ctx.facts, providerEmails: ctx.providerEmails,
+        });
+        return {
+          CSV行数: sum.total,
+          CREATE: sum.create,
+          EXISTING: sum.existing,
+          EXCLUDED: sum.excluded,
+          REVIEW_REQUIRED: sum.reviewRequired,
+          CSV内の正規化メール重複: sum.duplicateInCsv,
+          理由別: sum.skippedByReason,
+          合計一致: sum.create + sum.existing + sum.excluded + sum.reviewRequired === sum.total,
+        };
+      })(),
+      // 開始時に固定される snapshot 指紋と同一。**この時点では Redis へ書かない**
+      snapshot指紋: computeSnapshotFingerprint(ctx.orderedHashes),
     },
     confirmationPhrase: buildJobConfirmation({ batchId, total }),
     rollback: describeJobRollback({ batchId, source: buildJobSource(batchId) }),
