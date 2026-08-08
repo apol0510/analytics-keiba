@@ -84,6 +84,13 @@ production への投入は `2026-08-06T05:41:59Z`（01:00 UTC より後）なの
 netlify logs --source functions --function cron-marketing-automation --since 24h --json
 ```
 
+> ⚠️ **ログが `message: ''`（空）で出るときは実装側の不具合を疑う。**
+> 2026-08-08 01:00:52Z の起動で実際に空レコードになり、変更前は出ていたランタイムの
+> `Duration:` 行まで消えた（同時刻の他 cron は正常）。原因は `console.log` を
+> **detach して呼んでいた**こと（Netlify Lambda は console を差し替えているため
+> レシーバを失う）。**`console.log` は必ず直接・1 引数の文字列で呼ぶ。**
+> 再発防止は `automationTickLog.test.mjs` の guard で固定済み。
+
 | 実際の挙動 | ログ | 意味 |
 |---|---|---|
 | 200 | `{"ran":false,"reason":"gates_closed","未設定のゲート":[...],"接続":{"redis":false,"airtable":false},"sideEffects":"none"}` | **合格**。仕組みは正常で、env を開ければ動く |

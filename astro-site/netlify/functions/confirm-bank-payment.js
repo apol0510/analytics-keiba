@@ -51,7 +51,6 @@ const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
  */
 const SANRENPUKU_PLUS_INIT_TAG = '[sanrenpuku-plus-init]';
 
-
 function jsonResponse(statusCode, body) {
   return {
     statusCode,
@@ -271,37 +270,35 @@ exports.handler = async (event) => {
     let plusPaidAtRecorded = false;
     // ⚠️ 条件式はこの形のまま（既存 guard が `isSanrenpukuPromotion && isPlusFieldsEnabled(...)` を固定している）
     if (isSanrenpukuPromotion && isPlusFieldsEnabled(process.env)) {
-      {
-        try {
-          const plusInit = buildSanrenpukuPlusInitFields({ fields, confirmedAt });
-          if (!plusInit || !assertOnlyPlusFields(plusInit.fields)) {
-            // 既に SanrenpukuPaidAt / eligibility があり、書くものが無い（冪等）
-            plusInitOutcome = 'nothing_to_write';
-          } else {
-            const willRecordPaidAt = Object.prototype.hasOwnProperty.call(
-              plusInit.fields, SANRENPUKU_PAID_AT_FIELD
-            );
-            const plusRes = await fetch(
-              `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
-              {
-                method: 'PATCH',
-                headers: {
-                  Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ fields: plusInit.fields, typecast: true })
-              }
-            );
-            if (plusRes.ok) {
-              plusInitOutcome = 'recorded';
-              plusPaidAtRecorded = willRecordPaidAt;
-            } else {
-              plusInitOutcome = `failed_http_${plusRes.status}`;
+      try {
+        const plusInit = buildSanrenpukuPlusInitFields({ fields, confirmedAt });
+        if (!plusInit || !assertOnlyPlusFields(plusInit.fields)) {
+          // 既に SanrenpukuPaidAt / eligibility があり、書くものが無い（冪等）
+          plusInitOutcome = 'nothing_to_write';
+        } else {
+          const willRecordPaidAt = Object.prototype.hasOwnProperty.call(
+            plusInit.fields, SANRENPUKU_PAID_AT_FIELD
+          );
+          const plusRes = await fetch(
+            `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ fields: plusInit.fields, typecast: true })
             }
+          );
+          if (plusRes.ok) {
+            plusInitOutcome = 'recorded';
+            plusPaidAtRecorded = willRecordPaidAt;
+          } else {
+            plusInitOutcome = `failed_http_${plusRes.status}`;
           }
-        } catch (e) {
-          plusInitOutcome = 'failed_error';
         }
+      } catch (e) {
+        plusInitOutcome = 'failed_error';
       }
     } else if (isSanrenpukuPromotion) {
       // 三連複昇格だが env gate が閉じている（未作成フィールドへ PATCH しない）
