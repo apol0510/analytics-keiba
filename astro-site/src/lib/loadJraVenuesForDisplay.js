@@ -4,7 +4,16 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { injectHorseHistoriesIntoVenues } from './loadHorseHistoriesJra.js';
 
-export function loadJraVenuesForDisplay() {
+/**
+ * @param {{injectHistories?: boolean}} [options]
+ *   injectHistories: horseHistories 由来の表示専用フィールド
+ *   (recentRacesFromHistories / historyForDetails) を venues に注入するか。
+ *   既定 true（premium-sanrenpuku-jra の既存挙動）。
+ *   近走を表示しないページ（light-predictions-jra）は false を渡し、
+ *   注入前と同等の venues を受け取る。
+ */
+export function loadJraVenuesForDisplay(options = {}) {
+const { injectHistories = true } = options;
 const predictionsDir = join(process.cwd(), 'src', 'data', 'predictions', 'jra');
 let predictionData = null;
 let venues = [];
@@ -84,7 +93,7 @@ try {
 }
 
 // horseHistories 由来の表示専用注入 (失敗時は既存 recentRaces にフォールバック)
-if (!error && Array.isArray(venues) && venues.length > 0) {
+if (injectHistories && !error && Array.isArray(venues) && venues.length > 0) {
   try {
     const targetDate = predictionData?.date || null;
     if (targetDate) {
