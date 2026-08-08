@@ -197,11 +197,14 @@ test('ログの目印は安定している（検索の入口）', () => {
   assert.equal(TICK_LOG_TAG, '[marketing-automation]');
 });
 
-// ── 7. 空ログ退行の再発防止（2026-08-08）──────────────────────
+// ── 7. console.log を detach して呼ばない（2026-08-08）────────────
 //
-// 2026-08-08 01:00:52Z の本番起動で message='' となり、変更前は出ていたランタイムの
-// `Duration:` 行まで消えた。原因は `console.log` を detach して呼んでいたこと
-// （Netlify Lambda は console を差し替えているためレシーバを失う）。
+// 2026-08-08 01:00:52Z の本番起動について、当時は message='' と記録した。
+// ⚠️ ただし 2026-08-08 09:20Z の再取得では同じ起動に対して `Duration:` 行と
+//    `[marketing-automation] {...}` の 2 レコードが取得でき、空レコードは 0 件だった。
+//    **当時の観測を再現できないため root cause は未確定**とし、detach を原因と断定しない。
+// この guard は「console.log を detach して呼ぶ」という避けるべき書き方自体を禁じるもので、
+// 空ログの原因究明とは独立に価値がある（だから維持する）。
 test('console.log を detach して呼ばない（空ログ退行の再発防止）', () => {
   const src = readFileSync(fileURLToPath(new URL('../../../netlify/functions/cron-marketing-automation.js', import.meta.url)), 'utf8');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
