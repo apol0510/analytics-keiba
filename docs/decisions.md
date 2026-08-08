@@ -1419,3 +1419,62 @@ Premium Plus / UpsellTarget に限らず、**本番の顧客体験に触れる�
 
 `docs/upsell-target-ops.md`
 
+
+## 2026-08-08 — 大量取り込みジョブ（#235）設計監査：正本保存を fencing CAS にする
+
+### 決定
+
+`authority.save()`（無条件 `SET`）を**通常経路から外し**、`saveFenced()`（fencing token の CAS）を使う。
+
+### なぜ
+
+グローバルロックだけでは lost update を防げない。
+
+1. worker A がロック所有権を再検証 → Airtable へ create
+2. A が止まっている間に lease（120s）が失効し、worker B がロックを取得
+3. B が子バッチを実行し、正本を保存（`created` が進む）
+4. A が復帰して**古い job オブジェクト**を保存 → **B の結果が消える**
+
+Airtable の行自体は消えない（claim は `CREATED` のまま）が、正本の counters が実測とズレるため
+reconciler が `BLOCKED` にし、**人手の介入が必要**になる。保存側で
+「自分より新しい token の正本は上書きしない」を強制して塞ぐ。
+
+`SAVE_FENCED_LUA` は保存済み JSON の `fencingToken` を数値比較し、
+`stored > mine` なら `STALE` を返して**書かない**。token は `INCR` 由来の単調増加整数。
+
+### state transition 表（現行コードから導出）
+
+| from | 事象 | to | 実装 |
+|---|---|---|---|
+| （無）| `create`（NX）| `PLANNED` | `authority.create` — 既存なら `job_exists` |
+| `PLANNED` / `RUNNING` | 子バッチ開始 | `RUNNING` | `beginChildBatch`（`currentChild` に token を刻む）|
+| `RUNNING` | 子バッチ完了・残あり | `RUNNING` | `applyChildResult` |
+| `RUNNING` | `created >= plannedTotal` または `exhausted` かつ `failed == 0` | `COMPLETED` | `applyChildResult` |
+| `RUNNING` | 同上だが `failed > 0` | `PARTIAL` | `applyChildResult` |
+| 任意 | 突合が説明できない不一致 | `BLOCKED` | `markJobBlocked` |
+| 任意 | Redis 異常 | `BLOCKED` | `markJobRedisUnavailable` |
+| `COMPLETED` 以外 | 取消 | `CANCELLED` | `cancelImportJob`（作成済みは消さない）|
+| `COMPLETED` / `CANCELLED` / `FAILED` / `BLOCKED` | 続行要求 | **遷移しない** | `canStepImportJob`（`TERMINAL_STATUS`）|
+
+**claim の state**: `（無）→ CLAIMED → CREATED`。
+`CLAIMED` の解放は reconciler が 4 条件を確認したときだけ。**期限切れでも奪わない。**
+
+### 書き込み順序（変更なし・監査で妥当と確認）
+
+```
+snapshot 検証 → 対象選択 → 行 claim（atomic）→ ロック所有権 再検証
+  → Airtable create → CREATED へ昇格 → 正本を fenced save
+```
+
+- **claim → create の間で死ぬ**: `CLAIMED` のまま残り、reconciler が Airtable 実測と突合して回収
+- **create → CREATED 昇格の間で死ぬ**: 行は作られているが `CLAIMED` のまま。
+  次回 claim は `MINE` を返し、`facts.existing` で除外されるので**二重作成にならない**
+- **Redis 障害**: `RedisUnavailableError` で伝播し `BLOCKED`。**Airtable だけ進むことはない**
+  （claim が取れなければ create しない）
+
+### 監査で確認した項目（すべて既存テストで固定済み）
+
+UPDATE 経路が構造的に無い（`classifyCreateRow` が `facts.existing` を落とす）/
+EXCLUDED・REVIEW_REQUIRED を作らない / 書き込む列は allow-list 5 列 /
+メール送信経路を持たない / `CUSTOMER_IMPORT_WRITE_ENABLED` が閉じていれば開始も続行もしない /
+子バッチは 100 件以下・Airtable へは 10 件ずつ / rollback は削除ではなく Source 単位の隔離。

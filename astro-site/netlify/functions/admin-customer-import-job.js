@@ -376,7 +376,11 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     });
 
     if (out.stopped) {
-      await authority.save({ ...running, currentChild: null, updatedAt: nowIso });
+      // stale writer の上書きを避ける（自分より新しい正本があれば書かない）
+      await authority.saveFenced({
+        job: { ...running, currentChild: null, updatedAt: nowIso },
+        fencingToken: lock.token,
+      });
       return json(409, {
         mode: 'import-job-step', written: 0,
         error: out.note || '進められません', code: out.stopped,
@@ -402,7 +406,18 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     next.reconciliation = recon;
     if (recon.verdict === RECONCILE_VERDICT.BLOCKED) next = markJobBlocked({ job: next, reconciliation: recon, nowIso });
 
-    await authority.save(next);
+    // ⚠️ **必ず fenced save**。ロックだけでは lease 失効後の stale writer による
+    //    lost update を防げない（Airtable の行は残るが counters がズレて BLOCKED になる）。
+    const saved = await authority.saveFenced({ job: next, fencingToken: lock.token });
+    if (!saved.ok) {
+      console.warn('⚠️ [customer-import-job] 正本の保存を拒否:', { jobId: next.jobId, reason: saved.reason });
+      return json(409, {
+        mode: 'import-job-step', written: next.created - running.created,
+        error: 'この実行は古くなっています（別の実行が先に正本を更新しました）。画面を再読み込みしてください。',
+        code: saved.reason,
+        job: summarizeJobProgress(next),
+      });
+    }
 
     console.log('✅ [customer-import-job] 子バッチ完了:', {
       jobId: next.jobId, status: next.status, created: next.created, failed: next.failed,
@@ -484,7 +499,15 @@ async function handleCancel({ req, now, claims, authority }) {
       });
     }
     const cancelled = cancelImportJob({ job, nowIso: new Date(now).toISOString() });
-    await authority.save(cancelled);
+    // cancel は「進行中の実行より新しい意思」なので、保持しているロック token で書く
+    const savedCancel = await authority.saveFenced({ job: cancelled, fencingToken: lock.token });
+    if (!savedCancel.ok) {
+      return json(409, {
+        mode: 'import-job-cancel',
+        error: '別の実行が先に正本を更新しました。画面を再読み込みしてから取り消してください。',
+        code: savedCancel.reason,
+      });
+    }
     return json(200, {
       mode: 'import-job-cancel',
       job: summarizeJobProgress(cancelled),

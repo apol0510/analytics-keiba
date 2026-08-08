@@ -103,6 +103,20 @@ export function validateJobRecord(job) {
 /**
  * @param {{ cmd: (args: string[]) => Promise<any> }} deps
  */
+/**
+ * 正本の CAS 保存。**保存されている fencingToken が自分より新しければ書かない。**
+ * token は `INCR` 由来の単調増加整数（文字列）なので数値比較でよい。
+ */
+export const SAVE_FENCED_LUA = `
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 'MISSING' end
+local stored = string.match(cur, '"fencingToken":"(%d+)"')
+local mine = tonumber(ARGV[2])
+if stored ~= nil and mine ~= nil and tonumber(stored) > mine then return 'STALE' end
+redis.call('SET', KEYS[1], ARGV[1])
+return 'OK'
+`;
+
 export function createJobAuthority(deps = {}) {
   const cmd = deps.cmd;
   if (typeof cmd !== 'function') throw new Error('importJobAuthority: cmd が渡されていません');
@@ -138,11 +152,44 @@ export function createJobAuthority(deps = {}) {
       throw new RedisUnavailableError(REDIS_FAIL.UNKNOWN_RESULT, String(res));
     },
 
+    /**
+     * ⚠️ 無条件の上書き。**通常は `saveFenced` を使うこと。**
+     * ここを直接使ってよいのは、正本をまだ誰も更新し得ない場面
+     * （create 直後の初期化など）だけ。
+     */
     async save(job) {
       const v = validateJobRecord(job);
       if (!v.ok) return { ok: false, reason: 'invalid_job', missing: v.missing };
       await call(['SET', jobKey(job.jobId), JSON.stringify(job)], REDIS_FAIL.JOB_UNREADABLE);
       return { ok: true, reason: null };
+    },
+
+    /**
+     * fencing token による CAS 保存。**stale writer の上書きを拒否する。**
+     *
+     * グローバルロックだけでは lost update を防げない:
+     *   1. worker A がロック所有権を再検証 → Airtable へ create
+     *   2. A が止まっている間に lease (120s) が失効し、worker B がロックを取得
+     *   3. B が子バッチを実行し、正本を保存（created が進む）
+     *   4. A が復帰して**古い job オブジェクト**を保存 → **B の結果が消える**
+     *
+     * Airtable の行自体は消えない（claim は CREATED のまま）が、正本の counters が
+     * 実測とズレるため reconciler が BLOCKED にし、人手が必要になる。
+     * 保存側で「自分より新しい token の正本は上書きしない」を強制して塞ぐ。
+     */
+    async saveFenced({ job, fencingToken }) {
+      const v = validateJobRecord(job);
+      if (!v.ok) return { ok: false, reason: 'invalid_job', missing: v.missing };
+      const mine = Number(fencingToken);
+      if (!Number.isFinite(mine) || mine <= 0) return { ok: false, reason: 'invalid_fencing_token' };
+      const res = await call(
+        ['EVAL', SAVE_FENCED_LUA, '1', jobKey(job.jobId), JSON.stringify(job), String(mine)],
+        REDIS_FAIL.JOB_UNREADABLE,
+      );
+      if (res === 'OK') return { ok: true, reason: null };
+      if (res === 'STALE') return { ok: false, reason: 'stale_fencing_token' };
+      if (res === 'MISSING') return { ok: false, reason: 'job_not_found' };
+      throw new RedisUnavailableError(REDIS_FAIL.UNKNOWN_RESULT, String(res));
     },
 
     /**
