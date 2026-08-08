@@ -3129,6 +3129,32 @@ SSR 化すると prune が効かず約 23 MB がそのまま載る。着手前�
 SSR 化した 2 件を `CLIENT_ONLY_PAID_PAGES_KNOWN` から削除。
 消し忘れると `authSecurity.guard` が fail する仕組みなので、リストは常に実態と一致する。
 
+## 有料ページ SSR 化 Batch 2（2026-08-08 / PR・未 merge）
+
+`light-predictions` / `-urawa` / `-funabashi` の 3 件をサーバー側認可へ移した。
+`requiredPlan='standard'`（= Light 以上）の**既存の意味を変えていない**
+（`gatePaidPage` が `standard → canViewLight` に対応づける）。
+
+### SSR function size（毎回計測）
+
+| 時点 | サイズ | 250MB への余裕 |
+|---|---|---|
+| `#257` パイロット | 69.7 MB | 180.3 MB |
+| `#258` Batch 1 | 70.0 MB | 180.0 MB |
+| **Batch 2** | **70.5 MB** | **179.5 MB** |
+
+3 ページで **+0.5 MB**。南関 root データは既にバンドル済みという前提が引き続き成立。
+
+### 進捗
+
+| 区分 | 件数 |
+|---|---|
+| A（サーバー側認可）| **6**（premium-plus ×2 + SSR 化済み 4）|
+| B（client-side gate のみ）| **5** |
+
+残 B: `premium-predictions-{urawa,funabashi}`（Batch 3）/
+`premium-prediction/{jra,nankan}`（Batch 4）/ `light-predictions-jra`（Batch 5・要再設計）
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

@@ -1,6 +1,9 @@
 ---
-export const prerender = true;
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-08-08）。
+//    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
+export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
 import AccessControl from '../components/AccessControl.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
@@ -9,6 +12,17 @@ import { convertToYesterdayResults, getLatestDayData, convertToSanrenpukuYesterd
 import { getRaceTier, PLAN_ACCESS } from '../lib/race-config.js';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 import { pickLatestAndAdapt } from '../lib/adaptLatestPrediction.js';
+
+// ── サーバー側認可（この行より前で有料データを組み立てない）──
+// 判定は既存の単一源に委譲: ak_session（本人特定）+ resolveEntitlements（権利）。
+// requiredPlan='standard' は既存どおり Light 以上（canViewLight）を意味する。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: 'standard',
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
 
 // 浦和の最新予想を対象。無い場合は任意の最新 nankan データへフォールバック。
 const predictionModules = import.meta.glob('/src/data/predictions/*.json', { eager: true });
