@@ -3180,6 +3180,35 @@ SSR 化した 2 件を `CLIENT_ONLY_PAID_PAGES_KNOWN` から削除。
 
 残 B: `premium-prediction/{jra,nankan}`（Batch 4）/ `light-predictions-jra`（Batch 5・要再設計）
 
+## 有料ページ SSR 化 Batch 4（2026-08-08 / PR・未 merge）
+
+`premium-prediction/jra`（4,172 行）/ `premium-prediction/nankan`（5,052 行）の 2 件を
+サーバー側認可へ移した。**B 群で残るのは `light-predictions-jra` の 1 件だけ**になる。
+
+`requiredPlan='premium'`（→ `canViewPremium`）の既存の境界は変えていない。
+サブディレクトリ配下のため import は `../../lib/auth/paidPageGate.js`。
+
+### SSR function size（毎回計測）
+
+| 時点 | サイズ | 250MB への余裕 |
+|---|---|---|
+| `#257` パイロット | 69.7 MB | 180.3 MB |
+| `#258` Batch 1 | 70.0 MB | 180.0 MB |
+| `#259` Batch 2 | 70.5 MB | 179.5 MB |
+| `#260` Batch 3 | 71.0 MB | 179.0 MB |
+| **Batch 4** | **71.6 MB** | **178.4 MB** |
+
+合計 9,224 行の大物 2 件でも **+0.6 MB**。累計 **+1.9 MB**（上限の 0.8%）。
+`premium-prediction/jra` は eager glob を持たず、`nankan` の glob 先（南関 root）は
+既にバンドル済みだったため、行数の大きさは SSR サイズにほぼ効かないことが確認できた。
+
+### 進捗
+
+| 区分 | 件数 |
+|---|---|
+| A（サーバー側認可）| **10** |
+| B（client-side gate のみ）| **1**（`light-predictions-jra` のみ）|
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
