@@ -2933,6 +2933,86 @@ open だった 8 件を read-only で調査し、3 区分に整理した。**実
   すべて 2026-07-31、`PromotionalOffers` 残存 0）と運用ルール 4 点。
   **母集団のスナップショット値は書き写さない**方針も明記
 
+## 認証の裏経路（setTestAuth / レガシー鍵）を恒久除去（2026-08-08 / PR・未 merge）
+
+### 再流入ではない — **一度も除去されていなかった**
+
+調査の結論を先に書く。**「2026-07-07 に除去したものが再流入した」のではない。**
+
+| 事実 | 実測 |
+|---|---|
+| 除去コミット | `3c040a9`（2026-07-07 16:18 JST）「fix(auth): メールのみ認証・setTestAuth・localStorage 昇格 backdoor を全廃」|
+| そのコミットが居る場所 | `worktree-secure-auth-and-contact-autofill` / **PR #128 のブランチのみ** |
+| main の祖先か | **`git merge-base --is-ancestor 3c040a9 origin/main` = 偽（含まれない）** |
+
+つまり **PR #128 が merge されないまま 1 か月放置され、脆弱性は初出から連続して本番に存在し続けた**。
+
+**根本原因は「guard が main 側に無かったこと」。** 除去は PR の中にしかなく、main には
+再流入を検知する仕組みも、未除去を知らせる仕組みも無かった。だから誰も気づけなかった。
+
+### 何が危なかったか
+
+`window.setTestAuth(plan)` が任意の plan を `localStorage` へ書いてリロードする関数として
+**11 ページの本番配信 HTML に含まれていた**（`/premium-prediction/nankan/` `/dashboard/`
+`/light-predictions/` で実測）。これらは `prerender = true` かつ `verifyPlanAccess` 無し、
+`AccessControl` は localStorage の値を認可に使うため、**ブラウザのコンソール 1 行で
+有料コンテンツを閲覧できる**状態だった。
+
+さらに **正当な書き込み元が 1 つも無い**のに読むだけの「死んだ昇格経路」が 4 種あった。
+
+| 鍵 | 正当な writer | 扱い |
+|---|---|---|
+| `nankan_user` | **無し**（書いていたのは setTestAuth だけ）| reader 削除 |
+| `test_subscription_` | **無し** | reader 削除 |
+| `demo_subscription_` | **無し** | reader 削除 |
+| `auth_data` | **無し** | `AccessControl` の grant 経路のみ削除 |
+
+`/auth/verify`（正規経路）が書くのは **`user-plan` だけ**。
+
+### 修正（最小・恒久）
+
+- `window.setTestAuth` / `window.clearTestAuth` の定義と関連 console ヘルプを**全削除**
+- 上表 4 鍵を**権限判定に読む経路**を全削除
+- **削除しなかったもの**（要件どおり壊さない）:
+  `localStorage.removeItem('nankan_user')` 等の**掃除**、無料ページのログイン状態判定
+  （`isRegisteredUser`）、`user-plan` / `isLoggedIn` / `userPlan` の正規用途
+
+差分は **削除 505 行 / 追加 20 行**（追加は CI 配線とコメントのみ）。
+
+### 再発防止（CI で fail する）
+
+`src/lib/auth/authSecurity.guard.test.mjs`（10 件）を追加し、
+`npm run test:auth-security` として **`check:safety` と `.github/workflows/safety-check.yml`
+の個別 step の両方**へ組み込んだ。
+
+- 配信ソース（`src/pages` / `src/components` / `src/layouts` / `public`）を再帰走査
+- **コメントと実行コードを区別**（行/ブロックコメントを落としてから検査）。
+  経緯を説明するコメントで誤検知しないことをテストで固定
+- `AccessControl` が読む localStorage キーを**許可リストで固定**。増えたら fail するので、
+  新しい注入経路が黙って増えない
+- **検査対象 0 件なら fail**（guard の素通り防止）
+- 脆弱性を注入すると実際に落ちることを確認済み（setTestAuth 復活 → 2 件 fail /
+  レガシー鍵 reader 復活 → 1 件 fail）
+
+### ⚠️ これで塞ぎ切れていないもの（正直に記録）
+
+**`user-plan` を注入すれば、client-side gate しかない有料ページは今も突破できる。**
+
+| 経路 | 状態 |
+|---|---|
+| `setTestAuth` などの注入補助 | **消えた** |
+| writer の無いレガシー鍵 4 種 | **消えた** |
+| `user-plan` 直接注入 | **残る**（正規 writer があるため消せない）|
+
+`verifyPlanAccess` による SSR 認可があるのは **`premium-plus.astro` / `premium-plus-v2.astro` /
+`api/premium-plus-stage.json.js` / `api/upsell.json.js` の 4 つだけ**。
+Edge Function も middleware も無い（`netlify.toml` に `edge_functions` 設定なし）。
+`premium-prediction/*` `premium-sanrenpuku*` `light-predictions*` などは
+**すべて `prerender = true` の client-side gate のみ**。
+
+→ 完全な解決は**これらのページの SSR 化**が必要で、認証再設計バックログの
+PR-C（Edge）/ PR-D（SSR 化）に相当する。本 PR の範囲外。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

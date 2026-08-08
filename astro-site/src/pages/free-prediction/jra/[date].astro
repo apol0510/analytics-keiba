@@ -2147,9 +2147,7 @@ try {
           return true;
         }
         if (localStorage.getItem('userEmail')) return true;
-        if (localStorage.getItem('nankan_user')) return true;
         if (localStorage.getItem('auth_data')) return true;
-        if (Object.keys(localStorage).some(k => k.startsWith('test_subscription_'))) return true;
         return false;
       }
 

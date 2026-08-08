@@ -50,6 +50,7 @@
     "test:nankan": "npm run test:nankan-recent-races && npm run test:nankan-injection",
     "test:contact-autofill": "node src/lib/contact-autofill.test.js && node src/lib/contact-forms.guard.test.js",
     "test:auth-session": "node --test src/lib/auth/*.test.mjs",
+    "test:auth-security": "node --test src/lib/auth/authSecurity.guard.test.mjs",
     "test:dark-horse": "node --test src/lib/darkHorse/*.test.mjs",
     "test:sanrenpuku-cta": "node --test src/lib/sanrenpuku/*.test.mjs",
     "test:pricing-tiers": "node --test src/lib/pricing/*.test.mjs",
@@ -68,7 +69,7 @@
     "check:measurement": "node scripts/check-measurement-settings.mjs",
     "upload:premium-plus": "node scripts/uploadPremiumPlusImage.mjs",
     "seed:premium-plus": "node scripts/seedPremiumPlusLegacy.mjs",
-    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:crm && npm run test:auth-session",
+    "check:safety": "npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:crm && npm run test:auth-session && npm run test:auth-security",
     "verify:safety": "npm run build && npm run check:safety",
     "preflight:phase2-canary": "node scripts/phase2-canary-preflight.mjs"
   },

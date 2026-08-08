@@ -117,6 +117,10 @@ jobs:
         working-directory: astro-site
         run: npm run test:auth-session
 
+      - name: Verify 認証の裏経路が無い（setTestAuth / レガシー鍵での権限昇格）
+        working-directory: astro-site
+        run: npm run test:auth-security
+
       - name: Verify 穴馬抽出の当日データ選定（過去日 fallback なし 回帰テスト）
         working-directory: astro-site
         run: npm run test:dark-horse

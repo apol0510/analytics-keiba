@@ -1103,18 +1103,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             // AccessControlコンポーネントと同じロジックでプラン取得
             let userPlan = null;
 
-            // 1. test_subscription_*（本番で実際に使用中）
-            const testSubscriptionKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
-            if (testSubscriptionKeys.length > 0) {
-                try {
-                    const testData = JSON.parse(localStorage.getItem(testSubscriptionKeys[0]));
-                    userPlan = testData.planType;
-                    console.log('📦 プラン検出（test_subscription）:', userPlan);
-                } catch (error) {
-                    console.error('Test subscription parsing error:', error);
-                }
-            }
-
             // 2. user-plan（新形式・JSON）
             if (!userPlan) {
                 const userPlanData = localStorage.getItem('user-plan');
@@ -2414,40 +2402,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         window[`toggleRace${i}R`] = createToggleFunction(i);
     }
 
-    // テスト認証機能（開発環境用）
-    window.setTestAuth = function(plan) {
-        if (!['premium', 'standard', 'free'].includes(plan.toLowerCase())) {
-            console.error('❌ 無効なプラン:', plan);
-            console.log('📋 有効なプラン: premium, standard, free');
-            return;
-        }
-
-        const testUser = {
-            email: `test-${plan}@example.com`,
-            name: `テスト${plan.charAt(0).toUpperCase() + plan.slice(1)}ユーザー`,
-            plan: plan.toLowerCase(),
-            isTest: true,
-            points: plan === 'premium' ? 1000 : plan === 'standard' ? 500 : 100,
-            registrationDate: new Date().toISOString(),
-            lastLogin: new Date().toISOString()
-        };
-
-        // LocalStorageに保存
-        localStorage.setItem('nankan_user', JSON.stringify(testUser));
-        localStorage.setItem('nankan_test_auth', 'true');
-
-        console.log(`✅ テスト認証設定完了: ${plan}プラン`, testUser);
-        console.log('🔄 ページを更新して認証を適用してください');
-
-        // 1秒後に自動リロード
-        setTimeout(() => {
-            location.reload();
-        }, 1000);
-    };
 
     // コンソールにヘルプメッセージ表示
-    console.log('%c🔑 テスト認証機能が利用可能です', 'color: #60a5fa; font-weight: bold;');
-    console.log('%c使用方法: setTestAuth("premium") または setTestAuth("standard")', 'color: #94a3b8;');
 </script>
 
 <style>

@@ -147,40 +147,6 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
     function getCurrentUserPlan() {
         console.log('🔍 認証状態チェック開始');
         
-        // 0. デモモードのサブスクリプション情報をチェック（優先）
-        const demoKeys = Object.keys(localStorage).filter(key => key.startsWith('demo_subscription_'));
-        if (demoKeys.length > 0) {
-            try {
-                const demoData = JSON.parse(localStorage.getItem(demoKeys[0]));
-                console.log('🎭 デモモード認証:', demoData);
-                return {
-                    user: { id: 'demo_user', email: 'demo@example.com', demo: true },
-                    plan: demoData.planType.toLowerCase(),
-                    planType: 'Monthly',
-                    lifetimeSanrenpuku: false
-                };
-            } catch (error) {
-                console.error('Demo data parsing error:', error);
-            }
-        }
-
-        // 1. 旧形式のtest_subscription_データをチェック（最優先 - 本番で実際に使用中）
-        const testSubscriptionKeys = Object.keys(localStorage).filter(key => key.startsWith('test_subscription_'));
-        if (testSubscriptionKeys.length > 0) {
-            try {
-                const testData = JSON.parse(localStorage.getItem(testSubscriptionKeys[0]));
-                console.log('📦 旧形式認証データ発見:', testData);
-                return {
-                    user: { id: testData.userId, legacy: true },
-                    plan: testData.planType.toLowerCase(),
-                    planType: 'Monthly',
-                    lifetimeSanrenpuku: false
-                };
-            } catch (error) {
-                console.error('Test subscription data parsing error:', error);
-            }
-        }
-
         // 2. 新形式のuser-planチェック（2026-02-09更新: Lifetime対応）
         const userPlanData = localStorage.getItem('user-plan');
         if (userPlanData) {
@@ -211,47 +177,8 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             };
         }
 
-        // 4. nankan_user認証情報を取得（新テスト認証用・2026-02-09更新: Lifetime対応）
-        const nankanUser = localStorage.getItem('nankan_user');
-        if (nankanUser) {
-            try {
-                const userData = JSON.parse(nankanUser);
-                console.log('✅ nankan_user認証:', userData);
-                return {
-                    user: { email: userData.email, name: userData.name },
-                    plan: userData.plan || 'free',
-                    planType: userData.planType || 'Monthly',  // 追加
-                    lifetimeSanrenpuku: userData.lifetimeSanrenpuku || false  // 追加
-                };
-            } catch (error) {
-                console.error('Nankan user parsing error:', error);
-            }
-        }
-
-        // 5. ローカルストレージから認証情報を取得（2026-02-09更新: Lifetime対応）
-        const authData = localStorage.getItem('auth_data');
-        if (authData) {
-            try {
-                const { user, plan, expiresAt, planType, lifetimeSanrenpuku } = JSON.parse(authData);
-
-                // 有効期限チェック
-                if (new Date() > new Date(expiresAt)) {
-                    localStorage.removeItem('auth_data');
-                    return { user: null, plan: 'free', planType: 'Monthly', lifetimeSanrenpuku: false };
-                }
-
-                return {
-                    user,
-                    plan: plan || 'free',
-                    planType: planType || 'Monthly',
-                    lifetimeSanrenpuku: lifetimeSanrenpuku || false
-                };
-            } catch (error) {
-                console.error('Auth data parsing error:', error);
-                localStorage.removeItem('auth_data');
-            }
-        }
-
+        // ⚠️ auth_data は正当な書き込み元が 1 つも無く、読むと localStorage 注入を
+        //    そのまま権限として信じることになるため 2026-08-08 に削除した。
         // 6. セッションストレージチェック（2026-02-09更新: Lifetime対応）
         const sessionAuth = sessionStorage.getItem('temp_auth');
         if (sessionAuth) {
@@ -538,7 +465,8 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
         }
     }
 
-    // ⚠️ setTestAuth/clearTestAuth関数は public/test-auth.js で定義されています
+    // ⚠️ テスト用の認証注入関数（setTestAuth 等）は 2026-08-08 に恒久削除した。
+    //    再追加は auth-security guard で CI fail する。
     // ここでの再定義は削除しました（重複防止）
 
     document.addEventListener('DOMContentLoaded', () => {
