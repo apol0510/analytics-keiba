@@ -3155,6 +3155,31 @@ SSR 化した 2 件を `CLIENT_ONLY_PAID_PAGES_KNOWN` から削除。
 残 B: `premium-predictions-{urawa,funabashi}`（Batch 3）/
 `premium-prediction/{jra,nankan}`（Batch 4）/ `light-predictions-jra`（Batch 5・要再設計）
 
+## 有料ページ SSR 化 Batch 3（2026-08-08 / PR・未 merge）
+
+`premium-predictions-urawa` / `-funabashi` の 2 件をサーバー側認可へ移した。
+`requiredPlan='premium'`（→ `canViewPremium`）の**既存の境界は変えていない**。
+
+### SSR function size（毎回計測）
+
+| 時点 | サイズ | 250MB への余裕 |
+|---|---|---|
+| `#257` パイロット | 69.7 MB | 180.3 MB |
+| `#258` Batch 1 | 70.0 MB | 180.0 MB |
+| `#259` Batch 2 | 70.5 MB | 179.5 MB |
+| **Batch 3** | **71.0 MB** | **179.0 MB** |
+
+2 ページで **+0.5 MB**。累計でも +1.3 MB で、余裕は 250MB の **71.6%** を保っている。
+
+### 進捗
+
+| 区分 | 件数 |
+|---|---|
+| A（サーバー側認可）| **8** |
+| B（client-side gate のみ）| **3** |
+
+残 B: `premium-prediction/{jra,nankan}`（Batch 4）/ `light-predictions-jra`（Batch 5・要再設計）
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。
