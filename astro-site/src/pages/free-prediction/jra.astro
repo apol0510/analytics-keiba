@@ -2853,11 +2853,9 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
         if (userPlanData || isLoggedIn || userPlan || userPlanUnderscore || userEmail) {
           return true;
         }
-        // 互換: 他ページで使われている userEmail (camelCase) / nankan_user / auth_data / test_subscription_*
+        // 互換: 他ページで使われている userEmail (camelCase) / auth_data
         if (localStorage.getItem('userEmail')) return true;
-        if (localStorage.getItem('nankan_user')) return true;
         if (localStorage.getItem('auth_data')) return true;
-        if (Object.keys(localStorage).some(k => k.startsWith('test_subscription_'))) return true;
         return false;
       }
 
