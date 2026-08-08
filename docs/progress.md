@@ -3013,6 +3013,80 @@ Edge Function も middleware も無い（`netlify.toml` に `edge_functions` 設
 → 完全な解決は**これらのページの SSR 化**が必要で、認証再設計バックログの
 PR-C（Edge）/ PR-D（SSR 化）に相当する。本 PR の範囲外。
 
+## 有料ページのサーバー側認可へ移行（2026-08-08 / PR・未 merge）
+
+`#256` で注入補助（`setTestAuth`）とレガシー鍵は消えたが、**`user-plan` を直接書けば
+client-side gate のページは今も突破できる**。その構造的な穴を塞ぐ工程の 1 本目。
+
+### 全有料 route の機械分類
+
+`<AccessControl requiredPlan="...">`（free 以外）で守っているページを分類した。
+
+| 区分 | 定義 | 件数 |
+|---|---|---|
+| **A** | `verifyPlanAccess` / `gatePaidPage` によるサーバー側認可あり | **3**（本 PR で +1）|
+| **B** | `prerender = true` の静的 + client-side gate のみ | **10**（本 PR で -1）|
+| **C** | その他 | 0 |
+
+**B（残 10 件）**: `light-predictions{,-jra,-urawa,-funabashi}` /
+`premium-prediction/{jra,nankan}` / `premium-predictions-{urawa,funabashi}` /
+`premium-sanrenpuku` / `premium-select`
+
+⚠️ 分類スクリプトの初版はブロックコメント除去で `<AccessControl>` を巻き込み、
+B を 7 件と誤って数えた。**生ファイルで判定**して 11 件（当時）が正しい。
+
+### 最小設計: 既存の単一源へ委譲する 2 段
+
+`src/lib/auth/paidPageGate.js`（新規）。**第二の認証方式は作らない。**
+
+1. **本人特定** … `verifyPlanAccess`（ak_session / HttpOnly 署名 Cookie）
+2. **権利判定** … `resolveEntitlements`（Airtable の契約・買い切り・無料特典の正本）
+
+**なぜ 2 段が要るか**: session payload は `plan` 1 つしか持たず、
+**`LifetimeSanrenpuku`（三連複の買い切り）やカムバック無料特典を表現できない**。
+本番には `プラン=Premium` + `LifetimeSanrenpuku=true` の会員が実在するため、
+session の plan だけで三連複ページを判定すると**その会員を締め出す**。
+`premium-plus.astro` と同じく「入口は広め → 権利は Airtable の正本で判定」にした。
+
+| `requiredPlan` | 見る entitlement |
+|---|---|
+| `Premium Sanrenpuku` | `canViewSanrenpuku` |
+| `premium` | `canViewPremium` |
+| `standard`（= Light）| `canViewLight` |
+
+fail closed: 未知の `requiredPlan` / env 未注入 / Airtable 引けず / customer 無し は全て拒否。
+認可ライブラリは **`process.env` を直接参照しない**（既存 guard に従い env を注入必須）。
+応答には `Cache-Control: private, no-store` + `Vary: Cookie` を付け、共有キャッシュへ載せない。
+
+### 本 PR で移したページ（パイロット 1 件）
+
+**`premium-sanrenpuku-jra.astro`**（642 行・`src/data` 依存なし）を `prerender = false` へ。
+build 後 `dist/premium-sanrenpuku-jra/index.html` が**生成されない**ことを確認済み
+（＝未認証 HTTP 取得で有料本文が返らない）。
+
+### なぜ 10 件を一度に移さないか
+
+- 対象は合計 **約 29,700 行**
+- 多くが `import.meta.glob(..., { eager: true })` で **南関 25MB / JRA 23MB** の予想 JSON を
+  ページに取り込む。SSR 化すると SSR バンドルへ載り、**250MB 上限**と
+  2026-07-24 の `/premium-plus/` SSR 500 事故（build 成功でも本番 artifact が 500）に直結する
+- パイロットで SSR 関数は 66.9 → **69.7MB**。1 ページで +2.8MB なので、
+  データを抱えるページは**1 件ずつ計測しながら**移すのが安全
+
+### 再流入防止（CI）
+
+`authSecurity.guard.test.mjs` を拡張し、**B の既知リストを固定**した。
+
+- **新しく client-only の有料ページが増えたら fail**
+- SSR 化したページを既知リストから**消し忘れたら fail**
+- 既知リストに実在しないページが残っていたら fail
+- サーバー側認可のページは `prerender = false` であることを強制
+
+### 残件
+
+B の 10 件を、データ依存の小さい順に SSR 化する。
+各回で SSR 関数サイズを計測し、250MB に対する余裕を記録すること。
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

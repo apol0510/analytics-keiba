@@ -195,3 +195,75 @@ test('実行コードは確実に検知する（guard が空振りしない）',
   assert.match(code, /(?:window\s*\.\s*)?(set|clear)TestAuth\s*=/);
   assert.match(code, /setItem\s*\(\s*'nankan_user/);
 });
+
+// ── 5. client-only の有料ゲートを増やさない（2026-08-08 追加）──────
+/**
+ * `<AccessControl requiredPlan="...">` だけで守っている有料ページは、
+ * 静的 HTML に有料本文が入るため **localStorage の書き換えだけで読める**。
+ * サーバー側認可（`gatePaidPage`）へ移すまでの既知の残件をここで固定し、
+ * **新しく増えたら fail** させる。減らすのは自由（このリストから消すだけ）。
+ */
+const CLIENT_ONLY_PAID_PAGES_KNOWN = [
+  'src/pages/light-predictions-funabashi.astro',
+  'src/pages/light-predictions-jra.astro',
+  'src/pages/light-predictions-urawa.astro',
+  'src/pages/light-predictions.astro',
+  'src/pages/premium-prediction/jra.astro',
+  'src/pages/premium-prediction/nankan.astro',
+  'src/pages/premium-predictions-funabashi.astro',
+  'src/pages/premium-predictions-urawa.astro',
+  'src/pages/premium-sanrenpuku.astro',
+  'src/pages/premium-select.astro',
+];
+
+/** 有料ゲートのあるページを分類する（生ファイルで判定。コメント除去は誤爆するため使わない）。 */
+function classifyPaidPages() {
+  const out = { serverAuth: [], clientOnly: [] };
+  for (const f of SHIPPED) {
+    if (!f.endsWith('.astro') || !f.includes(`${'/'}pages${'/'}`)) continue;
+    const raw = readFileSync(f, 'utf8');
+    const tags = [...raw.matchAll(/<AccessControl\s([^>]*)>/g)].map((m) => m[1]);
+    const plans = [...new Set(tags.map((t) => {
+      const m = t.match(/requiredPlan\s*=\s*(?:"([^"]*)"|'([^']*)'|\{['"]([^'"]*)['"]\})/);
+      return m ? (m[1] || m[2] || m[3]) : null;
+    }).filter(Boolean))];
+    if (!plans.length || !plans.some((p) => !/^free$/i.test(p))) continue;
+    const server = /verifyPlanAccess|gatePaidPage/.test(raw);
+    (server ? out.serverAuth : out.clientOnly).push(rel(f));
+  }
+  out.serverAuth.sort(); out.clientOnly.sort();
+  return out;
+}
+
+test('有料ゲートのあるページを 1 つ以上検出できている（分類の素通り防止）', () => {
+  const { serverAuth, clientOnly } = classifyPaidPages();
+  assert.ok(serverAuth.length + clientOnly.length >= 10,
+    `有料ページの検出数が少なすぎる: ${serverAuth.length + clientOnly.length}`);
+});
+
+test('client-side gate だけの有料ページを新規に増やさない', () => {
+  const { clientOnly } = classifyPaidPages();
+  const added = clientOnly.filter((f) => !CLIENT_ONLY_PAID_PAGES_KNOWN.includes(f));
+  assert.deepEqual(added, [],
+    `サーバー側認可の無い有料ページが増えた（gatePaidPage を使うこと）: ${added.join(', ')}`);
+});
+
+test('サーバー側認可へ移したページは既知リストから消えている', () => {
+  const { clientOnly, serverAuth } = classifyPaidPages();
+  const stale = CLIENT_ONLY_PAID_PAGES_KNOWN.filter((f) => serverAuth.includes(f));
+  assert.deepEqual(stale, [],
+    `SSR 化済みなのに既知リストへ残っている: ${stale.join(', ')}`);
+  // 既知リストは実態と一致していること（消し忘れ・書き間違いを検知）
+  const missing = CLIENT_ONLY_PAID_PAGES_KNOWN.filter((f) => !clientOnly.includes(f));
+  assert.deepEqual(missing, [], `既知リストにあるが実在しない: ${missing.join(', ')}`);
+});
+
+test('サーバー側認可のページは gatePaidPage か verifyPlanAccess を通す', () => {
+  const { serverAuth } = classifyPaidPages();
+  assert.ok(serverAuth.length >= 3, `サーバー側認可のページが少なすぎる: ${serverAuth.length}`);
+  for (const f of serverAuth) {
+    const raw = readFileSync(join(ROOT, f), 'utf8');
+    assert.match(raw, /export const prerender\s*=\s*false/,
+      `${f}: サーバー側認可なのに prerender=false でない`);
+  }
+});

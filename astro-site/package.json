@@ -50,7 +50,7 @@
     "test:nankan": "npm run test:nankan-recent-races && npm run test:nankan-injection",
     "test:contact-autofill": "node src/lib/contact-autofill.test.js && node src/lib/contact-forms.guard.test.js",
     "test:auth-session": "node --test src/lib/auth/*.test.mjs",
-    "test:auth-security": "node --test src/lib/auth/authSecurity.guard.test.mjs",
+    "test:auth-security": "node --test src/lib/auth/authSecurity.guard.test.mjs src/lib/auth/paidPageGate.test.mjs",
     "test:dark-horse": "node --test src/lib/darkHorse/*.test.mjs",
     "test:sanrenpuku-cta": "node --test src/lib/sanrenpuku/*.test.mjs",
     "test:pricing-tiers": "node --test src/lib/pricing/*.test.mjs",

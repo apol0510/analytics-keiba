@@ -3,9 +3,12 @@
 // - データ: loadJraVenuesForDisplay()（JRA multi-venue スキーマ・近走注入込み）
 // - 買い目: buildRaceSanrenpuku()（単一源 osaeClassification 基準・南関 premium と同一ロジック）
 // - 会場切替: premium-sanrenpuku.astro / premium-prediction/nankan.astro と同一の venue タブ方式
-export const prerender = true;
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-08-08）。
+//    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
+export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccessControl from '../components/AccessControl.astro';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import { loadJraVenuesForDisplay } from '../lib/loadJraVenuesForDisplay.js';
 import { buildRaceSanrenpuku, formatSanrenpukuLine, generateNarrowedDisplayLines } from '../utils/sanrenpukuBetting.js';
 import { getHorseAiIndex } from '../lib/shared-prediction-logic.js';
@@ -14,6 +17,17 @@ import { loadFeatureScores, venueCodeFromName } from '../lib/loadFeatureScores.j
 import JraRaceHorseSection from '../components/JraRaceHorseSection.astro';
 // 段階公開 PHASE 2 の予告枠（文言は SSR エンドポイントから取得。静的 HTML には出さない）
 import PremiumPlusStageTeaser from '../components/PremiumPlusStageTeaser.astro';
+
+// ── サーバー側認可（この行より前で有料データを組み立てない）──
+// 判定は既存の単一源に委譲する: ak_session（本人特定）+ resolveEntitlements（権利）。
+// 未認可ならここで応答を返すので、有料本文は HTML に一切含まれない。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: 'Premium Sanrenpuku',
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
 
 // 直近の三連複的中実績（archiveSanrenpukuResultsJra 由来・表示専用）
 const latestResult = convertToSanrenpukuYesterdayResultsJra();
