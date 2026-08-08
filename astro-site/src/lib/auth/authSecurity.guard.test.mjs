@@ -204,10 +204,7 @@ test('実行コードは確実に検知する（guard が空振りしない）',
  * **新しく増えたら fail** させる。減らすのは自由（このリストから消すだけ）。
  */
 const CLIENT_ONLY_PAID_PAGES_KNOWN = [
-  'src/pages/light-predictions-funabashi.astro',
   'src/pages/light-predictions-jra.astro',
-  'src/pages/light-predictions-urawa.astro',
-  'src/pages/light-predictions.astro',
   'src/pages/premium-prediction/jra.astro',
   'src/pages/premium-prediction/nankan.astro',
   'src/pages/premium-predictions-funabashi.astro',
