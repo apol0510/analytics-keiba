@@ -91,19 +91,50 @@ const PROD_REDIS_URL_ENV = 'UPSTASH_REDIS_REST_URL';
  * @param {Record<string, string|undefined>} env
  * @returns {{ ok: boolean, code: string|null }}
  */
-export function checkCanaryIsolation(env = {}) {
-  if (isProductionContext(env.CONTEXT)) return { ok: false, code: 'production_context' };
+/**
+ * 実行環境が非本番かを判定する。
+ *
+ * ⚠️ Netlify Functions の**実行時**には `process.env.CONTEXT` が入っていないことがある
+ *    （2026-08-08 の Deploy Preview 実測で undefined）。CONTEXT だけを見ると
+ *    fail-closed で常に拒否になり canary が動かせない。そこでホスト名も信号に使う。
+ *
+ * ⚠️ ホスト名は理屈の上では詐称できるが、**主防御はここではない**。
+ *    production context には canary 専用 env の値が入っていない（空）ため、
+ *    仮にホストを詐称しても `canary_redis_not_configured` で止まる。
+ *    さらに production では `CUSTOMER_IMPORT_CANARY_ENABLED` が未定義で 403 になる。
+ *    ホスト判定は多層防御の 1 枚目にすぎない。
+ *
+ * @param {Record<string, string|undefined>} env
+ * @param {string} [host] リクエストの Host ヘッダ
+ */
+export function resolveNonProduction(env = {}, host = '') {
+  const ctx = env.CONTEXT;
+  // CONTEXT が既知の非本番値なら、それが最も強い信号
+  if (!isProductionContext(ctx)) return { nonProd: true, via: 'CONTEXT' };
+  // CONTEXT が **明示的に production** ならホストで覆さない
+  if (String(ctx || '') === 'production') return { nonProd: false, via: 'CONTEXT:production' };
+  // ここへ来るのは CONTEXT が未設定・空・未知値のときだけ。ホストを補助信号にする。
+  const h = String(host || '').toLowerCase().split(':')[0];
+  if (/^deploy-preview-\d+--[a-z0-9-]+\.netlify\.app$/.test(h)) return { nonProd: true, via: 'host:deploy-preview' };
+  if (/^[a-z0-9-]+--[a-z0-9-]+\.netlify\.app$/.test(h)) return { nonProd: true, via: 'host:branch-deploy' };
+  if (h === 'localhost' || h.startsWith('127.0.0.1')) return { nonProd: true, via: 'host:local' };
+  return { nonProd: false, via: 'production' };
+}
+
+export function checkCanaryIsolation(env = {}, host = '') {
+  const ctx = resolveNonProduction(env, host);
+  if (!ctx.nonProd) return { ok: false, code: 'production_context', via: ctx.via };
   const url = env[CANARY_REDIS_URL_ENV];
   const token = env[CANARY_REDIS_TOKEN_ENV];
   if (!url || !token) return { ok: false, code: 'canary_redis_not_configured' };
   const prodUrl = env[PROD_REDIS_URL_ENV];
-  if (prodUrl && String(prodUrl) === String(url)) return { ok: false, code: 'canary_points_at_production' };
-  return { ok: true, code: null };
+  if (prodUrl && String(prodUrl) === String(url)) return { ok: false, code: 'canary_points_at_production', via: ctx.via };
+  return { ok: true, code: null, via: ctx.via };
 }
 
 /** Upstash REST。**URL / token をレスポンスにもログにも出さない** */
-async function redisCmd(args) {
-  const iso = checkCanaryIsolation(process.env);
+async function redisCmd(args, host) {
+  const iso = checkCanaryIsolation(process.env, host);
   if (!iso.ok) throw new Error(`canary_isolation_${iso.code}`);
   const url = process.env[CANARY_REDIS_URL_ENV];
   const token = process.env[CANARY_REDIS_TOKEN_ENV];
@@ -146,7 +177,7 @@ function handlePreview({ now }) {
 }
 
 // ── run: Phase 0 + Phase 1（canary 名前空間のみ）───────────────
-async function handleRun({ req, now }) {
+async function handleRun({ req, now, host }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) {
     return json(400, { error: 'canaryId の形式が不正です（preview で発行したものを使ってください）。' });
@@ -159,7 +190,7 @@ async function handleRun({ req, now }) {
   }
 
   let runner;
-  try { runner = createCanaryRunner({ cmd: redisCmd, canaryId }); }
+  try { runner = createCanaryRunner({ cmd: (a) => redisCmd(a, host), canaryId }); }
   catch (e) { return json(400, guardBody(e)); }
 
   // ── exactly-once: 実行済みマーカーを SET NX ──
@@ -228,11 +259,11 @@ async function handleRun({ req, now }) {
 }
 
 // ── status / cleanup（Redis は prefix 限定でしか触らない）───────
-async function handleStatus({ req }) {
+async function handleStatus({ req, host }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
   let runner;
-  try { runner = createCanaryRunner({ cmd: redisCmd, canaryId }); }
+  try { runner = createCanaryRunner({ cmd: (a) => redisCmd(a, host), canaryId }); }
   catch (e) { return json(400, guardBody(e)); }
   try {
     // ⚠️ status は**数えるだけ**。削除しない
@@ -252,7 +283,7 @@ async function handleStatus({ req }) {
 }
 
 /** 最後の後始末。墓標も消して残存を完全に 0 にする（Function 無効化の直前に 1 回） */
-async function handleFinalize({ req }) {
+async function handleFinalize({ req, host }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
   if (String(req.confirmation || '').trim() !== buildFinalizeConfirmation(canaryId)) {
@@ -262,7 +293,7 @@ async function handleFinalize({ req }) {
     });
   }
   let runner;
-  try { runner = createCanaryRunner({ cmd: redisCmd, canaryId }); }
+  try { runner = createCanaryRunner({ cmd: (a) => redisCmd(a, host), canaryId }); }
   catch (e) { return json(400, guardBody(e)); }
   try {
     const fin = await finalizeCanary(runner);
@@ -277,11 +308,11 @@ async function handleFinalize({ req }) {
   }
 }
 
-async function handleCleanup({ req }) {
+async function handleCleanup({ req, host }) {
   const canaryId = String(req.canaryId || '').trim();
   if (!isValidCanaryId(canaryId)) return json(400, { error: 'canaryId の形式が不正です。' });
   let runner;
-  try { runner = createCanaryRunner({ cmd: redisCmd, canaryId }); }
+  try { runner = createCanaryRunner({ cmd: (a) => redisCmd(a, host), canaryId }); }
   catch (e) { return json(400, guardBody(e)); }
   try {
     const clean = await cleanupCanary(runner);
@@ -308,11 +339,13 @@ export const handler = async (event) => {
   }
 
   // ⚠️ **隔離の最終ガード**。production context / 本番 Redis を指す設定では 1 コマンドも送らない。
-  const isolation = checkCanaryIsolation(process.env);
+  const reqHost = event.headers?.host || event.headers?.Host || '';
+  const isolation = checkCanaryIsolation(process.env, reqHost);
   if (!isolation.ok) {
     return json(403, {
       error: 'canary は非本番 context の専用 Redis でのみ実行できます。',
       code: isolation.code,
+      via: isolation.via,
     });
   }
 
@@ -328,10 +361,10 @@ export const handler = async (event) => {
 
   try {
     if (action === 'preview') return handlePreview({ now });
-    if (action === 'run') return await handleRun({ req, now });
-    if (action === 'status') return await handleStatus({ req });
-    if (action === 'cleanup') return await handleCleanup({ req });
-    if (action === 'finalize') return await handleFinalize({ req });
+    if (action === 'run') return await handleRun({ req, now, host: reqHost });
+    if (action === 'status') return await handleStatus({ req, host: reqHost });
+    if (action === 'cleanup') return await handleCleanup({ req, host: reqHost });
+    if (action === 'finalize') return await handleFinalize({ req, host: reqHost });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     // ⚠️ 例外の中身をそのまま返さない（URL / token が混ざりうる）

@@ -106,7 +106,7 @@ test('Redis へ 1 コマンド送る前に隔離チェックを通す', () => {
 
 test('ハンドラ側でも Redis 到達前に 403 で断る', () => {
   const enabled = code.indexOf('CUSTOMER_IMPORT_CANARY_ENABLED');
-  const iso = code.indexOf('checkCanaryIsolation(process.env)', enabled);
+  const iso = code.indexOf('checkCanaryIsolation(process.env', enabled);
   assert.ok(iso > enabled, '有効化ゲートの直後に隔離チェックが無い');
 });
 
@@ -117,4 +117,49 @@ test('URL / token を応答にもログにも出さない', () => {
   // json(...) の第 2 引数へ url / token をそのまま入れていない
   assert.doesNotMatch(code, /json\(\s*\d+\s*,\s*\{[^}]*\b(url|token)\s*[,:}]/,
     '応答に url / token を含めている');
+});
+
+// ── 4. runtime の context 判定（CONTEXT が無い環境）─────────────
+test('CONTEXT が無くても Deploy Preview のホストなら非本番と判定する', async () => {
+  const { resolveNonProduction } = await import('../../../netlify/functions/admin-customer-import-redis-canary.js');
+  const r = resolveNonProduction({}, 'deploy-preview-235--analytics-keiba.netlify.app');
+  assert.equal(r.nonProd, true);
+  assert.equal(r.via, 'host:deploy-preview');
+});
+
+test('本番ホストは CONTEXT が無くても本番と判定する', async () => {
+  const { resolveNonProduction } = await import('../../../netlify/functions/admin-customer-import-redis-canary.js');
+  for (const h of ['analytics.keiba.link', 'analytics-keiba.netlify.app', '', 'example.com']) {
+    const r = resolveNonProduction({}, h);
+    assert.equal(r.nonProd, false, `host=${h} を非本番と誤判定した`);
+  }
+});
+
+test('ホストを詐称しても canary 用 env が無ければ実行できない（主防御）', () => {
+  // production では canary 専用 env の値が空 → 認証情報ゲートで止まる
+  const r = checkCanaryIsolation(
+    { CANARY_UPSTASH_REDIS_REST_URL: '', CANARY_UPSTASH_REDIS_REST_TOKEN: '' },
+    'deploy-preview-999--analytics-keiba.netlify.app',
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'canary_redis_not_configured');
+});
+
+test('CONTEXT が明示的に production ならホストで覆せない', () => {
+  const r = checkCanaryIsolation(
+    { ...ok, CONTEXT: 'production' },
+    'deploy-preview-235--analytics-keiba.netlify.app',
+  );
+  assert.equal(r.ok, false, 'preview ホストで production context を上書きしてしまった');
+  assert.equal(r.code, 'production_context');
+  assert.equal(r.via, 'CONTEXT:production');
+});
+
+test('ホスト信号が使われるのは CONTEXT が未設定・未知のときだけ', async () => {
+  const { resolveNonProduction } = await import('../../../netlify/functions/admin-customer-import-redis-canary.js');
+  const preview = 'deploy-preview-235--analytics-keiba.netlify.app';
+  assert.equal(resolveNonProduction({ CONTEXT: 'production' }, preview).via, 'CONTEXT:production');
+  assert.equal(resolveNonProduction({ CONTEXT: 'deploy-preview' }, 'analytics.keiba.link').via, 'CONTEXT');
+  assert.equal(resolveNonProduction({}, preview).via, 'host:deploy-preview');
+  assert.equal(resolveNonProduction({ CONTEXT: '' }, preview).via, 'host:deploy-preview');
 });
