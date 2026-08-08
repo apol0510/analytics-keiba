@@ -100,3 +100,28 @@ canary は**本番データを 1 件も変更しない**ため巻き戻す対象
 - 本番 Redis の URL / token を `CANARY_*` に入れる（コードが `canary_points_at_production` で拒否する）
 - production URL に対して canary を実行する
 - URL / token を PR・ログ・報告に書く
+
+---
+
+## 実行実績（2026-08-08 / 隔離 Upstash）
+
+| 項目 | 結果 |
+|---|---|
+| canaryId | `20260808142215-d14aa2ee` |
+| preview | HTTP 200 / `sideEffects: none`（Redis へ 1 コマンドも送らない）|
+| run | HTTP 200 / `ok: true` |
+| Phase 0 | **3/3 PASS** |
+| Phase 1 | **19/19 PASS** |
+| Phase 2（`SAVE_FENCED_LUA`）| **10/10 PASS** |
+| cleanup | found 8 / deleted 8 / **remaining 0** |
+| status | 残存キー **0** |
+| finalize | `finalized: true` / markerRemaining **0** / rootRemaining **0** |
+| 使用リソース | commands 50 / keysTouched 11（上限 32）/ 平均 144ms |
+| env 撤収 | deploy-preview の 3 件を unset 済み |
+
+Phase 2 の内訳（10/10 PASS）: MISSING / MISSING 時に書かない / same token 保存可 /
+newer token 保存可 / stale token は STALE / 拒否時に正本が変わらない /
+**lost update 再現（B 保存成功・A 拒否・B の正本維持）** / fencingToken 無しは後方互換で上書き可。
+
+production Redis へは 1 コマンドも送っていない（接続に使う env 名が別で、値も production には無い）。
+Airtable write 0 / 実顧客変更 0 / 実メール送信 0。
