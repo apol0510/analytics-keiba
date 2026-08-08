@@ -1,3 +1,7 @@
+// ⚠️ role アドレス判定は **旧経路と同じ関数**を使う（再実装しない）。
+//    定義が 2 箇所に分かれると、片方だけ更新されて分類が割れる。
+import { isRoleAddress } from './customerImport.js';
+
 /**
  * importEligibility.js — 「どの行を新規作成してよいか」の判定（純粋・I/O なし）
  *
@@ -26,6 +30,7 @@ export const SKIP_REASON = Object.freeze({
   DUPLICATE_IN_AK: 'duplicate_in_ak', // AK 側重複は自動統合しない
   PROVIDER_SUPPRESSED: 'provider_suppressed',
   EXISTING: 'existing',               // すでに AK にいる → **更新しない**
+  ROLE_ADDRESS: 'role_address',       // 共用・自動応答用（info@ 等）→ 人が見る
 });
 
 /** 判定に使う集合。`Set` でないものは空集合として扱う（fail closed 側へ倒す） */
@@ -56,6 +61,10 @@ export function classifyCreateRow({ entry, facts, providerEmails } = {}) {
   if (asSet(f.unsubscribed).has(email)) return { ok: false, reason: SKIP_REASON.UNSUBSCRIBED };
   if (asSet(f.hardBounce).has(email)) return { ok: false, reason: SKIP_REASON.HARD_BOUNCE };
   if (asSet(f.softBounce).has(email)) return { ok: false, reason: SKIP_REASON.SOFT_BOUNCE };
+  // ⚠️ **順序を旧経路に合わせる**。role アドレスは testAccounts より **前**に判定する。
+  //    順序が違うと、role かつ test のアドレスの理由コードが入れ替わる
+  //    （2026-08-09 の突合で実際に test_account が 1 件多く出た原因）。
+  if (isRoleAddress(email)) return { ok: false, reason: SKIP_REASON.ROLE_ADDRESS };
   if (asSet(f.suspended).has(email)) return { ok: false, reason: SKIP_REASON.SUSPENDED };
   if (asSet(f.testAccounts).has(email)) return { ok: false, reason: SKIP_REASON.TEST_ACCOUNT };
   if (asSet(f.paid).has(email)) return { ok: false, reason: SKIP_REASON.PAID };
@@ -149,11 +158,15 @@ export function summarizeImportPlan({ entries, facts, providerEmails } = {}) {
 
   const n = (k) => skippedByReason[k] || 0;
   // 要確認（人が見る）と、機械的に除外するものを分ける
-  const reviewRequired = n(SKIP_REASON.FLAGGED);
+  // ⚠️ EXCLUDED / REVIEW_REQUIRED の割り当ては **旧経路 (customerImport.js) と同一**にする。
+  //    旧で REVIEW なのは「人が決める」もの: flagged（配信失敗歴・氏名食い違い）/
+  //    role_address / duplicate_in_ak。それ以外の落ちは EXCLUDE。
+  const reviewRequired = n(SKIP_REASON.FLAGGED) + n(SKIP_REASON.ROLE_ADDRESS)
+    + n(SKIP_REASON.DUPLICATE_IN_AK);
   const existing = n(SKIP_REASON.EXISTING);
   const excluded = n(SKIP_REASON.NO_EMAIL) + n(SKIP_REASON.UNSUBSCRIBED)
     + n(SKIP_REASON.HARD_BOUNCE) + n(SKIP_REASON.SOFT_BOUNCE) + n(SKIP_REASON.SUSPENDED)
-    + n(SKIP_REASON.TEST_ACCOUNT) + n(SKIP_REASON.PAID) + n(SKIP_REASON.DUPLICATE_IN_AK)
+    + n(SKIP_REASON.TEST_ACCOUNT) + n(SKIP_REASON.PAID)
     + n(SKIP_REASON.PROVIDER_SUPPRESSED);
 
   return {
