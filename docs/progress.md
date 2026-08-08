@@ -2796,6 +2796,44 @@ Netlify のログにはランタイムの `Duration:` 行しか残らず、レ�
 **次の観測機会は JST 10:00（UTC 01:00）の次回スケジュール起動。**
 deploy 後にそこを待って `reason` を確認する。
 
+## 三連複購入日時の記録を「無言で失敗させない」（2026-08-08 / PR・未 merge）
+
+### 先に判明したこと: 記録機能は**既に実装済み**だった
+
+`buildSanrenpukuPlusInitFields`（2026-07-29 の PR ac5f736/a7f24f4 で導入）が、
+三連複の入金確認成功時に `SanrenpukuPaidAt` へ確認日時を書いている。
+冪等（既存値があれば書かない）・遡及 write なし・Plus 専用フィールドのみ、
+というユーザー要件はすべて満たされており、テストも既に存在していた。
+
+**本番で `SanrenpukuPaidAt` が 0/1682 なのはバグではない。**
+唯一の `LifetimeSanrenpuku=true` 会員は 2026-07-14 の購入で、
+この機能が入る 2026-07-29 より前だったため。以後の三連複購入から記録される。
+
+### 実際に残っていたギャップ: 失敗が無言
+
+この PATCH は **best effort**（未作成フィールドへの PATCH で昇格ごと 422 で落ちる事故を
+防ぐため、昇格 PATCH とは別にして失敗しても巻き戻さない）。この設計は正しいが、
+失敗時の痕跡が `console.warn` の一文だけで、**購入日時が記録されなかったことに
+誰も気づけなかった**。三連複の購入日時は `SanrenpukuPaidAt` にしか残らない
+（`RequestedAmount` は承認時クリア、金額は管理者宛メールのみ）ため、
+ここが落ちると購入の裏取りが永久に取れなくなる。
+
+### 変更（観測性のみ。判定・書き込み内容は不変）
+
+- 結果を必ず 1 つ確定させる: `recorded` / `nothing_to_write` / `gate_closed` /
+  `failed_http_<status>` / `failed_error`
+- 構造化ログ **`[sanrenpuku-plus-init]`**（成功 `console.log` / 失敗 `console.warn`）。
+  secret・メール・氏名は出さない
+- `confirm-bank-payment` の応答に `sanrenpukuPlusInit` / `sanrenpukuPaidAtRecorded` を追加。
+  **三連複購入のときだけ**載せるので通常購入の応答形は変わらない
+- **昇格 PATCH・env gate・冪等性・書き込むフィールドは一切変更していない**
+
+⚠️ 実装中、既存 guard（`isSanrenpukuPromotion && isPlusFieldsEnabled(process.env)` の
+条件式を固定）を壊す形にリファクタしてしまい `check:safety` が落ちた。
+**guard を緩めるのではなくコード側を元の条件式へ戻して**解決した。
+
+固定テスト: `src/lib/payments/sanrenpukuPaidAt.guard.test.mjs`（14 件）
+
 ## Next Actions
 
 新しいセッションが最初に行うべき順序。

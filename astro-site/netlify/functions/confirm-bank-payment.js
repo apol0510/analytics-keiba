@@ -34,11 +34,23 @@ import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js
 import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
 import {
   buildSanrenpukuPlusInitFields,
+  SANRENPUKU_PAID_AT_FIELD,
   assertOnlyPlusFields,
   isPlusFieldsEnabled,
 } from '../../src/lib/premiumPlus/premiumPlusEligibility.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
+
+/**
+ * 三連複購入時の Plus 初期化ログの目印。ログ検索の入口になるので変えない。
+ *
+ * ⚠️ この PATCH は best effort（失敗しても昇格は巻き戻さない）。だからこそ
+ *    **無言で失敗させない**。三連複の購入日時は `SanrenpukuPaidAt` にしか残らず
+ *    （`RequestedAmount` は承認時にクリア、金額は管理者宛メールのみ）、
+ *    ここが落ちると購入の裏取りが永久に取れなくなる。
+ */
+const SANRENPUKU_PLUS_INIT_TAG = '[sanrenpuku-plus-init]';
+
 
 function jsonResponse(statusCode, body) {
   return {
@@ -251,31 +263,60 @@ exports.handler = async (event) => {
     // ⚠️ ここが失敗しても昇格・メールを巻き戻さない（決済成功を最優先で保持する）。
     //    フィールド未作成の本番で 422 を出さないよう PREMIUM_PLUS_FIELDS_READY で gate する。
     const isSanrenpukuPromotion = confirmation.fields['LifetimeSanrenpuku'] === true;
+    // 結果を必ず 1 つ確定させる。**この PATCH は best effort なので、
+    // 失敗しても昇格は巻き戻さない。ただし「無言で失敗」させない**（2026-08-08）。
+    // 三連複の購入日時は SanrenpukuPaidAt にしか残らず（RequestedAmount は承認時にクリア、
+    // 金額は管理者宛メールのみ）、ここが落ちると購入の裏取りが永久に取れなくなる。
+    let plusInitOutcome = null;
+    let plusPaidAtRecorded = false;
+    // ⚠️ 条件式はこの形のまま（既存 guard が `isSanrenpukuPromotion && isPlusFieldsEnabled(...)` を固定している）
     if (isSanrenpukuPromotion && isPlusFieldsEnabled(process.env)) {
-      try {
-        const plusInit = buildSanrenpukuPlusInitFields({ fields, confirmedAt });
-        if (plusInit && assertOnlyPlusFields(plusInit.fields)) {
-          const plusRes = await fetch(
-            `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
-            {
-              method: 'PATCH',
-              headers: {
-                Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ fields: plusInit.fields, typecast: true })
-            }
-          );
-          if (plusRes.ok) {
-            console.log('✅ [confirm-bank-payment] Premium Plus 販売資格を初期化（review）:', { recordId });
+      {
+        try {
+          const plusInit = buildSanrenpukuPlusInitFields({ fields, confirmedAt });
+          if (!plusInit || !assertOnlyPlusFields(plusInit.fields)) {
+            // 既に SanrenpukuPaidAt / eligibility があり、書くものが無い（冪等）
+            plusInitOutcome = 'nothing_to_write';
           } else {
-            // 昇格は成功済み。status のみ記録し、処理は継続する
-            console.warn('⚠️ [confirm-bank-payment] Premium Plus 初期化に失敗（昇格は完了済み）:', plusRes.status);
+            const willRecordPaidAt = Object.prototype.hasOwnProperty.call(
+              plusInit.fields, SANRENPUKU_PAID_AT_FIELD
+            );
+            const plusRes = await fetch(
+              `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
+              {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ fields: plusInit.fields, typecast: true })
+              }
+            );
+            if (plusRes.ok) {
+              plusInitOutcome = 'recorded';
+              plusPaidAtRecorded = willRecordPaidAt;
+            } else {
+              plusInitOutcome = `failed_http_${plusRes.status}`;
+            }
           }
+        } catch (e) {
+          plusInitOutcome = 'failed_error';
         }
-      } catch (e) {
-        console.warn('⚠️ [confirm-bank-payment] Premium Plus 初期化で例外（昇格は完了済み）:', e.message);
       }
+    } else if (isSanrenpukuPromotion) {
+      // 三連複昇格だが env gate が閉じている（未作成フィールドへ PATCH しない）
+      plusInitOutcome = 'gate_closed';
+    }
+    if (isSanrenpukuPromotion) {
+      // 構造化ログ（secret も PII も出さない。recordId は運用上の追跡に必要なので残す既存方針に従う）
+      const ok = plusInitOutcome === 'recorded' || plusInitOutcome === 'nothing_to_write';
+      const line = `${SANRENPUKU_PLUS_INIT_TAG} ${JSON.stringify({
+        recordId,
+        outcome: plusInitOutcome,
+        sanrenpukuPaidAtRecorded: plusPaidAtRecorded,
+        promotion: 'kept', // 昇格は常に保持する（この PATCH の失敗で巻き戻さない）
+      })}`;
+      if (ok) console.log(line); else console.warn(line);
     }
 
     // ── Step 5: 入金確認メール ────────────────────────────
@@ -307,7 +348,13 @@ exports.handler = async (event) => {
       recordId,
       plan: confirmation.fields['プラン'],
       planType: confirmation.fields['PlanType'],
-      expiration: confirmation.expiration
+      expiration: confirmation.expiration,
+      // 三連複購入のときだけ、購入日時の記録結果を返す（Automation / 運用者が失敗に気づけるように）。
+      // ⚠️ ここが 'recorded' 以外でも昇格は成立している（決済成功を最優先で保持する設計）。
+      ...(isSanrenpukuPromotion ? {
+        sanrenpukuPlusInit: plusInitOutcome,
+        sanrenpukuPaidAtRecorded: plusPaidAtRecorded,
+      } : {}),
     });
   } catch (error) {
     console.error('❌ [confirm-bank-payment] error:', error);

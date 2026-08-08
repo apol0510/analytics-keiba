@@ -304,6 +304,32 @@ guard テストが「昇格 PATCH より後」「try/catch」「throw / 500 を�
 | 再実行ケース | 挙動 |
 |---|---|
 | confirm 再実行（LifetimeSanrenpuku 既に true） | `SanrenpukuPaidAt` は既存値を保持（更新しない） |
+
+### 三連複購入日時の記録は「無言で失敗させない」（2026-08-08 追加）
+
+三連複の購入日時は **`SanrenpukuPaidAt` にしか残らない**。
+`RequestedAmount` は承認時にクリアされ、金額は管理者宛メールにしか残らないため、
+この PATCH が落ちると**購入の裏取りが永久に取れなくなる**
+（2026-08-07 の監査で実際に「本当に購入したのか確認できない」会員が 1 名出た）。
+
+そこで、本 PATCH は **best effort のまま**（昇格を巻き戻さない設計は変えない）で、
+結果を必ず 1 つ確定させてログと応答に出す。
+
+| 結果 | 意味 |
+|---|---|
+| `recorded` | 記録できた（`sanrenpukuPaidAtRecorded` で購入日時を書いたかも分かる）|
+| `nothing_to_write` | 既に記録済み（冪等・正常）|
+| `gate_closed` | `PREMIUM_PLUS_FIELDS_READY` 未設定。**購入日時が残らない**ので env を確認する |
+| `failed_http_<status>` / `failed_error` | **記録に失敗**。昇格は成立しているので、購入日時だけ手当てが要る |
+
+- ログの目印は **`[sanrenpuku-plus-init]`**。成功は `console.log` / 失敗は `console.warn`
+- ログに secret・メール・氏名は出さない
+- `confirm-bank-payment` の応答にも `sanrenpukuPlusInit` / `sanrenpukuPaidAtRecorded` を載せる
+  （**三連複購入のときだけ**。通常購入の応答形は変えない）
+- **既存顧客への遡及 write はしない**。記録されるのは今後の確認分だけで、
+  2026-07-29 より前に購入した会員の `SanrenpukuPaidAt` は空のまま
+
+固定テスト: `src/lib/payments/sanrenpukuPaidAt.guard.test.mjs`
 | 管理者が eligible / blocked 設定済み | confirm 再実行で **review へ戻さない** |
 | 書くものが何も無い | PATCH 自体を行わない（null 返し） |
 
