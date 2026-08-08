@@ -540,28 +540,41 @@ export const handler = async (event) => {
     // plan は read-only（Redis も Airtable 書き込みも無し）
     if (action === 'plan') return await handlePlan({ req, KEY, BASE, now });
 
-    // ⚠️【BLOCKED】書き込み経路は ADR 承認と Redis canary が済むまで**構造的に封じている**。
-    //   ADR: docs/decisions.md「2026-08-05 — 大量取り込みの正本と排他に Upstash Redis を採用する」
-    //   この kill-switch は承認と canary が済むまで**外さない**。
+    // ⚠️【二重ゲート】書き込み経路は **2 つの env が両方 'true' のときだけ**開く。
+    //
+    //   1. CUSTOMER_IMPORT_JOB_APPROVED  … 本実行そのものの承認（人の判断）
+    //   2. CUSTOMER_IMPORT_WRITE_ENABLED … 書き込みの有効化（既存ゲート・実行時だけ開ける）
+    //
+    //   どちらも **production 未設定**。片方でも欠ければ 403 で止まる（fail closed）。
+    //   Redis canary は 2026-08-08 に隔離 Upstash で PASS 済み（Phase 0/1/2 全通過）だが、
+    //   それだけでは開かない。**env を開けるまで書き込みは構造的に不可能**。
     if (action === 'start' || action === 'step') {
-      return json(403, {
-        mode: `import-job-${action}`,
-        written: 0,
-        error: '取り込みジョブの書き込みは承認前のため停止中です（BLOCKED）。',
-        code: 'blocked_by_design',
-        blocked: {
-          理由: 'ADR 未承認 / Redis canary 未実施',
-          設計: 'グローバルロック + 正規化メール単位のグローバル行 claim（Redis）',
-          ADR: 'docs/decisions.md 2026-08-05（Proposed・未承認）',
-        },
-      });
+      const approved = process.env.CUSTOMER_IMPORT_JOB_APPROVED === 'true';
+      const writeOn = process.env.CUSTOMER_IMPORT_WRITE_ENABLED === 'true';
+      if (!approved || !writeOn) {
+        return json(403, {
+          mode: `import-job-${action}`,
+          written: 0,
+          error: '取り込みジョブの書き込みは停止中です（BLOCKED）。',
+          code: 'blocked_by_design',
+          blocked: {
+            未設定のゲート: [
+              !approved ? 'CUSTOMER_IMPORT_JOB_APPROVED' : null,
+              !writeOn ? 'CUSTOMER_IMPORT_WRITE_ENABLED' : null,
+            ].filter(Boolean),
+            設計: 'グローバルロック + 正規化メール単位のグローバル行 claim（Redis）',
+            canary: '2026-08-08 隔離 Upstash で PASS（Phase 0/1/2）',
+          },
+        });
+      }
     }
 
     const claims = createClaimStore({ cmd: redisCmd });
     const authority = createJobAuthority({ cmd: redisCmd });
 
-    // ⚠️ start / step は上の kill-switch で必ず 403 になるため、ここへは到達しない。
-    //    分岐を残しておくのは、承認後に kill-switch を外すだけで有効化できるようにするため。
+    // ⚠️ 上の二重ゲートが両方 'true' のときだけここへ到達する。
+    //    さらに canStartImportJob / canStepImportJob が CUSTOMER_IMPORT_WRITE_ENABLED を
+    //    再確認するので、ゲートは合計 2 段（Function 入口 + 判定の単一源）。
     if (action === 'start') return await handleStart({ req, KEY, BASE, now, claims, authority });
     if (action === 'step') return await handleStep({ req, KEY, BASE, now, claims, authority });
     if (action === 'status') return await handleStatus({ req, KEY, BASE, authority });
