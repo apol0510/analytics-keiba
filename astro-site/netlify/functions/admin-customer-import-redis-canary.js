@@ -1,11 +1,18 @@
 /**
- * admin-customer-import-redis-canary.js — 取り込みジョブ Redis 版の Phase 0 / Phase 1 canary
+ * admin-customer-import-redis-canary.js — 取り込みジョブ Redis 版の Phase 0 / 1 / 2 canary
+ *
+ * ── どこで動かすのか（2026-08-08 変更）──────────────────────────
+ * **AK 本番 Redis からは完全に分離した専用 Upstash** に対して、**非本番 context だけ**で動かす。
+ * 接続に使うのは canary 専用の env 名 `CANARY_UPSTASH_REDIS_REST_URL` / `_TOKEN` のみで、
+ * 本番の `UPSTASH_REDIS_REST_*` は接続に一切使わない（`checkCanaryIsolation` 参照）。
+ * これらは secret（`is_secret: true`）で、値を持つ context は `deploy-preview` だけ。
  *
  * ── なぜ Function なのか ──────────────────────────────────────
- * `CANARY_UPSTASH_REDIS_REST_URL` / `_TOKEN` は Netlify の **secret（`is_secret: true`）**で、
- * scope は `functions`・値を持つ context は `production` だけ。作成後は API でも CLI でも
- * 値を取り出せない。**secret を Netlify の外へ持ち出さずに** production Redis を検証する
- * 唯一の方法が、この専用 Function を production へ置いて叩くこと。
+ * secret は作成後 API でも CLI でも値を取り出せない。**secret を Netlify の外へ
+ * 持ち出さずに**実 Redis を検証する唯一の方法が、この専用 Function を
+ * Deploy Preview へ置いて叩くこと。
+ *
+ * ⚠️ 手順・合否条件・後始末は `docs/customer-import-canary-runbook.md` を参照。
  *
  * ⚠️ **この Function は Airtable に触れない。メールを送らない。**（依存が存在しない）
  * ⚠️ **書き込み・削除は `customer-import:canary:<canaryId>:` 配下だけ。**
