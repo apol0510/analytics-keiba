@@ -212,8 +212,6 @@ const CLIENT_ONLY_PAID_PAGES_KNOWN = [
   'src/pages/premium-prediction/nankan.astro',
   'src/pages/premium-predictions-funabashi.astro',
   'src/pages/premium-predictions-urawa.astro',
-  'src/pages/premium-sanrenpuku.astro',
-  'src/pages/premium-select.astro',
 ];
 
 /** 有料ゲートのあるページを分類する（生ファイルで判定。コメント除去は誤爆するため使わない）。 */
