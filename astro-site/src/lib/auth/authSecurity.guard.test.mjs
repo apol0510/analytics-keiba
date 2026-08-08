@@ -205,8 +205,6 @@ test('実行コードは確実に検知する（guard が空振りしない）',
  */
 const CLIENT_ONLY_PAID_PAGES_KNOWN = [
   'src/pages/light-predictions-jra.astro',
-  'src/pages/premium-prediction/jra.astro',
-  'src/pages/premium-prediction/nankan.astro',
 ];
 
 /** 有料ゲートのあるページを分類する（生ファイルで判定。コメント除去は誤爆するため使わない）。 */

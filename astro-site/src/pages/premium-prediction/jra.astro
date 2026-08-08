@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
 import AccessControl from '../../components/AccessControl.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
@@ -24,6 +25,17 @@ const sanrenpukuLatestResultJra = getLatestSanrenpukuDayDataJra();
 // KIは6項目詳細 / AKは3項目要約（docs/feature-scores-site-differentiation.md）。
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
+
+// ── サーバー側認可（この行より前で有料データを組み立てない）──
+// 判定は既存の単一源に委譲: ak_session（本人特定）+ resolveEntitlements（権利）。
+// requiredPlan='premium' は既存どおり canViewPremium を意味する（境界は変えない）。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: 'premium',
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
 
 // 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
 // 既存 recentRaces は温存するため、計算系 (computeEvalPoints / computeImportance /
@@ -159,7 +171,9 @@ const formatRecentDistance = (d) => {
   return s;
 };
 
-export const prerender = true;
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-08-08）。
+//    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
+export const prerender = false;
 
 // サーバーサイド認証チェック（セキュリティ強化）
 // ⚠️ 一時的に無効化（開発用）
