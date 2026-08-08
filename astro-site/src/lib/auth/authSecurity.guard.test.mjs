@@ -204,7 +204,9 @@ test('実行コードは確実に検知する（guard が空振りしない）',
  * **新しく増えたら fail** させる。減らすのは自由（このリストから消すだけ）。
  */
 const CLIENT_ONLY_PAID_PAGES_KNOWN = [
-  'src/pages/light-predictions-jra.astro',
+  // 2026-08-08: Batch 5 (light-predictions-jra) の SSR 化で **0 件**になった。
+  // ここへ追記することは「localStorage 書き換えだけで読める有料ページを増やす」ことを意味する。
+  // 追記せず gatePaidPage を使うこと。
 ];
 
 /** 有料ゲートのあるページを分類する（生ファイルで判定。コメント除去は誤爆するため使わない）。 */
@@ -247,6 +249,15 @@ test('サーバー側認可へ移したページは既知リストから消え�
   // 既知リストは実態と一致していること（消し忘れ・書き間違いを検知）
   const missing = CLIENT_ONLY_PAID_PAGES_KNOWN.filter((f) => !clientOnly.includes(f));
   assert.deepEqual(missing, [], `既知リストにあるが実在しない: ${missing.join(', ')}`);
+});
+
+test('client-side gate だけの有料ページは 0 件（B 群 = 0）', () => {
+  const { clientOnly, serverAuth } = classifyPaidPages();
+  assert.deepEqual(clientOnly, [],
+    `client-side gate だけの有料ページが残っている: ${clientOnly.join(', ')}`);
+  assert.deepEqual(CLIENT_ONLY_PAID_PAGES_KNOWN, [], '既知リストが空でない（B 群 = 0 を維持すること）');
+  assert.ok(serverAuth.length >= 11,
+    `サーバー側認可の有料ページが想定より少ない: ${serverAuth.length}`);
 });
 
 test('サーバー側認可のページは gatePaidPage か verifyPlanAccess を通す', () => {

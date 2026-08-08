@@ -3434,3 +3434,37 @@ rollback は該当 env の unset（コード変更不要）。
   branch は remote / local とも削除済み（必要になったら同じ版上げをやり直す）。
 - **作業 worktree**: `/Users/user/Projects/analytics-keiba-measure` は本 Phase 完了時に撤去済み。
 - **Last verified**: 2026-08-04
+
+## 2026-08-08 — SSR 実行時データ guard 拡張（Step 0）+ Batch 5（B 群 = 0 到達）
+
+- **Step 0（`check-ssr-runtime-data.mjs` 拡張）**: ファイル存在確認だけでなく、SSR 有料ページが
+  runtime で通る fs loader を**成果物に対して全件実行**して非空を確認する。
+  対象: `loadJraVenuesForDisplay` / `loadFeatureScores`(jra・nankan) /
+  `loadHorseHistoriesForVenue` / `loadHorseStatsNankan`。
+  JRA は予想の最新日・実在会場を loader から導出して後続 loader に渡す（会場取りこぼしを検知）。
+  NANKAN は予想本体が `import.meta.glob(eager)` でバンドルへ焼き込まれるため、
+  **ソース側最新日**を要求日とみなし、その日付で artifact 側を引けるか検査する。
+  - **退行 4 シナリオで fail を実測**: ①featureScores/jra 最新日削除 ②predictions/jra 全削除
+    （= 2026-08-08 の実障害そのもの）③horseStats/nankan 最新日削除 ④horseHistories/jra 1 会場削除。
+    ①は従来の存在確認では**素通りしていた**（他日付のファイルが残るため）。
+- **Batch 5（`light-predictions-jra.astro`）**: `import.meta.glob(eager)` + `pickLatestJraPrediction`
+  を既存 runtime loader `loadJraVenuesForDisplay({ injectHistories:false })` へ置換し、
+  `prerender=false` + `gatePaidPage(requiredPlan='standard')` を適用。
+  - `loadJraVenuesForDisplay` に `injectHistories` オプションを追加（既定 `true` = 既存挙動）。
+    Light は近走を表示しないため `false` を渡す。**ページ専用 loader は新設しない。**
+  - **差し替え前後を機械比較**: 最新日 / venue 数 / race 数 / `adaptNewToLegacy` 通過後の表示入力が
+    **byte 一致**（891,635 bytes。`lastUpdated` は adapter が打つ実行時刻のため除外）。
+  - 近走注入は raw venues に 386 件書くが `adaptNewToLegacy` が通さないため表示には元々届いていない。
+    option は ①将来 adapter が素通しに変わっても Light に近走が出ない ②request 毎の無駄な
+    histories 読込を避ける、の 2 点で維持する。
+- **B 群 = 0**: `CLIENT_ONLY_PAID_PAGES_KNOWN` が空になり、`clientOnly` 実測も 0 件。
+  guard に「B 群 = 0」テストを追加し、client-only 有料ページを 1 枚足すと fail することを実測。
+- **SSR 関数サイズ**: 94.9 MB / 250MB（余裕 155.1 MB）。base 94.8 MB からほぼ横ばい。
+  **反実仮想を実測**: eager glob のまま SSR 化すると 107.0 MB（+12.1 MB）だった。
+- 変更範囲: `astro-site/scripts/check-ssr-runtime-data.mjs` /
+  `astro-site/src/lib/loadJraVenuesForDisplay.js` /
+  `astro-site/src/lib/auth/authSecurity.guard.test.mjs` /
+  `astro-site/src/pages/light-predictions-jra.astro` / 本ファイル。
+  **`package.json` / lockfile / workflow / データ schema / consumer contract は未変更**（既存 step に乗る）。
+- production deploy / merge / env 変更 / Airtable write / 実顧客テストは**していない**。
+- **Last verified**: 2026-08-08

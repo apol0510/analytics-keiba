@@ -1,5 +1,5 @@
 ---
-export const prerender = true;
+export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AccordionClickClose from '../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
@@ -8,7 +8,9 @@ import { processRaceData, normalizeHorseData, validateDataIntegrity, getHorseCon
 import { convertToYesterdayResultsJra, getLatestDayDataJra } from '../lib/archive-utils.js';
 import { PLAN_ACCESS } from '../lib/race-config.js';
 import RaceHorseSection from '../components/RaceHorseSection.astro';
-import { pickLatestJraPrediction, adaptNewToLegacy } from '../lib/adaptLatestPrediction.js';
+import { adaptNewToLegacy } from '../lib/adaptLatestPrediction.js';
+import { loadJraVenuesForDisplay } from '../lib/loadJraVenuesForDisplay.js';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 // premium JRA と同じ shared featureScores 由来の AK3項目で特徴量重要度を揃える（表示専用・読むだけ）。
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../lib/akFeatureSummary.js';
@@ -67,15 +69,27 @@ function applyHorseHistoriesJra(horses, nameIndex, date, raceVenue, raceDistance
 // venue タブで切り替える設計にしている。各 venue は南関版と同じ
 // {raceDate, track, totalRaces, races} 形式に変換してから RaceHorseSection で描画する。
 
-// JRA 予想ファイルを import.meta.glob で集めて最新日を選択
-const jraPredictionModules = import.meta.glob('/src/data/predictions/jra/**/*.json', { eager: true });
-const latestJra = pickLatestJraPrediction(jraPredictionModules);
-if (!latestJra) {
-    throw new Error('JRA 予想データが見つかりません。src/data/predictions/jra/ を確認してください。');
+// サーバー側認可。未認証・権限不足はここで打ち切り、有料本文を一切生成しない。
+const gate = await gatePaidPage({
+    request: Astro.request,
+    requiredPlan: 'standard',
+    env: process.env,
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+// JRA 予想は runtime loader から取得する（import.meta.glob(eager) は SSR 関数へ
+// predictions/jra を丸ごとインライン化してしまうため使わない）。
+// injectHistories:false = 近走注入前の venues。Light は近走を表示しないため、
+// 現行 (glob + pickLatestJraPrediction) と同一の表示入力になる。
+const jraLoaded = loadJraVenuesForDisplay({ injectHistories: false });
+if (jraLoaded.error) {
+    throw new Error(`JRA 予想データが見つかりません: ${jraLoaded.error}`);
 }
+const latestJra = jraLoaded.predictionData;
 
 // 各 venue を旧スキーマに変換
-const adaptedVenues = (Array.isArray(latestJra.venues) ? latestJra.venues : [])
+const adaptedVenues = (Array.isArray(jraLoaded.venues) ? jraLoaded.venues : [])
     .map(v => {
         const adapted = adaptNewToLegacy(v);
         // venue slug は表示用の venue 名をそのまま使う（京都 / 東京 / 新潟 など）
