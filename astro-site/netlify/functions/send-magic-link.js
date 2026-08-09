@@ -68,6 +68,37 @@ function genericOk(headers) {
   };
 }
 
+
+/**
+ * 同一 Email の未使用・未期限トークンを Used=true にする（今発行した 1 本は残す）。
+ * 判定は純粋関数 `selectTokensToInvalidate` に委譲する（単一源）。
+ */
+async function sweepOldTokens({ authTokensTable, email, keepTokenId }) {
+  try {
+    const { selectTokensToInvalidate, chunkForUpdate } =
+      await import('../../src/lib/auth/magicLinkTokenSweep.js');
+    const escaped = String(email).replace(/'/g, "\\'");
+    const records = await authTokensTable
+      .select({
+        filterByFormula: `AND(LOWER(TRIM({Email})) = '${escaped}', NOT({Used}))`,
+        maxRecords: 50,
+      })
+      .all();
+    const { ids, skipped } = selectTokensToInvalidate({
+      records: records.map((r) => ({ id: r.id, fields: r.fields })),
+      keepTokenId,
+      nowMs: Date.now(),
+    });
+    for (const batch of chunkForUpdate(ids)) {
+      await authTokensTable.update(batch.map((id) => ({ id, fields: { Used: true } })));
+    }
+    // 件数だけ残す（Email / Token は出さない）
+    console.log(`🧹 [send-magic-link] ${JSON.stringify({ event: 'old_tokens_invalidated', count: ids.length, skippedUsed: skipped.used, skippedExpired: skipped.expired })}`);
+  } catch {
+    console.warn('⚠️ [send-magic-link] {"event":"old_token_sweep_failed"}');
+  }
+}
+
 exports.handler = async (event) => {
   const headers = corsHeaders(event);
 
@@ -104,7 +135,7 @@ exports.handler = async (event) => {
     // 0件 / 1件 / 複数件を明確に区別。複数件は fail closed（送信も token 作成もしない）。
     const lookup = classifyCustomerMatches(customers);
     if (lookup.kind === CUSTOMER_LOOKUP.NONE) {
-      console.warn(`[send-magic-link] Customer not found (generic 200): email=${email}`);
+      console.warn('[send-magic-link] {"event":"customer_not_found"}');
       return genericOk(headers);
     }
     if (lookup.kind === CUSTOMER_LOOKUP.CONFLICT) {
@@ -123,9 +154,8 @@ exports.handler = async (event) => {
 
     // トークン生成（単回使用・期限は MAGIC_LINK_TTL_MS）
     const token = uuidv4();
-    const tokenPrefix = token.slice(0, 8);
     const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_MS);
-    await authTokensTable.create([
+    const created = await authTokensTable.create([
       {
         fields: {
           Token: token,
@@ -138,7 +168,18 @@ exports.handler = async (event) => {
         },
       },
     ]);
-    console.log(`🎫 [send-magic-link] Token issued (paid): tokenPrefix=${tokenPrefix}, email=${email}`);
+    const newTokenId = (created && created[0] && created[0].id) || '';
+
+    // ── 有効なリンクを「最新 1 本」に保つ ──────────────────────────
+    // ⚠️ **create の後に掃除する**（前ではない）。同時に 2 回発行されても、
+    //    後から掃除した側が相手を無効化するため最終的に 1 本へ収束する。
+    //    先に掃除すると、両者が「掃除 → 作成」を終えて 2 本残りうる。
+    // ⚠️ 使用済み・期限切れは書き換えない（判定は magicLinkTokenSweep が単一源）。
+    // ⚠️ best-effort。失敗しても新しいリンクは有効なのでログインは通る
+    //    （失敗時の状態は「無効化しなかった」= 従来と同じで、悪化しない）。
+    await sweepOldTokens({ authTokensTable, email, keepTokenId: newTokenId });
+    // ⚠️ **メールアドレス・トークンはログに出さない**（2026-08-09 の監査で置換）。
+    console.log('🎫 [send-magic-link] {"event":"token_issued","plan":"paid"}');
 
     const magicLink = `${SITE_BASE}/auth/verify?token=${encodeURIComponent(token)}`;
     // Airtable Customers の氏名フィールドは日本語の `氏名`（`Name` / `お名前` は存在しない）。
@@ -185,10 +226,10 @@ exports.handler = async (event) => {
 </div>
 `,
       });
-      console.log(`✅ [send-magic-link] SendGrid 送信成功: email=${email}, tokenPrefix=${tokenPrefix}`);
+      console.log('✅ [send-magic-link] {"event":"mail_sent"}');
     } catch (sgError) {
       const errorDetails = sgError?.response?.body || sgError?.message || String(sgError);
-      console.error(`❌ [send-magic-link] SendGrid 送信失敗: email=${email}, error=`, errorDetails);
+      console.error(`❌ [send-magic-link] ${JSON.stringify({ event: 'mail_send_failed', status: (errorDetails && errorDetails.code) || null })}`);
       return {
         statusCode: 502,
         headers,
