@@ -90,9 +90,9 @@ test('申込者メール: 「利用開始した」と読める表現を含まな
 test('申込者メール: 振込先はモーダルと同じ口座', () => {
   const { application: app } = application();
   const html = buildOfferUserEmail({ application: app, supportEmail: 'support@keiba.link' }).html;
-  assert.ok(BANK_ACCOUNT_TEXT.includes('5338892'));
-  assert.ok(html.includes('5338892'));
-  assert.ok(html.includes('三井住友銀行 洲本支店'));
+  assert.ok(BANK_ACCOUNT_TEXT.includes('8307337'));
+  assert.ok(html.includes('8307337'));
+  assert.ok(html.includes('PayPay銀行 本店営業部'));
 });
 
 test('ユーザー入力は HTML エスケープする', () => {

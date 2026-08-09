@@ -259,7 +259,7 @@ exports.handler = async (event, context) => {
     <div class="alert">
       <h4 style="margin: 0 0 10px 0; color: #92400e;">⚠️ 対応必要事項</h4>
       <ol style="margin: 0; padding-left: 20px; color: #78350f;">
-        <li>振込確認（三井住友銀行 洲本支店 普通 5338892）</li>
+        <li>振込確認（PayPay銀行 本店営業部 普通 8307337）</li>
         <li>入金確認後、${email} へアクセス情報を送信</li>
         <li>Airtableに顧客情報を登録（${productName}）</li>
       </ol>
@@ -349,9 +349,9 @@ exports.handler = async (event, context) => {
       <ol style="margin: 0; padding-left: 20px; color: #1e293b;">
         <li style="margin-bottom: 10px;">
           <strong>振込先口座</strong><br>
-          三井住友銀行 洲本支店<br>
-          普通 5338892<br>
-          ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ
+          PayPay銀行 本店営業部<br>
+          普通 8307337<br>
+          ｳｴﾌﾞｹｲﾊﾞ
         </li>
         <li style="margin-bottom: 10px;">
           <strong>入金確認</strong><br>

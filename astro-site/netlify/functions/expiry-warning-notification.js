@@ -218,9 +218,9 @@ function generateCustomerEmail(fullName, email, plan, expiryDate, unsubscribeUrl
 
       <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
         <h4 style="margin: 0 0 15px 0;">🏦 振込先口座</h4>
-        <p style="margin: 5px 0;"><strong>三井住友銀行 洲本支店</strong></p>
-        <p style="margin: 5px 0;"><strong>普通 5338892</strong></p>
-        <p style="margin: 5px 0;">ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ</p>
+        <p style="margin: 5px 0;"><strong>PayPay銀行 本店営業部</strong></p>
+        <p style="margin: 5px 0;"><strong>普通 8307337</strong></p>
+        <p style="margin: 5px 0;">ｳｴﾌﾞｹｲﾊﾞ</p>
       </div>
 
       <div style="text-align: center; margin: 30px 0;">
