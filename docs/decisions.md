@@ -1558,3 +1558,57 @@ reason コードだけの構造化ログへ置換した。
 |---|---|---|
 | TTL | `src/lib/auth/constants.js` の `MAGIC_LINK_TTL_MINUTES`（CJS 側は値を持つが一致を強制）| `magicLinkTtl.guard.test.mjs` |
 | 無効化の判定 | `src/lib/auth/magicLinkTokenSweep.js`（純粋関数）| `magicLinkSingleActiveToken.test.mjs` |
+
+## 2026-08-09 — 大量取り込み: 全件走査をやめ、名指し取得 + 段階的検証にする
+
+### 背景（本番で起きたこと）
+
+`imp-2026-08-09-001`（14,279 件 CREATE）の終盤で **毎 step が HTTP 504** になった。
+書き込み自体は成立していたが、応答が返らないため運用が state 駆動になった。
+
+### 計測（本番 Customers 15,967 件）
+
+| 取得方法 | 件数 | ページ | 所要 |
+|---|---|---|---|
+| 全件・全列（従来）| 15,967 | 160 | **170.8 秒** |
+| 全件・2 列のみ | 15,967 | 160 | 169.8 秒 |
+| Source 限定・列なし | 14,279 | 143 | 154.7 秒 |
+| **対象 100 件を名指し** | 100 | 1 | **1.7 秒** |
+
+**列を減らしても効かない。コストはページ数**（約 1 秒/ページ）。
+Netlify Function のタイムアウト（最大 26 秒）では**全件走査は原理的に不可能**。
+step は facts 用と突合用で **2 回**引いていたので約 340 秒かかっていた。
+
+### 決定
+
+1. **facts は名指し取得にする**
+   `classifyCreateRow` は候補メールの `has()` しか見ないので、
+   **候補だけを含む facts でも判定は全件取得時と同一**。
+   `duplicateInAk` も、名指しクエリが同一メールの全レコードを返すので正しく検出できる。
+   窓（既定 300 件）単位で先読みし、必要数が揃うまで窓を進める（上限 12 窓）。
+   formula が長くなるので `listRecords`（POST）を使う。
+
+2. **per-batch 検証を追加する**
+   その batch で作成したメールを名指しで引き直し、
+   **取りこぼし / 二重 CREATE / 他 Source 混入**を検知する。
+   全体の件数より**検知が速い**（1 batch 単位）。
+
+3. **全体突合は cadence + 完了時**
+   総件数・全体の重複は全件走査が要るので、25 バッチごと + **完了時は必ず**実行する。
+   143 バッチなら 6 回程度。
+   省略した回は `deferredFullReconcile: true` を正本に残す（**黙って OK にしない**）。
+
+### 落とさなかったもの
+
+- `counters_balanced` / `within_plan` … 全件不要。毎 step 実行
+- `created_matches_airtable` / `claims_created_matches_airtable` / `no_new_duplicates`
+  … cadence + 完了時に実行。**完了時必須なので、一度も通さず COMPLETED にはならない**
+- 過少計測の測り直し（2026-08-09 の `4400 vs 4333`）も全体突合の中で維持
+- **fail open にしない**: 名指し取得が失敗したら例外。空集合で続けない
+  （空集合 = 除外が全部無効 = 二重 CREATE の温床）
+
+### PII
+
+名指しクエリの入力にメールを使うが、**ログ・レスポンス・正本には入れない**。
+`runChildBatch` が返す `createdEmails` はメモリ上だけで使う。
+audit は従来どおり `rowKey`（ハッシュ）のみ。
