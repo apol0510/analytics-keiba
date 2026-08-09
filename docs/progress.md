@@ -6,6 +6,65 @@
 > コード実装の完了記録ではない。過去のコード作業の完了状況は git 履歴・`docs/MAINTENANCE_HISTORY.md`・
 > `CLAUDE.md` を一次証拠とすること。
 
+
+## 2026-08-09 — 外部リスト大量取り込み `imp-2026-08-09-001` 本番完了（14,279 件）
+
+**結果: COMPLETED / CREATE 14,279 / UPDATE 0 / failed 0 / duplicate 0 / メール 0。**
+Customers は 1,688 → **15,967**（= 1,688 + 14,279 で完全一致）。
+reconciliation は最終 5 検査すべて PASS。write ゲート 2 件は **UNSET へ再閉鎖済み**。
+
+| 項目 | 値 |
+|---|---|
+| ImportBatchId | `imp-2026-08-09-001` |
+| Source | `customer-import:imp-2026-08-09-001` |
+| CSV 母数 | 15,779（CSV 内の正規化メール重複 0）|
+| CREATE / EXISTING / EXCLUDED / REVIEW | 14,279 / 1,373 / 33 / 94 |
+| 子バッチ | 142 完了 |
+| CSV fingerprint | `33200f587f03…` |
+| snapshot fingerprint | `abecef6dd726…` |
+| 書き込んだ列 | allow-list 内のみ |
+
+### 実行中に本番で見つけて直した不具合（5 件）
+
+**この経路は一度も通しで動いたことが無く、会計の不具合を 100 件ずつ本番で発見する形になった。**
+
+| PR | 内容 |
+|---|---|
+| #275 | `reconciliation.checks[].name` が `assertNoPii` に PII と誤検知され**正本を保存できなかった**（Airtable へは書けているのに `created=0` のまま）|
+| #276 | 取り残しを実測へ追いつかせる `adoptMeasuredCreated` |
+| #278 | `attempted` 未加算で `counters_balanced` が必ず落ちる / BLOCKED 解除経路 `action=unblock` / **143 バッチ通し試験** |
+| #280 | 書き込み中のページングによる**過少計測**（`4400 vs 4333`）で誤 BLOCKED → 一度だけ測り直す |
+| #281 | `MAX_PAGES=60` で 6,000 件超を数え切れず実測が過少に → 250 + 打ち切りは例外 |
+
+### 終盤の HTTP 504 と恒久対策（#283 / main 反映済み・**本番未検証**）
+
+終盤は毎 step が 504 になった（**書き込みは成立**。応答が返らないだけ）。
+
+計測（Customers 15,967 件）: 全件取得は **160 ページ / 約 170 秒**。**列を減らしても変わらない**
+（コストはページ数）。step は facts 用と突合用で 2 回引いており約 340 秒。
+Netlify Function のタイムアウト（最大 26 秒）では**全件走査は原理的に不可能**だった。
+
+対して **対象 100 件の名指しクエリは 1 コール 1.7 秒**。
+
+#283 で次のように変えた:
+- facts は**名指し取得**（窓 300 件・上限 12 窓・`listRecords` POST）
+- **per-batch 検証**を追加（書いたメールを引き直し、取りこぼし / 二重 CREATE / 他 Source を検知）
+- 全体突合は **cadence 25 + 完了時必須**。省略回は `deferredFullReconcile: true` を正本に残す
+
+⚠️ **#283 は本番での実地検証をまだ行っていない。**
+   次回の大量取り込みが名指し取得方式の初回実行になる。開始時は
+   最初の数バッチで `batch_verify` のログと所要時間（従来 340 秒 → 想定 4〜6 秒）を
+   確認してから流し切ること。
+
+### 次回に持ち越す注意
+
+- 確定件数は**測定時点の値**。Customers は日々増えるので、開始直前に `plan` を
+  再実行して確認文字列を取り直す（件数が変わると開始が拒否される）
+- `action=step` は逐次のみ。並行実行しない（グローバルロックで拒否される）
+- 504 が出ても書き込みは成立しうる。**状態（`action=status`）で判断する**
+- 完了後は env 2 件を必ず UNSET し、redeploy で再閉鎖する
+
+
 ## Final Goal
 
 南関競馬 + 中央競馬（JRA）統合 AI 予想プラットフォーム `https://analytics.keiba.link/` を、
