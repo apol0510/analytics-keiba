@@ -7,6 +7,46 @@
 > `CLAUDE.md` を一次証拠とすること。
 
 
+## 2026-08-09 — 振込先口座を PayPay銀行へ変更（本番反映済み）
+
+顧客の入金先を切り替えた。**旧口座はリポジトリから 0 件**（履歴文書 1 行を除く）。
+
+| 項目 | 変更後 |
+|---|---|
+| 振込先銀行 | PayPay銀行 |
+| 支店名 | 本店営業部 |
+| 口座種別 | 普通（変更なし）|
+| 口座番号 | 8307337 |
+| 口座名義 | ｳｴﾌﾞｹｲﾊﾞ |
+
+PR #288 `1de26b28` / 26 ファイル・159 行。
+
+### なぜ 26 ファイルになるか（次に口座を変えるとき必読）
+
+**振込モーダルは 18 ページへコピペで散在している。** 正本の `pricing.astro` だけ直すと
+残り 17 ページが旧口座のまま残り、そこから申し込んだ顧客が**旧口座へ振り込む**。
+2026-07 の `paymentCompletedConfirm` 未送信（16 ページ中 15 ページが壊れていた）と同じ構図。
+
+置換対象は 4 つの文字列（銀行名・支店名・口座番号・口座名義）で、
+**表示・コピーボタンの引数・メール本文**のすべてに出てくる。
+メール Function 3 本（`bank-transfer-application` / `expiry-notification` /
+`expiry-warning-notification`）と `offerIntakeEmail.js` も忘れないこと。
+
+- `docs/MAINTENANCE_HISTORY.md` は**履歴なので変更しない**（当時の実装の記録）
+- 口座名義の `font-size` 縮小指定は旧名義が長かったためのもの。短い名義では外す
+
+### 本番実画面で確認した内容
+
+| ページ | 結果 |
+|---|---|
+| `/pricing/` `/premium-upgrade/` `/light-campaign/` `/spring-campaign/` `/withdrawal-upsell/` `/sanrenpuku-demo/` `/archive-sanrenpuku-all/` `/dashboard/` `/offer/` | HTTP 200・新口座あり・**旧口座 0** |
+| light/premium 予想系・`premium-prediction/nankan` | 302 → `/login/`（認証ゲート・想定どおり）|
+| `/archive-sanrenpuku/` | 301 → `/archive-sanrenpuku-all/`（確認済み）|
+| `/premium-plus/` | 404（段階公開・想定どおり）|
+
+merge 前に Deploy Preview でも同じ検査を通している。
+
+
 ## 2026-08-09 — `dormant-reactivation` v2 を取り込み 14,279 名へ本番配信
 
 **対象は `imp-2026-08-09-001` で CREATE した外部無料ユーザー 14,279 名だけ。**
