@@ -522,7 +522,7 @@ test('使用停止中のキャンペーンは理由付きで拒否される（dr
 
 test('キャンペーン一覧は停止中も理由付きで返す', async () => {
   const { body } = parse(await call({ action: 'campaigns' }));
-  assert.equal(body.campaigns.length, 9, '停止中が一覧から消えている');
+  assert.equal(body.campaigns.length, 10, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
   assert.equal(off.length, 2, '停止中が 2 本でない');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に理由が無い`);

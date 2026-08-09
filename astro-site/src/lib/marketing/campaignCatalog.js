@@ -345,6 +345,43 @@ export const CAMPAIGNS = Object.freeze([
     enabled: true,
   },
   {
+    campaignId: 'free-member-activation',
+    version: 1,
+    name: '無料会員 活性化',
+    // `dormant-reactivation` との違い:
+    //   休眠再アプローチ = 「ご無沙汰しております」= **一度は接点があった前提**の文面で、
+    //     入口は実績ページ（有料の中身を見せて戻ってきてもらう）。
+    //   本キャンペーン   = **まだ無料の中身を使っていない人**へ、無料で何が見られるかを
+    //     具体的に伝えるのが目的。入口は無料予想ページそのもの。
+    // 契約の勧誘・価格・期限は書かない（活性化が目的で、販売はここでやらない）。
+    description: '無料会員へ、無料で見られる範囲を具体的に案内して実際に使ってもらう。価格・契約の勧誘はしない。',
+    subject: '【KEIBA Analytics】無料でご覧いただける予想のご案内',
+    body: [
+      '{{salutation}}',
+      '',
+      'KEIBA Analytics です。ご登録ありがとうございます。',
+      '',
+      '無料のままで、次の内容をご覧いただけます。',
+      '',
+      '・中央競馬（JRA）と南関競馬の全レースのAI予想',
+      '・前日の有料メインレース買い目と、その結果',
+      '',
+      '結果は当たった日も外した日もそのまま載せています。',
+      'まずは今日の予想からご覧ください。',
+    ].join('\n'),
+    ctaLabel: '今日の無料予想を見る',
+    ctaUrl: `${SITE}/free-prediction/nankan/`,
+    recommendedSegments: ['plan:free', 'contract:none', 'history:never'],
+    // 無料プラン かつ 契約なしのみ。**有料会員・期限切れには送らない**
+    //（期限切れは `dormant-reactivation` / `expired-comeback` の担当）。
+    audienceRule: {
+      contracts: [MK_CONTRACT.NONE],
+      plans: [MK_PLAN.FREE],
+      enforce: true,
+    },
+    enabled: true,
+  },
+  {
     campaignId: 'comeback-offer',
     version: 2,
     name: 'カムバック割引案内（専用URL）',
