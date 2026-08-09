@@ -25,6 +25,24 @@ function stub({ scheduled = [], deliveries = [], customers = [], suppression = t
     }
     if (u.includes('api.sendgrid.com')) return { ok: true, status: 200, json: async () => [] };
     if (u.includes('api.airtable.com')) {
+      // `POST /{table}/listRecords` は Airtable の **読み取り** API（長い formula 用）。
+      // 書き込みと数えず、formula の絞り込みを実挙動どおり再現する。
+      if (u.includes('/listRecords')) {
+        const formula = String(JSON.parse(init.body || '{}').filterByFormula || '');
+        const pick = (re) => new Set([...formula.matchAll(re)].map((m) => m[1]));
+        if (u.includes('Customers')) {
+          const want = pick(/LOWER\(\{Email\}\)='([^']*)'/g);
+          const rows = customers.filter((r) => want.has(String(r.fields?.Email || '').toLowerCase()));
+          return { ok: true, status: 200, json: async () => ({ records: rows }) };
+        }
+        if (u.includes('CampaignDeliveries')) {
+          const want = pick(/LOWER\(\{RecipientEmail\}\)='([^']*)'/g);
+          const rows = deliveries.filter((r) => want.size === 0
+            || want.has(String(r.fields?.RecipientEmail || '').toLowerCase()));
+          return { ok: true, status: 200, json: async () => ({ records: rows }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      }
       if (method !== 'GET') { calls.airtableWrites += 1; return { ok: true, status: 200, json: async () => ({}) }; }
       if (u.includes('ScheduledEmails')) {
         // 実 API は filterByFormula で絞る。stub でも同じに振る舞わせる

@@ -51,6 +51,9 @@ import {
 } from '../../src/lib/marketing/marketingEmailShell.js';
 import { evaluateExtraAudience } from '../../src/lib/marketing/campaignAudienceRules.js';
 import {
+  chunkList, assertFetchComplete, TARGETED_CHUNK, TARGETED_MAX_PAGES,
+} from '../../src/lib/marketing/marketingTargetedLoad.js';
+import {
   linkOfferForRecipient,
   requiresOfferUrl,
   OFFER_URL_PLACEHOLDER,
@@ -108,6 +111,85 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
     pages += 1;
     if (offset && pages >= 40) break;
   } while (offset);
+  return out;
+}
+
+/**
+ * 指定アドレスのレコードだけを `listRecords`（POST）で引く。
+ *
+ * 全件走査は `fetchAll` の 40 ページ打ち切りに当たり、後ろのレコードを黙って捨てる。
+ * 送信直前の再検証でそれをやると、配信停止・停止アカウントの判定を通り抜ける。
+ * 取り切れなければ**例外**にして、短い結果のまま送らせない。
+ */
+async function fetchByEmailsReadOnly({ KEY, BASE, table, emails, extraCondition = null }) {
+  const out = [];
+  for (const group of chunkList(emails, TARGETED_CHUNK)) {
+    const safe = group.filter((e) => !e.includes("'"));
+    if (safe.length === 0) continue;
+    const or = `OR(${safe.map((e) => `LOWER({Email})='${e}'`).join(',')})`;
+    const formula = extraCondition ? `AND(${extraCondition},${or})` : or;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100 };
+      if (offset) body.offset = offset;
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) throw new Error(`${table} targeted fetch failed: HTTP ${res.status}`);
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+      if (offset && pages >= TARGETED_MAX_PAGES) {
+        assertFetchComplete({ table, offset, pages, maxPages: TARGETED_MAX_PAGES });
+      }
+    } while (offset);
+  }
+  return out;
+}
+
+/** 宛先ぶんの Customers だけを引く。 */
+function fetchCustomersByEmails({ KEY, BASE, emails }) {
+  return fetchByEmailsReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE, emails });
+}
+
+/** 宛先ぶんのキャンペーン配信履歴だけを引く（24h 横断ガードの入力）。 */
+async function fetchCampaignDeliveriesForEmails({ KEY, BASE, emails }) {
+  const out = [];
+  for (const group of chunkList(emails, TARGETED_CHUNK)) {
+    const safe = group.filter((e) => !e.includes("'"));
+    if (safe.length === 0) continue;
+    const formula = `AND({EmailType}='campaign',OR(${safe
+      .map((e) => `LOWER({RecipientEmail})='${e}'`).join(',')}))`;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100 };
+      if (offset) body.offset = offset;
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) throw new Error(`${DELIVERIES_TABLE} targeted fetch failed: HTTP ${res.status}`);
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+      if (offset && pages >= TARGETED_MAX_PAGES) {
+        assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: TARGETED_MAX_PAGES });
+      }
+    } while (offset);
+  }
   return out;
 }
 
@@ -203,13 +285,26 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
     if (e) blocked.add(e); // 販促メールは SOFT_BOUNCE も送らない
   }
 
+  // 🛡️ 再検証に要る顧客・履歴は、**このジョブの宛先ぶんだけ**名指しで引く。
+  //
+  //    以前は Customers / CampaignDeliveries を全件走査していたが、`fetchAll` は
+  //    40 ページ（4,000 件）で **黙って打ち切る**。Customers が 15,967 件へ増えた結果:
+  //      - 4,000 件目より後ろの宛先が `fieldsByEmail` に載らず、キャンペーン固有条件が
+  //        `campaign_mismatch` で落ちる（実際にカナリアが送れなかった）
+  //      - `unsubscribed` / `suspended` も打ち切られた範囲でしか作られない
+  //        = **配信停止した人を送信対象から外し損ねる**
+  //    宛先ぶんだけなら件数に比例し、テーブルの大きさに依存しない。
+  const jobEmails = [...new Set(
+    jobs.flatMap((r) => String(r.fields?.Recipients || '')
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)),
+  )];
+
   // キャンペーン横断の最終送信日時（**このジョブ自身の記録は除く**。
   // 自分の queued レコードを見て自分を止めてしまわないようにする）
-  const campaignDeliveries = await fetchAll({
-    KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
-  }).catch(() => []);
+  const campaignDeliveries = await fetchCampaignDeliveriesForEmails({ KEY, BASE, emails: jobEmails })
+    .catch(() => []);
 
-  const customers = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
+  const customers = await fetchCustomersByEmails({ KEY, BASE, emails: jobEmails });
   const unsubscribed = new Set();
   /**
    * AK 側が意図的に止めたアカウント（suspended / banned 等）。
@@ -323,6 +418,19 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
         // 既に送った相手。台帳を書き換える必要も無いので数えるだけ
         summary.skipped += 1;
         summary.skippedByReason.already_sent_in_job = (summary.skippedByReason.already_sent_in_job || 0) + 1;
+        summary.verified += 1;
+        continue;
+      }
+      // 🛡️ 顧客レコードを引けない相手には送らない（fail closed）。
+      //    `unsubscribed` / `suspended` は Customers から作るため、レコードが無いと
+      //    「配信停止していない」ではなく「確認できていない」になる。
+      //    取得の打ち切りは `assertFetchComplete` が例外にするので、ここへ来るのは
+      //    enqueue 後にレコードが消えた場合。バッチ全体は止めず、この 1 件だけ落とす。
+      if (!fieldsByEmail.has(email)) {
+        toSkip.push({ email, status: 'skipped-duplicate', reason: 'customer_record_missing' });
+        summary.skipped += 1;
+        summary.skippedByReason.customer_record_missing =
+          (summary.skippedByReason.customer_record_missing || 0) + 1;
         summary.verified += 1;
         continue;
       }
