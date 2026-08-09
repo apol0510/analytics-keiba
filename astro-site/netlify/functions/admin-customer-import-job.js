@@ -55,7 +55,17 @@ import { reconcileImportJob, RECONCILE_VERDICT, shouldRemeasureBeforeBlock } fro
 import { CREATE_ALLOWED_FIELDS, OPTIONAL_AUDIT_FIELDS } from '../../src/lib/crm/importWritePlan.js';
 
 const CUSTOMERS_TABLE = 'Customers';
-const MAX_PAGES = 60;
+/**
+ * Customers 全件取得のページ上限。
+ *
+ * ⚠️ 60（= 6,000 件）だと**取り込みが進むほど数えきれなくなる**。
+ *    2026-08-09 の本実行で総件数が 6,088 になった時点で打ち切られ、
+ *    実測が過少になって created_matches_airtable が永久に落ちた。
+ *    最終的な総件数は 1,688 + 14,279 ≒ 15,967 なので、その 1.5 倍を見込む。
+ * ⚠️ **打ち切ったまま突合に使わない**。足りなければ例外にして fail closed にする
+ *    （少なく数えた値で「不一致」と判定すると、正しい実行を止めてしまう）。
+ */
+const MAX_PAGES = 250;
 
 function json(statusCode, body) {
   return {
@@ -99,7 +109,10 @@ async function fetchAllReadOnly({ KEY, BASE, table }) {
     const data = await res.json();
     out.push(...(data.records || []));
     offset = data.offset; pages += 1;
-    if (offset && pages >= MAX_PAGES) break;
+      if (offset && pages >= MAX_PAGES) {
+        // ⚠️ 打ち切った配列を突合に使うと「実測が少ない」と誤判定する。数え切れないなら止める。
+        throw new Error(`${table} fetch truncated at ${pages} pages (MAX_PAGES=${MAX_PAGES})`);
+      }
   } while (offset);
   return out;
 }
