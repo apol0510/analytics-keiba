@@ -7,6 +7,90 @@
 > `CLAUDE.md` を一次証拠とすること。
 
 
+## 2026-08-09 — 取り込みの残作業を確定し、無料会員 活性化テンプレートを追加
+
+### 取り込みの積み残しは **ゼロ**（read-only 実測で確定）
+
+「残り CREATE 候補 14,484 件」という旧記録は誤り。`imp-2026-08-09-001` で
+CREATE 候補は**出し切っている**。CSV 3 本を取り込み時と同じ判定器
+（`csvParse` → `mapColumns` → `mergeImportFiles`）に通し、Customers と突合した結果:
+
+| 項目 | 値 |
+|---|---|
+| マージ後の一意エントリ | 15,779（docs 記載と一致）|
+| Customers に存在 | 15,700 |
+| **未取り込み** | **79** |
+
+未取り込み 79 件の理由（**「理由なし」= 0 件**）:
+
+| 理由 | 件数 |
+|---|---|
+| 配信失敗歴あり（`delivery_error_history`）| 64（うち 5 は suppression 併発 / 1 は共用アドレス併発）|
+| provider suppression | 13 |
+| 共用アドレス（role address）| 8 |
+
+**この 79 件は取り込んではいけない。** バウンス歴・provider suppression 済み・
+共用アドレスで、追加すると送信者評価を落とす。人が個別に判断する場合を除き放置が正解。
+
+### UPDATE 経路は **設計として存在しない**
+
+`importWritePlan.js` / `admin-customer-import-job.js` に
+「作るのは CREATE_CANDIDATE だけ。**UPDATE_CANDIDATE は 1 件も触らない**」と明記があり、
+`classifyCreateRow` も `existing` を落とす（`SKIP_REASON.EXISTING`）。
+既存 1,373 件を CSV の値で上書きしたい場合は **新しい書き込み経路の実装が要る**。
+既存の顧客データを壊しうるので、列ごとの上書き方針を決めてから着手すること。
+
+### #283（名指し取得）の本番実地検証は**機会が無い**
+
+取り込むものが無いため `importTargetedSelect.js` を実行する場面が来ない。
+ただし**同じ設計**（名指し取得 + 打ち切りは例外）は marketing 側 #285 / #286 で
+14,279 通の本番配信を通して実証済み。次の大量取り込みが来たときに、
+最初の数バッチで `batch_verify` のログと所要時間を確認すること。
+
+### `free-member-activation` v1 を追加（無料会員 活性化）
+
+`docs/progress.md` のテンプレート台帳で「未着手」だったもの。
+
+| 項目 | 値 |
+|---|---|
+| 件名 | 【KEIBA Analytics】無料でご覧いただける予想のご案内 |
+| CTA | 今日の無料予想を見る → `/free-prediction/nankan/`（本番 200 実測）|
+| audienceRule | `contracts:[none] / plans:[free] / enforce:true` |
+| LOCKED hash | `256dfcbb6c06209c` |
+
+**`dormant-reactivation` との違い**（同じ文面にまとめない理由）:
+
+| | dormant-reactivation | free-member-activation |
+|---|---|---|
+| 前提 | 一度は接点があった（「ご無沙汰しております」）| **まだ無料の中身を使っていない** |
+| 入口 | 実績ページ（有料の中身を見せる）| 無料予想ページそのもの |
+| 対象 | contract none / expired | contract none **かつ** plan free |
+
+価格・契約の勧誘は書かない（活性化が目的で、販売はここでやらない）。
+
+### click 計測は**人の操作 2 つ待ち**（コード側は完成）
+
+| 確認したこと | 結果 |
+|---|---|
+| 実装 | `sendOne` の `tracking_settings.click_tracking` = **per-message**。magic link 経路には影響しない |
+| アカウント全体の click tracking | `enabled: false` ✅（**ここを true にしてはいけない**。magic link がボットの先読みで消費されログイン不能になる）|
+| Event Webhook | `delivered/open/bounce/dropped/spam_report = true` / **`click = false`** |
+| `MARKETING_CLICK_TRACKING_ENABLED` | 未設定（既定 OFF）|
+
+残る 2 つは当方では実施できない:
+
+1. **SendGrid Event Webhook の `click` を true にする**（provider 側の設定変更）
+2. **受信したカナリアメールのリンクを人が実際に押す**（クリックが無ければ検証できない）
+
+手順は `MARKETING_CLICK_TRACKING_ENABLED=true` + redeploy →
+カナリア（**version 上げが必須**。v3 は 2026-08-09 に使用済み）→ 人がクリック →
+`EmailEvents` に `click` 行と `UrlCategory` が入り、`UrlPath` にクエリが入らないことを確認。
+
+### PR #172 は既に MERGED
+
+「Draft・未マージ」という旧記録は誤り（2026-07-30 に merge 済み）。
+
+
 ## 2026-08-09 — 振込先口座を PayPay銀行へ変更（本番反映済み）
 
 顧客の入金先を切り替えた。**旧口座はリポジトリから 0 件**（履歴文書 1 行を除く）。

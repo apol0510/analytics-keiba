@@ -176,6 +176,9 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加。
     // 見た目が大きく変わるので version を上げ、DeliveryKey を v1 と分けた。
     'comeback-light-30d-granted': { version: 2, hash: '23e4b66cba221622' },
+    // 無料会員 活性化（2026-08-09 新規）。無料で見られる範囲だけを案内し、
+    // 価格・契約の勧誘は書かない。休眠再アプローチとは対象も入口も違う。
+    'free-member-activation': { version: 1, hash: '256dfcbb6c06209c' },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
