@@ -102,17 +102,49 @@ function installFakeAirtable() {
     if (!u.includes('api.airtable.com')) {
       throw new Error(`想定外の外部通信: ${u}`);
     }
-    if (method !== 'GET') {
+    // `POST /{table}/listRecords` は Airtable の **読み取り** API（長い formula を
+    // URL に載せられないときに使う）。書き込みと数えない。
+    const isListRecords = u.includes('/listRecords');
+    const formula = isListRecords ? String(JSON.parse(init.body || '{}').filterByFormula || '') : '';
+    /** formula から `key='value'` の value を全部拾う */
+    const pick = (re) => [...formula.matchAll(re)].map((m) => m[1]);
+
+    if (method !== 'GET' && !isListRecords) {
       store.writes.push({ table: u.split('/').pop().split('?')[0], method });
       if (u.includes('/Customers')) store.customerWrites += 1;
     }
 
     if (u.includes('/Customers')) {
+      if (isListRecords) {
+        // 名指し取得: RECORD_ID() で選ばれたものだけ返す（本番と同じ絞り込み）
+        const ids = new Set(pick(/RECORD_ID\(\)='([^']*)'/g));
+        return makeResponse({ records: CUSTOMERS.filter((r) => ids.has(r.id)) });
+      }
       if (method !== 'GET') return makeResponse({ error: 'Customers への書き込みは禁止' }, 403);
       return makeResponse({ records: CUSTOMERS });
     }
     if (u.includes('/EmailBlacklist')) return makeResponse({ records: BLACKLIST });
     if (u.includes('/CampaignDeliveries')) {
+      if (isListRecords) {
+        const keys = new Set(pick(/\{DeliveryKey\}='([^']*)'/g));
+        const mails = new Set(pick(/LOWER\(\{RecipientEmail\}\)='([^']*)'/g));
+        const ct = (formula.match(/\{CampaignType\}='([^']*)'/) || [])[1] || null;
+        return makeResponse({
+          records: store.deliveries.filter((d) => {
+            const f = d.fields || {};
+            if (keys.size > 0) {
+              if (!keys.has(String(f.DeliveryKey || ''))) return false;
+              if (ct && String(f.CampaignType || '') !== ct) return false;
+              return true;
+            }
+            if (mails.size > 0) {
+              return mails.has(String(f.RecipientEmail || '').toLowerCase())
+                && String(f.EmailType || '') === 'campaign';
+            }
+            return true;
+          }),
+        });
+      }
       if (method === 'GET') {
         // filterByFormula の細かい解釈はせず、sent/queued の台帳をそのまま返す
         return makeResponse({ records: store.deliveries });

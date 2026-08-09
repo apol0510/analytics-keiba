@@ -91,6 +91,7 @@ import {
   buildCampaignPlan,
   buildDeliveryRecords,
   chunkRecipients,
+  computeCampaignDeliveryKey,
   summarizeHistory,
   summarizeCampaignRuns,
   computePlanFingerprint,
@@ -125,6 +126,10 @@ import { measuredCount } from '../../src/lib/crm/deliveryMeasurement.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
+import {
+  chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
+  summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
+} from '../../src/lib/marketing/marketingTargetedLoad.js';
 // カムバック無料付与の成功者を引き継ぐ判定（対象の導出・期限・監査印の単一源）
 import {
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
@@ -295,6 +300,154 @@ async function loadCustomerMarketing({ KEY, BASE, now, withLogins = false }) {
     list, deliveries, tokens, magicLogins, blacklistStatus, blacklistSize: blacklistEmails.size,
     blacklistEmails,
   };
+}
+
+/**
+ * 選ばれた recordId **だけ**を Airtable から引く（全件走査しない）。
+ *
+ * `fetchAll` は `MAX_PAGES=40`（4,000 件）で黙って打ち切るため、Customers が
+ * それを超えて増えると、後ろの顧客が送信計画で `unknown_customer` として
+ * 静かに落ちる。全件走査は Function の実行時間にも収まらない。
+ * 対象件数に比例するコストへ置き換える（`imp-2026-08-09-001` の 504 と同じ対処）。
+ *
+ * formula が長くなるので GET ではなく `listRecords`（POST）を使う。
+ */
+async function fetchByRecordIds({ KEY, BASE, table, recordIds }) {
+  const out = [];
+  for (const group of chunkList(recordIds, TARGETED_CHUNK)) {
+    const formula = buildRecordIdFormula(group);
+    if (!formula) continue;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100 };
+      if (offset) body.offset = offset;
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) throw new Error(`${table} targeted fetch failed: HTTP ${res.status}`);
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+      if (offset && pages >= TARGETED_MAX_PAGES) {
+        assertFetchComplete({ table, offset, pages, maxPages: TARGETED_MAX_PAGES });
+      }
+    } while (offset);
+  }
+  return out;
+}
+
+/**
+ * 既送信突合を **今回の宛先ぶんだけ**引く。
+ *
+ * `CampaignDeliveries` を campaign 単位で全件読む実装は、配信実績が
+ * `MAX_PAGES` を超えた時点で `deliveredKeys` が不完全になり、
+ * `already_delivered` を見落として **二重送信**を許す。
+ * 判定に要るのは「いま送ろうとしている鍵が既にあるか」だけなので、
+ * 鍵を名指しで問い合わせる。
+ */
+async function fetchDeliveredKeys({ KEY, BASE, campaignType, keys }) {
+  const found = new Set();
+  for (const group of chunkList(keys, TARGETED_CHUNK)) {
+    const formula = buildDeliveryKeyFormula({ campaignType, keys: group });
+    if (!formula) continue;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100 };
+      if (offset) body.offset = offset;
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) throw new Error(`${DELIVERIES_TABLE} targeted fetch failed: HTTP ${res.status}`);
+      const data = await res.json();
+      for (const r of data.records || []) {
+        const status = String(r.fields?.Status || '');
+        if (status !== 'sent' && status !== 'queued') continue;
+        const k = String(r.fields?.DeliveryKey || '');
+        if (k) found.add(k);
+      }
+      offset = data.offset;
+      pages += 1;
+      if (offset && pages >= TARGETED_MAX_PAGES) {
+        assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: TARGETED_MAX_PAGES });
+      }
+    } while (offset);
+  }
+  return found;
+}
+
+/** 名指しで引いた顧客に、送信判定（marketing）を付ける。全件走査版と同じ単一源を使う。 */
+async function loadMarketingForRecordIds({ KEY, BASE, now, recordIds }) {
+  const records = await fetchByRecordIds({ KEY, BASE, table: CUSTOMERS_TABLE, recordIds });
+  const emails = records
+    .map((rec) => String(rec.fields?.Email || '').trim().toLowerCase())
+    .filter(Boolean);
+
+  // 24 時間の頻度ガードに要る「直近いつ送ったか」も、今回の宛先ぶんだけ引く。
+  const deliveries = await fetchDeliveriesByEmails({ KEY, BASE, emails }).catch(() => []);
+  const history = summarizeHistory(deliveries);
+  const { emails: blacklistEmails } =
+    await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
+
+  const list = records.map((rec) => {
+    const fields = rec.fields || {};
+    const email = String(fields.Email || '').trim().toLowerCase();
+    return {
+      recordId: rec.id,
+      record: rec,
+      fields,
+      marketing: resolveCustomerMarketing({
+        fields, nowMs: now, blacklistEmails, history: history.get(email),
+      }),
+    };
+  });
+  return { list, records };
+}
+
+/** 頻度ガード用に、指定アドレスの配信履歴だけを引く。 */
+async function fetchDeliveriesByEmails({ KEY, BASE, emails }) {
+  const out = [];
+  for (const group of chunkList(emails, TARGETED_CHUNK)) {
+    const safe = group.filter((e) => !e.includes("'"));
+    if (safe.length === 0) continue;
+    const formula = `AND({EmailType}='campaign',OR(${safe
+      .map((e) => `LOWER({RecipientEmail})='${e}'`).join(',')}))`;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100 };
+      if (offset) body.offset = offset;
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) throw new Error(`${DELIVERIES_TABLE} history fetch failed: HTTP ${res.status}`);
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+      if (offset && pages >= TARGETED_MAX_PAGES) {
+        assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: TARGETED_MAX_PAGES });
+      }
+    } while (offset);
+  }
+  return out;
 }
 
 export const handler = async (event) => {
@@ -838,13 +991,14 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
   validateBrandFromEmail(BRAND, fromEmail); // 送信元とブランドの取り違え防止
 
-  const { list } = await loadCustomerMarketing({ KEY, BASE, now });
-  const byId = new Map(list.map((c) => [c.recordId, c]));
-
   // 引き継ぎモード: 対象を Customers から**サーバーが導出する**（唯一の正）
+  //
+  // ⚠️ 引き継ぎだけは「誰が付与されたか」を Customers 側から探すため全件走査が要る。
+  //    通常の選択送信（recordIds 指定）は名指し取得だけで済ませ、全件走査へ落とさない。
   let handoffView = null;
   let targetIds = recordIds;
   if (grantOperationId) {
+    const { list } = await loadCustomerMarketing({ KEY, BASE, now });
     const resolved = collectGrantedRecipients({ records: list, operationId: grantOperationId, nowMs: now });
     const verdict = validateHandoffResolution({
       operationId: grantOperationId,
@@ -875,14 +1029,31 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     };
   }
 
+  // 🛡️ 送信対象は **名指しで**引く。全件走査は MAX_PAGES で黙って打ち切られ、
+  //    後ろの顧客が `unknown_customer` として静かに落ちる（= 送ったつもりで未送信）。
+  const targeted = await loadMarketingForRecordIds({ KEY, BASE, now, recordIds: targetIds });
+  const byId = new Map(targeted.list.map((c) => [c.recordId, c]));
+  const fetchAudit = summarizeTargetedFetch({ requested: targetIds, received: targeted.records });
+
   const selected = targetIds.map((id) => byId.get(id) || { recordId: id, fields: null, marketing: null });
 
   // 既送信突合（同一 campaignId:version）
-  const priorDeliveries = await fetchAll({
-    KEY, BASE, table: DELIVERIES_TABLE,
-    filterByFormula: `AND({CampaignType}='${campaign.campaignId}:v${campaign.version}', OR({Status}='sent', {Status}='queued'))`,
-  }).catch(() => []);
-  const deliveredKeys = new Set(priorDeliveries.map((r) => String(r.fields?.DeliveryKey || '')).filter(Boolean));
+  //
+  // ⚠️ campaign 単位の全件取得にしてはいけない。配信実績が `MAX_PAGES`（4,000 行）を
+  //    超えた時点で黙って打ち切られ、`deliveredKeys` が不完全になる
+  //    = `already_delivered` を見落として**二重送信**する。
+  //    判定に要るのは「今回送ろうとしている鍵が既にあるか」だけなので名指しで引く。
+  //    取り切れなければ例外（fail closed）。握り潰して送らない。
+  const candidateKeys = selected
+    .map((c) => (c.marketing
+      ? computeCampaignDeliveryKey({
+        campaign: sending, recipientEmail: c.marketing.email, brand: BRAND, fromEmail,
+      })
+      : null))
+    .filter(Boolean);
+  const deliveredKeys = await fetchDeliveredKeys({
+    KEY, BASE, campaignType: `${campaign.campaignId}:v${campaign.version}`, keys: candidateKeys,
+  });
 
   // 🛡️ SendGrid 側 suppression を毎回確認する。AK の EmailBlacklist は Webhook 稼働以降しか
   //    持たないため、これが無いと provider では送れない相手を「送信対象」に数えてしまう。
@@ -942,6 +1113,19 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const detailComplete = excludedRecords.length === plan.excluded.length
     && excludedRecords.every((e) => e.recordId)
     && new Set(excludedRecords.map((e) => e.recordId)).size === excludedRecords.length;
+
+  // 🛡️ 選んだ recordId を Airtable から**全部引けたか**を明示する。
+  //    引けなかった分は `unknown_customer` として除外されるので、取得漏れと
+  //    「本当に対象外」を取り違えないよう、件数を必ず応答に載せる。
+  if (!fetchAudit.complete) {
+    return json(502, {
+      error: '選択した顧客レコードを全部読み取れませんでした（不完全なまま送信しません）',
+      requested: fetchAudit.requested,
+      received: fetchAudit.received,
+      missing: fetchAudit.missing.length,
+      sideEffects: 'none',
+    });
+  }
 
   // 割引案内は「何をいくらで案内するのか」を最終確認に出す（金額の取り違え防止）。
   // 有効期限は台帳の実値（受信者ごとに違いうるので最短を出す）。
