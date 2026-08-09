@@ -4,7 +4,7 @@
  * - Airtable Customers でメール検証 → 会員判定（resolveMembership）
  * - **paid の場合だけ** AuthTokens に使い捨てトークンを作成し SendGrid で送信
  * - free / denied / 未登録 は送らず、常に一定の 200 応答（会員情報を列挙しない）
- * - token は uuid v4・15分有効・単回使用（従来どおり）
+ * - token は uuid v4・単回使用（有効期限は MAGIC_LINK_TTL_MINUTES）
  *
  * テーブル: Customers / AuthTokens（Token, Email, CreatedAt, ExpiresAt, Used, Ip_Address, User_Agent）
  * 環境変数: AIRTABLE_API_KEY / AIRTABLE_BASE_ID / SENDGRID_API_KEY / SENDGRID_FROM_EMAIL / MAGIC_LINK_BASE_URL
@@ -13,6 +13,21 @@
 const { v4: uuidv4 } = require('uuid');
 const Airtable = require('airtable');
 const sgMail = require('@sendgrid/mail');
+
+/**
+ * マジックリンクの有効期限（分）。
+ *
+ * ⚠️ **`src/lib/auth/constants.js` の `MAGIC_LINK_TTL_MINUTES` と同じ値にすること。**
+ *    この Function は CommonJS なので ESM の定数を import できない。
+ *    ズレると「メールの案内分数」と「実際の期限」が食い違うため、
+ *    `magicLinkTtl.guard.test.mjs` が両者の一致を強制する。
+ *
+ * ⚠️ 2026-08-09 の障害: 15 分だったため、Yahoo 側の配信遅延（実測 21〜75 分の滞留）で
+ *    **届いた時点で期限切れ**になりログインできなかった。同時刻の gmail / docomo / au は
+ *    遅延 0% で、yahoo.co.jp / ymail.ne.jp だけで発生していた。
+ */
+const MAGIC_LINK_TTL_MINUTES = 60;
+const MAGIC_LINK_TTL_MS = MAGIC_LINK_TTL_MINUTES * 60 * 1000;
 
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
@@ -53,6 +68,37 @@ function genericOk(headers) {
   };
 }
 
+
+/**
+ * 同一 Email の未使用・未期限トークンを Used=true にする（今発行した 1 本は残す）。
+ * 判定は純粋関数 `selectTokensToInvalidate` に委譲する（単一源）。
+ */
+async function sweepOldTokens({ authTokensTable, email, keepTokenId }) {
+  try {
+    const { selectTokensToInvalidate, chunkForUpdate } =
+      await import('../../src/lib/auth/magicLinkTokenSweep.js');
+    const escaped = String(email).replace(/'/g, "\\'");
+    const records = await authTokensTable
+      .select({
+        filterByFormula: `AND(LOWER(TRIM({Email})) = '${escaped}', NOT({Used}))`,
+        maxRecords: 50,
+      })
+      .all();
+    const { ids, skipped } = selectTokensToInvalidate({
+      records: records.map((r) => ({ id: r.id, fields: r.fields })),
+      keepTokenId,
+      nowMs: Date.now(),
+    });
+    for (const batch of chunkForUpdate(ids)) {
+      await authTokensTable.update(batch.map((id) => ({ id, fields: { Used: true } })));
+    }
+    // 件数だけ残す（Email / Token は出さない）
+    console.log(`🧹 [send-magic-link] ${JSON.stringify({ event: 'old_tokens_invalidated', count: ids.length, skippedUsed: skipped.used, skippedExpired: skipped.expired })}`);
+  } catch {
+    console.warn('⚠️ [send-magic-link] {"event":"old_token_sweep_failed"}');
+  }
+}
+
 exports.handler = async (event) => {
   const headers = corsHeaders(event);
 
@@ -89,7 +135,7 @@ exports.handler = async (event) => {
     // 0件 / 1件 / 複数件を明確に区別。複数件は fail closed（送信も token 作成もしない）。
     const lookup = classifyCustomerMatches(customers);
     if (lookup.kind === CUSTOMER_LOOKUP.NONE) {
-      console.warn(`[send-magic-link] Customer not found (generic 200): email=${email}`);
+      console.warn('[send-magic-link] {"event":"customer_not_found"}');
       return genericOk(headers);
     }
     if (lookup.kind === CUSTOMER_LOOKUP.CONFLICT) {
@@ -106,11 +152,10 @@ exports.handler = async (event) => {
       return genericOk(headers);
     }
 
-    // トークン生成 (15分有効・単回使用)
+    // トークン生成（単回使用・期限は MAGIC_LINK_TTL_MS）
     const token = uuidv4();
-    const tokenPrefix = token.slice(0, 8);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await authTokensTable.create([
+    const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_MS);
+    const created = await authTokensTable.create([
       {
         fields: {
           Token: token,
@@ -123,7 +168,18 @@ exports.handler = async (event) => {
         },
       },
     ]);
-    console.log(`🎫 [send-magic-link] Token issued (paid): tokenPrefix=${tokenPrefix}, email=${email}`);
+    const newTokenId = (created && created[0] && created[0].id) || '';
+
+    // ── 有効なリンクを「最新 1 本」に保つ ──────────────────────────
+    // ⚠️ **create の後に掃除する**（前ではない）。同時に 2 回発行されても、
+    //    後から掃除した側が相手を無効化するため最終的に 1 本へ収束する。
+    //    先に掃除すると、両者が「掃除 → 作成」を終えて 2 本残りうる。
+    // ⚠️ 使用済み・期限切れは書き換えない（判定は magicLinkTokenSweep が単一源）。
+    // ⚠️ best-effort。失敗しても新しいリンクは有効なのでログインは通る
+    //    （失敗時の状態は「無効化しなかった」= 従来と同じで、悪化しない）。
+    await sweepOldTokens({ authTokensTable, email, keepTokenId: newTokenId });
+    // ⚠️ **メールアドレス・トークンはログに出さない**（2026-08-09 の監査で置換）。
+    console.log('🎫 [send-magic-link] {"event":"token_issued","plan":"paid"}');
 
     const magicLink = `${SITE_BASE}/auth/verify?token=${encodeURIComponent(token)}`;
     // Airtable Customers の氏名フィールドは日本語の `氏名`（`Name` / `お名前` は存在しない）。
@@ -137,7 +193,7 @@ exports.handler = async (event) => {
         from: FROM_EMAIL,
         subject: '【KEIBA Analytics】ログインリンク',
         // ⚠️ クリック計測は**絶対に有効化しない**（2026-08-04 恒久化 / guard テストで固定）。
-        // このメールのリンクは 15 分・単回使用のログイントークンを含む。書き換えると
+        // このメールのリンクは単回使用のログイントークンを含む。書き換えると
         //   1. リンク検査ボットの先読みでトークンが消費され、本人がログインできない
         //   2. トークンが第三者のリダイレクタを経由する
         //   3. 併記しているコピー用 URL が別ドメインになり偽装リンクに見える
@@ -162,7 +218,7 @@ exports.handler = async (event) => {
       <p style="margin: 8px 0 0 0;"><a href="${magicLink}" style="color: #3b82f6; word-break: break-all; font-size: 13px;">${magicLink}</a></p>
     </div>
     <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; margin: 24px 0; border-radius: 4px;">
-      <p style="color: #991b1b; font-size: 14px; margin: 0; line-height: 1.6;">⚠️ このリンクは15分間有効です。<br>心当たりがない場合は、このメールを無視してください。</p>
+      <p style="color: #991b1b; font-size: 14px; margin: 0; line-height: 1.6;">⚠️ このリンクは${MAGIC_LINK_TTL_MINUTES}分間有効です。<br>心当たりがない場合は、このメールを無視してください。</p>
     </div>
     <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
     <p style="color: #64748b; font-size: 14px; margin: 0;">KEIBA Analytics チーム</p>
@@ -170,10 +226,10 @@ exports.handler = async (event) => {
 </div>
 `,
       });
-      console.log(`✅ [send-magic-link] SendGrid 送信成功: email=${email}, tokenPrefix=${tokenPrefix}`);
+      console.log('✅ [send-magic-link] {"event":"mail_sent"}');
     } catch (sgError) {
       const errorDetails = sgError?.response?.body || sgError?.message || String(sgError);
-      console.error(`❌ [send-magic-link] SendGrid 送信失敗: email=${email}, error=`, errorDetails);
+      console.error(`❌ [send-magic-link] ${JSON.stringify({ event: 'mail_send_failed', status: (errorDetails && errorDetails.code) || null })}`);
       return {
         statusCode: 502,
         headers,

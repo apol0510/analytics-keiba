@@ -148,12 +148,28 @@ exports.handler = async (event) => {
         console.error('❌ [verify-magic-link] SESSION_SIGNING_SECRET 未設定/不正 → 503');
         return { statusCode: 503, headers, body: JSON.stringify({ error: 'Session service unavailable' }) };
       case VERIFY_FLOW.MISSING_TOKEN:
+        // 2026-08-09 の障害では、この経路が**無言で return** していたため
+        // 「呼ばれているのに成功も失敗も記録されない」状態になり、原因特定が遅れた。
+        // token 値・メールアドレスは出さない。分類だけ残す。
+        console.warn('⚠️ [verify-magic-link] token 欠落');
         return { statusCode: 400, headers, body: JSON.stringify({ error: 'Token is required' }) };
       case VERIFY_FLOW.TOKEN_NOT_FOUND:
+        // 2026-08-09 の障害では、この経路が**無言で return** していたため
+        // 「呼ばれているのに成功も失敗も記録されない」状態になり、原因特定が遅れた。
+        // token 値・メールアドレスは出さない。分類だけ残す。
+        console.warn('⚠️ [verify-magic-link] token 不明');
         return { statusCode: 404, headers, body: JSON.stringify({ error: 'Token not found' }) };
       case VERIFY_FLOW.TOKEN_USED:
+        // 2026-08-09 の障害では、この経路が**無言で return** していたため
+        // 「呼ばれているのに成功も失敗も記録されない」状態になり、原因特定が遅れた。
+        // token 値・メールアドレスは出さない。分類だけ残す。
+        console.warn('⚠️ [verify-magic-link] token 使用済み');
         return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token already used' }) };
       case VERIFY_FLOW.TOKEN_EXPIRED:
+        // 2026-08-09 の障害では、この経路が**無言で return** していたため
+        // 「呼ばれているのに成功も失敗も記録されない」状態になり、原因特定が遅れた。
+        // token 値・メールアドレスは出さない。分類だけ残す。
+        console.warn('⚠️ [verify-magic-link] token 期限切れ');
         return { statusCode: 403, headers, body: JSON.stringify({ error: 'Token expired' }) };
       case VERIFY_FLOW.CUSTOMER_NOT_FOUND:
         return { statusCode: 404, headers, body: JSON.stringify({ error: 'Customer not found' }) };

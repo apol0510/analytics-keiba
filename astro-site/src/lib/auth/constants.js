@@ -92,3 +92,19 @@ export const EDGE_GATE_MODE = Object.freeze({
   PASS_THROUGH: 'pass-through',
   FAIL_CLOSED: 'fail-closed',
 });
+
+/**
+ * マジックリンクの有効期限（分）。**送信・検証・画面表示の単一源。**
+ *
+ * ⚠️ 2026-08-09 の障害: 15 分だったため、Yahoo 側の配信遅延（実測で 21〜75 分の滞留）
+ *    が起きると**届いた時点でトークンが期限切れ**になり、ログインできなかった。
+ *    利用者は再要求を繰り返し、さらに遅延が悪化する悪循環になった。
+ *    （同時刻の gmail / docomo / au は遅延 0%。yahoo.co.jp と ymail.ne.jp だけで発生）
+ *
+ * 単回使用・最新 1 通のみ有効という性質は変えないため、延長しても
+ * 「盗まれたリンクが使える時間」は実質変わらない（使えば即 Used になる）。
+ */
+export const MAGIC_LINK_TTL_MINUTES = 60;
+
+/** 同上（ミリ秒） */
+export const MAGIC_LINK_TTL_MS = MAGIC_LINK_TTL_MINUTES * 60 * 1000;
