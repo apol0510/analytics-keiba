@@ -51,7 +51,11 @@ export function reconcileImportJob({
   const dupBase = Number.isFinite(duplicateEmailPairsBaseline) ? int(duplicateEmailPairsBaseline) : null;
 
   const checks = [];
-  const add = (name, ok, detail) => checks.push({ name, ok, detail: detail ?? null });
+  // ⚠️ キー名を `name` にしない。この結果は job 正本へ保存され、
+  //    `assertNoPii` が **`name` を PII とみなして保存を拒否する**（2026-08-09 の障害）。
+  //    実際、子バッチが Airtable へ 100 件書いた後に正本の保存だけが invalid_job で
+  //    落ち、「作成済み 0 なのに 100 件存在する」不整合になった。
+  const add = (checkId, ok, detail) => checks.push({ checkId, ok, detail: detail ?? null });
 
   // 1) counters の内訳が試行数と合うか
   add('counters_balanced', created + skipped + failed === attempted,
@@ -68,7 +72,7 @@ export function reconcileImportJob({
   add('no_new_duplicates', (dup === null || dupBase === null) ? true : dup <= dupBase,
     (dup === null || dupBase === null) ? '重複数 未取得' : `${dup} vs 基準 ${dupBase}`);
 
-  const failedChecks = checks.filter((x) => !x.ok).map((x) => x.name);
+  const failedChecks = checks.filter((x) => !x.ok).map((x) => x.checkId);
 
   // claim は取れたが作成されていない行（回収待ち）。**これ自体は異常ではない**
   const claimedNotCreated = claimClaimed;
