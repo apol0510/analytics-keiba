@@ -7,6 +7,138 @@
 > `CLAUDE.md` を一次証拠とすること。
 
 
+## 2026-08-09 — `dormant-reactivation` v2 を取り込み 14,279 名へ本番配信
+
+**対象は `imp-2026-08-09-001` で CREATE した外部無料ユーザー 14,279 名だけ。**
+既存無料会員・過去 customer-import（210 名）は**含めない**。
+
+### 対象の一意復元（3 つの正本が一致）
+
+| 根拠 | 値 |
+|---|---|
+| Customers `Source='customer-import:imp-2026-08-09-001'` | 14,279 |
+| Redis 取り込みジョブ正本 `reconciliation.created` / `claims.CREATED` | 14,279 / 14,279（`claimedNotCreated` 0・`failedChecks` 0）|
+| Customers 総数 1,688 + 14,279 | 15,967（実測と一致）|
+
+過去 customer-import は `imp-2026-08-05-003` 100 / `imp-2026-08-04-002` 100 /
+`imp-2026-08-04-001` 10 = **210** で、いずれも今回の Source と一致しないため混入しない。
+
+### 除外 0 の理由（見落としではない）
+
+コホートへ `unsubscribe / blacklist / withdrawn / test account / provider suppression /
+duplicate / 同 campaign 既送` を適用した結果は **除外 0 / 送信 14,279**。
+これは取り込み時点（`importEligibility.js`）で provider suppression・role address・
+AK 内既存重複・flagged を除外済みのため、**同じ条件に二重に当たる対象が残っていない**から。
+
+全体計算とも整合する: Customers 全 15,967 に同じ判定を当てると送信可能 15,880 / 除外 87。
+`15,880 − 14,279 = 1,601 = 非コホート 1,688 − 87`。
+
+### 配信の構成
+
+| 項目 | 値 |
+|---|---|
+| キャンペーン | `dormant-reactivation` v2（休眠・無料会員 再アプローチ）|
+| 送信元 | `KEIBA Analytics <noreply@keiba.link>`（`brand-config.js`）|
+| 件名 | 【KEIBA Analytics】直近の的中実績をお届けします |
+| CTA | 「昨日の買い目と結果」→ `/results-showcase/nankan/` |
+| contentHash / shellVersion | `8bc34393b414464b` / 1 |
+| enqueue | 500 件 × 29 バッチ（`MAX_RECIPIENTS_PER_SEND=500`）|
+| ジョブ | 143（`RECIPIENTS_PER_JOB=100`）|
+
+### カナリアを先に通したことで、配信前に 2 つの重大欠陥が露見した
+
+カナリア（`marketing-canary`）は v2 を唯一のテスト受信者へ送信済みだった。
+`DeliveryKey` は `campaignId × version × 受信者 × 送信元` で**日付を含まない**
+（`campaignDate: 'fixed'`）ため、v2 のままでは `already_delivered` で送れない。
+設計どおり **v3 へ上げて**（#284）実送信したところ、送信できずに欠陥が見つかった。
+
+| PR | 欠陥 | 実害 |
+|---|---|---|
+| #285 | 送信計画が Customers を全件走査。`fetchAll` は `MAX_PAGES=40`（4,000 件）で **`break` するだけ**で打ち切りをエラーにしない | ① 15,967 件中 4,000 件目より後ろが `unknown_customer` で**黙って除外**（送ったつもりで未送信）。② 既送信突合も同じ打ち切りに晒され、**配信実績が 4,000 行を超えた時点で `already_delivered` を見落として二重送信**。今回 14,279 件で必ず超えるため、次バッチから防壁が壊れる状態だった |
+| #286 | dispatcher 側にも同じ全件走査 | `unsubscribed` / `suspended` を打ち切られた範囲でしか作らない = **配信停止した人を除外し損ねる**。カナリアは `campaign_mismatch` で 0 通になった |
+
+全件走査は Function の実行時間（最大 26 秒）にも収まらない（160 ページ ≈ 170 秒）。
+**ページ上限を上げても直らない。** `imp-2026-08-09-001` の 504 と同じ **名指し取得**へ寄せた:
+
+- 選んだ recordId / 宛先メールだけを `listRecords`（POST）で引く
+- ページ打ち切りは `assertFetchComplete` で**例外**（黙って短い結果を返さない）
+- enqueue 側は取得漏れがあれば **502 で停止**（`requested / received / missing` を応答に出す）
+- dispatcher 側は顧客レコードを引けない宛先を `customer_record_missing` で
+  **その 1 件だけ** skip（バッチ全体は止めない）
+
+テストの偽 Airtable が `POST /{table}/listRecords` を「書き込み」と誤認していたため、
+**実挙動どおり読み取りとして扱い、formula を実際に解釈する**ようにした。
+
+### タイムアウトと冪等性
+
+dispatch は 1 ジョブ 100 件を送り切る前に Netlify の proxy タイムアウトに当たる。
+ただし **送信 → 台帳 PATCH を受信者ごとに行う**ため、落ちても既送分は `sent` で残り、
+再実行時に `already_sent_in_job` で skip される。**受信者単位で冪等。**
+ドライバは「応答が無くても状態を読み直す」方針で継続した（送信結果を推測しない）。
+
+全員 skip になったジョブは `expectedWillSend: 0` の live 呼び出しで `SENT` へ確定させる。
+
+### 触ってはいけないこと
+
+- **送信元 `noreply@keiba.link` を変えない。** `from` は `DeliveryKey` の構成要素なので、
+  変更すると既送分と鍵が変わり**二重送信になる**。決済経路の正式送信元
+  `support@keiba.link`（`senderIdentity.js`）とは**意図的にスコープが分かれている**
+  （`docs/decisions.md` 2026-07-20）。混同して統一しないこと
+- `enforce: false` のキャンペーン（`comeback-light-30d-granted` / `comeback-offer`）は
+  audience 制約が効かず**全員に当たる**。前者は付与していない「Light 30 日無料」を
+  通知してしまう。宛先を明示選択する運用から外れないこと
+
+### 最終突合（2026-08-09 / read-only 実測）
+
+**queued / accepted / failed / delivered は別々に計測している。**
+`sent` は「SendGrid が受理した」であって配信完了ではない。
+
+| 指標 | 値 | 出所 |
+|---|---|---|
+| 対象 | 14,279 | Customers `Source` × Redis 正本 |
+| queued（残）| **0** | CampaignDeliveries |
+| **accepted** | **14,279** | CampaignDeliveries `Status='sent'` |
+| failed | **0** | CampaignDeliveries |
+| **delivered** | **13,953** | EmailEvents（Event Webhook 実測）|
+| bounce | 325（2.28%）| EmailEvents |
+| dropped | 11 | EmailEvents |
+| open | 2,949 | EmailEvents |
+
+| 冪等性の検証 | 結果 |
+|---|---|
+| DeliveryKey 一意 | 14,279 / 14,279 ✅ |
+| 宛先一意 | 14,279 / 14,279 ✅ |
+| accepted の宛先重複 | **0** ✅（二重送信なし）|
+| delivered だが台帳に accepted 無し | 0 ✅ |
+| accepted だが delivered 未観測 | 326（= bounce 325 + dropped 11 と概ね対応。webhook は遅延する）|
+| ScheduledEmails | 143 本すべて `SENT` / PENDING 残 0 ✅ |
+| 他キャンペーンの PENDING 滞留 | 0 ✅ |
+| CampaignDeliveries 総数 | 14,416 = 今回 14,279 + 既存 136 + カナリア 1 ✅ |
+| 取り込みジョブ（Redis）| COMPLETED / lock なし ✅ |
+
+### ゲート再閉鎖（実証済み）
+
+配信後に `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を
+**UNSET → redeploy** し、ランタイムで `sendEnabled: false` / `dispatchEnabled: false` を確認。
+実際に叩いて遮断されることまで確認した:
+
+| 呼び出し | 結果 |
+|---|---|
+| `admin-marketing action=send` | **503** `flag: MARKETING_CAMPAIGN_ENABLED` / `sideEffects: none` |
+| `marketing-campaign-dispatch dryRun=false` | **503** `flag: MARKETING_CAMPAIGN_DISPATCH_ENABLED` / `sideEffects: none` |
+
+⚠️ 実装が返すのは **503 + フラグ名**（403 ではない）。運用手順に 403 と書かないこと。
+
+### 次にやるとき
+
+- bounce 325 は provider suppression へ入る。**次回の配信では自動的に除外される**
+- 送信は 1 通ずつ（送信 → 台帳 PATCH）。1 ジョブ 100 件は Netlify の proxy タイムアウトに
+  必ず当たるので、**応答が無いことを失敗と見なさない**。状態を読み直して継続する
+- 全体で約 2 時間（accepted 14,279 / 平均 約 120 通/分）。並列化はしていない。
+  **同一ジョブへの並行 dispatch は二重送信を作る**（`alreadySent` は呼び出し開始時点の
+  スナップショット）ので、速度のために並列化しないこと
+
+
 ## 2026-08-09 — 外部リスト大量取り込み `imp-2026-08-09-001` 本番完了（14,279 件）
 
 **結果: COMPLETED / CREATE 14,279 / UPDATE 0 / failed 0 / duplicate 0 / メール 0。**
