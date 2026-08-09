@@ -57,16 +57,19 @@ test('EXISTING は既存 Customers の数だけ（更新しない対象）', () 
   assert.equal(s.existing, 2);
 });
 
-test('REVIEW_REQUIRED は flagged だけ', () => {
+test('REVIEW_REQUIRED は flagged / role_address / duplicate_in_ak（旧経路と同じ割り当て）', () => {
   const s = summarizeImportPlan({ entries, facts, providerEmails });
-  assert.equal(s.reviewRequired, 1);
+  // flagged 1 + duplicate_in_ak 1（この fixture に role アドレスは無い）
+  assert.equal(s.reviewRequired, 2);
   assert.equal(s.skippedByReason[SKIP_REASON.FLAGGED], 1);
+  assert.equal(s.skippedByReason[SKIP_REASON.DUPLICATE_IN_AK], 1);
 });
 
-test('EXCLUDED は機械的に落とす 9 種の合計', () => {
+test('EXCLUDED は機械的に落とす 8 種の合計（duplicate_in_ak は REVIEW へ）', () => {
   const s = summarizeImportPlan({ entries, facts, providerEmails });
-  // no_email / unsubscribed / hard / soft / suspended / test / paid / dup_in_ak / provider
-  assert.equal(s.excluded, 9);
+  // no_email / unsubscribed / hard / soft / suspended / test / paid / provider
+  // ⚠️ duplicate_in_ak は旧経路で REVIEW なので EXCLUDED に入れない
+  assert.equal(s.excluded, 8);
 });
 
 test('CSV 内の正規化メール重複を数える（大文字小文字を同一視）', () => {
