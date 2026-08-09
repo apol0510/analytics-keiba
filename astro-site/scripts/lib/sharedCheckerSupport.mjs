@@ -4,7 +4,8 @@
  * ⚠️ ブラウザ／クライアントバンドルへ import しないこと。
  *
  * 提供するもの:
- *   - 一時エラーの分類と専用 exit code（EXIT_TRANSIENT = 2）
+ *   1. 一時エラーの分類と専用 exit code（EXIT_TRANSIENT = 2）
+ *   2. 月ディレクトリ一覧による「存在しないファイルへの GET を撃たない」索引
  *
  * ## なぜ exit code を分けるのか
  *
@@ -58,4 +59,54 @@ export function exitWithSharedFetchError(error, io = {}) {
   write(`${error?.message ?? String(error)}\n`);
   if (transient) write(`TRANSIENT: 一時エラーのため判定不能（次回実行で再試行）\n`);
   exit(transient ? EXIT_TRANSIENT : 1);
+}
+
+/**
+ * Contents API のディレクトリ一覧は 1000 件が上限でページングできない。
+ * 到達した月は一覧を信用せず、従来どおり全ファイルへ GET する（取りこぼしを作らない）。
+ */
+const DIR_LISTING_MAX = 1000;
+
+/**
+ * 月ディレクトリのファイル名索引を作る。
+ *
+ * checker は 1 日ぶんを「会場ごとに GET して 404 か否か」で判定していたため、
+ * 非開催日でも 1 日あたり 10〜20 GET を撃っていた。存在確認だけなら
+ * 月ディレクトリ一覧 1 GET で足りるので、無いと分かっているファイルは撃たない。
+ *
+ * 判定は 3 値。'unknown' は「一覧が信用できないので個別に GET して確かめろ」の意味で、
+ * 存在確認だけの呼び出し側が未検証で found と誤判定しないための逃げ道である。
+ *
+ * @param {{listDirectory: Function}} client sharedFetch のクライアント
+ * @param {string} ref 参照 ref（通常 'main'）
+ * @returns {{status: (dir: string, fileName: string) => Promise<'present'|'absent'|'unknown'>}}
+ */
+export function createMonthIndex(client, ref = 'main') {
+  const cache = new Map();
+
+  async function namesFor(dir) {
+    if (cache.has(dir)) return cache.get(dir);
+
+    const entries = await client.listDirectory(dir, { ref, required: false });
+
+    let names;
+    if (entries === null) {
+      names = new Set(); // 月ディレクトリ自体が無い＝その月は空
+    } else if (entries.length >= DIR_LISTING_MAX) {
+      names = null; // 切り詰められている可能性 → 一覧を信用しない
+    } else {
+      names = new Set(entries.filter((e) => e.type === 'file').map((e) => e.name));
+    }
+
+    cache.set(dir, names);
+    return names;
+  }
+
+  return {
+    async status(dir, fileName) {
+      const names = await namesFor(dir);
+      if (names === null) return 'unknown';
+      return names.has(fileName) ? 'present' : 'absent';
+    },
+  };
 }
