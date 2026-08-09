@@ -51,6 +51,8 @@ import {
   createJobAuthority, buildJobRecord, ORDERING_VERSION, computeSnapshotFingerprint,
 } from '../../src/lib/crm/importJobAuthority.js';
 import { runChildBatch } from '../../src/lib/crm/importJobRunner.js';
+import { verifyWrittenBatch, shouldRunFullReconcile, BATCH_VERIFY } from '../../src/lib/crm/importBatchVerify.js';
+
 import { reconcileImportJob, RECONCILE_VERDICT, shouldRemeasureBeforeBlock } from '../../src/lib/crm/importJobReconcile.js';
 import { CREATE_ALLOWED_FIELDS, OPTIONAL_AUDIT_FIELDS } from '../../src/lib/crm/importWritePlan.js';
 
@@ -95,6 +97,42 @@ function redisCmd(args) {
     const j = await res.json();
     return j.result;
   });
+}
+
+
+/**
+ * 名指しでレコードを引く（**全件走査しない**）。
+ *
+ * ⚠️ 2026-08-09: Customers 15,967 件で全件取得に約 170 秒かかり Function タイムアウトを
+ *    超えた（実測 160 ページ × 約 1 秒。列を絞っても変わらない）。
+ *    対象 100 件の名指しクエリは **1 コール 1.7 秒**。
+ * ⚠️ formula が長くなるので `listRecords`（POST）を使う。
+ * ⚠️ 失敗は握りつぶさず throw（空配列で返すと除外が効かず二重作成しうる）。
+ */
+async function fetchByEmails({ KEY, BASE, table, emails }) {
+  const { chunkEmails } = await import('../../src/lib/crm/importTargetedSelect.js');
+  const out = [];
+  for (const group of chunkEmails(emails)) {
+    if (group.length === 0) continue;
+    const formula = `OR(${group.map((e) => `LOWER(TRIM({Email}))='${String(e).replace(/'/g, "\\'")}'`).join(',')})`;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100 };
+      if (offset) body.offset = offset;
+      const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}/listRecords`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`${table} targeted fetch failed: HTTP ${res.status}`);
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+    } while (offset && pages < 20);
+  }
+  return out;
 }
 
 async function fetchAllReadOnly({ KEY, BASE, table }) {
@@ -166,7 +204,13 @@ const countBySource = (records, source) =>
  * CSV → 統合 → 決定的な並び + **その時点の** Customers 由来の事実。
  * **子バッチのたびに呼ぶ**（既存アドレスを取り直すため）。
  */
-async function buildJobContext({ req, KEY, BASE, now }) {
+/**
+ * @param {{ skipAllRecords?: boolean }} opt
+ *   skipAllRecords=true のとき Customers の**全件取得を行わない**。
+ *   step は名指し取得（fetchByEmails）で足りるため既定でこれを使う。
+ *   全件が要るのは plan / 全体突合 / unblock のみ。
+ */
+async function buildJobContext({ req, KEY, BASE, now, skipAllRecords = false }) {
   const files = Array.isArray(req.files) ? req.files : [];
   if (files.length === 0) return { ok: false, status: 400, error: 'CSV が指定されていません' };
 
@@ -197,12 +241,12 @@ async function buildJobContext({ req, KEY, BASE, now }) {
   });
 
   const [records, blacklist, provider, availableFields] = await Promise.all([
-    fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
+    skipAllRecords ? Promise.resolve(null) : fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
     loadBlacklistSets({ KEY, BASE }),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
     loadAvailableFields({ KEY, BASE }),
   ]);
-  const facts = buildAkFacts({
+  const facts = records === null ? null : buildAkFacts({
     records, nowMs: now, blacklistHard: blacklist.hard, blacklistSoft: blacklist.soft,
     testRecipients: parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients,
   });
@@ -212,6 +256,9 @@ async function buildJobContext({ req, KEY, BASE, now }) {
 
   return {
     ok: true, entries, facts, records,
+    /** 名指し取得で facts を組み直すために必要（step は全件を持たない） */
+    blacklistHard: blacklist.hard, blacklistSoft: blacklist.soft,
+    testRecipients: parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients,
     providerEmails: providerOk ? provider.emails : new Set(),
     providerOk, availableFields, fileHashes, fileFingerprint,
     /** snapshot 用の決定的な hash 列（**PII を含まない**） */
@@ -363,7 +410,9 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
       });
     }
 
-    const ctx = await buildJobContext({ req, KEY, BASE, now });
+    // ⚠️ step は **Customers を全件取得しない**（15,967 件で約 170 秒 → Function タイムアウト）。
+    //    候補メールだけを名指しで引く。
+    const ctx = await buildJobContext({ req, KEY, BASE, now, skipAllRecords: true });
     if (!ctx.ok) return json(ctx.status, { error: ctx.error });
 
     const snap = await authority.verifySnapshot({ jobId, currentOrderedHashes: ctx.orderedHashes });
@@ -388,9 +437,17 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     //    状態が生じた。そのまま進めると reconciler が必ず BLOCKED になるため、
     //    実測へ追いつかせてから走らせる。増やす方向のみ・childHistory が空のときだけ。
     let jobForStep = repairCounterInvariants({ job, nowIso }).job;
-    const adopt = adoptMeasuredCreated({
-      job: jobForStep, airtableSourceCount: countBySource(ctx.records, jobForStep.source), nowIso,
-    });
+    // ⚠️ 追いつきは Airtable 実測が要る。step では全件を引かないので、
+    //    childHistory が空（= 取り残しがありうる初回）だけ全件を引いて確認する。
+    const adopt = (jobForStep.childHistory || []).length === 0
+      ? adoptMeasuredCreated({
+        job: jobForStep,
+        airtableSourceCount: countBySource(
+          await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }), jobForStep.source,
+        ),
+        nowIso,
+      })
+      : { job: jobForStep, adopted: 0, reason: 'not_first_step' };
     if (adopt.adopted > 0) {
       const savedAdopt = await authority.saveFenced({ job: adopt.job, fencingToken: lock.token });
       if (!savedAdopt.ok) {
@@ -409,6 +466,14 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     const out = await runChildBatch({
       job: running, entries: ctx.entries, currentOrderedHashes: ctx.orderedHashes,
       facts: ctx.facts, providerEmails: ctx.providerEmails, availableFields: ctx.availableFields,
+      selectRows: async ({ entries, providerEmails, cursor, limit }) => selectCreateRowsTargeted({
+        entries, cursor, limit, providerEmails, selectFn: selectCreateRows,
+        loadFacts: async (emails) => buildAkFacts({
+          records: await fetchByEmails({ KEY, BASE, table: CUSTOMERS_TABLE, emails }),
+          nowMs: now, blacklistHard: ctx.blacklistHard, blacklistSoft: ctx.blacklistSoft,
+          testRecipients: ctx.testRecipients,
+        }),
+      }),
       lockToken: lock.token, operationId, nowMs: now, nowIso,
       claims, authority,
       deps: {
@@ -461,39 +526,77 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
       claimedNotCreated: out.claimedNotCreated,
     });
 
-    // ── 4 点突合。**不一致なら自動続行しない** ──
-    const after = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
-    const recon = reconcileImportJob({
-      job: next,
-      claimCounts: { CLAIMED: out.claimedNotCreated || 0, CREATED: next.created, RELEASE_PENDING: 0 },
-      airtableSourceCount: countBySource(after, next.source),
-      duplicateEmailPairs: countDuplicateEmailPairs(after),
-      duplicateEmailPairsBaseline: next.duplicateEmailPairsBaseline,
-    });
-    // ⚠️ Airtable の一覧はページングで、**書き込み直後に読むと少なく数えることがある**。
-    //    件数系だけが落ちていて実測が記録より少ないときは、**一度だけ測り直してから**
-    //    判定する（2026-08-09 の本実行で 4400 vs 4333 の過少計測 → 停止後は 4400 で一致）。
-    let recon2 = recon;
-    if (shouldRemeasureBeforeBlock({
-      failedChecks: recon.failedChecks, created: next.created,
-      airtableSourceCount: countBySource(after, next.source),
-    })) {
-      await new Promise((r) => setTimeout(r, 2500));
-      const after2 = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
-      recon2 = reconcileImportJob({
+    // ── 検証（全件走査を毎回やらない）─────────────────────────
+    // ⚠️ 2026-08-09: Customers 15,967 件で全件取得に約 170 秒。毎 step は不可能。
+    //    per-batch は**書いたメールを名指しで**検証し、全体突合は cadence + **完了時必須**。
+    // ⚠️ audit は PII 回避で rowKey しか持たない。runner が持つ createdEmails を使う。
+    //    **メモリ上だけ**。ログ・レスポンス・正本へは入れない。
+    const writtenEmails = Array.isArray(out.createdEmails) ? out.createdEmails : [];
+    const isFinal = next.status === JOB_STATUS.COMPLETED || next.status === JOB_STATUS.PARTIAL
+      || out.exhausted === true;
+
+    let batchVerify = null;
+    if (writtenEmails.length > 0) {
+      let recs = null;
+      try {
+        recs = await fetchByEmails({ KEY, BASE, table: CUSTOMERS_TABLE, emails: writtenEmails });
+      } catch { recs = null; }   // 引けなければ verifyWrittenBatch が fail closed にする
+      batchVerify = verifyWrittenBatch({
+        writtenEmails, records: recs, expectedSource: next.source,
+      });
+      console.log(`🔎 [customer-import-job] ${JSON.stringify({ event: 'batch_verify', code: batchVerify.code, found: batchVerify.found, missing: batchVerify.missing, duplicates: batchVerify.duplicates, foreign: batchVerify.foreign })}`);
+      if (!batchVerify.ok) {
+        // 二重 CREATE / 取りこぼし / 他 Source 混入は**その場で止める**
+        next = markJobBlocked({
+          job: next,
+          reconciliation: { verdict: RECONCILE_VERDICT.BLOCKED, failedChecks: [`batch_${batchVerify.code}`], note: 'per-batch 検証で不一致' },
+          nowIso,
+        });
+      }
+    }
+    next.batchVerify = batchVerify ? { code: batchVerify.code, found: batchVerify.found } : null;
+
+    // 全体突合は cadence ごと + **完了時は必ず**（一度も通さず COMPLETED にしない）
+    if (next.status !== JOB_STATUS.BLOCKED
+      && shouldRunFullReconcile({ isFinal, childIndex: (next.childHistory || []).length })) {
+      const after = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
+      const recon = reconcileImportJob({
         job: next,
         claimCounts: { CLAIMED: out.claimedNotCreated || 0, CREATED: next.created, RELEASE_PENDING: 0 },
-        airtableSourceCount: countBySource(after2, next.source),
-        duplicateEmailPairs: countDuplicateEmailPairs(after2),
+        airtableSourceCount: countBySource(after, next.source),
+        duplicateEmailPairs: countDuplicateEmailPairs(after),
         duplicateEmailPairsBaseline: next.duplicateEmailPairsBaseline,
       });
-      console.log(`🔁 [customer-import-job] ${JSON.stringify({ event: 'reconcile_remeasured', before: recon.verdict, after: recon2.verdict })}`);
+      // ⚠️ 書き込み中のページングは**少なく数える**ことがある（2026-08-09: 4400 vs 4333）。
+      //    件数系だけが落ちていて実測が少ないときは、一度だけ測り直してから判定する。
+      let recon2 = recon;
+      if (shouldRemeasureBeforeBlock({
+        failedChecks: recon.failedChecks, created: next.created,
+        airtableSourceCount: countBySource(after, next.source),
+      })) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const after2 = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
+        recon2 = reconcileImportJob({
+          job: next,
+          claimCounts: { CLAIMED: out.claimedNotCreated || 0, CREATED: next.created, RELEASE_PENDING: 0 },
+          airtableSourceCount: countBySource(after2, next.source),
+          duplicateEmailPairs: countDuplicateEmailPairs(after2),
+          duplicateEmailPairsBaseline: next.duplicateEmailPairsBaseline,
+        });
+        console.log(`🔁 [customer-import-job] ${JSON.stringify({ event: 'reconcile_remeasured', before: recon.verdict, after: recon2.verdict })}`);
+      }
+      next.reconciliation = recon2;
+      next.lastFullReconcileAt = nowIso;
+      if (recon2.verdict === RECONCILE_VERDICT.BLOCKED) next = markJobBlocked({ job: next, reconciliation: recon2, nowIso });
+    } else if (next.status !== JOB_STATUS.BLOCKED) {
+      // 全体突合を省いた回は、**省いたことを正本に残す**（黙って OK にしない）
+      next.reconciliation = {
+        verdict: RECONCILE_VERDICT.OK, failedChecks: [], checks: [],
+        note: 'per-batch 検証のみ（全体突合は cadence と完了時に実施）',
+        deferredFullReconcile: true,
+      };
     }
-    next.reconciliation = recon2;
-    if (recon2.verdict === RECONCILE_VERDICT.BLOCKED) next = markJobBlocked({ job: next, reconciliation: recon2, nowIso });
 
-    // ⚠️ **必ず fenced save**。ロックだけでは lease 失効後の stale writer による
-    //    lost update を防げない（Airtable の行は残るが counters がズレて BLOCKED になる）。
     const saved = await authority.saveFenced({ job: next, fencingToken: lock.token });
     if (!saved.ok) {
       console.warn('⚠️ [customer-import-job] 正本の保存を拒否:', { jobId: next.jobId, reason: saved.reason });

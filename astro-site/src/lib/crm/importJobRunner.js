@@ -58,6 +58,8 @@ export const STEP_STOP = Object.freeze({
 export async function runChildBatch({
   job, entries, currentOrderedHashes, facts, providerEmails, availableFields,
   lockToken, operationId, nowMs, nowIso, claims, authority, deps,
+  /** 選定の差し替え（名指し取得）。未指定なら従来どおり facts で選ぶ */
+  selectRows,
 } = {}) {
   const stop = (reason, note) => ({ ok: false, stopped: reason, job, result: null, note });
 
@@ -76,9 +78,12 @@ export async function runChildBatch({
   if (limit <= 0) return stop(STEP_STOP.NOTHING_TO_WRITE, '計画に到達しています。');
 
   // ── 5a. 対象を選ぶ（既存・除外・要確認はここで落ちる）──
-  const picked = selectCreateRows({
-    entries, facts, providerEmails, cursor: int(job.cursor), limit,
-  });
+  // ⚠️ 既定は全件 facts での選定（従来どおり）。
+  //    Function は `selectRows` を注入して**名指し取得**に差し替える
+  //    （全件走査は Customers 15,967 件で約 170 秒かかり Function タイムアウトを超える）。
+  const picked = selectRows
+    ? await selectRows({ entries, providerEmails, cursor: int(job.cursor), limit })
+    : selectCreateRows({ entries, facts, providerEmails, cursor: int(job.cursor), limit });
   if (picked.rows.length === 0) {
     return {
       ok: true, stopped: null, job, result: null, exhausted: picked.exhausted,
@@ -129,7 +134,11 @@ export async function runChildBatch({
       availableFields,
       doneRowKeys: new Set(),
       // 第二防御（排他の代替ではない）
-      existingEmails: new Set(facts && facts.existing ? facts.existing : []),
+      // 第二防御（排他の代替ではない）。名指し取得時は窓の facts が渡るが、
+      // **書く行は必ずその窓に含まれる**ので既存判定は効く。
+      existingEmails: new Set(
+        (picked.facts && picked.facts.existing) || (facts && facts.existing) || [],
+      ),
       maxWrites: limit,
       deps,
     });
@@ -172,6 +181,11 @@ export async function runChildBatch({
     skipped: picked.skipped,
     /** claim は取れたが作成に至らなかった行（reconciler の回収対象） */
     claimedNotCreated: target.length - createdEmails.length,
+    /**
+     * この batch で実際に作成できたメール。**呼び出し側の名指し検証に使う**。
+     * ⚠️ メモリ上だけで使うこと。ログ・レスポンス・正本へ入れない（PII）。
+     */
+    createdEmails,
   };
 }
 

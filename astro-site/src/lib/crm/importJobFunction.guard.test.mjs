@@ -65,7 +65,10 @@ test('guard: ジョブ Function は既存レコードを更新・削除しない
   assert.equal(/method:\s*['"]DELETE['"]/.test(code), false, '削除を組み立てている');
   // Airtable への POST は「まとめ書き」「1 件ずつ」の 2 経路のみ。
   // Upstash REST も POST を使うので、Airtable URL を伴う POST だけを数える。
-  const airtablePosts = (code.match(/api\.airtable\.com[\s\S]{0,200}?method: 'POST'/g) || []).length;
+  // ⚠️ `listRecords` への POST は**読み取り**（長い formula を body で送るため）。
+  //    作成経路に数えない。
+  const airtablePosts = (code.match(/api\.airtable\.com[\s\S]{0,240}?method: 'POST'/g) || [])
+    .filter((m) => !m.includes('listRecords')).length;
   assert.equal(airtablePosts, 2, `Airtable への作成経路が ${airtablePosts} 箇所ある（2 箇所であるべき）`);
 });
 
