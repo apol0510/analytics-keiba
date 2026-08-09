@@ -177,7 +177,25 @@ async function main() {
 // 直接実行時のみ起動（import 時は実行しない＝テスト可能）。
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
-  main().catch((e) => { console.error('FATAL:', e); process.exit(1); });
+  main().catch((e) => {
+    // レート制限・timeout・5xx は「今は確定できない」だけ＝deferred。
+    // sharedFetch 側で回復時刻ぶんの bounded retry を尽くした後にここへ来る。
+    // 人間に再実行を求めず、workflow は failure にしない（次回の自動実行で追いつく）。
+    // auth / 権限 / schema / 検証失敗は従来どおり fail-closed（exit 1）。
+    // exit 2 は既に「引数エラー」で使われているため、慣例の EX_TEMPFAIL=75 を用いる。
+    const DEFERRABLE = new Set([
+      SHARED_FETCH_CODES.RATE_LIMITED,
+      SHARED_FETCH_CODES.TIMEOUT,
+      SHARED_FETCH_CODES.SERVER_ERROR,
+    ]);
+    if (e instanceof SharedFetchError && DEFERRABLE.has(e.code)) {
+      console.error(`DEFERRED: ${e.code} — 一時的に取得できないため中断（未書込・次回再試行）`);
+      console.error(`  path: ${e.path ?? '-'}`);
+      process.exit(75);
+    }
+    console.error('FATAL:', e);
+    process.exit(1);
+  });
 }
 
 export { fetchSharedRaw, validateHorseStatsJson, buildSharedPath, buildLocalPath };

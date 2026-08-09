@@ -82,17 +82,36 @@ jobs:
           echo "📅 horseStats(nankan) import: $DATE $VENUE"
 
       - name: Import horseStats (nankan) from keiba-data-shared
+        id: import
         env:
           # keiba-data-shared 読み取り用 PAT（Actions の自動 GITHUB_TOKEN では届かないため）
           KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node scripts/importHorseStatsNankan.js \
-            --date "${{ steps.resolve.outputs.date }}" \
-            --venue "${{ steps.resolve.outputs.venue }}"
+          # exit 75 (EX_TEMPFAIL) = レート制限 / timeout / 5xx で今は確定できない＝deferred。
+          # sharedFetch が回復時刻ぶんの bounded retry を尽くした後にのみ返る。未書込なので
+          # 途中状態は残らない。人間に再実行を求めず、run も failure にしない。
+          # exit 1 / 2 / 4 / 5（auth・権限・schema・引数・検証失敗）は従来どおり失敗させる。
+          if node scripts/importHorseStatsNankan.js \
+               --date "${{ steps.resolve.outputs.date }}" \
+               --venue "${{ steps.resolve.outputs.venue }}"; then
+            IMPORT_RC=0
+          else
+            IMPORT_RC=$?
+          fi
+
+          if [ "$IMPORT_RC" -eq 75 ]; then
+            echo "deferred=true" >> $GITHUB_OUTPUT
+            echo "⏸️  一時的に shared を取得できないため未完了（deferred）。書込は行っていない。"
+            exit 0
+          elif [ "$IMPORT_RC" -ne 0 ]; then
+            exit "$IMPORT_RC"
+          fi
+          echo "deferred=false" >> $GITHUB_OUTPUT
 
       - name: Check for changes (horseStats only)
         id: git-check
+        if: steps.import.outputs.deferred != 'true'
         run: |
           # horseStats/nankan 配下の変更だけをステージング（他系統は触らない）
           git add src/data/horseStats/nankan/
