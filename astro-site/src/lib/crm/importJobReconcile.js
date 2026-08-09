@@ -17,6 +17,28 @@
 const int = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
 
 /** 突合の判定 */
+/**
+ * BLOCKED の前に**測り直すべき**不一致かどうか。
+ *
+ * ⚠️ Airtable の一覧はページングで、**書き込み中に読むと少なく数えることがある**
+ *    （2026-08-09 の本実行で `4400 vs 4333` の過少計測が発生し、書き込み停止後に
+ *    数え直したら 4,400 で一致した）。1 回のスナップショットを正本にしない。
+ *
+ * 対象は「実測が記録より**少ない**」ケースだけ。多い場合は測り直しでは説明できない
+ * （＝本当に増えている）ので、そのまま BLOCKED にする。
+ *
+ * @param {{ failedChecks: string[], created: number, airtableSourceCount: number|null }} input
+ */
+export function shouldRemeasureBeforeBlock({ failedChecks, created, airtableSourceCount } = {}) {
+  const failed = Array.isArray(failedChecks) ? failedChecks : [];
+  if (failed.length === 0) return false;
+  const COUNT_CHECKS = ['created_matches_airtable', 'claims_created_matches_airtable'];
+  // 件数系以外が落ちているなら測り直しでは直らない
+  if (!failed.every((f) => COUNT_CHECKS.includes(f))) return false;
+  if (airtableSourceCount === null || airtableSourceCount === undefined) return false;
+  return Number(airtableSourceCount) < Number(created);
+}
+
 export const RECONCILE_VERDICT = Object.freeze({
   OK: 'OK',
   PARTIAL: 'PARTIAL',     // 説明できる不足（claim 済み・未作成など）。reconciler の回収待ち
