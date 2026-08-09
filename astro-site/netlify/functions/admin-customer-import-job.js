@@ -41,6 +41,7 @@ import {
   nextChildIndex, JOB_CHILD_MAX_ROWS, JOB_REJECT, JOB_REJECT_LABEL, JOB_STATUS,
   adoptMeasuredCreated,
   unblockImportJob,
+  repairCounterInvariants,
   buildUnblockConfirmation,
 } from '../../src/lib/crm/importJobModel.js';
 import {
@@ -373,9 +374,9 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     //    2026-08-09 の障害で「Airtable に 100 件あるのに正本は created=0」という
     //    状態が生じた。そのまま進めると reconciler が必ず BLOCKED になるため、
     //    実測へ追いつかせてから走らせる。増やす方向のみ・childHistory が空のときだけ。
-    let jobForStep = job;
+    let jobForStep = repairCounterInvariants({ job, nowIso }).job;
     const adopt = adoptMeasuredCreated({
-      job, airtableSourceCount: countBySource(ctx.records, job.source), nowIso,
+      job: jobForStep, airtableSourceCount: countBySource(ctx.records, jobForStep.source), nowIso,
     });
     if (adopt.adopted > 0) {
       const savedAdopt = await authority.saveFenced({ job: adopt.job, fencingToken: lock.token });
@@ -547,14 +548,22 @@ async function handleUnblock({ req, KEY, BASE, now, claims, authority }) {
     if (!job) return json(404, { mode: 'import-job-unblock', error: JOB_REJECT_LABEL[JOB_REJECT.JOB_NOT_FOUND], code: JOB_REJECT.JOB_NOT_FOUND });
 
     const records = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
+    // ⚠️ 突合の前に**算術的な不変条件**だけ回復する（attempted >= created+skipped+failed）。
+    //    created 等の実測値は触らない。ここを直さないと、記録漏れのせいで
+    //    counters_balanced が永久に落ちて BLOCKED から出られない。
+    const rep = repairCounterInvariants({ job, nowIso: new Date(now).toISOString() });
+    const jobR = rep.job;
+    if (rep.repaired > 0) {
+      console.log(`🔧 [customer-import-job] ${JSON.stringify({ event: 'counters_repaired', attemptedFrom: jobR.countersRepaired.attemptedFrom, attemptedTo: jobR.countersRepaired.attemptedTo })}`);
+    }
     const recon = reconcileImportJob({
-      job,
-      claimCounts: { CLAIMED: 0, CREATED: int0(job.created), RELEASE_PENDING: 0 },
-      airtableSourceCount: countBySource(records, job.source),
+      job: jobR,
+      claimCounts: { CLAIMED: 0, CREATED: int0(jobR.created), RELEASE_PENDING: 0 },
+      airtableSourceCount: countBySource(records, jobR.source),
       duplicateEmailPairs: countDuplicateEmailPairs(records),
-      duplicateEmailPairsBaseline: job.duplicateEmailPairsBaseline,
+      duplicateEmailPairsBaseline: jobR.duplicateEmailPairsBaseline,
     });
-    const r = unblockImportJob({ job, reconciliation: recon, confirmation: req.confirmation, nowIso: new Date(now).toISOString() });
+    const r = unblockImportJob({ job: jobR, reconciliation: recon, confirmation: req.confirmation, nowIso: new Date(now).toISOString() });
     if (!r.ok) {
       return json(409, {
         mode: 'import-job-unblock', error: '解除できません。', code: r.reason,

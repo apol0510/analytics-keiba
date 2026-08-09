@@ -280,6 +280,44 @@ export function adoptMeasuredCreated({ job, airtableSourceCount, nowIso } = {}) 
   };
 }
 
+/**
+ * counters の**算術的な不変条件**を回復する。
+ *
+ *   attempted >= created + skippedExisting + failed
+ *
+ * 「作成した数が試行した数を超える」ことは定義上ありえない。超えていれば
+ * `attempted` の記録漏れなので、**attempted を増やす方向にだけ**直す。
+ * created / skippedExisting / failed は**一切触らない**（実測由来なので推測しない）。
+ *
+ * ⚠️ 2026-08-09 の障害: Function が runner の `attempted` を渡しておらず、
+ *    正本が `created=200 / attempted=100` で保存された。以後 counters_balanced が
+ *    永久に落ち、BLOCKED から出られなくなった（unblock も reconcile OK を要求するため）。
+ *    コード修正は将来の step にしか効かないので、**既存の正本を直す経路**が要る。
+ *
+ * @param {{ job: object, nowIso: string }} input
+ * @returns {{ job: object, repaired: number, reason: string|null }}
+ */
+export function repairCounterInvariants({ job, nowIso } = {}) {
+  if (!job) return { job, repaired: 0, reason: 'no_job' };
+  const created = int(job.created);
+  const skipped = int(job.skippedExisting);
+  const failed = int(job.failed);
+  const attempted = int(job.attempted);
+  const need = created + skipped + failed;
+  if (attempted >= need) return { job, repaired: 0, reason: 'already_consistent' };
+  return {
+    job: {
+      ...job,
+      attempted: need,
+      /** 監査用。件数だけ */
+      countersRepaired: { attemptedFrom: attempted, attemptedTo: need, at: str(nowIso) },
+      updatedAt: str(nowIso),
+    },
+    repaired: need - attempted,
+    reason: null,
+  };
+}
+
 /** BLOCKED 解除の確認文字列（batchId に紐づくので使い回せない） */
 export function buildUnblockConfirmation(batchId) {
   return `UNBLOCK ${str(batchId)}`;
