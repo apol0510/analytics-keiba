@@ -86,7 +86,13 @@ test('guard: Customers / 決済メール v2 のフィールドへ書かない', 
   // Customers は **読むだけ**。patchRecord / createRecord の対象に含めない
   assert.equal(/patchRecord\(\{[^}]*table: CUSTOMERS_TABLE/.test(CODE), false, 'Customers を更新している');
   assert.equal(/createRecord\(\{[^}]*CUSTOMERS_TABLE/.test(CODE), false, 'Customers を作成している');
-  assert.ok(/fetchAll\(\{ KEY, BASE, table: CUSTOMERS_TABLE \}\)/.test(CODE), 'Customers の読み取りが失われている');
+  // Customers は宛先ぶんだけ**名指しで**読む。
+  // 全件走査は fetchAll の 40 ページ打ち切りに当たり、後ろの宛先の
+  // `unsubscribed` / `suspended` を確認しないまま送ってしまう（2026-08-09）。
+  assert.ok(/fetchCustomersByEmails\(\{ KEY, BASE, emails: jobEmails \}\)/.test(CODE),
+    'Customers の読み取りが失われている');
+  assert.equal(/fetchAll\(\{ KEY, BASE, table: CUSTOMERS_TABLE \}\)/.test(CODE), false,
+    'Customers の全件走査へ戻している（打ち切りで suppression 判定が抜ける）');
   for (const f of ['PaymentEmailStatus', 'PaymentEmailSent', 'PaymentConfirmed', 'idempotency_key', 'payment_confirmation_v2']) {
     assert.equal(CODE.includes(f), false, `決済メール v2 のフィールド ${f} に触れている`);
   }

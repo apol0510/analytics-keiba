@@ -99,3 +99,35 @@ test('guard: 名指し取得はページ打ち切りを例外にする', () => {
   assert.ok(calls.length >= 3,
     `名指し取得の各ループが打ち切りを検知すること（現在 ${calls.length} 箇所）`);
 });
+
+// ── dispatcher 側も同じ打ち切りに晒されていた ──────────────────
+//
+// `marketing-campaign-dispatch.js` は Customers を全件走査して
+// `unsubscribed` / `suspended` / `fieldsByEmail` を作っていた。40 ページで
+// 打ち切られると、後ろの宛先は「配信停止していない」ではなく
+// **「確認できていない」まま送信対象になる**（= suppression の取りこぼし）。
+
+const DISPATCH = readFileSync(
+  new URL('../../../netlify/functions/marketing-campaign-dispatch.js', import.meta.url), 'utf8',
+);
+
+test('guard: dispatcher は宛先ぶんの Customers だけを引く', () => {
+  assert.match(DISPATCH, /async function fetchByEmailsReadOnly\(/);
+  assert.match(DISPATCH, /fetchCustomersByEmails\(\{ KEY, BASE, emails: jobEmails \}\)/);
+  assert.doesNotMatch(DISPATCH, /fetchAll\(\{ KEY, BASE, table: CUSTOMERS_TABLE \}\)/,
+    'Customers の全件走査へ戻さない');
+});
+
+test('guard: dispatcher の 24h 履歴も宛先ぶんだけ引く', () => {
+  assert.match(DISPATCH, /fetchCampaignDeliveriesForEmails\(\{ KEY, BASE, emails: jobEmails \}\)/);
+  assert.doesNotMatch(
+    DISPATCH,
+    /fetchAll\(\{\s*KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `\{EmailType\}='campaign'`,?\s*\}\)/,
+    'CampaignDeliveries の全件走査へ戻さない',
+  );
+});
+
+test('guard: 顧客レコードを引けない宛先には送らない（fail closed）', () => {
+  assert.match(DISPATCH, /if \(!fieldsByEmail\.has\(email\)\) \{/);
+  assert.match(DISPATCH, /customer_record_missing/);
+});
