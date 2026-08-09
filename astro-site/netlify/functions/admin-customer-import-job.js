@@ -39,6 +39,7 @@ import {
   markJobBlocked, markJobRedisUnavailable, summarizeJobProgress, describeJobRollback,
   buildJobId, buildJobSource, buildJobConfirmation, buildOperationId, countChildBatches,
   nextChildIndex, JOB_CHILD_MAX_ROWS, JOB_REJECT, JOB_REJECT_LABEL, JOB_STATUS,
+  adoptMeasuredCreated,
 } from '../../src/lib/crm/importJobModel.js';
 import {
   createClaimStore, emailHash, RedisUnavailableError, LOCK_TTL_MS,
@@ -365,7 +366,28 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     const nowIso = new Date(now).toISOString();
     const index = nextChildIndex(job);
     const operationId = buildOperationId({ jobId, index });
-    const running = beginChildBatch({ job, nowIso, operationId, fencingToken: lock.token });
+    // ── 再開時の counters 追いつき（**最初の子バッチの前に 1 回だけ**）──
+    //    2026-08-09 の障害で「Airtable に 100 件あるのに正本は created=0」という
+    //    状態が生じた。そのまま進めると reconciler が必ず BLOCKED になるため、
+    //    実測へ追いつかせてから走らせる。増やす方向のみ・childHistory が空のときだけ。
+    let jobForStep = job;
+    const adopt = adoptMeasuredCreated({
+      job, airtableSourceCount: countBySource(ctx.records, job.source), nowIso,
+    });
+    if (adopt.adopted > 0) {
+      const savedAdopt = await authority.saveFenced({ job: adopt.job, fencingToken: lock.token });
+      if (!savedAdopt.ok) {
+        return json(409, {
+          mode: 'import-job-step', written: 0,
+          error: '正本の counters を実測へ追いつかせられませんでした。',
+          code: savedAdopt.reason,
+        });
+      }
+      jobForStep = adopt.job;
+      console.log(`🔧 [customer-import-job] ${JSON.stringify({ event: 'counters_adopted', from: adopt.job.countersAdopted.from, to: adopt.job.countersAdopted.to })}`);
+    }
+
+    const running = beginChildBatch({ job: jobForStep, nowIso, operationId, fencingToken: lock.token });
 
     const out = await runChildBatch({
       job: running, entries: ctx.entries, currentOrderedHashes: ctx.orderedHashes,
