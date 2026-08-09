@@ -1,4 +1,5 @@
 ---
+import { MAGIC_LINK_TTL_MINUTES } from '../../lib/auth/constants.js';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
 export const prerender = false;
@@ -58,7 +59,7 @@ export const prerender = false;
   .verify-content.error .spinner, .verify-content.success .spinner { display: none; }
 </style>
 
-<script>
+<script define:vars={{ TTL_MIN: MAGIC_LINK_TTL_MINUTES }}>
   (async () => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
@@ -88,7 +89,7 @@ export const prerender = false;
       const data = await res.json();
 
       if (!res.ok) {
-        fail(data.error === 'Token expired' ? 'リンクの有効期限（15分）が切れています。<br>下のボタンから、もう一度ログインリンクを受け取ってください。<br><strong>届いた最新の1通</strong>を 15分以内 にお開きください。'
+        fail(data.error === 'Token expired' ? `リンクの有効期限（${TTL_MIN}分）が切れています。<br>下のボタンから、もう一度ログインリンクを受け取ってください。<br><strong>届いた最新の1通</strong>を ${TTL_MIN}分以内 にお開きください。`
           : data.error === 'Token already used' ? 'このリンクは既に使用済みです。<br>お手数ですが、もう一度ログインリンクを受け取ってください（<strong>最新の1通</strong>をご利用ください）。'
           : data.error === 'Token not found' ? '無効なトークンです。'
           : data.error === 'Customer not found' ? 'アカウントが見つかりません。'
