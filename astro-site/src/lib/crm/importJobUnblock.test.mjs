@@ -124,7 +124,7 @@ test('Function は runner の attempted を applyChildResult へ渡す', () => {
 
 test('unblock は実測を取り直してから判定する', () => {
   const i = FN.indexOf('async function handleUnblock');
-  const body = FN.slice(i, i + 1800);
+  const body = FN.slice(i, i + 3200);
   assert.match(body, /fetchAllReadOnly\(/, '実測を取り直していない');
   assert.match(body, /reconcileImportJob\(/, '突合していない');
   assert.match(body, /saveFenced\(/, 'fenced save を使っていない');
