@@ -110,3 +110,37 @@ export function createMonthIndex(client, ref = 'main') {
     },
   };
 }
+
+/**
+ * import 系スクリプトの終端ハンドラ共通実装。
+ *
+ * 一時的な取得失敗（rate limit / timeout / 5xx）を **EX_TEMPFAIL=75** で返し、
+ * それ以外（token / 認証 / 権限 / schema / 検証失敗）は fail-closed（既定 1）にする。
+ *
+ * なぜ 75 か: 多くのスクリプトが `exit 2` を「引数エラー」に使っており衝突するため、
+ * 一時失敗を表す慣例コード EX_TEMPFAIL を採用した。
+ * 75 も非ゼロなので、成否だけを見る既存の呼び出し側の挙動は変わらない。
+ *
+ * 呼び出し側（workflow）は 75 を「今は確定できない」として扱い、run を failure にしない。
+ * sharedFetch 側で回復時刻ぶんの bounded retry を尽くした後にのみここへ到達する。
+ *
+ * @param {unknown} error
+ * @param {{label?: string, fatalCode?: number, io?: {write?:Function, exit?:Function}}} [opts]
+ */
+export function exitDeferredOrFatal(error, opts = {}) {
+  const { label = '', fatalCode = 1, io = {} } = opts;
+  const write = io.write ?? ((s) => process.stderr.write(s));
+  const exit = io.exit ?? ((c) => process.exit(c));
+  const prefix = label ? `${label}: ` : '';
+
+  if (isTransientSharedFetchError(error)) {
+    write(`DEFERRED: ${prefix}${error.code} — 一時的に取得できないため中断（未書込・次回再試行）\n`);
+    if (error.path) write(`  path: ${error.path}\n`);
+    return exit(EXIT_DEFERRED);
+  }
+  write(`FATAL: ${prefix}${error?.message ?? String(error)}\n`);
+  return exit(fatalCode);
+}
+
+/** 一時失敗を表す終了コード（EX_TEMPFAIL）。exit 2 は引数エラーで使用済みのため衝突を避ける。 */
+export const EXIT_DEFERRED = 75;

@@ -15,6 +15,9 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+
+const LABEL = 'verifyArchiveSync.js';
 
 // keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw 廃止・匿名 fallback 禁止）。
 const SHARED_REF = 'main';
@@ -214,9 +217,8 @@ async function main() {
     process.exit(1);
 
   } catch (error) {
-    console.error(`\n❌ エラーが発生しました: ${error.message}`);
-    console.error(error);
-    process.exit(1);
+    // 一時失敗(rate limit/timeout/5xx)は exit 75 で deferred、それ以外は fail-closed。
+    exitDeferredOrFatal(error, { label: LABEL });
   }
 }
 

@@ -23,6 +23,9 @@ import {
 } from '../src/utils/sanrenpukuBetting.js';
 import { resolveSharedToken } from './lib/sharedFetch.mjs';
 import { fetchSharedResults } from './importResultsJra.js';
+import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+
+const LABEL = 'importResultsJraSanrenpuku.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_PATH = join(__dirname, '..', 'src', 'data', 'archiveSanrenpukuResultsJra.json');
@@ -391,7 +394,6 @@ export async function runImport({
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   runImport().catch((e) => {
-    console.error(e?.message ?? String(e));
-    process.exit(1);
-  });
+      exitDeferredOrFatal(e, { label: LABEL });
+    });
 }

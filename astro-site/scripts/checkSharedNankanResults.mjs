@@ -18,6 +18,9 @@
  */
 import { pathToFileURL } from 'node:url';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+
+const LABEL = 'checkSharedNankanResults.mjs';
 
 function parseArgs(argv) {
   const args = {};
@@ -81,7 +84,6 @@ if (isDirectRun) {
       process.stdout.write(`TOTAL_RACES=${totalRaces}\n`);
     })
     .catch((e) => {
-      console.error(e?.message ?? String(e)); // message のみ（token を含まない）
-      process.exit(1);
+      exitDeferredOrFatal(e, { label: LABEL });
     });
 }
