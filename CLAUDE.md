@@ -1102,7 +1102,43 @@ jra.astro にも存在するかを検証。
 - `import-prediction-jra.yml` / `import-prediction-daily.yml`
 - `import-results-jra.yml` / `import-results-jra-daily.yml` / `import-results-nankan-daily.yml`
 - `auto-sync-check.yml` - archive整合性検証
-- `verify-archive-sync.yml`
+- `verify-archive-sync.yml` - archive 欠落の日次監視（過去7日）
+
+### verify-archive-sync.yml の監視契約（2026-08-09 恒久修正）
+
+`scripts/checkArchiveCoverage.mjs` が keiba-data-shared の **per-venue 構造**を直接読み、
+archive（`src/data/archiveResultsJra.json` / `archiveResults.json`）と突き合わせる。
+
+**背景**: 2026-08-09 以前は `checkSharedDailyFile.mjs` で
+**統合 daily ファイル**（`jra/results/YYYY/MM/YYYY-MM-DD.json`）だけを見ていた。
+shared の正本は per-venue（`...-CHU.json`）なので常に 404 になり、
+実開催日でも「Not found」→ アラート判定に入らず
+「✅ All dates synchronized」を出していた（＝監視が成立していない偽の緑）。
+
+**開催会場の決め方**: 暦や決め打ちで推測しない。月ディレクトリ一覧から
+`YYYY-MM-DD-{CODE}.json` に一致するファイルを拾い、**shared に実在するものだけ**を採用する。
+
+**状態の区別と exit code**:
+
+| 状態 | 意味 | exit | run |
+|---|---|---|---|
+| `ok` | archive 反映済み | 0 | 緑 |
+| `no_race` | results も予想も無い＝非開催 | 0 | 緑 |
+| `partial` | 投入途中（閾値未満）。欠落と断定しない | 0 | 緑 |
+| `deferred` | rate limit / timeout / 5xx で確定不能 | 2 | 緑（⚠️ ログのみ・次回再検証） |
+| `archive_missing` | shared に実データがあるのに archive 未反映 | 3 | **赤**（アラートメール後に failure） |
+| `results_missing` | 予想はあるのに結果未登録 | 3 | **赤**（同上） |
+| — | token 未設定 / 401 / 権限不足 / schema 不一致 | 1 | **赤**（即時） |
+
+閾値は JRA 10R / 南関 12R。予想の有無は JRA が computer 予想
+（`jra/predictions/computer/`）、南関が `nankan/predictions/`。
+racebook は前倒し/日付誤りの stray があるため判定根拠にしない。
+
+**禁止**: `continue-on-error` で隠さない。欠落があるのに exit 0 を返さない。
+一時エラーだけを緑にし、実データ欠落は必ず run を failure にする。
+
+**API GET**: 1 プロセスで7日ぶんを処理し、月ディレクトリ一覧を cache する
+（同一 run で同じディレクトリを二度取らない）。非開催日にはファイル GET を撃たない。
 
 keiba-intelligenceで実証済みの構成を採用。Concurrency Groupは
 - 南関: `archive-nankan-update`

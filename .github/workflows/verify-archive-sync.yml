@@ -10,8 +10,13 @@ jobs:
   verify-sync:
     runs-on: ubuntu-latest
     # private 化後の keiba-data-shared を cross-repo read するため、本 job の全 step へ供給。
-    # JRA/南関の存在確認 step（checkSharedDailyFile.mjs で unified daily ファイルを確認）が認証取得に使用。
+    # JRA/南関の archive 突き合わせ step（checkArchiveCoverage.mjs）が認証取得に使用。
     # secrets.GITHUB_TOKEN（自repoスコープ）は private 別repo読取に使わない。
+    #
+    # 2026-08-09: checkSharedDailyFile.mjs（統合 daily ファイル前提）から
+    # checkArchiveCoverage.mjs（shared の per-venue 構造を直接読む）へ差し替えた。
+    # 旧実装は実開催日でも常に 404 →「Not found」→ アラート判定に入らず、
+    # 監視が成立しないまま「✅ All dates synchronized」を出していた（偽の緑）。
     env:
       KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
 
@@ -33,120 +38,64 @@ jobs:
             exit 1
           fi
 
-          # 過去7日間の日付をチェック
-          MISSING_DATES=""
-          NO_RESULTS_DATES=""
-          TRANSIENT_DATES=""
-          ALERT_NEEDED=false
-          NO_RESULTS_ALERT=false
+          # checkArchiveCoverage.mjs は shared の per-venue 構造を直接読む。
+          # 旧 checkSharedDailyFile.mjs は統合 daily ファイル
+          # （jra/results/YYYY/MM/YYYY-MM-DD.json）を見ていたが、shared の正本は
+          # per-venue（...-CHU.json）なので常に 404 になり、実開催日でも
+          # 「Not found」→ アラート判定に入らず偽の緑を出していた。
+          #
+          # exit 0 … 欠落なし
+          # exit 2 … 一時エラー（rate limit/timeout/5xx）で未確定＝deferred。run は落とさない
+          # exit 3 … 実データ欠落を検出＝Failure（アラート送信後に run を failure にする）
+          # exit 1 … token / 認証 / 権限 / schema 不一致＝運用者の対応が要る fatal
+          if OUT=$(node astro-site/scripts/checkArchiveCoverage.mjs --category jra --days 7); then
+            RC=0
+          else
+            RC=$?
+          fi
+          echo "$OUT"
 
-          for i in {0..6}; do
-            DATE=$(date -u -d "$i days ago" +%Y-%m-%d 2>/dev/null || date -u -v-${i}d +%Y-%m-%d)
+          if [ "$RC" -eq 1 ]; then
+            echo "❌ JRA checkArchiveCoverage failed (token/auth/permission/schema)"
+            exit 1
+          fi
 
-            echo "━━━ Checking: $DATE ━━━"
+          MISSING=$(printf '%s\n' "$OUT" | sed -n 's/^ARCHIVE_MISSING_DATES=//p')
+          NO_RESULTS=$(printf '%s\n' "$OUT" | sed -n 's/^NO_RESULTS_DATES=//p')
+          DEFERRED=$(printf '%s\n' "$OUT" | sed -n 's/^DEFERRED_DATES=//p')
+          UNKNOWN=$(printf '%s\n' "$OUT" | sed -n 's/^UNKNOWN_VENUE_CODES=//p')
 
-            # 予想データ存在確認（認証付き / 匿名 curl・raw 廃止）
-            HAS_PREDICTION=false
-            # exit 2 = 一時エラー（rate limit/timeout/5xx）。その日をスキップし run は落とさない。
-            # exit 1 = token/認証/権限。運用者の対応が要るので従来どおり fatal。
-            if PRED_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category jra --kind predictions); then
-              RC=0
-            else
-              RC=$?
-            fi
-            if [ "$RC" -eq 2 ]; then
-              echo "⚠️  $DATE: shared 一時エラーのため JRA prediction の検証をスキップ（次回実行で再試行）"
-              TRANSIENT_DATES="${TRANSIENT_DATES}${DATE}, "
-              continue
-            elif [ "$RC" -ne 0 ]; then
-              echo "❌ Failed to confirm JRA prediction for $DATE (token/auth/permission error)."
-              exit 1
-            fi
-            if [ "$(printf '%s\n' "$PRED_OUT" | sed -n 's/^FOUND=//p')" = "true" ]; then
-              echo "✅ Prediction: Found"
-              HAS_PREDICTION=true
-            else
-              echo "⏭️  Prediction: Not found"
-            fi
-
-            # 結果データ存在確認（認証付き / race数は EXPECTED_RACES を消費）
-            # exit 2 = 一時エラー（rate limit/timeout/5xx）。その日をスキップし run は落とさない。
-            # exit 1 = token/認証/権限。運用者の対応が要るので従来どおり fatal。
-            if RES_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category jra --kind results); then
-              RC=0
-            else
-              RC=$?
-            fi
-            if [ "$RC" -eq 2 ]; then
-              echo "⚠️  $DATE: shared 一時エラーのため JRA results の検証をスキップ（次回実行で再試行）"
-              TRANSIENT_DATES="${TRANSIENT_DATES}${DATE}, "
-              continue
-            elif [ "$RC" -ne 0 ]; then
-              echo "❌ Failed to confirm JRA results for $DATE (token/auth/permission error)."
-              exit 1
-            fi
-            RES_FOUND=$(printf '%s\n' "$RES_OUT" | sed -n 's/^FOUND=//p')
-            RACE_COUNT=$(printf '%s\n' "$RES_OUT" | sed -n 's/^EXPECTED_RACES=//p')
-            RACE_COUNT="${RACE_COUNT:-0}"
-
-            if [ "$RES_FOUND" = "true" ]; then
-              echo "✅ Results: $RACE_COUNT races"
-
-              # 10レース以上ある場合のみチェック
-              if [ "$RACE_COUNT" -ge 10 ]; then
-                # keiba-intelligenceのアーカイブにあるかチェック
-                if grep -q "\"date\": \"$DATE\"" astro-site/src/data/archiveResultsJra.json; then
-                  echo "✅ Archive: Found"
-                else
-                  echo "❌ Archive: MISSING!"
-                  MISSING_DATES="${MISSING_DATES}${DATE} (${RACE_COUNT}R), "
-                  ALERT_NEEDED=true
-                fi
-              else
-                echo "⏭️  Skipped: $RACE_COUNT races (< 10)"
-              fi
-            else
-              echo "⏭️  Results: Not found"
-
-              # 予想データがあるのに結果データがない → アラート
-              if [ "$HAS_PREDICTION" = true ]; then
-                echo "🚨 PROBLEM: Prediction exists but NO results!"
-                NO_RESULTS_DATES="${NO_RESULTS_DATES}${DATE}, "
-                NO_RESULTS_ALERT=true
-              fi
-            fi
-          done
-
-          if [ "$ALERT_NEEDED" = true ]; then
+          if [ -n "$MISSING" ]; then
             echo "alert_needed=true" >> $GITHUB_OUTPUT
-            echo "missing_dates=${MISSING_DATES%, }" >> $GITHUB_OUTPUT
+            echo "missing_dates=$MISSING" >> $GITHUB_OUTPUT
+            echo "🚨 JRA: archive 未反映 → $MISSING"
           else
             echo "alert_needed=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ "$NO_RESULTS_ALERT" = true ]; then
+          if [ -n "$NO_RESULTS" ]; then
             echo "no_results_alert=true" >> $GITHUB_OUTPUT
-            echo "no_results_dates=${NO_RESULTS_DATES%, }" >> $GITHUB_OUTPUT
-            echo ""
-            echo "🚨 ALERT: Dates with predictions but NO results!"
-            echo "   $NO_RESULTS_DATES"
+            echo "no_results_dates=$NO_RESULTS" >> $GITHUB_OUTPUT
+            echo "🚨 JRA: 予想はあるが結果未登録 → $NO_RESULTS"
           else
             echo "no_results_alert=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ -n "$TRANSIENT_DATES" ]; then
-            echo ""
-            echo "⚠️  一時エラーで未検証の日付: ${TRANSIENT_DATES%, }"
-            echo "   （workflow は成功扱い。翌日の実行で再検証される）"
+          if [ "$RC" -eq 3 ]; then
+            echo "data_gap=true" >> $GITHUB_OUTPUT
+          else
+            echo "data_gap=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ "$ALERT_NEEDED" = false ] && [ "$NO_RESULTS_ALERT" = false ]; then
-            echo ""
-            if [ -n "$TRANSIENT_DATES" ]; then
-              echo "✅ 検証できた日付はすべて同期済み（未検証日は上記のとおり）"
-            else
-              echo "✅ All dates synchronized"
-            fi
+          if [ -n "$DEFERRED" ]; then
+            echo "⚠️  JRA: 一時エラーで未検証の日付 → ${DEFERRED}（次回実行で再検証）"
+          fi
+          if [ -n "$UNKNOWN" ]; then
+            echo "⚠️  JRA: 未知の会場コードを検出 → $UNKNOWN"
+          fi
+
+          if [ "$RC" -eq 0 ]; then
+            echo "✅ JRA: 過去7日すべて同期済み"
           fi
 
       - name: Check Nankan archive sync
@@ -158,121 +107,64 @@ jobs:
             exit 1
           fi
 
-          # 過去7日間の日付をチェック
-          MISSING_DATES=""
-          NO_RESULTS_DATES=""
-          TRANSIENT_DATES=""
-          ALERT_NEEDED=false
-          NO_RESULTS_ALERT=false
+          # checkArchiveCoverage.mjs は shared の per-venue 構造を直接読む。
+          # 旧 checkSharedDailyFile.mjs は統合 daily ファイル
+          # （nankan/results/YYYY/MM/YYYY-MM-DD.json）を見ていたが、shared の正本は
+          # per-venue（...-CHU.json）なので常に 404 になり、実開催日でも
+          # 「Not found」→ アラート判定に入らず偽の緑を出していた。
+          #
+          # exit 0 … 欠落なし
+          # exit 2 … 一時エラー（rate limit/timeout/5xx）で未確定＝deferred。run は落とさない
+          # exit 3 … 実データ欠落を検出＝Failure（アラート送信後に run を failure にする）
+          # exit 1 … token / 認証 / 権限 / schema 不一致＝運用者の対応が要る fatal
+          if OUT=$(node astro-site/scripts/checkArchiveCoverage.mjs --category nankan --days 7); then
+            RC=0
+          else
+            RC=$?
+          fi
+          echo "$OUT"
 
-          for i in {0..6}; do
-            DATE=$(date -u -d "$i days ago" +%Y-%m-%d 2>/dev/null || date -u -v-${i}d +%Y-%m-%d)
+          if [ "$RC" -eq 1 ]; then
+            echo "❌ 南関 checkArchiveCoverage failed (token/auth/permission/schema)"
+            exit 1
+          fi
 
-            echo "━━━ Checking: $DATE ━━━"
+          MISSING=$(printf '%s\n' "$OUT" | sed -n 's/^ARCHIVE_MISSING_DATES=//p')
+          NO_RESULTS=$(printf '%s\n' "$OUT" | sed -n 's/^NO_RESULTS_DATES=//p')
+          DEFERRED=$(printf '%s\n' "$OUT" | sed -n 's/^DEFERRED_DATES=//p')
+          UNKNOWN=$(printf '%s\n' "$OUT" | sed -n 's/^UNKNOWN_VENUE_CODES=//p')
 
-            # 予想データ存在確認（認証付き / 匿名 curl・raw 廃止）
-            HAS_PREDICTION=false
-            # exit 2 = 一時エラー（rate limit/timeout/5xx）。その日をスキップし run は落とさない。
-            # exit 1 = token/認証/権限。運用者の対応が要るので従来どおり fatal。
-            if PRED_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category nankan --kind predictions); then
-              RC=0
-            else
-              RC=$?
-            fi
-            if [ "$RC" -eq 2 ]; then
-              echo "⚠️  $DATE: shared 一時エラーのため 南関 prediction の検証をスキップ（次回実行で再試行）"
-              TRANSIENT_DATES="${TRANSIENT_DATES}${DATE}, "
-              continue
-            elif [ "$RC" -ne 0 ]; then
-              echo "❌ Failed to confirm 南関 prediction for $DATE (token/auth/permission error)."
-              exit 1
-            fi
-            if [ "$(printf '%s\n' "$PRED_OUT" | sed -n 's/^FOUND=//p')" = "true" ]; then
-              echo "✅ Prediction: Found"
-              HAS_PREDICTION=true
-            else
-              echo "⏭️  Prediction: Not found"
-            fi
-
-            # 結果データ存在確認（認証付き / 旧契約どおり unified nankan/results/Y/M/DATE.json のみ）。
-            # per-venue へ fallback しない（unified が正規404 なら「結果なし」側へ）。
-            # exit 2 = 一時エラー（rate limit/timeout/5xx）。その日をスキップし run は落とさない。
-            # exit 1 = token/認証/権限。運用者の対応が要るので従来どおり fatal。
-            if RES_OUT=$(node astro-site/scripts/checkSharedDailyFile.mjs --date "$DATE" --category nankan --kind results); then
-              RC=0
-            else
-              RC=$?
-            fi
-            if [ "$RC" -eq 2 ]; then
-              echo "⚠️  $DATE: shared 一時エラーのため 南関 results の検証をスキップ（次回実行で再試行）"
-              TRANSIENT_DATES="${TRANSIENT_DATES}${DATE}, "
-              continue
-            elif [ "$RC" -ne 0 ]; then
-              echo "❌ Failed to confirm 南関 results for $DATE (token/auth/permission error)."
-              exit 1
-            fi
-            RES_FOUND=$(printf '%s\n' "$RES_OUT" | sed -n 's/^FOUND=//p')
-            RACE_COUNT=$(printf '%s\n' "$RES_OUT" | sed -n 's/^EXPECTED_RACES=//p')
-            RACE_COUNT="${RACE_COUNT:-0}"
-
-            if [ "$RES_FOUND" = "true" ]; then
-              echo "✅ Results: $RACE_COUNT races"
-
-              # 12レース揃っている場合のみチェック
-              if [ "$RACE_COUNT" -ge 12 ]; then
-                # keiba-intelligenceのアーカイブにあるかチェック
-                if grep -q "\"date\": \"$DATE\"" astro-site/src/data/archiveResults.json; then
-                  echo "✅ Archive: Found"
-                else
-                  echo "❌ Archive: MISSING!"
-                  MISSING_DATES="${MISSING_DATES}${DATE} (${RACE_COUNT}R), "
-                  ALERT_NEEDED=true
-                fi
-              else
-                echo "⏭️  Skipped: $RACE_COUNT races (< 12)"
-              fi
-            else
-              echo "⏭️  Results: Not found"
-
-              # 予想データがあるのに結果データがない → アラート
-              if [ "$HAS_PREDICTION" = true ]; then
-                echo "🚨 PROBLEM: Prediction exists but NO results!"
-                NO_RESULTS_DATES="${NO_RESULTS_DATES}${DATE}, "
-                NO_RESULTS_ALERT=true
-              fi
-            fi
-          done
-
-          if [ "$ALERT_NEEDED" = true ]; then
+          if [ -n "$MISSING" ]; then
             echo "alert_needed=true" >> $GITHUB_OUTPUT
-            echo "missing_dates=${MISSING_DATES%, }" >> $GITHUB_OUTPUT
+            echo "missing_dates=$MISSING" >> $GITHUB_OUTPUT
+            echo "🚨 南関: archive 未反映 → $MISSING"
           else
             echo "alert_needed=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ "$NO_RESULTS_ALERT" = true ]; then
+          if [ -n "$NO_RESULTS" ]; then
             echo "no_results_alert=true" >> $GITHUB_OUTPUT
-            echo "no_results_dates=${NO_RESULTS_DATES%, }" >> $GITHUB_OUTPUT
-            echo ""
-            echo "🚨 ALERT: Dates with predictions but NO results!"
-            echo "   $NO_RESULTS_DATES"
+            echo "no_results_dates=$NO_RESULTS" >> $GITHUB_OUTPUT
+            echo "🚨 南関: 予想はあるが結果未登録 → $NO_RESULTS"
           else
             echo "no_results_alert=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ -n "$TRANSIENT_DATES" ]; then
-            echo ""
-            echo "⚠️  一時エラーで未検証の日付: ${TRANSIENT_DATES%, }"
-            echo "   （workflow は成功扱い。翌日の実行で再検証される）"
+          if [ "$RC" -eq 3 ]; then
+            echo "data_gap=true" >> $GITHUB_OUTPUT
+          else
+            echo "data_gap=false" >> $GITHUB_OUTPUT
           fi
 
-          if [ "$ALERT_NEEDED" = false ] && [ "$NO_RESULTS_ALERT" = false ]; then
-            echo ""
-            if [ -n "$TRANSIENT_DATES" ]; then
-              echo "✅ 検証できた日付はすべて同期済み（未検証日は上記のとおり）"
-            else
-              echo "✅ All dates synchronized"
-            fi
+          if [ -n "$DEFERRED" ]; then
+            echo "⚠️  南関: 一時エラーで未検証の日付 → ${DEFERRED}（次回実行で再検証）"
+          fi
+          if [ -n "$UNKNOWN" ]; then
+            echo "⚠️  南関: 未知の会場コードを検出 → $UNKNOWN"
+          fi
+
+          if [ "$RC" -eq 0 ]; then
+            echo "✅ 南関: 過去7日すべて同期済み"
           fi
 
       - name: Send alert email (JRA)
@@ -407,10 +299,21 @@ jobs:
             ワークフロー: verify-archive-sync.yml
         run: node .github/scripts/send-alert-email.js
 
-      - name: Success notification
-        if: steps.check-jra.outputs.alert_needed != 'true' && steps.check-nankan.outputs.alert_needed != 'true'
+      - name: Fail on unresolved archive gaps
+        # 実データ欠落は「偽の緑」を出さないため run を failure にする。
+        # アラートメール送信ステップの後に置くので、通知は必ず先に飛ぶ。
+        # 一時エラー（deferred）ではここに来ない＝ノイズで赤くならない。
+        if: steps.check-jra.outputs.data_gap == 'true' || steps.check-nankan.outputs.data_gap == 'true'
         run: |
-          echo "✅ All archives synchronized (past 7 days)"
-          echo "   JRA: OK"
-          echo "   Nankan: OK"
-          echo "   No alerts sent"
+          echo "❌ archive 欠落を検出（アラートメールは送信済み）"
+          echo "   JRA  missing=${{ steps.check-jra.outputs.missing_dates }} no-results=${{ steps.check-jra.outputs.no_results_dates }}"
+          echo "   南関 missing=${{ steps.check-nankan.outputs.missing_dates }} no-results=${{ steps.check-nankan.outputs.no_results_dates }}"
+          exit 1
+
+      - name: Success notification
+        if: steps.check-jra.outputs.data_gap != 'true' && steps.check-nankan.outputs.data_gap != 'true'
+        run: |
+          echo "✅ 過去7日の archive 監視に欠落なし"
+          echo "   JRA:  data_gap=${{ steps.check-jra.outputs.data_gap }}"
+          echo "   南関: data_gap=${{ steps.check-nankan.outputs.data_gap }}"
+          echo "   （一時エラーで未検証の日があった場合は各ステップのログに ⚠️ で出ている）"
