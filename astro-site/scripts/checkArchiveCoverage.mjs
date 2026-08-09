@@ -72,8 +72,8 @@ export const EXIT_DATA_GAP = 3;
 const SHARED_REF = 'main';
 
 /** 函館は HKD が正準。HAK は keiba-data-shared に存在しない誤コード。 */
-const JRA_VENUES = ['TOK', 'KYO', 'HAN', 'NAK', 'CHU', 'KOK', 'NII', 'FKS', 'SAP', 'HKD'];
-const NANKAN_VENUES = ['OOI', 'FUN', 'KAW', 'URA'];
+export const JRA_VENUES = ['TOK', 'KYO', 'HAN', 'NAK', 'CHU', 'KOK', 'NII', 'FKS', 'SAP', 'HKD'];
+export const NANKAN_VENUES = ['OOI', 'FUN', 'KAW', 'URA'];
 
 const CATEGORY_CONFIG = Object.freeze({
   jra: {

@@ -68,20 +68,50 @@ jobs:
 
           DATE="${{ steps.date.outputs.date }}"
 
-          # keiba-data-shared の JRA 統合 results を「認証付き」で確認する。
-          # 匿名 curl/raw は廃止。401/403/429/5xx/timeout は fatal（404 のみ未投入）。
-          # fatal なら確認 script が exit 1 → 本 step も失敗（results無しと誤判定しない）。
+          # keiba-data-shared の JRA results を「認証付き」で確認する。
+          #
+          # 2026-08-09: checkSharedDailyFile.mjs（統合 daily ファイル前提）から
+          # checkJraResultsForImport.mjs（shared の per-venue 正本を直接読む）へ差し替えた。
+          # 旧実装は jra/results/YYYY/MM/YYYY-MM-DD.json を見ていたが JRA results の正本は
+          # per-venue（...-CHU.json）で統合ファイルは存在しないため FOUND は常に false になり、
+          # 実開催日でも has_missing=false → 取込が一度も起動しなかった。
+          #
+          # exit 0 … 判定できた（FOUND の真偽を問わない）
+          # exit 2 … 一時エラー（rate limit/timeout/5xx）で確定不能＝deferred。
+          #          取込は見送るが run は落とさない（次回 schedule で再判定される）
+          # exit 1 … token / 認証 / 権限 / schema 不一致＝fail-closed（results 無しと誤判定しない）
           echo "🔍 Checking for JRA results: $DATE"
-          CHECK_OUT=$(node scripts/checkSharedDailyFile.mjs --date "$DATE") || {
-            echo "❌ Failed to confirm JRA results availability (auth/network error). Not treating as 'no results'."
+          if CHECK_OUT=$(node scripts/checkJraResultsForImport.mjs --date "$DATE"); then
+            CHECK_RC=0
+          else
+            CHECK_RC=$?
+          fi
+
+          if [ "$CHECK_RC" -eq 1 ]; then
+            echo "❌ Failed to confirm JRA results availability (token/auth/permission/schema). Not treating as 'no results'."
             exit 1
-          }
+          fi
+
+          echo "$CHECK_OUT"
+
+          if [ "$CHECK_RC" -eq 2 ]; then
+            echo "⚠️  一時エラーのため取込判定を見送る（次回 schedule で再判定）"
+            echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           FOUND=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^FOUND=//p')
           EXPECTED_VENUES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^EXPECTED_VENUES=//p')
           EXPECTED_VENUES="${EXPECTED_VENUES:-0}"
+          RESULT_STATE=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^STATE=//p')
+          UNKNOWN_CODES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^UNKNOWN_VENUE_CODES=//p')
+          if [ -n "$UNKNOWN_CODES" ]; then
+            echo "⚠️  未知の会場コードを検出 → ${UNKNOWN_CODES}"
+          fi
 
           if [ "$FOUND" = "true" ]; then
-            echo "✅ Results found in keiba-data-shared"
+            echo "✅ Results found in keiba-data-shared (state=$RESULT_STATE)"
             echo "   Expected venues: $EXPECTED_VENUES"
 
             # アーカイブに既に存在するかチェック
@@ -117,7 +147,11 @@ jobs:
               echo "has_missing_sanrenpuku=true" >> $GITHUB_OUTPUT
             fi
           else
-            echo "⏭️  No results in keiba-data-shared yet"
+            if [ "$RESULT_STATE" = "not_posted" ]; then
+              echo "⏭️  computer 予想はあるが results 未投入（当日未完了の可能性）: $DATE"
+            else
+              echo "⏭️  results も computer 予想も無い＝非開催: $DATE"
+            fi
             echo "has_missing=false" >> $GITHUB_OUTPUT
             echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
           fi
@@ -126,7 +160,7 @@ jobs:
         if: steps.check.outputs.has_missing == 'true'
         env:
           # private 化後の cross-repo read 用。importResultsJra.js が認証取得に使用。
-          # "Check for missing results" 内の匿名 curl は checkSharedDailyFile.mjs（認証付き）へ移行済み（PR-AK-4）。
+          # "Check for missing results" は checkJraResultsForImport.mjs（認証付き・per-venue）で判定する。
           KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           DATE="${{ steps.date.outputs.date }}"
