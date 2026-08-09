@@ -280,6 +280,45 @@ export function adoptMeasuredCreated({ job, airtableSourceCount, nowIso } = {}) 
   };
 }
 
+/** BLOCKED 解除の確認文字列（batchId に紐づくので使い回せない） */
+export function buildUnblockConfirmation(batchId) {
+  return `UNBLOCK ${str(batchId)}`;
+}
+
+/**
+ * BLOCKED を解除して再開可能にする。**突合が今 OK のときだけ。**
+ *
+ * ⚠️ 「人が確認した」を機械的に代替しない。解除の条件は
+ *    **その場で取り直した実測で reconcile が OK になること**。
+ *    OK にならないなら解除しない（BLOCKED の意味を保つ）。
+ * ⚠️ 解除しても counters は書き換えない（追いつきは adoptMeasuredCreated の役割）。
+ *
+ * @param {{ job: object, reconciliation: object, confirmation: string, nowIso: string }} input
+ */
+export function unblockImportJob({ job, reconciliation, confirmation, nowIso } = {}) {
+  if (!job) return { ok: false, reason: JOB_REJECT.JOB_NOT_FOUND, job: null };
+  if (job.status !== JOB_STATUS.BLOCKED) return { ok: false, reason: 'not_blocked', job };
+  if (str(confirmation) !== buildUnblockConfirmation(job.batchId)) {
+    return { ok: false, reason: JOB_REJECT.CONFIRMATION_MISMATCH, job };
+  }
+  const v = reconciliation && reconciliation.verdict;
+  if (v !== 'OK') {
+    return { ok: false, reason: 'still_inconsistent', job, failedChecks: (reconciliation || {}).failedChecks || [] };
+  }
+  return {
+    ok: true,
+    reason: null,
+    job: {
+      ...job,
+      status: JOB_STATUS.RUNNING,
+      currentChild: null,
+      reconciliation,
+      unblockedAt: str(nowIso),
+      updatedAt: str(nowIso),
+    },
+  };
+}
+
 export function markJobBlocked({ job, reconciliation, nowIso }) {
   return {
     ...job,
