@@ -21,6 +21,9 @@ import {
   formatSanrenpukuLine,
 } from '../src/utils/sanrenpukuBetting.js';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+
+const LABEL = 'importResultsSanrenpuku.js';
 
 // keiba-data-shared 取得は認証付き Contents API へ統一（匿名 raw.githubusercontent.com 廃止）。
 // private 化後も KEIBA_DATA_SHARED_TOKEN で読み取り可能。token 未設定時は匿名 fallback せず失敗する。
@@ -398,7 +401,7 @@ export async function runImport({
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   runImport().catch((e) => {
-    console.error(e?.message ?? String(e)); // message のみ（token を含まない）
-    process.exit(1);
+    // 一時失敗(rate limit/timeout/5xx)は exit 75 で deferred、それ以外は fail-closed。
+    exitDeferredOrFatal(e, { label: LABEL });
   });
 }

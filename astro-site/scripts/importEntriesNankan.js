@@ -35,6 +35,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createSharedClient, resolveSharedToken, SharedFetchError, SHARED_FETCH_CODES } from './lib/sharedFetch.mjs';
+import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+
+const LABEL = 'importEntriesNankan.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -297,8 +300,7 @@ async function main() {
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   main().catch((e) => {
-    console.error('FATAL:', e);
-    process.exit(1);
+    exitDeferredOrFatal(e, { label: LABEL });
   });
 }
 

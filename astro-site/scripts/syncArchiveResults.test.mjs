@@ -185,5 +185,7 @@ test('13. 一時エラーが3回連続したら走査を打ち切る（レート
   assert.equal(summary.errors.length, 0);
   assert.equal(summary.transient.length, 5, '残り日も transient として記録される');
   assert.equal(summary.transient[3].code, 'SKIPPED_AFTER_TRANSIENT');
-  assert.equal(fetchImpl.calls.length, 9, '3日ぶん（retries=2 → 1日3リクエスト）で打ち切る');
+  // 回復時刻の情報が無い 429 は sharedFetch が即 deferred へ倒すため、
+  // 1 日あたり 1 リクエストで済む（従来は 250ms/500ms の無意味な再試行で 3 リクエスト）。
+  assert.equal(fetchImpl.calls.length, 3, '3日ぶん × 各1リクエストで打ち切る（無駄な再試行をしない）');
 });

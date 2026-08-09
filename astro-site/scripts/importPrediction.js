@@ -72,6 +72,9 @@ import { isMainRace, generateRaceUmatanLines } from '../src/utils/mainRaceBettin
 
 // データ検証関数をインポート
 import { validateNankanPrediction } from './utils/validatePrediction.js';
+import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+
+const LABEL = 'importPrediction.js';
 
 /**
  * JST（日本時間）の今日の日付を取得
@@ -884,9 +887,8 @@ async function main() {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   } catch (error) {
-    console.error('\n❌ エラーが発生しました:', error.message);
-    console.error(error.stack);
-    process.exit(1);
+    // 一時失敗(rate limit/timeout/5xx)は exit 75 で deferred、それ以外は fail-closed。
+    exitDeferredOrFatal(error, { label: LABEL });
   }
 }
 

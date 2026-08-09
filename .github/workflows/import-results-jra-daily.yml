@@ -165,7 +165,19 @@ jobs:
         run: |
           DATE="${{ steps.date.outputs.date }}"
           echo "📥 Importing JRA results for: $DATE"
-          node scripts/importResultsJra.js --date "$DATE"
+          # exit 75 (EX_TEMPFAIL) = rate limit / timeout / 5xx で今は確定できない＝deferred。
+          # 未書込なので途中状態は残らない。run を failure にせず次回の自動実行へ委ねる。
+          # exit 1 等（auth / 権限 / schema / 検証失敗）は従来どおり失敗させる。
+          if node scripts/importResultsJra.js --date "$DATE"; then
+            RC_importResultsJra=0
+          else
+            RC_importResultsJra=$?
+          fi
+          if [ "$RC_importResultsJra" -eq 75 ]; then
+            echo "⏸️  importResultsJra: 一時的に shared を取得できず未完了（deferred）。次回実行で再試行。"
+          elif [ "$RC_importResultsJra" -ne 0 ]; then
+            exit "$RC_importResultsJra"
+          fi
 
       - name: Import JRA sanrenpuku results
         if: steps.check.outputs.has_missing_sanrenpuku == 'true'
@@ -175,7 +187,19 @@ jobs:
         run: |
           DATE="${{ steps.date.outputs.date }}"
           echo "📥 Importing JRA sanrenpuku results for: $DATE"
-          node scripts/importResultsJraSanrenpuku.js --date "$DATE"
+          # exit 75 (EX_TEMPFAIL) = rate limit / timeout / 5xx で今は確定できない＝deferred。
+          # 未書込なので途中状態は残らない。run を failure にせず次回の自動実行へ委ねる。
+          # exit 1 等（auth / 権限 / schema / 検証失敗）は従来どおり失敗させる。
+          if node scripts/importResultsJraSanrenpuku.js --date "$DATE"; then
+            RC_importResultsJraSanrenpuku=0
+          else
+            RC_importResultsJraSanrenpuku=$?
+          fi
+          if [ "$RC_importResultsJraSanrenpuku" -eq 75 ]; then
+            echo "⏸️  importResultsJraSanrenpuku: 一時的に shared を取得できず未完了（deferred）。次回実行で再試行。"
+          elif [ "$RC_importResultsJraSanrenpuku" -ne 0 ]; then
+            exit "$RC_importResultsJraSanrenpuku"
+          fi
 
       - name: Check for changes
         id: git-check

@@ -172,8 +172,17 @@ jobs:
             # 予想JSONが無い会場は importer 対象外（results は前段で存在確認済み）。
             if [ -f "src/data/predictions/${DATE}-${slug}.json" ]; then
               echo "▶  ${DATE} ${slug} (${code})"
-              if ! node scripts/importResultsSanrenpuku.js --date "$DATE" --venue "$slug" --venueCode "$code"; then
-                echo "❌ sanrenpuku import failed for ${DATE} ${slug} (exit non-zero)"
+              # exit 75 (EX_TEMPFAIL) = rate limit / timeout / 5xx で今は確定できない＝deferred。
+              # 未書込なので途中状態は残らない。FAILED にせず次回の自動実行へ委ねる。
+              if node scripts/importResultsSanrenpuku.js --date "$DATE" --venue "$slug" --venueCode "$code"; then
+                RC=0
+              else
+                RC=$?
+              fi
+              if [ "$RC" -eq 75 ]; then
+                echo "⏸️  sanrenpuku deferred for ${DATE} ${slug}（次回実行で再試行）"
+              elif [ "$RC" -ne 0 ]; then
+                echo "❌ sanrenpuku import failed for ${DATE} ${slug} (exit ${RC})"
                 FAILED=1
               fi
             else

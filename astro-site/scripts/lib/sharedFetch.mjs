@@ -88,6 +88,7 @@ const DEFAULTS = Object.freeze({
   ref: 'main',
   timeoutMs: 15000,
   retries: 2,
+  maxRateLimitWaitMs: 90_000,
 });
 
 const RETRYABLE_CODES = new Set([
@@ -112,6 +113,10 @@ export function createSharedClient(options = {}) {
     defaultRef = DEFAULTS.ref,
     timeoutMs = DEFAULTS.timeoutMs,
     retries = DEFAULTS.retries,
+    // レート制限で待てる上限。secondary rate limit（概ね60秒）は吸収し、
+    // primary の長い reset（最大60分）は待たずに deferred へ倒す。
+    maxRateLimitWaitMs = DEFAULTS.maxRateLimitWaitMs,
+    nowMsImpl = () => Date.now(),
     sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   } = options;
 
@@ -133,6 +138,32 @@ export function createSharedClient(options = {}) {
     return Math.min(2000, 250 * 2 ** attempt);
   }
 
+  /**
+   * レート制限の待ち時間を応答ヘッダから読む。
+   *
+   * 従来の backoff は 250ms/500ms で、レート制限（secondary は概ね 60 秒、
+   * primary は最大 60 分）にはまったく届かず「retry する意味がない retry」だった。
+   * GitHub は Retry-After（秒）か x-ratelimit-reset（epoch 秒）で回復時刻を返すので、
+   * それに従って待つ。ただし run を長時間占有しないよう上限で頭打ちにし、
+   * 上限を超える場合は待たずに throw して呼び出し側の deferred 判定へ回す。
+   *
+   * @returns {number|null} 待つべきミリ秒。上限超過・情報なしなら null（待たない）
+   */
+  function rateLimitWaitMs(headers, nowMs) {
+    const retryAfter = Number(headers?.get?.('retry-after'));
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      const ms = retryAfter * 1000;
+      return ms <= maxRateLimitWaitMs ? ms : null;
+    }
+    const reset = Number(headers?.get?.('x-ratelimit-reset'));
+    if (Number.isFinite(reset) && reset > 0) {
+      const ms = reset * 1000 - nowMs;
+      if (ms <= 0) return 0;
+      return ms <= maxRateLimitWaitMs ? ms : null;
+    }
+    return null;
+  }
+
   function classify(status, headers, bodyText, path, ref) {
     if (status === 401) {
       return new SharedFetchError(SHARED_FETCH_CODES.AUTH_FAILED, 'Authentication failed (401).', { status, path, ref });
@@ -144,12 +175,20 @@ export function createSharedClient(options = {}) {
       const remaining = headers?.get?.('x-ratelimit-remaining');
       const retryAfter = headers?.get?.('retry-after');
       if (retryAfter != null || remaining === '0') {
-        return new SharedFetchError(SHARED_FETCH_CODES.RATE_LIMITED, 'Rate limited (403).', { status, path, ref });
+        {
+          const err = new SharedFetchError(SHARED_FETCH_CODES.RATE_LIMITED, 'Rate limited (403).', { status, path, ref });
+          err.retryAfterMs = rateLimitWaitMs(headers, nowMsImpl());
+          return err;
+        }
       }
       return new SharedFetchError(SHARED_FETCH_CODES.FORBIDDEN, 'Forbidden (403).', { status, path, ref });
     }
     if (status === 429) {
-      return new SharedFetchError(SHARED_FETCH_CODES.RATE_LIMITED, 'Rate limited (429).', { status, path, ref });
+      {
+        const err = new SharedFetchError(SHARED_FETCH_CODES.RATE_LIMITED, 'Rate limited (429).', { status, path, ref });
+        err.retryAfterMs = rateLimitWaitMs(headers, nowMsImpl());
+        return err;
+      }
     }
     if (status === 404) {
       return new SharedFetchError(SHARED_FETCH_CODES.NOT_FOUND, 'Not found (404).', { status, path, ref });
@@ -198,7 +237,13 @@ export function createSharedClient(options = {}) {
         lastErr = e;
         const retryable = e instanceof SharedFetchError && RETRYABLE_CODES.has(e.code);
         if (retryable && attempt < retries) {
-          await sleepImpl(backoffMs(attempt));
+          if (e.code === SHARED_FETCH_CODES.RATE_LIMITED) {
+            // 回復時刻が分からない／上限を超えるほど先なら、待たずに deferred へ倒す。
+            if (typeof e.retryAfterMs !== 'number') throw e;
+            await sleepImpl(e.retryAfterMs);
+          } else {
+            await sleepImpl(backoffMs(attempt));
+          }
           continue;
         }
         throw e;
