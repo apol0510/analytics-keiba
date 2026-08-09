@@ -234,6 +234,52 @@ export function applyChildResult({
 }
 
 /** 突合が説明できない不一致を出した。**人が見るまで進めない** */
+/**
+ * 正本の counters を Airtable 実測へ追いつかせる（**再開時の 1 回だけ**）。
+ *
+ * ⚠️ 2026-08-09 の障害: 子バッチが Airtable へ 100 件 CREATE した直後に
+ *    正本の保存だけが失敗し、`created=0` のまま 100 件が存在する状態になった。
+ *    そのまま再開すると reconciler の `created_matches_airtable` が必ず落ちて
+ *    BLOCKED になり、永久に進めない。
+ *
+ * ⚠️ **無条件には追いつかせない。** 適用するのは
+ *    「まだ 1 つも子バッチを完了記録していない（childHistory が空）」ときだけ。
+ *    実行中のドリフトを黙って飲み込まないための制限。
+ * ⚠️ **増やす方向にしか動かさない**（削除・巻き戻しの兆候を隠さない）。
+ * ⚠️ plannedTotal を超えて増やさない。
+ *
+ * @param {{ job: object, airtableSourceCount: number, nowIso: string }} input
+ * @returns {{ job: object, adopted: number, reason: string|null }}
+ */
+export function adoptMeasuredCreated({ job, airtableSourceCount, nowIso } = {}) {
+  if (!job) return { job, adopted: 0, reason: 'no_job' };
+  if ((Array.isArray(job.childHistory) ? job.childHistory.length : 0) > 0) {
+    return { job, adopted: 0, reason: 'not_first_step' };
+  }
+  const measured = int(airtableSourceCount);
+  const recorded = int(job.created);
+  if (measured <= recorded) return { job, adopted: 0, reason: 'no_gap' };
+  const capped = Math.min(measured, int(job.plannedTotal));
+  if (capped <= recorded) return { job, adopted: 0, reason: 'capped' };
+  const gained = capped - recorded;
+  // ⚠️ `created` だけ上げると `counters_balanced`（created+skipped+failed == attempted）が
+  //    崩れて reconciler が落ちる。取り残された行は**試行もされている**ので
+  //    `attempted` も同じだけ上げる。
+  const attempted = Math.max(int(job.attempted) + gained, capped);
+  return {
+    job: {
+      ...job,
+      created: capped,
+      attempted,
+      /** 監査用。件数だけ（アドレスは持たない） */
+      countersAdopted: { from: recorded, to: capped, attemptedTo: attempted, at: str(nowIso) },
+      updatedAt: str(nowIso),
+    },
+    adopted: gained,
+    reason: null,
+  };
+}
+
 export function markJobBlocked({ job, reconciliation, nowIso }) {
   return {
     ...job,
