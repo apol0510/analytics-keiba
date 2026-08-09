@@ -40,6 +40,9 @@ import {
   buildJobId, buildJobSource, buildJobConfirmation, buildOperationId, countChildBatches,
   nextChildIndex, JOB_CHILD_MAX_ROWS, JOB_REJECT, JOB_REJECT_LABEL, JOB_STATUS,
   adoptMeasuredCreated,
+  unblockImportJob,
+  repairCounterInvariants,
+  buildUnblockConfirmation,
 } from '../../src/lib/crm/importJobModel.js';
 import {
   createClaimStore, emailHash, RedisUnavailableError, LOCK_TTL_MS,
@@ -142,6 +145,7 @@ function countDuplicateEmailPairs(records) {
   return [...counts.values()].filter((n) => n > 1).length;
 }
 
+const int0 = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
 const countBySource = (records, source) =>
   (records || []).filter((r) => String(r?.fields?.Source || '') === source).length;
 
@@ -370,9 +374,9 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
     //    2026-08-09 の障害で「Airtable に 100 件あるのに正本は created=0」という
     //    状態が生じた。そのまま進めると reconciler が必ず BLOCKED になるため、
     //    実測へ追いつかせてから走らせる。増やす方向のみ・childHistory が空のときだけ。
-    let jobForStep = job;
+    let jobForStep = repairCounterInvariants({ job, nowIso }).job;
     const adopt = adoptMeasuredCreated({
-      job, airtableSourceCount: countBySource(ctx.records, job.source), nowIso,
+      job: jobForStep, airtableSourceCount: countBySource(ctx.records, jobForStep.source), nowIso,
     });
     if (adopt.adopted > 0) {
       const savedAdopt = await authority.saveFenced({ job: adopt.job, fencingToken: lock.token });
@@ -430,8 +434,16 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
       });
     }
 
+    // ⚠️ `writeCreateBatch` は `attempted` を返さない。**runner の `out.attempted`
+    //    （= 実際に書きに行った行数）を渡す**こと。渡さないと counters_balanced
+    //    （created + skipped + failed === attempted）が必ず落ちて BLOCKED になる
+    //    （2026-08-09 の再開時に実際に発生）。
     let next = applyChildResult({
-      job: running, result: out.result || { ok: true, attempted: 0, created: 0, skippedExisting: 0, failed: 0 },
+      job: running,
+      result: {
+        ...(out.result || { ok: true, created: 0, skippedExisting: 0, failed: 0 }),
+        attempted: Number.isFinite(out.attempted) ? out.attempted : 0,
+      },
       scannedTo: out.scannedTo, exhausted: out.exhausted, nowIso,
       claimedNotCreated: out.claimedNotCreated,
     });
@@ -523,6 +535,54 @@ async function handleStatus({ req, KEY, BASE, authority }) {
 }
 
 // ── action: cancel（未処理分だけ止める。作成済みは消さない）─────
+/**
+ * BLOCKED を解除する。**その場で取り直した実測で reconcile が OK のときだけ。**
+ * counters は書き換えない（追いつきは step 側の adoptMeasuredCreated が行う）。
+ */
+async function handleUnblock({ req, KEY, BASE, now, claims, authority }) {
+  const lock = await claims.acquireGlobalLock({ ttlMs: LOCK_TTL_MS });
+  if (!lock.ok) return json(409, { mode: 'import-job-unblock', error: JOB_REJECT_LABEL[JOB_REJECT.LOCKED], code: JOB_REJECT.LOCKED });
+  try {
+    const batchId = String(req.batchId || '').trim();
+    const job = await authority.load(buildJobId(batchId));
+    if (!job) return json(404, { mode: 'import-job-unblock', error: JOB_REJECT_LABEL[JOB_REJECT.JOB_NOT_FOUND], code: JOB_REJECT.JOB_NOT_FOUND });
+
+    const records = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
+    // ⚠️ 突合の前に**算術的な不変条件**だけ回復する（attempted >= created+skipped+failed）。
+    //    created 等の実測値は触らない。ここを直さないと、記録漏れのせいで
+    //    counters_balanced が永久に落ちて BLOCKED から出られない。
+    const rep = repairCounterInvariants({ job, nowIso: new Date(now).toISOString() });
+    const jobR = rep.job;
+    if (rep.repaired > 0) {
+      console.log(`🔧 [customer-import-job] ${JSON.stringify({ event: 'counters_repaired', attemptedFrom: jobR.countersRepaired.attemptedFrom, attemptedTo: jobR.countersRepaired.attemptedTo })}`);
+    }
+    const recon = reconcileImportJob({
+      job: jobR,
+      claimCounts: { CLAIMED: 0, CREATED: int0(jobR.created), RELEASE_PENDING: 0 },
+      airtableSourceCount: countBySource(records, jobR.source),
+      duplicateEmailPairs: countDuplicateEmailPairs(records),
+      duplicateEmailPairsBaseline: jobR.duplicateEmailPairsBaseline,
+    });
+    const r = unblockImportJob({ job: jobR, reconciliation: recon, confirmation: req.confirmation, nowIso: new Date(now).toISOString() });
+    if (!r.ok) {
+      return json(409, {
+        mode: 'import-job-unblock', error: '解除できません。', code: r.reason,
+        failedChecks: r.failedChecks || recon.failedChecks, verdict: recon.verdict,
+        confirmationPhrase: buildUnblockConfirmation(batchId),
+      });
+    }
+    const saved = await authority.saveFenced({ job: r.job, fencingToken: lock.token });
+    if (!saved.ok) return json(409, { mode: 'import-job-unblock', error: '正本を保存できませんでした。', code: saved.reason });
+    console.log(`🔓 [customer-import-job] ${JSON.stringify({ event: 'unblocked', verdict: recon.verdict })}`);
+    return json(200, { mode: 'import-job-unblock', job: summarizeJobProgress(r.job), verdict: recon.verdict });
+  } catch (e) {
+    if (e instanceof RedisUnavailableError) return json(503, { mode: 'import-job-unblock', error: 'Redis を確認できません', code: e.code });
+    throw e;
+  } finally {
+    await claims.releaseGlobalLock(lock.token).catch(() => {});
+  }
+}
+
 async function handleCancel({ req, now, claims, authority }) {
   const lock = await claims.acquireGlobalLock({ ttlMs: LOCK_TTL_MS });
   if (!lock.ok) {
@@ -620,6 +680,7 @@ export const handler = async (event) => {
     if (action === 'start') return await handleStart({ req, KEY, BASE, now, claims, authority });
     if (action === 'step') return await handleStep({ req, KEY, BASE, now, claims, authority });
     if (action === 'status') return await handleStatus({ req, KEY, BASE, authority });
+    if (action === 'unblock') return await handleUnblock({ req, KEY, BASE, now, claims, authority });
     if (action === 'cancel') return await handleCancel({ req, now, claims, authority });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
