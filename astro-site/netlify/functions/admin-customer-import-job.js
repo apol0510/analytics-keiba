@@ -51,7 +51,7 @@ import {
   createJobAuthority, buildJobRecord, ORDERING_VERSION, computeSnapshotFingerprint,
 } from '../../src/lib/crm/importJobAuthority.js';
 import { runChildBatch } from '../../src/lib/crm/importJobRunner.js';
-import { reconcileImportJob, RECONCILE_VERDICT } from '../../src/lib/crm/importJobReconcile.js';
+import { reconcileImportJob, RECONCILE_VERDICT, shouldRemeasureBeforeBlock } from '../../src/lib/crm/importJobReconcile.js';
 import { CREATE_ALLOWED_FIELDS, OPTIONAL_AUDIT_FIELDS } from '../../src/lib/crm/importWritePlan.js';
 
 const CUSTOMERS_TABLE = 'Customers';
@@ -457,8 +457,27 @@ async function handleStep({ req, KEY, BASE, now, claims, authority }) {
       duplicateEmailPairs: countDuplicateEmailPairs(after),
       duplicateEmailPairsBaseline: next.duplicateEmailPairsBaseline,
     });
-    next.reconciliation = recon;
-    if (recon.verdict === RECONCILE_VERDICT.BLOCKED) next = markJobBlocked({ job: next, reconciliation: recon, nowIso });
+    // ⚠️ Airtable の一覧はページングで、**書き込み直後に読むと少なく数えることがある**。
+    //    件数系だけが落ちていて実測が記録より少ないときは、**一度だけ測り直してから**
+    //    判定する（2026-08-09 の本実行で 4400 vs 4333 の過少計測 → 停止後は 4400 で一致）。
+    let recon2 = recon;
+    if (shouldRemeasureBeforeBlock({
+      failedChecks: recon.failedChecks, created: next.created,
+      airtableSourceCount: countBySource(after, next.source),
+    })) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const after2 = await fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE });
+      recon2 = reconcileImportJob({
+        job: next,
+        claimCounts: { CLAIMED: out.claimedNotCreated || 0, CREATED: next.created, RELEASE_PENDING: 0 },
+        airtableSourceCount: countBySource(after2, next.source),
+        duplicateEmailPairs: countDuplicateEmailPairs(after2),
+        duplicateEmailPairsBaseline: next.duplicateEmailPairsBaseline,
+      });
+      console.log(`🔁 [customer-import-job] ${JSON.stringify({ event: 'reconcile_remeasured', before: recon.verdict, after: recon2.verdict })}`);
+    }
+    next.reconciliation = recon2;
+    if (recon2.verdict === RECONCILE_VERDICT.BLOCKED) next = markJobBlocked({ job: next, reconciliation: recon2, nowIso });
 
     // ⚠️ **必ず fenced save**。ロックだけでは lease 失効後の stale writer による
     //    lost update を防げない（Airtable の行は残るが counters がズレて BLOCKED になる）。
