@@ -168,7 +168,7 @@ test('6-b. /offer/ はログイン必須にしない（退会者が申し込め�
 
 test('6-c. ページは価格をハードコードせず、lookup の戻り値だけを表示する', () => {
   // 金額の数値リテラルを埋め込まない（口座番号は除く）
-  const withoutBank = page.src.replace(/5338892/g, '');
+  const withoutBank = page.src.replace(/8307337/g, '');
   assert.equal(/¥\s*\d{1,3},\d{3}/.test(withoutBank), false, '価格をハードコードしている');
   assert.ok(page.src.includes('offer-lookup'));
   assert.ok(page.src.includes('offer-application'));

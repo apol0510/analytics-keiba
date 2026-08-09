@@ -18,9 +18,9 @@ const SITE = 'https://analytics.keiba.link';
 
 /** 口座情報（`/pricing/` のモーダルと同じ値。変更時は両方直す） */
 export const BANK_ACCOUNT_TEXT = [
-  '三井住友銀行 洲本支店',
-  '普通 5338892',
-  'ﾏ-ｸｱﾂﾌﾟｴ-ｱｲｻ-ﾋﾞｽ ｱｻｲ ﾄｼﾋﾛ',
+  'PayPay銀行 本店営業部',
+  '普通 8307337',
+  'ｳｴﾌﾞｹｲﾊﾞ',
 ].join('\n');
 
 function yen(n) {
