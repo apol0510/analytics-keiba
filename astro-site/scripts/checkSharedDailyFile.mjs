@@ -22,10 +22,12 @@
  *
  * exit code:
  *   0 … 存在を確定できた（200=存在 / 認証済み404=未投入）。404 は「未投入」であり error ではない
- *   1 … token 未設定 / 401 / 403 / 429 / 5xx / timeout / その他 fatal（＝確定不能。成功扱いしない）
+ *   2 … 一時エラー（rate limit / timeout / 5xx）で確定不能。呼び出し側はスキップしてよい
+ *   1 … token 未設定 / 401 / 権限不足 / その他 fatal（＝確定不能。運用者の対応が要る）
  */
 import { pathToFileURL } from 'node:url';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
+import { exitWithSharedFetchError } from './lib/sharedCheckerSupport.mjs';
 
 const CATEGORIES = new Set(['jra', 'nankan']);
 const KINDS = new Set(['results', 'predictions']);
@@ -92,8 +94,5 @@ if (isDirectRun) {
       process.stdout.write(`EXPECTED_VENUES=${expectedVenues}\n`);
       process.stdout.write(`EXPECTED_RACES=${expectedRaces}\n`);
     })
-    .catch((e) => {
-      console.error(e?.message ?? String(e)); // message のみ（token を含まない）
-      process.exit(1);
-    });
+    .catch((e) => exitWithSharedFetchError(e)); // 一時エラーは exit 2、それ以外は exit 1
 }
