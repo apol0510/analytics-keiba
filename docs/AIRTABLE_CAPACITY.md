@@ -1,0 +1,220 @@
+# Airtable レコード上限と、配信履歴の置き場所
+
+**本書は「Airtable に何を置き、何を置かないか」の正本。** 2026-08-09 に Team 上限
+50,000 件を超過（実測 50,456 件）したときの調査と、恒久構成の設計を記録する。
+
+検査: `npm run check:airtable-capacity`（read-only。認証が無ければ skip）
+
+---
+
+## 1. 現在の内訳（2026-08-09 実測 / 全 12 table）
+
+| table | 件数 | 比率 | 性質 |
+|---|---:|---:|---|
+| **EmailEvents** | 18,793 | 37.2% | append-only テレメトリ |
+| **Customers** | 15,970 | 31.7% | **正本**（人が扱う） |
+| **CampaignDeliveries** | 14,416 | 28.6% | 冪等性の台帳 |
+| EmailBlacklist | 346 | 0.7% | suppression（**正本**） |
+| StepEnrollments | 342 | 0.7% | 運用 |
+| AuthTokens | 324 | 0.6% | 短命 |
+| ScheduledEmails | 174 | 0.3% | ジョブ（完了後は履歴）|
+| PromotionalOffers | 74 | 0.1% | 正本 |
+| PointExchangeRequests | 7 | 0.0% | 正本 |
+| CampaignDeliveries_M5A3LiveTest | 6 | 0.0% | 試験残骸 |
+| CampaignDeliveries_MarketingAutomation | 4 | 0.0% | **KMA 側**（AK は触らない）|
+| ProcessedWebhookEvents | 0 | 0.0% | 空 |
+| **合計** | **50,456** | | 上限 50,000 に対し **+456** |
+
+**上位 3 table で 97.5%。** うち Airtable でなければならないのは Customers だけ。
+
+## 2. 最大の増加源は「配信 1 回」
+
+| table | 2026-07 | 2026-08 | 備考 |
+|---|---:|---:|---|
+| Customers | 23 | 14,519 | 大半は一度きりの外部リスト取り込み。**自然増は月 20〜100 件** |
+| CampaignDeliveries | 71 | 14,345 | 配信 1 回で受信者数ぶん |
+| EmailEvents | 0 | 18,793 | **最古が 2026-08-02**。8 日で 18,793 件 |
+
+`EmailEvents` は **open / click を重複排除しない**（`buildEventKey` のコメント:
+「同じ人が 3 回開いたら 3 行」）。したがって受信者数に比例せず、**開封のたびに増える**。
+
+### 14,279 名へ 1 回送ると何件増えるか（コードから算出・実測で裏付け）
+
+| 生成物 | 件数 | 根拠 |
+|---|---:|---|
+| CampaignDeliveries | 14,279 | 受信者 1 人 1 行（`DeliveryKey` upsert）|
+| ScheduledEmails | 143 | `RECIPIENTS_PER_JOB = 100` |
+| EmailEvents `delivered` | 13,956 | 実測 |
+| EmailEvents `bounce` / `dropped` | 336 | 実測 |
+| EmailEvents `open` | **5,600〜12,600** | delivered × 0.4〜0.9（下記）|
+
+open 倍率の根拠: 今回の配信は送信 10 時間後で 4,093（×0.29）とまだ増加中。
+6 日経過した `comeback-light-30d-granted:v2` は 55/64 = **×0.86**（ただし n=64 と小さい）。
+
+| 見積り | 1 配信あたり |
+|---|---:|
+| 楽観（open ×0.4）| **34,296 件** |
+| 中位（open ×0.6）| **37,088 件** |
+| 悲観（open ×0.9）| **41,274 件** |
+
+**固定分（Customers + 運用系）は 17,243 件。Team の残り 32,757 件では 1 回も入らない。**
+
+## 3. API 呼び出し（100,000 calls/月）も同時に効いてくる
+
+| 内訳 | 概算 calls |
+|---|---:|
+| 配信結果 PATCH（**受信者ごとに 1 回**）| 14,279 |
+| CampaignDeliveries upsert（10 件/回）| 1,428 |
+| ScheduledEmails 作成 | 143 |
+| enqueue の名指し読み（29 バッチ）| ~1,972 |
+| dispatch の再検証読み | ~4,290 |
+| Event Webhook の書き込み | ~1,900 |
+| **合計** | **≈ 24,000 / 1 配信** |
+
+**月 4 回でレコード上限より先に API 上限へ当たる。** 週 1 配信は API 側でも成立しない。
+
+## 4. 選択肢の比較
+
+### A. Airtable Business へ上げる（125,000 records/base）
+
+| 項目 | 値 |
+|---|---:|
+| 現在 50,456 に対する空き | 74,544 件 |
+| **追加で送れる回数** | **2 回** |
+| 月 1 回配信なら | **約 2 か月で再枯渇** |
+| 週 1 回配信なら | **約 2 週間で再枯渇** |
+
+費用は座席課金（Business は Team の約 2 倍強の単価）。**座席数は API から取得できない**
+（`/v0/meta/whoami` は id しか返さない）ので、正確な差額は Airtable 管理画面で要確認。
+
+→ **金を払っても 2 か月しか買えない。構造が変わらないので却下。**
+
+### B. Team 維持 + 配信履歴だけ Airtable の外へ ★推奨
+
+Airtable に残すのは「人が画面で直接扱うもの」と「小さい正本」だけ。
+
+| 残す（Airtable）| 出す |
+|---|---|
+| Customers / EmailBlacklist / PromotionalOffers / PointExchangeRequests / StepEnrollments / AuthTokens / 実行中の ScheduledEmails | CampaignDeliveries（冪等性）/ EmailEvents（テレメトリ）/ 完了済み ScheduledEmails |
+
+**移行先は新サービスを増やさない。** AK には既に
+
+- **Upstash Redis**（`UPSTASH_REDIS_REST_URL` / `..._TOKEN` が production に設定済み。
+  大量取り込みジョブの正本として本番稼働実績あり）
+- **Netlify Blobs**（Pro に含まれる。Premium Plus 実績画像で稼働中）
+
+がある。
+
+| 常駐件数 | Team 上限までの余裕 |
+|---|---|
+| 17,243 件 | 32,757 件。Customers 自然増 50 件/月なら **50 年以上** |
+
+### C. Airtable 内で archive Base へ分離
+
+- archive 側も **同じ 50,000 件上限の対象**。1〜2 回の配信で archive が埋まる
+- Base 間はリンクできないので、管理画面・監査は 2 Base を横断する実装が要る
+- API 呼び出しは減らない（むしろ増える）
+
+→ **上限問題を先送りするだけ。却下。**
+
+### D. 保持期間で減らす（単独では不十分・B と併用する）
+
+| データ | 永久保持が要るか | 最小限 |
+|---|---|---|
+| `EmailEvents` の open | **不要**。集計値があれば足りる | campaign×version×日 の**カウント** |
+| `EmailEvents` の delivered | 送達の証跡として一定期間 | 90 日 + 集計 |
+| `EmailEvents` の bounce / dropped / spam_report | **suppression の根拠なので残す**。ただし正本は `EmailBlacklist` と provider 側 | 恒久（件数は小さい）|
+| `CampaignDeliveries` | **`DeliveryKey` の集合だけが冪等性に必須**。本文・時刻・JobId は運用の便宜 | `DeliveryKey` の集合 |
+| `ScheduledEmails` | 完了後は履歴 | 実行中のみ |
+
+D だけでは足りない: 保持 90 日でも月 1 配信で 3 か月ぶん（約 111,000 件）を抱えるため
+Team にも Business にも入らない。**B と組み合わせて初めて成立する。**
+
+## 5. 推奨アーキテクチャ
+
+```
+                 ┌─────────────── Airtable（Team のまま）────────────────┐
+                 │ Customers / EmailBlacklist / PromotionalOffers /      │
+   人が扱う正本  │ PointExchangeRequests / StepEnrollments / AuthTokens  │
+                 │ ScheduledEmails（実行中のみ）                          │
+                 └───────────────────────────────────────────────────────┘
+                                     ▲ 読み書き（従来どおり）
+                                     │
+   配信 ──────────┬──► Upstash Redis  : DeliveryKey の SET（冪等性の正本）
+                  │                     campaign×version 単位の集計カウンタ
+                  └──► Netlify Blobs  : 生イベントの NDJSON（監査用・追記のみ）
+```
+
+### 冪等性をどう守るか（**ここを間違えると二重送信になる**）
+
+いま必要なのは「この `DeliveryKey` は既に送ったか」の 1 問だけ。行そのものは要らない。
+
+- Redis の **SET**（`ak:delivered:<campaignId>:v<version>`）に `DeliveryKey` を入れる
+- 判定は `SISMEMBER`（O(1)）。現行の `fetchDeliveredKeys`（名指し取得）を置き換える
+- 容量: 14,279 件 × 約 80 バイト ≒ **1.2 MB / 配信**。年 12 回でも 15 MB 程度
+- コマンド数: 1 配信で `SADD` + `SISMEMBER` ≒ 29,000
+
+**移行は二重書き込みから始める。** Redis と Airtable の両方へ書き、判定は
+「Redis に無ければ Airtable も見る」。両者が一致することを 1〜2 配信ぶん確認してから
+Airtable 側の行を止める。**いきなり切り替えない。**
+
+### Blobs の multi-writer 問題を踏み込まない書き方
+
+Premium Plus 実績画像で踏んだ eventual consistency / CAS の問題は
+「**同じキーを読んで書き戻す**」から起きる。イベントログは
+**webhook バッチごとに固有キー**（`events/YYYY-MM-DD/<batchId>.ndjson`）で
+**新規作成しかしない**。読み書き競合が構造的に発生しない。
+
+## 6. 必要なコード変更
+
+| # | 変更 | 規模 | リスク |
+|---|---|---|---|
+| 1 | `deliveryKeyStore.js`（Redis SET の薄いラッパー・純粋 I/F）| 小 | 低 |
+| 2 | `admin-marketing.js` の `fetchDeliveredKeys` を store 経由へ（二重読み）| 小 | 中 |
+| 3 | enqueue 時に Redis へも `SADD`（二重書き）| 小 | 低 |
+| 4 | 突合スクリプト（Redis と Airtable の DeliveryKey 集合が一致するか）| 小 | 低 |
+| 5 | Event Webhook の書き込み先を Blobs + Redis カウンタへ | 中 | 中 |
+| 6 | 管理画面の開封表示を Redis カウンタから読む | 中 | 中 |
+| 7 | Airtable 側の旧行を削除（**別承認**）| 小 | **高** |
+
+1〜4 で「これ以上増やさない」が成立する。5〜6 は EmailEvents を止めるために要る。
+7 は既存 33,000 件を消す作業で、**バックアップ確認後に別途承認**。
+
+## 7. 移行対象の件数
+
+| 対象 | 件数 |
+|---|---:|
+| Redis へ入れる `DeliveryKey` | 14,416 |
+| Blobs へ書き出す `EmailEvents` | 18,793 |
+| 削除できる Airtable 行（上記 2 つ + 完了 ScheduledEmails）| **約 33,300** |
+| 削除後の常駐 | **約 17,200** |
+
+## 8. rollback
+
+| 段階 | 戻し方 |
+|---|---|
+| 二重書き込み中 | Redis 側を無視するだけ。Airtable が正本のまま動く |
+| 判定を Redis へ切替後 | env で store を `airtable` に戻す（コード変更なし）|
+| Airtable 行の削除後 | **戻せない。** 削除前に CSV/JSON でエクスポートし、Blobs へ退避してから実行する |
+
+**削除は最後。** 1〜6 が本番で 1 配信ぶん検証できるまで実行しない。
+
+## 9. 費用
+
+| 項目 | 月額追加 |
+|---|---:|
+| Upstash Redis | **0 円の見込み**（既に production で稼働中。データ 15 MB / 月 3 万コマンド程度）※現行プランの上限は Upstash 管理画面で要確認 |
+| Netlify Blobs | **0 円**（Pro に含まれる）|
+| Airtable | **0 円**（Team のまま）|
+
+対して Business へ上げると座席数 × 単価差が毎月かかり、それでも 2 か月で再枯渇する。
+
+## 10. 触ってはいけないこと
+
+- **`EmailBlacklist` を移さない。** suppression の正本で、件数も小さい
+- **`Customers` を移さない。** 人が画面で直接扱う正本
+- **`CampaignDeliveries_MarketingAutomation` は KMA 側のテーブル。** AK は読み書きしない
+- **二重書き込みの検証前に Airtable 側の書き込みを止めない**
+- **`DeliveryKey` の作り方（`campaignId × version × 受信者 × 送信元`・日付非依存）を変えない。**
+  変えると既送分と鍵が変わり二重送信になる
+- provider suppression（SendGrid）への依存はそのまま。AK 側台帳だけで判断しない
