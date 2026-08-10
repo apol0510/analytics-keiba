@@ -253,6 +253,11 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
   const now = Date.now();
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
   const fromName = getBrandConfig(BRAND).defaultFromName;
+  // 返信先。brand-config が正本。未設定のブランドでは付けない（勝手に窓口を作らない）
+  const replyToCfg = getBrandConfig(BRAND);
+  const replyTo = replyToCfg.replyToEmail
+    ? { email: replyToCfg.replyToEmail, name: replyToCfg.replyToName || replyToCfg.defaultFromName }
+    : null;
   validateBrandFromEmail(BRAND, fromEmail);
 
   // 1) 対象ジョブ = PENDING かつ マーケティングのタグを持つものだけ
@@ -579,7 +584,7 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
         durationDays: jobCampaign && jobCampaign.grantDurationDays,
       });
       const ok = await sendOne({
-        SG, fromEmail, fromName, to: email, subject: f.Subject, html, customArgs, expiryNote,
+        SG, fromEmail, fromName, replyTo, to: email, subject: f.Subject, html, customArgs, expiryNote,
         // クリック計測は**この経路だけ**・env で明示的に有効化したときだけ（既定 OFF）。
         // 配信基盤のアカウント設定は触らない（ログインリンクまで書き換わるため）。
         clickTracking: isMarketingClickTrackingEnabled(process.env),
@@ -660,7 +665,9 @@ function buildRecentContactMap(deliveries, excludeJobId) {
  * 本文シェルには `{{unsubscribeUrl}}` の印が必ず入っている。印が無い＝古い形式か
  * 壊れた本文なので、**その 1 通は送らない**（配信停止できないメールを出さない）。
  */
-async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs, expiryNote, clickTracking }) {
+async function sendOne({
+  SG, fromEmail, fromName, replyTo, to, subject, html, customArgs, expiryNote, clickTracking,
+}) {
   const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(to)}&brand=analytics-keiba`;
 
   // 受信者ごとの無料期間（読めなければ印ごと消える。嘘の期限を書かない）
@@ -679,6 +686,10 @@ async function sendOne({ SG, fromEmail, fromName, to, subject, html, customArgs,
       body: JSON.stringify({
         personalizations: [{ to: [{ email: to }] }],
         from: { email: fromEmail, name: fromName },
+        // ⚠️ From は `DeliveryKey` の構成要素なので**変えない**（変えると既送分と鍵が
+        //    変わり二重送信になる）。返信を受けるのは Reply-To の仕事。
+        //    Reply-To は鍵に入らないので、変えても冪等性に影響しない。
+        ...(replyTo ? { reply_to: replyTo } : {}),
         subject,
         // text/plain を先に置く（RFC 2046: 後ろほど優先度が高い）
         content: [
