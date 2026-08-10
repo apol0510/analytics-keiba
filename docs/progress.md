@@ -7,6 +7,44 @@
 > `CLAUDE.md` を一次証拠とすること。
 
 
+## 2026-08-09 — 配信履歴を Airtable から外す段階移行を実装（既定 OFF・本番未切替）
+
+Airtable Team 上限超過（50,456）への恒久対応。**Business へは上げない。**
+設計と切替順序の正本は `docs/AIRTABLE_CAPACITY.md`、判断の記録は `docs/decisions.md`。
+
+### 入れたもの（既定の挙動は変えていない）
+
+| ファイル | 役割 |
+|---|---|
+| `deliveryKeyStore.js` | Redis の DeliveryKey 集合。**TTL なし**・fail closed・AK 名前空間 `ak:mkt:` |
+| `deliveryKeySource.js` | 判定源の単一源。読み = **和集合** / 書き = 二重 |
+| `emailEventBlobStore.js` | Blob へ追記専用。**バッチ固有キー・読み書き戻し無し** |
+| `emailEventSink.js` | イベントの書き込み先と失敗時の扱い |
+| `deliveryStoreReconcile.js` | 突合と切替可否 |
+| `scripts/reconcile-delivery-stores.mjs` | 全件突合（Function の 26 秒に収まらないため運用スクリプト）|
+
+env は `MARKETING_DELIVERY_STORE` / `MARKETING_EVENT_SINK` の 2 つ。
+**未設定なら従来どおり Airtable のみ**。未知の値も airtable へ倒す。
+
+### 実装中に判明したこと
+
+- **Function 内で全件突合はできない。** `fetchAll` は 40 ページで黙って打ち切るため、
+  そのまま使うと**偽の「一致」**を出して切替可と誤判定する。既存ガードが検知したので
+  運用スクリプトへ移し、スクリプト側は打ち切りを**例外**にした
+- 突合は**集合そのもの**を比べる。件数一致では中身の違いを検出できない
+
+### テスト
+
+marketing + webhooks 1,269 pass / crm 539 pass / build・check:safety 通過 / secret 検出 0。
+失敗注入（Redis 不通・Blob 不通・部分失敗）、冪等性（2 回 SADD で増えない）、
+TTL コマンドを一切発行しないこと、生アドレスを Blob へ書かないことを固定した。
+
+### まだやっていないこと
+
+**production env 変更 / store 切替 / 本番 migration / Airtable DELETE は一切していない。**
+次は `MARKETING_DELIVERY_STORE=dual` を入れて 1 配信ぶん突合する段階。
+
+
 ## 2026-08-09 — Airtable Team 上限 50,000 件を超過（実測 50,456）／恒久構成を設計
 
 **現状: 上限超過中。** 書き込みが静かに失敗しうる状態。設計の正本は

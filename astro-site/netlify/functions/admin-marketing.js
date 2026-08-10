@@ -130,6 +130,10 @@ import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
+import {
+  resolveDeliveryStoreMode, resolveDeliveredKeys, recordDelivered,
+} from '../../src/lib/marketing/deliveryKeySource.js';
+import { createDeliveryKeyStore, makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 // カムバック無料付与の成功者を引き継ぐ判定（対象の導出・期限・監査印の単一源）
 import {
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
@@ -1051,9 +1055,30 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
       })
       : null))
     .filter(Boolean);
-  const deliveredKeys = await fetchDeliveredKeys({
-    KEY, BASE, campaignType: `${campaign.campaignId}:v${campaign.version}`, keys: candidateKeys,
+  // 🛡️ 既送信の判定源は `MARKETING_DELIVERY_STORE` の単一源に従う。
+  //    既定（未設定）は従来どおり Airtable のみ。`dual` なら Airtable と Redis の
+  //    **和集合**を取る（移行途中に片側しか無い既送信を見落とさないため）。
+  //    Redis が落ちても dual なら Airtable の答えで継続し、degraded として記録する。
+  const deliveryStoreMode = resolveDeliveryStoreMode(process.env);
+  const deliveryStoreScope = {
+    brand: BRAND, campaignId: campaign.campaignId, version: campaign.version,
+  };
+  const deliveredResolution = await resolveDeliveredKeys({
+    mode: deliveryStoreMode,
+    keys: candidateKeys,
+    fetchAirtableDelivered: (keys) => fetchDeliveredKeys({
+      KEY, BASE, campaignType: `${campaign.campaignId}:v${campaign.version}`, keys,
+    }),
+    fetchRedisDelivered: async (keys) => {
+      const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+      return store.filterDelivered({ ...deliveryStoreScope, keys });
+    },
   });
+  const deliveredKeys = deliveredResolution.delivered;
+  if (deliveredResolution.degraded) {
+    // 値・アドレスは出さない。理由コードだけ残す
+    console.warn('⚠️ [admin-marketing] delivery store degraded:', deliveredResolution.degraded);
+  }
 
   // 🛡️ SendGrid 側 suppression を毎回確認する。AK の EmailBlacklist は Webhook 稼働以降しか
   //    持たないため、これが無いと provider では送れない相手を「送信対象」に数えてしまう。
@@ -1249,7 +1274,21 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   for (const rec of deliveryRecords) {
     if (!assertOnlyDeliveryFields(rec.fields)) return json(500, { error: 'field allow-list violation' });
   }
-  await upsertDeliveries({ KEY, BASE, records: deliveryRecords });
+  // 🛡️ 記録先も単一源に従う。既定は Airtable のみ。`dual` は Redis へも SADD する。
+  //    Airtable 側の失敗は従来どおり致命（台帳が欠ける）。Redis 側の失敗は dual なら
+  //    致命にせず、差分は scripts/reconcile-delivery-stores.mjs で拾う。
+  const deliveryWrite = await recordDelivered({
+    mode: deliveryStoreMode,
+    keys: plan.recipients.map((r) => r.deliveryKey).filter(Boolean),
+    writeAirtable: () => upsertDeliveries({ KEY, BASE, records: deliveryRecords }),
+    writeRedis: async (keys) => {
+      const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+      await store.markDelivered({ ...deliveryStoreScope, keys });
+    },
+  });
+  if (deliveryWrite.redis === 'failed') {
+    console.warn('⚠️ [admin-marketing] delivery store redis write failed（Airtable が正本のため継続）');
+  }
 
   console.log('✅ [admin-marketing] キャンペーンをキューへ登録:', {
     campaignId: campaign.campaignId, version: campaign.version,

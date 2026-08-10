@@ -84,8 +84,14 @@ test('guard: 既送信突合を campaign 単位の全件取得へ戻さない', 
     /fetchAll\(\{[^}]*table: DELIVERIES_TABLE,\s*filterByFormula: `AND\(\{CampaignType\}/s,
     'campaign 単位で CampaignDeliveries を全件読む実装は二重送信を許す',
   );
-  assert.match(FN, /deliveredKeys = await fetchDeliveredKeys\(/,
-    'deliveredKeys は名指し取得から作ること');
+  // 既送信の判定は `deliveryKeySource` の単一源を通す。Airtable 側の reader は
+  // 引き続き**名指し取得**の `fetchDeliveredKeys`（全件走査へ戻さない）。
+  assert.match(FN, /fetchAirtableDelivered: \(keys\) => fetchDeliveredKeys\(/,
+    'Airtable 側の reader が名指し取得でなくなっている');
+  assert.match(FN, /const deliveredKeys = deliveredResolution\.delivered;/,
+    'deliveredKeys は resolveDeliveredKeys の結果から作ること');
+  assert.match(FN, /resolveDeliveredKeys\(\{/,
+    '既送信の判定が単一源を通っていない');
 });
 
 test('guard: 取得漏れは 502 で止める（unknown_customer として黙って除外しない）', () => {

@@ -271,16 +271,89 @@ async function applyEmailEventLedger({ events, now }) {
     };
   }
 
-  const result = await writeLedgerRows({
-    rows: batch.rows,
-    apiKey: AIRTABLE_API_KEY,
-    baseId: AIRTABLE_BASE_ID,
-    table: EMAIL_EVENTS_TABLE,
-    isAllowedFields: assertOnlyLedgerFields,
-    fetchFn: fetch,
+  // 🛡️ 書き込み先は `MARKETING_EVENT_SINK` の単一源に従う。
+  //    既定（未設定）は従来どおり Airtable のみ。`dual` で Blob と Redis カウンタを併記し、
+  //    `blob` で Airtable への行追加を止める（レコード上限対策）。
+  //    ⚠️ Blob は **バッチごとに固有キーで新規作成のみ**。既存 blob を読んで書き戻さない
+  //       （Premium Plus 実績画像で踏んだ read-modify-write 競合を持ち込まない）。
+  const {
+    resolveEventSinkMode, writeEventBatch,
+  } = await import('../../src/lib/webhooks/emailEventSink.js');
+  const sinkMode = resolveEventSinkMode(process.env);
+
+  let airtableResult = {
+    attempted: 0, written: 0, failed: 0, skipped: 0, deduped: 0,
+    batches: 0, failedBatches: 0, retryCount: 0, failureReasons: {},
+  };
+
+  const sink = await writeEventBatch({
+    mode: sinkMode,
+    events: batch.rows.map(toSinkEvent),
+    receivedAtMs: Date.now(),
+    writeAirtable: async () => {
+      airtableResult = await writeLedgerRows({
+        rows: batch.rows,
+        apiKey: AIRTABLE_API_KEY,
+        baseId: AIRTABLE_BASE_ID,
+        table: EMAIL_EVENTS_TABLE,
+        isAllowedFields: assertOnlyLedgerFields,
+        fetchFn: fetch,
+      });
+    },
+    writeBlob: async ({ events, receivedAtMs }) => {
+      const { createEmailEventBlobStore } = await import('../../src/lib/webhooks/emailEventBlobStore.js');
+      const { getStore } = await import('@netlify/blobs');
+      const { createHash } = await import('node:crypto');
+      const store = getStore('ak-email-events');
+      const blob = createEmailEventBlobStore({
+        setBlob: (key, body) => store.set(key, body),
+        hashFn: (s) => createHash('sha256').update(s, 'utf8').digest('hex'),
+      });
+      return blob.writeBatch({ events, receivedAtMs });
+    },
+    writeCounters: async (tally) => {
+      const { makeRedisCmd } = await import('../../src/lib/marketing/deliveryKeyStore.js');
+      const cmd = makeRedisCmd(process.env);
+      for (const [key, byType] of Object.entries(tally)) {
+        for (const [type, n] of Object.entries(byType)) {
+          await cmd(['HINCRBY', key, type, String(n)]);
+        }
+      }
+    },
   });
 
-  return { enabled: true, ...base, ...result };
+  // 理由コードだけ残す（アドレス・鍵・blob 本文は出さない）
+  if (sink.degraded.length > 0) {
+    console.warn('⚠️ [sendgrid-webhook] event sink degraded:', sink.degraded.join(','));
+  }
+
+  return {
+    enabled: true,
+    ...base,
+    ...airtableResult,
+    sink: { mode: sinkMode, airtable: sink.airtable, blob: sink.blob, counters: sink.counters },
+  };
+}
+
+/** 台帳行 → sink が扱う形。**allow-list は Blob store 側が最終判断する**。 */
+function toSinkEvent(row) {
+  const f = (row && row.fields) || {};
+  return {
+    eventKey: f.EventKey,
+    eventType: f.EventType,
+    eventAtMs: f.EventAt ? Date.parse(f.EventAt) : undefined,
+    campaignId: f.CampaignId,
+    campaignVersion: f.CampaignVersion,
+    deliveryKey: f.DeliveryKey,
+    campaignDeliveryRecordId: f.CampaignDeliveryRecordId,
+    customerRecordId: f.CustomerRecordId,
+    emailHash: f.EmailHash,
+    bounceClass: f.BounceClass,
+    reasonText: f.ReasonText,
+    providerEventId: f.ProviderEventId,
+    providerMessageId: f.ProviderMessageId,
+    resolutionStatus: f.ResolutionStatus,
+  };
 }
 
 // イベント処理判定
