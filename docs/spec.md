@@ -1295,3 +1295,18 @@ CI: `.github/workflows/safety-check.yml`（PR / push to main / workflow_dispatch
 - 滞留ブランチが多数残存しており、どれが生存 / 破棄対象かの棚卸し記録は **証拠未確認**（正確な本数も 未確認）。
 - `verify-project.sh` は **旧プロジェクト由来の期待値（旧パス・旧 remote）** を検証しており、本リポジトリでは常に失敗する。意図的な残置か放置かは **証拠未確認**。
 - 追跡下の lockfile が 3 つあり、うち `astro-site/astro-site/package-lock.json` は入れ子の重複。3 つとも npm 形式のため形式矛盾は無いが、入れ子が意図的かは **証拠未確認**（`CLAUDE.md` §Package manager）。
+
+### 配信履歴の置き場所（2026-08-09〜 段階移行）
+
+Airtable Team は 1 Base 50,000 レコードで、配信 1 回（14,279 名）で 34,000〜41,000 件増える。
+**Airtable に置くのは「人が画面で直接扱う正本」だけ**とし、配信履歴は既存インフラへ出す。
+
+| データ | 置き場所 | 理由 |
+|---|---|---|
+| Customers / EmailBlacklist / PromotionalOffers 等 | **Airtable** | 人が扱う正本。件数も小さい |
+| `DeliveryKey`（二重送信防止）| **Upstash Redis** の SET | 必要なのは集合だけ。O(1) 判定 |
+| 配信イベントの生ログ | **Netlify Blobs**（NDJSON）| append-only。バッチ固有キーで新規作成のみ |
+| イベントの集計 | Redis カウンタ | 表示用 |
+
+段階は `MARKETING_DELIVERY_STORE` / `MARKETING_EVENT_SINK` の 2 env で表す。
+**どちらも既定 OFF で従来動作。** 詳細と切替順序は `docs/AIRTABLE_CAPACITY.md`。

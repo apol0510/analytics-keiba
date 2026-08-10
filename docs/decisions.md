@@ -1028,6 +1028,48 @@ commit メッセージ以上の詳細な理由記録は無い。250MB 上限超�
 - commits `d75e7bf` / `d4a079b` / `77fbd58`
 - `astro-site/package.json` の `build` スクリプト
 
+## 2026-08-09 — Airtable Business へは上げず、配信履歴を既存インフラへ出す
+
+### 背景
+
+Airtable Team の 1 Base 50,000 レコードを超過（実測 50,456）。内訳は
+EmailEvents 18,793 / Customers 15,970 / CampaignDeliveries 14,416 で上位 3 つが 97.5%。
+配信 1 回（14,279 名）で 34,000〜41,000 件増える。
+
+### 決定
+
+- **Business（125,000）へ上げない。** 空きは 74,544 件 = 追加 2 回ぶんで、
+  月 1 配信なら約 2 か月で再枯渇する。座席課金を払っても構造が変わらない
+- **Team を維持**し、`CampaignDeliveries` と `EmailEvents` を Airtable から外す
+- 移行先は **新サービスを増やさない**。既に本番稼働している
+  **Upstash Redis**（取り込みジョブ）と **Netlify Blobs**（Pro 同梱）を使う
+- 冪等性の正本は **`DeliveryKey` の集合**だけ。行は要らない
+- 生イベントは **バッチ固有キーで新規作成のみ**。既存 blob を読んで書き戻さない
+  （Premium Plus 実績画像で踏んだ read-modify-write 競合を持ち込まない）
+- 切替は **二重書き込み → 突合 → 切替 → 削除** の順。飛ばさない
+
+### 明示的に採らなかった案
+
+- **archive Base への分離**: archive 側も同じ 50,000 上限の対象で、1〜2 回の配信で埋まる。
+  Base 間リンクが無いので管理画面・監査が二重になり、API 呼び出しも減らない
+- **保持期間の短縮のみ**: 90 日保持でも月 1 配信で約 111,000 件を抱え、
+  Team にも Business にも入らない。B と併用して初めて成立する
+
+### 譲らない前提
+
+- `DeliveryKey` の作り方（campaignId × version × 受信者 × 送信元・**日付非依存**）を変えない
+- Redis の集合に **TTL を付けない**（期限切れ = 再送）
+- 判定不能を「未送信」と扱わない（**fail open 禁止**）
+- `EmailBlacklist` と provider suppression は移さない
+- KMA の `CampaignDeliveries_MarketingAutomation` は読み書きしない
+
+### 検証
+
+`npm run check:airtable-capacity` / `npm run reconcile:delivery-stores`。
+突合は**集合そのもの**を比べる（件数一致では足りない）。
+Redis に足りない鍵が 1 つでもあれば切替不可とする。
+
+
 ## 2026-07-20 — 決済メールの送信元を `senderIdentity.js` に単一源化し、不一致は送信前 fail closed
 
 ### 背景

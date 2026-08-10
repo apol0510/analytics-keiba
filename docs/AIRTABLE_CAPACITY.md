@@ -218,3 +218,72 @@ Premium Plus 実績画像で踏んだ eventual consistency / CAS の問題は
 - **`DeliveryKey` の作り方（`campaignId × version × 受信者 × 送信元`・日付非依存）を変えない。**
   変えると既送分と鍵が変わり二重送信になる
 - provider suppression（SendGrid）への依存はそのまま。AK 側台帳だけで判断しない
+
+
+---
+
+# 実装（2026-08-09 / 段階移行）
+
+**既定の挙動は変えていない。** env を入れるまで従来どおり Airtable のみに書く。
+
+## 段階を表す env（既定 OFF）
+
+| env | 値 | 意味 |
+|---|---|---|
+| `MARKETING_DELIVERY_STORE` | 未設定 / `airtable` | 従来。Airtable のみ |
+| | `dual` | Airtable **と** Redis へ書き、判定は**和集合** |
+| | `redis` | Redis のみ |
+| `MARKETING_EVENT_SINK` | 未設定 / `airtable` | 従来。EmailEvents 行を書く |
+| | `dual` | Airtable + Blob + Redis カウンタ |
+| | `blob` | **Airtable へ行を書かない**。Blob + カウンタのみ |
+
+未知の値は **airtable へ倒す**（勝手に新経路へ行かせない）。
+
+## モジュール
+
+| ファイル | 役割 |
+|---|---|
+| `src/lib/marketing/deliveryKeyStore.js` | Redis の DeliveryKey 集合。TTL なし・fail closed |
+| `src/lib/marketing/deliveryKeySource.js` | どこを信じるかの単一源（読み=和集合 / 書き=二重）|
+| `src/lib/webhooks/emailEventBlobStore.js` | Blob へ追記専用。**バッチ固有キー・読み書き戻しなし** |
+| `src/lib/webhooks/emailEventSink.js` | イベントの書き込み先と失敗時の扱い |
+| `src/lib/marketing/deliveryStoreReconcile.js` | 突合と切替可否の判定 |
+| `scripts/reconcile-delivery-stores.mjs` | 全件突合（Function では 26 秒に収まらないため運用スクリプト）|
+| `scripts/check-airtable-capacity.mjs` | 件数と上限比の監視 |
+
+## 失敗時の扱い（表にして固定する）
+
+| 状況 | 挙動 |
+|---|---|
+| `dual` で Redis が読めない | Airtable の答えで判定を継続し `degraded` を記録。**送信は止めない** |
+| `redis` で Redis が読めない | **例外**。判定できないので送らない |
+| `dual` で Redis 書き込み失敗 | 致命にしない（Airtable が正本）。差分は突合で拾う |
+| `redis` で Redis 書き込み失敗 | **例外**（記録が残らないと次回二重送信）|
+| Airtable 書き込み失敗 | **常に致命**（台帳が欠ける）|
+| `dual` で Blob 失敗 | 致命にしない。`degraded` に残す |
+| `blob` で Blob 失敗 | **例外**。provider へ 5xx を返し**再送させる** |
+| カウンタ失敗 | 常に致命にしない（Blob から数え直せる）|
+
+## retention（推測で消さない。ここに書いたものだけ消す）
+
+| データ | Airtable | Redis | Blob |
+|---|---|---|---|
+| `DeliveryKey` | 切替後は不要 | **永久**（TTL 禁止。消えると再送）| — |
+| `CampaignDeliveries` の本文・時刻・JobId | 運用の便宜。**90 日**で十分 | 持たない | — |
+| `EmailEvents` の `delivered` | 切替後は不要 | 件数のみ | **生ログを保持** |
+| `EmailEvents` の `open` / `click` | **不要**（重複排除しないので最大の増加源）| 件数のみ | 生ログ 400 日 |
+| `EmailEvents` の `bounce` / `dropped` / `spam_report` | 切替後は不要 | 件数のみ | **永久**（suppression の根拠）|
+| suppression の**正本** | `EmailBlacklist`（移さない）| — | — |
+| `ScheduledEmails` | 実行中のみ。`SENT`/`FAILED` は 90 日 | — | — |
+
+**保持期間の根拠が docs に無いものは消さない。** 上表に無いデータは現状維持。
+
+## 切替の順序（飛ばさない）
+
+1. `MARKETING_DELIVERY_STORE=dual` → 1 配信 → `npm run reconcile:delivery-stores` が
+   `safeToSwitch=true` を返すことを確認
+2. `MARKETING_EVENT_SINK=dual` → 1 配信 → 件数突合
+3. `redis` / `blob` へ切替
+4. **ここで初めて** Airtable の旧行を export → 削除（別承認）
+
+各段は redeploy が要る（env 変更だけでは Function に反映されない）。
