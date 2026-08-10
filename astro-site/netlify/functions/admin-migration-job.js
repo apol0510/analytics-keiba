@@ -274,7 +274,18 @@ export const handler = async (event) => {
   try {
     if (action === 'status') {
       const job = await loadJob(cmd, jobType);
-      return json(200, { job: toPublicJob(job), sideEffects: 'none' });
+      // dual の実効性を確認するためのカウンタ（webhook が積む）。件数だけ。
+      let sink = null;
+      try {
+        const raw = await cmd(['HGETALL', 'ak:mkt:events:sink']);
+        if (Array.isArray(raw)) {
+          sink = {};
+          for (let i = 0; i < raw.length; i += 2) sink[raw[i]] = raw[i + 1];
+        } else if (raw && typeof raw === 'object') {
+          sink = raw;
+        }
+      } catch { sink = null; }
+      return json(200, { job: toPublicJob(job), eventSink: sink, sideEffects: 'none' });
     }
 
     if (action === 'start') {

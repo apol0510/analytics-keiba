@@ -128,3 +128,28 @@ test('writer が無いまま書こうとしたら例外', async () => {
   await assert.rejects(() => writeEventBatch({ mode: 'dual', events: [EV()], receivedAtMs: 1 }),
     /airtable_writer_missing/);
 });
+
+// ── dual の実効性を観測できること（2026-08-10）─────────────────
+import { readFileSync as _rf } from 'node:fs';
+const WEBHOOK = _rf(new URL('../../../netlify/functions/sendgrid-webhook.js', import.meta.url), 'utf8');
+
+test('guard: dual の結果を Redis カウンタへ残す（Blob へ書けていないのに気づけない事故を防ぐ）', () => {
+  assert.match(WEBHOOK, /ak:mkt:events:sink/);
+  assert.match(WEBHOOK, /HINCRBY/);
+  assert.match(WEBHOOK, /'blob_' \+ sink\.blob/);
+  assert.match(WEBHOOK, /last_degraded/);
+});
+
+test('guard: 観測用の書き込みが失敗しても webhook を落とさない', () => {
+  const i = WEBHOOK.indexOf('ak:mkt:events:sink');
+  const around = WEBHOOK.slice(Math.max(0, i - 900), i + 900);
+  assert.match(around, /try \{/);
+  assert.match(around, /\} catch \{/);
+});
+
+test('guard: webhook は Web 形式（Request）。Lambda 形式へ変えるなら connectLambda が要る', () => {
+  // Web 形式では Blobs が自動設定される。Lambda 形式へ変えると
+  // MissingBlobsEnvironmentError になり、dual では degraded で黙って落ちる。
+  assert.match(WEBHOOK, /export default async \(req\)/);
+  assert.equal(/export const handler = async \(event/.test(WEBHOOK), false);
+});
