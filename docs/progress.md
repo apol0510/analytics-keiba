@@ -1,3 +1,41 @@
+## 2026-08-10 — メールマーケティング方針を確定（#296 merged）
+
+方針の正本は `docs/spec.md` の「メールマーケティング方針」。以下は運用の確定事項。
+
+### 今後こうする（変更には別途判断が要る）
+
+- **benefit の無い大量配信を禁止**（200 名超で `benefitType` / `benefitDescription` 未宣言は fail closed）
+- **`dormant-reactivation` v2 の再大量配信を禁止**（`bulkSendAllowed: false`）。
+  再利用には benefit の宣言し直しが要る
+- **engagement 閾値は現状維持**（5 / 10 / 20）。
+  **実測で 5 回以上送信された人が出てきた時点で初めて再評価**する。
+  いま下げると 1 通の open だけを根拠に切ることになり、Apple MPP の影響で誤判定する
+- **click tracking は未有効**（`MARKETING_CLICK_TRACKING_ENABLED` 未設定 +
+  Event Webhook の `click=false`）。**click を有効なシグナルとして当てにしない**。
+  購入・ログインで代替している
+
+### 実測（2026-08-10 / 全 15,970 名）
+
+ACTIVE 3,512 / LOW_ENGAGEMENT 0 / INACTIVE 0 / HARD_INACTIVE 0 / UNKNOWN 12,458。
+送信回数の最大が 2〜4 回（59 名）で 5 回以上が 0 名のため、
+**engagement guard は現状 1 人も止めない**。次回配信の削減は unsubscribe(2) と
+provider suppression(388) のみで **2.4%**。
+
+→ **いま送信数を減らす手段は「人を絞ること」ではなく「送らないこと」**。
+benefit guard が主たる削減手段。
+
+### 併せて完了（#294 / #295）
+
+ワンクリック配信停止（RFC 8058）が全部 400 で落ちていた不具合を修正し本番反映。
+Reply-To を `support@keiba.link` に設定（From は `DeliveryKey` の構成要素なので不変）。
+配信停止申請者 1 名を反映し `sendable=false` を確認。
+
+### 現在の状態
+
+production env は**マーケティング関連すべて未設定**（gate 閉）。保留ジョブ 0。
+**新規マーケティング配信は再開していない。**
+
+
 ## 2026-08-10 — ワンクリック配信停止が全部失敗していた（修正・本番反映済み）
 
 利用者から「メール来ます」「配信停止申請」の問い合わせ（JST 11:36）を受けて実送信を
