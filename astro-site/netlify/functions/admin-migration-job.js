@@ -330,6 +330,64 @@ export const handler = async (event) => {
       }
     }
 
+    if (action === 'indexBlobEvents') {
+      // Blob に入っている EventKey を Redis の集合へ索引化する（突合のため）。
+      // **Blob は読むだけ**。書き戻さない（read-modify-write を作らない）。
+      const { getStore, connectLambda } = await import('@netlify/blobs');
+      connectLambda(event);
+      const blobs = getStore('ak-email-events');
+      const cursor = String(req.cursor || '') || undefined;
+      const listed = await blobs.list({ prefix: 'ak/email-events/', cursor, paginate: false });
+      const byType = {};
+      let keys = 0;
+      const setKey = `${JOB_NAMESPACE}:eventkeys`;
+      for (const b of listed.blobs || []) {
+        const body = await blobs.get(b.key);
+        if (!body) continue;
+        const found = [];
+        for (const line of String(body).split('\n')) {
+          if (!line.trim()) continue;
+          let o = null;
+          try { o = JSON.parse(line); } catch { continue; }
+          if (o.eventKey) found.push(String(o.eventKey));
+          if (o.eventType) byType[o.eventType] = (byType[o.eventType] || 0) + 1;
+        }
+        for (let i = 0; i < found.length; i += 200) {
+          await cmd(['SADD', setKey, ...found.slice(i, i + 200)]);
+        }
+        keys += found.length;
+      }
+      const total = await cmd(['SCARD', setKey]);
+      return json(200, {
+        blobsRead: (listed.blobs || []).length,
+        keysIndexed: keys,
+        uniqueInRedis: Number(total) || 0,
+        byType,
+        nextCursor: listed.cursor || null,
+        sideEffects: 'Redis の索引集合のみ（Blob / Airtable 不変）',
+      });
+    }
+
+    if (action === 'verifyEvents') {
+      // Airtable の EventKey が Blob 索引に含まれるかを照合する。件数のみ返す。
+      const keys = Array.isArray(req.keys) ? req.keys : [];
+      if (keys.length === 0 || keys.length > 500) {
+        return json(400, { error: 'keys は 1〜500 件', sideEffects: 'none' });
+      }
+      const setKey = `${JOB_NAMESPACE}:eventkeys`;
+      let res;
+      try {
+        res = await cmd(['SMISMEMBER', setKey, ...keys]);
+      } catch {
+        return json(503, { error: 'redis_unavailable', sideEffects: 'none' });
+      }
+      if (!Array.isArray(res) || res.length !== keys.length) {
+        return json(502, { error: 'unexpected_response', sideEffects: 'none' });
+      }
+      const present = res.filter((x) => Number(x) === 1).length;
+      return json(200, { checked: keys.length, present, missing: keys.length - present, sideEffects: 'none' });
+    }
+
     if (action === 'verify') {
       // 集合そのものを照合する。**件数一致では PASS にしない**ため。
       // 受け取るのは呼び出し側が Airtable から読んだ DeliveryKey（sha256 hex）で、
