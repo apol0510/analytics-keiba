@@ -1,3 +1,53 @@
+## 2026-08-10 — EmailEvents を Blob 単独へ切替（Airtable への追記が止まった）
+
+`MARKETING_EVENT_SINK=blob`。**Airtable の EmailEvents に行を追加しなくなった。**
+`MARKETING_DELIVERY_STORE` は **dual のまま維持**（Redis 単独へはまだ切り替えていない）。
+
+### 実効の証拠（自然流入で確認・新規配信 0）
+
+| 時刻 | Airtable EmailEvents | sink カウンタ |
+|---|---:|---|
+| 切替前 08:14Z | 19,157 | `mode_dual` |
+| +3 分 | 19,158 | `mode_blob:2` `blob_ok:22` `airtable_skipped:2` |
+| +6 分 | **19,158（増分 0）** | `mode_blob:5` `blob_ok:25` `airtable_skipped:5` |
+
+**Airtable は止まり、Blob は増え続けている。** `blob_failed:0` / degraded なし。
+19,158 のうち最後の +1 は切替直前の dual モードでの書き込み。
+
+### rollback
+
+`MARKETING_EVENT_SINK` を unset すれば `writesAirtableEvents` が true に戻り、
+Airtable への追記が復活する（コード変更不要）。実装で確認済み。
+
+### 削除前 export（実施済み・削除はしていない）
+
+`.migration-export/`（**.gitignore 済み**）へ全フィールドを NDJSON で退避。
+
+| table | 件数 | サイズ | digest |
+|---|---:|---:|---|
+| CampaignDeliveries | 14,416 | 9.4 MB | `b22c6623007bc7fa…` |
+| EmailEvents | 19,158 | 14.4 MB | `8ecdf49a89a09918…` |
+| ScheduledEmails（SENT/FAILED/CANCELLED）| 174 | 0.9 MB | `409c5eae89f4b0ee…` |
+
+⚠️ **PII を含む。repo へコミットしない。** 退避しただけでは消してよいことにならない。
+
+### 削除対象の最新（削除は未実施）
+
+| 対象 | 件数 |
+|---|---:|
+| EmailEvents | 19,158 |
+| CampaignDeliveries | 14,416 |
+| 完了済み ScheduledEmails | 174 |
+| **削除合計** | **33,748** |
+| 現在の Airtable 総数 | 50,825 |
+| **削除後の見込み** | **約 17,077** |
+
+### まだやっていないこと
+
+`MARKETING_DELIVERY_STORE=redis` / Airtable delete / 新規マーケティング配信 /
+Customers 変更 / blob 整理削除。**いずれも未実施。**
+
+
 ## 2026-08-10 — dual write を本番有効化（EVENT_SINK / DELIVERY_STORE）
 
 新着イベントが Airtable にだけ増え続ける状態を止めた。**新規メールは 1 通も送っていない。**
