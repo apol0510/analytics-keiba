@@ -1,3 +1,56 @@
+## 2026-08-10 — dual write を本番有効化（EVENT_SINK / DELIVERY_STORE）
+
+新着イベントが Airtable にだけ増え続ける状態を止めた。**新規メールは 1 通も送っていない。**
+
+| env | 値 | write 先 |
+|---|---|---|
+| `MARKETING_EVENT_SINK` | **dual** | Airtable + Blob + Redis カウンタ |
+| `MARKETING_DELIVERY_STORE` | **dual** | Airtable + Redis（判定は**和集合**）|
+
+### 検証は自然流入で行った（検証目的の配信はしていない）
+
+open が継続流入しているので、それを使って dual の実効を確認した。
+`ak:mkt:events:sink` に `mode_dual` / `blob_ok` が積まれ、**degraded は 0**。
+
+`mode_airtable:11 → mode_dual:7` と切り替わり、`blob_ok:7` / `counters_ok:7`。
+
+### preflight で先に潰したこと
+
+dual では **Blob 失敗が致命でない**ため、書けていなくても degraded ログだけで通過する。
+移行 Function で `MissingBlobsEnvironmentError` を踏んだ前例があるのに、
+webhook 側には確認手段が無かった。`ak:mkt:events:sink` カウンタを先に足し、
+**「Blob へ書けていないのに書けているつもり」を構造的に防いだ**。
+
+なお webhook は `export default async (req)` の **Web 形式**で、この形式では
+Blobs が自動設定される（`connectLambda` が要るのは Lambda 形式のみ）。
+本 repo に前例が無かったため断定せず、実データで確認してから先へ進めた。
+
+### reconcile（両方 PASS）
+
+| 対象 | 件数 | 結果 |
+|---|---:|---|
+| Airtable ↔ Blob（EventKey）| 19,139 | 欠け **0** ✅ |
+| Airtable ↔ Redis（DeliveryKey）| 14,415 | 欠け **0** ✅ |
+
+### rollback
+
+`resolveEventSinkMode({})` / `resolveDeliveryStoreMode({})` はいずれも `airtable` を返す。
+**env unset + redeploy で完全に元へ戻る**（コード変更不要）を実装で確認済み。
+
+### 現在の状態
+
+Airtable 総件数 **50,809**（EmailEvents 19,142 / CampaignDeliveries 14,416）。
+**dual は Airtable にも書き続けるので、件数は減らない。** 減るのは完全切替 → 削除の後。
+
+`MIGRATION_WRITE_ENABLED` は catch-up 後に UNSET + redeploy し 403 へ復帰済み。
+`MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` は閉じたまま。
+
+### 次（高リスク境界・未実施）
+
+`MARKETING_EVENT_SINK=blob` / `MARKETING_DELIVERY_STORE=redis` への完全切替。
+ここから先は **Airtable が正本でなくなる**ため、別承認。
+
+
 ## 2026-08-10 — 配信履歴の backfill を本番実行（Redis / Blob へ・Airtable 不変）
 
 Airtable の外へ出す準備として、既存の配信履歴を Redis と Blob へ移した。
