@@ -113,7 +113,7 @@ Reply-To は鍵に入らないことを検証済み。
 ### dry-run 実測（本番データ・書き込み 0）
 
 CampaignDeliveries 145 ページ / **14,415 件**（総 14,416 − skipped-duplicate 1）。
-EmailEvents 189 ページ / **18,871 件**。どちらも skip 0・重複 0。
+EmailEvents 190 ページ / **18,995 件**。どちらも skip 0・重複 0。
 
 ### リハーサル
 

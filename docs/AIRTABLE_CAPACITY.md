@@ -311,9 +311,10 @@ Premium Plus 実績画像で踏んだ eventual consistency / CAS の問題は
 | 対象 | ページ | 読み取り | 移行対象 | skip |
 |---|---:|---:|---:|---:|
 | CampaignDeliveries（sent/queued）| 145 | **14,415** | 14,415 | 0 |
-| EmailEvents | 189 | **18,871** | 18,871 | 0 |
+| EmailEvents | 190 | **18,995** | 18,995 | 0 |
 
 CampaignDeliveries は総数 14,416 のうち `skipped-duplicate` 1 件を除いた数。
+**EmailEvents は open が増え続けるので、実行時に必ず再計測すること**（この数字は測定時点の値）。
 **送っていない行を「送信済み」に入れない**ため、`sent` / `queued` だけを対象にする。
 
 ## checkpoint の方式
