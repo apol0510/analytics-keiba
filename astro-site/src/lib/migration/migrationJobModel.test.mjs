@@ -146,3 +146,15 @@ test('guard: 件数が合わなければ COMPLETED にしない', () => {
   assert.match(FN, /if \(!bal\.balanced\)/);
   assert.match(FN, /件数が合わないため完了にしません/);
 });
+
+test('guard: verify は集合照合で、欠けた鍵そのものは返さない', () => {
+  assert.match(FN, /if \(action === 'verify'\)/);
+  assert.match(FN, /store\.filterDelivered\(/);
+  // 返すのは件数だけ
+  assert.match(FN, /checked: keys\.length,[\s\S]{0,80}present: present\.length,[\s\S]{0,80}missing:/);
+  assert.doesNotMatch(FN, /missingKeys|present: present,/);
+});
+
+test('guard: verify は Redis が読めなければ 503（一致扱いしない）', () => {
+  assert.match(FN, /return json\(503, \{ error: 'redis_unavailable'/);
+});
