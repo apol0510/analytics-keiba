@@ -59,20 +59,30 @@ export const prerender = false;
   .verify-content.error .spinner, .verify-content.success .spinner { display: none; }
 </style>
 
+{/*
+  ⚠️ このスクリプトは **素の JavaScript で書くこと。TypeScript 構文を書いてはいけない。**
+     `define:vars` は `is:inline` を含意するため、Astro はこのブロックを
+     **トランスパイルもバンドルもせず、そのまま HTML に埋め込む**。
+     型注釈（型アサーションや引数の型）を書くと、ブラウザが SyntaxError で
+     **スクリプト全体を 1 行も実行しない** → 画面は
+     「認証中... トークンを確認しています」のまま永久に止まり、有料会員が
+     **誰もログインできなくなる**（2026-08-09 14:11 JST 〜 2026-08-10 の本番障害の真因）。
+     再発は `src/lib/auth/inlineScriptNoTs.guard.test.mjs` が検知する。
+*/}
 <script define:vars={{ TTL_MIN: MAGIC_LINK_TTL_MINUTES }}>
   (async () => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
-    const root = document.getElementById('loading-state') as HTMLDivElement;
-    const status = document.getElementById('status') as HTMLHeadingElement;
-    const msg = document.getElementById('message') as HTMLParagraphElement;
+    const root = document.getElementById('loading-state');
+    const status = document.getElementById('status');
+    const msg = document.getElementById('message');
 
-    function fail(text: string) {
+    function fail(text) {
       root.classList.add('error');
       status.textContent = '認証失敗';
       msg.innerHTML = `${text}<br><br><a href="/login/" style="display:inline-block;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:8px;">ログインリンクを再送する</a>`;
     }
-    function ok(text: string, redirectTo: string) {
+    function ok(text, redirectTo) {
       root.classList.add('success');
       status.textContent = 'ログイン成功';
       msg.innerHTML = `${text}<br><br>3秒後に <a href="${redirectTo}">${redirectTo}</a> へ移動します。`;
