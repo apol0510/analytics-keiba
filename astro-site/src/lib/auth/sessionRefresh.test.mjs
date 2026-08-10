@@ -19,6 +19,9 @@ import {
   resolveCarriedSessionStart,
   REFRESH_DECISION,
   REFRESH_REJECT,
+  REFRESH_THRESHOLD_RATIO,
+  REFRESH_THRESHOLD_FLOOR_MS,
+  resolveRefreshThresholdMs,
 } from './sessionRefresh.js';
 import { issuePaidSessionCookie, DEFAULT_SESSION_TTL_MS } from './sessionIssuance.js';
 import { MEMBER_TYPE } from './memberResolution.js';
@@ -335,4 +338,83 @@ test('v1 は残 TTL が多くても常に reissue（v2 へ移行）', async () =
   const { payload } = await issueV1Payload();
   const d = decideRefresh({ payload, membership: paidMember(), now: NOW + 1 * MIN }); // 残19分
   assert.equal(d.decision, REFRESH_DECISION.REISSUE);
+});
+
+// ─── 再発行閾値は idle TTL に比例する（2026-08-10 の不具合の恒久対策）─────────
+//
+// 旧実装は固定 5 分だった。idle TTL が 20 分だった頃は妥当だったが、
+// 2026-07-24 に idle TTL だけ 30 日へ延ばした際に閾値が据え置かれ、
+// **再発行は「30 日の最後の 5 分間にアクセスした場合」しか起きなく**なっていた。
+// keep-alive を全有料ページへ配線しても Cookie は延びず（本番で 204=keep を実測）、
+// 会員は最終ログインから 30 日で必ず締め出されていた。
+
+test('閾値は idle TTL に比例する（TTL だけ延ばしても延長が止まらない）', () => {
+  assert.equal(resolveRefreshThresholdMs(DEFAULT_SESSION_TTL_MS),
+    Math.floor(DEFAULT_SESSION_TTL_MS * REFRESH_THRESHOLD_RATIO));
+  // 30日 TTL なら 15日
+  assert.equal(resolveRefreshThresholdMs(30 * 24 * 60 * MIN), 15 * 24 * 60 * MIN);
+  // 比例なので TTL を変えれば閾値も動く
+  assert.equal(resolveRefreshThresholdMs(40 * 24 * 60 * MIN), 20 * 24 * 60 * MIN);
+});
+
+test('閾値が idle TTL に対して極端に小さくならない（旧不具合の再発検知）', () => {
+  const th = resolveRefreshThresholdMs(DEFAULT_SESSION_TTL_MS);
+  assert.ok(th >= DEFAULT_SESSION_TTL_MS * 0.25,
+    `閾値 ${th}ms は idle TTL ${DEFAULT_SESSION_TTL_MS}ms に対して小さすぎる`
+    + '（固定値へ戻すと延長が事実上止まる）');
+  // 旧実装の固定 5 分へ戻っていないこと
+  assert.notEqual(th, 5 * MIN);
+});
+
+test('下限は残る（極端に短い / 不正な TTL でも延長の余地を残す）', () => {
+  assert.equal(resolveRefreshThresholdMs(1 * MIN), REFRESH_THRESHOLD_FLOOR_MS);
+  for (const bad of [0, -1, NaN, Infinity, null, undefined, '30d']) {
+    assert.equal(resolveRefreshThresholdMs(bad), REFRESH_THRESHOLD_FLOOR_MS, `bad=${String(bad)}`);
+  }
+});
+
+test('残り TTL が半分を切ったら reissue、超えていれば keep', async () => {
+  const { payload } = await issueV2Payload(); // expiresAt = NOW + 30日
+  const DAY = 24 * 60 * MIN;
+
+  // 残 20日（> 15日）→ 延長しない
+  assert.equal(
+    decideRefresh({ payload, membership: paidMember(), now: NOW + 10 * DAY }).decision,
+    REFRESH_DECISION.KEEP);
+
+  // 残 10日（≤ 15日）→ 延長する
+  const d = decideRefresh({ payload, membership: paidMember(), now: NOW + 20 * DAY });
+  assert.equal(d.decision, REFRESH_DECISION.REISSUE);
+  assert.equal(d.ttlMs, DEFAULT_SESSION_TTL_MS, '延長後の idle TTL が満了分に戻っていない');
+});
+
+test('半 TTL 以内の訪問なら idle 失効しない。ただし絶対 TTL 90日で必ず reject', async () => {
+  const DAY = 24 * 60 * MIN;
+  let { payload } = await issueV2Payload();
+  let now = NOW;
+
+  // 15日ごとに訪問し続けても、絶対 TTL(90日) で必ず reject になる（延長では逃げられない）。
+  // 回避できるのは idle TTL（30日の無アクセス失効）だけであることを固定する。
+  let reachedAbsoluteReject = false;
+  for (let i = 0; i < 6; i += 1) {          // 15日 × 6 = 90日
+    now += 15 * DAY;
+    const d = decideRefresh({ payload, membership: paidMember(), now });
+    if (now - NOW >= ABSOLUTE_SESSION_TTL_MS) {
+      assert.equal(d.decision, REFRESH_DECISION.REJECT, '絶対 TTL 超過は reject のまま');
+      assert.equal(d.reason, REFRESH_REJECT.ABSOLUTE_EXPIRED);
+      reachedAbsoluteReject = true;
+      break;
+    }
+    assert.equal(d.decision, REFRESH_DECISION.REISSUE,
+      `${(now - NOW) / DAY}日目に延長されなかった（idle 失効する）`);
+    const issued = await createSessionV2({
+      secret: SECRET, sub: 'recPAID', plan: 'premium', venueAccess: ['jra', 'nankan'],
+      sessionVersion: 0, now, ttlMs: d.ttlMs, sessionStart: d.sessionStart, subtle,
+    });
+    payload = issued.payload;
+    assert.ok(payload.expiresAt > now, '延長後も期限切れのまま');
+  }
+  // 「延長し続ければ永久に入れる」と誤解させないため、reject に到達したことを必須にする
+  assert.ok(reachedAbsoluteReject,
+    '絶対 TTL の reject に到達していない（idle 延長で無期限になっていないか）');
 });
