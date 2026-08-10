@@ -388,19 +388,21 @@ test('残り TTL が半分を切ったら reissue、超えていれば keep', as
   assert.equal(d.ttlMs, DEFAULT_SESSION_TTL_MS, '延長後の idle TTL が満了分に戻っていない');
 });
 
-test('半 TTL 以内に 1 度でも開けば失効しない（15日ごとの訪問を 1 年ぶん回す）', async () => {
+test('半 TTL 以内の訪問なら idle 失効しない。ただし絶対 TTL 90日で必ず reject', async () => {
   const DAY = 24 * 60 * MIN;
   let { payload } = await issueV2Payload();
   let now = NOW;
 
-  // 15日ごとに訪問。絶対 TTL(90日) を跨ぐと reject になるのが正しい挙動なので、
-  // ここでは「絶対 TTL に達するまでは idle 失効しない」ことを確かめる。
+  // 15日ごとに訪問し続けても、絶対 TTL(90日) で必ず reject になる（延長では逃げられない）。
+  // 回避できるのは idle TTL（30日の無アクセス失効）だけであることを固定する。
+  let reachedAbsoluteReject = false;
   for (let i = 0; i < 6; i += 1) {          // 15日 × 6 = 90日
     now += 15 * DAY;
     const d = decideRefresh({ payload, membership: paidMember(), now });
     if (now - NOW >= ABSOLUTE_SESSION_TTL_MS) {
       assert.equal(d.decision, REFRESH_DECISION.REJECT, '絶対 TTL 超過は reject のまま');
       assert.equal(d.reason, REFRESH_REJECT.ABSOLUTE_EXPIRED);
+      reachedAbsoluteReject = true;
       break;
     }
     assert.equal(d.decision, REFRESH_DECISION.REISSUE,
@@ -412,4 +414,7 @@ test('半 TTL 以内に 1 度でも開けば失効しない（15日ごとの訪�
     payload = issued.payload;
     assert.ok(payload.expiresAt > now, '延長後も期限切れのまま');
   }
+  // 「延長し続ければ永久に入れる」と誤解させないため、reject に到達したことを必須にする
+  assert.ok(reachedAbsoluteReject,
+    '絶対 TTL の reject に到達していない（idle 延長で無期限になっていないか）');
 });
