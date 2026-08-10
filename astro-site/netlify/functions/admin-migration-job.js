@@ -154,9 +154,13 @@ async function stepDeliveryKeys({ KEY, BASE, cmd, job }) {
   };
 }
 
-async function stepEmailEvents({ KEY, BASE, cmd, job }) {
-  const { getStore } = await import('@netlify/blobs');
+async function stepEmailEvents({ KEY, BASE, cmd, job, event }) {
+  const { getStore, connectLambda } = await import('@netlify/blobs');
   const { createHash } = await import('node:crypto');
+  // ⚠️ Lambda 互換ランタイムでは Blobs が自動設定されず
+  //    `MissingBlobsEnvironmentError` になる（Premium Plus 実績画像で踏んだのと同じ）。
+  //    event を渡して明示的に接続する。
+  connectLambda(event);
   const blobs = getStore('ak-email-events');
   const blobStore = createEmailEventBlobStore({
     setBlob: (k, body) => blobs.set(k, body),
@@ -299,7 +303,7 @@ export const handler = async (event) => {
         const runner = jobType === JOB_TYPE.DELIVERY_KEYS ? stepDeliveryKeys : stepEmailEvents;
         let result;
         try {
-          result = await runner({ KEY, BASE, cmd, job });
+          result = await runner({ KEY, BASE, cmd, job, event });
         } catch (e) {
           const failed = failJob(job, e.type || e.message || 'step_failed', nowIso);
           await saveJob(cmd, failed);

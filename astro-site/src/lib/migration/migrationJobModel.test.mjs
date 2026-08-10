@@ -158,3 +158,9 @@ test('guard: verify は集合照合で、欠けた鍵そのものは返さない
 test('guard: verify は Redis が読めなければ 503（一致扱いしない）', () => {
   assert.match(FN, /return json\(503, \{ error: 'redis_unavailable'/);
 });
+
+test('guard: Blobs は connectLambda(event) で明示接続する', () => {
+  // Lambda 互換ランタイムでは自動設定されず MissingBlobsEnvironmentError になる
+  assert.match(FN, /connectLambda\(event\)/);
+  assert.match(FN, /runner\(\{ KEY, BASE, cmd, job, event \}\)/);
+});
