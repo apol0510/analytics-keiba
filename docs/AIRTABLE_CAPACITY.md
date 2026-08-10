@@ -287,3 +287,69 @@ Premium Plus 実績画像で踏んだ eventual consistency / CAS の問題は
 4. **ここで初めて** Airtable の旧行を export → 削除（別承認）
 
 各段は redeploy が要る（env 変更だけでは Function に反映されない）。
+
+
+---
+
+# 移行ツール（2026-08-09 / 本番未実行）
+
+## スクリプト
+
+| コマンド | 何をするか | 既定 |
+|---|---|---|
+| `npm run backfill:delivery-keys` | CampaignDeliveries → Redis の DeliveryKey 集合 | **dry-run** |
+| `npm run backfill:email-events` | EmailEvents → Blob へ NDJSON 退避 | **dry-run** |
+| `npm run export:airtable-tables` | 削除前の復元用 export（3 table）| 常に read-only |
+| `npm run reconcile:delivery-stores` | DeliveryKey 集合の突合 | read-only |
+| `npm run reconcile:email-events` | EventKey 集合 + 種別件数の突合 | read-only |
+| `npm run check:airtable-capacity` | 件数と上限比 | read-only |
+
+書き込むには **`--apply` を明示**する。付けなければ 1 バイトも書かない。
+
+## dry-run の実測（2026-08-09 / 本番データ・書き込み 0）
+
+| 対象 | ページ | 読み取り | 移行対象 | skip |
+|---|---:|---:|---:|---:|
+| CampaignDeliveries（sent/queued）| 145 | **14,415** | 14,415 | 0 |
+| EmailEvents | 190 | **18,995** | 18,995 | 0 |
+
+CampaignDeliveries は総数 14,416 のうち `skipped-duplicate` 1 件を除いた数。
+**EmailEvents は open が増え続けるので、実行時に必ず再計測すること**（この数字は測定時点の値）。
+**送っていない行を「送信済み」に入れない**ため、`sent` / `queued` だけを対象にする。
+
+## checkpoint の方式
+
+**Airtable の `offset` を保存しない。** offset は短命で、期限切れの値で再開すると
+途中から読み始めて**取りこぼす**。代わりに:
+
+  - 書き込みを**すべて冪等**にする（Redis=SADD / Blob=内容ハッシュのキー）
+  - 再開は「最初から読み直し、既にある分は冪等で素通り」
+  - checkpoint（`.migration-state/<job>.json`）は**進捗表示と検算のためだけ**
+
+読んだ件数と（書いた + 飛ばした）件数が合わなければ **完了扱いにしない**。
+
+## 二重実行・部分失敗
+
+| 事象 | 結果 |
+|---|---|
+| 同じ backfill を 2 回流す | Redis の集合は変わらない / Blob は同一キーなので増えない |
+| Airtable が途中で失敗 | 例外。部分的に入った分はそのまま。再実行で完全になる |
+| Redis / Blob が途中で失敗 | 例外。**完了扱いにしない** |
+| 部分的にしか入っていない | 突合が `missingInRedis` / `missingInBlob` を検出し **切替不可** |
+
+## 突合の判定（件数一致では PASS にしない）
+
+| 対象 | 比べるもの | 切替可の条件 |
+|---|---|---|
+| DeliveryKey | **集合そのもの** | Redis に足りない鍵が 0（余分は可）|
+| EmailEvents | **EventKey 集合** + 種別ごとの件数 | Blob に足りない鍵が 0 かつ種別件数が一致 |
+
+片側を読めなかったら `unavailable` とし、**「一致」とは扱わない**。
+
+## 削除前 export
+
+`export:airtable-tables` が recordId と**全フィールド**を NDJSON で落とし、
+件数と SHA-256 を manifest に残す。行を作り直せる。
+
+⚠️ 出力は **PII を含む**。`.migration-export/` は .gitignore 済み。repo へ入れない。
+⚠️ 退避しただけでは消してよいことにならない。**突合の PASS が先**。

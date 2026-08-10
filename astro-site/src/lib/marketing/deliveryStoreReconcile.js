@@ -88,6 +88,58 @@ export function reconcileEventCounts({ airtableCounts, blobCounts } = {}) {
 }
 
 /**
+ * EmailEvents の突合。**件数だけで PASS にしない**ので `EventKey` の集合を比べる。
+ *
+ * `EventKey` は provider の `sg_event_id` 由来（無ければ合成）で、1 イベント 1 値。
+ * これが Blob 側に揃っていれば、行そのものは Airtable から消してよい。
+ *
+ * @param {{
+ *   airtableKeys?: Set<string>|string[]|null,
+ *   blobKeys?: Set<string>|string[]|null,
+ *   airtableCounts?: object|null,
+ *   blobCounts?: object|null,
+ * }} input
+ */
+export function reconcileEventKeys({ airtableKeys, blobKeys, airtableCounts, blobCounts } = {}) {
+  if (airtableKeys === null || airtableKeys === undefined
+    || blobKeys === null || blobKeys === undefined) {
+    return {
+      status: RECON_STATUS.UNAVAILABLE,
+      airtable: 0, blob: 0, missingInBlob: 0, extraInBlob: 0,
+      counts: { status: RECON_STATUS.UNAVAILABLE, byType: {}, safeToSwitch: false },
+      safeToSwitch: false,
+    };
+  }
+  const a = asSet(airtableKeys);
+  const b = asSet(blobKeys);
+  let missingInBlob = 0;
+  for (const k of a) if (!b.has(k)) missingInBlob += 1;
+  let extraInBlob = 0;
+  for (const k of b) if (!a.has(k)) extraInBlob += 1;
+
+  let status = RECON_STATUS.MATCH;
+  if (missingInBlob > 0 && extraInBlob > 0) status = RECON_STATUS.BOTH_DIFFER;
+  else if (missingInBlob > 0) status = RECON_STATUS.REDIS_MISSING; // 「退避先に無い」の意
+  else if (extraInBlob > 0) status = RECON_STATUS.REDIS_EXTRA;
+
+  // 種別ごとの件数も併せて見る（集合が一致していても種別が壊れていたら気づける）
+  const counts = reconcileEventCounts({ airtableCounts, blobCounts });
+
+  return {
+    status,
+    airtable: a.size,
+    blob: b.size,
+    missingInBlob,
+    extraInBlob,
+    counts,
+    // 退避先に足りないイベントが 1 つでもあれば消せない（監査記録が欠ける）。
+    // 種別件数の突合が unavailable のときも安全側に倒す。
+    safeToSwitch: missingInBlob === 0
+      && (counts.status === RECON_STATUS.MATCH || counts.safeToSwitch === true),
+  };
+}
+
+/**
  * 切替可否の総合判定。**両方が安全なときだけ true**。
  * 片方でも `unavailable` なら false（読めないものを「一致」と扱わない）。
  */

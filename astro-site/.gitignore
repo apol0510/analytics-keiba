@@ -103,3 +103,7 @@ src/pages/premium-predictions-prototype.astro
 
 # Newsletter backfill CSV/JSON output (Email/PII を含むため repo にコミットしない)
 tmp/newsletter-backfill/
+
+# 移行の中間成果物（PII を含む・checkpoint）
+.migration-export/
+.migration-state/
