@@ -336,12 +336,17 @@ export const handler = async (event) => {
       const { getStore, connectLambda } = await import('@netlify/blobs');
       connectLambda(event);
       const blobs = getStore('ak-email-events');
-      const cursor = String(req.cursor || '') || undefined;
-      const listed = await blobs.list({ prefix: 'ak/email-events/', cursor, paginate: false });
+      // ⚠️ cursor は使わない。`list()` の cursor は paginate 指定と組み合わせが決まっており、
+      //    誤用すると落ちる。blob 数は数十個なので**一覧は毎回取り直し、範囲で切る**。
+      const listed = await blobs.list({ prefix: 'ak/email-events/' });
+      const all = (listed.blobs || []).slice().sort((a, b) => (a.key < b.key ? -1 : 1));
+      const from = Math.max(0, Number(req.from) || 0);
+      const limit = Math.max(1, Math.min(20, Number(req.limit) || 10));
+      const slice = all.slice(from, from + limit);
       const byType = {};
       let keys = 0;
       const setKey = `${JOB_NAMESPACE}:eventkeys`;
-      for (const b of listed.blobs || []) {
+      for (const b of slice) {
         const body = await blobs.get(b.key);
         if (!body) continue;
         const found = [];
@@ -358,12 +363,14 @@ export const handler = async (event) => {
         keys += found.length;
       }
       const total = await cmd(['SCARD', setKey]);
+      const nextFrom = from + slice.length;
       return json(200, {
-        blobsRead: (listed.blobs || []).length,
+        totalBlobs: all.length,
+        blobsRead: slice.length,
         keysIndexed: keys,
         uniqueInRedis: Number(total) || 0,
         byType,
-        nextCursor: listed.cursor || null,
+        nextFrom: nextFrom < all.length ? nextFrom : null,
         sideEffects: 'Redis の索引集合のみ（Blob / Airtable 不変）',
       });
     }
@@ -442,7 +449,9 @@ export const handler = async (event) => {
 
     return json(400, { error: `未知の action: ${action}`, sideEffects: 'none' });
   } catch (e) {
-    console.error('🚨 [migration] unexpected:', e?.name || 'Error');
-    return json(500, { error: 'unexpected error', sideEffects: 'none' });
+    // 理由コード（例外名）だけ返す。値・アドレス・鍵は出さない
+    const name = String(e?.name || 'Error');
+    console.error('🚨 [migration] unexpected:', name);
+    return json(500, { error: 'unexpected error', errorName: name, sideEffects: 'none' });
   }
 };
