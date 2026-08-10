@@ -96,6 +96,32 @@ Reply-To は鍵に入らないことを検証済み。
 > `CLAUDE.md` を一次証拠とすること。
 
 
+## 2026-08-09 — 移行/backfill ツールとreconciliationを完成（本番未実行）
+
+#292 を merge（**env 未設定なので挙動は不変**）。既存 14,415 + 18,871 件を
+安全に移せる状態まで作った。**production env 変更 / backfill 実行 / Airtable 削除は未実施。**
+
+| 作ったもの | 中身 |
+|---|---|
+| `migrationCheckpoint.js` | 進捗と検算。**Airtable offset を保存しない**（期限切れで取りこぼす）|
+| `completeRead.js` | 打ち切りを**例外**にする全件読み取り |
+| `backfillRunner.js` | 移行本体。IO は全部注入するのでリハーサルと本番で**同一経路** |
+| `backfill-delivery-keys.mjs` / `backfill-email-events.mjs` | 既定 dry-run。書くには `--apply` |
+| `export-airtable-tables.mjs` | 削除前の復元用 export（全フィールド + SHA-256）|
+| `reconcile-email-events.mjs` | EventKey 集合 + 種別件数の突合 |
+
+### dry-run 実測（本番データ・書き込み 0）
+
+CampaignDeliveries 145 ページ / **14,415 件**（総 14,416 − skipped-duplicate 1）。
+EmailEvents 189 ページ / **18,871 件**。どちらも skip 0・重複 0。
+
+### リハーサル
+
+本番と同じ規模（14,416 / 18,793）を fixture で通し、集合突合まで PASS。
+失敗注入（Airtable 途中失敗・Redis 途中失敗・Blob 途中失敗・壊れた応答・
+部分 backfill・二重実行）と PII 漏洩ガードも固定。migration 26 / marketing+webhooks 1,269 pass。
+
+
 ## 2026-08-09 — 配信履歴を Airtable から外す段階移行を実装（既定 OFF・本番未切替）
 
 Airtable Team 上限超過（50,456）への恒久対応。**Business へは上げない。**

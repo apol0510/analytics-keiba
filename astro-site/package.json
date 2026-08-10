@@ -79,7 +79,11 @@
     "verify:safety": "npm run build && npm run check:ssr-runtime-data && npm run check:safety",
     "preflight:phase2-canary": "node scripts/phase2-canary-preflight.mjs",
     "check:airtable-capacity": "node scripts/check-airtable-capacity.mjs",
-    "reconcile:delivery-stores": "node scripts/reconcile-delivery-stores.mjs"
+    "reconcile:delivery-stores": "node scripts/reconcile-delivery-stores.mjs",
+    "backfill:delivery-keys": "node scripts/backfill-delivery-keys.mjs",
+    "backfill:email-events": "node scripts/backfill-email-events.mjs",
+    "export:airtable-tables": "node scripts/export-airtable-tables.mjs",
+    "reconcile:email-events": "node scripts/reconcile-email-events.mjs"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.5.8",
