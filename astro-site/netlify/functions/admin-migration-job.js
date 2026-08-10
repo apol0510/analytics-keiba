@@ -326,6 +326,35 @@ export const handler = async (event) => {
       }
     }
 
+    if (action === 'verify') {
+      // 集合そのものを照合する。**件数一致では PASS にしない**ため。
+      // 受け取るのは呼び出し側が Airtable から読んだ DeliveryKey（sha256 hex）で、
+      // アドレスではない。**返すのは件数だけ**（どの鍵が欠けたかは返さない）。
+      const campaignId = String(req.campaignId || '').trim();
+      const version = Number(req.version);
+      const keys = Array.isArray(req.keys) ? req.keys : [];
+      if (!/^[A-Za-z0-9_.-]{1,120}$/.test(campaignId) || !Number.isInteger(version)) {
+        return json(400, { error: 'campaignId / version が必要です', sideEffects: 'none' });
+      }
+      if (keys.length === 0 || keys.length > 500) {
+        return json(400, { error: 'keys は 1〜500 件', sideEffects: 'none' });
+      }
+      const store = createDeliveryKeyStore({ redisCmd: cmd });
+      let present;
+      try {
+        present = await store.filterDelivered({ brand: BRAND, campaignId, version, keys });
+      } catch (e) {
+        // 判定できないものを「一致」と扱わない
+        return json(503, { error: 'redis_unavailable', sideEffects: 'none' });
+      }
+      return json(200, {
+        checked: keys.length,
+        present: present.length,
+        missing: keys.length - present.length,
+        sideEffects: 'none',
+      });
+    }
+
     if (action === 'reconcile') {
       if (jobType !== JOB_TYPE.DELIVERY_KEYS) {
         return json(400, { error: 'reconcile は delivery-keys のみ（EmailEvents は scripts/reconcile-email-events.mjs）', sideEffects: 'none' });
