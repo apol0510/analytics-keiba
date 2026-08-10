@@ -164,3 +164,20 @@ test('guard: Blobs は connectLambda(event) で明示接続する', () => {
   assert.match(FN, /connectLambda\(event\)/);
   assert.match(FN, /runner\(\{ KEY, BASE, cmd, job, event \}\)/);
 });
+
+test('guard: Blob 索引化は読むだけ（書き戻さない）', () => {
+  assert.match(FN, /if \(action === 'indexBlobEvents'\)/);
+  assert.match(FN, /blobs\.list\(/);
+  assert.match(FN, /blobs\.get\(b\.key\)/);
+  // 索引化の経路で blob へ書かない
+  const idx = FN.slice(FN.indexOf("action === 'indexBlobEvents'"), FN.indexOf("action === 'verifyEvents'"));
+  assert.equal(/blobs\.set\(/.test(idx), false, '索引化で blob へ書き戻している');
+});
+
+test('guard: verifyEvents は件数だけ返し、Redis 不通なら 503', () => {
+  assert.match(FN, /if \(action === 'verifyEvents'\)/);
+  assert.match(FN, /SMISMEMBER/);
+  const v = FN.slice(FN.indexOf("action === 'verifyEvents'"), FN.indexOf("action === 'verify'"));
+  assert.match(v, /error: 'redis_unavailable'/);
+  assert.equal(/missingKeys/.test(v), false);
+});
