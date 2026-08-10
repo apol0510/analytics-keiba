@@ -1,3 +1,54 @@
+## 2026-08-10 — EmailEvents 19,158 行を Airtable から削除（上限超過を解消）
+
+**A 案**: EmailEvents だけ先に削除。`CampaignDeliveries` は `MARKETING_DELIVERY_STORE` が
+dual のままだと消しても書き戻るため触っていない。
+
+| | 削除前 | 削除後 |
+|---|---:|---:|
+| EmailEvents | 19,158 | **0** |
+| Airtable 総件数 | 50,825（**上限 +825**）| **31,667（63.3%）** |
+| 残り | — | **18,333 件** |
+
+削除 19,158 / 既に無し 0 / **失敗 0**。
+
+### 削除してよい条件を機械で確かめてから消した
+
+1. 削除前 export に recordId と**全フィールド**がある（復元できる）
+2. その `EventKey` が **Blob 側の索引に存在する**
+3. `MARKETING_EVENT_SINK=blob` で Airtable への追記が止まっている
+
+**3 つすべてを満たした行だけ**を、export の recordId を指定して削除した。
+
+### 🛡️ 安全ガードが実際に止めた
+
+最初の dry-run で **19 件が Blob 索引に無く、全件中止**になった。
+原因は「最後の索引化（07:47）以降に dual モードで書かれた 19 件が
+Redis 索引に未反映」だったこと（19,158 − 19,139 = 19 と一致）。
+再索引化して 0 件にしてから実行した。
+**部分削除しない設計（1 件でも欠けたら全体中止）が効いた。**
+
+### 監査記録の所在（失われていない）
+
+- **Blob**: 索引一意 19,205 件（Airtable の 19,158 を包含）
+- **export**: `.migration-export/EmailEvents-2026-08-10T0832.ndjson`（14.4 MB / SHA-256 digest 付き）
+
+### 削除後も正常
+
+`mode_blob=55` / `blob_ok=75` / `blob_failed=0` / degraded なし。
+新着イベントは Blob に記録され続けている。
+
+### 触っていないもの
+
+`MARKETING_DELIVERY_STORE=dual`（維持）/ 配信 gate は閉じたまま /
+`MIGRATION_WRITE_ENABLED` 未設定 / Customers 変更 0 / 新規メール送信 0 /
+CampaignDeliveries 14,416 行は**そのまま**。
+
+### 残件
+
+`MARKETING_DELIVERY_STORE=redis` への切替 → `CampaignDeliveries` 14,416 行の削除
+（→ 総数 約 17,251 まで下がる）。blob の重複整理（223 個）。
+
+
 ## 2026-08-10 — EmailEvents を Blob 単独へ切替（Airtable への追記が止まった）
 
 `MARKETING_EVENT_SINK=blob`。**Airtable の EmailEvents に行を追加しなくなった。**
