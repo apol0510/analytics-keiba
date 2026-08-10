@@ -353,3 +353,48 @@ CampaignDeliveries は総数 14,416 のうち `skipped-duplicate` 1 件を除い
 
 ⚠️ 出力は **PII を含む**。`.migration-export/` は .gitignore 済み。repo へ入れない。
 ⚠️ 退避しただけでは消してよいことにならない。**突合の PASS が先**。
+
+
+---
+
+# 本番 backfill は Function の chunk ジョブで行う（2026-08-10）
+
+## なぜスクリプトではなく Function か
+
+Redis / Blobs の認証情報は **production env にしか無い**。`netlify env:get` は
+secret をマスクして返すため、手元のスクリプトからは到達できない
+（実測: Upstash へ HTTP 000 / `NETLIFY_SITE_ID` も未設定）。
+**値を人に渡してもらう運用は漏洩面を増やすので採らない。**
+env が揃っている Function の中で動かす。
+
+## なぜ chunk か
+
+Netlify Function は最大 26 秒。14,415 件を 1 回では処理できない。
+**1 step 数百件**に切り、`step` を繰り返して進める。
+
+| action | 役割 | 本番 write |
+|---|---|---|
+| `start` | ジョブを作る（chunkSize を決める）| ジョブ状態のみ |
+| `step` | 数百件ぶん進める。完了まで繰り返す | **Redis / Blob** |
+| `status` | 進捗を見る | なし |
+| `reconcile` | Redis 件数を見る（完全突合は script）| なし |
+
+## gate
+
+`MIGRATION_WRITE_ENABLED=true` が無ければ `start` / `step` は **403
+`blocked_by_design`**。main へ入れても何も起きない。
+
+## 正しさは cursor ではなく冪等で担保する
+
+- Redis は `SADD`、Blob は**内容ハッシュのキー**。同じ範囲をもう一度処理しても増えない
+- Airtable の `offset` は短命。**失効を検知したら先頭から読み直す**
+  （黙って途中から再開して取りこぼすより、やり直す方が安全）
+- 壊れた応答は **fail closed**（0 件と扱わない）
+- 読んだ件数と（書いた + 飛ばした）件数が合わなければ **COMPLETED にしない**
+- 同時実行はロックで 1 本に絞る
+- 応答に **cursor の実値を出さない**（`hasCursor` だけ）
+
+## 触らないもの
+
+**Airtable への書き込み・削除 0 / メール送信 0 / Customers 参照 0。**
+いずれもガードテストで固定している。
