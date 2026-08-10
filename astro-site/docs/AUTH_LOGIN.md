@@ -166,6 +166,30 @@ Cookie は**リンクを開いたブラウザのクッキー領域にしか保�
 > （退会・期限切れは次の表示で即失効）。keep-alive が足すのは **Cookie の寿命**だけ。
 > 失効していてもその場では追い出さず、Cookie 削除により次の遷移で拒否される（fail closed）。
 
+### 再発行の閾値は idle TTL に比例させる（スライディングウィンドウ）
+
+keep-alive を叩いても、サーバーが再発行しなければ Cookie は延びない。
+`decideRefresh` は **残り idle TTL が閾値以下のときだけ** 再発行する（それ以外は `keep` = 204）。
+
+| 定数 | 値 | 意味 |
+|---|---|---|
+| `REFRESH_THRESHOLD_RATIO` | `0.5` | 残りが idle TTL の**半分**を切ったら再発行 |
+| `REFRESH_THRESHOLD_FLOOR_MS` | 5分 | 比例値の下限（極端に短い TTL 用） |
+| `resolveRefreshThresholdMs(idleTtlMs)` | — | 実効閾値 = `max(下限, idleTtlMs × 比率)` |
+
+idle TTL 30日なら閾値は **15日**。つまり:
+
+- **15日以内に 1 度でも会員ページを開けば失効しない**
+- 再発行は最大でも半 TTL に 1 回（延長後は残りが 30日に戻る）＝ `Set-Cookie` は増えない
+- 上限は絶対 TTL 90日（`ABSOLUTE_SESSION_TTL_MS`）。これを跨ぐと `reject` で再ログインが必要
+
+> ⚠️ **閾値を固定値に戻さないこと。** 以前は固定 5 分だった。idle TTL が 20 分だった頃は
+> 妥当だったが、2026-07-24 に **idle TTL だけ 30 日へ延ばした際に閾値が据え置かれ**、
+> 再発行は「30 日の最後の 5 分間にアクセスした場合」しか起きなくなっていた。
+> keep-alive を全有料ページへ配線しても Cookie は延びず（本番で 204=keep を実測）、
+> 会員は最終ログインから 30 日で必ず締め出されていた。
+> `sessionRefresh.test.mjs` の「閾値が idle TTL に対して極端に小さくならない」が再発を検知する。
+
 ## 🚦 有料ページの拒否は「認証失敗」と「一時障害」を分ける（2026-08-10）
 
 `gatePaidPage`（`src/lib/auth/paidPageGate.js`）の拒否は 2 系統に分かれる。

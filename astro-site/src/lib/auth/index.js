@@ -58,7 +58,9 @@ export {
   resolveCarriedSessionStart,
   REFRESH_DECISION,
   REFRESH_REJECT,
-  REFRESH_THRESHOLD_MS,
+  REFRESH_THRESHOLD_RATIO,
+  REFRESH_THRESHOLD_FLOOR_MS,
+  resolveRefreshThresholdMs,
 } from './sessionRefresh.js';
 
 export { resolveEdgeGateMode } from './edgeGatePolicy.js';

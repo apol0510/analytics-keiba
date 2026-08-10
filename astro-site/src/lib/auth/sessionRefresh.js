@@ -23,8 +23,39 @@ import {
 import { MEMBER_TYPE } from './memberResolution.js';
 import { DEFAULT_SESSION_TTL_MS } from './sessionIssuance.js';
 
-/** 残り idle TTL がこの値以下になったら再発行する（それ未満の頻繁な再発行を避ける）。 */
-export const REFRESH_THRESHOLD_MS = 5 * 60 * 1000; // 5分
+/**
+ * 再発行の閾値は **idle TTL に比例させる**（スライディングウィンドウ）。
+ *
+ * ⚠️ 2026-08-10 に判明した不具合:
+ *    以前は固定 5 分だった。idle TTL が 20 分だった頃は「残り 5 分を切ったら延長」で
+ *    妥当だったが、2026-07-24 に idle TTL だけ **30 日**へ延ばした際に閾値が据え置かれ、
+ *    **再発行は「30 日の最後の 5 分間にアクセスした場合」しか起きなく**なっていた。
+ *    そのため keep-alive を全有料ページへ配線しても Cookie は延びず、
+ *    会員は最終ログインから 30 日で必ず締め出されていた（本番で 204=keep を実測）。
+ *
+ * 比例化すると「TTL の半分を切ったら延長」になるため:
+ *    - **TTL の半分（30日なら 15日）以内に 1 度でも会員ページを開けば失効しない**
+ *    - 再発行は最大でも半 TTL に 1 回（延長後は残りが TTL に戻る）＝ Set-Cookie は増えない
+ *
+ * 比率と TTL は必ず連動させること。**片方だけ変えると同じ事故が再発する**
+ * （`sessionRefresh.test.mjs` の「閾値は idle TTL に比例する」で強制）。
+ */
+export const REFRESH_THRESHOLD_RATIO = 0.5;
+
+/** 比例で決めた閾値の下限（極端に短い TTL でも延長の余地を残す）。 */
+export const REFRESH_THRESHOLD_FLOOR_MS = 5 * 60 * 1000; // 5分
+
+/**
+ * idle TTL から再発行閾値を決める。残り idle TTL がこの値**以下**になったら再発行する。
+ * @param {number} idleTtlMs
+ * @returns {number}
+ */
+export function resolveRefreshThresholdMs(idleTtlMs) {
+  if (typeof idleTtlMs !== 'number' || !Number.isFinite(idleTtlMs) || idleTtlMs <= 0) {
+    return REFRESH_THRESHOLD_FLOOR_MS;
+  }
+  return Math.max(REFRESH_THRESHOLD_FLOOR_MS, Math.floor(idleTtlMs * REFRESH_THRESHOLD_RATIO));
+}
 
 export const REFRESH_DECISION = Object.freeze({
   REISSUE: 'reissue', // 新しい ak_session を Set-Cookie する
@@ -69,9 +100,9 @@ export function resolveCarriedSessionStart(payload, now) {
  *   payload: object,              // verifySession を通った payload（v1 または v2）
  *   membership: object,          // resolveMembership の結果（最新 Airtable）
  *   now: number,
- *   idleTtlMs?: number,          // 既定 20分
- *   absoluteTtlMs?: number,      // 既定 12時間
- *   refreshThresholdMs?: number, // 既定 5分
+ *   idleTtlMs?: number,          // 既定 DEFAULT_SESSION_TTL_MS（30日）
+ *   absoluteTtlMs?: number,      // 既定 ABSOLUTE_SESSION_TTL_MS（90日）
+ *   refreshThresholdMs?: number, // 既定 idleTtlMs × REFRESH_THRESHOLD_RATIO（= 半分）
  * }} input
  * @returns {
  *   { decision: 'reissue', sessionStart: number, ttlMs: number,
@@ -87,7 +118,8 @@ export function decideRefresh(input) {
     now,
     idleTtlMs = DEFAULT_SESSION_TTL_MS,
     absoluteTtlMs = ABSOLUTE_SESSION_TTL_MS,
-    refreshThresholdMs = REFRESH_THRESHOLD_MS,
+    // 既定は idle TTL に比例（固定値にしない。TTL だけ延ばすと延長が事実上止まるため）
+    refreshThresholdMs = resolveRefreshThresholdMs(idleTtlMs),
   } = input || {};
 
   if (!payload || typeof payload !== 'object' || !isFiniteNumber(now)) {
