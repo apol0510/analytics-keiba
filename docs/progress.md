@@ -1,3 +1,54 @@
+## 2026-08-10 — ワンクリック配信停止が全部失敗していた（修正・本番反映済み）
+
+利用者から「メール来ます」「配信停止申請」の問い合わせ（JST 11:36）を受けて実送信を
+監査したところ、**配信停止の導線が壊れていた**ことが判明した。
+
+### 監査結果（新規送信は発生していない）
+
+gate は両方とも閉・保留ジョブ 0・queued 0。2026-08-09 の `dormant-reactivation` v2
+（accepted 14,279 / delivered 13,956 / bounce 325 / dropped 11）で完結しており、
+**同一キャンペーンの二重送信は 0**。宛先重複 59 名は 7〜8 月の別キャンペーンとの重複。
+最初の送信 2026-08-09T15:31Z / 最後 17:52Z。問い合わせはその 8 時間 44 分後。
+
+### 🔴 根本原因: RFC 8058 のワンクリックを JSON として読んでいた
+
+送信メールは `List-Unsubscribe-Post: List-Unsubscribe=One-Click` を付けており、
+Gmail / Yahoo はネイティブの配信停止ボタンを出す。押されると
+**form-urlencoded** の POST が来るが、handler は body を無条件で `JSON.parse` しており
+**400 で全部落ちていた**。13,956 通配信して配信停止フラグ 0 件だった理由がこれ。
+
+**押した人は「止めたつもり」で止まっていない。** 問い合わせフォームへ回った利用者もいた。
+
+修正（PR #294 `55bd1f20`）:
+- `parseUnsubscribeRequest.js`（純粋）で Content-Type を判定
+- **宛先は URL から取る**。body の email を宛先にしない（第三者を止められてしまう）
+- ワンクリックは配信停止専用。既存 JSON 経路・Content-Type 未指定は従来互換
+- 「登録が無い」はワンクリックでは 200（目的達成済み・存在を漏らさない）。
+  構成不備 503 / Airtable 障害 502 は **2xx にしない**
+
+本番実測: one-click **400 → 200**、実レコードへの書き込みも確認（冪等）。
+合図の無い form は 400、JSON 経路は 404、確認ページは 200 で従来どおり。
+
+### Reply-To が未設定だった
+
+payload に `reply_to` が無く From が `noreply@` のため**返信できなかった**。
+`support@keiba.link`（senderIdentity の OFFICIAL・production の SENDGRID_FROM_EMAIL・
+問い合わせフォームの from と同一）を brand-config へ追加して配線。
+
+**From は変えない**（`DeliveryKey` の構成要素。変えると既送分と鍵が変わり二重送信）。
+Reply-To は鍵に入らないことを検証済み。
+
+### 配信停止申請者
+
+`rec6ExrifclyuPmiJ`（Source=imp-2026-08-09-001）を一意に特定し、本番 unsubscribe 経路で
+`UnsubscribedAnalyticsKeiba=true` / `UnsubscribedAtAnalyticsKeiba` を反映。
+`sendable=false`・送信直前の再検証でも `unsubscribed` で停止することを確認。
+プラン・Status は不変。
+
+### 再開の条件
+
+**新規マーケティング配信は再開していない。** gate は閉じたまま。
+
 # Project Progress
 
 本書は `analytics-keiba` の **進捗の正本（canonical）** である。仕様は `docs/spec.md`、運用ルールは `CLAUDE.md`、設計判断は `docs/decisions.md` を参照。
