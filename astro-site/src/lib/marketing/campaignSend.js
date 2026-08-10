@@ -22,6 +22,7 @@
 import { createHash } from 'node:crypto';
 import { MARKETING_EMAIL_SHELL_VERSION } from './marketingEmailShell.js';
 import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/delivery-key.js';
+import { classifyEngagement, isBlockedByEngagement } from './engagementPolicy.js';
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
 import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
 import { evaluateExtraAudience, CAMPAIGN_MISMATCH } from './campaignAudienceRules.js';
@@ -72,6 +73,8 @@ export const MK_EXCLUSION = Object.freeze({
   RECENT_MARKETING_CONTACT: 'recent_marketing_contact',
   /** キャンペーン固有の追加条件（Premium Plus の販売資格・PHASE 等）に合致しない */
   CAMPAIGN_MISMATCH: CAMPAIGN_MISMATCH,
+  /** 反応が無いまま閾値を超えた（INACTIVE / HARD_INACTIVE）。unsubscribe とは別 */
+  ENGAGEMENT_BLOCKED: 'engagement_blocked',
   /** 同一アドレスが選択内で重複 */
   DUPLICATE: 'duplicate',
   /** キャンペーンの想定対象と契約状態が合わない */
@@ -189,6 +192,8 @@ export function buildCampaignPlan({
   campaign, selected, deliveredKeys, providerSuppressed, softBounced,
   audienceContext, brand, fromEmail, nowMs,
   offerRecords, offerSecret,
+  // エンゲージメント guard の入力。**Map を渡さなければ従来どおり素通り**（既存呼び出しを壊さない）
+  engagementByEmail, engagementThresholds,
 }) {
   const empty = (error) => ({
     ok: false, error, recipients: [], excluded: [],
@@ -266,6 +271,17 @@ export function buildCampaignPlan({
     const deliveryKey = computeCampaignDeliveryKey({ campaign, recipientEmail: email, brand, fromEmail });
     if (!deliveryKey) { exclude(recordId, MK_EXCLUSION.UNKNOWN_CUSTOMER); continue; }
     if (delivered.has(deliveryKey)) { exclude(recordId, MK_EXCLUSION.ALREADY_DELIVERED); continue; }
+
+    // 5-b. エンゲージメント guard。**反応が無いまま閾値を超えた相手には送らない**。
+    //      unsubscribe とは別状態で、将来の購入・ログインで ACTIVE へ復帰できる。
+    //      取引メールには適用しない（ここはキャンペーン経路なので常に対象）。
+    if (engagementByEmail instanceof Map) {
+      const eng = classifyEngagement(engagementByEmail.get(email) || {}, { thresholds: engagementThresholds });
+      if (isBlockedByEngagement(eng.state)) {
+        exclude(recordId, MK_EXCLUSION.ENGAGEMENT_BLOCKED);
+        continue;
+      }
+    }
 
     // 6. キャンペーン横断の頻度ガード（別キャンペーンでも 24 時間以内は送らない）
     if (isRecentMarketingContact({ lastSentAtMs: m.history && m.history.lastSentAtMs, nowMs })) {
