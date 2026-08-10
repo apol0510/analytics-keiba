@@ -181,3 +181,20 @@ test('guard: verifyEvents は件数だけ返し、Redis 不通なら 503', () =>
   assert.match(v, /error: 'redis_unavailable'/);
   assert.equal(/missingKeys/.test(v), false);
 });
+
+test('guard: Function が使う識別子をすべて import している（ReferenceError 防止）', () => {
+  // 2026-08-10: JOB_NAMESPACE の import 漏れで本番 500（ReferenceError）になった。
+  const marker = "from '../../src/lib/migration/migrationJobModel.js'";
+  const importBlock = FN.slice(0, FN.indexOf(marker));
+  const used = ['JOB_TYPE', 'JOB_STATUS', 'JOB_NAMESPACE', 'jobKey', 'lockKey',
+    'createJob', 'applyStep', 'completeJob', 'failJob', 'verifyBalance', 'canStep',
+    'isExpiredCursorError', 'toPublicJob', 'clampChunk', 'isValidJobType'];
+  for (const name of used) {
+    if (!new RegExp(`\\b${name}\\b`).test(FN)) continue; // 使っていなければ不要
+    assert.ok(importBlock.includes(name), `${name} を使っているのに import していない`);
+  }
+});
+
+test('guard: 500 応答に例外名を載せる（原因不明の 500 を追えるように）', () => {
+  assert.match(FN, /errorName: name/);
+});

@@ -27,7 +27,7 @@
  */
 
 import {
-  JOB_TYPE, JOB_STATUS, isValidJobType, clampChunk, jobKey, lockKey,
+  JOB_TYPE, JOB_STATUS, JOB_NAMESPACE, isValidJobType, clampChunk, jobKey, lockKey,
   createJob, applyStep, completeJob, failJob, verifyBalance, canStep,
   isExpiredCursorError, toPublicJob,
 } from '../../src/lib/migration/migrationJobModel.js';
