@@ -327,6 +327,29 @@ async function applyEmailEventLedger({ events, now }) {
     console.warn('⚠️ [sendgrid-webhook] event sink degraded:', sink.degraded.join(','));
   }
 
+  // 🔎 dual の実効性を **後から read-only で確認できるように** 結果を数える。
+  //    dual では Blob 失敗が致命でないため、記録しないと
+  //    「Blob へ書けていないのに書けているつもり」に気づけない。
+  //    ⚠️ ここが失敗しても webhook は落とさない（観測用であって本筋ではない）。
+  try {
+    const { makeRedisCmd } = await import('../../src/lib/marketing/deliveryKeyStore.js');
+    const redis = makeRedisCmd(process.env);
+    const k = 'ak:mkt:events:sink';
+    const bumps = [
+      ['mode_' + sinkMode, 1],
+      ['airtable_' + sink.airtable, 1],
+      ['blob_' + sink.blob, 1],
+      ['counters_' + sink.counters, 1],
+    ];
+    for (const [field, n] of bumps) await redis(['HINCRBY', k, field, String(n)]);
+    if (sink.degraded.length > 0) {
+      await redis(['HSET', k, 'last_degraded', sink.degraded.join(',')]);
+    }
+    if (sink.blobKey) await redis(['HSET', k, 'last_blob_written_at', new Date().toISOString()]);
+  } catch {
+    // 観測できないだけ。本処理は続ける
+  }
+
   return {
     enabled: true,
     ...base,
