@@ -116,5 +116,6 @@ test('認可の判定そのものは変えていない（fail closed 維持）',
   const r = await gatePaidPage({ request: req(''), requiredPlan: 'premium', env, now: 1 });
   assert.equal(r.ok, false);
   assert.equal(r.response.status, 302);
-  assert.equal(r.response.headers.get('location'), '/login/');
+  // 2026-08-10: 遷移理由を非機微コードで伝えるため `?r=` が付く（行き先は /login のまま）。
+  assert.equal(r.response.headers.get('location'), '/login/?r=no_session');
 });

@@ -213,8 +213,11 @@ exports.handler = async (event) => {
         ログインする
       </a>
     </div>
+    <div style="background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 16px; margin: 24px 0; border-radius: 4px;">
+      <p style="color: #1e3a8a; font-size: 14px; margin: 0; line-height: 1.7;">📱 <strong>普段ご利用の Safari / Chrome などのブラウザでリンクを開いてください。</strong><br>メールアプリ内のブラウザで開くと、別のブラウザでは再度ログインが必要になる場合があります。</p>
+    </div>
     <div style="background-color: #f1f5f9; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0; border-radius: 4px;">
-      <p style="color: #475569; font-size: 14px; margin: 0; line-height: 1.6;">ボタンが動作しない場合は、以下のURLをコピーしてブラウザに貼り付けてください。</p>
+      <p style="color: #475569; font-size: 14px; margin: 0; line-height: 1.6;">ボタンが動作しない場合や、別のブラウザで開きたい場合は、以下のURLをコピーしてブラウザに貼り付けてください。</p>
       <p style="margin: 8px 0 0 0;"><a href="${magicLink}" style="color: #3b82f6; word-break: break-all; font-size: 13px;">${magicLink}</a></p>
     </div>
     <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; margin: 24px 0; border-radius: 4px;">

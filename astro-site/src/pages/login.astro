@@ -16,6 +16,17 @@ export const prerender = true;
           <p>登録済みのメールアドレスを入力してください。<br>無料会員はそのままログイン、有料会員にはログイン用リンクをメールでお送りします。</p>
         </div>
 
+        {/*
+          有料ページから飛ばされてきた理由の表示（`?r=` / paidPageGate の
+          PUBLIC_LOGIN_REASON_CODES と対）。中身は下のスクリプトが allow-list から
+          組み立てる。URL の値を直接描画しない。
+          ※ 一時障害（Airtable 等）はここへ来ない。あちらは 503 を返す。
+        */}
+        <div id="reason-notice" class="reason-notice" role="status" hidden>
+          <p class="rn-title"></p>
+          <p class="rn-body"></p>
+        </div>
+
         <form id="loginForm" class="login-form">
           <div class="form-group">
             <label for="email">メールアドレス</label>
@@ -178,6 +189,34 @@ export const prerender = true;
     }
   }
 
+  .reason-notice {
+    margin: -16px 0 28px;
+    padding: 16px 18px;
+    border-radius: 10px;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-left-width: 4px;
+
+    &[hidden] { display: none; }
+
+    .rn-title {
+      margin: 0 0 6px;
+      color: #bfdbfe;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
+    .rn-body {
+      margin: 0;
+      color: #94a3b8;
+      font-size: 13.5px;
+      line-height: 1.75;
+      /* 文言は textContent で入れる（HTML を混ぜない）ため、改行は CSS で効かせる */
+      white-space: pre-line;
+    }
+    a { color: #60a5fa; }
+  }
+
   .login-footer {
     margin-top: 32px;
     padding-top: 24px;
@@ -198,6 +237,49 @@ export const prerender = true;
 </style>
 
 <script>
+  // ── 有料ページから飛ばされてきた理由の表示（paidPageGate の `?r=`）──
+  //
+  // ⚠️ URL の値を**そのまま描画しない**。allow-list に一致したときだけ、
+  //    ここで用意した固定文言を textContent で入れる（?r=<script> 等を無効化）。
+  // ⚠️ 一時障害（Airtable など）はここに来ない。あちらは 503 ページで
+  //    「ログイン状態は保持されています」と伝える（再ログインを促さない）。
+  //
+  // コードの集合は paidPageGate.js の PUBLIC_LOGIN_REASON_CODES と一致させること
+  // （loginReasonNotice.guard.test.mjs が両者の一致を強制する）。
+  const REASON_NOTICES: Record<string, { title: string; body: string }> = {
+    no_session: {
+      title: 'ログイン情報が確認できませんでした',
+      body: 'お手数ですが、下のフォームからもう一度ログインしてください。\n'
+        + '※ ログインリンクをメールアプリ内のブラウザで開くと、Safari / Chrome では別のログイン扱いになります。'
+        + '普段お使いのブラウザでリンクを開くと、次回からブックマークでアクセスできます。',
+    },
+    session_expired: {
+      title: 'ログインの有効期限が切れました',
+      body: 'セキュリティのため、一定期間で自動的にログアウトされます。'
+        + 'お手数ですが、もう一度ログインしてください。ご契約内容には影響ありません。',
+    },
+    not_entitled: {
+      title: 'このページは現在のご契約プランの対象外です',
+      body: 'ログイン状態に問題はありません。ご利用可能なページはマイページからご確認いただけます。',
+    },
+  };
+
+  (function showReasonNotice() {
+    const box = document.getElementById('reason-notice');
+    if (!box) return;
+    const code = new URLSearchParams(window.location.search).get('r');
+    if (!code) return;
+    const notice = Object.prototype.hasOwnProperty.call(REASON_NOTICES, code)
+      ? REASON_NOTICES[code]
+      : null;
+    if (!notice) return; // 未知の値は何も出さない（URL の内容を画面に出さない）
+    const titleEl = box.querySelector('.rn-title');
+    const bodyEl = box.querySelector('.rn-body');
+    if (titleEl) titleEl.textContent = notice.title;
+    if (bodyEl) bodyEl.textContent = notice.body;
+    box.removeAttribute('hidden');
+  })();
+
   const form = document.getElementById('loginForm') as HTMLFormElement;
   const emailInput = document.getElementById('email') as HTMLInputElement;
   const submitBtn = document.getElementById('submitBtn') as HTMLButtonElement;

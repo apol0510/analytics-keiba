@@ -18,6 +18,12 @@ import {
   PAID_DOOR_PLANS,
   PAID_PAGE_HEADERS,
   REQUIRED_PLAN_ENTITLEMENT,
+  TRANSIENT_DENY_REASONS,
+  isTransientDenyReason,
+  loginReasonCode,
+  LOGIN_REASON_CODE,
+  PUBLIC_LOGIN_REASON_CODES,
+  DEFAULT_LOGIN_REASON_CODE,
 } from './paidPageGate.js';
 import { issuePaidSessionCookie } from './sessionIssuance.js';
 import { MEMBER_TYPE } from './memberResolution.js';
@@ -65,7 +71,7 @@ test('Cookie 無し → 拒否（localStorage は判定に関与しない）', a
   assert.equal(g.ok, false);
   assert.ok(g.response, '拒否応答が無い');
   assert.equal(g.response.status, 302);
-  assert.equal(g.response.headers.get('Location'), '/login/');
+  assert.equal(g.response.headers.get('Location'), '/login/?r=no_session');
 });
 
 test('notFound:true なら 404（存在秘匿が要るページ用）', async () => {
@@ -207,4 +213,133 @@ test('requiredPlan → entitlement の対応が既存 3 種を網羅する', () 
     ['Premium Sanrenpuku', 'premium', 'standard']);
   assert.equal(resolveEntitlementFlag('PREMIUM'), 'canViewPremium', '表記ゆれを吸収していない');
   assert.equal(resolveEntitlementFlag('nope'), null);
+});
+
+// ── 5. 一時障害を認証失敗と分離する（2026-08-10 / A）─────────────
+//
+// 有効な有料会員が Airtable の一時障害で `/login` に飛ばされると、
+// 「ログインが切れた」と誤認して再ログインを繰り返す（再ログインしても直らない）。
+// 一時障害は 503 で返し、**再ログインを促さない**。
+const UNAVAILABLE = async () => ({ ok: false, reason: 'unavailable' });
+const THROWS = async () => { throw new Error('airtable down'); };
+
+test('Airtable 一時障害 → 503。/login へ飛ばさない', async () => {
+  for (const [label, lookup] of [['unavailable', UNAVAILABLE], ['例外', THROWS]]) {
+    const g = await gatePaidPage({
+      request: await signedRequest({ plan: 'premium' }),
+      requiredPlan: 'premium', env, now: NOW, lookup,
+    });
+    assert.equal(g.ok, false, label);
+    assert.equal(g.response.status, 503, `${label}: 503 ではない`);
+    assert.equal(g.response.headers.get('Location'), null, `${label}: /login へ飛ばしている`);
+    assert.equal(g.response.headers.get('Retry-After'), '30', `${label}: Retry-After が無い`);
+    assert.equal(g.response.headers.get('Cache-Control'), 'private, no-store');
+  }
+});
+
+test('一時障害ページは「ログインし直せ」と言わない', async () => {
+  const g = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'premium', env, now: NOW, lookup: UNAVAILABLE,
+  });
+  const html = await g.response.text();
+  assert.match(html, /ログイン状態は保持されています/, '「切れていない」と伝えていない');
+  assert.match(html, /ログインし直す必要はありません/);
+  // 再ログインへの導線そのものを置かない（押させない）
+  assert.ok(!html.includes('/login'), '一時障害ページに /login への導線がある');
+  assert.ok(!/ログインしてください|再度ログイン(?!が)/.test(html),
+    '一時障害なのに再ログインを促している');
+});
+
+test('notFound:true でも一時障害は 503（存在は漏れない）', async () => {
+  // ここへ到達できるのは**有効な署名 Cookie を持つ許可プランの利用者だけ**。
+  // 匿名アクセスは前段の session 検証で 404 になるため、503 で存在は漏れない。
+  const g = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'premium', env, now: NOW, notFound: true, lookup: UNAVAILABLE,
+  });
+  assert.equal(g.response.status, 503);
+
+  const anon = await gatePaidPage({
+    request: bareRequest(), requiredPlan: 'premium', env, now: NOW, notFound: true, lookup: UNAVAILABLE,
+  });
+  assert.equal(anon.response.status, 404, '匿名に 404 以外を返している（存在が漏れる）');
+});
+
+test('SESSION_SIGNING_SECRET 欠落も 503（利用者は再ログインしても直せない）', async () => {
+  const g = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'premium', env: {}, now: NOW, lookup: lookupOf(PLAIN_PREMIUM),
+  });
+  assert.equal(g.ok, false);
+  assert.equal(g.reason, 'key_missing');
+  assert.equal(g.response.status, 503);
+});
+
+test('設定ミス（env / requiredPlan）も /login へ飛ばさない', async () => {
+  const g1 = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'premium', env: undefined, now: NOW, lookup: lookupOf(PLAIN_PREMIUM),
+  });
+  assert.equal(g1.response.status, 503);
+  const g2 = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'admin', env, now: NOW, lookup: lookupOf(PLAIN_PREMIUM),
+  });
+  assert.equal(g2.response.status, 503);
+});
+
+test('customer_not_found は認証側（302）のまま', async () => {
+  // Customers に居ない = セッションが指す会員が消えている。再ログインで解決しうる。
+  const g = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'premium', env, now: NOW, lookup: lookupOf(null),
+  });
+  assert.equal(g.response.status, 302);
+  assert.equal(g.response.headers.get('Location'), '/login/?r=no_session');
+});
+
+// ── 6. /login へ渡す reason code（C）────────────────────────────
+test('期限切れセッションは r=session_expired', async () => {
+  const THIRTY_ONE_DAYS = 31 * 24 * 60 * 60 * 1000;
+  const g = await gatePaidPage({
+    request: await signedRequest({ plan: 'premium' }),
+    requiredPlan: 'premium', env, now: NOW + THIRTY_ONE_DAYS, lookup: lookupOf(PLAIN_PREMIUM),
+  });
+  assert.equal(g.ok, false);
+  assert.equal(g.reason, 'session_expired');
+  assert.equal(g.response.headers.get('Location'), '/login/?r=session_expired');
+});
+
+test('権利不足は r=not_entitled（「ログインが切れた」と誤解させない）', async () => {
+  const g = await gatePaidPage({
+    request: await signedRequest({ plan: 'light' }),
+    requiredPlan: 'premium', env, now: NOW, lookup: lookupOf(LIGHT),
+  });
+  assert.equal(g.reason, 'entitlement_denied');
+  assert.equal(g.response.headers.get('Location'), '/login/?r=not_entitled');
+});
+
+test('未知 reason は既定コードへ丸める（Location へ注入されない）', () => {
+  assert.equal(loginReasonCode('totally_unknown'), DEFAULT_LOGIN_REASON_CODE);
+  assert.equal(loginReasonCode(undefined), DEFAULT_LOGIN_REASON_CODE);
+  assert.equal(loginReasonCode('../../evil?x=1'), DEFAULT_LOGIN_REASON_CODE);
+  for (const code of PUBLIC_LOGIN_REASON_CODES) {
+    assert.match(code, /^[a-z_]+$/, `URL に出せない文字を含む: ${code}`);
+  }
+});
+
+test('公開コードの集合が login.astro の表示側と一致する', () => {
+  assert.deepEqual([...PUBLIC_LOGIN_REASON_CODES].sort(),
+    ['no_session', 'not_entitled', 'session_expired']);
+});
+
+test('一時障害の reason は /login コードへ写像しない（分離の担保）', () => {
+  for (const r of TRANSIENT_DENY_REASONS) {
+    assert.ok(isTransientDenyReason(r), `${r} が一時障害扱いになっていない`);
+    assert.ok(!Object.prototype.hasOwnProperty.call(LOGIN_REASON_CODE, r),
+      `${r} が /login 用コードにも入っている（分離が壊れている）`);
+  }
+  assert.equal(isTransientDenyReason('entitlement_denied'), false);
+  assert.equal(isTransientDenyReason('no_cookie'), false);
 });
