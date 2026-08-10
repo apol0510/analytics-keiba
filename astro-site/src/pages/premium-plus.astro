@@ -24,6 +24,7 @@ export const prerender = false;
  *   満足度4.9 / 継続率94%」は根拠のない固定値で、更新も止まっていた）
  */
 import AccessControl from '../components/AccessControl.astro';
+import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/index.js';
 import ppResultsRaw from '../data/premiumPlusResults.json';
 import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
@@ -1526,31 +1527,11 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
   <!-- 送信完了画面の共通処理（旧版はこの読み込みが無く、送信成功時に何も表示されなかった） -->
   <script is:inline src="/js/submission-result.js"></script>
 
+  {/* ak_session の idle TTL 延長。実装は SessionKeepAlive.astro が単一源 */}
+  <SessionKeepAlive />
+
   <script is:inline>
     // 実績カード・数値はサーバー側（Astro）で台帳から描画済み。ここでは何もしない。
-
-    // ── ak_session キープアライブ（会員の再ログイン負担軽減＋鮮度担保）─────────────
-    // このページは SSR で ak_session を検証済み（会員のみ到達）。表示のたびに
-    // refresh-session を叩き、Airtable で契約状態を再照会したうえで Cookie を延長する。
-    // 退会・期限切れなら refresh 側が Cookie を削除するので、次回遷移で 404（fail closed）。
-    // 認可はサーバーが真実源。ここは延長トリガのみで、失敗は無視（表示済み内容は変えない）。
-    (function () {
-      var pinging = false;
-      function keepAlive() {
-        if (pinging) return;
-        pinging = true;
-        fetch('/.netlify/functions/refresh-session', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-        }).catch(function () {}).then(function () { pinging = false; });
-      }
-      keepAlive();
-      document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState === 'visible') keepAlive();
-      });
-    })();
 
     // ── モーダル ───────────────────────────────────────────────
     // 段階公開: PHASE 4 未満 / 本日の受付終了(CLOSED) では申込モーダルを開かせない。

@@ -7,6 +7,7 @@
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import AccessControl from '../components/AccessControl.astro';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import { loadJraVenuesForDisplay } from '../lib/loadJraVenuesForDisplay.js';
@@ -92,6 +93,8 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
     title={`中央競馬 Premium三連複予想 | ${track} ${formattedDate}`}
     description={`AI技術による中央競馬（JRA）の超厳選三連複予想。累積スコアに基づく少点数買い目で最適な組み合わせのみを提供。`}
 >
+  {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+  <SessionKeepAlive />
     <AccessControl requiredPlan="Premium Sanrenpuku">
         <div class="page-container">
             <!-- ヘッダー -->

@@ -3,6 +3,7 @@
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
 import AccessControl from '../components/AccessControl.astro';
@@ -111,6 +112,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 ---
 
 <BaseLayout title={`プレミアム予想 | ${raceInfo.title}`} description={`AI技術による${raceInfo.track}競馬${raceInfo.raceName}の詳細分析。機械学習モデルによる高精度予想の有料版を提供中。`} canonical="/premium-prediction/nankan/" noindex={true}>
+  {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+  <SessionKeepAlive />
   <div style="margin:16px 0;padding:14px 18px;border:1px solid rgba(59,130,246,.4);border-radius:10px;background:rgba(59,130,246,.1);color:#e2e8f0;font-size:.95rem;line-height:1.6;">
     📢 このページは新しい<strong>南関統合 プレミアム予想ページ</strong>へ移動しました。最新の予想（大井・船橋・川崎・浦和を会場切替で表示）は
     <a href="/premium-prediction/nankan/" style="color:#60a5fa;font-weight:700;text-decoration:underline;">こちら →</a>

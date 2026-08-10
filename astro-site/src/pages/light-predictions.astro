@@ -3,6 +3,7 @@
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import AccordionClickClose from '../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
@@ -225,6 +226,8 @@ export const dailyResultsData = {
 ---
 
 <BaseLayout title="ライト会員予想" description={`AI技術による${track}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のライト版を提供中。`}>
+  {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+  <SessionKeepAlive />
     {/* 🔧 requiredPlan="standard" は AccessControl 内のプラン階層キー（canonical）。
         表示名は「ライト会員」で、AccessControl 側の getPlanDisplayName でも
         'light' / 'standard' は両方とも「Lightプラン」として表示される。

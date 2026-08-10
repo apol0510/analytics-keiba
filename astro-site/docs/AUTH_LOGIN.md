@@ -138,16 +138,33 @@ Cookie は**リンクを開いたブラウザのクッキー領域にしか保�
 
 同画面の自動遷移は **6秒**（3秒では案内を読み切れないため）。ガードが 5000ms 未満を弾く。
 
-> **keep-alive の配線は `/premium-plus/` だけ**（`premium-plus.astro` / `premium-plus-v2.astro` が
-> 表示のたび `refresh-session` を叩き、Airtable 再照会のうえ Cookie を延長する）。
-> **`gatePaidPage` で守っている 11 ページ**（`premium-prediction/{jra,nankan}` /
-> `premium-predictions-{funabashi,urawa}` / `light-predictions*` / `premium-sanrenpuku*` /
-> `premium-select`）は**どれも叩いていない**。
-> そのため予想ページしか見ない会員は idle TTL が一度も延びず、
-> **最終ログインから 30 日で必ず再ログイン**になる。別 PR 候補。
+### keep-alive（idle TTL の延長）— 単一源は `SessionKeepAlive.astro`
+
+`ak_session` の Max-Age は**発行時に固定**される。誰も `refresh-session` を叩かなければ
+一度も延びず、**最終ログインから 30 日で必ず再ログイン**になる。
+
+そこで会員確定ページは共通部品 **`src/components/SessionKeepAlive.astro`** を置く。
+表示のたび（および復帰時の `visibilitychange`）に `refresh-session` を 1 回叩き、
+サーバーが Airtable を再照会して延長 / 据置 / 失効を決める。
+
+| 配置先 | ページ |
+|---|---|
+| `gatePaidPage` で守る 11 ページ | `premium-prediction/{jra,nankan}` / `premium-predictions-{funabashi,urawa}` / `light-predictions{,-jra,-urawa,-funabashi}` / `premium-sanrenpuku{,-jra}` / `premium-select` |
+| `verifyPlanAccess` で守る 2 ページ | `premium-plus` / `premium-plus-v2` |
+
+**約束（`sessionKeepAlive.guard.test.mjs` が強制）**:
+
+- `gatePaidPage` を使う SSR ページは**必ず**配線する（新規ページの漏れを検知）
+- 実装をページへ直書きしない。`refresh-session` を叩いてよいのは部品だけ（単一源）
+- **会員と確定していないページへ置かない**（未ログイン利用者が毎表示 401 を叩くだけになる）
+- 1 ページに 1 個だけ（多重 ping を防ぐ）
+
+> 2026-08-10 以前は `/premium-plus/` にしか入っておらず、予想ページしか見ない会員
+> （＝大半）は 30 日ごとに必ず締め出されていた。
 >
-> 権利の鮮度自体は `gatePaidPage` が表示ごとに Airtable を引くので担保されている
-> （退会・期限切れは次の表示で即失効）。延びないのは Cookie の寿命だけ。
+> 権利の鮮度自体は `gatePaidPage` が表示ごとに Airtable を引くので元から担保されている
+> （退会・期限切れは次の表示で即失効）。keep-alive が足すのは **Cookie の寿命**だけ。
+> 失効していてもその場では追い出さず、Cookie 削除により次の遷移で拒否される（fail closed）。
 
 ## 🚦 有料ページの拒否は「認証失敗」と「一時障害」を分ける（2026-08-10）
 
