@@ -1310,3 +1310,93 @@ Airtable Team は 1 Base 50,000 レコードで、配信 1 回（14,279 名）�
 
 段階は `MARKETING_DELIVERY_STORE` / `MARKETING_EVENT_SINK` の 2 env で表す。
 **どちらも既定 OFF で従来動作。** 詳細と切替順序は `docs/AIRTABLE_CAPACITY.md`。
+
+---
+
+# メールマーケティング方針（2026-08-10 改定）
+
+**大量送信を減らし、反応する見込みのある相手へ「受け取る側に得のあるメール」だけを送る。**
+Customers レコードは削除しない。会員・決済とマーケティング配信可否は分ける。
+
+## 1. エンゲージメント分類
+
+単一源 `src/lib/marketing/engagementPolicy.js`。**閾値をコードへ散らさない。**
+
+| 状態 | 条件 | 通常マーケ配信 |
+|---|---|---|
+| `ACTIVE` | open / click / 購入 / ログインのいずれか | 送る |
+| `UNKNOWN` | 送信が閾値未満（判断材料不足）| 送る |
+| `LOW_ENGAGEMENT` | 5 回以上送信して無反応 | **送る**（観察段階。まだ止めない）|
+| `INACTIVE` | 10 回以上 delivered で無反応 | **除外** |
+| `HARD_INACTIVE` | 20 回以上 delivered で無反応 | **除外** |
+
+閾値は env で上書き可（`MARKETING_LOW_ENGAGEMENT_SENDS` /
+`MARKETING_INACTIVE_DELIVERED` / `MARKETING_HARD_INACTIVE_DELIVERED`）。
+壊れた値・大小関係が逆の設定は**既定へ倒す**。
+
+### 譲らない前提
+
+- **取引メールには適用しない**（決済確認 / 認証 / サポート / 期限通知 / step）。
+  反応が無くても届けなければならない
+- **unsubscribe とは別状態**。あちらは本人の意思表示
+- **bounce / provider suppression は従来どおり最優先で除外**
+- **open を絶対視しない。** Apple MPP・画像ブロックで落ちるし、プリフェッチで立つ。
+  open は「反応あり」へ倒すためだけに使い、open が無いことで切るのは
+  delivered が閾値に達してから
+- **click / 購入 / ログインはより強いシグナル**として別枠（`hasMeaningfulAction`）
+- **将来の購入・ログインで ACTIVE へ復帰できる**（状態を固定しない）
+- Customers レコードは削除しない
+
+### ⚠️ click は現状ゼロ
+
+`MARKETING_CLICK_TRACKING_ENABLED` が未設定で、Event Webhook の `click` も false。
+**click を有効なシグナルとして当てにしない。** 購入とログインで補う。
+
+## 2. メール価値 guard（benefit）
+
+単一源 `src/lib/marketing/campaignBenefit.js`。
+**大量配信では「受信者の具体的メリット」を宣言していないと送れない**（fail closed）。
+
+| benefitType | 例 |
+|---|---|
+| `free_access` | Light / Premium の期間限定無料 |
+| `discount` | 割引・特別価格 |
+| `content_unlock` | 通常有料の分析・指数・予想の開放 |
+| `new_feature` | 明確な新機能 / 新サービス |
+| `exclusive_perk` | 直接価値のある特典 |
+| `operational_test` | 運用テスト専用 |
+
+- **200 名以下の配信には適用しない**（個別対応・少数テストを止めない）
+- 説明が「サイトを見てください」だけなら弾く（具体的な得が要る）
+- 宣言も `bulkSendAllowed:false` も無いキャンペーンは作れない（テストで固定）
+
+### 🚫 `dormant-reactivation` v2 は大量配信の対象外
+
+2026-08-09 に 14,279 名へ送ったが、受信者の得は「実績が見られる」だけで、
+配信停止申請と苦情を招いた。`bulkSendAllowed: false` で隔離済み。
+**再利用には benefit の宣言し直しが要る。**
+
+## 3. 実測（2026-08-10 / 全 15,970 名）
+
+| 区分 | 人数 |
+|---|---:|
+| ACTIVE | **3,512** |
+| LOW_ENGAGEMENT | 0 |
+| INACTIVE | 0 |
+| HARD_INACTIVE | 0 |
+| UNKNOWN（材料不足）| 12,458 |
+
+**現状 engagement guard は 1 人も止めない。** 送信回数の最大が 2〜4 回（59 名）で、
+5 回以上に到達した人が **0 名**だから。分類は送信を重ねてから効いてくる。
+
+したがって**いま送信数を減らす手段は「人を絞ること」ではなく「送らないこと」**。
+benefit guard が主たる削減手段になる。
+
+| 段階 | 対象 |
+|---|---:|
+| 全 Customers | 15,970 |
+| − unsubscribe / provider suppression | 15,581 |
+| − engagement guard | 15,581（変わらず）|
+
+参考: 反応があった人だけに絞ると 3,508 名（削減率 78.0%）。ただし 1 通の open だけを
+根拠に 78% を切るのは**根拠が薄い**（Apple MPP の影響を受ける）。閾値運用を優先する。

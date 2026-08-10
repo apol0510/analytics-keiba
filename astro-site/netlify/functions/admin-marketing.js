@@ -127,6 +127,10 @@ import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
+  resolveThresholds, summarizeEngagement,
+} from '../../src/lib/marketing/engagementPolicy.js';
+import { buildEngagementStats } from '../../src/lib/marketing/engagementStats.js';
+import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
@@ -1520,9 +1524,20 @@ async function handleSegments({ KEY, BASE, now, req }) {
   // 計測状態（「0 件」と「計測していない」を画面で混同させないため一緒に返す）
   const measurement = await readMeasurementSettings({ apiKey: process.env.SENDGRID_API_KEY });
 
+  // エンゲージメント 4 区分の件数。**閾値も一緒に返す**（画面が独自に持たない）
+  const engagementThresholds = resolveThresholds(process.env);
+  const engagementStats = buildEngagementStats({ list, deliveries });
+  const engagement = {
+    thresholds: engagementThresholds,
+    counts: summarizeEngagement([...engagementStats.values()], { thresholds: engagementThresholds }),
+    // click は tracking が無効だと常に 0。画面で「反応が無い」と読み違えないよう明示する
+    clickTracking: isMarketingClickTrackingEnabled(process.env) ? 'enabled' : 'disabled',
+  };
+
   return json(200, {
     mode: 'segment-preview',
     sideEffects: 'none',
+    engagement,
     catalogVersion: SEGMENT_CATALOG_VERSION,
     evaluatedAt: new Date(now).toISOString(),
     providerSuppression: provider.ok

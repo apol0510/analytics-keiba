@@ -107,6 +107,8 @@ export const CAMPAIGNS = Object.freeze([
     //（同じ版のまま再実行すると `already_delivered` で拒否されるのが正しい挙動）。
     // 運用テスト専用なので、この版上げは**実顧客向けキャンペーンに一切影響しない**。
     // v3 は `dormant-reactivation` v2 の 14,279 件配信前カナリアのために上げた。
+    benefitType: 'operational_test',
+    benefitDescription: '運用テスト専用。一般顧客へは構造的に送れない',
     version: 3,
     name: 'マーケティング配信カナリア',
     description: '運用テスト専用。NEWSLETTER_TEST_RECIPIENTS に登録されたアドレスにのみ送信できる（一般顧客には送れない）。',
@@ -134,6 +136,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'expired-comeback',
+    benefitType: 'discount',
+    benefitDescription: '再契約者向けの特別価格をご案内します（期間限定の割引）',
     version: 2,
     name: '期限切れ会員 カムバック',
     description: '有効期限が切れた有料会員へ、再開の案内を送る。',
@@ -178,6 +182,8 @@ export const CAMPAIGNS = Object.freeze([
     campaignId: 'comeback-light-30d-granted',
     // v1 → v2: 文面はほぼ同じだが、**共通 HTML シェルへ載せ替えて見た目が大きく変わった**。
     // 受け取る人にとって別物なので version を上げる（DeliveryKey も分かれる）。
+    benefitType: 'free_access',
+    benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（付与済み）',
     version: 2,
     name: 'Light 30日無料付与済み案内',
     description: 'Light 30日無料を付与済みの顧客へ、申込不要で使えることを案内する。',
@@ -222,6 +228,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'premium-renewal',
+    benefitType: 'discount',
+    benefitDescription: '継続手続きの案内と、継続者向けの価格をご提示します',
     version: 2,
     name: 'Premium 再契約',
     description: '期限切れ / 期限間近の Premium 会員へ継続を案内する。',
@@ -255,6 +263,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'sanrenpuku-offer',
+    benefitType: 'discount',
+    benefitDescription: '三連複プランの特別価格をご案内します',
     version: 2,
     name: 'Premium Sanrenpuku 案内',
     description: '有効な Premium 会員へ三連複（買い切り）を案内する。',
@@ -290,6 +300,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'premium-plus-offer',
+    benefitType: 'exclusive_perk',
+    benefitDescription: '1日1鞍の三連単フォーメーションを特別価格でご案内します',
     version: 2,
     name: 'Premium Plus 案内',
     description: 'Premium Plus の販売資格があり、商品ページを閲覧できる会員だけに案内する。',
@@ -333,6 +345,10 @@ export const CAMPAIGNS = Object.freeze([
       '',
       'お手すきのときにご覧いただければ幸いです。',
     ].join('\n'),
+    // 🚫 2026-08-10: **大量配信の対象から外す**。2026-08-09 に 14,279 名へ送ったが、
+    //    受信者にとっての得は「実績が見られる」だけで、配信停止申請と苦情を招いた。
+    //    再利用するには benefitType / benefitDescription を宣言し直すこと。
+    bulkSendAllowed: false,
     ctaLabel: '昨日の買い目と結果',
     ctaUrl: `${SITE}/results-showcase/nankan/`,
     recommendedSegments: ['contract:none', 'contract:expired', 'history:never'],
@@ -346,6 +362,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'free-member-activation',
+    benefitType: 'content_unlock',
+    benefitDescription: '無料のまま全レースのAI予想と前日の有料買い目・結果を開放してご案内します',
     version: 1,
     name: '無料会員 活性化',
     // `dormant-reactivation` との違い:
@@ -383,6 +401,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'comeback-offer',
+    benefitType: 'discount',
+    benefitDescription: 'この方だけの特別価格（割引）を発行してご案内します',
     version: 2,
     name: 'カムバック割引案内（専用URL）',
     description: '発行済みの割引オファーを、その顧客だけが使える申込 URL 付きで案内する。',
@@ -415,6 +435,8 @@ export const CAMPAIGNS = Object.freeze([
   },
   {
     campaignId: 'general-announcement',
+    benefitType: 'new_feature',
+    benefitDescription: '新機能・新サービスのご案内（本文未設定のため現在は送信不可）',
     version: 1,
     name: '汎用キャンペーン',
     description: 'セグメント制限なしのお知らせ。使用前に件名・本文・CTA を設定する。',
