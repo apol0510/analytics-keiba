@@ -3,6 +3,7 @@
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import AccessControl from '../components/AccessControl.astro';
 import { processRaceData, getHorseConfidenceFromMark } from '../lib/shared-prediction-logic.js';
@@ -203,6 +204,8 @@ const premiumSelectRaces = sortedRaces.map(raceData => {
     title={`プレミアムセレクト予想 | ${track} ${formattedDate}`}
     description={`AI技術による${track}競馬の超厳選予想。累積スコアに基づく戦略ミックスで最適な買い目のみを提供。`}
 >
+  {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+  <SessionKeepAlive />
     <AccessControl requiredPlan="premium">
         <div class="page-container">
             <!-- ヘッダーセクション -->

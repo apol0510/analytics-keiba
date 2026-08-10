@@ -1,6 +1,7 @@
 ---
 export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import AccordionClickClose from '../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro';
 import AccessControl from '../components/AccessControl.astro';
@@ -180,6 +181,8 @@ const latestResult = getLatestDayDataJra();
 ---
 
 <BaseLayout title="ライト会員予想 - 中央競馬（JRA）" description={`AI技術による${venueListLabel}メインレースの馬単買い目付き予想。機械学習モデルによる高精度予想のライト版を提供中。`}>
+  {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+  <SessionKeepAlive />
     <AccessControl requiredPlan="standard">
         <div class="page-container">
         <!-- ヘッダーセクション -->

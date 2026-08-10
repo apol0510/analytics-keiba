@@ -1,0 +1,57 @@
+---
+/**
+ * SessionKeepAlive.astro — `ak_session` の idle TTL を延長する**単一源**
+ *
+ * ── 何のためにあるか ────────────────────────────────────────────
+ * `ak_session` は発行時の Max-Age（`DEFAULT_SESSION_TTL_MS` = 30日）で固定される。
+ * 誰も `refresh-session` を叩かなければ **一度も延びず、最終ログインから 30 日で
+ * 必ず再ログイン**になる。会員にとっては「またメール認証を要求された」に見える。
+ *
+ * 2026-08-10 の調査時点では、この keep-alive が配線されていたのは `/premium-plus/` だけで、
+ * `gatePaidPage` が守る有料予想ページ 11 枚はどれも叩いていなかった。
+ * そのため予想ページしか見ない会員（＝大半）は 30 日ごとに必ず締め出されていた。
+ *
+ * ── 何をするか ──────────────────────────────────────────────
+ * 表示のたびに `refresh-session` を 1 回叩く。サーバー側は Cookie を検証し、
+ * **Airtable で契約状態を再照会**したうえで延長 / 据置 / 失効を決める
+ * （`sessionRefresh.js` の `decideRefresh`）。
+ *   - reissue → 新しい Cookie（idle TTL が今から 30 日に延びる）
+ *   - keep    → 204（延長不要。Set-Cookie 無し）
+ *   - reject  → 401 + Cookie 削除（退会・期限切れ・絶対 TTL 90 日超）
+ *
+ * ── 置いてよい場所 ──────────────────────────────────────────
+ * **サーバー側で会員と確定したページだけ**（`gatePaidPage` / `verifyPlanAccess` を
+ * 通過したあとの SSR ページ）。無料ページや静的ページに置くと、未ログイン利用者が
+ * 毎表示 401 を叩くだけになり無意味かつ雑音になる。
+ *
+ * ── 設計の約束 ──────────────────────────────────────────────
+ * - **認可はサーバーが真実源**。ここは延長トリガでしかない
+ * - 失敗は握りつぶす（表示済みの内容を書き換えない・利用者に何も見せない）
+ * - 失効していても**その場では追い出さない**。Cookie が消えるので次の遷移で
+ *   `gatePaidPage` が拒否する（fail closed。表示中のページを突然壊さない）
+ * - `is:inline` なので **TypeScript 構文を書かない**
+ *   （`inlineScriptNoTs.guard.test.mjs` が構文エラーを検知する）
+ *
+ * 正本は `premium-plus.astro` にあった実装。重複を作らないため本部品へ集約し、
+ * premium-plus 系もこれを読む（`sessionKeepAlive.guard.test.mjs` が重複を禁止する）。
+ */
+---
+<script is:inline>
+  (function () {
+    var pinging = false;
+    function keepAlive() {
+      if (pinging) return;
+      pinging = true;
+      fetch('/.netlify/functions/refresh-session', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      }).catch(function () {}).then(function () { pinging = false; });
+    }
+    keepAlive();
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') keepAlive();
+    });
+  })();
+</script>

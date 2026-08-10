@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
 import AccessControl from '../../components/AccessControl.astro';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
@@ -419,6 +420,8 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
   title="中央競馬プロ予想 - KEIBA Analytics"
   description="KEIBA Analytics 中央競馬（JRA）のプロフェッショナルAI予想。機械学習モデルによる全レース詳細分析と馬単買い目を提供。"
 >
+  {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+  <SessionKeepAlive />
   <AccessControl requiredPlan="premium" venue="jra">
     <section class="prediction-section">
       <div class="container">
