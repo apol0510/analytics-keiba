@@ -1,3 +1,96 @@
+## 2026-08-10 — 有料ログインの 3 障害を分離して修正（#309 / #310 本番反映）
+
+有料会員から「マジックリンクからは予想を見られるが、あとでブラウザから直接開くと
+再度メール認証を要求される」という報告が続いた。調べると**別々の 3 件**が重なっていた。
+
+| # | 事象 | 期間 | 対応 |
+|---|---|---|---|
+| 1 | Yahoo 配信遅延 × TTL 15分 → 届いた時点で期限切れ | 〜8/9 14:11 | #271（TTL 60分）既済 |
+| 2 | Airtable 一時障害を 10 分キャッシュし有効会員を締め出し | 8/8 | #269 既済 |
+| 3 | **`/auth/verify` が TypeScript 構文混入で 1 行も動かず全滅** | **8/9 14:11 〜 8/10 19:52** | 本日 `3606e3aa` |
+
+さらに、報告の主因と考えられる **「別ブラウザでは Cookie が共有されない」** は仕様どおりだが
+説明が皆無だった（**最有力仮説・未確定**）。
+
+### 障害 3 の真因（約 29 時間 41 分・有料ログイン成功ゼロ）
+
+`7446b7e1` で `verify.astro` のスクリプトを `<script>` → `<script define:vars={...}>` に変えた。
+**`define:vars` は `is:inline` を含意する**ため Astro がトランスパイルせず、残っていた
+型注釈がそのままブラウザへ届き `SyntaxError: Unexpected identifier 'as'` で
+**ブロック全体が実行されない**状態になった。画面は「認証中... トークンを確認しています」で
+永久に停止し、`verify-magic-link` は呼ばれないので**サーバーログにも Airtable にも痕跡が残らない**。
+
+`AuthTokens` の `Used=true` は #272「有効なリンクは常に 1 本」による**旧トークン無効化**であって
+ログイン成功ではない。これを成功と誤読したため発見が遅れた。実被害 5 名 / 要求 14 回。
+
+**再発防止**: `inlineScriptNoTs.guard.test.mjs` が `src/**/*.astro` の
+`is:inline` / `define:vars` スクリプトを全走査し、素の JS として構文解析できないものを検出する。
+修正前のコードで fail することを実測。
+
+### #309 — 一時障害を「再ログイン要求」から分離（`0e540886` / deploy `6a79c787`）
+
+`gatePaidPage` は Cookie 無し・期限切れ・権利不足・**Airtable 一時障害**をすべて
+同じ `302 /login` に潰していた。有効会員が障害のたび「ログインが切れた」と誤認し、
+再ログインを繰り返して負荷が増える悪循環になっていた（8/8 の障害）。
+
+- **一時障害**（`lookup_unavailable` / `lookup_failed` / `key_missing` / `env_missing` /
+  `unknown_required_plan`）→ `Retry-After: 30` 付き **503**。
+  「ログイン状態は保持されています。ログインし直す必要はありません」と明示し、
+  ページ内に `/login` 導線を置かない
+- **認証失敗** → `/login/?r=no_session | session_expired | not_entitled`。
+  コードは allow-list で、未知の内部 reason は既定値へ丸める（Location への注入経路にしない）
+- `/login` は `?r=` を**描画せず**、一致時のみ固定文言を `textContent` で入れる
+- `notFound:true` でも一時障害は 503。この分岐へ来るのは**有効な署名 Cookie を持つ利用者だけ**なので
+  ページの存在は漏れない（匿名は前段で 404 のまま）
+- ログインメールと `/auth/verify` 成功画面に「普段お使いのブラウザで開く」案内を追加（自動遷移 3秒→6秒）
+
+**本番実測**: `?r=<img src=x onerror=alert(1)>` は**何も表示しない**。有料 4 ページは
+`302 → /login/?r=no_session`。有効セッションの通過に退行なし。console エラー 0。
+
+### #310 — keep-alive を共通部品化して有料ページへ配線（`b57a2c07` / deploy `6a79cc98`）
+
+`ak_session` の Max-Age は**発行時に固定**される。keep-alive が入っていたのは
+`/premium-plus/` だけで、`gatePaidPage` が守る**有料予想ページ 11 枚は未配線**だった。
+
+`premium-plus.astro` の実装を `src/components/SessionKeepAlive.astro` へ抽出し、
+11 ページ + premium-plus 系 2 ページへ配線。premium-plus の直書きは削除して単一源化した。
+サーバー側は既存 `refresh-session` のままで、新しいトークン・Cookie・endpoint は足していない。
+
+`sessionKeepAlive.guard.test.mjs` が ①gate ページは必ず配線 ②ページ直書き禁止（単一源）
+③会員確定ページ以外へ置かない ④1ページ1個 を強制する。
+
+**本番実測（read-only）**:
+
+| 確認項目 | 結果 |
+|---|---|
+| 表示ごとの `refresh-session` | `/premium-prediction/{jra,nankan}` `/light-predictions/` `/premium-select/` すべて **1 回だけ** |
+| 多重 POST | `visibilitychange` を 3 連投しても **+1 回のみ**（`pinging` ガードが抑止） |
+| 復帰時トリガ | バックグラウンド（`hidden`）では**発火しない**。`visible` で発火することを実測 |
+| 無料ページ | `/free-prediction/nankan/` は配線 **0 件**（未ログインが 401 を叩かない） |
+| 認可・本文表示 | 退行なし。`ak_session` は JS から見えない（HttpOnly 維持） |
+| console エラー | 0 件 |
+
+### ⚠️ 未解決: Max-Age は実際には更新されない（次の課題）
+
+本番の `refresh-session` は **204 = `KEEP`** を返し、**Set-Cookie が出ない**。
+`decideRefresh` は `remainingIdle > REFRESH_THRESHOLD_MS` なら再発行しないためで、
+**閾値が 5 分のまま idle TTL だけ 30 日へ延びている**（2026-07-24 の TTL 延長時に据置）。
+
+→ 再発行は「30 日の最後の 5 分間に有料ページを開いた場合」だけ発生する。
+**配線しただけでは 30 日での強制再ログインは解消しない**（#310 の表題は過大だった）。
+
+残作業は `REFRESH_THRESHOLD_MS` を idle TTL に比例させる**サーバー側 1 定数の変更**
+（例: 残り 50% を切ったら再発行 = 実質スライディングウィンドウ）。
+`sessionRefresh.js` と対応テストのみで完結し、クライアント側の再配線は不要。
+
+### 触っていないもの
+
+production env 変更 / Airtable への書き込み / 実顧客へのメール送信は**していない**。
+予想 4 領域（JRA・南関 × 無料・有料）の表示・予想ロジックは不変。
+有料ページの認可境界（誰が見られるか）も不変で、変えたのは拒否時の返し方と Cookie 延長トリガのみ。
+
+- **Last verified**: 2026-08-10
+
 ## 2026-08-10 — EmailEvents 19,158 行を Airtable から削除（上限超過を解消）
 
 **A 案**: EmailEvents だけ先に削除。`CampaignDeliveries` は `MARKETING_DELIVERY_STORE` が
