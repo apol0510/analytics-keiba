@@ -17,6 +17,9 @@
 //   - POST { action: 'resubscribe' } で配信再開対応
 
 import { createHash } from 'node:crypto';
+import {
+  parseUnsubscribeRequest, statusForResult, REQUEST_KIND,
+} from '../../src/lib/unsubscribe/parseUnsubscribeRequest.js';
 
 /**
  * brand → 配信停止フィールド名 + Base ID env のマッピング
@@ -211,26 +214,38 @@ export default async function handler(request) {
     }
 
     // POST: 配信停止 / 配信再開
+    //
+    // ⚠️ **body を無条件で JSON.parse しない。** Gmail / Yahoo のワンクリック配信停止
+    //    （RFC 8058）は `application/x-www-form-urlencoded` で
+    //    `List-Unsubscribe=One-Click` を送ってくる。2026-08-10 まで JSON 固定だったため
+    //    **押した人全員が 400 で失敗**していた（13,956 通に対し停止フラグ 0 件）。
     if (request.method === 'POST') {
-      let body;
-      try {
-        body = JSON.parse(await request.text());
-      } catch {
+      const parsed = parseUnsubscribeRequest({
+        contentType: request.headers.get('content-type'),
+        rawBody: await request.text(),
+        query: { email, brand: brandFromQuery },
+      });
+
+      if (parsed.kind === REQUEST_KIND.INVALID) {
+        console.log(`⚠️ unsubscribe rejected: reason=${parsed.reason}`); // PII なし
         return new Response(
-          JSON.stringify({ success: false, error: 'invalid JSON body' }),
+          JSON.stringify({ success: false, error: parsed.reason }),
           { status: 400, headers },
         );
       }
-      const { email: postEmail, brand, action } = body || {};
-      const requestedAction = action === 'resubscribe' ? 'resubscribe' : 'unsubscribe';
+
+      const postEmail = parsed.email;
+      const brand = parsed.brand;
+      const requestedAction = parsed.action;
 
       const trace = emailTraceId(postEmail);
-      console.log(`📧 unsubscribe handler invoked: brand=${brand || '<none>'} action=${requestedAction} trace=${trace}`);
+      console.log(`📧 unsubscribe handler invoked: kind=${parsed.kind} brand=${brand || '<none>'}`
+        + ` action=${requestedAction} trace=${trace}`);
 
       const result = await updateUnsubscribeStatus(postEmail, brand, requestedAction);
 
       if (result.ok) {
-        console.log(`✅ unsubscribe ok: brand=${result.brand} action=${result.action} trace=${trace}`);
+        console.log(`✅ unsubscribe ok: kind=${parsed.kind} brand=${result.brand} action=${result.action} trace=${trace}`);
         return new Response(
           JSON.stringify({
             success: true,
@@ -244,12 +259,11 @@ export default async function handler(request) {
         );
       }
 
-      console.log(`⚠️ unsubscribe failed: reason=${result.reason || 'unknown'} brand=${brand || '<none>'} trace=${trace}`);
-      const httpStatus =
-        result.reason === 'brand-required' || result.reason === 'unknown-brand' || result.reason === 'invalid-email' ? 400 :
-        result.reason === 'email-not-found' ? 404 :
-        result.reason === 'missing-env' ? 503 :
-        502;
+      console.log(`⚠️ unsubscribe failed: kind=${parsed.kind} reason=${result.reason || 'unknown'}`
+        + ` brand=${brand || '<none>'} trace=${trace}`);
+      // ワンクリックは**メールクライアントが見る**ので status の決め方を分ける
+      // （登録が無い＝目的は達成済み、かつアドレスの存在有無を漏らさない）
+      const httpStatus = statusForResult({ kind: parsed.kind, ok: false, reason: result.reason });
       return new Response(
         JSON.stringify({
           success: false,
