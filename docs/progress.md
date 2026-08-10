@@ -1,3 +1,57 @@
+## 2026-08-10 — 配信履歴の backfill を本番実行（Redis / Blob へ・Airtable 不変）
+
+Airtable の外へ出す準備として、既存の配信履歴を Redis と Blob へ移した。
+**Airtable は 1 行も削除・変更していない。** 読み手（env）もまだ切り替えていない。
+
+### 結果
+
+| 対象 | 件数 | 突合 |
+|---|---:|---|
+| DeliveryKey → Redis | **14,415** | 14,415 件を `SMISMEMBER` で個別照合 / 欠け **0** ✅ |
+| EmailEvents → Blob | **19,074** | 開始時点の全件を照合 / 欠け **0** ✅ |
+
+DeliveryKey はキャンペーン別に照合（dormant-reactivation v2 = 14,279 / comeback-offer v2 = 69 /
+comeback-light-30d-granted v2 = 64 / marketing-canary v1〜v3 = 各 1）。
+
+### 実行中に本番で見つけて直した不具合 3 件
+
+| PR | 内容 |
+|---|---|
+| #300 | Blobs が `MissingBlobsEnvironmentError`。Lambda 互換ランタイムでは自動設定されない → `connectLambda(event)`（Premium Plus 実績画像と同じ） |
+| #302 | `list()` の cursor 併用で 500。blob は数十個なので**一覧を取り直して from/limit の範囲で切る**方式へ。併せて **500 応答へ例外名を載せる**ようにした |
+| #303 | `JOB_NAMESPACE` の import 漏れで 500（ReferenceError）。**直前の例外名返却のおかげで即特定できた**。再発防止に import 漏れ検査 guard を追加 |
+
+いずれも fail closed が効いており、**壊れた状態で書き込みは起きていない**
+（Blobs 失敗時は read=0 / written=0 で FAILED）。
+
+### open が増え続けるので「完全一致」は一度きりの backfill では作れない
+
+検証のたびに Airtable 側が増える（19,067 → 19,071 → 19,080）。残差は 24 → 2 → 6 と
+振れ、**発散ではなく生きた尾を追っている**状態。そこで判定基準を
+**「backfill 開始時刻より前に存在したイベントが全て Blob にあるか」**に変えた。
+これは固定の的で、結果は **19,074 件 / 欠け 0**。
+
+恒久的に一致させるには `MARKETING_EVENT_SINK=dual` が要る（**今回の承認範囲外**）。
+
+### ⚠️ 再実行で Blob が増える
+
+catch-up を流すとバッチ境界がずれて内容ハッシュが変わり、**別キーの blob が新しく作られる**
+（39 → 78 → 117 個）。EventKey の集合は重複排除されるので**正しさには影響しない**が、
+保存量は増える。切替後に古い blob を整理する余地がある。
+
+### gate
+
+`MIGRATION_WRITE_ENABLED` は実行後に **UNSET + redeploy** し、
+`start` / `step` が **403 `blocked_by_design`** へ戻ったことを実測。
+
+### まだやっていないこと
+
+`MARKETING_DELIVERY_STORE=redis` / `MARKETING_EVENT_SINK=blob` の切替、
+Airtable の export と削除、新規メール配信。**いずれも未実施。**
+
+Airtable 総件数は **50,751**（上限 +751）。削除するまで減らない。
+
+
 ## 2026-08-10 — メールマーケティング方針を確定（#296 merged）
 
 方針の正本は `docs/spec.md` の「メールマーケティング方針」。以下は運用の確定事項。
