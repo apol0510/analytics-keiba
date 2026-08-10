@@ -23,6 +23,7 @@ export const LOGGED_DENY_REASONS = Object.freeze([
   'customer_not_found',   // session はあるが Customers に居ない
   'env_missing',          // 設定ミス
   'unknown_required_plan',
+  'key_missing',          // SESSION_SIGNING_SECRET 未設定 = 全会員が入れない設定ミス
 ]);
 
 /** ログ検索の入口。 */

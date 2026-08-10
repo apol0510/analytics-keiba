@@ -109,6 +109,78 @@ PR-B（`7c479db` / 2026-07-08）で期限切れ有料・退会申請を `denied`
 `AccessControl.astro` はこれらを見て有料 UI を出しうるため、
 **入口だけ直して表示が漏れる**状態を防ぐ。
 
+## 🍪 セッションは「リンクを開いたブラウザ」にだけ入る（2026-08-10 集約）
+
+`ak_session` は **HttpOnly Cookie**（`sessionCookie.js` が固定生成）:
+
+```
+ak_session=<署名付き値>; Max-Age=2592000; Path=/; SameSite=Lax; HttpOnly; Secure
+```
+
+- **Domain 属性を付けない = host-only**。`analytics.keiba.link` にのみ送られる
+- Max-Age は `DEFAULT_SESSION_TTL_MS`（**30日**）。`verify-magic-link` は `ttlMs` を渡さず既定値を使う
+- 絶対上限は `ABSOLUTE_SESSION_TTL_MS`（90日）
+
+### そのため「別ブラウザでは再ログインが必要」になる
+
+Cookie は**リンクを開いたブラウザのクッキー領域にしか保存されない**。
+メールアプリ内ブラウザ（iOS の WKWebView など）でマジックリンクを開くと、
+そのアプリ内ブラウザにだけログインが残り、あとから Safari / Chrome を開くと未ログインになる。
+
+これは仕様どおりだが、**利用者からは「ログインが保持されない不具合」に見える**
+（2026-08-09〜10 に有効な有料会員から複数の問い合わせ。最有力仮説・未確定）。
+そこで以下 2 箇所で必ず案内する。**消さないこと**（`loginReasonNotice.guard.test.mjs` が強制）:
+
+| 場所 | 文面 |
+|---|---|
+| ログインメール（`send-magic-link.js`）| 「普段ご利用の Safari / Chrome などのブラウザでリンクを開いてください」 |
+| `/auth/verify` 成功画面 | 「このブラウザへのログインが完了しました。次回から同じブラウザのブックマークからアクセスできます」 |
+
+同画面の自動遷移は **6秒**（3秒では案内を読み切れないため）。ガードが 5000ms 未満を弾く。
+
+> **keep-alive の配線は `/premium-plus/` だけ**（`premium-plus.astro` / `premium-plus-v2.astro` が
+> 表示のたび `refresh-session` を叩き、Airtable 再照会のうえ Cookie を延長する）。
+> **`gatePaidPage` で守っている 11 ページ**（`premium-prediction/{jra,nankan}` /
+> `premium-predictions-{funabashi,urawa}` / `light-predictions*` / `premium-sanrenpuku*` /
+> `premium-select`）は**どれも叩いていない**。
+> そのため予想ページしか見ない会員は idle TTL が一度も延びず、
+> **最終ログインから 30 日で必ず再ログイン**になる。別 PR 候補。
+>
+> 権利の鮮度自体は `gatePaidPage` が表示ごとに Airtable を引くので担保されている
+> （退会・期限切れは次の表示で即失効）。延びないのは Cookie の寿命だけ。
+
+## 🚦 有料ページの拒否は「認証失敗」と「一時障害」を分ける（2026-08-10）
+
+`gatePaidPage`（`src/lib/auth/paidPageGate.js`）の拒否は 2 系統に分かれる。
+
+### 一時障害 → **503**（`/login` へ送らない）
+
+`TRANSIENT_DENY_REASONS` = `lookup_unavailable` / `lookup_failed` / `key_missing` /
+`env_missing` / `unknown_required_plan`
+
+`Retry-After: 30` 付きの案内ページを返し、**「ログイン状態は保持されています。ログインし直す必要はありません」**
+と明示する。ページ内に `/login` への導線は置かない（ガードで強制）。
+
+> ⚠️ 2026-08-08 の障害の教訓: Airtable の一時障害（429 / タイムアウト）で有効会員が
+> `302 /login` に飛ばされ、「ログインが切れた」と誤認して再ログインを繰り返した。
+> 再ログインしても Airtable は復旧しないので直らず、負荷が増えて 429 がさらに出る悪循環になった。
+> **利用者が再ログインしても直らない失敗を `/login` へ送らない**のがこの分離の目的。
+
+### 認証失敗 → `/login/?r=<コード>` へ 302
+
+| 内部 reason | `?r=` | `/login` の表示 |
+|---|---|---|
+| `no_cookie` / `verify_failed` / `no_subject` / `customer_not_found` | `no_session` | ログイン情報が確認できませんでした（＋別ブラウザ問題の案内）|
+| `session_expired`（payload が `expired` / `absolute_expired`）| `session_expired` | ログインの有効期限が切れました |
+| `plan_not_allowed` / `entitlement_denied` | `not_entitled` | 現在のご契約プランの対象外です |
+
+- コードは `LOGIN_REASON_CODE` の allow-list。**未知の内部 reason は既定値へ丸める**ので、
+  Location ヘッダに未知の文字列は出ない
+- `/login` 側は `?r=` を**そのまま描画しない**。allow-list 一致時のみ固定文言を `textContent` で入れる
+- 表示可能コードと gate の公開コードの一致は `loginReasonNotice.guard.test.mjs` が強制する
+- `notFound: true`（存在秘匿ページ）でも**一時障害は 503**。この分岐へ来るのは有効な署名 Cookie を
+  持つ利用者だけなので、ページの存在は漏れない
+
 ## Airtable スキーマ
 
 ### Customers（既存・nankan-analytics 流用）
@@ -135,7 +207,7 @@ PR-B（`7c479db` / 2026-07-08）で期限切れ有料・退会申請を `denied`
 | `Token` | Single line text | UUID v4。検索キー |
 | `Email` | Email | 紐付くユーザー |
 | `CreatedAt` | Date (ISO) | 発行時刻 |
-| `ExpiresAt` | Date (ISO) | 有効期限（15分後） |
+| `ExpiresAt` | Date (ISO) | 有効期限。単一源は `src/lib/auth/constants.js` の `MAGIC_LINK_TTL_MINUTES`（現在 **60分**）|
 | `Used` | Checkbox | 使用済みフラグ |
 | `Ip_Address` | Single line text | 発行リクエスト元 IP |
 | `User_Agent` | Long text | 発行リクエストの User-Agent |

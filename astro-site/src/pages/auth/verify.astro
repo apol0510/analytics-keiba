@@ -82,11 +82,22 @@ export const prerender = false;
       status.textContent = '認証失敗';
       msg.innerHTML = `${text}<br><br><a href="/login/" style="display:inline-block;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:8px;">ログインリンクを再送する</a>`;
     }
+    // セッションは **このブラウザにだけ** 保存される（ak_session は HttpOnly Cookie で、
+    // ブラウザごとに別のクッキー領域に入る）。メールアプリ内ブラウザで開いた場合、
+    // 後から Safari / Chrome を開くと未ログイン扱いになり、利用者には
+    // 「ログインが保持されない不具合」に見える。ここで必ず明示する。
+    // 自動遷移は 6 秒（3 秒では読み切れないため延長）。
+    const REDIRECT_DELAY_MS = 6000;
     function ok(text, redirectTo) {
       root.classList.add('success');
       status.textContent = 'ログイン成功';
-      msg.innerHTML = `${text}<br><br>3秒後に <a href="${redirectTo}">${redirectTo}</a> へ移動します。`;
-      setTimeout(() => { window.location.replace(redirectTo); }, 3000);
+      msg.innerHTML = `${text}<br><br>`
+        + '<span style="display:block;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);'
+        + 'border-radius:8px;padding:14px 16px;color:#a7f3d0;font-size:14px;line-height:1.8;text-align:left;">'
+        + '✅ <strong>このブラウザへのログインが完了しました。</strong><br>'
+        + '次回から同じブラウザのブックマークからアクセスできます。</span>'
+        + `<br>${Math.round(REDIRECT_DELAY_MS / 1000)}秒後に <a href="${redirectTo}">${redirectTo}</a> へ移動します。`;
+      setTimeout(() => { window.location.replace(redirectTo); }, REDIRECT_DELAY_MS);
     }
 
     if (!token) { fail('トークンが指定されていません。'); return; }
