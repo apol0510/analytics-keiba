@@ -23,7 +23,9 @@ on:
       - 'astro-site/public/robots.txt'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
-      - '.github/workflows/safety-check.yml'
+      - '.github/workflows/**'
+      - 'astro-site/scripts/lib/workflowTransientContract.mjs'
+      - 'astro-site/scripts/lib/workflowTransientContract.test.mjs'
   push:
     branches:
       - main
@@ -41,7 +43,9 @@ on:
       - 'astro-site/public/robots.txt'
       - 'astro-site/package.json'
       - 'astro-site/package-lock.json'
-      - '.github/workflows/safety-check.yml'
+      - '.github/workflows/**'
+      - 'astro-site/scripts/lib/workflowTransientContract.mjs'
+      - 'astro-site/scripts/lib/workflowTransientContract.test.mjs'
   workflow_dispatch:
 
 concurrency:
@@ -73,6 +77,14 @@ jobs:
       - name: Static guard - no raw {horse.computerIndex} in JSX
         working-directory: astro-site
         run: npm run check:no-raw-index
+
+      # 一時障害（rate limit / timeout / 5xx）で schedule workflow が Failure に
+      # ならないことを機械検査する。checker=exit 2 / importer=exit 75 の分類を
+      # workflow 側が `exit 1` へ潰していないかを見る。
+      # 2026-08-10 の KI #150 / #196 と同型の退行をここで止める。
+      - name: Verify 一時障害を Failure に潰していない（schedule workflow の exit code 契約）
+        working-directory: astro-site
+        run: npm run test:workflow-transient
 
       - name: Build (astro)
         working-directory: astro-site

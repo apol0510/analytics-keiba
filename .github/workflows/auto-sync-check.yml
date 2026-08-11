@@ -40,17 +40,28 @@ jobs:
         working-directory: astro-site
         run: npm ci
 
+      # exit 0  … 同期OK（何もしない）
+      # exit 75 … 一時エラー（rate limit/timeout/5xx）で判定不能＝deferred。
+      #           「同期ズレ」ではないので自動修復へ進まない。run も落とさない。
+      # その他  … 同期ズレの可能性（または token/認証）→ 下の detect-missing で確定させる
+      #
+      # continue-on-error は使わない。outcome は success/failure の 2 値しか無く、
+      # deferred(75) と 実ズレ(1) を区別できないため、rc をそのまま output へ渡す。
       - name: Check sync status
         id: check-sync
         working-directory: astro-site
-        continue-on-error: true
         run: |
           echo "🔍 Checking sync status..."
-          npm run verify:sync
+          if npm run verify:sync; then RC=0; else RC=$?; fi
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          if [ "$RC" -eq 75 ]; then
+            echo "⏸️  verify:sync: 一時的に shared を取得できず判定不能（deferred）。次回実行で再判定。"
+          fi
+          exit 0
 
       - name: Detect missing dates
         id: detect-missing
-        if: steps.check-sync.outcome == 'failure'
+        if: steps.check-sync.outputs.rc != '0' && steps.check-sync.outputs.rc != '75'
         working-directory: astro-site
         run: |
           echo "🔍 Detecting missing dates..."
@@ -63,6 +74,7 @@ jobs:
 
           # 過去7日分の日付をチェック
           MISSING_DATES=""
+          DEFERRED_DATES=""
           TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
 
           for i in {1..7}; do
@@ -71,25 +83,50 @@ jobs:
             # 旧契約の厳密再現（匿名 curl/raw 廃止・認証付き）:
             #   FOUND = unified nankan/results/Y/M/DATE.json が存在（race数不問）
             #           OR unified が正規404 のとき per-venue OOI/FUN/KAW/URA の race 合計 ≥ 12
-            # fatal（token不足/401/403/429/5xx/timeout/malformed/INVALID_*）は確認 script が exit 1
-            # → step 失敗。fallback へ進むのは unified が「正規404=FOUND=false」のときだけ。
+            # 一時エラー（rate limit/timeout/5xx）はその日だけスキップして次回実行へ回す。
+            #   checkSharedDailyFile.mjs      … exit 2（exitWithSharedFetchError）
+            #   checkSharedNankanResults.mjs  … exit 75（exitDeferredOrFatal）
+            #   ※ 同じ「一時エラー」に repo 内で 2 種類のコードが混在している。
+            #     統一は別タスク（挙動を変えるため）。ここでは両方を deferred として扱う。
+            # fatal（token不足/401/403 権限/malformed/INVALID_*）は従来どおり exit 1 で step 失敗。
+            # → fallback へ進むのは unified が「正規404=FOUND=false」のときだけ。
             FOUND=false
 
             # (1) unified を認証付きで確認（旧: HTTP200 なら race数不問で FOUND）
-            UNIFIED_OUT=$(node scripts/checkSharedDailyFile.mjs --category nankan --kind results --date "$CHECK_DATE") || {
-              echo "❌ Failed to confirm Nankan unified results for $CHECK_DATE (auth/network error)."
+            if UNIFIED_OUT=$(node scripts/checkSharedDailyFile.mjs --category nankan --kind results --date "$CHECK_DATE"); then
+              RC=0
+            else
+              RC=$?
+            fi
+            if [ "$RC" -eq 2 ] || [ "$RC" -eq 75 ]; then
+              echo "⏸️  $CHECK_DATE: 一時エラーで判定不能（deferred・次回実行で再試行）"
+              DEFERRED_DATES="${DEFERRED_DATES:+$DEFERRED_DATES,}$CHECK_DATE"
+              continue
+            fi
+            if [ "$RC" -ne 0 ]; then
+              echo "❌ Failed to confirm Nankan unified results for $CHECK_DATE (auth/token/permission error)."
               exit 1
-            }
+            fi
             UNIFIED_FOUND=$(printf '%s\n' "$UNIFIED_OUT" | sed -n 's/^FOUND=//p')
 
             if [ "$UNIFIED_FOUND" = "true" ]; then
               FOUND=true
             else
               # (2) unified が正規404 のときだけ per-venue 合算へ fallback（旧契約どおり）
-              CHECK_OUT=$(node scripts/checkSharedNankanResults.mjs --date "$CHECK_DATE" --venues OOI,FUN,KAW,URA) || {
-                echo "❌ Failed to confirm Nankan per-venue results for $CHECK_DATE (auth/network error)."
+              if CHECK_OUT=$(node scripts/checkSharedNankanResults.mjs --date "$CHECK_DATE" --venues OOI,FUN,KAW,URA); then
+                RC=0
+              else
+                RC=$?
+              fi
+              if [ "$RC" -eq 2 ] || [ "$RC" -eq 75 ]; then
+                echo "⏸️  $CHECK_DATE: 一時エラーで判定不能（deferred・次回実行で再試行）"
+                DEFERRED_DATES="${DEFERRED_DATES:+$DEFERRED_DATES,}$CHECK_DATE"
+                continue
+              fi
+              if [ "$RC" -ne 0 ]; then
+                echo "❌ Failed to confirm Nankan per-venue results for $CHECK_DATE (auth/token/permission error)."
                 exit 1
-              }
+              fi
               TOTAL_RACES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^TOTAL_RACES=//p')
               TOTAL_RACES="${TOTAL_RACES:-0}"
               if [ "$TOTAL_RACES" -ge 12 ]; then
@@ -110,6 +147,10 @@ jobs:
             fi
           done
 
+          if [ -n "$DEFERRED_DATES" ]; then
+            echo "⏸️  一時エラーで未判定の日付: $DEFERRED_DATES（次回実行で再判定）"
+          fi
+
           if [ -n "$MISSING_DATES" ]; then
             echo "missing_dates=$MISSING_DATES" >> $GITHUB_OUTPUT
             echo "has_missing=true" >> $GITHUB_OUTPUT
@@ -119,7 +160,10 @@ jobs:
             echo "✅ No missing dates"
           fi
 
+      # exit 75 = 一時エラーで取込未完了＝deferred。書き終えた日ぶんは commit し、
+      # 未完了の日は次回 schedule で再試行する。run は failure にしない。
       - name: Auto-import missing dates
+        id: auto-import
         if: steps.detect-missing.outputs.has_missing == 'true'
         working-directory: astro-site
         env:
@@ -128,20 +172,41 @@ jobs:
           MISSING_DATES="${{ steps.detect-missing.outputs.missing_dates }}"
           IFS=',' read -ra DATES <<< "$MISSING_DATES"
 
+          DEFERRED=false
           for DATE in "${DATES[@]}"; do
             echo "━━━ Auto-importing: $DATE ━━━"
-            npm run import:results -- --date "$DATE"
+            if npm run import:results -- --date "$DATE"; then RC=0; else RC=$?; fi
+            if [ "$RC" -eq 75 ]; then
+              echo "⏸️  import:results $DATE: 一時的に shared を取得できず未完了（deferred）。次回実行で再試行。"
+              DEFERRED=true
+            elif [ "$RC" -ne 0 ]; then
+              exit "$RC"
+            fi
           done
+          echo "deferred=$DEFERRED" >> "$GITHUB_OUTPUT"
 
+      # verify:sync は「取込後もまだズレている」ことの確認。
+      # exit 75（一時エラーで確認できない）と、取込 deferred で残っているズレは failure にしない。
       - name: Validate and verify
         if: steps.detect-missing.outputs.has_missing == 'true'
         working-directory: astro-site
+        env:
+          IMPORT_DEFERRED: ${{ steps.auto-import.outputs.deferred }}
         run: |
           echo "🔍 Validating archive format..."
           npm run validate:archive
 
           echo "🔍 Verifying archive sync..."
-          npm run verify:sync
+          if npm run verify:sync; then RC=0; else RC=$?; fi
+          if [ "$RC" -eq 75 ]; then
+            echo "⏸️  verify:sync: 一時的に shared を取得できず確認不能（deferred）。次回実行で再確認。"
+            exit 0
+          fi
+          if [ "$RC" -ne 0 ] && [ "$IMPORT_DEFERRED" = "true" ]; then
+            echo "⏸️  取込が deferred のためズレが残っている（想定内）。次回実行で再試行。"
+            exit 0
+          fi
+          exit "$RC"
 
       - name: Commit and push
         if: steps.detect-missing.outputs.has_missing == 'true'
@@ -181,7 +246,15 @@ jobs:
           echo "   Successfully imported and pushed to main"
 
       - name: Already synced notification
-        if: steps.check-sync.outcome == 'success'
+        if: steps.check-sync.outputs.rc == '0'
         run: |
           echo "✅ Archive already in sync"
           echo "   No action needed"
+
+      # 一時エラーで判定できなかった run は「異常なし」でも「異常あり」でもない。
+      # 人間の対応は不要なので run は success のまま、状態だけ明示する。
+      - name: Deferred notification
+        if: steps.check-sync.outputs.rc == '75'
+        run: |
+          echo "⏸️  一時エラー（rate limit / timeout / 5xx）のため同期判定を見送りました"
+          echo "   人間の対応は不要です。次回の schedule 実行で再判定されます。"

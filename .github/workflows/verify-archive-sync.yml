@@ -60,6 +60,12 @@ jobs:
             exit 1
           fi
 
+          # rc=2 は「一時エラーで確定できなかった」。fatal 扱いしないことを明示する
+          # （下の DEFERRED_DATES は日単位の未確定、こちらは検査全体の未確定）。
+          if [ "$RC" -eq 2 ]; then
+            echo "⏸️  JRA: 一時エラーのため今回は同期判定を確定できず（deferred・次回実行で再検証）"
+          fi
+
           MISSING=$(printf '%s\n' "$OUT" | sed -n 's/^ARCHIVE_MISSING_DATES=//p')
           NO_RESULTS=$(printf '%s\n' "$OUT" | sed -n 's/^NO_RESULTS_DATES=//p')
           DEFERRED=$(printf '%s\n' "$OUT" | sed -n 's/^DEFERRED_DATES=//p')
@@ -127,6 +133,12 @@ jobs:
           if [ "$RC" -eq 1 ]; then
             echo "❌ 南関 checkArchiveCoverage failed (token/auth/permission/schema)"
             exit 1
+          fi
+
+          # rc=2 は「一時エラーで確定できなかった」。fatal 扱いしないことを明示する
+          # （下の DEFERRED_DATES は日単位の未確定、こちらは検査全体の未確定）。
+          if [ "$RC" -eq 2 ]; then
+            echo "⏸️  南関: 一時エラーのため今回は同期判定を確定できず（deferred・次回実行で再検証）"
           fi
 
           MISSING=$(printf '%s\n' "$OUT" | sed -n 's/^ARCHIVE_MISSING_DATES=//p')

@@ -45,6 +45,7 @@
     "check:jra-stale-retry": "node scripts/lib/importJraStaleRetry.test.mjs",
     "test:archive-sync": "node --test scripts/syncArchiveResults.test.mjs",
     "test:shared-checkers": "node --test scripts/lib/sharedCheckerSupport.test.mjs",
+    "test:workflow-transient": "node --test scripts/lib/workflowTransientContract.test.mjs",
     "test:archive-coverage": "node --test scripts/checkArchiveCoverage.test.mjs",
     "test:jra-import-need": "node --test scripts/checkJraResultsForImport.test.mjs",
     "audit:jra-ineligible": "node scripts/audit-jra-ineligible-invariant.mjs",
