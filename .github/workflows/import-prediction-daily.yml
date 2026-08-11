@@ -45,6 +45,7 @@ jobs:
           echo "📅 JST Today: $JST_DATE"
 
       - name: Import prediction from keiba-data-shared
+        id: import
         env:
           # private 化後の keiba-data-shared を cross-repo read する用。
           # importPrediction.js が認証取得に使用（GITHUB_TOKEN は self-repo 用途のまま）。
@@ -55,7 +56,18 @@ jobs:
           echo "🔄 Daily check: Importing prediction for $DATE"
 
           # import:prediction は日付未指定で JST 今日になるが、明示的に指定
-          npm run import:prediction -- --date "$DATE"
+          #
+          # exit 75 (EX_TEMPFAIL) = rate limit / timeout / 5xx で今は取得できない＝deferred。
+          #   予想の取込を見送るだけで、書き終えた会場ぶんは残る（部分前進）。
+          #   人間の対応は不要なので run を failure にせず、次回 schedule（毎日 23:00 JST）で再試行する。
+          # exit 1 等（token 未設定 / 401 / 権限 / schema 破損 / 検証失敗）は従来どおり failure。
+          if npm run import:prediction -- --date "$DATE"; then RC=0; else RC=$?; fi
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          if [ "$RC" -eq 75 ]; then
+            echo "⏸️  importPrediction: 一時的に shared を取得できず未完了（deferred）。次回実行で再試行。"
+            exit 0
+          fi
+          exit "$RC"
 
       - name: Check for changes
         id: git-check
@@ -153,8 +165,17 @@ jobs:
           echo "   Trigger: scheduled (23:00 JST)"
 
       - name: No changes notification
-        if: steps.git-check.outputs.changed != 'true'
+        if: steps.git-check.outputs.changed != 'true' && steps.import.outputs.rc == '0'
         run: |
           echo "⏭️  No changes detected (already up-to-date)"
           echo "   Date: ${{ steps.date.outputs.date }}"
           echo "   This is expected if the main trigger already ran today"
+
+      # 一時エラーで取込を見送った run は「取込済み」でも「異常」でもない。
+      # 人間の対応は不要なので run は success のまま、状態だけ明示する。
+      - name: Deferred notification
+        if: steps.import.outputs.rc == '75'
+        run: |
+          echo "⏸️  一時エラー（rate limit / timeout / 5xx）のため予想取込を見送りました"
+          echo "   Date: ${{ steps.date.outputs.date }}"
+          echo "   人間の対応は不要です。次回の schedule 実行（毎日 23:00 JST）で再試行されます。"

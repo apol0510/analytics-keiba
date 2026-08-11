@@ -74,10 +74,26 @@ jobs:
           # per-venue results(OOI/FUN/KAW/URA) の存在を「認証付き」で確認する。
           # 匿名 curl/raw は廃止。401/403/429/5xx/timeout は fatal（404 のみ未投入）。
           # 1件でも fatal なら確認 script が exit 1 → 本 step も失敗（results無しと誤判定しない）。
-          CHECK_OUT=$(node scripts/checkSharedNankanResults.mjs --date "$DATE" --venues OOI,FUN,KAW,URA) || {
-            echo "❌ Failed to confirm Nankan results availability (auth/network error). Not treating as 'no results'."
+          #
+          # exit 75 (EX_TEMPFAIL) … 一時エラー（rate limit/timeout/5xx）で確定不能＝deferred。
+          #   取込は見送るが run は落とさない（次回 schedule で再判定される）。
+          #   「results 無し」と誤判定して静かに素通りさせるのとは別物で、状態を明示して skip する。
+          if CHECK_OUT=$(node scripts/checkSharedNankanResults.mjs --date "$DATE" --venues OOI,FUN,KAW,URA); then
+            CHECK_RC=0
+          else
+            CHECK_RC=$?
+          fi
+          if [ "$CHECK_RC" -eq 75 ]; then
+            echo "⏸️  一時エラーのため南関結果の有無を判定できず、取込を見送る（次回 schedule で再判定）"
+            echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "has_missing_sanrenpuku=false" >> $GITHUB_OUTPUT
+            echo "deferred=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          if [ "$CHECK_RC" -ne 0 ]; then
+            echo "❌ Failed to confirm Nankan results availability (auth/token/permission error). Not treating as 'no results'."
             exit 1
-          }
+          fi
           FOUND_CODES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^FOUND_CODES=//p')
           TOTAL_RACES=$(printf '%s\n' "$CHECK_OUT" | sed -n 's/^TOTAL_RACES=//p')
           TOTAL_RACES="${TOTAL_RACES:-0}"
@@ -127,21 +143,37 @@ jobs:
         run: |
           DATE="${{ steps.date.outputs.date }}"
           echo "📥 Importing Nankan results for: $DATE"
-          npm run import:results -- --date "$DATE"
+          # exit 75 (EX_TEMPFAIL) = rate limit / timeout / 5xx で今は取得できない＝deferred。
+          # archive への書込は成功時のみなので壊れた中間状態は残らない。run は failure にしない。
+          # exit 1 等（auth / 権限 / schema / 検証失敗）は従来どおり失敗させる。
+          if npm run import:results -- --date "$DATE"; then RC=0; else RC=$?; fi
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          if [ "$RC" -eq 75 ]; then
+            echo "⏸️  importResults: 一時的に shared を取得できず未完了（deferred）。次回実行で再試行。"
+            exit 0
+          fi
+          exit "$RC"
 
       - name: Validate archive format (MANDATORY)
-        if: steps.check.outputs.has_missing == 'true'
+        if: steps.check.outputs.has_missing == 'true' && steps.import-results.outputs.rc == '0'
         run: |
           echo "🔍 Validating archive format..."
           npm run validate:archive
 
+      # 取込が deferred の run では archive は更新されていないため、ズレが残るのは想定内。
+      # verify:sync 自体の exit 75（確認できない）も failure にしない。
       - name: Verify archive sync (MANDATORY)
-        if: steps.check.outputs.has_missing == 'true'
+        if: steps.check.outputs.has_missing == 'true' && steps.import-results.outputs.rc == '0'
         env:
           KEIBA_DATA_SHARED_TOKEN: ${{ secrets.KEIBA_DATA_SHARED_TOKEN }}
         run: |
           echo "🔍 Verifying archive sync with keiba-data-shared..."
-          npm run verify:sync
+          if npm run verify:sync; then RC=0; else RC=$?; fi
+          if [ "$RC" -eq 75 ]; then
+            echo "⏸️  verify:sync: 一時的に shared を取得できず確認不能（deferred）。次回実行で再確認。"
+            exit 0
+          fi
+          exit "$RC"
 
       # 三連複（AI_SANRENPUKU_AXIS_V1）の自動取込。
       # 馬単と独立に「三連複アーカイブに当該日が無いか」を判定し、欠落していれば実行。

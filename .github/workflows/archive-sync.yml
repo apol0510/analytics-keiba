@@ -79,10 +79,18 @@ jobs:
           echo "🔍 Validating archive format..."
           npm run validate:archive
 
+      # exit 75 (EX_TEMPFAIL) = rate limit / timeout / 5xx で shared を読めず確認不能＝deferred。
+      # 「同期ズレ」ではなく「確認できなかった」なので run を failure にしない（次回実行で再確認）。
+      # exit 1（実際の同期ズレ / token / 認証 / 権限）は従来どおり failure。
       - name: Verify archive sync
         run: |
           echo "🔍 Verifying archive sync status..."
-          npm run verify:sync
+          if npm run verify:sync; then RC=0; else RC=$?; fi
+          if [ "$RC" -eq 75 ]; then
+            echo "⏸️  verify:sync: 一時的に shared を取得できず確認不能（deferred）。次回実行で再確認。"
+            exit 0
+          fi
+          exit "$RC"
 
       - name: Check for changes
         id: git-check
