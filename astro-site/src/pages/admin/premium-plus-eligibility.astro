@@ -165,6 +165,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           連続配信（シーケンス）の状況。**送信前に「誰が何通目か・次に何人へ送るか」を見る**。
           ここでは送信もキュー登録もしない。実際に届く HTML は各ステップの「文面を見る」で確認する。
         -->
+        <!--
+          無料体験の入口（自動付与）の下見。**ここでは付与しない**。
+          CSV 取り込みの対象総数・付与候補・除外理由を送信前に確認する。
+        -->
+        <div class="seq-box">
+          <div class="toolbar">
+            <button type="button" id="mkTrialLoad" class="btn-ghost btn-md">無料体験の入口を数える（付与しません）</button>
+            <span class="note" id="mkTrialState" aria-live="polite"></span>
+          </div>
+          <div class="dry-panel" id="mkTrialResult" hidden></div>
+        </div>
         <div class="seq-box">
           <div class="toolbar">
             <select id="mkSeqSelect" aria-label="連続配信キャンペーン"></select>
@@ -4791,6 +4802,62 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       pre.textContent = out.text || '';
       body.appendChild(pre);
     }
+
+    // ══ 無料体験の入口（自動付与）の下見 ═══════════════════════════
+    // **判定はサーバー**（lightTrialAutoGrant.js）。画面は返ってきた件数を出すだけ。
+    // ここから付与もキュー登録もしない。
+
+    async function mkTrialPreview() {
+      const btn = $('mkTrialLoad');
+      const state = $('mkTrialState');
+      if (!btn || btn.dataset.busy === '1') return;
+      btn.dataset.busy = '1'; btn.disabled = true;
+      state.textContent = '数えています…（付与もキュー登録もしません）';
+      try {
+        const out = await mkCall({ action: 'trialGrant' });
+        if (!out) { state.textContent = '取得できませんでした。'; return; }
+        mkTrialRender(out);
+        state.textContent = '';
+      } finally {
+        btn.dataset.busy = ''; btn.disabled = false;
+      }
+    }
+
+    /** 件数だけを描く。**顧客は 1 件も DOM へ出さない** */
+    function mkTrialRender(out) {
+      const box = $('mkTrialResult');
+      if (!box) return;
+      box.innerHTML = '';
+      box.hidden = false;
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      const c = out.cohort || {};
+      const auto = out.auto || {};
+      row('自動付与', auto.enabled ? 'ON' : 'OFF（管理画面から手動で付与します）', auto.enabled ? 'is-ok' : '');
+      if (!auto.enabled && Array.isArray(auto.missing) && auto.missing.length) {
+        row('　自動付与に必要な設定', auto.missing.join(' / '));
+      }
+      row('CSV 取り込みの対象総数', (c.total || 0) + ' 名', c.total > 0 ? 'is-ok' : 'is-ng');
+      const batches = Object.entries(c.byBatch || {});
+      row('　バッチ別', batches.length ? batches.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
+      row('走査した顧客', (c.scanned || 0) + ' 名');
+      row('付与候補', (out.candidates || 0) + ' 名', out.candidates > 0 ? 'is-ok' : '');
+      row('1 回の上限', (out.cap || 0) + ' 名' + (out.overMax ? '（超過のため実行は中止されます）' : ''));
+      const ex = Object.entries(out.excludedByReason || {});
+      row('除外理由', ex.length ? ex.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
+      if (c.observable === false) {
+        const w = document.createElement('p'); w.className = 'blocker'; w.textContent = c.note;
+        box.appendChild(w);
+      }
+      const p = document.createElement('p'); p.className = 'blocker'; p.textContent = out.notice || '';
+      box.appendChild(p);
+    }
+
+    $('mkTrialLoad')?.addEventListener('click', mkTrialPreview);
 
     $('mkSeqLoad')?.addEventListener('click', mkSeqStatus);
 

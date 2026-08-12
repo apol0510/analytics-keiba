@@ -141,6 +141,11 @@ import {
 } from '../../src/lib/marketing/sequenceProgress.js';
 import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
+  selectAutoGrantCandidates, readAutoGrantGates, AUTOGRANT_SKIP_LABEL,
+  MAX_GRANTS_PER_RUN, TRIAL_OFFER_ID,
+} from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
+import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
@@ -544,6 +549,7 @@ export const handler = async (event) => {
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
+    if (action === 'trialGrant') return await handleTrialGrantPreview({ KEY, BASE, now });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1003,6 +1009,54 @@ function resolveStepCampaign({ campaign, step }) {
   }
   const n = Number(step);
   return resolveSequenceStep(campaign, Number.isFinite(n) && n > 0 ? n : 1);
+}
+
+/**
+ * 無料体験の入口（自動付与）の**下見**（read-only・**1 バイトも書かない**）。
+ *
+ * 「CSV 取り込みの対象総数 / 付与候補 / 除外理由別の人数」を、**自動付与と同じ判定**
+ * （`lightTrialAutoGrant.js`）で数えて返す。cron を起動せずに管理画面から確認できる。
+ *
+ * ⚠️ ここは**付与しない**。付与できるのは既存の `admin-comeback-grants`（operationId 冪等）
+ *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
+ */
+async function handleTrialGrantPreview({ KEY, BASE, now }) {
+  const { list } = await loadCustomerMarketing({ KEY, BASE, now });
+  const records = list.map((c) => ({ recordId: c.recordId, fields: c.fields, marketing: c.marketing }));
+  const selection = selectAutoGrantCandidates({ records, nowMs: now, maxGrants: MAX_GRANTS_PER_RUN });
+  const observable = assertCohortObservable(selection.cohort);
+  const gates = readAutoGrantGates(process.env, now);
+
+  return json(200, {
+    mode: 'trial-grant-preview',
+    sideEffects: 'none',
+    offerId: TRIAL_OFFER_ID,
+    /** 自動付与のゲート（**閉じている間は 1 件も付与されない**） */
+    auto: {
+      enabled: gates.allOpen,
+      missing: gates.missing,
+      note: gates.allOpen
+        ? '自動付与は有効です。cron が 1 日 1 回、上限まで付与します。'
+        : '自動付与は停止中です。付与するには管理画面（カムバック特典）から手動で行います。',
+    },
+    cohort: {
+      total: selection.cohort.inCohort,
+      byBatch: selection.cohort.byBatch,
+      scanned: selection.counts.scanned,
+      observable: observable.ok,
+      note: observable.ok
+        ? null
+        : 'CSV 取り込みの痕跡が 1 件も見つかりません。**この状態では誰にも付与しません**（取り込み前か、Source を読めていないかを区別できないため）。',
+    },
+    candidates: selection.counts.candidates,
+    cap: MAX_GRANTS_PER_RUN,
+    overMax: selection.counts.overMax,
+    excludedByReason: Object.fromEntries(
+      Object.entries(selection.counts.byReason)
+        .map(([k, v]) => [AUTOGRANT_SKIP_LABEL[k] || COHORT_SKIP_LABEL[k] || k, v]),
+    ),
+    notice: 'これは下見です。**付与もキュー登録もしていません**。',
+  });
 }
 
 /**

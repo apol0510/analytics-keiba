@@ -155,6 +155,32 @@ test('【重要】コホート判定は取り込みの正本を使う（新し�
 });
 
 // ── 管理画面 ────────────────────────────────────────────────
+test('【表示】無料体験の入口（付与候補・除外理由・CSV 対象総数）が画面にある', () => {
+  for (const label of [
+    'CSV 取り込みの対象総数', '付与候補', '除外理由', 'バッチ別', '自動付与',
+  ]) assert.ok(PAGE.includes(label), `画面に項目が無い: ${label}`);
+  assert.match(PAGE, /id="mkTrialResult"/);
+  assert.match(PAGE, /action: 'trialGrant'/);
+  // 画面側で付与しない（判定も付与もサーバー）
+  const idx = PAGE.indexOf('function mkTrialRender');
+  const body = PAGE.slice(idx, idx + 2000);
+  assert.equal(/LightGrant|PATCH|付与する/.test(body), false, '画面から付与しようとしている');
+});
+
+test('【安全】下見 API は付与しない（read-only）', () => {
+  const code = codeOnly(ADMIN);
+  assert.match(code, /function handleTrialGrantPreview\(/);
+  assert.match(code, /selectAutoGrantCandidates\(/);
+  // 関数の中身だけを切り出す（次の関数宣言まで）
+  const start = code.indexOf('async function handleTrialGrantPreview');
+  const rest = code.slice(start + 10);
+  const end = rest.indexOf('\nasync function ');
+  const body = rest.slice(0, end > 0 ? end : 3000);
+  assert.equal(/method: '(PATCH|POST|DELETE)'/.test(body), false, '下見が書き込んでいる');
+  assert.match(body, /sideEffects: 'none'/);
+  assert.match(body, /付与もキュー登録もしていません/);
+});
+
 test('【表示】必要な項目が画面にある', () => {
   for (const label of [
     'キャンペーン', '自動配信', '最大配信回数', '次に送れる人数', '次回予定',
