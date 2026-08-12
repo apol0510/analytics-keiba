@@ -97,6 +97,7 @@ export const MK_EXCLUSION_LABEL = Object.freeze({
   already_delivered: '送信済み（同一キャンペーン）',
   recent_marketing_contact: '最近マーケティング送信済み（24時間以内）',
   campaign_mismatch: 'キャンペーン条件外',
+  engagement_blocked: '反応なしが続いている（開封・クリック・購入・ログインなし）',
   duplicate: '重複アドレス',
   contract_mismatch: '契約状態が対象外',
   plan_mismatch: 'プランが対象外',

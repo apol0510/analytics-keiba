@@ -286,10 +286,13 @@ async function applyEmailEventLedger({ events, now }) {
     batches: 0, failedBatches: 0, retryCount: 0, failureReasons: {},
   };
 
+  const sinkEvents = batch.rows.map(toSinkEvent);
+  const receivedAtMs = Date.now();
+
   const sink = await writeEventBatch({
     mode: sinkMode,
-    events: batch.rows.map(toSinkEvent),
-    receivedAtMs: Date.now(),
+    events: sinkEvents,
+    receivedAtMs,
     writeAirtable: async () => {
       airtableResult = await writeLedgerRows({
         rows: batch.rows,
@@ -321,6 +324,23 @@ async function applyEmailEventLedger({ events, now }) {
       }
     },
   });
+
+  // 📬 受信者ごとの「反応した事実」を畳んでおく（開封・クリックのみ・アドレスは hash）。
+  //    大量配信の engagement 判定はこの集計を読む。**生ログ（Blob）が正本**で、
+  //    ここは再構成できる索引なので、失敗しても webhook は落とさない（数字が古くなるだけ）。
+  //    ⚠️ sink mode に関係なく記録する（Airtable 行の有無とは独立した経路）。
+  let engagementSignal = 'skipped';
+  try {
+    const [{ createEngagementSignalStore }, { makeRedisCmd }] = await Promise.all([
+      import('../../src/lib/marketing/engagementSignalStore.js'),
+      import('../../src/lib/marketing/deliveryKeyStore.js'),
+    ]);
+    const store = createEngagementSignalStore({ redisCmd: makeRedisCmd(process.env) });
+    const r = await store.record({ events: sinkEvents, receivedAtMs });
+    engagementSignal = r.ok ? 'ok' : 'failed';
+  } catch {
+    engagementSignal = 'failed'; // Redis 未設定・一時障害。判定側は「確認できない」として誰も除外しない
+  }
 
   // 理由コードだけ残す（アドレス・鍵・blob 本文は出さない）
   if (sink.degraded.length > 0) {
@@ -354,7 +374,10 @@ async function applyEmailEventLedger({ events, now }) {
     enabled: true,
     ...base,
     ...airtableResult,
-    sink: { mode: sinkMode, airtable: sink.airtable, blob: sink.blob, counters: sink.counters },
+    sink: {
+      mode: sinkMode, airtable: sink.airtable, blob: sink.blob, counters: sink.counters,
+      engagementSignal,
+    },
   };
 }
 

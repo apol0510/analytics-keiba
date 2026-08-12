@@ -404,6 +404,13 @@ dispatcher（`marketing-campaign-dispatch.js`）は**この保存済みスナッ
   → 📮 実配信「配信内容を確認」→「実際に配信する」で marketing-campaign-dispatch を実行
 ```
 
+> **反応なし除外（2026-08-12〜）**: dry-run / セグメント下見 / 実 enqueue のいずれも
+> `handlePlan` / `handleSegments` で同じ `resolveEngagementView()` を通す。
+> 反応が無いまま閾値（10 / 20 通 delivered）を超えた相手は `engagement_blocked` で除外され、
+> 除外人数は送信確認ダイアログと下見パネルに必ず表示される。
+> **材料（開封の計測・Redis 集計・受信の新しさ）が 1 つでも欠ければ 1 人も除外しない。**
+> 仕様は [`ENGAGEMENT_SUPPRESSION.md`](./ENGAGEMENT_SUPPRESSION.md)。
+
 **2026-08-01 まで、最後の実配信だけ画面にボタンが無く、運用者が API を叩く必要があった。**
 「対象者とテンプレを選んで送る」ための画面なのに送信が完結しない状態だったため、
 実配信も管理画面から行えるようにした（安全装置は下記のとおり据え置き）。
@@ -847,6 +854,7 @@ CTA に入れる必要がある。ここが崩れると「他人のオファー�
 | キャンペーン定義（単一源） | `src/lib/marketing/campaignCatalog.js` |
 | キャンペーン固有の追加条件（純粋） | `src/lib/marketing/campaignAudienceRules.js` |
 | 送信対象確定・冪等性・頻度ガード（純粋） | `src/lib/marketing/campaignSend.js` |
+| **反応なし除外**（状態・閾値・適用可否・反応の集計） | `src/lib/marketing/engagementPolicy.js` / `engagementGuard.js` / `engagementSignalStore.js` → [`ENGAGEMENT_SUPPRESSION.md`](./ENGAGEMENT_SUPPRESSION.md) |
 | 送信ゲート・送信直前再検証（純粋） | `src/lib/marketing/marketingDispatchGate.js` |
 | SendGrid suppression 読み取り（GET のみ） | `src/lib/marketing/providerSuppression.js` |
 | 管理 API（キュー登録まで） | `netlify/functions/admin-marketing.js` |

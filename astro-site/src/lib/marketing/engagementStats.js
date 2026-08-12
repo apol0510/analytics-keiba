@@ -12,6 +12,13 @@
  *      - open は渡された分だけ加味する（呼び出し側が持っていれば）
  *    **open が取れないことを「反応が無い」と読み替えない**。
  *    材料が足りなければ `UNKNOWN` に留まり、guard は誰も止めない（安全側）。
+ *
+ * ── 観測できた期間だけを数える（`sinceMs`）──────────────────────
+ * 反応の集計（`engagementSignalStore.js`）が始まる**前**に送ったぶんは、
+ * 「開かれなかった」のか「記録していなかった」のか区別できない。
+ * `sinceMs` を渡すと、**その時刻以降の配信だけ**を delivered / sent に数える。
+ * 時刻が読めない配信行も数えない（**期間内だと証明できないものは数えない**）。
+ * これで「open=0 と確認できた」と「open データが無い」が構造的に混ざらない。
  */
 
 const norm = (e) => String(e || '').trim().toLowerCase();
@@ -22,11 +29,13 @@ const norm = (e) => String(e || '').trim().toLowerCase();
  *   deliveries?: Array<{fields: object}>,
  *   openByEmail?: Map<string, number>,
  *   clickByEmail?: Map<string, number>,
+ *   sinceMs?: number|null,
  * }} input
  * @returns {Map<string, {sent:number, delivered:number, open:number, click:number,
  *                        purchases:number, logins:number}>}  email → 集計
  */
-export function buildEngagementStats({ list, deliveries, openByEmail, clickByEmail } = {}) {
+export function buildEngagementStats({ list, deliveries, openByEmail, clickByEmail, sinceMs } = {}) {
+  const since = Number.isFinite(Number(sinceMs)) && Number(sinceMs) > 0 ? Number(sinceMs) : null;
   const stats = new Map();
   const ensure = (email) => {
     if (!stats.has(email)) {
@@ -51,6 +60,11 @@ export function buildEngagementStats({ list, deliveries, openByEmail, clickByEma
     if (String(f.EmailType || '') !== 'campaign') continue;
     const email = norm(f.RecipientEmail);
     if (!email) continue;
+    // 反応を観測できていた期間の配信だけを数える（期間外・時刻不明は数えない）
+    if (since !== null) {
+      const at = Date.parse(String(f.SentAt || f.QueuedAt || ''));
+      if (!Number.isFinite(at) || at < since) continue;
+    }
     const s = ensure(email);
     const status = String(f.Status || '');
     if (status === 'sent') {

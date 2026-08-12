@@ -97,6 +97,7 @@ import {
   computePlanFingerprint,
   computeCampaignContentHash,
   assertOnlyDeliveryFields,
+  MK_EXCLUSION,
   MK_EXCLUSION_LABEL,
   MAX_RECIPIENTS_PER_SEND,
   MARKETING_MIN_INTERVAL_MS,
@@ -127,9 +128,11 @@ import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
-  resolveThresholds, summarizeEngagement,
-} from '../../src/lib/marketing/engagementPolicy.js';
-import { buildEngagementStats } from '../../src/lib/marketing/engagementStats.js';
+  buildEngagementView, engagementCountsView,
+} from '../../src/lib/marketing/engagementGuard.js';
+import {
+  createEngagementSignalStore, emptySignals,
+} from '../../src/lib/marketing/engagementSignalStore.js';
 import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
@@ -421,7 +424,56 @@ async function loadMarketingForRecordIds({ KEY, BASE, now, recordIds }) {
       }),
     };
   });
-  return { list, records };
+  // ⚠️ `deliveries` も返す。engagement 判定は「この宛先へ何通届いたか」を要するため、
+  //    ここで引いた履歴をそのまま使う（別経路で数え直すと下見と実送信でズレる）。
+  return { list, records, deliveries };
+}
+
+/**
+ * 反応の集計（Redis）を読む。**読めなければ available:false**（0 と混同させない）。
+ * Redis 未設定でも管理画面は動く（engagement 除外が適用されないだけ）。
+ */
+async function loadEngagementSignals() {
+  try {
+    const store = createEngagementSignalStore({ redisCmd: makeRedisCmd(process.env) });
+    return await store.read();
+  } catch {
+    return emptySignals('redis_not_configured');
+  }
+}
+
+/**
+ * 「反応が無い相手を除外してよいか」を **下見（segments / dry-run）と実 enqueue で
+ * 同じ材料・同じ判定**から作る。判定そのものは `engagementGuard.js`（単一源）。
+ *
+ * 材料が 1 つでも欠ければ `applied:false` になり、`engagementByEmail` は null =
+ * 送信計画は誰も除外しない（fail closed）。
+ */
+async function resolveEngagementView({ list, deliveries, now }) {
+  const [signals, measurement] = await Promise.all([
+    loadEngagementSignals(),
+    readMeasurementSettings({ apiKey: process.env.SENDGRID_API_KEY }),
+  ]);
+  const view = buildEngagementView({
+    list, deliveries, signals, measurement, nowMs: now, env: process.env,
+  });
+  return { view, measurement, signals };
+}
+
+/** 画面へ返す形（アドレスも recordId も出さない。件数と状態だけ） */
+function engagementResponse(view) {
+  return {
+    applied: view.applied,
+    reason: view.reason,
+    reasonLabel: view.reasonLabel,
+    thresholds: view.thresholds,
+    coverage: view.coverage,
+    counts: engagementCountsView(view.counts),
+    blocked: view.blockedEmails.size,
+    note: view.applied
+      ? '反応が無いまま閾値を超えた相手を除外します（購入・ログイン・開封があれば次回は対象へ戻ります）。'
+      : '除外は適用していません。全員が engagement 以外の条件だけで判定されています。',
+  };
 }
 
 /** 頻度ガード用に、指定アドレスの配信履歴だけを引く。 */
@@ -1097,6 +1149,13 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     offerRecords = await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => null);
   }
 
+  // 🛡️ 反応が無い相手の除外。**材料が揃っているときだけ** Map を渡す。
+  //    渡さなければ `buildCampaignPlan` は素通りさせる（誰も除外しない）。
+  //    dry-run と live は同じこの関数を通るので、判定が食い違わない。
+  const { view: engagementView } = await resolveEngagementView({
+    list: targeted.list, deliveries: targeted.deliveries, now,
+  });
+
   const plan = buildCampaignPlan({
     campaign: sending, selected, deliveredKeys,
     providerSuppressed: provider.ok ? provider.emails : null,
@@ -1104,6 +1163,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     audienceContext: buildAudienceContext(process.env),
     brand: BRAND, fromEmail, nowMs: now,
     offerRecords, offerSecret: getOfferSecret(process.env),
+    engagementByEmail: engagementView.engagementByEmail,
+    engagementThresholds: engagementView.thresholds,
   });
   if (!plan.ok) {
     if (plan.error === 'provider_suppression_unavailable') {
@@ -1197,6 +1258,11 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     excludedDetail,
     excludedRecords,
     detailComplete,
+    // 反応なし除外の状態（適用中か・閾値・期間・今回何人落ちたか）
+    engagement: {
+      ...engagementResponse(engagementView),
+      blockedThisPlan: plan.counts.byReason[MK_EXCLUSION.ENGAGEMENT_BLOCKED] || 0,
+    },
     planFingerprint: plan.planFingerprint,
     // 確認した「組み立て方」の版。送信時にこの値の一致を要求する
     shellVersion: MARKETING_EMAIL_SHELL_VERSION,
@@ -1510,28 +1576,30 @@ async function handleSegments({ KEY, BASE, now, req }) {
   }
   const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
 
+  // エンゲージメント（5 区分の件数・閾値・適用可否）。**実送信と同じ判定**を使う。
+  // 適用できるときだけ `blockedEmails` が埋まり、セグメントの「送信できる人数」からも引かれる。
+  const { view: engagementView, measurement } = await resolveEngagementView({ list, deliveries, now });
+
   const records = list.map((c) => ({ id: c.recordId, fields: c.fields }));
   const shared = {
     records, nowMs: now,
     blacklistHard: hard, blacklistSoft: soft,
     providerSuppressed: provider.ok ? provider.emails : null,
     lastContactAtMs: buildLastContactMap(deliveries),
+    engagementBlockedEmails: engagementView.applied ? engagementView.blockedEmails : null,
     sampleSize,
   };
   const ids = wanted ? [wanted] : SEGMENT_IDS;
   const results = ids.map((id) => evaluateSegment({ ...shared, segmentId: id }));
 
-  // 計測状態（「0 件」と「計測していない」を画面で混同させないため一緒に返す）
-  const measurement = await readMeasurementSettings({ apiKey: process.env.SENDGRID_API_KEY });
-
-  // エンゲージメント 4 区分の件数。**閾値も一緒に返す**（画面が独自に持たない）
-  const engagementThresholds = resolveThresholds(process.env);
-  const engagementStats = buildEngagementStats({ list, deliveries });
   const engagement = {
-    thresholds: engagementThresholds,
-    counts: summarizeEngagement([...engagementStats.values()], { thresholds: engagementThresholds }),
+    ...engagementResponse(engagementView),
     // click は tracking が無効だと常に 0。画面で「反応が無い」と読み違えないよう明示する
     clickTracking: isMarketingClickTrackingEnabled(process.env) ? 'enabled' : 'disabled',
+    /** セグメント別に「今回 engagement 理由で除外される人数」（母数は選んだセグメント） */
+    blockedBySegment: Object.fromEntries(
+      results.map((r) => [r.segmentId, (r.byReason || {}).engagement_blocked || 0]),
+    ),
   };
 
   return json(200, {

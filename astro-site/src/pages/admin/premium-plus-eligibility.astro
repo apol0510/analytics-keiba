@@ -161,6 +161,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         </div>
         <div class="dry-panel" id="mkSegResult" hidden></div>
         <div class="measure-box" id="mkMeasureBox" hidden></div>
+        <!--
+          反応（engagement）の状況。**送信前にここで「何人が反応なしで除外されるか」を見る**。
+          除外を適用してよい材料が揃っていないときは、区分の人数を参考値と断ったうえで
+          「除外は適用していません」と明示する（0 と未計測を混同させない）。
+        -->
+        <div class="dry-panel" id="mkEngBox" hidden></div>
       </section>
 
       <!--
@@ -4463,6 +4469,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       mkSegLoaded = true;
       mkRenderMeasurement(out.measurement);
+      mkRenderEngagement(out.engagement, null);
     }
 
     /** 選んだセグメントの件数を数える（送信もキュー登録もしない） */
@@ -4482,6 +4489,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         }
         mkRenderSegment(out.segments[0], out);
         mkRenderMeasurement(out.measurement);
+        mkRenderEngagement(out.engagement, out.segments[0]);
         state.textContent = '';
       } finally {
         btn.dataset.busy = ''; btn.disabled = false;
@@ -4561,6 +4569,63 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       box.textContent = lines.join('\n');
       box.className = 'measure-box' + (m.open === 'enabled' && m.click === 'enabled' ? ' ok' : '');
       box.hidden = false;
+    }
+
+    /**
+     * 反応（engagement）の状況を出す。
+     *
+     * **「送信対象人数」と「反応なしで除外される人数」を送信前に必ず並べて見せる。**
+     * 適用できない状態（開封を計測していない・集計を読めない等）では、区分の人数を
+     * **参考値**と断り、「除外は適用していません」と明示する。
+     * サーバーが `applied` と理由を返すので、画面側で判定し直さない。
+     */
+    function mkRenderEngagement(eng, seg) {
+      const box = $('mkEngBox');
+      if (!box) return;
+      if (!eng) { box.hidden = true; return; }
+      box.innerHTML = '';
+      box.hidden = false;
+
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+
+      const c = eng.counts || {};
+      const t = eng.thresholds || {};
+      const applied = eng.applied === true;
+
+      row('反応なし除外', applied ? '適用中' : '適用していません', applied ? 'is-ok' : 'is-ng');
+      if (!applied) row('適用しない理由', eng.reasonLabel || eng.reason || '—');
+
+      if (seg) {
+        row('このセグメントの送信対象', seg.sendable + ' 名', seg.sendable > 0 ? 'is-ok' : 'is-ng');
+        const blocked = (eng.blockedBySegment || {})[seg.segmentId];
+        row('うち 反応なしで除外',
+          applied ? (Number(blocked || 0) + ' 名') : '0 名（適用していないため除外していません）');
+      }
+
+      row('閾値', '観察のみ ' + (t.lowEngagementSends ?? '—') + ' 通 / 除外 '
+        + (t.inactiveDelivered ?? '—') + ' 通 / 強い除外 ' + (t.hardInactiveDelivered ?? '—') + ' 通');
+      row('区分' + (applied ? '' : '（参考値）'),
+        '反応あり ' + (c.active || 0) + ' 名 / 観察中 ' + (c.lowEngagement || 0)
+        + ' 名 / 除外 ' + (c.inactive || 0) + ' 名 / 強い除外 ' + (c.hardInactive || 0)
+        + ' 名 / 判断材料なし ' + (c.unknown || 0) + ' 名');
+
+      const cov = eng.coverage || {};
+      row('数えている期間', cov.since ? (cov.since + ' 以降の配信のみ') : '—（記録開始前は数えません）');
+      row('開封を記録できている人数', (cov.openRecorded || 0) + ' 名');
+      row('最後に反応を受信', cov.lastEventAt || '—');
+      if (eng.clickTracking && eng.clickTracking !== 'enabled') {
+        row('⚠️ クリック計測', '無効（クリックは常に 0。反応なしの根拠にしません）');
+      }
+
+      const p = document.createElement('p');
+      p.className = 'blocker';
+      p.textContent = eng.note || '';
+      box.appendChild(p);
     }
 
     $('mkSegLoad')?.addEventListener('click', mkSegPreview);
@@ -5985,6 +6050,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       kvRow(dl, '選択', plan.selected + ' 名');
       kvRow(dl, '除外', plan.excluded + ' 名');
       kvRow(dl, '実送信', plan.willSend + ' 名', plan.willSend > 0 ? 'strong-ok' : 'muted');
+      // 反応なし除外は「何人落ちたか」と「そもそも適用しているか」を必ず並べる。
+      // 適用していないのに 0 名と出すと「反応が無い人は居ない」と読み違える。
+      if (plan.engagement) {
+        const eg = plan.engagement;
+        kvRow(dl, 'うち 反応なしで除外',
+          eg.applied ? (Number(eg.blockedThisPlan || 0) + ' 名')
+            : '適用していません（' + (eg.reasonLabel || eg.reason || '理由不明') + '）',
+          eg.applied ? '' : 'muted');
+        if (eg.applied && eg.coverage && eg.coverage.since) {
+          kvRow(dl, '反応を数えた期間', String(eg.coverage.since).slice(0, 10) + ' 以降の配信');
+        }
+      }
       // 何を送るのかを hash まで出す（キュー登録後はこの内容で固定される）
       kvRow(dl, '内容 hash', String(plan.contentHash || '').slice(0, 12)
         + (plan.contentEdited ? '（今回だけ編集）' : '（既定文面）'));
