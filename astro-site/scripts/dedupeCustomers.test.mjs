@@ -6,6 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { checkDeletable, fingerprintTargets, BLOCKING_FIELDS, DEFAULT_POINTS } from './dedupe-customers.mjs';
 
 const EMAIL = 'a@example.com';
@@ -61,8 +62,8 @@ test('対象一覧の指紋は順序に依存しない（取り違え検知に�
   assert.notEqual(a, fingerprintTargets([{ id: 'recA' }, { id: 'recC' }]));
 });
 
-test('既定は dry-run（--execute が無ければ削除経路へ入らない）', async () => {
-  const src = (await import('node:fs')).readFileSync(new URL('./dedupe-customers.mjs', import.meta.url), 'utf8');
+test('既定は dry-run（--execute が無ければ削除経路へ入らない）', () => {
+  const src = readFileSync(new URL('./dedupe-customers.mjs', import.meta.url), 'utf8');
   assert.match(src, /const execute = arg\('execute', false\) === true;/);
   assert.match(src, /if \(!execute\) \{[\s\S]{0,200}1 バイトも書いていません/);
   // export を書けなければ中止
@@ -71,4 +72,56 @@ test('既定は dry-run（--execute が無ければ削除経路へ入らない�
   assert.match(src, /件数が一致しません/);
   // 再実行安全（削除済みは失敗にしない）
   assert.match(src, /already_gone/);
+});
+
+// ── ポイント残高がある組の「値を固定した個別許可」──────────────
+import { POINTS_POLICY_MAX_KEEP_WINS } from './dedupe-customers.mjs';
+
+const withPoints = (n) => rec('recTTTTTTTTTTTTTT', { 'ポイント': n });
+const keepWith = (n) => rec('recKKKKKKKKKKKKKK', { 'ポイント': n });
+
+test('宣言が無ければポイント残高のある組は従来どおり skip', () => {
+  const r = checkDeletable({ target: withPoints(102), keep: keepWith(1230), email: EMAIL });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^has_points:102/);
+});
+
+test('値を固定した宣言があれば削除できる（最大値採用が実値で成立するときだけ）', () => {
+  const entry = {
+    pointsPolicy: POINTS_POLICY_MAX_KEEP_WINS, expectedDeletePoints: 102, expectedKeepPoints: 1230,
+  };
+  assert.equal(checkDeletable({ target: withPoints(102), keep: keepWith(1230), email: EMAIL, entry }).ok, true);
+});
+
+test('【重要】実行直前に 1 点でも動いていたら中止する', () => {
+  const entry = {
+    pointsPolicy: POINTS_POLICY_MAX_KEEP_WINS, expectedDeletePoints: 102, expectedKeepPoints: 1230,
+  };
+  const moved = checkDeletable({ target: withPoints(103), keep: keepWith(1230), email: EMAIL, entry });
+  assert.equal(moved.ok, false);
+  assert.match(moved.reason, /^points_changed:delete/);
+
+  const keepMoved = checkDeletable({ target: withPoints(102), keep: keepWith(1231), email: EMAIL, entry });
+  assert.equal(keepMoved.ok, false);
+  assert.match(keepMoved.reason, /^points_changed:keep/);
+});
+
+test('正本の残高が下回るなら（最大値採用が成り立たない）消さない', () => {
+  const entry = {
+    pointsPolicy: POINTS_POLICY_MAX_KEEP_WINS, expectedDeletePoints: 500, expectedKeepPoints: 100,
+  };
+  const r = checkDeletable({ target: withPoints(500), keep: keepWith(100), email: EMAIL, entry });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^keep_points_lower/);
+});
+
+test('【禁止】ポイントを無視する汎用オプションを作らない', () => {
+  const src = readFileSync(new URL('./dedupe-customers.mjs', import.meta.url), 'utf8');
+  // コメント（「作らない」と書いてある箇所）を除いた**実コード**だけを見る
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+  assert.equal(/allow-points-loss|allowPointsLoss|ignorePoints|arg\('force'/.test(code), false,
+    '汎用の抜け道が追加されている');
+  assert.match(src, /expectedDeletePoints/);
+  assert.match(src, /expectedKeepPoints/);
 });
