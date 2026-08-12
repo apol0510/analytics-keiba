@@ -1,3 +1,81 @@
+## 2026-08-12 — Customers の重複レコードを 7 件削除（本番実行済み）
+
+同じメールアドレスの Customers が 2 件あると、`auth/customerLookup` が **CONFLICT として
+fail closed でログインを拒否**する。重複の解消は、その人のログインを取り戻す作業でもある。
+
+### 監査（read-only）で分かったこと
+
+| 項目 | 値 |
+|---|---|
+| Customers 総数 | 15,971 |
+| 一意アドレス | 15,961 |
+| 重複アドレス | **10**（20 レコード） |
+| CSV 取り込みで作成 | 14,489（`imp-2026-08-09-001` 14,279 / `imp-2026-08-05-003` 100 / `imp-2026-08-04-002` 100 / `imp-2026-08-04-001` 10） |
+
+> ⚠️ **前提の訂正**: 重複 10 組のうち **CSV 取り込み由来（`Source = customer-import:*`）は 0 件**。
+> 10 組とも取り込み以前から存在した重複で、**取り込みは重複を 1 件も作っていない**
+> （取り込みは既存アドレスを UPDATE 扱いにし CREATE しない設計）。
+> 「取り込み側を消す」対象は存在しなかった。
+
+### 判定
+
+**残す** = 権利・課金・意思表示の値が多い方 → 参照されている方 → 作成が古い方。
+**消してよい**のは、削除側が次を全部満たす場合だけ:
+
+- 有効期限 / PlanType / PaymentConfirmed / PaidAt / LifetimeSanrenpuku / LightGrant* /
+  Requested* / Unsubscribed* / WithdrawalRequested / PremiumPlus* / 最終ログイン / Memo / Phone が **1 つも無い**
+- ポイントが既定値（1）以下
+- 残す側より強いプランでない
+- `CampaignDeliveries` / `PromotionalOffers` からの **recordId 参照が 0 件**
+
+→ **削除 7 / 要確認 3**（削除側にポイント残高 102・101・2 点）。
+**ポイントは 1 点も移していない**（統合は運用判断のため、残高がある組は触らない）。
+
+### 実行（2026-08-12）
+
+`astro-site/scripts/dedupe-customers.mjs`（PR #316・**merge 前**のスクリプトを使用）
+
+```
+対象 7 件 / 指紋 f46d9119180c6365 / モード ⚠️ 実削除
+💾 export: dedupe-rollback-export.json（7 件）
+検証: 削除可 7 / skip 0 / 既に削除済み 0
+🗑️  削除 7 / 7
+```
+
+削除前の最終確認（すべて一致）: 総数 15,971 / 重複 10 組 / target 7 件が条件を満たす /
+keep 側 7 件が実在 / target への recordId 参照 0 / export 7 件 / fingerprint 一致。
+
+### 削除後の read-only 確認
+
+| 確認項目 | 結果 |
+|---|---|
+| deleted / skipped | **7 / 0** |
+| Customers 総数 | **15,964**（15,971 − 7） |
+| 一意アドレス | 15,961（変化なし） |
+| 残る重複 | **3 組**（ポイント 102 / 101 / 2 の要確認分と一致） |
+| 削除した 7 アドレス | 各 **1 件**に収束（ログイン復旧） |
+| keep 側の権利・課金・配信停止 | **変化なし**（プラン / PlanType / 有効期限 / PaymentConfirmed / PaidAt / LifetimeSanrenpuku / LightGrantUntil / Unsubscribed / WithdrawalRequested / ポイント / Status を pre-post 比較） |
+| 孤児参照 | `CampaignDeliveries` 0 / `PromotionalOffers` 0 |
+| `AuthTokens` の孤児 | 10 件（**削除前も 10 件**。今回とは無関係の既存状態） |
+| 消えたアドレス | 0 件 |
+| 新規重複 | なし |
+
+### rollback
+
+削除前の全フィールドを `dedupe-rollback-export.json`（7 件・sha256 `f35f59a092a4954d…`）に保存し、
+**repo 外の永続保管**（`~/.analytics-keiba-ops/dedupe/2026-08-12/`、パーミッション 700）へコピー済み。
+**PII を含むため git には commit / push しない。**
+戻す場合は `fields` をそのまま create する（recordId は新しくなるが、
+recordId 参照がある行はそもそも削除していないので実害なし）。
+
+### 残件
+
+- **要確認 3 組**（ポイント 102 / 101 / 2 点）は未処理。統合するか放置するかは運用判断
+- `...@gmail.comtonari` のアドレス不正は**別案件**（重複解消では直らない。今回は触っていない）
+- PR #316（スクリプトと docs）は**未 merge**。今回の削除とは別判断
+
+- **Last verified**: 2026-08-12（本番 read-only）
+
 ## 2026-08-12 — 反応が無い相手への配信除外（#313 本番反映 / 観測は継続中）
 
 1 万数千件規模のキャンペーンで「**10〜20 回送っても開封が無い相手を配信から外す**」を、
