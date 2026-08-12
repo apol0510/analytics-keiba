@@ -111,7 +111,7 @@ test('【安全】シーケンスは無料付与を書かない（付与は admi
 });
 
 // ── 無料体験の入口（自動付与）────────────────────────────────
-test('【安全】自動付与は 6 ゲートが揃うまで Customers を書かない', () => {
+test('【安全】自動付与は 4 ゲートが揃うまで Customers を書かない', () => {
   const code = codeOnly(TRIAL_CRON);
   const gateIdx = code.indexOf('readAutoGrantGates');
   const patchIdx = code.indexOf("method: 'PATCH'");
@@ -119,8 +119,27 @@ test('【安全】自動付与は 6 ゲートが揃うまで Customers を書か
   for (const env of [
     'COMEBACK_GRANT_FIELDS_READY', 'COMEBACK_GRANT_ENABLED',
     'LIGHT_TRIAL_AUTOGRANT_ENABLED', 'LIGHT_TRIAL_AUTOGRANT_ARMED',
-    'MARKETING_CAMPAIGN_ENABLED', 'MARKETING_CAMPAIGN_DISPATCH_ENABLED',
   ]) assert.match(AUTOGRANT, new RegExp(env), `ゲートが欠けている: ${env}`);
+});
+
+test('【重要】付与と送信は分離（付与経路がメールもキューも作らない）', () => {
+  const code = codeOnly(TRIAL_CRON);
+  for (const bad of [
+    'ScheduledEmails', 'CampaignDeliveries', 'buildCampaignPlan',
+    'renderCampaign', 'buildScheduledEmailFields', 'buildDeliveryRecords',
+  ]) assert.equal(code.includes(bad), false, `付与経路が送信を持っている: ${bad}`);
+  // 配信系ゲートを要求していない（付与のために配信を開けさせない）
+  const gateCode = codeOnly(AUTOGRANT);
+  assert.equal(/MARKETING_CAMPAIGN_(ENABLED|DISPATCH_ENABLED)/.test(gateCode), false,
+    '付与のゲートに配信系 env が残っている');
+});
+
+test('【重要】候補が多くても全体を中止せず、先頭 N 件だけ処理する', () => {
+  const code = codeOnly(AUTOGRANT);
+  assert.equal(/OVER_MAX/.test(code), false, '全体中止の分岐が残っている');
+  assert.match(code, /remaining/);
+  assert.match(code, /localeCompare/, '決定的な並びになっていない');
+  assert.match(code, /HARD_MAX_BATCH_SIZE/);
 });
 
 test('【安全】付与の形は既存 planner を使う（複製しない）', () => {
@@ -131,19 +150,28 @@ test('【安全】付与の形は既存 planner を使う（複製しない）',
   assert.equal(/buildGrantFields\(/.test(code), false, '低レベル API を直接叩いている');
 });
 
-test('【重要】付与 → Step1 の順序が保証されている', () => {
-  const code = codeOnly(TRIAL_CRON);
-  const grantIdx = code.indexOf('applyGrants(');
-  const queueIdx = code.indexOf('buildCampaignPlan(');
-  assert.ok(grantIdx > 0 && queueIdx > grantIdx, 'Step1 の計画が付与より前にある');
-  assert.match(code, /recipientsAfterGrant\(/);
-  assert.match(code, /grantedIds\.length === 0/, '付与 0 件でも送ろうとしている');
+test('【重要】Step1 の対象は「無料期間中」であることで構造的に決まる', () => {
+  // 付与経路は queue しない。Step1 は sequence 側の requiresActiveGrant が決める
+  assert.match(codeOnly(PROGRESS), /requiresActiveGrant/);
+  assert.match(codeOnly(PROGRESS), /GRANT_REQUIRED/);
+  // 付与に失敗した人は権利が無いので Step1 の対象に入りようがない
+  assert.match(AUTOGRANT, /付与に失敗した人は権利が無いので/);
 });
 
 test('【安全】dry-run は書き込まない（管理シークレット必須）', () => {
   const code = codeOnly(TRIAL_CRON);
-  assert.match(code, /if \(dryRun\) \{[\s\S]{0,600}sideEffects: 'none'/);
+  assert.match(code, /if \(dryRun\) \{[\s\S]{0,900}sideEffects: 'none'/);
   assert.match(code, /x-admin-secret/);
+});
+
+test('【表示】下見に 全候補 / 今回処理予定 / remaining / 指紋 / hard max がある', () => {
+  const code = codeOnly(ADMIN);
+  for (const k of ['candidates:', 'batch:', 'remaining:', 'planFingerprint', 'hardMax']) {
+    assert.ok(code.includes(k), `下見の応答に無い: ${k}`);
+  }
+  // 下見と実行が同じ 1 本を通る
+  assert.match(code, /buildTrialGrantPlan\(/);
+  assert.match(codeOnly(TRIAL_CRON), /buildTrialGrantPlan\(/);
 });
 
 test('【重要】コホート判定は取り込みの正本を使う（新しい旗を作らない）', () => {
@@ -157,7 +185,8 @@ test('【重要】コホート判定は取り込みの正本を使う（新し�
 // ── 管理画面 ────────────────────────────────────────────────
 test('【表示】無料体験の入口（付与候補・除外理由・CSV 対象総数）が画面にある', () => {
   for (const label of [
-    'CSV 取り込みの対象総数', '付与候補', '除外理由', 'バッチ別', '自動付与',
+    'CSV 取り込みの対象総数', '全候補', '今回処理予定', '残り', '除外理由', 'バッチ別',
+    '自動付与', '計画の指紋', 'hard max',
   ]) assert.ok(PAGE.includes(label), `画面に項目が無い: ${label}`);
   assert.match(PAGE, /id="mkTrialResult"/);
   assert.match(PAGE, /action: 'trialGrant'/);
@@ -170,7 +199,7 @@ test('【表示】無料体験の入口（付与候補・除外理由・CSV 対�
 test('【安全】下見 API は付与しない（read-only）', () => {
   const code = codeOnly(ADMIN);
   assert.match(code, /function handleTrialGrantPreview\(/);
-  assert.match(code, /selectAutoGrantCandidates\(/);
+  assert.match(code, /buildTrialGrantPlan\(/);
   // 関数の中身だけを切り出す（次の関数宣言まで）
   const start = code.indexOf('async function handleTrialGrantPreview');
   const rest = code.slice(start + 10);

@@ -10,11 +10,21 @@
  *   4. 付与に成功した人だけを Step1 の送信対象として返す
  * だけ。付与フィールドの組み立ては 1 バイトも複製しない。
  *
- * ── 順序の保証（ここが壊れると「使えないのに案内が届く」）──────────
- *   付与（Customers 書き込み）が**成功した recordId だけ**を Step1 の対象にする。
- *   付与前・付与失敗の相手には**絶対にキュー登録しない**。
- *   部分失敗しても、成功したぶんだけが進む（`operationId` と DeliveryKey が
- *   二重付与・二重送信を防ぐ）。
+ * ── 付与と送信は**完全に分離**する ───────────────────────────
+ *   この経路は **Light の無料権利を付けるだけ**で、メールを 1 通も作らない。
+ *   したがって配信系ゲート（`MARKETING_CAMPAIGN_ENABLED` /
+ *   `MARKETING_CAMPAIGN_DISPATCH_ENABLED`）は**要求しない**。
+ *   Step1 の送信は別工程（管理画面の dry-run → キュー登録）で、
+ *   **付与に成功して無料期間中になった人だけ**が対象になる
+ *   （`requiresActiveGrant` の判定が構造的に保証する）。
+ *   付与に失敗した人は権利が無いので、Step1 の対象に**入りようがない**。
+ *
+ * ── 段階実行（14,000 件規模でも全体 abort しない）──────────────
+ *   1 回の実行では**未付与の候補の先頭 N 件だけ**を処理する（既定 100）。
+ *   **offset の正本は作らない。** 付与した人は次回の候補判定で
+ *   `grant_active` / `granted_before` に落ちるため、**再実行すると自然に次の N 件へ進む**。
+ *   失敗した人は候補に残るので、次回そのまま再評価される。
+ *   並び順は recordId 昇順で決めるので、同じ入力なら**毎回同じ 100 件**になる。
  *
  * ── 冪等性 ──────────────────────────────────────────────────
  *   付与 … `operationId` が同じなら同じ結果（`buildGrantFields` が
@@ -27,19 +37,31 @@
  *   2. `COMEBACK_GRANT_ENABLED=true`        … 既存の付与ゲート（実行許可）
  *   3. `LIGHT_TRIAL_AUTOGRANT_ENABLED=true` … 自動化そのものの許可
  *   4. `LIGHT_TRIAL_AUTOGRANT_ARMED=<今日の JST 日付>`（翌日には自動的に閉じる）
- *   5. `MARKETING_CAMPAIGN_ENABLED=true`（Step1 のキュー登録に必要）
- *   6. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true`（実送信の既存ゲート）
  *
  * ⚠️ 1・2 は**手動付与と同じゲート**を再利用する（自動化のために別の抜け道を作らない）。
+ * ⚠️ **配信系ゲートは要求しない。** 付与はメールを 1 通も作らないので、
+ *    権利を配るために配信を開ける必要はない（開けると事故の範囲が広がる）。
  */
 
 import { jstDateString } from '../marketing/campaignSend.js';
+import { buildComebackPlan, computePlanFingerprint } from './comebackGrantPlan.js';
+import { resolveOffer } from '../promotions/promotionOfferCatalog.js';
 import { matchesImportCohort, summarizeCohort, assertCohortObservable } from '../crm/importedCohort.js';
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 import { resolveFreeGrantHistory } from '../entitlements/freeGrantStatus.js';
 
-/** 1 回の実行で付与する上限（暴走防止。超えたら**切り捨てずに中止**） */
-export const MAX_GRANTS_PER_RUN = 100;
+/** 1 回の実行で付与する既定の件数 */
+export const DEFAULT_BATCH_SIZE = 100;
+
+/**
+ * 1 回の実行で付与してよい**絶対上限**。
+ * env でこれを超える値を指定したら**実行しない**（fail closed）。
+ * 大きくするほど 1 回の事故の範囲が広がるので、コード側の歯止めとして固定する。
+ */
+export const HARD_MAX_BATCH_SIZE = 500;
+
+/** 後方互換（既定値の別名） */
+export const MAX_GRANTS_PER_RUN = DEFAULT_BATCH_SIZE;
 
 /** 自動付与に使う特典（カタログの正本。ここで日数を書かない） */
 export const TRIAL_OFFER_ID = 'light-30d-free';
@@ -50,15 +72,16 @@ export const AUTOGRANT_ENV = Object.freeze({
   GRANT_ENABLED: 'COMEBACK_GRANT_ENABLED',
   ENABLED: 'LIGHT_TRIAL_AUTOGRANT_ENABLED',
   ARMED: 'LIGHT_TRIAL_AUTOGRANT_ARMED',
-  ENQUEUE: 'MARKETING_CAMPAIGN_ENABLED',
-  DISPATCH: 'MARKETING_CAMPAIGN_DISPATCH_ENABLED',
+  /** 1 回の件数（任意。未設定なら既定 100） */
+  BATCH_SIZE: 'LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE',
 });
 
 export const AUTOGRANT_ABORT = Object.freeze({
   GATES_CLOSED: 'gates_closed',
   COHORT_UNVERIFIABLE: 'cohort_unverifiable',
   NO_CANDIDATES: 'no_candidates',
-  OVER_MAX: 'over_max_candidates',
+  /** env の件数指定が絶対上限を超えている / 壊れている（**実行しない**） */
+  BATCH_SIZE_REJECTED: 'batch_size_rejected',
   OFFER_UNAVAILABLE: 'offer_unavailable',
 });
 
@@ -83,14 +106,30 @@ export const AUTOGRANT_SKIP_LABEL = Object.freeze({
 
 const str = (v) => String(v ?? '').trim();
 
+/**
+ * 1 回の件数を決める。**壊れた値・上限超えは実行しない**（fail closed）。
+ *
+ * @returns {{ok: true, size: number, source: string} | {ok: false, reason: string, requested: string}}
+ */
+export function resolveBatchSize(env = process.env) {
+  const raw = str((env || {})[AUTOGRANT_ENV.BATCH_SIZE]);
+  if (!raw) return { ok: true, size: DEFAULT_BATCH_SIZE, source: 'default' };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    return { ok: false, reason: 'not_a_positive_integer', requested: raw };
+  }
+  if (n > HARD_MAX_BATCH_SIZE) {
+    return { ok: false, reason: `over_hard_max:${HARD_MAX_BATCH_SIZE}`, requested: raw };
+  }
+  return { ok: true, size: n, source: 'env' };
+}
+
 /** ゲートの状態。**env の値は返さない**（不足している名前だけ） */
 export function readAutoGrantGates(env, nowMs) {
   const e = env || {};
   const fieldsReady = str(e[AUTOGRANT_ENV.FIELDS_READY]) === '1';
   const grantEnabled = e[AUTOGRANT_ENV.GRANT_ENABLED] === 'true';
   const enabled = e[AUTOGRANT_ENV.ENABLED] === 'true';
-  const enqueue = e[AUTOGRANT_ENV.ENQUEUE] === 'true';
-  const dispatch = e[AUTOGRANT_ENV.DISPATCH] === 'true';
   const today = jstDateString(Number.isFinite(nowMs) ? nowMs : 0);
   const armed = str(e[AUTOGRANT_ENV.ARMED]) === today;
   const missing = [
@@ -98,11 +137,9 @@ export function readAutoGrantGates(env, nowMs) {
     !grantEnabled ? AUTOGRANT_ENV.GRANT_ENABLED : null,
     !enabled ? AUTOGRANT_ENV.ENABLED : null,
     !armed ? AUTOGRANT_ENV.ARMED : null,
-    !enqueue ? AUTOGRANT_ENV.ENQUEUE : null,
-    !dispatch ? AUTOGRANT_ENV.DISPATCH : null,
   ].filter(Boolean);
   return {
-    fieldsReady, grantEnabled, enabled, armed, enqueue, dispatch, today,
+    fieldsReady, grantEnabled, enabled, armed, today,
     allOpen: missing.length === 0, missing,
   };
 }
@@ -167,16 +204,27 @@ export function selectAutoGrantCandidates({ records, batchIds, nowMs, maxGrants 
     candidates.push({ recordId: r.recordId, fields: r.fields });
   }
 
+  // **決定的な順序**（recordId 昇順）。同じ入力なら毎回同じ先頭 N 件になる
+  candidates.sort((a, b) => String(a.recordId).localeCompare(String(b.recordId)));
+  const size = Number.isInteger(maxGrants) && maxGrants > 0 ? maxGrants : DEFAULT_BATCH_SIZE;
+  const batch = candidates.slice(0, size);
+
   return {
     cohort,
     candidates,
+    /** 今回処理する先頭 N 件（**offset は持たない**。付与済みは次回の候補から自然に消える） */
+    batch,
     counts: {
       scanned: rows.length,
       cohortTotal: cohort.inCohort,
       candidates: candidates.length,
+      /** 今回処理する件数 */
+      batchSize: batch.length,
+      /** 今回のぶんを処理したあとに残る件数 */
+      remaining: Math.max(0, candidates.length - batch.length),
       byReason,
-      cap: maxGrants,
-      overMax: candidates.length > maxGrants,
+      cap: size,
+      hardMax: HARD_MAX_BATCH_SIZE,
     },
   };
 }
@@ -187,7 +235,7 @@ export function selectAutoGrantCandidates({ records, batchIds, nowMs, maxGrants 
  * @param {{ selection: object, gates: object, offer: object|null, maxGrants?: number }} input
  * @returns {{ok: boolean, abort?: string, candidates?: Array, counts?: object}}
  */
-export function planAutoGrantRun({ selection, gates, offer, maxGrants = MAX_GRANTS_PER_RUN } = {}) {
+export function planAutoGrantRun({ selection, gates, offer, batchSize } = {}) {
   if (!gates || gates.allOpen !== true) {
     return { ok: false, abort: AUTOGRANT_ABORT.GATES_CLOSED, missing: (gates && gates.missing) || [] };
   }
@@ -199,13 +247,23 @@ export function planAutoGrantRun({ selection, gates, offer, maxGrants = MAX_GRAN
   const observable = assertCohortObservable(sel.cohort || {});
   if (!observable.ok) return { ok: false, abort: AUTOGRANT_ABORT.COHORT_UNVERIFIABLE, counts: sel.counts };
 
-  const list = Array.isArray(sel.candidates) ? sel.candidates : [];
-  if (list.length === 0) return { ok: false, abort: AUTOGRANT_ABORT.NO_CANDIDATES, counts: sel.counts };
-  // 上限超過は**切り捨てずに中止**（部分実行の曖昧さを作らない）
-  if (list.length > maxGrants) {
-    return { ok: false, abort: AUTOGRANT_ABORT.OVER_MAX, counts: sel.counts, max: maxGrants };
-  }
-  return { ok: true, candidates: list, counts: sel.counts };
+  const all = Array.isArray(sel.candidates) ? sel.candidates : [];
+  if (all.length === 0) return { ok: false, abort: AUTOGRANT_ABORT.NO_CANDIDATES, counts: sel.counts };
+
+  // ⚠️ **候補が多くても全体を中止しない**（14,000 件規模でも段階実行で進む）。
+  //    今回のぶん（先頭 N 件）だけを返し、残りは次回の実行が拾う。
+  const size = Number.isInteger(batchSize) && batchSize > 0
+    ? Math.min(batchSize, HARD_MAX_BATCH_SIZE)
+    : (sel.batch ? sel.batch.length : DEFAULT_BATCH_SIZE);
+  const batch = (sel.batch && sel.batch.length === size) ? sel.batch : all.slice(0, size);
+
+  return {
+    ok: true,
+    candidates: batch,
+    recipients: batch.length,
+    remaining: Math.max(0, all.length - batch.length),
+    counts: sel.counts,
+  };
 }
 
 /**
@@ -223,14 +281,94 @@ export function recipientsAfterGrant({ targets, writtenRecordIds }) {
     .filter((id) => id && ok.has(id));
 }
 
+/** この実行の識別子（JST 日付。同じ日の再実行は同じ値 = 付与が冪等になる） */
+export function buildTrialOperationId(nowMs) {
+  return `light-trial-${jstDateString(Number.isFinite(nowMs) ? nowMs : 0)}`;
+}
+
+/**
+ * **下見と実行が同じものを見るための 1 本の入口。**
+ *
+ * 管理画面の preview も cron の実行も**この関数だけ**を呼ぶ。別々に組み立てると
+ * 「画面で見た 100 件」と「実際に付与する 100 件」がズレる。
+ *
+ * @param {{records: object[], env?: object, nowMs: number, gates?: object}} input
+ * @returns {{ok: boolean, abort?: string, ...}}
+ */
+export function buildTrialGrantPlan({ records, env = process.env, nowMs, gates } = {}) {
+  const batch = resolveBatchSize(env);
+  if (!batch.ok) {
+    return {
+      ok: false, abort: AUTOGRANT_ABORT.BATCH_SIZE_REJECTED,
+      reason: batch.reason, requested: batch.requested, hardMax: HARD_MAX_BATCH_SIZE,
+    };
+  }
+  const offerRes = resolveOffer(TRIAL_OFFER_ID);
+  if (!offerRes.ok) return { ok: false, abort: AUTOGRANT_ABORT.OFFER_UNAVAILABLE };
+  const offer = offerRes.offer;
+
+  const selection = selectAutoGrantCandidates({ records, nowMs, maxGrants: batch.size });
+  const g = gates || readAutoGrantGates(env, nowMs);
+  const operationId = buildTrialOperationId(nowMs);
+
+  // ゲートが閉じていても**件数の下見は返す**（書き込みはしない）
+  const view = {
+    offerId: TRIAL_OFFER_ID,
+    operationId,
+    batchSize: batch.size,
+    batchSizeSource: batch.source,
+    hardMax: HARD_MAX_BATCH_SIZE,
+    cohort: selection.cohort,
+    counts: selection.counts,
+    gates: { allOpen: g.allOpen, missing: g.missing },
+  };
+
+  const planned = planAutoGrantRun({ selection, gates: g, offer, batchSize: batch.size });
+  if (!planned.ok) {
+    // 下見のときはゲート閉が普通なので、件数だけは必ず返す
+    const grantPlan = buildComebackPlan({
+      grantOffers: [offer], purchaseOffer: null, selected: selection.batch || [],
+      nowMs, operationId, actor: 'cron-light-trial', source: 'light-trial-autogrant',
+    });
+    return {
+      ...view,
+      ok: false,
+      abort: planned.abort,
+      missing: planned.missing,
+      /** 下見用: ゲートが開いたときに実行される計画の指紋 */
+      planFingerprint: grantPlan.ok ? grantPlan.planFingerprint : '',
+      targets: grantPlan.ok ? grantPlan.targets.length : 0,
+    };
+  }
+
+  const grantPlan = buildComebackPlan({
+    grantOffers: [offer], purchaseOffer: null, selected: planned.candidates,
+    nowMs, operationId, actor: 'cron-light-trial', source: 'light-trial-autogrant',
+  });
+  if (!grantPlan.ok) return { ...view, ok: false, abort: grantPlan.error };
+
+  return {
+    ...view,
+    ok: true,
+    plan: grantPlan,
+    targets: grantPlan.targets.length,
+    remaining: planned.remaining,
+    planFingerprint: grantPlan.planFingerprint,
+  };
+}
+
 /** 実行結果の要約（**アドレスも recordId も含めない**） */
-export function summarizeAutoGrantRun({ plan, granted = 0, failed = 0, queued = 0 }) {
+export function summarizeAutoGrantRun({ plan, granted = 0, failed = 0 }) {
   return {
     コホート: plan && plan.counts ? plan.counts.cohortTotal : 0,
     付与候補: plan && plan.counts ? plan.counts.candidates : 0,
+    今回処理: plan && plan.ok ? plan.recipients : 0,
     付与成功: granted,
     付与失敗: failed,
-    Step1登録: queued,
+    残り: plan && plan.ok ? plan.remaining : (plan && plan.counts ? plan.counts.remaining : 0),
     中止: plan && plan.ok ? null : (plan && plan.abort) || 'unknown',
+    // ⚠️ この経路は**メールを 1 通も作らない**（Step1 は別工程）
+    キュー登録: 0,
+    送信: 0,
   };
 }

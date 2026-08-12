@@ -157,15 +157,15 @@ DeliveryKey は **campaign × version × step × 受信者**。
 5. step2 以降は間隔が来たぶんだけ（自動配信 ON なら cron が 1 日 1 ステップ）
 ```
 
-**入口を自動化する場合**（6 ゲートを開けたときだけ）
+**入口を自動化する場合**（4 ゲートを開けたときだけ）
 
 ```
 cron-light-trial-grant が 1 日 1 回:
   ① CSV コホートを数える（観測できなければ中止）
   ② 候補を選ぶ（過去付与・有料・期限なし付与・付与中・配信不可を除外）
-  ③ 付与（← ここで Customers へ LightGrant* を書く。buildComebackPlan が正本）
-  ④ **付与に成功した recordId だけ**を Step1 の対象にする
-  ⑤ Step1 をキュー登録（実送信は既存 dispatcher）
+  ③ **先頭 100 件だけ**付与（← Customers へ LightGrant* を書く。buildComebackPlan が正本）
+  → 残りは翌日以降の実行が順に処理する（offset は持たない）
+  → **キューも送信も作らない。** Step1 は管理画面から別途
 ```
 
 > ⚠️ **Customers を書くのは付与の 2 経路だけ**（手動 `admin-comeback-grants` /
@@ -190,7 +190,7 @@ cron-light-trial-grant が 1 日 1 回:
 
 ## 9-4. 無料体験の入口（自動付与 / `cron-light-trial-grant.js`）
 
-**既定 OFF。6 つのゲートが全て開くまで Customers へ 1 バイトも書かない。**
+**既定 OFF。4 つのゲートが全て開くまで Customers へ 1 バイトも書かない。**
 
 | # | env | 意味 |
 |---|---|---|
@@ -198,40 +198,51 @@ cron-light-trial-grant が 1 日 1 回:
 | 2 | `COMEBACK_GRANT_ENABLED=true` | 既存の付与ゲート（実行許可） |
 | 3 | `LIGHT_TRIAL_AUTOGRANT_ENABLED=true` | 自動化の許可 |
 | 4 | `LIGHT_TRIAL_AUTOGRANT_ARMED=<当日 JST>` | 当日ぶんの武装（翌日閉じる） |
-| 5 | `MARKETING_CAMPAIGN_ENABLED=true` | Step1 のキュー登録 |
-| 6 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | 実送信の既存ゲート |
 
 1・2 は**手動付与と同じゲートを再利用**する（自動化のための抜け道を作らない）。
 
-### 実行の順序（壊れると「使えないのに案内が届く」）
+> ⚠️ **配信系ゲート（`MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED`）は
+> 要求しない。** この経路は**権利を付けるだけ**でメールを 1 通も作らないため、
+> 権利を配るのに配信を開ける必要がない（開ければ事故の範囲が広がるだけ）。
+
+### 付与と送信は完全に分離する
 
 ```
-① CSV 取り込みコホートを数える  → 観測できなければ中止
-② 候補を選ぶ（有料 / 期限なし付与 / 付与中 / 過去付与 / 配信不可 を除外）
-③ 付与       ← buildComebackPlan の計画をそのまま PATCH（形も冪等性も既存が単一源）
-④ 成功した recordId だけを抽出  ← recipientsAfterGrant()
-⑤ Step1 をキュー登録            ← 付与前・失敗分には 1 通も送らない
+cron-light-trial-grant : Customers の LightGrant* を書く。**キューも送信も作らない**
+Step1 の送信          : 管理画面の dry-run → キュー登録（別工程・別ゲート）
 ```
 
-- 付与の冪等性 … `operationId`（`light-trial-<JST日付>`）＋ 有効な付与保有者は `already_granted`
-- 送信の冪等性 … DeliveryKey（campaign × version × step × 受信者）
-- 上限 100 名 / 回。超えたら**切り捨てずに中止**
-- **再付与しない**: 過去に無料付与の記録がある人は `granted_before` で除外
+Step1 の対象は「**無料期間中であること**」で決まる（`requiresActiveGrant`）。
+付与に失敗した人は権利が無いので、**Step1 の対象に入りようがない**。
+「付与に成功した人だけ送る」は運用手順ではなく**構造**で保証されている。
 
-### 下見（書き込みゼロ）
+### 段階実行（14,000 件規模でも全体 abort しない）
 
-**管理画面**の「無料体験の入口を数える（付与しません）」ボタンが正規の入口。
-`admin-marketing` の `action:'trialGrant'` が、**自動付与と同じ判定**で次を返す:
+1 回の実行では**未付与の候補の先頭 N 件だけ**を処理する。
 
-- 自動付与の ON / OFF（OFF なら不足している env 名）
-- **CSV 取り込みの対象総数**とバッチ別内訳
-- **付与候補**の人数と 1 回の上限
-- **除外理由別の人数**（有料 / 期限なし付与 / 付与中 / 過去付与 / 配信不可 / コホート外）
-- 取り込みの痕跡が 0 件なら「**この状態では誰にも付与しません**」と明示
+| 項目 | 値 |
+|---|---|
+| 既定 | **100 件/回** |
+| 変更 | `LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE`（任意） |
+| 絶対上限（hard max） | **500 件**。超える指定は**実行しない**（fail closed） |
+| 壊れた指定 | `abc` / `0` / `-5` / `10.5` などは**実行しない**（空文字だけは未設定扱い） |
 
-cron 側も同じ内容を返す（運用で API から確認したい場合）:
+- **offset の正本を作らない。** 付与した人は次回の候補判定で `grant_active` /
+  `granted_before` に落ちるので、**再実行すると自然に次の N 件へ進む**
+- 失敗した人は候補に残るため、**次回そのまま再評価**される
+- 並びは **recordId 昇順**で決定的。同じ入力なら毎回同じ N 件・同じ `planFingerprint`
+- **同一顧客への二重付与は起きない**（候補判定 + `operationId` の二重防御）
+
+### 下見と実行が同じものを見る
+
+管理画面の下見も cron の実行も **`buildTrialGrantPlan()` の 1 本**を通る。
+画面に出る「今回処理予定 100 件」と、実際に付与される 100 件は**同じ指紋**になる。
+
+下見が返すもの: 全候補 / 今回処理予定 / 残り / バッチ別 / 除外理由別 /
+`planFingerprint` / 1 回の上限と hard max / 自動付与ゲートの状態。
 
 ```bash
+# 管理画面の「無料体験の入口を数える（付与しません）」と同じ内容
 POST /.netlify/functions/cron-light-trial-grant
   x-admin-secret: <COMEBACK_ADMIN_SECRET or PREMIUM_PLUS_ADMIN_SECRET>
   {"dryRun": true}
