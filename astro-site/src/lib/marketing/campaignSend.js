@@ -145,6 +145,12 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
   if (!campaign || !campaign.campaignId) return null;
   const version = Number(campaign.version);
   if (!Number.isFinite(version)) return null;
+  // ── 連続配信のステップ ───────────────────────────────────────
+  // ステップごとに鍵を分ける（= campaign × version × step × 受信者 で 1 通）。
+  // ⚠️ `sequenceStep` を持たない従来のキャンペーンは **鍵を 1 文字も変えない**。
+  //    変えると既送信者へ再送できてしまう（テストで旧鍵を固定している）。
+  const step = Number(campaign.sequenceStep);
+  const stepPart = Number.isInteger(step) && step > 0 ? `s${step}` : '';
   try {
     return computeDeliveryKey({
       brand: String(brand || 'analytics-keiba'),
@@ -154,9 +160,9 @@ export function computeCampaignDeliveryKey({ campaign, recipientEmail, brand, fr
       campaignDate: 'fixed',
       audienceType: 'admin-selected',
       recipientEmail: String(recipientEmail || ''),
-      contentHash: `v${version}`,
+      contentHash: `v${version}${stepPart}`,
       fromEmail: String(fromEmail || ''),
-      extraKey: `campaign:${campaign.campaignId}:v${version}`,
+      extraKey: `campaign:${campaign.campaignId}:v${version}${stepPart ? `:${stepPart}` : ''}`,
     });
   } catch {
     return null; // 必須項目欠落 → 計画に含めない（fail closed）
@@ -383,7 +389,11 @@ export function computeCampaignContentHash(campaign) {
   // 同じ campaign 定義でも、組み立て方（`marketingEmailShell.js`）が変われば
   // 届く HTML は別物になる。版を入れないと「同じ hash なのに中身が違う」状態を
   // 検知できず、dry-run で確認したものと違うメールを送ってしまう。
-  const withShell = `${seedFull} shell:v${MARKETING_EMAIL_SHELL_VERSION}`;
+  // 連続配信のステップも種に入れる（同じ campaign×version でも別の内容として扱う）。
+  // ⚠️ ステップを持たない従来キャンペーンのハッシュは**変えない**（version ロックを壊さない）。
+  const stepNo = Number(c.sequenceStep);
+  const stepSeed = Number.isInteger(stepNo) && stepNo > 0 ? ` step:${stepNo}` : '';
+  const withShell = `${seedFull}${stepSeed} shell:v${MARKETING_EMAIL_SHELL_VERSION}`;
   return createHash('sha256').update(withShell, 'utf8').digest('hex').slice(0, 16);
 }
 

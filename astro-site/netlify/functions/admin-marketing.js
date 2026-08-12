@@ -134,6 +134,18 @@ import {
   createEngagementSignalStore, emptySignals,
 } from '../../src/lib/marketing/engagementSignalStore.js';
 import {
+  isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends,
+} from '../../src/lib/marketing/campaignSequence.js';
+import {
+  buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL,
+} from '../../src/lib/marketing/sequenceProgress.js';
+import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
+import {
+  selectAutoGrantCandidates, readAutoGrantGates, AUTOGRANT_SKIP_LABEL,
+  MAX_GRANTS_PER_RUN, TRIAL_OFFER_ID,
+} from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
+import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
@@ -536,6 +548,8 @@ export const handler = async (event) => {
     if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
+    if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
+    if (action === 'trialGrant') return await handleTrialGrantPreview({ KEY, BASE, now });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -624,8 +638,11 @@ function buildPreview({ campaign, fromEmail }) {
 
 function handlePreview({ req }) {
   // 停止中でも中身は確認できるようにする（送信経路ではないため）
-  const campaign = getCampaign(req.campaignId, { includeDisabled: true });
-  if (!campaign) return json(400, { error: '未知のキャンペーンです' });
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです' });
+  // 連続配信は **ステップ単位**で確認する（既定は step1）。実際に届く HTML をそのまま返す。
+  const campaign = resolveStepCampaign({ campaign: base, step: req.step });
+  if (!campaign) return json(400, { error: '未知のステップです', sideEffects: 'none' });
   const check = resolveDraft({ campaign, req });
   if (!check.ok) {
     return json(400, { error: check.errors.join(' / '), errors: check.errors, sideEffects: 'none' });
@@ -637,6 +654,10 @@ function handlePreview({ req }) {
     campaignId: campaign.campaignId,
     version: campaign.version,
     campaignName: campaign.name,
+    /** 連続配信のときだけ入る（何通目の文面か） */
+    step: campaign.sequenceStep || null,
+    stepName: campaign.sequenceStepName || null,
+    sequence: describeSequence(base),
     subject: preview.subject,
     html: preview.html,
     text: preview.text,
@@ -973,8 +994,155 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
  * dry-run（live=false）と 実行（live=true）の共通経路。
  * **同じ関数で対象を確定する**ことで、確認した件数と実際に積む件数がズレない。
  */
+/**
+ * 連続配信のステップを解決する。**シーケンスでなければそのまま返す**（既存経路を変えない）。
+ *
+ * 返るのは「キャンペーンと同じ形」なので、以降の描画・contentHash・DeliveryKey・
+ * 送信計画はすべて**既存の関数がそのまま**扱える（ステップ専用経路を作らない）。
+ */
+function resolveStepCampaign({ campaign, step }) {
+  if (!isSequenceCampaign(campaign)) {
+    // シーケンスでないのに step を指定されたら無視せず拒否（取り違え防止）
+    const n = Number(step);
+    if (Number.isFinite(n) && n !== 1) return null;
+    return campaign;
+  }
+  const n = Number(step);
+  return resolveSequenceStep(campaign, Number.isFinite(n) && n > 0 ? n : 1);
+}
+
+/**
+ * 無料体験の入口（自動付与）の**下見**（read-only・**1 バイトも書かない**）。
+ *
+ * 「CSV 取り込みの対象総数 / 付与候補 / 除外理由別の人数」を、**自動付与と同じ判定**
+ * （`lightTrialAutoGrant.js`）で数えて返す。cron を起動せずに管理画面から確認できる。
+ *
+ * ⚠️ ここは**付与しない**。付与できるのは既存の `admin-comeback-grants`（operationId 冪等）
+ *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
+ */
+async function handleTrialGrantPreview({ KEY, BASE, now }) {
+  const { list } = await loadCustomerMarketing({ KEY, BASE, now });
+  const records = list.map((c) => ({ recordId: c.recordId, fields: c.fields, marketing: c.marketing }));
+  const selection = selectAutoGrantCandidates({ records, nowMs: now, maxGrants: MAX_GRANTS_PER_RUN });
+  const observable = assertCohortObservable(selection.cohort);
+  const gates = readAutoGrantGates(process.env, now);
+
+  return json(200, {
+    mode: 'trial-grant-preview',
+    sideEffects: 'none',
+    offerId: TRIAL_OFFER_ID,
+    /** 自動付与のゲート（**閉じている間は 1 件も付与されない**） */
+    auto: {
+      enabled: gates.allOpen,
+      missing: gates.missing,
+      note: gates.allOpen
+        ? '自動付与は有効です。cron が 1 日 1 回、上限まで付与します。'
+        : '自動付与は停止中です。付与するには管理画面（カムバック特典）から手動で行います。',
+    },
+    cohort: {
+      total: selection.cohort.inCohort,
+      byBatch: selection.cohort.byBatch,
+      scanned: selection.counts.scanned,
+      observable: observable.ok,
+      note: observable.ok
+        ? null
+        : 'CSV 取り込みの痕跡が 1 件も見つかりません。**この状態では誰にも付与しません**（取り込み前か、Source を読めていないかを区別できないため）。',
+    },
+    candidates: selection.counts.candidates,
+    cap: MAX_GRANTS_PER_RUN,
+    overMax: selection.counts.overMax,
+    excludedByReason: Object.fromEntries(
+      Object.entries(selection.counts.byReason)
+        .map(([k, v]) => [AUTOGRANT_SKIP_LABEL[k] || COHORT_SKIP_LABEL[k] || k, v]),
+    ),
+    notice: 'これは下見です。**付与もキュー登録もしていません**。',
+  });
+}
+
+/**
+ * 連続配信の状況（**read-only**・送信もキュー登録もしない）。
+ *
+ * 「いま誰が何通目か」「次に送れるのは何人か」「なぜ止まったか」を
+ * **実送信と同じ判定**（`sequenceProgress.js`）で数える。
+ * 画面はこの数字だけを出す（独自に数え直さない）。
+ */
+async function handleSequence({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  const { list, deliveries, blacklistEmails } = await loadCustomerMarketing({ KEY, BASE, now });
+
+  // 除外の材料。**確認できないものは fail closed**（送らない側へ倒す）
+  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
+  const blacklist = await loadBlacklistSets({ KEY, BASE });
+  const { view: engagementView } = await resolveEngagementView({ list, deliveries, now });
+
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const progress = buildSequenceProgress({
+    campaign: base, selected: list, deliveries,
+    brand: BRAND, fromEmail, nowMs: now,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    softBounced: blacklist.soft,
+    engagementByEmail: engagementView.engagementByEmail,
+    engagementThresholds: engagementView.thresholds,
+  });
+  if (!progress.ok) return json(400, { error: `進行を計算できません: ${progress.error}` });
+
+  const next = selectNextDueStep(progress, { maxRecipients: MAX_RECIPIENTS_PER_SEND });
+  const seq = describeSequence(base);
+  const nextDueAt = progress.rows
+    .filter((r) => r.status === 'waiting' && Number.isFinite(r.nextSendAtMs))
+    .map((r) => r.nextSendAtMs)
+    .sort((a, b) => a - b)[0] || null;
+
+  return json(200, {
+    mode: 'sequence-status',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    campaignName: base.name,
+    version: base.version,
+    enabled: base.enabled === true,
+    /** 自動配信のゲート状態（env）。**開いていなければ自動では 1 通も出ない** */
+    auto: readSequenceAutoState(process.env, now),
+    maxSends: resolveMaxSends(base),
+    sequence: seq,
+    /** 次に流せるステップと人数（この人数がそのまま dry-run の対象になる） */
+    next: {
+      step: next.step,
+      recipients: next.recordIds.length,
+      truncated: next.truncated === true,
+      cap: MAX_RECIPIENTS_PER_SEND,
+      /** 送信対象の recordId（画面がそのまま dry-run へ渡す。PII は含まない） */
+      recordIds: next.recordIds,
+    },
+    nextScheduledAt: nextDueAt ? new Date(nextDueAt).toISOString() : null,
+    summary: progress.summary,
+    stopLabels: SEQ_STOP_LABEL,
+    engagement: engagementResponse(engagementView),
+    providerSuppression: describeProviderSuppression(provider),
+    notice: 'これは状況の確認です。**まだ何も送っていません**（キュー登録もしていません）。',
+  });
+}
+
 async function handlePlan({ KEY, BASE, now, req, live }) {
-  const campaign = getCampaign(req.campaignId);
+  const baseCampaign = getCampaign(req.campaignId);
+  if (baseCampaign && isSequenceCampaign(baseCampaign) && !Number.isFinite(Number(req.step))) {
+    // 連続配信は**何通目かを明示**させる（取り違えると別の文面が届く）
+    return json(400, {
+      error: 'このキャンペーンは連続配信です。step を指定してください（1〜' + resolveMaxSends(baseCampaign) + '）',
+      sequence: describeSequence(baseCampaign),
+      sideEffects: 'none',
+    });
+  }
+  // ステップを解決して以降は**キャンペーンと同じ扱い**にする
+  // （描画・contentHash・DeliveryKey・除外判定はすべて既存関数がそのまま処理する）
+  const campaign = baseCampaign ? resolveStepCampaign({ campaign: baseCampaign, step: req.step }) : null;
+  if (baseCampaign && !campaign) {
+    return json(400, { error: '未知のステップです', sideEffects: 'none' });
+  }
   if (!campaign) {
     // 停止中なら理由を返す（「未知」と区別する）
     const disabled = getCampaign(req.campaignId, { includeDisabled: true });
@@ -1245,6 +1413,10 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     campaignId: campaign.campaignId,
     campaignName: campaign.name,
     version: campaign.version,
+    /** 連続配信のときだけ入る（何通目を送ろうとしているか） */
+    step: campaign.sequenceStep || null,
+    stepName: campaign.sequenceStepName || null,
+    maxSends: campaign.sequenceMaxSends || null,
     // 「今回送る」件名・本文（テンプレートではなく確定した文面）
     subject: sending.subject,
     body: sending.body,

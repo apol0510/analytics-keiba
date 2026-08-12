@@ -32,9 +32,13 @@ import {
 } from '../promotions/comebackEmailTemplate.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 import {
-  renderMarketingEmail, UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
+  renderMarketingEmail, applyGrantExpiry,
+  UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
 } from './marketingEmailShell.js';
 import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
+import {
+  isSequenceCampaign, resolveSequenceStep, describeSequence, validateAllSequences,
+} from './campaignSequence.js';
 
 /**
  * カムバック割引案内が案内する条件。**オファーカタログの正本から取る**
@@ -400,6 +404,195 @@ export const CAMPAIGNS = Object.freeze([
     enabled: true,
   },
   {
+    /**
+     * **Light 無料体験 → 有料転換**の連続配信（4 通）。
+     *
+     * ── 導線 ────────────────────────────────────────────────
+     *   CSV 取り込みの無料会員 → **Light 30日無料を付与** → 実際に使ってもらう → Premium へ
+     *
+     * ── 付与は「このキャンペーンの外」で行う（重要）──────────────
+     * 付与を書けるのは次の 2 つだけで、どちらも `buildComebackPlan` を正本に使う:
+     *   1. `admin-comeback-grants`（管理画面からの手動付与・`operationId` で冪等）
+     *   2. `cron-light-trial-grant`（**入口の自動化**・既定 OFF・6 ゲート）
+     * **このシーケンス自身は付与を 1 件も作らない。** 送るのは
+     * **すでに期限付き Light 無料期間中の人**だけ
+     * （`requiresActiveGrant: { tier:'light', termedOnly:true }`）。
+     * 自動付与は「付与に成功した recordId」だけを Step1 の対象にするので、
+     * 付与前・付与失敗の相手へメールが出ることはない。
+     * 付与の正本は `promotionOfferCatalog.js` の `light-30d-free`
+     * （`grantTier: light` / `durationDays: 30` / `restoresPaidContract: false`）。
+     *
+     * ── 期間が終わったら ──────────────────────────────────────
+     * `LightGrantUntil` を過ぎると **書き込み無しで**権利が消えるだけ（純粋な時刻比較）。
+     * 自動で課金されることはない。進行判定は `grant_expired` で止める。
+     *
+     * ── 書かないこと ────────────────────────────────────────
+     * 的中・利益の保証、煽り、手書きの実績数値、価格の直書き。
+     * **プラン間の買い目点数の比較も書かない**（メイン以外の点数は一律ではないため、
+     * 「上位プランでも点数は増えない」は不正確。触れない）。
+     */
+    campaignId: 'light-trial-to-premium-sequence',
+    version: 1,
+    name: 'Light 無料体験 → Premium（連続配信 4 通）',
+    description: 'CSV 取り込みの会員のうち 期限付き Light 無料期間中の人へ、体験の開始 → 使い方 → 期間中の確認 → Premium の提案を 4 通で案内する。付与はこのキャンペーンでは行わない（手動付与 or 入口の自動化が担当）。',
+    benefitType: 'free_access',
+    benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（お申し込み・お支払いの手続きは不要）',
+    subject: '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます',
+    body: '',
+    ctaLabel: 'ログインして使いはじめる',
+    ctaUrl: `${SITE}/dashboard/`,
+    footerNote: 'このメールは、Lightプランの無料期間を設定させていただいたお客様へお送りしています。',
+    /**
+     * 受信者ごとの無料期間の**実際の終了日**（`LightGrantUntil`）を差し込む。
+     * dispatcher が 1 通ずつ解決するので、付与日と送信日がズレても文面が正しい。
+     * ⚠️ `grantDurationDays` は **終了日が読めなかったときだけ**の控えめな代替
+     *    （「付与日から N 日間」）。日付を断定しないための保険であって主役ではない。
+     */
+    showGrantExpiry: true,
+    grantDurationDays: 30,
+    /**
+     * **期限付き Light 無料期間中の人だけ**に送る（付与はしない・進行判定が確認する）。
+     * `termedOnly: true` = 期限なし（`light-lifetime-free`）は対象外。
+     * 「無料期間は◯日まで」と書けない相手に 30 日体験の案内を送らないため。
+     */
+    requiresActiveGrant: { tier: 'light', termedOnly: true },
+    /**
+     * **対象は CSV で取り込んだ会員だけ**（従来からの無料会員には送らない）。
+     * 判定の正本は取り込み時に書いた `Source`（`crm/importedCohort.js`）。
+     * `batchIds` を指定すれば特定バッチだけに絞れる（空 = 取り込み全体）。
+     */
+    requiresImportCohort: { batchIds: null },
+    recommendedSegments: [],
+    // 付与されていること自体が対象条件なので、契約状態・プランでは絞らない
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    sequence: {
+      maxSends: 4,
+      steps: [
+        {
+          stepNumber: 1,
+          delayDays: 0,
+          name: '無料体験の開始',
+          subject: '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます',
+          preheader: 'お申し込みは不要です。ログインするだけで、メインレースの買い目が見られます。',
+          badge: '30日間 無料',
+          headline: '現在、Lightプランを無料でご利用いただけます',
+          body: [
+            'Lightプランの無料期間を設定させていただいています。',
+            'お申し込みもお支払いの手続きも必要ありません。',
+            '',
+            'いつものメールアドレスでログインすると、そのままご利用いただけます。',
+          ].join('\n'),
+          benefitTitle: '無料期間中にご覧いただけるもの',
+          benefitItems: [
+            '各開催のメインレース買い目',
+            '買い目に対する結果（当たった日も外した日も）',
+            'AI総合指数と役割（本命 / 対抗 / 単穴 など）',
+          ],
+          ctaLabel: 'ログインして使いはじめる',
+          ctaUrl: `${SITE}/dashboard/`,
+          // ⚠️ 期間は**受信者ごとの実際の終了日**（`LightGrantUntil`）を差し込む。
+          //    「付与日から30日間」と固定で書かない（付与日と送信日は一致しない）。
+          ctaNote: `お申し込み手続きは必要ありません。${GRANT_EXPIRY_PLACEHOLDER}`,
+          benefitType: 'free_access',
+          benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（お申し込み・お支払いは不要）',
+        },
+        {
+          stepNumber: 2,
+          delayDays: 3,
+          name: '使い方・買い目の見方',
+          subject: '【KEIBA Analytics】メインレースの買い目の見方',
+          preheader: '本命から相手5頭への馬単5点。買い目の読み方と、当日の使い方をご案内します。',
+          badge: '使い方',
+          headline: 'メインレースの買い目は、こう見ます',
+          body: [
+            '無料期間中にご覧いただけるメインレースの買い目について、見方をご案内します。',
+            '',
+            '買い目は「本命 → 相手5頭」の馬単5点です。',
+            '点数を広げて当てにいくのではなく、軸を決めて絞る作り方をしています。',
+            '',
+            '前日には、その買い目と結果をあわせて公開しています。',
+            '当たった日も外した日もそのまま残しているので、',
+            'ご自身の見立てと突き合わせながらお使いいただけます。',
+          ].join('\n'),
+          benefitTitle: '当日の使い方',
+          benefitItems: [
+            'ログインしてメインレースの買い目を確認する',
+            'AI総合指数と役割で、軸にする馬を見る',
+            '翌日、結果ページで答え合わせをする',
+          ],
+          ctaLabel: 'メインレースの買い目を見る',
+          ctaUrl: `${SITE}/dashboard/`,
+          benefitType: 'free_access',
+          benefitDescription: 'Light無料期間中のメインレース買い目と結果の見方をご案内します',
+        },
+        {
+          stepNumber: 3,
+          delayDays: 5,
+          name: '期間中に確認していただきたいこと',
+          subject: '【KEIBA Analytics】無料期間中にご確認いただきたいこと',
+          preheader: '自動で課金されることはありません。期間中に見ておくと役立つ画面をまとめました。',
+          badge: 'ご確認',
+          headline: '無料期間中に見ておいていただきたいもの',
+          body: [
+            '無料期間のうちに確認しておいていただくと分かりやすいものをまとめました。',
+            '',
+            '■ メインレースの買い目と、その結果',
+            '買い目だけでなく、翌日の結果まで見ていただくと精度の感触がつかめます。',
+            '',
+            '■ AI総合指数と役割',
+            '本命・対抗・単穴などの役割と指数の並びを見ると、軸の決め方が分かります。',
+            '',
+            '■ お支払いについて',
+            '無料期間が終わっても、自動で課金されることはありません。',
+            '期間の終了日は、このメールの下部に記載しています。',
+            'ご継続の場合のみ、銀行振込でお手続きいただきます。',
+            'ご入金を確認してから利用期間が始まります。',
+          ].join('\n'),
+          ctaLabel: '無料期間中の予想を見る',
+          ctaUrl: `${SITE}/dashboard/`,
+          ctaNote: `このご案内の時点でお手続きは必要ありません。${GRANT_EXPIRY_PLACEHOLDER}`,
+          benefitType: 'free_access',
+          benefitDescription: 'Light無料期間中に確認しておくと役立つ画面と、お支払いの条件をご案内します',
+        },
+        {
+          stepNumber: 4,
+          delayDays: 7,
+          name: 'Premium の提案',
+          subject: '【KEIBA Analytics】他のレースもご覧になりたい場合は',
+          preheader: 'Lightはメインレース。Premiumは中央・南関の有料予想を全会場ご覧いただけます。',
+          badge: 'プランのご案内',
+          headline: 'もっと他のレースも見たい、と思われた方へ',
+          body: [
+            'Lightプランをお試しいただき、ありがとうございます。',
+            '',
+            'Lightでご覧いただけるのは各開催のメインレースです。',
+            'ここまでお使いいただいて「他のレースも見たい」と思われた場合は、',
+            'Premiumプランで中央（JRA）・南関の有料予想を全会場ご覧いただけます。',
+            '',
+            'メインレースだけで十分という方は、いまのままで問題ありません。',
+            '無料期間の終了後に自動で課金されることはありません。',
+            '終了日は下部に記載しています。',
+            '',
+            'このご案内は今回で最後です。',
+          ].join('\n'),
+          benefitTitle: '違いはご覧いただける範囲です',
+          benefitItems: [
+            'Light … 各開催のメインレース',
+            'Premium … 中央（JRA）・南関の有料予想を全会場',
+            '無料予想と前日の結果ページは、どちらでも引き続きご利用いただけます',
+          ],
+          ctaLabel: 'プランと料金を見る',
+          ctaUrl: `${SITE}/pricing/`,
+          ctaNote: '金額と内容はこちらのページが最新です。',
+          footerNote: 'この一連のご案内は今回で最後です。今後は通常のお知らせのみをお送りします。',
+          benefitType: 'free_access',
+          benefitDescription: 'Light無料期間の内容と、Premiumでご覧いただける範囲の違いをご案内します',
+        },
+      ],
+    },
+    enabled: true,
+  },
+  {
     campaignId: 'comeback-offer',
     benefitType: 'discount',
     benefitDescription: 'この方だけの特別価格（割引）を発行してご案内します',
@@ -467,7 +660,9 @@ export const CAMPAIGNS = Object.freeze([
  * @returns {{ ok: boolean, reason: string|null, detail: string|null }}
  */
 export function isTemplateConfigured(campaign) {
-  const c = campaign;
+  // 連続配信は **step1 が完成していれば使える**（親の body は空でよい）。
+  // 各ステップの中身は `validateSequence()` が別途検査する（件名・本文の重複も禁止）。
+  const c = isSequenceCampaign(campaign) ? resolveSequenceStep(campaign, 1) : campaign;
   if (!c) return { ok: false, reason: 'unknown_campaign', detail: null };
   if (c.isPlaceholderTemplate === true) {
     return { ok: false, reason: 'template_not_configured', detail: c.disabledDetail || null };
@@ -512,6 +707,8 @@ export function listCampaigns({ includeDisabled = true } = {}) {
         audienceRule: c.audienceRule,
         extraAudience: c.extraAudience || null,
         testOnly: c.testOnly === true,
+        /** 連続配信の定義（本文は含めない。件名・間隔・上限だけ） */
+        sequence: describeSequence(c),
         enabled: c.enabled === true,
         usable,
         disabledReason: usable ? null : (c.disabledReason || tpl.detail || tpl.reason || '利用不可'),
@@ -623,6 +820,18 @@ export function renderCampaign({
     unsubscribeUrl: unsubscribeUrl || UNSUBSCRIBE_PLACEHOLDER,
   });
 
+  // ── 無料期間の終了日 ────────────────────────────────────────
+  // 印は本文の外（CTA の注記など）にも置けるので、**完成した HTML / text 全体**へ
+  // 差し込む。渡されなければ印のまま残し、送信直前に dispatcher が
+  // 受信者ごとの `LightGrantUntil` で解決する（プレビューと実物を一致させる）。
+  if (expiryNote) {
+    return {
+      subject: c.subject,
+      html: applyGrantExpiry(rendered.html, expiryNote),
+      text: applyGrantExpiry(rendered.text, expiryNote),
+    };
+  }
+
   return { subject: c.subject, html: rendered.html, text: rendered.text };
 }
 
@@ -639,6 +848,14 @@ export function matchesCampaignAudience(campaign, marketing) {
   const planOk = !rule.plans?.length || rule.plans.includes(marketing.plan);
   if (contractOk && planOk) return { ok: true, enforced, reason: null };
   return { ok: false, enforced, reason: !contractOk ? 'contract_mismatch' : 'plan_mismatch' };
+}
+
+/**
+ * 連続配信の定義がカタログ全体で健全か（テストと起動時チェック用）。
+ * **ここが落ちる定義は本番に出せない**（同じメールの繰り返し・煽り表現・間隔不足など）。
+ */
+export function validateCampaignSequences() {
+  return validateAllSequences(CAMPAIGNS);
 }
 
 export default CAMPAIGNS;
