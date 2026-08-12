@@ -1,3 +1,99 @@
+## 2026-08-12 — 反応が無い相手への配信除外（#313 本番反映 / 観測は継続中）
+
+1 万数千件規模のキャンペーンで「**10〜20 回送っても開封が無い相手を配信から外す**」を、
+誤除外なしで成立させた。判定（`engagementPolicy.js` / 5・10・20 通）は #296 で入っていたが、
+**`admin-marketing.js` が `engagementByEmail` を渡していなかったため実際には 1 人も除外されていなかった**
+（判定モジュールの単体テストは全部 pass するのに効いていない状態）。
+配線だけ先に入れると「開封しているのに記録が無い人」を切るため、**反応の正本を作ってから**繋いだ。
+
+### 反応の正本
+
+| 指標 | 正本 | 読み方 |
+|---|---|---|
+| sent / delivered | `CampaignDeliveries`（`EmailType='campaign'`） | 宛先ぶんだけ名指し取得（既存） |
+| **open / click** | Event Webhook → Redis `ak:mkt:eng:v1:{open,click}` | `HGETALL` 数回 |
+| 購入 / ログイン | `Customers.PaidAt` / `LastLoginAt` | 既存 |
+
+- **Blob（NDJSON）が監査の正本**。Redis は**再構成できる補助索引**で、落ちても監査は欠けない
+  （`blob` モードの Blob 失敗は従来どおり致命 = provider へ再送させる。Redis 失敗は非致命）
+- **Airtable `EmailEvents` の全件走査へは戻していない**（容量対策で行は削除済み）。
+  guard テスト（`engagementWiring.guard.test.mjs`）が `EmailEvents` の再登場を検知する
+- フィールドは `EmailHash`（台帳と同じ `sha256(lower(email))` 先頭 32 桁）。Redis に生アドレスを置かない
+- **回数を持たず「最後に反応した時刻」だけ**保持 → 1 バッチ `HSET` 1 回・provider 再送でも二重計上なし
+
+### fail closed（1 つでも欠けたら誰も除外しない）
+
+`guard_off` / `signal_store_unavailable` / `open_not_measured`（**無効も不明も不可**） /
+`no_open_recorded` / `signal_stale`（既定 7 日） / `no_coverage_start`。
+さらに **集計を始めて以降の配信だけ**を数える（送信時刻が読めない行も数えない）。
+`MARKETING_ENGAGEMENT_COVERAGE_SINCE` は後ろへずらせるが**記録開始より前へは戻せない**。
+
+→ **deploy 直後は誰も除外されない。これは正常**（「0 人だから完了」ではない。下の観測条件を参照）。
+
+### 変えていないもの
+
+`Customers` は削除しない / unsubscribe・bounce・provider suppression が**先に**効く（理由を奪わない） /
+取引メール（payment・auth・support・expiry・step・race_main・transactional）は対象外 /
+benefit の無い大量配信を止める guard は据え置き / `CampaignDeliveries` の dual 運用不変 /
+`MARKETING_EVENT_SINK` 不変 / **production env 変更なし・本番 datastore への手動書込みなし・本番メール送信なし**。
+
+### 検証（マージ前）
+
+- 新規テスト 45 件（境界 **4/5/9/10/19/20**、open あり/なし/記録なし、購入・ログインでの ACTIVE 復帰、
+  **下見と enqueue の一致・再実行の安定**、既存除外との併用、Redis/応答への PII 非露出）
+- `test:marketing` 1204 / `test:crm` 545 / `test:webhooks` 163 pass、`build` OK、`check:safety` exit 0
+- **配線そのものを検査する guard** を追加（#296 の「テストは通るが効いていない」を再発させない）
+
+### 本番反映（read-only で確認済み / 2026-08-12）
+
+- deploy `6a7bd79b` = `81813ab5`（main / state=ready / published 02:18 UTC）
+- `/admin/premium-plus-eligibility/`（HTTP 200）に **engagement パネルが配信されている**
+  （`mkEngBox` / `mkRenderEngagement` / 「このセグメントの送信対象」/「うち 反応なしで除外」/
+  「適用していません」/ `blockedBySegment` / `blockedThisPlan` を実測）
+- `admin-marketing`（secret 無し）→ **403**。認可は従来どおり（副作用ゼロ）
+- CI: main の `check:ssr-runtime-data` は #314 で green に復帰済み
+
+### ⏳ 未完了の観測条件（**ここが埋まるまで本件は完了ではない**）
+
+deploy 直後に「除外 0 人」なのは**設計どおり**であって、動作の証明ではない。
+次の 3 段が自然に埋まったことを確認して初めて完了とする。
+
+1. **反応の記録が動くこと**
+   `sendgrid-webhook` の正常受信で `sink.engagementSignal === 'ok'`、かつ
+   `blob` は `ok` のまま（`blob_failed` = 0 / `degraded` なし）。
+   確認法: Netlify Function ログ、または下の管理画面で「最後に反応を受信」が更新されること。
+2. **`適用中` へ変わること**
+   自然な開封が貯まり `coverage.openRecorded > 0` かつ受信が新しい状態になると、
+   セグメント下見の表示が `適用していません（no_open_recorded）` → **`適用中`** に変わる。
+   このとき「数えている期間」に記録開始日が出る。
+3. **`engagement_blocked` が自然発生すること**
+   記録開始**以降**に 10 通以上届いて無反応の相手が現れたら、
+   dry-run の除外明細と下見の「うち 反応なしで除外」に `engagement_blocked` が**実際に**出る。
+   ⚠️ 現状は 1 人あたりの生涯送信回数が最大 2〜4 回（#296 実測）なので、
+   **数か月単位で送信を重ねないと到達しない**。到達前に「効いていない」と判断しないこと。
+
+確認手順（read-only・送信もキュー登録もしない）:
+`/admin/premium-plus-eligibility/` → 「セグメントの下見」→ 管理シークレット入力 →
+「人数を数える（送信しません）」。engagement パネルに 5 区分・閾値 5/10/20・適用状態・
+除外人数・数えている期間・最後に反応を受信が出る。
+
+### rollback
+
+`MARKETING_ENGAGEMENT_GUARD=off` を production env へ設定して redeploy → コード変更なしで
+従来の挙動（engagement 除外なし）へ戻る。仕様は `docs/ENGAGEMENT_SUPPRESSION.md`。
+
+### 変更範囲
+
+`src/lib/marketing/engagementSignalStore.js`（新規）/ `engagementGuard.js`（新規）/
+`engagementStats.js`（`sinceMs`）/ `campaignSend.js`・`campaignPlanView.js`（ラベル）/
+`src/lib/crm/audienceSegments.js`（`SEG_EXCLUDE.ENGAGEMENT_BLOCKED`）/
+`netlify/functions/admin-marketing.js`（配線）/ `netlify/functions/sendgrid-webhook.js`（記録）/
+`src/pages/admin/premium-plus-eligibility.astro`（表示）/ `docs/ENGAGEMENT_SUPPRESSION.md`（新規）/
+`docs/CUSTOMER_MARKETING.md` / テスト 5 ファイル。
+**`package.json` / lockfile / workflow / データ schema は未変更。**
+
+- **Last verified**: 2026-08-12（本番 read-only。上の観測条件 1〜3 は未達）
+
 ## 2026-08-10 — 再発行閾値を idle TTL に比例させる（#311 本番反映・30日 idle 失効の回避）
 
 #310 で keep-alive を有料 13 ページへ配線しても Cookie は延びなかった。
