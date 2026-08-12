@@ -854,6 +854,7 @@ CTA に入れる必要がある。ここが崩れると「他人のオファー�
 | キャンペーン定義（単一源） | `src/lib/marketing/campaignCatalog.js` |
 | キャンペーン固有の追加条件（純粋） | `src/lib/marketing/campaignAudienceRules.js` |
 | 送信対象確定・冪等性・頻度ガード（純粋） | `src/lib/marketing/campaignSend.js` |
+| **連続配信**（ステップ定義・進行・自動化） | `src/lib/marketing/campaignSequence.js` / `sequenceProgress.js` / `sequenceAutomation.js` → [`CAMPAIGN_SEQUENCE.md`](./CAMPAIGN_SEQUENCE.md) |
 | **反応なし除外**（状態・閾値・適用可否・反応の集計） | `src/lib/marketing/engagementPolicy.js` / `engagementGuard.js` / `engagementSignalStore.js` → [`ENGAGEMENT_SUPPRESSION.md`](./ENGAGEMENT_SUPPRESSION.md) |
 | 送信ゲート・送信直前再検証（純粋） | `src/lib/marketing/marketingDispatchGate.js` |
 | SendGrid suppression 読み取り（GET のみ） | `src/lib/marketing/providerSuppression.js` |

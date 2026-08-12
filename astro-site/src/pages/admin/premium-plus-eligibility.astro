@@ -162,6 +162,29 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <div class="dry-panel" id="mkSegResult" hidden></div>
         <div class="measure-box" id="mkMeasureBox" hidden></div>
         <!--
+          連続配信（シーケンス）の状況。**送信前に「誰が何通目か・次に何人へ送るか」を見る**。
+          ここでは送信もキュー登録もしない。実際に届く HTML は各ステップの「文面を見る」で確認する。
+        -->
+        <!--
+          無料体験の入口（自動付与）の下見。**ここでは付与しない**。
+          CSV 取り込みの対象総数・付与候補・除外理由を送信前に確認する。
+        -->
+        <div class="seq-box">
+          <div class="toolbar">
+            <button type="button" id="mkTrialLoad" class="btn-ghost btn-md">無料体験の入口を数える（付与しません）</button>
+            <span class="note" id="mkTrialState" aria-live="polite"></span>
+          </div>
+          <div class="dry-panel" id="mkTrialResult" hidden></div>
+        </div>
+        <div class="seq-box">
+          <div class="toolbar">
+            <select id="mkSeqSelect" aria-label="連続配信キャンペーン"></select>
+            <button type="button" id="mkSeqLoad" class="btn-primary btn-md">状況を見る（送信しません）</button>
+            <span class="note" id="mkSeqState" aria-live="polite"></span>
+          </div>
+          <div class="dry-panel" id="mkSeqResult" hidden></div>
+        </div>
+        <!--
           反応（engagement）の状況。**送信前にここで「何人が反応なしで除外されるか」を見る**。
           除外を適用してよい材料が揃っていないときは、区分の人数を参考値と断ったうえで
           「除外は適用していません」と明示する（0 と未計測を混同させない）。
@@ -1528,6 +1551,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 実際のメール本文をそのまま出す枠。枠内の配色はメール側の HTML が決める
      （管理 UI 側のダーク配色をここへ持ち込まない） */
   .ppe .prev-frame { width: 100%; height: 22rem; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; }
+  .ppe .seq-box { margin-top: .8rem; }
+  .ppe .mail-text { margin-top: .6rem; padding: .6rem .7rem; max-height: 16rem; overflow: auto;
+    white-space: pre-wrap; font-size: .8rem; line-height: 1.6; background: rgba(15,23,42,.35);
+    border: 1px solid rgba(148,163,184,.2); border-radius: 8px; }
   .ppe .prev-body { white-space: pre-wrap; word-break: break-word; font-size: .78rem; line-height: 1.8;
     color: #dbe6f5; background: #0d1626; border: 1px solid rgba(148,163,184,.16); border-radius: 8px;
     padding: .8rem; margin: .5rem 0 0; font-family: inherit; }
@@ -3069,6 +3096,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (!data) return;
       mkCampaigns = data.campaigns || [];
       mkLabels = data.labels || {};
+      // 連続配信のセレクトも同じカタログから埋める（画面が独自のキャンペーン表を持たない）
+      try { mkSeqInit(); } catch { /* シーケンス UI が無くても一覧は出す */ }
       mkSendEnabled = !!data.sendEnabled;
       mkState.sendEnabled = !!data.sendEnabled;
       mkState.dispatchEnabled = !!data.dispatchEnabled;
@@ -4627,6 +4656,210 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       p.textContent = eng.note || '';
       box.appendChild(p);
     }
+
+
+    // ══ 連続配信（シーケンス）══════════════════════════════════════
+    // **判定はすべてサーバー**（sequenceProgress.js）。画面は返ってきた数字を出すだけ。
+    // ここから送信もキュー登録もしない（dry-run へは対象 recordId を渡して従来経路に乗せる）。
+
+    let mkSeqLoaded = false;
+    let mkSeqLast = null;   // 直近の status 応答（Preview / dry-run 引き渡しに使う）
+
+    /** シーケンスを持つキャンペーンだけをセレクトに出す */
+    function mkSeqInit() {
+      const sel = $('mkSeqSelect');
+      if (!sel || mkSeqLoaded) return;
+      const seqs = (mkCampaigns || []).filter((c) => c && c.sequence);
+      sel.innerHTML = '';
+      if (seqs.length === 0) {
+        const o = document.createElement('option');
+        o.value = ''; o.textContent = '（連続配信のキャンペーンがありません）';
+        sel.appendChild(o);
+        return;
+      }
+      for (const c of seqs) {
+        const o = document.createElement('option');
+        o.value = c.campaignId;
+        o.textContent = c.name + '（全' + c.sequence.maxSends + '通）';
+        sel.appendChild(o);
+      }
+      mkSeqLoaded = true;
+    }
+
+    async function mkSeqStatus() {
+      const btn = $('mkSeqLoad');
+      const state = $('mkSeqState');
+      const id = $('mkSeqSelect')?.value;
+      if (!btn || !id || btn.dataset.busy === '1') return;
+      btn.dataset.busy = '1'; btn.disabled = true;
+      state.textContent = '数えています…（送信もキュー登録もしません）';
+      try {
+        const out = await mkCall({ action: 'sequence', campaignId: id });
+        if (!out) { state.textContent = '取得できませんでした。'; return; }
+        mkSeqLast = out;
+        mkSeqRender(out);
+        state.textContent = '';
+      } finally {
+        btn.dataset.busy = ''; btn.disabled = false;
+      }
+    }
+
+    /** 件数と各ステップの件名を出す。**顧客は 1 件も DOM へ出さない** */
+    function mkSeqRender(out) {
+      const box = $('mkSeqResult');
+      if (!box) return;
+      box.innerHTML = '';
+      box.hidden = false;
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+        return d;
+      };
+
+      const sum = out.summary || {};
+      const stops = sum.byStopReason || {};
+      const labels = out.stopLabels || {};
+      const auto = out.auto || {};
+
+      row('キャンペーン', out.campaignName + '（' + out.campaignId + ' v' + out.version + '）');
+      row('自動配信', auto.enabled ? 'ON' : 'OFF（管理画面から手動で確認・登録します）', auto.enabled ? 'is-ok' : '');
+      if (!auto.enabled && Array.isArray(auto.missing) && auto.missing.length) {
+        row('　自動配信に必要な設定', auto.missing.join(' / '));
+      }
+      row('最大配信回数', out.maxSends + ' 通');
+      row('対象人数（母数）', (sum.total || 0) + ' 名');
+      row('次に送れる人数',
+        (out.next && out.next.step ? 'ステップ' + out.next.step + ' へ ' + out.next.recipients + ' 名' : '0 名（いま送れる相手はいません）'),
+        out.next && out.next.recipients > 0 ? 'is-ok' : '');
+      row('待機中（間隔待ち）', (sum.waiting || 0) + ' 名');
+      row('次回予定', out.nextScheduledAt ? String(out.nextScheduledAt).replace('T', ' ').slice(0, 16) : '—');
+      row('配信完了', (sum.completed || 0) + ' 名');
+      row('自動停止', (sum.stopped || 0) + ' 名');
+      row('　うち 購入・契約成立', (stops.purchased || 0) + ' 名', 'is-ok');
+      row('　うち 無料体験がまだ（付与が必要）', (stops.grant_required || 0) + ' 名');
+      row('　うち 無料体験の期間終了', (stops.grant_expired || 0) + ' 名');
+      row('　うち 付与の取り消し', (stops.grant_revoked || 0) + ' 名');
+      row('　うち 期限なし付与（30日体験の対象外）', (stops.grant_lifetime || 0) + ' 名');
+      row('　うち 対象コホート外（CSV 取り込みでない）', (stops.not_in_cohort || 0) + ' 名');
+      row('　うち 反応なしで除外', (stops.engagement_blocked || 0) + ' 名');
+      row('　うち 配信停止・バウンス等', ((stops.not_sendable || 0) + (stops.provider_suppressed || 0) + (stops.soft_bounce || 0)) + ' 名');
+      row('　うち 対象条件から外れた', (stops.audience_mismatch || 0) + ' 名');
+      if (sum.balanced !== true) row('⚠️ 検算', '母数と内訳が一致しません', 'is-ng');
+
+      // ステップ別（件名 / 間隔 / 送信済み / いま送れる）＋ 実際に届く HTML の確認
+      const seq = out.sequence || { steps: [] };
+      const sent = sum.sentByStep || {};
+      const due = sum.dueByStep || {};
+      for (const st of seq.steps) {
+        const d = row(
+          'ステップ' + st.stepNumber + '（' + (st.delayDays === 0 ? '開始時' : '前回から' + st.delayDays + '日後') + '）',
+          st.subject,
+        );
+        const meta = document.createElement('div');
+        meta.className = 'dp-row sub-row';
+        const mk = document.createElement('span'); mk.className = 'dp-k'; mk.textContent = '　queue 済み / いま送れる';
+        const mv = document.createElement('span'); mv.className = 'dp-v';
+        mv.textContent = (sent[st.stepNumber] || 0) + ' 名 / ' + (due[st.stepNumber] || 0) + ' 名';
+        meta.appendChild(mk); meta.appendChild(mv);
+        box.appendChild(meta);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-ghost btn-sm';
+        btn.textContent = '文面を見る（実際に届く HTML）';
+        btn.addEventListener('click', () => mkSeqPreview(out.campaignId, st.stepNumber));
+        d.appendChild(btn);
+      }
+
+      const note = document.createElement('p');
+      note.className = 'blocker';
+      note.textContent = out.notice || 'まだ何も送っていません。';
+      box.appendChild(note);
+    }
+
+    /** 実際に届く HTML をそのまま出す（サンプル氏名・プレビュー用配信停止 URL） */
+    async function mkSeqPreview(campaignId, step) {
+      const out = await mkCall({ action: 'preview', campaignId, step });
+      if (!out) return;
+      const body = mkOpenModal('ステップ' + step + ' の文面（送信しません）');
+      const dl = document.createElement('dl'); dl.className = 'kv';
+      kvRow(dl, '件名', out.subject);
+      kvRow(dl, 'プリヘッダー', (out.preview && out.preview.preheader) || '—');
+      kvRow(dl, 'CTA', ((out.preview && out.preview.ctaLabel) || '') + ' → ' + ((out.preview && out.preview.ctaKind) || ''));
+      kvRow(dl, '内容 hash', String(out.contentHash || '').slice(0, 12));
+      body.appendChild(dl);
+
+      const frame = document.createElement('iframe');
+      frame.className = 'prev-frame';
+      frame.setAttribute('sandbox', '');
+      frame.srcdoc = '<body style="margin:0;background:#fff;">' + out.html + '</body>';
+      body.appendChild(frame);
+
+      const pre = document.createElement('pre');
+      pre.className = 'mail-text';
+      pre.textContent = out.text || '';
+      body.appendChild(pre);
+    }
+
+    // ══ 無料体験の入口（自動付与）の下見 ═══════════════════════════
+    // **判定はサーバー**（lightTrialAutoGrant.js）。画面は返ってきた件数を出すだけ。
+    // ここから付与もキュー登録もしない。
+
+    async function mkTrialPreview() {
+      const btn = $('mkTrialLoad');
+      const state = $('mkTrialState');
+      if (!btn || btn.dataset.busy === '1') return;
+      btn.dataset.busy = '1'; btn.disabled = true;
+      state.textContent = '数えています…（付与もキュー登録もしません）';
+      try {
+        const out = await mkCall({ action: 'trialGrant' });
+        if (!out) { state.textContent = '取得できませんでした。'; return; }
+        mkTrialRender(out);
+        state.textContent = '';
+      } finally {
+        btn.dataset.busy = ''; btn.disabled = false;
+      }
+    }
+
+    /** 件数だけを描く。**顧客は 1 件も DOM へ出さない** */
+    function mkTrialRender(out) {
+      const box = $('mkTrialResult');
+      if (!box) return;
+      box.innerHTML = '';
+      box.hidden = false;
+      const row = (k, v, cls) => {
+        const d = document.createElement('div'); d.className = 'dp-row ' + (cls || '');
+        const a = document.createElement('span'); a.className = 'dp-k'; a.textContent = k;
+        const b = document.createElement('span'); b.className = 'dp-v'; b.textContent = v;
+        d.appendChild(a); d.appendChild(b); box.appendChild(d);
+      };
+      const c = out.cohort || {};
+      const auto = out.auto || {};
+      row('自動付与', auto.enabled ? 'ON' : 'OFF（管理画面から手動で付与します）', auto.enabled ? 'is-ok' : '');
+      if (!auto.enabled && Array.isArray(auto.missing) && auto.missing.length) {
+        row('　自動付与に必要な設定', auto.missing.join(' / '));
+      }
+      row('CSV 取り込みの対象総数', (c.total || 0) + ' 名', c.total > 0 ? 'is-ok' : 'is-ng');
+      const batches = Object.entries(c.byBatch || {});
+      row('　バッチ別', batches.length ? batches.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
+      row('走査した顧客', (c.scanned || 0) + ' 名');
+      row('付与候補', (out.candidates || 0) + ' 名', out.candidates > 0 ? 'is-ok' : '');
+      row('1 回の上限', (out.cap || 0) + ' 名' + (out.overMax ? '（超過のため実行は中止されます）' : ''));
+      const ex = Object.entries(out.excludedByReason || {});
+      row('除外理由', ex.length ? ex.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
+      if (c.observable === false) {
+        const w = document.createElement('p'); w.className = 'blocker'; w.textContent = c.note;
+        box.appendChild(w);
+      }
+      const p = document.createElement('p'); p.className = 'blocker'; p.textContent = out.notice || '';
+      box.appendChild(p);
+    }
+
+    $('mkTrialLoad')?.addEventListener('click', mkTrialPreview);
+
+    $('mkSeqLoad')?.addEventListener('click', mkSeqStatus);
 
     $('mkSegLoad')?.addEventListener('click', mkSegPreview);
 

@@ -18,6 +18,7 @@ import {
   NAME_FALLBACK,
 } from './campaignCatalog.js';
 import { computeCampaignContentHash } from './campaignSend.js';
+import { getSequenceSteps, resolveSequenceStep } from './campaignSequence.js';
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 
@@ -179,12 +180,35 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     // 無料会員 活性化（2026-08-09 新規）。無料で見られる範囲だけを案内し、
     // 価格・契約の勧誘は書かない。休眠再アプローチとは対象も入口も違う。
     'free-member-activation': { version: 1, hash: '256dfcbb6c06209c' },
+    // 連続配信は **ステップごと**にロックする（ステップ単位で DeliveryKey が分かれるため、
+    // 1 ステップだけ文面を変えても、そのステップは既送信者へ届かない）。
+    'light-trial-to-premium-sequence': {
+      version: 1,
+      steps: {
+        1: 'b7d45ce01bc4e686',
+        2: 'a40b36b71fdeee59',
+        3: '490be646ddf3f46b',
+        4: '1964397b87c74383',
+      },
+    },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
     assert.ok(lock, `${c.campaignId}: version ロックに未登録。追加してください`);
     assert.equal(c.version, lock.version,
       `${c.campaignId}: version が変わっています。LOCKED の version と hash を更新してください`);
+    if (lock.steps) {
+      // 連続配信: ステップごとのハッシュを固定する
+      const steps = getSequenceSteps(c);
+      assert.equal(steps.length, Object.keys(lock.steps).length,
+        `${c.campaignId}: ステップ数が変わっています。LOCKED を更新してください`);
+      for (const s of steps) {
+        const effective = resolveSequenceStep(c, s.stepNumber);
+        assert.equal(computeCampaignContentHash(effective), lock.steps[s.stepNumber],
+          `${c.campaignId} step${s.stepNumber}: 文面が変更されています。**version を上げてから** LOCKED を更新してください`);
+      }
+      continue;
+    }
     assert.equal(computeCampaignContentHash(c), lock.hash,
       `${c.campaignId}: 本文/件名/CTA が変更されています。**version を上げてから** LOCKED を更新してください`);
   }
