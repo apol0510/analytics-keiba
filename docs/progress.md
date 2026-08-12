@@ -1,3 +1,42 @@
+## 2026-08-12 — 【完了】Customers 重複整理（正本状態を確定）
+
+**この案件は完了。** 以後の正本状態は次のとおり:
+
+| 項目 | 値 |
+|---|---|
+| Customers 総数 | **15,961** |
+| 一意メールアドレス | **15,961** |
+| 重複グループ | **0 組** |
+
+本日の作業で **10 レコード削除**（7 + 3）し、重複 10 組をすべて解消した。
+削除の判定・実行ログ・事後確認・rollback は下の各項に記録済み。
+rollback 用 export は `~/.analytics-keiba-ops/dedupe/2026-08-12/`（repo 外・700・git 管理外）。
+
+### 完了後の運用
+
+- 重複が再発したら `astro-site/scripts/dedupe-customers.mjs`（既定 dry-run）で同じ手順を踏む
+- 判定基準は `docs/CUSTOMER_DEDUPE.md` が単一源
+- **再発の外部要因**（旧 nankan-analytics の `auth-user.js` が同一 Base へ重複を作り得る）は
+  AK では直せない。別案件として残す
+
+## 2026-08-12 — 【保留】ポイント交換の未処理申請（**この案件は止めない**）
+
+**現在ポイント機能は使用していない**ため、以後の作業を止める要因にしない。
+`Status` 変更 / `ProcessedDate` 更新 / `Notes` 更新 / ポイント変更 / 顧客への送信は
+**いずれも行わない**。記録だけ残す。
+
+| 分類 | 件数 | 申請 |
+|---|---|---|
+| 提供済み証拠あり | 1 | `recSQS3N0bbLO7Th2` |
+| 受付のみ・提供証拠なし | 2 | `rechMTQgCKlmOcGGe` / `recPYBFN9JbZi2akM` |
+| 重複申請 | 1 | `recmTm4C193Dah651` |
+| 提供済みか不明 | 3 | `recFkpnHzUZOJ8UXg` / `recL2D5BFu2kBKWoR` / `rec12DhAPYThoJO1D` |
+
+- 実対応件数（重複を除く）= 6 件 / 5 名
+- `PointExchangeRequests` の `Status` は全件 `Pending` のままで**実態と同期していない**
+- 再開するときは `docs/POINT_EXCHANGE_FULFILLMENT.md`（冪等フローの設計案）から入る
+- **提供済み証拠のある申請へ再送しない / 不明な申請へ推測で再送しない**
+
 ## 2026-08-12 — Customers の重複を完全解消（追加 3 件削除・重複 0 組）
 
 先の 7 件に続き、保留していた 3 組を削除した。**Customers の重複はゼロになった。**
