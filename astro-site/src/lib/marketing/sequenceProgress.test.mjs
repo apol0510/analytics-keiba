@@ -280,11 +280,15 @@ test('resolveRecipientProgress 単体でも同じ答え', () => {
 const GRANT_CAMPAIGN = Object.freeze({
   ...CAMPAIGN,
   campaignId: 'seq-grant-test',
-  requiresActiveGrant: 'light',
+  // 期限付きの Light 無料体験のみ。期限なし（lifetime）は対象外
+  requiresActiveGrant: { tier: 'light', termedOnly: true },
   audienceRule: { contracts: [], plans: [], enforce: false },
 });
 
-const grantFields = (over = {}) => ({ Email: 'g@example.com', Status: 'active', ...over });
+// CSV 取り込みの会員であることも条件（Source が正本）
+const grantFields = (over = {}) => ({
+  Email: 'g@example.com', Status: 'active', Source: 'customer-import:imp-A', ...over,
+});
 const grantCustomer = (over = {}) => {
   const fields = grantFields(over);
   return { recordId: 'rec-g', fields, marketing: resolveCustomerMarketing({ fields, nowMs: NOW }) };
@@ -313,17 +317,41 @@ test('【停止】無料期間が終わったら止まる（「未付与」と�
   assert.notEqual(p.rows[0].stopReason, SEQ_STOP.GRANT_REQUIRED);
 });
 
-test('永久無料（Lifetime）でも対象になる', () => {
+test('【重要】期限なしの無料付与（lifetime）は対象外', () => {
   const p = grantRun([grantCustomer({ LightGrantLifetime: true })]);
-  assert.equal(p.rows[0].status, SEQ_STATUS.DUE);
+  assert.equal(p.rows[0].status, SEQ_STATUS.STOPPED);
+  assert.equal(p.rows[0].stopReason, SEQ_STOP.GRANT_LIFETIME, '30日体験の案内を lifetime 保有者へ送っている');
 });
 
-test('取り消した付与では送らない（値が消え RevokedAt が残る）', () => {
-  const revoked = grantCustomer({
+test('取り消し（revoked）は「期間終了」と区別して止める', () => {
+  const p = grantRun([grantCustomer({
     LightGrantUntil: null, LightGrantRevokedAt: new Date(NOW - DAY).toISOString(),
+  })]);
+  assert.equal(p.rows[0].stopReason, SEQ_STOP.GRANT_REVOKED);
+});
+
+test('【重要】CSV 取り込みの会員でなければ送らない（コホート限定）', () => {
+  const cohortCampaign = { ...GRANT_CAMPAIGN, requiresImportCohort: { batchIds: null } };
+  const outsider = {
+    recordId: 'rec-o',
+    fields: { Email: 'old@example.com', Status: 'active', LightGrantUntil: new Date(NOW + 20 * DAY).toISOString() },
+    marketing: resolveCustomerMarketing({
+      fields: { Email: 'old@example.com', Status: 'active', LightGrantUntil: new Date(NOW + 20 * DAY).toISOString() },
+      nowMs: NOW,
+    }),
+  };
+  const p = buildSequenceProgress({
+    campaign: cohortCampaign, selected: [outsider, grantCustomer({ LightGrantUntil: new Date(NOW + 20 * DAY).toISOString() })],
+    deliveries: [], brand: BRAND, fromEmail: FROM, nowMs: NOW, providerSuppressed: new Set(),
   });
-  const p = grantRun([revoked]);
-  assert.equal(p.rows[0].status, SEQ_STATUS.STOPPED);
+  const outsiderRow = p.rows.find((r) => r.email === 'old@example.com');
+  assert.equal(outsiderRow.stopReason, SEQ_STOP.NOT_IN_COHORT);
+  assert.equal(p.summary.due, 1, 'コホート内の 1 名だけが対象');
+});
+
+test('コホート指定が無いシーケンスは従来どおり（既存を壊さない）', () => {
+  const p = grantRun([grantCustomer({ LightGrantUntil: new Date(NOW + 20 * DAY).toISOString() })]);
+  assert.equal(p.rows[0].status, SEQ_STATUS.DUE);
 });
 
 test('【停止】無料体験中に有料契約が成立したら目的達成として止まる', () => {

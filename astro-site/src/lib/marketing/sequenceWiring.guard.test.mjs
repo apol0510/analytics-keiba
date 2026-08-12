@@ -13,6 +13,8 @@ const ADMIN = read('../../../netlify/functions/admin-marketing.js');
 const CRON = read('../../../netlify/functions/cron-campaign-sequence.js');
 const PAGE = read('../../pages/admin/premium-plus-eligibility.astro');
 const PROGRESS = read('./sequenceProgress.js');
+const TRIAL_CRON = read('../../../netlify/functions/cron-light-trial-grant.js');
+const AUTOGRANT = read('../comeback/lightTrialAutoGrant.js');
 const AUTO = read('./sequenceAutomation.js');
 
 const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -108,12 +110,56 @@ test('【安全】シーケンスは無料付与を書かない（付与は admi
   assert.match(codeOnly(PROGRESS), /GRANT_REQUIRED|GRANT_EXPIRED/);
 });
 
+// ── 無料体験の入口（自動付与）────────────────────────────────
+test('【安全】自動付与は 6 ゲートが揃うまで Customers を書かない', () => {
+  const code = codeOnly(TRIAL_CRON);
+  const gateIdx = code.indexOf('readAutoGrantGates');
+  const patchIdx = code.indexOf("method: 'PATCH'");
+  assert.ok(gateIdx > 0 && patchIdx > gateIdx, 'ゲート判定より前に書き込んでいる');
+  for (const env of [
+    'COMEBACK_GRANT_FIELDS_READY', 'COMEBACK_GRANT_ENABLED',
+    'LIGHT_TRIAL_AUTOGRANT_ENABLED', 'LIGHT_TRIAL_AUTOGRANT_ARMED',
+    'MARKETING_CAMPAIGN_ENABLED', 'MARKETING_CAMPAIGN_DISPATCH_ENABLED',
+  ]) assert.match(AUTOGRANT, new RegExp(env), `ゲートが欠けている: ${env}`);
+});
+
+test('【安全】付与の形は既存 planner を使う（複製しない）', () => {
+  const code = codeOnly(TRIAL_CRON) + codeOnly(AUTOGRANT);
+  assert.match(code, /buildComebackPlan\(/);
+  // 付与フィールドを自前で組み立てていない
+  assert.equal(/LightGrantUntil:\s*/.test(code), false, '付与フィールドを直接組み立てている');
+  assert.equal(/buildGrantFields\(/.test(code), false, '低レベル API を直接叩いている');
+});
+
+test('【重要】付与 → Step1 の順序が保証されている', () => {
+  const code = codeOnly(TRIAL_CRON);
+  const grantIdx = code.indexOf('applyGrants(');
+  const queueIdx = code.indexOf('buildCampaignPlan(');
+  assert.ok(grantIdx > 0 && queueIdx > grantIdx, 'Step1 の計画が付与より前にある');
+  assert.match(code, /recipientsAfterGrant\(/);
+  assert.match(code, /grantedIds\.length === 0/, '付与 0 件でも送ろうとしている');
+});
+
+test('【安全】dry-run は書き込まない（管理シークレット必須）', () => {
+  const code = codeOnly(TRIAL_CRON);
+  assert.match(code, /if \(dryRun\) \{[\s\S]{0,600}sideEffects: 'none'/);
+  assert.match(code, /x-admin-secret/);
+});
+
+test('【重要】コホート判定は取り込みの正本を使う（新しい旗を作らない）', () => {
+  const code = codeOnly(AUTOGRANT) + codeOnly(read('../crm/importedCohort.js'));
+  assert.match(code, /IMPORT_SOURCE_PREFIX/);
+  assert.match(code, /assertCohortObservable\(/);
+  // コホート判定用の独自フラグ名を発明していない
+  assert.equal(/LightTrialCohort|IsCsvImported|TrialTarget/.test(code), false);
+});
+
 // ── 管理画面 ────────────────────────────────────────────────
 test('【表示】必要な項目が画面にある', () => {
   for (const label of [
     'キャンペーン', '自動配信', '最大配信回数', '次に送れる人数', '次回予定',
     '配信完了', '自動停止', '購入・契約成立', '反応なしで除外', 'queue 済み',
-    '無料体験がまだ', '無料体験の期間終了',
+    '無料体験がまだ', '無料体験の期間終了', '期限なし付与', '対象コホート外',
   ]) {
     assert.ok(PAGE.includes(label), `画面に項目が無い: ${label}`);
   }

@@ -33,7 +33,8 @@ const renderStep = (n) => renderCampaign({
 test('本番シーケンスが取得でき、4 ステップある', () => {
   assert.ok(CAMPAIGN);
   assert.equal(steps.length, 4);
-  assert.equal(CAMPAIGN.requiresActiveGrant, 'light', 'Light 無料期間中だけを対象にしていない');
+  assert.deepEqual(CAMPAIGN.requiresActiveGrant, { tier: 'light', termedOnly: true },
+    '期限付き Light 無料期間中だけを対象にしていない');
 });
 
 test('無料期間の終了日は送信直前に差し替える（キュー登録時点では印のまま）', () => {
@@ -42,6 +43,8 @@ test('無料期間の終了日は送信直前に差し替える（キュー登�
     campaign: resolveSequenceStep(CAMPAIGN, 1), name: '山田', unsubscribeUrl: PREVIEW_UNSUBSCRIBE_URL,
   });
   assert.ok(queued.html.includes(GRANT_EXPIRY_PLACEHOLDER));
+  // CTA のすぐ横にも終了日を出す（ファーストビューで期間が分かるように）
+  assert.ok((queued.html.match(/\{\{grantExpiry\}\}/g) || []).length >= 2);
   // プレビュー（サンプル値を渡した場合）は印が残らない
   assert.equal(renderStep(1).html.includes(GRANT_EXPIRY_PLACEHOLDER), false);
 });

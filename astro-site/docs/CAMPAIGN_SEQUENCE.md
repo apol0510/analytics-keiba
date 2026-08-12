@@ -121,7 +121,14 @@ DeliveryKey は **campaign × version × step × 受信者**。
 
 ## 9. 無料体験を前提にするシーケンス（`requiresActiveGrant`）
 
-`requiresActiveGrant: 'light'` を宣言すると、**その無料権利が有効な人にだけ**送る。
+`requiresActiveGrant: { tier: 'light', termedOnly: true }` を宣言すると、
+**期限付きのその無料権利が有効な人にだけ**送る。
+
+- `termedOnly: true` … **期限なし（`light-lifetime-free`）は対象外**。
+  「無料期間は◯日まで」と書けず、体験からの転換という前提も成り立たないため
+- 無料期間の終了日は **`{{grantExpiry}}`**（`LightGrantUntil`）を受信者ごとに差し込む。
+  「付与日から 30 日間」という固定説明は**終了日が読めなかったときの保険**にすぎない
+  （付与日と送信日は一致しない）
 
 - **シーケンスは無料付与を 1 件も作らない。** 付与を書けるのは
   `admin-comeback-grants`（`operationId` で冪等）**だけ**。よって二重付与は構造的に起きない
@@ -145,6 +152,62 @@ DeliveryKey は **campaign × version × step × 受信者**。
 4. step2 以降は間隔が来たぶんだけ（自動配信 ON なら cron が 1 日 1 ステップ）
 ```
 
+## 9-3. 対象コホート（`requiresImportCohort`）
+
+「CSV で取り込んだ会員だけ」に限定する宣言。判定の正本は **取り込み時に書いた `Source`**。
+
+| 判定順 | 材料 | 備考 |
+|---|---|---|
+| 1 | `Source` が `customer-import:` で始まる | `buildCreateFields()` が **CREATE 時に必ず**書く |
+| 2 | `ImportBatchId` に値がある | 列が実在する環境のみ |
+| 3 | `CreatedBy === 'customer-import'` | 列が実在する環境のみ |
+
+- **どれも読めなければコホート外**（fail closed）。推測で新しい旗を作らない
+- ⚠️ **更新（UPDATE）で取り込んだ既存会員には `Source` が付かない**ため、
+  「既存会員だが CSV にも載っていた人」は**判別できない**。コホート外として扱う
+- 取り込みの痕跡が **1 件も無ければ `cohort_unverifiable` で中止**する
+  （「まだ取り込んでいない」と「`Source` を読めていない」を区別できないため）
+
+## 9-4. 無料体験の入口（自動付与 / `cron-light-trial-grant.js`）
+
+**既定 OFF。6 つのゲートが全て開くまで Customers へ 1 バイトも書かない。**
+
+| # | env | 意味 |
+|---|---|---|
+| 1 | `COMEBACK_GRANT_FIELDS_READY=1` | 既存の付与ゲート（列の実在） |
+| 2 | `COMEBACK_GRANT_ENABLED=true` | 既存の付与ゲート（実行許可） |
+| 3 | `LIGHT_TRIAL_AUTOGRANT_ENABLED=true` | 自動化の許可 |
+| 4 | `LIGHT_TRIAL_AUTOGRANT_ARMED=<当日 JST>` | 当日ぶんの武装（翌日閉じる） |
+| 5 | `MARKETING_CAMPAIGN_ENABLED=true` | Step1 のキュー登録 |
+| 6 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | 実送信の既存ゲート |
+
+1・2 は**手動付与と同じゲートを再利用**する（自動化のための抜け道を作らない）。
+
+### 実行の順序（壊れると「使えないのに案内が届く」）
+
+```
+① CSV 取り込みコホートを数える  → 観測できなければ中止
+② 候補を選ぶ（有料 / 期限なし付与 / 付与中 / 過去付与 / 配信不可 を除外）
+③ 付与       ← buildComebackPlan の計画をそのまま PATCH（形も冪等性も既存が単一源）
+④ 成功した recordId だけを抽出  ← recipientsAfterGrant()
+⑤ Step1 をキュー登録            ← 付与前・失敗分には 1 通も送らない
+```
+
+- 付与の冪等性 … `operationId`（`light-trial-<JST日付>`）＋ 有効な付与保有者は `already_granted`
+- 送信の冪等性 … DeliveryKey（campaign × version × step × 受信者）
+- 上限 100 名 / 回。超えたら**切り捨てずに中止**
+- **再付与しない**: 過去に無料付与の記録がある人は `granted_before` で除外
+
+### dry-run（書き込みゼロ）
+
+```bash
+POST /.netlify/functions/cron-light-trial-grant
+  x-admin-secret: <COMEBACK_ADMIN_SECRET or PREMIUM_PLUS_ADMIN_SECRET>
+  {"dryRun": true}
+```
+
+**ゲートが閉じていても**「CSV 対象総数 / バッチ別 / 付与候補 / 除外理由別件数」を返す。
+
 ## 9-2. 現行のシーケンス
 
 ### `light-trial-to-premium-sequence`（Light 無料体験 → Premium / 全 4 通）
@@ -156,7 +219,8 @@ DeliveryKey は **campaign × version × step × 受信者**。
 | 3 | +5 日 | 期間中に確認してほしいこと | 無料期間中にご確認いただきたいこと | 無料期間中の予想を見る |
 | 4 | +7 日 | Premium の提案 | 他のレースもご覧になりたい場合は | プランと料金を見る |
 
-対象は **Light 無料期間中の会員**（`requiresActiveGrant: 'light'`）。
+対象は **CSV 取り込みの会員**のうち **期限付き Light 無料期間中**の人
+（`requiresImportCohort` + `requiresActiveGrant: { tier:'light', termedOnly:true }`）。
 契約状態・プランでは絞らない（付与されていること自体が対象条件）。
 
 > ⚠️ **プラン間の買い目点数を比較して書かない。** メインレース以外の点数は一律ではないため、

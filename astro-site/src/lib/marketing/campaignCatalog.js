@@ -32,7 +32,8 @@ import {
 } from '../promotions/comebackEmailTemplate.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 import {
-  renderMarketingEmail, UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
+  renderMarketingEmail, applyGrantExpiry,
+  UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
 } from './marketingEmailShell.js';
 import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
 import {
@@ -428,7 +429,7 @@ export const CAMPAIGNS = Object.freeze([
     campaignId: 'light-trial-to-premium-sequence',
     version: 1,
     name: 'Light 無料体験 → Premium（連続配信 4 通）',
-    description: 'Light 30日無料を付与済みの会員へ、体験の開始 → 使い方 → 期間中の確認 → Premium の提案を 4 通で案内する。付与はしない（付与済みが対象）。',
+    description: 'CSV 取り込みの会員のうち Light 30日無料を付与済みの人へ、体験の開始 → 使い方 → 期間中の確認 → Premium の提案を 4 通で案内する。付与はしない（付与済みが対象）。',
     benefitType: 'free_access',
     benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（お申し込み・お支払いの手続きは不要）',
     subject: '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます',
@@ -436,11 +437,26 @@ export const CAMPAIGNS = Object.freeze([
     ctaLabel: 'ログインして使いはじめる',
     ctaUrl: `${SITE}/dashboard/`,
     footerNote: 'このメールは、Lightプランの無料期間を設定させていただいたお客様へお送りしています。',
-    /** 受信者ごとの無料期間の終了日を出す（読めないときは日付を断定しない） */
+    /**
+     * 受信者ごとの無料期間の**実際の終了日**（`LightGrantUntil`）を差し込む。
+     * dispatcher が 1 通ずつ解決するので、付与日と送信日がズレても文面が正しい。
+     * ⚠️ `grantDurationDays` は **終了日が読めなかったときだけ**の控えめな代替
+     *    （「付与日から N 日間」）。日付を断定しないための保険であって主役ではない。
+     */
     showGrantExpiry: true,
     grantDurationDays: 30,
-    /** **Light 無料期間中の人だけ**に送る（付与はしない・進行判定が確認する） */
-    requiresActiveGrant: 'light',
+    /**
+     * **期限付き Light 無料期間中の人だけ**に送る（付与はしない・進行判定が確認する）。
+     * `termedOnly: true` = 期限なし（`light-lifetime-free`）は対象外。
+     * 「無料期間は◯日まで」と書けない相手に 30 日体験の案内を送らないため。
+     */
+    requiresActiveGrant: { tier: 'light', termedOnly: true },
+    /**
+     * **対象は CSV で取り込んだ会員だけ**（従来からの無料会員には送らない）。
+     * 判定の正本は取り込み時に書いた `Source`（`crm/importedCohort.js`）。
+     * `batchIds` を指定すれば特定バッチだけに絞れる（空 = 取り込み全体）。
+     */
+    requiresImportCohort: { batchIds: null },
     recommendedSegments: [],
     // 付与されていること自体が対象条件なので、契約状態・プランでは絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },
@@ -454,9 +470,9 @@ export const CAMPAIGNS = Object.freeze([
           subject: '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます',
           preheader: 'お申し込みは不要です。ログインするだけで、メインレースの買い目が見られます。',
           badge: '30日間 無料',
-          headline: '今日から Light を無料でお使いいただけます',
+          headline: '現在、Lightプランを無料でご利用いただけます',
           body: [
-            'Lightプランの無料期間をご用意しました。',
+            'Lightプランの無料期間を設定させていただいています。',
             'お申し込みもお支払いの手続きも必要ありません。',
             '',
             'いつものメールアドレスでログインすると、そのままご利用いただけます。',
@@ -469,7 +485,9 @@ export const CAMPAIGNS = Object.freeze([
           ],
           ctaLabel: 'ログインして使いはじめる',
           ctaUrl: `${SITE}/dashboard/`,
-          ctaNote: 'お申し込み手続きは必要ありません。',
+          // ⚠️ 期間は**受信者ごとの実際の終了日**（`LightGrantUntil`）を差し込む。
+          //    「付与日から30日間」と固定で書かない（付与日と送信日は一致しない）。
+          ctaNote: `お申し込み手続きは必要ありません。${GRANT_EXPIRY_PLACEHOLDER}`,
           benefitType: 'free_access',
           benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（お申し込み・お支払いは不要）',
         },
@@ -521,12 +539,13 @@ export const CAMPAIGNS = Object.freeze([
             '',
             '■ お支払いについて',
             '無料期間が終わっても、自動で課金されることはありません。',
+            '期間の終了日は、このメールの下部に記載しています。',
             'ご継続の場合のみ、銀行振込でお手続きいただきます。',
             'ご入金を確認してから利用期間が始まります。',
           ].join('\n'),
           ctaLabel: '無料期間中の予想を見る',
           ctaUrl: `${SITE}/dashboard/`,
-          ctaNote: 'このご案内の時点でお手続きは必要ありません。',
+          ctaNote: `このご案内の時点でお手続きは必要ありません。${GRANT_EXPIRY_PLACEHOLDER}`,
           benefitType: 'free_access',
           benefitDescription: 'Light無料期間中に確認しておくと役立つ画面と、お支払いの条件をご案内します',
         },
@@ -547,6 +566,7 @@ export const CAMPAIGNS = Object.freeze([
             '',
             'メインレースだけで十分という方は、いまのままで問題ありません。',
             '無料期間の終了後に自動で課金されることはありません。',
+            '終了日は下部に記載しています。',
             '',
             'このご案内は今回で最後です。',
           ].join('\n'),
@@ -794,6 +814,18 @@ export function renderCampaign({
     footerNote: c.footerNote || '',
     unsubscribeUrl: unsubscribeUrl || UNSUBSCRIBE_PLACEHOLDER,
   });
+
+  // ── 無料期間の終了日 ────────────────────────────────────────
+  // 印は本文の外（CTA の注記など）にも置けるので、**完成した HTML / text 全体**へ
+  // 差し込む。渡されなければ印のまま残し、送信直前に dispatcher が
+  // 受信者ごとの `LightGrantUntil` で解決する（プレビューと実物を一致させる）。
+  if (expiryNote) {
+    return {
+      subject: c.subject,
+      html: applyGrantExpiry(rendered.html, expiryNote),
+      text: applyGrantExpiry(rendered.text, expiryNote),
+    };
+  }
 
   return { subject: c.subject, html: rendered.html, text: rendered.text };
 }

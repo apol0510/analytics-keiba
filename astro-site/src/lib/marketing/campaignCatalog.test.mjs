@@ -185,10 +185,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'light-trial-to-premium-sequence': {
       version: 1,
       steps: {
-        1: '433b4b5456ff6453',
+        1: 'b7d45ce01bc4e686',
         2: 'a40b36b71fdeee59',
-        3: 'b31340fc0f5385de',
-        4: '6861dc98f40d535b',
+        3: '490be646ddf3f46b',
+        4: '1964397b87c74383',
       },
     },
   };
