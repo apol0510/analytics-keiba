@@ -226,8 +226,21 @@ test('【本番で 422 にしない】formula が構文として壊れていな�
   assert.equal(
     buildBarrierFormula(),
     "AND({ComebackGrantSource} = 'light-trial-autogrant', "
-    + 'OR({LightGrantLifetime}, AND({LightGrantUntil} != BLANK(), IS_AFTER({LightGrantUntil}, NOW()))))',
+    + 'OR({LightGrantLifetime}, AND(NOT({LightGrantUntil} = BLANK()), IS_AFTER({LightGrantUntil}, NOW()))))',
   );
+});
+
+/**
+ * Airtable の `{Field} != BLANK()` は**中身に関係なく常に真**になる（2026-08-12 本番実測）。
+ * 本番 15,962 件で `{LightGrantedAt} != BLANK()` が 15,962 件を返した
+ * （正しくは 65 件。`= BLANK()` 側は 15,897 件で正しい）。
+ * 静かに条件が消えるので、formula に書かせない。
+ */
+test('【Airtable の罠】!= BLANK() を使っていない（常に真になる）', () => {
+  for (const [label, formula] of [['候補', buildCandidateFormula()], ['関所', buildBarrierFormula()]]) {
+    assert.equal(/!=\s*BLANK\(\)/.test(formula), false,
+      `${label}: != BLANK() は常に真になる。NOT({Field} = BLANK()) を使うこと`);
+  }
 });
 
 test('関所は自動付与で配って体験中の人だけを取る formula', () => {

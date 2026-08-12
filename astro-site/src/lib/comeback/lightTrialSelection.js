@@ -28,6 +28,20 @@
  *   - 付与履歴あり（`*GrantedAt` / `*GrantUntil` / `*GrantLifetime`）… `tierEvidence` と一致
  *   - メール空 / 配信停止 … `resolveSendability` が無条件に落とす列
  *
+ * ## ⚠️ Airtable の `!= BLANK()` は使わない（2026-08-12 本番実測）
+ *
+ * `{Field} != BLANK()` は**中身に関係なく常に真**になる。本番 Customers 15,962 件で:
+ *
+ * | formula | 件数 |
+ * |---|---|
+ * | `{LightGrantedAt} = BLANK()` | 15,897 ✅ |
+ * | `NOT({LightGrantedAt})` | 15,897 ✅ |
+ * | `{LightGrantedAt}`（truthy） | 65 ✅ |
+ * | `{LightGrantedAt} != BLANK()` | **15,962（全件・壊れている）** |
+ *
+ * 「空でない」を書きたいときは **`NOT({Field} = BLANK())`** を使うこと。
+ * `!= BLANK()` は静かに条件を無効化するので、テストで禁止している。
+ *
  * ⚠️ **`isImportedCustomer` は `Source` 以外に `ImportBatchId` / `CreatedBy` も見る**が、
  *    この Base の Customers には**その 2 列が存在しない**（87 列を実測）。存在しない列を
  *    formula に書くと Airtable は 422 を返すため、`Source` だけで絞っている。
@@ -89,7 +103,8 @@ export function buildCandidateFormula() {
       // コホート（取り込み時に必ず書かれる Source の接頭辞）
       `FIND('${COHORT_SOURCE_PREFIX}', {Source}) = 1`,
       // メールが無ければ送れない（resolveSendability: NO_EMAIL）
-      '{Email} != BLANK()',
+      // ⚠️ `!= BLANK()` は使わない（下の注記参照。本番で**常に真**になる）
+      'NOT({Email} = BLANK())',
       // 配信停止（resolveSendability: UNSUBSCRIBED）
       'NOT({UnsubscribedAnalyticsKeiba})',
       // 付与履歴（tierEvidence.granted = grantedAt / until / lifetime / active）
@@ -131,7 +146,7 @@ export function candidateFormulaAccepts(fields) {
 export function buildBarrierFormula() {
   const active = [
     '{LightGrantLifetime}',
-    'AND({LightGrantUntil} != BLANK(), IS_AFTER({LightGrantUntil}, NOW()))',
+    'AND(NOT({LightGrantUntil} = BLANK()), IS_AFTER({LightGrantUntil}, NOW()))',
   ].join(', ');
   return `AND({ComebackGrantSource} = '${AUTOGRANT_SOURCE}', OR(${active}))`;
 }
