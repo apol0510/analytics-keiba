@@ -38,7 +38,7 @@
 
 import {
   readAutoGrantGates, buildTrialGrantPlan, summarizeAutoGrantRun,
-  AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
+  AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE, TRIAL_SEQUENCE_ID,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import { chunkTargets } from '../../src/lib/comeback/comebackGrantPlan.js';
@@ -51,7 +51,8 @@ import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
 const DELIVERIES_TABLE = 'CampaignDeliveries';
-const CAMPAIGN_ID = 'light-trial-to-premium-sequence';
+/** 下見（admin-marketing の trialGrant）と同じキャンペーンを見る（単一源） */
+const CAMPAIGN_ID = TRIAL_SEQUENCE_ID;
 const MAX_PAGES = 60;
 
 export const TRIAL_LOG_TAG = '[light-trial-grant]';

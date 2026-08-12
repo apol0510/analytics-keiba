@@ -110,6 +110,7 @@ import { fetchDeliveryActivity } from '../../src/lib/marketing/deliveryActivity.
 import {
   isMarketingEnqueueEnabled,
   isMarketingDispatchEnabled,
+  isMarketingClickTrackingEnabled,
   isMarketingJob,
 } from '../../src/lib/marketing/marketingDispatchGate.js';
 import {
@@ -141,7 +142,7 @@ import {
 } from '../../src/lib/marketing/sequenceProgress.js';
 import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
-  buildTrialGrantPlan, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
+  buildTrialGrantPlan, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE, TRIAL_SEQUENCE_ID,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { BARRIER_RESOLVED_LABEL } from '../../src/lib/comeback/lightTrialBarrier.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';

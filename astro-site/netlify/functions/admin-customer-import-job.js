@@ -33,7 +33,8 @@ import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
 import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
-import { orderEntriesDeterministically, countCreateCandidates, summarizeImportPlan } from '../../src/lib/crm/importEligibility.js';
+import { orderEntriesDeterministically, countCreateCandidates, summarizeImportPlan, selectCreateRows } from '../../src/lib/crm/importEligibility.js';
+import { selectCreateRowsTargeted } from '../../src/lib/crm/importTargetedSelect.js';
 import {
   canStartImportJob, canStepImportJob, cancelImportJob, beginChildBatch, applyChildResult,
   markJobBlocked, markJobRedisUnavailable, summarizeJobProgress, describeJobRollback,

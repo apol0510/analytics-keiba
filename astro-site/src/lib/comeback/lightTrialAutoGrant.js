@@ -68,6 +68,12 @@ export const MAX_GRANTS_PER_RUN = DEFAULT_BATCH_SIZE;
 /** 自動付与に使う特典（カタログの正本。ここで日数を書かない） */
 export const TRIAL_OFFER_ID = 'light-30d-free';
 
+/**
+ * 付与のあとに案内する連続配信。**cron と管理画面の下見が同じキャンペーンを見る**ための単一源。
+ * ここが割れると「下見では関所が開いているのに cron は閉じている」のような食い違いが出る。
+ */
+export const TRIAL_SEQUENCE_ID = 'light-trial-to-premium-sequence';
+
 export const AUTOGRANT_ENV = Object.freeze({
   /** 既存の手動付与と同じゲート（自動化のために別の抜け道を作らない） */
   FIELDS_READY: 'COMEBACK_GRANT_FIELDS_READY',

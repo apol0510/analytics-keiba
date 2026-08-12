@@ -18,6 +18,8 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-premium-jra.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra-date.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
+      # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
+      - 'astro-site/scripts/check-functions-no-undef.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
@@ -41,6 +43,8 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-premium-jra.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra-date.mjs'
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
+      # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
+      - 'astro-site/scripts/check-functions-no-undef.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
@@ -79,6 +83,12 @@ jobs:
       - name: Install dependencies
         working-directory: astro-site
         run: npm ci
+
+      # import し忘れた 1 語は build もテストも通り、**その行を通った本番でだけ 500** になる。
+      # 2026-08-12 に 3 件（うち 1 件は 2 週間以上気づかれず）見つかったのでここで止める。
+      - name: Verify Functions に未定義の識別子が無い（import 漏れ = 本番 500）
+        working-directory: astro-site
+        run: npm run check:fn-no-undef
 
       - name: Static guard - no raw {horse.computerIndex} in JSX
         working-directory: astro-site
