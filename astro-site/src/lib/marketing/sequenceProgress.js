@@ -18,6 +18,10 @@
  *   1. 配信停止・ブラックリスト・停止アカウント・アドレス不正（`marketing.sendable`）
  *   2. 配信基盤の suppression / ソフトバウンス
  *   3. **購入済み**（有料契約が有効になった = このシーケンスの目的を達成）
+ *   3-b. **無料体験の状態**（`requiresActiveGrant` を宣言したシーケンスだけ）
+ *        まだ付与されていない → `grant_required` / 期間が終わった → `grant_expired`
+ *        ⚠️ **シーケンスは無料付与を行わない**。付与は管理画面（`admin-comeback-grants`）
+ *           だけが行い、`operationId` で冪等。したがって二重付与は構造的に起きない
  *   4. 対象条件から外れた（プラン・契約状態の変化。`enforce` のときだけ）
  *   5. **反応なし**（engagement INACTIVE / HARD_INACTIVE）
  *      ⚠️ UNKNOWN・計測不足では**止めない**。判定 Map が渡されなければ素通り
@@ -32,6 +36,8 @@ import {
 import { computeCampaignDeliveryKey } from './campaignSend.js';
 import { matchesCampaignAudience, isCampaignUsable } from './campaignCatalog.js';
 import { classifyEngagement, isBlockedByEngagement } from './engagementPolicy.js';
+import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
+import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 
 /** 受信者ごとの状態 */
 export const SEQ_STATUS = Object.freeze({
@@ -51,6 +57,8 @@ export const SEQ_STOP = Object.freeze({
   PROVIDER_SUPPRESSED: 'provider_suppressed',
   SOFT_BOUNCE: 'soft_bounce',
   PURCHASED: 'purchased',
+  GRANT_REQUIRED: 'grant_required',
+  GRANT_EXPIRED: 'grant_expired',
   AUDIENCE_MISMATCH: 'audience_mismatch',
   ENGAGEMENT_BLOCKED: 'engagement_blocked',
   CAMPAIGN_DISABLED: 'campaign_disabled',
@@ -62,6 +70,8 @@ export const SEQ_STOP_LABEL = Object.freeze({
   provider_suppressed: '配信基盤の停止リストに載っている',
   soft_bounce: 'ソフトバウンス履歴あり',
   purchased: '購入・契約が有効になったため停止',
+  grant_required: '無料体験がまだ始まっていない（無料付与が必要）',
+  grant_expired: '無料体験の期間が終了した',
   audience_mismatch: '対象条件から外れた（プラン・契約状態の変化）',
   engagement_blocked: '反応なしが続いているため停止',
   campaign_disabled: 'キャンペーンが停止中',
@@ -95,6 +105,32 @@ export function indexDeliveries(deliveries) {
     }
   }
   return byKey;
+}
+
+/**
+ * 無料体験（promotional grant）の状態を見る。
+ * **判定を作らない**。既存の単一源が出した値をそのまま使う。
+ *
+ * @returns {string|null} 停止理由（問題なければ null）
+ */
+function checkGrantState({ fields, marketing, tier, nowMs }) {
+  const t = tier === 'premium' ? 'premium' : 'light';
+  // `resolveCustomerMarketing` が既に解いた値を使う（顧客ごとに解き直さない）。
+  // 無い場合だけ entitlement を解く（cron など marketing を持たない経路のため）。
+  const m = marketing || null;
+  const active = m
+    ? (t === 'premium' ? m.promoPremiumActive === true : m.promoLightActive === true)
+    : (() => {
+      const ent = resolveEntitlements(fromAirtableFields(fields), nowMs);
+      return t === 'premium' ? ent.promo.premiumActive : ent.promo.lightActive;
+    })();
+  if (active) return null;
+
+  // 「まだ付与されていない」と「期間が終わった」を区別する（案内の意味が違う）
+  const raw = resolvePromotionalGrants(fromAirtableFields(fields).promoFields, nowMs);
+  const g = raw[t] || {};
+  if (g.expired || (Number.isFinite(g.untilMs) && g.untilMs !== null)) return SEQ_STOP.GRANT_EXPIRED;
+  return SEQ_STOP.GRANT_REQUIRED;
 }
 
 /** 購入済み（このシーケンスの目的を達成した）か */
@@ -151,6 +187,17 @@ export function resolveRecipientProgress({
   }
   if (softBounced instanceof Set && softBounced.has(email)) return stop(SEQ_STOP.SOFT_BOUNCE);
   if (hasPurchased(mk)) return stop(SEQ_STOP.PURCHASED);
+
+  // ── 無料体験の状態（宣言したシーケンスだけ）──────────────────────
+  // 判定は既存の単一源だけを使う（`resolveEntitlements` / `resolvePromotionalGrants`）。
+  // **ここで付与はしない**（付与は admin-comeback-grants の operationId 冪等な経路のみ）。
+  const requires = str(campaign.requiresActiveGrant);
+  if (requires) {
+    const g = checkGrantState({
+      fields: (customer && customer.fields) || {}, marketing: mk, tier: requires, nowMs,
+    });
+    if (g) return stop(g);
+  }
 
   const audience = matchesCampaignAudience(campaign, mk);
   if (!audience.ok && audience.enforced) return stop(SEQ_STOP.AUDIENCE_MISMATCH);

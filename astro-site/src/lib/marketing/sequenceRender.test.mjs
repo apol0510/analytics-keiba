@@ -15,20 +15,35 @@ import assert from 'node:assert/strict';
 import { getCampaign, renderCampaign } from './campaignCatalog.js';
 import { resolveSequenceStep, getSequenceSteps, FORBIDDEN_PHRASES } from './campaignSequence.js';
 import { checkBenefitForSend, BULK_THRESHOLD } from './campaignBenefit.js';
-import { EMAIL_WIDTH, PREVIEW_UNSUBSCRIBE_URL } from './marketingEmailShell.js';
+import {
+  EMAIL_WIDTH, PREVIEW_UNSUBSCRIBE_URL, GRANT_EXPIRY_PLACEHOLDER, describeGrantExpiry,
+} from './marketingEmailShell.js';
 
-const CAMPAIGN = getCampaign('free-to-premium-sequence');
+const CAMPAIGN = getCampaign('light-trial-to-premium-sequence');
 const steps = getSequenceSteps(CAMPAIGN);
 
+/** 管理画面のプレビューと同じ組み立て（無料期間の終了日はサンプル値で解決する） */
 const renderStep = (n) => renderCampaign({
   campaign: resolveSequenceStep(CAMPAIGN, n),
   name: '山田',
   unsubscribeUrl: PREVIEW_UNSUBSCRIBE_URL,
+  expiryNote: describeGrantExpiry({ durationDays: CAMPAIGN.grantDurationDays }),
 });
 
 test('本番シーケンスが取得でき、4 ステップある', () => {
   assert.ok(CAMPAIGN);
   assert.equal(steps.length, 4);
+  assert.equal(CAMPAIGN.requiresActiveGrant, 'light', 'Light 無料期間中だけを対象にしていない');
+});
+
+test('無料期間の終了日は送信直前に差し替える（キュー登録時点では印のまま）', () => {
+  // 受信者ごとに違う日付なので、印だけ残して dispatcher が 1 通ずつ差し替える
+  const queued = renderCampaign({
+    campaign: resolveSequenceStep(CAMPAIGN, 1), name: '山田', unsubscribeUrl: PREVIEW_UNSUBSCRIBE_URL,
+  });
+  assert.ok(queued.html.includes(GRANT_EXPIRY_PLACEHOLDER));
+  // プレビュー（サンプル値を渡した場合）は印が残らない
+  assert.equal(renderStep(1).html.includes(GRANT_EXPIRY_PLACEHOLDER), false);
 });
 
 test('各ステップが HTML と text の両方を生成する', () => {
@@ -88,9 +103,12 @@ test('4 通が別内容（件名・本文・CTA のいずれも使い回して�
   const rendered = steps.map((s) => renderStep(s.stepNumber));
   assert.equal(new Set(rendered.map((r) => r.subject)).size, 4);
   assert.equal(new Set(rendered.map((r) => r.text)).size, 4);
-  // CTA は 3 種類以上（step3/4 は同じ料金ページでよい）
+  // CTA の**文言**は 4 通とも違う（同じボタンを 4 回出さない）。
+  // 遷移先は体験中は同じダッシュボードでよい（step4 だけ料金ページ）。
+  const labels = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaLabel);
+  assert.equal(new Set(labels).size, 4, `CTA 文言の使い回し: ${labels.join(' / ')}`);
   const ctas = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaUrl);
-  assert.ok(new Set(ctas).size >= 3, `CTA の使い回しが多い: ${[...new Set(ctas)].join(', ')}`);
+  assert.ok(new Set(ctas).size >= 2);
 });
 
 test('配信停止リンクは本文に書かず、シェルが受信者ごとに差し込む', () => {

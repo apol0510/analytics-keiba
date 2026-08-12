@@ -182,13 +182,13 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'free-member-activation': { version: 1, hash: '256dfcbb6c06209c' },
     // 連続配信は **ステップごと**にロックする（ステップ単位で DeliveryKey が分かれるため、
     // 1 ステップだけ文面を変えても、そのステップは既送信者へ届かない）。
-    'free-to-premium-sequence': {
+    'light-trial-to-premium-sequence': {
       version: 1,
       steps: {
-        1: 'edd2bb3378a4b0b3',
-        2: 'bd1b1bcf6a5f3c56',
-        3: '9480d8fa5d6a164b',
-        4: '6b60efe50b9a81a5',
+        1: '433b4b5456ff6453',
+        2: 'a40b36b71fdeee59',
+        3: 'b31340fc0f5385de',
+        4: '6861dc98f40d535b',
       },
     },
   };

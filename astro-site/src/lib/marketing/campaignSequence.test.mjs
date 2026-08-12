@@ -198,8 +198,9 @@ test('本番カタログの連続配信定義がすべて健全', () => {
 test('本番の連続配信キャンペーンが 1 件以上あり、4 通構成で使用可能', () => {
   const seqs = CAMPAIGNS.filter((c) => isSequenceCampaign(c));
   assert.ok(seqs.length >= 1);
-  const c = getCampaign('free-to-premium-sequence');
-  assert.ok(c, '無料会員 → 有料の連続配信が使用可能でない');
+  const c = getCampaign('light-trial-to-premium-sequence');
+  assert.ok(c, 'Light 無料体験 → Premium の連続配信が使用可能でない');
+  assert.equal(c.requiresActiveGrant, 'light', '無料付与済みだけを対象にしていない');
   assert.equal(resolveMaxSends(c), 4);
   const view = describeSequence(c);
   assert.equal(view.steps.length, 4);

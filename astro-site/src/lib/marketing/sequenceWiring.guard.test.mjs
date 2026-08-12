@@ -89,11 +89,23 @@ test('【安全】step1 は自動で撃たない', () => {
 test('【安全】進行は保存せず送信の事実から導く（別の進行テーブルを作らない）', () => {
   const code = codeOnly(PROGRESS);
   assert.match(code, /indexDeliveries\(/);
-  assert.equal(/UPSTASH|HSET|Airtable/.test(code), false, '進行モジュールが I/O を持っている');
+  // I/O そのものを持っていないこと（`fromAirtableFields` のような純粋な変換は可）
+  assert.equal(/UPSTASH|HSET|await fetch|api\.airtable\.com/.test(code), false, '進行モジュールが I/O を持っている');
 });
 
 test('【安全】benefit guard を通る（得の宣言が無い大量配信を止める）', () => {
   assert.match(codeOnly(CRON), /checkBenefitForSend\(/);
+});
+
+test('【安全】シーケンスは無料付与を書かない（付与は admin-comeback-grants だけ）', () => {
+  for (const [name, src] of [['progress', PROGRESS], ['automation', AUTO], ['cron', CRON], ['admin', ADMIN]]) {
+    const code = codeOnly(src);
+    assert.equal(/LightGrantUntil|LightGrantedAt|PROMO_WRITABLE_FIELDS|buildGrantFields/.test(code), false,
+      `${name} が無料付与フィールドを書こうとしている`);
+  }
+  // 付与済みかどうかは既存の単一源で**読むだけ**
+  assert.match(codeOnly(PROGRESS), /resolvePromotionalGrants\(/);
+  assert.match(codeOnly(PROGRESS), /GRANT_REQUIRED|GRANT_EXPIRED/);
 });
 
 // ── 管理画面 ────────────────────────────────────────────────
@@ -101,6 +113,7 @@ test('【表示】必要な項目が画面にある', () => {
   for (const label of [
     'キャンペーン', '自動配信', '最大配信回数', '次に送れる人数', '次回予定',
     '配信完了', '自動停止', '購入・契約成立', '反応なしで除外', 'queue 済み',
+    '無料体験がまだ', '無料体験の期間終了',
   ]) {
     assert.ok(PAGE.includes(label), `画面に項目が無い: ${label}`);
   }

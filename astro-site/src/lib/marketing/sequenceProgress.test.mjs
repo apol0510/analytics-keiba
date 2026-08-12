@@ -273,3 +273,69 @@ test('resolveRecipientProgress 単体でも同じ答え', () => {
   assert.equal(r.nextStep, 2);
   assert.deepEqual(r.sentSteps, [1]);
 });
+
+// ── Light 無料体験を前提にしたシーケンス ────────────────────
+// 付与の正本は `promotionOfferCatalog.js` の `light-30d-free`
+// （grantTier: light / durationDays: 30）。**シーケンスは付与を 1 件も作らない**。
+const GRANT_CAMPAIGN = Object.freeze({
+  ...CAMPAIGN,
+  campaignId: 'seq-grant-test',
+  requiresActiveGrant: 'light',
+  audienceRule: { contracts: [], plans: [], enforce: false },
+});
+
+const grantFields = (over = {}) => ({ Email: 'g@example.com', Status: 'active', ...over });
+const grantCustomer = (over = {}) => {
+  const fields = grantFields(over);
+  return { recordId: 'rec-g', fields, marketing: resolveCustomerMarketing({ fields, nowMs: NOW }) };
+};
+const grantRun = (selected, deliveries = []) => buildSequenceProgress({
+  campaign: GRANT_CAMPAIGN, selected, deliveries, brand: BRAND, fromEmail: FROM, nowMs: NOW,
+  providerSuppressed: new Set(), softBounced: new Set(),
+});
+
+test('【停止】無料付与がまだなら送らない（シーケンスは付与しない）', () => {
+  const p = grantRun([grantCustomer()]);
+  assert.equal(p.rows[0].stopReason, SEQ_STOP.GRANT_REQUIRED);
+  assert.equal(p.summary.due, 0, '付与前に step1 を送ってしまっている');
+});
+
+test('無料期間中なら step1 から進む', () => {
+  const p = grantRun([grantCustomer({ LightGrantUntil: new Date(NOW + 20 * DAY).toISOString() })]);
+  assert.equal(p.rows[0].status, SEQ_STATUS.DUE);
+  assert.equal(p.rows[0].nextStep, 1);
+});
+
+test('【停止】無料期間が終わったら止まる（「未付与」とは区別する）', () => {
+  const expired = grantCustomer({ LightGrantUntil: new Date(NOW - DAY).toISOString() });
+  const p = grantRun([expired], []);
+  assert.equal(p.rows[0].stopReason, SEQ_STOP.GRANT_EXPIRED);
+  assert.notEqual(p.rows[0].stopReason, SEQ_STOP.GRANT_REQUIRED);
+});
+
+test('永久無料（Lifetime）でも対象になる', () => {
+  const p = grantRun([grantCustomer({ LightGrantLifetime: true })]);
+  assert.equal(p.rows[0].status, SEQ_STATUS.DUE);
+});
+
+test('取り消した付与では送らない（値が消え RevokedAt が残る）', () => {
+  const revoked = grantCustomer({
+    LightGrantUntil: null, LightGrantRevokedAt: new Date(NOW - DAY).toISOString(),
+  });
+  const p = grantRun([revoked]);
+  assert.equal(p.rows[0].status, SEQ_STATUS.STOPPED);
+});
+
+test('【停止】無料体験中に有料契約が成立したら目的達成として止まる', () => {
+  const bought = grantCustomer({
+    LightGrantUntil: new Date(NOW + 20 * DAY).toISOString(),
+    'プラン': 'Premium', '有効期限': '2027-01-01',
+  });
+  const p = grantRun([bought], []);
+  assert.equal(p.rows[0].stopReason, SEQ_STOP.PURCHASED, '購入が付与より先に評価されていない');
+});
+
+test('無料付与を要求しないシーケンスは従来どおり（既存を壊さない）', () => {
+  const p = run([customer('a@example.com')], []);
+  assert.equal(p.rows[0].status, SEQ_STATUS.DUE);
+});

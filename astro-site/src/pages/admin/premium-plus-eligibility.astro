@@ -4727,6 +4727,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       row('配信完了', (sum.completed || 0) + ' 名');
       row('自動停止', (sum.stopped || 0) + ' 名');
       row('　うち 購入・契約成立', (stops.purchased || 0) + ' 名', 'is-ok');
+      row('　うち 無料体験がまだ（付与が必要）', (stops.grant_required || 0) + ' 名');
+      row('　うち 無料体験の期間終了', (stops.grant_expired || 0) + ' 名');
       row('　うち 反応なしで除外', (stops.engagement_blocked || 0) + ' 名');
       row('　うち 配信停止・バウンス等', ((stops.not_sendable || 0) + (stops.provider_suppressed || 0) + (stops.soft_bounce || 0)) + ' 名');
       row('　うち 対象条件から外れた', (stops.audience_mismatch || 0) + ' 名');
