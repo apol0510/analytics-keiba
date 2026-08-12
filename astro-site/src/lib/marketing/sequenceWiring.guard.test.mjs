@@ -15,6 +15,7 @@ const PAGE = read('../../pages/admin/premium-plus-eligibility.astro');
 const PROGRESS = read('./sequenceProgress.js');
 const TRIAL_CRON = read('../../../netlify/functions/cron-light-trial-grant.js');
 const AUTOGRANT = read('../comeback/lightTrialAutoGrant.js');
+const LOADER = read('../comeback/lightTrialPlanLoader.js');
 const AUTO = read('./sequenceAutomation.js');
 
 const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -123,7 +124,8 @@ test('【安全】自動付与は 4 ゲートが揃うまで Customers を書か
 });
 
 test('【重要】付与と送信は分離（付与経路がメールもキューも作らない）', () => {
-  const code = codeOnly(TRIAL_CRON);
+  // 付与経路 = cron + 共通ローダー（読み込みはローダーへ移した）
+  const code = codeOnly(TRIAL_CRON) + codeOnly(LOADER);
   // 送信・キュー登録の道具を 1 つも持っていない
   for (const bad of [
     'ScheduledEmails', 'buildCampaignPlan', 'renderCampaign',
@@ -146,14 +148,18 @@ test('【重要】Step1 未処理があるうちは次の付与へ進まない�
   assert.match(code, /evaluateStep1Barrier\(/);
   assert.match(code, /barrier\.nextBatchAllowed !== true/);
   // cron が関所の材料を read-only で渡している
-  const cron = codeOnly(TRIAL_CRON);
-  assert.match(cron, /fetchSequenceDeliveries\(/);
+  const cron = codeOnly(TRIAL_CRON) + codeOnly(LOADER);
+  assert.match(cron, /readDeliveries\(/);
   assert.match(cron, /sequenceCampaign: campaign/);
   // 書き込みは Customers の PATCH だけ（POST は listRecords の読み取りのみ）
   const writes = cron.match(/method: '(POST|PATCH|DELETE)'/g) || [];
   assert.equal(writes.filter((w) => w.includes('PATCH')).length, 1, 'PATCH は Customers の付与 1 か所だけ');
   assert.equal(/method: 'DELETE'/.test(cron), false);
-  assert.equal((cron.match(/listRecords/g) || []).length, 2, 'POST は listRecords（読み取り）のみ');
+  // POST は 1 つ残らず listRecords（読み取り）であること
+  const posts = (cron.match(/method: 'POST'/g) || []).length;
+  const reads = (cron.match(/listRecords/g) || []).length;
+  assert.ok(reads >= 1, 'listRecords が無い');
+  assert.equal(posts, reads, 'listRecords 以外の POST がある（書き込みの疑い）');
 });
 
 test('【表示】下見に outstandingStep1 / resolved / nextBatchAllowed がある', () => {
@@ -195,14 +201,52 @@ test('【安全】dry-run は書き込まない（管理シークレット必須
   assert.match(code, /x-admin-secret/);
 });
 
-test('【表示】下見に 全候補 / 今回処理予定 / remaining / 指紋 / hard max がある', () => {
+test('【表示】下見に 今回処理予定 / 取得量 / moreAvailable / 指紋 / hard max がある', () => {
   const code = codeOnly(ADMIN);
-  for (const k of ['candidates:', 'batch:', 'remaining:', 'planFingerprint', 'hardMax']) {
+  for (const k of [
+    'batch:', 'batchSize:', 'planFingerprint', 'hardMax',
+    'remainingExact', 'moreAvailable', 'pagesFetched', 'recordsFetched',
+    'outstandingStep1', 'resolved:', 'nextBatchAllowed',
+  ]) {
     assert.ok(code.includes(k), `下見の応答に無い: ${k}`);
   }
-  // 下見と実行が同じ 1 本を通る
-  assert.match(code, /buildTrialGrantPlan\(/);
-  assert.match(codeOnly(TRIAL_CRON), /buildTrialGrantPlan\(/);
+});
+
+test('【配線】下見と実行が同じ 1 本（loadAndPlanLightTrial）を通る', () => {
+  // 片方だけ別経路にすると formula / sort / 指紋がズレる
+  assert.match(codeOnly(ADMIN), /loadAndPlanLightTrial\(/);
+  assert.match(codeOnly(TRIAL_CRON), /loadAndPlanLightTrial\(/);
+});
+
+test('【重要】全件走査へ戻していない（14,489 件でタイムアウトする）', () => {
+  const admin = codeOnly(ADMIN);
+  // 下見が Customers 全件ロードへ戻っていないこと
+  const start = admin.indexOf('async function handleTrialGrantPreview');
+  const rest = admin.slice(start + 10);
+  const end = rest.indexOf('\nasync function ');
+  const body = rest.slice(0, end > 0 ? end : rest.length);
+  assert.equal(/loadCustomerMarketing\(/.test(body), false,
+    '下見が Customers 全件ロード（MAX_PAGES=40 で黙って打ち切る）へ戻っている');
+  // cron も自前の全件取得を持たない
+  const cron = codeOnly(TRIAL_CRON);
+  assert.equal(/fetchCohortCustomers/.test(cron), false, 'cron が全件取得へ戻っている');
+});
+
+test('【安全】exact な残数を出さない（数えていないものを数えたと言わない）', () => {
+  const admin = codeOnly(ADMIN);
+  assert.match(admin, /remainingExact: null/);
+  const loader = codeOnly(read('../comeback/lightTrialPlanLoader.js'));
+  assert.match(loader, /remainingExact: null/);
+});
+
+test('【安全】取得上限は fail closed（silent truncation を作らない）', () => {
+  const sel = codeOnly(read('../comeback/lightTrialSelection.js'));
+  // 上限に達したら abort を返す。break で黙って抜けない
+  assert.match(sel, /CANDIDATE_SCAN_LIMIT/);
+  assert.match(sel, /BARRIER_SCAN_LIMIT/);
+  const loader = codeOnly(read('../comeback/lightTrialPlanLoader.js'));
+  assert.match(loader, /if \(!selected\.ok\)/);
+  assert.match(loader, /if \(!barrierFetch\.ok\)/);
 });
 
 test('【重要】コホート判定は取り込みの正本を使う（新しい旗を作らない）', () => {
@@ -216,8 +260,10 @@ test('【重要】コホート判定は取り込みの正本を使う（新し�
 // ── 管理画面 ────────────────────────────────────────────────
 test('【表示】無料体験の入口（付与候補・除外理由・CSV 対象総数）が画面にある', () => {
   for (const label of [
-    'CSV 取り込みの対象総数', '全候補', '今回処理予定', '残り', '除外理由', 'バッチ別',
+    '読んだ顧客', 'うち CSV 取り込み', '今回処理予定', '除外理由', 'バッチ別',
     '自動付与', '計画の指紋', 'hard max',
+    // 全件走査をやめたので「正確な残数は出さない」ことを画面でも明示する
+    '残り（正確な数）', '未算出', 'まだ候補があるか',
   ]) assert.ok(PAGE.includes(label), `画面に項目が無い: ${label}`);
   assert.match(PAGE, /id="mkTrialResult"/);
   assert.match(PAGE, /action: 'trialGrant'/);
@@ -230,7 +276,7 @@ test('【表示】無料体験の入口（付与候補・除外理由・CSV 対�
 test('【安全】下見 API は付与しない（read-only）', () => {
   const code = codeOnly(ADMIN);
   assert.match(code, /function handleTrialGrantPreview\(/);
-  assert.match(code, /buildTrialGrantPlan\(/);
+  assert.match(code, /loadAndPlanLightTrial\(/);
   // 関数の中身だけを切り出す（次の関数宣言まで）
   const start = code.indexOf('async function handleTrialGrantPreview');
   const rest = code.slice(start + 10);

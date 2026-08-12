@@ -37,23 +37,14 @@
  */
 
 import {
-  readAutoGrantGates, buildTrialGrantPlan, summarizeAutoGrantRun,
-  AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE, TRIAL_SEQUENCE_ID,
+  readAutoGrantGates, summarizeAutoGrantRun,
+  AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import { chunkTargets } from '../../src/lib/comeback/comebackGrantPlan.js';
-import { resolveCustomerMarketing } from '../../src/lib/marketing/customerMarketingAudience.js';
-import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js';
-import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
-import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
-import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
+import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
 
-const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
-const DELIVERIES_TABLE = 'CampaignDeliveries';
-/** 下見（admin-marketing の trialGrant）と同じキャンペーンを見る（単一源） */
-const CAMPAIGN_ID = TRIAL_SEQUENCE_ID;
-const MAX_PAGES = 60;
 
 export const TRIAL_LOG_TAG = '[light-trial-grant]';
 
@@ -69,63 +60,6 @@ function json(status, body) {
 }
 
 const auth = (key) => ({ Authorization: `Bearer ${key}` });
-
-/**
- * 取り込みコホートの候補を読む（**read-only**）。
- * `Source` で先に絞るので、Customers 全件を DOM/メモリへ展開しない。
- */
-async function fetchCohortCustomers({ KEY, BASE }) {
-  const out = [];
-  let offset;
-  let pages = 0;
-  do {
-    const body = {
-      // 取り込み時に必ず書かれる `Source` の接頭辞で絞る（正本は importWritePlan）
-      filterByFormula: "FIND('customer-import:', {Source}) = 1",
-      pageSize: 100,
-    };
-    if (offset) body.offset = offset;
-    const res = await fetch(
-      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}/listRecords`,
-      { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    );
-    if (!res.ok) throw new Error(`customers_fetch_${res.status}`);
-    const data = await res.json();
-    out.push(...(data.records || []));
-    offset = data.offset;
-    pages += 1;
-    if (offset && pages >= MAX_PAGES) throw new Error('customers_fetch_truncated');
-  } while (offset);
-  return out;
-}
-
-/**
- * 関所の材料。**read-only**（この Function は CampaignDeliveries へ 1 行も書かない）。
- * そのキャンペーンの配信履歴だけを名指しで引く（全件走査しない）。
- */
-async function fetchSequenceDeliveries({ KEY, BASE, campaignType }) {
-  const out = [];
-  let offset;
-  let pages = 0;
-  do {
-    const body = {
-      filterByFormula: `AND({EmailType}='campaign',{CampaignType}='${campaignType}')`,
-      pageSize: 100,
-    };
-    if (offset) body.offset = offset;
-    const res = await fetch(
-      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
-      { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    );
-    if (!res.ok) throw new Error(`deliveries_fetch_${res.status}`);
-    const data = await res.json();
-    out.push(...(data.records || []));
-    offset = data.offset;
-    pages += 1;
-    if (offset && pages >= MAX_PAGES) throw new Error('deliveries_fetch_truncated');
-  } while (offset);
-  return out;
-}
 
 /** 付与を書く（**計画どおりの fields だけ**）。成功した recordId を返す */
 async function applyGrants({ KEY, BASE, targets }) {
@@ -165,32 +99,14 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
   }
   if (!KEY || !BASE) return { ok: false, abort: 'airtable_not_configured', sideEffects: 'none' };
 
-  // ① コホートを読む（read-only）
-  const records = await fetchCohortCustomers({ KEY, BASE });
-  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
-  const rows = records.map((rec) => {
-    const fields = rec.fields || {};
-    return {
-      recordId: rec.id,
-      fields,
-      marketing: resolveCustomerMarketing({ fields, nowMs: now, blacklistEmails }),
-    };
-  });
-
-  // ② 関所の材料（**read-only**）: Step1 がどこまで届いているか
-  const campaign = getCampaign(CAMPAIGN_ID);
-  const deliveries = campaign
-    ? await fetchSequenceDeliveries({ KEY, BASE, campaignType: `${campaign.campaignId}:v${campaign.version}` })
-    : [];
-  const provider = await fetchProviderSuppression({ apiKey: env.SENDGRID_API_KEY, now });
-
-  // ③ 下見と実行が**同じ 1 本**を通る（画面で見た 100 件と実際に付与する 100 件が一致する）
-  const planned = buildTrialGrantPlan({
-    records: rows, env, nowMs: now, gates,
-    sequenceCampaign: campaign, deliveries,
-    providerSuppressed: provider.ok ? provider.emails : null,
-    brand: BRAND, fromEmail: getBrandConfig(BRAND).defaultFromEmail,
-  });
+  // ①②③ 下見と実行で**同じ 1 本**を通る（formula / sort / 関所 / 指紋が構造的に一致）
+  const loaded = await loadAndPlanLightTrial({ env, nowMs: now, gates });
+  if (!loaded.ok) {
+    const body = { ok: false, abort: loaded.abort, sideEffects: 'none', fetch: loaded.fetch || null };
+    log(body);
+    return body;
+  }
+  const planned = loaded.planned;
 
   const view = {
     offerId: planned.offerId,
@@ -199,13 +115,19 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
     batchSizeSource: planned.batchSizeSource,
     hardMax: HARD_MAX_BATCH_SIZE,
     cohort: {
-      総数: planned.cohort ? planned.cohort.inCohort : 0,
+      // ⚠️ 全件走査をやめたので**コホート全体の数ではない**（取得できた範囲）
+      観測できた件数: planned.cohort ? planned.cohort.inCohort : 0,
       バッチ別: planned.cohort ? planned.cohort.byBatch : {},
       走査件数: planned.counts ? planned.counts.scanned : 0,
+      全件走査していない: planned.cohort ? planned.cohort.partial === true : false,
     },
-    全候補: planned.counts ? planned.counts.candidates : 0,
     今回処理予定: planned.counts ? planned.counts.batchSize : 0,
-    残り: planned.counts ? planned.counts.remaining : 0,
+    /** 正確な残数は出さない（全件走査しないと分からないため） */
+    残り: null,
+    まだ候補がある: loaded.fetch ? loaded.fetch.moreAvailable : null,
+    取得ページ数: loaded.fetch ? loaded.fetch.pagesFetched : null,
+    取得件数: loaded.fetch ? loaded.fetch.recordsFetched : null,
+    関所取得件数: loaded.fetch ? loaded.fetch.barrierRecords : null,
     関所: {
       付与済み: planned.barrier ? planned.barrier.granted : 0,
       Step1未処理: planned.barrier ? planned.barrier.outstanding : 0,
@@ -226,7 +148,12 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
       ...view,
       notice: 'これは下見です。**1 バイトも書いていません**（付与もキュー登録もしていません）。',
     };
-    log({ mode: 'dry-run', cohort: view.cohort.総数, candidates: view.全候補, batch: view.今回処理予定 });
+    log({
+      mode: 'dry-run',
+      observed: view.cohort.観測できた件数,
+      batch: view.今回処理予定,
+      moreAvailable: view.まだ候補がある,
+    });
     return body;
   }
 
