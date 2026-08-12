@@ -44,8 +44,10 @@
  */
 
 import { jstDateString } from '../marketing/campaignSend.js';
-import { buildComebackPlan, computePlanFingerprint } from './comebackGrantPlan.js';
+import { buildComebackPlan } from './comebackGrantPlan.js';
 import { resolveOffer } from '../promotions/promotionOfferCatalog.js';
+import { evaluateStep1Barrier, barrierToken } from './lightTrialBarrier.js';
+import { createHash } from 'node:crypto';
 import { matchesImportCohort, summarizeCohort, assertCohortObservable } from '../crm/importedCohort.js';
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 import { resolveFreeGrantHistory } from '../entitlements/freeGrantStatus.js';
@@ -80,6 +82,8 @@ export const AUTOGRANT_ABORT = Object.freeze({
   GATES_CLOSED: 'gates_closed',
   COHORT_UNVERIFIABLE: 'cohort_unverifiable',
   NO_CANDIDATES: 'no_candidates',
+  /** 前回付与ぶんの Step1 がまだ片付いていない（関所） */
+  WAITING_FOR_STEP1: 'waiting_for_step1',
   /** env の件数指定が絶対上限を超えている / 壊れている（**実行しない**） */
   BATCH_SIZE_REJECTED: 'batch_size_rejected',
   OFFER_UNAVAILABLE: 'offer_unavailable',
@@ -295,7 +299,11 @@ export function buildTrialOperationId(nowMs) {
  * @param {{records: object[], env?: object, nowMs: number, gates?: object}} input
  * @returns {{ok: boolean, abort?: string, ...}}
  */
-export function buildTrialGrantPlan({ records, env = process.env, nowMs, gates } = {}) {
+export function buildTrialGrantPlan({
+  records, env = process.env, nowMs, gates,
+  // 関所の材料（**read-only**。渡されなければ関所は評価しない = 従来どおり）
+  sequenceCampaign, deliveries, providerSuppressed, brand, fromEmail,
+} = {}) {
   const batch = resolveBatchSize(env);
   if (!batch.ok) {
     return {
@@ -311,6 +319,15 @@ export function buildTrialGrantPlan({ records, env = process.env, nowMs, gates }
   const g = gates || readAutoGrantGates(env, nowMs);
   const operationId = buildTrialOperationId(nowMs);
 
+  // ── 関所: 前回付与ぶんの Step1 が片付くまで次のバッチへ進まない ──────
+  // **数えるだけ**（CampaignDeliveries は read-only 参照）。
+  const barrier = sequenceCampaign
+    ? evaluateStep1Barrier({
+      records, campaign: sequenceCampaign, deliveries,
+      providerSuppressed, brand, fromEmail, nowMs,
+    })
+    : { granted: 0, outstanding: 0, resolved: 0, byReason: {}, nextBatchAllowed: true, evaluated: false };
+
   // ゲートが閉じていても**件数の下見は返す**（書き込みはしない）
   const view = {
     offerId: TRIAL_OFFER_ID,
@@ -321,7 +338,20 @@ export function buildTrialGrantPlan({ records, env = process.env, nowMs, gates }
     cohort: selection.cohort,
     counts: selection.counts,
     gates: { allOpen: g.allOpen, missing: g.missing },
+    barrier,
   };
+
+  // 関所が閉じていたら、ゲートが開いていても**次のバッチを作らない**
+  if (sequenceCampaign && barrier.nextBatchAllowed !== true) {
+    return {
+      ...view,
+      ok: false,
+      abort: AUTOGRANT_ABORT.WAITING_FOR_STEP1,
+      outstandingStep1: barrier.outstanding,
+      planFingerprint: '',
+      targets: 0,
+    };
+  }
 
   const planned = planAutoGrantRun({ selection, gates: g, offer, batchSize: batch.size });
   if (!planned.ok) {
@@ -335,8 +365,8 @@ export function buildTrialGrantPlan({ records, env = process.env, nowMs, gates }
       ok: false,
       abort: planned.abort,
       missing: planned.missing,
-      /** 下見用: ゲートが開いたときに実行される計画の指紋 */
-      planFingerprint: grantPlan.ok ? grantPlan.planFingerprint : '',
+      /** 下見用: ゲートが開いたときに実行される計画の指紋（関所の状態を含む） */
+      planFingerprint: grantPlan.ok ? withBarrier(grantPlan.planFingerprint, barrier) : '',
       targets: grantPlan.ok ? grantPlan.targets.length : 0,
     };
   }
@@ -353,8 +383,19 @@ export function buildTrialGrantPlan({ records, env = process.env, nowMs, gates }
     plan: grantPlan,
     targets: grantPlan.targets.length,
     remaining: planned.remaining,
-    planFingerprint: grantPlan.planFingerprint,
+    planFingerprint: withBarrier(grantPlan.planFingerprint, barrier),
   };
+}
+
+/**
+ * 指紋に**関所の状態**を混ぜる。
+ * 「同じ 100 件」でも、関所が開いているかどうかで実行の意味が違うため、
+ * 下見と実行の突き合わせにはその違いも含める。
+ */
+function withBarrier(fingerprint, barrier) {
+  return createHash('sha256')
+    .update(`${String(fingerprint)}|${barrierToken(barrier)}`, 'utf8')
+    .digest('hex');
 }
 
 /** 実行結果の要約（**アドレスも recordId も含めない**） */

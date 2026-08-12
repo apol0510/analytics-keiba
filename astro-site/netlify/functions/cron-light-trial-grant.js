@@ -44,9 +44,14 @@ import { COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import { chunkTargets } from '../../src/lib/comeback/comebackGrantPlan.js';
 import { resolveCustomerMarketing } from '../../src/lib/marketing/customerMarketingAudience.js';
 import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js';
+import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
+import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
+const DELIVERIES_TABLE = 'CampaignDeliveries';
+const CAMPAIGN_ID = 'light-trial-to-premium-sequence';
 const MAX_PAGES = 60;
 
 export const TRIAL_LOG_TAG = '[light-trial-grant]';
@@ -89,6 +94,34 @@ async function fetchCohortCustomers({ KEY, BASE }) {
     offset = data.offset;
     pages += 1;
     if (offset && pages >= MAX_PAGES) throw new Error('customers_fetch_truncated');
+  } while (offset);
+  return out;
+}
+
+/**
+ * 関所の材料。**read-only**（この Function は CampaignDeliveries へ 1 行も書かない）。
+ * そのキャンペーンの配信履歴だけを名指しで引く（全件走査しない）。
+ */
+async function fetchSequenceDeliveries({ KEY, BASE, campaignType }) {
+  const out = [];
+  let offset;
+  let pages = 0;
+  do {
+    const body = {
+      filterByFormula: `AND({EmailType}='campaign',{CampaignType}='${campaignType}')`,
+      pageSize: 100,
+    };
+    if (offset) body.offset = offset;
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+      { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    );
+    if (!res.ok) throw new Error(`deliveries_fetch_${res.status}`);
+    const data = await res.json();
+    out.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    if (offset && pages >= MAX_PAGES) throw new Error('deliveries_fetch_truncated');
   } while (offset);
   return out;
 }
@@ -143,8 +176,20 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
     };
   });
 
-  // ②③ 下見と実行が**同じ 1 本**を通る（画面で見た 100 件と実際に付与する 100 件が一致する）
-  const planned = buildTrialGrantPlan({ records: rows, env, nowMs: now, gates });
+  // ② 関所の材料（**read-only**）: Step1 がどこまで届いているか
+  const campaign = getCampaign(CAMPAIGN_ID);
+  const deliveries = campaign
+    ? await fetchSequenceDeliveries({ KEY, BASE, campaignType: `${campaign.campaignId}:v${campaign.version}` })
+    : [];
+  const provider = await fetchProviderSuppression({ apiKey: env.SENDGRID_API_KEY, now });
+
+  // ③ 下見と実行が**同じ 1 本**を通る（画面で見た 100 件と実際に付与する 100 件が一致する）
+  const planned = buildTrialGrantPlan({
+    records: rows, env, nowMs: now, gates,
+    sequenceCampaign: campaign, deliveries,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    brand: BRAND, fromEmail: getBrandConfig(BRAND).defaultFromEmail,
+  });
 
   const view = {
     offerId: planned.offerId,
@@ -160,6 +205,12 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
     全候補: planned.counts ? planned.counts.candidates : 0,
     今回処理予定: planned.counts ? planned.counts.batchSize : 0,
     残り: planned.counts ? planned.counts.remaining : 0,
+    関所: {
+      付与済み: planned.barrier ? planned.barrier.granted : 0,
+      Step1未処理: planned.barrier ? planned.barrier.outstanding : 0,
+      片付いた: planned.barrier ? planned.barrier.resolved : 0,
+      次バッチ可: planned.barrier ? planned.barrier.nextBatchAllowed : true,
+    },
     planFingerprint: planned.planFingerprint || '',
     除外理由: Object.fromEntries(
       Object.entries((planned.counts && planned.counts.byReason) || {})
@@ -185,6 +236,7 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
   }
 
   // ④ 付与（**ここが唯一 Customers を書く**。メールは 1 通も作らない）
+  //    ここへ来るのは 関所が開いている（Step1 未処理 0 件）ときだけ
   const { written, failed } = await applyGrants({ KEY, BASE, targets: planned.plan.targets });
 
   const summary = summarizeAutoGrantRun({ plan: planned, granted: written.size, failed });

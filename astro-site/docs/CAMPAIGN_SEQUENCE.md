@@ -162,10 +162,14 @@ DeliveryKey は **campaign × version × step × 受信者**。
 ```
 cron-light-trial-grant が 1 日 1 回:
   ① CSV コホートを数える（観測できなければ中止）
-  ② 候補を選ぶ（過去付与・有料・期限なし付与・付与中・配信不可を除外）
-  ③ **先頭 100 件だけ**付与（← Customers へ LightGrant* を書く。buildComebackPlan が正本）
+  ② **関所**: 前回付与ぶんの Step1 が片付いたか数える（read-only）
+     → 未処理が 1 件でもあれば **waiting_for_step1 で終了**（付与しない）
+  ③ 候補を選ぶ（過去付与・有料・期限なし付与・付与中・配信不可を除外）
+  ④ **先頭 100 件だけ**付与（← Customers へ LightGrant* を書く。buildComebackPlan が正本）
   → 残りは翌日以降の実行が順に処理する（offset は持たない）
   → **キューも送信も作らない。** Step1 は管理画面から別途
+
+運用のリズム: 付与 100 名 → 管理画面で Step1 を dry-run → キュー登録 → 翌日の付与が進む
 ```
 
 > ⚠️ **Customers を書くのは付与の 2 経路だけ**（手動 `admin-comeback-grants` /
@@ -233,13 +237,42 @@ Step1 の対象は「**無料期間中であること**」で決まる（`requir
 - 並びは **recordId 昇順**で決定的。同じ入力なら毎回同じ N 件・同じ `planFingerprint`
 - **同一顧客への二重付与は起きない**（候補判定 + `operationId` の二重防御）
 
+### 関所: 案内していない付与を溜めない（read-only barrier）
+
+付与と送信を分けた結果、**Step1 をまだ案内していないのに次の 100 名へ付与が進む**と、
+使われないまま無料期間 30 日だけが減る人が積み上がる。そこで関所を置く。
+
+```
+outstandingStep1 > 0 の間は、次の付与バッチを実行しない（abort: waiting_for_step1）
+```
+
+- 対象は **自動付与で配った人**（`ComebackGrantSource = light-trial-autogrant`）のうち
+  **いま Light 無料期間中**の人
+- **`CampaignDeliveries` は read-only で参照するだけ。**
+  この経路はキュー登録も送信も**絶対にしない**
+- 判定に使う DeliveryKey は Step1 のもの（`campaign × version × step1 × 受信者`）
+
+**片付いた（resolved）とみなす条件** — 送信できない人が関所を**永久に塞がない**ため:
+
+| 条件 | 理由コード |
+|---|---|
+| Step1 が **queued / sent** になった | `step1_queued` |
+| 配信停止・バウンス・停止アカウント等（`sendable !== true`） | `not_sendable` |
+| 配信基盤の suppression に載っている | `provider_suppressed` |
+| 有料契約が成立した（目的達成） | `purchased` |
+| 無料期間が終了・取消（もう体験中でない） | `grant_ended` |
+
+`planFingerprint` には**関所の状態も混ぜる**（同じ 100 件でも、関所が開いているかで
+実行の意味が違うため）。待機中は指紋を出さない。
+
 ### 下見と実行が同じものを見る
 
 管理画面の下見も cron の実行も **`buildTrialGrantPlan()` の 1 本**を通る。
 画面に出る「今回処理予定 100 件」と、実際に付与される 100 件は**同じ指紋**になる。
 
 下見が返すもの: 全候補 / 今回処理予定 / 残り / バッチ別 / 除外理由別 /
-`planFingerprint` / 1 回の上限と hard max / 自動付与ゲートの状態。
+`planFingerprint` / 1 回の上限と hard max / 自動付与ゲートの状態 /
+**関所（`outstandingStep1` / `resolved` / `nextBatchAllowed` と片付いた内訳）**。
 
 ```bash
 # 管理画面の「無料体験の入口を数える（付与しません）」と同じ内容

@@ -124,14 +124,45 @@ test('【安全】自動付与は 4 ゲートが揃うまで Customers を書か
 
 test('【重要】付与と送信は分離（付与経路がメールもキューも作らない）', () => {
   const code = codeOnly(TRIAL_CRON);
+  // 送信・キュー登録の道具を 1 つも持っていない
   for (const bad of [
-    'ScheduledEmails', 'CampaignDeliveries', 'buildCampaignPlan',
-    'renderCampaign', 'buildScheduledEmailFields', 'buildDeliveryRecords',
+    'ScheduledEmails', 'buildCampaignPlan', 'renderCampaign',
+    'buildScheduledEmailFields', 'buildDeliveryRecords', 'performUpsert',
   ]) assert.equal(code.includes(bad), false, `付与経路が送信を持っている: ${bad}`);
+  // CampaignDeliveries は **read-only 参照だけ**（listRecords でしか触らない）
+  assert.match(code, /DELIVERIES_TABLE = 'CampaignDeliveries'/);
+  const cdWrite = /encodeURIComponent\(DELIVERIES_TABLE\)[\s\S]{0,200}method: '(POST|PATCH|DELETE)'/.test(code)
+    && !/DELIVERIES_TABLE\)\}\/listRecords/.test(code);
+  assert.equal(cdWrite, false, 'CampaignDeliveries へ書いている');
   // 配信系ゲートを要求していない（付与のために配信を開けさせない）
   const gateCode = codeOnly(AUTOGRANT);
   assert.equal(/MARKETING_CAMPAIGN_(ENABLED|DISPATCH_ENABLED)/.test(gateCode), false,
     '付与のゲートに配信系 env が残っている');
+});
+
+test('【重要】Step1 未処理があるうちは次の付与へ進まない（関所）', () => {
+  const code = codeOnly(AUTOGRANT);
+  assert.match(code, /WAITING_FOR_STEP1/);
+  assert.match(code, /evaluateStep1Barrier\(/);
+  assert.match(code, /barrier\.nextBatchAllowed !== true/);
+  // cron が関所の材料を read-only で渡している
+  const cron = codeOnly(TRIAL_CRON);
+  assert.match(cron, /fetchSequenceDeliveries\(/);
+  assert.match(cron, /sequenceCampaign: campaign/);
+  // 書き込みは Customers の PATCH だけ（POST は listRecords の読み取りのみ）
+  const writes = cron.match(/method: '(POST|PATCH|DELETE)'/g) || [];
+  assert.equal(writes.filter((w) => w.includes('PATCH')).length, 1, 'PATCH は Customers の付与 1 か所だけ');
+  assert.equal(/method: 'DELETE'/.test(cron), false);
+  assert.equal((cron.match(/listRecords/g) || []).length, 2, 'POST は listRecords（読み取り）のみ');
+});
+
+test('【表示】下見に outstandingStep1 / resolved / nextBatchAllowed がある', () => {
+  const code = codeOnly(ADMIN);
+  for (const k of ['outstandingStep1', 'resolved:', 'nextBatchAllowed']) {
+    assert.ok(code.includes(k), `下見の応答に無い: ${k}`);
+  }
+  assert.ok(PAGE.includes('Step1 未処理'), '画面に出ていない');
+  assert.ok(PAGE.includes('次バッチ可否'), '画面に出ていない');
 });
 
 test('【重要】候補が多くても全体を中止せず、先頭 N 件だけ処理する', () => {
