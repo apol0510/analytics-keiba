@@ -33,6 +33,20 @@
  *
  * targets.json の形:
  *   [{ "id": "recXXXX", "keepId": "recYYYY", "email": "a@example.com" }, ...]
+ *
+ * ── ポイント残高がある重複を消す場合（値を固定した個別許可）──────────
+ * 既定では**ポイントが既定値(1)を超える削除候補は必ず skip** する。
+ * どうしても消す必要がある組は、**その組だけ**を対象ファイル側で値ごと固定する:
+ *
+ *   {
+ *     "id": "recXXXX", "keepId": "recYYYY", "email": "a@example.com",
+ *     "pointsPolicy": "max_keep_wins",   // 正本の残高を採る = 移行しない、と確認済み
+ *     "expectedDeletePoints": 102,       // 実行直前の実値と**完全一致**しなければ中止
+ *     "expectedKeepPoints": 1230
+ *   }
+ *
+ * ⚠️ **「ポイント無視」の汎用オプション（--allow-points-loss 等）は作らない。**
+ *    値を固定した個別宣言だけを認める。1 点でも動いていたら skip する。
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -65,8 +79,11 @@ const norm = (v) => String(v ?? '').trim().toLowerCase();
 const has = (v) => v !== undefined && v !== null && String(v).trim() !== '' && v !== false;
 const rank = (p) => PLAN_RANK[norm(p)] ?? 0;
 
+/** ポイント残高がある組を消すときの唯一の宣言（汎用の抜け道は作らない） */
+export const POINTS_POLICY_MAX_KEEP_WINS = 'max_keep_wins';
+
 /** 削除してよいか（純粋・テストから直接呼ぶ） */
-export function checkDeletable({ target, keep, email }) {
+export function checkDeletable({ target, keep, email, entry }) {
   if (!keep) return { ok: false, reason: 'keep_record_missing' };
   if (norm(keep.fields?.Email) !== norm(email)) return { ok: false, reason: 'keep_email_mismatch' };
   if (!target) return { ok: false, reason: 'target_missing' };
@@ -75,7 +92,26 @@ export function checkDeletable({ target, keep, email }) {
   const f = target.fields || {};
   const blocking = BLOCKING_FIELDS.filter((k) => has(f[k]));
   if (blocking.length > 0) return { ok: false, reason: `has_values:${blocking.join(',')}` };
-  if (Number(f['ポイント'] ?? 0) > DEFAULT_POINTS) return { ok: false, reason: `has_points:${f['ポイント']}` };
+  const targetPoints = Number(f['ポイント'] ?? 0);
+  const keepPoints = Number(keep.fields?.['ポイント'] ?? 0);
+  if (targetPoints > DEFAULT_POINTS) {
+    const e = entry || {};
+    // 宣言が無ければ従来どおり skip（既定は安全側）
+    if (e.pointsPolicy !== POINTS_POLICY_MAX_KEEP_WINS) {
+      return { ok: false, reason: `has_points:${targetPoints}` };
+    }
+    // 宣言があっても、**実行直前の実値と完全一致**しなければ中止
+    if (Number(e.expectedDeletePoints) !== targetPoints) {
+      return { ok: false, reason: `points_changed:delete ${e.expectedDeletePoints}→${targetPoints}` };
+    }
+    if (Number(e.expectedKeepPoints) !== keepPoints) {
+      return { ok: false, reason: `points_changed:keep ${e.expectedKeepPoints}→${keepPoints}` };
+    }
+    // 「最大値採用」が成り立つ（正本が上回る）ことを実値で再確認する
+    if (!(keepPoints >= targetPoints)) {
+      return { ok: false, reason: `keep_points_lower:${keepPoints}<${targetPoints}` };
+    }
+  }
   if (rank(f['プラン']) > rank(keep.fields?.['プラン'])) return { ok: false, reason: 'target_plan_stronger' };
   return { ok: true, reason: null };
 }
@@ -152,6 +188,7 @@ async function main() {
       target: target.ok ? target.body : null,
       keep: keep.ok ? keep.body : null,
       email: t.email,
+      entry: t,
     });
     plan.push({ id: t.id, action: verdict.ok ? 'delete' : 'skip', reason: verdict.reason });
   }

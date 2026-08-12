@@ -46,10 +46,54 @@ fail closed でログインを拒否**する。重複の解消は、その人の
 | `ScheduledEmails.Recipients` | メールアドレス | 同上 |
 | `EmailEvents` | Blob（`emailHash` / `customerRecordId`） | 監査用の append-only ログ。過去行は書き換えない |
 
-## 5. 統合できる項目（**自動では移さない**）
+## 5. ポイント残高がある組の扱い
 
-ポイント残高だけは削除で失われる。移すかどうかは運用判断なので、
-**スクリプトは 1 点も移さず、残高がある組は `review` に落とす**。
+### 「ポイント」を書く経路（2026-08-12 全数監査）
+
+| # | 経路 | 更新式 | 種類 |
+|---|---|---|---|
+| 1 | `netlify/functions/daily-points.js`（AK） | `'ポイント': currentPoints + pointsToAdd`（free +1 / standard +10 / premium +30）を**全 Customers レコードに対して**実行 | 加算 |
+| 2 | `netlify/functions/auth-user.js`（AK） | 新規作成時のみ `'ポイント': 1` | 作成時のみ |
+| 3 | `src/lib/crm/importWritePlan.js`（AK） | CREATE 時のみ `'ポイント': 0` | 作成時のみ |
+| 4 | `nankan-analytics/netlify/functions/daily-points.js` | AK と同じ加算式。**同じ Base `apptmQUPAlgZMmBC9` を共有** | 加算 |
+| 5 | `nankan-analytics/netlify/functions/auth-user.js` | 新規作成時 `'ポイント': 1` | 作成時のみ |
+| 6 | `nankan-analytics/netlify/functions/send-magic-link.js` | 新規作成時 `'ポイント': 0` | 作成時のみ |
+
+**消費・減算の経路は存在しない。**
+`point-exchange.js` / `claim-reward.js` は申請メールを送るだけで Customers のポイントを引かない
+（`claim-reward.js` が書くのは `特典申請済み` のみ。しかもこの列は現行 schema に無い）。
+管理画面からのポイント更新経路も無い（`admin/point-exchange-requests.astro` は表示のみ）。
+Airtable Automation でポイントを書くものは docs / repo からは確認できない。
+git 履歴上、ポイントを書いていた（削除済み含む）Function は `daily-points.js` / `auth-user.js` だけ。
+
+### 二重付与を「証明」できるか
+
+できない。理由:
+
+- 付与は**レコード単位**なので、重複していた期間は二重に付与されうる（＝差の一部は二重計上）
+- しかし残高の内訳を復元する**台帳が存在しない**（`PointHistory` 相当のテーブルは無く、
+  `PointExchangeRequests` は申請の記録で残高の履歴ではない）
+- 付与元が **AK と nankan-analytics の 2 系統**あり、どちらがいつ動いたかを repo から確定できない
+  （どちらも cron 未登録で、過去の稼働実績を追えない）
+- 実データも「同じ付与を二重に受けた」形になっていない（後述の 3 組を参照）
+
+→ **証明できない場合は削除しない。** ポイントを失わせない側へ倒す。
+
+### どうしても消す場合の唯一の方法（値を固定した個別許可）
+
+汎用の「ポイント無視」オプションは**作らない**。対象ファイル側で組ごとに宣言する:
+
+```json
+{
+  "id": "recXXXX", "keepId": "recYYYY", "email": "a@example.com",
+  "pointsPolicy": "max_keep_wins",
+  "expectedDeletePoints": 102,
+  "expectedKeepPoints": 1230
+}
+```
+
+実行直前に**実値と完全一致**しなければ skip する（1 点でも動いていたら止まる）。
+さらに `正本 >= 削除候補` を実値で再確認する（最大値採用が成り立たない組は消せない）。
 
 ## 6. 実行
 
