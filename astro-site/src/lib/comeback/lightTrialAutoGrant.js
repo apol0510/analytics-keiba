@@ -297,18 +297,21 @@ export function buildTrialOperationId(nowMs) {
 }
 
 /**
- * **下見と実行が同じものを見るための 1 本の入口。**
+ * **下見と実行が同じ計画を作るための 1 本。**（選び方は問わない）
  *
- * 管理画面の preview も cron の実行も**この関数だけ**を呼ぶ。別々に組み立てると
- * 「画面で見た 100 件」と「実際に付与する 100 件」がズレる。
+ * `selection` は
+ *   - 全件から選んだもの（`selectAutoGrantCandidates`。テスト・少数データ用）
+ *   - Airtable 側で絞って必要な分だけ取ったもの（`selectCandidatesBounded`。**本番**）
+ * のどちらでもよい。ここから先（関所・計画・指紋）は**完全に同じ経路**を通る。
  *
- * @param {{records: object[], env?: object, nowMs: number, gates?: object}} input
- * @returns {{ok: boolean, abort?: string, ...}}
+ * @param {{selection: object, env?: object, nowMs: number, gates?: object,
+ *          barrierRecords?: object[]|null}} input
  */
-export function buildTrialGrantPlan({
-  records, env = process.env, nowMs, gates,
-  // 関所の材料（**read-only**。渡されなければ関所は評価しない = 従来どおり）
+export function buildPlanFromSelection({
+  selection, env = process.env, nowMs, gates,
   sequenceCampaign, deliveries, providerSuppressed, brand, fromEmail,
+  /** 関所の対象者。省略時は selection の元データを使わない（= 関所を評価しない） */
+  barrierRecords = null,
 } = {}) {
   const batch = resolveBatchSize(env);
   if (!batch.ok) {
@@ -321,20 +324,18 @@ export function buildTrialGrantPlan({
   if (!offerRes.ok) return { ok: false, abort: AUTOGRANT_ABORT.OFFER_UNAVAILABLE };
   const offer = offerRes.offer;
 
-  const selection = selectAutoGrantCandidates({ records, nowMs, maxGrants: batch.size });
   const g = gates || readAutoGrantGates(env, nowMs);
   const operationId = buildTrialOperationId(nowMs);
+  /** Airtable 側で絞って必要な分だけ取ったか（= 全体の残数を知らない） */
+  const bounded = !!(selection && selection.counts && selection.counts.bounded === true);
 
-  // ── 関所: 前回付与ぶんの Step1 が片付くまで次のバッチへ進まない ──────
-  // **数えるだけ**（CampaignDeliveries は read-only 参照）。
   const barrier = sequenceCampaign
     ? evaluateStep1Barrier({
-      records, campaign: sequenceCampaign, deliveries,
+      records: barrierRecords || [], campaign: sequenceCampaign, deliveries,
       providerSuppressed, brand, fromEmail, nowMs,
     })
     : { granted: 0, outstanding: 0, resolved: 0, byReason: {}, nextBatchAllowed: true, evaluated: false };
 
-  // ゲートが閉じていても**件数の下見は返す**（書き込みはしない）
   const view = {
     offerId: TRIAL_OFFER_ID,
     operationId,
@@ -347,7 +348,6 @@ export function buildTrialGrantPlan({
     barrier,
   };
 
-  // 関所が閉じていたら、ゲートが開いていても**次のバッチを作らない**
   if (sequenceCampaign && barrier.nextBatchAllowed !== true) {
     return {
       ...view,
@@ -361,7 +361,6 @@ export function buildTrialGrantPlan({
 
   const planned = planAutoGrantRun({ selection, gates: g, offer, batchSize: batch.size });
   if (!planned.ok) {
-    // 下見のときはゲート閉が普通なので、件数だけは必ず返す
     const grantPlan = buildComebackPlan({
       grantOffers: [offer], purchaseOffer: null, selected: selection.batch || [],
       nowMs, operationId, actor: 'cron-light-trial', source: 'light-trial-autogrant',
@@ -371,7 +370,6 @@ export function buildTrialGrantPlan({
       ok: false,
       abort: planned.abort,
       missing: planned.missing,
-      /** 下見用: ゲートが開いたときに実行される計画の指紋（関所の状態を含む） */
       planFingerprint: grantPlan.ok ? withBarrier(grantPlan.planFingerprint, barrier) : '',
       targets: grantPlan.ok ? grantPlan.targets.length : 0,
     };
@@ -388,9 +386,35 @@ export function buildTrialGrantPlan({
     ok: true,
     plan: grantPlan,
     targets: grantPlan.targets.length,
-    remaining: planned.remaining,
+    // ⚠️ bounded 選択では**全体を数えていない**ので残数を出さない（嘘の 0 を出さない）
+    remaining: bounded ? null : planned.remaining,
     planFingerprint: withBarrier(grantPlan.planFingerprint, barrier),
   };
+}
+
+/**
+ * 全件を渡して計画まで作る（**テストと少数データ専用**）。
+ *
+ * ⚠️ 本番の cron / 管理画面の下見は**これを使わない**。Customers 全件走査は
+ *    14,489 件規模で関数タイムアウトに収まらないため、`selectCandidatesBounded` を使う。
+ *
+ * @param {{records: object[], env?: object, nowMs: number, gates?: object}} input
+ * @returns {{ok: boolean, abort?: string, ...}}
+ */
+export function buildTrialGrantPlan({
+  records, env = process.env, nowMs, gates,
+  sequenceCampaign, deliveries, providerSuppressed, brand, fromEmail,
+} = {}) {
+  const batch = resolveBatchSize(env);
+  const selection = selectAutoGrantCandidates({
+    records, nowMs, maxGrants: batch.ok ? batch.size : DEFAULT_BATCH_SIZE,
+  });
+  // 関所の対象は「自動付与で配った人」だけ。全件から絞るのはここ（少数データ前提）
+  return buildPlanFromSelection({
+    selection, env, nowMs, gates,
+    sequenceCampaign, deliveries, providerSuppressed, brand, fromEmail,
+    barrierRecords: records,
+  });
 }
 
 /**

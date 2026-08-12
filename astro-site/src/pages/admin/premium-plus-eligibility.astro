@@ -4841,14 +4841,21 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (!auto.enabled && Array.isArray(auto.missing) && auto.missing.length) {
         row('　自動付与に必要な設定', auto.missing.join(' / '));
       }
-      row('CSV 取り込みの対象総数', (c.total || 0) + ' 名', c.total > 0 ? 'is-ok' : 'is-ng');
+      if (out.abort && !out.operationId) {
+        row('⚠️ 下見を確定できません', String(out.abort) + '（取得の上限に達しました。付与もしていません）', 'is-ng');
+      }
+      row('読んだ顧客', (out.recordsFetched || 0) + ' 名 / ' + (out.pagesFetched || 0) + ' ページ');
+      row('　うち CSV 取り込み', (c.observed || 0) + ' 名'
+        + (c.partial ? '（**全体数ではありません**）' : ''), (c.observed || 0) > 0 ? 'is-ok' : 'is-ng');
       const batches = Object.entries(c.byBatch || {});
-      row('　バッチ別', batches.length ? batches.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
-      row('走査した顧客', (c.scanned || 0) + ' 名');
-      row('全候補', (out.candidates || 0) + ' 名', out.candidates > 0 ? 'is-ok' : '');
+      row('　バッチ別（読んだ範囲）', batches.length ? batches.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
       row('今回処理予定', (out.batch || 0) + ' 名（1 回の上限 ' + (out.batchSize || 0) + ' 名'
-        + (out.batchSizeSource === 'env' ? '・env 指定' : '・既定') + '）');
-      row('残り', (out.remaining || 0) + ' 名（次回以降の実行で順に処理）');
+        + (out.batchSizeSource === 'env' ? '・env 指定'
+          : (out.batchSizeSource === 'request-preview' ? '・下見だけの仮指定' : '・既定')) + '）');
+      // 全件走査をやめたので**正確な残数は出さない**。嘘の数字より「まだ有る／無い」を出す
+      row('残り（正確な数）', '未算出（全件走査を廃止したため）');
+      row('まだ候補があるか', out.moreAvailable === true ? 'あり（次回以降の実行で順に処理）'
+        : (out.moreAvailable === false ? 'なし（読んだ範囲で打ち止め）' : '—'));
       const bar = out.barrier || {};
       row('次バッチ可否', bar.nextBatchAllowed ? '進めます' : '⛔ 待機中（Step1 未処理があるため付与しません）',
         bar.nextBatchAllowed ? 'is-ok' : 'is-ng');

@@ -142,8 +142,9 @@ import {
 } from '../../src/lib/marketing/sequenceProgress.js';
 import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
-  buildTrialGrantPlan, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE, TRIAL_SEQUENCE_ID,
+  AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
 import { BARRIER_RESOLVED_LABEL } from '../../src/lib/comeback/lightTrialBarrier.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -550,7 +551,7 @@ export const handler = async (event) => {
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
-    if (action === 'trialGrant') return await handleTrialGrantPreview({ KEY, BASE, now });
+    if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1021,31 +1022,39 @@ function resolveStepCampaign({ campaign, step }) {
  * ⚠️ ここは**付与しない**。付与できるのは既存の `admin-comeback-grants`（operationId 冪等）
  *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
  */
-async function handleTrialGrantPreview({ KEY, BASE, now }) {
-  const { list, deliveries } = await loadCustomerMarketing({ KEY, BASE, now });
-  const records = list.map((c) => ({ recordId: c.recordId, fields: c.fields, marketing: c.marketing }));
+async function handleTrialGrantPreview({ now, req }) {
+  // 下見でだけ「もし N 件なら」を試せる（**実行には効かない**。env が正本）
+  const override = Number.isInteger(req && req.batchSize) ? req.batchSize : null;
+  if (override !== null && (override <= 0 || override > HARD_MAX_BATCH_SIZE)) {
+    return json(400, { error: `batchSize は 1〜${HARD_MAX_BATCH_SIZE} で指定してください`, sideEffects: 'none' });
+  }
 
-  // 関所の材料（**read-only**）。Step1 がどこまで届いているかを数えるだけ。
-  const campaign = getCampaign(TRIAL_SEQUENCE_ID);
-  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
-
-  // **実行と同じ 1 本**（`buildTrialGrantPlan`）を通す。
-  // 画面で見た「今回処理予定 100 件」と、cron が実際に付与する 100 件が一致する。
-  const planned = buildTrialGrantPlan({
-    records, env: process.env, nowMs: now,
-    sequenceCampaign: campaign, deliveries,
-    providerSuppressed: provider.ok ? provider.emails : null,
-    brand: BRAND, fromEmail: getBrandConfig(BRAND).defaultFromEmail,
+  // 🛡️ **cron と同じ 1 本**を通す。formula / sort / 関所 / 指紋が構造的に一致する。
+  //    ここで全件走査に戻してはいけない（14,489 件で必ずタイムアウトする）。
+  const loaded = await loadAndPlanLightTrial({
+    env: process.env, nowMs: now, batchSizeOverride: override,
   });
-  const observable = assertCohortObservable(planned.cohort || {});
+  if (!loaded.ok) {
+    // 取得上限に達した = 数え切れていない。**黙って少なく見せない**
+    return json(200, {
+      mode: 'trial-grant-preview',
+      sideEffects: 'none',
+      ok: false,
+      abort: loaded.abort,
+      fetch: loaded.fetch || null,
+      notice: '取得の上限に達したため、下見を確定できませんでした（**付与も行いません**）。',
+    });
+  }
+
+  const planned = loaded.planned;
   const counts = planned.counts || {};
+  const observable = assertCohortObservable(planned.cohort || {});
 
   return json(200, {
     mode: 'trial-grant-preview',
     sideEffects: 'none',
     offerId: planned.offerId,
     operationId: planned.operationId,
-    /** 自動付与のゲート（**閉じている間は 1 件も付与されない**）*/
     auto: {
       enabled: (planned.gates || {}).allOpen === true,
       missing: (planned.gates || {}).missing || [],
@@ -1054,36 +1063,36 @@ async function handleTrialGrantPreview({ KEY, BASE, now }) {
         : '自動付与は停止中です。付与するには管理画面（カムバック特典）から手動で行います。',
     },
     cohort: {
-      total: planned.cohort ? planned.cohort.inCohort : 0,
+      /** ⚠️ **全体数ではない**。今回の下見で実際に読んだ範囲 */
+      observed: planned.cohort ? planned.cohort.inCohort : 0,
       byBatch: planned.cohort ? planned.cohort.byBatch : {},
-      scanned: counts.scanned || 0,
+      partial: true,
       observable: observable.ok,
       note: observable.ok
-        ? null
-        : 'CSV 取り込みの痕跡が 1 件も見つかりません。**この状態では誰にも付与しません**（取り込み前か、Source を読めていないかを区別できないため）。',
+        ? 'コホート全体は数えていません（全件走査を廃止したため）。表示は読んだ範囲の内訳です。'
+        : 'CSV 取り込みの痕跡が 1 件も見つかりません。**この状態では誰にも付与しません**。',
     },
-    /** 全候補 → 今回処理予定 → 残り（段階実行） */
-    candidates: counts.candidates || 0,
+    /** 今回処理予定 → 残りは「正確には出さない」 */
     batch: counts.batchSize || 0,
-    remaining: counts.remaining || 0,
-    /**
-     * 関所: 前回付与ぶんの Step1 が片付くまで次の付与へ進まない。
-     * `outstandingStep1 > 0` の間は付与しない（案内していない付与を溜めない）。
-     */
+    batchSize: planned.batchSize,
+    batchSizeSource: override !== null ? 'request-preview' : planned.batchSizeSource,
+    hardMax: HARD_MAX_BATCH_SIZE,
+    /** 全件走査をやめたので **exact な残数は出さない** */
+    remainingExact: null,
+    moreAvailable: loaded.fetch.moreAvailable,
+    pagesFetched: loaded.fetch.pagesFetched,
+    recordsFetched: loaded.fetch.recordsFetched,
     barrier: {
       granted: (planned.barrier || {}).granted || 0,
       outstandingStep1: (planned.barrier || {}).outstanding || 0,
       resolved: (planned.barrier || {}).resolved || 0,
       nextBatchAllowed: (planned.barrier || {}).nextBatchAllowed === true,
+      recordsFetched: loaded.fetch.barrierRecords,
       byReason: Object.fromEntries(
         Object.entries((planned.barrier || {}).byReason || {})
           .map(([k, v]) => [BARRIER_RESOLVED_LABEL[k] || k, v]),
       ),
     },
-    batchSize: planned.batchSize,
-    batchSizeSource: planned.batchSizeSource,
-    hardMax: HARD_MAX_BATCH_SIZE,
-    /** 下見と実行が同じ対象であることを突き合わせるための指紋 */
     planFingerprint: planned.planFingerprint || '',
     abort: planned.ok ? null : planned.abort,
     abortReason: planned.reason || null,

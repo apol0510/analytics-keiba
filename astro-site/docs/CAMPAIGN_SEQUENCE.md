@@ -161,10 +161,10 @@ DeliveryKey は **campaign × version × step × 受信者**。
 
 ```
 cron-light-trial-grant が 1 日 1 回:
-  ① CSV コホートを数える（観測できなければ中止）
-  ② **関所**: 前回付与ぶんの Step1 が片付いたか数える（read-only）
+  ① 候補を **Airtable 側で絞って必要な分だけ**読む（Email 昇順・全件走査しない）
+  ② **関所**: 自動付与で配って体験中の人だけを読み、Step1 が片付いたか数える（read-only）
      → 未処理が 1 件でもあれば **waiting_for_step1 で終了**（付与しない）
-  ③ 候補を選ぶ（過去付与・有料・期限なし付与・付与中・配信不可を除外）
+  ③ 取得した中から候補を確定（過去付与・有料・期限なし付与・付与中・配信不可を除外）
   ④ **先頭 100 件だけ**付与（← Customers へ LightGrant* を書く。buildComebackPlan が正本）
   → 残りは翌日以降の実行が順に処理する（offset は持たない）
   → **キューも送信も作らない。** Step1 は管理画面から別途
@@ -231,11 +231,38 @@ Step1 の対象は「**無料期間中であること**」で決まる（`requir
 | 絶対上限（hard max） | **500 件**。超える指定は**実行しない**（fail closed） |
 | 壊れた指定 | `abc` / `0` / `-5` / `10.5` などは**実行しない**（空文字だけは未設定扱い） |
 
-- **offset の正本を作らない。** 付与した人は次回の候補判定で `grant_active` /
-  `granted_before` に落ちるので、**再実行すると自然に次の N 件へ進む**
+- **offset の正本を作らない。** 付与すると `LightGrantedAt` が入って
+  **Airtable の formula から外れる**ので、再実行すると自然に次の N 件へ進む
 - 失敗した人は候補に残るため、**次回そのまま再評価**される
-- 並びは **recordId 昇順**で決定的。同じ入力なら毎回同じ N 件・同じ `planFingerprint`
+- 並びは **`Email` 昇順**で決定的（重複解消済みで一意）。同じ本番状態なら毎回同じ N 件・同じ `planFingerprint`
 - **同一顧客への二重付与は起きない**（候補判定 + `operationId` の二重防御）
+
+### 🛡️ 全件走査をやめた（2026-08-12）
+
+Customers 15,962 件・コホート 14,489 件に育ち、全件走査は**動かなくなっていた**。
+
+| 経路 | 旧実装の壊れ方 |
+|---|---|
+| cron | `MAX_PAGES=60`(6,000件) を超えて `customers_fetch_truncated` で**必ず落ちる** |
+| 管理画面の下見 | `MAX_PAGES=40`(4,000件) で**黙って打ち切り**、コホート 3,629 / 候補 3,588 と過少表示（真値 14,489 / 14,320）|
+
+145 ページの取得は実測 ~41 秒で、関数タイムアウトにも収まらない。そこで
+**「全体を数える」のをやめ「次の N 人を取る」**に変えた（正本 `lightTrialSelection.js`）。
+
+- **超集合の原則**: formula は `checkAutoGrantCandidate` が通す人を **1 人も落とさない**。
+  落とすとその人は永久に候補へ出てこない。総当たりテストで固定している
+- **退会（`WithdrawalRequested`）を formula に書かない**。`resolveSendability` は退会を
+  suppression にしていない（契約状態であってメール拒否ではない）
+- **有料判定も formula に書かない**。`resolveEntitlements` の組み合わせ判定なので
+  列だけの近似は過剰除外になりやすい。JS 側で落とす
+- **silent truncation を作らない**。上限に達したら `candidate_scan_limit` /
+  `barrier_scan_limit` で **fail closed**（付与しない）
+
+#### 正確な残数は出さない
+
+全件を数えないので `remainingExact` は **`null`** を返す。代わりに **`moreAvailable`**
+（まだ候補があるか）と `pagesFetched` / `recordsFetched` を返す。
+画面にも「残り（正確な数）: 未算出」と出す。**推測値を残数として出さないこと。**
 
 ### 関所: 案内していない付与を溜めない（read-only barrier）
 
@@ -267,12 +294,25 @@ outstandingStep1 > 0 の間は、次の付与バッチを実行しない（abort
 
 ### 下見と実行が同じものを見る
 
-管理画面の下見も cron の実行も **`buildTrialGrantPlan()` の 1 本**を通る。
-画面に出る「今回処理予定 100 件」と、実際に付与される 100 件は**同じ指紋**になる。
+管理画面の下見も cron の実行も **`loadAndPlanLightTrial()` の 1 本**を通る。
+formula / sort / 関所の集合 / `planFingerprint` が**構造的に一致する**。
 
-下見が返すもの: 全候補 / 今回処理予定 / 残り / バッチ別 / 除外理由別 /
+下見が返すもの: 今回処理予定 / batch size / 除外理由別 / `pagesFetched` /
+`recordsFetched` / `moreAvailable` / **`remainingExact: null`** /
 `planFingerprint` / 1 回の上限と hard max / 自動付与ゲートの状態 /
 **関所（`outstandingStep1` / `resolved` / `nextBatchAllowed` と片付いた内訳）**。
+
+> ⚠️ **scheduled function は本番から HTTP で叩けない**（Netlify が 403 で塞ぐ）。
+> したがって **本番の正規 dry-run は管理画面の `action='trialGrant'`**（read-only）。
+> cron 側の `{"dryRun":true}` はローカル・テスト用と考えること。
+
+下見だけ「もし N 件なら」を試せる（`batchSize` を渡す）。**実行には効かない**（env が正本）。
+
+```bash
+POST /.netlify/functions/admin-marketing
+  x-admin-secret: <MARKETING_ADMIN_SECRET or PREMIUM_PLUS_ADMIN_SECRET>
+  { "action": "trialGrant", "batchSize": 10 }
+```
 
 ```bash
 # 管理画面の「無料体験の入口を数える（付与しません）」と同じ内容
