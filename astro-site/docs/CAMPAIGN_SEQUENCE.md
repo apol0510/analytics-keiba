@@ -130,8 +130,10 @@ DeliveryKey は **campaign × version × step × 受信者**。
   「付与日から 30 日間」という固定説明は**終了日が読めなかったときの保険**にすぎない
   （付与日と送信日は一致しない）
 
-- **シーケンスは無料付与を 1 件も作らない。** 付与を書けるのは
-  `admin-comeback-grants`（`operationId` で冪等）**だけ**。よって二重付与は構造的に起きない
+- **シーケンス（送信側）自身は無料付与を 1 件も作らない。**
+  付与を書けるのは次の 2 つだけで、どちらも `buildComebackPlan` を正本に使う:
+  1. `admin-comeback-grants`（管理画面からの手動付与・`operationId` で冪等）
+  2. `cron-light-trial-grant`（**入口の自動化**・既定 OFF・6 ゲート・付与成功者だけ Step1 へ）
 - 付与の正本は `promotionOfferCatalog.js` の `light-30d-free`
   （`kind: entitlement_grant` / `grantTier: light` / `durationDays: 30` /
   `restoresPaidContract: false` / `allowedEntitlements: ['light']`）
@@ -145,12 +147,30 @@ DeliveryKey は **campaign × version × step × 受信者**。
 
 ### 運用の順序（付与 → 案内）
 
+**手動で始める場合**
+
 ```
-1. 管理画面「カムバック特典」で Light 30日無料を付与（← ここだけが Customers を書く）
-2. 連続配信パネルで対象人数を確認（付与前の人は grant_required で対象外）
-3. step1 を dry-run → 内容と人数を確認 → キュー登録
-4. step2 以降は間隔が来たぶんだけ（自動配信 ON なら cron が 1 日 1 ステップ）
+1. 管理画面「無料体験の入口を数える」で 対象総数 / 付与候補 / 除外理由 を確認（書き込みゼロ）
+2. 管理画面「カムバック特典」で Light 30日無料を付与（← Customers を書くのはこの操作）
+3. 連続配信パネルで対象人数を確認（付与前の人は grant_required で対象外）
+4. step1 を dry-run → 内容と人数を確認 → キュー登録
+5. step2 以降は間隔が来たぶんだけ（自動配信 ON なら cron が 1 日 1 ステップ）
 ```
+
+**入口を自動化する場合**（6 ゲートを開けたときだけ）
+
+```
+cron-light-trial-grant が 1 日 1 回:
+  ① CSV コホートを数える（観測できなければ中止）
+  ② 候補を選ぶ（過去付与・有料・期限なし付与・付与中・配信不可を除外）
+  ③ 付与（← ここで Customers へ LightGrant* を書く。buildComebackPlan が正本）
+  ④ **付与に成功した recordId だけ**を Step1 の対象にする
+  ⑤ Step1 をキュー登録（実送信は既存 dispatcher）
+```
+
+> ⚠️ **Customers を書くのは付与の 2 経路だけ**（手動 `admin-comeback-grants` /
+> 自動 `cron-light-trial-grant`）。**送信側（`cron-campaign-sequence` / `admin-marketing`）は
+> Customers を 1 バイトも書かない。**
 
 ## 9-3. 対象コホート（`requiresImportCohort`）
 

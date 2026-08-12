@@ -408,12 +408,17 @@ export const CAMPAIGNS = Object.freeze([
      * **Light 無料体験 → 有料転換**の連続配信（4 通）。
      *
      * ── 導線 ────────────────────────────────────────────────
-     *   無料会員 → **Light 30日無料を付与**（管理画面）→ 実際に使ってもらう → Premium へ
+     *   CSV 取り込みの無料会員 → **Light 30日無料を付与** → 実際に使ってもらう → Premium へ
      *
-     * ── 付与はこのキャンペーンでは行わない（重要）────────────────
-     * 無料付与を書けるのは `admin-comeback-grants`（`operationId` で冪等）**だけ**。
-     * このシーケンスは付与を 1 件も作らず、**すでに Light 無料期間中の人**にだけ送る
-     * （`requiresActiveGrant: 'light'`）。よって二重付与は構造的に起こらない。
+     * ── 付与は「このキャンペーンの外」で行う（重要）──────────────
+     * 付与を書けるのは次の 2 つだけで、どちらも `buildComebackPlan` を正本に使う:
+     *   1. `admin-comeback-grants`（管理画面からの手動付与・`operationId` で冪等）
+     *   2. `cron-light-trial-grant`（**入口の自動化**・既定 OFF・6 ゲート）
+     * **このシーケンス自身は付与を 1 件も作らない。** 送るのは
+     * **すでに期限付き Light 無料期間中の人**だけ
+     * （`requiresActiveGrant: { tier:'light', termedOnly:true }`）。
+     * 自動付与は「付与に成功した recordId」だけを Step1 の対象にするので、
+     * 付与前・付与失敗の相手へメールが出ることはない。
      * 付与の正本は `promotionOfferCatalog.js` の `light-30d-free`
      * （`grantTier: light` / `durationDays: 30` / `restoresPaidContract: false`）。
      *
@@ -429,7 +434,7 @@ export const CAMPAIGNS = Object.freeze([
     campaignId: 'light-trial-to-premium-sequence',
     version: 1,
     name: 'Light 無料体験 → Premium（連続配信 4 通）',
-    description: 'CSV 取り込みの会員のうち Light 30日無料を付与済みの人へ、体験の開始 → 使い方 → 期間中の確認 → Premium の提案を 4 通で案内する。付与はしない（付与済みが対象）。',
+    description: 'CSV 取り込みの会員のうち 期限付き Light 無料期間中の人へ、体験の開始 → 使い方 → 期間中の確認 → Premium の提案を 4 通で案内する。付与はこのキャンペーンでは行わない（手動付与 or 入口の自動化が担当）。',
     benefitType: 'free_access',
     benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（お申し込み・お支払いの手続きは不要）',
     subject: '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます',
