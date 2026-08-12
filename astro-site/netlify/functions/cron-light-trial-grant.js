@@ -1,61 +1,56 @@
 /**
  * cron-light-trial-grant.js — Light 30日無料体験の**入口**（自動付与 → Step1 登録 / 既定 OFF）
  *
- * ⚠️ **6 つのゲートが全て開くまで、Customers へ 1 バイトも書かない。**
+ * ⚠️ **4 つのゲートが全て開くまで、Customers へ 1 バイトも書かない。**
  *      1. `COMEBACK_GRANT_FIELDS_READY=1`       … 既存の付与ゲート（列の実在）
  *      2. `COMEBACK_GRANT_ENABLED=true`         … 既存の付与ゲート（実行許可）
  *      3. `LIGHT_TRIAL_AUTOGRANT_ENABLED=true`  … 自動化の許可
  *      4. `LIGHT_TRIAL_AUTOGRANT_ARMED=<今日の JST 日付>`（翌日には自動的に閉じる）
- *      5. `MARKETING_CAMPAIGN_ENABLED=true`     … Step1 のキュー登録
- *      6. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` … 実送信の既存ゲート
  *    1・2 は**手動付与と同じゲート**を再利用する（自動化のための抜け道を作らない）。
  *
- * ── 順序（ここが壊れると「使えないのに案内が届く」）──────────────
- *   ① 対象コホート（CSV 取り込み）を数える → 観測できなければ**中止**
- *   ② 候補を選ぶ（過去付与・有料・期限なし付与・配信不可を除外）
- *   ③ **付与**（`buildComebackPlan` の計画をそのまま PATCH）
- *   ④ **成功した recordId だけ**を Step1 の送信対象にする
- *   ⑤ Step1 をキュー登録（実送信は既存 dispatcher）
+ * ⚠️ **配信系ゲート（`MARKETING_CAMPAIGN_ENABLED` /
+ *    `MARKETING_CAMPAIGN_DISPATCH_ENABLED`）は要求しない。**
+ *    この Function は**権利を付けるだけ**で、メールを 1 通も作らないため。
  *
- *   付与前・付与失敗の相手には**絶対にキュー登録しない**。
+ * ── やること（付与だけ）──────────────────────────────────────
+ *   ① 対象コホート（CSV 取り込み）を数える → 観測できなければ**中止**
+ *   ② 候補を選ぶ（過去付与・有料・期限なし付与・付与中・配信不可を除外）
+ *   ③ **先頭 N 件だけ付与**（既定 100・`buildComebackPlan` の計画をそのまま PATCH）
+ *
+ * ── やらないこと ────────────────────────────────────────────
+ *   **キュー登録も送信もしない。** Step1 は別工程（管理画面の dry-run → キュー登録）で、
+ *   付与に成功して無料期間中になった人だけが対象になる。
+ *   付与に失敗した人は権利が無いので Step1 の対象に**入りようがない**。
+ *
+ * ── 段階実行（14,000 件規模でも全体 abort しない）──────────────
+ *   **offset の正本は作らない。** 付与済みは次回の候補判定で外れるので、
+ *   再実行すると自然に次の N 件へ進む。失敗した人は候補に残り、次回再評価される。
+ *   並びは recordId 昇順で決定的（同じ入力なら毎回同じ 100 件）。
  *
  * ── dry-run（書き込みゼロ）──────────────────────────────────
  *   `{"dryRun": true}` を POST すると、**ゲートが閉じていても**
  *   「CSV 対象総数 / 付与候補 / 除外理由別件数」を返す（read-only）。
  *   手動呼び出しには `x-admin-secret` が必要。
  *
- * ⚠️ この Function は**メールを送らない**。作るのは ScheduledEmails の PENDING 行と
- *    CampaignDeliveries の queued 行だけ。
+ * ⚠️ この Function が書くのは **Customers の LightGrant\* だけ**。
+ *    メールも、キューの行（ScheduledEmails / CampaignDeliveries）も**一切作らない**。
  */
 
 import {
-  readAutoGrantGates, selectAutoGrantCandidates, planAutoGrantRun,
-  recipientsAfterGrant, summarizeAutoGrantRun,
-  AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, TRIAL_OFFER_ID, MAX_GRANTS_PER_RUN,
+  readAutoGrantGates, buildTrialGrantPlan, summarizeAutoGrantRun,
+  AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
-import { buildComebackPlan, chunkTargets } from '../../src/lib/comeback/comebackGrantPlan.js';
-import { resolveOffer } from '../../src/lib/promotions/promotionOfferCatalog.js';
+import { chunkTargets } from '../../src/lib/comeback/comebackGrantPlan.js';
 import { resolveCustomerMarketing } from '../../src/lib/marketing/customerMarketingAudience.js';
-import { getCampaign, renderCampaign } from '../../src/lib/marketing/campaignCatalog.js';
-import { resolveSequenceStep } from '../../src/lib/marketing/campaignSequence.js';
-import {
-  buildCampaignPlan, buildDeliveryRecords, chunkRecipients,
-  computeCampaignContentHash, assertOnlyDeliveryFields,
-} from '../../src/lib/marketing/campaignSend.js';
-import { checkBenefitForSend } from '../../src/lib/marketing/campaignBenefit.js';
-import {
-  buildScheduledEmailFields, assertOnlyScheduledFields, buildJobId,
-} from '../../src/lib/marketing/marketingEnqueueContract.js';
-import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js';
+import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
-import { MARKETING_EMAIL_SHELL_VERSION } from '../../src/lib/marketing/marketingEmailShell.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
 const DELIVERIES_TABLE = 'CampaignDeliveries';
-const SCHEDULED_TABLE = 'ScheduledEmails';
 const CAMPAIGN_ID = 'light-trial-to-premium-sequence';
 const MAX_PAGES = 60;
 
@@ -103,6 +98,34 @@ async function fetchCohortCustomers({ KEY, BASE }) {
   return out;
 }
 
+/**
+ * 関所の材料。**read-only**（この Function は CampaignDeliveries へ 1 行も書かない）。
+ * そのキャンペーンの配信履歴だけを名指しで引く（全件走査しない）。
+ */
+async function fetchSequenceDeliveries({ KEY, BASE, campaignType }) {
+  const out = [];
+  let offset;
+  let pages = 0;
+  do {
+    const body = {
+      filterByFormula: `AND({EmailType}='campaign',{CampaignType}='${campaignType}')`,
+      pageSize: 100,
+    };
+    if (offset) body.offset = offset;
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+      { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    );
+    if (!res.ok) throw new Error(`deliveries_fetch_${res.status}`);
+    const data = await res.json();
+    out.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    if (offset && pages >= MAX_PAGES) throw new Error('deliveries_fetch_truncated');
+  } while (offset);
+  return out;
+}
+
 /** 付与を書く（**計画どおりの fields だけ**）。成功した recordId を返す */
 async function applyGrants({ KEY, BASE, targets }) {
   const written = new Set();
@@ -141,10 +164,6 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
   }
   if (!KEY || !BASE) return { ok: false, abort: 'airtable_not_configured', sideEffects: 'none' };
 
-  const offerRes = resolveOffer(TRIAL_OFFER_ID);
-  if (!offerRes.ok) return { ok: false, abort: AUTOGRANT_ABORT.OFFER_UNAVAILABLE, sideEffects: 'none' };
-  const offer = offerRes.offer;
-
   // ① コホートを読む（read-only）
   const records = await fetchCohortCustomers({ KEY, BASE });
   const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
@@ -157,153 +176,78 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
     };
   });
 
-  // ② 候補を選ぶ（dry-run と本実行で同じ関数）
-  const selection = selectAutoGrantCandidates({ records: rows, nowMs: now, maxGrants: MAX_GRANTS_PER_RUN });
+  // ② 関所の材料（**read-only**）: Step1 がどこまで届いているか
+  const campaign = getCampaign(CAMPAIGN_ID);
+  const deliveries = campaign
+    ? await fetchSequenceDeliveries({ KEY, BASE, campaignType: `${campaign.campaignId}:v${campaign.version}` })
+    : [];
+  const provider = await fetchProviderSuppression({ apiKey: env.SENDGRID_API_KEY, now });
+
+  // ③ 下見と実行が**同じ 1 本**を通る（画面で見た 100 件と実際に付与する 100 件が一致する）
+  const planned = buildTrialGrantPlan({
+    records: rows, env, nowMs: now, gates,
+    sequenceCampaign: campaign, deliveries,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    brand: BRAND, fromEmail: getBrandConfig(BRAND).defaultFromEmail,
+  });
+
+  const view = {
+    offerId: planned.offerId,
+    operationId: planned.operationId,
+    batchSize: planned.batchSize,
+    batchSizeSource: planned.batchSizeSource,
+    hardMax: HARD_MAX_BATCH_SIZE,
+    cohort: {
+      総数: planned.cohort ? planned.cohort.inCohort : 0,
+      バッチ別: planned.cohort ? planned.cohort.byBatch : {},
+      走査件数: planned.counts ? planned.counts.scanned : 0,
+    },
+    全候補: planned.counts ? planned.counts.candidates : 0,
+    今回処理予定: planned.counts ? planned.counts.batchSize : 0,
+    残り: planned.counts ? planned.counts.remaining : 0,
+    関所: {
+      付与済み: planned.barrier ? planned.barrier.granted : 0,
+      Step1未処理: planned.barrier ? planned.barrier.outstanding : 0,
+      片付いた: planned.barrier ? planned.barrier.resolved : 0,
+      次バッチ可: planned.barrier ? planned.barrier.nextBatchAllowed : true,
+    },
+    planFingerprint: planned.planFingerprint || '',
+    除外理由: Object.fromEntries(
+      Object.entries((planned.counts && planned.counts.byReason) || {})
+        .map(([k, v]) => [AUTOGRANT_SKIP_LABEL[k] || COHORT_SKIP_LABEL[k] || k, v]),
+    ),
+  };
 
   if (dryRun) {
     const body = {
-      ok: true,
-      mode: 'dry-run',
-      sideEffects: 'none',
+      ok: true, mode: 'dry-run', sideEffects: 'none',
       gates: { allOpen: gates.allOpen, missing: gates.missing },
-      cohort: {
-        総数: selection.cohort.inCohort,
-        バッチ別: selection.cohort.byBatch,
-        走査件数: selection.counts.scanned,
-      },
-      付与候補: selection.counts.candidates,
-      除外理由: Object.fromEntries(
-        Object.entries(selection.counts.byReason)
-          .map(([k, v]) => [AUTOGRANT_SKIP_LABEL[k] || COHORT_SKIP_LABEL[k] || k, v]),
-      ),
-      上限: MAX_GRANTS_PER_RUN,
+      ...view,
       notice: 'これは下見です。**1 バイトも書いていません**（付与もキュー登録もしていません）。',
     };
-    log({ mode: 'dry-run', cohort: selection.cohort.inCohort, candidates: selection.counts.candidates });
+    log({ mode: 'dry-run', cohort: view.cohort.総数, candidates: view.全候補, batch: view.今回処理予定 });
     return body;
   }
 
-  // ③ 付与の計画（形・冪等性・除外は既存 planner が単一源）
-  const plan = planAutoGrantRun({ selection, gates, offer, maxGrants: MAX_GRANTS_PER_RUN });
-  if (!plan.ok) {
-    log(summarizeAutoGrantRun({ plan }));
-    return { ok: false, ...plan, sideEffects: 'none' };
-  }
-  const operationId = `light-trial-${gates.today}`;
-  const grantPlan = buildComebackPlan({
-    grantOffers: [offer], purchaseOffer: null,
-    selected: plan.candidates,
-    nowMs: now, operationId, actor: 'cron-light-trial', source: 'light-trial-autogrant',
-  });
-  if (!grantPlan.ok || grantPlan.targets.length === 0) {
-    const body = { ok: false, abort: grantPlan.ok ? AUTOGRANT_ABORT.NO_CANDIDATES : grantPlan.error, sideEffects: 'none' };
-    log(body);
+  if (!planned.ok) {
+    const body = { ok: false, ...view, abort: planned.abort, reason: planned.reason, sideEffects: 'none' };
+    log(summarizeAutoGrantRun({ plan: planned }));
     return body;
   }
 
-  // ④ 付与（**ここが唯一 Customers を書く**）
-  const { written, failed } = await applyGrants({ KEY, BASE, targets: grantPlan.targets });
-  const grantedIds = recipientsAfterGrant({ targets: grantPlan.targets, writtenRecordIds: written });
-  if (grantedIds.length === 0) {
-    const body = { ok: false, abort: 'grant_failed', failed, sideEffects: 'none' };
-    log(body);
-    return body;
-  }
+  // ④ 付与（**ここが唯一 Customers を書く**。メールは 1 通も作らない）
+  //    ここへ来るのは 関所が開いている（Step1 未処理 0 件）ときだけ
+  const { written, failed } = await applyGrants({ KEY, BASE, targets: planned.plan.targets });
 
-  // ⑤ Step1 のキュー登録（**付与に成功した人だけ**）
-  const base = getCampaign(CAMPAIGN_ID);
-  const sending = base ? resolveSequenceStep(base, 1) : null;
-  if (!sending) return { ok: false, abort: 'campaign_unavailable', granted: grantedIds.length, sideEffects: 'granted_only' };
-
-  const provider = await fetchProviderSuppression({ apiKey: env.SENDGRID_API_KEY, now });
-  if (!provider.ok) {
-    // 付与は済んでいる。案内は次回の実行（または管理画面）で送る
-    const body = { ok: true, granted: grantedIds.length, queued: 0, note: 'suppression 未確認のため Step1 は登録していません', sideEffects: 'granted_only' };
-    log(body);
-    return body;
-  }
-
-  // 付与後の値で判定する（付与直後は権利が有効になっている）
-  const grantedSet = new Set(grantedIds);
-  const selected = grantPlan.targets
-    .filter((t) => grantedSet.has(t.recordId))
-    .map((t) => {
-      const src = rows.find((r) => r.recordId === t.recordId);
-      const fields = { ...((src && src.fields) || {}), ...(t.grantFields || {}) };
-      return { recordId: t.recordId, fields, marketing: resolveCustomerMarketing({ fields, nowMs: now, blacklistEmails }) };
-    });
-
-  const built = buildCampaignPlan({
-    campaign: sending, selected,
-    providerSuppressed: provider.emails,
-    brand: BRAND, fromEmail: getBrandConfig(BRAND).defaultFromEmail, nowMs: now,
-  });
-  if (!built.ok || built.recipients.length === 0) {
-    const body = { ok: true, granted: grantedIds.length, queued: 0, note: '送信対象が 0 名でした', sideEffects: 'granted_only' };
-    log(body);
-    return body;
-  }
-  const benefit = checkBenefitForSend({ campaign: sending, recipientCount: built.recipients.length });
-  if (!benefit.ok) {
-    return { ok: true, granted: grantedIds.length, queued: 0, note: `benefit_${benefit.reason}`, sideEffects: 'granted_only' };
-  }
-
-  const rendered = renderCampaign({ campaign: sending, name: null });
-  if (!rendered) return { ok: true, granted: grantedIds.length, queued: 0, note: 'render_failed', sideEffects: 'granted_only' };
-
-  const contentHash = computeCampaignContentHash(sending);
-  const jobIdByEmail = new Map();
-  let queued = 0;
-  const batches = chunkRecipients(built.recipients);
-  for (let i = 0; i < batches.length; i += 1) {
-    const batch = batches[i];
-    const jobId = buildJobId({
-      campaignId: base.campaignId, version: base.version, fingerprint: built.planFingerprint, index: i + 1,
-    });
-    const fields = buildScheduledEmailFields({
-      campaignId: base.campaignId,
-      subject: rendered.subject,
-      html: rendered.html,
-      emails: batch.map((r) => r.email),
-      jobId,
-      scheduledAtIso: new Date(now).toISOString(),
-      notes: `marketing campaign ${base.campaignId} v${base.version} sequence step1 `
-        + `grant:${operationId} content:${contentHash} shell:v${MARKETING_EMAIL_SHELL_VERSION}`,
-    });
-    if (!assertOnlyScheduledFields(fields)) continue;
-    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(SCHEDULED_TABLE)}`, {
-      method: 'POST',
-      headers: { ...auth(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ records: [{ fields }], typecast: false }),
-    });
-    if (!res.ok) continue;
-    for (const r of batch) jobIdByEmail.set(r.email, jobId);
-    queued += batch.length;
-  }
-
-  const deliveryRecords = buildDeliveryRecords({
-    campaign: sending, recipients: built.recipients, jobIdByEmail, nowMs: now,
-  });
-  for (const rec of deliveryRecords) {
-    if (!assertOnlyDeliveryFields(rec.fields)) return { ok: false, abort: 'delivery_fields_rejected' };
-  }
-  for (let i = 0; i < deliveryRecords.length; i += 10) {
-    await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`, {
-      method: 'PATCH',
-      headers: { ...auth(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        performUpsert: { fieldsToMergeOn: ['DeliveryKey'] },
-        records: deliveryRecords.slice(i, i + 10),
-      }),
-    });
-  }
-
-  const summary = summarizeAutoGrantRun({ plan, granted: grantedIds.length, failed, queued });
+  const summary = summarizeAutoGrantRun({ plan: planned, granted: written.size, failed });
   log(summary);
   return {
-    ok: true, operationId, granted: grantedIds.length, failed, queued,
-    sideEffects: 'granted_and_queued',
-    note: 'キュー登録まで。実送信は既存 dispatcher が行う（この Function はメールを送らない）。',
+    ok: true,
+    ...view,
+    granted: written.size,
+    failed,
+    sideEffects: 'granted_only',
+    note: '付与だけを行いました。**キュー登録も送信もしていません**（Step1 は別工程）。',
   };
 }
 

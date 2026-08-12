@@ -141,9 +141,9 @@ import {
 } from '../../src/lib/marketing/sequenceProgress.js';
 import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
-  selectAutoGrantCandidates, readAutoGrantGates, AUTOGRANT_SKIP_LABEL,
-  MAX_GRANTS_PER_RUN, TRIAL_OFFER_ID,
+  buildTrialGrantPlan, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { BARRIER_RESOLVED_LABEL } from '../../src/lib/comeback/lightTrialBarrier.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
@@ -1021,41 +1021,76 @@ function resolveStepCampaign({ campaign, step }) {
  *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
  */
 async function handleTrialGrantPreview({ KEY, BASE, now }) {
-  const { list } = await loadCustomerMarketing({ KEY, BASE, now });
+  const { list, deliveries } = await loadCustomerMarketing({ KEY, BASE, now });
   const records = list.map((c) => ({ recordId: c.recordId, fields: c.fields, marketing: c.marketing }));
-  const selection = selectAutoGrantCandidates({ records, nowMs: now, maxGrants: MAX_GRANTS_PER_RUN });
-  const observable = assertCohortObservable(selection.cohort);
-  const gates = readAutoGrantGates(process.env, now);
+
+  // 関所の材料（**read-only**）。Step1 がどこまで届いているかを数えるだけ。
+  const campaign = getCampaign(TRIAL_SEQUENCE_ID);
+  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
+
+  // **実行と同じ 1 本**（`buildTrialGrantPlan`）を通す。
+  // 画面で見た「今回処理予定 100 件」と、cron が実際に付与する 100 件が一致する。
+  const planned = buildTrialGrantPlan({
+    records, env: process.env, nowMs: now,
+    sequenceCampaign: campaign, deliveries,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    brand: BRAND, fromEmail: getBrandConfig(BRAND).defaultFromEmail,
+  });
+  const observable = assertCohortObservable(planned.cohort || {});
+  const counts = planned.counts || {};
 
   return json(200, {
     mode: 'trial-grant-preview',
     sideEffects: 'none',
-    offerId: TRIAL_OFFER_ID,
-    /** 自動付与のゲート（**閉じている間は 1 件も付与されない**） */
+    offerId: planned.offerId,
+    operationId: planned.operationId,
+    /** 自動付与のゲート（**閉じている間は 1 件も付与されない**）*/
     auto: {
-      enabled: gates.allOpen,
-      missing: gates.missing,
-      note: gates.allOpen
-        ? '自動付与は有効です。cron が 1 日 1 回、上限まで付与します。'
+      enabled: (planned.gates || {}).allOpen === true,
+      missing: (planned.gates || {}).missing || [],
+      note: (planned.gates || {}).allOpen
+        ? '自動付与は有効です。cron が 1 日 1 回、先頭から順に付与します。'
         : '自動付与は停止中です。付与するには管理画面（カムバック特典）から手動で行います。',
     },
     cohort: {
-      total: selection.cohort.inCohort,
-      byBatch: selection.cohort.byBatch,
-      scanned: selection.counts.scanned,
+      total: planned.cohort ? planned.cohort.inCohort : 0,
+      byBatch: planned.cohort ? planned.cohort.byBatch : {},
+      scanned: counts.scanned || 0,
       observable: observable.ok,
       note: observable.ok
         ? null
         : 'CSV 取り込みの痕跡が 1 件も見つかりません。**この状態では誰にも付与しません**（取り込み前か、Source を読めていないかを区別できないため）。',
     },
-    candidates: selection.counts.candidates,
-    cap: MAX_GRANTS_PER_RUN,
-    overMax: selection.counts.overMax,
+    /** 全候補 → 今回処理予定 → 残り（段階実行） */
+    candidates: counts.candidates || 0,
+    batch: counts.batchSize || 0,
+    remaining: counts.remaining || 0,
+    /**
+     * 関所: 前回付与ぶんの Step1 が片付くまで次の付与へ進まない。
+     * `outstandingStep1 > 0` の間は付与しない（案内していない付与を溜めない）。
+     */
+    barrier: {
+      granted: (planned.barrier || {}).granted || 0,
+      outstandingStep1: (planned.barrier || {}).outstanding || 0,
+      resolved: (planned.barrier || {}).resolved || 0,
+      nextBatchAllowed: (planned.barrier || {}).nextBatchAllowed === true,
+      byReason: Object.fromEntries(
+        Object.entries((planned.barrier || {}).byReason || {})
+          .map(([k, v]) => [BARRIER_RESOLVED_LABEL[k] || k, v]),
+      ),
+    },
+    batchSize: planned.batchSize,
+    batchSizeSource: planned.batchSizeSource,
+    hardMax: HARD_MAX_BATCH_SIZE,
+    /** 下見と実行が同じ対象であることを突き合わせるための指紋 */
+    planFingerprint: planned.planFingerprint || '',
+    abort: planned.ok ? null : planned.abort,
+    abortReason: planned.reason || null,
     excludedByReason: Object.fromEntries(
-      Object.entries(selection.counts.byReason)
+      Object.entries(counts.byReason || {})
         .map(([k, v]) => [AUTOGRANT_SKIP_LABEL[k] || COHORT_SKIP_LABEL[k] || k, v]),
     ),
-    notice: 'これは下見です。**付与もキュー登録もしていません**。',
+    notice: 'これは下見です。**付与もキュー登録もしていません**。付与しても Step1 は自動送信されません。',
   });
 }
 

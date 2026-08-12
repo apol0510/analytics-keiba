@@ -4845,8 +4845,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const batches = Object.entries(c.byBatch || {});
       row('　バッチ別', batches.length ? batches.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
       row('走査した顧客', (c.scanned || 0) + ' 名');
-      row('付与候補', (out.candidates || 0) + ' 名', out.candidates > 0 ? 'is-ok' : '');
-      row('1 回の上限', (out.cap || 0) + ' 名' + (out.overMax ? '（超過のため実行は中止されます）' : ''));
+      row('全候補', (out.candidates || 0) + ' 名', out.candidates > 0 ? 'is-ok' : '');
+      row('今回処理予定', (out.batch || 0) + ' 名（1 回の上限 ' + (out.batchSize || 0) + ' 名'
+        + (out.batchSizeSource === 'env' ? '・env 指定' : '・既定') + '）');
+      row('残り', (out.remaining || 0) + ' 名（次回以降の実行で順に処理）');
+      const bar = out.barrier || {};
+      row('次バッチ可否', bar.nextBatchAllowed ? '進めます' : '⛔ 待機中（Step1 未処理があるため付与しません）',
+        bar.nextBatchAllowed ? 'is-ok' : 'is-ng');
+      row('　付与済み（自動付与ぶん）', (bar.granted || 0) + ' 名');
+      row('　Step1 未処理（outstanding）', (bar.outstandingStep1 || 0) + ' 名',
+        (bar.outstandingStep1 || 0) > 0 ? 'is-ng' : '');
+      row('　片付いた（resolved）', (bar.resolved || 0) + ' 名');
+      const brs = Object.entries(bar.byReason || {});
+      if (brs.length) row('　片付いた内訳', brs.map(([k, n]) => k + ' ' + n + ' 名').join(' / '));
+      row('上限の絶対値（hard max）', (out.hardMax || 0) + ' 名（これを超える指定は実行しません）');
+      row('計画の指紋', String(out.planFingerprint || '—').slice(0, 16));
+      if (out.abort) row('⚠️ 実行できない理由', out.abort + (out.abortReason ? '（' + out.abortReason + '）' : ''), 'is-ng');
       const ex = Object.entries(out.excludedByReason || {});
       row('除外理由', ex.length ? ex.map(([k, n]) => k + ' ' + n + ' 名').join(' / ') : '—');
       if (c.observable === false) {
