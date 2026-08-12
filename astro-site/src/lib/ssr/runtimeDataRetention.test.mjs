@@ -124,3 +124,22 @@ test('prune スクリプトが本ポリシーを使い、全削除へ戻って�
   // 0 ファイルになったら失敗させる
   assert.match(code, /kept === 0/, '間引き後 0 件を検知していない');
 });
+
+// ── 6. 成果物チェッカーの突き合わせ単位 ─────────────────────
+test('成果物チェッカーは会場ごとに数える（複数会場開催で誤検知しない）', () => {
+  // 2026-08-12（浦和 12R + 別会場 10R = 22 件）で、浦和の 12 件を
+  // 「その日の全会場 22 件」と比べて "prune がレース単位で取りこぼしている" と
+  // 誤検知し、CI が落ちた。突き合わせは必ず会場スコープで行う。
+  const src = readFileSync(
+    fileURLToPath(new URL('../../../scripts/check-ssr-runtime-data.mjs', import.meta.url)), 'utf8'
+  );
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(code, /function sourceCountFor\(sub, date, code\)/, '会場を受け取っていない');
+  assert.match(code, /const prefix = code \? `\$\{date\}-\$\{code\}-` : `\$\{date\}-`/);
+  // horseStats（レース単位）の突き合わせは会場を必ず渡す
+  const calls = code.match(/sourceCountFor\('horseStats\/nankan', date[^)]*\)/g) || [];
+  assert.ok(calls.length >= 2, 'horseStats の突き合わせが見当たらない');
+  for (const c of calls) {
+    assert.match(c, /date, code\)/, `会場スコープで数えていない: ${c}`);
+  }
+});

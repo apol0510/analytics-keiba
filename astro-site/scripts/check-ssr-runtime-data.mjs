@@ -50,11 +50,19 @@ async function retainedByDate(sub, datePattern, codePattern) {
   return { dates: [...map.keys()].sort().reverse(), codes: map };
 }
 
-/** ソース (src/data) 側に、その日付のファイルが何件あるか */
-async function sourceCountFor(sub, date) {
+/**
+ * ソース (src/data) 側に、その日付のファイルが何件あるか。
+ *
+ * ⚠️ `code`（会場）を渡さないと **その日の全会場の合計**になる。
+ *    レース単位のファイル（horseStats）を会場ごとに突き合わせるときに
+ *    合計と比べると、複数会場開催の日は必ず「取りこぼし」に見える（誤検知）。
+ *    例: 2026-08-12 は浦和 12R + 別会場 10R = 22 件。浦和の 12 件と 22 件を比べていた。
+ */
+async function sourceCountFor(sub, date, code) {
   const dir = join(projectRoot, 'src', 'data', sub, ...date.split('-').slice(0, 2));
   const files = await listFiles(dir);
-  return files.filter((f) => f.startsWith(`${date}-`)).length;
+  const prefix = code ? `${date}-${code}-` : `${date}-`;
+  return files.filter((f) => f.startsWith(prefix)).length;
 }
 
 /**
@@ -255,7 +263,8 @@ async function probeNankanChain() {
     };
 
     const wanted = all.filter((f) => f.startsWith(`${date}-${code}-R`)).sort();
-    const srcRaces = await sourceCountFor('horseStats/nankan', date);
+    // 会場ごとに数える（同日複数会場開催で合計と比べない）
+    const srcRaces = await sourceCountFor('horseStats/nankan', date, code);
     if (wanted.length > 0 && srcRaces > 0 && wanted.length < srcRaces) {
       ng(`loadHorseStatsNankan: ${date}-${code} がソース ${srcRaces} レースに対し成果物 ${wanted.length} レース`
         + ' → prune がレース単位で取りこぼしている');
@@ -264,7 +273,7 @@ async function probeNankanChain() {
     if (hit) {
       ok(`loadHorseStatsNankan: ${hit} OK`);
     } else {
-      const inSource = await sourceCountFor('horseStats/nankan', date);
+      const inSource = await sourceCountFor('horseStats/nankan', date, code);
       if (inSource > 0) {
         ng(`loadHorseStatsNankan: ${date}-${code} 分はソースに ${inSource} 件あるのに成果物から引けない`
           + ' → prune が消した（退行）');
