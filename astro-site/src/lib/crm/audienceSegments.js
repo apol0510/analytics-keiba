@@ -49,6 +49,7 @@ export const SEG_EXCLUDE = Object.freeze({
   PAID_MEMBER: 'paid_member',
   RECENT_CONTACT: 'recent_contact',
   ALREADY_DELIVERED: 'already_delivered',
+  ENGAGEMENT_BLOCKED: 'engagement_blocked',
 });
 
 export const SEG_EXCLUDE_LABEL = Object.freeze({
@@ -65,6 +66,7 @@ export const SEG_EXCLUDE_LABEL = Object.freeze({
   paid_member: '現役の有料会員',
   recent_contact: '直近 24 時間に送信済み',
   already_delivered: 'このキャンペーンで送信済み',
+  engagement_blocked: '反応なしが続いている（開封・クリック・購入・ログインなし）',
 });
 
 /** 「長期未ログイン」とみなす日数 */
@@ -197,7 +199,8 @@ export function computeConditionHash(segment, options = {}) {
 export function evaluateSegment(input = {}) {
   const {
     records, segmentId, nowMs, blacklistHard, blacklistSoft, providerSuppressed,
-    lastContactAtMs, deliveredEmails, openedAtMs, campaignId, campaignVersion, sampleSize,
+    lastContactAtMs, deliveredEmails, openedAtMs, engagementBlockedEmails,
+    campaignId, campaignVersion, sampleSize,
   } = input;
 
   const segment = getSegment(segmentId);
@@ -212,6 +215,8 @@ export function evaluateSegment(input = {}) {
   const contact = lastContactAtMs instanceof Map ? lastContactAtMs : new Map();
   const delivered = deliveredEmails instanceof Set ? deliveredEmails : new Set();
   const opened = openedAtMs instanceof Map ? openedAtMs : new Map();
+  // 反応なしで除外される人。**Set が渡されない限り 1 人も除外しない**（材料が無ければ素通り）
+  const engagementBlocked = engagementBlockedEmails instanceof Set ? engagementBlockedEmails : new Set();
   const wantSample = Number.isInteger(sampleSize) && sampleSize > 0 ? Math.min(sampleSize, 20) : 0;
 
   // 同じアドレスが 2 件以上あるかを先に把握する（母数を一意にするため）
@@ -275,6 +280,9 @@ export function evaluateSegment(input = {}) {
     if (isRecentMarketingContact({ lastSentAtMs: contact.get(e) ?? null, nowMs: now })) {
       drop(SEG_EXCLUDE.RECENT_CONTACT); continue;
     }
+    // 反応なしが続いている相手（`engagementGuard.js` が適用可と判断したときだけ渡される）。
+    // unsubscribe とは別で、購入・ログイン・開封があれば次回は対象へ戻る。
+    if (engagementBlocked.has(e)) { drop(SEG_EXCLUDE.ENGAGEMENT_BLOCKED); continue; }
 
     sendable += 1;
     // 検証用サンプルは**匿名化した属性だけ**（アドレス・氏名・recordId は入れない）
