@@ -26,6 +26,9 @@ on:
       - '.github/workflows/**'
       - 'astro-site/scripts/lib/workflowTransientContract.mjs'
       - 'astro-site/scripts/lib/workflowTransientContract.test.mjs'
+      # 本番 Customers を削除する運用スクリプト（安全条件はテストで固定する）
+      - 'astro-site/scripts/dedupe-customers.mjs'
+      - 'astro-site/scripts/dedupeCustomers.test.mjs'
   push:
     branches:
       - main
@@ -46,6 +49,9 @@ on:
       - '.github/workflows/**'
       - 'astro-site/scripts/lib/workflowTransientContract.mjs'
       - 'astro-site/scripts/lib/workflowTransientContract.test.mjs'
+      # 本番 Customers を削除する運用スクリプト（安全条件はテストで固定する）
+      - 'astro-site/scripts/dedupe-customers.mjs'
+      - 'astro-site/scripts/dedupeCustomers.test.mjs'
   workflow_dispatch:
 
 concurrency:
@@ -184,6 +190,10 @@ jobs:
       - name: Verify CRM 基盤（大規模セグメント / 計測の 0 と未計測を混同しない / ログインリンクを書き換えない）
         working-directory: astro-site
         run: npm run test:crm
+
+      - name: Verify 重複削除スクリプトの安全条件（既定 dry-run / 権利・参照があれば消さない / 値固定の個別許可）
+        working-directory: astro-site
+        run: npm run test:dedupe
 
       - name: Verify Netlify deploy trigger（一過性 timeout は retry / 4xx は即 FAIL / 重複 build なし）
         run: bash .github/actions/netlify-deploy/tests/run-tests.sh
