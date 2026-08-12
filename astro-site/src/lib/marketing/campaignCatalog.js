@@ -35,6 +35,9 @@ import {
   renderMarketingEmail, UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
 } from './marketingEmailShell.js';
 import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
+import {
+  isSequenceCampaign, resolveSequenceStep, describeSequence, validateAllSequences,
+} from './campaignSequence.js';
 
 /**
  * カムバック割引案内が案内する条件。**オファーカタログの正本から取る**
@@ -400,6 +403,171 @@ export const CAMPAIGNS = Object.freeze([
     enabled: true,
   },
   {
+    /**
+     * 無料会員 → 有料プランの **連続配信（4 通）**。
+     *
+     * ── なぜシーケンスにするか ────────────────────────────────
+     * 1 通で「価値の説明・具体例・不安の解消・申込の案内」を全部やると長くなり、
+     * どれも伝わらない。**1 通 1 用件**に分け、間隔を空けて順に送る。
+     * 同じ文面を繰り返すのは禁止（`validateSequence` が件名・本文の重複を拒否する）。
+     *
+     * ── 書かないこと（`FORBIDDEN_PHRASES` で機械的にも検査）──────
+     * 的中・利益の保証、断定的な儲け話、「今だけ」の煽り、**手書きの的中率・回収率**。
+     * 実績に触れるときは、当たった日も外した日もそのまま載せている
+     * 公開ページ（results-showcase）へ誘導する。**数値をメールに書き写さない**
+     * （書き写すと更新されず、実データとズレた瞬間に虚偽になる）。
+     *
+     * ── 価格を書かない ──────────────────────────────────────
+     * 金額は `/pricing/` が正本。メールに書くと改定時にズレる。
+     */
+    campaignId: 'free-to-premium-sequence',
+    version: 1,
+    name: '無料会員 → 有料プラン（連続配信 4 通）',
+    description: '無料会員へ 4 通の連続配信で、無料の使い方 → 実績の見方 → 疑問の解消 → プランの選び方を順に案内する。購入・配信停止・反応なしで自動停止。',
+    benefitType: 'content_unlock',
+    benefitDescription: '無料のまま見られる全レースAI予想と、前日の有料メインレース買い目・結果を開放してご案内します',
+    // 既定（step が上書きしなければこれが使われる）
+    subject: '【KEIBA Analytics】無料でご覧いただける予想について',
+    body: '',
+    ctaLabel: '今日の無料予想を見る',
+    ctaUrl: `${SITE}/free-prediction/nankan/`,
+    footerNote: 'このメールは、KEIBA Analytics にご登録いただいた方へお送りしています。',
+    recommendedSegments: ['plan:free', 'contract:none'],
+    // 無料 かつ 契約なしのみ。**有料会員・期限切れには送らない**
+    audienceRule: {
+      contracts: [MK_CONTRACT.NONE],
+      plans: [MK_PLAN.FREE],
+      enforce: true,
+    },
+    sequence: {
+      maxSends: 4,
+      steps: [
+        {
+          stepNumber: 1,
+          delayDays: 0,
+          name: '主価値',
+          subject: '【KEIBA Analytics】無料でご覧いただける予想について',
+          preheader: '中央・南関の全レースAI予想と、前日の有料買い目・結果を無料で公開しています。',
+          badge: '無料でできること',
+          headline: '無料のままで、ここまでご覧いただけます',
+          body: [
+            'KEIBA Analytics にご登録いただき、ありがとうございます。',
+            '',
+            'まだご覧になっていない方もいらっしゃるので、',
+            '無料のままで何ができるかを、あらためてご案内します。',
+            '',
+            'AI が全レースの指数・印・役割（本命 / 対抗 / 単穴 など）を出しています。',
+            '買い目を組む前の「どの馬を中心に見るか」がすぐ分かります。',
+          ].join('\n'),
+          benefitTitle: '無料でご覧いただけるもの',
+          benefitItems: [
+            '中央（JRA）・南関の全レースのAI予想',
+            '前日の有料メインレース買い目と、その結果',
+            'AI総合指数と役割（本命 / 対抗 / 単穴 / 連下 / 抑え）',
+          ],
+          ctaLabel: '今日の無料予想を見る',
+          ctaUrl: `${SITE}/free-prediction/nankan/`,
+          benefitType: 'content_unlock',
+          benefitDescription: '無料のまま全レースのAI予想をご覧いただけることをご案内します',
+        },
+        {
+          stepNumber: 2,
+          delayDays: 3,
+          name: '具体例・実績の見方',
+          subject: '【KEIBA Analytics】前日の買い目と結果を、そのまま公開しています',
+          preheader: '当たった日も外した日も、同じページにそのまま掲載しています。',
+          badge: '実績の見方',
+          headline: '結果は、良い日も悪い日もそのまま出しています',
+          body: [
+            '予想の良し悪しは、当たった日だけを見ても分かりません。',
+            '',
+            'KEIBA Analytics では、有料メインレースの買い目と結果を',
+            '翌日に無料で公開しています。当たった日も外した日も、同じページに残しています。',
+            '',
+            'メインレースの買い目は、本命から相手 5 頭への馬単 5 点です。',
+            '点数を増やして当てにいく作りにはしていません。',
+            '',
+            '数字はこちらで書かず、実際のページでご確認ください。',
+            '直近の結果がそのまま並んでいます。',
+          ].join('\n'),
+          benefitTitle: 'このページで分かること',
+          benefitItems: [
+            '前日の有料メインレース買い目（本命 → 相手 5 頭）',
+            '的中・不的中と、的中時の払戻',
+            'メイン以外のレースの結果一覧',
+          ],
+          ctaLabel: '昨日の買い目と結果を見る',
+          ctaUrl: `${SITE}/results-showcase/nankan/`,
+          ctaNote: '会員登録やお支払いは必要ありません。',
+          benefitType: 'content_unlock',
+          benefitDescription: '通常は有料の前日メインレース買い目と結果を無料で開放してご案内します',
+        },
+        {
+          stepNumber: 3,
+          delayDays: 5,
+          name: '疑問・不安の解消',
+          subject: '【KEIBA Analytics】よくいただくご質問にお答えします',
+          preheader: '点数・お支払い・更新について、事前に知っておいていただきたいこと。',
+          badge: 'ご質問への回答',
+          headline: 'お申し込み前に、よくいただくご質問',
+          body: [
+            '有料プランについて、よくいただくご質問をまとめました。',
+            '',
+            '■ 買い目の点数が多くなりませんか',
+            'メインレースは馬単 5 点です。上位プランでも点数は増えません。',
+            'プランの違いは「閲覧できるレース数」で、点数を増やす設計にはしていません。',
+            '',
+            '■ 支払い方法と更新はどうなりますか',
+            'お支払いは銀行振込です。ご入金を確認してから利用期間が始まります。',
+            '期限が来ると自動で更新されることはありません。続けるかどうかは、そのつど選べます。',
+            '',
+            '■ 予想はどう作られていますか',
+            '指数・特徴量・印を組み合わせて AI が評価しています。',
+            '結果は良い日も悪い日もそのまま公開しています。',
+          ].join('\n'),
+          ctaLabel: 'プランと料金を見る',
+          ctaUrl: `${SITE}/pricing/`,
+          ctaNote: '金額と内容はこちらのページが最新です。',
+          benefitType: 'content_unlock',
+          benefitDescription: '点数の考え方・お支払い・更新の条件を事前にお伝えし、無料予想もそのままご利用いただけます',
+        },
+        {
+          stepNumber: 4,
+          delayDays: 7,
+          name: '選び方・再提案',
+          subject: '【KEIBA Analytics】プランの選び方（この案内は今回で最後です）',
+          preheader: 'まずは Light から。ご不要な場合、この一連のご案内は今回で終わりです。',
+          badge: 'プランの選び方',
+          headline: 'どのプランから始めるか',
+          body: [
+            'ここまでご案内した内容の締めくくりとして、プランの選び方をお伝えします。',
+            '',
+            '各開催のメインレースだけを追うなら Light、',
+            '中央・南関の有料予想を全会場ご覧になりたい場合は Premium が向いています。',
+            '',
+            '迷われる場合は、まず Light からで問題ありません。',
+            '無料予想と前日の結果ページは、これまでどおりご利用いただけます。',
+            '',
+            'なお、この一連のご案内は今回で最後です。',
+            '今後は通常のお知らせのみをお送りします。',
+          ].join('\n'),
+          benefitTitle: 'プランの目安',
+          benefitItems: [
+            'Light … 各開催のメインレース買い目を閲覧できます',
+            'Premium … 中央（JRA）・南関の有料予想を全会場ご覧いただけます',
+            '無料予想と前日の結果ページは引き続きご利用いただけます',
+          ],
+          ctaLabel: 'プランを確認する',
+          ctaUrl: `${SITE}/pricing/`,
+          footerNote: 'この一連のご案内は今回で最後です。今後は通常のお知らせのみをお送りします。',
+          benefitType: 'content_unlock',
+          benefitDescription: 'プランごとに閲覧できる範囲を整理してご案内し、無料予想も引き続き開放します',
+        },
+      ],
+    },
+    enabled: true,
+  },
+  {
     campaignId: 'comeback-offer',
     benefitType: 'discount',
     benefitDescription: 'この方だけの特別価格（割引）を発行してご案内します',
@@ -467,7 +635,9 @@ export const CAMPAIGNS = Object.freeze([
  * @returns {{ ok: boolean, reason: string|null, detail: string|null }}
  */
 export function isTemplateConfigured(campaign) {
-  const c = campaign;
+  // 連続配信は **step1 が完成していれば使える**（親の body は空でよい）。
+  // 各ステップの中身は `validateSequence()` が別途検査する（件名・本文の重複も禁止）。
+  const c = isSequenceCampaign(campaign) ? resolveSequenceStep(campaign, 1) : campaign;
   if (!c) return { ok: false, reason: 'unknown_campaign', detail: null };
   if (c.isPlaceholderTemplate === true) {
     return { ok: false, reason: 'template_not_configured', detail: c.disabledDetail || null };
@@ -512,6 +682,8 @@ export function listCampaigns({ includeDisabled = true } = {}) {
         audienceRule: c.audienceRule,
         extraAudience: c.extraAudience || null,
         testOnly: c.testOnly === true,
+        /** 連続配信の定義（本文は含めない。件名・間隔・上限だけ） */
+        sequence: describeSequence(c),
         enabled: c.enabled === true,
         usable,
         disabledReason: usable ? null : (c.disabledReason || tpl.detail || tpl.reason || '利用不可'),
@@ -639,6 +811,14 @@ export function matchesCampaignAudience(campaign, marketing) {
   const planOk = !rule.plans?.length || rule.plans.includes(marketing.plan);
   if (contractOk && planOk) return { ok: true, enforced, reason: null };
   return { ok: false, enforced, reason: !contractOk ? 'contract_mismatch' : 'plan_mismatch' };
+}
+
+/**
+ * 連続配信の定義がカタログ全体で健全か（テストと起動時チェック用）。
+ * **ここが落ちる定義は本番に出せない**（同じメールの繰り返し・煽り表現・間隔不足など）。
+ */
+export function validateCampaignSequences() {
+  return validateAllSequences(CAMPAIGNS);
 }
 
 export default CAMPAIGNS;
