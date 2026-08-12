@@ -1,3 +1,111 @@
+## 2026-08-12 — 【運用事故】作業ブランチの HEAD を main へ直接 push し、PR #316 を誤って merge した
+
+### 何が起きたか
+
+重複削除の結果を `docs/progress.md` へ記録するとき、**作業ブランチの HEAD をそのまま
+`git push origin HEAD:main` した**。ブランチにはレビュー待ちのスクリプトコミット
+（`fa6e4904`）も載っていたため、docs だけでなく
+
+- `astro-site/scripts/dedupe-customers.mjs`
+- `astro-site/scripts/dedupeCustomers.test.mjs`
+- `astro-site/docs/CUSTOMER_DEDUPE.md`
+
+が同時に main へ入り、GitHub が **PR #316 を MERGED と判定**した。
+「#316 の merge は別判断」という指示に反する結果になった。
+
+### 影響
+
+- 実害なし（スクリプトは手動実行専用で、どこからも自動起動されない。CI も green）
+- ユーザー判断により **revert せず、このまま残す**ことを確認済み
+
+### 再発防止（今後の rule）
+
+- **作業ブランチの HEAD を `main` へ直接 push しない。**
+  `git push origin HEAD:main` は、ブランチに載っている**全コミット**を main へ入れる。
+- `main` へ入れてよいのは、その 1 コミットだけを載せた状態のときに限る。
+  docs だけを反映したい場合は、**`origin/main` から新しく切った作業場所**で
+  その変更だけをコミットして push する（レビュー待ちのコミットを巻き込まない）。
+- レビュー対象を含むブランチは **PR 経由でのみ** main へ入れる。
+
+## 2026-08-12 — 残る重複 3 組の精査（read-only / 書き込みなし）
+
+重複 7 件の削除後に残った 3 組（削除側にポイント残高があるため保留したもの）を精査した。
+**本番へは 1 バイトも書いていない。**
+
+### 3 組の内訳
+
+| 組 | レコード | ポイント | 最終付与 | プラン | 有効期限 | 退会 | 参照 | 登録 |
+|---|---|---|---|---|---|---|---|---|
+| A | `rec6ZCzkrIn6Bai2d` **正本** | 1,230 | 2025-11-25 | Premium | 2025-11-17（期限切れ） | ✅ 2025-10-17 | 0 | 2025-09-29 13:45 |
+| A | `reck9LS8az6SI11yj` 削除候補 | 102 | 2025-09-30 | Free | — | — | 0 | 2025-09-29 12:10 |
+| B | `recWeIweTrEBIzy2G` **正本** | 101 | 2025-09-23 | Free | — | — | 0 | 2025-09-23 |
+| B | `recWRR2CEEzREaUg6` 削除候補 | 2 | 2026-03-23 | Free | — | — | 0 | 2026-02-25 |
+| C | `recbpvkL1v0JBzdv3` **正本** | 108 | 2026-05-26 | Free | — | — | 0 | 2025-09-30 02:53:54 |
+| C | `recrr0kwuhJ6UOVE8` 削除候補 | 101 | 2025-09-30 | Free | — | — | 0 | 2025-09-30 02:53:54 |
+
+3 組とも: `PaymentConfirmed` / `PaidAt` / `LifetimeSanrenpuku` / Light・Premium grant /
+`unsubscribe` / blacklist / 最終ログイン は**両側とも空**。`CampaignDeliveries` /
+`PromotionalOffers` / `AuthTokens` からの参照も**両側 0 件**。
+
+### 正本の判定
+
+- **A** … 削除候補側は Free・値なし。正本側に Premium 契約・**退会記録**・氏名・電話がある。
+  退会（`WithdrawalRequested`）は課金停止の記録であって配信拒否でもアカウント停止でもない
+  （`comebackPolicy` / `resolveEntitlements`）。**消すと退会の事実が失われる**ので正本は確定
+- **B** … 両側とも値なし。**古い方**（ポイントも多い）を正本にする
+- **C** … 登録日時が**秒まで同一** = 二重登録。ポイントも活動も新しい方を正本にする
+
+### ポイントの扱い: **「最大値採用」＝ 今回は移行しない**
+
+根拠は日次付与の実装（`netlify/functions/daily-points.js`）:
+
+```js
+// 全 Customers レコードをループし、**レコードごとに**加算する
+const currentPoints = record.get('ポイント') || 0;
+let pointsToAdd = 1;                    // free
+if (planLower === 'standard') pointsToAdd = 10;
+if (planLower === 'premium')  pointsToAdd = 30;
+await base('Customers').update(record.id, { 'ポイント': currentPoints + pointsToAdd });
+```
+
+- 重複レコードは**同じ日次付与を 2 回受け取っていた**。つまり残高の差は
+  「その人が 2 倍稼いだ」ではなく**同じ付与が二重に記録された**もの
+- したがって **「加算」は二重計上**になる（顧客が得ていない残高を確定させてしまう）
+- 実態に最も近いのは **「最大値採用」**（レコード 1 本ぶんの正しい累積）
+- そして **3 組とも正本側 ≥ 削除候補側**（1,230>102 / 101>2 / 108>101）
+  → **最大値採用の結果は「書き込み不要」**。ポイントは 1 点も移さない
+
+補足:
+- 日次付与は **cron 未登録**（`export const config` なし・`netlify.toml` にも記載なし）で、
+  `auth-user.js` にも「日次ポイント付与は廃止・書き込みゼロ」とある。残高は事実上凍結。
+- 重複していた間は `classifyCustomerMatches` が **CONFLICT で fail closed**（判定・トークン発行・
+  Cookie 発行・更新をすべて拒否）していたため、**本人はログインもポイント交換もできていない**。
+  重複解消で初めて正本 1 件が使えるようになる。
+
+### 統合案（承認待ち・未実行）
+
+| 項目 | 内容 |
+|---|---|
+| 削除候補 | `reck9LS8az6SI11yj` / `recWRR2CEEzREaUg6` / `recrr0kwuhJ6UOVE8`（**3 件**） |
+| 残す | `rec6ZCzkrIn6Bai2d` / `recWeIweTrEBIzy2G` / `recbpvkL1v0JBzdv3` |
+| ポイント移行 | **なし**（最大値採用の結果、正本側が既に上回っているため） |
+| 他フィールドの統合 | **なし**（削除候補側に固有の値が 1 つも無い） |
+| 参照整合性 | recordId 参照 0 件。メール参照は正本が残るので不変 |
+| 実行方法 | `dedupe-customers.mjs --targets <file> --expect 3 --export <file>`（既定 dry-run） |
+| rollback | `--export` の全フィールドを create し直す（recordId は変わるが参照ゼロなので実害なし） |
+
+⚠️ ただし `dedupe-customers.mjs` は **ポイントが既定値 1 を超える削除候補を skip する**設計。
+このまま実行すると 3 件とも skip される（安全側）。実行するには
+**「ポイントは移行しない」と決めたうえで、その組だけを明示的に許可するオプション**が要る。
+オプションの追加も承認後に行う（勝手に緩めない）。
+
+### 触っていないもの
+
+- `...@gmail.comtonari` のアドレス不正（**別案件**。重複解消では直らない）
+- 本番書き込み・ポイント移行・削除（**すべて未実行**）
+
+- **Last verified**: 2026-08-12（本番 read-only）
+
 ## 2026-08-12 — Customers の重複レコードを 7 件削除（本番実行済み）
 
 同じメールアドレスの Customers が 2 件あると、`auth/customerLookup` が **CONFLICT として
