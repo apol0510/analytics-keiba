@@ -2420,6 +2420,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return true;
     }
 
+    /**
+     * 一覧（＝販売候補の集合）に居ない相手を Email で直接引く。
+     * 候補集合は Airtable 側で絞っているため、無料会員などは一覧に出ない。
+     * 「あの人はどうなっている？」に答えられるよう、検索だけは絞り込みを迂回する。
+     */
+    async function lookupOutsideCandidates() {
+      const q = $('q').value.trim();
+      if (!q || q.indexOf('@') < 0) return;
+      const local = (lastData && (lastData.rows || [])) || [];
+      if (local.some((r) => String(r.email || '').toLowerCase() === q.toLowerCase())) return;
+      msg('候補一覧に居ないため、Email で直接検索しています…');
+      const out = await call({ action: 'lookup', email: q });
+      if (!out) return;
+      if (!out.found) { msg('この Email の会員は見つかりませんでした', 'err'); return; }
+      // 取得できた行を一覧へ足す（候補外である旨は state 列と併せて管理者が判断する）
+      lastData = { ...lastData, rows: [...local, ...out.rows] };
+      msg('候補一覧の対象外でしたが、Email 検索で 1 件見つけました（販売資格は下の状態を参照）');
+      render();
+    }
+
     function sortRows(rows) {
       return [...rows].sort((a, b) => {
         const d = classify(a).order - classify(b).order;
@@ -2434,6 +2454,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function renderSummary(c) {
       const bar = $('summary');
       bar.innerHTML = '';
+      // 取得が確定していないときは件数を出さない（0 を「本当に 0 件」と誤読させない）
+      if (!c) {
+        const w = document.createElement('span');
+        w.className = 'sum-item';
+        w.textContent = '件数は取得できていません';
+        bar.appendChild(w);
+        const sub = $('summarySub');
+        if (sub) sub.textContent = '';
+        return;
+      }
       const items = [
         ['即時販売', c.immediate, 'immediate', 'immediate'],
         ['販売可', c.eligible, 'eligible', 'eligible'],
@@ -2477,7 +2507,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function render() {
       if (!lastData) return;
       const data = lastData;
-      renderSummary(data.counts || {});
+      // 取得が確定していないなら集計も出さない（誤った販売判断を招く）
+      renderSummary(data.truncated ? null : (data.counts || {}));
       $('writeState').textContent = (data.writeEnabled
         ? '書き込み: 有効'
         : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。')
@@ -2564,11 +2595,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
         tb.appendChild(tr);
       }
+      // ⚠️ 取得が確定していないときに件数を出さない（0 件や不正確な全体件数を見せない）
+      if (data.truncated) {
+        $('count').textContent = '件数を確定できませんでした';
+        const empT = $('empty');
+        empT.hidden = false;
+        empT.textContent = '取得が上限に達したため、一覧と件数を表示しません（0 件ではありません）。';
+        msg('候補の取得が上限に達しました。件数は確定していません。', 'err');
+        return;
+      }
       $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
       const emp = $('empty');
       emp.hidden = rows.length > 0;
       emp.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
-      if (data.truncated) msg('件数が多いため一部のみ表示しています', 'err');
     }
 
     async function load() {
@@ -3007,6 +3046,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     $('reload').addEventListener('click', load);
     $('q').addEventListener('input', render);
+    // 一覧に居ない相手は Enter / フォーカスアウトでサーバーへ直接問い合わせる
+    $('q').addEventListener('change', lookupOutsideCandidates);
+    $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') lookupOutsideCandidates(); });
     $('fState').addEventListener('change', render);
     $('fRoute').addEventListener('change', render);
     $('fUpsell').addEventListener('change', render);

@@ -52,6 +52,7 @@ import {
 import {
   resolveAdminCandidate,
   PP_CANDIDATE,
+  buildAdminCandidateFormula,
 } from '../../src/lib/premiumPlus/premiumPlusAdminAudience.js';
 import {
   UPSELL_TARGET,
@@ -109,6 +110,7 @@ exports.handler = async (event) => {
 
   try {
     if (action === 'list') return await handleList({ KEY, BASE, now, onlyReview: !!req.onlyReview });
+    if (action === 'lookup') return await handleLookup({ KEY, BASE, now, req });
     if (action === 'update') return await handleUpdate({ KEY, BASE, now, req });
     if (action === 'preview') return await handlePreview({ KEY, BASE, now, req });
     if (action === 'setUpsell') return await handleSetUpsell({ KEY, BASE, now, req });
@@ -119,43 +121,34 @@ exports.handler = async (event) => {
   }
 };
 
-async function handleList({ KEY, BASE, now, onlyReview }) {
-  const rows = [];
-  let offset;
-  let pages = 0;
-  let truncated = false;
 
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}`);
-    url.searchParams.set('pageSize', '100');
-    if (offset) url.searchParams.set('offset', offset);
-    const res = await fetch(url, { headers: airtableHeaders(KEY) });
-    if (!res.ok) return json(502, { error: `Airtable list failed: ${res.status}` });
-    const data = await res.json();
+/**
+ * 1 レコード → 管理一覧の 1 行。**list と lookup で同じ組み立てを使う**
+ * （別々に書くと「一覧の値」と「個別検索の値」がズレる）。
+ * `candidate.listed` は呼び出し側が判断に使う（ここでは落とさない）。
+ */
+function buildAdminRow(rec, now) {
+    const fields = rec.fields || {};
+    const member = resolvePlusMemberFromFields(fields, { nowMs: now });
+    // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
+    // 区別できるように、両方を行に載せる。段階表示（何日目か）は localStorage 由来のため
+    // サーバーでは確定できず、'三連複（段階表示）' として返す。
+    // 「自動ならどうなるか」も併せて求める（管理者が手動指定中でも比較できるようにする）。
+    // explain が内部で resolveUpsellForCustomer を呼ぶので、ここで二重に解決しない。
+    const explain = explainUpsell({ fields, nowMs: now });
+    const upsell = explain.effectiveView;
+    const release = upsell.plusRelease;
+    // 表示用（判定はしない）。canViewSanrenpuku は権限正本の値をそのまま使う。
+    const srp = describeSanrenpukuHolding(resolveEntitlements(fromAirtableFields(fields), now));
 
-    for (const rec of data.records || []) {
-      const fields = rec.fields || {};
-      const member = resolvePlusMemberFromFields(fields, { nowMs: now });
-      // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
-      // 区別できるように、両方を行に載せる。段階表示（何日目か）は localStorage 由来のため
-      // サーバーでは確定できず、'三連複（段階表示）' として返す。
-      // 「自動ならどうなるか」も併せて求める（管理者が手動指定中でも比較できるようにする）。
-      // explain が内部で resolveUpsellForCustomer を呼ぶので、ここで二重に解決しない。
-      const explain = explainUpsell({ fields, nowMs: now });
-      const upsell = explain.effectiveView;
-      const release = upsell.plusRelease;
-      // 表示用（判定はしない）。canViewSanrenpuku は権限正本の値をそのまま使う。
-      const srp = describeSanrenpukuHolding(resolveEntitlements(fromAirtableFields(fields), now));
+    // 一覧に出すかは**表示専用の単一源**が決める（公開判定 resolvePremiumPlusRelease とは別）。
+    // route が none でも「有効 Premium だが PaidAt が空な旧会員」を落とさないため。
+    const candidate = resolveAdminCandidate({ fields, member, release });
 
-      // 一覧に出すかは**表示専用の単一源**が決める（公開判定 resolvePremiumPlusRelease とは別）。
-      // route が none でも「有効 Premium だが PaidAt が空な旧会員」を落とさないため。
-      const candidate = resolveAdminCandidate({ fields, member, release });
-      if (!candidate.listed) continue;
-
-      const eligibility = member.eligibility;
-      if (onlyReview && eligibility !== PP_ELIGIBILITY.REVIEW) continue;
-
-      rows.push({
+    const eligibility = member.eligibility;
+  return {
+        /** 一覧に出す対象か（呼び出し側が判断に使う。lookup は false でも返す） */
+        __listed: candidate.listed === true,
         recordId: rec.id,
         email: fields['Email'] || '',
         name: fields['氏名'] || '',
@@ -206,12 +199,99 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
         updatedBy: fields['PremiumPlusEligibilityUpdatedBy'] || '',
         phase: release.phase,
         sanrenpukuPaidAt: member.sanrenpukuPaidAtMs ? new Date(member.sanrenpukuPaidAtMs).toISOString() : '',
-      });
+  };
+}
+
+/**
+ * Email で 1 件だけ直接引く（**候補集合の外も引ける**）。
+ *
+ * 一覧は「販売候補になり得る人」だけへ絞り込んでいるので、
+ * 無料会員など候補外の人は一覧に出ない。管理者が「あの人はどうなっている？」を
+ * 確認できるよう、**検索だけは絞り込みを迂回**する。
+ * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。
+ */
+async function handleLookup({ KEY, BASE, now, req }) {
+  const email = String((req && req.email) || '').trim().toLowerCase();
+  if (!email) return json(400, { error: 'email を指定してください' });
+  // Airtable formula の文字列リテラルを壊さない
+  const safe = email.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  const res = await fetch(
+    `https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/listRecords`,
+    {
+      method: 'POST',
+      headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pageSize: 10,
+        filterByFormula: `LOWER(TRIM({Email})) = '${safe}'`,
+      }),
+    },
+  );
+  if (!res.ok) return json(502, { error: `Airtable lookup failed: ${res.status}` });
+  const data = await res.json();
+  const recs = data.records || [];
+  if (recs.length === 0) return json(200, { found: false, rows: [], sideEffects: 'none' });
+
+  const rows = recs.map((rec) => {
+    const row = buildAdminRow(rec, now);
+    return {
+      ...row,
+      /** 一覧の絞り込み対象に入っているか（false = 検索でしか出てこない人） */
+      inCandidateSet: row.__listed === true,
+    };
+  });
+  return json(200, { found: true, rows, sideEffects: 'none' });
+}
+
+async function handleList({ KEY, BASE, now, onlyReview }) {
+  const rows = [];
+  let offset;
+  let pages = 0;
+  let truncated = false;
+
+  // 🛡️ **Airtable 側で候補になり得ない人を落としてから読む**（全件走査しない）。
+  //    無フィルタ全件走査は Customers 15,962 件で MAX_PAGES に当たり、
+  //    販売資格者が黙って消えていた（2026-08-13）。formula は超集合（premiumPlusAdminAudience）。
+  const candidateFormula = buildAdminCandidateFormula();
+
+  do {
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/listRecords`,
+      {
+        method: 'POST',
+        headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageSize: 100,
+          filterByFormula: candidateFormula,
+          // Airtable の既定順（ビュー順）に結果が左右されないよう明示的に固定する
+          sort: [{ field: 'Email', direction: 'asc' }],
+          ...(offset ? { offset } : {}),
+        }),
+      },
+    );
+    if (!res.ok) return json(502, { error: `Airtable list failed: ${res.status}` });
+    const data = await res.json();
+
+    for (const rec of data.records || []) {
+      const row = buildAdminRow(rec, now);
+      if (!row.__listed) continue;
+      if (onlyReview && row.eligibility !== PP_ELIGIBILITY.REVIEW) continue;
+      rows.push(row);
     }
 
     offset = data.offset;
     pages += 1;
-    if (offset && pages >= MAX_PAGES) { truncated = true; break; }
+    // **黙って打ち切らない**。上限に当たったら「数え切れていない」ことを返して止める
+    // （少ない件数を正しい件数として見せない）。
+    if (offset && pages >= MAX_PAGES) {
+      return json(500, {
+        error: '候補の取得が上限に達しました。件数を確定できないため一覧を返しません。',
+        code: 'candidate_scan_limit',
+        pagesFetched: pages,
+        maxPages: MAX_PAGES,
+        sideEffects: 'none',
+      });
+    }
   } while (offset);
 
   // 保留（管理者確認待ち）を先頭に
