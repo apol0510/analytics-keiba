@@ -40,7 +40,7 @@ import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/l
 import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
 import { mergeImportFiles, toPreviewRows } from '../../src/lib/crm/importMergePlan.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
-import { lookupCustomersByEmails } from '../../src/lib/crm/customerEmailLookup.js';
+import { lookupCustomersByEmails, emailLookupErrorResponse } from '../../src/lib/crm/customerEmailLookup.js';
 
 const CUSTOMERS_TABLE = 'Customers';
 
@@ -428,6 +428,13 @@ export const handler = async (event) => {
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     // ⚠️ 例外メッセージに CSV の中身が混ざる可能性があるので**そのまま出さない**
+    // 照合できずに中止したときは、CSV を分割すれば通ることを運用者へ伝える。
+    // internal error に潰すと「壊れている」と誤解され、取り込みが進まない。
+    const lookup = emailLookupErrorResponse(e);
+    if (lookup) {
+      console.error('⏹️ [admin-customer-import] 照合できないため中止:', lookup.body.code);
+      return json(lookup.status, lookup.body);
+    }
     console.error('❌ [admin-customer-import] 処理に失敗しました');
     return json(500, { error: 'internal error' });
   }

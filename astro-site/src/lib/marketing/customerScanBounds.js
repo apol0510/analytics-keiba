@@ -311,3 +311,55 @@ export function describeNotNarrowable({ what, hint }) {
     sideEffects: 'none',
   };
 }
+
+/**
+ * ── 「読まない」と決めた理由を運用者へ届けるためのエラー ─────────────────
+ *
+ * 取得を中断すること自体は正しい（少ない件数を正しい件数として見せない）。
+ * だが **理由が `internal error` になると、運用者は何をすればよいか分からない**。
+ *
+ * 2026-08-13 の本番 read-only 検証で実際に起きたこと:
+ *   `admin-comeback-grants` を絞り込みなしで呼ぶと `500 {"error":"internal error"}`。
+ *   中身は「上限に達したので絞り込んでください」という**対処可能な**理由なのに、
+ *   画面には「内部エラー」としか出ない。運用者からは**壊れている**ように見え、
+ *   「条件を足せば見られる」ことに辿り着けない。
+ *
+ * そこで、絞り込み不可・上限到達は **型付きエラー**として投げ、
+ * Function 側の catch が 400 + 理由コードへ写せるようにする。
+ * `throw` のまま握り潰さない・500 にしない、が要点。
+ */
+export class ScanBoundsError extends Error {
+  /** @param {{error: string, code: string}} body そのままレスポンス本文にできる形 */
+  constructor(body) {
+    super(body && body.error ? body.error : 'scan bounds exceeded');
+    this.name = 'ScanBoundsError';
+    this.body = body;
+    this.status = 400;
+  }
+}
+
+/** 上限に達した（絞ったが件数を確定できない） */
+export function scanLimitError(args) {
+  return new ScanBoundsError(describeScanLimit(args));
+}
+
+/** そもそも絞り込めない（無条件の全件走査になる） */
+export function notNarrowableError(args) {
+  return new ScanBoundsError(describeNotNarrowable(args));
+}
+
+/**
+ * catch した例外を **400 応答へ写す**。対象外なら null（呼び出し側は従来どおり 500）。
+ *
+ * `instanceof` だけに頼らない（バンドラ経由で別インスタンスになった場合に
+ * 静かに 500 へ戻ってしまうため、`name` と `code` でも判定する）。
+ */
+export function scanErrorResponse(e) {
+  if (!e) return null;
+  const isScan = e instanceof ScanBoundsError
+    || (e.name === 'ScanBoundsError' && e.body && typeof e.body === 'object');
+  if (!isScan) return null;
+  const body = e.body && typeof e.body === 'object' ? e.body : describeScanLimit({ what: '取得' });
+  // 副作用が無いことは必ず明示する（運用者が「途中まで書かれたのでは」と疑わないように）
+  return { status: e.status || 400, body: { sideEffects: 'none', ...body } };
+}

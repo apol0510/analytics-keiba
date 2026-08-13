@@ -125,6 +125,9 @@ import { MK_CONTRACT, MK_PLAN } from '../../src/lib/marketing/customerMarketingA
 import {
   buildComebackCandidateFormula, buildGrantOperationFormula, buildAnyGrantOperationFormula,
   escapeFormulaValue, SCAN_MAX_PAGES,
+  scanErrorResponse,
+  scanLimitError,
+  notNarrowableError,
 } from '../../src/lib/marketing/customerScanBounds.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -204,7 +207,7 @@ async function fetchByRecordIds({ KEY, BASE, recordIds }) {
  */
 async function fetchBounded({ KEY, BASE, table, filterByFormula, what }) {
   if (!filterByFormula) {
-    throw new Error(`${what || table}を絞り込めませんでした（無条件の全件走査は行いません）`);
+    throw notNarrowableError({ what: what || table });
   }
   const out = [];
   let offset;
@@ -222,10 +225,7 @@ async function fetchBounded({ KEY, BASE, table, filterByFormula, what }) {
     offset = data.offset;
     pages += 1;
     if (offset && pages >= SCAN_MAX_PAGES) {
-      throw new Error(
-        `${what || table}の取得が上限（${SCAN_MAX_PAGES * 100} 件）に達しました。`
-        + '件数を確定できないため処理しません。絞り込み条件を追加してください。',
-      );
+      throw scanLimitError({ what: what || table, pagesFetched: pages, maxPages: SCAN_MAX_PAGES });
     }
   } while (offset);
   return out;
@@ -340,6 +340,13 @@ export const handler = async (event) => {
     if (action === 'handoffLatest') return await handleHandoffLatest({ KEY, BASE, now });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
+    // 絞り込み不可・上限到達は**対処できる**ので、理由をそのまま運用者へ返す。
+    // internal error に潰すと「壊れている」と誤解され、条件を足せば見られることに気づけない。
+    const scan = scanErrorResponse(e);
+    if (scan) {
+      console.error('⏹️ [admin-comeback-grants] 取得を中止:', scan.body.code);
+      return json(scan.status, scan.body);
+    }
     console.error('❌ [admin-comeback-grants]', e.message);
     return json(500, { error: 'internal error' });
   }

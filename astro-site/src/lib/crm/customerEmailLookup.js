@@ -126,3 +126,47 @@ export async function lookupCustomersByEmails({ emails, fetchPage, maxPagesPerCh
 
   return { records, chunks: chunks.length, requests };
 }
+
+/**
+ * ── 照合できなかった理由を運用者へ届ける ────────────────────────────
+ *
+ * 照合を中断すること自体は正しい（重複突合が不完全なまま取り込むと、
+ * 既存顧客を二重登録するか、既存を上書きする）。だが **理由が `internal error`
+ * になると運用者は何をすればよいか分からない**。
+ *
+ * 2026-08-13 の本番 read-only 検証で、`admin-customer-import` / `-run` は
+ * `EmailLookupError` を素通しで catch し `500 {"error":"internal error"}` を
+ * 返していた。CSV を分割すれば通る場合でも、それが伝わらない。
+ *
+ * @param {unknown} e catch した例外
+ * @returns {{status:number, body:object}|null} 対象外なら null
+ */
+export function emailLookupErrorResponse(e) {
+  if (!e) return null;
+  const isLookup = e instanceof EmailLookupError
+    || (e && e.name === 'EmailLookupError' && typeof e.code === 'string');
+  if (!isLookup) return null;
+
+  const detail = e.detail && typeof e.detail === 'object' ? e.detail : {};
+  const TEXT = {
+    too_many_emails:
+      `CSV のアドレス件数が多すぎて 1 回で照合できません（上限 ${MAX_EMAIL_CHUNKS * 200} 件）。`
+      + '重複突合が不完全なまま取り込むと既存顧客を二重登録するため、処理しません。'
+      + 'CSV を分割して実行してください。',
+    chunk_page_limit:
+      '同一アドレスの重複が想定を超えており、照合結果を確定できません。'
+      + '取り込みを中止しました。Customers 側の重複を先に整理してください。',
+    fetch_page_required:
+      '照合の取得経路が設定されていません（設定不備）。取り込みは行っていません。',
+  };
+  return {
+    status: 400,
+    body: {
+      error: TEXT[e.code] || `顧客照合に失敗しました（${e.code}）。取り込みは行っていません。`,
+      code: `customer_email_lookup:${e.code}`,
+      // 件数などの数値だけ返す（アドレスそのものは返さない）
+      detail: Object.fromEntries(Object.entries(detail).filter(([, v]) => typeof v === 'number')),
+      sideEffects: 'none',
+    },
+  };
+}
