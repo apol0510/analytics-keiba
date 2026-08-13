@@ -846,11 +846,70 @@ CTA に入れる必要がある。ここが崩れると「他人のオファー�
 最終確認には **オファー種別 / 通常価格 / オファー価格 / 割引率 / 有効期限（最短） / CTA の種類 /
 発行済みオファー件数** が出る。
 
+## 7-3. 🛡️ Customers の全件走査は禁止（2026-08-13 / 残件 0 達成）
+
+Customers は **15,962 件**。「無フィルタで先頭から読み、上限で黙って打ち切る」実装は
+**構文も型も正しく、テストも build も通るのに、本番規模でだけ人を静かに落とす**。
+実際に起きたこと:
+
+| 画面 | 症状 |
+|---|---|
+| Premium Plus 販売一覧 | 即時販売 3 名が全員窓の外 →「即時販売 0」 |
+| 連続配信の受信対象 | Light 付与 10 名のうち **2 名しか見えない** |
+| 無料体験の下見 | コホート 3,629 / 真値 14,489 と過少表示 |
+| CSV 取り込みの重複突合 | 先頭 6,000 件しか見ず、**約 10,000 人が「AK に居ない」判定**（＝二重登録） |
+
+### 許される形は 2 つだけ
+
+1. **用途別に formula で絞ってから読む**（この画面に要る候補は誰か、を式で書く）
+2. 絞れない用途は **fail closed**（少ない件数を正しい件数として見せない）
+
+### ⛔ `MAX_PAGES` を上げるのは解決ではない
+
+Airtable は 1 ページ 100 件・**base あたり毎秒 5 リクエスト**。15,962 件は 160 ページ =
+**最短 32 秒**で、同期 Function の実行時間に入らない。上限を上げても
+「打ち切り」が「タイムアウト」に変わるだけ。
+
+### 直した内容（4 系統）
+
+| 対象 | 直し方 |
+|---|---|
+| `admin-marketing` `customers` | プラン / 契約 / Plus 販売資格を formula 化。**1 つも選ばれなければ 400**（`scan_not_narrowable`）。残りの条件は読み込んだあとで絞る |
+| `admin-marketing` `segments` | **1 セグメントずつ**下見する（`segmentId` 必須）。選択肢を並べるだけの `segmentCatalog` は Airtable を読まない。絞れないセグメント（開封記録は Customers に無い）は 400 |
+| `admin-marketing` `customerDetail` | 1 件しか要らないので **recordId で名指しに引く**。配信履歴・ログイン記録も**その人の分だけ** |
+| `admin-comeback-grants` | 候補は「現役の有効会員でない人」を formula 化。引き継ぎ・突合は **付与操作 ID**、取り消しは **recordId** で引く |
+| `admin-customer-import{,-run}` | **問いを逆向きに**した。「AK の全員」ではなく「**CSV のアドレスが AK に居るか**」を聞く。コストが顧客数ではなく **CSV の行数**に比例する |
+
+### 「母数」の意味が変わったことに注意
+
+`customers` の集計母数は **絞り込んだ候補集合**であって全顧客ではない。
+応答は `candidateCount` + `candidateBasis`（`totalCustomers` は同義の旧名）。
+画面に「全顧客のうち何名」と書かないこと。
+
+### 重複アドレスの確認範囲（カムバック）
+
+重複していると `auth/customerLookup` が CONFLICT で fail closed になり、付与しても
+本人がログインできない。この確認は **対象アドレスを名指しで数える**（全件走査しない）。
+対象が 600 件を超えると数えないので、そのときは `duplicateCheckAvailable=false`。
+**「重複なし」と読まないこと。**
+
+### 検証
+
+`npm run check:no-unbounded-scan`（`check:safety` / CI に組込済み）。
+**許可リストは現在 0 件。** ここへ 1 行足すのは「今は直せないので黙って人を落とす」と
+宣言することに等しい。足す前にスクリプト冒頭のコメントを読むこと。
+
+判定は `src/lib/marketing/customerScanBounds.js` / `src/lib/crm/customerEmailLookup.js`
+（どちらも純粋。**超集合であること**を JS の鏡と突き合わせるテストで固定している）。
+
 ## 8. 関連ファイル
 
 | 目的 | ファイル |
 |---|---|
 | マーケティング対象判定（純粋） | `src/lib/marketing/customerMarketingAudience.js` |
+| **Customers の絞り込み（全件走査を作らないための単一源・純粋）** | `src/lib/marketing/customerScanBounds.js` |
+| **CSV アドレスの名指し突合（取り込み用・純粋）** | `src/lib/crm/customerEmailLookup.js` |
+| **全件走査の検出（CI で強制）** | `scripts/check-no-unbounded-customer-scan.mjs`（`npm run check:no-unbounded-scan`） |
 | キャンペーン定義（単一源） | `src/lib/marketing/campaignCatalog.js` |
 | キャンペーン固有の追加条件（純粋） | `src/lib/marketing/campaignAudienceRules.js` |
 | 送信対象確定・冪等性・頻度ガード（純粋） | `src/lib/marketing/campaignSend.js` |

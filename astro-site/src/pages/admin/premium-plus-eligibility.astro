@@ -4528,19 +4528,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     async function mkSegInit() {
       const sel = $('mkSegSelect');
       if (!sel || mkSegLoaded) return;
-      const out = await mkCall({ action: 'segments', sampleSize: 0 });
+      // 選択肢を並べるだけ。**ここでは数えない**（全セグメントを一括で数えると
+      // Customers 15,962 件の実質全件走査になり、途中で切れた件数が嘘になる）。
+      const out = await mkCall({ action: 'segmentCatalog' });
       if (!out || !Array.isArray(out.segments)) return;
       sel.innerHTML = '';
       for (const s of out.segments) {
         const o = document.createElement('option');
         o.value = s.segmentId;
-        o.textContent = s.segmentName + '（' + s.sendable + ' 名）';
+        // 数えていない件数を出さない。件数は「数える」を押したときだけ出す
+        o.textContent = s.segmentName;
         o.title = s.description || '';
         sel.appendChild(o);
       }
       mkSegLoaded = true;
-      mkRenderMeasurement(out.measurement);
-      mkRenderEngagement(out.engagement, null);
     }
 
     /** 選んだセグメントの件数を数える（送信もキュー登録もしない） */

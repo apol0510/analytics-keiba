@@ -29,8 +29,18 @@ test('guard: 実行 Function は既存レコードを更新しない（PATCH を
   assert.equal(/method:\s*['"]DELETE['"]/.test(code), false, '削除を組み立てている');
   // 作成は「まとめ書き」と「1 件ずつ（切り分け用）」の 2 経路だけ。
   // どちらも Customers への POST で、更新系は持たない。
+  //
+  // ⚠️ `POST /{table}/listRecords` は Airtable の**読み取り** API（長い formula を
+  //    URL に載せられないときに使う）。作成経路として数えない。
+  //    数えてしまうと「読み取りを増やしたら書き込み guard が落ちる」ことになり、
+  //    guard を緩めたくなる圧力が生まれる。読み取りと書き込みは分けて数える。
   const posts = code.match(/method:\s*['"]POST['"]/g) || [];
-  assert.equal(posts.length, 2, `作成経路が ${posts.length} 箇所ある（まとめ書き + 切り分け用の 2 箇所）`);
+  const listReads = code.match(/\/listRecords/g) || [];
+  assert.equal(posts.length - listReads.length, 2,
+    `作成経路が ${posts.length - listReads.length} 箇所ある（まとめ書き + 切り分け用の 2 箇所）`);
+  // 読み取り用 POST は listRecords 以外に無いこと
+  assert.equal(/listRecords/.test(code) ? /\/Customers\/listRecords|CUSTOMERS_TABLE\)\}\/listRecords/.test(code) : true,
+    true, 'listRecords 以外の POST 読み取りが混ざっている');
   assert.match(RUN, /createRecords: async \(fieldsArray\)/, 'まとめ書きの経路が無い');
   assert.match(RUN, /createRecord: async \(fields\)/, '切り分け用の 1 件書き込みが無い');
 });
@@ -127,8 +137,14 @@ test('guard: 例外の中身を応答へ返さない', () => {
 
 test('guard: 下見 Function に書き込み経路が増えていない', () => {
   const code = codeOnly(PREVIEW_FN);
-  assert.equal(/method:\s*['"](POST|PATCH|PUT|DELETE)['"]/.test(code), false,
+  assert.equal(/method:\s*['"](PATCH|PUT|DELETE)['"]/.test(code), false,
     '下見 Function に書き込みが混ざっている');
+  // POST は **listRecords（読み取り）だけ**。それ以外の POST は書き込み扱いで落とす
+  const posts = (code.match(/method:\s*['"]POST['"]/g) || []).length;
+  const listReads = (code.match(/\/listRecords/g) || []).length;
+  assert.equal(posts - listReads, 0, '下見 Function に書き込み（作成）が混ざっている');
+  assert.equal(/\/Customers\/listRecords|CUSTOMERS_TABLE\)\}\/listRecords/.test(code) || posts === 0,
+    true, 'listRecords 以外の POST 読み取りが混ざっている');
   assert.match(PREVIEW_FN, /action === 'run'/);
   assert.match(PREVIEW_FN, /501/);
 });
