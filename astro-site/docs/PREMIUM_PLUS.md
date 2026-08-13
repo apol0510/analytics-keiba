@@ -263,11 +263,75 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 | 個別検索の式 | `src/lib/premiumPlus/premiumPlusAdminSearch.js` |
 | テスト | `src/lib/premiumPlus/premiumPlusFunnel*.test.mjs`（`npm run test:premium-plus-media` / `check:safety` に組込済み） |
 
+## 🧑‍💼 管理画面の日常業務（`/admin/premium-plus-eligibility/` / 2026-08-13 検証）
+
+管理者が最後まで遂行できるべき導線と、その安全条件。
+
+```
+検索 → 個別状態確認 → 資格変更 → 正本への保存 → 再読込確認 → 変更履歴 → 失敗時の再処理
+```
+
+### 操作の前に
+
+- **操作者名を入力する**（接続パネル）。未入力だと**書き込みボタンを押せない**。
+  入れずに書けていた頃は変更履歴が全部 `admin` になり、誰の操作か追えなかった。
+
+### 検索でしか出てこない人がいる
+
+一覧は**販売候補**だけを出す。無料会員などは候補集合の外なので、
+**検索でしか出てこない**（区分列に「検索のみ（候補外）」と出る）。
+
+⚠️ その人を操作したあと一覧を取り直すと、素朴な実装では**行ごと消えて詳細が壊れる**
+（本番データで再現: 無料会員の Daniel）。`searchedRows` で保持しているので消さないこと。
+
+### 保存の確認は「読み直し」でやる
+
+保存後は `action='lookup'`（**recordId 指定**）で 1 件だけ読み直し、
+**Airtable の値**で確認する。送った値が通った前提にしない。
+アドレスではなく recordId で引くのは、**Email 未設定の会員**でも確認できるようにするため。
+
+### 失敗の 3 値を混ぜない
+
+| 結果 | 意味 | 画面 |
+|---|---|---|
+| 成功 | サーバーが成功を返した | 「保存を確認済み」 |
+| 失敗 | サーバーが失敗を返した（**書かれていない**）| そのまま再操作してよい |
+| **不明** | 通信が切れた（**書かれたか分からない**）| 上部に警告を出し続け、「再読込して確認」を促す |
+
+⚠️ **不明を失敗に丸めない。** 丸めると、実際は保存済みなのに同じ操作を繰り返す。
+
+### 同時編集
+
+画面は「見ていた時点の最終更新」を `expectedUpdatedAt` として送る。
+別の管理者が先に変えていれば **409 `stale_record`** で止まる（黙って上書きしない）。
+`expectedUpdatedAt` を送らない呼び出しは従来どおり通す（後方互換）。
+
+### 変更履歴の見え方（正本 と このタブ は別物）
+
+| 種類 | 内容 | 寿命 |
+|---|---|---|
+| **正本** | `PremiumPlusEligibilityUpdatedAt` / `UpdatedBy` / `Reason` | Airtable に恒久。ただし**最後の 1 回だけ** |
+| このタブの操作履歴 | 前後・結果（成功/失敗/不明）・操作者 | `sessionStorage`。**タブを閉じると消える** |
+
+**このタブの履歴を監査記録として扱わないこと。**
+
+### ⛔ 未対応（本番スキーマ変更が要るため停止）
+
+- **恒久的な変更履歴台帳**（何度でも遡れる履歴）。Airtable に履歴テーブル/列が無い。
+  PAT に `schema.bases:write` が無いので**フィールド追加は Airtable 画面で手動**
+- **販売CTA（UpsellTarget）の競合検知**。更新時刻の列が無く版を作れない
+- **操作者名のサーバー側必須化**。現在は画面側で必須。API 直叩きは `admin` のまま残る
+
+検証: `npm run test:premium-plus-media`（`check:safety` に組込済み）。
+導線の固定は `src/lib/premiumPlus/adminOperationsFlow.guard.test.mjs`。
+
 ## 関連ファイル
 
 | 目的 | ファイル |
 |---|---|
 | 集計ロジック（単一源・純粋） | `src/lib/premiumPlusShowcase.js` |
+| 管理画面の操作履歴（純粋・保存先注入） | `src/lib/premiumPlus/adminOperationLog.js` |
+| 業務導線の固定（guard） | `src/lib/premiumPlus/adminOperationsFlow.guard.test.mjs` |
 | テスト | `src/lib/premiumPlusShowcase.test.mjs`（`npm run test:premium-plus` / `check:safety` に組込済み） |
 | 画像 API（Blobs） | `netlify/functions/premium-plus-media.js` |
 | 商品ページ | `src/pages/premium-plus.astro` |

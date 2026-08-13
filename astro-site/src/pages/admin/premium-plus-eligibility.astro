@@ -38,6 +38,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <div class="conn-body" id="connBody" hidden>
       <label for="secret">管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
       <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
+      <!-- 誰が変更したかを残すため。未入力だと記録が全部 'admin' になり監査にならない -->
+      <label for="actor">操作者名（変更履歴に残ります）</label>
+      <input type="text" id="actor" placeholder="例: MK" autocomplete="off" maxlength="32" />
       <p class="note" id="writeState"></p>
     </div>
 
@@ -102,6 +105,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <p class="count" id="count"></p>
     <!-- 実閲覧の前提。計測開始より前は記録が存在せず確認できない、と常設で書く -->
     <p class="measure-note" id="measureNote"></p>
+    <!-- 通信断で結果が分からなかった操作。確認するまで消さない -->
+    <p class="measure-note warn" id="opWarn" hidden></p>
 
     <div class="tablewrap">
       <table class="tbl">
@@ -1257,6 +1262,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .measure-note.warn { color: #fbbf24; }
   .ppe .sec-sub { font-size: .78rem; font-weight: 700; color: #cbd5e1; margin: .9rem 0 .3rem; }
 
+  /* 操作履歴（このタブ内）。結果が分からないものだけを目立たせる */
+  .ppe .oplog { list-style: none; margin: .4rem 0 .6rem; padding: 0; }
+  .ppe .oplog-item {
+    font-size: .72rem; line-height: 1.7; color: #cbd5e1;
+    padding: .28rem .5rem; border-left: 3px solid rgba(148,163,184,.35);
+    margin-bottom: .25rem; background: rgba(148,163,184,.06); border-radius: 0 4px 4px 0;
+    word-break: break-all;
+  }
+  .ppe .oplog-item.ok { border-left-color: #34d399; }
+  .ppe .oplog-item.failed { border-left-color: #f87171; color: #fca5a5; }
+  .ppe .oplog-item.unknown { border-left-color: #fbbf24; color: #fcd34d; font-weight: 700; }
+
   /* 実閲覧セル: 「未確認」は控えめ・実測があるものだけ強調する。
      ⚠️ 未確認を 0 として色分けしない（見ていない証拠ではない） */
   .ppe .c-realview { white-space: nowrap; }
@@ -2218,6 +2235,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
 <script>
   // 判定の単一源を画面から使うための橋渡し。**ここでロジックを書かない**
+  // 操作履歴（このタブ内）。正規化・表示文言の正本は adminOperationLog.js
+  import { createOperationLog, describeEntry } from '../../lib/premiumPlus/adminOperationLog.js';
+  window.__ppOpLog = { createOperationLog, describeEntry };
   import {
     buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
   } from '../../lib/marketing/campaignPlanView.js';
@@ -2362,6 +2382,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       setConn(false);
     });
 
+    /**
+     * 操作履歴。
+     *
+     * ⚠️ この inline script は**解析時に即実行**され、`window.__ppOpLog` を用意する
+     *    module script は defer なので、ここで即座に触ると undefined になる
+     *    （同じ罠で引き継ぎ復元が本番で止まった前例あり）。
+     *    使うのはクリック後・描画時なので、**遅延取得**にして橋渡しの有無で壊さない。
+     */
+    const opLog = (() => {
+      const NOOP = { add: () => null, all: () => [], forRecord: () => [], unresolved: () => [] };
+      let inst = null;
+      const get = () => {
+        if (inst) return inst;
+        const b = window.__ppOpLog;
+        if (!b) return NOOP;   // 履歴が取れなくても操作自体は続けられる
+        inst = b.createOperationLog({ storage: window.sessionStorage });
+        return inst;
+      };
+      return {
+        add: (e) => get().add(e),
+        all: () => get().all(),
+        forRecord: (id) => get().forRecord(id),
+        unresolved: () => get().unresolved(),
+      };
+    })();
+    const describeOpEntry = (e) => (window.__ppOpLog ? window.__ppOpLog.describeEntry(e) : '');
+
+    // 操作者名。**シークレットと違い秘密ではない**ので localStorage に残して毎回入れ直させない。
+    // 未入力のまま書き込むと変更履歴が全部 'admin' になり、誰が変えたか分からなくなる。
+    const actorEl = $('actor');
+    actorEl.value = localStorage.getItem('pp-admin-actor') || '';
+    actorEl.addEventListener('change', () => {
+      localStorage.setItem('pp-admin-actor', actorEl.value.trim().slice(0, 32));
+    });
+    /** 変更履歴へ載せる操作者。空なら書き込ませない（誰の操作か分からない記録を作らない） */
+    const currentActor = () => actorEl.value.trim().slice(0, 32);
+
     function setConn(ok) {
       const el = $('connState');
       el.textContent = ok ? '● 管理API 接続済み' : '● 未接続';
@@ -2377,19 +2434,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       el.className = 'msg' + (kind ? ' ' + kind : '');
     }
 
+    /**
+     * 管理 API を呼ぶ。**例外を外へ投げない**（呼び出し側は null を見る）。
+     *
+     * ⚠️ ここで throw すると、押したボタンが disabled のまま固まって
+     *    ページを再読み込みするまで操作できなくなる（通信断・DNS 失敗で実際に起きる）。
+     *
+     * 通信が途中で切れた場合は **書けたかどうか分からない**。
+     * それを「失敗」と言い切ると、実際には保存済みなのに二重操作を誘発する。
+     * `unknown:true` を返して、呼び出し側に「確認してください」と出させる。
+     */
     async function call(payload) {
       const secret = secretEl.value.trim();
       if (!secret) { msg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return null; }
-      const res = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { msg(data.error || ('エラー: ' + res.status), 'err'); if (res.status === 403) setConn(false); return null; }
+      let res;
+      try {
+        res = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {
+        msg('通信に失敗しました。保存されたかどうかは分かりません。再読込で確認してください。', 'err');
+        return { __unknown: true, error: String((e && e.message) || e) };
+      }
+      let data = {};
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) {
+        msg(data.error || ('エラー: ' + res.status), 'err');
+        if (res.status === 403) setConn(false);
+        return null;
+      }
       setConn(true);
       return data;
     }
+
+    /** 通信断で結果が分からなかったか（失敗と言い切らない） */
+    const isUnknownResult = (out) => !!(out && out.__unknown);
 
     // ── 状態の分類（表示・並び順・フィルター用。判定そのものは Function 側の単一源）──
     function classify(r) {
@@ -2416,6 +2497,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       explicit: '設定済み', none: '—',
     };
     function kindShort(r) {
+      // 検索でしか出てこない人（販売候補ではない）を候補と混同させない
+      if (r.inCandidateSet === false) return '検索のみ（候補外）';
       const k = r.candidateKind || 'none';
       if (k === 'waiting_30d' && r.daysUntilRouteB != null) return '待機中 あと' + r.daysUntilRouteB + '日';
       return KIND_SHORT[k] || k;
@@ -2466,6 +2549,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       // 既に一覧に居る行は差し替える（実閲覧つきの新しい行を優先）
       const found = out.rows || [];
       const foundIds = new Set(found.map((r) => r.recordId));
+      // 候補集合の外の人は覚えておく。覚えないと、その人を操作したあとの
+      // 再読込（＝保存の確認）で行ごと消えて詳細が壊れる
+      for (const r of found) if (r.inCandidateSet !== true) searchedRows.set(r.recordId, r);
       const merged = [...local.filter((r) => !foundIds.has(r.recordId)), ...found];
       lastData = {
         ...lastData,
@@ -2600,8 +2686,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (b) b.hidden = !$('q').value.trim();
     }
 
+    /**
+     * 結果が分からなかった操作を画面上部に出し続ける。
+     * 「失敗した」と誤解して同じ操作を繰り返させないための警告。
+     */
+    function renderOpWarning() {
+      const el = $('opWarn');
+      if (!el) return;
+      const pending = opLog.unresolved();
+      el.hidden = pending.length === 0;
+      if (pending.length === 0) return;
+      el.textContent = `⚠️ 結果が分からない操作が ${pending.length} 件あります（通信が切れました）。`
+        + '保存されたかどうかは不明です。対象の「詳細・操作」→「再読込して確認」で正本を確かめてください。'
+        + '同じ操作を繰り返さないでください。';
+    }
+
     function render() {
       if (!lastData) return;
+      renderOpWarning();
       const data = lastData;
       // 取得が確定していないなら集計も出さない（誤った販売判断を招く）
       renderSummary(data.truncated ? null : (data.counts || {}));
@@ -2708,10 +2810,58 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       emp.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
     }
 
-    async function load() {
-      msg('読み込み中…');
+    /**
+     * 検索でしか出てこない人（候補集合の外）を覚えておく。
+     *
+     * ⚠️ ここを消すと**検索した相手を操作したあと詳細が壊れる**。
+     *    `load()` は候補集合しか返さないので、素朴に rows を差し替えると
+     *    「Daniel を検索 → 資格変更 → 保存 → 詳細が『対象が見つかりません』」になる
+     *    （本番データで再現: 無料会員の Daniel は候補集合の外に居る）。
+     *    保存後の再読込は**確認そのもの**なので、ここで消えてはいけない。
+     */
+    const searchedRows = new Map();   // recordId -> 検索で得た行
+
+    /** 一覧の行に、検索で見つけた候補外の人を混ぜる（候補側が新しければ候補側を採る） */
+    function mergeSearched(rows) {
+      const byId = new Map((rows || []).map((r) => [r.recordId, r]));
+      for (const [id, row] of searchedRows) if (!byId.has(id)) byId.set(id, row);
+      return [...byId.values()];
+    }
+
+    /**
+     * 一覧を取り直す。
+     * @param {{keepMessage?: boolean}} opts keepMessage=true なら直前の結果表示を消さない
+     *   （保存直後に「更新しました」を上書きしないため）
+     */
+    async function load(opts = {}) {
+      if (!opts.keepMessage) msg('読み込み中…');
       const data = await call({ action: 'list', onlyReview: $('onlyReview').checked });
-      if (data) { msg(''); lastData = data; render(); }
+      if (!data) return false;
+      if (!opts.keepMessage) msg('');
+      // 検索で拾った候補外の人は保持する（保存後の確認で消さない）
+      lastData = { ...data, rows: mergeSearched(data.rows || []) };
+      render();
+      return true;
+    }
+
+    /**
+     * 1 人だけ取り直して詳細を最新化する。
+     *
+     * 保存の確認は **Airtable から読み直した値**で行う（送った値が通った前提にしない）。
+     * @returns {Promise<object|null>} 取り直した行
+     */
+    async function refreshOne(recordId) {
+      // recordId で引く。アドレスで引くと Email 未設定の会員を確認できない
+      const out = await call({ action: 'lookup', recordId });
+      if (!out || out.__unknown || !out.found) return null;
+      const fresh = (out.rows || []).find((x) => x.recordId === recordId);
+      if (!fresh) return null;
+      searchedRows.set(recordId, fresh);
+      const rows = (lastData.rows || []).map((x) => (x.recordId === recordId ? fresh : x));
+      if (!rows.some((x) => x.recordId === recordId)) rows.push(fresh);
+      lastData = { ...lastData, rows, measurement: out.measurement || lastData.measurement };
+      render();
+      return fresh;
     }
 
     // ── 詳細・操作パネル（write はここだけ）──
@@ -2725,6 +2875,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     function renderDetail() {
+      renderOpWarning();
       const data = lastData;
       const r = (data && (data.rows || []).find((x) => x.recordId === dtRecordId)) || null;
       const body = $('dtBody');
@@ -2869,13 +3020,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         }
         radio.addEventListener('change', async () => {
           if (!radio.checked) return;
+          const actor = currentActor();
+          if (!actor) { msg('操作者名を入力してください（変更履歴に残ります）', 'err'); $('connBody').hidden = false; renderDetail(); return; }
+          const before = r.upsellTarget || 'auto';
           uButtons.forEach((x) => { x.disabled = true; });
           msg('販売CTA を更新中…');
-          const out = await call({ action: 'setUpsell', recordId: r.recordId, upsellTarget: value });
-          if (out) {
-            msg('販売CTA を「' + (out.upsellTargetLabel || value) + '」に設定しました'
+          const out = await call({ action: 'setUpsell', recordId: r.recordId, upsellTarget: value, actor });
+          const logged = {
+            kind: 'upsell', actor, recordId: r.recordId, email: r.email, at: Date.now(),
+            from: UPSELL_LABEL[before] || before, to: UPSELL_LABEL[value] || value,
+          };
+          if (isUnknownResult(out)) {
+            opLog.add({ ...logged, result: 'unknown', detail: '通信が切れました' });
+          } else if (!out) {
+            opLog.add({ ...logged, result: 'failed' });
+          } else {
+            opLog.add({ ...logged, result: 'ok', detail: out.warning || '' });
+            // 保存の確認は **Airtable から読み直した値**で行う（送った値が通った前提にしない）
+            await refreshOne(r.recordId);
+            msg('販売CTA を「' + (out.upsellTargetLabel || value) + '」に設定しました（保存を確認済み）'
               + (out.warning ? ' / ⚠️ ' + out.warning : ''), out.warning ? '' : 'ok');
-            await load();
           }
           renderDetail();
         });
@@ -2918,6 +3082,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (isCurrent) btn.title = '現在この状態です（適用中）';
         btn.addEventListener('click', async () => {
           if (btn.dataset.busy === '1') return; // 二重クリック防止
+          const actor = currentActor();
+          if (!actor) { msg('操作者名を入力してください（変更履歴に残ります）', 'err'); $('connBody').hidden = false; return; }
           if (plusAction === 'immediate') {
             const ok = window.confirm(
               'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
@@ -2929,11 +3095,29 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           btn.dataset.busy = '1';
           buttons.forEach((x) => { x.disabled = true; });
           msg('更新中…');
-          const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: memoInput.value });
+          const out = await call({
+            action: 'update', recordId: r.recordId, plusAction,
+            reason: memoInput.value, actor,
+            // 見ていた時点の版。別の管理者が先に変えていたら 409 で止まる
+            expectedUpdatedAt: r.updatedAt || '',
+          });
           btn.dataset.busy = '';
-          if (out) {
-            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : ''), 'ok');
-            await load();
+          const logged = {
+            kind: 'eligibility', actor, recordId: r.recordId, email: r.email, at: Date.now(),
+            from: r.eligibilityLabel || r.eligibility, to: null,
+          };
+          if (isUnknownResult(out)) {
+            // **失敗と言い切らない**。書けたかどうか分からないので確認させる
+            opLog.add({ ...logged, to: plusAction, result: 'unknown', detail: '通信が切れました' });
+          } else if (!out) {
+            opLog.add({ ...logged, to: plusAction, result: 'failed' });
+          } else {
+            opLog.add({ ...logged, from: out.previousLabel || logged.from, to: out.label, result: 'ok' });
+            // 保存の確認は **Airtable から読み直した値**で行う
+            const fresh = await refreshOne(r.recordId);
+            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : '')
+              + (fresh ? '（保存を確認済み）' : '（保存後の再読込に失敗しました。再読込で確認してください）'),
+              fresh ? 'ok' : 'err');
           }
           renderDetail(); // パネルを最新状態で再構成
         });
@@ -2975,7 +3159,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         + '三連複ページ（/premium-sanrenpuku/）の販売導線は段階公開の設計どおりで、'
         + 'この操作では変わりません（予告枠のリンクのみ）。'
         + '会員がそのリンクに気づかない場合は、別途ご案内ください。';
-      secD.appendChild(noteD);
+      // ⚠️ ここは noteWhere を足す。noteD を二度足すと（appendChild は移動なので）
+      //    「会員に見えるもの」の説明が**一度も表示されない**（2026-08-13 まで実際にそうだった）
+      secD.appendChild(noteWhere);
       const opsD = document.createElement('div'); opsD.className = 'ops';
       opsD.appendChild(mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate, !data.overrideEnabled));
       opsD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
@@ -2987,6 +3173,60 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const h5 = document.createElement('h3'); h5.textContent = '内部メモ'; secM.appendChild(h5);
       secM.appendChild(memoInput);
       body.appendChild(secM);
+
+      // ── 変更履歴 ────────────────────────────────────────────────
+      // 「正本に残っている最後の 1 回」と「このタブでの操作」は別物なので分けて出す。
+      const secH = document.createElement('div'); secH.className = 'dt-sec';
+      const h6 = document.createElement('h3'); h6.textContent = '変更履歴'; secH.appendChild(h6);
+
+      const hDl = document.createElement('dl'); hDl.className = 'kv';
+      kvRow(hDl, '最終更新（正本）', fmtDate(r.updatedAt) || '記録なし', r.updatedAt ? '' : 'muted');
+      kvRow(hDl, '最終更新者（正本）', r.updatedBy || '記録なし', r.updatedBy ? '' : 'muted');
+      kvRow(hDl, '内部メモ（正本）', r.reason || '記録なし', r.reason ? '' : 'muted');
+      secH.appendChild(hDl);
+
+      const mine = opLog.forRecord(r.recordId);
+      const hSub = document.createElement('p'); hSub.className = 'imp-meta';
+      hSub.textContent = 'このタブでの操作（' + mine.length + ' 件）'
+        + '／ タブを閉じると消えます。恒久的な記録は上の「正本」だけです。';
+      secH.appendChild(hSub);
+      if (mine.length === 0) {
+        const none = document.createElement('p'); none.className = 'muted';
+        none.style.fontSize = '.76rem';
+        none.textContent = 'このタブではまだ操作していません。';
+        secH.appendChild(none);
+      } else {
+        const ul = document.createElement('ul'); ul.className = 'oplog';
+        for (const e of mine.slice(0, 20)) {
+          const li = document.createElement('li');
+          li.className = 'oplog-item ' + e.result;
+          li.textContent = describeOpEntry(e);
+          ul.appendChild(li);
+        }
+        secH.appendChild(ul);
+      }
+      // 結果が分からなかった操作は、確認するまで目立たせる
+      if (mine.some((e) => e.result === 'unknown')) {
+        const warn = document.createElement('p'); warn.className = 'blocker';
+        warn.textContent = '⚠️ 結果が分からない操作があります（通信が切れました）。'
+          + '下の「再読込して確認」で正本の状態を確かめてください。同じ操作を続けて押さないでください。';
+        secH.appendChild(warn);
+      }
+      const reBtn = document.createElement('button');
+      reBtn.type = 'button'; reBtn.className = 'btn-detail';
+      reBtn.textContent = '再読込して確認';
+      reBtn.addEventListener('click', async () => {
+        reBtn.disabled = true;
+        msg('この会員の最新状態を取り直しています…');
+        const fresh = await refreshOne(r.recordId);
+        msg(fresh
+          ? '最新状態を取り直しました（正本の値です）'
+          : '取り直せませんでした。管理シークレットと通信状態を確認してください。', fresh ? 'ok' : 'err');
+        renderDetail();
+      });
+      const opsH = document.createElement('div'); opsH.className = 'ops'; opsH.appendChild(reBtn);
+      secH.appendChild(opsH);
+      body.appendChild(secH);
     }
 
     // オーバーレイ表示中は背面の一覧をスクロールさせない（閉じたら必ず元に戻す）
