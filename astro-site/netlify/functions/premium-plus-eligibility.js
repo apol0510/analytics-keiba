@@ -275,9 +275,14 @@ async function attachRealViews(rows) {
  * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。実閲覧も併せて返す。
  */
 async function handleLookup({ KEY, BASE, now, req }) {
-  // 旧 UI 互換: email パラメータも受ける
-  const raw = String((req && (req.query ?? req.email)) || '');
-  const built = buildLookupFormula(raw);
+  // recordId 指定は「保存後にその 1 件を読み直す」用。
+  // ⚠️ アドレスで読み直すと **Email が空の会員を確認できない**（保存できたのに
+  //    「再読込に失敗」と出る）。確認は操作の一部なので、必ず引ける経路を用意する。
+  const byId = String((req && req.recordId) || '').trim();
+  const built = byId
+    ? { ok: true, exactEmail: false, formula: `RECORD_ID() = '${byId.replace(/'/g, "\\'")}'` }
+    : buildLookupFormula(String((req && (req.query ?? req.email)) || ''));
+  const raw = byId || String((req && (req.query ?? req.email)) || '');
   if (!built.ok) return json(400, { error: SEARCH_ERROR_TEXT[built.reason] || '検索語が不正です' });
 
   const recs = [];
@@ -457,6 +462,25 @@ async function handleUpdate({ KEY, BASE, now, req }) {
   if (!getRes.ok) return json(404, { error: 'Record not found' });
   const currentFields = (await getRes.json()).fields || {};
 
+  // 🛡️ 別の管理者の変更を黙って上書きしない。
+  //    画面が「見ていた時点の最終更新」を送ってくるので、いまの値と食い違えば止める。
+  //    未送信（古い画面・API 直叩き）のときは従来どおり通す（後方互換）。
+  if (req.expectedUpdatedAt !== undefined) {
+    const seen = String(req.expectedUpdatedAt ?? '').trim();
+    const nowValue = String(currentFields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] ?? '').trim();
+    if (seen !== nowValue) {
+      return json(409, {
+        error: 'この会員は別の操作で更新されています。再読込して最新の状態を確認してから操作してください。',
+        code: 'stale_record',
+        seenUpdatedAt: seen || null,
+        currentUpdatedAt: nowValue || null,
+        currentUpdatedBy: currentFields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
+        currentEligibility: currentFields[PP_ELIGIBILITY_FIELDS.STATUS] || null,
+        sideEffects: 'none',
+      });
+    }
+  }
+
   const overrideFieldEnabled = isReleaseOverrideEnabled(process.env);
   const plusAction = String(req.plusAction || '').trim().toLowerCase();
 
@@ -503,12 +527,18 @@ async function handleUpdate({ KEY, BASE, now, req }) {
     success: true,
     recordId,
     action: plusAction,
+    // 変更の**前後**を返す（画面が「何が変わったか」を履歴に書けるようにする）
+    previous: currentFields[PP_ELIGIBILITY_FIELDS.STATUS] || null,
+    previousLabel: PP_ELIGIBILITY_LABEL[currentFields[PP_ELIGIBILITY_FIELDS.STATUS]] || null,
     next: built.next,
     label: PP_ELIGIBILITY_LABEL[built.next],
     override: built.override,
     overrideChanged: built.overrideChanged,
     // true のときだけ段階公開 anchor が動く（= PHASE 1 から見え始める）
     eligibleAtUpdated: built.eligibleAtUpdated,
+    // 次の操作の版として画面が持ち直す（毎回フル再読込しなくても競合検知が効く）
+    updatedAt: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] || null,
+    updatedBy: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
   });
 }
 
@@ -579,7 +609,9 @@ async function handleSetUpsell({ KEY, BASE, now, req }) {
     return json(502, { error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300) });
   }
 
-  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', { recordId, before, next });
+  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', {
+    recordId, before, next, actor: String(req.actor || '').slice(0, 32) || '(未入力)',
+  });
   return json(200, {
     success: true,
     recordId,
