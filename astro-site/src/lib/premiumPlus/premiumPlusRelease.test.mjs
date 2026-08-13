@@ -222,7 +222,7 @@ test('CLOSING: 15:00〜16:29 はまもなく受付終了', () => {
   assert.equal(computeIntakeStatus({ nowMs: SAT(16, 29) }), PP_INTAKE.CLOSING);
 });
 
-test('CLOSED: 16:30 以降は受付終了', () => {
+test('CLOSED: 16:30 以降は翌日分の受付へ切り替わる', () => {
   assert.equal(computeIntakeStatus({ nowMs: MON(16, 30) }), PP_INTAKE.CLOSED);
   assert.equal(computeIntakeStatus({ nowMs: MON(23, 59) }), PP_INTAKE.CLOSED);
   assert.equal(computeIntakeStatus({ nowMs: SAT(19, 0) }), PP_INTAKE.CLOSED, '土日でも同じ');
