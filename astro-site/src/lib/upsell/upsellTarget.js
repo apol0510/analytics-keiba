@@ -27,6 +27,7 @@
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolvePlusMemberFromFields } from '../premiumPlus/premiumPlusMember.js';
 import { resolvePremiumPlusRelease, PP_INTAKE } from '../premiumPlus/premiumPlusRelease.js';
+import { resolveSaleTarget } from '../premiumPlus/premiumPlusSaleDate.js';
 
 /** 管理者が選ぶ値。Airtable `UpsellTarget`（singleSelect）と 1:1。 */
 export const UPSELL_TARGET = Object.freeze({
@@ -249,19 +250,27 @@ export function resolvePlusAdminFlags({ target, member } = {}) {
  * @param {{ fields: object|null, nowMs?: number, sanrenpukuStage?: object, fallbackAnchor?: unknown,
  *          targetOverride?: unknown }} input
  */
-export function resolveUpsellForCustomer({ fields, nowMs = Date.now(), sanrenpukuStage, fallbackAnchor, targetOverride } = {}) {
+export function resolveUpsellForCustomer({
+  fields, nowMs = Date.now(), sanrenpukuStage, fallbackAnchor, targetOverride,
+  // 開催カレンダー。**未指定なら翌日分は売らない**（fail closed）
+  raceCalendar, knownRaceDates,
+} = {}) {
   const target = targetOverride === undefined
     ? readUpsellTarget(fields)
     : normalizeUpsellTarget(targetOverride);
   const entitlements = resolveEntitlements(fromAirtableFields(fields || {}), nowMs);
   const member = resolvePlusMemberFromFields(fields, { nowMs, fallbackAnchor });
+  // いま売れるのは何日分か（開催カレンダーで確認）。**確認できなければ売らない**
+  const saleTarget = resolveSaleTarget(nowMs, { calendar: raceCalendar, knownRaceDates });
   const plusRelease = resolvePremiumPlusRelease({
     ...member,
     ...resolvePlusAdminFlags({ target, member }),
     nowMs,
+    // 16:30 以降に翌日分（次の開催日分）を売ってよいか
+    nextDaySellable: saleTarget.isNextDay && saleTarget.sellable === true,
   });
   const view = resolveUpsellDisplay({ target, entitlements, plusRelease, sanrenpukuStage });
-  return { ...view, entitlements, plusRelease, member };
+  return { ...view, entitlements, plusRelease, member, saleTarget };
 }
 
 /** 管理画面の「実表示」列に出す短い説明 */
@@ -269,11 +278,11 @@ export function describeUpsellDisplay(view) {
   if (!view) return '';
   if (view.channel === UPSELL_CHANNEL.PLUS) {
     // ⚠️ 2026-08-13〜 16:30 以降は「受付時間外」ではなく**翌日分の受付中**。
-    //    `purchaseEnabled` は PHASE 4 なら常に true なので、
-    //    何日分を売っているか（intake）で出し分ける。
+    //    ただし翌日に開催が無い / 確認できないときは CLOSED（売らない）のまま。
+    //    「売らない」と「別の日を売る」を同じ状態にしないため、専用値で判定する。
     if (view.plus.showPurchaseCta) {
       if (!view.plus.purchaseEnabled) return 'Plus CTA（操作不可）';
-      return view.plus.intake === PP_INTAKE.CLOSED ? 'Plus CTA（翌日分受付中）' : 'Plus CTA';
+      return view.plus.intake === PP_INTAKE.NEXT_DAY_OPEN ? 'Plus CTA（翌日分受付中）' : 'Plus CTA';
     }
     return 'Plus 予告';
   }

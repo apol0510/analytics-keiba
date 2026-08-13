@@ -113,13 +113,61 @@ PHASE 4 到達後の **OPEN / CLOSING / CLOSED**（JST 判定）を通す。
 `bank-transfer-application` が `resolveSaleTarget(Date.now())` で出し直し、
 ズレたらログに残す。これで再送・再読込でも対象日がぶれない。
 
-### ⚠️ 翌日が非開催日かは判定できない
+### 受付状態は 5 つ（CLOSED を購入可に読み替えない）
 
-2026-08-13 時点で、この repo に**開催カレンダーは無く、将来日の開催有無を知る
-データ源も無い**（予想データは当日に dispatch で届く）。
-したがって「翌日が非開催なら次の開催日へ送る」は**実装していない**。
-推測で日付を作ると届かない日を売ることになる。
-対象日は管理画面と申込通知に必ず出るので、非開催時は運用で気づける。
+| 状態 | 時間帯 | 購入 |
+|---|---|---|
+| `open` / `limited` / `closing` | 00:00〜16:29 | 可（本日分）|
+| **`next_day_open`** | 16:30〜23:59 かつ**対象日の開催を確認できた** | 可（翌日分・次の開催日分）|
+| `closed` | 16:30〜23:59 かつ**確認できない** | **不可** |
+
+⚠️ `closed` を「購入可」に読み替えてはいけない。
+「売らない」と「別の日を売る」は意味が違い、同じ値に押し込むと
+fail closed の判定そのものが消える。**専用状態を持つ**。
+
+### ⚠️ 非開催日は売らない（開催カレンダー / fail closed）
+
+開催日の正本は `src/data/premiumPlusRaceCalendar.json`。
+取り込みは `scripts/importRaceCalendar.mjs`。
+
+```bash
+node scripts/importRaceCalendar.mjs --file <公式日程.json|csv> --covers-until 2026-09-30 --dry-run
+node scripts/importRaceCalendar.mjs --file <公式日程.json|csv> --covers-until 2026-09-30
+```
+
+**売らないのは次のとき**（どれも推測で日付を作らない）:
+
+- カレンダー未取込 / 空
+- `coversUntil` を過ぎた日（＝載っていなくても「非開催」と言い切れない）
+- 非開催と確定し、かつ次の開催日も見つからない
+
+非開催と**言い切れる**ときだけ、次に開催がある日へ送る。
+
+⚠️ **HTML を推測でスクレイピングしない。** 形が変わったときに黙って
+間違った日付を作り、届かない日を売ることになる。一次情報を人が確認して渡す。
+
+### 対象日は構造化項目として保存する（冪等）
+
+商品名の文字列だけに頼らず、Airtable の **`SaleTargetDate`**（`YYYY-MM-DD`）へ保存する。
+
+**一度確定した対象日は二度と再計算しない。** 未確定の申込
+（`PaymentConfirmed=false`）に保存済みの対象日があればそれが正。
+再送・再読込・翌日以降の再実行でも動かない（`resolveOrderSaleDate`）。
+確定後にカレンダーが変わっても、**客に約束した日は変えない**。
+
+#### schema 追加の手順（本番未実施）
+
+1. Airtable `Customers` に **`SaleTargetDate`（単一行テキスト）** を作成
+2. `netlify env:set PREMIUM_PLUS_SALE_DATE_FIELD_READY 1 --context production --force`
+3. 再デプロイ
+
+env 未設定のうちは**フィールドを書かない**ので、作成前に反映しても 422 にならない。
+
+#### rollback
+
+`netlify env:unset PREMIUM_PLUS_SALE_DATE_FIELD_READY --context production` → 再デプロイ。
+コード変更なしで「保存しない」状態へ戻る。保存済みの値は残るが読むだけなので害は無い。
+フィールド自体の削除は不要。
 
 ### ⚠️ 商品の届け方（閲覧権の実体）
 

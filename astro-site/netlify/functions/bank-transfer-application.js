@@ -7,7 +7,10 @@
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
-import { resolveSaleTarget, buildSaleProductName, verifySaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { resolveOrderSaleDate, buildSaleProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
+import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
+import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -142,26 +145,73 @@ exports.handler = async (event, context) => {
     //    ここで確定した商品名（対象日入り）が、管理者通知メール・お客様控え・
     //    申請履歴のすべてを通って残る＝どの日の買い目を届けるかが経路の端まで伝わる。
     const isPremiumPlusOrder = /Premium Plus/i.test(String(productName || ''));
-    let saleTarget = null;
-    if (isPremiumPlusOrder) {
-      saleTarget = resolveSaleTarget(Date.now());
-      const check = verifySaleTarget(saleTargetDate, Date.now());
-      if (!check.match) {
-        // 画面とサーバーでズレた（16:30 をまたいだ等）。**サーバー側を採用**する
-        console.warn('⚠️ [bank-transfer] 対象日が画面とズレたためサーバー値を採用:', {
-          claimed: check.claimed, server: check.server,
+    // ── 既に確定している対象日を読む（冪等の要）──────────────────
+    // 未確定の申込（PaymentConfirmed=false）に保存された対象日があれば、
+    // **再送・再読込・翌日以降の再実行でもそれを使い、再計算しない**。
+    let existingSaleTargetDate = null;
+    if (isPremiumPlusOrder && isSaleDateFieldEnabled(process.env)
+        && process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID) {
+      try {
+        const q = new URLSearchParams({
+          filterByFormula: `LOWER(TRIM({Email})) = '${String(email).toLowerCase().replace(/'/g, "\\'")}'`,
+          maxRecords: '1',
         });
+        const res = await fetch(
+          `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Customers?${q}`,
+          { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const f = (data.records || [])[0]?.fields || {};
+          // 入金確認済みの注文の日付は引き継がない（次の注文は新しい対象日）
+          if (f['PaymentConfirmed'] !== true) {
+            const v = f[SALE_TARGET_DATE_FIELD];
+            if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) existingSaleTargetDate = v;
+          }
+        }
+      } catch (e) {
+        // 読めなくても申込は止めない。**新規に確定させる**（推測はしない）
+        console.warn('⚠️ [bank-transfer] 既存の対象日を読めませんでした:', e.message);
       }
     }
-    // 対象日を含む確定商品名。**以後の処理・メール・履歴はこれを使う**
-    const orderProductName = (isPremiumPlusOrder && saleTarget && saleTarget.ok)
-      ? buildSaleProductName(saleTarget.label, 68000)
-      : productName;
-    if (isPremiumPlusOrder && saleTarget && saleTarget.ok) {
+    let saleOrder = null;
+    if (isPremiumPlusOrder) {
+      // ⚠️ 画面が送ってきた saleTargetDate は**採用しない**（開いたまま 16:30 をまたぐとズレる）。
+      //    既に注文へ保存済みの対象日があればそれが正（冪等）。無ければサーバーが決める。
+      const stored = existingSaleTargetDate;
+      saleOrder = resolveOrderSaleDate({
+        storedDate: stored,
+        nowMs: Date.now(),
+        calendar: shapeRaceCalendar(raceCalendarRaw),
+      });
+      if (!stored && saleTargetDate && saleTargetDate !== saleOrder.date) {
+        console.warn('⚠️ [bank-transfer] 対象日が画面とズレたためサーバー値を採用:', {
+          claimed: saleTargetDate, server: saleOrder.date,
+        });
+      }
+      // ⚠️ 開催が確認できない日は**売らない**（推測販売しない）
+      if (!saleOrder.sellable) {
+        console.warn('🚫 [bank-transfer] 対象日の開催を確認できないため受付しません:', {
+          reason: saleOrder.reason,
+        });
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: '現在お申し込みを受け付けていません。次回受付時にあらためてお願いいたします。',
+            code: `sale_not_available:${saleOrder.reason}`,
+            sideEffects: 'none',
+          }),
+        };
+      }
       console.log('📅 [bank-transfer] Premium Plus 対象日:', {
-        date: saleTarget.date, isNextDay: saleTarget.isNextDay, orderProductName,
+        date: saleOrder.date, reused: saleOrder.reused, reason: saleOrder.reason,
       });
     }
+    // 対象日を含む確定商品名。**以後の処理・メール・履歴はこれを使う**
+    const orderProductName = (isPremiumPlusOrder && saleOrder && saleOrder.date)
+      ? buildSaleProductName(saleOrder.label, 68000)
+      : productName;
 
     let memberPricingWarning = null;
     try {
@@ -572,7 +622,10 @@ exports.handler = async (event, context) => {
             fullName,
             planName,
             planType,
-            amount: requestedAmount
+            amount: requestedAmount,
+            // 対象日を**構造化項目**として保存（schema 未準備なら書かない）
+            saleTargetDate: saleOrder ? saleOrder.date : null,
+            saleDateFieldReady: isSaleDateFieldEnabled(process.env)
           });
 
           if (updateFields['Status'] === 'pending') {
@@ -634,7 +687,10 @@ exports.handler = async (event, context) => {
               fullName,
               planName,
               planType,
-              amount: requestedAmount
+              amount: requestedAmount,
+            // 対象日を**構造化項目**として保存（schema 未準備なら書かない）
+            saleTargetDate: saleOrder ? saleOrder.date : null,
+            saleDateFieldReady: isSaleDateFieldEnabled(process.env)
             });
             if (raceUpdateFields['Status'] !== 'pending') {
               console.log(`🛡️ [bank-transfer race] 既存 active 顧客のため Status / プラン / 有効期限は据え置き: ${email}`);
@@ -668,6 +724,9 @@ exports.handler = async (event, context) => {
                 planName,
                 planType,
                 amount: requestedAmount,
+            // 対象日を**構造化項目**として保存（schema 未準備なら書かない）
+            saleTargetDate: saleOrder ? saleOrder.date : null,
+            saleDateFieldReady: isSaleDateFieldEnabled(process.env),
                 isNewRecord: true,
                 email
               }),

@@ -26,14 +26,22 @@
  * `toISOString()` の UTC 基準で日付を作ってはいけない。JST の 00:00〜08:59 は
  * UTC ではまだ前日で、1 日ずれる（銀行振込の有効期限で同じ事故があった）。
  *
- * ## ⚠️ 翌日が非開催日かは**判定できない**
+ * ## ⚠️ 非開催日は売らない（fail closed）
  *
- * 2026-08-13 時点で、この repo に開催カレンダーは無く、将来日の開催有無を知る
- * データ源も無い（予想データは当日に dispatch で届く）。
- * したがって「翌日が非開催なら次の開催日へ送る」は**実装しない**。
- * 推測で日付を作ると、届かない日を売ることになる。
- * 対象日は管理画面と申込通知に必ず出すので、非開催時は運用で気づける。
+ * 対象日に開催が無ければ、届かない日を売ることになる。開催の有無は
+ * `premiumPlusRaceCalendar.js`（取り込んだ開催カレンダー）で判定し、
+ * **開催があると確認できた日だけ**を売る。
+ * 分からないとき（カレンダー未取込・有効期間外）は **販売しない**。
+ * 非開催と言い切れるときだけ、次に開催がある日へ送る。
+ *
+ * ## ⚠️ 一度確定した対象日は再計算しない
+ *
+ * 申込の再送・再読込・翌日以降の再実行で対象日が動くと、
+ * 「買った日」と「届く日」がズレる。初回申込で確定した値を
+ * `resolveOrderSaleDate()` が固定する。
  */
+
+import { checkRaceDay, findNextRaceDay, RACE_DAY } from './premiumPlusRaceCalendar.js';
 
 /** 本日分 → 翌日分 に切り替わる時刻（JST の分単位）。既存の受付締切と同じ 16:30 */
 export const SALE_CUTOVER_MIN = 16 * 60 + 30;
@@ -85,30 +93,83 @@ export function formatJstDate(parts) {
  *   cutoverMin: number,
  * }}
  */
-export function resolveSaleTarget(nowMs) {
+export function resolveSaleTarget(nowMs, { calendar, knownRaceDates } = {}) {
   const p = jstParts(nowMs);
   // 時刻が読めないときは**売らない側**へ倒す（fail closed）
   if (!p) {
     return {
-      ok: false, date: null, target: SALE_TARGET.TODAY, isNextDay: false,
+      ok: false, sellable: false, date: null, baseDate: null, shifted: false,
+      reason: 'bad_time', note: '時刻を判定できませんでした。',
+      target: SALE_TARGET.TODAY, isNextDay: false,
       label: '', productLabel: '', intakeLabel: '', cutoverMin: SALE_CUTOVER_MIN,
     };
   }
   const isNextDay = p.minutes >= SALE_CUTOVER_MIN;
   // ⚠️ 翌日は **JST の暦日**へ 1 日足してから整形する（UTC 基準で足さない）
-  const target = isNextDay ? jstParts(nowMs + DAY_MS) : p;
-  const date = formatJstDate(target);
-  const label = `${target.m}月${target.d}日分`;
+  const base = formatJstDate(isNextDay ? jstParts(nowMs + DAY_MS) : p);
+
+  // ── 開催の確認（**分からなければ売らない**）────────────────────
+  const ctx = { calendar, knownRaceDates };
+  const first = checkRaceDay(base, ctx);
+  let date = null;
+  let shifted = false;
+  let reason = first.code;
+  let note = first.note;
+
+  if (first.code === RACE_DAY.OPEN) {
+    date = base;
+  } else if (first.code === RACE_DAY.CLOSED) {
+    // 非開催と**言い切れる**ときだけ次の開催日を探す
+    const next = findNextRaceDay(addDaysStr(base, 1), ctx);
+    if (next.date) {
+      date = next.date;
+      shifted = true;
+      reason = RACE_DAY.OPEN;
+      note = `${base} は開催がないため、次の開催日（${next.date}）分を販売します。`;
+    } else {
+      reason = next.code;
+      note = next.note;
+    }
+  }
+
+  const sellable = date !== null;
+  const parts = sellable ? partsOfDate(date) : null;
+  const label = parts ? `${parts.m}月${parts.d}日分` : '';
   return {
     ok: true,
+    /** 販売してよいか。**false なら購入させない**（fail closed） */
+    sellable,
+    /** 販売対象日。売れないときは null（推測で日付を作らない） */
     date,
+    /** 時刻から導いた素の対象日（開催確認の前）。運用ログ・説明用 */
+    baseDate: base,
+    /** 非開催のため次の開催日へ送ったか */
+    shifted,
+    /** 売れない/送った理由（RACE_DAY のコード） */
+    reason,
+    note,
     target: isNextDay ? SALE_TARGET.NEXT_DAY : SALE_TARGET.TODAY,
     isNextDay,
     label,
-    productLabel: `${label} Premium Plus`,
+    productLabel: label ? `${label} Premium Plus` : 'Premium Plus',
     intakeLabel: isNextDay ? '翌日分 受付中' : '本日分 受付中',
     cutoverMin: SALE_CUTOVER_MIN,
   };
+}
+
+/** 'YYYY-MM-DD' → 暦日部品 */
+function partsOfDate(date) {
+  const [y, m, d] = String(date).split('-').map(Number);
+  return { y, m, d };
+}
+
+/** 'YYYY-MM-DD' に日を足す（カレンダー側と同じ計算） */
+function addDaysStr(date, days) {
+  const [y, m, d] = String(date).split('-').map(Number);
+  const t = Date.UTC(y, m - 1, d, 12) + days * 86400000;
+  const dt = new Date(t);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
 }
 
 /**
@@ -135,11 +196,49 @@ export function buildSaleProductName(label, price) {
  *
  * @returns {{match:boolean, server:string|null, claimed:string|null}}
  */
-export function verifySaleTarget(claimed, nowMs) {
-  const server = resolveSaleTarget(nowMs);
+export function verifySaleTarget(claimed, nowMs, ctx) {
+  const server = resolveSaleTarget(nowMs, ctx);
   const c = typeof claimed === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(claimed.trim())
     ? claimed.trim() : null;
   return { match: !!server.date && c === server.date, server: server.date, claimed: c };
+}
+
+/**
+ * ── 注文の対象日を**確定させる**（冪等）──────────────────────────
+ *
+ * 一度確定した対象日は**二度と再計算しない**。再送・再読込・翌日以降の
+ * 再実行で日付が動くと「買った日」と「届く日」がズレる。
+ *
+ * @param {{
+ *   storedDate?: string|null,   すでに注文へ保存されている対象日
+ *   nowMs: number,
+ *   calendar?: object|null,
+ *   knownRaceDates?: string[],
+ * }} input
+ * @returns {{
+ *   date: string|null, label: string, productLabel: string,
+ *   sellable: boolean, reused: boolean, reason: string, note: string,
+ * }}
+ */
+export function resolveOrderSaleDate({ storedDate, nowMs, calendar, knownRaceDates } = {}) {
+  const stored = typeof storedDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(storedDate.trim())
+    ? storedDate.trim() : null;
+  if (stored) {
+    // ⚠️ 保存済みなら**それが正**。開催カレンダーで再判定もしない
+    //    （確定後にカレンダーが変わっても、客に約束した日は変えない）。
+    const parts = partsOfDate(stored);
+    const label = `${parts.m}月${parts.d}日分`;
+    return {
+      date: stored, label, productLabel: `${label} Premium Plus`,
+      sellable: true, reused: true, reason: 'stored',
+      note: '初回申込で確定した対象日をそのまま使います（再計算しません）。',
+    };
+  }
+  const t = resolveSaleTarget(nowMs, { calendar, knownRaceDates });
+  return {
+    date: t.date, label: t.label, productLabel: t.productLabel,
+    sellable: t.sellable, reused: false, reason: t.reason, note: t.note,
+  };
 }
 
 export default resolveSaleTarget;

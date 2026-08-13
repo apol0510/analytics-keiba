@@ -240,7 +240,7 @@ export function describePreviewVisibility(preview) {
   // ⚠️ 2026-08-13〜 `purchaseEnabled` は PHASE 4 なら常に true（16:30 以降も買える）。
   //    ここで purchaseEnabled を分岐に使うと**片方の文言が死ぬ**ので、
   //    「何日分を売っているか」＝受付状態で分ける。
-  if (preview.intake === PP_INTAKE.CLOSED) {
+  if (preview.intake === PP_INTAKE.NEXT_DAY_OPEN) {
     return '商品ページ・価格・購入 CTA が表示され、申し込み操作ができます（翌日分の受付中）。';
   }
   return preview.purchaseEnabled

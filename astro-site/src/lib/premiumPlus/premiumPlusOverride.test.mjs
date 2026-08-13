@@ -153,17 +153,16 @@ test('override 経由の PHASE 4 でも受付時間帯ロジックが同じに�
   assert.equal(at(15, 0).purchaseEnabled, true);
   const closed = at(16, 30);
   assert.equal(closed.intake, PP_INTAKE.CLOSED);
-  assert.equal(closed.purchaseEnabled, true, '16:30 以降は翌日分として購入できるはず');
+  assert.equal(closed.purchaseEnabled, false, '翌日分を売れないのに購入できてしまっている');
   assert.equal(closed.showProductPage, true, 'CLOSED でも商品・実績は閲覧可');
   assert.equal(closed.phase, PP_PHASE.SALE);
 });
 
-test('16:30 以降に「今すぐ販売可」でも購入可（翌日分）', () => {
+test('16:30 以降に「今すぐ販売可」でも、翌日分を売れなければ購入不可', () => {
   const r = resolvePremiumPlusRelease(base({ releaseOverride: 'phase4', nowMs: jst(2026, 8, 3, 17, 0) }));
   assert.equal(r.overrideApplied, true);
   assert.equal(r.phase, PP_PHASE.SALE);
-  // 2026-08-13〜: 16:30 以降は「翌日分」として購入できる
-  assert.equal(r.purchaseEnabled, true);
+  assert.equal(r.purchaseEnabled, false);
 });
 
 // ── 管理画面の状態表示 ──────────────────────────────────────────

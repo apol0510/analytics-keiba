@@ -32,6 +32,8 @@ import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusRece
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
 // 「いま売っているのは何日分か」の単一源。表示・注文はここだけを使う
 import { resolveSaleTarget, buildSaleProductName } from '../lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar } from '../lib/premiumPlus/premiumPlusRaceCalendar.js';
+import ppRaceCalendar from '../data/premiumPlusRaceCalendar.json';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 import { recordPlusPageView } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
@@ -85,7 +87,8 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
 }
 const ppIntake = intakeCopy(ppRelease.intake);
 // 対象日（16:30 以降は翌日分）。**購入ボタンの近くに必ず出す**
-const ppSale = resolveSaleTarget(ppNow);
+// 開催カレンダーで確認できた日だけを売る（fail closed）
+const ppSale = resolveSaleTarget(ppNow, { calendar: shapeRaceCalendar(ppRaceCalendar) });
 
 // --- 実閲覧の記録（商品ページ到達）---
 // ここまで来た時点で SSR 認可を通っており recordId が確定している。クライアント JS に任せると
@@ -611,6 +614,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     .pp-intake-title { font-size: 0.82rem; font-weight: 700; color: var(--muted); margin: 0 0 0.35rem; }
     .pp-intake-status { font-size: 1rem; font-weight: 900; margin: 0; }
     /* 何日分を買うのか。購入ボタンのすぐ上に置く */
+    .pp-delivery-note { margin-top: .5rem; font-size: .8rem; line-height: 1.8; color: #cbd5e6; }
     .pp-sale-target { margin: 0 0 .6rem; font-size: 1.02rem; font-weight: 900; color: var(--gold); }
     .pp-sale-target-badge {
       display: inline-block; margin-left: .5rem; font-size: .68rem; font-weight: 800;
@@ -1156,13 +1160,15 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
 
             {/* 注文へ運ぶ対象日。サーバーが出し直して確定させるが、
                 画面が何日分を出していたかを記録として残す */}
-            <input type="hidden" id="ppSaleTargetDate" value={ppSale.date} />
+            <input type="hidden" id="ppSaleTargetDate" value={ppSale.date || ''} />
             <input type="hidden" id="ppSaleProductName" value={buildSaleProductName(ppSale.label, 68000)} />
             {/* 何日分を買うのかをボタンのすぐ上に出す（16:30 以降は翌日分） */}
-            <p class="pp-sale-target" data-sale-date={ppSale.date}>
-              <span class="pp-sale-target-label">{ppSale.productLabel}</span>
-              {ppSale.isNextDay && <span class="pp-sale-target-badge">翌日分</span>}
-            </p>
+            {ppSale.sellable && (
+              <p class="pp-sale-target" data-sale-date={ppSale.date}>
+                <span class="pp-sale-target-label">{ppSale.productLabel}</span>
+                {ppSale.isNextDay && <span class="pp-sale-target-badge">翌日分</span>}
+              </p>
+            )}
 
             <button class="cta-button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>
               🏦 銀行振込で購入する
@@ -1170,6 +1176,13 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
 
             <p class="cta-sub">
               入金確認後、AI が厳選した 1 鞍の買い目をお届けします。
+            </p>
+            {/* 自動配信ではなく**手動でお届けする**商品であることを明記する。
+                サイト上に購入者専用の閲覧画面は無いため、誤解を生まないよう出す */}
+            <p class="cta-sub pp-delivery-note">
+              こちらは <strong>担当者が手動でお届けする商品</strong>です。
+              {ppSale.sellable ? ppSale.label : '対象日分'}は
+              <strong>入金確認後にメールでご案内</strong>します（サイト上での閲覧ではありません）。
             </p>
           </>
         ) : (
