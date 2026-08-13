@@ -51,6 +51,20 @@ Claudeは、ただのコード記述係ではなく、実装から検証まで�
 5. **commit 前に `git diff` を確認する**
 6. **本番反映前に確認方法を示す**
 7. **検証を「一時的に無効化」しない**（CI・safety check・guard すべて）
+8. **このファイル（CLAUDE.md）へ仕様の詳細を書き戻さない** — 下記「文書の置き場所」に従う
+
+### 文書の置き場所（CLAUDE.md を再肥大させない）
+
+CLAUDE.md は**毎セッション全文が読み込まれる**。詳細を戻すと、守るべき禁止事項が埋もれる。
+
+| 書く内容 | 置き場所 |
+|---|---|
+| 禁止事項・停止条件・不変条件（1〜3 行で言い切れるもの） | **CLAUDE.md** |
+| 仕様・手順・閾値・フィールド一覧・経緯・インシデント記録 | `astro-site/docs/` の**正本** |
+
+- 新しい仕様を書くときは **既存の正本を先に探す**。無ければ新規 doc を作る
+- **新規 doc は必ず CLAUDE.md の「ドキュメント索引」へ 1 行追加**する（到達不能な doc を作らない）
+- 同じ規則を CLAUDE.md と doc の両方に**詳細まで**書かない（正本は 1 つ）
 
 ### 停止して確認を取る操作
 
@@ -117,6 +131,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | CI safety check | [`SAFETY_CHECKS.md`](./astro-site/docs/SAFETY_CHECKS.md) |
 | 旧 KI 風ブロックの再混入防止 | [`KI_RELIC_GUARDS.md`](./astro-site/docs/KI_RELIC_GUARDS.md) / [`PREMIUM_JRA_RULES.md`](./astro-site/docs/PREMIUM_JRA_RULES.md) / [`FREE_JRA_RULES.md`](./astro-site/docs/FREE_JRA_RULES.md) |
 | archive 同期・取込要否の監視契約 | [`ARCHIVE_SYNC_MONITORING.md`](./astro-site/docs/ARCHIVE_SYNC_MONITORING.md) |
+| keiba-intelligence との分離（独立運用） | [`KI_INDEPENDENCE.md`](./astro-site/docs/KI_INDEPENDENCE.md) |
 
 ### 商品・導線
 
@@ -139,6 +154,12 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | 顧客重複整理 | [`CUSTOMER_DEDUPE.md`](./astro-site/docs/CUSTOMER_DEDUPE.md) / [`CUSTOMERS_DEDUP_GUIDE.md`](./astro-site/docs/CUSTOMERS_DEDUP_GUIDE.md) |
 | ポイント交換 | [`POINT_EXCHANGE_FULFILLMENT.md`](./astro-site/docs/POINT_EXCHANGE_FULFILLMENT.md) |
 | 管理画面の絞り込み用語 | [`ADMIN_FILTER_DICTIONARY.md`](./astro-site/docs/ADMIN_FILTER_DICTIONARY.md) |
+| メルマガ基盤（Airtable 設計 / プレビュー / backfill） | [`NEWSLETTER_AUTOMATION_AIRTABLE_DESIGN.md`](./astro-site/docs/NEWSLETTER_AUTOMATION_AIRTABLE_DESIGN.md) / [`NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md`](./astro-site/docs/NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) / [`NEWSLETTER_PREVIEW_USAGE.md`](./astro-site/docs/NEWSLETTER_PREVIEW_USAGE.md) / [`NEWSLETTER_BRAND_BACKFILL_SPEC.md`](./astro-site/docs/NEWSLETTER_BRAND_BACKFILL_SPEC.md) / [`NEWSLETTER_CUSTOMERS_EXISTING_FIELDS_AUDIT.md`](./astro-site/docs/NEWSLETTER_CUSTOMERS_EXISTING_FIELDS_AUDIT.md) |
+
+### 移設の対応表
+
+CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの全件対応表は
+[`CLAUDE_MD_MIGRATION_AUDIT.md`](./astro-site/docs/CLAUDE_MD_MIGRATION_AUDIT.md)。
 
 ---
 
@@ -159,6 +180,10 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | 権限（entitlement） | `src/lib/entitlements/resolveEntitlements.js` |
 
 ページ側・Function 側にローカル判定を再実装しない。
+
+**重み・閾値・判定基準を変更したら、コードと該当する正本 MD を必ず両方更新する**
+（予想ロジックの重み / 購入点数の閾値 / 段階公開の日数 など）。
+片方だけ直すと、次に読む人が古い方を信じる。
 
 ### 表示
 
@@ -215,10 +240,19 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 
 検証: `npm run check:no-unbounded-scan`
 
-### keiba-intelligence
+### keiba-intelligence（AK と KI の分離）
 
-**絶対に触らない。** 2026-05-23〜 AK と KI は別サービスとして独立運用し、
-ロジック修正を自動的に横展開しない。過去の経緯を理由に同期作業を再開しない。
+**`keiba-intelligence` 側を絶対に触らない。**
+2026-05-23〜 AK と KI は**別サービスとして独立運用**する。両方とも稼働を続け、
+それぞれ独自の顧客へ予想を提供する。
+
+- AK 側のロジック修正を KI へ **自動的に横展開しない**
+- KI 側は **必要な場合のみ個別に修正**する
+- admin (`keiba-data-shared-admin`) からの dispatch / データ供給は **当面維持**
+- **過去の経緯を理由に同期作業を再開してはいけない**（2026-05-22 以前の同期義務は撤廃済み）
+
+運用方針・過去の経緯の全文は
+[`KI_INDEPENDENCE.md`](./astro-site/docs/KI_INDEPENDENCE.md)（**正本**）。
 
 ---
 
@@ -226,21 +260,26 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 
 ```bash
 cd /Users/user/Projects/analytics-keiba/astro-site
-npm run dev              # 開発サーバー
-npm run build            # validate → build → SSR 関数の prune
-npm run check:safety     # 恒久ルール検証を全部（CI と同じ）
-npm run verify:safety    # build + check:safety（push 前推奨）
+npm run dev                    # 開発サーバー
+npm run build                  # validate → build → SSR 関数の prune
+npm run validate:archive       # 旧フォーマット混入の検証
+npm run import:prediction      # 南関 予想取込（:jra で JRA）
+npm run import:results         # 南関 結果取込（:jra で JRA）
+npm run check:safety           # 恒久ルール検証を全部（CI と同じ）
+npm run verify:safety          # build + check:safety（push 前推奨）
 ```
 
 **予想ページ・カード・全レースプレビューを変更したら必ず `npm run check:safety` を実行する。**
 個別の `check:*` / `test:*` は `package.json` を参照（すべて `check:safety` に組込済み）。
 
-### CI で強制していること
+### CI で強制していること（正本: [`SAFETY_CHECKS.md`](./astro-site/docs/SAFETY_CHECKS.md)）
 
 1. 指数表示は必ず `raw − 1`
 2. 全レースプレビューで全頭が分類される（表示合計 = 出走頭数）
-3. 旧 KI 風ブロックが混入していない（3 ページ分の guard）
-4. Customers の無フィルタ全件走査＋黙って打ち切りが無い
+3. **無料版のモザイクは「描画されて」初めてマスク**
+   （gradient 文字の中では子の `blur()` が効かない。親に `stat-value-masked` を付ける）
+4. 旧 KI 風ブロックが混入していない（3 ページ分の guard + 構造パリティ）
+5. Customers の無フィルタ全件走査＋黙って打ち切りが無い
 
 **CI を通さずに指数表示や馬分類を変更してはいけない。**
 
