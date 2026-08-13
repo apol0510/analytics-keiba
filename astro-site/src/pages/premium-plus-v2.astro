@@ -32,6 +32,7 @@ import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusRece
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
+import { recordPlusPageView } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -81,6 +82,18 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
   });
 }
 const ppIntake = intakeCopy(ppRelease.intake);
+
+// --- 実閲覧の記録（商品ページ到達）---
+// ここまで来た時点で SSR 認可を通っており recordId が確定している。クライアント JS に任せると
+// JS 無効・広告ブロック・即離脱で落ちるため、サーバー側で数える。
+// Redis へ recordId だけ書き、Airtable へは 1 バイトも書かない。
+// 失敗・未設定・遅延は「未確認」のまま（0 回とは記録しない）で、ページは通常どおり返す。
+await recordPlusPageView({
+  recordId: access.payload?.sub || null,
+  env: process.env,
+  userAgent: Astro.request.headers.get('user-agent') || '',
+  nowMs: ppNow,
+});
 
 // 会員別レスポンス。CDN に共有キャッシュさせない。
 Astro.response.headers.set('Cache-Control', 'private, no-store');

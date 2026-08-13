@@ -1052,6 +1052,22 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          * window.__akUpsellChannel は /api/upsell.json の結果（未取得なら 'unknown'）。
          * unknown のときは従来どおり三連複側の既存判定に従う（この機能の障害で導線を止めない）。
          */
+        /**
+         * Premium Plus 導線の**実閲覧**を積む（送るかどうかは premiumPlusFunnelClient.js が決める）。
+         * 判定で「出す」と決めたことと、実際に画面に入って見えたことは別物なので、
+         * 要素を渡して「画面に入ったときだけ」表示として数える。
+         */
+        function recordPlusCtaShown(section) {
+            if (!section || section.__akFunnelBound) return;
+            section.__akFunnelBound = true;
+            const q = (window.__akPpFunnelQueue = window.__akPpFunnelQueue || []);
+            q.push({ event: 'cta_view', el: section });
+            const btn = document.getElementById('plus-upsell-btn');
+            if (btn) btn.addEventListener('click', () => {
+                window.__akPpFunnelQueue.push({ event: 'cta_click' });
+            });
+        }
+
         window.applyUpsellSections = applyUpsellSections;
         function applyUpsellSections(data) {
             const planChangeSection = document.getElementById('plan-change-section');
@@ -1072,7 +1088,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             if (channel === 'plus') {
                 // Premium Plus だけを出す（三連複ボタンとは同時に出さない）
                 planChangeSection.style.display = 'none';
-                if (plusSection) plusSection.style.display = 'block';
+                if (plusSection) {
+                    plusSection.style.display = 'block';
+                    recordPlusCtaShown(plusSection);
+                }
                 return;
             }
 
@@ -5373,6 +5392,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          取得できないとき（未ログイン・API 不在）は 'unknown' のままで従来動作を維持する。 -->
     <script>
       import { getUpsellDecision } from '../lib/upsell/upsellClient.js';
+      import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
+      // 実閲覧の送信本体。導線が出る前に install しておく（先に積まれても取りこぼさない）
+      installPlusFunnel(window);
       (async () => {
         const d = await getUpsellDecision();
         window.__akUpsellChannel = d.channel;

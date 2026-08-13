@@ -113,13 +113,16 @@ test('状態フィルター 5 種 + Route フィルター + Email 検索（ク�
   }
   assert.ok(PAGE.includes('<option value="sanrenpuku">'));
   assert.ok(PAGE.includes('<option value="premium_30d">'));
-  assert.match(PAGE, /id="q"[^>]*placeholder="Email で検索"/);
-  assert.match(PAGE, /String\(r\.email \|\| ''\)\.toLowerCase\(\)\.includes\(q\)/);
-  // 再描画のみ。API を呼ばない
-  assert.match(PAGE, /\$\('q'\)\.addEventListener\('input', render\)/);
+  assert.match(PAGE, /id="q"[^>]*placeholder="氏名 または アドレスの一部"/);
+  // 手元に完全なアドレスが無くても引けること（氏名でもアドレスの一部でも絞り込める）
+  assert.match(PAGE, /\$\{String\(r\.email \|\| ''\)\} \$\{String\(r\.name \|\| ''\)\}/);
+  assert.match(PAGE, /hay\.includes\(q\)/);
+  // 入力中は再描画のみ。API は呼ばない（サーバー検索は Enter / 検索ボタン / change だけ）
+  assert.match(PAGE, /\$\('q'\)\.addEventListener\('input', \(\) => \{ syncSearchBadge\(\); render\(\); \}\)/);
   assert.match(PAGE, /\$\('fState'\)\.addEventListener\('change', render\)/);
   assert.match(PAGE, /\$\('fRoute'\)\.addEventListener\('change', render\)/);
   assert.doesNotMatch(PAGE, /addEventListener\('input',\s*load\)/);
+  assert.doesNotMatch(PAGE, /addEventListener\('input',[^)]*lookupOutsideCandidates/);
 });
 
 test('並び順: 保留 → 販売可/販売中 → 即時販売 → 販売対象外、同群は最終更新の新しい順', () => {

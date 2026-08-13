@@ -200,6 +200,69 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
    exception stack trace（本番 500 は body 空）は取得できていない。
    Netlify build-cache の module drift だと**断定はしていない**。
 
+## 📏 実閲覧の計測（「表示判定」と「実閲覧」は別物 / 2026-08-13〜）
+
+管理画面の販売一覧には **意味の違う 2 列**がある。混同すると
+「見えているはず」を「見た」と読み違え、販売判断を誤る。
+
+| 列 | 何を表すか | 出どころ |
+|---|---|---|
+| **表示判定** | 設定と条件から導いた「この人には出るはず」 | `resolveUpsellForCustomer`（判定） |
+| **実閲覧** | 実際に届いた記録（CTA 表示 / クリック / 商品ページ到達） | Redis `ak:pp:funnel:v1`（実測） |
+
+### 記録するもの・しないもの
+
+| 何 | どこで記録するか |
+|---|---|
+| CTA 表示 | ブラウザ。**画面に入ったときだけ**（IntersectionObserver）。DOM に足しただけでは数えない |
+| CTA クリック | ブラウザ（`keepalive` で送るので遷移で消えない） |
+| 商品ページ到達 | **SSR で直接**。JS 無効・広告ブロック・即離脱でも落ちない |
+
+- 記録するのは **`ak_session` から解決した recordId だけ**。アドレスも氏名も保存しない。
+  クライアントが送った id は**一切使わない**（イベント名しか送らない）。
+- **Airtable へは 1 バイトも書かない。**
+- 同じ種別は **30 分（`DEDUPE_MS`）に 1 回**しか数えない（再描画・戻る操作で増やさない）。
+- bot / UA なしは数えない。
+
+### ⚠️ 除外してよいのは「管理者プレビュー」だけ
+
+判定は `premiumPlusFunnelServer.isAdminPreviewRequest`（**明示された印だけ**を見る）。
+次はすべて**除外してはいけない**。やると通常の顧客閲覧まで消えて「見ていない」に化ける。
+
+- 運営者本人の recordId（例: 0510apolone）だから除外 → **誤り**。本人が顧客として見たら計上する
+- 管理画面から遷移した（Referer が `/admin`）から除外 → **誤り**
+- 管理シークレットが付いているから除外 → **誤り**
+
+固定テスト: `src/lib/premiumPlus/premiumPlusFunnelExclusion.test.mjs`
+
+### ⚠️ 記録が無いことを「0 回」と書かない
+
+記録が無い理由は「本当に見ていない」だけではない。
+**計測開始より前だった / Redis を読めない**も同じく記録が無い。どれも**確認不能**。
+
+- 画面表示は必ず **「未確認」**。`0 回` `見ていない` と書かないこと
+- 計測開始時刻（`started_at`）を常設で出し、**それ以前は記録が存在せず確認できない**と明記する
+- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` 未設定なら全員「未確認」（0 ではない）
+
+### 個別検索（氏名・アドレスの一部）
+
+一覧は販売候補だけに絞っているので候補外の人は出ない。
+`action='lookup'` は **氏名の一部・アドレスの一部**で引ける（例: `Daniel` / `0510apolone` / `tori`）。
+式の組み立ては `premiumPlusAdminSearch.js` が単一源。一致が多すぎるときは
+**一部を返さず 400（`search_too_broad`）**で絞り込みを促す（先頭 N 件を「これで全部」と
+読ませない）。検索結果にも実閲覧を載せる。
+
+### 関連ファイル（計測）
+
+| 目的 | ファイル |
+|---|---|
+| 集計（純粋・I/O 注入） | `src/lib/premiumPlus/premiumPlusFunnelStore.js` |
+| Redis 接続 / SSR 記録 / プレビュー判定 | `src/lib/premiumPlus/premiumPlusFunnelServer.js` |
+| ブラウザ側の配線（キュー方式・単一源） | `src/lib/premiumPlus/premiumPlusFunnelClient.js` |
+| 記録 API（POST のみ・存在秘匿 404） | `src/pages/api/pp-funnel.json.js` |
+| 個別検索の式 | `src/lib/premiumPlus/premiumPlusAdminSearch.js` |
+| テスト | `src/lib/premiumPlus/premiumPlusFunnel*.test.mjs`（`npm run test:premium-plus-media` / `check:safety` に組込済み） |
+
 ## 関連ファイル
 
 | 目的 | ファイル |

@@ -67,6 +67,13 @@ import {
 import { explainUpsell, UPSELL_AUTO_RULE_TEXT } from '../../src/lib/upsell/upsellExplain.js';
 import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
 import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpukuDisplay.js';
+import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
+import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import {
+  buildLookupFormula,
+  SEARCH_ERROR_TEXT,
+  MAX_SEARCH_PAGES,
+} from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
@@ -203,34 +210,116 @@ function buildAdminRow(rec, now) {
 }
 
 /**
- * Email で 1 件だけ直接引く（**候補集合の外も引ける**）。
+ * 行に **実閲覧（実測）** を足す。
+ *
+ * ⚠️ **「表示判定」とは別物**。`upsellDisplay` は「この人には CTA を出す設定になっている」
+ *    という判定結果で、見た証拠ではない。ここで足す `realView` だけが実測。
+ *
+ * 読めない / 未設定のときは **全員 `available:false`（＝「未確認」）** にする。
+ * 0 回として返すと「見ていない」と読まれてしまう。
+ *
+ * @returns {Promise<{measurement: object}>} rows は破壊的に更新する
+ */
+async function attachRealViews(rows) {
+  const cmd = makeRedisCmd(process.env);
+  const unavailable = (reason) => {
+    for (const r of rows) r.realView = describeFunnelRow(null, { available: false });
+    return {
+      measurement: {
+        available: false,
+        reason,
+        startedAtJst: null,
+        note: '実閲覧を読み取れませんでした。表示は全員「未確認」です（0 回という意味ではありません）',
+      },
+    };
+  };
+  if (!cmd) return unavailable('measurement_unavailable');
+
+  let out;
+  try {
+    out = await createFunnelStore({ redisCmd: cmd }).readMany({ recordIds: rows.map((r) => r.recordId) });
+  } catch {
+    return unavailable('read_failed');
+  }
+  if (!out.available) return unavailable(out.reason || 'read_failed');
+
+  for (const r of rows) {
+    r.realView = describeFunnelRow(out.rows.get(r.recordId) || null, {
+      available: true,
+      startedAtMs: out.startedAtMs,
+    });
+  }
+  return {
+    measurement: {
+      available: true,
+      startedAtJst: funnelJst(out.startedAtMs),
+      // 計測開始より前のことは分からない、と管理画面に常設で書く
+      note: out.startedAtMs
+        ? `実閲覧は ${funnelJst(out.startedAtMs)} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません`
+        : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
+    },
+  };
+}
+
+/**
+ * 1 人を名指しで調べる（**候補集合の外も引ける**）。
  *
  * 一覧は「販売候補になり得る人」だけへ絞り込んでいるので、
  * 無料会員など候補外の人は一覧に出ない。管理者が「あの人はどうなっている？」を
  * 確認できるよう、**検索だけは絞り込みを迂回**する。
- * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。
+ *
+ * 検索語は **氏名の一部 / アドレスの一部**でよい（式の組み立ては
+ * `premiumPlusAdminSearch.js` が単一源）。完全一致の Email しか引けないと、
+ * 手元に氏名しか無い相手を調べられず「調べられない」が「見ていない」と誤読される。
+ *
+ * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。実閲覧も併せて返す。
  */
 async function handleLookup({ KEY, BASE, now, req }) {
-  const email = String((req && req.email) || '').trim().toLowerCase();
-  if (!email) return json(400, { error: 'email を指定してください' });
-  // Airtable formula の文字列リテラルを壊さない
-  const safe = email.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // 旧 UI 互換: email パラメータも受ける
+  const raw = String((req && (req.query ?? req.email)) || '');
+  const built = buildLookupFormula(raw);
+  if (!built.ok) return json(400, { error: SEARCH_ERROR_TEXT[built.reason] || '検索語が不正です' });
 
-  const res = await fetch(
-    `https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/listRecords`,
-    {
-      method: 'POST',
-      headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pageSize: 10,
-        filterByFormula: `LOWER(TRIM({Email})) = '${safe}'`,
-      }),
-    },
-  );
-  if (!res.ok) return json(502, { error: `Airtable lookup failed: ${res.status}` });
-  const data = await res.json();
-  const recs = data.records || [];
-  if (recs.length === 0) return json(200, { found: false, rows: [], sideEffects: 'none' });
+  const recs = [];
+  let offset;
+  let pages = 0;
+  do {
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/listRecords`,
+      {
+        method: 'POST',
+        headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageSize: 100,
+          filterByFormula: built.formula,
+          sort: [{ field: 'Email', direction: 'asc' }],
+          ...(offset ? { offset } : {}),
+        }),
+      },
+    );
+    if (!res.ok) return json(502, { error: `Airtable lookup failed: ${res.status}` });
+    const data = await res.json();
+    recs.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    // 一致が多すぎるときは **一部を返さない**（先頭 N 件を「該当者はこれだけ」と
+    // 読まれると、探している人が居ないと誤解される）。fail closed で絞り込みを促す。
+    if (offset && pages >= MAX_SEARCH_PAGES) {
+      return json(400, {
+        error: `「${raw}」に一致する会員が多すぎます（${pages * 100} 件以上）。`
+          + '一部だけを表示すると探している人を見落とすため、結果を返しません。検索語を絞り込んでください',
+        code: 'search_too_broad',
+        query: raw,
+        sideEffects: 'none',
+      });
+    }
+  } while (offset);
+
+  if (recs.length === 0) {
+    return json(200, {
+      found: false, rows: [], query: raw, exactEmail: built.exactEmail, sideEffects: 'none',
+    });
+  }
 
   const rows = recs.map((rec) => {
     const row = buildAdminRow(rec, now);
@@ -240,7 +329,16 @@ async function handleLookup({ KEY, BASE, now, req }) {
       inCandidateSet: row.__listed === true,
     };
   });
-  return json(200, { found: true, rows, sideEffects: 'none' });
+  const { measurement } = await attachRealViews(rows);
+
+  return json(200, {
+    found: true,
+    rows,
+    query: raw,
+    exactEmail: built.exactEmail,
+    measurement,
+    sideEffects: 'none',
+  });
 }
 
 async function handleList({ KEY, BASE, now, onlyReview }) {
@@ -298,8 +396,12 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   const order = { review: 0, eligible: 1, blocked: 2 };
   rows.sort((a, b) => (order[a.eligibility] - order[b.eligibility]) || String(a.email).localeCompare(String(b.email)));
 
+  // 実閲覧（実測）を足す。**表示判定とは別列**として返す
+  const { measurement } = await attachRealViews(rows);
+
   return json(200, {
     rows,
+    measurement,
     counts: {
       total: rows.length,
       review: rows.filter((r) => r.eligibility === PP_ELIGIBILITY.REVIEW).length,
@@ -311,6 +413,14 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
+    },
+    // 実測（表示判定の件数とは別物。混ぜて数えない）
+    realViewCounts: {
+      ctaViewed: rows.filter((r) => r.realView?.cta?.measured).length,
+      clicked: rows.filter((r) => r.realView?.click?.measured).length,
+      pageViewed: rows.filter((r) => r.realView?.page?.measured).length,
+      /** 記録が無い人。**「見ていない」ではなく「確認できない」** */
+      unknown: rows.filter((r) => !r.realView?.anyMeasured).length,
     },
     upsellCounts: {
       auto: rows.filter((r) => r.upsellTarget === UPSELL_TARGET.AUTO).length,

@@ -105,6 +105,8 @@ test('【Airtable の罠】!= BLANK() を使っていない（常に真になる
 // ── Function 側の配線 ──────────────────────────────────────────
 const FN = readFileSync(new URL('../../../netlify/functions/premium-plus-eligibility.js', import.meta.url), 'utf8');
 const code = FN.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+/** 個別検索の式を組み立てる単一源 */
+const SEARCH = readFileSync(new URL('./premiumPlusAdminSearch.js', import.meta.url), 'utf8');
 
 test('【配線】list は formula で絞ってから読む（全件走査へ戻さない）', () => {
   assert.match(code, /buildAdminCandidateFormula\(\)/);
@@ -135,24 +137,47 @@ test('【配線】一覧と集計は同じ rows から算出する（別集合�
   }
 });
 
-test('【配線】Email 検索は候補集合を迂回して直接引ける', () => {
-  assert.match(code, /action === 'lookup'/);
-  assert.match(code, /LOWER\(TRIM\(\{Email\}\)\) = /);
-  // lookup は候補 formula を使わない（使うと候補外が引けない）
+/** handleLookup の本体だけを切り出す */
+function lookupBody() {
   const i = code.indexOf('async function handleLookup');
   const rest = code.slice(i + 10);
   const end = rest.indexOf('\nasync function ');
-  const body = rest.slice(0, end > 0 ? end : rest.length);
+  return rest.slice(0, end > 0 ? end : rest.length);
+}
+
+test('【配線】個別検索は候補集合を迂回して直接引ける', () => {
+  assert.match(code, /action === 'lookup'/);
+  // 検索式の組み立ては単一源（premiumPlusAdminSearch）。Function 側に書き写さない
+  assert.match(code, /buildLookupFormula\(/);
+  assert.match(code, /filterByFormula: built\.formula/);
+  const body = lookupBody();
   assert.equal(/buildAdminCandidateFormula/.test(body), false, 'lookup が候補 formula で絞っている');
   assert.match(body, /buildAdminRow\(/, '一覧と別の組み立てをしている');
 });
 
-test('【安全】lookup の Email はエスケープしてから formula へ入れる', () => {
-  const i = code.indexOf('async function handleLookup');
-  const rest = code.slice(i + 10);
-  const end = rest.indexOf('\nasync function ');
-  const body = rest.slice(0, end > 0 ? end : rest.length);
-  assert.match(body, /replace\(/);
+test('【配線】氏名・アドレスの一部でも引ける（完全一致 Email だけに戻さない）', () => {
+  // 手元に完全なアドレスが無い相手（例: Daniel / 0510apolone / tori）を調べられること。
+  // 完全一致しか引けないと「調べられない」が「見ていない」と誤読される。
+  assert.match(SEARCH, /FIND\('\$\{safe\}', LOWER\(\{\$\{f\}\} & ''\)\)/);
+  assert.match(SEARCH, /SEARCH_FIELDS = Object\.freeze\(\['Email', '氏名'\]\)/);
+  // 完全なアドレスのときだけ完全一致（同姓同名を巻き込まない）
+  assert.match(SEARCH, /LOWER\(TRIM\(\{Email\}\)\) = /);
+});
+
+test('【安全】検索語はエスケープしてから formula へ入れる', () => {
+  // 生の入力が式へ入ると、式が壊れて全件一致にも 0 件一致にも化ける
+  assert.match(SEARCH, /export function escapeFormulaText/);
+  assert.match(SEARCH, /replace\(\/\\\\\/g, '\\\\\\\\'\)\.replace\(\/'\/g, "\\\\'"\)/);
+  assert.equal(/escapeFormulaText/.test(SEARCH), true);
+  // Function 側で素の入力を式へ入れていないこと
+  const body = lookupBody();
+  assert.equal(/filterByFormula: `/.test(body), false, 'Function 側で式を組み立て直している');
+});
+
+test('【安全】一致が多すぎる検索は一部だけ返さない（fail closed）', () => {
+  const body = lookupBody();
+  assert.match(body, /search_too_broad/);
+  assert.equal(/truncated = true/.test(body), false, '一部だけ返して「これで全部」と読ませている');
 });
 
 // ── 画面: truncated のときに 0 件・全体件数を出さない ────────────
