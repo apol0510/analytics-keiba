@@ -1295,8 +1295,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .nt-undelivered { color: #fca5a5; }
   .ppe .nt-unknown { color: #64748b; font-weight: 400; }
   .ppe .nt-action { color: #fcd34d; }
+  /* 「要対応」は**次の行**へ置く。横に並べると案内列だけで 113px を占め、
+     一覧全体が 133px はみ出して「操作」ボタンが初期表示から外れてしまう
+     （2026-08-13 にビルド成果物で実測。block 化で 72px / はみ出し 92px へ）。
+     モバイル（≤860px）は data-label のカード表示になり、
+     「案内　未案内」が 1 行・その下にバッジ、という並びになる。 */
   .ppe .nt-badge {
-    display: inline-block; margin-left: .4rem; font-size: .64rem; font-weight: 800;
+    display: block; width: fit-content; margin: .22rem 0 0; font-size: .64rem; font-weight: 800;
     padding: .1rem .45rem; border-radius: 999px; white-space: nowrap;
     background-color: #4a2f06; color: #fcd34d; border: 1px solid rgba(251,191,36,.5);
   }
