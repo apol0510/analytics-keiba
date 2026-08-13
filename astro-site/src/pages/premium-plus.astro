@@ -1675,6 +1675,8 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         transferName: document.getElementById('fullName').value,
         remarks: document.getElementById('remarks').value,
         productName: 'Premium Plus (¥68,000)',
+        // どの導線から来たか（?from=）。**採否はサーバーの allow-list**が決める
+        funnelSource: new URLSearchParams(location.search).get('from') || null,
           paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
         timestamp: new Date().toISOString(),
       };

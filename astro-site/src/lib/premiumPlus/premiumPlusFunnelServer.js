@@ -146,4 +146,57 @@ export function readPlusSourceFromUrl(url) {
   }
 }
 
+/**
+ * 決済開始を記録する（**サーバー側**。申込フォームが Function へ到達した時点）。
+ * 計測の失敗で申込処理を止めない（例外を投げない）。
+ */
+export async function recordPlusCheckoutStart({
+  recordId, env, nowMs, source, timeoutMs, redisCmd,
+} = {}) {
+  const cmd = redisCmd !== undefined ? redisCmd : makeRedisCmd(env);
+  if (!cmd) return { counted: false, reason: 'measurement_unavailable' };
+  try {
+    const store = createFunnelStore({ redisCmd: cmd });
+    const out = await withTimeout(store.record({
+      recordId,
+      event: FUNNEL_EVENT.CHECKOUT_START,
+      nowMs: typeof nowMs === 'number' ? nowMs : Date.now(),
+      // サーバー側の確定した到達点なので UA・認証の判定は通す
+      userAgent: 'server',
+      authenticated: true,
+      adminPreview: false,
+      source: normalizeFunnelSource(source),
+    }), typeof timeoutMs === 'number' ? timeoutMs : RECORD_TIMEOUT_MS);
+    return { counted: out.counted === true, reason: out.reason || null };
+  } catch {
+    return { counted: false, reason: 'record_failed' };
+  }
+}
+
+/**
+ * 購入完了を記録する（**サーバー側の確定イベント専用**）。
+ *
+ * ⚠️ 呼んでよいのは「入金確認が Airtable 上で検証された後」だけ。
+ *    画面の成功表示・クライアントからの通知では**絶対に呼ばない**。
+ *
+ * 二重計上は `orderKey` で潰す（Webhook 再送・Automation 再実行・再読込）。
+ */
+export async function recordPlusPurchase({
+  recordId, env, nowMs, orderKey, timeoutMs, redisCmd,
+} = {}) {
+  const cmd = redisCmd !== undefined ? redisCmd : makeRedisCmd(env);
+  if (!cmd) return { counted: false, reason: 'measurement_unavailable' };
+  try {
+    const store = createFunnelStore({ redisCmd: cmd });
+    const out = await withTimeout(store.record_purchase({
+      recordId,
+      nowMs: typeof nowMs === 'number' ? nowMs : Date.now(),
+      orderKey,
+    }), typeof timeoutMs === 'number' ? timeoutMs : RECORD_TIMEOUT_MS);
+    return { counted: out.counted === true, reason: out.reason || null, source: out.source ?? null };
+  } catch {
+    return { counted: false, reason: 'record_failed' };
+  }
+}
+
 export { FUNNEL_EVENT };
