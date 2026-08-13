@@ -26,6 +26,7 @@ import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
 import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
+import { lookupCustomersByEmails } from '../../src/lib/crm/customerEmailLookup.js';
 import {
   FIRST_RUN_MAX_ROWS, canRunFirstImport, buildConfirmationPhrase, describeRunPlan,
   OPTIONAL_AUDIT_FIELDS, RUN_REJECT, RUN_REJECT_LABEL,
@@ -33,7 +34,6 @@ import {
 import { writeCreateBatch } from '../../src/lib/crm/importWriteExecutor.js';
 
 const CUSTOMERS_TABLE = 'Customers';
-const MAX_PAGES = 60;
 
 function json(statusCode, body) {
   return {
@@ -49,21 +49,36 @@ function json(statusCode, body) {
   };
 }
 
-async function fetchAllReadOnly({ KEY, BASE, table }) {
-  const out = [];
-  let offset; let pages = 0;
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`);
-    url.searchParams.set('pageSize', '100');
-    if (offset) url.searchParams.set('offset', offset);
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` } });
-    if (!res.ok) throw new Error(`${table} fetch failed: HTTP ${res.status}`);
-    const data = await res.json();
-    out.push(...(data.records || []));
-    offset = data.offset; pages += 1;
-    if (offset && pages >= MAX_PAGES) break;
-  } while (offset);
-  return out;
+/**
+ * CSV のアドレスに一致する Customers を**名指しで**引く（read-only）。
+ *
+ * 🛡️ **全件走査へ戻さないこと。**旧実装は無フィルタで先頭 6,000 件だけ読んで打ち切っていた。
+ *    Customers 15,962 件では **約 10,000 人が「AK に居ない」と判定**され、
+ *    そのまま取り込むと既存会員のレコードが二重に作られる
+ *    （同一アドレス 2 件 → `auth/customerLookup` が CONFLICT で本人のログインを拒否する）。
+ *    ここは **書き込み経路**なので、取り落としがそのまま二重登録になる。
+ *
+ *    上限を上げても直らない（160 ページ = Airtable の毎秒 5 リクエスト制限で最短 32 秒）。
+ *    知りたいのは「CSV のアドレスが AK に居るか」だけなので、コストを CSV の行数に比例させる。
+ *    取り落としが起きるくらいなら例外（`lookupCustomersByEmails` が投げる）。
+ */
+async function fetchCustomersForEmails({ KEY, BASE, emails }) {
+  const { records } = await lookupCustomersByEmails({
+    emails,
+    fetchPage: async ({ formula, offset }) => {
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageSize: 100, filterByFormula: formula, ...(offset ? { offset } : {}) }),
+        },
+      );
+      if (!res.ok) throw new Error(`${CUSTOMERS_TABLE} lookup failed: HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+  return records;
 }
 
 async function loadBlacklistSets({ KEY, BASE }) {
@@ -138,8 +153,10 @@ async function buildRunContext({ req, KEY, BASE, now }) {
     })),
   });
 
+  // 取り込み対象アドレスの分だけ AK を引く（全件走査しない）
+  const lookupEmails = merged.entries.map((e) => e.email);
   const [records, blacklist, provider, availableFields] = await Promise.all([
-    fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
+    fetchCustomersForEmails({ KEY, BASE, emails: lookupEmails }),
     loadBlacklistSets({ KEY, BASE }),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
     loadAvailableFields({ KEY, BASE }),

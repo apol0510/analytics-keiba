@@ -221,10 +221,23 @@ test('secret 未設定なら機能ごと無効（503）', async () => {
 });
 
 // ── 一覧 / セグメント ────────────────────────────────────────────
-test('期限切れ・Light・Free・legacy を含めて母集団に出る', async () => {
+/** 全プランを選ぶ = 表せる範囲で最も広い候補集合（無条件の全件走査は許されない） */
+const ALL_PLANS = ['premium_sanrenpuku', 'premium', 'light', 'free'];
+
+test('【重要】絞り込み無しの一覧は fail closed（先頭 4,000 件を一覧として見せない）', async () => {
   const { status, body } = parse(await call({ action: 'customers' }));
+  assert.equal(status, 400, '無条件で全件走査している');
+  assert.equal(body.code, 'scan_not_narrowable');
+  assert.match(body.error, /人が静かに消えます/);
+  assert.equal(body.sideEffects, 'none');
+});
+
+test('期限切れ・Light・Free・legacy を含めて母集団に出る', async () => {
+  const { status, body } = parse(await call({ action: 'customers', plan: ALL_PLANS }));
   assert.equal(status, 200);
-  assert.equal(body.totalCustomers, CUSTOMERS.length);
+  assert.equal(body.candidateCount, CUSTOMERS.length);
+  // 母数が「全顧客」ではなく「絞り込んだ候補」であることを画面へ伝える
+  assert.match(body.candidateBasis, /全顧客ではありません/);
   // rec1 / rec2 / rec6(配信停止) / rec7(バウンス) / rec8(退会) の 5 件
   assert.equal(body.segments.contract.expired, 5, '期限切れが母集団から落ちている');
   assert.equal(body.segments.contract.unknown, 1, '有効期限なし legacy が unknown で見える');
@@ -247,7 +260,7 @@ test('セグメント絞り込みが効く（期限切れ かつ 送信可能）
 });
 
 test('除外者は理由付きで一覧に出る（消さずに見せる）', async () => {
-  const { body } = parse(await call({ action: 'customers', marketing: 'suppressed' }));
+  const { body } = parse(await call({ action: 'customers', plan: ALL_PLANS, marketing: 'suppressed' }));
   const byId = Object.fromEntries(body.rows.map((r) => [r.recordId, r.suppressionReasons]));
   assert.deepEqual(byId.rec6, ['unsubscribed']);
   assert.deepEqual(byId.rec7, ['blacklist']);

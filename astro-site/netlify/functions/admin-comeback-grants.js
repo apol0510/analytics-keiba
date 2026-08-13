@@ -122,6 +122,10 @@ import {
   fmtDay,
 } from '../../src/lib/entitlements/promotionalGrants.js';
 import { MK_CONTRACT, MK_PLAN } from '../../src/lib/marketing/customerMarketingAudience.js';
+import {
+  buildComebackCandidateFormula, buildGrantOperationFormula, buildAnyGrantOperationFormula,
+  escapeFormulaValue, SCAN_MAX_PAGES,
+} from '../../src/lib/marketing/customerScanBounds.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 一覧で返す最大件数（PII をむやみに大量送出しない） */
@@ -178,18 +182,107 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
  * 一覧の「今回付与できる」表示を dry-run の判定と一致させるために渡す
  * （渡さなければ従来どおり退会者は「付与不可」と出る）。
  */
-async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdrawn = false, offerSelected = false }) {
-  const records = await fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE });
-
-  // Customers 全体で重複しているアドレス。重複していると `auth/customerLookup` が
-  // CONFLICT で fail closed にしてログインを拒否するため、付与しても本人が使えない。
-  // **一覧・dry-run・実行が同じ判定になるよう、ここで 1 回だけ作って全員へ渡す。**
-  const emailCounts = new Map();
-  for (const rec of records) {
-    const e = String(rec.fields?.Email || '').trim().toLowerCase();
-    if (e) emailCounts.set(e, (emailCounts.get(e) || 0) + 1);
+/** 名指しの recordId だけを引く（全件走査しない）。1 回 50 件ずつ */
+async function fetchByRecordIds({ KEY, BASE, recordIds }) {
+  const ids = [...new Set((recordIds || []).map((v) => String(v || '').trim()).filter(Boolean))];
+  const out = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const group = ids.slice(i, i + 50);
+    const formula = `OR(${group.map((id) => `RECORD_ID() = '${escapeFormulaValue(id)}'`).join(', ')})`;
+    // eslint-disable-next-line no-await-in-loop -- チャンクは順に処理する
+    const recs = await fetchBounded({ KEY, BASE, table: CUSTOMERS_TABLE, filterByFormula: formula, what: '選択した顧客' });
+    out.push(...recs);
   }
-  const duplicateEmails = new Set([...emailCounts].filter(([, n]) => n > 1).map(([e]) => e));
+  return out;
+}
+
+/**
+ * Customers を **formula で絞ってから**読む。上限に当たったら**投げる**（fail closed）。
+ *
+ * 🛡️ 無フィルタ全件走査へ戻さないこと。Customers 15,962 件を先頭から読んで
+ *    `MAX_PAGES` で黙って打ち切ると、後ろの候補が静かに消える。
+ */
+async function fetchBounded({ KEY, BASE, table, filterByFormula, what }) {
+  if (!filterByFormula) {
+    throw new Error(`${what || table}を絞り込めませんでした（無条件の全件走査は行いません）`);
+  }
+  const out = [];
+  let offset;
+  let pages = 0;
+  do {
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterByFormula', filterByFormula);
+    if (offset) url.searchParams.set('offset', offset);
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`${table} fetch failed: HTTP ${res.status}`);
+    const data = await res.json();
+    out.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    if (offset && pages >= SCAN_MAX_PAGES) {
+      throw new Error(
+        `${what || table}の取得が上限（${SCAN_MAX_PAGES * 100} 件）に達しました。`
+        + '件数を確定できないため処理しません。絞り込み条件を追加してください。',
+      );
+    }
+  } while (offset);
+  return out;
+}
+
+/**
+ * 指定アドレスが Customers に**何件あるか**を名指しで数える。
+ *
+ * 重複していると `auth/customerLookup` が CONFLICT で fail closed になり、
+ * 付与しても本人がログインできない。**全件走査せずにこの確認を成立させる**ため、
+ * 対象アドレスだけを Airtable へ問い合わせる。
+ *
+ * ⚠️ 対象が多すぎるときは `available:false` を返す。**「重複なし」と断定しない**。
+ */
+const DUP_CHECK_MAX_EMAILS = 600;
+async function fetchDuplicateEmails({ KEY, BASE, emails }) {
+  const list = [...new Set((emails || []).map((e) => String(e || '').trim().toLowerCase()).filter(Boolean))];
+  if (list.length === 0) return { available: true, duplicates: new Set() };
+  if (list.length > DUP_CHECK_MAX_EMAILS) {
+    // 確認できないことを隠さない（呼び出し側は「重複なし」と扱ってはいけない）
+    return { available: false, duplicates: new Set() };
+  }
+  const counts = new Map();
+  for (let i = 0; i < list.length; i += 50) {
+    const group = list.slice(i, i + 50);
+    const formula = `OR(${group.map((e) => `LOWER(TRIM({Email} & '')) = '${escapeFormulaValue(e)}'`).join(', ')})`;
+    // eslint-disable-next-line no-await-in-loop -- チャンクは順に処理する
+    const recs = await fetchBounded({ KEY, BASE, table: CUSTOMERS_TABLE, filterByFormula: formula, what: '重複アドレス確認' });
+    for (const rec of recs) {
+      const e = String(rec.fields?.Email || '').trim().toLowerCase();
+      if (e) counts.set(e, (counts.get(e) || 0) + 1);
+    }
+  }
+  return {
+    available: true,
+    duplicates: new Set([...counts].filter(([, n]) => n > 1).map(([e]) => e)),
+  };
+}
+
+/**
+ * @param {{formula?: string, recordIds?: string[]}} scope
+ *   **どちらか必須**。無指定で全件走査へ落とさない（fail closed）。
+ */
+async function loadCustomers({
+  KEY, BASE, now, withOffers = false, allowWithdrawn = false, offerSelected = false, scope,
+}) {
+  const s = scope || {};
+  const records = Array.isArray(s.recordIds)
+    ? await fetchByRecordIds({ KEY, BASE, recordIds: s.recordIds })
+    : await fetchBounded({ KEY, BASE, table: CUSTOMERS_TABLE, filterByFormula: s.formula, what: 'カムバック候補' });
+
+  // 重複アドレスは**対象アドレスを名指しで**数える（Customers 全体を読まない）。
+  // 数えられなければ `duplicateCheckAvailable=false`。**「重複なし」と断定しない。**
+  const dup = await fetchDuplicateEmails({
+    KEY, BASE, emails: records.map((r) => r.fields?.Email),
+  });
+  const duplicateEmails = dup.duplicates;
 
   const list = records.map((rec) => {
     const fields = rec.fields || {};
@@ -207,7 +300,11 @@ async function loadCustomers({ KEY, BASE, now, withOffers = false, allowWithdraw
   const offers = withOffers
     ? await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => [])
     : [];
-  return { list, byId: new Map(list.map((c) => [c.recordId, c])), offers, duplicateEmails };
+  return {
+    list, byId: new Map(list.map((c) => [c.recordId, c])), offers, duplicateEmails,
+    /** false = 重複を確認できていない（**重複なしという意味ではない**） */
+    duplicateCheckAvailable: dup.available,
+  };
 }
 
 export const handler = async (event) => {
@@ -419,8 +516,10 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     return !!(r && r.ok && r.offer && isWithdrawnAllowedForOffer(r.offer));
   });
 
+  // 🛡️ 候補は **Airtable 側で絞ってから**読む（無フィルタ全件走査へ戻さない）
   const { list } = await loadCustomers({
     KEY, BASE, now, allowWithdrawn, offerSelected: selectedGrantIds.length > 0,
+    scope: { formula: buildComebackCandidateFormula(filter) },
   });
   const matched = list.filter((c) => matchesComebackFilter(c.view, filter));
 
@@ -686,10 +785,16 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   // 選んだ無料付与がカムバックの Light 30 日無料なら、退会者も対象にできる
   // （判断の単一源は comebackWithdrawnPolicy。ここでは offer をそのまま渡すだけ）
   const allowWithdrawn = (sel.grantOffers || []).some((o) => isWithdrawnAllowedForOffer(o));
-  const { list, byId, offers, duplicateEmails } = await loadCustomers({
+  // 🛡️ 読むのは **必要な人だけ**（全件走査しない）。
+  //    引き継ぎ（grantOperationId）は「その操作で付与された人」を formula で名指しに引く。
+  //    それ以外は画面で選ばれた recordId だけを引く。
+  const { list, byId, offers, duplicateEmails, duplicateCheckAvailable } = await loadCustomers({
     KEY, BASE, now, withOffers: needsOfferWrite, allowWithdrawn,
     // dry-run / 実行の時点では特典は必ず決まっている
     offerSelected: (sel.grantOffers || []).length > 0,
+    scope: grantOperationId
+      ? { formula: buildGrantOperationFormula(grantOperationId) }
+      : { recordIds },
   });
 
   // 引き継ぎの下見: 対象は**サーバーが Customers から再導出する**
@@ -993,7 +1098,7 @@ async function handleRevoke({ KEY, BASE, now, req, live }) {
     });
   }
 
-  const { byId } = await loadCustomers({ KEY, BASE, now });
+  const { byId } = await loadCustomers({ KEY, BASE, now, scope: { recordIds } });
   const selected = recordIds.map((id) => {
     const hit = byId.get(id);
     return { recordId: id, fields: hit ? hit.fields : null };
@@ -1075,7 +1180,14 @@ async function handleReconcile({ KEY, BASE, now, req }) {
   if (!operationId) return json(400, { error: 'operationId が必要です' });
   const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
 
-  const { byId, offers } = await loadCustomers({ KEY, BASE, now, withOffers: true });
+  // 🛡️ recordId 指定があればそれだけ、無ければ**その操作で付与された人**を formula で引く
+  //    （全件走査だと 15,962 件の先頭しか見ず、突合結果が嘘になる）
+  const { byId, offers } = await loadCustomers({
+    KEY, BASE, now, withOffers: true,
+    scope: recordIds.length
+      ? { recordIds }
+      : { formula: buildGrantOperationFormula(operationId) },
+  });
   const targets = (recordIds.length ? recordIds : [...byId.keys()])
     .map((id) => ({ recordId: id, fields: byId.get(id)?.fields || {} }));
 
@@ -1112,7 +1224,10 @@ async function handleHandoffLookup({ KEY, BASE, now, req }) {
   const operationId = String(req.operationId || '').trim();
   if (!operationId) return json(400, { error: 'operationId が必要です', sideEffects: 'none' });
 
-  const { list } = await loadCustomers({ KEY, BASE, now });
+  // 🛡️ その操作 ID で付与された人だけを引く（全件走査だと先頭しか見ず受信者が欠ける）
+  const { list } = await loadCustomers({
+    KEY, BASE, now, scope: { formula: buildGrantOperationFormula(operationId) },
+  });
   const resolved = collectGrantedRecipients({ records: list, operationId, nowMs: now });
   const verdict = validateHandoffResolution({
     operationId,
@@ -1165,7 +1280,10 @@ async function handleHandoffLookup({ KEY, BASE, now, req }) {
  * **アドレス・氏名・recordId は 1 つも返さない**。書き込みも一切しない。
  */
 async function handleHandoffLatest({ KEY, BASE, now }) {
-  const { list } = await loadCustomers({ KEY, BASE, now });
+  // 🛡️ 無料付与の操作痕跡がある人だけを引く（Customers 全件は読まない）
+  const { list } = await loadCustomers({
+    KEY, BASE, now, scope: { formula: buildAnyGrantOperationFormula() },
+  });
   const latest = pickLatestGrantOperation({ records: list, nowMs: now });
   if (!latest.ok) {
     return json(latest.reason === HANDOFF_BLOCK.EXPIRED ? 410 : 404, {

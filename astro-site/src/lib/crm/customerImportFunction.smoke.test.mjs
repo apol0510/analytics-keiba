@@ -133,9 +133,26 @@ test('smoke: 下見は Airtable の書き込み URL を一度も叩かない', a
   const seen = installFetch({ suppressionOk: true });
   await callHandler({ action: 'previewCsv', contentBase64: b64(CSV) });
   assert.ok(seen.length > 0, '外部を一度も呼んでいない（読み取りが動いていない）');
-  // 読むのは Customers / EmailBlacklist / suppression だけ
+  // 読むのは Customers / EmailBlacklist / suppression だけ。
+  // `Customers/listRecords` は Airtable の**読み取り** API（CSV のアドレスを名指しで引くため
+  // 長い formula を POST body に載せる）。書き込み URL ではない。
   for (const u of seen) {
-    assert.equal(/\/v0\/[^/]+\/(Customers|EmailBlacklist)\?/.test(u) || u.includes('api.sendgrid.com'), true,
-      `想定外の宛先を呼んでいる: ${u}`);
+    const ok = /\/v0\/[^/]+\/(Customers|EmailBlacklist)\?/.test(u)
+      || /\/v0\/[^/]+\/Customers\/listRecords$/.test(u)
+      || u.includes('api.sendgrid.com');
+    assert.equal(ok, true, `想定外の宛先を呼んでいる: ${u}`);
   }
+});
+
+test('【重要】下見は Customers を全件走査せず、CSV のアドレスを名指しで引く', async () => {
+  const seen = installFetch({ suppressionOk: true });
+  await callHandler({ action: 'previewCsv', contentBase64: b64(CSV) });
+  // 無フィルタの Customers 一覧（?pageSize=... だけ）を叩いていないこと。
+  // 叩くと先頭 6,000 件しか見えず、既存会員が「AK に居ない」に化けて二重登録になる
+  const bareList = seen.filter((u) => /\/v0\/[^/]+\/Customers\?/.test(u) && !/filterByFormula/.test(u));
+  assert.deepEqual(bareList, [], `Customers を無フィルタで走査している: ${bareList[0] || ''}`);
+  assert.ok(
+    seen.some((u) => /\/Customers\/listRecords$/.test(u)),
+    'CSV のアドレスによる名指し取得が行われていない',
+  );
 });
