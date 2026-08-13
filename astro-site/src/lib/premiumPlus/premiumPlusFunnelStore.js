@@ -139,8 +139,16 @@ export function funnelJst(ms) {
  * @param {{available?: boolean, startedAtMs?: number|null}} ctx
  */
 export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
+  // 構造化した値も併せて返す（画面が「初回 / 最終 / 回数」を列で出せるようにする）。
+  // ⚠️ measured=false のときは **count を 0 にしない**。null のまま返す。
+  const blank = { count: null, firstAtMs: null, lastAtMs: null, firstAtJst: null, lastAtJst: null };
   if (available === false) {
-    return { text: '未確認', note: '計測データを読み取れませんでした（0 回という意味ではありません）', measured: false };
+    return {
+      text: '未確認',
+      note: '計測データを読み取れませんでした（0 回という意味ではありません）',
+      measured: false,
+      ...blank,
+    };
   }
   const count = cell && Number.isFinite(cell.count) ? cell.count : null;
   if (count === null || count <= 0) {
@@ -151,12 +159,18 @@ export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
         ? `計測開始（${since} JST）以降の記録はありません。それ以前に見たかどうかは確認できません`
         : 'まだ計測記録がありません。過去に見たかどうかは確認できません',
       measured: false,
+      ...blank,
     };
   }
   return {
     text: `${count} 回`,
     note: `初回 ${funnelJst(cell.firstAtMs) || '不明'} / 最終 ${funnelJst(cell.lastAtMs) || '不明'}（JST）`,
     measured: true,
+    count,
+    firstAtMs: Number.isFinite(cell.firstAtMs) ? cell.firstAtMs : null,
+    lastAtMs: Number.isFinite(cell.lastAtMs) ? cell.lastAtMs : null,
+    firstAtJst: funnelJst(cell.firstAtMs),
+    lastAtJst: funnelJst(cell.lastAtMs),
   };
 }
 

@@ -70,6 +70,11 @@ import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpuku
 import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import {
+  resolveFunnelStage,
+  lastReactionAtMs,
+  summarizeFunnel,
+} from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
+import {
   buildLookupFormula,
   SEARCH_ERROR_TEXT,
   MAX_SEARCH_PAGES,
@@ -223,7 +228,13 @@ function buildAdminRow(rec, now) {
 async function attachRealViews(rows) {
   const cmd = makeRedisCmd(process.env);
   const unavailable = (reason) => {
-    for (const r of rows) r.realView = describeFunnelRow(null, { available: false });
+    for (const r of rows) {
+      r.realView = describeFunnelRow(null, { available: false });
+      // 読めていないので段階は「未確認」。**「未表示」とは書かない**
+      r.funnelStage = resolveFunnelStage(r.realView).stage;
+      r.funnelStageLabel = resolveFunnelStage(r.realView).label;
+      r.lastReactionAtMs = null;
+    }
     return {
       measurement: {
         available: false,
@@ -231,6 +242,7 @@ async function attachRealViews(rows) {
         startedAtJst: null,
         note: '実閲覧を読み取れませんでした。表示は全員「未確認」です（0 回という意味ではありません）',
       },
+      funnel: summarizeFunnel(rows),
     };
   };
   if (!cmd) return unavailable('measurement_unavailable');
@@ -248,6 +260,11 @@ async function attachRealViews(rows) {
       available: true,
       startedAtMs: out.startedAtMs,
     });
+    // 段階・最終反応時刻は**判定の単一源**に委ねる（画面で組み立て直さない）
+    const st = resolveFunnelStage(r.realView);
+    r.funnelStage = st.stage;
+    r.funnelStageLabel = st.label;
+    r.lastReactionAtMs = lastReactionAtMs(r.realView);
   }
   return {
     measurement: {
@@ -258,6 +275,8 @@ async function attachRealViews(rows) {
         ? `実閲覧は ${funnelJst(out.startedAtMs)} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません`
         : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
     },
+    // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）
+    funnel: summarizeFunnel(rows),
   };
 }
 
@@ -329,11 +348,13 @@ async function handleLookup({ KEY, BASE, now, req }) {
       inCandidateSet: row.__listed === true,
     };
   });
-  const { measurement } = await attachRealViews(rows);
+  const { measurement, funnel } = await attachRealViews(rows);
 
   return json(200, {
     found: true,
     rows,
+    // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
+    funnel,
     query: raw,
     exactEmail: built.exactEmail,
     measurement,
@@ -397,11 +418,12 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   rows.sort((a, b) => (order[a.eligibility] - order[b.eligibility]) || String(a.email).localeCompare(String(b.email)));
 
   // 実閲覧（実測）を足す。**表示判定とは別列**として返す
-  const { measurement } = await attachRealViews(rows);
+  const { measurement, funnel } = await attachRealViews(rows);
 
   return json(200, {
     rows,
     measurement,
+    funnel,
     counts: {
       total: rows.length,
       review: rows.filter((r) => r.eligibility === PP_ELIGIBILITY.REVIEW).length,
