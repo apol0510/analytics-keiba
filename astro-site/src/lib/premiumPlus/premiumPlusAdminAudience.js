@@ -30,6 +30,55 @@
 
 import { PP_ROUTE, PP_ELIGIBILITY_FIELDS, PREMIUM_30D_DAYS } from './premiumPlusRelease.js';
 
+/**
+ * ── 2026-08-13 の事故: 販売資格者が管理画面から消えていた ──────────────
+ * list API は Customers を**無フィルタで全件走査**し `MAX_PAGES=40`（先頭 4,000 件）で
+ * 打ち切っていた。Customers が 15,962 件へ育った結果、**即時販売 3 名が 3 名とも
+ * 窓の外**になり、画面は「即時販売 0 / 保留 6 / ROUTE A 0」と表示していた
+ * （実際は即時販売 3 / 保留 0 / 三連複会員 17）。顧客側の CTA は正常に出ていたのに、
+ * 管理者だけが「誰にも売れていない」と誤認する状態だった。
+ *
+ * 対策: **Airtable 側で候補になり得ない人を落としてから読む**。
+ * 実測でプラン分布は Free 15,864 / Premium 58 / Premium Sanrenpuku 17 / Light 14 /
+ * Test 6 / Premium Combo 3 なので、下の formula で ~98 件（1 ページ）に収まる。
+ *
+ * 🛡️ **超集合の原則**: この formula は `resolveAdminCandidate().listed === true` に
+ *    なり得る人を **1 人も落としてはいけない**（落とすと管理者から永久に見えなくなる）。
+ *    余分に取るのは安全（JS 側の `resolveAdminCandidate` が落とす）。
+ *    向きは `premiumPlusAdminAudience.test.mjs` の総当たりで固定している。
+ *
+ * ⚠️ Airtable の `{Field} != BLANK()` は**中身に関係なく常に真**になる（本番実測）。
+ *    「空でない」は必ず `NOT({Field} = BLANK())` と書くこと。
+ */
+export function buildAdminCandidateFormula() {
+  return [
+    'OR(',
+    [
+      // 無料会員は route も premiumActive も成立しないので候補になり得ない。
+      // ⚠️ プランが空の人は「Free と等しくない」= true 側に倒れて**含まれる**（安全側）
+      "NOT({プラン} = 'Free')",
+      // 三連複を買い切りで持つ現行形式（プランは Premium のまま）
+      '{LifetimeSanrenpuku}',
+      // 管理者が既に判断済みの相手は、route が崩れても一覧から消さない（EXPLICIT）
+      `NOT({${PP_ELIGIBILITY_FIELDS.STATUS}} = BLANK())`,
+      // override だけ残っている異常系も管理者に見せる
+      "NOT({PremiumPlusReleaseOverride} = BLANK())",
+    ].join(', '),
+    ')',
+  ].join('');
+}
+
+/** 上の formula と同じ判定を JS で行う（テスト用の鏡） */
+export function adminCandidateFormulaAccepts(fields) {
+  const f = fields && typeof fields === 'object' ? fields : {};
+  const plan = String(f['プラン'] ?? '').trim();
+  if (plan !== 'Free') return true;
+  if (f.LifetimeSanrenpuku === true) return true;
+  if (hasValue(f[PP_ELIGIBILITY_FIELDS.STATUS])) return true;
+  if (hasValue(f.PremiumPlusReleaseOverride)) return true;
+  return false;
+}
+
 /** 一覧に出す理由（＝管理者が見るべき区分）。表示専用で、販売資格ではない。 */
 export const PP_CANDIDATE = Object.freeze({
   /** ROUTE A 成立（三連複保有） */

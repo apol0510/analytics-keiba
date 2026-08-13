@@ -582,3 +582,114 @@ KMA 側の変更は本作業の範囲外。
 - [ ] 既存 22 件の個別解禁（管理者操作）
 - [x] 受付締切時刻の確定（2026-07-30・JST 共通 4 状態）
 - [ ] main への push / production deploy（承認待ち）
+
+## 販売管理 API は候補だけを取る（2026-08-13 / 全件走査を廃止）
+
+### 何が起きていたか
+
+`premium-plus-eligibility` の `action='list'` は Customers を**無フィルタで先頭から GET** し、
+`MAX_PAGES=40`（＝先頭 4,000 件）で打ち切っていた。Customers が 15,962 件へ育った結果、
+**即時販売 3 名が 3 名とも窓の外**になり、管理画面はこう表示していた:
+
+| 指標 | 画面（誤） | 実際 |
+|---|---|---|
+| 即時販売 | 0 | **3** |
+| 保留 | 6 | **15** |
+| ROUTE A（三連複） | 0 | **3** |
+
+顧客側の CTA は正常に出ていたため、**管理者だけが「誰にも売れていない」と誤認**する形だった。
+
+### Customers 15,962 件の内訳（2026-08-13 実測）
+
+| 区分 | 件数 |
+|---|---|
+| `Source = customer-import:*`（CSV 取り込み） | 14,489 |
+| Source 空（元からの AK 基盤） | 1,026 |
+| `nankan-analytics`（旧サービスからの引き継ぎ） | 447 |
+| **合計** | **15,962** |
+
+プラン: Free 15,864 / Premium 58 / Premium Sanrenpuku 17 / Light 14 / Test 6 / Premium Combo 3。
+Status=active 46 / 有効期限が未来 23 / ログイン履歴あり 144 / 退会 37 / 配信停止 2。
+
+**販売管理が見るべきなのはこのうち ~98 件（1 ページ）だけ**で、残り 15,864 件の無料連絡先は
+route も premiumActive も成立しないため候補になり得ない。
+
+### 対処: server-side filter（MAX_PAGES は増やさない）
+
+正本は `premiumPlusAdminAudience.js` の `buildAdminCandidateFormula()`。
+
+```
+OR(
+  NOT({プラン} = 'Free'),          ← 有料プラン履歴のある人だけ
+  {LifetimeSanrenpuku},            ← 三連複買い切り（プランは Premium のまま）
+  NOT({PremiumPlusEligibility} = BLANK()),      ← 管理者が判断済み
+  NOT({PremiumPlusReleaseOverride} = BLANK())   ← override だけ残る異常系
+)
+```
+
+- **全件走査しない / `MAX_PAGES` を増やして解決しない**
+- **並び順を `Email` 昇順で固定**（Airtable の既定ビュー順に結果が左右されない）
+- **集計と一覧は同じ `rows` から算出**（別集合を数えない）
+- 上限に達したら `candidate_scan_limit` で **fail closed**。
+  画面は件数も一覧も出さず「0 件ではありません」と明示する
+
+#### 🛡️ 超集合の原則
+
+formula は `resolveAdminCandidate().listed === true` になり得る人を **1 人も落としてはいけない**
+（落とすと管理者から永久に見えない）。余分に取るのは安全。
+`premiumPlusAdminBounded.test.mjs` の総当たりで固定している。
+
+**退会・配信停止・無反応除外を formula に足さないこと。**
+`resolveAdminCandidate` はこれらで人を落とさないので、formula 側で落とすと
+超集合が壊れる。特に**無反応除外は Customers のフィールドではない**
+（正本は `engagementPolicy.js` + Redis 集計 + CampaignDeliveries。**配信抑止のみで
+Customers は書き換えない／削除しない**）ため、Airtable formula では表現できず、
+販売資格の判定にも使わない（メールを開かない有料会員を販売管理から消してはいけない）。
+
+### Email 個別検索は候補集合を迂回する
+
+一覧は候補だけへ絞るので、無料会員など候補外の人は出ない。
+`action='lookup'` が Email 完全一致で 1 件だけ直接引き、`inCandidateSet: false` を添えて返す。
+行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。
+
+### 本番実測（2026-08-13・修正後）
+
+| 指標 | 値 |
+|---|---|
+| formula の取得 | **98 件 / 1 ページ / 1.2 秒**（旧: 全件 160 ページ / 79 秒） |
+| 一覧に出る候補 | 18 |
+| 即時販売 | **3** |
+| 販売可 eligible | 3 |
+| 保留 review | 15 |
+| 販売対象外 blocked | 0 |
+| ROUTE A（三連複） | 3 |
+| ROUTE B（Premium 30日） | 2 |
+| 全件走査との突き合わせ | **取りこぼし 0** |
+
+## ⚠️ 「表示される判定である」と「実表示済み」は区別する
+
+2026-08-13 に「Premium Plus CTA は誰にも表示されていない」と誤報告した。実際は表示されていた。
+
+**現時点で証明できていること**（コード・実データ）:
+
+- 対象会員の保存値は `PremiumPlusEligibility=eligible` + `PremiumPlusReleaseOverride=phase4`
+- 本番と同じ関数（`resolveUpsellForCustomer`）で `channel=plus` / `phase=4` /
+  `showTeaser` `showProductPage` `showPurchaseCta` `purchaseEnabled` すべて true
+- したがって**「表示される判定である」**
+
+**証明できていないこと**:
+
+- **その会員本人の署名セッションでの実画面表示と、リンク先が 200 で開くこと**。
+  `ak_session` が必要で未実施。**「実表示済み」とは書かないこと。**
+
+実際に表示されている CTA の実装元（実測）:
+
+| 画面 | 実装 | 表示条件 | リンク先 |
+|---|---|---|---|
+| ダッシュボード「会員限定のご案内を見る」 | `dashboard.astro` `#plus-upsell-section` | `/api/upsell.json` の `channel === 'plus'` | `/premium-plus-v2/` |
+| 三連複「新しい予想をご用意しました」 | `PremiumPlusStageTeaser.astro`（文言 `teaserOpen`） | `plus.showTeaser` かつ PHASE 4・ROUTE A | `/premium-plus/` |
+
+`PremiumPlusCta.astro` は 2026-07-15 から `premium-sanrenpuku.astro` でコメントアウトされたまま
+（別物）。**コンポーネント名だけで「CTA が無い」と判断しないこと。**
+未ログインでは `/premium-plus/` `/premium-plus-v2/` `/api/upsell.json` とも **404**（存在秘匿）で、
+**未ログインで取得した HTML を「CTA が無い」証拠に使ってはいけない。**
