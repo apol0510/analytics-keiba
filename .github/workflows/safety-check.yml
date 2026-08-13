@@ -20,6 +20,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
       # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
       - 'astro-site/scripts/check-functions-no-undef.mjs'
+      - 'astro-site/scripts/check-no-unbounded-customer-scan.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
@@ -45,6 +46,7 @@ on:
       - 'astro-site/scripts/check-no-ki-relics-free-jra.mjs'
       # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
       - 'astro-site/scripts/check-functions-no-undef.mjs'
+      - 'astro-site/scripts/check-no-unbounded-customer-scan.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
@@ -89,6 +91,12 @@ jobs:
       - name: Verify Functions に未定義の識別子が無い（import 漏れ = 本番 500）
         working-directory: astro-site
         run: npm run check:fn-no-undef
+
+      # Customers 15,962 件を無フィルタで先頭から読むと、人が静かに消える。
+      # 既知の残件は件数まで固定してあり、1 つでも増えたら落ちる。
+      - name: Verify Customers の無フィルタ全件走査を増やしていない
+        working-directory: astro-site
+        run: npm run check:no-unbounded-scan
 
       - name: Static guard - no raw {horse.computerIndex} in JSX
         working-directory: astro-site

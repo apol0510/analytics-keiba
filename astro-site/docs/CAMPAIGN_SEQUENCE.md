@@ -356,3 +356,77 @@ npm run check:safety     # 上記を含む全 safety check
 | `sequenceAutomation.test.mjs` | ゲート・1 ステップだけ・step1 手動・上限中止 |
 | `sequenceRender.test.mjs` | HTML/text 両方・モバイル・本番文面の表現・benefit guard |
 | `sequenceWiring.guard.test.mjs` | 管理 API / cron / 画面の配線と安全条件 |
+
+## 受信対象は Airtable 側で絞る（2026-08-13 / 全件走査を廃止）
+
+### 何が起きていたか
+
+`handleSequence`（進行状況）と `handlePlan` の**引き継ぎ経路**が Customers を
+**無フィルタで先頭から GET** し `MAX_PAGES=40`（先頭 4,000 件）で黙って打ち切っていた。
+
+本番実測（Customers 15,962 件）:
+
+| | 見えていた人数 |
+|---|---|
+| 旧: 無フィルタ先頭 4,000 件 | **2 / 10 名** |
+| 新: 受信対象 formula | **10 / 10 名** ✅ |
+
+この状態で queue を積むと **8 名へ案内が飛ばず、関所（`outstandingStep1`）も開かない**。
+
+### 対処
+
+キャンペーンは受信対象を**宣言**している。それを formula へ翻訳する
+（正本 `src/lib/marketing/campaignAudienceFormula.js`）。
+
+```
+AND(
+  OR( NOT({LightGrantedAt}=BLANK()), NOT({LightGrantUntil}=BLANK()),
+      {LightGrantLifetime}, NOT({LightGrantRevokedAt}=BLANK()) ),   ← requiresActiveGrant
+  FIND('customer-import:', {Source}) = 1                             ← requiresImportCohort
+)
+```
+
+実測 **10 件 / 1 ページ / 1.4 秒**。
+
+- **`MAX_PAGES` は増やさない**
+- **並び順を `Email` 昇順で固定**（既定ビュー順に左右されない）
+- **対象集合・集計・dry-run・queue 候補はすべて同じ `audience.records` から作る**
+- 上限到達は `audience_scan_limit`、宣言が無いキャンペーンは `audience_not_narrowable` で
+  **fail closed**。**少ない人数のまま集計も queue も進めない**
+- 引き継ぎは `LightGrantOp` / `PremiumGrantOp` で**名指し**（全件走査しない）
+
+#### 🛡️ 落としてよい人 / 落としてはいけない人
+
+落としてよいのは、宣言に照らして**構造的に対象になり得ない人**だけ:
+
+- `grant_required` … 無料付与の痕跡が 1 つも無い（15,962 件の大半）
+- `not_in_cohort` … 取り込みコホート外
+
+**期限切れ・取消・期限なし付与は残す**（`grant_expired` / `grant_revoked` /
+`grant_lifetime` として理由付きで数えるため）。
+
+⚠️ **配信停止・退会・購入済み・無反応除外を formula に足さないこと。**
+これらは送信可否であって受信対象の定義ではなく、既存の単一源
+（`resolveSendability` / `engagementPolicy` / `sequenceProgress`）が持っている。
+特に**無反応除外は Customers のフィールドではない**（Redis 集計 + CampaignDeliveries 由来の
+配信抑止で、Customers を書き換えないし削除もしない）ため formula では表現できない。
+
+#### 母集団の定義が変わる点（明示）
+
+体験を経ずに既に有料の会員（付与の痕跡なし）は受信対象に入らない。
+このシーケンスの「購入・契約成立」は**体験からの転換**を数える列なので、
+体験を受けていない既存有料会員をそこへ混ぜない。
+
+### 同型箇所の棚卸し（`check:no-unbounded-scan`）
+
+`scripts/check-no-unbounded-customer-scan.mjs` が「Customers を無フィルタで全件走査し、
+上限で黙って `break` する」箇所を静的に検出する。**既知の残件は件数まで固定**してあり、
+1 つでも増えると CI が落ちる。
+
+| ファイル | 状態 |
+|---|---|
+| `admin-marketing.js`（trialGrant / sequence / plan） | **修正済み**（PR #320 / 本 PR） |
+| `premium-plus-eligibility.js` | **修正済み**（PR #321） |
+| `admin-marketing.js`（`loadCustomerMarketing`: customers / customerDetail / segments） | 残件 |
+| `admin-comeback-grants.js` | 残件 |
+| `admin-customer-import.js` / `admin-customer-import-run.js` | 残件（全件突合が要件。打ち切りを fail closed へ） |
