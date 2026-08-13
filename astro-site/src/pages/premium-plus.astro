@@ -84,7 +84,7 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
 }
 const ppIntake = intakeCopy(ppRelease.intake);
 // 対象日（16:30 以降は翌日分）。**購入ボタンの近くに必ず出す**
-// 開催カレンダーで確認できた日だけを売る（fail closed）
+// 対象日（16:30 以降は翌暦日）。例外日だけ次の販売日へ送る
 const ppSale = resolveSaleTarget(ppNow, { calendar: shapeRaceCalendar(ppRaceCalendar) });
 
 // --- 実閲覧の記録（商品ページ到達）---

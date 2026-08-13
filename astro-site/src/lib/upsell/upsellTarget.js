@@ -252,21 +252,21 @@ export function resolvePlusAdminFlags({ target, member } = {}) {
  */
 export function resolveUpsellForCustomer({
   fields, nowMs = Date.now(), sanrenpukuStage, fallbackAnchor, targetOverride,
-  // 開催カレンダー。**未指定なら翌日分は売らない**（fail closed）
-  raceCalendar, knownRaceDates,
+  // 開催の例外リスト（中央・南関とも開催が無い日）。**未指定でも販売は続く**
+  raceCalendar,
 } = {}) {
   const target = targetOverride === undefined
     ? readUpsellTarget(fields)
     : normalizeUpsellTarget(targetOverride);
   const entitlements = resolveEntitlements(fromAirtableFields(fields || {}), nowMs);
   const member = resolvePlusMemberFromFields(fields, { nowMs, fallbackAnchor });
-  // いま売れるのは何日分か（開催カレンダーで確認）。**確認できなければ売らない**
-  const saleTarget = resolveSaleTarget(nowMs, { calendar: raceCalendar, knownRaceDates });
+  // いま売るのは何日分か。既定は販売可で、例外日だけ次の販売日へ送る
+  const saleTarget = resolveSaleTarget(nowMs, { calendar: raceCalendar });
   const plusRelease = resolvePremiumPlusRelease({
     ...member,
     ...resolvePlusAdminFlags({ target, member }),
     nowMs,
-    // 16:30 以降に翌日分（次の開催日分）を売ってよいか
+    // 16:30 以降は翌日分（例外日なら次の販売日分）を売る
     nextDaySellable: saleTarget.isNextDay && saleTarget.sellable === true,
   });
   const view = resolveUpsellDisplay({ target, entitlements, plusRelease, sanrenpukuStage });

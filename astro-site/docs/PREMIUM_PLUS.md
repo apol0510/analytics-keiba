@@ -125,26 +125,33 @@ PHASE 4 到達後の **OPEN / CLOSING / CLOSED**（JST 判定）を通す。
 「売らない」と「別の日を売る」は意味が違い、同じ値に押し込むと
 fail closed の判定そのものが消える。**専用状態を持つ**。
 
-### ⚠️ 非開催日は売らない（開催カレンダー / fail closed）
+### 開催は既定で「ある」。例外日だけ次の販売日へ送る
 
-開催日の正本は `src/data/premiumPlusRaceCalendar.json`。
-取り込みは `scripts/importRaceCalendar.mjs`。
+**平日は南関、週末は中央（JRA）**があり、中央・南関とも開催が無い日は
+**年 1〜3 日程度**しかない。つまり「開催がある」が既定で「無い」が例外。
 
-```bash
-node scripts/importRaceCalendar.mjs --file <公式日程.json|csv> --covers-until 2026-09-30 --dry-run
-node scripts/importRaceCalendar.mjs --file <公式日程.json|csv> --covers-until 2026-09-30
+そのため開催日を全部数え上げる方式（allow-list）は採らない。
+取り込みが遅れただけで販売が止まり、実態に対して代償が大きすぎる。
+
+`src/data/premiumPlusRaceCalendar.json` は **`noRaceDates`（例外リスト）だけ**を持つ。
+
+```json
+{ "noRaceDates": ["2026-08-15"], "checkedUntil": "2026-09-30" }
 ```
 
-**売らないのは次のとき**（どれも推測で日付を作らない）:
+- **例外リストが空でも通常販売は続く**（販売の必須条件ではない）
+- **確認期限（`checkedUntil`）が切れても販売は止めない**。警告するだけ
+- 例外日に当たったときだけ、次の販売可能日へ送る
 
-- カレンダー未取込 / 空
-- `coversUntil` を過ぎた日（＝載っていなくても「非開催」と言い切れない）
-- 非開催と確定し、かつ次の開催日も見つからない
+期限切れは `npm run check:race-calendar`（`check:safety` に組込）と
+管理画面の常設表示で警告する。**CI は落とさない**（販売条件ではないため）。
 
-非開催と**言い切れる**ときだけ、次に開催がある日へ送る。
+> 公式日程の自動取込は**将来改善**として分離した。年 1〜3 日の例外は
+> 手で `noRaceDates` に足せるので、販売開始を止める理由にしない。
 
-⚠️ **HTML を推測でスクレイピングしない。** 形が変わったときに黙って
-間違った日付を作り、届かない日を売ることになる。一次情報を人が確認して渡す。
+### 開催区分（画面・管理画面に出す）
+
+平日 = **南関** / 土日 = **中央**。判定は `circuitForDate`（`circuitForJst` と同じ規則）。
 
 ### 対象日は構造化項目として保存する（冪等）
 

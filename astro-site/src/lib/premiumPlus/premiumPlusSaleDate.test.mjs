@@ -191,69 +191,90 @@ test('jstParts / formatJstDate', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  開催カレンダー — 非開催日は売らない（fail closed）
+//  開催 — 既定は「ある」。例外日だけ次の販売日へ送る
+//
+//  平日は南関、週末は中央があり、中央・南関とも開催が無い日は年 1〜3 日。
+//  そこで allow-list ではなく **例外リスト**にし、
+//  **取込が無くても販売は止めない**。
 // ══════════════════════════════════════════════════════════════
-import { RACE_DAY, checkRaceDay, findNextRaceDay, addDays, shapeRaceCalendar } from './premiumPlusRaceCalendar.js';
+import {
+  RACE_DAY, CIRCUIT, checkRaceDay, findNextRaceDay, addDays,
+  shapeRaceCalendar, circuitForDate, checkCalendarFreshness,
+} from './premiumPlusRaceCalendar.js';
 import { resolveOrderSaleDate } from './premiumPlusSaleDate.js';
 
-const CAL = { dates: ['2026-08-14', '2026-08-16', '2026-08-17'], coversUntil: '2026-09-30' };
+/** 中央・南関とも開催が無い例外日 */
+const CAL = { noRaceDates: ['2026-08-15'], checkedUntil: '2026-09-30' };
 
-test('【重要】カレンダーが無ければ売らない（推測販売しない）', () => {
-  // ここは **ctx を渡さない**（開催の根拠が何も無い状態）
+test('【重要】例外リストが空でも通常販売を続ける', () => {
   const r = resolveSaleTarget(jst('2026-08-13 17:00'));
-  assert.equal(r.sellable, false);
-  assert.equal(r.date, null, '推測で日付を作っている');
-  assert.equal(r.reason, RACE_DAY.NO_CALENDAR);
-});
-
-test('【重要】カレンダーの有効期間を過ぎていれば売らない', () => {
-  const r = resolveSaleTarget(jst('2026-10-05 17:00'), { calendar: CAL });
-  assert.equal(r.sellable, false);
-  assert.equal(r.reason, RACE_DAY.OUT_OF_RANGE);
-});
-
-test('開催がある日は売る', () => {
-  const r = resolveSaleTarget(jst('2026-08-13 17:00'), { calendar: CAL });
-  assert.equal(r.sellable, true);
+  assert.equal(r.sellable, true, '取込が無いだけで販売が止まっている');
   assert.equal(r.date, '2026-08-14');
-  assert.equal(r.shifted, false);
 });
 
-test('【重要】翌日が非開催なら次の開催日分を売る', () => {
-  // 8/14 16:30 → 素の対象日は 8/15（非開催）→ 次の開催日 8/16
+test('【重要】確認期限を過ぎていても販売は止めない', () => {
+  const old = { noRaceDates: [], checkedUntil: '2026-01-01' };
+  const r = resolveSaleTarget(jst('2026-08-13 17:00'), { calendar: old });
+  assert.equal(r.sellable, true, '期限切れで販売が止まっている');
+  assert.equal(r.date, '2026-08-14');
+});
+
+test('【重要】2026-08-13 16:29 の申込は 2026-08-13 分', () => {
+  const r = resolveSaleTarget(jst('2026-08-13 16:29'), { calendar: CAL });
+  assert.equal(r.date, '2026-08-13');
+  assert.equal(r.isNextDay, false);
+  assert.equal(r.label, '8月13日分');
+});
+
+test('【重要】2026-08-13 16:30 の申込は 2026-08-14 分（8/14 は開催日）', () => {
+  const r = resolveSaleTarget(jst('2026-08-13 16:30'), { calendar: CAL });
+  assert.equal(r.date, '2026-08-14');
+  assert.equal(r.isNextDay, true);
+  assert.equal(r.shifted, false, '開催日なのに送っている');
+});
+
+test('【重要】翌日が例外日なら次の販売日分へ送る', () => {
+  // 8/14 16:30 → 素の対象日は 8/15（例外日）→ 8/16
   const r = resolveSaleTarget(jst('2026-08-14 16:30'), { calendar: CAL });
   assert.equal(r.baseDate, '2026-08-15');
   assert.equal(r.date, '2026-08-16');
   assert.equal(r.shifted, true);
-  assert.equal(r.label, '8月16日分');
+  assert.equal(r.sellable, true);
 });
 
-test('【重要】次の開催日が分からなければ売らない（探索を打ち切る）', () => {
-  const near = { dates: ['2026-08-14'], coversUntil: '2026-08-15' };
-  const r = resolveSaleTarget(jst('2026-08-14 17:00'), { calendar: near });
-  assert.equal(r.sellable, false, '有効期間の先を推測で探している');
+test('例外日が連続していても次の販売日を見つける', () => {
+  const cal = { noRaceDates: ['2026-08-15', '2026-08-16'], checkedUntil: '2026-09-30' };
+  const r = resolveSaleTarget(jst('2026-08-14 16:30'), { calendar: cal });
+  assert.equal(r.date, '2026-08-17');
 });
 
-test('本日分もカレンダーで判定する（当日データがあれば救える）', () => {
-  const noCal = resolveSaleTarget(jst('2026-08-13 10:00'));
-  assert.equal(noCal.sellable, false, 'カレンダー無しで本日分を売っている');
-  const saved = resolveSaleTarget(jst('2026-08-13 10:00'), { knownRaceDates: ['2026-08-13'] });
-  assert.equal(saved.sellable, true, '当日データで救えていない');
-  assert.equal(saved.date, '2026-08-13');
+// ── 開催区分（平日=南関 / 週末=中央）────────────────────────────
+test('【重要】平日は南関・週末は中央として扱う', () => {
+  assert.equal(circuitForDate('2026-08-13'), CIRCUIT.NANKAN, '木曜が南関でない');
+  assert.equal(circuitForDate('2026-08-14'), CIRCUIT.NANKAN, '金曜が南関でない');
+  assert.equal(circuitForDate('2026-08-15'), CIRCUIT.CHUO, '土曜が中央でない');
+  assert.equal(circuitForDate('2026-08-16'), CIRCUIT.CHUO, '日曜が中央でない');
+  assert.equal(circuitForDate('2026-08-17'), CIRCUIT.NANKAN, '月曜が南関でない');
+  assert.equal(circuitForDate('bad'), null);
 });
 
-test('checkRaceDay のコード', () => {
+test('対象日に開催区分のラベルが付く（画面・管理画面が使う）', () => {
+  assert.equal(resolveSaleTarget(jst('2026-08-13 12:00')).circuitLabel, '南関');
+  assert.equal(resolveSaleTarget(jst('2026-08-15 12:00')).circuitLabel, '中央');
+});
+
+// ── 判定の部品 ──────────────────────────────────────────────
+test('checkRaceDay は既定で開催あり', () => {
   assert.equal(checkRaceDay('2026-08-14', { calendar: CAL }).code, RACE_DAY.OPEN);
-  assert.equal(checkRaceDay('2026-08-15', { calendar: CAL }).code, RACE_DAY.CLOSED);
-  assert.equal(checkRaceDay('2026-12-01', { calendar: CAL }).code, RACE_DAY.OUT_OF_RANGE);
-  assert.equal(checkRaceDay('bad', { calendar: CAL }).code, RACE_DAY.BAD_DATE);
-  assert.equal(checkRaceDay('2026-08-14', {}).code, RACE_DAY.NO_CALENDAR);
+  assert.equal(checkRaceDay('2026-08-15', { calendar: CAL }).code, RACE_DAY.NO_RACE);
+  assert.equal(checkRaceDay('2026-12-01', { calendar: CAL }).code, RACE_DAY.OPEN, '未確認の日を非開催にしている');
+  assert.equal(checkRaceDay('2026-08-14', {}).code, RACE_DAY.OPEN, 'カレンダー無しで非開催にしている');
+  assert.equal(checkRaceDay('bad', {}).code, RACE_DAY.BAD_DATE);
 });
 
-test('findNextRaceDay は不明に当たったら止まる', () => {
-  const r = findNextRaceDay('2026-09-25', { calendar: CAL });
-  assert.equal(r.date, null);
-  assert.equal(r.code, RACE_DAY.OUT_OF_RANGE);
+test('findNextRaceDay は例外日を飛ばす', () => {
+  const r = findNextRaceDay('2026-08-15', { calendar: CAL });
+  assert.equal(r.date, '2026-08-16');
 });
 
 test('addDays は月・年をまたいでも正しい', () => {
@@ -263,12 +284,36 @@ test('addDays は月・年をまたいでも正しい', () => {
   assert.equal(addDays('bad', 1), null);
 });
 
-test('壊れたカレンダーでも例外を投げない', () => {
-  for (const bad of [null, undefined, {}, { dates: 'x' }, { dates: [1, 2] }]) {
+test('壊れたカレンダーでも例外を投げず、販売を止めない', () => {
+  for (const bad of [null, undefined, {}, { noRaceDates: 'x' }, { noRaceDates: [1, 2] }]) {
     const c = shapeRaceCalendar(bad);
     assert.equal(c.size, 0);
-    assert.equal(checkRaceDay('2026-08-14', { calendar: c }).code, RACE_DAY.NO_CALENDAR);
+    assert.equal(checkRaceDay('2026-08-14', { calendar: c }).code, RACE_DAY.OPEN);
   }
+});
+
+// ── 確認期限の警告（販売は止めない）──────────────────────────
+test('【重要】確認期限切れは警告するが販売は止めない', () => {
+  const f = checkCalendarFreshness({ calendar: { noRaceDates: [], checkedUntil: '2026-01-01' }, nowDate: '2026-08-14' });
+  assert.equal(f.stale, true);
+  assert.match(f.note, /販売は続きます/);
+});
+
+test('確認期限が近いと予告する', () => {
+  const f = checkCalendarFreshness({ calendar: { noRaceDates: [], checkedUntil: '2026-08-20' }, nowDate: '2026-08-14' });
+  assert.equal(f.stale, false);
+  assert.equal(f.expiringSoon, true);
+});
+
+test('期限内なら警告しない', () => {
+  const f = checkCalendarFreshness({ calendar: { noRaceDates: [], checkedUntil: '2026-12-31' }, nowDate: '2026-08-14' });
+  assert.equal(f.stale, false);
+  assert.equal(f.expiringSoon, false);
+});
+
+test('確認記録が無ければ stale として警告する', () => {
+  const f = checkCalendarFreshness({ calendar: { noRaceDates: [] }, nowDate: '2026-08-14' });
+  assert.equal(f.stale, true);
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -329,9 +374,8 @@ test('保存値が壊れていれば計算し直す（不正な日付を採用�
   }
 });
 
-test('初回で売れないなら注文も成立しない', () => {
-  // カレンダーも当日データも無い＝開催の根拠が無い
+test('カレンダー未取込でも注文は成立する（販売を止めない）', () => {
   const r = resolveOrderSaleDate({ nowMs: jst('2026-08-13 17:00') });
-  assert.equal(r.sellable, false);
-  assert.equal(r.date, null);
+  assert.equal(r.sellable, true);
+  assert.equal(r.date, '2026-08-14');
 });

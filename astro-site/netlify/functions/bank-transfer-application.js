@@ -189,7 +189,7 @@ exports.handler = async (event, context) => {
           claimed: saleTargetDate, server: saleOrder.date,
         });
       }
-      // ⚠️ 開催が確認できない日は**売らない**（推測販売しない）
+      // 例外が連続する等の異常時のみ売らない（通常は常に販売可）
       if (!saleOrder.sellable) {
         console.warn('🚫 [bank-transfer] 対象日の開催を確認できないため受付しません:', {
           reason: saleOrder.reason,

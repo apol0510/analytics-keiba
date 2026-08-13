@@ -2593,8 +2593,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return;
       }
       el.className = 'measure-note';
-      el.textContent = `いま販売中: ${t.productLabel}（${t.date}）／ ${t.intakeLabel}`
-        + (t.isNextDay ? ' ── 16:30 を過ぎたため翌日分を受付中です' : '');
+      el.className = 'measure-note' + (t.calendarStale ? ' warn' : '');
+      el.textContent = `いま販売中: ${t.productLabel}（${t.date} ／ ${t.circuitLabel || '—'}）／ ${t.intakeLabel}`
+        + (t.isNextDay ? ' ── 16:30 を過ぎたため翌日分を受付中です' : '')
+        + (t.shifted ? ` ── ${t.baseDate} は中央・南関とも開催が無いため次の販売日へ送っています` : '')
+        + (t.calendarNote ? ` ／ ⚠️ ${t.calendarNote}` : '');
     }
 
     function renderMeasurementNote(measurement, counts) {

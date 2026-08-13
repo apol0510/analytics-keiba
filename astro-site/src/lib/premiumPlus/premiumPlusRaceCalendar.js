@@ -1,149 +1,187 @@
 /**
  * premiumPlusRaceCalendar.js — 「その日は開催があるか」の判定（純粋・I/O なし）
  *
- * ## なぜ必要か
+ * ## 前提（実態）
  *
- * 16:30 以降は翌日分を売る。だが **翌日に開催が無ければ、届かない日を売ることになる**。
- * 「たぶん毎日ある」で売ってはいけない。
+ * **平日は南関、週末は中央（JRA）**があり、年間を通して
+ * **中央・南関ともに開催が無い日は 1〜3 日程度**しかない。
+ * つまり「開催がある」が既定で、「無い」が例外。
  *
- * ## 正本と fail closed
+ * ## したがって allow-list ではなく **例外リスト**にする
  *
- * 開催日の正本は **取り込んだ開催カレンダー**（`src/data/premiumPlusRaceCalendar.json`）。
- * 取り込みは `scripts/importRaceCalendar.mjs` が行う。
+ * 開催日を全部数え上げる方式（allow-list）にすると、
+ * 取り込みが遅れただけで販売が止まる。実態に対して代償が大きすぎる。
  *
- * ⚠️ **分からない日は売らない。** 次のどれかに当たれば販売しない:
- *   - カレンダーが無い / 空
- *   - カレンダーの有効期間より先の日付を聞かれた（`coversUntil` を過ぎている）
- *   - その日が開催日として載っていない
+ * ここでは **`noRaceDates`（中央・南関とも開催が無い日）だけ**を持ち、
+ * それ以外は開催があるものとして扱う。
  *
- * 「載っていない = 非開催」と断定できるのは **カレンダーがその日を含む期間を
- * カバーしているときだけ**。カバー範囲外は「非開催」ではなく「不明」であり、
- * どちらも**売らない**が、理由を分けて返す（運用が原因を特定できるように）。
+ * - `noRaceDates` が**空でも通常販売は続く**
+ * - 例外日に当たったときだけ、次の販売可能日へ送る
+ * - 取込が無いことを理由に販売を止めない
  *
- * ## 本日分は別扱いにしない
+ * ## 開催区分
  *
- * 本日分もこのカレンダーで判定する。ただし本日は**予想データが既に存在する**ので、
- * 呼び出し側は `knownRaceDates`（当日データ由来）を追加の根拠として渡せる。
- * カレンダー未整備でも本日分の販売が止まらないようにするための逃げ道で、
- * **将来日には使えない**（将来日の予想データは存在しないため）。
+ * 平日 = 南関 / 土日 = 中央。判定は `premiumPlusRelease.circuitForJst` と同じ規則で、
+ * ここでは**日付文字列**から求める（画面・管理画面の表示に使う）。
+ *
+ * ## 公式カレンダーの自動取込は将来改善
+ *
+ * 年 1〜3 日の例外を自動で拾うために取込基盤を作る価値はあるが、
+ * **販売開始を止める理由にはしない**。例外は手で `noRaceDates` に足せる。
  */
 
 /** 判定結果のコード */
 export const RACE_DAY = Object.freeze({
-  /** 開催がある（売ってよい） */
+  /** 開催がある（既定） */
   OPEN: 'open',
-  /** 開催が無い（載っているが非開催） */
-  CLOSED: 'closed',
-  /** カレンダーが無い / 空 */
-  NO_CALENDAR: 'no_calendar',
-  /** カレンダーの有効期間より先（分からない） */
-  OUT_OF_RANGE: 'out_of_range',
+  /** 例外リストに載っている（中央・南関とも開催が無い） */
+  NO_RACE: 'no_race',
   /** 日付の形式が不正 */
   BAD_DATE: 'bad_date',
 });
 
 export const RACE_DAY_NOTE = Object.freeze({
   open: '開催があります。',
-  closed: 'この日は開催がありません。',
-  no_calendar: '開催カレンダーが取り込まれていません。開催の有無を確認できないため販売しません。',
-  out_of_range: '開催カレンダーの有効期間を過ぎています。開催の有無を確認できないため販売しません。',
+  no_race: 'この日は中央・南関とも開催がありません。',
   bad_date: '日付が不正です。',
 });
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** 開催区分 */
+export const CIRCUIT = Object.freeze({
+  NANKAN: 'nankan',
+  CHUO: 'chuo',
+});
 
+export const CIRCUIT_LABEL = Object.freeze({
+  nankan: '南関',
+  chuo: '中央',
+});
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const isDate = (v) => typeof v === 'string' && DATE_RE.test(v.trim());
 
 /**
  * 取り込んだ生データ → 判定に使う形。壊れていても例外を投げない。
  *
- * @param {{dates?: string[], coversUntil?: string, source?: string, fetchedAt?: string}|null} raw
+ * ⚠️ **空でも正常**。空 = 「例外日が無い」であって「分からない」ではない。
+ *
+ * @param {{noRaceDates?: string[], source?: string, fetchedAt?: string, note?: string}|null} raw
  */
 export function shapeRaceCalendar(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
-  const dates = new Set(
-    (Array.isArray(r.dates) ? r.dates : [])
-      .map((d) => (typeof d === 'string' ? d.trim() : ''))
-      .filter(isDate),
+  const list = Array.isArray(r.noRaceDates) ? r.noRaceDates : [];
+  const noRaceDates = new Set(
+    list.map((d) => (typeof d === 'string' ? d.trim() : '')).filter(isDate),
   );
   return {
-    dates,
-    /** この日までは「載っていなければ非開催」と言い切れる */
-    coversUntil: isDate(r.coversUntil) ? r.coversUntil.trim() : null,
+    noRaceDates,
     source: typeof r.source === 'string' ? r.source : null,
     fetchedAt: typeof r.fetchedAt === 'string' ? r.fetchedAt : null,
-    size: dates.size,
+    /** 例外リストをこの日まで確認済み（表示・警告用。**販売条件ではない**） */
+    checkedUntil: isDate(r.checkedUntil) ? r.checkedUntil.trim() : null,
+    note: typeof r.note === 'string' ? r.note : null,
+    size: noRaceDates.size,
   };
 }
 
+/** 'YYYY-MM-DD' → 開催区分（平日=南関 / 土日=中央） */
+export function circuitForDate(date) {
+  if (!isDate(date)) return null;
+  const [y, m, d] = date.split('-').map(Number);
+  // UTC 正午基準で曜日だけを取る（タイムゾーンの影響を受けない）
+  const day = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
+  return day === 0 || day === 6 ? CIRCUIT.CHUO : CIRCUIT.NANKAN;
+}
+
 /**
- * その日に開催があるか。**分からないときは OPEN を返さない。**
+ * その日に開催があるか。**既定は「ある」**。
  *
  * @param {string} date 'YYYY-MM-DD'（JST の暦日）
- * @param {{calendar?: object|null, knownRaceDates?: string[]}} ctx
- *   knownRaceDates … 当日データ等、カレンダー以外で開催が確定している日
- * @returns {{ok:boolean, code:string, note:string}}
+ * @param {{calendar?: object|null}} ctx
+ * @returns {{ok:boolean, code:string, note:string, circuit:string|null, circuitLabel:string|null}}
  */
-export function checkRaceDay(date, { calendar, knownRaceDates } = {}) {
-  if (!isDate(date)) return out(RACE_DAY.BAD_DATE);
+export function checkRaceDay(date, { calendar } = {}) {
+  if (!isDate(date)) return out(RACE_DAY.BAD_DATE, null);
   const d = date.trim();
-
-  // カレンダー以外で開催が確定している日（当日の予想データ等）
-  const known = Array.isArray(knownRaceDates) ? knownRaceDates.filter(isDate) : [];
-  if (known.includes(d)) return out(RACE_DAY.OPEN);
-
-  const cal = calendar && calendar.dates instanceof Set ? calendar : shapeRaceCalendar(calendar);
-  if (cal.size === 0) return out(RACE_DAY.NO_CALENDAR);
-  if (cal.dates.has(d)) return out(RACE_DAY.OPEN);
-  // 載っていない。**カバー範囲内なら非開催と言い切れる**が、範囲外なら「不明」
-  if (!cal.coversUntil || d > cal.coversUntil) return out(RACE_DAY.OUT_OF_RANGE);
-  return out(RACE_DAY.CLOSED);
+  const cal = calendar && calendar.noRaceDates instanceof Set ? calendar : shapeRaceCalendar(calendar);
+  const circuit = circuitForDate(d);
+  // 例外リストに載っているときだけ「開催なし」。**それ以外は開催あり**
+  if (cal.noRaceDates.has(d)) return out(RACE_DAY.NO_RACE, circuit);
+  return out(RACE_DAY.OPEN, circuit);
 }
 
-function out(code) {
-  return { ok: code === RACE_DAY.OPEN, code, note: RACE_DAY_NOTE[code] || '' };
+function out(code, circuit) {
+  return {
+    ok: code === RACE_DAY.OPEN,
+    code,
+    note: RACE_DAY_NOTE[code] || '',
+    circuit,
+    circuitLabel: circuit ? CIRCUIT_LABEL[circuit] : null,
+  };
 }
 
-/** 'YYYY-MM-DD' に日数を足す（JST の暦日として扱う・UTC 基準にしない） */
+/** 'YYYY-MM-DD' に日数を足す（暦日として扱う・タイムゾーンの影響を受けない） */
 export function addDays(date, days) {
   if (!isDate(date)) return null;
   const [y, m, d] = date.split('-').map(Number);
-  // UTC の正午を基準にして日付だけを動かす（タイムゾーンの影響を受けない）
-  const t = Date.UTC(y, m - 1, d, 12) + days * 86400000;
-  const dt = new Date(t);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12) + days * 86400000);
   const p = (n) => String(n).padStart(2, '0');
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
 }
 
 /**
- * `from` 以降で**最初に開催がある日**を返す。
+ * `from` 以降で**最初に開催がある日**。既定で開催があるので、
+ * 例外が連続していない限り 1〜2 回で見つかる。
  *
- * ⚠️ 見つからない / 分からないときは **null**（＝売らない）。
- *    「たぶんこの辺」で日付を作らない。
- *
- * @param {string} from 'YYYY-MM-DD'（この日を含めて探す）
- * @param {{calendar?: object|null, knownRaceDates?: string[], maxLookaheadDays?: number}} ctx
  * @returns {{date:string|null, code:string, note:string, checked:number}}
  */
-export function findNextRaceDay(from, { calendar, knownRaceDates, maxLookaheadDays = 14 } = {}) {
-  if (!isDate(from)) return { date: null, ...pick(RACE_DAY.BAD_DATE), checked: 0 };
-  const cal = calendar && calendar.dates instanceof Set ? calendar : shapeRaceCalendar(calendar);
+export function findNextRaceDay(from, { calendar, maxLookaheadDays = 14 } = {}) {
+  if (!isDate(from)) return { date: null, code: RACE_DAY.BAD_DATE, note: RACE_DAY_NOTE.bad_date, checked: 0 };
+  const cal = calendar && calendar.noRaceDates instanceof Set ? calendar : shapeRaceCalendar(calendar);
   const limit = Math.max(1, Math.min(60, Number(maxLookaheadDays) || 14));
 
   let cursor = from;
   for (let i = 0; i < limit; i += 1) {
-    const r = checkRaceDay(cursor, { calendar: cal, knownRaceDates });
-    if (r.code === RACE_DAY.OPEN) return { date: cursor, ...pick(RACE_DAY.OPEN), checked: i + 1 };
-    // 「不明」に当たったらそこで止める。**その先を推測で探さない**
-    if (r.code !== RACE_DAY.CLOSED) return { date: null, ...pick(r.code), checked: i + 1 };
+    if (!cal.noRaceDates.has(cursor)) {
+      return { date: cursor, code: RACE_DAY.OPEN, note: RACE_DAY_NOTE.open, checked: i + 1 };
+    }
     cursor = addDays(cursor, 1);
   }
-  // 期間内に開催が見つからなかった。これも売らない
-  return { date: null, ...pick(RACE_DAY.OUT_OF_RANGE), checked: limit };
+  // 例外が 14 日続くことは実態としてあり得ないが、暴走はさせない
+  return { date: null, code: RACE_DAY.NO_RACE, note: '連続して開催がありません。', checked: limit };
 }
 
-function pick(code) {
-  return { code, note: RACE_DAY_NOTE[code] || '' };
+/**
+ * 例外リストの確認期限が切れていないか。**販売は止めない**が、
+ * 気づかず古いまま運用するのを防ぐために警告する。
+ *
+ * @param {{calendar?: object|null, nowDate?: string, warnWithinDays?: number}} input
+ * @returns {{stale:boolean, expiringSoon:boolean, checkedUntil:string|null, note:string}}
+ */
+export function checkCalendarFreshness({ calendar, nowDate, warnWithinDays = 30 } = {}) {
+  const cal = calendar && calendar.noRaceDates instanceof Set ? calendar : shapeRaceCalendar(calendar);
+  const today = isDate(nowDate) ? nowDate.trim() : null;
+  if (!cal.checkedUntil) {
+    return {
+      stale: true, expiringSoon: false, checkedUntil: null,
+      note: '開催の例外日をどこまで確認したか記録がありません。販売は続きますが、例外日を取りこぼす可能性があります。',
+    };
+  }
+  if (!today) return { stale: false, expiringSoon: false, checkedUntil: cal.checkedUntil, note: '' };
+  if (today > cal.checkedUntil) {
+    return {
+      stale: true, expiringSoon: false, checkedUntil: cal.checkedUntil,
+      note: `開催の例外日は ${cal.checkedUntil} までしか確認していません。販売は続きますが、例外日を取りこぼす可能性があります。`,
+    };
+  }
+  const warnFrom = addDays(cal.checkedUntil, -Math.abs(warnWithinDays));
+  if (warnFrom && today >= warnFrom) {
+    return {
+      stale: false, expiringSoon: true, checkedUntil: cal.checkedUntil,
+      note: `開催の例外日の確認期限（${cal.checkedUntil}）が近づいています。`,
+    };
+  }
+  return { stale: false, expiringSoon: false, checkedUntil: cal.checkedUntil, note: '' };
 }
 
 export default checkRaceDay;

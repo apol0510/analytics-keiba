@@ -244,13 +244,14 @@ test('19. plus 指定でも契約が無効なら出さない（Light / Free / �
   assert.equal(srp.channel, UPSELL_CHANNEL.PLUS);
 });
 
-test('20. 明示指定でも 16:30 以降・翌日分を売れなければ購入不可', () => {
+test('20. 明示指定でも 16:30 で対象日が翌日へ切り替わる（購入は可）', () => {
   const closed = Date.parse('2026-08-03T08:00:00Z'); // JST 17:00
   const v = view(PREMIUM, { target: 'plus', dayNo: 9, nowMs: closed });
   assert.equal(v.plus.showPurchaseCta, true);
-  // 開催カレンダー未指定＝翌日分を売れない → 購入不可（fail closed）
-  assert.equal(v.plus.purchaseEnabled, false, '翌日分を売れないのに購入できてしまっている');
-  assert.equal(v.plus.intake, 'closed');
+  // 16:30 以降は翌日分として購入できる（例外リストが空でも販売は続く）
+  assert.equal(v.plus.purchaseEnabled, true, '16:30 以降に購入できなくなっている');
+  // 16:30 以降・販売可のときは専用状態（CLOSED は「売らない」の意味で残す）
+  assert.equal(v.plus.intake, 'next_day_open');
 });
 
 test('21. auto の意味は変えない（eligibility 未設定なら従来どおり Plus を出さない）', () => {
@@ -316,15 +317,16 @@ test('12. blocked + plus 指定 → Plus CTA=false（明示指定より販売禁
   assert.equal(v.plus.showTeaser, false);
 });
 
-test('plus 指定でも 16:30 以降・翌日分を売れなければ購入不可', () => {
+test('plus 指定でも 16:30 以降は翌日分として購入できる', () => {
   // 2026-08-03 17:00 JST = intake closed
   const closed = Date.parse('2026-08-03T08:00:00Z');
   const v = view({ ...PREMIUM, ...IMMEDIATE }, { target: 'plus', dayNo: 9, nowMs: closed });
   assert.equal(v.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(v.plus.showPurchaseCta, true);
-  // 開催カレンダー未指定＝翌日分を売れない → 購入不可（fail closed）
-  assert.equal(v.plus.purchaseEnabled, false, '翌日分を売れないのに購入できてしまっている');
-  assert.equal(v.plus.intake, 'closed');
+  // 16:30 以降は翌日分として購入できる（例外リストが空でも販売は続く）
+  assert.equal(v.plus.purchaseEnabled, true, '16:30 以降に購入できなくなっている');
+  // 16:30 以降・販売可のときは専用状態（CLOSED は「売らない」の意味で残す）
+  assert.equal(v.plus.intake, 'next_day_open');
 });
 
 test('未ログイン / 退会 / 停止は plus 指定でも何も出さない（fail closed）', () => {
@@ -425,7 +427,7 @@ test('describeUpsellDisplay は設定値ではなく実表示を返す', () => {
   const closed = Date.parse('2026-08-03T08:00:00Z');
   assert.match(
     describeUpsellDisplay(view({ ...PREMIUM, ...IMMEDIATE }, { target: 'plus', dayNo: 9, nowMs: closed })),
-    /操作不可/,
+    /翌日分受付中/,
   );
 });
 
