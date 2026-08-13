@@ -73,6 +73,8 @@ import {
   resolveFunnelStage,
   lastReactionAtMs,
   summarizeFunnel,
+  summarizeFunnelBySource,
+  countUnknownSource,
 } from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
 import {
   buildLookupFormula,
@@ -242,7 +244,11 @@ async function attachRealViews(rows) {
         startedAtJst: null,
         note: '実閲覧を読み取れませんでした。表示は全員「未確認」です（0 回という意味ではありません）',
       },
-      funnel: summarizeFunnel(rows),
+      funnel: {
+        ...summarizeFunnel(rows),
+        bySource: summarizeFunnelBySource(rows),
+        unknownSource: countUnknownSource(rows),
+      },
     };
   };
   if (!cmd) return unavailable('measurement_unavailable');
@@ -275,8 +281,13 @@ async function attachRealViews(rows) {
         ? `実閲覧は ${funnelJst(out.startedAtMs)} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません`
         : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
     },
-    // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）
-    funnel: summarizeFunnel(rows),
+    // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）。
+    // 導線別（ダッシュボード / 三連複ページ）も同じ数え方で併記する。
+    funnel: {
+      ...summarizeFunnel(rows),
+      bySource: summarizeFunnelBySource(rows),
+      unknownSource: countUnknownSource(rows),
+    },
   };
 }
 

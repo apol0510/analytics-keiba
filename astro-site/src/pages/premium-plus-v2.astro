@@ -32,7 +32,7 @@ import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusRece
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
-import { recordPlusPageView } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
+import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -93,6 +93,10 @@ await recordPlusPageView({
   env: process.env,
   userAgent: Astro.request.headers.get('user-agent') || '',
   nowMs: ppNow,
+  // どのリンクから来たか（`?from=dashboard` / `?from=sanrenpuku`）。
+  // ⚠️ URL は自由に付けられるので、allow-list を通した値だけを記録する。
+  //    該当しなければ null（合計にだけ数える。推測で振り分けない）。
+  source: readPlusSourceFromUrl(Astro.url),
 });
 
 // 会員別レスポンス。CDN に共有キャッシュさせない。

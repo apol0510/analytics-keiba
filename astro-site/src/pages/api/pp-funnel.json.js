@@ -30,7 +30,7 @@ export const prerender = false;
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
-import { createFunnelStore, FUNNEL_EVENT } from '../../lib/premiumPlus/premiumPlusFunnelStore.js';
+import { createFunnelStore, FUNNEL_EVENT, normalizeFunnelSource } from '../../lib/premiumPlus/premiumPlusFunnelStore.js';
 import {
   makeRedisCmd, isAdminPreviewRequest, ADMIN_PREVIEW_HEADER,
 } from '../../lib/premiumPlus/premiumPlusFunnelServer.js';
@@ -73,6 +73,10 @@ export async function POST({ request }) {
   try { body = await request.json(); } catch { body = {}; }
   const event = String(body.event || '');
   if (!ALLOWED_EVENTS.has(event)) return json(400, { ok: false, error: 'unknown_event' });
+  // 導線（クリック元）は **allow-list をサーバーで検証**する。
+  // 該当しない値は null（= 指定なし）にして、合計にだけ数える。
+  // クライアントが送ってきた任意の文字列は**保存しない**。
+  const source = normalizeFunnelSource(body.source);
 
   // Premium Plus を売らない相手には存在を知らせない（判定は既存の単一源）
   const fields = await lookupCustomerFields({ recordId, env: process.env, now });
@@ -89,6 +93,7 @@ export async function POST({ request }) {
   const out = await store.record({
     recordId,
     event,
+    source,
     nowMs: now,
     userAgent: request.headers.get('user-agent') || '',
     authenticated: true,

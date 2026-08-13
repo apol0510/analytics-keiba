@@ -1278,6 +1278,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .rv-unknown { color: #64748b; }
   /* 実測があるときだけ出す日時。無いときに 0 回や日付を作らない */
   .ppe .rv-when { display: block; font-size: .62rem; font-weight: 400; color: #7f90ab; }
+  /* 導線（クリック元）の内訳。不明は控えめ（推測で振り分けない） */
+  .ppe .rv-src { display: block; font-size: .62rem; font-weight: 400; color: #9fb0c9; padding-left: .3rem; }
+  .ppe .rv-src-unknown { color: #7f90ab; font-style: italic; }
+  .ppe .fn-src-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; font-size: .7rem; color: #cbd5e6; border-top: 1px solid rgba(148,163,184,.12); padding-top: .35rem; }
+  .ppe .fn-src-row-unknown { color: #7f90ab; font-style: italic; }
+  .ppe .fn-src-name { font-weight: 700; color: #93a4bd; min-width: 7rem; }
+  .ppe .fn-src-seg { color: #e6edf7; }
+  .ppe .fn-src-rate { color: #86efac; }
   /* 段階バッジ。未確認は控えめ・進んだ段階ほど強く */
   .ppe .rv-stage {
     display: inline-block; font-size: .64rem; font-weight: 800; margin-bottom: .25rem;
@@ -2657,6 +2665,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           when.className = 'rv-when';
           when.textContent = `初回 ${cell.firstAtJst || '不明'} / 最終 ${cell.lastAtJst || '不明'}`;
           s.appendChild(when);
+          // 導線（クリック元）の内訳。**残りは「クリック元不明」**として必ず見せる
+          // （導線別の計測を始める前の記録。推測で振り分けない）。
+          for (const src of (cell.sources || [])) {
+            const li = document.createElement('span');
+            li.className = 'rv-src';
+            li.textContent = `└ ${src.label} ${src.count} 回`;
+            li.title = `初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'}（JST）`;
+            s.appendChild(li);
+          }
+          if (cell.unknownCount > 0) {
+            const li = document.createElement('span');
+            li.className = 'rv-src rv-src-unknown';
+            li.textContent = `└ ${cell.unknownLabel} ${cell.unknownCount} 回`;
+            li.title = '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）';
+            s.appendChild(li);
+          }
         } else {
           s.textContent = `${label} 未確認`;
         }
@@ -2735,6 +2759,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       unk.textContent = `未確認 ${funnel.unknown} 名`;
       unk.title = funnel.note || '';
       bar.appendChild(unk);
+
+      // ── 導線別 ────────────────────────────────────────────
+      // 全体と同じ数え方（人数・累積）で、ダッシュボード / 三連複ページを併記する。
+      for (const s of (funnel.bySource || [])) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row';
+        const nm = document.createElement('span');
+        nm.className = 'fn-src-name';
+        nm.textContent = s.label;
+        row.appendChild(nm);
+        const seg = (t, n) => { const x = document.createElement('span'); x.className = 'fn-src-seg'; x.textContent = `${t} ${n}`; return x; };
+        row.appendChild(seg('表示', s.viewed));
+        row.appendChild(seg('クリック', s.clicked));
+        row.appendChild(seg('到達', s.reached));
+        const rr = document.createElement('span');
+        rr.className = 'fn-src-rate' + (s.rates?.viewToClick === null ? ' fn-rate-unknown' : '');
+        rr.textContent = s.rates?.viewToClick === null
+          ? '表示→クリック 未確定'
+          : `表示→クリック ${s.rates.viewToClick}%`;
+        rr.title = s.rates?.viewToClick === null ? '分母が確定していないため転換率を出しません（0% ではありません）' : '';
+        row.appendChild(rr);
+        bar.appendChild(row);
+      }
+      const us = funnel.unknownSource;
+      if (us && (us.cta > 0 || us.click > 0 || us.page > 0)) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row fn-src-row-unknown';
+        row.textContent = `${us.label}: 表示 ${us.cta} 名 / クリック ${us.click} 名 / 到達 ${us.page} 名`;
+        row.title = '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）';
+        bar.appendChild(row);
+      }
 
       if (!funnel.available) bar.classList.add('warn'); else bar.classList.remove('warn');
     }
@@ -3008,6 +3063,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               ? `${c.count} 回（初回 ${c.firstAtJst || '不明'} / 最終 ${c.lastAtJst || '不明'} JST）`
               : '未確認',
             c.measured ? '' : 'muted');
+          // クリック元の内訳。導線別の計測より前の分は「クリック元不明」のまま出す
+          if (c.measured) {
+            for (const src of (c.sources || [])) {
+              kvRow(dl, `　└ ${src.label}`,
+                `${src.count} 回（初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'} JST）`);
+            }
+            if (c.unknownCount > 0) {
+              kvRow(dl, `　└ ${c.unknownLabel}`, `${c.unknownCount} 回`, 'muted');
+            }
+          }
         }
         if (rv && rv.startedAtJst) kvRow(dl, '計測開始', `${rv.startedAtJst} JST`);
       }

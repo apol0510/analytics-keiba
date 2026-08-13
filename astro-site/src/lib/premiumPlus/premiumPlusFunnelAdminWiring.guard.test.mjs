@@ -170,3 +170,82 @@ test('【重要】全件走査を作っていない・部分取得は fail close
   const fn = FNC.slice(FNC.indexOf('async function attachRealViews'));
   assert.match(fn.slice(0, fn.indexOf('\n}')), /return unavailable\(/);
 });
+
+// ══════════════════════════════════════════════════════════════
+//  CTA の導線（クリック元）の配線
+// ══════════════════════════════════════════════════════════════
+const TEASER = read('../../components/PremiumPlusStageTeaser.astro');
+const DASH = read('../../pages/dashboard.astro');
+const PPV2 = read('../../pages/premium-plus-v2.astro');
+const PP = read('../../pages/premium-plus.astro');
+const CLIENT = read('./premiumPlusFunnelClient.js');
+
+test('【重要】source はサーバーの allow-list で検証する（クライアント任意値を保存しない）', () => {
+  assert.match(API, /normalizeFunnelSource\(body\.source\)/);
+  assert.match(API, /source,/);
+  // クライアント側で検証して「通ったから安全」にしていないこと
+  assert.ok(!/ALLOWED_SOURCES|SOURCE_SET/.test(CLIENT), 'クライアントが採否を判断している');
+});
+
+test('【重要】三連複ページの案内枠は sanrenpuku を送る', () => {
+  assert.match(TEASER, /event: 'cta_view', el: card, source: 'sanrenpuku'/);
+  assert.match(TEASER, /event: 'cta_click', source: 'sanrenpuku'/);
+  assert.match(TEASER, /from=sanrenpuku/);
+});
+
+test('【重要】dashboard の「会員限定のご案内を見る」は dashboard を送る', () => {
+  assert.match(DASH, /event: 'cta_view', el: section, source: 'dashboard'/);
+  assert.match(DASH, /event: 'cta_click', source: 'dashboard'/);
+  assert.match(DASH, /from=dashboard/);
+});
+
+test('【重要】商品ページ到達も導線を allow-list 経由で記録する', () => {
+  for (const [name, src] of [['premium-plus-v2', PPV2], ['premium-plus', PP]]) {
+    assert.match(src, /readPlusSourceFromUrl\(Astro\.url\)/, `${name} が導線を読んでいない`);
+  }
+  assert.match(SERVER, /export function readPlusSourceFromUrl/);
+  assert.match(SERVER, /normalizeFunnelSource\(u\.searchParams\.get\('from'\)\)/);
+});
+
+test('【重要】重複除外は合計の lastAt だけで判断する（内訳が合計を超えない）', () => {
+  const rec = STORE.slice(STORE.indexOf('async record('));
+  const body = rec.slice(0, rec.indexOf('async read('));
+  assert.match(body, /const lastAt = num\(cur\.lastAt\)/);
+  assert.match(body, /now - lastAt < DEDUPE_MS/);
+  // 導線ごとに別の dedupe を持っていないこと
+  assert.ok(!/bySource\[[^\]]+\]\.lastAt[\s\S]{0,80}DEDUPE_MS/.test(body), '導線ごとに重複除外している');
+});
+
+test('【重要】導線不明を推測で振り分けない', () => {
+  // 合計 - 内訳 が unknownCount。マッピングや既定値で dashboard へ寄せていないこと
+  assert.match(STORE, /const unknownCount = Math\.max\(0, count - known\)/);
+  assert.ok(!/source \|\| 'dashboard'|source \?\? 'dashboard'/.test(STORE), '既定値で dashboard に寄せている');
+  assert.ok(!/source \|\| 'sanrenpuku'/.test(STORE), '既定値で sanrenpuku に寄せている');
+});
+
+test('【重要】管理画面が導線別の内訳と「不明」を出す', () => {
+  assert.match(PAGEC, /cell\.sources/);
+  assert.match(PAGEC, /cell\.unknownCount > 0/);
+  assert.match(PAGEC, /cell\.unknownLabel/);
+  assert.match(PAGEC, /funnel\.bySource/);
+  assert.match(PAGEC, /funnel\.unknownSource/);
+});
+
+test('【重要】詳細（個別検索）でも導線別を出す', () => {
+  const d = PAGEC.slice(PAGEC.indexOf('function renderDetail'));
+  const body = d.slice(0, d.indexOf('info.appendChild(dl)') + 30);
+  assert.match(body, /c\.sources/);
+  assert.match(body, /c\.unknownLabel/);
+});
+
+test('【重要】導線を増やしても画面がベタ書きにならない', () => {
+  assert.match(PAGEC, /funnel\.bySource \|\| \[\]/);
+  assert.ok(!/'ダッシュボード'|'三連複ページ'/.test(PAGEC), '導線名を画面へベタ書きしている');
+});
+
+test('【重要】Redis へ個人情報を増やしていない（導線追加後も）', () => {
+  const code = strip(STORE);
+  for (const bad of ['Email', 'email', '氏名', 'referrer', 'Referer']) {
+    assert.ok(!new RegExp(`\\b${bad}\\b`).test(code), `Redis 層が扱ってはいけない値: ${bad}`);
+  }
+});

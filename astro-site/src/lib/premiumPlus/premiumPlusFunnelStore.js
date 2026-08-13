@@ -62,6 +62,46 @@ const KEY_OF = Object.freeze({
 });
 
 /**
+ * ── CTA の導線（クリック元）──────────────────────────────────
+ *
+ * 同じ Premium Plus の CTA でも、どこから来たのかで意味が違う:
+ *   `dashboard`   … ダッシュボードの「会員限定のご案内を見る」
+ *   `sanrenpuku`  … 三連複会員ページの Premium Plus 案内枠
+ *
+ * ⚠️ **固定 allow-list。クライアントが送ってきた任意の値は保存しない。**
+ *    ここに無い値は「導線の指定なし」として扱い、**合計にだけ**数える
+ *    （推測で dashboard / sanrenpuku へ振り分けない）。
+ */
+export const FUNNEL_SOURCE = Object.freeze({
+  DASHBOARD: 'dashboard',
+  SANRENPUKU: 'sanrenpuku',
+});
+
+/** 集計・表示で使う導線の並び（画面がベタ書きしないための単一源） */
+export const FUNNEL_SOURCE_ORDER = Object.freeze([FUNNEL_SOURCE.DASHBOARD, FUNNEL_SOURCE.SANRENPUKU]);
+
+export const FUNNEL_SOURCE_LABEL = Object.freeze({
+  dashboard: 'ダッシュボード',
+  sanrenpuku: '三連複ページ',
+  /** 導線別の計測を始める前に記録された分。**推測で振り分けない** */
+  unknown: 'クリック元不明',
+});
+
+const SOURCE_SET = new Set(FUNNEL_SOURCE_ORDER);
+
+/**
+ * 受け取った source を allow-list で検証する。
+ * **該当しなければ null**（= 導線の指定なし。合計にだけ数える）。
+ *
+ * @param {unknown} raw
+ * @returns {string|null}
+ */
+export function normalizeFunnelSource(raw) {
+  const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return SOURCE_SET.has(s) ? s : null;
+}
+
+/**
  * 同じ種別を再度数えるまでの最短間隔。
  * 再描画・タブ復帰・戻る操作での過剰計上を潰す。
  */
@@ -100,16 +140,32 @@ const num = (v) => {
 /** 1 レコードぶんの生データ → 表示用（**数えられていないものは null**） */
 export function shapeFunnelRow(raw) {
   const r = raw || {};
-  const pick = (a, b, c) => ({
+  const pick = (a, b, c, d) => ({
     firstAtMs: num(r[a]),
     lastAtMs: num(r[b]),
     count: num(r[c]),
+    // 導線別の内訳。**古いデータには無い**（その分は「不明」として残る）
+    bySource: shapeBySource(r[d]),
   });
   return {
-    cta: pick('cta_first_at', 'cta_last_at', 'cta_views'),
-    click: pick('click_first_at', 'click_last_at', 'clicks'),
-    page: pick('page_first_at', 'page_last_at', 'page_views'),
+    cta: pick('cta_first_at', 'cta_last_at', 'cta_views', 'cta_by_source'),
+    click: pick('click_first_at', 'click_last_at', 'clicks', 'click_by_source'),
+    page: pick('page_first_at', 'page_last_at', 'page_views', 'page_by_source'),
   };
+}
+
+/** 保存された内訳 → 表示用（allow-list 外の鍵は捨てる） */
+export function shapeBySource(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const s of FUNNEL_SOURCE_ORDER) {
+    const e = src[s] && typeof src[s] === 'object' ? src[s] : null;
+    if (!e) continue;
+    const count = num(e.count);
+    if (count === null || count <= 0) continue;
+    out[s] = { firstAtMs: num(e.firstAt), lastAtMs: num(e.lastAt), count };
+  }
+  return out;
 }
 
 /** 記録が 1 つでもあるか（無いなら「未確認」であって 0 ではない） */
@@ -141,7 +197,7 @@ export function funnelJst(ms) {
 export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
   // 構造化した値も併せて返す（画面が「初回 / 最終 / 回数」を列で出せるようにする）。
   // ⚠️ measured=false のときは **count を 0 にしない**。null のまま返す。
-  const blank = { count: null, firstAtMs: null, lastAtMs: null, firstAtJst: null, lastAtJst: null };
+  const blank = { count: null, firstAtMs: null, lastAtMs: null, firstAtJst: null, lastAtJst: null, sources: [], unknownCount: null, unknownLabel: FUNNEL_SOURCE_LABEL.unknown };
   if (available === false) {
     return {
       text: '未確認',
@@ -162,6 +218,26 @@ export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
       ...blank,
     };
   }
+  // 導線別の内訳。**合計から内訳の和を引いた残りが「クリック元不明」**。
+  // 導線別の計測を始める前の記録はここに残る（推測で振り分けない）。
+  const by = cell && cell.bySource && typeof cell.bySource === 'object' ? cell.bySource : {};
+  const sources = [];
+  let known = 0;
+  for (const s of FUNNEL_SOURCE_ORDER) {
+    const e = by[s];
+    if (!e || !Number.isFinite(e.count) || e.count <= 0) continue;
+    known += e.count;
+    sources.push({
+      source: s,
+      label: FUNNEL_SOURCE_LABEL[s],
+      count: e.count,
+      firstAtJst: funnelJst(e.firstAtMs),
+      lastAtJst: funnelJst(e.lastAtMs),
+      firstAtMs: Number.isFinite(e.firstAtMs) ? e.firstAtMs : null,
+      lastAtMs: Number.isFinite(e.lastAtMs) ? e.lastAtMs : null,
+    });
+  }
+  const unknownCount = Math.max(0, count - known);
   return {
     text: `${count} 回`,
     note: `初回 ${funnelJst(cell.firstAtMs) || '不明'} / 最終 ${funnelJst(cell.lastAtMs) || '不明'}（JST）`,
@@ -171,6 +247,10 @@ export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
     lastAtMs: Number.isFinite(cell.lastAtMs) ? cell.lastAtMs : null,
     firstAtJst: funnelJst(cell.firstAtMs),
     lastAtJst: funnelJst(cell.lastAtMs),
+    sources,
+    /** 導線が分からない回数（0 なら内訳が全部そろっている） */
+    unknownCount,
+    unknownLabel: FUNNEL_SOURCE_LABEL.unknown,
   };
 }
 
@@ -238,23 +318,50 @@ export function createFunnelStore({ redisCmd } = {}) {
      *
      * @returns {Promise<{ok:boolean, counted:boolean, reason?:string}>}
      */
-    async record({ recordId, event, nowMs, userAgent, authenticated, adminPreview } = {}) {
+    async record({ recordId, event, nowMs, userAgent, authenticated, adminPreview, source } = {}) {
       const gate = shouldRecordFunnelEvent({ recordId, event, userAgent, authenticated, adminPreview });
       if (!gate.ok) return { ok: true, counted: false, reason: gate.reason };
 
       const now = num(nowMs) ?? 0;
       const key = KEY_OF[event];
+      // allow-list 外は null（= 導線の指定なし）。**任意の文字列を保存しない**
+      const src = normalizeFunnelSource(source);
       try {
         const cur = (await readOne(key, recordId)) || {};
         const lastAt = num(cur.lastAt);
-        // 同じ種別は一定時間 1 回だけ（再描画・戻る操作で増やさない）
+        // 同じ種別は一定時間 1 回だけ（再描画・戻る操作で増やさない）。
+        // ⚠️ 重複除外は**合計の lastAt だけ**で判断する。導線ごとに別々に数えると
+        //    内訳の合計が全体を超え、「不明」が負になる。
         if (lastAt !== null && now - lastAt < DEDUPE_MS) {
           return { ok: true, counted: false, reason: 'deduped' };
+        }
+        // 既存の内訳を引き継ぐ（**古い値には bySource が無い**。その分は「不明」に残る）
+        const curBy = cur.bySource && typeof cur.bySource === 'object' ? cur.bySource : {};
+        const bySource = {};
+        for (const s of FUNNEL_SOURCE_ORDER) {
+          const e = curBy[s] && typeof curBy[s] === 'object' ? curBy[s] : null;
+          if (e) {
+            bySource[s] = {
+              firstAt: num(e.firstAt) ?? null,
+              lastAt: num(e.lastAt) ?? null,
+              count: num(e.count) ?? 0,
+            };
+          }
+        }
+        if (src) {
+          const e = bySource[src] || null;
+          bySource[src] = {
+            firstAt: (e && num(e.firstAt)) ?? now,
+            lastAt: now,
+            count: ((e && num(e.count)) ?? 0) + 1,
+          };
         }
         const next = {
           firstAt: num(cur.firstAt) ?? now,
           lastAt: now,
           count: (num(cur.count) ?? 0) + 1,
+          // 内訳が 1 つも無いなら書かない（既存データの形を無用に変えない）
+          ...(Object.keys(bySource).length ? { bySource } : {}),
         };
         await redisCmd(['HSET', key, recordId, JSON.stringify(next)]);
         await redisCmd(['HSETNX', FUNNEL_KEY.META, META_FIELD.STARTED_AT, String(now)]);
@@ -283,8 +390,11 @@ export function createFunnelStore({ redisCmd } = {}) {
         ]);
         const flat = {
           cta_first_at: cta && cta.firstAt, cta_last_at: cta && cta.lastAt, cta_views: cta && cta.count,
+          cta_by_source: cta && cta.bySource,
           click_first_at: click && click.firstAt, click_last_at: click && click.lastAt, clicks: click && click.count,
+          click_by_source: click && click.bySource,
           page_first_at: page && page.firstAt, page_last_at: page && page.lastAt, page_views: page && page.count,
+          page_by_source: page && page.bySource,
         };
         return {
           available: true,
@@ -333,8 +443,11 @@ export function createFunnelStore({ redisCmd } = {}) {
             const c = at(cta, k); const cl = at(click, k); const p = at(page, k);
             rows.set(id, shapeFunnelRow({
               cta_first_at: c && c.firstAt, cta_last_at: c && c.lastAt, cta_views: c && c.count,
+              cta_by_source: c && c.bySource,
               click_first_at: cl && cl.firstAt, click_last_at: cl && cl.lastAt, clicks: cl && cl.count,
+              click_by_source: cl && cl.bySource,
               page_first_at: p && p.firstAt, page_last_at: p && p.lastAt, page_views: p && p.count,
+              page_by_source: p && p.bySource,
             }));
           });
         }

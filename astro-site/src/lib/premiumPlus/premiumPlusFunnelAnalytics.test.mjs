@@ -223,3 +223,130 @@ test('【重要】戻り値に recordId 以外の識別子を載せない', () =
   const s = summarizeFunnel(rows);
   assert.ok(!JSON.stringify(s).includes('example.com'), '集計にアドレスが混ざっている');
 });
+
+// ══════════════════════════════════════════════════════════════
+//  CTA の導線（クリック元）
+//
+//  0510apolone で既に記録されたクリックは**導線別計測より前**なので
+//  「クリック元不明」になる。ダッシュボード経由だったと人間が知っていても、
+//  データ上は dashboard へ書き換えない。
+// ══════════════════════════════════════════════════════════════
+import {
+  FUNNEL_SOURCE, FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL,
+  normalizeFunnelSource, shapeFunnelRow,
+} from './premiumPlusFunnelStore.js';
+import { summarizeFunnelBySource, countUnknownSource } from './premiumPlusFunnelAnalytics.js';
+
+/** 導線内訳つきの実測セル */
+const srcCell = (count, first, last, by) => ({ count, firstAtMs: first, lastAtMs: last, bySource: by });
+
+test('【重要】allow-list 外の source は採らない（任意値を保存しない）', () => {
+  assert.equal(normalizeFunnelSource('dashboard'), 'dashboard');
+  assert.equal(normalizeFunnelSource('sanrenpuku'), 'sanrenpuku');
+  assert.equal(normalizeFunnelSource(' DASHBOARD '), 'dashboard', '大小・空白は吸収する');
+  for (const bad of ['', 'evil', 'admin', '../x', null, undefined, 42, {}, ['dashboard']]) {
+    assert.equal(normalizeFunnelSource(bad), null, `採ってはいけない値: ${JSON.stringify(bad)}`);
+  }
+});
+
+test('allow-list は 2 導線（画面もこの並びを使う）', () => {
+  assert.deepEqual([...FUNNEL_SOURCE_ORDER], [FUNNEL_SOURCE.DASHBOARD, FUNNEL_SOURCE.SANRENPUKU]);
+  assert.equal(FUNNEL_SOURCE_LABEL.dashboard, 'ダッシュボード');
+  assert.equal(FUNNEL_SOURCE_LABEL.sanrenpuku, '三連複ページ');
+  assert.equal(FUNNEL_SOURCE_LABEL.unknown, 'クリック元不明');
+});
+
+test('【重要】導線が無い既存データは全量「不明」（dashboard へ推測分類しない）', () => {
+  // 0510apolone のクリック 1 回に相当（bySource が無い）
+  const c = describeFunnelCell(shapeFunnelRow({ clicks: 1, click_first_at: T(1), click_last_at: T(1) }).click,
+    { available: true });
+  assert.equal(c.measured, true);
+  assert.equal(c.count, 1);
+  assert.deepEqual(c.sources, [], '推測で導線を作っている');
+  assert.equal(c.unknownCount, 1);
+  assert.equal(c.unknownLabel, 'クリック元不明');
+});
+
+test('内訳と合計の差が「不明」として残る（後方互換）', () => {
+  const c = describeFunnelCell(
+    srcCell(5, T(1), T(5), { dashboard: { firstAtMs: T(2), lastAtMs: T(4), count: 3 } }),
+    { available: true });
+  assert.equal(c.count, 5);
+  assert.equal(c.sources.length, 1);
+  assert.equal(c.sources[0].source, 'dashboard');
+  assert.equal(c.sources[0].count, 3);
+  assert.equal(c.unknownCount, 2, '合計 - 内訳 が不明として残っていない');
+});
+
+test('導線ごとの初回・最終を返す', () => {
+  const c = describeFunnelCell(
+    srcCell(2, T(1), T(4), { sanrenpuku: { firstAtMs: T(1), lastAtMs: T(4), count: 2 } }),
+    { available: true });
+  const s = c.sources[0];
+  assert.equal(s.label, '三連複ページ');
+  assert.match(s.firstAtJst, /^2026-08-13 \d{2}:\d{2}$/);
+  assert.match(s.lastAtJst, /^2026-08-13 \d{2}:\d{2}$/);
+});
+
+test('【重要】不明は負にならない（内訳が合計を超えても壊さない）', () => {
+  const c = describeFunnelCell(
+    srcCell(1, T(1), T(1), { dashboard: { firstAtMs: T(1), lastAtMs: T(1), count: 9 } }),
+    { available: true });
+  assert.equal(c.unknownCount, 0);
+});
+
+test('allow-list 外の鍵は内訳から捨てる', () => {
+  const shaped = shapeFunnelRow({
+    cta_views: 3, cta_first_at: T(1), cta_last_at: T(3),
+    cta_by_source: { dashboard: { firstAt: T(1), lastAt: T(2), count: 1 }, evil: { firstAt: T(1), lastAt: T(1), count: 2 } },
+  });
+  assert.deepEqual(Object.keys(shaped.cta.bySource), ['dashboard']);
+});
+
+test('未実測セルは内訳も空・不明も null（0 にしない）', () => {
+  const c = describeFunnelCell(null, { available: true });
+  assert.deepEqual(c.sources, []);
+  assert.equal(c.unknownCount, null);
+});
+
+// ── 導線別の集計 ───────────────────────────────────────────
+const withSrc = (over) => ({ available: true, cta: none, click: none, page: none, ...over });
+const mCell = (count, by) => describeFunnelCell(srcCell(count, T(1), T(2), by), { available: true });
+
+test('導線別の転換を人数で数える', () => {
+  const rows = [
+    { recordId: 'r1', realView: withSrc({
+      cta: mCell(2, { dashboard: { firstAtMs: T(1), lastAtMs: T(2), count: 2 } }),
+      click: mCell(1, { dashboard: { firstAtMs: T(2), lastAtMs: T(2), count: 1 } }),
+      page: mCell(1, { dashboard: { firstAtMs: T(2), lastAtMs: T(2), count: 1 } }) }) },
+    { recordId: 'r2', realView: withSrc({
+      cta: mCell(1, { sanrenpuku: { firstAtMs: T(1), lastAtMs: T(1), count: 1 } }) }) },
+  ];
+  const by = summarizeFunnelBySource(rows);
+  const dash = by.find((x) => x.source === 'dashboard');
+  const srp = by.find((x) => x.source === 'sanrenpuku');
+  assert.deepEqual([dash.viewed, dash.clicked, dash.reached], [1, 1, 1]);
+  assert.deepEqual([srp.viewed, srp.clicked, srp.reached], [1, 0, 0]);
+  assert.equal(dash.rates.viewToClick, 100);
+  assert.equal(srp.rates.clickToReach, null, '分母 0 で 0% と書いている');
+});
+
+test('【重要】導線不明の記録はどの導線にも入れない', () => {
+  const rows = [{ recordId: 'r1', realView: withSrc({ cta: mCell(3, {}) }) }];
+  for (const s of summarizeFunnelBySource(rows)) {
+    assert.equal(s.viewed, 0, `${s.source} に不明を混ぜている`);
+  }
+  const u = countUnknownSource(rows);
+  assert.equal(u.cta, 1);
+  assert.equal(u.label, 'クリック元不明');
+});
+
+test('読めなかった人は導線別にも数えない', () => {
+  const rows = [{ recordId: 'r1', realView: { available: false } }];
+  for (const s of summarizeFunnelBySource(rows)) assert.equal(s.viewed, 0);
+  assert.equal(countUnknownSource(rows).cta, 0);
+});
+
+test('導線別の並びは allow-list の順', () => {
+  assert.deepEqual(summarizeFunnelBySource([]).map((s) => s.source), [...FUNNEL_SOURCE_ORDER]);
+});

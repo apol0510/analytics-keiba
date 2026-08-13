@@ -28,6 +28,8 @@
  * アドレス・氏名は受け取らないし返さない（Redis へも増やさない）。
  */
 
+import { FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL } from './premiumPlusFunnelStore.js';
+
 /** 実閲覧の段階。**到達した最も先の段階**で分類する。 */
 export const FUNNEL_STAGE = Object.freeze({
   /** 記録が無い（= 見ていない、ではない） */
@@ -167,6 +169,65 @@ export function summarizeFunnel(rows) {
  *
  * @param {Array<object>} rows 破壊しない
  */
+/**
+ * 導線別の転換。**全体と同じ数え方**（人数・累積）で、導線ごとに出す。
+ *
+ * ⚠️ 「その導線で数えられた回数が 1 以上の人」を 1 人と数える。
+ *    導線が分からない記録（導線別の計測を始める前の分）は
+ *    **どの導線にも入れない**。合計にだけ残り、`unknown` で見える。
+ *
+ * @param {Array<{realView?: object}>} rows
+ * @returns {Array<{source:string, label:string, viewed:number, clicked:number, reached:number,
+ *                  rates:{viewToClick:number|null, clickToReach:number|null}}>}
+ */
+export function summarizeFunnelBySource(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const hit = (cell, src) => {
+    if (!cell || cell.measured !== true || !Array.isArray(cell.sources)) return false;
+    return cell.sources.some((e) => e && e.source === src && Number.isFinite(e.count) && e.count > 0);
+  };
+  return FUNNEL_SOURCE_ORDER.map((src) => {
+    const c = { viewed: 0, clicked: 0, reached: 0 };
+    for (const r of list) {
+      const v = r && r.realView;
+      if (!v || v.available === false) continue;
+      const reached = hit(v.page, src);
+      const clicked = hit(v.click, src);
+      const viewed = hit(v.cta, src);
+      if (reached) c.reached += 1;
+      if (clicked || reached) c.clicked += 1;
+      if (viewed || clicked || reached) c.viewed += 1;
+    }
+    return {
+      source: src,
+      label: FUNNEL_SOURCE_LABEL[src] || src,
+      ...c,
+      rates: {
+        viewToClick: rate(c.clicked, c.viewed),
+        clickToReach: rate(c.reached, c.clicked),
+      },
+    };
+  });
+}
+
+/**
+ * 導線が分からない記録を持つ人数（種別ごと）。
+ * **「0 だから無い」ではなく「振り分けられていない分がある」**ことを見せる。
+ */
+export function countUnknownSource(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const has = (cell) => !!(cell && cell.measured === true && Number.isFinite(cell.unknownCount) && cell.unknownCount > 0);
+  const c = { cta: 0, click: 0, page: 0 };
+  for (const r of list) {
+    const v = r && r.realView;
+    if (!v || v.available === false) continue;
+    if (has(v.cta)) c.cta += 1;
+    if (has(v.click)) c.click += 1;
+    if (has(v.page)) c.page += 1;
+  }
+  return { ...c, label: FUNNEL_SOURCE_LABEL.unknown };
+}
+
 export function sortByLastReaction(rows) {
   return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
     const ta = lastReactionAtMs(a && a.realView);
