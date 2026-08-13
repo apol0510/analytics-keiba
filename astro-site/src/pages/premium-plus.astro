@@ -157,6 +157,36 @@ const ppToday = {
   isChuo: ppTodayIsChuo,
 };
 
+// --- ティザーは**販売対象日**に合わせる（16:30 以降は翌日分）-------------
+// ⚠️ ここを ppToday（今日）のままにすると、16:30 以降に同じ画面へ
+//    「本日の 1 鞍 8/14」と購入ブロックの「8月15日分」が並び、
+//    どちらを買うのか分からなくなる。見出し・日付・開催区分・ボタン文言は
+//    すべて **ppSale（単一源）** から作る。
+const ppTodayStr = `${ppToday.y}-${String(ppToday.m).padStart(2, '0')}-${String(ppToday.d).padStart(2, '0')}`;
+const ppTeaser = (() => {
+  // 売れないとき（例外日が連続する異常時のみ）は従来どおり本日を出す
+  if (!ppSale.sellable || !ppSale.date) {
+    return {
+      y: ppToday.y, m: ppToday.m, d: ppToday.d, wd: ppToday.wd,
+      isChuo: ppToday.isChuo,
+      circuitLabel: ppToday.isChuo ? '基本：中央' : '基本：南関',
+      isToday: true,
+    };
+  }
+  const [y, m, d] = ppSale.date.split('-').map(Number);
+  return {
+    y, m, d,
+    // UTC 正午基準で曜日だけを取る（タイムゾーンの影響を受けない）
+    wd: PP_WD[new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()],
+    isChuo: ppSale.circuit === 'chuo',
+    circuitLabel: ppSale.circuitLabel,
+    isToday: ppSale.date === ppTodayStr,
+  };
+})();
+// 対象日が今日なら従来どおり「本日」。今日でないときだけ日付で言い切る
+const ppTeaserEyebrow = ppTeaser.isToday ? '本日の 1 鞍' : `${ppTeaser.m}月${ppTeaser.d}日の 1 鞍`;
+const ppTeaserCta = ppTeaser.isToday ? '🔓 本日の1鞍を抽出する' : `🔓 ${ppTeaser.m}月${ppTeaser.d}日の1鞍を抽出する`;
+
 // --- 連勝レジャー帯（台帳の全件を最新順で・すべて掲載）---
 // 数値は台帳の実データのみ（手書き禁止）。payout は formatYenShort で短縮表示。
 const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
@@ -939,9 +969,9 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     <!-- ══ 本日の1鞍（ティザー・購入導線） ══ -->
     <div class="today">
       <div class="today-top">
-        <span class="ey">本日の 1 鞍</span><span class="today-spacer"></span>
-        <span class="when">{ppToday.y}/{ppToday.m}/{ppToday.d}（{ppToday.wd}）</span>
-        <span class={ppToday.isChuo ? 'today-circuit ch' : 'today-circuit nk'}>{ppToday.isChuo ? '基本：中央' : '基本：南関'}</span>
+        <span class="ey">{ppTeaserEyebrow}</span><span class="today-spacer"></span>
+        <span class="when">{ppTeaser.y}/{ppTeaser.m}/{ppTeaser.d}（{ppTeaser.wd}）</span>
+        <span class={ppTeaser.isChuo ? 'today-circuit ch' : 'today-circuit nk'}>{ppTeaser.circuitLabel}</span>
       </div>
       <div class="today-grid">
         <div class="today-l">
@@ -957,7 +987,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
             <>
               <div class="price"><span class="now">¥{PRICE.toLocaleString('ja-JP')}</span><span class="was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span></div>
               <span class="tax">買い切り・追加課金なし</span>
-              <button class="extract" type="button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>🔓 本日の1鞍を抽出する</button>
+              <button class="extract" type="button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>{ppTeaserCta}</button>
             </>
           ) : (
             <div class="pp-preparing">

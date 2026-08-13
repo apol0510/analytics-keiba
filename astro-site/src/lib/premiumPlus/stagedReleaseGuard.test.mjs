@@ -110,6 +110,20 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
     assert.doesNotMatch(src, /受付準備中です<|>受付準備中/);
   });
 
+  // 16:30 以降、ティザーが「本日（今日の日付）」のままだと購入ブロックの
+  // 「翌日分」と食い違い、どちらを買うのか分からなくなる。単一源 ppSale に寄せる。
+  test(`${name}: ティザーの見出し・日付・区分・ボタンは販売対象日（ppSale）から作る`, () => {
+    assert.match(src, /const ppTeaser = \(\(\) => \{/);
+    assert.match(src, /isToday: ppSale\.date === ppTodayStr/);
+    assert.match(src, /\{ppTeaserEyebrow\}/);
+    assert.match(src, /\{ppTeaserCta\}/);
+    assert.match(src, /\{ppTeaser\.y\}\/\{ppTeaser\.m\}\/\{ppTeaser\.d\}/);
+    assert.match(src, /\{ppTeaser\.circuitLabel\}/);
+    // 今日基準の値を直接描画に戻さない（16:30 以降にズレる）
+    assert.doesNotMatch(src, /\{ppToday\.y\}\/\{ppToday\.m\}\/\{ppToday\.d\}/);
+    assert.doesNotMatch(src, /\{ppToday\.isChuo \? '基本：中央' : '基本：南関'\}/);
+  });
+
   test(`${name}: 本文コピーと価格定数が変更されていない`, () => {
     for (const phrase of [
       'const PRICE = 68000;',
