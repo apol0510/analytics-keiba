@@ -136,10 +136,13 @@ test('引き継ぎ帯はモバイルでも崩れない', () => {
 });
 
 test('引き継ぎ帯は色だけで状態を表さない', () => {
-  const fn = sliceFrom(SCRIPT, 'function mkHandoffRender(', 1400);
+  const fn = sliceFrom(SCRIPT, 'function mkHandoffRender(', 2200);
   assert.match(fn, /カムバック無料付与の成功者を引き継ぎ中/, '状態を文章で出していない');
   assert.match(fn, /describeHandoff\(/, '人数・期限を出していない');
   assert.match(fn, /引き継ぎを解除/, '解除できない');
+  // 期限の緊急度も同じ帯で出す（失効すると付与も案内も進まなくなるため）
+  assert.match(fn, /resolveHandoffUrgency\(/, '期限の緊急度を出していない');
+  assert.match(fn, /urg\.note/, '失効間際に何をすべきか出していない');
 });
 
 // ── 6. 件数表示 ────────────────────────────────────────────────
