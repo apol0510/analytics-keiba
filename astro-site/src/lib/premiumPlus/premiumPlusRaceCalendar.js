@@ -52,9 +52,16 @@ export const CIRCUIT = Object.freeze({
   CHUO: 'chuo',
 });
 
+/**
+ * 画面・管理画面に出すラベル。
+ *
+ * ⚠️ **曜日から導いた「目安」であって、その日の実際の開催場ではない。**
+ * 「南関」「中央」と言い切ると開催実態を断定したことになるため、
+ * **必ず「基本：」を付けて目安であることを表に出す**。
+ */
 export const CIRCUIT_LABEL = Object.freeze({
-  nankan: '南関',
-  chuo: '中央',
+  nankan: '基本：南関',
+  chuo: '基本：中央',
 });
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

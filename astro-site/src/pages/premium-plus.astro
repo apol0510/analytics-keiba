@@ -941,7 +941,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
       <div class="today-top">
         <span class="ey">本日の 1 鞍</span><span class="today-spacer"></span>
         <span class="when">{ppToday.y}/{ppToday.m}/{ppToday.d}（{ppToday.wd}）</span>
-        <span class={ppToday.isChuo ? 'today-circuit ch' : 'today-circuit nk'}>{ppToday.isChuo ? '中央開催' : '南関開催'}</span>
+        <span class={ppToday.isChuo ? 'today-circuit ch' : 'today-circuit nk'}>{ppToday.isChuo ? '基本：中央' : '基本：南関'}</span>
       </div>
       <div class="today-grid">
         <div class="today-l">
@@ -967,7 +967,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
           )}
         </div>
       </div>
-      <p class="today-rule">🗓️ <span><b>平日は南関、土日は中央（JRA）。</b>中央と南関の開催が重なる日も、AI が全開催を横断して<b>ただ 1 鞍</b>だけを選びます。</span></p>
+      <p class="today-rule">🗓️ <span><b>基本：平日は南関、土日は中央（JRA）。</b>実際の開催場はその日の開催によります。中央と南関の開催が重なる日も、AI が全開催を横断して<b>ただ 1 鞍</b>だけを選びます。</span></p>
     </div>
 
     <!-- ══ なぜ三連複会員にだけ案内するのか ══ -->

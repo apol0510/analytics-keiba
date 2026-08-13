@@ -259,8 +259,17 @@ test('【重要】平日は南関・週末は中央として扱う', () => {
 });
 
 test('対象日に開催区分のラベルが付く（画面・管理画面が使う）', () => {
-  assert.equal(resolveSaleTarget(jst('2026-08-13 12:00')).circuitLabel, '南関');
-  assert.equal(resolveSaleTarget(jst('2026-08-15 12:00')).circuitLabel, '中央');
+  // ⚠️ 曜日から導いた**目安**であって実際の開催場ではない。
+  //    「南関」「中央」と言い切らず、必ず「基本：」を付ける。
+  assert.equal(resolveSaleTarget(jst('2026-08-13 12:00')).circuitLabel, '基本：南関');
+  assert.equal(resolveSaleTarget(jst('2026-08-15 12:00')).circuitLabel, '基本：中央');
+});
+
+test('【重要】開催区分ラベルは開催場を断定しない（必ず「基本：」を付ける）', () => {
+  for (const day of ['2026-08-13 12:00', '2026-08-15 12:00']) {
+    const label = resolveSaleTarget(jst(day)).circuitLabel;
+    assert.ok(label.startsWith('基本：'), `開催場を断定している: ${label}`);
+  }
 });
 
 // ── 判定の部品 ──────────────────────────────────────────────

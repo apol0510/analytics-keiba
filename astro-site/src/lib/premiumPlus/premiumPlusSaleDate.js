@@ -141,7 +141,11 @@ export function resolveSaleTarget(nowMs, { calendar } = {}) {
   const label = parts ? `${parts.m}月${parts.d}日分` : '';
   const circuit = sellable ? circuitForDate(date) : null;
   return {
-    /** 開催区分（平日=南関 / 週末=中央）。画面・管理画面に出す */
+    /**
+     * 開催区分（平日=南関 / 週末=中央）。画面・管理画面に出す。
+     * ⚠️ ラベル（`circuitLabel`）は**目安**なので「基本：南関」/「基本：中央」。
+     *    実際の開催場は断定しない。
+     */
     circuit,
     circuitLabel: circuit ? CIRCUIT_LABEL[circuit] : null,
     ok: true,
