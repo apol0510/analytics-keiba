@@ -26,7 +26,7 @@ import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
 import { fetchProviderSuppression } from '../../src/lib/marketing/providerSuppression.js';
 import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/lib/newsletter/airtable-fetch.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
-import { lookupCustomersByEmails } from '../../src/lib/crm/customerEmailLookup.js';
+import { lookupCustomersByEmails, emailLookupErrorResponse } from '../../src/lib/crm/customerEmailLookup.js';
 import {
   FIRST_RUN_MAX_ROWS, canRunFirstImport, buildConfirmationPhrase, describeRunPlan,
   OPTIONAL_AUDIT_FIELDS, RUN_REJECT, RUN_REJECT_LABEL,
@@ -345,6 +345,13 @@ export const handler = async (event) => {
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     // ⚠️ 例外メッセージに CSV の値が混ざりうるので**そのまま返さない**
+    // 照合できずに中止したときは、CSV を分割すれば通ることを運用者へ伝える。
+    // internal error に潰すと「壊れている」と誤解され、取り込みが進まない。
+    const lookup = emailLookupErrorResponse(e);
+    if (lookup) {
+      console.error('⏹️ [customer-import-run] 照合できないため中止:', lookup.body.code);
+      return json(lookup.status, lookup.body);
+    }
     console.error('❌ [customer-import-run] 処理に失敗しました');
     return json(500, { error: 'internal error' });
   }

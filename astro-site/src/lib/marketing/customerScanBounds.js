@@ -56,6 +56,31 @@ export function escapeFormulaValue(v) {
   return str(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+/**
+ * ── Airtable Customers に**実在する**列名（2026-08-13 本番実測）──────────
+ *
+ * formula に実在しない列名を書くと Airtable は `INVALID_FILTER_BY_FORMULA` を返し、
+ * その経路は**恒久的に壊れる**（HTTP 422 → 呼び出し側で 500）。
+ * JS 側でフィルタしていたときは存在しない列が `undefined` になるだけで気付けなかったが、
+ * Airtable 側で絞る設計にした以上、**列名の誤りは即座に機能停止**になる。
+ *
+ * 2026-08-13 の本番 read-only 検証で実際に見つかった不具合:
+ *   - `ex-paid-now-free` / `logged-in-not-purchased` の 2 セグメントが 500。
+ *     原因は `ExpirationDate`（実在しない）と `LastLoginAt`（実在しない）。
+ *     正しくは `有効期限` と `最終ログイン`。
+ *
+ * **新しい列を formula で使うときは、必ずここへ追加すること。**
+ * 追加前に本番へ実在するかを確認する（`NOT({列名} = BLANK())` を投げて
+ * `INVALID_FILTER_BY_FORMULA` が返らないこと）。
+ */
+export const CUSTOMER_FORMULA_FIELDS = Object.freeze([
+  'プラン', 'PlanType', 'Status', '有効期限', 'PaidAt',
+  'LifetimeSanrenpuku', 'SanrenpukuPaidAt', '最終ログイン',
+  'PremiumPlusEligibility', 'PremiumPlusReleaseOverride',
+  'LightGrantOp', 'PremiumGrantOp',
+  'Email', '氏名',
+]);
+
 const notBlank = (f) => `NOT({${f}} = BLANK())`;
 const eqLower = (field, value) => `LOWER(TRIM({${field}} & '')) = '${escapeFormulaValue(value)}'`;
 
@@ -205,7 +230,9 @@ export function buildSegmentFormula(segmentId) {
   const free = planGroupClause(MK_PLAN.FREE);
   // 支払い実績（everPaid）の痕跡。1 つでもあれば「過去有料」になり得る
   const everPaid = `OR(${[
-    notBlank('PaidAt'), notBlank('有効期限'), notBlank('ExpirationDate'),
+    // ⚠️ `ExpirationDate` は **Airtable に存在しない**（実在するのは `有効期限`）。
+    //    書くと INVALID_FILTER_BY_FORMULA でこのセグメントが恒久的に 500 になる。
+    notBlank('PaidAt'), notBlank('有効期限'),
     '{LifetimeSanrenpuku}', notBlank('SanrenpukuPaidAt'),
   ].join(', ')})`;
 
@@ -218,7 +245,9 @@ export function buildSegmentFormula(segmentId) {
       return `AND(${free}, ${everPaid})`;
     case 'logged-in-not-purchased':
       // ログイン記録があり、支払い実績が無い
-      return `AND(OR(${notBlank('最終ログイン')}, ${notBlank('LastLoginAt')}), NOT(${everPaid}))`;
+      // ⚠️ `LastLoginAt` は **Airtable に存在しない**。ログイン記録の正本列は `最終ログイン`
+      //    （`auth/lastLoginRecord.js` の LAST_LOGIN_FIELD）。
+      return `AND(${notBlank('最終ログイン')}, NOT(${everPaid}))`;
     case 'expired':
     case 'withdrawn':
       // 元有料会員に限られる（有料 tier の痕跡がある人）
@@ -310,4 +339,56 @@ export function describeNotNarrowable({ what, hint }) {
     code: SCAN_FAIL.NOT_NARROWABLE,
     sideEffects: 'none',
   };
+}
+
+/**
+ * ── 「読まない」と決めた理由を運用者へ届けるためのエラー ─────────────────
+ *
+ * 取得を中断すること自体は正しい（少ない件数を正しい件数として見せない）。
+ * だが **理由が `internal error` になると、運用者は何をすればよいか分からない**。
+ *
+ * 2026-08-13 の本番 read-only 検証で実際に起きたこと:
+ *   `admin-comeback-grants` を絞り込みなしで呼ぶと `500 {"error":"internal error"}`。
+ *   中身は「上限に達したので絞り込んでください」という**対処可能な**理由なのに、
+ *   画面には「内部エラー」としか出ない。運用者からは**壊れている**ように見え、
+ *   「条件を足せば見られる」ことに辿り着けない。
+ *
+ * そこで、絞り込み不可・上限到達は **型付きエラー**として投げ、
+ * Function 側の catch が 400 + 理由コードへ写せるようにする。
+ * `throw` のまま握り潰さない・500 にしない、が要点。
+ */
+export class ScanBoundsError extends Error {
+  /** @param {{error: string, code: string}} body そのままレスポンス本文にできる形 */
+  constructor(body) {
+    super(body && body.error ? body.error : 'scan bounds exceeded');
+    this.name = 'ScanBoundsError';
+    this.body = body;
+    this.status = 400;
+  }
+}
+
+/** 上限に達した（絞ったが件数を確定できない） */
+export function scanLimitError(args) {
+  return new ScanBoundsError(describeScanLimit(args));
+}
+
+/** そもそも絞り込めない（無条件の全件走査になる） */
+export function notNarrowableError(args) {
+  return new ScanBoundsError(describeNotNarrowable(args));
+}
+
+/**
+ * catch した例外を **400 応答へ写す**。対象外なら null（呼び出し側は従来どおり 500）。
+ *
+ * `instanceof` だけに頼らない（バンドラ経由で別インスタンスになった場合に
+ * 静かに 500 へ戻ってしまうため、`name` と `code` でも判定する）。
+ */
+export function scanErrorResponse(e) {
+  if (!e) return null;
+  const isScan = e instanceof ScanBoundsError
+    || (e.name === 'ScanBoundsError' && e.body && typeof e.body === 'object');
+  if (!isScan) return null;
+  const body = e.body && typeof e.body === 'object' ? e.body : describeScanLimit({ what: '取得' });
+  // 副作用が無いことは必ず明示する（運用者が「途中まで書かれたのでは」と疑わないように）
+  return { status: e.status || 400, body: { sideEffects: 'none', ...body } };
 }
