@@ -87,8 +87,8 @@ test('時刻シミュレーション: 4 状態の境界がプレビューに出�
     [14 * 60 + 59, PP_INTAKE.LIMITED, '本日分 残りわずか', true],
     [15 * 60, PP_INTAKE.CLOSING, '本日分 まもなく受付終了', true],
     [16 * 60 + 29, PP_INTAKE.CLOSING, '本日分 まもなく受付終了', true],
-    [16 * 60 + 30, PP_INTAKE.CLOSED, '本日分の受付は終了しました', false],
-    [19 * 60, PP_INTAKE.CLOSED, '本日分の受付は終了しました', false],
+    [16 * 60 + 30, PP_INTAKE.CLOSED, '翌日分 受付中', true],
+    [19 * 60, PP_INTAKE.CLOSED, '翌日分 受付中', true],
   ];
   for (const [atMin, intake, label, buyable] of cases) {
     const p = snap({}, { atMin });
@@ -99,9 +99,10 @@ test('時刻シミュレーション: 4 状態の境界がプレビューに出�
   }
 });
 
-test('16:30 以降は purchaseEnabled=false / CLOSED でも商品閲覧可', () => {
+test('16:30 以降も購入可（翌日分）/ 商品閲覧も可', () => {
   const p = snap({}, { atMin: 16 * 60 + 30 });
-  assert.equal(p.purchaseEnabled, false);
+  // 2026-08-13〜: 16:30 以降は「翌日分」として購入できる
+  assert.equal(p.purchaseEnabled, true);
   assert.equal(p.showProductPage, true);
   assert.equal(p.canBrowseWhenClosed, true);
   assert.equal(p.productPageStatus, 200);
@@ -204,7 +205,8 @@ test('describePreviewVisibility: 状態ごとに説明が変わる', () => {
   assert.match(describePreviewVisibility(snap({ PremiumPlusEligibility: 'review' })), /404/);
   assert.match(describePreviewVisibility(snap({}, { phaseDaysAgo: PP_PHASE_START_DAY.PREVIEW })), /価格・購入 CTA は非表示/);
   assert.match(describePreviewVisibility(snap({}, { atMin: 10 * 60 })), /申し込み操作ができます/);
-  assert.match(describePreviewVisibility(snap({}, { atMin: 19 * 60 })), /操作不可/);
+  // 2026-08-13〜: 16:30 以降も購入できる（翌日分）
+  assert.match(describePreviewVisibility(snap({}, { atMin: 19 * 60 })), /翌日分の受付中/);
 });
 
 test('時刻候補に必須の 8 パターンが揃っている', () => {

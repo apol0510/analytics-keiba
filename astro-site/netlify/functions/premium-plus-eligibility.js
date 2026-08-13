@@ -36,6 +36,7 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import { resolveSaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import {
   buildPreviewSnapshot,
   describePreviewVisibility,
@@ -401,6 +402,8 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
 
   return json(200, {
     rows,
+    // いま販売している対象日（16:30 以降は翌日分）。運用者が「何日分を売っているか」を見る
+    saleTarget: resolveSaleTarget(now),
     measurement,
     counts: {
       total: rows.length,

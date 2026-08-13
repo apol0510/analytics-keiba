@@ -222,7 +222,7 @@ test('CLOSING: 15:00〜16:29 はまもなく受付終了', () => {
   assert.equal(computeIntakeStatus({ nowMs: SAT(16, 29) }), PP_INTAKE.CLOSING);
 });
 
-test('CLOSED: 16:30 以降は受付終了', () => {
+test('CLOSED: 16:30 以降は翌日分の受付へ切り替わる', () => {
   assert.equal(computeIntakeStatus({ nowMs: MON(16, 30) }), PP_INTAKE.CLOSED);
   assert.equal(computeIntakeStatus({ nowMs: MON(23, 59) }), PP_INTAKE.CLOSED);
   assert.equal(computeIntakeStatus({ nowMs: SAT(19, 0) }), PP_INTAKE.CLOSED, '土日でも同じ');
@@ -251,16 +251,16 @@ test('受付時刻が不正なら CLOSED（売らない側に倒す）', () => {
   assert.equal(computeIntakeStatus({ nowMs: undefined }), PP_INTAKE.CLOSED);
 });
 
-test('CLOSED: 購入操作は不可・商品と実績は閲覧可', () => {
+test('CLOSED（翌日分受付中）: 購入操作は可・商品と実績も閲覧可', () => {
   const paid = jst(2026, 7, 1, 12, 0);
   const saleDay = 1 + PP_PHASE_START_DAY.SALE;
   const now = jst(2026, 7, saleDay, 23, 0);    // 16:30 以降 = 締切後
   const r = release({ paidAtMs: paid, nowMs: now });
   assert.equal(r.phase, PP_PHASE.SALE);
   assert.equal(r.intake, PP_INTAKE.CLOSED);
-  assert.equal(r.purchaseEnabled, false, 'CLOSED で購入操作不可');
+  assert.equal(r.purchaseEnabled, true, 'CLOSED は翌日分の受付中なので購入可');
   assert.equal(r.showProductPage, true, 'CLOSED でも商品・実績は閲覧可（404 にしない）');
-  assert.equal(r.showPurchaseCta, true, 'CTA ブロック自体は残し受付終了表示を出す');
+  assert.equal(r.showPurchaseCta, true, 'CTA は残り「翌日分 受付中」を出す');
 });
 
 // ── 文言（指定文章の完全維持）──────────────────────────────────────
@@ -276,8 +276,10 @@ test('指定文章がそのまま保持されている', () => {
   assert.equal(PP_RELEASE_COPY.intake.limited.status, '本日分 残りわずか');
   assert.equal(PP_RELEASE_COPY.intake.closing.title, '本日のPremium Plus受付');
   assert.equal(PP_RELEASE_COPY.intake.closing.status, '本日分 まもなく受付終了');
-  assert.equal(PP_RELEASE_COPY.intake.closed.title, '本日分の受付は終了しました');
-  assert.equal(PP_RELEASE_COPY.intake.closed.note, '次回受付時に、このページからお申し込みいただけます。');
+  // 2026-08-13〜: 締切後は「翌日分の受付」へ切り替わる
+  assert.equal(PP_RELEASE_COPY.intake.closed.title, '翌日分のPremium Plus受付');
+  assert.equal(PP_RELEASE_COPY.intake.closed.note,
+    '本日分の受付は終了しました。いまお申し込みいただくと翌日分をお届けします。');
 });
 
 test('予告文言に金額が含まれない（PHASE 2 で価格を出さない）', () => {

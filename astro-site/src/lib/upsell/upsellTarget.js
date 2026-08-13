@@ -26,7 +26,7 @@
 
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolvePlusMemberFromFields } from '../premiumPlus/premiumPlusMember.js';
-import { resolvePremiumPlusRelease } from '../premiumPlus/premiumPlusRelease.js';
+import { resolvePremiumPlusRelease, PP_INTAKE } from '../premiumPlus/premiumPlusRelease.js';
 
 /** 管理者が選ぶ値。Airtable `UpsellTarget`（singleSelect）と 1:1。 */
 export const UPSELL_TARGET = Object.freeze({
@@ -268,7 +268,13 @@ export function resolveUpsellForCustomer({ fields, nowMs = Date.now(), sanrenpuk
 export function describeUpsellDisplay(view) {
   if (!view) return '';
   if (view.channel === UPSELL_CHANNEL.PLUS) {
-    if (view.plus.showPurchaseCta) return view.plus.purchaseEnabled ? 'Plus CTA' : 'Plus CTA（受付時間外）';
+    // ⚠️ 2026-08-13〜 16:30 以降は「受付時間外」ではなく**翌日分の受付中**。
+    //    `purchaseEnabled` は PHASE 4 なら常に true なので、
+    //    何日分を売っているか（intake）で出し分ける。
+    if (view.plus.showPurchaseCta) {
+      if (!view.plus.purchaseEnabled) return 'Plus CTA（操作不可）';
+      return view.plus.intake === PP_INTAKE.CLOSED ? 'Plus CTA（翌日分受付中）' : 'Plus CTA';
+    }
     return 'Plus 予告';
   }
   if (view.channel === UPSELL_CHANNEL.SANRENPUKU) {

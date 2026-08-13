@@ -60,9 +60,9 @@ const CASES = [
   [14, 59, PP_INTAKE.LIMITED, '本日分 残りわずか', true],
   [15, 0, PP_INTAKE.CLOSING, '本日分 まもなく受付終了', true],
   [16, 29, PP_INTAKE.CLOSING, '本日分 まもなく受付終了', true],
-  [16, 30, PP_INTAKE.CLOSED, '本日分の受付は終了しました', false],
-  [19, 0, PP_INTAKE.CLOSED, '本日分の受付は終了しました', false],
-  [23, 59, PP_INTAKE.CLOSED, '本日分の受付は終了しました', false],
+  [16, 30, PP_INTAKE.CLOSED, '翌日分 受付中', true],
+  [19, 0, PP_INTAKE.CLOSED, '翌日分 受付中', true],
+  [23, 59, PP_INTAKE.CLOSED, '翌日分 受付中', true],
 ];
 
 // ── 境界（必須ケース）────────────────────────────────────────────
@@ -140,7 +140,8 @@ test('スケジュール定数が確定仕様どおり', () => {
 
 test('購入不可は CLOSED のときだけ', () => {
   for (const [h, mi, status, , buyable] of CASES) {
-    assert.equal(buyable, status !== PP_INTAKE.CLOSED, `${h}:${mi}`);
+    // 2026-08-13〜: CLOSED は「翌日分 受付中」なので、PHASE 4 なら常に購入可
+    assert.equal(buyable, true, `${h}:${mi}`);
   }
 });
 

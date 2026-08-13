@@ -194,12 +194,13 @@ test('契約が無効なら override があっても売らない', () => {
 
 // ══ 5. 受付時間帯は変えない ═══════════════════════════════════
 
-test('即時販売でも受付終了時刻は同じに効く（16:30 以降は購入不可）', () => {
+test('即時販売でも 16:30 で対象日が翌日へ切り替わる（購入は可）', () => {
   const closed = Date.parse('2026-08-07T08:00:00.000Z');   // JST 17:00
   const p = view(immediateFields(sanrenpuku()), closed);
   assert.equal(p.phase, PP_PHASE.SALE, 'PHASE は 4 のまま');
   assert.equal(p.showProductPage, true, '商品ページは開ける');
-  assert.equal(p.purchaseEnabled, false, '購入は受付時間外なので不可');
+  // 2026-08-13〜: 16:30 以降は「翌日分」として購入できる（対象日が切り替わるだけ）
+  assert.equal(p.purchaseEnabled, true, '16:30 以降は翌日分として購入できるはず');
 });
 
 // ══ 6. 冪等・他顧客への波及なし ═══════════════════════════════

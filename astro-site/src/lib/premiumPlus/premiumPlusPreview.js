@@ -237,9 +237,15 @@ export function describePreviewVisibility(preview) {
       : '商品ページは 404。予告も表示されません（会員からは存在が見えません）。';
   }
   if (!preview.showPurchaseCta) return '商品ページを閲覧できます。価格・購入 CTA は非表示（受付準備中）。';
+  // ⚠️ 2026-08-13〜 `purchaseEnabled` は PHASE 4 なら常に true（16:30 以降も買える）。
+  //    ここで purchaseEnabled を分岐に使うと**片方の文言が死ぬ**ので、
+  //    「何日分を売っているか」＝受付状態で分ける。
+  if (preview.intake === PP_INTAKE.CLOSED) {
+    return '商品ページ・価格・購入 CTA が表示され、申し込み操作ができます（翌日分の受付中）。';
+  }
   return preview.purchaseEnabled
     ? '商品ページ・価格・購入 CTA が表示され、申し込み操作ができます。'
-    : '商品ページ・価格は表示されますが、購入 CTA は操作不可です（本日分の受付終了）。';
+    : '商品ページ・価格は表示されますが、購入 CTA は操作できません。';
 }
 
 export { PP_PHASE, PP_INTAKE };

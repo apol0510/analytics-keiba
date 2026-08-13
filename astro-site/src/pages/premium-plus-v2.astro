@@ -30,6 +30,8 @@ import ppResultsRaw from '../data/premiumPlusResults.json';
 import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
 import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusReceiptCardV2.astro';
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
+// 「いま売っているのは何日分か」の単一源。表示・注文はここだけを使う
+import { resolveSaleTarget, buildSaleProductName } from '../lib/premiumPlus/premiumPlusSaleDate.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 import { recordPlusPageView } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
@@ -82,6 +84,8 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
   });
 }
 const ppIntake = intakeCopy(ppRelease.intake);
+// 対象日（16:30 以降は翌日分）。**購入ボタンの近くに必ず出す**
+const ppSale = resolveSaleTarget(ppNow);
 
 // --- 実閲覧の記録（商品ページ到達）---
 // ここまで来た時点で SSR 認可を通っており recordId が確定している。クライアント JS に任せると
@@ -606,6 +610,13 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     }
     .pp-intake-title { font-size: 0.82rem; font-weight: 700; color: var(--muted); margin: 0 0 0.35rem; }
     .pp-intake-status { font-size: 1rem; font-weight: 900; margin: 0; }
+    /* 何日分を買うのか。購入ボタンのすぐ上に置く */
+    .pp-sale-target { margin: 0 0 .6rem; font-size: 1.02rem; font-weight: 900; color: var(--gold); }
+    .pp-sale-target-badge {
+      display: inline-block; margin-left: .5rem; font-size: .68rem; font-weight: 800;
+      padding: .12rem .5rem; border-radius: 999px; vertical-align: middle;
+      background-color: rgba(245,196,81,.12); color: var(--gold); border: 1px solid rgba(245,196,81,.45);
+    }
     .pp-intake-note { font-size: 0.74rem; color: var(--muted); margin: 0.45rem 0 0; line-height: 1.7; }
     .pp-intake.open { border-color: rgba(52, 211, 153, 0.4); }
     .pp-intake.open .pp-intake-status { color: var(--green); }
@@ -1143,6 +1154,16 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
             </div>
             <p class="price-note">単品購入（サブスクリプションではありません）</p>
 
+            {/* 注文へ運ぶ対象日。サーバーが出し直して確定させるが、
+                画面が何日分を出していたかを記録として残す */}
+            <input type="hidden" id="ppSaleTargetDate" value={ppSale.date} />
+            <input type="hidden" id="ppSaleProductName" value={buildSaleProductName(ppSale.label, 68000)} />
+            {/* 何日分を買うのかをボタンのすぐ上に出す（16:30 以降は翌日分） */}
+            <p class="pp-sale-target" data-sale-date={ppSale.date}>
+              <span class="pp-sale-target-label">{ppSale.productLabel}</span>
+              {ppSale.isNextDay && <span class="pp-sale-target-badge">翌日分</span>}
+            </p>
+
             <button class="cta-button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>
               🏦 銀行振込で購入する
             </button>
@@ -1567,7 +1588,10 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         transferAmount: document.getElementById('transferAmount').value,
         transferName: document.getElementById('fullName').value,
         remarks: document.getElementById('remarks').value,
-        productName: 'Premium Plus (¥68,000)',
+        // 商品名に対象日を含める（管理者通知・お客様控え・申請履歴が運ぶ）
+        productName: document.getElementById('ppSaleProductName')?.value || 'Premium Plus (¥68,000)',
+        // 対象日そのもの。**サーバーが出し直して確定させる**（画面の値は参考）
+        saleTargetDate: document.getElementById('ppSaleTargetDate')?.value || null,
           paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
         timestamp: new Date().toISOString(),
       };

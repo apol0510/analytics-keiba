@@ -174,8 +174,13 @@ test('「残りわずか」を件数・在庫・販売上限と連動させな�
   assert.match(fn.slice(0, fn.indexOf('\n}')), /PP_INTAKE_SCHEDULE\.limitedFromMin/);
 });
 
-test('purchaseEnabled は CLOSED のときだけ false（override 経由でも同じ）', () => {
-  assert.match(stripComments(RELEASE_LIB), /purchaseEnabled:\s*isSale && intake !== PP_INTAKE\.CLOSED/);
+test('purchaseEnabled は PHASE 4 なら常に true（16:30 以降は翌日分として販売）', () => {
+  // 2026-08-13〜: 受付締切で「売らない」のではなく、対象日が翌日へ切り替わる。
+  // 買えない時間帯を作らないため、CLOSED を購入不可の条件に戻さないこと。
+  const code = stripComments(RELEASE_LIB);
+  assert.match(code, /purchaseEnabled:\s*isSale,/);
+  assert.doesNotMatch(code, /purchaseEnabled:\s*isSale && intake !== PP_INTAKE\.CLOSED/,
+    '16:30 以降を購入不可へ戻している');
 });
 
 // ── 管理者プレビュー（read-only・会員セッションを作らない）────────

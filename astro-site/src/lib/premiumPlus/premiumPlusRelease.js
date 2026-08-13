@@ -157,7 +157,15 @@ export const PP_INTAKE = Object.freeze({
   LIMITED: 'limited',
   /** 15:00〜16:29 JST */
   CLOSING: 'closing',
-  /** 16:30〜23:59 JST（購入不可） */
+  /**
+   * 16:30〜23:59 JST。**翌日分の受付中**（購入可）。
+   *
+   * ⚠️ 2026-08-13 以前は「本日分の受付は終了しました」で**購入不可**だった。
+   *    商品は毎日あるのに締切後の購入意欲を捨てていたため、対象日を翌日へ
+   *    切り替えて売る形にした。買えない時間帯は無い。
+   *    **値 `closed` は互換のため変えない**（保存済みデータ・既存判定を壊さない）。
+   *    対象日そのものは `premiumPlusSaleDate.js` が決める。
+   */
   CLOSED: 'closed',
 });
 
@@ -173,7 +181,7 @@ export const PP_CIRCUIT = Object.freeze({
  *   00:00〜12:29 → open    「本日分 受付中」            購入可
  *   12:30〜14:59 → limited 「本日分 残りわずか」        購入可
  *   15:00〜16:29 → closing 「本日分 まもなく受付終了」  購入可
- *   16:30〜23:59 → closed  「本日分の受付は終了しました」購入**不可**
+ *   16:30〜23:59 → closed  「翌日分 受付中」            購入可（**対象日が翌日**）
  *
  * ⚠️ 開催区分（中央 / 南関 / 昼開催 / ナイター）による分岐は**廃止**した。
  *    Premium Plus は曜日・会場に関わらずこの JST 共通時間だけを使う。
@@ -242,10 +250,11 @@ export const PP_RELEASE_COPY = Object.freeze({
       status: '本日分 まもなく受付終了',
       note: '',
     }),
+    // ⚠️ 名前は closed のままだが、**意味は「翌日分の受付中」**
     closed: Object.freeze({
-      title: '本日分の受付は終了しました',
-      status: '本日分の受付は終了しました',
-      note: '次回受付時に、このページからお申し込みいただけます。',
+      title: '翌日分のPremium Plus受付',
+      status: '翌日分 受付中',
+      note: '本日分の受付は終了しました。いまお申し込みいただくと翌日分をお届けします。',
     }),
   }),
 });
@@ -630,7 +639,9 @@ export function resolvePremiumPlusRelease(input) {
     showProductPage: phase >= PP_PHASE.PREVIEW,
     showPurchaseCta: isSale,
     // STEP 7
-    purchaseEnabled: isSale && intake !== PP_INTAKE.CLOSED,
+    // 16:30 以降も**翌日分として購入できる**（対象日が切り替わるだけ）。
+    // 以前はここで CLOSED を弾いて買えなくしていた。
+    purchaseEnabled: isSale,
     intake,
     circuit: resolvedCircuit,
   };
