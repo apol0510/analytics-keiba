@@ -154,3 +154,61 @@ test('【重要】どの経路もログに CSV の中身・アドレスを出さ
     }
   }
 });
+
+// ── formula が実在しない列を参照しないこと ─────────────────────────
+//
+// 2026-08-13 本番実測: `ExpirationDate` / `LastLoginAt` は Airtable に存在せず、
+// これを含む formula は INVALID_FILTER_BY_FORMULA（HTTP 422）になり、
+// `ex-paid-now-free` / `logged-in-not-purchased` の 2 セグメントが恒久的に 500 だった。
+// JS でフィルタしていた頃は存在しない列が undefined になるだけで気付けなかった。
+import {
+  CUSTOMER_FORMULA_FIELDS,
+  buildSegmentFormula,
+  buildCustomerListFormula,
+  buildComebackCandidateFormula,
+  buildGrantOperationFormula,
+  buildAnyGrantOperationFormula,
+} from './customerScanBounds.js';
+
+const SEGMENT_IDS = ['free-all', 'free-recent-login', 'free-dormant', 'ex-paid-now-free',
+  'expired', 'withdrawn', 'opened-not-logged-in', 'logged-in-not-purchased'];
+
+/** formula 文字列から `{列名}` をすべて抜き出す */
+const fieldsIn = (f) => [...new Set([...String(f || '').matchAll(/\{([^}]+)\}/g)].map((m) => m[1]))];
+
+test('【重要】全 formula が実在する列だけを参照する', () => {
+  const allowed = new Set(CUSTOMER_FORMULA_FIELDS);
+  const formulas = [
+    ...SEGMENT_IDS.map((id) => [`segment:${id}`, buildSegmentFormula(id)]),
+    ['customerList', buildCustomerListFormula({ plan: ['free', 'premium', 'light', 'premium_sanrenpuku'], contract: ['expired', 'active', 'none'], premiumPlus: ['eligible', 'unset'] })],
+    ['comeback', buildComebackCandidateFormula({ contract: ['expired'], plan: ['premium'] })],
+    ['comeback(空)', buildComebackCandidateFormula({})],
+    ['grantOp', buildGrantOperationFormula('op-123')],
+    ['anyGrantOp', buildAnyGrantOperationFormula()],
+  ];
+  for (const [label, f] of formulas) {
+    for (const field of fieldsIn(f)) {
+      assert.ok(allowed.has(field), `${label} が実在しない列を参照: {${field}}`);
+    }
+  }
+});
+
+test('【重要】存在しないことが確定した列名を formula へ書き戻さない', () => {
+  const src = readFileSync(new URL('./customerScanBounds.js', import.meta.url), 'utf8');
+  // コメント行は除外して、コードに残っていないことだけを見る
+  const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  for (const bad of ['ExpirationDate', 'LastLoginAt']) {
+    assert.ok(!code.includes(bad), `${bad} は Airtable に存在しない（コードに残っている）`);
+  }
+});
+
+test('ログイン記録は正本の列名を使う', () => {
+  const f = buildSegmentFormula('logged-in-not-purchased');
+  assert.ok(fieldsIn(f).includes('最終ログイン'), 'ログイン列が正本ではない');
+});
+
+test('壊れていた 2 セグメントが formula を返す（null に退化させない）', () => {
+  for (const id of ['ex-paid-now-free', 'logged-in-not-purchased']) {
+    assert.equal(typeof buildSegmentFormula(id), 'string', `${id} の formula が無い`);
+  }
+});

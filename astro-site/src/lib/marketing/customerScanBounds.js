@@ -56,6 +56,31 @@ export function escapeFormulaValue(v) {
   return str(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+/**
+ * ── Airtable Customers に**実在する**列名（2026-08-13 本番実測）──────────
+ *
+ * formula に実在しない列名を書くと Airtable は `INVALID_FILTER_BY_FORMULA` を返し、
+ * その経路は**恒久的に壊れる**（HTTP 422 → 呼び出し側で 500）。
+ * JS 側でフィルタしていたときは存在しない列が `undefined` になるだけで気付けなかったが、
+ * Airtable 側で絞る設計にした以上、**列名の誤りは即座に機能停止**になる。
+ *
+ * 2026-08-13 の本番 read-only 検証で実際に見つかった不具合:
+ *   - `ex-paid-now-free` / `logged-in-not-purchased` の 2 セグメントが 500。
+ *     原因は `ExpirationDate`（実在しない）と `LastLoginAt`（実在しない）。
+ *     正しくは `有効期限` と `最終ログイン`。
+ *
+ * **新しい列を formula で使うときは、必ずここへ追加すること。**
+ * 追加前に本番へ実在するかを確認する（`NOT({列名} = BLANK())` を投げて
+ * `INVALID_FILTER_BY_FORMULA` が返らないこと）。
+ */
+export const CUSTOMER_FORMULA_FIELDS = Object.freeze([
+  'プラン', 'PlanType', 'Status', '有効期限', 'PaidAt',
+  'LifetimeSanrenpuku', 'SanrenpukuPaidAt', '最終ログイン',
+  'PremiumPlusEligibility', 'PremiumPlusReleaseOverride',
+  'LightGrantOp', 'PremiumGrantOp',
+  'Email', '氏名',
+]);
+
 const notBlank = (f) => `NOT({${f}} = BLANK())`;
 const eqLower = (field, value) => `LOWER(TRIM({${field}} & '')) = '${escapeFormulaValue(value)}'`;
 
@@ -205,7 +230,9 @@ export function buildSegmentFormula(segmentId) {
   const free = planGroupClause(MK_PLAN.FREE);
   // 支払い実績（everPaid）の痕跡。1 つでもあれば「過去有料」になり得る
   const everPaid = `OR(${[
-    notBlank('PaidAt'), notBlank('有効期限'), notBlank('ExpirationDate'),
+    // ⚠️ `ExpirationDate` は **Airtable に存在しない**（実在するのは `有効期限`）。
+    //    書くと INVALID_FILTER_BY_FORMULA でこのセグメントが恒久的に 500 になる。
+    notBlank('PaidAt'), notBlank('有効期限'),
     '{LifetimeSanrenpuku}', notBlank('SanrenpukuPaidAt'),
   ].join(', ')})`;
 
@@ -218,7 +245,9 @@ export function buildSegmentFormula(segmentId) {
       return `AND(${free}, ${everPaid})`;
     case 'logged-in-not-purchased':
       // ログイン記録があり、支払い実績が無い
-      return `AND(OR(${notBlank('最終ログイン')}, ${notBlank('LastLoginAt')}), NOT(${everPaid}))`;
+      // ⚠️ `LastLoginAt` は **Airtable に存在しない**。ログイン記録の正本列は `最終ログイン`
+      //    （`auth/lastLoginRecord.js` の LAST_LOGIN_FIELD）。
+      return `AND(${notBlank('最終ログイン')}, NOT(${everPaid}))`;
     case 'expired':
     case 'withdrawn':
       // 元有料会員に限られる（有料 tier の痕跡がある人）
