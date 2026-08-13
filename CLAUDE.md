@@ -1,36 +1,36 @@
 # CLAUDE.md - analytics-keiba 司令塔
 
+> **このファイルは索引と「破ってはいけない約束」だけを持つ。**
+> 仕様の詳細は `astro-site/docs/` 配下が**正本**。ここに詳細を書き戻さないこと
+> （毎セッション読み込まれるため、肥大すると本当に読むべきルールが埋もれる）。
+
 ## プロジェクト識別
 
 ```
 プロジェクト名: analytics-keiba
 作業ディレクトリ: /Users/user/Projects/analytics-keiba/astro-site
-本番URL: https://analytics.keiba.link （移行後）
-旧URL: https://nankan-analytics.keiba.link
+本番URL: https://analytics.keiba.link
 コンセプト: 南関競馬 + 中央（JRA）競馬 統合AI予想プラットフォーム
 前身: /Users/user/Projects/nankan-analytics
-参照: /Users/user/Projects/keiba-intelligence (先行実装)
+参照: /Users/user/Projects/keiba-intelligence（先行実装・**独立運用**）
 ```
 
-## 🌐 本番 URL ルール（運用厳守 / 2026-05-29 集約）
+---
 
-| 項目 | 値 |
-|---|---|
-| **本番 URL** | `https://analytics.keiba.link/` |
-| **使用禁止 URL** | `https://analytics.keiba.jp/`（誤記・存在しない）|
-| **Netlify サブドメイン** | `https://*.netlify.app/` は **Deploy Preview 専用**。本番案内に使わない |
+# 実装担当としての責任
 
-### 禁止事項
+Claudeは、ただのコード記述係ではなく、実装から検証まで担当するエンジニアとして行動する。
 
-- `analytics.keiba.jp` を本番 URL として使わない / 案内しない
-- Netlify サブドメイン (`analytics-keiba.netlify.app` / `deploy-preview-NN--analytics-keiba.netlify.app`) を本番案内・目視確認 URL として使わない
-- 本番確認 URL を **推測で生成しない**
-- ドメインを記憶や雰囲気で補完しない
-- 不明な場合は **ユーザー確認を取る**
+- 変更前に既存仕様・関連コード・既存テストを確認する。
+- 変更には、必要なテストの追加または更新を含める。
+- 実装後は関連テスト、lint、型検査、build、safety checkを可能な範囲で自ら実行する。
+- 失敗した場合は報告だけで止まらず、原因を修正して再実行する。
+- テスト未実行、失敗中、未検証の状態を「完成」と報告しない。
+- 外部API・DB・ファイル操作は、失敗・空データ・タイムアウト・再実行を考慮し、エラーを握り潰さず安全側に処理する。
+- 重要な不具合修正では、先に再現テストを作り、修正後に再発しないことを確認する。
+- 完成条件は「コードを書いたこと」ではなく、要求された動作を検証できたこととする。
 
-### 該当する操作
-
-PR description の本番リンク / ユーザーへの本番反映確認案内 / 目視確認の指示 / 外部ドキュメント生成時の URL すべて。
+---
 
 ## 🚨 最重要：AI作業ルール 🚨
 
@@ -42,1333 +42,309 @@ PR description の本番リンク / ユーザーへの本番反映確認案内 /
 【完了条件】
 ```
 
-### AI作業の絶対禁止事項
+### 絶対禁止事項
 
-1. **推測でコードを書かない** - Readツールで実ファイルを確認
+1. **推測でコードを書かない** — Read ツールで実ファイルを確認する
 2. **指示されていない変更を勝手に広げない**
-3. **完了条件を満たさない完了宣言の禁止**
+3. **完了条件を満たさない完了宣言をしない**
 4. **数値修正は修正前後の比較を必ず出す**（表形式）
-5. **commit前にgit diffを確認する**
+5. **commit 前に `git diff` を確認する**
 6. **本番反映前に確認方法を示す**
+7. **検証を「一時的に無効化」しない**（CI・safety check・guard すべて）
+8. **このファイル（CLAUDE.md）へ仕様の詳細を書き戻さない** — 下記「文書の置き場所」に従う
 
-## 🧭 修正対象範囲ルール（4領域横断確認 / 2026-05-24 集約）
+### 文書の置き場所（CLAUDE.md を再肥大させない）
 
-表示・ロジック・データ反映・UI修正・文言修正・不具合修正を行う場合は、
-**原則として以下の 4 領域すべてを対象確認範囲に含める**こと。
-一部だけを修正して「完了」扱いにしてはいけない。
+CLAUDE.md は**毎セッション全文が読み込まれる**。詳細を戻すと、守るべき禁止事項が埋もれる。
 
-| # | 領域 | 主な該当ページ |
+| 書く内容 | 置き場所 |
+|---|---|
+| 禁止事項・停止条件・不変条件（1〜3 行で言い切れるもの） | **CLAUDE.md** |
+| 仕様・手順・閾値・フィールド一覧・経緯・インシデント記録 | `astro-site/docs/` の**正本** |
+
+- 新しい仕様を書くときは **既存の正本を先に探す**。無ければ新規 doc を作る
+- **新規 doc は必ず CLAUDE.md の「ドキュメント索引」へ 1 行追加**する（到達不能な doc を作らない）
+- 同じ規則を CLAUDE.md と doc の両方に**詳細まで**書かない（正本は 1 つ）
+
+### 停止して確認を取る操作
+
+PR の merge / production deploy / 本番データ書込み / env の変更 / queue 登録 / 実送信 /
+実顧客レコードの変更。**これらは承認前に必ず止まる。**
+
+### 自律完遂の運用
+
+段取り・完了条件・報告様式は [`docs/AUTONOMOUS_DELIVERY.md`](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
+
+---
+
+## 🌐 本番 URL ルール（運用厳守）
+
+| 項目 | 値 |
+|---|---|
+| **本番 URL** | `https://analytics.keiba.link/` |
+| **使用禁止 URL** | `https://analytics.keiba.jp/`（誤記・存在しない）|
+| **Netlify サブドメイン** | `https://*.netlify.app/` は **Deploy Preview 専用**。本番案内に使わない |
+
+**禁止**: 本番確認 URL を推測で生成しない。ドメインを記憶や雰囲気で補完しない。
+不明なら**ユーザー確認を取る**。PR 説明・本番反映確認の案内・目視確認の指示・
+外部ドキュメントの URL すべてに適用する。
+
+---
+
+## 🧭 修正対象範囲ルール（4領域横断確認）
+
+表示・ロジック・データ反映・UI・文言・不具合修正は、**原則 4 領域すべてを確認範囲に含める**。
+一部だけ直して「完了」扱いにしない。
+
+| # | 領域 | ページ |
 |---|---|---|
-| 1 | 中央競馬（JRA）**無料版** | `src/pages/free-prediction/jra.astro` |
-| 2 | 中央競馬（JRA）**有料版** | `src/pages/premium-prediction/jra.astro` |
-| 3 | 南関競馬（NANKAN）**無料版** | `src/pages/free-prediction/nankan.astro` |
-| 4 | 南関競馬（NANKAN）**有料版** | `src/pages/premium-prediction/nankan.astro` |
+| 1 | JRA **無料** | `src/pages/free-prediction/jra.astro` |
+| 2 | JRA **有料** | `src/pages/premium-prediction/jra.astro` |
+| 3 | NANKAN **無料** | `src/pages/free-prediction/nankan.astro` |
+| 4 | NANKAN **有料** | `src/pages/premium-prediction/nankan.astro` |
 
-### 必ず 4 領域を横断確認すべき修正
+**必ず横断確認する対象**: 指数表示 / 総合評価 / 買い目 / 不要馬 / 過去走 / 特徴量・評価ポイント /
+レース一覧・詳細 / アーカイブ結果 / 取込・変換ロジック / 表示文言・演出 UI。
 
-以下のいずれかに該当する場合は、4 領域すべてを必ず差分確認・整合性確認すること:
-
-- 指数表示
-- 総合評価表示
-- 買い目表示
-- 不要馬表示
-- 過去走表示
-- 特徴量・評価ポイント表示
-- レース一覧／詳細ページ表示
-- アーカイブ結果表示
-- データ取込・変換ロジック（importPrediction*.js / importResults*.js / featureScores.js / osaeClassification.js など）
-- 表示文言・演出 UI
-
-### 特定領域のみが対象の場合（例外運用）
-
-修正内容が明確に特定領域のみを対象としている場合は、**作業前または報告時に以下を必ず明記**すること:
-
-- **今回の対象範囲**（例: JRA 有料版のみ）
-- **対象外とした範囲**（例: JRA 無料版 / NANKAN 両版）
-- **対象外にした理由**（例: nankan には該当 HTML/CSS が無い・該当ロジックを使っていない 等）
-- **中央／南関、無料／有料のどこに影響する可能性があるか**
-
+**特定領域のみが対象の場合**は、作業前または報告時に
+**対象範囲 / 対象外とした範囲 / 対象外にした理由 / 中央・南関・無料・有料への影響**を明記する。
 明記なしで一領域だけ修正して push することは禁止。
 
-### 目的
+> 過去事例（2026-05-24）: JRA 有料版の `総合評価★` を `AI総合指数` へ移行した際、
+> 無料 JRA に旧ブロックが残り、ユーザー指摘で発覚した。
 
-- 片側だけ直って、もう片側が旧仕様のまま残る事故を防ぐ
-- 無料版だけ直って、有料版が壊れる事故を防ぐ
-- 中央と南関で**意図しない仕様差**が生じる事故を防ぐ
+パリティ検証: `npm run check:jra-nankan-parity`
 
-過去事例（2026-05-24）: JRA 有料版の `総合評価★` を廃止して `AI総合指数` に移行
-した際、無料版 JRA に同じ `総合評価★` ブロックが残り続け、ユーザー指摘で初めて
-発覚した。同種の事故再発防止のためこのルールを集約。
+---
 
-### 関連する単一源・パリティ検証
+## 📚 ドキュメント索引（**正本はこちら**）
 
-- `src/utils/osaeClassification.js` — 抑え/不要馬判定の単一源
-- `src/lib/shared-prediction-logic.js` — 指数表示用関数 (`getDisplayComputerIndex` / `formatDisplayComputerIndex`)
-- `npm run check:jra-nankan-parity` — JRA 有料版が NANKAN 有料版の構造に揃っているか検証
-- `npm run check:safety` — 上記を含む全 safety check
+### 予想・表示
 
-## 📊 データフロー
+| 領域 | 正本 |
+|---|---|
+| 予想ロジック（スコア・役割決定） | [`PREDICTION_LOGIC.md`](./astro-site/docs/PREDICTION_LOGIC.md) |
+| 買い目生成（メイン5点 / 通常2段 / 抑え判定） | [`MAIN_RACE_BETTING.md`](./astro-site/docs/MAIN_RACE_BETTING.md) |
+| 購入点数・回収率 | [`BET_POINT_LOGIC.md`](./astro-site/docs/BET_POINT_LOGIC.md) |
+| 指数表示（raw − 1 / AI総合指数） | [`DISPLAY_INDEX_RULES.md`](./astro-site/docs/DISPLAY_INDEX_RULES.md) |
+| データ取込フロー・二段防御 | [`DATA_FLOW.md`](./astro-site/docs/DATA_FLOW.md) |
+| CI safety check | [`SAFETY_CHECKS.md`](./astro-site/docs/SAFETY_CHECKS.md) |
+| 旧 KI 風ブロックの再混入防止 | [`KI_RELIC_GUARDS.md`](./astro-site/docs/KI_RELIC_GUARDS.md) / [`PREMIUM_JRA_RULES.md`](./astro-site/docs/PREMIUM_JRA_RULES.md) / [`FREE_JRA_RULES.md`](./astro-site/docs/FREE_JRA_RULES.md) |
+| archive 同期・取込要否の監視契約 | [`ARCHIVE_SYNC_MONITORING.md`](./astro-site/docs/ARCHIVE_SYNC_MONITORING.md) |
+| keiba-intelligence との分離（独立運用） | [`KI_INDEPENDENCE.md`](./astro-site/docs/KI_INDEPENDENCE.md) |
 
-```
-keiba-data-shared-admin（入力）
-  │ [ペア揃いガード] racebook + computer の両方が揃ったときだけ発火
-  ↓ repository_dispatch (prediction-updated / results-updated)
-.github/workflows/import-on-dispatch.yml
-.github/workflows/import-results-on-dispatch.yml
-  ↓
-astro-site/scripts/importPrediction{,Jra}.js
-  │ [中身 date 検証ガード] ±1日マージで拾ったファイルも中身 date が
-  │ 指定日と一致するもののみ採用
-astro-site/scripts/importResults{,Jra}.js
-  ↓
-astro-site/src/data/archive{,Jra}.json
-  ↓ 自動commit/push
-Netlify自動ビルド→本番反映
-```
+### 商品・導線
 
-### 📊 入力データの構成（前提）
+| 領域 | 正本 |
+|---|---|
+| Premium Plus（1日1鞍・単品） | [`PREMIUM_PLUS.md`](./astro-site/docs/PREMIUM_PLUS.md) / [`PREMIUM_PLUS_STAGED_RELEASE.md`](./astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md) / [`PREMIUM_PLUS_STORAGE_DESIGN.md`](./astro-site/docs/PREMIUM_PLUS_STORAGE_DESIGN.md) |
+| 有料実績ショーケース | [`RESULTS_SHOWCASE.md`](./astro-site/docs/RESULTS_SHOWCASE.md) |
+| 販売導線の制御（UpsellTarget） | [`UPSELL_TARGET.md`](./astro-site/docs/UPSELL_TARGET.md) |
 
-予想ページに表示されるデータは、admin 側の **2 つの入力経路** から成る：
+### 顧客・決済・メール
 
-| admin 経路 | 役割 | 取込元パス（keiba-data-shared） |
-|---|---|---|
-| `/admin/computer-manager` | **予想本体**（コンピ指数 + 印 + 役割振り分け） | `{cat}/predictions/computer/YYYY/MM/YYYY-MM-DD-{CODE}.json` |
-| `/admin/race-data-importer` | **補完情報**（騎手・調教師・斤量・性齢・近走など、表示に必須の値） | `{cat}/racebook/YYYY/MM/YYYY-MM-DD-{CODE}.json` |
+| 領域 | 正本 |
+|---|---|
+| ログイン（マジックリンク） | [`AUTH_LOGIN.md`](./astro-site/docs/AUTH_LOGIN.md) / [`AUTH_SESSION_DESIGN.md`](./astro-site/docs/AUTH_SESSION_DESIGN.md) |
+| 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
+| 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
+| 顧客マーケティング管理 | [`CUSTOMER_MARKETING.md`](./astro-site/docs/CUSTOMER_MARKETING.md) / [`CAMPAIGN_SEQUENCE.md`](./astro-site/docs/CAMPAIGN_SEQUENCE.md) / [`ENGAGEMENT_SUPPRESSION.md`](./astro-site/docs/ENGAGEMENT_SUPPRESSION.md) |
+| カムバック施策（無料特典 + 割引オファー） | [`COMEBACK_GRANTS.md`](./astro-site/docs/COMEBACK_GRANTS.md) |
+| SendGrid Event Webhook | [`SENDGRID_WEBHOOK.md`](./astro-site/docs/SENDGRID_WEBHOOK.md) / [`EMAIL_EVENT_LEDGER.md`](./astro-site/docs/EMAIL_EVENT_LEDGER.md) / [`DELIVERY_MEASUREMENT.md`](./astro-site/docs/DELIVERY_MEASUREMENT.md) |
+| 顧客重複整理 | [`CUSTOMER_DEDUPE.md`](./astro-site/docs/CUSTOMER_DEDUPE.md) / [`CUSTOMERS_DEDUP_GUIDE.md`](./astro-site/docs/CUSTOMERS_DEDUP_GUIDE.md) |
+| ポイント交換 | [`POINT_EXCHANGE_FULFILLMENT.md`](./astro-site/docs/POINT_EXCHANGE_FULFILLMENT.md) |
+| 管理画面の絞り込み用語 | [`ADMIN_FILTER_DICTIONARY.md`](./astro-site/docs/ADMIN_FILTER_DICTIONARY.md) |
+| メルマガ基盤（Airtable 設計 / プレビュー / backfill） | [`NEWSLETTER_AUTOMATION_AIRTABLE_DESIGN.md`](./astro-site/docs/NEWSLETTER_AUTOMATION_AIRTABLE_DESIGN.md) / [`NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md`](./astro-site/docs/NEWSLETTER_AIRTABLE_SETUP_CHECKLIST.md) / [`NEWSLETTER_PREVIEW_USAGE.md`](./astro-site/docs/NEWSLETTER_PREVIEW_USAGE.md) / [`NEWSLETTER_BRAND_BACKFILL_SPEC.md`](./astro-site/docs/NEWSLETTER_BRAND_BACKFILL_SPEC.md) / [`NEWSLETTER_CUSTOMERS_EXISTING_FIELDS_AUDIT.md`](./astro-site/docs/NEWSLETTER_CUSTOMERS_EXISTING_FIELDS_AUDIT.md) |
 
-- **予想の本体は computer-manager**。コンピ指数と印・役割振り分けはこちらから来る
-- **race-data-importer は補完**。予想ロジック自体には使わないが、騎手・調教師・斤量・
-  性齢・近走など**ページ表示やfeatureScores計算に必須**の値を埋める
-- 両方揃って初めて完全な予想ページが描画できる → だから dispatch も「両方揃いガード」
+### 移設の対応表
 
-### 🛡️ 二段防御: ペア揃いガード + 中身 date 検証（2026-05-23 集約）
+CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの全件対応表は
+[`CLAUDE_MD_MIGRATION_AUDIT.md`](./astro-site/docs/CLAUDE_MD_MIGRATION_AUDIT.md)。
 
-`prediction-updated` dispatch の取込で **前日データが当日 prediction に混入する**
-事故（2026-05-24 案件: 36レース中24レースが23日と完全同一）を恒久的に防ぐため、
-入力側と取込側に**二段の防御**を入れる。
+---
 
-#### Step 1: 入力側ガード（`keiba-data-shared-admin/netlify/lib/pair-guard.mjs`）
-- `racebook` JSON と `computer` JSON の両方が `keiba-data-shared` に揃ったときだけ
-  `prediction-updated` dispatch を発火
-- race-data-importer / computer-manager のどちらが先でも、**後勝ちで1回**発火
-- 詳細は admin 側 CLAUDE.md「🧠 keiba-intelligence連携」参照
+## 🚫 領域別の不変条件（詳細は各正本へ）
 
-#### Step 2: 取込側ガード（`astro-site/scripts/importPredictionJra.js`）
-- `fetchRacebookData` 内で **rbData.date が指定日と一致するもののみ採用**
-- ±1日マージロジック自体は維持（「ファイル名は前日付だが中身は当日」運用の救済）
-- admin ガードをすり抜けた場合の追加防御
+破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
 
-#### 触ってはいけないこと
-- ±1日マージロジックを削除しない（2026-05-15 案件の救済機能）
-- 中身 date 検証ガードを無効化しない（24日案件の追加防御）
-- 入力側ガードと取込側ガードは**両方で1セット**。片方だけ無効化しない
+### 単一源を再実装しない
 
-#### 検知時のログ
-- 入力側: `⏸️ [PairGuard] dispatch保留: ...` （Netlify Functions ログ）
-- 取込側: `⏭️ [RACEBOOK-GUARD] ... スキップ（中身 date=... ≠ 指定日 ...）`
-  （GitHub Actions ログ）
+| 判定 | 単一源 |
+|---|---|
+| 抑え / 不要馬 | `src/utils/osaeClassification.js` |
+| AI総合指数の表示 | `src/lib/shared-prediction-logic.js` の `getHorseAiIndex()` |
+| メイン判定・買い目生成 | `src/utils/mainRaceBetting.js` |
+| 販売導線の選択 | `src/lib/upsell/upsellTarget.js` |
+| マーケ対象判定 | `src/lib/marketing/customerMarketingAudience.js` |
+| 銀行振込の書込みフィールド | `src/lib/payments/bankPaymentFlow.js` |
+| 権限（entitlement） | `src/lib/entitlements/resolveEntitlements.js` |
 
-## 🛡️ 旧フォーマット禁止
+ページ側・Function 側にローカル判定を再実装しない。
+
+**重み・閾値・判定基準を変更したら、コードと該当する正本 MD を必ず両方更新する**
+（予想ロジックの重み / 購入点数の閾値 / 段階公開の日数 など）。
+片方だけ直すと、次に読む人が古い方を信じる。
+
+### 表示
+
+- **外部由来の元指数をそのまま画面に出さない。表示は必ず `raw − 1`。**
+  JSX に `{horse.computerIndex}` / `{horse.sourceComputerIndex}` を直接埋めるのは禁止
+- AI総合指数のフォールバックに `pt` / `totalScore` / `displayScore` / `rawScore` /
+  `confidence` / `score` を使わない（別スケール。100 超の異常値になる）
+- 壊れた馬データは**取込側 (sanitize)** で直す。表示側で `)` を replace 等の隠蔽をしない
+
+### 旧フォーマット禁止
 
 | 禁止（旧） | 必須（新） |
 |---|---|
 | `raceResults` ❌ | `races` ✅ |
 | `honmeiHit` ❌ | `isHit` ✅ |
 | `umatanHit` ❌ | `hitLines` ✅ |
-| `sanrenpukuHit` ❌ | - |
+| `sanrenpukuHit` ❌ | （廃止・後継なし） |
 
 検証: `npm run validate:archive`
 
-## 📊 購入点数ロジック
+### 買い目
 
-archiveResults の購入点数・回収率は仮回収率に応じた 3 段階方式。
-詳細仕様は `astro-site/docs/BET_POINT_LOGIC.md` を参照。
-閾値を変更する場合は **コードと MD を必ず両方更新**すること。
+- メインレースは **一方向馬単 `→` 最大 5 点**（裏目は買わない＝不的中）
+- 通常レースは **双方向 `↔` の本命軸 + 対抗軸 2 段**
+- 上位プランへの導線は「買い目数」ではなく「**閲覧できるレース数**」で作る
+- 過去 archive は再判定しない
 
-## 🎯 メインレース5点ロジック（一方向馬単 / 2026-07-09〜）
+### Premium Plus
 
-メインレースの買い目は **全プラン共通で最大5点** に統一する。
-**一方向馬単「本命→相手5頭」**（`→` 表記・裏目は取らない）で保存・表示・的中判定する。
-上位プランへの導線は「買い目数の増加」ではなく「**閲覧できるレース数の増加**」で作る方針。
-ユーザーは点数の多い買い目を嫌うため、上位プランでもメインレースは5点を超えない。
+- **単品購入**（サブスクではない）／**Premium Sanrenpuku 会員にのみ表示**
+- Premium / Light / 無料ページに CTA を置かない（`noindex` + robots.txt Disallow）
+- 実績数値の**手書き禁止**（`computeStats()` の戻り値のみ）
+- **不的中の日も必ずアップロードする**（的中日だけ上げると的中率が嘘になる）
+- 実績画像は Netlify Blobs。`public/upsell-images/` へのハードコード方式は**復活させない**
 
-> **2026-07-09 変更**: 旧仕様は双方向馬単「本命↔相手5頭」= 10点（表裏両取り）だった。
-> 「点数が多い」「裏目まで買うのは不自然」との判断で **一方向 `→` 5点** に統一。
-> - 生成: `mainRaceBetting.js` が `本命→相手...`（`→`）で保存。`countMainRaceBetPoints` = 相手数（最大5）
-> - 的中判定: `checkUmatanHit`（`importResults*.js`）は `→` を **一方向（軸→相手のみ）** と解釈。
->   `↔` / `⇔` / `-` は従来どおり双方向（過去 archive 救済・通常レース用）
-> - **裏目（相手1着・本命2着）は不的中**（例 買い目 `1→2` / 結果 `2-1` = 不的中）
-> - **過去 archive は再判定しない**（旧 `↔` エントリは双方向のまま据置）
-> - **通常レース（メイン以外）は現状維持**（双方向 `↔` 2段構成のまま）
+### 顧客・決済・メール
 
-### メインレース判定（会場別レース数で判定）
+- **メール送信・キャンペーンは `プラン` / `PlanType` / `Status` / `有効期限` /
+  `LifetimeSanrenpuku` / `PaymentConfirmed` / `PaymentEmailSent` を 1 バイトも書かない**
+- 昇格の唯一の経路は `PaymentConfirmed` → `confirm-bank-payment`
+- **退会は「課金停止」であって「メール拒否」ではない**。マーケ除外にしない
+  （`suspended` / `banned` は除外を維持）
+- **grant ≠ paid contract / offer ≠ entitlement**。無料特典・割引は権利も価格資格も与えない
+- **`NEWSLETTER_AUTOMATION_ENABLED` をマーケティングのために ON にしない**
+  （AK の全メール自動化のマスタースイッチ。専用ゲートだけで解禁する）
+- SendGrid suppression は毎回照合し、**取得に失敗したら送信計画を作らない**（fail closed）
+- secret の値そのものを CLAUDE.md / ログ / commit に**絶対に記載しない**
 
-`src/utils/mainRaceBetting.js` の `getMainRaceNumber(totalRaces)`：
+### Customers の取得（15,962 件）
 
-| 開催レース数 | メインレース番号 |
-|---|---|
-| 12R | **R11** |
-| 10R | **R9** |
-| 8R | **R7** |
-| その他 | 最終レース（フォールバック） |
+- **無フィルタの全件走査を作らない。** 用途別に `filterByFormula` で絞るか、
+  絞れないなら **fail closed**（少ない件数を正しい件数として見せない）
+- **`MAX_PAGES` を上げるのは解決ではない**（打ち切りがタイムアウトに変わるだけ）
 
-`src/lib/race-config.js` の `RACE_TIERS` / `getMainRaceNumber()` と同一の判定基準。
-複数会場同日開催（南関 大井+船橋、JRA 3場×12R など）は **会場別にレース数を数えてから判定**。
-`importResults*.js` / `importPrediction*.js` 内で `racesByVenue` Map を構築し、各 race の venue 別レース数で判定する。
+検証: `npm run check:no-unbounded-scan`
 
-### 5点買い目生成ロジック
+### keiba-intelligence（AK と KI の分離）
 
-メインレースのみ：
+**`keiba-intelligence` 側を絶対に触らない。**
+2026-05-23〜 AK と KI は**別サービスとして独立運用**する。両方とも稼働を続け、
+それぞれ独自の顧客へ予想を提供する。
 
-1. **本命を軸**にする（**対抗軸の2行目は生成しない**）
-2. 相手は本命を除く **役割優先で上位5頭**
-   - 役割優先順: 対抗 → 単穴 → 連下最上位 → 連下
-   - 同役割内は `pt`（displayScore/rawScore）降順
-3. 1行コンパクト形式で保存: `"{本命}→{c1}.{c2}.{c3}.{c4}.{c5}"`（一方向馬単）
-4. **5頭未満なら拾えた分のみ**（パディング・補欠埋めはしない）
-5. **抑え（補欠/抑え かつ racebook 系コンピ指数 ≥ 45）を `(抑え...)` で情報付与**する
-   （2026-05-21〜）。通常レースと同じ単一源 `selectOsaeNumbers`（`osaeClassification.js`）で
-   選出し、軸・選出済み相手を除外して馬番昇順。**本線5点には含めない情報表示**。
-   これで「表示の抑え（isOsaeCandidate）」と「買い目の抑え」が構造的に一致する。
+- AK 側のロジック修正を KI へ **自動的に横展開しない**
+- KI 側は **必要な場合のみ個別に修正**する
+- admin (`keiba-data-shared-admin`) からの dispatch / データ供給は **当面維持**
+- **過去の経緯を理由に同期作業を再開してはいけない**（2026-05-22 以前の同期義務は撤廃済み）
 
-例：本命3、上位5頭=5,7,8,10,12、抑え=9,14 → `bettingLines: ["3→5.7.8.10.12(抑え9.14)"]` の1行
-（抑え0件なら `"3→5.7.8.10.12"`）
+運用方針・過去の経緯の全文は
+[`KI_INDEPENDENCE.md`](./astro-site/docs/KI_INDEPENDENCE.md)（**正本**）。
 
-### 的中判定との整合性
-
-`scripts/importResults*.js` の `checkUmatanHit` は区切り記号で方向を切り替える:
-- `→` = **一方向**（軸→相手のみ的中・裏目は不的中） ← メインレース新仕様
-- `↔` / `⇔` / `-` = 双方向（軸→相手・相手→軸の両方向） ← 過去 archive・通常レース用
-
-上記1行 `"3→5.7.8.10.12"` で：
-
-- 本命→相手（3→5, 3→7, ..., 3→12）= 5点で **合計5点**
-- 裏目（5→3, 7→3, ...）は **買わない＝不的中**
-
-**表示・的中判定・archive保存で同じ `bettingLines` 文字列を使用**。別ロジックの混入なし。
-
-### archiveResults.json 保存形式（メインレース）
-
-```json
-{
-  "raceNumber": 11,
-  "venue": "大井",
-  "bettingLines": ["3→5.7.8.10.12"],
-  "isHit": true,
-  "hitLines": ["3→5.7.8.10.12"],
-  "umatan": { "combination": "3-5", "payout": 1200 },
-  "betType": "馬単",
-  "betPoints": 5
-}
-```
-
-メインレースのみ per-race `betPoints` を実本数（相手数、最大5）で記録。
-通常レースは従来通り `betPointsPerRace`（payout 由来ヒューリスティック）を per-race にも埋め込む。
-
-### 通常レース（メイン以外）
-
-メインレースと違い、**本命軸 + 対抗軸の 2 段構成**で生成する（2026-05-20〜）。
-各行末尾に抑えを情報として括弧付与する：
-
-- **1段目（本命軸）**: `"{本命}↔{相手...}(抑え{...})"`
-  - 相手は本命を除く **役割優先で上位5頭**（対抗 → 単穴 → 連下最上位 → 連下、同役割内は pt 降順）
-- **2段目（対抗軸）**: `"{対抗}↔{相手...}(抑え{...})"`
-  - 相手は対抗を除く **役割優先で上位5頭**（**本命** → 単穴 → 連下最上位 → 連下、同役割内は pt 降順）
-  - ※ 2段目は **本命を相手に入れる**（対抗は軸なので相手から除外）
-- 相手は選出後 **馬番昇順**で表示
-- `(抑え...)` は **抑え候補（role が `補欠`/`押さえ`/`抑え` かつ racebook 系コンピ指数 ≥ 45）**を **馬番昇順**で。
-  本命・対抗・両軸の選出済み相手は除外。**抑えが 0 件なら `(抑え...)` を出さない**。
-  判定は単一源 `osaeClassification.js` の `selectOsaeNumbers`（メインレース・三連複・表示と同一基準）
-- 対抗が存在しない場合は **本命軸の 1 行のみ**
-- `betPoints` は payout 由来ヒューリスティック（`betPointsPerRace`）
-
-例（本命9 / 対抗12 / 単穴1,2 / 連下3,6 / 抑え5,8,11）:
-```
-9↔1.2.3.6.12(抑え5.8.11)
-12↔1.2.3.6.9(抑え5.8.11)
-```
-
-> **メインレースは1段（本命軸・一方向 `→` 5点）**。通常レースの2段構成は持ち込まない。
-> ただし 2026-05-21〜 メインレースも `(抑え...)` を情報付与する（本線5点には不算入）。
-> 2段構成ロジックを `generateNormalRaceUmatanLines()` に閉じ込め、dispatcher
-> `generateRaceUmatanLines(horses, isMainRaceFlag)` で呼び分ける。
-
-### 表記文字
-
-- **メインレースは `→`（一方向馬単・5点）**（2026-07-09〜）
-- **通常レースは `↔`（双方向馬単・両軸2段）**
-- `checkUmatanHit`（`scripts/importResults*.js`）は区切りで方向を切替:
-  `→` = 一方向（軸→相手のみ）/ `↔` `⇔` `-` = 双方向（軸→相手・相手→軸）
-
-### 🧩 抑え/不要馬 判定の単一源（2026-05-21 集約）
-
-抑え・不要馬の判定は **`astro-site/src/utils/osaeClassification.js` に一本化**する。
-過去、判定が表示・買い目・三連複に分散し基準がズレ、「抑えのはずが不要馬」「直すと別が壊れる」
-が再発していたため、依存ゼロの純粋モジュールに集約した。
-
-| 判定 | 仕様 |
-|---|---|
-| `getOsaeCi(h)` | racebook 系コンピ指数（JRA: sourceComputerIndex 優先 / 南関: computerIndex、10未満は0） |
-| `isOsaeCandidate(h)` | role が `押さえ`/`抑え`/`補欠` かつ `getOsaeCi(h) ≥ 45` |
-| `isIneligibleHorse(h)` | HANDLED_ROLES 外/`無` または 抑え系だが候補でない |
-| `selectOsaeNumbers(h, exclude)` | `(抑え...)` 用の馬番（軸・相手除外、馬番昇順） |
-
-**禁止事項**:
-- `mainRaceBetting.js` / `sanrenpukuBetting.js` / 各 astro ページに**ローカル抑え判定を再実装しない**。
-  必ず `osaeClassification.js`（または再エクスポートする `shared-prediction-logic.js`）を import する。
-- `shared-prediction-logic.js` は `osaeClassification.js` を再エクスポートする薄いラッパー
-  （Astro/ブラウザ依存の `integrated-data-manager.js` を Node 実行へ巻き込まないため判定本体は置かない）。
-
-### 関連ファイル
-
-| 目的 | ファイル |
-|---|---|
-| ロジック本体 | `astro-site/src/utils/mainRaceBetting.js` |
-| **抑え/不要馬 判定（単一源）** | `astro-site/src/utils/osaeClassification.js` |
-| 既存メイン判定（プラン tier） | `astro-site/src/lib/race-config.js` |
-| 予想取込（買い目生成） | `astro-site/scripts/importPrediction.js`, `importPredictionJra.js` |
-| 結果取込（メインのみ betPoints 上書き） | `astro-site/scripts/importResults.js`, `importResultsJra.js` |
-| 表示（プラン分岐 / クライアント側 isMainRace） | `astro-site/src/pages/premium-prediction/jra.astro` |
-
-### 過去archive
-
-新ロジックは **新規取込分から適用**。過去の archiveResults エントリは旧フォーマットのまま残る（再生成は別タスク）。
-
-### keiba-intelligence との関係（独立運用、2026-05-23〜）
-
-`analytics-keiba` と `keiba-intelligence` は **別サービスとして独立運用** する。
-両方とも今後も稼働を続け、それぞれ独自の顧客に対して予想を提供する。
-
-#### 運用方針
-
-- `keiba-intelligence` は `analytics-keiba` とは **別サービスとして独立運用** する
-- admin (`keiba-data-shared-admin`) からの dispatch / データ供給は **当面維持** する（両 repo にデータが届く状態を続ける）
-- `/admin/computer-manager` は **予想本体**（コンピ指数 + 印 + 役割振り分け）
-- `/admin/race-data-importer` は **補完情報**（騎手・調教師・斤量・性齢・近走などの値）
-- `analytics-keiba` 側のロジック修正を `keiba-intelligence` へ **自動的に横展開しない**
-- `keiba-intelligence` 側は **必要な場合のみ個別に修正** する
-- 顧客表示に影響する汚染・誤表示が残る場合は、`keiba-intelligence` 側の運用方針に沿って **別途最小修正する**
-
-#### 過去の経緯
-
-2026-05-22 以前は両 repo で同じ判定式・同じ買い目生成ロジックを使う前提で、
-メインレース判定や10点ロジックの変更は両 repo 同時に行うルールだった。
-2026-05-23 にこの同期義務を取りやめ、両 repo は独立進化することとした。
-過去の経緯を理由に同期作業を再開してはいけない。
-
-## 💎 有料実績ショーケース（無料→有料導線 / 2026-07-09 集約）
-
-無料ユーザーに「有料版で実際に配信したメインレース買い目と結果」を毎日公開し、
-有料への導線にするページ。`/results-showcase/{jra,nankan}`（commit `b112c3c` main 反映済み）。
-
-### 設計原則（触る前に必読）
-
-- **新データを作らない**。既存の結果アーカイブ配列 `src/data/archiveResults.json`（南関）/
-  `archiveResultsJra.json`（JRA）の **最新日 = index 0** だけを読む。`importResults*.js` の
-  自動取込＋Netlify 自動ビルドにそのまま乗り、毎日「上書き」表示・自動反映される
-  （**アーカイブ本体とは別ページ・データ二重管理なし**）。「毎日上書きの別JSON生成」案は
-  単一源が割れるため**採用しない**。
-- 単一源 **`src/lib/resultsShowcase.js`**（純粋・Node/SSR安全）。`buildLatestShowcase(arr)` が
-  `arr[0]` を会場別グルーピングし、メインは `getMainRaceNumber(会場別レース数)`
-  （`mainRaceBetting.js` 再利用）で判定。複数会場同日開催（JRA 3会場×12R 等）に対応。
-  抑え除去は premium ページと同一正規表現の `stripOsae`。
-
-### 公開範囲（確定仕様）
-
-- **メインレースのみ買い目公開**: 本命→相手5頭=**5点**（`1→2.3.6.8.9(抑え4.5)` を抑え除去し
-  `本命→相手` で表示）。的中時は `umatan.combination` + `payout` を表示。
-  抑えは**伏せて**有料の付加価値を一段残す。
-  - **裏目的中の表示畳み込み（旧 `↔` archive 専用の後方互換）**: 2026-07-09〜 メインは
-    一方向馬単 `→` に統一され、**裏目（相手1着・本命2着）は不的中**となったため、新データでは
-    この畳み込みは発火しない。ただし旧仕様（双方向 `↔` 10点）で保存済みの過去 archive エントリは
-    再判定しない方針のため、`↔` の裏目的中（例 買い目 `1↔2.3.6.8.9` / 結果 `2-1`）が残る。
-    その**旧データの裏目的中のときだけ**、勝った1組に畳んで `本命 ⇄ 勝った相手`（例 `1 ⇄ 2`）を
-    `⇄` で表示する（相手5頭は出さない）。判定は `resultsShowcase.js` の `buildMainRace`：
-    `umatan.combination` の2着が本命なら `displayArrow='⇄'` / `displayPartners=[1着相手]`。
-    順目的中（本命が1着）・不的中は `本命 → 相手5頭`（`→`）。
-- **メイン以外は全レース ✅/✗ のみ**（買い目・払戻は非表示）。的中/不的中を正直に全部出す。
-- ⚠️ 既存アーカイブ（`archive/{jra,nankan}` 月別）は**意図的に買い目非公開**だが、本ページは
-  **意図的にメイン5点を公開**する差別化ページ。混同して buy 目を消さないこと。
-
-### 関連ファイル
-
-| 目的 | ファイル |
-|---|---|
-| 単一源ロジック | `src/lib/resultsShowcase.js` |
-| 独立ページ（prerender=false） | `src/pages/results-showcase/{jra,nankan}.astro` |
-| 無料ページ埋込バナー | `src/components/ResultsShowcaseBanner.astro`（category prop） |
-| 埋込先 | `src/pages/free-prediction/{jra,nankan}.astro`（dark-horse-link-section 直前） |
-| nav | `src/layouts/BaseLayout.astro`。ナビ集約後、昨日の買い目は top-level ではなく「🏆 実績」ドロップダウン内の「💎 昨日の買い目」グループ（JRA/NANKAN）に格納。的中実績（アーカイブ）と同じ実績メニューにまとめて混同回避 |
-
-### 運用の注意
-
-- JRA は平日開催が無く、南関（平日開催）と**最新日がズレる**のは正常（例: 南関7/8 / JRA7/5）。
-- ローカルで最新日が出ないときは、まず `origin/main` を fetch。結果取込コミットが先行しているだけ
-  （本番は Actions→Netlify で常に最新日を反映）。
-
-## 💠 Premium Plus（1日1鞍・単品商品 / 2026-07-15 刷新）
-
-`/premium-plus/` は **1 日 1 鞍・三連単フォーメーション**の単品商品。
-詳細な運用手順は `astro-site/docs/PREMIUM_PLUS.md` を参照。
-
-### 変更してはいけない前提
-
-- **単品購入**（サブスクではない）
-- **Premium Sanrenpuku 会員にのみ表示**。Premium / Light には存在も知らせない
-  → `AccessControl requiredPlan="Premium Sanrenpuku"` + `noindex` + robots.txt `Disallow: /premium-plus/`
-  → CTA (`PremiumPlusCta.astro`) を **Premium / Light / 無料ページに置かない**
-- 超精密 AI が厳選 1 鞍を提供（レース数を増やす訴求はしない）
-- 価格 ¥98,000 → ¥68,000
-
-### 実績画像は Netlify Blobs（ビルド不要・即反映）
-
-毎日 1 枚、投票内容照会のスクショを `/admin/premium-plus-images` または
-`npm run upload:premium-plus` でアップロードする。git には置かない。
-
-**旧方式（禁止・復活させない）**: `public/upsell-images/upsell-YYYYMMDD.png` をページに
-ハードコードし sed で書き換える方式。更新が止まり 3 ヶ月古い日付が本番に残った。
-（`public/upsell-images/` 自体は `withdrawal-upsell.astro` が参照しているため残す）
-
-### 実績数値の手書き禁止
-
-ページに出る数値は `src/lib/premiumPlusShowcase.js` の `computeStats()` の戻り値のみ。
-旧版の「的中率78% / 平均配当¥281,340 / 満足度4.9 / 継続率94%」は根拠のない手書き固定値だった。
-
-- **的中率・回収率**: `legacy` を除く直近 30 鞍から自動集計。**10 鞍未満なら非表示**
-- **最高払戻・的中時平均払戻**: `legacy` を含む全的中エントリから算出
-- 刷新前の 30 枚は**的中日しか保存されていない**ため `legacy=true`。
-  的中率の母数に入れると「的中率100%」という嘘になる
-- **不的中の日も必ずアップロードすること**（的中日だけ上げると的中率が嘘になる）
-
-検証: `npm run test:premium-plus`（`check:safety` に組込済み）
-
-### 🚦 導線は段階公開（2026-07-28〜）
-
-Premium Sanrenpuku 購入直後に ¥68,000 の購入 CTA を出さない。
-**PHASE 1 非公開（商品ページ 404）→ 2 予告のみ → 3 商品閲覧可・CTA は「受付準備中」→ 4 受付解禁**。
-PHASE 4 到達後は **JST 時刻だけ**で受付状態を自動判定する（2026-07-30 確定・毎日共通）:
-
-| JST | 状態 | 表示 | 購入 |
-|---|---|---|---|
-| 00:00〜12:29 | open | 本日分 受付中 | 可 |
-| 12:30〜14:59 | limited | 本日分 残りわずか | 可 |
-| 15:00〜16:29 | closing | 本日分 まもなく受付終了 | 可 |
-| 16:30〜23:59 | closed | 本日分の受付は終了しました | **不可** |
-
-- **開催区分（中央/南関/昼/ナイター）による分岐は廃止**。境界は `PP_INTAKE_SCHEDULE` の 1 か所のみ
-- **「残りわずか」は時刻のみ**。件数・在庫・販売上限と連動させない（カウンタ機能を追加しない）
-- CLOSED でも商品・実績の閲覧は可（404 にしない）
-- **override による即時 PHASE 4 でも同じ時間制御**（16:30 以降は purchaseEnabled=false）
-
-- 判定の単一源は `src/lib/premiumPlus/premiumPlusRelease.js`（純粋関数）。
-  **ページに日数条件・時刻条件を散在させない。**
-- phase の入力は「三連複権限 / 三連複購入確定日時 / 現在日時(JST) / 受付時刻」**のみ**。
-  **実績（的中・不的中）を入力にしない**（販売タイミングと結果を連動させない・guard テストで固定）。
-- 権限は既存正本 `verifyPlanAccess`（ak_session）を再利用。独自の権限ロジックを作らない。
-- 管理画面に **「表示プレビュー」**（完全 read-only）。会員セッション発行・ログインリンク・
-  メール送信・Customers 書込を一切せず、単一源の判定結果で会員向け表示を確認する。
-  時刻（受付 4 状態）と PHASE のシミュレーションは**プレビュー応答の中だけ**に閉じる
-- 仕様・解禁手順・未決定事項は `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`。
-
-### 💠 Premium Plus の販売対象（ROUTE A / B ＋ 管理者選別 / 2026-07-29〜）
-
-販売候補の入口は 2 つ。**どちらも自動では販売可にならない。**
-
-- **ROUTE A**: Premium Sanrenpuku 購入者（anchor = `SanrenpukuPaidAt`）
-- **ROUTE B**: 通常 Premium 会員で加入 30 日以上・三連複未購入（anchor = `PaidAt`）
-- 両立しない（三連複購入済みなら常に ROUTE A）
-
-**販売資格 `PremiumPlusEligibility` = `eligible`(販売可) / `review`(保留) / `blocked`(販売対象外)。**
-新規候補の初期値は必ず `review`。未設定・不正値・読取失敗も review 相当（fail closed）。
-管理画面 `/admin/premium-plus-eligibility` で管理者が選別する。
-
-- **自動で eligible / blocked にしない**（苦情・不的中・閲覧回数・KMA スコア等を理由にしない）
-- blocked にしても `Status` / `プラン` / `PlanType` / `有効期限` / `PaidAt` / `LifetimeSanrenpuku` /
-  `PaymentEmailSent` / `PaymentEmailStatus` は**絶対に変更しない**（allow-list で構造的に強制）
-- 資格変更でメール・LINE・通知は送らない。課金も昇格も起こさない
-- 三連複購入確定時の Plus 初期化は**昇格 PATCH の後・独立 PATCH・best effort**。
-  失敗しても昇格 / メール / LifetimeSanrenpuku を巻き戻さない
-- KMA は `PremiumPlusEligibility` を eligible へ変更してはいけない（マーケ対象 ≠ 販売許可）
-
-- **「今すぐ販売可」** = `PremiumPlusReleaseOverride='phase4'`。**eligible の会員だけ**段階公開を飛ばして
-  即 PHASE 4 にする。判定順は ①audience ②eligibility ③override ④通常 phase で、
-  **review / blocked は override があっても非公開**。日時の偽装（EligibleAt / SanrenpukuPaidAt を
-  過去日に書換）で実現してはいけない。gate は `PREMIUM_PLUS_OVERRIDE_READY=1`（未設定なら 503・fail closed）
-- 段階公開 anchor は **`PremiumPlusEligibleAt`**（eligible への実遷移時のみ更新）。
-  監査用 `PremiumPlusEligibilityUpdatedAt` を anchor に兼用しない
-  （メモ編集・同一資格の再保存で phase が Day 0 に戻るため）
-
-> ✅ Premium Plus 用フィールド（`SanrenpukuPaidAt` / `PremiumPlusEligibility` 系 6 つ ＋
-> `PremiumPlusReleaseOverride`）は **本番 Airtable に作成済み**で、
-> `PREMIUM_PLUS_FIELDS_READY=1` / `PREMIUM_PLUS_OVERRIDE_READY=1` も production に設定済み
-> （2026-07-30 read-only 実測で確認。旧記述「未作成」は当時の状態）。
-> ただし `SanrenpukuPaidAt` は **全 1441 件で空**なので ROUTE A の anchor は
-> `PremiumPlusEligibleAt`（管理者が販売可にした日）に依存する。
-> **`PaidAt` を ROUTE A の anchor に流用しないこと**（既存 Premium 会員が購入直後に PHASE 4 へ飛ぶ）。
-
-### 🔍 管理画面の表示条件は公開条件と分ける（2026-07-30）
-
-管理画面 `/admin/premium-plus-eligibility` の一覧が、顧客向け公開判定
-`resolvePremiumPlusRelease()` の `route === none` をそのまま表示条件に流用していたため、
-**有効な Premium 会員でも `PaidAt` が空な旧会員が一覧から丸ごと消えていた**
-（`PaidAt` は 2026-07-10 の入金確認フロー刷新 `126b6a7` 以降しか書かれない）。
-
-- 表示条件の単一源は **`src/lib/premiumPlus/premiumPlusAdminAudience.js`**（表示専用）
-- 区分: `route_a` / `route_b` / `waiting_30d`（30 日未満・あと N 日）/
-  `anchor_missing`（`PaidAt` 未記録）/ `explicit`
-- **一覧に出すこと自体は販売資格を一切与えない。** eligible や phase4 override を付けても
-  route 未成立なら公開されない（fail closed・guard テストで固定）
-- 旧データ不足を**推測で埋めない**（`登録日` / `createdTime` / `有効期限` を anchor 代用にしない）
-- 詳細: `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`
-
-## 📣 AK 顧客販売・マーケティング管理（2026-07-30〜 / Draft）
-
-`/admin/premium-plus-eligibility` はタブ構成。**Premium Plus 販売資格**と
-**マーケティング対象**は別概念として扱う。詳細は
-`astro-site/docs/CUSTOMER_MARKETING.md` を参照。
-
-- **AK 独自機能。keiba-marketing-automation（KMA）とは統合しない。**
-  KMA の schema / env / 顧客 / 送信ロジックを AK へ混ぜない。同一 Base の
-  `CampaignDeliveries_MarketingAutomation` は KMA 側のテーブルで、AK は読み書きしない
-- 判定の単一源は **`src/lib/marketing/customerMarketingAudience.js`**。
-  `premiumPlusAdminAudience` を万能顧客抽出ロジックへ膨らませない
-- 契約状態は `active` / `expiring_soon`(14日) / `expired` / `none`(Free) / **`unknown`**。
-  有料 tier なのに期限も Status も手掛かりが無い legacy は **推測で確定しない**
-- **期限切れ会員はキャンペーン対象にできるが、Premium Plus 販売資格へ自動復活させない**
-- ⚠️ **退会は「課金停止」であって「メール拒否」ではない**（2026-07-30 業務定義）。
-  `Status='withdrawn'` / `WithdrawalRequested=true` を**マーケティング除外にしない**。
-  根拠: `process-withdrawal.js` の退会受付メールが本人へ「メルマガは引き続き配信されます。
-  配信停止をご希望の場合は…」と案内し、退会処理は `UnsubscribedAnalyticsKeiba` を書かない
-  （書くのは `WithdrawalRequested` / `WithdrawalDate` / `WithdrawalReason` / `有効期限` のみ）。
-  メールを止める意思表示は `UnsubscribedAnalyticsKeiba` ＋ provider suppression が担う。
-  退会は `withdrawn` フラグとして**表示・絞り込みにだけ**使い、契約欄に履歴として出す。
-  **`suspended` / `banned` は引き続き除外**（AK が意図的に止めた相手なので別扱い）
-- **メールを送っても `Status` / `プラン` / `PlanType` / `有効期限` / `LifetimeSanrenpuku` /
-  `PaymentConfirmed` は変更しない。**「無料◯日復活」等の権限付与は別 Phase
-- キャンペーン定義は `src/lib/marketing/campaignCatalog.js` に集約（件名・本文を散らさない）。
-  **本文を変えたら `version` を上げる**（DeliveryKey が変わり再送可能になる）。
-  version 据え置きの本文変更は `campaignCatalog.test.mjs` の**内容ハッシュ ロック**が検知する
-- 差し込みは **`{{salutation}}` のみ**＝**完成した宛名**。テンプレートで敬称を後付けしない
-  （氏名未登録が大多数のため「お客様 様」の二重敬称になる）。氏名あり `山田 様` / なし `お客様`
-- **CTA 先が確定しないキャンペーンは `enabled:false`。推測で URL を作らない**
-  （`sanrenpuku-offer` は三連複の公開説明ページが無いため停止中）
-- 🧪 **`marketing-canary` は運用テスト専用**。対象は env `NEWSLETTER_TEST_RECIPIENTS`
-  一致者のみで、**一般顧客には構造的に送れない**（選択しても `campaign_mismatch`）。
-  env 未設定なら誰にも送れない（fail closed）。テスト用でも guard は一切バイパスしない。
-  **既存キャンペーンの `audienceRule` をテスト都合で緩めないこと**
-- 契約 × プランで決められない条件は `campaignAudienceRules.js` の `extraAudience` に閉じ込め、
-  **`customerMarketingAudience.js` を Premium Plus 販売判定で汚さない**。
-  `premium-plus-offer` は `eligible` かつ `showProductPage=true`（PHASE 3 以上）のみ対象
-  （CTA 先 `/premium-plus/` は PHASE 3 未満で 404 のため）。判定は
-  `resolvePremiumPlusRelease()` へ委譲し **PHASE 計算を複製しない**
-- **キャンペーン横断の頻度ガード 24 時間**（`MARKETING_MIN_INTERVAL_MS`・hard safety floor）。
-  DeliveryKey は同一 campaign/version しか防がないため、別キャンペーンの連続送信を止める。
-  対象は `EmailType='campaign'` のみ（取引メールは含めない）。dry-run / send / dispatch 直前の
-  3 箇所で判定し、dispatch 時は**自ジョブの記録を除外**する
-- 送信は `admin-marketing.js` が **ScheduledEmails(PENDING) + CampaignDeliveries(queued) を作るだけ**。
-  SendGrid の**送信 API** を呼ぶコードを持たない（guard テストで固定。suppression の GET のみ可）
-- 三重ガード: 認可 `x-admin-secret` / キュー登録 `MARKETING_CAMPAIGN_ENABLED='true'`（既定 OFF）/
-  実送信 `MARKETING_CAMPAIGN_DISPATCH_ENABLED='true'`（既定 OFF）
-- 二重送信防止 4 層: DeliveryKey 冪等 upsert / 既送信突合 / dry-run の `planFingerprint`（不一致は 409）/
-  送信ゲート
-- 決済メール v2 のフィールド（`PaymentEmailSent` 等）は**読みも書きもしない**
-
-### ⚠️ `NEWSLETTER_AUTOMATION_ENABLED` をマーケティングのために ON にしない（2026-07-30）
-
-これは **AK の全メール自動化のマスタースイッチ**で、実測 16 Function が参照する
-（cron-email-scheduler / send-newsletter 系 / expiry 通知 / retry-failed-emails / step メール ほか）。
-ON にすると滞留 `ScheduledEmails` の一斉送信と既存経路の同時解禁を招く。
-
-マーケティングは**専用ゲート `MARKETING_CAMPAIGN_DISPATCH_ENABLED`** だけで解禁する。
-
-| 操作 | 既存メール経路 | キャンペーン |
-|---|---|---|
-| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **動かない** | 専用 dispatcher からのみ送信可 |
-| `NEWSLETTER_AUTOMATION_ENABLED=true` のみ | 動く（従来どおり） | **送信されない** |
-| **両方 `true`** | 動く | **共有 executor からは送信されない** |
-
-- 専用 dispatcher `marketing-campaign-dispatch.js` は `NEWSLETTER_AUTOMATION_ENABLED` を読まない
-- **共有 executor は marketing job を env に関係なく常に skip する**（2026-07-30 恒久化）。
-  `canSharedExecutorSend(fields)` は **env を引数に取らない**ため、env 次第で開く条件を
-  将来も作れない（guard テストで固定）。スキップ時はレコードの状態を変えない（PENDING のまま）
-  - 理由: `cron-email-scheduler` は Netlify scheduled（`*/15 * * * *`）で、
-    共有 executor は**固定宛先に対する per-recipient 送信直前再検証を持たない**。
-    両 env が true になると再検証なしでキャンペーンが飛ぶ
-  - **marketing job の唯一の実送信経路は `marketing-campaign-dispatch`**
-- マーケ以外のジョブ（newsletter / step / race_main / expiry）の挙動は**不変**
-- ジョブ識別は既存フィールドのタグのみ（`CreatedBy='admin-marketing'` /
-  `TargetPlan='campaign:…'` / `JobId='mkt-…'`）。新フィールドを増やさない
-
-### 🛡️ SendGrid suppression を毎回照合する（fail closed）
-
-AK の `EmailBlacklist` は Event Webhook 稼働以降のイベントしか持たない。
-**2026-07-30 実測: SendGrid suppression 61 件に対し AK の実効除外は 4 件。
-AK 判定では送信可能なのに SendGrid が suppress 済みの会員が 43 名**（＋ソフトバウンス 4 名）。
-
-- `providerSuppression.js` が dry-run / send / dispatch のたびに SendGrid へ **GET** で照合
-- **取得に失敗したら送信計画を作らない**（503）。「確認できないから送る」を禁止
-- provider へは GET のみ（suppression の追加・削除をしない）
-- 販促メールは AK の **SOFT_BOUNCE も除外**する（取引メールとは基準を分ける）
-- 共有 executor は固定宛先ジョブの suppression を再チェックしないため、
-  専用 dispatcher が **1 通ごとに送信直前再検証**（`verifyBeforeSend`）を行う
-
-検証: `npm run test:marketing`（`check:safety` に組込済み）
-
-## 🎁 カムバック施策（無料特典 + 割引オファー / 2026-07-30 追加・Draft）
-
-以前 AK を離れた顧客へ、**無料の閲覧権（grant）**と**その顧客専用の割引価格（offer）**を
-管理画面から設定する機能。詳細仕様・手順・rollback は
-`astro-site/docs/COMEBACK_GRANTS.md`（**正本**）を参照。
-
-### 触る前に守る原則
-
-- **grant ≠ paid contract**。無料特典は閲覧権を増やすだけで支払い実績を作らない。
-  `memberType='paid'` は「有料階層のセッションを発行してよい」という認可ラベルであって
-  課金判定ではない。課金実績が要る判定は `entitlementSource` / `paidPremiumActive` を見る
-- **offer ≠ entitlement**。割引オファーを発行しても権利は 1 ミリも増えない。
-  昇格は `PaymentConfirmed` → `confirm-bank-payment` が唯一の経路
-- **Payment 系を変更しない**。`プラン` / `PlanType` / `Status` / `有効期限` / `PaidAt` /
-  `PaymentConfirmed` / `PaymentEmailSent` / `WithdrawalRequested` は 1 バイトも書かない
-  （書き込みは特典専用 15 列 + `PromotionalOffers` テーブルの allowlist のみ）
-- **`LifetimeSanrenpuku` を流用しない**。三連複買い切りは別権利で、無料特典の影響を受けない。
-  無料 Premium 特典で三連複購入資格・Premium Plus 販売資格を開かない
-- **grant は価格資格を付与しない**。会員向け通常特価（`/pricing/` の乗り換え価格）は
-  **paid contract 由来**（単一源 `src/lib/pricing/pricingEligibility.js`）、特別価格は
-  **PromotionalOffer 由来**。「閲覧できる＝会員価格が使える」は作らない
-- **メールと grant/offer を分離**。付与・発行の Function はメールを 1 通も送らない。
-  案内はマーケティングタブから別操作で送る
-- **production gate は多段・既定 OFF**: `COMEBACK_GRANT_FIELDS_READY` /
-  `COMEBACK_OFFER_TABLE_READY` / `COMEBACK_GRANT_ENABLED` / `PROMO_OFFER_SECRET`。
-  Airtable のフィールド／テーブル作成が先（未作成のまま PATCH すると 422 で巻き添え失敗）
-
-検証: `npm run test:comeback` / `npm run test:promotions` / `npm run test:entitlements`
-（すべて `check:safety` と CI に組込済み）
-
-## 🛒 販売導線の制御（UpsellTarget / 2026-07-31 追加・未本番）
-
-Premium 会員に「三連複」と「Premium Plus」を**同時に見せない**ための会員別 CTA 制御。
-詳細仕様・Airtable フィールド・有効化手順は `astro-site/docs/UPSELL_TARGET.md`（**正本**）。
-
-- **`UpsellTarget` は販売導線の選択であり、会員権・決済・entitlement の正本ではない**。
-  値は `auto` / `sanrenpuku` / `plus` / `none`。**未設定は `auto`**（migration 不要）
-- **auto の三連複は既存の段階表示を維持**（1日目なし→2〜3日目 予告→4日目以降 CTA / dismiss 可）。
-  auto でも即時 CTA にしない。単一源は `src/lib/sanrenpuku/sanrenpukuCtaStage.js`
-- **三連複と Premium Plus を同時表示しない**。判定の単一源は `src/lib/upsell/upsellTarget.js`
-  （`resolveUpsellForCustomer` / `resolveUpsellDisplay`）。ページ側に条件を再実装しない
-- 明示指定でも**各商品固有の権限条件は再評価**する（保有済みへ三連複 CTA を出さない・
-  blocked へ Plus を出さない・Free/Light へ出さない・受付時間外は購入不可）
-- **`plus` の明示指定＝管理者の販売許可**。`PremiumPlusEligibility` が review / 未設定でも
-  Plus を出す（二重操作をなくす）。ただし **`blocked` は常に不可**で、Airtable の
-  eligibility 値は**書き換えない**。`auto` の判定は従来どおり（免除は明示指定のときだけ）
-- 書き込みは `UpsellTarget` **1 列だけ**。課金・権限フィールドは 1 バイトも書かない。
-  gate は `UPSELL_TARGET_FIELD_READY=1`（**未設定なら 503**・既定 OFF）
-
-検証: `npm run test:upsell`（`check:safety` に組込済み）
-
-## 🧠 予想ロジック（スコア・役割決定）
-
-本命・対抗・単穴の選定は `analyticsScore = computerIndex×0.5 + featureScore×0.3 + markScore×0.2` の
-データ主導方式。keiba-intelligence（印ベース）と意図的に差別化している。
-詳細仕様は `astro-site/docs/PREDICTION_LOGIC.md` を参照。
-重み・閾値・差別化ルールを変更する場合は **コードと MD を必ず両方更新**すること。
-
-## 🔢 指数表示ルール（著作権・表示安全対策）
-
-analytics-keiba では、外部由来の元指数（racebook 系 `computerIndex` / `sourceComputerIndex`）を
-画面にそのまま表示してはならない。**ユーザー表示用の指数は必ず「元指数 − 1」** とする。
-
-| 用途 | 値 | 関数 |
-|---|---|---|
-| 内部計算（pt / analyticsScore / 役割分類 / isOsaeCandidate / isIneligibleHorse / 買い目生成 / 特徴量重要度） | raw `computerIndex` をそのまま使用 | （関数ラップ不要） |
-| 画面表示（HTML / カード / 全レースプレビュー / 無料予想 / プレミアム予想 / 不要馬・抑え候補・連下） | raw − 1 | `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` |
-
-### 必須ルール
-- 個別ページで `{horse.computerIndex}` を直接 JSX に埋めるのは **禁止**。必ず共通関数経由。
-- 共通関数は `astro-site/src/lib/shared-prediction-logic.js` の
-  `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` を使用。
-- JRA 側で `sourceComputerIndex` を選定してから表示する場合も、最終出力は同関数で `-1` する。
-- 新しい指数表示箇所を追加する場合も、必ず共通関数を使うこと。
-
-### 🎯 AI総合指数の正規取得ルート（2026-05-24 集約 / 4 領域共通）
-
-**京都4R 案件**（無料 JRA 単穴の AI総合指数が `161` になった事故）の根本対応として、
-AI 総合指数として画面に出す数値は **`getHorseAiIndex(horse)` 1 関数に集約**する。
-
-| 用途 | 関数 |
-|---|---|
-| **AI総合指数（4 領域共通の表示用）** | `getHorseAiIndex(horse)` |
-| raw - 1 変換のみ | `getDisplayComputerIndex(raw)` |
-
-**`getHorseAiIndex` の挙動:**
-- 参照源: `horse.sourceComputerIndex ?? horse.computerIndex` の**この 2 つだけ**
-- 範囲ガード: raw が 10〜99 の範囲外なら `null` を返す（=表示しない）
-- 範囲内なら `getDisplayComputerIndex(raw)` を返す（= raw - 1）
-
-**絶対に AI 総合指数として表示してはいけないフォールバック値**:
-- `horse.pt` / `horse.totalScore` / `horse.displayScore` / `horse.rawScore`
-  → これらは累積スコア / rawScore など別スケールの値。混在させると京都4R 案件のような
-     `100` 超の異常値表示が発生する。
-- `horse.confidence` / `horse.score` / `horse.rating` / `horse.evaluation`
-  → AI 総合指数とは別概念。
-
-**4 領域すべてで `getHorseAiIndex(horse)` を使う:**
-- `src/pages/free-prediction/jra.astro`
-- `src/pages/free-prediction/nankan.astro`
-- `src/pages/premium-prediction/jra.astro`
-- `src/pages/premium-prediction/nankan.astro`
-- `src/components/HorseMainCard.astro` / `RaceHorseSection.astro`（共有部品）
-
-ローカルに `getDisplayIndex` のような独自フォールバック関数を再実装することは禁止。
-
-### 🛡️ 馬データ整合性ガード（取込側 sanitize）
-
-`keiba-data-shared` 側（admin）の OCR / HTML パース失敗で
-`name === ''` / `sexAge === ')'` 等の壊れた馬データが流れ込んでも、
-予想カード（本命/対抗/単穴/連下系/補欠）に登場させない。
-
-`src/utils/normalizePrediction.js` の `sanitizeHorseName` / `sanitizeAge` /
-馬名空時の `role='無' + rawScore=0` 強制ガードで対応する。
-
-**禁止事項**:
-- 表示側で「`)` を replace で消す」「空文字を別文字で埋める」等の隠蔽対応は禁止。
-- データが壊れている場合は**取込側 (sanitize)** で修正する。
-- 過去 JSON は遡及修正しない方針（新規取込から順次正常化）。
-
-### 検証
-- `npm run check:display-index` — raw - 1 一致検証
-- `npm run check:prediction-integrity` — 馬名空 / 性齢ゴミ / AI総合指数 100超 を直近ファイルで検出
-- `npm run check:safety` に両方とも組込済み
-
-### 検証
-`node astro-site/scripts/check-display-computer-index.mjs [YYYY-MM-DD] [venueSlug]` で
-全レース・全馬を `raw - 1 == display` で検証する（不一致 1件でも非ゼロ exit）。
-
-### 関連ファイル
-| 目的 | ファイル |
-|---|---|
-| 共通関数 | `astro-site/src/lib/shared-prediction-logic.js` (`getDisplayComputerIndex` / `formatDisplayComputerIndex` / **`getHorseAiIndex`**) |
-| 取込 sanitize | `astro-site/src/utils/normalizePrediction.js` (`sanitizeHorseName` / `sanitizeAge` / 馬名空時の role='無' + rawScore=0 ガード) |
-| 整合性検証 | `astro-site/scripts/check-prediction-data-integrity.mjs` |
-| 表示適用 | `src/pages/free-prediction/nankan.astro`, `premium-prediction/nankan.astro`, `free-prediction/jra.astro`, `premium-prediction/jra.astro`, `src/components/HorseMainCard.astro`, `src/components/RaceHorseSection.astro` |
-| 検証スクリプト | `astro-site/scripts/check-display-computer-index.mjs` |
-
-## 📨 SendGrid Event Webhook（署名検証 / fail closed・2026-07-21）
-
-`netlify/functions/sendgrid-webhook.js` は**公開 URL**で、書き込む `EmailBlacklist` は
-`newsletter-preview.js` が配信除外に使う**実運用の suppression list**。
-2026-07-21 に署名検証なしで稼働していた欠陥（任意アドレスを HARD_BOUNCE 登録できた）を fail closed 化した。
-
-### 触る前に必読
-
-契約・reason コード・本番反映順序の単一源は
-[`astro-site/docs/SENDGRID_WEBHOOK.md`](./astro-site/docs/SENDGRID_WEBHOOK.md)。
-
-### 絶対禁止
-
-- **「検証鍵が未設定なら検証を省略する」分岐を作らない**（鍵未設定も 403。素通り禁止）
-- **署名検証より前に body を parse しない / Airtable を叩かない**（`req.json()` 禁止・raw body で検証）
-- **署名検証を Function 内に再実装しない**（単一源 `src/lib/webhooks/sendgridSignature.js`）
-- **`filterByFormula` へ外部入力を直挿ししない**（`airtableFormula.js` の `equalsFormula` 経由）
-- **ログ・応答にメールアドレス / 鍵 / 署名 / Airtable 応答本文を出さない**（reason コードのみ）
-
-検証: `npm run test:webhooks`（`check:safety` に組込済み / CI で個別 step 実行）
-
-## 🔑 ログイン（マジックリンク方式）
-
-`/login` でメール入力 → SendGrid 経由でリンク送信 → `/auth/verify?token=...` で検証 →
-localStorage `user-plan` に保存して AccessControl が読む構成。
-Airtable Base は **nankan-analytics と共有**（顧客は引き継ぎ）。
-詳細・環境変数・Airtable スキーマ追加手順は `astro-site/docs/AUTH_LOGIN.md` を参照。
-
-## 🏦 銀行振込 入金確認フロー（2026-07-10 再設計 / 本番反映済み）
-
-**入金確認は `PaymentConfirmed` にチェックを入れる 1 アクションだけ。有効期限は手入力しない。**
-
-### フロー
-
-| 段階 | 何が起きるか |
-|---|---|
-| **申込フォーム送信** | `bank-transfer-application.js` が `氏名` / `PaymentMethod` / `RequestedPlan` / `RequestedPlanType` / `RequestedAmount` / `PaymentConfirmed=false` のみ書く |
-| **入金確認（MK）** | Airtable で `PaymentConfirmed` にチェック |
-| **昇格（自動）** | Automation → `confirm-bank-payment.js` が `プラン` / `PlanType` / `Status='active'` / `有効期限`（**入金確認日 JST + 1年**）/ `PaidAt` / `PaymentEmailSent=true` を 1 回の PATCH で確定し、確認メールを送信 |
-
-- **申込時に有料権限を付与しない**。`プラン` / `PlanType` / `有効期限` / `Status='active'` は書かない
-- **既存 active Light 会員はフォーム送信だけでは昇格しない**（Light active のまま維持）
-- 新規 / 非 active のみ `Status='pending'`（`auth-user.js` の pending ガードで Free 扱い）
-- 退会フラグのリセットは**承認時**（未入金の申込で退会申請が消えないように）
-
-### 判定の単一源
-
-`astro-site/src/lib/payments/bankPaymentFlow.js`（純粋関数・Airtable 非依存）
-
-- `buildApplicationFields()` — 申込時に書くフィールド
-- `buildConfirmationFields()` — 承認時に書くフィールド。`RequestedPlan` が空なら `null`（fail closed）
-- `addOneYearJst()` / `addMonthsJst()` — **JST の暦日**で計算。`toISOString()` の UTC 基準は使わない
-  （JST 深夜 0〜9 時に 1 日ズレる）。閏日 2/29 + 1年 は 3/1 ではなく 2/28 に丸める
-
-検証: `npm run test:bank-payment`（`check:safety` に組込済み）
-
-**禁止事項**: Function 内で `プラン` / `有効期限` / `Status='active'` を直書きしない。
-必ず `bankPaymentFlow.js` 経由。guard テストが直書きを検知する。
-
-### 認可・冪等性・二重メール防止
-
-- **認可**: `confirm-bank-payment.js` は公開 URL。Airtable の `PaymentConfirmed=true` を
-  **再読込して検証**し、false なら 403。チェックできるのは Airtable にアクセスできる MK だけ
-- **冪等性**: 承認時に `Requested*` をクリア。再チェックしても `RequestedPlan` が空 → 昇格しない
-  （有効期限が再延長されない）
-- **二重メール防止**: confirm が `PaymentEmailSent=true` を立てるため、
-  `send-payment-confirmation-auto.js` の再送ガードでスキップされる。メールは常に 1 通
-
-### Airtable Automation（2 本。触る前に必読）
-
-| Automation | Trigger | 監視 Fields | 条件 | Action |
-|---|---|---|---|---|
-| 入金確認 → 有料プラン昇格 | When record updated | `PaymentConfirmed` | PaymentConfirmed is checked | `confirm-bank-payment` |
-| 入金確認メール自動送信 | When record updated | **`Status` のみ** | Status is active AND PaymentEmailSent is unchecked | `send-payment-confirmation-auto` |
-
-後者は元 `When a record matches conditions`（フィールド監視なし）で**レコード更新全般で発火**していた。
-2026-07-10 に `Status` のみ監視へ変更し、役割を「MK が手動で pending→active にしたときの確認メール」に縮小。
-
-**監視 Fields を空欄に戻さないこと。** 空欄 = 全フィールド監視となり、`RequestedAmount` の更新等でも
-入金確認メールが誤送信される。
-
-### ⚠️ 再送手順（変更あり）
-
-**`PaymentEmailSent` を空に戻すだけでは再送されない。**
-Automation は `Status` の変化でしか発火しないため、再送するには
-**`Status` を pending → active に切り替える**必要がある。
-これは `send-payment-confirmation-auto.js` が返す `howToResend` メッセージと同じ手順。
-
-### ⚠️ 未使用経路の二重送信リスク（未修正）
-
-`paypal-webhook.js` と `send-payment-confirmation.js` は
-**自前で SendGrid を叩き `Status='active'` を書くが `PaymentEmailSent=true` を立てない**。
-そのため Automation「入金確認メール自動送信」が発火し、**確認メールが 2 通届く**。
-
-現在 pricing は銀行振込のみを案内しており両経路とも未使用のため実害は無い。
-**復活させる場合は、両ファイルで `PaymentEmailSent: true` を同時に書く修正が必須。**
-
-### 🔐 PAYMENT_CONFIRM_SECRET（設定・本番検証済み / 2026-07-11）
-
-`confirm-bank-payment` は公開 URL のため、`PaymentConfirmed=true` 再読込認可に加えて
-`x-confirm-secret` ヘッダ認証を本番で有効化済み。**認証機能の有効化に追加のコード変更は不要**
-（gating は `if (process.env.PAYMENT_CONFIRM_SECRET)` として既にデプロイ済み。env 投入だけで有効化される）。
-
-- **Netlify**: `PAYMENT_CONFIRM_SECRET` を **production context に設定済み**。
-- **Airtable Automation**「入金確認 → 有料プラン昇格」の Run script は
-  `confirm-bank-payment` 呼び出し時に **`x-confirm-secret` ヘッダを送信する**
-  （`Content-Type: application/json` は残したまま1行追加）。
-- **順序厳守**: Automation ヘッダ追加 → その後 env 設定。逆順にすると env 有効化後に
-  ヘッダ無し Automation が全て 403 となり昇格が止まる。env 未設定の間はヘッダを送っても
-  Function 側が無視する（`if(CONFIRM_SECRET)` が false）ため無害。
-- **本番検証済み**:
-  - secret **なし** / **不一致** → `403 Forbidden`（認可段で停止・レコード非破壊）を確認済み。
-  - **正しい secret** による Premium 昇格（Automation 経由で `プラン=Premium` /
-    `PlanType=Annual` / `Status=active` / 有効期限 JST+1年 / `PaymentEmailSent=true` /
-    `Requested*` クリア / 確認メール1通）を確認済み。
-- **rollback**: `netlify env:unset PAYMENT_CONFIRM_SECRET --context production` →
-  正規 production build（Build Hook で origin/main を1回ビルド）で、コード変更なしに
-  従来の `PaymentConfirmed` 再読込認可のみへ即復帰する。
-- **secret 値そのものは CLAUDE.md / ログ / commit に絶対に記載しない。**
-
-### 残件
-
-- Airtable Customers に `Amount` / `ProductName` フィールドは無い。振込金額は
-  `RequestedAmount`（承認時にクリア）と管理者宛メールにしか残らない
-
-### 関連ファイル
-
-| 目的 | ファイル |
-|---|---|
-| 判定の単一源 | `astro-site/src/lib/payments/bankPaymentFlow.js` |
-| 申込 | `astro-site/netlify/functions/bank-transfer-application.js` |
-| 昇格 | `astro-site/netlify/functions/confirm-bank-payment.js` |
-| 確認メール（手動 active 化用） | `astro-site/netlify/functions/send-payment-confirmation-auto.js` |
-| テスト | `astro-site/src/lib/payments/bankPaymentFlow.test.mjs` / `bankPaymentFunctions.guard.test.mjs` |
+---
 
 ## 🔧 開発コマンド
 
 ```bash
 cd /Users/user/Projects/analytics-keiba/astro-site
-npm run dev            # 開発サーバー
-npm run build          # validate → build
-npm run validate:archive
-npm run import:prediction
-npm run import:prediction:jra
-npm run import:results
-npm run import:results:jra
-
-# 恒久ルール検証（指数表示 raw-1 / 全頭分類）
-npm run check:no-raw-index     # JSX に {horse.computerIndex} を直接出力していないか
-npm run check:display-index    # 全 predictions で 表示指数 == raw-1
-npm run check:horse-sections   # 全レースで 合計 == 出走頭数（不要馬セクション維持）
-npm run check:free-mask        # 無料版のモザイクが実際にぼける（gradient 文字で blur が無効化されない）
-npm run test:pricing-tiers     # /pricing/ のプラン別出し分け（Light 乗り換え価格の露出防止）
-npm run test:bank-payment      # 銀行振込 申込/入金確認フロー（入金前に昇格しない）
-npm run test:marketing         # 顧客マーケティング（対象判定/キャンペーン/送信計画・実送信なし）
-npm run test:webhooks          # SendGrid Event Webhook 署名検証 fail closed（無認証 Airtable 書込みの遮断）
-npm run check:safety           # 上記を含む全 safety check を直列実行
-npm run verify:safety          # build → check:safety（push 前推奨）
+npm run dev                    # 開発サーバー
+npm run build                  # validate → build → SSR 関数の prune
+npm run validate:archive       # 旧フォーマット混入の検証
+npm run import:prediction      # 南関 予想取込（:jra で JRA）
+npm run import:results         # 南関 結果取込（:jra で JRA）
+npm run check:safety           # 恒久ルール検証を全部（CI と同じ）
+npm run verify:safety          # build + check:safety（push 前推奨）
 ```
 
-## 🛡️ CI Safety Check（恒久ルール強制）
+**予想ページ・カード・全レースプレビューを変更したら必ず `npm run check:safety` を実行する。**
+個別の `check:*` / `test:*` は `package.json` を参照（すべて `check:safety` に組込済み）。
 
-以下 2 つの恒久ルールは **CI で強制**する。CI を通さずに予想表示や馬分類を変更してはいけない。
-一時的に検証を無効化することは **禁止**。
+### CI で強制していること（正本: [`SAFETY_CHECKS.md`](./astro-site/docs/SAFETY_CHECKS.md)）
 
-### CI で強制しているルール
-1. **指数表示は必ず raw − 1**
-   - `horse.computerIndex` / `horse.sourceComputerIndex` を JSX に直接埋めるのは禁止
-   - 必ず `getDisplayComputerIndex` / `formatDisplayComputerIndex` 経由
-2. **無料版のモザイクは「描画されて」初めてマスク**
-   - `.stat-score` / `.stat-index` の gradient 文字（`background-clip: text` +
-     `-webkit-text-fill-color: transparent`）の中では、子要素に `filter: blur()` を掛けても
-     **親が同じ文字をクリップ描画するため鮮明な文字が残る**（2026-07-31 本番不具合）
-   - マスク時は親に `stat-value-masked` を付け、gradient 文字を無効化する
-     （`.stat-value.stat-value-masked` の 2 クラスで上書き。同詳細度だと定義順依存になる）
-   - 検証: `npm run check:free-mask`（markup だけでなく打ち消し CSS の有無まで検査）
-3. **全レースプレビューで全頭が分類される**
-   - 本命 / 対抗 / 単穴 / 連下 / 抑え / 不要馬 のいずれかに必ず分類
-   - 表示合計 = 出走頭数
-   - 不要馬セクションが消えないこと
+1. 指数表示は必ず `raw − 1`
+2. 全レースプレビューで全頭が分類される（表示合計 = 出走頭数）
+3. **無料版のモザイクは「描画されて」初めてマスク**
+   （gradient 文字の中では子の `blur()` が効かない。親に `stat-value-masked` を付ける）
+4. 旧 KI 風ブロックが混入していない（3 ページ分の guard + 構造パリティ）
+5. Customers の無フィルタ全件走査＋黙って打ち切りが無い
 
-### CI が失敗する条件
-- 表示指数が raw と同じ
-- `getDisplayComputerIndex` で `-1` されていない
-- JSX に `{horse.computerIndex}` / `{horse.sourceComputerIndex}` を直接出力
-- 表示分類合計 != 出走頭数（不要馬・抑え・連下の分類漏れ）
-- 検証対象スコープなのに対象ファイル 0 件（「素通り」防止）
-- 対象ファイルがあるのに馬数 0 件（スキーマ破損）
+**CI を通さずに指数表示や馬分類を変更してはいけない。**
 
-### Workflow / Scripts
-| ファイル | 役割 |
-|---|---|
-| `.github/workflows/safety-check.yml` | PR / push to main / dispatch で実行 |
-| `astro-site/scripts/check-display-computer-index.mjs` | raw vs display 一致検証 |
-| `astro-site/scripts/check-no-raw-computer-index-display.mjs` | JSX 直接出力の grep ガード |
-| `astro-site/scripts/check-free-prediction-horse-sections.mjs` | 全頭分類検証 |
-| `astro-site/package.json` の `check:*` / `verify:safety` | 実行エントリ |
+新しい guard を足すときは
+**`package.json` の `check:safety` と `.github/workflows/safety-check.yml` の
+`paths` と `jobs.safety.steps` の 3 箇所すべて**に追加する（paths だけでは CI 実行されない）。
 
-### 運用ルール
-- 予想ページ・カード・全レースプレビューを変更したら **必ず** `npm run check:safety` を実行
-- push 前は `npm run verify:safety`（build + safety）を推奨
-- CI を通さずに指数表示や馬分類を変更してはいけない
-- 一時的に検証を無効化することは禁止
-
-## 🛡️ JRA premium 恒久ルール（KI 風ブロック再混入防止 / 2026-05-24 集約）
-
-`/premium-prediction/jra/` は keiba-intelligence (KI) からの fork 経緯で、
-旧 KI 風の演出（Ensemble Neural Network / XGBoost×LSTM / Multi-Dimensional
-Performance Analysis / WIN PROB / MODEL CERTAINTY 等）が長く残っていた。
-2026-05-24 にこれらを段階的に削除し、**`/premium-prediction/nankan/` の
-有料ページ構造に完全に寄せる**方針が集約された。
-
-**今後の作業・revert・コピペ・テンプレート同期で旧 KI 風ブロックが復活しないよう
-3 段の防御を入れる**:
-
-### 1. ドキュメント化
-詳細な禁止リスト・必須セクション・許可される維持要素・作業フローは
-ページ別に集約。**修正前に必ず読む**。
-- premium: `astro-site/docs/PREMIUM_JRA_RULES.md`
-- free `[date]`（過去日アーカイブ）: `astro-site/docs/FREE_JRA_RULES.md`
-
-### 2. grep 検査（再混入検知）
-
-JRA 系ページごとに **対象スコープ・検知範囲が異なる**ため、ページ別に分けて記述する。
-（共通: いずれも `check:safety` に組み込み済み・CI で強制実行）
-
-#### 2-A. `premium-prediction/jra.astro`（有料）
-
-`npm run check:ki-relics:jra` で検知。  
-詳細禁止リストは [`astro-site/docs/PREMIUM_JRA_RULES.md`](./astro-site/docs/PREMIUM_JRA_RULES.md) を参照。  
-代表的な禁止対象:
-- 文字列: `AI Recommended Betting Strategy`, `Multi-Dimensional Performance Analysis`,
-  `Ensemble Neural Network`, `XGBoost`, `LSTM`, `Cross-val`, `Win Prob`,
-  `Model Certainty`, `Expected Value`, `Feature Importance Analysis`,
-  `DEEP LEARNING PREDICTION`, `PRO MEMBER EXCLUSIVE`, `Inference Time`
-- クラス: `.ai-model-card`, `.detailed-horse-card`, `.dhc-quick-metrics`,
-  `.qm-label`, `.qm-value`, `.feature-grid`, `.feature-bar`, `.recent-races-grid`,
-  `.recent-race-item`, `.rr-venue`, `formula-row`, `axis-mark`, `opponents-list`,
-  `stat-stars-block`, `star-rating`
-
-#### 2-B. `free-prediction/jra/[date].astro`（無料 過去日）
-
-`npm run check:ki-relics:free-jra-date` で検知。  
-詳細禁止リストは [`astro-site/docs/FREE_JRA_RULES.md`](./astro-site/docs/FREE_JRA_RULES.md) を参照。  
-**A. 共通禁止対象**（PREMIUM と整合）に加えて、以下を**追加で検知**:
-- 文字列: `Powered by Keiba Intelligence`, `Recommended Betting Strategy`,
-  `AI予想解説`, `AI買い目`, `AI振り返り`, `AIRaceComment`, `AIBettingSection`
-- クラス: `.ai-comment-*` (header / badge / label / sub / masked-* など),
-  `.ai-betting-*` (header / badge / label / sub / toggle / masked-* など)
-
-理由: KI 由来コンポーネント（Powered by Keiba Intelligence クレジット /
-Recommended Betting Strategy 見出し / 有料版風 CTA）を含むため、
-free JRA 過去日ページには載せない。
-無料版の正規構造（`free-prediction/jra.astro` の `jra-race-accordion-list`）にはこれらは含まれない。
-
-#### 2-C. `free-prediction/jra.astro`（無料 index、PR-F1 で追加）
-
-`npm run check:ki-relics:free-jra` で検知。  
-**B (free [date]) と同じ禁止対象**（共通禁止 + KI 由来コンポーネント）を検知。
-
-ただし PR-F1 時点では以下を **意図的に検知対象外**としている（**恒久的な許可ではない・PR-F2 判断保留**）:
-- 文字列: `XGBoost`, `LSTM`, `Ensemble Neural Network`
-- 関連クラス: `.tech-background`, `.tech-section-title`, `.tech-block`,
-  `.tech-block-title`, `.tech-list`, `.tech-heading` 等
-
-理由: 上記は L1102-1144 の「AI予想の技術的背景」セクションで現在も画面表示されており、
-無料南関側 (`free-prediction/nankan.astro`) にも同様セクションがある可能性が高く、
-削除可否・南関側との同時対応の要否は **PR-F2 で判断**するため、
-PR-F1 では guard 検知対象外とした。
-
-**PR-F2 で削除方針が確定したら、本セクションの「検知対象外」記述から該当項目を移し、
-guard の BANNED リストにも追加する。**
-
-#### CI workflow ステップマトリクス（2026-05-29 / PR-J 集約）
-
-`.github/workflows/safety-check.yml` の `jobs.safety.steps` で **3 つの ki-relics guard すべてが PR / push to main で個別 step として CI 実行される**。
-
-| step 名 | npm script | 検査対象 |
-|---|---|---|
-| Verify premium JRA 旧 KI 風混入なし | `check:ki-relics:jra` | `premium-prediction/jra.astro` |
-| Verify free JRA [date] 旧 KI 風混入なし | `check:ki-relics:free-jra-date` | `free-prediction/jra/[date].astro` |
-| Verify free JRA index 旧 KI 風混入なし | `check:ki-relics:free-jra` | `free-prediction/jra.astro` |
-
-paths フィルターにも対応する guard スクリプト 3 ファイルが追加済み (PR-J / #46)。guard スクリプト単独修正の PR でも workflow が起動し、該当 step が CI 上で実際に実行される。
-
-**新規 guard を追加する場合の手順**:
-1. `astro-site/scripts/check-no-ki-relics-XXX.mjs` を作成
-2. `astro-site/package.json` の `check:safety` に組み込み
-3. `.github/workflows/safety-check.yml` の `pull_request.paths` / `push.paths` に追加
-4. **`jobs.safety.steps` にも個別 step として追加**（paths だけでは CI 実行されない）
-
-### 3. 構造パリティ検証（PR/作業時の差分確認の強制）
-`npm run check:jra-nankan-parity` で nankan.astro に存在する必須セクションが
-jra.astro にも存在するかを検証。
-- 必須: `.ai-badge`, `.race-title`, `.dark-horse-link-section`,
-  `.premium-status`, `.daily-analysis-section`, `.recommendation-section`,
-  `.unified-bet-card`, `.bet-list`, `.bet-item`, `.minor-group-renka`,
-  `.minor-group-osae`, `.ineligible-section`, `isOsaeCandidate` import,
-  `isIneligibleHorse` import
-
-### CI で強制
-上記 2 つは `check:safety` に組み込み済みで、PR / push to main で
-自動実行される（`.github/workflows/safety-check.yml`）。
-**「一時的に無効化」は禁止**。
-
-### 触ってはいけない領域
-- `keiba-intelligence` 側（**絶対に触らない**）
-- JSON データ / `importPrediction*.js` / `featureScores.js` /
-  `osaeClassification.js` / `shared-prediction-logic.js`（再エクスポート以外）
-
-### 復活させようとする操作の例（すべて検知できる状態）
-- `git revert <KI 風削除コミット>` → grep ガードで検知
-- `git checkout <旧コミット> -- premium-prediction/jra.astro` → grep ガード + パリティで検知
-- 別名で復活（`detailed-horse-card` → `detail-horse-card` 等）→ 禁止リストを更新して対応
-- nankan に無いセクション追加 → パリティチェックでは検知できないので、上記の grep
-  ガードに該当クラス/文字列を追加すること
-
-### 🔒 旧 KI 風除去 / guard 強化 系列の保留・禁止事項（2026-05-29 集約）
-
-旧 KI 風除去・guard 強化系列は **PR #41〜#46 / #45 で一段落**。以後の関連タスクは下表の保留・除外区分に従う。
-
-#### 触ってはいけないコンポーネント
-
-- `astro-site/src/components/AIBettingSection.astro` は **削除禁止**。`src/pages/prediction/[slug].astro`（南関 SSR 動的ページ・OOI / URAWA / FUNABASHI / KAWASAKI）で現役使用中のため、削除すると build / SSR が落ちる。premium-prediction/jra.astro / 無料 JRA から再 import するのも禁止（guard で検知）。
-
-#### 保留 / 凍結 / 除外
-
-| 候補 | 状態 | 理由 |
-|---|---|---|
-| **PR-F2** | 保留（着手可能・要判断）| `free-prediction/jra.astro` の tech-background (XGBoost / LSTM / Ensemble Neural Network) 削除可否 + `free-prediction/nankan.astro` 側との同時対応の要否判断が必要 |
-| **PR-H-2** | **無期限保留** | AIBettingSection.astro 削除は南関 prediction 系の刷新方針確定まで凍結 |
-| **PR-G2** | **候補から除外** | 上部 UI / 会場切替 / 余白 / 角丸デザイン統一は本番目視で問題なし。崩れが出た場合のみ別途対応 |
-| **PR-K** | 低優先度 | `check:jra-nankan-parity` / `check:prediction-integrity` の `safety-check.yml` 組み込み。`check:prediction-integrity` は既存問題（検査対象 0 件で失敗）があるため、まず原因調査が先 |
+---
 
 ## 📝 技術スタック
 
-- Astro 5 + Sass（SSR mode）
-- Netlify Pro（Functions/Blobs）
-- Airtable Pro（顧客管理）
-- SendGrid Marketing Campaigns（メルマガ）
-- Gemini 2.5 Flash（AI解説）
-- Stripe + 銀行振込（決済）
+Astro 5 + Sass（SSR）/ Netlify Pro（Functions・Blobs）/ Airtable Pro（顧客）/
+SendGrid（メール）/ Upstash Redis（計測・スナップショット）/ Gemini 2.5 Flash（AI解説）/
+Stripe + 銀行振込（決済）
 
-## 🔄 GitHub Actions Workflows
+### 特徴量システム
 
-`.github/workflows/` に配置：
-- `import-on-dispatch.yml` - 予想データ取込（南関＋JRA統合）
-- `import-results-on-dispatch.yml` - 結果データ取込
-- `import-prediction-jra.yml` / `import-prediction-daily.yml`
-- `import-results-jra.yml` / `import-results-jra-daily.yml` / `import-results-nankan-daily.yml`
-- `auto-sync-check.yml` - archive整合性検証
-- `verify-archive-sync.yml` - archive 欠落の日次監視（過去7日）
+`src/utils/featureScores.js` に全ページ共通の算出ロジック
+（Speed Index / Stamina Rating / Form Trend / Track Compatibility / Distance Fitness /
+Jockey Factor / 期待値（predictedOdds が無ければ控除率 25%））。
 
-### verify-archive-sync.yml の監視契約（2026-08-09 恒久修正）
+### GitHub Actions
 
-`scripts/checkArchiveCoverage.mjs` が keiba-data-shared の **per-venue 構造**を直接読み、
-archive（`src/data/archiveResultsJra.json` / `archiveResults.json`）と突き合わせる。
+`.github/workflows/` に配置。Concurrency Group は
+**南関 `archive-nankan-update` / JRA `archive-jra-update`** で統一。
+監視契約（偽の緑を作らないための exit code 規約）は
+[`ARCHIVE_SYNC_MONITORING.md`](./astro-site/docs/ARCHIVE_SYNC_MONITORING.md)。
 
-**背景**: 2026-08-09 以前は `checkSharedDailyFile.mjs` で
-**統合 daily ファイル**（`jra/results/YYYY/MM/YYYY-MM-DD.json`）だけを見ていた。
-shared の正本は per-venue（`...-CHU.json`）なので常に 404 になり、
-実開催日でも「Not found」→ アラート判定に入らず
-「✅ All dates synchronized」を出していた（＝監視が成立していない偽の緑）。
-
-**開催会場の決め方**: 暦や決め打ちで推測しない。月ディレクトリ一覧から
-`YYYY-MM-DD-{CODE}.json` に一致するファイルを拾い、**shared に実在するものだけ**を採用する。
-
-**状態の区別と exit code**:
-
-| 状態 | 意味 | exit | run |
-|---|---|---|---|
-| `ok` | archive 反映済み | 0 | 緑 |
-| `no_race` | results も予想も無い＝非開催 | 0 | 緑 |
-| `partial` | 投入途中（閾値未満）。欠落と断定しない | 0 | 緑 |
-| `deferred` | rate limit / timeout / 5xx で確定不能 | 2 | 緑（⚠️ ログのみ・次回再検証） |
-| `archive_missing` | shared に実データがあるのに archive 未反映 | 3 | **赤**（アラートメール後に failure） |
-| `results_missing` | 予想はあるのに結果未登録 | 3 | **赤**（同上） |
-| — | token 未設定 / 401 / 権限不足 / schema 不一致 | 1 | **赤**（即時） |
-
-閾値は JRA 10R / 南関 12R。予想の有無は JRA が computer 予想
-（`jra/predictions/computer/`）、南関が `nankan/predictions/`。
-racebook は前倒し/日付誤りの stray があるため判定根拠にしない。
-
-**禁止**: `continue-on-error` で隠さない。欠落があるのに exit 0 を返さない。
-一時エラーだけを緑にし、実データ欠落は必ず run を failure にする。
-
-**API GET**: 1 プロセスで7日ぶんを処理し、月ディレクトリ一覧を cache する
-（同一 run で同じディレクトリを二度取らない）。非開催日にはファイル GET を撃たない。
-
-### import-results-jra-daily.yml の取込要否判定（2026-08-09 恒久修正）
-
-`scripts/checkJraResultsForImport.mjs` が shared の **per-venue results** を読み、
-取込要否（`has_missing`）を判定する。
-
-**背景**: 2026-08-09 以前は `checkSharedDailyFile.mjs`（統合 daily ファイル前提）を
-使っていたため `FOUND` が常に false → `has_missing=false` → **取込が一度も起動しなかった**。
-JRA archive が最新に保たれていたのは `archive-sync.yml`（自己回復）が補っていたため。
-verify-archive-sync と同じ根因。
-
-**判定**:
-
-| STATE | 意味 | FOUND | exit |
-|---|---|---|---|
-| `complete` | 実在会場すべてが 10R 以上 | true | 0 |
-| `partial` | results はあるが未完了の会場がある（当日未完了など） | true | 0 |
-| `not_posted` | computer 予想はあるが results が 1 件も無い | false | 0 |
-| `no_race` | results も予想も無い＝非開催 | false | 0 |
-| `deferred` | rate limit / timeout / 5xx で確定不能 | false | 2 |
-| — | token 未設定 / 401 / 権限不足 / schema 不一致 | — | 1 |
-
-`EXPECTED_VENUES` は shared に実在する会場ファイル数。workflow は
-「archive 済み会場数 < EXPECTED_VENUES なら再取込」で追いつく（partial でも自動的に収束する）。
-
-**deferred は「results 無し」に丸めない**。取込を見送るだけで run は落とさず、
-次回 schedule で再判定する。token/認証/権限/schema は **fail-closed**（run を失敗させ、
-results 無しと誤判定しない）。
-
-keiba-intelligenceで実証済みの構成を採用。Concurrency Groupは
-- 南関: `archive-nankan-update`
-- JRA: `archive-jra-update`
-で統一。
-
-## 🧠 特徴量システム
-
-`src/utils/featureScores.js`に全ページ共通の算出ロジックあり：
-- Speed Index / Stamina Rating / Form Trend
-- Track Compatibility / Distance Fitness / Jockey Factor
-- 期待値（predictedOdds がなければ控除率25%）
-
-## 🔐 Netlify環境変数（必須）
+### Netlify 環境変数（必須）
 
 ```
-AIRTABLE_API_KEY
-AIRTABLE_BASE_ID
-SENDGRID_API_KEY
-SENDGRID_FROM_EMAIL
+AIRTABLE_API_KEY / AIRTABLE_BASE_ID
+SENDGRID_API_KEY / SENDGRID_FROM_EMAIL / SENDGRID_CUSTOM_FIELD_ANALYTICS
 GEMINI_API_KEY
-GITHUB_TOKEN
-GITHUB_REPO_OWNER
-GITHUB_REPO_NAME
-GITHUB_BRANCH
-SENDGRID_CUSTOM_FIELD_ANALYTICS  # 新規: analytics.keiba.link用カスタムフィールド
+GITHUB_TOKEN / GITHUB_REPO_OWNER / GITHUB_REPO_NAME / GITHUB_BRANCH
 ```
 
-## ⚠️ 移行タスク（初期セットアップ）
+機能別のゲート env（既定 OFF）は各正本を参照。**env 変更は要承認**。
 
-1. GitHubリポジトリ作成: `apol0510/analytics-keiba`
-2. Netlifyサイト作成・環境変数設定
-3. DNS: `analytics.keiba.link` をNetlifyに向ける
-4. SendGrid カスタムフィールド `registered_analytics` 追加
-5. keiba-data-shared-admin から本リポジトリへのdispatch送信追加
-6. nankan-analytics.keiba.link → analytics.keiba.link への301リダイレクト
-7. 内部リンク・メタタグ・メルマガテンプレ更新
+---
 
 ## 関連プロジェクト
 
 | プロジェクト | 役割 |
 |---|---|
-| `keiba-intelligence` | 先行実装・実装パターン参照元 |
+| `keiba-intelligence` | 先行実装。**独立運用・触らない** |
 | `keiba-data-shared-admin` | データ入力管理ツール |
-| `nankan-analytics` | 旧実装（段階的に引退予定） |
+| `nankan-analytics` | 旧実装（段階的に引退） |
+
+---
 
 ## 完了報告の簡潔化
 
-各フェーズの完了報告は、原則として以下だけを簡潔に記載すること。
+各フェーズの完了報告は、原則として以下だけを簡潔に記載する。
 
 - 判定
 - 実施内容
 - 変更ファイル
 - テスト結果
-- Git状態
-- 異常・未確定事項
+- Git状態（branch / commit / PR URL）
+- 異常・未確定事項（blocker を含む）
 - 次工程案
 
-成功したコマンドの全文、重複する説明、既知仕様の再掲は省略すること。
-エラー、想定外差分、安全条件違反がある場合のみ、必要なログを提示すること。
+成功したコマンドの全文、重複する説明、既知仕様の再掲は省略する。
+エラー、想定外差分、安全条件違反がある場合のみ、必要なログを提示する。
 
-各リポジトリ固有の安全条件、伝播確認、本番確認、取得回数、rollback条件など、既存の必須報告項目は省略しないこと。
-
-## 🤖 Autonomous Delivery Workflow（自律完遂運用 / 2026-07-20 追加）
-
-Claudeは本プロジェクトにおいて、単なる調査担当や途中監査担当ではなく、完成条件まで進める実装担当として行動する。
-
-本節は既存ルールを**置き換えない**。本節と既存節の記述が競合する場合は、
-**既存節（🚨 AI作業ルール / 🧭 修正対象範囲ルール / 🛡️ CI Safety Check / 🌐 本番 URL ルール ほか）の記述を優先**する。
-
-### Canonical documents
-
-作業開始時に必ず次を読む。
-
-- `docs/spec.md` — 仕様の正本
-- `docs/progress.md` — 進捗の正本
-- `docs/decisions.md` — 設計判断の正本
-- `CLAUDE.md`（本ファイル） — 運用ルールの正本
-
-各ドメインの詳細仕様は従来どおり `astro-site/docs/*.md`（`PREDICTION_LOGIC.md` / `BET_POINT_LOGIC.md` /
-`AUTH_LOGIN.md` / `PAYMENT_EMAIL_V2.md` / `PREMIUM_PLUS.md` / `SAFETY_CHECKS.md` 等）と
-`docs/*.md`（`ui-cross-plan-regression-policy.md` / `MEMBER_TIERS.md` / `PAYMENT_SYSTEM.md` 等）が正本である。
-`docs/spec.md` はそれらを置き換えず、責務境界と全体像のみを定義する。
-
-仕様・進捗・設計判断が競合する場合は、勝手に推測せず、git履歴と実装証拠を調査して整合させる。
-整合できない矛盾は `docs/progress.md` の Open Questions に記録する。
-
-### Continuous execution
-
-次の低・中リスク工程は、重大停止条件がない限り、中間承認なしで連続実行する。
-
-- read-only調査 / 設計 / 実装
-- unit test / integration test / lint / typecheck / 非本番build
-- 文書更新 / 通常commit / 通常push / Draft PR作成
-- PR差分の自己監査 / 可逆的な修正 / テスト失敗の原因修正
-
-コード、git履歴、既存文書、テストから判断できる内容を、ユーザーへ質問しない。小さな判断や軽微な不明点ごとに停止しない。
-「一旦停止します」「承認をください」を繰り返さない。同一HEAD・同一差分・同一テスト結果を理由なく何度も再監査しない。
-
-ただし §🚨 AI作業ルール の「作業開始時に必ず明示（目的 / 変更対象ファイル / 完了条件）」と
-§🧭 修正対象範囲ルール の対象範囲明記義務は、連続実行中も省略しない。
-
-**連続実行の範囲限定（本節は無制限の権限を与えるものではない）**
-
-- 「通常push」は本タスクの作業branchへの push のみを指す。`main` / `master` への直接 push を許可するものではない。
-- 「テスト失敗の修正」は、本タスクの範囲内で原因が明確に特定でき、かつ後方互換性を壊さない場合に限る。
-  原因不明・範囲外・互換性に影響する場合は停止する。
-- 「Draft PR 作成まで自律実行」は、PR merge および本番反映の事前承認を意味しない。
-- 作業中に本タスクの範囲外の不具合（着手前から存在する失敗テスト・既存バグを含む）を発見しても、
-  勝手に修正しない。`docs/progress.md` へ記録して報告し、修正可否はユーザー判断を仰ぐ。
-  範囲外の既存不具合を自分の変更による regression として扱わない。
-
-### High-risk approval boundary
-
-次の操作は、直前でのみ停止し、実施内容・対象・影響・rollback手順・検証結果を一括報告する。
-
-- production deploy / production環境変数またはsecret変更
-- 本番メール・LINE・通知の送信
-- 本番DB・Airtable・Redis・Blob・外部APIへの書込み
-- 共通データリポジトリへの本番PUT / workflow dispatch
-- package公開・registry公開（npm publish等）
-- production reader・transport・モデル・artifact・champion・datastoreの切替
-- PR merge / データ削除 / rollback困難なmigration
-- force push / reset / rebase / amend / 履歴改変
-- 課金・契約・会員権限への本番変更
-
-高リスク操作に到達する前の安全な工程は完了させる。
-
-本リポジトリでの具体例: 入金確認メール v2 の cutover、`PAYMENT_CONFIRM_SECRET` 等の env 投入・解除、
-Netlify Build Hook 実行、Airtable Automation の変更、Netlify Blobs への本番アップロード、
-`import-*` workflow の手動 dispatch。
-
-### Immediate stop conditions
-
-次の場合は即時停止する。
-
-- secret・token・認証値が出力される可能性（§🔐 PAYMENT_CONFIRM_SECRET の「値を絶対に記載しない」を含む）
-- 対象外リポジトリまたは対象外ファイルへの予期しない変更
-- 本番データ破損の可能性 / 二重送信または重複実行の可能性 / rollback不能
-- 現行API・schema・consumer contractの破壊（旧フォーマット復活、±1日マージ削除、中身date検証ガード無効化を含む）
-- origin・branch・HEAD・対象日・会場・件数等の前提不一致
-- 未知の既存変更との競合 / merge conflict
-- test・lint・typecheck・buildの失敗を安全に解消できない（safety check の一時無効化は §🛡️ CI Safety Check により禁止）
-- 別リポジトリの仕様を誤って適用する可能性（特に `keiba-intelligence` / `keiba-data-shared-admin`）
-
-### Repository isolation
-
-複数プロジェクトを扱う場合も、各リポジトリを独立して扱う。変更前に必ず次を確認する。
-
-```
-pwd
-git rev-parse --show-toplevel
-git remote get-url origin   # 本リポジトリは https://github.com/apol0510/analytics-keiba.git
-git branch --show-current
-git rev-parse HEAD
-git status --short
-```
-
-別リポジトリの変更が必要な場合は、現在のリポジトリから勝手に移動して同時変更せず、
-依存変更として `docs/progress.md` へ記録する。
-横断変更が明示的に承認されたタスクでは、リポジトリごとに独立したbranch・commit・Draft PRを作成する。
-
-これは §keiba-intelligence との関係（独立運用、2026-05-23〜）の「自動的に横展開しない」方針と同一の考え方である。
-
-### Package manager
-
-- package manager は各リポジトリの正本に従う。全リポジトリ一律の npm / pnpm 強制はしない。
-- 正本の優先順位:
-  1. `package.json` の `packageManager` フィールド
-  2. lockfile
-  3. CI / workflow / deploy 設定
-  4. 既存の明示的なプロジェクト固有ルール
-- `package-lock.json` のみ → npm / `pnpm-lock.yaml` のみ → pnpm / `yarn.lock` のみ → yarn。
-- 複数 lockfile が併存する場合、または文書と実装・CI・lockfile が矛盾する場合は、
-  **依存変更を停止**し `docs/progress.md` へ記録する。どちらか一方を勝手に削除・変換しない。
-- lockfile を無断で別形式へ変換しない。
-- `npm install` / `pnpm install` 等を一律禁止も一律許可もしない。上記正本に従って判断する。
-
-本リポジトリの現状（2026-07-20 確認）: `packageManager` フィールドは未設定。追跡下の lockfile は
-`astro-site/package-lock.json` / `nankan-stripe-integration/package-lock.json` /
-`astro-site/astro-site/package-lock.json` の 3 つで **いずれも npm 形式**。CI（`.github/workflows/*.yml`）は
-`npm ci`、`netlify.toml` は `npm run build`。したがって本リポジトリの正本は **npm** であり、
-pnpm / yarn を要求する既存ルールは存在しない（形式の矛盾なし＝依存変更の停止条件には該当しない）。
-ただし `astro-site/astro-site/` の入れ子 lockfile は意図不明のため `docs/progress.md` の
-Open Questions に記録する。**独断で削除しない。**
-
-### Progress maintenance
-
-- 作業開始時と各Phase完了時に `docs/progress.md` を更新する。
-- 重要な設計判断を行った場合は `docs/decisions.md` を更新する。
-- 仕様変更が承認された場合のみ `docs/spec.md` を更新する。
-- 予想ロジック・購入点数などの詳細仕様を変更した場合は、従来どおり
-  **コードと対応する `astro-site/docs/*.md` を必ず両方更新**する。
-
-### Completion report
-
-最終報告の書式は §完了報告の簡潔化 を primary とする。**重複して別書式で書き直さない。**
-同節の必須項目（判定 / 実施内容 / 変更ファイル / テスト結果 / Git状態 / 異常・未確定事項 / 次工程案）に加えて、
-自律完遂運用では次の3点を必ず含める。
-
-1. 未実施の高リスク操作
-2. 次に必要な承認
-3. `docs/progress.md` の現在地
-
-「Git状態」には branch / commit / Draft PR URL を含める。「異常・未確定事項」には blocker を含める。
+**各リポジトリ固有の安全条件、伝播確認、本番確認、取得回数、rollback 条件など、
+既存の必須報告項目は省略しない。**

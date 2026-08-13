@@ -1,7 +1,10 @@
-# Safety Checks — 表示指数 raw-1 と全頭分類の恒久ルール
+# Safety Checks — CI で強制している恒久ルール
 
-analytics-keiba には CI で強制している 2 つの恒久ルールがある。
+analytics-keiba には CI で強制している恒久ルールがある。
 変更前後で **必ず** 該当チェックがローカルで通ることを確認すること。
+
+> **このファイルが CI safety の正本。** CLAUDE.md には要点だけを置く。
+> ルールを増やしたらここへ追記し、CLAUDE.md 側は箇条書き 1 行に留めること。
 
 ## ルール 1: 表示用コンピ指数は必ず raw − 1
 
@@ -43,6 +46,34 @@ import { getDisplayComputerIndex } from '../lib/shared-prediction-logic.js';
 
 表示合計 = 出走頭数。「不要馬セクション」を抜くことで頭数が合わなくなるのは NG。
 
+## ルール 3: 無料版のモザイクは「描画されて」初めてマスク
+
+> 2026-08-13 に CLAUDE.md から移設（原文のまま）。2026-07-31 の本番不具合が根拠。
+
+- `.stat-score` / `.stat-index` の gradient 文字（`background-clip: text` +
+  `-webkit-text-fill-color: transparent`）の中では、子要素に `filter: blur()` を掛けても
+  **親が同じ文字をクリップ描画するため鮮明な文字が残る**（2026-07-31 本番不具合）
+- マスク時は親に `stat-value-masked` を付け、gradient 文字を無効化する
+  （`.stat-value.stat-value-masked` の 2 クラスで上書き。同詳細度だと定義順依存になる）
+- 検証: `npm run check:free-mask`（markup だけでなく打ち消し CSS の有無まで検査）
+
+## ルール 4: 旧 KI 風ブロックを再混入させない
+
+3 ページ分の grep guard と構造パリティで強制する。詳細は
+[`KI_RELIC_GUARDS.md`](./KI_RELIC_GUARDS.md) / [`PREMIUM_JRA_RULES.md`](./PREMIUM_JRA_RULES.md) /
+[`FREE_JRA_RULES.md`](./FREE_JRA_RULES.md)。
+
+検証: `npm run check:ki-relics:jra` / `check:ki-relics:free-jra-date` / `check:ki-relics:free-jra`
+/ `check:jra-nankan-parity`
+
+## ルール 5: Customers を無フィルタで全件走査しない
+
+Customers は 15,962 件。先頭 N 件だけ読んで黙って打ち切ると**人が静かに消える**。
+用途別に `filterByFormula` で絞るか、絞れないなら fail closed にする。
+**`MAX_PAGES` を上げるのは解決ではない。**
+
+検証: `npm run check:no-unbounded-scan`
+
 ## ローカル確認コマンド
 
 ```bash
@@ -69,6 +100,13 @@ node scripts/check-free-prediction-horse-sections.mjs 2026-05-19 ooi
 2. `npm run build` — Astro build（既存 `validate:archive` 込み）
 3. `npm run check:display-index` — 全 predictions/*.json で raw vs display 突合
 4. `npm run check:horse-sections` — 全レースで分類合計 = 出走頭数 を検証
+5. `npm run check:free-mask` — 無料版マスクの打ち消し CSS まで検査
+6. `npm run check:ki-relics:*` — 旧 KI 風ブロックの再混入検知（3 ページ分の個別 step）
+7. `npm run check:no-unbounded-scan` — Customers の無フィルタ全件走査＋黙って打ち切りの検知
+
+実行エントリの正本は `astro-site/package.json` の `check:safety` / `verify:safety`。
+**新しい guard を足すときは `check:safety` と `safety-check.yml` の `paths` と
+`jobs.safety.steps` の 3 箇所すべてに追加する**（paths だけでは CI 実行されない）。
 
 ### CI が失敗する条件
 
