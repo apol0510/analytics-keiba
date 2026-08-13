@@ -1299,6 +1299,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .fn-src-why { flex-basis: 100%; font-size: .62rem; color: #7f90ab; line-height: 1.7; }
   .ppe .fn-src-note { flex-basis: 100%; font-size: .64rem; color: #7f90ab; line-height: 1.7; padding-top: .3rem; }
   .ppe .fn-src-note-on { color: #fcd34d; }
+  .ppe .fn-period { font-size: .66rem; color: #cbd5e6; }
   /* 段階バッジ。未確認は控えめ・進んだ段階ほど強く */
   .ppe .rv-stage {
     display: inline-block; font-size: .64rem; font-weight: 800; margin-bottom: .25rem;
@@ -2667,7 +2668,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         e.appendChild(nb);
       }
       // 表示 → クリック → 商品ページ の 3 段を **回数・初回・最終**で並べる
-      for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ']]) {
+      for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ'],
+        ['checkout', '決済開始'], ['purchase', '購入完了']]) {
         const cell = rv[key] || {};
         const s = document.createElement('span');
         s.className = 'rv' + (cell.measured ? ' rv-yes' : ' rv-unknown');
@@ -2844,6 +2846,55 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         row.className = 'fn-src-row fn-src-row-unknown';
         row.textContent = `${u.label}: 表示 ${u.cta} 名 / クリック ${u.click} 名 / 到達 ${u.page} 名`;
         row.title = tip;
+        bar.appendChild(row);
+      }
+      // ── 購入までの導線別転換 ────────────────────────────────
+      for (const s of (funnel.purchaseBySource || [])) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row';
+        const nm = document.createElement('span');
+        nm.className = 'fn-src-name';
+        nm.textContent = s.label + '（購入）';
+        row.appendChild(nm);
+        const seg = (t, n) => { const x = document.createElement('span'); x.className = 'fn-src-seg'; x.textContent = `${t} ${n}`; return x; };
+        row.appendChild(seg('到達', s.reached));
+        row.appendChild(seg('決済開始', s.checkout));
+        row.appendChild(seg('購入', s.purchased));
+        const rr = document.createElement('span');
+        rr.className = 'fn-src-rate' + (s.rates?.checkoutToPurchase === null ? ' fn-rate-unknown' : '');
+        rr.textContent = s.rates?.checkoutToPurchase === null
+          ? '決済開始→購入 未確定'
+          : `決済開始→購入 ${s.rates.checkoutToPurchase}%`;
+        row.appendChild(rr);
+        bar.appendChild(row);
+      }
+      // ── 抽出（クリック済み未購入 / 到達済み未購入）──────────────
+      const np = funnel.notPurchased;
+      if (np) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row';
+        row.textContent = `クリック済み未購入 ${np.clickedNotPurchased} 名 / 到達済み未購入 ${np.reachedNotPurchased} 名`
+          + (np.unverified > 0 ? ` / 購入を確認できず ${np.unverified} 名` : '');
+        row.title = np.note || '';
+        bar.appendChild(row);
+      }
+      // ── 期間集計（今日 / 7 日 / 30 日）。**件数**であり人数ではない ──
+      const dl = funnel.daily;
+      if (dl) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row fn-period';
+        if (!dl.available) {
+          row.classList.add('fn-src-row-unknown');
+          row.textContent = dl.note || '期間集計を読み取れませんでした（0 件ではありません）';
+        } else {
+          const parts = (dl.windows || []).map((w) => {
+            const e = w.byEvent || {};
+            return `${w.label}: 表示 ${e.cta_view || 0} / クリック ${e.cta_click || 0} / 到達 ${e.page_view || 0}`
+              + ` / 決済開始 ${e.checkout_start || 0} / 購入 ${e.purchase || 0}`;
+          });
+          row.textContent = parts.join('　｜　');
+          row.title = (dl.note || '').replace(/\*\*/g, '');
+        }
         bar.appendChild(row);
       }
       // **合計と導線別は数え方が違う**ことを常設で書く（食い違いを不具合と誤解させない）
@@ -3140,7 +3191,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         kvRow(dl, '実閲覧 段階', r.funnelStageLabel
           || (rv && window.__ppFunnel ? window.__ppFunnel.resolveFunnelStage(rv).label : '未確認'),
           (r.funnelStage && r.funnelStage !== 'unknown') ? '' : 'muted');
-        for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ']]) {
+        for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ'],
+          ['checkout', '決済開始'], ['purchase', '購入完了']]) {
           const c = (rv && rv[key]) || {};
           kvRow(dl, `実閲覧 ${label}`,
             c.measured

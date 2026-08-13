@@ -70,9 +70,13 @@ test('recordId の形式が違えば数えない（任意文字列を鍵にし�
 });
 
 test('未知のイベントは数えない', () => {
-  assert.equal(shouldRecordFunnelEvent({
-    recordId: REC, event: 'purchase', userAgent: UA, authenticated: true,
-  }).reason, 'unknown_event');
+  // ⚠️ `purchase` / `checkout_start` は 2026-08-13 に**実在するイベント**になった。
+  //    未知の例として使わない（通ってしまい検査にならない）。
+  for (const unknown of ['refund', 'signup', 'view', '']) {
+    assert.equal(shouldRecordFunnelEvent({
+      recordId: REC, event: unknown, userAgent: UA, authenticated: true,
+    }).reason, 'unknown_event', `${unknown} を未知として弾いていない`);
+  }
 });
 
 // ── 過剰計上の防止 ──────────────────────────────────────────

@@ -32,6 +32,8 @@ import {
   FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL,
   FUNNEL_SOURCE_KIND, FUNNEL_SOURCE_KIND_OF, FUNNEL_SOURCE_KIND_LABEL,
   isOnPageSource,
+  FUNNEL_EVENT, FUNNEL_EVENT_ORDER, FUNNEL_EVENT_LABEL,
+  FUNNEL_WINDOW_DAYS, recentDayKeys,
 } from './premiumPlusFunnelStore.js';
 
 /** 実閲覧の段階。**到達した最も先の段階**で分類する。 */
@@ -280,6 +282,104 @@ export function hasSourceTotalMismatch(rows) {
 }
 
 /** 画面に常設で出す注記（**合計と導線別は一致しないことがある**） */
+/**
+ * 抽出: **クリック済み未購入 / 到達済み未購入**。
+ *
+ * ⚠️ 「購入していない」と「購入を確認できていない」を混同しない。
+ *    購入の記録が読めない（`available:false`）人は**どちらにも入れない**。
+ *
+ * @returns {{clickedNotPurchased:Array, reachedNotPurchased:Array, unverified:Array}}
+ */
+export function extractNotPurchased(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const out = { clickedNotPurchased: [], reachedNotPurchased: [], unverified: [] };
+  for (const r of list) {
+    const v = r && r.realView;
+    if (!v || v.available === false) { out.unverified.push(r); continue; }
+    // 購入は「記録があるか」で判断する。無い＝未購入（計測開始以降）
+    const purchased = measured(v.purchase);
+    if (purchased) continue;
+    if (measured(v.page)) out.reachedNotPurchased.push(r);
+    else if (measured(v.click)) out.clickedNotPurchased.push(r);
+  }
+  return out;
+}
+
+/**
+ * 購入転換率（導線別）。**人数**で数える。
+ * 分母が確定しないときは null（0% と書かない）。
+ */
+export function summarizePurchaseBySource(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const hit = (cell, src) => {
+    if (!cell || cell.measured !== true || !Array.isArray(cell.sources)) return false;
+    return cell.sources.some((e) => e && e.source === src && Number.isFinite(e.count) && e.count > 0);
+  };
+  return FUNNEL_SOURCE_ORDER.map((src) => {
+    const c = { reached: 0, checkout: 0, purchased: 0 };
+    for (const r of list) {
+      const v = r && r.realView;
+      if (!v || v.available === false) continue;
+      if (hit(v.page, src)) c.reached += 1;
+      if (hit(v.checkout, src)) c.checkout += 1;
+      if (hit(v.purchase, src)) c.purchased += 1;
+    }
+    return {
+      source: src,
+      label: FUNNEL_SOURCE_LABEL[src] || src,
+      ...c,
+      rates: {
+        reachToCheckout: rate(c.checkout, c.reached),
+        checkoutToPurchase: rate(c.purchased, c.checkout),
+        reachToPurchase: rate(c.purchased, c.reached),
+      },
+    };
+  });
+}
+
+/**
+ * 期間集計（今日 / 7 日 / 30 日）。**件数**であり人数ではない。
+ *
+ * @param {{available:boolean, entries:object|null}} daily `store.readDaily()` の戻り
+ */
+export function summarizeDaily(daily, nowMs, windows = FUNNEL_WINDOW_DAYS) {
+  if (!daily || daily.available !== true || !daily.entries) {
+    return { available: false, note: '期間集計を読み取れませんでした（0 件という意味ではありません）', windows: [] };
+  }
+  const out = [];
+  for (const days of windows) {
+    const keys = new Set(recentDayKeys(nowMs, days));
+    const byEvent = {};
+    const bySource = {};
+    for (const [field, raw] of Object.entries(daily.entries)) {
+      const [day, event, source] = String(field).split('|');
+      if (!keys.has(day)) continue;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      byEvent[event] = (byEvent[event] || 0) + n;
+      bySource[source] = bySource[source] || {};
+      bySource[source][event] = (bySource[source][event] || 0) + n;
+    }
+    out.push({
+      days,
+      label: days === 1 ? '今日' : `${days} 日`,
+      byEvent: Object.fromEntries(FUNNEL_EVENT_ORDER.map((e) => [e, byEvent[e] || 0])),
+      bySource,
+      rates: {
+        viewToClick: rate(byEvent[FUNNEL_EVENT.CTA_CLICK], byEvent[FUNNEL_EVENT.CTA_VIEW]),
+        reachToCheckout: rate(byEvent[FUNNEL_EVENT.CHECKOUT_START], byEvent[FUNNEL_EVENT.PAGE_VIEW]),
+        checkoutToPurchase: rate(byEvent[FUNNEL_EVENT.PURCHASE], byEvent[FUNNEL_EVENT.CHECKOUT_START]),
+      },
+    });
+  }
+  return {
+    available: true,
+    windows: out,
+    eventLabels: FUNNEL_EVENT_LABEL,
+    note: '期間集計は**件数**です（上の人数とは単位が違います）。',
+  };
+}
+
 export const SOURCE_TOTAL_NOTE =
   '「導線別」は導線ごとに数えた件数です。重複除外も導線ごとに行うため、'
   + '**合計値と一致しない場合があります**（別々の集計であり、どちらも正しい値です）。';

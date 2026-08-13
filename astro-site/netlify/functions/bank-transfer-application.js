@@ -11,6 +11,7 @@ import { resolveOrderSaleDate, buildSaleProductName } from '../../src/lib/premiu
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
 import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
 import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
+import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -48,6 +49,7 @@ exports.handler = async (event, context) => {
       remarks,
       productName,
       saleTargetDate,
+      funnelSource,
       paymentCompletedConfirm,
       timestamp
     } = formData;
@@ -607,6 +609,19 @@ exports.handler = async (event, context) => {
           // 既存顧客 - Update
           const existingRecord = existingRecords[0];
           const recordId = existingRecord.id;
+          // ── 決済開始の計測（**サーバー側**。申込がここへ到達した時点）─────
+          // Premium Plus の申込だけを Plus のファネルへ数える（他商品を混ぜない）。
+          // 計測が失敗しても申込処理は続ける（例外を投げない設計）。
+          if (/Premium Plus/i.test(String(productName || ''))) {
+            const m = await recordPlusCheckoutStart({
+              recordId,
+              env: process.env,
+              nowMs: Date.now(),
+              // 導線はフォームが載せた値。**採否はサーバーの allow-list**が決める
+              source: funnelSource,
+            });
+            console.log('📊 [bank-transfer] 決済開始の計測:', { counted: m.counted, reason: m.reason });
+          }
           const currentStatus = existingRecord.fields?.Status || null;
           const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
 

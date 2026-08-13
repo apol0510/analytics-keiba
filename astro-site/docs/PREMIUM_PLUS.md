@@ -507,6 +507,62 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 自動更新は画面のメッセージを**上書きしない**（`call(payload, { quiet: true })`）。
 管理者の操作結果が自動更新に消されるのを防ぐ。
 
+### 決済まで計測する（2026-08-13〜）
+
+段階は **表示 → クリック → 商品ページ到達 → 決済開始 → 購入完了** の 5 つ。
+
+| 段階 | 記録する場所 | 性質 |
+|---|---|---|
+| 表示 / クリック | ブラウザ → `/api/pp-funnel.json` | クライアント発火・サーバー検証 |
+| 商品ページ到達 | 商品ページ SSR | サーバー |
+| **決済開始** | `bank-transfer-application` | **サーバー**。申込が Function へ到達した時点 |
+| **購入完了** | `confirm-bank-payment` | **サーバー側の確定イベントのみ** |
+
+#### ⚠️ 購入完了は「確定」でしか記録しない
+
+記録するのは、`PaymentConfirmed=true` を Airtable から**再読込して検証**し、
+昇格 PATCH が**成功した後**だけ。**画面の成功表示では記録しない**
+（客が見た画面は確定ではない）。記録 API（クライアント経路）は
+`purchase` / `checkout_start` を**受け付けない**。
+
+#### ⚠️ 二重計上を潰す
+
+| 経路 | 対策 |
+|---|---|
+| Webhook 再送 / Automation 再実行 | **`orderKey` につき 1 回**。記録済みなら何も書かない |
+| `orderKey` が無い | **recordId につき 1 回**（単品購入のため） |
+| 申込フォームの再送信・再読込 | 既存と同じ 30 分・種別 × source の重複除外 |
+
+`orderKey` は確定内容から作る（`recordId:プラン:PaidAt`）。
+**現在時刻や乱数を使わない**（毎回違う鍵になり二重計上する）。
+
+計測が失敗しても**昇格・決済は巻き戻さない**（決済成功を最優先で保持する）。
+
+#### ⚠️ 購入の導線は推測しない
+
+購入時点でサーバーは導線を知らないので、**決済開始で記録した source を引き継ぐ**。
+
+| 決済開始の導線 | 購入の帰属 |
+|---|---|
+| 1 つだけ | その導線 |
+| 2 つ以上 | **`ambiguous`（導線を特定できず）**。どちらへも寄せない |
+| 無い | `noSource` |
+
+#### 期間集計（今日 / 7 日 / 30 日）
+
+`ak:pp:funnel:v1:daily` HASH、フィールド `YYYYMMDD|event|source`。
+
+- **recordId を含まない**（集計値のみ・PII なし）
+- 書込み時に `HINCRBY`、読取りは `HGETALL` 1 回
+- 保持は 91 日。書込み時に古いフィールドを 1 つ `HDEL`（自己クリーンアップ）
+- **日次カウンタは補助**。ここが失敗しても本体の記録は巻き戻さない
+- ⚠️ 期間集計は**件数**、転換バーは**人数**。単位が違うので画面に明記する
+
+#### 抽出
+
+「クリック済み未購入」「到達済み未購入」を出す。
+**購入を確認できない人（読み取り失敗）はどちらにも入れない**（別に数える）。
+
 ### 関連ファイル（計測）
 
 | 目的 | ファイル |
@@ -517,6 +573,9 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 | 記録 API（POST のみ・存在秘匿 404） | `src/pages/api/pp-funnel.json.js` |
 | 個別検索の式 | `src/lib/premiumPlus/premiumPlusAdminSearch.js` |
 | **段階・並び順・転換率（純粋）** | `src/lib/premiumPlus/premiumPlusFunnelAnalytics.js` |
+| **決済開始・購入完了の記録** | `src/lib/premiumPlus/premiumPlusFunnelServer.js`（`recordPlusCheckoutStart` / `recordPlusPurchase`）|
+| 購入の確定点 | `netlify/functions/confirm-bank-payment.js` |
+| 決済開始の記録点 | `netlify/functions/bank-transfer-application.js` |
 | テスト | `src/lib/premiumPlus/premiumPlusFunnel*.test.mjs`（`npm run test:premium-plus-media` / `check:safety` に組込済み） |
 
 ## 関連ファイル

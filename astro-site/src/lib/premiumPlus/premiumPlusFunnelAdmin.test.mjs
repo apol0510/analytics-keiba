@@ -79,8 +79,9 @@ test('【重要】一覧は行数ぶん往復しない（種別ごとにまと�
   const ids = Array.from({ length: 50 }, (_, i) => `rec${String(i).padStart(14, '0')}`).concat([A, B]);
   const out = await store.readMany({ recordIds: ids });
   assert.equal(out.available, true);
-  // META 1 + 種別 3 = 4 回（52 件でも変わらない）
-  assert.equal(counter.calls, 4, `往復が多すぎる: ${counter.calls}`);
+  // META 1 + 種別 5（表示 / クリック / 到達 / 決済開始 / 購入完了）= 6 回。
+  // ⚠️ 件数（52 件）に**依存しない**ことがこの検査の主眼。段階が増えたら数を更新する。
+  assert.equal(counter.calls, 6, `往復が多すぎる: ${counter.calls}`);
   assert.equal(out.rows.get(A).cta.count, 1);
   assert.equal(out.rows.get(B).cta.count, null, '記録が無い人を 0 にしている');
 });
@@ -90,8 +91,8 @@ test('まとめ読みは件数が多いと分割する（1 コマンドを肥大
   const store = createFunnelStore({ redisCmd: fakeRedis(counter) });
   const ids = Array.from({ length: READ_CHUNK * 2 + 1 }, (_, i) => `rec${String(i).padStart(14, '0')}`);
   await store.readMany({ recordIds: ids });
-  // META 1 + 3 チャンク × 3 種別 = 10
-  assert.equal(counter.calls, 10);
+  // META 1 + 3 チャンク × 5 種別 = 16
+  assert.equal(counter.calls, 16);
 });
 
 test('まとめ読みが落ちたら available:false（全員 0 回にしない）', async () => {
