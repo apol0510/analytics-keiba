@@ -144,10 +144,15 @@ test('7. 管理画面の詳細に 自動判定CTA / 理由 / 判断材料 / 実�
   for (const label of [
     '三連複保有', 'ROUTE', 'Premium加入からの経過',
     '自動判定CTA', '自動判定の理由',
-    '現在の設定', '顧客に表示されるCTA', '実表示の理由',
+    // 「表示判定」= 出るはずという判定。「実閲覧」= 実際に届いた記録。**別物として並べる**
+    '現在の設定', '顧客に表示されるCTA', '表示判定の理由',
+    '実閲覧（実測 / 表示判定とは別）', 'CTA 表示', 'CTA クリック', '商品ページ到達',
   ]) {
     assert.ok(adminPage.includes(label), `詳細パネルに「${label}」が無い`);
   }
+  // 判定を実閲覧として読ませない（旧ラベル「実表示」は判定なのに実測に見える）
+  assert.equal(/kvRow\(uCur, '実表示'/.test(adminPage), false,
+    '判定の列が「実表示」のまま。実測（実閲覧）と紛らわしい');
   // 「自動」の意味を明記する（文言の正本は upsellExplain.js）
   assert.ok(/upsellAutoRules/.test(adminPage), '「自動」の判定ルールを表示していない');
   assert.ok(/「自動」の判定ルール/.test(adminPage));

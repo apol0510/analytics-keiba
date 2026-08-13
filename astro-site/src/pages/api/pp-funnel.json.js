@@ -31,6 +31,9 @@ import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/i
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
 import { createFunnelStore, FUNNEL_EVENT } from '../../lib/premiumPlus/premiumPlusFunnelStore.js';
+import {
+  makeRedisCmd, isAdminPreviewRequest, ADMIN_PREVIEW_HEADER,
+} from '../../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 function notFound() {
   return new Response('Not Found', {
@@ -46,23 +49,9 @@ function json(status, body) {
   });
 }
 
-/** Upstash REST。未設定なら null（計測しないだけで画面は壊さない） */
-export function makeRedisCmd(env) {
-  if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) return null;
-  return async (args) => {
-    const res = await fetch(env.UPSTASH_REDIS_REST_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.UPSTASH_REDIS_REST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(args),
-    });
-    if (!res.ok) throw new Error(`redis_${res.status}`);
-    const data = await res.json();
-    return data && Object.prototype.hasOwnProperty.call(data, 'result') ? data.result : null;
-  };
-}
+// Redis 接続は `premiumPlusFunnelServer.js` の 1 か所だけ（SSR ページ・管理画面と共用）。
+// ここに書き写すと env 名や JSON の扱いがすぐズレる。
+export { makeRedisCmd };
 
 const ALLOWED_EVENTS = new Set([FUNNEL_EVENT.CTA_VIEW, FUNNEL_EVENT.CTA_CLICK, FUNNEL_EVENT.PAGE_VIEW]);
 
@@ -103,9 +92,14 @@ export async function POST({ request }) {
     nowMs: now,
     userAgent: request.headers.get('user-agent') || '',
     authenticated: true,
-    // 管理者プレビューは顧客の行動ではないので数えない
-    adminPreview: String(body.preview || '') === '1'
-      || (request.headers.get('x-admin-preview') || '') === '1',
+    // 管理者プレビューは顧客の行動ではないので数えない。
+    // ⚠️ 判定は「明示された印だけ」（premiumPlusFunnelServer.isAdminPreviewRequest）。
+    //    運営者本人の recordId・管理画面からの Referer・管理シークレットの有無で
+    //    除外してはいけない（通常の顧客閲覧まで消える）。
+    adminPreview: isAdminPreviewRequest({
+      body,
+      header: request.headers.get(ADMIN_PREVIEW_HEADER),
+    }),
   });
 
   return json(200, { ok: out.ok, counted: out.counted, reason: out.reason || null });

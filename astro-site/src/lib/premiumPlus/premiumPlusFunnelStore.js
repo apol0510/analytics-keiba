@@ -73,6 +73,9 @@ export const META_FIELD = Object.freeze({
   STARTED_AT: 'started_at',
 });
 
+/** まとめ読みの 1 コマンドあたり件数（Upstash のリクエストが肥大しないように） */
+export const READ_CHUNK = 200;
+
 /** Airtable の recordId 形式。これ以外は受け付けない（任意文字列を鍵にしない） */
 export const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 
@@ -113,6 +116,66 @@ export function shapeFunnelRow(raw) {
 export function hasAnyFunnelRecord(row) {
   const r = row || {};
   return [r.cta, r.click, r.page].some((x) => x && Number.isFinite(x.count) && x.count > 0);
+}
+
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+/** ミリ秒 → 'YYYY-MM-DD HH:MM'（JST）。null はそのまま null */
+export function funnelJst(ms) {
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms + JST_OFFSET_MS);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+/**
+ * 1 種別ぶんの**表示文言**（管理画面が独自に組み立てないための単一源）。
+ *
+ * ⚠️ **記録が無いことを「0 回」と書かない。**
+ * 記録が無い理由は「本当に見ていない」だけでなく「計測を始める前だった」
+ * 「Redis が読めない」もある。どれも**確認不能**であって 0 ではない。
+ *
+ * @param {{count:number|null, firstAtMs:number|null, lastAtMs:number|null}|null} cell
+ * @param {{available?: boolean, startedAtMs?: number|null}} ctx
+ */
+export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
+  if (available === false) {
+    return { text: '未確認', note: '計測データを読み取れませんでした（0 回という意味ではありません）', measured: false };
+  }
+  const count = cell && Number.isFinite(cell.count) ? cell.count : null;
+  if (count === null || count <= 0) {
+    const since = funnelJst(startedAtMs);
+    return {
+      text: '未確認',
+      note: since
+        ? `計測開始（${since} JST）以降の記録はありません。それ以前に見たかどうかは確認できません`
+        : 'まだ計測記録がありません。過去に見たかどうかは確認できません',
+      measured: false,
+    };
+  }
+  return {
+    text: `${count} 回`,
+    note: `初回 ${funnelJst(cell.firstAtMs) || '不明'} / 最終 ${funnelJst(cell.lastAtMs) || '不明'}（JST）`,
+    measured: true,
+  };
+}
+
+/**
+ * 1 会員ぶんの実閲覧を管理画面用にまとめる。
+ * **「表示判定」列とは別物**（判定は resolveUpsellForCustomer、ここは実測）。
+ */
+export function describeFunnelRow(row, { available, startedAtMs } = {}) {
+  const ctx = { available, startedAtMs };
+  const r = row || {};
+  return {
+    available: available !== false,
+    startedAtJst: funnelJst(startedAtMs),
+    cta: describeFunnelCell(r.cta, ctx),
+    click: describeFunnelCell(r.click, ctx),
+    page: describeFunnelCell(r.page, ctx),
+    /** 1 つでも実測があるか。false = 「見ていない」ではなく「確認できない」 */
+    anyMeasured: available !== false && hasAnyFunnelRecord(r),
+  };
 }
 
 /**
@@ -217,6 +280,53 @@ export function createFunnelStore({ redisCmd } = {}) {
         };
       } catch {
         return { available: false, reason: 'read_failed', row: null };
+      }
+    },
+
+    /**
+     * 複数レコードをまとめて読む（管理一覧用）。
+     *
+     * 1 件ずつ読むと一覧の行数だけ往復が増えて管理画面がタイムアウトする。
+     * **HMGET で種別ごと 1 回**に畳む（3 種別 + META = 4 往復 / チャンク）。
+     *
+     * 読めなければ `available:false`。**そのとき行を 0 回にしない**
+     * （呼び出し側は全員「未確認」と出す）。
+     *
+     * @returns {Promise<{available:boolean, startedAtMs:number|null, rows:Map<string,object>|null, reason?:string}>}
+     */
+    async readMany({ recordIds } = {}) {
+      const ids = [...new Set((recordIds || []).map((x) => String(x || '')))]
+        .filter((id) => RECORD_ID_RE.test(id));
+      if (ids.length === 0) return { available: true, startedAtMs: null, rows: new Map() };
+
+      try {
+        const startedAt = await redisCmd(['HGET', FUNNEL_KEY.META, META_FIELD.STARTED_AT]);
+        const rows = new Map();
+        // Upstash の 1 コマンドが際限なく長くならないよう分割する
+        for (let i = 0; i < ids.length; i += READ_CHUNK) {
+          const chunk = ids.slice(i, i + READ_CHUNK);
+          const [cta, click, page] = await Promise.all([
+            redisCmd(['HMGET', FUNNEL_KEY.CTA, ...chunk]),
+            redisCmd(['HMGET', FUNNEL_KEY.CLICK, ...chunk]),
+            redisCmd(['HMGET', FUNNEL_KEY.PAGE, ...chunk]),
+          ]);
+          const at = (arr, k) => {
+            const v = Array.isArray(arr) ? arr[k] : null;
+            if (v === null || v === undefined) return null;
+            try { return JSON.parse(typeof v === 'string' ? v : String(v)); } catch { return null; }
+          };
+          chunk.forEach((id, k) => {
+            const c = at(cta, k); const cl = at(click, k); const p = at(page, k);
+            rows.set(id, shapeFunnelRow({
+              cta_first_at: c && c.firstAt, cta_last_at: c && c.lastAt, cta_views: c && c.count,
+              click_first_at: cl && cl.firstAt, click_last_at: cl && cl.lastAt, clicks: cl && cl.count,
+              page_first_at: p && p.firstAt, page_last_at: p && p.lastAt, page_views: p && p.count,
+            }));
+          });
+        }
+        return { available: true, startedAtMs: num(startedAt), rows };
+      } catch {
+        return { available: false, reason: 'read_failed', startedAtMs: null, rows: null };
       }
     },
   };
