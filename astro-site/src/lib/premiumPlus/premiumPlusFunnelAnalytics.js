@@ -212,21 +212,48 @@ export function summarizeFunnelBySource(rows) {
 
 /**
  * 導線が分からない記録を持つ人数（種別ごと）。
- * **「0 だから無い」ではなく「振り分けられていない分がある」**ことを見せる。
+ *
+ * ⚠️ **「合計 − 内訳の和」では出さない**（負になる）。
+ *    次の 2 つを**別々に**数える:
+ *      - `legacy`   … 導線別計測より前の記録
+ *      - `noSource` … 計測開始後に source なしで届いた記録
  */
 export function countUnknownSource(rows) {
   const list = Array.isArray(rows) ? rows : [];
-  const has = (cell) => !!(cell && cell.measured === true && Number.isFinite(cell.unknownCount) && cell.unknownCount > 0);
-  const c = { cta: 0, click: 0, page: 0 };
+  const hasLegacy = (c) => !!(c && c.measured === true && Number.isFinite(c.legacyCount) && c.legacyCount > 0);
+  const hasNo = (c) => !!(c && c.measured === true && Number.isFinite(c.noSourceCount) && c.noSourceCount > 0);
+  const legacy = { cta: 0, click: 0, page: 0 };
+  const noSource = { cta: 0, click: 0, page: 0 };
   for (const r of list) {
     const v = r && r.realView;
     if (!v || v.available === false) continue;
-    if (has(v.cta)) c.cta += 1;
-    if (has(v.click)) c.click += 1;
-    if (has(v.page)) c.page += 1;
+    for (const k of ['cta', 'click', 'page']) {
+      if (hasLegacy(v[k])) legacy[k] += 1;
+      if (hasNo(v[k])) noSource[k] += 1;
+    }
   }
-  return { ...c, label: FUNNEL_SOURCE_LABEL.unknown };
+  return {
+    legacy: { ...legacy, label: FUNNEL_SOURCE_LABEL.legacy },
+    noSource: { ...noSource, label: FUNNEL_SOURCE_LABEL.noSource },
+  };
 }
+
+/**
+ * 合計と導線別の和が食い違っている人がいるか。
+ * **食い違いは異常ではない**（数え方が違う）。画面に注記を出すためのフラグ。
+ */
+export function hasSourceTotalMismatch(rows) {
+  return (Array.isArray(rows) ? rows : []).some((r) => {
+    const v = r && r.realView;
+    if (!v || v.available === false) return false;
+    return ['cta', 'click', 'page'].some((k) => v[k] && v[k].sourceTotalDiffers === true);
+  });
+}
+
+/** 画面に常設で出す注記（**合計と導線別は一致しないことがある**） */
+export const SOURCE_TOTAL_NOTE =
+  '「導線別」は導線ごとに数えた件数です。重複除外も導線ごとに行うため、'
+  + '**合計値と一致しない場合があります**（別々の集計であり、どちらも正しい値です）。';
 
 export function sortByLastReaction(rows) {
   return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {

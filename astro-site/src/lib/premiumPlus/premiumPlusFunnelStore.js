@@ -84,10 +84,38 @@ export const FUNNEL_SOURCE_LABEL = Object.freeze({
   dashboard: 'ダッシュボード',
   sanrenpuku: '三連複ページ',
   /** 導線別の計測を始める前に記録された分。**推測で振り分けない** */
-  unknown: 'クリック元不明',
+  legacy: 'クリック元不明（計測前）',
+  /** 計測開始後に source なしで届いた分。legacy と混ぜない */
+  noSource: 'クリック元なし',
 });
 
 const SOURCE_SET = new Set(FUNNEL_SOURCE_ORDER);
+
+/**
+ * 導線別集計のスキーマ版。**この版で書かれた記録だけが内訳を持つ。**
+ *
+ * `sv` を持たない値は導線別計測より前のもので、**全量が legacy（クリック元不明）**。
+ * 「合計 − 内訳の和」で不明を出してはいけない（下記）。
+ */
+export const FUNNEL_SOURCE_SCHEMA = 1;
+
+/**
+ * ── ⚠️ 合計（aggregate）と導線別（bySource）は**意味が違う** ────────────
+ *
+ * - **合計**: 「その人がその種別で反応した 30 分窓の数」。
+ *   導線に関係なく 1 つの窓で 1 回。**互換のためこの意味を変えない。**
+ * - **導線別**: 「その導線で反応した 30 分窓の数」を導線ごとに数える。
+ *
+ * したがって **導線別の和が合計を超えることがある**（正常）。
+ * 例: dashboard をクリックした 10 分後に sanrenpuku をクリック
+ *     → 合計 1 / dashboard 1 / sanrenpuku 1（和 2 > 合計 1）
+ *
+ * **だから「合計 − 内訳の和」で不明を出してはいけない。負になる。**
+ * 不明は次の 2 つを**明示的に別々へ**数える:
+ *   - `legacy`   … 導線別計測より前の記録（`sv` が無い分）。**過去データは書き換えない**
+ *   - `noSource` … 導線別計測が始まったあと、source なしで届いた記録
+ */
+const LEGACY_NOTE = '導線別計測より前の記録';
 
 /**
  * 受け取った source を allow-list で検証する。
@@ -137,21 +165,60 @@ const num = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** 保存された 3 種別 → `shapeFunnelRow` が読む平たい形（**組み立ては 1 か所**） */
+export function flatten({ cta, click, page } = {}) {
+  const out = {};
+  for (const [p, v] of [['cta', cta], ['click', click], ['page', page]]) {
+    out[`${p}_first_at`] = v && v.firstAt;
+    out[`${p}_last_at`] = v && v.lastAt;
+    out[`${p}_count`] = v && v.count;
+    out[`${p}_by_source`] = v && v.bySource;
+    out[`${p}_no_source`] = v && v.noSource;
+    out[`${p}_legacy`] = v && v.legacy;
+    out[`${p}_sv`] = v && v.sv;
+  }
+  return out;
+}
+
 /** 1 レコードぶんの生データ → 表示用（**数えられていないものは null**） */
 export function shapeFunnelRow(raw) {
   const r = raw || {};
-  const pick = (a, b, c, d) => ({
-    firstAtMs: num(r[a]),
-    lastAtMs: num(r[b]),
-    count: num(r[c]),
-    // 導線別の内訳。**古いデータには無い**（その分は「不明」として残る）
-    bySource: shapeBySource(r[d]),
+  const pick = (p) => ({
+    firstAtMs: num(r[`${p}_first_at`]),
+    lastAtMs: num(r[`${p}_last_at`]),
+    count: num(r[`${p}_count`]),
+    // 導線別の内訳。**古いデータには無い**
+    bySource: shapeBySource(r[`${p}_by_source`]),
+    // source なしで届いた分（導線別計測が始まったあと）。legacy とは別枠
+    noSource: shapeBucket(r[`${p}_no_source`]),
+    // 導線別計測より前にあった回数。**引き算では出さない**
+    legacyCount: resolveLegacyCount(r[`${p}_sv`], r[`${p}_legacy`], r[`${p}_count`]),
   });
-  return {
-    cta: pick('cta_first_at', 'cta_last_at', 'cta_views', 'cta_by_source'),
-    click: pick('click_first_at', 'click_last_at', 'clicks', 'click_by_source'),
-    page: pick('page_first_at', 'page_last_at', 'page_views', 'page_by_source'),
-  };
+  return { cta: pick('cta'), click: pick('click'), page: pick('page') };
+}
+
+/** 1 バケット（導線 1 つ / noSource）→ 表示用 */
+export function shapeBucket(raw) {
+  const e = raw && typeof raw === 'object' ? raw : null;
+  if (!e) return null;
+  const count = num(e.count);
+  if (count === null || count <= 0) return null;
+  return { firstAtMs: num(e.firstAt), lastAtMs: num(e.lastAt), count };
+}
+
+/**
+ * 導線別計測より前にあった回数。
+ *
+ * ⚠️ **「合計 − 内訳の和」で出してはいけない。** 合計と導線別は数え方が違い
+ * （合計は全導線共通の 30 分窓、導線別は導線ごとの 30 分窓）、
+ * 和が合計を超えることがある。引き算すると負になる。
+ *
+ * - `sv` が無い = 導線別計測より前の値 → **全量が legacy**
+ * - `sv` がある = 書き込み時に固定した `legacy` をそのまま使う
+ */
+export function resolveLegacyCount(sv, legacy, count) {
+  if (num(sv) === null) return num(count) ?? 0;
+  return num(legacy) ?? 0;
 }
 
 /** 保存された内訳 → 表示用（allow-list 外の鍵は捨てる） */
@@ -197,7 +264,13 @@ export function funnelJst(ms) {
 export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
   // 構造化した値も併せて返す（画面が「初回 / 最終 / 回数」を列で出せるようにする）。
   // ⚠️ measured=false のときは **count を 0 にしない**。null のまま返す。
-  const blank = { count: null, firstAtMs: null, lastAtMs: null, firstAtJst: null, lastAtJst: null, sources: [], unknownCount: null, unknownLabel: FUNNEL_SOURCE_LABEL.unknown };
+  const blank = {
+    count: null, firstAtMs: null, lastAtMs: null, firstAtJst: null, lastAtJst: null,
+    sources: [], sourceTotal: null, sourceTotalDiffers: false,
+    legacyCount: null, legacyLabel: FUNNEL_SOURCE_LABEL.legacy,
+    noSourceCount: null, noSourceFirstAtJst: null, noSourceLastAtJst: null,
+    noSourceLabel: FUNNEL_SOURCE_LABEL.noSource,
+  };
   if (available === false) {
     return {
       text: '未確認',
@@ -218,15 +291,18 @@ export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
       ...blank,
     };
   }
-  // 導線別の内訳。**合計から内訳の和を引いた残りが「クリック元不明」**。
-  // 導線別の計測を始める前の記録はここに残る（推測で振り分けない）。
+  // ── 導線別の内訳 ────────────────────────────────────────────
+  // ⚠️ **合計 − 内訳の和では出さない。** 合計と導線別は数え方が違い
+  //    （合計は全導線共通の 30 分窓、導線別は導線ごとの 30 分窓）、
+  //    和が合計を超えることがある。引き算すると負になる。
+  //    不明は legacy（計測前）と noSource（計測後に source なし）を**別々に明示**する。
   const by = cell && cell.bySource && typeof cell.bySource === 'object' ? cell.bySource : {};
   const sources = [];
-  let known = 0;
+  let sourceTotal = 0;
   for (const s of FUNNEL_SOURCE_ORDER) {
     const e = by[s];
     if (!e || !Number.isFinite(e.count) || e.count <= 0) continue;
-    known += e.count;
+    sourceTotal += e.count;
     sources.push({
       source: s,
       label: FUNNEL_SOURCE_LABEL[s],
@@ -237,7 +313,8 @@ export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
       lastAtMs: Number.isFinite(e.lastAtMs) ? e.lastAtMs : null,
     });
   }
-  const unknownCount = Math.max(0, count - known);
+  const noSrc = cell && cell.noSource ? cell.noSource : null;
+  const legacyCount = Number.isFinite(cell && cell.legacyCount) ? cell.legacyCount : 0;
   return {
     text: `${count} 回`,
     note: `初回 ${funnelJst(cell.firstAtMs) || '不明'} / 最終 ${funnelJst(cell.lastAtMs) || '不明'}（JST）`,
@@ -248,9 +325,18 @@ export function describeFunnelCell(cell, { available, startedAtMs } = {}) {
     firstAtJst: funnelJst(cell.firstAtMs),
     lastAtJst: funnelJst(cell.lastAtMs),
     sources,
-    /** 導線が分からない回数（0 なら内訳が全部そろっている） */
-    unknownCount,
-    unknownLabel: FUNNEL_SOURCE_LABEL.unknown,
+    /** 導線別の合計。**`count` と一致しないことがある**（数え方が違うため） */
+    sourceTotal,
+    /** 合計と導線別の和が食い違っているか（画面に注記を出すため） */
+    sourceTotalDiffers: sourceTotal !== count,
+    /** 導線別計測より前の記録。**引き算では出さない**（保存値または全量） */
+    legacyCount,
+    legacyLabel: FUNNEL_SOURCE_LABEL.legacy,
+    /** 計測開始後に source なしで届いた記録。legacy とは別枠 */
+    noSourceCount: noSrc && Number.isFinite(noSrc.count) ? noSrc.count : 0,
+    noSourceFirstAtJst: noSrc ? funnelJst(noSrc.firstAtMs) : null,
+    noSourceLastAtJst: noSrc ? funnelJst(noSrc.lastAtMs) : null,
+    noSourceLabel: FUNNEL_SOURCE_LABEL.noSource,
   };
 }
 
@@ -328,45 +414,80 @@ export function createFunnelStore({ redisCmd } = {}) {
       const src = normalizeFunnelSource(source);
       try {
         const cur = (await readOne(key, recordId)) || {};
-        const lastAt = num(cur.lastAt);
-        // 同じ種別は一定時間 1 回だけ（再描画・戻る操作で増やさない）。
-        // ⚠️ 重複除外は**合計の lastAt だけ**で判断する。導線ごとに別々に数えると
-        //    内訳の合計が全体を超え、「不明」が負になる。
-        if (lastAt !== null && now - lastAt < DEDUPE_MS) {
-          return { ok: true, counted: false, reason: 'deduped' };
+        const tracked = num(cur.sv) !== null;
+
+        // ── 重複除外は **種別 × 導線** 単位 ───────────────────────
+        // dashboard を押した 10 分後に sanrenpuku を押したら、**両方 1 回ずつ**数える。
+        // 同じ導線の 30 分以内の再クリックだけを落とす。
+        const bucket = src || 'noSource';
+        const curBucket = src
+          ? ((cur.bySource && cur.bySource[src]) || null)
+          : (cur.noSource || null);
+        const bucketLastAt = curBucket ? num(curBucket.lastAt) : null;
+        const bucketDeduped = bucketLastAt !== null && now - bucketLastAt < DEDUPE_MS;
+
+        // 合計は**従来どおり**（全導線共通の 30 分窓）。互換のため意味を変えない。
+        // ⚠️ 合計が落ちても導線別は数える。だから和が合計を超えることがある（正常）。
+        const aggLastAt = num(cur.lastAt);
+        const aggDeduped = aggLastAt !== null && now - aggLastAt < DEDUPE_MS;
+
+        if (aggDeduped && bucketDeduped) {
+          return { ok: true, counted: false, reason: 'deduped', bucket };
         }
-        // 既存の内訳を引き継ぐ（**古い値には bySource が無い**。その分は「不明」に残る）
+
+        // 既存の内訳を**そのまま**引き継ぐ（過去データを書き換えない）
         const curBy = cur.bySource && typeof cur.bySource === 'object' ? cur.bySource : {};
         const bySource = {};
         for (const s of FUNNEL_SOURCE_ORDER) {
           const e = curBy[s] && typeof curBy[s] === 'object' ? curBy[s] : null;
-          if (e) {
-            bySource[s] = {
-              firstAt: num(e.firstAt) ?? null,
-              lastAt: num(e.lastAt) ?? null,
-              count: num(e.count) ?? 0,
+          if (!e) continue;
+          bySource[s] = {
+            firstAt: num(e.firstAt) ?? null,
+            lastAt: num(e.lastAt) ?? null,
+            count: num(e.count) ?? 0,
+          };
+        }
+        const curNo = cur.noSource && typeof cur.noSource === 'object' ? cur.noSource : null;
+        let noSource = curNo
+          ? { firstAt: num(curNo.firstAt) ?? null, lastAt: num(curNo.lastAt) ?? null, count: num(curNo.count) ?? 0 }
+          : null;
+
+        if (!bucketDeduped) {
+          if (src) {
+            const e = bySource[src] || null;
+            bySource[src] = {
+              firstAt: (e && num(e.firstAt)) ?? now,
+              lastAt: now,
+              count: ((e && num(e.count)) ?? 0) + 1,
+            };
+          } else {
+            // source なしで届いた分は **legacy とは別に**明示して数える
+            noSource = {
+              firstAt: (noSource && num(noSource.firstAt)) ?? now,
+              lastAt: now,
+              count: ((noSource && num(noSource.count)) ?? 0) + 1,
             };
           }
         }
-        if (src) {
-          const e = bySource[src] || null;
-          bySource[src] = {
-            firstAt: (e && num(e.firstAt)) ?? now,
-            lastAt: now,
-            count: ((e && num(e.count)) ?? 0) + 1,
-          };
-        }
+
+        // 導線別計測より前にあった分を **1 度だけ** legacy として固定する。
+        // これは分類の変更ではなく「内訳が無いまま存在した回数」の保存。
+        // ⚠️ 既に sv がある値の legacy は触らない（過去データを書き換えない）。
+        const legacy = tracked ? (num(cur.legacy) ?? 0) : (num(cur.count) ?? 0);
+
         const next = {
           firstAt: num(cur.firstAt) ?? now,
-          lastAt: now,
-          count: (num(cur.count) ?? 0) + 1,
-          // 内訳が 1 つも無いなら書かない（既存データの形を無用に変えない）
+          lastAt: aggDeduped ? aggLastAt : now,
+          count: (num(cur.count) ?? 0) + (aggDeduped ? 0 : 1),
+          sv: FUNNEL_SOURCE_SCHEMA,
+          legacy,
           ...(Object.keys(bySource).length ? { bySource } : {}),
+          ...(noSource ? { noSource } : {}),
         };
         await redisCmd(['HSET', key, recordId, JSON.stringify(next)]);
         await redisCmd(['HSETNX', FUNNEL_KEY.META, META_FIELD.STARTED_AT, String(now)]);
         await redisCmd(['HSET', FUNNEL_KEY.META, META_FIELD.SCHEMA, String(FUNNEL_SCHEMA)]);
-        return { ok: true, counted: true };
+        return { ok: true, counted: true, bucket, aggregateCounted: !aggDeduped };
       } catch (e) {
         // 計測の失敗で顧客の画面を壊さない
         return { ok: false, counted: false, reason: 'write_failed' };
@@ -388,14 +509,7 @@ export function createFunnelStore({ redisCmd } = {}) {
           readOne(FUNNEL_KEY.PAGE, recordId),
           redisCmd(['HGET', FUNNEL_KEY.META, META_FIELD.STARTED_AT]),
         ]);
-        const flat = {
-          cta_first_at: cta && cta.firstAt, cta_last_at: cta && cta.lastAt, cta_views: cta && cta.count,
-          cta_by_source: cta && cta.bySource,
-          click_first_at: click && click.firstAt, click_last_at: click && click.lastAt, clicks: click && click.count,
-          click_by_source: click && click.bySource,
-          page_first_at: page && page.firstAt, page_last_at: page && page.lastAt, page_views: page && page.count,
-          page_by_source: page && page.bySource,
-        };
+        const flat = flatten({ cta, click, page });
         return {
           available: true,
           /** 計測を始めた時刻。これより前の閲覧は観測できていない */
@@ -441,14 +555,7 @@ export function createFunnelStore({ redisCmd } = {}) {
           };
           chunk.forEach((id, k) => {
             const c = at(cta, k); const cl = at(click, k); const p = at(page, k);
-            rows.set(id, shapeFunnelRow({
-              cta_first_at: c && c.firstAt, cta_last_at: c && c.lastAt, cta_views: c && c.count,
-              cta_by_source: c && c.bySource,
-              click_first_at: cl && cl.firstAt, click_last_at: cl && cl.lastAt, clicks: cl && cl.count,
-              click_by_source: cl && cl.bySource,
-              page_first_at: p && p.firstAt, page_last_at: p && p.lastAt, page_views: p && p.count,
-              page_by_source: p && p.bySource,
-            }));
+            rows.set(id, shapeFunnelRow(flatten({ cta: c, click: cl, page: p })));
           });
         }
         return { available: true, startedAtMs: num(startedAt), rows };

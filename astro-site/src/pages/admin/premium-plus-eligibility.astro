@@ -1286,6 +1286,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .fn-src-name { font-weight: 700; color: #93a4bd; min-width: 7rem; }
   .ppe .fn-src-seg { color: #e6edf7; }
   .ppe .fn-src-rate { color: #86efac; }
+  .ppe .fn-src-note { flex-basis: 100%; font-size: .64rem; color: #7f90ab; line-height: 1.7; padding-top: .3rem; }
+  .ppe .fn-src-note-on { color: #fcd34d; }
   /* 段階バッジ。未確認は控えめ・進んだ段階ほど強く */
   .ppe .rv-stage {
     display: inline-block; font-size: .64rem; font-weight: 800; margin-bottom: .25rem;
@@ -2674,11 +2676,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             li.title = `初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'}（JST）`;
             s.appendChild(li);
           }
-          if (cell.unknownCount > 0) {
+          // ⚠️ 不明は **legacy（計測前）と noSource（計測後に source なし）を別々**に出す。
+          //    「合計 − 内訳の和」では出さない（数え方が違うので負になる）。
+          if (cell.legacyCount > 0) {
             const li = document.createElement('span');
             li.className = 'rv-src rv-src-unknown';
-            li.textContent = `└ ${cell.unknownLabel} ${cell.unknownCount} 回`;
+            li.textContent = `└ ${cell.legacyLabel} ${cell.legacyCount} 回`;
             li.title = '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）';
+            s.appendChild(li);
+          }
+          if (cell.noSourceCount > 0) {
+            const li = document.createElement('span');
+            li.className = 'rv-src rv-src-unknown';
+            li.textContent = `└ ${cell.noSourceLabel} ${cell.noSourceCount} 回`;
+            li.title = `計測開始後に導線の指定なしで届いた分です（初回 ${cell.noSourceFirstAtJst || '不明'} / 最終 ${cell.noSourceLastAtJst || '不明'}）`;
             s.appendChild(li);
           }
         } else {
@@ -2782,13 +2793,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         row.appendChild(rr);
         bar.appendChild(row);
       }
-      const us = funnel.unknownSource;
-      if (us && (us.cta > 0 || us.click > 0 || us.page > 0)) {
+      // 不明は 2 種類。**別々に**出す（片方へ寄せない）
+      const us = funnel.unknownSource || {};
+      for (const [key, tip] of [
+        ['legacy', '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）'],
+        ['noSource', '計測開始後に、導線の指定なしで届いた分です'],
+      ]) {
+        const u = us[key];
+        if (!u || (u.cta <= 0 && u.click <= 0 && u.page <= 0)) continue;
         const row = document.createElement('span');
         row.className = 'fn-src-row fn-src-row-unknown';
-        row.textContent = `${us.label}: 表示 ${us.cta} 名 / クリック ${us.click} 名 / 到達 ${us.page} 名`;
-        row.title = '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）';
+        row.textContent = `${u.label}: 表示 ${u.cta} 名 / クリック ${u.click} 名 / 到達 ${u.page} 名`;
+        row.title = tip;
         bar.appendChild(row);
+      }
+      // **合計と導線別は数え方が違う**ことを常設で書く（食い違いを不具合と誤解させない）
+      if (funnel.sourceNote) {
+        const note = document.createElement('span');
+        note.className = 'fn-src-note' + (funnel.sourceTotalMismatch ? ' fn-src-note-on' : '');
+        note.textContent = funnel.sourceNote.replace(/\*\*/g, '');
+        bar.appendChild(note);
       }
 
       if (!funnel.available) bar.classList.add('warn'); else bar.classList.remove('warn');
@@ -3069,8 +3093,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               kvRow(dl, `　└ ${src.label}`,
                 `${src.count} 回（初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'} JST）`);
             }
-            if (c.unknownCount > 0) {
-              kvRow(dl, `　└ ${c.unknownLabel}`, `${c.unknownCount} 回`, 'muted');
+            if (c.legacyCount > 0) kvRow(dl, `　└ ${c.legacyLabel}`, `${c.legacyCount} 回`, 'muted');
+            if (c.noSourceCount > 0) {
+              kvRow(dl, `　└ ${c.noSourceLabel}`,
+                `${c.noSourceCount} 回（初回 ${c.noSourceFirstAtJst || '不明'} / 最終 ${c.noSourceLastAtJst || '不明'} JST）`, 'muted');
+            }
+            if (c.sourceTotalDiffers) {
+              kvRow(dl, '　└ 注記', '導線別は導線ごとの集計です。合計値と一致しないことがあります', 'muted');
             }
           }
         }

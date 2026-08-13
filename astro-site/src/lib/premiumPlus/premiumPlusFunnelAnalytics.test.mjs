@@ -233,12 +233,11 @@ test('【重要】戻り値に recordId 以外の識別子を載せない', () =
 // ══════════════════════════════════════════════════════════════
 import {
   FUNNEL_SOURCE, FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL,
-  normalizeFunnelSource, shapeFunnelRow,
+  normalizeFunnelSource, shapeFunnelRow, flatten, createFunnelStore, DEDUPE_MS,
 } from './premiumPlusFunnelStore.js';
-import { summarizeFunnelBySource, countUnknownSource } from './premiumPlusFunnelAnalytics.js';
-
-/** 導線内訳つきの実測セル */
-const srcCell = (count, first, last, by) => ({ count, firstAtMs: first, lastAtMs: last, bySource: by });
+import {
+  summarizeFunnelBySource, countUnknownSource, hasSourceTotalMismatch, SOURCE_TOTAL_NOTE,
+} from './premiumPlusFunnelAnalytics.js';
 
 test('【重要】allow-list 外の source は採らない（任意値を保存しない）', () => {
   assert.equal(normalizeFunnelSource('dashboard'), 'dashboard');
@@ -253,65 +252,99 @@ test('allow-list は 2 導線（画面もこの並びを使う）', () => {
   assert.deepEqual([...FUNNEL_SOURCE_ORDER], [FUNNEL_SOURCE.DASHBOARD, FUNNEL_SOURCE.SANRENPUKU]);
   assert.equal(FUNNEL_SOURCE_LABEL.dashboard, 'ダッシュボード');
   assert.equal(FUNNEL_SOURCE_LABEL.sanrenpuku, '三連複ページ');
-  assert.equal(FUNNEL_SOURCE_LABEL.unknown, 'クリック元不明');
+  assert.match(FUNNEL_SOURCE_LABEL.legacy, /クリック元不明/);
+  assert.match(FUNNEL_SOURCE_LABEL.noSource, /クリック元なし/);
 });
 
-test('【重要】導線が無い既存データは全量「不明」（dashboard へ推測分類しない）', () => {
-  // 0510apolone のクリック 1 回に相当（bySource が無い）
-  const c = describeFunnelCell(shapeFunnelRow({ clicks: 1, click_first_at: T(1), click_last_at: T(1) }).click,
+test('【重要】既存の source なし記録は source 不明のまま（dashboard へ推測分類しない）', () => {
+  // 0510apolone のクリック 1 回に相当（sv も bySource も無い）
+  const c = describeFunnelCell(shapeFunnelRow(flatten({ click: { firstAt: T(1), lastAt: T(1), count: 1 } })).click,
     { available: true });
   assert.equal(c.measured, true);
   assert.equal(c.count, 1);
   assert.deepEqual(c.sources, [], '推測で導線を作っている');
-  assert.equal(c.unknownCount, 1);
-  assert.equal(c.unknownLabel, 'クリック元不明');
+  assert.equal(c.legacyCount, 1, '計測前の記録が legacy として残っていない');
+  assert.equal(c.noSourceCount, 0, 'legacy を noSource と混同している');
+  assert.match(c.legacyLabel, /計測前/);
 });
 
-test('内訳と合計の差が「不明」として残る（後方互換）', () => {
-  const c = describeFunnelCell(
-    srcCell(5, T(1), T(5), { dashboard: { firstAtMs: T(2), lastAtMs: T(4), count: 3 } }),
-    { available: true });
-  assert.equal(c.count, 5);
+test('【重要】source 別合計が aggregate を超えても正常（引き算しない）', () => {
+  // 合計 1（全導線共通の 30 分窓）に対し、導線別は dashboard 1 + sanrenpuku 1 = 2
+  const c = describeFunnelCell(shapeFunnelRow(flatten({
+    click: {
+      firstAt: T(1), lastAt: T(1), count: 1, sv: 1, legacy: 0,
+      bySource: {
+        dashboard: { firstAt: T(1), lastAt: T(1), count: 1 },
+        sanrenpuku: { firstAt: T(1), lastAt: T(1), count: 1 },
+      },
+    },
+  })).click, { available: true });
+  assert.equal(c.count, 1);
+  assert.equal(c.sourceTotal, 2, '導線別の和が出ていない');
+  assert.equal(c.sourceTotalDiffers, true);
+  assert.equal(c.legacyCount, 0, '引き算で負や誤った不明を作っている');
+  assert.equal(c.noSourceCount, 0);
+});
+
+test('【重要】legacy と noSource を別々に数える', () => {
+  const c = describeFunnelCell(shapeFunnelRow(flatten({
+    click: {
+      firstAt: T(1), lastAt: T(5), count: 3, sv: 1, legacy: 1,
+      bySource: { dashboard: { firstAt: T(2), lastAt: T(2), count: 1 } },
+      noSource: { firstAt: T(5), lastAt: T(5), count: 1 },
+    },
+  })).click, { available: true });
+  assert.equal(c.legacyCount, 1);
+  assert.equal(c.noSourceCount, 1);
   assert.equal(c.sources.length, 1);
-  assert.equal(c.sources[0].source, 'dashboard');
-  assert.equal(c.sources[0].count, 3);
-  assert.equal(c.unknownCount, 2, '合計 - 内訳 が不明として残っていない');
+  assert.notEqual(c.legacyLabel, c.noSourceLabel, 'legacy と noSource が同じ扱いになっている');
 });
 
 test('導線ごとの初回・最終を返す', () => {
-  const c = describeFunnelCell(
-    srcCell(2, T(1), T(4), { sanrenpuku: { firstAtMs: T(1), lastAtMs: T(4), count: 2 } }),
-    { available: true });
+  const c = describeFunnelCell(shapeFunnelRow(flatten({
+    cta: { firstAt: T(1), lastAt: T(4), count: 2, sv: 1, legacy: 0,
+      bySource: { sanrenpuku: { firstAt: T(1), lastAt: T(4), count: 2 } } },
+  })).cta, { available: true });
   const s = c.sources[0];
   assert.equal(s.label, '三連複ページ');
   assert.match(s.firstAtJst, /^2026-08-13 \d{2}:\d{2}$/);
   assert.match(s.lastAtJst, /^2026-08-13 \d{2}:\d{2}$/);
 });
 
-test('【重要】不明は負にならない（内訳が合計を超えても壊さない）', () => {
-  const c = describeFunnelCell(
-    srcCell(1, T(1), T(1), { dashboard: { firstAtMs: T(1), lastAtMs: T(1), count: 9 } }),
-    { available: true });
-  assert.equal(c.unknownCount, 0);
+test('【重要】内訳が合計を大きく超えても不明が負にならない', () => {
+  const c = describeFunnelCell(shapeFunnelRow(flatten({
+    click: { firstAt: T(1), lastAt: T(1), count: 1, sv: 1, legacy: 0,
+      bySource: { dashboard: { firstAt: T(1), lastAt: T(1), count: 9 } } },
+  })).click, { available: true });
+  assert.equal(c.legacyCount, 0);
+  assert.equal(c.noSourceCount, 0);
+  assert.ok(c.legacyCount >= 0 && c.noSourceCount >= 0, '不明が負になっている');
 });
 
-test('allow-list 外の鍵は内訳から捨てる', () => {
-  const shaped = shapeFunnelRow({
-    cta_views: 3, cta_first_at: T(1), cta_last_at: T(3),
-    cta_by_source: { dashboard: { firstAt: T(1), lastAt: T(2), count: 1 }, evil: { firstAt: T(1), lastAt: T(1), count: 2 } },
-  });
-  assert.deepEqual(Object.keys(shaped.cta.bySource), ['dashboard']);
+test('【重要】不正 source は任意の導線へ分類されない', () => {
+  const shaped = shapeFunnelRow(flatten({
+    cta: { firstAt: T(1), lastAt: T(3), count: 3, sv: 1, legacy: 0,
+      bySource: { dashboard: { firstAt: T(1), lastAt: T(2), count: 1 }, evil: { firstAt: T(1), lastAt: T(1), count: 2 } } },
+  }));
+  assert.deepEqual(Object.keys(shaped.cta.bySource), ['dashboard'], 'allow-list 外の鍵が残っている');
+  const c = describeFunnelCell(shaped.cta, { available: true });
+  assert.deepEqual(c.sources.map((x) => x.source), ['dashboard']);
+  // evil の 2 回が dashboard / sanrenpuku へ流れ込んでいないこと
+  assert.equal(c.sources[0].count, 1);
 });
 
 test('未実測セルは内訳も空・不明も null（0 にしない）', () => {
   const c = describeFunnelCell(null, { available: true });
   assert.deepEqual(c.sources, []);
-  assert.equal(c.unknownCount, null);
+  assert.equal(c.legacyCount, null);
+  assert.equal(c.noSourceCount, null);
 });
 
 // ── 導線別の集計 ───────────────────────────────────────────
 const withSrc = (over) => ({ available: true, cta: none, click: none, page: none, ...over });
-const mCell = (count, by) => describeFunnelCell(srcCell(count, T(1), T(2), by), { available: true });
+const mCell = (count, by) => describeFunnelCell(
+  shapeFunnelRow(flatten({ cta: { firstAt: T(1), lastAt: T(2), count, sv: 1, legacy: Object.keys(by || {}).length ? 0 : count, bySource: by } })).cta,
+  { available: true });
 
 test('導線別の転換を人数で数える', () => {
   const rows = [
@@ -337,16 +370,172 @@ test('【重要】導線不明の記録はどの導線にも入れない', () =>
     assert.equal(s.viewed, 0, `${s.source} に不明を混ぜている`);
   }
   const u = countUnknownSource(rows);
-  assert.equal(u.cta, 1);
-  assert.equal(u.label, 'クリック元不明');
+  assert.equal(u.legacy.cta, 1, 'legacy として数えていない');
+  assert.equal(u.noSource.cta, 0);
 });
 
 test('読めなかった人は導線別にも数えない', () => {
   const rows = [{ recordId: 'r1', realView: { available: false } }];
   for (const s of summarizeFunnelBySource(rows)) assert.equal(s.viewed, 0);
-  assert.equal(countUnknownSource(rows).cta, 0);
+  assert.equal(countUnknownSource(rows).legacy.cta, 0);
+  assert.equal(countUnknownSource(rows).noSource.cta, 0);
 });
 
 test('導線別の並びは allow-list の順', () => {
   assert.deepEqual(summarizeFunnelBySource([]).map((s) => s.source), [...FUNNEL_SOURCE_ORDER]);
+});
+
+// ══════════════════════════════════════════════════════════════
+//  重複除外は「イベント種別 × source」単位
+//
+//  全導線共通で除外すると、dashboard を押した直後の sanrenpuku クリックが
+//  丸ごと消える。各導線で 1 回ずつ数える必要がある。
+// ══════════════════════════════════════════════════════════════
+
+/** 実 Redis を使わない store（HSET/HGET をメモリで再現） */
+function memStore() {
+  const db = new Map();
+  const store = createFunnelStore({
+    redisCmd: async (cmd) => {
+      const [op, key, field, value] = cmd;
+      if (op === 'HGET') return db.get(`${key}|${field}`) ?? null;
+      if (op === 'HSET') { db.set(`${key}|${field}`, value); return 1; }
+      if (op === 'HSETNX') { const k = `${key}|${field}`; if (db.has(k)) return 0; db.set(k, value); return 1; }
+      return null;
+    },
+  });
+  const read = (key, id) => { const v = db.get(`${key}|${id}`); return v ? JSON.parse(v) : null; };
+  return { store, read, db };
+}
+
+const ID = 'recDEDUPETEST0001';
+const UA = 'Mozilla/5.0 (Macintosh) Safari/605.1';
+const CLICK_KEY = 'ak:pp:funnel:v1:click';
+const click = (store, at, source) => store.record({
+  recordId: ID, event: 'cta_click', nowMs: at, userAgent: UA, authenticated: true, source,
+});
+
+test('【重要】dashboard → sanrenpuku を 30 分以内にクリックすると各 1 回', async () => {
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  const r1 = await click(store, t0, 'dashboard');
+  const r2 = await click(store, t0 + 10 * 60 * 1000, 'sanrenpuku');
+  assert.equal(r1.counted, true);
+  assert.equal(r2.counted, true, '別導線のクリックが除外されている');
+
+  const v = read(CLICK_KEY, ID);
+  assert.equal(v.bySource.dashboard.count, 1);
+  assert.equal(v.bySource.sanrenpuku.count, 1, 'sanrenpuku が記録されていない');
+  // 合計は従来どおり全導線共通の 30 分窓なので 1 のまま（互換維持）
+  assert.equal(v.count, 1, '合計の意味が変わっている（互換が壊れている）');
+});
+
+test('【重要】同じ source を 30 分以内に再クリックしても 1 回', async () => {
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  await click(store, t0, 'dashboard');
+  const again = await click(store, t0 + 5 * 60 * 1000, 'dashboard');
+  assert.equal(again.counted, false, '同一導線の連打を数えている');
+  assert.equal(again.reason, 'deduped');
+  assert.equal(read(CLICK_KEY, ID).bySource.dashboard.count, 1);
+});
+
+test('同じ source でも 30 分を超えれば数える', async () => {
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  await click(store, t0, 'dashboard');
+  const later = await click(store, t0 + DEDUPE_MS + 1000, 'dashboard');
+  assert.equal(later.counted, true);
+  assert.equal(read(CLICK_KEY, ID).bySource.dashboard.count, 2);
+});
+
+test('【重要】source 別合計が aggregate を超えても正常に読める', async () => {
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  await click(store, t0, 'dashboard');
+  await click(store, t0 + 60 * 1000, 'sanrenpuku');
+  const raw = read(CLICK_KEY, ID);
+  const c = describeFunnelCell(shapeFunnelRow(flatten({ click: raw })).click, { available: true });
+  assert.equal(c.count, 1);
+  assert.equal(c.sourceTotal, 2, '導線別の和が出ていない');
+  assert.equal(c.sourceTotalDiffers, true, '食い違いを画面へ伝えられない');
+  assert.ok(c.legacyCount >= 0 && c.noSourceCount >= 0, '不明が負になっている');
+});
+
+test('【重要】既存の source なし記録は source 不明のまま（後から書き換えない）', async () => {
+  const { store, read, db } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  // 導線別計測より前の記録（sv も bySource も無い）= 0510apolone のクリック相当
+  db.set(`${CLICK_KEY}|${ID}`, JSON.stringify({ firstAt: t0 - 86400000, lastAt: t0 - 86400000, count: 1 }));
+
+  // そのあと dashboard からのクリックが来る
+  await click(store, t0, 'dashboard');
+  const v = read(CLICK_KEY, ID);
+  assert.equal(v.legacy, 1, '計測前の 1 回が legacy として保持されていない');
+  assert.equal(v.bySource.dashboard.count, 1);
+  assert.ok(!v.bySource.sanrenpuku, '身に覚えのない導線が生えている');
+
+  const c = describeFunnelCell(shapeFunnelRow(flatten({ click: v })).click, { available: true });
+  assert.equal(c.legacyCount, 1, '過去の記録が dashboard へ書き換えられている');
+  assert.equal(c.sources.length, 1);
+  assert.equal(c.sources[0].count, 1);
+});
+
+test('【重要】不正 source は任意の導線へ分類されない（記録経路）', async () => {
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  for (const bad of ['evil', '', 'admin', null]) {
+    // eslint-disable-next-line no-await-in-loop -- 順に時刻をずらして記録する
+    await click(store, t0 + DEDUPE_MS * (1 + ['evil', '', 'admin', null].indexOf(bad)), bad);
+  }
+  const v = read(CLICK_KEY, ID);
+  assert.ok(!v.bySource || Object.keys(v.bySource).length === 0, '不正 source が導線として保存されている');
+  assert.ok(v.noSource.count >= 1, 'source なしとして数えられていない');
+});
+
+test('【重要】Daniel 相当 fixture で 2 導線が独立して計測される', async () => {
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-13T05:00:00Z');
+  const rec = (event, at, source) => store.record({
+    recordId: ID, event, nowMs: at, userAgent: UA, authenticated: true, source,
+  });
+  // 三連複ページで表示 → クリック、その 5 分後にダッシュボードでも表示 → クリック
+  await rec('cta_view', t0, 'sanrenpuku');
+  await rec('cta_click', t0 + 60000, 'sanrenpuku');
+  await rec('cta_view', t0 + 5 * 60000, 'dashboard');
+  await rec('cta_click', t0 + 6 * 60000, 'dashboard');
+  await rec('page_view', t0 + 7 * 60000, 'dashboard');
+
+  const row = shapeFunnelRow(flatten({
+    cta: read('ak:pp:funnel:v1:cta', ID),
+    click: read(CLICK_KEY, ID),
+    page: read('ak:pp:funnel:v1:page', ID),
+  }));
+  const view = {
+    available: true,
+    cta: describeFunnelCell(row.cta, { available: true }),
+    click: describeFunnelCell(row.click, { available: true }),
+    page: describeFunnelCell(row.page, { available: true }),
+  };
+  // 2 導線それぞれ 1 回ずつ独立して数えられている
+  assert.deepEqual(view.cta.sources.map((s) => [s.source, s.count]).sort(),
+    [['dashboard', 1], ['sanrenpuku', 1]]);
+  assert.deepEqual(view.click.sources.map((s) => [s.source, s.count]).sort(),
+    [['dashboard', 1], ['sanrenpuku', 1]]);
+  assert.deepEqual(view.page.sources.map((s) => [s.source, s.count]), [['dashboard', 1]]);
+  // 合計は全導線共通の窓なので 1（導線別の和 2 と食い違うが正常）
+  assert.equal(view.cta.count, 1);
+  assert.equal(view.cta.sourceTotalDiffers, true);
+
+  const by = summarizeFunnelBySource([{ recordId: ID, realView: view }]);
+  const dash = by.find((x) => x.source === 'dashboard');
+  const srp = by.find((x) => x.source === 'sanrenpuku');
+  assert.deepEqual([dash.viewed, dash.clicked, dash.reached], [1, 1, 1]);
+  assert.deepEqual([srp.viewed, srp.clicked, srp.reached], [1, 1, 0], '三連複導線が独立して数えられていない');
+  assert.equal(hasSourceTotalMismatch([{ recordId: ID, realView: view }]), true);
+});
+
+test('画面へ出す注記が「一致しない場合がある」と述べている', () => {
+  assert.match(SOURCE_TOTAL_NOTE, /導線別/);
+  assert.match(SOURCE_TOTAL_NOTE, /一致しない/);
 });

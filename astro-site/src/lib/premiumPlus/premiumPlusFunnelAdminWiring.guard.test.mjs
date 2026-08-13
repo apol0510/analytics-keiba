@@ -207,26 +207,53 @@ test('【重要】商品ページ到達も導線を allow-list 経由で記録�
   assert.match(SERVER, /normalizeFunnelSource\(u\.searchParams\.get\('from'\)\)/);
 });
 
-test('【重要】重複除外は合計の lastAt だけで判断する（内訳が合計を超えない）', () => {
+test('【重要】重複除外は「種別 × 導線」単位（全導線共通に戻さない）', () => {
   const rec = STORE.slice(STORE.indexOf('async record('));
   const body = rec.slice(0, rec.indexOf('async read('));
-  assert.match(body, /const lastAt = num\(cur\.lastAt\)/);
-  assert.match(body, /now - lastAt < DEDUPE_MS/);
-  // 導線ごとに別の dedupe を持っていないこと
-  assert.ok(!/bySource\[[^\]]+\]\.lastAt[\s\S]{0,80}DEDUPE_MS/.test(body), '導線ごとに重複除外している');
+  assert.match(body, /bucketLastAt/, '導線ごとの前回時刻を見ていない');
+  assert.match(body, /bucketDeduped/);
+  assert.match(body, /aggDeduped/);
+  // 合計だけで早期 return していないこと（別導線のクリックが消える）
+  assert.ok(!/if \(aggDeduped\) \{[\s\S]{0,80}return \{ ok: true, counted: false/.test(body),
+    '合計だけで除外している（別導線のクリックが消える）');
+  assert.match(body, /if \(aggDeduped && bucketDeduped\)/, '両方が除外のときだけ落とす形になっていない');
+});
+
+test('【重要】不明を「合計 − 内訳の和」で出さない（負になる）', () => {
+  assert.ok(!/count - known|count - sourceTotal/.test(STORE), '引き算で不明を出している');
+  assert.match(STORE, /export function resolveLegacyCount/);
+  // legacy は保存値か全量。引き算しない
+  assert.match(STORE, /if \(num\(sv\) === null\) return num\(count\) \?\? 0;/);
+});
+
+test('【重要】legacy と noSource を別々に持つ', () => {
+  assert.match(STORE, /legacy: 'クリック元不明（計測前）'/);
+  assert.match(STORE, /noSource: 'クリック元なし'/);
+  assert.match(STORE, /noSourceCount/);
+  assert.match(STORE, /legacyCount/);
+});
+
+test('【重要】過去データを書き換えない（sv があれば legacy を触らない）', () => {
+  const rec = STORE.slice(STORE.indexOf('async record('));
+  const body = rec.slice(0, rec.indexOf('async read('));
+  assert.match(body, /const legacy = tracked \? \(num\(cur\.legacy\) \?\? 0\) : \(num\(cur\.count\) \?\? 0\);/);
 });
 
 test('【重要】導線不明を推測で振り分けない', () => {
-  // 合計 - 内訳 が unknownCount。マッピングや既定値で dashboard へ寄せていないこと
-  assert.match(STORE, /const unknownCount = Math\.max\(0, count - known\)/);
   assert.ok(!/source \|\| 'dashboard'|source \?\? 'dashboard'/.test(STORE), '既定値で dashboard に寄せている');
   assert.ok(!/source \|\| 'sanrenpuku'/.test(STORE), '既定値で sanrenpuku に寄せている');
 });
 
+test('【重要】合計と導線別が一致しないことを画面に明記する', () => {
+  assert.match(FNC, /SOURCE_TOTAL_NOTE/);
+  assert.match(PAGEC, /funnel\.sourceNote/);
+  assert.match(PAGEC, /fn-src-note/);
+});
+
 test('【重要】管理画面が導線別の内訳と「不明」を出す', () => {
   assert.match(PAGEC, /cell\.sources/);
-  assert.match(PAGEC, /cell\.unknownCount > 0/);
-  assert.match(PAGEC, /cell\.unknownLabel/);
+  assert.match(PAGEC, /cell\.legacyCount > 0/);
+  assert.match(PAGEC, /cell\.noSourceCount > 0/);
   assert.match(PAGEC, /funnel\.bySource/);
   assert.match(PAGEC, /funnel\.unknownSource/);
 });
@@ -235,7 +262,8 @@ test('【重要】詳細（個別検索）でも導線別を出す', () => {
   const d = PAGEC.slice(PAGEC.indexOf('function renderDetail'));
   const body = d.slice(0, d.indexOf('info.appendChild(dl)') + 30);
   assert.match(body, /c\.sources/);
-  assert.match(body, /c\.unknownLabel/);
+  assert.match(body, /c\.legacyLabel/);
+  assert.match(body, /c\.noSourceLabel/);
 });
 
 test('【重要】導線を増やしても画面がベタ書きにならない', () => {

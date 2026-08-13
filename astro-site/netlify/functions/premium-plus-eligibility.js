@@ -75,6 +75,8 @@ import {
   summarizeFunnel,
   summarizeFunnelBySource,
   countUnknownSource,
+  hasSourceTotalMismatch,
+  SOURCE_TOTAL_NOTE,
 } from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
 import {
   buildLookupFormula,
@@ -248,6 +250,8 @@ async function attachRealViews(rows) {
         ...summarizeFunnel(rows),
         bySource: summarizeFunnelBySource(rows),
         unknownSource: countUnknownSource(rows),
+        sourceTotalMismatch: hasSourceTotalMismatch(rows),
+        sourceNote: SOURCE_TOTAL_NOTE,
       },
     };
   };
@@ -287,6 +291,8 @@ async function attachRealViews(rows) {
       ...summarizeFunnel(rows),
       bySource: summarizeFunnelBySource(rows),
       unknownSource: countUnknownSource(rows),
+      sourceTotalMismatch: hasSourceTotalMismatch(rows),
+      sourceNote: SOURCE_TOTAL_NOTE,
     },
   };
 }
