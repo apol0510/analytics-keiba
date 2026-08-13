@@ -145,6 +145,9 @@ import {
   AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
+import {
+  buildCampaignAudienceFormula, buildGrantOperationFormula,
+} from '../../src/lib/marketing/campaignAudienceFormula.js';
 import { BARRIER_RESOLVED_LABEL } from '../../src/lib/comeback/lightTrialBarrier.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -290,6 +293,56 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
     if (offset && pages >= MAX_PAGES) break;
   } while (offset);
   return out;
+}
+
+/**
+ * **キャンペーンの受信対象だけ**を読む（全件走査しない）。
+ *
+ * 絞り込みはキャンペーンの宣言（`requiresActiveGrant` / `requiresImportCohort`）から
+ * `campaignAudienceFormula.js` が作る。判定そのものは `sequenceProgress` が単一源のまま。
+ *
+ * 上限に達したら **fail closed**（少ない人数のまま続行しない）。
+ * `formula` が作れないキャンペーンも fail closed にする（黙って全件走査へ落とさない）。
+ *
+ * @returns {{ok: true, list: object[], pagesFetched: number}
+ *          | {ok: false, code: string, pagesFetched?: number}}
+ */
+async function loadCampaignAudience({ KEY, BASE, now, campaign, formula: forced }) {
+  const built = forced ? { formula: forced } : buildCampaignAudienceFormula(campaign);
+  if (!built || !built.formula) {
+    return { ok: false, code: 'audience_not_narrowable' };
+  }
+  const records = [];
+  let offset;
+  let pages = 0;
+  do {
+    // 読み取りは **GET のまま**にする（この経路が非 GET を出さないことを smoke test が守っている）。
+    // formula は短い（宣言 2 つぶん）ので URL 長に収まる。長くなる変更を入れるときは
+    // 下の長さガードが fail closed で止める。
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterByFormula', built.formula);
+    // 既定ビュー順に結果が左右されないよう固定する
+    url.searchParams.set('sort[0][field]', 'Email');
+    url.searchParams.set('sort[0][direction]', 'asc');
+    if (offset) url.searchParams.set('offset', offset);
+    if (url.toString().length > 15000) {
+      return { ok: false, code: 'audience_formula_too_long' };
+    }
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) return { ok: false, code: `audience_fetch_${res.status}` };
+    const data = await res.json();
+    records.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    // **黙って打ち切らない**。少ない人数で集計も queue も進めない
+    if (offset && pages >= MAX_PAGES) {
+      return { ok: false, code: 'audience_scan_limit', pagesFetched: pages };
+    }
+  } while (offset);
+
+  return { ok: true, records, pagesFetched: pages };
 }
 
 /** Customers + EmailBlacklist + 自分のキャンペーン履歴を読み、顧客ごとの判定を作る（read-only）。 */
@@ -1118,7 +1171,39 @@ async function handleSequence({ KEY, BASE, now, req }) {
     return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
   }
 
-  const { list, deliveries, blacklistEmails } = await loadCustomerMarketing({ KEY, BASE, now });
+  // 🛡️ **受信対象だけ**を読む（全件走査しない）。Customers 15,962 件を先頭から読むと
+  //    先頭 4,000 件で打ち切られ、付与した人が数人しか見えなくなる（2026-08-13 実測）。
+  const audience = await loadCampaignAudience({ KEY, BASE, now, campaign: base });
+  if (!audience.ok) {
+    // 少ない人数のまま集計も dry-run も進めない
+    return json(audience.code === 'audience_not_narrowable' ? 400 : 500, {
+      error: audience.code === 'audience_not_narrowable'
+        ? 'このキャンペーンは受信対象を絞り込めません（全件走査はしません）。宣言（requiresActiveGrant / requiresImportCohort）を追加してください。'
+        : '受信対象の取得が上限に達しました。人数を確定できないため進行状況を返しません。',
+      code: audience.code,
+      pagesFetched: audience.pagesFetched ?? null,
+      sideEffects: 'none',
+    });
+  }
+
+  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
+  // 配信履歴は元から campaign で絞ってある（全件走査ではない）
+  const deliveries = await fetchAll({
+    KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
+  }).catch(() => []);
+  const history = summarizeHistory(deliveries);
+  const list = audience.records.map((rec) => {
+    const fields = rec.fields || {};
+    const email = String(fields.Email || '').trim().toLowerCase();
+    return {
+      recordId: rec.id,
+      record: rec,
+      fields,
+      marketing: resolveCustomerMarketing({
+        fields, nowMs: now, blacklistEmails, history: history.get(email),
+      }),
+    };
+  });
 
   // 除外の材料。**確認できないものは fail closed**（送らない側へ倒す）
   const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
@@ -1266,12 +1351,26 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
 
   // 引き継ぎモード: 対象を Customers から**サーバーが導出する**（唯一の正）
   //
-  // ⚠️ 引き継ぎだけは「誰が付与されたか」を Customers 側から探すため全件走査が要る。
-  //    通常の選択送信（recordIds 指定）は名指し取得だけで済ませ、全件走査へ落とさない。
+  // 「その回に付与された人」は `LightGrantOp` / `PremiumGrantOp` で名指しできるので、
+  // **全件走査しない**（旧実装は先頭 4,000 件で打ち切られ、付与した 10 名のうち
+  // 2 名しか見えなかった。その状態で queue を積むと 8 名へ案内が飛ばない）。
   let handoffView = null;
   let targetIds = recordIds;
   if (grantOperationId) {
-    const { list } = await loadCustomerMarketing({ KEY, BASE, now });
+    const opAudience = await loadCampaignAudience({
+      KEY, BASE, now, campaign: null, formula: buildGrantOperationFormula(grantOperationId),
+    });
+    if (!opAudience.ok) {
+      return json(500, {
+        error: '引き継ぎ対象の取得が上限に達しました。人数を確定できないため中止します。',
+        code: opAudience.code,
+        grantOperationId,
+        sideEffects: 'none',
+      });
+    }
+    const list = opAudience.records.map((rec) => ({
+      recordId: rec.id, record: rec, fields: rec.fields || {},
+    }));
     const resolved = collectGrantedRecipients({ records: list, operationId: grantOperationId, nowMs: now });
     const verdict = validateHandoffResolution({
       operationId: grantOperationId,
