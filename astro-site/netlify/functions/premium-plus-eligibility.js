@@ -36,6 +36,9 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import { resolveSaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar, checkCalendarFreshness } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
+import ppRaceCalendar from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import {
   buildPreviewSnapshot,
   describePreviewVisibility,
@@ -439,6 +442,14 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
 
   return json(200, {
     rows,
+    // いま販売している対象日（16:30 以降は翌日分）と開催区分。
+    // 例外リストの確認期限切れは**警告するだけ**（販売は止めない）。
+    saleTarget: (() => {
+      const cal = shapeRaceCalendar(ppRaceCalendar);
+      const t = resolveSaleTarget(now, { calendar: cal });
+      const f = checkCalendarFreshness({ calendar: cal, nowDate: t.baseDate });
+      return { ...t, calendarStale: f.stale, calendarNote: f.stale || f.expiringSoon ? f.note : '' };
+    })(),
     measurement,
     funnel,
     counts: {

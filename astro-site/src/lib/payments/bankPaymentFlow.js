@@ -107,6 +107,18 @@ export function isActiveStatus(status) {
  * @param {string} [input.email] create パスで必須
  * @returns {Record<string, unknown>}
  */
+/**
+ * Premium Plus の対象日を書き込む Airtable フィールド名。
+ * ⚠️ **本番に未作成のうちは書かない**（422 になる）。`SaleTargetDate` を作成後、
+ *    env `PREMIUM_PLUS_SALE_DATE_FIELD_READY=1` を立てて初めて書き込む。
+ */
+export const SALE_TARGET_DATE_FIELD = 'SaleTargetDate';
+
+/** schema が用意できているか（未設定なら書かない = 既存挙動のまま） */
+export function isSaleDateFieldEnabled(env = {}) {
+  return String(env.PREMIUM_PLUS_SALE_DATE_FIELD_READY || '') === '1';
+}
+
 export function buildApplicationFields({
   currentStatus,
   fullName,
@@ -115,6 +127,10 @@ export function buildApplicationFields({
   amount,
   isNewRecord = false,
   email,
+  /** Premium Plus の対象日（'YYYY-MM-DD'）。**構造化項目として保存する** */
+  saleTargetDate = null,
+  /** schema 準備済みか。未準備なら書かない */
+  saleDateFieldReady = false,
 }) {
   const fields = {
     '氏名': fullName,
@@ -126,6 +142,11 @@ export function buildApplicationFields({
   };
 
   if (Number.isFinite(amount)) fields['RequestedAmount'] = amount;
+  // 対象日は**構造化項目**として保存する（商品名の文字列だけに頼らない）。
+  // 未作成の本番で 422 を出さないよう env で gate する。
+  if (saleDateFieldReady && typeof saleTargetDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(saleTargetDate)) {
+    fields[SALE_TARGET_DATE_FIELD] = saleTargetDate;
+  }
 
   if (isNewRecord) {
     fields['Email'] = email;

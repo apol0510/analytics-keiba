@@ -112,6 +112,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <!-- 表示 → クリック → 商品ページ到達 の人数と転換率（分母が確定しなければ率は出さない） -->
     <div class="funnel-bar" id="funnelBar" hidden></div>
     <!-- 実閲覧の前提。計測開始より前は記録が存在せず確認できない、と常設で書く -->
+    <!-- いま販売している対象日（16:30 以降は翌日分） -->
+    <p class="measure-note" id="saleTargetNote"></p>
     <p class="measure-note" id="measureNote"></p>
     <!-- 自動更新の最終実行時刻。更新されているのか止まっているのかを常に見せる -->
     <p class="measure-note" id="refreshNote"></p>
@@ -2822,6 +2824,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      * 実閲覧の前提を常設で書く。**計測開始より前のことは記録が存在せず確認できない。**
      * これを書かないと「未確認」が「見ていない」と読まれる。
      */
+    /**
+     * いま販売している対象日。**16:30 以降は翌日分**へ切り替わる。
+     * 運用者が「今の申込がどの日の買い目か」を取り違えないよう常設で出す。
+     */
+    function renderSaleTargetNote(t) {
+      const el = $('saleTargetNote');
+      if (!el) return;
+      if (!t || !t.ok) {
+        el.className = 'measure-note warn';
+        el.textContent = '販売対象日を判定できませんでした。';
+        return;
+      }
+      el.className = 'measure-note';
+      el.className = 'measure-note' + (t.calendarStale ? ' warn' : '');
+      el.textContent = `いま販売中: ${t.productLabel}（${t.date} ／ ${t.circuitLabel || '—'}）／ ${t.intakeLabel}`
+        + (t.isNextDay ? ' ── 16:30 を過ぎたため翌日分を受付中です' : '')
+        + (t.shifted ? ` ── ${t.baseDate} は中央・南関とも開催が無いため次の販売日へ送っています` : '')
+        + (t.calendarNote ? ` ／ ⚠️ ${t.calendarNote}` : '');
+    }
+
     function renderMeasurementNote(measurement, counts) {
       const el = $('measureNote');
       if (!el) return;
@@ -2951,6 +2973,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return;
       }
       $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
+      renderSaleTargetNote(data.saleTarget);
       renderMeasurementNote(data.measurement, data.realViewCounts);
       const emp = $('empty');
       emp.hidden = rows.length > 0;

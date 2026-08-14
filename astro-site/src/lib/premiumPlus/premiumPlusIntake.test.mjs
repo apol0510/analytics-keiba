@@ -140,6 +140,8 @@ test('スケジュール定数が確定仕様どおり', () => {
 
 test('購入不可は CLOSED のときだけ', () => {
   for (const [h, mi, status, , buyable] of CASES) {
+    // computeIntakeStatus は**時刻だけ**の判定。翌日分を売れるかは別途
+    // nextDaySellable（開催カレンダー由来）で決まる。ここでは渡していない＝売らない
     assert.equal(buyable, status !== PP_INTAKE.CLOSED, `${h}:${mi}`);
   }
 });
