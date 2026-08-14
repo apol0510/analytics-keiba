@@ -118,6 +118,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <!-- いま販売している対象日（16:30 以降は翌日分） -->
     <p class="measure-note" id="saleTargetNote"></p>
     <p class="measure-note" id="measureNote"></p>
+    <!-- 「販売可なのに案内していない」人数。売れる状態に見えて誰にも届いていない状況を検知する -->
+    <p class="measure-note" id="notifyNote"></p>
     <!-- 通信断で結果が分からなかった操作。確認するまで消さない -->
     <p class="measure-note warn" id="opWarn" hidden></p>
     <!-- 自動更新の最終実行時刻。更新されているのか止まっているのかを常に見せる -->
@@ -133,10 +135,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <th class="c-route">Route</th>
             <th class="c-kind">区分</th>
             <th class="c-upsell">販売CTA</th>
-            <!-- ⚠️ この 2 列は意味が違う。混同すると「見えているはず」を「見た」と読み違える。
-                 表示判定 = 設定と条件から導いた「出るはず」。実閲覧 = 実際に届いた記録。 -->
+            <!-- ⚠️ この 3 列は意味が違う。混同すると「見えているはず」を「届いた」と読み違える。
+                 表示判定 = 設定と条件から導いた「出るはず」
+                 実閲覧   = 本人が画面で見た実測
+                 案内     = こちらから送った実績（CampaignDeliveries） -->
             <th class="c-display">表示判定</th>
             <th class="c-realview">実閲覧</th>
+            <th class="c-notified">案内</th>
             <th class="c-phase">PHASE</th>
             <th class="c-eligible">販売許可日</th>
             <th class="c-updated">最終更新</th>
@@ -1346,6 +1351,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .fn-rate-unknown { color: #7f90ab; }
   .ppe .fn-arrow { color: #52627d; font-size: .8rem; }
   .ppe .fn-unknown { margin-left: auto; font-size: .7rem; color: #7f90ab; }
+
+  /* 案内セル: 「販売可なのに届いていない」だけを目立たせる。
+     ⚠️ 未確認は 0 通ではないので、未案内と同じ色にしない */
+  .ppe .c-notified { white-space: nowrap; }
+  .ppe .nt { display: inline-block; font-size: .72rem; font-weight: 700; }
+  .ppe .nt-notified { color: #86efac; }
+  .ppe .nt-never { color: #cbd5e6; }
+  .ppe .nt-undelivered { color: #fca5a5; }
+  .ppe .nt-unknown { color: #64748b; font-weight: 400; }
+  .ppe .nt-action { color: #fcd34d; }
+  /* 「要対応」は**次の行**へ置く。横に並べると案内列だけで 113px を占め、
+     一覧全体が 133px はみ出して「操作」ボタンが初期表示から外れてしまう
+     （2026-08-13 にビルド成果物で実測。block 化で 72px / はみ出し 92px へ）。
+     モバイル（≤860px）は data-label のカード表示になり、
+     「案内　未案内」が 1 行・その下にバッジ、という並びになる。 */
+  .ppe .nt-badge {
+    display: block; width: fit-content; margin: .22rem 0 0; font-size: .64rem; font-weight: 800;
+    padding: .1rem .45rem; border-radius: 999px; white-space: nowrap;
+    background-color: #4a2f06; color: #fcd34d; border: 1px solid rgba(251,191,36,.5);
+  }
 
   /* ── 一覧テーブル ── */
   .ppe .tablewrap { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px; overflow: hidden; }
@@ -2640,6 +2665,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         rows: merged,
         // 検索結果の実閲覧の前提も同じ場所に出す
         measurement: out.measurement || lastData.measurement,
+        // 案内の集計も同様（検索だけで開いたときに「未取得」のままにしない）
+        notified: out.notified || lastData.notified,
       };
       const added = found.filter((r) => !local.some((l) => l.recordId === r.recordId)).length;
       msg(`検索で ${found.length} 件（うち一覧に無かった人 ${added} 件）。販売資格は「状態」列、実際に見たかは「実閲覧」列を参照`);
@@ -2796,6 +2823,67 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         e.appendChild(s);
       }
       return e;
+    }
+
+    /**
+     * 案内（こちらから送ったか）のセル。**表示判定とも実閲覧とも別の軸**。
+     *
+     * ⚠️ 読み取れなかったときは必ず「未確認」。**「未案内」と書かない。**
+     *    未案内と表示すると既に送った相手へ二重送信する。逆に、送っていないのに
+     *    「案内済み」と出すと、その人は永久に案内されない。迷ったら未確認。
+     */
+    function notifiedCell(r) {
+      const e = document.createElement('td');
+      e.className = 'c-notified';
+      e.setAttribute('data-label', '案内');
+      const n = r.plusNotified;
+      const s = document.createElement('span');
+      if (!n || !n.available) {
+        s.className = 'nt nt-unknown';
+        s.textContent = '未確認';
+        s.title = (n && n.note) || '配信履歴を読み取れていません（0 通という意味ではありません）';
+        e.appendChild(s);
+        return e;
+      }
+      s.className = 'nt nt-' + n.state + (n.needsAction ? ' nt-action' : '');
+      s.textContent = n.state === 'notified' && n.sentCount > 1
+        ? `${n.label}（${n.sentCount}通）`
+        : n.label;
+      s.title = [n.note, n.actionNote, n.lastSentAt ? `最終送信: ${fmtDate(n.lastSentAt)}` : '']
+        .filter(Boolean).join('\n');
+      e.appendChild(s);
+      // 「販売可なのに届いていない」は見落とすと売上がゼロのまま止まるので、明示的に出す
+      if (n.needsAction) {
+        const b = document.createElement('span');
+        b.className = 'nt-badge';
+        b.textContent = '要対応';
+        b.title = n.actionNote;
+        e.appendChild(b);
+      }
+      return e;
+    }
+
+    /**
+     * 「販売可なのに案内していない」人数を常設で書く。
+     * 管理画面が「販売可・CTA 表示中」と出していても、案内 0 通ならその会員が
+     * Plus に気づく経路は事実上ない。ここを出さないと運用者は気づけない。
+     */
+    function renderNotifyNote(notified) {
+      const el = $('notifyNote');
+      if (!el) return;
+      if (!notified) {
+        el.className = 'measure-note warn';
+        el.textContent = '案内: 未取得。この一覧の「案内」列はすべて未確認です（0 通ではありません）。';
+        return;
+      }
+      const parts = [notified.note || ''];
+      if (notified.available) {
+        parts.push(`案内済み ${notified.notified} 名 / 未案内 ${notified.never} 名`
+          + (notified.undelivered ? ` / 未着 ${notified.undelivered} 名` : ''));
+      }
+      el.className = 'measure-note'
+        + (!notified.available || notified.needsAction > 0 ? ' warn' : '');
+      el.textContent = parts.filter(Boolean).join(' ／ ');
     }
 
     /**
@@ -3086,6 +3174,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (!r.upsellDisplay || r.upsellDisplay === '表示なし') cD.classList.add('muted');
         tr.appendChild(cD);
         tr.appendChild(realViewCell(r));
+        tr.appendChild(notifiedCell(r));
         tr.appendChild(td('c-phase', 'PHASE', String(r.phase)));
         tr.appendChild(td('c-eligible', '販売許可日', fmtDate(r.eligibleAt), r.eligibleAt ? '' : 'muted'));
         tr.appendChild(td('c-updated', '最終更新', fmtDate(r.updatedAt), r.updatedAt ? '' : 'muted'));
@@ -3114,6 +3203,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
       renderSaleTargetNote(data.saleTarget);
       renderMeasurementNote(data.measurement, data.realViewCounts);
+      renderNotifyNote(data.notified);
       const emp = $('empty');
       emp.hidden = rows.length > 0;
       emp.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
@@ -3225,7 +3315,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       searchedRows.set(recordId, fresh);
       const rows = (lastData.rows || []).map((x) => (x.recordId === recordId ? fresh : x));
       if (!rows.some((x) => x.recordId === recordId)) rows.push(fresh);
-      lastData = { ...lastData, rows, measurement: out.measurement || lastData.measurement };
+      lastData = {
+        ...lastData, rows,
+        measurement: out.measurement || lastData.measurement,
+        notified: out.notified || lastData.notified,
+      };
       render();
       return fresh;
     }
