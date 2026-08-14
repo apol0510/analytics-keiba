@@ -81,6 +81,7 @@ import {
   hasSourceTotalMismatch,
   SOURCE_TOTAL_NOTE,
   summarizePurchaseBySource,
+  PURCHASE_ENTRY_ONLY_NOTE,
   extractNotPurchased,
   summarizeDaily,
 } from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
@@ -313,6 +314,7 @@ async function attachRealViews(rows) {
       sourceNote: SOURCE_TOTAL_NOTE,
       // 決済開始 → 購入完了の導線別転換（人数）
       purchaseBySource: summarizePurchaseBySource(rows),
+      purchaseEntryOnlyNote: PURCHASE_ENTRY_ONLY_NOTE,
       // 抽出: クリック済み未購入 / 到達済み未購入（購入を確認できない人は別枠）
       notPurchased: (() => {
         const x = extractNotPurchased(rows);

@@ -20,8 +20,11 @@ import {
   FUNNEL_EVENT, FUNNEL_KEY, FUNNEL_SOURCE_AMBIGUOUS, DEDUPE_MS,
   DAILY_RETENTION_DAYS, FUNNEL_WINDOW_DAYS,
   createFunnelStore, attributePurchaseSource, funnelDayKey, dailyField, recentDayKeys,
-  normalizeHgetall,
+  normalizeHgetall, normalizeEntrySource,
 } from './premiumPlusFunnelStore.js';
+import {
+  summarizePurchaseBySource, PURCHASE_ENTRY_ONLY_NOTE,
+} from './premiumPlusFunnelAnalytics.js';
 
 const ID = 'recPURCHASETEST01';
 const UA = 'Mozilla/5.0 (Macintosh) Safari/605.1';
@@ -323,7 +326,35 @@ test('決済開始の計測失敗で申込処理を止めない', () => {
 });
 
 test('【重要】source はサーバーの allow-list を通す（フォームの値をそのまま使わない）', () => {
-  assert.match(fnBody(SERVER, 'recordPlusCheckoutStart'), /normalizeFunnelSource\(source\)/);
+  // ⚠️ この値は画面が `?from=` から拾ったもの＝**URL 由来**。誰でも付けられる。
+  //    商品ページ内の導線（plus_page）を URL から名乗らせない。
+  assert.match(fnBody(SERVER, 'recordPlusCheckoutStart'), /normalizeEntrySource\(source\)/);
+  assert.ok(!/normalizeFunnelSource\(source\)/.test(fnBody(SERVER, 'recordPlusCheckoutStart')),
+    '?from= が全 allow-list を受けている（plus_page を名乗れてしまう）');
+});
+
+test('【重要】決済開始は URL から plus_page を名乗れない', async () => {
+  const { store, read } = memStore();
+  await store.record({
+    recordId: ID, event: FUNNEL_EVENT.CHECKOUT_START, nowMs: T0,
+    userAgent: 'server', authenticated: true, source: normalizeEntrySource('plus_page'),
+  });
+  const v = read(FUNNEL_KEY.CHECKOUT, ID);
+  assert.ok(!v.bySource || !v.bySource.plus_page, '商品ページ内が流入導線として保存されている');
+  assert.ok(v.noSource && v.noSource.count >= 1, 'source なしとして数えていない');
+  // 流入導線は従来どおり通る
+  assert.equal(normalizeEntrySource('dashboard'), 'dashboard');
+});
+
+test('【重要】購入の帰属は流入導線だけを並べる（商品ページ内で退化させない）', () => {
+  const rows = summarizePurchaseBySource([]);
+  assert.deepEqual(rows.map((r) => r.source), ['dashboard', 'sanrenpuku'],
+    '購入の帰属に商品ページ内が混じっている');
+  // 買った人は全員が商品ページを通るので、並べても導線差が出ない。
+  // 到達（分母）も作れないため「到達 0 なのに購入がある」行になる。
+  assert.ok(!rows.some((r) => r.source === 'plus_page'));
+  assert.match(PURCHASE_ENTRY_ONLY_NOTE, /流入導線だけ/);
+  assert.match(PURCHASE_ENTRY_ONLY_NOTE, /0 件という意味ではありません/);
 });
 
 test('計測できないときは黙って 0 にしない', () => {

@@ -2849,6 +2849,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         bar.appendChild(row);
       }
       // ── 購入までの導線別転換 ────────────────────────────────
+      // ⚠️ ここに並ぶのは**流入導線だけ**。商品ページ内の導線は買った人全員が
+      //    通る場所なので導線差が出ず、到達（分母）も作れない。**0 件ではない**。
+      if (funnel.purchaseEntryOnlyNote && (funnel.purchaseBySource || []).length) {
+        const note = document.createElement('span');
+        note.className = 'fn-src-note';
+        note.textContent = funnel.purchaseEntryOnlyNote.replace(/\*\*/g, '');
+        bar.appendChild(note);
+      }
       for (const s of (funnel.purchaseBySource || [])) {
         const row = document.createElement('span');
         row.className = 'fn-src-row';

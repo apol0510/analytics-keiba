@@ -31,7 +31,7 @@
 import {
   FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL,
   FUNNEL_SOURCE_KIND, FUNNEL_SOURCE_KIND_OF, FUNNEL_SOURCE_KIND_LABEL,
-  isOnPageSource,
+  isOnPageSource, ENTRY_SOURCE_ORDER,
   FUNNEL_EVENT, FUNNEL_EVENT_ORDER, FUNNEL_EVENT_LABEL,
   FUNNEL_WINDOW_DAYS, recentDayKeys,
 } from './premiumPlusFunnelStore.js';
@@ -306,8 +306,21 @@ export function extractNotPurchased(rows) {
 }
 
 /**
+ * 購入の帰属に商品ページ内の導線を並べない理由。画面がそのまま出せる文言。
+ */
+export const PURCHASE_ENTRY_ONLY_NOTE =
+  '購入の帰属は**流入導線だけ**で数えます。商品ページ内の導線は、'
+  + '買った人全員が通る場所なので導線の差が出ません（0 件という意味ではありません）。';
+
+/**
  * 購入転換率（導線別）。**人数**で数える。
  * 分母が確定しないときは null（0% と書かない）。
+ *
+ * ⚠️ **流入導線（entry）だけを並べる。**
+ *    商品ページ内の導線（`plus_page`）は到達がこの導線より上流にあるため
+ *    分母（到達）が必ず 0 になり、「到達 0 なのに購入がある」という
+ *    読めない行ができる。そもそも購入者は全員そこを通るので、
+ *    並べても導線ごとの差が出ない（指標として退化する）。
  */
 export function summarizePurchaseBySource(rows) {
   const list = Array.isArray(rows) ? rows : [];
@@ -315,7 +328,7 @@ export function summarizePurchaseBySource(rows) {
     if (!cell || cell.measured !== true || !Array.isArray(cell.sources)) return false;
     return cell.sources.some((e) => e && e.source === src && Number.isFinite(e.count) && e.count > 0);
   };
-  return FUNNEL_SOURCE_ORDER.map((src) => {
+  return ENTRY_SOURCE_ORDER.map((src) => {
     const c = { reached: 0, checkout: 0, purchased: 0 };
     for (const r of list) {
       const v = r && r.realView;

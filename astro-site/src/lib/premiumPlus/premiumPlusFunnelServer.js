@@ -22,7 +22,9 @@
  * （その人は「未確認」のままになる。0 回とは記録しない）。
  */
 
-import { createFunnelStore, FUNNEL_EVENT, normalizeEntrySource } from './premiumPlusFunnelStore.js';
+import {
+  createFunnelStore, FUNNEL_EVENT, normalizeEntrySource,
+} from './premiumPlusFunnelStore.js';
 
 /** これを超えたら記録を諦めてページを返す（計測のために顧客を待たせない） */
 export const RECORD_TIMEOUT_MS = 700;
@@ -169,7 +171,10 @@ export async function recordPlusCheckoutStart({
       userAgent: 'server',
       authenticated: true,
       adminPreview: false,
-      source: normalizeFunnelSource(source),
+      // ⚠️ この値は画面が `?from=` から拾ったもの＝**URL 由来**。
+      //    誰でも付けられるので、`plus_page`（商品ページ内）を名乗らせない。
+      //    購入の帰属は「どの流入導線から来たか」でしか意味を持たない。
+      source: normalizeEntrySource(source),
     }), typeof timeoutMs === 'number' ? timeoutMs : RECORD_TIMEOUT_MS);
     return { counted: out.counted === true, reason: out.reason || null };
   } catch {
