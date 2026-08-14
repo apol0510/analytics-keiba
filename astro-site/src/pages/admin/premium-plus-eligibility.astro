@@ -5418,7 +5418,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       box.appendChild(t);
       // 残り時間は**緊急度つき**で出す。旧実装は常に「約 N 分」で、
       // 付与直後（1440 分）と失効（0 分）が同じ見た目だった。
-      // 期限を過ぎると引き継ぎも復旧口も 410 になり、その付与操作へは二度と届かない。
+      // 期限を過ぎると引き継ぎ票も復旧口（handoffLatest / handoffLookup）も 410 になり、
+      // **引き継ぎ経路からは**その付与操作へ届かなくなる。
+      // ⚠️ ただし案内自体が止まるわけではない（2026-08-14 実測）。Step1 の対象は
+      //    付与状態から毎回再導出されるので、連続配信の画面から続行できる。
       const urg = handoffApi() ? handoffApi().resolveHandoffUrgency(ticket, Date.now()) : null;
       const d = document.createElement('span');
       d.className = 'hb-d' + (urg ? ' hb-' + urg.level : '');
