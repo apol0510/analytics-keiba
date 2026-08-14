@@ -99,14 +99,29 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="none">案内しない</option>
       </select>
       <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
+      <!-- 実閲覧の段階で絞る。値は premiumPlusFunnelAnalytics.js が単一源 -->
+      <select id="fFunnel" aria-label="実閲覧の段階">
+        <option value="">実閲覧: すべて</option>
+      </select>
+      <select id="fSort" aria-label="並べ替え">
+        <option value="default">並び: 既定（状態順）</option>
+        <option value="reaction">並び: 反応が新しい順</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="autoRefresh" checked /> 自動更新</label>
     </div>
 
     <p class="msg" id="message"></p>
     <p class="count" id="count"></p>
+    <!-- 表示 → クリック → 商品ページ到達 の人数と転換率（分母が確定しなければ率は出さない） -->
+    <div class="funnel-bar" id="funnelBar" hidden></div>
     <!-- 実閲覧の前提。計測開始より前は記録が存在せず確認できない、と常設で書く -->
+    <!-- いま販売している対象日（16:30 以降は翌日分） -->
+    <p class="measure-note" id="saleTargetNote"></p>
     <p class="measure-note" id="measureNote"></p>
     <!-- 通信断で結果が分からなかった操作。確認するまで消さない -->
     <p class="measure-note warn" id="opWarn" hidden></p>
+    <!-- 自動更新の最終実行時刻。更新されているのか止まっているのかを常に見せる -->
+    <p class="measure-note" id="refreshNote"></p>
 
     <div class="tablewrap">
       <table class="tbl">
@@ -1280,6 +1295,57 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .rv { display: block; font-size: .68rem; line-height: 1.6; }
   .ppe .rv-yes { color: #86efac; font-weight: 700; }
   .ppe .rv-unknown { color: #64748b; }
+  /* 実測があるときだけ出す日時。無いときに 0 回や日付を作らない */
+  .ppe .rv-when { display: block; font-size: .62rem; font-weight: 400; color: #7f90ab; }
+  /* 導線（クリック元）の内訳。不明は控えめ（推測で振り分けない） */
+  .ppe .rv-src { display: block; font-size: .62rem; font-weight: 400; color: #9fb0c9; padding-left: .3rem; }
+  .ppe .rv-src-unknown { color: #7f90ab; font-style: italic; }
+  .ppe .fn-src-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; font-size: .7rem; color: #cbd5e6; border-top: 1px solid rgba(148,163,184,.12); padding-top: .35rem; }
+  .ppe .fn-src-row-unknown { color: #7f90ab; font-style: italic; }
+  .ppe .fn-src-name { font-weight: 700; color: #93a4bd; min-width: 7rem; }
+  .ppe .fn-src-seg { color: #e6edf7; }
+  .ppe .fn-src-rate { color: #86efac; }
+  /* 導線の種類。流入（商品ページへ送る）と 商品ページ内 を一目で分ける */
+  .ppe .fn-src-kind {
+    font-size: .58rem; font-weight: 800; letter-spacing: .04em; padding: .1em .45em;
+    border-radius: 999px; color: #93c5fd; border: 1px solid rgba(147,197,253,.35); background: rgba(147,197,253,.08);
+  }
+  .ppe .fn-src-kind-onpage { color: #f0abfc; border-color: rgba(240,171,252,.35); background: rgba(240,171,252,.08); }
+  .ppe .fn-src-row-onpage { border-top-style: dashed; }
+  /* 「到達を出さない理由」。0 名と誤読させないための説明はその場に置く */
+  .ppe .fn-src-why { flex-basis: 100%; font-size: .62rem; color: #7f90ab; line-height: 1.7; }
+  .ppe .fn-src-note { flex-basis: 100%; font-size: .64rem; color: #7f90ab; line-height: 1.7; padding-top: .3rem; }
+  .ppe .fn-src-note-on { color: #fcd34d; }
+  /* 段階バッジ。未確認は控えめ・進んだ段階ほど強く */
+  .ppe .rv-stage {
+    display: inline-block; font-size: .64rem; font-weight: 800; margin-bottom: .25rem;
+    padding: .1rem .45rem; border-radius: 999px; white-space: nowrap;
+  }
+  .ppe .rv-stage-unknown { background-color: #1e293b; color: #7f90ab; border: 1px solid rgba(148,163,184,.3); }
+  .ppe .rv-stage-viewed_not_clicked { background-color: #14304d; color: #93c5fd; border: 1px solid rgba(96,165,250,.4); }
+  .ppe .rv-stage-clicked_not_reached { background-color: #143b33; color: #6ee7b7; border: 1px solid rgba(52,211,153,.42); }
+  .ppe .rv-stage-reached { background-color: #12463a; color: #a7f3d0; border: 1px solid rgba(52,211,153,.6); }
+  .ppe .rv-new {
+    display: inline-block; margin-left: .35rem; font-size: .62rem; font-weight: 800;
+    padding: .08rem .4rem; border-radius: 999px; white-space: nowrap;
+    background-color: #4a2f06; color: #fcd34d; border: 1px solid rgba(251,191,36,.5);
+  }
+
+  /* 表示 → クリック → 到達 の転換バー */
+  .ppe .funnel-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+    background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px;
+    padding: .6rem .85rem; margin: .3rem 0 .5rem;
+  }
+  .ppe .funnel-bar[hidden] { display: none; }
+  .ppe .funnel-bar.warn { border-color: rgba(251,191,36,.45); }
+  .ppe .fn-step { display: inline-flex; align-items: baseline; gap: .35rem; }
+  .ppe .fn-label { font-size: .7rem; color: #93a4bd; }
+  .ppe .fn-value { font-size: .95rem; font-weight: 800; color: #e6edf7; }
+  .ppe .fn-rate { font-size: .66rem; color: #86efac; }
+  .ppe .fn-rate-unknown { color: #7f90ab; }
+  .ppe .fn-arrow { color: #52627d; font-size: .8rem; }
+  .ppe .fn-unknown { margin-left: auto; font-size: .7rem; color: #7f90ab; }
 
   /* ── 一覧テーブル ── */
   .ppe .tablewrap { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px; overflow: hidden; }
@@ -2268,6 +2334,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     maskEmail as stMaskEmail,
   } from '../../lib/marketing/marketingConsoleState.js';
   import { GRANT_ELIGIBILITY_NOTE } from '../../lib/entitlements/freeGrantStatus.js';
+  // 実閲覧の段階・並び順・転換率。**判定はモジュール側**（画面で組み立て直さない）
+  import {
+    FUNNEL_STAGE, FUNNEL_STAGE_LABEL, FUNNEL_STAGE_ORDER,
+    resolveFunnelStage, lastReactionAtMs, isNewReaction, sortByLastReaction, filterByStage,
+  } from '../../lib/premiumPlus/premiumPlusFunnelAnalytics.js';
+  window.__ppFunnel = {
+    FUNNEL_STAGE, FUNNEL_STAGE_LABEL, FUNNEL_STAGE_ORDER,
+    resolveFunnelStage, lastReactionAtMs, isNewReaction, sortByLastReaction, filterByStage,
+  };
   // 絞り込みの表示名・説明の単一源（画面に文言を直接書かない）
   import {
     FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
@@ -2443,10 +2518,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      * 通信が途中で切れた場合は **書けたかどうか分からない**。
      * それを「失敗」と言い切ると、実際には保存済みなのに二重操作を誘発する。
      * `unknown:true` を返して、呼び出し側に「確認してください」と出させる。
+     *
+     * @param {object} payload
+     * @param {{quiet?: boolean}} [opt] quiet=true は自動更新用。
+     *   画面のメッセージを書き換えない（管理者の操作結果を自動更新が上書きしないため）。
      */
-    async function call(payload) {
+    async function call(payload, opt) {
+      const quiet = !!(opt && opt.quiet);
+      const say = (t, k) => { if (!quiet) msg(t, k); };
       const secret = secretEl.value.trim();
-      if (!secret) { msg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return null; }
+      if (!secret) { say('管理シークレットを入力してください', 'err'); if (!quiet) $('connBody').hidden = false; return null; }
       let res;
       try {
         res = await fetch(API, {
@@ -2455,13 +2536,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           body: JSON.stringify(payload),
         });
       } catch (e) {
-        msg('通信に失敗しました。保存されたかどうかは分かりません。再読込で確認してください。', 'err');
+        // ⚠️ 自動更新でも黙らせない。通信断は「保存されたか不明」なので握りつぶさない
+        say('通信に失敗しました。保存されたかどうかは分かりません。再読込で確認してください。', 'err');
         return { __unknown: true, error: String((e && e.message) || e) };
       }
       let data = {};
       try { data = await res.json(); } catch { data = {}; }
       if (!res.ok) {
-        msg(data.error || ('エラー: ' + res.status), 'err');
+        say(data.error || ('エラー: ' + res.status), 'err');
         if (res.status === 403) setConn(false);
         return null;
       }
@@ -2565,6 +2647,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     function sortRows(rows) {
+      // 反応が新しい順は**判定モジュール**に任せる（記録が無い人は必ず後ろ）
+      if ($('fSort') && $('fSort').value === 'reaction' && window.__ppFunnel) {
+        return window.__ppFunnel.sortByLastReaction(rows);
+      }
       return [...rows].sort((a, b) => {
         const d = classify(a).order - classify(b).order;
         if (d !== 0) return d;
@@ -2648,12 +2734,64 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         e.appendChild(s);
         return e;
       }
-      // 表示 → クリック → 商品ページ の 3 段を 1 セルに並べる
+      // 段階（表示済み未クリック / クリック済み未到達 / 到達済み / 未確認）を先頭に出す。
+      // 判定は premiumPlusFunnelAnalytics.js（サーバーも同じ関数を使う）。
+      const stage = r.funnelStageLabel
+        || (window.__ppFunnel ? window.__ppFunnel.resolveFunnelStage(rv).label : null);
+      if (stage) {
+        const sb = document.createElement('span');
+        sb.className = 'rv-stage rv-stage-' + (r.funnelStage || 'unknown');
+        sb.textContent = stage;
+        e.appendChild(sb);
+      }
+      // 新規反応（前回この画面を見た時刻より後に反応があった人）
+      if (isNewReactionRow(r)) {
+        const nb = document.createElement('span');
+        nb.className = 'rv-new';
+        nb.textContent = '新規反応';
+        nb.title = '前回この画面を開いたあとに記録された反応です。「再読み込み」で既読になります';
+        e.appendChild(nb);
+      }
+      // 表示 → クリック → 商品ページ の 3 段を **回数・初回・最終**で並べる
       for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ']]) {
         const cell = rv[key] || {};
         const s = document.createElement('span');
         s.className = 'rv' + (cell.measured ? ' rv-yes' : ' rv-unknown');
-        s.textContent = `${label} ${cell.text || '未確認'}`;
+        if (cell.measured) {
+          // ⚠️ 実測があるときだけ日時を出す。無いときに 0 回や日付を作らない
+          s.textContent = `${label} ${cell.count} 回`;
+          const when = document.createElement('span');
+          when.className = 'rv-when';
+          when.textContent = `初回 ${cell.firstAtJst || '不明'} / 最終 ${cell.lastAtJst || '不明'}`;
+          s.appendChild(when);
+          // 導線（クリック元）の内訳。**残りは「クリック元不明」**として必ず見せる
+          // （導線別の計測を始める前の記録。推測で振り分けない）。
+          for (const src of (cell.sources || [])) {
+            const li = document.createElement('span');
+            li.className = 'rv-src';
+            li.textContent = `└ ${src.label} ${src.count} 回`;
+            li.title = `初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'}（JST）`;
+            s.appendChild(li);
+          }
+          // ⚠️ 不明は **legacy（計測前）と noSource（計測後に source なし）を別々**に出す。
+          //    「合計 − 内訳の和」では出さない（数え方が違うので負になる）。
+          if (cell.legacyCount > 0) {
+            const li = document.createElement('span');
+            li.className = 'rv-src rv-src-unknown';
+            li.textContent = `└ ${cell.legacyLabel} ${cell.legacyCount} 回`;
+            li.title = '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）';
+            s.appendChild(li);
+          }
+          if (cell.noSourceCount > 0) {
+            const li = document.createElement('span');
+            li.className = 'rv-src rv-src-unknown';
+            li.textContent = `└ ${cell.noSourceLabel} ${cell.noSourceCount} 回`;
+            li.title = `計測開始後に導線の指定なしで届いた分です（初回 ${cell.noSourceFirstAtJst || '不明'} / 最終 ${cell.noSourceLastAtJst || '不明'}）`;
+            s.appendChild(li);
+          }
+        } else {
+          s.textContent = `${label} 未確認`;
+        }
         s.title = cell.note || '';
         e.appendChild(s);
       }
@@ -2661,9 +2799,174 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     /**
+     * ── 新規反応 ──────────────────────────────────────────────
+     * 「前回この画面を見たあとに入った反応」を出す。
+     *
+     * 基準時刻は**この管理者のブラウザだけ**が持つ（サーバーにも Redis にも保存しない＝
+     * 個人情報も状態も増やさない）。基準が無い初回は**誰も新規にしない**
+     * （全員に付けると意味が消える）。既読にするのは**手動の「再読み込み」だけ**で、
+     * 自動更新では既読にしない（見ていない間の反応を消さないため）。
+     */
+    const FUNNEL_SEEN_KEY = 'ppFunnelSeenAt';
+    function funnelSeenAt() {
+      const v = Number(sessionStorage.getItem(FUNNEL_SEEN_KEY));
+      return Number.isFinite(v) && v > 0 ? v : null;
+    }
+    function markFunnelSeen() {
+      try { sessionStorage.setItem(FUNNEL_SEEN_KEY, String(Date.now())); } catch { /* 保存できなくても動く */ }
+    }
+    function isNewReactionRow(r) {
+      const seen = funnelSeenAt();
+      if (seen === null || !window.__ppFunnel) return false;
+      return window.__ppFunnel.isNewReaction(r.realView, seen);
+    }
+
+    /**
+     * 表示 → クリック → 商品ページ到達 の**人数と転換率**。
+     *
+     * ⚠️ 分母が確定しないときは率を出さない（サーバーが null を返す）。
+     *    0% と書くと「誰も押していない」と読まれるが、実際は「まだ分からない」。
+     */
+    function renderFunnelBar(funnel) {
+      const bar = $('funnelBar');
+      if (!bar) return;
+      bar.innerHTML = '';
+      if (!funnel) { bar.hidden = true; return; }
+      bar.hidden = false;
+
+      const step = (label, n, rateLabel, rate) => {
+        const box = document.createElement('span');
+        box.className = 'fn-step';
+        const t = document.createElement('span');
+        t.className = 'fn-label';
+        t.textContent = label;
+        const v = document.createElement('span');
+        v.className = 'fn-value';
+        v.textContent = `${n} 名`;
+        box.appendChild(t); box.appendChild(v);
+        if (rateLabel) {
+          const rr = document.createElement('span');
+          rr.className = 'fn-rate' + (rate === null ? ' fn-rate-unknown' : '');
+          // null は「まだ分からない」。0% にしない
+          rr.textContent = rate === null ? `${rateLabel} 未確定` : `${rateLabel} ${rate}%`;
+          rr.title = rate === null ? '分母が確定していないため転換率を出しません（0% ではありません）' : '';
+          box.appendChild(rr);
+        }
+        return box;
+      };
+      const arrow = () => { const a = document.createElement('span'); a.className = 'fn-arrow'; a.textContent = '→'; return a; };
+
+      bar.appendChild(step('表示', funnel.viewed));
+      bar.appendChild(arrow());
+      bar.appendChild(step('クリック', funnel.clicked, '表示→クリック', funnel.rates?.viewToClick ?? null));
+      bar.appendChild(arrow());
+      bar.appendChild(step('商品ページ到達', funnel.reached, 'クリック→到達', funnel.rates?.clickToReach ?? null));
+
+      const unk = document.createElement('span');
+      unk.className = 'fn-unknown';
+      unk.textContent = `未確認 ${funnel.unknown} 名`;
+      unk.title = funnel.note || '';
+      bar.appendChild(unk);
+
+      // ── 導線別（クリック元）────────────────────────────────
+      // 全体と同じ数え方（人数・累積）で、導線ごとに併記する。
+      // ⚠️ 導線には性質の違う 2 種類がある。**同じ行として並べない**:
+      //    「商品ページへの流入」（ダッシュボード / 三連複ページ）は 表示→クリック→到達 が繋がる。
+      //    「商品ページ内」（購入ボタン）は到達が上流なので **到達を出さない**（0 名ではない）。
+      for (const s of (funnel.bySource || [])) {
+        const onPage = s.kind === 'on_page';
+        const row = document.createElement('span');
+        row.className = 'fn-src-row' + (onPage ? ' fn-src-row-onpage' : '');
+        const nm = document.createElement('span');
+        nm.className = 'fn-src-name';
+        nm.textContent = s.label;
+        nm.title = s.kindLabel ? `${s.kindLabel}の導線です` : '';
+        row.appendChild(nm);
+        // どちらの種類かをその場で分かるようにする（ラベルの読み分けに頼らせない）
+        if (s.kindLabel) {
+          const kd = document.createElement('span');
+          kd.className = 'fn-src-kind' + (onPage ? ' fn-src-kind-onpage' : '');
+          kd.textContent = s.kindLabel;
+          row.appendChild(kd);
+        }
+        const seg = (t, n) => { const x = document.createElement('span'); x.className = 'fn-src-seg'; x.textContent = `${t} ${n}`; return x; };
+        row.appendChild(seg('表示', s.viewed));
+        row.appendChild(seg('クリック', s.clicked));
+        if (s.reached === null) {
+          // **0 と書かない。** 指標そのものが存在しない
+          const x = document.createElement('span');
+          x.className = 'fn-src-seg fn-rate-unknown';
+          x.textContent = '到達 —';
+          x.title = (s.reachNote || '').replace(/\*\*/g, '');
+          row.appendChild(x);
+        } else {
+          row.appendChild(seg('到達', s.reached));
+        }
+        const rr = document.createElement('span');
+        rr.className = 'fn-src-rate' + (s.rates?.viewToClick === null ? ' fn-rate-unknown' : '');
+        rr.textContent = s.rates?.viewToClick === null
+          ? '表示→クリック 未確定'
+          : `表示→クリック ${s.rates.viewToClick}%`;
+        rr.title = s.rates?.viewToClick === null ? '分母が確定していないため転換率を出しません（0% ではありません）' : '';
+        row.appendChild(rr);
+        // 商品ページ内は「クリック→到達」を出さない理由をその場に置く
+        if (onPage && s.reachNote) {
+          const why = document.createElement('span');
+          why.className = 'fn-src-why';
+          why.textContent = s.reachNote.replace(/\*\*/g, '');
+          row.appendChild(why);
+        }
+        bar.appendChild(row);
+      }
+      // 不明は 2 種類。**別々に**出す（片方へ寄せない）
+      const us = funnel.unknownSource || {};
+      for (const [key, tip] of [
+        ['legacy', '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）'],
+        ['noSource', '計測開始後に、導線の指定なしで届いた分です'],
+      ]) {
+        const u = us[key];
+        if (!u || (u.cta <= 0 && u.click <= 0 && u.page <= 0)) continue;
+        const row = document.createElement('span');
+        row.className = 'fn-src-row fn-src-row-unknown';
+        row.textContent = `${u.label}: 表示 ${u.cta} 名 / クリック ${u.click} 名 / 到達 ${u.page} 名`;
+        row.title = tip;
+        bar.appendChild(row);
+      }
+      // **合計と導線別は数え方が違う**ことを常設で書く（食い違いを不具合と誤解させない）
+      if (funnel.sourceNote) {
+        const note = document.createElement('span');
+        note.className = 'fn-src-note' + (funnel.sourceTotalMismatch ? ' fn-src-note-on' : '');
+        note.textContent = funnel.sourceNote.replace(/\*\*/g, '');
+        bar.appendChild(note);
+      }
+
+      if (!funnel.available) bar.classList.add('warn'); else bar.classList.remove('warn');
+    }
+
+    /**
      * 実閲覧の前提を常設で書く。**計測開始より前のことは記録が存在せず確認できない。**
      * これを書かないと「未確認」が「見ていない」と読まれる。
      */
+    /**
+     * いま販売している対象日。**16:30 以降は翌日分**へ切り替わる。
+     * 運用者が「今の申込がどの日の買い目か」を取り違えないよう常設で出す。
+     */
+    function renderSaleTargetNote(t) {
+      const el = $('saleTargetNote');
+      if (!el) return;
+      if (!t || !t.ok) {
+        el.className = 'measure-note warn';
+        el.textContent = '販売対象日を判定できませんでした。';
+        return;
+      }
+      el.className = 'measure-note';
+      el.className = 'measure-note' + (t.calendarStale ? ' warn' : '');
+      el.textContent = `いま販売中: ${t.productLabel}（${t.date} ／ ${t.circuitLabel || '—'}）／ ${t.intakeLabel}`
+        + (t.isNextDay ? ' ── 16:30 を過ぎたため翌日分を受付中です' : '')
+        + (t.shifted ? ` ── ${t.baseDate} は中央・南関とも開催が無いため次の販売日へ送っています` : '')
+        + (t.calendarNote ? ` ／ ⚠️ ${t.calendarNote}` : '');
+    }
+
     function renderMeasurementNote(measurement, counts) {
       const el = $('measureNote');
       if (!el) return;
@@ -2712,7 +3015,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。')
         + (data.overrideEnabled ? ' / 今すぐ販売可: 利用可' : ' / 今すぐ販売可: 無効（PREMIUM_PLUS_OVERRIDE_READY 未設定）');
 
-      const rows = sortRows((data.rows || []).filter(matches));
+      renderFunnelBar(data.truncated ? null : (data.funnel || null));
+      // 段階での絞り込み（未知の値では絞らない＝人を隠さない）
+      let base = (data.rows || []).filter(matches);
+      const stage = $('fFunnel') ? $('fFunnel').value : '';
+      if (stage && window.__ppFunnel) base = window.__ppFunnel.filterByStage(base, stage);
+      const rows = sortRows(base);
       const tb = $('rows');
       tb.innerHTML = '';
       for (const r of rows) {
@@ -2804,6 +3112,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return;
       }
       $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
+      renderSaleTargetNote(data.saleTarget);
       renderMeasurementNote(data.measurement, data.realViewCounts);
       const emp = $('empty');
       emp.hidden = rows.length > 0;
@@ -2830,18 +3139,75 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     /**
      * 一覧を取り直す。
-     * @param {{keepMessage?: boolean}} opts keepMessage=true なら直前の結果表示を消さない
-     *   （保存直後に「更新しました」を上書きしないため）
+     *
+     * @param {{keepMessage?: boolean, auto?: boolean}} opts
+     *   keepMessage=true … 直前の結果表示を消さない（保存直後の「更新しました」を上書きしない）
+     *   auto=true       … 自動更新（メッセージを出さない・既読にしない）
      */
     async function load(opts = {}) {
-      if (!opts.keepMessage) msg('読み込み中…');
-      const data = await call({ action: 'list', onlyReview: $('onlyReview').checked });
-      if (!data) return false;
-      if (!opts.keepMessage) msg('');
+      const auto = !!opts.auto;
+      const silent = auto || !!opts.keepMessage;
+      if (!silent) msg('読み込み中…');
+      const data = await call({ action: 'list', onlyReview: $('onlyReview').checked }, { quiet: auto });
+      // ⚠️ 通信断（__unknown）を成功として扱わない。表示を作り替えない
+      if (!data || data.__unknown) {
+        // 自動更新が失敗しても画面は壊さない。ただし黙らない
+        if (auto) renderRefreshNote(null, true);
+        return false;
+      }
+      if (!silent) msg('');
       // 検索で拾った候補外の人は保持する（保存後の確認で消さない）
       lastData = { ...data, rows: mergeSearched(data.rows || []) };
+      // 手動の再読み込みだけを「既読」にする。自動更新で新規反応を消さない
+      if (!auto) markFunnelSeen();
       render();
+      renderRefreshNote(Date.now(), auto);
       return true;
+    }
+
+
+    /** 最終更新時刻。更新されているのか止まっているのかを常に見せる */
+    function renderRefreshNote(atMs, auto) {
+      const el = $('refreshNote');
+      if (!el) return;
+      if (atMs === null) {
+        el.className = 'measure-note warn';
+        el.textContent = '自動更新に失敗しました。表示は前回取得したままです。「再読み込み」で取り直してください。';
+        return;
+      }
+      const d = new Date(atMs);
+      const p = (n) => String(n).padStart(2, '0');
+      const on = $('autoRefresh') && $('autoRefresh').checked;
+      el.className = 'measure-note';
+      el.textContent = `最終更新 ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+        + (auto ? '（自動）' : '')
+        + (on ? ` ／ 自動更新 ${Math.round(AUTO_REFRESH_MS / 1000)} 秒ごと（このタブが表示中のときだけ）` : ' ／ 自動更新 OFF');
+    }
+
+    /**
+     * ── 自動更新 ────────────────────────────────────────────
+     * 「再読み込み」を押さなくても新しい反応が入ることを前提にする。
+     * ただし**安全な間隔**で、かつ**邪魔をしない条件**でだけ動かす:
+     *   - このタブが表示されているときだけ（背景タブで叩き続けない）
+     *   - 詳細・操作パネルを開いている間は止める（操作中に足元を変えない）
+     *   - 管理シークレット未入力なら動かさない（無駄な 403 を作らない）
+     *   - 実行中は重ねない
+     */
+    const AUTO_REFRESH_MS = 90000;
+    let autoTimer = null;
+    let autoBusy = false;
+    function autoRefreshTick() {
+      if (autoBusy) return;
+      if (!$('autoRefresh') || !$('autoRefresh').checked) return;
+      if (document.visibilityState !== 'visible') return;
+      if (dtRecordId) return;                       // 詳細を開いている間は触らない
+      if (!(($('secret') || {}).value || '').trim()) return;
+      autoBusy = true;
+      load({ auto: true }).finally(() => { autoBusy = false; });
+    }
+    function startAutoRefresh() {
+      if (autoTimer) clearInterval(autoTimer);
+      autoTimer = setInterval(autoRefreshTick, AUTO_REFRESH_MS);
     }
 
     /**
@@ -2913,6 +3279,40 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         r.daysSincePremium == null ? 'muted' : '');
       kvRow(dl, '販売許可日', fmtDate(r.eligibleAt));
       kvRow(dl, '最終更新', fmtDate(r.updatedAt));
+      // ── 実閲覧（実測）──────────────────────────────────────
+      // 個別検索で開いたときも一覧と**同じ情報**を出す。
+      // 検索でしか出てこない相手（候補集合の外）の反応も、ここで確認できる。
+      // ⚠️ 実測が無い項目に「0 回」と書かない。必ず「未確認」。
+      {
+        const rv = r.realView;
+        kvRow(dl, '実閲覧 段階', r.funnelStageLabel
+          || (rv && window.__ppFunnel ? window.__ppFunnel.resolveFunnelStage(rv).label : '未確認'),
+          (r.funnelStage && r.funnelStage !== 'unknown') ? '' : 'muted');
+        for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ']]) {
+          const c = (rv && rv[key]) || {};
+          kvRow(dl, `実閲覧 ${label}`,
+            c.measured
+              ? `${c.count} 回（初回 ${c.firstAtJst || '不明'} / 最終 ${c.lastAtJst || '不明'} JST）`
+              : '未確認',
+            c.measured ? '' : 'muted');
+          // クリック元の内訳。導線別の計測より前の分は「クリック元不明」のまま出す
+          if (c.measured) {
+            for (const src of (c.sources || [])) {
+              kvRow(dl, `　└ ${src.label}`,
+                `${src.count} 回（初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'} JST）`);
+            }
+            if (c.legacyCount > 0) kvRow(dl, `　└ ${c.legacyLabel}`, `${c.legacyCount} 回`, 'muted');
+            if (c.noSourceCount > 0) {
+              kvRow(dl, `　└ ${c.noSourceLabel}`,
+                `${c.noSourceCount} 回（初回 ${c.noSourceFirstAtJst || '不明'} / 最終 ${c.noSourceLastAtJst || '不明'} JST）`, 'muted');
+            }
+            if (c.sourceTotalDiffers) {
+              kvRow(dl, '　└ 注記', '導線別は導線ごとの集計です。合計値と一致しないことがあります', 'muted');
+            }
+          }
+        }
+        if (rv && rv.startedAtJst) kvRow(dl, '計測開始', `${rv.startedAtJst} JST`);
+      }
       info.appendChild(dl);
       // 一覧に出しても顧客側に出ない相手は、操作前にその理由を出す（空振りの操作をさせない）
       if (r.releaseBlockedBy && r.candidateNote) {
@@ -3416,6 +3816,37 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('fRoute').addEventListener('change', render);
     $('fUpsell').addEventListener('change', render);
     $('fKind').addEventListener('change', render);
+    $('fFunnel').addEventListener('change', render);
+    $('fSort').addEventListener('change', render);
+    $('autoRefresh').addEventListener('change', () => {
+      startAutoRefresh();
+      renderRefreshNote(Date.now(), false);
+    });
+    // 背景タブでは叩かない。戻ってきたら 1 回だけ取り直す（古い画面のまま操作させない）
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') autoRefreshTick();
+    });
+
+    /**
+     * 実閲覧の段階フィルタは**モジュールの定義から**作る。
+     * 画面に選択肢をベタ書きすると、判定側に段階が増えたときに黙って取りこぼす。
+     */
+    function fillFunnelFilter() {
+      const sel = $('fFunnel');
+      // ⚠️ この inline script は **module script より先**に走る。
+      //    window.__ppFunnel がまだ無い時点で作ると選択肢が空のままになるので、
+      //    module の実行が終わる DOMContentLoaded まで待つ。
+      if (!sel || !window.__ppFunnel || sel.options.length > 1) return;
+      for (const stage of window.__ppFunnel.FUNNEL_STAGE_ORDER) {
+        const o = document.createElement('option');
+        o.value = stage;
+        o.textContent = '実閲覧: ' + window.__ppFunnel.FUNNEL_STAGE_LABEL[stage];
+        sel.appendChild(o);
+      }
+    }
+    document.addEventListener('DOMContentLoaded', fillFunnelFilter);
+    fillFunnelFilter(); // 既に読み込み済みなら即座に
+    startAutoRefresh();
 
     // ══════════════════════════════════════════════════════════════
     //  顧客マーケティング（AK 独自 / KMA とは無関係）

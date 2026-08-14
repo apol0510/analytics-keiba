@@ -53,7 +53,11 @@ test('【重要】保存成功の表示が直後の再読込に消されない',
 
 // ── 3. 失敗時の再処理 ────────────────────────────────────────
 test('【重要】通信断で操作が固まらない（call が例外を投げない）', () => {
-  const c = PAGEC.slice(PAGEC.indexOf('async function call(payload)'), PAGEC.indexOf('async function call(payload)') + 1400);
+  // ⚠️ 引数が増えても検出できるようにする（自動更新の quiet 追加で `call(payload, opt)` になった）。
+  //    literal 一致にすると、署名が変わった瞬間に**検査が素通り**して守れなくなる。
+  const at = PAGEC.search(/async function call\(payload/);
+  assert.ok(at >= 0, 'call() を見つけられない（署名が変わった？）');
+  const c = PAGEC.slice(at, at + 1600);
   assert.match(c, /try \{[\s\S]*await fetch\(API/, 'fetch を try で囲っていない');
   assert.match(c, /__unknown: true/);
 });

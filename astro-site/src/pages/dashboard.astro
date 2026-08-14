@@ -1061,11 +1061,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             if (!section || section.__akFunnelBound) return;
             section.__akFunnelBound = true;
             const q = (window.__akPpFunnelQueue = window.__akPpFunnelQueue || []);
-            q.push({ event: 'cta_view', el: section });
+            // 導線（クリック元）を添える。**値の採否はサーバーの allow-list**が決める。
+            // ここはダッシュボードの「会員限定のご案内を見る」なので 'dashboard'。
+            q.push({ event: 'cta_view', el: section, source: 'dashboard' });
             const btn = document.getElementById('plus-upsell-btn');
-            if (btn) btn.addEventListener('click', () => {
-                window.__akPpFunnelQueue.push({ event: 'cta_click' });
-            });
+            if (btn) {
+                // 商品ページ到達側でも導線が分かるようにする（サーバーが allow-list で検証する）
+                const href = btn.getAttribute('href') || '';
+                if (href && href.indexOf('from=') < 0) {
+                    btn.setAttribute('href', href + (href.indexOf('?') >= 0 ? '&' : '?') + 'from=dashboard');
+                }
+                btn.addEventListener('click', () => {
+                    window.__akPpFunnelQueue.push({ event: 'cta_click', source: 'dashboard' });
+                });
+            }
         }
 
         window.applyUpsellSections = applyUpsellSections;
