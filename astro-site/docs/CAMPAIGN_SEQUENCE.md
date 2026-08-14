@@ -109,6 +109,56 @@ DeliveryKey は **campaign × version × step × 受信者**。
 5. 実配信は既存 dispatcher（`MARKETING_CAMPAIGN_DISPATCH_ENABLED`）
 6. step2 以降は、上のゲートを開ければ cron が自動で進める
 
+### 7-1. Step1 の直前確認（`preflight:light-trial-step1`）
+
+Step1 は**母集団が最大**で、押した後に残る行（ScheduledEmails / CampaignDeliveries）も
+いちばん多い。承認を取る前に**機械で前提を固定**する。
+
+```bash
+# 読むだけ。書き込み・送信・env 変更はしない（終了コード 0 = 押してよい / 1 = 不可）
+MARKETING_ADMIN_SECRET=… npm run preflight:light-trial-step1 -- --expect 10
+```
+
+判定は `src/lib/marketing/step1Preflight.js`（純粋）。**母集団を自分で作り直さない**のが要点で、
+`admin-marketing` の read-only アクション（`sequence` / `trialGrant` / `jobs`）の答えを
+**検算するだけ**。作り直すと画面の人数と preflight の人数がズレる（2026-08-13 の 4,000 件
+打ち切り事故と同じ構図）。
+
+止まる条件（critical。1 つでも落ちたら押さない）:
+
+| 見るもの | 落ちる条件 |
+|---|---|
+| 次のステップ | Step1 以外が来ている |
+| 人数 | `--expect` と不一致（**増えていても止める**）/ 0 名 / 上限で切り捨て |
+| 既送信 | `sentByStep[1] > 0`（二重案内） |
+| 関所 | `outstandingStep1 ≠ 対象数`（一部しか見えていない） |
+| キュー | 同キャンペーンの既存ジョブ / PENDING が残っている |
+| ゲート | **実送信が開いている**（登録した瞬間に飛ぶ）/ 段階と `sendEnabled` が食い違う |
+| 自動配信 | cron が動く状態になっている |
+| 除外材料 | 配信基盤の停止リストを確認できない（**fail closed**） |
+| 応答 | 取得できていない・`sideEffects` が `none` でない（書き込み経路を叩いた） |
+
+> ⚠️ **CI には入れない**（`check:safety` から本番の管理エンドポイントを叩かないため）。
+> 判定ロジックの単体テストだけが `test:marketing` 経由で CI に乗る。
+
+### 7-2. キュー登録の rollback
+
+| 状態 | 戻し方 |
+|---|---|
+| PENDING のジョブ | 管理画面 / `action=cancelJob`（**PENDING だけ**取り消せる。`operationId` 必須・冪等） |
+| `queued` の配信行 | cancelJob が同時に処理する。**`sent` の行には 1 バイトも触らない** |
+| SENT のジョブ | 取り消せない（送った事実）。`MARKETING_CAMPAIGN_DISPATCH_ENABLED` が閉じていれば SENT にならない |
+| Customers | **触っていない**ので戻す対象が無い（送信側は Customers を書かない） |
+
+再実行の冪等性は 3 段:
+
+1. `deliveredKeys`（sent/queued の DeliveryKey）で `already_delivered` として除外
+2. 除外の結果 0 名になれば `送信対象が 0 件です`（400）で**書き込み前に止まる**
+3. CampaignDeliveries は `performUpsert(DeliveryKey)`。同じ人に 2 行作らない
+
+加えて `planFingerprint` が対象集合と文面を封じているので、
+dry-run から母集団が変わっていれば 409 で中止する（TOCTOU 防止）。
+
 ## 8. やってはいけないこと
 
 - 同じ件名・本文を別ステップに置く（検証で落ちる）
@@ -356,6 +406,8 @@ npm run check:safety     # 上記を含む全 safety check
 | `sequenceAutomation.test.mjs` | ゲート・1 ステップだけ・step1 手動・上限中止 |
 | `sequenceRender.test.mjs` | HTML/text 両方・モバイル・本番文面の表現・benefit guard |
 | `sequenceWiring.guard.test.mjs` | 管理 API / cron / 画面の配線と安全条件 |
+| `step1Preflight.test.mjs` | Step1 直前確認の判定（**確認できないものを ok にしない**） |
+| `step1PreflightScript.guard.test.mjs` | preflight スクリプトが read-only のままか（許可アクション固定） |
 
 ## 受信対象は Airtable 側で絞る（2026-08-13 / 全件走査を廃止）
 
