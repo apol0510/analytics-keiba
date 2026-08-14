@@ -38,38 +38,44 @@ const FN_DIR = path.join(ROOT, 'netlify', 'functions');
 
 /**
  * 既知の許可（理由付き）。
- * ここへ足すときは「なぜ全件で安全か」を必ず書くこと。
+ *
+ * ## 🎉 現在 **0 件**。この状態を維持すること。
+ *
+ * 2026-08-13 に残り 4 系統をすべて bounded 化した:
+ *
+ *   - `admin-marketing` customers / segments … 用途別 formula + fail closed
+ *   - `admin-marketing` customerDetail       … recordId で名指しに 1 件だけ引く
+ *   - `admin-comeback-grants`                … 候補 formula / 付与操作 ID / recordId で引く
+ *   - `admin-customer-import{,-run}`         … **問いを逆向きに**して CSV のアドレスを名指しで引く
+ *
+ * ## ⛔ ここへ 1 行足す前に読むこと
+ *
+ * 例外を足すのは「今は直せないので黙って人を落とす」と宣言することに等しい。
+ * まず次を検討する:
+ *
+ *   1. **その API に必要な候補は誰か**を formula で書けないか
+ *   2. **1 件しか要らない**のに全件読んでいないか（recordId で引けないか）
+ *   3. **問いの向きが逆**ではないか（「全員」ではなく「この人たちは居るか」で足りないか）
+ *   4. 絞れないなら **fail closed**（少ない件数を正しい件数として見せない）
+ *
+ * **`MAX_PAGES` を上げるのは解決ではない。** Airtable は 1 ページ 100 件・
+ * base あたり毎秒 5 リクエストなので、15,962 件の走査は最短 32 秒。
+ * 上限を上げても打ち切りがタイムアウトへ移るだけ。
  */
 const ALLOWED = new Map([
   // file -> { count, reason }
   // **件数まで固定する**。1 つでも増えたらこの検査は落ちる（新規混入を止めるため）。
-  // 減らしたら count も下げること（減った分の枠を残さない）。
-  ['admin-marketing.js', {
-    count: 1,
-    reason: 'loadCustomerMarketing（customers / customerDetail / segments 用）。'
-      + '販売・配信の判定経路（sequence / plan / trialGrant）は bounded 化済み。'
-      + '一覧系の bounded 化は別 PR で対応する。',
-  }],
-  ['admin-comeback-grants.js', {
-    count: 1,
-    reason: 'カムバック特典の候補一覧。同型だが本 PR の対象外。別 PR で bounded 化する。',
-  }],
-  ['admin-customer-import.js', {
-    count: 1,
-    reason: 'CSV 取り込みの重複判定。全件突合が要件だが、打ち切りは fail closed へ直す必要がある。別 PR。',
-  }],
-  ['admin-customer-import-run.js', {
-    count: 1,
-    reason: '同上（取り込み実行側）。別 PR。',
-  }],
 ]);
 
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
 
-/** その打ち切りが fail closed か（throw / return して結果を返さない） */
+/**
+ * その打ち切りが fail closed か（throw / return して**結果を返さない**）。
+ * 独自の Error 派生（`CustomerFetchTruncatedError` 等）も throw なので許可する。
+ */
 function isFailClosed(snippet) {
-  return /throw new Error\(/.test(snippet) || /return json\(/.test(snippet);
+  return /throw\s+new\s+[A-Za-z0-9_$]+\s*\(/.test(snippet) || /return json\(/.test(snippet);
 }
 
 const findings = [];
@@ -100,8 +106,21 @@ for (const file of readdirSync(FN_DIR).filter((f) => f.endsWith('.js')).sort()) 
   const code = stripComments(raw);
   if (!/Customers/.test(code)) continue;
 
-  // ① ページング helper を **Customers に対して formula 無しで**呼んでいる箇所
-  for (const fn of ['fetchAll', 'fetchAllRecords', 'listAll']) {
+  // ① ページング helper を **Customers に対して formula 無しで**呼んでいる箇所。
+  //    ただし helper 自身が上限で fail closed（throw）しているなら「完走するか落ちるか」の
+  //    どちらかなので、黙って人が消えることはない → 許可する。
+  const failClosedHelpers = new Set();
+  for (const def of code.matchAll(/(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(/g)) {
+    const start = def.index;
+    const next = code.slice(start + 1).search(/\n(?:async\s+)?function\s/);
+    const body = code.slice(start, next > 0 ? start + 1 + next : code.length);
+    if (/pages\s*>=/.test(body) && /throw\s+new\s+\w*Error/.test(body)) failClosedHelpers.add(def[1]);
+  }
+  for (const fn of [
+    'fetchAll', 'fetchAllRecords', 'listAll', 'fetchAllReadOnly',
+    'fetchBounded', 'fetchCustomersBounded',
+  ]) {
+    if (failClosedHelpers.has(fn)) continue; // 上限で落ちる = 黙って切らない
     for (const call of callArgs(code, fn)) {
       const a = call.text;
       if (!/CUSTOMERS_TABLE|['"`]Customers['"`]/.test(a)) continue;
@@ -121,6 +140,28 @@ for (const file of readdirSync(FN_DIR).filter((f) => f.endsWith('.js')).sort()) 
     if (!/CUSTOMERS_TABLE|\/Customers/.test(before)) continue;
     if (/filterByFormula/.test(before)) continue;
     findings.push({ file, line: lineOf(code, m.index), why: '無フィルタのページングを上限で黙って break している' });
+  }
+
+  // ③ **上限の名前に依らない網**: ② は `MAX_PAGES` という綴りだけを見ていたので、
+  //    `LIMIT` 等へ改名すると素通りしていた。`pages >= <上限>` を綴りに依らず見る。
+  const loopRe = /while\s*\(\s*offset\s*\)/g;
+  let lm;
+  while ((lm = loopRe.exec(code)) !== null) {
+    // ループ本体は while の手前にある（do { ... } while (offset)）
+    const before = code.slice(Math.max(0, lm.index - 2500), lm.index);
+    const body = before.slice(Math.max(0, before.lastIndexOf('do')));
+    if (!/CUSTOMERS_TABLE|['"`]Customers['"`]|\/Customers/.test(body)) continue;
+    if (/filterByFormula/.test(body)) continue;
+    // 上限で **throw / return** しているなら「完走するか落ちるか」。黙って消えない
+    const cap = body.match(/pages\s*>=\s*[A-Za-z0-9_$]+[^\n]*/);
+    if (!cap) continue;                 // 上限が無い = 打ち切らない（完走するかタイムアウト）
+    const guard = body.slice(body.indexOf(cap[0]), body.indexOf(cap[0]) + 400);
+    if (isFailClosed(guard)) continue;
+    findings.push({
+      file,
+      line: lineOf(code, lm.index),
+      why: 'Customers を無フィルタで回し、上限で黙って打ち切っている',
+    });
   }
 }
 

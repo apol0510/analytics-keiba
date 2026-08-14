@@ -421,7 +421,7 @@ test('【重要】失効を「約 0 分」と書かない（まだ使えるよ�
   assert.equal(u.remainingText, '失効');
   assert.match(describeHandoff(t, NOW), /失効/);
   assert.equal(/約 ?0 分/.test(describeHandoff(t, NOW)), false, '失効を 0 分と書いている');
-  assert.match(u.note, /期限が切れました/);
+  assert.match(u.note, /失効しました/);
 });
 
 test('【重要】残り時間から緊急度が分かる（付与直後と失効間際が同じ見た目にならない）', () => {
@@ -453,7 +453,7 @@ test('期限が読めない票は「まだ使える」と見せない（fail clo
   for (const bad of [undefined, null, 0, NaN, 'いつか']) {
     const u = resolveHandoffUrgency({ operationId: OP, grantedCount: 5, expiresAtMs: bad }, NOW);
     assert.equal(u.level, 'expired', `期限 ${String(bad)} を有効扱いしている`);
-    assert.match(u.note, /引き継ぎ直/);
+    assert.match(u.note, /連続配信/, '生きている復旧経路を案内していない');
   }
 });
 
@@ -471,4 +471,28 @@ test('緊急度の文言にアドレス・内部 ID を含めない', () => {
     assert.equal(s.includes(OP), false, '内部 ID が出ている');
     assert.equal(s.includes('@'), false);
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  失効時に「もう案内できない」と読ませない
+//
+//  2026-08-14 本番実測: 引き継ぎが失効しても Step1 のキュー登録は続けられる。
+//  連続配信の受信者はキャンペーンの宣言から**毎回導出**され、引き継ぎ票に
+//  依存しないため（失効後に 10 名が due 10 / next step 1 で解決されるのを確認）。
+//  ここで「作れません」と書くと、生きている経路を見落とさせる。
+// ══════════════════════════════════════════════════════════════
+test('【重要】失効しても「案内は続けられる」と伝える（詰みだと読ませない）', () => {
+  const u = resolveHandoffUrgency({ operationId: OP, grantedCount: 10, expiresAtMs: NOW - 1 }, NOW);
+  assert.equal(u.level, 'expired');
+  assert.equal(u.remainingText, '失効', '失効を「約 0 分」と書いている');
+  assert.match(u.note, /続けられます/, '詰んだように読める');
+  assert.match(u.note, /連続配信/, '生きている復旧経路を案内していない');
+  // 取り直せないものを「取り直せ」と言わない
+  assert.ok(!/カムバック特典タブから引き継ぎ直/.test(u.note),
+    '失効した操作は取り直せない（同じ TTL で 410）のに再取得を勧めている');
+});
+
+test('【重要】失効の説明が「案内を作れない」と断定していない', () => {
+  const u = resolveHandoffUrgency({ operationId: OP, grantedCount: 10, expiresAtMs: NOW - 1 }, NOW);
+  assert.ok(!/案内を作れません/.test(u.note), '事実と違う断定が戻っている');
 });

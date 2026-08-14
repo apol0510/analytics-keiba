@@ -40,9 +40,9 @@ import { fetchEmailBlacklistReadOnly, buildBlacklistEmailSet } from '../../src/l
 import { buildAkFacts } from '../../src/lib/crm/importAkFacts.js';
 import { mergeImportFiles, toPreviewRows } from '../../src/lib/crm/importMergePlan.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
+import { lookupCustomersByEmails, emailLookupErrorResponse } from '../../src/lib/crm/customerEmailLookup.js';
 
 const CUSTOMERS_TABLE = 'Customers';
-const MAX_PAGES = 60;
 
 function json(statusCode, body) {
   return {
@@ -58,24 +58,36 @@ function json(statusCode, body) {
   };
 }
 
-/** Airtable は**読むだけ**。この Function に書き込みヘルパーを置かない */
-async function fetchAllReadOnly({ KEY, BASE, table }) {
-  const out = [];
-  let offset;
-  let pages = 0;
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`);
-    url.searchParams.set('pageSize', '100');
-    if (offset) url.searchParams.set('offset', offset);
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` } });
-    if (!res.ok) throw new Error(`${table} fetch failed: HTTP ${res.status}`);
-    const data = await res.json();
-    out.push(...(data.records || []));
-    offset = data.offset;
-    pages += 1;
-    if (offset && pages >= MAX_PAGES) break;
-  } while (offset);
-  return out;
+/**
+ * CSV のアドレスに一致する Customers を**名指しで**引く（read-only・書き込みヘルパーは置かない）。
+ *
+ * 🛡️ **Customers の全件走査へ戻さないこと。**
+ *    旧実装は無フィルタで先頭 6,000 件だけ読んで打ち切っていた。Customers 15,962 件では
+ *    **約 10,000 人が「AK に居ない」と判定**され、取り込むと既存会員のレコードが二重に作られる
+ *    （同一アドレス 2 件 → `auth/customerLookup` が CONFLICT で本人のログインを拒否する）。
+ *    上限を上げても直らない（160 ページ = Airtable の毎秒 5 リクエスト制限で最短 32 秒）。
+ *
+ *    知りたいのは「AK の全員」ではなく「**CSV のアドレスが AK に居るか**」だけなので、
+ *    コストは顧客数ではなく **CSV の行数**に比例させる。取り落としが起きるくらいなら例外。
+ */
+async function fetchCustomersForEmails({ KEY, BASE, emails }) {
+  const { records } = await lookupCustomersByEmails({
+    emails,
+    fetchPage: async ({ formula, offset }) => {
+      // 式が長いので GET（URL 長制限あり）ではなく listRecords（POST）を使う
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageSize: 100, filterByFormula: formula, ...(offset ? { offset } : {}) }),
+        },
+      );
+      if (!res.ok) throw new Error(`${CUSTOMERS_TABLE} lookup failed: HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+  return records;
 }
 
 /** AK の EmailBlacklist を HARD / SOFT に分ける（`admin-marketing.js` と同じ考え方） */
@@ -158,8 +170,9 @@ async function handlePreviewCsv({ req, KEY, BASE, now }) {
   }
 
   // ── 2. AK 側の事実を読む（read-only）──
+  // CSV に載っているアドレスの分だけ AK を引く（全件走査しない）
   const [records, blacklist, provider] = await Promise.all([
-    fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
+    fetchCustomersForEmails({ KEY, BASE, emails: parsed.rows.map((r) => r.email) }),
     loadBlacklistSets({ KEY, BASE }),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
   ]);
@@ -286,8 +299,10 @@ async function handlePreviewFiles({ req, KEY, BASE, now }) {
     })),
   });
 
+  // 統合後のアドレスの分だけ AK を引く（全件走査しない）
+  const mergedRows = toPreviewRows(merged.entries);
   const [records, blacklist, provider] = await Promise.all([
-    fetchAllReadOnly({ KEY, BASE, table: CUSTOMERS_TABLE }),
+    fetchCustomersForEmails({ KEY, BASE, emails: mergedRows.map((r) => r.email) }),
     loadBlacklistSets({ KEY, BASE }),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
   ]);
@@ -298,7 +313,7 @@ async function handlePreviewFiles({ req, KEY, BASE, now }) {
 
   const batchId = buildBatchId({ dateIso: new Date(now).toISOString(), seq: 1 });
   const preview = buildImportPreview({
-    rows: toPreviewRows(merged.entries),
+    rows: mergedRows,
     existingEmails: facts.existing,
     duplicateInAk: facts.duplicateInAk,
     paidEmails: facts.paid,
@@ -413,6 +428,13 @@ export const handler = async (event) => {
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     // ⚠️ 例外メッセージに CSV の中身が混ざる可能性があるので**そのまま出さない**
+    // 照合できずに中止したときは、CSV を分割すれば通ることを運用者へ伝える。
+    // internal error に潰すと「壊れている」と誤解され、取り込みが進まない。
+    const lookup = emailLookupErrorResponse(e);
+    if (lookup) {
+      console.error('⏹️ [admin-customer-import] 照合できないため中止:', lookup.body.code);
+      return json(lookup.status, lookup.body);
+    }
     console.error('❌ [admin-customer-import] 処理に失敗しました');
     return json(500, { error: 'internal error' });
   }

@@ -121,13 +121,17 @@ import {
 import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
 import { parseTestRecipientsEnv } from '../../src/lib/newsletter/test-recipients.js';
 import {
-  SEGMENT_IDS, SEGMENT_CATALOG_VERSION, evaluateSegment, SEG_EXCLUDE_LABEL,
+  SEGMENT_IDS, SEGMENTS, SEGMENT_CATALOG_VERSION, evaluateSegment, SEG_EXCLUDE_LABEL,
 } from '../../src/lib/crm/audienceSegments.js';
 import { buildLastContactMap, readMeasurementSettings } from '../../src/lib/crm/segmentInputs.js';
 import { measuredCount } from '../../src/lib/crm/deliveryMeasurement.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
+import {
+  buildCustomerListFormula, buildSegmentFormula, describeScanLimit, describeNotNarrowable,
+  escapeFormulaValue, SCAN_FAIL, SCAN_MAX_PAGES,
+} from '../../src/lib/marketing/customerScanBounds.js';
 import {
   buildEngagementView, engagementCountsView,
 } from '../../src/lib/marketing/engagementGuard.js';
@@ -345,15 +349,69 @@ async function loadCampaignAudience({ KEY, BASE, now, campaign, formula: forced 
   return { ok: true, records, pagesFetched: pages };
 }
 
-/** Customers + EmailBlacklist + 自分のキャンペーン履歴を読み、顧客ごとの判定を作る（read-only）。 */
-async function loadCustomerMarketing({ KEY, BASE, now, withLogins = false }) {
-  const [customers, deliveries, tokens] = await Promise.all([
-    fetchAll({ KEY, BASE, table: CUSTOMERS_TABLE }),
-    fetchAll({ KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'` })
-      .catch(() => []), // 履歴が読めなくても一覧は出す（履歴なし扱い）
+/**
+ * Customers を **formula で絞ってから**読む。上限に達したら **fail closed**。
+ *
+ * 🛡️ 無フィルタ全件走査へ戻さないこと。Customers 15,962 件は 160 ページ =
+ *    Airtable の毎秒 5 リクエスト制限で**最短 32 秒**かかり、同期 Function に入らない。
+ *    先頭だけ読んで打ち切ると、後ろの顧客が黙って消える（販売一覧・連続配信で実際に起きた）。
+ *
+ * @returns {Promise<{ok:true, records:object[], pagesFetched:number}
+ *                  | {ok:false, body:object}>}
+ */
+async function fetchCustomersBounded({ KEY, BASE, formula, what }) {
+  if (!formula) {
+    return { ok: false, body: describeNotNarrowable({ what }) };
+  }
+  const records = [];
+  let offset;
+  let pages = 0;
+  do {
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterByFormula', formula);
+    // 既定ビュー順に結果が左右されないよう固定する
+    url.searchParams.set('sort[0][field]', 'Email');
+    url.searchParams.set('sort[0][direction]', 'asc');
+    if (offset) url.searchParams.set('offset', offset);
+    if (url.toString().length > 15000) {
+      return { ok: false, body: describeNotNarrowable({ what, hint: '絞り込み条件が長すぎます。選択を減らしてください。' }) };
+    }
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`${CUSTOMERS_TABLE} fetch failed: HTTP ${res.status}`);
+    const data = await res.json();
+    records.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    // **黙って打ち切らない**。少ない件数を正しい件数として見せない
+    if (offset && pages >= SCAN_MAX_PAGES) {
+      return { ok: false, body: describeScanLimit({ what, pagesFetched: pages }) };
+    }
+  } while (offset);
+  return { ok: true, records, pagesFetched: pages };
+}
+
+/**
+ * Customers + EmailBlacklist + 自分のキャンペーン履歴を読み、顧客ごとの判定を作る（read-only）。
+ *
+ * ⚠️ `customers` は**呼び出し側が絞って渡す**（この関数は全件走査しない）。
+ */
+async function loadCustomerMarketing({ KEY, BASE, now, withLogins = false, customers, emailScope }) {
+  // カルテ（1 人）のときは配信履歴・ログイン記録も**その人の分だけ**引く。
+  // 台帳は顧客数に比例して育つので、1 人のために全件読むと同じ打ち切り事故を起こす。
+  const scoped = String(emailScope || '').trim().toLowerCase();
+  const scopeClause = scoped ? `LOWER(TRIM({Email})) = '${escapeFormulaValue(scoped)}'` : null;
+  const [deliveries, tokens] = await Promise.all([
+    fetchAll({
+      KEY, BASE, table: DELIVERIES_TABLE,
+      filterByFormula: scopeClause
+        ? `AND({EmailType}='campaign', ${scopeClause})`
+        : `{EmailType}='campaign'`,
+    }).catch(() => []), // 履歴が読めなくても一覧は出す（履歴なし扱い）
     // ログイン列は補助情報。読めなくても一覧・送信判定は成立させる
     withLogins
-      ? fetchAll({ KEY, BASE, table: AUTH_TOKENS_TABLE }).catch(() => [])
+      ? fetchAll({ KEY, BASE, table: AUTH_TOKENS_TABLE, filterByFormula: scopeClause }).catch(() => [])
       : Promise.resolve([]),
   ]);
   const magicLogins = summarizeMagicLinkLogins(tokens);
@@ -602,6 +660,7 @@ export const handler = async (event) => {
     if (action === 'customerDetail') return await handleCustomerDetail({ KEY, BASE, now, req });
     if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
     if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
+    if (action === 'segmentCatalog') return handleSegmentCatalog();
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
@@ -737,8 +796,22 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     if (!v.ok) return json(400, { error: v.error });
     picked[key] = v.values;
   }
+  // 🛡️ **Airtable 側で候補を絞ってから読む**（無フィルタ全件走査へ戻さない）。
+  //    表せるのは Airtable の列で決まる条件だけ（プラン / 契約 / Plus 販売資格）。
+  //    残りの条件（送信可否・履歴・最終ログイン・オファー・頻度）は読み込んだあとで絞る。
+  //    1 つも表せないなら **fail closed**（先頭 4,000 件だけを一覧として見せない）。
+  const listFormula = buildCustomerListFormula(picked);
+  const loaded = await fetchCustomersBounded({
+    KEY, BASE, formula: listFormula, what: '顧客一覧',
+  });
+  if (!loaded.ok) {
+    return json(loaded.body.code === SCAN_FAIL.NOT_NARROWABLE ? 400 : 500, {
+      ...loaded.body,
+      hint: 'プラン / 契約状態 / Premium Plus 販売資格 のいずれかを 1 つ以上選んでください（これらだけが Airtable 側で絞り込めます）。',
+    });
+  }
   const { list, blacklistStatus, blacklistSize } = await loadCustomerMarketing({
-    KEY, BASE, now, withLogins: true,
+    KEY, BASE, now, withLogins: true, customers: loaded.records,
   });
   // 一覧のマーケ列に使う（読み取りのみ）。失敗しても一覧は出す
   const offersAll = await fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []);
@@ -854,7 +927,12 @@ async function handleCustomers({ KEY, BASE, now, req }) {
     ),
     matchedCount: matched.length,
     truncated: matched.length > rows.length,
+    // ⚠️ 集計の母数は**絞り込んだ候補集合**であって全顧客ではない。
+    //    「全顧客のうち何名」と読ませないため、母数の意味を明示して返す。
     segments: summarizeSegments(list.map((c) => c.marketing)),
+    candidateCount: list.length,
+    candidateBasis: '選択した プラン / 契約状態 / Premium Plus 販売資格 に一致する候補のみ（全顧客ではありません）',
+    /** @deprecated 名前が「全顧客」に読めるため candidateCount を使うこと */
     totalCustomers: list.length,
     blacklist: { status: blacklistStatus, size: blacklistSize },
     sendEnabled: isMarketingSendEnabled(process.env),
@@ -966,12 +1044,17 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   const recordId = String(req.recordId || '').trim();
   if (!recordId) return json(400, { error: 'recordId が必要です' });
 
-  const { list, deliveries, tokens, magicLogins, blacklistEmails } =
-    await loadCustomerMarketing({ KEY, BASE, now, withLogins: true });
-  const hit = list.find((c) => c.recordId === recordId);
-  if (!hit) return json(404, { error: '該当する顧客が見つかりません' });
+  // 🛡️ **1 件しか要らないのに全件走査しない**。recordId で名指しに引く
+  //    （全件走査だと 15,962 件の先頭 4,000 件に居ない顧客のカルテが 404 に化ける）。
+  const found = await fetchByRecordIds({ KEY, BASE, table: CUSTOMERS_TABLE, recordIds: [recordId] });
+  if (!found.length) return json(404, { error: '該当する顧客が見つかりません' });
 
-  const email = String(hit.fields.Email || '').trim().toLowerCase();
+  const email = String((found[0].fields || {}).Email || '').trim().toLowerCase();
+  const { list, deliveries, tokens, magicLogins, blacklistEmails } =
+    await loadCustomerMarketing({
+      KEY, BASE, now, withLogins: true, customers: found, emailScope: email,
+    });
+  const hit = list[0];
 
   // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
   const blacklist = await loadBlacklistSets({ KEY, BASE });
@@ -1871,6 +1954,28 @@ async function upsertDeliveries({ KEY, BASE, records }) {
  * ⚠️ 配信履歴の読み解きと配信基盤の設定取得は `crm/segmentInputs.js` に分離してある
  *    （この Function に宛先列や SendGrid のエンドポイントを持ち込まないため）。
  */
+/**
+ * セグメントの**名前だけ**を返す（Airtable を一切読まない）。
+ *
+ * 下見（`segments`）は 1 セグメントずつ数える設計にしたので、
+ * 選択肢を並べるためだけに全セグメントを数える必要はない。
+ * ここで件数を返さないのは意図的（**数えていないものを件数として出さない**）。
+ */
+function handleSegmentCatalog() {
+  return json(200, {
+    mode: 'segment-catalog',
+    sideEffects: 'none',
+    catalogVersion: SEGMENT_CATALOG_VERSION,
+    segments: SEGMENTS.map((s) => ({
+      segmentId: s.id,
+      segmentName: s.name,
+      description: s.description || '',
+      requires: s.requires || [],
+    })),
+    notice: '件数はここでは数えません。セグメントを選んで「数える」を押してください。',
+  });
+}
+
 async function handleSegments({ KEY, BASE, now, req }) {
   const wanted = String(req.segmentId || '').trim();
   if (wanted && !SEGMENT_IDS.includes(wanted)) {
@@ -1878,7 +1983,35 @@ async function handleSegments({ KEY, BASE, now, req }) {
   }
   const sampleSize = Number.isInteger(req.sampleSize) ? Math.min(req.sampleSize, 20) : 0;
 
-  const { list, blacklistEmails, deliveries } = await loadCustomerMarketing({ KEY, BASE, now });
+  // 🛡️ **セグメントは 1 つずつ下見する**（全セグメント一括 = 実質全件走査になるため）。
+  //    Customers 15,962 件を無条件に読み切る道は取らない（Airtable の毎秒 5 リクエスト制限で
+  //    最短 32 秒。同期 Function に入らず、途中で切ると件数が嘘になる）。
+  if (!wanted) {
+    return json(400, {
+      ...describeNotNarrowable({
+        what: 'セグメント下見',
+        hint: 'セグメントを 1 つ選んでください（全セグメント一括の下見は行いません）。',
+      }),
+      segmentIds: SEGMENT_IDS,
+    });
+  }
+  const segFormula = buildSegmentFormula(wanted);
+  const loaded = await fetchCustomersBounded({
+    KEY, BASE, formula: segFormula, what: `セグメント「${wanted}」の下見`,
+  });
+  if (!loaded.ok) {
+    return json(loaded.body.code === SCAN_FAIL.NOT_NARROWABLE ? 400 : 500, {
+      ...loaded.body,
+      ...(segFormula ? {} : {
+        hint: 'このセグメントの条件は Customers の列だけでは絞り込めません'
+          + '（開封記録は配信台帳側にあります）。件数を確定できないため下見を行いません。',
+      }),
+    });
+  }
+
+  const { list, blacklistEmails, deliveries } = await loadCustomerMarketing({
+    KEY, BASE, now, customers: loaded.records,
+  });
 
   // 除外の材料。**確認できないものは fail closed**（送らない側へ倒す）
   const hard = blacklistEmails instanceof Set ? blacklistEmails : new Set();
@@ -1905,8 +2038,8 @@ async function handleSegments({ KEY, BASE, now, req }) {
     engagementBlockedEmails: engagementView.applied ? engagementView.blockedEmails : null,
     sampleSize,
   };
-  const ids = wanted ? [wanted] : SEGMENT_IDS;
-  const results = ids.map((id) => evaluateSegment({ ...shared, segmentId: id }));
+  // 候補は選んだセグメント専用に絞ってあるので、ここで別のセグメントを評価しない
+  const results = [evaluateSegment({ ...shared, segmentId: wanted })];
 
   const engagement = {
     ...engagementResponse(engagementView),

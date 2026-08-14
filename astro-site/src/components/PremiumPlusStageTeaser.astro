@@ -113,15 +113,36 @@
       if (data.productHref && linkLabel) {
         const link = document.createElement('a');
         link.className = 'pp-stage-link';
-        link.href = data.productHref;
+        // 商品ページ到達側でも導線が分かるようにする（サーバーが allow-list で検証する）
+        link.href = data.productHref + (data.productHref.indexOf('?') >= 0 ? '&' : '?') + 'from=sanrenpuku';
         link.textContent = linkLabel;
         card.appendChild(link);
       }
 
       slot.appendChild(card);
       slot.hidden = false;
+
+      // 実閲覧の計測。**この inline script は送信条件を持たない**（送るかどうかは
+      // premiumPlusFunnelClient.js の 1 か所が決める）。ここは積むだけ。
+      // card を渡すと「画面に入ったとき」だけ表示として数える（DOM に足しただけでは数えない）。
+      // ⚠️ この script は is:inline で未ログイン者の HTML にも載る。イベント名以外は書かない。
+      const q = (window.__akPpFunnelQueue = window.__akPpFunnelQueue || []);
+      // 導線（クリック元）を添える。**値の採否はサーバーの allow-list**が決める。
+      // ここは三連複会員ページの予告枠なので 'sanrenpuku'。
+      q.push({ event: 'cta_view', el: card, source: 'sanrenpuku' });
+      card.addEventListener('click', (ev) => {
+        if (ev.target && ev.target.closest && ev.target.closest('a')) {
+          window.__akPpFunnelQueue.push({ event: 'cta_click', source: 'sanrenpuku' });
+        }
+      });
     } catch {
       // 取得失敗時は何も出さない（fail closed）
     }
   })();
+</script>
+
+<!-- 送信本体（バンドルされる module）。inline 側が先に push しても取りこぼさない。 -->
+<script>
+  import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
+  installPlusFunnel(window);
 </script>

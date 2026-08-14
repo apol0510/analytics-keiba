@@ -29,8 +29,13 @@ import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/inde
 import ppResultsRaw from '../data/premiumPlusResults.json';
 import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
+// 「いま売っているのは何日分か」の単一源。表示・注文はここだけを使う
+import { resolveSaleTarget, buildSaleProductName } from '../lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar } from '../lib/premiumPlus/premiumPlusRaceCalendar.js';
+import ppRaceCalendar from '../data/premiumPlusRaceCalendar.json';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
+import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -78,6 +83,25 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
   });
 }
 const ppIntake = intakeCopy(ppRelease.intake);
+// 対象日（16:30 以降は翌日分）。**購入ボタンの近くに必ず出す**
+// 対象日（16:30 以降は翌暦日）。例外日だけ次の販売日へ送る
+const ppSale = resolveSaleTarget(ppNow, { calendar: shapeRaceCalendar(ppRaceCalendar) });
+
+// --- 実閲覧の記録（商品ページ到達）---
+// ここまで来た時点で SSR 認可を通っており recordId が確定している。クライアント JS に任せると
+// JS 無効・広告ブロック・即離脱で落ちるため、サーバー側で数える。
+// Redis へ recordId だけ書き、Airtable へは 1 バイトも書かない。
+// 失敗・未設定・遅延は「未確認」のまま（0 回とは記録しない）で、ページは通常どおり返す。
+await recordPlusPageView({
+  recordId: access.payload?.sub || null,
+  env: process.env,
+  userAgent: Astro.request.headers.get('user-agent') || '',
+  nowMs: ppNow,
+  // どのリンクから来たか（`?from=dashboard` / `?from=sanrenpuku`）。
+  // ⚠️ URL は自由に付けられるので、allow-list を通した値だけを記録する。
+  //    該当しなければ null（合計にだけ数える。推測で振り分けない）。
+  source: readPlusSourceFromUrl(Astro.url),
+});
 
 // 会員別レスポンス。CDN に共有キャッシュさせない。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
@@ -136,6 +160,36 @@ const ppToday = {
   wd: PP_WD[ppJstNow.getUTCDay()],
   isChuo: ppTodayIsChuo,
 };
+
+// --- ティザーは**販売対象日**に合わせる（16:30 以降は翌日分）-------------
+// ⚠️ ここを ppToday（今日）のままにすると、16:30 以降に同じ画面へ
+//    「本日の 1 鞍 8/14」と購入ブロックの「8月15日分」が並び、
+//    どちらを買うのか分からなくなる。見出し・日付・開催区分・ボタン文言は
+//    すべて **ppSale（単一源）** から作る。
+const ppTodayStr = `${ppToday.y}-${String(ppToday.m).padStart(2, '0')}-${String(ppToday.d).padStart(2, '0')}`;
+const ppTeaser = (() => {
+  // 売れないとき（例外日が連続する異常時のみ）は従来どおり本日を出す
+  if (!ppSale.sellable || !ppSale.date) {
+    return {
+      y: ppToday.y, m: ppToday.m, d: ppToday.d, wd: ppToday.wd,
+      isChuo: ppToday.isChuo,
+      circuitLabel: ppToday.isChuo ? '基本：中央' : '基本：南関',
+      isToday: true,
+    };
+  }
+  const [y, m, d] = ppSale.date.split('-').map(Number);
+  return {
+    y, m, d,
+    // UTC 正午基準で曜日だけを取る（タイムゾーンの影響を受けない）
+    wd: PP_WD[new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()],
+    isChuo: ppSale.circuit === 'chuo',
+    circuitLabel: ppSale.circuitLabel,
+    isToday: ppSale.date === ppTodayStr,
+  };
+})();
+// 対象日が今日なら従来どおり「本日」。今日でないときだけ日付で言い切る
+const ppTeaserEyebrow = ppTeaser.isToday ? '本日の 1 鞍' : `${ppTeaser.m}月${ppTeaser.d}日の 1 鞍`;
+const ppTeaserCta = ppTeaser.isToday ? '🔓 本日の1鞍を抽出する' : `🔓 ${ppTeaser.m}月${ppTeaser.d}日の1鞍を抽出する`;
 
 // --- 連勝レジャー帯（台帳の全件を最新順で・すべて掲載）---
 // 数値は台帳の実データのみ（手書き禁止）。payout は formatYenShort で短縮表示。
@@ -611,6 +665,14 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     }
     .pp-intake-title { font-size: 0.82rem; font-weight: 700; color: var(--muted); margin: 0 0 0.35rem; }
     .pp-intake-status { font-size: 1rem; font-weight: 900; margin: 0; }
+    /* 何日分を買うのか。購入ボタンのすぐ上に置く */
+    .pp-delivery-note { margin-top: .5rem; font-size: .8rem; line-height: 1.8; color: #cbd5e6; }
+    .pp-sale-target { margin: 0 0 .6rem; font-size: 1.02rem; font-weight: 900; color: var(--gold); }
+    .pp-sale-target-badge {
+      display: inline-block; margin-left: .5rem; font-size: .68rem; font-weight: 800;
+      padding: .12rem .5rem; border-radius: 999px; vertical-align: middle;
+      background-color: rgba(245,196,81,.12); color: var(--gold); border: 1px solid rgba(245,196,81,.45);
+    }
     .pp-intake-note { font-size: 0.74rem; color: var(--muted); margin: 0.45rem 0 0; line-height: 1.7; }
     .pp-intake.open { border-color: rgba(52, 211, 153, 0.4); }
     .pp-intake.open .pp-intake-status { color: var(--green); }
@@ -911,9 +973,9 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     <!-- ══ 本日の1鞍（ティザー・購入導線） ══ -->
     <div class="today">
       <div class="today-top">
-        <span class="ey">本日の 1 鞍</span><span class="today-spacer"></span>
-        <span class="when">{ppToday.y}/{ppToday.m}/{ppToday.d}（{ppToday.wd}）</span>
-        <span class={ppToday.isChuo ? 'today-circuit ch' : 'today-circuit nk'}>{ppToday.isChuo ? '中央開催' : '南関開催'}</span>
+        <span class="ey">{ppTeaserEyebrow}</span><span class="today-spacer"></span>
+        <span class="when">{ppTeaser.y}/{ppTeaser.m}/{ppTeaser.d}（{ppTeaser.wd}）</span>
+        <span class={ppTeaser.isChuo ? 'today-circuit ch' : 'today-circuit nk'}>{ppTeaser.circuitLabel}</span>
       </div>
       <div class="today-grid">
         <div class="today-l">
@@ -929,7 +991,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
             <>
               <div class="price"><span class="now">¥{PRICE.toLocaleString('ja-JP')}</span><span class="was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span></div>
               <span class="tax">買い切り・追加課金なし</span>
-              <button class="extract" type="button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>🔓 本日の1鞍を抽出する</button>
+              <button class="extract" type="button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>{ppTeaserCta}</button>
             </>
           ) : (
             <div class="pp-preparing">
@@ -939,7 +1001,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
           )}
         </div>
       </div>
-      <p class="today-rule">🗓️ <span><b>平日は南関、土日は中央（JRA）。</b>中央と南関の開催が重なる日も、AI が全開催を横断して<b>ただ 1 鞍</b>だけを選びます。</span></p>
+      <p class="today-rule">🗓️ <span><b>基本：平日は南関、土日は中央（JRA）。</b>実際の開催場はその日の開催によります。中央と南関の開催が重なる日も、AI が全開催を横断して<b>ただ 1 鞍</b>だけを選びます。</span></p>
     </div>
 
     <!-- ══ なぜ三連複会員にだけ案内するのか ══ -->
@@ -1214,7 +1276,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
 
     <!-- ══ 価格・CTA ══ -->
     <section class="section">
-      <div class="offer">
+      <div class="offer" id="pp-offer">
         {ppRelease.showPurchaseCta ? (
           <>
             <span class="eyebrow">◆ Premium Sanrenpuku 会員 特別価格</span>
@@ -1233,12 +1295,31 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
             </div>
             <p class="price-note">単品購入（サブスクリプションではありません）</p>
 
+            {/* 注文へ運ぶ対象日。サーバーが出し直して確定させるが、
+                画面が何日分を出していたかを記録として残す */}
+            <input type="hidden" id="ppSaleTargetDate" value={ppSale.date || ''} />
+            <input type="hidden" id="ppSaleProductName" value={buildSaleProductName(ppSale.label, 68000)} />
+            {/* 何日分を買うのかをボタンのすぐ上に出す（16:30 以降は翌日分） */}
+            {ppSale.sellable && (
+              <p class="pp-sale-target" data-sale-date={ppSale.date}>
+                <span class="pp-sale-target-label">{ppSale.productLabel}</span>
+                {ppSale.isNextDay && <span class="pp-sale-target-badge">翌日分</span>}
+              </p>
+            )}
+
             <button class="cta-button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>
               🏦 銀行振込で購入する
             </button>
 
             <p class="cta-sub">
               入金確認後、AI が厳選した 1 鞍の買い目をお届けします。
+            </p>
+            {/* 自動配信ではなく**手動でお届けする**商品であることを明記する。
+                サイト上に購入者専用の閲覧画面は無いため、誤解を生まないよう出す */}
+            <p class="cta-sub pp-delivery-note">
+              こちらは <strong>担当者が手動でお届けする商品</strong>です。
+              {ppSale.sellable ? ppSale.label : '対象日分'}は
+              <strong>入金確認後にメールでご案内</strong>します（サイト上での閲覧ではありません）。
             </p>
           </>
         ) : (
@@ -1657,7 +1738,12 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         transferAmount: document.getElementById('transferAmount').value,
         transferName: document.getElementById('fullName').value,
         remarks: document.getElementById('remarks').value,
-        productName: 'Premium Plus (¥68,000)',
+        // 商品名に対象日を含める（管理者通知・お客様控え・申請履歴が運ぶ）
+        productName: document.getElementById('ppSaleProductName')?.value || 'Premium Plus (¥68,000)',
+        // 対象日そのもの。**サーバーが出し直して確定させる**（画面の値は参考）
+        saleTargetDate: document.getElementById('ppSaleTargetDate')?.value || null,
+        // どの導線から来たか（?from=）。**採否はサーバーの allow-list**が決める
+        funnelSource: new URLSearchParams(location.search).get('from') || null,
           paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
         timestamp: new Date().toISOString(),
       };
@@ -1762,6 +1848,39 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         submitLoading.style.display = 'none';
       }
     });
+  </script>
+
+  <!-- ══ 商品ページ内の導線の実閲覧（クリック元 = plus_page）══
+       同じ Premium Plus の CTA でも、ダッシュボード / 三連複ページ / この商品ページ内の
+       どこで押されたかで意味が違う。運用者が判別できるよう導線を添えて数える。
+       ⚠️ 値の採否は**サーバーの allow-list**が決める（クライアント申告は信用しない）。
+       ⚠️ 送信の判断は premiumPlusFunnelClient.js の 1 か所だけが持つ。ここは積むだけ。 -->
+  <script is:inline>
+    (function () {
+      try {
+        var q = (window.__akPpFunnelQueue = window.__akPpFunnelQueue || []);
+        // 「画面に入ったとき」だけ表示として数える（DOM にあるだけでは数えない）
+        var offer = document.getElementById('pp-offer');
+        if (offer) q.push({ event: 'cta_view', el: offer, source: 'plus_page' });
+        // 商品ページ内の購入 CTA を**取りこぼさず**拾う。
+        //   - 価格ブロックの購入ボタン（.cta-button）
+        //   - 1 鞍の抽出ボタン（.today .extract）
+        //   - モバイル固定 CTA（.sticky-cta の中。class を持たない）
+        // ⚠️ class の列挙だけだと固定 CTA を落とす。**モバイルで最も押される導線**なので、
+        //    「購入モーダルを開くもの」を条件に含めて、CTA が増えても落ちないようにする。
+        // disabled のときはブラウザが click を発火しないので、受付前を数えることはない。
+        var btns = document.querySelectorAll('.cta-button, .today .extract, [onclick*="openBankModal"]');
+        for (var i = 0; i < btns.length; i += 1) {
+          btns[i].addEventListener('click', function () {
+            window.__akPpFunnelQueue.push({ event: 'cta_click', source: 'plus_page' });
+          });
+        }
+      } catch (e) { /* 計測の失敗で購入導線を壊さない */ }
+    })();
+  </script>
+  <script>
+    import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
+    installPlusFunnel(window);
   </script>
 </body>
 </html>

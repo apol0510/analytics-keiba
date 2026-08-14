@@ -38,6 +38,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <div class="conn-body" id="connBody" hidden>
       <label for="secret">管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
       <input type="password" id="secret" placeholder="Netlify に設定した値" autocomplete="off" />
+      <!-- 誰が変更したかを残すため。未入力だと記録が全部 'admin' になり監査にならない -->
+      <label for="actor">操作者名（変更履歴に残ります）</label>
+      <input type="text" id="actor" placeholder="例: MK" autocomplete="off" maxlength="32" />
       <p class="note" id="writeState"></p>
     </div>
 
@@ -59,10 +62,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     <div class="toolbar">
       <details class="email-search" id="qBox">
-          <summary class="email-summary">🔎 Email で個別検索<span class="email-badge" id="qBadge" hidden>Email 条件あり</span></summary>
-          <p class="email-note">特定の顧客をメールアドレスで探す場合だけ使用します。</p>
+          <summary class="email-summary">🔎 個別検索（氏名・アドレス）<span class="email-badge" id="qBadge" hidden>検索条件あり</span></summary>
+          <p class="email-note">
+            特定の顧客を探すときだけ使います。<b>氏名の一部・アドレスの一部</b>でも引けます
+            （例: <code>Daniel</code> / <code>0510apolone</code> / <code>tori</code>）。
+            販売候補の一覧に居ない人も検索できます。Enter で実行。
+          </p>
           <div class="email-row">
-            <input type="search" id="q" placeholder="Email で検索" autocomplete="off" aria-label="Email 検索" />
+            <input type="search" id="q" placeholder="氏名 または アドレスの一部" autocomplete="off" aria-label="氏名・アドレス検索" />
+            <button type="button" id="qSearch" class="btn-ghost btn-sm">検索</button>
             <button type="button" id="qClear" class="btn-ghost btn-sm">クリア</button>
           </div>
         </details>
@@ -91,10 +99,31 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="none">案内しない</option>
       </select>
       <label class="chk"><input type="checkbox" id="onlyReview" /> 保留のみ再取得</label>
+      <!-- 実閲覧の段階で絞る。値は premiumPlusFunnelAnalytics.js が単一源 -->
+      <select id="fFunnel" aria-label="実閲覧の段階">
+        <option value="">実閲覧: すべて</option>
+      </select>
+      <select id="fSort" aria-label="並べ替え">
+        <option value="default">並び: 既定（状態順）</option>
+        <option value="reaction">並び: 反応が新しい順</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="autoRefresh" checked /> 自動更新</label>
     </div>
 
     <p class="msg" id="message"></p>
     <p class="count" id="count"></p>
+    <!-- 表示 → クリック → 商品ページ到達 の人数と転換率（分母が確定しなければ率は出さない） -->
+    <div class="funnel-bar" id="funnelBar" hidden></div>
+    <!-- 実閲覧の前提。計測開始より前は記録が存在せず確認できない、と常設で書く -->
+    <!-- いま販売している対象日（16:30 以降は翌日分） -->
+    <p class="measure-note" id="saleTargetNote"></p>
+    <p class="measure-note" id="measureNote"></p>
+    <!-- 「販売可なのに案内していない」人数。売れる状態に見えて誰にも届いていない状況を検知する -->
+    <p class="measure-note" id="notifyNote"></p>
+    <!-- 通信断で結果が分からなかった操作。確認するまで消さない -->
+    <p class="measure-note warn" id="opWarn" hidden></p>
+    <!-- 自動更新の最終実行時刻。更新されているのか止まっているのかを常に見せる -->
+    <p class="measure-note" id="refreshNote"></p>
 
     <div class="tablewrap">
       <table class="tbl">
@@ -106,7 +135,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <th class="c-route">Route</th>
             <th class="c-kind">区分</th>
             <th class="c-upsell">販売CTA</th>
-            <th class="c-display">実表示</th>
+            <!-- ⚠️ この 3 列は意味が違う。混同すると「見えているはず」を「届いた」と読み違える。
+                 表示判定 = 設定と条件から導いた「出るはず」
+                 実閲覧   = 本人が画面で見た実測
+                 案内     = こちらから送った実績（CampaignDeliveries） -->
+            <th class="c-display">表示判定</th>
+            <th class="c-realview">実閲覧</th>
+            <th class="c-notified">案内</th>
             <th class="c-phase">PHASE</th>
             <th class="c-eligible">販売許可日</th>
             <th class="c-updated">最終更新</th>
@@ -1240,7 +1275,103 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .msg { font-size: .82rem; min-height: 1.1em; margin: 0 0 .3rem; }
   .ppe .msg.ok { color: #34d399; }
   .ppe .msg.err { color: #f87171; }
-  .ppe .count { font-size: .74rem; color: #93a4bd; margin: 0 0 .6rem; }
+  .ppe .count { font-size: .74rem; color: #93a4bd; margin: 0 0 .3rem; }
+
+  /* 実閲覧の前提（計測開始より前は記録が存在しない）を常設で出す */
+  .ppe .measure-note { font-size: .72rem; color: #93a4bd; margin: 0 0 .6rem; line-height: 1.7; }
+  .ppe .measure-note.warn { color: #fbbf24; }
+  .ppe .sec-sub { font-size: .78rem; font-weight: 700; color: #cbd5e1; margin: .9rem 0 .3rem; }
+
+  /* 操作履歴（このタブ内）。結果が分からないものだけを目立たせる */
+  .ppe .oplog { list-style: none; margin: .4rem 0 .6rem; padding: 0; }
+  .ppe .oplog-item {
+    font-size: .72rem; line-height: 1.7; color: #cbd5e1;
+    padding: .28rem .5rem; border-left: 3px solid rgba(148,163,184,.35);
+    margin-bottom: .25rem; background: rgba(148,163,184,.06); border-radius: 0 4px 4px 0;
+    word-break: break-all;
+  }
+  .ppe .oplog-item.ok { border-left-color: #34d399; }
+  .ppe .oplog-item.failed { border-left-color: #f87171; color: #fca5a5; }
+  .ppe .oplog-item.unknown { border-left-color: #fbbf24; color: #fcd34d; font-weight: 700; }
+
+  /* 実閲覧セル: 「未確認」は控えめ・実測があるものだけ強調する。
+     ⚠️ 未確認を 0 として色分けしない（見ていない証拠ではない） */
+  .ppe .c-realview { white-space: nowrap; }
+  .ppe .rv { display: block; font-size: .68rem; line-height: 1.6; }
+  .ppe .rv-yes { color: #86efac; font-weight: 700; }
+  .ppe .rv-unknown { color: #64748b; }
+  /* 実測があるときだけ出す日時。無いときに 0 回や日付を作らない */
+  .ppe .rv-when { display: block; font-size: .62rem; font-weight: 400; color: #7f90ab; }
+  /* 導線（クリック元）の内訳。不明は控えめ（推測で振り分けない） */
+  .ppe .rv-src { display: block; font-size: .62rem; font-weight: 400; color: #9fb0c9; padding-left: .3rem; }
+  .ppe .rv-src-unknown { color: #7f90ab; font-style: italic; }
+  .ppe .fn-src-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; font-size: .7rem; color: #cbd5e6; border-top: 1px solid rgba(148,163,184,.12); padding-top: .35rem; }
+  .ppe .fn-src-row-unknown { color: #7f90ab; font-style: italic; }
+  .ppe .fn-src-name { font-weight: 700; color: #93a4bd; min-width: 7rem; }
+  .ppe .fn-src-seg { color: #e6edf7; }
+  .ppe .fn-src-rate { color: #86efac; }
+  /* 導線の種類。流入（商品ページへ送る）と 商品ページ内 を一目で分ける */
+  .ppe .fn-src-kind {
+    font-size: .58rem; font-weight: 800; letter-spacing: .04em; padding: .1em .45em;
+    border-radius: 999px; color: #93c5fd; border: 1px solid rgba(147,197,253,.35); background: rgba(147,197,253,.08);
+  }
+  .ppe .fn-src-kind-onpage { color: #f0abfc; border-color: rgba(240,171,252,.35); background: rgba(240,171,252,.08); }
+  .ppe .fn-src-row-onpage { border-top-style: dashed; }
+  /* 「到達を出さない理由」。0 名と誤読させないための説明はその場に置く */
+  .ppe .fn-src-why { flex-basis: 100%; font-size: .62rem; color: #7f90ab; line-height: 1.7; }
+  .ppe .fn-src-note { flex-basis: 100%; font-size: .64rem; color: #7f90ab; line-height: 1.7; padding-top: .3rem; }
+  .ppe .fn-src-note-on { color: #fcd34d; }
+  .ppe .fn-period { font-size: .66rem; color: #cbd5e6; }
+  /* 段階バッジ。未確認は控えめ・進んだ段階ほど強く */
+  .ppe .rv-stage {
+    display: inline-block; font-size: .64rem; font-weight: 800; margin-bottom: .25rem;
+    padding: .1rem .45rem; border-radius: 999px; white-space: nowrap;
+  }
+  .ppe .rv-stage-unknown { background-color: #1e293b; color: #7f90ab; border: 1px solid rgba(148,163,184,.3); }
+  .ppe .rv-stage-viewed_not_clicked { background-color: #14304d; color: #93c5fd; border: 1px solid rgba(96,165,250,.4); }
+  .ppe .rv-stage-clicked_not_reached { background-color: #143b33; color: #6ee7b7; border: 1px solid rgba(52,211,153,.42); }
+  .ppe .rv-stage-reached { background-color: #12463a; color: #a7f3d0; border: 1px solid rgba(52,211,153,.6); }
+  .ppe .rv-new {
+    display: inline-block; margin-left: .35rem; font-size: .62rem; font-weight: 800;
+    padding: .08rem .4rem; border-radius: 999px; white-space: nowrap;
+    background-color: #4a2f06; color: #fcd34d; border: 1px solid rgba(251,191,36,.5);
+  }
+
+  /* 表示 → クリック → 到達 の転換バー */
+  .ppe .funnel-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+    background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px;
+    padding: .6rem .85rem; margin: .3rem 0 .5rem;
+  }
+  .ppe .funnel-bar[hidden] { display: none; }
+  .ppe .funnel-bar.warn { border-color: rgba(251,191,36,.45); }
+  .ppe .fn-step { display: inline-flex; align-items: baseline; gap: .35rem; }
+  .ppe .fn-label { font-size: .7rem; color: #93a4bd; }
+  .ppe .fn-value { font-size: .95rem; font-weight: 800; color: #e6edf7; }
+  .ppe .fn-rate { font-size: .66rem; color: #86efac; }
+  .ppe .fn-rate-unknown { color: #7f90ab; }
+  .ppe .fn-arrow { color: #52627d; font-size: .8rem; }
+  .ppe .fn-unknown { margin-left: auto; font-size: .7rem; color: #7f90ab; }
+
+  /* 案内セル: 「販売可なのに届いていない」だけを目立たせる。
+     ⚠️ 未確認は 0 通ではないので、未案内と同じ色にしない */
+  .ppe .c-notified { white-space: nowrap; }
+  .ppe .nt { display: inline-block; font-size: .72rem; font-weight: 700; }
+  .ppe .nt-notified { color: #86efac; }
+  .ppe .nt-never { color: #cbd5e6; }
+  .ppe .nt-undelivered { color: #fca5a5; }
+  .ppe .nt-unknown { color: #64748b; font-weight: 400; }
+  .ppe .nt-action { color: #fcd34d; }
+  /* 「要対応」は**次の行**へ置く。横に並べると案内列だけで 113px を占め、
+     一覧全体が 133px はみ出して「操作」ボタンが初期表示から外れてしまう
+     （2026-08-13 にビルド成果物で実測。block 化で 72px / はみ出し 92px へ）。
+     モバイル（≤860px）は data-label のカード表示になり、
+     「案内　未案内」が 1 行・その下にバッジ、という並びになる。 */
+  .ppe .nt-badge {
+    display: block; width: fit-content; margin: .22rem 0 0; font-size: .64rem; font-weight: 800;
+    padding: .1rem .45rem; border-radius: 999px; white-space: nowrap;
+    background-color: #4a2f06; color: #fcd34d; border: 1px solid rgba(251,191,36,.5);
+  }
 
   /* ── 一覧テーブル ── */
   .ppe .tablewrap { background: #111c33; border: 1px solid rgba(148,163,184,.16); border-radius: 11px; overflow: hidden; }
@@ -2206,6 +2337,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
 <script>
   // 判定の単一源を画面から使うための橋渡し。**ここでロジックを書かない**
+  // 操作履歴（このタブ内）。正規化・表示文言の正本は adminOperationLog.js
+  import { createOperationLog, describeEntry } from '../../lib/premiumPlus/adminOperationLog.js';
+  window.__ppOpLog = { createOperationLog, describeEntry };
   import {
     buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
   } from '../../lib/marketing/campaignPlanView.js';
@@ -2236,6 +2370,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     maskEmail as stMaskEmail,
   } from '../../lib/marketing/marketingConsoleState.js';
   import { GRANT_ELIGIBILITY_NOTE } from '../../lib/entitlements/freeGrantStatus.js';
+  // 実閲覧の段階・並び順・転換率。**判定はモジュール側**（画面で組み立て直さない）
+  import {
+    FUNNEL_STAGE, FUNNEL_STAGE_LABEL, FUNNEL_STAGE_ORDER,
+    resolveFunnelStage, lastReactionAtMs, isNewReaction, sortByLastReaction, filterByStage,
+  } from '../../lib/premiumPlus/premiumPlusFunnelAnalytics.js';
+  window.__ppFunnel = {
+    FUNNEL_STAGE, FUNNEL_STAGE_LABEL, FUNNEL_STAGE_ORDER,
+    resolveFunnelStage, lastReactionAtMs, isNewReaction, sortByLastReaction, filterByStage,
+  };
   // 絞り込みの表示名・説明の単一源（画面に文言を直接書かない）
   import {
     FILTER_DEFINITIONS, EMAIL_SEARCH, ADVANCED_FILTERS,
@@ -2352,6 +2495,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       setConn(false);
     });
 
+    /**
+     * 操作履歴。
+     *
+     * ⚠️ この inline script は**解析時に即実行**され、`window.__ppOpLog` を用意する
+     *    module script は defer なので、ここで即座に触ると undefined になる
+     *    （同じ罠で引き継ぎ復元が本番で止まった前例あり）。
+     *    使うのはクリック後・描画時なので、**遅延取得**にして橋渡しの有無で壊さない。
+     */
+    const opLog = (() => {
+      const NOOP = { add: () => null, all: () => [], forRecord: () => [], unresolved: () => [] };
+      let inst = null;
+      const get = () => {
+        if (inst) return inst;
+        const b = window.__ppOpLog;
+        if (!b) return NOOP;   // 履歴が取れなくても操作自体は続けられる
+        inst = b.createOperationLog({ storage: window.sessionStorage });
+        return inst;
+      };
+      return {
+        add: (e) => get().add(e),
+        all: () => get().all(),
+        forRecord: (id) => get().forRecord(id),
+        unresolved: () => get().unresolved(),
+      };
+    })();
+    const describeOpEntry = (e) => (window.__ppOpLog ? window.__ppOpLog.describeEntry(e) : '');
+
+    // 操作者名。**シークレットと違い秘密ではない**ので localStorage に残して毎回入れ直させない。
+    // 未入力のまま書き込むと変更履歴が全部 'admin' になり、誰が変えたか分からなくなる。
+    const actorEl = $('actor');
+    actorEl.value = localStorage.getItem('pp-admin-actor') || '';
+    actorEl.addEventListener('change', () => {
+      localStorage.setItem('pp-admin-actor', actorEl.value.trim().slice(0, 32));
+    });
+    /** 変更履歴へ載せる操作者。空なら書き込ませない（誰の操作か分からない記録を作らない） */
+    const currentActor = () => actorEl.value.trim().slice(0, 32);
+
     function setConn(ok) {
       const el = $('connState');
       el.textContent = ok ? '● 管理API 接続済み' : '● 未接続';
@@ -2367,19 +2547,50 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       el.className = 'msg' + (kind ? ' ' + kind : '');
     }
 
-    async function call(payload) {
+    /**
+     * 管理 API を呼ぶ。**例外を外へ投げない**（呼び出し側は null を見る）。
+     *
+     * ⚠️ ここで throw すると、押したボタンが disabled のまま固まって
+     *    ページを再読み込みするまで操作できなくなる（通信断・DNS 失敗で実際に起きる）。
+     *
+     * 通信が途中で切れた場合は **書けたかどうか分からない**。
+     * それを「失敗」と言い切ると、実際には保存済みなのに二重操作を誘発する。
+     * `unknown:true` を返して、呼び出し側に「確認してください」と出させる。
+     *
+     * @param {object} payload
+     * @param {{quiet?: boolean}} [opt] quiet=true は自動更新用。
+     *   画面のメッセージを書き換えない（管理者の操作結果を自動更新が上書きしないため）。
+     */
+    async function call(payload, opt) {
+      const quiet = !!(opt && opt.quiet);
+      const say = (t, k) => { if (!quiet) msg(t, k); };
       const secret = secretEl.value.trim();
-      if (!secret) { msg('管理シークレットを入力してください', 'err'); $('connBody').hidden = false; return null; }
-      const res = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { msg(data.error || ('エラー: ' + res.status), 'err'); if (res.status === 403) setConn(false); return null; }
+      if (!secret) { say('管理シークレットを入力してください', 'err'); if (!quiet) $('connBody').hidden = false; return null; }
+      let res;
+      try {
+        res = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {
+        // ⚠️ 自動更新でも黙らせない。通信断は「保存されたか不明」なので握りつぶさない
+        say('通信に失敗しました。保存されたかどうかは分かりません。再読込で確認してください。', 'err');
+        return { __unknown: true, error: String((e && e.message) || e) };
+      }
+      let data = {};
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) {
+        say(data.error || ('エラー: ' + res.status), 'err');
+        if (res.status === 403) setConn(false);
+        return null;
+      }
       setConn(true);
       return data;
     }
+
+    /** 通信断で結果が分からなかったか（失敗と言い切らない） */
+    const isUnknownResult = (out) => !!(out && out.__unknown);
 
     // ── 状態の分類（表示・並び順・フィルター用。判定そのものは Function 側の単一源）──
     function classify(r) {
@@ -2406,6 +2617,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       explicit: '設定済み', none: '—',
     };
     function kindShort(r) {
+      // 検索でしか出てこない人（販売候補ではない）を候補と混同させない
+      if (r.inCandidateSet === false) return '検索のみ（候補外）';
       const k = r.candidateKind || 'none';
       if (k === 'waiting_30d' && r.daysUntilRouteB != null) return '待機中 あと' + r.daysUntilRouteB + '日';
       return KIND_SHORT[k] || k;
@@ -2427,32 +2640,57 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (fk !== 'all' && r.candidateKind !== fk) return false;
       const fu = $('fUpsell').value;
       if (fu !== 'all' && (r.upsellTarget || 'auto') !== fu) return false;
+      // 検索語は氏名でもアドレスでも引ける（サーバー側の検索と同じ意味にする）
       const q = $('q').value.trim().toLowerCase();
-      if (q && !String(r.email || '').toLowerCase().includes(q)) return false;
+      if (q) {
+        const hay = `${String(r.email || '')} ${String(r.name || '')}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     }
 
     /**
-     * 一覧（＝販売候補の集合）に居ない相手を Email で直接引く。
+     * 一覧（＝販売候補の集合）に居ない相手を名指しで引く。
+     *
      * 候補集合は Airtable 側で絞っているため、無料会員などは一覧に出ない。
      * 「あの人はどうなっている？」に答えられるよう、検索だけは絞り込みを迂回する。
+     *
+     * **氏名の一部・アドレスの一部で引ける**（Daniel / 0510apolone / tori のように、
+     * 手元に完全なアドレスが無いことが多い）。式の組み立てはサーバー側の単一源。
      */
     async function lookupOutsideCandidates() {
       const q = $('q').value.trim();
-      if (!q || q.indexOf('@') < 0) return;
+      if (!q) return;
       const local = (lastData && (lastData.rows || [])) || [];
-      if (local.some((r) => String(r.email || '').toLowerCase() === q.toLowerCase())) return;
-      msg('候補一覧に居ないため、Email で直接検索しています…');
-      const out = await call({ action: 'lookup', email: q });
+      msg('候補一覧の外も含めて検索しています…');
+      const out = await call({ action: 'lookup', query: q });
       if (!out) return;
-      if (!out.found) { msg('この Email の会員は見つかりませんでした', 'err'); return; }
-      // 取得できた行を一覧へ足す（候補外である旨は state 列と併せて管理者が判断する）
-      lastData = { ...lastData, rows: [...local, ...out.rows] };
-      msg('候補一覧の対象外でしたが、Email 検索で 1 件見つけました（販売資格は下の状態を参照）');
+      if (!out.found) { msg(`「${q}」に一致する会員は見つかりませんでした（氏名・アドレスの一部で検索できます）`, 'err'); return; }
+      // 既に一覧に居る行は差し替える（実閲覧つきの新しい行を優先）
+      const found = out.rows || [];
+      const foundIds = new Set(found.map((r) => r.recordId));
+      // 候補集合の外の人は覚えておく。覚えないと、その人を操作したあとの
+      // 再読込（＝保存の確認）で行ごと消えて詳細が壊れる
+      for (const r of found) if (r.inCandidateSet !== true) searchedRows.set(r.recordId, r);
+      const merged = [...local.filter((r) => !foundIds.has(r.recordId)), ...found];
+      lastData = {
+        ...lastData,
+        rows: merged,
+        // 検索結果の実閲覧の前提も同じ場所に出す
+        measurement: out.measurement || lastData.measurement,
+        // 案内の集計も同様（検索だけで開いたときに「未取得」のままにしない）
+        notified: out.notified || lastData.notified,
+      };
+      const added = found.filter((r) => !local.some((l) => l.recordId === r.recordId)).length;
+      msg(`検索で ${found.length} 件（うち一覧に無かった人 ${added} 件）。販売資格は「状態」列、実際に見たかは「実閲覧」列を参照`);
       render();
     }
 
     function sortRows(rows) {
+      // 反応が新しい順は**判定モジュール**に任せる（記録が無い人は必ず後ろ）
+      if ($('fSort') && $('fSort').value === 'reaction' && window.__ppFunnel) {
+        return window.__ppFunnel.sortByLastReaction(rows);
+      }
       return [...rows].sort((a, b) => {
         const d = classify(a).order - classify(b).order;
         if (d !== 0) return d;
@@ -2516,8 +2754,418 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return e;
     }
 
+    /**
+     * 実閲覧（実測）のセル。**表示判定とは別物**。
+     *
+     * ⚠️ 記録が無いときは必ず「未確認」と出す。**「0 回」「見ていない」と書かない。**
+     *    記録が無い理由には「計測開始より前だった」「計測データを読めない」も含まれ、
+     *    どれも過去に見たかどうかは**確認できない**（記録が存在しない）。
+     */
+    function realViewCell(r) {
+      const e = document.createElement('td');
+      e.className = 'c-realview';
+      e.setAttribute('data-label', '実閲覧');
+      const rv = r.realView;
+      if (!rv) {
+        const s = document.createElement('span');
+        s.className = 'muted';
+        s.textContent = '未確認';
+        s.title = '実閲覧を取得できていません（0 回という意味ではありません）';
+        e.appendChild(s);
+        return e;
+      }
+      // 段階（表示済み未クリック / クリック済み未到達 / 到達済み / 未確認）を先頭に出す。
+      // 判定は premiumPlusFunnelAnalytics.js（サーバーも同じ関数を使う）。
+      const stage = r.funnelStageLabel
+        || (window.__ppFunnel ? window.__ppFunnel.resolveFunnelStage(rv).label : null);
+      if (stage) {
+        const sb = document.createElement('span');
+        sb.className = 'rv-stage rv-stage-' + (r.funnelStage || 'unknown');
+        sb.textContent = stage;
+        e.appendChild(sb);
+      }
+      // 新規反応（前回この画面を見た時刻より後に反応があった人）
+      if (isNewReactionRow(r)) {
+        const nb = document.createElement('span');
+        nb.className = 'rv-new';
+        nb.textContent = '新規反応';
+        nb.title = '前回この画面を開いたあとに記録された反応です。「再読み込み」で既読になります';
+        e.appendChild(nb);
+      }
+      // 表示 → クリック → 商品ページ の 3 段を **回数・初回・最終**で並べる
+      for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ'],
+        ['checkout', '決済開始'], ['purchase', '購入完了']]) {
+        const cell = rv[key] || {};
+        const s = document.createElement('span');
+        s.className = 'rv' + (cell.measured ? ' rv-yes' : ' rv-unknown');
+        if (cell.measured) {
+          // ⚠️ 実測があるときだけ日時を出す。無いときに 0 回や日付を作らない
+          s.textContent = `${label} ${cell.count} 回`;
+          const when = document.createElement('span');
+          when.className = 'rv-when';
+          when.textContent = `初回 ${cell.firstAtJst || '不明'} / 最終 ${cell.lastAtJst || '不明'}`;
+          s.appendChild(when);
+          // 導線（クリック元）の内訳。**残りは「クリック元不明」**として必ず見せる
+          // （導線別の計測を始める前の記録。推測で振り分けない）。
+          for (const src of (cell.sources || [])) {
+            const li = document.createElement('span');
+            li.className = 'rv-src';
+            li.textContent = `└ ${src.label} ${src.count} 回`;
+            li.title = `初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'}（JST）`;
+            s.appendChild(li);
+          }
+          // ⚠️ 不明は **legacy（計測前）と noSource（計測後に source なし）を別々**に出す。
+          //    「合計 − 内訳の和」では出さない（数え方が違うので負になる）。
+          if (cell.legacyCount > 0) {
+            const li = document.createElement('span');
+            li.className = 'rv-src rv-src-unknown';
+            li.textContent = `└ ${cell.legacyLabel} ${cell.legacyCount} 回`;
+            li.title = '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）';
+            s.appendChild(li);
+          }
+          if (cell.noSourceCount > 0) {
+            const li = document.createElement('span');
+            li.className = 'rv-src rv-src-unknown';
+            li.textContent = `└ ${cell.noSourceLabel} ${cell.noSourceCount} 回`;
+            li.title = `計測開始後に導線の指定なしで届いた分です（初回 ${cell.noSourceFirstAtJst || '不明'} / 最終 ${cell.noSourceLastAtJst || '不明'}）`;
+            s.appendChild(li);
+          }
+        } else {
+          s.textContent = `${label} 未確認`;
+        }
+        s.title = cell.note || '';
+        e.appendChild(s);
+      }
+      return e;
+    }
+
+    /**
+     * 案内（こちらから送ったか）のセル。**表示判定とも実閲覧とも別の軸**。
+     *
+     * ⚠️ 読み取れなかったときは必ず「未確認」。**「未案内」と書かない。**
+     *    未案内と表示すると既に送った相手へ二重送信する。逆に、送っていないのに
+     *    「案内済み」と出すと、その人は永久に案内されない。迷ったら未確認。
+     */
+    function notifiedCell(r) {
+      const e = document.createElement('td');
+      e.className = 'c-notified';
+      e.setAttribute('data-label', '案内');
+      const n = r.plusNotified;
+      const s = document.createElement('span');
+      if (!n || !n.available) {
+        s.className = 'nt nt-unknown';
+        s.textContent = '未確認';
+        s.title = (n && n.note) || '配信履歴を読み取れていません（0 通という意味ではありません）';
+        e.appendChild(s);
+        return e;
+      }
+      s.className = 'nt nt-' + n.state + (n.needsAction ? ' nt-action' : '');
+      s.textContent = n.state === 'notified' && n.sentCount > 1
+        ? `${n.label}（${n.sentCount}通）`
+        : n.label;
+      s.title = [n.note, n.actionNote, n.lastSentAt ? `最終送信: ${fmtDate(n.lastSentAt)}` : '']
+        .filter(Boolean).join('\n');
+      e.appendChild(s);
+      // 「販売可なのに届いていない」は見落とすと売上がゼロのまま止まるので、明示的に出す
+      if (n.needsAction) {
+        const b = document.createElement('span');
+        b.className = 'nt-badge';
+        b.textContent = '要対応';
+        b.title = n.actionNote;
+        e.appendChild(b);
+      }
+      return e;
+    }
+
+    /**
+     * 「販売可なのに案内していない」人数を常設で書く。
+     * 管理画面が「販売可・CTA 表示中」と出していても、案内 0 通ならその会員が
+     * Plus に気づく経路は事実上ない。ここを出さないと運用者は気づけない。
+     */
+    function renderNotifyNote(notified) {
+      const el = $('notifyNote');
+      if (!el) return;
+      if (!notified) {
+        el.className = 'measure-note warn';
+        el.textContent = '案内: 未取得。この一覧の「案内」列はすべて未確認です（0 通ではありません）。';
+        return;
+      }
+      const parts = [notified.note || ''];
+      if (notified.available) {
+        parts.push(`案内済み ${notified.notified} 名 / 未案内 ${notified.never} 名`
+          + (notified.undelivered ? ` / 未着 ${notified.undelivered} 名` : ''));
+      }
+      el.className = 'measure-note'
+        + (!notified.available || notified.needsAction > 0 ? ' warn' : '');
+      el.textContent = parts.filter(Boolean).join(' ／ ');
+    }
+
+    /**
+     * ── 新規反応 ──────────────────────────────────────────────
+     * 「前回この画面を見たあとに入った反応」を出す。
+     *
+     * 基準時刻は**この管理者のブラウザだけ**が持つ（サーバーにも Redis にも保存しない＝
+     * 個人情報も状態も増やさない）。基準が無い初回は**誰も新規にしない**
+     * （全員に付けると意味が消える）。既読にするのは**手動の「再読み込み」だけ**で、
+     * 自動更新では既読にしない（見ていない間の反応を消さないため）。
+     */
+    const FUNNEL_SEEN_KEY = 'ppFunnelSeenAt';
+    function funnelSeenAt() {
+      const v = Number(sessionStorage.getItem(FUNNEL_SEEN_KEY));
+      return Number.isFinite(v) && v > 0 ? v : null;
+    }
+    function markFunnelSeen() {
+      try { sessionStorage.setItem(FUNNEL_SEEN_KEY, String(Date.now())); } catch { /* 保存できなくても動く */ }
+    }
+    function isNewReactionRow(r) {
+      const seen = funnelSeenAt();
+      if (seen === null || !window.__ppFunnel) return false;
+      return window.__ppFunnel.isNewReaction(r.realView, seen);
+    }
+
+    /**
+     * 表示 → クリック → 商品ページ到達 の**人数と転換率**。
+     *
+     * ⚠️ 分母が確定しないときは率を出さない（サーバーが null を返す）。
+     *    0% と書くと「誰も押していない」と読まれるが、実際は「まだ分からない」。
+     */
+    function renderFunnelBar(funnel) {
+      const bar = $('funnelBar');
+      if (!bar) return;
+      bar.innerHTML = '';
+      if (!funnel) { bar.hidden = true; return; }
+      bar.hidden = false;
+
+      const step = (label, n, rateLabel, rate) => {
+        const box = document.createElement('span');
+        box.className = 'fn-step';
+        const t = document.createElement('span');
+        t.className = 'fn-label';
+        t.textContent = label;
+        const v = document.createElement('span');
+        v.className = 'fn-value';
+        v.textContent = `${n} 名`;
+        box.appendChild(t); box.appendChild(v);
+        if (rateLabel) {
+          const rr = document.createElement('span');
+          rr.className = 'fn-rate' + (rate === null ? ' fn-rate-unknown' : '');
+          // null は「まだ分からない」。0% にしない
+          rr.textContent = rate === null ? `${rateLabel} 未確定` : `${rateLabel} ${rate}%`;
+          rr.title = rate === null ? '分母が確定していないため転換率を出しません（0% ではありません）' : '';
+          box.appendChild(rr);
+        }
+        return box;
+      };
+      const arrow = () => { const a = document.createElement('span'); a.className = 'fn-arrow'; a.textContent = '→'; return a; };
+
+      bar.appendChild(step('表示', funnel.viewed));
+      bar.appendChild(arrow());
+      bar.appendChild(step('クリック', funnel.clicked, '表示→クリック', funnel.rates?.viewToClick ?? null));
+      bar.appendChild(arrow());
+      bar.appendChild(step('商品ページ到達', funnel.reached, 'クリック→到達', funnel.rates?.clickToReach ?? null));
+
+      const unk = document.createElement('span');
+      unk.className = 'fn-unknown';
+      unk.textContent = `未確認 ${funnel.unknown} 名`;
+      unk.title = funnel.note || '';
+      bar.appendChild(unk);
+
+      // ── 導線別（クリック元）────────────────────────────────
+      // 全体と同じ数え方（人数・累積）で、導線ごとに併記する。
+      // ⚠️ 導線には性質の違う 2 種類がある。**同じ行として並べない**:
+      //    「商品ページへの流入」（ダッシュボード / 三連複ページ）は 表示→クリック→到達 が繋がる。
+      //    「商品ページ内」（購入ボタン）は到達が上流なので **到達を出さない**（0 名ではない）。
+      for (const s of (funnel.bySource || [])) {
+        const onPage = s.kind === 'on_page';
+        const row = document.createElement('span');
+        row.className = 'fn-src-row' + (onPage ? ' fn-src-row-onpage' : '');
+        const nm = document.createElement('span');
+        nm.className = 'fn-src-name';
+        nm.textContent = s.label;
+        nm.title = s.kindLabel ? `${s.kindLabel}の導線です` : '';
+        row.appendChild(nm);
+        // どちらの種類かをその場で分かるようにする（ラベルの読み分けに頼らせない）
+        if (s.kindLabel) {
+          const kd = document.createElement('span');
+          kd.className = 'fn-src-kind' + (onPage ? ' fn-src-kind-onpage' : '');
+          kd.textContent = s.kindLabel;
+          row.appendChild(kd);
+        }
+        const seg = (t, n) => { const x = document.createElement('span'); x.className = 'fn-src-seg'; x.textContent = `${t} ${n}`; return x; };
+        row.appendChild(seg('表示', s.viewed));
+        row.appendChild(seg('クリック', s.clicked));
+        if (s.reached === null) {
+          // **0 と書かない。** 指標そのものが存在しない
+          const x = document.createElement('span');
+          x.className = 'fn-src-seg fn-rate-unknown';
+          x.textContent = '到達 —';
+          x.title = (s.reachNote || '').replace(/\*\*/g, '');
+          row.appendChild(x);
+        } else {
+          row.appendChild(seg('到達', s.reached));
+        }
+        const rr = document.createElement('span');
+        rr.className = 'fn-src-rate' + (s.rates?.viewToClick === null ? ' fn-rate-unknown' : '');
+        rr.textContent = s.rates?.viewToClick === null
+          ? '表示→クリック 未確定'
+          : `表示→クリック ${s.rates.viewToClick}%`;
+        rr.title = s.rates?.viewToClick === null ? '分母が確定していないため転換率を出しません（0% ではありません）' : '';
+        row.appendChild(rr);
+        // 商品ページ内は「クリック→到達」を出さない理由をその場に置く
+        if (onPage && s.reachNote) {
+          const why = document.createElement('span');
+          why.className = 'fn-src-why';
+          why.textContent = s.reachNote.replace(/\*\*/g, '');
+          row.appendChild(why);
+        }
+        bar.appendChild(row);
+      }
+      // 不明は 2 種類。**別々に**出す（片方へ寄せない）
+      const us = funnel.unknownSource || {};
+      for (const [key, tip] of [
+        ['legacy', '導線別の計測を始める前に記録された分です。どの導線かは分かりません（推測で振り分けません）'],
+        ['noSource', '計測開始後に、導線の指定なしで届いた分です'],
+      ]) {
+        const u = us[key];
+        if (!u || (u.cta <= 0 && u.click <= 0 && u.page <= 0)) continue;
+        const row = document.createElement('span');
+        row.className = 'fn-src-row fn-src-row-unknown';
+        row.textContent = `${u.label}: 表示 ${u.cta} 名 / クリック ${u.click} 名 / 到達 ${u.page} 名`;
+        row.title = tip;
+        bar.appendChild(row);
+      }
+      // ── 購入までの導線別転換 ────────────────────────────────
+      // ⚠️ ここに並ぶのは**流入導線だけ**。商品ページ内の導線は買った人全員が
+      //    通る場所なので導線差が出ず、到達（分母）も作れない。**0 件ではない**。
+      if (funnel.purchaseEntryOnlyNote && (funnel.purchaseBySource || []).length) {
+        const note = document.createElement('span');
+        note.className = 'fn-src-note';
+        note.textContent = funnel.purchaseEntryOnlyNote.replace(/\*\*/g, '');
+        bar.appendChild(note);
+      }
+      for (const s of (funnel.purchaseBySource || [])) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row';
+        const nm = document.createElement('span');
+        nm.className = 'fn-src-name';
+        nm.textContent = s.label + '（購入）';
+        row.appendChild(nm);
+        const seg = (t, n) => { const x = document.createElement('span'); x.className = 'fn-src-seg'; x.textContent = `${t} ${n}`; return x; };
+        row.appendChild(seg('到達', s.reached));
+        row.appendChild(seg('決済開始', s.checkout));
+        row.appendChild(seg('購入', s.purchased));
+        const rr = document.createElement('span');
+        rr.className = 'fn-src-rate' + (s.rates?.checkoutToPurchase === null ? ' fn-rate-unknown' : '');
+        rr.textContent = s.rates?.checkoutToPurchase === null
+          ? '決済開始→購入 未確定'
+          : `決済開始→購入 ${s.rates.checkoutToPurchase}%`;
+        row.appendChild(rr);
+        bar.appendChild(row);
+      }
+      // ── 抽出（クリック済み未購入 / 到達済み未購入）──────────────
+      const np = funnel.notPurchased;
+      if (np) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row';
+        row.textContent = `クリック済み未購入 ${np.clickedNotPurchased} 名 / 到達済み未購入 ${np.reachedNotPurchased} 名`
+          + (np.unverified > 0 ? ` / 購入を確認できず ${np.unverified} 名` : '');
+        row.title = np.note || '';
+        bar.appendChild(row);
+      }
+      // ── 期間集計（今日 / 7 日 / 30 日）。**件数**であり人数ではない ──
+      const dl = funnel.daily;
+      if (dl) {
+        const row = document.createElement('span');
+        row.className = 'fn-src-row fn-period';
+        if (!dl.available) {
+          row.classList.add('fn-src-row-unknown');
+          row.textContent = dl.note || '期間集計を読み取れませんでした（0 件ではありません）';
+        } else {
+          const parts = (dl.windows || []).map((w) => {
+            const e = w.byEvent || {};
+            return `${w.label}: 表示 ${e.cta_view || 0} / クリック ${e.cta_click || 0} / 到達 ${e.page_view || 0}`
+              + ` / 決済開始 ${e.checkout_start || 0} / 購入 ${e.purchase || 0}`;
+          });
+          row.textContent = parts.join('　｜　');
+          row.title = (dl.note || '').replace(/\*\*/g, '');
+        }
+        bar.appendChild(row);
+      }
+      // **合計と導線別は数え方が違う**ことを常設で書く（食い違いを不具合と誤解させない）
+      if (funnel.sourceNote) {
+        const note = document.createElement('span');
+        note.className = 'fn-src-note' + (funnel.sourceTotalMismatch ? ' fn-src-note-on' : '');
+        note.textContent = funnel.sourceNote.replace(/\*\*/g, '');
+        bar.appendChild(note);
+      }
+
+      if (!funnel.available) bar.classList.add('warn'); else bar.classList.remove('warn');
+    }
+
+    /**
+     * 実閲覧の前提を常設で書く。**計測開始より前のことは記録が存在せず確認できない。**
+     * これを書かないと「未確認」が「見ていない」と読まれる。
+     */
+    /**
+     * いま販売している対象日。**16:30 以降は翌日分**へ切り替わる。
+     * 運用者が「今の申込がどの日の買い目か」を取り違えないよう常設で出す。
+     */
+    function renderSaleTargetNote(t) {
+      const el = $('saleTargetNote');
+      if (!el) return;
+      if (!t || !t.ok) {
+        el.className = 'measure-note warn';
+        el.textContent = '販売対象日を判定できませんでした。';
+        return;
+      }
+      el.className = 'measure-note';
+      el.className = 'measure-note' + (t.calendarStale ? ' warn' : '');
+      el.textContent = `いま販売中: ${t.productLabel}（${t.date} ／ ${t.circuitLabel || '—'}）／ ${t.intakeLabel}`
+        + (t.isNextDay ? ' ── 16:30 を過ぎたため翌日分を受付中です' : '')
+        + (t.shifted ? ` ── ${t.baseDate} は中央・南関とも開催が無いため次の販売日へ送っています` : '')
+        + (t.calendarNote ? ` ／ ⚠️ ${t.calendarNote}` : '');
+    }
+
+    function renderMeasurementNote(measurement, counts) {
+      const el = $('measureNote');
+      if (!el) return;
+      if (!measurement) {
+        el.className = 'measure-note warn';
+        el.textContent = '実閲覧: 未取得。この一覧の「実閲覧」列はすべて未確認です（0 回ではありません）。';
+        return;
+      }
+      const parts = [measurement.note || ''];
+      if (measurement.available && counts) {
+        parts.push(`実測: 表示 ${counts.ctaViewed} 名 / クリック ${counts.clicked} 名 / 商品ページ ${counts.pageViewed} 名 / 未確認 ${counts.unknown} 名`);
+      }
+      el.className = 'measure-note' + (measurement.available ? '' : ' warn');
+      el.textContent = parts.filter(Boolean).join(' ／ ');
+    }
+
+    /** 検索条件が効いていることを畳んだ状態でも分かるようにする */
+    function syncSearchBadge() {
+      const b = $('qBadge');
+      if (b) b.hidden = !$('q').value.trim();
+    }
+
+    /**
+     * 結果が分からなかった操作を画面上部に出し続ける。
+     * 「失敗した」と誤解して同じ操作を繰り返させないための警告。
+     */
+    function renderOpWarning() {
+      const el = $('opWarn');
+      if (!el) return;
+      const pending = opLog.unresolved();
+      el.hidden = pending.length === 0;
+      if (pending.length === 0) return;
+      el.textContent = `⚠️ 結果が分からない操作が ${pending.length} 件あります（通信が切れました）。`
+        + '保存されたかどうかは不明です。対象の「詳細・操作」→「再読込して確認」で正本を確かめてください。'
+        + '同じ操作を繰り返さないでください。';
+    }
+
     function render() {
       if (!lastData) return;
+      renderOpWarning();
       const data = lastData;
       // 取得が確定していないなら集計も出さない（誤った販売判断を招く）
       renderSummary(data.truncated ? null : (data.counts || {}));
@@ -2526,7 +3174,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         : '書き込み: 無効（Airtable に Premium Plus フィールド未作成 / PREMIUM_PLUS_FIELDS_READY 未設定）。一覧は閲覧のみ。')
         + (data.overrideEnabled ? ' / 今すぐ販売可: 利用可' : ' / 今すぐ販売可: 無効（PREMIUM_PLUS_OVERRIDE_READY 未設定）');
 
-      const rows = sortRows((data.rows || []).filter(matches));
+      renderFunnelBar(data.truncated ? null : (data.funnel || null));
+      // 段階での絞り込み（未知の値では絞らない＝人を隠さない）
+      let base = (data.rows || []).filter(matches);
+      const stage = $('fFunnel') ? $('fFunnel').value : '';
+      if (stage && window.__ppFunnel) base = window.__ppFunnel.filterByStage(base, stage);
+      const rows = sortRows(base);
       const tb = $('rows');
       tb.innerHTML = '';
       for (const r of rows) {
@@ -2581,16 +3234,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (r.candidateNote) kb.title = r.candidateNote;
         cK.appendChild(kb);
         tr.appendChild(cK);
-        // 販売CTA（管理者が設定した値）と 実表示（顧客側で実際に見えるもの）を分けて出す
+        // 販売CTA（管理者が設定した値）/ 表示判定（条件から導いた結果）/ 実閲覧（実測）を分けて出す
         tr.appendChild(td('c-upsell', '販売CTA', UPSELL_LABEL[r.upsellTarget] || '自動',
           (r.upsellTarget || 'auto') === 'auto' ? 'muted' : ''));
         const cD = document.createElement('td');
         cD.className = 'c-display';
-        cD.setAttribute('data-label', '実表示');
+        cD.setAttribute('data-label', '表示判定');
         cD.textContent = r.upsellDisplay || '—';
-        if (r.upsellReason) cD.title = r.upsellReason;
+        cD.title = `判定（この人には出るはず）。実際に見た記録ではありません。${r.upsellReason ? '\n理由: ' + r.upsellReason : ''}`;
         if (!r.upsellDisplay || r.upsellDisplay === '表示なし') cD.classList.add('muted');
         tr.appendChild(cD);
+        tr.appendChild(realViewCell(r));
+        tr.appendChild(notifiedCell(r));
         tr.appendChild(td('c-phase', 'PHASE', String(r.phase)));
         tr.appendChild(td('c-eligible', '販売許可日', fmtDate(r.eligibleAt), r.eligibleAt ? '' : 'muted'));
         tr.appendChild(td('c-updated', '最終更新', fmtDate(r.updatedAt), r.updatedAt ? '' : 'muted'));
@@ -2617,15 +3272,127 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return;
       }
       $('count').textContent = '表示 ' + rows.length + ' 件 / 全 ' + (data.rows || []).length + ' 件';
+      renderSaleTargetNote(data.saleTarget);
+      renderMeasurementNote(data.measurement, data.realViewCounts);
+      renderNotifyNote(data.notified);
       const emp = $('empty');
       emp.hidden = rows.length > 0;
       emp.textContent = (data.rows || []).length ? '条件に一致する会員はいません。' : '該当する候補はありません。';
     }
 
-    async function load() {
-      msg('読み込み中…');
-      const data = await call({ action: 'list', onlyReview: $('onlyReview').checked });
-      if (data) { msg(''); lastData = data; render(); }
+    /**
+     * 検索でしか出てこない人（候補集合の外）を覚えておく。
+     *
+     * ⚠️ ここを消すと**検索した相手を操作したあと詳細が壊れる**。
+     *    `load()` は候補集合しか返さないので、素朴に rows を差し替えると
+     *    「Daniel を検索 → 資格変更 → 保存 → 詳細が『対象が見つかりません』」になる
+     *    （本番データで再現: 無料会員の Daniel は候補集合の外に居る）。
+     *    保存後の再読込は**確認そのもの**なので、ここで消えてはいけない。
+     */
+    const searchedRows = new Map();   // recordId -> 検索で得た行
+
+    /** 一覧の行に、検索で見つけた候補外の人を混ぜる（候補側が新しければ候補側を採る） */
+    function mergeSearched(rows) {
+      const byId = new Map((rows || []).map((r) => [r.recordId, r]));
+      for (const [id, row] of searchedRows) if (!byId.has(id)) byId.set(id, row);
+      return [...byId.values()];
+    }
+
+    /**
+     * 一覧を取り直す。
+     *
+     * @param {{keepMessage?: boolean, auto?: boolean}} opts
+     *   keepMessage=true … 直前の結果表示を消さない（保存直後の「更新しました」を上書きしない）
+     *   auto=true       … 自動更新（メッセージを出さない・既読にしない）
+     */
+    async function load(opts = {}) {
+      const auto = !!opts.auto;
+      const silent = auto || !!opts.keepMessage;
+      if (!silent) msg('読み込み中…');
+      const data = await call({ action: 'list', onlyReview: $('onlyReview').checked }, { quiet: auto });
+      // ⚠️ 通信断（__unknown）を成功として扱わない。表示を作り替えない
+      if (!data || data.__unknown) {
+        // 自動更新が失敗しても画面は壊さない。ただし黙らない
+        if (auto) renderRefreshNote(null, true);
+        return false;
+      }
+      if (!silent) msg('');
+      // 検索で拾った候補外の人は保持する（保存後の確認で消さない）
+      lastData = { ...data, rows: mergeSearched(data.rows || []) };
+      // 手動の再読み込みだけを「既読」にする。自動更新で新規反応を消さない
+      if (!auto) markFunnelSeen();
+      render();
+      renderRefreshNote(Date.now(), auto);
+      return true;
+    }
+
+
+    /** 最終更新時刻。更新されているのか止まっているのかを常に見せる */
+    function renderRefreshNote(atMs, auto) {
+      const el = $('refreshNote');
+      if (!el) return;
+      if (atMs === null) {
+        el.className = 'measure-note warn';
+        el.textContent = '自動更新に失敗しました。表示は前回取得したままです。「再読み込み」で取り直してください。';
+        return;
+      }
+      const d = new Date(atMs);
+      const p = (n) => String(n).padStart(2, '0');
+      const on = $('autoRefresh') && $('autoRefresh').checked;
+      el.className = 'measure-note';
+      el.textContent = `最終更新 ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+        + (auto ? '（自動）' : '')
+        + (on ? ` ／ 自動更新 ${Math.round(AUTO_REFRESH_MS / 1000)} 秒ごと（このタブが表示中のときだけ）` : ' ／ 自動更新 OFF');
+    }
+
+    /**
+     * ── 自動更新 ────────────────────────────────────────────
+     * 「再読み込み」を押さなくても新しい反応が入ることを前提にする。
+     * ただし**安全な間隔**で、かつ**邪魔をしない条件**でだけ動かす:
+     *   - このタブが表示されているときだけ（背景タブで叩き続けない）
+     *   - 詳細・操作パネルを開いている間は止める（操作中に足元を変えない）
+     *   - 管理シークレット未入力なら動かさない（無駄な 403 を作らない）
+     *   - 実行中は重ねない
+     */
+    const AUTO_REFRESH_MS = 90000;
+    let autoTimer = null;
+    let autoBusy = false;
+    function autoRefreshTick() {
+      if (autoBusy) return;
+      if (!$('autoRefresh') || !$('autoRefresh').checked) return;
+      if (document.visibilityState !== 'visible') return;
+      if (dtRecordId) return;                       // 詳細を開いている間は触らない
+      if (!(($('secret') || {}).value || '').trim()) return;
+      autoBusy = true;
+      load({ auto: true }).finally(() => { autoBusy = false; });
+    }
+    function startAutoRefresh() {
+      if (autoTimer) clearInterval(autoTimer);
+      autoTimer = setInterval(autoRefreshTick, AUTO_REFRESH_MS);
+    }
+
+    /**
+     * 1 人だけ取り直して詳細を最新化する。
+     *
+     * 保存の確認は **Airtable から読み直した値**で行う（送った値が通った前提にしない）。
+     * @returns {Promise<object|null>} 取り直した行
+     */
+    async function refreshOne(recordId) {
+      // recordId で引く。アドレスで引くと Email 未設定の会員を確認できない
+      const out = await call({ action: 'lookup', recordId });
+      if (!out || out.__unknown || !out.found) return null;
+      const fresh = (out.rows || []).find((x) => x.recordId === recordId);
+      if (!fresh) return null;
+      searchedRows.set(recordId, fresh);
+      const rows = (lastData.rows || []).map((x) => (x.recordId === recordId ? fresh : x));
+      if (!rows.some((x) => x.recordId === recordId)) rows.push(fresh);
+      lastData = {
+        ...lastData, rows,
+        measurement: out.measurement || lastData.measurement,
+        notified: out.notified || lastData.notified,
+      };
+      render();
+      return fresh;
     }
 
     // ── 詳細・操作パネル（write はここだけ）──
@@ -2639,6 +3406,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     function renderDetail() {
+      renderOpWarning();
       const data = lastData;
       const r = (data && (data.rows || []).find((x) => x.recordId === dtRecordId)) || null;
       const body = $('dtBody');
@@ -2676,6 +3444,41 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         r.daysSincePremium == null ? 'muted' : '');
       kvRow(dl, '販売許可日', fmtDate(r.eligibleAt));
       kvRow(dl, '最終更新', fmtDate(r.updatedAt));
+      // ── 実閲覧（実測）──────────────────────────────────────
+      // 個別検索で開いたときも一覧と**同じ情報**を出す。
+      // 検索でしか出てこない相手（候補集合の外）の反応も、ここで確認できる。
+      // ⚠️ 実測が無い項目に「0 回」と書かない。必ず「未確認」。
+      {
+        const rv = r.realView;
+        kvRow(dl, '実閲覧 段階', r.funnelStageLabel
+          || (rv && window.__ppFunnel ? window.__ppFunnel.resolveFunnelStage(rv).label : '未確認'),
+          (r.funnelStage && r.funnelStage !== 'unknown') ? '' : 'muted');
+        for (const [key, label] of [['cta', '表示'], ['click', 'クリック'], ['page', '商品ページ'],
+          ['checkout', '決済開始'], ['purchase', '購入完了']]) {
+          const c = (rv && rv[key]) || {};
+          kvRow(dl, `実閲覧 ${label}`,
+            c.measured
+              ? `${c.count} 回（初回 ${c.firstAtJst || '不明'} / 最終 ${c.lastAtJst || '不明'} JST）`
+              : '未確認',
+            c.measured ? '' : 'muted');
+          // クリック元の内訳。導線別の計測より前の分は「クリック元不明」のまま出す
+          if (c.measured) {
+            for (const src of (c.sources || [])) {
+              kvRow(dl, `　└ ${src.label}`,
+                `${src.count} 回（初回 ${src.firstAtJst || '不明'} / 最終 ${src.lastAtJst || '不明'} JST）`);
+            }
+            if (c.legacyCount > 0) kvRow(dl, `　└ ${c.legacyLabel}`, `${c.legacyCount} 回`, 'muted');
+            if (c.noSourceCount > 0) {
+              kvRow(dl, `　└ ${c.noSourceLabel}`,
+                `${c.noSourceCount} 回（初回 ${c.noSourceFirstAtJst || '不明'} / 最終 ${c.noSourceLastAtJst || '不明'} JST）`, 'muted');
+            }
+            if (c.sourceTotalDiffers) {
+              kvRow(dl, '　└ 注記', '導線別は導線ごとの集計です。合計値と一致しないことがあります', 'muted');
+            }
+          }
+        }
+        if (rv && rv.startedAtJst) kvRow(dl, '計測開始', `${rv.startedAtJst} JST`);
+      }
       info.appendChild(dl);
       // 一覧に出しても顧客側に出ない相手は、操作前にその理由を出す（空振りの操作をさせない）
       if (r.releaseBlockedBy && r.candidateNote) {
@@ -2711,9 +3514,31 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       kvRow(uCur, '自動判定の理由', r.upsellAutoReasonText || r.upsellReason || '—', 'muted');
       kvRow(uCur, '現在の設定', UPSELL_LABEL[r.upsellTarget] || r.upsellTarget || '自動');
       kvRow(uCur, '顧客に表示されるCTA', r.upsellChannelLabel || '—');
-      kvRow(uCur, '実表示', r.upsellDisplay || '—');
-      kvRow(uCur, '実表示の理由', r.upsellReasonText || r.upsellReason || '—', 'muted');
+      kvRow(uCur, '表示判定', r.upsellDisplay || '—');
+      kvRow(uCur, '表示判定の理由', r.upsellReasonText || r.upsellReason || '—', 'muted');
       upSec.appendChild(uCur);
+
+      // ── 実閲覧（実測）──
+      // ⚠️ 上の「表示判定」は**出るはず**という判定。ここだけが**実際に届いた記録**。
+      //    記録が無い場合は「未確認」であって「見ていない」ではない（計測開始前の閲覧は残らない）。
+      const rvHead = document.createElement('h4');
+      rvHead.className = 'sec-sub';
+      rvHead.textContent = '実閲覧（実測 / 表示判定とは別）';
+      upSec.appendChild(rvHead);
+      const uRv = document.createElement('dl'); uRv.className = 'kv';
+      const rv = r.realView;
+      for (const [key, label] of [['cta', 'CTA 表示'], ['click', 'CTA クリック'], ['page', '商品ページ到達']]) {
+        const c = rv && rv[key];
+        const text = c ? c.text : '未確認';
+        kvRow(uRv, label, c && c.note ? `${text}（${c.note}）` : text, c && c.measured ? '' : 'muted');
+      }
+      upSec.appendChild(uRv);
+      const rvNote = document.createElement('p');
+      rvNote.className = 'blocker';
+      rvNote.textContent = rv && rv.startedAtJst
+        ? `ℹ️ 実閲覧は ${rv.startedAtJst} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません。`
+        : 'ℹ️ 実閲覧の記録がまだありません。過去に見たかどうかは記録が存在せず確認できません（0 回ではありません）。';
+      upSec.appendChild(rvNote);
 
       // 手動指定が自動判定と違う結果になっているときだけ、その旨を明示する
       if (r.upsellIsManual && r.upsellDiffersFromAuto) {
@@ -2761,13 +3586,26 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         }
         radio.addEventListener('change', async () => {
           if (!radio.checked) return;
+          const actor = currentActor();
+          if (!actor) { msg('操作者名を入力してください（変更履歴に残ります）', 'err'); $('connBody').hidden = false; renderDetail(); return; }
+          const before = r.upsellTarget || 'auto';
           uButtons.forEach((x) => { x.disabled = true; });
           msg('販売CTA を更新中…');
-          const out = await call({ action: 'setUpsell', recordId: r.recordId, upsellTarget: value });
-          if (out) {
-            msg('販売CTA を「' + (out.upsellTargetLabel || value) + '」に設定しました'
+          const out = await call({ action: 'setUpsell', recordId: r.recordId, upsellTarget: value, actor });
+          const logged = {
+            kind: 'upsell', actor, recordId: r.recordId, email: r.email, at: Date.now(),
+            from: UPSELL_LABEL[before] || before, to: UPSELL_LABEL[value] || value,
+          };
+          if (isUnknownResult(out)) {
+            opLog.add({ ...logged, result: 'unknown', detail: '通信が切れました' });
+          } else if (!out) {
+            opLog.add({ ...logged, result: 'failed' });
+          } else {
+            opLog.add({ ...logged, result: 'ok', detail: out.warning || '' });
+            // 保存の確認は **Airtable から読み直した値**で行う（送った値が通った前提にしない）
+            await refreshOne(r.recordId);
+            msg('販売CTA を「' + (out.upsellTargetLabel || value) + '」に設定しました（保存を確認済み）'
               + (out.warning ? ' / ⚠️ ' + out.warning : ''), out.warning ? '' : 'ok');
-            await load();
           }
           renderDetail();
         });
@@ -2810,6 +3648,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (isCurrent) btn.title = '現在この状態です（適用中）';
         btn.addEventListener('click', async () => {
           if (btn.dataset.busy === '1') return; // 二重クリック防止
+          const actor = currentActor();
+          if (!actor) { msg('操作者名を入力してください（変更履歴に残ります）', 'err'); $('connBody').hidden = false; return; }
           if (plusAction === 'immediate') {
             const ok = window.confirm(
               'この会員は即時PHASE 4となり、価格と購入CTAが表示されます。\n\n'
@@ -2821,11 +3661,29 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           btn.dataset.busy = '1';
           buttons.forEach((x) => { x.disabled = true; });
           msg('更新中…');
-          const out = await call({ action: 'update', recordId: r.recordId, plusAction, reason: memoInput.value });
+          const out = await call({
+            action: 'update', recordId: r.recordId, plusAction,
+            reason: memoInput.value, actor,
+            // 見ていた時点の版。別の管理者が先に変えていたら 409 で止まる
+            expectedUpdatedAt: r.updatedAt || '',
+          });
           btn.dataset.busy = '';
-          if (out) {
-            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : ''), 'ok');
-            await load();
+          const logged = {
+            kind: 'eligibility', actor, recordId: r.recordId, email: r.email, at: Date.now(),
+            from: r.eligibilityLabel || r.eligibility, to: null,
+          };
+          if (isUnknownResult(out)) {
+            // **失敗と言い切らない**。書けたかどうか分からないので確認させる
+            opLog.add({ ...logged, to: plusAction, result: 'unknown', detail: '通信が切れました' });
+          } else if (!out) {
+            opLog.add({ ...logged, to: plusAction, result: 'failed' });
+          } else {
+            opLog.add({ ...logged, from: out.previousLabel || logged.from, to: out.label, result: 'ok' });
+            // 保存の確認は **Airtable から読み直した値**で行う
+            const fresh = await refreshOne(r.recordId);
+            msg('更新しました: ' + out.label + (out.override === 'phase4' ? '（即時販売）' : '')
+              + (fresh ? '（保存を確認済み）' : '（保存後の再読込に失敗しました。再読込で確認してください）'),
+              fresh ? 'ok' : 'err');
           }
           renderDetail(); // パネルを最新状態で再構成
         });
@@ -2867,7 +3725,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         + '三連複ページ（/premium-sanrenpuku/）の販売導線は段階公開の設計どおりで、'
         + 'この操作では変わりません（予告枠のリンクのみ）。'
         + '会員がそのリンクに気づかない場合は、別途ご案内ください。';
-      secD.appendChild(noteD);
+      // ⚠️ ここは noteWhere を足す。noteD を二度足すと（appendChild は移動なので）
+      //    「会員に見えるもの」の説明が**一度も表示されない**（2026-08-13 まで実際にそうだった）
+      secD.appendChild(noteWhere);
       const opsD = document.createElement('div'); opsD.className = 'ops';
       opsD.appendChild(mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate, !data.overrideEnabled));
       opsD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
@@ -2879,6 +3739,60 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const h5 = document.createElement('h3'); h5.textContent = '内部メモ'; secM.appendChild(h5);
       secM.appendChild(memoInput);
       body.appendChild(secM);
+
+      // ── 変更履歴 ────────────────────────────────────────────────
+      // 「正本に残っている最後の 1 回」と「このタブでの操作」は別物なので分けて出す。
+      const secH = document.createElement('div'); secH.className = 'dt-sec';
+      const h6 = document.createElement('h3'); h6.textContent = '変更履歴'; secH.appendChild(h6);
+
+      const hDl = document.createElement('dl'); hDl.className = 'kv';
+      kvRow(hDl, '最終更新（正本）', fmtDate(r.updatedAt) || '記録なし', r.updatedAt ? '' : 'muted');
+      kvRow(hDl, '最終更新者（正本）', r.updatedBy || '記録なし', r.updatedBy ? '' : 'muted');
+      kvRow(hDl, '内部メモ（正本）', r.reason || '記録なし', r.reason ? '' : 'muted');
+      secH.appendChild(hDl);
+
+      const mine = opLog.forRecord(r.recordId);
+      const hSub = document.createElement('p'); hSub.className = 'imp-meta';
+      hSub.textContent = 'このタブでの操作（' + mine.length + ' 件）'
+        + '／ タブを閉じると消えます。恒久的な記録は上の「正本」だけです。';
+      secH.appendChild(hSub);
+      if (mine.length === 0) {
+        const none = document.createElement('p'); none.className = 'muted';
+        none.style.fontSize = '.76rem';
+        none.textContent = 'このタブではまだ操作していません。';
+        secH.appendChild(none);
+      } else {
+        const ul = document.createElement('ul'); ul.className = 'oplog';
+        for (const e of mine.slice(0, 20)) {
+          const li = document.createElement('li');
+          li.className = 'oplog-item ' + e.result;
+          li.textContent = describeOpEntry(e);
+          ul.appendChild(li);
+        }
+        secH.appendChild(ul);
+      }
+      // 結果が分からなかった操作は、確認するまで目立たせる
+      if (mine.some((e) => e.result === 'unknown')) {
+        const warn = document.createElement('p'); warn.className = 'blocker';
+        warn.textContent = '⚠️ 結果が分からない操作があります（通信が切れました）。'
+          + '下の「再読込して確認」で正本の状態を確かめてください。同じ操作を続けて押さないでください。';
+        secH.appendChild(warn);
+      }
+      const reBtn = document.createElement('button');
+      reBtn.type = 'button'; reBtn.className = 'btn-detail';
+      reBtn.textContent = '再読込して確認';
+      reBtn.addEventListener('click', async () => {
+        reBtn.disabled = true;
+        msg('この会員の最新状態を取り直しています…');
+        const fresh = await refreshOne(r.recordId);
+        msg(fresh
+          ? '最新状態を取り直しました（正本の値です）'
+          : '取り直せませんでした。管理シークレットと通信状態を確認してください。', fresh ? 'ok' : 'err');
+        renderDetail();
+      });
+      const opsH = document.createElement('div'); opsH.className = 'ops'; opsH.appendChild(reBtn);
+      secH.appendChild(opsH);
+      body.appendChild(secH);
     }
 
     // オーバーレイ表示中は背面の一覧をスクロールさせない（閉じたら必ず元に戻す）
@@ -3057,14 +3971,48 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     });
 
     $('reload').addEventListener('click', load);
-    $('q').addEventListener('input', render);
-    // 一覧に居ない相手は Enter / フォーカスアウトでサーバーへ直接問い合わせる
+    $('q').addEventListener('input', () => { syncSearchBadge(); render(); });
+    // クリアで絞り込みを外す（押しても何も起きない状態だった）
+    $('qClear').addEventListener('click', () => { $('q').value = ''; syncSearchBadge(); render(); });
+    // 一覧に居ない相手は Enter / 検索ボタン / フォーカスアウトでサーバーへ直接問い合わせる
     $('q').addEventListener('change', lookupOutsideCandidates);
     $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') lookupOutsideCandidates(); });
+    $('qSearch').addEventListener('click', lookupOutsideCandidates);
     $('fState').addEventListener('change', render);
     $('fRoute').addEventListener('change', render);
     $('fUpsell').addEventListener('change', render);
     $('fKind').addEventListener('change', render);
+    $('fFunnel').addEventListener('change', render);
+    $('fSort').addEventListener('change', render);
+    $('autoRefresh').addEventListener('change', () => {
+      startAutoRefresh();
+      renderRefreshNote(Date.now(), false);
+    });
+    // 背景タブでは叩かない。戻ってきたら 1 回だけ取り直す（古い画面のまま操作させない）
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') autoRefreshTick();
+    });
+
+    /**
+     * 実閲覧の段階フィルタは**モジュールの定義から**作る。
+     * 画面に選択肢をベタ書きすると、判定側に段階が増えたときに黙って取りこぼす。
+     */
+    function fillFunnelFilter() {
+      const sel = $('fFunnel');
+      // ⚠️ この inline script は **module script より先**に走る。
+      //    window.__ppFunnel がまだ無い時点で作ると選択肢が空のままになるので、
+      //    module の実行が終わる DOMContentLoaded まで待つ。
+      if (!sel || !window.__ppFunnel || sel.options.length > 1) return;
+      for (const stage of window.__ppFunnel.FUNNEL_STAGE_ORDER) {
+        const o = document.createElement('option');
+        o.value = stage;
+        o.textContent = '実閲覧: ' + window.__ppFunnel.FUNNEL_STAGE_LABEL[stage];
+        sel.appendChild(o);
+      }
+    }
+    document.addEventListener('DOMContentLoaded', fillFunnelFilter);
+    fillFunnelFilter(); // 既に読み込み済みなら即座に
+    startAutoRefresh();
 
     // ══════════════════════════════════════════════════════════════
     //  顧客マーケティング（AK 独自 / KMA とは無関係）
@@ -4551,19 +5499,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     async function mkSegInit() {
       const sel = $('mkSegSelect');
       if (!sel || mkSegLoaded) return;
-      const out = await mkCall({ action: 'segments', sampleSize: 0 });
+      // 選択肢を並べるだけ。**ここでは数えない**（全セグメントを一括で数えると
+      // Customers 15,962 件の実質全件走査になり、途中で切れた件数が嘘になる）。
+      const out = await mkCall({ action: 'segmentCatalog' });
       if (!out || !Array.isArray(out.segments)) return;
       sel.innerHTML = '';
       for (const s of out.segments) {
         const o = document.createElement('option');
         o.value = s.segmentId;
-        o.textContent = s.segmentName + '（' + s.sendable + ' 名）';
+        // 数えていない件数を出さない。件数は「数える」を押したときだけ出す
+        o.textContent = s.segmentName;
         o.title = s.description || '';
         sel.appendChild(o);
       }
       mkSegLoaded = true;
-      mkRenderMeasurement(out.measurement);
-      mkRenderEngagement(out.engagement, null);
     }
 
     /** 選んだセグメントの件数を数える（送信もキュー登録もしない） */

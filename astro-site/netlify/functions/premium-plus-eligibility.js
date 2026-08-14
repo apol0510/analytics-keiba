@@ -36,6 +36,9 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import { resolveSaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar, checkCalendarFreshness } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
+import ppRaceCalendar from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import {
   buildPreviewSnapshot,
   describePreviewVisibility,
@@ -67,8 +70,37 @@ import {
 import { explainUpsell, UPSELL_AUTO_RULE_TEXT } from '../../src/lib/upsell/upsellExplain.js';
 import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitlements/resolveEntitlements.js';
 import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpukuDisplay.js';
+import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
+import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import {
+  buildPlusDeliveryFormula,
+  indexPlusDeliveries,
+  describePlusNotified,
+  summarizePlusNotified,
+} from '../../src/lib/premiumPlus/plusNotifiedStatus.js';
+import { chunkList, assertFetchComplete, TARGETED_MAX_PAGES } from '../../src/lib/marketing/marketingTargetedLoad.js';
+import {
+  resolveFunnelStage,
+  lastReactionAtMs,
+  summarizeFunnel,
+  summarizeFunnelBySource,
+  countUnknownSource,
+  hasSourceTotalMismatch,
+  SOURCE_TOTAL_NOTE,
+  summarizePurchaseBySource,
+  PURCHASE_ENTRY_ONLY_NOTE,
+  extractNotPurchased,
+  summarizeDaily,
+} from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
+import {
+  buildLookupFormula,
+  SEARCH_ERROR_TEXT,
+  MAX_SEARCH_PAGES,
+} from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
+/** 配信履歴。**名指しでしか引かない**（14,000 行超あり全件走査は不可能）。 */
+const DELIVERIES_TABLE = process.env.AIRTABLE_DELIVERIES_TABLE || 'CampaignDeliveries';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
 const MAX_PAGES = 40;
 
@@ -203,34 +235,263 @@ function buildAdminRow(rec, now) {
 }
 
 /**
- * Email で 1 件だけ直接引く（**候補集合の外も引ける**）。
+ * 行に **実閲覧（実測）** を足す。
+ *
+ * ⚠️ **「表示判定」とは別物**。`upsellDisplay` は「この人には CTA を出す設定になっている」
+ *    という判定結果で、見た証拠ではない。ここで足す `realView` だけが実測。
+ *
+ * 読めない / 未設定のときは **全員 `available:false`（＝「未確認」）** にする。
+ * 0 回として返すと「見ていない」と読まれてしまう。
+ *
+ * @returns {Promise<{measurement: object}>} rows は破壊的に更新する
+ */
+/** 期間集計を読む。読めなければ available:false（**0 件と断定しない**） */
+async function readDailySafe() {
+  const cmd = makeRedisCmd(process.env);
+  if (!cmd) return { available: false, entries: null };
+  try {
+    return await createFunnelStore({ redisCmd: cmd }).readDaily({ nowMs: Date.now() });
+  } catch {
+    return { available: false, entries: null };
+  }
+}
+
+async function attachRealViews(rows) {
+  const cmd = makeRedisCmd(process.env);
+  const unavailable = (reason) => {
+    for (const r of rows) {
+      r.realView = describeFunnelRow(null, { available: false });
+      // 読めていないので段階は「未確認」。**「未表示」とは書かない**
+      r.funnelStage = resolveFunnelStage(r.realView).stage;
+      r.funnelStageLabel = resolveFunnelStage(r.realView).label;
+      r.lastReactionAtMs = null;
+    }
+    return {
+      measurement: {
+        available: false,
+        reason,
+        startedAtJst: null,
+        note: '実閲覧を読み取れませんでした。表示は全員「未確認」です（0 回という意味ではありません）',
+      },
+      funnel: {
+        ...summarizeFunnel(rows),
+        bySource: summarizeFunnelBySource(rows),
+        unknownSource: countUnknownSource(rows),
+        sourceTotalMismatch: hasSourceTotalMismatch(rows),
+        sourceNote: SOURCE_TOTAL_NOTE,
+      },
+    };
+  };
+  if (!cmd) return unavailable('measurement_unavailable');
+
+  let out;
+  try {
+    out = await createFunnelStore({ redisCmd: cmd }).readMany({ recordIds: rows.map((r) => r.recordId) });
+  } catch {
+    return unavailable('read_failed');
+  }
+  if (!out.available) return unavailable(out.reason || 'read_failed');
+
+  for (const r of rows) {
+    r.realView = describeFunnelRow(out.rows.get(r.recordId) || null, {
+      available: true,
+      startedAtMs: out.startedAtMs,
+    });
+    // 段階・最終反応時刻は**判定の単一源**に委ねる（画面で組み立て直さない）
+    const st = resolveFunnelStage(r.realView);
+    r.funnelStage = st.stage;
+    r.funnelStageLabel = st.label;
+    r.lastReactionAtMs = lastReactionAtMs(r.realView);
+  }
+  return {
+    measurement: {
+      available: true,
+      startedAtJst: funnelJst(out.startedAtMs),
+      // 計測開始より前のことは分からない、と管理画面に常設で書く
+      note: out.startedAtMs
+        ? `実閲覧は ${funnelJst(out.startedAtMs)} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません`
+        : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
+    },
+    // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）。
+    // 導線別（ダッシュボード / 三連複ページ / 商品ページ内）も同じ数え方で併記する。
+    // 種類（流入 / 商品ページ内）は analytics 側が付ける。ここでは組み立て直さない。
+    funnel: {
+      ...summarizeFunnel(rows),
+      bySource: summarizeFunnelBySource(rows),
+      unknownSource: countUnknownSource(rows),
+      sourceTotalMismatch: hasSourceTotalMismatch(rows),
+      sourceNote: SOURCE_TOTAL_NOTE,
+      // 決済開始 → 購入完了の導線別転換（人数）
+      purchaseBySource: summarizePurchaseBySource(rows),
+      purchaseEntryOnlyNote: PURCHASE_ENTRY_ONLY_NOTE,
+      // 抽出: クリック済み未購入 / 到達済み未購入（購入を確認できない人は別枠）
+      notPurchased: (() => {
+        const x = extractNotPurchased(rows);
+        return {
+          clickedNotPurchased: x.clickedNotPurchased.length,
+          reachedNotPurchased: x.reachedNotPurchased.length,
+          unverified: x.unverified.length,
+          note: '「未購入」は計測開始以降に購入記録が無い人です。読み取れなかった人は別に数えます（0 ではありません）。',
+        };
+      })(),
+      // 期間集計（今日 / 7 日 / 30 日）。**件数**であり人数ではない
+      daily: summarizeDaily(await readDailySafe(), Date.now()),
+    },
+  };
+}
+
+/**
+ * 行に **案内済みかどうか**（CampaignDeliveries の実績）を足す。
+ *
+ * ⚠️ これは `upsellDisplay`（出す設定か）とも `realView`（本人が見たか）とも別の軸で、
+ *    **こちらから声をかけたか**を表す。3 つを同じ列にまとめない。
+ *
+ * 2026-08-13 実測: `premium-plus-offer` の配信は本番全体で 0 件。
+ * 「販売可・CTA 表示中」と出ている会員に、こちらからは一度も案内していなかった。
+ *
+ * 取得は **名指しのみ**（recordId + アドレス）。`CampaignDeliveries` は 14,000 行超で、
+ * 全件走査は Function の実行時間では原理的に終わらない（`check:no-unbounded-scan`）。
+ * 取り切れなかったら `assertFetchComplete` が投げ、**短い結果を「送っていない」と
+ * 誤読させない**（catch して全員「未確認」に倒す）。
+ *
+ * @returns {Promise<{notified: object}>} rows は破壊的に更新する
+ */
+async function attachPlusNotified({ KEY, BASE, rows }) {
+  const unavailable = (reason) => {
+    for (const r of rows) r.plusNotified = describePlusNotified({ entries: null, available: false });
+    const sum = summarizePlusNotified(rows);
+    return { notified: { ...sum, available: false, reason } };
+  };
+  if (!KEY || !BASE) return unavailable('airtable_unavailable');
+  if (rows.length === 0) return { notified: summarizePlusNotified(rows) };
+
+  const records = [];
+  try {
+    // recordId とアドレスを別チャンクで引く（1 本の formula を長くしすぎない）。
+    const idGroups = chunkList(rows.map((r) => r.recordId));
+    const mailGroups = chunkList(rows.map((r) => String(r.email || '').trim().toLowerCase()));
+    const queries = [
+      ...idGroups.map((g) => buildPlusDeliveryFormula({ recordIds: g })),
+      ...mailGroups.map((g) => buildPlusDeliveryFormula({ emails: g })),
+    ].filter(Boolean);
+
+    for (const formula of queries) {
+      let offset;
+      let pages = 0;
+      do {
+        const body = { filterByFormula: formula, pageSize: 100 };
+        if (offset) body.offset = offset;
+        const res = await fetch(
+          `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+          {
+            method: 'POST',
+            headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!res.ok) throw new Error(`${DELIVERIES_TABLE} fetch failed: HTTP ${res.status}`);
+        const data = await res.json();
+        records.push(...(data.records || []));
+        offset = data.offset;
+        pages += 1;
+        // 打ち切ったまま返さない。不完全な履歴は「未案内」の誤表示に直結する。
+        if (offset && pages >= TARGETED_MAX_PAGES) {
+          assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: TARGETED_MAX_PAGES });
+        }
+      } while (offset);
+    }
+  } catch (e) {
+    // 理由はログにだけ残す（アドレス・レコード内容は出さない）
+    console.error('❌ [premium-plus-eligibility] 配信履歴の取得に失敗:', e.message);
+    return unavailable('read_failed');
+  }
+
+  const { byRecordId, byEmail } = indexPlusDeliveries(records);
+  for (const r of rows) {
+    const email = String(r.email || '').trim().toLowerCase();
+    // recordId 側とアドレス側の**和集合**。片方にしか無い行を落とさない。
+    const merged = [...(byRecordId.get(r.recordId) || []), ...(byEmail.get(email) || [])];
+    // 同じ行が両方から入るので重複を落とす（件数を水増ししない）
+    const seen = new Set();
+    const entries = merged.filter((e) => {
+      const k = `${e.campaignType}|${e.status}|${e.atMs}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    r.plusNotified = describePlusNotified({
+      entries,
+      available: true,
+      upsellChannel: r.upsellChannel,
+    });
+  }
+  return { notified: summarizePlusNotified(rows) };
+}
+
+/**
+ * 1 人を名指しで調べる（**候補集合の外も引ける**）。
  *
  * 一覧は「販売候補になり得る人」だけへ絞り込んでいるので、
  * 無料会員など候補外の人は一覧に出ない。管理者が「あの人はどうなっている？」を
  * 確認できるよう、**検索だけは絞り込みを迂回**する。
- * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。
+ *
+ * 検索語は **氏名の一部 / アドレスの一部**でよい（式の組み立ては
+ * `premiumPlusAdminSearch.js` が単一源）。完全一致の Email しか引けないと、
+ * 手元に氏名しか無い相手を調べられず「調べられない」が「見ていない」と誤読される。
+ *
+ * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。実閲覧も併せて返す。
  */
 async function handleLookup({ KEY, BASE, now, req }) {
-  const email = String((req && req.email) || '').trim().toLowerCase();
-  if (!email) return json(400, { error: 'email を指定してください' });
-  // Airtable formula の文字列リテラルを壊さない
-  const safe = email.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // recordId 指定は「保存後にその 1 件を読み直す」用。
+  // ⚠️ アドレスで読み直すと **Email が空の会員を確認できない**（保存できたのに
+  //    「再読込に失敗」と出る）。確認は操作の一部なので、必ず引ける経路を用意する。
+  const byId = String((req && req.recordId) || '').trim();
+  const built = byId
+    ? { ok: true, exactEmail: false, formula: `RECORD_ID() = '${byId.replace(/'/g, "\\'")}'` }
+    : buildLookupFormula(String((req && (req.query ?? req.email)) || ''));
+  const raw = byId || String((req && (req.query ?? req.email)) || '');
+  if (!built.ok) return json(400, { error: SEARCH_ERROR_TEXT[built.reason] || '検索語が不正です' });
 
-  const res = await fetch(
-    `https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/listRecords`,
-    {
-      method: 'POST',
-      headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pageSize: 10,
-        filterByFormula: `LOWER(TRIM({Email})) = '${safe}'`,
-      }),
-    },
-  );
-  if (!res.ok) return json(502, { error: `Airtable lookup failed: ${res.status}` });
-  const data = await res.json();
-  const recs = data.records || [];
-  if (recs.length === 0) return json(200, { found: false, rows: [], sideEffects: 'none' });
+  const recs = [];
+  let offset;
+  let pages = 0;
+  do {
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/listRecords`,
+      {
+        method: 'POST',
+        headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageSize: 100,
+          filterByFormula: built.formula,
+          sort: [{ field: 'Email', direction: 'asc' }],
+          ...(offset ? { offset } : {}),
+        }),
+      },
+    );
+    if (!res.ok) return json(502, { error: `Airtable lookup failed: ${res.status}` });
+    const data = await res.json();
+    recs.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    // 一致が多すぎるときは **一部を返さない**（先頭 N 件を「該当者はこれだけ」と
+    // 読まれると、探している人が居ないと誤解される）。fail closed で絞り込みを促す。
+    if (offset && pages >= MAX_SEARCH_PAGES) {
+      return json(400, {
+        error: `「${raw}」に一致する会員が多すぎます（${pages * 100} 件以上）。`
+          + '一部だけを表示すると探している人を見落とすため、結果を返しません。検索語を絞り込んでください',
+        code: 'search_too_broad',
+        query: raw,
+        sideEffects: 'none',
+      });
+    }
+  } while (offset);
+
+  if (recs.length === 0) {
+    return json(200, {
+      found: false, rows: [], query: raw, exactEmail: built.exactEmail, sideEffects: 'none',
+    });
+  }
 
   const rows = recs.map((rec) => {
     const row = buildAdminRow(rec, now);
@@ -240,7 +501,20 @@ async function handleLookup({ KEY, BASE, now, req }) {
       inCandidateSet: row.__listed === true,
     };
   });
-  return json(200, { found: true, rows, sideEffects: 'none' });
+  const { measurement, funnel } = await attachRealViews(rows);
+  const { notified } = await attachPlusNotified({ KEY, BASE, rows });
+
+  return json(200, {
+    found: true,
+    rows,
+    // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
+    funnel,
+    query: raw,
+    exactEmail: built.exactEmail,
+    measurement,
+    notified,
+    sideEffects: 'none',
+  });
 }
 
 async function handleList({ KEY, BASE, now, onlyReview }) {
@@ -298,8 +572,24 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   const order = { review: 0, eligible: 1, blocked: 2 };
   rows.sort((a, b) => (order[a.eligibility] - order[b.eligibility]) || String(a.email).localeCompare(String(b.email)));
 
+  // 実閲覧（実測）を足す。**表示判定とは別列**として返す
+  const { measurement, funnel } = await attachRealViews(rows);
+  // 案内済み（こちらから送ったか）を足す。表示判定とも実閲覧とも別の軸。
+  const { notified } = await attachPlusNotified({ KEY, BASE, rows });
+
   return json(200, {
     rows,
+    // いま販売している対象日（16:30 以降は翌日分）と開催区分。
+    // 例外リストの確認期限切れは**警告するだけ**（販売は止めない）。
+    saleTarget: (() => {
+      const cal = shapeRaceCalendar(ppRaceCalendar);
+      const t = resolveSaleTarget(now, { calendar: cal });
+      const f = checkCalendarFreshness({ calendar: cal, nowDate: t.baseDate });
+      return { ...t, calendarStale: f.stale, calendarNote: f.stale || f.expiringSoon ? f.note : '' };
+    })(),
+    measurement,
+    notified,
+    funnel,
     counts: {
       total: rows.length,
       review: rows.filter((r) => r.eligibility === PP_ELIGIBILITY.REVIEW).length,
@@ -311,6 +601,14 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
+    },
+    // 実測（表示判定の件数とは別物。混ぜて数えない）
+    realViewCounts: {
+      ctaViewed: rows.filter((r) => r.realView?.cta?.measured).length,
+      clicked: rows.filter((r) => r.realView?.click?.measured).length,
+      pageViewed: rows.filter((r) => r.realView?.page?.measured).length,
+      /** 記録が無い人。**「見ていない」ではなく「確認できない」** */
+      unknown: rows.filter((r) => !r.realView?.anyMeasured).length,
     },
     upsellCounts: {
       auto: rows.filter((r) => r.upsellTarget === UPSELL_TARGET.AUTO).length,
@@ -346,6 +644,25 @@ async function handleUpdate({ KEY, BASE, now, req }) {
   });
   if (!getRes.ok) return json(404, { error: 'Record not found' });
   const currentFields = (await getRes.json()).fields || {};
+
+  // 🛡️ 別の管理者の変更を黙って上書きしない。
+  //    画面が「見ていた時点の最終更新」を送ってくるので、いまの値と食い違えば止める。
+  //    未送信（古い画面・API 直叩き）のときは従来どおり通す（後方互換）。
+  if (req.expectedUpdatedAt !== undefined) {
+    const seen = String(req.expectedUpdatedAt ?? '').trim();
+    const nowValue = String(currentFields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] ?? '').trim();
+    if (seen !== nowValue) {
+      return json(409, {
+        error: 'この会員は別の操作で更新されています。再読込して最新の状態を確認してから操作してください。',
+        code: 'stale_record',
+        seenUpdatedAt: seen || null,
+        currentUpdatedAt: nowValue || null,
+        currentUpdatedBy: currentFields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
+        currentEligibility: currentFields[PP_ELIGIBILITY_FIELDS.STATUS] || null,
+        sideEffects: 'none',
+      });
+    }
+  }
 
   const overrideFieldEnabled = isReleaseOverrideEnabled(process.env);
   const plusAction = String(req.plusAction || '').trim().toLowerCase();
@@ -393,12 +710,18 @@ async function handleUpdate({ KEY, BASE, now, req }) {
     success: true,
     recordId,
     action: plusAction,
+    // 変更の**前後**を返す（画面が「何が変わったか」を履歴に書けるようにする）
+    previous: currentFields[PP_ELIGIBILITY_FIELDS.STATUS] || null,
+    previousLabel: PP_ELIGIBILITY_LABEL[currentFields[PP_ELIGIBILITY_FIELDS.STATUS]] || null,
     next: built.next,
     label: PP_ELIGIBILITY_LABEL[built.next],
     override: built.override,
     overrideChanged: built.overrideChanged,
     // true のときだけ段階公開 anchor が動く（= PHASE 1 から見え始める）
     eligibleAtUpdated: built.eligibleAtUpdated,
+    // 次の操作の版として画面が持ち直す（毎回フル再読込しなくても競合検知が効く）
+    updatedAt: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] || null,
+    updatedBy: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
   });
 }
 
@@ -469,7 +792,9 @@ async function handleSetUpsell({ KEY, BASE, now, req }) {
     return json(502, { error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300) });
   }
 
-  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', { recordId, before, next });
+  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', {
+    recordId, before, next, actor: String(req.actor || '').slice(0, 32) || '(未入力)',
+  });
   return json(200, {
     success: true,
     recordId,

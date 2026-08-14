@@ -16,8 +16,20 @@ const STYLE = PAGE.slice(PAGE.indexOf('<style is:global>'), PAGE.indexOf('</styl
 const SCRIPT = PAGE.slice(PAGE.indexOf('<script is:inline>'));
 
 // ── API 契約（UI を変えても payload を変えない）──────────────────
-test('write payload が変わっていない（action/update の 4 キー）', () => {
-  assert.match(PAGE, /call\(\{\s*action:\s*'update',\s*recordId:\s*r\.recordId,\s*plusAction,\s*reason:\s*memoInput\.value\s*\}\)/);
+test('write payload が変わっていない（action/update の 6 キー）', () => {
+  // 送るキーを固定する。増えた分が Airtable の**書き込み**を増やしていないか常に確認すること。
+  //   actor            … 既に書いていた UpdatedBy の中身（'admin' 固定をやめただけ・新規列ではない）
+  //   expectedUpdatedAt… 競合検知のための **読み取り専用**の版。書き込みではない
+  const i = PAGE.indexOf("action: 'update', recordId: r.recordId, plusAction");
+  assert.ok(i > -1, 'update の呼び出し形が変わっている');
+  const payload = PAGE.slice(i, PAGE.indexOf('});', i))
+    .replace(/\/\/[^\n]*/g, ''); // コメント行はキーとして数えない
+  // 想定外のキーが増えていないこと（キー名と個数で固定する）
+  const tokens = payload.split(',').map((t) => t.trim()).filter(Boolean);
+  const names = tokens.map((t) => t.split(':')[0].trim());
+  assert.deepEqual(names,
+    ['action', 'recordId', 'plusAction', 'reason', 'actor', 'expectedUpdatedAt'],
+    `update payload のキーが変わっている: ${JSON.stringify(names)}`);
   for (const a of ["'staged'", "'immediate'", "'review'", "'blocked'"]) {
     assert.ok(PAGE.includes(a), `plusAction が無い: ${a}`);
   }
@@ -113,13 +125,16 @@ test('状態フィルター 5 種 + Route フィルター + Email 検索（ク�
   }
   assert.ok(PAGE.includes('<option value="sanrenpuku">'));
   assert.ok(PAGE.includes('<option value="premium_30d">'));
-  assert.match(PAGE, /id="q"[^>]*placeholder="Email で検索"/);
-  assert.match(PAGE, /String\(r\.email \|\| ''\)\.toLowerCase\(\)\.includes\(q\)/);
-  // 再描画のみ。API を呼ばない
-  assert.match(PAGE, /\$\('q'\)\.addEventListener\('input', render\)/);
+  assert.match(PAGE, /id="q"[^>]*placeholder="氏名 または アドレスの一部"/);
+  // 手元に完全なアドレスが無くても引けること（氏名でもアドレスの一部でも絞り込める）
+  assert.match(PAGE, /\$\{String\(r\.email \|\| ''\)\} \$\{String\(r\.name \|\| ''\)\}/);
+  assert.match(PAGE, /hay\.includes\(q\)/);
+  // 入力中は再描画のみ。API は呼ばない（サーバー検索は Enter / 検索ボタン / change だけ）
+  assert.match(PAGE, /\$\('q'\)\.addEventListener\('input', \(\) => \{ syncSearchBadge\(\); render\(\); \}\)/);
   assert.match(PAGE, /\$\('fState'\)\.addEventListener\('change', render\)/);
   assert.match(PAGE, /\$\('fRoute'\)\.addEventListener\('change', render\)/);
   assert.doesNotMatch(PAGE, /addEventListener\('input',\s*load\)/);
+  assert.doesNotMatch(PAGE, /addEventListener\('input',[^)]*lookupOutsideCandidates/);
 });
 
 test('並び順: 保留 → 販売可/販売中 → 即時販売 → 販売対象外、同群は最終更新の新しい順', () => {

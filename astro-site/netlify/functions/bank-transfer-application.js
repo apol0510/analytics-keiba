@@ -7,6 +7,11 @@
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
+import { resolveOrderSaleDate, buildSaleProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
+import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
+import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
+import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -43,6 +48,8 @@ exports.handler = async (event, context) => {
       transferName,
       remarks,
       productName,
+      saleTargetDate,
+      funnelSource,
       paymentCompletedConfirm,
       timestamp
     } = formData;
@@ -134,9 +141,83 @@ exports.handler = async (event, context) => {
     //    ここでは Airtable を 1 バイトも書かず、金額も書き換えない。
     // 通常価格の申込では Airtable を追加照会しない（Campaign 価格のときだけ 1 回 GET）。
     // ────────────────────────────────────────────────────────────
+    // ── Premium Plus: 対象日をサーバーで確定させる ──────────────────
+    // ⚠️ 画面の値をそのまま採用しない。フォームを開いたまま 16:30 をまたぐと
+    //    「本日分」のつもりの注文が実際には翌日分になる。**サーバーが出し直す**。
+    //    ここで確定した商品名（対象日入り）が、管理者通知メール・お客様控え・
+    //    申請履歴のすべてを通って残る＝どの日の買い目を届けるかが経路の端まで伝わる。
+    const isPremiumPlusOrder = /Premium Plus/i.test(String(productName || ''));
+    // ── 既に確定している対象日を読む（冪等の要）──────────────────
+    // 未確定の申込（PaymentConfirmed=false）に保存された対象日があれば、
+    // **再送・再読込・翌日以降の再実行でもそれを使い、再計算しない**。
+    let existingSaleTargetDate = null;
+    if (isPremiumPlusOrder && isSaleDateFieldEnabled(process.env)
+        && process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID) {
+      try {
+        const q = new URLSearchParams({
+          filterByFormula: `LOWER(TRIM({Email})) = '${String(email).toLowerCase().replace(/'/g, "\\'")}'`,
+          maxRecords: '1',
+        });
+        const res = await fetch(
+          `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Customers?${q}`,
+          { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const f = (data.records || [])[0]?.fields || {};
+          // 入金確認済みの注文の日付は引き継がない（次の注文は新しい対象日）
+          if (f['PaymentConfirmed'] !== true) {
+            const v = f[SALE_TARGET_DATE_FIELD];
+            if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) existingSaleTargetDate = v;
+          }
+        }
+      } catch (e) {
+        // 読めなくても申込は止めない。**新規に確定させる**（推測はしない）
+        console.warn('⚠️ [bank-transfer] 既存の対象日を読めませんでした:', e.message);
+      }
+    }
+    let saleOrder = null;
+    if (isPremiumPlusOrder) {
+      // ⚠️ 画面が送ってきた saleTargetDate は**採用しない**（開いたまま 16:30 をまたぐとズレる）。
+      //    既に注文へ保存済みの対象日があればそれが正（冪等）。無ければサーバーが決める。
+      const stored = existingSaleTargetDate;
+      saleOrder = resolveOrderSaleDate({
+        storedDate: stored,
+        nowMs: Date.now(),
+        calendar: shapeRaceCalendar(raceCalendarRaw),
+      });
+      if (!stored && saleTargetDate && saleTargetDate !== saleOrder.date) {
+        console.warn('⚠️ [bank-transfer] 対象日が画面とズレたためサーバー値を採用:', {
+          claimed: saleTargetDate, server: saleOrder.date,
+        });
+      }
+      // 例外が連続する等の異常時のみ売らない（通常は常に販売可）
+      if (!saleOrder.sellable) {
+        console.warn('🚫 [bank-transfer] 対象日の開催を確認できないため受付しません:', {
+          reason: saleOrder.reason,
+        });
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: '現在お申し込みを受け付けていません。次回受付時にあらためてお願いいたします。',
+            code: `sale_not_available:${saleOrder.reason}`,
+            sideEffects: 'none',
+          }),
+        };
+      }
+      console.log('📅 [bank-transfer] Premium Plus 対象日:', {
+        date: saleOrder.date, reused: saleOrder.reused, reason: saleOrder.reason,
+      });
+    }
+    // 対象日を含む確定商品名。**以後の処理・メール・履歴はこれを使う**
+    const orderProductName = (isPremiumPlusOrder && saleOrder && saleOrder.date)
+      ? buildSaleProductName(saleOrder.label, 68000)
+      : productName;
+
     let memberPricingWarning = null;
     try {
-      const preCheck = checkMemberOnlyPricing({ productName, fields: null });
+      const preCheck = checkMemberOnlyPricing({ productName: orderProductName, fields: null });
       if (preCheck.memberOnly) {
         const KEY = process.env.AIRTABLE_API_KEY;
         const BASE = process.env.AIRTABLE_BASE_ID;
@@ -148,11 +229,11 @@ exports.handler = async (event, context) => {
           const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` } });
           if (res.ok) fields = ((await res.json()).records || [])[0]?.fields || null;
         }
-        const verdict = checkMemberOnlyPricing({ productName, fields });
+        const verdict = checkMemberOnlyPricing({ productName: orderProductName, fields });
         if (!verdict.eligible) {
           memberPricingWarning = verdict.warning;
           console.warn('⚠️ [bank-transfer] 会員限定価格の資格が確認できない申込:', {
-            email, productName, pricingTier: verdict.tier,
+            email, productName: orderProductName, pricingTier: verdict.tier,
           });
         }
       }
@@ -172,7 +253,7 @@ exports.handler = async (event, context) => {
     // 管理者向けメール内容
     const adminPersonalization = {
       to: [{ email: ADMIN_EMAIL }],
-      subject: `【入金完了報告】${email} - ${productName}`
+      subject: `【入金完了報告】${email} - ${orderProductName}`
     };
     // Make Mailhook転送（環境変数があるときだけ bcc を付ける。空配列は SendGrid が 400 を返す）
     if (process.env.MAKE_MAILHOOK_EMAIL) {
@@ -204,7 +285,7 @@ exports.handler = async (event, context) => {
   <div class="container">
     <div class="header">
       <h2 style="margin: 0;">🏦 入金完了報告</h2>
-      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">${productName} の入金完了報告が届きました</p>
+      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">${orderProductName} の入金完了報告が届きました</p>
     </div>
 
     <div class="section">
@@ -223,7 +304,7 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">商品:</span>
-        <span class="value">${productName}</span>
+        <span class="value">${orderProductName}</span>
       </div>
     </div>
 
@@ -261,7 +342,7 @@ exports.handler = async (event, context) => {
       <ol style="margin: 0; padding-left: 20px; color: #78350f;">
         <li>振込確認（PayPay銀行 本店営業部 普通 8307337）</li>
         <li>入金確認後、${email} へアクセス情報を送信</li>
-        <li>Airtableに顧客情報を登録（${productName}）</li>
+        <li>Airtableに顧客情報を登録（${orderProductName}）</li>
       </ol>
     </div>
 
@@ -283,7 +364,7 @@ exports.handler = async (event, context) => {
     const userEmailData = {
       personalizations: [{
         to: [{ email: email }],
-        subject: `【入金完了報告受付】KEIBA Analytics ${productName}`
+        subject: `【入金完了報告受付】KEIBA Analytics ${orderProductName}`
       }],
       from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
       content: [{
@@ -328,7 +409,7 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">商品:</span>
-        <span class="value">${productName}</span>
+        <span class="value">${orderProductName}</span>
       </div>
       <div class="info-row">
         <span class="label">振込完了日:</span>
@@ -359,7 +440,7 @@ exports.handler = async (event, context) => {
         </li>
         <li style="margin-bottom: 10px;">
           <strong>アクセス情報送付</strong><br>
-          ${productName} のアクセス方法をメールでお送りいたします
+          ${orderProductName} のアクセス方法をメールでお送りいたします
         </li>
       </ol>
     </div>
@@ -480,7 +561,7 @@ exports.handler = async (event, context) => {
       const requestedAmount = Number.parseInt(transferAmount, 10);
 
       console.log('📝 申込内容を Requested* に退避:', {
-        productName,
+        productName: orderProductName,
         fullPlanName,
         planName,
         planType,
@@ -528,6 +609,19 @@ exports.handler = async (event, context) => {
           // 既存顧客 - Update
           const existingRecord = existingRecords[0];
           const recordId = existingRecord.id;
+          // ── 決済開始の計測（**サーバー側**。申込がここへ到達した時点）─────
+          // Premium Plus の申込だけを Plus のファネルへ数える（他商品を混ぜない）。
+          // 計測が失敗しても申込処理は続ける（例外を投げない設計）。
+          if (/Premium Plus/i.test(String(productName || ''))) {
+            const m = await recordPlusCheckoutStart({
+              recordId,
+              env: process.env,
+              nowMs: Date.now(),
+              // 導線はフォームが載せた値。**採否はサーバーの allow-list**が決める
+              source: funnelSource,
+            });
+            console.log('📊 [bank-transfer] 決済開始の計測:', { counted: m.counted, reason: m.reason });
+          }
           const currentStatus = existingRecord.fields?.Status || null;
           const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
 
@@ -543,7 +637,10 @@ exports.handler = async (event, context) => {
             fullName,
             planName,
             planType,
-            amount: requestedAmount
+            amount: requestedAmount,
+            // 対象日を**構造化項目**として保存（schema 未準備なら書かない）
+            saleTargetDate: saleOrder ? saleOrder.date : null,
+            saleDateFieldReady: isSaleDateFieldEnabled(process.env)
           });
 
           if (updateFields['Status'] === 'pending') {
@@ -605,7 +702,10 @@ exports.handler = async (event, context) => {
               fullName,
               planName,
               planType,
-              amount: requestedAmount
+              amount: requestedAmount,
+            // 対象日を**構造化項目**として保存（schema 未準備なら書かない）
+            saleTargetDate: saleOrder ? saleOrder.date : null,
+            saleDateFieldReady: isSaleDateFieldEnabled(process.env)
             });
             if (raceUpdateFields['Status'] !== 'pending') {
               console.log(`🛡️ [bank-transfer race] 既存 active 顧客のため Status / プラン / 有効期限は据え置き: ${email}`);
@@ -639,6 +739,9 @@ exports.handler = async (event, context) => {
                 planName,
                 planType,
                 amount: requestedAmount,
+            // 対象日を**構造化項目**として保存（schema 未準備なら書かない）
+            saleTargetDate: saleOrder ? saleOrder.date : null,
+            saleDateFieldReady: isSaleDateFieldEnabled(process.env),
                 isNewRecord: true,
                 email
               }),

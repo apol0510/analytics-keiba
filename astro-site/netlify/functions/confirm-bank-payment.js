@@ -30,6 +30,7 @@
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+import { recordPlusPurchase } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js';
 import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
 import {
@@ -244,6 +245,31 @@ exports.handler = async (event) => {
       console.error('❌ Airtable PATCH failed:', errorText);
       // 握りつぶさない。Automation 側で失敗が見えるように 500 を返す
       return jsonResponse(500, { error: 'Airtable update failed', detail: errorText });
+    }
+
+    // ── 購入完了の計測（**ここが唯一の確定点**）────────────────
+    // Airtable 上の PaymentConfirmed=true を再読込で検証し、昇格 PATCH が成功した後。
+    // ⚠️ 画面の成功表示では記録しない。ここだけがサーバー側の確定イベント。
+    // 二重計上は orderKey（この確定の識別子）で潰す。Automation の再実行・
+    // Webhook 再送で何度呼ばれても 1 回しか数えない。
+    // 計測が失敗しても昇格は巻き戻さない（決済成功を最優先で保持する）。
+    try {
+      const purchaseMetric = await recordPlusPurchase({
+        recordId,
+        env: process.env,
+        nowMs: Date.now(),
+        // 確定した内容から作る安定した鍵（同じ確定は同じ鍵になる）
+        orderKey: [
+          recordId,
+          confirmation.fields['プラン'] || '',
+          confirmation.fields['PaidAt'] || confirmation.expiration || '',
+        ].join(':'),
+      });
+      console.log('📊 [confirm-bank-payment] 購入計測:', {
+        counted: purchaseMetric.counted, reason: purchaseMetric.reason, source: purchaseMetric.source,
+      });
+    } catch (metricError) {
+      console.error('⚠️ [confirm-bank-payment] 購入計測に失敗（昇格は成功）:', metricError.message);
     }
 
     console.log('✅ [confirm-bank-payment] 昇格完了:', {
