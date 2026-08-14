@@ -36,7 +36,7 @@ import { shapeRaceCalendar } from '../lib/premiumPlus/premiumPlusRaceCalendar.js
 import ppRaceCalendar from '../data/premiumPlusRaceCalendar.json';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
-import { recordPlusPageView } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
+import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -100,6 +100,10 @@ await recordPlusPageView({
   env: process.env,
   userAgent: Astro.request.headers.get('user-agent') || '',
   nowMs: ppNow,
+  // どのリンクから来たか（`?from=dashboard` / `?from=sanrenpuku`）。
+  // ⚠️ URL は自由に付けられるので、allow-list を通した値だけを記録する。
+  //    該当しなければ null（合計にだけ数える。推測で振り分けない）。
+  source: readPlusSourceFromUrl(Astro.url),
 });
 
 // 会員別レスポンス。CDN に共有キャッシュさせない。
@@ -1169,7 +1173,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
 
     <!-- ══ 価格・CTA ══ -->
     <section class="section">
-      <div class="offer">
+      <div class="offer" id="pp-offer">
         {ppRelease.showPurchaseCta ? (
           <>
             <span class="eyebrow">◆ Premium Sanrenpuku 会員 特別価格</span>
@@ -1739,6 +1743,39 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         submitLoading.style.display = 'none';
       }
     });
+  </script>
+
+  <!-- ══ 商品ページ内の導線の実閲覧（クリック元 = plus_page）══
+       同じ Premium Plus の CTA でも、ダッシュボード / 三連複ページ / この商品ページ内の
+       どこで押されたかで意味が違う。運用者が判別できるよう導線を添えて数える。
+       ⚠️ 値の採否は**サーバーの allow-list**が決める（クライアント申告は信用しない）。
+       ⚠️ 送信の判断は premiumPlusFunnelClient.js の 1 か所だけが持つ。ここは積むだけ。 -->
+  <script is:inline>
+    (function () {
+      try {
+        var q = (window.__akPpFunnelQueue = window.__akPpFunnelQueue || []);
+        // 「画面に入ったとき」だけ表示として数える（DOM にあるだけでは数えない）
+        var offer = document.getElementById('pp-offer');
+        if (offer) q.push({ event: 'cta_view', el: offer, source: 'plus_page' });
+        // 商品ページ内の購入 CTA を**取りこぼさず**拾う。
+        //   - 価格ブロックの購入ボタン（.cta-button）
+        //   - 1 鞍の抽出ボタン（.today .extract）
+        //   - モバイル固定 CTA（.sticky-cta の中。class を持たない）
+        // ⚠️ class の列挙だけだと固定 CTA を落とす。**モバイルで最も押される導線**なので、
+        //    「購入モーダルを開くもの」を条件に含めて、CTA が増えても落ちないようにする。
+        // disabled のときはブラウザが click を発火しないので、受付前を数えることはない。
+        var btns = document.querySelectorAll('.cta-button, .today .extract, [onclick*="openBankModal"]');
+        for (var i = 0; i < btns.length; i += 1) {
+          btns[i].addEventListener('click', function () {
+            window.__akPpFunnelQueue.push({ event: 'cta_click', source: 'plus_page' });
+          });
+        }
+      } catch (e) { /* 計測の失敗で購入導線を壊さない */ }
+    })();
+  </script>
+  <script>
+    import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
+    installPlusFunnel(window);
   </script>
 </body>
 </html>
