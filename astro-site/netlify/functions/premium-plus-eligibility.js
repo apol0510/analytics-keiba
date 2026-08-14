@@ -36,6 +36,9 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import { resolveSaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar, checkCalendarFreshness } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
+import ppRaceCalendar from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import {
   buildPreviewSnapshot,
   describePreviewVisibility,
@@ -76,6 +79,15 @@ import {
   summarizePlusNotified,
 } from '../../src/lib/premiumPlus/plusNotifiedStatus.js';
 import { chunkList, assertFetchComplete, TARGETED_MAX_PAGES } from '../../src/lib/marketing/marketingTargetedLoad.js';
+import {
+  resolveFunnelStage,
+  lastReactionAtMs,
+  summarizeFunnel,
+  summarizeFunnelBySource,
+  countUnknownSource,
+  hasSourceTotalMismatch,
+  SOURCE_TOTAL_NOTE,
+} from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
 import {
   buildLookupFormula,
   SEARCH_ERROR_TEXT,
@@ -232,13 +244,26 @@ function buildAdminRow(rec, now) {
 async function attachRealViews(rows) {
   const cmd = makeRedisCmd(process.env);
   const unavailable = (reason) => {
-    for (const r of rows) r.realView = describeFunnelRow(null, { available: false });
+    for (const r of rows) {
+      r.realView = describeFunnelRow(null, { available: false });
+      // 読めていないので段階は「未確認」。**「未表示」とは書かない**
+      r.funnelStage = resolveFunnelStage(r.realView).stage;
+      r.funnelStageLabel = resolveFunnelStage(r.realView).label;
+      r.lastReactionAtMs = null;
+    }
     return {
       measurement: {
         available: false,
         reason,
         startedAtJst: null,
         note: '実閲覧を読み取れませんでした。表示は全員「未確認」です（0 回という意味ではありません）',
+      },
+      funnel: {
+        ...summarizeFunnel(rows),
+        bySource: summarizeFunnelBySource(rows),
+        unknownSource: countUnknownSource(rows),
+        sourceTotalMismatch: hasSourceTotalMismatch(rows),
+        sourceNote: SOURCE_TOTAL_NOTE,
       },
     };
   };
@@ -257,6 +282,11 @@ async function attachRealViews(rows) {
       available: true,
       startedAtMs: out.startedAtMs,
     });
+    // 段階・最終反応時刻は**判定の単一源**に委ねる（画面で組み立て直さない）
+    const st = resolveFunnelStage(r.realView);
+    r.funnelStage = st.stage;
+    r.funnelStageLabel = st.label;
+    r.lastReactionAtMs = lastReactionAtMs(r.realView);
   }
   return {
     measurement: {
@@ -266,6 +296,16 @@ async function attachRealViews(rows) {
       note: out.startedAtMs
         ? `実閲覧は ${funnelJst(out.startedAtMs)} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません`
         : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
+    },
+    // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）。
+    // 導線別（ダッシュボード / 三連複ページ / 商品ページ内）も同じ数え方で併記する。
+    // 種類（流入 / 商品ページ内）は analytics 側が付ける。ここでは組み立て直さない。
+    funnel: {
+      ...summarizeFunnel(rows),
+      bySource: summarizeFunnelBySource(rows),
+      unknownSource: countUnknownSource(rows),
+      sourceTotalMismatch: hasSourceTotalMismatch(rows),
+      sourceNote: SOURCE_TOTAL_NOTE,
     },
   };
 }
@@ -431,12 +471,14 @@ async function handleLookup({ KEY, BASE, now, req }) {
       inCandidateSet: row.__listed === true,
     };
   });
-  const { measurement } = await attachRealViews(rows);
+  const { measurement, funnel } = await attachRealViews(rows);
   const { notified } = await attachPlusNotified({ KEY, BASE, rows });
 
   return json(200, {
     found: true,
     rows,
+    // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
+    funnel,
     query: raw,
     exactEmail: built.exactEmail,
     measurement,
@@ -501,14 +543,23 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   rows.sort((a, b) => (order[a.eligibility] - order[b.eligibility]) || String(a.email).localeCompare(String(b.email)));
 
   // 実閲覧（実測）を足す。**表示判定とは別列**として返す
-  const { measurement } = await attachRealViews(rows);
+  const { measurement, funnel } = await attachRealViews(rows);
   // 案内済み（こちらから送ったか）を足す。表示判定とも実閲覧とも別の軸。
   const { notified } = await attachPlusNotified({ KEY, BASE, rows });
 
   return json(200, {
     rows,
+    // いま販売している対象日（16:30 以降は翌日分）と開催区分。
+    // 例外リストの確認期限切れは**警告するだけ**（販売は止めない）。
+    saleTarget: (() => {
+      const cal = shapeRaceCalendar(ppRaceCalendar);
+      const t = resolveSaleTarget(now, { calendar: cal });
+      const f = checkCalendarFreshness({ calendar: cal, nowDate: t.baseDate });
+      return { ...t, calendarStale: f.stale, calendarNote: f.stale || f.expiringSoon ? f.note : '' };
+    })(),
     measurement,
     notified,
+    funnel,
     counts: {
       total: rows.length,
       review: rows.filter((r) => r.eligibility === PP_ELIGIBILITY.REVIEW).length,

@@ -22,7 +22,13 @@ test('未知のイベントはキューから捨てる', () => {
   assert.equal(normalizeQueueItem('purchase'), null);
   assert.equal(normalizeQueueItem({ event: 'purchase' }), null);
   assert.equal(normalizeQueueItem(null), null);
-  assert.deepEqual(normalizeQueueItem('cta_click'), { event: 'cta_click', el: null });
+  // 導線（source）は運ぶだけ。**採否はサーバーの allow-list**が決める
+  assert.deepEqual(normalizeQueueItem('cta_click'), { event: 'cta_click', el: null, source: null });
+  assert.deepEqual(normalizeQueueItem({ event: 'cta_click', source: 'dashboard' }),
+    { event: 'cta_click', el: null, source: 'dashboard' });
+  // 文字列でない source は運ばない（送信本文に妙な型を混ぜない）
+  assert.deepEqual(normalizeQueueItem({ event: 'cta_click', source: { evil: 1 } }),
+    { event: 'cta_click', el: null, source: null });
 });
 
 test('【重要】1 ページ表示で同じ種別は 1 回しか送らない', () => {

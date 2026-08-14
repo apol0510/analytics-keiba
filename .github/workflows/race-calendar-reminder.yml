@@ -1,0 +1,148 @@
+name: 開催カレンダー 確認期限リマインド
+
+# Premium Plus の開催例外リスト（premiumPlusRaceCalendar.json）の `checkedUntil` が
+# 切れる前に GitHub Issue で知らせる。
+#
+# ⚠️ **販売は止めない。** 例外リストは販売の必須条件ではなく、期限切れでも通常販売は続く。
+#    ここは「気づかないまま古い確認範囲で運用する」のを防ぐだけなので、
+#    **この workflow は失敗しない**（Issue を立てる / 閉じるだけ）。
+#
+# 判定は単一源 `checkCalendarFreshness`（= 管理画面・check:safety と同じ関数）。
+# 期限の 30 日前から `expiringSoon`、過ぎたら `stale` になる。
+
+on:
+  schedule:
+    # 毎日 09:00 JST（00:00 UTC）。期限の 30 日前ちょうどに気づける
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'astro-site/src/data/premiumPlusRaceCalendar.json'
+      - 'astro-site/scripts/check-race-calendar-freshness.mjs'
+      - '.github/workflows/race-calendar-reminder.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: race-calendar-reminder
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 判定スクリプトは node 標準機能だけで動く（依存なし）。npm install は不要
+      - name: 確認期限を判定する
+        id: check
+        working-directory: astro-site
+        run: |
+          node scripts/check-race-calendar-freshness.mjs --json > /tmp/cal.json
+          cat /tmp/cal.json
+          node -e '
+            const fs = require("fs");
+            const j = JSON.parse(fs.readFileSync("/tmp/cal.json", "utf8"));
+            const out = [
+              `needsReminder=${j.needsReminder}`,
+              `checkedUntil=${j.checkedUntil || "(未記録)"}`,
+              `state=${j.stale ? "期限切れ" : j.expiringSoon ? "期限が近い" : "期限内"}`,
+              `noRaceDates=${j.noRaceDates}`,
+              `note=${j.note.replace(/\n/g, " ")}`,
+            ].join("\n");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
+          '
+
+      - name: ラベルを用意する（無ければ作る）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create race-calendar \
+            --color 'BFD4F2' \
+            --description 'Premium Plus 開催カレンダーの確認期限' \
+            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+
+      - name: 既存のリマインド Issue を探す
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          num=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+                  --state open --label race-calendar \
+                  --json number --jq '.[0].number // ""')
+          echo "number=$num" >> "$GITHUB_OUTPUT"
+          echo "既存 Issue: ${num:-なし}"
+
+      # 期限が近い / 切れている、かつ未起票のときだけ 1 本立てる（重複起票しない）
+      - name: リマインド Issue を起票する
+        if: steps.check.outputs.needsReminder == 'true' && steps.existing.outputs.number == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKED_UNTIL: ${{ steps.check.outputs.checkedUntil }}
+          STATE: ${{ steps.check.outputs.state }}
+          NOTE: ${{ steps.check.outputs.note }}
+        run: |
+          cat > /tmp/body.md <<EOF
+          ## 開催カレンダーの確認範囲を延長してください
+
+          | 項目 | 値 |
+          |---|---|
+          | \`checkedUntil\` | **${CHECKED_UNTIL}** |
+          | 状態 | **${STATE}** |
+          | 例外日 (\`noRaceDates\`) | ${{ steps.check.outputs.noRaceDates }} 件 |
+
+          > ${NOTE}
+
+          ### ⚠️ 販売は止まりません
+
+          例外リストは**販売の必須条件ではありません**。期限が切れても
+          Premium Plus の通常販売は続きます。これは「中央・南関とも開催が無い日」を
+          取りこぼさないための確認作業です。
+
+          ### 手順
+
+          一次情報はどちらも直接読めない形式なので、機械可読なソースを叩きます。
+
+          | 対象 | URL | 注意 |
+          |---|---|---|
+          | JRA | \`https://www.jra.go.jp/keiba/common/calendar/json/YYYYMM.json\` | UTF-8。\`data[].info[].race[]\` が非空 = 開催日。ファイル名は \`202701.json\` 形式のみ 200（\`2027_01\` 等は 403） |
+          | 南関 | \`https://www.nankankeiba.com/calendar/YYYYMM.do\`（01/04/07/10 の 4 本で通年） | **Shift_JIS**。月見出しは \`nk23_c-table21__title">N月\`、開催セルは \`is-bg-{ooi,kawasaki,funabashi,urawa}\` クラス |
+
+          1. 両方を取得し、**どちらにも開催が無い日**だけを洗い出す
+          2. \`astro-site/src/data/premiumPlusRaceCalendar.json\` の
+             \`noRaceDates\` に追記し、\`checkedUntil\` / \`fetchedAt\` を更新する
+             （**0 件なら空のままが正しい**。空 = 未確認ではなく「例外日が無い」）
+          3. \`cd astro-site && npm run check:race-calendar\` で ✅ を確認
+          4. main へ push（Netlify が自動デプロイ）
+          5. 管理画面 or admin API \`action=list\` の \`calendarStale\` が \`false\` になることを確認
+
+          期日を延ばせたらこの Issue は**次回の実行で自動的に閉じます**。
+
+          <sub>この Issue は \`.github/workflows/race-calendar-reminder.yml\` が自動起票しました。</sub>
+          EOF
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "🗓️ 開催カレンダーの checkedUntil を延長してください（現在: ${CHECKED_UNTIL}）" \
+            --label race-calendar \
+            --body-file /tmp/body.md
+
+      # 延長されたら自動で閉じる（手で閉じ忘れても残らない）
+      - name: 期限内に戻ったので Issue を閉じる
+        if: steps.check.outputs.needsReminder == 'false' && steps.existing.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue close "${{ steps.existing.outputs.number }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --comment "✅ \`checkedUntil\` が **${{ steps.check.outputs.checkedUntil }}** まで延長され、確認期限内に戻りました。自動でクローズします。"
+
+      - name: 結果
+        run: |
+          echo "確認済み: ${{ steps.check.outputs.checkedUntil }} / 状態: ${{ steps.check.outputs.state }}"
+          echo "リマインド要否: ${{ steps.check.outputs.needsReminder }} / 既存 Issue: ${{ steps.existing.outputs.number || 'なし' }}"

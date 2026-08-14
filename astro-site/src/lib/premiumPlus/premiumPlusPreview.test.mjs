@@ -99,8 +99,9 @@ test('時刻シミュレーション: 4 状態の境界がプレビューに出�
   }
 });
 
-test('16:30 以降は purchaseEnabled=false / CLOSED でも商品閲覧可', () => {
+test('16:30 以降・翌日分を売れないときは購入不可（商品閲覧は可）', () => {
   const p = snap({}, { atMin: 16 * 60 + 30 });
+  // 開催カレンダー未指定＝翌日分を売れない → 購入不可（fail closed）
   assert.equal(p.purchaseEnabled, false);
   assert.equal(p.showProductPage, true);
   assert.equal(p.canBrowseWhenClosed, true);
@@ -204,7 +205,7 @@ test('describePreviewVisibility: 状態ごとに説明が変わる', () => {
   assert.match(describePreviewVisibility(snap({ PremiumPlusEligibility: 'review' })), /404/);
   assert.match(describePreviewVisibility(snap({}, { phaseDaysAgo: PP_PHASE_START_DAY.PREVIEW })), /価格・購入 CTA は非表示/);
   assert.match(describePreviewVisibility(snap({}, { atMin: 10 * 60 })), /申し込み操作ができます/);
-  assert.match(describePreviewVisibility(snap({}, { atMin: 19 * 60 })), /操作不可/);
+  assert.match(describePreviewVisibility(snap({}, { atMin: 19 * 60 })), /操作できません/);
 });
 
 test('時刻候補に必須の 8 パターンが揃っている', () => {

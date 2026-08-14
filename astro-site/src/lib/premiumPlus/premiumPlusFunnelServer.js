@@ -22,7 +22,7 @@
  * （その人は「未確認」のままになる。0 回とは記録しない）。
  */
 
-import { createFunnelStore, FUNNEL_EVENT } from './premiumPlusFunnelStore.js';
+import { createFunnelStore, FUNNEL_EVENT, normalizeEntrySource } from './premiumPlusFunnelStore.js';
 
 /** これを超えたら記録を諦めてページを返す（計測のために顧客を待たせない） */
 export const RECORD_TIMEOUT_MS = 700;
@@ -102,7 +102,7 @@ async function withTimeout(promise, ms) {
  * @returns {Promise<{counted:boolean, reason:string|null}>}
  */
 export async function recordPlusPageView({
-  recordId, env, userAgent, nowMs, adminPreview, timeoutMs, redisCmd,
+  recordId, env, userAgent, nowMs, adminPreview, timeoutMs, redisCmd, source,
 } = {}) {
   const cmd = redisCmd !== undefined ? redisCmd : makeRedisCmd(env);
   // 計測できないことを黙って 0 回にしない
@@ -118,10 +118,35 @@ export async function recordPlusPageView({
       // ここへ来ている時点で SSR 認可を通っている
       authenticated: true,
       adminPreview: adminPreview === true,
+      // 導線（どのリンクから来たか）。**採否は store の allow-list**が決める
+      source,
     }), typeof timeoutMs === 'number' ? timeoutMs : RECORD_TIMEOUT_MS);
     return { counted: out.counted === true, reason: out.reason || null };
   } catch {
     return { counted: false, reason: 'record_failed' };
+  }
+}
+
+/**
+ * 商品ページの URL から導線を読む（`?from=dashboard` など）。
+ *
+ * ⚠️ **クライアントが自由に付けられる値**なので、そのまま保存しない。
+ *    `normalizeEntrySource` の allow-list を通し、該当しなければ null
+ *    （= 導線の指定なし。合計にだけ数える）。推測で振り分けない。
+ *
+ * ⚠️ **受け付けるのは流入導線（entry）だけ。** 商品ページ内の導線（`plus_page`）は
+ *    「ここへ来た経路」ではないので、`?from=plus_page` は採用しない
+ *    （誰でも付けられるパラメータで到達の内訳を汚さない）。
+ *
+ * @param {string|URL|null} url
+ * @returns {string|null}
+ */
+export function readPlusSourceFromUrl(url) {
+  try {
+    const u = url instanceof URL ? url : new URL(String(url || ''), 'https://analytics.keiba.link');
+    return normalizeEntrySource(u.searchParams.get('from'));
+  } catch {
+    return null;
   }
 }
 

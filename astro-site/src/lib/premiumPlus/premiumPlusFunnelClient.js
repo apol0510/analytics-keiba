@@ -56,12 +56,15 @@ const ALLOWED = new Set([FUNNEL_EVENT.CTA_VIEW, FUNNEL_EVENT.CTA_CLICK, FUNNEL_E
  */
 export function normalizeQueueItem(raw) {
   if (typeof raw === 'string') {
-    return ALLOWED.has(raw) ? { event: raw, el: null } : null;
+    return ALLOWED.has(raw) ? { event: raw, el: null, source: null } : null;
   }
   if (!raw || typeof raw !== 'object') return null;
   const event = String(raw.event || '');
   if (!ALLOWED.has(event)) return null;
-  return { event, el: raw.el || null };
+  // 導線はそのまま運ぶだけ。**正しさの判定はサーバー**（allow-list）。
+  // ここで検証すると、クライアントを信用したことになる。
+  const source = typeof raw.source === 'string' ? raw.source : null;
+  return { event, el: raw.el || null, source };
 }
 
 /**
@@ -74,10 +77,10 @@ export function createFunnelClient({ post, observe } = {}) {
   /** このページ表示で送った種別（種別ごと 1 回だけ） */
   const sent = new Set();
 
-  function send(event) {
+  function send(event, source) {
     if (!ALLOWED.has(event) || sent.has(event)) return false;
     sent.add(event);
-    try { post(event); } catch { /* 計測の失敗で画面を壊さない */ }
+    try { post(event, source); } catch { /* 計測の失敗で画面を壊さない */ }
     return true;
   }
 
@@ -88,10 +91,10 @@ export function createFunnelClient({ post, observe } = {}) {
       if (!item) return false;
       if (item.el && typeof observe === 'function') {
         // まだ数えない。画面に入った時点で send する
-        observe(item.el, () => send(item.event));
+        observe(item.el, () => send(item.event, item.source));
         return true;
       }
-      return send(item.event);
+      return send(item.event, item.source);
     },
     /** 送信済みの種別（テスト・デバッグ用） */
     sentEvents() { return [...sent]; },
@@ -100,14 +103,15 @@ export function createFunnelClient({ post, observe } = {}) {
 
 /** 既定の送信（fetch）。遷移で中断されないよう keepalive を付ける */
 function browserPost(win) {
-  return (event) => {
+  return (event, source) => {
     try {
       win.fetch(FUNNEL_ENDPOINT, {
         method: 'POST',
         credentials: 'same-origin',
         keepalive: true,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event }),
+        // source は**そのまま送るだけ**。採否はサーバーの allow-list が決める
+        body: JSON.stringify(source ? { event, source } : { event }),
       }).catch(() => {});
     } catch { /* fetch が無い環境では黙って何もしない */ }
   };
