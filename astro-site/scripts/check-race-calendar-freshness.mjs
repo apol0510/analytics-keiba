@@ -9,6 +9,10 @@
  *   0 … 期限内 / 期限が近い（警告のみ）
  *   0 … 期限切れ・未記録も **0**（CI を落とさない。販売条件ではないため）
  * `--strict` を付けたときだけ期限切れで 1 を返す（任意運用）。
+ *
+ * `--json` … 判定結果だけを JSON で出す（**exit は常に 0**）。
+ *   リマインド workflow（race-calendar-reminder.yml）がこれを読んで
+ *   GitHub Issue を起票 / クローズする。人向けの行は出さない。
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -28,7 +32,23 @@ const jstToday = () => {
 let raw = null;
 try { raw = JSON.parse(readFileSync(FILE, 'utf8')); } catch { /* 無くても販売は止めない */ }
 const cal = shapeRaceCalendar(raw);
-const f = checkCalendarFreshness({ calendar: cal, nowDate: jstToday() });
+const today = jstToday();
+const f = checkCalendarFreshness({ calendar: cal, nowDate: today });
+
+if (process.argv.includes('--json')) {
+  // ⚠️ ここは機械が読む。**exit は常に 0**（販売条件ではないので落とさない）
+  process.stdout.write(`${JSON.stringify({
+    today,
+    checkedUntil: cal.checkedUntil,
+    noRaceDates: cal.size,
+    stale: f.stale,
+    expiringSoon: f.expiringSoon,
+    /** リマインドを出すべきか（期限切れ・未記録・期限間近） */
+    needsReminder: !!(f.stale || f.expiringSoon),
+    note: f.note || '',
+  })}\n`);
+  process.exit(0);
+}
 
 console.log(`開催の例外日: ${cal.size} 件 / 確認済み: ${cal.checkedUntil || '(未記録)'}`);
 if (f.stale) {
