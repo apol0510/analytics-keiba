@@ -26,7 +26,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../upsell/upsellTarget.js';
-import { PP_PHASE, teaserCopyForRoute, intakeCopy } from './premiumPlusRelease.js';
+import { PP_PHASE, PP_INTAKE, teaserCopyForRoute, intakeCopy } from './premiumPlusRelease.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { PREMIUM_PLUS_CANDIDATE_PLANS } from '../auth/index.js';
 
@@ -113,15 +113,23 @@ test('【重要】受付時間内は申込ボタンを操作できる', () => {
   assert.equal(up.plus.purchaseEnabled, true, '受付時間内なのに操作不可');
 });
 
-test('【重要】受付時間外でも CTA 自体は出る（操作だけ不可）', () => {
+test('【重要】16:30 を過ぎても CTA は消えず、翌日分として購入できる', () => {
+  // AT_CLOSED は 17:46 JST。
+  // ⚠️ 2026-08-14〜の仕様変更: 16:30 は「売らない」ではなく
+  //    **「翌日分へ切り替わる」**。旧仕様（purchaseEnabled=false）で固定すると、
+  //    翌日分販売そのものを止める方向に効くので戻さないこと。
+  //    「売らない」は `closed`（例外日が連続する異常時のみ）だけが表す。
   const up = view(SANRENPUKU_MEMBER, AT_CLOSED);
   assert.equal(up.plus.showProductPage, true, '時間外に商品ページごと消えている');
   assert.equal(up.plus.showPurchaseCta, true, '時間外に価格ごと消えている');
-  assert.equal(up.plus.purchaseEnabled, false);
+  assert.equal(up.plusRelease.intake, PP_INTAKE.NEXT_DAY_OPEN,
+    '16:30 以降が翌日分受付になっていない');
+  assert.equal(up.plus.purchaseEnabled, true, '翌日分の購入まで止めている');
   assert.equal(stageShowsLink(stageApi(SANRENPUKU_MEMBER, AT_CLOSED)), true,
     '時間外に予告枠の CTA まで消えている');
   const ic = intakeCopy(up.plusRelease.intake);
-  assert.match(ic.status, /受付.*終了/);
+  assert.match(ic.status, /翌日分/, '受付状態が翌日分と読めない');
+  assert.match(ic.note, /本日分の受付は終了/, '本日分が締まったことを伝えていない');
 });
 
 // ── 「今すぐ販売可」は既に冗長 ────────────────────────────────

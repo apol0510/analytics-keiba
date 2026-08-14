@@ -110,6 +110,20 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
     assert.doesNotMatch(src, /受付準備中です<|>受付準備中/);
   });
 
+  // 16:30 以降、ティザーが「本日（今日の日付）」のままだと購入ブロックの
+  // 「翌日分」と食い違い、どちらを買うのか分からなくなる。単一源 ppSale に寄せる。
+  test(`${name}: ティザーの見出し・日付・区分・ボタンは販売対象日（ppSale）から作る`, () => {
+    assert.match(src, /const ppTeaser = \(\(\) => \{/);
+    assert.match(src, /isToday: ppSale\.date === ppTodayStr/);
+    assert.match(src, /\{ppTeaserEyebrow\}/);
+    assert.match(src, /\{ppTeaserCta\}/);
+    assert.match(src, /\{ppTeaser\.y\}\/\{ppTeaser\.m\}\/\{ppTeaser\.d\}/);
+    assert.match(src, /\{ppTeaser\.circuitLabel\}/);
+    // 今日基準の値を直接描画に戻さない（16:30 以降にズレる）
+    assert.doesNotMatch(src, /\{ppToday\.y\}\/\{ppToday\.m\}\/\{ppToday\.d\}/);
+    assert.doesNotMatch(src, /\{ppToday\.isChuo \? '基本：中央' : '基本：南関'\}/);
+  });
+
   test(`${name}: 本文コピーと価格定数が変更されていない`, () => {
     for (const phrase of [
       'const PRICE = 68000;',
@@ -120,7 +134,8 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
       '🏦 銀行振込で購入する',
       '🔓 本日の1鞍を抽出する',
       '買い切り・追加課金なし',
-      '平日は南関、土日は中央（JRA）。',
+      // ⚠️ 「基本：」を外して言い切ると、その日の実際の開催場を断定したことになる
+      '基本：平日は南関、土日は中央（JRA）。',
       '掲載している画像は、実際に投票した投票内容照会のスクリーンショットです。',
     ]) {
       assert.ok(src.includes(phrase), `本文が失われている: ${phrase}`);
@@ -174,8 +189,14 @@ test('「残りわずか」を件数・在庫・販売上限と連動させな�
   assert.match(fn.slice(0, fn.indexOf('\n}')), /PP_INTAKE_SCHEDULE\.limitedFromMin/);
 });
 
-test('purchaseEnabled は CLOSED のときだけ false（override 経由でも同じ）', () => {
-  assert.match(stripComments(RELEASE_LIB), /purchaseEnabled:\s*isSale && intake !== PP_INTAKE\.CLOSED/);
+test('purchaseEnabled は CLOSED のときだけ false（翌日分は NEXT_DAY_OPEN が担う）', () => {
+  // 2026-08-13〜: 受付締切で「売らない」のではなく、対象日が翌日へ切り替わる。
+  // 買えない時間帯を作らないため、CLOSED を購入不可の条件に戻さないこと。
+  // CLOSED は「売らない」状態のまま。翌日分は専用状態 NEXT_DAY_OPEN が担う。
+  // CLOSED を購入可に読み替えると fail closed の判定が消えるので禁止。
+  const code = stripComments(RELEASE_LIB);
+  assert.match(code, /purchaseEnabled:\s*isSale && intake !== PP_INTAKE\.CLOSED/);
+  assert.match(code, /NEXT_DAY_OPEN/, '翌日分の専用状態が無い');
 });
 
 // ── 管理者プレビュー（read-only・会員セッションを作らない）────────

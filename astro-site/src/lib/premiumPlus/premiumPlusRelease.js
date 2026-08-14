@@ -157,8 +157,20 @@ export const PP_INTAKE = Object.freeze({
   LIMITED: 'limited',
   /** 15:00〜16:29 JST */
   CLOSING: 'closing',
-  /** 16:30〜23:59 JST（購入不可） */
+  /**
+   * 本日分の受付が終わり、**かつ翌日分も売れない**（購入不可）。
+   * 開催カレンダーが無い / 有効期間外 / 次の開催日が見つからない、が該当する。
+   * **「売らない」を表す状態はこれだけ**（fail closed の受け皿）。
+   */
   CLOSED: 'closed',
+  /**
+   * 16:30〜23:59 JST。**翌日分（または次の開催日分）の受付中**（購入可）。
+   *
+   * ⚠️ CLOSED を「購入可」に読み替える設計にしない。
+   *    「売らない」と「別の日を売る」は意味が違い、同じ値に押し込むと
+   *    fail closed の判定ができなくなる。**専用の状態として持つ**。
+   */
+  NEXT_DAY_OPEN: 'next_day_open',
 });
 
 /** 開催サーキット（曜日から導出。平日 = 南関 / 土日 = 中央） */
@@ -173,7 +185,7 @@ export const PP_CIRCUIT = Object.freeze({
  *   00:00〜12:29 → open    「本日分 受付中」            購入可
  *   12:30〜14:59 → limited 「本日分 残りわずか」        購入可
  *   15:00〜16:29 → closing 「本日分 まもなく受付終了」  購入可
- *   16:30〜23:59 → closed  「本日分の受付は終了しました」購入**不可**
+ *   16:30〜23:59 → closed  「翌日分 受付中」            購入可（**対象日が翌日**）
  *
  * ⚠️ 開催区分（中央 / 南関 / 昼開催 / ナイター）による分岐は**廃止**した。
  *    Premium Plus は曜日・会場に関わらずこの JST 共通時間だけを使う。
@@ -241,6 +253,13 @@ export const PP_RELEASE_COPY = Object.freeze({
       title: '本日のPremium Plus受付',
       status: '本日分 まもなく受付終了',
       note: '',
+    }),
+    // 売らない状態。翌日分も売れないとき（開催カレンダー未取込・非開催 等）だけ出る
+    // 16:30 以降・翌日分（次の開催日分）を受付中。**購入できる状態**
+    next_day_open: Object.freeze({
+      title: '翌日分のPremium Plus受付',
+      status: '翌日分 受付中',
+      note: '本日分の受付は終了しました。いまお申し込みいただくと、対象日分をお届けします。',
     }),
     closed: Object.freeze({
       title: '本日分の受付は終了しました',
@@ -527,6 +546,12 @@ export function resolvePremiumPlusRelease(input) {
     /** 管理者が Plus を売ると決めているか（ROUTE C の条件。UpsellTarget=plus / 今すぐ販売可）*/
     adminPlusTarget = false,
     /**
+     * 16:30 以降に「翌日分（次の開催日分）」を売れるか。
+     * **開催カレンダーで開催が確認できたときだけ true**（判定は premiumPlusSaleDate.js）。
+     * 未指定は false ＝ 売らない（fail closed）。
+     */
+    nextDaySellable = false,
+    /**
      * 管理者が **販売導線として Plus を明示指定**しているか（`UpsellTarget=plus` のみ）。
      * これは「Plus を売る」という管理者判断そのものなので、
      *   - `PremiumPlusEligibility` が review / 未設定でも先へ進める（二重操作をなくす）
@@ -612,7 +637,13 @@ export function resolvePremiumPlusRelease(input) {
 
   // STEP 6: 受付ステータス
   const isSale = phase === PP_PHASE.SALE;
-  const intake = isSale ? computeIntakeStatus({ nowMs }) : null;
+  // 時刻だけの受付状態。16:30 以降は closed。
+  const rawIntake = isSale ? computeIntakeStatus({ nowMs }) : null;
+  // 翌日分を売れると確認できたときだけ **専用状態** へ昇格させる。
+  // ⚠️ CLOSED を「購入可」に読み替えない（売らない状態を潰さないため）。
+  const intake = (rawIntake === PP_INTAKE.CLOSED && nextDaySellable === true)
+    ? PP_INTAKE.NEXT_DAY_OPEN
+    : rawIntake;
 
   return {
     allowed: true,
@@ -630,6 +661,10 @@ export function resolvePremiumPlusRelease(input) {
     showProductPage: phase >= PP_PHASE.PREVIEW,
     showPurchaseCta: isSale,
     // STEP 7
+    // 16:30 以降は「翌日分（または次の開催日分）」として購入できる。
+    // ただし**その日に開催があると確認できたときだけ**（fail closed）。
+    // 判定は resolvePremiumPlusRelease の呼び出し側が saleTarget を渡して行う。
+    // 売らない状態（CLOSED）だけが購入不可。NEXT_DAY_OPEN は購入可。
     purchaseEnabled: isSale && intake !== PP_INTAKE.CLOSED,
     intake,
     circuit: resolvedCircuit,
@@ -660,6 +695,7 @@ export function intakeCopy(intake) {
   if (intake === PP_INTAKE.OPEN) return PP_RELEASE_COPY.intake.open;
   if (intake === PP_INTAKE.LIMITED) return PP_RELEASE_COPY.intake.limited;
   if (intake === PP_INTAKE.CLOSING) return PP_RELEASE_COPY.intake.closing;
+  if (intake === PP_INTAKE.NEXT_DAY_OPEN) return PP_RELEASE_COPY.intake.next_day_open;
   if (intake === PP_INTAKE.CLOSED) return PP_RELEASE_COPY.intake.closed;
   return null;
 }

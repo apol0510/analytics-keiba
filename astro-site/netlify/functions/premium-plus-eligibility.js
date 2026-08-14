@@ -36,6 +36,9 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import { resolveSaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { shapeRaceCalendar, checkCalendarFreshness } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
+import ppRaceCalendar from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import {
   buildPreviewSnapshot,
   describePreviewVisibility,
@@ -70,12 +73,30 @@ import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpuku
 import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import {
+  buildPlusDeliveryFormula,
+  indexPlusDeliveries,
+  describePlusNotified,
+  summarizePlusNotified,
+} from '../../src/lib/premiumPlus/plusNotifiedStatus.js';
+import { chunkList, assertFetchComplete, TARGETED_MAX_PAGES } from '../../src/lib/marketing/marketingTargetedLoad.js';
+import {
+  resolveFunnelStage,
+  lastReactionAtMs,
+  summarizeFunnel,
+  summarizeFunnelBySource,
+  countUnknownSource,
+  hasSourceTotalMismatch,
+  SOURCE_TOTAL_NOTE,
+} from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
+import {
   buildLookupFormula,
   SEARCH_ERROR_TEXT,
   MAX_SEARCH_PAGES,
 } from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
+/** 配信履歴。**名指しでしか引かない**（14,000 行超あり全件走査は不可能）。 */
+const DELIVERIES_TABLE = process.env.AIRTABLE_DELIVERIES_TABLE || 'CampaignDeliveries';
 /** 一覧取得のページ上限（暴走防止）。1 ページ 100 件。 */
 const MAX_PAGES = 40;
 
@@ -223,13 +244,26 @@ function buildAdminRow(rec, now) {
 async function attachRealViews(rows) {
   const cmd = makeRedisCmd(process.env);
   const unavailable = (reason) => {
-    for (const r of rows) r.realView = describeFunnelRow(null, { available: false });
+    for (const r of rows) {
+      r.realView = describeFunnelRow(null, { available: false });
+      // 読めていないので段階は「未確認」。**「未表示」とは書かない**
+      r.funnelStage = resolveFunnelStage(r.realView).stage;
+      r.funnelStageLabel = resolveFunnelStage(r.realView).label;
+      r.lastReactionAtMs = null;
+    }
     return {
       measurement: {
         available: false,
         reason,
         startedAtJst: null,
         note: '実閲覧を読み取れませんでした。表示は全員「未確認」です（0 回という意味ではありません）',
+      },
+      funnel: {
+        ...summarizeFunnel(rows),
+        bySource: summarizeFunnelBySource(rows),
+        unknownSource: countUnknownSource(rows),
+        sourceTotalMismatch: hasSourceTotalMismatch(rows),
+        sourceNote: SOURCE_TOTAL_NOTE,
       },
     };
   };
@@ -248,6 +282,11 @@ async function attachRealViews(rows) {
       available: true,
       startedAtMs: out.startedAtMs,
     });
+    // 段階・最終反応時刻は**判定の単一源**に委ねる（画面で組み立て直さない）
+    const st = resolveFunnelStage(r.realView);
+    r.funnelStage = st.stage;
+    r.funnelStageLabel = st.label;
+    r.lastReactionAtMs = lastReactionAtMs(r.realView);
   }
   return {
     measurement: {
@@ -258,7 +297,105 @@ async function attachRealViews(rows) {
         ? `実閲覧は ${funnelJst(out.startedAtMs)} JST から記録しています。それ以前に見たかどうかは記録が存在せず確認できません`
         : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
     },
+    // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）。
+    // 導線別（ダッシュボード / 三連複ページ / 商品ページ内）も同じ数え方で併記する。
+    // 種類（流入 / 商品ページ内）は analytics 側が付ける。ここでは組み立て直さない。
+    funnel: {
+      ...summarizeFunnel(rows),
+      bySource: summarizeFunnelBySource(rows),
+      unknownSource: countUnknownSource(rows),
+      sourceTotalMismatch: hasSourceTotalMismatch(rows),
+      sourceNote: SOURCE_TOTAL_NOTE,
+    },
   };
+}
+
+/**
+ * 行に **案内済みかどうか**（CampaignDeliveries の実績）を足す。
+ *
+ * ⚠️ これは `upsellDisplay`（出す設定か）とも `realView`（本人が見たか）とも別の軸で、
+ *    **こちらから声をかけたか**を表す。3 つを同じ列にまとめない。
+ *
+ * 2026-08-13 実測: `premium-plus-offer` の配信は本番全体で 0 件。
+ * 「販売可・CTA 表示中」と出ている会員に、こちらからは一度も案内していなかった。
+ *
+ * 取得は **名指しのみ**（recordId + アドレス）。`CampaignDeliveries` は 14,000 行超で、
+ * 全件走査は Function の実行時間では原理的に終わらない（`check:no-unbounded-scan`）。
+ * 取り切れなかったら `assertFetchComplete` が投げ、**短い結果を「送っていない」と
+ * 誤読させない**（catch して全員「未確認」に倒す）。
+ *
+ * @returns {Promise<{notified: object}>} rows は破壊的に更新する
+ */
+async function attachPlusNotified({ KEY, BASE, rows }) {
+  const unavailable = (reason) => {
+    for (const r of rows) r.plusNotified = describePlusNotified({ entries: null, available: false });
+    const sum = summarizePlusNotified(rows);
+    return { notified: { ...sum, available: false, reason } };
+  };
+  if (!KEY || !BASE) return unavailable('airtable_unavailable');
+  if (rows.length === 0) return { notified: summarizePlusNotified(rows) };
+
+  const records = [];
+  try {
+    // recordId とアドレスを別チャンクで引く（1 本の formula を長くしすぎない）。
+    const idGroups = chunkList(rows.map((r) => r.recordId));
+    const mailGroups = chunkList(rows.map((r) => String(r.email || '').trim().toLowerCase()));
+    const queries = [
+      ...idGroups.map((g) => buildPlusDeliveryFormula({ recordIds: g })),
+      ...mailGroups.map((g) => buildPlusDeliveryFormula({ emails: g })),
+    ].filter(Boolean);
+
+    for (const formula of queries) {
+      let offset;
+      let pages = 0;
+      do {
+        const body = { filterByFormula: formula, pageSize: 100 };
+        if (offset) body.offset = offset;
+        const res = await fetch(
+          `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+          {
+            method: 'POST',
+            headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!res.ok) throw new Error(`${DELIVERIES_TABLE} fetch failed: HTTP ${res.status}`);
+        const data = await res.json();
+        records.push(...(data.records || []));
+        offset = data.offset;
+        pages += 1;
+        // 打ち切ったまま返さない。不完全な履歴は「未案内」の誤表示に直結する。
+        if (offset && pages >= TARGETED_MAX_PAGES) {
+          assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: TARGETED_MAX_PAGES });
+        }
+      } while (offset);
+    }
+  } catch (e) {
+    // 理由はログにだけ残す（アドレス・レコード内容は出さない）
+    console.error('❌ [premium-plus-eligibility] 配信履歴の取得に失敗:', e.message);
+    return unavailable('read_failed');
+  }
+
+  const { byRecordId, byEmail } = indexPlusDeliveries(records);
+  for (const r of rows) {
+    const email = String(r.email || '').trim().toLowerCase();
+    // recordId 側とアドレス側の**和集合**。片方にしか無い行を落とさない。
+    const merged = [...(byRecordId.get(r.recordId) || []), ...(byEmail.get(email) || [])];
+    // 同じ行が両方から入るので重複を落とす（件数を水増ししない）
+    const seen = new Set();
+    const entries = merged.filter((e) => {
+      const k = `${e.campaignType}|${e.status}|${e.atMs}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    r.plusNotified = describePlusNotified({
+      entries,
+      available: true,
+      upsellChannel: r.upsellChannel,
+    });
+  }
+  return { notified: summarizePlusNotified(rows) };
 }
 
 /**
@@ -275,9 +412,14 @@ async function attachRealViews(rows) {
  * 行の組み立ては一覧と同じ `buildAdminRow`（値がズレない）。実閲覧も併せて返す。
  */
 async function handleLookup({ KEY, BASE, now, req }) {
-  // 旧 UI 互換: email パラメータも受ける
-  const raw = String((req && (req.query ?? req.email)) || '');
-  const built = buildLookupFormula(raw);
+  // recordId 指定は「保存後にその 1 件を読み直す」用。
+  // ⚠️ アドレスで読み直すと **Email が空の会員を確認できない**（保存できたのに
+  //    「再読込に失敗」と出る）。確認は操作の一部なので、必ず引ける経路を用意する。
+  const byId = String((req && req.recordId) || '').trim();
+  const built = byId
+    ? { ok: true, exactEmail: false, formula: `RECORD_ID() = '${byId.replace(/'/g, "\\'")}'` }
+    : buildLookupFormula(String((req && (req.query ?? req.email)) || ''));
+  const raw = byId || String((req && (req.query ?? req.email)) || '');
   if (!built.ok) return json(400, { error: SEARCH_ERROR_TEXT[built.reason] || '検索語が不正です' });
 
   const recs = [];
@@ -329,14 +471,18 @@ async function handleLookup({ KEY, BASE, now, req }) {
       inCandidateSet: row.__listed === true,
     };
   });
-  const { measurement } = await attachRealViews(rows);
+  const { measurement, funnel } = await attachRealViews(rows);
+  const { notified } = await attachPlusNotified({ KEY, BASE, rows });
 
   return json(200, {
     found: true,
     rows,
+    // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
+    funnel,
     query: raw,
     exactEmail: built.exactEmail,
     measurement,
+    notified,
     sideEffects: 'none',
   });
 }
@@ -397,11 +543,23 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   rows.sort((a, b) => (order[a.eligibility] - order[b.eligibility]) || String(a.email).localeCompare(String(b.email)));
 
   // 実閲覧（実測）を足す。**表示判定とは別列**として返す
-  const { measurement } = await attachRealViews(rows);
+  const { measurement, funnel } = await attachRealViews(rows);
+  // 案内済み（こちらから送ったか）を足す。表示判定とも実閲覧とも別の軸。
+  const { notified } = await attachPlusNotified({ KEY, BASE, rows });
 
   return json(200, {
     rows,
+    // いま販売している対象日（16:30 以降は翌日分）と開催区分。
+    // 例外リストの確認期限切れは**警告するだけ**（販売は止めない）。
+    saleTarget: (() => {
+      const cal = shapeRaceCalendar(ppRaceCalendar);
+      const t = resolveSaleTarget(now, { calendar: cal });
+      const f = checkCalendarFreshness({ calendar: cal, nowDate: t.baseDate });
+      return { ...t, calendarStale: f.stale, calendarNote: f.stale || f.expiringSoon ? f.note : '' };
+    })(),
     measurement,
+    notified,
+    funnel,
     counts: {
       total: rows.length,
       review: rows.filter((r) => r.eligibility === PP_ELIGIBILITY.REVIEW).length,
@@ -457,6 +615,25 @@ async function handleUpdate({ KEY, BASE, now, req }) {
   if (!getRes.ok) return json(404, { error: 'Record not found' });
   const currentFields = (await getRes.json()).fields || {};
 
+  // 🛡️ 別の管理者の変更を黙って上書きしない。
+  //    画面が「見ていた時点の最終更新」を送ってくるので、いまの値と食い違えば止める。
+  //    未送信（古い画面・API 直叩き）のときは従来どおり通す（後方互換）。
+  if (req.expectedUpdatedAt !== undefined) {
+    const seen = String(req.expectedUpdatedAt ?? '').trim();
+    const nowValue = String(currentFields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] ?? '').trim();
+    if (seen !== nowValue) {
+      return json(409, {
+        error: 'この会員は別の操作で更新されています。再読込して最新の状態を確認してから操作してください。',
+        code: 'stale_record',
+        seenUpdatedAt: seen || null,
+        currentUpdatedAt: nowValue || null,
+        currentUpdatedBy: currentFields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
+        currentEligibility: currentFields[PP_ELIGIBILITY_FIELDS.STATUS] || null,
+        sideEffects: 'none',
+      });
+    }
+  }
+
   const overrideFieldEnabled = isReleaseOverrideEnabled(process.env);
   const plusAction = String(req.plusAction || '').trim().toLowerCase();
 
@@ -503,12 +680,18 @@ async function handleUpdate({ KEY, BASE, now, req }) {
     success: true,
     recordId,
     action: plusAction,
+    // 変更の**前後**を返す（画面が「何が変わったか」を履歴に書けるようにする）
+    previous: currentFields[PP_ELIGIBILITY_FIELDS.STATUS] || null,
+    previousLabel: PP_ELIGIBILITY_LABEL[currentFields[PP_ELIGIBILITY_FIELDS.STATUS]] || null,
     next: built.next,
     label: PP_ELIGIBILITY_LABEL[built.next],
     override: built.override,
     overrideChanged: built.overrideChanged,
     // true のときだけ段階公開 anchor が動く（= PHASE 1 から見え始める）
     eligibleAtUpdated: built.eligibleAtUpdated,
+    // 次の操作の版として画面が持ち直す（毎回フル再読込しなくても競合検知が効く）
+    updatedAt: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] || null,
+    updatedBy: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
   });
 }
 
@@ -579,7 +762,9 @@ async function handleSetUpsell({ KEY, BASE, now, req }) {
     return json(502, { error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300) });
   }
 
-  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', { recordId, before, next });
+  console.log('✅ [premium-plus-eligibility] 販売導線を更新:', {
+    recordId, before, next, actor: String(req.actor || '').slice(0, 32) || '(未入力)',
+  });
   return json(200, {
     success: true,
     recordId,
