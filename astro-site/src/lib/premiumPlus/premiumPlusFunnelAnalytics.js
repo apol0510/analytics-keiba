@@ -28,7 +28,11 @@
  * アドレス・氏名は受け取らないし返さない（Redis へも増やさない）。
  */
 
-import { FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL } from './premiumPlusFunnelStore.js';
+import {
+  FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL,
+  FUNNEL_SOURCE_KIND, FUNNEL_SOURCE_KIND_OF, FUNNEL_SOURCE_KIND_LABEL,
+  isOnPageSource,
+} from './premiumPlusFunnelStore.js';
 
 /** 実閲覧の段階。**到達した最も先の段階**で分類する。 */
 export const FUNNEL_STAGE = Object.freeze({
@@ -170,14 +174,30 @@ export function summarizeFunnel(rows) {
  * @param {Array<object>} rows 破壊しない
  */
 /**
+ * 商品ページ内の導線に「到達」を出さない理由。画面がそのまま出せる文言。
+ *
+ * ⚠️ ここを `0` にしてはいけない。**0 名ではなく、指標が存在しない。**
+ */
+export const ON_PAGE_REACH_NOTE =
+  '商品ページ内の導線です。商品ページ到達は**この導線より前**に起きているため、'
+  + '「到達」と「クリック→到達」は出しません（0 名という意味ではありません）。';
+
+/**
  * 導線別の転換。**全体と同じ数え方**（人数・累積）で、導線ごとに出す。
  *
  * ⚠️ 「その導線で数えられた回数が 1 以上の人」を 1 人と数える。
  *    導線が分からない記録（導線別の計測を始める前の分）は
  *    **どの導線にも入れない**。合計にだけ残り、`unknown` で見える。
  *
+ * ⚠️ **商品ページ内の導線（`on_page`）は到達を出さない。**
+ *    到達はその導線より上流で起きているので、`reached` を数えると
+ *    必ず 0 になり「誰も到達しなかった」と読めてしまう。
+ *    `reached` / `clickToReach` は **null（未確定）**にして、理由を添える。
+ *
  * @param {Array<{realView?: object}>} rows
- * @returns {Array<{source:string, label:string, viewed:number, clicked:number, reached:number,
+ * @returns {Array<{source:string, label:string, kind:string, kindLabel:string,
+ *                  viewed:number, clicked:number, reached:number|null,
+ *                  reachNote:string|null,
  *                  rates:{viewToClick:number|null, clickToReach:number|null}}>}
  */
 export function summarizeFunnelBySource(rows) {
@@ -187,24 +207,33 @@ export function summarizeFunnelBySource(rows) {
     return cell.sources.some((e) => e && e.source === src && Number.isFinite(e.count) && e.count > 0);
   };
   return FUNNEL_SOURCE_ORDER.map((src) => {
+    const onPage = isOnPageSource(src);
     const c = { viewed: 0, clicked: 0, reached: 0 };
     for (const r of list) {
       const v = r && r.realView;
       if (!v || v.available === false) continue;
-      const reached = hit(v.page, src);
+      // 商品ページ内の導線に到達は結び付かない（上流で起きている）
+      const reached = onPage ? false : hit(v.page, src);
       const clicked = hit(v.click, src);
       const viewed = hit(v.cta, src);
       if (reached) c.reached += 1;
       if (clicked || reached) c.clicked += 1;
       if (viewed || clicked || reached) c.viewed += 1;
     }
+    const kind = FUNNEL_SOURCE_KIND_OF[src] || FUNNEL_SOURCE_KIND.ENTRY;
     return {
       source: src,
       label: FUNNEL_SOURCE_LABEL[src] || src,
-      ...c,
+      kind,
+      kindLabel: FUNNEL_SOURCE_KIND_LABEL[kind] || kind,
+      viewed: c.viewed,
+      clicked: c.clicked,
+      // **0 ではなく null**（指標が存在しない）
+      reached: onPage ? null : c.reached,
+      reachNote: onPage ? ON_PAGE_REACH_NOTE : null,
       rates: {
         viewToClick: rate(c.clicked, c.viewed),
-        clickToReach: rate(c.reached, c.clicked),
+        clickToReach: onPage ? null : rate(c.reached, c.clicked),
       },
     };
   });

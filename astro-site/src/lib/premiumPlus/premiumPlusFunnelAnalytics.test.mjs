@@ -233,27 +233,63 @@ test('【重要】戻り値に recordId 以外の識別子を載せない', () =
 // ══════════════════════════════════════════════════════════════
 import {
   FUNNEL_SOURCE, FUNNEL_SOURCE_ORDER, FUNNEL_SOURCE_LABEL,
-  normalizeFunnelSource, shapeFunnelRow, flatten, createFunnelStore, DEDUPE_MS,
+  FUNNEL_SOURCE_KIND, FUNNEL_SOURCE_KIND_OF, FUNNEL_SOURCE_KIND_LABEL,
+  ENTRY_SOURCE_ORDER, isOnPageSource,
+  normalizeFunnelSource, normalizeEntrySource,
+  shapeFunnelRow, flatten, createFunnelStore, DEDUPE_MS,
 } from './premiumPlusFunnelStore.js';
+import { readPlusSourceFromUrl } from './premiumPlusFunnelServer.js';
 import {
   summarizeFunnelBySource, countUnknownSource, hasSourceTotalMismatch, SOURCE_TOTAL_NOTE,
+  ON_PAGE_REACH_NOTE,
 } from './premiumPlusFunnelAnalytics.js';
 
 test('【重要】allow-list 外の source は採らない（任意値を保存しない）', () => {
   assert.equal(normalizeFunnelSource('dashboard'), 'dashboard');
   assert.equal(normalizeFunnelSource('sanrenpuku'), 'sanrenpuku');
+  assert.equal(normalizeFunnelSource('plus_page'), 'plus_page');
   assert.equal(normalizeFunnelSource(' DASHBOARD '), 'dashboard', '大小・空白は吸収する');
-  for (const bad of ['', 'evil', 'admin', '../x', null, undefined, 42, {}, ['dashboard']]) {
+  assert.equal(normalizeFunnelSource(' PLUS_PAGE '), 'plus_page', '大小・空白は吸収する');
+  for (const bad of ['', 'evil', 'admin', '../x', 'plus-page', null, undefined, 42, {}, ['dashboard']]) {
     assert.equal(normalizeFunnelSource(bad), null, `採ってはいけない値: ${JSON.stringify(bad)}`);
   }
 });
 
-test('allow-list は 2 導線（画面もこの並びを使う）', () => {
-  assert.deepEqual([...FUNNEL_SOURCE_ORDER], [FUNNEL_SOURCE.DASHBOARD, FUNNEL_SOURCE.SANRENPUKU]);
+test('allow-list は 3 導線（画面もこの並びを使う）', () => {
+  assert.deepEqual([...FUNNEL_SOURCE_ORDER],
+    [FUNNEL_SOURCE.DASHBOARD, FUNNEL_SOURCE.SANRENPUKU, FUNNEL_SOURCE.PLUS_PAGE]);
   assert.equal(FUNNEL_SOURCE_LABEL.dashboard, 'ダッシュボード');
   assert.equal(FUNNEL_SOURCE_LABEL.sanrenpuku, '三連複ページ');
+  assert.equal(FUNNEL_SOURCE_LABEL.plus_page, 'Premium Plus 商品ページ内');
   assert.match(FUNNEL_SOURCE_LABEL.legacy, /クリック元不明/);
   assert.match(FUNNEL_SOURCE_LABEL.noSource, /クリック元なし/);
+  // 3 導線すべてにラベルがある（画面が source 値をそのまま出さない）
+  for (const s of FUNNEL_SOURCE_ORDER) {
+    assert.ok(FUNNEL_SOURCE_LABEL[s], `ラベルが無い: ${s}`);
+    assert.ok(FUNNEL_SOURCE_KIND_OF[s], `種類が無い: ${s}`);
+  }
+});
+
+test('【重要】導線の種類を分ける（流入 / 商品ページ内）', () => {
+  assert.equal(FUNNEL_SOURCE_KIND_OF.dashboard, FUNNEL_SOURCE_KIND.ENTRY);
+  assert.equal(FUNNEL_SOURCE_KIND_OF.sanrenpuku, FUNNEL_SOURCE_KIND.ENTRY);
+  assert.equal(FUNNEL_SOURCE_KIND_OF.plus_page, FUNNEL_SOURCE_KIND.ON_PAGE);
+  assert.equal(isOnPageSource('plus_page'), true);
+  assert.equal(isOnPageSource('dashboard'), false);
+  assert.equal(isOnPageSource('evil'), false);
+  assert.deepEqual([...ENTRY_SOURCE_ORDER], ['dashboard', 'sanrenpuku'], '流入導線だけを取り出せていない');
+  assert.ok(FUNNEL_SOURCE_KIND_LABEL.entry && FUNNEL_SOURCE_KIND_LABEL.on_page);
+});
+
+test('【重要】?from= は流入導線だけ受ける（plus_page を名乗らせない）', () => {
+  assert.equal(normalizeEntrySource('dashboard'), 'dashboard');
+  assert.equal(normalizeEntrySource('sanrenpuku'), 'sanrenpuku');
+  assert.equal(normalizeEntrySource('plus_page'), null, '商品ページ内を流入として採っている');
+  assert.equal(readPlusSourceFromUrl('https://analytics.keiba.link/premium-plus/?from=dashboard'), 'dashboard');
+  assert.equal(readPlusSourceFromUrl('https://analytics.keiba.link/premium-plus/?from=plus_page'), null,
+    'URL から plus_page を名乗れてしまう（到達の内訳が汚れる）');
+  assert.equal(readPlusSourceFromUrl('https://analytics.keiba.link/premium-plus/?from=evil'), null);
+  assert.equal(readPlusSourceFromUrl('https://analytics.keiba.link/premium-plus/'), null);
 });
 
 test('【重要】既存の source なし記録は source 不明のまま（dashboard へ推測分類しない）', () => {
@@ -362,6 +398,49 @@ test('導線別の転換を人数で数える', () => {
   assert.deepEqual([srp.viewed, srp.clicked, srp.reached], [1, 0, 0]);
   assert.equal(dash.rates.viewToClick, 100);
   assert.equal(srp.rates.clickToReach, null, '分母 0 で 0% と書いている');
+});
+
+test('【重要】商品ページ内の導線は到達を出さない（0 名と書かない）', () => {
+  // 商品ページ内で「見た → 押した」。到達はこの導線より前に起きている
+  const rows = [
+    { recordId: 'r1', realView: withSrc({
+      cta: mCell(1, { plus_page: { firstAtMs: T(1), lastAtMs: T(1), count: 1 } }),
+      click: mCell(1, { plus_page: { firstAtMs: T(2), lastAtMs: T(2), count: 1 } }),
+      // 到達は流入導線（dashboard）側に記録されている
+      page: mCell(1, { dashboard: { firstAtMs: T(1), lastAtMs: T(1), count: 1 } }) }) },
+  ];
+  const by = summarizeFunnelBySource(rows);
+  const pp = by.find((x) => x.source === 'plus_page');
+  assert.equal(pp.kind, FUNNEL_SOURCE_KIND.ON_PAGE);
+  assert.equal(pp.kindLabel, FUNNEL_SOURCE_KIND_LABEL.on_page);
+  assert.deepEqual([pp.viewed, pp.clicked], [1, 1], '商品ページ内の表示・クリックを数えていない');
+  assert.equal(pp.reached, null, '到達を 0 と書いている（指標が存在しないので null）');
+  assert.equal(pp.rates.clickToReach, null, 'クリック→到達を 0% と書いている');
+  assert.equal(pp.rates.viewToClick, 100, '表示→クリックは商品ページ内でも意味がある');
+  assert.ok(pp.reachNote && /0 名という意味ではありません/.test(pp.reachNote), '理由を返していない');
+  assert.equal(ON_PAGE_REACH_NOTE, pp.reachNote, '文言が単一源になっていない');
+  // 流入導線は従来どおり到達を数える（後方互換）
+  const dash = by.find((x) => x.source === 'dashboard');
+  assert.equal(dash.kind, FUNNEL_SOURCE_KIND.ENTRY);
+  assert.equal(dash.reached, 1);
+  assert.equal(typeof dash.reachNote, 'object', 'entry に理由文言は要らない（null）');
+});
+
+test('【重要】plus_page を足しても既存データの集計が変わらない（後方互換）', () => {
+  // 導線別計測より前の記録（sv も bySource も無い）
+  const legacyRow = { recordId: 'r1', realView: withSrc({ cta: mCell(3, {}) }) };
+  const by = summarizeFunnelBySource([legacyRow]);
+  assert.equal(by.length, 3, '導線が 3 行にならない');
+  for (const s of by) {
+    assert.equal(s.viewed, 0, `${s.source} に過去データを混ぜている`);
+    assert.equal(s.clicked, 0);
+  }
+  // 過去データに plus_page のバケツを勝手に作らない（未計測は 0 回ではない）
+  const cell = describeFunnelCell(shapeFunnelRow(flatten({
+    cta: { firstAt: T(1), lastAt: T(1), count: 1 },
+  })).cta, { available: true });
+  assert.deepEqual(cell.sources, [], '過去データに導線の内訳を作っている');
+  assert.equal(cell.sources.some((x) => x.source === 'plus_page'), false);
 });
 
 test('【重要】導線不明の記録はどの導線にも入れない', () => {
@@ -533,6 +612,48 @@ test('【重要】Daniel 相当 fixture で 2 導線が独立して計測され�
   assert.deepEqual([dash.viewed, dash.clicked, dash.reached], [1, 1, 1]);
   assert.deepEqual([srp.viewed, srp.clicked, srp.reached], [1, 1, 0], '三連複導線が独立して数えられていない');
   assert.equal(hasSourceTotalMismatch([{ recordId: ID, realView: view }]), true);
+});
+
+test('【重要】3 サーフェスが 1 人の中で独立して判別できる（合成 fixture）', async () => {
+  // ⚠️ これは**合成データ**。実在の会員の本番記録ではない。
+  // 三連複ページ → ダッシュボード → 商品ページ到達 → 商品ページ内の購入ボタン、の順。
+  const { store, read } = memStore();
+  const t0 = Date.parse('2026-08-14T05:00:00Z');
+  const rec = (event, at, source) => store.record({
+    recordId: ID, event, nowMs: at, userAgent: UA, authenticated: true, source,
+  });
+  await rec('cta_view', t0, 'sanrenpuku');
+  await rec('cta_click', t0 + 60000, 'sanrenpuku');
+  await rec('cta_view', t0 + 5 * 60000, 'dashboard');
+  await rec('cta_click', t0 + 6 * 60000, 'dashboard');
+  await rec('page_view', t0 + 7 * 60000, 'dashboard');
+  // 商品ページに着いてから、ページ内の購入ボタンを見て押した
+  await rec('cta_view', t0 + 8 * 60000, 'plus_page');
+  await rec('cta_click', t0 + 9 * 60000, 'plus_page');
+
+  const row = shapeFunnelRow(flatten({
+    cta: read('ak:pp:funnel:v1:cta', ID),
+    click: read(CLICK_KEY, ID),
+    page: read('ak:pp:funnel:v1:page', ID),
+  }));
+  const view = {
+    available: true,
+    cta: describeFunnelCell(row.cta, { available: true }),
+    click: describeFunnelCell(row.click, { available: true }),
+    page: describeFunnelCell(row.page, { available: true }),
+  };
+  // 3 サーフェスが混ざらずに 1 回ずつ立っている
+  assert.deepEqual(view.click.sources.map((s) => [s.source, s.count]).sort(),
+    [['dashboard', 1], ['plus_page', 1], ['sanrenpuku', 1]],
+    'クリック元を 3 サーフェスで判別できていない');
+  assert.deepEqual(view.page.sources.map((s) => [s.source, s.count]), [['dashboard', 1]],
+    '到達に商品ページ内の導線が混ざっている');
+
+  const by = summarizeFunnelBySource([{ recordId: ID, realView: view }]);
+  const pp = by.find((x) => x.source === 'plus_page');
+  assert.deepEqual([pp.viewed, pp.clicked], [1, 1]);
+  assert.equal(pp.reached, null, '商品ページ内に到達を作っている');
+  assert.equal(by.find((x) => x.source === 'dashboard').reached, 1);
 });
 
 test('画面へ出す注記が「一致しない場合がある」と述べている', () => {

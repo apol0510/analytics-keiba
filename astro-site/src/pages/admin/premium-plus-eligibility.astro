@@ -1288,6 +1288,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .fn-src-name { font-weight: 700; color: #93a4bd; min-width: 7rem; }
   .ppe .fn-src-seg { color: #e6edf7; }
   .ppe .fn-src-rate { color: #86efac; }
+  /* 導線の種類。流入（商品ページへ送る）と 商品ページ内 を一目で分ける */
+  .ppe .fn-src-kind {
+    font-size: .58rem; font-weight: 800; letter-spacing: .04em; padding: .1em .45em;
+    border-radius: 999px; color: #93c5fd; border: 1px solid rgba(147,197,253,.35); background: rgba(147,197,253,.08);
+  }
+  .ppe .fn-src-kind-onpage { color: #f0abfc; border-color: rgba(240,171,252,.35); background: rgba(240,171,252,.08); }
+  .ppe .fn-src-row-onpage { border-top-style: dashed; }
+  /* 「到達を出さない理由」。0 名と誤読させないための説明はその場に置く */
+  .ppe .fn-src-why { flex-basis: 100%; font-size: .62rem; color: #7f90ab; line-height: 1.7; }
   .ppe .fn-src-note { flex-basis: 100%; font-size: .64rem; color: #7f90ab; line-height: 1.7; padding-top: .3rem; }
   .ppe .fn-src-note-on { color: #fcd34d; }
   /* 段階バッジ。未確認は控えめ・進んだ段階ほど強く */
@@ -2773,19 +2782,40 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       unk.title = funnel.note || '';
       bar.appendChild(unk);
 
-      // ── 導線別 ────────────────────────────────────────────
-      // 全体と同じ数え方（人数・累積）で、ダッシュボード / 三連複ページを併記する。
+      // ── 導線別（クリック元）────────────────────────────────
+      // 全体と同じ数え方（人数・累積）で、導線ごとに併記する。
+      // ⚠️ 導線には性質の違う 2 種類がある。**同じ行として並べない**:
+      //    「商品ページへの流入」（ダッシュボード / 三連複ページ）は 表示→クリック→到達 が繋がる。
+      //    「商品ページ内」（購入ボタン）は到達が上流なので **到達を出さない**（0 名ではない）。
       for (const s of (funnel.bySource || [])) {
+        const onPage = s.kind === 'on_page';
         const row = document.createElement('span');
-        row.className = 'fn-src-row';
+        row.className = 'fn-src-row' + (onPage ? ' fn-src-row-onpage' : '');
         const nm = document.createElement('span');
         nm.className = 'fn-src-name';
         nm.textContent = s.label;
+        nm.title = s.kindLabel ? `${s.kindLabel}の導線です` : '';
         row.appendChild(nm);
+        // どちらの種類かをその場で分かるようにする（ラベルの読み分けに頼らせない）
+        if (s.kindLabel) {
+          const kd = document.createElement('span');
+          kd.className = 'fn-src-kind' + (onPage ? ' fn-src-kind-onpage' : '');
+          kd.textContent = s.kindLabel;
+          row.appendChild(kd);
+        }
         const seg = (t, n) => { const x = document.createElement('span'); x.className = 'fn-src-seg'; x.textContent = `${t} ${n}`; return x; };
         row.appendChild(seg('表示', s.viewed));
         row.appendChild(seg('クリック', s.clicked));
-        row.appendChild(seg('到達', s.reached));
+        if (s.reached === null) {
+          // **0 と書かない。** 指標そのものが存在しない
+          const x = document.createElement('span');
+          x.className = 'fn-src-seg fn-rate-unknown';
+          x.textContent = '到達 —';
+          x.title = (s.reachNote || '').replace(/\*\*/g, '');
+          row.appendChild(x);
+        } else {
+          row.appendChild(seg('到達', s.reached));
+        }
         const rr = document.createElement('span');
         rr.className = 'fn-src-rate' + (s.rates?.viewToClick === null ? ' fn-rate-unknown' : '');
         rr.textContent = s.rates?.viewToClick === null
@@ -2793,6 +2823,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           : `表示→クリック ${s.rates.viewToClick}%`;
         rr.title = s.rates?.viewToClick === null ? '分母が確定していないため転換率を出しません（0% ではありません）' : '';
         row.appendChild(rr);
+        // 商品ページ内は「クリック→到達」を出さない理由をその場に置く
+        if (onPage && s.reachNote) {
+          const why = document.createElement('span');
+          why.className = 'fn-src-why';
+          why.textContent = s.reachNote.replace(/\*\*/g, '');
+          row.appendChild(why);
+        }
         bar.appendChild(row);
       }
       // 不明は 2 種類。**別々に**出す（片方へ寄せない）

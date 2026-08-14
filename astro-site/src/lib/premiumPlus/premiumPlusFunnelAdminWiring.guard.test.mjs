@@ -21,6 +21,7 @@ const FN = read('../../../netlify/functions/premium-plus-eligibility.js');
 const STORE = read('./premiumPlusFunnelStore.js');
 const SERVER = read('./premiumPlusFunnelServer.js');
 const API = read('../../pages/api/pp-funnel.json.js');
+const ANALYTICS = read('./premiumPlusFunnelAnalytics.js');
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
 const PAGEC = strip(PAGE);
 const FNC = strip(FN);
@@ -199,12 +200,56 @@ test('【重要】dashboard の「会員限定のご案内を見る」は dashbo
   assert.match(DASH, /from=dashboard/);
 });
 
+test('【重要】商品ページ内の購入導線は plus_page を送る（3 サーフェス目）', () => {
+  for (const [name, src] of [['premium-plus', PP], ['premium-plus-v2', PPV2]]) {
+    // 表示は「画面に入ったとき」だけ（DOM にあるだけでは数えない）
+    assert.match(src, /id="pp-offer"/, `${name} に観測対象の id が無い`);
+    assert.match(src, /event: 'cta_view', el: offer, source: 'plus_page'/, `${name} が表示を送っていない`);
+    assert.match(src, /event: 'cta_click', source: 'plus_page'/, `${name} がクリックを送っていない`);
+    // 価格ブロックの購入ボタンと 1 鞍の抽出ボタン、両方を拾う
+    assert.match(src, /\.cta-button, \.today \.extract, \[onclick\*="openBankModal"\]/,
+      `${name} が購入ボタンを拾えていない`);
+    // ⚠️ モバイル固定 CTA（`.sticky-cta` の中・class 無し）を落とさないこと。
+    //    class の列挙だけだと漏れる。**モバイルで最も押される導線**。
+    assert.match(src, /sticky-cta/, `${name} にモバイル固定 CTA が無い`);
+    // 送信の判断は 1 か所（各ページに fetch を書き写さない）
+    assert.match(src, /installPlusFunnel\(window\)/, `${name} が計測クライアントを入れていない`);
+    assert.ok(!/fetch\(\s*['"]\/api\/pp-funnel/.test(src), `${name} が独自に fetch している`);
+  }
+});
+
+test('【重要】商品ページ内の導線を「流入」として URL から名乗らせない', () => {
+  // ?from= は entry だけ。plus_page を URL で名乗れると到達の内訳が汚れる
+  assert.match(SERVER, /normalizeEntrySource\(u\.searchParams\.get\('from'\)\)/);
+  assert.ok(!/normalizeFunnelSource\(u\.searchParams/.test(SERVER),
+    '?from= が全 allow-list を受けている（plus_page を名乗れてしまう）');
+  // 商品ページのリンクに from=plus_page を付けていないこと
+  for (const [name, src] of [['premium-plus', PP], ['premium-plus-v2', PPV2], ['dashboard', DASH], ['teaser', TEASER]]) {
+    assert.ok(!/from=plus_page/.test(src), `${name} が from=plus_page を付けている`);
+  }
+});
+
+test('【重要】商品ページ内の導線に「到達」を作らない（0 名と書かない）', () => {
+  // 判定は analytics（純粋）に集約し、画面で組み立て直さない
+  assert.match(ANALYTICS, /ON_PAGE_REACH_NOTE/);
+  assert.match(ANALYTICS, /reached: onPage \? null : c\.reached/);
+  assert.match(ANALYTICS, /clickToReach: onPage \? null : rate\(/);
+  // 画面は null を「—」で出し、0 と書かない
+  assert.match(PAGEC, /s\.reached === null/);
+  assert.match(PAGEC, /到達 —/);
+  assert.ok(!/到達 \$\{s\.reached \?\? 0\}|s\.reached \|\| 0/.test(PAGEC), '画面が到達を 0 へ潰している');
+  // 導線の種類が画面に出る（運用者が流入と商品ページ内を読み分けられる）
+  assert.match(PAGEC, /s\.kindLabel/);
+  assert.match(PAGEC, /fn-src-kind/);
+});
+
 test('【重要】商品ページ到達も導線を allow-list 経由で記録する', () => {
   for (const [name, src] of [['premium-plus-v2', PPV2], ['premium-plus', PP]]) {
     assert.match(src, /readPlusSourceFromUrl\(Astro\.url\)/, `${name} が導線を読んでいない`);
   }
   assert.match(SERVER, /export function readPlusSourceFromUrl/);
-  assert.match(SERVER, /normalizeFunnelSource\(u\.searchParams\.get\('from'\)\)/);
+  // ⚠️ URL から名乗れるのは**流入導線だけ**（商品ページ内の導線は経路ではない）
+  assert.match(SERVER, /normalizeEntrySource\(u\.searchParams\.get\('from'\)\)/);
 });
 
 test('【重要】重複除外は「種別 × 導線」単位（全導線共通に戻さない）', () => {

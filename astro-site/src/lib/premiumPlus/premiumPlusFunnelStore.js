@@ -64,32 +64,78 @@ const KEY_OF = Object.freeze({
 /**
  * ── CTA の導線（クリック元）──────────────────────────────────
  *
- * 同じ Premium Plus の CTA でも、どこから来たのかで意味が違う:
+ * 同じ Premium Plus の CTA でも、どこで押されたかで意味が違う:
  *   `dashboard`   … ダッシュボードの「会員限定のご案内を見る」
  *   `sanrenpuku`  … 三連複会員ページの Premium Plus 案内枠
+ *   `plus_page`   … Premium Plus 商品ページ内の購入ボタン
  *
  * ⚠️ **固定 allow-list。クライアントが送ってきた任意の値は保存しない。**
  *    ここに無い値は「導線の指定なし」として扱い、**合計にだけ**数える
- *    （推測で dashboard / sanrenpuku へ振り分けない）。
+ *    （推測でどれかへ振り分けない）。
  */
 export const FUNNEL_SOURCE = Object.freeze({
   DASHBOARD: 'dashboard',
   SANRENPUKU: 'sanrenpuku',
+  PLUS_PAGE: 'plus_page',
 });
 
 /** 集計・表示で使う導線の並び（画面がベタ書きしないための単一源） */
-export const FUNNEL_SOURCE_ORDER = Object.freeze([FUNNEL_SOURCE.DASHBOARD, FUNNEL_SOURCE.SANRENPUKU]);
+export const FUNNEL_SOURCE_ORDER = Object.freeze([
+  FUNNEL_SOURCE.DASHBOARD,
+  FUNNEL_SOURCE.SANRENPUKU,
+  FUNNEL_SOURCE.PLUS_PAGE,
+]);
 
 export const FUNNEL_SOURCE_LABEL = Object.freeze({
   dashboard: 'ダッシュボード',
   sanrenpuku: '三連複ページ',
+  plus_page: 'Premium Plus 商品ページ内',
   /** 導線別の計測を始める前に記録された分。**推測で振り分けない** */
   legacy: 'クリック元不明（計測前）',
   /** 計測開始後に source なしで届いた分。legacy と混ぜない */
   noSource: 'クリック元なし',
 });
 
+/**
+ * ── ⚠️ 導線には**性質の違う 2 種類**がある ──────────────────────────
+ *
+ * - `entry`   … 商品ページ**へ送る**導線（ダッシュボード / 三連複ページ）。
+ *               表示 → クリック → 商品ページ到達 が一本の流れになる。
+ * - `on_page` … 商品ページ**の中**にある導線（購入ボタン）。
+ *               到達は**この導線より上流**なので「クリック → 到達」は成立しない。
+ *
+ * これを区別せずに同じ表で並べると、商品ページ内の導線が
+ * **「到達 0 名 / クリック→到達 0%」**に見える。実際は 0 ではなく
+ * **その指標が存在しない**（`null` = 未確定）。ここを混ぜてはいけない。
+ */
+export const FUNNEL_SOURCE_KIND = Object.freeze({
+  ENTRY: 'entry',
+  ON_PAGE: 'on_page',
+});
+
+export const FUNNEL_SOURCE_KIND_OF = Object.freeze({
+  dashboard: FUNNEL_SOURCE_KIND.ENTRY,
+  sanrenpuku: FUNNEL_SOURCE_KIND.ENTRY,
+  plus_page: FUNNEL_SOURCE_KIND.ON_PAGE,
+});
+
+export const FUNNEL_SOURCE_KIND_LABEL = Object.freeze({
+  entry: '商品ページへの流入',
+  on_page: '商品ページ内',
+});
+
+/** 商品ページへ**送る**導線だけ（`?from=` に載ってよいのはこれだけ） */
+export const ENTRY_SOURCE_ORDER = Object.freeze(
+  FUNNEL_SOURCE_ORDER.filter((s) => FUNNEL_SOURCE_KIND_OF[s] === FUNNEL_SOURCE_KIND.ENTRY),
+);
+
+/** その導線が商品ページ内のものか */
+export function isOnPageSource(source) {
+  return FUNNEL_SOURCE_KIND_OF[source] === FUNNEL_SOURCE_KIND.ON_PAGE;
+}
+
 const SOURCE_SET = new Set(FUNNEL_SOURCE_ORDER);
+const ENTRY_SOURCE_SET = new Set(ENTRY_SOURCE_ORDER);
 
 /**
  * 導線別集計のスキーマ版。**この版で書かれた記録だけが内訳を持つ。**
@@ -127,6 +173,21 @@ const LEGACY_NOTE = '導線別計測より前の記録';
 export function normalizeFunnelSource(raw) {
   const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   return SOURCE_SET.has(s) ? s : null;
+}
+
+/**
+ * URL の `?from=` 用。**流入導線（entry）だけ**を受け付ける。
+ *
+ * ⚠️ `?from=plus_page` を通してはいけない。商品ページ内の導線は
+ *    「商品ページへ来た経路」ではないので、URL から名乗らせると
+ *    到達の内訳が汚れる（誰でも付けられるパラメータでもある）。
+ *
+ * @param {unknown} raw
+ * @returns {string|null}
+ */
+export function normalizeEntrySource(raw) {
+  const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return ENTRY_SOURCE_SET.has(s) ? s : null;
 }
 
 /**

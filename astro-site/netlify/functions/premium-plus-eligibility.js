@@ -289,7 +289,8 @@ async function attachRealViews(rows) {
         : 'まだ実閲覧の記録がありません。過去に見たかどうかは記録が存在せず確認できません',
     },
     // 表示 → クリック → 到達の人数と転換率（分母が確定しなければ率は null）。
-    // 導線別（ダッシュボード / 三連複ページ）も同じ数え方で併記する。
+    // 導線別（ダッシュボード / 三連複ページ / 商品ページ内）も同じ数え方で併記する。
+    // 種類（流入 / 商品ページ内）は analytics 側が付ける。ここでは組み立て直さない。
     funnel: {
       ...summarizeFunnel(rows),
       bySource: summarizeFunnelBySource(rows),
