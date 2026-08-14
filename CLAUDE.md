@@ -146,6 +146,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | 領域 | 正本 |
 |---|---|
 | ログイン（マジックリンク） | [`AUTH_LOGIN.md`](./astro-site/docs/AUTH_LOGIN.md) / [`AUTH_SESSION_DESIGN.md`](./astro-site/docs/AUTH_SESSION_DESIGN.md) |
+| 管理画面の Basic 認証（`/admin/*`） | [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md) |
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
 | 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
 | 顧客マーケティング管理 | [`CUSTOMER_MARKETING.md`](./astro-site/docs/CUSTOMER_MARKETING.md) / [`CAMPAIGN_SEQUENCE.md`](./astro-site/docs/CAMPAIGN_SEQUENCE.md) / [`ENGAGEMENT_SUPPRESSION.md`](./astro-site/docs/ENGAGEMENT_SUPPRESSION.md) |
@@ -231,6 +232,8 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
   （AK の全メール自動化のマスタースイッチ。専用ゲートだけで解禁する）
 - SendGrid suppression は毎回照合し、**取得に失敗したら送信計画を作らない**（fail closed）
 - secret の値そのものを CLAUDE.md / ログ / commit に**絶対に記載しない**
+- **認証情報をソースへ書かない**（env にだけ置く）。env 未設定は「認証不要」ではなく
+  **誰も通さない**（fail closed）。正本: [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md)
 
 ### Customers の取得（15,962 件）
 

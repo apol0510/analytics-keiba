@@ -578,11 +578,137 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 | 決済開始の記録点 | `netlify/functions/bank-transfer-application.js` |
 | テスト | `src/lib/premiumPlus/premiumPlusFunnel*.test.mjs`（`npm run test:premium-plus-media` / `check:safety` に組込済み） |
 
+## 📣 案内済みかどうか（「販売可」と「届いた」は別 / 2026-08-13〜）
+
+**2026-08-13 実測: `premium-plus-offer` の配信は本番全体で 0 件だった。**
+販売可にして CTA を出していた会員に、こちらからは**一度も案内を送っていなかった**。
+CTA は「ログインして該当ページを開けば見える」ものなので、案内が 0 通なら
+その人が Premium Plus に気づく経路は事実上ない。それでも管理画面には
+「販売可」「CTA 表示中」と出ていたため、**売れる状態に見えて誰にも届いていない**状態が続いていた。
+
+一覧の 3 列は**すべて別の軸**で、1 つでも欠けると判断を誤る。
+
+| 列 | 何を表すか | 出どころ |
+|---|---|---|
+| **表示判定** | 設定と条件から導いた「この人には出るはず」 | `resolveUpsellForCustomer`（判定） |
+| **実閲覧** | 本人が画面で見た実測 | Redis `ak:pp:funnel:v1` |
+| **案内** | **こちらから送った実績** | Airtable `CampaignDeliveries` |
+
+### 4 つの状態
+
+| 状態 | 意味 | 要対応 |
+|---|---|---|
+| **案内済み** | `Status='sent'` が 1 通以上ある | — |
+| **未着（送信失敗）** | 送信を試みたが `failed` のみ。本人には届いていない | ✅ |
+| **未案内** | 履歴を読めたうえで 1 通も無い | ✅（`channel=plus` のときだけ） |
+| **未確認** | 配信履歴を**読み取れなかった** | — |
+
+**「要対応」バッジは `upsellChannel === 'plus'` のときだけ付ける。**
+三連複を売る相手・売らない相手に Plus の案内が無いのは正常なので、要対応にしない。
+
+### ⚠️ 迷ったら「未確認」に倒す（両方向に事故がある）
+
+| 誤表示 | 起きること |
+|---|---|
+| 送っていないのに **案内済み** | 運用者が動かない。その会員は**永久に案内されない**（最悪） |
+| 送ったのに **未案内** | 二重送信を誘発する |
+
+読み取れないときは**どちらでもない「未確認」**にする。**`0 通` と書かない。**
+
+- `queued`（送信待ち）と `cancelled` は「送った」に数えない
+- `failed` しか無いときは**案内済みにしない**（届いていないため）
+- `CampaignType` は **前方一致**（`premium-plus-offer:`）で引く。版を上げても
+  過去に送った相手が「未案内」に戻らないようにする
+
+### 取得は名指しのみ（全件走査を作らない）
+
+`CampaignDeliveries` は 14,000 行超で、全件走査は Function の実行時間で終わらない。
+
+- 対象は **recordId（`CustomerRecordId`）とアドレス（`RecipientEmail`）の OR** で名指しする。
+  `CustomerRecordId` は後から入った列で古い行には無いことがあり、**片方だけで引くと
+  送ったのに「未案内」**と出る
+- 取り切れなければ `assertFetchComplete` が投げ、**全員「未確認」**へ倒す
+  （短い結果を「送っていない」と読ませない）
+
+### 関連ファイル（案内）
+
+| 目的 | ファイル |
+|---|---|
+| 判定の単一源（純粋・I/O なし） | `src/lib/premiumPlus/plusNotifiedStatus.js` |
+| 取得と配線 | `netlify/functions/premium-plus-eligibility.js`（`attachPlusNotified`） |
+| 画面 | `src/pages/admin/premium-plus-eligibility.astro`（`notifiedCell` / `renderNotifyNote`） |
+| キャンペーン正本 | `src/lib/marketing/campaignCatalog.js`（`campaignId: 'premium-plus-offer'`） |
+| テスト | `plusNotifiedStatus.test.mjs` / `plusNotifiedWiring.guard.test.mjs`（`check:safety` に組込済み） |
+
+## 🧑‍💼 管理画面の日常業務（`/admin/premium-plus-eligibility/` / 2026-08-13 検証）
+
+管理者が最後まで遂行できるべき導線と、その安全条件。
+
+```
+検索 → 個別状態確認 → 資格変更 → 正本への保存 → 再読込確認 → 変更履歴 → 失敗時の再処理
+```
+
+### 操作の前に
+
+- **操作者名を入力する**（接続パネル）。未入力だと**書き込みボタンを押せない**。
+  入れずに書けていた頃は変更履歴が全部 `admin` になり、誰の操作か追えなかった。
+
+### 検索でしか出てこない人がいる
+
+一覧は**販売候補**だけを出す。無料会員などは候補集合の外なので、
+**検索でしか出てこない**（区分列に「検索のみ（候補外）」と出る）。
+
+⚠️ その人を操作したあと一覧を取り直すと、素朴な実装では**行ごと消えて詳細が壊れる**
+（本番データで再現: 無料会員の Daniel）。`searchedRows` で保持しているので消さないこと。
+
+### 保存の確認は「読み直し」でやる
+
+保存後は `action='lookup'`（**recordId 指定**）で 1 件だけ読み直し、
+**Airtable の値**で確認する。送った値が通った前提にしない。
+アドレスではなく recordId で引くのは、**Email 未設定の会員**でも確認できるようにするため。
+
+### 失敗の 3 値を混ぜない
+
+| 結果 | 意味 | 画面 |
+|---|---|---|
+| 成功 | サーバーが成功を返した | 「保存を確認済み」 |
+| 失敗 | サーバーが失敗を返した（**書かれていない**）| そのまま再操作してよい |
+| **不明** | 通信が切れた（**書かれたか分からない**）| 上部に警告を出し続け、「再読込して確認」を促す |
+
+⚠️ **不明を失敗に丸めない。** 丸めると、実際は保存済みなのに同じ操作を繰り返す。
+
+### 同時編集
+
+画面は「見ていた時点の最終更新」を `expectedUpdatedAt` として送る。
+別の管理者が先に変えていれば **409 `stale_record`** で止まる（黙って上書きしない）。
+`expectedUpdatedAt` を送らない呼び出しは従来どおり通す（後方互換）。
+
+### 変更履歴の見え方（正本 と このタブ は別物）
+
+| 種類 | 内容 | 寿命 |
+|---|---|---|
+| **正本** | `PremiumPlusEligibilityUpdatedAt` / `UpdatedBy` / `Reason` | Airtable に恒久。ただし**最後の 1 回だけ** |
+| このタブの操作履歴 | 前後・結果（成功/失敗/不明）・操作者 | `sessionStorage`。**タブを閉じると消える** |
+
+**このタブの履歴を監査記録として扱わないこと。**
+
+### ⛔ 未対応（本番スキーマ変更が要るため停止）
+
+- **恒久的な変更履歴台帳**（何度でも遡れる履歴）。Airtable に履歴テーブル/列が無い。
+  PAT に `schema.bases:write` が無いので**フィールド追加は Airtable 画面で手動**
+- **販売CTA（UpsellTarget）の競合検知**。更新時刻の列が無く版を作れない
+- **操作者名のサーバー側必須化**。現在は画面側で必須。API 直叩きは `admin` のまま残る
+
+検証: `npm run test:premium-plus-media`（`check:safety` に組込済み）。
+導線の固定は `src/lib/premiumPlus/adminOperationsFlow.guard.test.mjs`。
+
 ## 関連ファイル
 
 | 目的 | ファイル |
 |---|---|
 | 集計ロジック（単一源・純粋） | `src/lib/premiumPlusShowcase.js` |
+| 管理画面の操作履歴（純粋・保存先注入） | `src/lib/premiumPlus/adminOperationLog.js` |
+| 業務導線の固定（guard） | `src/lib/premiumPlus/adminOperationsFlow.guard.test.mjs` |
 | テスト | `src/lib/premiumPlusShowcase.test.mjs`（`npm run test:premium-plus` / `check:safety` に組込済み） |
 | 画像 API（Blobs） | `netlify/functions/premium-plus-media.js` |
 | 商品ページ | `src/pages/premium-plus.astro` |
