@@ -21,6 +21,21 @@ const src = readFileSync(fnPath, 'utf8');
 /** コメントを除いた実コード（説明文で guard が誤検知しないようにする） */
 const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
+/**
+ * 関数 1 本ぶんを切り出す（**固定バイト数で切らない**）。
+ *
+ * 以前は `slice(from, from + 2500)` のような固定窓で見ていたため、
+ * 関数へ安全条件を足して長くなるだけで、判定対象が窓の外へ落ちて
+ * guard が「順序が壊れた」と誤検知した（2026-08-15）。
+ * 窓の大きさに意味は無いので、閉じ括弧まで取る。
+ */
+function sliceFunction(source, name) {
+  const from = source.indexOf(`async function ${name}`);
+  if (from === -1) return '';
+  const m = source.slice(from).match(/^[\s\S]*?\n\}/);
+  return m ? m[0] : source.slice(from);
+}
+
 test('1. メール送信 API を呼ばない（suppression の読み取りだけは許可）', () => {
   for (const banned of ['mail/send', '@sendgrid', 'nodemailer', 'resend.com']) {
     assert.equal(code.toLowerCase().includes(banned.toLowerCase()), false, `${banned} を呼んでいる`);
@@ -217,16 +232,14 @@ test('guard: 取消は単一源 marketingJobs.js に委譲する（Function に�
 test('guard: 取消は operationId 必須で冪等（同じ取消を 2 回書かない）', () => {
   assert.match(src, /操作 ID（operationId）が必要です/, 'operationId 無しを拒否していない');
   assert.match(src, /isAlreadyCancelledBy\(\{ job, operationId \}\)/, '実施済み判定をしていない');
-  const from = src.indexOf('async function handleCancelJob');
-  const seg = src.slice(from, from + 2500);
+  const seg = sliceFunction(src, 'handleCancelJob');
   const idemIdx = seg.indexOf('isAlreadyCancelledBy');
   const writeIdx = seg.indexOf('patchRecord(');
   assert.ok(idemIdx > -1 && writeIdx > idemIdx, '冪等判定より前に書き込んでいる');
 });
 
 test('guard: 取消は sent の配信行に触れない', () => {
-  const from = src.indexOf('async function handleCancelJob');
-  const seg = src.slice(from, from + 2500);
+  const seg = sliceFunction(src, 'handleCancelJob');
   assert.match(seg, /selectCancelableDeliveries\(/, '対象を絞らずに配信行を書き換えている');
   assert.equal(/Status: 'sent'/.test(seg), false, '送信済みの状態を書き換えている');
 });

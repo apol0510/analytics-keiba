@@ -74,6 +74,24 @@ export function buildDeliveryKeyFormula({ campaignType, keys }) {
   return `AND({CampaignType}='${ct}',${or})`;
 }
 
+/** `OR({ScheduledEmailJobId}='mkt-..',...)` — ジョブに紐づく配信行だけを引く */
+export function buildJobIdFormula(jobIds) {
+  const safe = (Array.isArray(jobIds) ? jobIds : []).filter(isSafeIdentifier);
+  if (safe.length === 0) return null;
+  return `OR(${safe.map((id) => `{ScheduledEmailJobId}='${id}'`).join(',')})`;
+}
+
+/**
+ * ScheduledEmails から**マーケティングのジョブだけ**を引く formula。
+ *
+ * 判定は `marketingDispatchGate.js#isMarketingJob` と同じ 3 条件（どれか 1 つで該当）。
+ * ⚠️ Airtable の `=` は大小を区別するので `LOWER()` を通す（JS 側も lowercase で比較している）。
+ * ⚠️ 取りこぼすと共有 executor 側の扱いがズレるため、**広めに**判定する。
+ */
+export const MARKETING_JOB_FORMULA = "OR(LOWER({CreatedBy})='admin-marketing',"
+  + "FIND('campaign:',LOWER({TargetPlan}&''))=1,"
+  + "FIND('mkt-',LOWER({JobId}&''))=1)";
+
 /**
  * 取り切れたかを検証する。取りこぼしがあれば投げる。
  *

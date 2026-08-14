@@ -1,3 +1,77 @@
+## 2026-08-15 — 【修正】管理画面の進行表示が CampaignDeliveries 4,000 行で黙って打ち切られていた
+
+### 何が起きていたか（本番実測）
+
+Light 無料体験の Step1 を **10 名ぶんキュー登録した直後**に、管理画面が食い違う数を出した。
+
+| 経路 | 表示 | 実際 |
+|---|---|---|
+| `sequence` | Step1 送信済み **1 名** / due **9 名** | 10 名とも queued |
+| `jobs` | ジョブの配信件数 **1** | 10 |
+| `trialGrant`（関所）| outstanding **0** / resolved **10** | ✅ 正しい |
+
+原因は `admin-marketing.js` の `fetchAll` が **`MAX_PAGES=40`（4,000 行）で `break`** すること。
+例外にならないので、呼び出し側は短い結果を全体だと誤認する。
+`CampaignDeliveries` は **6,110 行**（`{EmailType}='campaign'`）まで育っており、
+新しい 10 行のうち 9 行が打ち切りの外に落ちていた。
+
+「campaign で絞ってあるから全件走査ではない」というコメントの前提が、
+台帳の成長で崩れていた（絞り込んでも 6,110 行ある）。
+
+### 影響範囲（実害の切り分け）
+
+- **送信経路は安全だった。** `handlePlan` は `fetchDeliveredKeys`（DeliveryKey 名指し・fail closed）を
+  使うので `already_delivered` を取りこぼさない。**同じ 10 名で再 dryRun して
+  `excluded 10 / willSend 0` を本番で実測**（二重送信は起きない）。
+- 実害は**表示のみ**。ただし運用者が「まだ 9 名残っている」と誤読し、
+  もう一度キュー登録しようとする導線を作る。
+
+### 直した内容
+
+すべて `CampaignDeliveries` / `ScheduledEmails` の**状態表示**経路。
+
+| 経路 | 変更 |
+|---|---|
+| `handleSequence` | 台帳全件 → **受信対象の宛先だけ**名指し（`fetchDeliveriesByEmails`）。失敗は 500 `deliveries_fetch_incomplete` |
+| `handleJobs` | ScheduledEmails を `MARKETING_JOB_FORMULA` で絞り、配信行は **JobId 名指し**（`fetchDeliveriesByJobIds`）。失敗は 500 `jobs_fetch_incomplete` |
+| `handleHistory` | 母数が台帳全体なので名指し不可 → **打ち切りを例外化**（`fetchAllStrict`）。`.catch(() => [])` も撤去（失敗が「0 件」に見えていた） |
+| `handleCancelJob` | 2 つの取得を fail closed 化。**取得に失敗したら 1 バイトも書かない**（ジョブだけ取り消して配信行を `queued` で残す＝部分取消を防ぐ。残ると `already_delivered` で永久に除外される） |
+| `loadCustomerMarketing` | 一覧表示時に台帳全件へ落ちていたのを、**表示する顧客の宛先だけ**名指しへ |
+| `fetchDeliveriesByEmails` | formula へ載せられない宛先（`'` を含む）を**黙って飛ばしていた**のを例外化（飛ばすと進行が 1 通ぶん巻き戻って見える） |
+
+新設: `fetchAllStrict`（打ち切り＝例外）/ `fetchDeliveriesByJobIds` /
+`buildJobIdFormula` / `MARKETING_JOB_FORMULA`。
+`fetchAll` 自体は他テーブル用に残すが、**危険性を明記**し guard で状態テーブルへの使用を禁じた。
+
+### 横断確認
+
+- `cron-campaign-sequence.js` は**既に `assertFetchComplete` で fail closed**（対処不要）
+- `admin-marketing.js` の残る `fetchAll` は Customers / AuthTokens / Offers / EmailEvents /
+  EmailBlacklist 向けで、`CampaignDeliveries` / `ScheduledEmails` は **0 件**（guard が固定）
+- 同型パターンを持つ他 Function（`admin-comeback-grants` / `premium-plus-eligibility` ほか）は
+  本件の対象テーブル外。別案件として残す
+
+### テスト
+
+- `marketingStatusScan.regression.test.mjs` — 偽 Airtable に **6,110 行**の台帳を持たせ、
+  実ハンドラを起動して「10 名を 10 名として数える」ことを検証。
+  台帳を全件走査しに来たら偽サーバー側が検知して落とす。
+  **旧実装で 5/6 fail → 修正後 6/6 pass を実測**（空振りしない試験であることを確認）
+- `marketingStatusScan.guard.test.mjs` — 打ち切る `fetchAll` で状態テーブルを読まないことを固定（8 件）
+- `marketingTargetedLoad.test.mjs` — 新ヘルパの単体（+4 件）
+- `adminMarketingFunction.guard.test.mjs` — 取消 guard が**固定 2,500 文字窓**で切っていたため、
+  関数へ安全条件を足しただけで誤検知した。`sliceFunction()` で関数全体を見るよう修正
+
+### 検証
+
+`npm run test:marketing` 1,374 pass / 0 fail ・ `npm run check:safety` EXIT=0 ・
+`npm run build` EXIT=0（SSR 100.0 MB / 250MB）・追加行の secret scan 0 件。
+
+### やっていないこと
+
+production deploy / merge / 実メール送信 / 本番 env 変更 / Airtable write。
+**Last verified**: 2026-08-15
+
 ## 2026-08-12 — 【完了】Customers 重複整理（正本状態を確定）
 
 **この案件は完了。** 以後の正本状態は次のとおり:

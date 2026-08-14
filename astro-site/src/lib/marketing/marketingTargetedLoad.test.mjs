@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   chunkList, isSafeIdentifier, buildRecordIdFormula, buildDeliveryKeyFormula,
   assertFetchComplete, summarizeTargetedFetch, TARGETED_CHUNK,
+  buildJobIdFormula, MARKETING_JOB_FORMULA,
 } from './marketingTargetedLoad.js';
 
 const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
@@ -136,4 +137,47 @@ test('guard: dispatcher の 24h 履歴も宛先ぶんだけ引く', () => {
 test('guard: 顧客レコードを引けない宛先には送らない（fail closed）', () => {
   assert.match(DISPATCH, /if \(!fieldsByEmail\.has\(email\)\) \{/);
   assert.match(DISPATCH, /customer_record_missing/);
+});
+
+// ── ジョブ名指し（2026-08-15 / 状態表示の打ち切り対策）────────────
+
+test('buildJobIdFormula: ジョブ ID を名指しする OR 句を作る', () => {
+  assert.equal(buildJobIdFormula([]), null);
+  assert.equal(buildJobIdFormula(null), null);
+  assert.equal(
+    buildJobIdFormula(['mkt-a-v1-abc-1']),
+    "OR({ScheduledEmailJobId}='mkt-a-v1-abc-1')",
+  );
+  assert.equal(
+    buildJobIdFormula(['mkt-a-1', 'mkt-b-2']),
+    "OR({ScheduledEmailJobId}='mkt-a-1',{ScheduledEmailJobId}='mkt-b-2')",
+  );
+});
+
+test('【重要】buildJobIdFormula: formula へ入れてはいけない値を落とす', () => {
+  // 落とした結果 0 件になるなら null（＝呼び出し側は読みに行かない）
+  assert.equal(buildJobIdFormula(["' OR 1=1"]), null);
+  assert.equal(buildJobIdFormula(['mkt-ok-1', "bad'value"]), "OR({ScheduledEmailJobId}='mkt-ok-1')");
+});
+
+test('MARKETING_JOB_FORMULA: isMarketingJob と同じ 3 条件を大小無視で見る', () => {
+  for (const needle of ['CreatedBy', 'TargetPlan', 'JobId', 'admin-marketing', 'campaign:', 'mkt-']) {
+    assert.ok(MARKETING_JOB_FORMULA.includes(needle), `${needle} を見ていない`);
+  }
+  // Airtable の = は大小を区別するので LOWER を通していること
+  assert.match(MARKETING_JOB_FORMULA, /LOWER\(\{CreatedBy\}\)/);
+  assert.match(MARKETING_JOB_FORMULA, /LOWER\(\{TargetPlan\}/);
+  assert.match(MARKETING_JOB_FORMULA, /LOWER\(\{JobId\}/);
+  // 空セルで FIND が壊れないよう `&''` で文字列化していること
+  assert.match(MARKETING_JOB_FORMULA, /\{TargetPlan\}&''/);
+});
+
+test('【重要】状態表示の取得は fail closed（打ち切りを例外にする）', () => {
+  assert.match(FN, /async function fetchAllStrict\(\{/, 'fail closed の取得が無い');
+  assert.match(FN, /async function fetchDeliveriesByJobIds\(\{/, 'ジョブ名指しの取得が無い');
+  // 打ち切りを検知したら投げる
+  assert.throws(
+    () => assertFetchComplete({ table: 'CampaignDeliveries', offset: 'x', pages: 40, maxPages: 40 }),
+    /打ち切られました/,
+  );
 });
