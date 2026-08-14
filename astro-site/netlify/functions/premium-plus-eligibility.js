@@ -87,6 +87,10 @@ import {
   countUnknownSource,
   hasSourceTotalMismatch,
   SOURCE_TOTAL_NOTE,
+  summarizePurchaseBySource,
+  PURCHASE_ENTRY_ONLY_NOTE,
+  extractNotPurchased,
+  summarizeDaily,
 } from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
 import {
   buildLookupFormula,
@@ -241,6 +245,17 @@ function buildAdminRow(rec, now) {
  *
  * @returns {Promise<{measurement: object}>} rows は破壊的に更新する
  */
+/** 期間集計を読む。読めなければ available:false（**0 件と断定しない**） */
+async function readDailySafe() {
+  const cmd = makeRedisCmd(process.env);
+  if (!cmd) return { available: false, entries: null };
+  try {
+    return await createFunnelStore({ redisCmd: cmd }).readDaily({ nowMs: Date.now() });
+  } catch {
+    return { available: false, entries: null };
+  }
+}
+
 async function attachRealViews(rows) {
   const cmd = makeRedisCmd(process.env);
   const unavailable = (reason) => {
@@ -306,6 +321,21 @@ async function attachRealViews(rows) {
       unknownSource: countUnknownSource(rows),
       sourceTotalMismatch: hasSourceTotalMismatch(rows),
       sourceNote: SOURCE_TOTAL_NOTE,
+      // 決済開始 → 購入完了の導線別転換（人数）
+      purchaseBySource: summarizePurchaseBySource(rows),
+      purchaseEntryOnlyNote: PURCHASE_ENTRY_ONLY_NOTE,
+      // 抽出: クリック済み未購入 / 到達済み未購入（購入を確認できない人は別枠）
+      notPurchased: (() => {
+        const x = extractNotPurchased(rows);
+        return {
+          clickedNotPurchased: x.clickedNotPurchased.length,
+          reachedNotPurchased: x.reachedNotPurchased.length,
+          unverified: x.unverified.length,
+          note: '「未購入」は計測開始以降に購入記録が無い人です。読み取れなかった人は別に数えます（0 ではありません）。',
+        };
+      })(),
+      // 期間集計（今日 / 7 日 / 30 日）。**件数**であり人数ではない
+      daily: summarizeDaily(await readDailySafe(), Date.now()),
     },
   };
 }

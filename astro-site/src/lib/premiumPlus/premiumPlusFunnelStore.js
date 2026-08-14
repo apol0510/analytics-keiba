@@ -45,7 +45,13 @@ export const FUNNEL_KEY = Object.freeze({
   CTA: `${FUNNEL_NAMESPACE}:cta`,
   CLICK: `${FUNNEL_NAMESPACE}:click`,
   PAGE: `${FUNNEL_NAMESPACE}:page`,
+  /** 決済開始（申込フォームが Function へ到達した時点。サーバー側イベント） */
+  CHECKOUT: `${FUNNEL_NAMESPACE}:checkout`,
+  /** 購入完了（入金確認の確定。**サーバー側の確定イベントのみ**） */
+  PURCHASE: `${FUNNEL_NAMESPACE}:purchase`,
   META: `${FUNNEL_NAMESPACE}:meta`,
+  /** 期間集計用の日次カウンタ（**recordId を含まない**集計値のみ） */
+  DAILY: `${FUNNEL_NAMESPACE}:daily`,
 });
 
 /** 記録する行動 */
@@ -53,12 +59,32 @@ export const FUNNEL_EVENT = Object.freeze({
   CTA_VIEW: 'cta_view',
   CTA_CLICK: 'cta_click',
   PAGE_VIEW: 'page_view',
+  /** 決済開始。**サーバー側**（申込フォームが Function へ到達した時点）で記録する */
+  CHECKOUT_START: 'checkout_start',
+  /** 購入完了。**サーバー側の確定イベントのみ**（入金確認が Airtable で検証された後）*/
+  PURCHASE: 'purchase',
+});
+
+/** 画面・集計で使う段階の並び（表示 → クリック → 到達 → 決済開始 → 購入完了） */
+export const FUNNEL_EVENT_ORDER = Object.freeze([
+  FUNNEL_EVENT.CTA_VIEW, FUNNEL_EVENT.CTA_CLICK, FUNNEL_EVENT.PAGE_VIEW,
+  FUNNEL_EVENT.CHECKOUT_START, FUNNEL_EVENT.PURCHASE,
+]);
+
+export const FUNNEL_EVENT_LABEL = Object.freeze({
+  cta_view: '表示',
+  cta_click: 'クリック',
+  page_view: '商品ページ到達',
+  checkout_start: '決済開始',
+  purchase: '購入完了',
 });
 
 const KEY_OF = Object.freeze({
   [FUNNEL_EVENT.CTA_VIEW]: FUNNEL_KEY.CTA,
   [FUNNEL_EVENT.CTA_CLICK]: FUNNEL_KEY.CLICK,
   [FUNNEL_EVENT.PAGE_VIEW]: FUNNEL_KEY.PAGE,
+  [FUNNEL_EVENT.CHECKOUT_START]: FUNNEL_KEY.CHECKOUT,
+  [FUNNEL_EVENT.PURCHASE]: FUNNEL_KEY.PURCHASE,
 });
 
 /**
@@ -90,6 +116,8 @@ export const FUNNEL_SOURCE_LABEL = Object.freeze({
   dashboard: 'ダッシュボード',
   sanrenpuku: '三連複ページ',
   plus_page: 'Premium Plus 商品ページ内',
+  /** 決済開始の導線が複数あって購入をどちらへも寄せられない。**推測しない** */
+  ambiguous: '導線を特定できず',
   /** 導線別の計測を始める前に記録された分。**推測で振り分けない** */
   legacy: 'クリック元不明（計測前）',
   /** 計測開始後に source なしで届いた分。legacy と混ぜない */
@@ -205,6 +233,15 @@ export const META_FIELD = Object.freeze({
 /** まとめ読みの 1 コマンドあたり件数（Upstash のリクエストが肥大しないように） */
 export const READ_CHUNK = 200;
 
+/** 期間集計の窓（日）。画面はこの順で出す */
+export const FUNNEL_WINDOW_DAYS = Object.freeze([1, 7, 30]);
+
+/** 日次カウンタを保持する日数。これより古いフィールドは書込み時に掃除する */
+export const DAILY_RETENTION_DAYS = 91;
+
+/** 購入の帰属が確定しないときの印（どの導線へも寄せない） */
+export const FUNNEL_SOURCE_AMBIGUOUS = 'ambiguous';
+
 /** Airtable の recordId 形式。これ以外は受け付けない（任意文字列を鍵にしない） */
 export const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 
@@ -227,9 +264,10 @@ const num = (v) => {
 };
 
 /** 保存された 3 種別 → `shapeFunnelRow` が読む平たい形（**組み立ては 1 か所**） */
-export function flatten({ cta, click, page } = {}) {
+export function flatten({ cta, click, page, checkout, purchase } = {}) {
   const out = {};
-  for (const [p, v] of [['cta', cta], ['click', click], ['page', page]]) {
+  for (const [p, v] of [['cta', cta], ['click', click], ['page', page],
+    ['checkout', checkout], ['purchase', purchase]]) {
     out[`${p}_first_at`] = v && v.firstAt;
     out[`${p}_last_at`] = v && v.lastAt;
     out[`${p}_count`] = v && v.count;
@@ -255,7 +293,10 @@ export function shapeFunnelRow(raw) {
     // 導線別計測より前にあった回数。**引き算では出さない**
     legacyCount: resolveLegacyCount(r[`${p}_sv`], r[`${p}_legacy`], r[`${p}_count`]),
   });
-  return { cta: pick('cta'), click: pick('click'), page: pick('page') };
+  return {
+    cta: pick('cta'), click: pick('click'), page: pick('page'),
+    checkout: pick('checkout'), purchase: pick('purchase'),
+  };
 }
 
 /** 1 バケット（導線 1 つ / noSource）→ 表示用 */
@@ -296,6 +337,40 @@ export function shapeBySource(raw) {
   return out;
 }
 
+/**
+ * 購入をどの導線へ帰属させるか。**推測しない。**
+ *
+ * 決済開始（checkout）の内訳を見て:
+ *   - 導線が 1 つだけ → その導線
+ *   - 2 つ以上       → `ambiguous`（どちらへも寄せない）
+ *   - 0 個           → null（= 導線なし）
+ *
+ * @param {object|null} checkoutRaw 保存されている checkout の生データ
+ * @returns {string|null}
+ */
+export function attributePurchaseSource(checkoutRaw) {
+  const by = checkoutRaw && checkoutRaw.bySource && typeof checkoutRaw.bySource === 'object'
+    ? checkoutRaw.bySource : {};
+  const hit = FUNNEL_SOURCE_ORDER.filter((s) => {
+    const e = by[s];
+    return e && (num(e.count) ?? 0) > 0;
+  });
+  if (hit.length === 1) return hit[0];
+  if (hit.length > 1) return FUNNEL_SOURCE_AMBIGUOUS;
+  return null;
+}
+
+/** Upstash の HGETALL は配列で返ることがある。オブジェクトへ正規化する */
+export function normalizeHgetall(raw) {
+  if (!raw) return {};
+  if (Array.isArray(raw)) {
+    const out = {};
+    for (let i = 0; i + 1 < raw.length; i += 2) out[String(raw[i])] = raw[i + 1];
+    return out;
+  }
+  return typeof raw === 'object' ? raw : {};
+}
+
 /** 記録が 1 つでもあるか（無いなら「未確認」であって 0 ではない） */
 export function hasAnyFunnelRecord(row) {
   const r = row || {};
@@ -303,6 +378,27 @@ export function hasAnyFunnelRecord(row) {
 }
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+/** ミリ秒 → JST の 'YYYYMMDD'（日次カウンタの鍵） */
+export function funnelDayKey(ms) {
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms + JST_OFFSET_MS);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}`;
+}
+
+/** 日次カウンタのフィールド名。**recordId を入れない**（集計値のみ） */
+export function dailyField(day, event, source) {
+  return `${day}|${event}|${source || 'none'}`;
+}
+
+/** 直近 N 日ぶんの 'YYYYMMDD'（今日を含む） */
+export function recentDayKeys(nowMs, days) {
+  const n = Number.isFinite(days) && days > 0 ? Math.floor(days) : 1;
+  const out = [];
+  for (let i = 0; i < n; i += 1) out.push(funnelDayKey(nowMs - i * 86400000));
+  return out.filter(Boolean);
+}
 
 /** ミリ秒 → 'YYYY-MM-DD HH:MM'（JST）。null はそのまま null */
 export function funnelJst(ms) {
@@ -414,6 +510,8 @@ export function describeFunnelRow(row, { available, startedAtMs } = {}) {
     cta: describeFunnelCell(r.cta, ctx),
     click: describeFunnelCell(r.click, ctx),
     page: describeFunnelCell(r.page, ctx),
+    checkout: describeFunnelCell(r.checkout, ctx),
+    purchase: describeFunnelCell(r.purchase, ctx),
     /** 1 つでも実測があるか。false = 「見ていない」ではなく「確認できない」 */
     anyMeasured: available !== false && hasAnyFunnelRecord(r),
   };
@@ -456,6 +554,27 @@ export function createFunnelStore({ redisCmd } = {}) {
     const v = await redisCmd(['HGET', key, recordId]);
     if (v === null || v === undefined) return null;
     try { return JSON.parse(typeof v === 'string' ? v : String(v)); } catch { return null; }
+  }
+
+  /**
+   * 期間集計用の日次カウンタを 1 つ進める。
+   *
+   * ⚠️ **recordId を入れない**（`YYYYMMDD|event|source` だけ）。
+   *    個人を Redis へ増やさないため、ここは純粋な集計値。
+   * 併せて保持期間より古いフィールドを 1 つ掃除する（自己クリーンアップ・状態を持たない）。
+   */
+  async function bumpDaily(nowMs, event, source) {
+    const day = funnelDayKey(nowMs);
+    if (!day) return;
+    // ⚠️ 日次カウンタは**補助**。ここが失敗しても本体の記録を巻き戻さない。
+    //    （HINCRBY / HDEL を持たない環境でも本体は動く）
+    try {
+      await redisCmd(['HINCRBY', FUNNEL_KEY.DAILY, dailyField(day, event, source), '1']);
+      const stale = funnelDayKey(nowMs - DAILY_RETENTION_DAYS * 86400000);
+      if (stale) await redisCmd(['HDEL', FUNNEL_KEY.DAILY, dailyField(stale, event, source)]);
+    } catch {
+      // 期間集計が欠けるだけ。本体の実閲覧は保持する
+    }
   }
 
   return {
@@ -548,10 +667,105 @@ export function createFunnelStore({ redisCmd } = {}) {
         await redisCmd(['HSET', key, recordId, JSON.stringify(next)]);
         await redisCmd(['HSETNX', FUNNEL_KEY.META, META_FIELD.STARTED_AT, String(now)]);
         await redisCmd(['HSET', FUNNEL_KEY.META, META_FIELD.SCHEMA, String(FUNNEL_SCHEMA)]);
+        await bumpDaily(now, event, src);
         return { ok: true, counted: true, bucket, aggregateCounted: !aggDeduped };
       } catch (e) {
         // 計測の失敗で顧客の画面を壊さない
         return { ok: false, counted: false, reason: 'write_failed' };
+      }
+    },
+
+    /**
+     * ── 購入完了を記録する（**サーバー側の確定イベント専用**）─────────
+     *
+     * 表示・クリックと違い、購入は **一度きり**でなければならない。
+     * Airtable Automation の再実行 / Webhook 再送 / 画面の再読込で
+     * 何度呼ばれても **同じ注文は 1 回しか計上しない**。
+     *
+     * 冪等性の鍵:
+     *   - `orderKey` があれば **(recordId, orderKey) につき 1 回**
+     *   - 無ければ **recordId につき 1 回**（この商品は単品購入のため）
+     *
+     * 導線は**推測しない**。決済開始で記録した source を引き継ぎ、
+     * 複数あって決められないときは `ambiguous` に置く。
+     *
+     * @param {{recordId:string, nowMs:number, orderKey?:string|null}} input
+     * @returns {Promise<{ok:boolean, counted:boolean, reason?:string, source?:string|null}>}
+     */
+    async record_purchase({ recordId, nowMs, orderKey } = {}) {
+      if (!RECORD_ID_RE.test(String(recordId || ''))) {
+        return { ok: true, counted: false, reason: 'bad_record_id' };
+      }
+      const now = num(nowMs) ?? 0;
+      const key = FUNNEL_KEY.PURCHASE;
+      const slot = String(orderKey || '').trim() || 'default';
+      try {
+        const cur = (await readOne(key, recordId)) || {};
+        const orders = cur.orders && typeof cur.orders === 'object' ? cur.orders : {};
+        // ⚠️ ここが二重計上の唯一の防壁。既に見た注文なら**何も書かない**
+        if (orders[slot]) {
+          return { ok: true, counted: false, reason: 'already_counted', source: cur.attributedSource ?? null };
+        }
+
+        // 導線は決済開始の記録から引き継ぐ（推測しない）
+        const checkout = (await readOne(FUNNEL_KEY.CHECKOUT, recordId)) || null;
+        const src = attributePurchaseSource(checkout);
+
+        const next = {
+          firstAt: num(cur.firstAt) ?? now,
+          lastAt: now,
+          count: (num(cur.count) ?? 0) + 1,
+          sv: FUNNEL_SOURCE_SCHEMA,
+          legacy: num(cur.sv) !== null ? (num(cur.legacy) ?? 0) : (num(cur.count) ?? 0),
+          orders: { ...orders, [slot]: now },
+          attributedSource: src,
+        };
+        if (src && src !== FUNNEL_SOURCE_AMBIGUOUS) {
+          const by = cur.bySource && typeof cur.bySource === 'object' ? { ...cur.bySource } : {};
+          const e = by[src] || null;
+          by[src] = {
+            firstAt: (e && num(e.firstAt)) ?? now,
+            lastAt: now,
+            count: ((e && num(e.count)) ?? 0) + 1,
+          };
+          next.bySource = by;
+        } else if (src === FUNNEL_SOURCE_AMBIGUOUS) {
+          const a = cur.ambiguous || null;
+          next.ambiguous = {
+            firstAt: (a && num(a.firstAt)) ?? now,
+            lastAt: now,
+            count: ((a && num(a.count)) ?? 0) + 1,
+          };
+          if (cur.bySource) next.bySource = cur.bySource;
+        } else {
+          const n = cur.noSource || null;
+          next.noSource = {
+            firstAt: (n && num(n.firstAt)) ?? now,
+            lastAt: now,
+            count: ((n && num(n.count)) ?? 0) + 1,
+          };
+          if (cur.bySource) next.bySource = cur.bySource;
+        }
+
+        await redisCmd(['HSET', key, recordId, JSON.stringify(next)]);
+        await redisCmd(['HSETNX', FUNNEL_KEY.META, META_FIELD.STARTED_AT, String(now)]);
+        await bumpDaily(now, FUNNEL_EVENT.PURCHASE, src);
+        return { ok: true, counted: true, source: src };
+      } catch {
+        return { ok: false, counted: false, reason: 'write_failed' };
+      }
+    },
+
+    /**
+     * 期間集計（今日 / 7 日 / 30 日）を読む。
+     * **件数**であり人数ではない（画面で必ず明示する）。
+     */
+    async readDaily({ nowMs, windows = FUNNEL_WINDOW_DAYS } = {}) {
+      try {
+        const all = await redisCmd(['HGETALL', FUNNEL_KEY.DAILY]);
+        return { available: true, entries: normalizeHgetall(all), windows, nowMs };
+      } catch {
+        return { available: false, reason: 'read_failed', entries: null, windows, nowMs };
       }
     },
 
@@ -604,10 +818,12 @@ export function createFunnelStore({ redisCmd } = {}) {
         // Upstash の 1 コマンドが際限なく長くならないよう分割する
         for (let i = 0; i < ids.length; i += READ_CHUNK) {
           const chunk = ids.slice(i, i + READ_CHUNK);
-          const [cta, click, page] = await Promise.all([
+          const [cta, click, page, checkout, purchase] = await Promise.all([
             redisCmd(['HMGET', FUNNEL_KEY.CTA, ...chunk]),
             redisCmd(['HMGET', FUNNEL_KEY.CLICK, ...chunk]),
             redisCmd(['HMGET', FUNNEL_KEY.PAGE, ...chunk]),
+            redisCmd(['HMGET', FUNNEL_KEY.CHECKOUT, ...chunk]),
+            redisCmd(['HMGET', FUNNEL_KEY.PURCHASE, ...chunk]),
           ]);
           const at = (arr, k) => {
             const v = Array.isArray(arr) ? arr[k] : null;
@@ -616,7 +832,8 @@ export function createFunnelStore({ redisCmd } = {}) {
           };
           chunk.forEach((id, k) => {
             const c = at(cta, k); const cl = at(click, k); const p = at(page, k);
-            rows.set(id, shapeFunnelRow(flatten({ cta: c, click: cl, page: p })));
+            const co = at(checkout, k); const pu = at(purchase, k);
+            rows.set(id, shapeFunnelRow(flatten({ cta: c, click: cl, page: p, checkout: co, purchase: pu })));
           });
         }
         return { available: true, startedAtMs: num(startedAt), rows };
