@@ -478,4 +478,11 @@ test('guard(init): bridge が無くても例外で画面を止めない', () => 
   assert.match(PAGE, /function mkHandoffRestore\(\) \{\s*\n\s*const api = handoffApi\(\);\s*\n\s*if \(!api\)/);
   assert.match(PAGE, /function mkHandoffAdopt\(ticket\) \{\s*\n\s*const api = handoffApi\(\);\s*\n\s*if \(!api\)/);
   assert.match(PAGE, /handoffApi\(\) \? handoffApi\(\)\.describeHandoff/);
+  // 残り時間は緊急度つきで出す（付与直後と失効間際が同じ見た目にならない）
+  assert.match(PAGE, /resolveHandoffUrgency\(ticket, Date\.now\(\)\)/);
+  assert.match(PAGE, /'hb-d' \+ \(urg \? ' hb-' \+ urg\.level : ''\)/);
+  // 失効が近い / 失効済みのときだけ、何をすべきかを名指しで出す
+  assert.match(PAGE, /urg\.level === 'expired' \? '⛔ ' : '⚠️ '/);
+  // 色だけに頼らない（文言でも状態が分かる）
+  assert.ok(PAGE.includes('.ppe .hb-warn.hb-expired'), '失効の表示スタイルが無い');
 });

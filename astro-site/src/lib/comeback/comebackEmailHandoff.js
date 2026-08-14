@@ -325,6 +325,77 @@ export function clearHandoff(storage) {
 }
 
 /**
+ * 引き継ぎの残り時間を**運用者が判断できる形**にする。
+ *
+ * ## なぜ分だけでは駄目か
+ *
+ * 旧実装は残りを常に「約 N 分」で出していた。付与直後は「約 1440 分」で
+ * **緊急かどうか読み取れず**、失効後は「約 0 分」で**まだ使えるように見えた**。
+ *
+ * 期限を過ぎると引き継ぎは 410 になり、`handoffLatest`（復旧口）も**同じ TTL** で弾く。
+ * つまり **24 時間を過ぎると、その付与操作は引き継ぎ経路からは届かなくなる**
+ * （`handoffLookup` で操作 ID を指定しても同じ TTL で 410 になる）。
+ *
+ * ## ⚠️ ただし「案内が出せなくなる」わけではない（2026-08-14 本番実測）
+ *
+ * Step1 のキュー登録は **引き継ぎに依存していない**。連続配信の受信者は
+ * キャンペーンの宣言（`requiresActiveGrant` / `requiresImportCohort`）から
+ * **毎回導出**されるので、引き継ぎが失効していても対象は正しく解決される
+ * （失効後に `light-trial-2026-08-13` の 10 名が `due 10` / `next step 1` で
+ *  解決されることを本番で確認済み）。
+ *
+ * したがって残り時間を目立たせる理由は「**失効すると案内が二度と出せない**」ではなく、
+ * **引き継ぎ票という近道が使えなくなり、対象を選び直す手間が増える**ため。
+ * 失効時に「もう無理だ」と読ませると、生きている復旧経路を見落とさせる。
+ *
+ * @returns {{level:'none'|'ok'|'soon'|'critical'|'expired',
+ *            remainingMs:number|null, remainingText:string, note:string|null}}
+ */
+export function resolveHandoffUrgency(handoff, nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  if (!handoff || !str(handoff.operationId)) {
+    return { level: 'none', remainingMs: null, remainingText: '引き継ぎなし', note: null };
+  }
+  const expiresAt = num(handoff.expiresAtMs);
+  if (!(expiresAt > 0)) {
+    // 期限が読めないものを「まだ使える」と見せない
+    return {
+      level: 'expired', remainingMs: null, remainingText: '期限不明',
+      note: '引き継ぎの期限を確認できません。連続配信の画面から Step1 の対象を確認してください'
+        + '（対象は付与状態から毎回導出されるので、引き継ぎ票が無くても登録できます）。',
+    };
+  }
+  const left = expiresAt - now;
+  if (left <= 0) {
+    return {
+      level: 'expired', remainingMs: 0, remainingText: '失効',
+      // ⚠️ ここで「もう作れない」と書かない。引き継ぎ票が使えないだけで、
+      //    Step1 のキュー登録は連続配信の画面から**そのまま続けられる**。
+      note: '引き継ぎ票は失効しました（操作 ID を指定しても取り直せません）。'
+        + '案内自体は続けられます: 連続配信の画面で Step1 の対象を確認してキュー登録してください'
+        + '（対象は付与状態から毎回導出されます）。',
+    };
+  }
+  const mins = Math.ceil(left / 60000);
+  const remainingText = mins >= 60
+    ? `残り 約${Math.floor(mins / 60)} 時間${mins % 60 ? ` ${mins % 60} 分` : ''}`
+    : `残り 約${mins} 分`;
+  if (left <= 30 * 60 * 1000) {
+    return {
+      level: 'critical', remainingMs: left, remainingText,
+      note: 'まもなく失効します。先に Step1 のキュー登録を済ませてください。',
+    };
+  }
+  if (left <= 3 * 60 * 60 * 1000) {
+    return {
+      level: 'soon', remainingMs: left, remainingText,
+      note: '本日中に Step1 のキュー登録を済ませてください（失効すると引き継げません）。',
+    };
+  }
+  return { level: 'ok', remainingMs: left, remainingText, note: null };
+}
+
+/**
  * 画面の見出し用の要約（人数と期限だけ）。
  *
  * ⚠️ **operationId は出さない。** 運用者が読む必要はなく、画面に出すと
@@ -333,9 +404,11 @@ export function clearHandoff(storage) {
 export function describeHandoff(handoff, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   if (!handoff || !str(handoff.operationId)) return '引き継ぎなし';
-  const left = num(handoff.expiresAtMs) - now;
-  const mins = left > 0 ? Math.ceil(left / 60000) : 0;
-  return `付与成功 ${num(handoff.grantedCount)} 名（引き継ぎ期限まで約 ${mins} 分）`;
+  const u = resolveHandoffUrgency(handoff, now);
+  const head = `付与成功 ${num(handoff.grantedCount)} 名`;
+  // 失効を「約 0 分」と書かない（まだ使えるように読める）
+  if (u.level === 'expired') return `${head}（引き継ぎ ${u.remainingText}）`;
+  return `${head}（引き継ぎ期限まで ${u.remainingText}）`;
 }
 
 /**
