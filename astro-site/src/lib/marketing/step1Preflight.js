@@ -60,6 +60,16 @@ const num = (v) => {
 const str = (v) => String(v ?? '').trim();
 
 /**
+ * 表示用のステップ名。**判定には使わない**（見出しの文字列だけを整える）。
+ *
+ * `step` が読めないときに `Step${step}` をそのまま埋めると
+ * **`Stepnull で送れる人数`** のような見出しになり、読み手が
+ * 「Stepnull という何か」があるのかと迷う。値が無いことは
+ * 「（不明）」と明示し、**落ちる／通るの判定は 1 ミリも変えない**。
+ */
+const stepLabel = (step) => (Number.isInteger(step) && step > 0 ? `Step${step}` : 'ステップ（不明）');
+
+/**
  * gate の状態を env から読む（**値は返さない**。ON/OFF だけ）。
  * secret ではないが、値をそのまま持ち回るとログ・画面へ漏れる経路が増えるため
  * 最初から真偽値へ潰しておく。
@@ -157,14 +167,16 @@ export function evaluateStep1Preflight({
   const sentThisStep = num(sentByStep[String(step)] ?? sentByStep[step]);
   // 過去コホートの実績は **止める理由にならない**（母集団に前回の受信者も含まれるため）。
   // ただし黙って隠さない。
-  info(true, `この campaign で Step${step} を受け取り済みの人数（過去コホート含む）`,
+  info(true, `この campaign で ${stepLabel(step)} を受け取り済みの人数（過去コホート含む）`,
     `${sentThisStep === null ? '(不明)' : sentThisStep} 名 / 母集団 ${num(summary.total)} 名`);
   critical(summary.balanced === true, '進行の内訳が検算に合う', `balanced=${String(summary.balanced)}`);
   // 候補は「いま送れる人」だけ。母集団の due と一致していること
   const dueByStep = (summary.dueByStep && typeof summary.dueByStep === 'object') ? summary.dueByStep : {};
   const dueThisStep = num(dueByStep[String(step)] ?? dueByStep[step]);
   critical(dueThisStep === recipients,
-    `Step${step} で送れる人数と送信対象数が一致`, `dueByStep[${step}]=${dueThisStep} / recipients=${recipients}`);
+    `${stepLabel(step)} で送れる人数と送信対象数が一致`,
+    `dueByStep[${step === null ? '(不明)' : step}]=${dueThisStep === null ? '(不明)' : dueThisStep}`
+    + ` / recipients=${recipients === null ? '(不明)' : recipients}`);
 
   // ── 4-2. 候補の DeliveryKey を名指しで確認する（campaign 全履歴は見ない）──
   critical(!!dup, '重複確認（duplicateCheck）を取得できた', dup ? '' : '取得できていない');

@@ -496,3 +496,57 @@ test('【重要】orphan 判定が取れないときは ok にしない', () => 
   const r = run({ duplicateCheck: okDuplicate({ pendingCandidates: null }) });
   assert.equal(r.ok, false, '不明を安全と読んでいる');
 });
+
+// ── 見出しの表示（判定は変えない / 2026-08-15 本番で `Stepnull` を確認）──────
+//
+// `step` が読めないとき `Step${step}` をそのまま埋めると
+// **「Stepnull で送れる人数」** という見出しになり、読み手が
+// 「Stepnull という何か」があるのかと迷う。値が無いことは明示する。
+// ⚠️ 直すのは**文字列だけ**。落ちる／通るの判定は 1 ミリも変えない。
+
+/** step が読めない状態（本番で踏んだ形：全員 queue 済みで次が無い） */
+const unknownStepState = () => {
+  const seq = okSequence();
+  seq.next = { step: null, recipients: 0, truncated: false, cap: 500, recordIds: [] };
+  seq.summary = {
+    total: 10, due: 0, waiting: 10, completed: 0, stopped: 0,
+    byStopReason: {}, dueByStep: {}, sentByStep: {}, byCurrentStep: { 1: 10 }, balanced: true,
+  };
+  const tg = okTrialGrant();
+  tg.barrier = { granted: 10, outstandingStep1: 0, resolved: 10, nextBatchAllowed: true, byReason: {} };
+  return { sequence: seq, trialGrant: tg, duplicateCheck: null };
+};
+
+test('【重要】step が読めないとき「Stepnull」と表示しない', () => {
+  const r = run({ ...unknownStepState(), expectRecipients: 10 });
+  const dump = JSON.stringify(r.checks);
+  for (const bad of ['Stepnull', 'Stepundefined', 'StepNaN', 'Step()']) {
+    assert.equal(dump.includes(bad), false, `見出しに ${bad} が出ている`);
+  }
+  // 不明であることは明示する（黙って消さない）
+  assert.ok(r.checks.some((c) => c.label.includes('ステップ（不明）')), '不明と明示していない');
+});
+
+test('【重要】表示を直しても判定は変わらない（fail closed のまま）', () => {
+  const r = run({ ...unknownStepState(), expectRecipients: 10 });
+  assert.equal(r.ok, false, '通してしまっている');
+  const labels = r.failures.map((f) => f.label);
+  assert.ok(labels.some((l) => l.includes('次に流れるのは Step1')));
+  assert.ok(labels.some((l) => l.includes('対象が 1 名以上')));
+  assert.ok(labels.some((l) => l.includes('重複確認')));
+});
+
+test('数値が読めない項目は「(不明)」と出す（0 と書かない）', () => {
+  const r = run({ ...unknownStepState(), expectRecipients: 10 });
+  const row = r.checks.find((c) => c.label.includes('で送れる人数と送信対象数が一致'));
+  assert.ok(row, '該当項目が無い');
+  assert.match(row.detail, /dueByStep\[\(不明\)\]=\(不明\)/);
+  // 「0」と誤記しないこと
+  assert.equal(/dueByStep\[null\]|=null/.test(row.detail), false);
+});
+
+test('step が読めているときは従来どおり Step1 と出す', () => {
+  const r = run();
+  assert.ok(r.checks.some((c) => c.label.includes('Step1 で送れる人数')), '通常時の見出しが変わっている');
+  assert.equal(JSON.stringify(r.checks).includes('ステップ（不明）'), false);
+});
