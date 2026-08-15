@@ -7902,8 +7902,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const ul = document.createElement('ul'); ul.className = 'exlist';
         for (const r of data.runs) {
           const li = document.createElement('li');
-          li.textContent = r.campaignType + '　登録 ' + r.queued + ' / 処理済 ' + r.sent
-            + ' / 失敗 ' + r.failed + ' / スキップ ' + r.skipped + '　' + fmtDate(r.lastAt);
+          // ⚠️ 数の出所は**送信ジョブ台帳**。配信行 1 件ずつの状態（skipped 等）は
+          //    配信台帳が大きすぎて集計できないため出さない（0 と書くと嘘になる）。
+          li.textContent = r.campaignType + '　送信 ' + r.jobs + ' 回 / 対象 ' + r.recipients
+            + ' 名 / 処理済 ' + r.sent + ' / 失敗 ' + r.failed
+            + (r.pending ? ' / 送信待ち ' + r.pending + ' 回' : '')
+            + '　' + fmtDate(r.lastAt);
           ul.appendChild(li);
         }
         sec.appendChild(ul);

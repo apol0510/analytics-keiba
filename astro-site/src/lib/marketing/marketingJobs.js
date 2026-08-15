@@ -203,3 +203,45 @@ export function assertOnlyCancelFields(fields, allow = JOB_CANCEL_WRITABLE_FIELD
   if (keys.length === 0) return false;
   return keys.every((k) => allow.includes(k));
 }
+
+/**
+ * キャンペーンごとの実施サマリを **送信ジョブから** 作る（純粋）。
+ *
+ * ── なぜ配信台帳から数えないか（2026-08-15 実測）────────────────
+ * 旧実装は `CampaignDeliveries` を全件読んで数えていた。台帳は **14,426 行
+ * （145 ページ / 実測 162 秒）** まで育っており、Netlify Function の実行時間
+ * （最大 26 秒）では**原理的に読み切れない**。
+ * 4,000 行で黙って打ち切っていた頃は「動いているが数が嘘」だった。
+ *
+ * ジョブ台帳（`ScheduledEmails`）は **1 送信 = 1 行**で、マーケティング分は
+ * 152 行しかない。「いつ・どのキャンペーンを・何人へ流したか」はここで完結する。
+ *
+ * ⚠️ **数の意味が変わる**ので、画面と応答で必ず出所を明示すること:
+ *   - `recipients` … ジョブに載せた宛先数（＝送信対象）
+ *   - `sent` / `failed` … 送信基盤が報告したジョブ単位の件数
+ *   - **`skipped` は出さない**（配信行 1 件ずつの状態なので、ジョブからは分からない）。
+ *     推測で 0 を埋めない。
+ *
+ * @param {Array} jobRows `buildJobView` の戻り（deliveries 無しで組み立ててよい）
+ */
+export function summarizeCampaignRunsFromJobs(jobRows) {
+  const byCampaign = new Map();
+  for (const j of Array.isArray(jobRows) ? jobRows : []) {
+    const key = j && j.campaignId
+      ? `${j.campaignId}${j.version ? `:v${j.version}` : ''}`
+      : '(unknown)';
+    const cur = byCampaign.get(key) || {
+      campaignType: key, jobs: 0, recipients: 0, sent: 0, failed: 0, pending: 0, lastAt: null,
+    };
+    cur.jobs += 1;
+    cur.recipients += Number(j.recipientCount) || 0;
+    cur.sent += Number(j.sentCount) || 0;
+    cur.failed += Number(j.failedCount) || 0;
+    if (str(j.status).toUpperCase() === JOB_STATUS.PENDING) cur.pending += 1;
+    const at = str(j.completedAt || j.scheduledFor);
+    if (at && (!cur.lastAt || at > cur.lastAt)) cur.lastAt = at;
+    byCampaign.set(key, cur);
+  }
+  return [...byCampaign.values()]
+    .sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')));
+}
