@@ -276,9 +276,10 @@ export const POST_EXPIRY_STEPS = Object.freeze([
     ],
     benefitTitle: '決める前に見るもの',
     benefitItems: ['ご覧になりたいレース数', '過去の買い目と結果', 'プランごとの範囲'],
-    ctaLabel: '結果を確かめる',
-    ctaUrl: `${SITE}/results-showcase/jra/`,
-    ctaNote: 'そのうえでプランの内容もご確認いただけます。',
+    // 料金の話をしている回なので、遷移先も料金のページへ揃える
+    ctaLabel: '料金を確認する',
+    ctaUrl: `${SITE}/pricing/`,
+    ctaNote: '過去の買い目と結果は無料のページで確かめられます。',
   }),
   step({
     n: 11, delayDays: 7, angle: '不安の解消',
@@ -441,6 +442,9 @@ export const POST_EXPIRY_STEPS = Object.freeze([
       '',
       '配信が止まったあとも、無料予想と結果のページは引き続きご覧いただけます。',
       'お手続きは必要ありません。',
+      '',
+      'ご覧になるレース数を増やしたい場合は、プランのページに範囲と料金を書いています。',
+      'ご検討いただける場合は、そちらをご覧ください。',
       '',
       'ご覧いただき、ありがとうございました。',
     ],
