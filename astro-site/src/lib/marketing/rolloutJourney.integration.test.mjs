@@ -607,3 +607,75 @@ test('【重要】one-shot の翌日以降、新規付与は自動で始まら�
     }
   } finally { restore(); }
 });
+
+test('【重要】kill switch: 積み残しがあっても 1 バイトも書かず、1 通も送らない', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(5, START - DAY, 30) });
+  try {
+    // まず queue まで進めて「送信待ちジョブがある」状態を作る
+    await tick(START);
+    assert.ok(world.jobs().length >= 1, 'キュー登録できていない（前提が崩れている）');
+    assert.equal(world.sent.length, 0);
+
+    // 緊急停止（管理画面から `killed: true` にするのと同じ）
+    const { createRolloutStore } = await import('./rolloutStore.js');
+    const store = createRolloutStore({ cmd: world.redisCmd });
+    await store.kill({ campaignId: CAMPAIGN_ID, nowMs: START, note: 'test' });
+
+    const before = {
+      jobs: world.jobs().length,
+      deliveries: world.deliveries().length,
+      sent: world.sent.length,
+      background: world.calls.background,
+    };
+
+    // 以降どれだけ回しても、送信・キュー登録・付与が起きない
+    const cron = await import('../../../netlify/functions/cron-marketing-rollout.js');
+    for (let d = 0; d <= 5; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await cron.runRolloutTick({ env: process.env, now: START + d * DAY });
+      assert.equal(r.action, 'skip', `${d} 日目に ${r.action} が動いている`);
+      assert.equal(r.reason, 'kill_switch', `${d} 日目の停止理由が ${r.reason}`);
+      assert.equal(r.sideEffects, 'none', `${d} 日目に副作用がある`);
+    }
+    assert.equal(world.sent.length, before.sent, '緊急停止中に送信している');
+    assert.equal(world.jobs().length, before.jobs, '緊急停止中にジョブを作っている');
+    assert.equal(world.deliveries().length, before.deliveries, '緊急停止中に台帳を書いている');
+    assert.equal(world.calls.background, before.background, '緊急停止中に Background を起動している');
+  } finally { restore(); }
+});
+
+test('【重要】kill switch を解除すれば、積み残しは続きから処理される', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(4, START - DAY, 30) });
+  try {
+    await tick(START);                       // queue まで
+    const { createRolloutStore } = await import('./rolloutStore.js');
+    const store = createRolloutStore({ cmd: world.redisCmd });
+    await store.kill({ campaignId: CAMPAIGN_ID, nowMs: START });
+    await runDay(tick, START + DAY);         // 止まっている
+    assert.equal(world.sent.length, 0, '緊急停止中に送っている');
+
+    await store.resume({ campaignId: CAMPAIGN_ID, nowMs: START + 2 * DAY });
+    for (let d = 2; d <= 4; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    assert.equal(world.sent.length, 4, `解除後に送られていない（${world.sent.length} 通）`);
+    const pairs = world.sent.map((x) => `${x.to}|${x.subject}`);
+    assert.equal(new Set(pairs).size, pairs.length, '二重送信が起きている');
+  } finally { restore(); }
+});
+
+test('【重要】MARKETING_ROLLOUT_ENABLED が OFF なら従来どおり副作用ゼロで abort', async () => {
+  const { world, restore } = await boot({ people: makePeople(3, START - DAY, 30) });
+  try {
+    const cron = await import('../../../netlify/functions/cron-marketing-rollout.js');
+    const before = { jobs: world.jobs().length, sent: world.sent.length };
+    const out = await cron.runRolloutTick({
+      env: { ...process.env, MARKETING_ROLLOUT_ENABLED: '' }, now: START,
+    });
+    assert.equal(out.abort, 'rollout_disabled');
+    assert.equal(out.sideEffects, 'none');
+    assert.equal(world.jobs().length, before.jobs);
+    assert.equal(world.sent.length, before.sent);
+  } finally { restore(); }
+});

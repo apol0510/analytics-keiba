@@ -109,16 +109,32 @@ alwaysArmed: false      # 継続運用に切り替える判断がつくまでは
 armedFor: <実行日の JST 日付>
 ```
 
-**rollback 時の状態**:
+**rollback 時の状態**（**効き方が 3 段階ある。混同しない**）:
 
-| やり方 | 効き方 | 使う場面 |
-|---|---|---|
-| `killed: true`（`store.kill()`） | **次の tick から停止**（redeploy 不要・数分） | 想定外の挙動をすぐ止めたい |
-| `stage: 'paused'` / `dailyLimit: 0` | 新規付与だけ止め、積んだぶんは送る | 付与ペースだけ落としたい |
-| env を UNSET + redeploy | 完全停止（数分〜十数分） | 恒久的に閉じる |
+| やり方 | 何が止まるか | 何が止まらないか | 反映 |
+|---|---|---|---|
+| `killed: true`（`store.kill()`） | **次の cron tick 以降の自動処理を全部**（新規付与 / キュー登録 / 送信起動 / touch2〜24 の続き） | **既に起動済みの Background 送信**（そのジョブは走り切ることがある） | 次 tick（最長 1 時間・redeploy 不要） |
+| `stage: 'paused'` / `dailyLimit: 0` | **新規付与だけ** | 積んだぶんのキュー登録・送信・続きの通は**進む**（意図的） | 次 tick |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy | **送信経路そのもの**（積むだけになる） | — | redeploy 後（数分〜十数分） |
+| env 4 件を UNSET + redeploy | 自動運転すべて | — | redeploy 後 |
 
-⚠️ **kill switch は「送信中のジョブ」を取り消さない**（走り切る）。
-即時に送信も止めるなら `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy。
+⚠️ **`killed: true` でも、既に起動した Background ジョブは取り消せない**（送信中のバッチは走り切る）。
+**送信そのものを確実に止める最終手段は `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy。**
+
+⚠️ `killed: true` の tick は**何も書かない**（`sideEffects: 'none'`）。集計の同期も止まるので、
+状況は台帳（`action=jobs` / `action=sequence`）で確認する。
+
+**実装で固定していること**（`rolloutOrchestrator.test.mjs` / `rolloutJourney.integration.test.mjs`）:
+
+| 状態 | 結果 |
+|---|---|
+| `killed: true` + 送信待ちジョブあり | 送信起動 **0**（`reason: kill_switch`） |
+| `killed: true` + queue 積み残しあり | キュー登録 **0** |
+| `killed: true` + 期日の follow-up あり | 続きの通 **0** |
+| `killed: true` + 付与候補あり | 付与 **0** |
+| `killed: true`（実 I/O） | ジョブ・台帳・送信・Background 起動すべて増加 **0** |
+| `killed` 解除後 | 積み残しが**続きから**処理される（二重送信 0） |
+| `MARKETING_ROLLOUT_ENABLED` OFF | 従来どおり `sideEffects: 'none'` で abort |
 
 ---
 
@@ -236,9 +252,9 @@ cron は 1 時間ごと。**`dailyLimit`（= 100）まで**付与する（`stage
 
 | 事象 | 対応 | 所要 |
 |---|---|---|
-| 送信内容が想定と違う | `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy（積むが送らない） | 数分〜十数分 |
-| 付与が想定より速い / 多い | `dailyLimit` を下げる or `stage: 'paused'`（Redis・redeploy 不要） | 即時（次 tick） |
-| 全部止めたい | `killed: true` → そのうえで env 4 つを UNSET + redeploy | 即時 + 数分 |
+| 送信内容が想定と違う | **① `killed: true`（次 tick から自動処理を全停止）→ ② `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy**（起動済みジョブも含めて送信経路を閉じる） | 次 tick + 数分 |
+| 付与が想定より速い / 多い | `dailyLimit` を下げる or `stage: 'paused'`（Redis・redeploy 不要。積んだぶんは送られる） | 即時（次 tick） |
+| 全部止めたい | `killed: true` → そのうえで env 4 つを UNSET + redeploy | 次 tick + 数分 |
 | 付与してしまった人を戻したい | **自動では戻さない**。`admin-comeback-grants` の取消（`LightGrantRevokedAt`）を手動で | 手動 |
 | 送ってしまったメール | **取り消せない**。配信停止の申し出に個別対応する | — |
 
