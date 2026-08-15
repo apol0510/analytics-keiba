@@ -1,3 +1,62 @@
+## 2026-08-15 — 【追加】Step1 キュー登録の直前確認を read-only で機械化（再利用できる安全装置）
+
+### なぜ
+
+Step1 のキュー登録は承認が要る操作で、押した後は ScheduledEmails / CampaignDeliveries に
+行が残る。これまで「押してよいか」の根拠が調査メモにしか無く、**承認の直前に
+再確認する手段が無かった**。次のコホートでも同じ判断を繰り返すので、道具にする。
+
+### 何を入れたか
+
+- `src/lib/marketing/step1Preflight.js`（純粋・I/O なし）— 押してよいかの判定
+- `scripts/light-trial-step1-preflight.mjs` — read-only ランナー（`npm run preflight:light-trial-step1`）
+- テスト 39 件（判定 31 / スクリプト guard 8）
+- `docs/CAMPAIGN_SEQUENCE.md` に 7-1（直前確認）/ 7-2（rollback）
+
+**母集団を作り直さない**のが要点。対象人数・停止理由・関所の残件は `admin-marketing` の
+read-only アクション（`sequence` / `trialGrant` / `jobs`）が単一源として計算しているので、
+preflight は**その答えを検算するだけ**にする。作り直すと画面の人数とズレる。
+
+### 現行 API（#339 / #341 / #343 後）との整合
+
+`jobs` は **新しい順に一部だけ**返すようになった（`jobsTotal` / `jobsShown` / `jobsTruncated`）。
+初版の判定はこれを知らず、**見えている範囲に無い＝無い**と読んでいた。
+古いジョブを見落として二重にキュー登録しうるので、
+
+- 対象ジョブが**見つかった**ら「ある」と言い切る（窓に関係なく正しい）
+- **見つからない**うえ `jobsTruncated` なら **critical で落とす**（「確認できません」と言って止まる）
+- 窓が全体を覆っているときだけ「0 件（全件を確認）」と言う
+
+取得範囲（`30 / 152 件` 等）は必ず表に出す。
+
+### 2 局面をテストで固定
+
+| 局面 | 期待 | 実装 |
+|---|---|---|
+| **いまの 10 名**（2026-08-14 に queue 済み） | **止まる** | `sentByStep[1]=10` / 既存ジョブあり / 次が Step1 でない → critical 3 件 |
+| **次のコホート**（未 queue・100 名） | **通る** | due 100 / 既送信 0 / 関所 100 / 両ゲート閉 → ok。増える行は ScheduledEmails 1・CampaignDeliveries 100・Customers 0 |
+
+人数の一致だけで判断しないことも固定した（10 名に揃えても既送信とジョブがあれば落ちる）。
+
+### 安全条件
+
+- **read-only のみ**。書き込み系アクション（`dryRun` / `send` / `cancelJob`）は
+  許可リストで凍結し guard テストが監視。Airtable / SendGrid も直接叩かない
+- **CI には入れない**（`check:safety` から本番の管理エンドポイントを叩かない）。
+  判定の単体テストだけ `test:marketing` 経由で CI に乗る
+- アドレス・recordId・secret を出力しない（件数と理由のみ）
+
+### 経緯
+
+初版は PR #338（base `6cfabf50`）。#339 / #341 / #343 のマージで base が古くなり
+CONFLICTING になったため、**rebase / cherry-pick / force push は使わず**
+最新 `origin/main`（`9454fec2`）へ差分を再適用して出し直した。#338 は close。
+
+### やっていないこと
+
+production deploy / merge / 実メール送信 / 本番 env 変更 / Airtable write /
+次の 100 名への付与。**Last verified**: 2026-08-15
+
 ## 2026-08-15 — 【修正】管理画面の進行表示が CampaignDeliveries 4,000 行で黙って打ち切られていた
 
 ### 何が起きていたか（本番実測）
