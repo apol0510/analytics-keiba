@@ -157,6 +157,7 @@ import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/imp
 import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
+  buildJobIdFormula, MARKETING_JOB_FORMULA,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import {
   resolveDeliveryStoreMode, resolveDeliveredKeys, recordDelivered,
@@ -279,6 +280,12 @@ async function loadBlacklistSets({ KEY, BASE }) {
   }
 }
 
+/**
+ * ⚠️ **`MAX_PAGES`（4,000 行）で黙って打ち切る。** 打ち切っても例外にならないので、
+ *    呼び出し側は「短い結果」を全体だと誤認する。
+ *    `CampaignDeliveries` / `ScheduledEmails` の状態表示には**使わないこと**
+ *    （`fetchAllStrict` か名指し取得を使う。guard テストが検知する）。
+ */
 async function fetchAll({ KEY, BASE, table, filterByFormula }) {
   const out = [];
   let offset;
@@ -296,6 +303,59 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
     pages += 1;
     if (offset && pages >= MAX_PAGES) break;
   } while (offset);
+  return out;
+}
+
+/**
+ * `fetchAll` と同じだが、**取り切れなければ例外**（fail closed）。
+ *
+ * ── なぜ要るか（2026-08-15 の実測）────────────────────────────
+ * `CampaignDeliveries` が 6,110 行になった時点で、`{EmailType}='campaign'` の
+ * 全件取得は 4,000 行で打ち切られていた。その結果、Step1 を 10 名ぶん
+ * キュー登録した直後に管理画面が **「送信済み 1 名 / 残り 9 名」** と表示した
+ * （実際は 10 名とも queued）。運用者が「まだ 9 名残っている」と誤読する。
+ *
+ * 状態表示は**部分集合を全体として出してはいけない**。数えられないなら
+ * 数を出さずに落とす。
+ */
+async function fetchAllStrict({ KEY, BASE, table, filterByFormula, maxPages = MAX_PAGES }) {
+  const out = [];
+  let offset;
+  let pages = 0;
+  do {
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`);
+    url.searchParams.set('pageSize', '100');
+    if (filterByFormula) url.searchParams.set('filterByFormula', filterByFormula);
+    if (offset) url.searchParams.set('offset', offset);
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`${table} fetch failed: HTTP ${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const data = await res.json();
+    out.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    // 打ち切りは**例外**。黙って短い結果を返さない
+    if (offset && pages >= maxPages) assertFetchComplete({ table, offset, pages, maxPages });
+  } while (offset);
+  return out;
+}
+
+/**
+ * 指定ジョブに紐づく配信行だけを引く（**名指し・fail closed**）。
+ * ジョブ数ぶんしか読まないので、台帳全体が何行あっても影響を受けない。
+ */
+async function fetchDeliveriesByJobIds({ KEY, BASE, jobIds }) {
+  const out = [];
+  for (const group of chunkList(jobIds, TARGETED_CHUNK)) {
+    const formula = buildJobIdFormula(group);
+    if (!formula) continue;
+    // eslint-disable-next-line no-await-in-loop -- チャンクごとに順に読む
+    const rows = await fetchAllStrict({
+      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula, maxPages: TARGETED_MAX_PAGES,
+    });
+    out.push(...rows);
+  }
   return out;
 }
 
@@ -402,13 +462,20 @@ async function loadCustomerMarketing({ KEY, BASE, now, withLogins = false, custo
   // 台帳は顧客数に比例して育つので、1 人のために全件読むと同じ打ち切り事故を起こす。
   const scoped = String(emailScope || '').trim().toLowerCase();
   const scopeClause = scoped ? `LOWER(TRIM({Email})) = '${escapeFormulaValue(scoped)}'` : null;
+  // 配信履歴は **いま表示する顧客の宛先だけ**を名指しで引く。
+  //
+  // ⚠️ 旧実装は emailScope が無いとき（＝一覧）に `{EmailType}='campaign'` の
+  //    全件取得へ落ちていた。台帳が 4,000 行を超えると `fetchAll` が黙って打ち切り、
+  //    履歴の無い人が「最近接触していない」に見える（頻度ガードが緩む）。
+  //    履歴の用途は全部 1 人単位なので、母数を顧客数に比例させる。
+  const scopeEmails = scoped
+    ? [scoped]
+    : (Array.isArray(customers) ? customers : [])
+      .map((rec) => String(((rec && rec.fields) || {}).Email || '').trim().toLowerCase())
+      .filter(Boolean);
   const [deliveries, tokens] = await Promise.all([
-    fetchAll({
-      KEY, BASE, table: DELIVERIES_TABLE,
-      filterByFormula: scopeClause
-        ? `AND({EmailType}='campaign', ${scopeClause})`
-        : `{EmailType}='campaign'`,
-    }).catch(() => []), // 履歴が読めなくても一覧は出す（履歴なし扱い）
+    // 履歴は判定に効くので、取り切れなければ **例外**（握り潰して「履歴なし」にしない）
+    fetchDeliveriesByEmails({ KEY, BASE, emails: scopeEmails }),
     // ログイン列は補助情報。読めなくても一覧・送信判定は成立させる
     withLogins
       ? fetchAll({ KEY, BASE, table: AUTH_TOKENS_TABLE, filterByFormula: scopeClause }).catch(() => [])
@@ -601,11 +668,23 @@ function engagementResponse(view) {
   };
 }
 
-/** 頻度ガード用に、指定アドレスの配信履歴だけを引く。 */
+/**
+ * 頻度ガード・進行判定用に、**指定アドレスの配信履歴だけ**を引く。
+ *
+ * ⚠️ formula へ直挿しできないアドレス（`'` を含む）は**黙って飛ばさない**。
+ *    飛ばすとその人の履歴が「無い」ことになり、進行が 1 通ぶん巻き戻って見える
+ *    （＝同じ Step をもう一度送ろうとする）。数えられないなら中止する。
+ */
 async function fetchDeliveriesByEmails({ KEY, BASE, emails }) {
   const out = [];
   for (const group of chunkList(emails, TARGETED_CHUNK)) {
     const safe = group.filter((e) => !e.includes("'"));
+    if (safe.length !== group.length) {
+      throw new Error(
+        `${DELIVERIES_TABLE}: formula へ載せられない宛先が ${group.length - safe.length} 件あります`
+        + '（履歴を取り切れないため中止します）',
+      );
+    }
     if (safe.length === 0) continue;
     const formula = `AND({EmailType}='campaign',OR(${safe
       .map((e) => `LOWER({RecipientEmail})='${e}'`).join(',')}))`;
@@ -1270,10 +1349,28 @@ async function handleSequence({ KEY, BASE, now, req }) {
   }
 
   const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
-  // 配信履歴は元から campaign で絞ってある（全件走査ではない）
-  const deliveries = await fetchAll({
-    KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
-  }).catch(() => []);
+  // 配信履歴は **受信対象の宛先だけ**を名指しで引く（台帳全体は読まない）。
+  //
+  // ⚠️ 旧実装は `{EmailType}='campaign'` の全件取得だった。「campaign で絞ってあるから
+  //    全件走査ではない」という前提が崩れており、台帳が 6,110 行になった時点で
+  //    `fetchAll` の 4,000 行打ち切りに掛かっていた（2026-08-15 実測）。
+  //    その結果、Step1 を 10 名ぶん登録した直後に「送信済み 1 名 / 残り 9 名」と
+  //    **過少表示**した。取得コストも対象人数に比例させる。
+  const audienceEmails = audience.records
+    .map((rec) => String((rec.fields || {}).Email || '').trim().toLowerCase())
+    .filter(Boolean);
+  let deliveries;
+  try {
+    deliveries = await fetchDeliveriesByEmails({ KEY, BASE, emails: audienceEmails });
+  } catch (e) {
+    // 数えられないなら**数を出さない**（部分集合を全体として表示しない）
+    return json(500, {
+      error: '配信履歴を取り切れなかったため、進行状況を返しません（数えられない数は出しません）。',
+      code: 'deliveries_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
   const history = summarizeHistory(deliveries);
   const list = audience.records.map((rec) => {
     const fields = rec.fields || {};
@@ -1785,10 +1882,30 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
  * ⚠️ **アドレスは返さない**（件数と理由コードだけ）。
  */
 async function handleJobs({ KEY, BASE }) {
-  const [scheduled, deliveries] = await Promise.all([
-    fetchAll({ KEY, BASE, table: SCHEDULED_TABLE }).catch(() => []),
-    fetchAll({ KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'` }).catch(() => []),
-  ]);
+  // ① ジョブは **マーケティング分だけ**を引く（ScheduledEmails 全件を読まない）。
+  //    formula は `isMarketingJob` と同じ 3 条件で、`buildJobView` 側の再判定と食い違わない。
+  // ② 配信行は **①で得たジョブ ID を名指し**で引く。旧実装は台帳を
+  //    `{EmailType}='campaign'` で全件取得しており、6,110 行になった時点で
+  //    4,000 行打ち切りに掛かって各ジョブの件数が過少表示されていた（2026-08-15 実測）。
+  // ③ どちらも取り切れなければ **例外 → 500**。短い結果を全体として出さない。
+  let scheduled;
+  let deliveries;
+  try {
+    scheduled = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: MARKETING_JOB_FORMULA,
+    });
+    const jobIds = scheduled
+      .map((r) => String(((r && r.fields) || {}).JobId || '').trim())
+      .filter(Boolean);
+    deliveries = await fetchDeliveriesByJobIds({ KEY, BASE, jobIds });
+  } catch (e) {
+    return json(500, {
+      error: 'ジョブの状況を取り切れなかったため、一覧を返しません（数えられない数は出しません）。',
+      code: 'jobs_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
   const jobs = buildJobView({ jobRecords: scheduled, deliveryRecords: deliveries, isMarketingJob });
   return json(200, {
     jobs,
@@ -1820,9 +1937,22 @@ async function handleCancelJob({ KEY, BASE, now, req }) {
     return json(400, { error: '識別子の形式が不正です' });
   }
 
-  const scheduled = await fetchAll({
-    KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
-  }).catch(() => []);
+  // ⚠️ 取得失敗を `[]` に潰さない。潰すと「ジョブが見つかりません」(404) と
+  //    区別が付かず、取り消せたのか取り消せていないのか分からなくなる。
+  let scheduled;
+  try {
+    scheduled = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
+      maxPages: TARGETED_MAX_PAGES,
+    });
+  } catch (e) {
+    return json(500, {
+      error: 'ジョブを取得できなかったため中止しました（取消は行っていません）。',
+      code: 'cancel_job_fetch_failed',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
   const job = scheduled.find((r) => String(r.fields?.JobId || '') === jobId) || null;
   if (!job) return json(404, { error: 'ジョブが見つかりません', reason: CANCEL_REJECT.NOT_FOUND });
   if (!isMarketingJob(job.fields || {})) {
@@ -1846,9 +1976,25 @@ async function handleCancelJob({ KEY, BASE, now, req }) {
   }
 
   // 1) 送信待ちの配信行（queued のみ）を cancelled にする。**sent には触れない**
-  const deliveries = await fetchAll({
-    KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{ScheduledEmailJobId}='${jobId}'`,
-  }).catch(() => []);
+  //
+  // ⚠️ ここを `.catch(() => [])` にしてはいけない。取得に失敗すると対象 0 件となり、
+  //    **ジョブだけ取り消して配信行を `queued` のまま残す**（＝部分取消）。
+  //    残った `queued` は `already_delivered` として永久に除外され、
+  //    その人には二度と Step が届かなくなる。取れないなら 1 バイトも書かない。
+  let deliveries;
+  try {
+    deliveries = await fetchAllStrict({
+      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{ScheduledEmailJobId}='${jobId}'`,
+      maxPages: TARGETED_MAX_PAGES,
+    });
+  } catch (e) {
+    return json(500, {
+      error: '配信行を取り切れなかったため中止しました（部分取消を避けるため何も書いていません）。',
+      code: 'cancel_deliveries_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
   const targets = selectCancelableDeliveries({ jobId, deliveryRecords: deliveries });
   const deliveryFields = buildDeliveryCancelFields({ operationId, nowMs: now });
   if (!deliveryFields || !assertOnlyCancelFields(deliveryFields, DELIVERY_CANCEL_WRITABLE_FIELDS)) {
@@ -1881,8 +2027,22 @@ async function handleCancelJob({ KEY, BASE, now, req }) {
 }
 
 async function handleHistory({ KEY, BASE }) {
-  const deliveries = await fetchAll({ KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'` })
-    .catch(() => []);
+  // 実績サマリは台帳全体が母数なので**名指しにはできない**。
+  // そのぶん打ち切りを許さない（旧実装は 4,000 行で黙って切れたうえ、
+  // `.catch(() => [])` で失敗まで「0 件」に見えていた）。
+  let deliveries;
+  try {
+    deliveries = await fetchAllStrict({
+      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
+    });
+  } catch (e) {
+    return json(500, {
+      error: '配信実績を取り切れなかったため、集計を返しません（部分集計は実績として出しません）。',
+      code: 'history_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
   return json(200, {
     runs: summarizeCampaignRuns(deliveries),
     total: deliveries.length,

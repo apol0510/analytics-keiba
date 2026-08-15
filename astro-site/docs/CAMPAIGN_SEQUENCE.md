@@ -356,6 +356,35 @@ npm run check:safety     # 上記を含む全 safety check
 | `sequenceAutomation.test.mjs` | ゲート・1 ステップだけ・step1 手動・上限中止 |
 | `sequenceRender.test.mjs` | HTML/text 両方・モバイル・本番文面の表現・benefit guard |
 | `sequenceWiring.guard.test.mjs` | 管理 API / cron / 画面の配線と安全条件 |
+| `marketingStatusScan.regression.test.mjs` | 台帳 6,110 行でも 10 名を 10 名と数える（実ハンドラ起動） |
+| `marketingStatusScan.guard.test.mjs` | 状態表示が打ち切る取得へ戻らない・fail closed の維持 |
+
+## 配信台帳も名指しで読む（2026-08-15 / 状態表示の打ち切りを廃止）
+
+Customers の全件走査は 2026-08-13 に廃止したが、**`CampaignDeliveries` 側は残っていた**。
+台帳が 6,110 行（`{EmailType}='campaign'`）に育った結果、`fetchAll` の
+`MAX_PAGES=40`（4,000 行）打ち切りに掛かり、**Step1 を 10 名ぶん登録した直後に
+「送信済み 1 名 / 残り 9 名」と過少表示**した（本番実測）。
+
+「`{EmailType}='campaign'` で絞ってあるから全件走査ではない」は**もう成り立たない**。
+絞っても 6,110 行ある。
+
+| 経路 | 読み方 |
+|---|---|
+| `handleSequence` | 受信対象の**宛先だけ**（`fetchDeliveriesByEmails`） |
+| `handleJobs` | ScheduledEmails は `MARKETING_JOB_FORMULA` で絞り、配信行は **JobId 名指し** |
+| `handleCancelJob` | JobId 名指し。**取れなければ 1 バイトも書かない**（部分取消の防止） |
+| `loadCustomerMarketing` | 表示する顧客の**宛先だけ** |
+| `handleHistory` | 母数が台帳全体なので名指し不可 → **打ち切りを例外化**（`fetchAllStrict`） |
+
+- **状態表示は部分集合を全体として出さない。** 数えられないなら数を出さずに落とす
+  （`deliveries_fetch_incomplete` / `jobs_fetch_incomplete` / `history_fetch_incomplete`）
+- 取得失敗を `.catch(() => [])` で潰さない（**失敗と 0 件が区別できなくなる**）
+- `fetchAll`（黙って打ち切る）で `CampaignDeliveries` / `ScheduledEmails` を読むことは
+  **禁止**。`marketingStatusScan.guard.test.mjs` が検知する
+- 送信経路（`handlePlan`）は元から `fetchDeliveredKeys` の名指し・fail closed なので
+  **二重送信の防壁は影響を受けていなかった**（同じ 10 名の再 dryRun で `willSend 0` を実測）
+- `cron-campaign-sequence.js` は元から `assertFetchComplete` で fail closed
 
 ## 受信対象は Airtable 側で絞る（2026-08-13 / 全件走査を廃止）
 
