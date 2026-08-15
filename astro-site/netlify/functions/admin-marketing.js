@@ -162,6 +162,10 @@ import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketi
 import { readStageGates, describeBlocked } from '../../src/lib/marketing/rolloutGates.js';
 import { describeJourney } from '../../src/lib/marketing/journeyModel.js';
 import { JOURNEY_STATE_LABEL } from '../../src/lib/marketing/journeyTotals.js';
+import {
+  planRolloutStart, planRolloutPause, planRolloutResume, describeControlResult,
+  ROLLOUT_OP, CONTROL_REJECT_LABEL,
+} from '../../src/lib/marketing/rolloutControl.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -780,6 +784,12 @@ export const handler = async (event) => {
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
+    // ⚠️ ここから 4 つは **read-only ではない**（Redis の展開状態だけを書き換える）。
+    //    Customers・配信台帳・送信には触れない。受け付ける値は `rolloutControl.js` が絞る。
+    if (action === 'rolloutStart') return await handleRolloutControl({ op: ROLLOUT_OP.START, now, req });
+    if (action === 'rolloutKill') return await handleRolloutControl({ op: ROLLOUT_OP.KILL, now, req });
+    if (action === 'rolloutPause') return await handleRolloutControl({ op: ROLLOUT_OP.PAUSE, now, req });
+    if (action === 'rolloutResume') return await handleRolloutControl({ op: ROLLOUT_OP.RESUME, now, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1443,6 +1453,112 @@ async function handleRollout({ KEY, BASE, now, req }) {
  *
  * ⚠️ 返すのは件数と状態の内訳だけ。**アドレス・recordId・DeliveryKey は返さない。**
  */
+/**
+ * 展開状態の書き換え（**唯一の書き込み口**）。
+ *
+ * ⚠️ **これだけが read-only ではない。** 書くのは Redis の展開状態のみで、
+ *    Customers・`ScheduledEmails`・`CampaignDeliveries`・SendGrid には一切触れない。
+ *
+ * ── なぜ必要か ────────────────────────────────────────────────
+ * 2026-08-15 の activation で、状態を書く経路が本番に無く**開始できなかった**。
+ * さらに runbook が約束している「異常時は `killed: true` で全停止」も、
+ * 立てる手段が無いままだった（rollback が絵に描いた餅になっていた）。
+ *
+ * ── 安全策 ────────────────────────────────────────────────────
+ * - 管理 secret 必須（この Function の入口で検証済み）
+ * - 受け付ける値は `rolloutControl.js` が allow-list で絞る
+ *   （段階は 5 値・上限は 0〜{HARD_DAILY_MAX} の整数・武装日は当日〜7 日先）
+ * - `start` は **CAS 必須**（`expectedVersion`。競合したら書かない）
+ * - `kill` は競合しても 1 度やり直す（**止める操作は通したい**）
+ * - 応答に PII・secret を入れない
+ */
+async function handleRolloutControl({ op, now, req }) {
+  const campaignId = String((req && req.campaignId) || '').trim();
+  const base = getCampaign(campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+  // 機能そのものの許可（既定 OFF）。**env が閉じているうちは状態も触らせない**
+  if (!isRolloutEnabled(process.env)) {
+    return json(503, {
+      error: '自動運転が無効です（MARKETING_ROLLOUT_ENABLED 未設定）',
+      flag: 'MARKETING_ROLLOUT_ENABLED',
+      sideEffects: 'none',
+    });
+  }
+
+  let store;
+  try {
+    store = createRolloutStore({ cmd: makeRedisCmd(process.env) });
+  } catch {
+    return json(503, { error: '展開状態の保存先へ接続できません', sideEffects: 'none' });
+  }
+
+  try {
+    // ── 緊急停止だけは読み直して 1 度やり直す（止める操作は通す）──────
+    if (op === ROLLOUT_OP.KILL) {
+      const killed = await store.kill({ campaignId, nowMs: now, note: String((req && req.note) || '') });
+      console.log('🛑 [admin-marketing] rollout kill', { campaignId, stage: killed.state.stage });
+      return json(200, {
+        mode: 'rollout-control',
+        sideEffects: '展開状態（Redis）のみ',
+        ...describeControlResult({ op, state: killed.state }),
+        notice: '緊急停止しました。**次の cron tick から自動処理を全部止めます**'
+          + '（既に起動済みの送信は走り切ることがあります。'
+          + '送信経路自体を閉じるには MARKETING_CAMPAIGN_DISPATCH_ENABLED を外して redeploy してください）。',
+      });
+    }
+
+    const cur = await store.load(campaignId);
+
+    let planned;
+    if (op === ROLLOUT_OP.START) {
+      planned = planRolloutStart({ current: cur.state, exists: cur.exists, req, nowMs: now });
+    } else if (op === ROLLOUT_OP.PAUSE) {
+      planned = planRolloutPause({ current: cur.state, nowMs: now });
+    } else if (op === ROLLOUT_OP.RESUME) {
+      planned = planRolloutResume({ current: cur.state, nowMs: now });
+    } else {
+      return json(400, { error: '知らない操作です', sideEffects: 'none' });
+    }
+    if (!planned.ok) {
+      return json(400, {
+        error: CONTROL_REJECT_LABEL[planned.reason] || '指定を受け付けられません',
+        reason: planned.reason,
+        sideEffects: 'none',
+      });
+    }
+
+    const expectedVersion = op === ROLLOUT_OP.START
+      ? planned.expectedVersion
+      : (cur.exists ? cur.state.version : null);
+    const saved = await store.save({ campaignId, state: planned.state, expectedVersion });
+    console.log('🚚 [admin-marketing] rollout control', {
+      campaignId, op, stage: saved.state.stage, dailyLimit: saved.state.dailyLimit,
+    });
+    return json(200, {
+      mode: 'rollout-control',
+      sideEffects: '展開状態（Redis）のみ',
+      ...describeControlResult({ op, state: saved.state }),
+      notice: op === ROLLOUT_OP.START
+        ? '展開状態を設定しました。**まだ 1 件も付与していません**（次の cron tick から動きます）。'
+        : '展開状態を更新しました。付与・キュー登録・送信は行っていません。',
+    });
+  } catch (e) {
+    const code = (e instanceof RolloutStoreError && e.code) || 'unavailable';
+    // 競合は「誰かが同時に触った」なので、**書かずに** 409 で返す
+    const status = code === 'cas_conflict' ? 409 : 503;
+    return json(status, {
+      error: code === 'cas_conflict'
+        ? '他の操作と競合しました。もう一度読み直してからやり直してください。'
+        : '展開状態を更新できませんでした。',
+      code,
+      sideEffects: 'none',
+    });
+  }
+}
+
 async function handleDuplicateCheck({ KEY, BASE, req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
