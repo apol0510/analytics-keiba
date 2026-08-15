@@ -195,22 +195,45 @@ test('本番カタログの連続配信定義がすべて健全', () => {
   assert.equal(v.ok, true, v.errors.join(' / '));
 });
 
-test('本番の連続配信キャンペーンが 1 件以上あり、24 通構成で使用可能', () => {
+test('本番の連続配信は 2 フェーズ（体験中 6 通 + 体験終了後 18 通 = 24 接点）', () => {
   const seqs = CAMPAIGNS.filter((c) => isSequenceCampaign(c));
-  assert.ok(seqs.length >= 1);
-  const c = getCampaign('light-trial-to-premium-sequence');
-  assert.ok(c, 'Light 無料体験 → Premium の連続配信が使用可能でない');
-  assert.deepEqual(c.requiresActiveGrant, { tier: 'light', termedOnly: true },
+  assert.ok(seqs.length >= 2);
+
+  // ── 体験中フェーズ ───────────────────────────────────────
+  const active = getCampaign('light-trial-to-premium-sequence');
+  assert.ok(active, 'Light 無料体験 → Premium の連続配信が使用可能でない');
+  assert.deepEqual(active.requiresActiveGrant, { tier: 'light', termedOnly: true },
     '期限付き Light 無料期間中だけを対象にしていない');
-  assert.ok(c.requiresImportCohort, 'CSV 取り込みコホートに限定していない');
-  assert.equal(resolveMaxSends(c), 24);
-  const view = describeSequence(c);
-  assert.equal(view.steps.length, 24);
-  assert.equal(new Set(view.steps.map((s) => s.subject)).size, 24, '件名が 24 通とも異なる');
-  // 1 通目は即時、以降は最小間隔（2 日）以上あける
-  assert.equal(view.steps[0].delayDays, 0);
-  assert.ok(view.steps.slice(1).every((s) => s.delayDays >= 2), '間隔が短すぎるステップがある');
-  assert.ok(view.steps.every((s) => s.preheader), 'preheader が全ステップにある');
+  assert.ok(active.requiresImportCohort, 'CSV 取り込みコホートに限定していない');
+  assert.equal(resolveMaxSends(active), 6, '無料期間 30 日に収まらない通数を体験中へ置いている');
+
+  // ── 体験終了後フェーズ ───────────────────────────────────
+  const post = getCampaign('light-trial-post-expiry-sequence');
+  assert.ok(post, '体験終了後フェーズが使用可能でない');
+  assert.equal(post.requiresActiveGrant, undefined, '終了後なのに有効な付与を要求している');
+  assert.deepEqual(post.requiresExpiredGrant, { tier: 'light' });
+  assert.ok(post.requiresImportCohort, 'CSV 取り込みコホートに限定していない');
+  assert.equal(resolveMaxSends(post), 18);
+
+  // ── 合計 24 接点 ────────────────────────────────────────
+  assert.equal(resolveMaxSends(active) + resolveMaxSends(post), 24);
+
+  for (const c of [active, post]) {
+    const view = describeSequence(c);
+    const n = resolveMaxSends(c);
+    assert.equal(view.steps.length, n, `${c.campaignId} の Step 数が上限と違う`);
+    assert.equal(new Set(view.steps.map((s) => s.subject)).size, n,
+      `${c.campaignId} の件名が重複している`);
+    // 1 通目は即時、以降は最小間隔（2 日）以上あける
+    assert.equal(view.steps[0].delayDays, 0, `${c.campaignId} の 1 通目が即時でない`);
+    assert.ok(view.steps.slice(1).every((s) => s.delayDays >= 2),
+      `${c.campaignId} に間隔が短すぎるステップがある`);
+    assert.ok(view.steps.every((s) => s.preheader), `${c.campaignId} に preheader の無い Step がある`);
+  }
+
+  // 件名は**フェーズをまたいでも**重複しない（同じ文面を 2 度送らない）
+  const all = [...describeSequence(active).steps, ...describeSequence(post).steps];
+  assert.equal(new Set(all.map((s) => s.subject)).size, 24, '24 通のうち件名が重複している');
 });
 
 test('getSequenceSteps は stepNumber 昇順', () => {

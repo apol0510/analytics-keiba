@@ -1,5 +1,11 @@
 /**
- * rolloutJourney.integration.test.mjs — **人手ゼロで Step1 → Step24 → 完了**
+ * rolloutJourney.integration.test.mjs — **人手ゼロで 1 通目 → 24 通目 → 完了**
+ *
+ * ⚠️ 24 通は **2 フェーズ**に分かれている:
+ *      体験中     `light-trial-to-premium-sequence`（6 通 / 接点 1〜6）
+ *      体験終了後 `light-trial-post-expiry-sequence`（18 通 / 接点 7〜24）
+ *    無料体験は 30 日で終わるため、**実際の 30 日付与**で通しに回し、
+ *    期限切れをまたいで 24 通そろうことを固定する。
  *   node --test src/lib/marketing/rolloutJourney.integration.test.mjs
  *
  * 偽の世界（Airtable / Redis / SendGrid）を置き、**本物の cron を何十 tick も回す**。
@@ -22,12 +28,13 @@ import assert from 'node:assert/strict';
 import { createWorld } from './rolloutJourney.fake.mjs';
 import { getCampaign } from './campaignCatalog.js';
 import { getSequenceSteps, resolveSequenceStep } from './campaignSequence.js';
+import { JOURNEY_PHASES, MAX_TOUCHES, toTouch } from './journeyModel.js';
 import { ROLLOUT_STAGE } from './rolloutPlan.js';
 
 const CAMPAIGN_ID = 'light-trial-to-premium-sequence';
 const DAY = 86400_000;
 const START = Date.parse('2026-09-01T01:00:00Z');   // JST 10:00
-const STEP_COUNT = getSequenceSteps(getCampaign(CAMPAIGN_ID, { includeDisabled: true })).length;
+const STEP_COUNT = MAX_TOUCHES;   // 通し番号の総数（体験中 6 + 終了後 18）
 
 /** 工程ゲートを全部開けた env（**本番では既定で閉じている**） */
 const ENV = Object.freeze({
@@ -127,71 +134,91 @@ async function runDay(tick, dayMs, times = 4) {
   return actions;
 }
 
-/** 件名 → 何通目か（配信行には step が入らないので、届いた文面から見る） */
-const CAMPAIGN = getCampaign(CAMPAIGN_ID, { includeDisabled: true });
-const STEP_BY_SUBJECT = new Map(
-  getSequenceSteps(CAMPAIGN).map((s) => [resolveSequenceStep(CAMPAIGN, s.stepNumber).subject, s.stepNumber]),
-);
-const sentSteps = (world) => [...new Set(world.sent.map((s) => STEP_BY_SUBJECT.get(s.subject)).filter(Boolean))];
+/**
+ * 件名 → **通し番号（1〜24）**。配信行には step が入らないので、届いた文面から見る。
+ * フェーズをまたいで 1 本に数えるため、`journeyModel` の変換を通す。
+ */
+const TOUCH_BY_SUBJECT = new Map();
+for (const p of JOURNEY_PHASES) {
+  const c = getCampaign(p.campaignId, { includeDisabled: true });
+  for (const s of getSequenceSteps(c)) {
+    TOUCH_BY_SUBJECT.set(resolveSequenceStep(c, s.stepNumber).subject, toTouch(p.campaignId, s.stepNumber));
+  }
+}
+const sentSteps = (world) => [...new Set(world.sent.map((s) => TOUCH_BY_SUBJECT.get(s.subject)).filter(Boolean))];
+/** その人が受け取った通し番号（昇順） */
+const touchesFor = (world, email) => world.sent
+  .filter((x) => x.to === email)
+  .map((x) => TOUCH_BY_SUBJECT.get(x.subject))
+  .filter(Boolean)
+  .sort((a, b) => a - b);
 
 // ── 通し（人手ゼロ）────────────────────────────────────────────
 
-test('【重要】時計を進めるだけで Step1 → Step24 まで人手ゼロで進む', async () => {
-  // ⚠️ 無料期間が続いている間だけ配信対象になる（`requiresActiveGrant`）。
-  //    ここでは**配線が最後まで通るか**を見たいので、期間を十分長く取る。
-  //    30 日の無料期間だと 24 通は入り切らない（下の別テストで固定している）。
-  const { world, tick, restore } = await boot({ people: makePeople(5, START - DAY, 400) });
+test('【重要】30 日の無料体験でも、期限切れをまたいで 24 通が人手ゼロで届く', async () => {
+  // ⚠️ **実際の 30 日付与**で回す。体験中に入るのは 6 通前後で、
+  //    期限が切れたら終了後フェーズへ移り、合計 24 通に到達する。
+  const { world, tick, restore } = await boot({ people: makePeople(4, START - DAY, 30) });
   try {
     let day = 0;
-    // 24 通 × 最短間隔 3 日 + 余裕。1 日 4 tick まで
-    for (; day < 200 && sentSteps(world).length < STEP_COUNT; day += 1) {
+    for (; day < 300 && sentSteps(world).length < MAX_TOUCHES; day += 1) {
       // eslint-disable-next-line no-await-in-loop
       await runDay(tick, START + day * DAY);
     }
-    const steps = sentSteps(world).sort((a, b) => a - b);
-    assert.deepEqual(steps, Array.from({ length: STEP_COUNT }, (_, i) => i + 1),
-      `Step1〜${STEP_COUNT} まで届いていない（届いた: ${steps.join(',')}）`);
-    assert.equal(world.sent.length, STEP_COUNT * 5, `送信数が合わない（${world.sent.length}）`);
-    // 同じ人へ同じ Step を 2 通送っていない
-    const pairs = world.sent.map((s) => `${s.to}|${s.subject}`);
-    assert.equal(new Set(pairs).size, pairs.length, '同じ人へ同じ文面を二度送っている');
+    const touches = sentSteps(world).sort((a, b) => a - b);
+    assert.deepEqual(touches, Array.from({ length: MAX_TOUCHES }, (_, i) => i + 1),
+      `1〜24 通目まで届いていない（届いた: ${touches.join(',')}）`);
+
+    // 1 人あたり 24 通ちょうど・重複ゼロ
+    for (const p of world.tables.Customers) {
+      const mine = touchesFor(world, p.fields.Email);
+      assert.equal(mine.length, MAX_TOUCHES, `${mine.length} 通しか届いていない人がいる`);
+      assert.equal(new Set(mine).size, MAX_TOUCHES, '同じ通し番号を二度送っている');
+    }
+    assert.equal(world.sent.length, MAX_TOUCHES * 4, `送信数が合わない（${world.sent.length}）`);
   } finally { restore(); }
 });
 
-test('【重要】24 通が終わると completed になり、それ以上は送らない', async () => {
-  const { world, tick, restore } = await boot({ people: makePeople(3, START - DAY, 400) });
+test('【重要】体験中 1〜6 → 期限切れ → 7 通目以降（順番が入れ替わらない）', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(2, START - DAY, 30) });
   try {
-    for (let d = 0; d < 200 && sentSteps(world).length < STEP_COUNT; d += 1) {
+    for (let d = 0; d < 300 && sentSteps(world).length < MAX_TOUCHES; d += 1) {
       // eslint-disable-next-line no-await-in-loop
       await runDay(tick, START + d * DAY);
     }
+    const mine = touchesFor(world, world.tables.Customers[0].fields.Email);
+    assert.deepEqual(mine, [...mine].sort((a, b) => a - b), '順番が入れ替わっている');
+    assert.ok(mine.includes(6) && mine.includes(7), 'フェーズをまたいでいない');
+  } finally { restore(); }
+});
+
+test('【重要】24 通に達したら、その後いくら回しても 1 通も増えない', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(2, START - DAY, 30) });
+  try {
+    let day = 0;
+    for (; day < 300 && sentSteps(world).length < MAX_TOUCHES; day += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + day * DAY);
+    }
     const afterAll = world.sent.length;
-    // さらに 60 日回しても 1 通も増えない
-    for (let d = 200; d < 260; d += 1) {
+    assert.equal(afterAll, MAX_TOUCHES * 2);
+    for (let d = day; d < day + 120; d += 1) {
       // eslint-disable-next-line no-await-in-loop
       await runDay(tick, START + d * DAY);
     }
     assert.equal(world.sent.length, afterAll, `24 通の後に ${world.sent.length - afterAll} 通送っている`);
-    assert.equal(afterAll, STEP_COUNT * 3);
   } finally { restore(); }
 });
 
-test('【重要】30 日の無料期間には 24 通は入り切らない（期限切れで止まる）', async () => {
-  // ⚠️ これは不具合ではなく**現在の仕様**（`requiresActiveGrant`）。
-  //    無料期間が終わった人は `grant_expired` で停止し、後続 Step は積まれない。
-  //    「期限後も送るか」は配信対象の定義を変える判断なので、ここでは事実だけ固定する。
-  const { world, tick, restore } = await boot({ people: makePeople(3, START - DAY, 30) });
+test('【重要】無反応のままでも 24 通まで進む（反応が無いことを理由に止めない）', async () => {
+  // 偽の世界には開封・クリックの記録が 1 件も無い = 完全な無反応
+  const { world, tick, restore } = await boot({ people: makePeople(2, START - DAY, 30) });
   try {
-    for (let d = 0; d < 120; d += 1) {
+    for (let d = 0; d < 300 && sentSteps(world).length < MAX_TOUCHES; d += 1) {
       // eslint-disable-next-line no-await-in-loop
       await runDay(tick, START + d * DAY);
     }
-    const steps = sentSteps(world).sort((a, b) => a - b);
-    assert.ok(steps.length >= 1, '1 通も届いていない');
-    assert.ok(steps.length < STEP_COUNT,
-      `無料期間 30 日で ${steps.length} 通届いた（期限切れ後も送っているなら仕様変更が要る）`);
-    // 期限が切れたあとに送っていないこと（最後の送信は期限内）
-    assert.ok(steps[0] === 1, 'Step1 から始まっていない');
+    assert.equal(sentSteps(world).length, MAX_TOUCHES, '無反応を理由に途中で止まっている');
   } finally { restore(); }
 });
 
@@ -225,8 +252,8 @@ test('【重要】購入した人には以降の Step を積まない', async ()
   } finally { restore(); }
 });
 
-test('【重要】Step5 のあとに購入したら Step6 以降は 0 通', async () => {
-  const { world, tick, restore } = await boot({ people: makePeople(4, START - DAY, 400) });
+test('【重要】5 通目のあとに購入したら、体験中も終了後も 0 通', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(4, START - DAY, 30) });
   try {
     // Step5 が届くまで進める
     let day = 0;
@@ -248,6 +275,9 @@ test('【重要】Step5 のあとに購入したら Step6 以降は 0 通', asyn
     }
     const after = world.sent.filter((x) => x.to === buyerMail).length;
     assert.equal(after, before, `購入後に ${after - before} 通送っている`);
+    // 終了後フェーズ（7 通目以降）も 1 通も来ていない
+    assert.equal(touchesFor(world, buyerMail).filter((t) => t >= 7).length, 0,
+      '購入者へ終了後フェーズを送っている');
     // 他の人には届き続ける（購入者だけを止めている）
     const others = world.sent.filter((x) => x.to !== buyerMail).length;
     assert.ok(others > before, '購入していない人まで止めている');
@@ -381,5 +411,115 @@ test('【重要】キュー登録ゲートが閉じていれば、積まない�
     assert.equal(world.jobs().length, 0, 'ゲートが閉じているのにジョブを作っている');
     assert.equal(world.deliveries().length, 0, 'ゲートが閉じているのに台帳を書いている');
     assert.equal(world.sent.length, 0);
+  } finally { restore(); }
+});
+
+test('【重要】期限切れの直前に購入 → 終了後フェーズは 0 通', async () => {
+  const grantedAt = START - DAY;
+  const { world, tick, restore } = await boot({ people: makePeople(3, grantedAt, 30) });
+  try {
+    const buyer = world.tables.Customers[0];
+    const mail = buyer.fields.Email;
+    // 期限（付与 + 30 日）の 1 日前まで進める
+    const expiryDay = Math.floor((grantedAt + 30 * DAY - START) / DAY);
+    for (let d = 0; d < expiryDay - 1; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    world.setCustomer(buyer.id, { プラン: 'Premium', Status: 'active' });
+    const before = touchesFor(world, mail).length;
+
+    for (let d = expiryDay - 1; d < expiryDay + 90; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    const mine = touchesFor(world, mail);
+    assert.equal(mine.length, before, `購入後に ${mine.length - before} 通送っている`);
+    assert.equal(mine.filter((t) => t >= 7).length, 0, '購入者へ終了後フェーズを送っている');
+    // 購入していない人は 7 通目以降へ進んでいる
+    const other = touchesFor(world, world.tables.Customers[1].fields.Email);
+    assert.ok(other.some((t) => t >= 7), '購入していない人まで止めている');
+  } finally { restore(); }
+});
+
+test('【重要】終了後フェーズの 3 通目のあとに購入 → 以降 0 通', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(3, START - DAY, 30) });
+  try {
+    const buyer = world.tables.Customers[0];
+    const mail = buyer.fields.Email;
+    // 通し番号 9（= 終了後フェーズ 3 通目）まで進める
+    let day = 0;
+    for (; day < 300 && touchesFor(world, mail).filter((t) => t >= 7).length < 3; day += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + day * DAY);
+    }
+    const before = touchesFor(world, mail).length;
+    assert.ok(before >= 9, `終了後フェーズ 3 通目まで届いていない（${before}）`);
+
+    world.setCustomer(buyer.id, { プラン: 'Premium', Status: 'active' });
+    for (let d = day; d < day + 120; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    assert.equal(touchesFor(world, mail).length, before,
+      `購入後に ${touchesFor(world, mail).length - before} 通送っている`);
+  } finally { restore(); }
+});
+
+test('【重要】ハードバウンス / 苦情 / 配信基盤の停止リスト → 以降 0 通', async () => {
+  for (const type of ['bounce', 'complaint', 'spam']) {
+    // eslint-disable-next-line no-await-in-loop
+    const { world, tick, restore } = await boot({ people: makePeople(3, START - DAY, 30) });
+    try {
+      let day = 0;
+      for (; day < 30 && sentSteps(world).length < 2; day += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await runDay(tick, START + day * DAY);
+      }
+      const target = world.tables.Customers[0];
+      const mail = target.fields.Email;
+      world.addToBlacklist(mail, type);
+      const before = touchesFor(world, mail).length;
+
+      for (let d = day; d < day + 120; d += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await runDay(tick, START + d * DAY);
+      }
+      assert.equal(touchesFor(world, mail).length, before,
+        `${type} のあとに ${touchesFor(world, mail).length - before} 通送っている`);
+      // 他の人は進み続ける
+      assert.ok(touchesFor(world, world.tables.Customers[1].fields.Email).length > before,
+        `${type} で他の人まで止めている`);
+    } finally { restore(); }
+  }
+});
+
+test('【重要】フェーズ移行は毎 tick 導出（handoff の記録を二重に作らない）', async () => {
+  const { world, tick, restore } = await boot({ people: makePeople(3, START - DAY, 30) });
+  try {
+    // 期限切れ直後を、同じ日に何度も回す（cron 再起動と同じ状況）
+    let day = 0;
+    for (; day < 300 && sentSteps(world).filter((t) => t >= 7).length < 1; day += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + day * DAY);
+    }
+    const jobsAfter = world.jobs().length;
+    const deliveriesAfter = world.deliveries().length;
+    const sentAfter = world.sent.length;
+
+    // 同じ日をもう一度、しつこく回す
+    for (let i = 0; i < 6; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await tick(START + day * DAY + i * 600_000);
+    }
+    assert.equal(world.jobs().length, jobsAfter, 'ジョブを二重に作っている');
+    assert.equal(world.deliveries().length, deliveriesAfter, '配信行を二重に作っている');
+    assert.equal(world.sent.length, sentAfter, '二重送信が起きている');
+
+    // 通し番号にも重複が無い
+    for (const p of world.tables.Customers) {
+      const mine = touchesFor(world, p.fields.Email);
+      assert.equal(new Set(mine).size, mine.length, '同じ通し番号を二度送っている');
+    }
   } finally { restore(); }
 });

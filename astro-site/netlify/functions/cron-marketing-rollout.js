@@ -47,12 +47,22 @@ import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
 import { readAutoGrantGates } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
+import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
+import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
 
-/** この展開が対象とするキャンペーン（連続配信 24 通） */
+/**
+ * この展開が対象とする道のり。**2 キャンペーンで 1 本**（合計 24 接点）。
+ *   体験中     `light-trial-to-premium-sequence`   Step1〜6   → 接点 1〜6
+ *   体験終了後 `light-trial-post-expiry-sequence`  Step1〜18  → 接点 7〜24
+ * 通し番号の変換は `journeyModel.js` が単一源。
+ */
 export const ROLLOUT_CAMPAIGN_ID = 'light-trial-to-premium-sequence';
+export const POST_EXPIRY_CAMPAIGN_ID = 'light-trial-post-expiry-sequence';
+/** 展開状態・集計の鍵は**道のり単位**（キャンペーンが分かれても 1 本として追う） */
+const STATE_KEY = ROLLOUT_CAMPAIGN_ID;
 
 /** 付与直後に積むのは必ず 1 通目 */
 const STEP1 = 1;
@@ -146,7 +156,9 @@ async function callAdminMarketing(body) {
 async function loadJobs() {
   const res = await callAdminMarketing({ action: 'jobs' });
   if (res.statusCode !== 200 || !res.body || !Array.isArray(res.body.jobs)) return null;
-  const mine = res.body.jobs.filter((j) => j && String(j.campaignId || '') === ROLLOUT_CAMPAIGN_ID);
+  // **両フェーズ**のジョブを拾う（キャンペーンが分かれても送信の面倒は 1 か所で見る）
+  const ours = new Set(JOURNEY_PHASES.map((p) => p.campaignId));
+  const mine = res.body.jobs.filter((j) => j && ours.has(String(j.campaignId || '')));
   const pending = mine.filter((j) => j.status === 'PENDING');
   return {
     count: pending.length,
@@ -197,10 +209,10 @@ export function collectFinishedJobs({ pendingJobIds, byId, jobSteps }) {
  * 既存の進行判定が選んだ `recordIds` を渡す。**どちらも同じ安全経路**を通る:
  *   dry-run（対象・文面・組み立て版の確定）→ 指紋を持ったまま登録
  */
-async function queueStep({ step, grantOperationId = null, recordIds = null }) {
+async function queueStep({ campaignId = ROLLOUT_CAMPAIGN_ID, step, grantOperationId = null, recordIds = null }) {
   const target = grantOperationId ? { grantOperationId } : { recordIds };
   const dry = await callAdminMarketing({
-    action: 'dryRun', campaignId: ROLLOUT_CAMPAIGN_ID, step, ...target,
+    action: 'dryRun', campaignId, step, ...target,
   });
   if (dry.statusCode !== 200) {
     return { ok: false, stage: 'dryRun', step, status: dry.statusCode, error: dry.body?.error || null };
@@ -210,7 +222,7 @@ async function queueStep({ step, grantOperationId = null, recordIds = null }) {
 
   // ⚠️ dry-run で確認した**そのもの**を積む（指紋・文面・組み立て版を全部持ち回る）
   const live = await callAdminMarketing({
-    action: 'send', campaignId: ROLLOUT_CAMPAIGN_ID, step, ...target,
+    action: 'send', campaignId, step, ...target,
     planFingerprint: dry.body.planFingerprint,
     contentHash: dry.body.contentHash,
     shellVersion: dry.body.shellVersion,
@@ -221,6 +233,9 @@ async function queueStep({ step, grantOperationId = null, recordIds = null }) {
   return {
     ok: true,
     step,
+    campaignId,
+    /** 通し番号（1〜24）。集計と画面はこちらで数える */
+    touch: toTouch(campaignId, step),
     queued: Number(live.body?.queued || 0),
     jobIds: (live.body?.jobs || []).map((j) => String(j.jobId || '')).filter(Boolean),
   };
@@ -235,12 +250,13 @@ async function queueStep({ step, grantOperationId = null, recordIds = null }) {
  *    間隔・頻度上限まで見たうえで「いま流してよい人」だけを返す。
  *    独自に数えると、**止めるべき人へ送る**事故になる。
  */
-async function readNextDueStep() {
-  const res = await callAdminMarketing({ action: 'sequence', campaignId: ROLLOUT_CAMPAIGN_ID });
+async function readPhaseDue(campaignId) {
+  const res = await callAdminMarketing({ action: 'sequence', campaignId });
   if (res.statusCode !== 200 || !res.body || !res.body.next) return null; // fail closed
   const step = Number(res.body.next.step);
   const recordIds = Array.isArray(res.body.next.recordIds) ? res.body.next.recordIds.map(String) : [];
   return {
+    campaignId,
     step: Number.isFinite(step) ? step : null,
     recordIds,
     due: recordIds.length,
@@ -248,6 +264,29 @@ async function readNextDueStep() {
     summary: res.body.summary || null,
     nextScheduledAt: res.body.nextScheduledAt || null,
   };
+}
+
+/**
+ * **両フェーズ**の期日を見て、次に積むものを 1 つ決める。
+ *
+ * ⚠️ 体験中フェーズを先に見る。期限が切れる直前の人には、
+ *    終了後の案内より先に体験中の案内を届けたい。
+ * ⚠️ どちらかが**読めなければ null**（fail closed）。片方だけで判断すると、
+ *    もう片方の期日を取りこぼしたまま「やることなし」と誤認する。
+ */
+async function readNextDueStep() {
+  const phases = [];
+  for (const p of JOURNEY_PHASES) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await readPhaseDue(p.campaignId).catch(() => null);
+    if (!r) return null;
+    phases.push(r);
+  }
+  const pick = phases.find((r) => r.step && r.due > 0) || phases[0];
+  const nextAt = phases
+    .map((r) => r.nextScheduledAt).filter(Boolean)
+    .sort()[0] || null;
+  return { ...pick, phases, nextScheduledAt: pick.nextScheduledAt || nextAt };
 }
 
 /** 同期 dispatcher を**同じプロセス内で**呼ぶ（read-only の再確認に使う） */
@@ -377,7 +416,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const store = createRolloutStore({ cmd: redisCmd });
   let loaded;
   try {
-    loaded = await store.load(ROLLOUT_CAMPAIGN_ID);
+    loaded = await store.load(STATE_KEY);
   } catch (e) {
     // ⚠️ 状態が読めないなら**何もしない**（止まっているつもりで動くのが一番危ない）
     const code = e instanceof RolloutStoreError ? e.code : 'unreachable';
@@ -422,7 +461,14 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     settled: { jobs: settledJobs.finished.length, sent: settledJobs.sent, failed: settledJobs.failed },
     /** 起動したのに台帳が進んでいないジョブ（送信済みとは扱わない） */
     dispatchStalled: progress.stalled.map((x) => x.jobId),
-    nextDue: due ? { step: due.step, recipients: due.due, at: due.nextScheduledAt } : null,
+    nextDue: due ? {
+      campaignId: due.campaignId,
+      step: due.step,
+      touch: toTouch(due.campaignId, due.step),
+      recipients: due.due,
+      at: due.nextScheduledAt,
+      maxTouches: MAX_TOUCHES,
+    } : null,
     blocked: describeBlocked(env),
   };
 
@@ -433,16 +479,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const metrics = createRolloutMetrics({ cmd: redisCmd });
   // 集計は**画面のためだけ**。ここが失敗しても運用は止めない（正本は台帳）
   const bumpTotals = async (delta) => {
-    try { await metrics.bumpTotals({ campaignId: ROLLOUT_CAMPAIGN_ID, delta, nowMs: now }); } catch { /* 表示だけ */ }
+    try { await metrics.bumpTotals({ campaignId: STATE_KEY, delta, nowMs: now }); } catch { /* 表示だけ */ }
   };
   const bumpSteps = async (delta) => {
-    try { await metrics.bumpSteps({ campaignId: ROLLOUT_CAMPAIGN_ID, delta, nowMs: now }); } catch { /* 表示だけ */ }
+    try { await metrics.bumpSteps({ campaignId: STATE_KEY, delta, nowMs: now }); } catch { /* 表示だけ */ }
   };
   /** CAS で書き戻す。競合したら**書かない**（次 tick が読み直して続きから進む） */
   const saveState = async (next) => {
     try {
       await store.save({
-        campaignId: ROLLOUT_CAMPAIGN_ID, state: next,
+        campaignId: STATE_KEY, state: next,
         expectedVersion: loaded.exists ? state.version : null,
       });
       return true;
@@ -451,6 +497,31 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       return false;
     }
   };
+
+  // ── 進行の内訳を集計へ同期する（**画面が正本を読まなくて済むように**）──
+  //    `action=sequence` は既に受信対象だけを名指しで読んでいる。
+  //    その結果をここで写しておけば、管理画面は Redis の 2 GET で開ける。
+  //    ⚠️ 人を二重に数えないよう、まとめ方は `journeyTotals.js` が単一源。
+  if (due && Array.isArray(due.phases)) {
+    const active = due.phases.find((p) => p.campaignId === ROLLOUT_CAMPAIGN_ID);
+    const post = due.phases.find((p) => p.campaignId === POST_EXPIRY_CAMPAIGN_ID);
+    const built = buildJourneyTotals({
+      active: active ? active.summary : null,
+      postExpiry: post ? post.summary : null,
+    });
+    if (built.ok) {
+      try {
+        // ⚠️ **人数だけ**を同期する（Step 別の実績は積み上げたまま残す）
+        await metrics.reconcileTotals({
+          campaignId: STATE_KEY,
+          totals: toMetricsTotals({ totals: built.totals, granted: state.totalGranted }),
+          nowMs: now,
+        });
+      } catch { /* 表示だけ。運用は止めない */ }
+    } else {
+      log({ ok: false, warn: 'journey_totals_unavailable', reason: built.reason });
+    }
+  }
 
   // 集計へ写す（失敗しても運用は止めない）。写した ぶんは追跡対象から外す
   if (settledJobs.finished.length > 0) {
@@ -519,11 +590,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     //    その場合は既存の進行判定（`action=sequence`）が「Step1 が期日」と言う人だけを積む。
     //    判定はあくまで単一源に任せるので、止めるべき人へ送ることはない。
     if (!opId) {
-      if (!due || due.step !== STEP1 || due.recordIds.length === 0) {
+      // ⚠️ 救済で積んでよいのは**体験中フェーズの 1 通目**だけ。
+      //    終了後フェーズの期日をここで積むと、付与の引き継ぎとは別の相手になる。
+      if (!due || due.campaignId !== ROLLOUT_CAMPAIGN_ID
+        || due.step !== STEP1 || due.recordIds.length === 0) {
         log({ ...view, skipped: 'no_handoff', sideEffects: 'none' });
         return { ok: false, ...view, abort: 'no_handoff', sideEffects: 'none' };
       }
-      const rescue = await queueStep({ step: STEP1, recordIds: due.recordIds });
+      const rescue = await queueStep({
+        campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, recordIds: due.recordIds,
+      });
       if (!rescue.ok) {
         log({ ...view, ok: false, stage: rescue.stage, error: rescue.error, sideEffects: 'none' });
         return { ok: false, ...view, abort: 'queue_failed', detail: rescue, sideEffects: 'none' };
@@ -531,13 +607,13 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       await saveState({
         ...state,
         pendingJobIds: [...state.pendingJobIds, ...rescue.jobIds],
-        jobSteps: { ...state.jobSteps, ...Object.fromEntries(rescue.jobIds.map((id) => [id, STEP1])) },
+        jobSteps: { ...state.jobSteps, ...Object.fromEntries(rescue.jobIds.map((id) => [id, rescue.touch])) },
       });
-      await bumpSteps({ [STEP1]: { queued: rescue.queued } });
+      await bumpSteps({ [rescue.touch]: { queued: rescue.queued } });
       log({ ...view, queued: rescue.queued, via: 'sequence', sideEffects: 'queued_only' });
       return { ok: true, ...view, queued: rescue.queued, jobs: rescue.jobIds, sideEffects: 'queued_only' };
     }
-    const res = await queueStep({ step: STEP1, grantOperationId: opId });
+    const res = await queueStep({ campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, grantOperationId: opId });
     if (!res.ok) {
       log({ ...view, ok: false, stage: res.stage, error: res.error, sideEffects: 'none' });
       return { ok: false, ...view, abort: 'queue_failed', detail: res, sideEffects: 'none' };
@@ -545,9 +621,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     await saveState({
       ...state, pendingHandoffOp: null,
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
-      jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, STEP1])) },
+      jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
     });
-    await bumpSteps({ [STEP1]: { queued: res.queued } });
+    await bumpSteps({ [res.touch]: { queued: res.queued } });
     log({ ...view, queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only' });
     return { ok: true, ...view, queued: res.queued, jobs: res.jobIds, sideEffects: 'queued_only' };
   }
@@ -561,7 +637,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       // 事実が変わった（誰かが購入・配信停止した等）。**この tick では積まない**
       return { ok: false, ...view, abort: 'no_due_recipients', sideEffects: 'none' };
     }
-    const res = await queueStep({ step: due.step, recordIds: due.recordIds });
+    const res = await queueStep({
+      campaignId: due.campaignId, step: due.step, recordIds: due.recordIds,
+    });
     if (!res.ok) {
       log({ ...view, ok: false, stage: res.stage, step: due.step, error: res.error, sideEffects: 'none' });
       return { ok: false, ...view, abort: 'queue_failed', detail: res, sideEffects: 'none' };
@@ -569,11 +647,17 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     await saveState({
       ...state,
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
-      jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, due.step])) },
+      jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
     });
-    await bumpSteps({ [due.step]: { queued: res.queued } });
-    log({ ...view, step: due.step, queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only' });
-    return { ok: true, ...view, step: due.step, queued: res.queued, jobs: res.jobIds, sideEffects: 'queued_only' };
+    await bumpSteps({ [res.touch]: { queued: res.queued } });
+    log({
+      ...view, step: due.step, touch: res.touch, campaignId: due.campaignId,
+      queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only',
+    });
+    return {
+      ok: true, ...view, step: due.step, touch: res.touch, campaignId: due.campaignId,
+      queued: res.queued, jobs: res.jobIds, sideEffects: 'queued_only',
+    };
   }
 
   // ── ④ 付与 ───────────────────────────────────────────────

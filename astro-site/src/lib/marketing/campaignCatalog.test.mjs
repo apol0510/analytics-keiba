@@ -18,7 +18,7 @@ import {
   NAME_FALLBACK,
 } from './campaignCatalog.js';
 import { computeCampaignContentHash } from './campaignSend.js';
-import { getSequenceSteps, resolveSequenceStep } from './campaignSequence.js';
+import { getSequenceSteps, resolveSequenceStep, resolveMaxSends } from './campaignSequence.js';
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 
@@ -206,30 +206,40 @@ test('【version ロック】本文を変えたら version を上げる', () => 
         1: 'b7d45ce01bc4e686',
         2: 'a40b36b71fdeee59',
         3: '490be646ddf3f46b',
-        // (B) 未送信 Step の修正。2026-08-15 に「今回で最後」を削除（24 通構成では嘘になる）。
-        //     **誰にも届いていない Step**なので version は上げない（上げると Step1 が再送される）。
+        // (B) 未送信 Step の修正。2026-08-15 に「今回で最後」を削除（続きがあるため）。
         4: '06c2941d15072757',
-        // (A) 末尾への追加（Step5〜24 / `lightTrialSteps.js`）。既存 Step の鍵を変えない
+        // (A) 末尾への追加（Step5〜6 / `lightTrialSteps.js`）。既存 Step の鍵を変えない
         5: '31f6cae59a98a699',
         6: '4acf2e87ffa15892',
-        7: '172cd4674d89758d',
-        8: 'be3a5534aea603b8',
-        9: '786eede675cd698a',
-        10: 'b003a6ccda005525',
-        11: '7e4ec7c4366c9504',
-        12: '5cc06b2ee3809446',
-        13: '990c33d76b57bd67',
-        14: 'a68c5229e07f9224',
-        15: 'dfdb96360714b4e9',
-        16: 'febe1ee53cfb772b',
-        17: '8c7d1e9e8c2e330c',
-        18: 'c9b710221a10e5eb',
-        19: '8befca064fa1f591',
-        20: '1db8551e21ee6f92',
-        21: 'd149bae8e5a0b0ad',
-        22: '906addafa169b472',
-        23: '8228c0e999594838',
-        24: '7abb875b42b1b661',
+      },
+    },
+    /**
+     * 体験終了後フェーズ（**新設 / 通し番号 7〜24**）。
+     * 体験中フェーズから 18 通を移したのではなく、**期限切れ後の事実に合わせて書き直した**
+     * 別キャンペーン（`postExpirySteps.js`）。version=1 で送信実績はまだ無い。
+     */
+    'light-trial-post-expiry-sequence': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: 'c2860342c2472c0b',
+        2: 'cf5858e24363b113',
+        3: '63d2e320fa3c3d07',
+        4: '338a6d1a2e0301db',
+        5: 'd85801d24ae4eb61',
+        6: 'a1860f80ac887463',
+        7: '139a0d9343ea46fc',
+        8: 'edfc4509ec10b929',
+        9: 'a930c75fa3cf0939',
+        10: '56e3a783e257b7a7',
+        11: '719460865a972ac7',
+        12: 'c6c6c20fb1135bc6',
+        13: 'c4ed8d7d97c8f48e',
+        14: '4ca02330b4b18e87',
+        15: 'a340270591ca0819',
+        16: 'fa6e65fa9d97a78a',
+        17: '8af4fe69a6089610',
+        18: '9dd9be91a0a11fde',
       },
     },
   };
@@ -297,12 +307,50 @@ test('【重要】送信済み Step1 は逐語で凍結（実送信済み・2026
 test('【重要】末尾への追加は version を上げずに許可（既存 Step の鍵を変えない）', () => {
   const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
   const steps = getSequenceSteps(c);
-  // 追加前の 4 通は連番の先頭に残っている（差し込み・並べ替えをしていない）
-  assert.deepEqual(steps.slice(0, 4).map((s) => s.stepNumber), [1, 2, 3, 4],
-    '既存 Step の番号が動いています（DeliveryKey が変わり再送になります）');
-  assert.equal(steps.length, 24);
-  // 番号は 1..24 の連番（欠番・重複があると「何通目か」が壊れる）
-  assert.deepEqual(steps.map((s) => s.stepNumber), Array.from({ length: 24 }, (_, i) => i + 1));
+  // 既存 Step の番号が動いていない（動くと DeliveryKey が変わり再送になる）
+  assert.deepEqual(steps.map((s) => s.stepNumber), [1, 2, 3, 4, 5, 6]);
+  assert.equal(c.version, 1, 'version を上げると Step1 が全員へ再送される');
+});
+
+test('【重要】体験中フェーズは 6 通で打ち止め（無料期間に収まる範囲）', () => {
+  const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  assert.equal(resolveMaxSends(c), 6);
+  assert.equal(getSequenceSteps(c).length, 6);
+  // 権利が有効であることを前提にしたフェーズなので、宣言も維持されている
+  assert.deepEqual(c.requiresActiveGrant, { tier: 'light', termedOnly: true });
+});
+
+test('【重要】体験終了後フェーズは 18 通・version 1・active grant を要求しない', () => {
+  const c = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  assert.ok(c, '終了後フェーズが無い');
+  assert.equal(c.version, 1);
+  assert.equal(resolveMaxSends(c), 18);
+  assert.equal(getSequenceSteps(c).length, 18);
+  assert.equal(c.requiresActiveGrant, undefined, '終了後なのに有効な付与を要求している');
+  assert.deepEqual(c.requiresExpiredGrant, { tier: 'light' });
+  assert.ok(c.requiresImportCohort, '体験コホート以外へ送ろうとしている');
+  assert.equal(c.showGrantExpiry, undefined, '終わった期限を差し込もうとしている');
+});
+
+test('【重要】合計 24 接点（体験中 6 + 終了後 18）', () => {
+  const a = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  const b = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  assert.equal(getSequenceSteps(a).length + getSequenceSteps(b).length, 24);
+});
+
+test('【重要】終了後の文面に「まだ無料で使える」と読める表現を残さない', () => {
+  const c = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  // 「無料期間中」「まだ無料」など、終わった権利を現在形で書いた表現
+  const BANNED = ['無料期間中', '無料体験中', 'まだ無料', '無料でご利用いただけます', '期間の残り'];
+  for (const s of getSequenceSteps(c)) {
+    const text = [s.subject, s.preheader, s.badge, s.headline, s.body,
+      s.benefitTitle, (s.benefitItems || []).join(' '), s.ctaNote, s.footerNote].join('\n');
+    for (const ng of BANNED) {
+      assert.equal(text.includes(ng), false, `step${s.stepNumber} に「${ng}」が残っている`);
+    }
+    // 終了日の差し込みも使わない（終わった日付を案内に出さない）
+    assert.equal(text.includes('{{grantExpiry}}'), false, `step${s.stepNumber} に終了日の印が残っている`);
+  }
 });
 
 test('【重要】送信済み Step の一覧は縮めない（凍結の対象を後から外さない）', () => {

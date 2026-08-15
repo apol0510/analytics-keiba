@@ -160,6 +160,8 @@ import {
 import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
 import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketing/rolloutMetrics.js';
 import { readStageGates, describeBlocked } from '../../src/lib/marketing/rolloutGates.js';
+import { describeJourney } from '../../src/lib/marketing/journeyModel.js';
+import { JOURNEY_STATE_LABEL } from '../../src/lib/marketing/journeyTotals.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -1310,25 +1312,47 @@ async function handleRollout({ KEY, BASE, now, req }) {
 
   const policy = normalizePolicy(base.sequencePolicy);
   const maxSends = Math.max(resolveMaxSends(base), policy.maxSends);
-  const stepNumbers = getSequenceSteps(base).map((s) => s.stepNumber);
+  /**
+   * ⚠️ 画面が数えるのは**通し番号（1〜24）**。
+   *    体験中 6 通 + 終了後 18 通に分かれていても、運用者が見たいのは
+   *    「この人はいま何通目か」なので、`journeyModel.js` の変換で 1 本にまとめる。
+   */
+  const journey = describeJourney();
+  const stepNumbers = Array.from({ length: journey.maxTouches }, (_, i) => i + 1);
 
   // 集計から画面の形へ（**件数だけ**。率は 0 通の Step で作らない）
   const t = metrics.totals;
+  /**
+   * ⚠️ **2 フェーズを 1 本として見せる。**
+   *    体験中 / 体験終了・フォロー中 / 購入 / 停止 / 24 通完了 の 5 分類で、
+   *    1 人が必ず 1 か所に入る（`journeyTotals.js` が二重計上を防いでいる）。
+   *    集計が無ければ数字を出さない（**0 と書かない**）。
+   */
   const funnel = t
     ? {
       observed: t.granted,
       cohortTotal: t.granted,
-      // 集計は「付与した人」しか数えない。母集団全体（未付与を含む）は別途 rollout state から
       partial: false,
       counts: {
-        not_started: t.notStarted, in_progress: t.inProgress,
-        purchased: t.purchased, stopped: t.stopped, completed: t.completed,
+        // 運用者の言葉（`JOURNEY_STATE_LABEL` と対応）
+        in_trial: t.inTrial,
+        in_follow_up: t.inFollowUp,
+        purchased: t.purchased,
+        stopped: t.stopped,
+        completed: t.completed,
+        // 互換のため残す（旧画面が読んでいる）
+        not_started: t.notStarted,
+        in_progress: t.inProgress,
       },
+      labels: JOURNEY_STATE_LABEL,
       byStopReason: t.byStopReason || {},
       notStarted: t.notStarted,
-      balanced: t.granted === (t.notStarted + t.inProgress + t.purchased + t.stopped + t.completed),
+      balanced: t.granted === (t.notStarted + t.inTrial + t.inFollowUp + t.purchased + t.stopped + t.completed),
     }
-    : { observed: null, cohortTotal: null, partial: true, counts: null, byStopReason: {}, notStarted: null, balanced: null };
+    : {
+      observed: null, cohortTotal: null, partial: true, counts: null,
+      labels: JOURNEY_STATE_LABEL, byStopReason: {}, notStarted: null, balanced: null,
+    };
 
   const sm = (metrics.steps && metrics.steps.steps) || {};
   const stepView = stepNumbers.map((step) => {
@@ -1374,6 +1398,16 @@ async function handleRollout({ KEY, BASE, now, req }) {
     policy: describePolicy(base.sequencePolicy),
     maxSends,
     stepCount: stepNumbers.length,
+    /** 2 キャンペーンを 1 本の道のりとして見せる（体験中 / 体験終了・フォロー中） */
+    journey,
+    /**
+     * 通し番号ごとの実績（1〜24）。**いま何通目まで出ているか**が分かる。
+     * ⚠️ 集計が無い Step は `null`（0 と書かない）。
+     */
+    currentTouch: (() => {
+      const sent = stepView.filter((x) => Number(x.sent) > 0).map((x) => x.step);
+      return sent.length ? Math.max(...sent) : null;
+    })(),
     /** 集計が読めなかったときの理由（**推測で数字を作らない**） */
     metricsPartial: metrics.partial === true,
     metricsReason: metrics.reason || null,

@@ -1169,6 +1169,77 @@ TTL 切れ・取消済み・付与時刻不明は候補にしない。過去の�
 | 対象の再導出 | `netlify/functions/admin-marketing.js`（`grantOperationId`）|
 | テスト | `comebackEmailHandoff.test.mjs` / `comebackHandoffHandler.smoke.test.mjs` / `comebackHandoffContract.guard.test.mjs` |
 
+## Light 無料体験 → Premium の道のり（2 フェーズ / 合計 24 接点 / 2026-08-15）
+
+### 何を約束しているか
+
+**1 人あたり最大 24 通**の接点を作り、反応（開封・クリック・購入・配信停止・バウンス）で
+継続 / 停止を決める。人が 145 回手操作しなくても運用できること。
+
+### なぜ 2 キャンペーンに分かれているか
+
+無料体験は **30 日で終わる**。最短 3 日間隔 + 無反応での間隔延長では、
+体験中に届くのは **6 通前後**（統合テストで実測）。
+7 通目以降を体験中フェーズに置くと、期限切れの相手へ「無料期間中です」と書いた
+メールを送ることになり、**事実と食い違う**。
+
+| フェーズ | campaignId | 通数 | 通し番号 | 対象条件 |
+|---|---|---|---|---|
+| 体験中 | `light-trial-to-premium-sequence` | 6 | 1〜6 | `requiresActiveGrant: {tier:'light', termedOnly:true}` + 取り込みコホート |
+| 体験終了後 | `light-trial-post-expiry-sequence` | 18 | 7〜24 | `requiresExpiredGrant: {tier:'light'}` + 取り込みコホート |
+
+通し番号（touch）の変換は **`src/lib/marketing/journeyModel.js` が単一源**
+（`journeyId = light-trial-to-premium-v1` / `maxTouches = 24`）。
+
+### フェーズ移行（handoff）
+
+**記録を作らない。** 毎 tick、そのときの事実から導出する:
+
+1. 体験中フェーズは期限切れを `grant_expired` として止める（**脱落ではない**）
+2. 終了後フェーズは `requiresExpiredGrant` で「痕跡があり期限切れ」の人を対象にする
+3. 購入・配信停止・バウンス・苦情・suppression・対象外は既存の単一源が止める
+4. 期日が来たら通常の安全経路（sequence 判定 → dry-run → 指紋 / contentHash /
+   shellVersion 固定 → queue → 送信直前 dry-run → `expectedWillSend` 付き Background）
+
+導出なので**二重に作られようがない**（統合テストで固定）。
+
+### 止める条件と、止めない条件
+
+**即停止**: 購入 / 配信停止 / ハードバウンス / 苦情 / provider suppression / 対象外
+（`grant_revoked` / `grant_lifetime` / コホート外）。
+
+**止めない**: 単なる無反応。間隔は伸ばすが（無反応 3 連続で 2 倍）、24 通までは進む。
+短期の出しすぎ防止（最短 3 日 / 7 日 2 通）と、送信直前の横断頻度ガードは維持する。
+
+### 文面の約束
+
+- 終了後の文面に「無料体験中」「まだ無料で利用できます」等、**事実と異なる表現を置かない**
+  （カタログ検証で禁止語を検査）
+- 終了後は `{{grantExpiry}}`（体験の終了日）を差し込まない
+- 24 通すべて `action=preview` で**送らずに確認できる**
+
+### version ルール（連続配信）
+
+DeliveryKey = `campaignId × version × step × 受信者`。version を上げると
+**1 通目から全員へ配り直し**になるため、単発キャンペーンと同じ扱いにしない。
+
+| | 扱い |
+|---|---|
+| 末尾への追加 | version 据え置きで**許可**（既存 Step の鍵を変えない） |
+| 未送信 Step の修正 | version 据え置きで**許可**（`LOCKED` に記録） |
+| **送信済み Step の変更** | **禁止**（`campaignCatalog.test.mjs` が逐語で凍結） |
+
+送信済み: `light-trial-to-premium-sequence` の **Step1**（2026-08-15 / 10 名）。
+
+### 管理画面（`action=rollout`）
+
+体験中 / 体験終了・フォロー中 / 購入 / 停止 / 24 通完了 / 現在の通し番号 / 次回予定 /
+閉じている env と、そのせいで止まっていることを返す。
+人数の主計は**終了後フェーズの集計**から作る（両フェーズは同じ母集団なので、
+単純に足すと 1 人を 2 回数える）。まとめ方は `journeyTotals.js` が単一源。
+
+---
+
 ## 5. External Dependencies
 
 | 依存 | 用途 | 備考 |

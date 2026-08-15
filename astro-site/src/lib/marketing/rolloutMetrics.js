@@ -37,7 +37,11 @@ export const metricsKey = Object.freeze({
 });
 
 /** 集計の形式版。**形を変えたら上げる**（古い形は partial 扱いにする） */
-export const METRICS_SCHEMA_VERSION = 1;
+/**
+ * 集計の形の版。**上げると古い集計は `partial` 扱いになる**（数字を混ぜない）。
+ * v2: フェーズ別（`inTrial` / `inFollowUp`）を追加。
+ */
+export const METRICS_SCHEMA_VERSION = 2;
 
 export const METRICS_FAIL = Object.freeze({
   UNREACHABLE: 'unreachable',
@@ -69,6 +73,10 @@ export function emptyTotals() {
     granted: 0,
     /** 1 通も送っていない人数 */
     notStarted: 0,
+    /** **体験中**（無料期間が有効で、体験中フェーズが担当している人） */
+    inTrial: 0,
+    /** **体験終了・フォロー中**（期限切れ後フェーズが担当している人） */
+    inFollowUp: 0,
     /** 送信中 */
     inProgress: 0,
     /** 購入して止めた人数 */
@@ -97,6 +105,8 @@ export function normalizeDelta(delta) {
   return {
     granted: pick('granted'),
     notStarted: pick('notStarted'),
+    inTrial: pick('inTrial'),
+    inFollowUp: pick('inFollowUp'),
     inProgress: pick('inProgress'),
     purchased: pick('purchased'),
     stopped: pick('stopped'),
@@ -116,7 +126,7 @@ local cur = redis.call('GET', KEYS[1])
 local t
 if cur then t = cjson.decode(cur) else t = {} end
 local d = cjson.decode(ARGV[1])
-for _, k in ipairs({'granted','notStarted','inProgress','purchased','stopped','completed'}) do
+for _, k in ipairs({'granted','notStarted','inTrial','inFollowUp','inProgress','purchased','stopped','completed'}) do
   t[k] = (tonumber(t[k]) or 0) + (tonumber(d[k]) or 0)
 end
 if d.byStopReason then
@@ -257,6 +267,23 @@ export function createRolloutMetrics(deps = {}) {
         JSON.stringify(clean), String(METRICS_SCHEMA_VERSION), String(Number(nowMs) || 0),
       ]);
       return { ok: true };
+    },
+
+    /**
+     * **人数の内訳だけ**を正本から作り直す（Step 別の実績は触らない）。
+     *
+     * ⚠️ `reconcile()` は totals と steps の**両方**を上書きする。
+     *    定期的に人数だけ同期したいときにあれを使うと、
+     *    積み上げてきた Step 別の送信数が毎回 0 に戻る。
+     */
+    async reconcileTotals({ campaignId, totals, nowMs }) {
+      guard(campaignId);
+      const t = {
+        ...emptyTotals(), ...(totals || {}),
+        schema: METRICS_SCHEMA_VERSION, updatedAtMs: Number(nowMs) || null,
+      };
+      await call(['SET', metricsKey.totals(campaignId), JSON.stringify(t)]);
+      return { ok: true, totals: t };
     },
 
     /**

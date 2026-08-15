@@ -57,6 +57,7 @@ import {
 } from './marketingEmailShell.js';
 import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
 import { LIGHT_TRIAL_EXTRA_STEPS, LIGHT_TRIAL_ANGLES } from './lightTrialSteps.js';
+import { POST_EXPIRY_STEPS, POST_EXPIRY_ANGLES } from './postExpirySteps.js';
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, validateAllSequences,
 } from './campaignSequence.js';
@@ -454,8 +455,8 @@ export const CAMPAIGNS = Object.freeze([
      */
     campaignId: 'light-trial-to-premium-sequence',
     version: 1,
-    name: 'Light 無料体験 → Premium（連続配信 4 通）',
-    description: 'CSV 取り込みの会員のうち 期限付き Light 無料期間中の人へ、体験の開始 → 使い方 → 期間中の確認 → Premium の提案を 4 通で案内する。付与はこのキャンペーンでは行わない（手動付与 or 入口の自動化が担当）。',
+    name: 'Light 無料体験 → Premium（体験中フェーズ / 連続配信 6 通）',
+    description: 'CSV 取り込みの会員のうち 期限付き Light 無料期間中の人へ、体験の開始 → 使い方 → 活用 → Premium の提案を 6 通で案内する。**体験期間中に届く分だけ**を担当し、期限切れ後の 18 通は light-trial-post-expiry-sequence が引き継ぐ（合計 24 接点 / journeyModel.js）。付与はこのキャンペーンでは行わない。',
     benefitType: 'free_access',
     benefitDescription: 'Lightプランを30日間 無料でご利用いただけます（お申し込み・お支払いの手続きは不要）',
     subject: '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます',
@@ -486,13 +487,15 @@ export const CAMPAIGNS = Object.freeze([
     /**
      * 連続配信の運用ポリシー（`sequencePolicy.js` が正本）。
      *
-     * ⚠️ **現行は 4 通のまま**。数十通へ伸ばすときは `steps` を足したうえで
-     *    `maxSends` を上げる（`maxSends` だけ上げても定義済みステップ数は超えられない）。
-     *    ここに置くのは「送りすぎない」ための上限で、**増やすための値ではない**。
+     * ⚠️ **体験中フェーズは 6 通で打ち止め**。無料期間 30 日に現実的に収まるのが
+     *    このあたりまで（最短 3 日間隔 + 無反応での間隔延長。統合テストで実測）。
+     *    7 通目以降をここへ足すと、期限切れの相手へ「無料期間中です」と書いた
+     *    メールを送ることになり**事実と食い違う**。続きは
+     *    `light-trial-post-expiry-sequence`（18 通）が担当する。
      */
     sequencePolicy: {
-      /** **24 通**。到達したら自動終了する */
-      maxSends: 24,
+      /** **6 通**。到達したら体験中フェーズは終了（続きは終了後フェーズ） */
+      maxSends: 6,
       minIntervalDays: 3,
       /** 短期間の過剰配信を防ぐ（7 日で最大 2 通）。頻度は抑える */
       frequencyCap: { windowDays: 7, maxSends: 2 },
@@ -515,8 +518,8 @@ export const CAMPAIGNS = Object.freeze([
     // 付与されていること自体が対象条件なので、契約状態・プランでは絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },
     sequence: {
-      /** Step1〜4 + `lightTrialSteps.js` の Step5〜24 = **24 通** */
-      maxSends: 24,
+      /** Step1〜4 + `lightTrialSteps.js` の Step5〜6 = **6 通**（通し番号 1〜6） */
+      maxSends: 6,
       steps: [
         {
           stepNumber: 1,
@@ -639,6 +642,68 @@ export const CAMPAIGNS = Object.freeze([
         },
         ...LIGHT_TRIAL_EXTRA_STEPS,
       ],
+    },
+    enabled: true,
+  },
+  /**
+   * ── 無料体験 **終了後** フェーズ（通し番号 7〜24 / 全 18 通）────────────
+   *
+   * 体験中フェーズ（`light-trial-to-premium-sequence`）は権利が有効である前提で
+   * 書いてあるので、期限が切れた相手へ送ると事実と食い違う。
+   * 分けたうえで、**同じ 1 本の道のり**として数える（`journeyModel.js`）。
+   *
+   * ⚠️ `requiresActiveGrant` は**要求しない**。代わりに
+   *    「体験に参加した痕跡があり、その期限が切れている」ことを要求する
+   *    （`requiresExpiredGrant`）。購入・配信停止・バウンス・苦情・
+   *    provider suppression・対象外は既存の単一源が止める。
+   * ⚠️ 無反応だけでは止めない（`stopAfterNoEngagement: null`）。
+   */
+  {
+    campaignId: 'light-trial-post-expiry-sequence',
+    version: 1,
+    name: 'Light 無料体験 → Premium（体験終了後フェーズ / 連続配信 18 通）',
+    description: '無料体験の期間が終了した方へ、振り返り → 無料でご覧いただける範囲 → 実績 → プランのご案内を 18 通で行う。通し番号では 7〜24 通目（合計 24 接点 / journeyModel.js）。無料付与はしない。',
+    benefitType: 'free_content',
+    benefitDescription: '無料体験の終了後も無料でご覧いただける予想・買い目・結果のご案内です',
+    subject: '【KEIBA Analytics】無料期間の終了と、これからご覧いただけるもの',
+    body: '',
+    ctaLabel: '無料予想を見る',
+    ctaUrl: `${SITE}/free-prediction/nankan/`,
+    footerNote: 'このメールは、Lightプランの無料期間をご利用いただいたお客様へお送りしています。',
+    /**
+     * ⚠️ **無料期間の終了日を差し込まない**（`showGrantExpiry` を立てない）。
+     *    終わった日付を案内文へ出すと「まだ期間がある」と読めてしまう。
+     */
+    /**
+     * **体験に参加し、その期限が切れている人**だけに送る。
+     * `tier: 'light'` = Light 無料付与の列を見る。
+     * 期限なし付与（lifetime）・取消（revoked）・まだ有効（active）は対象外。
+     */
+    requiresExpiredGrant: { tier: 'light' },
+    /** 体験中フェーズと同じく、CSV 取り込みの会員だけ */
+    requiresImportCohort: { batchIds: null },
+    sequencePolicy: {
+      /** **18 通**。体験中の 6 通と合わせて 24 接点 */
+      maxSends: 18,
+      minIntervalDays: 3,
+      /** 短期間の過剰配信を防ぐ（7 日で最大 2 通） */
+      frequencyCap: { windowDays: 7, maxSends: 2 },
+      /**
+       * ⚠️ **無反応だけを理由に打ち切らない**（体験中フェーズと同じ方針）。
+       *    止めるのは 購入 / 配信停止 / ハードバウンス / 苦情 /
+       *    provider suppression / 対象外 のときだけ。
+       */
+      slowdownAfterNoEngagement: 3,
+      slowdownFactor: 2,
+      stopAfterNoEngagement: null,
+      angles: POST_EXPIRY_ANGLES,
+    },
+    recommendedSegments: [],
+    // 期限切れであること自体が対象条件なので、契約状態・プランでは絞らない
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    sequence: {
+      maxSends: 18,
+      steps: POST_EXPIRY_STEPS,
     },
     enabled: true,
   },
