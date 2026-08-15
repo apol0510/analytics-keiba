@@ -67,7 +67,7 @@ const str = (v) => String(v ?? '').trim();
  * 「Stepnull という何か」があるのかと迷う。値が無いことは
  * 「（不明）」と明示し、**落ちる／通るの判定は 1 ミリも変えない**。
  */
-const stepLabel = (step) => (Number.isInteger(step) && step > 0 ? `Step${step}` : 'ステップ（不明）');
+export const stepLabel = (step) => (Number.isInteger(step) && step > 0 ? `Step${step}` : 'ステップ（不明）');
 
 /**
  * gate の状態を env から読む（**値は返さない**。ON/OFF だけ）。

@@ -31,7 +31,7 @@
  */
 import {
   evaluateStep1Preflight, resolveStep1Stage, readStep1Gates,
-  STEP1_STAGE_LABEL, SEVERITY,
+  STEP1_STAGE_LABEL, SEVERITY, stepLabel,
 } from '../src/lib/marketing/step1Preflight.js';
 
 /** 呼んでよいアクションはこれだけ（すべて `sideEffects: 'none'`） */
@@ -80,7 +80,10 @@ function printReport(result, gates) {
   console.log(`  ${p.writes.scheduledEmails.table}    : ${p.writes.scheduledEmails.rows} 行 (${p.writes.scheduledEmails.status})`);
   console.log(`  ${p.writes.campaignDeliveries.table} : ${p.writes.campaignDeliveries.rows} 行 (${p.writes.campaignDeliveries.status})`);
   console.log(`  ${p.writes.customers.table}          : ${p.writes.customers.rows} 行 — ${p.writes.customers.note}`);
-  console.log(`\n対象: Step${p.step} / ${p.recipients} 名（全 ${p.maxSends} 通中）`);
+  // ⚠️ ステップ名の整形は**判定側と同じ関数**を使う（書き写すと片方だけ直り、
+  //    実際 #345 では判定側だけ直してここに `Stepnull` が残った）。
+  console.log(`\n対象: ${stepLabel(p.step)} / ${p.recipients ?? '(不明)'} 名`
+    + ` / 全 ${p.maxSends ?? '(不明)'} 通中`);
   console.log(result.ok
     ? '\n✅ 前提を満たしています。**承認のうえで**キュー登録へ進めます。\n'
     : `\n❌ 押してはいけません（未達 ${result.failures.length} 件）。\n`);

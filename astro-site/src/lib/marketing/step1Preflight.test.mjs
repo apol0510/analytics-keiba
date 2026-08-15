@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import {
   evaluateStep1Preflight, describeStep1Writes, readStep1Gates, resolveStep1Stage,
-  STEP1_STAGE, SEVERITY,
+  STEP1_STAGE, SEVERITY, stepLabel,
 } from './step1Preflight.js';
 
 const CAMPAIGN = 'light-trial-to-premium-sequence';
@@ -549,4 +549,12 @@ test('step が読めているときは従来どおり Step1 と出す', () => {
   const r = run();
   assert.ok(r.checks.some((c) => c.label.includes('Step1 で送れる人数')), '通常時の見出しが変わっている');
   assert.equal(JSON.stringify(r.checks).includes('ステップ（不明）'), false);
+});
+
+test('【重要】stepLabel は公開され、表示側と判定側で共有できる', () => {
+  assert.equal(stepLabel(1), 'Step1');
+  assert.equal(stepLabel(4), 'Step4');
+  for (const bad of [null, undefined, 0, -1, 1.5, NaN, '1']) {
+    assert.equal(stepLabel(bad), 'ステップ（不明）', `${String(bad)} を Step 扱いしている`);
+  }
 });
