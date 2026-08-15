@@ -109,6 +109,112 @@ DeliveryKey は **campaign × version × step × 受信者**。
 5. 実配信は既存 dispatcher（`MARKETING_CAMPAIGN_DISPATCH_ENABLED`）
 6. step2 以降は、上のゲートを開ければ cron が自動で進める
 
+### 7-1. Step1 の直前確認（`preflight:light-trial-step1`）
+
+Step1 は**母集団が最大**で、押した後に残る行（ScheduledEmails / CampaignDeliveries）も
+いちばん多い。承認を取る前に**機械で前提を固定**する。
+**1 回きりの道具ではなく、次のコホートの Step1 でも同じように使う。**
+
+```bash
+# 読むだけ。書き込み・送信・env 変更はしない（終了コード 0 = 押してよい / 1 = 不可）
+MARKETING_ADMIN_SECRET=… npm run preflight:light-trial-step1 -- --expect 100
+```
+
+判定は `src/lib/marketing/step1Preflight.js`（純粋）。**母集団を自分で作り直さない**のが要点で、
+`admin-marketing` の read-only アクション
+（`sequence` / `duplicateCheck` / `trialGrant` / `jobs`）の答えを**検算するだけ**。
+作り直すと画面の人数と preflight の人数がズレる。
+
+#### 🛡️ 重複判定は campaign 単位ではなく **cohort 単位**
+
+「この campaign のジョブが 1 つでもあれば止める」という判定は、
+**1 回でも Step1 を流したら二度と通らない**。コホートは何度も来るので、
+それでは 2 回目以降の Step1 を永久に承認できない。
+
+見るのは「この campaign を過去に流したか」ではなく
+「**いま選んでいる相手に、その通が既に出ているか**」。判定単位は不変キーの
+**`DeliveryKey`（campaign × version × step × 受信者）**で、
+**送信経路（`handlePlan`）が `already_delivered` に使う鍵と同一**。
+
+`action=duplicateCheck`（read-only）が、`sequence` の確定した候補 `recordIds` だけを受け取り、
+
+1. 宛先を `recordId` で名指し取得 → 各候補の `DeliveryKey` を計算
+2. **その鍵の配信行だけ**を名指し取得（台帳の大きさに依存しない）
+3. 候補に紐づくジョブの状態だけを確認
+4. **送信待ちのジョブだけ**を引き（`AND({Status}='PENDING', <marketing 判定>)`）、
+   その `Recipients` を現在候補と突き合わせる
+
+を行い、**件数と状態の内訳だけ**を返す（アドレス・recordId・DeliveryKey は返さない）。
+
+> ⚠️ **4 が要る理由**: `CampaignDeliveries → ScheduledEmailJobId → ScheduledEmails` と
+> 辿るだけでは、**配信行が欠けているジョブ**が見えない。キュー登録は
+> 「ジョブ行を作る → 配信行を upsert」の順なので、途中で落ちると
+> **PENDING ジョブだけが残り配信行が無い**（＝本当の orphan）。見逃すと同じ人へ
+> 2 通目を積む。`PENDING` は「いま詰まっているキュー」なので件数が小さく、
+> campaign の全履歴走査にはならない。campaign / version の同一性を確認し、
+> step の同一性は**内容 hash**で見る。
+
+候補数の上限は `DUPLICATE_CHECK_MAX`（= `MAX_RECIPIENTS_PER_SEND`）。
+**判定と表示で同じ定数**を使い、応答に `limit` / `given` を返す。
+`recordIds` に重複があれば 400 で fail closed。
+
+止まる条件（critical。1 つでも落ちたら押さない）:
+
+| 見るもの | 落ちる条件 |
+|---|---|
+| 次のステップ | Step1 以外が来ている |
+| 人数 | `--expect` と不一致（**増えていても止める**）/ 0 名 / 上限で切り捨て |
+| **候補の重複** | `alreadyDelivered > 0`（その相手に既に queued/sent の鍵がある） |
+| **候補のジョブ** | `pendingCandidates > 0`（候補が送信待ちジョブに載っている。**配信行が無くても検知**） |
+| **配信行の整合** | `pendingLinkedJobs > 0`（配信行が送信待ちジョブを指している） |
+| **判定不能** | `unresolved > 0`（顧客が引けない／メールが無く鍵を作れない）/ 応答なし |
+| 進行 | `dueByStep[step] ≠ 対象数` / 検算が合わない |
+| 関所 | `outstandingStep1 ≠ 対象数` |
+| ゲート | **実送信が開いている**（登録した瞬間に飛ぶ）/ 段階と `sendEnabled` が食い違う |
+| 自動配信 | cron が動く状態になっている |
+| 除外材料 | 配信基盤の停止リストを確認できない（**fail closed**） |
+| 応答 | `sideEffects` が `none` でない（書き込み経路を叩いた） |
+
+**止める理由にしないもの**（info として必ず表示する）:
+
+- この campaign を過去に流したこと（`sentByStep[step] > 0`）。
+  母集団には前回コホートの受信者も含まれるので、**0 でないのが正常**
+- 同 campaign の過去ジョブが `jobs` に見えること
+
+> ⚠️ **`jobs` は新しい順に一部だけ返す**（2026-08-15〜）。
+> ここから「無い」を推測しない。重複判定は `duplicateCheck` が正で、
+> `jobs` は「実送信を開けたら何が飛ぶか」を見る**参考**にとどめる。
+
+> ⚠️ **CI には入れない**（`check:safety` から本番の管理エンドポイントを叩かないため）。
+> 判定ロジックの単体テストだけが `test:marketing` 経由で CI に乗る。
+
+**現在の状態（2026-08-15）**: `light-trial-2026-08-13` の 10 名は Step1 を
+**キュー登録済み**（PENDING / 未送信）。この状態で preflight を走らせると
+「次が Step1 でない」「対象 0 名」で**正しく止まる**。
+仮に同じ 10 名を候補へ入れても、`duplicateCheck` が
+`alreadyDelivered=10` / `pendingCandidates=10` を返して**必ず落ちる**
+（配信行が消えていても、送信待ちジョブの `Recipients` 側で検知する）。
+一方、**まだ Step1 を出していない次のコホートには通る**
+（過去ジョブがあっても、`jobs` が窓で切られていても）。
+
+### 7-2. キュー登録の rollback
+
+| 状態 | 戻し方 |
+|---|---|
+| PENDING のジョブ | 管理画面 / `action=cancelJob`（**PENDING だけ**取り消せる。`operationId` 必須・冪等） |
+| `queued` の配信行 | cancelJob が同時に処理する。**`sent` の行には 1 バイトも触らない** |
+| SENT のジョブ | 取り消せない（送った事実）。`MARKETING_CAMPAIGN_DISPATCH_ENABLED` が閉じていれば SENT にならない |
+| Customers | **触っていない**ので戻す対象が無い（送信側は Customers を書かない） |
+
+再実行の冪等性は 3 段:
+
+1. `deliveredKeys`（sent/queued の DeliveryKey）で `already_delivered` として除外
+2. 除外の結果 0 名になれば `送信対象が 0 件です`（400）で**書き込み前に止まる**
+3. CampaignDeliveries は `performUpsert(DeliveryKey)`。同じ人に 2 行作らない
+
+加えて `planFingerprint` が対象集合と文面を封じているので、
+dry-run から母集団が変わっていれば 409 で中止する（TOCTOU 防止）。
+
 ## 8. やってはいけないこと
 
 - 同じ件名・本文を別ステップに置く（検証で落ちる）
@@ -356,18 +462,20 @@ npm run check:safety     # 上記を含む全 safety check
 | `sequenceAutomation.test.mjs` | ゲート・1 ステップだけ・step1 手動・上限中止 |
 | `sequenceRender.test.mjs` | HTML/text 両方・モバイル・本番文面の表現・benefit guard |
 | `sequenceWiring.guard.test.mjs` | 管理 API / cron / 画面の配線と安全条件 |
-| `marketingStatusScan.regression.test.mjs` | 台帳 6,110 行でも 10 名を 10 名と数える（実ハンドラ起動） |
+| `marketingStatusScan.regression.test.mjs` | 台帳 **6,110 行 fixture** でも 10 名を 10 名と数える（実ハンドラ起動） |
 | `marketingStatusScan.guard.test.mjs` | 状態表示が打ち切る取得へ戻らない・fail closed の維持 |
+| `step1Preflight.test.mjs` | Step1 直前確認の判定（**確認できないものを ok にしない**／queue 済みで止まる・未 queue で通る） |
+| `step1PreflightScript.guard.test.mjs` | preflight スクリプトが read-only のままか（許可アクション固定） |
 
 ## 配信台帳も名指しで読む（2026-08-15 / 状態表示の打ち切りを廃止）
 
 Customers の全件走査は 2026-08-13 に廃止したが、**`CampaignDeliveries` 側は残っていた**。
-台帳が 6,110 行（`{EmailType}='campaign'`）に育った結果、`fetchAll` の
+台帳が 4,000 行を超えて育った結果（**実測 14,426 行**・`{EmailType}='campaign'`）、`fetchAll` の
 `MAX_PAGES=40`（4,000 行）打ち切りに掛かり、**Step1 を 10 名ぶん登録した直後に
 「送信済み 1 名 / 残り 9 名」と過少表示**した（本番実測）。
 
 「`{EmailType}='campaign'` で絞ってあるから全件走査ではない」は**もう成り立たない**。
-絞っても 6,110 行ある。
+絞っても **14,426 行**ある（2026-08-15 実測 / 145 ページ / 162 秒）。
 
 | 経路 | 読み方 |
 |---|---|

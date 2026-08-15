@@ -1,3 +1,112 @@
+## 2026-08-15 — 【追加】Step1 キュー登録の直前確認を read-only で機械化（再利用できる安全装置）
+
+### なぜ
+
+Step1 のキュー登録は承認が要る操作で、押した後は ScheduledEmails / CampaignDeliveries に
+行が残る。これまで「押してよいか」の根拠が調査メモにしか無く、**承認の直前に
+再確認する手段が無かった**。次のコホートでも同じ判断を繰り返すので、道具にする。
+
+### 何を入れたか
+
+- `src/lib/marketing/step1Preflight.js`（純粋・I/O なし）— 押してよいかの判定
+- `scripts/light-trial-step1-preflight.mjs` — read-only ランナー（`npm run preflight:light-trial-step1`）
+- テスト 39 件（判定 31 / スクリプト guard 8）
+- `docs/CAMPAIGN_SEQUENCE.md` に 7-1（直前確認）/ 7-2（rollback）
+
+**母集団を作り直さない**のが要点。対象人数・停止理由・関所の残件は `admin-marketing` の
+read-only アクション（`sequence` / `trialGrant` / `jobs`）が単一源として計算しているので、
+preflight は**その答えを検算するだけ**にする。作り直すと画面の人数とズレる。
+
+### 🛡️ 重複判定は campaign 単位ではなく cohort 単位（設計是正）
+
+初版は「この campaign のジョブが 1 つでもあれば止める」判定だった。これは
+**1 回でも Step1 を流したら二度と通らない**——コホートは何度も来るので、
+2 回目以降の Step1 を永久に承認できない。完成条件（次のコホートで再利用できる）と矛盾する。
+
+見るべきは「この campaign を過去に流したか」ではなく
+「**いま選んでいる相手に、その通が既に出ているか**」。判定単位は不変キーの
+`DeliveryKey`（campaign × version × step × 受信者）で、
+**送信経路（`handlePlan`）が `already_delivered` に使う鍵と同一**。
+
+`admin-marketing` に read-only の `action=duplicateCheck` を追加した:
+
+1. `sequence` が確定した候補 `recordIds` を受け取る（campaign 全履歴は見ない）
+2. 宛先を `recordId` で名指し取得 → 各候補の `DeliveryKey` を計算
+3. **その鍵の配信行だけ**を名指し取得（台帳の大きさに依存しない）
+4. 候補に紐づくジョブの状態だけを確認（**orphan PENDING の検知**）
+
+返すのは件数と状態の内訳だけ（**アドレス・recordId・DeliveryKey は返さない**）。
+取り切れなければ 500 で fail closed。書き込みは 1 件も行わない。
+
+判定の変更:
+
+| 項目 | 旧 | 新 |
+|---|---|---|
+| 既送信 | `sentByStep[1] > 0` で critical | **info**（母集団に前回コホートが含まれるので 0 でないのが正常） |
+| 既存ジョブ | 同 campaign にあれば critical | **info**（過去に流したこと自体は止める理由にしない） |
+| 重複 | — | `alreadyDelivered > 0` / `pendingLinkedJobs > 0` / `unresolved > 0` で **critical** |
+| `jobs` の窓 | 見えなければ critical | **参考のみ**（「無い」を推測しない） |
+| orphan PENDING | 配信行経由でしか見ない | **ジョブの `Recipients` から突き合わせ**（配信行が欠けていても検知） |
+
+### 現行 API（#339 / #341 / #343 後）との整合
+
+`jobs` は **新しい順に一部だけ**返す（`jobsTotal` / `jobsShown` / `jobsTruncated`）。
+**この窓からは何も推測しない。** 重複判定は `duplicateCheck` が正で、
+`jobs` は「実送信を開けたら何が飛ぶか」を見る**参考**として取得範囲だけを表に出す。
+
+> 検討途中に「`jobsTruncated` で対象ジョブが見えなければ critical」という案を採ったが、
+> **campaign 単位の判定そのものが誤り**だったため破棄した（見えても見えなくても止まる＝
+> 2 回目以降が永久に通らない）。現行仕様は上記のとおり。
+
+### 本当の orphan PENDING を捕まえる
+
+`CampaignDeliveries → ScheduledEmailJobId → ScheduledEmails` と辿るだけでは、
+**配信行が欠けているジョブ**は見えない。キュー登録は「ジョブ行を作る → 配信行を upsert」の
+順なので、途中で落ちると **PENDING ジョブだけが残り配信行が無い**状態になる。これが本当の
+orphan で、見逃すと同じ人へ 2 通目のジョブを積む。
+
+対策: **送信待ちのジョブだけ**を引き（`AND({Status}='PENDING', <marketing 判定>)`）、
+その `Recipients` を現在候補と突き合わせる。`PENDING` は「いま詰まっているキュー」なので
+件数が小さく、campaign の全履歴走査にはならない。campaign / version の同一性を確認し、
+step の同一性は**内容 hash**（ステップごとに件名・本文が違う）で見る。
+突き合わせに使ったアドレスは**応答にもログにも出さない**（返すのは件数だけ）。
+
+### 契約の不一致を解消
+
+`recordIds` の上限判定が `MAX_RECIPIENTS_PER_SEND * 2` なのに、エラー文は
+「上限 500 件」と表示していた（**言っている上限の 2 倍まで受け付ける**）。
+判定と表示で同じ定数（`DUPLICATE_CHECK_MAX`）を使い、応答に `limit` / `given` を返す。
+`recordIds` に重複があれば **400 で fail closed**（候補数と鍵の数がズレて
+「判定できた」と誤認する余地を作らない）。
+
+### 2 局面をテストで固定
+
+| 局面 | 期待 | 実装 |
+|---|---|---|
+| **いまの 10 名**（2026-08-14 に queue 済み） | **止まる** | 次が Step1 でない / 対象 0 名。仮に同じ 10 名を候補へ入れても `alreadyDelivered=10` / `pendingLinkedJobs=1` で落ちる |
+| **次のコホート**（未 queue・100 名） | **通る** | **過去ジョブあり・`jobsTotal=152` / `jobsTruncated=true` / `sentByStep[1]=10`** という本番同等の周辺状態でも ok。増える行は ScheduledEmails 1・CampaignDeliveries 100・Customers 0 |
+
+次のコホートでも「1 名でも鍵があれば止まる」「ゲート・関所の条件は同じように効く」ことを固定した。
+
+### 安全条件
+
+- **read-only のみ**。書き込み系アクション（`dryRun` / `send` / `cancelJob`）は
+  許可リストで凍結し guard テストが監視。Airtable / SendGrid も直接叩かない
+- **CI には入れない**（`check:safety` から本番の管理エンドポイントを叩かない）。
+  判定の単体テストだけ `test:marketing` 経由で CI に乗る
+- アドレス・recordId・secret を出力しない（件数と理由のみ）
+
+### 経緯
+
+初版は PR #338（base `6cfabf50`）。#339 / #341 / #343 のマージで base が古くなり
+CONFLICTING になったため、**rebase / cherry-pick / force push は使わず**
+最新 `origin/main`（`9454fec2`）へ差分を再適用して出し直した。#338 は close。
+
+### やっていないこと
+
+production deploy / merge / 実メール送信 / 本番 env 変更 / Airtable write /
+次の 100 名への付与。**Last verified**: 2026-08-15
+
 ## 2026-08-15 — 【修正】管理画面の進行表示が CampaignDeliveries 4,000 行で黙って打ち切られていた
 
 ### 何が起きていたか（本番実測）
@@ -12,11 +121,11 @@ Light 無料体験の Step1 を **10 名ぶんキュー登録した直後**に�
 
 原因は `admin-marketing.js` の `fetchAll` が **`MAX_PAGES=40`（4,000 行）で `break`** すること。
 例外にならないので、呼び出し側は短い結果を全体だと誤認する。
-`CampaignDeliveries` は **6,110 行**（`{EmailType}='campaign'`）まで育っており、
+`CampaignDeliveries` は 4,000 行を超えて育っており（**実測 14,426 行**・`{EmailType}='campaign'`）、
 新しい 10 行のうち 9 行が打ち切りの外に落ちていた。
 
 「campaign で絞ってあるから全件走査ではない」というコメントの前提が、
-台帳の成長で崩れていた（絞り込んでも 6,110 行ある）。
+台帳の成長で崩れていた（絞り込んでも **14,426 行**ある）。
 
 ### 影響範囲（実害の切り分け）
 
@@ -53,7 +162,7 @@ Light 無料体験の Step1 を **10 名ぶんキュー登録した直後**に�
 
 ### テスト
 
-- `marketingStatusScan.regression.test.mjs` — 偽 Airtable に **6,110 行**の台帳を持たせ、
+- `marketingStatusScan.regression.test.mjs` — 偽 Airtable に **6,110 行 fixture** の台帳を持たせ、
   実ハンドラを起動して「10 名を 10 名として数える」ことを検証。
   台帳を全件走査しに来たら偽サーバー側が検知して落とす。
   **旧実装で 5/6 fail → 修正後 6/6 pass を実測**（空振りしない試験であることを確認）

@@ -3,7 +3,7 @@
  *   node --test src/lib/marketing/marketingStatusScan.regression.test.mjs
  *
  * ── 再現する事故（2026-08-15 本番）────────────────────────────
- * `CampaignDeliveries` が 6,110 行になった時点で、`admin-marketing` の
+ * `CampaignDeliveries` が 4,000 行を超えた時点で（**本番実測 14,426 行**）、`admin-marketing` の
  * `fetchAll`（`MAX_PAGES=40` で **break**）が台帳を 4,000 行で打ち切っていた。
  * その結果 Step1 を 10 名ぶんキュー登録した直後に、
  *
@@ -12,7 +12,7 @@
  *
  * と**過少表示**した。運用者が「まだ 9 名残っている」と誤読する。
  *
- * ここでは fetch を差し替えた偽 Airtable に **6,110 行の台帳**を持たせ、
+ * ここでは fetch を差し替えた偽 Airtable に **6,110 行 fixture の台帳**を持たせ、
  * ハンドラを実際に起動して「10 名を 10 名として数える」ことを確かめる。
  * 全件走査へ落ちた場合は偽サーバー側が検知してテストを落とす。
  */
@@ -29,7 +29,11 @@ const SECRET = 'test-admin-secret';
 const BRAND = 'analytics-keiba';
 const CAMPAIGN_ID = 'light-trial-to-premium-sequence';
 const JOB_ID = 'mkt-light-trial-to-premium-sequence-v1-af3acf8c-1';
-/** 本番と同じ規模。4,000 行の打ち切り境界を確実に越える */
+/**
+ * **6,110 行 fixture**（本番実測値ではない）。
+ * 目的は 4,000 行の打ち切り境界を確実に越えること。
+ * 本番の実測は **14,426 行 / 145 ページ / 162 秒**（2026-08-15）。
+ */
 const LEDGER_ROWS = 6110;
 
 const FROM = getBrandConfig(BRAND).defaultFromEmail;
@@ -83,9 +87,12 @@ const scheduledRows = [{
 /**
  * 偽 Airtable。**全件走査を検知する**のが肝。
  * `CampaignDeliveries` を絞り込み無し（= `{EmailType}='campaign'` だけ）で読みに来たら
- * 6,110 行をページングで返す（＝旧実装なら 40 ページで打ち切られる）。
+ * 6,110 行 fixture をページングで返す（＝旧実装なら 40 ページで打ち切られる）。
  */
-function stubAirtable({ onFullScan } = {}) {
+let pendingRowsOverride = null;
+
+function stubAirtable({ onFullScan, pendingRows } = {}) {
+  pendingRowsOverride = pendingRows ?? null;
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
@@ -102,6 +109,8 @@ function stubAirtable({ onFullScan } = {}) {
 
     if (u.includes('/ScheduledEmails')) {
       if (!formula) throw new Error('ScheduledEmails を絞り込み無しで読んでいる');
+      // 送信待ちジョブの照会（orphan PENDING 検知）だけ別の集合を返せるようにする
+      if (/\{Status\}='PENDING'/.test(formula)) return ok({ records: pendingRowsOverride ?? scheduledRows });
       return ok({ records: scheduledRows });
     }
 
@@ -121,7 +130,7 @@ function stubAirtable({ onFullScan } = {}) {
 
 const ok = (body) => ({ ok: true, status: 200, json: async () => body });
 
-/** 台帳をページングで返す（100 行/ページ）。既定は本番と同じ 6,110 行 = 62 ページ */
+/** 台帳をページングで返す（100 行/ページ）。既定は 6,110 行 fixture = 62 ページ */
 function paginatedLedger(url, rows = LEDGER_ROWS) {
   const page = Number(new URL(url).searchParams.get('offset') || 0);
   const start = page * 100;
@@ -151,7 +160,7 @@ async function invoke(payload) {
 
 // ── 本体 ──────────────────────────────────────────────────────
 
-test('【重要】台帳 6,110 行でも jobs が 10 名を 10 名として数える', async () => {
+test('【重要】台帳 6,110 行 fixture でも jobs が 10 名を 10 名として数える', async () => {
   const calls = stubAirtable();
   const { statusCode, body } = await invoke({ action: 'jobs' });
   assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
@@ -167,7 +176,7 @@ test('【重要】台帳 6,110 行でも jobs が 10 名を 10 名として数�
     '配信行を名指しで引いていない');
 });
 
-test('【重要】台帳 6,110 行でも sequence が Step1 送信済み 10 名を認識する', async () => {
+test('【重要】台帳 6,110 行 fixture でも sequence が Step1 送信済み 10 名を認識する', async () => {
   stubAirtable();
   const { statusCode, body } = await invoke({ action: 'sequence', campaignId: CAMPAIGN_ID });
   assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 300));
@@ -191,7 +200,7 @@ test('【重要】sequence / jobs / barrier の見え方が一致する（10 名
 });
 
 test('【重要】全件走査へ落ちたら気付ける（この試験が空振りしない）', async () => {
-  // 台帳を全件で読みに来たら 6,110 行を返す。旧実装ならここで 4,000 行に切れる
+  // 台帳を全件で読みに来たら 6,110 行 fixture を返す。旧実装ならここで 4,000 行に切れる
   let fullScans = 0;
   stubAirtable({ onFullScan: (u) => { fullScans += 1; return paginatedLedger(u); } });
   await invoke({ action: 'jobs' });
@@ -293,4 +302,161 @@ test('【重要】ジョブ台帳を取り切れなければ 500（部分集計�
   assert.equal(statusCode, 500);
   assert.equal(body.code, 'history_fetch_incomplete');
   assert.equal(body.sideEffects, 'none');
+});
+
+// ── 候補単位の重複確認（action=duplicateCheck / 2026-08-15）────────
+//
+// campaign 単位で「過去ジョブがあれば止める」判定は、1 回流したら二度と通らない。
+// 見るのは候補ごとの DeliveryKey（campaign × version × step × 受信者）。
+
+test('【重要】duplicateCheck は候補の鍵だけを名指しで見る（台帳を全件走査しない）', async () => {
+  let fullScans = 0;
+  const calls = stubAirtable({ onFullScan: (u) => { fullScans += 1; return paginatedLedger(u, 20000); } });
+  const { statusCode, body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  assert.equal(fullScans, 0, '台帳を全件走査している');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(body.candidates, 10);
+  assert.equal(body.unresolved, 0);
+  // 候補の鍵で引いた行が queued なので「既に出ている」と判定される
+  assert.equal(body.alreadyDelivered, 10);
+  // 顧客・配信行とも名指しで引いている
+  const targeted = calls.filter((c) => c.url.includes('/CampaignDeliveries'));
+  assert.ok(targeted.length > 0);
+  assert.ok(targeted.every((c) => /DeliveryKey/.test(c.formula)), '鍵で名指ししていない');
+});
+
+test('【重要】duplicateCheck の応答に PII / 鍵を載せない', async () => {
+  stubAirtable();
+  const { body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  const dump = JSON.stringify(body);
+  assert.equal(/@example\.com/.test(dump), false, 'アドレスが出ている');
+  assert.equal(/recCUST/.test(dump), false, 'recordId が出ている');
+  assert.equal(/DeliveryKey"\s*:/.test(dump), false, 'DeliveryKey を返している');
+});
+
+test('【重要】duplicateCheck は対象未指定・未知ステップを拒否する', async () => {
+  stubAirtable();
+  assert.equal((await invoke({ action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1, recordIds: [] })).statusCode, 400);
+  assert.equal((await invoke({ action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 99, recordIds: ['recX'] })).statusCode, 400);
+  assert.equal((await invoke({ action: 'duplicateCheck', campaignId: 'unknown', step: 1, recordIds: ['recX'] })).statusCode, 400);
+});
+
+test('【重要】duplicateCheck は書き込みを 1 件も行わない', async () => {
+  const calls = stubAirtable();
+  await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  const writes = calls.filter((c) => ['PATCH', 'PUT', 'DELETE'].includes(c.method));
+  assert.deepEqual(writes, [], '書き込んでいる');
+});
+
+// ── 本当の orphan PENDING（配信行が欠けている）──────────────────
+//
+// キュー登録は「ジョブ行を作る → 配信行を upsert」の順なので、途中で落ちると
+// **PENDING ジョブだけが残り配信行が無い**。`CampaignDeliveries → JobId` の
+// 経路では見えないので、ジョブ側の `Recipients` から突き合わせる。
+
+/** 候補を宛先に持つ PENDING ジョブ（ただし配信行は無い） */
+const orphanPendingJob = (emails) => ([{
+  id: 'recJOBORPHAN001',
+  fields: {
+    JobId: 'mkt-light-trial-to-premium-sequence-v1-orphan-1',
+    Status: 'PENDING',
+    Recipients: emails.join(', '),
+    TargetPlan: `campaign:${CAMPAIGN_ID}`,
+    CreatedBy: 'admin-marketing',
+    Notes: `marketing campaign ${CAMPAIGN_ID} v1`,
+  },
+}]);
+
+test('【重要】配信行が無い orphan PENDING を検知する', async () => {
+  // 配信行は 1 件も返さない（= CampaignDeliveries が欠けている状態）
+  globalThis.fetch = (() => {
+    const base = stubAirtable({ pendingRows: orphanPendingJob(PEOPLE.slice(0, 4).map((p) => p.email)) });
+    const inner = globalThis.fetch;
+    return async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/CampaignDeliveries')) return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      return inner(url, init);
+    };
+  })();
+  const { statusCode, body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  // 配信行経由では 0（＝旧実装では見逃していた）
+  assert.equal(body.alreadyDelivered, 0);
+  assert.equal(body.pendingLinkedJobs, 0);
+  // ジョブ側の突き合わせで検知できている
+  assert.equal(body.pendingCandidates, 4, '本当の orphan PENDING を見逃している');
+  assert.equal(body.pendingOverlap.jobs, 1);
+});
+
+test('【重要】orphan 検知でも PII を返さない', async () => {
+  globalThis.fetch = (() => {
+    const base = stubAirtable({ pendingRows: orphanPendingJob(PEOPLE.map((p) => p.email)) });
+    const inner = globalThis.fetch;
+    return async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/CampaignDeliveries')) return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      return inner(url, init);
+    };
+  })();
+  const { body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  const dump = JSON.stringify(body);
+  assert.equal(/@example\.com/.test(dump), false, 'アドレスが出ている');
+  assert.equal(/recCUST|recJOB/.test(dump), false, 'recordId / ジョブ recordId が出ている');
+});
+
+test('別キャンペーン・別 version の PENDING は候補を止めない', async () => {
+  const other = orphanPendingJob(PEOPLE.map((p) => p.email));
+  other[0].fields.TargetPlan = 'campaign:dormant-reactivation';
+  other[0].fields.Notes = 'marketing campaign dormant-reactivation v2';
+  globalThis.fetch = (() => {
+    stubAirtable({ pendingRows: other });
+    const inner = globalThis.fetch;
+    return async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/CampaignDeliveries')) return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      return inner(url, init);
+    };
+  })();
+  const { body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  assert.equal(body.pendingCandidates, 0, '別キャンペーンの滞留で止めている');
+});
+
+test('【重要】duplicateCheck は候補の重複・上限を fail closed で弾く', async () => {
+  stubAirtable();
+  const dup = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: ['recA', 'recA', 'recB'],
+  });
+  assert.equal(dup.statusCode, 400);
+  assert.match(String(dup.body.error || ''), /重複/);
+  assert.equal(dup.body.duplicates, 1);
+
+  const over = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: Array.from({ length: 501 }, (_, i) => `rec${i}`),
+  });
+  assert.equal(over.statusCode, 400);
+  // 判定に使った上限と、表示している上限が一致していること
+  assert.equal(over.body.limit, 500);
+  assert.match(String(over.body.error || ''), new RegExp(`上限 ${over.body.limit} 件`));
+  assert.equal(over.body.given, 501);
 });

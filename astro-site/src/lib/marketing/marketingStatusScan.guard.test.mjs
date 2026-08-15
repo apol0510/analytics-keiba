@@ -6,7 +6,7 @@
  * `admin-marketing.js` の `fetchAll` は `MAX_PAGES`（4,000 行）で **break** する。
  * 例外にならないので、呼び出し側は短い結果を全体だと誤認する。
  *
- * 2026-08-15 の実測: `CampaignDeliveries` が 6,110 行になった時点で
+ * 2026-08-15 の実測: `CampaignDeliveries` は **14,426 行**あり、4,000 行を超えた時点で
  * `handleSequence` / `handleJobs` / `handleHistory` が打ち切りに掛かり、
  * Step1 を 10 名ぶんキュー登録した直後に管理画面が
  * **「送信済み 1 名 / 残り 9 名」** と表示した（実際は 10 名とも queued）。
