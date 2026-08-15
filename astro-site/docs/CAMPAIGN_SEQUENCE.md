@@ -222,9 +222,19 @@ Lua（`LOCK_VERIFY_LUA` / `LOCK_RELEASE_LUA`）をそのまま共有する。
 | jobId ごとに独立 | 鍵は `ak:marketing-dispatch:lock:<jobId>` |
 | 自分の token でしか解放しない | Lua で `GET` → 一致時のみ `DEL`（atomic） |
 | 送信直前の再確認 | SendGrid を叩く前に `verify()`。奪われていたら **1 通も送らない** |
-| 途中異常でも解放を試みる | handler の `finally`。**解放失敗は「成功」にしない**（TTL で開く） |
+| 途中異常でも解放を試みる | 実行後に必ず解放を試み、**解放そのものが例外でも送信結果を失わない** |
+| 解放失敗を「成功」にしない | 応答に `lockRelease: {ok, reason, retryAfterSec}` と `warning` を返す |
 | 取得失敗・状態不明 | **送信 0・書き込み 0**（`409 busy` / `503 unavailable`） |
 | dryRun | 鍵を取らない（何本走ってもよい） |
+
+**解放に失敗したとき**（応答の `lockRelease.ok === false`）:
+
+- **送信結果は事実どおり**（`sent` を 0 へ巻き戻さない）。巻き戻すと運用者が
+  「送れていない」と読んで**もう一度送る**
+- 鍵が残っている間、同じジョブの再実行は `409 busy` で弾かれる。
+  **TTL（約 300 秒）が切れるまで再実行しない**。`retryAfterSec` は目安
+- **自動で再実行しない。** 応答の `warning` にもそう書く
+- TTL 明けに再実行しても、最後の砦として**既送信者は `sent` 判定で除外**される
 
 **TTL 切れの安全性**: TTL は 300 秒で、Netlify Function の上限 26 秒より十分長い。
 よって「送信中に TTL が切れて別実行が入る」ことは構造的に起きない。

@@ -282,24 +282,64 @@ export const handler = async (event) => {
     }
   }
 
+  // ── 実行 → 解放 → 応答（この順序に意味がある）────────────────────
+  //
+  // ⚠️ **解放の失敗を「送信の失敗」にしてはいけない。**
+  //    メールは既に出ている。`sent` を 0 へ巻き戻すと、運用者は
+  //    「送れていない」と読んで**もう一度送る**。事実（送信結果）はそのまま返し、
+  //    解放の可否は `lockRelease` として**別の欄**に載せる。
+  //
+  // ⚠️ 同時に「解放できなかった」を黙って握り潰すのも駄目。
+  //    鍵が残っている間、同じジョブの再実行は `busy` で弾かれる。
+  //    **TTL が切れるまで再実行しないこと**を運用者へ明示する。
+  let result;
   try {
-    return await dispatch({
+    result = await dispatch({
       KEY, BASE, SG, dryRun, jobIdFilter,
       expectedWillSend: dryRun ? null : Number(req.expectedWillSend),
       lock, lockToken,
     });
   } catch (e) {
     console.error('❌ [marketing-dispatch]', e.message);
-    return json(500, { error: 'internal error' });
-  } finally {
-    // 途中で落ちても必ず解放を試みる。**解放できなくても「成功」にしない**
-    //（TTL で自然に開く。握り潰すより不明と言う方が安全）
-    if (lock && lockToken) {
-      const rel = await lock.release({ jobId: jobIdFilter, token: lockToken });
-      if (!rel.ok) console.warn('⚠️ [marketing-dispatch] lock release 失敗:', rel.reason);
-    }
+    result = json(500, { error: 'internal error' });
   }
+
+  if (!lock || !lockToken) return result;
+
+  // 解放そのものが例外でも**送信結果を失わない**
+  let rel;
+  try {
+    rel = await lock.release({ jobId: jobIdFilter, token: lockToken });
+  } catch (e) {
+    // ⚠️ 例外の中身（URL・token を含みうる）は載せない。理由コードだけ
+    rel = { ok: false, reason: (e && e.code) || LOCK_FAIL.UNAVAILABLE };
+  }
+  return withLockRelease(result, { rel, jobId: jobIdFilter });
 };
+
+/**
+ * 応答へ `lockRelease` を足す（**送信結果は 1 バイトも書き換えない**）。
+ *
+ * 解放できなかったときは、鍵が TTL で開くまで同じジョブを再実行してはいけない。
+ * 自動再実行の材料にならないよう `retryAfterSec` は**目安として**返し、
+ * 「自動で再実行しない」ことを文言でも明示する。
+ */
+function withLockRelease(res, { rel, jobId }) {
+  let body;
+  try { body = JSON.parse(res.body || '{}'); } catch { return res; }
+
+  body.lockRelease = { ok: rel.ok === true, reason: rel.ok === true ? null : String(rel.reason || 'unknown') };
+
+  if (!rel.ok) {
+    body.lockRelease.retryAfterSec = DISPATCH_LOCK_TTL_SEC;
+    body.warning = '送信は完了していますが、実行ロックを解放できませんでした。'
+      + `同じジョブの再実行は約 ${DISPATCH_LOCK_TTL_SEC} 秒（ロックの期限）待ってください。`
+      + '**自動で再実行しないでください**（送信件数はこの応答のとおりです）。';
+    // ログにも理由コードだけを残す（アドレス・URL・token は出さない）
+    console.warn('⚠️ [marketing-dispatch] lock release 失敗:', { jobId, reason: body.lockRelease.reason });
+  }
+  return { ...res, body: JSON.stringify(body) };
+}
 
 async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null, lock = null, lockToken = null }) {
   const now = Date.now();

@@ -17,7 +17,10 @@
 - `src/lib/marketing/dispatchLock.js`（新規）— 鍵空間 `ak:marketing-dispatch:`
 - live のみ取得。**dryRun は鍵を取らない**
 - **SendGrid を叩く直前に `verify()`**。奪われていたら 1 通も送らない（409）
-- handler の `finally` で解放を試み、**解放失敗を「成功」にしない**
+- 解放の可否を応答へ明示（`lockRelease: {ok, reason, retryAfterSec}` + `warning`）。
+  **解放失敗を「送信失敗」にしない**（`sent` を巻き戻さない。巻き戻すと運用者が
+  「送れていない」と読んでもう一度送る）。同時に握り潰しもしない
+  （鍵が残る間は再実行が busy。TTL まで待つ・自動再実行しない、と文言で明示）
 - 取得失敗 = `409 busy` / 状態不明・Redis 不通 = `503`。どちらも**送信 0・書き込み 0**
 - TTL 300 秒 >> Function 上限 26 秒 → **送信中に TTL が切れない**
 
@@ -36,7 +39,7 @@ Airtable の `PENDING → PROCESSING`（CAS ではない）。
 
 ### 検証
 
-`npm run test:marketing` 1,458 pass / 0 fail ・ `check:safety` EXIT=0 ・
+`npm run test:marketing` 1,464 pass / 0 fail ・ `check:safety` EXIT=0 ・
 `build` EXIT=0 ・ 追加行の secret scan 0 件。
 
 ### やっていないこと

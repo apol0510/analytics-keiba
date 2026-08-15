@@ -469,3 +469,121 @@ test('【重要】途中失敗のあと再実行すると、残りだけ処理�
   // 実行が終われば鍵は解放されている（次の再実行が塞がれない）
   assert.equal(store.size, 0, '鍵を解放していない');
 });
+
+// ══════════════════════════════════════════════════════════════
+//  ロック解放の可否を応答へ明示する（2026-08-15）
+//
+//  ⚠️ **解放の失敗を「送信の失敗」にしてはいけない。** メールは既に出ている。
+//     `sent` を 0 へ巻き戻すと運用者は「送れていない」と読んで**もう一度送る**。
+//     事実（送信結果）はそのまま返し、解放の可否は別の欄に載せる。
+//  ⚠️ 同時に、握り潰すのも駄目。鍵が残っている間は再実行が busy で弾かれるので、
+//     **TTL が切れるまで再実行しない**ことを明示する。
+// ══════════════════════════════════════════════════════════════
+
+test('【重要】送信成功 + 解放成功 → sent=1 / lockRelease.ok=true', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({ ...oneRecipientFixture(), redis: shared });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 200);
+  assert.equal(body.sent, 1);
+  assert.equal(calls.sendgridSend, 1);
+  assert.deepEqual(body.lockRelease, { ok: true, reason: null });
+  assert.equal(body.warning, undefined, '正常時に警告を出している');
+  assert.equal(store.size, 0, '鍵が残っている');
+});
+
+test('【重要】送信成功 + 解放失敗 → sent は 1 のまま / lockRelease.ok=false / 警告あり', async () => {
+  const store = new Map();
+  const base = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    ...oneRecipientFixture(),
+    redis: (args) => {
+      // 解放（DEL を含む Lua）だけを失敗させる
+      if (String(args[0]).toUpperCase() === 'EVAL' && String(args[1]).includes("redis.call('DEL'")) {
+        throw new Error('release boom');
+      }
+      return base(args);
+    },
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+
+  // 送信の事実は**巻き戻さない**
+  assert.equal(statusCode, 200, '解放失敗を送信失敗にしている');
+  assert.equal(body.sent, 1, '送信済み件数を巻き戻している');
+  assert.equal(body.failed, 0);
+  assert.equal(calls.sendgridSend, 1);
+
+  // 解放の可否は別の欄で明示する
+  assert.equal(body.lockRelease.ok, false);
+  assert.equal(typeof body.lockRelease.reason, 'string');
+  assert.equal(body.lockRelease.retryAfterSec, 300);
+  assert.match(body.warning, /解放できませんでした/);
+  assert.match(body.warning, /自動で再実行しないでください/);
+
+  // secret / URL / token を漏らさない
+  const dump = JSON.stringify(body);
+  assert.equal(/fake-token|fake-redis\.local|UPSTASH/.test(dump), false, '接続情報が応答に出ている');
+});
+
+test('【重要】解放失敗のあと即時 2 回目を叩くと busy で送信 0', async () => {
+  const store = new Map();
+  const base = makeFakeRedis(store, { fence: 0 });
+  const redis = (args) => {
+    if (String(args[0]).toUpperCase() === 'EVAL' && String(args[1]).includes("redis.call('DEL'")) {
+      throw new Error('release boom');
+    }
+    return base(args);
+  };
+  const calls = stub({ ...oneRecipientFixture(), redis });
+  const first = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(first.body.sent, 1);
+  assert.equal(first.body.lockRelease.ok, false);
+
+  // 鍵が残っているので 2 回目は弾かれる（＝二重送信にならない）
+  const second = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(second.statusCode, 409);
+  assert.equal(second.body.code, 'busy');
+  assert.equal(calls.sendgridSend, 1, '2 回目が送信している');
+});
+
+test('【重要】TTL で鍵が消えた後も、既送信者は再送しない（最後の砦は sent 判定）', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    ...oneRecipientFixture(),
+    // 前回の実行で送信済み（配信行が sent）
+    deliveries: [deliveryRow({ email: 'a@example.com', status: 'sent', n: '1' })],
+    redis: shared,
+  });
+  // 鍵は TTL で消えている状態（store が空）＝ロックは取れる
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 0 }, LIVE_ENV);
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  assert.equal(calls.sendgridSend, 0, 'TTL 明けに既送信者へ再送している');
+  assert.equal(body.lockRelease.ok, true);
+});
+
+test('解放処理そのものが例外でも、送信結果を失わない', async () => {
+  const store = new Map(); const base = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    ...oneRecipientFixture(),
+    redis: (args) => {
+      if (String(args[0]).toUpperCase() === 'EVAL' && String(args[1]).includes("redis.call('DEL'")) {
+        throw new Error('unreachable');
+      }
+      return base(args);
+    },
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 200);
+  assert.equal(body.sent, 1);
+  assert.equal(calls.sendgridSend, 1);
+  assert.equal(body.lockRelease.ok, false);
+  assert.ok(body.warning);
+});
+
+test('dryRun の応答には lockRelease を足さない（鍵を取っていない）', async () => {
+  const calls = stub({ ...oneRecipientFixture() });
+  const { statusCode, body } = await invoke({ dryRun: true }, LIVE_ENV);
+  assert.equal(statusCode, 200);
+  assert.equal(body.lockRelease, undefined);
+  assert.equal(calls.sendgridSend, 0);
+});
