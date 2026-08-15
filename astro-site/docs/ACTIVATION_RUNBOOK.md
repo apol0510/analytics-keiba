@@ -102,21 +102,34 @@
 
 100 名の成功条件（§4）を満たしたうえで、改めて承認を得てから:
 
+```json
+{"action":"rolloutStart","campaignId":"light-trial-to-premium-sequence",
+ "stage":"scale","dailyLimit":500,
+ "alwaysArmed":false,"armedFor":"<実行日の JST 日付>",
+ "expectedVersion":<いまの版>,"note":"scale 500"}
 ```
-stage: 'scale'
-dailyLimit: 500
-alwaysArmed: false      # 継続運用に切り替える判断がつくまでは one-shot のまま
-armedFor: <実行日の JST 日付>
-```
+
+（既存キーを更新するので `expectedVersion` は `action=rollout` で読んだ版を渡す）
 
 **rollback 時の状態**（**効き方が 3 段階ある。混同しない**）:
 
 | やり方 | 何が止まるか | 何が止まらないか | 反映 |
 |---|---|---|---|
-| `killed: true`（`store.kill()`） | **次の cron tick 以降の自動処理を全部**（新規付与 / キュー登録 / 送信起動 / touch2〜24 の続き） | **既に起動済みの Background 送信**（そのジョブは走り切ることがある） | 次 tick（最長 1 時間・redeploy 不要） |
-| `stage: 'paused'` / `dailyLimit: 0` | **新規付与だけ** | 積んだぶんのキュー登録・送信・続きの通は**進む**（意図的） | 次 tick |
+| `action=rolloutKill`（緊急停止） | **次の cron tick 以降の自動処理を全部**（新規付与 / キュー登録 / 送信起動 / touch2〜24 の続き） | **既に起動済みの Background 送信**（そのジョブは走り切ることがある） | 次 tick（最長 1 時間・redeploy 不要） |
+| `action=rolloutPause`（`stage: paused`） | **新規付与だけ** | 積んだぶんのキュー登録・送信・続きの通は**進む**（意図的） | 次 tick |
 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy | **送信経路そのもの**（積むだけになる） | — | redeploy 後（数分〜十数分） |
 | env 4 件を UNSET + redeploy | 自動運転すべて | — | redeploy 後 |
+
+```bash
+# 緊急停止（競合しても通る。止める操作は通す）
+curl -s -X POST "$SITE/.netlify/functions/admin-marketing" \
+  -H 'Content-Type: application/json' -H "x-admin-secret: $SECRET" \
+  -d '{"action":"rolloutKill","campaignId":"light-trial-to-premium-sequence","note":"incident"}'
+
+# 新規付与だけ止める / 停止の解除（段階は上がらない）
+#   {"action":"rolloutPause",  "campaignId":"..."}
+#   {"action":"rolloutResume", "campaignId":"..."}
+```
 
 ⚠️ **`killed: true` でも、既に起動した Background ジョブは取り消せない**（送信中のバッチは走り切る）。
 **送信そのものを確実に止める最終手段は `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy。**
@@ -211,11 +224,34 @@ Build Hook を 1 回叩き、`origin/main` を production build する。
 
 ### Step 3. Redis rollout state を開始（CAS 新規作成 / one-shot）
 
-`stage: 'canary'` / `dailyLimit: 100` / `killed: false` / **`alwaysArmed: false`** /
-**`armedFor: <実行日の JST 日付>`** / `expectedVersion: null` で作成
+**管理 API から行う**（2026-08-16 に追加。それ以前は書き込み口が無く開始できなかった）。
+
+```bash
+# ① いまの版を読む（新規なら state が無い = expectedVersion は null）
+curl -s -X POST "$SITE/.netlify/functions/admin-marketing" \
+  -H 'Content-Type: application/json' -H "x-admin-secret: $SECRET" \
+  -d '{"action":"rollout","campaignId":"light-trial-to-premium-sequence"}'
+
+# ② 開始（CAS 必須。expectedVersion は ① の版。新規作成なら null）
+curl -s -X POST "$SITE/.netlify/functions/admin-marketing" \
+  -H 'Content-Type: application/json' -H "x-admin-secret: $SECRET" \
+  -d '{"action":"rolloutStart","campaignId":"light-trial-to-premium-sequence",
+       "stage":"canary","dailyLimit":100,
+       "alwaysArmed":false,"armedFor":"<実行日の JST 日付>",
+       "expectedVersion":null,"note":"activation canary 100 (one-shot)"}'
+```
+
 → `action=rollout` で `canProceed: true` と `dailyLimit: 100` を確認。
 
 ⚠️ `alwaysArmed: true` にしない。**翌日に次の 100 名が自動で始まってしまう**。
+⚠️ `armedFor` は**その日の cron tick が実際に走る JST 日付**。
+   深夜 0 時をまたぐ時間帯に設定すると、翌日の日付でないと武装されない。
+⚠️ `dailyLimit` は**必ず明示する**（未指定は 400。「100 名のつもりが canary 既定の 10 名」を防ぐ）。
+
+受け付けない値は 400 で返り、**1 バイトも書かない**:
+段階が 5 値以外 / `dailyLimit` が整数でない・0 未満・2000 超 /
+`armedFor` が過去・7 日より先・形式違い / `expectedVersion` の指定漏れ。
+版が食い違えば **409**（誰かが同時に触った）。
 
 ### Step 4. 付与（自動 / cron が 1 tick で実行）
 
@@ -241,8 +277,8 @@ cron は 1 時間ごと。**`dailyLimit`（= 100）まで**付与する（`stage
 
 `armedFor` は翌日に切れるので次バッチは自動では始まらないが、**明示的に止めておく**:
 
-- 正常時: `stage: 'paused'` にする（積み残しの queue / 送信は引き続き処理される）
-- 異常時: `killed: true`（次 tick から全停止）、必要なら env を UNSET + redeploy
+- 正常時: `action=rolloutPause`（積み残しの queue / 送信は引き続き処理される）
+- 異常時: `action=rolloutKill`（次 tick から全停止）、必要なら env を UNSET + redeploy
 
 そのうえで §4 の成功条件を read-only で確認する。**500 名へ進むには別承認が必要。**
 
