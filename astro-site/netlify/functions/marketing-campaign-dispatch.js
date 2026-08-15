@@ -60,6 +60,10 @@ import {
 } from '../../src/lib/promotions/offerCampaignLink.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
+import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
+  createDispatchLock, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, DispatchLockError,
+} from '../../src/lib/marketing/dispatchLock.js';
 import {
   indexDeliveriesByRecipient,
   buildCampaignCustomArgs,
@@ -238,18 +242,66 @@ export const handler = async (event) => {
     }
   }
 
+  // ── 同一ジョブの live を 1 本だけ通す（原子的排他）─────────────────
+  //
+  // ⚠️ `alreadySent` は「読んだ時点の事実」でしかない。読んでから記録するまでの
+  //    間に**同じ jobId の live がもう 1 本**走ると、両方が「まだ誰も送っていない」
+  //    を読み、両方が `expectedWillSend` を通り、**同じ相手へ 2 通**送れる
+  //    （二重クリック / HTTP retry / Function の並行起動）。
+  //    逐次再実行の冪等性だけでは塞げないので、送信の前に鍵を取る。
+  //
+  // dryRun は書かないので鍵を取らない（確認は何本走ってもよい）。
+  let lock = null;
+  let lockToken = null;
+  if (!dryRun) {
+    try {
+      lock = createDispatchLock({ cmd: makeRedisCmd(process.env) });
+    } catch (e) {
+      // Redis が無い / 設定されていない = **排他できない**。送らない。
+      return json(503, {
+        error: '二重送信を防ぐ排他を利用できないため中止しました（送信していません）。',
+        code: LOCK_FAIL.UNAVAILABLE, sideEffects: 'none',
+      });
+    }
+    try {
+      const got = await lock.acquire({ jobId: jobIdFilter, ttlSec: DISPATCH_LOCK_TTL_SEC });
+      if (!got.ok) {
+        return json(409, {
+          error: 'このジョブは別の実行が処理中です（二重送信を避けるため中止しました）。',
+          code: LOCK_FAIL.BUSY, jobId: jobIdFilter, sideEffects: 'none',
+        });
+      }
+      lockToken = got.token;
+    } catch (e) {
+      // 取れたかどうか**分からない**ときも送らない（fail closed）
+      return json(503, {
+        error: '排他の状態を確認できないため中止しました（送信していません）。',
+        code: (e instanceof DispatchLockError && e.code) || LOCK_FAIL.UNAVAILABLE,
+        sideEffects: 'none',
+      });
+    }
+  }
+
   try {
     return await dispatch({
       KEY, BASE, SG, dryRun, jobIdFilter,
       expectedWillSend: dryRun ? null : Number(req.expectedWillSend),
+      lock, lockToken,
     });
   } catch (e) {
     console.error('❌ [marketing-dispatch]', e.message);
     return json(500, { error: 'internal error' });
+  } finally {
+    // 途中で落ちても必ず解放を試みる。**解放できなくても「成功」にしない**
+    //（TTL で自然に開く。握り潰すより不明と言う方が安全）
+    if (lock && lockToken) {
+      const rel = await lock.release({ jobId: jobIdFilter, token: lockToken });
+      if (!rel.ok) console.warn('⚠️ [marketing-dispatch] lock release 失敗:', rel.reason);
+    }
   }
 };
 
-async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null }) {
+async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null, lock = null, lockToken = null }) {
   const now = Date.now();
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
   const fromName = getBrandConfig(BRAND).defaultFromName;
@@ -547,6 +599,28 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
     // 3-a) 送らない相手を台帳へ記録（送信前に確定させる）
     if (toSkip.length > 0) {
       await patchDeliveriesByEmail({ KEY, BASE, jobId, entries: toSkip, now });
+    }
+
+    // 🛡️ **SendGrid を叩く直前に鍵がまだ自分のものか確かめる。**
+    //    奪われている / 消えている＝別実行が同じジョブを進めた可能性がある。
+    //    その場合は 1 通も送らない（確認できない状態で送らない）。
+    if (lock && lockToken) {
+      let held;
+      try {
+        held = await lock.verify({ jobId, token: lockToken });
+      } catch (e) {
+        return json(503, {
+          error: '排他の状態を確認できないため送信を中止しました（送信していません）。',
+          code: (e instanceof DispatchLockError && e.code) || LOCK_FAIL.UNAVAILABLE,
+          jobId, sideEffects: 'none',
+        });
+      }
+      if (!held.ok) {
+        return json(409, {
+          error: '別の実行がこのジョブを処理したため中止しました（送信していません）。',
+          code: held.reason, jobId, sideEffects: 'none',
+        });
+      }
     }
 
     // 3-b) 1 通ずつ送る（個別送信。他受信者のアドレスが漏れない）

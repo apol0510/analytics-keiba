@@ -13,13 +13,59 @@ const SECRET = 'test-admin-secret';
 const JOB_ID = 'mkt-expired-comeback-v2-abc12345-1';
 
 /** Airtable / SendGrid を差し替える。**送信 API を叩いたら記録する** */
-function stub({ scheduled = [], deliveries = [], customers = [], suppression = true } = {}) {
-  const calls = { sendgridSend: 0, airtableWrites: 0, urls: [] };
+/**
+ * 偽 Redis（Upstash REST）。**排他の意味を保ったまま**振る舞わせる:
+ * `INCR` は単調増加、`SET NX` は既存キーがあれば null、
+ * `EVAL`（verify / release）は token 一致のときだけ OK。
+ */
+function makeFakeRedis(store = new Map(), counters = { fence: 0 }) {
+  return (args) => {
+    const op = String(args[0] || '').toUpperCase();
+    if (op === 'INCR') { counters.fence += 1; return String(counters.fence); }
+    if (op === 'SET') {
+      const [, key, val, ...rest] = args;
+      const nx = rest.map((x) => String(x).toUpperCase()).includes('NX');
+      if (nx && store.has(key)) return null;
+      store.set(key, String(val));
+      return 'OK';
+    }
+    if (op === 'EVAL') {
+      const script = String(args[1] || '');
+      const key = args[3];
+      const token = String(args[4]);
+      const cur = store.get(key);
+      if (cur === undefined) return 'LOST';
+      if (cur !== token) return 'STOLEN';
+      if (script.includes("redis.call('DEL'")) store.delete(key);
+      return 'OK';
+    }
+    if (op === 'GET') return store.get(args[1]) ?? null;
+    if (op === 'DEL') { store.delete(args[1]); return 1; }
+    return null;
+  };
+}
+
+function stub({
+  scheduled = [], deliveries = [], customers = [], suppression = true,
+  redis = null, onSend = null,
+} = {}) {
+  const calls = { sendgridSend: 0, airtableWrites: 0, urls: [], redisOps: [] };
+  const redisCmd = redis || makeFakeRedis();
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     const method = (init.method || 'GET').toUpperCase();
     calls.urls.push(method + ' ' + u.split('?')[0]);
-    if (u.includes('api.sendgrid.com/v3/mail/send')) { calls.sendgridSend += 1; return { ok: true, status: 202 }; }
+    if (u.includes('fake-redis.local')) {
+      const args = JSON.parse(init.body || '[]');
+      calls.redisOps.push(String(args[0]).toUpperCase());
+      const result = await redisCmd(args);
+      return { ok: true, status: 200, json: async () => ({ result }) };
+    }
+    if (u.includes('api.sendgrid.com/v3/mail/send')) {
+      calls.sendgridSend += 1;
+      if (onSend) await onSend();
+      return { ok: true, status: 202 };
+    }
     if (u.includes('api.sendgrid.com/v3/suppression')) {
       return suppression ? { ok: true, status: 200, json: async () => [] } : { ok: false, status: 401, json: async () => ({}) };
     }
@@ -65,6 +111,10 @@ async function invoke(body, env = {}) {
   process.env.AIRTABLE_API_KEY = 'test-key';
   process.env.AIRTABLE_BASE_ID = 'appTEST';
   process.env.SENDGRID_API_KEY = 'SG.test';
+  // 排他は Redis が正本。既定で「使える」状態にしておき、
+  // 「使えないと送らない」ことは専用の試験で確かめる
+  process.env.UPSTASH_REDIS_REST_URL = 'https://fake-redis.local';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'fake-token';
   delete process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED;
   for (const [k, v] of Object.entries(env)) process.env[k] = v;
   const mod = await import('../../../netlify/functions/marketing-campaign-dispatch.js');
@@ -216,4 +266,206 @@ test('smoke: dry-run はジョブ単位の内訳を返す', async () => {
     'status', 'queued', 'willSend', 'willSkip', 'skipByReason']) {
     assert.ok(k in r, `jobResults に ${k} が無い`);
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  同一ジョブの live 二重起動（2026-08-15 の設計監査）
+//
+//  `alreadySent` は「読んだ時点の事実」でしかない。読んでから記録するまでの
+//  間に同じ jobId の live がもう 1 本走ると、両方が「まだ誰も送っていない」を
+//  読み、両方が expectedWillSend を通り、**同じ相手へ 2 通**送れる。
+//  逐次再実行の冪等性だけでは塞げないので、同時実行そのものを試験する。
+// ══════════════════════════════════════════════════════════════
+
+const LIVE_ENV = { MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true' };
+
+/**
+ * 本文には `{{unsubscribeUrl}}` の印が要る。
+ * 印が無い本文は **1 通も送らない**（配信停止できないメールを出さない）ので、
+ * 正常系の fixture には必ず入れる。
+ */
+const CONTENT = '<p>本文</p><p><a href="{{unsubscribeUrl}}">配信停止</a></p>';
+
+/** DeliveryKey は sha256 hex 64 桁・recordId は rec+14 文字（実仕様） */
+const key64 = (seed) => seed.padEnd(64, '0').slice(0, 64).replace(/[^a-f0-9]/g, 'a');
+const recId = (seed) => ('rec' + seed.replace(/[^A-Za-z0-9]/g, '')).padEnd(17, '0').slice(0, 17);
+
+const deliveryRow = ({ email, status = 'queued', n = '1' }) => ({
+  id: recId('DEL' + n),
+  fields: {
+    ScheduledEmailJobId: JOB_ID,
+    RecipientEmail: email,
+    DeliveryKey: key64('abc' + n),
+    CustomerRecordId: recId('CUS' + n),
+    CampaignType: 'expired-comeback:v2',
+    EmailType: 'campaign',
+    Status: status,
+  },
+});
+
+/** 送信対象 1 名ぶんの正常な fixture（配信行が無いと delivery_not_found で落ちる） */
+const oneRecipientFixture = () => ({
+  scheduled: [job({ Content: CONTENT })],
+  customers: [{ id: recId('CUS1'), fields: { Email: 'a@example.com', 'プラン': 'Free' } }],
+  deliveries: [deliveryRow({ email: 'a@example.com', n: '1' })],
+});
+
+test('【重要】同一 jobId の live を同時に 2 本開始しても、送信へ入るのは 1 本だけ', async () => {
+  // 2 本が同じ Redis を見る（実運用と同じ）
+  const store = new Map(); const counters = { fence: 0 };
+  const shared = makeFakeRedis(store, counters);
+
+  // 1 本目が送信 API を叩いている**最中に** 2 本目を開始する
+  let second = null;
+  const calls = stub({
+    ...oneRecipientFixture(),
+    redis: shared,
+    onSend: async () => {
+      if (!second) {
+        second = invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+        await second.catch(() => {});
+      }
+    },
+  });
+
+  const first = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  const other = await second;
+
+  assert.equal(first.statusCode, 200, `1 本目が通っていない: ${JSON.stringify(first.body).slice(0, 200)}`);
+  assert.equal(other.statusCode, 409, '2 本目が止まっていない');
+  assert.equal(other.body.code, 'busy', `明示的に busy と言っていない: ${JSON.stringify(other.body)}`);
+  assert.equal(other.body.sideEffects, 'none');
+  // 送信は 1 通だけ（2 本目は 1 通も送っていない）
+  assert.equal(calls.sendgridSend, 1, `二重送信している（${calls.sendgridSend} 通）`);
+});
+
+test('【重要】2 本目は送信も書き込みもしない', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  // 先に鍵を埋めておく（＝他実行が処理中の状態）
+  store.set('ak:marketing-dispatch:lock:' + JOB_ID, '999');
+  const calls = stub({ scheduled: [job()], redis: shared });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 409);
+  assert.equal(body.code, 'busy');
+  assert.equal(calls.sendgridSend, 0, '送信している');
+  assert.equal(calls.airtableWrites, 0, '書き込んでいる');
+});
+
+test('【重要】異なる jobId は互いを塞がない', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  // 別ジョブの鍵が埋まっていても、こちらは通る
+  store.set('ak:marketing-dispatch:lock:mkt-other-v1-zzz-1', '1');
+  const calls = stub({ ...oneRecipientFixture(), redis: shared });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 200, '別ジョブの鍵で塞がれている');
+  assert.equal(calls.sendgridSend, 1, `送信していない: ${JSON.stringify(body).slice(0, 400)}`);
+});
+
+test('【重要】Redis へ到達できなければ送信 0（fail closed）', async () => {
+  const calls = stub({
+    scheduled: [job()],
+    redis: () => { throw new Error('unreachable'); },
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 503);
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(calls.sendgridSend, 0, '排他が確認できないのに送信した');
+  assert.equal(calls.airtableWrites, 0);
+});
+
+test('【重要】Redis が設定されていなければ送信 0（排他できないなら送らない）', async () => {
+  const calls = stub(oneRecipientFixture());
+  process.env.PREMIUM_PLUS_ADMIN_SECRET = SECRET;
+  process.env.AIRTABLE_API_KEY = 'test-key';
+  process.env.AIRTABLE_BASE_ID = 'appTEST';
+  process.env.SENDGRID_API_KEY = 'SG.test';
+  process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED = 'true';
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  const mod = await import('../../../netlify/functions/marketing-campaign-dispatch.js');
+  const res = await mod.handler({
+    httpMethod: 'POST', headers: { 'x-admin-secret': SECRET },
+    body: JSON.stringify({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }),
+  });
+  const body = JSON.parse(res.body || '{}');
+  assert.equal(res.statusCode, 503, '排他が無いのに送信へ進んでいる');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(calls.sendgridSend, 0);
+  assert.equal(calls.airtableWrites, 0);
+});
+
+test('【重要】送信直前に鍵を奪われていたら 1 通も送らない', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    ...oneRecipientFixture(),
+    redis: (args) => {
+      const op = String(args[0]).toUpperCase();
+      // 取得は通すが、verify の直前に別実行の token へ差し替える
+      if (op === 'EVAL' && String(args[1]).includes("return 'OK'") && !String(args[1]).includes('DEL')) {
+        store.set(args[3], 'stolen-by-another-run');
+      }
+      return shared(args);
+    },
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 409, '奪われているのに送っている');
+  assert.equal(body.code, 'stolen');
+  assert.equal(calls.sendgridSend, 0, '1 通でも送っている');
+});
+
+test('【重要】dryRun は鍵を取らない（副作用なし・何本走ってもよい）', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({ scheduled: [job()], redis: shared });
+  const a = await invoke({ dryRun: true }, LIVE_ENV);
+  const b = await invoke({ dryRun: true }, LIVE_ENV);
+  assert.equal(a.statusCode, 200);
+  assert.equal(b.statusCode, 200, 'dryRun 同士が塞ぎ合っている');
+  assert.equal(a.body.sideEffects, 'none');
+  assert.equal(calls.sendgridSend, 0);
+  assert.equal(calls.airtableWrites, 0);
+  assert.equal(store.size, 0, 'dryRun で鍵を作っている');
+});
+
+test('【重要】逐次再実行では既送信者を再送しない（従来の冪等性を維持）', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    scheduled: [job({ Recipients: 'a@example.com, b@example.com', RecipientCount: 2, Content: CONTENT })],
+    customers: [
+      { id: recId('CUS1'), fields: { Email: 'a@example.com', 'プラン': 'Free' } },
+      { id: recId('CUS2'), fields: { Email: 'b@example.com', 'プラン': 'Free' } },
+    ],
+    // a は既に送信済み / b はこれから
+    deliveries: [
+      deliveryRow({ email: 'a@example.com', status: 'sent', n: '1' }),
+      deliveryRow({ email: 'b@example.com', status: 'queued', n: '2' }),
+    ],
+    redis: shared,
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 250));
+  assert.equal(calls.sendgridSend, 1, '既送信者へ再送している');
+  assert.equal(body.sent, 1);
+});
+
+test('【重要】途中失敗のあと再実行すると、残りだけ処理し、鍵は解放される', async () => {
+  const store = new Map(); const shared = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    scheduled: [job({ Recipients: 'a@example.com, b@example.com', RecipientCount: 2, Content: CONTENT })],
+    customers: [
+      { id: recId('CUS1'), fields: { Email: 'a@example.com', 'プラン': 'Free' } },
+      { id: recId('CUS2'), fields: { Email: 'b@example.com', 'プラン': 'Free' } },
+    ],
+    // 1 通目で落ちた後の状態（a=sent / b=queued のまま）
+    deliveries: [
+      deliveryRow({ email: 'a@example.com', status: 'sent', n: '1' }),
+      deliveryRow({ email: 'b@example.com', status: 'queued', n: '2' }),
+    ],
+    redis: shared,
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 250));
+  assert.equal(calls.sendgridSend, 1, '残り 1 通だけを送っていない');
+  assert.equal(body.sent, 1);
+  // 実行が終われば鍵は解放されている（次の再実行が塞がれない）
+  assert.equal(store.size, 0, '鍵を解放していない');
 });

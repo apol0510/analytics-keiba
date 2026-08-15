@@ -1,3 +1,50 @@
+## 2026-08-15 — 【修正】実送信の同一ジョブ二重起動を原子的に止める
+
+### 何が穴だったか
+
+`marketing-campaign-dispatch` の live は「① 配信行を読む → ② alreadySent を作る →
+③ SendGrid へ送る → ④ sent を記録」の順。①〜④ の間に**同じ jobId の live がもう 1 本**
+走ると、両方が「まだ誰も送っていない」を読み、両方が `expectedWillSend` を通り、
+**同じ相手へ 2 通**送れる（二重クリック / HTTP retry / Function の並行起動）。
+既存の防御は「逐次再実行には冪等」でしかなく、**同時実行は塞げていなかった**。
+
+### 直した内容
+
+新しい外部サービスも新しい本番 env も増やさない。既に本番で動いている
+`UPSTASH_REDIS_REST_*` と `automationStore.js` の `SET NX EX` + fencing token + Lua を
+**共有**する（Lua をモジュール定数へ切り出して再利用。automation 側の挙動は不変）。
+
+- `src/lib/marketing/dispatchLock.js`（新規）— 鍵空間 `ak:marketing-dispatch:`
+- live のみ取得。**dryRun は鍵を取らない**
+- **SendGrid を叩く直前に `verify()`**。奪われていたら 1 通も送らない（409）
+- handler の `finally` で解放を試み、**解放失敗を「成功」にしない**
+- 取得失敗 = `409 busy` / 状態不明・Redis 不通 = `503`。どちらも**送信 0・書き込み 0**
+- TTL 300 秒 >> Function 上限 26 秒 → **送信中に TTL が切れない**
+
+採用しなかった案: Netlify Blobs（read-after-write が eventual で排他に使えない）/
+Airtable の `PENDING → PROCESSING`（CAS ではない）。
+
+### テスト
+
+- **同一 jobId の live を同時 2 本 → 送信は 1 通だけ・2 本目は `409 busy`**
+  （1 本目が SendGrid を叩いている最中に 2 本目を開始して再現）
+- 2 本目は送信 0・書き込み 0 / 異なる jobId は互いを塞がない
+- Redis 不通・未設定は送信 0（fail closed）/ 送信直前に奪われたら 0 通で 409
+- dryRun は鍵を取らず副作用なし
+- 逐次再実行では既送信者を再送しない（従来の冪等性を維持）
+- 途中失敗 → 再実行で残りだけ処理し、**鍵は解放されている**
+
+### 検証
+
+`npm run test:marketing` 1,458 pass / 0 fail ・ `check:safety` EXIT=0 ・
+`build` EXIT=0 ・ 追加行の secret scan 0 件。
+
+### やっていないこと
+
+production env 変更 / production deploy / 実メール送信 / 次の 100 名付与。
+10 名の PENDING ジョブ・両 marketing gate OFF・実送信 0 は維持。
+**Last verified**: 2026-08-15
+
 ## 2026-08-15 — 【追加】Step1 キュー登録の直前確認を read-only で機械化（再利用できる安全装置）
 
 ### なぜ
