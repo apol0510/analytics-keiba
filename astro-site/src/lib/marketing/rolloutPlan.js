@@ -104,6 +104,14 @@ export function defaultRolloutState() {
     lastRunCount: 0,
     /** 累計（画面表示・進捗） */
     totalGranted: 0,
+    /**
+     * **付与のあと、まだ Step1 を積んでいない引き継ぎ**（`LightGrantOp` の値）。
+     * これが残っている限り、次の tick は「新しく配る」より先に queue を進める。
+     * 引き継ぎ自体は 24 時間で失効するので、置きっぱなしにはならない。
+     */
+    pendingHandoffOp: null,
+    /** queue 済みでまだ送信を起動していないジョブ ID（送信の起動は台帳が正本） */
+    pendingJobIds: [],
     updatedAtMs: null,
     note: '',
   };
@@ -126,6 +134,11 @@ export function normalizeRolloutState(raw) {
     lastRunDay: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.lastRunDay)) ? str(raw.lastRunDay) : null,
     lastRunCount: Math.max(0, num(raw.lastRunCount) ?? 0),
     totalGranted: Math.max(0, num(raw.totalGranted) ?? 0),
+    pendingHandoffOp: str(raw.pendingHandoffOp).slice(0, 100) || null,
+    // 壊れた値・多すぎる値は捨てる（ここが暴れると送信起動が暴れる）
+    pendingJobIds: Array.isArray(raw.pendingJobIds)
+      ? raw.pendingJobIds.map((v) => str(v).slice(0, 120)).filter(Boolean).slice(0, 50)
+      : [],
     updatedAtMs: num(raw.updatedAtMs),
     note: str(raw.note).slice(0, 200),
   };

@@ -185,6 +185,31 @@ test('smoke: preview は既定文面・上限・差し込みを返す（送信�
   assert.equal(calls.length, 0, 'プレビューで外部 API を叩いている');
 });
 
+test('【重要】24 通すべてを送らずに確認できる（管理者の事前レビュー）', async () => {
+  const seen = new Set();
+  for (let step = 1; step <= 24; step += 1) {
+    const { statusCode, body } = await invoke({
+      action: 'preview', campaignId: 'light-trial-to-premium-sequence', step,
+    });
+    assert.equal(statusCode, 200, `step${step} が確認できない: ${JSON.stringify(body).slice(0, 200)}`);
+    assert.equal(body.step, step, `step${step} の指定が効いていない`);
+    assert.ok(body.subject && body.subject.length > 0, `step${step} に件名が無い`);
+    assert.ok(body.preview && body.preview.html && body.preview.text, `step${step} の完成形が無い`);
+    assert.equal(/\{\{[a-zA-Z]+\}\}/.test(body.preview.html), false, `step${step} に未解決の差し込みが残っている`);
+    assert.ok(body.preview.html.includes('配信を停止する'), `step${step} に配信停止が無い`);
+    assert.ok(body.notice.includes('送信しません'), `step${step} が送信しない旨を示していない`);
+    seen.add(body.subject);
+  }
+  assert.equal(seen.size, 24, '件名が重複している（同じ文面を送っている）');
+});
+
+test('存在しない 25 通目は確認できない（上限を超えた文面を作らない）', async () => {
+  const { statusCode } = await invoke({
+    action: 'preview', campaignId: 'light-trial-to-premium-sequence', step: 25,
+  });
+  assert.equal(statusCode, 400);
+});
+
 test('smoke: preview は編集した文面でも同じレンダラーで描く', async () => {
   stubFetch({});
   const { statusCode, body } = await invoke({

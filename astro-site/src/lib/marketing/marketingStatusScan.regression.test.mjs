@@ -466,19 +466,46 @@ test('【重要】duplicateCheck は候補の重複・上限を fail closed で�
 // 14,479 名を段階展開するとき、運用者が見るのは件数だけ。
 // 母集団を読み切れなければ「部分」と明示し、割合を捏造しない。
 
-test('【重要】rollout は read-only で、母集団・5 分類・Step 別・kill switch を返す', async () => {
+test('【重要】rollout は read-only で、進捗・Step 別・kill switch を返す', async () => {
   stubAirtable();
   const { statusCode, body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
   assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 300));
   assert.equal(body.sideEffects, 'none');
   assert.ok(body.control, 'kill switch / 段階が無い');
   assert.ok(body.batch, 'バッチ進行が無い');
-  assert.ok(body.funnel, '母集団と 5 分類が無い');
+  assert.ok(body.funnel, '進捗が無い');
   assert.ok(Array.isArray(body.steps), 'Step 別が無い');
   assert.ok(body.policy, 'ポリシー要約が無い');
-  // 分類の合計が観測数と一致する
-  assert.equal(body.funnel.balanced, true);
-  assert.equal(body.funnel.observed, 10);
+  assert.equal(body.stepCount, 24, '24 Step を出していない');
+});
+
+test('【重要】rollout は正本（Customers / 配信台帳）を読まない', async () => {
+  let fullScans = 0;
+  const calls = stubAirtable({ onFullScan: (u) => { fullScans += 1; return paginatedLedger(u, 20000); } });
+  await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(fullScans, 0, '台帳を全件走査している');
+  // 14,489 名 × 24 Step を毎回読む設計に戻っていないこと
+  const customers = calls.filter((c) => c.url.includes('/Customers'));
+  const ledger = calls.filter((c) => c.url.includes('/CampaignDeliveries'));
+  assert.equal(customers.length, 0, `Customers を ${customers.length} 回読んでいる`);
+  assert.equal(ledger.length, 0, `配信台帳を ${ledger.length} 回読んでいる`);
+});
+
+test('【重要】集計が無ければ partial（0 件と書かない）', async () => {
+  stubAirtable();
+  const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(body.metricsPartial, true, '未計測を数字として出している');
+  assert.ok(body.metricsReason, '理由を出していない');
+  assert.equal(body.funnel.counts, null, '未計測なのに 5 分類を数字で返している');
+  assert.equal(body.funnel.partial, true);
+});
+
+test('【重要】I/O が母集団に依存しない（14,489 名 × 24 Step でも同じ）', async () => {
+  stubAirtable();
+  const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.ok(body.io, 'I/O の見積りを出していない');
+  assert.equal(body.io.airtablePages, 0, 'Airtable を読んでいる');
+  assert.ok(body.io.redisGets <= 4, `Redis GET が ${body.io.redisGets} 回`);
 });
 
 test('【重要】rollout は既定で「進めない」（kill switch は既定 OFF 側）', async () => {
@@ -494,16 +521,6 @@ test('【重要】rollout の応答に PII を含めない', async () => {
   const dump = JSON.stringify(body);
   assert.equal(/@example\.com/.test(dump), false, 'アドレスが出ている');
   assert.equal(/recCUST|recDEL/.test(dump), false, 'recordId が出ている');
-});
-
-test('【重要】rollout は配信台帳を全件走査しない', async () => {
-  let fullScans = 0;
-  const calls = stubAirtable({ onFullScan: (u) => { fullScans += 1; return paginatedLedger(u, 20000); } });
-  await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
-  assert.equal(fullScans, 0, '台帳を全件走査している');
-  const ledger = calls.filter((c) => c.url.includes('/CampaignDeliveries'));
-  assert.ok(ledger.every((c) => /RecipientEmail|DeliveryKey|ScheduledEmailJobId/.test(c.formula)),
-    '名指しで引いていない');
 });
 
 test('rollout は連続配信でないキャンペーンを拒否する', async () => {

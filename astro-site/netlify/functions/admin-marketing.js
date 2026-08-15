@@ -138,8 +138,7 @@ import {
   createEngagementSignalStore, emptySignals,
 } from '../../src/lib/marketing/engagementSignalStore.js';
 import {
-  isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends,
-} from '../../src/lib/marketing/campaignSequence.js';
+  isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends, getSequenceSteps,} from '../../src/lib/marketing/campaignSequence.js';
 import {
   buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL,
 } from '../../src/lib/marketing/sequenceProgress.js';
@@ -159,6 +158,7 @@ import {
   createRolloutStore, isRolloutEnabled, RolloutStoreError,
 } from '../../src/lib/marketing/rolloutStore.js';
 import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
+import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketing/rolloutMetrics.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -1290,106 +1290,78 @@ async function handleRollout({ KEY, BASE, now, req }) {
     return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
   }
 
-  // ① 展開状態（無ければ既定＝停止）
+  // ⚠️ **正本（Customers / CampaignDeliveries）をここで読まない。**
+  //    2026-08-15 実測で、コホート 14,489 件の取得だけで **約 156 秒**。
+  //    同期 Function の上限 26 秒では原理的に開かない。24 Step まで伸ばせば
+  //    配信行は約 35 万行になり、さらに悪化する。
+  //    ダッシュボードは**増分集計（Redis）だけ**を読む（GET 2 回）。
+  //    集計が無い / 壊れている / 版違いなら **partial** として数字を出さない。
   let state = null;
   let stateError = null;
+  let metrics = { partial: true, reason: 'unavailable', totals: null, steps: null };
   try {
-    const store = createRolloutStore({ cmd: makeRedisCmd(process.env) });
-    state = (await store.load(base.campaignId)).state;
+    const cmd = makeRedisCmd(process.env);
+    state = (await createRolloutStore({ cmd }).load(base.campaignId)).state;
+    metrics = await createRolloutMetrics({ cmd }).read(base.campaignId);
   } catch (e) {
-    // 読めないなら**動かさない**。画面には理由コードだけ出す
     stateError = (e instanceof RolloutStoreError && e.code) || 'unavailable';
   }
 
-  // ② 受信対象（名指し。全件走査しない）
-  const audience = await loadCampaignAudience({ KEY, BASE, now, campaign: base });
-  if (!audience.ok) {
-    return json(audience.code === 'audience_not_narrowable' ? 400 : 500, {
-      error: '受信対象を確定できないため、進捗を返しません（数えられない数は出しません）。',
-      code: audience.code, sideEffects: 'none',
-    });
-  }
+  const policy = normalizePolicy(base.sequencePolicy);
+  const maxSends = Math.max(resolveMaxSends(base), policy.maxSends);
+  const stepNumbers = getSequenceSteps(base).map((s) => s.stepNumber);
 
-  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
-  const audienceEmails = audience.records
-    .map((rec) => String((rec.fields || {}).Email || '').trim().toLowerCase())
-    .filter(Boolean);
-  let deliveries;
-  try {
-    deliveries = await fetchDeliveriesByEmails({ KEY, BASE, emails: audienceEmails });
-  } catch (e) {
-    return json(500, {
-      error: '配信履歴を取り切れなかったため、進捗を返しません。',
-      code: 'rollout_deliveries_fetch_incomplete',
-      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
-    });
-  }
-  const history = summarizeHistory(deliveries);
-  const list = audience.records.map((rec) => {
-    const fields = rec.fields || {};
-    const email = String(fields.Email || '').trim().toLowerCase();
+  // 集計から画面の形へ（**件数だけ**。率は 0 通の Step で作らない）
+  const t = metrics.totals;
+  const funnel = t
+    ? {
+      observed: t.granted,
+      cohortTotal: t.granted,
+      // 集計は「付与した人」しか数えない。母集団全体（未付与を含む）は別途 rollout state から
+      partial: false,
+      counts: {
+        not_started: t.notStarted, in_progress: t.inProgress,
+        purchased: t.purchased, stopped: t.stopped, completed: t.completed,
+      },
+      byStopReason: t.byStopReason || {},
+      notStarted: t.notStarted,
+      balanced: t.granted === (t.notStarted + t.inProgress + t.purchased + t.stopped + t.completed),
+    }
+    : { observed: null, cohortTotal: null, partial: true, counts: null, byStopReason: {}, notStarted: null, balanced: null };
+
+  const sm = (metrics.steps && metrics.steps.steps) || {};
+  const stepView = stepNumbers.map((step) => {
+    const m = sm[String(step)] || null;
+    const sent = m ? Number(m.sent) || 0 : null;
     return {
-      recordId: rec.id,
-      record: rec,
-      fields,
-      marketing: resolveCustomerMarketing({ fields, nowMs: now, blacklistEmails, history: history.get(email) }),
+      step,
+      sent,
+      queued: m ? Number(m.queued) || 0 : null,
+      failed: m ? Number(m.failed) || 0 : null,
+      opened: m ? Number(m.opened) || 0 : null,
+      clicked: m ? Number(m.clicked) || 0 : null,
+      // ⚠️ 0 通の Step で率を作らない
+      openRate: sent ? (Number(m.opened) || 0) / sent : null,
+      clickRate: sent ? (Number(m.clicked) || 0) / sent : null,
     };
   });
 
-  // ③ 進行（既存の単一源をそのまま使う）
-  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
-  const blacklist = await loadBlacklistSets({ KEY, BASE });
-  const { view: engagementView } = await resolveEngagementView({ list, deliveries, now });
-  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
-  const progress = buildSequenceProgress({
-    campaign: base, selected: list, deliveries, brand: BRAND, fromEmail, nowMs: now,
-    providerSuppressed: provider.ok ? provider.emails : null,
-    softBounced: blacklist.soft,
-    engagementByEmail: engagementView.engagementByEmail,
-    engagementThresholds: engagementView.thresholds,
-  });
-  if (!progress.ok) return json(400, { error: `進行を計算できません: ${progress.error}`, sideEffects: 'none' });
-
-  const policy = normalizePolicy(base.sequencePolicy);
-  const maxSends = Math.max(resolveMaxSends(base), policy.maxSends);
-
-  // ④ 画面が要る形へまとめる（**件数だけ**）
-  const rows = progress.rows.map((r) => ({
-    sentCount: r.sentSteps.length,
-    purchased: r.stopReason === 'purchased',
-    stopped: r.status === 'stopped',
-    stopReason: r.stopReason || null,
-    sentSteps: r.sentSteps,
-    dueStep: r.status === 'due' ? r.nextStep : null,
-    waitingStep: r.status === 'waiting' ? r.nextStep : null,
-  }));
-  const funnel = buildFunnel({
-    rows, maxSends,
-    // 受信対象は名指しで取り切っているので母数は確定
-    cohortTotal: rows.length, cohortPartial: false,
-  });
-  const stepView = buildStepView({ steps: progress.steps, rows });
-
-  // ⚠️ 展開状態を読めないときも**理由を出す**。
-  //    「進めません」だけ返すと、運用者は原因を探せない（実際に空になっていた）。
   const plan = state
     ? planRolloutTick({
       state, nowMs: now,
-      remainingCandidates: funnel.notStarted,
+      // 残り候補は展開状態が持つ（正本の全件走査はしない）
+      remainingCandidates: Number.isFinite(Number(req.remainingCandidates))
+        ? Number(req.remainingCandidates) : null,
       previousOutstanding: 0,
       envEnabled: isRolloutEnabled(process.env),
     })
     : { ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE, allowance: 0, stage: ROLLOUT_STAGE.PAUSED, dailyLimit: 0, day: null };
 
-  const nextDueAt = progress.rows
-    .filter((r) => r.status === 'waiting' && Number.isFinite(r.nextSendAtMs))
-    .map((r) => r.nextSendAtMs).sort((a, b) => a - b)[0] || null;
-
   const view = buildRolloutView({
     state: state || {}, envEnabled: isRolloutEnabled(process.env), plan,
     funnel, stepView,
-    remainingCandidates: funnel.notStarted,
-    nextScheduledAtMs: nextDueAt,
+    remainingCandidates: plan.ok ? plan.allowance : null,
+    nextScheduledAtMs: null,
   });
 
   return json(200, {
@@ -1400,11 +1372,16 @@ async function handleRollout({ KEY, BASE, now, req }) {
     ...view,
     policy: describePolicy(base.sequencePolicy),
     maxSends,
-    /** 展開状態を読めなかったときの理由（**動かさない**） */
+    stepCount: stepNumbers.length,
+    /** 集計が読めなかったときの理由（**推測で数字を作らない**） */
+    metricsPartial: metrics.partial === true,
+    metricsReason: metrics.reason || null,
+    metricsUpdatedAt: t && t.updatedAtMs ? new Date(t.updatedAtMs).toISOString() : null,
     stateError,
-    engagement: engagementResponse(engagementView),
-    providerSuppression: describeProviderSuppression(provider),
-    notice: 'これは状況の確認です。**付与もキュー登録も送信もしていません**。',
+    /** この画面が使う I/O（母集団に依存しないことを示す） */
+    io: estimateDashboardIo({ cohortSize: t ? t.granted : 0, stepCount: stepNumbers.length }),
+    notice: '増分集計を読んでいます（正本は Customers / CampaignDeliveries）。'
+      + '**付与もキュー登録も送信もしていません。**',
   });
 }
 
