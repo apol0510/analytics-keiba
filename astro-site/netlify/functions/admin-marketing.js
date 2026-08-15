@@ -310,7 +310,7 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
  * `fetchAll` と同じだが、**取り切れなければ例外**（fail closed）。
  *
  * ── なぜ要るか（2026-08-15 の実測）────────────────────────────
- * `CampaignDeliveries` が 6,110 行になった時点で、`{EmailType}='campaign'` の
+ * `CampaignDeliveries` が 4,000 行を超えた時点で、`{EmailType}='campaign'` の
  * 全件取得は 4,000 行で打ち切られていた。その結果、Step1 を 10 名ぶん
  * キュー登録した直後に管理画面が **「送信済み 1 名 / 残り 9 名」** と表示した
  * （実際は 10 名とも queued）。運用者が「まだ 9 名残っている」と誤読する。
@@ -766,6 +766,7 @@ export const handler = async (event) => {
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
+    if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1260,6 +1261,166 @@ function resolveStepCampaign({ campaign, step }) {
  * ⚠️ ここは**付与しない**。付与できるのは既存の `admin-comeback-grants`（operationId 冪等）
  *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
  */
+/**
+ * **いまから送ろうとしている宛先だけ**の重複確認（read-only・1 バイトも書かない）。
+ *
+ * ── なぜ campaign 単位で見てはいけないか ───────────────────────
+ * 「この campaign のジョブが 1 つでもあれば止める」という判定は、
+ * **1 回でも Step1 を流したら二度と通らない**。コホートは何度も来るので、
+ * それでは 2 回目以降の Step1 が永久に承認できない。
+ *
+ * 見るべきは「**この campaign を過去に流したか**」ではなく
+ * 「**いま選んでいる相手に、その通が既に出ているか**」。
+ * 判定単位は不変キーの `DeliveryKey`（campaign × version × step × 受信者）で、
+ * **送信経路（`handlePlan`）が `already_delivered` に使う鍵と同一**。
+ *
+ * ⚠️ 返すのは件数と状態の内訳だけ。**アドレス・recordId・DeliveryKey は返さない。**
+ */
+async function handleDuplicateCheck({ KEY, BASE, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  const campaign = resolveStepCampaign({ campaign: base, step: req.step });
+  if (!campaign) return json(400, { error: '未知のステップです', sideEffects: 'none' });
+
+  const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
+  if (recordIds.length === 0) return json(400, { error: '対象が選択されていません', sideEffects: 'none' });
+  if (recordIds.length > MAX_RECIPIENTS_PER_SEND * 2) {
+    return json(400, { error: `選択が多すぎます（上限 ${MAX_RECIPIENTS_PER_SEND} 件）`, sideEffects: 'none' });
+  }
+
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const campaignType = `${campaign.campaignId}:v${campaign.version}`;
+
+  // ① 宛先を名指しで引く（全件走査しない）
+  let customers;
+  try {
+    customers = await fetchByRecordIds({ KEY, BASE, table: CUSTOMERS_TABLE, recordIds });
+  } catch (e) {
+    return json(500, {
+      error: '対象顧客を取り切れなかったため、重複を判定しません。',
+      code: 'duplicate_customers_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+  const byId = new Map(customers.map((r) => [r.id, r]));
+  const keys = [];
+  let unresolved = 0;   // 顧客が引けない / メールが無い = 鍵を作れない
+  for (const id of recordIds) {
+    const email = String(((byId.get(id) || {}).fields || {}).Email || '').trim().toLowerCase();
+    const key = email
+      ? computeCampaignDeliveryKey({ campaign, recipientEmail: email, brand: BRAND, fromEmail })
+      : null;
+    if (key) keys.push(key); else unresolved += 1;
+  }
+
+  // ② その鍵の配信行だけを名指しで引く（台帳の大きさに依存しない）
+  let rows;
+  try {
+    rows = await fetchDeliveryRowsByKeys({ KEY, BASE, campaignType, keys });
+  } catch (e) {
+    return json(500, {
+      error: '配信行を取り切れなかったため、重複を判定しません。',
+      code: 'duplicate_deliveries_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+
+  const byStatus = {};
+  const jobIds = new Set();
+  const seenKeys = new Set();
+  for (const r of rows) {
+    const f = (r && r.fields) || {};
+    const st = String(f.Status || '(空)').toLowerCase();
+    byStatus[st] = (byStatus[st] || 0) + 1;
+    // 送信経路が `already_delivered` とみなすのは queued / sent
+    if (st === 'queued' || st === 'sent') {
+      const k = String(f.DeliveryKey || '');
+      if (k) seenKeys.add(k);
+    }
+    const j = String(f.ScheduledEmailJobId || '').trim();
+    if (j) jobIds.add(j);
+  }
+
+  // ③ 候補に紐づくジョブの状態だけを見る（campaign 全履歴は見ない）。
+  //    「この人たちが既に送信待ちのジョブに載っていないか」を確認する。
+  let linkedJobs = [];
+  try {
+    linkedJobs = jobIds.size > 0
+      ? await fetchByJobIds({ KEY, BASE, jobIds: [...jobIds] })
+      : [];
+  } catch (e) {
+    return json(500, {
+      error: '候補に紐づくジョブを取り切れなかったため、重複を判定しません。',
+      code: 'duplicate_jobs_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+  const jobStatus = {};
+  for (const r of linkedJobs) {
+    const st = String(((r && r.fields) || {}).Status || '(空)').toUpperCase();
+    jobStatus[st] = (jobStatus[st] || 0) + 1;
+  }
+
+  return json(200, {
+    mode: 'duplicate-check',
+    sideEffects: 'none',
+    campaignId: campaign.campaignId,
+    version: campaign.version,
+    step: campaign.sequenceStep ?? null,
+    /** 判定できた候補数（= 鍵を作れた数）。要求数と違えば fail closed の材料 */
+    candidates: recordIds.length,
+    resolved: keys.length,
+    unresolved,
+    /** 既に queued / sent の鍵を持つ候補数。**0 でなければ送ってはいけない** */
+    alreadyDelivered: seenKeys.size,
+    /** 参考: 見つかった配信行の状態内訳（cancelled / skipped も見える） */
+    byStatus,
+    /** 候補に紐づくジョブの状態内訳。PENDING があれば送信待ちに載っている */
+    linkedJobs: linkedJobs.length,
+    linkedJobStatus: jobStatus,
+    pendingLinkedJobs: jobStatus.PENDING || 0,
+    notice: 'いま選んでいる宛先ぶんだけを DeliveryKey で名指し確認しています'
+      + '（campaign の過去実績は見ていません）。何も書き込んでいません。',
+  });
+}
+
+/** 候補の DeliveryKey に一致する配信行だけを引く（名指し・fail closed） */
+async function fetchDeliveryRowsByKeys({ KEY, BASE, campaignType, keys }) {
+  const out = [];
+  for (const group of chunkList(keys, TARGETED_CHUNK)) {
+    const formula = buildDeliveryKeyFormula({ campaignType, keys: group });
+    if (!formula) continue;
+    // eslint-disable-next-line no-await-in-loop -- チャンクごとに順に読む
+    const rows = await fetchAllStrict({
+      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula,
+      maxPages: TARGETED_MAX_PAGES,
+      fields: ['DeliveryKey', 'Status', 'ScheduledEmailJobId'],
+    });
+    out.push(...rows);
+  }
+  return out;
+}
+
+/** 指定 JobId のジョブ行だけを引く（名指し・fail closed） */
+async function fetchByJobIds({ KEY, BASE, jobIds }) {
+  const out = [];
+  for (const group of chunkList(jobIds, JOB_ID_CHUNK)) {
+    const safe = group.filter((id) => /^[A-Za-z0-9_.-]{1,120}$/.test(id));
+    if (safe.length !== group.length) {
+      throw new Error(`${SCHEDULED_TABLE}: formula へ載せられない JobId があります（判定を中止します）`);
+    }
+    if (safe.length === 0) continue;
+    const formula = `OR(${safe.map((id) => `{JobId}='${id}'`).join(',')})`;
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: formula,
+      maxPages: JOB_ID_MAX_PAGES, fields: ['JobId', 'Status'],
+    });
+    out.push(...rows);
+  }
+  return out;
+}
+
 async function handleTrialGrantPreview({ now, req }) {
   // 下見でだけ「もし N 件なら」を試せる（**実行には効かない**。env が正本）
   const override = Number.isInteger(req && req.batchSize) ? req.batchSize : null;
@@ -1375,7 +1536,7 @@ async function handleSequence({ KEY, BASE, now, req }) {
   // 配信履歴は **受信対象の宛先だけ**を名指しで引く（台帳全体は読まない）。
   //
   // ⚠️ 旧実装は `{EmailType}='campaign'` の全件取得だった。「campaign で絞ってあるから
-  //    全件走査ではない」という前提が崩れており、台帳が 6,110 行になった時点で
+  //    全件走査ではない」という前提が崩れており、台帳が 4,000 行を超えた時点で
   //    `fetchAll` の 4,000 行打ち切りに掛かっていた（2026-08-15 実測）。
   //    その結果、Step1 を 10 名ぶん登録した直後に「送信済み 1 名 / 残り 9 名」と
   //    **過少表示**した。取得コストも対象人数に比例させる。
@@ -1908,7 +2069,7 @@ async function handleJobs({ KEY, BASE }) {
   // ① ジョブは **マーケティング分だけ**を引く（ScheduledEmails 全件を読まない）。
   //    formula は `isMarketingJob` と同じ 3 条件で、`buildJobView` 側の再判定と食い違わない。
   // ② 配信行は **①で得たジョブ ID を名指し**で引く。旧実装は台帳を
-  //    `{EmailType}='campaign'` で全件取得しており、6,110 行になった時点で
+  //    `{EmailType}='campaign'` で全件取得しており、4,000 行を超えた時点で
   //    4,000 行打ち切りに掛かって各ジョブの件数が過少表示されていた（2026-08-15 実測）。
   // ③ どちらも取り切れなければ **例外 → 500**。短い結果を全体として出さない。
   let scheduled;
@@ -1920,7 +2081,7 @@ async function handleJobs({ KEY, BASE }) {
     });
     jobsTotal = allJobs.length;
     // ④ 読む量を**表示する件数**に合わせる。全ジョブぶんの配信行を引くと
-    //    台帳全体（6,110 行）を読むのと変わらず、Function の実行時間に収まらない。
+    //    台帳全体（14,426 行 / 実測 2026-08-15）を読むのと変わらず、実行時間に収まらない。
     //    落とした分は `jobsTotal` / `jobsShown` で**明示する**（黙って切らない）。
     scheduled = allJobs
       .slice()

@@ -28,7 +28,7 @@ test('【重要】呼べるアクションが許可リストで固定されて�
   const list = SRC.match(/READ_ONLY_ACTIONS = Object\.freeze\(\[(.*?)\]\)/s);
   assert.ok(list, '許可リストを読めない');
   const items = list[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
-  assert.deepEqual(items.sort(), ['jobs', 'sequence', 'trialGrant'].sort());
+  assert.deepEqual(items.sort(), ['duplicateCheck', 'jobs', 'sequence', 'trialGrant'].sort());
 });
 
 test('【重要】Airtable / SendGrid を直接叩かない', () => {
@@ -62,7 +62,14 @@ test('判定に失敗したら非ゼロで終わる（沈黙して通さない�
 });
 
 test('取得に失敗しても評価をスキップしない（null のまま fail closed へ渡す）', () => {
-  assert.match(SRC, /evaluateStep1Preflight\(\{[\s\S]*?sequence, trialGrant, jobs/);
+  assert.match(SRC, /evaluateStep1Preflight\(\{[\s\S]*?sequence, trialGrant, jobs, duplicateCheck/);
+});
+
+test('【重要】重複確認は sequence が確定した候補にだけ掛ける（campaign 全履歴を見ない）', () => {
+  assert.match(SRC, /callReadOnly\('duplicateCheck', \{ step: next\.step, recordIds: next\.recordIds \}\)/,
+    '候補を渡していない');
+  // 候補が無いときは呼ばない（呼んでも判定できない）
+  assert.match(SRC, /Array\.isArray\(next\.recordIds\) && next\.recordIds\.length > 0/);
 });
 
 test('CI（check:safety）に組み込まれていない（本番へ通信する道具のため）', async () => {

@@ -35,7 +35,7 @@ import {
 } from '../src/lib/marketing/step1Preflight.js';
 
 /** 呼んでよいアクションはこれだけ（すべて `sideEffects: 'none'`） */
-const READ_ONLY_ACTIONS = Object.freeze(['sequence', 'trialGrant', 'jobs']);
+const READ_ONLY_ACTIONS = Object.freeze(['sequence', 'trialGrant', 'jobs', 'duplicateCheck']);
 
 const CAMPAIGN_ID = process.env.STEP1_CAMPAIGN_ID || 'light-trial-to-premium-sequence';
 const BASE_URL = process.env.AK_BASE_URL || 'https://analytics.keiba.link';
@@ -52,17 +52,19 @@ function parseArgs(argv) {
 }
 
 /** read-only アクションを 1 つ呼ぶ。**許可リスト外は呼ばずに落とす** */
-async function callReadOnly(action) {
+async function callReadOnly(action, extra = {}) {
   if (!READ_ONLY_ACTIONS.includes(action)) {
     throw new Error(`read-only ではないアクションを呼ぼうとしました: ${action}`);
   }
   const res = await fetch(`${BASE_URL}/.netlify/functions/admin-marketing`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-admin-secret': SECRET },
-    body: JSON.stringify({ action, campaignId: CAMPAIGN_ID }),
+    body: JSON.stringify({ action, campaignId: CAMPAIGN_ID, ...extra }),
   });
-  if (!res.ok) throw new Error(`${action}: HTTP ${res.status}`);
-  return res.json();
+  // 4xx / 5xx も本文を読む（fail closed の理由を判定へ渡すため）
+  const body = await res.json().catch(() => null);
+  if (!res.ok && !body) throw new Error(`${action}: HTTP ${res.status}`);
+  return body;
 }
 
 function printReport(result, gates) {
@@ -93,16 +95,26 @@ async function main() {
   const gates = readStep1Gates(process.env);
   const stage = args.stage || resolveStep1Stage(process.env);
 
-  let sequence = null; let trialGrant = null; let jobs = null;
+  let sequence = null; let trialGrant = null; let jobs = null; let duplicateCheck = null;
   try {
-    [sequence, trialGrant, jobs] = await Promise.all(READ_ONLY_ACTIONS.map(callReadOnly));
+    // 先に進行状況を取り、**そこで確定した候補**に対してだけ重複を確認する
+    // （campaign 全履歴ではなく、いま送ろうとしている相手だけを見る）
+    sequence = await callReadOnly('sequence');
+    const next = (sequence && sequence.next) || {};
+    [trialGrant, jobs, duplicateCheck] = await Promise.all([
+      callReadOnly('trialGrant'),
+      callReadOnly('jobs'),
+      Array.isArray(next.recordIds) && next.recordIds.length > 0 && next.step
+        ? callReadOnly('duplicateCheck', { step: next.step, recordIds: next.recordIds })
+        : Promise.resolve(null),
+    ]);
   } catch (e) {
     // 取れなかったものは null のまま評価へ渡す（**沈黙を成功にしない**）
     console.error(`⚠️  read-only 取得に失敗: ${e.message}`);
   }
 
   const result = evaluateStep1Preflight({
-    sequence, trialGrant, jobs, campaignId: CAMPAIGN_ID,
+    sequence, trialGrant, jobs, duplicateCheck, campaignId: CAMPAIGN_ID,
     expectRecipients: args.expect, stage,
   });
   printReport(result, gates);

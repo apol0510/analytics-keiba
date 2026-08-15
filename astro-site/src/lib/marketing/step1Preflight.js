@@ -79,14 +79,16 @@ export function resolveStep1Stage(env = {}) {
  * @param {object} input
  * @param {object} input.sequence   `action=sequence` の応答
  * @param {object} input.trialGrant `action=trialGrant` の応答（関所）
- * @param {object} input.jobs       `action=jobs` の応答（キュー現況）
+ * @param {object} input.jobs       `action=jobs` の応答（キュー現況・**参考**）
+ * @param {object} input.duplicateCheck `action=duplicateCheck` の応答
+ *   （**いま選んでいる候補の DeliveryKey だけ**を名指し確認したもの。重複判定の正）
  * @param {string} input.campaignId 期待するキャンペーン
  * @param {number|null} [input.expectRecipients] 事前に合意した人数（違えば止める）
  * @param {string} [input.stage] STEP1_STAGE
  * @returns {{ok:boolean, stage:string, checks:Array, plan:object, failures:Array}}
  */
 export function evaluateStep1Preflight({
-  sequence, trialGrant, jobs, campaignId,
+  sequence, trialGrant, jobs, duplicateCheck, campaignId,
   expectRecipients = null, stage = STEP1_STAGE.PRE,
 }) {
   const checks = [];
@@ -99,6 +101,7 @@ export function evaluateStep1Preflight({
   const seq = sequence && typeof sequence === 'object' ? sequence : null;
   const tg = trialGrant && typeof trialGrant === 'object' ? trialGrant : null;
   const jb = jobs && typeof jobs === 'object' ? jobs : null;
+  const dup = duplicateCheck && typeof duplicateCheck === 'object' ? duplicateCheck : null;
 
   // ── 0. 応答そのものが揃っているか（欠けていたら以降は判定しない）──────
   critical(!!seq, 'sequence 応答を取得できた', seq ? '' : '取得できていない');
@@ -138,13 +141,45 @@ export function evaluateStep1Preflight({
   critical(recordIds !== null && recordIds.length === recipients,
     'recordId の数と人数が一致', `recordIds=${recordIds ? recordIds.length : '(無し)'} / recipients=${recipients}`);
 
-  // ── 4. Step1 がまだ 1 通も出ていないこと（二重案内の防止）──────────
+  // ── 4. **いま選んでいる相手**にその通が出ていないこと（二重案内の防止）──
+  //
+  // ⚠️ 「この campaign を過去に流したか」で判定してはいけない。
+  //    1 回でも Step1 を流したら二度と通らなくなり、次のコホートを永久に承認できない。
+  //    コホートは何度も来るので、見るのは **候補ごとの DeliveryKey**
+  //    （campaign × version × step × 受信者 = 不変キー）。
   const summary = (seq.summary && typeof seq.summary === 'object') ? seq.summary : {};
   const sentByStep = (summary.sentByStep && typeof summary.sentByStep === 'object') ? summary.sentByStep : {};
-  const sentStep1 = num(sentByStep['1'] ?? sentByStep[1]);
-  critical(sentStep1 === 0, 'Step1 の既送信・既キュー登録が 0', `sentByStep[1]=${sentStep1 === null ? '(不明)' : sentStep1}`);
+  const sentThisStep = num(sentByStep[String(step)] ?? sentByStep[step]);
+  // 過去コホートの実績は **止める理由にならない**（母集団に前回の受信者も含まれるため）。
+  // ただし黙って隠さない。
+  info(true, `この campaign で Step${step} を受け取り済みの人数（過去コホート含む）`,
+    `${sentThisStep === null ? '(不明)' : sentThisStep} 名 / 母集団 ${num(summary.total)} 名`);
   critical(summary.balanced === true, '進行の内訳が検算に合う', `balanced=${String(summary.balanced)}`);
-  critical(num(summary.due) === recipients, 'due 件数と送信対象数が一致', `due=${num(summary.due)} / recipients=${recipients}`);
+  // 候補は「いま送れる人」だけ。母集団の due と一致していること
+  const dueByStep = (summary.dueByStep && typeof summary.dueByStep === 'object') ? summary.dueByStep : {};
+  const dueThisStep = num(dueByStep[String(step)] ?? dueByStep[step]);
+  critical(dueThisStep === recipients,
+    `Step${step} で送れる人数と送信対象数が一致`, `dueByStep[${step}]=${dueThisStep} / recipients=${recipients}`);
+
+  // ── 4-2. 候補の DeliveryKey を名指しで確認する（campaign 全履歴は見ない）──
+  critical(!!dup, '重複確認（duplicateCheck）を取得できた', dup ? '' : '取得できていない');
+  if (dup) {
+    critical(str(dup.sideEffects) === 'none', 'duplicateCheck は副作用なしの応答', `sideEffects=${str(dup.sideEffects) || '(無し)'}`);
+    critical(str(dup.campaignId) === str(campaignId), '重複確認が同じキャンペーンを見ている', `campaignId=${str(dup.campaignId)}`);
+    critical(num(dup.step) === step, '重複確認が同じステップを見ている', `step=${num(dup.step)}`);
+    critical(num(dup.candidates) === recipients,
+      '重複確認の対象数が送信対象数と一致', `candidates=${num(dup.candidates)} / recipients=${recipients}`);
+    // 鍵を作れなかった候補（顧客が引けない / メールが無い）は**不明**として落とす
+    critical(num(dup.unresolved) === 0,
+      '全候補の重複を判定できた', `判定できなかった候補=${num(dup.unresolved)} 件`);
+    critical(num(dup.alreadyDelivered) === 0,
+      'この候補にその通はまだ出ていない',
+      `既に queued/sent の候補=${num(dup.alreadyDelivered)} 名 / 内訳=${JSON.stringify(dup.byStatus || {})}`);
+    // 候補が既に送信待ちのジョブへ載っていないか（orphan PENDING の検知）
+    critical(num(dup.pendingLinkedJobs) === 0,
+      '候補が送信待ちのジョブに載っていない',
+      `候補に紐づく PENDING ジョブ=${num(dup.pendingLinkedJobs)} 件 / 内訳=${JSON.stringify(dup.linkedJobStatus || {})}`);
+  }
 
   // 停止した人がいても止めはしない（送らないだけ）。ただし**必ず理由を表に出す**
   const stopped = num(summary.stopped) ?? 0;
@@ -173,28 +208,20 @@ export function evaluateStep1Preflight({
   const jobsTruncated = jb.jobsTruncated === true;
   const jobsTotal = num(jb.jobsTotal);
   const jobsShown = num(jb.jobsShown) ?? (jobList ? jobList.length : null);
-  info(true, 'ジョブ一覧の取得範囲',
+
+  // ⚠️ `jobs` は**新しい順に一部だけ**返す（2026-08-15〜）。
+  //    ここから「無い」を推測しない。**候補の重複判定は 4-2 の DeliveryKey が正**で、
+  //    この一覧は「実送信を開けたら何が飛ぶか」を見るための参考にとどめる。
+  info(true, 'ジョブ一覧の取得範囲（参考・重複判定には使わない）',
     `${jobsShown === null ? '?' : jobsShown} / ${jobsTotal === null ? '?' : jobsTotal} 件`
     + (jobsTruncated ? '（新しい順に一部のみ）' : '（全件）'));
-
-  if (mine.length > 0) {
-    // 見つかった = 窓に関係なく「ある」と言い切れる
-    critical(false, 'このキャンペーンの既存ジョブが 0', `既存=${mine.length} 件`);
-    critical(minePending.length === 0, 'このキャンペーンの PENDING ジョブが 0', `PENDING=${minePending.length} 件`);
-  } else if (jobsTruncated) {
-    // 見えていないだけかもしれない。**確認できないものを ok にしない**
-    critical(false, 'このキャンペーンの既存ジョブが 0',
-      `一覧が新しい順 ${jobsShown}/${jobsTotal} 件に絞られており、`
-      + '古いジョブの有無を確認できません（進行状況の sentByStep で判断してください）');
-  } else {
-    critical(true, 'このキャンペーンの既存ジョブが 0', '既存=0 件（全件を確認）');
-    critical(true, 'このキャンペーンの PENDING ジョブが 0', 'PENDING=0 件（全件を確認）');
-  }
-
-  info(pending.length === 0, '他キャンペーン由来の PENDING も 0',
+  info(true, `この campaign の過去ジョブ（見えている範囲）`,
+    `${mine.length} 件（過去に流していること自体は止める理由にしない）`);
+  info(pending.length === 0, '見えている範囲に PENDING が無い',
     (pending.length === 0
-      ? (jobsTruncated ? '（見えている範囲では 0 件）' : '')
-      : `PENDING=${pending.length} 件（実送信ゲートを開けると一緒に飛ぶ）`));
+      ? (jobsTruncated ? '（見えている範囲では 0 件）' : '（全件で 0 件）')
+      : `PENDING=${pending.length} 件（実送信ゲートを開けると一緒に飛ぶ）`
+        + (minePending.length ? ` / うち同 campaign=${minePending.length} 件` : '')));
 
   // ── 7. ゲートの状態 ──────────────────────────────────────
   // **実送信は常に閉じていること**。キュー登録の可否は段階で変わる。
