@@ -78,3 +78,10 @@ test('CI（check:safety）に組み込まれていない（本番へ通信する
     'CI から本番の管理エンドポイントを叩くことになっている');
   assert.ok(pkg.scripts['preflight:light-trial-step1'], '手動実行のエントリが無い');
 });
+
+test('【重要】ステップ名の整形を書き写さない（判定側と同じ関数を使う）', () => {
+  // #345 は判定側だけ直し、ランナーの要約行に `Stepnull` が残った。
+  // 同じ整形を 2 箇所に書くと必ず片方だけ直る。
+  assert.match(SRC, /stepLabel/, '共有ヘルパを使っていない');
+  assert.equal(/Step\$\{/.test(SRC), false, 'ステップ名を直接埋めている');
+});
