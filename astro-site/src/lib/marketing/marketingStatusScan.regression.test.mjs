@@ -18,6 +18,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { computeCampaignDeliveryKey } from './campaignSend.js';
 import { getCampaign } from './campaignCatalog.js';
@@ -120,15 +121,15 @@ function stubAirtable({ onFullScan } = {}) {
 
 const ok = (body) => ({ ok: true, status: 200, json: async () => body });
 
-/** 6,110 行をページングで返す（100 行/ページ = 62 ページ） */
-function paginatedLedger(url) {
+/** 台帳をページングで返す（100 行/ページ）。既定は本番と同じ 6,110 行 = 62 ページ */
+function paginatedLedger(url, rows = LEDGER_ROWS) {
   const page = Number(new URL(url).searchParams.get('offset') || 0);
   const start = page * 100;
-  const records = Array.from({ length: Math.min(100, LEDGER_ROWS - start) }, (_, i) => ({
+  const records = Array.from({ length: Math.max(0, Math.min(100, rows - start)) }, (_, i) => ({
     id: `recOLD${String(start + i).padStart(10, '0')}`,
     fields: { EmailType: 'campaign', CampaignType: 'dormant-reactivation:v2', Status: 'sent' },
   }));
-  const next = start + 100 < LEDGER_ROWS ? String(page + 1) : undefined;
+  const next = start + 100 < rows ? String(page + 1) : undefined;
   return ok(next ? { records, offset: next } : { records });
 }
 
@@ -197,9 +198,17 @@ test('【重要】全件走査へ落ちたら気付ける（この試験が空�
   assert.equal(fullScans, 0, '台帳を全件走査している（名指し取得へ直っていない）');
 });
 
-test('【重要】履歴は取り切れなければ 500（部分集計を実績として出さない）', async () => {
-  // history は母数が台帳全体なので名指しにできない。打ち切りは例外になる
+test('【重要】履歴は現在の台帳（6,110 行）を読み切って集計する', async () => {
+  // history だけは母数が台帳全体なので名指しにできない。上限を実データに合わせてある
   stubAirtable({ onFullScan: (u) => paginatedLedger(u) });
+  const { statusCode, body } = await invoke({ action: 'history' });
+  assert.equal(statusCode, 200, `読み切れていない: ${JSON.stringify(body).slice(0, 200)}`);
+  assert.equal(body.total, LEDGER_ROWS, `${body.total} 行しか数えていない（打ち切られている）`);
+});
+
+test('【重要】履歴も上限を超えたら 500（部分集計を実績として出さない）', async () => {
+  // 上限（HISTORY_MAX_PAGES）を超える規模になったら、黙って切らずに落ちる
+  stubAirtable({ onFullScan: (u) => paginatedLedger(u, 20000) });
   const { statusCode, body } = await invoke({ action: 'history' });
   assert.equal(statusCode, 500, `打ち切った集計を 200 で返している: ${JSON.stringify(body).slice(0, 200)}`);
   assert.equal(body.code, 'history_fetch_incomplete');
@@ -213,4 +222,48 @@ test('【重要】応答にメールアドレスを載せない', async () => {
   for (const r of [seq, jobs]) {
     assert.equal(/@example\.com/.test(JSON.stringify(r.body)), false, '応答にアドレスが含まれる');
   }
+});
+
+// ── 読む量が実データに耐えること（2026-08-15 / deploy 後に本番で 500 になった）──
+//
+// 名指しにしても **1 リクエストで名指しするジョブ数 × 100 行** を読む。
+// 既定の 50 ジョブ × 20 ページ（2,000 行）では 5,000 行を読み切れず、
+// fail closed が正しく働いた結果 `jobs` が 500 になった（＝表示できない）。
+// 「安全に落ちる」だけでなく「実データで落ちない」ことも試験する。
+
+test('【重要】1 リクエストで名指しするジョブ数ぶんのページを確保している', () => {
+  const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  const chunk = Number((FN.match(/const JOB_ID_CHUNK = (\d+)/) || [])[1]);
+  const pages = FN.match(/const JOB_ID_MAX_PAGES = JOB_ID_CHUNK \* (\d+)/);
+  assert.ok(Number.isFinite(chunk) && chunk > 0, 'JOB_ID_CHUNK が無い');
+  assert.ok(pages, 'JOB_ID_MAX_PAGES をチャンク数から導いていない');
+  // 1 ジョブ = 最大 100 宛先 = 1 ページ。チャンク数ぶん以上のページが要る
+  assert.ok(Number(pages[1]) >= 1, 'ページ上限がチャンク数を下回っている');
+  // 既定値（50 × 20）をそのまま使っていないこと
+  assert.equal(/fetchDeliveriesByJobIds[\s\S]{0,400}TARGETED_MAX_PAGES/.test(FN), false,
+    '既定の上限を使っている（50 ジョブでは必ず溢れる）');
+});
+
+test('【重要】ジョブ一覧は件数を明示して切る（黙って切らない）', () => {
+  const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  for (const k of ['jobsTotal', 'jobsShown', 'jobsTruncated', 'JOBS_VIEW_LIMIT']) {
+    assert.ok(FN.includes(k), `${k} が無い`);
+  }
+  const UI = readFileSync(new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url), 'utf8');
+  assert.match(UI, /data\.jobsTruncated/, '画面が省略を伝えていない');
+  assert.match(UI, /全 \$\{data\.jobsTotal\} 件/, '画面が総数を出していない');
+});
+
+test('【重要】実績集計は現在の台帳規模を読み切れる上限を持つ', () => {
+  const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  const max = Number((FN.match(/const HISTORY_MAX_PAGES = (\d+)/) || [])[1]);
+  assert.ok(Number.isFinite(max), 'HISTORY_MAX_PAGES が無い');
+  // 2026-08-15 時点 6,110 行 = 62 ページ。余裕を持って上回ること
+  assert.ok(max >= 62, `上限 ${max} ページでは現在の台帳（62 ページ）を読み切れない`);
+  assert.match(FN, /HISTORY_FIELDS/, '集計に要る列だけへ絞っていない');
+});
+
+test('【重要】必要な列だけを要求する（fields[] を送る）', () => {
+  const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  assert.match(FN, /url\.searchParams\.append\('fields\[\]', f\)/, 'fields[] を送っていない');
 });

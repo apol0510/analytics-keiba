@@ -318,7 +318,7 @@ async function fetchAll({ KEY, BASE, table, filterByFormula }) {
  * 状態表示は**部分集合を全体として出してはいけない**。数えられないなら
  * 数を出さずに落とす。
  */
-async function fetchAllStrict({ KEY, BASE, table, filterByFormula, maxPages = MAX_PAGES }) {
+async function fetchAllStrict({ KEY, BASE, table, filterByFormula, maxPages = MAX_PAGES, fields }) {
   const out = [];
   let offset;
   let pages = 0;
@@ -326,6 +326,8 @@ async function fetchAllStrict({ KEY, BASE, table, filterByFormula, maxPages = MA
     const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`);
     url.searchParams.set('pageSize', '100');
     if (filterByFormula) url.searchParams.set('filterByFormula', filterByFormula);
+    // 必要な列だけ受け取る（台帳は行数が多いので、列を絞るだけで所要時間が大きく縮む）
+    for (const f of Array.isArray(fields) ? fields : []) url.searchParams.append('fields[]', f);
     if (offset) url.searchParams.set('offset', offset);
     // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
     const res = await fetch(url, { headers: authHeaders(KEY) });
@@ -342,17 +344,48 @@ async function fetchAllStrict({ KEY, BASE, table, filterByFormula, maxPages = MA
 }
 
 /**
+ * 1 リクエストで名指しするジョブ数と、そのぶんのページ上限。
+ *
+ * 1 ジョブが持つ配信行は最大 `RECIPIENTS_PER_JOB`（100）= 1 ページぶん。
+ * よって N ジョブなら N ページで足りる。**倍の余裕**を取ったうえで、
+ * それでも溢れたら fail closed で気付けるようにする
+ * （既定の `TARGETED_CHUNK=50` × `TARGETED_MAX_PAGES=20` だと
+ *  50 ジョブ = 最大 5,000 行 > 2,000 行で必ず溢れる。2026-08-15 に本番で踏んだ）。
+ */
+const JOB_ID_CHUNK = 15;
+const JOB_ID_MAX_PAGES = JOB_ID_CHUNK * 2;
+
+/** ジョブ一覧に載せる件数（新しい順）。**落とした分は件数で明示する** */
+const JOBS_VIEW_LIMIT = 30;
+
+/** 配信行のうち、ジョブ表示に要る列だけ */
+const JOB_DELIVERY_FIELDS = [
+  'ScheduledEmailJobId', 'Status', 'QueuedAt', 'SentAt', 'FailedAt', 'SkippedAt', 'ErrorMessage',
+];
+
+/** 実績集計に要る列だけ */
+const HISTORY_FIELDS = ['CampaignType', 'EmailType', 'Status', 'QueuedAt', 'SentAt'];
+
+/**
+ * 実績集計のページ上限。**母数が台帳全体なので名指しにできない**唯一の経路。
+ * 2026-08-15 時点で 6,110 行（62 ページ）。倍の余裕を取る。
+ * ここを超えたら「集計を出さない」（＝また設計を見直す合図）。
+ */
+const HISTORY_MAX_PAGES = 120;
+
+/**
  * 指定ジョブに紐づく配信行だけを引く（**名指し・fail closed**）。
- * ジョブ数ぶんしか読まないので、台帳全体が何行あっても影響を受けない。
+ * 読む量はジョブ数に比例し、台帳全体が何行あっても影響を受けない。
  */
 async function fetchDeliveriesByJobIds({ KEY, BASE, jobIds }) {
   const out = [];
-  for (const group of chunkList(jobIds, TARGETED_CHUNK)) {
+  for (const group of chunkList(jobIds, JOB_ID_CHUNK)) {
     const formula = buildJobIdFormula(group);
     if (!formula) continue;
     // eslint-disable-next-line no-await-in-loop -- チャンクごとに順に読む
     const rows = await fetchAllStrict({
-      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula, maxPages: TARGETED_MAX_PAGES,
+      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula,
+      maxPages: JOB_ID_MAX_PAGES, fields: JOB_DELIVERY_FIELDS,
     });
     out.push(...rows);
   }
@@ -1890,10 +1923,20 @@ async function handleJobs({ KEY, BASE }) {
   // ③ どちらも取り切れなければ **例外 → 500**。短い結果を全体として出さない。
   let scheduled;
   let deliveries;
+  let jobsTotal = 0;
   try {
-    scheduled = await fetchAllStrict({
+    const allJobs = await fetchAllStrict({
       KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: MARKETING_JOB_FORMULA,
     });
+    jobsTotal = allJobs.length;
+    // ④ 読む量を**表示する件数**に合わせる。全ジョブぶんの配信行を引くと
+    //    台帳全体（6,110 行）を読むのと変わらず、Function の実行時間に収まらない。
+    //    落とした分は `jobsTotal` / `jobsShown` で**明示する**（黙って切らない）。
+    scheduled = allJobs
+      .slice()
+      .sort((a, b) => String(((b && b.fields) || {}).ScheduledFor || '')
+        .localeCompare(String(((a && a.fields) || {}).ScheduledFor || '')))
+      .slice(0, JOBS_VIEW_LIMIT);
     const jobIds = scheduled
       .map((r) => String(((r && r.fields) || {}).JobId || '').trim())
       .filter(Boolean);
@@ -1909,6 +1952,11 @@ async function handleJobs({ KEY, BASE }) {
   const jobs = buildJobView({ jobRecords: scheduled, deliveryRecords: deliveries, isMarketingJob });
   return json(200, {
     jobs,
+    /** 何件のうち何件を出しているか（**黙って切らない**） */
+    jobsTotal,
+    jobsShown: jobs.length,
+    jobsLimit: JOBS_VIEW_LIMIT,
+    jobsTruncated: jobsTotal > jobs.length,
     sendEnabled: isMarketingSendEnabled(process.env),
     dispatchEnabled: isDispatchEnabled(process.env),
     notice: isDispatchEnabled(process.env)
@@ -2034,6 +2082,9 @@ async function handleHistory({ KEY, BASE }) {
   try {
     deliveries = await fetchAllStrict({
       KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
+      // 台帳は 6,110 行（2026-08-15）。既定の 40 ページ（4,000 行）では足りない。
+      // 列を集計に要る 5 つへ絞ったうえで上限を上げる。溢れたら従来どおり fail closed。
+      maxPages: HISTORY_MAX_PAGES, fields: HISTORY_FIELDS,
     });
   } catch (e) {
     return json(500, {
