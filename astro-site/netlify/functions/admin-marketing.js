@@ -152,6 +152,14 @@ import {
   buildCampaignAudienceFormula, buildGrantOperationFormula,
 } from '../../src/lib/marketing/campaignAudienceFormula.js';
 import { BARRIER_RESOLVED_LABEL } from '../../src/lib/comeback/lightTrialBarrier.js';
+import {
+  planRolloutTick, ROLLOUT_STAGE, ROLLOUT_BLOCK,
+} from '../../src/lib/marketing/rolloutPlan.js';
+import {
+  createRolloutStore, isRolloutEnabled, RolloutStoreError,
+} from '../../src/lib/marketing/rolloutStore.js';
+import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
+import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
@@ -768,6 +776,7 @@ export const handler = async (event) => {
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
+    if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1262,6 +1271,143 @@ function resolveStepCampaign({ campaign, step }) {
  * ⚠️ ここは**付与しない**。付与できるのは既存の `admin-comeback-grants`（operationId 冪等）
  *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
  */
+/**
+ * 大規模展開の**運用画面**（read-only・1 バイトも書かない）。
+ *
+ * 運用者が知りたいのは 6 つだけ:
+ *   母集団 / 未開始・進行中・購入・停止・完了 / Step 別 / 次回予定 /
+ *   バッチ進行 / kill switch の状態
+ *
+ * ⚠️ **母集団を読み切れなければ「部分」と明示する。** 割合を捏造しない。
+ * ⚠️ 返すのは件数だけ（アドレス・recordId は 1 つも返さない）。
+ * ⚠️ 展開状態（段階・件数・停止）は Redis が正本。**env の開閉・redeploy は要らない**。
+ *    ただし機能そのものの許可は env（`MARKETING_ROLLOUT_ENABLED`・既定 OFF）。
+ */
+async function handleRollout({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  // ① 展開状態（無ければ既定＝停止）
+  let state = null;
+  let stateError = null;
+  try {
+    const store = createRolloutStore({ cmd: makeRedisCmd(process.env) });
+    state = (await store.load(base.campaignId)).state;
+  } catch (e) {
+    // 読めないなら**動かさない**。画面には理由コードだけ出す
+    stateError = (e instanceof RolloutStoreError && e.code) || 'unavailable';
+  }
+
+  // ② 受信対象（名指し。全件走査しない）
+  const audience = await loadCampaignAudience({ KEY, BASE, now, campaign: base });
+  if (!audience.ok) {
+    return json(audience.code === 'audience_not_narrowable' ? 400 : 500, {
+      error: '受信対象を確定できないため、進捗を返しません（数えられない数は出しません）。',
+      code: audience.code, sideEffects: 'none',
+    });
+  }
+
+  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
+  const audienceEmails = audience.records
+    .map((rec) => String((rec.fields || {}).Email || '').trim().toLowerCase())
+    .filter(Boolean);
+  let deliveries;
+  try {
+    deliveries = await fetchDeliveriesByEmails({ KEY, BASE, emails: audienceEmails });
+  } catch (e) {
+    return json(500, {
+      error: '配信履歴を取り切れなかったため、進捗を返しません。',
+      code: 'rollout_deliveries_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+  const history = summarizeHistory(deliveries);
+  const list = audience.records.map((rec) => {
+    const fields = rec.fields || {};
+    const email = String(fields.Email || '').trim().toLowerCase();
+    return {
+      recordId: rec.id,
+      record: rec,
+      fields,
+      marketing: resolveCustomerMarketing({ fields, nowMs: now, blacklistEmails, history: history.get(email) }),
+    };
+  });
+
+  // ③ 進行（既存の単一源をそのまま使う）
+  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
+  const blacklist = await loadBlacklistSets({ KEY, BASE });
+  const { view: engagementView } = await resolveEngagementView({ list, deliveries, now });
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const progress = buildSequenceProgress({
+    campaign: base, selected: list, deliveries, brand: BRAND, fromEmail, nowMs: now,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    softBounced: blacklist.soft,
+    engagementByEmail: engagementView.engagementByEmail,
+    engagementThresholds: engagementView.thresholds,
+  });
+  if (!progress.ok) return json(400, { error: `進行を計算できません: ${progress.error}`, sideEffects: 'none' });
+
+  const policy = normalizePolicy(base.sequencePolicy);
+  const maxSends = Math.max(resolveMaxSends(base), policy.maxSends);
+
+  // ④ 画面が要る形へまとめる（**件数だけ**）
+  const rows = progress.rows.map((r) => ({
+    sentCount: r.sentSteps.length,
+    purchased: r.stopReason === 'purchased',
+    stopped: r.status === 'stopped',
+    stopReason: r.stopReason || null,
+    sentSteps: r.sentSteps,
+    dueStep: r.status === 'due' ? r.nextStep : null,
+    waitingStep: r.status === 'waiting' ? r.nextStep : null,
+  }));
+  const funnel = buildFunnel({
+    rows, maxSends,
+    // 受信対象は名指しで取り切っているので母数は確定
+    cohortTotal: rows.length, cohortPartial: false,
+  });
+  const stepView = buildStepView({ steps: progress.steps, rows });
+
+  // ⚠️ 展開状態を読めないときも**理由を出す**。
+  //    「進めません」だけ返すと、運用者は原因を探せない（実際に空になっていた）。
+  const plan = state
+    ? planRolloutTick({
+      state, nowMs: now,
+      remainingCandidates: funnel.notStarted,
+      previousOutstanding: 0,
+      envEnabled: isRolloutEnabled(process.env),
+    })
+    : { ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE, allowance: 0, stage: ROLLOUT_STAGE.PAUSED, dailyLimit: 0, day: null };
+
+  const nextDueAt = progress.rows
+    .filter((r) => r.status === 'waiting' && Number.isFinite(r.nextSendAtMs))
+    .map((r) => r.nextSendAtMs).sort((a, b) => a - b)[0] || null;
+
+  const view = buildRolloutView({
+    state: state || {}, envEnabled: isRolloutEnabled(process.env), plan,
+    funnel, stepView,
+    remainingCandidates: funnel.notStarted,
+    nextScheduledAtMs: nextDueAt,
+  });
+
+  return json(200, {
+    mode: 'rollout-status',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    ...view,
+    policy: describePolicy(base.sequencePolicy),
+    maxSends,
+    /** 展開状態を読めなかったときの理由（**動かさない**） */
+    stateError,
+    engagement: engagementResponse(engagementView),
+    providerSuppression: describeProviderSuppression(provider),
+    notice: 'これは状況の確認です。**付与もキュー登録も送信もしていません**。',
+  });
+}
+
 /**
  * **いまから送ろうとしている宛先だけ**の重複確認（read-only・1 バイトも書かない）。
  *

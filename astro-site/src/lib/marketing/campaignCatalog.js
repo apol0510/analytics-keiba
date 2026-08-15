@@ -462,6 +462,25 @@ export const CAMPAIGNS = Object.freeze([
      * `batchIds` を指定すれば特定バッチだけに絞れる（空 = 取り込み全体）。
      */
     requiresImportCohort: { batchIds: null },
+    /**
+     * 連続配信の運用ポリシー（`sequencePolicy.js` が正本）。
+     *
+     * ⚠️ **現行は 4 通のまま**。数十通へ伸ばすときは `steps` を足したうえで
+     *    `maxSends` を上げる（`maxSends` だけ上げても定義済みステップ数は超えられない）。
+     *    ここに置くのは「送りすぎない」ための上限で、**増やすための値ではない**。
+     */
+    sequencePolicy: {
+      maxSends: 4,
+      minIntervalDays: 3,
+      /** 短期間の過剰配信を防ぐ（7 日で最大 2 通） */
+      frequencyCap: { windowDays: 7, maxSends: 2 },
+      /** 無反応が続いたら間隔を空け、閾値で打ち切る */
+      slowdownAfterNoEngagement: 3,
+      slowdownFactor: 2,
+      stopAfterNoEngagement: 8,
+      /** 訴求角度。同じ角度を連投しない（文面を足すときの枠） */
+      angles: ['体験の開始', '使い方', '期間の確認', '継続の提案'],
+    },
     recommendedSegments: [],
     // 付与されていること自体が対象条件なので、契約状態・プランでは絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },

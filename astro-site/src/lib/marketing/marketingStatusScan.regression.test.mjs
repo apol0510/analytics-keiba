@@ -460,3 +460,54 @@ test('【重要】duplicateCheck は候補の重複・上限を fail closed で�
   assert.match(String(over.body.error || ''), new RegExp(`上限 ${over.body.limit} 件`));
   assert.equal(over.body.given, 501);
 });
+
+// ── 大規模展開の運用画面（action=rollout / 2026-08-15）──────────────
+//
+// 14,479 名を段階展開するとき、運用者が見るのは件数だけ。
+// 母集団を読み切れなければ「部分」と明示し、割合を捏造しない。
+
+test('【重要】rollout は read-only で、母集団・5 分類・Step 別・kill switch を返す', async () => {
+  stubAirtable();
+  const { statusCode, body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 300));
+  assert.equal(body.sideEffects, 'none');
+  assert.ok(body.control, 'kill switch / 段階が無い');
+  assert.ok(body.batch, 'バッチ進行が無い');
+  assert.ok(body.funnel, '母集団と 5 分類が無い');
+  assert.ok(Array.isArray(body.steps), 'Step 別が無い');
+  assert.ok(body.policy, 'ポリシー要約が無い');
+  // 分類の合計が観測数と一致する
+  assert.equal(body.funnel.balanced, true);
+  assert.equal(body.funnel.observed, 10);
+});
+
+test('【重要】rollout は既定で「進めない」（kill switch は既定 OFF 側）', async () => {
+  stubAirtable();
+  const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(body.control.canProceed, false, '既定で進める状態になっている');
+  assert.ok(body.control.blockedReason, '進めない理由を出していない');
+});
+
+test('【重要】rollout の応答に PII を含めない', async () => {
+  stubAirtable();
+  const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  const dump = JSON.stringify(body);
+  assert.equal(/@example\.com/.test(dump), false, 'アドレスが出ている');
+  assert.equal(/recCUST|recDEL/.test(dump), false, 'recordId が出ている');
+});
+
+test('【重要】rollout は配信台帳を全件走査しない', async () => {
+  let fullScans = 0;
+  const calls = stubAirtable({ onFullScan: (u) => { fullScans += 1; return paginatedLedger(u, 20000); } });
+  await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(fullScans, 0, '台帳を全件走査している');
+  const ledger = calls.filter((c) => c.url.includes('/CampaignDeliveries'));
+  assert.ok(ledger.every((c) => /RecipientEmail|DeliveryKey|ScheduledEmailJobId/.test(c.formula)),
+    '名指しで引いていない');
+});
+
+test('rollout は連続配信でないキャンペーンを拒否する', async () => {
+  stubAirtable();
+  const { statusCode } = await invoke({ action: 'rollout', campaignId: 'dormant-reactivation' });
+  assert.equal(statusCode, 400);
+});
