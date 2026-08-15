@@ -197,7 +197,62 @@ MARKETING_ADMIN_SECRET=… npm run preflight:light-trial-step1 -- --expect 100
 一方、**まだ Step1 を出していない次のコホートには通る**
 （過去ジョブがあっても、`jobs` が窓で切られていても）。
 
-### 7-2. キュー登録の rollback
+### 7-2. 実送信の排他（同一ジョブの二重起動を止める）
+
+`marketing-campaign-dispatch` の live は
+
+```
+① CampaignDeliveries を読む → ② alreadySent を作る
+→ ③ SendGrid へ送る → ④ sent を Airtable へ記録
+```
+
+の順で進む。①〜④ の間に**同じ jobId の live がもう 1 本**走ると、両方が
+「まだ誰も送っていない」を読み、両方が `expectedWillSend` を通り、
+**同じ相手へ 2 通**送れる（二重クリック / HTTP retry / Function の並行起動）。
+**「逐次再実行には冪等」だけでは塞げない。**
+
+対策は Redis の原子的排他（`src/lib/marketing/dispatchLock.js`）。
+**新しい外部サービスも新しい本番 env も増やさず**、既に本番で動いている
+`UPSTASH_REDIS_REST_*` と `automationStore.js` の `SET NX EX` + fencing token +
+Lua（`LOCK_VERIFY_LUA` / `LOCK_RELEASE_LUA`）をそのまま共有する。
+
+| 性質 | 実装 |
+|---|---|
+| 同一 jobId は 1 本だけ | `SET <key> <token> NX EX` |
+| jobId ごとに独立 | 鍵は `ak:marketing-dispatch:lock:<jobId>` |
+| 自分の token でしか解放しない | Lua で `GET` → 一致時のみ `DEL`（atomic） |
+| 送信直前の再確認 | SendGrid を叩く前に `verify()`。奪われていたら **1 通も送らない** |
+| 途中異常でも解放を試みる | 実行後に必ず解放を試み、**解放そのものが例外でも送信結果を失わない** |
+| 解放失敗を「成功」にしない | 応答に `lockRelease: {ok, reason, retryAfterSec}` と `warning` を返す |
+| 取得失敗・状態不明 | **送信 0・書き込み 0**（`409 busy` / `503 unavailable`） |
+| dryRun | 鍵を取らない（何本走ってもよい） |
+
+**解放に失敗したとき**（応答の `lockRelease.ok === false`）:
+
+- **送信結果は事実どおり**（`sent` を 0 へ巻き戻さない）。巻き戻すと運用者が
+  「送れていない」と読んで**もう一度送る**
+- **`warning` の文言も事実に合わせる**。dispatch は送信前に 409（人数不一致・鍵の奪取）や
+  503 で止まることがあり、そのとき `sent` は 0。一律に「送信は完了しています」と書くと
+  「送れたのに解放だけ失敗した」と誤解させる（逆方向の事故）
+  - `sent > 0` … 「**N 通の送信処理は完了していますが**、実行ロックを解放できませんでした」
+  - `sent === 0` / 不明 … 「**メール送信は行われていません。**実行ロックを解放できませんでした」
+- 鍵が残っている間、同じジョブの再実行は `409 busy` で弾かれる。
+  **TTL（約 300 秒）が切れるまで再実行しない**。`retryAfterSec` は目安
+- **自動で再実行しない。** 応答の `warning` にもそう書く
+- TTL 明けに再実行しても、最後の砦として**既送信者は `sent` 判定で除外**される
+
+**TTL 切れの安全性**: TTL は 300 秒で、Netlify Function の上限 26 秒より十分長い。
+よって「送信中に TTL が切れて別実行が入る」ことは構造的に起きない。
+それでも送信直前の `verify()` で奪取を検知する。
+
+**採用しなかった案**:
+- Netlify Blobs — read-after-write が eventual で、排他の判定に使えない（2026-07-16 実測）
+- Airtable の `PENDING → PROCESSING` 更新 — CAS ではない（読んで書くまでに別実行が同じ遷移を書ける）
+
+⚠️ 鍵に入れてよいのは `jobId` だけ。**アドレス・secret は 1 文字も入れない**
+（`jobId` は `mkt-<campaign>-v<n>-<fingerprint>-<index>` で PII を含まない）。
+
+### 7-3. キュー登録の rollback
 
 | 状態 | 戻し方 |
 |---|---|
@@ -466,6 +521,8 @@ npm run check:safety     # 上記を含む全 safety check
 | `marketingStatusScan.guard.test.mjs` | 状態表示が打ち切る取得へ戻らない・fail closed の維持 |
 | `step1Preflight.test.mjs` | Step1 直前確認の判定（**確認できないものを ok にしない**／queue 済みで止まる・未 queue で通る） |
 | `step1PreflightScript.guard.test.mjs` | preflight スクリプトが read-only のままか（許可アクション固定） |
+| `dispatchLock.test.mjs` | 実送信の排他（1 本だけ・自分の token でしか解放しない・状態不明は例外） |
+| `dispatcherHandler.smoke.test.mjs` | **同時 2 本でも送信は 1 通**・Redis 不通は送信 0・dryRun は鍵を取らない |
 
 ## 配信台帳も名指しで読む（2026-08-15 / 状態表示の打ち切りを廃止）
 

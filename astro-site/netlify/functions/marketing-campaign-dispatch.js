@@ -60,6 +60,10 @@ import {
 } from '../../src/lib/promotions/offerCampaignLink.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
+import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
+  createDispatchLock, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, DispatchLockError,
+} from '../../src/lib/marketing/dispatchLock.js';
 import {
   indexDeliveriesByRecipient,
   buildCampaignCustomArgs,
@@ -238,18 +242,117 @@ export const handler = async (event) => {
     }
   }
 
+  // ── 同一ジョブの live を 1 本だけ通す（原子的排他）─────────────────
+  //
+  // ⚠️ `alreadySent` は「読んだ時点の事実」でしかない。読んでから記録するまでの
+  //    間に**同じ jobId の live がもう 1 本**走ると、両方が「まだ誰も送っていない」
+  //    を読み、両方が `expectedWillSend` を通り、**同じ相手へ 2 通**送れる
+  //    （二重クリック / HTTP retry / Function の並行起動）。
+  //    逐次再実行の冪等性だけでは塞げないので、送信の前に鍵を取る。
+  //
+  // dryRun は書かないので鍵を取らない（確認は何本走ってもよい）。
+  let lock = null;
+  let lockToken = null;
+  if (!dryRun) {
+    try {
+      lock = createDispatchLock({ cmd: makeRedisCmd(process.env) });
+    } catch (e) {
+      // Redis が無い / 設定されていない = **排他できない**。送らない。
+      return json(503, {
+        error: '二重送信を防ぐ排他を利用できないため中止しました（送信していません）。',
+        code: LOCK_FAIL.UNAVAILABLE, sideEffects: 'none',
+      });
+    }
+    try {
+      const got = await lock.acquire({ jobId: jobIdFilter, ttlSec: DISPATCH_LOCK_TTL_SEC });
+      if (!got.ok) {
+        return json(409, {
+          error: 'このジョブは別の実行が処理中です（二重送信を避けるため中止しました）。',
+          code: LOCK_FAIL.BUSY, jobId: jobIdFilter, sideEffects: 'none',
+        });
+      }
+      lockToken = got.token;
+    } catch (e) {
+      // 取れたかどうか**分からない**ときも送らない（fail closed）
+      return json(503, {
+        error: '排他の状態を確認できないため中止しました（送信していません）。',
+        code: (e instanceof DispatchLockError && e.code) || LOCK_FAIL.UNAVAILABLE,
+        sideEffects: 'none',
+      });
+    }
+  }
+
+  // ── 実行 → 解放 → 応答（この順序に意味がある）────────────────────
+  //
+  // ⚠️ **解放の失敗を「送信の失敗」にしてはいけない。**
+  //    メールは既に出ている。`sent` を 0 へ巻き戻すと、運用者は
+  //    「送れていない」と読んで**もう一度送る**。事実（送信結果）はそのまま返し、
+  //    解放の可否は `lockRelease` として**別の欄**に載せる。
+  //
+  // ⚠️ 同時に「解放できなかった」を黙って握り潰すのも駄目。
+  //    鍵が残っている間、同じジョブの再実行は `busy` で弾かれる。
+  //    **TTL が切れるまで再実行しないこと**を運用者へ明示する。
+  let result;
   try {
-    return await dispatch({
+    result = await dispatch({
       KEY, BASE, SG, dryRun, jobIdFilter,
       expectedWillSend: dryRun ? null : Number(req.expectedWillSend),
+      lock, lockToken,
     });
   } catch (e) {
     console.error('❌ [marketing-dispatch]', e.message);
-    return json(500, { error: 'internal error' });
+    result = json(500, { error: 'internal error' });
   }
+
+  if (!lock || !lockToken) return result;
+
+  // 解放そのものが例外でも**送信結果を失わない**
+  let rel;
+  try {
+    rel = await lock.release({ jobId: jobIdFilter, token: lockToken });
+  } catch (e) {
+    // ⚠️ 例外の中身（URL・token を含みうる）は載せない。理由コードだけ
+    rel = { ok: false, reason: (e && e.code) || LOCK_FAIL.UNAVAILABLE };
+  }
+  return withLockRelease(result, { rel, jobId: jobIdFilter });
 };
 
-async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null }) {
+/**
+ * 応答へ `lockRelease` を足す（**送信結果は 1 バイトも書き換えない**）。
+ *
+ * 解放できなかったときは、鍵が TTL で開くまで同じジョブを再実行してはいけない。
+ * 自動再実行の材料にならないよう `retryAfterSec` は**目安として**返し、
+ * 「自動で再実行しない」ことを文言でも明示する。
+ */
+function withLockRelease(res, { rel, jobId }) {
+  let body;
+  try { body = JSON.parse(res.body || '{}'); } catch { return res; }
+
+  body.lockRelease = { ok: rel.ok === true, reason: rel.ok === true ? null : String(rel.reason || 'unknown') };
+
+  if (!rel.ok) {
+    body.lockRelease.retryAfterSec = DISPATCH_LOCK_TTL_SEC;
+    // ⚠️ **文言は事実に合わせる。**
+    //    dispatch は送信前に 409（人数不一致・鍵の奪取）や 503 で止まることがある。
+    //    その場合 `sent` は 0 なのに「送信は完了しています」と書くと、
+    //    運用者は「送れたのに解放だけ失敗した」と誤解する（逆方向の事故）。
+    const sent = Number(body.sent);
+    const sentKnown = Number.isFinite(sent);
+    body.warning = (sentKnown && sent > 0
+      ? `${sent} 通の送信処理は完了していますが、実行ロックを解放できませんでした。`
+      : 'メール送信は行われていません。実行ロックを解放できませんでした。')
+      + `同じジョブの再実行は約 ${DISPATCH_LOCK_TTL_SEC} 秒（ロックの期限）待ってください。`
+      + '**自動で再実行しないでください**'
+      + (sentKnown ? '（送信件数はこの応答のとおりです）。' : '（送信件数はこの応答から確認できません）。');
+    // ログにも理由コードだけを残す（アドレス・URL・token は出さない）
+    console.warn('⚠️ [marketing-dispatch] lock release 失敗:', {
+      jobId, reason: body.lockRelease.reason, sent: sentKnown ? sent : null,
+    });
+  }
+  return { ...res, body: JSON.stringify(body) };
+}
+
+async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null, lock = null, lockToken = null }) {
   const now = Date.now();
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
   const fromName = getBrandConfig(BRAND).defaultFromName;
@@ -547,6 +650,28 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
     // 3-a) 送らない相手を台帳へ記録（送信前に確定させる）
     if (toSkip.length > 0) {
       await patchDeliveriesByEmail({ KEY, BASE, jobId, entries: toSkip, now });
+    }
+
+    // 🛡️ **SendGrid を叩く直前に鍵がまだ自分のものか確かめる。**
+    //    奪われている / 消えている＝別実行が同じジョブを進めた可能性がある。
+    //    その場合は 1 通も送らない（確認できない状態で送らない）。
+    if (lock && lockToken) {
+      let held;
+      try {
+        held = await lock.verify({ jobId, token: lockToken });
+      } catch (e) {
+        return json(503, {
+          error: '排他の状態を確認できないため送信を中止しました（送信していません）。',
+          code: (e instanceof DispatchLockError && e.code) || LOCK_FAIL.UNAVAILABLE,
+          jobId, sideEffects: 'none',
+        });
+      }
+      if (!held.ok) {
+        return json(409, {
+          error: '別の実行がこのジョブを処理したため中止しました（送信していません）。',
+          code: held.reason, jobId, sideEffects: 'none',
+        });
+      }
     }
 
     // 3-b) 1 通ずつ送る（個別送信。他受信者のアドレスが漏れない）

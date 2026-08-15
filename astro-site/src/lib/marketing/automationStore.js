@@ -56,6 +56,29 @@ export function emailHash(email) {
   return e ? createHash('sha256').update(e, 'utf8').digest('hex') : '';
 }
 
+/**
+ * lock の検証・解放は **Lua で atomic に行う**（GET してから DEL の 2 段だと、
+ * その隙に TTL 切れ→別実行が取得、を消してしまう）。
+ *
+ * ⚠️ ここはマーケティング自動化だけの持ち物ではない。**同じ排他が要る経路**
+ *    （例: 実送信 dispatcher の同一ジョブ二重起動防止）から再利用する。
+ *    新しい仕組みを増やすより、既に本番で動いている 1 つを共有する。
+ */
+export const LOCK_RELEASE_LUA = `
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 'LOST' end
+if cur ~= ARGV[1] then return 'STOLEN' end
+redis.call('DEL', KEYS[1])
+return 'OK'
+`;
+
+export const LOCK_VERIFY_LUA = `
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 'LOST' end
+if cur ~= ARGV[1] then return 'STOLEN' end
+return 'OK'
+`;
+
 export class AutomationStoreError extends Error {
   constructor(code, detail) {
     super(`automation_store:${code}`);
@@ -217,21 +240,6 @@ return 'OK'
 `;
 
   /** 自分の token のときだけ解放する */
-  const RELEASE_LUA = `
-local cur = redis.call('GET', KEYS[1])
-if not cur then return 'LOST' end
-if cur ~= ARGV[1] then return 'STOLEN' end
-redis.call('DEL', KEYS[1])
-return 'OK'
-`;
-
-  const VERIFY_LUA = `
-local cur = redis.call('GET', KEYS[1])
-if not cur then return 'LOST' end
-if cur ~= ARGV[1] then return 'STOLEN' end
-return 'OK'
-`;
-
   const parse = (raw, what) => {
     if (raw === null) return null;
     try { return JSON.parse(raw); }
@@ -333,7 +341,7 @@ return 'OK'
 
     /** enqueue の直前に必ず通す。**失っていたら書かない** */
     async verifyClaim({ automationId, token }) {
-      const res = await call(['EVAL', VERIFY_LUA, '1', autoKey.lock(automationId), String(token)],
+      const res = await call(['EVAL', LOCK_VERIFY_LUA, '1', autoKey.lock(automationId), String(token)],
         STORE_FAIL.LOCK_STATE_UNKNOWN);
       if (res === 'OK') return { ok: true, reason: null };
       if (res === 'LOST' || res === 'STOLEN') return { ok: false, reason: String(res).toLowerCase() };
@@ -341,7 +349,7 @@ return 'OK'
     },
 
     async releaseClaim({ automationId, token }) {
-      const res = await call(['EVAL', RELEASE_LUA, '1', autoKey.lock(automationId), String(token)],
+      const res = await call(['EVAL', LOCK_RELEASE_LUA, '1', autoKey.lock(automationId), String(token)],
         STORE_FAIL.LOCK_STATE_UNKNOWN);
       return { ok: res === 'OK', reason: res === 'OK' ? null : String(res).toLowerCase() };
     },
