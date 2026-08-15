@@ -517,8 +517,11 @@ test('【重要】送信成功 + 解放失敗 → sent は 1 のまま / lockRel
   assert.equal(body.lockRelease.ok, false);
   assert.equal(typeof body.lockRelease.reason, 'string');
   assert.equal(body.lockRelease.retryAfterSec, 300);
+  assert.match(body.warning, /1 通の送信処理は完了していますが/);
   assert.match(body.warning, /解放できませんでした/);
   assert.match(body.warning, /自動で再実行しないでください/);
+  // 送っていないのに「送信は行われていない」とは書かない
+  assert.equal(/メール送信は行われていません/.test(body.warning), false);
 
   // secret / URL / token を漏らさない
   const dump = JSON.stringify(body);
@@ -586,4 +589,88 @@ test('dryRun の応答には lockRelease を足さない（鍵を取っていな
   assert.equal(statusCode, 200);
   assert.equal(body.lockRelease, undefined);
   assert.equal(calls.sendgridSend, 0);
+});
+
+// ── 解放失敗時の文言は「実際に送ったか」に合わせる（2026-08-15）──────
+//
+// dispatch は送信前に 409（人数不一致・鍵の奪取）や 503 で止まることがある。
+// その場合 `sent` は 0 なのに「送信は完了しています」と書くと、運用者は
+// 「送れたのに解放だけ失敗した」と誤解する（逆方向の事故）。
+
+/** 解放だけを失敗させる Redis（取得・verify は通す） */
+const releaseFailingRedis = (store) => {
+  const base = makeFakeRedis(store, { fence: 0 });
+  return (args) => {
+    if (String(args[0]).toUpperCase() === 'EVAL' && String(args[1]).includes("redis.call('DEL'")) {
+      throw new Error('release boom');
+    }
+    return base(args);
+  };
+};
+
+test('【重要】送信 0 の 409 + 解放失敗 → 「送信は行われていない」と書く', async () => {
+  const store = new Map();
+  const calls = stub({ ...oneRecipientFixture(), redis: releaseFailingRedis(store) });
+  // 確認した人数と食い違わせて、送信前に 409 で止める
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 99 }, LIVE_ENV);
+
+  assert.equal(statusCode, 409, '前提が崩れている');
+  assert.equal(calls.sendgridSend, 0, '止まったのに送信している');
+  // 元の結果は書き換えない
+  assert.equal(body.sideEffects, 'none', '元の sideEffects を書き換えている');
+  assert.equal(body.expected, 99);
+  // 文言は事実どおり
+  assert.equal(body.lockRelease.ok, false);
+  assert.equal(body.lockRelease.retryAfterSec, 300);
+  assert.match(body.warning, /メール送信は行われていません/);
+  assert.equal(/送信処理は完了していますが/.test(body.warning), false, '送っていないのに完了と書いている');
+  assert.match(body.warning, /自動で再実行しないでください/);
+});
+
+test('【重要】送信 0 の 503（鍵を奪われた）+ 解放失敗 → 「送信は行われていない」と書く', async () => {
+  const store = new Map();
+  const base = makeFakeRedis(store, { fence: 0 });
+  const calls = stub({
+    ...oneRecipientFixture(),
+    redis: (args) => {
+      const op = String(args[0]).toUpperCase();
+      // verify の直前に別実行の token へ差し替える → 送信前に 409 で止まる
+      if (op === 'EVAL' && String(args[1]).includes("return 'OK'") && !String(args[1]).includes('DEL')) {
+        store.set(args[3], 'stolen-by-another-run');
+      }
+      // 解放は失敗させる
+      if (op === 'EVAL' && String(args[1]).includes("redis.call('DEL'")) throw new Error('release boom');
+      return base(args);
+    },
+  });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+
+  assert.equal(statusCode, 409);
+  assert.equal(body.code, 'stolen');
+  assert.equal(calls.sendgridSend, 0);
+  assert.equal(body.sideEffects, 'none');
+  assert.match(body.warning, /メール送信は行われていません/);
+  assert.equal(/送信処理は完了していますが/.test(body.warning), false);
+});
+
+test('【重要】解放失敗の文言に接続情報を混ぜない', async () => {
+  const store = new Map();
+  stub({ ...oneRecipientFixture(), redis: releaseFailingRedis(store) });
+  const { body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  const dump = JSON.stringify(body);
+  for (const bad of ['fake-token', 'fake-redis.local', 'UPSTASH', 'Bearer']) {
+    assert.equal(dump.includes(bad), false, `${bad} が応答に出ている`);
+  }
+});
+
+test('解放失敗でも元の statusCode / sent / failed / skipped を書き換えない', async () => {
+  const store = new Map();
+  const calls = stub({ ...oneRecipientFixture(), redis: releaseFailingRedis(store) });
+  const { statusCode, body } = await invoke({ dryRun: false, jobId: JOB_ID, expectedWillSend: 1 }, LIVE_ENV);
+  assert.equal(statusCode, 200);
+  assert.equal(body.sent, 1);
+  assert.equal(body.failed, 0);
+  assert.equal(body.skipped, 0);
+  assert.equal(calls.sendgridSend, 1);
+  assert.equal(body.mode, 'live');
 });

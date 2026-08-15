@@ -332,11 +332,22 @@ function withLockRelease(res, { rel, jobId }) {
 
   if (!rel.ok) {
     body.lockRelease.retryAfterSec = DISPATCH_LOCK_TTL_SEC;
-    body.warning = '送信は完了していますが、実行ロックを解放できませんでした。'
+    // ⚠️ **文言は事実に合わせる。**
+    //    dispatch は送信前に 409（人数不一致・鍵の奪取）や 503 で止まることがある。
+    //    その場合 `sent` は 0 なのに「送信は完了しています」と書くと、
+    //    運用者は「送れたのに解放だけ失敗した」と誤解する（逆方向の事故）。
+    const sent = Number(body.sent);
+    const sentKnown = Number.isFinite(sent);
+    body.warning = (sentKnown && sent > 0
+      ? `${sent} 通の送信処理は完了していますが、実行ロックを解放できませんでした。`
+      : 'メール送信は行われていません。実行ロックを解放できませんでした。')
       + `同じジョブの再実行は約 ${DISPATCH_LOCK_TTL_SEC} 秒（ロックの期限）待ってください。`
-      + '**自動で再実行しないでください**（送信件数はこの応答のとおりです）。';
+      + '**自動で再実行しないでください**'
+      + (sentKnown ? '（送信件数はこの応答のとおりです）。' : '（送信件数はこの応答から確認できません）。');
     // ログにも理由コードだけを残す（アドレス・URL・token は出さない）
-    console.warn('⚠️ [marketing-dispatch] lock release 失敗:', { jobId, reason: body.lockRelease.reason });
+    console.warn('⚠️ [marketing-dispatch] lock release 失敗:', {
+      jobId, reason: body.lockRelease.reason, sent: sentKnown ? sent : null,
+    });
   }
   return { ...res, body: JSON.stringify(body) };
 }

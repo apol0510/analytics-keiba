@@ -20,7 +20,10 @@
 - 解放の可否を応答へ明示（`lockRelease: {ok, reason, retryAfterSec}` + `warning`）。
   **解放失敗を「送信失敗」にしない**（`sent` を巻き戻さない。巻き戻すと運用者が
   「送れていない」と読んでもう一度送る）。同時に握り潰しもしない
-  （鍵が残る間は再実行が busy。TTL まで待つ・自動再実行しない、と文言で明示）
+  （鍵が残る間は再実行が busy。TTL まで待つ・自動再実行しない、と文言で明示）。
+  **`warning` の文言は実際に送ったかで分岐**する（送信前に 409 / 503 で止まったときは
+  `sent=0` なので「メール送信は行われていません」と書く。一律「送信は完了」と書くと
+  「送れたのに解放だけ失敗した」と誤解させる）
 - 取得失敗 = `409 busy` / 状態不明・Redis 不通 = `503`。どちらも**送信 0・書き込み 0**
 - TTL 300 秒 >> Function 上限 26 秒 → **送信中に TTL が切れない**
 
@@ -39,7 +42,7 @@ Airtable の `PENDING → PROCESSING`（CAS ではない）。
 
 ### 検証
 
-`npm run test:marketing` 1,466 pass / 0 fail ・ `check:safety` EXIT=0 ・
+`npm run test:marketing` 1,470 pass / 0 fail ・ `check:safety` EXIT=0 ・
 `build` EXIT=0 ・ 追加行の secret scan 0 件。
 
 ### やっていないこと
