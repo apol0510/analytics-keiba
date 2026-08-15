@@ -30,9 +30,9 @@ const renderStep = (n) => renderCampaign({
   expiryNote: describeGrantExpiry({ durationDays: CAMPAIGN.grantDurationDays }),
 });
 
-test('本番シーケンスが取得でき、4 ステップある', () => {
+test('本番シーケンスが取得でき、24 ステップある', () => {
   assert.ok(CAMPAIGN);
-  assert.equal(steps.length, 4);
+  assert.equal(steps.length, 24);
   assert.deepEqual(CAMPAIGN.requiresActiveGrant, { tier: 'light', termedOnly: true },
     '期限付き Light 無料期間中だけを対象にしていない');
 });
@@ -102,16 +102,47 @@ test('【重要】保証・煽り表現が本番文面に無い', () => {
   }
 });
 
-test('4 通が別内容（件名・本文・CTA のいずれも使い回していない）', () => {
+test('24 通が別内容（件名・本文を使い回していない）', () => {
   const rendered = steps.map((s) => renderStep(s.stepNumber));
-  assert.equal(new Set(rendered.map((r) => r.subject)).size, 4);
-  assert.equal(new Set(rendered.map((r) => r.text)).size, 4);
-  // CTA の**文言**は 4 通とも違う（同じボタンを 4 回出さない）。
-  // 遷移先は体験中は同じダッシュボードでよい（step4 だけ料金ページ）。
-  const labels = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaLabel);
-  assert.equal(new Set(labels).size, 4, `CTA 文言の使い回し: ${labels.join(' / ')}`);
+  assert.equal(new Set(rendered.map((r) => r.subject)).size, 24, '件名を使い回している');
+  assert.equal(new Set(rendered.map((r) => r.text)).size, 24, '本文を使い回している');
+});
+
+test('【重要】連続する 2 通で同じ CTA 文言・同じ訴求角度を続けない', () => {
+  // 24 通すべての CTA 文言を変えるのは不自然（「予想を見る」は何度も使う）。
+  // 守りたいのは「**続けて同じものを出さない**」こと。
+  const resolved = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber));
+  for (let i = 1; i < resolved.length; i += 1) {
+    assert.notEqual(resolved[i].ctaLabel, resolved[i - 1].ctaLabel,
+      `step${i} と step${i + 1} の CTA 文言が同じ`);
+  }
+  const angles = resolved.map((r) => r.angle).filter(Boolean);
+  assert.ok(angles.length >= 20, '訴求角度が付いていないステップが多い');
+  for (let i = 1; i < angles.length; i += 1) {
+    assert.notEqual(angles[i], angles[i - 1], `連続する 2 通の訴求角度が同じ（${angles[i]}）`);
+  }
+});
+
+test('CTA の遷移先が 1 種類に偏っていない', () => {
   const ctas = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaUrl);
-  assert.ok(new Set(ctas).size >= 2);
+  assert.ok(new Set(ctas).size >= 4, `遷移先が ${new Set(ctas).size} 種類しかない`);
+});
+
+test('【重要】誇大表現・保証表現・架空実績を書かない', () => {
+  const banned = [
+    '必ず', '絶対', '確実に', '保証', '儲か', '稼げ', '損はし',
+    '今だけ', '残りわずか', '急いで', '限定',
+  ];
+  for (const s of steps) {
+    const r = resolveSequenceStep(CAMPAIGN, s.stepNumber);
+    const text = [r.subject, r.headline, r.body, r.preheader, r.ctaNote].filter(Boolean).join('\n');
+    for (const w of banned) {
+      assert.equal(text.includes(w), false, `step${s.stepNumber} に「${w}」が入っている`);
+    }
+    // 実績の数値を本文へ書き写さない（％・円・的中率）
+    assert.equal(/的中率\s*\d|回収率\s*\d|\d+\s*%|¥\s*[\d,]{3,}/.test(text), false,
+      `step${s.stepNumber} に実績数値らしき記述がある`);
+  }
 });
 
 test('配信停止リンクは本文に書かず、シェルが受信者ごとに差し込む', () => {

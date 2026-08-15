@@ -36,6 +36,7 @@ import {
   UNSUBSCRIBE_PLACEHOLDER, GRANT_EXPIRY_PLACEHOLDER,
 } from './marketingEmailShell.js';
 import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog.js';
+import { LIGHT_TRIAL_EXTRA_STEPS, LIGHT_TRIAL_ANGLES } from './lightTrialSteps.js';
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, validateAllSequences,
 } from './campaignSequence.js';
@@ -470,22 +471,32 @@ export const CAMPAIGNS = Object.freeze([
      *    ここに置くのは「送りすぎない」ための上限で、**増やすための値ではない**。
      */
     sequencePolicy: {
-      maxSends: 4,
+      /** **24 通**。到達したら自動終了する */
+      maxSends: 24,
       minIntervalDays: 3,
-      /** 短期間の過剰配信を防ぐ（7 日で最大 2 通） */
+      /** 短期間の過剰配信を防ぐ（7 日で最大 2 通）。頻度は抑える */
       frequencyCap: { windowDays: 7, maxSends: 2 },
-      /** 無反応が続いたら間隔を空け、閾値で打ち切る */
+      /**
+       * 無反応が続いたら**間隔を空ける**（送るのをやめるのではない）。
+       *
+       * ⚠️ **無反応だけを理由に打ち切らない**（`stopAfterNoEngagement: null`）。
+       *    目的は「無反応の相手にも接点を作って反応を見る」ことなので、
+       *    8 通で終了すると反応が出る前に打ち切ることになる。
+       *    止めるのは**明示的な拒否・到達不能・購入**のときだけ:
+       *    購入 / 配信停止 / ハードバウンス / 苦情 / provider suppression / 対象外。
+       */
       slowdownAfterNoEngagement: 3,
       slowdownFactor: 2,
-      stopAfterNoEngagement: 8,
-      /** 訴求角度。同じ角度を連投しない（文面を足すときの枠） */
-      angles: ['体験の開始', '使い方', '期間の確認', '継続の提案'],
+      stopAfterNoEngagement: null,
+      /** 訴求角度。同じ角度を連投しない */
+      angles: LIGHT_TRIAL_ANGLES,
     },
     recommendedSegments: [],
     // 付与されていること自体が対象条件なので、契約状態・プランでは絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },
     sequence: {
-      maxSends: 4,
+      /** Step1〜4 + `lightTrialSteps.js` の Step5〜24 = **24 通** */
+      maxSends: 24,
       steps: [
         {
           stepNumber: 1,
@@ -592,7 +603,7 @@ export const CAMPAIGNS = Object.freeze([
             '無料期間の終了後に自動で課金されることはありません。',
             '終了日は下部に記載しています。',
             '',
-            'このご案内は今回で最後です。',
+            'ご不要であれば、下部のリンクからいつでも配信を止められます。',
           ].join('\n'),
           benefitTitle: '違いはご覧いただける範囲です',
           benefitItems: [
@@ -603,10 +614,10 @@ export const CAMPAIGNS = Object.freeze([
           ctaLabel: 'プランと料金を見る',
           ctaUrl: `${SITE}/pricing/`,
           ctaNote: '金額と内容はこちらのページが最新です。',
-          footerNote: 'この一連のご案内は今回で最後です。今後は通常のお知らせのみをお送りします。',
           benefitType: 'free_access',
           benefitDescription: 'Light無料期間の内容と、Premiumでご覧いただける範囲の違いをご案内します',
         },
+        ...LIGHT_TRIAL_EXTRA_STEPS,
       ],
     },
     enabled: true,

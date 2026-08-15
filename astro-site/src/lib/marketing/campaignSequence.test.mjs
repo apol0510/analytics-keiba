@@ -195,7 +195,7 @@ test('本番カタログの連続配信定義がすべて健全', () => {
   assert.equal(v.ok, true, v.errors.join(' / '));
 });
 
-test('本番の連続配信キャンペーンが 1 件以上あり、4 通構成で使用可能', () => {
+test('本番の連続配信キャンペーンが 1 件以上あり、24 通構成で使用可能', () => {
   const seqs = CAMPAIGNS.filter((c) => isSequenceCampaign(c));
   assert.ok(seqs.length >= 1);
   const c = getCampaign('light-trial-to-premium-sequence');
@@ -203,11 +203,13 @@ test('本番の連続配信キャンペーンが 1 件以上あり、4 通構成
   assert.deepEqual(c.requiresActiveGrant, { tier: 'light', termedOnly: true },
     '期限付き Light 無料期間中だけを対象にしていない');
   assert.ok(c.requiresImportCohort, 'CSV 取り込みコホートに限定していない');
-  assert.equal(resolveMaxSends(c), 4);
+  assert.equal(resolveMaxSends(c), 24);
   const view = describeSequence(c);
-  assert.equal(view.steps.length, 4);
-  assert.equal(new Set(view.steps.map((s) => s.subject)).size, 4, '件名が 4 通とも異なる');
-  assert.deepEqual(view.steps.map((s) => s.delayDays), [0, 3, 5, 7]);
+  assert.equal(view.steps.length, 24);
+  assert.equal(new Set(view.steps.map((s) => s.subject)).size, 24, '件名が 24 通とも異なる');
+  // 1 通目は即時、以降は最小間隔（2 日）以上あける
+  assert.equal(view.steps[0].delayDays, 0);
+  assert.ok(view.steps.slice(1).every((s) => s.delayDays >= 2), '間隔が短すぎるステップがある');
   assert.ok(view.steps.every((s) => s.preheader), 'preheader が全ステップにある');
 });
 

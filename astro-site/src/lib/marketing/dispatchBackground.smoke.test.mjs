@@ -251,3 +251,81 @@ test('送信経路を二重に持たない（同期版の runDispatch を使う�
   assert.match(src, /runDispatch/, '同期版の送信経路を使っていない');
   assert.equal(/api\.sendgrid\.com/.test(src), false, '自前の送信経路を持っている');
 });
+
+// ── 鍵の維持（2026-08-15 の指摘）────────────────────────────────
+//
+// Background は最大 8 分動く。同期用の 300 秒 TTL を流用すると
+// 送信の途中で排他が切れ、別実行が同じジョブを取れてしまう。
+
+test('【重要】background は長い TTL で取り、チャンクごとに延長する', async () => {
+  const seen = [];
+  const store = new Map();
+  const base = makeFakeRedis(store);
+  const s = stub({
+    n: 30, perSendMs: 5_000,
+    redis: (args) => {
+      const op = String(args[0]).toUpperCase();
+      if (op === 'SET') seen.push({ op: 'acquire', ttl: Number(args[5]) });
+      if (op === 'EVAL' && String(args[1]).includes("redis.call('EXPIRE'")) {
+        seen.push({ op: 'renew', ttl: Number(args[5]) });
+      }
+      return base(args);
+    },
+  });
+  try {
+    await invoke({ jobId: JOB_ID, expectedWillSend: 30 });
+  } finally { s.restoreNow(); }
+
+  const acquire = seen.find((x) => x.op === 'acquire');
+  assert.ok(acquire, '鍵を取得していない');
+  assert.ok(acquire.ttl > 300, `TTL が ${acquire.ttl} 秒（同期用 300 秒を流用している）`);
+  const renews = seen.filter((x) => x.op === 'renew');
+  assert.ok(renews.length >= 1, 'チャンクごとに延長していない');
+  assert.ok(renews.every((r) => r.ttl === acquire.ttl), '延長の TTL が取得時と違う');
+});
+
+test('【重要】チャンクの途中で鍵を失ったら、以後 1 通も送らない', async () => {
+  const store = new Map();
+  const base = makeFakeRedis(store);
+  let renews = 0;
+  const s = stub({
+    n: 40, perSendMs: 5_000,
+    redis: (args) => {
+      const op = String(args[0]).toUpperCase();
+      // 2 回目の renew で奪われた状態にする
+      if (op === 'EVAL' && String(args[1]).includes("redis.call('EXPIRE'")) {
+        renews += 1;
+        if (renews >= 2) store.set(args[3], 'stolen-by-another-run');
+      }
+      return base(args);
+    },
+  });
+  try {
+    await invoke({ jobId: JOB_ID, expectedWillSend: 40 });
+  } finally { s.restoreNow(); }
+  // 1 チャンクぶんは送れているが、40 通すべては送っていない
+  assert.ok(s.calls.sendgridSend > 0, '1 通も送れていない（前提が崩れている）');
+  assert.ok(s.calls.sendgridSend < 40, `鍵を失ったのに ${s.calls.sendgridSend} 通送っている`);
+});
+
+test('【重要】鍵を失ったときは解放しない（他実行の鍵を消さない）', async () => {
+  const store = new Map();
+  const base = makeFakeRedis(store);
+  let renews = 0;
+  const s = stub({
+    n: 40, perSendMs: 5_000,
+    redis: (args) => {
+      const op = String(args[0]).toUpperCase();
+      if (op === 'EVAL' && String(args[1]).includes("redis.call('EXPIRE'")) {
+        renews += 1;
+        if (renews >= 2) store.set(args[3], 'another-run-token');
+      }
+      return base(args);
+    },
+  });
+  try {
+    await invoke({ jobId: JOB_ID, expectedWillSend: 40 });
+  } finally { s.restoreNow(); }
+  const key = `ak:marketing-dispatch:lock:${JOB_ID}`;
+  assert.equal(store.get(key), 'another-run-token', '他実行の鍵を消している');
+});

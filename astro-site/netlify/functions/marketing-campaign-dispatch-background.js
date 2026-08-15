@@ -31,7 +31,8 @@ import { runDispatch, resolveDispatchSecret } from './marketing-campaign-dispatc
 import { isMarketingDispatchEnabled } from '../../src/lib/marketing/marketingDispatchGate.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import {
-  createDispatchLock, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, DispatchLockError,
+  createDispatchLock, DISPATCH_LOCK_BACKGROUND_TTL_SEC, assertBackgroundTtlCovers,
+  LOCK_FAIL, DispatchLockError,
 } from '../../src/lib/marketing/dispatchLock.js';
 import { DEFAULT_BACKGROUND_BUDGET_MS } from '../../src/lib/marketing/sendBudget.js';
 
@@ -80,9 +81,22 @@ export const handler = async (event) => {
     log({ ok: false, error: LOCK_FAIL.UNAVAILABLE, jobId });
     return { statusCode: 202, body: '' };
   }
+  // ⚠️ **同期用の TTL を流用しない。** Background は最大 8 分動くので、
+  //    300 秒だと送信の途中で排他が切れ、別実行が同じジョブを取れてしまう。
+  //    起動前に「TTL が 予算 + 1 チャンク + 後片付け を覆っているか」を確かめる。
+  const ttlCheck = assertBackgroundTtlCovers({
+    ttlSec: DISPATCH_LOCK_BACKGROUND_TTL_SEC,
+    budgetMs: DEFAULT_BACKGROUND_BUDGET_MS,
+    chunkMs: CHUNK_BUDGET_MS,
+  });
+  if (!ttlCheck.ok) {
+    log({ ok: false, error: 'lock_ttl_too_short', needMs: ttlCheck.needMs, haveMs: ttlCheck.haveMs, jobId });
+    return { statusCode: 202, body: '' };
+  }
+
   let token = null;
   try {
-    const got = await lock.acquire({ jobId, ttlSec: DISPATCH_LOCK_TTL_SEC });
+    const got = await lock.acquire({ jobId, ttlSec: DISPATCH_LOCK_BACKGROUND_TTL_SEC });
     if (!got.ok) { log({ ok: false, error: LOCK_FAIL.BUSY, jobId }); return { statusCode: 202, body: '' }; }
     token = got.token;
   } catch (e) {
@@ -95,11 +109,22 @@ export const handler = async (event) => {
   let sent = 0;
   let failed = 0;
   let remaining = null;
+  let lockLost = false;
   try {
     // ② 予算内で送る → ③ 残りがあれば繰り返す
     while (chunks < MAX_CHUNKS) {
       if (Date.now() - startedAt > DEFAULT_BACKGROUND_BUDGET_MS) break;
       chunks += 1;
+      // 🛡️ **各チャンクの開始前に、鍵がまだ自分のものか確かめて延長する。**
+      //    失っていたら（TTL 切れ・奪取）**即停止し、以後 1 通も送らない**。
+      // eslint-disable-next-line no-await-in-loop
+      const held = await lock.renew({ jobId, token, ttlSec: DISPATCH_LOCK_BACKGROUND_TTL_SEC })
+        .catch((e) => ({ ok: false, reason: (e && e.code) || LOCK_FAIL.UNAVAILABLE }));
+      if (!held.ok) {
+        lockLost = true;
+        log({ ok: false, error: 'lock_lost', reason: held.reason, jobId, chunks, sent });
+        break;
+      }
       // eslint-disable-next-line no-await-in-loop -- チャンクは順に処理する
       const res = await runDispatch({
         KEY, BASE, SG, dryRun: false, jobIdFilter: jobId,
@@ -127,20 +152,26 @@ export const handler = async (event) => {
   } catch (e) {
     log({ ok: false, error: 'chunk_failed', detail: String((e && e.message) || 'unknown'), jobId, chunks });
   } finally {
-    // ④ 解放。**失敗しても送信結果は台帳が正本**なので、理由コードだけ残す
-    try {
-      const rel = await lock.release({ jobId, token });
-      if (!rel.ok) log({ ok: false, error: 'lock_release_failed', reason: rel.reason, jobId });
-    } catch (e) {
-      log({ ok: false, error: 'lock_release_failed', reason: (e && e.code) || LOCK_FAIL.UNAVAILABLE, jobId });
+    // ④ 解放。**失敗しても送信結果は台帳が正本**なので、理由コードだけ残す。
+    //    ⚠️ 鍵を失っている場合は解放しない（**他実行が取った鍵を消さない**）。
+    if (lockLost) {
+      log({ ok: false, error: 'lock_release_skipped', reason: 'not_owner', jobId });
+    } else {
+      try {
+        const rel = await lock.release({ jobId, token });
+        if (!rel.ok) log({ ok: false, error: 'lock_release_failed', reason: rel.reason, jobId });
+      } catch (e) {
+        log({ ok: false, error: 'lock_release_failed', reason: (e && e.code) || LOCK_FAIL.UNAVAILABLE, jobId });
+      }
     }
   }
 
   // ⚠️ アドレスは 1 つも出さない（件数と jobId だけ）
   log({
-    ok: true, jobId, chunks, sent, failed, remaining,
+    ok: !lockLost, jobId, chunks, sent, failed, remaining,
     elapsedMs: Date.now() - startedAt,
-    complete: remaining === 0,
+    complete: !lockLost && remaining === 0,
+    lockLost,
   });
   return { statusCode: 202, body: '' };
 };
