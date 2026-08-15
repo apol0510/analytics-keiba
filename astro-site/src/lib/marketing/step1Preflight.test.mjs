@@ -58,6 +58,9 @@ const okDuplicate = (over = {}) => ({
   linkedJobs: 0,
   linkedJobStatus: {},
   pendingLinkedJobs: 0,
+  // 配信行が欠けた orphan PENDING も見るため、ジョブ側からの突き合わせ結果を持つ
+  pendingOverlap: { jobs: 0, candidates: 0, sameStep: 0, otherStep: 0, unknownStep: 0 },
+  pendingCandidates: 0,
   ...over,
 });
 
@@ -143,7 +146,11 @@ test('【重要】同じ campaign の過去ジョブがあるだけでは止め�
 
 test('【重要】候補が送信待ちのジョブに載っていたら止まる（orphan PENDING の検知）', () => {
   const r = run({
-    duplicateCheck: okDuplicate({ linkedJobs: 1, linkedJobStatus: { PENDING: 1 }, pendingLinkedJobs: 1 }),
+    duplicateCheck: okDuplicate({
+      linkedJobs: 1, linkedJobStatus: { PENDING: 1 }, pendingLinkedJobs: 1,
+      pendingOverlap: { jobs: 1, candidates: 10, sameStep: 1, otherStep: 0, unknownStep: 0 },
+      pendingCandidates: 10,
+    }),
   });
   assert.equal(r.ok, false);
   assert.ok(failed(r).some((l) => l.includes('送信待ちのジョブに載っていない')));
@@ -402,7 +409,12 @@ test('【重要】同じ 10 名を無理に候補へ入れても、重複確認�
   st.trialGrant.barrier.outstandingStep1 = 10;
   const r = run({
     ...st,
-    duplicateCheck: okDuplicate({ alreadyDelivered: 10, byStatus: { queued: 10 }, linkedJobs: 1, linkedJobStatus: { PENDING: 1 }, pendingLinkedJobs: 1 }),
+    duplicateCheck: okDuplicate({
+      alreadyDelivered: 10, byStatus: { queued: 10 },
+      linkedJobs: 1, linkedJobStatus: { PENDING: 1 }, pendingLinkedJobs: 1,
+      pendingOverlap: { jobs: 1, candidates: 10, sameStep: 1, otherStep: 0, unknownStep: 0 },
+      pendingCandidates: 10,
+    }),
     expectRecipients: 10,
   });
   assert.equal(r.ok, false);
@@ -462,4 +474,25 @@ test('次のコホートでもゲート・関所の条件は同じように効�
   assert.equal(run({ ...st, jobs: productionLikeJobs({ dispatchEnabled: true }), expectRecipients: 100 }).ok, false);
   const c = { ...st, trialGrant: { ...st.trialGrant, barrier: { ...st.trialGrant.barrier, outstandingStep1: 42 } } };
   assert.equal(run({ ...c, expectRecipients: 100 }).ok, false);
+});
+
+test('【重要】配信行が無い orphan PENDING でも止まる（ジョブ側の Recipients で検知）', () => {
+  // CampaignDeliveries は空（alreadyDelivered=0 / linkedJobs=0）なのに、
+  // 送信待ちジョブの宛先に候補が載っている = 本当の orphan
+  const r = run({
+    duplicateCheck: okDuplicate({
+      alreadyDelivered: 0, byStatus: {}, linkedJobs: 0, linkedJobStatus: {}, pendingLinkedJobs: 0,
+      pendingOverlap: { jobs: 1, candidates: 4, sameStep: 1, otherStep: 0, unknownStep: 0 },
+      pendingCandidates: 4,
+    }),
+  });
+  assert.equal(r.ok, false, '配信行が無い orphan PENDING を見逃している');
+  const row = r.failures.find((f) => f.label.includes('配信行が無い場合も含む'));
+  assert.ok(row, JSON.stringify(failed(r)));
+  assert.match(row.detail, /候補=4 名/);
+});
+
+test('【重要】orphan 判定が取れないときは ok にしない', () => {
+  const r = run({ duplicateCheck: okDuplicate({ pendingCandidates: null }) });
+  assert.equal(r.ok, false, '不明を安全と読んでいる');
 });

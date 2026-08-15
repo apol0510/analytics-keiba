@@ -140,9 +140,23 @@ MARKETING_ADMIN_SECRET=… npm run preflight:light-trial-step1 -- --expect 100
 
 1. 宛先を `recordId` で名指し取得 → 各候補の `DeliveryKey` を計算
 2. **その鍵の配信行だけ**を名指し取得（台帳の大きさに依存しない）
-3. 候補に紐づくジョブの状態だけを確認（orphan PENDING の検知）
+3. 候補に紐づくジョブの状態だけを確認
+4. **送信待ちのジョブだけ**を引き（`AND({Status}='PENDING', <marketing 判定>)`）、
+   その `Recipients` を現在候補と突き合わせる
 
 を行い、**件数と状態の内訳だけ**を返す（アドレス・recordId・DeliveryKey は返さない）。
+
+> ⚠️ **4 が要る理由**: `CampaignDeliveries → ScheduledEmailJobId → ScheduledEmails` と
+> 辿るだけでは、**配信行が欠けているジョブ**が見えない。キュー登録は
+> 「ジョブ行を作る → 配信行を upsert」の順なので、途中で落ちると
+> **PENDING ジョブだけが残り配信行が無い**（＝本当の orphan）。見逃すと同じ人へ
+> 2 通目を積む。`PENDING` は「いま詰まっているキュー」なので件数が小さく、
+> campaign の全履歴走査にはならない。campaign / version の同一性を確認し、
+> step の同一性は**内容 hash**で見る。
+
+候補数の上限は `DUPLICATE_CHECK_MAX`（= `MAX_RECIPIENTS_PER_SEND`）。
+**判定と表示で同じ定数**を使い、応答に `limit` / `given` を返す。
+`recordIds` に重複があれば 400 で fail closed。
 
 止まる条件（critical。1 つでも落ちたら押さない）:
 
@@ -151,7 +165,8 @@ MARKETING_ADMIN_SECRET=… npm run preflight:light-trial-step1 -- --expect 100
 | 次のステップ | Step1 以外が来ている |
 | 人数 | `--expect` と不一致（**増えていても止める**）/ 0 名 / 上限で切り捨て |
 | **候補の重複** | `alreadyDelivered > 0`（その相手に既に queued/sent の鍵がある） |
-| **候補のジョブ** | `pendingLinkedJobs > 0`（候補が送信待ちジョブに載っている） |
+| **候補のジョブ** | `pendingCandidates > 0`（候補が送信待ちジョブに載っている。**配信行が無くても検知**） |
+| **配信行の整合** | `pendingLinkedJobs > 0`（配信行が送信待ちジョブを指している） |
 | **判定不能** | `unresolved > 0`（顧客が引けない／メールが無く鍵を作れない）/ 応答なし |
 | 進行 | `dueByStep[step] ≠ 対象数` / 検算が合わない |
 | 関所 | `outstandingStep1 ≠ 対象数` |
@@ -177,7 +192,8 @@ MARKETING_ADMIN_SECRET=… npm run preflight:light-trial-step1 -- --expect 100
 **キュー登録済み**（PENDING / 未送信）。この状態で preflight を走らせると
 「次が Step1 でない」「対象 0 名」で**正しく止まる**。
 仮に同じ 10 名を候補へ入れても、`duplicateCheck` が
-`alreadyDelivered=10` / `pendingLinkedJobs=1` を返して**必ず落ちる**。
+`alreadyDelivered=10` / `pendingCandidates=10` を返して**必ず落ちる**
+（配信行が消えていても、送信待ちジョブの `Recipients` 側で検知する）。
 一方、**まだ Step1 を出していない次のコホートには通る**
 （過去ジョブがあっても、`jobs` が窓で切られていても）。
 

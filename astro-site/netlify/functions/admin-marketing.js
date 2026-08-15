@@ -198,6 +198,7 @@ import {
   DELIVERY_CANCEL_WRITABLE_FIELDS,
   CANCEL_REJECT,
   summarizeCampaignRunsFromJobs,
+  parseJobCampaign,
 } from '../../src/lib/marketing/marketingJobs.js';
 import {
   buildCustomerDossier,
@@ -1284,8 +1285,22 @@ async function handleDuplicateCheck({ KEY, BASE, req }) {
 
   const recordIds = Array.isArray(req.recordIds) ? req.recordIds.map(String) : [];
   if (recordIds.length === 0) return json(400, { error: '対象が選択されていません', sideEffects: 'none' });
-  if (recordIds.length > MAX_RECIPIENTS_PER_SEND * 2) {
-    return json(400, { error: `選択が多すぎます（上限 ${MAX_RECIPIENTS_PER_SEND} 件）`, sideEffects: 'none' });
+  // ⚠️ 判定と表示で**同じ上限**を使う（閾値とメッセージがズレていると、
+  //    「上限 500 件」と言いながら 900 件を受け付ける、が起きる）
+  if (recordIds.length > DUPLICATE_CHECK_MAX) {
+    return json(400, {
+      error: `選択が多すぎます（上限 ${DUPLICATE_CHECK_MAX} 件）`,
+      limit: DUPLICATE_CHECK_MAX, given: recordIds.length, sideEffects: 'none',
+    });
+  }
+  // 重複した recordId は**受け付けない**。候補数と鍵の数がズレて
+  // 「判定できた」と誤認する余地を作らない
+  const uniqueIds = new Set(recordIds);
+  if (uniqueIds.size !== recordIds.length) {
+    return json(400, {
+      error: '対象に重複があります（重複したまま判定しません）',
+      duplicates: recordIds.length - uniqueIds.size, sideEffects: 'none',
+    });
   }
 
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
@@ -1304,13 +1319,14 @@ async function handleDuplicateCheck({ KEY, BASE, req }) {
   }
   const byId = new Map(customers.map((r) => [r.id, r]));
   const keys = [];
+  const candidateEmails = new Set();   // ⚠️ 応答にもログにも出さない（照合にだけ使う）
   let unresolved = 0;   // 顧客が引けない / メールが無い = 鍵を作れない
   for (const id of recordIds) {
     const email = String(((byId.get(id) || {}).fields || {}).Email || '').trim().toLowerCase();
     const key = email
       ? computeCampaignDeliveryKey({ campaign, recipientEmail: email, brand: BRAND, fromEmail })
       : null;
-    if (key) keys.push(key); else unresolved += 1;
+    if (key) { keys.push(key); candidateEmails.add(email); } else unresolved += 1;
   }
 
   // ② その鍵の配信行だけを名指しで引く（台帳の大きさに依存しない）
@@ -1361,6 +1377,53 @@ async function handleDuplicateCheck({ KEY, BASE, req }) {
     jobStatus[st] = (jobStatus[st] || 0) + 1;
   }
 
+  // ④ **本当の orphan PENDING** を捕まえる。
+  //
+  // ③ は `CampaignDeliveries → ScheduledEmailJobId → ScheduledEmails` と辿るので、
+  // **配信行が欠けている**ジョブは見えない。ところがキュー登録は
+  // 「ジョブ行を作る → 配信行を upsert する」の順なので、途中で落ちると
+  // **PENDING ジョブだけが残り配信行が無い**状態になる。これが本当の orphan で、
+  // 見逃すと同じ人へ 2 通目のジョブを積んでしまう。
+  //
+  // ジョブ側には宛先（`Recipients`）が入っているので、**送信待ちのジョブだけ**を
+  // 引いて候補と突き合わせる。`PENDING` は「いま詰まっているキュー」なので
+  // 件数は小さく、campaign の全履歴を走査することにはならない。
+  let pendingJobRecords = [];
+  try {
+    pendingJobRecords = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE,
+      filterByFormula: `AND({Status}='PENDING',${MARKETING_JOB_FORMULA})`,
+      maxPages: TARGETED_MAX_PAGES,
+      fields: ['JobId', 'Status', 'Recipients', 'TargetPlan', 'Notes'],
+    });
+  } catch (e) {
+    return json(500, {
+      error: '送信待ちジョブを取り切れなかったため、重複を判定しません。',
+      code: 'duplicate_pending_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+
+  const stepContentHash = computeCampaignContentHash(campaign);
+  const overlap = { jobs: 0, candidates: 0, sameStep: 0, otherStep: 0, unknownStep: 0 };
+  const overlapped = new Set();
+  for (const rec of pendingJobRecords) {
+    const f = (rec && rec.fields) || {};
+    const parsed = parseJobCampaign(f);
+    // campaign / version が違うジョブは対象外（別キャンペーンの滞留は別問題）
+    if (String(parsed.campaignId) !== String(campaign.campaignId)) continue;
+    if (String(parsed.version) !== String(campaign.version)) continue;
+    const hit = splitRecipients(f.Recipients).filter((e) => candidateEmails.has(e));
+    if (hit.length === 0) continue;
+    overlap.jobs += 1;
+    for (const e of hit) overlapped.add(e);
+    // step の同一性は**内容 hash**で見る（ステップごとに件名・本文が違うので hash も違う）
+    if (!parsed.contentHash) overlap.unknownStep += 1;
+    else if (stepContentHash.startsWith(parsed.contentHash)) overlap.sameStep += 1;
+    else overlap.otherStep += 1;
+  }
+  overlap.candidates = overlapped.size;
+
   return json(200, {
     mode: 'duplicate-check',
     sideEffects: 'none',
@@ -1379,9 +1442,31 @@ async function handleDuplicateCheck({ KEY, BASE, req }) {
     linkedJobs: linkedJobs.length,
     linkedJobStatus: jobStatus,
     pendingLinkedJobs: jobStatus.PENDING || 0,
+    /**
+     * **配信行が無くても**候補が送信待ちジョブに載っているか
+     * （`Recipients` 側から突き合わせた結果。本当の orphan PENDING を捕まえる）。
+     * `sameStep` / `otherStep` は内容 hash による step 同一性。
+     */
+    pendingOverlap: overlap,
+    /** 送信待ちジョブに載っている候補数（**0 でなければ送ってはいけない**） */
+    pendingCandidates: overlap.candidates,
     notice: 'いま選んでいる宛先ぶんだけを DeliveryKey で名指し確認しています'
       + '（campaign の過去実績は見ていません）。何も書き込んでいません。',
   });
+}
+
+/** 重複確認で受け付ける候補数の上限（**判定と表示で同じ値を使う**） */
+const DUPLICATE_CHECK_MAX = MAX_RECIPIENTS_PER_SEND;
+
+/**
+ * `ScheduledEmails.Recipients`（`a@x, b@y` 形式）を小文字のアドレス配列にする。
+ * ⚠️ 戻り値は**照合にだけ**使う。応答にもログにも出さない。
+ */
+function splitRecipients(value) {
+  return String(value ?? '')
+    .split(/[,;\n]/)
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /** 候補の DeliveryKey に一致する配信行だけを引く（名指し・fail closed） */

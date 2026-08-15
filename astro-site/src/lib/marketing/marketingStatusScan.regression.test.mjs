@@ -89,7 +89,10 @@ const scheduledRows = [{
  * `CampaignDeliveries` を絞り込み無し（= `{EmailType}='campaign'` だけ）で読みに来たら
  * 6,110 行 fixture をページングで返す（＝旧実装なら 40 ページで打ち切られる）。
  */
-function stubAirtable({ onFullScan } = {}) {
+let pendingRowsOverride = null;
+
+function stubAirtable({ onFullScan, pendingRows } = {}) {
+  pendingRowsOverride = pendingRows ?? null;
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
@@ -106,6 +109,8 @@ function stubAirtable({ onFullScan } = {}) {
 
     if (u.includes('/ScheduledEmails')) {
       if (!formula) throw new Error('ScheduledEmails を絞り込み無しで読んでいる');
+      // 送信待ちジョブの照会（orphan PENDING 検知）だけ別の集合を返せるようにする
+      if (/\{Status\}='PENDING'/.test(formula)) return ok({ records: pendingRowsOverride ?? scheduledRows });
       return ok({ records: scheduledRows });
     }
 
@@ -351,4 +356,107 @@ test('【重要】duplicateCheck は書き込みを 1 件も行わない', async
   });
   const writes = calls.filter((c) => ['PATCH', 'PUT', 'DELETE'].includes(c.method));
   assert.deepEqual(writes, [], '書き込んでいる');
+});
+
+// ── 本当の orphan PENDING（配信行が欠けている）──────────────────
+//
+// キュー登録は「ジョブ行を作る → 配信行を upsert」の順なので、途中で落ちると
+// **PENDING ジョブだけが残り配信行が無い**。`CampaignDeliveries → JobId` の
+// 経路では見えないので、ジョブ側の `Recipients` から突き合わせる。
+
+/** 候補を宛先に持つ PENDING ジョブ（ただし配信行は無い） */
+const orphanPendingJob = (emails) => ([{
+  id: 'recJOBORPHAN001',
+  fields: {
+    JobId: 'mkt-light-trial-to-premium-sequence-v1-orphan-1',
+    Status: 'PENDING',
+    Recipients: emails.join(', '),
+    TargetPlan: `campaign:${CAMPAIGN_ID}`,
+    CreatedBy: 'admin-marketing',
+    Notes: `marketing campaign ${CAMPAIGN_ID} v1`,
+  },
+}]);
+
+test('【重要】配信行が無い orphan PENDING を検知する', async () => {
+  // 配信行は 1 件も返さない（= CampaignDeliveries が欠けている状態）
+  globalThis.fetch = (() => {
+    const base = stubAirtable({ pendingRows: orphanPendingJob(PEOPLE.slice(0, 4).map((p) => p.email)) });
+    const inner = globalThis.fetch;
+    return async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/CampaignDeliveries')) return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      return inner(url, init);
+    };
+  })();
+  const { statusCode, body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  // 配信行経由では 0（＝旧実装では見逃していた）
+  assert.equal(body.alreadyDelivered, 0);
+  assert.equal(body.pendingLinkedJobs, 0);
+  // ジョブ側の突き合わせで検知できている
+  assert.equal(body.pendingCandidates, 4, '本当の orphan PENDING を見逃している');
+  assert.equal(body.pendingOverlap.jobs, 1);
+});
+
+test('【重要】orphan 検知でも PII を返さない', async () => {
+  globalThis.fetch = (() => {
+    const base = stubAirtable({ pendingRows: orphanPendingJob(PEOPLE.map((p) => p.email)) });
+    const inner = globalThis.fetch;
+    return async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/CampaignDeliveries')) return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      return inner(url, init);
+    };
+  })();
+  const { body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  const dump = JSON.stringify(body);
+  assert.equal(/@example\.com/.test(dump), false, 'アドレスが出ている');
+  assert.equal(/recCUST|recJOB/.test(dump), false, 'recordId / ジョブ recordId が出ている');
+});
+
+test('別キャンペーン・別 version の PENDING は候補を止めない', async () => {
+  const other = orphanPendingJob(PEOPLE.map((p) => p.email));
+  other[0].fields.TargetPlan = 'campaign:dormant-reactivation';
+  other[0].fields.Notes = 'marketing campaign dormant-reactivation v2';
+  globalThis.fetch = (() => {
+    stubAirtable({ pendingRows: other });
+    const inner = globalThis.fetch;
+    return async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/CampaignDeliveries')) return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      return inner(url, init);
+    };
+  })();
+  const { body } = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: PEOPLE.map((p) => p.id),
+  });
+  assert.equal(body.pendingCandidates, 0, '別キャンペーンの滞留で止めている');
+});
+
+test('【重要】duplicateCheck は候補の重複・上限を fail closed で弾く', async () => {
+  stubAirtable();
+  const dup = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: ['recA', 'recA', 'recB'],
+  });
+  assert.equal(dup.statusCode, 400);
+  assert.match(String(dup.body.error || ''), /重複/);
+  assert.equal(dup.body.duplicates, 1);
+
+  const over = await invoke({
+    action: 'duplicateCheck', campaignId: CAMPAIGN_ID, step: 1,
+    recordIds: Array.from({ length: 501 }, (_, i) => `rec${i}`),
+  });
+  assert.equal(over.statusCode, 400);
+  // 判定に使った上限と、表示している上限が一致していること
+  assert.equal(over.body.limit, 500);
+  assert.match(String(over.body.error || ''), new RegExp(`上限 ${over.body.limit} 件`));
+  assert.equal(over.body.given, 501);
 });

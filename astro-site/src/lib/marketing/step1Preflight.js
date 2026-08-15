@@ -7,11 +7,16 @@
  * そのため「いま押してよいか」を**人の記憶ではなく機械で**固定する。
  *
  * ── なぜ判定を作り直さないのか ────────────────────────────────
- * 対象人数・停止理由・関所の残件は **`admin-marketing` の read-only アクション**
- * （`sequence` / `trialGrant` / `jobs`）が既に単一源として計算している。
+ * 対象人数・停止理由・関所の残件・候補の重複は **`admin-marketing` の read-only アクション**
+ * （`sequence` / `duplicateCheck` / `trialGrant` / `jobs`）が既に単一源として計算している。
  * ここで Airtable を読み直して独自に数え直すと、**画面の人数と preflight の人数がズレる**
  * （それは 2026-08-13 に実際に起きた 4,000 件打ち切り事故と同じ構図）。
- * so: このモジュールは **サーバーの答えを検算するだけ**で、母集団を自分では作らない。
+ * このモジュールは **サーバーの答えを検算するだけ**で、母集団を自分では作らない。
+ *
+ * ── 重複判定は campaign 単位ではなく cohort 単位 ──────────────────
+ * 「この campaign を過去に流したか」で止めると、1 回流した時点で二度と通らない。
+ * 見るのは「**いま選んでいる相手に、その通が既に出ているか**」＝ `DeliveryKey`。
+ * 過去コホートの実績（`sentByStep` / 過去ジョブ）は **info** に留める。
  *
  * ── 絶対にしないこと ──────────────────────────────────────
  * - 送信・キュー登録・Airtable への write（このファイルは I/O を一切持たない）
@@ -175,9 +180,21 @@ export function evaluateStep1Preflight({
     critical(num(dup.alreadyDelivered) === 0,
       'この候補にその通はまだ出ていない',
       `既に queued/sent の候補=${num(dup.alreadyDelivered)} 名 / 内訳=${JSON.stringify(dup.byStatus || {})}`);
-    // 候補が既に送信待ちのジョブへ載っていないか（orphan PENDING の検知）
+    // 候補が既に送信待ちのジョブへ載っていないか。
+    // ⚠️ 配信行が欠けた **本当の orphan PENDING** は
+    //    `CampaignDeliveries → JobId` の経路では見えない。
+    //    ジョブ側の `Recipients` と突き合わせた `pendingCandidates` が正。
+    const pendingCandidates = num(dup.pendingCandidates);
+    critical(pendingCandidates === 0,
+      '候補が送信待ちのジョブに載っていない（配信行が無い場合も含む）',
+      `送信待ちジョブに載っている候補=${pendingCandidates === null ? '(不明)' : pendingCandidates} 名`
+      + ` / 該当ジョブ=${num((dup.pendingOverlap || {}).jobs)} 件`
+      + ` / step 一致=${num((dup.pendingOverlap || {}).sameStep)}`
+      + ` 別step=${num((dup.pendingOverlap || {}).otherStep)}`
+      + ` 不明=${num((dup.pendingOverlap || {}).unknownStep)}`);
+    // 配信行経由でも同じことを見る（片方だけ壊れたときに気付ける）
     critical(num(dup.pendingLinkedJobs) === 0,
-      '候補が送信待ちのジョブに載っていない',
+      '候補の配信行が送信待ちジョブを指していない',
       `候補に紐づく PENDING ジョブ=${num(dup.pendingLinkedJobs)} 件 / 内訳=${JSON.stringify(dup.linkedJobStatus || {})}`);
   }
 
