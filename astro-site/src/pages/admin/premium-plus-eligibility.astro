@@ -7766,6 +7766,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
       const sec = document.createElement('div'); sec.className = 'dt-sec';
       const h = document.createElement('h3'); h.textContent = '② ジョブ一覧（新しい順）'; sec.appendChild(h);
+      // 全部は出さない。**何件中何件かを必ず出す**（黙って切ると「これで全部」と読まれる）
+      if (data.jobsTruncated) {
+        const t = document.createElement('p'); t.className = 'tl-note';
+        t.textContent = `⚠️ 新しい ${data.jobsShown} 件を表示しています（全 ${data.jobsTotal} 件）。`
+          + '古いジョブは省略しました。';
+        sec.appendChild(t);
+      }
       if (!data.jobs.length) {
         const p = document.createElement('p'); p.className = 'tl-note'; p.textContent = 'キャンペーンジョブはまだありません。';
         sec.appendChild(p);
