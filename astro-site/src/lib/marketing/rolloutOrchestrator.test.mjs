@@ -15,7 +15,9 @@ import {
   tickRollout, planQueueAfterGrant, settleTick, describeTick,
   TICK_ACTION, TICK_BLOCK,
 } from './rolloutOrchestrator.js';
-import { defaultRolloutState, ROLLOUT_STAGE, ROLLOUT_BLOCK, jstDay } from './rolloutPlan.js';
+import {
+  defaultRolloutState, ROLLOUT_STAGE, ROLLOUT_BLOCK, jstDay, resolveDailyLimit,
+} from './rolloutPlan.js';
 
 const NOW = Date.parse('2026-08-16T00:00:00Z');
 const DAY = 24 * 3600_000;
@@ -310,4 +312,73 @@ test('describeTick は件数と理由だけを返す（PII なし）', () => {
   assert.equal(d.count, 100);
   assert.equal(d.stage, ROLLOUT_STAGE.STEADY);
   assert.equal(JSON.stringify(d).includes('@'), false);
+});
+
+// ── one-shot（当日だけ武装）────────────────────────────────────
+//    100 名カナリアは「1 回だけ配って、結果を見るまで次を配らない」。
+//    そのため `alwaysArmed: false` + `armedFor: <当日>` で始める。
+//    ⚠️ このとき**積み残し（queue / 送信）まで止めてはいけない**。
+//       止めると、付与だけされて案内が届かない人が残る。
+
+const oneShot = (nowMs) => ({
+  ...defaultRolloutState(),
+  stage: ROLLOUT_STAGE.CANARY,
+  dailyLimit: 100,
+  alwaysArmed: false,
+  armedFor: jstDay(nowMs),
+});
+
+test('【重要】one-shot: 武装した当日は配る', () => {
+  const state = oneShot(NOW);
+  const r = tickRollout({ state, nowMs: NOW, envEnabled: true, facts: facts(), env: ENV_OPEN });
+  assert.equal(r.action, TICK_ACTION.GRANT);
+  assert.equal(r.count, 100, 'dailyLimit が stage 既定（canary=10）を上書きしていない');
+});
+
+test('【重要】one-shot: 翌日は新規付与を止める（自動で次バッチへ進まない）', () => {
+  const state = oneShot(NOW);
+  const r = tickRollout({ state, nowMs: NOW + DAY, envEnabled: false, facts: facts(), env: ENV_OPEN });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.PAUSED);
+});
+
+test('【重要】one-shot: 武装が切れても queue の積み残しは進む', () => {
+  const state = oneShot(NOW);
+  const r = tickRollout({
+    state, nowMs: NOW + DAY, envEnabled: false,
+    facts: facts({ grantedPendingQueue: 100 }), env: ENV_OPEN,
+  });
+  assert.equal(r.action, TICK_ACTION.QUEUE, '付与した人への案内が止まっている');
+  assert.equal(r.count, 100);
+});
+
+test('【重要】one-shot: 武装が切れても送信待ちジョブは流す（何日経っても）', () => {
+  const state = oneShot(NOW);
+  for (const days of [1, 3, 30]) {
+    const r = tickRollout({
+      state, nowMs: NOW + days * DAY, envEnabled: false,
+      facts: facts({ pendingJobs: 1 }), env: ENV_OPEN,
+    });
+    assert.equal(r.action, TICK_ACTION.DISPATCH, `${days} 日後に送信が止まっている`);
+  }
+});
+
+test('【重要】one-shot: 武装が切れても期日の follow-up は進む', () => {
+  const state = oneShot(NOW);
+  const r = tickRollout({
+    state, nowMs: NOW + 10 * DAY, envEnabled: false,
+    facts: facts({ followUpStep: 2, followUpDue: 40 }), env: ENV_OPEN,
+  });
+  assert.equal(r.action, TICK_ACTION.FOLLOW_UP, '続きの通が止まっている');
+});
+
+test('stage は実装が持つ 5 値のみ（画面・runbook が勝手な値を使わない）', () => {
+  assert.deepEqual(Object.values(ROLLOUT_STAGE), ['paused', 'canary', 'steady', 'scale', 'completed']);
+});
+
+test('【重要】dailyLimit は stage 既定を上書きする（canary でも 100 名にできる）', () => {
+  assert.equal(resolveDailyLimit({ ...defaultRolloutState(), stage: ROLLOUT_STAGE.CANARY }), 10);
+  assert.equal(resolveDailyLimit({ ...defaultRolloutState(), stage: ROLLOUT_STAGE.CANARY, dailyLimit: 100 }), 100);
+  // 拡大は stage=scale（既定 500）
+  assert.equal(resolveDailyLimit({ ...defaultRolloutState(), stage: ROLLOUT_STAGE.SCALE }), 500);
 });

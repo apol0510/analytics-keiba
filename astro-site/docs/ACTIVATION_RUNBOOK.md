@@ -37,30 +37,87 @@
 鍵: `ak:marketing-rollout:state:light-trial-to-premium-sequence`
 （道のり単位。キャンペーンが 2 本でも状態は 1 つ）
 
-| 項目 | 予定値 | 意味 |
+### stage に使える値は 5 つだけ
+
+`rolloutPlan.js` の `ROLLOUT_STAGE` が正本。**これ以外の値は書かない**
+（正規化で `paused` に倒れ、意図せず止まる）。
+
+| stage | 1 日あたりの既定 |
+|---|---|
+| `paused` | 0（既定） |
+| `canary` | 10 |
+| `steady` | 100 |
+| `scale` | 500 |
+| `completed` | 0 |
+
+⚠️ `canary10` / `steady100` のような値は**存在しない**。
+
+### 100 名カナリアの開始値（one-shot）
+
+| 項目 | 値 | 意味 |
 |---|---|---|
-| `stage` | `canary10` → 確認後 `steady100` | 段階。カナリアは 10、その後 100/日 |
-| `dailyLimit` | `100` | 1 日あたりの付与上限（`HARD_DAILY_MAX = 2000` で頭打ち） |
-| `killed` | `false` | 緊急停止（`true` で次の tick から全停止） |
-| `alwaysArmed` | `true` | 日次の武装を自動化（env の日付書き換えを不要にする） |
-| `armedFor` | `null` | `alwaysArmed` を使うので未使用 |
-| `pendingHandoffOp` | `null` | 付与後の引き継ぎ（自動で入る） |
-| `pendingJobIds` / `jobSteps` / `dispatchWatch` | 空 | 実行中に自動で埋まる |
-| `note` | `activation canary 2026-08-xx` | 誰が何のために開始したか |
+| `stage` | **`canary`** | 経路を確かめる段階 |
+| `dailyLimit` | **`100`** | **stage 既定（canary = 10）を上書きして 100 名にする** |
+| `killed` | `false` | 緊急停止は入れない |
+| `alwaysArmed` | **`false`** | **1 回だけ**。翌日に自動で次バッチへ進ませない |
+| `armedFor` | **`<実行日の JST 日付 YYYY-MM-DD>`** | この日だけ新規付与を許可する |
+| `note` | `activation canary 100 (one-shot)` | 誰が何のために開始したか |
+| `pendingHandoffOp` / `pendingJobIds` / `jobSteps` / `dispatchWatch` | 空 | 実行中に自動で埋まる |
+
+**「canary だから 10 名」ではない。** 人数を決めるのは `dailyLimit` で、
+`resolveDailyLimit()` が `dailyLimit`（指定があればそれ）> stage 既定 の順に解決し、
+`HARD_DAILY_MAX = 2000` で頭打ちにする。したがって `stage: canary` + `dailyLimit: 100` = **100 名**。
 
 **CAS 前提値**: 現在キーは**存在しない**（`action=rollout` が `metricsPartial: not_initialized`）。
-初回書き込みは `expectedVersion: null`（新規作成）で行う。
+初回書き込みは `expectedVersion: null`（新規作成）。
 既にキーがある場合は `load()` が返した `state.version` をそのまま渡す。**版が違えば書かない**。
+
+### one-shot は「新規付与だけ」を止める（実装で確認済み）
+
+`armedFor` が切れた翌日以降も、**付与済みの人の queue と送信は最後まで進む**。
+止まるのは新規付与だけ。テストで固定している:
+
+| 確認 | テスト |
+|---|---|
+| 武装した当日は `dailyLimit` ぶん配る（canary でも 100） | `rolloutOrchestrator.test.mjs` |
+| 翌日は新規付与を止める（`paused`） | 同上 |
+| 武装が切れても queue の積み残しは進む | 同上 |
+| 武装が切れても送信待ちジョブは流す（1 / 3 / 30 日後） | 同上 |
+| 武装が切れても期日の follow-up は進む | 同上 |
+| **実 I/O**: 当日 queue → 翌日以降に送信完了（二重送信 0） | `rolloutJourney.integration.test.mjs` |
+| **実 I/O**: 送信が途中で切れても翌日に残りだけ送る | 同上 |
+| **実 I/O**: 翌日以降に新規付与が自動で始まらない | 同上 |
+
+つまり**最小修正は不要**だった（`envEnabled` は新規付与の判定にしか使われていない）。
+
+### 100 名が片付いたあとの停止（**自動で次バッチへ進ませない**）
+
+`armedFor` は翌日に自然と切れるので、放置しても次の 100 名は始まらない。
+そのうえで結果確認が終わるまで、**明示的に止めた状態**にしておく:
+
+- `stage: 'paused'`（推奨。積み残しの queue / 送信は引き続き処理される）
+- 異常があった場合は `killed: true`（次 tick から全停止）
+
+### 500 名へ拡大する場合（**別承認が必要**）
+
+100 名の成功条件（§4）を満たしたうえで、改めて承認を得てから:
+
+```
+stage: 'scale'
+dailyLimit: 500
+alwaysArmed: false      # 継続運用に切り替える判断がつくまでは one-shot のまま
+armedFor: <実行日の JST 日付>
+```
 
 **rollback 時の状態**:
 
 | やり方 | 効き方 | 使う場面 |
 |---|---|---|
-| 管理画面から `killed: true`（`store.kill()`） | **次の tick から停止**（redeploy 不要・数分） | 想定外の挙動をすぐ止めたい |
+| `killed: true`（`store.kill()`） | **次の tick から停止**（redeploy 不要・数分） | 想定外の挙動をすぐ止めたい |
 | `stage: 'paused'` / `dailyLimit: 0` | 新規付与だけ止め、積んだぶんは送る | 付与ペースだけ落としたい |
-| env を UNSET（`MARKETING_ROLLOUT_ENABLED` 他） + redeploy | 完全停止（数分〜十数分） | 恒久的に閉じる |
+| env を UNSET + redeploy | 完全停止（数分〜十数分） | 恒久的に閉じる |
 
-⚠️ **kill switch は「送信途中のジョブ」を取り消さない**（送信中のバッチは走り切る）。
+⚠️ **kill switch は「送信中のジョブ」を取り消さない**（走り切る）。
 即時に送信も止めるなら `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy。
 
 ---
@@ -136,14 +193,18 @@ netlify env:set MARKETING_ROLLOUT_ENABLED true --context production --force   # 
 Build Hook を 1 回叩き、`origin/main` を production build する。
 **deploy 完了まで自動運転は動かない**（env が読めないため）。
 
-### Step 3. Redis rollout state を開始（CAS 新規作成）
+### Step 3. Redis rollout state を開始（CAS 新規作成 / one-shot）
 
-`stage: canary10` / `dailyLimit: 100` / `alwaysArmed: true` / `killed: false` /
-`expectedVersion: null` で作成 → `action=rollout` で `canProceed: true` を確認。
+`stage: 'canary'` / `dailyLimit: 100` / `killed: false` / **`alwaysArmed: false`** /
+**`armedFor: <実行日の JST 日付>`** / `expectedVersion: null` で作成
+→ `action=rollout` で `canProceed: true` と `dailyLimit: 100` を確認。
+
+⚠️ `alwaysArmed: true` にしない。**翌日に次の 100 名が自動で始まってしまう**。
 
 ### Step 4. 付与（自動 / cron が 1 tick で実行）
 
-cron は 1 時間ごと。`stage` の上限まで付与する。
+cron は 1 時間ごと。**`dailyLimit`（= 100）まで**付与する（`stage` の既定ではない）。
+`armedFor` の当日なので 1 回だけ走り、翌日以降は新規付与を行わない。
 手動で先に進めたい場合も**新しい経路を作らない**（cron を待つ）。
 
 ### Step 5. queue（自動 / 次の tick）
@@ -160,12 +221,14 @@ cron は 1 時間ごと。`stage` の上限まで付与する。
 `action=jobs` … `counts.sent` / `failed` / `skipped`、
 `action=sequence` … `sentByStep`、`action=rollout` … 進行と現在の touch。
 
-### Step 8. gate 再閉鎖 / kill switch の確認
+### Step 8. 停止（結果確認まで次バッチへ進ませない）
 
-カナリアの結果を確認するまで、次のバッチを走らせたくない場合:
+`armedFor` は翌日に切れるので次バッチは自動では始まらないが、**明示的に止めておく**:
 
-- **すぐ止める**: 管理画面から `killed: true`（次 tick から停止・redeploy 不要）
-- **恒久的に閉じる**: env を UNSET して redeploy
+- 正常時: `stage: 'paused'` にする（積み残しの queue / 送信は引き続き処理される）
+- 異常時: `killed: true`（次 tick から全停止）、必要なら env を UNSET + redeploy
+
+そのうえで §4 の成功条件を read-only で確認する。**500 名へ進むには別承認が必要。**
 
 ---
 
@@ -188,4 +251,4 @@ cron は 1 時間ごと。`stage` の上限まで付与する。
 - production marketing gate の ON
 - Redis rollout state の本番開始設定
 - 100 名への実付与 / 実メール送信
-- 500 名以降への拡大（100 名の成功条件を満たしてから）
+- 500 名以降への拡大（100 名の成功条件を満たし、**別承認を得てから** `stage: 'scale'` / `dailyLimit: 500`）

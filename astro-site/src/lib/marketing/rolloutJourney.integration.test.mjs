@@ -76,7 +76,7 @@ function makePeople(n = 5, grantedAt = START - DAY, grantDays = 30) {
  * 世界を用意して cron を回せる形にする。
  * 返す `tick(nowMs)` が 1 回ぶんの自動運転。
  */
-async function boot({ people = makePeople() } = {}) {
+async function boot({ people = makePeople(), state: stateOverride = null } = {}) {
   const world = createWorld({ people });
   const originalFetch = globalThis.fetch;
   const originalEnv = { ...process.env };
@@ -109,7 +109,10 @@ async function boot({ people = makePeople() } = {}) {
   const cur = await store.load(CAMPAIGN_ID);
   await store.save({
     campaignId: CAMPAIGN_ID,
-    state: { ...cur.state, stage: ROLLOUT_STAGE.STEADY, alwaysArmed: true, dailyLimit: 100 },
+    state: {
+      ...cur.state, stage: ROLLOUT_STAGE.STEADY, alwaysArmed: true, dailyLimit: 100,
+      ...(stateOverride || {}),
+    },
     expectedVersion: null,
   });
 
@@ -520,6 +523,87 @@ test('【重要】フェーズ移行は毎 tick 導出（handoff の記録を二
     for (const p of world.tables.Customers) {
       const mine = touchesFor(world, p.fields.Email);
       assert.equal(new Set(mine).size, mine.length, '同じ通し番号を二度送っている');
+    }
+  } finally { restore(); }
+});
+
+test('【重要】one-shot: 武装が切れた翌日でも、積み残しの送信は完了する', async () => {
+  // 100 名カナリアの形: `alwaysArmed: false` + `armedFor: <当日>`。
+  // ⚠️ **当日のうちに片付かなかったぶん**（queue 済みで未送信）が、
+  //    翌日以降に処理されることを確かめる。ここが止まると、
+  //    付与だけされて案内が届かない人が残る。
+  const { jstDay } = await import('./rolloutPlan.js');
+  const { world, tick, restore } = await boot({
+    people: makePeople(5, START - DAY, 30),
+    state: {
+      stage: ROLLOUT_STAGE.CANARY, dailyLimit: 100, alwaysArmed: false, armedFor: jstDay(START),
+    },
+  });
+  try {
+    // 当日は **queue まで**（1 tick だけ回して、送信を翌日へ持ち越す）
+    await tick(START);
+    assert.ok(world.jobs().length >= 1, '当日にキュー登録できていない');
+    assert.equal(world.sent.length, 0, 'この tick で送信まで進んでいる（前提が崩れている）');
+
+    // 翌日以降（**武装は切れている**）: 送信が完了する
+    for (let d = 1; d <= 3; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    assert.equal(world.sent.length, 5, `武装切れで送信が止まっている（${world.sent.length} 通）`);
+    assert.ok(sentSteps(world).includes(1), '1 通目が届いていない');
+
+    // 二重送信ゼロ
+    const pairs = world.sent.map((x) => `${x.to}|${x.subject}`);
+    assert.equal(new Set(pairs).size, pairs.length, '二重送信が起きている');
+  } finally { restore(); }
+});
+
+test('【重要】one-shot: 送信が途中で切れても、翌日以降に残りだけ送る', async () => {
+  const { jstDay } = await import('./rolloutPlan.js');
+  const { world, tick, restore } = await boot({
+    people: makePeople(5, START - DAY, 30),
+    state: {
+      stage: ROLLOUT_STAGE.CANARY, dailyLimit: 100, alwaysArmed: false, armedFor: jstDay(START),
+    },
+  });
+  try {
+    world.limitSends(2);                    // 当日は 2 通で詰まる
+    await runDay(tick, START, 3);
+    const firstRound = world.sent.length;
+    assert.ok(firstRound <= 2, `詰まったのに ${firstRound} 通送っている`);
+
+    world.clearSendLimit();                 // 送信基盤が回復（翌日・武装は切れている）
+    for (let d = 1; d <= 3; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    assert.equal(world.sent.length, 5, `残りが送られていない（${world.sent.length} 通）`);
+    const pairs = world.sent.map((x) => `${x.to}|${x.subject}`);
+    assert.equal(new Set(pairs).size, pairs.length, '再開で二重送信が起きている');
+  } finally { restore(); }
+});
+
+test('【重要】one-shot の翌日以降、新規付与は自動で始まらない', async () => {
+  const { jstDay } = await import('./rolloutPlan.js');
+  const cron = await import('../../../netlify/functions/cron-marketing-rollout.js');
+  const { world, tick, restore } = await boot({
+    people: makePeople(3, START - DAY, 30),
+    state: {
+      stage: ROLLOUT_STAGE.CANARY, dailyLimit: 100, alwaysArmed: false, armedFor: jstDay(START),
+    },
+  });
+  try {
+    // 積み残しを片付けきる
+    for (let d = 0; d <= 3; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await runDay(tick, START + d * DAY);
+    }
+    // 翌日以降の tick で `grant` が選ばれないこと（= 次の 100 名が自動で始まらない）
+    for (let d = 4; d <= 10; d += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await cron.runRolloutTick({ env: process.env, now: START + d * DAY });
+      assert.notEqual(r.action, 'grant', `${d} 日目に自動で付与が始まっている`);
     }
   } finally { restore(); }
 });
