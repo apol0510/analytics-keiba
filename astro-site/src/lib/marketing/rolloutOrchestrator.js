@@ -72,6 +72,18 @@ const num = (v) => {
  * @returns {{action: string, reason?: string, count?: number, plan?: object}}
  */
 export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
+  // ── ⓪ 緊急停止（**他のすべてに優先する**）────────────────────────
+  //    ⚠️ ここを 4 番目（新規付与の判定）に置くと、`killed: true` にしても
+  //       送信・キュー登録・続きの通が進んでしまう。
+  //       「kill switch = 次の tick から自動処理を全部止める」という運用上の契約と
+  //       食い違うので、**事実を数える前に**最初に見る。
+  //    ⚠️ 既に起動済みの Background 送信は取り消せない（走り切る）。
+  //       送信経路そのものを閉じる最終手段は `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を外すこと。
+  const s = normalizeRolloutState(state);
+  if (s.killed === true) {
+    return { action: TICK_ACTION.SKIP, reason: ROLLOUT_BLOCK.KILLED };
+  }
+
   const f = facts && typeof facts === 'object' ? facts : {};
   const remaining = num(f.remainingCandidates);
   const pendingQueue = num(f.grantedPendingQueue);

@@ -382,3 +382,81 @@ test('【重要】dailyLimit は stage 既定を上書きする（canary でも 
   // 拡大は stage=scale（既定 500）
   assert.equal(resolveDailyLimit({ ...defaultRolloutState(), stage: ROLLOUT_STAGE.SCALE }), 500);
 });
+
+// ── kill switch は全アクションに優先する ──────────────────────
+//    ⚠️ 以前は「新規付与」の判定でしか killed を見ておらず、
+//       `killed: true` にしても送信・キュー登録・続きの通が進んでいた
+//       （runbook の「次 tick から緊急停止」という契約と食い違っていた）。
+
+const killedState = (over = {}) => ({
+  ...defaultRolloutState(),
+  stage: ROLLOUT_STAGE.STEADY,
+  dailyLimit: 100,
+  alwaysArmed: true,
+  killed: true,
+  ...over,
+});
+
+test('【重要】kill switch: 送信待ちジョブがあっても送信を起動しない', () => {
+  const r = tick({ state: killedState(), facts: facts({ pendingJobs: 3 }) });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED);
+});
+
+test('【重要】kill switch: queue の積み残しがあってもキュー登録しない', () => {
+  const r = tick({ state: killedState(), facts: facts({ grantedPendingQueue: 100 }) });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED);
+});
+
+test('【重要】kill switch: 期日の follow-up（touch2〜24）も積まない', () => {
+  const r = tick({ state: killedState(), facts: facts({ followUpStep: 7, followUpDue: 42 }) });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED);
+});
+
+test('【重要】kill switch: 新規付与もしない', () => {
+  const r = tick({ state: killedState(), facts: facts({ remainingCandidates: 14479 }) });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED);
+});
+
+test('【重要】kill switch: 全部同時に積まれていても 1 つも実行しない', () => {
+  const r = tick({
+    state: killedState(),
+    facts: facts({ pendingJobs: 3, grantedPendingQueue: 100, followUpStep: 7, followUpDue: 42 }),
+  });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED);
+});
+
+test('【重要】kill switch: 事実が読めない状態でも止まる（判定より先に効く）', () => {
+  const r = tick({ state: killedState(), facts: facts({ pendingJobs: null, grantedPendingQueue: null }) });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED, '事実不明が理由になっている（kill が後回し）');
+});
+
+test('【重要】kill switch: env が全部開いていても止まる', () => {
+  const r = tickRollout({
+    state: killedState(), nowMs: NOW, envEnabled: true,
+    facts: facts({ pendingJobs: 1 }), env: ENV_OPEN,
+  });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.KILLED);
+});
+
+test('【重要】stage=paused は従来どおり「新規付与だけ」停止（積み残しは進む）', () => {
+  const paused = { ...defaultRolloutState(), stage: 'paused', alwaysArmed: true };
+  assert.equal(tick({ state: paused, facts: facts({ pendingJobs: 2 }) }).action, TICK_ACTION.DISPATCH);
+  assert.equal(tick({ state: paused, facts: facts({ grantedPendingQueue: 5 }) }).action, TICK_ACTION.QUEUE);
+  assert.equal(tick({ state: paused, facts: facts({ followUpStep: 3, followUpDue: 9 }) }).action, TICK_ACTION.FOLLOW_UP);
+  // 新規付与だけは止まる
+  assert.equal(tick({ state: paused }).action, TICK_ACTION.SKIP);
+});
+
+test('killed=false なら従来どおり動く（one-shot の挙動を壊していない）', () => {
+  const alive = { ...killedState(), killed: false };
+  assert.equal(tick({ state: alive, facts: facts({ pendingJobs: 1 }) }).action, TICK_ACTION.DISPATCH);
+  assert.equal(tick({ state: alive, facts: facts({ grantedPendingQueue: 5 }) }).action, TICK_ACTION.QUEUE);
+  assert.equal(tick({ state: alive }).action, TICK_ACTION.GRANT);
+});

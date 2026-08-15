@@ -41,7 +41,7 @@ import {
 import {
   createRolloutStore, isRolloutEnabled, RolloutStoreError,
 } from '../../src/lib/marketing/rolloutStore.js';
-import { normalizeRolloutState, jstDay } from '../../src/lib/marketing/rolloutPlan.js';
+import { normalizeRolloutState, jstDay, ROLLOUT_BLOCK } from '../../src/lib/marketing/rolloutPlan.js';
 import { createRolloutMetrics } from '../../src/lib/marketing/rolloutMetrics.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
@@ -424,6 +424,26 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     return { ok: false, abort: 'state_unreadable', code, sideEffects: 'none' };
   }
   const state = normalizeRolloutState(loaded.state);
+
+  // ── 緊急停止（**読み込んだ直後に見る**）────────────────────────
+  //    ⚠️ 事実の収集より前に返す。ここから先は集計の書き込み（Redis）や
+  //       送信の起動が混ざるので、`killed` のときは**何も書かずに戻る**。
+  //    ⚠️ 既に起動済みの Background 送信は取り消せない（走り切る）。
+  //       送信経路そのものを閉じる最終手段は
+  //       `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を外して redeploy すること。
+  if (state.killed === true) {
+    const killed = {
+      ok: true,
+      action: TICK_ACTION.SKIP,
+      reason: ROLLOUT_BLOCK.KILLED,
+      campaignId: ROLLOUT_CAMPAIGN_ID,
+      sideEffects: 'none',
+      notice: '緊急停止中です。付与・キュー登録・送信起動をすべて行いません'
+        + '（起動済みの送信は走り切ることがあります）。',
+    };
+    log(killed);
+    return killed;
+  }
 
   // ── 事実を数える ──────────────────────────────────────────
   const grantGates = readAutoGrantGates(armEnvForTick(env, state, now), now);
