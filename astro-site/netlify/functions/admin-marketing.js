@@ -93,7 +93,6 @@ import {
   chunkRecipients,
   computeCampaignDeliveryKey,
   summarizeHistory,
-  summarizeCampaignRuns,
   computePlanFingerprint,
   computeCampaignContentHash,
   assertOnlyDeliveryFields,
@@ -198,6 +197,7 @@ import {
   JOB_CANCEL_WRITABLE_FIELDS,
   DELIVERY_CANCEL_WRITABLE_FIELDS,
   CANCEL_REJECT,
+  summarizeCampaignRunsFromJobs,
 } from '../../src/lib/marketing/marketingJobs.js';
 import {
   buildCustomerDossier,
@@ -362,16 +362,6 @@ const JOBS_VIEW_LIMIT = 30;
 const JOB_DELIVERY_FIELDS = [
   'ScheduledEmailJobId', 'Status', 'QueuedAt', 'SentAt', 'FailedAt', 'SkippedAt', 'ErrorMessage',
 ];
-
-/** 実績集計に要る列だけ */
-const HISTORY_FIELDS = ['CampaignType', 'EmailType', 'Status', 'QueuedAt', 'SentAt'];
-
-/**
- * 実績集計のページ上限。**母数が台帳全体なので名指しにできない**唯一の経路。
- * 2026-08-15 時点で 6,110 行（62 ページ）。倍の余裕を取る。
- * ここを超えたら「集計を出さない」（＝また設計を見直す合図）。
- */
-const HISTORY_MAX_PAGES = 120;
 
 /**
  * 指定ジョブに紐づく配信行だけを引く（**名指し・fail closed**）。
@@ -2075,29 +2065,35 @@ async function handleCancelJob({ KEY, BASE, now, req }) {
 }
 
 async function handleHistory({ KEY, BASE }) {
-  // 実績サマリは台帳全体が母数なので**名指しにはできない**。
-  // そのぶん打ち切りを許さない（旧実装は 4,000 行で黙って切れたうえ、
-  // `.catch(() => [])` で失敗まで「0 件」に見えていた）。
-  let deliveries;
+  // ⚠️ **配信台帳からは数えない。**
+  //    `CampaignDeliveries` は 14,426 行（145 ページ / 実測 162 秒・2026-08-15）まで育っており、
+  //    Function の実行時間（最大 26 秒）では**原理的に読み切れない**。
+  //    4,000 行で黙って打ち切っていた頃は「動いているが数が嘘」だった。
+  //    ジョブ台帳は 1 送信 = 1 行（マーケティング分 152 行）で、
+  //    「いつ・どのキャンペーンを・何人へ流したか」はここで完結する。
+  let jobRecords;
   try {
-    deliveries = await fetchAllStrict({
-      KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: `{EmailType}='campaign'`,
-      // 台帳は 6,110 行（2026-08-15）。既定の 40 ページ（4,000 行）では足りない。
-      // 列を集計に要る 5 つへ絞ったうえで上限を上げる。溢れたら従来どおり fail closed。
-      maxPages: HISTORY_MAX_PAGES, fields: HISTORY_FIELDS,
+    jobRecords = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: MARKETING_JOB_FORMULA,
     });
   } catch (e) {
     return json(500, {
-      error: '配信実績を取り切れなかったため、集計を返しません（部分集計は実績として出しません）。',
+      error: '送信ジョブを取り切れなかったため、集計を返しません（部分集計は実績として出しません）。',
       code: 'history_fetch_incomplete',
       detail: String((e && e.message) || 'unknown'),
       sideEffects: 'none',
     });
   }
+  // 配信行は読まない（counts は使わない）。ジョブ自身が持つ件数だけで組み立てる
+  const jobRows = buildJobView({ jobRecords, deliveryRecords: [], isMarketingJob });
   return json(200, {
-    runs: summarizeCampaignRuns(deliveries),
-    total: deliveries.length,
-    notice: 'Status=sent は「送信基盤が処理した」を意味します。実配信（delivered）とは別です。',
+    runs: summarizeCampaignRunsFromJobs(jobRows),
+    jobs: jobRows.length,
+    /** 数の出所。**画面はこれを必ず出す**（台帳集計だと誤読させない） */
+    source: 'scheduled-emails',
+    notice: '送信ジョブ台帳の集計です。sent は「送信基盤が処理した」件数で、'
+      + '実配信（delivered）とは別です。配信行 1 件ずつの状態（skipped 等）は'
+      + '配信台帳が大きすぎて集計できないため出していません。',
   });
 }
 

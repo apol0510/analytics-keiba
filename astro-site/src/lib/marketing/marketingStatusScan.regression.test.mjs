@@ -198,23 +198,6 @@ test('【重要】全件走査へ落ちたら気付ける（この試験が空�
   assert.equal(fullScans, 0, '台帳を全件走査している（名指し取得へ直っていない）');
 });
 
-test('【重要】履歴は現在の台帳（6,110 行）を読み切って集計する', async () => {
-  // history だけは母数が台帳全体なので名指しにできない。上限を実データに合わせてある
-  stubAirtable({ onFullScan: (u) => paginatedLedger(u) });
-  const { statusCode, body } = await invoke({ action: 'history' });
-  assert.equal(statusCode, 200, `読み切れていない: ${JSON.stringify(body).slice(0, 200)}`);
-  assert.equal(body.total, LEDGER_ROWS, `${body.total} 行しか数えていない（打ち切られている）`);
-});
-
-test('【重要】履歴も上限を超えたら 500（部分集計を実績として出さない）', async () => {
-  // 上限（HISTORY_MAX_PAGES）を超える規模になったら、黙って切らずに落ちる
-  stubAirtable({ onFullScan: (u) => paginatedLedger(u, 20000) });
-  const { statusCode, body } = await invoke({ action: 'history' });
-  assert.equal(statusCode, 500, `打ち切った集計を 200 で返している: ${JSON.stringify(body).slice(0, 200)}`);
-  assert.equal(body.code, 'history_fetch_incomplete');
-  assert.equal(body.sideEffects, 'none');
-});
-
 test('【重要】応答にメールアドレスを載せない', async () => {
   stubAirtable();
   const seq = await invoke({ action: 'sequence', campaignId: CAMPAIGN_ID });
@@ -254,16 +237,60 @@ test('【重要】ジョブ一覧は件数を明示して切る（黙って切�
   assert.match(UI, /全 \$\{data\.jobsTotal\} 件/, '画面が総数を出していない');
 });
 
-test('【重要】実績集計は現在の台帳規模を読み切れる上限を持つ', () => {
-  const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
-  const max = Number((FN.match(/const HISTORY_MAX_PAGES = (\d+)/) || [])[1]);
-  assert.ok(Number.isFinite(max), 'HISTORY_MAX_PAGES が無い');
-  // 2026-08-15 時点 6,110 行 = 62 ページ。余裕を持って上回ること
-  assert.ok(max >= 62, `上限 ${max} ページでは現在の台帳（62 ページ）を読み切れない`);
-  assert.match(FN, /HISTORY_FIELDS/, '集計に要る列だけへ絞っていない');
-});
-
 test('【重要】必要な列だけを要求する（fields[] を送る）', () => {
   const FN = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
   assert.match(FN, /url\.searchParams\.append\('fields\[\]', f\)/, 'fields[] を送っていない');
+});
+
+// ── 実績集計は配信台帳から数えない（2026-08-15 / 台帳 14,426 行）──────
+//
+// `CampaignDeliveries` は 145 ページ・実測 162 秒。Function の 26 秒では読み切れない。
+// ジョブ台帳（1 送信 = 1 行）へ集計元を移した。**数の意味が変わるので出所を明示する。**
+
+test('【重要】history は配信台帳を読まずに 200 を返す', async () => {
+  let ledgerReads = 0;
+  stubAirtable({ onFullScan: (u) => { ledgerReads += 1; return paginatedLedger(u, 20000); } });
+  const { statusCode, body } = await invoke({ action: 'history' });
+  assert.equal(statusCode, 200, `落ちている: ${JSON.stringify(body).slice(0, 200)}`);
+  assert.equal(ledgerReads, 0, '配信台帳を読んでいる（読み切れない規模）');
+  assert.equal(body.source, 'scheduled-emails', '数の出所を出していない');
+  assert.equal(Array.isArray(body.runs), true);
+});
+
+test('【重要】history はジョブ台帳の件数で集計する', async () => {
+  stubAirtable();
+  const { body } = await invoke({ action: 'history' });
+  const run = body.runs.find((r) => r.campaignType.startsWith(CAMPAIGN_ID));
+  assert.ok(run, '対象キャンペーンの行が無い');
+  assert.equal(run.jobs, 1);
+  assert.equal(run.recipients, 10, `対象人数が ${run.recipients}`);
+  assert.equal(run.sent, 0);
+  assert.equal(run.failed, 0);
+  assert.equal(run.pending, 1, '送信待ちを数えていない');
+});
+
+test('【重要】分からない値を 0 で埋めない（skipped を出さない）', async () => {
+  stubAirtable();
+  const { body } = await invoke({ action: 'history' });
+  for (const r of body.runs) {
+    assert.equal('skipped' in r, false, 'ジョブから分からない skipped を出している');
+    assert.equal('queued' in r, false, '配信行の状態を出している');
+  }
+  assert.match(body.notice, /送信ジョブ台帳/, '出所を説明していない');
+  assert.match(body.notice, /skipped/, '出していない項目の理由を説明していない');
+});
+
+test('【重要】ジョブ台帳を取り切れなければ 500（部分集計を出さない）', async () => {
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/ScheduledEmails')) {
+      // 常に offset を返し続ける = 取り切れない
+      return ok({ records: scheduledRows, offset: 'more' });
+    }
+    return ok({ records: [] });
+  };
+  const { statusCode, body } = await invoke({ action: 'history' });
+  assert.equal(statusCode, 500);
+  assert.equal(body.code, 'history_fetch_incomplete');
+  assert.equal(body.sideEffects, 'none');
 });

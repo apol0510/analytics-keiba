@@ -447,10 +447,17 @@ test('履歴はキャンペーン単位で集計される', async () => {
   await call({ action: 'send', campaignId: 'expired-comeback', recordIds: ['rec1', 'rec2'], planFingerprint: dry.body.planFingerprint, contentHash: dry.body.contentHash, shellVersion: dry.body.shellVersion });
 
   const { body } = parse(await call({ action: 'history' }));
+  // 集計元は **送信ジョブ台帳**（配信台帳は 14,426 行あり Function では読み切れない / 2026-08-15）。
+  // 数の意味が変わったので、出所と項目名も一緒に固定する。
+  assert.equal(body.source, 'scheduled-emails', '数の出所を出していない');
   assert.equal(body.runs.length, 1);
   assert.equal(body.runs[0].campaignType, 'expired-comeback:v2');
-  assert.equal(body.runs[0].queued, 2);
+  assert.equal(body.runs[0].jobs, 1, '送信回数を数えていない');
+  assert.equal(body.runs[0].recipients, 2, '対象人数を数えていない');
   assert.equal(body.runs[0].sent, 0, 'provider 受理前に sent を数えている');
+  assert.equal(body.runs[0].pending, 1, '送信待ちを数えていない');
+  // 分からない値は 0 で埋めない
+  assert.equal('skipped' in body.runs[0], false, 'ジョブから分からない skipped を出している');
   assert.ok(body.notice.includes('実配信'));
 });
 
