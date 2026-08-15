@@ -39,7 +39,7 @@ Airtable の `PENDING → PROCESSING`（CAS ではない）。
 
 ### 検証
 
-`npm run test:marketing` 1,464 pass / 0 fail ・ `check:safety` EXIT=0 ・
+`npm run test:marketing` 1,466 pass / 0 fail ・ `check:safety` EXIT=0 ・
 `build` EXIT=0 ・ 追加行の secret scan 0 件。
 
 ### やっていないこと
