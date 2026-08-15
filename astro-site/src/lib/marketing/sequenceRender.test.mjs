@@ -22,6 +22,16 @@ import {
 const CAMPAIGN = getCampaign('light-trial-to-premium-sequence');
 const steps = getSequenceSteps(CAMPAIGN);
 
+/** 体験終了後フェーズ（通し番号 7〜24）。**同じ検査を両方へ掛ける** */
+const POST = getCampaign('light-trial-post-expiry-sequence');
+const postSteps = getSequenceSteps(POST);
+const renderPostStep = (n) => renderCampaign({
+  campaign: resolveSequenceStep(POST, n),
+  name: '山田',
+  unsubscribeUrl: PREVIEW_UNSUBSCRIBE_URL,
+  // ⚠️ 終了後の案内に無料期間の終了日は差し込まない（渡さない）
+});
+
 /** 管理画面のプレビューと同じ組み立て（無料期間の終了日はサンプル値で解決する） */
 const renderStep = (n) => renderCampaign({
   campaign: resolveSequenceStep(CAMPAIGN, n),
@@ -30,11 +40,14 @@ const renderStep = (n) => renderCampaign({
   expiryNote: describeGrantExpiry({ durationDays: CAMPAIGN.grantDurationDays }),
 });
 
-test('本番シーケンスが取得でき、4 ステップある', () => {
+test('本番シーケンスは 2 フェーズで合計 24 ステップ', () => {
   assert.ok(CAMPAIGN);
-  assert.equal(steps.length, 4);
+  assert.equal(steps.length, 6, '体験中フェーズは 6 通');
   assert.deepEqual(CAMPAIGN.requiresActiveGrant, { tier: 'light', termedOnly: true },
     '期限付き Light 無料期間中だけを対象にしていない');
+  assert.ok(POST);
+  assert.equal(postSteps.length, 18, '体験終了後フェーズは 18 通');
+  assert.equal(steps.length + postSteps.length, 24);
 });
 
 test('無料期間の終了日は送信直前に差し替える（キュー登録時点では印のまま）', () => {
@@ -102,16 +115,89 @@ test('【重要】保証・煽り表現が本番文面に無い', () => {
   }
 });
 
-test('4 通が別内容（件名・本文・CTA のいずれも使い回していない）', () => {
-  const rendered = steps.map((s) => renderStep(s.stepNumber));
-  assert.equal(new Set(rendered.map((r) => r.subject)).size, 4);
-  assert.equal(new Set(rendered.map((r) => r.text)).size, 4);
-  // CTA の**文言**は 4 通とも違う（同じボタンを 4 回出さない）。
-  // 遷移先は体験中は同じダッシュボードでよい（step4 だけ料金ページ）。
-  const labels = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaLabel);
-  assert.equal(new Set(labels).size, 4, `CTA 文言の使い回し: ${labels.join(' / ')}`);
-  const ctas = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaUrl);
-  assert.ok(new Set(ctas).size >= 2);
+test('24 通が別内容（件名・本文を使い回していない / フェーズをまたいでも）', () => {
+  const rendered = [
+    ...steps.map((s) => renderStep(s.stepNumber)),
+    ...postSteps.map((s) => renderPostStep(s.stepNumber)),
+  ];
+  assert.equal(rendered.length, 24);
+  assert.equal(new Set(rendered.map((r) => r.subject)).size, 24, '件名を使い回している');
+  assert.equal(new Set(rendered.map((r) => r.text)).size, 24, '本文を使い回している');
+});
+
+test('【重要】体験終了後の文面は HTML / text の両方が出る', () => {
+  for (const s of postSteps) {
+    const r = renderPostStep(s.stepNumber);
+    assert.ok(r.html && r.html.length > 200, `post step${s.stepNumber} の HTML が無い`);
+    assert.ok(r.text && r.text.length > 50, `post step${s.stepNumber} の text が無い`);
+    assert.ok(r.subject, `post step${s.stepNumber} の件名が無い`);
+    // 終わった期限の印が残っていない（差し込む相手がいない）
+    assert.equal(r.html.includes(GRANT_EXPIRY_PLACEHOLDER), false,
+      `post step${s.stepNumber} に無料期間の終了日の印が残っている`);
+  }
+});
+
+test('【重要】体験終了後の文面にも保証表現・手書き実績を置かない', () => {
+  for (const s of postSteps) {
+    const r = renderPostStep(s.stepNumber);
+    for (const ng of FORBIDDEN_PHRASES) {
+      assert.equal(r.text.includes(ng), false, `post step${s.stepNumber} に「${ng}」がある`);
+    }
+    assert.equal(/(的中率|回収率|勝率)\s*[:：]?\s*\d/.test(r.text), false,
+      `post step${s.stepNumber} に手書き実績がある`);
+  }
+});
+
+test('【重要】体験終了後も benefit guard を満たす（得の宣言がある）', () => {
+  for (const s of postSteps) {
+    const c = resolveSequenceStep(POST, s.stepNumber);
+    const r = checkBenefitForSend({ campaign: c, recipientCount: BULK_THRESHOLD + 1 });
+    assert.equal(r.ok, true, `post step${s.stepNumber} が ${r.reason} で弾かれる`);
+  }
+});
+
+test('【重要】連続する 2 通で同じ CTA 文言・同じ訴求角度を続けない（24 通を通して）', () => {
+  // 24 通すべての CTA 文言を変えるのは不自然（「予想を見る」は何度も使う）。
+  // 守りたいのは「**続けて同じものを出さない**」こと。
+  // ⚠️ フェーズの切れ目（6 通目 → 7 通目）も連続として見る。
+  const resolved = [
+    ...steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber)),
+    ...postSteps.map((s) => resolveSequenceStep(POST, s.stepNumber)),
+  ];
+  assert.equal(resolved.length, 24);
+  for (let i = 1; i < resolved.length; i += 1) {
+    assert.notEqual(resolved[i].ctaLabel, resolved[i - 1].ctaLabel,
+      `${i} 通目と ${i + 1} 通目の CTA 文言が同じ`);
+  }
+  const angles = resolved.map((r) => r.angle).filter(Boolean);
+  assert.ok(angles.length >= 20, '訴求角度が付いていないステップが多い');
+  for (let i = 1; i < angles.length; i += 1) {
+    assert.notEqual(angles[i], angles[i - 1], `連続する 2 通の訴求角度が同じ（${angles[i]}）`);
+  }
+});
+
+test('CTA の遷移先が 1 種類に偏っていない（各フェーズで）', () => {
+  const active = steps.map((s) => resolveSequenceStep(CAMPAIGN, s.stepNumber).ctaUrl);
+  assert.ok(new Set(active).size >= 2, `体験中の遷移先が ${new Set(active).size} 種類しかない`);
+  const post = postSteps.map((s) => resolveSequenceStep(POST, s.stepNumber).ctaUrl);
+  assert.ok(new Set(post).size >= 4, `終了後の遷移先が ${new Set(post).size} 種類しかない`);
+});
+
+test('【重要】誇大表現・保証表現・架空実績を書かない', () => {
+  const banned = [
+    '必ず', '絶対', '確実に', '保証', '儲か', '稼げ', '損はし',
+    '今だけ', '残りわずか', '急いで', '限定',
+  ];
+  for (const s of steps) {
+    const r = resolveSequenceStep(CAMPAIGN, s.stepNumber);
+    const text = [r.subject, r.headline, r.body, r.preheader, r.ctaNote].filter(Boolean).join('\n');
+    for (const w of banned) {
+      assert.equal(text.includes(w), false, `step${s.stepNumber} に「${w}」が入っている`);
+    }
+    // 実績の数値を本文へ書き写さない（％・円・的中率）
+    assert.equal(/的中率\s*\d|回収率\s*\d|\d+\s*%|¥\s*[\d,]{3,}/.test(text), false,
+      `step${s.stepNumber} に実績数値らしき記述がある`);
+  }
 });
 
 test('配信停止リンクは本文に書かず、シェルが受信者ごとに差し込む', () => {

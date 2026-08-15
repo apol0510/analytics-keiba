@@ -13,8 +13,10 @@ import assert from 'node:assert/strict';
 
 import {
   createDispatchLock, dispatchKey, isSafeJobId, DispatchLockError,
-  DISPATCH_LOCK_ROOT, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL,
+  DISPATCH_LOCK_ROOT, DISPATCH_LOCK_TTL_SEC, DISPATCH_LOCK_BACKGROUND_TTL_SEC,
+  assertBackgroundTtlCovers, LOCK_FAIL,
 } from './dispatchLock.js';
+import { DEFAULT_BACKGROUND_BUDGET_MS } from './sendBudget.js';
 
 const JOB = 'mkt-light-trial-to-premium-sequence-v1-af3acf8c-1';
 
@@ -140,4 +142,157 @@ test('fencing token は単調増加（使い回さない）', async () => {
   const b = await lock.acquire({ jobId: 'mkt-b-v1-x-1' });
   assert.notEqual(a.token, b.token);
   assert.ok(Number(b.token) > Number(a.token));
+});
+
+// ── Background の TTL と延長（2026-08-15 の指摘）────────────────────
+//
+// Background は最大 8 分動くのに、同期用の 300 秒 TTL を流用すると
+// **送信の途中で排他が切れ**、別実行が同じジョブを取って二重送信できる。
+
+test('【重要】background の TTL は 予算 + 1 チャンク + 後片付け を覆う', () => {
+  const r = assertBackgroundTtlCovers({
+    ttlSec: DISPATCH_LOCK_BACKGROUND_TTL_SEC,
+    budgetMs: DEFAULT_BACKGROUND_BUDGET_MS,
+    chunkMs: 60_000,
+  });
+  assert.equal(r.ok, true, `TTL ${DISPATCH_LOCK_BACKGROUND_TTL_SEC}s は ${r.needMs}ms を覆えない`);
+  // 同期用の 300 秒では覆えないことも固定（流用の再発防止）
+  const sync = assertBackgroundTtlCovers({
+    ttlSec: DISPATCH_LOCK_TTL_SEC, budgetMs: DEFAULT_BACKGROUND_BUDGET_MS, chunkMs: 60_000,
+  });
+  assert.equal(sync.ok, false, '同期用 TTL でも覆えてしまう（テストが意味を持たない）');
+});
+
+test('同期用の TTL は壊さない（300 秒のまま）', () => {
+  assert.equal(DISPATCH_LOCK_TTL_SEC, 300);
+  assert.ok(DISPATCH_LOCK_BACKGROUND_TTL_SEC > DISPATCH_LOCK_TTL_SEC);
+});
+
+test('【重要】renew は自分の token のときだけ期限を延ばす', async () => {
+  const store = new Map();
+  const expires = new Map();
+  const cmd = async (args) => {
+    const op = String(args[0]).toUpperCase();
+    if (op === 'INCR') return '1';
+    if (op === 'SET') { store.set(args[1], String(args[2])); expires.set(args[1], Number(args[5])); return 'OK'; }
+    if (op === 'EVAL') {
+      const script = String(args[1]); const k = args[3]; const tok = String(args[4]);
+      const cur = store.get(k);
+      if (cur === undefined) return 'LOST';
+      if (cur !== tok) return 'STOLEN';
+      if (script.includes("redis.call('EXPIRE'")) { expires.set(k, Number(args[5])); return 'OK'; }
+      if (script.includes("redis.call('DEL'")) { store.delete(k); return 'OK'; }
+      return 'OK';
+    }
+    return null;
+  };
+  const lock = createDispatchLock({ cmd });
+  const got = await lock.acquire({ jobId: JOB, ttlSec: 600 });
+  assert.equal(expires.get(dispatchKey.lock(JOB)), 600);
+  // 自分の token なら延ばせる
+  const ok = await lock.renew({ jobId: JOB, token: got.token, ttlSec: 1200 });
+  assert.equal(ok.ok, true);
+  assert.equal(expires.get(dispatchKey.lock(JOB)), 1200, '期限が延びていない');
+  // 他人の token では延ばせない
+  const bad = await lock.renew({ jobId: JOB, token: 'someone-else', ttlSec: 9999 });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.reason, 'stolen');
+  assert.equal(expires.get(dispatchKey.lock(JOB)), 1200, '他人の鍵を延命している');
+});
+
+test('【重要】鍵が消えていれば renew は lost（延命で復活させない）', async () => {
+  const store = new Map();
+  const lock = createDispatchLock({ cmd: fakeRedis(store) });
+  const got = await lock.acquire({ jobId: JOB });
+  store.delete(dispatchKey.lock(JOB));
+  const r = await lock.renew({ jobId: JOB, token: got.token });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'lost');
+  assert.equal(store.has(dispatchKey.lock(JOB)), false, '消えた鍵を作り直している');
+});
+
+test('【重要】5 分経過しても background の鍵は生きている（2 本目が取れない）', async () => {
+  // 実時間相当: TTL 秒数を「経過秒」と突き合わせて期限切れを再現する
+  const store = new Map();      // key -> { token, expiresAtSec }
+  let nowSec = 0;
+  const cmd = async (args) => {
+    const op = String(args[0]).toUpperCase();
+    const purge = () => {
+      for (const [k, v] of store) if (v.expiresAtSec <= nowSec) store.delete(k);
+    };
+    if (op === 'INCR') return String(Math.floor(nowSec) + 1);
+    if (op === 'SET') {
+      purge();
+      const [, k, v, ...rest] = args;
+      const up = rest.map((x) => String(x).toUpperCase());
+      if (up.includes('NX') && store.has(k)) return null;
+      const ttl = Number(rest[rest.indexOf('EX') + 1] ?? rest[3] ?? 300);
+      store.set(k, { token: String(v), expiresAtSec: nowSec + ttl });
+      return 'OK';
+    }
+    if (op === 'EVAL') {
+      purge();
+      const script = String(args[1]); const k = args[3]; const tok = String(args[4]);
+      const cur = store.get(k);
+      if (!cur) return 'LOST';
+      if (cur.token !== tok) return 'STOLEN';
+      if (script.includes("redis.call('EXPIRE'")) { cur.expiresAtSec = nowSec + Number(args[5]); return 'OK'; }
+      if (script.includes("redis.call('DEL'")) { store.delete(k); return 'OK'; }
+      return 'OK';
+    }
+    return null;
+  };
+
+  const bg = createDispatchLock({ cmd });
+  const other = createDispatchLock({ cmd });
+
+  // background が長い TTL で取得
+  const got = await bg.acquire({ jobId: JOB, ttlSec: DISPATCH_LOCK_BACKGROUND_TTL_SEC });
+  assert.equal(got.ok, true);
+
+  // 5 分（同期用 TTL のぶん）経過 — ここで切れてはいけない
+  nowSec += 300;
+  assert.equal((await other.acquire({ jobId: JOB })).ok, false, '5 分で切れて 2 本目が取れている');
+  assert.equal((await bg.verify({ jobId: JOB, token: got.token })).ok, true, '5 分で自分の鍵を失っている');
+
+  // さらに 8 分（background 予算ぶん）経過。チャンクごとに renew している前提
+  for (let i = 0; i < 8; i += 1) {
+    nowSec += 60;
+    const r = await bg.renew({ jobId: JOB, token: got.token, ttlSec: DISPATCH_LOCK_BACKGROUND_TTL_SEC });
+    assert.equal(r.ok, true, `${i + 1} 分目で鍵を失っている`);
+    assert.equal((await other.acquire({ jobId: JOB })).ok, false, `${i + 1} 分目に 2 本目が取れている`);
+  }
+
+  // 解放すれば次が取れる
+  assert.equal((await bg.release({ jobId: JOB, token: got.token })).ok, true);
+  assert.equal((await other.acquire({ jobId: JOB })).ok, true, '解放後に取れない');
+});
+
+test('【重要】renew しなければ TTL 切れで別実行が取れる（renew が効いている証明）', async () => {
+  const store = new Map();
+  let nowSec = 0;
+  const cmd = async (args) => {
+    const op = String(args[0]).toUpperCase();
+    for (const [k, v] of store) if (v.expiresAtSec <= nowSec) store.delete(k);
+    if (op === 'INCR') return String(nowSec + 1);
+    if (op === 'SET') {
+      const [, k, v, ...rest] = args;
+      if (rest.map((x) => String(x).toUpperCase()).includes('NX') && store.has(k)) return null;
+      store.set(k, { token: String(v), expiresAtSec: nowSec + Number(rest[3] ?? 300) });
+      return 'OK';
+    }
+    if (op === 'EVAL') {
+      const k = args[3]; const cur = store.get(k);
+      if (!cur) return 'LOST';
+      if (cur.token !== String(args[4])) return 'STOLEN';
+      return 'OK';
+    }
+    return null;
+  };
+  const a = createDispatchLock({ cmd });
+  const b = createDispatchLock({ cmd });
+  await a.acquire({ jobId: JOB, ttlSec: 300 });   // 同期用 TTL のまま
+  nowSec += 301;                                   // renew せずに 5 分超
+  assert.equal((await b.acquire({ jobId: JOB })).ok, true,
+    'TTL 切れを再現できていない（このテストが意味を持たない）');
 });

@@ -23,6 +23,14 @@ export const BENEFIT_TYPE = Object.freeze({
   NEW_FEATURE: 'new_feature',
   /** 上記以外で、受信者に直接価値がある特典 */
   EXCLUSIVE_PERK: 'exclusive_perk',
+  /**
+   * **無料で見られる範囲の案内**（新しい権利は付かない）。
+   *
+   * 無料体験が終わった方への案内のように、「いま無料で何が見られるか」を伝えるもの。
+   * `free_access`（期間限定で有料プランを無料開放）とは別物なので分けている。
+   * ⚠️ これを `free_access` と書くと「まだ無料で使える」という誤解になる。
+   */
+  FREE_CONTENT: 'free_content',
   /** 運用テスト専用（一般顧客へは構造的に送れないキャンペーンだけ） */
   OPERATIONAL_TEST: 'operational_test',
 });

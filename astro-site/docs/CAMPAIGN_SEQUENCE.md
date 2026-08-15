@@ -270,6 +270,21 @@ Lua（`LOCK_VERIFY_LUA` / `LOCK_RELEASE_LUA`）をそのまま共有する。
 加えて `planFingerprint` が対象集合と文面を封じているので、
 dry-run から母集団が変わっていれば 409 で中止する（TOCTOU 防止）。
 
+### 7-4. 大規模展開（14,479 名を段階展開する）
+
+100 名/日の固定運用では 145 日かかり、毎回 env を開閉して redeploy する必要がある。
+段階展開・時間予算・数十通ポリシー・運用画面は
+**[`MARKETING_ROLLOUT.md`](./MARKETING_ROLLOUT.md)** が単一源。
+
+要点だけ:
+
+- **二段のスイッチ**: env（機能の許可・既定 OFF）と 状態（段階・件数・緊急停止・redeploy 不要）
+- **送信は時間で切る**: 同期 18 秒 / background 8 分。ジョブは完了するまで `PENDING` のまま
+- 大きいジョブは `marketing-campaign-dispatch-background` が完走させる
+  （**送信経路は同期版の `runDispatch` を再利用**。自前の送信ループを持たない）
+- 数十通は `sequencePolicy.js`（最大回数・最小間隔・頻度上限・訴求角度・反応での停止）
+- 運用画面は `action=rollout`（read-only・件数だけ）
+
 ## 8. やってはいけないこと
 
 - 同じ件名・本文を別ステップに置く（検証で落ちる）
@@ -523,6 +538,12 @@ npm run check:safety     # 上記を含む全 safety check
 | `step1PreflightScript.guard.test.mjs` | preflight スクリプトが read-only のままか（許可アクション固定） |
 | `dispatchLock.test.mjs` | 実送信の排他（1 本だけ・自分の token でしか解放しない・状態不明は例外） |
 | `dispatcherHandler.smoke.test.mjs` | **同時 2 本でも送信は 1 通**・Redis 不通は送信 0・dryRun は鍵を取らない |
+| `rolloutPlan.test.mjs` / `rolloutStore.test.mjs` | 段階展開の判断と状態（既定停止・kill switch・CAS） |
+| `sequencePolicy.test.mjs` | 数十通の間隔・頻度上限・購入で停止・訴求角度 |
+| `sendBudget.test.mjs` | 送信を時間で切る（完了と打ち切りの区別） |
+| `rolloutView.test.mjs` | 運用画面の集計（割合を捏造しない） |
+| **`rolloutScale.test.mjs`** | **14,489 名 fixture**・100/500/1000 名チャンク・1000 通の分割送信 |
+| `dispatchBackground.smoke.test.mjs` | Background でチャンク完走・排他・ゲート・PII |
 
 ## 配信台帳も名指しで読む（2026-08-15 / 状態表示の打ち切りを廃止）
 

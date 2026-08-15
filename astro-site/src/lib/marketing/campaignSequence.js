@@ -28,8 +28,18 @@
 /** ステップ間隔の下限（日）。連日で追いかけない */
 export const MIN_STEP_DELAY_DAYS = 2;
 
-/** 1 シーケンスの上限。これ以上は「送りすぎ」なので定義できない */
-export const MAX_SEQUENCE_STEPS = 6;
+/**
+ * 1 シーケンスの上限。
+ *
+ * ⚠️ **6 → 36 へ引き上げ（2026-08-15）。** 事業要件が
+ * 「無反応の相手にも数十回の接点を作って反応を見る」に変わったため。
+ *
+ * 「送りすぎ」の防御はステップ数の上限ではなく、
+ * **`sequencePolicy` の頻度上限（既定 7 日で 2 通）と最小間隔**が担う。
+ * ステップ数だけ絞っても、短期間に詰めて送れば同じことになる。
+ * ここは「際限なく定義できない」ための天井にとどめる。
+ */
+export const MAX_SEQUENCE_STEPS = 36;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -106,6 +116,8 @@ export function resolveSequenceStep(campaign, stepNumber) {
     footerNote: pick('footerNote') || '',
     benefitType: pick('benefitType'),
     benefitDescription: pick('benefitDescription'),
+    /** 訴求角度。**連投を避けるための札**（画面と `sequencePolicy` が使う） */
+    angle: str(step.angle) || null,
     /** ここから下がシーケンス固有（DeliveryKey / 画面表示が使う） */
     sequenceStep: step.stepNumber,
     sequenceStepCount: getSequenceSteps(campaign).length,

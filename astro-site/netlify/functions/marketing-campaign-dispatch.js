@@ -65,6 +65,10 @@ import {
   createDispatchLock, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, DispatchLockError,
 } from '../../src/lib/marketing/dispatchLock.js';
 import {
+  createSendBudget, summarizeSendRun,
+  DEFAULT_SYNC_BUDGET_MS, DEFAULT_BACKGROUND_BUDGET_MS,
+} from '../../src/lib/marketing/sendBudget.js';
+import {
   indexDeliveriesByRecipient,
   buildCampaignCustomArgs,
 } from '../../src/lib/marketing/campaignCustomArgs.js';
@@ -197,11 +201,17 @@ async function fetchCampaignDeliveriesForEmails({ KEY, BASE, emails }) {
   return out;
 }
 
+/** 認可に使う secret の解決（同期版と background 版で**同じ規則**を使う） */
+export function resolveDispatchSecret(env) {
+  const e = env || {};
+  return e.MARKETING_ADMIN_SECRET || e.PREMIUM_PLUS_ADMIN_SECRET || null;
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json(200, {});
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method Not Allowed' });
 
-  const SECRET = process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET;
+  const SECRET = resolveDispatchSecret(process.env);
   const KEY = process.env.AIRTABLE_API_KEY;
   const BASE = process.env.AIRTABLE_BASE_ID;
   const SG = process.env.SENDGRID_API_KEY;
@@ -294,7 +304,7 @@ export const handler = async (event) => {
   //    **TTL が切れるまで再実行しないこと**を運用者へ明示する。
   let result;
   try {
-    result = await dispatch({
+    result = await runDispatch({
       KEY, BASE, SG, dryRun, jobIdFilter,
       expectedWillSend: dryRun ? null : Number(req.expectedWillSend),
       lock, lockToken,
@@ -352,7 +362,14 @@ function withLockRelease(res, { rel, jobId }) {
   return { ...res, body: JSON.stringify(body) };
 }
 
-async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null, lock = null, lockToken = null }) {
+/**
+ * ⚠️ **送信経路はこの 1 本だけ。** Background 版（`-background.js`）も
+ *    自前の送信ループを持たず、この関数を呼ぶ（条件の再検証・除外・冪等性を二重に書かない）。
+ */
+export async function runDispatch({
+  KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend = null,
+  lock = null, lockToken = null, budgetMs = DEFAULT_SYNC_BUDGET_MS, startedAtMs = null,
+}) {
   const now = Date.now();
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
   const fromName = getBrandConfig(BRAND).defaultFromName;
@@ -675,7 +692,19 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
     }
 
     // 3-b) 1 通ずつ送る（個別送信。他受信者のアドレスが漏れない）
+    //
+    // ⚠️ **時間で切る。** 同期 Function の上限は 26 秒で、1 通ごとに
+    //    SendGrid 送信 + Airtable PATCH を行うため、100 通以上は 1 回で終わらない。
+    //    kill されると応答が返らず「何通送れたか」が分からなくなるので、
+    //    上限に届く前に**自分で止まり、残りは次の実行へ渡す**。
+    //    1 通ごとに `sent` を書いてあるので、再開しても二重送信にならない。
+    const budget = createSendBudget({
+      limitMs: budgetMs,
+      nowMs: Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
+    });
+    let stoppedByBudget = false;
     for (const email of toSend) {
+      if (!budget.canSendAnother(Date.now())) { stoppedByBudget = true; break; }
       let html = String(f.Content || '');
       if (needsOffer) {
         const url = offerUrlByEmail.get(email);
@@ -719,6 +748,25 @@ async function dispatch({ KEY, BASE, SG, dryRun, jobIdFilter, expectedWillSend =
         KEY, BASE, jobId, now,
         entries: [{ email, status: ok ? 'sent' : 'failed', reason: ok ? null : 'send_failed' }],
       });
+      budget.record(Date.now());
+    }
+
+    // 途中で止めたなら、ジョブは **PENDING のまま**にする（次の実行が続きを送る）
+    const run = summarizeSendRun({
+      total: toSend.length,
+      sent: summary.sent,
+      failed: summary.failed,
+      stoppedByBudget,
+    });
+    jobResults[jobResults.length - 1].budget = budget.describe(Date.now());
+    jobResults[jobResults.length - 1].remaining = run.remaining;
+    jobResults[jobResults.length - 1].stoppedByBudget = run.stoppedByBudget;
+    if (!run.complete) {
+      summary.incomplete = (summary.incomplete || 0) + 1;
+      summary.remaining = (summary.remaining || 0) + run.remaining;
+      summary.resumeHint = run.resumeHint;
+      // ⚠️ 完了していないので **ジョブの状態を触らない**（PENDING のまま）
+      continue;
     }
 
     // 3-c) ジョブを終了状態にする

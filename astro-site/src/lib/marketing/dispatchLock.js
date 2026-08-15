@@ -32,6 +32,18 @@
 
 import { LOCK_VERIFY_LUA, LOCK_RELEASE_LUA } from './automationStore.js';
 
+/**
+ * **token が一致するときだけ**期限を延ばす（atomic）。
+ * `GET` → `EXPIRE` の 2 段では、その隙に切れて別実行が取った鍵を延命しうる。
+ */
+const RENEW_LUA = `
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 'LOST' end
+if cur ~= ARGV[1] then return 'STOLEN' end
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 'OK'
+`;
+
 /** dispatch 専用の鍵空間（automation とは分ける） */
 export const DISPATCH_LOCK_ROOT = 'ak:marketing-dispatch:';
 
@@ -41,11 +53,33 @@ export const dispatchKey = Object.freeze({
 });
 
 /**
- * lock の既定 TTL（秒）。
- * Netlify Function の上限は 26 秒。**その 10 倍以上**を取り、
- * 送信中に期限切れが起きない側へ倒す（落ちた場合の解放は TTL に任せる）。
+ * 同期 Function 用の既定 TTL（秒）。
+ * Netlify の上限は 26 秒。**その 10 倍以上**を取り、送信中に期限切れが起きない側へ倒す。
  */
 export const DISPATCH_LOCK_TTL_SEC = 300;
+
+/**
+ * Background Function 用の TTL（秒）。
+ *
+ * ⚠️ **同期用の 300 秒を流用してはいけない。** Background は最大 15 分動き、
+ *    既定予算は 8 分。300 秒（5 分）だと**送信の途中で排他が切れ**、
+ *    別の実行が同じジョブを取得して二重送信できてしまう。
+ *
+ * 内訳（`assertBackgroundTtlCovers()` がテストで固定する）:
+ *   予算 8 分 + 1 チャンク（最大 1 分）+ 後片付け・解放の余白
+ * さらに **チャンクごとに `renew()`** して、実行が長引いても切れないようにする。
+ */
+export const DISPATCH_LOCK_BACKGROUND_TTL_SEC = 20 * 60;
+
+/**
+ * TTL が「予算 + 1 チャンク + 後片付け」を覆っているかを確かめる。
+ * 覆っていなければ**送信中に排他が切れる**ので、呼び出し側は起動しない。
+ */
+export function assertBackgroundTtlCovers({ ttlSec, budgetMs, chunkMs, cleanupMs = 30_000 }) {
+  const need = Number(budgetMs) + Number(chunkMs) + Number(cleanupMs);
+  const have = Number(ttlSec) * 1000;
+  return { ok: have >= need, needMs: need, haveMs: have };
+}
 
 export const LOCK_FAIL = Object.freeze({
   /** 他の実行が持っている（正常な衝突） */
@@ -92,7 +126,7 @@ export function createDispatchLock(deps = {}) {
 
   const call = async (args, code) => {
     const op = String(args[0] || '').toUpperCase();
-    if (['GET', 'SET', 'DEL', 'INCR'].includes(op)) assertKey(args[1]);
+    if (['GET', 'SET', 'DEL', 'INCR', 'EXPIRE'].includes(op)) assertKey(args[1]);
     if (op === 'EVAL') {
       const n = Number(args[2]);
       for (const k of args.slice(3, 3 + (Number.isFinite(n) ? n : 0))) assertKey(k);
@@ -142,6 +176,26 @@ export function createDispatchLock(deps = {}) {
       if (res === 'LOST') return { ok: false, reason: LOCK_FAIL.LOST };
       if (res === 'STOLEN') return { ok: false, reason: LOCK_FAIL.STOLEN };
       throw new DispatchLockError(LOCK_FAIL.UNAVAILABLE, 'verify');
+    },
+
+    /**
+     * **自分の token のときだけ**期限を延ばす（atomic）。
+     *
+     * Background は 1 チャンクごとにこれを呼ぶ。`GET` してから `EXPIRE` の 2 段だと、
+     * その隙に TTL 切れ→別実行が取得、という状態を延命してしまう。
+     * 失っていたら `{ok:false}` を返し、**呼び出し側は即停止する**。
+     */
+    async renew({ jobId, token, ttlSec }) {
+      if (!isSafeJobId(jobId)) throw new DispatchLockError(LOCK_FAIL.BAD_JOB_ID);
+      const ttl = Number.isFinite(ttlSec) && ttlSec > 0
+        ? Math.floor(ttlSec) : DISPATCH_LOCK_BACKGROUND_TTL_SEC;
+      const res = await call([
+        'EVAL', RENEW_LUA, '1', dispatchKey.lock(jobId), String(token), String(ttl),
+      ]);
+      if (res === 'OK') return { ok: true, reason: null };
+      if (res === 'LOST') return { ok: false, reason: LOCK_FAIL.LOST };
+      if (res === 'STOLEN') return { ok: false, reason: LOCK_FAIL.STOLEN };
+      throw new DispatchLockError(LOCK_FAIL.UNAVAILABLE, 'renew');
     },
 
     /**

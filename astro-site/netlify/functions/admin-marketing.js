@@ -138,8 +138,7 @@ import {
   createEngagementSignalStore, emptySignals,
 } from '../../src/lib/marketing/engagementSignalStore.js';
 import {
-  isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends,
-} from '../../src/lib/marketing/campaignSequence.js';
+  isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends, getSequenceSteps,} from '../../src/lib/marketing/campaignSequence.js';
 import {
   buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL,
 } from '../../src/lib/marketing/sequenceProgress.js';
@@ -152,6 +151,18 @@ import {
   buildCampaignAudienceFormula, buildGrantOperationFormula,
 } from '../../src/lib/marketing/campaignAudienceFormula.js';
 import { BARRIER_RESOLVED_LABEL } from '../../src/lib/comeback/lightTrialBarrier.js';
+import {
+  planRolloutTick, ROLLOUT_STAGE, ROLLOUT_BLOCK,
+} from '../../src/lib/marketing/rolloutPlan.js';
+import {
+  createRolloutStore, isRolloutEnabled, RolloutStoreError,
+} from '../../src/lib/marketing/rolloutStore.js';
+import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
+import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketing/rolloutMetrics.js';
+import { readStageGates, describeBlocked } from '../../src/lib/marketing/rolloutGates.js';
+import { describeJourney } from '../../src/lib/marketing/journeyModel.js';
+import { JOURNEY_STATE_LABEL } from '../../src/lib/marketing/journeyTotals.js';
+import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
@@ -768,6 +779,7 @@ export const handler = async (event) => {
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
+    if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1262,6 +1274,160 @@ function resolveStepCampaign({ campaign, step }) {
  * ⚠️ ここは**付与しない**。付与できるのは既存の `admin-comeback-grants`（operationId 冪等）
  *    と、ゲートが全部開いたときの `cron-light-trial-grant` だけ。
  */
+/**
+ * 大規模展開の**運用画面**（read-only・1 バイトも書かない）。
+ *
+ * 運用者が知りたいのは 6 つだけ:
+ *   母集団 / 未開始・進行中・購入・停止・完了 / Step 別 / 次回予定 /
+ *   バッチ進行 / kill switch の状態
+ *
+ * ⚠️ **母集団を読み切れなければ「部分」と明示する。** 割合を捏造しない。
+ * ⚠️ 返すのは件数だけ（アドレス・recordId は 1 つも返さない）。
+ * ⚠️ 展開状態（段階・件数・停止）は Redis が正本。**env の開閉・redeploy は要らない**。
+ *    ただし機能そのものの許可は env（`MARKETING_ROLLOUT_ENABLED`・既定 OFF）。
+ */
+async function handleRollout({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  // ⚠️ **正本（Customers / CampaignDeliveries）をここで読まない。**
+  //    2026-08-15 実測で、コホート 14,489 件の取得だけで **約 156 秒**。
+  //    同期 Function の上限 26 秒では原理的に開かない。24 Step まで伸ばせば
+  //    配信行は約 35 万行になり、さらに悪化する。
+  //    ダッシュボードは**増分集計（Redis）だけ**を読む（GET 2 回）。
+  //    集計が無い / 壊れている / 版違いなら **partial** として数字を出さない。
+  let state = null;
+  let stateError = null;
+  let metrics = { partial: true, reason: 'unavailable', totals: null, steps: null };
+  try {
+    const cmd = makeRedisCmd(process.env);
+    state = (await createRolloutStore({ cmd }).load(base.campaignId)).state;
+    metrics = await createRolloutMetrics({ cmd }).read(base.campaignId);
+  } catch (e) {
+    stateError = (e instanceof RolloutStoreError && e.code) || 'unavailable';
+  }
+
+  const policy = normalizePolicy(base.sequencePolicy);
+  const maxSends = Math.max(resolveMaxSends(base), policy.maxSends);
+  /**
+   * ⚠️ 画面が数えるのは**通し番号（1〜24）**。
+   *    体験中 6 通 + 終了後 18 通に分かれていても、運用者が見たいのは
+   *    「この人はいま何通目か」なので、`journeyModel.js` の変換で 1 本にまとめる。
+   */
+  const journey = describeJourney();
+  const stepNumbers = Array.from({ length: journey.maxTouches }, (_, i) => i + 1);
+
+  // 集計から画面の形へ（**件数だけ**。率は 0 通の Step で作らない）
+  const t = metrics.totals;
+  /**
+   * ⚠️ **2 フェーズを 1 本として見せる。**
+   *    体験中 / 体験終了・フォロー中 / 購入 / 停止 / 24 通完了 の 5 分類で、
+   *    1 人が必ず 1 か所に入る（`journeyTotals.js` が二重計上を防いでいる）。
+   *    集計が無ければ数字を出さない（**0 と書かない**）。
+   */
+  const funnel = t
+    ? {
+      observed: t.granted,
+      cohortTotal: t.granted,
+      partial: false,
+      counts: {
+        // 運用者の言葉（`JOURNEY_STATE_LABEL` と対応）
+        in_trial: t.inTrial,
+        in_follow_up: t.inFollowUp,
+        purchased: t.purchased,
+        stopped: t.stopped,
+        completed: t.completed,
+        // 互換のため残す（旧画面が読んでいる）
+        not_started: t.notStarted,
+        in_progress: t.inProgress,
+      },
+      labels: JOURNEY_STATE_LABEL,
+      byStopReason: t.byStopReason || {},
+      notStarted: t.notStarted,
+      balanced: t.granted === (t.notStarted + t.inTrial + t.inFollowUp + t.purchased + t.stopped + t.completed),
+    }
+    : {
+      observed: null, cohortTotal: null, partial: true, counts: null,
+      labels: JOURNEY_STATE_LABEL, byStopReason: {}, notStarted: null, balanced: null,
+    };
+
+  const sm = (metrics.steps && metrics.steps.steps) || {};
+  const stepView = stepNumbers.map((step) => {
+    const m = sm[String(step)] || null;
+    const sent = m ? Number(m.sent) || 0 : null;
+    return {
+      step,
+      sent,
+      queued: m ? Number(m.queued) || 0 : null,
+      failed: m ? Number(m.failed) || 0 : null,
+      opened: m ? Number(m.opened) || 0 : null,
+      clicked: m ? Number(m.clicked) || 0 : null,
+      // ⚠️ 0 通の Step で率を作らない
+      openRate: sent ? (Number(m.opened) || 0) / sent : null,
+      clickRate: sent ? (Number(m.clicked) || 0) / sent : null,
+    };
+  });
+
+  const plan = state
+    ? planRolloutTick({
+      state, nowMs: now,
+      // 残り候補は展開状態が持つ（正本の全件走査はしない）
+      remainingCandidates: Number.isFinite(Number(req.remainingCandidates))
+        ? Number(req.remainingCandidates) : null,
+      previousOutstanding: 0,
+      envEnabled: isRolloutEnabled(process.env),
+    })
+    : { ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE, allowance: 0, stage: ROLLOUT_STAGE.PAUSED, dailyLimit: 0, day: null };
+
+  const view = buildRolloutView({
+    state: state || {}, envEnabled: isRolloutEnabled(process.env), plan,
+    funnel, stepView,
+    remainingCandidates: plan.ok ? plan.allowance : null,
+    nextScheduledAtMs: null,
+  });
+
+  return json(200, {
+    mode: 'rollout-status',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    ...view,
+    policy: describePolicy(base.sequencePolicy),
+    maxSends,
+    stepCount: stepNumbers.length,
+    /** 2 キャンペーンを 1 本の道のりとして見せる（体験中 / 体験終了・フォロー中） */
+    journey,
+    /**
+     * 通し番号ごとの実績（1〜24）。**いま何通目まで出ているか**が分かる。
+     * ⚠️ 集計が無い Step は `null`（0 と書かない）。
+     */
+    currentTouch: (() => {
+      const sent = stepView.filter((x) => Number(x.sent) > 0).map((x) => x.step);
+      return sent.length ? Math.max(...sent) : null;
+    })(),
+    /** 集計が読めなかったときの理由（**推測で数字を作らない**） */
+    metricsPartial: metrics.partial === true,
+    metricsReason: metrics.reason || null,
+    metricsUpdatedAt: t && t.updatedAtMs ? new Date(t.updatedAtMs).toISOString() : null,
+    stateError,
+    /** この画面が使う I/O（母集団に依存しないことを示す） */
+    io: estimateDashboardIo({ cohortSize: t ? t.granted : 0, stepCount: stepNumbers.length }),
+    /**
+     * ⚠️ **どの env が閉じていて、何が止まっているか。**
+     *    工程ごとに必要な env は違う（付与 / キュー登録 / 実送信）。
+     *    「動かない」だけでは運用者が開けるべき env を判断できないので、
+     *    名前と結果をそのまま出す（値は出さない）。
+     */
+    gates: readStageGates(process.env),
+    blocked: describeBlocked(process.env),
+    notice: '増分集計を読んでいます（正本は Customers / CampaignDeliveries）。'
+      + '**付与もキュー登録も送信もしていません。**',
+  });
+}
+
 /**
  * **いまから送ろうとしている宛先だけ**の重複確認（read-only・1 バイトも書かない）。
  *

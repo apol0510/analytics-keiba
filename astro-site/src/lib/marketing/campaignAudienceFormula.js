@@ -38,7 +38,7 @@
  */
 
 import { COHORT_SOURCE_PREFIX } from '../crm/importedCohort.js';
-import { resolveGrantRequirement } from './sequenceProgress.js';
+import { resolveGrantRequirement, resolveExpiredGrantRequirement } from './sequenceProgress.js';
 
 /** tier ごとの Customers 列名（正本は promotionalGrants の運用に合わせる） */
 const GRANT_FIELDS = Object.freeze({
@@ -95,6 +95,13 @@ export function buildCampaignAudienceFormula(campaign) {
   const grant = resolveGrantRequirement(campaign);
   if (grant) clauses.push(grantTraceClause(grant.tier));
 
+  // ⚠️ 終了後フェーズも**痕跡がある人**まで（期限内 / 期限切れの別は formula で判定しない）。
+  //    「期限が切れているか」は日付比較なので、**判定の単一源**
+  //    （`sequenceProgress` の `checkExpiredGrantState`）に任せる。
+  //    ここで日付を比較すると、Airtable 側と JS 側で 2 つの判定が生まれる。
+  const expiredGrant = resolveExpiredGrantRequirement(campaign);
+  if (expiredGrant) clauses.push(grantTraceClause(expiredGrant.tier));
+
   const cohort = campaign.requiresImportCohort;
   if (cohort) {
     clauses.push(`FIND('${COHORT_SOURCE_PREFIX}', {Source}) = 1`);
@@ -120,6 +127,9 @@ export function campaignAudienceFormulaAccepts(campaign, fields) {
 
   const grant = resolveGrantRequirement(campaign);
   if (grant && !hasGrantTrace(f, grant.tier)) return false;
+
+  const expiredGrant = resolveExpiredGrantRequirement(campaign);
+  if (expiredGrant && !hasGrantTrace(f, expiredGrant.tier)) return false;
 
   const cohort = campaign.requiresImportCohort;
   if (cohort) {

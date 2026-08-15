@@ -18,7 +18,7 @@ import {
   NAME_FALLBACK,
 } from './campaignCatalog.js';
 import { computeCampaignContentHash } from './campaignSend.js';
-import { getSequenceSteps, resolveSequenceStep } from './campaignSequence.js';
+import { getSequenceSteps, resolveSequenceStep, resolveMaxSends } from './campaignSequence.js';
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
 import { OFFER_URL_PLACEHOLDER } from '../promotions/offerCampaignLink.js';
 
@@ -182,13 +182,64 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'free-member-activation': { version: 1, hash: '256dfcbb6c06209c' },
     // 連続配信は **ステップごと**にロックする（ステップ単位で DeliveryKey が分かれるため、
     // 1 ステップだけ文面を変えても、そのステップは既送信者へ届かない）。
+    //
+    // ── 連続配信の version ルール（2026-08-15 明文化）─────────────────
+    //   DeliveryKey = campaignId × **version** × step × 受信者。
+    //   つまり version を上げると **Step1 から全員へ配り直し**になる。
+    //   そのため、この 3 つを区別する:
+    //
+    //   (A) **末尾への追加**（append-only extension）… version 据え置きで**許可**
+    //       既存 Step の DeliveryKey を 1 つも変えないため、再送は起きない。
+    //       例: 4 通 → 24 通（Step5〜24 を追加）
+    //   (B) **未送信 Step の修正** … version 据え置きで**許可**（要記録）
+    //       まだ誰にも届いていないので「修正版が届かない」問題が起きない。
+    //       例: Step4 の「今回で最後」という記述（24 通構成では嘘になる）
+    //   (C) **送信済み Step の変更** … **禁止**（version を上げるしかない）
+    //       version を上げれば全員へ再送されるので、実質やり直しになる。
+    //       送信済み Step は `DELIVERED_STEPS` に登録し、下の専用テストで
+    //       **1 文字も変わっていない**ことを固定する。
     'light-trial-to-premium-sequence': {
       version: 1,
+      /** 本番で**実際に配信済み**の Step（変更禁止 / 下の専用テストが逐語で守る） */
+      delivered: [1],
       steps: {
         1: 'b7d45ce01bc4e686',
         2: 'a40b36b71fdeee59',
         3: '490be646ddf3f46b',
-        4: '1964397b87c74383',
+        // (B) 未送信 Step の修正。2026-08-15 に「今回で最後」を削除（続きがあるため）。
+        4: '06c2941d15072757',
+        // (A) 末尾への追加（Step5〜6 / `lightTrialSteps.js`）。既存 Step の鍵を変えない
+        5: '31f6cae59a98a699',
+        6: '4acf2e87ffa15892',
+      },
+    },
+    /**
+     * 体験終了後フェーズ（**新設 / 通し番号 7〜24**）。
+     * 体験中フェーズから 18 通を移したのではなく、**期限切れ後の事実に合わせて書き直した**
+     * 別キャンペーン（`postExpirySteps.js`）。version=1 で送信実績はまだ無い。
+     */
+    'light-trial-post-expiry-sequence': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: 'c2860342c2472c0b',
+        2: 'cf5858e24363b113',
+        3: '63d2e320fa3c3d07',
+        4: '338a6d1a2e0301db',
+        5: 'd85801d24ae4eb61',
+        6: 'a1860f80ac887463',
+        7: '139a0d9343ea46fc',
+        8: 'edfc4509ec10b929',
+        9: 'a930c75fa3cf0939',
+        10: '56e3a783e257b7a7',
+        11: '719460865a972ac7',
+        12: 'c6c6c20fb1135bc6',
+        13: 'c4ed8d7d97c8f48e',
+        14: '4ca02330b4b18e87',
+        15: 'a340270591ca0819',
+        16: 'fa6e65fa9d97a78a',
+        17: '8af4fe69a6089610',
+        18: '9dd9be91a0a11fde',
       },
     },
   };
@@ -212,6 +263,100 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     assert.equal(computeCampaignContentHash(c), lock.hash,
       `${c.campaignId}: 本文/件名/CTA が変更されています。**version を上げてから** LOCKED を更新してください`);
   }
+});
+
+/**
+ * ── 送信済み Step は 1 文字も変えない ──────────────────────────
+ *
+ * 2026-08-15 に **10 名へ Step1 を実送信済み**。この文面を変えると:
+ *   - version を上げなければ、修正版は**その 10 名へ二度と届かない**（DeliveryKey が同じ）
+ *   - version を上げれば、**Step1 から全員へ配り直し**になる
+ * どちらも事故なので、**送信済み Step は凍結**する。
+ *
+ * ハッシュだけでなく**逐語**で固定するのは、ハッシュ表だけだと
+ * 「本文を変えてハッシュも書き換える」で guard が素通りするため。
+ */
+test('【重要】送信済み Step1 は逐語で凍結（実送信済み・2026-08-15 / 10 名）', () => {
+  const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  const s1 = resolveSequenceStep(c, 1);
+  assert.equal(c.version, 1, 'version を上げると Step1 が全員へ再送される');
+  assert.equal(s1.subject, '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます');
+  assert.equal(s1.preheader, 'お申し込みは不要です。ログインするだけで、メインレースの買い目が見られます。');
+  assert.equal(s1.badge, '30日間 無料');
+  assert.equal(s1.headline, '現在、Lightプランを無料でご利用いただけます');
+  assert.equal(
+    s1.body,
+    'Lightプランの無料期間を設定させていただいています。\n'
+    + 'お申し込みもお支払いの手続きも必要ありません。\n\n'
+    + 'いつものメールアドレスでログインすると、そのままご利用いただけます。',
+  );
+  assert.equal(s1.benefitTitle, '無料期間中にご覧いただけるもの');
+  assert.deepEqual(s1.benefitItems, [
+    '各開催のメインレース買い目',
+    '買い目に対する結果（当たった日も外した日も）',
+    'AI総合指数と役割（本命 / 対抗 / 単穴 など）',
+  ]);
+  assert.equal(s1.ctaLabel, 'ログインして使いはじめる');
+  assert.equal(s1.ctaUrl, 'https://analytics.keiba.link/dashboard/');
+  assert.equal(s1.ctaNote, 'お申し込み手続きは必要ありません。{{grantExpiry}}');
+  // 内容ハッシュも当時のまま（DeliveryKey は version 由来だが、届く中身の同一性はこれで見る）
+  assert.equal(computeCampaignContentHash(s1), 'b7d45ce01bc4e686',
+    'Step1 の文面が変わっています。**送信済みなので変更できません**');
+});
+
+test('【重要】末尾への追加は version を上げずに許可（既存 Step の鍵を変えない）', () => {
+  const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  const steps = getSequenceSteps(c);
+  // 既存 Step の番号が動いていない（動くと DeliveryKey が変わり再送になる）
+  assert.deepEqual(steps.map((s) => s.stepNumber), [1, 2, 3, 4, 5, 6]);
+  assert.equal(c.version, 1, 'version を上げると Step1 が全員へ再送される');
+});
+
+test('【重要】体験中フェーズは 6 通で打ち止め（無料期間に収まる範囲）', () => {
+  const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  assert.equal(resolveMaxSends(c), 6);
+  assert.equal(getSequenceSteps(c).length, 6);
+  // 権利が有効であることを前提にしたフェーズなので、宣言も維持されている
+  assert.deepEqual(c.requiresActiveGrant, { tier: 'light', termedOnly: true });
+});
+
+test('【重要】体験終了後フェーズは 18 通・version 1・active grant を要求しない', () => {
+  const c = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  assert.ok(c, '終了後フェーズが無い');
+  assert.equal(c.version, 1);
+  assert.equal(resolveMaxSends(c), 18);
+  assert.equal(getSequenceSteps(c).length, 18);
+  assert.equal(c.requiresActiveGrant, undefined, '終了後なのに有効な付与を要求している');
+  assert.deepEqual(c.requiresExpiredGrant, { tier: 'light' });
+  assert.ok(c.requiresImportCohort, '体験コホート以外へ送ろうとしている');
+  assert.equal(c.showGrantExpiry, undefined, '終わった期限を差し込もうとしている');
+});
+
+test('【重要】合計 24 接点（体験中 6 + 終了後 18）', () => {
+  const a = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  const b = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  assert.equal(getSequenceSteps(a).length + getSequenceSteps(b).length, 24);
+});
+
+test('【重要】終了後の文面に「まだ無料で使える」と読める表現を残さない', () => {
+  const c = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  // 「無料期間中」「まだ無料」など、終わった権利を現在形で書いた表現
+  const BANNED = ['無料期間中', '無料体験中', 'まだ無料', '無料でご利用いただけます', '期間の残り'];
+  for (const s of getSequenceSteps(c)) {
+    const text = [s.subject, s.preheader, s.badge, s.headline, s.body,
+      s.benefitTitle, (s.benefitItems || []).join(' '), s.ctaNote, s.footerNote].join('\n');
+    for (const ng of BANNED) {
+      assert.equal(text.includes(ng), false, `step${s.stepNumber} に「${ng}」が残っている`);
+    }
+    // 終了日の差し込みも使わない（終わった日付を案内に出さない）
+    assert.equal(text.includes('{{grantExpiry}}'), false, `step${s.stepNumber} に終了日の印が残っている`);
+  }
+});
+
+test('【重要】送信済み Step の一覧は縮めない（凍結の対象を後から外さない）', () => {
+  // 実送信の事実は増えることはあっても減らない。減らす変更は guard の骨抜き
+  const DELIVERED_IN_PRODUCTION = [1];
+  assert.ok(DELIVERED_IN_PRODUCTION.includes(1), 'Step1 を凍結対象から外している');
 });
 
 test('内容ハッシュは本文の変更を検知する', () => {

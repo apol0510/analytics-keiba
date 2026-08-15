@@ -185,6 +185,44 @@ test('smoke: preview は既定文面・上限・差し込みを返す（送信�
   assert.equal(calls.length, 0, 'プレビューで外部 API を叩いている');
 });
 
+test('【重要】24 通すべてを送らずに確認できる（管理者の事前レビュー）', async () => {
+  // ⚠️ 24 通は **2 フェーズ**に分かれている（体験中 6 + 体験終了後 18）。
+  //    運用者は「通し番号 1〜24」で確認したいので、両方をつないで見る。
+  const PHASES = [
+    { campaignId: 'light-trial-to-premium-sequence', steps: 6 },
+    { campaignId: 'light-trial-post-expiry-sequence', steps: 18 },
+  ];
+  const seen = new Set();
+  let touch = 0;
+  for (const phase of PHASES) {
+    for (let step = 1; step <= phase.steps; step += 1) {
+      touch += 1;
+      // eslint-disable-next-line no-await-in-loop
+      const { statusCode, body } = await invoke({
+        action: 'preview', campaignId: phase.campaignId, step,
+      });
+      assert.equal(statusCode, 200, `${touch} 通目が確認できない: ${JSON.stringify(body).slice(0, 200)}`);
+      assert.equal(body.step, step, `${touch} 通目の step 指定が効いていない`);
+      assert.ok(body.subject && body.subject.length > 0, `${touch} 通目に件名が無い`);
+      assert.ok(body.preview && body.preview.html && body.preview.text, `${touch} 通目の完成形が無い`);
+      assert.equal(/\{\{[a-zA-Z]+\}\}/.test(body.preview.html), false,
+        `${touch} 通目に未解決の差し込みが残っている`);
+      assert.ok(body.preview.html.includes('配信を停止する'), `${touch} 通目に配信停止が無い`);
+      assert.ok(body.notice.includes('送信しません'), `${touch} 通目が送信しない旨を示していない`);
+      seen.add(body.subject);
+    }
+  }
+  assert.equal(touch, 24, '24 通そろっていない');
+  assert.equal(seen.size, 24, '件名が重複している（同じ文面を送っている）');
+});
+
+test('各フェーズの上限を超えた文面は確認できない（存在しない通を作らない）', async () => {
+  const over = await invoke({ action: 'preview', campaignId: 'light-trial-to-premium-sequence', step: 7 });
+  assert.equal(over.statusCode, 400, '体験中フェーズに 7 通目がある');
+  const overPost = await invoke({ action: 'preview', campaignId: 'light-trial-post-expiry-sequence', step: 19 });
+  assert.equal(overPost.statusCode, 400, '終了後フェーズに 19 通目がある');
+});
+
 test('smoke: preview は編集した文面でも同じレンダラーで描く', async () => {
   stubFetch({});
   const { statusCode, body } = await invoke({

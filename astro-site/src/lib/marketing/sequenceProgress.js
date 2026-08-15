@@ -66,6 +66,8 @@ export const SEQ_STOP = Object.freeze({
   GRANT_EXPIRED: 'grant_expired',
   GRANT_REVOKED: 'grant_revoked',
   GRANT_LIFETIME: 'grant_lifetime',
+  /** 終了後フェーズ用: **まだ体験中**（体験中フェーズが担当する） */
+  GRANT_STILL_ACTIVE: 'grant_still_active',
   NOT_IN_COHORT: 'not_in_cohort',
   AUDIENCE_MISMATCH: 'audience_mismatch',
   ENGAGEMENT_BLOCKED: 'engagement_blocked',
@@ -82,6 +84,7 @@ export const SEQ_STOP_LABEL = Object.freeze({
   grant_expired: '無料体験の期間が終了した',
   grant_revoked: '無料付与が取り消されている',
   grant_lifetime: '期限なしの無料付与（30日体験の案内は送らない）',
+  grant_still_active: 'まだ無料体験中（終了後の案内はまだ送らない）',
   not_in_cohort: '対象コホート外（CSV 取り込みの会員ではない）',
   audience_mismatch: '対象条件から外れた（プラン・契約状態の変化）',
   engagement_blocked: '反応なしが続いているため停止',
@@ -130,6 +133,46 @@ export function resolveGrantRequirement(campaign) {
   if (typeof raw === 'string') return { tier: raw === 'premium' ? 'premium' : 'light', termedOnly: false };
   const tier = String(raw.tier || 'light') === 'premium' ? 'premium' : 'light';
   return { tier, termedOnly: raw.termedOnly === true };
+}
+
+/**
+ * `requiresExpiredGrant` の宣言を読む（**体験が終わった人だけ**へ送るフェーズ用）。
+ *
+ * ⚠️ `requiresActiveGrant` の逆。両方を同時に宣言することはない
+ *    （同じ人が「体験中」かつ「体験終了」にはならない）。
+ */
+export function resolveExpiredGrantRequirement(campaign) {
+  const raw = campaign && campaign.requiresExpiredGrant;
+  if (!raw) return null;
+  if (typeof raw === 'string') return { tier: raw === 'premium' ? 'premium' : 'light' };
+  return { tier: String(raw.tier || 'light') === 'premium' ? 'premium' : 'light' };
+}
+
+/**
+ * 体験が**終わっている**か。終わっていなければ止める理由を返す。
+ *
+ * 送ってよいのは「参加した痕跡があり、期限が切れている」人だけ:
+ *   - 痕跡が無い            → `grant_required`（そもそも体験していない）
+ *   - まだ有効             → `grant_still_active`（体験中フェーズの担当）
+ *   - 期限なし（lifetime）  → `grant_lifetime`（終わる期間が無い）
+ *   - 取り消された          → `grant_revoked`（明確な対象外）
+ */
+function checkExpiredGrantState({ fields, requirement, nowMs }) {
+  const t = requirement.tier;
+  const raw = resolvePromotionalGrants(fromAirtableFields(fields).promoFields, nowMs);
+  const g = raw[t] || {};
+  const grantedAtMs = Number(g.grantedAtMs);
+  const untilMs = Number(g.untilMs);
+
+  // 取消は最優先（明確な対象外）
+  if (Number.isFinite(g.revokedAtMs)) return SEQ_STOP.GRANT_REVOKED;
+  // 参加した痕跡が無い（付与日も終了日も無い）
+  if (!Number.isFinite(grantedAtMs) && !Number.isFinite(untilMs)) return SEQ_STOP.GRANT_REQUIRED;
+  // 期限なし付与は「終了後」にならない
+  if (g.lifetime === true || !Number.isFinite(untilMs)) return SEQ_STOP.GRANT_LIFETIME;
+  // まだ期間内 → 体験中フェーズの担当（**脱落ではない**）
+  if (untilMs > Number(nowMs)) return SEQ_STOP.GRANT_STILL_ACTIVE;
+  return null;   // 期限切れ = このフェーズの対象
 }
 
 function checkGrantState({ fields, marketing, requirement, nowMs }) {
@@ -233,6 +276,16 @@ export function resolveRecipientProgress({
   if (requirement) {
     const g = checkGrantState({
       fields: (customer && customer.fields) || {}, marketing: mk, requirement, nowMs,
+    });
+    if (g) return stop(g);
+  }
+
+  // ── 無料体験が**終わった**人だけのフェーズ（宣言したシーケンスだけ）──────
+  //    判定は同じ単一源（`resolvePromotionalGrants`）を使う。ここで付与も延長もしない。
+  const expiredRequirement = resolveExpiredGrantRequirement(campaign);
+  if (expiredRequirement) {
+    const g = checkExpiredGrantState({
+      fields: (customer && customer.fields) || {}, requirement: expiredRequirement, nowMs,
     });
     if (g) return stop(g);
   }
