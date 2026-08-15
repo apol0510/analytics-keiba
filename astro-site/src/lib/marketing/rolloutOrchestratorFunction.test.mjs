@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import {
-  runRolloutTick, isArmedByState, armEnvForTick, deriveFacts, collectFinishedJobs, ROLLOUT_CAMPAIGN_ID,
+  runRolloutTick, isArmedByState, armEnvForTick, deriveFacts, collectFinishedJobs,
+  readWillSend, checkDispatchProgress, ROLLOUT_CAMPAIGN_ID,
 } from '../../../netlify/functions/cron-marketing-rollout.js';
 import { defaultRolloutState, ROLLOUT_STAGE, jstDay } from './rolloutPlan.js';
 
@@ -151,10 +152,11 @@ test('【重要】付与は既存の 1 本を呼ぶ（自前で Customers を書
   assert.equal(CODE.includes('/Customers'), false, 'Customers を直接触っている');
 });
 
-test('【重要】queue は管理画面と同じ関数を通す（自前で ScheduledEmails を作らない）', () => {
+test('【重要】queue は管理画面と同じ関数を通す（自前で台帳を書かない）', () => {
   assert.ok(SOURCE.includes("action: 'dryRun'") && SOURCE.includes("action: 'send'"), '既存の登録経路を通っていない');
-  assert.equal(CODE.includes('ScheduledEmails'), false, '自前でジョブ行を作っている');
-  assert.equal(CODE.includes('CampaignDeliveries'), false, '自前で台帳を書いている');
+  // ⚠️ 語そのものは説明文にも出る。**Airtable を直接叩いていないこと**で判定する
+  assert.equal(CODE.includes('api.airtable.com'), false, 'Airtable を直接叩いている');
+  assert.equal(/createRecord|upsertDeliveries|patchDeliveries/.test(CODE), false, '自前で行を作っている');
 });
 
 test('【重要】dry-run の指紋・文面・組み立て版をそのまま渡す（すり替え防止）', () => {
@@ -206,4 +208,105 @@ test('【重要】写し終えたジョブは追跡から外す（二重に数�
   assert.equal(r.failed, 2);
   // 送信中と、見つからないジョブは**判断しない**（次 tick で見る）
   assert.deepEqual(r.stillRunning, ['b', 'c']);
+});
+
+// ── 送信起動の契約（expectedWillSend）──────────────────────────
+
+test('【重要】dry-run の willSend をそのまま渡す（古い RecipientCount から推測しない）', () => {
+  const r = readWillSend({ jobResults: [{ jobId: 'mkt-a', willSend: 100, willSkip: 3, alreadySent: 7 }] }, 'mkt-a');
+  assert.equal(r.ok, true);
+  assert.equal(r.willSend, 100);
+  assert.equal(r.alreadySent, 7);
+});
+
+test('【重要】dry-run に自分のジョブが無ければ不明扱い（起動しない）', () => {
+  const r = readWillSend({ jobResults: [{ jobId: 'mkt-other', willSend: 5 }] }, 'mkt-a');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'job_not_in_dry_run');
+});
+
+test('【重要】willSend が数でなければ不明扱い（0 と決めつけない）', () => {
+  for (const bad of [null, undefined, '100', NaN]) {
+    const r = readWillSend({ jobResults: [{ jobId: 'mkt-a', willSend: bad }] }, 'mkt-a');
+    assert.equal(r.ok, false, `willSend=${String(bad)} を数として受け入れている`);
+  }
+});
+
+test('【重要】dry-run の形が変わったら不明扱い（推測で埋めない）', () => {
+  assert.equal(readWillSend({}, 'mkt-a').ok, false);
+  assert.equal(readWillSend({ jobResults: 'x' }, 'mkt-a').ok, false);
+});
+
+test('willSend=0 は理由ごと受け取れる（不用意に送らないため）', () => {
+  const r = readWillSend({
+    jobResults: [{ jobId: 'mkt-a', willSend: 0, willSkip: 10, skipByReason: { unsubscribed: 10 } }],
+  }, 'mkt-a');
+  assert.equal(r.ok, true);
+  assert.equal(r.willSend, 0);
+  assert.deepEqual(r.skipByReason, { unsubscribed: 10 });
+});
+
+test('【重要】起動直前に dry-run を通してから Background を呼ぶ（順序を固定）', () => {
+  const fn = CODE.slice(CODE.indexOf('async function startDispatch'));
+  const dryAt = fn.indexOf('dryRun: true');
+  const bgAt = fn.indexOf('marketing-campaign-dispatch-background');
+  assert.ok(dryAt > -1, '起動直前の dry-run が無い');
+  assert.ok(bgAt > dryAt, 'dry-run より先に Background を呼んでいる');
+  assert.ok(fn.includes('expectedWillSend: w.willSend'), '確定した人数を渡していない');
+});
+
+test('【重要】Background 側の expectedWillSend 必須ガードを外していない', () => {
+  const BG = readFileSync(
+    join(HERE, '../../../netlify/functions/marketing-campaign-dispatch-background.js'), 'utf8',
+  );
+  assert.ok(BG.includes('expected_will_send_required'), '必須ガードが消えている');
+});
+
+test('【重要】202 を送信成功として扱わない（台帳の進みで判定する）', () => {
+  const before = { 'mkt-a': 0, 'mkt-b': 40 };
+  const r = checkDispatchProgress({
+    watch: before,
+    byId: new Map([
+      ['mkt-a', { status: 'PENDING', sentCount: 0 }],   // 起動したが進んでいない
+      ['mkt-b', { status: 'PENDING', sentCount: 90 }],  // 進んだ
+    ]),
+  });
+  assert.deepEqual(r.stalled.map((x) => x.jobId), ['mkt-a']);
+  assert.deepEqual(r.advanced.map((x) => x.jobId), ['mkt-b']);
+});
+
+test('見えないジョブは進んだとも止まったとも判断しない', () => {
+  const r = checkDispatchProgress({ watch: { 'mkt-x': 5 }, byId: new Map() });
+  assert.equal(r.stalled.length, 0);
+  assert.equal(r.advanced.length, 0);
+});
+
+test('【重要】残りだけを送る再開でも、そのつど dry-run から人数を取り直す', () => {
+  // 1 回目の起動後に 60 通済み → 残り 40。**古い 100 を使い回さない**
+  const r = readWillSend({ jobResults: [{ jobId: 'mkt-a', willSend: 40, alreadySent: 60 }] }, 'mkt-a');
+  assert.equal(r.willSend, 40);
+  const fn = CODE.slice(CODE.indexOf('async function startDispatch'));
+  assert.equal(/RecipientCount/.test(fn), false, '作成時の人数から推測している');
+});
+
+// ── 工程ゲート（実装と説明を一致させる）────────────────────────
+
+test('【重要】各工程に必要な env を単一源から読む（cron が独自判定を持たない）', () => {
+  assert.ok(CODE.includes('rolloutGates.js') || SOURCE.includes('rolloutGates.js'), 'gate の単一源を使っていない');
+  // queue / dispatch の env を cron が直接読んでいない（迂回の芽を摘む）
+  assert.equal(/env\.MARKETING_CAMPAIGN_ENABLED|MARKETING_CAMPAIGN_ENABLED\s*===/.test(CODE), false,
+    'cron が独自にゲートを判定している');
+});
+
+test('【重要】Step 別の集計は「何通目か」が分かるジョブだけ（Step1 に混ぜない）', () => {
+  const r = collectFinishedJobs({
+    pendingJobIds: ['a', 'b'],
+    byId: new Map([
+      ['a', { status: 'COMPLETED', sentCount: 10, failedCount: 0 }],
+      ['b', { status: 'COMPLETED', sentCount: 5, failedCount: 1 }],
+    ]),
+    jobSteps: { a: 7 },   // b は不明
+  });
+  assert.deepEqual(r.byStep, { 7: { sent: 10, failed: 0 } });
+  assert.equal(r.sent, 15, '合計は両方を数える');
 });

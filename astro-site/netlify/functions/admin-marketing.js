@@ -159,6 +159,7 @@ import {
 } from '../../src/lib/marketing/rolloutStore.js';
 import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
 import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketing/rolloutMetrics.js';
+import { readStageGates, describeBlocked } from '../../src/lib/marketing/rolloutGates.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -1380,6 +1381,14 @@ async function handleRollout({ KEY, BASE, now, req }) {
     stateError,
     /** この画面が使う I/O（母集団に依存しないことを示す） */
     io: estimateDashboardIo({ cohortSize: t ? t.granted : 0, stepCount: stepNumbers.length }),
+    /**
+     * ⚠️ **どの env が閉じていて、何が止まっているか。**
+     *    工程ごとに必要な env は違う（付与 / キュー登録 / 実送信）。
+     *    「動かない」だけでは運用者が開けるべき env を判断できないので、
+     *    名前と結果をそのまま出す（値は出さない）。
+     */
+    gates: readStageGates(process.env),
+    blocked: describeBlocked(process.env),
     notice: '増分集計を読んでいます（正本は Customers / CampaignDeliveries）。'
       + '**付与もキュー登録も送信もしていません。**',
   });

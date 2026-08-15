@@ -112,9 +112,32 @@ export function defaultRolloutState() {
     pendingHandoffOp: null,
     /** queue 済みでまだ送信を起動していないジョブ ID（送信の起動は台帳が正本） */
     pendingJobIds: [],
+    /** jobId → 何通目か。集計を Step 別に積むために覚えておく */
+    jobSteps: {},
+    /**
+     * 送信を起動したときの「そのジョブの送信済み件数」。
+     * **202 は送信成功ではない**ので、次の tick で台帳が進んだかを見るために控える。
+     */
+    dispatchWatch: {},
     updatedAtMs: null,
     note: '',
   };
+}
+
+/** jobId → 数値 の対応表を安全に取り込む（壊れた値・多すぎる値は捨てる） */
+function normalizeJobMap(raw, pick) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(raw)) {
+    if (n >= 50) break;
+    const key = str(k).slice(0, 120);
+    const val = pick(v);
+    if (!key || val === null) continue;
+    out[key] = val;
+    n += 1;
+  }
+  return out;
 }
 
 /** 状態を安全に正規化する（壊れた値は既定へ倒す） */
@@ -139,6 +162,14 @@ export function normalizeRolloutState(raw) {
     pendingJobIds: Array.isArray(raw.pendingJobIds)
       ? raw.pendingJobIds.map((v) => str(v).slice(0, 120)).filter(Boolean).slice(0, 50)
       : [],
+    jobSteps: normalizeJobMap(raw.jobSteps, (v) => {
+      const n = num(v);
+      return n !== null && n >= 1 && n <= 99 ? Math.floor(n) : null;
+    }),
+    dispatchWatch: normalizeJobMap(raw.dispatchWatch, (v) => {
+      const n = num(v);
+      return n !== null && n >= 0 ? Math.floor(n) : null;
+    }),
     updatedAtMs: num(raw.updatedAtMs),
     note: str(raw.note).slice(0, 200),
   };

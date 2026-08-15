@@ -182,18 +182,34 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'free-member-activation': { version: 1, hash: '256dfcbb6c06209c' },
     // 連続配信は **ステップごと**にロックする（ステップ単位で DeliveryKey が分かれるため、
     // 1 ステップだけ文面を変えても、そのステップは既送信者へ届かない）。
+    //
+    // ── 連続配信の version ルール（2026-08-15 明文化）─────────────────
+    //   DeliveryKey = campaignId × **version** × step × 受信者。
+    //   つまり version を上げると **Step1 から全員へ配り直し**になる。
+    //   そのため、この 3 つを区別する:
+    //
+    //   (A) **末尾への追加**（append-only extension）… version 据え置きで**許可**
+    //       既存 Step の DeliveryKey を 1 つも変えないため、再送は起きない。
+    //       例: 4 通 → 24 通（Step5〜24 を追加）
+    //   (B) **未送信 Step の修正** … version 据え置きで**許可**（要記録）
+    //       まだ誰にも届いていないので「修正版が届かない」問題が起きない。
+    //       例: Step4 の「今回で最後」という記述（24 通構成では嘘になる）
+    //   (C) **送信済み Step の変更** … **禁止**（version を上げるしかない）
+    //       version を上げれば全員へ再送されるので、実質やり直しになる。
+    //       送信済み Step は `DELIVERED_STEPS` に登録し、下の専用テストで
+    //       **1 文字も変わっていない**ことを固定する。
     'light-trial-to-premium-sequence': {
       version: 1,
+      /** 本番で**実際に配信済み**の Step（変更禁止 / 下の専用テストが逐語で守る） */
+      delivered: [1],
       steps: {
         1: 'b7d45ce01bc4e686',
         2: 'a40b36b71fdeee59',
         3: '490be646ddf3f46b',
-        // ⚠️ step4 の文面は 2026-08-15 に修正した（24 通構成で「今回で最後」は嘘になるため）。
-        //    **version は上げていない。** version は DeliveryKey の構成要素なので、
-        //    上げると既に Step1 を受け取った 10 名へ Step1 から再送される。
-        //    文面の変更は DeliveryKey を変えないので、再送は起きない。
+        // (B) 未送信 Step の修正。2026-08-15 に「今回で最後」を削除（24 通構成では嘘になる）。
+        //     **誰にも届いていない Step**なので version は上げない（上げると Step1 が再送される）。
         4: '06c2941d15072757',
-        // Step5〜24（`lightTrialSteps.js`）。**新規追加**なので既存の進行に影響しない
+        // (A) 末尾への追加（Step5〜24 / `lightTrialSteps.js`）。既存 Step の鍵を変えない
         5: '31f6cae59a98a699',
         6: '4acf2e87ffa15892',
         7: '172cd4674d89758d',
@@ -237,6 +253,62 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     assert.equal(computeCampaignContentHash(c), lock.hash,
       `${c.campaignId}: 本文/件名/CTA が変更されています。**version を上げてから** LOCKED を更新してください`);
   }
+});
+
+/**
+ * ── 送信済み Step は 1 文字も変えない ──────────────────────────
+ *
+ * 2026-08-15 に **10 名へ Step1 を実送信済み**。この文面を変えると:
+ *   - version を上げなければ、修正版は**その 10 名へ二度と届かない**（DeliveryKey が同じ）
+ *   - version を上げれば、**Step1 から全員へ配り直し**になる
+ * どちらも事故なので、**送信済み Step は凍結**する。
+ *
+ * ハッシュだけでなく**逐語**で固定するのは、ハッシュ表だけだと
+ * 「本文を変えてハッシュも書き換える」で guard が素通りするため。
+ */
+test('【重要】送信済み Step1 は逐語で凍結（実送信済み・2026-08-15 / 10 名）', () => {
+  const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  const s1 = resolveSequenceStep(c, 1);
+  assert.equal(c.version, 1, 'version を上げると Step1 が全員へ再送される');
+  assert.equal(s1.subject, '【KEIBA Analytics】Lightプランを30日間 無料でお使いいただけます');
+  assert.equal(s1.preheader, 'お申し込みは不要です。ログインするだけで、メインレースの買い目が見られます。');
+  assert.equal(s1.badge, '30日間 無料');
+  assert.equal(s1.headline, '現在、Lightプランを無料でご利用いただけます');
+  assert.equal(
+    s1.body,
+    'Lightプランの無料期間を設定させていただいています。\n'
+    + 'お申し込みもお支払いの手続きも必要ありません。\n\n'
+    + 'いつものメールアドレスでログインすると、そのままご利用いただけます。',
+  );
+  assert.equal(s1.benefitTitle, '無料期間中にご覧いただけるもの');
+  assert.deepEqual(s1.benefitItems, [
+    '各開催のメインレース買い目',
+    '買い目に対する結果（当たった日も外した日も）',
+    'AI総合指数と役割（本命 / 対抗 / 単穴 など）',
+  ]);
+  assert.equal(s1.ctaLabel, 'ログインして使いはじめる');
+  assert.equal(s1.ctaUrl, 'https://analytics.keiba.link/dashboard/');
+  assert.equal(s1.ctaNote, 'お申し込み手続きは必要ありません。{{grantExpiry}}');
+  // 内容ハッシュも当時のまま（DeliveryKey は version 由来だが、届く中身の同一性はこれで見る）
+  assert.equal(computeCampaignContentHash(s1), 'b7d45ce01bc4e686',
+    'Step1 の文面が変わっています。**送信済みなので変更できません**');
+});
+
+test('【重要】末尾への追加は version を上げずに許可（既存 Step の鍵を変えない）', () => {
+  const c = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+  const steps = getSequenceSteps(c);
+  // 追加前の 4 通は連番の先頭に残っている（差し込み・並べ替えをしていない）
+  assert.deepEqual(steps.slice(0, 4).map((s) => s.stepNumber), [1, 2, 3, 4],
+    '既存 Step の番号が動いています（DeliveryKey が変わり再送になります）');
+  assert.equal(steps.length, 24);
+  // 番号は 1..24 の連番（欠番・重複があると「何通目か」が壊れる）
+  assert.deepEqual(steps.map((s) => s.stepNumber), Array.from({ length: 24 }, (_, i) => i + 1));
+});
+
+test('【重要】送信済み Step の一覧は縮めない（凍結の対象を後から外さない）', () => {
+  // 実送信の事実は増えることはあっても減らない。減らす変更は guard の骨抜き
+  const DELIVERED_IN_PRODUCTION = [1];
+  assert.ok(DELIVERED_IN_PRODUCTION.includes(1), 'Step1 を凍結対象から外している');
 });
 
 test('内容ハッシュは本文の変更を検知する', () => {

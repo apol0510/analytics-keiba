@@ -108,6 +108,23 @@ env だけで運用すると 145 回の開閉になる。状態だけにする�
 - 排他は同期版と同じ鍵（`ak:marketing-dispatch:lock:<jobId>`）
 - Background は結果を返せない（202 即返し）。**送信件数は台帳が正本**
 
+### 起動には `expectedWillSend` が要る（安全策は外さない）
+
+Background は `expectedWillSend` が無ければ **202 を返して 1 通も送らない**。
+これは「確認した人数と実際の人数が違ったら送らない」ための安全策なので、外さない。
+代わりに運転手が**起動直前に read-only の dry-run** を通して人数を数える。
+
+| やること | 理由 |
+|---|---|
+| 起動直前に `dryRun: true` で `jobResults[].willSend` を取る | 作成後に配信停止・バウンス・購入・既送信が起きていれば対象は減っている |
+| dry-run が失敗 / 形が違う / 自分のジョブが無い → **起動しない** | 分からないまま送らない |
+| `willSend = 0` → **起動せず理由（`skipByReason`）を記録** | 全員が既送信・配信停止などで正常に 0 のことがある |
+| `RecipientCount`（作成時の人数）は**使わない** | 古い数を渡すと送信直前ガードで 409 になり 1 通も出ない |
+
+**202 は「送れた」ではない。** 起動時の送信済み件数を控えておき、次の tick で
+台帳が進んだかを見る。進んでいなければ `dispatchStalled` として記録し、
+**送信済みとは扱わず**、次の tick が同じ経路（dry-run から）を通す。
+
 ### provider 受理と delivered は別
 
 `Status='sent'` は「送信基盤が受理した」。実配信は Event Webhook が別に記録する。
@@ -183,6 +200,31 @@ env だけで運用すると 145 回の開閉になる。状態だけにする�
 - 終わったジョブの実績は**進めない tick でも**集計へ写す（送ったのに 0 通のまま残さない）
 - 事実が 1 つでも読めなければ**何もしない**（`Number(null) === 0` の罠に落ちない）
 
+### 1 tick の優先順位
+
+| 順 | 状況 | やること |
+|---|---|---|
+| ① | 終わったジョブがある | 台帳の実績を集計へ写す（**進めない tick でも行う**） |
+| ② | 送信待ちジョブがある | **送信起動**（起動直前に dry-run で人数を確定） |
+| ③ | 付与済みで Step1 未 queue | **queue** |
+| ④ | 既存ユーザーに期日の Step がある | **最も早い期日の Step を queue**（Step2〜24） |
+| ⑤ | 積み残しも期日も無い | **新規付与** |
+| ⑥ | どれでもない | 理由付きで skip |
+
+### Step2〜24 は既存の単一源が決める
+
+「誰の次が何 Step か」を運転手は**決めない**。`action=sequence`
+（`buildSequenceProgress` / `selectNextDueStep`）が、購入・配信停止・ハードバウンス・
+苦情・provider suppression・対象外・間隔・頻度上限まで見たうえで返す
+「いま流してよい人」だけを積む。
+
+⚠️ **`sentCount + 1` のような独自判定を持たない。** 独自に数えると、
+止めるべき人へ送る事故になる（この単一源が止めている理由を運転手は知らない）。
+
+Step1 も Step2〜24 も**同じ安全経路**を通る:
+`sequence 判定 → dry-run → planFingerprint / contentHash / shellVersion を固定 → queue
+→ 送信直前 dry-run → expectedWillSend 付きで Background`。
+
 ### 書き込み経路を増やしていない
 
 | 段階 | 実際に書く場所 |
@@ -248,6 +290,36 @@ env だけで運用すると 145 回の開閉になる。状態だけにする�
 
 ---
 
+## 6.5 工程ごとの env（`rolloutGates.js` が単一源）
+
+必要な env は**工程ごとに違う**。「4 つ開ければ動く」ではない。
+
+| 工程 | 必要な env | 閉じていると |
+|---|---|---|
+| 自動運転 | `MARKETING_ROLLOUT_ENABLED=true` | 何も起きない（付与も queue も送信も） |
+| 無料付与 | `COMEBACK_GRANT_FIELDS_READY=1`<br>`COMEBACK_GRANT_ENABLED=true`<br>`LIGHT_TRIAL_AUTOGRANT_ENABLED=true` | 新規付与が進まない（既存ぶんの送信は進む） |
+| キュー登録 | `MARKETING_CAMPAIGN_ENABLED=true` | 案内が積まれない（付与だけ進む） |
+| 実送信 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | **メールが 1 通も出ない**（積まれるだけ） |
+
+- **既存ゲートを迂回しない。** 運転手は判定を**写す**だけで、緩めない
+- 判定に使った env と、実際に動く env（`process.env`）の**両方**で確かめる
+  （Function を跨ぐと dispatcher / admin は `process.env` を読むため）
+- `COMEBACK_GRANT_FIELDS_READY` だけ `'1'`（既存の付与ゲートに合わせる。`'true'` では開かない）
+- 画面（`action=rollout`）が `gates` / `blocked` を返す。
+  **閉じている env の名前と、そのせいで何が止まっているか**をそのまま出す（値は出さない）
+
+### 本番で有効化するとき
+
+1. 先に `MARKETING_ROLLOUT_ENABLED` **以外**を設定（付与 3 つ / queue / 送信）
+2. 展開状態を管理画面から `stage` / `dailyLimit` / `alwaysArmed` で設定
+3. 最後に `MARKETING_ROLLOUT_ENABLED=true`
+4. env 変更は **redeploy しないと反映されない**（Netlify の仕様）
+
+停止は `MARKETING_ROLLOUT_ENABLED` を外す（redeploy 要）か、
+**管理画面の kill switch**（redeploy 不要・次の tick から止まる）。
+
+---
+
 ## 7. 安全条件（触る前に必読）
 
 - **Customers 全件走査へ戻さない。** 受信対象は宣言から formula を作って名指しで引く
@@ -278,6 +350,8 @@ npm run check:safety     # 全 safety check
 | **`rolloutOrchestrator.test.mjs`** | **積み残し優先 / 事実不明で停止 / 同日二重防止 / 14,479 名を tick だけで配り切る / 途中 kill** |
 | **`rolloutOrchestratorFunction.test.mjs`** | **ゲート閉で無接続 / 武装は状態側 / 経路を増やしていない / 実績の写しを skip tick でも行う** |
 | **`rolloutMetrics.test.mjs`** | **加算の atomic 性 / 未計測を 0 と書かない / 版違い・破損で partial / I/O が母集団に依存しない** |
+| **`rolloutGates.test.mjs`** | **工程ごとの env / 既定は全部閉 / 名前をそのまま返す / 値を出さない** |
+| **`rolloutJourney.integration.test.mjs`** | **時計を進めるだけで Step1→24→完了 / 購入・配信停止で以降 0 通 / 再起動で二重 0 / 分割再開 / ゲート別の副作用** |
 
 ## 9. まだやっていないこと
 
@@ -285,5 +359,33 @@ npm run check:safety     # 全 safety check
 - 段階の自動昇格はしない（提案のみ）
 - Step5〜24 の**文面は初稿**。配信前に文言レビューを通す
 - 集計の `reconcile()` は**手動で叩く復旧口**。定期実行はまだ配線していない
+- **30 日の無料期間には 24 通は入り切らない**（下記）
 - 開封・クリックの計測は既存の Event Webhook に依存（click 計測はアカウント全体では
   有効化しない。magic link が壊れるため）
+
+
+---
+
+## 10. 判明した制約: 無料期間 30 日 と 24 通は両立しない
+
+統合テストで通しに回して分かった事実（`rolloutJourney.integration.test.mjs` が固定）:
+
+- 配信対象は `requiresActiveGrant: { tier: 'light', termedOnly: true }`。
+  **無料期間が終わると `grant_expired` で停止**し、後続 Step は積まれない
+- 間隔は最短 3 日 + 無反応 3 連続で 2 倍。**30 日では 6 通前後**しか入らない
+- 無料期間を十分長くすれば **Step1 → Step24 → 完了まで人手ゼロで到達する**（テスト済み）
+
+つまり現状のまま本番で回すと、**Step7 以降は誰にも届かない**。
+Step12 以降は「期限前 / 期限後 / 復帰 / 継続の提案」を書いてあるので、
+**届けたい相手は無料期間が終わった人**であり、この制約と噛み合っていない。
+
+### 選べる直し方（**どれも配信対象の定義を変えるので、判断が要る**）
+
+| 案 | 内容 | 影響 |
+|---|---|---|
+| A | 期限切れ後も一定期間は対象に含める | `requiresActiveGrant` の宣言と `sequenceProgress` の停止理由に手が入る（**共有ロジック**） |
+| B | 無料期間中に収まる通数へ減らす（6〜8 通） | 24 通の文面が余る。接点を増やす目的からは後退 |
+| C | 期限後ぶんを**別キャンペーン**に分ける | 既存の進行を壊さずに済む。DeliveryKey も分かれる |
+
+⚠️ **勝手に選ばない。** ここを変えると「誰に送るか」が変わるため、
+本番の配信対象そのものの判断になる。現状は事実をテストで固定するに留めている。
