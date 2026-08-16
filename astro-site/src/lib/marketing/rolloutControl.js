@@ -8,14 +8,15 @@
  * 管理 API へ書き込み口を足す。**その代わり、受け付ける値をここで絞る。**
  *
  * ── 受け付ける操作は 4 つだけ ──────────────────────────────────
- *   start   … 段階・1 日上限・武装を設定して開始する（CAS 必須）
+ *   start   … 段階・1 日上限・**1 バッチの人数**・武装を設定して開始する（CAS 必須）
  *   kill    … 緊急停止（**次の tick から自動処理を全部止める**）
  *   pause   … 新規付与だけ止める（積み残しの queue / 送信は進む）
  *   resume  … 停止を解除する（**段階は上げない**）
  *
  * ── ここで弾くもの（fail closed）────────────────────────────────
  * - 知らない `stage`（実装が持つ 5 値以外）
- * - `dailyLimit` が整数でない / 負 / 上限超え
+ * - `dailyLimit` / `batchSize` の未指定・整数でない・負・上限超え
+ *   （両方とも**必ず明示させる**。既定値で代用しない）
  * - `armedFor` が過去の日付（**武装したつもりで動かない**状態を作らない）
  * - `armedFor` が遠すぎる未来（置きっぱなしの誤爆を防ぐ）
  * - `expectedVersion` の指定漏れ（**CAS 無しでは書かせない**）
@@ -24,7 +25,7 @@
  * ⚠️ Customers・配信台帳・送信には**一切触れない**。
  */
 
-import { ROLLOUT_STAGE, HARD_DAILY_MAX, jstDay, normalizeRolloutState } from './rolloutPlan.js';
+import { ROLLOUT_STAGE, ABSOLUTE_MAX_PER_DAY, jstDay, normalizeRolloutState } from './rolloutPlan.js';
 
 /** 受け付ける操作 */
 export const ROLLOUT_OP = Object.freeze({
@@ -52,8 +53,8 @@ export const CONTROL_REJECT = Object.freeze({
 export const CONTROL_REJECT_LABEL = Object.freeze({
   unknown_op: '知らない操作です',
   bad_stage: '段階の値が不正です（paused / canary / steady / scale / completed のみ）',
-  bad_daily_limit: `1 日あたりの上限が不正です（0〜${HARD_DAILY_MAX} の整数）`,
-  bad_batch_size: `1 バッチの人数が不正です（1〜1 日上限の整数）`,
+  bad_daily_limit: `1 日あたりの上限が不正です（0〜${ABSOLUTE_MAX_PER_DAY} の整数）`,
+  bad_batch_size: '1 バッチの人数（batchSize）を 1〜1 日上限の整数で指定してください',
   bad_always_armed: 'alwaysArmed は true / false のみです',
   bad_armed_for: '武装日は YYYY-MM-DD（JST）で指定してください',
   armed_for_past: '武装日が過去です（その日は来ないので何も起きません）',
@@ -92,18 +93,16 @@ export function planRolloutStart({ current, exists, req, nowMs }) {
   //    ⚠️ 未指定を「段階の既定でよい」と解釈しない。**必ず明示させる**
   //       （100 名のつもりが canary 既定の 10 名だった、を防ぐ）
   const dailyLimit = r.dailyLimit;
-  if (!Number.isInteger(dailyLimit) || dailyLimit < 0 || dailyLimit > HARD_DAILY_MAX) {
+  if (!Number.isInteger(dailyLimit) || dailyLimit < 0 || dailyLimit > ABSOLUTE_MAX_PER_DAY) {
     return reject(CONTROL_REJECT.BAD_DAILY_LIMIT);
   }
 
-  // ── 1 バッチの人数（**1 日上限とは別物**）──────────────────────
-  //    未指定なら 1 日上限と同じ（＝従来どおり 1 日 1 バッチ相当）。
-  let batchSize = null;
-  if (r.batchSize !== undefined && r.batchSize !== null) {
-    if (!Number.isInteger(r.batchSize) || r.batchSize <= 0 || r.batchSize > dailyLimit) {
-      return reject(CONTROL_REJECT.BAD_BATCH_SIZE);
-    }
-    batchSize = r.batchSize;
+  // ── 1 バッチの人数（**1 日上限とは完全に別物・必ず明示させる**）──────
+  //    「1 回に何人へ配るか」と「1 日に何人まで配るか」は別の判断。
+  //    未指定を 1 日上限で代用すると、15,000 名を 1 バッチで投げる事故になる。
+  const batchSize = r.batchSize;
+  if (!Number.isInteger(batchSize) || batchSize <= 0 || batchSize > dailyLimit) {
+    return reject(CONTROL_REJECT.BAD_BATCH_SIZE);
   }
 
   // ── 武装（1 回だけ / 継続）──────────────────────────────────

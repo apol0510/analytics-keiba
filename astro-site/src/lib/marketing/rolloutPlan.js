@@ -40,8 +40,16 @@ export const STAGE_DEFAULT_DAILY = Object.freeze({
   completed: 0,
 });
 
-/** 1 日あたりの絶対上限。**状態が壊れてもこれを超えない** */
-export const HARD_DAILY_MAX = 2000;
+/**
+ * 1 日あたりの**絶対上限**。状態が壊れてもこれを超えない。
+ *
+ * ⚠️ 以前は 2000 固定だった（カナリア期の安全弁）。
+ *    AK の最終目的は約 15,000 件のコホートへ Step1 を配ることで、
+ *    2000/日 では 8 日かかる。**必要なら 1 日で配り切れる**ようにここを上げ、
+ *    実際の配信量は運用が `dailyLimit` で明示する（既定値は無い＝必ず指定させる）。
+ * ⚠️ それでも**無制限にはしない**。桁を間違えた指定（15 万など）は弾く。
+ */
+export const ABSOLUTE_MAX_PER_DAY = 20000;
 
 /** 進めない理由（固定コード。件数・理由だけを画面へ出す） */
 export const ROLLOUT_BLOCK = Object.freeze({
@@ -169,7 +177,7 @@ export function normalizeRolloutState(raw) {
   if (!raw || typeof raw !== 'object') return d;
   const stage = Object.values(ROLLOUT_STAGE).includes(str(raw.stage)) ? str(raw.stage) : d.stage;
   const dailyRaw = num(raw.dailyLimit);
-  const daily = dailyRaw !== null && dailyRaw >= 0 ? Math.min(Math.floor(dailyRaw), HARD_DAILY_MAX) : null;
+  const daily = dailyRaw !== null && dailyRaw >= 0 ? Math.min(Math.floor(dailyRaw), ABSOLUTE_MAX_PER_DAY) : null;
   return {
     version: num(raw.version) || 1,
     stage,
@@ -177,7 +185,7 @@ export function normalizeRolloutState(raw) {
     dailyLimit: daily,
     batchSize: (() => {
       const b = num(raw.batchSize);
-      return b !== null && b > 0 ? Math.min(Math.floor(b), HARD_DAILY_MAX) : null;
+      return b !== null && b > 0 ? Math.min(Math.floor(b), ABSOLUTE_MAX_PER_DAY) : null;
     })(),
     dayGrantedCount: Math.max(0, num(raw.dayGrantedCount) ?? 0),
     batchSeq: Math.max(0, num(raw.batchSeq) ?? 0),
@@ -209,7 +217,7 @@ export function resolveDailyLimit(state) {
   const s = normalizeRolloutState(state);
   const byStage = STAGE_DEFAULT_DAILY[s.stage] ?? 0;
   const n = s.dailyLimit === null ? byStage : s.dailyLimit;
-  return Math.max(0, Math.min(n, HARD_DAILY_MAX));
+  return Math.max(0, Math.min(n, ABSOLUTE_MAX_PER_DAY));
 }
 
 /**
@@ -222,7 +230,7 @@ export function resolveBatchSize(state) {
   const s = normalizeRolloutState(state);
   const daily = resolveDailyLimit(s);
   const b = s.batchSize === null ? daily : s.batchSize;
-  return Math.max(0, Math.min(b, daily, HARD_DAILY_MAX));
+  return Math.max(0, Math.min(b, daily, ABSOLUTE_MAX_PER_DAY));
 }
 
 /** 今日すでに配った人数（日付が変わっていれば 0） */
@@ -282,7 +290,7 @@ export function planRolloutTick({
   // ⑥ 今日の残り枠（**1 日 1 回ではなく、1 日の合計人数**で止める）
   if (dailyLimit <= 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED };
   const already = grantedToday(s, nowMs);
-  const dailyRoom = Math.min(dailyLimit, HARD_DAILY_MAX) - already;
+  const dailyRoom = Math.min(dailyLimit, ABSOLUTE_MAX_PER_DAY) - already;
   if (dailyRoom <= 0) {
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED, grantedToday: already };
   }

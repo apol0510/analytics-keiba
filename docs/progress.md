@@ -35,6 +35,24 @@ duplicate / 苦情は 1 件でも停止、failed 5% 超・bounce 2% 超・unsubs
 `npm run test:marketing` **1,874 pass / 0 fail**・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0・secret scan 0 件。
 
+### 最終設計へ修正（同日 / 2026-08-17）
+
+初期カナリア用の `HARD_DAILY_MAX = 2000` 固定では、最終目的（約 15,000 件へ配る）に小さすぎた。
+
+- `HARD_DAILY_MAX = 2000` 固定を廃止 → **`ABSOLUTE_MAX_PER_DAY = 20000`**（設定可能な安全上限）
+- `dailyLimit` と `batchSize` を**完全に分離**し、**両方とも rolloutStart で明示必須**
+  （既定値で代用すると「15,000 名を 1 バッチで投げる」事故になる）
+- cron を**毎時 → 5 分間隔**へ。1 バッチ = 3 tick なので、毎時では 15,000 件に 90 時間かかる。
+  5 分間隔なら 500×30 = 90 tick ≈ **7.5 時間**、1000×15 = 45 tick ≈ **3.75 時間**で同日完走
+- 速さを決めるのは cron ではなく**関所**（前バッチの Step1 が送り終わるまで次を始めない）
+
+追加テスト: 15,000 件を 500×30 / 1000×15 で同日完走 / 途中で duplicate・苦情・
+suppression 読取不能が出たら**残りのバッチが即停止** / 絶対上限で頭打ち /
+1 日上限を小さくすればその日はそこで止まる / batchSize 必須・1 日上限超えは拒否。
+
+`npm run test:marketing` **1,887 pass / 0 fail**・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0・secret scan 0 件。
+
 ### やっていないこと
 
 production deploy / production Redis state 変更 / 実顧客への新規付与 / 実メール送信 / PR merge。

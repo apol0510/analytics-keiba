@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import {
   planRolloutTick, applyRolloutRun, normalizeRolloutState, defaultRolloutState,
   resolveDailyLimit, resolveBatchSize, grantedToday, suggestNextStage, estimateRemainingDays, jstDay,
-  ROLLOUT_STAGE, ROLLOUT_BLOCK, STAGE_DEFAULT_DAILY, HARD_DAILY_MAX,
+  ROLLOUT_STAGE, ROLLOUT_BLOCK, STAGE_DEFAULT_DAILY, ABSOLUTE_MAX_PER_DAY,
 } from './rolloutPlan.js';
 
 /** 2026-08-16 09:00 JST */
@@ -85,8 +85,12 @@ test('【重要】1 日あたりの上限は状態で変えられる（env の�
 });
 
 test('【重要】絶対上限を超える指定は頭打ちにする（状態が壊れても暴走しない）', () => {
-  assert.equal(resolveDailyLimit({ stage: ROLLOUT_STAGE.SCALE, dailyLimit: 999999 }), HARD_DAILY_MAX);
-  assert.equal(tick({ state: running({ dailyLimit: 999999 }) }).allowance, HARD_DAILY_MAX);
+  assert.equal(resolveDailyLimit({ stage: ROLLOUT_STAGE.SCALE, dailyLimit: 999999 }), ABSOLUTE_MAX_PER_DAY);
+  // 候補が十分いても絶対上限で頭打ち（残り候補が少なければそちらが効く）
+  assert.equal(
+    tick({ state: running({ dailyLimit: 999999 }), remainingCandidates: 999999 }).allowance,
+    ABSOLUTE_MAX_PER_DAY,
+  );
 });
 
 test('残り候補が上限より少なければ残りだけ進む', () => {

@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import {
   planRolloutTick, applyRolloutRun, defaultRolloutState, jstDay,
-  ROLLOUT_STAGE, ROLLOUT_BLOCK, HARD_DAILY_MAX,
+  ROLLOUT_STAGE, ROLLOUT_BLOCK, ABSOLUTE_MAX_PER_DAY,
 } from './rolloutPlan.js';
 import { buildTrialOperationId } from '../comeback/lightTrialAutoGrant.js';
 import { canStartNextBatch, BATCH_STOP } from './batchHealth.js';
@@ -30,6 +30,31 @@ const scale = (over = {}) => ({
   armedFor: DAY,
   ...over,
 });
+
+/** 15,000 件を「グループを連続処理して 1 日で配り切る」形 */
+function runAllBatches(state, { cohort, nowMs = NOW, onBatch } = {}) {
+  let s = state;
+  let remaining = cohort;
+  const ops = [];
+  let guard = 0;
+  while (remaining > 0 && guard < 200) {
+    guard += 1;
+    const plan = planRolloutTick({
+      state: s, nowMs, remainingCandidates: remaining, previousOutstanding: 0, envEnabled: true,
+    });
+    if (!plan.ok) return { s, remaining, ops, stoppedBy: plan.reason, batches: ops.length };
+    // ⚠️ 実運用ではここで 付与 → queue → 送信 → 台帳確認 が終わってから次へ進む
+    //    （関所 previousOutstanding が 0 に戻るのがその合図）
+    if (onBatch) {
+      const verdict = onBatch({ batchSeq: plan.batchSeq, allowance: plan.allowance });
+      if (verdict && verdict.stop) return { s, remaining, ops, stoppedBy: verdict.reason, batches: ops.length };
+    }
+    ops.push(buildTrialOperationId(nowMs, plan.batchSeq));
+    s = applyRolloutRun({ state: s, nowMs, granted: plan.allowance, batchSeq: plan.batchSeq });
+    remaining -= plan.allowance;
+  }
+  return { s, remaining, ops, stoppedBy: null, batches: ops.length };
+}
 
 /** 1 バッチ回す（関所は「片付いた」前提） */
 function runBatch(state, { remaining = 14000, outstanding = 0, nowMs = NOW } = {}) {
@@ -94,11 +119,11 @@ test('【重要】同じバッチの再実行は同じ operationId（付与が�
 });
 
 test('【重要】1 日上限は絶対上限を超えられない', () => {
-  const s = scale({ dailyLimit: HARD_DAILY_MAX + 5000, batchSize: HARD_DAILY_MAX + 1000 });
+  const s = scale({ dailyLimit: ABSOLUTE_MAX_PER_DAY + 5000, batchSize: ABSOLUTE_MAX_PER_DAY + 1000 });
   const r = planRolloutTick({
     state: s, nowMs: NOW, remainingCandidates: 100000, previousOutstanding: 0, envEnabled: true,
   });
-  assert.ok(r.allowance <= HARD_DAILY_MAX, `${r.allowance} 名配ろうとしている`);
+  assert.ok(r.allowance <= ABSOLUTE_MAX_PER_DAY, `${r.allowance} 名配ろうとしている`);
 });
 
 test('【重要】残り候補がバッチ人数より少なければ、残りぶんだけ', () => {
@@ -178,4 +203,91 @@ test('15,000 件を 500 名 × 2000/日 で配り切る日数', () => {
   }
   assert.equal(remaining, 0);
   assert.equal(day, Math.ceil(15000 / 2000), `${day} 日かかっている`);
+});
+
+// ── 最終目的: 15,000 件を 1 日で配り切る ─────────────────────────
+
+test('【重要】15,000 件を 500 名 × 30 バッチで同じ日に配り切れる', () => {
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 500 }), { cohort: 15000 });
+  assert.equal(r.remaining, 0, `${r.remaining} 名が残っている（${r.stoppedBy}）`);
+  assert.equal(r.batches, 30, `${r.batches} バッチで終わっている`);
+  assert.equal(r.s.dayGrantedCount, 15000);
+  // バッチごとに operationId が違う（= 別の付与として記録される）
+  assert.equal(new Set(r.ops).size, 30, 'operationId が重複している');
+});
+
+test('【重要】15,000 件を 1000 名 × 15 バッチでも配り切れる', () => {
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 1000 }), { cohort: 15000 });
+  assert.equal(r.remaining, 0);
+  assert.equal(r.batches, 15);
+  assert.equal(new Set(r.ops).size, 15);
+});
+
+test('【重要】1 リクエストで全員へ投げる形にはしない（必ずグループに割る）', () => {
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 500 }), { cohort: 15000 });
+  // 1 バッチの人数は必ず batchSize 以下
+  assert.ok(r.batches >= 30, '1 回で大量に投げている');
+});
+
+test('【重要】途中で異常が出たら、残りのバッチは即座に止まる', () => {
+  // 12 バッチ目で健全性チェックが落ちる（duplicate 検知など）
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 500 }), {
+    cohort: 15000,
+    onBatch: ({ batchSeq }) => {
+      if (batchSeq < 12) return null;
+      const health = canStartNextBatch({
+        sent: 500, failed: 0, duplicates: 1, bounces: 0, complaints: 0, unsubscribes: 0,
+        previousOutstanding: 0, suppressionReadable: true,
+      });
+      return health.ok ? null : { stop: true, reason: health.reason };
+    },
+  });
+  assert.equal(r.stoppedBy, BATCH_STOP.DUPLICATES);
+  assert.equal(r.batches, 11, `${r.batches} バッチ進んでしまった`);
+  assert.equal(r.remaining, 15000 - 11 * 500, '止まったのに配り続けている');
+});
+
+test('【重要】苦情が 1 件出たらその場で止まる', () => {
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 500 }), {
+    cohort: 15000,
+    onBatch: ({ batchSeq }) => {
+      if (batchSeq < 3) return null;
+      const health = canStartNextBatch({
+        sent: 500, failed: 0, duplicates: 0, bounces: 0, complaints: 1, unsubscribes: 0,
+        previousOutstanding: 0, suppressionReadable: true,
+      });
+      return health.ok ? null : { stop: true, reason: health.reason };
+    },
+  });
+  assert.equal(r.stoppedBy, BATCH_STOP.COMPLAINTS);
+  assert.equal(r.batches, 2);
+});
+
+test('【重要】前バッチの結果が読めなければ、そこで止まる', () => {
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 500 }), {
+    cohort: 15000,
+    onBatch: ({ batchSeq }) => {
+      if (batchSeq < 5) return null;
+      const health = canStartNextBatch({
+        sent: 500, failed: 0, duplicates: 0, bounces: 0, complaints: 0, unsubscribes: 0,
+        previousOutstanding: 0, suppressionReadable: false,   // 停止リストが読めない
+      });
+      return health.ok ? null : { stop: true, reason: health.reason };
+    },
+  });
+  assert.equal(r.stoppedBy, BATCH_STOP.SUPPRESSION_UNREADABLE);
+  assert.equal(r.batches, 4);
+});
+
+test('【重要】1 日上限は絶対上限（20,000）で頭打ち', () => {
+  const r = runAllBatches(scale({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 1000 }), { cohort: 30000 });
+  assert.equal(r.stoppedBy, ROLLOUT_BLOCK.DAILY_LIMIT_REACHED);
+  assert.equal(r.s.dayGrantedCount, ABSOLUTE_MAX_PER_DAY);
+});
+
+test('【重要】1 日上限を小さくすれば、その日はそこで止まる（段階的に上げられる）', () => {
+  const r = runAllBatches(scale({ dailyLimit: 2000, batchSize: 500 }), { cohort: 15000 });
+  assert.equal(r.stoppedBy, ROLLOUT_BLOCK.DAILY_LIMIT_REACHED);
+  assert.equal(r.batches, 4);
+  assert.equal(r.s.dayGrantedCount, 2000);
 });

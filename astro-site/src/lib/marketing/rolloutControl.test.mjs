@@ -16,7 +16,7 @@ import {
   planRolloutStart, planRolloutPause, planRolloutResume, describeControlResult,
   CONTROL_REJECT, MAX_ARMED_AHEAD_DAYS,
 } from './rolloutControl.js';
-import { defaultRolloutState, ROLLOUT_STAGE, HARD_DAILY_MAX, jstDay } from './rolloutPlan.js';
+import { defaultRolloutState, ROLLOUT_STAGE, ABSOLUTE_MAX_PER_DAY, jstDay } from './rolloutPlan.js';
 
 const NOW = Date.parse('2026-08-16T02:00:00Z');   // JST 11:00
 const TODAY = jstDay(NOW);
@@ -24,7 +24,10 @@ const DAY = 86400_000;
 
 const start = (req, over = {}) => planRolloutStart({
   current: defaultRolloutState(), exists: false, nowMs: NOW,
-  req: { stage: 'canary', dailyLimit: 100, alwaysArmed: false, armedFor: TODAY, expectedVersion: null, ...req },
+  req: {
+    stage: 'canary', dailyLimit: 100, batchSize: 100,
+    alwaysArmed: false, armedFor: TODAY, expectedVersion: null, ...req,
+  },
   ...over,
 });
 
@@ -64,18 +67,44 @@ test('【重要】知らない段階は断る（canary10 のような値を書�
 });
 
 test('【重要】1 日あたりの上限は整数・0 以上・絶対上限以内', () => {
-  for (const v of [-1, 1.5, '100', null, undefined, HARD_DAILY_MAX + 1]) {
-    const r = start({ dailyLimit: v });
+  for (const v of [-1, 1.5, '100', null, undefined, ABSOLUTE_MAX_PER_DAY + 1]) {
+    const r = start({ dailyLimit: v, batchSize: 1 });
     assert.equal(r.ok, false, `dailyLimit=${String(v)} を受け入れている`);
     assert.equal(r.reason, CONTROL_REJECT.BAD_DAILY_LIMIT);
   }
-  assert.equal(start({ dailyLimit: 0 }).ok, true, '0（止める）は許す');
-  assert.equal(start({ dailyLimit: HARD_DAILY_MAX }).ok, true);
+  // 1 日上限 0（止める）のときはバッチも 0 しかありえない → batchSize 必須と両立しない
+  assert.equal(start({ dailyLimit: 0, batchSize: 1 }).reason, CONTROL_REJECT.BAD_BATCH_SIZE);
+  assert.equal(start({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 1000 }).ok, true);
 });
 
 test('【重要】未指定の上限を「段階の既定でよい」と解釈しない', () => {
   const r = start({ dailyLimit: undefined });
   assert.equal(r.ok, false, '未指定を通している（100 名のつもりが 10 名になる）');
+});
+
+test('【重要】1 バッチの人数も必ず明示させる（15,000 名を 1 回で投げない）', () => {
+  const r = start({ batchSize: undefined });
+  assert.equal(r.ok, false, 'batchSize 未指定を通している');
+  assert.equal(r.reason, CONTROL_REJECT.BAD_BATCH_SIZE);
+});
+
+test('【重要】1 バッチが 1 日上限を超える指定は断る', () => {
+  const r = start({ dailyLimit: 1000, batchSize: 1001 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, CONTROL_REJECT.BAD_BATCH_SIZE);
+});
+
+test('【重要】15,000 名を 500 名ずつ配る指定が通る（最終目的の形）', () => {
+  const r = start({ stage: 'scale', dailyLimit: 15000, batchSize: 500 });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.state.dailyLimit, 15000);
+  assert.equal(r.state.batchSize, 500);
+});
+
+test('【重要】絶対上限（20,000）は超えられない', () => {
+  const r = start({ stage: 'scale', dailyLimit: ABSOLUTE_MAX_PER_DAY + 1, batchSize: 500 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, CONTROL_REJECT.BAD_DAILY_LIMIT);
 });
 
 test('【重要】one-shot なのに武装日が無ければ断る（永久に動かない状態を作らない）', () => {
@@ -115,7 +144,7 @@ test('alwaysArmed は真偽値のみ', () => {
 test('【重要】expectedVersion の指定漏れは断る（CAS 無しで上書きさせない）', () => {
   const r = planRolloutStart({
     current: defaultRolloutState(), exists: false, nowMs: NOW,
-    req: { stage: 'canary', dailyLimit: 100, alwaysArmed: true },
+    req: { stage: 'canary', dailyLimit: 100, batchSize: 100, alwaysArmed: true },
   });
   assert.equal(r.ok, false);
   assert.equal(r.reason, CONTROL_REJECT.EXPECTED_VERSION_REQUIRED);
@@ -124,7 +153,7 @@ test('【重要】expectedVersion の指定漏れは断る（CAS 無しで上書
 test('【重要】新規作成のつもりで既存を上書きしない', () => {
   const r = planRolloutStart({
     current: { ...defaultRolloutState(), version: 3 }, exists: true, nowMs: NOW,
-    req: { stage: 'canary', dailyLimit: 100, alwaysArmed: true, expectedVersion: null },
+    req: { stage: 'canary', dailyLimit: 100, batchSize: 100, alwaysArmed: true, expectedVersion: null },
   });
   assert.equal(r.ok, false, '既存があるのに新規作成として通している');
 });
@@ -132,7 +161,7 @@ test('【重要】新規作成のつもりで既存を上書きしない', () =>
 test('【重要】既存が無いのに版を指定したら断る', () => {
   const r = planRolloutStart({
     current: defaultRolloutState(), exists: false, nowMs: NOW,
-    req: { stage: 'canary', dailyLimit: 100, alwaysArmed: true, expectedVersion: 3 },
+    req: { stage: 'canary', dailyLimit: 100, batchSize: 100, alwaysArmed: true, expectedVersion: 3 },
   });
   assert.equal(r.ok, false);
 });
@@ -140,7 +169,7 @@ test('【重要】既存が無いのに版を指定したら断る', () => {
 test('既存キーの更新は版を引き継ぐ', () => {
   const r = planRolloutStart({
     current: { ...defaultRolloutState(), version: 4 }, exists: true, nowMs: NOW,
-    req: { stage: 'scale', dailyLimit: 500, alwaysArmed: false, armedFor: TODAY, expectedVersion: 4 },
+    req: { stage: 'scale', dailyLimit: 500, batchSize: 500, alwaysArmed: false, armedFor: TODAY, expectedVersion: 4 },
   });
   assert.equal(r.ok, true, r.reason);
   assert.equal(r.expectedVersion, 4);
@@ -153,7 +182,7 @@ test('既存キーの更新は版を引き継ぐ', () => {
 test('【重要】start は緊急停止を勝手に解除しない', () => {
   const r = planRolloutStart({
     current: { ...defaultRolloutState(), killed: true, version: 2 }, exists: true, nowMs: NOW,
-    req: { stage: 'canary', dailyLimit: 100, alwaysArmed: true, expectedVersion: 2 },
+    req: { stage: 'canary', dailyLimit: 100, batchSize: 100, alwaysArmed: true, expectedVersion: 2 },
   });
   assert.equal(r.ok, true, r.reason);
   assert.equal(r.state.killed, true, '止めた事実を消している');
