@@ -1,3 +1,47 @@
+## 2026-08-16 — 【追加】1 通ごとの配信計測（DeliveryKey 索引 → sequencePolicy 配線）
+
+100 名カナリアの Step1 は sent=100 / failed=0 まで確認できたが、**delivered / open が
+touch ごとに読めない**状態だった。原因と対策:
+
+### EmailEvents が空だったのは仕様
+
+production は `MARKETING_EVENT_SINK=blob`。イベント行は Netlify Blobs（生ログ）と
+Redis カウンタへ入り、Airtable へは書かない（`EmailEvents` が Airtable の 37% を占めたため）。
+Webhook は登録済み・有効で受信も生きていた（`lastEventAt` が送信の 1 分後）。
+
+### 足したもの
+
+| モジュール | 役割 |
+|---|---|
+| `deliveryEventIndex.js` | **1 通ごと**の delivered / open を `ak:delivery-events:<DeliveryKey>` へ O(1) で畳む |
+| `touchMeasurement.js` | 配信台帳 × 索引を **DeliveryKey 完全一致**で結び、履歴と touch 別集計を作る |
+| `deliveryEventBackfill.js` | 索引より前に届いたぶんを生ログから拾い直す**計画**（下見のみ） |
+| `action=touchMeasurement` | touch 別 sent / delivered / opened / measured / unknown と率（分母を明記） |
+| `action=eventBackfillDryRun` | 日付で絞った Blob 走査 + 対象鍵だけの下見（**1 バイトも書かない**） |
+
+### 誤帰属を構造的に防いだ
+
+受信者ごとの「最新 open」からは推測しない。**古いメールを後から開いても、直近 touch を
+開封済みにしない**ことを統合テストで固定（touch1 を 10 日後に開封 → touch2 は未開封のまま）。
+
+`click` は provider 側 OFF のため索引にも集計にも作らない（false と捏造しない）。
+
+### 未計測の扱い
+
+delivered を確認できない / 索引が読めない → **未計測**。無反応として数えず、減速も停止もしない。
+PR #352 の `countConsecutiveNoEngagement` 修正と噛み合わせて、実データで動くことを検証した。
+
+### テスト
+
+`test:marketing` **1,832 pass / 0 fail**（+66）・`check:safety` EXIT=0 ・
+`check:fn-no-undef` OK ・ `build` EXIT=0 ・ secret scan 0 件。
+
+### やっていないこと
+
+**production Redis への backfill 実行はしていない**（下見のみ。別承認境界）。
+PR merge / production deploy / rolloutResume / 次の付与もしていない。
+**Last verified**: 2026-08-16
+
 ## 2026-08-15 — 【決定】30 日 と 24 通の両立（体験中 6 通 + 体験終了後 18 通の 2 フェーズ）
 
 前項で「30 日の無料期間に 24 通は入らない」と分かった件の決着。

@@ -482,3 +482,57 @@ click tracking がかかり、**マジックリンクが壊れる**（既知の�
 
 エンゲージメント除外（`engagementPolicy`）側は従来から未計測を `unknown` として扱い、
 **誰も除外しない**（本番実測でも 110 名が `unknown` / `blocked: 0`）。
+
+---
+
+## 12. 1 通ごとの計測（2026-08-16 追加）
+
+### なぜ「受信者ごとの最新 open」ではだめか
+
+受信者単位の集計だと「**どの通を**開いたか」が分からない。
+古いメールを後から開いた場合、直近の touch を開封済みと**誤って帰属**する。
+判断は必ず **DeliveryKey（campaign × version × step × 受信者の sha256）完全一致**で行う。
+
+### 索引（`deliveryEventIndex.js`）
+
+webhook 受信時、**resolved なイベントだけ**を Redis へ O(1) で畳む。
+
+| 鍵 | `ak:delivery-events:<DeliveryKey>` |
+|---|---|
+| 持つもの | `d`（delivered 時刻）/ `o`（最初の open）/ `ol`（最後の open）/ `oc`（open 回数）/ `v`（版） |
+| 持たないもの | **click**（provider 側 OFF。観測していないものを false にしない）／bounce・spam・unsubscribe（**既存の停止経路が正本**） |
+| PII | 入れない（鍵は sha256、アドレスは保存しない） |
+| 冪等 | delivered / first open は**より早い方**、last open は**より遅い方**、open 回数は provider の event id が未登録のときだけ +1 |
+| 正本 | **Blob の生ログ**。索引は再構築できる写し |
+| 失敗時 | webhook を落とさない（`deliveryIndex: failed` をログに残すだけ） |
+
+### 履歴への結合（`touchMeasurement.js`）
+
+配信台帳の行と索引を DeliveryKey 完全一致で結び、`sequencePolicy` が食える履歴にする。
+
+| 索引の状態 | 履歴の行 |
+|---|---|
+| delivered あり + open あり | `measured: true` / `opened: true` |
+| delivered あり + open なし | `measured: true` / `opened: false` |
+| delivered を確認できない | `measured: false`（**無反応として数えない**） |
+| 索引そのものが読めない | 全行 `measured: false` |
+
+### 管理画面（`action=touchMeasurement`）
+
+touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を返す。
+
+- `deliveryRate = delivered / **sent**`、`openRate = opened / **delivered**`（分母を応答に明記）
+- 分母 0 のときは率を `null`（0% と書かない）
+- 索引が読めなければ `measurementAvailable: false`
+- **Blob 全件走査はしない**（`blobReads: 0`）。Redis は 1 リクエスト最大 500 鍵の bounded read
+
+### 索引より前に届いたぶん（`action=eventBackfillDryRun`）
+
+索引は webhook 受信時にしか積まれないので、**索引を作る前に届いたイベント**は入らない。
+生ログ（Blob）から**対象の DeliveryKey だけ**を拾い直す下見を用意した。
+
+- 走査は**日付で絞る**（`date: YYYY-MM-DD` 必須。Blob 鍵は `ak/email-events/YYYY/MM/DD/...`）
+- 対象は「その campaign × version × step で実際に送った鍵」だけ
+- `resolved` でないイベントは入れない
+- 同じ鍵に別 campaign / version が混ざっていたら **conflict として書かない**
+- **下見は 1 バイトも書かない。** 実行（Redis 書き込み）は**別の承認境界**

@@ -325,6 +325,35 @@ async function applyEmailEventLedger({ events, now }) {
     },
   });
 
+  // 🔑 **1 通ごと**の配信結果を DeliveryKey で引ける索引へ畳む（O(1)）。
+  //    受信者単位の集計（下の engagementSignalStore）では「どの通を開いたか」が分からず、
+  //    古いメールを後から開いたときに別の touch へ誤帰属する。
+  //    ⚠️ **resolved なイベントだけ**（3 点が配信台帳と完全一致したもの）。
+  //    ⚠️ 正本は Blob の生ログ。ここは再構築できる索引なので、失敗しても webhook を落とさない。
+  let deliveryIndex = 'skipped';
+  try {
+    const resolvedEvents = sinkEvents.filter((e) => e && e.resolutionStatus === 'resolved');
+    if (resolvedEvents.length > 0) {
+      const [{ createDeliveryEventIndex }, { makeRedisCmd }] = await Promise.all([
+        import('../../src/lib/webhooks/deliveryEventIndex.js'),
+        import('../../src/lib/marketing/deliveryKeyStore.js'),
+      ]);
+      const index = createDeliveryEventIndex({ cmd: makeRedisCmd(process.env) });
+      const r = await index.fold({
+        events: resolvedEvents.map((e) => ({
+          type: e.eventType,
+          atMs: e.eventAtMs,
+          deliveryKey: e.deliveryKey,
+          providerEventId: e.providerEventId,
+        })),
+        nowMs: receivedAtMs,
+      });
+      deliveryIndex = r.failed > 0 ? 'degraded' : 'ok';
+    }
+  } catch {
+    deliveryIndex = 'failed';  // 判定側は「確認できない」= 未計測として扱う
+  }
+
   // 📬 受信者ごとの「反応した事実」を畳んでおく（開封・クリックのみ・アドレスは hash）。
   //    大量配信の engagement 判定はこの集計を読む。**生ログ（Blob）が正本**で、
   //    ここは再構成できる索引なので、失敗しても webhook は落とさない（数字が古くなるだけ）。
@@ -377,6 +406,7 @@ async function applyEmailEventLedger({ events, now }) {
     sink: {
       mode: sinkMode, airtable: sink.airtable, blob: sink.blob, counters: sink.counters,
       engagementSignal,
+      deliveryIndex,
     },
   };
 }

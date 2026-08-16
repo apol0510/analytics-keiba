@@ -160,7 +160,12 @@ import {
 import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
 import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketing/rolloutMetrics.js';
 import { readStageGates, describeBlocked } from '../../src/lib/marketing/rolloutGates.js';
-import { describeJourney } from '../../src/lib/marketing/journeyModel.js';
+import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journeyModel.js';
+import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
+import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
+import {
+  planBackfill, describeBackfillPlan, parseNdjson, blobDatePrefix, MAX_BLOBS_PER_RUN,
+} from '../../src/lib/webhooks/deliveryEventBackfill.js';
 import { JOURNEY_STATE_LABEL } from '../../src/lib/marketing/journeyTotals.js';
 import {
   planRolloutStart, planRolloutPause, planRolloutResume, describeControlResult,
@@ -229,6 +234,9 @@ const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 const AUTH_TOKENS_TABLE = 'AuthTokens';
 /** AK 自身のキャンペーン配信台帳。KMA の *_MarketingAutomation は使わない。 */
 const DELIVERIES_TABLE = 'CampaignDeliveries';
+
+/** 文字列として読む（null / undefined を 'null' にしない） */
+const str = (v) => String(v ?? '').trim();
 const SCHEDULED_TABLE = 'ScheduledEmails';
 /** 恒久台帳。テーブル名は受信側 `emailEventLedger.js` が単一源 */
 const EMAIL_EVENTS_TABLE = EMAIL_EVENTS_TABLE_NAME;
@@ -790,6 +798,8 @@ export const handler = async (event) => {
     if (action === 'rolloutKill') return await handleRolloutControl({ op: ROLLOUT_OP.KILL, now, req });
     if (action === 'rolloutPause') return await handleRolloutControl({ op: ROLLOUT_OP.PAUSE, now, req });
     if (action === 'rolloutResume') return await handleRolloutControl({ op: ROLLOUT_OP.RESUME, now, req });
+    if (action === 'touchMeasurement') return await handleTouchMeasurement({ KEY, BASE, now, req });
+    if (action === 'eventBackfillDryRun') return await handleEventBackfillDryRun({ KEY, BASE, req });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1557,6 +1567,176 @@ async function handleRolloutControl({ op, now, req }) {
       sideEffects: 'none',
     });
   }
+}
+
+/**
+ * touch 別の配信実績（**read-only**・PII なし）。
+ *
+ * 「送った」だけでなく「**届いた・開かれた**」を touch ごとに出す。
+ * 数え方は `touchMeasurement.js` が単一源で、結合は **DeliveryKey 完全一致**。
+ *
+ * ⚠️ **Blob の全件走査はしない。** 配信台帳から対象の DeliveryKey を名指しで集め、
+ *    Redis の索引を bounded read するだけ（既定 1 リクエスト 500 鍵まで）。
+ * ⚠️ 索引が読めないときは **`measurementAvailable: false`**（0 件と書かない）。
+ */
+async function handleTouchMeasurement({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  // ── 対象の配信行（この campaign のもの）を名指しで引く ───────────
+  const version = String(base.version);
+  const campaignType = `${base.campaignId}:v${version}`;
+  let deliveries;
+  try {
+    deliveries = await fetchAllStrict({
+      KEY, BASE, table: DELIVERIES_TABLE,
+      filterByFormula: `{CampaignType}='${campaignType}'`,
+      fields: ['DeliveryKey', 'CampaignType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail'],
+    });
+  } catch (e) {
+    return json(500, {
+      error: '配信台帳を取り切れなかったため、実績を返しません（数えられない数は出しません）。',
+      code: 'deliveries_fetch_incomplete',
+      sideEffects: 'none',
+    });
+  }
+
+  // ── DeliveryKey → step の対応表を作る（**推測しない**）───────────
+  //    受信者ごとに、その campaign の各 step の鍵を計算して突き合わせる。
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const emails = [...new Set(deliveries
+    .map((r) => str((r.fields || {}).RecipientEmail).toLowerCase())
+    .filter(Boolean))];
+  const stepByDeliveryKey = new Map();
+  for (const s of getSequenceSteps(base)) {
+    const stepCampaign = resolveSequenceStep(base, s.stepNumber);
+    if (!stepCampaign) continue;
+    for (const email of emails) {
+      const k = computeCampaignDeliveryKey({
+        campaign: stepCampaign, recipientEmail: email, brand: BRAND, fromEmail,
+      });
+      if (k) stepByDeliveryKey.set(k, s.stepNumber);
+    }
+  }
+
+  // ── イベント索引を bounded read ─────────────────────────────────
+  const keys = deliveries
+    .map((r) => str((r.fields || {}).DeliveryKey))
+    .filter((k) => stepByDeliveryKey.has(k));
+  let index = { ok: false, byKey: new Map() };
+  if (keys.length > 0) {
+    try {
+      const idx = createDeliveryEventIndex({ cmd: makeRedisCmd(process.env) });
+      index = await idx.read(keys.slice(0, MAX_READ_KEYS));
+    } catch {
+      index = { ok: false, byKey: new Map() };   // 読めない = 未計測（0 件にしない）
+    }
+  }
+
+  const summary = summarizeByTouch({ deliveries, stepByDeliveryKey, index });
+  return json(200, {
+    mode: 'touch-measurement',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    ...summary,
+    io: {
+      /** Blob は読んでいない（全件走査ゼロ） */
+      blobReads: 0,
+      redisKeys: Math.min(keys.length, MAX_READ_KEYS),
+      airtableRows: deliveries.length,
+      cappedAt: MAX_READ_KEYS,
+      truncated: keys.length > MAX_READ_KEYS,
+    },
+    notice: summary.measurementAvailable
+      ? '配信イベントの索引から数えています（open は届いた通が分母）。'
+      : '**イベント索引を読めませんでした。** 未計測として扱っています（0 件ではありません）。',
+  });
+}
+
+/**
+ * 索引ができる前に届いたイベントを、生ログから入れ直す**下見**（read-only）。
+ *
+ * ⚠️ **1 バイトも書かない。** 実行（Redis への書き込み）は別の承認境界。
+ * ⚠️ Blob は**日付で絞って**読む（全件走査しない）。
+ */
+async function handleEventBackfillDryRun({ KEY, BASE, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  const date = str(req.date);
+  const prefix = blobDatePrefix(date);
+  if (!prefix) {
+    return json(400, { error: '走査する日付（date: YYYY-MM-DD）を指定してください', sideEffects: 'none' });
+  }
+  const step = Number(req.step);
+  if (!Number.isInteger(step) || step < 1) {
+    return json(400, { error: '対象の step を指定してください', sideEffects: 'none' });
+  }
+  const stepCampaign = resolveSequenceStep(base, step);
+  if (!stepCampaign) return json(400, { error: '未知のステップです', sideEffects: 'none' });
+
+  // 対象の DeliveryKey（この campaign × version × step の受信者ぶん）
+  const campaignType = `${base.campaignId}:v${base.version}`;
+  let deliveries;
+  try {
+    deliveries = await fetchAllStrict({
+      KEY, BASE, table: DELIVERIES_TABLE,
+      filterByFormula: `{CampaignType}='${campaignType}'`,
+      fields: ['DeliveryKey', 'Status', 'RecipientEmail'],
+    });
+  } catch {
+    return json(500, { error: '配信台帳を取り切れませんでした', sideEffects: 'none' });
+  }
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const targetKeys = new Set();
+  for (const r of deliveries) {
+    const f = r.fields || {};
+    if (str(f.Status) !== 'sent') continue;
+    const email = str(f.RecipientEmail).toLowerCase();
+    if (!email) continue;
+    const k = computeCampaignDeliveryKey({
+      campaign: stepCampaign, recipientEmail: email, brand: BRAND, fromEmail,
+    });
+    if (k && str(f.DeliveryKey) === k) targetKeys.add(k);
+  }
+
+  // 生ログ（Blob）を**その日だけ**読む
+  let records = [];
+  let blobsScanned = 0;
+  try {
+    const { getStore } = await import('@netlify/blobs');
+    const store = getStore('ak-email-events');
+    const listed = await store.list({ prefix });
+    const blobs = (listed && listed.blobs) || [];
+    for (const b of blobs.slice(0, MAX_BLOBS_PER_RUN)) {
+      // eslint-disable-next-line no-await-in-loop
+      const text = await store.get(b.key);
+      if (!text) continue;
+      blobsScanned += 1;
+      records = records.concat(parseNdjson(text));
+    }
+  } catch (e) {
+    return json(503, {
+      error: '生ログ（Blob）を読めませんでした。下見を確定できません。',
+      code: 'blob_unreadable',
+      sideEffects: 'none',
+    });
+  }
+
+  const { plan, stats } = planBackfill({ records, targetKeys });
+  return json(200, {
+    mode: 'event-backfill-dry-run',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    step,
+    date,
+    ...describeBackfillPlan({ plan, stats, targetKeys, blobsScanned }),
+    notice: 'これは下見です。**Redis へ 1 バイトも書いていません**（実行は別承認）。',
+  });
 }
 
 async function handleDuplicateCheck({ KEY, BASE, req }) {
