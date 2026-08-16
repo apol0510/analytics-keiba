@@ -304,3 +304,104 @@ cron は 1 時間ごと。**`dailyLimit`（= 100）まで**付与する（`stage
 - Redis rollout state の本番開始設定
 - 100 名への実付与 / 実メール送信
 - 500 名以降への拡大（100 名の成功条件を満たし、**別承認を得てから** `stage: 'scale'` / `dailyLimit: 500`）
+
+---
+
+## 8. 500 名 one-shot（2026-08-17 JST 予定 / **未実行**）
+
+100 名カナリアの結果を受けての次段階。**当日まで実行しない。**
+
+### 前提（2026-08-16 時点の実測）
+
+| 項目 | 値 |
+|---|---|
+| 状態 | `stage=paused` / `killed=false` / `armedFor=null` / `totalGranted=100` |
+| `lastRunDay` | **2026-08-16**（当日はもう配れない = `already_ran_today`） |
+| gate 4 件 | **ON のまま**（env 変更・redeploy は不要） |
+| touch1 | sent 110 / delivered 100 / opened 6 / measured 100 / unknown 10 |
+
+⚠️ **8/16 中に `rolloutStart` して 500 名を足さない。** 同じ JST 日には配れない仕様なので、
+仮に開始しても `already_ran_today` で拒否される。`lastRunDay` を手で消す・Redis を直接
+書き換えるのも**禁止**（二重付与の防波堤を自分で外すことになる）。
+
+### ① 実行直前の read-only 確認（既存 110 名）
+
+```bash
+# 配信の実績（touch 別）
+{"action":"touchMeasurement","campaignId":"light-trial-to-premium-sequence"}
+#   → delivered / opened / measured / unknown、measurementAvailable: true
+# 進行と停止理由（購入・配信停止・バウンス・苦情・suppression）
+{"action":"sequence","campaignId":"light-trial-to-premium-sequence"}
+#   → summary.byStopReason（purchased / not_sendable / soft_bounce / provider_suppressed …）
+#   → engagement.coverage.lastEventAt（**Webhook が生きているか**）
+# ジョブ（duplicate / failed / skipped）
+{"action":"jobs"}
+```
+
+| 見るもの | 合格の目安 |
+|---|---|
+| delivered / opened | 数字が出ている（`measurementAvailable: true`） |
+| bounce / dropped / spam / complaint / unsubscribe | `byStopReason` と EmailBlacklist の増分が 0 に近い |
+| duplicate | 配信行の DeliveryKey 重複 0 / 宛先重複 0 |
+| stopped / purchase | `byStopReason` に理由つきで出る（購入は歓迎すべき停止） |
+| `lastEventAt` | 直近（Webhook 受信が生きている） |
+
+### ② 新規候補の preflight（500 名）
+
+```bash
+{"action":"trialGrant","batchSize":500}
+```
+
+| 見るもの | 2026-08-16 時点の実測 |
+|---|---|
+| eligible（`batch`） | **500** |
+| 除外理由 | 配信停止・バウンス・停止アカウント等 **6**（= suppression が効いている） |
+| 既付与との重複 | **0**（付与済み 110 名は候補に入らない） |
+| 関所 `outstandingStep1` | **0** → `nextBatchAllowed: true` |
+| コホート | `imp-2026-08-09-001` 499 / `imp-2026-08-04-001` 1 |
+
+⚠️ この下見は `abort: gates_closed` と返る。`LIGHT_TRIAL_AUTOGRANT_ARMED` を env に
+置かない運用（当日日付は展開状態から注入する）ため**正常**。
+⚠️ 同じ理由で `planFingerprint` も下見では空になる。**指紋の一致は cron の中で強制**される
+（`loadAndPlanLightTrial` が下見と実行で同じ 1 本を通るため、別経路にはならない）。
+
+### ③ 開始（8/17 JST に 1 回だけ）
+
+```bash
+# 1) いまの版を読む（**expectedVersion に渡す値**）
+{"action":"rollout","campaignId":"light-trial-to-premium-sequence"}
+#    → stateVersion（新規なら null）
+
+# 2) 開始（CAS）
+{"action":"rolloutStart","campaignId":"light-trial-to-premium-sequence",
+ "stage":"scale","dailyLimit":500,
+ "alwaysArmed":false,"armedFor":"2026-08-17",
+ "expectedVersion":<① の stateVersion>,"note":"activation scale 500 (one-shot)"}
+```
+
+- **env の変更・redeploy は不要**（gate 4 件は ON のまま）
+- `stage: scale` の既定は 500 だが、**`dailyLimit` は明示する**（未指定は 400）
+- `armedFor` は **cron tick が実際に走る JST 日付**。深夜 0 時をまたぐ時間帯は翌日日付にする
+
+### ④ 実行後（当日中）
+
+1. cron が 1 tick ごとに 付与 → queue → 送信起動 と進む（1 時間ごと）
+2. 完了したら **`{"action":"rolloutPause"}`** で明示的に止める
+   （`armedFor` は翌日に失効するので自動継続はしないが、明示的に閉じる）
+3. read-only で確認:
+
+| 指標 | 確認方法 |
+|---|---|
+| grant | `rollout` の `batch.lastRunCount` / `totalGranted` |
+| queue / sent / failed / skipped | `jobs` の `counts` |
+| duplicate | 配信行の DeliveryKey・宛先の重複 0 |
+| delivered / opened | `touchMeasurement`（索引が積まれるまで数分〜） |
+| bounce / complaint / unsubscribe | `sequence` の `byStopReason` + EmailBlacklist の増分 |
+| purchase | `sequence` の `byStopReason.purchased` |
+| **Customers 課金系変更** | 付与した人の `プラン` / `Status` / `PlanType` / `有効期限` が**空のまま** |
+
+### ⑤ 異常時
+
+- `{"action":"rolloutKill"}` … 次 tick 以降の自動処理を全停止（redeploy 不要）
+- 送信経路を閉じるなら `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy
+- 付与済みの権利は**自動で戻さない**（必要なら手動 revoke）
