@@ -535,4 +535,10 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
 - 対象は「その campaign × version × step で実際に送った鍵」だけ
 - `resolved` でないイベントは入れない
 - 同じ鍵に別 campaign / version が混ざっていたら **conflict として書かない**
-- **下見は 1 バイトも書かない。** 実行（Redis 書き込み）は**別の承認境界**
+- **下見は 1 バイトも書かない**（`action=eventBackfillDryRun`）
+- 実行は `action=eventBackfillRun`。**確認を 3 つ要求する**:
+  `confirm: true` / 下見で見た `expectedWriteKeys` と一致 / `conflicts: 0`。
+  1 つでも欠ければ **400 / 409 で書かない**（Blob は追記され続けるので、
+  確認したときと対象が変わっていたら止める）
+- 書くのは**索引だけ**。Customers・配信台帳・送信には触れない。
+  畳み込みは webhook と**同じ関数**を通すので、何度実行しても結果は変わらない

@@ -799,7 +799,8 @@ export const handler = async (event) => {
     if (action === 'rolloutPause') return await handleRolloutControl({ op: ROLLOUT_OP.PAUSE, now, req });
     if (action === 'rolloutResume') return await handleRolloutControl({ op: ROLLOUT_OP.RESUME, now, req });
     if (action === 'touchMeasurement') return await handleTouchMeasurement({ KEY, BASE, now, req });
-    if (action === 'eventBackfillDryRun') return await handleEventBackfillDryRun({ KEY, BASE, req, event });
+    if (action === 'eventBackfillDryRun') return await handleEventBackfill({ KEY, BASE, req, event, live: false });
+    if (action === 'eventBackfillRun') return await handleEventBackfill({ KEY, BASE, req, event, live: true });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1663,7 +1664,7 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
  * ⚠️ **1 バイトも書かない。** 実行（Redis への書き込み）は別の承認境界。
  * ⚠️ Blob は**日付で絞って**読む（全件走査しない）。
  */
-async function handleEventBackfillDryRun({ KEY, BASE, req, event }) {
+async function handleEventBackfill({ KEY, BASE, req, event, live = false }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
   const date = str(req.date);
@@ -1730,15 +1731,91 @@ async function handleEventBackfillDryRun({ KEY, BASE, req, event }) {
   }
 
   const { plan, stats } = planBackfill({ records, targetKeys });
+  const view = describeBackfillPlan({ plan, stats, targetKeys, blobsScanned });
+
+  if (!live) {
+    return json(200, {
+      mode: 'event-backfill-dry-run',
+      sideEffects: 'none',
+      campaignId: base.campaignId,
+      version: base.version,
+      step,
+      date,
+      ...view,
+      notice: 'これは下見です。**Redis へ 1 バイトも書いていません**（実行は別承認）。',
+    });
+  }
+
+  // ── 実行（**索引だけ**を書く）────────────────────────────────
+  //   ⚠️ 下見と同じ計画であることを件数で突き合わせる（TOCTOU 防止）。
+  //      Blob は追記され続けるので、確認した数と違えば**書かずに止める**。
+  if (req.confirm !== true) {
+    return json(400, { error: '実行するには confirm: true が必要です', sideEffects: 'none' });
+  }
+  const expected = Number(req.expectedWriteKeys);
+  if (!Number.isInteger(expected)) {
+    return json(400, {
+      error: '下見で確認した willWriteKeys（expectedWriteKeys）が必要です', sideEffects: 'none',
+    });
+  }
+  if (expected !== view.willWriteKeys) {
+    return json(409, {
+      error: '下見のときと対象が変わりました。もう一度下見からやり直してください。',
+      expected, got: view.willWriteKeys, sideEffects: 'none',
+    });
+  }
+  if (view.conflicts > 0) {
+    return json(409, {
+      error: '同じ鍵に別キャンペーンのイベントが混ざっています。書き込みを中止しました。',
+      conflicts: view.conflicts, sideEffects: 'none',
+    });
+  }
+
+  let result = { keys: 0, written: 0, failed: 0 };
+  try {
+    const idx = createDeliveryEventIndex({ cmd: makeRedisCmd(process.env) });
+    // 索引の畳み込みは webhook と**同じ関数**を通す（別経路を作らない）
+    const events = [];
+    for (const [key, u] of plan) {
+      if (u.deliveredAtMs !== null) {
+        events.push({ type: 'delivered', atMs: u.deliveredAtMs, deliveryKey: key });
+      }
+      if (u.firstOpenAtMs !== null) {
+        const ids = u.openEventIds.length > 0 ? u.openEventIds : [''];
+        for (const id of ids) {
+          events.push({
+            type: 'open',
+            atMs: u.firstOpenAtMs,
+            deliveryKey: key,
+            providerEventId: id,
+          });
+        }
+        if (u.lastOpenAtMs !== null && u.lastOpenAtMs !== u.firstOpenAtMs) {
+          events.push({ type: 'open', atMs: u.lastOpenAtMs, deliveryKey: key, providerEventId: '' });
+        }
+      }
+    }
+    result = await idx.fold({ events, nowMs: Date.now() });
+  } catch {
+    return json(503, { error: '索引へ書き込めませんでした', sideEffects: 'unknown' });
+  }
+
+  console.log('🔑 [admin-marketing] event backfill:', {
+    campaignId: base.campaignId, step, date,
+    keys: result.keys, written: result.written, failed: result.failed,
+  });
   return json(200, {
-    mode: 'event-backfill-dry-run',
-    sideEffects: 'none',
+    mode: 'event-backfill-run',
+    sideEffects: '配信イベント索引（Redis）のみ',
     campaignId: base.campaignId,
     version: base.version,
     step,
     date,
-    ...describeBackfillPlan({ plan, stats, targetKeys, blobsScanned }),
-    notice: 'これは下見です。**Redis へ 1 バイトも書いていません**（実行は別承認）。',
+    ...view,
+    written: result.written,
+    failed: result.failed,
+    notice: '索引へ書き込みました。**Customers・配信台帳・送信には触れていません**'
+      + '（同じ内容を再実行しても結果は変わりません）。',
   });
 }
 
