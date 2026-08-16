@@ -229,3 +229,41 @@ test('応答に PII / secret を入れない', async () => {
   const dump = JSON.stringify(body);
   assert.equal(/@|rec[A-Za-z0-9]{14}|Bearer|token/i.test(dump), false, dump.slice(0, 200));
 });
+
+// ── 開始に必要な版を read-only で取れる（2026-08-16 追加）──────────
+//    `rolloutStart` は CAS のため `expectedVersion` を要求する。
+//    その値を読む手段が無いと、運用者は開始できない（8/17 の 500 名 one-shot で必要）。
+
+test('【重要】rollout は展開状態の版を返す（expectedVersion に使える）', async () => {
+  const w = stubWorld({ initial: { ...defaultRolloutState(), version: 7, stage: 'paused' } });
+  const { statusCode, body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  assert.equal(body.stateVersion, 7, '版を返していない（開始できない）');
+  assert.equal(body.stateExists, true);
+  assert.equal(w.state().version, 7, '読むだけで書き換えている');
+});
+
+test('【重要】状態が無ければ版は null（＝新規作成の合図）', async () => {
+  stubWorld();
+  const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(body.stateVersion, null);
+  assert.equal(body.stateExists, false);
+});
+
+test('【重要】返した版でそのまま開始できる（読み → 開始が繋がる）', async () => {
+  stubWorld({ initial: { ...defaultRolloutState(), version: 3, stage: 'paused' } });
+  const read = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  const start = await invoke(startPayload({
+    stage: 'scale', dailyLimit: 500, expectedVersion: read.body.stateVersion,
+  }));
+  assert.equal(start.statusCode, 200, JSON.stringify(start.body).slice(0, 200));
+  assert.equal(start.body.stage, 'scale');
+  assert.equal(start.body.dailyLimit, 500);
+});
+
+test('rollout は read-only のまま（版を返しても書かない）', async () => {
+  const w = stubWorld({ initial: { ...defaultRolloutState(), version: 2 } });
+  const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(w.state().version, 2);
+});

@@ -1322,10 +1322,16 @@ async function handleRollout({ KEY, BASE, now, req }) {
   //    集計が無い / 壊れている / 版違いなら **partial** として数字を出さない。
   let state = null;
   let stateError = null;
+  /** 展開状態の版（`rolloutStart` の `expectedVersion` に渡す値）。無ければ null = 新規作成 */
+  let stateVersion = null;
+  let stateExists = false;
   let metrics = { partial: true, reason: 'unavailable', totals: null, steps: null };
   try {
     const cmd = makeRedisCmd(process.env);
-    state = (await createRolloutStore({ cmd }).load(base.campaignId)).state;
+    const loadedState = await createRolloutStore({ cmd }).load(base.campaignId);
+    state = loadedState.state;
+    stateExists = loadedState.exists === true;
+    stateVersion = stateExists ? loadedState.state.version : null;
     metrics = await createRolloutMetrics({ cmd }).read(base.campaignId);
   } catch (e) {
     stateError = (e instanceof RolloutStoreError && e.code) || 'unavailable';
@@ -1429,6 +1435,13 @@ async function handleRollout({ KEY, BASE, now, req }) {
       const sent = stepView.filter((x) => Number(x.sent) > 0).map((x) => x.step);
       return sent.length ? Math.max(...sent) : null;
     })(),
+    /**
+     * 展開状態の版と存在。**`rolloutStart` の `expectedVersion` にそのまま渡す**
+     * （新規作成なら `null`）。これが読めないと CAS で開始できない。
+     */
+    stateVersion,
+    stateExists,
+    stateUpdatedAt: state && state.updatedAtMs ? new Date(state.updatedAtMs).toISOString() : null,
     /** 集計が読めなかったときの理由（**推測で数字を作らない**） */
     metricsPartial: metrics.partial === true,
     metricsReason: metrics.reason || null,
