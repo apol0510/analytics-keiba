@@ -430,3 +430,55 @@ npm run check:safety     # 全 safety check
 無反応でも 24 通まで進む。5 通目のあと購入 / 期限切れ直前に購入 / 終了後 3 通目のあと購入 →
 以降 0 通。配信停止 / ハードバウンス / 苦情 / suppression → 以降 0 通。
 cron 再起動で handoff の二重作成 0・二重 queue / 送信 0。
+
+---
+
+## 11. 配信イベントの計測（2026-08-16 調査）
+
+### EmailEvents（Airtable）が空なのは**仕様**
+
+`MARKETING_EVENT_SINK=blob`（production）なので、イベント行は Airtable へ**書かない**。
+
+| `MARKETING_EVENT_SINK` | Airtable `EmailEvents` | Blob 生ログ | Redis カウンタ |
+|---|---|---|---|
+| 未設定 / `airtable` | 書く | — | — |
+| `dual` | 書く | 書く | 書く |
+| **`blob`（現行）** | **書かない** | 書く | 書く |
+
+理由: `EmailEvents` は Airtable の 37% を占め、`open` は重複排除されないため無制限に増える。
+
+### 実際にイベントは届いている（実測）
+
+| 確認 | 実測（2026-08-16） |
+|---|---|
+| SendGrid Event Webhook | **登録済み・有効**（URL は本番の `/.netlify/functions/sendgrid-webhook`） |
+| ON になっている event | `delivered` / `open` / `bounce` / `dropped` / `spam_report` / `unsubscribe` |
+| OFF の event | `click` / `deferred` / `processed` / `group_*` |
+| 署名検証 | `SENDGRID_WEBHOOK_VERIFICATION_KEY` は production に**設定済み**（未設定なら 403 で fail closed） |
+| 受信の生存確認 | engagement coverage の `lastEventAt` が**送信の 1 分後**を指す |
+| provider 側統計 | requests 109 / **delivered 109** / opens 8（unique 4）/ bounces 0 / blocks 0 / deferred 0 / spam 0 / unsubscribes 0 |
+
+⚠️ **click は provider 側で OFF**。クリック計測を有効化するとアカウント全体の
+click tracking がかかり、**マジックリンクが壊れる**（既知の禁止事項）。有効化しない。
+
+### 読み取り経路（現状の限界）
+
+- **集計**（Redis）… `action=sequence` の `engagement.coverage`（観測開始・最終イベント・記録済み open 数）
+- **生ログ**（Netlify Blobs `ak-email-events`）… 監査用。管理 API からの読み出し口は**まだ無い**
+- **campaign / step / touch 別の delivered・open の内訳**を返す口は**無い**（次工程）
+
+### 未計測は「無反応」ではない（2026-08-16 修正）
+
+`countConsecutiveNoEngagement` は `opened !== true` を無反応として数えていた。
+`sink=blob` では配信行に開封が載らないため、**全員が無反応**として扱われ、
+`resolveIntervalDays` の減速（間隔 2 倍）が全員に掛かっていた。
+将来 `stopAfterNoEngagement` に数値を入れると**全員が打ち切られる**状態でもあった。
+
+修正後:
+
+- 観測できた通（`opened` / `clicked` が真偽値、または `measured: true`）だけを数える
+- **未計測に当たったらそこで数えるのを止める**（過去へ遡らない）
+- `summarizeEngagementHistory()` が「無反応」と「未計測」を分けて返す（`unknown` フラグ付き）
+
+エンゲージメント除外（`engagementPolicy`）側は従来から未計測を `unknown` として扱い、
+**誰も除外しない**（本番実測でも 110 名が `unknown` / `blocked: 0`）。

@@ -223,21 +223,81 @@ export function pickAngle({ angles, stepNumber, lastAngle = null, policy }) {
 }
 
 /**
+ * その 1 通について、**反応を観測できたか**（開封・クリックの記録が存在するか）。
+ *
+ * ⚠️ 「開封していない」と「**開封を記録していない**」は別物。
+ *    2026-08-16 時点の本番は `MARKETING_EVENT_SINK=blob` で、配信イベントは
+ *    Blob と Redis カウンタへ入る（Airtable の配信行には開封が載らない）。
+ *    その状態で `opened !== true` を「無反応」と数えると、**全員が無反応**になる。
+ */
+export function isEngagementMeasured(row) {
+  const r = row || {};
+  return typeof r.opened === 'boolean'
+    || typeof r.clicked === 'boolean'
+    || r.measured === true;
+}
+
+/** その 1 通に反応があったか（観測できているときだけ true） */
+export function isEngaged(row) {
+  const r = row || {};
+  return r.opened === true || r.clicked === true;
+}
+
+/**
  * 反応から「無反応が何回続いたか」を数える（次の判断の材料）。
  *
- * @param {Array<{opened?: boolean, clicked?: boolean}>} history 新しい順でも古い順でもよい
+ * ⚠️ **観測できていない通は数に入れない**（数えるのをそこで止める）。
+ *    未計測を無反応として積み上げると:
+ *      - 間隔が全員 2 倍になる（`resolveIntervalDays`）
+ *      - `stopAfterNoEngagement` を将来設定したときに**全員が打ち切られる**
+ *    どちらも「反応が無い」ではなく「見えていない」ことが原因なので、判断材料にしない。
+ *
+ * @param {Array<{opened?: boolean, clicked?: boolean, measured?: boolean}>} history
+ *        新しい順でも古い順でもよい
  * @param {{order?: 'asc'|'desc'}} [opts] 既定は古い順（asc）
+ * @returns {number} 直近から連続する「**観測できたうえで**反応が無かった」回数
  */
 export function countConsecutiveNoEngagement(history, { order = 'asc' } = {}) {
   const rows = Array.isArray(history) ? history.slice() : [];
   const seq = order === 'desc' ? rows : rows.reverse();
   let n = 0;
   for (const r of seq) {
-    const engaged = !!(r && (r.opened === true || r.clicked === true));
-    if (engaged) break;
+    if (isEngaged(r)) break;
+    // 観測できていない通に当たったら、そこから先は**判断しない**
+    if (!isEngagementMeasured(r)) break;
     n += 1;
   }
   return n;
+}
+
+/**
+ * 反応の観測状況を要約する（画面・ログ用。**PII を含めない**）。
+ *
+ * 「無反応が続いている」と「計測できていない」を**分けて**出す。
+ */
+export function summarizeEngagementHistory(history, { order = 'asc' } = {}) {
+  const rows = Array.isArray(history) ? history.slice() : [];
+  const seq = order === 'desc' ? rows : rows.reverse();
+  let measured = 0;
+  let engaged = 0;
+  let unmeasured = 0;
+  for (const r of seq) {
+    if (isEngagementMeasured(r)) {
+      measured += 1;
+      if (isEngaged(r)) engaged += 1;
+    } else {
+      unmeasured += 1;
+    }
+  }
+  return {
+    total: seq.length,
+    measured,
+    unmeasured,
+    engaged,
+    consecutiveNoEngagement: countConsecutiveNoEngagement(history, { order }),
+    /** 1 通も観測できていない = 判断材料が無い（0 件と区別する） */
+    unknown: measured === 0 && seq.length > 0,
+  };
 }
 
 /** 画面へ出す要約（**PII を含めない**） */
