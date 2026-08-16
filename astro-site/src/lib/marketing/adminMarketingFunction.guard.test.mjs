@@ -269,3 +269,32 @@ test('guard: ジョブ一覧・取消の応答にアドレスを載せない', (
     assert.equal(seg.includes(banned), false, `応答に ${banned} を載せている`);
   }
 });
+
+// ── Blobs へ触るときは接続してから（2026-08-16）─────────────────
+test('【重要】Blob を読む前に connectLambda する（v1 Function の必須手順）', () => {
+  const fn = src.slice(src.indexOf('async function handleEventBackfillDryRun'));
+  const getAt = fn.indexOf("getStore('ak-email-events')");
+  const connectAt = fn.indexOf('connectLambda(event)');
+  assert.ok(getAt > -1, 'Blob を読んでいない');
+  assert.ok(connectAt > -1, 'connectLambda を呼んでいない（MissingBlobsEnvironmentError になる）');
+  assert.ok(connectAt < getAt, 'getStore の後に接続している');
+});
+
+test('【重要】backfill の下見は 1 バイトも書かない', () => {
+  const fn = src.slice(
+    src.indexOf('async function handleEventBackfillDryRun'),
+    src.indexOf('async function handleDuplicateCheck'),
+  );
+  assert.equal(/store\.set\(|setBlob|HSET|EVAL|method: 'PATCH'|method: 'POST'/.test(fn), false,
+    '下見なのに書き込んでいる');
+  assert.ok(fn.includes("sideEffects: 'none'"));
+});
+
+test('【重要】touch 別計測は Blob 全件走査をしない', () => {
+  const fn = src.slice(
+    src.indexOf('async function handleTouchMeasurement'),
+    src.indexOf('async function handleEventBackfillDryRun'),
+  );
+  assert.equal(fn.includes('getStore'), false, 'Blob を読んでいる');
+  assert.ok(fn.includes('MAX_READ_KEYS'), 'Redis 読み取りに上限が無い');
+});

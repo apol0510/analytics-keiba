@@ -799,7 +799,7 @@ export const handler = async (event) => {
     if (action === 'rolloutPause') return await handleRolloutControl({ op: ROLLOUT_OP.PAUSE, now, req });
     if (action === 'rolloutResume') return await handleRolloutControl({ op: ROLLOUT_OP.RESUME, now, req });
     if (action === 'touchMeasurement') return await handleTouchMeasurement({ KEY, BASE, now, req });
-    if (action === 'eventBackfillDryRun') return await handleEventBackfillDryRun({ KEY, BASE, req });
+    if (action === 'eventBackfillDryRun') return await handleEventBackfillDryRun({ KEY, BASE, req, event });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
@@ -1663,7 +1663,7 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
  * ⚠️ **1 バイトも書かない。** 実行（Redis への書き込み）は別の承認境界。
  * ⚠️ Blob は**日付で絞って**読む（全件走査しない）。
  */
-async function handleEventBackfillDryRun({ KEY, BASE, req }) {
+async function handleEventBackfillDryRun({ KEY, BASE, req, event }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
   const date = str(req.date);
@@ -1707,7 +1707,10 @@ async function handleEventBackfillDryRun({ KEY, BASE, req }) {
   let records = [];
   let blobsScanned = 0;
   try {
-    const { getStore } = await import('@netlify/blobs');
+    const { getStore, connectLambda } = await import('@netlify/blobs');
+    // ⚠️ v1 形式（`handler(event)`）の Function から Blobs を使うには **接続が要る**。
+    //    これを忘れると MissingBlobsEnvironmentError になる（Premium Plus 実績画像で踏んだ罠）。
+    if (event) connectLambda(event);
     const store = getStore('ak-email-events');
     const listed = await store.list({ prefix });
     const blobs = (listed && listed.blobs) || [];
