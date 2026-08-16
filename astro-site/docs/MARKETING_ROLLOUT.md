@@ -430,3 +430,115 @@ npm run check:safety     # 全 safety check
 無反応でも 24 通まで進む。5 通目のあと購入 / 期限切れ直前に購入 / 終了後 3 通目のあと購入 →
 以降 0 通。配信停止 / ハードバウンス / 苦情 / suppression → 以降 0 通。
 cron 再起動で handoff の二重作成 0・二重 queue / 送信 0。
+
+---
+
+## 11. 配信イベントの計測（2026-08-16 調査）
+
+### EmailEvents（Airtable）が空なのは**仕様**
+
+`MARKETING_EVENT_SINK=blob`（production）なので、イベント行は Airtable へ**書かない**。
+
+| `MARKETING_EVENT_SINK` | Airtable `EmailEvents` | Blob 生ログ | Redis カウンタ |
+|---|---|---|---|
+| 未設定 / `airtable` | 書く | — | — |
+| `dual` | 書く | 書く | 書く |
+| **`blob`（現行）** | **書かない** | 書く | 書く |
+
+理由: `EmailEvents` は Airtable の 37% を占め、`open` は重複排除されないため無制限に増える。
+
+### 実際にイベントは届いている（実測）
+
+| 確認 | 実測（2026-08-16） |
+|---|---|
+| SendGrid Event Webhook | **登録済み・有効**（URL は本番の `/.netlify/functions/sendgrid-webhook`） |
+| ON になっている event | `delivered` / `open` / `bounce` / `dropped` / `spam_report` / `unsubscribe` |
+| OFF の event | `click` / `deferred` / `processed` / `group_*` |
+| 署名検証 | `SENDGRID_WEBHOOK_VERIFICATION_KEY` は production に**設定済み**（未設定なら 403 で fail closed） |
+| 受信の生存確認 | engagement coverage の `lastEventAt` が**送信の 1 分後**を指す |
+| provider 側統計 | requests 109 / **delivered 109** / opens 8（unique 4）/ bounces 0 / blocks 0 / deferred 0 / spam 0 / unsubscribes 0 |
+
+⚠️ **click は provider 側で OFF**。クリック計測を有効化するとアカウント全体の
+click tracking がかかり、**マジックリンクが壊れる**（既知の禁止事項）。有効化しない。
+
+### 読み取り経路（現状の限界）
+
+- **集計**（Redis）… `action=sequence` の `engagement.coverage`（観測開始・最終イベント・記録済み open 数）
+- **生ログ**（Netlify Blobs `ak-email-events`）… 監査用。管理 API からの読み出し口は**まだ無い**
+- **campaign / step / touch 別の delivered・open の内訳**を返す口は**無い**（次工程）
+
+### 未計測は「無反応」ではない（2026-08-16 修正）
+
+`countConsecutiveNoEngagement` は `opened !== true` を無反応として数えていた。
+`sink=blob` では配信行に開封が載らないため、**全員が無反応**として扱われ、
+`resolveIntervalDays` の減速（間隔 2 倍）が全員に掛かっていた。
+将来 `stopAfterNoEngagement` に数値を入れると**全員が打ち切られる**状態でもあった。
+
+修正後:
+
+- 観測できた通（`opened` / `clicked` が真偽値、または `measured: true`）だけを数える
+- **未計測に当たったらそこで数えるのを止める**（過去へ遡らない）
+- `summarizeEngagementHistory()` が「無反応」と「未計測」を分けて返す（`unknown` フラグ付き）
+
+エンゲージメント除外（`engagementPolicy`）側は従来から未計測を `unknown` として扱い、
+**誰も除外しない**（本番実測でも 110 名が `unknown` / `blocked: 0`）。
+
+---
+
+## 12. 1 通ごとの計測（2026-08-16 追加）
+
+### なぜ「受信者ごとの最新 open」ではだめか
+
+受信者単位の集計だと「**どの通を**開いたか」が分からない。
+古いメールを後から開いた場合、直近の touch を開封済みと**誤って帰属**する。
+判断は必ず **DeliveryKey（campaign × version × step × 受信者の sha256）完全一致**で行う。
+
+### 索引（`deliveryEventIndex.js`）
+
+webhook 受信時、**resolved なイベントだけ**を Redis へ O(1) で畳む。
+
+| 鍵 | `ak:delivery-events:<DeliveryKey>` |
+|---|---|
+| 持つもの | `d`（delivered 時刻）/ `o`（最初の open）/ `ol`（最後の open）/ `oc`（open 回数）/ `v`（版） |
+| 持たないもの | **click**（provider 側 OFF。観測していないものを false にしない）／bounce・spam・unsubscribe（**既存の停止経路が正本**） |
+| PII | 入れない（鍵は sha256、アドレスは保存しない） |
+| 冪等 | delivered / first open は**より早い方**、last open は**より遅い方**、open 回数は provider の event id が未登録のときだけ +1 |
+| 正本 | **Blob の生ログ**。索引は再構築できる写し |
+| 失敗時 | webhook を落とさない（`deliveryIndex: failed` をログに残すだけ） |
+
+### 履歴への結合（`touchMeasurement.js`）
+
+配信台帳の行と索引を DeliveryKey 完全一致で結び、`sequencePolicy` が食える履歴にする。
+
+| 索引の状態 | 履歴の行 |
+|---|---|
+| delivered あり + open あり | `measured: true` / `opened: true` |
+| delivered あり + open なし | `measured: true` / `opened: false` |
+| delivered を確認できない | `measured: false`（**無反応として数えない**） |
+| 索引そのものが読めない | 全行 `measured: false` |
+
+### 管理画面（`action=touchMeasurement`）
+
+touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を返す。
+
+- `deliveryRate = delivered / **sent**`、`openRate = opened / **delivered**`（分母を応答に明記）
+- 分母 0 のときは率を `null`（0% と書かない）
+- 索引が読めなければ `measurementAvailable: false`
+- **Blob 全件走査はしない**（`blobReads: 0`）。Redis は 1 リクエスト最大 500 鍵の bounded read
+
+### 索引より前に届いたぶん（`action=eventBackfillDryRun`）
+
+索引は webhook 受信時にしか積まれないので、**索引を作る前に届いたイベント**は入らない。
+生ログ（Blob）から**対象の DeliveryKey だけ**を拾い直す下見を用意した。
+
+- 走査は**日付で絞る**（`date: YYYY-MM-DD` 必須。Blob 鍵は `ak/email-events/YYYY/MM/DD/...`）
+- 対象は「その campaign × version × step で実際に送った鍵」だけ
+- `resolved` でないイベントは入れない
+- 同じ鍵に別 campaign / version が混ざっていたら **conflict として書かない**
+- **下見は 1 バイトも書かない**（`action=eventBackfillDryRun`）
+- 実行は `action=eventBackfillRun`。**確認を 3 つ要求する**:
+  `confirm: true` / 下見で見た `expectedWriteKeys` と一致 / `conflicts: 0`。
+  1 つでも欠ければ **400 / 409 で書かない**（Blob は追記され続けるので、
+  確認したときと対象が変わっていたら止める）
+- 書くのは**索引だけ**。Customers・配信台帳・送信には触れない。
+  畳み込みは webhook と**同じ関数**を通すので、何度実行しても結果は変わらない

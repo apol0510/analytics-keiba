@@ -269,3 +269,48 @@ test('guard: ジョブ一覧・取消の応答にアドレスを載せない', (
     assert.equal(seg.includes(banned), false, `応答に ${banned} を載せている`);
   }
 });
+
+// ── Blobs へ触るときは接続してから（2026-08-16）─────────────────
+test('【重要】Blob を読む前に connectLambda する（v1 Function の必須手順）', () => {
+  const fn = src.slice(src.indexOf('async function handleEventBackfill'));
+  const getAt = fn.indexOf("getStore('ak-email-events')");
+  const connectAt = fn.indexOf('connectLambda(event)');
+  assert.ok(getAt > -1, 'Blob を読んでいない');
+  assert.ok(connectAt > -1, 'connectLambda を呼んでいない（MissingBlobsEnvironmentError になる）');
+  assert.ok(connectAt < getAt, 'getStore の後に接続している');
+});
+
+test('【重要】backfill の下見は 1 バイトも書かない', () => {
+  const fn = src.slice(
+    src.indexOf('async function handleEventBackfill'),
+    src.indexOf('async function handleDuplicateCheck'),
+  );
+  // 下見の分岐（live でない）は必ず sideEffects: 'none' で返す
+  assert.ok(fn.includes("mode: 'event-backfill-dry-run'"));
+  assert.ok(fn.includes("sideEffects: 'none'"));
+  // 索引以外へ書かない（Customers・台帳・送信に触れない）
+  assert.equal(/method: 'PATCH'|method: 'POST'|upsertDeliveries|createRecord|sendgrid/.test(fn), false,
+    '索引以外へ書いている');
+});
+
+test('【重要】backfill の実行は確認つき（confirm + 件数一致 + conflict 0）', () => {
+  const fn = src.slice(
+    src.indexOf('async function handleEventBackfill'),
+    src.indexOf('async function handleDuplicateCheck'),
+  );
+  assert.ok(fn.includes('req.confirm !== true'), '確認なしで実行できる');
+  assert.ok(fn.includes('expectedWriteKeys'), '下見との件数一致を要求していない');
+  assert.ok(fn.includes('view.conflicts > 0'), 'conflict があっても書いてしまう');
+  // 書き込みは索引の共通関数（webhook と同じ経路）だけ
+  assert.ok(fn.includes('createDeliveryEventIndex'), '索引の単一源を使っていない');
+  assert.ok(fn.includes("sideEffects: '配信イベント索引（Redis）のみ'"));
+});
+
+test('【重要】touch 別計測は Blob 全件走査をしない', () => {
+  const fn = src.slice(
+    src.indexOf('async function handleTouchMeasurement'),
+    src.indexOf('async function handleEventBackfill'),
+  );
+  assert.equal(fn.includes('getStore'), false, 'Blob を読んでいる');
+  assert.ok(fn.includes('MAX_READ_KEYS'), 'Redis 読み取りに上限が無い');
+});

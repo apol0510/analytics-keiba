@@ -1240,6 +1240,41 @@ DeliveryKey = `campaignId × version × step × 受信者`。version を上げ�
 
 ---
 
+## 配信イベントの計測（2026-08-16 / 1 通ごと）
+
+### 保存先
+
+| 場所 | 役割 |
+|---|---|
+| **Netlify Blobs**（`ak-email-events`） | **正本**。生ログを append-only（`MARKETING_EVENT_SINK=blob`） |
+| **Redis**（`ak:delivery-events:<DeliveryKey>`） | 1 通ごとの索引（delivered / first open / last open / open 回数）。再構築できる写し |
+| **Redis**（engagement signal） | 受信者ごとの反応集計（どの通かは持たない） |
+| Airtable `EmailEvents` | **書かない**（行数が Airtable の 37% を占めたため移設済み） |
+
+### 判断は DeliveryKey 完全一致
+
+「この人がこの touch を開いたか」は **DeliveryKey**（campaign × version × step × 受信者の
+sha256）でしか結ばない。受信者ごとの「最新 open 時刻」から推測すると、
+古いメールを後から開いたときに別 touch へ誤帰属する。
+
+### 未計測は「無反応」ではない
+
+| 状態 | 扱い |
+|---|---|
+| delivered あり + open あり | 反応あり |
+| delivered あり + open なし | **観測できた**無反応（減速の材料になる） |
+| delivered を確認できない / 索引が読めない | **未計測**（無反応として数えない・減速も停止もしない） |
+
+`click` は provider 側で OFF（アカウント全体の click tracking はマジックリンクを壊すため）。
+**false と捏造せず unknown のまま**にする。
+
+### 読み取りの上限
+
+- 管理画面 `action=touchMeasurement` … Blob 全件走査 **なし**、Redis は最大 500 鍵の bounded read
+- `action=eventBackfillDryRun` … Blob は**日付で絞って**読む。**書き込みは別承認**
+
+---
+
 ## 5. External Dependencies
 
 | 依存 | 用途 | 備考 |

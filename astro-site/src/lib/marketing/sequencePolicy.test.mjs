@@ -16,6 +16,7 @@ import {
   decideNext, resolveStop, resolveIntervalDays, checkFrequencyCap, pickAngle,
   countConsecutiveNoEngagement, normalizePolicy, describePolicy,
   NEXT_ACTION, STOP_REASON, WAIT_REASON, DEFAULT_POLICY,
+  summarizeEngagementHistory, isEngagementMeasured, isEngaged,
 } from './sequencePolicy.js';
 
 const DAY = 24 * 3600_000;
@@ -167,12 +168,15 @@ test('打ち切らない設定にもできる', () => {
 });
 
 test('連続無反応の数え方（開封・クリックがあれば途切れる）', () => {
-  // 古い順: 開封あり → 無 → 無
-  assert.equal(countConsecutiveNoEngagement([{ opened: true }, {}, {}]), 2);
-  // 全部無反応
-  assert.equal(countConsecutiveNoEngagement([{}, {}, {}, {}]), 4);
+  // ⚠️ 「無反応」は**観測できた無反応**（`opened: false`）のこと。
+  //    フィールドが無い行は「まだ観測できていない」なので数に入れない
+  //    （2026-08-16 の修正。詳細は下の「未計測を無反応と誤認しない」）。
+  // 古い順: 開封あり → 無反応 → 無反応
+  assert.equal(countConsecutiveNoEngagement([{ opened: true }, { opened: false }, { opened: false }]), 2);
+  // 全部（観測できた）無反応
+  assert.equal(countConsecutiveNoEngagement([{ opened: false }, { opened: false }, { opened: false }, { opened: false }]), 4);
   // 直近がクリックあり
-  assert.equal(countConsecutiveNoEngagement([{}, {}, { clicked: true }]), 0);
+  assert.equal(countConsecutiveNoEngagement([{ opened: false }, { opened: false }, { clicked: true }]), 0);
   assert.equal(countConsecutiveNoEngagement([]), 0);
   assert.equal(countConsecutiveNoEngagement(null), 0);
 });
@@ -271,4 +275,75 @@ test('【重要】途中で購入したらそこで止まる（残りは送ら�
   }
   assert.equal(stop, STOP_REASON.PURCHASED);
   assert.equal(sent, 5, '購入後も送っている');
+});
+
+// ── 未計測を「無反応」と誤認しない（2026-08-16）─────────────────
+//    本番は `MARKETING_EVENT_SINK=blob` で、配信イベントは Blob と Redis カウンタへ入る。
+//    Airtable の配信行に開封が載らないため、`opened !== true` を無反応と数えると
+//    **全員が無反応**になり、間隔が一律 2 倍になる（将来 stopAfterNoEngagement を
+//    設定すれば全員が打ち切られる）。
+
+test('【重要】観測できていない通は無反応として数えない', () => {
+  // opened / clicked が付いていない = まだ何も観測できていない
+  assert.equal(countConsecutiveNoEngagement([{}, {}, {}, {}, {}]), 0);
+  assert.equal(countConsecutiveNoEngagement([{ sentAtMs: 1 }, { sentAtMs: 2 }]), 0);
+});
+
+test('【重要】観測できた無反応だけを数える', () => {
+  assert.equal(countConsecutiveNoEngagement([{ opened: false }, { opened: false }]), 2);
+  assert.equal(countConsecutiveNoEngagement([{ measured: true }, { measured: true }]), 2);
+});
+
+test('【重要】未計測に当たったらそこで数えるのを止める（過去へ遡らない）', () => {
+  // 古い順: 観測済み無反応 → 未計測 → 観測済み無反応
+  const r = countConsecutiveNoEngagement([{ opened: false }, {}, { opened: false }]);
+  assert.equal(r, 1, '未計測をまたいで数えている');
+});
+
+test('反応があればそこで止まる（従来どおり）', () => {
+  assert.equal(countConsecutiveNoEngagement([{ opened: false }, { opened: true }, { opened: false }]), 1);
+  assert.equal(countConsecutiveNoEngagement([{ clicked: true }, { opened: false }]), 1);
+});
+
+test('【重要】未計測ばかりなら間隔を伸ばさない', () => {
+  const policy = { minIntervalDays: 3, slowdownAfterNoEngagement: 3, slowdownFactor: 2 };
+  const noEng = countConsecutiveNoEngagement([{}, {}, {}, {}, {}]);
+  const days = resolveIntervalDays({ policy, state: { consecutiveNoEngagement: noEng }, stepDelayDays: 5 });
+  assert.equal(days, 5, '計測できていないのに間隔を 2 倍にしている');
+});
+
+test('観測できた無反応が続けば従来どおり間隔を伸ばす', () => {
+  const policy = { minIntervalDays: 3, slowdownAfterNoEngagement: 3, slowdownFactor: 2 };
+  const noEng = countConsecutiveNoEngagement([{ opened: false }, { opened: false }, { opened: false }]);
+  const days = resolveIntervalDays({ policy, state: { consecutiveNoEngagement: noEng }, stepDelayDays: 5 });
+  assert.equal(days, 10);
+});
+
+test('【重要】未計測は将来 stopAfterNoEngagement を設定しても打ち切らない', () => {
+  const policy = { maxSends: 24, stopAfterNoEngagement: 8 };
+  const noEng = countConsecutiveNoEngagement(Array.from({ length: 20 }, () => ({})));
+  const r = resolveStop({ policy, state: { sentCount: 20, consecutiveNoEngagement: noEng } });
+  assert.equal(r.stop, false, '計測できていないのに打ち切っている');
+});
+
+test('要約は「無反応」と「未計測」を分けて出す', () => {
+  const r = summarizeEngagementHistory([{ opened: false }, {}, { opened: true }]);
+  assert.equal(r.total, 3);
+  assert.equal(r.measured, 2);
+  assert.equal(r.unmeasured, 1);
+  assert.equal(r.engaged, 1);
+  assert.equal(r.unknown, false);
+  const none = summarizeEngagementHistory([{}, {}]);
+  assert.equal(none.unknown, true, '1 通も観測できていないことを示せていない');
+  assert.equal(none.consecutiveNoEngagement, 0);
+});
+
+test('観測の有無を判定できる', () => {
+  assert.equal(isEngagementMeasured({ opened: false }), true);
+  assert.equal(isEngagementMeasured({ clicked: false }), true);
+  assert.equal(isEngagementMeasured({ measured: true }), true);
+  assert.equal(isEngagementMeasured({}), false);
+  assert.equal(isEngagementMeasured(null), false);
+  assert.equal(isEngaged({ opened: true }), true);
+  assert.equal(isEngaged({ opened: false }), false);
 });
