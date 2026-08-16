@@ -542,3 +542,65 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
   確認したときと対象が変わっていたら止める）
 - 書くのは**索引だけ**。Customers・配信台帳・送信には触れない。
   畳み込みは webhook と**同じ関数**を通すので、何度実行しても結果は変わらない
+
+---
+
+## 13. 同日に複数バッチ（グループ配信 / 2026-08-17）
+
+### 変えたこと
+
+「**1 日 1 回**」（`lastRunDay === 今日 なら always 拒否`）を**やめた**。
+約 15,000 件を配るのに 1 日 1 バッチでは 30 日かかり、目的（安全なグループ単位の連続配信）と
+噛み合わないため。
+
+| | 旧 | 現行 |
+|---|---|---|
+| 同じ日の 2 回目 | **常に拒否**（`already_ran_today`） | 上限と関所の範囲で**進める** |
+| `dailyLimit` の意味 | 1 回に配る人数 = 1 日の人数 | **1 日に配れる合計人数**（回数ではない） |
+| 1 回に配る人数 | 同上 | **`batchSize`**（未指定なら `dailyLimit` と同じ） |
+| `lastRunDay` の役割 | 同日 2 回目の禁止 | **今日の集計がどの日のものか**を示すだけ |
+
+### 何が二重付与・二重送信を防ぐか
+
+1. **関所（`previousOutstanding > 0` なら次を始めない）** … バッチを直列化する。
+   付与 → queue → 送信 → 台帳確認 が終わるまで次は始まらない。cron が重複起動しても同じ判断。
+2. **1 日の合計上限**（`dailyLimit` / 絶対上限 `HARD_DAILY_MAX = 2000`）
+3. **バッチごとに一意な `operationId`**
+   - `light-trial-2026-08-17`（1 バッチ目 = **従来と同じ形**。既存データと互換）
+   - `light-trial-2026-08-17-b2`, `-b3` …（同じ日の 2 バッチ目以降）
+   - 同じ値なら付与は冪等。**別のバッチは必ず別の値**になる
+4. **DeliveryKey**（campaign × version × step × 受信者）… 同じ人へ同じ touch を二度送らない
+5. **kill switch**（全アクションに優先）
+
+### バッチ間の健全性チェック（`batchHealth.js`）
+
+2 バッチ目以降は、**前のバッチの結果を確かめてから**始める。
+人が挟まらないので、機械が代わりに見る。
+
+| 見るもの | 止める条件（既定） |
+|---|---|
+| duplicate | **1 件でも** |
+| complaint（苦情） | **1 件でも** |
+| failed（送信失敗） | 5% 超 |
+| hard bounce | 2% 超 |
+| unsubscribe | 2% 超 |
+| `previousOutstanding` | 0 でない |
+| provider suppression | **読めない**とき |
+
+⚠️ **数えられない値が 1 つでもあれば進まない**（0 件として通さない）。
+異常なら運転手が `stage: 'paused'` へ落として**自分で止まる**
+（新規付与だけ止まり、積み残しの queue / 送信は続く）。
+
+### 運用（例: 500 名単位）
+
+```json
+{"action":"rolloutStart","campaignId":"light-trial-to-premium-sequence",
+ "stage":"scale","dailyLimit":2000,"batchSize":500,
+ "alwaysArmed":false,"armedFor":"<実行日 JST>","expectedVersion":<stateVersion>}
+```
+
+→ 500 名 → 完了確認 → 500 名 …（1 日 4 バッチまで）。
+後から 1000 / 2000 単位にしたければ `batchSize` を上げる（`dailyLimit` と `HARD_DAILY_MAX` が天井）。
+
+⚠️ `armedFor` は**その日のうち有効**（1 バッチで外れない）。翌日には失効する。
+⚠️ 15,000 件を 2000/日 で配ると **8 日**（テストで固定）。

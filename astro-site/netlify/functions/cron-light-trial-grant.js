@@ -86,7 +86,13 @@ async function applyGrants({ KEY, BASE, targets }) {
  * 実処理。**テストからはここを直接呼ぶ**。
  * @param {{env: object, now: number, dryRun?: boolean}} args
  */
-export async function runLightTrialGrant({ env = process.env, now = Date.now(), dryRun = false } = {}) {
+export async function runLightTrialGrant({
+  env = process.env, now = Date.now(), dryRun = false,
+  /** そのバッチの通し番号（運転手が展開状態から渡す。1 なら従来と同じ operationId） */
+  batchSeq = 1,
+  /** そのバッチで配る人数（運転手が展開状態の batchSize から渡す） */
+  batchSizeOverride = null,
+} = {}) {
   const gates = readAutoGrantGates(env, now);
   const KEY = env.AIRTABLE_API_KEY;
   const BASE = env.AIRTABLE_BASE_ID;
@@ -100,7 +106,9 @@ export async function runLightTrialGrant({ env = process.env, now = Date.now(), 
   if (!KEY || !BASE) return { ok: false, abort: 'airtable_not_configured', sideEffects: 'none' };
 
   // ①②③ 下見と実行で**同じ 1 本**を通る（formula / sort / 関所 / 指紋が構造的に一致）
-  const loaded = await loadAndPlanLightTrial({ env, nowMs: now, gates });
+  const loaded = await loadAndPlanLightTrial({
+    env, nowMs: now, gates, batchSeq, batchSizeOverride,
+  });
   if (!loaded.ok) {
     const body = { ok: false, abort: loaded.abort, sideEffects: 'none', fetch: loaded.fetch || null };
     log(body);

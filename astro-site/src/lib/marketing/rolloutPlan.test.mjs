@@ -5,7 +5,7 @@
  * 守る性質:
  *   - 既定は**止まっている**（何もしなければ 1 通も出ない）
  *   - kill switch は段階より強く、**次の tick から効く**
- *   - 同じ日に二重に走らせない
+ *   - 同じ日でも**上限の範囲でバッチを重ねられる**（関所が直列化する）
  *   - 前回ぶんの Step1 が片付くまで次を配らない
  *   - 読めない値は「0 件」ではなく**停止**（fail closed）
  */
@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import {
   planRolloutTick, applyRolloutRun, normalizeRolloutState, defaultRolloutState,
-  resolveDailyLimit, suggestNextStage, estimateRemainingDays, jstDay,
+  resolveDailyLimit, resolveBatchSize, grantedToday, suggestNextStage, estimateRemainingDays, jstDay,
   ROLLOUT_STAGE, ROLLOUT_BLOCK, STAGE_DEFAULT_DAILY, HARD_DAILY_MAX,
 } from './rolloutPlan.js';
 
@@ -95,10 +95,61 @@ test('残り候補が上限より少なければ残りだけ進む', () => {
 
 // ── 二重実行・関所・fail closed ────────────────────────────────
 
-test('【重要】同じ日に二重に走らせない', () => {
-  const r = tick({ state: running({ lastRunDay: DAY }) });
+test('【重要】同じ日でも上限の範囲なら次のバッチへ進める（1 日 1 回をやめた）', () => {
+  // 今日すでに 100 名配ったが、1 日上限 2000・バッチ 500 なのでまだ進める
+  const r = tick({
+    state: running({ lastRunDay: DAY, dayGrantedCount: 100, dailyLimit: 2000, batchSize: 500 }),
+  });
+  assert.equal(r.ok, true, `止まっている: ${r.reason}`);
+  assert.equal(r.allowance, 500);
+  assert.equal(r.grantedToday, 100);
+});
+
+test('【重要】今日の合計が 1 日上限に達したら止まる', () => {
+  const r = tick({
+    state: running({ lastRunDay: DAY, dayGrantedCount: 2000, dailyLimit: 2000, batchSize: 500 }),
+  });
   assert.equal(r.ok, false);
-  assert.equal(r.reason, ROLLOUT_BLOCK.ALREADY_RAN_TODAY);
+  assert.equal(r.reason, ROLLOUT_BLOCK.DAILY_LIMIT_REACHED);
+});
+
+test('【重要】1 日上限の残りがバッチ未満なら、残りぶんだけ配る', () => {
+  const r = tick({
+    state: running({ lastRunDay: DAY, dayGrantedCount: 1800, dailyLimit: 2000, batchSize: 500 }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.allowance, 200, '上限を超えて配ろうとしている');
+});
+
+test('【重要】日付が変われば今日の集計は 0 に戻る', () => {
+  const YESTERDAY = jstDay(NOW - 86400_000);
+  const s = running({ lastRunDay: YESTERDAY, dayGrantedCount: 2000, dailyLimit: 2000, batchSize: 500 });
+  assert.equal(grantedToday(s, NOW), 0);
+  const r = tick({ state: s });
+  assert.equal(r.ok, true);
+  assert.equal(r.allowance, 500);
+});
+
+test('【重要】バッチ番号は同じ日の中で増える（operationId の枝番になる）', () => {
+  const first = tick({ state: running({ lastRunDay: null, batchSize: 500, dailyLimit: 2000 }) });
+  assert.equal(first.batchSeq, 1);
+  const second = tick({
+    state: running({ lastRunDay: DAY, batchSeq: 1, dayGrantedCount: 500, batchSize: 500, dailyLimit: 2000 }),
+  });
+  assert.equal(second.batchSeq, 2);
+  // 日付が変われば 1 から
+  const nextDay = tick({
+    state: running({
+      lastRunDay: jstDay(NOW - 86400_000), batchSeq: 4, dayGrantedCount: 2000,
+      batchSize: 500, dailyLimit: 2000,
+    }),
+  });
+  assert.equal(nextDay.batchSeq, 1);
+});
+
+test('【重要】バッチ人数は 1 日上限を超えない', () => {
+  assert.equal(resolveBatchSize({ ...defaultRolloutState(), dailyLimit: 300, batchSize: 500 }), 300);
+  assert.equal(resolveBatchSize({ ...defaultRolloutState(), stage: 'scale', batchSize: null }), 500);
 });
 
 test('【重要】前回ぶんの Step1 が残っていれば次を配らない（関所）', () => {
@@ -147,15 +198,40 @@ test('【重要】継続運用（alwaysArmed）では毎日の日付置き直し
 
 // ── 実行後の状態 ─────────────────────────────────────────────
 
-test('【重要】実行後は同じ日にもう一度走らせない印が付く', () => {
-  const after = applyRolloutRun({ state: running(), nowMs: NOW, granted: 100 });
+test('【重要】実行後は今日の集計とバッチ番号が進む', () => {
+  const after = applyRolloutRun({ state: running(), nowMs: NOW, granted: 100, batchSeq: 1 });
   assert.equal(after.lastRunDay, DAY);
   assert.equal(after.lastRunCount, 100);
+  assert.equal(after.dayGrantedCount, 100);
+  assert.equal(after.batchSeq, 1);
   assert.equal(after.totalGranted, 100);
-  const again = planRolloutTick({
-    state: after, nowMs: NOW, remainingCandidates: 100, previousOutstanding: 0, envEnabled: true,
+});
+
+test('【重要】同じ日に続けて実行すると集計が積み上がる（1 日上限まで）', () => {
+  let s = running({ dailyLimit: 2000, batchSize: 500 });
+  for (let i = 1; i <= 4; i += 1) {
+    const p = planRolloutTick({
+      state: s, nowMs: NOW, remainingCandidates: 10000, previousOutstanding: 0, envEnabled: true,
+    });
+    assert.equal(p.ok, true, `${i} バッチ目で止まった: ${p.reason}`);
+    assert.equal(p.batchSeq, i);
+    s = applyRolloutRun({ state: s, nowMs: NOW, granted: p.allowance, batchSeq: p.batchSeq });
+  }
+  assert.equal(s.dayGrantedCount, 2000);
+  assert.equal(s.totalGranted, 2000);
+  const done = planRolloutTick({
+    state: s, nowMs: NOW, remainingCandidates: 10000, previousOutstanding: 0, envEnabled: true,
   });
-  assert.equal(again.reason, ROLLOUT_BLOCK.ALREADY_RAN_TODAY);
+  assert.equal(done.reason, ROLLOUT_BLOCK.DAILY_LIMIT_REACHED);
+});
+
+test('【重要】関所が閉じている間は同じ日でも次のバッチを始めない', () => {
+  const s = running({ lastRunDay: DAY, dayGrantedCount: 500, batchSize: 500, dailyLimit: 2000 });
+  const p = planRolloutTick({
+    state: s, nowMs: NOW, remainingCandidates: 10000, previousOutstanding: 12, envEnabled: true,
+  });
+  assert.equal(p.ok, false);
+  assert.equal(p.reason, ROLLOUT_BLOCK.WAITING_PREVIOUS);
 });
 
 test('累計は積み上がる', () => {
@@ -164,9 +240,24 @@ test('累計は積み上がる', () => {
   assert.equal(s.totalGranted, 110);
 });
 
-test('日付指定の運用は 1 回で自動的に閉じる', () => {
-  const s = { ...defaultRolloutState(), stage: ROLLOUT_STAGE.STEADY, armedFor: DAY };
-  const after = applyRolloutRun({ state: s, nowMs: NOW, granted: 10 });
+test('【重要】武装した日はその日のうちバッチを続けられる（翌日には失効する）', () => {
+  const s = { ...defaultRolloutState(), stage: ROLLOUT_STAGE.STEADY, armedFor: DAY, batchSize: 500, dailyLimit: 2000 };
+  const after = applyRolloutRun({ state: s, nowMs: NOW, granted: 500, batchSeq: 1 });
+  assert.equal(after.armedFor, DAY, '同じ日の 2 バッチ目が not_armed で止まる');
+  const next = planRolloutTick({
+    state: after, nowMs: NOW, remainingCandidates: 10000, previousOutstanding: 0, envEnabled: true,
+  });
+  assert.equal(next.ok, true);
+  // 翌日は武装が効かない
+  const tomorrow = planRolloutTick({
+    state: after, nowMs: NOW + 86400_000, remainingCandidates: 10000, previousOutstanding: 0, envEnabled: true,
+  });
+  assert.equal(tomorrow.reason, ROLLOUT_BLOCK.NOT_ARMED);
+});
+
+test('【重要】armedFor が今日でなければ、実行しても付け直さない（置きっぱなし防止）', () => {
+  const s = { ...defaultRolloutState(), stage: ROLLOUT_STAGE.STEADY, armedFor: jstDay(NOW - 86400_000) };
+  const after = applyRolloutRun({ state: s, nowMs: NOW, granted: 10, batchSeq: 1 });
   assert.equal(after.armedFor, null, '置きっぱなしになる');
 });
 

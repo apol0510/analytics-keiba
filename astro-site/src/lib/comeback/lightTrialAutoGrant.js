@@ -291,9 +291,22 @@ export function recipientsAfterGrant({ targets, writtenRecordIds }) {
     .filter((id) => id && ok.has(id));
 }
 
-/** この実行の識別子（JST 日付。同じ日の再実行は同じ値 = 付与が冪等になる） */
-export function buildTrialOperationId(nowMs) {
-  return `light-trial-${jstDateString(Number.isFinite(nowMs) ? nowMs : 0)}`;
+/**
+ * この実行（**1 バッチ**）の識別子。
+ *
+ * - `light-trial-2026-08-17`      … その日の 1 バッチ目（**従来と同じ値**）
+ * - `light-trial-2026-08-17-b2`   … 同じ日の 2 バッチ目
+ *
+ * ⚠️ 同じ値なら**付与は冪等**（`buildGrantFields` が同じ結果を書く）。
+ *    だから「同じバッチの再実行」は安全で、「別のバッチ」は必ず別の値になる。
+ * ⚠️ 1 バッチ目を枝番なしにしているのは**既存データとの互換のため**
+ *    （2026-08-15 / 08-16 の付与は枝番なしで記録されている）。
+ */
+export function buildTrialOperationId(nowMs, batchSeq) {
+  const day = jstDateString(Number.isFinite(nowMs) ? nowMs : 0);
+  const seq = Number(batchSeq);
+  if (!Number.isInteger(seq) || seq <= 1) return `light-trial-${day}`;
+  return `light-trial-${day}-b${seq}`;
 }
 
 /**
@@ -312,6 +325,8 @@ export function buildPlanFromSelection({
   sequenceCampaign, deliveries, providerSuppressed, brand, fromEmail,
   /** 関所の対象者。省略時は selection の元データを使わない（= 関所を評価しない） */
   barrierRecords = null,
+  /** そのバッチの通し番号（1 日の 2 バッチ目以降は operationId の枝番になる） */
+  batchSeq = 1,
 } = {}) {
   const batch = resolveBatchSize(env);
   if (!batch.ok) {
@@ -325,7 +340,7 @@ export function buildPlanFromSelection({
   const offer = offerRes.offer;
 
   const g = gates || readAutoGrantGates(env, nowMs);
-  const operationId = buildTrialOperationId(nowMs);
+  const operationId = buildTrialOperationId(nowMs, batchSeq);
   /** Airtable 側で絞って必要な分だけ取ったか（= 全体の残数を知らない） */
   const bounded = !!(selection && selection.counts && selection.counts.bounded === true);
 

@@ -39,6 +39,7 @@ export const CONTROL_REJECT = Object.freeze({
   UNKNOWN_OP: 'unknown_op',
   BAD_STAGE: 'bad_stage',
   BAD_DAILY_LIMIT: 'bad_daily_limit',
+  BAD_BATCH_SIZE: 'bad_batch_size',
   BAD_ALWAYS_ARMED: 'bad_always_armed',
   BAD_ARMED_FOR: 'bad_armed_for',
   ARMED_FOR_PAST: 'armed_for_past',
@@ -52,6 +53,7 @@ export const CONTROL_REJECT_LABEL = Object.freeze({
   unknown_op: '知らない操作です',
   bad_stage: '段階の値が不正です（paused / canary / steady / scale / completed のみ）',
   bad_daily_limit: `1 日あたりの上限が不正です（0〜${HARD_DAILY_MAX} の整数）`,
+  bad_batch_size: `1 バッチの人数が不正です（1〜1 日上限の整数）`,
   bad_always_armed: 'alwaysArmed は true / false のみです',
   bad_armed_for: '武装日は YYYY-MM-DD（JST）で指定してください',
   armed_for_past: '武装日が過去です（その日は来ないので何も起きません）',
@@ -94,6 +96,16 @@ export function planRolloutStart({ current, exists, req, nowMs }) {
     return reject(CONTROL_REJECT.BAD_DAILY_LIMIT);
   }
 
+  // ── 1 バッチの人数（**1 日上限とは別物**）──────────────────────
+  //    未指定なら 1 日上限と同じ（＝従来どおり 1 日 1 バッチ相当）。
+  let batchSize = null;
+  if (r.batchSize !== undefined && r.batchSize !== null) {
+    if (!Number.isInteger(r.batchSize) || r.batchSize <= 0 || r.batchSize > dailyLimit) {
+      return reject(CONTROL_REJECT.BAD_BATCH_SIZE);
+    }
+    batchSize = r.batchSize;
+  }
+
   // ── 武装（1 回だけ / 継続）──────────────────────────────────
   if (typeof r.alwaysArmed !== 'boolean') return reject(CONTROL_REJECT.BAD_ALWAYS_ARMED);
   let armedFor = null;
@@ -132,6 +144,7 @@ export function planRolloutStart({ current, exists, req, nowMs }) {
       ...base,
       stage,
       dailyLimit,
+      batchSize,
       alwaysArmed: r.alwaysArmed === true,
       armedFor,
       // ⚠️ 開始操作で緊急停止を解除しない（止めた事実を勝手に消さない）
@@ -186,6 +199,9 @@ export function describeControlResult({ op, state }) {
     op,
     stage: s.stage,
     dailyLimit: s.dailyLimit,
+    batchSize: s.batchSize,
+    dayGrantedCount: s.dayGrantedCount,
+    batchSeq: s.batchSeq,
     alwaysArmed: s.alwaysArmed,
     armedFor: s.armedFor,
     killed: s.killed,

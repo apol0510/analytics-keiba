@@ -176,10 +176,25 @@ test('【重要】env の許可が無ければ配らない', () => {
   assert.equal(r.reason, ROLLOUT_BLOCK.PAUSED);
 });
 
-test('【重要】同じ日に二度配らない', () => {
-  const r = tick({ state: running({ lastRunDay: jstDay(NOW) }) });
+test('【重要】同じ日でも上限の範囲なら次のバッチへ進む（グループ配信）', () => {
+  // 今日 500 名配った直後。1 日上限 2000 / バッチ 500 ならまだ進める
+  const r = tick({
+    state: running({
+      lastRunDay: jstDay(NOW), batchSeq: 1, dayGrantedCount: 500,
+      dailyLimit: 2000, batchSize: 500,
+    }),
+  });
+  assert.equal(r.action, TICK_ACTION.GRANT);
+  assert.equal(r.count, 500);
+  assert.equal(r.plan.batchSeq, 2, 'バッチ番号が増えていない');
+});
+
+test('【重要】今日の合計が 1 日上限に達したら配らない', () => {
+  const r = tick({
+    state: running({ lastRunDay: jstDay(NOW), dayGrantedCount: 2000, dailyLimit: 2000, batchSize: 500 }),
+  });
   assert.equal(r.action, TICK_ACTION.SKIP);
-  assert.equal(r.reason, ROLLOUT_BLOCK.ALREADY_RAN_TODAY);
+  assert.equal(r.reason, ROLLOUT_BLOCK.DAILY_LIMIT_REACHED);
 });
 
 test('【重要】関所（前回ぶんの未処理）が残っていれば配らない', () => {
@@ -209,21 +224,32 @@ test('1 人も付与できなければ queue しない', () => {
 
 // ── 状態の更新 ──────────────────────────────────────────────
 
-test('【重要】付与した数だけを刻む（queue が落ちても二重に配らない）', () => {
-  const after = settleTick({ state: running(), nowMs: NOW, granted: 100 });
+test('【重要】付与した数だけを刻む（queue が落ちても数を二重に数えない）', () => {
+  const after = settleTick({ state: running(), nowMs: NOW, granted: 100, batchSeq: 1 });
   assert.equal(after.lastRunDay, jstDay(NOW));
   assert.equal(after.lastRunCount, 100);
+  assert.equal(after.dayGrantedCount, 100);
   assert.equal(after.totalGranted, 100);
-  // 同じ日にもう一度 tick しても配らない
-  const again = tickRollout({ state: after, nowMs: NOW, envEnabled: true, facts: facts(), env: ENV_OPEN });
-  assert.equal(again.action, TICK_ACTION.SKIP);
-  assert.equal(again.reason, ROLLOUT_BLOCK.ALREADY_RAN_TODAY);
+  assert.equal(after.batchSeq, 1);
+});
+
+test('【重要】関所が閉じている間は、同じ日でも次のバッチを始めない', () => {
+  const after = settleTick({ state: running({ dailyLimit: 2000, batchSize: 500 }), nowMs: NOW, granted: 500, batchSeq: 1 });
+  // 前バッチの Step1 がまだ片付いていない
+  const r = tickRollout({
+    state: after, nowMs: NOW, envEnabled: true,
+    facts: facts({ outstandingStep1: 500, grantedPendingQueue: 0, pendingJobs: 0 }),
+    env: ENV_OPEN,
+  });
+  assert.equal(r.action, TICK_ACTION.SKIP);
+  assert.equal(r.reason, ROLLOUT_BLOCK.WAITING_PREVIOUS);
 });
 
 // ── 通しで回す ──────────────────────────────────────────────
 
-test('【重要】付与 → queue → dispatch が tick をまたいで続く', () => {
-  let state = running();
+test('【重要】付与 → queue → dispatch が tick をまたいで続く（同日に次バッチも）', () => {
+  // 1 日上限 2000 / 1 バッチ 100 → 同じ日に何度も配れる
+  let state = running({ dailyLimit: 2000, batchSize: 100 });
   const seen = [];
   // 1 tick 目: 付与
   let r = tickRollout({ state, nowMs: NOW, envEnabled: true, facts: facts(), env: ENV_OPEN });
@@ -248,18 +274,17 @@ test('【重要】付与 → queue → dispatch が tick をまたいで続く',
   seen.push(r.action);
   assert.equal(r.action, TICK_ACTION.DISPATCH);
 
-  // 4 tick 目: 片付いた。同じ日なので次は配らない
+  // 4 tick 目: 片付いた。**同じ日でも次のバッチへ進む**（1 日上限まで）
   r = tickRollout({ state, nowMs: NOW + 3 * 3600_000, envEnabled: true, facts: facts(), env: ENV_OPEN });
   seen.push(r.action);
-  assert.equal(r.action, TICK_ACTION.SKIP);
-  assert.equal(r.reason, ROLLOUT_BLOCK.ALREADY_RAN_TODAY);
+  assert.equal(r.action, TICK_ACTION.GRANT);
 
-  // 翌日は再び配る
+  // 翌日も配る
   r = tickRollout({ state, nowMs: NOW + DAY, envEnabled: true, env: ENV_OPEN, facts: facts({ remainingCandidates: 14379 }) });
   seen.push(r.action);
   assert.equal(r.action, TICK_ACTION.GRANT);
 
-  assert.deepEqual(seen, ['grant', 'queue', 'dispatch', 'skip', 'grant']);
+  assert.deepEqual(seen, ['grant', 'queue', 'dispatch', 'grant', 'grant']);
 });
 
 test('【重要】14,479 名を tick の繰り返しで配り切れる（人手を挟まない）', () => {

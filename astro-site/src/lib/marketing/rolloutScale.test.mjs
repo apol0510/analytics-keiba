@@ -176,22 +176,51 @@ test('チャンクの目安が桁として妥当（運用の期待値を作れ�
   assert.ok(bg >= 1000, `background の目安が ${bg} 通（小さすぎる）`);
 });
 
-test('【重要】重複起動・日跨ぎでも二重に配らない', () => {
-  let state = { ...defaultRolloutState(), stage: ROLLOUT_STAGE.STEADY, alwaysArmed: true, dailyLimit: 500 };
+test('【重要】cron が重複起動しても二重に配らない（関所が止める）', () => {
+  // 1 日上限 2000 / 1 バッチ 500 → 上限にはまだ余裕がある状態で二重起動を試す
+  let state = {
+    ...defaultRolloutState(), stage: ROLLOUT_STAGE.SCALE, alwaysArmed: true,
+    dailyLimit: 2000, batchSize: 500,
+  };
   const nowMs = NOW;
   const first = planRolloutTick({ state, nowMs, remainingCandidates: COHORT, previousOutstanding: 0, envEnabled: true });
   assert.equal(first.ok, true);
-  state = applyRolloutRun({ state, nowMs, granted: first.allowance });
+  assert.equal(first.allowance, 500);
+  state = applyRolloutRun({ state, nowMs, granted: first.allowance, batchSeq: first.batchSeq });
 
-  // 同じ日に cron が二重起動しても進めない
-  for (const t of [nowMs, nowMs + 3600_000, nowMs + 8 * 3600_000]) {
+  // 直後は前バッチの Step1 が未処理 → **関所**が次を止める
+  for (const t of [nowMs, nowMs + 60_000, nowMs + 3600_000]) {
+    const again = planRolloutTick({
+      state, nowMs: t, remainingCandidates: COHORT, previousOutstanding: 500, envEnabled: true,
+    });
+    assert.equal(again.ok, false, '前バッチが片付く前に次を配っている');
+    assert.equal(again.reason, 'waiting_previous_step1');
+  }
+
+  // 片付けば同じ日でも次のバッチへ進む（グループ配信）
+  const second = planRolloutTick({
+    state, nowMs: nowMs + 2 * 3600_000, remainingCandidates: COHORT - 500, previousOutstanding: 0, envEnabled: true,
+  });
+  assert.equal(second.ok, true);
+  assert.equal(second.batchSeq, 2);
+});
+
+test('【重要】1 日の合計が上限に達したら、その日はもう配らない', () => {
+  let state = {
+    ...defaultRolloutState(), stage: ROLLOUT_STAGE.STEADY, alwaysArmed: true,
+    dailyLimit: 500, batchSize: 500,
+  };
+  const first = planRolloutTick({ state, nowMs: NOW, remainingCandidates: COHORT, previousOutstanding: 0, envEnabled: true });
+  state = applyRolloutRun({ state, nowMs: NOW, granted: first.allowance, batchSeq: first.batchSeq });
+
+  for (const t of [NOW, NOW + 3600_000, NOW + 8 * 3600_000]) {
     const again = planRolloutTick({ state, nowMs: t, remainingCandidates: COHORT, previousOutstanding: 0, envEnabled: true });
-    assert.equal(again.ok, false, '同じ日に二重に配っている');
-    assert.equal(again.reason, 'already_ran_today');
+    assert.equal(again.ok, false, '上限を超えて配っている');
+    assert.equal(again.reason, 'daily_limit_reached');
   }
   // 翌日は進める
   const next = planRolloutTick({
-    state, nowMs: nowMs + DAY, remainingCandidates: COHORT - 500, previousOutstanding: 0, envEnabled: true,
+    state, nowMs: NOW + DAY, remainingCandidates: COHORT - 500, previousOutstanding: 0, envEnabled: true,
   });
   assert.equal(next.ok, true);
 });

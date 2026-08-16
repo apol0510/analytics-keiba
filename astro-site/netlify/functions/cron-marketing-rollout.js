@@ -49,6 +49,7 @@ import { readAutoGrantGates } from '../../src/lib/comeback/lightTrialAutoGrant.j
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
+import { canStartNextBatch, describeBatchHealth } from '../../src/lib/marketing/batchHealth.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
@@ -685,11 +686,59 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     if (runtimeBlocked(ROLLOUT_STAGE_GATE.GRANT)) {
       return { ok: false, ...view, abort: 'gate_closed_grant', sideEffects: 'none' };
     }
-    const out = await runLightTrialGrant({ env: armEnvForTick(env, state, now), now });
+
+    // ⚠️ **2 バッチ目以降は、前のバッチの結果を確かめてから始める。**
+    //    「1 日 1 回」をやめた代わりに、ここが人の目の役割をする。
+    //    数えられない値が 1 つでもあれば進まない（0 件として通さない）。
+    const seq = Number(decision.plan && decision.plan.batchSeq) || 1;
+    if (seq > 1) {
+      const prevSent = jobs
+        ? [...jobs.byId.values()]
+          .filter((j) => j && j.status !== 'PENDING')
+          .reduce((a, j) => a + (Number(j.sentCount) || 0), 0)
+        : null;
+      const prevFailed = jobs
+        ? [...jobs.byId.values()].reduce((a, j) => a + (Number(j.failedCount) || 0), 0)
+        : null;
+      const health = canStartNextBatch({
+        sent: prevSent,
+        failed: prevFailed,
+        // 二重は「同じ人へ同じ touch」が無いこと。台帳の集計が単一源
+        duplicates: due && due.summary ? Number(due.summary.duplicates || 0) : 0,
+        bounces: due && due.summary ? Number((due.summary.byStopReason || {}).soft_bounce || 0) : null,
+        complaints: due && due.summary
+          ? Number((due.summary.byStopReason || {}).provider_suppressed || 0) : null,
+        unsubscribes: due && due.summary
+          ? Number((due.summary.byStopReason || {}).not_sendable || 0) : null,
+        previousOutstanding: facts.outstandingStep1,
+        suppressionReadable: !!(due && due.summary),
+      });
+      if (!health.ok) {
+        // **自分で止まる**（新規付与だけ止め、積み残しの queue / 送信は進む）
+        await saveState({ ...state, stage: 'paused', note: `auto-stop: ${health.reason}` });
+        log({
+          ...view, ok: false, autoStopped: true,
+          batchHealth: describeBatchHealth(health), sideEffects: 'state_only',
+        });
+        return {
+          ok: false, ...view, abort: 'batch_health_stop',
+          batchHealth: describeBatchHealth(health), sideEffects: 'state_only',
+          notice: '前のバッチの結果に問題があったため、新規付与を止めました'
+            + '（積み残しのキュー登録・送信は続きます）。',
+        };
+      }
+    }
+
+    const out = await runLightTrialGrant({
+      env: armEnvForTick(env, state, now),
+      now,
+      batchSeq: seq,
+      batchSizeOverride: decision.plan ? decision.plan.allowance : null,
+    });
     const granted = Number(out?.granted || 0);
     const opId = String(out?.operationId || planLoad?.planned?.operationId || '');
     // ⚠️ **付与した数だけ**を刻む（queue が落ちても同じ日に二重に配らない）
-    const next = settleTick({ state, nowMs: now, granted });
+    const next = settleTick({ state, nowMs: now, granted, batchSeq: seq });
     await saveState({ ...next, pendingHandoffOp: granted > 0 ? opId : null });
     if (granted > 0) await bumpTotals({ granted });
     log({ ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' });
