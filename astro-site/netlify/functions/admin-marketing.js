@@ -164,6 +164,10 @@ import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journey
 import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import {
+  resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
+  MEASUREMENT_INLINE_MAX_PAGES,
+} from '../../src/lib/marketing/touchMeasurementScan.js';
+import {
   planBackfill, describeBackfillPlan, parseNdjson, blobDatePrefix, MAX_BLOBS_PER_RUN,
 } from '../../src/lib/webhooks/deliveryEventBackfill.js';
 import { JOURNEY_STATE_LABEL } from '../../src/lib/marketing/journeyTotals.js';
@@ -799,6 +803,7 @@ export const handler = async (event) => {
     if (action === 'rolloutPause') return await handleRolloutControl({ op: ROLLOUT_OP.PAUSE, now, req });
     if (action === 'rolloutResume') return await handleRolloutControl({ op: ROLLOUT_OP.RESUME, now, req });
     if (action === 'touchMeasurement') return await handleTouchMeasurement({ KEY, BASE, now, req });
+    if (action === 'touchMeasurementPage') return await handleTouchMeasurementPage({ KEY, BASE, now, req });
     if (action === 'eventBackfillDryRun') return await handleEventBackfill({ KEY, BASE, req, event, live: false });
     if (action === 'eventBackfillRun') return await handleEventBackfill({ KEY, BASE, req, event, live: true });
     if (action === 'history') return await handleHistory({ KEY, BASE });
@@ -1584,35 +1589,77 @@ async function handleRolloutControl({ op, now, req }) {
 }
 
 /**
- * touch 別の配信実績（**read-only**・PII なし）。
+ * 配信台帳を **1 ページだけ** 読む（cursor = Airtable の offset）。
+ *
+ * ⚠️ 全件取得（`fetchAllStrict`）と違い、**ここでは打ち切りを異常としない**。
+ *    「続きがある」ことを `offset` で返し、呼び出し側が次を取る前提だから。
+ *    黙って短い結果を全体として見せないよう、応答側で `partial` / `cursor` を必ず出す。
+ * ⚠️ `RecipientEmail` は DeliveryKey の突き合わせに要るが、**応答にもログにも出さない**。
+ */
+async function fetchDeliveryPage({ KEY, BASE, campaignType, pageSize, cursor }) {
+  const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`);
+  // Airtable の 1 リクエスト上限は 100 件。要求ページはそれを跨いで満たす
+  url.searchParams.set('pageSize', '100');
+  url.searchParams.set('filterByFormula', `{CampaignType}='${campaignType}'`);
+  for (const f of ['DeliveryKey', 'CampaignType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail']) {
+    url.searchParams.append('fields[]', f);
+  }
+  const records = [];
+  let offset = cursor || undefined;
+  while (records.length < pageSize) {
+    if (offset) url.searchParams.set('offset', offset); else url.searchParams.delete('offset');
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`${DELIVERIES_TABLE} page fetch failed: HTTP ${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const data = await res.json();
+    records.push(...(data.records || []));
+    offset = data.offset;
+    if (!offset) break;
+  }
+  return { records, offset: offset || null };
+}
+
+/**
+ * touch 別の配信実績 **1 ページぶん**（`action=touchMeasurementPage`・read-only・PII なし）。
  *
  * 「送った」だけでなく「**届いた・開かれた**」を touch ごとに出す。
  * 数え方は `touchMeasurement.js` が単一源で、結合は **DeliveryKey 完全一致**。
  *
- * ⚠️ **Blob の全件走査はしない。** 配信台帳から対象の DeliveryKey を名指しで集め、
- *    Redis の索引を bounded read するだけ（既定 1 リクエスト 500 鍵まで）。
+ * ⚠️ **これは 1 ページの数**。応答は必ず `partial` と `scan.cursor` を持つ。
+ *    全体は `action=touchMeasurement`（小さい campaign 用）か
+ *    `npm run scan:touch-measurement`（cursor を辿って合算）で得る。
+ * ⚠️ **Blob の全件走査はしない。** Redis の索引は bounded read（1 ページ ≤ 500 鍵）。
  * ⚠️ 索引が読めないときは **`measurementAvailable: false`**（0 件と書かない）。
  */
-async function handleTouchMeasurement({ KEY, BASE, now, req }) {
+async function handleTouchMeasurementPage({ KEY, BASE, now, req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
   if (!isSequenceCampaign(base)) {
     return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
   }
 
-  // ── 対象の配信行（この campaign のもの）を名指しで引く ───────────
+  // ── 対象の配信行を **1 ページだけ**引く（cursor = Airtable の offset）─────
+  //    ⚠️ 全件一括で読まない。2026-08-17 に 610 行で 504（Inactivity Timeout）になった。
+  //       最終的に 14,000 名規模になるので、**1 リクエスト 1 ページ**に固定し、
+  //       呼び出し側が cursor を辿って合算する（`touchMeasurementScan.js`）。
   const version = String(base.version);
   const campaignType = `${base.campaignId}:v${version}`;
+  const pageSize = resolveScanPageSize(req.pageSize);
+  const cursorIn = str(req.cursor) || null;
+  const pageIndex = Number.isInteger(Number(req.pageIndex)) && Number(req.pageIndex) >= 0
+    ? Number(req.pageIndex) : 0;
   let deliveries;
+  let nextCursor = null;
   try {
-    deliveries = await fetchAllStrict({
-      KEY, BASE, table: DELIVERIES_TABLE,
-      filterByFormula: `{CampaignType}='${campaignType}'`,
-      fields: ['DeliveryKey', 'CampaignType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail'],
+    const page = await fetchDeliveryPage({
+      KEY, BASE, campaignType, pageSize, cursor: cursorIn,
     });
+    deliveries = page.records;
+    nextCursor = page.offset || null;
   } catch (e) {
     return json(500, {
-      error: '配信台帳を取り切れなかったため、実績を返しません（数えられない数は出しません）。',
+      error: '配信台帳を読めなかったため、実績を返しません（数えられない数は出しません）。',
       code: 'deliveries_fetch_incomplete',
       sideEffects: 'none',
     });
@@ -1651,23 +1698,44 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
   }
 
   const summary = summarizeByTouch({ deliveries, stepByDeliveryKey, index });
+  const done = !nextCursor;
   return json(200, {
     mode: 'touch-measurement',
     sideEffects: 'none',
     campaignId: base.campaignId,
     version: base.version,
     ...summary,
+    /**
+     * このページだけの数であることを**必ず明示する**（黙って一部を全体として出さない）。
+     * `done: false` の間は `cursor` を渡して次を取り、`touchMeasurementScan.js` の
+     * `mergeTouchPage` で足す（同じ `pageIndex` は二重に数えない）。
+     */
+    scan: {
+      pageIndex,
+      pageSize,
+      rows: deliveries.length,
+      cursor: nextCursor,
+      done,
+    },
+    partial: !done,
     io: {
       /** Blob は読んでいない（全件走査ゼロ） */
       blobReads: 0,
       redisKeys: Math.min(keys.length, MAX_READ_KEYS),
       airtableRows: deliveries.length,
       cappedAt: MAX_READ_KEYS,
+      /** 1 ページは索引の bounded read 上限以下なので、ページ内で切れることはない */
       truncated: keys.length > MAX_READ_KEYS,
     },
-    notice: summary.measurementAvailable
-      ? '配信イベントの索引から数えています（open は届いた通が分母）。'
-      : '**イベント索引を読めませんでした。** 未計測として扱っています（0 件ではありません）。',
+    notice: [
+      summary.measurementAvailable
+        ? '配信イベントの索引から数えています（open は届いた通が分母）。'
+        : '**イベント索引を読めませんでした。** 未計測として扱っています（0 件ではありません）。',
+      done
+        ? null
+        : '**これは 1 ページぶんの数です。** `cursor` を渡して続きを取り、合算してください'
+          + '（`npm run scan:touch-measurement`）。',
+    ].filter(Boolean).join(' '),
   });
 }
 
@@ -1677,6 +1745,63 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
  * ⚠️ **1 バイトも書かない。** 実行（Redis への書き込み）は別の承認境界。
  * ⚠️ Blob は**日付で絞って**読む（全件走査しない）。
  */
+/**
+ * touch 別の配信実績 **全体**（`action=touchMeasurement`・read-only・PII なし）。
+ *
+ * ── 契約（**ここが肝**）────────────────────────────────────────
+ * この action は**昔から「全体の集計」**を返す約束で、runbook の curl もそう読む。
+ * 配信行が増えた今、1 リクエストで全部は数え切れない。そこで:
+ *
+ *   数え切れた   → `complete: true` ＋ 従来どおりの `touches` / `totals`
+ *   数え切れない → **`touches` も `totals` も返さない**（`complete: false` +
+ *                  `code: 'measurement_requires_scan'`）
+ *
+ * ⚠️ **部分集計を全体の形で返さない。** 一部を全体と誤読させるくらいなら
+ *    数を出さない方が安全（2026-08-17 の 504 と同じ「黙って足りない」を作らない）。
+ * ⚠️ 歩くページ数は `MEASUREMENT_INLINE_MAX_PAGES` で頭打ち。
+ *    **ここを増やして全件走査に戻さない。** 大きい campaign は
+ *    `action=touchMeasurementPage` / `npm run scan:touch-measurement` を使う。
+ */
+async function handleTouchMeasurement({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  let pageIndex = 0;
+  let failed = null;
+  const scan = await scanAllTouchPages({
+    maxPages: MEASUREMENT_INLINE_MAX_PAGES,
+    fetchPage: async (cursor) => {
+      const res = await handleTouchMeasurementPage({
+        KEY, BASE, now, req: { ...req, cursor: cursor || undefined, pageIndex },
+      });
+      let body = {};
+      try { body = JSON.parse(res.body || '{}'); } catch { body = {}; }
+      if (res.statusCode !== 200) { failed = body; return null; }
+      pageIndex += 1;
+      return body;
+    },
+  });
+  if (failed) return json(500, { ...failed, sideEffects: 'none' });
+
+  const built = buildInlineMeasurementResult({ scan, budgetPages: MEASUREMENT_INLINE_MAX_PAGES });
+  return json(built.ok ? 200 : 413, {
+    mode: 'touch-measurement',
+    /** 契約が変わったことを読み手が判別できるようにする */
+    schemaVersion: 2,
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    ...built.body,
+    notice: built.ok
+      ? '配信イベントの索引から数えています（open は届いた通が分母）。**全ページを数え切っています**。'
+      : '**数え切れなかったので数字は返していません**（部分を全体として扱わないため）。'
+        + '`action=touchMeasurementPage` で cursor を辿るか、`npm run scan:touch-measurement` を使ってください。',
+  });
+}
+
 async function handleEventBackfill({ KEY, BASE, req, event, live = false }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
