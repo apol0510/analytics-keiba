@@ -58,6 +58,9 @@ import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
 import { canStartNextBatch, describeBatchHealth } from '../../src/lib/marketing/batchHealth.js';
+import {
+  captureHealthSnapshot, diffHealthSnapshot, hasHealthBaseline, toStoredBaseline,
+} from '../../src/lib/marketing/batchHealthBaseline.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
@@ -838,25 +841,36 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     //    「1 日 1 回」をやめた代わりに、ここが人の目の役割をする。
     //    数えられない値が 1 つでもあれば進まない（0 件として通さない）。
     const seq = Number(decision.plan && decision.plan.batchSeq) || 1;
-    if (seq > 1) {
-      const prevSent = jobs
+    /**
+     * ⚠️ 健全性は**累積値ではなく増分**で見る。
+     *    `byStopReason.provider_suppressed` は「候補を除外した理由」で、
+     *    コホートに元から居る停止リスト該当者がそのまま数えられる。
+     *    それを苦情（0 件許容）として渡すと**永久に開始できない**
+     *    （2026-08-17: 全コホート開始の 1 tick 目で `complaints_detected` 誤検知）。
+     */
+    const snapshot = captureHealthSnapshot({
+      jobsSent: jobs
         ? [...jobs.byId.values()]
           .filter((j) => j && j.status !== 'PENDING')
           .reduce((a, j) => a + (Number(j.sentCount) || 0), 0)
-        : null;
-      const prevFailed = jobs
+        : null,
+      jobsFailed: jobs
         ? [...jobs.byId.values()].reduce((a, j) => a + (Number(j.failedCount) || 0), 0)
-        : null;
+        : null,
+      dueSummary: due ? due.summary : null,
+    });
+    const baseline = state.healthBaseline;
+    // 最初のバッチ（比較相手が無い）は健全性判定を行わない。関所・1 日上限・kill が守る
+    if (seq > 1 && hasHealthBaseline(baseline)) {
+      const delta = diffHealthSnapshot(baseline, snapshot);
       const health = canStartNextBatch({
-        sent: prevSent,
-        failed: prevFailed,
+        sent: delta.counts.sent,
+        failed: delta.counts.failed,
         // 二重は「同じ人へ同じ touch」が無いこと。台帳の集計が単一源
-        duplicates: due && due.summary ? Number(due.summary.duplicates || 0) : 0,
-        bounces: due && due.summary ? Number((due.summary.byStopReason || {}).soft_bounce || 0) : null,
-        complaints: due && due.summary
-          ? Number((due.summary.byStopReason || {}).provider_suppressed || 0) : null,
-        unsubscribes: due && due.summary
-          ? Number((due.summary.byStopReason || {}).not_sendable || 0) : null,
+        duplicates: delta.counts.duplicates,
+        bounces: delta.counts.bounces,
+        complaints: delta.counts.complaints,
+        unsubscribes: delta.counts.unsubscribes,
         previousOutstanding: facts.outstandingStep1,
         suppressionReadable: !!(due && due.summary),
       });
@@ -968,7 +982,15 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     const handoffs = granted > 0 && opId
       ? [...new Set([...(state.pendingHandoffOps || []), opId])].slice(-10)
       : (state.pendingHandoffOps || []);
-    await saveState({ ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null });
+    // ⚠️ 新しいバッチを始めたときだけ基準点を置き直す（このバッチの「起点」）。
+    //    バッチ途中（200 → 400 → 500）で置き直すと、そのバッチ自身の結果が消える。
+    const nextBaseline = decision.plan && decision.plan.startsNewBatch === true
+      ? toStoredBaseline(snapshot, now)
+      : (state.healthBaseline || toStoredBaseline(snapshot, now));
+    await saveState({
+      ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null,
+      healthBaseline: nextBaseline,
+    });
     if (granted > 0) await bumpTotals({ granted });
     log({ ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' });
     return { ok: true, ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' };

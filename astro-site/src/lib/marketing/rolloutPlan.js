@@ -138,6 +138,13 @@ export function defaultRolloutState() {
     /** 自動停止の理由コード（PII は入れない） */
     stopReason: null,
     /**
+     * **バッチ健全性の基準点**（累積値のスナップショット）。
+     * 次のバッチの前に差分を取り、「そのバッチで新しく起きたこと」を見る。
+     * ⚠️ 累積値をそのまま渡すと、コホートに元から居る停止リスト該当者 1 名が
+     *    永久に「苦情 1 件」として当たり、**二度と開始できない**（2026-08-17 の誤検知）。
+     */
+    healthBaseline: null,
+    /**
      * 「今日動かしてよい」という明示。`YYYY-MM-DD`（JST）。
      * 置きっぱなしでも**翌日には効かなくなる**ので、暴走しない。
      * `alwaysArmed: true` なら日付を毎日置き直さずに継続運用できる。
@@ -218,6 +225,12 @@ export function normalizeRolloutState(raw) {
     batchGrantedCount: Math.max(0, num(raw.batchGrantedCount) ?? 0),
     autoStopped: raw.autoStopped === true,
     stopReason: str(raw.stopReason).slice(0, 80) || null,
+    healthBaseline: raw.healthBaseline && typeof raw.healthBaseline === 'object'
+      ? Object.fromEntries(
+        ['sent', 'failed', 'duplicates', 'bounces', 'complaints', 'unsubscribes', 'atMs']
+          .map((k) => [k, num(raw.healthBaseline[k])]),
+      )
+      : null,
     armedFor: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.armedFor)) ? str(raw.armedFor) : null,
     alwaysArmed: raw.alwaysArmed === true,
     lastRunDay: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.lastRunDay)) ? str(raw.lastRunDay) : null,
