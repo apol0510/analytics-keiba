@@ -23,7 +23,6 @@ import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/i
 import { PP_PHASE, teaserCopyForRoute } from '../../lib/premiumPlus/premiumPlusRelease.js';
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
-import { enforceSalePause } from '../../lib/premiumPlus/salePauseGuard.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -53,17 +52,11 @@ export async function GET({ request }) {
   // 販売導線の選択（UpsellTarget）。**この会員に Plus を見せてよいか**をここで決める。
   // sanrenpuku / none 指定の会員には Plus の予告も商品ページも出さない（2 商品を並べない）。
   // 判定は単一源 upsellTarget.js。ページ側に条件を散らさない。
-  // 会員単位の販売 一時停止は**キャッシュを迂回して**確認する（deny-marker）。
-  // fields は最大 10 分キャッシュされるため、停止直後の会員が古い値で通り得る。
-  const upsell = await enforceSalePause({
-    view: resolveUpsellForCustomer({
-      fields,
-      nowMs: now,
-      fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
-    }),
+  // 販売の一時停止（PremiumPlusSalePaused）は member → release の単一源が読む。
+  const upsell = resolveUpsellForCustomer({
     fields,
-    recordId: access.payload?.sub || null,
-    env: process.env,
+    nowMs: now,
+    fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
   });
   if (upsell.channel !== UPSELL_CHANNEL.PLUS) return notFound();
 

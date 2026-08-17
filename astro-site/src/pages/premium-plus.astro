@@ -35,7 +35,6 @@ import { shapeRaceCalendar } from '../lib/premiumPlus/premiumPlusRaceCalendar.js
 import ppRaceCalendar from '../data/premiumPlusRaceCalendar.json';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
-import { enforceSalePause } from '../lib/premiumPlus/salePauseGuard.js';
 import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 // --- SSR プラン認可（真実源） ---
@@ -68,18 +67,12 @@ const ppFields = await lookupCustomerFields({
 // 会員状態は既存の権限正本（resolveEntitlements）を再利用する。Plus 専用の権限判定は作らない。
 // 販売導線の選択（UpsellTarget）も同じ単一源で評価する。
 // sanrenpuku / none 指定の会員は商品ページ自体を開けない（2 商品を並べない・存在秘匿）。
-// 会員単位の販売 一時停止は**キャッシュを迂回して**確認する（deny-marker）。
-// ppFields は最大 10 分キャッシュされるため、停止直後の会員が古い値のまま
-// 商品ページ・価格・購入ボタンへ到達し得る。停止中は下の showProductPage 判定で 404 になる。
-const ppUpsell = await enforceSalePause({
-  view: resolveUpsellForCustomer({
-    fields: ppFields,
-    nowMs: ppNow,
-    fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
-  }),
+// 販売の一時停止（PremiumPlusSalePaused）は member → release の単一源が読む。
+// 停止中は showProductPage が false になり、下の判定でこのページは 404 になる。
+const ppUpsell = resolveUpsellForCustomer({
   fields: ppFields,
-  recordId: access.payload?.sub || null,
-  env: process.env,
+  nowMs: ppNow,
+  fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
 });
 const ppRelease = ppUpsell.plusRelease;
 if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {

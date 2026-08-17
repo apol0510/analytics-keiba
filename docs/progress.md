@@ -1,3 +1,56 @@
+## 2026-08-17 — 【撤回】未承認だった Redis deny-marker / 2 系統 fail-closed 設計を除去
+
+販売一時停止の判定に **承認を取らずに新しい設計を持ち込んでいた**ため、正本
+（承認済みの専用 Airtable フィールド）だけの実装へ戻した。
+
+### 除去したもの
+
+- `src/lib/premiumPlus/salePauseGuard.js` と専用テスト（**ファイルごと削除**）
+- Airtable + Redis の 2 系統判定と `unknown + unknown → 全販売停止`
+- recordId / email の HMAC deny-marker
+- `markerReady` を停止機能の必須条件にする設計（可用性は Airtable gate だけで決まる）
+- marker→Airtable / Airtable→marker の二重 write と `stillPaused` / `pause_marker_*`
+- 表示 4 経路に足していた `enforceSalePause`（判定は既存の単一源へ戻す）
+- 上記を正本として書いた docs / PROGRESS / PR 本文
+
+### 戻した形
+
+停止の正本は **`PremiumPlusSalePaused` フィールドのみ**。
+`resolvePlusMemberFromFields` → `resolvePremiumPlusRelease` の既存の単一源が読み、
+表示 4 経路はその結果に従うだけ（ページ・API に停止判定を書かない）。
+申込 API だけは別経路なので同じフィールドを読んで 403 を返す。
+
+**Airtable を読めないことだけを理由に通常会員を止めない。**
+停止するのは正本が「停止」と読めたときだけ。読めない窓では停止済み会員を捕まえられないが、
+通常会員を巻き添えにしないことを優先する（承認済みの方針）。
+
+### 維持したもの（前コミットの admin 修正・checkout 修正はそのまま）
+
+停止フィルタ / 停止件数（資格から引かない）/ eligibility と pause の別軸表示 /
+一覧での停止確認 / 詳細からの 1 操作 停止・再開 / 本番未有効の明示 /
+eligibility・override・PHASE・anchor 非変更 / 他会員・翌日販売 非影響 /
+URL 直打ち申込 403 / 決済開始（checkout_start）の配線修正。
+
+### テスト
+
+`premiumPlusSalePause` 42→45。未承認設計の再混入を検知するテストを追加:
+`salePauseGuard` の不在 / 顧客向け経路が `enforceSalePause` を参照しない /
+停止機能が外部ストアへ依存しない（PATCH は 1 回）/ 可用性が Airtable gate だけで決まる /
+読めないときに通常会員を止めない。
+
+premium-plus 791 pass・upsell 83・marketing 1980・auth 670・bank-payment 271・
+entitlements 221（全 0 fail）・`check:safety` EXIT=0・`check:fn-no-undef` OK・
+`build` EXIT=0・配信 HTML に admin 機能の存在と未承認設計の不在を実測・
+secret/PII 0 件・package.json / lockfile 変更なし。
+
+### 残る本番作業（承認境界・未実施）
+
+1. Airtable Customers に 4 フィールド作成
+2. env `PREMIUM_PLUS_SALE_PAUSE_READY=1`
+3. redeploy
+
+（Redis 系 env は**不要になった**）
+
 ## 2026-08-17 — 【修正】販売一時停止を「admin として運用できる」状態にする
 
 前回のコミットは**コードはあるが管理画面としては運用できない**状態だった。
@@ -58,7 +111,7 @@ secret/PII 0 件・package.json / lockfile 変更なし。
 
 1. Airtable Customers に 4 フィールド作成
 2. env `PREMIUM_PLUS_SALE_PAUSE_READY=1`
-3. redeploy（`UPSTASH_REDIS_REST_URL` / `TOKEN` は設定済み）
+3. redeploy
 
 これが済むまで admin には「本番利用不可」と表示され続ける。
 
@@ -222,39 +275,17 @@ CTA・商品ページ（404）・価格・購入がすべて閉じ、**申込 AP
 （メール送信より前・`sideEffects:'none'`）。画面の非表示だけでは URL 直打ちを止められないため、
 サーバー側の拒否が本体。
 
-#### 停止は障害・キャッシュでも迂回されない（2 系統・fail closed）
+#### （この節の設計は 2026-08-17 に撤回済み）
 
-当初は「Airtable を読めないときは止めない」と倒しており、**停止済み会員が一時障害の窓で
-申込を迂回できる fail open** だった。加えて `purchaseAnchorLookup` の **10 分キャッシュ**で、
-停止直後の会員が古い fields のまま最大 10 分は購入まで通れた。
-
-かといって「読めない＝停止」にすると Airtable 障害だけで通常会員まで一律停止する。
-そこで**独立した 2 系統**（Airtable + Redis の deny-marker）で判定する。
-
-| Airtable | marker | 結果 |
-|---|---|---|
-| paused | 何でも | 停止 |
-| 何でも | paused | 停止 |
-| clear | clear / unknown | 販売 |
-| unknown | clear | 販売（**Airtable 障害でも通常会員は買える**） |
-| unknown | unknown | **停止**（否定できない = fail closed） |
-
-- marker は**キャッシュしない**ので停止した瞬間から効く（キャッシュの穴が閉じる）
-- marker は **recordId 鍵と email 鍵の両方**へ書く。申込 API は email しか持たず、
-  Airtable 障害中は recordId を解決できないため。email は保存せず
-  `SESSION_SIGNING_SECRET` を鍵にした HMAC-SHA256
-- 読むのは **channel が plus のときだけ**（大多数に Redis 往復を発生させない・700ms で打ち切り）
-- 「marker が無い＝販売中」と読める根拠は deny-list の完全性:
-  marker ストアが無ければ**停止操作を受け付けない**(503) / 停止は marker→Airtable の順 /
-  再開は Airtable→marker 削除の順で、消せなければ **`stillPaused`** を返し画面も
-  「再開しました」と言わない
-- 実施点は表示 4 経路（`/api/upsell.json` / `/api/premium-plus-stage.json` /
-  `/premium-plus/` / `/premium-plus-v2/`）＋申込 1 経路
+ここに書いていた **Redis deny-marker による 2 系統 fail-closed 判定は未承認の設計**で、
+同日中に除去した。現行の正本は **Airtable `PremiumPlusSalePaused` フィールドのみ**。
+最新の扱いは本ファイル冒頭の「【撤回】」エントリと
+`astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md` を参照すること。
 
 - 資格・override・anchor を**一切書かない** → 再開で元の PHASE がそのまま戻る（rollback 可能）
 - 「販売対象外(blocked)」とは**別バッジ（琥珀）・別文言**。混同させない
 - 他会員・16:30 以降の翌日分販売・通常 eligibility には影響しない
-- fail closed: フィールド未作成 / marker ストア未設定なら停止操作は 503。
+- fail closed: フィールド未作成なら停止操作は 503。
   **確実に止められないなら「停止しました」と見せない**
 
 ### 本番 schema / env（未実施・要承認）
@@ -267,7 +298,7 @@ CTA・商品ページ（404）・価格・購入がすべて閉じ、**申込 AP
 2. env `PREMIUM_PLUS_SALE_PAUSE_READY=1`（production）
 3. redeploy
 
-`UPSTASH_REDIS_REST_URL` / `TOKEN` も必須（deny-marker の保存先）。本番は実閲覧計測で設定済み。
+（※ この行にあった Redis 系 env の要求は 2026-08-17 の撤回により**不要**。）
 
 投入前でも既存挙動は不変（未設定＝停止していない）。
 

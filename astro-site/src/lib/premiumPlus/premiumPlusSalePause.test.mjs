@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 import {
   PP_ELIGIBILITY, PP_PHASE, PP_SALE_PAUSE_FIELDS, PP_ELIGIBILITY_FIELDS,
@@ -279,9 +279,8 @@ const APPLY = read('../../../netlify/functions/bank-transfer-application.js');
 const ADMIN_FN = read('../../../netlify/functions/premium-plus-eligibility.js');
 
 test('【重要】申込 Function が停止を確認して拒否する（URL 直打ち対策）', () => {
-  // 判定は 2 系統（Airtable + deny-marker）の単一源へ委譲する。
-  // 詳細な fail closed の性質は salePauseGuard.test.mjs で固定。
-  assert.match(APPLY, /resolveSalePauseGate\(/, '申込側で停止を判定していない');
+  // 判定の正本は Airtable の PremiumPlusSalePaused のみ。
+  assert.match(APPLY, /normalizeSalePaused\(/, '申込側で停止を判定していない');
   assert.match(APPLY, /code: 'sale_paused'/);
   assert.match(APPLY, /statusCode: 403/);
 });
@@ -298,17 +297,26 @@ test('拒否時に副作用なしを明示する', () => {
   assert.match(seg, /sideEffects: 'none'/);
 });
 
-test('【重要】Airtable を読めないだけでは通さない（fail open を作らない）', () => {
+test('【重要】停止判定の正本は Airtable フィールドだけ（外部ストアに依存しない）', () => {
   const seg = APPLY.slice(
     APPLY.indexOf('会員単位の販売 一時停止を'), APPLY.indexOf("code: 'sale_paused'"),
   );
-  // 旧実装は catch の中で「読めなければ通す」と倒しており、停止済み会員が
-  // 一時障害の窓で申込を迂回できた。判定は 2 系統の gate へ委ねる。
+  assert.match(seg, /normalizeSalePaused\(/, '正本フィールドで判定していない');
+  assert.match(seg, /PP_SALE_PAUSE_FIELDS\.PAUSED/);
   assert.match(seg, /catch/, '読み取り失敗を握り潰していない（申込が 500 になる）');
-  assert.ok(!/読めなかったときは\*\*止めない\*\*/.test(seg), 'fail open の実装が戻っている');
-  assert.match(seg, /resolveSalePauseGate\(/, '停止判定を gate に委ねていない');
-  // Airtable が落ちて recordId が引けなくても marker を引けるように email を渡す
-  assert.match(seg, /email,/, 'email 経路が無いと Airtable 障害中に marker を引けない');
+  // 承認されていない外部ストア（Redis deny-marker）へ依存しない
+  for (const banned of ['resolveSalePauseGate', 'salePauseGuard', 'marker', 'Redis', 'UPSTASH']) {
+    assert.ok(!seg.includes(banned), `未承認の依存が残っている: ${banned}`);
+  }
+});
+
+test('【重要】Airtable を読めないことだけを理由に通常会員を止めない', () => {
+  const seg = APPLY.slice(
+    APPLY.indexOf('会員単位の販売 一時停止を'), APPLY.indexOf("code: 'sale_paused'"),
+  );
+  // 停止するのは「正本が停止と読めた」ときだけ。fields が無い＝止めない。
+  assert.match(seg, /plusCustomerFields\s*\n?\s*&& normalizeSalePaused/,
+    '読めないときも停止側へ倒している（通常会員が巻き添えになる）');
 });
 
 test('【重要】管理 API の停止操作は gate off で 503（画面だけ停止させない）', () => {
@@ -428,9 +436,37 @@ test('【重要】停止ボタンは本番未有効なら押せない', () => {
   assert.match(seg, /psBtn\.disabled = !psUsable/);
 });
 
-test('【重要】可用性は Airtable フィールドと marker の両方が揃って初めて true', () => {
+test('【重要】可用性は Airtable フィールドの gate だけで決まる', () => {
   const fn = read('../../../netlify/functions/premium-plus-eligibility.js');
   assert.match(fn, /salePause: \{/, '一覧応答が可用性を返していない');
-  assert.match(fn, /writable: isSalePauseEnabled\(process\.env\) && !!makeRedisCmd\(process\.env\)/);
-  assert.match(fn, /salePauseWritable: isSalePauseEnabled\(process\.env\) && !!makeRedisCmd\(process\.env\)/);
+  assert.match(fn, /writable: isSalePauseEnabled\(process\.env\)/);
+  assert.match(fn, /salePauseWritable: isSalePauseEnabled\(process\.env\)/);
+  // 外部ストアの有無を停止機能の必須条件にしない
+  assert.ok(!/writable: isSalePauseEnabled\(process\.env\) && !!makeRedisCmd/.test(fn),
+    '外部ストアを停止の必須条件にしている');
+});
+
+test('【重要】停止機能が未承認の外部ストアへ依存していない', () => {
+  const fn = read('../../../netlify/functions/premium-plus-eligibility.js');
+  const seg = fn.slice(fn.indexOf('async function handleSetSalePause'));
+  const body = seg.slice(0, seg.indexOf('\n/**'));
+  for (const banned of ['writeSalePauseMarker', 'emailPauseKey', 'isPauseMarkerAvailable',
+    'markerCmd', 'stillPaused', 'pause_marker']) {
+    assert.ok(!body.includes(banned), `未承認の設計が残っている: ${banned}`);
+  }
+  // 書くのは Airtable の停止フィールドだけ（1 回の PATCH）
+  assert.equal((body.match(/method: 'PATCH'/g) || []).length, 1, 'PATCH が 1 回ではない');
+});
+
+test('【重要】salePauseGuard（deny-marker 設計）が存在しない', () => {
+  for (const f of ['./salePauseGuard.js', './salePauseGuard.test.mjs']) {
+    assert.ok(!existsSync(new URL(f, import.meta.url)), `未承認の設計ファイルが残っている: ${f}`);
+  }
+  // 顧客向け経路からも参照されていない
+  for (const rel of ['../../pages/api/upsell.json.js', '../../pages/api/premium-plus-stage.json.js',
+    '../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro',
+    '../../../netlify/functions/bank-transfer-application.js']) {
+    assert.ok(!read(rel).includes('salePauseGuard'), `salePauseGuard を参照している: ${rel}`);
+    assert.ok(!read(rel).includes('enforceSalePause'), `enforceSalePause を参照している: ${rel}`);
+  }
 });
