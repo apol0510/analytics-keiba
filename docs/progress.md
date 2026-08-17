@@ -40,6 +40,20 @@
 
 影響: 付与 0 / 送信 0（止まっただけ）。しきい値そのものは据え置き。
 
+### 現在地（2026-08-17 時点）
+
+| | 状態 |
+|---|---|
+| 本番 main | `4bee3612`（#359 = 自動完走・終端・完成条件の固定）まで反映済み |
+| 展開 | **停止中**（`stage=paused` / `autoStopped=true` / `stopReason=complaints_detected`） |
+| 実績 | 本日の付与は午前のカナリア **500 名**のみ（累計 610 名）。全コホートぶんは **0 名** |
+| 残り | 約 **13,900 名**（未着手） |
+| 修正 | **PR #360**（この項目の修正）。マージ・本番反映・展開の再開は**未実施** |
+
+⚠️ 任務は未完了（冒頭の「任務の完了条件」1〜7 を満たしていない）。
+再開には #360 のマージ → 本番反映 → `rolloutStart`（`dailyLimit=15000` / `batchSize=500` /
+`alwaysArmed=true`）が必要。
+
 `test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0。
 
