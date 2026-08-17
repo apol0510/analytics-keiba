@@ -1396,6 +1396,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .badge.sale { background-color: #12463a; color: #a7f3d0; border: 1px solid rgba(52,211,153,.55); }
   .ppe .badge.immediate { background: linear-gradient(135deg, var(--gold), var(--gold-2)); color: #2a1d02; border: 1px solid rgba(245,196,81,.7); }
   .ppe .badge.blocked { background-color: #2a1416; color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
+  /* 一時停止。「販売対象外(blocked=赤)」と**見た目で区別**する（琥珀＝止まっているだけ・戻せる） */
+  .ppe .badge.paused { background-color: #3a2a08; color: #fcd34d; border: 1px solid rgba(245,196,81,.55); }
 
   /* ── タブ（販売 / マーケティング）── */
   .ppe .tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .9rem; border-bottom: 1px solid rgba(148,163,184,.18); }
@@ -2595,6 +2597,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // ── 状態の分類（表示・並び順・フィルター用。判定そのものは Function 側の単一源）──
     function classify(r) {
       if (r.eligibility === 'blocked') return { key: 'blocked', badge: 'blocked', short: '販売対象外', order: 4 };
+      // ⚠️ 一時停止は「販売対象外」と**別の状態**として出す。
+      //    同じバッジにすると、再開すべき相手が恒久的な対象外の中に埋もれる。
+      //    資格判定より先に見せるのは、止めている間は資格が何であれ売れないため。
+      if (r.salePaused === true) return { key: 'paused', badge: 'paused', short: '一時停止中', order: 0 };
       if (r.eligibility !== 'eligible') return { key: 'review', badge: 'review', short: '保留', order: 1 };
       if (r.overrideApplied) return { key: 'immediate', badge: 'immediate', short: '即時販売', order: 3 };
       if (r.phase === 4) return { key: 'sale', badge: 'sale', short: '販売中', order: 2 };
@@ -3621,6 +3627,92 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         upSec.appendChild(w);
       }
       body.appendChild(upSec);
+
+      // ── 販売の一時停止（会員単位）──────────────────────────────
+      // ⚠️ 「販売対象外(blocked)」とは**別の操作**。ここは資格を保持したまま
+      //    表示・商品ページ・購入・申込だけを止める。再開すれば元の状態がそのまま戻る。
+      const psSec = document.createElement('div'); psSec.className = 'dt-sec';
+      const psH = document.createElement('h3'); psH.textContent = '販売の一時停止'; psSec.appendChild(psH);
+      const psNote = document.createElement('p'); psNote.className = 'muted';
+      psNote.style.margin = '0 0 8px'; psNote.style.fontSize = '0.82rem';
+      psNote.textContent = 'この会員にだけ Premium Plus を売らない状態にします。'
+        + '販売資格・段階公開（PHASE）・会員権は変わらず、再開すればそのまま元に戻ります。'
+        + '「販売対象外」は恒久的な判断で、これとは別の操作です。';
+      psSec.appendChild(psNote);
+
+      const psKv = document.createElement('dl'); psKv.className = 'kv';
+      kvRow(psKv, '現在の状態', r.salePaused ? '⏸ 一時停止中（資格は保持）' : '✅ 販売中',
+        r.salePaused ? '' : 'muted');
+      if (r.salePaused) {
+        kvRow(psKv, '停止した日時', fmtDate(r.salePausedAt));
+        kvRow(psKv, '停止した操作者', r.salePausedBy || '—');
+        if (r.salePauseReason) kvRow(psKv, '停止理由', r.salePauseReason);
+      } else if (r.salePausedAt) {
+        // 再開後も「前回いつ止めたか」は監査として見えるようにする
+        kvRow(psKv, '前回の停止/再開', fmtDate(r.salePausedAt) + '（' + (r.salePausedBy || '—') + '）', 'muted');
+      }
+      psSec.appendChild(psKv);
+
+      const psOps = document.createElement('div'); psOps.className = 'ops';
+      const psBtn = document.createElement('button');
+      psBtn.type = 'button';
+      psBtn.className = r.salePaused ? 'btn-primary' : 'btn-danger';
+      psBtn.textContent = r.salePaused ? '▶ 販売を再開する' : '⏸ 販売を一時停止する';
+      psBtn.disabled = r.salePauseWritable === false;
+      psBtn.addEventListener('click', async () => {
+        const actor = currentActor();
+        if (!actor) {
+          msg('操作者名を入力してください（変更履歴に残ります）', 'err');
+          $('connBody').hidden = false; renderDetail(); return;
+        }
+        const nextPaused = !r.salePaused;
+        // 停止は顧客の購入導線を全面的に閉じるので、必ず確認を挟む
+        if (nextPaused && !window.confirm(
+          (r.email || 'この会員') + ' の Premium Plus 販売を一時停止します。\n\n'
+          + '・CTA / 商品ページ / 購入 / 申込がすべて止まります\n'
+          + '・販売資格と PHASE は変わりません（再開でそのまま戻ります）\n'
+          + '・他の会員には影響しません',
+        )) return;
+        const reason = nextPaused
+          ? (window.prompt('停止理由（任意・管理者だけが見ます）', r.salePauseReason || '') ?? '')
+          : '';
+        psBtn.disabled = true;
+        msg(nextPaused ? '販売を停止中…' : '販売を再開中…');
+        const out = await call({
+          action: 'setSalePause', recordId: r.recordId, paused: nextPaused, reason, actor,
+          // 同時編集の検知（停止側の版）
+          expectedPausedAt: r.salePausedAt || '',
+        });
+        const logged = {
+          kind: 'salePause', actor, recordId: r.recordId, email: r.email, at: Date.now(),
+          from: r.salePaused ? '一時停止中' : '販売中',
+          to: nextPaused ? '一時停止中' : '販売中',
+        };
+        if (isUnknownResult(out)) {
+          opLog.add({ ...logged, result: 'unknown', detail: '通信が切れました' });
+        } else if (!out) {
+          opLog.add({ ...logged, result: 'failed' });
+        } else {
+          opLog.add({ ...logged, result: 'ok', detail: out.changed === false ? '既に同じ状態' : '' });
+          // 送った値が通った前提にせず、Airtable から読み直して確認する
+          await refreshOne(r.recordId);
+          msg(nextPaused
+            ? '販売を一時停止しました（保存を確認済み / 資格は変更していません）'
+            : '販売を再開しました（保存を確認済み）', 'ok');
+        }
+        renderDetail();
+      });
+      psOps.appendChild(psBtn);
+      psSec.appendChild(psOps);
+
+      if (r.salePauseWritable === false) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ 販売の一時停止は無効です（Airtable に PremiumPlusSalePaused 系フィールドを作成し '
+          + 'PREMIUM_PLUS_SALE_PAUSE_READY=1 を設定してください）。'
+          + '有効化するまで停止操作は受け付けません（止めたつもりで売れ続けるのを防ぐため）。';
+        psSec.appendChild(w);
+      }
+      body.appendChild(psSec);
 
       const pvSec = document.createElement('div'); pvSec.className = 'dt-sec';
       const h2 = document.createElement('h3'); h2.textContent = '表示確認'; pvSec.appendChild(h2);

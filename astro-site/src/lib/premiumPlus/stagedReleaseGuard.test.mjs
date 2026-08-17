@@ -405,7 +405,13 @@ test('明示指定（UpsellTarget=plus）は Airtable の eligibility 値を書�
 
 test('override: 日時の偽装で実現していない（EligibleAt / SanrenpukuPaidAt を書き換えない）', () => {
   const code = stripComments(read('./premiumPlusEligibility.js'));
-  const fn = code.slice(code.indexOf('export function buildAdminActionFields'));
+  // ⚠️ **その関数だけ**を切り出す。ファイル末尾まで見ると、後ろに足された別の関数
+  //    （buildSalePauseFields 等）の記述まで拾って誤検知する。
+  const start = code.indexOf('export function buildAdminActionFields');
+  assert.ok(start > 0, 'buildAdminActionFields が無い');
+  const rest = code.slice(start + 'export function'.length);
+  const nextExport = rest.indexOf('\nexport ');
+  const fn = nextExport < 0 ? rest : rest.slice(0, nextExport);
   assert.doesNotMatch(fn, /SANRENPUKU_PAID_AT_FIELD/);
   assert.doesNotMatch(fn, /ELIGIBLE_AT/);
 });

@@ -1,3 +1,90 @@
+## 2026-08-17 — 【修正+機能】決済開始の計測が発火していなかった / 会員単位の販売 一時停止
+
+### 発端
+
+「Daniel の Premium Plus CTA」の read-only 調査。実測で判明したのは次の通り。
+
+- 表示判定は 3 サーフェスとも成立（channel=plus / PHASE 4 / 購入可）
+- 実閲覧: CTA 表示 6 回（dashboard 4 / 三連複 5・最終 08-16 21:35 JST）、
+  クリック 1 回（08-15 22:44・三連複ページ）、商品ページ到達 1 回（同 22:44）
+- 到達した時点の販売状態を実レコードで再現 → **いずれも購入可能**（翌日分 受付中）。
+  受付時間帯・非開催日で止まっていたわけではない
+- **決済開始 / 購入完了は「未確認」** ← ここが計測の欠落だった
+
+### 1. 決済開始の計測が構造的に発火しない状態だった（恒久修正）
+
+`bank-transfer-application.js` の計測呼び出しが、**互いに排他な二重条件**の中にあった。
+
+```
+if (!productName.includes('Premium Plus')) {   // Plus を除外するブロック
+  ...
+  if (/Premium Plus/i.test(productName)) {     // Plus だけを対象にする条件
+    await recordPlusCheckoutStart(...)         // → 到達不能
+  }
+}
+```
+
+関数もテストも配線ガードも存在し grep でも見つかるのに、**本番の記録は永久に 0 件**になる。
+既存の配線ガードは「呼び出しが書いてあること」しか見ておらず素通りしていた。
+
+- 計測を **Plus 除外ブロックの外**へ移動。recordId が確定してからだけ記録する
+- recordId は対象日照会と**同じ GET で拾って再利用**（Airtable の照会を増やさない）
+- 引けなければ記録しない（**email 等で推測の id を作らない**）
+- 冪等性は store の `DEDUPE_MS`（同一 recordId・同一種別は 30 分に 1 回）が持つ。再送で水増ししない
+- 計測失敗は握りつぶし、申込を失敗扱いにも rollback もしない
+- 商品名判定を単一源 `isPremiumPlusProductName()` に集約。
+  **大小を区別する `.includes('Premium Plus')` と `/Premium Plus/i` の混在**という
+  潜在バグ（`premium plus` 表記だと月額プラン登録の経路へ落ちる）も同時に解消
+
+新ガード `plusCheckoutIntakeWiring.guard.test.mjs` は**書いてあるか**ではなく
+**到達可能か**（除外ブロックより前にあるか）を固定する。
+
+### 2. 会員単位の「販売中 ⇔ 一時停止」（新機能）
+
+`/admin/premium-plus-eligibility/` の詳細パネルから 1 クリックで切替。再開も同じボタン。
+
+**既存フィールドでは恒久的に表現できない**ことを確認したうえで専用フィールドを追加した。
+`blocked` 代用は ① 恒久判断と一時停止が混ざる ② **再開時に `PremiumPlusEligibleAt` が
+更新され PHASE が Day 0 へ戻る**、の 2 点で不可。`UpsellTarget='none'` は三連複 CTA まで
+巻き添えにするうえ申込 API を止められない（詳細は `docs/PREMIUM_PLUS_STAGED_RELEASE.md`）。
+
+停止すると dashboard / 三連複ページ予告 / `/premium-plus/` / `/premium-plus-v2/` の
+CTA・商品ページ（404）・価格・購入がすべて閉じ、**申込 API も 403 `sale_paused`**
+（メール送信より前・`sideEffects:'none'`）。画面の非表示だけでは URL 直打ちを止められないため、
+サーバー側の拒否が本体。
+
+- 資格・override・anchor を**一切書かない** → 再開で元の PHASE がそのまま戻る（rollback 可能）
+- 「販売対象外(blocked)」とは**別バッジ（琥珀）・別文言**。混同させない
+- 他会員・16:30 以降の翌日分販売・通常 eligibility には影響しない
+- fail closed: フィールド未作成なら停止操作は 503。**書けないのに「停止しました」と見せない**
+- Airtable を読めないときは**止めない**（障害で全員の申込を落とさない）
+
+### 本番 schema / env（未実施・要承認）
+
+このコミットには含めない。有効化には次が必要。
+
+1. Airtable Customers に 4 フィールド作成
+   （`PremiumPlusSalePaused` チェックボックス / `PremiumPlusSalePausedAt` 日時 /
+   `PremiumPlusSalePausedBy` テキスト / `PremiumPlusSalePauseReason` テキスト）
+2. env `PREMIUM_PLUS_SALE_PAUSE_READY=1`（production）
+3. redeploy
+
+投入前でも既存挙動は不変（未設定＝停止していない）。
+
+### テスト
+
+新規 46（`plusCheckoutIntakeWiring.guard` 14 + `premiumPlusSalePause` 32）。
+既存ガード 3 件は仕様変更に合わせて更新（allow-list に 4 フィールド追加 /
+「全 admin action は資格操作」という前提を `PP_ELIGIBILITY_ACTIONS` へ限定 /
+関数本体の切り出しをファイル末尾までではなく次の export までに限定）。
+
+`test:premium-plus-media` 776 pass 0 fail・`upsell` 83 pass・`test:marketing` 1903 pass・
+`test:auth-session` 670 pass・`test:bank-payment` 271 pass・`test:entitlements` 221 pass・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII scan 0 件。
+
+※ `npm run lint` / `npm run typecheck` は本 repo では実行不可（eslint・@astrojs/check とも
+未インストールで設定ファイルも無く、CI でも実行されていない）。依存追加は本タスクの範囲外として見送り。
+
 ## 2026-08-17 — 【変更】同日に複数バッチを回せるようにする（1 日 1 回の廃止）
 
 約 15,000 件を「安全なグループ単位で連続配信する」目的に対し、

@@ -31,6 +31,7 @@ import {
   PP_ELIGIBILITY,
   PP_ELIGIBILITY_LABEL,
   PP_ELIGIBILITY_FIELDS,
+  PP_SALE_PAUSE_FIELDS,
   PP_ROUTE,
   describeReleaseState,
   resolvePremiumPlusRelease,
@@ -47,9 +48,11 @@ import {
 } from '../../src/lib/premiumPlus/premiumPlusPreview.js';
 import {
   buildAdminActionFields,
+  buildSalePauseFields,
   assertOnlyPlusFields,
   isPlusFieldsEnabled,
   isReleaseOverrideEnabled,
+  isSalePauseEnabled,
   PP_ADMIN_ACTION,
 } from '../../src/lib/premiumPlus/premiumPlusEligibility.js';
 import {
@@ -146,6 +149,7 @@ exports.handler = async (event) => {
     if (action === 'update') return await handleUpdate({ KEY, BASE, now, req });
     if (action === 'preview') return await handlePreview({ KEY, BASE, now, req });
     if (action === 'setUpsell') return await handleSetUpsell({ KEY, BASE, now, req });
+    if (action === 'setSalePause') return await handleSetSalePause({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -231,6 +235,16 @@ function buildAdminRow(rec, now) {
         updatedBy: fields['PremiumPlusEligibilityUpdatedBy'] || '',
         phase: release.phase,
         sanrenpukuPaidAt: member.sanrenpukuPaidAtMs ? new Date(member.sanrenpukuPaidAtMs).toISOString() : '',
+        // ── 会員単位の販売 一時停止（資格とは別の軸）──────────────
+        // ⚠️ `eligibility='blocked'`（販売対象外）と混同させない。停止は資格を保持したまま
+        //    全面を閉じているだけで、再開すれば元の phase / 資格がそのまま戻る。
+        salePaused: member.salePaused === true,
+        salePausedLabel: member.salePaused === true ? '一時停止中' : '販売中',
+        salePausedAt: fields[PP_SALE_PAUSE_FIELDS.UPDATED_AT] || '',
+        salePausedBy: fields[PP_SALE_PAUSE_FIELDS.UPDATED_BY] || '',
+        salePauseReason: fields[PP_SALE_PAUSE_FIELDS.REASON] || '',
+        /** 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う） */
+        salePauseWritable: isSalePauseEnabled(process.env),
   };
 }
 
@@ -722,6 +736,124 @@ async function handleUpdate({ KEY, BASE, now, req }) {
     // 次の操作の版として画面が持ち直す（毎回フル再読込しなくても競合検知が効く）
     updatedAt: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_AT] || null,
     updatedBy: built.fields[PP_ELIGIBILITY_FIELDS.UPDATED_BY] || null,
+  });
+}
+
+/**
+ * 会員単位の「販売中 ⇔ 一時停止」を切り替える（1 クリック操作の受け口）。
+ *
+ * ## 何を変えるか
+ *
+ * `PremiumPlusSalePaused` 系 4 フィールドだけ。
+ * **販売資格（PremiumPlusEligibility）・段階公開 anchor・override は一切書かない。**
+ * だから止めても資格は残り、再開すれば PHASE も元のまま戻る（rollback 可能）。
+ *
+ * ## 影響範囲
+ *
+ * 1 レコードのみ。他会員・16:30 以降の翌日販売・通常の eligibility 判定には影響しない
+ * （停止判定は resolvePremiumPlusRelease の中で **その会員の fields からのみ**導出される）。
+ *
+ * ## fail closed
+ *
+ * フィールド未作成（gate off）なら **503 で拒否**する。書けないのに
+ * 「停止しました」と返すと、止めたつもりで売れ続ける。
+ */
+async function handleSetSalePause({ KEY, BASE, now, req }) {
+  if (!isPlusFieldsEnabled(process.env)) {
+    return json(503, {
+      error: 'Premium Plus フィールドが未有効（PREMIUM_PLUS_FIELDS_READY 未設定）',
+      sideEffects: 'none',
+    });
+  }
+  if (!isSalePauseEnabled(process.env)) {
+    return json(503, {
+      error: '販売の一時停止は未有効（PremiumPlusSalePaused 系フィールド未作成 / PREMIUM_PLUS_SALE_PAUSE_READY 未設定）',
+      hint: 'Airtable に PremiumPlusSalePaused / PremiumPlusSalePausedAt / PremiumPlusSalePausedBy / PremiumPlusSalePauseReason を作成後、env を 1 にしてください',
+      code: 'sale_pause_not_ready',
+      sideEffects: 'none',
+    });
+  }
+
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+  if (typeof req.paused !== 'boolean') {
+    return json(400, { error: 'paused は true / false で指定してください', sideEffects: 'none' });
+  }
+
+  // 変更前の状態は **Airtable から読む**（クライアント申告は信用しない）
+  const getRes = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!getRes.ok) return json(404, { error: 'Record not found', sideEffects: 'none' });
+  const currentFields = (await getRes.json()).fields || {};
+
+  // 同時編集の検知。停止操作は**停止側の更新時刻**を版として使う
+  // （資格の UpdatedAt とは別の軸なので混ぜない）。
+  if (req.expectedPausedAt !== undefined) {
+    const seen = String(req.expectedPausedAt ?? '').trim();
+    const nowValue = String(currentFields[PP_SALE_PAUSE_FIELDS.UPDATED_AT] ?? '').trim();
+    if (seen !== nowValue) {
+      return json(409, {
+        error: 'この会員の販売状態は別の操作で更新されています。再読込してから操作してください。',
+        code: 'stale_record',
+        seenPausedAt: seen || null,
+        currentPausedAt: nowValue || null,
+        sideEffects: 'none',
+      });
+    }
+  }
+
+  const built = buildSalePauseFields({
+    paused: req.paused,
+    current: currentFields[PP_SALE_PAUSE_FIELDS.PAUSED],
+    reason: req.reason,
+    actor: req.actor || 'admin',
+    now: new Date(now),
+    enabled: true,
+  });
+  if (!built) return json(400, { error: '販売状態の更新内容を組み立てられませんでした', sideEffects: 'none' });
+
+  // 既に同じ状態なら PATCH しない（監査日時を無意味に更新しない）
+  if (!built.changed) {
+    return json(200, {
+      success: true, recordId, paused: built.paused, changed: false,
+      label: built.paused ? '一時停止中' : '販売中',
+      note: '既に同じ状態のため変更していません',
+      pausedAt: currentFields[PP_SALE_PAUSE_FIELDS.UPDATED_AT] || null,
+      sideEffects: 'none',
+    });
+  }
+
+  // PATCH 直前の最終防衛（Plus 専用フィールド以外が混ざっていないか）
+  if (!assertOnlyPlusFields(built.fields)) return json(500, { error: 'field allow-list violation' });
+
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    method: 'PATCH',
+    headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: built.fields, typecast: true }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error('❌ [premium-plus-eligibility] 販売停止 PATCH failed:', res.status);
+    return json(502, {
+      error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300),
+    });
+  }
+
+  console.log('✅ [premium-plus-eligibility] 販売状態を更新:', {
+    recordId, paused: built.paused, actor: req.actor || 'admin',
+  });
+  return json(200, {
+    success: true,
+    recordId,
+    paused: built.paused,
+    changed: true,
+    previousPaused: currentFields[PP_SALE_PAUSE_FIELDS.PAUSED] === true,
+    label: built.paused ? '一時停止中' : '販売中',
+    pausedAt: built.fields[PP_SALE_PAUSE_FIELDS.UPDATED_AT] || null,
+    pausedBy: built.fields[PP_SALE_PAUSE_FIELDS.UPDATED_BY] || null,
+    // 資格は触っていないことを応答でも明示する（画面の履歴に残す）
+    eligibilityUnchanged: true,
   });
 }
 
