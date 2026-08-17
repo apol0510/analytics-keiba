@@ -44,7 +44,7 @@
  */
 
 import { jstDateString } from '../marketing/campaignSend.js';
-import { buildComebackPlan } from './comebackGrantPlan.js';
+import { buildComebackPlan, MAX_GRANT_RECORDS } from './comebackGrantPlan.js';
 import { resolveOffer } from '../promotions/promotionOfferCatalog.js';
 import { evaluateStep1Barrier, barrierToken } from './lightTrialBarrier.js';
 import { createHash } from 'node:crypto';
@@ -64,6 +64,22 @@ export const HARD_MAX_BATCH_SIZE = 500;
 
 /** 後方互換（既定値の別名） */
 export const MAX_GRANTS_PER_RUN = DEFAULT_BATCH_SIZE;
+
+/**
+ * **1 回の付与操作で実際に扱える人数の上限**（＝呼び出し側が 1 回に依頼してよい最大）。
+ *
+ * ⚠️ 上限は 1 つではない。**低い方が勝つ**:
+ *   - `HARD_MAX_BATCH_SIZE`（この Function の歯止め・500）
+ *   - `MAX_GRANT_RECORDS`（`buildComebackPlan` が計画を作る上限・200）
+ *     → これを超えると **計画自体が作られず** `too_many_records:N>200` で 0 件になる
+ *
+ * ⚠️ **ここで数値を再定義しない**（正本は各モジュール）。2026-08-17 の事故:
+ *    `batchSize=500` から allowance 400 を 1 回で依頼し、`too_many_records:400>200` で
+ *    毎 tick 付与 0 のまま空回りした。以後、依頼人数はこの値で刻む。
+ * ⚠️ 論理的な「1 バッチの人数」（展開状態の `batchSize` = 500 / 1000 など）を
+ *    **狭める意味ではない**。バッチはこの単位に分割して進む。
+ */
+export const GRANT_OPERATION_MAX = Math.min(HARD_MAX_BATCH_SIZE, MAX_GRANT_RECORDS);
 
 /** 自動付与に使う特典（カタログの正本。ここで日数を書かない） */
 export const TRIAL_OFFER_ID = 'light-30d-free';

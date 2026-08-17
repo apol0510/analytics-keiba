@@ -1297,7 +1297,9 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 
 ### 読み取りの上限
 
-- 管理画面 `action=touchMeasurement` … Blob 全件走査 **なし**、Redis は最大 500 鍵の bounded read
+- 管理画面 `action=touchMeasurement` … Blob 全件走査 **なし**、Redis は最大 500 鍵の bounded read。
+  **配信台帳も全件走査しない**（1 ページ = cursor 方式。全体は `action=touchMeasurementPage` を辿る
+  `npm run scan:touch-measurement`。数え切れないときは数字を返さない）
 - `action=eventBackfillDryRun` … Blob は**日付で絞って**読む。**書き込みは別承認**
 
 ---

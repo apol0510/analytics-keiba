@@ -1,3 +1,52 @@
+## 2026-08-17 — 【修正】付与の実効上限 200 との整合 / touch 実績のページ化
+
+本番で 2 件の頭打ちを踏んだので恒久修正した（**AK のみ**）。
+
+### 1. 論理 batchSize と「付与 1 回の上限」を分ける
+
+`batchSize=500` から allowance 400 を 1 回で依頼したところ、`buildComebackPlan` の
+`MAX_GRANT_RECORDS=200` に掛かり `too_many_records:400>200` で **付与 0 のまま 14 tick 空回り**
+（`batchSeq` だけ進み、`lastRunCount: 0` が正常実行として記録されていた）。
+
+- 1 回に依頼する人数を **`GRANT_OPERATION_MAX = min(HARD_MAX_BATCH_SIZE 500, MAX_GRANT_RECORDS 200)`**
+  へ揃えた。**数値はどこにも再定義しない**（正本は各モジュール）
+- `batchSize=500` → **200 + 200 + 100** / `batchSize=1000` → **200 × 5** で同日に進む。
+  **500 / 1000 を断る仕様変更はしていない**（既存契約のまま）
+- 既定 100 への silent cap は復活させない（午前の修正 #355 を維持）
+
+### 2. 「予定があったのに 0 件」を成功として settle しない
+
+`grantOutcome.js` の `classifyGrantOutcome()` が `granted` / `idle`（候補 0）/ `failed` を分ける。
+`failed` は **状態を一切動かさず**（`batchSeq`・`dayGrantedCount`・`lastRunCount`）、
+`stage: paused` + `note: auto-stop: <理由>` で**自分から止まる**。無人での無限空回りが起きない。
+
+### 3. touch 別実績を 1 リクエスト 1 ページに
+
+配信行 610 で `action=touchMeasurement` が **504**。全件一括走査をやめ、
+`cursor`（Airtable の offset）で 1 ページ（既定 200 / 上限 500）だけ読む形へ。
+DeliveryKey の計算もイベント索引の読みも**そのページ分だけ**。
+全体は `npm run scan:touch-measurement` が cursor を辿って合算する
+（`mergeTouchPage` は `pageIndex` で重複を弾き、**率は合計してから 1 回だけ**計算）。
+
+### 追記（同日・PR #356 内）
+
+- **`action` を分離**: `touchMeasurement`（全体・`schemaVersion: 2`。数え切れたときだけ数を返す。
+  足りなければ `complete:false` / `measurement_requires_scan` で**数字を返さない**）と
+  `touchMeasurementPage`（1 ページ・必ず `partial` / `scan.cursor`）。
+  呼び出し元は `scripts/touch-measurement-scan.mjs` だけで、テストが一覧を固定する
+- **自動停止を CAS で確定**: `rolloutPauseGuard.js` の `pauseWithRetry()` が読み直し + 上限つき再試行。
+  確定できなければ `state_write_conflict` / `autoStopped: false` で**止めたと偽らない**
+
+### テスト
+
+`grantBatchAlignment.test.mjs`（15 件）/ `touchMeasurementScan.test.mjs`（13 件）を追加。
+500→200+200+100 / 1000→200×5 / 100 付与済み→200+200 / 再付与 0 / 関所 / 0 件で settle しない /
+無限空回りしない / operationId 冪等 / 499・500・501・610・15,000 件の境界 / ページ重複 0 /
+未計測を 0 件にしない / PII なし。
+
+`test:marketing` 1,931 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0。
+
 ## 2026-08-17 — 【変更】同日に複数バッチを回せるようにする（1 日 1 回の廃止）
 
 約 15,000 件を「安全なグループ単位で連続配信する」目的に対し、

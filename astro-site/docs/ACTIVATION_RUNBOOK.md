@@ -329,6 +329,8 @@ cron は 1 時間ごと。**`dailyLimit`（= 100）まで**付与する（`stage
 ```bash
 # 配信の実績（touch 別）
 {"action":"touchMeasurement","campaignId":"light-trial-to-premium-sequence"}
+# ⚠️ 数え切れない規模になると数字を返さない（complete:false / measurement_requires_scan）。
+#    そのときは `npm run scan:touch-measurement`（cursor を辿って合算）を使う。
 #   → delivered / opened / measured / unknown、measurementAvailable: true
 # 進行と停止理由（購入・配信停止・バウンス・苦情・suppression）
 {"action":"sequence","campaignId":"light-trial-to-premium-sequence"}
@@ -395,7 +397,7 @@ cron は 1 時間ごと。**`dailyLimit`（= 100）まで**付与する（`stage
 | grant | `rollout` の `batch.lastRunCount` / `totalGranted` |
 | queue / sent / failed / skipped | `jobs` の `counts` |
 | duplicate | 配信行の DeliveryKey・宛先の重複 0 |
-| delivered / opened | `touchMeasurement`（索引が積まれるまで数分〜） |
+| delivered / opened | `touchMeasurement`（小規模）/ `npm run scan:touch-measurement`（全体・索引が積まれるまで数分〜） |
 | bounce / complaint / unsubscribe | `sequence` の `byStopReason` + EmailBlacklist の増分 |
 | purchase | `sequence` の `byStopReason.purchased` |
 | **Customers 課金系変更** | 付与した人の `プラン` / `Status` / `PlanType` / `有効期限` が**空のまま** |
