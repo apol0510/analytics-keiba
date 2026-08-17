@@ -61,7 +61,7 @@ import { canStartNextBatch, describeBatchHealth } from '../../src/lib/marketing/
 import {
   captureOutcomeSnapshot, diffOutcomeSnapshot, hasOutcomeBaseline, toStoredOutcome,
 } from '../../src/lib/marketing/batchOutcomeSignals.js';
-import { readBlacklistWindow } from '../../src/lib/marketing/blacklistWindowReader.js';
+import { readEventWindow } from '../../src/lib/marketing/eventWindowReader.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
@@ -856,16 +856,22 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
      *    （2026-08-17: 全コホート開始の 1 tick 目で `complaints_detected` 誤検知）。
      */
     /**
-     * ⚠️ 健全性の件数は**前バッチで起きたイベント**だけ。正本は `EmailBlacklist`
-     *    （Event Webhook が書く唯一の経路）。`byStopReason`（＝いま候補を除外する理由）は
-     *    **使わない** — 展開では母集団が 1 バッチ 500 名ずつ増えるので、
-     *    以前から停止リストに載っていた人が入るだけで増えてしまう（2026-08-17 に 2 度誤停止）。
+     * ⚠️ 健全性の件数は**前バッチで起きたイベント**だけを、**1 イベント 1 件**で数える。
+     *    正本は配信イベント台帳（Blob の NDJSON。Event Webhook が書く）。
+     *    - `byStopReason`（いま候補を除外する理由）は使わない
+     *      … 母集団が 1 バッチ 500 名増えるだけで増える（2026-08-17 に 2 度誤停止）
+     *    - `EmailBlacklist` も使わない
+     *      … アドレス 1 行の upsert 台帳で、既存行は `BounceCount+1` の PATCH。
+     *        `AddedAt` が古いまま＝**古い登録者の新イベントを取り逃がす**
+     *    窓は「このバッチを始めた時刻 → いま」。campaign で絞り、providerEventId で重複を除く。
      */
-    const blacklist = await readBlacklistWindow({
-      apiKey: process.env.AIRTABLE_API_KEY,
-      baseId: process.env.AIRTABLE_BASE_ID,
-      nowMs: now,
-    }).catch(() => null);
+    const eventWindow = state.healthBaseline && Number(state.healthBaseline.atMs)
+      ? await readEventWindow({
+        sinceMs: Number(state.healthBaseline.atMs),
+        untilMs: now,
+        campaignId: ROLLOUT_CAMPAIGN_ID,
+      }).catch(() => null)
+      : null;
     const snapshot = captureOutcomeSnapshot({
       jobsSent: jobs
         ? [...jobs.byId.values()]
@@ -877,7 +883,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         : null,
       // 二重送信は DeliveryKey が構造的に防ぐ。送信経路が弾いた数を状態から受け取る
       duplicates: Number(state.batchDuplicates || 0),
-      blacklist,
+      events: eventWindow,
     });
     const baseline = state.healthBaseline;
     // 最初のバッチ（比較相手が無い）は健全性判定を行わない。関所・1 日上限・kill が守る

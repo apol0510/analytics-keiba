@@ -578,29 +578,34 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
 2 バッチ目以降は、**前のバッチの結果を確かめてから**始める。
 人が挟まらないので、機械が代わりに見る。
 
-#### 入力は「前バッチで**起きたこと**」だけ（2026-08-17 に 2 度誤停止）
+#### 入力は「前バッチで**起きたイベント**」だけ（入力ソースを 3 度間違えた）
 
 | 指標 | 正本 | なぜ |
 |---|---|---|
-| sent / failed | **ジョブ台帳**（`ScheduledEmails` の `sentCount` / `failedCount`） | 前バッチの送信でしか増えない |
+| sent / failed | **ジョブ台帳**（`ScheduledEmails` の `sentCount` / `failedCount`） | 前バッチの送信でしか増えない（累計の差分を取る） |
 | duplicate | **送信経路が `already_delivered` で弾いた数** | DeliveryKey が構造的に防ぐ。正常は 0 |
-| spam complaint / unsubscribe / hard bounce | **`EmailBlacklist`**（Event Webhook が書く唯一の経路）を**直近窓**で読み、`BounceType` で分類 | **イベントが起きたときだけ行が増える** |
+| spam complaint / unsubscribe / hard bounce | **配信イベント台帳**（`emailEventBlobStore.js` の NDJSON・**1 行 1 イベント**）を、`campaignId` と「バッチ開始 → いま」の窓で切って数える | 1 イベント 1 件・同一人の複数イベントも残る |
 
-⚠️ **`action=sequence` の `byStopReason` は使わない。** あれは「いま候補を除外する理由」＝
-   **現在の状態**で、前バッチの出来事ではない。
-   - 1 度目の誤停止: 累積をそのまま苦情として渡し、元から居る停止リスト該当者 1 名で永久停止
-   - 2 度目: その差分を取ったが、展開は**1 バッチ 500 名ずつ母集団が増える**ので、
-     以前から停止リストに載っていた人が母集団へ入るだけで差分が増える
+⚠️ **使ってはいけない入力（実際に踏んだ順）**
 
-⚠️ `BounceType` の対応: `spam` → 苦情 / `unsubscribe` → 配信停止 /
-   `hard`・`blocked`・`dropped` → ハードバウンス / **`soft` はハードとして数えない**。
-⚠️ 窓は**直近 2 日**（日付をまたいでも直前バッチのイベントが外れない）。
-   読めなければ **null → fail closed**（0 件と書かない）。全件走査はしない。
-⚠️ バッチを始めるたびに累計のスナップショット（`healthBaseline`）を控え、**差分**で判定する。
-   最初のバッチは比較相手が無いので判定しない（関所・1 日上限・kill が守る）。
+1. `action=sequence` の `byStopReason` の**累積** … いま候補を除外する理由（現在状態）。
+   コホートに元から居る停止リスト該当者 1 名で**永久停止**した
+2. その**差分** … 展開は 1 バッチ 500 名ずつ母集団が増えるので、
+   **以前から該当していた人が母集団へ入るだけで差分が増える**
+3. `EmailBlacklist` の行数 … あれは**アドレス 1 行の upsert 台帳**。
+   既存行は `BounceCount+1` の PATCH で `AddedAt` は据え置き・`BounceType` は上書き。
+   **1 イベント 1 行ではない**ので、古い登録者の新イベントを取り逃がし、
+   同一人の複数イベントも数えられない
+
+⚠️ 台帳の読み方は既存 backfill と同じ `list({prefix}) → get → parseNdjson`。
+   **走査上限あり**（`MAX_EVENT_BLOBS`）で、超えたら `null` → fail closed。**読むだけ**。
+⚠️ 分類: `spamreport` → 苦情 / `unsubscribe`・`group_unsubscribe` → 配信停止 /
+   `dropped`・`bounce(hard)` → ハードバウンス / **`bounce(soft)` はハードとして数えない**。
+⚠️ `providerEventId` で**再送を二重に数えない**。`campaignId` で**他 campaign を混ぜない**。
+   `deliveryKey` を渡せば**直前バッチの通だけ**へ厳密に scope できる。
 ⚠️ **しきい値は変えていない**（苦情 0 件 / failed 5% / bounce・unsubscribe 2% / duplicate 0）。
 
-| 見るもの（**増分**） | 止める条件（既定） |
+| 見るもの | 止める条件（既定） |
 |---|---|
 | duplicate | **1 件でも** |
 | complaint（苦情） | **1 件でも** |

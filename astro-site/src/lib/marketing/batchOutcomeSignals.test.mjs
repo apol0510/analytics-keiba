@@ -1,16 +1,16 @@
 /**
- * batchOutcomeSignals.test.mjs — 健全性の入力は「前バッチで**起きたこと**」だけ
+ * batchOutcomeSignals.test.mjs — 健全性の入力は「前バッチで**起きたイベント**」だけ
  *   node --test src/lib/marketing/batchOutcomeSignals.test.mjs
  *
- * 2026-08-17 に 2 度誤停止した:
- *   1 度目 … `byStopReason` の**累積**をそのまま苦情として渡した
- *            → コホートに元から居る停止リスト該当者 1 名で永久停止
- *   2 度目 … その**差分**を取った
- *            → 展開は 1 バッチ 500 名ずつ母集団が増えるので、
- *              以前から停止リストに載っていた人が母集団へ入るだけで差分が増える
+ * 入力ソースを 3 度間違えた記録:
+ *   1 度目 … `byStopReason`（いま候補を除外する理由 ＝ 現在状態）の**累積**を苦情として渡し、
+ *            コホートに元から居る停止リスト該当者 1 名で**永久停止**
+ *   2 度目 … その**差分**にしたが、展開は 1 バッチ 500 名ずつ母集団が増えるので、
+ *            以前から該当していた人が母集団へ入るだけで差分が増える
+ *   3 度目（未遂）… `EmailBlacklist` を数えようとした。あれは**アドレス 1 行の upsert 台帳**で、
+ *            既存行は `BounceCount+1` の PATCH・`AddedAt` 据え置き ＝ 1 イベント 1 行ではない
  *
- * 正しい source は `EmailBlacklist`（Event Webhook が書く唯一の経路）。
- * **イベントが起きたときにだけ行が増える**ので、母集団が増えても増えない。
+ * 正本は**配信イベント台帳**（Blob の NDJSON・1 行 1 イベント）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,17 +19,49 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  summarizeBlacklistWindow, captureOutcomeSnapshot, diffOutcomeSnapshot,
-  hasOutcomeBaseline, toStoredOutcome, blacklistWindowFormula, OUTCOME_FIELDS,
+  captureOutcomeSnapshot, diffOutcomeSnapshot, hasOutcomeBaseline, toStoredOutcome,
+  OUTCOME_FIELDS, WINDOW_FIELDS,
 } from './batchOutcomeSignals.js';
+import { summarizeEventWindow, classifyEvent, windowDates } from './batchEventWindow.js';
+import { readEventWindow } from './eventWindowReader.js';
 import { canStartNextBatch, BATCH_STOP } from './batchHealth.js';
-import { normalizeRolloutState, planRolloutTick, ROLLOUT_STAGE, ROLLOUT_BLOCK, jstDay } from './rolloutPlan.js';
+import { normalizeRolloutState, planRolloutTick, ROLLOUT_STAGE, ROLLOUT_BLOCK } from './rolloutPlan.js';
 
-const NOW = Date.UTC(2026, 7, 18, 1, 0, 0);
-const bl = (types) => types.map((t) => ({ fields: { BounceType: t } }));
+const CAMPAIGN = 'light-trial-to-premium-sequence';
+const BATCH_START = Date.UTC(2026, 7, 18, 10, 0, 0);
+const NOW = BATCH_START + 15 * 60_000;
 
-/** 健全性判定まで通す（しきい値は既存のまま） */
-function judge({ baseline, current, previousOutstanding = 0, suppressionReadable = true }) {
+let seq = 0;
+/** 台帳 1 行（NDJSON の 1 行に相当） */
+const ev = (over = {}) => {
+  seq += 1;
+  return {
+    eventKey: `k-${seq}`,
+    eventType: 'delivered',
+    eventAtMs: BATCH_START + 60_000,
+    campaignId: CAMPAIGN,
+    campaignVersion: 1,
+    deliveryKey: 'a'.repeat(64),
+    providerEventId: `p-${seq}`,
+    ...over,
+  };
+};
+
+const summarize = (records, over = {}) => summarizeEventWindow({
+  records, campaignId: CAMPAIGN, sinceMs: BATCH_START, ...over,
+});
+
+function judge({
+  events, sent = 500, failed = 0, duplicates = 0,
+  previousOutstanding = 0, suppressionReadable = true,
+}) {
+  const baseline = toStoredOutcome(captureOutcomeSnapshot({
+    jobsSent: 610, jobsFailed: 0, duplicates: 0,
+    events: { complaints: 0, unsubscribes: 0, bounces: 0 },
+  }), BATCH_START);
+  const current = captureOutcomeSnapshot({
+    jobsSent: 610 + sent, jobsFailed: failed, duplicates, events,
+  });
   const d = diffOutcomeSnapshot(baseline, current);
   return canStartNextBatch({
     sent: d.counts.sent, failed: d.counts.failed, duplicates: d.counts.duplicates,
@@ -39,122 +71,217 @@ function judge({ baseline, current, previousOutstanding = 0, suppressionReadable
   });
 }
 
-const snapshot = ({ sent, failed = 0, duplicates = 0, types }) => captureOutcomeSnapshot({
-  jobsSent: sent, jobsFailed: failed, duplicates, blacklist: summarizeBlacklistWindow(bl(types)),
+// ── 1 イベント = 1 件 ───────────────────────────────────────────
+
+test('【重要】同じ人の複数イベントを失わない（1 イベント 1 件）', () => {
+  const same = 'b'.repeat(64);
+  const s = summarize([
+    ev({ eventType: 'bounce', bounceClass: 'hard', deliveryKey: same }),
+    ev({ eventType: 'spamreport', deliveryKey: same }),
+    ev({ eventType: 'unsubscribe', deliveryKey: same }),
+  ]);
+  assert.equal(s.bounces, 1);
+  assert.equal(s.complaints, 1);
+  assert.equal(s.unsubscribes, 1);
+  assert.equal(s.counted, 3, '同一人の複数イベントを 1 件に潰している');
 });
 
-// ── 母集団が増えても増えない（今回の本題）──────────────────────────
-
-test('【重要】既に provider suppression 該当の人が母集団へ入っても complaint=0', () => {
-  // 前バッチ後: blacklist は「昨日の hard bounce 1 件」だけ
-  const before = snapshot({ sent: 610, types: ['hard'] });
-  // 次のバッチ前: 母集団が 500 名増え、その中に**以前から**停止リストに載っている人が 30 名居る。
-  //              しかし EmailBlacklist の行は増えない（新しいイベントが起きていない）
-  const after = snapshot({ sent: 1_110, types: ['hard'] });
-  const d = diffOutcomeSnapshot(before, after);
-  assert.equal(d.counts.complaints, 0, '母集団の増加を苦情として数えている');
-  assert.equal(d.counts.unsubscribes, 0, '母集団の増加を配信停止として数えている');
-  assert.equal(d.counts.bounces, 0);
-  assert.equal(d.counts.sent, 500, '前バッチの送信数が取れていない');
-  assert.equal(judge({ baseline: before, current: after }).ok, true);
+test('【重要】古い停止リスト登録者の**新しい**イベントも数える', () => {
+  // 台帳はアドレスの登録状態ではなくイベントを持つので、いつ登録された人でも新イベントは 1 行
+  const s = summarize([ev({ eventType: 'spamreport' })]);
+  assert.equal(s.complaints, 1, '古い登録者の新イベントを取り逃がしている');
 });
 
-test('【重要】not_sendable の人数は unsubscribe イベントとして数えない', () => {
-  // 健全性の入力に `due`（現在状態の集計）を使っていないこと（実装の配線を固定）
-  const src = readFileSyncRel('netlify/functions/cron-marketing-rollout.js');
-  const call = src.slice(src.indexOf('const health = canStartNextBatch({'), src.indexOf('if (!health.ok)'));
-  assert.ok(call.length > 0, '健全性判定の呼び出しが見つからない');
-  assert.equal(/byStopReason/.test(call), false, '現在状態の停止理由を健全性へ渡している');
-  // **件数**は 1 つも `due`（候補評価の集計）から取らない。
-  // （`suppressionReadable` だけは「集計を読めたか」の確認なので `due` を見てよい）
-  for (const field of ['sent', 'failed', 'duplicates', 'bounces', 'complaints', 'unsubscribes']) {
-    const line = call.split('\n').find((l) => l.trim().startsWith(`${field}:`)) || '';
-    assert.equal(/due\b/.test(line), false, `${field} を候補評価の集計から取っている: ${line.trim()}`);
-    assert.ok(/delta\.counts\./.test(line), `${field} が前バッチの増分になっていない: ${line.trim()}`);
-  }
-  assert.ok(src.includes('readBlacklistWindow'), '実イベント源を読んでいない');
-  const reader = readFileSyncRel('src/lib/marketing/blacklistWindowReader.js');
-  assert.ok(reader.includes('summarizeBlacklistWindow'), '分類していない');
-  assert.ok(reader.includes('EmailBlacklist'), '正本テーブルを読んでいない');
-  // 現在状態の停止理由を健全性の入力に変換していない（コメント以外での使用が無い）
-  const code = src.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
-  assert.equal(/byStopReason/.test(code), false, 'コード中で停止理由を参照している');
+test('【重要】provider の再送を二重に数えない（providerEventId で冪等）', () => {
+  const s = summarize([
+    ev({ eventType: 'spamreport', providerEventId: 'dup-1' }),
+    ev({ eventType: 'spamreport', providerEventId: 'dup-1' }),
+  ]);
+  assert.equal(s.complaints, 1, '同じイベントを 2 回数えている');
 });
 
-test('【重要】soft bounce 履歴を hard bounce として数えない', () => {
-  const s = summarizeBlacklistWindow(bl(['soft', 'soft', 'hard']));
-  assert.equal(s.bounces, 1, 'soft を hard として数えている');
+// ── scope ───────────────────────────────────────────────────────
+
+test('【重要】他 campaign のイベントを前バッチへ混ぜない', () => {
+  const s = summarize([
+    ev({ eventType: 'spamreport', campaignId: 'dormant-reactivation' }),
+    ev({ eventType: 'spamreport' }),
+  ]);
+  assert.equal(s.complaints, 1);
+  assert.equal(s.skipped.otherCampaign, 1);
+});
+
+test('【重要】バッチ開始より前のイベントを数えない', () => {
+  const s = summarize([
+    ev({ eventType: 'spamreport', eventAtMs: BATCH_START - 60_000 }),
+    ev({ eventType: 'spamreport' }),
+  ]);
+  assert.equal(s.complaints, 1);
+  assert.equal(s.skipped.beforeWindow, 1);
+});
+
+test('【重要】DeliveryKey を渡せば直前バッチの通だけへ厳密に scope する', () => {
+  const mine = 'c'.repeat(64);
+  const other = 'd'.repeat(64);
+  const s = summarize([
+    ev({ eventType: 'spamreport', deliveryKey: mine }),
+    ev({ eventType: 'spamreport', deliveryKey: other }),
+  ], { deliveryKeys: new Set([mine]) });
+  assert.equal(s.complaints, 1);
+  assert.equal(s.skipped.otherBatch, 1);
+});
+
+// ── 分類 ────────────────────────────────────────────────────────
+
+test('【重要】soft bounce を hard bounce として数えない', () => {
+  assert.equal(classifyEvent({ eventType: 'bounce', bounceClass: 'soft' }), 'softBounces');
+  assert.equal(classifyEvent({ eventType: 'bounce', bounceClass: 'hard' }), 'bounces');
+  assert.equal(classifyEvent({ eventType: 'dropped' }), 'bounces');
+  assert.equal(classifyEvent({ eventType: 'spamreport' }), 'complaints');
+  assert.equal(classifyEvent({ eventType: 'unsubscribe' }), 'unsubscribes');
+  assert.equal(classifyEvent({ eventType: 'group_unsubscribe' }), 'unsubscribes');
+  // 配信・開封は健全性に数えない
+  assert.equal(classifyEvent({ eventType: 'delivered' }), null);
+  assert.equal(classifyEvent({ eventType: 'open' }), null);
+  const s = summarize([
+    ev({ eventType: 'bounce', bounceClass: 'soft' }),
+    ev({ eventType: 'bounce', bounceClass: 'soft' }),
+    ev({ eventType: 'bounce', bounceClass: 'hard' }),
+  ]);
+  assert.equal(s.bounces, 1);
   assert.equal(s.softBounces, 2);
 });
 
-// ── 本当に起きたら止める（しきい値は既存のまま）────────────────────
+// ── しきい値（既存契約は変更しない）──────────────────────────────
 
-test('【重要】本当に spam complaint が 1 件起きたら止める', () => {
-  const before = snapshot({ sent: 610, types: [] });
-  const after = snapshot({ sent: 1_110, types: ['spam'] });
-  const d = diffOutcomeSnapshot(before, after);
-  assert.equal(d.counts.complaints, 1);
-  const h = judge({ baseline: before, current: after });
-  assert.equal(h.ok, false, '新しい苦情を見逃している');
+test('【重要】本当の spam complaint 1 件で停止', () => {
+  const h = judge({ events: summarize([ev({ eventType: 'spamreport' })]) });
+  assert.equal(h.ok, false);
   assert.equal(h.reason, BATCH_STOP.COMPLAINTS);
 });
 
-test('【重要】unsubscribe が増えたら率で判定（2% 超で停止）', () => {
-  const before = snapshot({ sent: 610, types: [] });
-  const ok = snapshot({ sent: 1_110, types: Array(9).fill('unsubscribe') });      // 9/500 = 1.8%
-  const ng = snapshot({ sent: 1_110, types: Array(11).fill('unsubscribe') });     // 11/500 = 2.2%
-  assert.equal(judge({ baseline: before, current: ok }).ok, true);
-  const h = judge({ baseline: before, current: ng });
+test('【重要】unsubscribe は前バッチ送信数を分母に率で判定（2%）', () => {
+  const under = summarize(Array.from({ length: 9 }, () => ev({ eventType: 'unsubscribe' })));
+  const over = summarize(Array.from({ length: 11 }, () => ev({ eventType: 'unsubscribe' })));
+  assert.equal(judge({ events: under, sent: 500 }).ok, true);      // 9/500 = 1.8%
+  const h = judge({ events: over, sent: 500 });                     // 11/500 = 2.2%
   assert.equal(h.ok, false);
   assert.equal(h.reason, BATCH_STOP.UNSUBSCRIBE_RATE);
 });
 
-test('【重要】hard bounce が増えたら率で判定（2% 超で停止）', () => {
-  const before = snapshot({ sent: 610, types: [] });
-  const ng = snapshot({ sent: 1_110, types: [...Array(8).fill('hard'), ...Array(4).fill('blocked')] });
-  const h = judge({ baseline: before, current: ng });   // 12/500 = 2.4%
+test('【重要】hard bounce も率で判定（soft は分子に入らない）', () => {
+  const mixed = summarize([
+    ...Array.from({ length: 11 }, () => ev({ eventType: 'bounce', bounceClass: 'hard' })),
+    ...Array.from({ length: 50 }, () => ev({ eventType: 'bounce', bounceClass: 'soft' })),
+  ]);
+  const h = judge({ events: mixed, sent: 500 });                    // hard 11/500 = 2.2%
   assert.equal(h.ok, false);
   assert.equal(h.reason, BATCH_STOP.BOUNCE_RATE);
+  const softOnly = summarize(Array.from({ length: 50 }, () => ev({ eventType: 'bounce', bounceClass: 'soft' })));
+  assert.equal(judge({ events: softOnly, sent: 500 }).ok, true, 'soft を hard として数えている');
 });
 
-test('【重要】送信失敗・二重送信の既存契約は維持', () => {
-  const before = snapshot({ sent: 610, failed: 0, duplicates: 0, types: [] });
-  const failed = snapshot({ sent: 1_110, failed: 30, duplicates: 0, types: [] });  // 30/500 = 6% > 5%
-  assert.equal(judge({ baseline: before, current: failed }).reason, BATCH_STOP.FAILED_RATE);
-  const dup = snapshot({ sent: 1_110, failed: 0, duplicates: 1, types: [] });
-  assert.equal(judge({ baseline: before, current: dup }).reason, BATCH_STOP.DUPLICATES);
+test('【重要】failed / duplicate / previousOutstanding / suppression の既存契約は維持', () => {
+  const none = summarize([]);
+  assert.equal(judge({ events: none, failed: 30 }).reason, BATCH_STOP.FAILED_RATE);
+  assert.equal(judge({ events: none, duplicates: 1 }).reason, BATCH_STOP.DUPLICATES);
+  assert.equal(judge({ events: none, previousOutstanding: 120 }).reason, BATCH_STOP.OUTSTANDING);
+  assert.equal(judge({ events: none, suppressionReadable: false }).reason, BATCH_STOP.SUPPRESSION_UNREADABLE);
+  assert.equal(judge({ events: none }).ok, true);
 });
 
 // ── 読めないときは 0 にしない ───────────────────────────────────
 
-test('【重要】EmailBlacklist を読めなければ fail closed（0 件にしない）', () => {
-  const unreadable = captureOutcomeSnapshot({
-    jobsSent: 1_110, jobsFailed: 0, duplicates: 0, blacklist: null,
-  });
-  assert.equal(unreadable.complaints, null, '読めないものを 0 と書いている');
-  assert.equal(summarizeBlacklistWindow(null), null);
-  const before = snapshot({ sent: 610, types: [] });
-  const h = judge({ baseline: before, current: unreadable });
+test('【重要】台帳を読めなければ fail closed（0 件にしない）', () => {
+  assert.equal(summarizeEventWindow({ records: null, campaignId: CAMPAIGN, sinceMs: BATCH_START }), null);
+  const snap = captureOutcomeSnapshot({ jobsSent: 1_110, jobsFailed: 0, duplicates: 0, events: null });
+  assert.equal(snap.complaints, null, '読めないものを 0 と書いている');
+  const h = judge({ events: null });
   assert.equal(h.ok, false);
   assert.equal(h.reason, BATCH_STOP.UNREADABLE);
 });
 
-test('【重要】provider suppression が読めないときの fail closed は維持', () => {
-  const before = snapshot({ sent: 610, types: [] });
-  const after = snapshot({ sent: 1_110, types: [] });
-  const h = judge({ baseline: before, current: after, suppressionReadable: false });
-  assert.equal(h.ok, false);
-  assert.equal(h.reason, BATCH_STOP.SUPPRESSION_UNREADABLE);
+test('窓が長すぎる / 逆転しているときは数え切れないとする', () => {
+  assert.equal(windowDates(BATCH_START, BATCH_START - 1), null, '逆転した窓を通している');
+  assert.equal(windowDates(BATCH_START, BATCH_START + 10 * 86400_000), null, '長すぎる窓を通している');
+  assert.deepEqual(windowDates(BATCH_START, NOW), ['2026-08-18']);
 });
 
-test('【重要】前バッチが片付いていなければ次バッチ 0（関所は維持）', () => {
-  const before = snapshot({ sent: 610, types: [] });
-  const after = snapshot({ sent: 1_110, types: [] });
-  const h = judge({ baseline: before, current: after, previousOutstanding: 120 });
-  assert.equal(h.ok, false);
-  assert.equal(h.reason, BATCH_STOP.OUTSTANDING);
+test('【重要】窓の件数は差分を取らない（同一人の複数イベントを落とさない）', () => {
+  const baseline = toStoredOutcome(captureOutcomeSnapshot({
+    jobsSent: 610, jobsFailed: 0, duplicates: 0,
+    events: { complaints: 3, unsubscribes: 0, bounces: 0 },
+  }), BATCH_START);
+  const current = captureOutcomeSnapshot({
+    jobsSent: 1_110, jobsFailed: 0, duplicates: 0,
+    events: { complaints: 1, unsubscribes: 0, bounces: 0 },
+  });
+  const d = diffOutcomeSnapshot(baseline, current);
+  assert.equal(d.counts.complaints, 1, '窓の件数を差分にして苦情を消している');
+  assert.equal(d.counts.sent, 500, '累計項目が差分になっていない');
+  assert.deepEqual([...WINDOW_FIELDS], ['complaints', 'unsubscribes', 'bounces']);
+});
 
-  // 計画側の関所も（新しいバッチは未処理 0 を要求する）
+// ── 実装の配線（回帰を止める）──────────────────────────────────
+
+test('【重要】運転手は現在状態（byStopReason / EmailBlacklist）を健全性へ渡さない', () => {
+  const src = readRel('netlify/functions/cron-marketing-rollout.js');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
+  assert.equal(/byStopReason/.test(code), false, '現在状態の停止理由を参照している');
+  assert.equal(/EmailBlacklist/.test(code), false, 'upsert 台帳をイベント数に使っている');
+  assert.ok(src.includes('readEventWindow'), 'イベント台帳を読んでいない');
+  const call = src.slice(src.indexOf('const health = canStartNextBatch({'), src.indexOf('if (!health.ok)'));
+  for (const f of ['sent', 'failed', 'duplicates', 'bounces', 'complaints', 'unsubscribes']) {
+    const line = call.split('\n').find((l) => l.trim().startsWith(`${f}:`)) || '';
+    assert.ok(/delta\.counts\./.test(line), `${f} が前バッチの実績になっていない: ${line.trim()}`);
+  }
+});
+
+test('【重要】イベント台帳は読むだけ・全件走査しない（新しい経路を作らない）', () => {
+  const reader = readRel('src/lib/marketing/eventWindowReader.js');
+  assert.equal(/method:\s*'(POST|PATCH|PUT|DELETE)'/.test(reader), false, '書き込みをしている');
+  assert.ok(reader.includes('MAX_EVENT_BLOBS'), '走査上限が無い');
+  assert.ok(reader.includes('parseNdjson') && reader.includes('blobDatePrefix'), '既存の読み方を使っていない');
+  assert.equal(typeof readEventWindow, 'function');
+});
+
+test('走査上限を超えたら数え切れないとして null', async () => {
+  const many = Array.from({ length: 300 }, (_, i) => ({ key: `k${i}` }));
+  const store = { list: async () => ({ blobs: many }), get: async () => '' };
+  const r = await readEventWindow({
+    sinceMs: BATCH_START, untilMs: NOW, campaignId: CAMPAIGN, getStoreImpl: () => store,
+  });
+  assert.equal(r, null, '数え切れていないのに数を返している');
+});
+
+test('台帳を読んで窓の件数を返す（NDJSON 経路の通し確認）', async () => {
+  const line = JSON.stringify(ev({ eventType: 'spamreport' }));
+  const store = {
+    list: async () => ({ blobs: [{ key: 'ak/email-events/2026/08/18/100000-abc.ndjson' }] }),
+    get: async () => line,
+  };
+  const r = await readEventWindow({
+    sinceMs: BATCH_START, untilMs: NOW, campaignId: CAMPAIGN, getStoreImpl: () => store,
+  });
+  assert.equal(r.complaints, 1);
+  assert.equal(r.blobsScanned, 1);
+});
+
+test('保存形に PII も secret も入らない', () => {
+  const stored = toStoredOutcome(captureOutcomeSnapshot({
+    jobsSent: 610, jobsFailed: 0, duplicates: 0,
+    events: summarize([ev({ eventType: 'spamreport' })]),
+  }), NOW);
+  const dump = JSON.stringify(stored);
+  assert.equal(/@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(dump), false);
+  assert.equal(/rec[A-Za-z0-9]{14}/.test(dump), false);
+  assert.deepEqual(Object.keys(stored).sort(), [...OUTCOME_FIELDS, 'atMs'].sort());
+  assert.equal(hasOutcomeBaseline(stored), true);
+  assert.equal(hasOutcomeBaseline(null), false);
+  assert.equal(normalizeRolloutState({ healthBaseline: stored }).healthBaseline.complaints, 1);
+});
+
+test('関所（前バッチ未処理）は計画側でも維持', () => {
   const plan = planRolloutTick({
     state: {
       ...normalizeRolloutState({}), stage: ROLLOUT_STAGE.SCALE,
@@ -166,48 +293,7 @@ test('【重要】前バッチが片付いていなければ次バッチ 0（関
   assert.equal(plan.reason, ROLLOUT_BLOCK.WAITING_PREVIOUS);
 });
 
-// ── 窓と保存形 ──────────────────────────────────────────────────
-
-test('日付をまたいでも直前バッチのイベントが窓から外れない（当日 + 前日）', () => {
-  const f = blacklistWindowFormula(NOW);
-  assert.ok(f.includes("DATEADD(TODAY(), -2, 'days')"), `窓が狭すぎる: ${f}`);
-  assert.ok(f.includes('{AddedAt}'));
-});
-
-test('累計が減っても差分はマイナスにしない（窓から古い行が外れる）', () => {
-  const before = snapshot({ sent: 610, types: ['hard', 'hard', 'spam'] });
-  const after = snapshot({ sent: 1_110, types: [] });   // 窓から外れて 0 件になった
-  const d = diffOutcomeSnapshot(before, after);
-  for (const f of OUTCOME_FIELDS) assert.ok(d.counts[f] >= 0, `${f} がマイナス`);
-  assert.equal(d.counts.complaints, 0);
-});
-
-test('最初のバッチは比較相手が無いので判定しない', () => {
-  assert.equal(hasOutcomeBaseline(null), false);
-  assert.equal(hasOutcomeBaseline({}), false);
-  assert.equal(hasOutcomeBaseline(toStoredOutcome(snapshot({ sent: 1, types: [] }), NOW)), true);
-});
-
-test('状態へ保存する形に PII も secret も入らない', () => {
-  const stored = toStoredOutcome(snapshot({ sent: 610, types: ['spam'] }), NOW);
-  const dump = JSON.stringify(stored);
-  assert.equal(/@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(dump), false);
-  assert.equal(/rec[A-Za-z0-9]{14}/.test(dump), false);
-  assert.deepEqual(Object.keys(stored).sort(), [...OUTCOME_FIELDS, 'atMs'].sort());
-  assert.equal(normalizeRolloutState({ healthBaseline: stored }).healthBaseline.complaints, 1);
-});
-
-test('【重要】EmailBlacklist からアドレスを取っていない（読む列は種別だけ）', () => {
-  const reader = readFileSyncRel('src/lib/marketing/blacklistWindowReader.js');
-  assert.ok(reader.includes("'BounceType'"), '種別を取っていない');
-  assert.equal(/fields\[\]',\s*'Email'/.test(reader), false, 'アドレスを取得している');
-  // 読むだけ（書き込み経路を増やさない）
-  assert.equal(/method:\s*'(POST|PATCH|PUT|DELETE)'/.test(reader), false, '書き込みをしている');
-  // 全件走査しない
-  assert.ok(reader.includes('BLACKLIST_WINDOW_MAX_PAGES'), 'ページ上限が無い');
-});
-
-function readFileSyncRel(rel) {
+function readRel(rel) {
   const here = dirname(fileURLToPath(import.meta.url));
   return readFileSync(join(here, '..', '..', '..', rel), 'utf8');
 }

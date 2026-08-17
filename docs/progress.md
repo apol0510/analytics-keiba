@@ -33,19 +33,23 @@
 - `byStopReason.provider_suppressed` … **候補を除外した理由**（静的・累積）
 - 苦情・バウンス・配信停止 … **前のバッチで起きた出来事**（増分）
 
-**入力ソースそのものを差し替えた**（`batchOutcomeSignals.js` + `blacklistWindowReader.js`）。
+**入力ソースそのものを差し替えた**（`batchEventWindow.js` + `eventWindowReader.js`）。
 
 | 指標 | 正本 |
 |---|---|
-| sent / failed | ジョブ台帳（`ScheduledEmails`） |
+| sent / failed | ジョブ台帳（`ScheduledEmails`）の累計差分 |
 | duplicate | 送信経路が `already_delivered` で弾いた数 |
-| spam complaint / unsubscribe / hard bounce | **`EmailBlacklist` の直近 2 日窓**を `BounceType` で分類 |
+| spam complaint / unsubscribe / hard bounce | **配信イベント台帳**（Blob の NDJSON・**1 行 1 イベント**）を `campaignId` と「バッチ開始 → いま」の窓で数える |
 
-`byStopReason`（現在状態）は**一切使わない**。展開は 1 バッチ 500 名ずつ母集団が増えるので、
-以前から停止リストに載っていた人が入るだけで差分が増え、**同じ誤停止を繰り返す**ため。
-`EmailBlacklist` は**イベントが起きたときだけ行が増える**ので母集団の増加では動かない。
-バッチ開始時にスナップショットを控えて差分で判定し、最初のバッチは判定しない。
-読めなければ 0 と書かず fail closed。**しきい値は据え置き**。
+使ってはいけない入力を 3 つ潰した:
+① `byStopReason` の累積（現在状態・元から居る 1 名で永久停止）
+② その差分（母集団が 500 名増えるだけで増える）
+③ `EmailBlacklist` の行数（**アドレス 1 行の upsert 台帳**で 1 イベント 1 行ではない。
+   既存行は `BounceCount+1` の PATCH・`AddedAt` 据え置きなので古い登録者の新イベントを落とす）
+
+`providerEventId` で再送を除き、`campaignId` で他 campaign を除き、`deliveryKey` を渡せば
+直前バッチへ厳密に scope できる。走査上限を超えたら `null` → fail closed。
+**しきい値は据え置き**（苦情 0 件 / failed 5% / bounce・unsubscribe 2% / duplicate 0）。
 
 影響: 付与 0 / 送信 0（止まっただけ）。しきい値そのものは据え置き。
 
