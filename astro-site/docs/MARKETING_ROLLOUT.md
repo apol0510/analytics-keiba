@@ -764,8 +764,12 @@ cron は **5 分間隔**（毎時 1 回だと 90 時間かかり「1 日で配�
 **`dailyLimit=15000 / batchSize=500` で、約 15,000 名を同じ日に配り切る。**
 一度開始したら、運用者は**毎日 arm もresume もしない**。異常のときだけ人が出る。
 
+**数値の正本は `src/lib/marketing/rolloutTarget.js`（`ROLLOUT_TARGET`）**。
+docs とコードは `rolloutTargetContract.test.mjs` が突き合わせるので、**片方だけ変えると CI が落ちる**。
+
 | | 値 |
 |---|---|
+| 対象 | 取り込みコホート 約 15,000 名 |
 | 1 日に配れる合計 | `dailyLimit = 15000` |
 | 論理バッチ | `batchSize = 500` |
 | 付与 1 回 | **200**（`GRANT_OPERATION_MAX`。500 は **200 + 200 + 100**） |

@@ -1231,6 +1231,32 @@ DeliveryKey = `campaignId × version × step × 受信者`。version を上げ�
 
 送信済み: `light-trial-to-premium-sequence` の **Step1**（2026-08-15 / 10 名）。
 
+### 展開の完成条件（**正本: `astro-site/src/lib/marketing/rolloutTarget.js`**）
+
+| 項目 | 値 |
+|---|---|
+| 対象 | 取り込みコホート **約 15,000 名** |
+| 目標 | 正常時は**同日中に自動で配り切る**（`sameDay: true`） |
+| 1 日上限 | **dailyLimit=15000** |
+| 論理バッチ | **batchSize=500** |
+| 付与 1 回 | **200**（`GRANT_OPERATION_MAX`）。500 名は **200 + 200 + 100** に分割 |
+| 1 バッチ | 付与 3 + queue 1 + 送信起動 1 = **5 tick**（cron 2 分 → 30 バッチで約 5 時間） |
+
+- 各論理 500 名は **付与 → Step1 queue → dispatch → `PENDING=0` / `outstandingStep1=0` 確認**
+  を経てから次のバッチへ進む
+- **人間は 500 名ごと・日ごとの再開操作をしない**（開始は `alwaysArmed: true` の 1 回だけ）
+- 正常なら候補 0 まで自動継続し **`completed`** へ入る。
+  `completed` 後は cron が動いても**新規付与 0**（既に配った人の Step2〜24 は続く）
+- **異常時だけ auto-stop** し、人が原因を解消して開始し直すまで再開しない
+- 二重付与・二重 queue・二重送信は既存の **`operationId` / `DeliveryKey` / 関所 / CAS** で防ぐ
+- 大規模の touch 集計は **paged scan**（`action=touchMeasurementPage` /
+  `npm run scan:touch-measurement`）が正規経路。**単一 Function の全件走査へ戻さない**
+
+⚠️ **「500 名/日」は仕様ではない。** 2026-08-17 に 500 名で止めたのはカナリアと障害修正のため。
+   運用を一時的に絞るときは `rolloutStart` の引数（state）で絞る。**目標そのものは下げない。**
+   目標値を変えるには `rolloutTarget.js` と本節を**同時に**直す必要がある
+   （`rolloutTargetContract.test.mjs` が突き合わせているので、片方だけでは CI が落ちる）。
+
 ### 管理画面（`action=rollout`）
 
 体験中 / 体験終了・フォロー中 / 購入 / 停止 / 24 通完了 / 現在の通し番号 / 次回予定 /

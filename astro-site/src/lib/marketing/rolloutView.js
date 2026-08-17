@@ -13,6 +13,7 @@
 
 import { normalizeRolloutState, resolveDailyLimit, estimateRemainingDays, ROLLOUT_BLOCK_LABEL } from './rolloutPlan.js';
 import { resolveOperationalState } from './rolloutOperationalState.js';
+import { describeTargetGap } from './rolloutTarget.js';
 import { STOP_REASON_LABEL } from './sequencePolicy.js';
 
 /** 1 人の進行状態（画面の 5 分類） */
@@ -156,6 +157,12 @@ export function buildRolloutView({
       operational: resolveOperationalState({ state: s, plan }),
       autoStopped: s.autoStopped === true,
       stopReason: s.stopReason || null,
+      /**
+       * **完成条件（正本 `rolloutTarget.js`）との差**。
+       * 目標より小さい設定で走っていること自体は異常ではないが、
+       * 「絞ったまま気づかず放置」を防ぐため必ず画面へ出す。
+       */
+      target: describeTargetGap(s),
       batchGrantedCount: s.batchGrantedCount,
       note: s.note || null,
     },

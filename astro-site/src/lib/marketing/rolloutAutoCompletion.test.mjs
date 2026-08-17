@@ -21,13 +21,14 @@ import {
 import { tickRollout, settleTick, isRolloutComplete, TICK_ACTION } from './rolloutOrchestrator.js';
 import { resolveOperationalState, OPERATIONAL_STATE } from './rolloutOperationalState.js';
 import { GRANT_OPERATION_MAX, buildTrialOperationId } from '../comeback/lightTrialAutoGrant.js';
+import { ROLLOUT_TARGET, describeTargetPlan } from './rolloutTarget.js';
 
 const DAY_MS = 86400_000;
 const NOW = Date.UTC(2026, 7, 18, 1, 0, 0);   // JST 2026-08-18 10:00
 const DAY = jstDay(NOW);
 
-/** 本番の想定設定（**これが完成形**） */
-const PROD = { dailyLimit: 15_000, batchSize: 500 };
+/** 本番の想定設定（**正本は `rolloutTarget.js`**。ここで数値を書かない） */
+const PROD = { dailyLimit: ROLLOUT_TARGET.dailyLimit, batchSize: ROLLOUT_TARGET.batchSize };
 
 const running = (over = {}) => ({
   ...defaultRolloutState(),
@@ -131,9 +132,9 @@ function makeWorld({ cohort, state, nowMs = NOW }) {
 // ── 同日完走（これが完成条件）──────────────────────────────────
 
 test('【重要】dailyLimit=15000 / batchSize=500 で 15,000 名を同じ日に配り切る', () => {
-  const w = makeWorld({ cohort: 15_000, state: running() });
+  const w = makeWorld({ cohort: ROLLOUT_TARGET.cohortApprox, state: running() });
   const seq = w.run();
-  assert.equal(w.granted, 15_000, `${w.granted} 名しか配れていない`);
+  assert.equal(w.granted, ROLLOUT_TARGET.cohortApprox, `${w.granted} 名しか配れていない`);
   assert.equal(w.sent, 15_000, 'Step1 が全員に届いていない');
   assert.equal(w.cohort, 0);
   assert.equal(seq[seq.length - 1], 'completed', `終端に入っていない: ${seq[seq.length - 1]}`);
@@ -145,9 +146,11 @@ test('【重要】dailyLimit=15000 / batchSize=500 で 15,000 名を同じ日に
 test('【重要】1 論理バッチ 500 名は 200 + 200 + 100 の付与に分かれる', () => {
   const w = makeWorld({ cohort: 15_000, state: running() });
   w.run();
-  assert.deepEqual(w.grants.slice(0, 3), [200, 200, 100], `最初のバッチが ${w.grants.slice(0, 3)}`);
-  assert.deepEqual(w.grants.slice(3, 6), [200, 200, 100], '2 バッチ目が同じ形でない');
-  assert.equal(w.grants.length, 90, `付与回数 ${w.grants.length}（30 バッチ × 3 回のはず）`);
+  assert.deepEqual(w.grants.slice(0, 3), [...ROLLOUT_TARGET.grantSplit], `最初のバッチが ${w.grants.slice(0, 3)}`);
+  assert.deepEqual(w.grants.slice(3, 6), [...ROLLOUT_TARGET.grantSplit], '2 バッチ目が同じ形でない');
+  const plan = describeTargetPlan();
+  assert.equal(w.grants.length, plan.batches * plan.grantsPerBatch,
+    `付与回数 ${w.grants.length}（${plan.batches} バッチ × ${plan.grantsPerBatch} 回のはず）`);
   assert.ok(w.grants.every((n) => n <= GRANT_OPERATION_MAX), '付与 1 回が上限を超えている');
   assert.equal(new Set(w.ops).size, w.ops.length, 'operationId が重複している');
 });
@@ -157,8 +160,9 @@ test('【重要】1 バッチあたり 5 tick で進む（付与 3 + queue 1 + �
   const seq = w.run();
   const first5 = seq.slice(0, 5);
   assert.deepEqual(first5, ['grant', 'grant', 'grant', 'queue', 'dispatch'], `順序が違う: ${first5}`);
-  // 30 バッチ × 5 tick + 終端 1
-  assert.ok(seq.length <= 30 * 5 + 2, `${seq.length} tick かかっている（遅すぎる）`);
+  // 30 バッチ × 5 tick + 終端 1（数は正本 `rolloutTarget.js` から）
+  const plan = describeTargetPlan();
+  assert.ok(seq.length <= plan.ticks + 2, `${seq.length} tick かかっている（目安 ${plan.ticks}）`);
 });
 
 test('1000 名バッチでも配り切る（200 × 5 + queue + 送信）', () => {

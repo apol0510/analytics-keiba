@@ -1,3 +1,29 @@
+# 進捗（新しい順）
+
+## 🎯 任務の完了条件（Light 無料体験 展開）— **ここが未達なら任務は完了ではない**
+
+| # | 条件 | 状態の見方 |
+|---|---|---|
+| 1 | 取り込みコホート **約 15,000 名**へ Light 無料体験を配り切る | `action=rollout` の `funnel` / 関所 `granted` |
+| 2 | `dailyLimit=15000` / `batchSize=500` で **正常時は同日完走** | `control.target.onTarget === true` |
+| 3 | **人が日ごと・バッチごとに操作しない**（開始は `alwaysArmed` の 1 回だけ） | `control.operational` が `daily_limit_reached` でも人の操作を要求しない |
+| 4 | 候補 0 まで自動継続し **`completed`** に入る | `control.operational === 'completed'` |
+| 5 | `completed` 後は cron が動いても **新規付与 0**（Step2〜24 は継続） | `batch.totalGranted` が増えない |
+| 6 | 異常時だけ **auto-stop**（人が直すまで再開しない） | `control.operational === 'auto_stopped'` + `stopReason` |
+| 7 | 二重付与・二重 queue・二重送信が **0** | `operationId` / `DeliveryKey` / 関所 / CAS |
+
+⚠️ **次のどれも「任務完了」ではない**（部分的な成果であって、完了条件 1〜7 を満たさない）:
+
+- 500 名（や 100 名）へ配れた ＝ **カナリアが成功しただけ**
+- Draft PR ができた / CI が green ＝ **コードが用意できただけ**
+- merge / production deploy した ＝ **配れる状態になっただけ**
+- 1 日ぶん進んだ ＝ **その日のぶんが進んだだけ**
+
+完了条件・数値の正本は **`astro-site/src/lib/marketing/rolloutTarget.js`**（`docs/spec.md` と対応）。
+**「500 名/日」は仕様ではない**（2026-08-17 のカナリア実績を仕様と読み替えない）。
+
+---
+
 ## 2026-08-18 — 【変更】残りコホートを人手なしで配り切る（同日完走・終端・fail closed）
 
 「本日 500 名を送れた」ではなく、**残り約 13,900 名を人が毎日操作せずに最後まで配り切る**
