@@ -216,14 +216,11 @@ test('【重要】15,000 件を 500 名 × 30 バッチで同じ日に配り切�
   assert.equal(new Set(r.ops).size, 30, 'operationId が重複している');
 });
 
-test('【重要】15,000 件を 250 名 × 60 バッチでも配り切れる（刻みを変えられる）', () => {
-  // ⚠️ 1 バッチの上限は付与側の `HARD_MAX_BATCH_SIZE`（500）。
-  //    それを超える刻み（旧テストの 1000）は `rolloutControl` が保存を断るので、
-  //    到達できない設定をテストで固定しない。
-  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 250 }), { cohort: 15000 });
+test('【重要】15,000 件を 1000 名 × 15 バッチでも配り切れる', () => {
+  const r = runAllBatches(scale({ dailyLimit: 15000, batchSize: 1000 }), { cohort: 15000 });
   assert.equal(r.remaining, 0);
-  assert.equal(r.batches, 60);
-  assert.equal(new Set(r.ops).size, 60);
+  assert.equal(r.batches, 15);
+  assert.equal(new Set(r.ops).size, 15);
 });
 
 test('【重要】1 リクエストで全員へ投げる形にはしない（必ずグループに割る）', () => {
@@ -283,7 +280,7 @@ test('【重要】前バッチの結果が読めなければ、そこで止ま�
 });
 
 test('【重要】1 日上限は絶対上限（20,000）で頭打ち', () => {
-  const r = runAllBatches(scale({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 500 }), { cohort: 30000 });
+  const r = runAllBatches(scale({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 1000 }), { cohort: 30000 });
   assert.equal(r.stoppedBy, ROLLOUT_BLOCK.DAILY_LIMIT_REACHED);
   assert.equal(r.s.dayGrantedCount, ABSOLUTE_MAX_PER_DAY);
 });

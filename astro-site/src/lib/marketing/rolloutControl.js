@@ -26,11 +26,6 @@
  */
 
 import { ROLLOUT_STAGE, ABSOLUTE_MAX_PER_DAY, jstDay, normalizeRolloutState } from './rolloutPlan.js';
-/**
- * 付与側の 1 回あたり絶対上限。**ここで同じ値を再定義しない**（ズレると
- * 「設定はできるが毎 tick 付与側が fail closed で止まる」状態を作れてしまう）。
- */
-import { HARD_MAX_BATCH_SIZE } from '../comeback/lightTrialAutoGrant.js';
 
 /** 受け付ける操作 */
 export const ROLLOUT_OP = Object.freeze({
@@ -59,7 +54,7 @@ export const CONTROL_REJECT_LABEL = Object.freeze({
   unknown_op: '知らない操作です',
   bad_stage: '段階の値が不正です（paused / canary / steady / scale / completed のみ）',
   bad_daily_limit: `1 日あたりの上限が不正です（0〜${ABSOLUTE_MAX_PER_DAY} の整数）`,
-  bad_batch_size: `1 バッチの人数（batchSize）を 1〜1 日上限かつ ${HARD_MAX_BATCH_SIZE} 以下の整数で指定してください`,
+  bad_batch_size: '1 バッチの人数（batchSize）を 1〜1 日上限の整数で指定してください',
   bad_always_armed: 'alwaysArmed は true / false のみです',
   bad_armed_for: '武装日は YYYY-MM-DD（JST）で指定してください',
   armed_for_past: '武装日が過去です（その日は来ないので何も起きません）',
@@ -105,12 +100,8 @@ export function planRolloutStart({ current, exists, req, nowMs }) {
   // ── 1 バッチの人数（**1 日上限とは完全に別物・必ず明示させる**）──────
   //    「1 回に何人へ配るか」と「1 日に何人まで配るか」は別の判断。
   //    未指定を 1 日上限で代用すると、15,000 名を 1 バッチで投げる事故になる。
-  //    ⚠️ 付与側の絶対上限（`HARD_MAX_BATCH_SIZE`）も超えさせない。
-  //       超えた値を保存できてしまうと、毎 tick 付与側が `batch_size_rejected` で
-  //       fail closed になり、**設定はできるのに 1 人も進まない**状態になる。
   const batchSize = r.batchSize;
-  if (!Number.isInteger(batchSize) || batchSize <= 0 || batchSize > dailyLimit
-    || batchSize > HARD_MAX_BATCH_SIZE) {
+  if (!Number.isInteger(batchSize) || batchSize <= 0 || batchSize > dailyLimit) {
     return reject(CONTROL_REJECT.BAD_BATCH_SIZE);
   }
 

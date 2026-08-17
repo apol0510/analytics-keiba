@@ -47,7 +47,7 @@ import {
 import { createRolloutMetrics } from '../../src/lib/marketing/rolloutMetrics.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
-import { readAutoGrantGates } from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { readAutoGrantGates, HARD_MAX_BATCH_SIZE } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
@@ -474,8 +474,17 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
    *    **エラーを出さずに** allowance が 100 へ縮む（2026-08-17 の事故）。
    *    窓が 0（今日の残り枠なし・停止中など）のときは既定のまま読むだけ
    *    （どのみち `planRolloutTick` が配らせない）。
+   *
+   * ⚠️ `perCallMax` は**付与 1 回の上限**（`HARD_MAX_BATCH_SIZE` = 500。#319 以来の既存仕様で、
+   *    1 回の事故の範囲を狭く保つための歯止め）。`batchSize` にこれを超える値
+   *    （送信側で許されている 1,000 など）を設定しても**断らない**。1 回あたりを
+   *    500 で刻み、残りは次の tick が続きを拾う（`dayGrantedCount` が積み上がるので
+   *    `dailyLimit` の意味は変わらない）。
+   *    ⚠️ **既定値 100 へ落とすことはしない**（それが 2026-08-17 の事故）。
    */
-  const observationWindow = resolveObservationWindow(state, now);
+  const observationWindow = resolveObservationWindow(state, now, {
+    perCallMax: HARD_MAX_BATCH_SIZE,
+  });
   const planLoad = await loadAndPlanLightTrial({
     env,
     nowMs: now,

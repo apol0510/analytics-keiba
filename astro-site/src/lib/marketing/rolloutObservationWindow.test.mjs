@@ -21,7 +21,9 @@ import {
 } from './rolloutPlan.js';
 import { deriveFacts } from '../../../netlify/functions/cron-marketing-rollout.js';
 import { planRolloutStart } from './rolloutControl.js';
-import { buildTrialOperationId, HARD_MAX_BATCH_SIZE } from '../comeback/lightTrialAutoGrant.js';
+import {
+  buildTrialOperationId, HARD_MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE, resolveBatchSize as resolveGrantBatchSize,
+} from '../comeback/lightTrialAutoGrant.js';
 import { candidateFormulaAccepts } from '../comeback/lightTrialSelection.js';
 
 /** 2026-08-17 10:00 JST */
@@ -46,7 +48,8 @@ function state(over = {}) {
  * `cohortSize` は**まだ配っていない候補の総数**（テスト内の真の値）。
  */
 function tickThrough({ s, cohortSize, previousOutstanding = 0, nowMs = NOW }) {
-  const window = resolveObservationWindow(s, nowMs);
+  // 本番の tick と同じ引数（付与 1 回の上限を渡す）
+  const window = resolveObservationWindow(s, nowMs, { perCallMax: HARD_MAX_BATCH_SIZE });
   // bounded 取得の再現: 窓のぶんだけ取れる。取り切れなければ「まだ居る」
   const observed = Math.min(window, cohortSize);
   const moreAvailable = cohortSize > observed;
@@ -199,23 +202,63 @@ test('付与済みの人は候補に戻らない（既存 100 名の再付与 0�
   assert.equal(candidateFormulaAccepts({ ...base, PremiumGrantedAt: '2026-08-01' }), false);
 });
 
-test('batchSize は付与側の絶対上限を超えて保存できない', () => {
+// ── 500 / 1000 いずれの刻みも使える（新たに狭めない）──────────────────
+
+test('【重要】batchSize=1000 も従来どおり保存できる（今回の修正で禁止しない）', () => {
   const req = {
     stage: ROLLOUT_STAGE.SCALE, dailyLimit: 15_000,
     alwaysArmed: false, armedFor: DAY, expectedVersion: 1,
   };
-  const over = planRolloutStart({
-    current: state(), exists: true, nowMs: NOW,
-    req: { ...req, batchSize: HARD_MAX_BATCH_SIZE + 1 },
-  });
-  assert.equal(over.ok, false, '付与側が必ず fail closed する値を保存できてしまう');
-  assert.equal(over.reason, 'bad_batch_size');
+  for (const size of [100, 500, 1000]) {
+    const r = planRolloutStart({
+      current: state(), exists: true, nowMs: NOW, req: { ...req, batchSize: size },
+    });
+    assert.equal(r.ok, true, `batchSize=${size} を断っている: ${r.reason}`);
+    assert.equal(r.state.batchSize, size);
+    assert.equal(r.expectedVersion, 1, 'CAS の前提値が落ちている');
+  }
+});
 
-  const okStart = planRolloutStart({
-    current: state(), exists: true, nowMs: NOW,
-    req: { ...req, batchSize: HARD_MAX_BATCH_SIZE },
-  });
-  assert.equal(okStart.ok, true, `上限ちょうどが通らない: ${okStart.reason}`);
-  assert.equal(okStart.state.batchSize, HARD_MAX_BATCH_SIZE);
-  assert.equal(okStart.expectedVersion, 1, 'CAS の前提値が落ちている');
+test('【重要】batchSize=1000 でも付与側の既定 100 へ落ちない（silent cap の再発防止）', () => {
+  const s = state({ dailyLimit: 15_000, batchSize: 1000 });
+  const r = tickThrough({ s, cohortSize: 14_000 });
+  assert.notEqual(r.plan.allowance, DEFAULT_BATCH_SIZE, '既定 100 へ縮んでいる（事故の再発）');
+  assert.ok(r.plan.allowance >= HARD_MAX_BATCH_SIZE, `${r.plan.allowance} 名しか配ろうとしていない`);
+  assert.equal(r.plan.ok, true, `止まった: ${r.plan.reason}`);
+});
+
+test('【重要】1 回の付与呼び出しは付与側の上限（500）を超えない＝ fail closed させない', () => {
+  // 付与側は 500 超の指定を**実行しない**（#319 以来の既存仕様）。
+  // だから観測窓＝1 回の依頼人数は 500 で刻む（断るのではなく分ける）。
+  assert.equal(resolveGrantBatchSize({ LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE: '1000' }).ok, false);
+  assert.equal(resolveGrantBatchSize({ LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE: '500' }).ok, true);
+
+  const s = state({ dailyLimit: 15_000, batchSize: 1000 });
+  const window = resolveObservationWindow(s, NOW, { perCallMax: HARD_MAX_BATCH_SIZE });
+  assert.equal(window, HARD_MAX_BATCH_SIZE, '付与側が断る人数を 1 回で依頼しようとしている');
+  // 上限を渡さなければ設定どおり（純粋な計画としては 1000）
+  assert.equal(resolveObservationWindow(s, NOW), 1000);
+});
+
+test('【重要】batchSize=1000 は同じ日に 500 + 500 で進む（設定を拒否せず配り切る）', () => {
+  let s = state({ dailyLimit: 15_000, batchSize: 1000 });
+  const granted = [];
+  const ops = [];
+  for (let i = 0; i < 2; i += 1) {
+    const r = tickThrough({ s, cohortSize: 14_000 });
+    assert.equal(r.plan.ok, true, `${i + 1} 回目で止まった: ${r.plan.reason}`);
+    granted.push(r.plan.allowance);
+    ops.push(buildTrialOperationId(NOW, r.plan.batchSeq));
+    s = applyRolloutRun({ state: s, nowMs: NOW, granted: r.plan.allowance, batchSeq: r.plan.batchSeq });
+  }
+  assert.deepEqual(granted, [500, 500]);
+  assert.equal(s.dayGrantedCount, 1000, '1000 名ぶん進んでいない');
+  assert.equal(new Set(ops).size, 2, 'operationId が重複している（再付与になる）');
+});
+
+test('batchSize=1000 でも今日の残り枠を超えない（100 付与済みなら 400）', () => {
+  const s = state({ dailyLimit: 500, batchSize: 1000, lastRunDay: DAY, dayGrantedCount: 100, batchSeq: 1 });
+  const r = tickThrough({ s, cohortSize: 14_000 });
+  assert.equal(r.window, 400);
+  assert.equal(r.plan.allowance, 400, '1 日上限を超えて配ろうとしている');
 });

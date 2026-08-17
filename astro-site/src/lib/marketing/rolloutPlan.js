@@ -246,7 +246,7 @@ export function dailyRoomToday(state, nowMs) {
 }
 
 /**
- * **候補を何人ぶん観測するか**（＝このバッチで配りうる最大人数）。
+ * **候補を何人ぶん観測するか**（＝この 1 回で配りうる最大人数）。
  *
  * ⚠️ 候補の取得は bounded（必要な分だけ Airtable から取る）なので、
  *    **観測窓がそのまま allowance の上限になる**。窓が意図より狭いと
@@ -255,14 +255,27 @@ export function dailyRoomToday(state, nowMs) {
  * ⚠️ 2026-08-17 の事故: `batchSize=500 / dailyLimit=500` を設定したのに、
  *    観測が付与側の既定（`LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE` 未設定 = 100）で
  *    打ち切られ、**100 名しか付与されなかった**。以後、観測窓は
- *    「1 バッチの人数」と「今日の残り枠」の小さい方に**必ず**合わせる。
+ *    設定された `batchSize` と今日の残り枠に**必ず**合わせる。
+ *    **既定値（100）へ落とすことは二度としない。**
  *
- * 例: batchSize=500 / dailyLimit=500 / dayGrantedCount=100 → 窓は **400**
- *     （残り枠を超えて観測しても、どうせ配れないので取らない）
+ * @param {object} state
+ * @param {number} nowMs
+ * @param {{perCallMax?: number}} [opts]
+ *   `perCallMax` = **1 回の付与呼び出しで扱える上限**（付与側の
+ *   `HARD_MAX_BATCH_SIZE`。2026-08-13 の #319 以来の既存仕様）。
+ *   `batchSize` がこれより大きくても**断らない**。1 回あたりをこの上限で刻み、
+ *   残りは次の tick が続きを拾う（`dayGrantedCount` は積み上がるので
+ *   `dailyLimit` の意味は変わらない）。**設定を拒否しない・100 へも落とさない**。
+ *
+ * 例:
+ * - batchSize=500 / 残り枠 500 / perCallMax 500 → 窓 **500**
+ * - batchSize=500 / 今日すでに 100 名 → 窓 **400**（= 残り枠）
+ * - batchSize=1000 / 残り枠 1000 / perCallMax 500 → 窓 **500**（1000 は 2 回に分かれて進む）
  */
-export function resolveObservationWindow(state, nowMs) {
+export function resolveObservationWindow(state, nowMs, { perCallMax } = {}) {
   const s = normalizeRolloutState(state);
-  return Math.max(0, Math.min(resolveBatchSize(s), dailyRoomToday(s, nowMs)));
+  const cap = Number.isFinite(perCallMax) && perCallMax > 0 ? perCallMax : Infinity;
+  return Math.max(0, Math.min(resolveBatchSize(s), dailyRoomToday(s, nowMs), cap));
 }
 
 /**
