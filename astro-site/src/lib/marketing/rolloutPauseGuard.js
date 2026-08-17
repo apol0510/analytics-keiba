@@ -40,7 +40,7 @@ export const PAUSE_CONFLICT = 'state_write_conflict';
  *                    alreadyPaused?: boolean, version?: number|null}>}
  */
 export async function pauseWithRetry({
-  store, campaignId, nowMs, note = '', maxAttempts = PAUSE_MAX_ATTEMPTS,
+  store, campaignId, nowMs, note = '', reason = '', maxAttempts = PAUSE_MAX_ATTEMPTS,
 } = {}) {
   if (!store || typeof store.load !== 'function' || typeof store.save !== 'function') {
     return { ok: false, code: PAUSE_CONFLICT, attempts: 0 };
@@ -66,7 +66,14 @@ export async function pauseWithRetry({
 
     // ⚠️ **読み直した state の上に**停止を重ねる（新しい変更を古い値で潰さない）
     const planned = planRolloutPause({ current: cur, nowMs });
-    const next = { ...planned.state, note: String(note || planned.state.note || '') };
+    const next = {
+      ...planned.state,
+      note: String(note || planned.state.note || ''),
+      // ⚠️ 「異常で止まった」ことを状態に残す。**1 日上限に達しただけの停止と区別する**
+      //    （毎日の resume を人に要求しないため）。人が start / resume すると消える。
+      autoStopped: true,
+      stopReason: String(reason || note || 'auto_stop').slice(0, 80),
+    };
     try {
       // eslint-disable-next-line no-await-in-loop
       await store.save({
@@ -92,6 +99,61 @@ export function describePauseResult(r) {
     attempts: Number(v.attempts) || 0,
     code: v.ok === true ? null : (v.code || PAUSE_CONFLICT),
   };
+}
+
+/**
+ * **終端（`completed`）へ入れる**。停止と同じく CAS で確定させる。
+ *
+ * ⚠️ 異常停止ではないので `autoStopped` は立てない（人の再開を要求しない）。
+ * ⚠️ すでに `completed` なら書かない。`killed` なら触らない（緊急停止が優先）。
+ * ⚠️ 確定できなければ `ok: false`。**終わったと報告しない**（次の tick が改めて入れる）。
+ */
+export async function completeWithRetry({
+  store, campaignId, nowMs, note = '', maxAttempts = PAUSE_MAX_ATTEMPTS,
+} = {}) {
+  if (!store || typeof store.load !== 'function' || typeof store.save !== 'function') {
+    return { ok: false, code: PAUSE_CONFLICT, attempts: 0 };
+  }
+  let attempts = 0;
+  let lastCode = PAUSE_CONFLICT;
+  while (attempts < Math.max(1, maxAttempts)) {
+    attempts += 1;
+    let loaded;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      loaded = await store.load(campaignId);
+    } catch (e) {
+      lastCode = (e && e.code) || 'state_unreadable';
+      continue;
+    }
+    const cur = normalizeRolloutState(loaded && loaded.state);
+    if (cur.stage === ROLLOUT_STAGE.COMPLETED) {
+      return { ok: true, alreadyCompleted: true, attempts, version: cur.version };
+    }
+    if (cur.killed === true) return { ok: false, code: 'killed', attempts };
+    const next = {
+      ...cur,
+      stage: ROLLOUT_STAGE.COMPLETED,
+      // 終わったら**武装を外す**（翌日 cron が勝手に始めない）
+      armedFor: null,
+      alwaysArmed: false,
+      autoStopped: false,
+      stopReason: null,
+      note: String(note || cur.note || ''),
+      updatedAtMs: Number(nowMs) || null,
+    };
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await store.save({
+        campaignId, state: next,
+        expectedVersion: loaded && loaded.exists ? cur.version : null,
+      });
+      return { ok: true, alreadyCompleted: false, attempts, version: cur.version };
+    } catch (e) {
+      lastCode = (e && e.code) || PAUSE_CONFLICT;
+    }
+  }
+  return { ok: false, code: lastCode || PAUSE_CONFLICT, attempts };
 }
 
 export default pauseWithRetry;

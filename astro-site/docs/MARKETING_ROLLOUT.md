@@ -755,3 +755,76 @@ cron は **5 分間隔**（毎時 1 回だと 90 時間かかり「1 日で配�
 
 検証: `npm run test:marketing`（`touchMeasurementScan.test.mjs` が 499 / 500 / 501 / 610 /
 15,000 件の境界と多ページ・重複 0・PII なしを固定）
+
+
+## 🤖 人手なしで最後まで配り切る（2026-08-18）
+
+### 完成条件
+
+**`dailyLimit=15000 / batchSize=500` で、約 15,000 名を同じ日に配り切る。**
+一度開始したら、運用者は**毎日 arm もresume もしない**。異常のときだけ人が出る。
+
+**数値の正本は `src/lib/marketing/rolloutTarget.js`（`ROLLOUT_TARGET`）**。
+docs とコードは `rolloutTargetContract.test.mjs` が突き合わせるので、**片方だけ変えると CI が落ちる**。
+
+| | 値 |
+|---|---|
+| 対象 | 取り込みコホート 約 15,000 名 |
+| 1 日に配れる合計 | `dailyLimit = 15000` |
+| 論理バッチ | `batchSize = 500` |
+| 付与 1 回 | **200**（`GRANT_OPERATION_MAX`。500 は **200 + 200 + 100**） |
+| 1 バッチの tick | 付与 3 + queue 1 + 送信起動 1 = **5 tick** |
+| 全体 | 30 バッチ = **150 tick**。cron **2 分間隔**で約 **5 時間** |
+
+⚠️ 2026-08-17 の「500 名で停止」は**カナリアと障害修正のため**であって仕様ではない。
+
+### 関所は「論理バッチ単位」
+
+500 名は付与 3 回に分かれるので、**その 3 回の途中は未処理があっても進む**
+（`batchGrantedCount` がバッチの進み具合）。配り切ったら
+queue → 送信 → 台帳確認（`outstandingStep1 = 0`）まで待ってから次のバッチへ。
+
+- 未処理が「自分が配った数」を超えたら `outstanding_mismatch` で**停止**（説明できない状態）
+- 頼んだ人数に届かなかったら**そのバッチを閉じる**（候補が尽きた合図。端数を取りこぼさない）
+
+### 開始方式は `alwaysArmed`（既存の仕組みをそのまま使う）
+
+`alwaysArmed: true` なら `armedFor` の書き換えが要らず、**日付が変われば
+`dayGrantedCount` が 0 に戻って続きが進む**。新しい仕組みは足していない。
+
+- **異常停止すると `planRolloutPause` が `alwaysArmed: false` にする**ので、
+  自動では戻らない（人が `rolloutStart` するまで動かない）
+- **completed に入ると `alwaysArmed: false` + `armedFor: null`**（翌日も動かない）
+
+### 終端（completed）は「新しく配る相手が居ない」だけ
+
+`isRolloutComplete()` が `候補 0` かつ `関所 0 / queue 待ち 0 / 送信待ち 0` を確かめ、
+CAS（`completeWithRetry`）で `stage: completed` に入る。
+
+⚠️ **completed でも tick は止まらない。** 既に配った人の Step2〜24 は何週間も続くので、
+運転手は動き続け、`planRolloutTick` が**付与だけ**を止める。
+（一時停止 `paused` のときだけ、台帳を読む前に抜ける）
+
+### 運用状態は 6 つ（`rolloutOperationalState.js`）
+
+| 状態 | 意味 | 人の操作 |
+|---|---|---|
+| `running` | 展開中 | 不要 |
+| `waiting_previous` | 前のバッチの送信待ち | 不要 |
+| `daily_limit_reached` | 今日の上限に到達。**日付が変われば自動で続く** | **不要** |
+| `completed` | 配る相手がもういない | 不要（終端） |
+| `paused` | 人が止めた | 再開が要る |
+| `auto_stopped` | **異常で自動停止**（`stopReason` 付き） | **原因を直して開始し直す** |
+
+⚠️ **`daily_limit_reached` と `auto_stopped` を同じ意味にしない。**
+前者で毎日 resume を人に求める運用にはしない。
+
+### 自動停止する条件（fail closed）
+
+付与失敗（`too_many_records` / 書き込み失敗 / 理由不明）／**queue 失敗**／
+**送信起動が 1 件も成功しない**／バッチ健全性（duplicate・苦情・失敗率・bounce・
+unsubscribe・suppression 読めない）／`outstanding_mismatch`／事実が読めない／
+CAS で停止を確定できない（`state_write_conflict` は「止めた」と報告しない）。
+
+停止すると `stage: paused` + `autoStopped: true` + `stopReason` が残り、
+**人が `rolloutStart` するまで再開しない**（`alwaysArmed` も外れる）。

@@ -36,7 +36,7 @@
  */
 
 import {
-  tickRollout, settleTick, describeTick, TICK_ACTION, TICK_BLOCK,
+  tickRollout, settleTick, describeTick, isRolloutComplete, TICK_ACTION, TICK_BLOCK,
 } from '../../src/lib/marketing/rolloutOrchestrator.js';
 import {
   createRolloutStore, isRolloutEnabled, RolloutStoreError,
@@ -52,7 +52,7 @@ import {
   classifyGrantOutcome, describeGrantOutcome, GRANT_OUTCOME,
 } from '../../src/lib/marketing/grantOutcome.js';
 import {
-  pauseWithRetry, describePauseResult, PAUSE_CONFLICT,
+  pauseWithRetry, completeWithRetry, describePauseResult, PAUSE_CONFLICT,
 } from '../../src/lib/marketing/rolloutPauseGuard.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
@@ -471,6 +471,27 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     return killed;
   }
 
+  // ── 動かない状態なら**数える前に**抜ける ─────────────────────
+  //    ⚠️ 止まっている / 終わっているのに毎 tick 台帳を読むのは無駄で、
+  //       cron を短い間隔にするほど効いてくる（同日完走のために間隔を詰めている）。
+  //       ここで抜けても**送信の後片付けはしない**ので、止める前に積んだ分は
+  //       運用者が再開したときに続きから進む。
+  //    ⚠️ **`completed` では抜けない。** 終端は「新しく配る相手が居ない」という意味で、
+  //       既に配った人の Step2〜24 は何週間も続く。ここで抜けると案内が止まる
+  //       （`planRolloutTick` が付与だけを止める）。
+  if (state.stage === 'paused') {
+    const idle = {
+      ok: true, campaignId: ROLLOUT_CAMPAIGN_ID,
+      action: TICK_ACTION.SKIP,
+      reason: ROLLOUT_BLOCK.PAUSED,
+      autoStopped: state.autoStopped === true,
+      stopReason: state.stopReason || null,
+      sideEffects: 'none',
+    };
+    log(idle);
+    return idle;
+  }
+
   // ── 事実を数える ──────────────────────────────────────────
   const grantGates = readAutoGrantGates(armEnvForTick(env, state, now), now);
   /**
@@ -615,6 +636,29 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     log({ ok: false, warn: 'dispatch_no_progress', jobIds: progress.stalled.map((x) => x.jobId) });
   }
 
+  // ── 終端に入る（配る相手が居なくなった）────────────────────────
+  //    ⚠️ 候補 0 だけでは終わらせない。関所・queue 待ち・送信待ち・期日待ちが
+  //       全部片付いていること（`isRolloutComplete`）を確かめてから入る。
+  //    ⚠️ 入れなければ「終わった」と報告しない（次の tick が改めて入れる）。
+  const finished = isRolloutComplete({ facts });
+  if (finished.done && state.stage !== 'completed') {
+    const done = await completeWithRetry({
+      store, campaignId: STATE_KEY, nowMs: now, note: 'completed: cohort exhausted',
+    });
+    const body = {
+      ok: done.ok, ...view,
+      action: TICK_ACTION.SKIP,
+      completed: done.ok,
+      abort: done.ok ? null : (done.code || PAUSE_CONFLICT),
+      sideEffects: done.ok && done.alreadyCompleted !== true ? 'state_only' : 'none',
+      notice: done.ok
+        ? '**展開が完了しました**（配る相手がもういません）。以後の tick は何もしません。'
+        : '完了の記録が競合しました。まだ完了とは扱いません（次の tick でやり直します）。',
+    };
+    log(body);
+    return body;
+  }
+
   // ⚠️ 実績の写しは**進めない tick でも行う**。
   //    送信を起動した次の tick は普通「今日はもう配った」で skip する。
   //    ここで先に return すると、送ったのに画面が 0 通のまま何日も残る。
@@ -640,6 +684,21 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       return { ok: false, ...view, abort: 'no_job_ids', sideEffects: 'none' };
     }
     const res = await startDispatch({ jobIds, byId: jobs ? jobs.byId : null });
+    if (res && res.ok === false && Number(res.started || 0) === 0) {
+      // ⚠️ **送信が 1 件も起動できないのは異常**。放置すると queue だけ溜まり続ける
+      const paused = await pauseWithRetry({
+        store, campaignId: STATE_KEY, nowMs: now,
+        note: 'auto-stop: dispatch_failed', reason: 'dispatch_failed',
+      });
+      const body = {
+        ok: false, ...view, abort: 'dispatch_failed',
+        autoStopped: paused.ok, pause: describePauseResult(paused),
+        dispatch: res, sideEffects: 'none',
+        notice: '送信を起動できなかったため**新規付与を止めました**（人が直すまで再開しません）。',
+      };
+      log(body);
+      return body;
+    }
     // 起動したジョブだけ「送信済み件数の起点」を控える（次 tick で進みを見る）
     await saveState({ ...state, dispatchWatch: { ...state.dispatchWatch, ...(res.watch || {}) } });
     // ⚠️ 送った件数は**ここでは分からない**（Background は結果を返せない）。台帳が正本。
@@ -659,7 +718,10 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     if (runtimeBlocked(ROLLOUT_STAGE_GATE.QUEUE)) {
       return { ok: false, ...view, abort: 'gate_closed_queue', sideEffects: 'none' };
     }
-    const opId = state.pendingHandoffOp;
+    const opIds = Array.isArray(state.pendingHandoffOps) && state.pendingHandoffOps.length > 0
+      ? state.pendingHandoffOps
+      : (state.pendingHandoffOp ? [state.pendingHandoffOp] : []);
+    const opId = opIds[0] || null;
     // ⚠️ 引き継ぎの記録が無いことは起こりうる（cron が付与の直後に落ちた / 人が手で付与した）。
     //    ここで諦めると、**権利はあるのに案内が一生届かない人**が残る。
     //    その場合は既存の進行判定（`action=sequence`）が「Step1 が期日」と言う人だけを積む。
@@ -688,13 +750,44 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       log({ ...view, queued: rescue.queued, via: 'sequence', sideEffects: 'queued_only' });
       return { ok: true, ...view, queued: rescue.queued, jobs: rescue.jobIds, sideEffects: 'queued_only' };
     }
-    const res = await queueStep({ campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, grantOperationId: opId });
-    if (!res.ok) {
-      log({ ...view, ok: false, stage: res.stage, error: res.error, sideEffects: 'none' });
-      return { ok: false, ...view, abort: 'queue_failed', detail: res, sideEffects: 'none' };
+    // ⚠️ 論理バッチぶん（最大 3 回の付与）をまとめて積む。**1 tick 1 段階**は保つ
+    //    （段階は「queue」のまま。相手が 3 回ぶんに分かれているだけ）。
+    const queued = { jobIds: [], count: 0, touch: null, done: [] };
+    for (const id of opIds) {
+      // eslint-disable-next-line no-await-in-loop -- 付与 op ごとに既存の 1 本を通す
+      const one = await queueStep({ campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, grantOperationId: id });
+      if (!one.ok) {
+        // ⚠️ **queue の失敗は自動停止**（放置すると権利だけ付いて案内が届かない）。
+        //    済んだぶんは状態へ残し、残りの引き継ぎは次に持ち越す。
+        const rest = opIds.filter((x) => !queued.done.includes(x));
+        await saveState({
+          ...state,
+          pendingHandoffOps: rest,
+          pendingHandoffOp: null,
+          pendingJobIds: [...state.pendingJobIds, ...queued.jobIds],
+          jobSteps: { ...state.jobSteps, ...Object.fromEntries(queued.jobIds.map((j) => [j, queued.touch])) },
+        });
+        const paused = await pauseWithRetry({
+          store, campaignId: STATE_KEY, nowMs: now,
+          note: `auto-stop: queue_failed:${one.stage || 'unknown'}`, reason: 'queue_failed',
+        });
+        const body = {
+          ok: false, ...view, abort: 'queue_failed',
+          autoStopped: paused.ok, pause: describePauseResult(paused),
+          queued: queued.count, sideEffects: queued.count > 0 ? 'queued_only' : 'none',
+          notice: 'キュー登録に失敗したため**新規付与を止めました**（人が直すまで再開しません）。',
+        };
+        log(body);
+        return body;
+      }
+      queued.jobIds.push(...one.jobIds);
+      queued.count += one.queued;
+      queued.touch = one.touch;
+      queued.done.push(id);
     }
+    const res = { ok: true, jobIds: queued.jobIds, queued: queued.count, touch: queued.touch };
     await saveState({
-      ...state, pendingHandoffOp: null,
+      ...state, pendingHandoffOp: null, pendingHandoffOps: [],
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
       jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
     });
@@ -863,8 +956,19 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     }
 
     // ⚠️ **付与した数だけ**を刻む（queue が落ちても同じ日に二重に配らない）
-    const next = settleTick({ state, nowMs: now, granted, batchSeq: seq });
-    await saveState({ ...next, pendingHandoffOp: granted > 0 ? opId : null });
+    const next = settleTick({
+      state, nowMs: now, granted, batchSeq: seq,
+      startsNewBatch: decision.plan ? decision.plan.startsNewBatch === true : false,
+      // ⚠️ 頼んだ人数に届かなかった = **いま配れる候補が尽きた**。
+      //    バッチを閉じて queue → 送信へ進む（埋まるまで待つと先へ行けない）。
+      requested: Number(decision.plan?.allowance || 0),
+    });
+    // ⚠️ 論理バッチ 500 名は付与 3 回（200 + 200 + 100）に分かれる。
+    //    **1 回ぶんで上書きせず積む**（上書きすると先の 400 名が queue されない）。
+    const handoffs = granted > 0 && opId
+      ? [...new Set([...(state.pendingHandoffOps || []), opId])].slice(-10)
+      : (state.pendingHandoffOps || []);
+    await saveState({ ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null });
     if (granted > 0) await bumpTotals({ granted });
     log({ ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' });
     return { ok: true, ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' };
@@ -906,6 +1010,12 @@ export default async function handler(req) {
  *    送信基盤が詰まればその分だけ自然に遅くなる。
  * ⚠️ ゲートが閉じていれば接続前に終わる（副作用ゼロ）。空振りの tick は安い。
  */
+/**
+ * **2 分間隔**。1 tick 1 段階なので、論理バッチ 500 名は
+ * 付与 3 回（200 + 200 + 100）+ queue 1 回 + 送信起動 1 回 = **5 tick**で進む。
+ * 15,000 名 = 30 バッチ = 150 tick ≈ **5 時間**（5 分間隔だと 12.5 時間で同日に届かない）。
+ * ⚠️ 止まっている / 終わっている tick は台帳を読む前に抜けるので、空振りは安い。
+ */
 export const config = {
-  schedule: '*/5 * * * *',
+  schedule: '*/2 * * * *',
 };

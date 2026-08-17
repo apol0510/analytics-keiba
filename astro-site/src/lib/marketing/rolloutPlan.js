@@ -64,6 +64,11 @@ export const ROLLOUT_BLOCK = Object.freeze({
   ALREADY_RAN_TODAY: 'already_ran_today',
   WAITING_PREVIOUS: 'waiting_previous_step1',
   NO_CANDIDATES: 'no_candidates',
+  /**
+   * 関所の未処理数が「自分が配った数」を超えている＝**説明できない未処理**。
+   * 別経路の付与・状態の巻き戻りなどが疑われるので、推測で進めず止める。
+   */
+  OUTSTANDING_MISMATCH: 'outstanding_mismatch',
   DAILY_LIMIT_REACHED: 'daily_limit_reached',
   STATE_UNREADABLE: 'state_unreadable',
   COMPLETED: 'completed',
@@ -76,6 +81,7 @@ export const ROLLOUT_BLOCK_LABEL = Object.freeze({
   already_ran_today: '今日はすでに実行済みです',
   waiting_previous_step1: '前回ぶんの Step1 がまだ片付いていません',
   no_candidates: '対象がいません',
+  outstanding_mismatch: '未処理の数が説明できません（安全側で停止）',
   daily_limit_reached: '本日の上限に達しました',
   state_unreadable: '展開状態を読めません（安全側で停止）',
   completed: '対象を配り終えました',
@@ -118,6 +124,20 @@ export function defaultRolloutState() {
     /** 今日のバッチ通し番号（1 から。`operationId` の枝番になる） */
     batchSeq: 0,
     /**
+     * **いまの論理バッチで配った人数**（`batchSize` に達するまで積み上がる）。
+     * 論理バッチ 500 名は付与側の上限で 200 + 200 + 100 の 3 回に分かれるので、
+     * 「500 名ぶん配り終えたか」はこの数で判断する。
+     * 500 名を queue → 送信し終えて関所が空いたら 0 に戻る。
+     */
+    batchGrantedCount: 0,
+    /**
+     * **異常で自動停止したか**（`stage: 'paused'` の理由の区別）。
+     * 1 日上限に達しただけの停止と、人が直すべき異常停止を混同しないために持つ。
+     */
+    autoStopped: false,
+    /** 自動停止の理由コード（PII は入れない） */
+    stopReason: null,
+    /**
      * 「今日動かしてよい」という明示。`YYYY-MM-DD`（JST）。
      * 置きっぱなしでも**翌日には効かなくなる**ので、暴走しない。
      * `alwaysArmed: true` なら日付を毎日置き直さずに継続運用できる。
@@ -141,6 +161,12 @@ export function defaultRolloutState() {
      * 引き継ぎ自体は 24 時間で失効するので、置きっぱなしにはならない。
      */
     pendingHandoffOp: null,
+    /**
+     * **論理バッチぶんの引き継ぎ**（付与 1 回ごとに 1 つ増える）。
+     * 500 名は 200 + 200 + 100 の 3 回に分かれるので、**3 つ溜めてから**まとめて queue する。
+     * 旧 `pendingHandoffOp`（単数）は後方互換のため読み続ける。
+     */
+    pendingHandoffOps: [],
     /** queue 済みでまだ送信を起動していないジョブ ID（送信の起動は台帳が正本） */
     pendingJobIds: [],
     /** jobId → 何通目か。集計を Step 別に積むために覚えておく */
@@ -189,12 +215,18 @@ export function normalizeRolloutState(raw) {
     })(),
     dayGrantedCount: Math.max(0, num(raw.dayGrantedCount) ?? 0),
     batchSeq: Math.max(0, num(raw.batchSeq) ?? 0),
+    batchGrantedCount: Math.max(0, num(raw.batchGrantedCount) ?? 0),
+    autoStopped: raw.autoStopped === true,
+    stopReason: str(raw.stopReason).slice(0, 80) || null,
     armedFor: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.armedFor)) ? str(raw.armedFor) : null,
     alwaysArmed: raw.alwaysArmed === true,
     lastRunDay: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.lastRunDay)) ? str(raw.lastRunDay) : null,
     lastRunCount: Math.max(0, num(raw.lastRunCount) ?? 0),
     totalGranted: Math.max(0, num(raw.totalGranted) ?? 0),
     pendingHandoffOp: str(raw.pendingHandoffOp).slice(0, 100) || null,
+    pendingHandoffOps: Array.isArray(raw.pendingHandoffOps)
+      ? raw.pendingHandoffOps.map((v) => str(v).slice(0, 100)).filter(Boolean).slice(0, 10)
+      : (str(raw.pendingHandoffOp) ? [str(raw.pendingHandoffOp).slice(0, 100)] : []),
     // 壊れた値・多すぎる値は捨てる（ここが暴れると送信起動が暴れる）
     pendingJobIds: Array.isArray(raw.pendingJobIds)
       ? raw.pendingJobIds.map((v) => str(v).slice(0, 120)).filter(Boolean).slice(0, 50)
@@ -275,7 +307,29 @@ export function dailyRoomToday(state, nowMs) {
 export function resolveObservationWindow(state, nowMs, { perCallMax } = {}) {
   const s = normalizeRolloutState(state);
   const cap = Number.isFinite(perCallMax) && perCallMax > 0 ? perCallMax : Infinity;
-  return Math.max(0, Math.min(resolveBatchSize(s), dailyRoomToday(s, nowMs), cap));
+  // ⚠️ いまのバッチが埋まっていても **0 にしない**。次に付与が起きるとしたら
+  //    それは「新しいバッチの 1 回目」なので、窓は `batchSize` に戻る。
+  //    ここを 0 にすると候補を 1 人も観測できず、`remainingCandidates` が
+  //    下限 1 に落ちて **1 名ずつしか配れなくなる**（同日完走に届かない）。
+  //    進めてよいかどうかを決めるのは `planRolloutTick`（関所・1 日上限）。
+  const room = resolveBatchRoom(s) || resolveBatchSize(s);
+  return Math.max(0, Math.min(room, dailyRoomToday(s, nowMs), cap));
+}
+
+/**
+ * **いまの論理バッチで、あと何人配れるか**（`batchSize - batchGrantedCount`）。
+ *
+ * ⚠️ 論理バッチ（`batchSize`）と付与 1 回（`GRANT_OPERATION_MAX` = 200）は別物。
+ *    500 名のバッチは 200 + 200 + 100 の 3 回に分かれて配られ、
+ *    **3 回を配り終えてから** queue → 送信 → 関所確認へ進む。
+ * ⚠️ 0 のときは「このバッチはもう配り切った」＝ 関所が空くまで次を始めない。
+ *    ただし関所が空いていれば**次のバッチを始めてよい**ので、
+ *    `planRolloutTick` が `batchSize` へ戻して計画する。
+ */
+export function resolveBatchRoom(state) {
+  const s = normalizeRolloutState(state);
+  const size = resolveBatchSize(s);
+  return Math.max(0, size - Math.max(0, s.batchGrantedCount));
 }
 
 /**
@@ -301,6 +355,10 @@ export function planRolloutTick({
     grantedToday: grantedToday(s, nowMs),
     /** 候補を何人ぶん観測すべきか。**事実収集はこの窓で取る**（狭いと allowance が黙って縮む） */
     observationWindow: resolveObservationWindow(s, nowMs),
+    /** いまの論理バッチの進み具合（500 名なら 200 → 400 → 500） */
+    batchGrantedCount: Math.max(0, s.batchGrantedCount),
+    batchRoom: resolveBatchRoom(s),
+    startsNewBatch: false,
     batchSeq: s.lastRunDay === jstDay(nowMs) ? s.batchSeq : 0,
   };
 
@@ -315,13 +373,34 @@ export function planRolloutTick({
   if (!s.alwaysArmed && s.armedFor !== day) {
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.NOT_ARMED };
   }
-  // ④ 前のバッチが片付くまで次を配らない（**関所＝バッチの直列化**）
-  //    ⚠️ ここが「同じ日は 1 回だけ」に代わる安全装置。
-  //       付与 → queue → 送信 → 台帳確認 が終わるまで `outstanding > 0` なので、
-  //       次のバッチは始まらない。cron が重複起動しても同じ判断になる。
+  // ④ 関所（**論理バッチ単位**でバッチを直列化する）
+  //    ⚠️ 500 名のバッチは付与側の上限で 200 + 200 + 100 に分かれる。
+  //       その 3 回の途中は「自分が配ったぶん」が未処理として残るので、
+  //       **バッチを配り切るまでは未処理があっても進む**。
+  //       配り切ったら queue → 送信 → 台帳確認（`outstanding` が 0 に戻る）まで待つ。
+  //    ⚠️ 未処理が「自分が配った数」を超えるのは説明できない状態。**推測で進めない**。
   const outstanding = num(previousOutstanding);
   if (outstanding === null) return { ...base, ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE };
-  if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
+  const granted = Math.max(0, s.batchGrantedCount);
+  let batchRoom = resolveBatchRoom(s);
+  let startsNewBatch = false;
+  if (granted > 0) {
+    // バッチの途中。未処理は**自分が配ったぶん**のはずで、それを超えるのは説明できない
+    if (outstanding > granted) {
+      return { ...base, ok: false, reason: ROLLOUT_BLOCK.OUTSTANDING_MISMATCH };
+    }
+    if (batchRoom <= 0) {
+      // 配り切った → queue → 送信 → 台帳確認（未処理 0）まで待つ
+      if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
+      batchRoom = batchSize;
+      startsNewBatch = true;
+    }
+  } else {
+    // 新しいバッチを始めるときは、**前のバッチが完全に片付いている**ことを要求する
+    if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
+    batchRoom = batchSize;
+    startsNewBatch = true;
+  }
 
   // ⑤ 対象が読めない / いない
   const remaining = num(remainingCandidates);
@@ -336,7 +415,7 @@ export function planRolloutTick({
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED, grantedToday: already };
   }
 
-  const allowance = Math.min(batchSize, dailyRoom, remaining);
+  const allowance = Math.min(batchRoom, dailyRoom, remaining);
   if (allowance <= 0) {
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED, grantedToday: already };
   }
@@ -347,16 +426,23 @@ export function planRolloutTick({
     allowance,
     reason: null,
     grantedToday: already,
-    /** このバッチの通し番号（`operationId` の枝番になる。1 日の中で必ず増える） */
+    batchRoom,
+    /** この付与でバッチを新しく始めるか（`applyRolloutRun` が集計を 0 から数え直す） */
+    startsNewBatch,
+    /** この付与の通し番号（`operationId` の枝番になる。1 日の中で必ず増える） */
     batchSeq: (s.lastRunDay === day ? s.batchSeq : 0) + 1,
   };
 }
 
 /** 実行後の状態（**同じ日にもう一度走らせない**印を必ず付ける） */
-export function applyRolloutRun({ state, nowMs, granted, batchSeq }) {
+export function applyRolloutRun({
+  state, nowMs, granted, batchSeq, startsNewBatch = false, closeBatch = false,
+}) {
   const s = normalizeRolloutState(state);
   const day = jstDay(nowMs);
   const n = Math.max(0, num(granted) ?? 0);
+  // 論理バッチの進み具合。新しいバッチなら 0 から数え直す
+  const batchBase = startsNewBatch === true ? 0 : Math.max(0, s.batchGrantedCount);
   // 日付が変われば今日の集計は 0 から数え直す
   const already = s.lastRunDay === day ? s.dayGrantedCount : 0;
   const seq = num(batchSeq);
@@ -365,6 +451,10 @@ export function applyRolloutRun({ state, nowMs, granted, batchSeq }) {
     lastRunDay: day,
     lastRunCount: n,
     dayGrantedCount: already + n,
+    // `closeBatch` = 候補が尽きたのでこのバッチはここまで（queue へ進ませる）
+    batchGrantedCount: closeBatch === true
+      ? Math.max(resolveBatchSize(s), batchBase + n)
+      : batchBase + n,
     batchSeq: seq !== null && seq > 0
       ? seq
       : (s.lastRunDay === day ? s.batchSeq : 0) + 1,
