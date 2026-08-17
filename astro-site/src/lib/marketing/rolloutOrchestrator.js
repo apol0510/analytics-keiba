@@ -108,6 +108,19 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
     return { action: TICK_ACTION.DISPATCH, count: pendingJobs };
   }
 
+  // ── ①-b 論理バッチを配り切る（**queue より先**）──────────────────
+  //    500 名のバッチは付与側の上限で 200 + 200 + 100 に分かれる。
+  //    その途中で queue へ移ると、1 バッチに queue / 送信が 3 回ずつ要り、
+  //    15,000 名を配るのに tick が 1.5 倍かかる（同日完走が届かなくなる）。
+  //    **バッチを配り切ってから** queue → 送信 → 関所確認 の順にする。
+  //    ⚠️ 「配り切る」の判断は `planRolloutTick` が持つ（関所・1 日上限・候補数を見る）。
+  const midBatchPlan = planRolloutTick({
+    state, nowMs, remainingCandidates: remaining, previousOutstanding: outstanding, envEnabled,
+  });
+  if (midBatchPlan.ok && midBatchPlan.startsNewBatch !== true && canGrant) {
+    return { action: TICK_ACTION.GRANT, count: midBatchPlan.allowance, plan: midBatchPlan };
+  }
+
   // ── ② 付与したのに queue していない人 ─────────────────────────
   //    ここを飛ばすと、権利だけ付いて案内が来ない人が溜まる。
   if (pendingQueue > 0) {
@@ -128,9 +141,7 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
   }
 
   // ── ④ 新しく配る ─────────────────────────────────────────────
-  const plan = planRolloutTick({
-    state, nowMs, remainingCandidates: remaining, previousOutstanding: outstanding, envEnabled,
-  });
+  const plan = midBatchPlan;
   if (!plan.ok) {
     // 候補が尽きていて、期日待ちも無い ＝ 展開そのものが終わっている
     return { action: TICK_ACTION.SKIP, reason: plan.reason, plan, gates };
@@ -154,9 +165,21 @@ export function planQueueAfterGrant({ grantedRecordIds }) {
  * ⚠️ **付与した数だけを `lastRun` に刻む。** queue / dispatch が途中で落ちても、
  *    同じ日に二重に配らないことはこれで守られる（続きは次の tick が拾う）。
  */
-export function settleTick({ state, nowMs, granted, batchSeq }) {
+export function settleTick({
+  state, nowMs, granted, batchSeq, startsNewBatch = false, requested = null,
+}) {
+  const got = Math.max(0, num(granted) ?? 0);
+  const want = num(requested);
   return applyRolloutRun({
-    state, nowMs, granted: Math.max(0, num(granted) ?? 0), batchSeq: num(batchSeq),
+    state, nowMs, granted: got, batchSeq: num(batchSeq),
+    // 論理バッチの 1 回目なら集計を 0 から数え直す（500 = 200 + 200 + 100 の区切り）
+    startsNewBatch: startsNewBatch === true,
+    /**
+     * ⚠️ 頼んだ人数に届かなかったら**バッチを閉じる**。
+     *    「いま配れる候補が尽きた」という意味なので、埋まるのを待たずに
+     *    queue → 送信 → 関所確認 へ進める（待つと最後の端数が永久に出ない）。
+     */
+    closeBatch: want !== null && want > 0 && got < want,
   });
 }
 
@@ -188,3 +211,33 @@ export function describeTick({ action, reason, count, plan, step, gates }) {
 export const STEPS_PER_TICK = 1;
 
 export default tickRollout;
+
+/**
+ * **展開そのものが終わったか**（= もう配る相手が居ない）。
+ *
+ * ⚠️ 「候補 0」だけでは終わりにしない。配った人の Step1 が全部片付いていること
+ *    （関所 0 / 送信待ちジョブ 0 / queue 待ち 0）まで揃って初めて終端に入る。
+ *    途中で終端にすると、**権利はあるのに案内が届かない人**が残る。
+ * ⚠️ 期日待ち（Step2 以降）が残っているうちは終わりにしない。
+ * ⚠️ 数えられない値が 1 つでもあれば **false**（推測で終わらせない）。
+ *
+ * @returns {{done: boolean, reason: string|null}}
+ */
+export function isRolloutComplete({ facts } = {}) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const remaining = num(f.remainingCandidates);
+  const outstanding = num(f.outstandingStep1);
+  const pendingQueue = num(f.grantedPendingQueue);
+  const pendingJobs = num(f.pendingJobs);
+  if (remaining === null || outstanding === null || pendingQueue === null || pendingJobs === null) {
+    return { done: false, reason: 'facts_unreadable' };
+  }
+  if (remaining > 0) return { done: false, reason: 'candidates_remain' };
+  if (outstanding > 0 || pendingQueue > 0 || pendingJobs > 0) {
+    return { done: false, reason: 'step1_in_flight' };
+  }
+  // ⚠️ Step2〜24 の期日待ちは**終端の条件にしない**。
+  //    終端は「**新しく配る相手が居ない**」という意味で、既に配った人への
+  //    案内は何週間も続く（`completed` は付与だけを止める）。
+  return { done: true, reason: null };
+}

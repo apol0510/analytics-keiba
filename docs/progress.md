@@ -1,3 +1,60 @@
+# 進捗（新しい順）
+
+## 🎯 任務の完了条件（Light 無料体験 展開）— **ここが未達なら任務は完了ではない**
+
+| # | 条件 | 状態の見方 |
+|---|---|---|
+| 1 | 取り込みコホート **約 15,000 名**へ Light 無料体験を配り切る | `action=rollout` の `funnel` / 関所 `granted` |
+| 2 | `dailyLimit=15000` / `batchSize=500` で **正常時は同日完走** | `control.target.onTarget === true` |
+| 3 | **人が日ごと・バッチごとに操作しない**（開始は `alwaysArmed` の 1 回だけ） | `control.operational` が `daily_limit_reached` でも人の操作を要求しない |
+| 4 | 候補 0 まで自動継続し **`completed`** に入る | `control.operational === 'completed'` |
+| 5 | `completed` 後は cron が動いても **新規付与 0**（Step2〜24 は継続） | `batch.totalGranted` が増えない |
+| 6 | 異常時だけ **auto-stop**（人が直すまで再開しない） | `control.operational === 'auto_stopped'` + `stopReason` |
+| 7 | 二重付与・二重 queue・二重送信が **0** | `operationId` / `DeliveryKey` / 関所 / CAS |
+
+⚠️ **次のどれも「任務完了」ではない**（部分的な成果であって、完了条件 1〜7 を満たさない）:
+
+- 500 名（や 100 名）へ配れた ＝ **カナリアが成功しただけ**
+- Draft PR ができた / CI が green ＝ **コードが用意できただけ**
+- merge / production deploy した ＝ **配れる状態になっただけ**
+- 1 日ぶん進んだ ＝ **その日のぶんが進んだだけ**
+
+完了条件・数値の正本は **`astro-site/src/lib/marketing/rolloutTarget.js`**（`docs/spec.md` と対応）。
+**「500 名/日」は仕様ではない**（2026-08-17 のカナリア実績を仕様と読み替えない）。
+
+---
+
+## 2026-08-18 — 【変更】残りコホートを人手なしで配り切る（同日完走・終端・fail closed）
+
+「本日 500 名を送れた」ではなく、**残り約 13,900 名を人が毎日操作せずに最後まで配り切る**
+ことが完成条件。`dailyLimit=15000 / batchSize=500` で同じ日に配り切る形に揃えた。
+
+### 変えたこと
+
+1. **関所を論理バッチ単位へ**。500 名は付与 3 回（200 + 200 + 100）に分かれるので、
+   その途中は未処理があっても進み、配り切ってから queue → 送信 → 台帳確認で次のバッチへ。
+   1 バッチ = **5 tick**（従来は 200 名ごとに 3 tick で 1.5 倍かかっていた）
+2. **cron を 2 分間隔**へ（150 tick ≈ 5 時間で 15,000 名）。止まっている tick は
+   台帳を読む前に抜けるので空振りは安い
+3. **終端 `completed`**。候補 0 かつ関所・queue・送信待ちが 0 なら CAS で `completed`。
+   ⚠️ 付与だけを止め、既に配った人の Step2〜24 は止めない
+4. **運用状態 6 つ**（`rolloutOperationalState.js`）。`daily_limit_reached`（翌日自動継続）と
+   `auto_stopped`（人が直すまで動かない）を**別物として**画面に出す
+5. **fail closed を拡張**: queue 失敗 / 送信起動 0 件 / `outstanding_mismatch` でも自動停止
+6. 開始方式は既存の **`alwaysArmed`**。新しい仕組みは足していない
+   （停止・完了で `alwaysArmed` が外れるので、勝手な自動復帰は起きない）
+
+### テスト（`rolloutAutoCompletion.test.mjs` 20 件）
+
+15,000 名同日完走 / 500 = 200+200+100 / 1000 でも完走 / 1 バッチ 5 tick / 最後の端数 /
+関所（配り切るまでは進む・配り切ったら待つ）/ outstanding 不整合 / 翌日の自動継続 /
+`alwaysArmed` と one-shot の違い / 候補 0 で completed / completed 後は付与 0 /
+auto-stop 後は翌日も再開しない / 上限到達と異常停止の区別 / 重複 tick で二重付与 0 /
+queue・送信の再試行で二重送信 0 / PII なし。
+
+`test:marketing` 1,969 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0。
+
 ## 2026-08-17 — 【修正】付与の実効上限 200 との整合 / touch 実績のページ化
 
 本番で 2 件の頭打ちを踏んだので恒久修正した（**AK のみ**）。

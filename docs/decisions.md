@@ -8,6 +8,41 @@
 
 ---
 
+## 2026-08-17 — Light 無料体験の展開は「約 15,000 名を同日完走」（**500 名/日ではない**）
+
+### Status
+
+**Accepted**。数値は `astro-site/src/lib/marketing/rolloutTarget.js` が正本で、
+`rolloutTargetContract.test.mjs` が docs と突き合わせる（CI で強制）。
+
+### Context
+
+2026-08-17、カナリアとして 500 名を配り、その日は障害修正のため意図的に停止した。
+その**実績**が「500 名/日という仕様」として読み替えられ、
+15,000 名を 30 日かけて配る計画に縮みかけた。ユーザーから明確な訂正があった。
+
+同種の後退はこれで 3 回目（既定 100 名への silent cap、`MAX_GRANT_RECORDS=200` の
+空回り、この 500 名/日の読み替え）で、**文章だけの契約は縮む**ことが実証された。
+
+### Decision
+
+- 展開の完成条件を **`dailyLimit=15000` / `batchSize=500` / 同日完走**とする
+- 論理バッチ 500 名は付与側の上限に従い **200 + 200 + 100** の 3 回に分割する
+- 各バッチは **付与 → queue → dispatch → 関所（`outstandingStep1=0`）確認**で直列化する
+- 開始は **`alwaysArmed: true` の 1 回だけ**。日ごと・バッチごとの人の操作を要求しない
+- 候補が尽きたら **`completed`**、異常時だけ **auto-stop**（人が直すまで再開しない）
+- **数値はコードの定数を正本**とし、docs と CI で突き合わせる。
+  一時的な絞り込みは state（`rolloutStart` の引数）で行い、**目標は下げない**
+
+### Consequences
+
+- 「500 名/日」へ戻す変更は、定数・`docs/spec.md`・`docs/decisions.md`・
+  `astro-site/docs/MARKETING_ROLLOUT.md` を**同時に**直さない限り CI が通らない
+- 運用画面には**目標との差**（`control.target.onTarget` / `gaps`）が常に出るので、
+  絞ったまま放置されない
+
+---
+
 ## 2026-08-05 — Redis canary は専用 Function で行う（secret をローカルへ持ち出さない）
 
 ### Status
