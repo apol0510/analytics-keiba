@@ -12,6 +12,7 @@
  */
 
 import { normalizeRolloutState, resolveDailyLimit, estimateRemainingDays, ROLLOUT_BLOCK_LABEL } from './rolloutPlan.js';
+import { resolveOperationalState } from './rolloutOperationalState.js';
 import { STOP_REASON_LABEL } from './sequencePolicy.js';
 
 /** 1 人の進行状態（画面の 5 分類） */
@@ -147,6 +148,15 @@ export function buildRolloutView({
       canProceed: !!(plan && plan.ok),
       blockedReason: plan && !plan.ok ? plan.reason : null,
       blockedLabel: plan && !plan.ok ? (ROLLOUT_BLOCK_LABEL[plan.reason] || plan.reason) : null,
+      /**
+       * 運用者が最初に見る 1 語（`rolloutOperationalState.js` が単一源）。
+       * ⚠️ **「今日の上限に到達」と「異常停止」を混同しない**。
+       *    前者は日付が変われば自動で続く（人の操作は要らない）。
+       */
+      operational: resolveOperationalState({ state: s, plan }),
+      autoStopped: s.autoStopped === true,
+      stopReason: s.stopReason || null,
+      batchGrantedCount: s.batchGrantedCount,
       note: s.note || null,
     },
     /** ② バッチ進行 */

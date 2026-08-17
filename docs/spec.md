@@ -1297,6 +1297,9 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 
 ### 読み取りの上限
 
+- 展開の運用状態は 6 つ（`src/lib/marketing/rolloutOperationalState.js` が単一源）:
+  `running` / `waiting_previous` / `daily_limit_reached`（**翌日自動継続**）/ `completed` /
+  `paused` / `auto_stopped`（**人が直すまで再開しない**）
 - 管理画面 `action=touchMeasurement` … Blob 全件走査 **なし**、Redis は最大 500 鍵の bounded read。
   **配信台帳も全件走査しない**（1 ページ = cursor 方式。全体は `action=touchMeasurementPage` を辿る
   `npm run scan:touch-measurement`。数え切れないときは数字を返さない）

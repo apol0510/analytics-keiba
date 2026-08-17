@@ -148,6 +148,9 @@ export function planRolloutStart({ current, exists, req, nowMs }) {
       armedFor,
       // ⚠️ 開始操作で緊急停止を解除しない（止めた事実を勝手に消さない）
       killed: base.killed === true,
+      // 人が明示的に開始した = 異常停止の印は消してよい（原因を見たうえでの操作）
+      autoStopped: false,
+      stopReason: null,
       note,
       updatedAtMs: Number(nowMs) || null,
     },
@@ -186,6 +189,9 @@ export function planRolloutResume({ current, nowMs }) {
       killed: false,
       armedFor: null,
       alwaysArmed: false,
+      // 再開操作でも異常停止の印は消す（人が原因を見たうえで押す操作なので）
+      autoStopped: false,
+      stopReason: null,
       updatedAtMs: Number(nowMs) || null,
     },
   };
@@ -201,6 +207,9 @@ export function describeControlResult({ op, state }) {
     batchSize: s.batchSize,
     dayGrantedCount: s.dayGrantedCount,
     batchSeq: s.batchSeq,
+    batchGrantedCount: s.batchGrantedCount,
+    autoStopped: s.autoStopped,
+    stopReason: s.stopReason,
     alwaysArmed: s.alwaysArmed,
     armedFor: s.armedFor,
     killed: s.killed,
