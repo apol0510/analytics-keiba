@@ -177,4 +177,60 @@ export async function scanAllTouchPages({ fetchPage, maxPages = 200 } = {}) {
   return { ...finalizeTouchScan(acc), complete };
 }
 
+/**
+ * `action=touchMeasurement`（**ページを跨がない呼び出し**）が 1 回で歩いてよいページ数。
+ *
+ * ⚠️ ここを増やして「全件を 1 リクエストで」に戻さない。610 行で 504 になったのが発端で、
+ *    行数は 14,000 名規模まで増える。**足りなければ数を返さない**のが正しい振る舞い。
+ */
+export const MEASUREMENT_INLINE_MAX_PAGES = 2;
+
+/** 数を返せなかった理由（固定コード） */
+export const MEASUREMENT_INCOMPLETE = 'measurement_requires_scan';
+
+/**
+ * ページ集計を **「全体の数」として返してよいかどうか**で 2 つに分ける。
+ *
+ * ⚠️ **部分集計を `touches` / `totals` の形で返さない。**
+ *    旧来 `action=touchMeasurement` は「全体の集計」を返す約束だった。
+ *    ここで 1 ページ分を同じ形で返すと、読み手（runbook の curl / 将来の画面）が
+ *    **一部を全体として読む**。数が足りないときは**数そのものを返さない**。
+ *
+ * @param {{scan: object, budgetPages: number}} input
+ *   `scan` … `scanAllTouchPages()` の戻り（`complete` を含む）
+ * @returns {{ok: boolean, body: object}} `ok:false` なら数は入っていない
+ */
+export function buildInlineMeasurementResult({ scan, budgetPages = MEASUREMENT_INLINE_MAX_PAGES } = {}) {
+  const r = scan && typeof scan === 'object' ? scan : null;
+  if (!r || r.complete !== true) {
+    return {
+      ok: false,
+      body: {
+        /** 数は**入れない**（部分を全体と誤読させない） */
+        complete: false,
+        code: MEASUREMENT_INCOMPLETE,
+        scannedPages: r && r.scan ? r.scan.pages : 0,
+        scannedRows: r && r.scan ? r.scan.rows : 0,
+        budgetPages,
+        error: '配信件数が多く、1 回の呼び出しでは全体を数え切れません。'
+          + 'ページを辿る呼び出し（action=touchMeasurementPage）か '
+          + '`npm run scan:touch-measurement` を使ってください。',
+      },
+    };
+  }
+  return {
+    ok: true,
+    body: {
+      complete: true,
+      measurementAvailable: r.measurementAvailable,
+      touches: r.touches,
+      totals: r.totals,
+      clickMeasured: r.clickMeasured,
+      scannedPages: r.scan.pages,
+      scannedRows: r.scan.rows,
+      budgetPages,
+    },
+  };
+}
+
 export default mergeTouchPage;

@@ -665,6 +665,20 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
 | `idle` | 正常に配る相手が居ない（`no_candidates`） | **しない** | しない |
 | `failed` | 予定があったのに 0 件（`too_many_records` / 書き込み失敗 / 理由不明） | **しない**（`batchSeq`・`dayGrantedCount`・`lastRunCount` を動かさない） | **する**（`stage: paused` + `note: auto-stop: <理由>`） |
 
+#### 自動停止は CAS で確定させる（`rolloutPauseGuard.js`）
+
+展開状態の保存は CAS（`expectedVersion`）なので、**競合すると保存されない**。
+旧実装は保存の成否を見ずに `autoStopped: true` と返しており、
+**「止めたと報告したのに止まっていない」**が起こり得た。
+
+- 停止は `pauseWithRetry()` が担当。**毎回読み直してから**書く（新しい変更を古い値で潰さない）
+- 競合したら**上限つき**（`PAUSE_MAX_ATTEMPTS = 3`）でやり直す
+- すでに `paused` / `killed` なら書かずに完了扱い（**二重に書かない**）
+- 確定できなければ **`abort: 'state_write_conflict'` / `autoStopped: false` / `sideEffects: 'none'`**
+  で返す（**止まったと偽らない**。次の tick が改めて止める）
+- どちらの結果でも `settleTick` は呼ばないので、`batchSeq` / `dayGrantedCount` /
+  `lastRunCount` は動かない。Customers への再付与もしない
+
 ⚠️ **`idle` と `failed` を混ぜない。** 候補 0 は正常な終わり方、`too_many_records` は運用が直す異常。
 
 - 残数は **`counts.candidates`（実際に配れる人の数）** で数える。
@@ -707,6 +721,21 @@ cron は **5 分間隔**（毎時 1 回だと 90 時間かかり「1 日で配�
 | DeliveryKey の計算 | 全受信者 × 全 step | **そのページの受信者ぶんだけ** |
 | イベント索引の読み | 先頭 500 件で頭打ち | 1 ページは必ず上限以下（`TOUCH_SCAN_MAX_PAGE ≤ MAX_READ_KEYS`） |
 | 全体を見る方法 | （無い） | **`npm run scan:touch-measurement`**（cursor を辿って合算） |
+
+### action は 2 つに分かれている（**契約を混ぜない**）
+
+| action | 返すもの | 読み方 |
+|---|---|---|
+| `touchMeasurement` | **全体**（`schemaVersion: 2`） | 数え切れたときだけ `complete: true` + `touches` / `totals`。<br>数え切れないときは **`touches` も `totals` も返さない**（`complete: false` / `code: measurement_requires_scan` / HTTP 413） |
+| `touchMeasurementPage` | **1 ページ** | 必ず `partial` と `scan.cursor` を持つ。合算は呼び出し側（`mergeTouchPage`） |
+
+⚠️ 旧来 `touchMeasurement` は「全体の集計」を返す約束だった。**部分集計を同じ形で返さない**
+（一部を全体として読まれるくらいなら数を出さない）。1 回で歩くページ数は
+`MEASUREMENT_INLINE_MAX_PAGES` で頭打ちで、**ここを増やして全件走査へ戻さない**。
+
+⚠️ 2026-08-17 時点で `touchMeasurement` を呼ぶ実装は **`scripts/touch-measurement-scan.mjs` だけ**
+（管理画面にも他 Function にも読み手は無い）。`touchMeasurementContract.test.mjs` が
+呼び出し元の一覧を固定しているので、増えたらテストが落ちる。
 
 ### 合算の約束
 

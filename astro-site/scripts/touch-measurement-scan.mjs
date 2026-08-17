@@ -3,8 +3,10 @@
  * touch-measurement-scan.mjs — touch 別実績を**ページを辿って**合算する（read-only）
  *
  * ── なぜ要るか ────────────────────────────────────────────────
- * `action=touchMeasurement` は 1 リクエスト 1 ページしか返さない（timeout を前提にしない設計）。
+ * `action=touchMeasurementPage` は 1 リクエスト 1 ページしか返さない（timeout を前提にしない設計）。
  * 全体を見たいときは cursor を辿って足す必要があり、その手順を**機械に固定**する。
+ * （小さい campaign なら `action=touchMeasurement` が全体を 1 回で返すが、
+ *   数え切れないときは**数字を返さない**。ここはどの規模でも通る経路。）
  * 2026-08-17 に配信行 610 で 504 になったのが発端。最終的に 14,000 名規模になる。
  *
  * ── 使い方 ────────────────────────────────────────────────────
@@ -12,7 +14,7 @@
  *   # secret は PREMIUM_PLUS_ADMIN_SECRET でも可（Function 側の優先順と同じ）
  *   # 基点 URL は AK_BASE_URL で上書きできる（既定 https://analytics.keiba.link）
  *
- * ⚠️ **read-only**。付与・キュー登録・送信は一切しない（呼ぶのは touchMeasurement だけ）。
+ * ⚠️ **read-only**。付与・キュー登録・送信は一切しない（呼ぶのは touchMeasurementPage だけ）。
  * ⚠️ 出力は**件数と率だけ**。アドレス・recordId・secret は出さない。
  */
 import { scanAllTouchPages, TOUCH_SCAN_DEFAULT_PAGE } from '../src/lib/marketing/touchMeasurementScan.js';
@@ -44,7 +46,7 @@ async function fetchPage(cursor) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-admin-secret': SECRET },
     body: JSON.stringify({
-      action: 'touchMeasurement',
+      action: 'touchMeasurementPage',
       campaignId: args.campaign,
       pageSize: args.page,
       cursor: cursor || undefined,

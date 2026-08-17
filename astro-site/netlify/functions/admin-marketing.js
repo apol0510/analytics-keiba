@@ -163,7 +163,10 @@ import { readStageGates, describeBlocked } from '../../src/lib/marketing/rollout
 import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journeyModel.js';
 import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
-import { resolveScanPageSize } from '../../src/lib/marketing/touchMeasurementScan.js';
+import {
+  resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
+  MEASUREMENT_INLINE_MAX_PAGES,
+} from '../../src/lib/marketing/touchMeasurementScan.js';
 import {
   planBackfill, describeBackfillPlan, parseNdjson, blobDatePrefix, MAX_BLOBS_PER_RUN,
 } from '../../src/lib/webhooks/deliveryEventBackfill.js';
@@ -800,6 +803,7 @@ export const handler = async (event) => {
     if (action === 'rolloutPause') return await handleRolloutControl({ op: ROLLOUT_OP.PAUSE, now, req });
     if (action === 'rolloutResume') return await handleRolloutControl({ op: ROLLOUT_OP.RESUME, now, req });
     if (action === 'touchMeasurement') return await handleTouchMeasurement({ KEY, BASE, now, req });
+    if (action === 'touchMeasurementPage') return await handleTouchMeasurementPage({ KEY, BASE, now, req });
     if (action === 'eventBackfillDryRun') return await handleEventBackfill({ KEY, BASE, req, event, live: false });
     if (action === 'eventBackfillRun') return await handleEventBackfill({ KEY, BASE, req, event, live: true });
     if (action === 'history') return await handleHistory({ KEY, BASE });
@@ -1617,18 +1621,18 @@ async function fetchDeliveryPage({ KEY, BASE, campaignType, pageSize, cursor }) 
 }
 
 /**
- * touch 別の配信実績（**read-only**・PII なし）。
+ * touch 別の配信実績 **1 ページぶん**（`action=touchMeasurementPage`・read-only・PII なし）。
  *
  * 「送った」だけでなく「**届いた・開かれた**」を touch ごとに出す。
  * 数え方は `touchMeasurement.js` が単一源で、結合は **DeliveryKey 完全一致**。
  *
- * ⚠️ **Blob の全件走査はしない。** 配信台帳から対象の DeliveryKey を名指しで集め、
- *    Redis の索引を bounded read するだけ（既定 1 リクエスト 500 鍵まで）。
+ * ⚠️ **これは 1 ページの数**。応答は必ず `partial` と `scan.cursor` を持つ。
+ *    全体は `action=touchMeasurement`（小さい campaign 用）か
+ *    `npm run scan:touch-measurement`（cursor を辿って合算）で得る。
+ * ⚠️ **Blob の全件走査はしない。** Redis の索引は bounded read（1 ページ ≤ 500 鍵）。
  * ⚠️ 索引が読めないときは **`measurementAvailable: false`**（0 件と書かない）。
- * ⚠️ **1 リクエストで返すのは 1 ページぶんだけ**（`scan.cursor` / `partial`）。
- *    全件は `npm run scan:touch-measurement` が cursor を辿って合算する。
  */
-async function handleTouchMeasurement({ KEY, BASE, now, req }) {
+async function handleTouchMeasurementPage({ KEY, BASE, now, req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
   if (!isSequenceCampaign(base)) {
@@ -1741,6 +1745,63 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
  * ⚠️ **1 バイトも書かない。** 実行（Redis への書き込み）は別の承認境界。
  * ⚠️ Blob は**日付で絞って**読む（全件走査しない）。
  */
+/**
+ * touch 別の配信実績 **全体**（`action=touchMeasurement`・read-only・PII なし）。
+ *
+ * ── 契約（**ここが肝**）────────────────────────────────────────
+ * この action は**昔から「全体の集計」**を返す約束で、runbook の curl もそう読む。
+ * 配信行が増えた今、1 リクエストで全部は数え切れない。そこで:
+ *
+ *   数え切れた   → `complete: true` ＋ 従来どおりの `touches` / `totals`
+ *   数え切れない → **`touches` も `totals` も返さない**（`complete: false` +
+ *                  `code: 'measurement_requires_scan'`）
+ *
+ * ⚠️ **部分集計を全体の形で返さない。** 一部を全体と誤読させるくらいなら
+ *    数を出さない方が安全（2026-08-17 の 504 と同じ「黙って足りない」を作らない）。
+ * ⚠️ 歩くページ数は `MEASUREMENT_INLINE_MAX_PAGES` で頭打ち。
+ *    **ここを増やして全件走査に戻さない。** 大きい campaign は
+ *    `action=touchMeasurementPage` / `npm run scan:touch-measurement` を使う。
+ */
+async function handleTouchMeasurement({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  let pageIndex = 0;
+  let failed = null;
+  const scan = await scanAllTouchPages({
+    maxPages: MEASUREMENT_INLINE_MAX_PAGES,
+    fetchPage: async (cursor) => {
+      const res = await handleTouchMeasurementPage({
+        KEY, BASE, now, req: { ...req, cursor: cursor || undefined, pageIndex },
+      });
+      let body = {};
+      try { body = JSON.parse(res.body || '{}'); } catch { body = {}; }
+      if (res.statusCode !== 200) { failed = body; return null; }
+      pageIndex += 1;
+      return body;
+    },
+  });
+  if (failed) return json(500, { ...failed, sideEffects: 'none' });
+
+  const built = buildInlineMeasurementResult({ scan, budgetPages: MEASUREMENT_INLINE_MAX_PAGES });
+  return json(built.ok ? 200 : 413, {
+    mode: 'touch-measurement',
+    /** 契約が変わったことを読み手が判別できるようにする */
+    schemaVersion: 2,
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    ...built.body,
+    notice: built.ok
+      ? '配信イベントの索引から数えています（open は届いた通が分母）。**全ページを数え切っています**。'
+      : '**数え切れなかったので数字は返していません**（部分を全体として扱わないため）。'
+        + '`action=touchMeasurementPage` で cursor を辿るか、`npm run scan:touch-measurement` を使ってください。',
+  });
+}
+
 async function handleEventBackfill({ KEY, BASE, req, event, live = false }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });

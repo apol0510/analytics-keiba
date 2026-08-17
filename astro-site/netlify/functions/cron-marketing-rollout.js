@@ -51,6 +51,9 @@ import { readAutoGrantGates, GRANT_OPERATION_MAX } from '../../src/lib/comeback/
 import {
   classifyGrantOutcome, describeGrantOutcome, GRANT_OUTCOME,
 } from '../../src/lib/marketing/grantOutcome.js';
+import {
+  pauseWithRetry, describePauseResult, PAUSE_CONFLICT,
+} from '../../src/lib/marketing/rolloutPauseGuard.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
@@ -766,17 +769,29 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       });
       if (!health.ok) {
         // **自分で止まる**（新規付与だけ止め、積み残しの queue / 送信は進む）
-        await saveState({ ...state, stage: 'paused', note: `auto-stop: ${health.reason}` });
-        log({
-          ...view, ok: false, autoStopped: true,
-          batchHealth: describeBatchHealth(health), sideEffects: 'state_only',
+        // ⚠️ 保存が CAS で競合したら「止めた」と報告しない（`pauseWithRetry` が確定させる）
+        const paused = await pauseWithRetry({
+          store, campaignId: STATE_KEY, nowMs: now, note: `auto-stop: ${health.reason}`,
         });
-        return {
+        const body = paused.ok ? {
           ok: false, ...view, abort: 'batch_health_stop',
-          batchHealth: describeBatchHealth(health), sideEffects: 'state_only',
+          autoStopped: true,
+          batchHealth: describeBatchHealth(health),
+          pause: describePauseResult(paused),
+          sideEffects: 'state_only',
           notice: '前のバッチの結果に問題があったため、新規付与を止めました'
             + '（積み残しのキュー登録・送信は続きます）。',
+        } : {
+          ok: false, ...view, abort: PAUSE_CONFLICT,
+          autoStopped: false,
+          batchHealth: describeBatchHealth(health),
+          pause: describePauseResult(paused),
+          sideEffects: 'none',
+          notice: '**停止を確定できませんでした**（展開状態の書き込みが競合）。'
+            + '止まったとは報告しません。付与もキュー登録も送信も行っていません。',
         };
+        log(body);
+        return body;
       }
     }
 
@@ -805,14 +820,32 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     });
 
     if (verdict.outcome === GRANT_OUTCOME.FAILED) {
-      await saveState({ ...state, stage: 'paused', note: `auto-stop: ${verdict.detail || verdict.reason}` });
-      const body = {
+      // ⚠️ **「止めた」と言うからには本当に止まっていること。**
+      //    CAS 競合で保存できていないのに autoStopped を返さない（読み直して上限つきで再試行）。
+      //    どちらの結果でも `settleTick` は呼ばない = batchSeq / dayGrantedCount /
+      //    lastRunCount は動かない。Customers への再付与も行わない。
+      const paused = await pauseWithRetry({
+        store, campaignId: STATE_KEY, nowMs: now,
+        note: `auto-stop: ${verdict.detail || verdict.reason}`,
+      });
+      const body = paused.ok ? {
         ok: false, ...view, abort: verdict.reason,
+        autoStopped: true,
         grantOutcome: describeGrantOutcome(verdict),
+        pause: describePauseResult(paused),
         granted: 0, failed: Number(out?.failed || 0),
         sideEffects: 'state_only',
         notice: '付与を予定しましたが 1 件も書けませんでした。**空回りを避けるため新規付与を止めます**'
           + '（バッチ番号も日次集計も進めていません。積み残しのキュー登録・送信は続きます）。',
+      } : {
+        ok: false, ...view, abort: PAUSE_CONFLICT,
+        autoStopped: false,
+        grantOutcome: describeGrantOutcome(verdict),
+        pause: describePauseResult(paused),
+        granted: 0, failed: Number(out?.failed || 0),
+        sideEffects: 'none',
+        notice: '付与は 1 件もできず、**停止も確定できませんでした**（展開状態の書き込みが競合）。'
+          + '止まったとは報告しません。次の tick で改めて止めます。',
       };
       log(body);
       return body;

@@ -28,6 +28,15 @@ DeliveryKey の計算もイベント索引の読みも**そのページ分だけ
 全体は `npm run scan:touch-measurement` が cursor を辿って合算する
 （`mergeTouchPage` は `pageIndex` で重複を弾き、**率は合計してから 1 回だけ**計算）。
 
+### 追記（同日・PR #356 内）
+
+- **`action` を分離**: `touchMeasurement`（全体・`schemaVersion: 2`。数え切れたときだけ数を返す。
+  足りなければ `complete:false` / `measurement_requires_scan` で**数字を返さない**）と
+  `touchMeasurementPage`（1 ページ・必ず `partial` / `scan.cursor`）。
+  呼び出し元は `scripts/touch-measurement-scan.mjs` だけで、テストが一覧を固定する
+- **自動停止を CAS で確定**: `rolloutPauseGuard.js` の `pauseWithRetry()` が読み直し + 上限つき再試行。
+  確定できなければ `state_write_conflict` / `autoStopped: false` で**止めたと偽らない**
+
 ### テスト
 
 `grantBatchAlignment.test.mjs`（15 件）/ `touchMeasurementScan.test.mjs`（13 件）を追加。
