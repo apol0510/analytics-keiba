@@ -24,6 +24,7 @@ import {
 } from './batchOutcomeSignals.js';
 import { summarizeEventWindow, classifyEvent, windowDates } from './batchEventWindow.js';
 import { readEventWindow } from './eventWindowReader.js';
+import { readBatchDeliveryKeys } from './batchDeliveryKeys.js';
 import { canStartNextBatch, BATCH_STOP } from './batchHealth.js';
 import { normalizeRolloutState, planRolloutTick, ROLLOUT_STAGE, ROLLOUT_BLOCK } from './rolloutPlan.js';
 
@@ -297,3 +298,104 @@ function readRel(rel) {
   const here = dirname(fileURLToPath(import.meta.url));
   return readFileSync(join(here, '..', '..', '..', rel), 'utf8');
 }
+
+// ── 直前バッチへの厳密 scope（DeliveryKey 集合）─────────────────────
+
+test('【重要】同一 campaign・同時間帯の**別バッチ**の spamreport を混ぜない', () => {
+  const prev = 'e'.repeat(64);      // 直前バッチの通
+  const older = 'f'.repeat(64);     // 前のバッチの通（遅れてイベントが届いた）
+  const s = summarize([
+    ev({ eventType: 'spamreport', deliveryKey: older }),
+    ev({ eventType: 'spamreport', deliveryKey: prev }),
+  ], { deliveryKeys: new Set([prev]) });
+  assert.equal(s.complaints, 1, '別バッチのイベントを混ぜている');
+  assert.equal(s.skipped.otherBatch, 1);
+});
+
+test('【重要】同一 campaign・同時間帯の**別 touch**のイベントを混ぜない', () => {
+  // Step2〜24 の定期便は別の通 = 別 DeliveryKey。集合に入らないので数えない
+  const step1 = '1'.repeat(64);
+  const step7 = '7'.repeat(64);
+  const s = summarize([
+    ev({ eventType: 'unsubscribe', deliveryKey: step7 }),
+    ev({ eventType: 'unsubscribe', deliveryKey: step1 }),
+  ], { deliveryKeys: new Set([step1]) });
+  assert.equal(s.unsubscribes, 1, '別 touch のイベントを混ぜている');
+});
+
+test('【重要】前バッチの spamreport 1 件は検知する（scope しても取り逃がさない）', () => {
+  const mine = '2'.repeat(64);
+  const s = summarize([ev({ eventType: 'spamreport', deliveryKey: mine })], {
+    deliveryKeys: new Set([mine]),
+  });
+  assert.equal(s.complaints, 1);
+  assert.equal(judge({ events: s }).reason, BATCH_STOP.COMPLAINTS);
+});
+
+test('【重要】500 名バッチ相当の DeliveryKey 集合で正しく数える', async () => {
+  const keys = Array.from({ length: 500 }, (_, i) => String(i).padStart(64, '0'));
+  const set = new Set(keys);
+  const records = [
+    // このバッチの通（数える）
+    ...keys.slice(0, 3).map((k) => ev({ eventType: 'spamreport', deliveryKey: k })),
+    // 別バッチの通（数えない）
+    ...Array.from({ length: 20 }, (_, i) => ev({
+      eventType: 'spamreport', deliveryKey: String(1000 + i).padStart(64, 'a'),
+    })),
+  ];
+  const s = summarize(records, { deliveryKeys: set });
+  assert.equal(s.complaints, 3);
+  assert.equal(s.skipped.otherBatch, 20);
+});
+
+test('【重要】DeliveryKey 集合を取れなければ fail closed（推測 scope へ戻さない）', async () => {
+  // jobIds が無い / 取り切れない → null
+  assert.equal(await readBatchDeliveryKeys({ apiKey: 'k', baseId: 'b', jobIds: [] }), null);
+  assert.equal(await readBatchDeliveryKeys({ jobIds: ['mkt-x-1'] }), null);
+  const failing = async () => ({ ok: false, status: 500, json: async () => ({}) });
+  assert.equal(await readBatchDeliveryKeys({
+    apiKey: 'k', baseId: 'b', jobIds: ['mkt-x-1'], fetchImpl: failing,
+  }), null, 'HTTP 失敗で一部の鍵を返している');
+  // ページ上限を超えたら null
+  const endless = async () => ({
+    ok: true,
+    json: async () => ({ records: [{ fields: { DeliveryKey: '3'.repeat(64) } }], offset: 'more' }),
+  });
+  assert.equal(await readBatchDeliveryKeys({
+    apiKey: 'k', baseId: 'b', jobIds: ['mkt-x-1'], fetchImpl: endless,
+  }), null, '取り切れていないのに鍵を返している');
+
+  // 集合が無いまま健全性を出さない（運転手の配線）
+  const src = readRel('netlify/functions/cron-marketing-rollout.js');
+  assert.ok(src.includes('deliveryKeys: batchKeys'), '直前バッチの鍵を渡していない');
+  assert.ok(/batchKeys\s*&&/.test(src), '鍵が無いのにイベントを数えようとしている');
+});
+
+test('DeliveryKey 集合は鍵の形だけを受け取る（PII を持ち出さない）', async () => {
+  const ok = async () => ({
+    ok: true,
+    json: async () => ({
+      records: [
+        { fields: { DeliveryKey: '4'.repeat(64) } },
+        { fields: { DeliveryKey: 'not-a-key' } },
+        { fields: {} },
+      ],
+    }),
+  });
+  const keys = await readBatchDeliveryKeys({
+    apiKey: 'k', baseId: 'b', jobIds: ['mkt-x-1'], fetchImpl: ok,
+  });
+  assert.deepEqual([...keys], ['4'.repeat(64)], '鍵の形でない値を混ぜている');
+  const reader = readRel('src/lib/marketing/batchDeliveryKeys.js');
+  assert.equal(/fields\[\]',\s*'(RecipientEmail|Email)'/.test(reader), false, 'アドレスを取得している');
+  assert.equal(/method:\s*'(POST|PATCH|PUT|DELETE)'/.test(reader), false, '書き込みをしている');
+});
+
+test('【重要】バッチの jobIds を状態へ控えている（鍵の導出元）', () => {
+  const src = readRel('netlify/functions/cron-marketing-rollout.js');
+  assert.ok(src.includes('lastBatchJobIds: res.jobIds'), 'queue したジョブを控えていない');
+  const st = normalizeRolloutState({ lastBatchJobIds: ['mkt-a-1', 'mkt-a-2'] });
+  assert.deepEqual(st.lastBatchJobIds, ['mkt-a-1', 'mkt-a-2']);
+  // PII は入らない
+  assert.equal(/@/.test(JSON.stringify(st.lastBatchJobIds)), false);
+});

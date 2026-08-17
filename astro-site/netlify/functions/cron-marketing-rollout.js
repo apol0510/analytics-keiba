@@ -62,6 +62,7 @@ import {
   captureOutcomeSnapshot, diffOutcomeSnapshot, hasOutcomeBaseline, toStoredOutcome,
 } from '../../src/lib/marketing/batchOutcomeSignals.js';
 import { readEventWindow } from '../../src/lib/marketing/eventWindowReader.js';
+import { readBatchDeliveryKeys } from '../../src/lib/marketing/batchDeliveryKeys.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
@@ -800,6 +801,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       // ⚠️ 送信経路が `already_delivered` として弾いた数 = **二重送信の試み**。
       //    0 件が正常（DeliveryKey が構造的に防ぐ）。累計で持ち、健全性は差分で見る
       batchDuplicates: Number(state.batchDuplicates || 0) + Number(res.duplicates || 0),
+      // ⚠️ **このバッチのジョブ**を控える。健全性のイベントを
+      //    「このバッチの通（DeliveryKey）」だけへ絞るための唯一の手掛かり
+      lastBatchJobIds: res.jobIds,
     });
     await bumpSteps({ [res.touch]: { queued: res.queued } });
     log({ ...view, queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only' });
@@ -865,11 +869,24 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
      *        `AddedAt` が古いまま＝**古い登録者の新イベントを取り逃がす**
      *    窓は「このバッチを始めた時刻 → いま」。campaign で絞り、providerEventId で重複を除く。
      */
-    const eventWindow = state.healthBaseline && Number(state.healthBaseline.atMs)
+    /**
+     * ⚠️ **直前バッチの通だけ**を見る。campaign と時刻の窓だけでは、
+     *    同じ campaign の別バッチ（遅れて届いたイベント）や
+     *    別 touch（Step2〜24 の定期便）が混ざる。
+     *    バッチの jobIds → `CampaignDeliveries` → DeliveryKey 集合で厳密に絞る。
+     * ⚠️ 集合を取り切れなければ `null` のまま渡さず、**イベントも数えない**（fail closed）。
+     */
+    const batchKeys = await readBatchDeliveryKeys({
+      apiKey: process.env.AIRTABLE_API_KEY,
+      baseId: process.env.AIRTABLE_BASE_ID,
+      jobIds: state.lastBatchJobIds,
+    }).catch(() => null);
+    const eventWindow = batchKeys && state.healthBaseline && Number(state.healthBaseline.atMs)
       ? await readEventWindow({
         sinceMs: Number(state.healthBaseline.atMs),
         untilMs: now,
         campaignId: ROLLOUT_CAMPAIGN_ID,
+        deliveryKeys: batchKeys,
       }).catch(() => null)
       : null;
     const snapshot = captureOutcomeSnapshot({

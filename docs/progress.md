@@ -47,9 +47,17 @@
 ③ `EmailBlacklist` の行数（**アドレス 1 行の upsert 台帳**で 1 イベント 1 行ではない。
    既存行は `BounceCount+1` の PATCH・`AddedAt` 据え置きなので古い登録者の新イベントを落とす）
 
-`providerEventId` で再送を除き、`campaignId` で他 campaign を除き、`deliveryKey` を渡せば
-直前バッチへ厳密に scope できる。走査上限を超えたら `null` → fail closed。
+**直前バッチの通だけ**に絞る: queue 時に控えた `lastBatchJobIds` → `CampaignDeliveries` を
+名指しで引いて **DeliveryKey 集合**を作り（`batchDeliveryKeys.js`）、その鍵のイベントだけ数える。
+同じ campaign の別バッチ（遅延イベント）・別 touch（Step2〜24）を混ぜない。
+鍵を取り切れなければ `null` → **fail closed**（推測 scope へ戻さない）。
+`providerEventId` で再送を除き、`campaignId` で他 campaign を除く。走査上限超過も fail closed。
 **しきい値は据え置き**（苦情 0 件 / failed 5% / bounce・unsubscribe 2% / duplicate 0）。
+
+⚠️ 併せて、既存テスト `marketingStatusScan.regression.test.mjs` の fixture が
+絶対日付（2026-08-13 / 08-14）で固定されており、**実時間が進むと Step2 の期日が来て落ちる**
+時限爆弾になっていた（2026-08-18 に顕在化・コードの不具合ではない）。
+fixture を「いま」からの相対時刻に直した（**テストのみの修正**）。
 
 影響: 付与 0 / 送信 0（止まっただけ）。しきい値そのものは据え置き。
 

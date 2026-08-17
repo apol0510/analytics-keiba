@@ -601,8 +601,12 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
    **走査上限あり**（`MAX_EVENT_BLOBS`）で、超えたら `null` → fail closed。**読むだけ**。
 ⚠️ 分類: `spamreport` → 苦情 / `unsubscribe`・`group_unsubscribe` → 配信停止 /
    `dropped`・`bounce(hard)` → ハードバウンス / **`bounce(soft)` はハードとして数えない**。
+⚠️ **直前バッチの通だけ**に絞る（campaign と時刻の窓だけでは、同じ campaign の
+   別バッチの遅延イベントや別 touch（Step2〜24 の定期便）が混ざる）。
+   絞り方: queue 時に控えた **`lastBatchJobIds`** → `CampaignDeliveries` を名指しで引く →
+   **DeliveryKey 集合**（`batchDeliveryKeys.js`）。取り切れなければ **null → fail closed**
+   （鍵が無いままイベントを数えない）。
 ⚠️ `providerEventId` で**再送を二重に数えない**。`campaignId` で**他 campaign を混ぜない**。
-   `deliveryKey` を渡せば**直前バッチの通だけ**へ厳密に scope できる。
 ⚠️ **しきい値は変えていない**（苦情 0 件 / failed 5% / bounce・unsubscribe 2% / duplicate 0）。
 
 | 見るもの | 止める条件（既定） |

@@ -150,6 +150,13 @@ export function defaultRolloutState() {
      */
     batchDuplicates: 0,
     /**
+     * **直前の論理バッチで作ったジョブ ID**（`ScheduledEmails.JobId`）。
+     * ここから `CampaignDeliveries` を名指しで引き、そのバッチの **DeliveryKey 集合**を得て、
+     * 健全性のイベントを「**そのバッチの通**」だけに絞る
+     * （同じ campaign の別バッチ・別 touch のイベントを混ぜないため）。
+     */
+    lastBatchJobIds: [],
+    /**
      * 「今日動かしてよい」という明示。`YYYY-MM-DD`（JST）。
      * 置きっぱなしでも**翌日には効かなくなる**ので、暴走しない。
      * `alwaysArmed: true` なら日付を毎日置き直さずに継続運用できる。
@@ -237,6 +244,9 @@ export function normalizeRolloutState(raw) {
       )
       : null,
     batchDuplicates: Math.max(0, num(raw.batchDuplicates) ?? 0),
+    lastBatchJobIds: Array.isArray(raw.lastBatchJobIds)
+      ? raw.lastBatchJobIds.map((v) => str(v).slice(0, 120)).filter(Boolean).slice(0, 50)
+      : [],
     armedFor: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.armedFor)) ? str(raw.armedFor) : null,
     alwaysArmed: raw.alwaysArmed === true,
     lastRunDay: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.lastRunDay)) ? str(raw.lastRunDay) : null,
