@@ -84,6 +84,7 @@ const startPayload = (over = {}) => ({
   action: 'rolloutStart',
   stage: 'canary',
   dailyLimit: 100,
+  batchSize: 100,
   alwaysArmed: false,
   armedFor: TODAY,
   expectedVersion: null,
@@ -133,6 +134,8 @@ test('【重要】壊れた指定は 400 で、1 バイトも書かない', asyn
     { alwaysArmed: false, armedFor: undefined },
     { armedFor: '2020-01-01' },
     { expectedVersion: undefined },
+    { batchSize: undefined },
+    { batchSize: 101 },
   ]) {
     const w = stubWorld();
     // eslint-disable-next-line no-await-in-loop
@@ -156,7 +159,7 @@ test('【重要】CAS が競合したら 409 で書かない', async () => {
 test('既存キーを正しい版で更新できる（500 名へ拡大する形）', async () => {
   const w = stubWorld({ initial: { ...defaultRolloutState(), version: 5, stage: 'canary' } });
   const { statusCode, body } = await invoke(startPayload({
-    stage: 'scale', dailyLimit: 500, expectedVersion: 5,
+    stage: 'scale', dailyLimit: 500, batchSize: 500, expectedVersion: 5,
   }));
   assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
   assert.equal(w.state().stage, 'scale');
@@ -254,7 +257,7 @@ test('【重要】返した版でそのまま開始できる（読み → 開始
   stubWorld({ initial: { ...defaultRolloutState(), version: 3, stage: 'paused' } });
   const read = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
   const start = await invoke(startPayload({
-    stage: 'scale', dailyLimit: 500, expectedVersion: read.body.stateVersion,
+    stage: 'scale', dailyLimit: 500, batchSize: 500, expectedVersion: read.body.stateVersion,
   }));
   assert.equal(start.statusCode, 200, JSON.stringify(start.body).slice(0, 200));
   assert.equal(start.body.stage, 'scale');
@@ -266,4 +269,17 @@ test('rollout は read-only のまま（版を返しても書かない）', asyn
   const { body } = await invoke({ action: 'rollout', campaignId: CAMPAIGN_ID });
   assert.equal(body.sideEffects, 'none');
   assert.equal(w.state().version, 2);
+});
+
+test('【重要】15,000 名を 500 名ずつ配る指定が本番の形で通る', async () => {
+  const w = stubWorld();
+  const { statusCode, body } = await invoke(startPayload({
+    stage: 'scale', dailyLimit: 15000, batchSize: 500,
+    note: 'group rollout 15k (500 x 30)',
+  }));
+  assert.equal(statusCode, 200, JSON.stringify(body).slice(0, 200));
+  assert.equal(body.dailyLimit, 15000);
+  assert.equal(body.batchSize, 500);
+  assert.equal(w.state().dailyLimit, 15000);
+  assert.equal(w.state().batchSize, 500);
 });

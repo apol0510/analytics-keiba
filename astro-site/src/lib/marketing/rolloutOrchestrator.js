@@ -154,8 +154,10 @@ export function planQueueAfterGrant({ grantedRecordIds }) {
  * ⚠️ **付与した数だけを `lastRun` に刻む。** queue / dispatch が途中で落ちても、
  *    同じ日に二重に配らないことはこれで守られる（続きは次の tick が拾う）。
  */
-export function settleTick({ state, nowMs, granted }) {
-  return applyRolloutRun({ state, nowMs, granted: Math.max(0, num(granted) ?? 0) });
+export function settleTick({ state, nowMs, granted, batchSeq }) {
+  return applyRolloutRun({
+    state, nowMs, granted: Math.max(0, num(granted) ?? 0), batchSeq: num(batchSeq),
+  });
 }
 
 /**

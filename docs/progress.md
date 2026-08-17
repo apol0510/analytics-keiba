@@ -1,3 +1,63 @@
+## 2026-08-17 — 【変更】同日に複数バッチを回せるようにする（1 日 1 回の廃止）
+
+約 15,000 件を「安全なグループ単位で連続配信する」目的に対し、
+`lastRunDay === 今日 なら常に拒否`（1 日 1 回）が噛み合っていなかった（1 日 1 バッチだと 30 日）。
+
+### 変えたこと
+
+- **「1 日 1 回」を廃止**。`lastRunDay` の役割は「今日の集計がどの日のものか」だけに縮小
+- `dailyLimit` は **1 日に配れる合計人数**（回数ではない）
+- **`batchSize`** を追加（1 回に配る人数。未指定なら `dailyLimit` と同じ＝従来どおり）
+- `armedFor` は**その日のうち有効**（1 バッチで外れない）。翌日には失効
+
+### 二重付与・二重送信を防ぐもの（1 日 1 回の代替）
+
+1. 関所（`previousOutstanding > 0` なら次を始めない）＝ バッチの直列化
+2. 1 日の合計上限（`dailyLimit` / 絶対上限 2000）
+3. **バッチごとに一意な operationId**（`light-trial-YYYY-MM-DD` / `-b2` / `-b3`…）。
+   1 バッチ目は従来と同じ形なので既存データ（8/15・8/16 の付与）と互換
+4. DeliveryKey（同じ人へ同じ touch を二度送らない）
+5. kill switch（全アクションに優先）
+
+### バッチ間の健全性チェック（`batchHealth.js`）
+
+2 バッチ目以降は前バッチの結果を機械が確認してから始める。
+duplicate / 苦情は 1 件でも停止、failed 5% 超・bounce 2% 超・unsubscribe 2% 超で停止、
+`previousOutstanding` が 0 でない・停止リストが読めない・**数えられない値がある**も停止。
+異常時は運転手が `stage: 'paused'` へ落として自分で止まる（積み残しの送信は続く）。
+
+### テスト（+23）
+
+同日 500 × 4 バッチ → 1 日上限で停止 / 関所が直列化する / operationId がバッチごとに一意で
+再実行は冪等 / 絶対上限を超えない / 残り候補が少なければ残りだけ / 緊急停止が優先 /
+武装した日のうちは複数バッチ・翌日は停止 / 15,000 件を 2000/日 で 8 日 / 従来の 1 日 1 バッチ運用も維持。
+
+`npm run test:marketing` **1,874 pass / 0 fail**・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0・secret scan 0 件。
+
+### 最終設計へ修正（同日 / 2026-08-17）
+
+初期カナリア用の `HARD_DAILY_MAX = 2000` 固定では、最終目的（約 15,000 件へ配る）に小さすぎた。
+
+- `HARD_DAILY_MAX = 2000` 固定を廃止 → **`ABSOLUTE_MAX_PER_DAY = 20000`**（設定可能な安全上限）
+- `dailyLimit` と `batchSize` を**完全に分離**し、**両方とも rolloutStart で明示必須**
+  （既定値で代用すると「15,000 名を 1 バッチで投げる」事故になる）
+- cron を**毎時 → 5 分間隔**へ。1 バッチ = 3 tick なので、毎時では 15,000 件に 90 時間かかる。
+  5 分間隔なら 500×30 = 90 tick ≈ **7.5 時間**、1000×15 = 45 tick ≈ **3.75 時間**で同日完走
+- 速さを決めるのは cron ではなく**関所**（前バッチの Step1 が送り終わるまで次を始めない）
+
+追加テスト: 15,000 件を 500×30 / 1000×15 で同日完走 / 途中で duplicate・苦情・
+suppression 読取不能が出たら**残りのバッチが即停止** / 絶対上限で頭打ち /
+1 日上限を小さくすればその日はそこで止まる / batchSize 必須・1 日上限超えは拒否。
+
+`npm run test:marketing` **1,887 pass / 0 fail**・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0・secret scan 0 件。
+
+### やっていないこと
+
+production deploy / production Redis state 変更 / 実顧客への新規付与 / 実メール送信 / PR merge。
+**Last verified**: 2026-08-17
+
 ## 2026-08-16 — 【追加】1 通ごとの配信計測（DeliveryKey 索引 → sequencePolicy 配線）
 
 100 名カナリアの Step1 は sent=100 / failed=0 まで確認できたが、**delivered / open が

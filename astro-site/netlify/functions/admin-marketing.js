@@ -1491,7 +1491,7 @@ async function handleRollout({ KEY, BASE, now, req }) {
  * ── 安全策 ────────────────────────────────────────────────────
  * - 管理 secret 必須（この Function の入口で検証済み）
  * - 受け付ける値は `rolloutControl.js` が allow-list で絞る
- *   （段階は 5 値・上限は 0〜{HARD_DAILY_MAX} の整数・武装日は当日〜7 日先）
+ *   （段階は 5 値・1 日上限と 1 バッチ人数は必須の整数・武装日は当日〜7 日先）
  * - `start` は **CAS 必須**（`expectedVersion`。競合したら書かない）
  * - `kill` は競合しても 1 度やり直す（**止める操作は通したい**）
  * - 応答に PII・secret を入れない

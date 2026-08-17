@@ -85,6 +85,8 @@ async function readDeliveries({ apiKey, baseId, campaignType }) {
  */
 export async function loadAndPlanLightTrial({
   env = process.env, nowMs = Date.now(), gates, batchSizeOverride = null, deps = {},
+  /** そのバッチの通し番号（同じ日の 2 バッチ目以降は operationId が枝番になる） */
+  batchSeq = 1,
 } = {}) {
   const apiKey = env.AIRTABLE_API_KEY;
   const baseId = env.AIRTABLE_BASE_ID;
@@ -203,6 +205,7 @@ export async function loadAndPlanLightTrial({
     brand: BRAND,
     fromEmail: getBrandConfig(BRAND).defaultFromEmail,
     barrierRecords: barrierFetch.rows,
+    batchSeq,
   });
 
   return {

@@ -1240,6 +1240,33 @@ DeliveryKey = `campaignId × version × step × 受信者`。version を上げ�
 
 ---
 
+## グループ配信の単位（2026-08-17 / 同日複数バッチ）
+
+約 15,000 件を安全に配るため、**同じ日に複数バッチ**を回せる。
+
+| 概念 | 意味 |
+|---|---|
+| `batchSize` | **1 回に配る人数**（例 500）。**必須**（既定値で代用しない） |
+| `dailyLimit` | **1 日に配れる合計人数**（回数ではない。例 15000）。**必須** |
+| `ABSOLUTE_MAX_PER_DAY` | 絶対上限 **20000**（状態が壊れても超えない。15,000 件を 1 日で配り切れる） |
+| `lastRunDay` | **今日の集計がどの日のものか**（「1 日 1 回」の禁止札ではない） |
+| `batchSeq` | 今日のバッチ通し番号。`operationId` の枝番になる |
+
+**「1 日 1 回」は廃止した。** 代わりに次が二重付与・二重送信を防ぐ:
+
+1. **関所**（`previousOutstanding > 0` なら次を始めない）＝ バッチの直列化
+2. 1 日の合計上限
+3. **バッチごとに一意な `operationId`**（`light-trial-YYYY-MM-DD` / `-b2` …。
+   1 バッチ目は従来の形なので既存データと互換。同じ値の再実行は冪等）
+4. DeliveryKey（campaign × version × step × 受信者）
+5. kill switch（全アクションに優先）
+
+**バッチ間の健全性チェック**（`batchHealth.js`）: 2 バッチ目以降は前バッチの
+failed / duplicate / bounce / complaint / unsubscribe / outstanding / suppression を確認し、
+**数えられない値があれば進まない**。異常なら `stage: 'paused'` へ落として自分で止まる。
+
+---
+
 ## 配信イベントの計測（2026-08-16 / 1 通ごと）
 
 ### 保存先

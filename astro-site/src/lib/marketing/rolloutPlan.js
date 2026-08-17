@@ -40,14 +40,27 @@ export const STAGE_DEFAULT_DAILY = Object.freeze({
   completed: 0,
 });
 
-/** 1 日あたりの絶対上限。**状態が壊れてもこれを超えない** */
-export const HARD_DAILY_MAX = 2000;
+/**
+ * 1 日あたりの**絶対上限**。状態が壊れてもこれを超えない。
+ *
+ * ⚠️ 以前は 2000 固定だった（カナリア期の安全弁）。
+ *    AK の最終目的は約 15,000 件のコホートへ Step1 を配ることで、
+ *    2000/日 では 8 日かかる。**必要なら 1 日で配り切れる**ようにここを上げ、
+ *    実際の配信量は運用が `dailyLimit` で明示する（既定値は無い＝必ず指定させる）。
+ * ⚠️ それでも**無制限にはしない**。桁を間違えた指定（15 万など）は弾く。
+ */
+export const ABSOLUTE_MAX_PER_DAY = 20000;
 
 /** 進めない理由（固定コード。件数・理由だけを画面へ出す） */
 export const ROLLOUT_BLOCK = Object.freeze({
   KILLED: 'kill_switch',
   PAUSED: 'paused',
   NOT_ARMED: 'not_armed',
+  /**
+   * ⚠️ **廃止**。以前は「同じ日は 1 回だけ」を強制していたが、
+   *    同日に複数バッチを回すグループ配信と噛み合わないためやめた。
+   *    値は互換のため残す（過去ログ・画面のラベル用）。
+   */
   ALREADY_RAN_TODAY: 'already_ran_today',
   WAITING_PREVIOUS: 'waiting_previous_step1',
   NO_CANDIDATES: 'no_candidates',
@@ -90,8 +103,20 @@ export function defaultRolloutState() {
     stage: ROLLOUT_STAGE.PAUSED,
     /** 緊急停止。true なら段階に関係なく止まる */
     killed: false,
-    /** 1 日あたりの上限（未指定なら段階の既定） */
+    /**
+     * **1 日あたりの上限**（未指定なら段階の既定）。
+     * ⚠️ 「1 日 1 回」ではない。1 日に配ってよい**合計人数**。
+     */
     dailyLimit: null,
+    /**
+     * **1 バッチの人数**（未指定なら `dailyLimit` と同じ = 1 日 1 バッチ相当）。
+     * 15,000 件を安全に配るには「500 名 → 完了確認 → 次の 500 名」を同日中に繰り返す。
+     */
+    batchSize: null,
+    /** 今日すでに配った人数（`lastRunDay` が今日でなければ 0 として扱う） */
+    dayGrantedCount: 0,
+    /** 今日のバッチ通し番号（1 から。`operationId` の枝番になる） */
+    batchSeq: 0,
     /**
      * 「今日動かしてよい」という明示。`YYYY-MM-DD`（JST）。
      * 置きっぱなしでも**翌日には効かなくなる**ので、暴走しない。
@@ -99,7 +124,13 @@ export function defaultRolloutState() {
      */
     armedFor: null,
     alwaysArmed: false,
-    /** 最後に実行した JST 日と件数（同じ日に二重に走らせない） */
+    /**
+     * 最後に実行した JST 日と件数。
+     * ⚠️ 役割は「**今日の集計がどの日のものか**」を示すことだけ。
+     *    以前はこれで「同じ日は 1 回だけ」を強制していたが、
+     *    グループ配信（同日に 500 名 × 複数バッチ）と噛み合わないため廃止した。
+     *    二重付与は operationId の冪等性・DeliveryKey・関所が防ぐ。
+     */
     lastRunDay: null,
     lastRunCount: 0,
     /** 累計（画面表示・進捗） */
@@ -146,12 +177,18 @@ export function normalizeRolloutState(raw) {
   if (!raw || typeof raw !== 'object') return d;
   const stage = Object.values(ROLLOUT_STAGE).includes(str(raw.stage)) ? str(raw.stage) : d.stage;
   const dailyRaw = num(raw.dailyLimit);
-  const daily = dailyRaw !== null && dailyRaw >= 0 ? Math.min(Math.floor(dailyRaw), HARD_DAILY_MAX) : null;
+  const daily = dailyRaw !== null && dailyRaw >= 0 ? Math.min(Math.floor(dailyRaw), ABSOLUTE_MAX_PER_DAY) : null;
   return {
     version: num(raw.version) || 1,
     stage,
     killed: raw.killed === true,
     dailyLimit: daily,
+    batchSize: (() => {
+      const b = num(raw.batchSize);
+      return b !== null && b > 0 ? Math.min(Math.floor(b), ABSOLUTE_MAX_PER_DAY) : null;
+    })(),
+    dayGrantedCount: Math.max(0, num(raw.dayGrantedCount) ?? 0),
+    batchSeq: Math.max(0, num(raw.batchSeq) ?? 0),
     armedFor: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.armedFor)) ? str(raw.armedFor) : null,
     alwaysArmed: raw.alwaysArmed === true,
     lastRunDay: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.lastRunDay)) ? str(raw.lastRunDay) : null,
@@ -180,7 +217,26 @@ export function resolveDailyLimit(state) {
   const s = normalizeRolloutState(state);
   const byStage = STAGE_DEFAULT_DAILY[s.stage] ?? 0;
   const n = s.dailyLimit === null ? byStage : s.dailyLimit;
-  return Math.max(0, Math.min(n, HARD_DAILY_MAX));
+  return Math.max(0, Math.min(n, ABSOLUTE_MAX_PER_DAY));
+}
+
+/**
+ * 1 バッチの人数。**指定が無ければ 1 日上限と同じ**（＝従来どおり 1 日 1 バッチ相当）。
+ *
+ * ⚠️ 「1 日に配れる合計」（`dailyLimit`）と「1 回に配る人数」（`batchSize`）は別物。
+ *    15,000 件を安全に配るには、500 名を配って結果を確かめ、また 500 名…を繰り返す。
+ */
+export function resolveBatchSize(state) {
+  const s = normalizeRolloutState(state);
+  const daily = resolveDailyLimit(s);
+  const b = s.batchSize === null ? daily : s.batchSize;
+  return Math.max(0, Math.min(b, daily, ABSOLUTE_MAX_PER_DAY));
+}
+
+/** 今日すでに配った人数（日付が変わっていれば 0） */
+export function grantedToday(state, nowMs) {
+  const s = normalizeRolloutState(state);
+  return s.lastRunDay === jstDay(nowMs) ? s.dayGrantedCount : 0;
 }
 
 /**
@@ -200,7 +256,12 @@ export function planRolloutTick({
   const s = normalizeRolloutState(state);
   const day = jstDay(nowMs);
   const dailyLimit = resolveDailyLimit(s);
-  const base = { allowance: 0, stage: s.stage, dailyLimit, day };
+  const batchSize = resolveBatchSize(s);
+  const base = {
+    allowance: 0, stage: s.stage, dailyLimit, batchSize, day,
+    grantedToday: grantedToday(s, nowMs),
+    batchSeq: s.lastRunDay === jstDay(nowMs) ? s.batchSeq : 0,
+  };
 
   // ① env のマスタースイッチ。**既定 OFF**（コード側の最後の砦）
   if (envEnabled !== true) return { ...base, ok: false, reason: ROLLOUT_BLOCK.PAUSED };
@@ -213,37 +274,68 @@ export function planRolloutTick({
   if (!s.alwaysArmed && s.armedFor !== day) {
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.NOT_ARMED };
   }
-  // ④ 同じ日に二重に走らせない（cron の重複起動・手動再実行）
-  if (s.lastRunDay === day) return { ...base, ok: false, reason: ROLLOUT_BLOCK.ALREADY_RAN_TODAY };
-
-  // ⑤ 前回ぶんの Step1 が片付くまで次を配らない（関所）
+  // ④ 前のバッチが片付くまで次を配らない（**関所＝バッチの直列化**）
+  //    ⚠️ ここが「同じ日は 1 回だけ」に代わる安全装置。
+  //       付与 → queue → 送信 → 台帳確認 が終わるまで `outstanding > 0` なので、
+  //       次のバッチは始まらない。cron が重複起動しても同じ判断になる。
   const outstanding = num(previousOutstanding);
   if (outstanding === null) return { ...base, ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE };
   if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
 
-  // ⑥ 対象が読めない / いない
+  // ⑤ 対象が読めない / いない
   const remaining = num(remainingCandidates);
   if (remaining === null) return { ...base, ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE };
   if (remaining <= 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.NO_CANDIDATES };
 
+  // ⑥ 今日の残り枠（**1 日 1 回ではなく、1 日の合計人数**で止める）
   if (dailyLimit <= 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED };
+  const already = grantedToday(s, nowMs);
+  const dailyRoom = Math.min(dailyLimit, ABSOLUTE_MAX_PER_DAY) - already;
+  if (dailyRoom <= 0) {
+    return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED, grantedToday: already };
+  }
 
-  return { ...base, ok: true, allowance: Math.min(dailyLimit, remaining), reason: null };
+  const allowance = Math.min(batchSize, dailyRoom, remaining);
+  if (allowance <= 0) {
+    return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED, grantedToday: already };
+  }
+
+  return {
+    ...base,
+    ok: true,
+    allowance,
+    reason: null,
+    grantedToday: already,
+    /** このバッチの通し番号（`operationId` の枝番になる。1 日の中で必ず増える） */
+    batchSeq: (s.lastRunDay === day ? s.batchSeq : 0) + 1,
+  };
 }
 
 /** 実行後の状態（**同じ日にもう一度走らせない**印を必ず付ける） */
-export function applyRolloutRun({ state, nowMs, granted }) {
+export function applyRolloutRun({ state, nowMs, granted, batchSeq }) {
   const s = normalizeRolloutState(state);
   const day = jstDay(nowMs);
   const n = Math.max(0, num(granted) ?? 0);
+  // 日付が変われば今日の集計は 0 から数え直す
+  const already = s.lastRunDay === day ? s.dayGrantedCount : 0;
+  const seq = num(batchSeq);
   return {
     ...s,
     lastRunDay: day,
     lastRunCount: n,
+    dayGrantedCount: already + n,
+    batchSeq: seq !== null && seq > 0
+      ? seq
+      : (s.lastRunDay === day ? s.batchSeq : 0) + 1,
     totalGranted: s.totalGranted + n,
     updatedAtMs: Number(nowMs) || null,
-    // 日付指定で動かしている運用では、1 日 1 回で自動的に閉じる
-    armedFor: s.alwaysArmed ? s.armedFor : null,
+    /**
+     * ⚠️ **武装（armedFor）はその日のうちは外さない。**
+     *    以前は 1 バッチで外していたが、それだと同日 2 バッチ目が
+     *    `not_armed` で止まる。1 日の上限（`dailyLimit`）と関所で守る。
+     *    翌日には日付が変わって自然に失効する。
+     */
+    armedFor: s.alwaysArmed ? s.armedFor : (s.armedFor === day ? day : null),
   };
 }
 
