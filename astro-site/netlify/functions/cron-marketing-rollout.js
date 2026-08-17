@@ -59,8 +59,9 @@ import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/jo
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
 import { canStartNextBatch, describeBatchHealth } from '../../src/lib/marketing/batchHealth.js';
 import {
-  captureHealthSnapshot, diffHealthSnapshot, hasHealthBaseline, toStoredBaseline,
-} from '../../src/lib/marketing/batchHealthBaseline.js';
+  captureOutcomeSnapshot, diffOutcomeSnapshot, hasOutcomeBaseline, toStoredOutcome,
+} from '../../src/lib/marketing/batchOutcomeSignals.js';
+import { readBlacklistWindow } from '../../src/lib/marketing/blacklistWindowReader.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
@@ -261,6 +262,9 @@ async function queueStep({ campaignId = ROLLOUT_CAMPAIGN_ID, step, grantOperatio
   }
   return {
     ok: true,
+    // 送信経路が「もう届けた」として弾いた数 = **二重送信の試み**（正常は 0）
+    duplicates: Number(live.body?.skippedByReason?.already_delivered
+      ?? live.body?.byReason?.already_delivered ?? 0),
     step,
     campaignId,
     /** 通し番号（1〜24）。集計と画面はこちらで数える */
@@ -793,6 +797,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       ...state, pendingHandoffOp: null, pendingHandoffOps: [],
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
       jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
+      // ⚠️ 送信経路が `already_delivered` として弾いた数 = **二重送信の試み**。
+      //    0 件が正常（DeliveryKey が構造的に防ぐ）。累計で持ち、健全性は差分で見る
+      batchDuplicates: Number(state.batchDuplicates || 0) + Number(res.duplicates || 0),
     });
     await bumpSteps({ [res.touch]: { queued: res.queued } });
     log({ ...view, queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only' });
@@ -848,7 +855,18 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
      *    それを苦情（0 件許容）として渡すと**永久に開始できない**
      *    （2026-08-17: 全コホート開始の 1 tick 目で `complaints_detected` 誤検知）。
      */
-    const snapshot = captureHealthSnapshot({
+    /**
+     * ⚠️ 健全性の件数は**前バッチで起きたイベント**だけ。正本は `EmailBlacklist`
+     *    （Event Webhook が書く唯一の経路）。`byStopReason`（＝いま候補を除外する理由）は
+     *    **使わない** — 展開では母集団が 1 バッチ 500 名ずつ増えるので、
+     *    以前から停止リストに載っていた人が入るだけで増えてしまう（2026-08-17 に 2 度誤停止）。
+     */
+    const blacklist = await readBlacklistWindow({
+      apiKey: process.env.AIRTABLE_API_KEY,
+      baseId: process.env.AIRTABLE_BASE_ID,
+      nowMs: now,
+    }).catch(() => null);
+    const snapshot = captureOutcomeSnapshot({
       jobsSent: jobs
         ? [...jobs.byId.values()]
           .filter((j) => j && j.status !== 'PENDING')
@@ -857,12 +875,14 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       jobsFailed: jobs
         ? [...jobs.byId.values()].reduce((a, j) => a + (Number(j.failedCount) || 0), 0)
         : null,
-      dueSummary: due ? due.summary : null,
+      // 二重送信は DeliveryKey が構造的に防ぐ。送信経路が弾いた数を状態から受け取る
+      duplicates: Number(state.batchDuplicates || 0),
+      blacklist,
     });
     const baseline = state.healthBaseline;
     // 最初のバッチ（比較相手が無い）は健全性判定を行わない。関所・1 日上限・kill が守る
-    if (seq > 1 && hasHealthBaseline(baseline)) {
-      const delta = diffHealthSnapshot(baseline, snapshot);
+    if (seq > 1 && hasOutcomeBaseline(baseline)) {
+      const delta = diffOutcomeSnapshot(baseline, snapshot);
       const health = canStartNextBatch({
         sent: delta.counts.sent,
         failed: delta.counts.failed,
@@ -985,8 +1005,8 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     // ⚠️ 新しいバッチを始めたときだけ基準点を置き直す（このバッチの「起点」）。
     //    バッチ途中（200 → 400 → 500）で置き直すと、そのバッチ自身の結果が消える。
     const nextBaseline = decision.plan && decision.plan.startsNewBatch === true
-      ? toStoredBaseline(snapshot, now)
-      : (state.healthBaseline || toStoredBaseline(snapshot, now));
+      ? toStoredOutcome(snapshot, now)
+      : (state.healthBaseline || toStoredOutcome(snapshot, now));
     await saveState({
       ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null,
       healthBaseline: nextBaseline,

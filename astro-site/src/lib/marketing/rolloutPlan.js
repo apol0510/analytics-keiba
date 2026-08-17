@@ -145,6 +145,11 @@ export function defaultRolloutState() {
      */
     healthBaseline: null,
     /**
+     * 送信経路が `already_delivered` として弾いた**累計**（＝二重送信の試み）。
+     * 正常は 0 のまま。健全性は前バッチからの**差分**で見る。
+     */
+    batchDuplicates: 0,
+    /**
      * 「今日動かしてよい」という明示。`YYYY-MM-DD`（JST）。
      * 置きっぱなしでも**翌日には効かなくなる**ので、暴走しない。
      * `alwaysArmed: true` なら日付を毎日置き直さずに継続運用できる。
@@ -231,6 +236,7 @@ export function normalizeRolloutState(raw) {
           .map((k) => [k, num(raw.healthBaseline[k])]),
       )
       : null,
+    batchDuplicates: Math.max(0, num(raw.batchDuplicates) ?? 0),
     armedFor: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.armedFor)) ? str(raw.armedFor) : null,
     alwaysArmed: raw.alwaysArmed === true,
     lastRunDay: /^\d{4}-\d{2}-\d{2}$/.test(str(raw.lastRunDay)) ? str(raw.lastRunDay) : null,

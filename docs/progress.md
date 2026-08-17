@@ -33,10 +33,19 @@
 - `byStopReason.provider_suppressed` … **候補を除外した理由**（静的・累積）
 - 苦情・バウンス・配信停止 … **前のバッチで起きた出来事**（増分）
 
-`batchHealthBaseline.js` を追加し、バッチ開始時に累積値のスナップショット（`healthBaseline`）を
-控えて**差分**で判定する。最初のバッチは比較相手が無いので健全性判定を行わない。
-`rolloutStart` は基準点を捨てる（止まっていた間の変化を 1 バッチの結果と誤認しない）。
-数えられない項目があれば差分を出さず fail closed（`canStartNextBatch` が `unreadable` で止める）。
+**入力ソースそのものを差し替えた**（`batchOutcomeSignals.js` + `blacklistWindowReader.js`）。
+
+| 指標 | 正本 |
+|---|---|
+| sent / failed | ジョブ台帳（`ScheduledEmails`） |
+| duplicate | 送信経路が `already_delivered` で弾いた数 |
+| spam complaint / unsubscribe / hard bounce | **`EmailBlacklist` の直近 2 日窓**を `BounceType` で分類 |
+
+`byStopReason`（現在状態）は**一切使わない**。展開は 1 バッチ 500 名ずつ母集団が増えるので、
+以前から停止リストに載っていた人が入るだけで差分が増え、**同じ誤停止を繰り返す**ため。
+`EmailBlacklist` は**イベントが起きたときだけ行が増える**ので母集団の増加では動かない。
+バッチ開始時にスナップショットを控えて差分で判定し、最初のバッチは判定しない。
+読めなければ 0 と書かず fail closed。**しきい値は据え置き**。
 
 影響: 付与 0 / 送信 0（止まっただけ）。しきい値そのものは据え置き。
 
