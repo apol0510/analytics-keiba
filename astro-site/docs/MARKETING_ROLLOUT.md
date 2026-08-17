@@ -606,12 +606,56 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
    既定値で代用すると「15,000 名を 1 バッチで投げる」事故になる。
 ⚠️ `armedFor` は**その日のうち有効**（1 バッチで外れない）。翌日には失効する。
 
+#### 🩹 候補の観測窓は `batchSize` に必ず合わせる（2026-08-17 の事故と恒久対策）
+
+`batchSize=500 / dailyLimit=500` で開始したのに、tick が **100 名しか付与しなかった**。
+
+原因は**事実収集の観測窓**。tick は候補数を数えるために
+`loadAndPlanLightTrial()` を呼ぶが、ここに人数を渡していなかったため
+付与側の既定（`LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE` 未設定 = `DEFAULT_BATCH_SIZE` 100）で
+候補の取得が打ち切られ、`remainingCandidates = 100` になった。
+`allowance = min(batchSize, dailyRoom, remaining)` なので、**エラーを出さずに**
+バッチが 100 名へ縮む（silent cap）。
+
+対策（`resolveObservationWindow(state, nowMs, { perCallMax })` を単一源にした）:
+
+| | 値 |
+|---|---|
+| 観測窓 | `min(batchSize, 今日の残り枠, 付与 1 回の上限)` |
+| 例: `batchSize=500` / 今日まだ 0 名 | **500** |
+| 例: `batchSize=500` / 今日すでに 100 名 | **400**（= `dailyLimit 500 − 100`） |
+| 例: `batchSize=1000` / 今日まだ 0 名 | **500**（= 付与 1 回の上限。残り 500 は次の tick） |
+| 例: 今日の残り枠 0 | **0**（読みにも行かない） |
+
+#### 人数の上限は 2 軸あり、混同しない
+
+| 軸 | 値 | 出どころ |
+|---|---|---|
+| **付与 1 回**（`runLightTrialGrant` 1 呼び出し） | **500**（`HARD_MAX_BATCH_SIZE`） | #319 以来の既存仕様。1 回の事故の範囲を狭く保つ歯止め。**超える値は実行しない**（fail closed） |
+| **送信の子バッチ** | 既定 500 / **上限 1,000** | `docs/spec.md`（配送の実行モデル） |
+| **1 日に配れる合計** | `dailyLimit`（絶対上限 `ABSOLUTE_MAX_PER_DAY = 20000`） | #354 |
+
+⚠️ `batchSize` に **1000 を指定してよい**（送信側の刻みとして正式に許可されている）。
+   `rolloutStart` は**断らない**。付与だけは 1 回 500 で刻み、残りは次の tick が続きを拾う
+   （`dayGrantedCount` が積み上がるので `dailyLimit` の意味は変わらない）。
+   **「設定を断る」のではなく「分けて配る」**。
+
+- 残数は **`counts.candidates`（実際に配れる人の数）** で数える。
+  `cohort.inCohort` は「読んだ Airtable の行数」なので、除外された人まで数えてしまう。
+- `moreAvailable === true` のときの件数は「少なくともこれだけ居る」という**下限**。
+  `remainingIsLowerBound: true` を facts に持たせ、**全残数として断定させない**。
+- `moreAvailable === false` なら窓の中で拾えた分が確定値（**最後の端数を取りこぼさない**）。
+
+⚠️ **env `LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE` で回避しない。** 展開状態（`batchSize`）と
+   env の 2 か所に人数の正本ができ、どちらが効いているか分からなくなる。
+   人数の正本は**展開状態だけ**。
+
 ### 15,000 件を 1 日で配り切る
 
 | 割り方 | バッチ数 | tick 数（1 バッチ = 付与 / queue / 送信の 3 tick） | 所要（5 分間隔） |
 |---|---|---|---|
 | 500 × 30 | 30 | 90 | 約 **7.5 時間** |
-| 1000 × 15 | 15 | 45 | 約 **3.75 時間** |
+| 1000 × 15 | 15 | 45 | 約 **3.75 時間**（付与は 500 ずつ 2 回に分かれる。下記） |
 
 cron は **5 分間隔**（毎時 1 回だと 90 時間かかり「1 日で配り切る」に届かない）。
 ⚠️ 速さを決めているのは cron の間隔ではなく**関所**。前のバッチの Step1 が送り終わるまで

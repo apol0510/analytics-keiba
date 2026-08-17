@@ -41,11 +41,13 @@ import {
 import {
   createRolloutStore, isRolloutEnabled, RolloutStoreError,
 } from '../../src/lib/marketing/rolloutStore.js';
-import { normalizeRolloutState, jstDay, ROLLOUT_BLOCK } from '../../src/lib/marketing/rolloutPlan.js';
+import {
+  normalizeRolloutState, jstDay, ROLLOUT_BLOCK, resolveObservationWindow,
+} from '../../src/lib/marketing/rolloutPlan.js';
 import { createRolloutMetrics } from '../../src/lib/marketing/rolloutMetrics.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
-import { readAutoGrantGates } from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { readAutoGrantGates, HARD_MAX_BATCH_SIZE } from '../../src/lib/comeback/lightTrialAutoGrant.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
@@ -107,7 +109,10 @@ export function armEnvForTick(env, state, nowMs) {
  *   ここを outstanding のまま返すと、同じ人へ二重にジョブを積むことになる
  *   （DeliveryKey で最終的には止まるが、無駄なジョブと混乱が残る）。
  */
-export function deriveFacts({ barrier, moreAvailable, pendingJobs, cohortObserved, followUpStep, followUpDue }) {
+export function deriveFacts({
+  barrier, moreAvailable, pendingJobs, cohortObserved, candidatesObserved,
+  followUpStep, followUpDue,
+}) {
   // ⚠️ `Number(null) === 0`。素で Number() に通すと**「読めない」が「0 件」になる**。
   //    0 件と不明は運用上まったく違う（不明で進めると二重付与・二重送信になりうる）。
   const count = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -115,18 +120,32 @@ export function deriveFacts({ barrier, moreAvailable, pendingJobs, cohortObserve
   const jobs = count(pendingJobs);
   if (outstanding === null || jobs === null) {
     return {
-      remainingCandidates: null, grantedPendingQueue: null, pendingJobs: null, outstandingStep1: null,
+      remainingCandidates: null, remainingIsLowerBound: false,
+      grantedPendingQueue: null, pendingJobs: null, outstandingStep1: null,
       followUpStep: null, followUpDue: null,
     };
   }
-  // 残数は全件走査しないと確定しないので、「まだ候補がある」を件数の代わりに使う。
+  // 残数は全件走査しないと確定しないので、**観測できた「配れる人」の数**を使う。
+  // ⚠️ 観測は bounded（観測窓ぶんしか取らない）。`moreAvailable === true` のときの
+  //    件数は「少なくともこれだけいる」という **下限**であって、全残数ではない。
+  //    その旨を `remainingIsLowerBound` で持ち回り、**残日数の断定に使わせない**。
   // ⚠️ `moreAvailable` が分からない場合は **null**（0 と書かない）。
+  const observed = count(candidatesObserved) ?? count(cohortObserved);
   let remaining;
-  if (moreAvailable === true) remaining = Number(cohortObserved) || 1;
-  else if (moreAvailable === false) remaining = 0;
-  else remaining = null;
+  let lowerBound = false;
+  if (moreAvailable === false) {
+    // 窓の先にはもう居ない。**窓の中で拾えた分は配り切る**（端数を取りこぼさない）。
+    // 数えられていなければ 0（先に居ないうえに拾えた数も無い＝配る相手が居ない）
+    remaining = observed ?? 0;
+  } else if (moreAvailable === true && observed !== null) {
+    remaining = Math.max(observed, 1);
+    lowerBound = true;
+  } else {
+    remaining = null;
+  }
   return {
     remainingCandidates: remaining,
+    remainingIsLowerBound: lowerBound,
     grantedPendingQueue: jobs > 0 ? 0 : outstanding,
     pendingJobs: jobs,
     outstandingStep1: outstanding,
@@ -448,7 +467,30 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
 
   // ── 事実を数える ──────────────────────────────────────────
   const grantGates = readAutoGrantGates(armEnvForTick(env, state, now), now);
-  const planLoad = await loadAndPlanLightTrial({ env, nowMs: now, gates: grantGates }).catch(() => null);
+  /**
+   * ⚠️ **観測窓は展開状態（`batchSize` / 今日の残り枠）に必ず合わせる。**
+   *    ここを既定値のままにすると、`batchSize=500` を設定しても付与側の既定
+   *    （100 名）でしか候補を見ず、`remainingCandidates` が 100 になり、
+   *    **エラーを出さずに** allowance が 100 へ縮む（2026-08-17 の事故）。
+   *    窓が 0（今日の残り枠なし・停止中など）のときは既定のまま読むだけ
+   *    （どのみち `planRolloutTick` が配らせない）。
+   *
+   * ⚠️ `perCallMax` は**付与 1 回の上限**（`HARD_MAX_BATCH_SIZE` = 500。#319 以来の既存仕様で、
+   *    1 回の事故の範囲を狭く保つための歯止め）。`batchSize` にこれを超える値
+   *    （送信側で許されている 1,000 など）を設定しても**断らない**。1 回あたりを
+   *    500 で刻み、残りは次の tick が続きを拾う（`dayGrantedCount` が積み上がるので
+   *    `dailyLimit` の意味は変わらない）。
+   *    ⚠️ **既定値 100 へ落とすことはしない**（それが 2026-08-17 の事故）。
+   */
+  const observationWindow = resolveObservationWindow(state, now, {
+    perCallMax: HARD_MAX_BATCH_SIZE,
+  });
+  const planLoad = await loadAndPlanLightTrial({
+    env,
+    nowMs: now,
+    gates: grantGates,
+    batchSizeOverride: observationWindow > 0 ? observationWindow : null,
+  }).catch(() => null);
   const jobs = await loadJobs().catch(() => null);
   // Step2〜24 の期日は**既存の単一源**（`action=sequence`）に聞く
   const due = await readNextDueStep().catch(() => null);
@@ -456,6 +498,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     barrier: planLoad?.planned?.barrier || null,
     moreAvailable: planLoad?.fetch ? planLoad.fetch.moreAvailable : null,
     pendingJobs: jobs ? jobs.count : null,
+    // ⚠️ 残数は**実際に配れる候補の数**で数える。`cohort.inCohort` は
+    //    「読んだ Airtable の行数」なので、除外された人まで数えてしまう。
+    candidatesObserved: planLoad?.planned?.counts?.candidates ?? null,
     cohortObserved: planLoad?.planned?.cohort?.inCohort ?? null,
     followUpStep: due ? due.step : null,
     followUpDue: due ? due.due : null,
