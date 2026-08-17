@@ -335,8 +335,102 @@ test('一覧・詳細が現在状態を返す（一目で分かる）', () => {
 
 test('管理画面が停止と販売対象外を別バッジで出す', () => {
   const page = read('../../pages/admin/premium-plus-eligibility.astro');
-  assert.match(page, /badge: 'paused'/);
+  // ⚠️ 資格バッジ（classify）に混ぜず、**別バッジ**として添える
+  assert.match(page, /className = 'badge paused'/, '停止用の別バッジが無い');
   assert.match(page, /\.badge\.paused/, '専用の見た目が無い（blocked と同じに見える）');
   assert.match(page, /action: 'setSalePause'/);
   assert.match(page, /販売を再開する/, '再開が同じ場所から 1 クリックでできない');
+});
+
+// ══════════════════════════════════════════════════════════════
+//  管理画面の「軸」を混ぜない（2026-08-17 の回帰を固定）
+// ══════════════════════════════════════════════════════════════
+//
+// 停止を classify() の状態キーへ混ぜた実装では、停止中の会員が
+// 「販売可」「保留」「販売対象外」のどのフィルタにも出てこなくなり
+// （キーが paused に化ける）、件数（サーバーは eligibility で数える）とも
+// 食い違った。**資格の軸と停止の軸は分けたまま**にする。
+
+test('【重要】classify は資格の軸だけを返す（停止を混ぜない）', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  const start = page.indexOf('function classify(r)');
+  assert.ok(start > 0, 'classify が無い');
+  const body = page.slice(start, page.indexOf('\n    }', start));
+  assert.ok(
+    !/salePaused/.test(body),
+    'classify が停止を状態キーに混ぜている（資格フィルタから停止中の会員が消える）',
+  );
+});
+
+test('【重要】停止は資格バッジを置き換えず添える', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  assert.match(page, /function pauseBadge\(r\)/, '停止用の別バッジが無い');
+  // 資格バッジを作った直後に添えている
+  const seg = page.slice(page.indexOf("c2.className = 'c-state'"), page.indexOf("tr.appendChild(c2)"));
+  assert.match(seg, /badge\.textContent = st\.short/, '資格バッジを出していない');
+  assert.match(seg, /pauseBadge\(r\)/, '停止バッジを添えていない');
+});
+
+test('【重要】停止中だけを絞り込める（見つけられないと再開できない）', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  assert.match(page, /id="fPause"/, '停止の絞り込みが無い');
+  assert.match(page, /value="paused"/);
+  const seg = page.slice(page.indexOf('function matches(r)'), page.indexOf('function matches(r)') + 1200);
+  assert.match(seg, /fPause/, '停止フィルタが matches に効いていない');
+  // 資格フィルタは停止中を除外しない
+  assert.ok(!/fs === 'eligible'[^\n]*salePaused/.test(seg), '資格フィルタが停止で分岐している');
+});
+
+test('【重要】停止件数を資格の件数から差し引かない', () => {
+  const fn = read('../../../netlify/functions/premium-plus-eligibility.js');
+  const seg = fn.slice(fn.indexOf('counts: {'), fn.indexOf('realViewCounts'));
+  assert.match(seg, /salePaused: rows\.filter/, '停止件数を返していない（画面と件数が食い違う）');
+  // eligible / immediate は eligibility / override だけで数え続ける
+  assert.match(seg, /eligible: rows\.filter\(\(r\) => r\.eligibility === PP_ELIGIBILITY\.ELIGIBLE\)/);
+  assert.ok(!/eligible:[^\n]*salePaused/.test(seg), '販売可の件数から停止を引いている');
+});
+
+test('【重要】停止中を状態フィルタとして正式に選べる', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  const seg = page.slice(page.indexOf('id="fPause"'), page.indexOf('id="fPause"') + 400);
+  assert.match(seg, /一時停止中だけ/, '停止中だけを選ぶ項目が無い');
+  assert.match(seg, /停止していないものだけ/, '稼働中だけを選ぶ項目が無い');
+  assert.match(page, /\$\('fPause'\)\.addEventListener\('change', render\)/, '選んでも再描画されない');
+});
+
+test('【重要】停止件数のチップから停止中の一覧へ行ける（資格フィルタは解除する）', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  const seg = page.slice(page.indexOf("pb2.className = 's paused'"), page.indexOf("bar.appendChild(pb2)"));
+  assert.match(seg, /\$\('fState'\)\.value = 'all'/, '資格フィルタが残って停止中が隠れる');
+  assert.match(seg, /\$\('fPause'\)\.value = 'paused'/);
+});
+
+test('【重要】資格チップを押しても停止フィルタが残らない', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  const seg = page.slice(page.indexOf("b.addEventListener('click', () => { $('fState').value = filter"), 200 + page.indexOf("b.addEventListener('click', () => { $('fState').value = filter"));
+  assert.match(seg, /\$\('fPause'\)\.value = 'all'/, '停止フィルタが残り件数と行が食い違う');
+});
+
+test('【重要】本番未有効なら admin に「使えない」と明示する（完成に見せない）', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  assert.match(page, /id="pauseOff"/, '未有効の告知枠が無い');
+  assert.match(page, /function renderPauseAvailability\(\)/);
+  assert.match(page, /本番環境では使えません/, '使えないことを明言していない');
+  // 情報が無い応答を「使える」と解釈しない（fail closed）
+  const seg = page.slice(page.indexOf('function pauseAvailable()'), page.indexOf('function renderPauseAvailability'));
+  assert.match(seg, /sp\.writable === true/, '未確認を使える扱いにしている');
+});
+
+test('【重要】停止ボタンは本番未有効なら押せない', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  const seg = page.slice(page.indexOf('const psUsable'), page.indexOf('const psUsable') + 400);
+  assert.match(seg, /r\.salePauseWritable !== false && pauseAvailable\(\)/);
+  assert.match(seg, /psBtn\.disabled = !psUsable/);
+});
+
+test('【重要】可用性は Airtable フィールドと marker の両方が揃って初めて true', () => {
+  const fn = read('../../../netlify/functions/premium-plus-eligibility.js');
+  assert.match(fn, /salePause: \{/, '一覧応答が可用性を返していない');
+  assert.match(fn, /writable: isSalePauseEnabled\(process\.env\) && !!makeRedisCmd\(process\.env\)/);
+  assert.match(fn, /salePauseWritable: isSalePauseEnabled\(process\.env\) && !!makeRedisCmd\(process\.env\)/);
 });

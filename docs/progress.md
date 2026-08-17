@@ -1,3 +1,67 @@
+## 2026-08-17 — 【修正】販売一時停止を「admin として運用できる」状態にする
+
+前回のコミットは**コードはあるが管理画面としては運用できない**状態だった。
+read-only 監査で判明した内容と、その是正。
+
+### 監査で分かったこと
+
+- 本番実測: Airtable の停止用 4 フィールド**未作成**、`PREMIUM_PLUS_SALE_PAUSE_READY`
+  **未設定** → 停止ボタンは常時 disabled で **利用可能率 0%**
+- それを画面のどこにも出しておらず、**使えるように見えていた**
+
+### 自分で作り込んだ回帰 3 件（是正済み）
+
+`classify()` の状態キーに停止を混ぜたことが原因。「資格と停止は別の軸」と
+docs に書きながら UI で軸を潰していた。
+
+1. 停止中の会員が「販売可 / 保留 / 販売対象外」の**どのフィルタにも出てこない**
+2. 件数はサーバーが `eligibility` で数えるため、**件数と表示行が食い違う**
+3. 状態バッジが上書きされ、**eligible なのか blocked なのか読めない**
+
+### 直したこと
+
+- `classify()` は**資格の軸だけ**に戻す。停止は `pauseBadge()` が**別バッジで添える**
+  → 一覧で「販売可 ＋ 一時停止中」が同時に読める
+- `fPause` フィルタを新設（停止中だけ / 停止していないものだけ）。資格フィルタは停止で分岐しない
+- `counts.salePaused` を追加し、サマリーに専用チップ（琥珀）。
+  **`eligible` / `immediate` からは引かない**（停止中でも資格は「販売可」が正しい）
+- チップ相互のフィルタ解除を明示（資格チップ→`fPause=all` / 停止チップ→`fState=all`）
+  ＝ どのチップを押しても件数と行が一致する
+- `salePause: { writable, fieldsReady, markerReady }` を一覧応答へ追加。
+  未有効なら一覧先頭に**告知を常設**し、有効化 3 手順を ✅❌ で表示。ボタンも無効化。
+  応答に `salePause` が無い旧デプロイも**使える扱いにしない**（fail closed）
+
+### 今回追加しなかったもの（正本にない機能を勝手に足さない）
+
+一括停止 / 緊急全停止 / 期限付き停止 / 停止理由マスタ / 顧客向け文言編集 /
+新しい恒久監査基盤 / deny-marker 由来の追加管理機能。いずれも**未着手**。
+
+### 変えていないこと（回帰なし）
+
+停止・再開で `eligibility` / `override` / `PHASE` / `anchor` は書かない。
+他会員・16:30 以降の翌日分販売・三連複の販売導線に影響しない。
+URL 直打ち申込の 403 も維持。
+
+### テスト
+
+`premiumPlusSalePause` を 32 → 42 へ。回帰を固定:
+paused フィルタ / paused 件数（資格から引かない）/ eligibility + pause 同時表示 /
+classify に停止を混ぜない / 他会員非影響 / pause→resume で元 PHASE 維持 /
+本番未有効の明示（未確認を「使える」と解釈しない）。
+
+premium-plus 816 pass・upsell 83・marketing 1980・auth 670・bank-payment 271・
+entitlements 221（いずれも 0 fail）・`check:safety` EXIT=0・`check:fn-no-undef` OK・
+`build` EXIT=0・inline script 構文 OK・配信 HTML に新 UI の存在を確認・
+secret/PII 0 件・package.json / lockfile 変更なし。
+
+### 残る本番作業（承認境界・未実施）
+
+1. Airtable Customers に 4 フィールド作成
+2. env `PREMIUM_PLUS_SALE_PAUSE_READY=1`
+3. redeploy（`UPSTASH_REDIS_REST_URL` / `TOKEN` は設定済み）
+
+これが済むまで admin には「本番利用不可」と表示され続ける。
+
 # 進捗（新しい順）
 
 ## 🎯 任務の完了条件（Light 無料体験 展開）— **ここが未達なら任務は完了ではない**

@@ -246,8 +246,12 @@ function buildAdminRow(rec, now) {
         salePausedAt: fields[PP_SALE_PAUSE_FIELDS.UPDATED_AT] || '',
         salePausedBy: fields[PP_SALE_PAUSE_FIELDS.UPDATED_BY] || '',
         salePauseReason: fields[PP_SALE_PAUSE_FIELDS.REASON] || '',
-        /** 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う） */
-        salePauseWritable: isSalePauseEnabled(process.env),
+        /**
+         * 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う）。
+         * Airtable フィールドと deny-marker ストアが**両方**要る
+         * （marker が無いと停止を確実に適用できないため handleSetSalePause が 503 を返す）。
+         */
+        salePauseWritable: isSalePauseEnabled(process.env) && !!makeRedisCmd(process.env),
   };
 }
 
@@ -615,6 +619,10 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       routeA: rows.filter((r) => r.route === PP_ROUTE.SANRENPUKU).length,
       routeB: rows.filter((r) => r.route === PP_ROUTE.PREMIUM_30D).length,
       immediate: rows.filter((r) => r.overrideApplied).length,
+      // 一時停止は資格とは別の軸なので**別に数える**（eligible / immediate からは引かない）。
+      // 資格は「販売可」のまま止まっている、が正しい状態なので、
+      // 上の件数から差し引くと「販売可」の実数が読めなくなる。
+      salePaused: rows.filter((r) => r.salePaused === true).length,
       // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
@@ -636,6 +644,14 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     writeEnabled: isPlusFieldsEnabled(process.env),
     overrideEnabled: isReleaseOverrideEnabled(process.env),
     upsellEnabled: isUpsellFieldEnabled(process.env),
+    // 販売の一時停止が**本番で実際に使えるか**。画面はこれで
+    // 「今は使えない」ことを明示する（使えるように見せない）。
+    // 2 系統（Airtable フィールド + deny-marker ストア）が揃って初めて true。
+    salePause: {
+      writable: isSalePauseEnabled(process.env) && !!makeRedisCmd(process.env),
+      fieldsReady: isSalePauseEnabled(process.env),
+      markerReady: !!makeRedisCmd(process.env),
+    },
     // 「自動」の意味を管理画面に常設するための文言（正本は upsellExplain.js）
     upsellAutoRules: UPSELL_AUTO_RULE_TEXT,
     truncated,
