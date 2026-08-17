@@ -83,6 +83,7 @@
     "verify:safety": "npm run build && npm run check:ssr-runtime-data && npm run check:safety",
     "preflight:phase2-canary": "node scripts/phase2-canary-preflight.mjs",
     "preflight:light-trial-step1": "node scripts/light-trial-step1-preflight.mjs",
+    "scan:touch-measurement": "node scripts/touch-measurement-scan.mjs",
     "check:airtable-capacity": "node scripts/check-airtable-capacity.mjs",
     "reconcile:delivery-stores": "node scripts/reconcile-delivery-stores.mjs",
     "backfill:delivery-keys": "node scripts/backfill-delivery-keys.mjs",

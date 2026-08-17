@@ -627,18 +627,45 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
 | 例: `batchSize=1000` / 今日まだ 0 名 | **500**（= 付与 1 回の上限。残り 500 は次の tick） |
 | 例: 今日の残り枠 0 | **0**（読みにも行かない） |
 
-#### 人数の上限は 2 軸あり、混同しない
+#### 人数の上限は 4 軸あり、混同しない（**低い方が勝つ**）
 
 | 軸 | 値 | 出どころ |
 |---|---|---|
-| **付与 1 回**（`runLightTrialGrant` 1 呼び出し） | **500**（`HARD_MAX_BATCH_SIZE`） | #319 以来の既存仕様。1 回の事故の範囲を狭く保つ歯止め。**超える値は実行しない**（fail closed） |
-| **送信の子バッチ** | 既定 500 / **上限 1,000** | `docs/spec.md`（配送の実行モデル） |
+| **付与の計画**（`buildComebackPlan`） | **200**（`MAX_GRANT_RECORDS`） | 暴走防止。超えると **計画自体を作らない**（`too_many_records:N>200`）＝ **実効上限** |
+| **付与 1 回**（`runLightTrialGrant` 1 呼び出し） | 500（`HARD_MAX_BATCH_SIZE`） | #319 以来。**超える値は実行しない**（fail closed） |
+| **送信の子バッチ** | 既定 500 / 上限 1,000 | `docs/spec.md`（配送の実行モデル） |
 | **1 日に配れる合計** | `dailyLimit`（絶対上限 `ABSOLUTE_MAX_PER_DAY = 20000`） | #354 |
 
-⚠️ `batchSize` に **1000 を指定してよい**（送信側の刻みとして正式に許可されている）。
-   `rolloutStart` は**断らない**。付与だけは 1 回 500 で刻み、残りは次の tick が続きを拾う
-   （`dayGrantedCount` が積み上がるので `dailyLimit` の意味は変わらない）。
+運転手が 1 回に依頼する人数は **`GRANT_OPERATION_MAX = min(HARD_MAX_BATCH_SIZE, MAX_GRANT_RECORDS)` = 200**。
+**この値をどこにも再定義しない**（正本は各モジュール）。`batchSize` が 200 で割り切れる必要はない
+（例: `batchSize=500` は **200 → 200 → 100**）。
+
+⚠️ `batchSize` に **500 / 1000 を指定してよい**（送信側の刻みとして正式に許可されている）。
+   `rolloutStart` は**断らない**。付与だけは 1 回 **200**（`GRANT_OPERATION_MAX`）で刻み、
+   残りは次の tick が続きを拾う（`dayGrantedCount` が積み上がるので `dailyLimit` の意味は変わらない）。
    **「設定を断る」のではなく「分けて配る」**。
+
+| 設定 | 同じ日の進み方 |
+|---|---|
+| `batchSize=500` | **200 → 200 → 100**（計 500） |
+| `batchSize=1000` | **200 × 5**（計 1000） |
+| `batchSize=500` / 今日すでに 100 名 | **200 → 200**（残り枠 400 で止まる） |
+
+#### 🩹 「配る予定があったのに 0 件」を成功として記録しない（2026-08-17 午後の事故）
+
+`batchSize=500` から allowance 400 を **1 回で**依頼したところ、`MAX_GRANT_RECORDS=200` に掛かり
+`too_many_records:400>200` で **付与 0 のまま 14 tick 空回り**した
+（`batchSeq` だけ進み、`lastRunCount: 0` が正常実行として記録され、5 分ごとに永久に繰り返す状態）。
+
+判定は `grantOutcome.js` の `classifyGrantOutcome()` が単一源:
+
+| 結果 | 条件 | 状態の記録 | 自動停止 |
+|---|---|---|---|
+| `granted` | 1 人以上配れた（部分成功を含む） | **実数で settle** | しない |
+| `idle` | 正常に配る相手が居ない（`no_candidates`） | **しない** | しない |
+| `failed` | 予定があったのに 0 件（`too_many_records` / 書き込み失敗 / 理由不明） | **しない**（`batchSeq`・`dayGrantedCount`・`lastRunCount` を動かさない） | **する**（`stage: paused` + `note: auto-stop: <理由>`） |
+
+⚠️ **`idle` と `failed` を混ぜない。** 候補 0 は正常な終わり方、`too_many_records` は運用が直す異常。
 
 - 残数は **`counts.candidates`（実際に配れる人の数）** で数える。
   `cohort.inCohort` は「読んだ Airtable の行数」なので、除外された人まで数えてしまう。
@@ -663,3 +690,33 @@ cron は **5 分間隔**（毎時 1 回だと 90 時間かかり「1 日で配�
 
 ⚠️ **1 リクエストで 15,000 名へ投げる形にはしない。** 必ずグループ（`batchSize`）へ割り、
 1 バッチずつ「付与 → queue → 送信 → 台帳確認」を終えてから次へ進む。
+
+
+## 📏 touch 別実績は「1 リクエスト 1 ページ」で数える（2026-08-17）
+
+`action=touchMeasurement` は配信台帳を**全件一括**で読み、受信者 × step ぶんの DeliveryKey を
+その場で全部計算していた。配信行が **610 に増えた時点で 504（Inactivity Timeout）**。
+最終的に 14,000 名規模になるため、**timeout や上限値を上げるだけの対応はしない**（必ずまた壊れる）。
+
+### 変えたこと
+
+| | 旧 | 現行 |
+|---|---|---|
+| 台帳の読み方 | `fetchAllStrict` で**全件** | **1 ページだけ**（`cursor` = Airtable の `offset`） |
+| 1 リクエストの仕事量 | 行数に比例して増える | **`pageSize` で頭打ち**（既定 200 / 上限 500） |
+| DeliveryKey の計算 | 全受信者 × 全 step | **そのページの受信者ぶんだけ** |
+| イベント索引の読み | 先頭 500 件で頭打ち | 1 ページは必ず上限以下（`TOUCH_SCAN_MAX_PAGE ≤ MAX_READ_KEYS`） |
+| 全体を見る方法 | （無い） | **`npm run scan:touch-measurement`**（cursor を辿って合算） |
+
+### 合算の約束
+
+- 合算は `touchMeasurementScan.js` の `mergeTouchPage()` が単一源。
+  **`pageIndex` で識別し、同じページを 2 回足しても増えない**（再試行で数が膨らまない）
+- **率は合計してから 1 回だけ**計算する（ページごとの率を平均しない）
+- 索引を読めなかったページが 1 つでもあれば `measurementAvailable: false`
+  （読めなかったぶんを 0 件として通さない）
+- 応答は `partial` と `scan.cursor` を必ず返す。**1 ページを全体として見せない**
+- `RecipientEmail` は突き合わせに使うだけで、**応答にもログにも出さない**
+
+検証: `npm run test:marketing`（`touchMeasurementScan.test.mjs` が 499 / 500 / 501 / 610 /
+15,000 件の境界と多ページ・重複 0・PII なしを固定）

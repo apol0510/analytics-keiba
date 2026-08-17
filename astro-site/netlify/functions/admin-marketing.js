@@ -163,6 +163,7 @@ import { readStageGates, describeBlocked } from '../../src/lib/marketing/rollout
 import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journeyModel.js';
 import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
+import { resolveScanPageSize } from '../../src/lib/marketing/touchMeasurementScan.js';
 import {
   planBackfill, describeBackfillPlan, parseNdjson, blobDatePrefix, MAX_BLOBS_PER_RUN,
 } from '../../src/lib/webhooks/deliveryEventBackfill.js';
@@ -1584,6 +1585,38 @@ async function handleRolloutControl({ op, now, req }) {
 }
 
 /**
+ * 配信台帳を **1 ページだけ** 読む（cursor = Airtable の offset）。
+ *
+ * ⚠️ 全件取得（`fetchAllStrict`）と違い、**ここでは打ち切りを異常としない**。
+ *    「続きがある」ことを `offset` で返し、呼び出し側が次を取る前提だから。
+ *    黙って短い結果を全体として見せないよう、応答側で `partial` / `cursor` を必ず出す。
+ * ⚠️ `RecipientEmail` は DeliveryKey の突き合わせに要るが、**応答にもログにも出さない**。
+ */
+async function fetchDeliveryPage({ KEY, BASE, campaignType, pageSize, cursor }) {
+  const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`);
+  // Airtable の 1 リクエスト上限は 100 件。要求ページはそれを跨いで満たす
+  url.searchParams.set('pageSize', '100');
+  url.searchParams.set('filterByFormula', `{CampaignType}='${campaignType}'`);
+  for (const f of ['DeliveryKey', 'CampaignType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail']) {
+    url.searchParams.append('fields[]', f);
+  }
+  const records = [];
+  let offset = cursor || undefined;
+  while (records.length < pageSize) {
+    if (offset) url.searchParams.set('offset', offset); else url.searchParams.delete('offset');
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`${DELIVERIES_TABLE} page fetch failed: HTTP ${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const data = await res.json();
+    records.push(...(data.records || []));
+    offset = data.offset;
+    if (!offset) break;
+  }
+  return { records, offset: offset || null };
+}
+
+/**
  * touch 別の配信実績（**read-only**・PII なし）。
  *
  * 「送った」だけでなく「**届いた・開かれた**」を touch ごとに出す。
@@ -1592,6 +1625,8 @@ async function handleRolloutControl({ op, now, req }) {
  * ⚠️ **Blob の全件走査はしない。** 配信台帳から対象の DeliveryKey を名指しで集め、
  *    Redis の索引を bounded read するだけ（既定 1 リクエスト 500 鍵まで）。
  * ⚠️ 索引が読めないときは **`measurementAvailable: false`**（0 件と書かない）。
+ * ⚠️ **1 リクエストで返すのは 1 ページぶんだけ**（`scan.cursor` / `partial`）。
+ *    全件は `npm run scan:touch-measurement` が cursor を辿って合算する。
  */
 async function handleTouchMeasurement({ KEY, BASE, now, req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
@@ -1600,19 +1635,27 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
     return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
   }
 
-  // ── 対象の配信行（この campaign のもの）を名指しで引く ───────────
+  // ── 対象の配信行を **1 ページだけ**引く（cursor = Airtable の offset）─────
+  //    ⚠️ 全件一括で読まない。2026-08-17 に 610 行で 504（Inactivity Timeout）になった。
+  //       最終的に 14,000 名規模になるので、**1 リクエスト 1 ページ**に固定し、
+  //       呼び出し側が cursor を辿って合算する（`touchMeasurementScan.js`）。
   const version = String(base.version);
   const campaignType = `${base.campaignId}:v${version}`;
+  const pageSize = resolveScanPageSize(req.pageSize);
+  const cursorIn = str(req.cursor) || null;
+  const pageIndex = Number.isInteger(Number(req.pageIndex)) && Number(req.pageIndex) >= 0
+    ? Number(req.pageIndex) : 0;
   let deliveries;
+  let nextCursor = null;
   try {
-    deliveries = await fetchAllStrict({
-      KEY, BASE, table: DELIVERIES_TABLE,
-      filterByFormula: `{CampaignType}='${campaignType}'`,
-      fields: ['DeliveryKey', 'CampaignType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail'],
+    const page = await fetchDeliveryPage({
+      KEY, BASE, campaignType, pageSize, cursor: cursorIn,
     });
+    deliveries = page.records;
+    nextCursor = page.offset || null;
   } catch (e) {
     return json(500, {
-      error: '配信台帳を取り切れなかったため、実績を返しません（数えられない数は出しません）。',
+      error: '配信台帳を読めなかったため、実績を返しません（数えられない数は出しません）。',
       code: 'deliveries_fetch_incomplete',
       sideEffects: 'none',
     });
@@ -1651,23 +1694,44 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
   }
 
   const summary = summarizeByTouch({ deliveries, stepByDeliveryKey, index });
+  const done = !nextCursor;
   return json(200, {
     mode: 'touch-measurement',
     sideEffects: 'none',
     campaignId: base.campaignId,
     version: base.version,
     ...summary,
+    /**
+     * このページだけの数であることを**必ず明示する**（黙って一部を全体として出さない）。
+     * `done: false` の間は `cursor` を渡して次を取り、`touchMeasurementScan.js` の
+     * `mergeTouchPage` で足す（同じ `pageIndex` は二重に数えない）。
+     */
+    scan: {
+      pageIndex,
+      pageSize,
+      rows: deliveries.length,
+      cursor: nextCursor,
+      done,
+    },
+    partial: !done,
     io: {
       /** Blob は読んでいない（全件走査ゼロ） */
       blobReads: 0,
       redisKeys: Math.min(keys.length, MAX_READ_KEYS),
       airtableRows: deliveries.length,
       cappedAt: MAX_READ_KEYS,
+      /** 1 ページは索引の bounded read 上限以下なので、ページ内で切れることはない */
       truncated: keys.length > MAX_READ_KEYS,
     },
-    notice: summary.measurementAvailable
-      ? '配信イベントの索引から数えています（open は届いた通が分母）。'
-      : '**イベント索引を読めませんでした。** 未計測として扱っています（0 件ではありません）。',
+    notice: [
+      summary.measurementAvailable
+        ? '配信イベントの索引から数えています（open は届いた通が分母）。'
+        : '**イベント索引を読めませんでした。** 未計測として扱っています（0 件ではありません）。',
+      done
+        ? null
+        : '**これは 1 ページぶんの数です。** `cursor` を渡して続きを取り、合算してください'
+          + '（`npm run scan:touch-measurement`）。',
+    ].filter(Boolean).join(' '),
   });
 }
 

@@ -47,7 +47,10 @@ import {
 import { createRolloutMetrics } from '../../src/lib/marketing/rolloutMetrics.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { loadAndPlanLightTrial } from '../../src/lib/comeback/lightTrialPlanLoader.js';
-import { readAutoGrantGates, HARD_MAX_BATCH_SIZE } from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import { readAutoGrantGates, GRANT_OPERATION_MAX } from '../../src/lib/comeback/lightTrialAutoGrant.js';
+import {
+  classifyGrantOutcome, describeGrantOutcome, GRANT_OUTCOME,
+} from '../../src/lib/marketing/grantOutcome.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
@@ -475,15 +478,18 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
    *    窓が 0（今日の残り枠なし・停止中など）のときは既定のまま読むだけ
    *    （どのみち `planRolloutTick` が配らせない）。
    *
-   * ⚠️ `perCallMax` は**付与 1 回の上限**（`HARD_MAX_BATCH_SIZE` = 500。#319 以来の既存仕様で、
-   *    1 回の事故の範囲を狭く保つための歯止め）。`batchSize` にこれを超える値
-   *    （送信側で許されている 1,000 など）を設定しても**断らない**。1 回あたりを
-   *    500 で刻み、残りは次の tick が続きを拾う（`dayGrantedCount` が積み上がるので
+   * ⚠️ `perCallMax` は**付与 1 回で実際に扱える上限**（`GRANT_OPERATION_MAX`
+   *    = `min(HARD_MAX_BATCH_SIZE 500, MAX_GRANT_RECORDS 200)` = **200**）。
+   *    どちらも既存仕様で、**低い方が勝つ**。`batchSize` にこれを超える値
+   *    （500 / 1000 など）を設定しても**断らない**。1 回あたりをこの単位で刻み、
+   *    残りは次の tick が続きを拾う（`dayGrantedCount` が積み上がるので
    *    `dailyLimit` の意味は変わらない）。
-   *    ⚠️ **既定値 100 へ落とすことはしない**（それが 2026-08-17 の事故）。
+   *    ⚠️ **既定値 100 へ落とすことはしない**（それが 2026-08-17 午前の事故）。
+   *    ⚠️ 200 を超えて依頼すると `buildComebackPlan` が計画を作らず
+   *       `too_many_records:N>200` で 0 件になる（2026-08-17 午後の事故）。
    */
   const observationWindow = resolveObservationWindow(state, now, {
-    perCallMax: HARD_MAX_BATCH_SIZE,
+    perCallMax: GRANT_OPERATION_MAX,
   });
   const planLoad = await loadAndPlanLightTrial({
     env,
@@ -782,6 +788,47 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     });
     const granted = Number(out?.granted || 0);
     const opId = String(out?.operationId || planLoad?.planned?.operationId || '');
+
+    /**
+     * ⚠️ **配る予定があったのに 0 件だったら「実行した」ことにしない。**
+     *    2026-08-17 の本番: `too_many_records:400>200` で毎 tick 0 件のまま
+     *    `settleTick` が走り、`batchSeq` だけ進んで 14 回空回りした。
+     *    - `settle: false` → `batchSeq` も `dayGrantedCount` も `lastRunCount` も動かさない
+     *    - `pause: true`  → 人が直すまで新規付与を止める（積み残しの queue / 送信は続く）
+     *    - 候補 0（正常な終わり）は**止めない**（`idle`）
+     */
+    const verdict = classifyGrantOutcome({
+      requested: Number(decision.plan?.allowance || 0),
+      granted,
+      failed: Number(out?.failed || 0),
+      abort: out?.abort || null,
+    });
+
+    if (verdict.outcome === GRANT_OUTCOME.FAILED) {
+      await saveState({ ...state, stage: 'paused', note: `auto-stop: ${verdict.detail || verdict.reason}` });
+      const body = {
+        ok: false, ...view, abort: verdict.reason,
+        grantOutcome: describeGrantOutcome(verdict),
+        granted: 0, failed: Number(out?.failed || 0),
+        sideEffects: 'state_only',
+        notice: '付与を予定しましたが 1 件も書けませんでした。**空回りを避けるため新規付与を止めます**'
+          + '（バッチ番号も日次集計も進めていません。積み残しのキュー登録・送信は続きます）。',
+      };
+      log(body);
+      return body;
+    }
+
+    if (verdict.outcome === GRANT_OUTCOME.IDLE) {
+      // 配る相手が居ないだけ。**状態を汚さない**（記録も停止もしない）
+      const body = {
+        ok: true, ...view, granted: 0,
+        grantOutcome: describeGrantOutcome(verdict),
+        sideEffects: 'none',
+      };
+      log(body);
+      return body;
+    }
+
     // ⚠️ **付与した数だけ**を刻む（queue が落ちても同じ日に二重に配らない）
     const next = settleTick({ state, nowMs: now, granted, batchSeq: seq });
     await saveState({ ...next, pendingHandoffOp: granted > 0 ? opId : null });
