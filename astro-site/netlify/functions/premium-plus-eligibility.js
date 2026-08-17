@@ -76,6 +76,9 @@ import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpuku
 import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import {
+  writeSalePauseMarker, emailPauseKey, isPauseMarkerAvailable,
+} from '../../src/lib/premiumPlus/salePauseGuard.js';
+import {
   buildPlusDeliveryFormula,
   indexPlusDeliveries,
   describePlusNotified,
@@ -803,6 +806,21 @@ async function handleSetSalePause({ KEY, BASE, now, req }) {
     }
   }
 
+  // ── deny-marker（Redis）は停止の**第 2 系統**。ここが使えないと停止操作を受け付けない ──
+  // marker が「無い＝停止していない」と読めるのは、deny-list が**完全**なときだけ。
+  // marker を書けないまま Airtable だけ停止すると、Airtable が読めない窓で
+  // 「Airtable=unknown / marker=clear」となり **停止が消える**（迂回できてしまう）。
+  const markerCmd = makeRedisCmd(process.env);
+  if (!isPauseMarkerAvailable(markerCmd)) {
+    return json(503, {
+      error: '販売の一時停止を確実に適用できません（deny-marker ストア未設定）',
+      hint: 'UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN を設定してください',
+      code: 'pause_marker_unavailable',
+      sideEffects: 'none',
+    });
+  }
+  const emailKey = emailPauseKey(currentFields['Email'], process.env.SESSION_SIGNING_SECRET);
+
   const built = buildSalePauseFields({
     paused: req.paused,
     current: currentFields[PP_SALE_PAUSE_FIELDS.PAUSED],
@@ -812,6 +830,22 @@ async function handleSetSalePause({ KEY, BASE, now, req }) {
     enabled: true,
   });
   if (!built) return json(400, { error: '販売状態の更新内容を組み立てられませんでした', sideEffects: 'none' });
+
+  // ── 書き込み順序（途中で失敗しても安全側に倒れるように）──────────────
+  // 停止: marker → Airtable。marker が入らなければ Airtable も書かない（嘘の「停止済み」を作らない）
+  // 再開: Airtable → marker 削除。途中で失敗したら**停止したまま**（過剰に止まる側＝安全）
+  if (built.changed && built.paused) {
+    const m = await writeSalePauseMarker({
+      redisCmd: markerCmd, recordId, emailKey, paused: true,
+    });
+    if (!m.ok) {
+      return json(502, {
+        error: '販売停止を適用できませんでした（deny-marker の書き込み失敗）。もう一度お試しください。',
+        code: 'pause_marker_write_failed',
+        sideEffects: 'none',
+      });
+    }
+  }
 
   // 既に同じ状態なら PATCH しない（監査日時を無意味に更新しない）
   if (!built.changed) {
@@ -835,13 +869,45 @@ async function handleSetSalePause({ KEY, BASE, now, req }) {
   if (!res.ok) {
     const detail = await res.text();
     console.error('❌ [premium-plus-eligibility] 販売停止 PATCH failed:', res.status);
+    // 停止しようとして Airtable が失敗した場合、marker だけが残る。
+    // marker は「停止」を意味するので**過剰に止まる**が、売ってしまうより安全。
+    // 取り消せるように marker を戻す。戻せなくても 502 は返す（黙って売らせない）。
+    if (built.paused) {
+      const rollback = await writeSalePauseMarker({
+        redisCmd: markerCmd, recordId, emailKey, paused: false,
+      });
+      if (!rollback.ok) {
+        console.error('⚠️ [premium-plus-eligibility] marker のロールバックに失敗（停止側で残置）');
+      }
+    }
     return json(502, {
       error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300),
+      markerRolledBack: built.paused,
     });
   }
 
+  // 再開は Airtable 成功後に marker を消す。消せなければ**停止したまま**（安全側）で
+  // その事実を返す。「再開しました」と言い切らない。
+  let markerCleared = true;
+  if (built.changed && !built.paused) {
+    const m = await writeSalePauseMarker({
+      redisCmd: markerCmd, recordId, emailKey, paused: false,
+    });
+    markerCleared = m.ok;
+    if (!m.ok) {
+      console.error('❌ [premium-plus-eligibility] 再開時の marker 削除に失敗（停止のまま）');
+      return json(502, {
+        error: '販売の再開を完了できませんでした（deny-marker が残っています）。'
+          + 'この会員は停止したままです。もう一度「販売を再開する」を実行してください。',
+        code: 'pause_marker_clear_failed',
+        recordId,
+        stillPaused: true,
+      });
+    }
+  }
+
   console.log('✅ [premium-plus-eligibility] 販売状態を更新:', {
-    recordId, paused: built.paused, actor: req.actor || 'admin',
+    recordId, paused: built.paused, actor: req.actor || 'admin', markerCleared,
   });
   return json(200, {
     success: true,

@@ -107,10 +107,63 @@ Sanrenpuku 購入済みになったユーザーには ROUTE B を適用しない
 
 ### 影響しないもの
 
-- **他会員**（判定はその会員の fields からのみ導出）
+- **他会員**（判定はその会員の fields / marker からのみ導出）
 - **16:30 以降の翌日分販売**（停止していない会員は従来どおり買える）
 - **通常の eligibility 判定 / PHASE / anchor**（一切書き換えない）
 - **三連複の販売導線**（Plus だけを止める）
+
+### 障害・キャッシュでも迂回されないこと（`salePauseGuard.js`）
+
+停止の判定を Airtable 1 本に頼ると、**2 つの穴**から迂回される。
+
+1. **10 分キャッシュ**（`purchaseAnchorLookup.js` の `ANCHOR_CACHE_TTL_MS`）。
+   停止直前に読まれた会員は最大 10 分「停止していない」fields で判定され、購入まで通る
+2. **一時障害**。「読めないから通す」と倒すと、障害の窓で迂回できる
+
+かといって「読めない＝停止」にすると **Airtable 障害だけで通常会員まで一律停止**する。
+そこで**独立した 2 系統**を持つ。停止中の会員だけを Redis の **deny-marker**
+（`ak:pp:sale_paused:v1`）にも書き、**marker はキャッシュしない**。
+
+| Airtable | marker | 結果 |
+|---|---|---|
+| paused | 何でも | **停止** |
+| 何でも | paused | **停止** |
+| clear | clear / unknown | 販売 |
+| unknown | clear | 販売（**Airtable 障害でも通常会員は買える**） |
+| unknown | unknown | **停止**（停止を否定できない = fail closed） |
+
+- marker は **recordId 鍵と email 鍵の両方**に書く。申込 API は email しか持たず、
+  Airtable が落ちていると recordId を解決できないため。
+  email は保存せず `SESSION_SIGNING_SECRET` を鍵にした HMAC-SHA256 を使う
+- marker 読み取りは **`plus` を出す相手のときだけ**（大多数には Redis 往復を発生させない）。
+  700ms で打ち切り、会員ページを待たせない
+
+#### 「marker が無い＝販売中」と読んでよい理由（deny-list の完全性）
+
+書き込み側で完全性を保証しているため。**ここを崩すと fail closed が崩れる。**
+
+- marker ストアが使えないときは **停止操作を受け付けない**（503 `pause_marker_unavailable`）
+- 停止は **marker → Airtable** の順。marker が入らなければ Airtable も書かない
+  （Airtable だけ停止して marker が無いと、障害時に「unknown / clear」で**停止が消える**）
+- 再開は **Airtable → marker 削除** の順。marker を消せなければ **停止したまま**とし、
+  API は `stillPaused: true`、画面は「再開しました」と言わない（安全側で止まる）
+
+⚠️ **停止・再開は必ず管理画面から行うこと。** Airtable の画面でチェックボックスを直接
+操作すると marker が作られず、**Airtable が読めない窓でだけ**停止が効かなくなる
+（Airtable が読める間は正本が効くので停止自体は成立する）。
+
+#### 実施点（表示 4 経路 + 申込 1 経路）
+
+| 経路 | 実施 |
+|---|---|
+| dashboard CTA `/api/upsell.json` | `enforceSalePause()` |
+| 三連複ページ予告 `/api/premium-plus-stage.json` | `enforceSalePause()` → 404 |
+| `/premium-plus/` | `enforceSalePause()` → `showProductPage=false` → 404 |
+| `/premium-plus-v2/` | 同上 |
+| 申込 `bank-transfer-application` | `resolveSalePauseGate()` → 403 `sale_paused` |
+
+fields が読めなかった会員は `channel` が none になるため、実施点へ来る前に閉じている
+（＝表示系は元から fail closed）。
 
 ### 表示の区別
 
@@ -354,6 +407,9 @@ override フィールドは eligibility 系より**後から**追加するため
   （止めたつもりで売れ続けるのが最悪の事故）。
 - 投入順序: **① Airtable で 4 フィールド作成 → ② env `PREMIUM_PLUS_SALE_PAUSE_READY=1` →
   ③ redeploy**。逆順にしても壊れないが、②③ の前は停止操作が 503 のまま。
+- **`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` も必須**（deny-marker の保存先）。
+  本番は実閲覧計測で既に設定済み。未設定だと停止操作が 503 `pause_marker_unavailable` になる
+  （＝確実に止められないなら止めたと言わない）。
 
 - 既存 Audit Log 機構は AK に無い（Payment Email v2 の状態列があるだけ）ため、
   UpdatedAt / UpdatedBy の 2 列で最小限の監査を持つ。履歴テーブルは作らない。

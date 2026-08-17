@@ -3639,6 +3639,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         + '販売資格・段階公開（PHASE）・会員権は変わらず、再開すればそのまま元に戻ります。'
         + '「販売対象外」は恒久的な判断で、これとは別の操作です。';
       psSec.appendChild(psNote);
+      // ⚠️ Airtable 画面で直接チェックすると deny-marker が作られず、
+      //    Airtable が読めない一時障害の窓でだけ停止が効かなくなる。
+      const psWhere = document.createElement('p'); psWhere.className = 'muted';
+      psWhere.style.margin = '0 0 8px'; psWhere.style.fontSize = '0.82rem';
+      psWhere.textContent = '⚠️ 停止・再開は必ずこの画面から行ってください。'
+        + 'Airtable のチェックボックスを直接操作すると、停止を二重化する仕組み（deny-marker）が'
+        + '作られず、障害時に停止が効かないことがあります。';
+      psSec.appendChild(psWhere);
 
       const psKv = document.createElement('dl'); psKv.className = 'kv';
       kvRow(psKv, '現在の状態', r.salePaused ? '⏸ 一時停止中（資格は保持）' : '✅ 販売中',
@@ -3692,6 +3700,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           opLog.add({ ...logged, result: 'unknown', detail: '通信が切れました' });
         } else if (!out) {
           opLog.add({ ...logged, result: 'failed' });
+        } else if (out.stillPaused) {
+          // 再開の途中で deny-marker を消せなかった。**この会員は停止したまま**。
+          // 「再開しました」と言い切ると、止まっているのに再開済みと誤認される。
+          opLog.add({ ...logged, to: '一時停止中', result: 'failed', detail: out.error || 'marker 削除失敗' });
+          await refreshOne(r.recordId);
+          msg('⚠️ 再開を完了できませんでした。この会員は停止したままです。もう一度「販売を再開する」を実行してください。', 'err');
         } else {
           opLog.add({ ...logged, result: 'ok', detail: out.changed === false ? '既に同じ状態' : '' });
           // 送った値が通った前提にせず、Airtable から読み直して確認する

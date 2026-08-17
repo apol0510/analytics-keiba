@@ -12,7 +12,7 @@ import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCale
 import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
 import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
-import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
+import { resolveSalePauseGate, SALE_PAUSED_MESSAGE } from '../../src/lib/premiumPlus/salePauseGuard.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -250,19 +250,36 @@ exports.handler = async (event, context) => {
           }
         }
       } catch (e) {
-        // 読めなかったときは**止めない**（Airtable 障害で全員の申込を落とさない）。
-        // 停止は「明示的に停止と読めたときだけ」効かせる。
-        console.warn('⚠️ [bank-transfer] 販売状態を確認できませんでした:', e.message);
+        // ここでは**止めも通しもしない**。Airtable を読めなかった事実だけを残し、
+        // 判定は下の 2 系統（Airtable + deny-marker）へ委ねる。
+        // ⚠️ 旧実装はここで「読めなければ通す」と倒しており、停止済み会員が
+        //    一時障害の窓で申込を迂回できた（fail open）。
+        console.warn('⚠️ [bank-transfer] 会員レコードを読めませんでした:', e.message);
       }
-      if (plusCustomerFields && normalizeSalePaused(plusCustomerFields[PP_SALE_PAUSE_FIELDS.PAUSED])) {
-        console.warn('🚫 [bank-transfer] 販売一時停止中の会員からの Premium Plus 申込を拒否:', {
-          recordId: plusCustomerRecordId,
+      // ── 停止判定（fail closed）─────────────────────────────
+      // Airtable と deny-marker の**独立した 2 系統**で決める。
+      //   どちらかが停止と言えば停止 / どちらかが「停止していない」と答えられれば販売
+      //   / **両方とも答えられないときだけ**停止（＝停止を否定できないので通さない）
+      // これで「Airtable 障害だけで通常会員まで一律停止」にはならない。
+      // email 経路の鍵があるので、Airtable が落ちて recordId が引けなくても marker は引ける。
+      const pauseGate = await resolveSalePauseGate({
+        fields: plusCustomerFields,
+        recordId: plusCustomerRecordId,
+        email,
+        env: process.env,
+      });
+      if (pauseGate.paused) {
+        console.warn('🚫 [bank-transfer] Premium Plus 申込を拒否（販売停止）:', {
+          recordId: plusCustomerRecordId || null,
+          airtable: pauseGate.airtable,
+          marker: pauseGate.marker,
+          why: pauseGate.why,
         });
         return {
           statusCode: 403,
           headers,
           body: JSON.stringify({
-            error: '現在お申し込みを受け付けていません。再開までしばらくお待ちください。',
+            error: SALE_PAUSED_MESSAGE,
             code: 'sale_paused',
             sideEffects: 'none',
           }),

@@ -18,6 +18,7 @@ export const prerender = false;
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
+import { enforceSalePause } from '../../lib/premiumPlus/salePauseGuard.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -45,10 +46,18 @@ export async function GET({ request }) {
     now,
   });
 
-  const view = resolveUpsellForCustomer({
+  // 会員単位の販売 一時停止は**キャッシュを迂回して**確認する。
+  // `fields` は最大 10 分キャッシュされるため、停止直後の会員がここで
+  // 「販売中」の古い値のまま通ってしまう（enforceSalePause が deny-marker で塞ぐ）。
+  const view = await enforceSalePause({
+    view: resolveUpsellForCustomer({
+      fields,
+      nowMs: now,
+      fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+    }),
     fields,
-    nowMs: now,
-    fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+    recordId: access.payload?.sub || null,
+    env: process.env,
   });
 
   const body = {

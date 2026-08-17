@@ -101,11 +101,40 @@ CTA・商品ページ（404）・価格・購入がすべて閉じ、**申込 AP
 （メール送信より前・`sideEffects:'none'`）。画面の非表示だけでは URL 直打ちを止められないため、
 サーバー側の拒否が本体。
 
+#### 停止は障害・キャッシュでも迂回されない（2 系統・fail closed）
+
+当初は「Airtable を読めないときは止めない」と倒しており、**停止済み会員が一時障害の窓で
+申込を迂回できる fail open** だった。加えて `purchaseAnchorLookup` の **10 分キャッシュ**で、
+停止直後の会員が古い fields のまま最大 10 分は購入まで通れた。
+
+かといって「読めない＝停止」にすると Airtable 障害だけで通常会員まで一律停止する。
+そこで**独立した 2 系統**（Airtable + Redis の deny-marker）で判定する。
+
+| Airtable | marker | 結果 |
+|---|---|---|
+| paused | 何でも | 停止 |
+| 何でも | paused | 停止 |
+| clear | clear / unknown | 販売 |
+| unknown | clear | 販売（**Airtable 障害でも通常会員は買える**） |
+| unknown | unknown | **停止**（否定できない = fail closed） |
+
+- marker は**キャッシュしない**ので停止した瞬間から効く（キャッシュの穴が閉じる）
+- marker は **recordId 鍵と email 鍵の両方**へ書く。申込 API は email しか持たず、
+  Airtable 障害中は recordId を解決できないため。email は保存せず
+  `SESSION_SIGNING_SECRET` を鍵にした HMAC-SHA256
+- 読むのは **channel が plus のときだけ**（大多数に Redis 往復を発生させない・700ms で打ち切り）
+- 「marker が無い＝販売中」と読める根拠は deny-list の完全性:
+  marker ストアが無ければ**停止操作を受け付けない**(503) / 停止は marker→Airtable の順 /
+  再開は Airtable→marker 削除の順で、消せなければ **`stillPaused`** を返し画面も
+  「再開しました」と言わない
+- 実施点は表示 4 経路（`/api/upsell.json` / `/api/premium-plus-stage.json` /
+  `/premium-plus/` / `/premium-plus-v2/`）＋申込 1 経路
+
 - 資格・override・anchor を**一切書かない** → 再開で元の PHASE がそのまま戻る（rollback 可能）
 - 「販売対象外(blocked)」とは**別バッジ（琥珀）・別文言**。混同させない
 - 他会員・16:30 以降の翌日分販売・通常 eligibility には影響しない
-- fail closed: フィールド未作成なら停止操作は 503。**書けないのに「停止しました」と見せない**
-- Airtable を読めないときは**止めない**（障害で全員の申込を落とさない）
+- fail closed: フィールド未作成 / marker ストア未設定なら停止操作は 503。
+  **確実に止められないなら「停止しました」と見せない**
 
 ### 本番 schema / env（未実施・要承認）
 
@@ -117,16 +146,18 @@ CTA・商品ページ（404）・価格・購入がすべて閉じ、**申込 AP
 2. env `PREMIUM_PLUS_SALE_PAUSE_READY=1`（production）
 3. redeploy
 
+`UPSTASH_REDIS_REST_URL` / `TOKEN` も必須（deny-marker の保存先）。本番は実閲覧計測で設定済み。
+
 投入前でも既存挙動は不変（未設定＝停止していない）。
 
 ### テスト
 
-新規 46（`plusCheckoutIntakeWiring.guard` 14 + `premiumPlusSalePause` 32）。
+新規 74（`plusCheckoutIntakeWiring.guard` 14 + `premiumPlusSalePause` 32 + `salePauseGuard` 28）。
 既存ガード 3 件は仕様変更に合わせて更新（allow-list に 4 フィールド追加 /
 「全 admin action は資格操作」という前提を `PP_ELIGIBILITY_ACTIONS` へ限定 /
 関数本体の切り出しをファイル末尾までではなく次の export までに限定）。
 
-`test:premium-plus-media` 776 pass 0 fail・`upsell` 83 pass・`test:marketing` 1903 pass・
+`test:premium-plus-media` 806 pass 0 fail・`upsell` 83 pass・`test:marketing` 1903 pass・
 `test:auth-session` 670 pass・`test:bank-payment` 271 pass・`test:entitlements` 221 pass・
 `check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII scan 0 件。
 
