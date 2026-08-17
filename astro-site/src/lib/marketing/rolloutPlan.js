@@ -239,6 +239,32 @@ export function grantedToday(state, nowMs) {
   return s.lastRunDay === jstDay(nowMs) ? s.dayGrantedCount : 0;
 }
 
+/** 今日まだ配ってよい人数（1 日上限 − 今日すでに配った数）。負にはしない */
+export function dailyRoomToday(state, nowMs) {
+  const s = normalizeRolloutState(state);
+  return Math.max(0, resolveDailyLimit(s) - grantedToday(s, nowMs));
+}
+
+/**
+ * **候補を何人ぶん観測するか**（＝このバッチで配りうる最大人数）。
+ *
+ * ⚠️ 候補の取得は bounded（必要な分だけ Airtable から取る）なので、
+ *    **観測窓がそのまま allowance の上限になる**。窓が意図より狭いと
+ *    `planRolloutTick` の `remaining` が小さく出て、**エラーも出さずに**
+ *    バッチが縮む。
+ * ⚠️ 2026-08-17 の事故: `batchSize=500 / dailyLimit=500` を設定したのに、
+ *    観測が付与側の既定（`LIGHT_TRIAL_AUTOGRANT_BATCH_SIZE` 未設定 = 100）で
+ *    打ち切られ、**100 名しか付与されなかった**。以後、観測窓は
+ *    「1 バッチの人数」と「今日の残り枠」の小さい方に**必ず**合わせる。
+ *
+ * 例: batchSize=500 / dailyLimit=500 / dayGrantedCount=100 → 窓は **400**
+ *     （残り枠を超えて観測しても、どうせ配れないので取らない）
+ */
+export function resolveObservationWindow(state, nowMs) {
+  const s = normalizeRolloutState(state);
+  return Math.max(0, Math.min(resolveBatchSize(s), dailyRoomToday(s, nowMs)));
+}
+
 /**
  * **今回いくつ進めてよいか**を決める。
  *
@@ -260,6 +286,8 @@ export function planRolloutTick({
   const base = {
     allowance: 0, stage: s.stage, dailyLimit, batchSize, day,
     grantedToday: grantedToday(s, nowMs),
+    /** 候補を何人ぶん観測すべきか。**事実収集はこの窓で取る**（狭いと allowance が黙って縮む） */
+    observationWindow: resolveObservationWindow(s, nowMs),
     batchSeq: s.lastRunDay === jstDay(nowMs) ? s.batchSeq : 0,
   };
 
@@ -290,7 +318,7 @@ export function planRolloutTick({
   // ⑥ 今日の残り枠（**1 日 1 回ではなく、1 日の合計人数**で止める）
   if (dailyLimit <= 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED };
   const already = grantedToday(s, nowMs);
-  const dailyRoom = Math.min(dailyLimit, ABSOLUTE_MAX_PER_DAY) - already;
+  const dailyRoom = dailyRoomToday(s, nowMs);
   if (dailyRoom <= 0) {
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.DAILY_LIMIT_REACHED, grantedToday: already };
   }

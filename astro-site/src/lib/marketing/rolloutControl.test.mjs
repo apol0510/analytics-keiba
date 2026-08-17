@@ -74,7 +74,14 @@ test('【重要】1 日あたりの上限は整数・0 以上・絶対上限以�
   }
   // 1 日上限 0（止める）のときはバッチも 0 しかありえない → batchSize 必須と両立しない
   assert.equal(start({ dailyLimit: 0, batchSize: 1 }).reason, CONTROL_REJECT.BAD_BATCH_SIZE);
-  assert.equal(start({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 1000 }).ok, true);
+  // ⚠️ 1 バッチは付与側の絶対上限（`HARD_MAX_BATCH_SIZE` = 500）を超えられない。
+  //    超える値を保存できると、毎 tick 付与側が fail closed になり **1 人も進まない**。
+  assert.equal(start({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 500 }).ok, true);
+  assert.equal(
+    start({ dailyLimit: ABSOLUTE_MAX_PER_DAY, batchSize: 1000 }).reason,
+    CONTROL_REJECT.BAD_BATCH_SIZE,
+    '付与側が必ず断る刻みを保存できてしまう',
+  );
 });
 
 test('【重要】未指定の上限を「段階の既定でよい」と解釈しない', () => {
