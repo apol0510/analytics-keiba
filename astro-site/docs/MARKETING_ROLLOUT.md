@@ -731,7 +731,13 @@ cron は **5 分間隔**（毎時 1 回だと 90 時間かかり「1 日で配�
 
 ⚠️ 旧来 `touchMeasurement` は「全体の集計」を返す約束だった。**部分集計を同じ形で返さない**
 （一部を全体として読まれるくらいなら数を出さない）。1 回で歩くページ数は
-`MEASUREMENT_INLINE_MAX_PAGES` で頭打ちで、**ここを増やして全件走査へ戻さない**。
+**`MEASUREMENT_INLINE_MAX_PAGES = 1`**（＝ 1 ページ版とまったく同じ仕事量）で頭打ちで、
+**ここを増やして全件走査へ戻さない**。
+
+⚠️ **2 ページにしてはいけない（2026-08-17 本番実測）。** 2 ページ歩く実装は 610 行の campaign で
+   2 ページ目の途中に Function がタイムアウトし **504**（意図した「即 413 + 数字なし」に到達できない）。
+   1 ページ版は同条件で完走することを本番で確認済み。**610 行規模では全体版は 413 を返す**ので、
+   全体集計は `npm run scan:touch-measurement` を使う。
 
 ⚠️ 2026-08-17 時点で `touchMeasurement` を呼ぶ実装は **`scripts/touch-measurement-scan.mjs` だけ**
 （管理画面にも他 Function にも読み手は無い）。`touchMeasurementContract.test.mjs` が

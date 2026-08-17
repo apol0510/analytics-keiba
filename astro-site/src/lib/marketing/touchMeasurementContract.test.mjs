@@ -84,21 +84,38 @@ test('【重要】数え切れないとき touches / totals を返さない（�
 });
 
 test('【重要】数え切れたときだけ従来どおりの形で返す', async () => {
-  const r = await inlineScan([
-    page(200, { startAt: 0, pageIndex: 0, cursor: 'c1' }),
-    page(120, { startAt: 200, pageIndex: 1, cursor: null }),
-  ]);
+  // 予算（1 ページ）で終わる = 小さい campaign
+  const r = await inlineScan([page(120, { startAt: 0, pageIndex: 0, cursor: null })]);
   assert.equal(r.ok, true);
   assert.equal(r.body.complete, true);
-  assert.equal(r.body.totals.sent, 320, '合計が全ページぶんになっていない');
+  assert.equal(r.body.totals.sent, 120, '合計が読んだページぶんになっていない');
   assert.ok(Array.isArray(r.body.touches));
   assert.deepEqual(r.body.totals.rateBasis, { deliveryRate: 'sent', openRate: 'delivered' });
   assert.equal(r.body.clickMeasured, false);
   assert.equal(r.body.measurementAvailable, true);
 });
 
-test('【重要】予算を増やして全件走査へ戻していない', () => {
-  assert.ok(MEASUREMENT_INLINE_MAX_PAGES <= 2, `1 回の呼び出しで ${MEASUREMENT_INLINE_MAX_PAGES} ページ歩いている`);
+test('【重要】全体版の仕事量は 1 ページ版と同じ（2 ページで 504 になった）', () => {
+  // 2026-08-17 本番: 2 ページ歩く実装は 610 行の campaign で 504（意図した 413 に届かない）。
+  // 1 ページ版は同条件で完走を確認済みなので、全体版もそのコストに揃える。
+  assert.equal(
+    MEASUREMENT_INLINE_MAX_PAGES, 1,
+    `1 回の呼び出しで ${MEASUREMENT_INLINE_MAX_PAGES} ページ歩いている（504 の再発）`,
+  );
+});
+
+test('【重要】1 ページで終わらなければ数字を返さない（610 行の本番規模）', async () => {
+  // 既定 200 行 × 4 ページ相当。1 ページ目で cursor が残る = 数え切れない
+  const r = await inlineScan([
+    page(200, { startAt: 0, pageIndex: 0, cursor: 'c1' }),
+    page(200, { startAt: 200, pageIndex: 1, cursor: 'c2' }),
+    page(200, { startAt: 400, pageIndex: 2, cursor: 'c3' }),
+    page(10, { startAt: 600, pageIndex: 3, cursor: null }),
+  ]);
+  assert.equal(r.ok, false);
+  assert.equal(r.body.code, MEASUREMENT_INCOMPLETE);
+  assert.equal('totals' in r.body, false, '部分集計を返している');
+  assert.equal(r.body.scannedPages, 1, '予算を超えて歩いている');
 });
 
 test('壊れた入力を「数え切れた」と言わない', () => {

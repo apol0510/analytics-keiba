@@ -182,8 +182,14 @@ export async function scanAllTouchPages({ fetchPage, maxPages = 200 } = {}) {
  *
  * ⚠️ ここを増やして「全件を 1 リクエストで」に戻さない。610 行で 504 になったのが発端で、
  *    行数は 14,000 名規模まで増える。**足りなければ数を返さない**のが正しい振る舞い。
+ * ⚠️ **1 に固定する（2026-08-17 本番実測）。** 2 ページにしていたところ、610 行の campaign で
+ *    2 ページ目の途中で Function がタイムアウトし **504** になった
+ *    （意図した「即 413 + 数字なし」に到達できない）。1 ページ分の仕事量は
+ *    `action=touchMeasurementPage` が本番で完走できると実証済み
+ *    （200 行 / Redis 200 鍵）。全体版のコストをそれと**同一**にする。
+ *    大きい campaign は `touchMeasurementPage` / `npm run scan:touch-measurement` を使う。
  */
-export const MEASUREMENT_INLINE_MAX_PAGES = 2;
+export const MEASUREMENT_INLINE_MAX_PAGES = 1;
 
 /** 数を返せなかった理由（固定コード） */
 export const MEASUREMENT_INCOMPLETE = 'measurement_requires_scan';
