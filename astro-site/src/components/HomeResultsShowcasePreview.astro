@@ -8,6 +8,12 @@
 //   詳細は astro-site/docs/RESULTS_SHOWCASE.md。
 // - データが無いカテゴリはカードごと非表示。両方無ければセクション自体を描画しない。
 //
+// 構成（2026-08-18 改訂）:
+//   ① 当日の全体実績（的中数/総レース数・回収率）を最初に置く
+//   ② 全会場・全レースの ✅/✗ 一覧（JRA の 3 会場開催も全会場ぶん）
+//   ③ その下に代表メインレースの実際の配信買い目（詳細）
+//   メイン不的中の日に全体実績まで悪く見えないよう、先に当日全体を認識させる。
+//
 // props:
 //   nankanArchive / jraArchive: archiveResults{,Jra}.json の中身（呼び出し側から渡す）
 import { buildShowcasePreview } from '../lib/resultsShowcasePreview.js';
@@ -44,48 +50,76 @@ const cards = [
               <span class="rsp__meta">{c.dateLabel}・{c.venueLabel}</span>
             </div>
 
-            <div class="rsp__race">
-              🎯 {c.mainVenue} {c.mainRace.raceNumber}R メイン
-              {c.mainRace.raceName && <span class="rsp__race-name">{c.mainRace.raceName}</span>}
-            </div>
-
-            <div class="rsp__bet">
-              <span class="rsp__bet-label">配信買い目<span class="rsp__bet-type">馬単{c.mainRace.betPoints}点</span></span>
-              <div class="rsp__line">
-                <span class="rsp__num rsp__num--honmei">{c.mainRace.honmei}</span>
-                <span class="rsp__arrow">{c.mainRace.displayArrow}</span>
-                {c.mainRace.displayPartners.map((p: string) => (
-                  <span class="rsp__num">{p}</span>
-                ))}
-              </div>
-            </div>
-
-            <div class="rsp__result">
-              {c.mainRace.isHit ? (
-                <>
-                  <span class="rsp__badge rsp__badge--hit">✅ 的中</span>
-                  {c.mainRace.combination && (
-                    <span class="rsp__combo">{c.mainRace.combination}</span>
-                  )}
-                  {c.mainRace.payout && (
-                    <span class="rsp__payout">¥{c.mainRace.payout.toLocaleString()}</span>
-                  )}
-                </>
-              ) : (
-                <span class="rsp__badge rsp__badge--miss">✗ 不的中</span>
-              )}
-            </div>
-
-            <div class="rsp__stats">
-              <span class="rsp__stat">当日的中 <b>{c.hitRaces}/{c.totalRaces}</b></span>
+            {/* ① 当日の全体実績（先に見せる） */}
+            <div class="rsp__summary">
+              <span class="rsp__sum">
+                <b class="rsp__sum-value">{c.hitRaces}<i>/{c.totalRaces}</i></b>
+                <i class="rsp__sum-label">当日の的中レース</i>
+              </span>
               {c.recoveryRate != null && (
-                <span class={`rsp__stat ${c.recoveryRate >= 100 ? 'is-profit' : ''}`}>
-                  回収率 <b>{c.recoveryRate}%</b>
+                <span class={`rsp__sum ${c.recoveryRate >= 100 ? 'is-profit' : ''}`}>
+                  <b class="rsp__sum-value">{c.recoveryRate}<i>%</i></b>
+                  <i class="rsp__sum-label">回収率</i>
                 </span>
               )}
-              {c.otherVenueCount > 0 && (
-                <span class="rsp__stat">他{c.otherVenueCount}会場のメインも公開</span>
-              )}
+            </div>
+
+            {/* ② 全会場・全レースの ✅/✗（非メインは的中の有無のみ） */}
+            <div class="rsp__races">
+              {c.venueGroups.map((g: any) => (
+                <div class="rsp__venue">
+                  <span class="rsp__venue-name">{g.venue}<i>全{g.totalRaces}R</i></span>
+                  <div class="rsp__strip">
+                    {g.races.map((r: any) => (
+                      <span
+                        class={`rsp__chip ${r.isHit ? 'is-hit' : 'is-miss'} ${r.isMain ? 'is-main' : ''}`}
+                        title={`${r.raceNumber}R${r.isMain ? '（メイン）' : ''} ${r.isHit ? '的中' : '不的中'}`}
+                      >
+                        <i class="rsp__chip-r">{r.raceNumber}R</i>
+                        <i class="rsp__chip-mark">{r.isHit ? '✅' : '✗'}</i>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ③ 代表メインレースの実際の配信買い目（詳細） */}
+            <div class="rsp__main">
+              <div class="rsp__race">
+                🎯 {c.mainVenue} {c.mainRace.raceNumber}R メイン
+                {c.mainRace.raceName && <span class="rsp__race-name">{c.mainRace.raceName}</span>}
+              </div>
+
+              <div class="rsp__bet">
+                <span class="rsp__bet-label">配信買い目<span class="rsp__bet-type">馬単{c.mainRace.betPoints}点</span></span>
+                <div class="rsp__line">
+                  <span class="rsp__num rsp__num--honmei">{c.mainRace.honmei}</span>
+                  <span class="rsp__arrow">{c.mainRace.displayArrow}</span>
+                  {c.mainRace.displayPartners.map((p: string) => (
+                    <span class="rsp__num">{p}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div class="rsp__result">
+                {c.mainRace.isHit ? (
+                  <>
+                    <span class="rsp__badge rsp__badge--hit">✅ 的中</span>
+                    {c.mainRace.combination && (
+                      <span class="rsp__combo">{c.mainRace.combination}</span>
+                    )}
+                    {c.mainRace.payout && (
+                      <span class="rsp__payout">¥{c.mainRace.payout.toLocaleString()}</span>
+                    )}
+                  </>
+                ) : (
+                  <span class="rsp__badge rsp__badge--miss">✗ 不的中</span>
+                )}
+                {c.otherVenueCount > 0 && (
+                  <span class="rsp__note">他{c.otherVenueCount}会場のメインも公開</span>
+                )}
+              </div>
             </div>
 
             <span class="rsp__cta">{c.categoryLabel}の実績を詳しく見る →</span>
@@ -196,6 +230,113 @@ const cards = [
     color: #94a3b8;
   }
 
+  /* ① 当日の全体実績 */
+  .rsp__summary {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .rsp__sum {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 6px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .rsp__sum-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    line-height: 1.1;
+    color: #f1f5f9;
+    font-style: normal;
+  }
+  .rsp__sum-value i {
+    font-size: 0.95rem;
+    font-style: normal;
+    color: #94a3b8;
+  }
+  .rsp__sum.is-profit .rsp__sum-value {
+    color: #10b981;
+  }
+  .rsp__sum-label {
+    font-size: 0.68rem;
+    font-style: normal;
+    color: #94a3b8;
+  }
+
+  /* ② 全会場・全レースの ✅/✗ */
+  .rsp__races {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .rsp__venue-name {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #cbd5e1;
+    margin-bottom: 4px;
+  }
+  .rsp__venue-name i {
+    margin-left: 6px;
+    font-style: normal;
+    font-weight: 500;
+    color: #94a3b8;
+  }
+  .rsp__strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .rsp__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 5px;
+    border-radius: 6px;
+    background: rgba(51, 65, 85, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    white-space: nowrap;
+  }
+  .rsp__chip-r {
+    font-size: 0.6rem;
+    font-style: normal;
+    color: #94a3b8;
+  }
+  .rsp__chip-mark {
+    font-size: 0.62rem;
+    font-style: normal;
+    line-height: 1;
+  }
+  .rsp__chip.is-hit {
+    background: rgba(16, 185, 129, 0.14);
+    border-color: rgba(16, 185, 129, 0.3);
+  }
+  .rsp__chip.is-hit .rsp__chip-r {
+    color: #6ee7b7;
+  }
+  .rsp__chip.is-miss .rsp__chip-mark {
+    color: #94a3b8;
+    font-weight: 700;
+  }
+  .rsp__chip.is-main {
+    border-color: rgba(251, 191, 36, 0.55);
+  }
+  .rsp__chip.is-main .rsp__chip-r {
+    color: #fbbf24;
+    font-weight: 700;
+  }
+
+  /* ③ 代表メインの詳細 */
+  .rsp__main {
+    padding-top: 10px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  }
   .rsp__race {
     font-size: 0.85rem;
     font-weight: 700;
@@ -294,21 +435,9 @@ const cards = [
     color: #fbbf24;
   }
 
-  .rsp__stats {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    margin-top: 12px;
-    font-size: 0.78rem;
+  .rsp__note {
+    font-size: 0.72rem;
     color: #94a3b8;
-  }
-  .rsp__stat b {
-    font-size: 0.95rem;
-    color: #e2e8f0;
-    margin-left: 2px;
-  }
-  .rsp__stat.is-profit b {
-    color: #10b981;
   }
 
   .rsp__cta {
@@ -348,6 +477,43 @@ const cards = [
       height: 28px;
       padding: 0 4px;
       font-size: 0.88rem;
+    }
+    /* 全レース一覧は 12R でも 2 行に収まるよう詰める */
+    .rsp__sum {
+      padding: 6px 4px;
+    }
+    .rsp__sum-value {
+      font-size: 1.3rem;
+    }
+    .rsp__chip {
+      gap: 1px;
+      padding: 2px 4px;
+    }
+    .rsp__chip-r {
+      font-size: 0.56rem;
+    }
+    .rsp__chip-mark {
+      font-size: 0.58rem;
+    }
+    /* 会場名を一覧の左に回り込ませ、1 会場につき 1 行ぶん縦を詰める */
+    .rsp__venue {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .rsp__venue-name {
+      flex: 0 0 auto;
+      margin: 2px 0 0;
+      min-width: 3.2em;
+    }
+    .rsp__venue-name i {
+      display: block;
+      margin: 0;
+      font-size: 0.62rem;
+    }
+    .rsp__races {
+      gap: 6px;
+      margin-bottom: 10px;
     }
   }
 </style>

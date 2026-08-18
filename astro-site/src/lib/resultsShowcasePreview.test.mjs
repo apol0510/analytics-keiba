@@ -6,8 +6,14 @@
 //   - 買い目はメインレースのみ・抑えは非公開
 //   - 旧 ↔ archive の裏目的中は buildMainRace の畳み込み（⇄ + 勝った1組）に従う
 //   - データが無い / 代表メインが無いカテゴリは null（＝カードごと非表示）
+//   - 全レース一覧は ✅/✗ のみ（非メインの買い目・払戻を持たせない）
+//   - 全体実績 → 全レース一覧 → メイン買い目詳細 の順で描画する（メイン不的中の日に
+//     全体実績まで悪く見えないようにするための構成。マークアップ順を guard で固定）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
 
 import {
   buildShowcasePreview,
@@ -203,5 +209,153 @@ test('本物のアーカイブでも壊れない（両カテゴリ）', async ()
     assert.ok(p.totalRaces > 0);
     assert.ok(p.hitRaces <= p.totalRaces);
     assert.equal(JSON.stringify(p).includes('抑え'), false);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// 全レース一覧（2026-08-18 追加）
+// ─────────────────────────────────────────────────────────────
+
+test('全会場・全レースを venueGroups で返す（JRA 複数会場も全会場ぶん）', () => {
+  const a = makeDay({ venue: '中京' });
+  const b = makeDay({ venue: '新潟', mainLine: '1→2.3.4.5.6' });
+  const c = makeDay({ venue: '札幌', mainLine: '3→1.2.4.5.6' });
+  const merged = {
+    date: '2026-08-16',
+    venues: ['中京', '新潟', '札幌'],
+    totalRaces: 36,
+    hitRaces: 15,
+    recoveryRate: 256.1,
+    races: [...a.races, ...b.races, ...c.races],
+  };
+  const p = buildShowcasePreview([merged], 'jra');
+  assert.deepEqual(
+    p.venueGroups.map((g) => g.venue),
+    ['中京', '新潟', '札幌']
+  );
+  for (const g of p.venueGroups) {
+    assert.equal(g.totalRaces, 12);
+    assert.equal(g.races.length, 12);
+    assert.deepEqual(
+      g.races.map((r) => r.raceNumber),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    );
+    assert.equal(g.hasMain, true);
+    assert.equal(g.mainRaceNumber, 11);
+  }
+  // 全 36 レースが漏れなく出る
+  assert.equal(p.venueGroups.reduce((n, g) => n + g.races.length, 0), 36);
+});
+
+test('全レース一覧は的中の有無のみ（非メインの買い目・払戻を持たない）', () => {
+  const p = buildShowcasePreview([makeDay({ mainHit: true, mainPayout: 4210 })], 'jra');
+  const races = p.venueGroups.flatMap((g) => g.races);
+  assert.ok(races.length > 0);
+  for (const r of races) {
+    assert.deepEqual(Object.keys(r).sort(), ['isHit', 'isMain', 'raceNumber']);
+  }
+  // 一覧側に払戻・組み合わせ・買い目が一切載っていない
+  const serialized = JSON.stringify(p.venueGroups);
+  for (const leak of ['payout', 'combination', 'bettingLines', '抑え', '4210']) {
+    assert.equal(serialized.includes(leak), false, `${leak} が一覧に漏れている`);
+  }
+});
+
+test('メインレースだけ isMain=true（1 会場につき 1 レース）', () => {
+  const p = buildShowcasePreview([makeDay()], 'jra');
+  for (const g of p.venueGroups) {
+    const mains = g.races.filter((r) => r.isMain);
+    assert.equal(mains.length, 1);
+    assert.equal(mains[0].raceNumber, g.mainRaceNumber);
+  }
+});
+
+test('10R 開催（南関）は 9R がメイン・全 10 レースが出る', () => {
+  const races = Array.from({ length: 10 }, (_, i) => ({
+    raceNumber: i + 1,
+    venue: '大井',
+    isHit: i % 2 === 0,
+    bettingLines: ['1↔2.3.4.5.6'],
+    betPoints: 5,
+  }));
+  races[8] = {
+    raceNumber: 9,
+    venue: '大井',
+    raceName: 'サードニックス賞',
+    bettingLines: ['5→1.2.6.8.9(抑え3.7)'],
+    isHit: false,
+    umatan: { combination: '9-1', payout: 7820 },
+    betPoints: 5,
+  };
+  const p = buildShowcasePreview(
+    [{ date: '2026-08-17', venues: ['大井'], totalRaces: 10, hitRaces: 7, recoveryRate: 135.4, races }],
+    'nankan'
+  );
+  assert.equal(p.venueGroups.length, 1);
+  assert.equal(p.venueGroups[0].races.length, 10);
+  assert.equal(p.venueGroups[0].mainRaceNumber, 9);
+  assert.equal(p.mainRace.raceNumber, 9);
+});
+
+test('的中数は単一源の値のまま（一覧から数え直さない）', () => {
+  const day = makeDay({ hitRaces: 4 });
+  const p = buildShowcasePreview([day], 'jra');
+  const view = buildLatestShowcase([day]);
+  assert.equal(p.hitRaces, view.hitRaces);
+  assert.equal(p.totalRaces, view.totalRaces);
+});
+
+test('本物のアーカイブでも全レースが出る（両カテゴリ）', async () => {
+  const [{ default: nankan }, { default: jra }] = await Promise.all([
+    import('../data/archiveResults.json', { with: { type: 'json' } }),
+    import('../data/archiveResultsJra.json', { with: { type: 'json' } }),
+  ]);
+  for (const [arr, category] of [
+    [nankan, 'nankan'],
+    [jra, 'jra'],
+  ]) {
+    const p = buildShowcasePreview(arr, category);
+    if (p === null) continue;
+    const total = p.venueGroups.reduce((n, g) => n + g.races.length, 0);
+    assert.equal(total, p.totalRaces, `${category}: 一覧の件数が totalRaces と一致しない`);
+    for (const r of p.venueGroups.flatMap((g) => g.races)) {
+      assert.deepEqual(Object.keys(r).sort(), ['isHit', 'isMain', 'raceNumber']);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// 表示順の guard（全体実績 → 全レース一覧 → メイン買い目詳細）
+// ─────────────────────────────────────────────────────────────
+
+test('コンポーネントは全体実績 → 全レース一覧 → メイン買い目 の順で描画する', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const astro = readFileSync(
+    join(here, '..', 'components', 'HomeResultsShowcasePreview.astro'),
+    'utf-8'
+  );
+  const body = astro.slice(astro.indexOf('<section class="rsp"'), astro.indexOf('<style>'));
+  const iSummary = body.indexOf('class="rsp__summary"');
+  const iRaces = body.indexOf('class="rsp__races"');
+  const iMain = body.indexOf('class="rsp__main"');
+  assert.ok(iSummary > 0, '全体実績ブロックが無い');
+  assert.ok(iRaces > 0, '全レース一覧ブロックが無い');
+  assert.ok(iMain > 0, 'メイン買い目ブロックが無い');
+  assert.ok(
+    iSummary < iRaces && iRaces < iMain,
+    `順序が崩れている: summary=${iSummary} races=${iRaces} main=${iMain}`
+  );
+});
+
+test('全レース一覧のマークアップに払戻・買い目を出していない', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const astro = readFileSync(
+    join(here, '..', 'components', 'HomeResultsShowcasePreview.astro'),
+    'utf-8'
+  );
+  const body = astro.slice(astro.indexOf('<section class="rsp"'), astro.indexOf('<style>'));
+  const strip = body.slice(body.indexOf('class="rsp__races"'), body.indexOf('class="rsp__main"'));
+  for (const banned of ['payout', 'combination', 'displayPartners', 'honmei', 'betPoints']) {
+    assert.equal(strip.includes(banned), false, `一覧に ${banned} を出している`);
   }
 });

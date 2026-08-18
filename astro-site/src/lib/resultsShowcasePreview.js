@@ -10,6 +10,9 @@
 //     buildMainRace() が決めたものをそのまま使う。ここで再実装しない。
 //   - 代表メインは「最初にメインレースを持つ会場」を機械的に選ぶ。
 //     的中した会場を優先的に選ぶ等の“良く見せる”選び方はしない（実績の誇張禁止）。
+//   - 全レース一覧（✅/✗）も buildLatestShowcase() の venueGroups[].races[] をそのまま渡す。
+//     非メインは正本どおり **的中の有無のみ**で、買い目・払戻は持たせない
+//     （raceNumber / isHit / isMain の 3 キーだけ。ここで race レコードを触らない）。
 // ─────────────────────────────────────────────────────────────
 
 import { buildLatestShowcase } from './resultsShowcase.js';
@@ -54,6 +57,16 @@ export function buildShowcasePreview(archiveArray, category) {
   const representative = groupsWithMain[0];
   const recoveryRate = view.recoveryRate == null ? null : Number(view.recoveryRate);
 
+  // 全会場・全レースの ✅/✗ 一覧（JRA の 1 日 3 会場開催も全会場ぶん渡す）。
+  // buildShowcaseDay() が組んだ races をそのまま使い、ここでは集計も並べ替えもしない。
+  const venueGroups = (view.venueGroups ?? []).map((g) => ({
+    venue: g.venue,
+    totalRaces: g.totalRaces,
+    hasMain: !!g.mainRace,
+    mainRaceNumber: g.mainRace ? g.mainRace.raceNumber : null,
+    races: g.races,
+  }));
+
   return {
     category,
     categoryLabel: CATEGORY_LABEL[category],
@@ -70,5 +83,7 @@ export function buildShowcasePreview(archiveArray, category) {
     mainVenue: representative.venue,
     // 同日に他会場のメインもある場合の件数（JRA の3会場開催など）
     otherVenueCount: groupsWithMain.length - 1,
+    // 全会場・全レースの ✅/✗（非メインは的中の有無のみ）
+    venueGroups,
   };
 }
