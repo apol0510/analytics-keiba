@@ -1,3 +1,63 @@
+## 2026-08-18 — 【実績】資格の軸と停止の分離を本番反映し、read-only で実測完了
+
+PR #365 を squash merge（main `133e482a`）→ 本番反映 → 6 項目を read-only 実測。
+**すべて期待どおり。Daniel の停止は維持されたまま、資格表示だけが正本へ戻った。**
+
+### 本番の現在状態
+
+| 項目 | 値 |
+|---|---|
+| main | `133e482a`（PR #365 squash merge） |
+| 停止中の会員 | **1 名**（Daniel）／候補 17 名 |
+| production env | **変更なし**（`PREMIUM_PLUS_SALE_PAUSE_READY=1` のまま） |
+| Airtable データ | **変更なし**（Daniel の保存値も無変更） |
+
+### 実測結果（read-only・6 項目）
+
+| # | 確認項目 | 実測 | 判定 |
+|---|---|---|---|
+| ① | Daniel の資格表示 | **即時販売**（`phase=4` / `overrideApplied=true`） | ✅ |
+| ② | 停止は別軸で表示 | `salePaused=true` / `salePausedLabel=一時停止中` / `state=一時停止中（資格は保持）` | ✅ |
+| ③ | `immediate` 件数 | **3**（停止前と同じ。修正前は 2 に減っていた） | ✅ |
+| ④ | `salePaused` 件数 | **1** | ✅ |
+| ⑤ | Daniel の顧客向け 5 経路 | 下表のとおり**全て停止のまま** | ✅ |
+| ⑥ | 他会員 | 停止フラグ 0 名 / Plus CTA 表示 2 名（無影響） | ✅ |
+
+`counts.eligible` は 3 のまま（元から `eligibility` 由来で影響を受けない）。
+
+### ⑤ 顧客向け 5 経路（Daniel 停止 / 対照会員 非停止）
+
+| # | 経路 | Daniel | 対照会員 |
+|---|---|---|---|
+| 1 | dashboard CTA | `channel=none` → 非表示 | `channel=plus` |
+| 2 | premium-sanrenpuku 予告 | `showTeaser=false` → 404 | true |
+| 3 | `/premium-plus/` | `showProductPage=false` → 404 | true |
+| 4 | `/premium-plus-v2/` | 同上 → 404 | true |
+| 5 | 申込 Function | **403 `sale_paused` / `sideEffects:"none"`** | 未実行 |
+
+管理者プレビューの `visibility` も Daniel「商品ページは 404。予告も表示されません」/
+対照「商品ページ・価格・購入 CTA が表示され、申し込み操作ができます」。
+
+⚠️ 経路 5 は停止側でのみ実行（非停止会員で試すと実申込が成立しメールが飛ぶため）。
+実行前に Airtable 健全性（1134ms / `PremiumPlusSalePaused=true`）を確認し、
+403 が確定的な状態でのみ POST した。**メール 0 通・課金変更 0 件・レコード変更 0 件。**
+
+### 補足: 管理者プレビューは今も denied 値を出す（正しい挙動）
+
+`action=preview` は「**顧客に何が見えるか**」を返す面なので、停止中の Daniel では
+`phase=1` / `overrideApplied=false` のまま。これは仕様どおりで、修正対象は
+**一覧の資格表示と `immediate` 集計**だった。両者は役割が違うので統一しない。
+
+### rollback
+
+| 手段 | 方法 |
+|---|---|
+| 表示修正だけ戻す | `git revert 133e482a`（停止判定・申込 403・保存値には触れていないため、戻しても Daniel の停止は継続） |
+| Daniel の停止解除 | 管理画面 詳細 →「▶ 販売を再開する」 |
+| 停止機能ごと無効化 | `PREMIUM_PLUS_SALE_PAUSE_READY` を unset → 再デプロイ（先に再開しておくこと） |
+
+merge 前 main（基準）= `363f5f99`。
+
 ## 2026-08-18 — 【修正】停止中に資格バッジと「即時販売」件数が動く不一致を解消
 
 本番で Daniel を停止した際に観測した表示の不一致を、確定仕様
