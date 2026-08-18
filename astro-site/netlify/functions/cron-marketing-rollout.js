@@ -516,6 +516,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const jobs = await loadJobs().catch(() => null);
   // Step2〜24 の期日は**既存の単一源**（`action=sequence`）に聞く
   const due = await readNextDueStep().catch(() => null);
+  /** まだ queue していない付与の数（**運転手のローカル状態**が正） */
+  const pendingHandoffs = (Array.isArray(state.pendingHandoffOps) ? state.pendingHandoffOps.length : 0)
+    + (state.pendingHandoffOp ? 1 : 0);
   const facts = deriveFacts({
     barrier: planLoad?.planned?.barrier || null,
     moreAvailable: planLoad?.fetch ? planLoad.fetch.moreAvailable : null,
@@ -527,6 +530,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     followUpStep: due ? due.step : null,
     followUpDue: due ? due.due : null,
   });
+  facts.pendingHandoffs = pendingHandoffs;
 
   // ── 終わったジョブの実績を集計へ写す（画面のためだけ・正本は台帳）──
   //    決断より前にやる。ここを後回しにすると「送ったのに 0 通」と見える時間が伸びる。
