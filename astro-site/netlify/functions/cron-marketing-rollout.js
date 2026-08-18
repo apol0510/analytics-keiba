@@ -377,6 +377,50 @@ export function readWillSend(dryBody, jobId) {
 }
 
 /**
+ * `startDispatch` の skip 理由のうち、**異常ではない**もの。
+ *
+ * ⚠️ allow-list である（deny-list にしない）。知らない理由が増えたら
+ *    **異常側**に倒れるので、fail closed が既定になる。
+ */
+export const BENIGN_DISPATCH_SKIP = Object.freeze(['will_send_zero']);
+
+/**
+ * 「1 件も起動しなかった」を**正当な 0 と異常な 0 に分ける**（純粋）。
+ *
+ * ── なぜ要るか（2026-08-18 の auto-stop）────────────────────────
+ * 旧実装は `ok: started > 0` だけを見ていた。ところが `startDispatch` は
+ * **`willSend === 0` のジョブを意図的に起動しない**（その場の注記どおり
+ * 「0 名は異常ではない。全員が既送信・配信停止・バウンス等」）。
+ * その結果、**送るべき人が正当にゼロ**の回が `started === 0` になり、
+ * 呼び出し側が `dispatch_failed` として自動停止していた。
+ * 本番実測でも PENDING 0 / 全ジョブ SENT / failed 0 / 重複 0 で、
+ * **送信は成功しているのに展開だけが止まった**。
+ *
+ * ⚠️ ただし「正当な 0」と言えるのは、**その通が台帳で終わっている**ときだけ。
+ *    ジョブがまだ `PENDING` のまま `willSend === 0` なら、起動しない限り
+ *    永久に終わらない（＝ queue が溜まり続ける）ので**異常**として扱う。
+ *    台帳で見えないジョブも同じく異常側（**分からないものを正当にしない**）。
+ *
+ * @param {{started: number, skipped: Array<{reason: string}>}} input
+ * @returns {{ok: boolean, started: number, failures: number,
+ *            failureReasons: string[], nothingToStart: boolean}}
+ */
+export function classifyDispatchStart({ started = 0, skipped = [] } = {}) {
+  const n = Number(started) || 0;
+  const list = Array.isArray(skipped) ? skipped : [];
+  const benign = new Set(BENIGN_DISPATCH_SKIP);
+  const failures = list.filter((s) => !benign.has(String((s && s.reason) || '')));
+  return {
+    ok: n > 0 || failures.length === 0,
+    started: n,
+    failures: failures.length,
+    failureReasons: [...new Set(failures.map((f) => String((f && f.reason) || 'unknown')))],
+    /** 起動すべきものが**正当に**無かった（異常ではない） */
+    nothingToStart: n === 0 && failures.length === 0,
+  };
+}
+
+/**
  * 送信を起動する。**起動直前に必ず read-only の dry-run を通す。**
  *
  * Background は `expectedWillSend` が無ければ 202 を返して**何も送らない**（安全策）。
@@ -390,7 +434,14 @@ async function startDispatch({ jobIds, byId }) {
   const secret = process.env.MARKETING_DISPATCH_SECRET
     || process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET;
   const site = String(process.env.URL || process.env.DEPLOY_URL || '').replace(/\/$/, '');
-  if (!secret || !site) return { ok: false, error: 'dispatch_not_configured', started: 0, skipped: [] };
+  if (!secret || !site) {
+    // 設定不備は**異常**（`nothingToStart` にしない）
+    return {
+      ok: false, error: 'dispatch_not_configured', started: 0,
+      failures: 1, failureReasons: ['dispatch_not_configured'],
+      nothingToStart: false, requested: (jobIds || []).length, skipped: [], watch: {},
+    };
+  }
 
   let started = 0;
   const skipped = [];
@@ -407,7 +458,17 @@ async function startDispatch({ jobIds, byId }) {
     if (!w.ok) { skipped.push({ jobId, reason: w.reason }); continue; }
     if (w.willSend === 0) {
       // 0 名は異常ではない（全員が既送信・配信停止・バウンス等）。**理由ごと記録して起動しない**
-      skipped.push({ jobId, reason: 'will_send_zero', skipByReason: w.skipByReason, alreadySent: w.alreadySent });
+      // ⚠️ ただし**正当な 0 と言えるのは台帳でその通が終わっているときだけ**。
+      //    まだ PENDING なら起動しない限り永久に終わらない（queue が溜まる）ので異常側へ。
+      //    台帳で見えないジョブも異常側（**分からないものを正当にしない**）。
+      const job = byId && byId.get ? byId.get(jobId) : null;
+      const unfinished = !job || job.status === 'PENDING';
+      skipped.push({
+        jobId,
+        reason: unfinished ? 'will_send_zero_unfinished' : 'will_send_zero',
+        skipByReason: w.skipByReason,
+        alreadySent: w.alreadySent,
+      });
       continue;
     }
     // ② 起動（202 即返し）。送信済み件数を控えて、次 tick で台帳の進みを見る
@@ -429,7 +490,8 @@ async function startDispatch({ jobIds, byId }) {
       skipped.push({ jobId, reason: 'start_failed' }); // 次 tick が同じ判断で拾う
     }
   }
-  return { ok: started > 0, started, requested: jobIds.length, skipped, watch };
+  // ⚠️ `started > 0` だけで成否を決めない（正当な 0 と異常な 0 は別物）
+  return { ...classifyDispatchStart({ started, skipped }), requested: jobIds.length, skipped, watch };
 }
 
 /**
@@ -695,8 +757,11 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       return { ok: false, ...view, abort: 'no_job_ids', sideEffects: 'none' };
     }
     const res = await startDispatch({ jobIds, byId: jobs ? jobs.byId : null });
-    if (res && res.ok === false && Number(res.started || 0) === 0) {
-      // ⚠️ **送信が 1 件も起動できないのは異常**。放置すると queue だけ溜まり続ける
+    // ⚠️ 止めるのは**異常な 0 のときだけ**。「送るべき人が正当にゼロ」で止めない
+    //    （`classifyDispatchStart` が両者を分ける）。次 tick で台帳が SENT を示せば
+    //    `collectFinishedJobs` が `pendingJobIds` から外し、展開は先へ進む。
+    if (res && res.ok === false) {
+      // ⚠️ **起動できるはずのものを 1 件も起動できないのは異常**。放置すると queue だけ溜まり続ける
       const paused = await pauseWithRetry({
         store, campaignId: STATE_KEY, nowMs: now,
         note: 'auto-stop: dispatch_failed', reason: 'dispatch_failed',

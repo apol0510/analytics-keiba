@@ -1,3 +1,88 @@
+## 2026-08-18 — 【修正】「送るべき人が正当にゼロ」を送信失敗にしない（dispatch_failed の誤検知）
+
+#367 を本番反映して展開を再開したところ、**別の理由**で自動停止した。
+`batch_stats_unreadable` は再発しておらず（健全性の窓読みは 2 バッチぶん正常に通った）、
+今度は `auto-stop: dispatch_failed` だった。
+
+### 送信は失敗していない（停止時の本番実測）
+
+| 項目 | 実測 |
+|---|---|
+| PENDING | **0** |
+| `mkt-` ジョブ | **170 件すべて SENT** |
+| failed | **0** |
+| Step1 配信行 | **1,408 件すべて `sent`** / 重複 DeliveryKey **0** |
+| outstandingStep1 | **0** |
+| 付与済み / Step1 解決済み | **1,410 / 1,410**（queue・送信済み 1,398 + 停止リスト 12） |
+
+詰まっているものが 1 つも無い。**止まったのは判定側だけ**だった。
+
+### 原因
+
+`startDispatch()` は最後に `ok: started > 0` を返していた。ところが同じ関数は
+**`willSend === 0` のジョブを意図的に起動しない**（その場の注記どおり
+「0 名は異常ではない。全員が既送信・配信停止・バウンス等」）。
+
+その結果、**その回のジョブが全部 `willSend === 0`** だと `started === 0` になり、
+呼び出し側の
+
+```js
+if (res && res.ok === false && Number(res.started || 0) === 0) { auto-stop }
+```
+
+が `dispatch_failed` として展開を止めていた。
+つまり「**正当に送るものが無い**」と「**送信基盤が壊れている**」を区別できていない。
+
+⚠️ 構図は #363 / #364 の**裏返し**。あちらは「対象 0 件」を成功扱いする **fail open**、
+今回は「正当な 0」を失敗扱いする**過剰な fail closed** で、展開が前へ進めなくなっていた。
+
+### 直し方（件数ではなく**理由**で判定する）
+
+判定を純粋関数 `classifyDispatchStart({ started, skipped })` に集約し、
+`started` の数ではなく **skip の理由**で正当 / 異常を分ける。
+
+| skip 理由 | 扱い |
+|---|---|
+| `will_send_zero`（台帳でその通が**完了済み**） | ✅ 正当（`nothingToStart`）。**止めない** |
+| `will_send_zero_unfinished`（まだ `PENDING` / 台帳で見えない） | ❌ 異常。起動しない限り永久に終わらない（queue が溜まる） |
+| `dry_run_failed` / `dry_run_shape_unknown` / `job_not_in_dry_run` / `will_send_unknown` | ❌ 異常（**分からないものを正当にしない**） |
+| `http_*` / `start_failed` / `dispatch_not_configured` | ❌ 異常 |
+
+- `ok = started > 0 || failures === 0`
+- 呼び出し側は `res.ok === false` のときだけ止める（`started === 0` を条件にしない）
+- **allow-list**（正当は `will_send_zero` の 1 種類だけ）。知らない理由が増えたら
+  自動的に異常側へ倒れるので **fail closed が既定**
+- 正当な 0 と異常が混ざったら**異常を優先**して止める
+- 正当な 0 を「起動した」とも言わない（`sideEffects` は `none` のまま）
+
+⚠️ **送信経路そのものは変えていない。** `willSend === 0` を起動しない契約も、
+起動直前の dry-run で人数を確定する契約（`expectedWillSend`）もそのまま。
+
+### 進めなくなる心配はないか
+
+正当な 0（台帳で完了済み）のジョブは、次の tick で `collectFinishedJobs` が
+`pendingJobIds` から外すので DISPATCH は選ばれなくなり、展開は先へ進む。
+まだ `PENDING` のものは上表のとおり**異常として従来どおり止める**ので、
+「静かに空回りし続ける」状態は作らない。
+
+### テスト
+
+`dispatchStartOutcome.test.mjs` を新設（**15 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+`startDispatch` は非 export のため、配線はソース検査の guard で固定した
+（`started === 0` を停止条件にしていない / 分類関数を通している /
+`willSend 0` を台帳の状態で分けている / 設定不備を `nothingToStart` にしない /
+送信経路の起動条件を緩めていない）。
+
+`test:marketing` 2,088 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+いずれも fail 0 / cancelled 0。`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・
+secret/PII 0 件・`package.json` / `package-lock.json` 変更なし。
+
+### 本番の状態（この修正では触っていない）
+
+`stage=paused` / `autoStopped=true` / `stopReason=dispatch_failed` を**維持**。
+**新規 grant も rollout 再開も行っていない。** env / secret / schema / datastore 変更なし。
+eligible 残数 **13,078**。
+
 ## 2026-08-18 — 【修正】健全性の窓読みを「日全体」から**実バッチ窓**へ絞る（auto-stop の原因）
 
 #364 反映後に rollout を再開したところ、200 名を付与・案内した直後の**バッチ #2** で
