@@ -203,9 +203,14 @@ async function raceDeadline(promise, deadlineAtMs, nowFn) {
   let timer = null;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve(DEADLINE), remaining);
-    // Node では pending なタイマーが event loop を保持する。締切用は保持させない
-    if (timer && typeof timer.unref === 'function') timer.unref();
   });
+  // ⚠️ このタイマーを `unref()` してはいけない。締切は**発火させたい**ので、
+  //    待っている間は event loop を保持させる。`unref()` すると
+  //    「hang した I/O しか残っていない」状況で loop が枯渇し、
+  //    締切が来る前に promise が宙づりのまま終わる
+  //    （node:test の "Promise resolution is still pending but the event loop
+  //     has already resolved" で実際に踏んだ）。
+  //    解決したら下の `finally` で `clearTimeout` するので loop は保持しない。
   try {
     return await Promise.race([pending, timeout]);
   } finally {
@@ -236,10 +241,9 @@ export function createDeadlineFetch({
     if (remaining <= 0) return expired();        // 予算切れなら **I/O を始めない**
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     let timer = null;
-    if (controller) {
-      timer = setTimeout(() => controller.abort(), remaining);
-      if (timer && typeof timer.unref === 'function') timer.unref();
-    }
+    // ⚠️ ここも `unref()` しない（abort を**発火させたい**）。
+    //    完了時に `finally` で `clearTimeout` するので loop は保持しない。
+    if (controller) timer = setTimeout(() => controller.abort(), remaining);
     try {
       return await fetchImpl(url, controller ? { ...options, signal: controller.signal } : options);
     } catch {

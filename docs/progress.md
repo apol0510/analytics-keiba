@@ -158,8 +158,15 @@ await store.get(...)          // ← これ自体が遅延・ハングしたら�
    通信の一時失敗も再試行せず fail closed に倒す（健全性は「読めなければ止まる」が正しい）。
 2. **必ず返る保証**: `raceDeadline()` で `list` / 各 `get` を実時間と競走させる。
    SDK や差し替え store が abort を尊重しなくても**必ず `null` で返る**。
-   締切タイマーは `unref()` し、破棄する promise には `catch` を付けて
-   **未完了 I/O が event loop を保持しない**（新実装が 1.77 秒で終了することで実測確認）。
+   破棄する promise には `catch` を付け、解決時に `clearTimeout` するので
+   **未完了 I/O が event loop を保持しない**（テストが 1.8 秒で正常終了することで実測確認）。
+
+⚠️ 締切タイマーを `unref()` してはいけない（一度入れて CI で踏んだ）。
+締切は**発火させたい**ので、待つ間は event loop を保持させる必要がある。
+`unref()` すると「hang した I/O しか残っていない」状況で loop が枯渇し、
+締切が来る前に promise が宙づりのまま終わる
+（node:test の `Promise resolution is still pending but the event loop has already resolved`
+で 10 件が `cancelled` になった）。解決後は `clearTimeout` で解放するので保持は残らない。
 
 ⚠️ 締切に当たったら**部分集計を絶対に返さない**（少なく数えるのが一番危ない）。
 
