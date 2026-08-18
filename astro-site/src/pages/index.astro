@@ -4,6 +4,7 @@
 // データは日次の取込コミット → Netlify 再ビルドで更新される（他の静的予想ページと同じ運用）。
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import HomeResultsShowcasePreview from '../components/HomeResultsShowcasePreview.astro';
 import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
 import { weeklyResults, dailyTabs, dailyResultsData } from './light-predictions.astro';
@@ -263,6 +264,10 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     />
                 </picture>
             </section>
+
+            <!-- 有料版で実際に配信した買い目プレビュー（/results-showcase/ への導線） -->
+            <!-- 表示データは単一源 lib/resultsShowcase.js。詳細は docs/RESULTS_SHOWCASE.md -->
+            <HomeResultsShowcasePreview jraArchive={archiveResultsJra} nankanArchive={archiveResults} />
 
             <!-- Hero Section -->
             <section class="hero-section">

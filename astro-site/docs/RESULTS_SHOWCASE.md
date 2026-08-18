@@ -43,7 +43,27 @@
 | 独立ページ（prerender=false） | `src/pages/results-showcase/{jra,nankan}.astro` |
 | 無料ページ埋込バナー | `src/components/ResultsShowcaseBanner.astro`（category prop） |
 | 埋込先 | `src/pages/free-prediction/{jra,nankan}.astro`（dark-horse-link-section 直前） |
+| トップ上部プレビュー（ビュー選択のみ） | `src/lib/resultsShowcasePreview.js` / `src/lib/resultsShowcasePreview.test.mjs`（`npm run test:results-showcase`・`check:safety` 組込） |
+| トップ上部プレビュー（表示） | `src/components/HomeResultsShowcasePreview.astro` |
+| 埋込先（トップ） | `src/pages/index.astro`（Hero Key Visual 直下 / Hero Section の前） |
 | nav | `src/layouts/BaseLayout.astro`。ナビ集約後、昨日の買い目は top-level ではなく「🏆 実績」ドロップダウン内の「💎 昨日の買い目」グループ（JRA/NANKAN）に格納。的中実績（アーカイブ）と同じ実績メニューにまとめて混同回避 |
+
+### トップページ上部プレビュー（2026-08-18 追加）
+
+Hero Key Visual の直下・Hero Section の前に、`/results-showcase/{jra,nankan}` へ誘導する
+コンパクトプレビューを置く（PC 2 カラム / スマホ 1 カラム）。
+
+- **集計を持たない**。`resultsShowcasePreview.js` は単一源 `buildLatestShowcase()` の戻り値から
+  **選ぶだけ**のアダプタ。新しい結果 JSON・独自集計・固定の宣伝数値は作らない
+- 出す値は当日の **代表メインレースの配信買い目**（抑え非公開・単一源の `displayArrow` /
+  `displayPartners` をそのまま使う）、的中/不的中、的中時の払戻、当日の的中数/総レース数、回収率
+- **代表メインは「最初にメインレースを持つ会場」を機械的に選ぶ**。的中した会場を優先して
+  選ぶ等の“良く見せる”並べ替えはしない（複数会場開催時は「他 N 会場のメインも公開」と件数だけ添える）
+- 回収率が無い日は項目ごと非表示（0% を捏造しない）。代表メインが作れないカテゴリは
+  **カードごと非表示**、両方無ければセクションを描画しない
+- トップ下部の「昨日の的中結果」（`/archive/` 導線・買い目非公開）とは役割が異なる。
+  上部プレビューは **配信買い目そのものを見せて `/results-showcase/` へ送る**のが目的なので、
+  下部セクションに買い目を足して役割を重複させないこと
 
 ### 運用の注意
 
