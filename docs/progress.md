@@ -1,3 +1,90 @@
+## 2026-08-18 — 【修正】健全性の窓読みを「日全体」から**実バッチ窓**へ絞る（auto-stop の原因）
+
+#364 反映後に rollout を再開したところ、200 名を付与・案内した直後の**バッチ #2** で
+`auto-stop: batch_stats_unreadable` が出て停止した。**ガードは正しく動いている**
+（読めないものを 0 と言わずに止まった）が、原因は名簿でも送信結果でもなく**読み方**だった。
+
+### 何が起きていたか（本番実測）
+
+`eventWindowReader.js` は `list({prefix})` で**その UTC 日全体**の blob を数え、
+`MAX_EVENT_BLOBS = 200` と比べて超えていたら **実際のバッチ窓で絞る前に** `null` を返していた。
+
+| 実測 | 値 |
+|---|---|
+| `ak/email-events/2026/08/18/` の blob 数 | **523** |
+| 上限 `MAX_EVENT_BLOBS` | 200 |
+| 結果 | 常に `null` → bounces/complaints/unsubscribes が `null` → `batch_stats_unreadable` |
+
+⚠️ **blob 数はイベント数ではない。** `emailEventBlobStore.js` は
+**1 webhook バッチ = 1 blob**（本文は 1 行 1 イベント・最大 1000 イベント）で書く。
+つまり**送るほど当日の blob が増える**ので、この判定のままでは
+高 volume の日に健全性を**永久に読めない**（バッチ #2 以降へ進めない）。
+
+### 直し方（上限を上げるのではない）
+
+上限を 2000 へ上げるだけの修正は採らない。**blob ごとに `get()` する**ので
+Function 時間がそのまま悪化する。正しくは**読む前に候補を絞る**:
+
+1. `list({prefix})` は従来どおり（日単位・append-only の正本は変えない）
+2. **鍵から受信時刻を復元**し、窓に関係し得ない blob を候補から外す
+3. `MAX_EVENT_BLOBS` は「日全体」ではなく**実際に読む候補数**へ当てる
+4. 窓外の blob は **`get()` しない**
+5. 候補自体が上限超過なら従来どおり `null` → fail closed
+
+### どこまで安全に事前除外できるか（**証明できない境界は捨てない**）
+
+鍵は `buildBatchBlobKey()` の `ak/email-events/YYYY/MM/DD/HHMMSS-<hash12>.ndjson` で、
+日時部は **`receivedAtMs` の UTC・秒精度**。実物の writer と 2,000 件の往復で
+`parseBlobKeyReceivedAtMs(key) === floor(receivedAtMs, 1s)` を確認済み。
+
+窓で切りたいのは `eventAtMs`（provider 発行）で、受信時刻とは**別の時計**:
+
+| 側 | 言えるか | 根拠 |
+|---|---|---|
+| **上限側**（古すぎる blob を捨てる） | ✅ 言える | イベントは起きてから送られる。受信 `r` の blob の最大 `eventAtMs < R + 1s + skew`。`R + 1s + skew <= sinceMs` なら窓内イベントは**構造的に入り得ない** |
+| **下限側**（新しい blob を捨てる） | ❌ 言えない | provider の再送・遅延に加え、`admin-migration-job.js` は `receivedAtMs: Date.now()` で**古い `eventAtMs`** を書く。よって新しい blob にも古いイベントが入り得る |
+
+したがって事前除外は**「古すぎて窓に届かない」側だけ**。
+`RECEIVE_CLOCK_SKEW_MS = 15 分` を安全側に取り、**鍵を読めない blob も捨てない**。
+残った候補は中身を読み、`summarizeEventWindow` が `eventAtMs` で正しく落とす。
+
+### 変えていないもの
+
+- `emailEventBlobStore.js` の **append-only / manifest 無し**設計（日次 1 blob への
+  read-modify-write のような multi-writer 競合を作らない）
+- schema / writer / datastore / production env / secret
+- 厳密 scope の単一源 `summarizeEventWindow`
+  （campaign / DeliveryKey / `eventAtMs` 窓 / `providerEventId` 重複排除 / soft≠hard）
+- **本物の読み取り失敗は今までどおり `null`**（list/get の失敗・候補超過・
+  一覧が不完全なら成功扱いにしない）
+
+### `list` の完全性（要件として確認）
+
+`@netlify/blobs` v10.7.9 の `list()` は `paginate` 無しのとき `collectIterator` で
+`next_cursor` を**追い切って全件**返し、非 200/204/404 は throw する（暗黙の truncate は無い）。
+そのうえで、万一「1 ページだけ」の形（`next_cursor` / `cursor` が残る）が渡された場合は
+**成功扱いにしない**ガードを追加した。
+
+### テスト
+
+`eventWindowReader.test.mjs` を新設（14 件）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+
+同日 500 件超でも窓内 200 以下なら読める / 窓外は `get` しない（日全体を全 get しない）/
+窓内が上限超過なら `null` / DeliveryKey 外・他 campaign・`eventAtMs` 窓外を混ぜない /
+`providerEventId` 再送を二重に数えない / soft bounce を hard にしない /
+list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob は捨てない。
+
+`test:marketing` 2,051 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII 0 件・
+`package.json` / `package-lock.json` 変更なし。
+
+### 本番の状態（この修正では触っていない）
+
+`stage=paused` / `autoStopped=true` / `stopReason=auto-stop: batch_stats_unreadable` を**維持**。
+**新規 grant も rollout 再開も行っていない。**
+停止時点の実測: 付与 **1,210** / Step1 解決 **1,210**（キュー登録・送信済み 1,202 + 停止リスト 8）/
+outstandingStep1 **0** / PENDING **0** / failed **0** / duplicate **0** / eligible 残 **13,278**。
+
 ## 2026-08-18 — 【実績】資格の軸と停止の分離を本番反映し、read-only で実測完了
 
 PR #365 を squash merge（main `133e482a`）→ 本番反映 → 6 項目を read-only 実測。
