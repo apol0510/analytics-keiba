@@ -479,26 +479,10 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     return killed;
   }
 
-  // ── 動かない状態なら**数える前に**抜ける ─────────────────────
-  //    ⚠️ 止まっている / 終わっているのに毎 tick 台帳を読むのは無駄で、
-  //       cron を短い間隔にするほど効いてくる（同日完走のために間隔を詰めている）。
-  //       ここで抜けても**送信の後片付けはしない**ので、止める前に積んだ分は
-  //       運用者が再開したときに続きから進む。
-  //    ⚠️ **`completed` では抜けない。** 終端は「新しく配る相手が居ない」という意味で、
-  //       既に配った人の Step2〜24 は何週間も続く。ここで抜けると案内が止まる
-  //       （`planRolloutTick` が付与だけを止める）。
-  if (state.stage === 'paused') {
-    const idle = {
-      ok: true, campaignId: ROLLOUT_CAMPAIGN_ID,
-      action: TICK_ACTION.SKIP,
-      reason: ROLLOUT_BLOCK.PAUSED,
-      autoStopped: state.autoStopped === true,
-      stopReason: state.stopReason || null,
-      sideEffects: 'none',
-    };
-    log(idle);
-    return idle;
-  }
+  // ⚠️ **一時停止でも tick は止めない。** 止めるのは新規付与だけで、
+  //    積み残しの queue 登録・送信は進める（`planRolloutTick` が付与を断る）。
+  //    2026-08-18: ここで早期に抜けていたため、自動停止したときに
+  //    **queue 済み 197 通が送信されないまま滞留**した。
 
   // ── 事実を数える ──────────────────────────────────────────
   const grantGates = readAutoGrantGates(armEnvForTick(env, state, now), now);

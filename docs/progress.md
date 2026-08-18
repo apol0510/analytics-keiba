@@ -78,6 +78,24 @@ fixture を「いま」からの相対時刻に直した（**テストのみの�
 `test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0。
 
+## 2026-08-18 — 【修正】関所を付与 1 回ごとへ戻す / 停止中も送信は流す
+
+全コホートの自動運転を再開したところ、200 名を付与 → queue した直後の 2 回目の付与が
+**付与側の関所**（`evaluateStep1Barrier`。「前回ぶんの Step1 が**送り終わる**まで付与しない」）に
+断られ、`waiting_for_step1` で自動停止した。運転手側だけ「論理バッチ単位」に緩めていたため。
+
+- **運転手の関所を付与 1 回ごとへ戻した**（付与側と同じ条件で待つ）。
+  論理バッチ 500 名は 200 + 200 + 100 の 3 回で満たし、**間に queue / 送信が入る**。
+  付与 1 回 = 3 tick（cron 2 分で 6 分）→ 13,900 名で約 7 時間
+- **一時停止でも tick を止めない**ようにした。`paused` は新規付与だけを止め、
+  積み残しの queue 登録・送信は進める（停止時に **queue 済み 197 通が滞留**したため）
+- 完成条件の正本（`rolloutTarget.js`）も実態へ更新（`ticksPerGrant: 3` / `ticksPerBatch: 9`）
+
+この時点の実績: 付与 810 名（累計）/ Step1 送信 609 通 / 滞留 197 通 / 失敗 0 / 重複 0。
+
+`test:marketing` 2,007 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0。
+
 ## 2026-08-18 — 【変更】残りコホートを人手なしで配り切る（同日完走・終端・fail closed）
 
 「本日 500 名を送れた」ではなく、**残り約 13,900 名を人が毎日操作せずに最後まで配り切る**

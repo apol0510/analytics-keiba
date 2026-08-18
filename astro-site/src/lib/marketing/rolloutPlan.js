@@ -341,7 +341,9 @@ export function resolveObservationWindow(state, nowMs, { perCallMax } = {}) {
   //    ここを 0 にすると候補を 1 人も観測できず、`remainingCandidates` が
   //    下限 1 に落ちて **1 名ずつしか配れなくなる**（同日完走に届かない）。
   //    進めてよいかどうかを決めるのは `planRolloutTick`（関所・1 日上限）。
-  const room = resolveBatchRoom(s) || resolveBatchSize(s);
+  // ⚠️ 付与は毎回「未処理 0」から始まるので、窓は常に `batchSize`（と今日の残り枠・
+  //    付与 1 回の上限）で決まる。`batchGrantedCount` は進捗表示のためだけに残す。
+  const room = resolveBatchSize(s);
   return Math.max(0, Math.min(room, dailyRoomToday(s, nowMs), cap));
 }
 
@@ -402,34 +404,21 @@ export function planRolloutTick({
   if (!s.alwaysArmed && s.armedFor !== day) {
     return { ...base, ok: false, reason: ROLLOUT_BLOCK.NOT_ARMED };
   }
-  // ④ 関所（**論理バッチ単位**でバッチを直列化する）
-  //    ⚠️ 500 名のバッチは付与側の上限で 200 + 200 + 100 に分かれる。
-  //       その 3 回の途中は「自分が配ったぶん」が未処理として残るので、
-  //       **バッチを配り切るまでは未処理があっても進む**。
-  //       配り切ったら queue → 送信 → 台帳確認（`outstanding` が 0 に戻る）まで待つ。
-  //    ⚠️ 未処理が「自分が配った数」を超えるのは説明できない状態。**推測で進めない**。
+  // ④ 関所（**付与 1 回ごと**に直列化する）
+  //    ⚠️ **付与側にも同じ関所がある**（`buildPlanFromSelection` の `evaluateStep1Barrier`）。
+  //       あちらは「前回付与ぶんの Step1 が**送り終わる**まで付与しない」で、
+  //       queue しただけでは開かない。ここを緩めても付与側が `waiting_for_step1` で
+  //       断るだけなので、**運転手は付与側と同じ条件で待つ**。
+  //    ⚠️ 2026-08-18 の事故: ここだけ「論理バッチ単位」に緩めた結果、
+  //       200 名を付与 → queue した直後の 2 回目の付与が付与側に断られ、
+  //       「予定があったのに 0 件」として自動停止した（安全側だが前へ進めない）。
+  //       論理バッチ 500 名は **付与 → queue → 送信 → 次の付与** を繰り返して満たす。
   const outstanding = num(previousOutstanding);
   if (outstanding === null) return { ...base, ok: false, reason: ROLLOUT_BLOCK.STATE_UNREADABLE };
-  const granted = Math.max(0, s.batchGrantedCount);
-  let batchRoom = resolveBatchRoom(s);
-  let startsNewBatch = false;
-  if (granted > 0) {
-    // バッチの途中。未処理は**自分が配ったぶん**のはずで、それを超えるのは説明できない
-    if (outstanding > granted) {
-      return { ...base, ok: false, reason: ROLLOUT_BLOCK.OUTSTANDING_MISMATCH };
-    }
-    if (batchRoom <= 0) {
-      // 配り切った → queue → 送信 → 台帳確認（未処理 0）まで待つ
-      if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
-      batchRoom = batchSize;
-      startsNewBatch = true;
-    }
-  } else {
-    // 新しいバッチを始めるときは、**前のバッチが完全に片付いている**ことを要求する
-    if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
-    batchRoom = batchSize;
-    startsNewBatch = true;
-  }
+  if (outstanding > 0) return { ...base, ok: false, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
+  // 未処理 0 で始める = 常に「新しい付与」。1 回の人数は観測窓（付与側の上限）で決まる
+  const batchRoom = batchSize;
+  const startsNewBatch = true;
 
   // ⑤ 対象が読めない / いない
   const remaining = num(remainingCandidates);
