@@ -11,12 +11,15 @@
  * 2026-08-18 の #363 は 0 件を一律 A とみなして引き継ぎを消していた（**fail open**）。
  * B のときは「付与済みなのに案内が来ない人」が黙って残る。
  *
- * ── 見分け方（既存の事実だけで判定する）────────────────────────
- * 関所の `outstandingStep1` は「付与したのに Step1 が案内に乗っていない人」の数。
- *   - `0` なら誰も待っていない → **A**（畳んでよい）
- *   - `> 0` なら待っている人が居る → **B の疑い**。畳まず、次の tick でやり直す。
- *     それが続くなら **fail closed**（自動停止して人に見せる）
- * ⚠️ `outstandingStep1` が読めない（null）ときも畳まない（**推測で消さない**）。
+ * ── 見分け方（**正の証拠だけ**）──────────────────────────────
+ * 畳んでよいのは「その付与 operation の対象者**全員**の Step1 が配信台帳に
+ * `queued` / `sent` で載っている」と**確認できたとき**だけ（`handoffQueueProof.js`）。
+ *
+ * ⚠️ 使ってはいけない根拠（本番で誤りが実証された）:
+ *   - dry-run の「対象 0 件」… まだ Airtable に見えていないだけのことがある
+ *   - 関所の `outstandingStep1 === 0` … **同じ読み取り遅延で 0 に見える**（2026-08-18 / #362）
+ *   - 「救済経路があるから大丈夫」… 引き継ぎの責任を推測で手放さない
+ * ⚠️ 証明できなければ**消さない**。続くなら fail closed（自動停止）。
  */
 
 /** 0 件が続いても畳まずに再試行する回数。超えたら止める */
@@ -38,25 +41,26 @@ const num = (v) => {
 };
 
 /**
- * @param {{outstandingStep1: number|null, attempts: number,
+ * @param {{proof: {ok: boolean, reason?: string|null}|null, attempts: number,
  *          maxAttempts?: number}} input
+ *   `proof` … `proveHandoffQueued()` の結果。**これだけが CLEAR の根拠**
  * @returns {{action: string, attempts: number, reason: string|null}}
  */
 export function resolveEmptyHandoff({
-  outstandingStep1, attempts = 0, maxAttempts = MAX_EMPTY_HANDOFF_ATTEMPTS,
+  proof, attempts = 0, maxAttempts = MAX_EMPTY_HANDOFF_ATTEMPTS,
 } = {}) {
-  const outstanding = num(outstandingStep1);
+  const proven = !!(proof && proof.ok === true);
   const tried = Math.max(0, num(attempts) ?? 0) + 1;
 
-  // 誰も案内待ちでない = 本当に積み終わっている
-  if (outstanding === 0) return { action: HANDOFF_ACTION.CLEAR, attempts: 0, reason: null };
+  // **全員ぶんの Step1 が台帳にある**と確認できたときだけ畳む
+  if (proven) return { action: HANDOFF_ACTION.CLEAR, attempts: 0, reason: null };
 
-  // 待っている人が居る / 数えられない → 畳まない
+  // 証明できない → 消さない。続くなら止めて人に見せる
   if (tried >= Math.max(1, maxAttempts)) {
     return {
       action: HANDOFF_ACTION.STOP,
       attempts: tried,
-      reason: outstanding === null ? 'handoff_unverifiable' : 'handoff_unresolved',
+      reason: `handoff_unproven:${(proof && proof.reason) || 'unknown'}`.slice(0, 60),
     };
   }
   return { action: HANDOFF_ACTION.RETRY, attempts: tried, reason: null };

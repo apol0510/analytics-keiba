@@ -55,6 +55,12 @@ import {
   pauseWithRetry, completeWithRetry, describePauseResult, PAUSE_CONFLICT,
 } from '../../src/lib/marketing/rolloutPauseGuard.js';
 import { resolveEmptyHandoff, HANDOFF_ACTION } from '../../src/lib/marketing/handoffResolution.js';
+import { proveHandoffQueued } from '../../src/lib/marketing/handoffQueueProof.js';
+import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
+
+/** 配信ブランド（DeliveryKey の材料。`lightTrialPlanLoader.js` と同じ値でなければならない） */
+const TRIAL_BRAND = 'analytics-keiba';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
@@ -802,8 +808,31 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
        *    関所（`outstandingStep1`）が 0 のときだけ畳み、そうでなければ
        *    やり直し、続くなら止めて人に見せる。
        */
+      /**
+       * ⚠️ **正の証拠だけで畳む。** dry-run の 0 件も、関所の 0 も根拠にしない
+       *    （どちらも Airtable の読み取り遅延で 0 に見えることが本番で実証済み）。
+       *    その付与 operation の対象者**全員**の Step1 が台帳に載っていることを確かめる。
+       */
+      const campaignForProof = getCampaign(ROLLOUT_CAMPAIGN_ID, { includeDisabled: true });
+      // ⚠️ ブランドは既存の単一源に合わせる（`lightTrialPlanLoader.js` と同じ値）。
+      //    ここで別の値を使うと DeliveryKey が変わり、**証明が常に失敗する**
+      const brandCfg = getBrandConfig(TRIAL_BRAND);
+      let proof = { ok: false, reason: 'not_checked' };
+      for (const id of opIds) {
+        // eslint-disable-next-line no-await-in-loop -- op ごとに 1 回
+        proof = await proveHandoffQueued({
+          apiKey: process.env.AIRTABLE_API_KEY,
+          baseId: process.env.AIRTABLE_BASE_ID,
+          operationId: id,
+          campaign: campaignForProof,
+          brand: TRIAL_BRAND,
+          fromEmail: brandCfg ? brandCfg.defaultFromEmail : null,
+          step: STEP1,
+        }).catch(() => ({ ok: false, reason: 'proof_failed' }));
+        if (!proof.ok) break;   // 1 つでも証明できなければ畳まない
+      }
       const verdict = resolveEmptyHandoff({
-        outstandingStep1: facts.outstandingStep1,
+        proof,
         attempts: state.handoffEmptyAttempts,
       });
       if (verdict.action === HANDOFF_ACTION.CLEAR) {
@@ -813,7 +842,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         const body = {
           ok: true, ...view, queued: 0, handoffsCleared: queued.done.length,
           sideEffects: 'state_only',
-          notice: '引き継ぎぶんは既に積み終わっていました（案内待ちは 0 名）。',
+          notice: '引き継ぎぶんは**全員ぶん台帳で確認**できたので畳みました。',
         };
         log(body);
         return body;
@@ -824,7 +853,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         const body = {
           ok: true, ...view, queued: 0, handoffRetry: verdict.attempts,
           sideEffects: 'state_only',
-          notice: '引き継ぎの対象が 0 件でしたが、**案内待ちが残っている**ので消さずにやり直します。',
+          notice: '引き継ぎを積み終わったと**証明できなかった**ので、消さずにやり直します。',
         };
         log(body);
         return body;

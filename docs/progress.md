@@ -88,15 +88,26 @@ fixture を「いま」からの相対時刻に直した（**テストのみの�
 
 B で畳むと「付与済みなのに案内が来ない人」が黙って残る。
 
-### 直したこと（`handoffResolution.js` が単一源）
+### 直したこと（正の証拠でしか消さない）
 
-| 関所 `outstandingStep1` | 判断 |
+引き継ぎ（`grantOperationId`）を消してよいのは、**その回に付与した人全員の Step1 が
+配信台帳に `queued` / `sent` で載っている**と確認できたときだけ。
+
+| 根拠 | 使う？ |
 |---|---|
-| 0（案内待ちが居ない） | **CLEAR**（畳む） |
-| > 0 / 数えられない | **RETRY**（消さずに次の tick でやり直す） |
-| やり直しても解決しない（3 回） | **STOP**（`handoff_unresolved` / `handoff_unverifiable` で自動停止） |
+| dry-run の「対象 0 件」 | ❌ まだ Airtable に見えていないだけのことがある |
+| 関所 `outstandingStep1 === 0` | ❌ **同じ読み取り遅延で 0 に見える**（#362 で実証） |
+| 「救済経路があるから大丈夫」 | ❌ 引き継ぎの責任を推測で手放さない |
+| **その operation の対象者を再導出 → Step1 の DeliveryKey → 配信行を名指し確認** | ✅ |
 
-引き継ぎは**止めるときも消さない**ので、人が直したあとに続きから積める。
+`handoffQueueProof.js`（read-only）が既存契約だけで証明する:
+`buildGrantOperationFormula(op)` で対象者を再導出 → `computeCampaignDeliveryKey` で
+Step1 の鍵 → `buildDeliveryKeyFormula` で `CampaignDeliveries` を名指し。
+**全員ぶん揃ったときだけ** CLEAR。揃わない・読めない・0 人に見えるときは保持して retry、
+続けば **引き継ぎを残したまま** auto-stop（`handoff_unproven:<理由>`）。
+
+⚠️ ブランドは `lightTrialPlanLoader.js` と同じ値を使う（違うと鍵が変わり証明が常に失敗する）。
+⚠️ アドレスは鍵の計算にだけ使い、戻り値にもログにも出さない。
 
 この時点の実績: 付与 1,010 名 / Step1 案内済み 1,005 名（queue または送信済み）/
 送信 806 通・PENDING 258 通（dispatch 待ち）/ 除外 5 名 / 失敗 0 / 重複 0。
