@@ -218,13 +218,27 @@ B で畳むと「付与済みなのに案内が来ない人」が黙って残る
 | **その operation の対象者を再導出 → Step1 の DeliveryKey → 配信行を名指し確認** | ✅ |
 
 `handoffQueueProof.js`（read-only）が既存契約だけで証明する:
-`buildGrantOperationFormula(op)` で対象者を再導出 → `computeCampaignDeliveryKey` で
-Step1 の鍵 → `buildDeliveryKeyFormula` で `CampaignDeliveries` を名指し。
-**全員ぶん揃ったときだけ** CLEAR。揃わない・読めない・0 人に見えるときは保持して retry、
+
+1. `buildGrantOperationFormula(op)` … 付与時に Customers へ書かれた `LightGrantOp` /
+   `PremiumGrantOp` から、その回の対象者を**再導出**（`comebackEmailHandoff.js` の契約）
+2. `resolveCustomerMarketing` / `loadBlacklistEmails` / `fetchProviderSuppression` …
+   送信可否の**既存単一源**をそのまま使う
+3. `computeCampaignDeliveryKey` + `buildDeliveryKeyFormula` … その人たちの Step1 の
+   配信行を**名指し**で引く
+4. **`evaluateStep1Barrier` に渡して数える**（解決の定義は既存契約に任せる）
+
+⚠️ **「全員 queued/sent」を条件にしない。** 配信基盤の停止リスト・配信停止・
+   購入済み・体験終了は既存契約で**正当に除外**され、送ってはいけない。
+   それらも「解決済み」として数える（除外理由をここで新しく作らない）。
+   1 名の正当な除外で永久に解決しなくなる、という指摘への対応。
+
+`outstanding === 0`（＝全員が queued/sent か正当な除外）のときだけ CLEAR。
+一部でも未解決 / 材料が読めない / 対象者が 0 人に見えるときは保持して retry、
 続けば **引き継ぎを残したまま** auto-stop（`handoff_unproven:<理由>`）。
 
-⚠️ ブランドは `lightTrialPlanLoader.js` と同じ値を使う（違うと鍵が変わり証明が常に失敗する）。
-⚠️ アドレスは鍵の計算にだけ使い、戻り値にもログにも出さない。
+⚠️ ブランドは `lightTrialPlanLoader.js` と同じ値（違うと鍵が変わり証明が常に失敗する）。
+⚠️ 配信基盤の鍵は lib が env から読む（**運転手に SendGrid を持ち込まない**）。
+⚠️ アドレスは判定にだけ使い、戻り値にもログにも state にも出さない。
 
 この時点の実績: 付与 1,010 名 / Step1 案内済み 1,005 名（queue または送信済み）/
 送信 806 通・PENDING 258 通（dispatch 待ち）/ 除外 5 名 / 失敗 0 / 重複 0。

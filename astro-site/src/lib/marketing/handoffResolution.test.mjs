@@ -1,12 +1,13 @@
 /**
- * handoffResolution.test.mjs — 引き継ぎは**正の証拠**でしか消さない
+ * handoffResolution.test.mjs — 引き継ぎは「**全員解決済み**」を正に確認できたときだけ消す
  *   node --test src/lib/marketing/handoffResolution.test.mjs
  *
- * 消してよいのは「その付与 operation の対象者**全員**の Step1 が
- * 配信台帳に載っている」と確認できたときだけ。
  * 使ってはいけない根拠（本番で誤りが実証された）:
- *   - dry-run の「対象 0 件」   … まだ Airtable に見えていないだけのことがある
- *   - 関所の `outstandingStep1 === 0` … **同じ読み取り遅延で 0 に見える**（#362）
+ *   - dry-run の「対象 0 件」          … まだ Airtable に見えていないことがある
+ *   - 関所 `outstandingStep1 === 0`    … 同じ読み取り遅延で 0 に見える（#362）
+ *   - 「全員 queued/sent」             … **正当に除外された 1 名**で永久に解決しない
+ *
+ * 「解決済み」の定義は既存の単一源（`evaluateStep1Barrier`）に任せる。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,22 +22,48 @@ import { computeCampaignDeliveryKey } from './campaignSend.js';
 import { getCampaign } from './campaignCatalog.js';
 import { resolveSequenceStep } from './campaignSequence.js';
 import { getBrandConfig } from '../newsletter/brand-config.js';
+import { AUTOGRANT_SOURCE } from '../comeback/lightTrialBarrier.js';
 
 const OP = 'light-trial-2026-08-18-b7';
 const CAMPAIGN = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
-const BRAND = 'analytics-keiba';   // `lightTrialPlanLoader.js` の BRAND と同じ
+const BRAND = 'analytics-keiba';           // `lightTrialPlanLoader.js` の BRAND と同じ
 const FROM = getBrandConfig(BRAND).defaultFromEmail;
 const STEP1 = resolveSequenceStep(CAMPAIGN, 1);
-const emails = ['a@example.com', 'b@example.com', 'c@example.com'];
-const keyOf = (email) => computeCampaignDeliveryKey({ campaign: STEP1, recipientEmail: email, brand: BRAND, fromEmail: FROM });
+const NOW = Date.UTC(2026, 7, 18, 10, 0, 0);
+const UNTIL = new Date(NOW + 20 * 86400_000).toISOString();
 
-/** Airtable の偽実装（Customers → 対象者 / CampaignDeliveries → 配信行） */
-function fakeAirtable({ members = emails, deliveries = [], failCustomers = false, failDeliveries = false } = {}) {
+const keyOf = (email) => computeCampaignDeliveryKey({
+  campaign: STEP1, recipientEmail: email, brand: BRAND, fromEmail: FROM,
+});
+
+/** 体験中の受信者（送れる人） */
+const member = (email, over = {}) => ({
+  id: `rec${email.replace(/\W/g, '')}`,
+  fields: {
+    Email: email,
+    LightGrantOp: OP,
+    LightGrantedAt: new Date(NOW - 3600_000).toISOString(),
+    LightGrantUntil: UNTIL,
+    UnsubscribedAnalyticsKeiba: false,
+    // 関所の対象は「自動付与で配った人」だけ（既存契約）
+    ComebackGrantSource: AUTOGRANT_SOURCE,
+    ...over,
+  },
+});
+
+const deliveryRow = (email, status = 'queued') => ({
+  fields: {
+    DeliveryKey: keyOf(email), Status: status, EmailType: 'campaign',
+    CampaignType: `${CAMPAIGN.campaignId}:v${CAMPAIGN.version}`,
+  },
+});
+
+function fakeAirtable({ members = [], deliveries = [], failCustomers = false, failDeliveries = false } = {}) {
   return async (url) => {
     const u = String(url);
     if (u.includes('/Customers')) {
       if (failCustomers) return { ok: false, status: 500, json: async () => ({}) };
-      return { ok: true, json: async () => ({ records: members.map((e, i) => ({ id: `rec${i}`, fields: { Email: e } })) }) };
+      return { ok: true, json: async () => ({ records: members }) };
     }
     if (u.includes('/CampaignDeliveries')) {
       if (failDeliveries) return { ok: false, status: 500, json: async () => ({}) };
@@ -46,103 +73,149 @@ function fakeAirtable({ members = emails, deliveries = [], failCustomers = false
   };
 }
 
-const deliveryRow = (email, status = 'queued') => ({ fields: { DeliveryKey: keyOf(email), Status: status } });
-
-const prove = (opts) => proveHandoffQueued({
-  apiKey: 'k', baseId: 'b', operationId: OP, campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM,
-  fetchImpl: fakeAirtable(opts),
+const prove = ({
+  members = [], deliveries = [], failCustomers = false, failDeliveries = false,
+  blacklist = [], suppressed = [], blacklistFails = false, suppressionFails = false,
+} = {}) => proveHandoffQueued({
+  apiKey: 'k', baseId: 'b', sendgridApiKey: 'sg', operationId: OP,
+  campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM, nowMs: NOW,
+  fetchImpl: fakeAirtable({ members, deliveries, failCustomers, failDeliveries }),
+  deps: {
+    loadBlacklistEmails: async () => (blacklistFails ? {} : { emails: new Set(blacklist) }),
+    fetchProviderSuppression: async () => (suppressionFails
+      ? { ok: false, emails: null }
+      : { ok: true, emails: new Set(suppressed) }),
+  },
 });
 
-// ── 1〜3: 正の証拠でしか畳まない ────────────────────────────────
+// ── 1. 198 queued + 2 恒久 suppression → 解決できる ──────────────────
 
-test('【重要】queue 済みの証拠が無ければ handoff を保持（関所 0 でも消さない）', async () => {
-  const proof = await prove({ deliveries: [] });     // 台帳に 1 件も無い
-  assert.equal(proof.ok, false);
-  assert.equal(proof.reason, PROOF_FAIL.NOT_ALL_QUEUED);
-  // 関所が 0 に見えていても関係なく保持
-  const v = resolveEmptyHandoff({ proof, attempts: 0 });
-  assert.equal(v.action, HANDOFF_ACTION.RETRY, '証拠が無いのに畳んでいる');
+test('【重要】200 名中 198 queued + 2 名が既存契約上の除外 → handoff は解決できる', async () => {
+  const all = Array.from({ length: 200 }, (_, i) => `u${i}@example.com`);
+  const sent = all.slice(0, 198);
+  const suppressed = all.slice(198);           // 配信基盤の停止リスト（既存単一源）
+  const proof = await prove({
+    members: all.map((e) => member(e)),
+    deliveries: sent.map((e) => deliveryRow(e)),
+    suppressed,
+  });
+  assert.equal(proof.ok, true, `解決できていない: ${proof.reason} / ${JSON.stringify(proof.byReason)}`);
+  assert.equal(proof.members, 200);
+  assert.equal(proof.outstanding, 0);
+  assert.equal(proof.byReason.step1_queued, 198);
+  assert.equal(proof.byReason.provider_suppressed, 2, '除外を解決として数えていない');
+  assert.equal(resolveEmptyHandoff({ proof, attempts: 1 }).action, HANDOFF_ACTION.CLEAR);
 });
 
-test('【重要】読み取り遅延で対象者が 0 人に見えるときも保持（証明にしない）', async () => {
-  const proof = await prove({ members: [] });
+// ── 2. 除外対象は送らない ────────────────────────────────────────
+
+test('【重要】除外対象へ無理に送らない（解決＝送信ではない）', async () => {
+  const target = 'sup@example.com';
+  const proof = await prove({ members: [member(target)], deliveries: [], suppressed: [target] });
+  assert.equal(proof.ok, true);
+  assert.equal(proof.byReason.provider_suppressed, 1);
+  assert.equal(proof.byReason.step1_queued, undefined, '除外者を送信済みとして数えている');
+  // 配信停止（blacklist）も同じ（既存の `resolveCustomerMarketing` が判定）
+  const unsub = await prove({
+    members: [member('x@example.com', { UnsubscribedAnalyticsKeiba: true })], deliveries: [],
+  });
+  assert.equal(unsub.ok, true);
+  assert.equal(unsub.byReason.not_sendable, 1);
+});
+
+// ── 3. 未解決が 1 名でも残れば保持 ───────────────────────────────
+
+test('【重要】queued でも恒久除外でもない 1 名が残れば handoff 保持', async () => {
+  const ok1 = 'a@example.com';
+  const pending = 'b@example.com';
+  const proof = await prove({
+    members: [member(ok1), member(pending)],
+    deliveries: [deliveryRow(ok1)],
+  });
   assert.equal(proof.ok, false);
-  assert.equal(proof.reason, PROOF_FAIL.NO_MEMBERS);
+  assert.equal(proof.reason, PROOF_FAIL.NOT_ALL_RESOLVED);
+  assert.equal(proof.outstanding, 1);
   assert.equal(resolveEmptyHandoff({ proof, attempts: 0 }).action, HANDOFF_ACTION.RETRY);
 });
 
-test('【重要】その operation の全員が queue 済みと確認できたら CLEAR', async () => {
-  const proof = await prove({ deliveries: emails.map((e) => deliveryRow(e)) });
-  assert.equal(proof.ok, true, `証明できていない: ${proof.reason}`);
-  assert.equal(proof.members, 3);
-  assert.equal(proof.queued, 3);
-  assert.equal(resolveEmptyHandoff({ proof, attempts: 2 }).action, HANDOFF_ACTION.CLEAR);
-  // sent でも積み終わりとみなす
-  const sent = await prove({ deliveries: emails.map((e) => deliveryRow(e, 'sent')) });
-  assert.equal(sent.ok, true);
-});
+// ── 4. 一時的・不明な除外を勝手に完了扱いしない ─────────────────────
 
-// ── 4: 他 operation / 他バッチの証拠では畳まない ─────────────────
-
-test('【重要】他 operation・他バッチの配信行では CLEAR しない', async () => {
-  // 別人（別バッチ）の行しか無い
-  const other = await prove({ deliveries: [deliveryRow('zzz@example.com')] });
-  assert.equal(other.ok, false);
-  assert.equal(other.queued, 0, '別バッチの行を自分のものとして数えている');
-  // 一部だけ積み終わっていても畳まない
-  const partial = await prove({ deliveries: [deliveryRow(emails[0]), deliveryRow(emails[1])] });
-  assert.equal(partial.ok, false);
-  assert.equal(partial.queued, 2);
-  assert.equal(partial.members, 3);
-  assert.equal(resolveEmptyHandoff({ proof: partial, attempts: 0 }).action, HANDOFF_ACTION.RETRY);
-});
-
-test('skipped / failed の行は「積み終わった」と数えない', async () => {
-  const proof = await prove({ deliveries: emails.map((e) => deliveryRow(e, 'skipped')) });
+test('【重要】判定材料に出てこない事情を勝手に「解決」にしない', async () => {
+  // 送信可能なのに台帳へ行が無い人は **未解決**（「たぶん送ったはず」にしない）
+  const proof = await prove({ members: [member('c@example.com')], deliveries: [] });
   assert.equal(proof.ok, false);
-  assert.equal(proof.queued, 0);
+  assert.equal(proof.outstanding, 1);
+  // skipped / failed の行は「積み終わった」に数えない
+  const skipped = await prove({
+    members: [member('d@example.com')], deliveries: [deliveryRow('d@example.com', 'skipped')],
+  });
+  assert.equal(skipped.ok, false, 'skipped を解決として数えている');
 });
 
-// ── 5: 確認不能が続けば handoff を残したまま止める ────────────────
+// ── 5. 除外情報が読めない → fail closed ──────────────────────────
 
-test('【重要】確認不能が続いたら handoff を残したまま auto-stop', async () => {
-  const unreadable = await prove({ failDeliveries: true });
-  assert.equal(unreadable.ok, false);
-  assert.equal(unreadable.reason, PROOF_FAIL.DELIVERIES_UNREADABLE);
+test('【重要】停止リスト / ブラックリストが読めなければ証明しない', async () => {
+  const noSup = await prove({ members: [member('e@example.com')], suppressionFails: true });
+  assert.equal(noSup.ok, false);
+  assert.equal(noSup.reason, PROOF_FAIL.EXCLUSIONS_UNREADABLE);
+  const noBl = await prove({ members: [member('e@example.com')], blacklistFails: true });
+  assert.equal(noBl.ok, false);
+  assert.equal(noBl.reason, PROOF_FAIL.EXCLUSIONS_UNREADABLE);
+  // 台帳・対象者が読めないときも同じ
+  assert.equal((await prove({ failCustomers: true })).reason, PROOF_FAIL.MEMBERS_UNREADABLE);
+  assert.equal((await prove({ members: [member('f@example.com')], failDeliveries: true })).reason,
+    PROOF_FAIL.DELIVERIES_UNREADABLE);
+  // 対象者が 0 人に見えるのも証明にしない（読み取り遅延）
+  assert.equal((await prove({ members: [] })).reason, PROOF_FAIL.NO_MEMBERS);
+  for (const p of [{ ok: false, reason: 'x' }]) {
+    assert.equal(resolveEmptyHandoff({ proof: p, attempts: 0 }).action, HANDOFF_ACTION.RETRY);
+  }
+});
+
+// ── 6. 他 operation の鍵では解決しない ──────────────────────────
+
+test('【重要】他 operation・他バッチの配信行では解決しない', async () => {
+  const mine = 'g@example.com';
+  const proof = await prove({
+    members: [member(mine)],
+    deliveries: [deliveryRow('someone-else@example.com')],   // 別バッチの行
+  });
+  assert.equal(proof.ok, false);
+  assert.equal(proof.outstanding, 1, '別バッチの行を自分の解決として数えている');
+});
+
+// ── 7〜8. 保持したまま停止 / 状態 ───────────────────────────────
+
+test('【重要】証明できない状態が続けば handoff を残したまま auto-stop', async () => {
+  const proof = await prove({ members: [member('h@example.com')], deliveries: [] });
   let attempts = 0;
   let last = null;
   for (let i = 0; i < MAX_EMPTY_HANDOFF_ATTEMPTS + 1; i += 1) {
-    last = resolveEmptyHandoff({ proof: unreadable, attempts });
+    last = resolveEmptyHandoff({ proof, attempts });
     attempts = last.attempts;
     if (last.action === HANDOFF_ACTION.STOP) break;
   }
   assert.equal(last.action, HANDOFF_ACTION.STOP);
-  assert.match(last.reason, /^handoff_unproven:/, `理由が残っていない: ${last.reason}`);
-  // 顧客が読めないときも同じ
-  const noCust = await prove({ failCustomers: true });
-  assert.equal(noCust.reason, PROOF_FAIL.MEMBERS_UNREADABLE);
+  assert.match(last.reason, /^handoff_unproven:/);
 });
 
-// ── 実装の配線・安全性 ──────────────────────────────────────────
-
-test('【重要】運転手は証明を取ってから判定している（関所 0 を根拠にしない）', () => {
+test('【重要】運転手の配線（関所 0 を根拠にしない・停止時に消さない）', () => {
   const src = readRel('netlify/functions/cron-marketing-rollout.js');
   assert.ok(src.includes('proveHandoffQueued'), '正の証拠を取っていない');
   const call = src.slice(src.indexOf('const verdict = resolveEmptyHandoff({'), src.indexOf('if (verdict.action === HANDOFF_ACTION.CLEAR)'));
   assert.ok(call.includes('proof'), '判定に証明を渡していない');
   assert.equal(/outstandingStep1/.test(call), false, '関所の値を畳む根拠に使っている');
-  // 止めるときも引き継ぎを消さない
   const stopBlock = src.slice(src.indexOf('// 解決しない = 人に見せる'), src.indexOf('const res = { ok: true, jobIds'));
   assert.equal(/pendingHandoffOps: \[\]/.test(stopBlock), false, '停止時に引き継ぎを消している');
 });
 
-test('証明は読むだけ・PII を持ち出さない', () => {
+test('証明は既存の単一源を再利用し、読むだけ・PII を持ち出さない', () => {
   const lib = readRel('src/lib/marketing/handoffQueueProof.js');
+  assert.ok(lib.includes('evaluateStep1Barrier'), '解決判定を自前で実装している');
+  assert.ok(lib.includes('resolveCustomerMarketing'), '送信可否を自前で判定している');
+  assert.ok(lib.includes('fetchProviderSuppression'), '停止リストの単一源を使っていない');
   assert.equal(/method:\s*'(POST|PATCH|PUT|DELETE)'/.test(lib), false, '書き込みをしている');
   assert.ok(lib.includes('MAX_PAGES'), '走査上限が無い');
-  // 戻り値に PII を入れない
-  const proofShape = { ok: true, reason: null, members: 3, queued: 3 };
-  assert.deepEqual(Object.keys(proofShape).sort(), ['members', 'ok', 'queued', 'reason']);
 });
 
 test('再試行回数は状態へ保存できる（PII なし）', () => {

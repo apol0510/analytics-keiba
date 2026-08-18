@@ -828,6 +828,8 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
           brand: TRIAL_BRAND,
           fromEmail: brandCfg ? brandCfg.defaultFromEmail : null,
           step: STEP1,
+          nowMs: now,
+          env: process.env,
         }).catch(() => ({ ok: false, reason: 'proof_failed' }));
         if (!proof.ok) break;   // 1 つでも証明できなければ畳まない
       }

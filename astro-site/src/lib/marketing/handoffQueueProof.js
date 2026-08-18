@@ -1,32 +1,40 @@
 /**
- * handoffQueueProof.js — 「この付与 operation の Step1 は**もう積んである**」を
- * **正の証拠**で確かめる（read-only）
+ * handoffQueueProof.js — 「この付与 operation は**全員解決済み**」を正の証拠で確かめる（read-only）
  *
  * ── なぜ要るか ────────────────────────────────────────────────
- * 引き継ぎ（`grantOperationId`）を消してよいのは「その回に付与した人**全員**の Step1 が
- * 既に配信台帳へ載っている」と**確認できたときだけ**。
+ * 引き継ぎ（`grantOperationId`）を消してよいのは、その回に付与した人が
+ * **全員「解決済み」**と確認できたときだけ。使ってはいけない根拠:
+ *   - dry-run の「対象 0 件」          … まだ Airtable に見えていないことがある
+ *   - 関所 `outstandingStep1 === 0`    … 同じ読み取り遅延で 0 に見える（#362 で実証）
+ *   - 「救済経路があるから大丈夫」      … 引き継ぎの責任を推測で手放さない
  *
- * 使ってはいけない根拠（本番で誤りが実証された）:
- *   - dry-run の「対象 0 件」… まだ Airtable に見えていないだけのことがある
- *   - 関所の `outstandingStep1 === 0` … **同じ読み取り遅延で 0 に見える**（2026-08-18）
+ * ── 「解決済み」の定義は**既存の単一源に任せる** ────────────────
+ * `evaluateStep1Barrier`（`lightTrialBarrier.js`）が既に決めている:
  *
- * ── 正の証拠の作り方（既存契約だけを使う）───────────────────────
- *   1. `buildGrantOperationFormula(op)` … 付与時に Customers へ書かれた
- *      `LightGrantOp` / `PremiumGrantOp` から、その回の対象者を**再導出**する
- *      （`comebackEmailHandoff.js` の既存契約。引き継ぐのは operationId だけ）
- *   2. 対象者の Step1 `DeliveryKey` を計算し、`CampaignDeliveries` を**名指し**で引く
- *   3. **全員**が `queued` / `sent` の行を持っていれば「積み終わった」＝ CLEAR
+ *   step1_queued        … Step1 の DeliveryKey が台帳にある（queued / sent）
+ *   not_sendable        … 配信停止・バウンス等で送信対象外（`resolveCustomerMarketing`）
+ *   provider_suppressed … 配信基盤の停止リスト（`fetchProviderSuppression`）
+ *   purchased           … 有料契約が成立（案内不要）
+ *   grant_ended         … 無料体験が終わっている / 取り消された
  *
- * ⚠️ 1 人でも確認できなければ **証明できない**（`ok: false`）。引き継ぎは消さない。
- * ⚠️ 対象者が 0 人に見えるのも「まだ見えていない」可能性があるので**証明にしない**。
- * ⚠️ メールアドレスは鍵の計算にだけ使い、**戻り値にもログにも出さない**。
- * ⚠️ 読むだけ。新しいテーブルも schema も作らない。
+ * ⚠️ **除外理由をここで新しく作らない。** 送ってよい / いけないの判断は
+ *    `campaignSend` / suppression / audience の既存単一源がすでに持っている。
+ *    ここはそれを **この operation の対象者だけに適用して数え直す**だけ。
+ * ⚠️ 「全員 queued/sent」を条件にすると、**正当に除外された 1 名**（停止リスト等）で
+ *    永久に解決しなくなる（2026-08-18 の指摘）。除外も**解決**として数える。
+ * ⚠️ 材料（対象者・配信行・停止リスト・ブラックリスト）が 1 つでも読めなければ
+ *    **証明しない**（`ok: false`）。引き継ぎは消さない。
+ * ⚠️ アドレスは判定にだけ使い、**戻り値にもログにも出さない**。読むだけ・新 schema なし。
  */
 
 import { buildGrantOperationFormula } from './campaignAudienceFormula.js';
 import { buildDeliveryKeyFormula } from './marketingTargetedLoad.js';
 import { computeCampaignDeliveryKey } from './campaignSend.js';
 import { resolveSequenceStep } from './campaignSequence.js';
+import { resolveCustomerMarketing } from './customerMarketingAudience.js';
+import { evaluateStep1Barrier } from '../comeback/lightTrialBarrier.js';
+import { loadBlacklistEmails } from '../newsletter/airtable-fetch.js';
+import { fetchProviderSuppression } from './providerSuppression.js';
 
 export const CUSTOMERS_TABLE = 'Customers';
 export const DELIVERIES_TABLE = 'CampaignDeliveries';
@@ -35,15 +43,14 @@ export const KEY_CHUNK = 40;
 /** 走査してよいページ数（1 op は最大 200 名なので通常 2〜3 ページ） */
 export const MAX_PAGES = 12;
 
-/** 台帳で「もう積んである」とみなす状態（送信経路の `already_delivered` と同じ） */
-export const QUEUED_STATUSES = Object.freeze(['queued', 'sent']);
-
 export const PROOF_FAIL = Object.freeze({
   NO_OPERATION: 'no_operation',
   MEMBERS_UNREADABLE: 'members_unreadable',
   NO_MEMBERS: 'no_members',
   DELIVERIES_UNREADABLE: 'deliveries_unreadable',
-  NOT_ALL_QUEUED: 'not_all_queued',
+  /** 停止リスト・ブラックリストが読めない = 除外の正当性を確認できない */
+  EXCLUSIONS_UNREADABLE: 'exclusions_unreadable',
+  NOT_ALL_RESOLVED: 'not_all_resolved',
   NO_STEP: 'no_step',
 });
 
@@ -83,15 +90,20 @@ async function readAll({ fetchImpl, apiKey, baseId, table, formula, fields }) {
 }
 
 /**
- * その付与 operation の Step1 が**全員ぶん**積んであることを確かめる。
+ * その付与 operation の対象者が**全員解決済み**であることを確かめる。
  *
- * @returns {Promise<{ok: boolean, reason: string|null, members: number, queued: number}>}
+ * @returns {Promise<{ok: boolean, reason: string|null, members: number,
+ *                    resolved: number, outstanding: number, byReason: object}>}
  */
 export async function proveHandoffQueued({
-  apiKey, baseId, operationId, campaign, brand, fromEmail, step = 1, fetchImpl = fetch,
+  apiKey, baseId, operationId, campaign, brand, fromEmail, step = 1, nowMs = Date.now(),
+  /** 配信基盤の停止リストを読むための env。**運転手に鍵を持ち回らせない** */
+  env = process.env, fetchImpl = fetch, deps = {},
 } = {}) {
   const op = str(operationId);
-  const fail = (reason, extra = {}) => ({ ok: false, reason, members: 0, queued: 0, ...extra });
+  const fail = (reason, extra = {}) => ({
+    ok: false, reason, members: 0, resolved: 0, outstanding: 0, byReason: {}, ...extra,
+  });
   if (!op || !apiKey || !baseId) return fail(PROOF_FAIL.NO_OPERATION);
 
   const stepCampaign = campaign ? resolveSequenceStep(campaign, step) : null;
@@ -101,45 +113,72 @@ export async function proveHandoffQueued({
   // ① その回に付与された人を**再導出**する（既存契約）
   const formula = buildGrantOperationFormula(op);
   if (!formula) return fail(PROOF_FAIL.NO_OPERATION);
-  const members = await readAll({
-    fetchImpl, apiKey, baseId, table: CUSTOMERS_TABLE, formula, fields: ['Email'],
-  });
+  const members = await readAll({ fetchImpl, apiKey, baseId, table: CUSTOMERS_TABLE, formula });
   if (members === null) return fail(PROOF_FAIL.MEMBERS_UNREADABLE);
   // ⚠️ 0 人は「まだ見えていない」可能性がある。**証明にしない**
   if (members.length === 0) return fail(PROOF_FAIL.NO_MEMBERS);
 
-  // ② その人たちの Step1 鍵（**アドレスは戻さない**）
-  const keys = [];
-  for (const r of members) {
-    const email = str((r && r.fields && r.fields.Email) || '').toLowerCase();
-    if (!email) return fail(PROOF_FAIL.MEMBERS_UNREADABLE, { members: members.length });
-    const k = computeCampaignDeliveryKey({ campaign: stepCampaign, recipientEmail: email, brand, fromEmail });
-    if (!k) return fail(PROOF_FAIL.MEMBERS_UNREADABLE, { members: members.length });
-    keys.push(k);
+  // ② 除外の材料（**既存の単一源**。読めなければ証明しない）
+  const blacklistReader = deps.loadBlacklistEmails || loadBlacklistEmails;
+  const suppressionReader = deps.fetchProviderSuppression || fetchProviderSuppression;
+  let blacklistEmails;
+  try {
+    const bl = await blacklistReader({ brand, baseId, apiKey });
+    blacklistEmails = bl && bl.emails;
+    if (!blacklistEmails) return fail(PROOF_FAIL.EXCLUSIONS_UNREADABLE, { members: members.length });
+  } catch {
+    return fail(PROOF_FAIL.EXCLUSIONS_UNREADABLE, { members: members.length });
+  }
+  let providerSuppressed = null;
+  try {
+    const sup = await suppressionReader({ apiKey: (env || {}).SENDGRID_API_KEY, nowMs, now: nowMs });
+    if (!sup || sup.ok !== true) return fail(PROOF_FAIL.EXCLUSIONS_UNREADABLE, { members: members.length });
+    providerSuppressed = sup.emails;
+  } catch {
+    return fail(PROOF_FAIL.EXCLUSIONS_UNREADABLE, { members: members.length });
   }
 
-  // ③ 台帳を名指しで引き、queued / sent を数える
-  const seen = new Set();
+  // ③ その人たちの Step1 鍵で配信行を名指し（**アドレスは戻さない**）
+  const rows = members.map((r) => ({
+    ...r,
+    marketing: resolveCustomerMarketing({ fields: (r && r.fields) || {}, nowMs, blacklistEmails }),
+  }));
+  const keys = [];
+  for (const r of rows) {
+    const email = str((r.marketing && r.marketing.email) || (r.fields && r.fields.Email)).toLowerCase();
+    if (!email) continue;   // 鍵を作れない人は barrier が `not_sendable` として解決する
+    const k = computeCampaignDeliveryKey({ campaign: stepCampaign, recipientEmail: email, brand, fromEmail });
+    if (k) keys.push(k);
+  }
+  const deliveries = [];
   for (const group of chunk(keys, KEY_CHUNK)) {
     const f = buildDeliveryKeyFormula({ campaignType, keys: group });
-    if (!f) return fail(PROOF_FAIL.DELIVERIES_UNREADABLE, { members: members.length });
+    if (!f) return fail(PROOF_FAIL.DELIVERIES_UNREADABLE, { members: rows.length });
     // eslint-disable-next-line no-await-in-loop
-    const rows = await readAll({
+    const got = await readAll({
       fetchImpl, apiKey, baseId, table: DELIVERIES_TABLE, formula: f,
-      fields: ['DeliveryKey', 'Status'],
+      fields: ['DeliveryKey', 'Status', 'CampaignType'],
     });
-    if (rows === null) return fail(PROOF_FAIL.DELIVERIES_UNREADABLE, { members: members.length });
-    for (const r of rows) {
-      const fl = (r && r.fields) || {};
-      if (QUEUED_STATUSES.includes(str(fl.Status).toLowerCase())) seen.add(str(fl.DeliveryKey));
-    }
+    if (got === null) return fail(PROOF_FAIL.DELIVERIES_UNREADABLE, { members: rows.length });
+    deliveries.push(...got);
   }
 
-  const queued = keys.filter((k) => seen.has(k)).length;
-  if (queued < keys.length) {
-    return { ok: false, reason: PROOF_FAIL.NOT_ALL_QUEUED, members: keys.length, queued };
+  // ④ **解決済みの判定は既存の単一源へ**（除外理由をここで作らない）
+  const barrier = evaluateStep1Barrier({
+    records: rows, campaign, deliveries, providerSuppressed, brand, fromEmail, nowMs,
+  });
+  if (barrier.outstanding > 0) {
+    return {
+      ok: false, reason: PROOF_FAIL.NOT_ALL_RESOLVED,
+      members: barrier.granted, resolved: barrier.resolved,
+      outstanding: barrier.outstanding, byReason: barrier.byReason || {},
+    };
   }
-  return { ok: true, reason: null, members: keys.length, queued };
+  return {
+    ok: true, reason: null,
+    members: barrier.granted, resolved: barrier.resolved,
+    outstanding: 0, byReason: barrier.byReason || {},
+  };
 }
 
 export default proveHandoffQueued;
