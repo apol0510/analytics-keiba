@@ -578,6 +578,37 @@ touch 別に `sent` / `delivered` / `opened` / `measured` / `unknown` と率を�
 2 バッチ目以降は、**前のバッチの結果を確かめてから**始める。
 人が挟まらないので、機械が代わりに見る。
 
+#### 入力は「前バッチで**起きたイベント**」だけ（入力ソースを 3 度間違えた）
+
+| 指標 | 正本 | なぜ |
+|---|---|---|
+| sent / failed | **ジョブ台帳**（`ScheduledEmails` の `sentCount` / `failedCount`） | 前バッチの送信でしか増えない（累計の差分を取る） |
+| duplicate | **送信経路が `already_delivered` で弾いた数** | DeliveryKey が構造的に防ぐ。正常は 0 |
+| spam complaint / unsubscribe / hard bounce | **配信イベント台帳**（`emailEventBlobStore.js` の NDJSON・**1 行 1 イベント**）を、`campaignId` と「バッチ開始 → いま」の窓で切って数える | 1 イベント 1 件・同一人の複数イベントも残る |
+
+⚠️ **使ってはいけない入力（実際に踏んだ順）**
+
+1. `action=sequence` の `byStopReason` の**累積** … いま候補を除外する理由（現在状態）。
+   コホートに元から居る停止リスト該当者 1 名で**永久停止**した
+2. その**差分** … 展開は 1 バッチ 500 名ずつ母集団が増えるので、
+   **以前から該当していた人が母集団へ入るだけで差分が増える**
+3. `EmailBlacklist` の行数 … あれは**アドレス 1 行の upsert 台帳**。
+   既存行は `BounceCount+1` の PATCH で `AddedAt` は据え置き・`BounceType` は上書き。
+   **1 イベント 1 行ではない**ので、古い登録者の新イベントを取り逃がし、
+   同一人の複数イベントも数えられない
+
+⚠️ 台帳の読み方は既存 backfill と同じ `list({prefix}) → get → parseNdjson`。
+   **走査上限あり**（`MAX_EVENT_BLOBS`）で、超えたら `null` → fail closed。**読むだけ**。
+⚠️ 分類: `spamreport` → 苦情 / `unsubscribe`・`group_unsubscribe` → 配信停止 /
+   `dropped`・`bounce(hard)` → ハードバウンス / **`bounce(soft)` はハードとして数えない**。
+⚠️ **直前バッチの通だけ**に絞る（campaign と時刻の窓だけでは、同じ campaign の
+   別バッチの遅延イベントや別 touch（Step2〜24 の定期便）が混ざる）。
+   絞り方: queue 時に控えた **`lastBatchJobIds`** → `CampaignDeliveries` を名指しで引く →
+   **DeliveryKey 集合**（`batchDeliveryKeys.js`）。取り切れなければ **null → fail closed**
+   （鍵が無いままイベントを数えない）。
+⚠️ `providerEventId` で**再送を二重に数えない**。`campaignId` で**他 campaign を混ぜない**。
+⚠️ **しきい値は変えていない**（苦情 0 件 / failed 5% / bounce・unsubscribe 2% / duplicate 0）。
+
 | 見るもの | 止める条件（既定） |
 |---|---|
 | duplicate | **1 件でも** |

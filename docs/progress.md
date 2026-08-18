@@ -24,6 +24,60 @@
 
 ---
 
+## 2026-08-17 — 【修正】バッチ健全性を「増分」で見る（開始 1 tick 目の誤検知）
+
+全コホートの展開を開始した直後、**1 tick 目で `complaints_detected` により自動停止**した。
+実際の苦情ではなく、コホートに元から居る**配信基盤の停止リスト該当者 1 名**を
+苦情として数えていた（苦情のしきい値は 0 件なので、このままでは二度と開始できない）。
+
+- `byStopReason.provider_suppressed` … **候補を除外した理由**（静的・累積）
+- 苦情・バウンス・配信停止 … **前のバッチで起きた出来事**（増分）
+
+**入力ソースそのものを差し替えた**（`batchEventWindow.js` + `eventWindowReader.js`）。
+
+| 指標 | 正本 |
+|---|---|
+| sent / failed | ジョブ台帳（`ScheduledEmails`）の累計差分 |
+| duplicate | 送信経路が `already_delivered` で弾いた数 |
+| spam complaint / unsubscribe / hard bounce | **配信イベント台帳**（Blob の NDJSON・**1 行 1 イベント**）を `campaignId` と「バッチ開始 → いま」の窓で数える |
+
+使ってはいけない入力を 3 つ潰した:
+① `byStopReason` の累積（現在状態・元から居る 1 名で永久停止）
+② その差分（母集団が 500 名増えるだけで増える）
+③ `EmailBlacklist` の行数（**アドレス 1 行の upsert 台帳**で 1 イベント 1 行ではない。
+   既存行は `BounceCount+1` の PATCH・`AddedAt` 据え置きなので古い登録者の新イベントを落とす）
+
+**直前バッチの通だけ**に絞る: queue 時に控えた `lastBatchJobIds` → `CampaignDeliveries` を
+名指しで引いて **DeliveryKey 集合**を作り（`batchDeliveryKeys.js`）、その鍵のイベントだけ数える。
+同じ campaign の別バッチ（遅延イベント）・別 touch（Step2〜24）を混ぜない。
+鍵を取り切れなければ `null` → **fail closed**（推測 scope へ戻さない）。
+`providerEventId` で再送を除き、`campaignId` で他 campaign を除く。走査上限超過も fail closed。
+**しきい値は据え置き**（苦情 0 件 / failed 5% / bounce・unsubscribe 2% / duplicate 0）。
+
+⚠️ 併せて、既存テスト `marketingStatusScan.regression.test.mjs` の fixture が
+絶対日付（2026-08-13 / 08-14）で固定されており、**実時間が進むと Step2 の期日が来て落ちる**
+時限爆弾になっていた（2026-08-18 に顕在化・コードの不具合ではない）。
+fixture を「いま」からの相対時刻に直した（**テストのみの修正**）。
+
+影響: 付与 0 / 送信 0（止まっただけ）。しきい値そのものは据え置き。
+
+### 現在地（2026-08-17 時点）
+
+| | 状態 |
+|---|---|
+| 本番 main | `4bee3612`（#359 = 自動完走・終端・完成条件の固定）まで反映済み |
+| 展開 | **停止中**（`stage=paused` / `autoStopped=true` / `stopReason=complaints_detected`） |
+| 実績 | 本日の付与は午前のカナリア **500 名**のみ（累計 610 名）。全コホートぶんは **0 名** |
+| 残り | 約 **13,900 名**（未着手） |
+| 修正 | **PR #360**（この項目の修正）。マージ・本番反映・展開の再開は**未実施** |
+
+⚠️ 任務は未完了（冒頭の「任務の完了条件」1〜7 を満たしていない）。
+再開には #360 のマージ → 本番反映 → `rolloutStart`（`dailyLimit=15000` / `batchSize=500` /
+`alwaysArmed=true`）が必要。
+
+`test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0。
+
 ## 2026-08-18 — 【変更】残りコホートを人手なしで配り切る（同日完走・終端・fail closed）
 
 「本日 500 名を送れた」ではなく、**残り約 13,900 名を人が毎日操作せずに最後まで配り切る**
