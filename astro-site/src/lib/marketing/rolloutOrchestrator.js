@@ -89,6 +89,13 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
   const pendingQueue = num(f.grantedPendingQueue);
   const pendingJobs = num(f.pendingJobs);
   const outstanding = num(f.outstandingStep1);
+  /**
+   * **まだ queue していない付与**（運転手のローカル状態）。
+   * ⚠️ Airtable は付与直後の読み取りが追いつかないことがあり、関所（`outstanding`）が
+   *    0 に見えてしまう。自分が付与した事実は状態が持っているので、**そちらを優先**する。
+   *    2026-08-18: これが無いために「付与 → 次の tick でまた付与 → 付与側が拒否」で 2 度停止した。
+   */
+  const pendingHandoffs = num(f.pendingHandoffs) ?? 0;
 
   // ⚠️ 事実が 1 つでも読めないなら**何もしない**（推測で付与・送信しない）
   if (remaining === null || pendingQueue === null || pendingJobs === null || outstanding === null) {
@@ -108,21 +115,14 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
     return { action: TICK_ACTION.DISPATCH, count: pendingJobs };
   }
 
-  // ── ①-b 論理バッチを配り切る（**queue より先**）──────────────────
-  //    500 名のバッチは付与側の上限で 200 + 200 + 100 に分かれる。
-  //    その途中で queue へ移ると、1 バッチに queue / 送信が 3 回ずつ要り、
-  //    15,000 名を配るのに tick が 1.5 倍かかる（同日完走が届かなくなる）。
-  //    **バッチを配り切ってから** queue → 送信 → 関所確認 の順にする。
-  //    ⚠️ 「配り切る」の判断は `planRolloutTick` が持つ（関所・1 日上限・候補数を見る）。
-  const midBatchPlan = planRolloutTick({
-    state, nowMs, remainingCandidates: remaining, previousOutstanding: outstanding, envEnabled,
-  });
-  if (midBatchPlan.ok && midBatchPlan.startsNewBatch !== true && canGrant) {
-    return { action: TICK_ACTION.GRANT, count: midBatchPlan.allowance, plan: midBatchPlan };
-  }
-
   // ── ② 付与したのに queue していない人 ─────────────────────────
   //    ここを飛ばすと、権利だけ付いて案内が来ない人が溜まる。
+  //    ⚠️ 引き継ぎが残っているなら、送信待ちジョブがあっても**先に queue する**
+  //       （`grantedPendingQueue` はジョブがあると 0 になるため、ここで拾わないと詰まる）。
+  if (pendingHandoffs > 0) {
+    if (!canQueue) return { action: TICK_ACTION.SKIP, reason: TICK_BLOCK.GATE_CLOSED_QUEUE, gates };
+    return { action: TICK_ACTION.QUEUE, count: pendingHandoffs };
+  }
   if (pendingQueue > 0) {
     if (!canQueue) return { action: TICK_ACTION.SKIP, reason: TICK_BLOCK.GATE_CLOSED_QUEUE, gates };
     return { action: TICK_ACTION.QUEUE, count: pendingQueue };
@@ -141,7 +141,17 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
   }
 
   // ── ④ 新しく配る ─────────────────────────────────────────────
-  const plan = midBatchPlan;
+  //    ⚠️ 引き継ぎ（queue 待ち）が残っている限り配らない。付与側の関所と同じ意味を
+  //       **ローカル状態**で担保する（Airtable の読み取り遅延に影響されない）。
+  if (pendingHandoffs > 0) {
+    return { action: TICK_ACTION.SKIP, reason: ROLLOUT_BLOCK.WAITING_PREVIOUS };
+  }
+  //    ⚠️ **queue / 送信より後**に置く。付与側の関所は「前回ぶんの Step1 が
+  //       送り終わるまで付与しない」なので、先に配ろうとしても断られる
+  //       （2026-08-18: 先に配ろうとして `waiting_for_step1` で自動停止した）。
+  const plan = planRolloutTick({
+    state, nowMs, remainingCandidates: remaining, previousOutstanding: outstanding, envEnabled,
+  });
   if (!plan.ok) {
     // 候補が尽きていて、期日待ちも無い ＝ 展開そのものが終わっている
     return { action: TICK_ACTION.SKIP, reason: plan.reason, plan, gates };

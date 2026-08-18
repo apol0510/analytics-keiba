@@ -32,7 +32,17 @@ export const GRANT_OUTCOME = Object.freeze({
  * 「配る相手が居ない」＝ 正常。これ以外の abort は異常として扱う。
  * （`lightTrialAutoGrant.js` の `AUTOGRANT_ABORT.NO_CANDIDATES` と同じ値）
  */
-export const NORMAL_EMPTY_ABORTS = Object.freeze(['no_candidates']);
+export const NORMAL_EMPTY_ABORTS = Object.freeze([
+  'no_candidates',
+  /**
+   * ⚠️ **付与側の関所待ちは異常ではない**（`AUTOGRANT_ABORT.WAITING_FOR_STEP1`）。
+   *    前回付与ぶんの Step1 がまだ案内に乗っていないだけで、queue が進めば開く。
+   *    2026-08-18: これを異常として自動停止し、**運転が 2 度止まった**。
+   *    付与直後は Airtable の読み取りが追いつかず、運転手側の関所が開いて見えることがある
+   *    （付与側は自分で読み直すので正しく断る）。**待てばよい**ので止めない。
+   */
+  'waiting_for_step1',
+]);
 
 /** 異常の理由コード（固定。件数・理由だけを画面とログへ出す） */
 export const GRANT_FAILURE = Object.freeze({

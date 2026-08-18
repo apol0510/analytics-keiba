@@ -151,6 +151,9 @@ export function planRolloutStart({ current, exists, req, nowMs }) {
       // 人が明示的に開始した = 異常停止の印は消してよい（原因を見たうえでの操作）
       autoStopped: false,
       stopReason: null,
+      // ⚠️ 開始時に基準点を捨てる。**最初のバッチは差分を取らない**
+      //    （古い基準点と比べると、止まっていた間の変化を 1 バッチの結果と誤認する）
+      healthBaseline: null,
       note,
       updatedAtMs: Number(nowMs) || null,
     },

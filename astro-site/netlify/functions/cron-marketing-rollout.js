@@ -58,6 +58,11 @@ import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
 import { canStartNextBatch, describeBatchHealth } from '../../src/lib/marketing/batchHealth.js';
+import {
+  captureOutcomeSnapshot, diffOutcomeSnapshot, hasOutcomeBaseline, toStoredOutcome,
+} from '../../src/lib/marketing/batchOutcomeSignals.js';
+import { readEventWindow } from '../../src/lib/marketing/eventWindowReader.js';
+import { readBatchDeliveryKeys } from '../../src/lib/marketing/batchDeliveryKeys.js';
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
@@ -258,6 +263,9 @@ async function queueStep({ campaignId = ROLLOUT_CAMPAIGN_ID, step, grantOperatio
   }
   return {
     ok: true,
+    // 送信経路が「もう届けた」として弾いた数 = **二重送信の試み**（正常は 0）
+    duplicates: Number(live.body?.skippedByReason?.already_delivered
+      ?? live.body?.byReason?.already_delivered ?? 0),
     step,
     campaignId,
     /** 通し番号（1〜24）。集計と画面はこちらで数える */
@@ -471,26 +479,10 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     return killed;
   }
 
-  // ── 動かない状態なら**数える前に**抜ける ─────────────────────
-  //    ⚠️ 止まっている / 終わっているのに毎 tick 台帳を読むのは無駄で、
-  //       cron を短い間隔にするほど効いてくる（同日完走のために間隔を詰めている）。
-  //       ここで抜けても**送信の後片付けはしない**ので、止める前に積んだ分は
-  //       運用者が再開したときに続きから進む。
-  //    ⚠️ **`completed` では抜けない。** 終端は「新しく配る相手が居ない」という意味で、
-  //       既に配った人の Step2〜24 は何週間も続く。ここで抜けると案内が止まる
-  //       （`planRolloutTick` が付与だけを止める）。
-  if (state.stage === 'paused') {
-    const idle = {
-      ok: true, campaignId: ROLLOUT_CAMPAIGN_ID,
-      action: TICK_ACTION.SKIP,
-      reason: ROLLOUT_BLOCK.PAUSED,
-      autoStopped: state.autoStopped === true,
-      stopReason: state.stopReason || null,
-      sideEffects: 'none',
-    };
-    log(idle);
-    return idle;
-  }
+  // ⚠️ **一時停止でも tick は止めない。** 止めるのは新規付与だけで、
+  //    積み残しの queue 登録・送信は進める（`planRolloutTick` が付与を断る）。
+  //    2026-08-18: ここで早期に抜けていたため、自動停止したときに
+  //    **queue 済み 197 通が送信されないまま滞留**した。
 
   // ── 事実を数える ──────────────────────────────────────────
   const grantGates = readAutoGrantGates(armEnvForTick(env, state, now), now);
@@ -524,6 +516,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const jobs = await loadJobs().catch(() => null);
   // Step2〜24 の期日は**既存の単一源**（`action=sequence`）に聞く
   const due = await readNextDueStep().catch(() => null);
+  /** まだ queue していない付与の数（**運転手のローカル状態**が正） */
+  const pendingHandoffs = (Array.isArray(state.pendingHandoffOps) ? state.pendingHandoffOps.length : 0)
+    + (state.pendingHandoffOp ? 1 : 0);
   const facts = deriveFacts({
     barrier: planLoad?.planned?.barrier || null,
     moreAvailable: planLoad?.fetch ? planLoad.fetch.moreAvailable : null,
@@ -535,6 +530,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     followUpStep: due ? due.step : null,
     followUpDue: due ? due.due : null,
   });
+  facts.pendingHandoffs = pendingHandoffs;
 
   // ── 終わったジョブの実績を集計へ写す（画面のためだけ・正本は台帳）──
   //    決断より前にやる。ここを後回しにすると「送ったのに 0 通」と見える時間が伸びる。
@@ -790,6 +786,12 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       ...state, pendingHandoffOp: null, pendingHandoffOps: [],
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
       jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
+      // ⚠️ 送信経路が `already_delivered` として弾いた数 = **二重送信の試み**。
+      //    0 件が正常（DeliveryKey が構造的に防ぐ）。累計で持ち、健全性は差分で見る
+      batchDuplicates: Number(state.batchDuplicates || 0) + Number(res.duplicates || 0),
+      // ⚠️ **このバッチのジョブ**を控える。健全性のイベントを
+      //    「このバッチの通（DeliveryKey）」だけへ絞るための唯一の手掛かり
+      lastBatchJobIds: res.jobIds,
     });
     await bumpSteps({ [res.touch]: { queued: res.queued } });
     log({ ...view, queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only' });
@@ -838,25 +840,68 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     //    「1 日 1 回」をやめた代わりに、ここが人の目の役割をする。
     //    数えられない値が 1 つでもあれば進まない（0 件として通さない）。
     const seq = Number(decision.plan && decision.plan.batchSeq) || 1;
-    if (seq > 1) {
-      const prevSent = jobs
+    /**
+     * ⚠️ 健全性は**累積値ではなく増分**で見る。
+     *    `byStopReason.provider_suppressed` は「候補を除外した理由」で、
+     *    コホートに元から居る停止リスト該当者がそのまま数えられる。
+     *    それを苦情（0 件許容）として渡すと**永久に開始できない**
+     *    （2026-08-17: 全コホート開始の 1 tick 目で `complaints_detected` 誤検知）。
+     */
+    /**
+     * ⚠️ 健全性の件数は**前バッチで起きたイベント**だけを、**1 イベント 1 件**で数える。
+     *    正本は配信イベント台帳（Blob の NDJSON。Event Webhook が書く）。
+     *    - `byStopReason`（いま候補を除外する理由）は使わない
+     *      … 母集団が 1 バッチ 500 名増えるだけで増える（2026-08-17 に 2 度誤停止）
+     *    - `EmailBlacklist` も使わない
+     *      … アドレス 1 行の upsert 台帳で、既存行は `BounceCount+1` の PATCH。
+     *        `AddedAt` が古いまま＝**古い登録者の新イベントを取り逃がす**
+     *    窓は「このバッチを始めた時刻 → いま」。campaign で絞り、providerEventId で重複を除く。
+     */
+    /**
+     * ⚠️ **直前バッチの通だけ**を見る。campaign と時刻の窓だけでは、
+     *    同じ campaign の別バッチ（遅れて届いたイベント）や
+     *    別 touch（Step2〜24 の定期便）が混ざる。
+     *    バッチの jobIds → `CampaignDeliveries` → DeliveryKey 集合で厳密に絞る。
+     * ⚠️ 集合を取り切れなければ `null` のまま渡さず、**イベントも数えない**（fail closed）。
+     */
+    const batchKeys = await readBatchDeliveryKeys({
+      apiKey: process.env.AIRTABLE_API_KEY,
+      baseId: process.env.AIRTABLE_BASE_ID,
+      jobIds: state.lastBatchJobIds,
+    }).catch(() => null);
+    const eventWindow = batchKeys && state.healthBaseline && Number(state.healthBaseline.atMs)
+      ? await readEventWindow({
+        sinceMs: Number(state.healthBaseline.atMs),
+        untilMs: now,
+        campaignId: ROLLOUT_CAMPAIGN_ID,
+        deliveryKeys: batchKeys,
+      }).catch(() => null)
+      : null;
+    const snapshot = captureOutcomeSnapshot({
+      jobsSent: jobs
         ? [...jobs.byId.values()]
           .filter((j) => j && j.status !== 'PENDING')
           .reduce((a, j) => a + (Number(j.sentCount) || 0), 0)
-        : null;
-      const prevFailed = jobs
+        : null,
+      jobsFailed: jobs
         ? [...jobs.byId.values()].reduce((a, j) => a + (Number(j.failedCount) || 0), 0)
-        : null;
+        : null,
+      // 二重送信は DeliveryKey が構造的に防ぐ。送信経路が弾いた数を状態から受け取る
+      duplicates: Number(state.batchDuplicates || 0),
+      events: eventWindow,
+    });
+    const baseline = state.healthBaseline;
+    // 最初のバッチ（比較相手が無い）は健全性判定を行わない。関所・1 日上限・kill が守る
+    if (seq > 1 && hasOutcomeBaseline(baseline)) {
+      const delta = diffOutcomeSnapshot(baseline, snapshot);
       const health = canStartNextBatch({
-        sent: prevSent,
-        failed: prevFailed,
+        sent: delta.counts.sent,
+        failed: delta.counts.failed,
         // 二重は「同じ人へ同じ touch」が無いこと。台帳の集計が単一源
-        duplicates: due && due.summary ? Number(due.summary.duplicates || 0) : 0,
-        bounces: due && due.summary ? Number((due.summary.byStopReason || {}).soft_bounce || 0) : null,
-        complaints: due && due.summary
-          ? Number((due.summary.byStopReason || {}).provider_suppressed || 0) : null,
-        unsubscribes: due && due.summary
-          ? Number((due.summary.byStopReason || {}).not_sendable || 0) : null,
+        duplicates: delta.counts.duplicates,
+        bounces: delta.counts.bounces,
+        complaints: delta.counts.complaints,
+        unsubscribes: delta.counts.unsubscribes,
         previousOutstanding: facts.outstandingStep1,
         suppressionReadable: !!(due && due.summary),
       });
@@ -968,7 +1013,15 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     const handoffs = granted > 0 && opId
       ? [...new Set([...(state.pendingHandoffOps || []), opId])].slice(-10)
       : (state.pendingHandoffOps || []);
-    await saveState({ ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null });
+    // ⚠️ 新しいバッチを始めたときだけ基準点を置き直す（このバッチの「起点」）。
+    //    バッチ途中（200 → 400 → 500）で置き直すと、そのバッチ自身の結果が消える。
+    const nextBaseline = decision.plan && decision.plan.startsNewBatch === true
+      ? toStoredOutcome(snapshot, now)
+      : (state.healthBaseline || toStoredOutcome(snapshot, now));
+    await saveState({
+      ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null,
+      healthBaseline: nextBaseline,
+    });
     if (granted > 0) await bumpTotals({ granted });
     log({ ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' });
     return { ok: true, ...view, granted, failed: Number(out?.failed || 0), sideEffects: 'granted_only' };

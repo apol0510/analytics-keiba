@@ -20,6 +20,7 @@ import {
 } from './rolloutPlan.js';
 import { tickRollout, settleTick, isRolloutComplete, TICK_ACTION } from './rolloutOrchestrator.js';
 import { resolveOperationalState, OPERATIONAL_STATE } from './rolloutOperationalState.js';
+import { classifyGrantOutcome, GRANT_OUTCOME } from './grantOutcome.js';
 import { GRANT_OPERATION_MAX, buildTrialOperationId } from '../comeback/lightTrialAutoGrant.js';
 import { ROLLOUT_TARGET, describeTargetPlan } from './rolloutTarget.js';
 
@@ -143,34 +144,33 @@ test('【重要】dailyLimit=15000 / batchSize=500 で 15,000 名を同じ日に
   assert.equal(w.state.dayGrantedCount, 15_000);
 });
 
-test('【重要】1 論理バッチ 500 名は 200 + 200 + 100 の付与に分かれる', () => {
+test('【重要】付与 1 回は 200 名（付与側の上限）で、毎回 queue → 送信を挟む', () => {
   const w = makeWorld({ cohort: 15_000, state: running() });
   w.run();
-  assert.deepEqual(w.grants.slice(0, 3), [...ROLLOUT_TARGET.grantSplit], `最初のバッチが ${w.grants.slice(0, 3)}`);
-  assert.deepEqual(w.grants.slice(3, 6), [...ROLLOUT_TARGET.grantSplit], '2 バッチ目が同じ形でない');
-  const plan = describeTargetPlan();
-  assert.equal(w.grants.length, plan.batches * plan.grantsPerBatch,
-    `付与回数 ${w.grants.length}（${plan.batches} バッチ × ${plan.grantsPerBatch} 回のはず）`);
+  // 付与側の関所（前回ぶんの Step1 が送り終わるまで付与しない）と同じ条件で待つ
+  assert.ok(w.grants.slice(0, 5).every((n) => n === GRANT_OPERATION_MAX),
+    `付与が ${w.grants.slice(0, 5)}（毎回 200 のはず）`);
   assert.ok(w.grants.every((n) => n <= GRANT_OPERATION_MAX), '付与 1 回が上限を超えている');
   assert.equal(new Set(w.ops).size, w.ops.length, 'operationId が重複している');
+  // 論理バッチ 500 名は 200 + 200 + 100 の 3 回で満たす（間に queue / 送信が入る）
+  assert.deepEqual([...ROLLOUT_TARGET.grantSplit], [200, 200, 100]);
 });
 
-test('【重要】1 バッチあたり 5 tick で進む（付与 3 + queue 1 + 送信 1）', () => {
+test('【重要】付与 1 回あたり 3 tick で進む（付与 → queue → 送信）', () => {
   const w = makeWorld({ cohort: 15_000, state: running() });
   const seq = w.run();
-  const first5 = seq.slice(0, 5);
-  assert.deepEqual(first5, ['grant', 'grant', 'grant', 'queue', 'dispatch'], `順序が違う: ${first5}`);
-  // 30 バッチ × 5 tick + 終端 1（数は正本 `rolloutTarget.js` から）
+  assert.deepEqual(seq.slice(0, 6), ['grant', 'queue', 'dispatch', 'grant', 'queue', 'dispatch'],
+    `順序が違う: ${seq.slice(0, 6)}`);
   const plan = describeTargetPlan();
   assert.ok(seq.length <= plan.ticks + 2, `${seq.length} tick かかっている（目安 ${plan.ticks}）`);
 });
 
-test('1000 名バッチでも配り切る（200 × 5 + queue + 送信）', () => {
+test('1000 名バッチでも配り切る（付与は毎回 200・間に queue / 送信）', () => {
   const w = makeWorld({ cohort: 15_000, state: running({ batchSize: 1000 }) });
   const seq = w.run();
   assert.equal(w.granted, 15_000);
-  assert.deepEqual(w.grants.slice(0, 5), [200, 200, 200, 200, 200]);
-  assert.deepEqual(seq.slice(0, 7), ['grant', 'grant', 'grant', 'grant', 'grant', 'queue', 'dispatch']);
+  assert.deepEqual(w.grants.slice(0, 3), [200, 200, 200]);
+  assert.deepEqual(seq.slice(0, 3), ['grant', 'queue', 'dispatch']);
 });
 
 test('最後の端数も配り切る（14,050 名）', () => {
@@ -183,12 +183,11 @@ test('最後の端数も配り切る（14,050 名）', () => {
 
 // ── 関所（送信が終わるまで次のバッチへ進まない）────────────────────
 
-test('【重要】バッチを配り切ったら送信が終わるまで次の付与へ進まない', () => {
+test('【重要】付与したら送信が終わるまで次の付与へ進まない（付与側と同じ関所）', () => {
   const w = makeWorld({ cohort: 15_000, state: running() });
-  w.tick(); w.tick(); w.tick();              // 200 + 200 + 100
-  assert.equal(w.state.batchGrantedCount, 500);
-  assert.equal(resolveBatchRoom(w.state), 0, 'バッチに空きが残っている');
-  // 送信が終わる前に付与は起きない
+  assert.equal(w.tick(), 'grant');
+  assert.ok(w.outstanding > 0, '付与したのに未処理が無い');
+  // 送信が終わる前に付与は起きない（付与側の `waiting_for_step1` と同じ条件）
   const facts = w.facts();
   const plan = planRolloutTick({
     state: w.state, nowMs: NOW, remainingCandidates: facts.remainingCandidates,
@@ -196,21 +195,22 @@ test('【重要】バッチを配り切ったら送信が終わるまで次の�
   });
   assert.equal(plan.ok, false);
   assert.equal(plan.reason, ROLLOUT_BLOCK.WAITING_PREVIOUS);
-  // queue → 送信 が済むと次のバッチが始まる
+  // queue → 送信 が済むと次の付与が始まる
   assert.equal(w.tick(), 'queue');
   assert.equal(w.tick(), 'dispatch');
   assert.equal(w.outstanding, 0);
   assert.equal(w.tick(), 'grant');
-  assert.equal(w.state.batchGrantedCount, 200, '新しいバッチとして数え直していない');
 });
 
-test('【重要】未処理が「自分が配った数」を超えたら止まる（説明できない状態）', () => {
+test('【重要】未処理が残っている限り、量にかかわらず付与しない', () => {
   const s = applyRolloutRun({ state: running(), nowMs: NOW, granted: 200, batchSeq: 1, startsNewBatch: true });
-  const plan = planRolloutTick({
-    state: s, nowMs: NOW, remainingCandidates: 14_000, previousOutstanding: 900, envEnabled: true,
-  });
-  assert.equal(plan.ok, false);
-  assert.equal(plan.reason, ROLLOUT_BLOCK.OUTSTANDING_MISMATCH);
+  for (const outstanding of [1, 200, 900]) {
+    const plan = planRolloutTick({
+      state: s, nowMs: NOW, remainingCandidates: 14_000, previousOutstanding: outstanding, envEnabled: true,
+    });
+    assert.equal(plan.ok, false, `未処理 ${outstanding} で配ろうとしている`);
+    assert.equal(plan.reason, ROLLOUT_BLOCK.WAITING_PREVIOUS);
+  }
 });
 
 test('【重要】翌日でも未処理が残っていれば新規付与 0', () => {
@@ -343,7 +343,7 @@ test('緊急停止は状態に関係なく最優先', () => {
 
 test('【重要】同じ tick が重複起動しても二重付与しない（関所と operationId）', () => {
   const w = makeWorld({ cohort: 15_000, state: running() });
-  w.tick(); w.tick(); w.tick();           // バッチを配り切る
+  w.tick();                                // 付与（未処理が残る）
   const before = { granted: w.granted, seq: w.state.batchSeq };
   // 同じ状態でもう一度 tick しても付与にはならない（送信待ちのため）
   const again = w.tick();
@@ -392,7 +392,10 @@ test('【重要】completed は「新しく配る相手が居ない」だけ（S
     /state\.stage === 'completed'\s*\|\|\s*state\.stage === 'paused'/.test(src), false,
     'completed で tick を止めている（Step2〜24 の案内が届かなくなる）',
   );
-  assert.ok(src.includes("state.stage === 'paused'"), '一時停止で早期に抜けていない');
+  // ⚠️ **一時停止でも tick を止めない**（積み残しの queue / 送信を流すため）
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
+  assert.equal(/if \(state\.stage === 'paused'\)/.test(code), false,
+    '一時停止で早期に抜けている（queue 済みの通が滞留する）');
 });
 
 // ── 観測 ────────────────────────────────────────────────────────
@@ -405,4 +408,38 @@ test('運用状態の一覧に PII も secret も混ぜない', () => {
   const dump = JSON.stringify(v);
   assert.equal(/@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(dump), false);
   assert.equal(/rec[A-Za-z0-9]{14}/.test(dump), false);
+});
+
+// ── 付与直後の読み取り遅延で二重に配らない（2026-08-18 に 2 度停止）──────
+
+test('【重要】queue 待ちの引き継ぎがある限り付与しない（関所が開いて見えても）', () => {
+  // Airtable の読み取りが追いつかず outstanding が 0 に見える状況を再現
+  const facts = {
+    remainingCandidates: 13_700, outstandingStep1: 0,
+    grantedPendingQueue: 0, pendingJobs: 2, followUpStep: null, followUpDue: null,
+    pendingHandoffs: 1,
+  };
+  const d = tickRollout({ state: running(), nowMs: NOW, envEnabled: true, facts, env: ENV });
+  assert.notEqual(d.action, TICK_ACTION.GRANT, '引き継ぎが残っているのに配ろうとしている');
+});
+
+test('【重要】送信待ちジョブがあっても引き継ぎは先に queue する（詰まらせない）', () => {
+  const facts = {
+    remainingCandidates: 13_700, outstandingStep1: 200,
+    // ジョブがあると `grantedPendingQueue` は 0 になる（本番の deriveFacts と同じ）
+    grantedPendingQueue: 0, pendingJobs: 2, followUpStep: null, followUpDue: null,
+    pendingHandoffs: 1,
+  };
+  const d = tickRollout({ state: running(), nowMs: NOW, envEnabled: true, facts, env: ENV });
+  // 送信起動が最優先なので dispatch、無ければ queue（どちらにせよ付与ではない）
+  assert.ok([TICK_ACTION.DISPATCH, TICK_ACTION.QUEUE].includes(d.action), `action=${d.action}`);
+});
+
+test('【重要】付与側の「まだ送っていない」は異常停止にしない（待てば開く）', () => {
+  const v = classifyGrantOutcome({ requested: 200, granted: 0, abort: 'waiting_for_step1' });
+  assert.equal(v.outcome, GRANT_OUTCOME.IDLE, '関所待ちを異常として止めている');
+  assert.equal(v.settle, false, '状態を汚している');
+  assert.equal(v.pause, false, '待てばよい状況で自動停止している');
+  // 本物の異常は今までどおり止める
+  assert.equal(classifyGrantOutcome({ requested: 200, granted: 0, abort: 'too_many_records:400>200' }).pause, true);
 });

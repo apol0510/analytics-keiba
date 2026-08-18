@@ -40,6 +40,17 @@ const FROM = getBrandConfig(BRAND).defaultFromEmail;
 const STEP1 = resolveSequenceStep(getCampaign(CAMPAIGN_ID, { includeDisabled: true }), 1);
 
 /** 付与済み・コホート内の 10 名（本番の 10 名と同じ形） */
+/**
+ * ⚠️ **fixture の時刻は「いま」からの相対で作る。**
+ *    絶対日付（2026-08-13 / 08-14）で固定していたため、実時間が進むと
+ *    「Step2 の期日が来た」状態になり、`due` が 10 に変わって落ちた
+ *    （2026-08-18 に顕在化。**コードではなく fixture の時限爆弾**）。
+ *    ここでは「Step1 を昨日送った直後」の状況を、いつ実行しても再現する。
+ */
+const DAY_MS = 86400_000;
+const GRANTED_AT = new Date(Date.now() - 2 * DAY_MS).toISOString();
+const QUEUED_AT = new Date(Date.now() - 1 * DAY_MS).toISOString();
+
 const PEOPLE = Array.from({ length: 10 }, (_, i) => ({
   id: `recCUST${String(i).padStart(9, '0')}`,
   email: `member${i}@example.com`,
@@ -52,7 +63,7 @@ const customerRecords = PEOPLE.map((p) => ({
     プラン: 'Free',
     Source: 'customer-import:imp-2026-08-09-001',
     LightGrantOp: 'light-trial-2026-08-13',
-    LightGrantedAt: '2026-08-13T01:30:00.000Z',
+    LightGrantedAt: GRANTED_AT,
     LightGrantUntil: '2026-09-12T01:30:00.000Z',
     ComebackGrantSource: 'light-trial-autogrant',
   },
@@ -70,7 +81,7 @@ const step1DeliveryRows = PEOPLE.map((p, i) => ({
     RecipientEmail: p.email,
     CustomerRecordId: p.id,
     Status: 'queued',
-    QueuedAt: '2026-08-14T22:30:19.408Z',
+    QueuedAt: QUEUED_AT,
     ScheduledEmailJobId: JOB_ID,
   },
 }));
@@ -78,7 +89,7 @@ const step1DeliveryRows = PEOPLE.map((p, i) => ({
 const scheduledRows = [{
   id: 'recJOB0000000001',
   fields: {
-    JobId: JOB_ID, Status: 'PENDING', ScheduledFor: '2026-08-14T22:30:19.408Z',
+    JobId: JOB_ID, Status: 'PENDING', ScheduledFor: QUEUED_AT,
     RecipientCount: 10, TargetPlan: `campaign:${CAMPAIGN_ID}`, CreatedBy: 'admin-marketing',
     Notes: `marketing campaign ${CAMPAIGN_ID} v1`,
   },
