@@ -249,7 +249,15 @@ async function queueStep({ campaignId = ROLLOUT_CAMPAIGN_ID, step, grantOperatio
     return { ok: false, stage: 'dryRun', step, status: dry.statusCode, error: dry.body?.error || null };
   }
   const recipients = Number(dry.body?.recipients ?? dry.body?.willSend ?? 0);
-  if (!recipients) return { ok: false, stage: 'dryRun', step, error: '対象 0 件', recipients: 0 };
+  /**
+   * ⚠️ **「対象 0 件」は失敗ではない。**
+   *    その付与ぶんは既に積み終わっている（queue は冪等）か、まだ Airtable に
+   *    反映されていないだけ。**引き継ぎを畳んで次へ進む**のが正しい。
+   *    2026-08-18: これを失敗として自動停止していた（`queue_failed`）。
+   */
+  if (!recipients) {
+    return { ok: true, empty: true, step, campaignId, touch: toTouch(campaignId, step), queued: 0, jobIds: [], duplicates: 0 };
+  }
 
   // ⚠️ dry-run で確認した**そのもの**を積む（指紋・文面・組み立て版を全部持ち回る）
   const live = await callAdminMarketing({
@@ -752,6 +760,8 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     for (const id of opIds) {
       // eslint-disable-next-line no-await-in-loop -- 付与 op ごとに既存の 1 本を通す
       const one = await queueStep({ campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, grantOperationId: id });
+      // 「対象 0 件」= その付与ぶんは積み終わっている。**引き継ぎを畳んで次の op へ**
+      if (one.ok && one.empty) { queued.done.push(id); continue; }
       if (!one.ok) {
         // ⚠️ **queue の失敗は自動停止**（放置すると権利だけ付いて案内が届かない）。
         //    済んだぶんは状態へ残し、残りの引き継ぎは次に持ち越す。
@@ -780,6 +790,19 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       queued.count += one.queued;
       queued.touch = one.touch;
       queued.done.push(id);
+    }
+    if (queued.jobIds.length === 0 && queued.count === 0) {
+      // 引き継ぎは全部「積み終わっていた」。**畳んで正常終了**する。
+      //    まだ案内できていない人が居れば、次の tick が既存の救済経路
+      //    （`action=sequence` の期日判定）で拾う。
+      await saveState({ ...state, pendingHandoffOp: null, pendingHandoffOps: [] });
+      const body = {
+        ok: true, ...view, queued: 0, handoffsCleared: queued.done.length,
+        sideEffects: 'state_only',
+        notice: '引き継ぎぶんは既に積み終わっていました（**新しくは積んでいません**）。',
+      };
+      log(body);
+      return body;
     }
     const res = { ok: true, jobIds: queued.jobIds, queued: queued.count, touch: queued.touch };
     await saveState({
