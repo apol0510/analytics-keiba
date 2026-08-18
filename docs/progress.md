@@ -57,6 +57,96 @@
 
 production deploy / 実顧客データ書込み / 実メール送信 / schema 変更 / PR merge。
 **#372（Light trial rollout 修復）とは完全に分離**した別 branch・別 worktree。
+## 2026-08-19 — 【本番実行】再募集クーポンの初取得を 1 件記録（Daniel / 3 列のみ・0→1）
+
+PR #373 を squash merge（`367cccbc`）したうえで、承認どおり
+**Daniel の再募集クーポン取得を本番で 1 回だけ**実行した。
+**書込みは Customers の 3 列のみ**で、資格・停止・課金・会員権は 1 バイトも動いていない。
+
+### 実行直前の再確認（fail closed）
+
+書込みスクリプトは、次のいずれかが崩れたら **PATCH せずに中止**する作りにした:
+
+| 条件 | 実測 |
+|---|---|
+| 停止中の会員が **1 名**であること | 1 名 ✅ |
+| その `recordId` が **2026-08-18 に MK が停止した Daniel の記録と一致**すること | ✅ 一致 |
+| プラン | Premium Sanrenpuku / PlanType=Lifetime |
+| 実行前の取得済み件数 | **0** |
+| 実行前のクーポン 3 列 | 3 列とも **未設定** |
+
+### ⚠️ 顧客向け API は本番で叩けない（設計として正しい）
+
+当初は `/api/premium-plus-coupon.json` を実際に叩く計画だったが、
+**`SESSION_SIGNING_SECRET` は Netlify の masked secret で読み出せない**
+（`env:get` は `****…` を返す）。つまり **運用者でも会員セッションを偽造できない**。
+これは望ましい性質なので、**回避せず**別手段を取った。
+
+そのため取得の記録は **Airtable への直接 PATCH** で行った。ただし
+**書く値は手打ちせず、本番と同じ単一源 `buildReopenCouponClaimFields()` に生成させ**、
+フィールド allow-list も同じ `assertOnlyCouponFields()` で検査してから送っている。
+
+> **したがって「本番で顧客導線から取得できること」は今回も実証していない。**
+> 実証済みなのは「3 列が正しい値で記録され、他が動かないこと」まで。
+> 顧客導線（休止ページの取得ボタン → API → 3 列書込み）は
+> **単体テスト・配線 guard・本番と同一ビルド成果物のローカル駆動**で確認した範囲に留まる。
+> 本番 DOM での取得は、**会員本人が実際に押したときに初めて実証される**。
+
+### 書き込んだもの（単一源が生成した値）
+
+| 列 | 値 |
+|---|---|
+| `PremiumPlusReopenCouponClaimedAt` | `2026-08-18T22:07:54.803Z`（ISO 日時） |
+| `PremiumPlusReopenCouponId` | `premium-plus-reopen-priority@v1` |
+| `PremiumPlusReopenCouponSource` | `pause-notice` |
+
+PATCH は **HTTP 200**。
+
+### 確認結果（read-only・値は出力しない）
+
+書込み前後で **全フィールドをハッシュ比較**し、変わった列名だけを取り出した。
+
+| 確認項目 | 結果 |
+|---|---|
+| 変わった列 | **クーポン 3 列だけ** ✅ |
+| `ClaimedAt` の形式 | ISO 日時 ✅ |
+| 資格・停止・課金・退会 系 18 列 | **全て不変** ✅（`プラン` / `PlanType` / `Status` / `有効期限` / `PaidAt` / `PaymentConfirmed` / `PaymentEmailSent` / `LifetimeSanrenpuku` / `PremiumPlusEligibility` / `PremiumPlusEligibilityReason` / `PremiumPlusEligibleAt` / `PremiumPlusReleaseOverride` / `PremiumPlusSalePaused` / `PremiumPlusSalePausedAt` / `PremiumPlusSalePausedBy` / `SanrenpukuPaidAt` / `WithdrawalRequested` / `UpsellTarget`） |
+| `PremiumPlusSalePaused` | **true のまま** ✅（販売停止は解除していない） |
+| 取得済み件数 | **0 → 1** ✅ |
+| 管理画面の当該会員 | クーポン**取得済み** / 取得日時 `2026-08-18T22:07:54Z` / 取得元 `pause-notice` / 識別子 `premium-plus-reopen-priority@v1` ✅ |
+| 同会員の資格 | **販売可 / PHASE4（即時販売）** — 取得前と同じ ✅ |
+| 同会員の CTA 実表示 | **表示なし（channel=none）** — 通常導線は閉じたまま ✅ |
+| 他会員 16 名 | 取得済み **0** / 停止中 **0** / Plus CTA 実表示 **2 名**（従来どおり）＝ **影響なし** ✅ |
+| 候補総数・資格内訳 | 17 名 / 即時販売 3・販売可 3・保留 14・対象外 0（取得前と同じ） ✅ |
+
+#### メール送信 0 / queue 登録 0 / 課金・昇格 0
+
+- 実行したのは **Airtable への PATCH 1 回だけ**。SendGrid も配信 queue も**呼んでいない**
+- **Airtable Automation も発火しない**: 稼働中の 2 本は
+  「入金確認 → 昇格」＝ `PaymentConfirmed` 監視、「入金確認メール自動送信」＝ `Status` のみ監視。
+  **どちらのフィールドも変更していない**（差分で確認済み）
+- `PaymentEmailSent` も不変
+
+#### 二重取得
+
+**本番では 2 回目を実行していない**（1 回だけの承認のため）。
+冪等性は既存テストで固定済み: `buildReopenCouponClaimFields()` は取得済みなら
+`changed:false` / `fields:{}` を返し、API は **PATCH せずに 200**（`alreadyClaimed:true`）。
+取得日時は上書きされない。
+
+### rollback
+
+**この 3 列を空にすれば「未取得」へ戻る**（`ClaimedAt` が空 = 未取得が唯一の判定）。
+Airtable 画面で 3 列をクリアするだけでよく、他の列に触れる必要はない。
+取得は冪等なので、戻したあとに再取得しても問題ない。
+
+### 現在地
+
+本番は「Daniel に受付休止ページが出て、購入経路は閉じたまま、クーポン 1 件が記録済み」。
+再募集時は管理画面の**「クーポン取得済み」で 1 名を抽出**できる。
+価格・割引条件は**未確定のまま**（`terms.determined=false`）で、決めるのは
+`promotionOfferCatalog.js` に Premium Plus の offer を追加するとき。
+
 ## 2026-08-19 — 【本番反映】受付休止ページ＋再募集クーポンを production 有効化（PR #370 squash merge / 取得テストは未実施）
 
 PR #370 を承認どおり **env → merge → deploy** の順で本番反映した。
