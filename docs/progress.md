@@ -1,3 +1,80 @@
+## 2026-08-18 — 【実績】販売一時停止を本番有効化し、Daniel 1 名で運用確認まで完了
+
+PR #358 を squash merge（main `ae4907a9`）→ 本番反映 → env 投入 → 実会員 1 名で
+停止を実行し、5 経路と他会員非影響まで確認した。**すべて想定どおり。**
+
+### 本番の現在状態
+
+| 項目 | 値 |
+|---|---|
+| main | `ae4907a9`（PR #358 squash merge / 2026-08-18 04:24 UTC） |
+| Airtable Customers | 88 → **92 フィールド**（停止用 4 つを手動作成・型一致を read-only 検証） |
+| env | `PREMIUM_PLUS_SALE_PAUSE_READY=1`（production） |
+| redeploy | Build Hook `analytics-keiba-auto-deploy` で実施（HTTP 200） |
+| admin 可用性 | `salePause = {writable:true, fieldsReady:true}` |
+| 停止中の会員 | **1 名**（`counts.salePaused=1`。候補 17 名中） |
+
+### Daniel の停止状態
+
+`recM7t6T6W3YRgXuA` / 実行 2026-08-18 04:38:23Z / 操作者 `MK` /
+理由「運用確認（承認済み・2026-08-18）」。
+
+**書かれたのは停止系 4 フィールドだけ**（Airtable 実データで確認）:
+
+| 項目 | 停止前 | 停止後 | 判定 |
+|---|---|---|---|
+| `PremiumPlusEligibility` | eligible | eligible | ✅ 不変 |
+| `PremiumPlusReleaseOverride` | phase4 | phase4 | ✅ 不変 |
+| `PremiumPlusEligibleAt` | 2026-07-29T16:11:51.236Z | 同左 | ✅ anchor 不変 |
+| プラン / PlanType / Status / 有効期限 / PaidAt | — | 同左 | ✅ 課金系 不変 |
+| `PremiumPlusSalePaused` | （無） | true | 追加 |
+
+`state` は「一時停止中（資格は保持）」、`upsellReason` は
+「Plus の販売を一時停止中（この会員のみ・資格は保持）」。
+
+### 5 経路の確認結果（Daniel 停止 / 対照会員 非停止）
+
+| # | 経路 | Daniel（停止） | 対照会員（非停止） |
+|---|---|---|---|
+| 1 | dashboard CTA | `channel=none` → **非表示** | `channel=plus` → 表示 |
+| 2 | premium-sanrenpuku 予告 | `showTeaser=false` → **404** | `showTeaser=true` |
+| 3 | `/premium-plus/` | `showProductPage=false` → **404** | true |
+| 4 | `/premium-plus-v2/` | 同上 → **404** | true |
+| 5 | 申込 Function（URL 直打ち） | **HTTP 403 `sale_paused` / `sideEffects:"none"`** | （未実行）|
+
+管理者プレビューの `visibility` 文言も
+Daniel「商品ページは 404。予告も表示されません」/ 対照「商品ページ・価格・購入 CTA が表示され、
+申し込み操作ができます」と一致。
+
+⚠️ 経路 5 は**停止側でのみ実行**した。非停止会員で試すと実際の申込が成立し
+管理者通知・顧客控えメールが飛ぶため、実行していない。
+実行前に Airtable 読み取りの健全性（200 / 974ms / `PremiumPlusSalePaused=true`）を確認し、
+403 が確定的な状態でのみ POST した。**メール送信 0 通・課金変更 0 件。**
+
+### 他会員への非影響
+
+候補 17 名中、停止フラグが立っているのは Daniel のみ（他 16 名は `salePaused` なし）。
+`counts.eligible` は停止前後とも **3** で資格は不変。他会員 2 名は Plus CTA 表示のまま。
+
+### 既知の表示上の限界（安全側・未修正）
+
+停止中は派生値 `overrideApplied` が false・`phase` が 1 になるため、
+**管理一覧の資格バッジが「即時販売」→「PHASE 1」に見え、`即時販売` の件数も 1 減る**
+（今回 3→2）。**保存値は不変**なので再開すれば元に戻るが、
+「資格の軸は停止で動かさない」という意図とは食い違う。
+`counts.eligible` は `eligibility` 由来なので影響を受けない。
+恒久対応するなら、派生 release ではなく保存値から資格バッジ/`immediate` を出す必要がある。
+
+### rollback
+
+| 手段 | 方法 | 影響 |
+|---|---|---|
+| **1. 停止の解除**（推奨・即時） | 管理画面 詳細 →「▶ 販売を再開する」。API なら `action=setSalePause` / `paused:false` | Daniel が元の「即時販売」へ戻る。PHASE・資格は保存値のままなので Day 0 に戻らない |
+| **2. 機能ごと無効化** | `netlify env:unset PREMIUM_PLUS_SALE_PAUSE_READY --context production` → Build Hook で再デプロイ | 停止操作が 503 に戻る。**既に停止中のレコードは停止したまま**なので、先に 1 で再開しておくこと |
+| **3. コードごと撤回** | `git revert ae4907a9` | 停止フィールドが残っても読み手が消えるだけ（未設定＝停止していない扱い） |
+
+merge 前 main（rollback 基準）= `b972cc7a`。
+
 ## 2026-08-17 — 【撤回】未承認だった Redis deny-marker / 2 系統 fail-closed 設計を除去
 
 販売一時停止の判定に **承認を取らずに新しい設計を持ち込んでいた**ため、正本
