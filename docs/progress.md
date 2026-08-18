@@ -93,7 +93,11 @@ Meta API（`GET /v0/meta/bases/{base}/tables`）でスキーマのみ取得。
 本番は「休止ページが出る・クーポン取得 API が有効・誰もまだ取得していない」状態。
 次は **取得テスト＝本番 Customers レコードへの初の書込み**になるため、**実行前で停止**した。
 
-- 対象: 一時停止中の会員 **1 名**（Premium Sanrenpuku・自ら操作する運営者本人）
+- 対象: 一時停止中の会員 **1 名**（Premium Sanrenpuku / PlanType=Lifetime・三連複保有(旧プラン)）。
+  **2026-08-18 に MK が停止した Daniel のレコードと recordId が一致**することを read-only で確認済み
+  （記録は 2026-08-18「販売一時停止を本番有効化し、Daniel 1 名で運用確認まで完了」節の
+  停止操作 `recordId` / 停止日時 2026-08-18T04:38:23Z / 操作者 MK と同一）。
+  ⚠️ **運営者本人ではない**（運営者のアドレスと不一致であることを確認済み）
 - 書込内容: `PremiumPlusReopenCouponClaimedAt`（now ISO）/ `PremiumPlusReopenCouponId`
   (`premium-plus-reopen-priority@v1`) / `PremiumPlusReopenCouponSource`（`pause-notice`）の **3 列のみ**
 - 起こらないこと: 課金・昇格・メール送信・queue 登録・販売停止の解除・資格/override/PHASE の変更
