@@ -195,6 +195,20 @@ fixture を「いま」からの相対時刻に直した（**テストのみの�
 `test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0。
 
+## 2026-08-18 — 【修正】queue の「対象 0 件」を失敗にしない
+
+引き継ぎ（付与ぶん）を積もうとしたとき、dry-run が「対象 0 件」を返すと
+`queue_failed` として自動停止していた。0 件は**その付与ぶんが既に積み終わっている**
+（queue は冪等）か、まだ Airtable に反映されていないだけで、**失敗ではない**。
+
+- 0 件は `empty` として返し、**引き継ぎを畳んで次の op へ**進む
+- 引き継ぎが全部「積み終わっていた」場合は、引き継ぎを消して正常終了。
+  まだ案内できていない人が居れば、**次の tick が既存の救済経路**
+  （`action=sequence` の期日判定）で拾う
+- **本物の queue 失敗（HTTP エラー等）は従来どおり自動停止**
+
+`test:marketing` 2,011 pass・`check:safety` EXIT=0・`build` EXIT=0。
+
 ## 2026-08-18 — 【修正】付与直後の読み取り遅延で二重に配らない（2 度の自動停止の真因）
 
 自動運転が 2 度とも `waiting_for_step1` で自動停止した。真因は **Airtable の読み取り遅延**。

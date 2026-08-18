@@ -443,3 +443,16 @@ test('【重要】付与側の「まだ送っていない」は異常停止に�
   // 本物の異常は今までどおり止める
   assert.equal(classifyGrantOutcome({ requested: 200, granted: 0, abort: 'too_many_records:400>200' }).pause, true);
 });
+
+test('【重要】queue の「対象 0 件」を失敗として自動停止しない', () => {
+  const src = readFileSync(
+    new URL('../../../netlify/functions/cron-marketing-rollout.js', import.meta.url), 'utf8',
+  );
+  // dryRun が 0 件でも ok:true（empty）で返す
+  assert.equal(/error: '対象 0 件'/.test(src), false, '0 件を失敗として返している');
+  assert.ok(/empty: true/.test(src), '0 件を「積み終わっている」として畳んでいない');
+  // 畳んだら引き継ぎを消して正常終了する（自動停止しない）
+  assert.ok(/handoffsCleared/.test(src), '引き継ぎを畳んだ記録が無い');
+  // 本物の queue 失敗は今までどおり自動停止
+  assert.ok(/abort: 'queue_failed'/.test(src), 'queue 失敗の停止経路が消えている');
+});
