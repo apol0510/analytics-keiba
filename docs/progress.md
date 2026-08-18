@@ -1,3 +1,80 @@
+## 2026-08-18 — 【修正】ジョブだけ作れて配信行が作れない途中状態を成功にしない（orphan PENDING）
+
+#369 反映後に再開したところ、また `auto-stop: dispatch_failed` で止まった。
+今度は**誤検知ではない**。#369 の契約（`PENDING` + `willSend 0` は異常）が
+**本物の異常を正しく捕まえた**。
+
+### read-only 調査で確定したこと
+
+| # | 問い | 実測 |
+|---|---|---|
+| 1 | ScheduledEmails 作成 | **1 件成功**（宛先 100 / `sentCount` 0 / PENDING） |
+| 2 | CampaignDeliveries upsert | **0 件成功**。12:00Z 以降 **どの CampaignType にも 1 行も増えていない**（部分書き込みですらない） |
+| 3 | どの段階で途切れたか | ジョブ作成の**後**、配信行 upsert の**最初のチャンク**。dry-run が `skipByReason: {"delivery_not_found": 100}` を返す |
+| 4 | 原因の切り分け | **Airtable ベース上限は否定**（33,187 / 50,000）。`buildDeliveryRecords` が 0 件を返した説も否定（0 件なら HTTP を呼ばず 200 成功になり、`queued` 集計が伸びるはずだが伸びていない）。残る候補は **429 / 4xx（要求形） / 一過性 5xx / Function timeout**。正確な HTTP status は read-only の面からは取得できない（Function ログ非公開） |
+| 5 | 部分失敗を成功として handoff を畳んだか | **畳んでいない**。Redis の `step1.queued` は 949 のまま伸びておらず、queue は成功を返していない。**残ったのは orphan ジョブ行だけ** |
+| 6 | 159 名に既存 DeliveryKey は本当に 0 か | **0**。付与済み 1,570 のうち配信行あり 1,398 / **無し 172** |
+| 7 | 正常除外が別にあるか | **ある**。172 のうち **13 名**は配信基盤の停止リストで barrier が既に解決済み（172 − 13 = **159** が outstanding。数が合う） |
+| 8 | orphan ジョブと付与集合は一致するか | **一致しない（真部分集合）**。ジョブ宛先 100 は全て「配信行なし」に含まれるが、**72 名はジョブにすら入っていない**（うち 13 名は停止リスト＝ **59 名が未 queue**）。100 + 59 = 159 |
+
+⚠️ 数値はすべて件数のみ。アドレス・recordId は取得も出力もしていない。
+
+### 原因（既に repo に明記されていた故障形）
+
+`admin-marketing.js` の重複確認コメントが、この形をそのまま書いている:
+
+> キュー登録は「ジョブ行を作る → 配信行を upsert する」の順なので、途中で落ちると
+> **PENDING ジョブだけが残り配信行が無い**状態になる。これが本当の orphan で、
+> 見逃すと同じ人へ 2 通目のジョブを積んでしまう。
+
+`handlePlan` はこの 2 つを**1 つの取引にしていない**うえ、
+
+- `buildDeliveryRecords` は許可外フィールドを `continue` で**黙って落とす**
+  （全件落ちても 0 件のまま素通りし、`upsertDeliveries` は HTTP を 1 回も呼ばない＝例外も出ない）
+- 呼び出し側の `assertOnlyDeliveryFields` 再チェックは**フィルタ後の配列**を回すので**絶対に発火しない**
+- `upsertDeliveries` は 10 件ずつ PATCH するが、**間隔も再試行も無い**
+  （取得側 `airtable-fetch.js` は 5rps 対策で 220ms 空けているのに、書き込み側には無い）
+- 書けたかどうかを**読み戻して確認していない**
+
+### 直し方
+
+判定を純粋関数 `queueDeliveryOutcome.js` に集約し、**配信行の実在を読み戻して確認できたときだけ**
+キュー成功と言う。確認できなければ**作ってしまった PENDING ジョブを取り消して orphan を残さない**。
+
+| 状況 | 結果 |
+|---|---|
+| 組み立て件数 ≠ 宛先数 | `delivery_records_dropped` → 書きにいかず 500 + ジョブ取消 |
+| 宛先に DeliveryKey が無い | `delivery_keys_missing` → 500 + ジョブ取消 |
+| 読み戻せない | `deliveries_unverified` → **0 件と言わず** 500 + ジョブ取消 |
+| 読み戻したら足りない（部分成功含む） | `deliveries_incomplete` → **期待 / 確認 / 不足を数で返し** 500 + ジョブ取消 |
+| 全部一致 | **成功**（ここでだけ handoff を確定してよい） |
+
+あわせて `upsertDeliveries` に既存慣習の **220ms 間隔 + 一過性（429 / 5xx）のみ最大 3 回再試行**を追加した
+（直らない 4xx は即諦める）。upsert は `DeliveryKey` をマージキーにした冪等操作なので、
+**再試行しても行は増えない**。
+
+⚠️ 送信経路は増やしていない（`upsertDeliveries` / `recordDelivered` の呼び出しは各 1 か所のまま）。
+⚠️ orphan PENDING を捕まえる既存の重複確認契約（`pendingOverlap`）はそのまま残している。
+
+### テスト
+
+`queueDeliveryOutcome.test.mjs` を新設（**19 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+ジョブ成功→配信行 0 件 / 一部成功（37 / 100・チャンク境界 20 / 35）を件数ごと固定 /
+組み立ての取りこぼし / 読み戻せないときに 0 件と言わない / 鍵が無い /
+再実行で二重にならない / 他バッチの鍵を巻き込まない / 完全成功だけ ok /
+配線（読み戻してから成功・失敗時に取消・冪等 upsert 維持・経路を二重化しない・orphan 検知契約を維持）。
+
+`test:marketing` 2,113 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass
+（いずれも fail 0 / cancelled 0）・`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・
+secret/PII 0 件・`package.json` / `package-lock.json` 変更なし。
+
+### 本番の状態（この修正では触っていない）
+
+`stage=paused` / `autoStopped=true` / `stopReason=dispatch_failed` を**維持**。
+付与 **1,570** / Step1 解決 **1,411** / outstandingStep1 **159** / PENDING **1**（orphan） /
+failed **0** / duplicate **0** / eligible 残 **12,918**。
+**本番データの修復（159 名の配信行作成 / orphan ジョブの取消 / 再 queue / 実送信 / 再開）は行っていない。**
+
 ## 2026-08-18 — 【修正】「送るべき人が正当にゼロ」を送信失敗にしない（dispatch_failed の誤検知）
 
 #367 を本番反映して展開を再開したところ、**別の理由**で自動停止した。

@@ -175,6 +175,9 @@ import {
   planRolloutStart, planRolloutPause, planRolloutResume, describeControlResult,
   ROLLOUT_OP, CONTROL_REJECT_LABEL,
 } from '../../src/lib/marketing/rolloutControl.js';
+import {
+  classifyQueueOutcome, collectDeliveryKeys, QUEUE_FAIL,
+} from '../../src/lib/marketing/queueDeliveryOutcome.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -2789,6 +2792,22 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   for (const rec of deliveryRecords) {
     if (!assertOnlyDeliveryFields(rec.fields)) return json(500, { error: 'field allow-list violation' });
   }
+  /**
+   * ⚠️ 組み立て段の**黙った取りこぼし**を先に捕まえる。
+   *    `buildDeliveryRecords` は許可外フィールドが混ざった行を `continue` で落とすので、
+   *    全件落ちても 0 件のまま素通りし、`upsertDeliveries` は HTTP を 1 回も呼ばない
+   *    （＝例外も出ない）。ここで数を突き合わせておかないと
+   *    「配信行 0 件なのにキュー成功」になる（2026-08-18 の事故）。
+   */
+  if (deliveryRecords.length !== plan.recipients.length) {
+    await cancelOrphanJobs({ KEY, BASE, jobs, now, reason: QUEUE_FAIL.RECORDS_DROPPED });
+    return json(500, {
+      error: 'キュー登録を確定できませんでした（配信行を組み立てられません）',
+      reason: QUEUE_FAIL.RECORDS_DROPPED,
+      expected: plan.recipients.length, built: deliveryRecords.length,
+      sideEffects: 'jobs_cancelled',
+    });
+  }
   // 🛡️ 記録先も単一源に従う。既定は Airtable のみ。`dual` は Redis へも SADD する。
   //    Airtable 側の失敗は従来どおり致命（台帳が欠ける）。Redis 側の失敗は dual なら
   //    致命にせず、差分は scripts/reconcile-delivery-stores.mjs で拾う。
@@ -2803,6 +2822,36 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   });
   if (deliveryWrite.redis === 'failed') {
     console.warn('⚠️ [admin-marketing] delivery store redis write failed（Airtable が正本のため継続）');
+  }
+
+  /**
+   * ⚠️ **配信行が実在することを読み戻して確かめてから**キュー成功と言う。
+   *    例外が出なかったことは「書けた」の証拠にならない。読めなければ 0 件とも言わず、
+   *    部分成功も成功へ丸めない（`queueDeliveryOutcome.js` が単一源）。
+   *    確認できなければ、**作ってしまった PENDING ジョブを取り消して orphan を残さない**。
+   */
+  const expectedKeys = collectDeliveryKeys(plan.recipients);
+  const verifiedKeys = await readDeliveryKeysPresent({
+    KEY, BASE, campaign, keys: [...expectedKeys],
+  });
+  const outcome = classifyQueueOutcome({
+    recipients: plan.recipients, builtCount: deliveryRecords.length, verifiedKeys,
+  });
+  if (!outcome.ok) {
+    await cancelOrphanJobs({ KEY, BASE, jobs, now, reason: outcome.reason });
+    console.error('🛑 [admin-marketing] キュー登録を確定できず取消:', {
+      campaignId: campaign.campaignId, reason: outcome.reason,
+      expected: outcome.expected, verified: outcome.verified, missing: outcome.missing,
+      jobs: jobs.length,
+    });
+    return json(500, {
+      error: 'キュー登録を確定できませんでした（配信行を確認できません）',
+      reason: outcome.reason,
+      expected: outcome.expected, verified: outcome.verified, missing: outcome.missing,
+      sideEffects: 'jobs_cancelled',
+      notice: '配信行が確認できないため、作成した送信待ちジョブを取り消しました。'
+        + '配信行は DeliveryKey 冪等なので、そのまま再実行できます。',
+    });
   }
 
   console.log('✅ [admin-marketing] キャンペーンをキューへ登録:', {
@@ -3057,15 +3106,102 @@ async function createRecord({ KEY, BASE, table, fields }) {
 }
 
 /** DeliveryKey を merge key にした upsert。同じ key は何度実行しても 1 行のまま。 */
+/**
+ * 指定した `DeliveryKey` のうち **台帳に実在するもの**を返す（read-only）。
+ *
+ * ⚠️ 読めなければ `null`（**0 件と言わない**）。呼び出し側が fail closed する。
+ * ⚠️ 既存の名指し formula（`buildDeliveryKeyFormula`）を使う。全件走査しない。
+ */
+async function readDeliveryKeysPresent({ KEY, BASE, campaign, keys }) {
+  const list = (Array.isArray(keys) ? keys : []).map((k) => String(k || '').trim()).filter(Boolean);
+  if (list.length === 0) return null;
+  const campaignType = `${campaign.campaignId}:v${campaign.version}`;
+  const found = new Set();
+  for (let i = 0; i < list.length; i += 40) {
+    const group = list.slice(i, i + 40);
+    const formula = buildDeliveryKeyFormula({ campaignType, keys: group });
+    if (!formula) return null;
+    let rows;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 40 件ずつ名指し
+      rows = await fetchAllStrict({
+        KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula,
+        maxPages: TARGETED_MAX_PAGES, fields: ['DeliveryKey'],
+      });
+    } catch {
+      return null;                       // 読めない = 確認できない
+    }
+    if (!Array.isArray(rows)) return null;
+    for (const r of rows) {
+      const k = String(((r && r.fields) || {}).DeliveryKey || '').trim();
+      if (k) found.add(k);
+    }
+  }
+  return found;
+}
+
+/**
+ * 配信行を確定できなかったときに、**作ってしまった送信待ちジョブを取り消す**。
+ *
+ * ⚠️ orphan PENDING（配信行の無い PENDING ジョブ）を残さないための補償。
+ *    残すと重複確認が「もう積んである」と見なし、同じ人へ 2 通目を積む余地ができる。
+ * ⚠️ 取消は**既存契約**（`buildJobCancelFields`）をそのまま使う。新しい書き方をしない。
+ */
+async function cancelOrphanJobs({ KEY, BASE, jobs, now, reason }) {
+  for (const j of Array.isArray(jobs) ? jobs : []) {
+    if (!j || !j.recordId) continue;
+    const fields = buildJobCancelFields({
+      operationId: `queue-unconfirmed:${String(reason || 'unknown')}`.slice(0, 60),
+      nowMs: now,
+    });
+    if (!fields || !assertOnlyCancelFields(fields, JOB_CANCEL_WRITABLE_FIELDS)) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 1 ジョブずつ
+      await patchRecord({ KEY, BASE, table: SCHEDULED_TABLE, recordId: j.recordId, fields });
+    } catch {
+      // 取消にも失敗したら**握り潰さずログだけ**（呼び出し側は既に 500 を返す）
+      console.error('🛑 [admin-marketing] orphan ジョブの取消に失敗:', { jobId: j.jobId });
+    }
+  }
+}
+
+/** Airtable は 1 base 5 req/sec。既存の取得側（`airtable-fetch.js`）と同じ間隔を空ける */
+const AIRTABLE_PACE_MS = 220;
+/** 一過性（429 / 5xx）だけ、この回数まで待って再試行する */
+const UPSERT_MAX_RETRY = 3;
+
 async function upsertDeliveries({ KEY, BASE, records }) {
+  const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
   for (let i = 0; i < records.length; i += 10) {
     const batch = records.slice(i, i + 10);
-    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${DELIVERIES_TABLE}`, {
-      method: 'PATCH',
-      headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: batch }),
-    });
-    if (!res.ok) throw new Error(`${DELIVERIES_TABLE} upsert failed: HTTP ${res.status}`);
+    // ⚠️ 1 回の呼び出しで最大 10 件（Airtable の performUpsert 上限）。
+    //    ここは**冪等**（`DeliveryKey` をマージキーにした upsert）なので、
+    //    再試行しても行は増えない。
+    let lastStatus = 0;
+    let ok = false;
+    for (let attempt = 0; attempt <= UPSERT_MAX_RETRY; attempt += 1) {
+      if (i > 0 || attempt > 0) {
+        // eslint-disable-next-line no-await-in-loop -- 5rps を超えないための間隔
+        await sleep(AIRTABLE_PACE_MS * (attempt + 1));
+      }
+      let res;
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 10 件ずつ
+        res = await fetch(`https://api.airtable.com/v0/${BASE}/${DELIVERIES_TABLE}`, {
+          method: 'PATCH',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: batch }),
+        });
+      } catch {
+        lastStatus = 0;                       // 通信失敗も一過性として再試行
+        continue;
+      }
+      if (res.ok) { ok = true; break; }
+      lastStatus = res.status;
+      // ⚠️ 4xx（429 以外）は投げ直しても直らない。**即座に諦める**
+      if (res.status !== 429 && res.status < 500) break;
+    }
+    if (!ok) throw new Error(`${DELIVERIES_TABLE} upsert failed: HTTP ${lastStatus}`);
   }
 }
 
