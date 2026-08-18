@@ -37,6 +37,7 @@ import {
   resolvePremiumPlusRelease,
 } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolvePlusMemberFromFields } from '../../src/lib/premiumPlus/premiumPlusMember.js';
+import { eligibilityAxisFields } from '../../src/lib/premiumPlus/premiumPlusAdminEligibilityAxis.js';
 import { resolveSaleTarget } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar, checkCalendarFreshness } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
 import ppRaceCalendar from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
@@ -181,6 +182,14 @@ function buildAdminRow(rec, now) {
     // route が none でも「有効 Premium だが PaidAt が空な旧会員」を落とさないため。
     const candidate = resolveAdminCandidate({ fields, member, release });
 
+    // ── 資格の軸（停止とは別軸）─────────────────────────────
+    // ⚠️ 停止中は release が denied（phase=1 / overrideApplied=false）になる。
+    //    そのまま一覧へ流すと、保存値は変わっていないのに資格バッジが
+    //    「即時販売」→「PHASE 1」に化け、「即時販売」の件数も減る。
+    //    停止を外した状態で同じ単一源を解き直し、**資格の表示だけ**そちらを使う。
+    //    顧客向け表示（upsellChannel / state / showProductPage）は release のまま。
+    const axis = eligibilityAxisFields({ fields, nowMs: now, release });
+
     const eligibility = member.eligibility;
   return {
         /** 一覧に出す対象か（呼び出し側が判断に使う。lookup は false でも返す） */
@@ -228,12 +237,13 @@ function buildAdminRow(rec, now) {
         routeLabel: explain.routeLabel,
         reason: fields['PremiumPlusEligibilityReason'] || '',
         releaseOverride: release.releaseOverride || '',
-        overrideApplied: release.overrideApplied,
+        // 資格の軸（停止で動かさない）。停止の有無は salePaused 列が持つ。
+        overrideApplied: axis.overrideApplied,
         state: describeReleaseState(release),
         eligibleAt: fields['PremiumPlusEligibleAt'] || '',
         updatedAt: fields['PremiumPlusEligibilityUpdatedAt'] || '',
         updatedBy: fields['PremiumPlusEligibilityUpdatedBy'] || '',
-        phase: release.phase,
+        phase: axis.phase,
         sanrenpukuPaidAt: member.sanrenpukuPaidAtMs ? new Date(member.sanrenpukuPaidAtMs).toISOString() : '',
         // ── 会員単位の販売 一時停止（資格とは別の軸）──────────────
         // ⚠️ `eligibility='blocked'`（販売対象外）と混同させない。停止は資格を保持したまま

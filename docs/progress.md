@@ -1,3 +1,50 @@
+## 2026-08-18 — 【修正】停止中に資格バッジと「即時販売」件数が動く不一致を解消
+
+本番で Daniel を停止した際に観測した表示の不一致を、確定仕様
+（「資格の軸は停止で動かさない」「eligibility と pause は別軸」）へ揃えた。
+
+### 症状（本番実測）
+
+保存値（`PremiumPlusEligibility=eligible` / `PremiumPlusReleaseOverride=phase4` /
+`PremiumPlusEligibleAt`）は**一切変わっていない**のに、停止すると
+
+- 資格バッジが「即時販売」→「PHASE 1」に化ける
+- 「即時販売」の件数が **3 → 2** に減る
+
+### 原因
+
+停止中は `resolvePremiumPlusRelease` が denied を返し、`phase=LOCKED(1)` /
+`overrideApplied=false` になる。これを管理一覧の**資格表示**にもそのまま使っていた。
+`counts.immediate` は `rows.filter(r => r.overrideApplied)` なので件数も連動して減った。
+
+### 直し方
+
+単一源 `src/lib/premiumPlus/premiumPlusAdminEligibilityAxis.js` を追加。
+停止中の会員だけ**停止フラグを外して同じ resolver を解き直し**、
+その `phase` / `overrideApplied` を資格表示に使う（判定は書き写さない）。
+
+- 変更は `buildAdminRow` の 2 行（`phase` / `overrideApplied`）＋ import のみ
+- **顧客向け判定・申込 403 には触れていない**。`state` / `upsellChannel` /
+  `showProductPage` は停止を反映した release のまま
+- `counts.eligible` は元から `eligibility` 由来なので影響なし
+
+### テスト（新規 13）
+
+`premiumPlusAdminEligibilityAxis.test.mjs`。指定 6 点を固定:
+eligible+phase4 を停止しても資格バッジは「即時販売」/ immediate 件数は停止前後で不変 /
+salePaused だけ増減 / 停止バッジは資格バッジと別表示 / 再開後も同じ資格状態 / 他会員非影響。
+加えて blocked・review が停止で化けないこと、**資格表示を戻しても顧客向けの停止は
+効いたまま**（最悪の回帰の防止）、資格の軸が顧客向け 5 経路へ流用されていないことも固定。
+
+premium-plus 802 pass・upsell 83・marketing 2011・auth 670・bank-payment 271・
+entitlements 221（全 0 fail）・`check:safety` EXIT=0・`check:fn-no-undef` OK・
+`build` EXIT=0・secret/PII 0 件・package.json / lockfile 変更なし。
+
+### 本番への影響
+
+**表示のみ**。停止判定・申込 403・保存値には触れていないため、
+Daniel の停止状態（2026-08-18 04:38:23Z〜）はそのまま維持される。
+
 ## 2026-08-18 — 【実績】販売一時停止を本番有効化し、Daniel 1 名で運用確認まで完了
 
 PR #358 を squash merge（main `ae4907a9`）→ 本番反映 → env 投入 → 実会員 1 名で
