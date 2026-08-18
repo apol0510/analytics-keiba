@@ -207,6 +207,81 @@ list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob �
 **新規 grant も rollout 再開も行っていない。**
 停止時点の実測: 付与 **1,210** / Step1 解決 **1,210**（キュー登録・送信済み 1,202 + 停止リスト 8）/
 outstandingStep1 **0** / PENDING **0** / failed **0** / duplicate **0** / eligible 残 **13,278**。
+## 2026-08-18 — 【実績】トップ実績プレビューを「全レース実績」主役へ再設計し本番反映（PR #368 squash merge）
+
+### 目的
+
+初版は代表メインレースの配信買い目をトップに大きく出していたため、
+**メインが不的中の日に当日全体の実績まで悪く見えた**。
+トップの主役を「その日の全レース実績」に置き換える。
+
+### 確定した仕様（同日 2 度の改訂を経て確定）
+
+| 項目 | 決定 |
+|---|---|
+| トップの構成 | ① 当日の全体実績（的中数/総レース数・回収率）→ ② 全会場・全レースの ✅/✗ → ③ 導線 |
+| トップの買い目・払戻 | **表示しない**（マークアップだけでなく**データとして持たない**） |
+| メイン強調 | **やめる**（金枠等なし・全レース同列） |
+| メイン買い目の公開先 | **`/results-showcase/{jra,nankan}` 側のみ。そちらの表示は変更しない** |
+| JRA 複数会場 | 全会場・全レース（中京・新潟・札幌 × 12R = 36 レース） |
+
+`resultsShowcasePreview.js` は `mainRace` / `honmei` / `displayPartners` / `payout` /
+`combination` を**戻り値に含めない**。隠すのではなく持たないことで漏れを防ぐ。
+
+### 変更ファイル
+
+| ファイル | 変更 |
+|---|---|
+| `astro-site/src/lib/resultsShowcasePreview.js` | 買い目・払戻を返さない形へ書き換え。`venueGroups`（全会場・全レース）のみ |
+| `astro-site/src/components/HomeResultsShowcasePreview.astro` | メイン詳細ブロックと強調スタイルを削除。全体実績 → 全レース → CTA |
+| `astro-site/src/lib/resultsShowcasePreview.test.mjs` | **17 ケース**へ再構成（買い目非露出 / 全レース網羅 / メイン非強調 / 表示順 guard） |
+| `astro-site/docs/RESULTS_SHOWCASE.md` | 正本へ確定仕様を反映 |
+
+**`/results-showcase/*.astro` / `resultsShowcase.js` / `ResultsShowcaseBanner.astro` /
+`mainRaceBetting.js` は無変更**（`git diff origin/main...HEAD` で確認済み）。
+
+### 縦の長さ（実測）
+
+| viewport | セクション高 | 12R 一覧 |
+|---|---|---|
+| PC 1280px / 1100px | 約 **451px** | 1 行 |
+| PC 900px（分岐直上） | 約 522px | 2 行 |
+| スマホ 390px / 360px | 約 **729px** | 2 行 |
+
+初版 1,180px → 改訂 1,074px → 今回 **729px**（スマホ）。
+
+### 結果
+
+| 項目 | 値 |
+|---|---|
+| PR | **#368（MERGED）** |
+| merge 方式 | **squash merge**（merge 前 HEAD `d6a17c20` / CI PASS / MERGEABLE・CLEAN / behind 0 を確認して実行） |
+| main | `ed0fc828` → **`aa9299a3`** |
+| merge 後 CI（main push） | ✅ Safety Check success |
+| production 反映 | ✅ **反映済み**（`https://analytics.keiba.link/`） |
+
+### 本番確認（read-only / merge 後）
+
+| # | 確認項目 | 実測 | 判定 |
+|---|---|---|---|
+| ① | トップに買い目・払戻が出ていない | `配信買い目` / `馬単` / `抑え` / `¥` / `rsp__bet` / `rsp__main` / `rsp__line` / `rsp__num` / `rsp__payout` / `rsp__combo` **すべて無し** | ✅ |
+| ② | メインが強調されていない | `is-main` / `（メイン）` **無し**（DOM 実測 `mainEmphasis: 0`） | ✅ |
+| ③ | JRA / 南関の全レース ✅/✗ | チップ **46 個**（中京 12・新潟 12・札幌 12・大井 10） | ✅ |
+| ④ | 的中数 / 総レース数・回収率 | JRA `15/36` `256.1%` / 南関 `7/10` `135.4%` | ✅ |
+| ⑤ | `/results-showcase/` は従来どおりメイン買い目 | JRA 3 本（`7→2.4.11.13.15` `1→2.3.4.5.9` `7→5.6.10.13.15`）/ 南関 1 本（`5→1.2.6.8.9`）。`配信買い目`・`馬単` 表記維持・抑えは非公開のまま | ✅ |
+| ⑥ | トップ一覧と詳細ページの ✅/✗ | **会場ごとに完全一致** | ✅ |
+| ⑦ | PC 表示 | 1100 / 1280px とも 2 カラム・セクション **454px**・12R 一覧 1 行 | ✅ |
+| ⑧ | SP 表示 | 360 / 390px とも 1 カラム・セクション **737px**・12R 一覧 2 行 | ✅ |
+| ⑨ | 既存ページ非影響 | `/` `/results-showcase/*` `/free-prediction/*` `/archive/*` `/pricing/` `/login/` `/dashboard/` すべて merge 前と同じ 200、`/premium-prediction/*` は 302（認可）で不変。プレビューの出現は `/` のみ | ✅ |
+| ⑩ | 既存セクション健在 | トップ下部「昨日の的中結果」3 箇所・`/archive/` リンク・無料ページの `scb-banner` 健在 | ✅ |
+
+⑦⑧ はブラウザのウィンドウ幅が固定で変更できないため、**本番配信中の HTML と
+`/assets/index.*.css` を取得してローカルで各 viewport 幅を実測**した。
+
+rollback は `aa9299a3` の revert のみで完結する（**env / Airtable / データは一切変更していない**）。
+
+---
+
 ## 2026-08-18 — 【実績】トップページに有料実績ショーケースのプレビューを追加し本番反映（PR #366 squash merge）
 
 ### 目的
