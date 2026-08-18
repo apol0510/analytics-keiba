@@ -21,7 +21,7 @@
  *                  付与 → Step1 queue → 送信 → 関所確認 を回す
  * - `grantOperationMax` … 付与 1 回の上限（`MAX_GRANT_RECORDS` / `HARD_MAX_BATCH_SIZE` の小さい方）。
  *                  500 名の論理バッチは **200 + 200 + 100** の 3 回に分かれる
- * - `ticksPerBatch` … 1 バッチに要する tick（付与 3 + queue 1 + 送信起動 1）
+ * - `ticksPerBatch` … 論理バッチ 1 本に要する tick（付与 3 回 × 3 tick）
  * - `cronMinutes` … cron の間隔。30 バッチ × 5 tick × 2 分 ≈ 5 時間
  */
 export const ROLLOUT_TARGET = Object.freeze({
@@ -30,9 +30,15 @@ export const ROLLOUT_TARGET = Object.freeze({
   dailyLimit: 15_000,
   batchSize: 500,
   grantOperationMax: 200,
-  /** 500 = 200 + 200 + 100 */
+  /**
+   * 500 = 200 + 200 + 100。ただし **1 回ごとに queue → 送信 → 関所確認**を挟む
+   * （付与側の関所が「前回ぶんの Step1 が送り終わるまで付与しない」ため）。
+   */
   grantSplit: Object.freeze([200, 200, 100]),
-  ticksPerBatch: 5,
+  /** 付与 1 回あたりの tick 数（付与 1 + queue 1 + 送信起動 1） */
+  ticksPerGrant: 3,
+  /** 論理バッチ 500 名ぶん（3 回 × 3 tick） */
+  ticksPerBatch: 9,
   cronMinutes: 2,
   /** 正常時は**同日に**配り切る（翌日以降へ持ち越すのは異常や絞り込みのとき） */
   sameDay: true,

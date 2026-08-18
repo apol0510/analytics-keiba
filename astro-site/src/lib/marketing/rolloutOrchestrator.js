@@ -108,19 +108,6 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
     return { action: TICK_ACTION.DISPATCH, count: pendingJobs };
   }
 
-  // ── ①-b 論理バッチを配り切る（**queue より先**）──────────────────
-  //    500 名のバッチは付与側の上限で 200 + 200 + 100 に分かれる。
-  //    その途中で queue へ移ると、1 バッチに queue / 送信が 3 回ずつ要り、
-  //    15,000 名を配るのに tick が 1.5 倍かかる（同日完走が届かなくなる）。
-  //    **バッチを配り切ってから** queue → 送信 → 関所確認 の順にする。
-  //    ⚠️ 「配り切る」の判断は `planRolloutTick` が持つ（関所・1 日上限・候補数を見る）。
-  const midBatchPlan = planRolloutTick({
-    state, nowMs, remainingCandidates: remaining, previousOutstanding: outstanding, envEnabled,
-  });
-  if (midBatchPlan.ok && midBatchPlan.startsNewBatch !== true && canGrant) {
-    return { action: TICK_ACTION.GRANT, count: midBatchPlan.allowance, plan: midBatchPlan };
-  }
-
   // ── ② 付与したのに queue していない人 ─────────────────────────
   //    ここを飛ばすと、権利だけ付いて案内が来ない人が溜まる。
   if (pendingQueue > 0) {
@@ -141,7 +128,12 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
   }
 
   // ── ④ 新しく配る ─────────────────────────────────────────────
-  const plan = midBatchPlan;
+  //    ⚠️ **queue / 送信より後**に置く。付与側の関所は「前回ぶんの Step1 が
+  //       送り終わるまで付与しない」なので、先に配ろうとしても断られる
+  //       （2026-08-18: 先に配ろうとして `waiting_for_step1` で自動停止した）。
+  const plan = planRolloutTick({
+    state, nowMs, remainingCandidates: remaining, previousOutstanding: outstanding, envEnabled,
+  });
   if (!plan.ok) {
     // 候補が尽きていて、期日待ちも無い ＝ 展開そのものが終わっている
     return { action: TICK_ACTION.SKIP, reason: plan.reason, plan, gates };

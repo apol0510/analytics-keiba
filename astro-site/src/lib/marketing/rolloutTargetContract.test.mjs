@@ -56,8 +56,13 @@ test('【重要】付与 1 回の上限と分割が矛盾していない', () =>
     ROLLOUT_TARGET.grantSplit.reduce((a, b) => a + b, 0), ROLLOUT_TARGET.batchSize,
     '分割の合計が論理バッチと合っていない',
   );
-  assert.equal(ROLLOUT_TARGET.ticksPerBatch, ROLLOUT_TARGET.grantSplit.length + 2,
-    '1 バッチの tick 数（付与 n + queue 1 + 送信 1）と合っていない');
+  // 付与 1 回ごとに queue → 送信 → 関所確認を挟む（付与側の関所と同じ条件で待つ）
+  assert.equal(ROLLOUT_TARGET.ticksPerGrant, 3, '付与 1 回の tick 数が違う');
+  assert.equal(
+    ROLLOUT_TARGET.ticksPerBatch,
+    ROLLOUT_TARGET.grantSplit.length * ROLLOUT_TARGET.ticksPerGrant,
+    '論理バッチの tick 数（付与回数 × 3）と合っていない',
+  );
 });
 
 test('【重要】1 日上限は絶対上限の範囲に収まっている', () => {
@@ -69,7 +74,7 @@ test('【重要】1 日上限は絶対上限の範囲に収まっている', () 
 test('【重要】同日に配り切れる見積もりになっている（24 時間以内）', () => {
   const plan = describeTargetPlan();
   assert.equal(plan.batches, 30, `${plan.batches} バッチ（15,000 ÷ 500 = 30 のはず）`);
-  assert.equal(plan.ticks, 150);
+  assert.equal(plan.ticks, 270);
   assert.ok(plan.hours <= 12, `${plan.hours} 時間かかる見積もり（同日完走に届かない）`);
 });
 
