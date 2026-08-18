@@ -22,8 +22,10 @@
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import {
   PP_ELIGIBILITY_FIELDS,
+  PP_SALE_PAUSE_FIELDS,
   normalizeEligibility,
   normalizeReleaseOverride,
+  normalizeSalePaused,
   resolveSanrenpukuPaidAt,
   toPaidAtMs,
 } from './premiumPlusRelease.js';
@@ -56,6 +58,10 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
       eligibility: normalizeEligibility(undefined), // = review（fail closed）
       eligibleAtMs: null,
       releaseOverride: null,
+      // fields を読めないときは「停止していない」。ここを true にすると
+      // Airtable 障害で全会員の販売が止まる（可用性の事故）。
+      // 停止は**明示されたときだけ**（premiumPlusRelease.js の設計コメント参照）。
+      salePaused: false,
       anchorSource: 'none',
     };
   }
@@ -80,6 +86,9 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
     eligibleAtMs: toPaidAtMs(f[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT]),
     // フィールド未作成なら undefined → normalize が null（override なし）にする（fail closed）
     releaseOverride: normalizeReleaseOverride(f[PP_ELIGIBILITY_FIELDS.OVERRIDE]),
+    // 会員単位の販売 一時停止。フィールド未作成 / 未チェックは false（＝停止していない）。
+    // 読み取りに gate は不要（未設定 = 従来どおりの挙動）。
+    salePaused: normalizeSalePaused(f[PP_SALE_PAUSE_FIELDS.PAUSED]),
     anchorSource: srp.source,
   };
 }

@@ -24,9 +24,11 @@ import {
   PP_ELIGIBILITY,
   PP_ELIGIBILITY_FIELDS,
   PP_RELEASE_OVERRIDE,
+  PP_SALE_PAUSE_FIELDS,
   SANRENPUKU_PAID_AT_FIELDS,
   normalizeEligibility,
   normalizeReleaseOverride,
+  normalizeSalePaused,
 } from './premiumPlusRelease.js';
 
 /** 三連複購入確定日時の正本フィールド名（書き込みはこの 1 つだけ） */
@@ -41,9 +43,13 @@ export const PP_WRITABLE_FIELDS = Object.freeze([
   PP_ELIGIBILITY_FIELDS.OVERRIDE,
   PP_ELIGIBILITY_FIELDS.UPDATED_AT,
   PP_ELIGIBILITY_FIELDS.UPDATED_BY,
+  PP_SALE_PAUSE_FIELDS.PAUSED,
+  PP_SALE_PAUSE_FIELDS.UPDATED_AT,
+  PP_SALE_PAUSE_FIELDS.UPDATED_BY,
+  PP_SALE_PAUSE_FIELDS.REASON,
 ]);
 
-/** 管理画面の操作（この 4 つだけ） */
+/** 管理画面の操作 */
 export const PP_ADMIN_ACTION = Object.freeze({
   /** 段階公開で販売可: eligible ＋ override 解除（PHASE 1 から開始） */
   STAGED: 'staged',
@@ -53,7 +59,25 @@ export const PP_ADMIN_ACTION = Object.freeze({
   REVIEW: 'review',
   /** 販売対象外 */
   BLOCKED: 'blocked',
+  /**
+   * この会員だけ販売を一時停止する。
+   * ⚠️ 資格（eligibility）・override・anchor を**一切変更しない**。再開で元に戻る。
+   */
+  PAUSE_SALE: 'pauseSale',
+  /** 一時停止を解除する（同じ場所から 1 クリックで戻す） */
+  RESUME_SALE: 'resumeSale',
 });
+
+/** 資格そのものを変える操作（＝ eligibility を書く操作）だけの集合 */
+export const PP_ELIGIBILITY_ACTIONS = Object.freeze([
+  PP_ADMIN_ACTION.STAGED, PP_ADMIN_ACTION.IMMEDIATE,
+  PP_ADMIN_ACTION.REVIEW, PP_ADMIN_ACTION.BLOCKED,
+]);
+
+/** 販売の一時停止/再開だけを変える操作 */
+export const PP_SALE_PAUSE_ACTIONS = Object.freeze([
+  PP_ADMIN_ACTION.PAUSE_SALE, PP_ADMIN_ACTION.RESUME_SALE,
+]);
 
 /** 絶対に触れてはいけないフィールド（テストと実行時の両方で検査する） */
 export const PP_FORBIDDEN_FIELDS = Object.freeze([
@@ -87,6 +111,21 @@ export function isPlusFieldsEnabled(env) {
  */
 export function isReleaseOverrideEnabled(env) {
   return isPlusFieldsEnabled(env) && env.PREMIUM_PLUS_OVERRIDE_READY === '1';
+}
+
+/**
+ * 販売 一時停止フィールド（`PremiumPlusSalePaused` 系 4 つ）への**書き込み**が有効か。
+ *
+ * override と同じ理由で gate を分ける: これらは後から追加するフィールドで、
+ * 未作成の本番へ含めて PATCH すると Airtable が 422 を返し、**同じ PATCH の
+ * 他の更新まで巻き添えで失敗する**。
+ *
+ * ⚠️ gate が off の間は「停止する」操作を**受け付けない**（fail closed）。
+ *    書けないのに画面上だけ停止したように見せると、**止めたつもりで売れ続ける**という
+ *    最悪の誤解が生まれる。読み取り（未設定 = 停止していない）に gate は不要。
+ */
+export function isSalePauseEnabled(env) {
+  return isPlusFieldsEnabled(env) && env.PREMIUM_PLUS_SALE_PAUSE_READY === '1';
 }
 
 /**
@@ -272,4 +311,67 @@ export function buildAdminActionFields({
     eligibleAtUpdated: base.eligibleAtUpdated,
     overrideChanged,
   };
+}
+
+/**
+ * 会員単位の「販売中 ⇔ 一時停止」で書くフィールド。
+ *
+ * ── 何を書かないか（ここが肝）─────────────────────────────────
+ * `PremiumPlusEligibility` / `PremiumPlusEligibleAt` / `PremiumPlusReleaseOverride` を
+ * **一切書かない**。停止は資格と独立した軸なので、
+ *   - 停止しても「販売可」の資格はそのまま残る
+ *   - 再開しても段階公開の anchor が動かない（PHASE が Day 0 へ戻らない）
+ * これが blocked / review で代用できない理由そのもの。
+ *
+ * ── 冪等 ────────────────────────────────────────────────────
+ * 既に同じ状態なら `changed:false` を返し、**PATCH させない**
+ * （監査日時だけが無意味に更新され続けるのを防ぐ）。
+ *
+ * ── 再開時に理由を残すか ────────────────────────────────────
+ * 再開では停止理由をクリアする（次に止めたときの理由と混ざらないため）。
+ * 監査の日時・操作者は毎回更新する。
+ *
+ * @param {{
+ *   paused: boolean,          これから設定したい状態（true=停止 / false=再開）
+ *   current?: unknown,        変更前の PremiumPlusSalePaused 生値
+ *   reason?: unknown,         停止理由（停止時のみ意味を持つ）
+ *   actor?: unknown,
+ *   now: Date|number,
+ *   enabled?: boolean,        フィールドが本番に存在するか（isSalePauseEnabled）
+ * }} input
+ * @returns {{ fields: Record<string, unknown>, paused: boolean, changed: boolean }|null}
+ *   フィールド未作成（enabled=false）なら null（呼び出し側は 503。fail closed）
+ */
+export function buildSalePauseFields({ paused, current, reason, actor, now, enabled = false }) {
+  if (typeof paused !== 'boolean') return null;
+  // 書けないなら「止めた」と言わせない（画面だけ停止＝売れ続ける事故を防ぐ）
+  if (!enabled) return null;
+  const iso = toIso(now);
+  if (!iso) return null;
+
+  const prev = normalizeSalePaused(current);
+  if (prev === paused) {
+    return { fields: {}, paused, changed: false };
+  }
+
+  const out = {
+    [PP_SALE_PAUSE_FIELDS.PAUSED]: paused,
+    [PP_SALE_PAUSE_FIELDS.UPDATED_AT]: iso,
+    [PP_SALE_PAUSE_FIELDS.UPDATED_BY]: String(actor || 'admin').slice(0, 64),
+  };
+  // 停止時だけ理由を保存し、再開ではクリアする
+  out[PP_SALE_PAUSE_FIELDS.REASON] = paused
+    ? String(reason ?? '').slice(0, PP_REASON_MAX_LENGTH)
+    : '';
+
+  if (!assertOnlyPlusFields(out)) return null;
+  // 資格系を巻き添えで書いていないことを構造的に確認する
+  for (const k of [
+    PP_ELIGIBILITY_FIELDS.STATUS,
+    PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT,
+    PP_ELIGIBILITY_FIELDS.OVERRIDE,
+  ]) {
+    if (k in out) return null;
+  }
+  return { fields: out, paused, changed: true };
 }

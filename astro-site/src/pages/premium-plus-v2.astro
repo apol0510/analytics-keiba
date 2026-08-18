@@ -69,6 +69,8 @@ const ppFields = await lookupCustomerFields({
 // 会員状態は既存の権限正本（resolveEntitlements）を再利用する。Plus 専用の権限判定は作らない。
 // 販売導線の選択（UpsellTarget）も同じ単一源で評価する。
 // sanrenpuku / none 指定の会員は商品ページ自体を開けない（2 商品を並べない・存在秘匿）。
+// 販売の一時停止（PremiumPlusSalePaused）は member → release の単一源が読む。
+// 停止中は showProductPage が false になり、下の判定でこのページは 404 になる。
 const ppUpsell = resolveUpsellForCustomer({
   fields: ppFields,
   nowMs: ppNow,

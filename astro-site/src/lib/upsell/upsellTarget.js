@@ -71,6 +71,8 @@ export const UPSELL_REASON = Object.freeze({
   SANRENPUKU_OWNED: 'sanrenpuku_owned',
   SANRENPUKU_NOT_ELIGIBLE: 'sanrenpuku_not_eligible',
   PLUS_NOT_ELIGIBLE: 'plus_not_eligible',
+  /** 会員単位で Plus の販売を一時停止している（資格はそのまま） */
+  PLUS_SALE_PAUSED: 'plus_sale_paused',
   NOTHING_TO_SELL: 'nothing_to_sell',
 });
 
@@ -85,6 +87,7 @@ export const UPSELL_REASON_LABEL = Object.freeze({
   sanrenpuku_owned: '三連複を保有済み',
   sanrenpuku_not_eligible: '三連複の購入資格なし',
   plus_not_eligible: 'Plus の販売対象外（資格・phase・route）',
+  plus_sale_paused: 'Plus の販売を一時停止中（この会員のみ・資格は保持）',
   nothing_to_sell: '販売できる商品がない',
 });
 
@@ -163,6 +166,10 @@ export function resolveUpsellDisplay({ target, entitlements, plusRelease, sanren
   const plusSaleReady = !!rel && rel.showPurchaseCta === true;   // phase 4（override 含む）
   const plusTeaserReady = !!rel && rel.showTeaser === true;      // phase 2 以上
   const plusAnyReady = plusSaleReady || plusTeaserReady;
+  // 会員単位の一時停止。`rel` 側で既に全フラグが false になっているので**導線は塞がる**が、
+  // 理由まで「対象外」に丸めると管理画面で再開すべき相手が見分けられなくなる。
+  // ⚠️ Plus だけを止める。三連複の導線には影響させない。
+  const plusPaused = !!rel && rel.salePaused === true;
 
   const sanrenpukuView = () => {
     const s = sanrenpukuStage || null;
@@ -189,6 +196,7 @@ export function resolveUpsellDisplay({ target, entitlements, plusRelease, sanren
 
   if (t === UPSELL_TARGET.PLUS) {
     // 明示指定でも Plus 側の権限条件（route / eligibility / phase）は再評価する
+    if (plusPaused) return out(UPSELL_CHANNEL.NONE, UPSELL_REASON.PLUS_SALE_PAUSED);
     if (!plusAnyReady) return out(UPSELL_CHANNEL.NONE, UPSELL_REASON.PLUS_NOT_ELIGIBLE);
     return out(UPSELL_CHANNEL.PLUS, UPSELL_REASON.ADMIN_PLUS, { plus: plusView() });
   }
@@ -207,7 +215,10 @@ export function resolveUpsellDisplay({ target, entitlements, plusRelease, sanren
   if (srpEligible) return out(UPSELL_CHANNEL.SANRENPUKU, UPSELL_REASON.AUTO_SANRENPUKU, { sanrenpuku: sanrenpukuView() });
   // 3) 三連複を売れない相手にだけ Plus の予告を出す（同時表示を作らない）
   if (plusTeaserReady) return out(UPSELL_CHANNEL.PLUS, UPSELL_REASON.AUTO_PLUS_TEASER, { plus: plusView() });
-  // 4) どちらでもない
+  // 4) どちらでもない。
+  //    ⚠️ 一時停止が理由のときはそう言う。「三連複を保有済み」「販売できる商品がない」に
+  //       丸めると、止めた事実が管理画面から消えて再開されないまま放置される。
+  if (plusPaused) return out(UPSELL_CHANNEL.NONE, UPSELL_REASON.PLUS_SALE_PAUSED);
   return out(UPSELL_CHANNEL.NONE, srpOwned ? UPSELL_REASON.SANRENPUKU_OWNED : UPSELL_REASON.NOTHING_TO_SELL);
 }
 

@@ -150,6 +150,10 @@ export function describeUpsellReasonText(view, release) {
       return '有効な有料 Premium 契約が無いため、三連複の購入資格がありません';
     case UPSELL_REASON.PLUS_NOT_ELIGIBLE:
       return describePlusBlockReason(rel);
+    case UPSELL_REASON.PLUS_SALE_PAUSED:
+      // ⚠️ 「販売対象外」と書かない。資格は残っていて、再開すれば元に戻る状態。
+      return 'この会員の Plus 販売を一時停止中です（販売資格・PHASE は保持したまま。'
+        + '管理画面の「販売の一時停止」から再開できます）';
     case UPSELL_REASON.NOTHING_TO_SELL:
       return describeNothingToSell(rel);
     default:

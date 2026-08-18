@@ -45,6 +45,8 @@ export async function GET({ request }) {
     now,
   });
 
+  // 販売の一時停止（PremiumPlusSalePaused）は member → release の単一源が読む。
+  // ここで個別に判定しない。
   const view = resolveUpsellForCustomer({
     fields,
     nowMs: now,

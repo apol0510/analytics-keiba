@@ -24,6 +24,7 @@ import {
 import { resolvePlusMemberFromFields } from './premiumPlusMember.js';
 import {
   PP_ADMIN_ACTION,
+  PP_ELIGIBILITY_ACTIONS,
   PP_WRITABLE_FIELDS,
   PP_FORBIDDEN_FIELDS,
   SANRENPUKU_PAID_AT_FIELD,
@@ -276,13 +277,23 @@ test('未知の操作は拒否（丸めない）', () => {
 });
 
 test('どの操作でも Plus 専用フィールド以外を書かない', () => {
-  for (const action of Object.values(PP_ADMIN_ACTION)) {
+  // ⚠️ **資格を変える操作だけ**を回す。販売の一時停止（pauseSale / resumeSale）は
+  //    資格を一切書かない別の操作で、buildSalePauseFields が担当する
+  //    （premiumPlusSalePause.test.mjs で別途固定）。
+  for (const action of PP_ELIGIBILITY_ACTIONS) {
     const r = ACT({ action, current: PP_ELIGIBILITY.ELIGIBLE, currentOverride: 'phase4' });
     assert.ok(r, action);
     assert.equal(assertOnlyPlusFields(r.fields), true, action);
     for (const f of PP_FORBIDDEN_FIELDS) assert.equal(has(r.fields, f), false, `${action}: ${f}`);
     // 購入日時は絶対に触らない（過去日への偽装をしない）
     assert.equal(has(r.fields, SANRENPUKU_PAID_AT_FIELD), false, `${action}: SanrenpukuPaidAt を書いている`);
+  }
+  // 一時停止の操作を資格更新へ流し込めないこと（経路の取り違えを防ぐ）
+  for (const action of [PP_ADMIN_ACTION.PAUSE_SALE, PP_ADMIN_ACTION.RESUME_SALE]) {
+    assert.equal(
+      ACT({ action, current: PP_ELIGIBILITY.ELIGIBLE, currentOverride: 'phase4' }), null,
+      `${action} が資格更新として受理された`,
+    );
   }
 });
 

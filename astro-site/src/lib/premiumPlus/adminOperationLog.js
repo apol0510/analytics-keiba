@@ -53,11 +53,14 @@ export const OP_RESULT_LABEL = Object.freeze({
 export const OP_KIND = Object.freeze({
   ELIGIBILITY: 'eligibility',
   UPSELL: 'upsell',
+  /** 会員単位の「販売中 ⇔ 一時停止」。資格（ELIGIBILITY）とは別の軸なので別種別にする */
+  SALE_PAUSE: 'salePause',
 });
 
 export const OP_KIND_LABEL = Object.freeze({
   eligibility: '販売資格',
   upsell: '販売CTA',
+  salePause: '販売の一時停止',
 });
 
 const str = (v) => String(v ?? '').trim();
