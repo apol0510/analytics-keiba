@@ -1,3 +1,63 @@
+## 2026-08-19 — 【追加】Direct Response Marketing（DRM）基盤
+
+「一斉に送る」から「**反応を見て次の訴求を変える**」へ進むための土台を入れた。
+既存の 24-touch・CTA・購入停止・suppression・頻度 guard は**一切変えていない**。
+
+### すでにあった機能（再利用した）
+
+| 能力 | 既存の正本 |
+|---|---|
+| delivered / opened（1 通単位） | `webhooks/deliveryEventIndex.js` ＋ `marketing/touchMeasurement.js` |
+| purchased | `customerMarketingAudience.js`（`premiumActive` / `lightActive`） |
+| 退会・停止・バウンス | `resolveSendability` / `providerSuppressed` / `softBounced` |
+| 停止・頻度 guard | `marketing/sequencePolicy.js` |
+| **未計測を 0 にしない契約** | `crm/deliveryMeasurement.js`（3 状態） |
+| attribution 語彙 | `crm/campaignOutcome.js`（direct / correlated / unknown） |
+
+### 足りなかったもの
+
+1. 顧客単位の response state を解決する単一源が無い（材料が散在）
+2. **response-driven routing が無い**（`decideNext` は `nextStep = sent + 1` の線形、`pickAngle` は位置ベース）
+3. 購入を touch / DeliveryKey まで辿れない
+4. DRM 指標を 1 か所で返す面が無い
+5. 「反応層 → 次の訴求」で見える運営画面が無い
+
+### 追加したもの（**新 schema / env / datastore なし**）
+
+| 追加 | 役割 |
+|---|---|
+| `src/lib/drm/drmResponseState.js` | 反応を 1 つに畳む。**click は常に `null`**、open 未計測は `unknown` |
+| `src/lib/drm/drmRouting.js` | 宣言（`sequence.responseRoutes`）で反応層 → 次 touch / variant / angle |
+| `src/lib/drm/drmAttribution.js` | 購入を campaign / version / step / DeliveryKey / offer へ。確定不能は `unattributed` |
+| `src/lib/drm/drmMetrics.js` | sent / delivered / open / click / purchase / CVR / touch 別 conversion / unattributed |
+| `admin-marketing` の `action: 'drm'` | read-only ビュー（**新 Function を作らない**・増分集計だけ・全件走査しない） |
+| `/admin/drm` | 運営画面（read-only）。未計測は **0 ではなく「—」** |
+
+⚠️ `drmRouting` は**送信可否も頻度も判定しない**（責務の二重化を防ぐためテストで固定）。
+⚠️ **`purchased` / `suppressed` には宣言があっても行き先を作らない**（停止の二重防御）。
+⚠️ A/B は `variant` を**コード側の識別子**として持つだけで、**schema を増やさない**
+（`DeliveryKey` は campaign × version × step × 受信者で既に一意）。
+
+### テスト
+
+`src/lib/drm/drmFoundation.test.mjs`（**31 件**）。`test:drm` を新設し `check:safety` へ組み込み。
+購入 > 停止 > クリック > 開封 の優先順 / 無料特典を購入に数えない /
+**click 未計測を 0 にしない** / open 未計測を「未開封」と断定しない /
+**unknown で反応前提の枝へ入れない** / 終端層へ行き先を作らない /
+知らない route 条件を採用しない / 窓の外・時刻不明は `unattributed` /
+**CVR の母数は送信済み** / 母数 0 なら率を作らない / DRM 基盤が書き込み・送信経路を呼ばない。
+
+`test:drm` 31 pass・`test:marketing` 2,094 pass・`test:comeback` 431 pass・
+`test:webhooks` 190 pass・`test:crm` 567 pass（いずれも fail 0 / cancelled 0）・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0。
+
+⚠️ `package.json` は **scripts のみ**追加（`test:drm`）。依存は増やしていない（lock 不変）。
+
+### やっていないこと
+
+production deploy / 実顧客データ書込み / 実メール送信 / schema 変更 / PR merge。
+**#372（Light trial rollout 修復）とは完全に分離**した別 branch・別 worktree。
+
 ## 2026-08-18 — 【機能】販売停止中の直 URL を 404 にせず受付休止ページ＋再募集クーポン（PR #370 Draft・未 merge）
 
 ### 今回の目的

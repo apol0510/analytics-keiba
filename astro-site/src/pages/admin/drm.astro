@@ -1,0 +1,182 @@
+---
+export const prerender = true;
+// 認可: この画面は /admin/* の Basic-Auth（Edge Function）背後。
+// API 呼び出しは x-admin-secret を admin-marketing Function 側で検証する。
+// secret はこのタブ限定（sessionStorage）で、URL にも localStorage にも置かない。
+//
+// ⚠️ この画面は **read-only**。送信も付与も取消もしない（action は 'drm' だけ）。
+// ⚠️ 「誰に何を送るか」ではなく「**どの反応層に、次に何を訴求するか**」を出す。
+// ⚠️ 計測していない指標は **0 ではなく「—」**（`deliveryMeasurement` の契約）。
+//    ここで 0 と書くと、施策の評価を丸ごと誤る（2026-08-04 の開封 0 誤表示）。
+// ⚠️ style は必ず `is:global` + `.drm` 名前空間（Astro の scoped style は
+//    JS で生成した行に適用されないため。premium-plus-eligibility と同じ理由）。
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+<BaseLayout title="DRM（反応別の次の訴求）｜管理">
+  <div class="drm">
+    <header class="drm-head">
+      <h1>DRM — どの反応層に、次に何を訴求するか</h1>
+      <p class="drm-sub">読み取り専用です。この画面から送信・付与・取消は行いません。</p>
+      <div class="drm-ctl">
+        <label>キャンペーン
+          <select id="drm-campaign">
+            <option value="light-trial-to-premium-sequence">light-trial-to-premium-sequence</option>
+            <option value="light-trial-post-expiry-sequence">light-trial-post-expiry-sequence</option>
+          </select>
+        </label>
+        <button id="drm-load" type="button">読み込む</button>
+      </div>
+      <p id="drm-status" class="drm-status" role="status"></p>
+    </header>
+
+    <section class="drm-sec">
+      <h2>ファネル</h2>
+      <div id="drm-funnel" class="drm-funnel"></div>
+      <p class="drm-note" id="drm-measure"></p>
+    </section>
+
+    <section class="drm-sec">
+      <h2>反応層と次の訴求</h2>
+      <table class="drm-table">
+        <thead>
+          <tr><th>反応層</th><th class="n">人数</th><th class="n">次の touch</th><th>訴求（angle）</th><th>variant</th><th>備考</th></tr>
+        </thead>
+        <tbody id="drm-segments"></tbody>
+      </table>
+    </section>
+
+    <section class="drm-sec">
+      <h2>touch 別 conversion</h2>
+      <table class="drm-table">
+        <thead>
+          <tr><th class="n">touch</th><th class="n">送信</th><th class="n">到達</th><th class="n">開封</th><th class="n">クリック</th><th class="n">購入</th><th class="n">CVR</th></tr>
+        </thead>
+        <tbody id="drm-touches"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <style is:global>
+    .drm { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+    .drm-head h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+    .drm-sub { color: #64748b; margin: 0 0 1rem; font-size: .9rem; }
+    .drm-ctl { display: flex; gap: .75rem; align-items: end; flex-wrap: wrap; }
+    .drm-ctl select, .drm-ctl button { padding: .45rem .6rem; font-size: .95rem; }
+    .drm-status { margin: .75rem 0 0; font-size: .9rem; color: #b45309; min-height: 1.2em; }
+    .drm-sec { margin-top: 2rem; }
+    .drm-sec h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+    .drm-funnel { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .6rem; }
+    .drm-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: .6rem .7rem; background: #fff; }
+    .drm-card .k { font-size: .78rem; color: #64748b; }
+    .drm-card .v { font-size: 1.25rem; font-weight: 700; }
+    .drm-card .v.na { color: #94a3b8; font-weight: 500; font-size: 1rem; }
+    .drm-table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    .drm-table th, .drm-table td { border-bottom: 1px solid #e2e8f0; padding: .45rem .5rem; text-align: left; }
+    .drm-table th.n, .drm-table td.n { text-align: right; }
+    .drm-table tbody tr.term { background: #f8fafc; color: #64748b; }
+    .drm-na { color: #94a3b8; }
+    .drm-note { color: #64748b; font-size: .85rem; margin-top: .5rem; }
+    @media (prefers-color-scheme: dark) {
+      .drm-card { background: #0f172a; border-color: #334155; }
+      .drm-table th, .drm-table td { border-color: #334155; }
+      .drm-table tbody tr.term { background: #111827; }
+    }
+  </style>
+
+  <script is:inline>
+    (function () {
+      // ⚠️ 計測していないものは 0 ではなく「—」。ここが 0 だと施策の評価を誤る
+      var NA = '—（計測していません）';
+      var $ = function (id) { return document.getElementById(id); };
+      function fmt(v) { return v === null || v === undefined ? null : Number(v).toLocaleString(); }
+      function pct(v) { return v === null || v === undefined ? null : (Number(v) * 100).toFixed(2) + '%'; }
+      function cell(v) {
+        var td = document.createElement('td');
+        td.className = 'n';
+        if (v === null || v === undefined) { td.textContent = '—'; td.classList.add('drm-na'); }
+        else td.textContent = v;
+        return td;
+      }
+      function secret() {
+        var s = sessionStorage.getItem('ak-admin-secret');
+        if (!s) { s = window.prompt('管理 secret（このタブ限定）'); if (s) sessionStorage.setItem('ak-admin-secret', s); }
+        return s;
+      }
+      function card(k, v) {
+        var d = document.createElement('div');
+        d.className = 'drm-card';
+        var a = document.createElement('div'); a.className = 'k'; a.textContent = k;
+        var b = document.createElement('div'); b.className = 'v' + (v === null ? ' na' : '');
+        b.textContent = v === null ? NA : v;
+        d.appendChild(a); d.appendChild(b);
+        return d;
+      }
+      async function load() {
+        var st = $('drm-status');
+        st.textContent = '読み込み中…';
+        var s = secret();
+        if (!s) { st.textContent = 'secret が入力されていません。'; return; }
+        var res, body;
+        try {
+          res = await fetch('/.netlify/functions/admin-marketing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-admin-secret': s },
+            body: JSON.stringify({ action: 'drm', campaignId: $('drm-campaign').value }),
+          });
+          body = await res.json();
+        } catch (e) { st.textContent = '通信に失敗しました。'; return; }
+        if (!res.ok) { st.textContent = '取得できませんでした: ' + (body && body.error ? body.error : res.status); return; }
+
+        st.textContent = body.partial
+          ? '⚠️ 集計を読めていません（' + (body.partialReason || 'unknown') + '）。数字は表示しません。'
+          : '';
+
+        var f = body.funnel;
+        var fw = $('drm-funnel'); fw.textContent = '';
+        if (f) {
+          fw.appendChild(card('送信', fmt(f.sent)));
+          fw.appendChild(card('到達', fmt(f.delivered)));
+          fw.appendChild(card('開封', fmt(f.opened)));
+          fw.appendChild(card('クリック', fmt(f.clicked)));
+          fw.appendChild(card('購入', fmt(f.purchased)));
+          fw.appendChild(card('CVR', pct(f.cvr)));
+          fw.appendChild(card('未帰属', fmt(f.unattributed)));
+        }
+        var m = body.measurement || {};
+        $('drm-measure').textContent = '計測状態 — 到達: ' + m.delivered + ' / 開封: ' + m.open
+          + ' / クリック: ' + m.click + '（クリックは provider 側 tracking が無効なため計測していません）';
+
+        var tb = $('drm-segments'); tb.textContent = '';
+        (body.segments || []).forEach(function (sg) {
+          var tr = document.createElement('tr');
+          if (sg.reason === 'terminal_state') tr.className = 'term';
+          var th = document.createElement('td'); th.textContent = sg.label; tr.appendChild(th);
+          tr.appendChild(cell(fmt(sg.count)));
+          tr.appendChild(cell(sg.nextStep === null ? null : sg.nextStep));
+          var a = document.createElement('td'); a.textContent = sg.angle || '—'; tr.appendChild(a);
+          var v = document.createElement('td'); v.textContent = sg.variant || '—'; tr.appendChild(v);
+          var r = document.createElement('td');
+          r.textContent = sg.reason === 'terminal_state' ? '送りません（購入・停止）'
+            : sg.reason === 'response_unknown' ? '反応を計測できていないため既定へ'
+              : sg.reason === 'no_route_matched' ? '宣言なし（既定の次へ）' : '';
+          tr.appendChild(r);
+          tb.appendChild(tr);
+        });
+
+        var tt = $('drm-touches'); tt.textContent = '';
+        ((f && f.byTouch) || []).forEach(function (t) {
+          var tr = document.createElement('tr');
+          tr.appendChild(cell(t.step));
+          tr.appendChild(cell(fmt(t.sent)));
+          tr.appendChild(cell(fmt(t.delivered)));
+          tr.appendChild(cell(fmt(t.opened)));
+          tr.appendChild(cell(fmt(t.clicked)));
+          tr.appendChild(cell(fmt(t.purchased)));
+          tr.appendChild(cell(pct(t.conversionRate)));
+          tt.appendChild(tr);
+        });
+      }
+      $('drm-load').addEventListener('click', load);
+    })();
+  </script>
+</BaseLayout>

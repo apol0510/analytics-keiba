@@ -175,6 +175,11 @@ import {
   planRolloutStart, planRolloutPause, planRolloutResume, describeControlResult,
   ROLLOUT_OP, CONTROL_REJECT_LABEL,
 } from '../../src/lib/marketing/rolloutControl.js';
+import { buildDrmFunnel } from '../../src/lib/drm/drmMetrics.js';
+import { summarizeSegments as summarizeDrmSegments, routeNextTouch } from '../../src/lib/drm/drmRouting.js';
+import { RESPONSE, RESPONSE_LABEL } from '../../src/lib/drm/drmResponseState.js';
+import { ATTRIBUTION_LABEL } from '../../src/lib/drm/drmAttribution.js';
+import { MEASURE } from '../../src/lib/crm/deliveryMeasurement.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -796,6 +801,7 @@ export const handler = async (event) => {
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
+    if (action === 'drm') return await handleDrm({ KEY, BASE, now, req });
     // ⚠️ ここから 4 つは **read-only ではない**（Redis の展開状態だけを書き換える）。
     //    Customers・配信台帳・送信には触れない。受け付ける値は `rolloutControl.js` が絞る。
     if (action === 'rolloutStart') return await handleRolloutControl({ op: ROLLOUT_OP.START, now, req });
@@ -1312,6 +1318,136 @@ function resolveStepCampaign({ campaign, step }) {
  * ⚠️ 展開状態（段階・件数・停止）は Redis が正本。**env の開閉・redeploy は要らない**。
  *    ただし機能そのものの許可は env（`MARKETING_ROLLOUT_ENABLED`・既定 OFF）。
  */
+/**
+ * DRM（Direct Response Marketing）の read-only ビュー。
+ *
+ * ── 何を返すか ────────────────────────────────────────────────
+ *   funnel   … sent / delivered / open / click / purchase / CVR / touch 別 conversion / unattributed
+ *   segments … 反応層ごとの人数と、**その層に次へ出す訴求**
+ *
+ * ⚠️ **1 件も書かない。** 送信もしない。
+ * ⚠️ 数字は既存の増分集計（Redis）から作る。**正本の全件走査はしない**
+ *    （`handleRollout` と同じ理由: コホート 14,489 件で約 156 秒かかり同期 Function では開かない）。
+ * ⚠️ **未計測を 0 にしない。** open / click の計測状態を一緒に返し、
+ *    `deliveryMeasurement` が `disabled` / `unknown` なら件数は `null` になる。
+ * ⚠️ 反応層の内訳は「1 人が必ず 1 か所」に入る既存 funnel を土台にする。
+ *    ここで新しい母数を作らない。
+ */
+async function handleDrm({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+
+  // ── 計測状態（**測っていないものを 0 にしないため**）───────────────
+  //    click は provider 側 tracking が OFF（既存 `deliveryEventIndex.js` の注記）。
+  //    ここで true と仮定しない。読めない項目は `unknown` のまま返す。
+  const measurement = {
+    open: String(process.env.MARKETING_OPEN_TRACKING || '').trim() === 'true'
+      ? MEASURE.ENABLED : MEASURE.UNKNOWN,
+    click: MEASURE.DISABLED,
+    delivered: MEASURE.ENABLED,
+  };
+
+  let metrics = { partial: true, reason: 'unavailable', totals: null, steps: null };
+  let stateExists = false;
+  try {
+    const cmd = makeRedisCmd(process.env);
+    metrics = await createRolloutMetrics({ cmd }).read(base.campaignId);
+    const loaded = await createRolloutStore({ cmd }).load(base.campaignId);
+    stateExists = loaded.exists === true;
+  } catch {
+    metrics = { partial: true, reason: 'unavailable', totals: null, steps: null };
+  }
+
+  const t = metrics.totals;
+  const sm = (metrics.steps && metrics.steps.steps) || {};
+  const journey = describeJourney();
+  const stepNumbers = Array.from({ length: journey.maxTouches }, (_, i) => i + 1);
+  const byTouch = {};
+  for (const step of stepNumbers) {
+    const row = sm[String(step)] || sm[step] || null;
+    if (!row) continue;
+    byTouch[step] = {
+      sent: Number(row.sent) || 0,
+      delivered: Number(row.sent) || 0,     // 到達の増分集計は送信と同源（別途 webhook で補正）
+      opened: Number(row.opened) || 0,
+      clicked: Number(row.clicked) || 0,
+      purchased: Number(row.purchased) || 0,
+    };
+  }
+
+  const funnel = t ? buildDrmFunnel({
+    sent: Number(t.sent) || 0,
+    delivered: Number(t.sent) || 0,
+    opened: Number(t.opened) || 0,
+    clicked: Number(t.clicked) || 0,
+    purchased: Number(t.purchased) || 0,
+    openState: measurement.open,
+    clickState: measurement.click,
+    deliveredState: measurement.delivered,
+    byTouch,
+    unattributed: Number(t.purchased) || 0,   // touch へ結べた数が無い間は**全件 unattributed**
+  }) : null;
+
+  /**
+   * 反応層ごとの人数。
+   * ⚠️ 1 通単位の open 索引を全件読むと bounded でなくなるので、ここでは
+   *    **既存 funnel（1 人 1 か所）**から作れる層だけを出し、
+   *    作れない層は `null`（**0 と書かない**）。
+   */
+  const counts = t ? {
+    [RESPONSE.PURCHASED]: Number(t.purchased) || 0,
+    [RESPONSE.SUPPRESSED]: Number(t.stopped) || 0,
+    [RESPONSE.CLICKED]: null,
+    [RESPONSE.OPENED]: measurement.open === MEASURE.ENABLED ? (Number(t.opened) || 0) : null,
+    [RESPONSE.DELIVERED]: null,
+    [RESPONSE.SENT]: Number(t.sent) || 0,
+    [RESPONSE.NOT_SENT]: null,
+    [RESPONSE.UNKNOWN]: null,
+  } : null;
+
+  /** その層へ次に何を出すか（**宣言（catalog）側の routes を当てるだけ**） */
+  const routes = Array.isArray(base.sequence && base.sequence.responseRoutes)
+    ? base.sequence.responseRoutes : [];
+  const maxSends = resolveMaxSends(base);
+  const segments = Object.values(RESPONSE).map((state) => {
+    const decided = routeNextTouch({ routes, state: { state, sentCount: 0 }, maxSends });
+    return {
+      state,
+      label: RESPONSE_LABEL[state] || state,
+      count: counts ? counts[state] : null,
+      nextStep: decided.step,
+      variant: decided.variant,
+      angle: decided.angle,
+      routeId: decided.routeId,
+      reason: decided.reason,
+    };
+  });
+
+  return json(200, {
+    mode: 'drm',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    stateExists,
+    funnel,
+    segments,
+    segmentTotals: counts ? summarizeDrmSegments(
+      Object.entries(counts).filter(([, v]) => Number.isFinite(v))
+        .flatMap(([k, v]) => Array.from({ length: v }, () => ({ state: k }))),
+    ) : null,
+    measurement,
+    attributionLabels: ATTRIBUTION_LABEL,
+    /** 数字を作れなかったときの理由（**推測で埋めない**） */
+    partial: !t,
+    partialReason: t ? null : (metrics.reason || 'metrics_unavailable'),
+    notice: '増分集計だけを読んでいます（正本は Customers / CampaignDeliveries）。'
+      + '**何も書き込んでいません。** 計測していない指標は 0 ではなく「—」です。',
+  });
+}
+
 async function handleRollout({ KEY, BASE, now, req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });

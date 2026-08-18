@@ -80,7 +80,7 @@
     "check:no-unbounded-scan": "node scripts/check-no-unbounded-customer-scan.mjs",
     "upload:premium-plus": "node scripts/uploadPremiumPlusImage.mjs",
     "seed:premium-plus": "node scripts/seedPremiumPlusLegacy.mjs",
-    "check:safety": "npm run check:race-calendar && npm run check:fn-no-undef && npm run check:no-unbounded-scan && npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:archive-sync && npm run test:shared-checkers && npm run test:archive-coverage && npm run test:jra-import-need && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:results-showcase && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:crm && npm run test:dedupe && npm run test:auth-session && npm run test:auth-security && npm run test:ssr-retention",
+    "check:safety": "npm run check:race-calendar && npm run check:fn-no-undef && npm run check:no-unbounded-scan && npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:archive-sync && npm run test:shared-checkers && npm run test:archive-coverage && npm run test:jra-import-need && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:results-showcase && npm run test:premium-plus && npm run test:premium-plus-media && npm run test:drm && npm run test:marketing && npm run test:comeback && npm run test:promotions && npm run test:upsell && npm run test:contact-subject && npm run test:webhooks && npm run test:crm && npm run test:dedupe && npm run test:auth-session && npm run test:auth-security && npm run test:ssr-retention",
     "verify:safety": "npm run build && npm run check:ssr-runtime-data && npm run check:safety",
     "preflight:phase2-canary": "node scripts/phase2-canary-preflight.mjs",
     "preflight:light-trial-step1": "node scripts/light-trial-step1-preflight.mjs",
@@ -91,7 +91,8 @@
     "backfill:email-events": "node scripts/backfill-email-events.mjs",
     "export:airtable-tables": "node scripts/export-airtable-tables.mjs",
     "reconcile:email-events": "node scripts/reconcile-email-events.mjs",
-    "check:race-calendar": "node scripts/check-race-calendar-freshness.mjs"
+    "check:race-calendar": "node scripts/check-race-calendar-freshness.mjs",
+    "test:drm": "node --test src/lib/drm/*.test.mjs"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.5.8",
