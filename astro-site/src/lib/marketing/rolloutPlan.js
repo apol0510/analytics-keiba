@@ -157,6 +157,13 @@ export function defaultRolloutState() {
      */
     lastBatchJobIds: [],
     /**
+     * 引き継ぎを積もうとして「対象 0 件」だった**連続回数**。
+     * ⚠️ 0 件は「もう積み終わっている」か「まだ Airtable に見えていない」かの
+     *    どちらか。**後者を黙って捨てると案内が届かない人が残る**（fail open）。
+     *    未案内が残っているのに 0 件が続くなら fail closed で止める。
+     */
+    handoffEmptyAttempts: 0,
+    /**
      * 「今日動かしてよい」という明示。`YYYY-MM-DD`（JST）。
      * 置きっぱなしでも**翌日には効かなくなる**ので、暴走しない。
      * `alwaysArmed: true` なら日付を毎日置き直さずに継続運用できる。
@@ -244,6 +251,7 @@ export function normalizeRolloutState(raw) {
       )
       : null,
     batchDuplicates: Math.max(0, num(raw.batchDuplicates) ?? 0),
+    handoffEmptyAttempts: Math.max(0, num(raw.handoffEmptyAttempts) ?? 0),
     lastBatchJobIds: Array.isArray(raw.lastBatchJobIds)
       ? raw.lastBatchJobIds.map((v) => str(v).slice(0, 120)).filter(Boolean).slice(0, 50)
       : [],

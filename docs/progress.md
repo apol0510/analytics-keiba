@@ -78,6 +78,32 @@ fixture を「いま」からの相対時刻に直した（**テストのみの�
 `test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0。
 
+## 2026-08-18 — 【修正】引き継ぎの「対象 0 件」を fail closed にする（#363 の後始末）
+
+#363 で「対象 0 件」を失敗扱いしない直し方をしたが、**一律で引き継ぎを消していた**（fail open）。
+0 件には 2 つの意味がある:
+
+  A. もう積み終わっている（queue は冪等）→ 畳んでよい
+  B. まだ Airtable に反映されていない（付与直後の読み取り遅延）→ **畳んではいけない**
+
+B で畳むと「付与済みなのに案内が来ない人」が黙って残る。
+
+### 直したこと（`handoffResolution.js` が単一源）
+
+| 関所 `outstandingStep1` | 判断 |
+|---|---|
+| 0（案内待ちが居ない） | **CLEAR**（畳む） |
+| > 0 / 数えられない | **RETRY**（消さずに次の tick でやり直す） |
+| やり直しても解決しない（3 回） | **STOP**（`handoff_unresolved` / `handoff_unverifiable` で自動停止） |
+
+引き継ぎは**止めるときも消さない**ので、人が直したあとに続きから積める。
+
+この時点の実績: 付与 1,010 名 / Step1 案内済み 1,005 名（queue または送信済み）/
+送信 806 通・PENDING 258 通（dispatch 待ち）/ 除外 5 名 / 失敗 0 / 重複 0。
+新規付与は**承認のうえ一時停止**（queue / dispatch は継続）。
+
+`test:marketing` 2,017 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・`build` EXIT=0。
+
 ## 2026-08-18 — 【修正】queue の「対象 0 件」を失敗にしない
 
 引き継ぎ（付与ぶん）を積もうとしたとき、dry-run が「対象 0 件」を返すと

@@ -54,6 +54,7 @@ import {
 import {
   pauseWithRetry, completeWithRetry, describePauseResult, PAUSE_CONFLICT,
 } from '../../src/lib/marketing/rolloutPauseGuard.js';
+import { resolveEmptyHandoff, HANDOFF_ACTION } from '../../src/lib/marketing/handoffResolution.js';
 import { readStageGates, canRunStage, describeBlocked, ROLLOUT_STAGE_GATE } from '../../src/lib/marketing/rolloutGates.js';
 import { toTouch, JOURNEY_PHASES, MAX_TOUCHES } from '../../src/lib/marketing/journeyModel.js';
 import { buildJourneyTotals, toMetricsTotals } from '../../src/lib/marketing/journeyTotals.js';
@@ -792,21 +793,60 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       queued.done.push(id);
     }
     if (queued.jobIds.length === 0 && queued.count === 0) {
-      // 引き継ぎは全部「積み終わっていた」。**畳んで正常終了**する。
-      //    まだ案内できていない人が居れば、次の tick が既存の救済経路
-      //    （`action=sequence` の期日判定）で拾う。
-      await saveState({ ...state, pendingHandoffOp: null, pendingHandoffOps: [] });
+      /**
+       * 「対象 0 件」の意味は 2 つある（`handoffResolution.js` が単一源）:
+       *   A. もう積み終わっている → 引き継ぎを畳んでよい
+       *   B. まだ Airtable に見えていない（付与直後の読み取り遅延）→ **畳んではいけない**
+       * ⚠️ #363 は一律 A として消していた（**fail open**）。B のとき
+       *    「付与済みなのに案内が来ない人」が黙って残る。
+       *    関所（`outstandingStep1`）が 0 のときだけ畳み、そうでなければ
+       *    やり直し、続くなら止めて人に見せる。
+       */
+      const verdict = resolveEmptyHandoff({
+        outstandingStep1: facts.outstandingStep1,
+        attempts: state.handoffEmptyAttempts,
+      });
+      if (verdict.action === HANDOFF_ACTION.CLEAR) {
+        await saveState({
+          ...state, pendingHandoffOp: null, pendingHandoffOps: [], handoffEmptyAttempts: 0,
+        });
+        const body = {
+          ok: true, ...view, queued: 0, handoffsCleared: queued.done.length,
+          sideEffects: 'state_only',
+          notice: '引き継ぎぶんは既に積み終わっていました（案内待ちは 0 名）。',
+        };
+        log(body);
+        return body;
+      }
+      if (verdict.action === HANDOFF_ACTION.RETRY) {
+        // **引き継ぎは消さない**。次の tick でやり直す
+        await saveState({ ...state, handoffEmptyAttempts: verdict.attempts });
+        const body = {
+          ok: true, ...view, queued: 0, handoffRetry: verdict.attempts,
+          sideEffects: 'state_only',
+          notice: '引き継ぎの対象が 0 件でしたが、**案内待ちが残っている**ので消さずにやり直します。',
+        };
+        log(body);
+        return body;
+      }
+      // 解決しない = 人に見せる（fail closed）
+      const paused = await pauseWithRetry({
+        store, campaignId: STATE_KEY, nowMs: now,
+        note: `auto-stop: ${verdict.reason}`, reason: verdict.reason,
+      });
       const body = {
-        ok: true, ...view, queued: 0, handoffsCleared: queued.done.length,
+        ok: false, ...view, abort: verdict.reason,
+        autoStopped: paused.ok, pause: describePauseResult(paused),
+        handoffRetry: verdict.attempts, queued: 0,
         sideEffects: 'state_only',
-        notice: '引き継ぎぶんは既に積み終わっていました（**新しくは積んでいません**）。',
+        notice: '引き継ぎを積めないまま案内待ちが残っています。**引き継ぎは消さずに停止**しました。',
       };
       log(body);
       return body;
     }
     const res = { ok: true, jobIds: queued.jobIds, queued: queued.count, touch: queued.touch };
     await saveState({
-      ...state, pendingHandoffOp: null, pendingHandoffOps: [],
+      ...state, pendingHandoffOp: null, pendingHandoffOps: [], handoffEmptyAttempts: 0,
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
       jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
       // ⚠️ 送信経路が `already_delivered` として弾いた数 = **二重送信の試み**。
