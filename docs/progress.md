@@ -323,6 +323,39 @@ B で畳むと「付与済みなのに案内が来ない人」が黙って残る
 
 `test:marketing` 2,017 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・`build` EXIT=0。
 
+### 追補（同日）— ブラックリストの「読めた」を **status で正に確認**する
+
+上の証明はブラックリストを `bl && bl.emails` で見ていた。これが**契約と合っていない**。
+
+`loadBlacklistEmails()`（`newsletter/airtable-fetch.js`）は**読めなくても例外を投げない**。
+`missing` / `permission-error` / `network-error` / `read-error` のいずれでも
+`{ emails: new Set(), status: <理由> }` を返す。**空 Set は truthy** なので、
+`bl.emails` を見るだけでは **読み取り失敗が「ブラックリスト 0 件」として通る**。
+そのまま数えると、本当はブラックリストで除外されるはずの人が
+「まだ案内していない人」から漏れ、**引き継ぎを誤って畳む**（fail open が 1 つ残っていた）。
+
+証明に使ってよいのは **正に確認できた 2 通りだけ**（`acceptBlacklistResult`）:
+
+| `status` | 証明に使う？ |
+|---|---|
+| `enabled`（かつ `emails` が Set） | ✅ 実際に読めた |
+| `not-applicable` かつ `BRAND_HAS_BLACKLIST_TABLE[brand] === false` | ✅ **テーブル非対象と分かっているブランドだけ** |
+| `missing` / `permission-error` / `network-error` / `read-error` / 未知 | ❌ `PROOF_FAIL.EXCLUSIONS_UNREADABLE` |
+| `not-applicable` だが brand が AK / 未知 / 未指定 | ❌ 同上 |
+
+⚠️ **AK を `not-applicable` 扱いしない。** AK は `BRAND_HAS_BLACKLIST_TABLE` で `true`
+   （EmailBlacklist テーブルが実在する）。AK で `not-applicable` が返るのは契約違反なので証明しない。
+⚠️ `fetchProviderSuppression` の `ok:false` fail closed は**現状維持**。
+
+テストは**実物の戻り値の形**（`{ emails, status }`）で mock する。
+形の違う mock（`{ emails }` だけ / `{}`）は、この事故をそのまま素通りさせる。
+`handoffQueueProof.test.mjs` を新設（16 件）し、`handoffResolution.test.mjs` の
+mock も実物の形へ揃えた。旧実装に対して当てると **5 件が落ちる**ことを確認済み。
+
+`test:marketing` 2,037 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0。
+本番は**新規 grant 停止・PENDING=0 を維持**（このコミットは read-only な判定のみで挙動を緩めない）。
+
 ## 2026-08-18 — 【修正】queue の「対象 0 件」を失敗にしない
 
 引き継ぎ（付与ぶん）を積もうとしたとき、dry-run が「対象 0 件」を返すと

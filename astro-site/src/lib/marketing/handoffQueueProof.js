@@ -24,6 +24,9 @@
  *    永久に解決しなくなる（2026-08-18 の指摘）。除外も**解決**として数える。
  * ⚠️ 材料（対象者・配信行・停止リスト・ブラックリスト）が 1 つでも読めなければ
  *    **証明しない**（`ok: false`）。引き継ぎは消さない。
+ * ⚠️ ブラックリストは**空 Set が返ってきても「読めた」とは限らない**。
+ *    `loadBlacklistEmails()` は失敗時も例外を投げず `{ emails: new Set(), status: <理由> }`
+ *    を返すため、`status` を正に確認する（`acceptBlacklistResult`）。
  * ⚠️ アドレスは判定にだけ使い、**戻り値にもログにも出さない**。読むだけ・新 schema なし。
  */
 
@@ -33,7 +36,7 @@ import { computeCampaignDeliveryKey } from './campaignSend.js';
 import { resolveSequenceStep } from './campaignSequence.js';
 import { resolveCustomerMarketing } from './customerMarketingAudience.js';
 import { evaluateStep1Barrier } from '../comeback/lightTrialBarrier.js';
-import { loadBlacklistEmails } from '../newsletter/airtable-fetch.js';
+import { loadBlacklistEmails, BRAND_HAS_BLACKLIST_TABLE } from '../newsletter/airtable-fetch.js';
 import { fetchProviderSuppression } from './providerSuppression.js';
 
 export const CUSTOMERS_TABLE = 'Customers';
@@ -89,6 +92,42 @@ async function readAll({ fetchImpl, apiKey, baseId, table, formula, fields }) {
   return rows;
 }
 
+/** `loadBlacklistEmails()` が「読めた」ときだけ返す status */
+export const BLACKLIST_STATUS_ENABLED = 'enabled';
+/** テーブルを持たないブランドで返る status（AK は**該当しない**） */
+export const BLACKLIST_STATUS_NOT_APPLICABLE = 'not-applicable';
+
+/**
+ * `loadBlacklistEmails()` の戻り値を**証明に使ってよいか**判定する（純粋・fail closed）。
+ *
+ * ⚠️ この関数が要る理由: `loadBlacklistEmails()` は**読めなくても例外を投げない**。
+ *    `missing` / `permission-error` / `network-error` / `read-error` のいずれでも
+ *    `{ emails: new Set(), status: <理由> }` を返す。空 Set は truthy なので
+ *    `if (!bl.emails)` で見ると **読み取り失敗が「ブラックリスト 0 件」として通る**。
+ *    そのまま数えると、本当はブラックリストで除外されるはずの人が
+ *    「まだ案内していない人」から漏れ、引き継ぎを誤って畳む（fail open）。
+ *
+ * 使ってよいのは **正に確認できた** 2 通りだけ:
+ *   1. `status === 'enabled'` かつ `emails` が Set … 実際に読めた
+ *   2. `status === 'not-applicable'` かつ **そのブランドが本当にテーブル非対象**
+ *      （`BRAND_HAS_BLACKLIST_TABLE[brand] === false`）。AK は `true` なので該当しない。
+ *      未知・未指定のブランドも「非対象と確認できた」ことにはしない。
+ *
+ * @returns {Set<string>|null} 使ってよい Set。使えないときは `null`
+ */
+export function acceptBlacklistResult(result, brand, hasTableMap = BRAND_HAS_BLACKLIST_TABLE) {
+  const emails = result && result.emails;
+  if (!(emails instanceof Set)) return null;
+  const status = str(result && result.status);
+  if (status === BLACKLIST_STATUS_ENABLED) return emails;
+  if (status === BLACKLIST_STATUS_NOT_APPLICABLE) {
+    // **テーブルを持たないと分かっているブランドだけ**許可する（既存契約に従う）
+    return (hasTableMap || {})[str(brand)] === false ? emails : null;
+  }
+  // missing / permission-error / network-error / read-error / 未知 → 証明しない
+  return null;
+}
+
 /**
  * その付与 operation の対象者が**全員解決済み**であることを確かめる。
  *
@@ -121,12 +160,15 @@ export async function proveHandoffQueued({
   // ② 除外の材料（**既存の単一源**。読めなければ証明しない）
   const blacklistReader = deps.loadBlacklistEmails || loadBlacklistEmails;
   const suppressionReader = deps.fetchProviderSuppression || fetchProviderSuppression;
-  let blacklistEmails;
+  let blacklistEmails = null;
   try {
-    const bl = await blacklistReader({ brand, baseId, apiKey });
-    blacklistEmails = bl && bl.emails;
-    if (!blacklistEmails) return fail(PROOF_FAIL.EXCLUSIONS_UNREADABLE, { members: members.length });
+    // ⚠️ `loadBlacklistEmails()` は失敗しても例外を投げず空 Set を返す。
+    //    **status を正に確認**してからでないと、読み取り失敗を「0 件」と取り違える
+    blacklistEmails = acceptBlacklistResult(await blacklistReader({ brand, baseId, apiKey }), brand);
   } catch {
+    blacklistEmails = null;
+  }
+  if (blacklistEmails === null) {
     return fail(PROOF_FAIL.EXCLUSIONS_UNREADABLE, { members: members.length });
   }
   let providerSuppressed = null;

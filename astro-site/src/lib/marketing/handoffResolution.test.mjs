@@ -81,7 +81,11 @@ const prove = ({
   campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM, nowMs: NOW,
   fetchImpl: fakeAirtable({ members, deliveries, failCustomers, failDeliveries }),
   deps: {
-    loadBlacklistEmails: async () => (blacklistFails ? {} : { emails: new Set(blacklist) }),
+    // ⚠️ mock は**実物の戻り値の形**に合わせる。`loadBlacklistEmails()` は失敗しても
+    //    例外を投げず `{ emails: new Set(), status: <失敗理由> }` を返す（空 Set は truthy）
+    loadBlacklistEmails: async () => (blacklistFails
+      ? { emails: new Set(), status: 'network-error' }
+      : { emails: new Set(blacklist), status: 'enabled' }),
     fetchProviderSuppression: async () => (suppressionFails
       ? { ok: false, emails: null }
       : { ok: true, emails: new Set(suppressed) }),
