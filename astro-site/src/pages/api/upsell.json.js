@@ -11,6 +11,13 @@
  * ⚠️ Premium Plus の存在秘匿を維持する。channel が plus でないときは
  *    `plus` の詳細（phase / 受付状況 / 商品ページ URL）を**一切返さない**。
  *
+ * ## 取得済みクーポン（マイページのカード）
+ *
+ * `coupon` は **ak_session から解決した本人 1 件**の保有状態だけを返す。
+ * クライアントは recordId も email も指定できない（他会員のクーポンは構造的に出ない）。
+ * **未取得のときは `{ claimed: false }` だけ**を返し、名称も条件も返さない
+ * （マイページはカードごと出さない）。
+ *
  * 書き込みはしない（Airtable は GET のみ・1 レコード）。
  */
 export const prerender = false;
@@ -18,6 +25,11 @@ export const prerender = false;
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
+// 取得済みクーポンの保有状態（マイページのカード用）。判定・文言は単一源に任せる
+import {
+  readReopenCoupon, describeCouponForMember,
+} from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
+import { formatClaimedAtJst, COUPON_PAGE_PATH } from '../../lib/premiumPlus/premiumPlusPauseNoticePage.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -53,9 +65,34 @@ export async function GET({ request }) {
     fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
   });
 
+  // 本人のクーポン保有状態。文言・条件は単一源（describeCouponForMember）に作らせる。
+  // ⚠️ ここで条件文や価格を組み立てないこと。条件が確定したら単一源だけが変わる。
+  const held = readReopenCoupon(fields);
+  const couponBody = held.claimed
+    ? (() => {
+      const v = describeCouponForMember({
+        coupon: held,
+        paused: view.plusRelease?.salePaused === true,
+        // マイページから新規取得はさせない（取得はクーポンページ / 受付休止ページ）
+        claimable: false,
+      });
+      return {
+        claimed: true,
+        name: v.name,
+        claimedAt: held.claimedAtIso,
+        claimedAtText: formatClaimedAtJst(held.claimedAtIso),
+        usableNote: v.usableNote,
+        termsText: v.termsText,
+        termsDetermined: v.termsDetermined,
+        detailHref: COUPON_PAGE_PATH,
+      };
+    })()
+    : { claimed: false };
+
   const body = {
     channel: view.channel,
     reason: view.reason,
+    coupon: couponBody,
     // 三連複は「出してよいか」だけ。段階（予告/CTA）はクライアントが決める。
     sanrenpuku: { allowed: view.sanrenpuku.allowed },
     plus: view.channel === UPSELL_CHANNEL.PLUS

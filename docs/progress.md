@@ -20,15 +20,31 @@
 
 ### 1. dashboard（マイページ）に本人の取得済みクーポンを表示する
 
-**状態: 実装途中（branch `feat/dashboard-reopen-coupon-card`・未 commit / 未 PR）**
+**状態: 実装済み・Draft PR / CI まで完了。⚠️ MK の目視確認と merge が未了**
+（branch `feat/dashboard-reopen-coupon-card`）
 
-- 未取得ならカードごと出さない
-- クーポン名 / 取得済み状態 / 取得日時（JST・時刻まで）/ 優待内容 / **有効期限** /
-  `/premium-plus-coupon/` への詳細リンク
-- PC / mobile 両方
-- **他会員の情報を絶対に出さない**（対象はセッション由来の 1 件のみ）
+実装済みの内容:
 
-⚠️ **有効期限は項目自体が存在しない**（下の 2 が未確定のため）。2 の確定後に表示を足すこと。
+| 要件 | 状態 |
+|---|---|
+| 未取得ならカードごと出さない | ✅（既定 `display:none`・`claimed !== true` で出さない）|
+| クーポン名 / 取得済みバッジ | ✅ |
+| 取得日時（JST・**時刻まで**）| ✅（`formatClaimedAtJst` を共用）|
+| 優待内容 | ✅（**単一源 `termsText`**。未確定の今は「募集再開時にご案内」）|
+| `/premium-plus-coupon/` への詳細リンク | ✅ |
+| PC / mobile | ✅（`@media (max-width: 768px)` で 1 カラム・ボタン全幅）|
+| 他会員の情報を出さない | ✅（対象は **ak_session 由来の 1 件のみ**。client は recordId / email を指定できない）|
+| **有効期限** | ❌ **未実装**（下の 2 が未確定で項目自体が存在しない）|
+
+配線（**新しい通信を増やしていない**）:
+`/api/upsell.json`（既存の本人認証済み経路）に `coupon` を追加 →
+`upsellClient.js` の `getReopenCoupon()` → dashboard のカード。
+判定・文言・条件はすべてサーバーの単一源が返した値をそのまま表示し、
+**dashboard 側に独自判定・価格・割引率を持たせていない**。
+
+⚠️ **有効期限の表示は 2 の確定後に足すこと。** 条件が決まったら
+`premiumPlusReopenCoupon.js` の `describeCouponTerms()` / `PP_REOPEN_COUPON.terms` を
+更新するだけで、受付休止ページ・クーポンページ・マイページの**3 面すべてに同時反映**される。
 
 ### 2. クーポンの具体的価値を確定する（**MK の決定が必要**）
 
@@ -116,9 +132,8 @@ MK が目視確認すべき画面:
 
 1. **まず MK に 2（クーポンの具体的価値）と 3（admin の付与 / 取消の要否）を確認する。**
    ここが決まらないと 1 の「有効期限・優待内容」表示も 6 も先へ進めない。
-2. 並行して **1（dashboard のカード）を仕上げる** — branch `feat/dashboard-reopen-coupon-card`
-   に実装途中のものがある（API `/api/upsell.json` に `coupon` を追加 → `upsellClient.js` の
-   `getReopenCoupon()` → dashboard のカード）。Draft PR・CI・**MK 目視**まで。
+2. **1（dashboard のカード）は実装・テスト・Draft PR・CI まで完了**。
+   残りは **MK の目視確認 → merge** だけ（本番 deploy はその後）。
 3. 5（目視確認）を MK に依頼し、承認を得る。
 4. 6 は 2 の確定後に着手する。
 

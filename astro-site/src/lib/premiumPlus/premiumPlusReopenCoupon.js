@@ -255,6 +255,21 @@ export function buildReopenCouponClaimFields({ current, now, source, enabled = f
 }
 
 /**
+ * 優待条件を 1 文で返す（**条件の表示はここだけ**）。
+ *
+ * 現在は `PP_REOPEN_COUPON.terms.determined === false` なので「募集再開時にご案内」を返す。
+ * 条件確定後にここが具体条件を返すようにすれば、全画面へ同時に反映される。
+ * ⚠️ 金額・割引率をこの関数の外で組み立てないこと。
+ */
+export function describeCouponTerms(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  if (t.determined !== true) return PP_REOPEN_COUPON_TERMS_NOTE;
+  // 条件が確定したときの表示は、確定と同時にここへ実装する
+  // （未確定のまま金額を書かないための空欄。正本は promotionOfferCatalog.js）
+  return PP_REOPEN_COUPON_TERMS_NOTE;
+}
+
+/**
  * 顧客画面に出す表示モデル（クーポンページ・受付休止ページで共用）。
  * **他会員の情報は入らない**（渡された 1 人分の fields からしか作らない）。
  *
@@ -263,6 +278,17 @@ export function buildReopenCouponClaimFields({ current, now, source, enabled = f
 export function describeCouponForMember({ coupon, paused, claimable, storageReady = true } = {}) {
   const held = coupon || { claimed: false, claimedAtIso: '' };
   return {
+    /**
+     * 「いまの優待条件」として**全ての面に出す 1 本の文字列**。
+     *
+     * 条件が未確定の今は「募集再開時にご案内します」を返す。
+     * 条件が決まったら **`PP_REOPEN_COUPON.terms` を埋める（正本は
+     * `promotions/promotionOfferCatalog.js` の Premium Plus 用 offer）だけ**でよく、
+     * ここを読んでいる面（受付休止ページ / クーポンページ / マイページ）は
+     * **すべて自動で同じ表示に変わる**。
+     * ⚠️ 各画面で条件文を組み立て直さないこと（表示がズレる）。
+     */
+    termsText: describeCouponTerms(),
     name: PP_REOPEN_COUPON.name,
     description: PP_REOPEN_COUPON.description,
     claimed: held.claimed === true,
