@@ -43,16 +43,54 @@ if (res && res.ok === false && Number(res.started || 0) === 0) { auto-stop }
 
 | skip 理由 | 扱い |
 |---|---|
-| `will_send_zero`（台帳でその通が**完了済み**） | ✅ 正当（`nothingToStart`）。**止めない** |
-| `will_send_zero_unfinished`（まだ `PENDING` / 台帳で見えない） | ❌ 異常。起動しない限り永久に終わらない（queue が溜まる） |
-| `dry_run_failed` / `dry_run_shape_unknown` / `job_not_in_dry_run` / `will_send_unknown` | ❌ 異常（**分からないものを正当にしない**） |
-| `http_*` / `start_failed` / `dispatch_not_configured` | ❌ 異常 |
+| `will_send_zero`（台帳の Status が **`SENT`**） | OK 正当（`nothingToStart`）。**止めない** |
+| `will_send_zero_unfinished`（`SENT` 以外 / 台帳で見えない） | NG 異常 |
+| `dry_run_failed` / `dry_run_shape_unknown` / `job_not_in_dry_run` / `will_send_unknown` | NG 異常（**分からないものを正当にしない**） |
+| `http_*` / `start_failed` / `dispatch_not_configured` | NG 異常 |
+| 渡された形が壊れている（`dispatch_outcome_shape_unknown`） | NG 異常 |
 
-- `ok = started > 0 || failures === 0`
-- 呼び出し側は `res.ok === false` のときだけ止める（`started === 0` を条件にしない）
-- **allow-list**（正当は `will_send_zero` の 1 種類だけ）。知らない理由が増えたら
+#### 成功条件は `failures === 0`（**起動件数を混ぜない**）
+
+```js
+ok: failures.length === 0          // started > 0 を混ぜない
+nothingToStart: started === 0 && failures.length === 0
+```
+
+⚠️ ここに `started > 0 ||` を混ぜると、**「3 件起動できたが 1 件は `http_500`」が成功**になり、
+**異常が起動件数で隠れる**。正当な `will_send_zero` が混ざるのは構わないが、
+異常理由が 1 件でもあれば止める。
+
+⚠️ **これは旧挙動より厳しい。** 旧実装は `started > 0` なら無条件に成功としていたので、
+一部ジョブの起動失敗（`http_*` / `start_failed`）が見逃されていた。今回それも止める。
+
+#### 壊れた入力は「正当な 0」にしない
+
+`classifyDispatchStart` は**既定値で埋めない**。`started` が有限な非負数でない、
+`skipped` が配列でない、引数がオブジェクトでない場合は例外にせず
+`ok:false` / `nothingToStart:false` / `failureReasons:['dispatch_outcome_shape_unknown']` を返す。
+理由名は既存の `dry_run_shape_unknown` と同じ言い方に揃え、新しい概念を増やしていない。
+
+#### 「台帳で完了済み」と言えるのは `SENT` だけ
+
+既存契約で ScheduledEmails の Status を書くのは 2 か所しかない:
+
+| 書き手 | 値 | 意味 |
+|---|---|---|
+| `marketing-campaign-dispatch.js:776` | `summary.failed > 0 ? 'FAILED' : 'SENT'` | **`SENT` = 失敗 0 で送り切った** |
+| `admin-marketing.js`（ジョブ取消） | `CANCELLED` | 人が止めた |
+
+`PENDING` は送信待ち（`loadJobs` も同じ扱い）。
+**`FAILED` / `CANCELLED` を「正常に解決した」と読める根拠は既存契約に無い**ので、
+`willSend === 0` の正当な理由（全員が既送信）には入れない。
+`PARTIAL` / `SENDING` や未知の Status も同様に異常側へ倒す
+（`DISPATCH_SETTLED_STATUS = ['SENT']` の allow-list）。
+
+⚠️ 旧案の `!job || job.status === 'PENDING'` は **deny-list** で、
+`FAILED` / `CANCELLED` / 未知をすべて正当扱いしていた（fail open）。
+
+- **allow-list**（正当な skip は `will_send_zero` の 1 種類だけ）。知らない理由が増えたら
   自動的に異常側へ倒れるので **fail closed が既定**
-- 正当な 0 と異常が混ざったら**異常を優先**して止める
+- 呼び出し側は `res.ok === false` のときだけ止める（`started === 0` を条件にしない）
 - 正当な 0 を「起動した」とも言わない（`sideEffects` は `none` のまま）
 
 ⚠️ **送信経路そのものは変えていない。** `willSend === 0` を起動しない契約も、
@@ -67,13 +105,16 @@ if (res && res.ok === false && Number(res.started || 0) === 0) { auto-stop }
 
 ### テスト
 
-`dispatchStartOutcome.test.mjs` を新設（**15 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+`dispatchStartOutcome.test.mjs` を新設（**21 件**）。
+**3 つの fail open それぞれを、戻すとテストが落ちること**で確認済み
+（1. 起動件数で異常を隠す → 3 件 fail / 2. 壊れた入力を既定値で埋める → 1 件 fail /
+3. Status を deny-list で見る → 1 件 fail）。
 `startDispatch` は非 export のため、配線はソース検査の guard で固定した
 （`started === 0` を停止条件にしていない / 分類関数を通している /
 `willSend 0` を台帳の状態で分けている / 設定不備を `nothingToStart` にしない /
 送信経路の起動条件を緩めていない）。
 
-`test:marketing` 2,088 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`test:marketing` 2,094 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
 いずれも fail 0 / cancelled 0。`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・
 secret/PII 0 件・`package.json` / `package-lock.json` 変更なし。
 

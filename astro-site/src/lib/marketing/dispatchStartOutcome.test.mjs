@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 
 import {
   classifyDispatchStart, BENIGN_DISPATCH_SKIP,
+  DISPATCH_SETTLED_STATUS, DISPATCH_OUTCOME_SHAPE_UNKNOWN,
 } from '../../../netlify/functions/cron-marketing-rollout.js';
 
 const skips = (...reasons) => reasons.map((reason, i) => ({ jobId: `mkt-${i}`, reason }));
@@ -75,11 +76,38 @@ test('【重要】正当な 0 と異常が混ざったら異常を優先して�
 });
 
 // ── 起動できた場合は従来どおり ───────────────────────────────
-test('1 件でも起動できていれば止めない（従来挙動を維持）', () => {
+// ── 起動件数で異常を隠さない（**判定の中心は failures === 0**）──────────
+test('【重要】started=2 + http_500 → ok=false（起動件数で異常を隠さない）', () => {
   const r = classifyDispatchStart({ started: 2, skipped: skips('http_500') });
-  assert.equal(r.ok, true);
+  assert.equal(r.ok, false, '起動できた件数で異常が隠れている');
+  assert.equal(r.failures, 1);
   assert.equal(r.nothingToStart, false);
-  assert.equal(r.failures, 1, '失敗は隠さず数える');
+});
+
+test('【重要】started=1 + start_failed → ok=false', () => {
+  const r = classifyDispatchStart({ started: 1, skipped: skips('start_failed') });
+  assert.equal(r.ok, false);
+  assert.equal(r.failures, 1);
+});
+
+test('【重要】started=2 + will_send_zero → ok=true（正当な skip は混ざってよい）', () => {
+  const r = classifyDispatchStart({ started: 2, skipped: skips('will_send_zero') });
+  assert.equal(r.ok, true);
+  assert.equal(r.failures, 0);
+  assert.equal(r.nothingToStart, false, '起動しているので nothingToStart ではない');
+});
+
+test('【重要】started>0 + 知らない理由 → ok=false', () => {
+  const r = classifyDispatchStart({ started: 5, skipped: skips('brand_new_reason') });
+  assert.equal(r.ok, false);
+});
+
+test('【重要】started=0 + will_send_zero + 知らない理由 → ok=false', () => {
+  const r = classifyDispatchStart({
+    started: 0, skipped: skips('will_send_zero', 'brand_new_reason'),
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.nothingToStart, false);
 });
 
 test('起動できて skip も無ければ当然 ok', () => {
@@ -90,12 +118,41 @@ test('起動できて skip も無ければ当然 ok', () => {
 });
 
 // ── 入力が壊れていても落ちない ───────────────────────────────
-test('引数が無い・壊れていても例外にせず異常側でもない（0 件 0 失敗）', () => {
-  for (const input of [undefined, {}, { started: null, skipped: null }, { skipped: 'x' }]) {
+// ── 壊れた入力は「正当な 0」にしない（fail closed）────────────────────
+test('【重要】渡された形が壊れていたら異常側（正当な 0 にしない）', () => {
+  const broken = [
+    undefined, null, {}, [], 'x', 42,
+    { started: null, skipped: null },
+    { skipped: 'x' },                       // started 無し
+    { started: 1 },                         // skipped 無し
+    { started: 'two', skipped: [] },        // 数値でない
+    { started: -1, skipped: [] },           // 負
+    { started: NaN, skipped: [] },
+    { started: 0, skipped: { reason: 'x' } }, // 配列でない
+  ];
+  for (const input of broken) {
     const r = classifyDispatchStart(input);
-    assert.equal(r.started, 0);
-    assert.equal(r.failures, 0);
-    assert.equal(r.nothingToStart, true);
+    assert.equal(r.ok, false, `${JSON.stringify(input)} を成功にしている`);
+    assert.equal(r.nothingToStart, false, `${JSON.stringify(input)} を正当な 0 にしている`);
+    assert.equal(r.failures, 1);
+    assert.deepEqual(r.failureReasons, [DISPATCH_OUTCOME_SHAPE_UNKNOWN]);
+  }
+});
+
+test('壊れた入力でも例外は投げない', () => {
+  for (const input of [undefined, null, 'x', [], { skipped: 'x' }]) {
+    assert.doesNotThrow(() => classifyDispatchStart(input));
+  }
+});
+
+// ── 台帳の Status は SENT だけを「正常完了」とする ──────────────────
+test('【重要】正常完了とみなす Status は SENT だけ', () => {
+  assert.deepEqual([...DISPATCH_SETTLED_STATUS], ['SENT']);
+  for (const bad of ['PENDING', 'FAILED', 'CANCELLED', 'PARTIAL', 'SENDING', '', 'sent-ish']) {
+    assert.equal(
+      DISPATCH_SETTLED_STATUS.includes(bad), false,
+      `${bad} を正常完了として扱ってはいけない`,
+    );
   }
 });
 
@@ -141,14 +198,19 @@ test('【重要】`startDispatch` の戻り値は分類関数を通している'
   assert.ok(/classifyDispatchStart\(\{ started, skipped \}\)/.test(src), '分類関数を通していない');
 });
 
-test('【重要】willSend 0 は台帳の状態で正当 / 異常に分けている', () => {
+test('【重要】willSend 0 は台帳の Status を allow-list で見ている', () => {
   const src = readRel(CRON);
   const block = src.slice(src.indexOf('if (w.willSend === 0) {'), src.indexOf('// ② 起動（202 即返し）'));
   assert.ok(/byId.*get\(jobId\)/.test(block), '台帳の状態を見ていない');
-  assert.ok(/status === 'PENDING'/.test(block), 'PENDING を異常側へ倒していない');
+  assert.ok(/DISPATCH_SETTLED_STATUS\.includes/.test(block), 'allow-list を使っていない');
   assert.ok(/will_send_zero_unfinished/.test(block), '未完了ジョブを別理由にしていない');
-  // 台帳で見えないジョブも異常側
-  assert.ok(/!job \|\| job\.status === 'PENDING'/.test(block), '見えないジョブを正当扱いしている');
+  // 台帳で見えないジョブは正当にしない（`!!job` が必須）
+  assert.ok(/!!job/.test(block), '見えないジョブを正当扱いしている');
+  // deny-list（PENDING だけ弾く）へ戻していない
+  assert.equal(
+    /status === 'PENDING'/.test(block), false,
+    'PENDING だけを弾く書き方に戻っている（FAILED / CANCELLED が正当になる）',
+  );
 });
 
 test('【重要】設定不備は `nothingToStart` にしない', () => {
