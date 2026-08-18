@@ -37,18 +37,97 @@ Function 時間がそのまま悪化する。正しくは**読む前に候補を
 日時部は **`receivedAtMs` の UTC・秒精度**。実物の writer と 2,000 件の往復で
 `parseBlobKeyReceivedAtMs(key) === floor(receivedAtMs, 1s)` を確認済み。
 
-窓で切りたいのは `eventAtMs`（provider 発行）で、受信時刻とは**別の時計**:
+⚠️ **当初は「provider 時計のずれは最大 15 分」として捨てていたが、これは撤回した。**
+その上限を裏づける契約が**どこにも無い**:
 
-| 側 | 言えるか | 根拠 |
+| 調べた先 | 分かったこと |
+|---|---|
+| SendGrid 公式 Event Webhook 仕様 | `timestamp` は**イベント発生時刻**。失敗した通知は**発生後 最大 24 時間**リトライ（＝受信が**遅れる**側の話） |
+| repo 内唯一の skew 定数 `sendgridSignature.js` | `DEFAULT_MAX_SKEW_SEC = 24h`。**署名リプレイ防御**であってイベント時刻の契約ではない |
+
+→ **「◯分以内なら未来へずれない」という前提で blob を捨ててはいけない。**
+
+#### 代わりに使う根拠: **DeliveryKey の因果関係**（時計に依存しない）
+
+健全性で数えたいのは「直前バッチの通に起きたイベント」だけで、呼び出し側は必ず
+`deliveryKeys` を渡す（`cron-marketing-rollout.js` L966-972: `batchKeys && … ? readEventWindow({ deliveryKeys: batchKeys }) : null`）。
+
+その鍵の通が**送られる前に**、その通のイベントを受信することはあり得ない。そして:
+
+1. `sinceMs` = `state.healthBaseline.atMs` … そのバッチの **GRANT tick** で置いた基準点
+2. `state.lastBatchJobIds` … その後の **QUEUE tick** で控えたジョブ（cron L888）＝ 基準点より後
+3. 健全性チェックは **GRANT 分岐**の中でしか走らず（cron L928）、そこへ到達するには
+   `outstanding === 0`（`rolloutPlan.js` L426 `WAITING_PREVIOUS`）が要る ＝ 前バッチの queue は済んでいる
+
+よって `deliveryKeys` の通はすべて `sinceMs` より後に送られており、それらのイベントを載せた
+blob の受信時刻も必ず `sinceMs` より後。**受信時刻が `sinceMs` 以前の blob には、
+この鍵集合のイベントは入り得ない。** provider の時計を一切使わない
+（当方の受信時刻と当方の基準点の比較だけ）。
+
+- 事前除外は **`deliveryKeys` を渡されたときだけ**（空 Set も scope 扱いにしない）
+- 渡されないときは根拠が無いので**1 つも捨てない**
+- 鍵を読めない blob も捨てない
+- 許容するズレは**鍵の秒切り捨てぶん（1 秒）だけ**＝ `buildBatchBlobKey` から証明できる値
+
+#### 鍵 parse の完全 fail closed
+
+`Date.UTC` は 4/31 を 5/1 へ、秒 60 を次分へ**黙って繰り上げる**ので、復元値を分解し直して
+**入力と完全一致**することを確認する。writer が作り得ない日時は必ず `null`
+（= 時刻で除外せず**読む**側へ倒す）。
+
+`2026/04/31` → null ／ `2026/02/29`（非閏年）→ null ／ `2028/02/29` → valid ／
+秒 60・分 60・時 24・0 月・0 日・13 月 → null。
+
+### 本番事故の read-only replay（実測）
+
+停止時の実データへ**候補選別ロジックだけ**を当てた（付与・queue・送信・再開はしていない）。
+
+| 項目 | 実測 |
+|---|---|
+| `blobsListed`（当日 `2026/08/18` 全体） | **538** |
+| 候補 blob（`scoped=true` / 基準点 05:42:16Z） | **189** |
+| 実際に読む必要がある blob | **189** |
+| `MAX_EVENT_BLOBS = 200` 以内か | **YES**（余裕 11 件） |
+| `eventWindow` は null にならず読めるか | **読めた ✅**（旧実装は 538 > 200 で null） |
+| 直前バッチ `DeliveryKey` 数 | 197 |
+| 最終 complaints / unsubscribes / hard bounces | **0 / 0 / 0**（softBounces 0） |
+| skipped 内訳 | otherType 199 / otherBatch 12 / otherCampaign 2 / beforeWindow 0 |
+| 窓外 blob を get したか | **0 件**（除外 349 件は 1 つも取得していない） |
+| 取得 wall time | 110.5 秒（**ローカル CLI 経由 8 並列**。Function 内の実測ではない） |
+| NDJSON 行数 / parse 時間 | 213 行 / 4 ms |
+
+→ **今回の停止（`batch_stats_unreadable`）はこの修正で解消する。**
+
+### ⚠️ 残る構造的な欠落（この修正だけでは 500 名バッチは通らない）
+
+replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGrid は実質
+**1 イベント 1 POST** で送ってくるため、`emailEventBlobStore` の
+「1 webhook バッチ = 1 blob」設計では **blob 数 ≒ イベント数 ≒ 送信人数**になる。
+健全性の窓は**そのバッチ自身の送信**を必ず含むので、候補数は batchSize に比例する:
+
+実測比率 **0.96 blob/名**（197 名 → 189 blob）からの外挿:
+
+| batchSize | 窓内候補 blob（外挿） | `MAX_EVENT_BLOBS=200` |
 |---|---|---|
-| **上限側**（古すぎる blob を捨てる） | ✅ 言える | イベントは起きてから送られる。受信 `r` の blob の最大 `eventAtMs < R + 1s + skew`。`R + 1s + skew <= sinceMs` なら窓内イベントは**構造的に入り得ない** |
-| **下限側**（新しい blob を捨てる） | ❌ 言えない | provider の再送・遅延に加え、`admin-migration-job.js` は `receivedAtMs: Date.now()` で**古い `eventAtMs`** を書く。よって新しい blob にも古いイベントが入り得る |
+| 100 | 約 96 | 収まる |
+| 200 | 約 192 | 収まる |
+| **300** | 約 288 | **超過 → null** |
+| **500**（現在の本番設定） | **約 480** | **超過 → null** |
+| 1000 | 約 959 | 超過 → null |
 
-したがって事前除外は**「古すぎて窓に届かない」側だけ**。
-`RECEIVE_CLOCK_SKEW_MS = 15 分` を安全側に取り、**鍵を読めない blob も捨てない**。
-残った候補は中身を読み、`summarizeEventWindow` が `eventAtMs` で正しく落とす。
+**本番は `batchSize=500`** なので、この修正だけで再開すると
+**同じ `batch_stats_unreadable` に再び当たる**（今回たまたま 200 名ぶんだったのは、
+1 回の付与上限が 200 名で、その 200 名ぶんの送信しか窓に入らなかったため）。
 
-### 変えていないもの
+これは**窓の絞り込みでは解けない**。窓はバッチ自身の送信を含む必要があるからで、
+残るのは `MAX_EVENT_BLOBS` の**費用モデル**そのもの
+（現コードは候補を**逐次 `get()`** するので、上限＝ Function 時間の代理指標）。
+
+⚠️ **この PR では `MAX_EVENT_BLOBS` を上げない。** 上げるなら
+「読みの並列化などで時間を実測して裏づける」ことが前提で、
+本番 Function 内の実測は deploy 無しには取れない。判断は分離する。
+
+### 変えていないもの### 変えていないもの
 
 - `emailEventBlobStore.js` の **append-only / manifest 無し**設計（日次 1 blob への
   read-modify-write のような multi-writer 競合を作らない）
@@ -67,14 +146,16 @@ Function 時間がそのまま悪化する。正しくは**読む前に候補を
 
 ### テスト
 
-`eventWindowReader.test.mjs` を新設（14 件）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+`eventWindowReader.test.mjs` を新設（**18 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
 
 同日 500 件超でも窓内 200 以下なら読める / 窓外は `get` しない（日全体を全 get しない）/
 窓内が上限超過なら `null` / DeliveryKey 外・他 campaign・`eventAtMs` 窓外を混ぜない /
 `providerEventId` 再送を二重に数えない / soft bounce を hard にしない /
-list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob は捨てない。
+list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob は捨てない /
+`deliveryKeys` が無い・空なら 1 つも事前除外しない / 存在しない日付（4/31・非閏年 2/29）と
+秒 60・分 60・時 24 は `null`。
 
-`test:marketing` 2,051 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`test:marketing` 2,055 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
 `check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII 0 件・
 `package.json` / `package-lock.json` 変更なし。
 

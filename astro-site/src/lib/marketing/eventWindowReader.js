@@ -21,29 +21,44 @@
  * 直し方は「上限を上げる」ではない（blob ごとに `get()` するので Function 時間が悪化する）。
  * **実際に読む候補まで先に絞り、その候補数へ上限を当てる**。
  *
- * ── どこまで安全に事前除外できるか（推測で捨てない）────────────────
+ * ── どこまで安全に事前除外できるか（**推測で捨てない**）──────────────
  * 鍵は `buildBatchBlobKey()` が作る `ak/email-events/YYYY/MM/DD/HHMMSS-<hash12>.ndjson` で、
- * 日付・時刻部は **`receivedAtMs` の UTC・秒精度**（`emailEventBlobStore.js`）。
+ * 日時部は **`receivedAtMs` の UTC・秒精度**（`emailEventBlobStore.js`）。
  * 一方、窓で切りたいのは **`eventAtMs`（provider 発行の発生時刻）** で、両者は別物:
  *
  *   `receivedAtMs` … こちらの受信時刻（`sendgrid-webhook.js` の `Date.now()`）
  *   `eventAtMs`    … provider の payload 由来（`EventAt` を `Date.parse`）
  *
- * ここから**証明できるのは片側だけ**:
+ * ⚠️ **「provider 時刻が受信時刻より未来へずれる幅」に上限は無い。**
+ *    SendGrid 公式仕様にあるのは「イベント発生後**最大 24 時間**リトライする」だけで、
+ *    これは受信が**遅れる**側の話。repo 内の唯一の skew 定数
+ *    `sendgridSignature.js` の `DEFAULT_MAX_SKEW_SEC = 24h` も
+ *    **署名リプレイ防御**であってイベント時刻の契約ではない。
+ *    よって「◯分以内なら未来へずれない」という前提で blob を捨ててはいけない。
  *
- *   - **上限側は言える**: イベントは起きてから送られてくるので、受信時刻 `r` の blob に
- *     入るイベントは `eventAtMs <= r + (provider 時計のずれ)`。
- *     鍵は秒で切り捨てられているので実際の `r ∈ [R, R + 1000)`。よって
- *     **その blob の最大 eventAtMs < R + 1000 + SKEW**。
- *     → `R + 1000 + SKEW <= sinceMs` なら、窓内のイベントは**構造的に入り得ない**ので捨ててよい。
+ * ── 代わりに使う根拠: **DeliveryKey の因果関係**（時計に依存しない）──────
+ * 健全性で数えたいのは「**直前バッチの通**に起きたイベント」だけで、
+ * 呼び出し側は必ず `deliveryKeys`（そのバッチの鍵集合）を渡す
+ * （`cron-marketing-rollout.js`: `batchKeys && … ? readEventWindow({ deliveryKeys: batchKeys }) : null`）。
  *
- *   - **下限側は言えない**: provider の再送・遅延や過去データの移送
- *     (`admin-migration-job.js` は `receivedAtMs: Date.now()` で**古い `eventAtMs`** を書く)
- *     があるため、「新しく受信した blob に古いイベントは入らない」とは言えない。
- *     → 受信が新しい blob は**捨てない**。中身を読んでから `summarizeEventWindow` が
- *       `eventAtMs` で正しく落とす。
+ * その鍵の通が**送られる前に**、その通のイベントを受信することはあり得ない。そして:
  *
- * したがって事前除外は**「古すぎて窓に届かない blob」だけ**。鍵を読めない blob も捨てない。
+ *   1. `sinceMs` = `state.healthBaseline.atMs` … そのバッチの **GRANT tick** で置いた基準点
+ *   2. `state.lastBatchJobIds` … その後の **QUEUE tick** で控えたジョブ（= 基準点より後）
+ *   3. 健全性チェックは **GRANT 分岐**の中でしか走らず、そこへ到達するには
+ *      `outstanding === 0`（`rolloutPlan.js` の `WAITING_PREVIOUS`）が要る
+ *      ＝ 前バッチの queue は済んでいる
+ *
+ * よって `deliveryKeys` の通は**すべて `sinceMs` より後に送られた**ので、
+ * それらのイベントを載せた blob の受信時刻も必ず `sinceMs` より後。
+ * → **受信時刻が `sinceMs` 以前の blob には、この鍵集合のイベントは入り得ない。**
+ * これは provider の時計を一切使わない（当方の受信時刻と当方の基準点の比較だけ）。
+ *
+ * ⚠️ したがって事前除外は **`deliveryKeys` を渡されたときだけ**行う。
+ *    渡されないときは根拠が無いので**1 つも捨てない**（従来どおり全候補を読む）。
+ * ⚠️ 鍵を読めない blob も捨てない。
+ * ⚠️ 許容するズレは**鍵の秒切り捨てぶん（1 秒）だけ**。
+ *    これは `buildBatchBlobKey` の実装から証明できる値で、経験則の定数ではない。
  */
 
 import { parseNdjson, blobDatePrefix } from '../webhooks/deliveryEventBackfill.js';
@@ -65,52 +80,61 @@ export const EVENT_STORE = 'ak-email-events';
  */
 export const KEY_TIME_GRANULARITY_MS = 1000;
 
-/**
- * provider の時計がこちらより**進んでいる**場合の許容幅。
- *
- * `eventAtMs` は SendGrid の `timestamp`、`receivedAtMs` は当方の `Date.now()` なので、
- * 厳密には `eventAtMs <= receivedAtMs` を保証できない（別々の時計）。
- * 事前除外は**安全側にだけ効かせたい**ので、広めに取る。
- * 広く取っても、健全性の窓はバッチ 1 回ぶん（通常は数分）なので候補数は十分絞れる。
- */
-export const RECEIVE_CLOCK_SKEW_MS = 15 * 60 * 1000;
-
 /** `ak/email-events/YYYY/MM/DD/HHMMSS-<hash>.ndjson` （`buildBatchBlobKey` の逆） */
 const KEY_RE = /(?:^|\/)(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})(\d{2})(\d{2})-[a-f0-9]{8,64}\.ndjson$/;
 
 /**
  * blob の鍵から**受信時刻（UTC・秒精度の下限）**を取り出す。
  *
+ * ⚠️ **writer が作り得ない日時は必ず `null`**（fail closed）。
+ *    `Date.UTC` は 4/31 を 5/1 へ、秒 60 を次分へ**黙って繰り上げる**ので、
+ *    復元した値を分解し直して**入力と完全一致**することを確かめる。
+ *    （`buildBatchBlobKey` は実在時刻からしか鍵を作らないので、
+ *      繰り上がる鍵は「writer 以外が置いたもの」＝時刻として信用しない）
+ *
  * @returns {number|null} 読めなければ `null`（＝**時刻で除外してはいけない**）
  */
 export function parseBlobKeyReceivedAtMs(key) {
   const m = KEY_RE.exec(String(key ?? ''));
   if (!m) return null;
-  const [, y, mo, d, h, mi, s] = m.map(Number);
-  // 桁は正規表現で保証済み。範囲外（月 13 など）は Date.UTC が繰り上げるので明示的に弾く
-  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return null;
-  const t = Date.UTC(y, mo - 1, d, h, mi, s);
-  return Number.isFinite(t) ? t : null;
+  const [, y, mo, d, h, mi, sec] = m.map(Number);
+  // 秒は 0..59（`p2(getUTCSeconds())` は 60 を作らない。閏秒も JS の時刻には出ない）
+  if (mo < 1 || mo > 12 || d < 1 || h > 23 || mi > 59 || sec > 59) return null;
+  const t = Date.UTC(y, mo - 1, d, h, mi, sec);
+  if (!Number.isFinite(t)) return null;
+  // **繰り上がりを許さない**（4/31 → 5/1、2/29(非閏年) → 3/1 などを弾く）
+  const back = new Date(t);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() + 1 !== mo || back.getUTCDate() !== d
+    || back.getUTCHours() !== h || back.getUTCMinutes() !== mi || back.getUTCSeconds() !== sec) {
+    return null;
+  }
+  return t;
 }
 
 /**
  * この blob を**読む必要があるか**（＝窓に関係し得るか）。
  *
- * 捨ててよいのは「古すぎて窓に届かない」と**証明できる**ものだけ:
- *   その blob の最大 eventAtMs < R + 粒度 + skew  なので、
- *   `R + 粒度 + skew <= sinceMs` のとき窓内イベントは入り得ない。
+ * 捨ててよいのは、**`deliveryKeys` で直前バッチへ scope しているとき**に
+ * 「受信時刻が基準点以前」と**鍵から確定できる**ものだけ。
+ * その鍵集合の通は `sinceMs` より後に送られているので（ヘッダの因果関係を参照）、
+ * 受信がそれ以前の blob には該当イベントが入り得ない。
+ *
+ * ⚠️ `scoped` でないときは**1 つも捨てない**（provider 時計に上限が無く、
+ *    「受信が古い＝イベントも古い」とは言えないため）。
+ * ⚠️ 鍵を読めないときも捨てない（**推測で捨てない**）。
  *
  * @returns {boolean} 読むなら true（**判断できないものは true**）
  */
 export function isBlobInWindow({
-  key, sinceMs,
-  granularityMs = KEY_TIME_GRANULARITY_MS, skewMs = RECEIVE_CLOCK_SKEW_MS,
+  key, sinceMs, scoped = false, granularityMs = KEY_TIME_GRANULARITY_MS,
 } = {}) {
+  if (scoped !== true) return true;              // scope が無ければ絞る根拠が無い
   const since = Number(sinceMs);
   if (!Number.isFinite(since)) return true;      // 窓が無いなら絞らない
   const received = parseBlobKeyReceivedAtMs(key);
   if (received === null) return true;            // 鍵を読めない＝**推測で捨てない**
-  return received + granularityMs + skewMs > since;
+  // 鍵は秒切り捨てなので実受信は [received, received + granularity)
+  return received + granularityMs > since;
 }
 
 /**
@@ -138,6 +162,14 @@ export async function readEventWindow({
   }
   if (!store || typeof store.list !== 'function' || typeof store.get !== 'function') return null;
 
+  /**
+   * 事前除外してよいのは**直前バッチの鍵で scope しているとき**だけ。
+   * 鍵が無ければ「受信が古い＝イベントも古い」と言えないので 1 つも捨てない。
+   */
+  const scoped = deliveryKeys instanceof Set
+    ? deliveryKeys.size > 0
+    : Array.isArray(deliveryKeys) && deliveryKeys.length > 0;
+
   // ── ① 候補を決める（**まだ 1 つも get しない**）──────────────────
   const candidates = [];
   let listedCount = 0;
@@ -161,7 +193,7 @@ export async function readEventWindow({
       const key = b && b.key;
       if (!key) continue;
       // 窓に関係し得ない blob は**候補にも入れない**（= get しない）
-      if (!isBlobInWindow({ key, sinceMs })) continue;
+      if (!isBlobInWindow({ key, sinceMs, scoped })) continue;
       candidates.push(key);
     }
   }
@@ -189,7 +221,7 @@ export async function readEventWindow({
   // ⚠️ campaign / DeliveryKey / eventAtMs 窓 / providerEventId 重複排除は
   //    `summarizeEventWindow` が単一源。ここでは**一切判定しない**。
   const summary = summarizeEventWindow({ records, campaignId, sinceMs, deliveryKeys });
-  return summary ? { ...summary, blobsScanned: scanned, blobsListed: listedCount } : null;
+  return summary ? { ...summary, blobsScanned: scanned, blobsListed: listedCount, scoped } : null;
 }
 
 export default readEventWindow;

@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 
 import {
   readEventWindow, isBlobInWindow, parseBlobKeyReceivedAtMs,
-  MAX_EVENT_BLOBS, RECEIVE_CLOCK_SKEW_MS, KEY_TIME_GRANULARITY_MS,
+  MAX_EVENT_BLOBS, KEY_TIME_GRANULARITY_MS,
 } from './eventWindowReader.js';
 import { buildBatchBlobKey } from '../webhooks/emailEventBlobStore.js';
 
@@ -268,15 +268,102 @@ test('【重要】鍵を読めない blob は捨てない（証明できない�
   assert.equal(res.complaints, 1);
 });
 
-test('事前除外は「古すぎる」側だけ。skew ぶんは安全側に残す', () => {
+test('事前除外は scope があるときだけ・許容は鍵の 1 秒粒度だけ（証明済みの契約のみ）', () => {
   const since = DAY + 12 * 3600_000;
-  const margin = KEY_TIME_GRANULARITY_MS + RECEIVE_CLOCK_SKEW_MS;
-  // 窓のちょうど skew 手前 → **残す**（provider 時計が進んでいる可能性）
-  assert.equal(isBlobInWindow({ key: keyAt(since - margin + 1000, 1), sinceMs: since }), true);
-  // 明確に古い → 捨てる
-  assert.equal(isBlobInWindow({ key: keyAt(since - margin - 60_000, 2), sinceMs: since }), false);
+  const old = keyAt(since - 60_000, 1);
+  const boundary = keyAt(since - KEY_TIME_GRANULARITY_MS, 2);   // 受信 + 1s == since
+  const inside = keyAt(since + 1000, 3);
+
+  // ── scope あり（直前バッチの鍵で絞っている）= 因果関係で捨ててよい ──
+  assert.equal(isBlobInWindow({ key: old, sinceMs: since, scoped: true }), false);
+  assert.equal(isBlobInWindow({ key: boundary, sinceMs: since, scoped: true }), false);
+  assert.equal(isBlobInWindow({ key: inside, sinceMs: since, scoped: true }), true);
   // 受信が窓より後（provider の遅延で古いイベントを含み得る）→ **残す**
-  assert.equal(isBlobInWindow({ key: keyAt(since + 3600_000, 3), sinceMs: since }), true);
+  assert.equal(isBlobInWindow({ key: keyAt(since + 3600_000, 4), sinceMs: since, scoped: true }), true);
+
+  // ── scope なし = 捨てる根拠が無い（provider 時計に上限が無い）──────
+  assert.equal(isBlobInWindow({ key: old, sinceMs: since, scoped: false }), true);
+  assert.equal(isBlobInWindow({ key: old, sinceMs: since }), true, '既定は捨てない');
+
   // sinceMs 不明なら絞らない
-  assert.equal(isBlobInWindow({ key: keyAt(DAY, 4), sinceMs: null }), true);
+  assert.equal(isBlobInWindow({ key: keyAt(DAY, 5), sinceMs: null, scoped: true }), true);
+});
+
+test('【重要】deliveryKeys が無いときは 1 つも事前除外しない（時計に根拠が無い）', async () => {
+  const since = DAY + 12 * 3600_000;
+  const oldKey = keyAt(since - 3600_000, 1);
+  const blobs = { [oldKey]: ndjson([ev({ eventAtMs: since + 1000 })]) };
+  const f = fakeStore({ blobs });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 60_000, campaignId: CAMPAIGN,
+    deliveryKeys: null, getStoreImpl: f.impl,
+  });
+  assert.equal(res.scoped, false);
+  assert.deepEqual(f.got, [oldKey], 'scope が無いのに捨てている');
+  // provider 時刻が受信より後という「あり得る」ケースを取り逃がさない
+  assert.equal(res.complaints, 1);
+});
+
+test('【重要】空の deliveryKeys も scope 扱いにしない', async () => {
+  const since = DAY + 12 * 3600_000;
+  const oldKey = keyAt(since - 3600_000, 1);
+  const blobs = { [oldKey]: ndjson([ev({ eventAtMs: since + 1000 })]) };
+  const f = fakeStore({ blobs });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 60_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(), getStoreImpl: f.impl,
+  });
+  assert.equal(res.scoped, false);
+  assert.deepEqual(f.got, [oldKey]);
+});
+
+// ── 鍵の parse は writer が作り得ない日時を必ず落とす（fail closed）──────
+test('【重要】writer が作り得ない日時は null（Date.UTC の繰り上がりを許さない）', () => {
+  const bad = [
+    '2026/04/31/000000-abcdef012345.ndjson',   // 4 月 31 日は無い
+    '2026/02/29/000000-abcdef012345.ndjson',   // 2026 は閏年でない
+    '2025/02/29/000000-abcdef012345.ndjson',
+    '2100/02/29/000000-abcdef012345.ndjson',   // 100 年ルール（閏年でない）
+    '2026/06/31/000000-abcdef012345.ndjson',
+    '2026/13/01/000000-abcdef012345.ndjson',   // 13 月
+    '2026/00/10/000000-abcdef012345.ndjson',   // 0 月
+    '2026/08/00/000000-abcdef012345.ndjson',   // 0 日
+    '2026/08/18/126060-abcdef012345.ndjson',   // 秒 60
+    '2026/08/18/125960-abcdef012345.ndjson',   // 秒 60（分 59）
+    '2026/08/18/246000-abcdef012345.ndjson',   // 時 24
+    '2026/08/18/126000-abcdef012345.ndjson'.replace('1260', '1360'),  // 分 60
+  ];
+  for (const k of bad) {
+    assert.equal(parseBlobKeyReceivedAtMs(`ak/email-events/${k}`), null, `${k} を通してはいけない`);
+  }
+  // 実在する閏日は通る
+  assert.equal(
+    parseBlobKeyReceivedAtMs('ak/email-events/2028/02/29/235959-abcdef012345.ndjson'),
+    Date.UTC(2028, 1, 29, 23, 59, 59),
+  );
+  assert.equal(
+    parseBlobKeyReceivedAtMs('ak/email-events/2000/02/29/000000-abcdef012345.ndjson'),
+    Date.UTC(2000, 1, 29, 0, 0, 0),
+  );
+});
+
+test('【重要】不正・未知の鍵は捨てずに読む（scope があっても）', async () => {
+  const since = DAY + 12 * 3600_000;
+  const mine = 'a'.repeat(64);
+  // ⚠️ 窓の日付ディレクトリ配下だけが list される。**時刻部が壊れている鍵**を使う
+  //    （存在しない日付の鍵はそもそも別 prefix なので list に載らない）
+  const weird = [
+    'ak/email-events/2026/08/18/legacy-blob.ndjson',           // writer 形式でない
+    'ak/email-events/2026/08/18/126060-abcdef012345.ndjson',   // 秒 60
+    'ak/email-events/2026/08/18/246000-abcdef012345.ndjson',   // 時 24
+  ];
+  const blobs = {};
+  for (const k of weird) blobs[k] = ndjson([ev({ eventAtMs: since + 1000, deliveryKey: mine })]);
+  const f = fakeStore({ blobs });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 60_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set([mine]), getStoreImpl: f.impl,
+  });
+  assert.equal(f.got.length, weird.length, '鍵を読めない blob を読み飛ばしてはいけない');
+  assert.equal(res.complaints, 3);
 });
