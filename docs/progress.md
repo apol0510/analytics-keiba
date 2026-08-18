@@ -1,4 +1,4 @@
-## 2026-08-18 — 【進行中】トップページに有料実績ショーケースのプレビューを追加（PR #366 Draft・未マージ）
+## 2026-08-18 — 【実績】トップページに有料実績ショーケースのプレビューを追加し本番反映（PR #366 squash merge）
 
 ### 目的
 
@@ -30,22 +30,38 @@
 - 代表メインが作れないカテゴリはカードごと非表示、両方無ければセクション自体を描画しない
 - トップ下部の「昨日の的中結果」（`/archive/` 導線・買い目非公開）は**変更していない**（役割が重複しない）
 
-### 現在の状態
+### 結果
 
 | 項目 | 値 |
 |---|---|
-| branch | `feat/home-results-showcase-preview` |
-| HEAD | `75bfeaa8` |
-| PR | **#366（Draft）** |
-| CI | **PASS**（safety-check / deploy-preview / header rules / redirect rules） |
+| PR | **#366（MERGED）** |
+| merge 方式 | **squash merge**（main `581f0452` / merge 前 HEAD `60120021` を確認して実行） |
+| main | `60507ccd` → **`581f0452`** |
+| merge 後 CI（main push） | ✅ Safety Check **success** |
+| production 反映 | ✅ **反映済み**（`https://analytics.keiba.link/`） |
 | build | ✅ 成功（prune 後 SSR 関数 101.8MB / 250MB） |
 | safety | ✅ `npm run check:safety` exit 0（`test:results-showcase` 13/13 込み） |
-| Deploy Preview 確認 | ✅ 挿入位置・実データ描画・`抑え` 非混入・CTA 先 200 を確認済み |
-| production 反映 | **未反映** |
-| merge | **未実施**（承認後に squash merge 予定） |
 
-Deploy Preview 実測: JRA=8/16 中京・新潟・札幌（中京11R `7 → 2 4 11 13 15` 不的中 / 当日 15/36・回収率 256.1%）、
-南関=8/17 大井（9R `5 → 1 2 6 8 9` 不的中 / 7/10・135.4%）。
+### 本番確認（read-only / merge 後）
+
+| # | 確認項目 | 実測 | 判定 |
+|---|---|---|---|
+| ① | 挿入位置 | `hero-keyvisual` → 本セクション → `hero-section` の順 | ✅ |
+| ② | JRA カード | 8/16 中京・新潟・札幌 / 中京11R `7 → 2 4 11 13 15` 不的中 / 当日 15/36・回収率 256.1%・他2会場のメインも公開 | ✅ |
+| ③ | 南関カード | 8/17 大井 / 大井9R `5 → 1 2 6 8 9` 不的中 / 当日 7/10・回収率 135.4% | ✅ |
+| ④ | 抑えの非公開 | 出力 HTML に `抑え` の混入なし | ✅ |
+| ⑤ | CTA 先 | `/results-showcase/{jra,nankan}/` とも 200。**遷移先の買い目・的中数・回収率がカードと完全一致**（単一源） | ✅ |
+| ⑥ | PC 2 カラム | viewport 1100 / 1280 で `grid-template-columns` が 2 列・カードが同一 y 座標で横並び | ✅ |
+| ⑦ | モバイル 1 カラム | viewport 360 / 390 / 430 で 1 列に積み上げ。本命 + 相手5頭 = 6 チップが **1 行に収まる** | ✅ |
+| ⑧ | 既存ページ 非影響 | `/` `/results-showcase/*` `/free-prediction/*` `/archive/*` `/pricing/` `/login/` `/dashboard/` すべて merge 前と同じ 200。`/premium-prediction/*` は 302（認可）で変化なし | ✅ |
+| ⑨ | 本プレビューの出現範囲 | `/` のみ（他ページに `rsp` セクション 0 件） | ✅ |
+| ⑩ | 既存セクション健在 | トップ下部「昨日の的中結果」3 箇所・`/archive/` リンク健在。無料予想ページの既存バナー `scb-banner` も健在 | ✅ |
+
+⑥⑦ はブラウザのウィンドウ幅が 848px 固定でそれ以上/以下にできなかったため、
+**本番の HTML と CSS 資産をそのまま取得**してローカルで各 viewport 幅を実測した
+（検証したのは本番配信中の `/assets/index.*.css` の実体）。
+
+rollback は `581f0452` の revert のみで完結する（**env / Airtable / データは一切変更していない**）。
 
 ### 補足
 
