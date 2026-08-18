@@ -73,35 +73,54 @@ import { HARD_MAX_BATCH_SIZE } from '../comeback/lightTrialAutoGrant.js';
 export const EVENTS_PER_RECIPIENT_ALLOWANCE = 4;
 
 /**
- * 1 回の判定で **実際に読む（get する）** blob の数の上限（**件数側の歯止め**）。
+ * 1 回の判定で **実際に読む（get する）** blob 数の **backstop**（暴走時の歯止め）。
  *
  * ⚠️ これは「その日の blob 数」ではなく**窓に関係する候補数**に当てる。
  *    日全体へ当てると、送信量が増えるだけで永久に読めなくなる（2026-08-18 の事故）。
  *
- * ⚠️ 値は経験則ではなく**バッチの構造上限から導く**。
- *    `emailEventBlobStore` は **1 webhook バッチ = 1 blob** で、SendGrid は実質
- *    1 イベント 1 POST（実測 1 blob ≒ 1.13 イベント）なので
- *    **blob 数 ≒ イベント数 ≒ 送信人数**になる。健全性の窓は**そのバッチ自身の送信**を
- *    必ず含むため、候補数は batchSize に比例する。
- *    1 回の付与は `HARD_MAX_BATCH_SIZE`（= 500 名）を超えないので、
- *    上限は `500 × 4 = 2000`。**これ未満だと 500 名バッチが構造的に読めない**
- *    （200 のままだと約 480 候補で常に null になり、rollout が進めない）。
+ * ⚠️ **これは「この件数までなら必ず読める」という保証ではない。**
+ *    真の制約は `READ_DEADLINE_MS`（wall-clock budget）で、件数上限は
+ *    「際限なく `get` を積まない」ための backstop にすぎない。
  *
- * ⚠️ 件数を増やしただけでは Function 時間が伸びる。**時間側の歯止めは
- *    `READ_DEADLINE_MS`** で、読みは `BLOB_READ_CONCURRENCY` 本で並列化する。
+ * ⚠️ 値の出どころ: `emailEventBlobStore` は **1 webhook バッチ = 1 blob** で、
+ *    SendGrid は実質 1 イベント 1 POST（本番実測 1 blob ≒ 1.13 イベント）なので
+ *    **blob 数はおおむね送信量に比例**する。1 回の付与呼び出しは
+ *    `HARD_MAX_BATCH_SIZE`（`lightTrialAutoGrant.js` = 500）を超えないため、
+ *    その 4 倍を目安に置く。
+ *    ⚠️ ただし候補 blob には**同じ時間帯の別 campaign / 別 touch の webhook** も
+ *    入り得るので、**「500 × 4 なら構造的に必ず収まる」とは言えない**。
+ *    収まらなければ従来どおり `null`（fail closed）で止まる。
  */
 export const MAX_EVENT_BLOBS = HARD_MAX_BATCH_SIZE * EVENTS_PER_RECIPIENT_ALLOWANCE;
 
 /**
- * 候補の読み取りに使ってよい時間（**本当の制約はこちら**）。
+ * **この読み取り全体（list + 全 get）に使ってよい実時間**。
  * 既存の時間歯止め（`emailEventLedgerWriter.js` の `LEDGER_TOTAL_DEADLINE_MS = 8000`）に合わせる。
  * ここは 1 tick の一部（他に Airtable 読みもある）なので短めに取り、
  * 超えたら**数え切れていない**として `null`（fail closed）。
+ *
+ * ⚠️ **これが本当の制約。** `MAX_EVENT_BLOBS` は単なる backstop（暴走時の件数上限）で、
+ *    「この件数までなら必ず読める」という保証ではない。
  */
 export const READ_DEADLINE_MS = 8000;
 
 /** 同時に走らせる `get` の本数（1 件ずつ直列に読むと候補数ぶん時間がかかる） */
 export const BLOB_READ_CONCURRENCY = 12;
+
+/**
+ * 予算切れのときに **SDK へ返す** HTTP status。
+ *
+ * ⚠️ `408` でなければならない。`@netlify/blobs` の `fetchAndRetry` は
+ *    **429 / 5xx / throw を最大 5 回・5 秒 sleep で再試行**するので、
+ *    abort を throw のまま返すと**予算を大きく超える**。
+ *    `408` は再試行対象外で、`Store.get` / `Store.list` が
+ *    `BlobsInternalError` を投げる（＝こちらは `null` へ倒せる）。
+ *    v10.7.9 の実装で「408 は 1 回だけ・再試行なし」を実測確認済み。
+ */
+export const DEADLINE_STATUS = 408;
+
+/** 予算切れを表す番兵（`null` は「blob が空」と紛れるので使わない） */
+const DEADLINE = Symbol('event-window-deadline');
 
 /** blob store の名前（既存 backfill と同一） */
 export const EVENT_STORE = 'ak-email-events';
@@ -170,10 +189,73 @@ export function isBlobInWindow({
 }
 
 /**
+ * `promise` を**実時間の締切**と競走させる。締切なら `DEADLINE` を返す。
+ *
+ * ⚠️ 未完了の I/O は捨てるので、後から reject しても unhandled にならないよう
+ *    `catch` を付けておく。**実 I/O 自体の中断は `createDeadlineFetch` が行う**
+ *    （ここは「SDK が abort を尊重しなくても必ず返る」ための二重化）。
+ */
+async function raceDeadline(promise, deadlineAtMs, nowFn) {
+  const remaining = deadlineAtMs - nowFn();
+  const pending = Promise.resolve(promise);
+  pending.catch(() => {});                       // 破棄する側の unhandled 防止
+  if (remaining <= 0) return DEADLINE;
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(DEADLINE), remaining);
+    // Node では pending なタイマーが event loop を保持する。締切用は保持させない
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  });
+  try {
+    return await Promise.race([pending, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * 実 I/O を**締切で中断する** fetch を作る（`getStore({ fetch })` へ差し込む）。
+ *
+ * `@netlify/blobs` v10.7.9 の `get` / `list` には `signal` も `timeout` も無い
+ * （`GetOptions` は `consistency` のみ）。一方 `getStore({ name, fetch })` は
+ * **fetch 実装の差し替えを正式に受け付ける**（`ClientOptions.fetch?: Fetcher` →
+ * `getClientOptions` が `fetch: options.fetch` を Client へ渡す）ので、
+ * ここで `AbortSignal` を付けて**ソケットごと切る**。
+ *
+ * ⚠️ 失敗は **throw せず `408` を返す**。throw だと `fetchAndRetry` が
+ *    5 回 × 5 秒 sleep で再試行し、予算を大きく超えてしまう。
+ * ⚠️ その結果、通信の一時失敗も再試行せず fail closed になる。
+ *    健全性判定は「読めなければ止まる」が正しいので、この方向に倒す。
+ */
+export function createDeadlineFetch({
+  deadlineAtMs, nowFn = Date.now, fetchImpl = fetch, status = DEADLINE_STATUS,
+} = {}) {
+  const expired = () => new Response(null, { status });
+  return async (url, options = {}) => {
+    const remaining = deadlineAtMs - nowFn();
+    if (remaining <= 0) return expired();        // 予算切れなら **I/O を始めない**
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer = null;
+    if (controller) {
+      timer = setTimeout(() => controller.abort(), remaining);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    }
+    try {
+      return await fetchImpl(url, controller ? { ...options, signal: controller.signal } : options);
+    } catch {
+      return expired();                          // abort も通信失敗も**再試行させない**
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+}
+
+/**
  * 候補を**並列**に読む。1 件でも失敗したら、締切を過ぎたら `null`（fail closed）。
  *
  * ⚠️ 並列にしても**数え方は変わらない**。`summarizeEventWindow` は
  *    `providerEventId` で重複を除き、件数を足すだけなので**順序に依存しない**。
+ * ⚠️ 締切に当たったら**途中結果を返さない**（少なく数えるのが一番危ない）。
  */
 async function readCandidates({ store, keys, concurrency, deadlineAtMs, nowFn }) {
   const records = [];
@@ -184,19 +266,18 @@ async function readCandidates({ store, keys, concurrency, deadlineAtMs, nowFn })
   await Promise.all(Array.from({ length: lanes }, async () => {
     for (;;) {
       if (broken) return;
-      // ⚠️ 締切を過ぎたら**途中結果を返さない**（少なく数えるのが一番危ない）
-      if (nowFn() >= deadlineAtMs) { broken = true; return; }
       const i = next;
       next += 1;
       if (i >= keys.length) return;
       let text;
       try {
         // eslint-disable-next-line no-await-in-loop -- lane ごとに 1 件ずつ
-        text = await store.get(keys[i]);
+        text = await raceDeadline(store.get(keys[i]), deadlineAtMs, nowFn);
       } catch {
         broken = true;
         return;
       }
+      if (text === DEADLINE) { broken = true; return; }
       scanned += 1;
       if (text) records.push(...parseNdjson(text));
     }
@@ -217,13 +298,22 @@ export async function readEventWindow({
 } = {}) {
   const dates = windowDates(sinceMs, untilMs);
   if (!dates || dates.length === 0) return null;
+
+  // ⚠️ 予算は **この関数の開始時点**から取る。`list` も全 `get` も**同じ budget** に入れる
+  //    （`list` が遅れた分だけ `get` の持ち時間が減る、が正しい）
+  const deadlineAtMs = nowFn() + Math.max(1, Number(deadlineMs) || 0);
+
   let store;
   try {
     if (getStoreImpl) {
       store = getStoreImpl(EVENT_STORE);
     } else {
       const { getStore } = await import('@netlify/blobs');
-      store = getStore(EVENT_STORE);
+      // 実 I/O を締切で中断できるよう、**fetch を差し替えた** store を作る
+      store = getStore({
+        name: EVENT_STORE,
+        fetch: createDeadlineFetch({ deadlineAtMs, nowFn }),
+      });
     }
   } catch {
     return null;
@@ -247,10 +337,11 @@ export async function readEventWindow({
     let listed;
     try {
       // eslint-disable-next-line no-await-in-loop -- 日付ごとに 1 回
-      listed = await store.list({ prefix });
+      listed = await raceDeadline(store.list({ prefix }), deadlineAtMs, nowFn);
     } catch {
       return null;
     }
+    if (listed === DEADLINE) return null;        // list だけで予算を使い切った
     // ⚠️ `@netlify/blobs` の `list()` は paginate 無しなら内部で `next_cursor` を
     //    追い切って**全件**返す（v10: `collectIterator`）。取り切れないときは throw する。
     //    それでも「1 ページだけ」の形が渡ってきたら**成功扱いにしない**（暗黙の truncate 防止）。
@@ -274,7 +365,7 @@ export async function readEventWindow({
   //    件数だけで止めると「読めるのに読まない」が起きるので、
   //    本当の制約である**時間**で止める。超えたら 0 と言わずに null。
   const read = await readCandidates({
-    store, keys: candidates, concurrency, deadlineAtMs: nowFn() + deadlineMs, nowFn,
+    store, keys: candidates, concurrency, deadlineAtMs, nowFn,
   });
   if (read === null) return null;
   const { records, scanned } = read;

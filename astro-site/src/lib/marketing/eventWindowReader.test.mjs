@@ -19,6 +19,7 @@ import {
   readEventWindow, isBlobInWindow, parseBlobKeyReceivedAtMs,
   MAX_EVENT_BLOBS, KEY_TIME_GRANULARITY_MS, READ_DEADLINE_MS,
   BLOB_READ_CONCURRENCY, EVENTS_PER_RECIPIENT_ALLOWANCE,
+  createDeadlineFetch, DEADLINE_STATUS,
 } from './eventWindowReader.js';
 import { HARD_MAX_BATCH_SIZE } from '../comeback/lightTrialAutoGrant.js';
 import { buildBatchBlobKey } from '../webhooks/emailEventBlobStore.js';
@@ -370,15 +371,18 @@ test('【重要】不正・未知の鍵は捨てずに読む（scope があっ�
   assert.equal(res.complaints, 3);
 });
 
-// ── 費用モデル: 500 名バッチが構造的に読めること ─────────────────────
-test('【重要】上限は 1 バッチの構造上限から導く（500 名バッチが読めなくならない）', () => {
+// ── 費用モデル: 件数上限は backstop（真の制約は wall-clock budget）──────
+test('件数上限は付与 1 回の構造上限から導く（値の直書きにしない）', () => {
+  // ⚠️ `MAX_EVENT_BLOBS` は「この件数まで必ず読める」保証ではなく **backstop**。
+  //    候補には同時間帯の別 campaign / 別 touch の webhook も入り得る。
+  //    真の制約は `READ_DEADLINE_MS`（wall-clock budget）。
   assert.equal(MAX_EVENT_BLOBS, HARD_MAX_BATCH_SIZE * EVENTS_PER_RECIPIENT_ALLOWANCE);
-  // 本番実測 1 blob ≒ 1.13 イベント。500 名バッチの最悪ケースが収まること
-  const worst = Math.ceil(HARD_MAX_BATCH_SIZE * 1.13);
-  assert.ok(MAX_EVENT_BLOBS > worst, `500 名バッチ（約 ${worst}）が上限 ${MAX_EVENT_BLOBS} を超える`);
+  // 付与 1 回ぶん（`HARD_MAX_BATCH_SIZE`）の送信で出る blob の目安は超えて置く
+  const oneGrantCall = Math.ceil(HARD_MAX_BATCH_SIZE * 1.13);   // 実測 1 blob ≒ 1.13 イベント
+  assert.ok(MAX_EVENT_BLOBS > oneGrantCall);
 });
 
-test('【重要】500 名バッチ相当（480 blob）でも読める（旧上限 200 なら null だった）', async () => {
+test('【重要】481 blob でも読める（旧上限 200 なら null だった）', async () => {
   const since = DAY + 12 * 3600_000;
   const mine = 'a'.repeat(64);
   const blobs = {};
@@ -393,7 +397,7 @@ test('【重要】500 名バッチ相当（480 blob）でも読める（旧上�
     sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
     deliveryKeys: new Set([mine]), getStoreImpl: f.impl,
   });
-  assert.notEqual(res, null, '500 名バッチぶんを読めていない');
+  assert.notEqual(res, null, '旧上限 200 の規模で読めなくなっている');
   assert.equal(res.complaints, 1);
   assert.equal(res.blobsScanned, 481);
   assert.ok(res.blobsScanned <= MAX_EVENT_BLOBS);
@@ -477,4 +481,180 @@ test('並列でも get 失敗は fail closed', async () => {
 test('既定の締切・並列度は既存の慣習に沿う', () => {
   assert.equal(READ_DEADLINE_MS, 8000, '既存 LEDGER_TOTAL_DEADLINE_MS と同じ 8s');
   assert.ok(BLOB_READ_CONCURRENCY >= 1 && BLOB_READ_CONCURRENCY <= 32);
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  実 wall-clock の締切（**遅い / 止まった I/O でも必ず返る**）
+//  旧実装は `get` の**前**にしか時刻を見ておらず、`get` 自体が遅れると
+//  `Promise.all` がそれを待ってしまい「8 秒で fail closed」になっていなかった。
+// ══════════════════════════════════════════════════════════════════
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const NEVER = () => new Promise(() => {});   // 永久に resolve しない
+
+/** 実時間で測るための store（fake の get/list に遅延を仕込む） */
+function slowStore({ blobs, getDelayMs = 0, listDelayMs = 0, hangKeys = null, hangList = false }) {
+  const got = [];
+  const store = {
+    async list({ prefix }) {
+      if (hangList) return NEVER();
+      if (listDelayMs) await sleep(listDelayMs);
+      return { blobs: Object.keys(blobs).filter((k) => k.startsWith(prefix)).map((k) => ({ key: k })), directories: [] };
+    },
+    async get(key) {
+      got.push(key);
+      if (hangKeys && hangKeys.has(key)) return NEVER();
+      if (getDelayMs) await sleep(getDelayMs);
+      return blobs[key];
+    },
+  };
+  return { store, got, impl: () => store };
+}
+
+const winKeys = (n, since) => {
+  const b = {};
+  for (let i = 0; i < n; i += 1) {
+    b[keyAt(since + i * 1000, i)] = ndjson([ev({ eventAtMs: since + i * 1000, deliveryKey: 'a'.repeat(64) })]);
+  }
+  return b;
+};
+
+test('【重要】get が締切より長く遅れる → 実 wall-clock で締切付近に null', async () => {
+  const since = DAY + 12 * 3600_000;
+  const blobs = winKeys(6, since);
+  const f = slowStore({ blobs, getDelayMs: 400 });
+  const t0 = Date.now();
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 300, concurrency: 1,
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(res, null, '締切を過ぎたのに件数を返している');
+  assert.ok(elapsed < 2000, `締切で止まっていない: ${elapsed}ms`);
+});
+
+test('【重要】get が永久に resolve しない → Function timeout を待たず null', async () => {
+  const since = DAY + 12 * 3600_000;
+  const blobs = winKeys(3, since);
+  const hang = new Set([Object.keys(blobs)[0]]);
+  const f = slowStore({ blobs, hangKeys: hang });
+  const t0 = Date.now();
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 250, concurrency: 1,
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(res, null);
+  assert.ok(elapsed < 2000, `hang した get を待ってしまった: ${elapsed}ms`);
+});
+
+test('【重要】list が締切を超える → null（list も同じ budget）', async () => {
+  const since = DAY + 12 * 3600_000;
+  const f = slowStore({ blobs: winKeys(2, since), listDelayMs: 600 });
+  const t0 = Date.now();
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 200,
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(res, null);
+  assert.ok(elapsed < 2000, `list を待ち切ってしまった: ${elapsed}ms`);
+  assert.equal(f.got.length, 0, 'list が終わっていないのに get している');
+});
+
+test('【重要】list が永久に resolve しない → null', async () => {
+  const since = DAY + 12 * 3600_000;
+  const f = slowStore({ blobs: {}, hangList: true });
+  const t0 = Date.now();
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 200,
+  });
+  assert.equal(res, null);
+  assert.ok(Date.now() - t0 < 2000);
+});
+
+test('【重要】最後の 1 件だけ締切超過でも部分結果を成功扱いにしない', async () => {
+  const since = DAY + 12 * 3600_000;
+  const blobs = winKeys(5, since);
+  const last = Object.keys(blobs).sort().at(-1);
+  const f = slowStore({ blobs, hangKeys: new Set([last]) });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 300, concurrency: 1,
+  });
+  assert.equal(res, null, '4 件ぶんの部分集計を返してしまっている');
+});
+
+test('【重要】並列 lane の 1 本だけ hang → 全体 null', async () => {
+  const since = DAY + 12 * 3600_000;
+  const blobs = winKeys(24, since);
+  const f = slowStore({ blobs, hangKeys: new Set([Object.keys(blobs)[5]]) });
+  const t0 = Date.now();
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 300, concurrency: 8,
+  });
+  assert.equal(res, null);
+  assert.ok(Date.now() - t0 < 2000, `hang lane を待ってしまった: ${Date.now() - t0}ms`);
+});
+
+test('全件が予算内なら従来どおり正常に集計する', async () => {
+  const since = DAY + 12 * 3600_000;
+  const blobs = winKeys(12, since);
+  const f = slowStore({ blobs, getDelayMs: 5 });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set(['a'.repeat(64)]), getStoreImpl: f.impl,
+    deadlineMs: 4000, concurrency: 4,
+  });
+  assert.notEqual(res, null);
+  assert.equal(res.blobsScanned, 12);
+  assert.equal(res.complaints, 12);
+});
+
+// ── 実 I/O を止める側（createDeadlineFetch）──────────────────────────
+test('【重要】createDeadlineFetch は実 I/O へ AbortSignal を渡す', async () => {
+  let sawSignal = null;
+  const f = createDeadlineFetch({
+    deadlineAtMs: Date.now() + 1000,
+    fetchImpl: async (_u, o) => { sawSignal = o.signal; return new Response('ok', { status: 200 }); },
+  });
+  const res = await f('https://example.com/x', { method: 'GET' });
+  assert.equal(res.status, 200);
+  assert.ok(sawSignal, 'signal を渡していない');
+  assert.equal(typeof sawSignal.aborted, 'boolean');
+});
+
+test('【重要】締切超過の I/O は abort され、SDK が再試行しない 408 になる', async () => {
+  const f = createDeadlineFetch({ deadlineAtMs: Date.now() + 60, fetchImpl: (u, o) => new Promise((_res, rej) => {
+    o.signal.addEventListener('abort', () => rej(new Error('AbortError')));
+  }) });
+  const t0 = Date.now();
+  const res = await f('https://example.com/x');
+  assert.equal(res.status, DEADLINE_STATUS, '408 でないと fetchAndRetry が 5 回×5 秒 sleep する');
+  assert.ok(Date.now() - t0 < 2000);
+});
+
+test('予算切れなら I/O を始めずに 408', async () => {
+  let called = 0;
+  const f = createDeadlineFetch({
+    deadlineAtMs: Date.now() - 1, fetchImpl: async () => { called += 1; return new Response('x'); },
+  });
+  const res = await f('https://example.com/x');
+  assert.equal(res.status, DEADLINE_STATUS);
+  assert.equal(called, 0, '予算切れなのに I/O を始めている');
+});
+
+test('通信失敗も 408 として返す（throw だと SDK が再試行して予算を壊す）', async () => {
+  const f = createDeadlineFetch({
+    deadlineAtMs: Date.now() + 5000, fetchImpl: async () => { throw new Error('ECONNRESET'); },
+  });
+  assert.equal((await f('https://example.com/x')).status, DEADLINE_STATUS);
 });

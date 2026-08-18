@@ -98,40 +98,72 @@ blob の受信時刻も必ず `sinceMs` より後。**受信時刻が `sinceMs` 
 
 → **今回の停止（`batch_stats_unreadable`）はこの修正で解消する。**
 
-### 費用モデルも直す（500 名バッチが構造的に読めるようにする）
+### 費用モデル: 件数の上限ではなく **wall-clock budget** で守る
 
 replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGrid は実質
 **1 イベント 1 POST** で送ってくるため、「1 webhook バッチ = 1 blob」設計では
-**blob 数 ≒ イベント数 ≒ 送信人数**になる。健全性の窓は**そのバッチ自身の送信**を
-必ず含むので、候補数は batchSize に比例する。実測 **0.96 blob/名**（197 名 → 189 blob）:
+**blob 数はおおむね送信量に比例**する。健全性の窓はその回の送信を含むので、
+旧 `MAX_EVENT_BLOBS = 200` は送信量が増えるほど当たりやすくなる
+（本番実測: 197 名ぶんの窓で候補 189、上限まで余裕 11 件）。
 
-| batchSize | 窓内候補 blob（外挿） | 旧 `MAX_EVENT_BLOBS=200` |
+⚠️ **運転手の進み方の正確な記述**（旧版の書き方を訂正）:
+`batchSize=500` は**論理バッチ**で、1 つの health window に 500 名ぶんが
+まとめて入るわけではない。実際は
+**付与 → queue → dispatch → `outstanding === 0` → 次の付与**
+を繰り返して論理バッチを満たす（1 回の付与呼び出しは
+`HARD_MAX_BATCH_SIZE` / `GRANT_OPERATION_MAX` が上限）。
+health window は**その 1 回ぶん**を見る。
+**`batchSize=500` / `dailyLimit=15000` はこの PR で変更していない。**
+
+そこで**件数と時間を分離**した:
+
+| 歯止め | 値 | 位置づけ |
 |---|---|---|
-| 200 | 約 192 | 収まる |
-| **500**（本番設定） | **約 480** | **超過 → null** |
+| `READ_DEADLINE_MS` | **8000 ms** | **これが真の制約**。`list` + 全 `get` を**同じ budget** に入れ、超えたら `null` |
+| `BLOB_READ_CONCURRENCY` | **12** | 逐次だと候補数ぶん時間がかかるので並列化 |
+| `MAX_EVENT_BLOBS` | `HARD_MAX_BATCH_SIZE × 4` = **2000** | **単なる backstop**（際限なく `get` を積まないため） |
 
-つまり**窓の絞り込みだけでは 500 名バッチは通らない**。残っていたのは
-`MAX_EVENT_BLOBS` の**費用モデル**そのもの（候補を**逐次 `get()`** するので、
-件数上限が Function 時間の代理指標になっていた）。そこで**件数と時間を分離**した:
+⚠️ `MAX_EVENT_BLOBS` は **「この件数までなら必ず読める」という保証ではない。**
+候補 blob には**同じ時間帯の別 campaign / 別 touch の webhook** も入り得るので、
+**「500 × 4 なら構造的に必ず収まる」とは言えない**。収まらなければ従来どおり
+`null`（fail closed）で止まる。
 
-| 歯止め | 値 | 根拠 |
-|---|---|---|
-| `MAX_EVENT_BLOBS` | `HARD_MAX_BATCH_SIZE × EVENTS_PER_RECIPIENT_ALLOWANCE` = **500 × 4 = 2000** | 1 回の付与は `HARD_MAX_BATCH_SIZE`（`lightTrialAutoGrant.js` = 500 名）を超えない。blob ≒ イベント ≒ 人数なので、**構造上限から導く**（マジックナンバーにしない） |
-| `READ_DEADLINE_MS` | **8000 ms** | 既存の時間歯止め `emailEventLedgerWriter.js` の `LEDGER_TOTAL_DEADLINE_MS = 8000` に合わせる。健全性は 1 tick の一部（他に Airtable 読みもある）なので短めに取る |
-| `BLOB_READ_CONCURRENCY` | **12** | 逐次だと候補数ぶん時間がかかる。並列化して**時間側で止められる**ようにする |
+### 締切を**本当の wall-clock** にする（前版の欠陥修正）
 
-⚠️ **「上限を 2000 へ上げるだけ」にはしていない。** 本当の制約は時間なので、
-締切を過ぎたら**途中結果を返さず `null`**（少なく数えるのが一番危ない）。
-件数上限は backstop に降格し、`HARD_MAX_BATCH_SIZE` から導いて直書きを避けた。
+前版の `readCandidates` は `get` の**前**にしか時刻を見ておらず、
 
-⚠️ **並列にしても数え方は変わらない。** `summarizeEventWindow` は
-`providerEventId` で重複を除いて件数を足すだけで**順序に依存しない**。
-並列度 1 / 7 / 12 で結果が一致することをテストで固定した。
+```js
+if (nowFn() >= deadlineAtMs) ...
+await store.get(...)          // ← これ自体が遅延・ハングしたら止められない
+```
 
-⚠️ Function 内の実測レイテンシは deploy 無しには取れないため、
-**時間は「測って上げる」のではなく「超えたら止める」で担保**している。
+`Promise.all` がその未完了 `get` を待つため、**「8 秒で fail closed」は実装できていなかった**。
+`store.list()` も budget の起算前だった。**実測でも旧版はテストプロセスごとハングした**
+（`exit 142` / 36 件中 26 件で停止）。新版は **1.77 秒で正常終了**する。
 
-### 変えていないもの### 変えていないもの### 変えていないもの
+#### SDK 側の abort 可否（`@netlify/blobs` v10.7.9 を実装で確認）
+
+| 調べた点 | 結果 |
+|---|---|
+| `GetOptions` / `ListOptions` に `signal` / `timeout` | **無い**（`GetOptions` は `consistency` のみ） |
+| `getStore({ name, fetch })` で **fetch 差し替え** | **できる**（`ClientOptions.fetch?: Fetcher` → `getClientOptions` が `fetch: options.fetch` を Client へ渡す）。実測で custom fetch が呼ばれることを確認 |
+| `fetchAndRetry` の再試行 | **429 / 5xx / throw** を最大 5 回・5 秒 sleep で再試行。**abort を throw で返すと budget を壊す** |
+| `408` の扱い | 再試行**されない**（実測 1 回・12ms）。`Store.get` / `Store.list` が `BlobsInternalError` を投げる |
+
+→ 二層で守る:
+
+1. **実 I/O の中断**: `createDeadlineFetch()` を `getStore({ fetch })` へ差し込み、
+   残り時間の `AbortController` を付けて**ソケットごと切る**。
+   失敗は **throw せず `408`** を返す（`fetchAndRetry` に再試行させないため）。
+   通信の一時失敗も再試行せず fail closed に倒す（健全性は「読めなければ止まる」が正しい）。
+2. **必ず返る保証**: `raceDeadline()` で `list` / 各 `get` を実時間と競走させる。
+   SDK や差し替え store が abort を尊重しなくても**必ず `null` で返る**。
+   締切タイマーは `unref()` し、破棄する promise には `catch` を付けて
+   **未完了 I/O が event loop を保持しない**（新実装が 1.77 秒で終了することで実測確認）。
+
+⚠️ 締切に当たったら**部分集計を絶対に返さない**（少なく数えるのが一番危ない）。
+
+### 変えていないもの### 変えていないもの### 変えていないもの### 変えていないもの
 
 - `emailEventBlobStore.js` の **append-only / manifest 無し**設計（日次 1 blob への
   read-modify-write のような multi-writer 競合を作らない）
@@ -150,7 +182,7 @@ replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGri
 
 ### テスト
 
-`eventWindowReader.test.mjs` を新設（**25 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+`eventWindowReader.test.mjs` を新設（**36 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
 
 同日 500 件超でも窓内 200 以下なら読める / 窓外は `get` しない（日全体を全 get しない）/
 窓内が上限超過なら `null` / DeliveryKey 外・他 campaign・`eventAtMs` 窓外を混ぜない /
@@ -158,11 +190,14 @@ replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGri
 list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob は捨てない /
 `deliveryKeys` が無い・空なら 1 つも事前除外しない / 存在しない日付（4/31・非閏年 2/29）と
 秒 60・分 60・時 24 は `null` /
-**500 名バッチ相当（481 blob）が読める**（旧上限 200 なら null だった）/
-締切超過は途中結果を返さず `null` / 並列度 1・7・12 で件数が一致 /
-上限は `HARD_MAX_BATCH_SIZE × 4` から導く（値の直書き禁止）。
+481 blob でも読める（旧上限 200 なら null だった）/ 並列度 1・7・12 で件数が一致 /
+**`get` が締切より遅い・永久に resolve しない → 実 wall-clock で null**（Function timeout を待たない）/
+**`list` が締切超過・hang → null**（get を 1 件も始めない）/
+**最後の 1 件だけ超過でも部分結果を成功扱いにしない** / **並列 lane の 1 本だけ hang → 全体 null** /
+全件が予算内なら従来どおり集計 / `createDeadlineFetch` が実 I/O へ `AbortSignal` を渡し、
+締切超過・通信失敗を再試行されない `408` にする。
 
-`test:marketing` 2,062 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`test:marketing` 2,073 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
 `check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII 0 件・
 `package.json` / `package-lock.json` 変更なし。
 
