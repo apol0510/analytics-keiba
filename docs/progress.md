@@ -1,46 +1,54 @@
-## 2026-08-18 — 【進行中】トップ results-showcase プレビューを「全体実績 → 全レース → メイン買い目」へ改訂（PR 準備中）
+## 2026-08-18 — 【進行中】トップ実績プレビューを「全レース実績」主役へ再設計（PR #368 Draft）
 
 ### 目的
 
-初版は代表メインレースだけを大きく見せていたため、**メインが不的中の日に当日全体の実績まで悪く見えた**。
-トップ上部でもその日の全レース実績が一目で分かるようにする。
+初版は代表メインレースの配信買い目をトップに大きく出していたため、
+**メインが不的中の日に当日全体の実績まで悪く見えた**。
+トップの主役を「その日の全レース実績」に置き換える。
 
-### 変更内容
+### 確定した仕様（同日 2 度の改訂を経て確定）
 
-表示順を **① 当日の全体実績（的中数/総レース数・回収率）→ ② 全会場・全レースの ✅/✗ →
-③ 代表メインの実際の配信買い目（詳細）** に組み替えた。
+| 項目 | 決定 |
+|---|---|
+| トップの構成 | ① 当日の全体実績（的中数/総レース数・回収率）→ ② 全会場・全レースの ✅/✗ → ③ 導線 |
+| トップの買い目・払戻 | **表示しない**（マークアップだけでなく**データとして持たない**） |
+| メイン強調 | **やめる**（金枠等なし・全レース同列） |
+| メイン買い目の公開先 | **`/results-showcase/{jra,nankan}` 側のみ。そちらの表示は変更しない** |
+| JRA 複数会場 | 全会場・全レース（中京・新潟・札幌 × 12R = 36 レース） |
+
+`resultsShowcasePreview.js` は `mainRace` / `honmei` / `displayPartners` / `payout` /
+`combination` を**戻り値に含めない**。隠すのではなく持たないことで漏れを防ぐ。
+
+### 変更ファイル
 
 | ファイル | 変更 |
 |---|---|
-| `astro-site/src/lib/resultsShowcasePreview.js` | `venueGroups`（全会場・全レース）を追加。`buildLatestShowcase()` の `venueGroups[].races[]` を**そのまま渡すだけ**で、集計も並べ替えもしない |
-| `astro-site/src/components/HomeResultsShowcasePreview.astro` | 全体実績ブロック → 全レース一覧（会場別チップ）→ メイン詳細 の順に再構成 |
-| `astro-site/src/lib/resultsShowcasePreview.test.mjs` | 13 → **21 ケース**。全会場網羅 / 一覧は ✅/✗ のみ / 表示順 guard を追加 |
-| `astro-site/docs/RESULTS_SHOWCASE.md` | 正本へ改訂仕様を追記 |
+| `astro-site/src/lib/resultsShowcasePreview.js` | 買い目・払戻を返さない形へ書き換え。`venueGroups`（全会場・全レース）のみ |
+| `astro-site/src/components/HomeResultsShowcasePreview.astro` | メイン詳細ブロックと強調スタイルを削除。全体実績 → 全レース → CTA |
+| `astro-site/src/lib/resultsShowcasePreview.test.mjs` | **17 ケース**へ再構成（買い目非露出 / 全レース網羅 / メイン非強調 / 表示順 guard） |
+| `astro-site/docs/RESULTS_SHOWCASE.md` | 正本へ確定仕様を反映 |
 
-### 正本の遵守
-
-- 新しい結果 JSON も独自集計も作らない（`buildLatestShowcase()` の戻り値の再利用のみ）
-- **非メインは ✅/✗ のみ**。渡す race は `raceNumber` / `isHit` / `isMain` の 3 キーだけで、
-  買い目・払戻を持たせない（テストで固定）
-- メインだけ実際の配信買い目を表示（抑え非公開・`displayArrow` / `displayPartners` は単一源のまま）
-- JRA の複数会場開催は**全会場ぶん**（中京・新潟・札幌 × 12R = 36 レース）。メインは一覧内で金枠表示
-- 不的中も同じ視認性で表示（`✗` を薄くして隠さない）
-- データが無いカテゴリはカードごと非表示、両方無ければセクション自体を描画しない
+**`/results-showcase/*.astro` / `resultsShowcase.js` / `ResultsShowcaseBanner.astro` /
+`mainRaceBetting.js` は無変更**（`git diff origin/main...HEAD` で確認済み）。
 
 ### 縦の長さ（実測）
 
 | viewport | セクション高 | 12R 一覧 |
 |---|---|---|
-| PC 1280px | 約 614px（カード 2 列・各 511px） | 1 行 |
-| スマホ 390px | 約 1,074px（初版比 −106px） | 2 行 |
+| PC 1280px / 1100px | 約 **451px** | 1 行 |
+| PC 900px（分岐直上） | 約 522px | 2 行 |
+| スマホ 390px / 360px | 約 **729px** | 2 行 |
 
-スマホは会場名を一覧の左へ回り込ませ、1 会場につき 1 行ぶん詰めた。
+初版 1,180px → 改訂 1,074px → 今回 **729px**（スマホ）。
 
-### 検証
+### 現在の状態
 
-`test:results-showcase` 21/21 / `check:safety` exit 0 / `build` 成功（SSR 関数 101.8MB）/
-`check:ssr-runtime-data` OK / secret・PII なし / `package-lock.json` 変更なし。
-本番の `/results-showcase/jra/` の一覧と**同じ ✅/✗ 並び**になることを突合済み。
+| 項目 | 値 |
+|---|---|
+| branch | `feat/home-showcase-all-races` |
+| PR | **#368（Draft）** |
+| production 反映 | **未反映** |
+| merge | **未実施** |
 
 ---
 

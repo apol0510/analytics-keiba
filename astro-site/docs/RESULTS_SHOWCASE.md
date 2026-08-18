@@ -43,40 +43,50 @@
 | 独立ページ（prerender=false） | `src/pages/results-showcase/{jra,nankan}.astro` |
 | 無料ページ埋込バナー | `src/components/ResultsShowcaseBanner.astro`（category prop） |
 | 埋込先 | `src/pages/free-prediction/{jra,nankan}.astro`（dark-horse-link-section 直前） |
-| トップ上部プレビュー（ビュー選択のみ） | `src/lib/resultsShowcasePreview.js` / `src/lib/resultsShowcasePreview.test.mjs`（`npm run test:results-showcase`・`check:safety` 組込） |
+| トップ上部プレビュー（ビュー選択のみ・買い目を持たない） | `src/lib/resultsShowcasePreview.js` / `src/lib/resultsShowcasePreview.test.mjs`（`npm run test:results-showcase`・`check:safety` 組込） |
 | トップ上部プレビュー（表示） | `src/components/HomeResultsShowcasePreview.astro` |
 | 埋込先（トップ） | `src/pages/index.astro`（Hero Key Visual 直下 / Hero Section の前） |
 | nav | `src/layouts/BaseLayout.astro`。ナビ集約後、昨日の買い目は top-level ではなく「🏆 実績」ドロップダウン内の「💎 昨日の買い目」グループ（JRA/NANKAN）に格納。的中実績（アーカイブ）と同じ実績メニューにまとめて混同回避 |
 
-### トップページ上部プレビュー（2026-08-18 追加 / 同日 全レース一覧へ改訂）
+### トップページ上部プレビュー（2026-08-18 追加 / 同日 2 度の改訂）
 
 Hero Key Visual の直下・Hero Section の前に、`/results-showcase/{jra,nankan}` へ誘導する
 コンパクトプレビューを置く（PC 2 カラム / スマホ 1 カラム）。
 
-**表示順は ① 当日の全体実績 → ② 全会場・全レースの ✅/✗ → ③ 代表メインの配信買い目（詳細）で固定**。
-初版は代表メインだけを大きく見せていたため、**メインが不的中の日に当日全体まで悪く見えた**。
-先に全体実績と全レース一覧を認識させ、メイン買い目はその下の詳細として置く。
-この順序は `resultsShowcasePreview.test.mjs` の guard（マークアップ内の出現順を検査）で固定する。
+**構成は ① 当日の全体実績（的中数/総レース数・回収率）→ ② 全会場・全レースの ✅/✗ → ③ 導線 で固定。**
+
+#### トップでは買い目・払戻を出さない（確定仕様）
+
+初版は代表メインの配信買い目をトップに出していたが、
+
+1. 代表メインが目立ちすぎ、**メイン不的中の日に当日全体の実績まで悪く見えた**
+2. 主役を「その日の全レース実績」に置きたい
+
+という理由で、**トップからメイン買い目・払戻の表示を削除**した。
+
+- トップの主役は **的中数 / 総レース数・回収率・全レースの ✅/✗** の 3 点
+- **全レースを同列で表示する**。メインレースを金枠等で強調しない
+- `resultsShowcasePreview.js` は**買い目・払戻を戻り値に含めない**
+  （`mainRace` / `honmei` / `displayPartners` / `payout` / `combination` を返さない）。
+  マークアップ側だけで隠すのではなく**データとして持たない**ことで漏れを防ぐ。テストで固定
+- **メインレースの実際の配信買い目は `/results-showcase/{jra,nankan}` 側だけで公開する。
+  そちらの表示（メイン 5 点・抑え非公開・旧 `↔` 裏目的中の `⇄` 畳み込み）は変更しない**
+
+#### そのほかの原則
 
 - **集計を持たない**。`resultsShowcasePreview.js` は単一源 `buildLatestShowcase()` の戻り値から
   **選ぶだけ**のアダプタ。新しい結果 JSON・独自集計・固定の宣伝数値は作らない
   （全レース一覧も `venueGroups[].races[]` をそのまま渡すだけで、的中数を数え直さない）
-- 出す値は当日の **代表メインレースの配信買い目**（抑え非公開・単一源の `displayArrow` /
-  `displayPartners` をそのまま使う）、的中/不的中、的中時の払戻、当日の的中数/総レース数、回収率
-- **全レース一覧は正本どおり ✅/✗ のみ**。非メインの買い目・払戻は出さない
-  （渡す race は `raceNumber` / `isHit` / `isMain` の 3 キーだけ。テストで固定）
-- **JRA の複数会場開催は全会場ぶん**出す（例: 中京・新潟・札幌 × 12R = 36 レース）。
-  メインレースは一覧内で金枠ハイライトし、どれがメインか一覧上でも分かるようにする
+- **全レース一覧は正本どおり ✅/✗ のみ**。渡す race は `raceNumber` / `isHit` / `isMain` の
+  3 キーだけ（`isMain` は単一源の値を通すだけで**表示上の強調には使わない**）
+- **JRA の複数会場開催は全会場ぶん**出す（例: 中京・新潟・札幌 × 12R = 36 レース）
 - 不的中も同じ視認性で出す（実績なので `✗` を薄くして隠さない）
-- **代表メインは「最初にメインレースを持つ会場」を機械的に選ぶ**。的中した会場を優先して
-  選ぶ等の“良く見せる”並べ替えはしない（複数会場開催時は「他 N 会場のメインも公開」と件数だけ添える）
-- 回収率が無い日は項目ごと非表示（0% を捏造しない）。代表メインが作れないカテゴリは
+- 回収率が無い日は項目ごと非表示（0% を捏造しない）。表示できるレースが 1 つも無いカテゴリは
   **カードごと非表示**、両方無ければセクションを描画しない
-- 縦の長さは実測で管理する（2026-08-18 改訂時点: PC 1280px で約 614px /
-  スマホ 390px で約 1,074px。12R の一覧は PC 1 行・スマホ 2 行に収まる）
-- トップ下部の「昨日の的中結果」（`/archive/` 導線・買い目非公開）とは役割が異なる。
-  上部プレビューは **配信買い目そのものを見せて `/results-showcase/` へ送る**のが目的なので、
-  下部セクションに買い目を足して役割を重複させないこと
+- 縦の長さは実測で管理する（2026-08-18 時点: PC 1280px で約 451px / スマホ 390px で約 729px。
+  12R の一覧は PC 1 行・スマホ 2 行）
+- 表示順・買い目非表示・メイン非強調は `resultsShowcasePreview.test.mjs` の guard
+  （マークアップを直接検査）で固定する
 
 ### 運用の注意
 

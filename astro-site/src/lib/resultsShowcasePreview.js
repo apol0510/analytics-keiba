@@ -1,18 +1,18 @@
 // resultsShowcasePreview.js
 // ─────────────────────────────────────────────────────────────
-// トップページ上部の「有料版で実際に配信した買い目」プレビュー用ビュー。
+// トップページ上部の「当日の実績」プレビュー用ビュー。
 //
 // 方針:
 //   - 集計は一切しない。単一源 resultsShowcase.js の buildLatestShowcase() の
 //     戻り値から【選ぶだけ】の薄いアダプタ。
 //     （新しい結果 JSON も独自集計も作らない = RESULTS_SHOWCASE.md の確定仕様）
-//   - 買い目の公開範囲（メインのみ / 抑え非公開 / 旧 ↔ 裏目的中の畳み込み）は
-//     buildMainRace() が決めたものをそのまま使う。ここで再実装しない。
-//   - 代表メインは「最初にメインレースを持つ会場」を機械的に選ぶ。
-//     的中した会場を優先的に選ぶ等の“良く見せる”選び方はしない（実績の誇張禁止）。
-//   - 全レース一覧（✅/✗）も buildLatestShowcase() の venueGroups[].races[] をそのまま渡す。
-//     非メインは正本どおり **的中の有無のみ**で、買い目・払戻は持たせない
-//     （raceNumber / isHit / isMain の 3 キーだけ。ここで race レコードを触らない）。
+//   - トップでは **買い目・払戻を一切出さない**（2026-08-18 改訂）。
+//     主役は「的中数 / 総レース数・回収率・全レースの ✅/✗」。
+//     メインレースの実際の配信買い目は /results-showcase/{jra,nankan} 側だけで見せる。
+//     → そもそも買い目・払戻を **戻り値に含めない**ことで、トップ側から漏れないようにする。
+//   - 全レースは venueGroups[].races[] をそのまま渡す。非メインも含めて同列で、
+//     各レースは raceNumber / isHit / isMain の 3 キーのみ（買い目・払戻を持たない）。
+//     isMain は単一源の値をそのまま通すだけで、**表示上の強調には使わない**。
 // ─────────────────────────────────────────────────────────────
 
 import { buildLatestShowcase } from './resultsShowcase.js';
@@ -39,8 +39,8 @@ export function formatShowcaseDate(date) {
 /**
  * アーカイブ配列（index 0 = 最新日）→ トップページ用プレビュー1枚。
  *
- * 表示できる代表メインレース（＝実際に配信した買い目）が無い場合は null を返し、
- * 呼び出し側でカードごと非表示にする（空カードや作り物の数値を出さない）。
+ * 表示できるレースが 1 つも無い場合は null を返し、呼び出し側でカードごと
+ * 非表示にする（空カードや作り物の数値を出さない）。
  *
  * @param {Array} archiveArray archiveResults.json / archiveResultsJra.json の中身
  * @param {'jra'|'nankan'} category
@@ -51,21 +51,19 @@ export function buildShowcasePreview(archiveArray, category) {
   const view = buildLatestShowcase(archiveArray);
   if (!view) return null;
 
-  const groupsWithMain = (view.venueGroups ?? []).filter((g) => g && g.mainRace);
-  if (groupsWithMain.length === 0) return null;
-
-  const representative = groupsWithMain[0];
-  const recoveryRate = view.recoveryRate == null ? null : Number(view.recoveryRate);
-
-  // 全会場・全レースの ✅/✗ 一覧（JRA の 1 日 3 会場開催も全会場ぶん渡す）。
+  // 全会場・全レースの ✅/✗（JRA の 1 日 3 会場開催も全会場ぶん）。
   // buildShowcaseDay() が組んだ races をそのまま使い、ここでは集計も並べ替えもしない。
-  const venueGroups = (view.venueGroups ?? []).map((g) => ({
-    venue: g.venue,
-    totalRaces: g.totalRaces,
-    hasMain: !!g.mainRace,
-    mainRaceNumber: g.mainRace ? g.mainRace.raceNumber : null,
-    races: g.races,
-  }));
+  const venueGroups = (view.venueGroups ?? [])
+    .filter((g) => g && Array.isArray(g.races) && g.races.length > 0)
+    .map((g) => ({
+      venue: g.venue,
+      totalRaces: g.totalRaces,
+      races: g.races,
+    }));
+
+  if (venueGroups.length === 0) return null;
+
+  const recoveryRate = view.recoveryRate == null ? null : Number(view.recoveryRate);
 
   return {
     category,
@@ -75,15 +73,11 @@ export function buildShowcasePreview(archiveArray, category) {
     date: view.date,
     dateLabel: formatShowcaseDate(view.date),
     venueLabel: view.venueLabel,
+    // 当日の全体実績（単一源の値をそのまま使う）
     totalRaces: view.totalRaces,
     hitRaces: view.hitRaces,
     recoveryRate: Number.isFinite(recoveryRate) ? recoveryRate : null,
-    // 代表メイン（買い目本体は buildMainRace の戻り値をそのまま使う）
-    mainRace: representative.mainRace,
-    mainVenue: representative.venue,
-    // 同日に他会場のメインもある場合の件数（JRA の3会場開催など）
-    otherVenueCount: groupsWithMain.length - 1,
-    // 全会場・全レースの ✅/✗（非メインは的中の有無のみ）
+    // 全会場・全レースの ✅/✗（買い目・払戻は持たせない）
     venueGroups,
   };
 }
