@@ -1,3 +1,204 @@
+## 2026-08-18 — 【機能】販売停止中の直 URL を 404 にせず受付休止ページ＋再募集クーポン（PR #370 Draft・未 merge）
+
+### 今回の目的
+
+Premium Plus の販売を一時停止している会員が、**以前保存した直 URL**
+（`/premium-plus/` `/premium-plus-v2/`）へ来たときに 404 で追い返さず、
+受付休止のご案内を出し、募集再開時に使える優待クーポンを取得できるようにする。
+**販売停止そのものは維持する**（購入経路は閉じたまま）。
+
+停止は一時的な運用判断なのに、`denied()` 経路の 404 が「販売対象外になった」のと
+同じ見え方になり、検討済みのお客様を取りこぼしていた。
+
+### 確定仕様
+
+#### A. 変えないもの（回帰テストで固定）
+
+| | 停止中の挙動 |
+|---|---|
+| dashboard の Plus CTA | **従来どおり非表示**（`/api/upsell.json` は `channel=none`） |
+| 三連複ページの Plus 予告 | **従来どおり非表示** |
+| 商品ページの購入 CTA・価格・振込情報 | **出さない**（休止ページに購入導線は 1 つも無い） |
+| 申込 Function | **403 `sale_paused` / `sideEffects:'none'` のまま**（ファイル未変更） |
+| 販売資格 / override / PHASE anchor / 会員権 / 決済 | **一切書き換えない** |
+
+#### B. 誰に休止ページを出すか
+
+判定は単一源 `resolvePlusPauseNoticeView()`（`premiumPlusRelease.js`）→
+`resolveUpsellForCustomer().pauseNotice` で配る。
+**「停止フラグを外したら商品ページを見られたはずの人」だけ**に限定する。
+
+⚠️ `salePaused === true` だけを条件にしてはいけない。`denied()` は停止フラグを
+**全経路の戻り値に載せる**ため、route 未成立・`blocked`・無料会員にまで
+`salePaused:true` が付き、**商品の存在が漏れる**。
+
+| 会員 | 停止中の直 URL |
+|---|---|
+| 販売可（PHASE 3 以上）| **受付休止ページ 200** |
+| `blocked`（販売対象外）| 404（恒久判断を一時停止で上書きしない） |
+| `review`（保留）/ PHASE 2 以下 | 404 |
+| Plus の候補ではない（無料・Premium 加入直後 等）| 404 |
+| `UpsellTarget=none` / `sanrenpuku` | 404（管理者が別の導線を指定しているため） |
+
+#### C. 再募集クーポン（取得権であって、割引ではない）
+
+- 取得しても**権利は 1 ミリも増えない**。申込・課金・Premium 昇格・
+  **メール送信・queue 登録は一切発生しない**
+- 販売停止は解除しない（`PremiumPlusSalePaused` を 1 バイトも書かない）
+- 書くのは `PremiumPlusReopenCoupon*` の **3 フィールドだけ**
+  （`assertOnlyCouponFields` が PATCH 直前に機械的に検査）
+- 対象は **`ak_session` 由来の recordId のみ**。body の id / email は読まない
+- 取得済みなら **PATCH せず 200**（冪等・取得日時を上書きしない＝二重取得なし）
+- 対象外は **404**（存在秘匿。401/403 は使わない）／ gate off・PATCH 失敗は **503**
+  （保存できていないのに「取得した」と言わない）
+
+#### D. 割引条件は未確定のまま（創作しない）
+
+`promotionOfferCatalog.js`（価格の正本）に **Premium Plus 用の offer が 1 件も無い**。
+よって割引額・割引率・特別価格・有効期限は決まっておらず、
+`PP_REOPEN_COUPON.terms.determined = false` として**明示的に未確定のまま持つ**。
+顧客画面にも金額を出さず「募集再開時にご案内します」とだけ書く。
+
+> **`PromotionalOffers` へ 1 行積む案は採らなかった。**
+> あの台帳は「価格が入った購入条件」の台帳で、`offerFilterModel.js` /
+> `customerTimeline.js` / `recommendedActions.js` が `Status` / `ExpiresAt` /
+> `OfferPrice` を読んで顧客を分類している。価格も期限も無い行を混ぜると、
+> 割引オファーを 1 度も受け取っていない顧客が管理画面で
+> **「期限切れのオファーのみ」と表示される**（嘘の分類が生まれる）。
+
+#### E. 販売停止を解除したあとの扱い
+
+| | 解除後 |
+|---|---|
+| 取得済みクーポン | **そのまま残る**（取得日時も保持。期限未設定＝勝手に失効させない） |
+| 商品ページ | 通常の商品ページへ戻る（休止ページは出なくなる） |
+| クーポンページ | **取得済みの会員は引き続き閲覧できる**（状態確認のため） |
+| 新規取得 | **できない**（取得 CTA は案内対象のときだけ。`claimable: noticeTarget`） |
+| 販売資格 / PHASE | 停止前の状態がそのまま戻る（クーポンは判定に一切影響しない） |
+
+#### F. 再募集するときの手順
+
+1. `promotionOfferCatalog.js` に Premium Plus 用の `purchase_offer` を追加する
+   （**金額・割引率・TTL はそこが正本**。`/pricing/` との突き合わせ guard も効く）
+2. 管理画面「クーポン取得済み」で対象会員を抽出する
+3. 既存の offer 発行経路（`promotionalOffer.js` / `PromotionalOffers`）で発行する
+
+**本 PR は 1〜2 の抽出までしか用意していない。** 3 の発行・実メール送信・queue 登録・
+価格変更・課金は**含まない**。
+
+### 完成条件（すべて満たしたことを確認済み）
+
+- 停止中でも通常 CTA は非表示のまま
+- 停止中の商品直 URL が 404 ではなく受付休止ページ
+- 休止ページに購入 CTA・価格・申込導線が無い
+- 申込 Function は引き続き 403 `sale_paused`
+- クーポン取得成功 / 同一会員の二重取得なし / 他会員へ影響なし
+- 他会員のクーポンを閲覧できない
+- 非対象会員による取得 API 直打ちを防ぐ
+- 取得で eligibility / override / phase / anchor / plan / payment を変更しない
+- 取得でメール送信・queue 登録が発生しない
+- admin で取得済み状態と日時を確認できる
+- クーポンページは本人の状態のみ表示
+- 停止解除後も既存の資格状態を壊さない
+- 特定個人の name / email を hardcode していない
+
+### 実装済み
+
+| 目的 | ファイル |
+|---|---|
+| クーポン保有状態の単一源（純粋） | `src/lib/premiumPlus/premiumPlusReopenCoupon.js`（新規） |
+| 休止ページを出す条件（純粋） | `src/lib/premiumPlus/premiumPlusRelease.js` に `resolvePlusPauseNoticeView()` を追加 |
+| 顧客への配布 | `src/lib/upsell/upsellTarget.js` が `pauseNotice` を返す |
+| 休止 / クーポンページの HTML（純粋） | `src/lib/premiumPlus/premiumPlusPauseNoticePage.js`（新規） |
+| 取得 API | `src/pages/api/premium-plus-coupon.json.js`（新規・POST のみ） |
+| クーポンページ | `src/pages/premium-plus-coupon.astro`（新規・SSR・noindex） |
+| 商品ページの分岐 | `src/pages/premium-plus.astro` / `premium-plus-v2.astro` |
+| 管理一覧 / 詳細 | `netlify/functions/premium-plus-eligibility.js` / `src/pages/admin/premium-plus-eligibility.astro` |
+| キャッシュ無効化（1 件だけ） | `src/lib/premiumPlus/purchaseAnchorLookup.js` に `invalidateCustomerFields()` |
+| noindex | `public/robots.txt` に `/premium-plus-coupon/` |
+
+**HTML を .astro ではなくライブラリで組んだ理由**: 商品ページは 2,000 行超で、
+その中に休止分岐を差し込むと購入 CTA・価格・口座情報が漏れやすい。別ファイルにして
+「購入導線が 1 つも入っていない」ことを**文字列として検査できる**ようにした。
+
+**管理画面は 3 つの軸を混ぜない**:
+
+| 軸 | 何を表す | 表示 |
+|---|---|---|
+| 販売資格 | `PremiumPlusEligibility` / PHASE | 既存の資格バッジ（停止で動かさない） |
+| 販売の一時停止 | `PremiumPlusSalePaused` | `一時停止中`（琥珀）+ `fPause` |
+| **再募集クーポン** | 顧客本人が取得した事実 | `クーポン取得済み`（青緑）+ `fCoupon` + 件数 |
+
+クーポンは**管理者が付与・取消する操作を持たない**（顧客の取得でしか増えない）。
+
+### テスト結果
+
+```
+premiumPlusReopenCoupon.test.mjs      21 pass  冪等 / 禁止フィールド / gate / 未確定条件
+premiumPlusPauseNotice.test.mjs       20 pass  誰に出すか / 購入導線ゼロ / 停止解除で元に戻る
+pauseCouponHandler.smoke.test.mjs     13 pass  本物のハンドラを実行し PATCH 内容を検査
+pauseCouponWiring.guard.test.mjs      20 pass  配線 guard（申込 Function の 403 維持を含む）
+stagedReleaseGuard.test.mjs                    既存 404 guard を更新（休止分岐に購入導線が無いことを追加）
+
+check:safety                          exit 0
+build                                 exit 0（SSR 関数 102.4MB / 250MB）
+check:fn-no-undef / check:no-unbounded-scan / check:ssr-runtime-data   OK
+回帰: upsell 83 / promotions 120 / comeback 431 / entitlements 221 / bank-payment 271  すべて fail 0
+```
+
+`pauseCouponHandler.smoke.test.mjs` は構造 grep ではなく**実際にハンドラを呼ぶ**。
+Airtable は fetch をスタブし、送られた PATCH の中身をそのまま検査する
+（取得成功 / 二重取得なし / 他会員無影響 / body で他人指定しても自分だけ /
+未ログイン 404 / blocked 404 / gate off 503 / PATCH 失敗 503 / GET 不可）。
+
+### 現在地
+
+| 項目 | 値 |
+|---|---|
+| branch | `feat/premium-plus-pause-waitlist-coupon` |
+| PR | **#370（Draft・未 merge）** |
+| CI | **全 pass**（safety-check / Netlify deploy-preview / header・redirect rules） |
+| 本番反映 | **なし** |
+
+### 未実施（承認が要る操作）
+
+#### production schema（Airtable Customers・**未作成**）
+
+| 追加項目 | 型 | 用途 |
+|---|---|---|
+| `PremiumPlusReopenCouponClaimedAt` | 日時 | **取得日時。値があれば取得済み**（取得済みの唯一の根拠） |
+| `PremiumPlusReopenCouponId` | 単一行テキスト | クーポン定義（`premium-plus-reopen-priority@v1`） |
+| `PremiumPlusReopenCouponSource` | 単一行テキスト | 取得元（`pause-notice` / `coupon-page`） |
+
+⚠️ **チェックボックスを別に作らないこと。** 取得済みフラグと日時の 2 本立てにすると、
+片方だけ書けたときに「取得済みだが日時不明」というズレが生まれる。
+
+#### env（**未設定**）
+
+`PREMIUM_PLUS_REOPEN_COUPON_READY=1`（`PREMIUM_PLUS_FIELDS_READY=1` も併せて必要）。
+
+- 投入順序: **① Airtable で 3 フィールド作成 → ② env → ③ redeploy**
+- 有効化するまで取得は **503**（画面にもその旨を出す）。
+  **休止ページ自体は env 不要で動作する**
+- gate を停止フラグ（`PREMIUM_PLUS_SALE_PAUSE_READY`）と分けたのは、
+  未作成フィールドを含む PATCH が 422 で**他の更新まで巻き添えにする**ため
+
+#### その他（すべて未実施）
+
+PR merge / production deploy / 本番データ書込み / queue 登録 / 実メール送信 /
+クーポン利用による価格変更 / 課金 / Premium 昇格。
+
+### rollback
+
+| 段階 | 手順 |
+|---|---|
+| 取得だけ止める | **env `PREMIUM_PLUS_REOPEN_COUPON_READY` を unset → redeploy**。コード変更なしに取得が 503 へ戻る（休止ページは残る） |
+| 機能ごと戻す | **PR #370 を revert**。休止ページも消え、停止中の直 URL は元の 404 に戻る |
+| Airtable フィールド | **消さなくてよい**。読み取りに gate は不要で、値が無ければ「未取得」として扱う（既存機能に影響しない） |
+
+⚠️ env は kill switch ではない。**休止ページの表示自体は env に依存しない**ので、
+ページごと止めるには revert が要る。
+
 ## 2026-08-18 — 【修正】「送るべき人が正当にゼロ」を送信失敗にしない（dispatch_failed の誤検知）
 
 #367 を本番反映して展開を再開したところ、**別の理由**で自動停止した。
