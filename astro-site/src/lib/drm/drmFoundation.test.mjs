@@ -367,3 +367,225 @@ test('【重要】DRM 基盤は送信経路も書き込みも呼ばない（read
     }
   }
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  実 sequence への配線（E2E）
+//  `responseRoutes` を宣言した campaign だけで効き、
+//  未宣言なら既存の線形挙動を **1 ミリも変えない**。
+// ══════════════════════════════════════════════════════════════════
+
+import { getCampaign } from '../marketing/campaignCatalog.js';
+import { buildSequenceProgress } from '../marketing/sequenceProgress.js';
+import { resolveCustomerMarketing } from '../marketing/customerMarketingAudience.js';
+import { computeCampaignDeliveryKey } from '../marketing/campaignSend.js';
+import { resolveSequenceStep } from '../marketing/campaignSequence.js';
+import { resolveRoutedStep } from './drmRouting.js';
+
+const SEQ_BRAND = 'analytics-keiba';
+const SEQ_FROM = 'sender@example.com';
+const SEQ_NOW = Date.UTC(2026, 7, 19);
+const SEQ_BASE = getCampaign('light-trial-to-premium-sequence', { includeDisabled: true });
+
+function seqCustomer(over = {}) {
+  const fields = {
+    Email: 'u1@example.com',
+    LightGrantedAt: new Date(SEQ_NOW - DAY).toISOString(),
+    LightGrantUntil: new Date(SEQ_NOW + 29 * DAY).toISOString(),
+    ComebackGrantSource: 'light-trial-autogrant',
+    Source: 'customer-import:test',
+    ...over,
+  };
+  return { recordId: 'rec1', fields, marketing: resolveCustomerMarketing({ fields, nowMs: SEQ_NOW }) };
+}
+
+/** step1 を送信済みにする配信行 */
+function sentStep1() {
+  const k = computeCampaignDeliveryKey({
+    campaign: resolveSequenceStep(SEQ_BASE, 1), recipientEmail: 'u1@example.com',
+    brand: SEQ_BRAND, fromEmail: SEQ_FROM,
+  });
+  return [{
+    fields: {
+      DeliveryKey: k, CampaignType: `${SEQ_BASE.campaignId}:v${SEQ_BASE.version}`,
+      Status: 'sent', SentAt: new Date(SEQ_NOW - 3600_000).toISOString(), EmailType: 'campaign',
+    },
+  }];
+}
+
+const withRoutes = (responseRoutes) => ({
+  ...SEQ_BASE, sequence: { ...SEQ_BASE.sequence, responseRoutes },
+});
+
+function runSeq(campaign, responseByEmail, customer = seqCustomer()) {
+  return buildSequenceProgress({
+    campaign, selected: [customer], deliveries: sentStep1(),
+    brand: SEQ_BRAND, fromEmail: SEQ_FROM, nowMs: SEQ_NOW,
+    providerSuppressed: new Set(), softBounced: new Set(), responseByEmail,
+  }).rows[0];
+}
+
+test('【重要】responseRoutes 未宣言なら既存の線形挙動を完全維持', () => {
+  const plain = runSeq(SEQ_BASE, undefined);
+  assert.equal(plain.nextStep, 2, '線形（送信済み 1 → 次 2）が変わっている');
+  assert.equal(plain.routedBy, null);
+  // 反応を渡しても、宣言が無ければ何も変わらない
+  const withResp = runSeq(SEQ_BASE, new Map([['u1@example.com', { state: RESPONSE.OPENED, sentCount: 1 }]]));
+  assert.equal(withResp.nextStep, 2, '宣言が無いのに反応で行き先が変わっている');
+  assert.equal(withResp.routedBy, null);
+});
+
+test('【重要】opened の route があれば実際の次 touch が変わる', () => {
+  const camp = withRoutes([{ when: 'opened', step: 5, angle: 'social-proof', variant: 'proof-a' }]);
+  const r = runSeq(camp, new Map([['u1@example.com', { state: RESPONSE.OPENED, sentCount: 1 }]]));
+  assert.equal(r.nextStep, 5, '反応で行き先が変わっていない');
+  assert.equal(r.routedBy, 'opened:5');
+  assert.equal(r.angle, 'social-proof');
+  assert.equal(r.variant, 'proof-a');
+});
+
+test('【重要】unknown は反応前提の route へ入らず線形へ戻る', () => {
+  const camp = withRoutes([{ when: 'opened', step: 5 }]);
+  const r = runSeq(camp, new Map([['u1@example.com', { state: RESPONSE.UNKNOWN, sentCount: 1 }]]));
+  assert.equal(r.nextStep, 2, 'unknown で反応前提の枝へ入っている');
+  assert.equal(r.routedBy, null);
+});
+
+test('【重要】反応が渡されていなくても線形へ戻る（推測しない）', () => {
+  const camp = withRoutes([{ when: 'opened', step: 5 }]);
+  assert.equal(runSeq(camp, undefined).nextStep, 2);
+  assert.equal(runSeq(camp, new Map()).nextStep, 2);
+});
+
+test('【重要】購入者には次 touch を作らない（停止が最優先）', () => {
+  const camp = withRoutes([{ when: 'purchased', step: 6 }, { when: 'opened', step: 5 }]);
+  const cust = seqCustomer({ 'プラン': 'Premium', PlanType: 'Annual', Status: 'active', 有効期限: new Date(SEQ_NOW + 200 * DAY).toISOString() });
+  const r = runSeq(camp, new Map([['u1@example.com', { state: RESPONSE.PURCHASED, sentCount: 1 }]]), cust);
+  assert.equal(r.nextStep, null, '購入者に次の送り先を作っている');
+  assert.equal(r.stopReason, 'purchased');
+});
+
+test('【重要】送信対象外には次 touch を作らない', () => {
+  const camp = withRoutes([{ when: 'suppressed', step: 6 }, { when: 'opened', step: 5 }]);
+  const cust = seqCustomer({ MarketingUnsubscribedAnalyticsKeiba: true, UnsubscribedAnalyticsKeiba: true });
+  const r = runSeq(camp, new Map([['u1@example.com', { state: RESPONSE.SUPPRESSED, sentCount: 1 }]]), cust);
+  assert.equal(r.nextStep, null, '送信対象外に送り先を作っている');
+  assert.ok(r.stopReason, '停止理由が無い');
+});
+
+test('【重要】route が既送 step を指しても二重送信しない（線形へ戻る）', () => {
+  const camp = withRoutes([{ when: 'opened', step: 1 }]);   // step1 は既に送信済み
+  const r = runSeq(camp, new Map([['u1@example.com', { state: RESPONSE.OPENED, sentCount: 1 }]]));
+  assert.equal(r.nextStep, 2, '既に送った step へ戻している');
+  assert.equal(r.routedBy, null);
+});
+
+test('【重要】resolveRoutedStep は既送 step / 上限超過 / 反応なしで null（線形へ）', () => {
+  const routes = [{ when: 'opened', step: 5 }];
+  const resp = { state: RESPONSE.OPENED, sentCount: 1 };
+  assert.equal(resolveRoutedStep({ routes, response: resp, sentSteps: [5], linearStep: 2, maxSends: 6 }), null);
+  assert.equal(resolveRoutedStep({ routes, response: resp, sentSteps: [1], linearStep: 2, maxSends: 4 }), null);
+  assert.equal(resolveRoutedStep({ routes, response: null, sentSteps: [1], linearStep: 2, maxSends: 6 }), null);
+  assert.equal(resolveRoutedStep({ routes: [], response: resp, sentSteps: [1], linearStep: 2, maxSends: 6 }), null);
+  const ok = resolveRoutedStep({ routes, response: resp, sentSteps: [1], linearStep: 2, maxSends: 6 });
+  assert.equal(ok.step, 5);
+});
+
+test('【重要】DRM routing は停止条件も頻度 guard も上書きしない（責務の分離）', () => {
+  const code = codeOf('drmRouting.js');
+  for (const f of ['frequencyCap', 'minIntervalDays', 'sendable', 'providerSuppressed']) {
+    assert.equal(code.includes(f), false, `routing が ${f} を判定している`);
+  }
+  // 実配線側でも、停止判定より後にだけ効いていること
+  const seq = readFileSync(new URL('../marketing/sequenceProgress.js', import.meta.url), 'utf8');
+  assert.ok(seq.indexOf('if (hasPurchased(mk)) return stop') < seq.indexOf('resolveRoutedStep('),
+    '停止判定より前に routing を通している');
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  sent と delivered を混同しない（API 側の契約）
+// ══════════════════════════════════════════════════════════════════
+
+test('【重要】DRM の面が sent を delivered として代用していない', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async function handleDrm({'), src.indexOf('async function handleRollout({'));
+  assert.equal(/delivered: Number\(t\.sent\)/.test(fn), false, 'sent を delivered に写している');
+  assert.equal(/delivered: Number\(row\.sent\)/.test(fn), false, 'touch 別で sent を delivered に写している');
+  assert.ok(/delivered: null/.test(fn), 'delivered を未計測として返していない');
+  assert.ok(/delivered: MEASURE\.UNKNOWN/.test(fn), 'delivered の計測状態を unknown にしていない');
+});
+
+test('【重要】未計測の delivered を sent で補完しない（funnel 側）', () => {
+  const f = buildDrmFunnel({
+    sent: 500, delivered: null, purchased: 5,
+    deliveredState: MEASURE.UNKNOWN, openState: MEASURE.UNKNOWN, clickState: MEASURE.DISABLED,
+  });
+  assert.equal(f.sent, 500);
+  assert.equal(f.delivered, null, 'delivered を sent で埋めている');
+  assert.equal(f.cvrOnDelivered, null, '到達基準 CVR を作ってしまっている');
+  assert.equal(f.cvr, 5 / 500, '送信基準の CVR は出せる');
+});
+
+test('【重要】排他的に数えられないときは segment を null にする（累積指標を層と呼ばない）', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async function handleDrm({'), src.indexOf('async function handleRollout({'));
+  assert.ok(/segmentCounts: null/.test(fn), '排他的でない人数を返している');
+  assert.ok(/per_customer_unavailable/.test(fn), '理由を返していない');
+  assert.ok(/count: null/.test(fn), 'segment ごとに人数を出してしまっている');
+});
+
+test('【重要】顧客単位で数えるときは 1 人 1 state（排他）', () => {
+  const states = [
+    { state: RESPONSE.OPENED }, { state: RESPONSE.OPENED },
+    { state: RESPONSE.PURCHASED }, { state: RESPONSE.UNKNOWN },
+  ];
+  const seg = summarizeSegments(states);
+  const sum = Object.values(seg.counts).reduce((a, b) => a + b, 0);
+  assert.equal(sum, seg.total, '合計が人数と一致しない（重複して数えている）');
+  assert.equal(seg.total, 4);
+});
+
+test('【重要】click 未計測を direct 0 件として見せない', () => {
+  const s = summarizeAttribution([
+    { attribution: ATTRIBUTION.UNATTRIBUTED, step: null },
+  ], { clickMeasured: false });
+  assert.equal(s.byAttribution.direct, 0);
+  assert.equal(s.clickMeasured, false, 'click を測っていない事実を持ち回っていない');
+  // 画面は clickMeasured=false を見て「0 件」ではなく「測っていない」と出す
+});
+
+test('【重要】DRM の面が決済メール v2 のフィールドへ触れない（既存 guard を守る）', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  for (const banned of ['PaymentEmailSent', 'PaymentEmailStatus', 'PaymentConfirmed', 'PaidAt']) {
+    assert.equal(src.includes(banned), false, `${banned} に触れている`);
+  }
+});
+
+test('【重要】購入時刻が読めないときは推測せず unattributed（理由つき）', () => {
+  const r = attributePurchase({
+    purchasedAtMs: null,
+    touches: [{ step: 2, deliveryKey: 'k2', campaignId: 'c', version: 1, sentAtMs: T0, openedAtMs: T0 }],
+    clickMeasured: false,
+  });
+  assert.equal(r.attribution, ATTRIBUTION.UNATTRIBUTED);
+  assert.equal(r.reason, 'no_purchase_time');
+  assert.equal(r.step, null, '推測で step を埋めている');
+});
+
+test('【重要】帰属できない理由を返す（0 件＝効果なし、と読ませない）', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async function handleDrmCohort({'), src.indexOf('async function handleDrm({'));
+  assert.ok(/attributionLimits/.test(fn), '帰属の限界を返していない');
+  assert.ok(/clickMeasured: false/.test(fn), 'click 未計測を明示していない');
+  assert.ok(/purchaseTimeAvailable: false/.test(fn), '購入時刻を読めない事実を明示していない');
+});
+
+test('【重要】drmCohort は名指しのみ・全件走査しない・書き込まない', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async function handleDrmCohort({'), src.indexOf('async function handleDrm({'));
+  assert.ok(/recordIds/.test(fn), '宛先を名指ししていない');
+  assert.ok(/DUPLICATE_CHECK_MAX/.test(fn), '件数上限が無い');
+  assert.ok(/buildDeliveryKeyFormula/.test(fn), '名指し formula を使っていない');
+  for (const banned of ['createRecord', 'upsertDeliveries', 'patchRecord', "method: 'PATCH'", 'sendgrid']) {
+    assert.equal(fn.includes(banned), false, `書き込み/送信（${banned}）をしている`);
+  }
+});

@@ -166,4 +166,45 @@ export function summarizeSegments(states) {
   return { total, counts };
 }
 
+
+/**
+ * **実際の sequence で次の step を選ぶ**ときの判定（純粋）。
+ *
+ * ⚠️ ここは「送ってよい」と既存 `sequenceProgress` / `sequencePolicy` が
+ *    判断した**後**にだけ呼ばれる。停止条件・頻度 guard は**一切見ない**（上書きしない）。
+ * ⚠️ 次のどれかに当たれば **`null` を返して既存の線形へ戻す**（安全側）:
+ *      - 反応が分からない（`response` が無い）
+ *      - route が当たらない / 宣言が無い
+ *      - 選ばれた step が**既に送信済み**（同じ人へ二重送信しない・過去へ戻らない）
+ *      - 上限を超える
+ *
+ * @param {{routes: object[], response: object|null, sentSteps: number[],
+ *          linearStep: number, maxSends: number|null}} input
+ * @returns {{step:number, variant:string|null, angle:string|null, routeId:string}|null}
+ */
+export function resolveRoutedStep({
+  routes, response, sentSteps, linearStep, maxSends = null,
+} = {}) {
+  const list = Array.isArray(routes) ? routes : [];
+  if (list.length === 0) return null;                  // 宣言が無ければ既存挙動のまま
+  if (!response || !response.state) return null;       // 反応が読めない → 線形へ
+
+  const decided = routeNextTouch({ routes: list, state: response, maxSends });
+  if (!decided.matched) return null;                   // unknown 等はここで線形へ落ちる
+  const step = num(decided.step);
+  if (step === null) return null;                      // 終端・上限超過
+
+  // ⚠️ **既に送った step を選ばない**（二重送信・過去への逆戻りを構造的に防ぐ）
+  const sent = new Set((Array.isArray(sentSteps) ? sentSteps : []).map((n) => num(n)).filter((n) => n !== null));
+  if (sent.has(step)) return null;
+
+  const cap = num(maxSends);
+  if (cap !== null && step > cap) return null;
+  if (step === num(linearStep)) {
+    // 線形と同じ行き先なら、variant / angle だけ添えて返す（挙動は変わらない）
+    return { step, variant: decided.variant, angle: decided.angle, routeId: decided.routeId };
+  }
+  return { step, variant: decided.variant, angle: decided.angle, routeId: decided.routeId };
+}
+
 export default routeNextTouch;

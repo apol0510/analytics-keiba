@@ -39,6 +39,10 @@
 反応層 → 次の touch / variant / angle を**宣言で**選ぶ。
 キャンペーン固有ロジックを Function へ直書きしない。
 
+**実際の sequence へ配線済み**: `sequenceProgress.resolveRecipientProgress` が
+`campaign.sequence.responseRoutes` を宣言した campaign でだけ `resolveRoutedStep` を通す。
+`responseByEmail`（任意）を渡さない / 宣言が無い場合は**従来どおり完全に線形**。
+
 ```js
 sequence: {
   responseRoutes: [
@@ -54,14 +58,25 @@ sequence: {
 - **知らない `when` は採用しない**（勝手な条件を増やさない）
 - **`unknown` 用の route が無ければ既定の線形へ落とす**（推測で反応前提の枝へ入れない）
 - ⚠️ **`purchased` / `suppressed` には宣言があっても行き先を作らない**（`step: null`）。
-  停止は `sequencePolicy` が決めるが、**行き先を作らないことでも二重に塞ぐ**
+  停止は `sequencePolicy` / `sequenceProgress` が決めるが、**行き先を作らないことでも二重に塞ぐ**
+- ⚠️ **既に送った step は選ばない**（同じ人への二重送信・過去への逆戻りを構造的に防ぐ）
+- ⚠️ 停止判定を**通過した後**にしか効かない（`hasPurchased` の `stop()` より後ろに置いてある）
 
-### A/B（将来拡張）
+### A/B — **まだ運用できません**
 
-`variant` は**キャンペーン定義（コード）側の識別子**。
-`campaignId` / `version` / `step` と並べて使う。
-**新しい schema も列も要らない**（`DeliveryKey` は campaign × version × step × 受信者で既に一意なので、
-配信を分けたいときは既存作法どおり version か step を分ける）。
+`variant` は**キャンペーン定義（コード）側の識別子**で、route が返せるところまで作った。
+
+⚠️ **「A/B 実施可能」とは書かない。** 現状 `DeliveryKey` は
+campaign × version × step × 受信者で作られており、**variant を含まない**。
+そのため今は次が揃っていない:
+
+  - variant 別に**送り分ける**経路
+  - variant 別の**帰属**
+  - variant 別の**重複防止**（同じ人へ両方の variant が届かない保証）
+
+今回の到達点は **「将来 variant を識別できる routing 契約を持つ」まで**。
+実運用するには、既存作法どおり version か step を分けるか、
+`DeliveryKey` の作り方を変える設計判断が別途要る（本 PR では扱わない）。
 
 ## 3. conversion attribution（`drmAttribution.js`）
 
@@ -86,6 +101,10 @@ sent / delivered / open / click / purchase / CVR / touch 別 conversion / unattr
 ⚠️ **未計測を 0 にしない。** `crm/deliveryMeasurement.js` の 3 状態
 （`enabled` / `disabled` / `unknown`）をそのまま使い、数えてよいときだけ件数を返す（他は `null`）。
 ⚠️ **provider 受理（accepted）と delivered を混同しない。**
+`action:'drm'` の面は増分集計（送信側の数）しか持たないので、
+**delivered は `null` / `unknown`**。`sent` で代用しない。
+1 通単位の到達が要るときは `action:'drmCohort'`（宛先を名指し）で
+`deliveryEventIndex` から引く。
 ⚠️ **CVR の母数は送信済み。** 到達基準は `cvrOnDelivered` として別に持つ。
 ⚠️ 母数 0 なら率を作らない（`null`）。
 
@@ -100,6 +119,33 @@ sent / delivered / open / click / purchase / CVR / touch 別 conversion / unattr
 
 read-only API は `admin-marketing` の **`action: 'drm'`**（新しい Function を作らない）。
 増分集計（Redis）だけを読み、**正本の全件走査はしない**（`handleRollout` と同じ理由）。
+
+⚠️ この面では**反応層の人数を出さない**（`segmentCounts: null` /
+`segmentCountsReason: 'per_customer_unavailable'`）。
+`sent` / `opened` / `purchased` / `stopped` は**同じ人が複数に入る累積指標**で、
+1 人 1 state の排他的な層ではないため。
+
+### `action: 'drmCohort'`（bounded・実データ）
+
+`recordIds` で**宛先を名指し**して、その人たちだけを読む（上限は既存 `DUPLICATE_CHECK_MAX`）。
+ここでだけ次を返す:
+
+  - **1 人 1 state** の排他的な反応層（`segmentCounts`）
+  - 購入の帰属（`campaignId` / `version` / `step` / `DeliveryKey` / `offerKey` / confidence）
+
+⚠️ **いまは帰属が確定しません**（設計どおり `unattributed` のまま）。理由を 2 つとも返す:
+
+| 理由 | なぜ |
+|---|---|
+| `clickMeasured: false` | provider 側の click tracking が無効（有効化するとマジックリンクが壊れる） |
+| `purchaseTimeAvailable: false` | **この Function は決済メール v2 のフィールドに触れない**という既存契約（`offerCampaignFunction.guard.test.mjs`）があり、購入日時を読まない |
+
+⚠️ **帰属のためにその既存契約を緩めない。** 購入日時をどこから取るかは別途の設計判断で、
+本 PR では**推測で `direct` / `correlated` にしない**（`unattributed` + 理由を返す）方を選んだ。
+⚠️ したがって **「direct 0 件＝効果なし」ではない**。UI もその旨を出す。
+  - 1 通単位の到達・開封（`deliveryEventIndex` が読めたときだけ。読めなければ `unknown`）
+
+⚠️ 全件走査はしない。⚠️ 1 件も書かない。⚠️ アドレスは返さない。
 
 ## 6. safety
 

@@ -40,18 +40,57 @@
 
 ### テスト
 
-`src/lib/drm/drmFoundation.test.mjs`（**31 件**）。`test:drm` を新設し `check:safety` へ組み込み。
+`src/lib/drm/drmFoundation.test.mjs`（**49 件**）。`test:drm` を新設し `check:safety` へ組み込み。
 購入 > 停止 > クリック > 開封 の優先順 / 無料特典を購入に数えない /
 **click 未計測を 0 にしない** / open 未計測を「未開封」と断定しない /
 **unknown で反応前提の枝へ入れない** / 終端層へ行き先を作らない /
 知らない route 条件を採用しない / 窓の外・時刻不明は `unattributed` /
 **CVR の母数は送信済み** / 母数 0 なら率を作らない / DRM 基盤が書き込み・送信経路を呼ばない。
 
-`test:drm` 31 pass・`test:marketing` 2,094 pass・`test:comeback` 431 pass・
+`test:drm` 49 pass・`test:marketing` 2,094 pass・`test:comeback` 431 pass・
 `test:webhooks` 190 pass・`test:crm` 567 pass（いずれも fail 0 / cancelled 0）・
 `check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0。
 
 ⚠️ `package.json` は **scripts のみ**追加（`test:drm`）。依存は増やしていない（lock 不変）。
+
+### レビュー指摘の反映（2026-08-19）
+
+| # | 指摘 | 直したこと |
+|---|---|---|
+| 1 | `sent` を `delivered` に代用していた | 削除。この面は増分集計（送信側の数）しか持たないので **`delivered: null` / `measurement.delivered: unknown`**。1 通単位の到達が要るときは `drmCohort` で `deliveryEventIndex` から引く |
+| 2 | routing が表示だけで実経路に繋がっていない | `sequenceProgress.resolveRecipientProgress` へ **opt-in で配線**。`responseRoutes` 宣言済み campaign だけで効き、未宣言・反応なしは**完全に線形**。**停止判定を通過した後**にしか効かず、**既送 step は選ばない** |
+| 3 | attribution が実データへ繋がっていない | `action:'drmCohort'`（**名指し・bounded**）で実 touch 履歴から算出。ただし購入日時は**既存 guard により読まない**ので `unattributed` + 理由を返す（推測で direct にしない） |
+| 4 | 累積指標を segment と呼んでいた | `action:'drm'` では **`segmentCounts: null`**（`per_customer_unavailable`）。**1 人 1 state の排他的な人数は `drmCohort` でだけ**返す |
+| 5 | A/B 実施可能と読める記述 | 削除。`DeliveryKey` に variant が含まれないため、**variant 別の送信・帰属・重複防止は未完成**と明記。到達点は「将来 variant を識別できる routing 契約を持つ」まで |
+
+⚠️ **既存 guard を緩めていない。** `admin-marketing.js` は決済メール v2 のフィールド
+（`PaidAt` 等）に一切触れないまま（`offerCampaignFunction.guard.test.mjs` が通る）。
+
+### ⚠️ **まだ「完成」ではない**
+
+DRM の最終完成条件のうち、**購入の帰属だけが未達**。
+
+| 完成条件 | 状態 |
+|---|---|
+| response-driven routing が実 sequence で動く | ✅ |
+| `responseRoutes` 未定義なら既存挙動不変 | ✅ |
+| purchase / suppression 停止が最優先 | ✅ |
+| `sent` と `delivered` を混同しない | ✅ |
+| 未計測を 0 にしない | ✅ |
+| 顧客 segment は排他的（`drmCohort`） | ✅ |
+| 帰属不能は正直に `unattributed` | ✅ |
+| **利用可能な購入時刻正本があれば touch / DeliveryKey まで帰属** | ❌ **未達** |
+| duplicate send なし | ✅ |
+| operator UI で反応層・次訴求・conversion を確認できる | ✅ |
+
+**未達の理由**: 購入日時を読める正本が、`admin-marketing.js` の
+**決済メール v2 guard**（`offerCampaignFunction.guard.test.mjs`：`PaidAt` 等に触れない）を
+守ったまま使える形で見つかっていない。guard を緩めない判断をしたため、
+帰属は `unattributed` + 理由（`purchaseTimeAvailable: false`）に留まる。
+**推測で購入日時を作らない。**
+
+→ 別途 read-only で「guard を緩めずに使える購入日時・契約開始日時・
+checkout/purchase event の正本」を調査し、あれば接続する（本 PR の範囲外）。
 
 ### やっていないこと
 
