@@ -98,36 +98,40 @@ blob の受信時刻も必ず `sinceMs` より後。**受信時刻が `sinceMs` 
 
 → **今回の停止（`batch_stats_unreadable`）はこの修正で解消する。**
 
-### ⚠️ 残る構造的な欠落（この修正だけでは 500 名バッチは通らない）
+### 費用モデルも直す（500 名バッチが構造的に読めるようにする）
 
 replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGrid は実質
-**1 イベント 1 POST** で送ってくるため、`emailEventBlobStore` の
-「1 webhook バッチ = 1 blob」設計では **blob 数 ≒ イベント数 ≒ 送信人数**になる。
-健全性の窓は**そのバッチ自身の送信**を必ず含むので、候補数は batchSize に比例する:
+**1 イベント 1 POST** で送ってくるため、「1 webhook バッチ = 1 blob」設計では
+**blob 数 ≒ イベント数 ≒ 送信人数**になる。健全性の窓は**そのバッチ自身の送信**を
+必ず含むので、候補数は batchSize に比例する。実測 **0.96 blob/名**（197 名 → 189 blob）:
 
-実測比率 **0.96 blob/名**（197 名 → 189 blob）からの外挿:
-
-| batchSize | 窓内候補 blob（外挿） | `MAX_EVENT_BLOBS=200` |
+| batchSize | 窓内候補 blob（外挿） | 旧 `MAX_EVENT_BLOBS=200` |
 |---|---|---|
-| 100 | 約 96 | 収まる |
 | 200 | 約 192 | 収まる |
-| **300** | 約 288 | **超過 → null** |
-| **500**（現在の本番設定） | **約 480** | **超過 → null** |
-| 1000 | 約 959 | 超過 → null |
+| **500**（本番設定） | **約 480** | **超過 → null** |
 
-**本番は `batchSize=500`** なので、この修正だけで再開すると
-**同じ `batch_stats_unreadable` に再び当たる**（今回たまたま 200 名ぶんだったのは、
-1 回の付与上限が 200 名で、その 200 名ぶんの送信しか窓に入らなかったため）。
+つまり**窓の絞り込みだけでは 500 名バッチは通らない**。残っていたのは
+`MAX_EVENT_BLOBS` の**費用モデル**そのもの（候補を**逐次 `get()`** するので、
+件数上限が Function 時間の代理指標になっていた）。そこで**件数と時間を分離**した:
 
-これは**窓の絞り込みでは解けない**。窓はバッチ自身の送信を含む必要があるからで、
-残るのは `MAX_EVENT_BLOBS` の**費用モデル**そのもの
-（現コードは候補を**逐次 `get()`** するので、上限＝ Function 時間の代理指標）。
+| 歯止め | 値 | 根拠 |
+|---|---|---|
+| `MAX_EVENT_BLOBS` | `HARD_MAX_BATCH_SIZE × EVENTS_PER_RECIPIENT_ALLOWANCE` = **500 × 4 = 2000** | 1 回の付与は `HARD_MAX_BATCH_SIZE`（`lightTrialAutoGrant.js` = 500 名）を超えない。blob ≒ イベント ≒ 人数なので、**構造上限から導く**（マジックナンバーにしない） |
+| `READ_DEADLINE_MS` | **8000 ms** | 既存の時間歯止め `emailEventLedgerWriter.js` の `LEDGER_TOTAL_DEADLINE_MS = 8000` に合わせる。健全性は 1 tick の一部（他に Airtable 読みもある）なので短めに取る |
+| `BLOB_READ_CONCURRENCY` | **12** | 逐次だと候補数ぶん時間がかかる。並列化して**時間側で止められる**ようにする |
 
-⚠️ **この PR では `MAX_EVENT_BLOBS` を上げない。** 上げるなら
-「読みの並列化などで時間を実測して裏づける」ことが前提で、
-本番 Function 内の実測は deploy 無しには取れない。判断は分離する。
+⚠️ **「上限を 2000 へ上げるだけ」にはしていない。** 本当の制約は時間なので、
+締切を過ぎたら**途中結果を返さず `null`**（少なく数えるのが一番危ない）。
+件数上限は backstop に降格し、`HARD_MAX_BATCH_SIZE` から導いて直書きを避けた。
 
-### 変えていないもの### 変えていないもの
+⚠️ **並列にしても数え方は変わらない。** `summarizeEventWindow` は
+`providerEventId` で重複を除いて件数を足すだけで**順序に依存しない**。
+並列度 1 / 7 / 12 で結果が一致することをテストで固定した。
+
+⚠️ Function 内の実測レイテンシは deploy 無しには取れないため、
+**時間は「測って上げる」のではなく「超えたら止める」で担保**している。
+
+### 変えていないもの### 変えていないもの### 変えていないもの
 
 - `emailEventBlobStore.js` の **append-only / manifest 無し**設計（日次 1 blob への
   read-modify-write のような multi-writer 競合を作らない）
@@ -146,16 +150,19 @@ replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGri
 
 ### テスト
 
-`eventWindowReader.test.mjs` を新設（**18 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+`eventWindowReader.test.mjs` を新設（**25 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
 
 同日 500 件超でも窓内 200 以下なら読める / 窓外は `get` しない（日全体を全 get しない）/
 窓内が上限超過なら `null` / DeliveryKey 外・他 campaign・`eventAtMs` 窓外を混ぜない /
 `providerEventId` 再送を二重に数えない / soft bounce を hard にしない /
 list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob は捨てない /
 `deliveryKeys` が無い・空なら 1 つも事前除外しない / 存在しない日付（4/31・非閏年 2/29）と
-秒 60・分 60・時 24 は `null`。
+秒 60・分 60・時 24 は `null` /
+**500 名バッチ相当（481 blob）が読める**（旧上限 200 なら null だった）/
+締切超過は途中結果を返さず `null` / 並列度 1・7・12 で件数が一致 /
+上限は `HARD_MAX_BATCH_SIZE × 4` から導く（値の直書き禁止）。
 
-`test:marketing` 2,055 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`test:marketing` 2,062 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
 `check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII 0 件・
 `package.json` / `package-lock.json` 変更なし。
 

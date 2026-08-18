@@ -23,7 +23,7 @@ import {
   OUTCOME_FIELDS, WINDOW_FIELDS,
 } from './batchOutcomeSignals.js';
 import { summarizeEventWindow, classifyEvent, windowDates } from './batchEventWindow.js';
-import { readEventWindow } from './eventWindowReader.js';
+import { readEventWindow, MAX_EVENT_BLOBS } from './eventWindowReader.js';
 import { readBatchDeliveryKeys } from './batchDeliveryKeys.js';
 import { canStartNextBatch, BATCH_STOP } from './batchHealth.js';
 import { normalizeRolloutState, planRolloutTick, ROLLOUT_STAGE, ROLLOUT_BLOCK } from './rolloutPlan.js';
@@ -247,7 +247,9 @@ test('【重要】イベント台帳は読むだけ・全件走査しない（�
 });
 
 test('走査上限を超えたら数え切れないとして null', async () => {
-  const many = Array.from({ length: 300 }, (_, i) => ({ key: `k${i}` }));
+  // ⚠️ 上限は `HARD_MAX_BATCH_SIZE × 4` から導く定数。**値をここに直書きしない**
+  //    （直書きすると定数を変えたときにこの歯止めが黙って効かなくなる）
+  const many = Array.from({ length: MAX_EVENT_BLOBS + 1 }, (_, i) => ({ key: `k${i}` }));
   const store = { list: async () => ({ blobs: many }), get: async () => '' };
   const r = await readEventWindow({
     sinceMs: BATCH_START, untilMs: NOW, campaignId: CAMPAIGN, getStoreImpl: () => store,

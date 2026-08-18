@@ -17,8 +17,10 @@ import assert from 'node:assert/strict';
 
 import {
   readEventWindow, isBlobInWindow, parseBlobKeyReceivedAtMs,
-  MAX_EVENT_BLOBS, KEY_TIME_GRANULARITY_MS,
+  MAX_EVENT_BLOBS, KEY_TIME_GRANULARITY_MS, READ_DEADLINE_MS,
+  BLOB_READ_CONCURRENCY, EVENTS_PER_RECIPIENT_ALLOWANCE,
 } from './eventWindowReader.js';
+import { HARD_MAX_BATCH_SIZE } from '../comeback/lightTrialAutoGrant.js';
 import { buildBatchBlobKey } from '../webhooks/emailEventBlobStore.js';
 
 const CAMPAIGN = 'light-trial-to-premium-sequence';
@@ -366,4 +368,113 @@ test('【重要】不正・未知の鍵は捨てずに読む（scope があっ�
   });
   assert.equal(f.got.length, weird.length, '鍵を読めない blob を読み飛ばしてはいけない');
   assert.equal(res.complaints, 3);
+});
+
+// ── 費用モデル: 500 名バッチが構造的に読めること ─────────────────────
+test('【重要】上限は 1 バッチの構造上限から導く（500 名バッチが読めなくならない）', () => {
+  assert.equal(MAX_EVENT_BLOBS, HARD_MAX_BATCH_SIZE * EVENTS_PER_RECIPIENT_ALLOWANCE);
+  // 本番実測 1 blob ≒ 1.13 イベント。500 名バッチの最悪ケースが収まること
+  const worst = Math.ceil(HARD_MAX_BATCH_SIZE * 1.13);
+  assert.ok(MAX_EVENT_BLOBS > worst, `500 名バッチ（約 ${worst}）が上限 ${MAX_EVENT_BLOBS} を超える`);
+});
+
+test('【重要】500 名バッチ相当（480 blob）でも読める（旧上限 200 なら null だった）', async () => {
+  const since = DAY + 12 * 3600_000;
+  const mine = 'a'.repeat(64);
+  const blobs = {};
+  for (let i = 0; i < 480; i += 1) {
+    blobs[keyAt(since + i * 1000, i)] = ndjson([ev({
+      eventAtMs: since + i * 1000, deliveryKey: mine, eventType: 'delivered',
+    })]);
+  }
+  blobs[keyAt(since + 500_000, 700)] = ndjson([ev({ eventAtMs: since + 500_000, deliveryKey: mine })]);
+  const f = fakeStore({ blobs });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set([mine]), getStoreImpl: f.impl,
+  });
+  assert.notEqual(res, null, '500 名バッチぶんを読めていない');
+  assert.equal(res.complaints, 1);
+  assert.equal(res.blobsScanned, 481);
+  assert.ok(res.blobsScanned <= MAX_EVENT_BLOBS);
+  assert.ok(481 > 200, '旧上限 200 なら null になっていた規模であること');
+});
+
+// ── 時間の歯止め（**本当の制約**）──────────────────────────────
+test('【重要】締切を過ぎたら途中結果を返さず null（少なく数えない）', async () => {
+  const since = DAY + 12 * 3600_000;
+  const mine = 'a'.repeat(64);
+  const blobs = {};
+  for (let i = 0; i < 50; i += 1) {
+    blobs[keyAt(since + i * 1000, i)] = ndjson([ev({ eventAtMs: since + i * 1000, deliveryKey: mine })]);
+  }
+  const f = fakeStore({ blobs });
+  let clock = 0;
+  const nowFn = () => { clock += 1000; return clock; };   // 1 件ごとに 1 秒進む偽時計
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set([mine]), getStoreImpl: f.impl,
+    deadlineMs: 5000, nowFn, concurrency: 1,
+  });
+  assert.equal(res, null, '締切超過なのに件数を返している');
+  assert.ok(f.got.length < 50, '全件読んでしまっている');
+});
+
+test('締切に余裕があれば最後まで読む', async () => {
+  const since = DAY + 12 * 3600_000;
+  const mine = 'a'.repeat(64);
+  const blobs = {};
+  for (let i = 0; i < 20; i += 1) {
+    blobs[keyAt(since + i * 1000, i)] = ndjson([ev({ eventAtMs: since + i * 1000, deliveryKey: mine })]);
+  }
+  const f = fakeStore({ blobs });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set([mine]), getStoreImpl: f.impl,
+  });
+  assert.equal(res.blobsScanned, 20);
+  assert.equal(res.complaints, 20);
+});
+
+// ── 並列でも数え方が変わらない ─────────────────────────────────
+test('【重要】並列度を変えても件数が変わらない（順序に依存しない）', async () => {
+  const since = DAY + 12 * 3600_000;
+  const mine = 'a'.repeat(64);
+  const blobs = {};
+  for (let i = 0; i < 40; i += 1) {
+    blobs[keyAt(since + i * 1000, i)] = ndjson([
+      ev({ eventAtMs: since + i * 1000, deliveryKey: mine, providerEventId: `pe-${i}` }),
+      ev({ eventAtMs: since + i * 1000, deliveryKey: mine, providerEventId: 'pe-dup', eventType: 'unsubscribe' }),
+    ]);
+  }
+  const run = (concurrency) => readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set([mine]), getStoreImpl: fakeStore({ blobs }).impl, concurrency,
+  });
+  const [a, b, c] = await Promise.all([run(1), run(7), run(BLOB_READ_CONCURRENCY)]);
+  for (const r of [a, b, c]) {
+    assert.equal(r.complaints, 40);
+    assert.equal(r.unsubscribes, 1, '再送を二重に数えている');
+    assert.equal(r.blobsScanned, 40);
+  }
+});
+
+test('並列でも get 失敗は fail closed', async () => {
+  const since = DAY + 12 * 3600_000;
+  const mine = 'a'.repeat(64);
+  const blobs = {};
+  for (let i = 0; i < 30; i += 1) {
+    blobs[keyAt(since + i * 1000, i)] = ndjson([ev({ eventAtMs: since + i * 1000, deliveryKey: mine })]);
+  }
+  const f = fakeStore({ blobs, getThrows: true });
+  const res = await readEventWindow({
+    sinceMs: since, untilMs: since + 3600_000, campaignId: CAMPAIGN,
+    deliveryKeys: new Set([mine]), getStoreImpl: f.impl,
+  });
+  assert.equal(res, null);
+});
+
+test('既定の締切・並列度は既存の慣習に沿う', () => {
+  assert.equal(READ_DEADLINE_MS, 8000, '既存 LEDGER_TOTAL_DEADLINE_MS と同じ 8s');
+  assert.ok(BLOB_READ_CONCURRENCY >= 1 && BLOB_READ_CONCURRENCY <= 32);
 });

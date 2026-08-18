@@ -63,13 +63,45 @@
 
 import { parseNdjson, blobDatePrefix } from '../webhooks/deliveryEventBackfill.js';
 import { windowDates, summarizeEventWindow } from './batchEventWindow.js';
+import { HARD_MAX_BATCH_SIZE } from '../comeback/lightTrialAutoGrant.js';
 
 /**
- * 1 回の判定で **実際に読む（get する）** blob の数の上限。
+ * 1 通ぶんの窓で見込むイベント数の許容（delivered / open / bounce …）。
+ * 本番実測（2026-08-18）: 直前バッチ 197 名に対し窓内 blob **189**・NDJSON **213 行**
+ * ＝ 約 **0.96 blob/名**・約 1.08 イベント/名。**4 倍**を上限側の余裕として取る。
+ */
+export const EVENTS_PER_RECIPIENT_ALLOWANCE = 4;
+
+/**
+ * 1 回の判定で **実際に読む（get する）** blob の数の上限（**件数側の歯止め**）。
+ *
  * ⚠️ これは「その日の blob 数」ではなく**窓に関係する候補数**に当てる。
  *    日全体へ当てると、送信量が増えるだけで永久に読めなくなる（2026-08-18 の事故）。
+ *
+ * ⚠️ 値は経験則ではなく**バッチの構造上限から導く**。
+ *    `emailEventBlobStore` は **1 webhook バッチ = 1 blob** で、SendGrid は実質
+ *    1 イベント 1 POST（実測 1 blob ≒ 1.13 イベント）なので
+ *    **blob 数 ≒ イベント数 ≒ 送信人数**になる。健全性の窓は**そのバッチ自身の送信**を
+ *    必ず含むため、候補数は batchSize に比例する。
+ *    1 回の付与は `HARD_MAX_BATCH_SIZE`（= 500 名）を超えないので、
+ *    上限は `500 × 4 = 2000`。**これ未満だと 500 名バッチが構造的に読めない**
+ *    （200 のままだと約 480 候補で常に null になり、rollout が進めない）。
+ *
+ * ⚠️ 件数を増やしただけでは Function 時間が伸びる。**時間側の歯止めは
+ *    `READ_DEADLINE_MS`** で、読みは `BLOB_READ_CONCURRENCY` 本で並列化する。
  */
-export const MAX_EVENT_BLOBS = 200;
+export const MAX_EVENT_BLOBS = HARD_MAX_BATCH_SIZE * EVENTS_PER_RECIPIENT_ALLOWANCE;
+
+/**
+ * 候補の読み取りに使ってよい時間（**本当の制約はこちら**）。
+ * 既存の時間歯止め（`emailEventLedgerWriter.js` の `LEDGER_TOTAL_DEADLINE_MS = 8000`）に合わせる。
+ * ここは 1 tick の一部（他に Airtable 読みもある）なので短めに取り、
+ * 超えたら**数え切れていない**として `null`（fail closed）。
+ */
+export const READ_DEADLINE_MS = 8000;
+
+/** 同時に走らせる `get` の本数（1 件ずつ直列に読むと候補数ぶん時間がかかる） */
+export const BLOB_READ_CONCURRENCY = 12;
 
 /** blob store の名前（既存 backfill と同一） */
 export const EVENT_STORE = 'ak-email-events';
@@ -138,6 +170,41 @@ export function isBlobInWindow({
 }
 
 /**
+ * 候補を**並列**に読む。1 件でも失敗したら、締切を過ぎたら `null`（fail closed）。
+ *
+ * ⚠️ 並列にしても**数え方は変わらない**。`summarizeEventWindow` は
+ *    `providerEventId` で重複を除き、件数を足すだけなので**順序に依存しない**。
+ */
+async function readCandidates({ store, keys, concurrency, deadlineAtMs, nowFn }) {
+  const records = [];
+  let scanned = 0;
+  let broken = false;
+  let next = 0;
+  const lanes = Math.max(1, Math.min(concurrency, keys.length));
+  await Promise.all(Array.from({ length: lanes }, async () => {
+    for (;;) {
+      if (broken) return;
+      // ⚠️ 締切を過ぎたら**途中結果を返さない**（少なく数えるのが一番危ない）
+      if (nowFn() >= deadlineAtMs) { broken = true; return; }
+      const i = next;
+      next += 1;
+      if (i >= keys.length) return;
+      let text;
+      try {
+        // eslint-disable-next-line no-await-in-loop -- lane ごとに 1 件ずつ
+        text = await store.get(keys[i]);
+      } catch {
+        broken = true;
+        return;
+      }
+      scanned += 1;
+      if (text) records.push(...parseNdjson(text));
+    }
+  }));
+  return broken ? null : { records, scanned };
+}
+
+/**
  * @param {{sinceMs: number, untilMs: number, campaignId: string,
  *          deliveryKeys?: Set<string>|null, getStoreImpl?: Function,
  *          maxBlobs?: number}} input
@@ -145,7 +212,8 @@ export function isBlobInWindow({
  */
 export async function readEventWindow({
   sinceMs, untilMs, campaignId, deliveryKeys = null, getStoreImpl = null,
-  maxBlobs = MAX_EVENT_BLOBS,
+  maxBlobs = MAX_EVENT_BLOBS, deadlineMs = READ_DEADLINE_MS,
+  concurrency = BLOB_READ_CONCURRENCY, nowFn = Date.now,
 } = {}) {
   const dates = windowDates(sinceMs, untilMs);
   if (!dates || dates.length === 0) return null;
@@ -202,21 +270,14 @@ export async function readEventWindow({
   //    候補が多すぎる＝数え切れない → **0 と言わずに null**（呼び出し側が fail closed）
   if (candidates.length > maxBlobs) return null;
 
-  // ── ③ 候補だけ読む ─────────────────────────────────────────
-  const records = [];
-  let scanned = 0;
-  for (const key of candidates) {
-    let text;
-    try {
-      // eslint-disable-next-line no-await-in-loop -- blob ごとに 1 回
-      text = await store.get(key);
-    } catch {
-      return null;
-    }
-    scanned += 1;
-    if (!text) continue;
-    records.push(...parseNdjson(text));
-  }
+  // ── ③ 候補だけ読む（**並列 + 時間の歯止め**）─────────────────────
+  //    件数だけで止めると「読めるのに読まない」が起きるので、
+  //    本当の制約である**時間**で止める。超えたら 0 と言わずに null。
+  const read = await readCandidates({
+    store, keys: candidates, concurrency, deadlineAtMs: nowFn() + deadlineMs, nowFn,
+  });
+  if (read === null) return null;
+  const { records, scanned } = read;
 
   // ⚠️ campaign / DeliveryKey / eventAtMs 窓 / providerEventId 重複排除は
   //    `summarizeEventWindow` が単一源。ここでは**一切判定しない**。
