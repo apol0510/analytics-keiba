@@ -57,6 +57,122 @@
 
 production deploy / 実顧客データ書込み / 実メール送信 / schema 変更 / PR merge。
 **#372（Light trial rollout 修復）とは完全に分離**した別 branch・別 worktree。
+## 2026-08-19 — 【本番反映】受付休止ページ＋再募集クーポンを production 有効化（PR #370 squash merge / 取得テストは未実施）
+
+PR #370 を承認どおり **env → merge → deploy** の順で本番反映した。
+**顧客レコードへの書込みは 1 件も行っていない**（クーポン取得テストは実行直前で停止）。
+
+### 実施したこと
+
+| 手順 | 内容 | 結果 |
+|---|---|---|
+| ① Airtable | 3 フィールド作成（MK 手動）→ **read-only で型検証** | ✅ |
+| ② env | `PREMIUM_PLUS_REOPEN_COUPON_READY=1`（production） | ✅ |
+| ③ merge | PR #370 Ready → **squash merge**（HEAD `4acb53ae` を確定点に指定） | `b84e6afb` |
+| ④ deploy | Build Hook `analytics-keiba-auto-deploy`（branch=main）を curl | `ready` / commit `b84e6afb` |
+
+`gh pr merge --match-head-commit 4acb53ae…` を使い、**承認された HEAD 以外が混ざったら
+merge が失敗する**ようにした（承認時点と別物を本番へ入れないため）。
+
+### Airtable スキーマ（read-only 検証・2026-08-19）
+
+Meta API（`GET /v0/meta/bases/{base}/tables`）でスキーマのみ取得。
+**顧客レコードは 1 件も読んでいない**（PII 非接触）。
+
+| フィールド | type | 判定 |
+|---|---|---|
+| `PremiumPlusReopenCouponClaimedAt` | `dateTime` | ✅ options は既存 `PaidAt` と完全一致 |
+| `PremiumPlusReopenCouponId` | `singleLineText` | ✅ |
+| `PremiumPlusReopenCouponSource` | `singleLineText` | ✅ |
+
+- 想定外のクーポン系フィールド（チェックボックス等）**なし**
+  → 取得済み判定が `ClaimedAt` 単独のままで正しい
+- 照合は**コード側の定数（`PP_REOPEN_COUPON_WRITABLE_FIELDS`）を import してそのまま突き合わせ**、
+  検査スクリプトに文字列を書き写さないことで両側のタイポを排除した
+- Customers の fields 数: 64 → **95**
+
+### 反映後の read-only 確認
+
+#### 1. 本番（未ログイン・実 HTTP）
+
+| URL | 結果 |
+|---|---|
+| `/premium-plus/` `/premium-plus-v2/` `/premium-plus-coupon/` | **404**（存在秘匿） |
+| `GET` / `POST /api/premium-plus-coupon.json` | **404** |
+| `robots.txt` | `Disallow: /premium-plus-coupon/` **反映済み**（＝ deploy が生きている証拠） |
+
+#### 2. 本番 管理 Function（`action=list`・read-only・実データ）
+
+| 項目 | 実測 |
+|---|---|
+| readiness | `reopenCoupon: {writable:true, fieldsReady:true, termsDetermined:false}` |
+| 候補総数 / 一時停止中 | 17 名 / **1 名** |
+| 停止中会員（Premium Sanrenpuku）| 資格=**販売可 / PHASE4（即時販売）**・停止=**一時停止中** |
+| その会員の **CTA 実表示** | **表示なし（channel=none）** ＝ 通常導線は閉じたまま |
+| その会員の **クーポン** | **未取得**（`claimedAt` 空）・`coupon書込可=true` |
+| **クーポン取得済み（全体）** | **0 件** ＝ 書込みを 1 件も行っていない |
+| 他会員 16 名 | クーポン取得済み **0**・Plus CTA 実表示 2 名（従来どおり・**影響なし**） |
+
+#### 3. 会員向け画面（**本番セッションは作らない**／ローカル実 SSR）
+
+⚠️ **本番の本人セッションは作れない**ため、`.netlify/build/entry.mjs`
+（**本番と同一のビルド成果物**）を plain Node で直接叩き、Airtable は
+**合成レコード**（PII なし・停止中/販売可）を返す stub で確認した。
+**本番 Airtable へは 1 回も接続していない。**
+
+| URL | 結果 |
+|---|---|
+| `/premium-plus/` `/premium-plus-v2/` | **200・受付休止ページ**（見出し「現在、新規受付を休止しております」） |
+| `/premium-plus-coupon/` | **200・クーポンページ**（「未取得」＋取得 CTA） |
+| 3 ページ共通 | 購入CTA/申込/振込/決済 **なし** ・ 価格 **なし** ・「好評につき」等 **なし** ・ `noindex` あり ・ `Cache-Control: private, no-store` |
+
+**非対象へ漏れないこと**（同じバンドルで実測）:
+
+| 会員 | `/premium-plus/` |
+|---|---|
+| 停止中・販売可 | 200 受付休止ページ |
+| 停止中・**blocked** | **404** |
+| 停止中・**review** | **404** |
+| 停止中・`UpsellTarget=none` / `sanrenpuku` | **404** |
+| **無料会員** | **404** |
+| 停止していない販売可 | 200 **商品ページ**（従来どおり） |
+
+> ⚠️ 検証ハーネスの罠（記録として残す）: `lookupCustomerFields` は **recordId を鍵に
+> 10 分キャッシュ**する。ケースごとに recordId を使い回すと**前ケースの合成レコードが返り**、
+> 無料会員が 200 になる（＝実装ではなくテストの誤り）。**ケース毎に一意の recordId を使う。**
+
+#### 4. 申込 Function（ローカル実行・本番へは接続しない）
+
+停止中会員として `productName='Premium Plus'` で申込 →
+**`403` / `code='sale_paused'` / `sideEffects='none'`**、
+**Airtable 書込 0・SendGrid 送信 0**。仕様どおり変わっていない。
+
+### 現在地と次の 1 手（**停止中**）
+
+本番は「休止ページが出る・クーポン取得 API が有効・誰もまだ取得していない」状態。
+次は **取得テスト＝本番 Customers レコードへの初の書込み**になるため、**実行前で停止**した。
+
+- 対象: 一時停止中の会員 **1 名**（Premium Sanrenpuku / PlanType=Lifetime・三連複保有(旧プラン)）。
+  **2026-08-18 に MK が停止した Daniel のレコードと recordId が一致**することを read-only で確認済み
+  （記録は 2026-08-18「販売一時停止を本番有効化し、Daniel 1 名で運用確認まで完了」節の
+  停止操作 `recordId` / 停止日時 2026-08-18T04:38:23Z / 操作者 MK と同一）。
+  ⚠️ **運営者本人ではない**（運営者のアドレスと不一致であることを確認済み）
+- 書込内容: `PremiumPlusReopenCouponClaimedAt`（now ISO）/ `PremiumPlusReopenCouponId`
+  (`premium-plus-reopen-priority@v1`) / `PremiumPlusReopenCouponSource`（`pause-notice`）の **3 列のみ**
+- 起こらないこと: 課金・昇格・メール送信・queue 登録・販売停止の解除・資格/override/PHASE の変更
+- rollback: **Airtable 画面で 3 列を空にする**（`ClaimedAt` を空にすれば「未取得」へ戻る。
+  取得は冪等なので再取得も可能）
+
+### rollback（機能全体）
+
+| 段階 | 手順 |
+|---|---|
+| 取得だけ止める | env `PREMIUM_PLUS_REOPEN_COUPON_READY` を unset → **Build Hook で redeploy**。取得は 503 に戻る（休止ページは残る） |
+| 機能ごと戻す | `b84e6afb` を revert → deploy。停止中の直 URL は元の 404 に戻る |
+| Airtable | フィールドは**消さなくてよい**（読み取りに gate 不要・値が無ければ「未取得」） |
+
+⚠️ env は kill switch ではない。**休止ページの表示は env に依存しない**ので、
+ページごと止めるには revert が要る。
 
 ## 2026-08-18 — 【機能】販売停止中の直 URL を 404 にせず受付休止ページ＋再募集クーポン（PR #370 Draft・未 merge）
 
