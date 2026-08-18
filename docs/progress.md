@@ -1,3 +1,219 @@
+## 2026-08-18 — 【修正】健全性の窓読みを「日全体」から**実バッチ窓**へ絞る（auto-stop の原因）
+
+#364 反映後に rollout を再開したところ、200 名を付与・案内した直後の**バッチ #2** で
+`auto-stop: batch_stats_unreadable` が出て停止した。**ガードは正しく動いている**
+（読めないものを 0 と言わずに止まった）が、原因は名簿でも送信結果でもなく**読み方**だった。
+
+### 何が起きていたか（本番実測）
+
+`eventWindowReader.js` は `list({prefix})` で**その UTC 日全体**の blob を数え、
+`MAX_EVENT_BLOBS = 200` と比べて超えていたら **実際のバッチ窓で絞る前に** `null` を返していた。
+
+| 実測 | 値 |
+|---|---|
+| `ak/email-events/2026/08/18/` の blob 数 | **523** |
+| 上限 `MAX_EVENT_BLOBS` | 200 |
+| 結果 | 常に `null` → bounces/complaints/unsubscribes が `null` → `batch_stats_unreadable` |
+
+⚠️ **blob 数はイベント数ではない。** `emailEventBlobStore.js` は
+**1 webhook バッチ = 1 blob**（本文は 1 行 1 イベント・最大 1000 イベント）で書く。
+つまり**送るほど当日の blob が増える**ので、この判定のままでは
+高 volume の日に健全性を**永久に読めない**（バッチ #2 以降へ進めない）。
+
+### 直し方（上限を上げるのではない）
+
+上限を 2000 へ上げるだけの修正は採らない。**blob ごとに `get()` する**ので
+Function 時間がそのまま悪化する。正しくは**読む前に候補を絞る**:
+
+1. `list({prefix})` は従来どおり（日単位・append-only の正本は変えない）
+2. **鍵から受信時刻を復元**し、窓に関係し得ない blob を候補から外す
+3. `MAX_EVENT_BLOBS` は「日全体」ではなく**実際に読む候補数**へ当てる
+4. 窓外の blob は **`get()` しない**
+5. 候補自体が上限超過なら従来どおり `null` → fail closed
+
+### どこまで安全に事前除外できるか（**証明できない境界は捨てない**）
+
+鍵は `buildBatchBlobKey()` の `ak/email-events/YYYY/MM/DD/HHMMSS-<hash12>.ndjson` で、
+日時部は **`receivedAtMs` の UTC・秒精度**。実物の writer と 2,000 件の往復で
+`parseBlobKeyReceivedAtMs(key) === floor(receivedAtMs, 1s)` を確認済み。
+
+⚠️ **当初は「provider 時計のずれは最大 15 分」として捨てていたが、これは撤回した。**
+その上限を裏づける契約が**どこにも無い**:
+
+| 調べた先 | 分かったこと |
+|---|---|
+| SendGrid 公式 Event Webhook 仕様 | `timestamp` は**イベント発生時刻**。失敗した通知は**発生後 最大 24 時間**リトライ（＝受信が**遅れる**側の話） |
+| repo 内唯一の skew 定数 `sendgridSignature.js` | `DEFAULT_MAX_SKEW_SEC = 24h`。**署名リプレイ防御**であってイベント時刻の契約ではない |
+
+→ **「◯分以内なら未来へずれない」という前提で blob を捨ててはいけない。**
+
+#### 代わりに使う根拠: **DeliveryKey の因果関係**（時計に依存しない）
+
+健全性で数えたいのは「直前バッチの通に起きたイベント」だけで、呼び出し側は必ず
+`deliveryKeys` を渡す（`cron-marketing-rollout.js` L966-972: `batchKeys && … ? readEventWindow({ deliveryKeys: batchKeys }) : null`）。
+
+その鍵の通が**送られる前に**、その通のイベントを受信することはあり得ない。そして:
+
+1. `sinceMs` = `state.healthBaseline.atMs` … そのバッチの **GRANT tick** で置いた基準点
+2. `state.lastBatchJobIds` … その後の **QUEUE tick** で控えたジョブ（cron L888）＝ 基準点より後
+3. 健全性チェックは **GRANT 分岐**の中でしか走らず（cron L928）、そこへ到達するには
+   `outstanding === 0`（`rolloutPlan.js` L426 `WAITING_PREVIOUS`）が要る ＝ 前バッチの queue は済んでいる
+
+よって `deliveryKeys` の通はすべて `sinceMs` より後に送られており、それらのイベントを載せた
+blob の受信時刻も必ず `sinceMs` より後。**受信時刻が `sinceMs` 以前の blob には、
+この鍵集合のイベントは入り得ない。** provider の時計を一切使わない
+（当方の受信時刻と当方の基準点の比較だけ）。
+
+- 事前除外は **`deliveryKeys` を渡されたときだけ**（空 Set も scope 扱いにしない）
+- 渡されないときは根拠が無いので**1 つも捨てない**
+- 鍵を読めない blob も捨てない
+- 許容するズレは**鍵の秒切り捨てぶん（1 秒）だけ**＝ `buildBatchBlobKey` から証明できる値
+
+#### 鍵 parse の完全 fail closed
+
+`Date.UTC` は 4/31 を 5/1 へ、秒 60 を次分へ**黙って繰り上げる**ので、復元値を分解し直して
+**入力と完全一致**することを確認する。writer が作り得ない日時は必ず `null`
+（= 時刻で除外せず**読む**側へ倒す）。
+
+`2026/04/31` → null ／ `2026/02/29`（非閏年）→ null ／ `2028/02/29` → valid ／
+秒 60・分 60・時 24・0 月・0 日・13 月 → null。
+
+### 本番事故の read-only replay（実測）
+
+停止時の実データへ**候補選別ロジックだけ**を当てた（付与・queue・送信・再開はしていない）。
+
+| 項目 | 実測 |
+|---|---|
+| `blobsListed`（当日 `2026/08/18` 全体） | **538** |
+| 候補 blob（`scoped=true` / 基準点 05:42:16Z） | **189** |
+| 実際に読む必要がある blob | **189** |
+| `MAX_EVENT_BLOBS = 200` 以内か | **YES**（余裕 11 件） |
+| `eventWindow` は null にならず読めるか | **読めた ✅**（旧実装は 538 > 200 で null） |
+| 直前バッチ `DeliveryKey` 数 | 197 |
+| 最終 complaints / unsubscribes / hard bounces | **0 / 0 / 0**（softBounces 0） |
+| skipped 内訳 | otherType 199 / otherBatch 12 / otherCampaign 2 / beforeWindow 0 |
+| 窓外 blob を get したか | **0 件**（除外 349 件は 1 つも取得していない） |
+| 取得 wall time | 110.5 秒（**ローカル CLI 経由 8 並列**。Function 内の実測ではない） |
+| NDJSON 行数 / parse 時間 | 213 行 / 4 ms |
+
+→ **今回の停止（`batch_stats_unreadable`）はこの修正で解消する。**
+
+### 費用モデル: 件数の上限ではなく **wall-clock budget** で守る
+
+replay で **1 blob あたり平均 1.13 イベント**と判明した。SendGrid は実質
+**1 イベント 1 POST** で送ってくるため、「1 webhook バッチ = 1 blob」設計では
+**blob 数はおおむね送信量に比例**する。健全性の窓はその回の送信を含むので、
+旧 `MAX_EVENT_BLOBS = 200` は送信量が増えるほど当たりやすくなる
+（本番実測: 197 名ぶんの窓で候補 189、上限まで余裕 11 件）。
+
+⚠️ **運転手の進み方の正確な記述**（旧版の書き方を訂正）:
+`batchSize=500` は**論理バッチ**で、1 つの health window に 500 名ぶんが
+まとめて入るわけではない。実際は
+**付与 → queue → dispatch → `outstanding === 0` → 次の付与**
+を繰り返して論理バッチを満たす（1 回の付与呼び出しは
+`HARD_MAX_BATCH_SIZE` / `GRANT_OPERATION_MAX` が上限）。
+health window は**その 1 回ぶん**を見る。
+**`batchSize=500` / `dailyLimit=15000` はこの PR で変更していない。**
+
+そこで**件数と時間を分離**した:
+
+| 歯止め | 値 | 位置づけ |
+|---|---|---|
+| `READ_DEADLINE_MS` | **8000 ms** | **これが真の制約**。`list` + 全 `get` を**同じ budget** に入れ、超えたら `null` |
+| `BLOB_READ_CONCURRENCY` | **12** | 逐次だと候補数ぶん時間がかかるので並列化 |
+| `MAX_EVENT_BLOBS` | `HARD_MAX_BATCH_SIZE × 4` = **2000** | **単なる backstop**（際限なく `get` を積まないため） |
+
+⚠️ `MAX_EVENT_BLOBS` は **「この件数までなら必ず読める」という保証ではない。**
+候補 blob には**同じ時間帯の別 campaign / 別 touch の webhook** も入り得るので、
+**「500 × 4 なら構造的に必ず収まる」とは言えない**。収まらなければ従来どおり
+`null`（fail closed）で止まる。
+
+### 締切を**本当の wall-clock** にする（前版の欠陥修正）
+
+前版の `readCandidates` は `get` の**前**にしか時刻を見ておらず、
+
+```js
+if (nowFn() >= deadlineAtMs) ...
+await store.get(...)          // ← これ自体が遅延・ハングしたら止められない
+```
+
+`Promise.all` がその未完了 `get` を待つため、**「8 秒で fail closed」は実装できていなかった**。
+`store.list()` も budget の起算前だった。**実測でも旧版はテストプロセスごとハングした**
+（`exit 142` / 36 件中 26 件で停止）。新版は **1.77 秒で正常終了**する。
+
+#### SDK 側の abort 可否（`@netlify/blobs` v10.7.9 を実装で確認）
+
+| 調べた点 | 結果 |
+|---|---|
+| `GetOptions` / `ListOptions` に `signal` / `timeout` | **無い**（`GetOptions` は `consistency` のみ） |
+| `getStore({ name, fetch })` で **fetch 差し替え** | **できる**（`ClientOptions.fetch?: Fetcher` → `getClientOptions` が `fetch: options.fetch` を Client へ渡す）。実測で custom fetch が呼ばれることを確認 |
+| `fetchAndRetry` の再試行 | **429 / 5xx / throw** を最大 5 回・5 秒 sleep で再試行。**abort を throw で返すと budget を壊す** |
+| `408` の扱い | 再試行**されない**（実測 1 回・12ms）。`Store.get` / `Store.list` が `BlobsInternalError` を投げる |
+
+→ 二層で守る:
+
+1. **実 I/O の中断**: `createDeadlineFetch()` を `getStore({ fetch })` へ差し込み、
+   残り時間の `AbortController` を付けて**ソケットごと切る**。
+   失敗は **throw せず `408`** を返す（`fetchAndRetry` に再試行させないため）。
+   通信の一時失敗も再試行せず fail closed に倒す（健全性は「読めなければ止まる」が正しい）。
+2. **必ず返る保証**: `raceDeadline()` で `list` / 各 `get` を実時間と競走させる。
+   SDK や差し替え store が abort を尊重しなくても**必ず `null` で返る**。
+   破棄する promise には `catch` を付け、解決時に `clearTimeout` するので
+   **未完了 I/O が event loop を保持しない**（テストが 1.8 秒で正常終了することで実測確認）。
+
+⚠️ 締切タイマーを `unref()` してはいけない（一度入れて CI で踏んだ）。
+締切は**発火させたい**ので、待つ間は event loop を保持させる必要がある。
+`unref()` すると「hang した I/O しか残っていない」状況で loop が枯渇し、
+締切が来る前に promise が宙づりのまま終わる
+（node:test の `Promise resolution is still pending but the event loop has already resolved`
+で 10 件が `cancelled` になった）。解決後は `clearTimeout` で解放するので保持は残らない。
+
+⚠️ 締切に当たったら**部分集計を絶対に返さない**（少なく数えるのが一番危ない）。
+
+### 変えていないもの### 変えていないもの### 変えていないもの### 変えていないもの
+
+- `emailEventBlobStore.js` の **append-only / manifest 無し**設計（日次 1 blob への
+  read-modify-write のような multi-writer 競合を作らない）
+- schema / writer / datastore / production env / secret
+- 厳密 scope の単一源 `summarizeEventWindow`
+  （campaign / DeliveryKey / `eventAtMs` 窓 / `providerEventId` 重複排除 / soft≠hard）
+- **本物の読み取り失敗は今までどおり `null`**（list/get の失敗・候補超過・
+  一覧が不完全なら成功扱いにしない）
+
+### `list` の完全性（要件として確認）
+
+`@netlify/blobs` v10.7.9 の `list()` は `paginate` 無しのとき `collectIterator` で
+`next_cursor` を**追い切って全件**返し、非 200/204/404 は throw する（暗黙の truncate は無い）。
+そのうえで、万一「1 ページだけ」の形（`next_cursor` / `cursor` が残る）が渡された場合は
+**成功扱いにしない**ガードを追加した。
+
+### テスト
+
+`eventWindowReader.test.mjs` を新設（**36 件**）。**旧実装に当てると 2 件が落ちる**ことを確認済み。
+
+同日 500 件超でも窓内 200 以下なら読める / 窓外は `get` しない（日全体を全 get しない）/
+窓内が上限超過なら `null` / DeliveryKey 外・他 campaign・`eventAtMs` 窓外を混ぜない /
+`providerEventId` 再送を二重に数えない / soft bounce を hard にしない /
+list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob は捨てない /
+`deliveryKeys` が無い・空なら 1 つも事前除外しない / 存在しない日付（4/31・非閏年 2/29）と
+秒 60・分 60・時 24 は `null` /
+481 blob でも読める（旧上限 200 なら null だった）/ 並列度 1・7・12 で件数が一致 /
+**`get` が締切より遅い・永久に resolve しない → 実 wall-clock で null**（Function timeout を待たない）/
+**`list` が締切超過・hang → null**（get を 1 件も始めない）/
+**最後の 1 件だけ超過でも部分結果を成功扱いにしない** / **並列 lane の 1 本だけ hang → 全体 null** /
+全件が予算内なら従来どおり集計 / `createDeadlineFetch` が実 I/O へ `AbortSignal` を渡し、
+締切超過・通信失敗を再試行されない `408` にする。
+
+`test:marketing` 2,073 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0・secret/PII 0 件・
+`package.json` / `package-lock.json` 変更なし。
+
+### 本番の状態（この修正では触っていない）
+
+`stage=paused` / `autoStopped=true` / `stopReason=auto-stop: batch_stats_unreadable` を**維持**。
+**新規 grant も rollout 再開も行っていない。**
+停止時点の実測: 付与 **1,210** / Step1 解決 **1,210**（キュー登録・送信済み 1,202 + 停止リスト 8）/
+outstandingStep1 **0** / PENDING **0** / failed **0** / duplicate **0** / eligible 残 **13,278**。
 ## 2026-08-18 — 【実績】トップ実績プレビューを「全レース実績」主役へ再設計し本番反映（PR #368 squash merge）
 
 ### 目的
