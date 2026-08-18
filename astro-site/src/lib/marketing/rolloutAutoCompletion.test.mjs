@@ -20,6 +20,7 @@ import {
 } from './rolloutPlan.js';
 import { tickRollout, settleTick, isRolloutComplete, TICK_ACTION } from './rolloutOrchestrator.js';
 import { resolveOperationalState, OPERATIONAL_STATE } from './rolloutOperationalState.js';
+import { classifyGrantOutcome, GRANT_OUTCOME } from './grantOutcome.js';
 import { GRANT_OPERATION_MAX, buildTrialOperationId } from '../comeback/lightTrialAutoGrant.js';
 import { ROLLOUT_TARGET, describeTargetPlan } from './rolloutTarget.js';
 
@@ -407,4 +408,38 @@ test('運用状態の一覧に PII も secret も混ぜない', () => {
   const dump = JSON.stringify(v);
   assert.equal(/@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(dump), false);
   assert.equal(/rec[A-Za-z0-9]{14}/.test(dump), false);
+});
+
+// ── 付与直後の読み取り遅延で二重に配らない（2026-08-18 に 2 度停止）──────
+
+test('【重要】queue 待ちの引き継ぎがある限り付与しない（関所が開いて見えても）', () => {
+  // Airtable の読み取りが追いつかず outstanding が 0 に見える状況を再現
+  const facts = {
+    remainingCandidates: 13_700, outstandingStep1: 0,
+    grantedPendingQueue: 0, pendingJobs: 2, followUpStep: null, followUpDue: null,
+    pendingHandoffs: 1,
+  };
+  const d = tickRollout({ state: running(), nowMs: NOW, envEnabled: true, facts, env: ENV });
+  assert.notEqual(d.action, TICK_ACTION.GRANT, '引き継ぎが残っているのに配ろうとしている');
+});
+
+test('【重要】送信待ちジョブがあっても引き継ぎは先に queue する（詰まらせない）', () => {
+  const facts = {
+    remainingCandidates: 13_700, outstandingStep1: 200,
+    // ジョブがあると `grantedPendingQueue` は 0 になる（本番の deriveFacts と同じ）
+    grantedPendingQueue: 0, pendingJobs: 2, followUpStep: null, followUpDue: null,
+    pendingHandoffs: 1,
+  };
+  const d = tickRollout({ state: running(), nowMs: NOW, envEnabled: true, facts, env: ENV });
+  // 送信起動が最優先なので dispatch、無ければ queue（どちらにせよ付与ではない）
+  assert.ok([TICK_ACTION.DISPATCH, TICK_ACTION.QUEUE].includes(d.action), `action=${d.action}`);
+});
+
+test('【重要】付与側の「まだ送っていない」は異常停止にしない（待てば開く）', () => {
+  const v = classifyGrantOutcome({ requested: 200, granted: 0, abort: 'waiting_for_step1' });
+  assert.equal(v.outcome, GRANT_OUTCOME.IDLE, '関所待ちを異常として止めている');
+  assert.equal(v.settle, false, '状態を汚している');
+  assert.equal(v.pause, false, '待てばよい状況で自動停止している');
+  // 本物の異常は今までどおり止める
+  assert.equal(classifyGrantOutcome({ requested: 200, granted: 0, abort: 'too_many_records:400>200' }).pause, true);
 });

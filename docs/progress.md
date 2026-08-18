@@ -78,6 +78,30 @@ fixture を「いま」からの相対時刻に直した（**テストのみの�
 `test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0。
 
+## 2026-08-18 — 【修正】付与直後の読み取り遅延で二重に配らない（2 度の自動停止の真因）
+
+自動運転が 2 度とも `waiting_for_step1` で自動停止した。真因は **Airtable の読み取り遅延**。
+
+1. 運転手が 200 名を付与する
+2. 次の tick で関所（`outstandingStep1`）を読むが、**付与直後の行がまだ反映されておらず 0 に見える**
+3. 運転手は「配ってよい」と判断 → 付与側は自分で読み直すので正しく `waiting_for_step1` で断る
+4. 「予定があったのに 0 件」＝異常として自動停止
+
+### 直したこと
+
+- **運転手のローカル状態を正とする**: まだ queue していない引き継ぎ（`pendingHandoffOps`）が
+  残っている限り**付与しない**。Airtable の反映を待たない
+- 引き継ぎがあるときは、送信待ちジョブがあっても**先に queue する**
+  （`grantedPendingQueue` はジョブがあると 0 になるため、拾わないと詰まる）
+- 付与側の `waiting_for_step1` は**異常ではなく待ち**として扱う（自動停止しない）。
+  `too_many_records` などの本物の異常は今までどおり停止する
+
+この時点の実績: 付与 1,010 名（累計）/ Step1 送信 806 通 / 滞留 0 / 失敗 0 / 重複 0。
+（前回の滞留 197 通は「停止中も送信は流す」修正により送信済み）
+
+`test:marketing` 2,010 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
+`check:fn-no-undef` OK・`build` EXIT=0。
+
 ## 2026-08-18 — 【修正】関所を付与 1 回ごとへ戻す / 停止中も送信は流す
 
 全コホートの自動運転を再開したところ、200 名を付与 → queue した直後の 2 回目の付与が
