@@ -738,6 +738,57 @@ export function resolvePremiumPlusRelease(input) {
 }
 
 /**
+ * 「販売を一時停止している会員が、以前保存した直 URL で来たときに受付休止ページを
+ * 出してよいか」を決める（純粋・単一源）。
+ *
+ * ## 直している問題
+ *
+ * 停止すると `resolvePremiumPlusRelease` は denied を返し、商品ページは 404 になる。
+ * 非会員への存在秘匿としては正しいが、**以前この URL を見ていたお客様**まで
+ * 「ページが消えた」扱いで追い返してしまう。停止は一時的な運用判断であって、
+ * その会員が対象外になったわけではない。
+ *
+ * ## 誰に出すか（出しすぎない）
+ *
+ * `salePaused` が true というだけでは足りない。`denied()` は停止フラグを
+ * 全経路の戻り値に載せるため、`route` が成立していない相手・`blocked`（恒久的に
+ * 販売対象外）の相手にも `salePaused:true` が付く。これらに休止ページを出すと
+ * **本来存在を知らせない相手へ商品の存在を漏らす**。
+ *
+ * そこで「**停止を外したら商品ページを見られたはずの人**」だけに限定する。
+ * 判定は停止フラグだけを false にして同じ単一源をもう一度解くので、
+ * 条件を書き写すことによるズレが構造的に生まれない。
+ *
+ * ⚠️ 購入可否には使わないこと。休止ページは購入 CTA も申込経路も持たない。
+ *    申込 Function 側の 403 `sale_paused` は**そのまま維持**する。
+ *
+ * @param {Parameters<typeof resolvePremiumPlusRelease>[0]} input
+ *   `resolvePremiumPlusRelease` に渡したものと**同じ input**
+ * @returns {{ paused: boolean, showPauseNotice: boolean,
+ *             wouldShowProductPage: boolean, wouldShowPurchaseCta: boolean }}
+ */
+export function resolvePlusPauseNoticeView(input) {
+  const paused = normalizeSalePaused(input && input.salePaused);
+  if (!paused) {
+    return {
+      paused: false,
+      showPauseNotice: false,
+      wouldShowProductPage: false,
+      wouldShowPurchaseCta: false,
+    };
+  }
+  // 停止フラグ**だけ**を外して解き直す。他の条件は一切変えない。
+  const resumed = resolvePremiumPlusRelease({ ...input, salePaused: false });
+  const wouldShowProductPage = resumed.showProductPage === true;
+  return {
+    paused: true,
+    showPauseNotice: wouldShowProductPage,
+    wouldShowProductPage,
+    wouldShowPurchaseCta: resumed.showPurchaseCta === true,
+  };
+}
+
+/**
  * 管理画面に出す「現在の状態」を日本語 1 行で返す（顧客向け画面には出さない）。
  *
  * @param {ReturnType<typeof resolvePremiumPlusRelease>} release

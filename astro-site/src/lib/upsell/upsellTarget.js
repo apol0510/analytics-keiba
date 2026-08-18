@@ -26,7 +26,7 @@
 
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolvePlusMemberFromFields } from '../premiumPlus/premiumPlusMember.js';
-import { resolvePremiumPlusRelease, PP_INTAKE } from '../premiumPlus/premiumPlusRelease.js';
+import { resolvePremiumPlusRelease, resolvePlusPauseNoticeView, PP_INTAKE } from '../premiumPlus/premiumPlusRelease.js';
 import { resolveSaleTarget } from '../premiumPlus/premiumPlusSaleDate.js';
 
 /** 管理者が選ぶ値。Airtable `UpsellTarget`（singleSelect）と 1:1。 */
@@ -273,15 +273,34 @@ export function resolveUpsellForCustomer({
   const member = resolvePlusMemberFromFields(fields, { nowMs, fallbackAnchor });
   // いま売るのは何日分か。既定は販売可で、例外日だけ次の販売日へ送る
   const saleTarget = resolveSaleTarget(nowMs, { calendar: raceCalendar });
+  const adminFlags = resolvePlusAdminFlags({ target, member });
+  // 16:30 以降は翌日分（例外日なら次の販売日分）を売る
+  const nextDaySellable = saleTarget.isNextDay && saleTarget.sellable === true;
   const plusRelease = resolvePremiumPlusRelease({
     ...member,
-    ...resolvePlusAdminFlags({ target, member }),
+    ...adminFlags,
     nowMs,
-    // 16:30 以降は翌日分（例外日なら次の販売日分）を売る
-    nextDaySellable: saleTarget.isNextDay && saleTarget.sellable === true,
+    nextDaySellable,
   });
   const view = resolveUpsellDisplay({ target, entitlements, plusRelease, sanrenpukuStage });
-  return { ...view, entitlements, plusRelease, member, saleTarget };
+  // ── 受付休止ページ（停止中に直 URL で来たお客様への案内）────────────
+  // 停止していない会員では常に false ＝ 既存の 404 挙動も CTA も一切変わらない。
+  // ⚠️ 管理者が Plus 以外の導線を指定している会員には出さない。
+  //    `none` は「販売導線を出さない」、`sanrenpuku` は「三連複だけを見せる」という
+  //    管理者の判断なので、休止案内で Plus の存在を知らせてはいけない。
+  const pauseNotice = (() => {
+    // ⚠️ release と**同じ入力**で解く。片方だけ条件を足すと
+    //    「商品ページは 404 なのに休止案内は出る」ようなズレが生まれる。
+    const v = resolvePlusPauseNoticeView({
+      ...member,
+      ...adminFlags,
+      nowMs,
+      nextDaySellable,
+    });
+    const targetAllows = target === UPSELL_TARGET.AUTO || target === UPSELL_TARGET.PLUS;
+    return { ...v, showPauseNotice: v.showPauseNotice === true && targetAllows };
+  })();
+  return { ...view, entitlements, plusRelease, member, saleTarget, pauseNotice };
 }
 
 /** 管理画面の「実表示」列に出す短い説明 */

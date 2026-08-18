@@ -101,6 +101,11 @@ import {
   SEARCH_ERROR_TEXT,
   MAX_SEARCH_PAGES,
 } from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
+import {
+  readReopenCoupon,
+  isReopenCouponEnabled,
+  PP_REOPEN_COUPON,
+} from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 配信履歴。**名指しでしか引かない**（14,000 行超あり全件走査は不可能）。 */
@@ -191,6 +196,8 @@ function buildAdminRow(rec, now) {
     const axis = eligibilityAxisFields({ fields, nowMs: now, release });
 
     const eligibility = member.eligibility;
+    // 取得状態は 1 レコードの値をそのまま読むだけ（他会員は一切参照しない）
+    const reopenCoupon = readReopenCoupon(fields);
   return {
         /** 一覧に出す対象か（呼び出し側が判断に使う。lookup は false でも返す） */
         __listed: candidate.listed === true,
@@ -253,6 +260,17 @@ function buildAdminRow(rec, now) {
         salePausedAt: fields[PP_SALE_PAUSE_FIELDS.UPDATED_AT] || '',
         salePausedBy: fields[PP_SALE_PAUSE_FIELDS.UPDATED_BY] || '',
         salePauseReason: fields[PP_SALE_PAUSE_FIELDS.REASON] || '',
+        // ── 再募集クーポンの取得（資格とも停止とも別の軸）──────────────
+        // ⚠️ 「販売できるか」ではない。**停止中に受付休止ページから会員自身が
+        //    取得した**という事実だけ。取得しても資格・停止・会員権は動かない。
+        reopenCouponName: PP_REOPEN_COUPON.name,
+        reopenCouponClaimed: reopenCoupon.claimed === true,
+        reopenCouponClaimedAt: reopenCoupon.claimedAtIso,
+        reopenCouponLabel: reopenCoupon.claimed === true ? 'クーポン取得済み' : 'クーポン未取得',
+        reopenCouponId: reopenCoupon.couponId,
+        reopenCouponSource: reopenCoupon.source,
+        /** 取得の記録が本番で保存できる状態か（画面の注意表示に使う） */
+        reopenCouponWritable: isReopenCouponEnabled(process.env),
         /**
          * 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う）。
          */
@@ -628,6 +646,9 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // 資格は「販売可」のまま止まっている、が正しい状態なので、
       // 上の件数から差し引くと「販売可」の実数が読めなくなる。
       salePaused: rows.filter((r) => r.salePaused === true).length,
+      // 再募集クーポンの取得済み。**資格・停止のどちらの内訳でもない**ので別に数える。
+      // 再募集時に「取得済み会員だけを抽出する」ための件数でもある。
+      reopenCouponClaimed: rows.filter((r) => r.reopenCouponClaimed === true).length,
       // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
@@ -655,6 +676,13 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     salePause: {
       writable: isSalePauseEnabled(process.env),
       fieldsReady: isSalePauseEnabled(process.env),
+    },
+    // 再募集クーポンの取得記録が本番で保存できるか（停止フラグとは別 gate）
+    reopenCoupon: {
+      writable: isReopenCouponEnabled(process.env),
+      fieldsReady: isReopenCouponEnabled(process.env),
+      name: PP_REOPEN_COUPON.name,
+      termsDetermined: PP_REOPEN_COUPON.terms.determined === true,
     },
     // 「自動」の意味を管理画面に常設するための文言（正本は upsellExplain.js）
     upsellAutoRules: UPSELL_AUTO_RULE_TEXT,

@@ -88,6 +88,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="paused">一時停止中だけ</option>
         <option value="active">停止していないものだけ</option>
       </select>
+      <select id="fCoupon" aria-label="再募集クーポンの取得で絞り込み">
+        <option value="all">クーポン取得を問わない</option>
+        <option value="claimed">クーポン取得済みだけ</option>
+        <option value="unclaimed">クーポン未取得だけ</option>
+      </select>
       <select id="fRoute" aria-label="Route で絞り込み">
         <option value="all">すべての Route</option>
         <option value="sanrenpuku">三連複の購入から</option>
@@ -1273,6 +1278,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .sumbar .s.blocked .v { color: #f87171; }
   /* 一時停止は「販売対象外(赤)」と別色（琥珀＝止まっているだけ・戻せる） */
   .ppe .sumbar .s.paused .v { color: #fcd34d; }
+  .ppe .sumbar .s.coupon .v { color: #5eead4; }
 
   /* 「一時停止は本番でまだ使えない」の明示。見落とされない強さで出す */
   .ppe .pause-off {
@@ -1415,6 +1421,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .badge.blocked { background-color: #2a1416; color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
   /* 一時停止。「販売対象外(blocked=赤)」と**見た目で区別**する（琥珀＝止まっているだけ・戻せる） */
   .ppe .badge.paused { background-color: #3a2a08; color: #fcd34d; border: 1px solid rgba(245,196,81,.55); }
+  /* 再募集クーポン取得済み。資格バッジ・停止バッジのどちらとも別の軸 */
+  .ppe .badge.coupon { background-color: #0b2f2a; color: #5eead4; border: 1px solid rgba(45,212,191,.5); }
 
   /* ── タブ（販売 / マーケティング）── */
   .ppe .tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .9rem; border-bottom: 1px solid rgba(148,163,184,.18); }
@@ -2680,6 +2688,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       return b;
     }
 
+    /**
+     * 再募集クーポンのバッジ（資格バッジ・停止バッジに**添える**。置き換えない）。
+     * 取得していなければ null を返す＝通常会員の見た目は一切変わらない。
+     *
+     * ⚠️ 「販売できる」でも「停止している」でもない**第 3 の軸**。
+     *    停止中に受付休止ページからお客様自身が取得した、という事実だけを表す。
+     */
+    function couponBadge(r) {
+      if (r.reopenCouponClaimed !== true) return null;
+      const b = document.createElement('span');
+      b.className = 'badge coupon';
+      b.textContent = 'クーポン取得済み';
+      const at = r.reopenCouponClaimedAt ? '（' + fmtDate(r.reopenCouponClaimedAt) + '）' : '';
+      b.title = '再募集時の優待クーポンを取得済みです' + at
+        + '。販売資格・一時停止・会員権は変わりません。';
+      return b;
+    }
+
     const ROUTE_SHORT = { sanrenpuku: 'A', premium_30d: 'B', premium_admin: 'C', none: '—' };
     const ROUTE_LABEL = {
       sanrenpuku: 'A（三連複）', premium_30d: 'B（Premium 30日）',
@@ -2719,6 +2745,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const fp = $('fPause').value;
       if (fp === 'paused' && r.salePaused !== true) return false;
       if (fp === 'active' && r.salePaused === true) return false;
+      // 再募集クーポンの取得も独立した軸（資格・停止のフィルタから消さない）
+      const fc = $('fCoupon').value;
+      if (fc === 'claimed' && r.reopenCouponClaimed !== true) return false;
+      if (fc === 'unclaimed' && r.reopenCouponClaimed === true) return false;
       const fr = $('fRoute').value;
       if (fr !== 'all' && r.route !== fr) return false;
       const fk = $('fKind').value;
@@ -2820,7 +2850,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k;
         const vv = document.createElement('span'); vv.className = 'v'; vv.textContent = String(v == null ? 0 : v);
         b.appendChild(kk); b.appendChild(vv);
-        b.addEventListener('click', () => { $('fState').value = filter; $('fPause').value = 'all'; render(); });
+        b.addEventListener('click', () => { $('fState').value = filter; $('fPause').value = 'all'; $('fCoupon').value = 'all'; render(); });
         bar.appendChild(b);
       });
       // 一時停止（資格の内訳ではないので区切って添える）。0 件でも常設して
@@ -2839,6 +2869,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $('fState').value = 'all'; $('fPause').value = 'paused'; render();
       });
       bar.appendChild(pb2);
+      // 再募集クーポン取得済み（資格・停止のどちらの内訳でもない第 3 の軸）。
+      // 再開時に「取得済みの方だけへご案内する」ための件数。0 件でも常設する。
+      const couponCount = c.reopenCouponClaimed == null ? 0 : c.reopenCouponClaimed;
+      const sp3 = document.createElement('span'); sp3.className = 'sep'; sp3.textContent = '｜';
+      bar.appendChild(sp3);
+      const cb2 = document.createElement('button');
+      cb2.type = 'button';
+      cb2.className = 's coupon';
+      cb2.title = '再募集クーポンを取得済みの会員だけを表示する';
+      const ck = document.createElement('span'); ck.className = 'k'; ck.textContent = 'クーポン取得済み';
+      const cv = document.createElement('span'); cv.className = 'v'; cv.textContent = String(couponCount);
+      cb2.appendChild(ck); cb2.appendChild(cv);
+      cb2.addEventListener('click', () => {
+        // 取得済みは資格・停止を問わず全部見たいので、他のフィルタは解除する
+        $('fState').value = 'all'; $('fPause').value = 'all'; $('fCoupon').value = 'claimed'; render();
+      });
+      bar.appendChild(cb2);
       $('summarySub').textContent = 'ROUTE A（三連複） ' + (c.routeA == null ? 0 : c.routeA)
         + '　/　ROUTE B（Premium 30日） ' + (c.routeB == null ? 0 : c.routeB)
         + '　/　ROUTE B 待機中 ' + (c.waiting30d == null ? 0 : c.waiting30d)
@@ -3310,6 +3357,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         // 置き換えると「止まっているが資格は販売可」なのか「販売対象外」なのかが読めない。
         const pb = pauseBadge(r);
         if (pb) c2.appendChild(pb);
+        // クーポン取得も別軸。資格・停止のどちらのバッジも置き換えない。
+        const cb = couponBadge(r);
+        if (cb) c2.appendChild(cb);
         tr.appendChild(c2);
 
         // プラン列: プラン名はそのまま。三連複保有者にはバッジを添える。
@@ -3821,6 +3871,43 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       body.appendChild(psSec);
 
+      // ── 再募集クーポン（資格・停止とは**別の第 3 の軸**。読み取り専用）────
+      // ⚠️ ここは管理者が付与するものではない。停止中に受付休止ページから
+      //    **お客様自身が取得した**という事実を確認するだけ。
+      //    取得しても資格・停止・段階公開・会員権・決済は一切変わらない。
+      const rcSec = document.createElement('div'); rcSec.className = 'dt-sec';
+      const rcH = document.createElement('h3'); rcH.textContent = '再募集クーポン'; rcSec.appendChild(rcH);
+      const rcNote = document.createElement('p'); rcNote.className = 'muted';
+      rcNote.style.margin = '0 0 8px'; rcNote.style.fontSize = '0.82rem';
+      rcNote.textContent = '販売を一時停止している間に、お客様が受付休止ページからご自身で'
+        + '取得されたクーポンの保有状況です。管理者が付与・取消する操作はありません。'
+        + '取得しても販売資格・一時停止・段階公開（PHASE）・会員権・決済は変わりません。'
+        + '優待の具体的な条件は未確定で、募集再開時に決めます。';
+      rcSec.appendChild(rcNote);
+
+      const rcKv = document.createElement('dl'); rcKv.className = 'kv';
+      kvRow(rcKv, 'いま販売を止めているか', r.salePaused ? '⏸ 一時停止中' : '✅ 停止していない',
+        r.salePaused ? '' : 'muted');
+      kvRow(rcKv, 'クーポン', r.reopenCouponName || '—', r.reopenCouponName ? '' : 'muted');
+      kvRow(rcKv, '取得状況', r.reopenCouponClaimed ? '🎟 取得済み' : '未取得',
+        r.reopenCouponClaimed ? '' : 'muted');
+      if (r.reopenCouponClaimed) {
+        kvRow(rcKv, '取得日時', fmtDate(r.reopenCouponClaimedAt));
+        if (r.reopenCouponSource) kvRow(rcKv, '取得元', r.reopenCouponSource, 'muted');
+        if (r.reopenCouponId) kvRow(rcKv, 'クーポン識別子', r.reopenCouponId, 'muted');
+      }
+      rcSec.appendChild(rcKv);
+      if (r.reopenCouponWritable === false) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ クーポンの取得記録は現在この本番環境に保存できません。'
+          + 'Airtable に PremiumPlusReopenCoupon 系フィールドを作成し、'
+          + 'PREMIUM_PLUS_REOPEN_COUPON_READY=1 を設定してください。'
+          + '有効化するまでお客様の取得操作は受け付けません'
+          + '（取得したのに記録が残らず、再開時にご案内できない事故を防ぐため）。';
+        rcSec.appendChild(w);
+      }
+      body.appendChild(rcSec);
+
       const pvSec = document.createElement('div'); pvSec.className = 'dt-sec';
       const h2 = document.createElement('h3'); h2.textContent = '表示確認'; pvSec.appendChild(h2);
       const pvBtn = document.createElement('button');
@@ -4179,6 +4266,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     $('qSearch').addEventListener('click', lookupOutsideCandidates);
     $('fState').addEventListener('change', render);
     $('fPause').addEventListener('change', render);
+    $('fCoupon').addEventListener('change', render);
     $('fRoute').addEventListener('change', render);
     $('fUpsell').addEventListener('change', render);
     $('fKind').addEventListener('change', render);

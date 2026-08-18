@@ -34,6 +34,12 @@ import { resolveSaleTarget, buildSaleProductName } from '../lib/premiumPlus/prem
 import { shapeRaceCalendar } from '../lib/premiumPlus/premiumPlusRaceCalendar.js';
 import ppRaceCalendar from '../data/premiumPlusRaceCalendar.json';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../lib/upsell/upsellTarget.js';
+// 受付休止ページ（停止中に直 URL で来たお客様を 404 で追い返さない）
+import {
+  readReopenCoupon, describeCouponForMember, isReopenCouponEnabled,
+  PP_REOPEN_COUPON_SOURCE,
+} from '../lib/premiumPlus/premiumPlusReopenCoupon.js';
+import { renderPauseNoticeHtml } from '../lib/premiumPlus/premiumPlusPauseNoticePage.js';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
@@ -76,6 +82,36 @@ const ppUpsell = resolveUpsellForCustomer({
 });
 const ppRelease = ppUpsell.plusRelease;
 if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
+  // ── 販売を一時停止している対象会員だけは 404 にしない ──────────────
+  // 以前この URL を保存されたお客様を「ページが消えた」扱いで追い返さないため、
+  // 受付休止のご案内と、募集再開時の優待クーポン取得だけを出す。
+  // ⚠️ 購入 CTA・価格・申込経路は 1 つも出さない（販売停止は維持したまま）。
+  //    誰に出すかの判定は単一源 `pauseNotice`（停止を外したら商品ページを
+  //    見られたはずの人だけ）。それ以外は従来どおり 404 のまま。
+  if (ppUpsell.pauseNotice?.showPauseNotice === true) {
+    const ppCoupon = readReopenCoupon(ppFields);
+    const ppCouponView = describeCouponForMember({
+      coupon: ppCoupon,
+      paused: true,
+      claimable: true,
+      storageReady: isReopenCouponEnabled(process.env),
+    });
+    return new Response(
+      renderPauseNoticeHtml({
+        coupon: ppCouponView,
+        source: PP_REOPEN_COUPON_SOURCE.PAUSE_NOTICE,
+      }),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'private, no-store',
+          'X-Robots-Tag': 'noindex, nofollow',
+          Vary: 'Cookie',
+        },
+      },
+    );
+  }
   return new Response('Not Found', {
     status: 404,
     headers: {
