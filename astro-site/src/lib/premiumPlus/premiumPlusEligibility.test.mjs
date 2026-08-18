@@ -34,6 +34,11 @@ test('書けるのは Plus 専用フィールドだけ（禁止フィールド�
     'PremiumPlusEligibleAt',
     'PremiumPlusReleaseOverride',
     'SanrenpukuPaidAt',
+    // 会員単位の販売 一時停止（資格とは別の軸。書くのは buildSalePauseFields だけ）
+    'PremiumPlusSalePaused',
+    'PremiumPlusSalePausedAt',
+    'PremiumPlusSalePausedBy',
+    'PremiumPlusSalePauseReason',
   ].sort());
 });
 

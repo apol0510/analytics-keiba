@@ -52,6 +52,7 @@ export async function GET({ request }) {
   // 販売導線の選択（UpsellTarget）。**この会員に Plus を見せてよいか**をここで決める。
   // sanrenpuku / none 指定の会員には Plus の予告も商品ページも出さない（2 商品を並べない）。
   // 判定は単一源 upsellTarget.js。ページ側に条件を散らさない。
+  // 販売の一時停止（PremiumPlusSalePaused）は member → release の単一源が読む。
   const upsell = resolveUpsellForCustomer({
     fields,
     nowMs: now,

@@ -145,6 +145,53 @@ export const PP_RELEASE_OVERRIDE = Object.freeze({
 });
 
 /**
+ * ── 会員単位の販売 一時停止 ────────────────────────────────────
+ *
+ * 「この会員にだけ、今は Premium Plus を売らない」を表す**独立した軸**。
+ * 販売資格（`PremiumPlusEligibility`）とは別に持つ。
+ *
+ * ⚠️ **`blocked`（販売対象外）で代用しない。** 理由は 2 つあり、どちらも実害がある:
+ *   1. 意味が違う。`blocked` は「この人には売らない」という**恒久的な判断**で、
+ *      一時停止は「資格はあるが、いまは止めている」。管理画面で同じに見えると
+ *      再開すべき相手が埋もれる。
+ *   2. 再開時に段階公開がリセットされる。`buildEligibilityUpdateFields` は
+ *      **review/blocked → eligible の実遷移で `PremiumPlusEligibleAt` を now に更新**する。
+ *      止めて再開しただけで anchor が動き、PHASE が Day 0 へ戻ってしまう。
+ *
+ * ⚠️ `UpsellTarget='none'` でも代用しない。あれは**販売導線の選択**（三連複を含む）で、
+ *    Plus だけを止める道具ではない。三連複の CTA まで巻き添えで消える。
+ *
+ * ⚠️ `PremiumPlusReleaseOverride` に値を足すのも不可。あれは phase 進行を飛ばす
+ *    override であり、上書きすると「今すぐ販売可」の設定が失われる。
+ *
+ * 未設定・フィールド未作成は **false（＝停止していない）**。
+ * 既存会員の販売状態を勝手に変えないため、ここは fail closed にしない。
+ * 「止める」と明示されたときだけ止める（停止側は全面 fail closed = 全経路を閉じる）。
+ */
+export const PP_SALE_PAUSE_FIELDS = Object.freeze({
+  /** 停止中か（checkbox） */
+  PAUSED: 'PremiumPlusSalePaused',
+  /** 停止/再開の操作日時（dateTime・監査用） */
+  UPDATED_AT: 'PremiumPlusSalePausedAt',
+  /** 操作者（single line text・監査用） */
+  UPDATED_BY: 'PremiumPlusSalePausedBy',
+  /** 停止理由（single line text・管理者だけが見る） */
+  REASON: 'PremiumPlusSalePauseReason',
+});
+
+/**
+ * 販売 一時停止フラグの正規化。
+ * Airtable の checkbox は未チェックのとき**フィールド自体が返ってこない**ので
+ * `undefined` は false。文字列 'true' / 1 も true として扱う（typecast 経由の揺れ）。
+ */
+export function normalizeSalePaused(raw) {
+  if (raw === true) return true;
+  if (raw === 1) return true;
+  const v = (raw == null ? '' : String(raw)).trim().toLowerCase();
+  return v === 'true' || v === '1' || v === 'yes' || v === 'checked';
+}
+
+/**
  * 本日の受付ステータス（PHASE 4 到達後のみ意味を持つ）。
  *
  * ⚠️ `limited`（残りわずか）は **時刻だけ**で決まる。販売件数・在庫・上限とは
@@ -560,6 +607,12 @@ export function resolvePremiumPlusRelease(input) {
      * ⚠️ Airtable の `PremiumPlusEligibility` を書き換えることは**しない**（判定上の扱いだけ）。
      */
     adminPlusAuthorized = false,
+    /**
+     * この会員だけ販売を一時停止しているか（`PremiumPlusSalePaused`）。
+     * true なら **表示・商品ページ・購入 CTA・申込のすべてを閉じる**。
+     * 資格 (`eligibility`) も phase も**書き換えない**（再開したら元の状態に戻る）。
+     */
+    salePaused = false,
   } = input || {};
   // 後方互換: 旧 paidAtMs は Sanrenpuku 購入確定日時
   const sanrenpukuPaidAtMs = input && input.sanrenpukuPaidAtMs !== undefined
@@ -572,6 +625,7 @@ export function resolvePremiumPlusRelease(input) {
 
   const normalizedEligibility = normalizeEligibility(eligibility);
   const normalizedOverride = normalizeReleaseOverride(releaseOverride);
+  const paused = salePaused === true;
 
   const denied = (over = {}) => ({
     allowed: false,
@@ -590,6 +644,8 @@ export function resolvePremiumPlusRelease(input) {
     intake: null,
     circuit: resolvedCircuit,
     adminSaleDirective: false,
+    /** 会員単位の一時停止によって閉じているか（「販売対象外」と区別するための印） */
+    salePaused: paused,
     ...over,
   });
 
@@ -608,6 +664,14 @@ export function resolvePremiumPlusRelease(input) {
   // STEP 3: 販売資格。
   // ⚠️ blocked は**何があっても**ここで打ち切る（明示指定でも override でも免除しない）。
   if (normalizedEligibility === PP_ELIGIBILITY.BLOCKED) {
+    return denied({ route, daysSincePremium });
+  }
+  // STEP 3.5: 会員単位の販売 一時停止。
+  // ⚠️ ここで**すべての面（予告 / 商品ページ / 価格 / 購入 CTA）を閉じる**。
+  //    資格・override・anchor は一切書き換えないので、再開すれば元の状態がそのまま戻る。
+  //    「販売対象外(blocked)」より後に置くのは、恒久判断の blocked を一時停止で
+  //    上書き表示しないため（blocked は blocked のまま見せる）。
+  if (paused) {
     return denied({ route, daysSincePremium });
   }
   // 管理者が販売導線として Plus を明示指定しているときは、review / 未設定でも先へ進める。
@@ -668,6 +732,8 @@ export function resolvePremiumPlusRelease(input) {
     purchaseEnabled: isSale && intake !== PP_INTAKE.CLOSED,
     intake,
     circuit: resolvedCircuit,
+    /** ここへ来た時点で停止していない（形を揃えて呼び出し側の分岐を減らす） */
+    salePaused: false,
   };
 }
 
@@ -679,7 +745,11 @@ export function resolvePremiumPlusRelease(input) {
  */
 export function describeReleaseState(release) {
   const r = release || {};
+  // ⚠️ 「販売対象外(blocked)」と「一時停止」を同じ文言にしない。
+  //    停止は資格を残したまま止めているだけで、**再開すれば元に戻る**。
+  //    混ぜると再開すべき相手が販売対象外の中に埋もれる。
   if (r.eligibility === PP_ELIGIBILITY.BLOCKED) return '販売対象外';
+  if (r.salePaused === true) return '一時停止中（資格は保持）';
   if (r.eligibility !== PP_ELIGIBILITY.ELIGIBLE) return '保留';
   if (!r.allowed) return '対象外（Plus 候補の条件を満たしていません）';
   if (r.overrideApplied) return '即時販売';

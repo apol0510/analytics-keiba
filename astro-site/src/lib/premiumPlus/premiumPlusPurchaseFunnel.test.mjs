@@ -314,8 +314,13 @@ test('【重要】orderKey は確定内容から作る（再送で同じ鍵に�
 
 test('【重要】決済開始は申込 Function（サーバー側）で記録する', () => {
   assert.match(APPLY, /recordPlusCheckoutStart\(/);
-  // Premium Plus の申込だけを Plus のファネルへ数える
-  assert.match(APPLY, /Premium Plus\/i\.test\(String\(productName/);
+  // Premium Plus の申込だけを Plus のファネルへ数える。
+  // ⚠️ 判定は単一源 `isPremiumPlusProductName()`（大小区別なし）に集約した。
+  //    以前はここで `/Premium Plus/i.test(String(productName))` という**書き方**を
+  //    固定していたが、書き方が合っていても呼び出しが排他条件の中にあり
+  //    **一度も発火しなかった**（到達可能性は plusCheckoutIntakeWiring.guard.test.mjs で固定）。
+  assert.match(APPLY, /isPremiumPlusProductName\(productName\)/);
+  assert.match(APPLY, /if \(isPremiumPlusOrder\) \{/, 'Plus の申込だけを数える条件が無い');
 });
 
 test('決済開始の計測失敗で申込処理を止めない', () => {

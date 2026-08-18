@@ -7,11 +7,12 @@
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
-import { resolveOrderSaleDate, buildSaleProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
+import { resolveOrderSaleDate, buildSaleProductName, isPremiumPlusProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
 import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
 import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -146,7 +147,12 @@ exports.handler = async (event, context) => {
     //    「本日分」のつもりの注文が実際には翌日分になる。**サーバーが出し直す**。
     //    ここで確定した商品名（対象日入り）が、管理者通知メール・お客様控え・
     //    申請履歴のすべてを通って残る＝どの日の買い目を届けるかが経路の端まで伝わる。
-    const isPremiumPlusOrder = /Premium Plus/i.test(String(productName || ''));
+    const isPremiumPlusOrder = isPremiumPlusProductName(productName);
+    // 決済開始の計測に使う recordId。下の対象日照会で引けたら再利用し、
+    // 引けなかったときだけ計測直前に 1 回だけ引き直す（Airtable の GET を増やさない）。
+    let plusCustomerRecordId = null;
+    // 同じ照会で得た会員 fields（販売の一時停止判定に使う）
+    let plusCustomerFields = null;
     // ── 既に確定している対象日を読む（冪等の要）──────────────────
     // 未確定の申込（PaymentConfirmed=false）に保存された対象日があれば、
     // **再送・再読込・翌日以降の再実行でもそれを使い、再計算しない**。
@@ -164,7 +170,11 @@ exports.handler = async (event, context) => {
         );
         if (res.ok) {
           const data = await res.json();
-          const f = (data.records || [])[0]?.fields || {};
+          const rec0 = (data.records || [])[0] || null;
+          const f = rec0?.fields || {};
+          // 同じ照会で recordId と販売状態も拾っておく（決済開始の計測 / 停止判定で使う）
+          if (rec0?.id) plusCustomerRecordId = rec0.id;
+          plusCustomerFields = rec0 ? f : null;
           // 入金確認済みの注文の日付は引き継がない（次の注文は新しい対象日）
           if (f['PaymentConfirmed'] !== true) {
             const v = f[SALE_TARGET_DATE_FIELD];
@@ -209,6 +219,62 @@ exports.handler = async (event, context) => {
       console.log('📅 [bank-transfer] Premium Plus 対象日:', {
         date: saleOrder.date, reused: saleOrder.reused, reason: saleOrder.reason,
       });
+    }
+
+    // ── Premium Plus: 会員単位の販売 一時停止を**サーバーで**確認する ──────────
+    // ⚠️ 画面（CTA の非表示 / ボタン disabled）は URL 直打ち・コンソール操作・
+    //    古いタブからの再送で回避できる。**申込を止められるのはここだけ。**
+    //    停止中の会員の申込は、メール送信より前に・副作用ゼロで打ち切る。
+    //
+    // 「販売対象外(blocked)」ではなく「一時停止」なので、文言も別にする
+    // （顧客には理由を明かさず、再開があり得ることだけ伝える）。
+    if (isPremiumPlusOrder) {
+      try {
+        if (plusCustomerFields === null
+            && process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID) {
+          const q = new URLSearchParams({
+            filterByFormula: `LOWER(TRIM({Email})) = '${String(email).toLowerCase().replace(/'/g, "\\'")}'`,
+            maxRecords: '1',
+          });
+          const res = await fetch(
+            `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Customers?${q}`,
+            { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const rec0 = (data.records || [])[0] || null;
+            if (rec0) {
+              plusCustomerRecordId = rec0.id;
+              plusCustomerFields = rec0.fields || {};
+            }
+          }
+        }
+      } catch (e) {
+        // 読めなかったときは**通常会員の申込まで巻き添えで止めない**。
+        // 停止は正本（PremiumPlusSalePaused）が「停止」と読めたときだけ効かせる。
+        // ⚠️ この窓では停止済み会員の申込を捕まえられない。
+        //    それでも「Airtable が読めない」だけを理由に全員を止める設計は採らない。
+        console.warn('⚠️ [bank-transfer] 会員レコードを読めませんでした:', e.message);
+      }
+      // ── 停止判定 ───────────────────────────────────────────
+      // 正本は Airtable の `PremiumPlusSalePaused` **のみ**。
+      // 画面（CTA 非表示・ボタン disabled）は URL 直打ち・古いタブからの再送で
+      // 回避できるため、**申込を止められるのはここだけ**。
+      if (plusCustomerFields
+          && normalizeSalePaused(plusCustomerFields[PP_SALE_PAUSE_FIELDS.PAUSED])) {
+        console.warn('🚫 [bank-transfer] Premium Plus 申込を拒否（販売停止）:', {
+          recordId: plusCustomerRecordId || null,
+        });
+        return {
+          statusCode: 403,
+          headers,
+          body: JSON.stringify({
+            error: '現在お申し込みを受け付けていません。再開までしばらくお待ちください。',
+            code: 'sale_paused',
+            sideEffects: 'none',
+          }),
+        };
+      }
     }
     // 対象日を含む確定商品名。**以後の処理・メール・履歴はこれを使う**
     const orderProductName = (isPremiumPlusOrder && saleOrder && saleOrder.date)
@@ -501,9 +567,44 @@ exports.handler = async (event, context) => {
     }
 
     // ========================================
+    // 決済開始の計測（Premium Plus のみ・サーバー側）
+    // ========================================
+    // ⚠️ **この直後の Airtable 登録ブロックは Premium Plus を除外する**（単品購入のため
+    //    顧客レコードを作り替えない）。計測をそのブロックの中に置くと
+    //    `Premium Plus 以外` と `Premium Plus だけ` の条件が重なって**永久に発火しない**。
+    //    2026-08-14〜2026-08-17 の本番はこの状態で、決済開始が 1 件も記録されていなかった。
+    //    → 計測は必ず**このブロックの外**（Plus を除外しない場所）で行う。
+    //
+    // 記録は recordId が確定してからだけ行う（Redis の識別子は recordId のみ）。
+    // 計測は申込の成否に一切関与しない: 失敗しても握りつぶし、rollback もしない。
+    if (isPremiumPlusOrder) {
+      try {
+        // recordId は上の販売状態チェックで既に確定している（Airtable の GET を増やさない）
+        if (plusCustomerRecordId) {
+          // 冪等性は store 側の DEDUPE_MS（同一 recordId・同一種別は 30 分に 1 回）が持つ。
+          // 再送・二重送信で水増しされない。
+          const m = await recordPlusCheckoutStart({
+            recordId: plusCustomerRecordId,
+            env: process.env,
+            nowMs: Date.now(),
+            // 導線はフォームが載せた値。**採否はサーバーの allow-list**が決める
+            source: funnelSource,
+          });
+          console.log('📊 [bank-transfer] 決済開始の計測:', { counted: m.counted, reason: m.reason });
+        } else {
+          // 会員レコードが引けない申込（Plus は既存会員にしか売らないので通常起きない）。
+          // **推測の recordId を作らない**。計測しないだけで申込は通す。
+          console.warn('⚠️ [bank-transfer] 決済開始を計測できません（会員レコード未特定）');
+        }
+      } catch (metricError) {
+        console.warn('⚠️ [bank-transfer] 決済開始の計測に失敗:', metricError.message);
+      }
+    }
+
+    // ========================================
     // Airtable登録（Premium Plus以外の月額プラン）
     // ========================================
-    if (!productName.includes('Premium Plus')) {
+    if (!isPremiumPlusProductName(productName)) {
       // プラン名から料金部分を削除（Airtable Single select用）
       // 例: "Premium Lifetime (¥78,000（永久アクセス）)" → "Premium Lifetime"
       // 例: "Premium Annual (¥68,000/年)" → "Premium Annual"
@@ -609,19 +710,10 @@ exports.handler = async (event, context) => {
           // 既存顧客 - Update
           const existingRecord = existingRecords[0];
           const recordId = existingRecord.id;
-          // ── 決済開始の計測（**サーバー側**。申込がここへ到達した時点）─────
-          // Premium Plus の申込だけを Plus のファネルへ数える（他商品を混ぜない）。
-          // 計測が失敗しても申込処理は続ける（例外を投げない設計）。
-          if (/Premium Plus/i.test(String(productName || ''))) {
-            const m = await recordPlusCheckoutStart({
-              recordId,
-              env: process.env,
-              nowMs: Date.now(),
-              // 導線はフォームが載せた値。**採否はサーバーの allow-list**が決める
-              source: funnelSource,
-            });
-            console.log('📊 [bank-transfer] 決済開始の計測:', { counted: m.counted, reason: m.reason });
-          }
+          // ⚠️ ここに決済開始の計測を置かないこと。
+          //    このブロックは `Premium Plus 以外` のときしか実行されないため、
+          //    Plus 限定の計測を置くと条件が重なって**永久に発火しない**（実際に発生した）。
+          //    計測はこのブロックの外（上部の「決済開始の計測」）で行う。
           const currentStatus = existingRecord.fields?.Status || null;
           const updateUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers/${recordId}`;
 
@@ -780,7 +872,7 @@ exports.handler = async (event, context) => {
     // ========================================
     // BlastMail読者登録（Premium Plus以外の月額プラン）
     // ========================================
-    if (!productName.includes('Premium Plus')) {
+    if (!isPremiumPlusProductName(productName)) {
       try {
         const BLASTMAIL_USERNAME = process.env.BLASTMAIL_USERNAME;
         const BLASTMAIL_PASSWORD = process.env.BLASTMAIL_PASSWORD;

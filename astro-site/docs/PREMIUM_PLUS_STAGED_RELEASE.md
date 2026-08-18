@@ -62,6 +62,7 @@
 1. 会員状態（`resolveEntitlements` の `canViewSanrenpuku` / `canViewPremium`）
 2. **route**: Sanrenpuku 保有 → `sanrenpuku` / 通常 Premium 有効 かつ 加入 30 日以上 → `premium_30d` / それ以外 → `none`
 3. **販売資格**: `PremiumPlusEligibility` が `eligible` 以外はここで打ち切り
+3.5. **販売の一時停止**: `PremiumPlusSalePaused` が true ならここで打ち切り（下記）
 4. **anchor**: route 固有の購入確定日時と販売許可日から決める
 5. **phase**: anchor からの JST 暦日で 1〜4
 6. **受付ステータス**: PHASE 4 のときだけ OPEN / CLOSING / CLOSED
@@ -72,6 +73,119 @@
 Sanrenpuku 購入済みになったユーザーには ROUTE B を適用しない（`resolvePlusRoute` が
 先に ROUTE A を返す）。ROUTE B 進行中に三連複を買えば ROUTE A へ切り替わり、
 両方が同時に立つ構造にはしていない。
+
+## 会員単位の販売 一時停止（`PremiumPlusSalePaused` / 2026-08-17）
+
+「この会員にだけ、いまは Premium Plus を売らない」を **資格とは独立した軸**で持つ。
+販売資格（eligible / review / blocked）は**そのまま残る**。
+
+### 既存フィールドで代用できない理由（検討済み・不採用）
+
+| 代用案 | なぜ不可 |
+|---|---|
+| `PremiumPlusEligibility='blocked'` | ① 意味が違う（blocked は**恒久判断**、停止は一時的）。管理画面で同じに見えると再開すべき相手が埋もれる ② **再開で段階公開がリセット**される。`buildEligibilityUpdateFields` は review/blocked → eligible の実遷移で `PremiumPlusEligibleAt` を now に更新するため、止めて戻すだけで PHASE が Day 0 に戻る |
+| `PremiumPlusEligibility='review'` | 同上（意味＝「まだ判断していない」/ anchor リセットも同じ） |
+| `PremiumPlusReleaseOverride` に値を追加 | あれは phase 進行を飛ばす override。上書きすると「今すぐ販売可」の設定が消える |
+| `UpsellTarget='none'` | **販売導線の選択**（三連複を含む）であって Plus 専用ではない。三連複 CTA まで巻き添えで消える。さらに申込 Function は UpsellTarget を読まないので **URL 直打ちを止められない** |
+
+→ 専用フィールドを 1 本足すのが唯一「恒久的に・混同なく」表現できる形。
+
+### 効果（停止中）
+
+`resolvePremiumPlusRelease` が STEP 3.5 で打ち切り、Plus のフラグが**全部 false** になる。
+
+| 面 | 停止中 |
+|---|---|
+| dashboard の案内ボタン | 出ない（`/api/upsell.json` の channel が plus にならない） |
+| 三連複ページの予告枠 | 出ない（`showTeaser=false` → stage API 404） |
+| `/premium-plus/` `/premium-plus-v2/` | **404**（`showProductPage=false`） |
+| 価格・購入 CTA | 出ない（`showPurchaseCta=false` / `purchaseEnabled=false`） |
+| **申込 API（URL 直打ち・古いタブからの再送）** | **403 `sale_paused`**（`bank-transfer-application.js`。メール送信より前・`sideEffects:'none'`） |
+
+⚠️ 画面側の非表示だけでは**止まらない**（URL 直打ち・コンソール・古いタブが回避できる）。
+**申込を止められるのはサーバー側の 403 だけ**なので、この経路を外さないこと。
+
+### 影響しないもの
+
+- **他会員**（判定はその会員の fields / marker からのみ導出）
+- **16:30 以降の翌日分販売**（停止していない会員は従来どおり買える）
+- **通常の eligibility 判定 / PHASE / anchor**（一切書き換えない）
+- **三連複の販売導線**（Plus だけを止める）
+
+### 判定の正本は Airtable フィールドだけ
+
+停止判定は `PremiumPlusSalePaused` を **`resolvePlusMemberFromFields` →
+`resolvePremiumPlusRelease` の既存の単一源が読む**。表示 4 経路（dashboard CTA /
+三連複ページ予告 / `/premium-plus/` / `/premium-plus-v2/`）はこの結果に従うだけで、
+ページ側・API 側に停止判定を書かない。
+
+申込 API だけは別経路（`resolveUpsellForCustomer` を通らない）なので、
+`bank-transfer-application.js` が同じフィールドを読んで 403 を返す。
+**画面の非表示だけでは URL 直打ちを止められないため、この 403 が唯一の実効的な停止点。**
+
+#### 読めなかったときの扱い
+
+Airtable を読めなかったときは **停止側へ倒さない**。
+「読めない＝停止」にすると、Airtable の一時障害だけで**通常会員全員の購入まで止まる**。
+
+- 表示系は元々 fail closed（fields が無いと `channel` が none になり何も売らない）
+- 申込 API は「正本が停止と読めたとき」だけ 403。読めなかった窓では停止済み会員を
+  捕まえられないが、**通常会員を巻き添えにしないことを優先する**（承認済みの方針）
+
+⚠️ 外部ストア（Redis 等）を使った二重化・2 系統判定は **この正本に含まれない**。
+必要になった場合は設計として別途承認を取ること。
+
+### 表示の区別（**資格と停止は別の軸**）
+
+| 状態 | バッジ | `describeReleaseState` |
+|---|---|---|
+| 販売対象外 | `blocked`（赤） | `販売対象外` |
+| 一時停止 | `paused`（琥珀） | `一時停止中（資格は保持）` |
+
+**同じ文言・同じ色にしないこと。** 混ぜると再開すべき相手が恒久的な対象外の中に埋もれる。
+
+⚠️ **`classify()` に停止を混ぜてはいけない。** 一度これをやって次の 3 つを同時に壊した:
+
+1. 停止中の会員が「販売可 / 保留 / 販売対象外」の**どのフィルタにも出てこない**
+   （状態キーが `paused` に化けるため）
+2. サマリー件数はサーバーが `eligibility` で数えるので、**件数と表示行が食い違う**
+3. 状態バッジが上書きされ、**その会員が eligible なのか blocked なのか読めない**
+
+正しい形:
+
+- `classify()` は**資格の軸だけ**を返す（従来どおり）
+- 停止は `pauseBadge()` が**別バッジとして添える**（資格バッジは残す）
+- 絞り込みは `fPause`（停止中だけ / 停止していないものだけ）で**独立して**行う
+- 件数は `counts.salePaused` を**別に**出す（`eligible` / `immediate` から差し引かない。
+  停止中でも資格は「販売可」のままが正しいため）
+
+### 本番で使えないときは admin に明示する
+
+`salePause.writable`（= Airtable フィールドの gate）が false のとき、
+一覧の先頭に**未有効の告知**を常設し、停止ボタンを無効化する。
+
+**「ボタンがあるから使える」と誤認させないこと。** 有効化の手順（フィールド作成 / env）を
+✅❌ 付きで出し、いま何が欠けているかをその場で読めるようにする。
+応答に `salePause` が無い（旧デプロイ）ときも**使える扱いにしない**。
+
+### 操作（管理画面 → 詳細パネル「販売の一時停止」）
+
+1 クリックで `販売中 ⇔ 一時停止` を切り替える。再開も**同じ場所の同じボタン**。
+API は `action='setSalePause'`（`{ recordId, paused, reason?, actor, expectedPausedAt? }`）。
+
+- 操作者名が未入力なら押せない（変更履歴が `admin` に潰れるのを防ぐ）
+- 停止時のみ確認ダイアログ＋理由入力（任意）。再開は確認なしで即戻せる
+- 保存後は `refreshOne`（recordId 指定）で **Airtable から読み直して**確認する
+- 同時編集は `expectedPausedAt` で検知（**停止側の版**。資格の UpdatedAt とは別軸）
+- 既に同じ状態なら PATCH しない（`changed:false`。監査日時を無駄に動かさない）
+
+### rollback
+
+1. **運用での取り消し**: 同じボタンで「販売を再開」→ 元の PHASE・資格がそのまま戻る
+2. **機能ごと止める**: `PREMIUM_PLUS_SALE_PAUSE_READY` を unset → 停止操作は 503 で受け付けなくなる
+   （既にチェック済みのレコードは**停止したまま**なので、先に画面から再開しておくこと）
+3. **コードごと戻す**: `git revert`。フィールドが残っていても読み手が消えるだけで、
+   未設定＝停止していない扱いに戻る
 
 ## 販売資格 PremiumPlusEligibility
 
@@ -268,6 +382,25 @@ override フィールドは eligibility 系より**後から**追加するため
 | `PremiumPlusReleaseOverride` | 単一選択 `phase4`（空 = override なし） | 「今すぐ販売可」。**未作成・要承認** |
 | `PremiumPlusEligibilityUpdatedAt` | 日時 | **監査専用**（phase には使わない） |
 | `PremiumPlusEligibilityUpdatedBy` | テキスト | 監査（操作者） |
+
+### 販売 一時停止フィールド（**本番未作成・要承認 / 2026-08-17 追加**）
+
+| フィールド | 型 | 用途 |
+|---|---|---|
+| `PremiumPlusSalePaused` | **チェックボックス** | 停止中か。未作成・未チェック = 停止していない |
+| `PremiumPlusSalePausedAt` | 日時 | 停止/再開の操作日時（監査） |
+| `PremiumPlusSalePausedBy` | テキスト | 操作者（監査） |
+| `PremiumPlusSalePauseReason` | テキスト（200 字） | 停止理由。**管理者だけが見る。顧客画面に出さない** |
+
+- gate は **`PREMIUM_PLUS_SALE_PAUSE_READY === '1'`**（`isSalePauseEnabled()`。
+  `PREMIUM_PLUS_FIELDS_READY=1` も併せて必要）。override と gate を分けるのは、
+  未作成フィールドを含む PATCH が 422 で**他の更新まで巻き添えにする**ため。
+- **読み取りに gate は不要**（フィールドが無い＝停止していない＝従来どおり）。
+- **停止操作だけ fail closed**。gate off のときは 503 `sale_pause_not_ready` を返し、
+  画面のボタンも無効化する。**書けないのに「停止しました」と見せない**
+  （止めたつもりで売れ続けるのが最悪の事故）。
+- 投入順序: **① Airtable で 4 フィールド作成 → ② env `PREMIUM_PLUS_SALE_PAUSE_READY=1` →
+  ③ redeploy**。逆順にしても壊れないが、②③ の前は停止操作が 503 のまま。
 
 - 既存 Audit Log 機構は AK に無い（Payment Email v2 の状態列があるだけ）ため、
   UpdatedAt / UpdatedBy の 2 列で最小限の監査を持つ。履歴テーブルは作らない。
