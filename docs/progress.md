@@ -1,3 +1,60 @@
+## 2026-08-18 — 【進行中】トップページに有料実績ショーケースのプレビューを追加（PR #366 Draft・未マージ）
+
+### 目的
+
+反応の良い `/results-showcase/` の内容を、トップページの **Hero Key Visual 直下（Hero Section より前）** で
+実際に見えるプレビューとして表示し、有料実績ページへの導線を強化する。
+単なるリンクバナーではなく、**その日に有料会員へ配信したメインレースの買い目そのもの**を
+トップだけで読み取れるコンパクトカードにする。
+
+### 完了済み内容
+
+| 区分 | 内容 |
+|---|---|
+| 新規 | `astro-site/src/lib/resultsShowcasePreview.js` — 単一源 `buildLatestShowcase()` の戻り値から**選ぶだけ**の薄いアダプタ |
+| 新規 | `astro-site/src/components/HomeResultsShowcasePreview.astro` — JRA / 南関の 2 カード（PC 2 カラム / SP 1 カラム） |
+| 新規 | `astro-site/src/lib/resultsShowcasePreview.test.mjs` — 13 ケース |
+| 変更 | `astro-site/src/pages/index.astro` — Hero Key Visual 直下へ 1 タグ追加（既存 archive JSON import を渡すだけ） |
+| 変更 | `astro-site/package.json` — `test:results-showcase` を追加し `check:safety` に配線 |
+| 変更 | `.github/workflows/safety-check.yml` — 個別 step として CI 実行 |
+| 変更 | `astro-site/docs/RESULTS_SHOWCASE.md` — 正本へ上部プレビューの確定仕様を追記 |
+
+確定仕様（`RESULTS_SHOWCASE.md`）の遵守:
+
+- **新しい結果 JSON も独自集計も作らない**。`archiveResults{,Jra}.json` の最新日（index 0）を
+  `buildLatestShowcase()` に通した結果から選ぶだけ
+- 買い目の公開範囲（メインのみ / 抑え非公開 / 旧 `↔` 裏目的中の `⇄` 畳み込み）は
+  単一源の `displayArrow` / `displayPartners` をそのまま描画し、再実装しない
+- **誇張しない**: 代表メインは「最初にメインレースを持つ会場」を機械的に選ぶ（的中会場を優先しない）。
+  固定の宣伝数値は新設せず、回収率が無い日は項目ごと非表示（0% を捏造しない）
+- 代表メインが作れないカテゴリはカードごと非表示、両方無ければセクション自体を描画しない
+- トップ下部の「昨日の的中結果」（`/archive/` 導線・買い目非公開）は**変更していない**（役割が重複しない）
+
+### 現在の状態
+
+| 項目 | 値 |
+|---|---|
+| branch | `feat/home-results-showcase-preview` |
+| HEAD | `75bfeaa8` |
+| PR | **#366（Draft）** |
+| CI | **PASS**（safety-check / deploy-preview / header rules / redirect rules） |
+| build | ✅ 成功（prune 後 SSR 関数 101.8MB / 250MB） |
+| safety | ✅ `npm run check:safety` exit 0（`test:results-showcase` 13/13 込み） |
+| Deploy Preview 確認 | ✅ 挿入位置・実データ描画・`抑え` 非混入・CTA 先 200 を確認済み |
+| production 反映 | **未反映** |
+| merge | **未実施**（承認後に squash merge 予定） |
+
+Deploy Preview 実測: JRA=8/16 中京・新潟・札幌（中京11R `7 → 2 4 11 13 15` 不的中 / 当日 15/36・回収率 256.1%）、
+南関=8/17 大井（9R `5 → 1 2 6 8 9` 不的中 / 7/10・135.4%）。
+
+### 補足
+
+`npm run lint` / `npm run typecheck` は**リポジトリ側に設定が無く main でも実行できない**
+（`eslint.config.js` 不在 / `@astrojs/check` 未インストール）。本 PR で依存は追加していない
+（`package-lock.json` 変更なし）。代替として `node --check` / JSON / YAML パースで構文検証した。
+
+---
+
 ## 2026-08-18 — 【実績】資格の軸と停止の分離を本番反映し、read-only で実測完了
 
 PR #365 を squash merge（main `133e482a`）→ 本番反映 → 6 項目を read-only 実測。
