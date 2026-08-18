@@ -379,6 +379,90 @@ fixture を「いま」からの相対時刻に直した（**テストのみの�
 `test:marketing` 1,989 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・
 `check:fn-no-undef` OK・`build` EXIT=0。
 
+## 2026-08-18 — 【修正】引き継ぎの「対象 0 件」を fail closed にする（#363 の後始末）
+
+#363 で「対象 0 件」を失敗扱いしない直し方をしたが、**一律で引き継ぎを消していた**（fail open）。
+0 件には 2 つの意味がある:
+
+  A. もう積み終わっている（queue は冪等）→ 畳んでよい
+  B. まだ Airtable に反映されていない（付与直後の読み取り遅延）→ **畳んではいけない**
+
+B で畳むと「付与済みなのに案内が来ない人」が黙って残る。
+
+### 直したこと（正の証拠でしか消さない）
+
+引き継ぎ（`grantOperationId`）を消してよいのは、**その回に付与した人全員の Step1 が
+配信台帳に `queued` / `sent` で載っている**と確認できたときだけ。
+
+| 根拠 | 使う？ |
+|---|---|
+| dry-run の「対象 0 件」 | ❌ まだ Airtable に見えていないだけのことがある |
+| 関所 `outstandingStep1 === 0` | ❌ **同じ読み取り遅延で 0 に見える**（#362 で実証） |
+| 「救済経路があるから大丈夫」 | ❌ 引き継ぎの責任を推測で手放さない |
+| **その operation の対象者を再導出 → Step1 の DeliveryKey → 配信行を名指し確認** | ✅ |
+
+`handoffQueueProof.js`（read-only）が既存契約だけで証明する:
+
+1. `buildGrantOperationFormula(op)` … 付与時に Customers へ書かれた `LightGrantOp` /
+   `PremiumGrantOp` から、その回の対象者を**再導出**（`comebackEmailHandoff.js` の契約）
+2. `resolveCustomerMarketing` / `loadBlacklistEmails` / `fetchProviderSuppression` …
+   送信可否の**既存単一源**をそのまま使う
+3. `computeCampaignDeliveryKey` + `buildDeliveryKeyFormula` … その人たちの Step1 の
+   配信行を**名指し**で引く
+4. **`evaluateStep1Barrier` に渡して数える**（解決の定義は既存契約に任せる）
+
+⚠️ **「全員 queued/sent」を条件にしない。** 配信基盤の停止リスト・配信停止・
+   購入済み・体験終了は既存契約で**正当に除外**され、送ってはいけない。
+   それらも「解決済み」として数える（除外理由をここで新しく作らない）。
+   1 名の正当な除外で永久に解決しなくなる、という指摘への対応。
+
+`outstanding === 0`（＝全員が queued/sent か正当な除外）のときだけ CLEAR。
+一部でも未解決 / 材料が読めない / 対象者が 0 人に見えるときは保持して retry、
+続けば **引き継ぎを残したまま** auto-stop（`handoff_unproven:<理由>`）。
+
+⚠️ ブランドは `lightTrialPlanLoader.js` と同じ値（違うと鍵が変わり証明が常に失敗する）。
+⚠️ 配信基盤の鍵は lib が env から読む（**運転手に SendGrid を持ち込まない**）。
+⚠️ アドレスは判定にだけ使い、戻り値にもログにも state にも出さない。
+
+この時点の実績: 付与 1,010 名 / Step1 案内済み 1,005 名（queue または送信済み）/
+送信 806 通・PENDING 258 通（dispatch 待ち）/ 除外 5 名 / 失敗 0 / 重複 0。
+新規付与は**承認のうえ一時停止**（queue / dispatch は継続）。
+
+`test:marketing` 2,017 pass・`test:comeback` 431 pass・`check:safety` EXIT=0・`build` EXIT=0。
+
+### 追補（同日）— ブラックリストの「読めた」を **status で正に確認**する
+
+上の証明はブラックリストを `bl && bl.emails` で見ていた。これが**契約と合っていない**。
+
+`loadBlacklistEmails()`（`newsletter/airtable-fetch.js`）は**読めなくても例外を投げない**。
+`missing` / `permission-error` / `network-error` / `read-error` のいずれでも
+`{ emails: new Set(), status: <理由> }` を返す。**空 Set は truthy** なので、
+`bl.emails` を見るだけでは **読み取り失敗が「ブラックリスト 0 件」として通る**。
+そのまま数えると、本当はブラックリストで除外されるはずの人が
+「まだ案内していない人」から漏れ、**引き継ぎを誤って畳む**（fail open が 1 つ残っていた）。
+
+証明に使ってよいのは **正に確認できた 2 通りだけ**（`acceptBlacklistResult`）:
+
+| `status` | 証明に使う？ |
+|---|---|
+| `enabled`（かつ `emails` が Set） | ✅ 実際に読めた |
+| `not-applicable` かつ `BRAND_HAS_BLACKLIST_TABLE[brand] === false` | ✅ **テーブル非対象と分かっているブランドだけ** |
+| `missing` / `permission-error` / `network-error` / `read-error` / 未知 | ❌ `PROOF_FAIL.EXCLUSIONS_UNREADABLE` |
+| `not-applicable` だが brand が AK / 未知 / 未指定 | ❌ 同上 |
+
+⚠️ **AK を `not-applicable` 扱いしない。** AK は `BRAND_HAS_BLACKLIST_TABLE` で `true`
+   （EmailBlacklist テーブルが実在する）。AK で `not-applicable` が返るのは契約違反なので証明しない。
+⚠️ `fetchProviderSuppression` の `ok:false` fail closed は**現状維持**。
+
+テストは**実物の戻り値の形**（`{ emails, status }`）で mock する。
+形の違う mock（`{ emails }` だけ / `{}`）は、この事故をそのまま素通りさせる。
+`handoffQueueProof.test.mjs` を新設（16 件）し、`handoffResolution.test.mjs` の
+mock も実物の形へ揃えた。旧実装に対して当てると **5 件が落ちる**ことを確認済み。
+
+`test:marketing` 2,037 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0。
+本番は**新規 grant 停止・PENDING=0 を維持**（このコミットは read-only な判定のみで挙動を緩めない）。
+
 ## 2026-08-18 — 【修正】queue の「対象 0 件」を失敗にしない
 
 引き継ぎ（付与ぶん）を積もうとしたとき、dry-run が「対象 0 件」を返すと
