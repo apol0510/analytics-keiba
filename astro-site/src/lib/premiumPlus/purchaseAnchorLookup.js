@@ -33,6 +33,20 @@ export function clearAnchorCache() {
 }
 
 /**
+ * 1 レコードだけキャッシュから落とす。
+ *
+ * このモジュールは 10 分キャッシュを持つため、**同じリクエスト系列で Customers を
+ * 更新した直後**（例: クーポン取得）に読み直すと古い値が返り、画面が「未取得」の
+ * ままになる。書き込んだ側がここを呼んで、自分の更新だけを確実に見えるようにする。
+ *
+ * ⚠️ 全消し（clearAnchorCache）を本番経路で呼ばないこと。他会員の取得まで巻き添えで
+ *    無効化され、Airtable への再取得が一斉に走る。
+ */
+export function invalidateCustomerFields(recordId) {
+  if (typeof recordId === 'string' && recordId) cache.delete(recordId);
+}
+
+/**
  * Customers レコードの fields を取得する（キャッシュ付き・読み取り専用）。
  * 取得できないときは null。
  *

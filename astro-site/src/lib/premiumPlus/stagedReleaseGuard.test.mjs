@@ -82,9 +82,27 @@ for (const [name, src] of Object.entries(PRODUCT_PAGES)) {
     // 販売導線が plus でない会員も同じ 404（2 商品を並べない・存在秘匿）
     assert.match(fm, /if\s*\(ppUpsell\.channel !== UPSELL_CHANNEL\.PLUS \|\| !ppRelease\.showProductPage\)/);
     const gate = fm.slice(fm.indexOf('!ppRelease.showProductPage'));
-    assert.match(gate.slice(0, 400), /status:\s*404/);
+    // ゲート内で 404 以外に抜けられるのは**受付休止ページ 1 つだけ**。
+    // その分岐を含めても、最後は必ず 404 で閉じている。
+    const head = gate.slice(0, 2000);
+    assert.match(head, /status:\s*404/);
     // 認可ゲートと同じく 401/403 は使わない（存在を漏らさない）
     assert.doesNotMatch(fm, /status:\s*40[13]/);
+  });
+
+  test(`${name}: 停止中の会員だけ 404 ではなく受付休止ページ（200）`, () => {
+    const gate = fm.slice(fm.indexOf('!ppRelease.showProductPage'));
+    const head = gate.slice(0, 2000);
+    // 判定はライブラリ側の単一源。ページで停止条件を書き直さない
+    assert.match(head, /ppUpsell\.pauseNotice\?\.showPauseNotice === true/, '休止案内の判定を単一源から読んでいない');
+    assert.doesNotMatch(head, /SalePaused/, 'ページ側で停止フラグを直接読んでいる');
+    // 休止ページは専用レンダラで組む（商品ページの本文を流用しない）
+    assert.match(head, /renderPauseNoticeHtml\(/);
+    assert.match(head, /status:\s*200/);
+    // 休止ページに購入導線を持ち込まない
+    const branch = head.slice(0, head.indexOf('status: 404') >= 0 ? head.indexOf('status: 404') : head.length);
+    assert.doesNotMatch(branch, /openBankModal|purchaseEnabled|showPurchaseCta|68,?000|98,?000/,
+      '受付休止ページの分岐に購入導線・価格が入っている');
   });
 
   test(`${name}: 購入 CTA は showPurchaseCta でのみ描画される`, () => {

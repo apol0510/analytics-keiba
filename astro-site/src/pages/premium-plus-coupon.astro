@@ -1,0 +1,83 @@
+---
+export const prerender = false;
+/**
+ * /premium-plus-coupon/ — 会員が**自分の**取得済みクーポンを確認するページ
+ *
+ * 認可は商品ページと同じ SSR ゲート（`ak_session` → `verifyPlanAccess`）。
+ * さらに「クーポンを取得済み」または「いま受付休止の案内対象」でなければ 404 にする
+ * （Premium Plus の存在秘匿を崩さない）。
+ *
+ * **他会員のクーポンは構造的に見えない**: 参照するのはセッションから解決した
+ * recordId 1 件だけで、一覧・検索・他人の recordId 指定の経路を持たない。
+ *
+ * 画面には購入 CTA も価格も出さない（販売停止中の導線は閉じたまま）。
+ */
+import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/index.js';
+import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
+import { resolveUpsellForCustomer } from '../lib/upsell/upsellTarget.js';
+import {
+  readReopenCoupon, describeCouponForMember, isReopenCouponEnabled,
+  PP_REOPEN_COUPON_SOURCE,
+} from '../lib/premiumPlus/premiumPlusReopenCoupon.js';
+import { renderCouponPageHtml } from '../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+
+const now = Date.now();
+
+function notFound() {
+  return new Response('Not Found', {
+    status: 404,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+
+const access = await verifyPlanAccess({
+  cookieHeader: Astro.request.headers.get('cookie') || '',
+  secret: process.env.SESSION_SIGNING_SECRET,
+  now,
+  allowedPlans: PREMIUM_PLUS_CANDIDATE_PLANS,
+});
+if (!access.ok) return notFound();
+
+const fields = await lookupCustomerFields({
+  recordId: access.payload?.sub || null,
+  env: process.env,
+  now,
+});
+const view = resolveUpsellForCustomer({
+  fields,
+  nowMs: now,
+  fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+});
+const coupon = readReopenCoupon(fields);
+const noticeTarget = view.pauseNotice?.showPauseNotice === true;
+
+// 取得済みの人は停止が解除された後もここで確認できる。
+// どちらでもない相手には存在を知らせない。
+if (!coupon.claimed && !noticeTarget) return notFound();
+
+const couponView = describeCouponForMember({
+  coupon,
+  paused: view.plusRelease?.salePaused === true,
+  // 取得 CTA は「いま案内対象」のときだけ。停止解除後に新規取得はさせない。
+  claimable: noticeTarget,
+  storageReady: isReopenCouponEnabled(process.env),
+});
+
+const html = renderCouponPageHtml({
+  coupon: couponView,
+  source: PP_REOPEN_COUPON_SOURCE.COUPON_PAGE,
+});
+
+return new Response(html, {
+  status: 200,
+  headers: {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'private, no-store',
+    'X-Robots-Tag': 'noindex, nofollow',
+    Vary: 'Cookie',
+  },
+});
+---
