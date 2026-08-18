@@ -165,6 +165,78 @@ list・get の失敗と一覧の不完全は `null` / 鍵を読めない blob �
 **新規 grant も rollout 再開も行っていない。**
 停止時点の実測: 付与 **1,210** / Step1 解決 **1,210**（キュー登録・送信済み 1,202 + 停止リスト 8）/
 outstandingStep1 **0** / PENDING **0** / failed **0** / duplicate **0** / eligible 残 **13,278**。
+## 2026-08-18 — 【実績】トップページに有料実績ショーケースのプレビューを追加し本番反映（PR #366 squash merge）
+
+### 目的
+
+反応の良い `/results-showcase/` の内容を、トップページの **Hero Key Visual 直下（Hero Section より前）** で
+実際に見えるプレビューとして表示し、有料実績ページへの導線を強化する。
+単なるリンクバナーではなく、**その日に有料会員へ配信したメインレースの買い目そのもの**を
+トップだけで読み取れるコンパクトカードにする。
+
+### 完了済み内容
+
+| 区分 | 内容 |
+|---|---|
+| 新規 | `astro-site/src/lib/resultsShowcasePreview.js` — 単一源 `buildLatestShowcase()` の戻り値から**選ぶだけ**の薄いアダプタ |
+| 新規 | `astro-site/src/components/HomeResultsShowcasePreview.astro` — JRA / 南関の 2 カード（PC 2 カラム / SP 1 カラム） |
+| 新規 | `astro-site/src/lib/resultsShowcasePreview.test.mjs` — 13 ケース |
+| 変更 | `astro-site/src/pages/index.astro` — Hero Key Visual 直下へ 1 タグ追加（既存 archive JSON import を渡すだけ） |
+| 変更 | `astro-site/package.json` — `test:results-showcase` を追加し `check:safety` に配線 |
+| 変更 | `.github/workflows/safety-check.yml` — 個別 step として CI 実行 |
+| 変更 | `astro-site/docs/RESULTS_SHOWCASE.md` — 正本へ上部プレビューの確定仕様を追記 |
+
+確定仕様（`RESULTS_SHOWCASE.md`）の遵守:
+
+- **新しい結果 JSON も独自集計も作らない**。`archiveResults{,Jra}.json` の最新日（index 0）を
+  `buildLatestShowcase()` に通した結果から選ぶだけ
+- 買い目の公開範囲（メインのみ / 抑え非公開 / 旧 `↔` 裏目的中の `⇄` 畳み込み）は
+  単一源の `displayArrow` / `displayPartners` をそのまま描画し、再実装しない
+- **誇張しない**: 代表メインは「最初にメインレースを持つ会場」を機械的に選ぶ（的中会場を優先しない）。
+  固定の宣伝数値は新設せず、回収率が無い日は項目ごと非表示（0% を捏造しない）
+- 代表メインが作れないカテゴリはカードごと非表示、両方無ければセクション自体を描画しない
+- トップ下部の「昨日の的中結果」（`/archive/` 導線・買い目非公開）は**変更していない**（役割が重複しない）
+
+### 結果
+
+| 項目 | 値 |
+|---|---|
+| PR | **#366（MERGED）** |
+| merge 方式 | **squash merge**（main `581f0452` / merge 前 HEAD `60120021` を確認して実行） |
+| main | `60507ccd` → **`581f0452`** |
+| merge 後 CI（main push） | ✅ Safety Check **success** |
+| production 反映 | ✅ **反映済み**（`https://analytics.keiba.link/`） |
+| build | ✅ 成功（prune 後 SSR 関数 101.8MB / 250MB） |
+| safety | ✅ `npm run check:safety` exit 0（`test:results-showcase` 13/13 込み） |
+
+### 本番確認（read-only / merge 後）
+
+| # | 確認項目 | 実測 | 判定 |
+|---|---|---|---|
+| ① | 挿入位置 | `hero-keyvisual` → 本セクション → `hero-section` の順 | ✅ |
+| ② | JRA カード | 8/16 中京・新潟・札幌 / 中京11R `7 → 2 4 11 13 15` 不的中 / 当日 15/36・回収率 256.1%・他2会場のメインも公開 | ✅ |
+| ③ | 南関カード | 8/17 大井 / 大井9R `5 → 1 2 6 8 9` 不的中 / 当日 7/10・回収率 135.4% | ✅ |
+| ④ | 抑えの非公開 | 出力 HTML に `抑え` の混入なし | ✅ |
+| ⑤ | CTA 先 | `/results-showcase/{jra,nankan}/` とも 200。**遷移先の買い目・的中数・回収率がカードと完全一致**（単一源） | ✅ |
+| ⑥ | PC 2 カラム | viewport 1100 / 1280 で `grid-template-columns` が 2 列・カードが同一 y 座標で横並び | ✅ |
+| ⑦ | モバイル 1 カラム | viewport 360 / 390 / 430 で 1 列に積み上げ。本命 + 相手5頭 = 6 チップが **1 行に収まる** | ✅ |
+| ⑧ | 既存ページ 非影響 | `/` `/results-showcase/*` `/free-prediction/*` `/archive/*` `/pricing/` `/login/` `/dashboard/` すべて merge 前と同じ 200。`/premium-prediction/*` は 302（認可）で変化なし | ✅ |
+| ⑨ | 本プレビューの出現範囲 | `/` のみ（他ページに `rsp` セクション 0 件） | ✅ |
+| ⑩ | 既存セクション健在 | トップ下部「昨日の的中結果」3 箇所・`/archive/` リンク健在。無料予想ページの既存バナー `scb-banner` も健在 | ✅ |
+
+⑥⑦ はブラウザのウィンドウ幅が 848px 固定でそれ以上/以下にできなかったため、
+**本番の HTML と CSS 資産をそのまま取得**してローカルで各 viewport 幅を実測した
+（検証したのは本番配信中の `/assets/index.*.css` の実体）。
+
+rollback は `581f0452` の revert のみで完結する（**env / Airtable / データは一切変更していない**）。
+
+### 補足
+
+`npm run lint` / `npm run typecheck` は**リポジトリ側に設定が無く main でも実行できない**
+（`eslint.config.js` 不在 / `@astrojs/check` 未インストール）。本 PR で依存は追加していない
+（`package-lock.json` 変更なし）。代替として `node --check` / JSON / YAML パースで構文検証した。
+
+---
 
 ## 2026-08-18 — 【実績】資格の軸と停止の分離を本番反映し、read-only で実測完了
 
