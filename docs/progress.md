@@ -156,7 +156,8 @@ MK が目視確認すべき画面:
 | `src/lib/drm/drmRouting.js` | 宣言（`sequence.responseRoutes`）で反応層 → 次 touch / variant / angle |
 | `src/lib/drm/drmAttribution.js` | 購入を campaign / version / step / DeliveryKey / offer へ。確定不能は `unattributed` |
 | `src/lib/drm/drmMetrics.js` | sent / delivered / open / click / purchase / CVR / touch 別 conversion / unattributed |
-| `admin-marketing` の `action: 'drm'` | read-only ビュー（**新 Function を作らない**・増分集計だけ・全件走査しない） |
+| `admin-marketing` の `action: 'drm'` | read-only ビュー（**送信面に新 Function を作らない**・増分集計だけ・全件走査しない） |
+| `admin-drm-attribution`（新・分析専用） | 購入帰属だけを read-only で読む（送信経路の決済 guard を守るため分離） |
 | `/admin/drm` | 運営画面（read-only）。未計測は **0 ではなく「—」** |
 
 ⚠️ `drmRouting` は**送信可否も頻度も判定しない**（責務の二重化を防ぐためテストで固定）。
@@ -231,6 +232,9 @@ MK が目視確認すべき画面:
 - **送信経路の決済フィールド guard を維持** ✅（`offerCampaignFunction.guard` は無変更）
 - duplicate send なし ✅
 - operator UI で反応層・次訴求・conversion を確認できる ✅
+
+⚠️ 上の ✅ は**実装とテストで固定したところまで**。**本番データでの実測はしていない**
+（production deploy も実顧客の読み取りも行っていない）。実運用の数字で確認したとは書かない。
 
 ### やっていないこと
 
