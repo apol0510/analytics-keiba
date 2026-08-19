@@ -956,9 +956,25 @@ payment のいずれも動かさない。
   Customers の「クーポン取得済み」は消さない
 - admin は `Source='premium-plus-coupon-reservation'` で通常の販促 offer と区別する
 
-⚠️ **有効期限の日数が未確定のあいだは本番で予約行を作らない**（fail closed）。
-また **redeem の部分成功**（redeemed なのに昇格失敗 / 昇格成功なのに issued のまま）を
-検出・回復する手段が無いため、**本番 write は未接続**。詳細は `docs/progress.md` の「2-B」。
+#### 有効期限（2026-08-19 MK 確定）
+
+**再募集開始日時から 14 日間**（`expiryDays = 14`）。
+ただし **`reopenStartsAt`（実際の再募集開始日時）は未決定**なので、
+`expiresAt` は `reopenStartsAt + 14 日` で**導出**する（`resolveCouponExpiry()`）。
+⚠️ **開始日時を捏造しない。** 未設定のあいだは `buildReservationFields()` が null を返し、
+**本番の予約 write は fail closed**。
+
+#### redeem の部分成功（実装済み）
+
+`Customers 成功 → redeem` の順で、Customers が失敗した回は redeem しない。
+Customers 成功後に redeem が失敗しても巻き戻さず `needs_redeem`（要修復）として検出し、
+再実行は **`REDEEM_ONLY`**（offer 台帳の 2 列だけ）で収束する
+＝**二重昇格・有効期限の再延長・二重メールは起きない**。
+`未確定 + redeemed` は `anomaly` として**自動修復せず** admin に手順を出す。
+状態は admin の詳細で「所持中 / 利用予約 / 使用済み / 予約取消 / 要修復」として確認できる。
+
+⚠️ **未完了は「配線・有効化」だけ**: `confirm-bank-payment` への接続と production 有効化。
+詳細は `docs/progress.md` の「2-B」。
 
 #### 申込記録は既存 schema で足りる（**新規 schema 不要**）
 
