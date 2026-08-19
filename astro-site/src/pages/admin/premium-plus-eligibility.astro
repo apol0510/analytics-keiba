@@ -1279,6 +1279,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 一時停止は「販売対象外(赤)」と別色（琥珀＝止まっているだけ・戻せる） */
   .ppe .sumbar .s.paused .v { color: #fcd34d; }
   .ppe .sumbar .s.coupon .v { color: #5eead4; }
+  /* 「確認できない」は件数ではない。0 件（緑・青）と同じ見た目にしない */
+  .ppe .sumbar .s.warn .v { color: #fb923c; font-size: .82rem; font-weight: 800; }
+  .ppe .sumbar .s.warn .k { color: #fdba74; }
 
   /* 「一時停止は本番でまだ使えない」の明示。見落とされない強さで出す */
   .ppe .pause-off {
@@ -2886,6 +2889,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $('fState').value = 'all'; $('fPause').value = 'all'; $('fCoupon').value = 'claimed'; render();
       });
       bar.appendChild(cb2);
+      // 予約台帳を読めていないときは、件数の隣に**確認できない**ことを常設で出す。
+      // ⚠️ 「クーポン取得済み」件数は Customers 側の記録なので読めているが、
+      //    その人が**使ったかどうか**は台帳が読めないと分からない。
+      const cLedger = (lastData && lastData.couponLedger) || null;
+      if (cLedger && cLedger.available === false) {
+        const wsp = document.createElement('span'); wsp.className = 'sep'; wsp.textContent = '｜';
+        bar.appendChild(wsp);
+        const wb = document.createElement('span');
+        wb.className = 's warn';
+        wb.title = cLedger.note || '予約台帳を確認できませんでした。';
+        const wk = document.createElement('span'); wk.className = 'k';
+        wk.textContent = 'クーポン利用状態';
+        const wv = document.createElement('span'); wv.className = 'v';
+        wv.textContent = '確認できない';
+        wb.appendChild(wk); wb.appendChild(wv);
+        bar.appendChild(wb);
+      }
       $('summarySub').textContent = 'ROUTE A（三連複） ' + (c.routeA == null ? 0 : c.routeA)
         + '　/　ROUTE B（Premium 30日） ' + (c.routeB == null ? 0 : c.routeB)
         + '　/　ROUTE B 待機中 ' + (c.waiting30d == null ? 0 : c.waiting30d)
@@ -3896,10 +3916,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (r.reopenCouponExpiryText) kvRow(rcKv, '有効期限', r.reopenCouponExpiryText, 'muted');
       // ライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
       // ⚠️ 通常の販促オファーとは別軸。Airtable を直接見に行かせないための表示。
+      // ⚠️ 台帳を読めていないとき（gate off / 読み取り失敗 / 打ち切り）は
+      //    「クーポン所持中」「予約 0 件」と**断定しない**。確認できないことを出す。
       if (r.couponLifecycle) {
-        kvRow(rcKv, '利用状態', r.couponLifecycle.label || '—',
-          r.couponLifecycle.needsRepair ? '' : 'muted');
-        if (r.couponLifecycle.reservationCount) {
+        const unread = r.couponLifecycle.ledgerAvailable === false;
+        kvRow(rcKv, '利用状態', unread ? '確認できない' : (r.couponLifecycle.label || '—'),
+          (unread || r.couponLifecycle.needsRepair) ? '' : 'muted');
+        kvRow(rcKv, '予約台帳', unread ? '確認できない' : '確認できた', unread ? '' : 'muted');
+        if (unread) {
+          kvRow(rcKv, '利用予約の件数', '確認できない', '');
+        } else if (r.couponLifecycle.reservationCount) {
           kvRow(rcKv, '利用予約の件数', String(r.couponLifecycle.reservationCount), 'muted');
         }
       }
@@ -3915,6 +3941,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (r.couponLifecycle && r.couponLifecycle.needsRepair) {
         const w = document.createElement('p'); w.className = 'blocker';
         w.textContent = (r.couponLifecycle.redeemLabel || '') + ' — ' + (r.couponLifecycle.repair || '');
+        rcSec.appendChild(w);
+      }
+      // 台帳を読めていない理由と、判断してはいけないことを明示する。
+      // ⚠️ ここを出さずに「クーポン所持中」だけを見せると、実在する利用予約・使用済みが
+      //    見えないまま「未使用」と判断されてしまう。
+      if (r.couponLifecycle && r.couponLifecycle.ledgerAvailable === false) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ ' + (r.couponLifecycle.ledgerNote || '予約台帳を確認できませんでした。')
+          + ' 利用予約の有無・使用済みかどうかは判断できません'
+          + '（「予約なし」「未使用」と扱わないでください）。'
+          + '取得状況（下記）は Customers 側の記録なので、これだけは確認できます。';
         rcSec.appendChild(w);
       }
       if (r.reopenCouponWritable === false) {

@@ -69,6 +69,12 @@ export const COUPON_LIFECYCLE = Object.freeze({
   NEEDS_REPAIR: 'needs_repair',
   /** 取得していない */
   NONE: 'none',
+  /**
+   * **確認できない**（予約台帳を読めていない）。
+   * ⚠️ `HELD`（所持中・予約 0 件）や `NONE` と**混同しない**。
+   *    「読めた結果 0 件」と「読めていない」は別の事実。
+   */
+  UNKNOWN: 'unknown',
 });
 
 export const COUPON_LIFECYCLE_LABEL = Object.freeze({
@@ -78,7 +84,39 @@ export const COUPON_LIFECYCLE_LABEL = Object.freeze({
   revoked: 'クーポン予約取消',
   needs_repair: '⚠️ 要修復（入金確認と使用済みが食い違っています）',
   none: 'クーポン未取得',
+  unknown: '確認できない（予約台帳を読めていません）',
 });
+
+/**
+ * 予約台帳を読めなかった理由（**admin にそのまま出す**）。
+ * ⚠️ どれも「予約 0 件」ではない。理由を出さないと運営者が復旧できない。
+ */
+export const LEDGER_UNAVAILABLE = Object.freeze({
+  /** 台帳そのものが有効化されていない */
+  GATE_OFF: 'gate_off',
+  /** Airtable の読み取りに失敗した */
+  READ_FAILED: 'read_failed',
+  /** ページ上限に達し、全件を読み切れていない */
+  PAGE_LIMIT: 'page_limit',
+  /** 呼び出し側が台帳を渡していない（配線漏れ）*/
+  NOT_PROVIDED: 'not_provided',
+});
+
+export const LEDGER_UNAVAILABLE_NOTE = Object.freeze({
+  gate_off: '予約台帳（PromotionalOffers）が有効化されていないため、'
+    + 'クーポンの利用予約・使用済みを確認できません（COMEBACK_OFFER_TABLE_READY が未設定）。',
+  read_failed: '予約台帳の読み取りに失敗したため、クーポンの利用状態を確認できません。'
+    + '時間をおいて再読込してください。',
+  page_limit: '予約台帳を全件読み切れなかったため、クーポンの利用状態を確認できません。'
+    + '件数を確定できない状態で「予約なし」と判断しないでください。',
+  not_provided: '予約台帳を読み込んでいないため、クーポンの利用状態を確認できません。',
+  unknown: '予約台帳を確認できませんでした。',
+});
+
+/** 理由に対応する説明文（未知の理由でも「確認できない」ことは伝える） */
+export function describeLedgerUnavailable(reason) {
+  return LEDGER_UNAVAILABLE_NOTE[String(reason || '')] || LEDGER_UNAVAILABLE_NOTE.unknown;
+}
 
 /**
  * 予約を作れる状態か（**fail closed**）。
@@ -272,10 +310,54 @@ export function buildReservationRevokeFields({ record, nowMs, reason }) {
 /**
  * admin 表示用のライフサイクル状態（**通常の販促 offer とは混ぜない**）。
  *
- * @param {{ fields: object|null, offerRows?: object[], customerRecordId: string }} input
+ * ## 「確認できない」と「0 件」を混同しない（**この関数の要**）
+ *
+ * `offerRows` は **読めた結果**だけを渡すこと。読めなかったときは `null` を渡すか
+ * `ledgerAvailable: false` を明示する。呼び出し側で `rows || []` と潰すと、
+ * gate off / 読み取り失敗 / 打ち切りの会員が「クーポン所持中・予約 0 件」と
+ * **断定表示**され、実在する利用予約・使用済みが見えなくなる。
+ *
+ * 台帳を読めていないときは `state='unknown'` を返し、`reservationCount` も
+ * **0 ではなく null** にする（件数を確定できていないため）。
+ * `claimed`（Customers 側の取得の事実）だけは読めているのでそのまま返す。
+ *
+ * @param {{ fields: object|null, offerRows?: object[]|null, customerRecordId: string,
+ *           ledgerAvailable?: boolean, ledgerReason?: string }} input
  */
-export function describeCouponLifecycle({ fields, offerRows = [], customerRecordId } = {}) {
+export function describeCouponLifecycle({
+  fields, offerRows, customerRecordId, ledgerAvailable, ledgerReason,
+} = {}) {
   const held = readReopenCoupon(fields);
+  // 台帳を読めたかは呼び出し側が明示する。未指定なら `offerRows` が配列かどうかで決める
+  // （null / undefined = 確認できない）。**既定を「読めた」にしない**
+  const available = ledgerAvailable === undefined
+    ? Array.isArray(offerRows)
+    : ledgerAvailable === true;
+
+  if (!available) {
+    const reason = ledgerReason
+      || (offerRows === undefined ? LEDGER_UNAVAILABLE.NOT_PROVIDED : '');
+    const redeemView = resolveRedeemState({ fields, reservation: null, ledgerAvailable: false });
+    return {
+      state: COUPON_LIFECYCLE.UNKNOWN,
+      label: COUPON_LIFECYCLE_LABEL[COUPON_LIFECYCLE.UNKNOWN],
+      /** 台帳を読めたか。false のあいだ state / reservationCount を信用しない */
+      ledgerAvailable: false,
+      ledgerReason: reason || 'unknown',
+      ledgerNote: describeLedgerUnavailable(reason),
+      // Customers 側の「取得した」という事実だけは読めている（台帳とは別の列）
+      claimed: held.claimed === true,
+      claimedAtIso: held.claimedAtIso,
+      /** ⚠️ 0 ではなく null。件数を確定できていない */
+      reservationCount: null,
+      reservationCountText: '確認できない',
+      redeemState: redeemView.state,
+      redeemLabel: redeemView.label,
+      repair: redeemView.repair,
+      needsRepair: false,
+    };
+  }
+
   const mine = (offerRows || []).filter((rec) => isReservationRow(rec)
     && String(((rec && rec.fields) || {}).CustomerRecordId || '') === String(customerRecordId));
   const statusOf = (rec) => String(((rec && rec.fields) || {}).Status || '').trim().toLowerCase();
@@ -292,15 +374,20 @@ export function describeCouponLifecycle({ fields, offerRows = [], customerRecord
   const latest = mine.find((r) => statusOf(r) === OFFER_STATUS.ISSUED)
     || mine.find((r) => statusOf(r) === OFFER_STATUS.REDEEMED)
     || mine[0] || null;
-  const redeemView = resolveRedeemState({ fields, reservation: latest });
+  const redeemView = resolveRedeemState({ fields, reservation: latest, ledgerAvailable: true });
   if (redeemView.needsRepair) state = COUPON_LIFECYCLE.NEEDS_REPAIR;
 
   return {
     state,
     label: COUPON_LIFECYCLE_LABEL[state],
+    /** 台帳を読めた（＝ reservationCount は確定値）*/
+    ledgerAvailable: true,
+    ledgerReason: '',
+    ledgerNote: '',
     claimed: held.claimed === true,
     claimedAtIso: held.claimedAtIso,
     reservationCount: mine.length,
+    reservationCountText: String(mine.length),
     /** 入金確認と redeem の突き合わせ（waiting / needs_redeem / complete / anomaly）*/
     redeemState: redeemView.state,
     redeemLabel: redeemView.label,

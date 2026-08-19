@@ -136,11 +136,59 @@ test('修復対象だけを抽出でき、他会員へ影響しない', () => {
 });
 
 // ── 判定材料 ────────────────────────────────────────────────
-test('Customers の確定判定はプラン + Status=active で決まる', () => {
+test('Customers の確定判定はプラン + Status=active + 未処理の申込が残っていないこと', () => {
   assert.equal(isCustomerSettled(SETTLED), true);
+  // ⚠️ **既に active な会員**が Premium Plus を申し込んだ直後は「確定」ではない。
+  //    Requested* が残っているあいだは未確定（confirm が承認時にクリアする）。
+  //    ここを見落とすと、利用予約（issued）が常に要修復へ化ける。
+  assert.equal(isCustomerSettled({ ...SETTLED, RequestedPlan: 'Premium Plus' }), false);
+  assert.equal(isCustomerSettled({ ...SETTLED, RequestedPlan: '' }), true);
   assert.equal(isCustomerSettled({ 'プラン': 'Premium Plus', 'Status': 'pending' }), false);
   assert.equal(isCustomerSettled({ 'Status': 'active' }), false);
   assert.equal(isCustomerSettled(null), false);
+});
+
+// ── 台帳を読めていない（確認できない）────────────────────────
+test('台帳を読めていなければ「予約なし」と判定しない', () => {
+  const v = resolveRedeemState({ fields: SETTLED, reservation: null, ledgerAvailable: false });
+  assert.equal(v.state, REDEEM_STATE.UNKNOWN);
+  assert.notEqual(v.state, REDEEM_STATE.NO_RESERVATION, '確認できないを「予約なし」にしている');
+  assert.equal(v.ledgerAvailable, false);
+  // 「要修復」とも「対応不要」とも断定しない
+  assert.equal(v.needsRepair, false);
+  assert.ok(v.repair.includes('確定'), '判断を止める文言が出ていない');
+});
+
+test('台帳を読めていない回は redeem しない（読めないまま書かない）', () => {
+  const p = planRedeemAfterConfirm({
+    fields: SETTLED, reservation: null, customerUpdateOk: true, ledgerAvailable: false,
+  });
+  assert.equal(p.action, REDEEM_ACTION.NONE);
+  assert.equal(p.reason, 'ledger_unavailable');
+});
+
+test('ライフサイクルも「確認できない」と「0 件」を分ける', () => {
+  const held = { PremiumPlusReopenCouponClaimedAt: '2026-08-18T00:00:00Z' };
+  // 読めた結果 0 件 = 所持中
+  const zero = describeCouponLifecycle({ fields: held, offerRows: [], customerRecordId: 'recA' });
+  assert.equal(zero.state, COUPON_LIFECYCLE.HELD);
+  assert.equal(zero.ledgerAvailable, true);
+  assert.equal(zero.reservationCount, 0);
+  // 読めていない = 所持中と断定しない・件数も 0 にしない
+  for (const arg of [
+    { fields: held, offerRows: null, customerRecordId: 'recA' },
+    { fields: held, offerRows: [], ledgerAvailable: false, customerRecordId: 'recA' },
+    { fields: held, customerRecordId: 'recA' },
+  ]) {
+    const v = describeCouponLifecycle(arg);
+    assert.equal(v.state, COUPON_LIFECYCLE.UNKNOWN, JSON.stringify(Object.keys(arg)));
+    assert.equal(v.ledgerAvailable, false);
+    assert.equal(v.reservationCount, null);
+    assert.equal(v.needsRepair, false);
+    // 取得の事実（Customers 側）は読めているので残す
+    assert.equal(v.claimed, true);
+    assert.ok(v.ledgerNote.length > 0, '確認できない理由が出ていない');
+  }
 });
 
 // ── admin 表示 ──────────────────────────────────────────────
@@ -160,10 +208,25 @@ test('admin は要修復を独立した状態として出す', () => {
   assert.match(page, /couponLifecycle\.repair/);
 });
 
-test('予約台帳を読めないときは 0 件と断定しない', () => {
+test('予約台帳を読めないときは 0 件と断定しない（gate off / 失敗 / 打ち切り）', () => {
   const fn = read('../../../netlify/functions/premium-plus-eligibility.js');
-  assert.match(fn, /if \(!isOfferTableEnabled\(process\.env\)\) return null;/);
-  assert.match(fn, /pages >= MAX_PAGES && offset\) return null/);
+  // 3 つの理由すべてを「確認できない」として返す（null / [] へ潰さない）
+  assert.match(fn, /unavailable\(LEDGER_UNAVAILABLE\.GATE_OFF\)/);
+  assert.match(fn, /unavailable\(LEDGER_UNAVAILABLE\.READ_FAILED\)/);
+  assert.match(fn, /unavailable\(LEDGER_UNAVAILABLE\.PAGE_LIMIT\)/);
+  // ⚠️ 「読めなかった」を空配列へ潰す書き方を復活させない
+  assert.doesNotMatch(fn, /reservationRows \|\| \[\]/, 'null を [] へ潰している');
+  // 一覧と個別検索が**同じ台帳**を読む（片方だけ読まないと状態がズレる）
+  const lookup = fn.slice(fn.indexOf('async function handleLookup'), fn.indexOf('async function readReservationLedger'));
+  assert.match(lookup, /readReservationLedger\(\{ KEY, BASE \}\)/, '個別検索が台帳を読んでいない');
+  assert.match(lookup, /buildAdminRow\(rec, now, ledger\)/, '個別検索が台帳を渡していない');
+});
+
+test('台帳の状態は画面にも出す（「確認できない」を無言で 0 件表示にしない）', () => {
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  assert.match(page, /couponLifecycle\.ledgerAvailable === false/);
+  assert.match(page, /確認できない/);
+  assert.match(page, /couponLifecycle\.ledgerNote/);
 });
 
 // ── まだ本番へ接続しない ────────────────────────────────────

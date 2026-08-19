@@ -102,7 +102,12 @@ import {
   MAX_SEARCH_PAGES,
 } from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
 import { OFFERS_TABLE, isOfferTableEnabled } from '../../src/lib/promotions/promotionalOffer.js';
-import { describeCouponLifecycle } from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
+import {
+  describeCouponLifecycle,
+  describeLedgerUnavailable,
+  COUPON_LIFECYCLE,
+  LEDGER_UNAVAILABLE,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
 import {
   readReopenCoupon,
   isReopenCouponEnabled,
@@ -171,11 +176,28 @@ exports.handler = async (event) => {
 
 
 /**
+ * 予約台帳を**読めていない**ことを表す既定値。
+ *
+ * ⚠️ 既定を「空の台帳」にしない。台帳を渡し忘れた呼び出しが
+ *    「クーポン所持中・予約 0 件」と**断定表示**してしまうため、
+ *    **渡し忘れ = 確認できない**へ倒す（fail closed）。
+ */
+const UNREAD_LEDGER = Object.freeze({
+  rows: null, available: false, reason: LEDGER_UNAVAILABLE.NOT_PROVIDED,
+});
+
+/**
  * 1 レコード → 管理一覧の 1 行。**list と lookup で同じ組み立てを使う**
  * （別々に書くと「一覧の値」と「個別検索の値」がズレる）。
  * `candidate.listed` は呼び出し側が判断に使う（ここでは落とさない）。
+ *
+ * @param {object} rec Airtable の 1 レコード
+ * @param {number} now 判定に使う現在時刻
+ * @param {{ rows: object[]|null, available: boolean, reason: string }} ledger
+ *   クーポン予約台帳。**`available:false` を空配列へ潰さないこと**
+ *   （「読めた結果 0 件」と「確認できない」は別の事実）。
  */
-function buildAdminRow(rec, now, reservationRows = []) {
+function buildAdminRow(rec, now, ledger = UNREAD_LEDGER) {
     const fields = rec.fields || {};
     const member = resolvePlusMemberFromFields(fields, { nowMs: now });
     // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
@@ -285,7 +307,12 @@ function buildAdminRow(rec, now, reservationRows = []) {
         // クーポンのライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
         // ⚠️ 通常の販促オファーとは**別軸**。Airtable を直接見に行かせないための表示。
         couponLifecycle: describeCouponLifecycle({
-          fields, offerRows: reservationRows, customerRecordId: rec.id,
+          fields,
+          // ⚠️ 読めていないときは null のまま渡す（[] へ潰すと 0 件と断定される）
+          offerRows: ledger.available ? ledger.rows : null,
+          ledgerAvailable: ledger.available === true,
+          ledgerReason: ledger.reason,
+          customerRecordId: rec.id,
         }),
         /**
          * 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う）。
@@ -553,8 +580,10 @@ async function handleLookup({ KEY, BASE, now, req }) {
     });
   }
 
+  // 一覧と**同じ台帳・同じ判定**を使う（片方だけ台帳を見ないと状態が食い違う）
+  const ledger = await readReservationLedger({ KEY, BASE });
   const rows = recs.map((rec) => {
-    const row = buildAdminRow(rec, now);
+    const row = buildAdminRow(rec, now, ledger);
     return {
       ...row,
       /** 一覧の絞り込み対象に入っているか（false = 検索でしか出てこない人） */
@@ -567,6 +596,8 @@ async function handleLookup({ KEY, BASE, now, req }) {
   return json(200, {
     found: true,
     rows,
+    // 予約台帳を読めたか（一覧と同じ塊。読めていないなら画面に「確認できない」と出す）
+    couponLedger: describeLedger(ledger),
     // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
     funnel,
     query: raw,
@@ -577,15 +608,24 @@ async function handleLookup({ KEY, BASE, now, req }) {
   });
 }
 
+/** 予約台帳のページ上限（暴走防止）。上限に当たったら「確認できない」として返す。 */
+const LEDGER_MAX_PAGES = 10;
+
 /**
- * クーポン利用予約の行を読む（**read-only**）。
+ * クーポン利用予約の台帳を読む（**read-only**）。
  *
- * 台帳 gate が off / 読めない場合は **null**（＝「確認できない」）を返す。
- * 空配列（＝予約 0 件）と区別する。
+ * 返すのは **`{ rows, available, reason }`**。
+ * `available:false` は「予約 0 件」ではなく「**確認できない**」で、理由は次の 3 つ:
+ *   - `gate_off`     … 台帳が有効化されていない
+ *   - `read_failed`  … Airtable の読み取りに失敗した
+ *   - `page_limit`   … 全件を読み切れなかった
+ *
+ * ⚠️ 呼び出し側は `rows || []` のように**空配列へ潰さないこと**。
+ *    潰すと「読めていない」が「予約 0 件（＝クーポン所持中）」として断定表示される。
  */
-async function readReservationRows({ KEY, BASE }) {
-  if (!isOfferTableEnabled(process.env)) return null;
-  const MAX_PAGES = 10;   // 打ち切ったら「確認できない」として返す（黙って欠落させない）
+async function readReservationLedger({ KEY, BASE }) {
+  const unavailable = (reason) => ({ rows: null, available: false, reason });
+  if (!isOfferTableEnabled(process.env)) return unavailable(LEDGER_UNAVAILABLE.GATE_OFF);
   const out = [];
   let offset;
   let pages = 0;
@@ -599,22 +639,34 @@ async function readReservationRows({ KEY, BASE }) {
           body: JSON.stringify({ pageSize: 100, ...(offset ? { offset } : {}) }),
         },
       );
-      if (!res.ok) return null;
+      if (!res.ok) return unavailable(LEDGER_UNAVAILABLE.READ_FAILED);
       const data = await res.json();
       out.push(...(data.records || []));
       offset = data.offset;
       pages += 1;
-      if (pages >= MAX_PAGES && offset) return null;   // 全部見きれていない = 確認できない
+      // 全部見きれていない = 確認できない（読めた分だけを「全部」として返さない）
+      if (pages >= LEDGER_MAX_PAGES && offset) return unavailable(LEDGER_UNAVAILABLE.PAGE_LIMIT);
     } while (offset);
-    return out;
+    // ここまで来たら読み切れている。**空配列は「読めた結果 0 件」**
+    return { rows: out, available: true, reason: '' };
   } catch {
-    return null;
+    return unavailable(LEDGER_UNAVAILABLE.READ_FAILED);
   }
 }
 
+/** 台帳の状態を画面へそのまま出すための塊（一覧・個別検索で同じものを返す）*/
+function describeLedger(ledger) {
+  return {
+    available: ledger.available === true,
+    reason: ledger.reason || '',
+    note: ledger.available === true ? '' : describeLedgerUnavailable(ledger.reason),
+  };
+}
+
 async function handleList({ KEY, BASE, now, onlyReview }) {
-  // 予約行は**1 回だけ**読む（会員ごとに引かない）。読めなければ null＝「確認できない」
-  const reservationRows = await readReservationRows({ KEY, BASE });
+  // 予約台帳は**1 回だけ**読む（会員ごとに引かない）。
+  // ⚠️ 読めなければ available:false＝「確認できない」。**[] へ潰さない**
+  const ledger = await readReservationLedger({ KEY, BASE });
   const rows = [];
   let offset;
   let pages = 0;
@@ -644,7 +696,7 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     const data = await res.json();
 
     for (const rec of data.records || []) {
-      const row = buildAdminRow(rec, now, reservationRows || []);
+      const row = buildAdminRow(rec, now, ledger);
       if (!row.__listed) continue;
       if (onlyReview && row.eligibility !== PP_ELIGIBILITY.REVIEW) continue;
       rows.push(row);
@@ -676,6 +728,9 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
 
   return json(200, {
     rows,
+    // 予約台帳を読めたか（個別検索と同じ塊）。
+    // ⚠️ 読めていないときは件数も状態も確定していない。画面は「確認できない」と出す。
+    couponLedger: describeLedger(ledger),
     // いま販売している対象日（16:30 以降は翌日分）と開催区分。
     // 例外リストの確認期限切れは**警告するだけ**（販売は止めない）。
     saleTarget: (() => {
@@ -702,6 +757,17 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // 再募集クーポンの取得済み。**資格・停止のどちらの内訳でもない**ので別に数える。
       // 再募集時に「取得済み会員だけを抽出する」ための件数でもある。
       reopenCouponClaimed: rows.filter((r) => r.reopenCouponClaimed === true).length,
+      // クーポンの**利用状態**の内訳。⚠️ 台帳を読めていないときは数えない（null）。
+      // 0 と返すと「予約 0 件」と読まれる（確認できないことを 0 件にしない）。
+      couponReserved: ledger.available
+        ? rows.filter((r) => r.couponLifecycle && r.couponLifecycle.state === COUPON_LIFECYCLE.RESERVED).length
+        : null,
+      couponRedeemed: ledger.available
+        ? rows.filter((r) => r.couponLifecycle && r.couponLifecycle.state === COUPON_LIFECYCLE.REDEEMED).length
+        : null,
+      couponNeedsRepair: ledger.available
+        ? rows.filter((r) => r.couponLifecycle && r.couponLifecycle.needsRepair === true).length
+        : null,
       // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
