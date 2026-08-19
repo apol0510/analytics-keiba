@@ -298,6 +298,123 @@ fail closed し、**他のタグ（初コース・乗り替わり）は残す縮
 
 ---
 
+## 2026-08-19 — 【追加】Direct Response Marketing（DRM）基盤
+
+「一斉に送る」から「**反応を見て次の訴求を変える**」へ進むための土台を入れた。
+既存の 24-touch・CTA・購入停止・suppression・頻度 guard は**一切変えていない**。
+
+### すでにあった機能（再利用した）
+
+| 能力 | 既存の正本 |
+|---|---|
+| delivered / opened（1 通単位） | `webhooks/deliveryEventIndex.js` ＋ `marketing/touchMeasurement.js` |
+| purchased | `customerMarketingAudience.js`（`premiumActive` / `lightActive`） |
+| 退会・停止・バウンス | `resolveSendability` / `providerSuppressed` / `softBounced` |
+| 停止・頻度 guard | `marketing/sequencePolicy.js` |
+| **未計測を 0 にしない契約** | `crm/deliveryMeasurement.js`（3 状態） |
+| attribution 語彙 | `crm/campaignOutcome.js`（direct / correlated / unknown） |
+
+### 足りなかったもの
+
+1. 顧客単位の response state を解決する単一源が無い（材料が散在）
+2. **response-driven routing が無い**（`decideNext` は `nextStep = sent + 1` の線形、`pickAngle` は位置ベース）
+3. 購入を touch / DeliveryKey まで辿れない
+4. DRM 指標を 1 か所で返す面が無い
+5. 「反応層 → 次の訴求」で見える運営画面が無い
+
+### 追加したもの（**新 schema / env / datastore なし**）
+
+| 追加 | 役割 |
+|---|---|
+| `src/lib/drm/drmResponseState.js` | 反応を 1 つに畳む。**click は常に `null`**、open 未計測は `unknown` |
+| `src/lib/drm/drmRouting.js` | 宣言（`sequence.responseRoutes`）で反応層 → 次 touch / variant / angle |
+| `src/lib/drm/drmAttribution.js` | 購入を campaign / version / step / DeliveryKey / offer へ。確定不能は `unattributed` |
+| `src/lib/drm/drmMetrics.js` | sent / delivered / open / click / purchase / CVR / touch 別 conversion / unattributed |
+| `admin-marketing` の `action: 'drm'` | read-only ビュー（**送信面に新 Function を作らない**・増分集計だけ・全件走査しない） |
+| `admin-drm-attribution`（新・分析専用） | 購入帰属だけを read-only で読む（送信経路の決済 guard を守るため分離） |
+| `/admin/drm` | 運営画面（read-only）。未計測は **0 ではなく「—」** |
+
+⚠️ `drmRouting` は**送信可否も頻度も判定しない**（責務の二重化を防ぐためテストで固定）。
+⚠️ **`purchased` / `suppressed` には宣言があっても行き先を作らない**（停止の二重防御）。
+⚠️ A/B は `variant` を**コード側の識別子**として持つだけで、**schema を増やさない**
+（`DeliveryKey` は campaign × version × step × 受信者で既に一意）。
+
+### テスト
+
+`src/lib/drm/drmFoundation.test.mjs`（**49 件**）＋ `drmAttributionFunction.guard.test.mjs`（**15 件**）。`test:drm` を新設し `check:safety` へ組み込み。
+購入 > 停止 > クリック > 開封 の優先順 / 無料特典を購入に数えない /
+**click 未計測を 0 にしない** / open 未計測を「未開封」と断定しない /
+**unknown で反応前提の枝へ入れない** / 終端層へ行き先を作らない /
+知らない route 条件を採用しない / 窓の外・時刻不明は `unattributed` /
+**CVR の母数は送信済み** / 母数 0 なら率を作らない / DRM 基盤が書き込み・送信経路を呼ばない。
+
+`test:drm` 49 pass・`test:marketing` 2,094 pass・`test:comeback` 431 pass・
+`test:webhooks` 190 pass・`test:crm` 567 pass（いずれも fail 0 / cancelled 0）・
+`check:safety` EXIT=0・`check:fn-no-undef` OK・`build` EXIT=0。
+
+⚠️ `package.json` は **scripts のみ**追加（`test:drm`）。依存は増やしていない（lock 不変）。
+
+### レビュー指摘の反映（2026-08-19）
+
+| # | 指摘 | 直したこと |
+|---|---|---|
+| 1 | `sent` を `delivered` に代用していた | 削除。この面は増分集計（送信側の数）しか持たないので **`delivered: null` / `measurement.delivered: unknown`**。1 通単位の到達が要るときは `drmCohort` で `deliveryEventIndex` から引く |
+| 2 | routing が表示だけで実経路に繋がっていない | `sequenceProgress.resolveRecipientProgress` へ **opt-in で配線**。`responseRoutes` 宣言済み campaign だけで効き、未宣言・反応なしは**完全に線形**。**停止判定を通過した後**にしか効かず、**既送 step は選ばない** |
+| 3 | attribution が実データへ繋がっていない | `action:'drmCohort'`（**名指し・bounded**）で実 touch 履歴から算出。ただし購入日時は**既存 guard により読まない**ので `unattributed` + 理由を返す（推測で direct にしない） |
+| 4 | 累積指標を segment と呼んでいた | `action:'drm'` では **`segmentCounts: null`**（`per_customer_unavailable`）。**1 人 1 state の排他的な人数は `drmCohort` でだけ**返す |
+| 5 | A/B 実施可能と読める記述 | 削除。`DeliveryKey` に variant が含まれないため、**variant 別の送信・帰属・重複防止は未完成**と明記。到達点は「将来 variant を識別できる routing 契約を持つ」まで |
+
+⚠️ **既存 guard を緩めていない。** `admin-marketing.js` は決済メール v2 のフィールド
+（`PaidAt` 等）に一切触れないまま（`offerCampaignFunction.guard.test.mjs` が通る）。
+
+### 購入帰属を**分析専用 Function へ分離**して接続（責務分離）
+
+購入確定時刻の正本は `Customers.PaidAt`（`bankPaymentFlow.buildConfirmationFields` が
+`PaidAt: confirmedAt.toISOString()` ＝ **入金確認＝有料化確定時刻**として書く）。
+一方 `offerCampaignFunction.guard.test.mjs` は**送信経路**が決済メール v2 の
+フィールドへ触れないことを守っている。**その guard は緩めない。**
+
+そこで責務を分けた:
+
+| 経路 | 決済フィールド | 役割 |
+|---|---|---|
+| `admin-marketing` / `marketing-campaign-dispatch` | **触れない**（guard 継続） | 送信 |
+| **`admin-drm-attribution`（新・read-only）** | 購入確定時刻だけ読む | 帰属 |
+
+- 購入日時は既存 `premiumPlus/purchaseAnchorLookup.js` を再利用。
+  **時刻 1 つだけ返す薄いラッパ `lookupPaidConfirmedAt()`** を同モジュールへ追加
+  （raw fields を DRM へ出さない）。**独自の Airtable query で別実装しない**
+- `missing` / `invalid` / `not_found` / `unavailable` は**購入として数えず `unattributed`**
+- click は OFF なので **direct を捏造しない**（「0 件」ではなく「測っていない」）
+- 認証は既存管理 Function と同等（`x-admin-secret`・未設定は 503・不一致は 403）
+- 入力は bounded（`MAX_RECORD_IDS = 500`・名指し formula・ページ上限・全件走査なし）
+- **書き込み・queue 登録・dispatch 呼出・メール送信・PromotionalOffers 書込みなし**
+- raw customer fields を返さず、email / 氏名 / recordId をログにもレスポンスにも出さない
+
+`admin-marketing` 側からは帰属を削除（`attributionEndpoint` を案内するだけ）。
+
+### 完成条件（更新）
+
+- response-driven routing が実 sequence で動く ✅
+- `responseRoutes` 未定義なら既存挙動不変 ✅
+- purchase / suppression 停止が最優先 ✅
+- `sent` と `delivered` を混同しない ✅
+- 未計測を 0 にしない ✅
+- 顧客 segment は排他的 ✅
+- 帰属不能は正直に `unattributed` ✅
+- **Premium / Light の購入確定時刻から実 touch へ帰属できる** ✅
+- **送信経路の決済フィールド guard を維持** ✅（`offerCampaignFunction.guard` は無変更）
+- duplicate send なし ✅
+- operator UI で反応層・次訴求・conversion を確認できる ✅
+
+⚠️ 上の ✅ は**実装とテストで固定したところまで**。**本番データでの実測はしていない**
+（production deploy も実顧客の読み取りも行っていない）。実運用の数字で確認したとは書かない。
+
+### やっていないこと
+
+production deploy / 実顧客データ書込み / 実メール送信 / schema 変更 / PR merge。
+**#372（Light trial rollout 修復）とは完全に分離**した別 branch・別 worktree。
+
 ## 2026-08-19 — 【本番実行】再募集クーポンの初取得を 1 件記録（Daniel / 3 列のみ・0→1）
 
 PR #373 を squash merge（`367cccbc`）したうえで、承認どおり
