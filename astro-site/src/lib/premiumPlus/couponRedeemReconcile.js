@@ -76,16 +76,27 @@ export const REDEEM_STATE_REPAIR = Object.freeze({
 /**
  * Customers 側が「**この申込の**入金確認・昇格まで確定している」か。
  *
- * `confirm-bank-payment` は 1 回の PATCH で
- * プラン / PlanType / Status='active' / 有効期限 / PaidAt / PaymentEmailSent を確定させ、
- * **同時に `Requested*` をクリアする**（`bankPaymentFlow.js` の冪等性）。
+ * 判定は **`docs/BANK_TRANSFER_FLOW.md` / `payments/bankPaymentFlow.js` の正本**に合わせる。
+ * 3 条件を**すべて**満たしたときだけ確定とみなす（**fail closed**）:
  *
- * ⚠️ **「有効な会員である」だけでは確定と言えない。**
- *    Premium Plus を買うのは**既に active な三連複会員**なので、
- *    プランと Status だけを見ると申込した瞬間から「確定済み」に見え、
+ * | 条件 | 根拠 |
+ * |---|---|
+ * | `Status === 'active'`（かつプランが空でない）| `buildConfirmationFields()` が承認時に確定させる |
+ * | `RequestedPlan` が**空** | 承認時に `Requested*` をクリアする（冪等性）|
+ * | `PaymentConfirmed === true` | 承認済みの痕跡として**残る**（クリアしない）|
+ *
+ * ⚠️ **`Status='active'` だけでは絶対に確定と判定しない。**
+ *    申込の時点で既存 active 会員は `Status='active'` のままであり、
+ *    `buildApplicationFields()` は `RequestedPlan` を書き `PaymentConfirmed=false` を置く。
+ *    プランと Status だけを見ると**申込した瞬間から「確定済み」に見え**、
  *    利用予約（issued）が**常に `needs_redeem`＝要修復に化ける**
  *    （＝ admin で「利用予約（入金確認待ち）」が一度も出ない）。
- *    未処理の申込が残っているあいだ（`RequestedPlan` が空でない）は**未確定**とみなす。
+ *
+ * ⚠️ `RequestedPlan` が空でも `PaymentConfirmed !== true` なら**確定としない**。
+ *    入金確認を経ていない active（手動 active 化・旧データ等）を
+ *    「この申込の入金確認が済んだ」と読み替えないため。
+ *    その結果 `redeemed` の予約行と組み合わさると `anomaly` として運営者に出る
+ *    （**自動修復しない**のが正しい扱い）。
  */
 export function isCustomerSettled(fields) {
   const f = fields && typeof fields === 'object' ? fields : {};
@@ -93,7 +104,9 @@ export function isCustomerSettled(fields) {
   const status = String(f['Status'] ?? '').trim().toLowerCase();
   if (plan === '' || status !== 'active') return false;
   // 承認待ちの申込が残っている = この申込の入金確認はまだ済んでいない
-  return String(f['RequestedPlan'] ?? '').trim() === '';
+  if (String(f['RequestedPlan'] ?? '').trim() !== '') return false;
+  // 承認済みの痕跡。confirm-bank-payment の認可と**同じ読み方**（厳密に true のみ）
+  return f['PaymentConfirmed'] === true;
 }
 
 function reservationStatus(reservation) {

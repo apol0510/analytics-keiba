@@ -484,20 +484,34 @@ admin には「クーポン所持中・予約 0 件」と**断定表示**され�
 - `resolveRedeemState()` / `planRedeemAfterConfirm()` にも `ledgerAvailable` を通した。
   **台帳を読めていない回は redeem しない**（読めないまま書かない）。
 
-#### ③ 利用予約が**常に**「要修復」に化けていた（修正の過程で発見）
+#### ③ 利用予約が**常に**「要修復」に化けていた（**MK 採用済み・戻さない**）
 
 `isCustomerSettled()` が「プランがあり Status=active」だけを見ていた。
 **Premium Plus を買うのは既に active な三連複会員**なので、申込した瞬間から「入金確認済み」と
 判定され、`issued`（利用予約）が**必ず `needs_redeem`＝要修復**になっていた。
 admin で「クーポン利用予約（入金確認待ち）」が**一度も出ない**状態だった。
 
-→ `confirm-bank-payment` が承認時に `Requested*` をクリアする既存の冪等性を使い、
-**`RequestedPlan` が残っているあいだは未確定**とみなす。これで 4 状態
-（`waiting` / `needs_redeem` / `complete` / `anomaly`）がすべて実際に出るようになった。
+**2026-08-19 MK 判断: これは仕様変更ではなく、`docs/BANK_TRANSFER_FLOW.md` /
+`payments/bankPaymentFlow.js` の正本に合わせた不具合修正。採用・差し戻さない。**
+あわせて **もう一段 fail closed** にすることが指示され、判定を 3 条件へ確定した。
 
-⚠️ **この 3 件目は MK 指摘の 2 件の外側**。指摘どおりに直すと「issued → 利用予約」の
-テストが書けないため踏み込んだ。**判定を変えているので、不要なら差し戻せる**
-（`couponRedeemReconcile.js` の `isCustomerSettled` の 1 行）。
+##### 確定した判定（正本は `docs/BANK_TRANSFER_FLOW.md`）
+
+`Status === 'active'`（かつプランが空でない）**かつ** `RequestedPlan` が空
+**かつ** `PaymentConfirmed === true` の **3 つすべて**が揃ったときだけ「確定」。
+
+| 段階 | Status | RequestedPlan | PaymentConfirmed | 判定 |
+|---|---|---|---|---|
+| 申込前（既存 active 会員）| active | 空 | false | **未確定** |
+| 申込直後 | active（**変わらない**）| あり | false | **未確定**（＝利用予約・待ち）|
+| confirm 成功後 | active | **空** | **true** | **確定**（＝ redeem へ進める）|
+
+- **`Status='active'` だけで確定と判定しない**（申込しても active は動かないため）。
+- **`RequestedPlan` が空でも `PaymentConfirmed !== true` なら確定としない**。
+  手動 active 化・旧データを「入金確認済み」と読み替えないための fail closed。
+- `PaymentConfirmed` は**厳密に `true` のみ**（`confirm-bank-payment.js` の認可と同じ読み方）。
+
+これで 4 状態（`waiting` / `needs_redeem` / `complete` / `anomaly`）がすべて実際に出る。
 なお `planRedeemAfterConfirm` は **confirm へ未配線**のため、本番の書き込み挙動は変わらない。
 
 #### 実際の admin 画面で確認したこと（本番非接触）
@@ -590,8 +604,8 @@ PC / mobile とも MK が目視し、上記の画面を**現段階では一旦 O
 3. **1（dashboard のカード）は実装・テスト・Draft PR・CI まで完了**。
    目視は 5 のとおり**一旦 OK**。残りは merge だけ（本番 deploy はその後）。
 4. 6 は 2 の確定後に着手する。
-5. **3-B ③（`isCustomerSettled` の判定変更）を MK が是とするか確認する。**
-   不要なら 1 行で差し戻せる。
+5. ~~3-B ③（`isCustomerSettled` の判定変更）の可否確認~~ → **2026-08-19 MK 採用済み**。
+   正本に合わせた不具合修正として確定（3 条件・`BANK_TRANSFER_FLOW.md` に固定）。**戻さない。**
 
 ---
 

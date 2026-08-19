@@ -27,18 +27,23 @@ const SECRET = 'admin-secret-for-test';
 const REC = 'recSYNTH00000001';
 const EMAIL = 'synthetic@example.invalid';
 
-/** 一覧に出る候補（ROUTE A）でクーポン取得済みの合成会員 */
+/**
+ * 一覧に出る候補（ROUTE A）でクーポン取得済みの合成会員。
+ * **入金確認まで完了した姿**＝ `Requested*` はクリア済み・`PaymentConfirmed` は痕跡として残る
+ * （`docs/BANK_TRANSFER_FLOW.md` の正本どおり）。
+ */
 const MEMBER = {
   'Email': EMAIL, '氏名': 'テスト',
   'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
   'SanrenpukuPaidAt': '2020-01-01T00:00:00.000Z',
   [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-18T22:07:54.803Z',
+  'RequestedPlan': '', 'PaymentConfirmed': true,
 };
 
 /**
  * **申込は出したが入金確認がまだ**の会員（＝ 利用予約の通常状態）。
- * 既に active な三連複会員のまま `Requested*` が残っているのが実際の姿で、
- * `confirm-bank-payment` が承認時にこれをクリアする。
+ * 既に active な三連複会員のまま `Requested*` が残り `PaymentConfirmed=false`。
+ * ⚠️ `Status='active'` は申込前から変わらないので、**active だけで確定と判定しない**。
  */
 const MEMBER_UNSETTLED = {
   ...MEMBER,
@@ -200,6 +205,31 @@ test('入金確認と使用済みの食い違い（要修復 / 異常）も両�
   v = await bothViews();
   assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.NEEDS_REPAIR);
   assert.equal(v.listRow.couponLifecycle.redeemState, 'anomaly');
+  assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
+});
+
+test('active だけでは「入金確認済み」と判定しない（admin の表示まで通して確認）', async () => {
+  // ① 申込直後: active + RequestedPlan あり + PaymentConfirmed=false → 利用予約（待ち）
+  stub({ offers: [reservation(OFFER_STATUS.ISSUED)], member: MEMBER_UNSETTLED });
+  let v = await bothViews();
+  assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.RESERVED);
+  assert.equal(v.listRow.couponLifecycle.redeemState, 'waiting');
+  assert.equal(v.listRow.couponLifecycle.needsRepair, false, '入金確認待ちを要修復にしている');
+  assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
+
+  // ② 申込は残っていないが入金確認を経ていない → **確定としない**（fail closed）。
+  //    issued はそのまま「利用予約」で、要修復にはしない
+  const NOT_CONFIRMED = { ...MEMBER, 'RequestedPlan': '', 'PaymentConfirmed': false };
+  stub({ offers: [reservation(OFFER_STATUS.ISSUED)], member: NOT_CONFIRMED });
+  v = await bothViews();
+  assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.RESERVED);
+  assert.equal(v.listRow.couponLifecycle.needsRepair, false);
+  assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
+
+  // ③ 承認済み: RequestedPlan 空 + PaymentConfirmed=true + issued → 要修復（redeem 未完了）
+  stub({ offers: [reservation(OFFER_STATUS.ISSUED)], member: MEMBER });
+  v = await bothViews();
+  assert.equal(v.listRow.couponLifecycle.redeemState, 'needs_redeem');
   assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
 });
 

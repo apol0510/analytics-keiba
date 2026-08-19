@@ -25,7 +25,23 @@ const res = (status, over = {}) => ({
   },
 });
 const UNSETTLED = { 'Email': 'a@example.invalid' };
-const SETTLED = { 'Email': 'a@example.invalid', 'プラン': 'Premium Plus', 'Status': 'active' };
+/**
+ * 承認済み（confirm-bank-payment 完了後）の姿。
+ * `Requested*` はクリアされ、`PaymentConfirmed` は**痕跡として残る**。
+ */
+const SETTLED = {
+  'Email': 'a@example.invalid', 'プラン': 'Premium Plus', 'Status': 'active',
+  'RequestedPlan': '', 'PaymentConfirmed': true,
+};
+/**
+ * **申込直後**（入金確認待ち）の姿。既存 active 会員なので `Status` は active のまま、
+ * `RequestedPlan` が入り `PaymentConfirmed=false`。
+ */
+const APPLIED = {
+  'Email': 'a@example.invalid', 'プラン': 'Premium Sanrenpuku', 'Status': 'active',
+  'RequestedPlan': 'Premium Plus', 'RequestedPlanType': 'Single', 'RequestedAmount': 58000,
+  'PaymentConfirmed': false,
+};
 
 // ── 4 状態 ──────────────────────────────────────────────────
 test('Customers 未確定 + issued → 通常の確認待ち', () => {
@@ -136,16 +152,81 @@ test('修復対象だけを抽出でき、他会員へ影響しない', () => {
 });
 
 // ── 判定材料 ────────────────────────────────────────────────
-test('Customers の確定判定はプラン + Status=active + 未処理の申込が残っていないこと', () => {
+/**
+ * ⚠️ **`Status='active'` だけで settled と判定しない。**
+ * 正本（`docs/BANK_TRANSFER_FLOW.md` / `payments/bankPaymentFlow.js`）に合わせ、
+ * `Status=active` + `RequestedPlan` 空 + `PaymentConfirmed=true` の 3 つが揃ったときだけ確定。
+ */
+test('settled は Status=active + RequestedPlan 空 + PaymentConfirmed=true の 3 条件', () => {
+  const base = { 'プラン': 'Premium Plus', 'Status': 'active' };
+
+  // ① 申込直後: active + RequestedPlan あり + PaymentConfirmed=false → 確定しない
+  assert.equal(isCustomerSettled(APPLIED), false);
+  assert.equal(isCustomerSettled({ ...base, RequestedPlan: 'Premium Plus', PaymentConfirmed: false }), false);
+
+  // ② 申込は残っていないが入金確認を経ていない → **確定しない**（fail closed）
+  assert.equal(isCustomerSettled({ ...base, RequestedPlan: '', PaymentConfirmed: false }), false);
+  assert.equal(isCustomerSettled({ ...base, RequestedPlan: '' }), false, 'PaymentConfirmed 未設定を確定にしている');
+
+  // ③ 承認済み: active + RequestedPlan 空 + PaymentConfirmed=true → 確定
+  assert.equal(isCustomerSettled({ ...base, RequestedPlan: '', PaymentConfirmed: true }), true);
   assert.equal(isCustomerSettled(SETTLED), true);
-  // ⚠️ **既に active な会員**が Premium Plus を申し込んだ直後は「確定」ではない。
-  //    Requested* が残っているあいだは未確定（confirm が承認時にクリアする）。
-  //    ここを見落とすと、利用予約（issued）が常に要修復へ化ける。
+
+  // 承認済みでも申込が再び入っていれば未確定（次の申込の入金確認待ち）
   assert.equal(isCustomerSettled({ ...SETTLED, RequestedPlan: 'Premium Plus' }), false);
-  assert.equal(isCustomerSettled({ ...SETTLED, RequestedPlan: '' }), true);
+
+  // チェックボックスは**厳密に true** のみ（confirm-bank-payment の認可と同じ読み方）
+  for (const v of ['true', 1, 'checked', {}]) {
+    assert.equal(isCustomerSettled({ ...base, RequestedPlan: '', PaymentConfirmed: v }), false, String(v));
+  }
+
   assert.equal(isCustomerSettled({ 'プラン': 'Premium Plus', 'Status': 'pending' }), false);
   assert.equal(isCustomerSettled({ 'Status': 'active' }), false);
   assert.equal(isCustomerSettled(null), false);
+});
+
+test('申込直後（active のまま）は waiting であって要修復ではない', () => {
+  const v = resolveRedeemState({ fields: APPLIED, reservation: res('issued') });
+  assert.equal(v.state, REDEEM_STATE.WAITING);
+  assert.equal(v.needsRepair, false, '入金確認待ちを要修復にしている');
+  assert.equal(v.customerSettled, false);
+  // この段階では redeem しない（入金確認前に使用済みにしない）
+  const p = planRedeemAfterConfirm({ fields: APPLIED, reservation: res('issued') });
+  assert.equal(p.action, REDEEM_ACTION.NONE);
+  assert.equal(p.reason, 'customer_not_settled');
+});
+
+test('confirm 完了後（Requested* クリア + PaymentConfirmed=true）は REDEEM_ONLY へ進む', () => {
+  // confirm の PATCH 後に読み直したレコード
+  const afterConfirm = {
+    ...APPLIED, 'プラン': 'Premium Plus', 'RequestedPlan': '', 'RequestedPlanType': '',
+    'RequestedAmount': null, 'PaymentConfirmed': true,
+  };
+  const v = resolveRedeemState({ fields: afterConfirm, reservation: res('issued') });
+  assert.equal(v.state, REDEEM_STATE.NEEDS_REDEEM);
+  const p = planRedeemAfterConfirm({ fields: afterConfirm, reservation: res('issued') });
+  assert.equal(p.action, REDEEM_ACTION.REDEEM_ONLY);
+  assert.equal(p.reason, 'settled_pending_redeem');
+
+  // ⚠️ 触るのは offer 台帳の 2 列だけ。**Customers を書かない**ので
+  //    二重昇格・有効期限の再延長・二重メールは起きない
+  const out = buildReservationRedeemFields({ record: res('issued'), nowMs: Date.parse('2026-09-10T00:00:00Z') });
+  assert.deepEqual(Object.keys(out.fields).sort(), ['RedeemedAt', 'Status'],
+    'offer 台帳の 2 列以外を書こうとしている');
+  // 再実行しても二重 redeem しない
+  assert.equal(buildReservationRedeemFields({ record: res('redeemed'), nowMs: Date.now() }).skipped, 'already_redeemed');
+});
+
+test('確定判定は他会員のレコードを参照しない（渡された 1 件だけを見る）', () => {
+  const others = [
+    { id: 'recX', fields: { ...SETTLED, Email: 'x@example.invalid' }, reservation: res('issued') },
+    { id: 'recY', fields: APPLIED, reservation: res('issued') },
+  ];
+  const targets = listRepairTargets(others);
+  // APPLIED（入金確認待ち）は修復対象に入らない。SETTLED の 1 件だけ
+  assert.deepEqual(targets.map((t) => t.id), ['recX']);
+  // 関数は fields を破壊しない
+  assert.equal(others[1].fields.PaymentConfirmed, false);
 });
 
 // ── 台帳を読めていない（確認できない）────────────────────────
