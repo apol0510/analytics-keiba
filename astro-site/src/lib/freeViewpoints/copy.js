@@ -11,13 +11,30 @@
 
 import { TAG, RACE_STATE } from './raceViewpoints.js';
 
-/** 予想的な評価語。文言に混ざっていないことをテストで検査する。 */
-export const BANNED_WORDS = Object.freeze([
+/**
+ * **予想的な評価語**。すべての文言（CTA を含む）に混ざっていないことを検査する。
+ * 事実の記述に徹し、こちらの判断を無料側で語らないため。
+ */
+export const BANNED_JUDGEMENT_WORDS = Object.freeze([
   '堅い', '堅め', '固い', '狙い', '軸向き', '妙味', '波乱', '荒れ', '勝負',
+  '的中', '回収', 'おすすめ', '推奨', '有望', '期待大',
+]);
+
+/**
+ * **有料項目そのものを指す語**。タグ・状態・当日相対の文言には出さない
+ * （レースの見どころの説明に有料項目名が出てくる必要が無いため）。
+ *
+ * ⚠️ `PAID_CTA` / `HORSE_SECTION` は**例外**。
+ *    「買い目は出していない / 有料版で公開している」と**明示するために言及する**必要がある。
+ *    ただし言及してよいのは**語だけ**で、実際の値や馬番の組み合わせは絶対に出さない。
+ */
+export const BANNED_PAID_TERMS = Object.freeze([
   '本命', '対抗', '単穴', '連下', '抑え', '不要馬',
   '買い目', '馬単', '三連複', '三連単', '指数', 'スコア', '評価点', '重要度',
-  '的中', '回収', 'おすすめ', '推奨',
 ]);
+
+/** @deprecated 役割別に分割した。新規利用は上の 2 つを使う。 */
+export const BANNED_WORDS = Object.freeze([...BANNED_JUDGEMENT_WORDS, ...BANNED_PAID_TERMS]);
 
 /** 一覧に出す短いタグ名（仮）。 */
 export const TAG_LABEL = Object.freeze({
@@ -73,4 +90,53 @@ export function coverageNote(result) {
   return `${entryCount}頭すべての近走を集計`;
 }
 
-export default { TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL, BANNED_WORDS, coverageNote };
+/**
+ * 馬単位の条件変化チップ（仮）。**色だけに頼らず記号と文字でも意味が分かる**ようにする。
+ * `kind` は表示側の色分けキー。
+ */
+export const HORSE_CHANGE_CHIP = Object.freeze({
+  distanceChanged: Object.freeze({ label: '距離替わり', icon: '⇔', kind: 'distance' }),
+  firstCourse: Object.freeze({ label: '初コース', icon: '◇', kind: 'course' }),
+  jockeyChanged: Object.freeze({ label: '乗り替わり', icon: '⇄', kind: 'jockey' }),
+  easyCompare: Object.freeze({ label: '前走と近い条件', icon: '≡', kind: 'compare' }),
+});
+
+/** タグに付ける記号（色に依存させないため）。 */
+export const TAG_ICON = Object.freeze({
+  [TAG.DISTANCE_CHANGE]: '⇔',
+  [TAG.FIRST_COURSE]: '◇',
+  [TAG.JOCKEY_CHANGE]: '⇄',
+  [TAG.EASY_COMPARE]: '≡',
+  [TAG.HARD_COMPARE]: '≠',
+});
+
+/** 状態に付ける記号。 */
+export const STATE_ICON = Object.freeze({
+  [RACE_STATE.NEUTRAL]: '＝',
+  [RACE_STATE.NO_HISTORY]: '—',
+  [RACE_STATE.UNMATCHED]: '⏳',
+});
+
+/**
+ * `/free-prediction/` への導線（仮）。
+ * 「出走馬を見に行く」ではなく、**買い目は有料版で確認できる**ことを伝える。
+ * `/free-prediction/` は**有料版プレビュー**なので、そこで有料版の中身のイメージが掴める。
+ */
+export const PAID_CTA = Object.freeze({
+  heading: 'このレースの買い目は有料版で公開しています',
+  body: 'このページでは近走から分かる条件だけを出しています。どの馬からどう狙うかは有料版で公開しています。無料予想ページでは、有料版の中身のイメージをご覧いただけます。',
+  linkLabel: '無料予想ページで有料版のイメージを見る →',
+  planLabel: 'プランを見る →',
+});
+
+/** 馬単位の内訳の見出し（仮）。 */
+export const HORSE_SECTION = Object.freeze({
+  heading: '出走馬と近走から分かる条件',
+  note: '印は無料で公開している上位 4 頭ぶんです。指数・評価点・買い目は含みません。',
+  noChanges: '近走が確認できていないため、条件の変化は出していません。',
+});
+
+export default {
+  TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL,
+  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
+};

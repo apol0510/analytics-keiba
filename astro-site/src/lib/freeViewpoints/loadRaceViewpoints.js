@@ -16,6 +16,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildJoinIndex, joinRaceHorses } from '../jra/horseHistoryJoin.js';
+import { buildFreePublicRows } from '../freePublicView.js';
 import { evaluateRace, dailyHighlights } from './raceViewpoints.js';
 import { RECENT_RACES_WINDOW } from './thresholds.js';
 
@@ -62,6 +63,47 @@ function readJson(file) {
   try { return JSON.parse(readFileSync(file, 'utf-8')); } catch { return null; }
 }
 
+
+/**
+ * 詳細に出す出走馬行を作る。
+ *
+ * **無料公開してよい範囲の単一源は `freePublicView.js` の `buildFreePublicRows()`**。
+ * ここを迂回して自前で組み立てないこと（有料項目の混入を検査できなくなる）。
+ * DTO は `pt` / AI総合指数 / 役割 / 特徴量を含まないので、そのまま出しても漏れない。
+ * `_horse`（生データ参照）は**この時点で捨てる**。
+ *
+ * @param {Array} entries 予想側の出走馬（正規化前でよい）
+ * @param {Array<{ref:any, hasHistory:boolean, distanceChanged:boolean, firstCourse:boolean, jockeyChanged:boolean, easyCompare:boolean}>} horseFlags
+ * @param {Map<number, object>} prevByNumber 馬番 -> 前走（公開事実のみ）
+ */
+function buildHorseRows(entries, horseFlags, prevByNumber) {
+  const flagByRef = new Map((horseFlags || []).map((f) => [f.ref, f]));
+  const rows = buildFreePublicRows(entries, { resolveRecent: () => [] });
+  return rows.map((row) => {
+    const f = flagByRef.get(row.number) || null;
+    const prev = prevByNumber.get(row.number) || null;
+    return {
+      number: row.number,
+      name: row.name,
+      jockey: row.jockey,
+      trainer: row.trainer,
+      weight: row.weight,
+      ageGender: row.ageGender,
+      isHeadline: row.isHeadline,
+      headlineMark: row.headlineMark,
+      headlineKind: row.headlineKind,
+      // 公開事実由来の条件変化。無ければ null（データ不足を「該当なし」と偽らない）
+      changes: f && f.hasHistory ? {
+        distanceChanged: f.distanceChanged,
+        firstCourse: f.firstCourse,
+        jockeyChanged: f.jockeyChanged,
+        easyCompare: f.easyCompare,
+      } : null,
+      prev: prev ? { venue: prev.venue, distance: prev.distance, jockey: prev.jockey } : null,
+    };
+  });
+}
+
 // ── 南関 ──────────────────────────────────────────────────────
 
 function latestNankanFiles(root) {
@@ -96,28 +138,30 @@ function buildNankanVenue(root, date, file) {
     );
 
     const horses = [];
+    const prevByNumber = new Map();
     for (const h of entries) {
-      const s = byNumber.get(h?.horseNumber);
-      if (!s) continue;
-      horses.push({
-        past: (s.recentRacesDetailed || []).slice(0, RECENT_RACES_WINDOW).map((e) => ({
-          venue: e?.venue, distance: parseDistanceMeters(e?.distance), jockey: e?.jockey,
-        })),
-        todayJockey: s.profile?.jockey,
-      });
+      const st = byNumber.get(h?.horseNumber);
+      if (!st) continue;
+      const past = (st.recentRacesDetailed || []).slice(0, RECENT_RACES_WINDOW).map((e) => ({
+        venue: e?.venue, distance: parseDistanceMeters(e?.distance), jockey: e?.jockey,
+      }));
+      if (past[0]) prevByNumber.set(h.horseNumber, past[0]);
+      horses.push({ ref: h.horseNumber, past, todayJockey: st.profile?.jockey });
     }
+
+    const distanceMeters = parseDistanceMeters(ri.distance, ri.raceName);
+    const result = evaluateRace({
+      category: 'nankan', venue, distanceMeters, entryCount: entries.length, horses,
+    }, sameJockey);
 
     races.push({
       raceNumber,
       startTime: ri.startTime || null,
       raceName: cleanRaceName(ri.raceName),
-      distanceMeters: parseDistanceMeters(ri.distance, ri.raceName),
+      distanceMeters,
       entryCount: entries.length,
-      result: evaluateRace({
-        category: 'nankan', venue,
-        distanceMeters: parseDistanceMeters(ri.distance, ri.raceName),
-        entryCount: entries.length, horses,
-      }, sameJockey),
+      result,
+      horseRows: buildHorseRows(entries, result.horseFlags, prevByNumber),
     });
   }
   races.sort((a, b) => a.raceNumber - b.raceNumber);
@@ -157,27 +201,29 @@ function buildJraVenue(root, date, venueData) {
     const joined = index ? joinRaceHorses(entries, index) : entries.map(() => ({ matched: false }));
 
     const horses = [];
+    const prevByNumber = new Map();
     entries.forEach((h, i) => {
       if (!joined[i]?.matched) return;
       const r5 = joined[i].entry?.recent5 || [];
-      horses.push({
-        past: r5.slice(0, RECENT_RACES_WINDOW).map((e) => ({
-          venue: e?.venue,
-          distance: parseDistanceMeters(e?.distanceMeters, e?.displayDistance),
-          jockey: e?.jockey,
-        })),
-        todayJockey: h?.jockey,
-      });
+      const past = r5.slice(0, RECENT_RACES_WINDOW).map((e) => ({
+        venue: e?.venue,
+        distance: parseDistanceMeters(e?.distanceMeters, e?.displayDistance),
+        jockey: e?.jockey,
+      }));
+      if (past[0]) prevByNumber.set(h?.horseNumber, past[0]);
+      horses.push({ ref: h?.horseNumber, past, todayJockey: h?.jockey });
     });
 
     const distanceMeters = parseDistanceMeters(ri.distance, ri.raceName);
+    const result = evaluateRace({ category: 'jra', venue, distanceMeters, entryCount: entries.length, horses }, sameJockey);
     races.push({
       raceNumber,
       startTime: ri.startTime || null,
       raceName: cleanRaceName(ri.raceName),
       distanceMeters,
       entryCount: entries.length,
-      result: evaluateRace({ category: 'jra', venue, distanceMeters, entryCount: entries.length, horses }, sameJockey),
+      result,
+      horseRows: buildHorseRows(entries, result.horseFlags, prevByNumber),
     });
   }
   races.sort((a, b) => a.raceNumber - b.raceNumber);

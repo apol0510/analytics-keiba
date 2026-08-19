@@ -63,6 +63,7 @@ function classifyHorse(horse, ctx) {
   const jockeySame = ctx.sameJockey(horse?.todayJockey, prev?.jockey);
 
   return {
+    ref: horse?.ref ?? null,
     hasHistory: true,
     distanceKnown,
     distanceChanged: distanceKnown && Math.abs(prevDistance - today) >= DISTANCE_CHANGE_METERS,
@@ -94,7 +95,7 @@ export function evaluateRace(race, sameJockey) {
   const matched = horses.length;
   const coverage = entryCount > 0 ? matched / entryCount : 0;
 
-  const empty = { tags: [], counts: { matched, withHistory: 0 }, coverage, matched, entryCount, degraded: [] };
+  const empty = { tags: [], counts: { matched, withHistory: 0 }, coverage, matched, entryCount, degraded: [], horseFlags: [] };
 
   // 照合しきれていない → 一部の馬で全体を語らない
   if (entryCount === 0 || coverage < REQUIRED_COVERAGE) {
@@ -102,7 +103,7 @@ export function evaluateRace(race, sameJockey) {
   }
 
   const ctx = { venue: race?.venue, distanceMeters: num(race?.distanceMeters), sameJockey };
-  const flags = horses.map((h) => classifyHorse(h, ctx));
+  const flags = horses.map((h) => ({ ref: h?.ref ?? null, ...classifyHorse(h, ctx) }));
   const withHistory = flags.filter((f) => f.hasHistory);
 
   // 全頭照合できたうえで近走が 1 頭も無い → 新馬戦など（照合失敗ではない）
@@ -155,6 +156,16 @@ export function evaluateRace(race, sameJockey) {
     matched,
     entryCount,
     degraded,
+    // 「なぜこのレースが◯◯多めなのか」を馬単位まで辿れるようにする。
+    // 公開事実（前走の会場・距離・騎手）から出した真偽値だけで、有料項目は含まない。
+    horseFlags: flags.map((f) => ({
+      ref: f.ref,
+      hasHistory: !!f.hasHistory,
+      distanceChanged: !!f.distanceChanged,
+      firstCourse: !!f.firstCourse,
+      jockeyChanged: !!f.jockeyChanged,
+      easyCompare: !!f.easyCompare,
+    })),
   };
 }
 
