@@ -9,11 +9,15 @@
  *   - 計算系 (computeEvalPoints / computeImportance / detectRecentRunningStyle /
  *     AI 総合指数 / 印 / 買い目 / darkHorses) は引き続き horse.recentRaces を読むため、副作用ゼロ。
  *   - データ源は horseHistories.recent5。レース当日 date と一致する race は除外して最大 4 走。
- *   - 突合キーは horseName (prediction 側に horseId が無いため。venue 単位で読むので同名衝突はほぼ起きない)。
+ *   - 突合キーは horseName (prediction 側に horseId が無いため)。
+ *     **結合規則の単一源は `src/lib/jra/horseHistoryJoin.js`**（完全一致優先 →
+ *     既知接頭辞 `(地)`/`(外)` を外して再照合 → 衝突は fail closed）。本 module は判定結果を使うだけ。
  */
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { buildJoinIndex, joinRaceHorses } from './jra/horseHistoryJoin.js';
 
 const JRA_VENUE_NAME_TO_CODE = {
   '東京': 'TOK',
@@ -55,6 +59,31 @@ export function loadHorseHistoriesForVenue(date, venueCode, projectRoot = proces
 }
 
 /**
+ * 結合用の索引を作る。実体は `jra/horseHistoryJoin.js` の `buildJoinIndex()`。
+ * `resolveRaceHistories()` とセットで使う。
+ */
+export function buildHistoryJoinIndex(historiesJson) {
+  return buildJoinIndex(historiesJson);
+}
+
+/**
+ * 1 レースぶんの馬配列に対応する履歴 entry を返す（入力と同じ長さ）。
+ * 照合できなかった要素は null。判定規則は `jra/horseHistoryJoin.js` が単一源。
+ *
+ * @param {Array<object>} horses
+ * @param {{exact: Map, normalized: Map}|null} joinIndex
+ * @param {{nameOf?: (h: object) => unknown}} [opts]
+ * @returns {Array<object|null>}
+ */
+export function resolveRaceHistories(horses, joinIndex, opts = {}) {
+  if (!Array.isArray(horses) || !joinIndex) return (Array.isArray(horses) ? horses : []).map(() => null);
+  return joinRaceHorses(horses, joinIndex, opts).map((r) => (r.matched ? r.entry : null));
+}
+
+/**
+ * @deprecated 完全一致のみの旧索引。`(地)`/`(外)` 付きの馬が落ちるため新規利用は不可。
+ * 既存呼び出しの互換のためだけに残す。
+ *
  * horseHistories.horses (horseId keyed) を horseName -> entry の Map に変換。
  * 同名衝突は最初の1件のみ。
  */
@@ -201,13 +230,15 @@ export function injectHorseHistoriesIntoVenues(venues, date, projectRoot) {
     if (!venueCode) continue;
     const historiesJson = loadHorseHistoriesForVenue(date, venueCode, projectRoot);
     if (!historiesJson) continue;
-    const nameIndex = buildHorseNameIndex(historiesJson);
-    if (nameIndex.size === 0) continue;
+    const joinIndex = buildHistoryJoinIndex(historiesJson);
+    if (joinIndex.exact.size === 0) continue;
     for (const race of (venueData.predictions || [])) {
-      for (const horse of (race?.horses || [])) {
-        if (!horse || !horse.horseName) continue;
-        const histHorse = nameIndex.get(horse.horseName);
-        if (!histHorse) continue;
+      const horses = race?.horses || [];
+      // 結合はレース単位で行う（レース内の衝突を検出して fail closed にするため）。
+      const resolved = resolveRaceHistories(horses, joinIndex);
+      horses.forEach((horse, hi) => {
+        const histHorse = resolved[hi];
+        if (!horse || !histHorse) return;
         const built = pickRecentRacesFromHistories(histHorse, date);
         if (built && built.length > 0) {
           horse.recentRacesFromHistories = built;
@@ -218,7 +249,7 @@ export function injectHorseHistoriesIntoVenues(venues, date, projectRoot) {
         if (builtForDetails && builtForDetails.length > 0) {
           horse.historyForDetails = builtForDetails;
         }
-      }
+      });
     }
   }
 }
