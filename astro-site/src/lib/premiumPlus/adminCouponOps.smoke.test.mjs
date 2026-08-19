@@ -250,6 +250,78 @@ test('予約取消 → 訂正 の順なら通る（予約が残っていれば�
   assert.equal(out.body.after.claimed, false);
 });
 
+// ── 付与と再発行の排他（**サーバーで再判定**）────────────────
+test('API 直叩きでも 付与と再発行は排他になる', async () => {
+  // ① 履歴なし → 再発行は通らない（UI を経由しない直叩きでも同じ）
+  let out = await op(PP_COUPON_ADMIN_ACTION.REISSUE);
+  assert.equal(out.statusCode, 409);
+  assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.NO_HISTORY);
+  assert.equal(out.body.sideEffects, 'none');
+  assert.equal(db.writes.length, 0);
+
+  // ② 付与は通る
+  out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '初回の付与' });
+  assert.equal(out.statusCode, 200);
+  assert.equal(db.writes.length, 1);
+
+  // ③ 二重付与は通らない
+  out = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(out.statusCode, 409);
+  assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.ALREADY_CLAIMED);
+
+  // ④ 訂正すると履歴が残り、以後は**付与ではなく再発行**
+  await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '誤付与の訂正' });
+  out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '履歴があるのに付与' });
+  assert.equal(out.statusCode, 409);
+  assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.HISTORY_EXISTS);
+
+  const beforeReissue = db.writes.length;
+  out = await op(PP_COUPON_ADMIN_ACTION.REISSUE, { reason: '訂正後の再発行' });
+  assert.equal(out.statusCode, 200);
+  assert.equal(out.body.after.claimed, true);
+
+  // ⑤ 二重再発行も通らない
+  out = await op(PP_COUPON_ADMIN_ACTION.REISSUE);
+  assert.equal(out.statusCode, 409);
+  assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.ALREADY_CLAIMED);
+  assert.equal(db.writes.length, beforeReissue + 1, '断った操作が書き込んでいる');
+
+  // 他会員は 1 度も触られていない
+  assert.ok(db.writes.every((w) => w.id === REC));
+  assert.equal(db.customers[OTHER][PP_REOPEN_COUPON_FIELDS.CLAIMED_AT], '2026-08-10T00:00:00.000Z');
+  assert.equal(db.customers[OTHER][PP_REOPEN_COUPON_FIELDS.SOURCE], 'pause-notice');
+});
+
+test('利用予約中 / 使用済み / 台帳確認不能 は 付与も再発行も通さない', async () => {
+  // 利用予約中（取得済み + issued）
+  db = makeDb({
+    member: {
+      [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-18T22:07:54.803Z',
+      [PP_REOPEN_COUPON_FIELDS.SOURCE]: 'pause-notice',
+    },
+    offers: [{ id: 'recOFFER0000001', fields: reservationFields(OFFER_STATUS.ISSUED) }],
+  });
+  for (const a of ['grant', 'reissue']) {
+    const out = await op(a);
+    assert.equal(out.statusCode, 409, a);
+    assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.ALREADY_CLAIMED, a);
+  }
+  // 使用済み
+  db.offers.recOFFER0000001.Status = OFFER_STATUS.REDEEMED;
+  for (const a of ['grant', 'reissue']) {
+    const out = await op(a);
+    assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.ALREADY_REDEEMED, a);
+  }
+  // 台帳確認不能
+  db.ledger = 'fail';
+  for (const a of ['grant', 'reissue']) {
+    const out = await op(a);
+    assert.equal(out.statusCode, 503, a);
+    assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.LEDGER_UNAVAILABLE, a);
+  }
+  assert.equal(db.writes.length, 0, '断ったのに書き込んでいる');
+});
+
 // ── 二重操作・使用済み ───────────────────────────────────────
 test('二重付与を断る（副作用ゼロ）', async () => {
   await op(PP_COUPON_ADMIN_ACTION.GRANT);

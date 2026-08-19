@@ -102,6 +102,10 @@ export const PP_COUPON_ADMIN_REJECT = Object.freeze({
   RESERVATION_ACTIVE: 'reservation_active',
   /** 取り消せる利用予約が無い */
   NO_RESERVATION: 'no_reservation',
+  /** 過去に取得履歴がある → 付与ではなく再発行を使う */
+  HISTORY_EXISTS: 'coupon_history_exists',
+  /** 過去の取得履歴が無い → 再発行ではなく付与を使う */
+  NO_HISTORY: 'coupon_no_history',
   /** 既に取り消し済み / 使用済みで取り消せない */
   RESERVATION_NOT_REVOCABLE: 'reservation_not_revocable',
 });
@@ -123,6 +127,12 @@ export const PP_COUPON_ADMIN_REJECT_TEXT = Object.freeze({
     + '先に「利用予約を取り消す」を行ってください'
     + '（予約を残したまま取得状態を書き換えると、予約と取得の整合が崩れます）。',
   no_reservation: '取り消せる利用予約がありません。',
+  coupon_history_exists: 'この会員には過去の取得履歴があります。'
+    + '「クーポンを付与」ではなく「クーポンを再発行」を使ってください'
+    + '（履歴のある会員への付与と、初めての付与を取り違えないため）。',
+  coupon_no_history: 'この会員には過去の取得履歴がありません。'
+    + '「クーポンを再発行」ではなく「クーポンを付与」を使ってください'
+    + '（再発行は、訂正・失効で一度失った方へ渡し直す操作です）。',
   reservation_not_revocable: 'この利用予約は既に使用済み／取消済みのため取り消せません。',
 });
 
@@ -207,6 +217,32 @@ export function describeCouponAudit(parsed) {
   return bits.join(' / ');
 }
 
+/**
+ * **過去に一度でもこのクーポンを持っていたか**（付与と再発行を排他にするための判定）。
+ *
+ * 判定材料は Customers の**その会員の 3 列だけ**（他会員も台帳も見ない）:
+ *   - いま取得済み（`ClaimedAt` あり）
+ *   - `Source` に何か記録がある（顧客取得 `pause-notice` / 管理者操作 `admin-*`）
+ *
+ * 誤取得訂正は `ClaimedAt` を空にする一方、`Source` に
+ * `admin-correct|…|prev=<元の取得日時>` を残すので、**訂正後も履歴ありと判定できる**。
+ *
+ * @returns {{ had: boolean, prevClaimedAtIso: string, evidence: string }}
+ */
+export function describeCouponHistory(fields) {
+  const held = readReopenCoupon(fields);
+  const audit = parseCouponAudit(held.source);
+  if (held.claimed) {
+    return { had: true, prevClaimedAtIso: held.claimedAtIso, evidence: 'claimed' };
+  }
+  if (audit.prevClaimedAtIso) {
+    return { had: true, prevClaimedAtIso: audit.prevClaimedAtIso, evidence: 'corrected' };
+  }
+  // 取得日時は無いが記録だけ残っている（手作業で消された等）。**履歴ありへ倒す**
+  if (held.source) return { had: true, prevClaimedAtIso: '', evidence: 'source' };
+  return { had: false, prevClaimedAtIso: '', evidence: 'none' };
+}
+
 /** その会員の予約行だけを取り出す（**他会員の行は一切見ない**） */
 export function ownReservations({ offerRows, customerRecordId }) {
   return (offerRows || []).filter((rec) => isReservationRow(rec)
@@ -272,6 +308,11 @@ export function resolveCouponAdminPlanFor({
     if (held.claimed) return deny(R.ALREADY_CLAIMED);
     // 入金確認待ちの予約が残ったまま付与し直さない（取得と予約の整合が崩れる）
     if (issued) return deny(R.RESERVATION_ACTIVE);
+    // ⚠️ **付与と再発行は排他**。同じ状態で両方が通ると、
+    //    「初めて渡した」のか「訂正後に渡し直した」のかが監査から読めなくなる。
+    const history = describeCouponHistory(fields);
+    if (action === A.GRANT && history.had) return deny(R.HISTORY_EXISTS);
+    if (action === A.REISSUE && !history.had) return deny(R.NO_HISTORY);
     // 再発行は「訂正・失効の後にもう一度渡す」操作。過去の取得記録を引き継ぐ
     const prev = parseCouponAudit(held.source);
     const kind = action === A.REISSUE ? PP_COUPON_ADMIN_SOURCE.reissue : PP_COUPON_ADMIN_SOURCE.grant;
@@ -378,6 +419,7 @@ export function describeCouponAdminActions({
       lifecycleIsUnknown: true,
     };
   }
+  // 付与と再発行に共通の前提（ここまでは同じ）
   const claimBlock = hasRedeemed ? R.ALREADY_REDEEMED
     : (!storage ? R.STORAGE_DISABLED
       : (issued ? R.RESERVATION_ACTIVE : (state.claimed ? R.ALREADY_CLAIMED : null)));
@@ -385,19 +427,23 @@ export function describeCouponAdminActions({
     : (!storage ? R.STORAGE_DISABLED
       : (issued ? R.RESERVATION_ACTIVE : (!state.claimed ? R.NOT_CLAIMED : null)));
   const revokeBlock = issued ? null : (mine.length ? R.RESERVATION_NOT_REVOCABLE : R.NO_RESERVATION);
-  // 再発行は「過去に取得記録がある（訂正済み）」ときの操作。無ければ付与を使う
-  const reissueBlock = claimBlock
-    || (state.audit.prevClaimedAtIso || state.audit.byAdmin ? null : R.NOT_CLAIMED);
+  // ⚠️ **付与と再発行は排他**（サーバーも同じ判定で再確認する）。
+  //    履歴なし → 付与だけ / 履歴あり（訂正済み） → 再発行だけ。
+  const history = describeCouponHistory(fields);
+  const grantBlock = claimBlock || (history.had ? R.HISTORY_EXISTS : null);
+  const reissueBlock = claimBlock || (history.had ? null : R.NO_HISTORY);
 
   return {
     state,
     actions: [
-      mk(A.GRANT, !claimBlock, claimBlock ? PP_COUPON_ADMIN_REJECT_TEXT[claimBlock] : ''),
+      mk(A.GRANT, !grantBlock, grantBlock ? PP_COUPON_ADMIN_REJECT_TEXT[grantBlock] : ''),
       mk(A.REVOKE_RESERVATION, !revokeBlock, revokeBlock ? PP_COUPON_ADMIN_REJECT_TEXT[revokeBlock] : ''),
       mk(A.CORRECT, !correctBlock, correctBlock ? PP_COUPON_ADMIN_REJECT_TEXT[correctBlock] : ''),
       mk(A.REISSUE, !reissueBlock, reissueBlock ? PP_COUPON_ADMIN_REJECT_TEXT[reissueBlock] : ''),
     ],
     storageReady: storage,
+    /** 過去に一度でも持っていたか（付与 / 再発行のどちらを使うかの根拠）*/
+    history,
     /** 使用済みは操作できない、を画面で必ず伝える */
     redeemed: hasRedeemed,
     lifecycleIsUnknown: state.lifecycle === COUPON_LIFECYCLE.UNKNOWN,

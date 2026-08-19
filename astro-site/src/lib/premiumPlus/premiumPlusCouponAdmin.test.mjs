@@ -175,6 +175,79 @@ test('再発行: 取得済みのまま二重に再発行しない', () => {
     A.PP_COUPON_ADMIN_REJECT.ALREADY_CLAIMED);
 });
 
+// ── 付与と再発行は排他 ───────────────────────────────────────
+/**
+ * | 状態 | 付与 | 再発行 |
+ * |---|---|---|
+ * | 取得履歴が一度も無い | ✅ | ❌ |
+ * | 履歴あり・訂正済みで現在未取得 | ❌ | ✅ |
+ * | 取得済み / 利用予約中 / 使用済み / 台帳確認不能 | ❌ | ❌ |
+ */
+test('取得履歴が無ければ 付与のみ・再発行は不可', () => {
+  assert.equal(A.describeCouponHistory(NOT_HELD).had, false);
+  assert.equal(plan({ action: 'grant' }).ok, true);
+  const no = plan({ action: 'reissue' });
+  assert.equal(no.ok, false);
+  assert.equal(no.code, A.PP_COUPON_ADMIN_REJECT.NO_HISTORY);
+});
+
+test('訂正済み（履歴あり・現在未取得）なら 再発行のみ・付与は不可', () => {
+  const corrected = { ...HELD, ...plan({ action: 'correct', fields: HELD }).fields };
+  assert.equal(A.describeCouponHistory(corrected).had, true);
+  assert.equal(A.describeCouponHistory(corrected).prevClaimedAtIso, '2026-08-18T22:07:54.803Z');
+  assert.equal(plan({ action: 'reissue', fields: corrected }).ok, true);
+  const no = plan({ action: 'grant', fields: corrected });
+  assert.equal(no.ok, false);
+  assert.equal(no.code, A.PP_COUPON_ADMIN_REJECT.HISTORY_EXISTS);
+});
+
+test('取得済み / 利用予約中 / 使用済み / 台帳確認不能 は 付与も再発行も不可', () => {
+  const R = A.PP_COUPON_ADMIN_REJECT;
+  const cases = [
+    ['取得済み', { fields: HELD, offerRows: [] }, R.ALREADY_CLAIMED],
+    ['利用予約中', { fields: HELD, offerRows: [resv(OFFER_STATUS.ISSUED)] }, R.ALREADY_CLAIMED],
+    ['使用済み', { fields: HELD, offerRows: [resv(OFFER_STATUS.REDEEMED)] }, R.ALREADY_REDEEMED],
+    ['台帳確認不能', { fields: HELD, offerRows: null, ledgerAvailable: false }, R.LEDGER_UNAVAILABLE],
+  ];
+  for (const [label, over, code] of cases) {
+    for (const action of ['grant', 'reissue']) {
+      const out = plan({ action, ...over });
+      assert.equal(out.ok, false, `${label} / ${action}`);
+      assert.equal(out.code, code, `${label} / ${action}`);
+    }
+  }
+  // 未取得だが予約が生きている（訂正後に予約だけ残っている異常系）も両方不可
+  const corrected = { ...HELD, ...plan({ action: 'correct', fields: HELD }).fields };
+  for (const action of ['grant', 'reissue']) {
+    assert.equal(plan({ action, fields: corrected, offerRows: [resv(OFFER_STATUS.ISSUED)] }).code,
+      R.RESERVATION_ACTIVE, action);
+  }
+});
+
+test('二重 grant / 二重 reissue をどちらも通さない', () => {
+  const R = A.PP_COUPON_ADMIN_REJECT;
+  // 付与 → もう一度 付与
+  const granted = { ...NOT_HELD, ...plan({ action: 'grant' }).fields };
+  assert.equal(plan({ action: 'grant', fields: granted }).code, R.ALREADY_CLAIMED);
+  // 訂正 → 再発行 → もう一度 再発行
+  const corrected = { ...granted, ...plan({ action: 'correct', fields: granted }).fields };
+  const reissued = { ...corrected, ...plan({ action: 'reissue', fields: corrected }).fields };
+  assert.equal(plan({ action: 'reissue', fields: reissued }).code, R.ALREADY_CLAIMED);
+});
+
+test('画面のボタンも排他になっている（サーバーと同じ判定）', () => {
+  const view = (fields) => Object.fromEntries(A.describeCouponAdminActions({
+    fields, offerRows: [], ledgerAvailable: true, env: ENV_ON, customerRecordId: REC,
+  }).actions.map((a) => [a.action, a.enabled]));
+  // 履歴なし
+  assert.deepEqual([view(NOT_HELD).grant, view(NOT_HELD).reissue], [true, false]);
+  // 訂正済み
+  const corrected = { ...HELD, ...plan({ action: 'correct', fields: HELD }).fields };
+  assert.deepEqual([view(corrected).grant, view(corrected).reissue], [false, true]);
+  // 取得済み
+  assert.deepEqual([view(HELD).grant, view(HELD).reissue], [false, false]);
+});
+
 // ── 予約取消 ────────────────────────────────────────────────
 test('予約取消: 予約行だけを対象にし、Customers は触らない', () => {
   const out = plan({ action: 'revokeReservation', fields: HELD, offerRows: [resv(OFFER_STATUS.ISSUED)] });
