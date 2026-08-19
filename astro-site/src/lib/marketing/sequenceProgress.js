@@ -40,6 +40,7 @@ import {
 import { computeCampaignDeliveryKey } from './campaignSend.js';
 import { matchesCampaignAudience, isCampaignUsable } from './campaignCatalog.js';
 import { classifyEngagement, isBlockedByEngagement } from './engagementPolicy.js';
+import { resolveRoutedStep } from '../drm/drmRouting.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 import { matchesImportCohort, COHORT_SKIP_LABEL } from '../crm/importedCohort.js';
@@ -219,6 +220,12 @@ function hasPurchased(marketing) {
 export function resolveRecipientProgress({
   campaign, customer, deliveredIndex, brand, fromEmail, nowMs,
   providerSuppressed, softBounced, engagementByEmail, engagementThresholds,
+  /**
+   * 反応で次の訴求を変えるための入力（**任意**）。
+   * ⚠️ `campaign.sequence.responseRoutes` が宣言されている campaign でだけ効く。
+   *    渡さない / 宣言が無い場合は**従来どおり完全に線形**（既存挙動を 1 ミリも変えない）。
+   */
+  responseByEmail,
 }) {
   const recordId = str(customer && customer.recordId);
   const mk = (customer && customer.marketing) || null;
@@ -300,7 +307,23 @@ export function resolveRecipientProgress({
   }
 
   // ── 次のステップ ────────────────────────────────────────────
-  const nextStep = currentStep + 1;
+  //    ⚠️ ここへ来た時点で**停止条件は全部通過している**（購入・退会・停止リスト・
+  //       バウンス・対象外・engagement は上で `stop()` 済み）。
+  //       反応による行き先の変更は**その後**にしか効かない（停止を上書きしない）。
+  const linearStep = currentStep + 1;
+  let nextStep = linearStep;
+  let routed = null;
+  const routes = (campaign && campaign.sequence && campaign.sequence.responseRoutes) || null;
+  if (Array.isArray(routes) && routes.length > 0) {
+    routed = resolveRoutedStep({
+      routes,
+      response: responseByEmail instanceof Map ? responseByEmail.get(email) : null,
+      sentSteps,
+      linearStep,
+      maxSends: max,
+    });
+    if (routed && Number.isInteger(routed.step)) nextStep = routed.step;
+  }
   if (nextStep > max) {
     return { ...base, sentSteps, currentStep, status: SEQ_STATUS.COMPLETED, stopReason: SEQ_STOP.MAX_SENDS_REACHED };
   }
@@ -310,6 +333,10 @@ export function resolveRecipientProgress({
     ...base, sentSteps, currentStep, nextStep, nextSendAtMs,
     status: due ? SEQ_STATUS.DUE : SEQ_STATUS.WAITING,
     stopReason: null,
+    /** 反応で選んだ場合だけ入る（**宣言が無ければ null**） */
+    routedBy: routed ? routed.routeId : null,
+    variant: routed ? routed.variant : null,
+    angle: routed ? routed.angle : null,
   };
 }
 
@@ -322,6 +349,7 @@ export function resolveRecipientProgress({
 export function buildSequenceProgress({
   campaign, selected, deliveries, brand, fromEmail, nowMs,
   providerSuppressed, softBounced, engagementByEmail, engagementThresholds,
+  responseByEmail,
 }) {
   if (!campaign || !isSequenceCampaign(campaign)) {
     return { ok: false, error: 'not_a_sequence' };
@@ -336,6 +364,7 @@ export function buildSequenceProgress({
     const row = resolveRecipientProgress({
       campaign, customer: c, deliveredIndex, brand, fromEmail, nowMs,
       providerSuppressed, softBounced, engagementByEmail, engagementThresholds,
+      responseByEmail,
     });
     // 同一アドレスの重複レコードは 1 人として数える（2 通送らない）
     if (row.email) {
