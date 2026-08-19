@@ -280,6 +280,47 @@ exports.handler = async (event, context) => {
         };
       }
     }
+    // ── クーポン検証（**副作用ゼロの地点で行う**）───────────────────
+    // ⚠️ 本人が couponId を**明示的に選んだ**申込で検証に失敗したときは、
+    //    黙って通常価格へ落として受理してはいけない。
+    //    58,000円のつもりで申し込んだ人が 68,000円の申込を作られるのが最悪の事故。
+    //    所持していない / 未知の id / 判定不能 は**申込ごと停止**し、
+    //    Customers / PromotionalOffers / queue / メール のどれにも触れずに返す。
+    //
+    //    クーポンを**最初から選んでいない**申込は従来どおり通常価格で進む。
+    let serverPricing = null;
+    if (isPremiumPlusOrder) {
+      const selectedCouponId = String(couponId ?? '').trim();
+      if (selectedCouponId) {
+        try {
+          serverPricing = resolveOrderPricing({
+            fields: plusCustomerFields,
+            couponId: selectedCouponId,
+            nowMs: Date.now(),
+          });
+        } catch (e) {
+          serverPricing = null;  // 判定不能。下で拒否する
+        }
+        // 検証に落ちた（理由あり）／判定できなかった／割引が乗らなかった → 申込を止める
+        if (!serverPricing || serverPricing.reason || !serverPricing.couponApplied) {
+          console.warn('🚫 [bank-transfer] クーポン検証に失敗したため申込を停止:', {
+            recordId: plusCustomerRecordId || null,
+            reason: serverPricing ? serverPricing.reason : 'pricing_unavailable',
+          });
+          return {
+            statusCode: 409,
+            headers,
+            body: JSON.stringify({
+              error: 'クーポンを確認できませんでした。お手数ですが、'
+                + 'ページを再読み込みのうえ、もう一度お試しください。',
+              code: 'coupon_unavailable',
+              sideEffects: 'none',
+            }),
+          };
+        }
+      }
+    }
+
     // 対象日を含む確定商品名。**以後の処理・メール・履歴はこれを使う**
     const orderProductName = (isPremiumPlusOrder && saleOrder && saleOrder.date)
       ? buildSaleProductName(saleOrder.label, 68000)
@@ -673,10 +714,10 @@ exports.handler = async (event, context) => {
       let requestedAmount = clientAmount;
       let appliedCoupon = null;
       if (isPremiumPlusOrder) {
-        const pricing = resolveOrderPricing({
-          fields: plusCustomerFields,
-          couponId,
-          nowMs: Date.now(),
+        // 上で検証済みの結果をそのまま使う（ここで再計算すると判定が割れる）。
+        // クーポン未選択のときは通常価格を採用する。
+        const pricing = serverPricing || resolveOrderPricing({
+          fields: plusCustomerFields, couponId: null, nowMs: Date.now(),
         });
         if (Number.isFinite(pricing.finalPrice)) {
           requestedAmount = pricing.finalPrice;
@@ -687,7 +728,6 @@ exports.handler = async (event, context) => {
             client: Number.isFinite(clientAmount) ? clientAmount : null,
             server: requestedAmount,
             couponApplied: appliedCoupon ? appliedCoupon.couponId : null,
-            reason: pricing.reason || null,
           });
         }
       }
