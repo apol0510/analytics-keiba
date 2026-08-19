@@ -6,6 +6,8 @@
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+// 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
+import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
 import { resolveOrderSaleDate, buildSaleProductName, isPremiumPlusProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
@@ -49,6 +51,8 @@ exports.handler = async (event, context) => {
       transferName,
       remarks,
       productName,
+      // 選択されたクーポン（**id だけ**。割引額・最終価格は受け取らない）
+      couponId,
       saleTargetDate,
       funnelSource,
       paymentCompletedConfirm,
@@ -659,14 +663,43 @@ exports.handler = async (event, context) => {
       // confirm-bank-payment.js が PaymentConfirmed を起点に行う。
       // 有効期限は入金確認日（JST）基準で自動計算されるため手入力は不要。
       // ─────────────────────────────────────────────
-      const requestedAmount = Number.parseInt(transferAmount, 10);
+      // ── 申込価格はサーバーが決める ─────────────────────────────
+      // ⚠️ 画面の `transferAmount` は**参考値**。Premium Plus の申込では
+      //    「本人が本当にそのクーポンを持っているか」を Airtable の実データから
+      //    再検証し、**正本の通常価格から 1 回だけ引いた確定値**を採用する。
+      //    クライアントが割引額・最終価格を送ってきても読まない（二重適用・改ざん防止）。
+      //    検証に落ちたら割引なし（通常価格）へ倒す＝ fail closed。
+      const clientAmount = Number.parseInt(transferAmount, 10);
+      let requestedAmount = clientAmount;
+      let appliedCoupon = null;
+      if (isPremiumPlusOrder) {
+        const pricing = resolveOrderPricing({
+          fields: plusCustomerFields,
+          couponId,
+          nowMs: Date.now(),
+        });
+        if (Number.isFinite(pricing.finalPrice)) {
+          requestedAmount = pricing.finalPrice;
+          appliedCoupon = pricing.couponApplied;
+        }
+        if (clientAmount !== requestedAmount) {
+          console.warn('⚠️ [bank-transfer] 申込金額をサーバー確定値へ置き換え:', {
+            client: Number.isFinite(clientAmount) ? clientAmount : null,
+            server: requestedAmount,
+            couponApplied: appliedCoupon ? appliedCoupon.couponId : null,
+            reason: pricing.reason || null,
+          });
+        }
+      }
 
       console.log('📝 申込内容を Requested* に退避:', {
         productName: orderProductName,
         fullPlanName,
         planName,
         planType,
-        requestedAmount: Number.isFinite(requestedAmount) ? requestedAmount : null
+        requestedAmount: Number.isFinite(requestedAmount) ? requestedAmount : null,
+        // どのクーポンを適用したか（後から追跡できるように残す）
+        couponApplied: appliedCoupon ? appliedCoupon.couponId : null
       });
 
       // Airtable登録処理
