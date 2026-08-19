@@ -71,6 +71,18 @@ let realEnv;
 /**
  * @param {{ member?: object, ledger?: 'ok'|'fail'|'pages', offers?: object[] }} cfg
  */
+/**
+ * ⚠️ `Response`（undici）を返さない。読まれない body のストリームがテスト終了後まで残り、
+ *    CI で「A resource generated asynchronous activity after the test ended」で落ちる。
+ *    handler が使うのは `ok` / `status` / `json()` だけなので、素の object で足りる。
+ */
+const reply = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+  text: async () => JSON.stringify(body),
+});
+
 function stub(cfg = {}) {
   const member = cfg.member || MEMBER;
   const offers = cfg.offers || [];
@@ -78,28 +90,42 @@ function stub(cfg = {}) {
   const calls = { offers: 0, customers: 0 };
   globalThis.fetch = async (url) => {
     const u = String(url);
-    const ok = (body) => new Response(JSON.stringify(body),
-      { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (u.includes('/PromotionalOffers/')) {
       calls.offers += 1;
-      if (mode === 'fail') return new Response('boom', { status: 500 });
+      if (mode === 'fail') return reply(500, { error: 'boom' });
       // 常に offset を返し続ける = ページ上限に当たる（全件読み切れない）
-      if (mode === 'pages') return ok({ records: offers, offset: 'more' });
-      return ok({ records: offers });
+      if (mode === 'pages') return reply(200, { records: offers, offset: 'more' });
+      return reply(200, { records: offers });
     }
-    if (u.includes('/Customers/')) { calls.customers += 1; return ok({ records: [{ id: REC, fields: member }] }); }
-    if (u.includes('/CampaignDeliveries/')) return ok({ records: [] });
-    return new Response('blocked', { status: 403 });
+    if (u.includes('/Customers/')) {
+      calls.customers += 1;
+      return reply(200, { records: [{ id: REC, fields: member }] });
+    }
+    if (u.includes('/CampaignDeliveries/')) return reply(200, { records: [] });
+    return reply(403, { error: 'blocked' });
   };
   return calls;
 }
 
+/**
+ * handler は **1 回だけ** import する。
+ * ⚠️ `?t=${Math.random()}` で毎回読み直すと、大きな依存グラフが呼び出し回数だけ
+ *    生成されて CI で残留する。env は request 時に読まれるので使い回して問題ない。
+ */
+let handlerPromise = null;
+function loadHandler() {
+  if (!handlerPromise) {
+    globalThis.exports = {};
+    globalThis.module = { exports: globalThis.exports };
+    // ESM import + exports.handler の混在（Netlify の bundler と同じ扱い）
+    handlerPromise = import(FN).then(() => globalThis.exports.handler);
+  }
+  return handlerPromise;
+}
+
 async function post(body) {
-  globalThis.exports = {};
-  globalThis.module = { exports: globalThis.exports };
-  // ESM import + exports.handler の混在（Netlify の bundler と同じ扱い）
-  await import(`${FN}?t=${Math.random()}`);
-  const res = await globalThis.exports.handler({
+  const handler = await loadHandler();
+  const res = await handler({
     httpMethod: 'POST',
     headers: { 'content-type': 'application/json', 'x-admin-secret': SECRET },
     body: JSON.stringify(body),
