@@ -1,0 +1,45 @@
+---
+/**
+ * /race-viewpoints/jra/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
+ *
+ * ⚠️ URL・ページ名称・最終コピーは MK 未承認。目視確認が必要。
+ *    確定するまで nav へは載せない（直 URL でのみ到達可能）。
+ *
+ * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量
+ * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import RaceViewpointsBoard from '../../components/RaceViewpointsBoard.astro';
+import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
+
+export const prerender = false;
+
+let view: any = null;
+try {
+  view = buildViewpoints('jra', process.cwd());
+} catch (error) {
+  console.error('[race-viewpoints/jra] build error:', error);
+}
+---
+
+<BaseLayout
+  title={`レースの見どころ | 中央競馬`}
+  description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
+  noindex={true}
+>
+  {view
+    ? <RaceViewpointsBoard view={view} categoryLabel="中央競馬" freeUrl="/free-prediction/jra/" />
+    : (
+      <section class="rvb-empty">
+        <h1>レースの見どころ（中央競馬）</h1>
+        <p>本日ぶんのデータがまだ用意できていません。取込が終わり次第表示されます。</p>
+        <a href="/free-prediction/jra/">中央競馬 の無料予想を見る →</a>
+      </section>
+    )}
+</BaseLayout>
+
+<style>
+  .rvb-empty { max-width: 640px; margin: 0 auto; padding: 64px 16px; text-align: center; color: #cbd5e1; }
+  .rvb-empty h1 { color: #38bdf8; font-size: 1.4rem; margin-bottom: 12px; }
+  .rvb-empty a { color: #38bdf8; }
+</style>

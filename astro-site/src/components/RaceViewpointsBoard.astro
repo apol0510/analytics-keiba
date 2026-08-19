@@ -1,0 +1,146 @@
+---
+/**
+ * RaceViewpointsBoard.astro — 無料「レースの見どころ」ボード（表示専用）
+ *
+ * 出すもの : 発走時刻 / R / レース名 / 距離 / 頭数 / 絶対タグ or 中立文 or 状態 / 当日相対（会場単位）
+ * 出さないもの: 買い目・pt・AI総合指数・役割・特徴量（**judge 側で入力にもしていない**）
+ *
+ * ⚠️ 文言・名称・URL は仮。MK 目視確認が必要。
+ */
+import { RACE_STATE } from '../lib/freeViewpoints/raceViewpoints.js';
+import { TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL, coverageNote } from '../lib/freeViewpoints/copy.js';
+
+interface Props { view: any; categoryLabel: string; freeUrl: string; }
+const { view, categoryLabel, freeUrl } = Astro.props;
+
+const fmtDate = (d: string) => {
+  const [y, m, day] = String(d).split('-');
+  return `${y}年${parseInt(m, 10)}月${parseInt(day, 10)}日`;
+};
+const stateClass = (s: string) =>
+  s === RACE_STATE.TAGGED ? 'is-tagged'
+  : s === RACE_STATE.NEUTRAL ? 'is-neutral'
+  : 'is-pending';
+---
+
+<section class="rvb">
+  <header class="rvb-head">
+    <h1 class="rvb-title">今日のレースの見どころ<span class="rvb-cat">{categoryLabel}</span></h1>
+    <p class="rvb-date">{fmtDate(view.date)}</p>
+    <p class="rvb-lead">
+      出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、
+      レースごとに「何が替わったか」「近走を見比べやすいか」を出しています。
+      買い目や評価の数値は出していません。
+    </p>
+  </header>
+
+  {view.venues.map((venue: any) => (
+    <div class="rvb-venue">
+      <h2 class="rvb-venue-name">{venue.venue}<span class="rvb-venue-count">{venue.races.length}R</span></h2>
+
+      <ol class="rvb-list">
+        {venue.races.map((race: any) => (
+          <li class={`rvb-row ${stateClass(race.result.state)}`}>
+            <div class="rvb-row-main">
+              <span class="rvb-time">{race.startTime || '--:--'}</span>
+              <span class="rvb-r">{race.raceNumber}R</span>
+              <span class="rvb-name">{race.raceName || '　'}</span>
+              <span class="rvb-meta">
+                {race.distanceMeters ? `${race.distanceMeters}m` : '距離未取得'} ・ {race.entryCount}頭
+              </span>
+            </div>
+
+            <div class="rvb-row-tags">
+              {race.result.state === RACE_STATE.TAGGED
+                ? race.result.tags.map((t: string) => <span class="rvb-tag">{TAG_LABEL[t]}</span>)
+                : <span class="rvb-state">{STATE_LABEL[race.result.state]}</span>}
+            </div>
+
+            <details class="rvb-detail">
+              <summary class="rvb-detail-sum">このレースの見かた</summary>
+              <div class="rvb-detail-body">
+                {race.result.state === RACE_STATE.TAGGED
+                  ? race.result.tags.map((t: string) => <p class="rvb-sentence">{TAG_SENTENCE[t]}</p>)
+                  : <p class="rvb-sentence">{STATE_SENTENCE[race.result.state]}</p>}
+
+                {race.result.degraded.length > 0 && race.result.state !== RACE_STATE.UNMATCHED && (
+                  <p class="rvb-degraded">
+                    {race.result.degraded.includes('distance') && '今日の距離が取得できていないため、距離に関する見どころは出していません。'}
+                    {race.result.degraded.includes('jockey') && '騎手を照合できない馬があるため、乗り替わりの見どころは出していません。'}
+                  </p>
+                )}
+
+                <p class="rvb-cov">{coverageNote(race.result)}</p>
+                <a class="rvb-link" href={freeUrl}>出走馬・印を見る →</a>
+              </div>
+            </details>
+          </li>
+        ))}
+      </ol>
+
+      <div class="rvb-highlight">
+        <span class="rvb-highlight-head">今日の{venue.venue}では</span>
+        <ul class="rvb-highlight-list">
+          {(['mostChanged', 'easiest', 'hardest'] as const).map((k) => (
+            venue.highlights[k] ? (
+              <li><span class="rvb-highlight-key">{HIGHLIGHT_LABEL[k]}</span><span class="rvb-highlight-val">{venue.highlights[k]}R</span></li>
+            ) : null
+          ))}
+        </ul>
+        <p class="rvb-highlight-note">※ この 3 つは<strong>今日のこの会場の中での比較</strong>です。上のタグ（{categoryLabel}全体の基準）とは別の見かたです。</p>
+      </div>
+    </div>
+  ))}
+
+  <p class="rvb-foot">
+    近走の集計元は、南関は出走各馬の近走詳細データ、中央は JRA 公式の競走成績です。
+    まだ確認できていないレースは、無理に傾向を出さず「近走データ準備中」と表示しています。
+  </p>
+</section>
+
+<style>
+  .rvb { max-width: 1000px; margin: 0 auto; padding: 24px 16px 64px; color: #e2e8f0; }
+  .rvb-head { text-align: center; margin-bottom: 28px; }
+  .rvb-title { font-size: 1.9rem; font-weight: 800; color: #38bdf8; margin: 0 0 6px; line-height: 1.3; }
+  .rvb-cat { display: inline-block; margin-left: 10px; padding: 3px 10px; border-radius: 999px; background: rgba(56,189,248,.15); color: #67e8f9; font-size: .8rem; vertical-align: middle; }
+  .rvb-date { color: #94a3b8; margin: 0 0 12px; font-size: .95rem; }
+  .rvb-lead { color: #cbd5e1; font-size: .92rem; line-height: 1.8; max-width: 640px; margin: 0 auto; }
+  .rvb-venue { margin-top: 34px; }
+  .rvb-venue-name { font-size: 1.25rem; font-weight: 700; color: #e2e8f0; border-left: 4px solid #38bdf8; padding-left: 10px; margin: 0 0 12px; }
+  .rvb-venue-count { color: #67e8f9; font-size: .8rem; margin-left: 8px; }
+  .rvb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .rvb-row { border: 1px solid rgba(148,163,184,.25); border-radius: 10px; background: rgba(15,23,42,.55); padding: 10px 12px; }
+  .rvb-row.is-neutral { border-color: rgba(148,163,184,.16); }
+  .rvb-row.is-pending { border-color: rgba(148,163,184,.16); background: rgba(15,23,42,.35); }
+  .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .rvb-time { color: #94a3b8; font-variant-numeric: tabular-nums; font-size: .85rem; }
+  .rvb-r { font-weight: 800; color: #38bdf8; min-width: 2.6em; }
+  .rvb-name { font-weight: 600; }
+  .rvb-meta { color: #94a3b8; font-size: .82rem; margin-left: auto; }
+  .rvb-row-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .rvb-tag { background: rgba(56,189,248,.14); color: #67e8f9; border: 1px solid rgba(56,189,248,.35); border-radius: 6px; padding: 2px 8px; font-size: .8rem; }
+  .rvb-state { color: #94a3b8; font-size: .8rem; }
+  .rvb-detail { margin-top: 8px; }
+  .rvb-detail-sum { cursor: pointer; color: #7dd3fc; font-size: .8rem; list-style: none; }
+  .rvb-detail-sum::-webkit-details-marker { display: none; }
+  .rvb-detail-sum::before { content: '▸ '; }
+  .rvb-detail[open] .rvb-detail-sum::before { content: '▾ '; }
+  .rvb-detail-body { padding: 8px 0 2px; border-top: 1px solid rgba(148,163,184,.18); margin-top: 6px; }
+  .rvb-sentence { margin: 0 0 6px; font-size: .88rem; line-height: 1.75; color: #cbd5e1; }
+  .rvb-degraded { margin: 0 0 6px; font-size: .8rem; color: #fbbf24; }
+  .rvb-cov { margin: 0 0 8px; font-size: .78rem; color: #94a3b8; }
+  .rvb-link { color: #38bdf8; font-size: .85rem; text-decoration: none; }
+  .rvb-link:hover { text-decoration: underline; }
+  .rvb-highlight { margin-top: 12px; border: 1px dashed rgba(56,189,248,.4); border-radius: 10px; padding: 12px; background: rgba(56,189,248,.05); }
+  .rvb-highlight-head { font-weight: 700; color: #67e8f9; font-size: .9rem; }
+  .rvb-highlight-list { list-style: none; margin: 8px 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; }
+  .rvb-highlight-list li { display: flex; gap: 6px; align-items: baseline; }
+  .rvb-highlight-key { color: #cbd5e1; font-size: .85rem; }
+  .rvb-highlight-val { font-weight: 800; color: #38bdf8; }
+  .rvb-highlight-note { margin: 0; font-size: .75rem; color: #94a3b8; line-height: 1.7; }
+  .rvb-foot { margin-top: 32px; font-size: .78rem; color: #94a3b8; line-height: 1.8; }
+  @media (max-width: 640px) {
+    .rvb-title { font-size: 1.4rem; }
+    .rvb-meta { margin-left: 0; width: 100%; }
+  }
+</style>
