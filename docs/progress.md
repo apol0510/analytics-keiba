@@ -407,13 +407,33 @@ fail closed し、**他のタグ（初コース・乗り替わり）は残す縮
 - duplicate send なし ✅
 - operator UI で反応層・次訴求・conversion を確認できる ✅
 
-⚠️ 上の ✅ は**実装とテストで固定したところまで**。**本番データでの実測はしていない**
-（production deploy も実顧客の読み取りも行っていない）。実運用の数字で確認したとは書かない。
+### 本番反映と read-only 実測（2026-08-19）
+
+承認のうえ PR #374 を squash merge（`6ed73865`）。Netlify の自動 production deploy
+`6a8541de`（context=production / branch=main）が **ready** で公開された。
+
+本番での read-only 実測（名指し・bounded・**書込みゼロ**）:
+
+| 名指しした対象 | 結果 |
+|---|---|
+| `PaidAt` あり 3 名 ＋ 無し 3 名 | `purchases: 3` / `purchaseTimeReasons: {ok:3, missing:3}` |
+| sequence 受信者 8 名（`PaidAt` 無し）| `purchases: 0` / `{missing:8}` |
+| `PaidAt` あり 20 名 × sequence 2 本 | `purchases: 20` / `{ok:20}` / `unattributed: 20` |
+
+- **購入確定時刻の読み取りは本番で成立**（`PaidAt` 20 件を `ok` で読めている）
+- 名指しした対象と**当該 sequence の touch が交差しなかった**ため、
+  `correlated` は 0 ／ `unattributed` は 20。
+  **対象が無いのに帰属を作らない**という正本どおりの挙動
+- `direct` は provider 側の click tracking が無効なため構造的に成立しない
+  （`clickMeasured: false` を併せて返す。0 件＝効果なし、ではない）
+- 全レスポンスで `sideEffects: 'none'`、`attributed` に email / 氏名 / recordId は含まれない
+
+⚠️ **`correlated` の実例は未観測**（事実の記録。完成条件ではない）。
 
 ### やっていないこと
 
-production deploy / 実顧客データ書込み / 実メール送信 / schema 変更 / PR merge。
-**#372（Light trial rollout 修復）とは完全に分離**した別 branch・別 worktree。
+実顧客データ書込み / 実メール送信 / queue 登録 / dispatch 呼出 / schema・env・datastore 変更。
+**#372（Light trial rollout 修復）には触れていない**。
 
 ## 2026-08-19 — 【本番実行】再募集クーポンの初取得を 1 件記録（Daniel / 3 列のみ・0→1）
 
