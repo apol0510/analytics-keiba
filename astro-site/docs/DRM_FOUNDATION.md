@@ -1,3 +1,56 @@
+### 購入帰属は**分析専用の別 Function**（`admin-drm-attribution`）
+
+購入がどの 1 通に結び付くかを知るには「**いつ有料になったか**」が要る。
+その正本は `Customers.PaidAt` — `bankPaymentFlow.buildConfirmationFields` が
+`PaidAt: confirmedAt.toISOString()` として書く、**入金確認 ＝ 有料化が確定した時刻**。
+
+⚠️ **`checkout`（申込）時刻ではない。** 申込フォーム送信時には書かれない
+（申込時は `Requested*` へ退避するだけ）。
+
+#### なぜ送信経路から分けたのか
+
+`offerCampaignFunction.guard.test.mjs` は**送信経路**
+（`admin-marketing.js` / `marketing-campaign-dispatch.js`）が決済メール v2 の
+フィールドへ触れないことを守っている。これは
+「販促メールを出す経路が決済状態に依存して二重送信・状態汚染を起こさない」ための契約で、
+**帰属のために緩めない**。
+
+そこで**責務を分けた**:
+
+| 経路 | 決済フィールド | 役割 |
+|---|---|---|
+| `admin-marketing` / `marketing-campaign-dispatch`（**送信**） | **触れない**（guard 継続） | 誰に何を送るか |
+| **`admin-drm-attribution`（分析専用・read-only）** | 購入確定時刻だけ読む | 購入をどの 1 通に結ぶか |
+
+新しい商品仕様ではなく、**内部の責務分離**。
+
+#### 使う正本（別実装しない）
+
+`premiumPlus/purchaseAnchorLookup.js` の既存 read-only I/O をそのまま使う。
+DRM 用に**時刻 1 つだけ返す薄いラッパ** `lookupPaidConfirmedAt()` を同モジュールへ追加した。
+
+| 戻り | 意味 |
+|---|---|
+| `{ paidAtMs, reason: 'ok' }` | 有料化確定時刻 |
+| `reason: 'missing'` | `PaidAt` が無い（＝有料化を確認できない） |
+| `reason: 'invalid'` | 値を時刻として解釈できない |
+| `reason: 'not_found'` / `'unavailable'` | レコードが無い / 読めない |
+
+⚠️ `ok` 以外は**購入者として数えず、帰属もしない**（`unattributed`）。
+**推測で時刻を補完しない。** ⚠️ `PaidAt` を独自の Airtable query で別実装しない。
+⚠️ raw fields を DRM 側へ返さない（時刻と理由だけ）。
+
+#### 帰属の原則
+
+| 段階 | 条件 |
+|---|---|
+| `direct` | その 1 通の**クリック**を正に計測できたときだけ |
+| `correlated` | 送信 / 開封後の既定窓（30 日）内に有料化 |
+| `unattributed` | 証明不能（時刻なし・窓の外・touch なし） |
+
+⚠️ **click tracking は現在 OFF** なので direct は成立しない。
+**「direct 0 件＝効果なし」ではない**ことを API も UI も明示する。
+
 # DRM（Direct Response Marketing）基盤
 
 「一斉に送る仕組み」ではなく、**顧客の反応を計測し、反応に応じて次の訴求を変え、購入まで辿る**ための土台。
@@ -146,6 +199,20 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（新しい Function
   - 1 通単位の到達・開封（`deliveryEventIndex` が読めたときだけ。読めなければ `unknown`）
 
 ⚠️ 全件走査はしない。⚠️ 1 件も書かない。⚠️ アドレスは返さない。
+
+## DRM の完成条件
+
+- response-driven routing が**実 sequence** で動く
+- `responseRoutes` 未定義なら**既存挙動不変**
+- purchase / suppression 停止が最優先
+- `sent` と `delivered` を混同しない
+- 未計測を 0 にしない
+- 顧客 segment は**排他的**（1 人 1 state）
+- 帰属不能は正直に `unattributed`
+- **Premium / Light の購入確定時刻から実 touch へ帰属できる**
+- **送信経路の決済フィールド guard を維持したまま**である
+- duplicate send なし
+- operator UI で反応層・次訴求・conversion を確認できる
 
 ## 6. safety
 

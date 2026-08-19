@@ -14,6 +14,9 @@ export const prerender = true;
 //    1 人 1 state の排他的な人数にならない。この面では人数を「—」にする。
 // ⚠️ **A/B 実施可能とは書かない。** variant を識別する契約は持つが、
 //    DeliveryKey に variant は含まれておらず、variant 別の送信・帰属・重複防止は未完成。
+// ⚠️ 購入帰属は **admin-drm-attribution**（分析専用の別 Function）から読む。
+//    送信経路（admin-marketing / marketing-campaign-dispatch）は決済メール v2 の
+//    フィールドへ触れない契約なので、購入確定時刻をそこで読ませない。
 // ⚠️ style は必ず `is:global` + `.drm` 名前空間（Astro の scoped style は
 //    JS で生成した行に適用されないため。premium-plus-eligibility と同じ理由）。
 import BaseLayout from '../../layouts/BaseLayout.astro';
@@ -52,6 +55,31 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           <tr><th>反応層</th><th class="n">人数</th><th class="n">次の touch</th><th>訴求（angle）</th><th>variant</th><th>備考</th></tr>
         </thead>
         <tbody id="drm-segments"></tbody>
+      </table>
+    </section>
+
+    <section class="drm-sec">
+      <h2>購入の帰属</h2>
+      <p class="drm-note">
+        宛先を名指しして読みます（全件走査なし）。購入確定時刻は
+        <strong>入金確認＝有料化が確定した時刻</strong>で、申込（checkout）時刻ではありません。
+        帰属は分析専用の <code>admin-drm-attribution</code> が返します
+        （送信経路は決済フィールドに触れない契約のため分離しています）。
+      </p>
+      <div class="drm-ctl">
+        <label>対象 recordId（カンマ区切り）
+          <input id="drm-ids" type="text" size="40" placeholder="recXXXX, recYYYY" />
+        </label>
+        <label>対応するメール（同じ順・同じ数）
+          <input id="drm-emails" type="text" size="40" placeholder="a@example.com, b@example.com" />
+        </label>
+        <button id="drm-attr" type="button">帰属を読む</button>
+      </div>
+      <div id="drm-attr-out" class="drm-funnel"></div>
+      <p id="drm-attr-note" class="drm-note"></p>
+      <table class="drm-table">
+        <thead><tr><th>campaign</th><th class="n">version</th><th class="n">touch</th><th>確からしさ</th><th>DeliveryKey（先頭 12）</th></tr></thead>
+        <tbody id="drm-attr-rows"></tbody>
       </table>
     </section>
 
@@ -189,7 +217,57 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           tt.appendChild(tr);
         });
       }
+      async function loadAttribution() {
+        var note = $('drm-attr-note');
+        var s = secret();
+        if (!s) { note.textContent = 'secret が入力されていません。'; return; }
+        var ids = $('drm-ids').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+        var ems = $('drm-emails').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+        if (!ids.length || ids.length !== ems.length) {
+          note.textContent = 'recordId とメールを同じ数・同じ順で入れてください。'; return;
+        }
+        note.textContent = '読み込み中…';
+        var res, body;
+        try {
+          res = await fetch('/.netlify/functions/admin-drm-attribution', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-admin-secret': s },
+            body: JSON.stringify({ campaignId: $('drm-campaign').value, recordIds: ids, emails: ems }),
+          });
+          body = await res.json();
+        } catch (e) { note.textContent = '通信に失敗しました。'; return; }
+        if (!res.ok) { note.textContent = '取得できませんでした: ' + (body && body.error ? body.error : res.status); return; }
+
+        var a = body.attribution || {};
+        var by = a.byAttribution || {};
+        var w = $('drm-attr-out'); w.textContent = '';
+        w.appendChild(card('購入（有料化確定）', fmt(body.purchases)));
+        // ⚠️ click 未計測のときは 0 ではなく「—」
+        w.appendChild(card('direct（クリック由来）', a.clickMeasured ? fmt(by.direct) : null));
+        w.appendChild(card('correlated（相関）', fmt(by.correlated)));
+        w.appendChild(card('未帰属', fmt(by.unattributed)));
+
+        var reasons = body.purchaseTimeReasons || {};
+        note.textContent = '購入確定時刻の取得内訳: '
+          + Object.keys(reasons).map(function (k) { return k + '=' + reasons[k]; }).join(' / ')
+          + '（missing / invalid / unavailable は購入として数えず、帰属もしません）'
+          + ' ／ クリックは計測していないため direct は「—」です（0 件＝効果なし、ではありません）。';
+
+        var tb = $('drm-attr-rows'); tb.textContent = '';
+        (body.attributed || []).forEach(function (r) {
+          var tr = document.createElement('tr');
+          var c1 = document.createElement('td'); c1.textContent = r.campaignId || '—'; tr.appendChild(c1);
+          tr.appendChild(cell(r.version));
+          tr.appendChild(cell(r.step));
+          var c4 = document.createElement('td'); c4.textContent = r.confidence || '—'; tr.appendChild(c4);
+          var c5 = document.createElement('td');
+          c5.textContent = r.deliveryKey ? String(r.deliveryKey).slice(0, 12) + '…' : '—';
+          tr.appendChild(c5);
+          tb.appendChild(tr);
+        });
+      }
       $('drm-load').addEventListener('click', load);
+      $('drm-attr').addEventListener('click', loadAttribution);
     })();
   </script>
 </BaseLayout>

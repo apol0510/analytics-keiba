@@ -40,7 +40,7 @@
 
 ### テスト
 
-`src/lib/drm/drmFoundation.test.mjs`（**49 件**）。`test:drm` を新設し `check:safety` へ組み込み。
+`src/lib/drm/drmFoundation.test.mjs`（**49 件**）＋ `drmAttributionFunction.guard.test.mjs`（**15 件**）。`test:drm` を新設し `check:safety` へ組み込み。
 購入 > 停止 > クリック > 開封 の優先順 / 無料特典を購入に数えない /
 **click 未計測を 0 にしない** / open 未計測を「未開封」と断定しない /
 **unknown で反応前提の枝へ入れない** / 終端層へ行き先を作らない /
@@ -66,31 +66,45 @@
 ⚠️ **既存 guard を緩めていない。** `admin-marketing.js` は決済メール v2 のフィールド
 （`PaidAt` 等）に一切触れないまま（`offerCampaignFunction.guard.test.mjs` が通る）。
 
-### ⚠️ **まだ「完成」ではない**
+### 購入帰属を**分析専用 Function へ分離**して接続（責務分離）
 
-DRM の最終完成条件のうち、**購入の帰属だけが未達**。
+購入確定時刻の正本は `Customers.PaidAt`（`bankPaymentFlow.buildConfirmationFields` が
+`PaidAt: confirmedAt.toISOString()` ＝ **入金確認＝有料化確定時刻**として書く）。
+一方 `offerCampaignFunction.guard.test.mjs` は**送信経路**が決済メール v2 の
+フィールドへ触れないことを守っている。**その guard は緩めない。**
 
-| 完成条件 | 状態 |
-|---|---|
-| response-driven routing が実 sequence で動く | ✅ |
-| `responseRoutes` 未定義なら既存挙動不変 | ✅ |
-| purchase / suppression 停止が最優先 | ✅ |
-| `sent` と `delivered` を混同しない | ✅ |
-| 未計測を 0 にしない | ✅ |
-| 顧客 segment は排他的（`drmCohort`） | ✅ |
-| 帰属不能は正直に `unattributed` | ✅ |
-| **利用可能な購入時刻正本があれば touch / DeliveryKey まで帰属** | ❌ **未達** |
-| duplicate send なし | ✅ |
-| operator UI で反応層・次訴求・conversion を確認できる | ✅ |
+そこで責務を分けた:
 
-**未達の理由**: 購入日時を読める正本が、`admin-marketing.js` の
-**決済メール v2 guard**（`offerCampaignFunction.guard.test.mjs`：`PaidAt` 等に触れない）を
-守ったまま使える形で見つかっていない。guard を緩めない判断をしたため、
-帰属は `unattributed` + 理由（`purchaseTimeAvailable: false`）に留まる。
-**推測で購入日時を作らない。**
+| 経路 | 決済フィールド | 役割 |
+|---|---|---|
+| `admin-marketing` / `marketing-campaign-dispatch` | **触れない**（guard 継続） | 送信 |
+| **`admin-drm-attribution`（新・read-only）** | 購入確定時刻だけ読む | 帰属 |
 
-→ 別途 read-only で「guard を緩めずに使える購入日時・契約開始日時・
-checkout/purchase event の正本」を調査し、あれば接続する（本 PR の範囲外）。
+- 購入日時は既存 `premiumPlus/purchaseAnchorLookup.js` を再利用。
+  **時刻 1 つだけ返す薄いラッパ `lookupPaidConfirmedAt()`** を同モジュールへ追加
+  （raw fields を DRM へ出さない）。**独自の Airtable query で別実装しない**
+- `missing` / `invalid` / `not_found` / `unavailable` は**購入として数えず `unattributed`**
+- click は OFF なので **direct を捏造しない**（「0 件」ではなく「測っていない」）
+- 認証は既存管理 Function と同等（`x-admin-secret`・未設定は 503・不一致は 403）
+- 入力は bounded（`MAX_RECORD_IDS = 500`・名指し formula・ページ上限・全件走査なし）
+- **書き込み・queue 登録・dispatch 呼出・メール送信・PromotionalOffers 書込みなし**
+- raw customer fields を返さず、email / 氏名 / recordId をログにもレスポンスにも出さない
+
+`admin-marketing` 側からは帰属を削除（`attributionEndpoint` を案内するだけ）。
+
+### 完成条件（更新）
+
+- response-driven routing が実 sequence で動く ✅
+- `responseRoutes` 未定義なら既存挙動不変 ✅
+- purchase / suppression 停止が最優先 ✅
+- `sent` と `delivered` を混同しない ✅
+- 未計測を 0 にしない ✅
+- 顧客 segment は排他的 ✅
+- 帰属不能は正直に `unattributed` ✅
+- **Premium / Light の購入確定時刻から実 touch へ帰属できる** ✅
+- **送信経路の決済フィールド guard を維持** ✅（`offerCampaignFunction.guard` は無変更）
+- duplicate send なし ✅
+- operator UI で反応層・次訴求・conversion を確認できる ✅
 
 ### やっていないこと
 

@@ -571,12 +571,14 @@ test('【重要】購入時刻が読めないときは推測せず unattributed�
   assert.equal(r.step, null, '推測で step を埋めている');
 });
 
-test('【重要】帰属できない理由を返す（0 件＝効果なし、と読ませない）', () => {
+test('【重要】送信経路は帰属を返さず、分析専用 Function へ委ねる', () => {
   const src = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
   const fn = src.slice(src.indexOf('async function handleDrmCohort({'), src.indexOf('async function handleDrm({'));
-  assert.ok(/attributionLimits/.test(fn), '帰属の限界を返していない');
-  assert.ok(/clickMeasured: false/.test(fn), 'click 未計測を明示していない');
-  assert.ok(/purchaseTimeAvailable: false/.test(fn), '購入時刻を読めない事実を明示していない');
+  // 送信経路は購入時刻を読まない（決済フィールド guard を守る）
+  assert.equal(/attributePurchase\(/.test(src), false, '送信経路が帰属を計算している');
+  assert.ok(/attributionEndpoint/.test(fn), '帰属の担当を案内していない');
+  // 排他的な segment はここで返してよい
+  assert.ok(/segmentCounts: summarizeDrmSegments\(states\)/.test(fn), '排他的 segment を返していない');
 });
 
 test('【重要】drmCohort は名指しのみ・全件走査しない・書き込まない', () => {

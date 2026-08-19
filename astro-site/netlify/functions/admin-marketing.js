@@ -178,9 +178,7 @@ import {
 import { buildDrmFunnel } from '../../src/lib/drm/drmMetrics.js';
 import { summarizeSegments as summarizeDrmSegments, routeNextTouch } from '../../src/lib/drm/drmRouting.js';
 import { resolveResponseState } from '../../src/lib/drm/drmResponseState.js';
-import { attributePurchase, summarizeAttribution } from '../../src/lib/drm/drmAttribution.js';
 import { RESPONSE, RESPONSE_LABEL } from '../../src/lib/drm/drmResponseState.js';
-import { ATTRIBUTION_LABEL } from '../../src/lib/drm/drmAttribution.js';
 import { MEASURE } from '../../src/lib/crm/deliveryMeasurement.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
@@ -1438,7 +1436,6 @@ async function handleDrmCohort({ KEY, BASE, now, req }) {
 
   // ── ④ 1 人 1 state の反応層 ＋ 購入の帰属 ─────────────────────
   const states = [];
-  const attributions = [];
   for (const c of customers) {
     const fields = (c && c.fields) || {};
     const marketing = resolveCustomerMarketing({ fields, nowMs: now });
@@ -1465,21 +1462,6 @@ async function handleDrmCohort({ KEY, BASE, now, req }) {
     });
     states.push(state);
 
-    if (state.state === RESPONSE.PURCHASED) {
-      /**
-       * ⚠️ **購入時刻はこの Function からは読まない。**
-       *    決済メール v2 のフィールド（購入日時を含む）へ触れないことが
-       *    `offerCampaignFunction.guard.test.mjs` の既存契約で、
-       *    帰属のためにその契約を緩めない。
-       *    時刻が無ければ `attributePurchase` は `unattributed`（理由 `no_purchase_time`）を返す。
-       *    **推測で direct / correlated にしない。**
-       */
-      attributions.push(attributePurchase({
-        purchasedAtMs: null,
-        touches: touches.filter((t) => t.deliveryKey),
-        clickMeasured: false,                           // click は測れていない
-      }));
-    }
   }
 
   return json(200, {
@@ -1492,27 +1474,18 @@ async function handleDrmCohort({ KEY, BASE, now, req }) {
     observed: customers.length,
     /** ⚠️ **1 人 1 state**（累積指標ではない） */
     segmentCounts: summarizeDrmSegments(states),
-    /** 購入の帰属。**確定できないものは unattributed のまま** */
-    attribution: summarizeAttribution(attributions, { clickMeasured: false }),
-    attributed: attributions
-      .filter((a) => a.attribution !== 'unattributed')
-      .map((a) => ({
-        campaignId: a.campaignId, version: a.version, step: a.step,
-        deliveryKey: a.deliveryKey, offerKey: a.offerKey, confidence: a.attribution,
-      })),
+    /**
+     * ⚠️ **購入の帰属はここでは返さない。**
+     *    有料化確定時刻（`bankPaymentFlow` が書く正本）を読むには決済フィールドが要り、
+     *    送信経路（この Function）は既存 guard でそこへ触れない契約になっている。
+     *    帰属は分析専用の **`admin-drm-attribution`** が単一源。
+     */
+    attributionEndpoint: 'admin-drm-attribution',
     measurement,
     deliveriesReadable: deliveryByKey !== null,
-    /** なぜ帰属が確定しないのか（**0 件＝効果なし、と読ませない**） */
-    attributionLimits: {
-      clickMeasured: false,
-      clickReason: 'provider 側の click tracking が無効（有効化するとマジックリンクが壊れる）',
-      purchaseTimeAvailable: false,
-      purchaseTimeReason: 'この Function は決済メール v2 のフィールドに触れない既存契約のため、'
-        + '購入日時を読まない（帰属は unattributed のまま）',
-    },
     notice: 'この人たちだけを名指しで読みました（全件走査なし）。**何も書き込んでいません。**'
-      + ' クリックは計測しておらず、購入日時もこの面では読まないため、帰属は unattributed になります'
-      + '（0 件＝効果なし、ではありません）。',
+      + ' 購入の帰属は分析専用の admin-drm-attribution が返します'
+      + '（送信経路は決済フィールドに触れない契約のため）。',
   });
 }
 
@@ -1624,7 +1597,6 @@ async function handleDrm({ KEY, BASE, now, req }) {
     segmentCountsReason: 'per_customer_unavailable',
     routesDeclared: routes.length > 0,
     measurement,
-    attributionLabels: ATTRIBUTION_LABEL,
     /** 数字を作れなかったときの理由（**推測で埋めない**） */
     partial: !t,
     partialReason: t ? null : (metrics.reason || 'metrics_unavailable'),
