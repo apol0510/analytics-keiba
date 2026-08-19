@@ -366,8 +366,19 @@ export function describeCouponLifecycle({
   if (mine.some((r) => statusOf(r) === OFFER_STATUS.REDEEMED)) state = COUPON_LIFECYCLE.REDEEMED;
   else if (mine.some((r) => statusOf(r) === OFFER_STATUS.ISSUED)) state = COUPON_LIFECYCLE.RESERVED;
   else if (mine.length && mine.every((r) => statusOf(r) === OFFER_STATUS.REVOKED)) {
-    // 予約は取り消されたが、取得の事実は残っている
-    state = held.claimed ? COUPON_LIFECYCLE.REVOKED : COUPON_LIFECYCLE.NONE;
+    // 予約は取り消されたが、取得の事実は残っている。
+    // ⚠️ ただし**いま持っているクーポンより古い**取消は履歴であって現在の状態ではない
+    //    （管理者が訂正 → 再発行したあとに「予約取消」と出続けると、
+    //     再発行できていないように読める）。取得日時より後の取消だけを現在の状態とする。
+    const claimedMs = held.claimedAtMs;
+    const belongsToCurrentClaim = mine.some((r) => {
+      const started = Date.parse(String(((r && r.fields) || {}).StartsAt || ''));
+      if (!Number.isFinite(started) || !Number.isFinite(claimedMs)) return true;  // 判定不能なら従来どおり
+      return started >= claimedMs;
+    });
+    state = held.claimed
+      ? (belongsToCurrentClaim ? COUPON_LIFECYCLE.REVOKED : COUPON_LIFECYCLE.HELD)
+      : COUPON_LIFECYCLE.NONE;
   }
   // ── 入金確認と redeem の食い違いを拾う（要修復 / 異常）────────────
   // ⚠️ 自動で直さない。運営者が判別できるように**状態と修復方針を出すだけ**。

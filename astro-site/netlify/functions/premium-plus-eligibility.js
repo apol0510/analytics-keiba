@@ -101,7 +101,14 @@ import {
   SEARCH_ERROR_TEXT,
   MAX_SEARCH_PAGES,
 } from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
-import { OFFERS_TABLE, isOfferTableEnabled } from '../../src/lib/promotions/promotionalOffer.js';
+import { OFFERS_TABLE, isOfferTableEnabled, assertOnlyOfferFields } from '../../src/lib/promotions/promotionalOffer.js';
+import {
+  PP_COUPON_ADMIN_ACTION,
+  resolveCouponAdminPlanFor,
+  describeCouponAdminState,
+  describeCouponAdminActions,
+} from '../../src/lib/premiumPlus/premiumPlusCouponAdmin.js';
+import { buildReservationRevokeFields } from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
 import {
   describeCouponLifecycle,
   describeLedgerUnavailable,
@@ -167,6 +174,7 @@ exports.handler = async (event) => {
     if (action === 'preview') return await handlePreview({ KEY, BASE, now, req });
     if (action === 'setUpsell') return await handleSetUpsell({ KEY, BASE, now, req });
     if (action === 'setSalePause') return await handleSetSalePause({ KEY, BASE, now, req });
+    if (action === 'couponAdmin') return await handleCouponAdmin({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -306,6 +314,14 @@ function buildAdminRow(rec, now, ledger = UNREAD_LEDGER) {
         reopenCouponExpiryText: describeCouponExpiry(),
         // クーポンのライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
         // ⚠️ 通常の販促オファーとは**別軸**。Airtable を直接見に行かせないための表示。
+        // 管理者が今この会員に対して行える操作（**表示用**。可否はサーバーが再判定する）
+        couponAdmin: describeCouponAdminActions({
+          fields,
+          offerRows: ledger.available ? ledger.rows : null,
+          ledgerAvailable: ledger.available === true,
+          env: process.env,
+          customerRecordId: rec.id,
+        }),
         couponLifecycle: describeCouponLifecycle({
           fields,
           // ⚠️ 読めていないときは null のまま渡す（[] へ潰すと 0 件と断定される）
@@ -661,6 +677,168 @@ function describeLedger(ledger) {
     reason: ledger.reason || '',
     note: ledger.available === true ? '' : describeLedgerUnavailable(ledger.reason),
   };
+}
+
+/**
+ * 再募集クーポンの**管理者操作**（付与 / 予約取消 / 誤取得訂正 / 再発行）。
+ *
+ * 認可はハンドラ先頭の `x-admin-secret` 検証だけが根拠（この画面は /admin/* の
+ * Basic 認証の背後だが、**API 直叩きでも同じ制約を通す**）。
+ *
+ * 安全条件（**すべてサーバー側で再判定する**。画面がボタンを出したかは根拠にしない）:
+ *   - 対象は `recordId` で名指しした **1 会員だけ**。他会員のレコードは読み書きしない
+ *   - 予約台帳を読めなければ**全操作を拒否**（使用済みか判断できないまま書き換えない）
+ *   - **使用済み**のクーポンは取得状態へ戻さない・再発行しない
+ *   - 取得済みへの二重付与 / 取消済み予約の二重取消は状態遷移で構造的に防ぐ
+ *   - 書けるのはクーポン 3 列（Customers）または予約行の 2 列（台帳）だけ。
+ *     資格 / 停止 / 会員権 / 決済 / メールは**1 バイトも触らない**
+ *   - 操作者・理由は必須。監査値は `Source` / `Notes` に構造化して残す
+ */
+async function handleCouponAdmin({ KEY, BASE, now, req }) {
+  const recordId = String(req.recordId || '').trim();
+  const couponAction = String(req.couponAction || '').trim();
+  const actor = String(req.actor || '').trim();
+  const reason = String(req.reason || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+
+  // ── 現状は **Airtable から読み直す**（クライアント申告は一切信用しない）──
+  const getRes = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!getRes.ok) return json(404, { error: 'Record not found', sideEffects: 'none' });
+  const currentFields = (await getRes.json()).fields || {};
+  const ledger = await readReservationLedger({ KEY, BASE });
+
+  const describe = (fields) => describeCouponAdminState({
+    fields,
+    offerRows: ledger.available ? ledger.rows : null,
+    ledgerAvailable: ledger.available === true,
+    customerRecordId: recordId,
+  });
+  const before = describe(currentFields);
+  // 対象会員を取り違えないよう、応答に必ず本人の識別情報を載せる
+  const subject = {
+    recordId,
+    email: currentFields['Email'] || '',
+    name: currentFields['氏名'] || '',
+    plan: currentFields['プラン'] || '',
+  };
+
+  const plan = resolveCouponAdminPlanFor({
+    action: couponAction,
+    fields: currentFields,
+    offerRows: ledger.available ? ledger.rows : null,
+    ledgerAvailable: ledger.available === true,
+    env: process.env,
+    actor, reason, nowMs: now,
+    customerRecordId: recordId,
+  });
+  if (!plan.ok) {
+    // 入力の不備は 400 / 状態の衝突は 409 / 確認できない・未有効は 503
+    const status = ({
+      unknown_action: 400, missing_actor: 400, missing_reason: 400,
+      ledger_unavailable: 503, coupon_storage_disabled: 503,
+    })[plan.code] || 409;
+    return json(status, {
+      error: plan.message,
+      code: plan.code,
+      subject,
+      before,
+      couponLedger: describeLedger(ledger),
+      sideEffects: 'none',
+    });
+  }
+
+  // ── 予約取消: **予約行だけ**を revoked にする（Customers は触らない）──
+  if (plan.target === 'reservation') {
+    const target = (ledger.rows || []).find((r) => r.id === plan.reservationRecordId);
+    const built = buildReservationRevokeFields({ record: target, nowMs: now, reason: plan.note });
+    if (!built.fields) {
+      return json(409, {
+        error: `利用予約を取り消せません（${built.skipped}）`, code: built.skipped,
+        subject, before, sideEffects: 'none',
+      });
+    }
+    if (!assertOnlyOfferFields(built.fields)) return json(500, { error: 'field allow-list violation' });
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(OFFERS_TABLE)}/${plan.reservationRecordId}`,
+      {
+        method: 'PATCH',
+        headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: built.fields }),
+      },
+    );
+    if (!res.ok) {
+      const detail = await res.text();
+      console.error('❌ [premium-plus-eligibility] 予約取消 PATCH failed:', res.status);
+      return json(502, {
+        error: '予約台帳の更新に失敗しました', status: res.status, detail: detail.slice(0, 300),
+        subject, before,
+      });
+    }
+    console.log('✅ [premium-plus-eligibility] 利用予約を取消:', { recordId, actor });
+    // 台帳が変わったので**読み直す**（手元の ledger を使い回さない）
+    const after = await reloadCouponState({ KEY, BASE, recordId });
+    return json(200, {
+      success: true, couponAction, subject, before, after,
+      changed: true,
+      /** Customers 側は 1 バイトも書いていない */
+      customerFieldsUnchanged: true,
+      note: '利用予約を取り消しました。クーポンの取得（保有）はそのまま残っています。',
+      rollback: '同じクーポンで改めてお申し込みいただけます。'
+        + '取り消した予約行を issued へ戻す操作は用意していません（二重予約を防ぐため）。',
+      sideEffects: 'coupon_reservation_revoked',
+    });
+  }
+
+  // ── 付与 / 誤取得訂正 / 再発行: Customers のクーポン 3 列だけ ──
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    method: 'PATCH',
+    headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: plan.fields, typecast: true }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error('❌ [premium-plus-eligibility] クーポン操作 PATCH failed:', res.status);
+    return json(502, {
+      error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300),
+      subject, before,
+    });
+  }
+  console.log('✅ [premium-plus-eligibility] クーポン操作:', { recordId, couponAction, actor });
+
+  const after = await reloadCouponState({ KEY, BASE, recordId, ledger });
+  return json(200, {
+    success: true,
+    couponAction,
+    subject,
+    before,
+    after,
+    changed: true,
+    /** 資格・停止・会員権・決済は変更していない（応答でも明示して履歴に残す） */
+    eligibilityUnchanged: true,
+    membershipUnchanged: true,
+    rollback: couponAction === PP_COUPON_ADMIN_ACTION.CORRECT
+      ? '「クーポンを再発行」で取得状態へ戻せます（訂正前の取得日時は監査記録に残っています）。'
+      : '「誤取得を訂正」で取得を取り消せます。',
+    sideEffects: 'coupon_fields_updated',
+  });
+}
+
+/** 操作後の状態を **Airtable から読み直して**返す（送った値が通った前提にしない） */
+async function reloadCouponState({ KEY, BASE, recordId, ledger }) {
+  const fresh = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!fresh.ok) return null;   // 読めなければ null（成功したことにしない）
+  const fields = (await fresh.json()).fields || {};
+  const led = ledger || await readReservationLedger({ KEY, BASE });
+  return describeCouponAdminState({
+    fields,
+    offerRows: led.available ? led.rows : null,
+    ledgerAvailable: led.available === true,
+    customerRecordId: recordId,
+  });
 }
 
 async function handleList({ KEY, BASE, now, onlyReview }) {
