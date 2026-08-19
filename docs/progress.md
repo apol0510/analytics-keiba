@@ -298,6 +298,125 @@ fail closed し、**他のタグ（初コース・乗り替わり）は残す縮
 
 ---
 
+## 2026-08-19 — 【修正】ジョブだけ作れて配信行が作れない途中状態を成功にしない（orphan PENDING）
+
+Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開したところ、また
+`auto-stop: dispatch_failed` で止まった。今度は**誤検知ではない**。#369 の契約
+（`PENDING` + `willSend 0` は異常）が**本物の異常を正しく捕まえた**。
+
+⚠️ この作業は **#372 の作り直し**（#372 は 19 commit 遅れで `admin-marketing.js` の import と
+`docs/progress.md` が main と競合していた）。**最新 origin/main から branch を切り直し、
+今回の修正だけを再適用**している（`rebase` / `force push` / `cherry-pick` は不使用）。
+
+### read-only 調査で確定したこと（#372 で実測済み・再実行していない）
+
+| # | 問い | 実測 |
+|---|---|---|
+| 1 | ScheduledEmails 作成 | **1 件成功**（宛先 100 / `sentCount` 0 / PENDING） |
+| 2 | CampaignDeliveries upsert | **0 件成功**。12:00Z 以降 **どの CampaignType にも 1 行も増えていない**（部分書き込みですらない） |
+| 3 | どの段階で途切れたか | ジョブ作成の**後**、配信行 upsert の**最初のチャンク**。dry-run が `skipByReason: {"delivery_not_found": 100}` を返す |
+| 4 | 原因の切り分け | **Airtable ベース上限は否定**（33,187 / 50,000）。残る候補は **429 / 4xx（要求形） / 一過性 5xx / Function timeout**。正確な HTTP status は read-only の面からは取得できない（Function ログ非公開） |
+| 5 | 部分失敗を成功として handoff を畳んだか | **畳んでいない**。Redis の `step1.queued` は 949 のまま。**残ったのは orphan ジョブ行だけ** |
+| 6 | 159 名に既存 DeliveryKey は本当に 0 か | **0**。付与済み 1,570 のうち配信行あり 1,398 / **無し 172** |
+| 7 | 正常除外が別にあるか | **ある**。172 のうち **13 名**は配信基盤の停止リストで barrier が既に解決済み（172 − 13 = **159** が outstanding） |
+| 8 | orphan ジョブと付与集合は一致するか | **一致しない（真部分集合）**。ジョブ宛先 100 は全て「配信行なし」に含まれるが、**72 名はジョブにすら入っていない**（うち 13 名は停止リスト＝ **59 名が未 queue**）。100 + 59 = 159 |
+
+⚠️ 数値はすべて件数のみ。アドレス・recordId は取得も出力もしていない。
+
+### 原因（既に repo に明記されていた故障形）
+
+キュー登録は「ジョブ行を作る → 配信行を upsert する」の順で、**1 つの取引になっていない**。
+途中で落ちると **PENDING ジョブだけが残り配信行が無い**（＝ orphan）。加えて:
+
+- `buildDeliveryRecords` は許可外フィールドを `continue` で**黙って落とす**
+  （全件落ちても 0 件のまま素通りし、`upsertDeliveries` は HTTP を 1 回も呼ばない＝例外も出ない）
+- 呼び出し側の `assertOnlyDeliveryFields` 再チェックは**フィルタ後の配列**を回すので**絶対に発火しない**
+- `upsertDeliveries` は 10 件ずつ PATCH するが、**間隔も再試行も無い**
+  （取得側 `airtable-fetch.js` は 5rps 対策で 220ms 空けているのに、書き込み側には無い）
+- 書けたかどうかを**読み戻して確認していない**
+
+### 直し方
+
+判定を純粋関数 `src/lib/marketing/queueDeliveryOutcome.js` に集約し、
+**配信行の実在を読み戻して確認できたときだけ**キュー成功と言う。
+
+#### 1. 例外も同じ確定処理へ通す
+
+書き込みは try/catch で受け、**例外 / 読めない / 0 件 / 部分成功のすべてを同じ
+`settleQueueWrite` へ通す**。「例外が出たので 500」で終わらせず、
+**ジョブと配信行の実状態を read-only で数え直してから**次の処置を決める。
+
+#### 2. 部分成功で「ジョブだけ取消」はしない（論理 rollback になっていない）
+
+既存契約 `fetchDeliveredKeys` は Status が **`sent` / `queued`** の行だけを既送信と数える。
+100 名中 37 件だけ配信行が `queued` で残ると、**その 37 名は再 queue で `already_delivered`
+として除外され、送っていないのに永久に対象から外れる**。そこで:
+
+- **A. まず不足ぶんだけ冪等に補完**する（`DeliveryKey` upsert なので行は増えない。最大 2 回）。
+  全件読み戻して揃えば**そこで成功**。
+- **B. それでも揃わなければ既存の rollback 契約で巻き戻す**。
+  `buildDeliveryCancelFields`（既存）で配信行を **`cancelled`** にし、そのあとジョブを
+  取り消す（**配信行 → ジョブの順**。`handleCancelJob` と同じ）。
+  `cancelled` は既送信集合に入らないので、**全員がそのまま再 queue できる**。
+
+⚠️ **新しい Status は作らない。削除もしない。**
+
+#### 3. 取消できたと確認できるまで「取消しました」と言わない
+
+`patchRecord` の失敗を握り潰さず件数で持ち、**取消後に read-back** する。
+確認できなければ `rolledBack:false` / `sideEffects:'partial_unconfirmed'` を返し、
+**handoff も成功扱いにせず・rollout は停止のまま**にする。
+返す内容は件数だけで、アドレスも recordId も出さない。
+
+**「読めなかった」と「読めた結果 0 行」を分ける**（今回の追加修正）。まだ 1 行も書いていない
+`delivery_records_dropped` の巻き戻しは後者になる。ここを混ぜると、**完全に巻き戻せているのに
+「人が確認するまで再実行しないでください」と報告し、安全な再 queue まで止めてしまう**。
+判定は純粋関数 `summarizeRollback()` が単一源（`rollback_failed` / `rollback_unverified` /
+`rollback_incomplete` / verified）。**Function 側で別条件を再実装しない**。
+
+#### 4. 一過性の失敗で落ちにくくする
+
+`upsertDeliveries` に既存慣習の **220ms 間隔 + 一過性（429 / 5xx）のみ最大 3 回再試行**を追加
+（直らない 4xx は即諦める）。upsert は `DeliveryKey` 冪等なので再試行しても行は増えない。
+
+⚠️ 送信経路は増やしていない（`upsertDeliveries` / `recordDelivered` の呼び出しは各 1 か所のまま）。
+⚠️ 確定処理・巻き戻しは**送信経路を一切呼ばない**（実送信 0 のまま修復できる）。
+⚠️ 確定処理の中で `ScheduledEmails` を作り直さない（再試行で二重ジョブを作らない）。
+⚠️ orphan PENDING を捕まえる既存の重複確認契約（`pendingOverlap`）はそのまま。
+
+### テスト
+
+`queueDeliveryOutcome.test.mjs`（**37 件**）。再 queue 経路は**実物**で固定した
+（実 campaign・実 `resolveCustomerMarketing`・実 `computeCampaignDeliveryKey` を通した
+`buildCampaignPlan`）: `queued` の 2 件が `already_delivered` で除外される /
+**100 名中 37 件残すと 63 名しか対象にならない**（＝ジョブだけ取消は rollback にならない）/
+`cancelled` にすれば **100 名全員が対象へ戻る** / 再実行でも `DeliveryKey` が増えない。
+ほかに: ジョブ成功→配信行 0 件 / 部分成功（37 / 100・チャンク境界 20 / 35）を件数ごと固定 /
+組み立ての取りこぼし / 読み戻せないときに 0 件と言わない / 鍵が無い /
+巻き戻しの成功判定（失敗を成功扱いしない・読めないを 0 と読み替えない・
+読めて 0 行は verified にできる）/ 補完の再試行で ScheduledEmails を二重に作らない /
+巻き戻しで削除も実送信もしない / 配線（読み戻してから成功・失敗時に取消・
+冪等 upsert 維持・経路を二重化しない・orphan 検知契約を維持）。
+
+`test:marketing` 2,131 pass・`test:comeback` 431 pass・`test:webhooks` 190 pass・
+`test:crm` 567 pass・`test:drm` 64 pass（いずれも fail 0 / cancelled 0）。
+`package.json` / `package-lock.json` は**変更なし**。
+
+### 本番の状態（この修正では触っていない）
+
+`stage=paused` / `autoStopped=true` / `stopReason=dispatch_failed` を**維持**。
+**本番データの修復（159 名の配信行作成 / orphan ジョブの取消 / 再 queue / 実送信 / 再開）は
+行っていない。** production は safe-stop のまま。
+
+⚠️ **救済の完成条件を件数で固定しない。** 「配信行 1,398 → 1,557」のような固定値は使わない
+（実行時点で provider suppression・退会・購入などが増減するため）。正本の最新判定を
+再計測し、完成条件は次の 4 つとする:
+
+- `outstandingStep1 = 0`
+- `PENDING = 0`
+- **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
+- duplicate grant / queue / send = **0**
+
 ## 2026-08-19 — 【追加】Direct Response Marketing（DRM）基盤
 
 「一斉に送る」から「**反応を見て次の訴求を変える**」へ進むための土台を入れた。
