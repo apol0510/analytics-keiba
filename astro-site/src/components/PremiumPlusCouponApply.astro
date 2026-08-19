@@ -120,7 +120,14 @@
   load().then(function (data) {
     if (!data) return;           // 取得できないときは何も出さない（fail closed）
     render(data);
-    if (!block.hidden) applyServerPricing(data);
+    if (block.hidden) return;
+    // 本人のクーポンを**初期選択**し、その価格をサーバーに計算させて即表示する。
+    // ⚠️ URL パラメータや localStorage を根拠にしない。id を渡してサーバーが再検証する。
+    var first = (data.coupons && data.coupons[0]) ? data.coupons[0].couponId : '';
+    if (!first) { applyServerPricing(data); return; }
+    load(first).then(function (applied) {
+      applyServerPricing(applied && applied.pricing ? applied : data);
+    });
   });
 
   applyBtn.addEventListener('click', function () {

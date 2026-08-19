@@ -367,13 +367,63 @@ export function resolveCouponPrice(def = PP_REOPEN_COUPON) {
   };
 }
 
+/** 申込画面のパス（クーポンから申込へ進む先） */
+export const PP_ORDER_PATH = '/premium-plus-v2/';
+
+/**
+ * 「取得後にどこへ進めるか」の CTA（**dashboard / クーポンページで共用**）。
+ *
+ * ⚠️ **販売停止中・再募集前は購入させない。**
+ *    押せる購入 CTA を偽装せず、`href: null` の**非購入表示**を返す。
+ * ⚠️ 文言・遷移先をここ以外で組み立てないこと（面ごとにズレる）。
+ *
+ * @param {{ claimed: boolean, purchasable: boolean, source?: string }} input
+ * @returns {{ show: boolean, purchasable: boolean, label: string, href: string|null,
+ *             note: string, detailLabel: string, detailHref: string }}
+ */
+export function describeCouponOrderCta({ claimed, purchasable, source = 'dashboard' } = {}) {
+  const discount = describeCouponDiscount();
+  const base = {
+    show: claimed === true,
+    detailLabel: 'クーポン詳細を確認',
+    detailHref: '/premium-plus-coupon/',
+  };
+  if (claimed !== true) {
+    return { ...base, show: false, purchasable: false, label: '', href: null, note: '' };
+  }
+  if (purchasable === true) {
+    // 再募集後・購入可能: 申込であることが明確な文言にする
+    return {
+      ...base,
+      purchasable: true,
+      label: `${discount}で申し込む`,
+      href: `${PP_ORDER_PATH}?from=${encodeURIComponent(source)}`,
+      note: '',
+    };
+  }
+  // 販売停止中・再募集前: **リンクにしない**（押せる購入 CTA を偽装しない）
+  return {
+    ...base,
+    purchasable: false,
+    label: `再募集時に${discount}で申し込めます`,
+    href: null,
+    note: '再募集時にこのクーポンをご利用いただけます。',
+  };
+}
+
 /**
  * 顧客画面に出す表示モデル（クーポンページ・受付休止ページで共用）。
  * **他会員の情報は入らない**（渡された 1 人分の fields からしか作らない）。
  *
  * @param {{ coupon: object, paused: boolean, claimable: boolean, storageReady?: boolean }} input
  */
-export function describeCouponForMember({ coupon, paused, claimable, storageReady = true } = {}) {
+export function describeCouponForMember({
+  coupon, paused, claimable, storageReady = true,
+  /** いま購入できるか（`plusRelease.purchaseEnabled`）。停止中は false */
+  purchasable = false,
+  /** CTA の導線元（`?from=` に載る） */
+  ctaSource = 'dashboard',
+} = {}) {
   const held = coupon || { claimed: false, claimedAtIso: '' };
   return {
     /**
@@ -408,6 +458,13 @@ export function describeCouponForMember({ coupon, paused, claimable, storageRead
     paused: paused === true,
     /** 取得 CTA を出してよいか（取得済みなら常に false ＝ 二重取得させない） */
     showClaimCta: claimable === true && held.claimed !== true,
+    /**
+     * 取得後の申込導線（主 CTA）。販売停止中は `href: null` の非購入表示。
+     * ⚠️ 呼び出し側は `purchasable` を見てリンクにするか決めること。
+     */
+    orderCta: describeCouponOrderCta({
+      claimed: held.claimed === true, purchasable: purchasable === true, source: ctaSource,
+    }),
     /** 保存先が有効化されていない（押しても取得できない）ことを隠さない */
     storageReady: storageReady !== false,
   };
