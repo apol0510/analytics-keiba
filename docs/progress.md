@@ -407,8 +407,45 @@ fail closed し、**他のタグ（初コース・乗り替わり）は残す縮
 - duplicate send なし ✅
 - operator UI で反応層・次訴求・conversion を確認できる ✅
 
-⚠️ 上の ✅ は**実装とテストで固定したところまで**。**本番データでの実測はしていない**
-（production deploy も実顧客の読み取りも行っていない）。実運用の数字で確認したとは書かない。
+### 本番 read-only 実測（merge・production 反映後）
+
+merge と production 反映のあと、本番データに対して **read-only** で帰属を実行した。
+
+| 実測 | 値 |
+|---|---|
+| 読み取れた購入確定時刻（`PaidAt`）| **20 件**（正常読取）|
+| 対象 touch との intersection | **0** |
+| 結果 | **`correlated` = 0 / `unattributed` = 20** |
+
+**これは正本どおりの挙動**である。`DRM_FOUNDATION.md` は
+「帰属不能は正直に `unattributed`」「推測で `direct` にしない」と定めており、
+**対象が存在しないのに帰属を捏造しない**のが正しい。
+`correlated` = 0 は「機能が動いていない」ことを意味しない。
+
+⚠️ **`correlated` の実例は未観測**（今回の母集団に該当する購入が無かったため）。
+これは**事実の記録**であって、**完成条件ではない**。
+`DRM_FOUNDATION.md` の「DRM の完成条件」に
+「`correlated` を 1 件以上observeする」という項目は**無い**（12 項目を read-only で確認済み）。
+したがって **将来の購入発生を待つ未完了任務にはしない**。
+
+### 正本の完成条件に対する判定（`DRM_FOUNDATION.md`「DRM の完成条件」）
+
+| 完成条件（正本の 12 項目） | 判定 |
+|---|---|
+| response-driven routing が実 sequence で動く | ✅ |
+| `responseRoutes` 未定義なら既存挙動不変 | ✅ |
+| purchase / suppression 停止が最優先 | ✅ |
+| `sent` と `delivered` を混同しない | ✅ |
+| 未計測を 0 にしない | ✅ |
+| 顧客 segment は排他的 | ✅ |
+| 帰属不能は正直に `unattributed` | ✅ **本番実測で確認**（20 件を `unattributed`）|
+| Premium / Light の購入確定時刻から実 touch へ帰属できる | ✅ 本番の `PaidAt` 20 件を正常読取し帰属処理が動作 |
+| 送信経路の決済フィールド guard を維持 | ✅ |
+| duplicate send なし | ✅ |
+| operator UI で反応層・次訴求・conversion を確認できる | ✅ |
+| （新 schema / production env / datastore を追加しない）| ✅ |
+
+**正本に定義された完成条件はすべて満たされている。** 正本上、残っている項目は無い。
 
 ### やっていないこと
 
