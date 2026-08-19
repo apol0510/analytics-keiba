@@ -82,6 +82,9 @@ import {
   DRAFT_PLACEHOLDERS,
 } from '../../src/lib/marketing/campaignContentDraft.js';
 import { requiresOfferUrl, isLiveOffer } from '../../src/lib/promotions/offerCampaignLink.js';
+// クーポン利用予約は**販促 offer とは別物**。同じ分類へ混ぜない。
+// ⚠️ 判定は promotions 側のモジュールから取る（販促は Premium Plus の販売判定を import しない）
+import { isReservationRow } from '../../src/lib/promotions/couponReservationSource.js';
 import {
   PREVIEW_UNSUBSCRIBE_URL, describeGrantExpiry, plainTextFromMarketingHtml,
   MARKETING_EMAIL_SHELL_VERSION, SHELL_VERSION_NOTE_PREFIX,
@@ -1100,7 +1103,13 @@ function marketingColumns({ c, offersByCustomer, now }) {
     ...(offersByCustomer.get(c.recordId) || []),
     ...(email ? (offersByCustomer.get(email) || []) : []),
   ];
-  const uniq = [...new Map(mine.map((o) => [o.id, o])).values()];
+  const all = [...new Map(mine.map((o) => [o.id, o])).values()];
+  // ⚠️ クーポンの**利用予約**行を「現在申込みに使えるオファーあり」に混ぜない。
+  //    予約は「58,000円で申し込んで入金確認を待っている」状態で、
+  //    管理者が発行した割引オファーとは意味がまったく違う。
+  //    区別は `Source`（既存列）だけで行い、schema は増やさない。
+  const reservations = all.filter((o) => isReservationRow(o));
+  const uniq = all.filter((o) => !isReservationRow(o));
   const live = uniq.filter((o) => isLiveOffer({ record: o, nowMs: now }));
   // 状態の内訳（排他区分の材料）。Status は issued / redeemed / expired / revoked
   const statusOf = (o) => String(o.fields?.Status || '').trim().toLowerCase();
@@ -1135,6 +1144,9 @@ function marketingColumns({ c, offersByCustomer, now }) {
     offerExpiredCount: expiredCount,
     offerTotalCount: uniq.length,
     offerLedgerAvailable: true,
+    // クーポン利用予約の件数だけ（**offer 系カウントとは別軸**）。
+    // 状態そのもの（所持中 / 予約 / 使用済み / 取消）は Premium Plus 管理画面が出す。
+    couponReservationCount: reservations.length,
     offerExpiresAt: Number.isFinite(soonest) ? new Date(soonest).toISOString() : null,
     nextSendableAt: Number.isFinite(nextSendableAtMs) && nextSendableAtMs > now
       ? new Date(nextSendableAtMs).toISOString() : null,

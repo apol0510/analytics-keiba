@@ -148,7 +148,72 @@ Customers / PromotionalOffers / queue / payment のどれにも触れずに返�
 `buildRedeemFields()` が「issued 以外なら書かない」で二重利用を防いでいる。
 **この遷移をどこで起こすかが未決定。** MK が決めるまで実装しない。
 
-#### 💡 利用ライフサイクルの提案（**MK 判断待ち・確定仕様ではない**）
+#### ✅ 利用ライフサイクル（**2026-08-19 MK 確定**）
+
+```
+取得済み → 申込画面で 10,000円OFF を選択 → 58,000円を銀行振込
+  → **振込完了報告が正常受理された時点**で PromotionalOffers に Status='issued'（利用予約）
+  → MK が PaymentConfirmed を確認し confirm-bank-payment が正常完了した時点で
+    Status='redeemed' / RedeemedAt を確定
+```
+
+- **選択しただけでは issued にも redeemed にもしない**
+- **振込完了報告が正常受理される前に利用予約を作らない**
+
+##### ExpiresAt は「クーポン本体の利用期限」
+
+予約用の 24h / 48h といった**別 TTL は作らない**。
+
+⚠️ **期限判定は「振込完了報告の受理時」に固定する。**
+期限内に報告が受理されていれば、その後 MK の入金確認が期限をまたいでも
+**確認待ち時間を理由に失効させない**。
+redeem では `now > ExpiresAt` を見ず、台帳の `StartsAt`（＝報告受理時刻）と
+`ExpiresAt` を突き合わせて「報告時点で期限内だったか」を**再現・検証**する
+（`wasReportedWithinExpiry()`）。
+
+##### 期限が未確定のあいだは有効化しない（fail closed）
+
+クーポン本体の有効期限は**まだ未確定**。仮の日付・14日・90日を入れない。
+`expiresDetermined !== true` のあいだ `buildReservationFields()` は **null** を返し、
+本番に予約行を作れる状態へ**有効化しない**。
+
+##### admin 分類（既存 `Source` で区別・schema 追加なし）
+
+| 状態 | 表現 |
+|---|---|
+| クーポン所持中 | Customers の `ClaimedAt` あり・予約行なし |
+| クーポン利用予約（入金確認待ち）| 予約行 `Status='issued'` + `Source='premium-plus-coupon-reservation'` |
+| 使用済み | 予約行 `Status='redeemed'` |
+| 予約取消 | 予約行 `Status='revoked'`（**取得の事実は残る**）|
+
+⚠️ **「クーポン利用予約」を「現在申込みに使えるオファーあり」と同じ分類へ混ぜない。**
+`admin-marketing.js` は `Source` で予約行を除外してから offer を数える。
+
+##### 取消の意味（表現を現行フローに合わせる）
+
+現行 `bank-transfer-application` は**振込完了後の報告フォーム**なので、
+「未入金取消」という表現は使わない。正しくは
+**「入金確認前の取消・誤申告訂正」**。
+取消では**予約行だけ**を `revoked` にし、Customers 側の「クーポン取得済み」は消さない
+（取り消したあとも同じクーポンで申し込み直せる）。
+
+##### ⚠️ 未完了: redeem の部分成功（**本番 write を有効化しない理由**）
+
+`confirm-bank-payment` は Customers（入金確認・昇格）を書く。
+redeem は **PromotionalOffers という別テーブル**への書き込みになるため、
+**部分成功**が起こりうる。既存の冪等性だけでは次を検出・回復できない:
+
+| 事象 | 既存で足りるか |
+|---|---|
+| confirm 再実行で二重 redeem | ✅ 足りる（`issued` 以外は書かない一方向遷移）|
+| **redeemed なのに昇格失敗** | ❌ 検出手段が無い（redeem 済みだけ残る）|
+| **昇格成功なのに offer が issued のまま** | ❌ 検出手段が無い（次回 confirm で拾えない）|
+| 同じクーポンで再申込 | ⚠️ `findActiveReservation` で防げるが、上の不整合が残ると誤判定しうる |
+
+→ **不整合の検出・回復（照合バッチ or 管理画面の突き合わせ）が無いまま
+本番 write を有効化しない。** 未完了として残す。
+
+#### （参考）当初の調査メモ
 
 第一候補として提示された流れ:
 
@@ -164,7 +229,7 @@ Customers / PromotionalOffers / queue / payment のどれにも触れずに返�
 | 同一クーポンで複数の未入金申込を作れない | `hasActiveOffer({offerId, customerRecordId})` が issued かつ未期限の行を検出して弾く |
 | 再送で二重予約しない | `OfferKey`＝`sha256(operationId, offerId, version, customerRecordId)` の **upsert**（同じ操作なら 1 行のまま）|
 | 入金確認の再実行で二重 redeem しない | `buildRedeemFields()` が **issued 以外なら書かない**（一方向遷移）|
-| 未入金取消でクーポンを失わない | 予約行を `revoked` にするだけ。**取得の事実（Customers の `ClaimedAt`）は別列なので消えない** |
+| 入金確認前の取消・誤申告訂正でクーポンを失わない | 予約行を `revoked` にするだけ。**取得の事実（Customers の `ClaimedAt`）は別列なので消えない** |
 | 58,000円の申込と redeem 対象が一致 | 予約行の `OfferPrice` と Customers `RequestedAmount` がどちらも 58,000 |
 | 入金確認成功前に redeemed にしない | redeem は `confirm-bank-payment`（`PaymentConfirmed` 起点）でだけ行う |
 
@@ -181,7 +246,9 @@ Customers / PromotionalOffers / queue / payment のどれにも触れずに返�
    admin でそう表示される。`Source` 列で区別はできるが、
    `offerFilterModel.js` 側に除外を足す**コード変更**が要る（schema 変更ではない）。
 
-**どちらも本 PR では実装しない。** MK が①有効期限②admin 分類の扱いを決めてから着手する。
+**→ 上記のとおり 2026-08-19 に MK が確定。** ①`ExpiresAt` はクーポン本体の期限、
+②admin は `Source` で区別、と決まったため、純粋ロジックは実装済み。
+**残るブロッカーは「有効期限の日数そのもの」と「redeem の部分成功対策」**。
 
 **rollback**: 予約を実装した場合でも、`COMEBACK_OFFER_TABLE_READY` を unset すれば
 行の作成が止まる（既存 gate）。作ってしまった予約行は `Status='revoked'` にすれば
@@ -279,9 +346,8 @@ MK が目視確認すべき画面:
 
 ## ▶ 次作業（次回セッションはここから）
 
-1. **MK に 4 点を確認する: ①有効期限 ②「使用済み」にするタイミング（2-B の表。
-   第一候補「申込受付=予約 / 入金確認=redeemed」は既存 schema で実装可能と確認済み）
-   ③予約行の `ExpiresAt` に何を入れるか ④admin の付与 / 取消の要否。**
+1. **MK に 4 点を確認する: ①有効期限 ②（確定済み）利用ライフサイクル
+   ③redeem の部分成功を検出・回復する手段（照合バッチ等）④admin の付与 / 取消の要否。**
    どれも実装を止めている決定事項。
    割引条件（10,000円OFF / 68,000→58,000）は 2026-08-19 に確定し反映済み。
 2. **1（dashboard のカード）は実装・テスト・Draft PR・CI まで完了**。

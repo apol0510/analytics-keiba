@@ -940,13 +940,25 @@ payment のいずれも動かさない。
 `salePaused` / `eligibility` / `override` / PHASE / route / plan / payment を**一切変更しない**。
 募集再開して購入可能になって初めて、クーポンを購入へ使える。
 
-#### ❓ 「使用済み」にするタイミングは未決定
+#### 利用ライフサイクル（2026-08-19 MK 確定）
 
-**選択しただけ・フォームを開いただけで使用済みにしない。**
-候補は「申込受付時 / 入金確認時 / Premium 昇格成功時」の 3 つ。
-既存フローとの整合では**入金確認時**（`PaymentConfirmed` → `confirm-bank-payment`）が最有力だが、
-**MK 未決定**。決まるまで `PromotionalOffers` へ行を作らない。
-詳細と論点は `docs/progress.md` の「2-B」を参照。
+```
+選択・適用 → 振込完了報告の正常受理で Status='issued'（利用予約）
+          → 入金確認（confirm-bank-payment）の正常完了で Status='redeemed'
+```
+
+- **選択しただけでは issued にも redeemed にもしない**
+- **報告が正常受理される前に予約を作らない**
+- `ExpiresAt` は**クーポン本体の利用期限**（予約用の別 TTL は作らない）
+- ⚠️ **期限判定は報告受理時に固定**。期限内に報告済みなら、MK の確認が期限をまたいでも
+  失効させない（`StartsAt` と `ExpiresAt` の突き合わせで台帳から再現する）
+- 取消は「**入金確認前の取消・誤申告訂正**」。予約行だけ `revoked` にし、
+  Customers の「クーポン取得済み」は消さない
+- admin は `Source='premium-plus-coupon-reservation'` で通常の販促 offer と区別する
+
+⚠️ **有効期限の日数が未確定のあいだは本番で予約行を作らない**（fail closed）。
+また **redeem の部分成功**（redeemed なのに昇格失敗 / 昇格成功なのに issued のまま）を
+検出・回復する手段が無いため、**本番 write は未接続**。詳細は `docs/progress.md` の「2-B」。
 
 #### 申込記録は既存 schema で足りる（**新規 schema 不要**）
 
