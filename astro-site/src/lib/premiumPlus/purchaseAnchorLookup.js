@@ -100,6 +100,37 @@ export async function lookupSanrenpukuPaidAt(input) {
 }
 
 /**
+ * **通常 Light / Premium の「有料化が確定した時刻」だけ**を返す薄いラッパ（read-only）。
+ *
+ * ── なぜこの 1 関数を足すのか ──────────────────────────────────
+ * DRM の購入帰属は「いつ有料になったか」だけが要る。ところが
+ * `lookupCustomerFields` は Customers の **fields をまるごと**返すので、
+ * 分析側へ渡すと氏名・アドレス・契約状態まで持ち出してしまう。
+ * ここで**時刻 1 つに絞って**返し、raw fields を外へ出さない。
+ *
+ * ── `PaidAt` の意味（取り違えない）──────────────────────────────
+ * ⚠️ **checkout（申込）時刻ではない。** `bankPaymentFlow.buildConfirmationFields` が
+ *    `PaidAt: confirmedAt.toISOString()` として書く、**入金確認 = 有料化が確定した時刻**。
+ *    申込フォーム送信時には書かれない（申込時は `Requested*` へ退避するだけ）。
+ * ⚠️ 読めない / 無い / 解釈できない値は **`null`**（`reason` つき）。
+ *    **推測で時刻を作らない。** 呼び出し側は帰属を `unattributed` にする。
+ *
+ * @param {{ recordId?: string|null, env?: object, now?: number, fetchImpl?: Function }} input
+ * @returns {Promise<{ paidAtMs: number|null, reason: 'ok'|'missing'|'invalid'|'not_found'|'unavailable' }>}
+ */
+export async function lookupPaidConfirmedAt(input) {
+  const r = await lookupCustomerFieldsResult(input);
+  if (!r.ok) return { paidAtMs: null, reason: r.reason };
+  const raw = (r.fields || {})['PaidAt'];
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return { paidAtMs: null, reason: 'missing' };
+  }
+  const ms = Date.parse(String(raw));
+  if (!Number.isFinite(ms)) return { paidAtMs: null, reason: 'invalid' };
+  return { paidAtMs: ms, reason: 'ok' };
+}
+
+/**
  * Airtable Customers から 1 レコードの fields を読む。失敗はすべて null。
  * @returns {Promise<object|null>}
  */
