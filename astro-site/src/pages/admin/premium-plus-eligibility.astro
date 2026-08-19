@@ -3894,6 +3894,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (r.reopenCouponDiscountText) kvRow(rcKv, '割引', r.reopenCouponDiscountText);
       if (r.reopenCouponPriceText) kvRow(rcKv, '価格', r.reopenCouponPriceText);
       if (r.reopenCouponExpiryText) kvRow(rcKv, '有効期限', r.reopenCouponExpiryText, 'muted');
+      // ライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
+      // ⚠️ 通常の販促オファーとは別軸。Airtable を直接見に行かせないための表示。
+      if (r.couponLifecycle) {
+        kvRow(rcKv, '利用状態', r.couponLifecycle.label || '—',
+          r.couponLifecycle.needsRepair ? '' : 'muted');
+        if (r.couponLifecycle.reservationCount) {
+          kvRow(rcKv, '利用予約の件数', String(r.couponLifecycle.reservationCount), 'muted');
+        }
+      }
       kvRow(rcKv, '取得状況', r.reopenCouponClaimed ? '🎟 取得済み' : '未取得',
         r.reopenCouponClaimed ? '' : 'muted');
       if (r.reopenCouponClaimed) {
@@ -3902,6 +3911,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         if (r.reopenCouponId) kvRow(rcKv, 'クーポン識別子', r.reopenCouponId, 'muted');
       }
       rcSec.appendChild(rcKv);
+      // 要修復・異常はここで手順まで出す（運営者が Airtable を開かなくて済むように）
+      if (r.couponLifecycle && r.couponLifecycle.needsRepair) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = (r.couponLifecycle.redeemLabel || '') + ' — ' + (r.couponLifecycle.repair || '');
+        rcSec.appendChild(w);
+      }
       if (r.reopenCouponWritable === false) {
         const w = document.createElement('p'); w.className = 'blocker';
         w.textContent = '⚠️ クーポンの取得記録は現在この本番環境に保存できません。'

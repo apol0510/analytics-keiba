@@ -79,7 +79,20 @@ export const PP_REOPEN_COUPON = Object.freeze({
     discountValue: PP_REOPEN_COUPON_DISCOUNT_YEN,
     regularPrice: REGULAR_PRICE.premium_plus,
     offerPrice: REGULAR_PRICE.premium_plus - PP_REOPEN_COUPON_DISCOUNT_YEN,
-    /** 有効期限は未確定。null のまま + expiresDetermined:false */
+    /**
+     * 有効期限の**ルールは確定**（2026-08-19 MK）:
+     *   **再募集開始日時から 14 日間**
+     *
+     * ⚠️ ただし **`reopenStartsAt`（再募集の開始日時）がまだ決まっていない**ので、
+     *    絶対日時である `expiresAt` は**まだ計算できない**。
+     *    `expiresDetermined` は「顧客へ出せる確定日時があるか」を表すフラグなので false のまま。
+     *    再募集の開始日時が決まったら `reopenStartsAt` を入れるだけで、
+     *    `expiresAt` は `resolveCouponExpiry()` が 14 日を足して導出する。
+     * ⚠️ **仮の日付をここに書かないこと。**
+     */
+    expiryDays: 14,
+    /** 再募集の開始日時（ISO）。**未定** */
+    reopenStartsAt: null,
     expiresAt: null,
     expiresDetermined: false,
   }),
@@ -90,7 +103,7 @@ export const PP_REOPEN_COUPON = Object.freeze({
  * ⚠️ 「30日間有効」などと勝手に補完しないこと。
  */
 export const PP_REOPEN_COUPON_EXPIRY_NOTE =
-  '有効期限は未定です（募集再開のご案内時にお知らせいたします）。';
+  '募集再開日から14日間ご利用いただけます（開始日は募集再開のご案内時にお知らせいたします）。';
 
 /** 「いつ使えるか」の説明（顧客画面・管理画面で同じ文言を使う） */
 export const PP_REOPEN_COUPON_USABLE_NOTE = '募集再開時にご利用いただけます。';
@@ -308,6 +321,26 @@ export function describeCouponPrice(def = PP_REOPEN_COUPON) {
   return t.determined === true
     ? `通常 ${formatYen(t.regularPrice)} → ${formatYen(t.offerPrice)}`
     : '';
+}
+
+/**
+ * 有効期限を導出する（**期限の計算はここだけ**）。
+ *
+ * ルール: **再募集開始日時 + 14 日**。
+ * `reopenStartsAt` が未定のあいだは `null` を返す（＝仮の日付を作らない）。
+ */
+export function resolveCouponExpiry(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  if (t.expiresAt) return { expiresAtIso: String(t.expiresAt), determined: true };
+  const startMs = Date.parse(String(t.reopenStartsAt || ''));
+  const days = Number(t.expiryDays);
+  if (!Number.isFinite(startMs) || !Number.isFinite(days)) {
+    return { expiresAtIso: null, determined: false };
+  }
+  return {
+    expiresAtIso: new Date(startMs + days * 24 * 60 * 60 * 1000).toISOString(),
+    determined: true,
+  };
 }
 
 /** 有効期限の表示。**未確定のあいだは日付を作らない** */

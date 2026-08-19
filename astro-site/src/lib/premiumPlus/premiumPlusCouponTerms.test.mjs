@@ -103,12 +103,15 @@ test('文言はすべて単一源から作られ、全画面で同一', () => {
 });
 
 // ── 有効期限 ────────────────────────────────────────────────
-test('有効期限は未確定のまま（日付を作らない）', () => {
+test('有効期限のルールは確定（再募集開始日 + 14日）だが、具体的な日付はまだ作らない', () => {
+  // ルール: 14 日。開始日時（reopenStartsAt）は未定なので絶対日時は出さない
+  assert.equal(PP_REOPEN_COUPON.terms.expiryDays, 14);
+  assert.equal(PP_REOPEN_COUPON.terms.reopenStartsAt, null);
   assert.equal(PP_REOPEN_COUPON.terms.expiresAt, null);
   assert.equal(PP_REOPEN_COUPON.terms.expiresDetermined, false);
   const txt = describeCouponExpiry();
-  assert.match(txt, /未定/);
-  assert.doesNotMatch(txt, /\d{4}-\d{2}-\d{2}|\d+日間|\d+日以内/, '期限を勝手に補完している');
+  assert.match(txt, /14日間/);
+  assert.doesNotMatch(txt, /\d{4}-\d{2}-\d{2}|\d+月\d+日/, '具体的な日付を作っている');
 });
 
 // ── クーポンは権利でも購入可否でもない ────────────────────────

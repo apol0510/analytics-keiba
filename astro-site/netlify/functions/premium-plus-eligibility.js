@@ -101,6 +101,8 @@ import {
   SEARCH_ERROR_TEXT,
   MAX_SEARCH_PAGES,
 } from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
+import { OFFERS_TABLE, isOfferTableEnabled } from '../../src/lib/promotions/promotionalOffer.js';
+import { describeCouponLifecycle } from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
 import {
   readReopenCoupon,
   isReopenCouponEnabled,
@@ -173,7 +175,7 @@ exports.handler = async (event) => {
  * （別々に書くと「一覧の値」と「個別検索の値」がズレる）。
  * `candidate.listed` は呼び出し側が判断に使う（ここでは落とさない）。
  */
-function buildAdminRow(rec, now) {
+function buildAdminRow(rec, now, reservationRows = []) {
     const fields = rec.fields || {};
     const member = resolvePlusMemberFromFields(fields, { nowMs: now });
     // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
@@ -280,6 +282,11 @@ function buildAdminRow(rec, now) {
         reopenCouponDiscountText: describeCouponDiscount(),
         reopenCouponPriceText: describeCouponPrice(),
         reopenCouponExpiryText: describeCouponExpiry(),
+        // クーポンのライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
+        // ⚠️ 通常の販促オファーとは**別軸**。Airtable を直接見に行かせないための表示。
+        couponLifecycle: describeCouponLifecycle({
+          fields, offerRows: reservationRows, customerRecordId: rec.id,
+        }),
         /**
          * 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う）。
          */
@@ -570,7 +577,44 @@ async function handleLookup({ KEY, BASE, now, req }) {
   });
 }
 
+/**
+ * クーポン利用予約の行を読む（**read-only**）。
+ *
+ * 台帳 gate が off / 読めない場合は **null**（＝「確認できない」）を返す。
+ * 空配列（＝予約 0 件）と区別する。
+ */
+async function readReservationRows({ KEY, BASE }) {
+  if (!isOfferTableEnabled(process.env)) return null;
+  const MAX_PAGES = 10;   // 打ち切ったら「確認できない」として返す（黙って欠落させない）
+  const out = [];
+  let offset;
+  let pages = 0;
+  try {
+    do {
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(OFFERS_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageSize: 100, ...(offset ? { offset } : {}) }),
+        },
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+      if (pages >= MAX_PAGES && offset) return null;   // 全部見きれていない = 確認できない
+    } while (offset);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 async function handleList({ KEY, BASE, now, onlyReview }) {
+  // 予約行は**1 回だけ**読む（会員ごとに引かない）。読めなければ null＝「確認できない」
+  const reservationRows = await readReservationRows({ KEY, BASE });
   const rows = [];
   let offset;
   let pages = 0;
@@ -600,7 +644,7 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     const data = await res.json();
 
     for (const rec of data.records || []) {
-      const row = buildAdminRow(rec, now);
+      const row = buildAdminRow(rec, now, reservationRows || []);
       if (!row.__listed) continue;
       if (onlyReview && row.eligibility !== PP_ELIGIBILITY.REVIEW) continue;
       rows.push(row);

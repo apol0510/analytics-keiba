@@ -199,9 +199,13 @@ test('利用予約を通常の販促 offer と混同しない', () => {
 test('ライフサイクルの 4 状態を区別できる', () => {
   const L = R.COUPON_LIFECYCLE;
   const s = (rows, fields = HELD) => R.describeCouponLifecycle({ fields, offerRows: rows, customerRecordId: REC }).state;
+  const SETTLED = { ...HELD, 'プラン': 'Premium Plus', 'Status': 'active' };
   assert.equal(s([]), L.HELD);
   assert.equal(s([row()]), L.RESERVED);
-  assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })]), L.REDEEMED);
+  // 使用済みは **Customers も確定している**ときだけ「正常完了」。
+  // 未確定のまま redeemed なら要修復（異常）として拾う
+  assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })], SETTLED), L.REDEEMED);
+  assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })], HELD), L.NEEDS_REPAIR);
   assert.equal(s([row({ Status: OFFER_STATUS.REVOKED })]), L.REVOKED);
   assert.equal(s([], {}), L.NONE);
 });

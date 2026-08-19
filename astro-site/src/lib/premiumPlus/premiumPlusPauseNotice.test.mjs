@@ -139,7 +139,8 @@ test('確定した優待条件（10,000円OFF / 68,000円 → 58,000円）が全
     assert.match(html, /10,000円OFF/, '割引額が出ていない');
     assert.match(html, /通常 68,000円 → 58,000円/, '通常価格→適用価格が出ていない');
     assert.match(html, /有効期限/, '有効期限の行が無い');
-    assert.match(html, /未定/, '有効期限を未確定と伝えていない');
+    assert.match(html, /14日間/, '有効期限のルールを伝えていない');
+    assert.doesNotMatch(html, /有効期限[^<]*\d{4}-\d{2}-\d{2}/, '具体的な日付を出している');
   }
 });
 

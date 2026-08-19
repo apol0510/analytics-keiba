@@ -112,7 +112,8 @@ test('有効期限が未確定のあいだは期限切れ扱いにしない（�
   assert.equal(p.finalPrice, 58000, '未確定の期限で弾いている');
   const list = listApplicableCoupons({ fields: HELD, nowMs: far });
   assert.equal(list.length, 1);
-  assert.match(list[0].expiryText, /未定/);
+  assert.match(list[0].expiryText, /14日間/);
+  assert.doesNotMatch(list[0].expiryText, /\d{4}-\d{2}-\d{2}|\d+月\d+日/, '具体的な日付を作っている');
   assert.equal(list[0].expiryDetermined, false);
 });
 

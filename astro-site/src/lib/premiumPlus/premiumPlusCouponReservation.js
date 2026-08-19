@@ -43,6 +43,7 @@
 import { createHash } from 'node:crypto';
 import { RESERVATION_SOURCE as RESERVATION_SOURCE_VALUE, isReservationRow } from '../promotions/couponReservationSource.js';
 import { OFFER_STATUS, assertOnlyOfferFields } from '../promotions/promotionalOffer.js';
+import { resolveRedeemState } from './couponRedeemReconcile.js';
 import {
   PP_REOPEN_COUPON, couponIdWithVersion, resolveCouponPrice, readReopenCoupon,
 } from './premiumPlusReopenCoupon.js';
@@ -64,6 +65,8 @@ export const COUPON_LIFECYCLE = Object.freeze({
   REDEEMED: 'redeemed',
   /** 予約取消（入金確認前の取消・誤申告訂正） */
   REVOKED: 'revoked',
+  /** 要修復（昇格済みだが未 redeem / redeemed なのに未昇格）*/
+  NEEDS_REPAIR: 'needs_repair',
   /** 取得していない */
   NONE: 'none',
 });
@@ -73,6 +76,7 @@ export const COUPON_LIFECYCLE_LABEL = Object.freeze({
   reserved: 'クーポン利用予約（入金確認待ち）',
   redeemed: 'クーポン使用済み',
   revoked: 'クーポン予約取消',
+  needs_repair: '⚠️ 要修復（入金確認と使用済みが食い違っています）',
   none: 'クーポン未取得',
 });
 
@@ -283,11 +287,25 @@ export function describeCouponLifecycle({ fields, offerRows = [], customerRecord
     // 予約は取り消されたが、取得の事実は残っている
     state = held.claimed ? COUPON_LIFECYCLE.REVOKED : COUPON_LIFECYCLE.NONE;
   }
+  // ── 入金確認と redeem の食い違いを拾う（要修復 / 異常）────────────
+  // ⚠️ 自動で直さない。運営者が判別できるように**状態と修復方針を出すだけ**。
+  const latest = mine.find((r) => statusOf(r) === OFFER_STATUS.ISSUED)
+    || mine.find((r) => statusOf(r) === OFFER_STATUS.REDEEMED)
+    || mine[0] || null;
+  const redeemView = resolveRedeemState({ fields, reservation: latest });
+  if (redeemView.needsRepair) state = COUPON_LIFECYCLE.NEEDS_REPAIR;
+
   return {
     state,
     label: COUPON_LIFECYCLE_LABEL[state],
     claimed: held.claimed === true,
     claimedAtIso: held.claimedAtIso,
     reservationCount: mine.length,
+    /** 入金確認と redeem の突き合わせ（waiting / needs_redeem / complete / anomaly）*/
+    redeemState: redeemView.state,
+    redeemLabel: redeemView.label,
+    /** 運営者に出す修復方針（Airtable を直接見に行かせない）*/
+    repair: redeemView.needsRepair ? redeemView.repair : '',
+    needsRepair: redeemView.needsRepair,
   };
 }
