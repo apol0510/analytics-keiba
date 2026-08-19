@@ -41,6 +41,19 @@
  * 条件が確定して実際の offer を発行する段になったら、そのときは台帳へ積む（上記手順 3）。
  */
 
+import { REGULAR_PRICE, DISCOUNT_TYPE } from '../promotions/promotionOfferCatalog.js';
+
+/** 円表記（3 桁区切り）。表示の体裁もここ 1 か所で決める。 */
+export function formatYen(n) {
+  return Number.isFinite(Number(n)) ? `${Number(n).toLocaleString('ja-JP')}円` : '';
+}
+
+/**
+ * 割引額（円）。**この 1 か所だけが割引の実体**。
+ * ⚠️ 画面・API・管理画面で数値を書き写さないこと（ズレたら guard テストが落ちる）。
+ */
+export const PP_REOPEN_COUPON_DISCOUNT_YEN = 10000;
+
 /** クーポン定義（1 種類のみ。増やすときはここに足す） */
 export const PP_REOPEN_COUPON = Object.freeze({
   couponId: 'premium-plus-reopen-priority',
@@ -50,21 +63,34 @@ export const PP_REOPEN_COUPON = Object.freeze({
   /** 顧客に見せる説明（事実だけ。「好評につき」等の裏付けの無い表現は入れない） */
   description: '募集を再開した際に、ご利用いただける優待クーポンです。',
   /**
-   * 割引条件。**未確定**（`promotionOfferCatalog.js` に Premium Plus の offer が無いため）。
-   * ⚠️ ここに金額・割引率・期限を書かないこと。決めるのは再募集時にカタログ側。
+   * 割引条件（**2026-08-19 に MK が確定**）。
+   *
+   *   固定額割引 10,000円OFF ／ 通常 68,000円 → 58,000円
+   *
+   * 通常価格は価格の正本 `promotionOfferCatalog.js` の `REGULAR_PRICE.premium_plus` を参照し、
+   * 適用価格は**引き算で導出**する（68,000 と 58,000 を別々に書かない＝ズレようがない）。
+   *
+   * ⚠️ `expiresAt` は**まだ未確定**。`expiresDetermined:false` のまま置く。
+   *    勝手に日数を決めないこと（顧客へ出す期限は MK が決める）。
    */
   terms: Object.freeze({
-    determined: false,
-    discountType: null,
-    discountValue: null,
-    offerPrice: null,
+    determined: true,
+    discountType: DISCOUNT_TYPE.AMOUNT,
+    discountValue: PP_REOPEN_COUPON_DISCOUNT_YEN,
+    regularPrice: REGULAR_PRICE.premium_plus,
+    offerPrice: REGULAR_PRICE.premium_plus - PP_REOPEN_COUPON_DISCOUNT_YEN,
+    /** 有効期限は未確定。null のまま + expiresDetermined:false */
     expiresAt: null,
+    expiresDetermined: false,
   }),
 });
 
-/** 顧客画面に出す「条件は未確定」の説明（断定しない・数値を出さない） */
-export const PP_REOPEN_COUPON_TERMS_NOTE =
-  '優待の具体的な内容は、募集再開のご案内時に改めてお知らせいたします。';
+/**
+ * 有効期限の説明。**期限だけはまだ未確定**なので、日数を書かずにそう伝える。
+ * ⚠️ 「30日間有効」などと勝手に補完しないこと。
+ */
+export const PP_REOPEN_COUPON_EXPIRY_NOTE =
+  '有効期限は未定です（募集再開のご案内時にお知らせいたします）。';
 
 /** 「いつ使えるか」の説明（顧客画面・管理画面で同じ文言を使う） */
 export const PP_REOPEN_COUPON_USABLE_NOTE = '募集再開時にご利用いただけます。';
@@ -263,10 +289,49 @@ export function buildReopenCouponClaimFields({ current, now, source, enabled = f
  */
 export function describeCouponTerms(def = PP_REOPEN_COUPON) {
   const t = (def && def.terms) || {};
-  if (t.determined !== true) return PP_REOPEN_COUPON_TERMS_NOTE;
-  // 条件が確定したときの表示は、確定と同時にここへ実装する
-  // （未確定のまま金額を書かないための空欄。正本は promotionOfferCatalog.js）
-  return PP_REOPEN_COUPON_TERMS_NOTE;
+  if (t.determined !== true) {
+    // 条件が未確定に戻された場合でも金額を出さない（fail safe）
+    return '優待の具体的な内容は、募集再開のご案内時に改めてお知らせいたします。';
+  }
+  return `${formatYen(t.discountValue)}OFF（通常 ${formatYen(t.regularPrice)} → ${formatYen(t.offerPrice)}）`;
+}
+
+/** 割引だけを短く（バッジ・見出し用）。例: 「10,000円OFF」 */
+export function describeCouponDiscount(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  return t.determined === true ? `${formatYen(t.discountValue)}OFF` : '';
+}
+
+/** 価格だけを短く。例: 「通常 68,000円 → 58,000円」 */
+export function describeCouponPrice(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  return t.determined === true
+    ? `通常 ${formatYen(t.regularPrice)} → ${formatYen(t.offerPrice)}`
+    : '';
+}
+
+/** 有効期限の表示。**未確定のあいだは日付を作らない** */
+export function describeCouponExpiry(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  if (t.expiresDetermined === true && t.expiresAt) return String(t.expiresAt);
+  return PP_REOPEN_COUPON_EXPIRY_NOTE;
+}
+
+/**
+ * 適用価格を返す（**購入価格を計算してよいのはここだけ**）。
+ *
+ * ⚠️ 二重割引を防ぐため、**入力価格から引き算しない**。常に正本の通常価格から
+ *    1 回だけ引いた確定値を返す。既に割引済みの価格を渡しても結果は変わらない。
+ */
+export function resolveCouponPrice(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  if (t.determined !== true) return null;
+  return {
+    regularPrice: t.regularPrice,
+    offerPrice: t.offerPrice,
+    discountType: t.discountType,
+    discountValue: t.discountValue,
+  };
 }
 
 /**
@@ -289,6 +354,14 @@ export function describeCouponForMember({ coupon, paused, claimable, storageRead
      * ⚠️ 各画面で条件文を組み立て直さないこと（表示がズレる）。
      */
     termsText: describeCouponTerms(),
+    /** 「10,000円OFF」だけ（見出し・バッジ用） */
+    discountText: describeCouponDiscount(),
+    /** 「通常 68,000円 → 58,000円」だけ */
+    priceText: describeCouponPrice(),
+    /** 有効期限（未確定のあいだは「未定」と伝える） */
+    expiryText: describeCouponExpiry(),
+    /** 期限が確定しているか（未確定を隠さない） */
+    expiryDetermined: PP_REOPEN_COUPON.terms.expiresDetermined === true,
     name: PP_REOPEN_COUPON.name,
     description: PP_REOPEN_COUPON.description,
     claimed: held.claimed === true,
@@ -297,7 +370,7 @@ export function describeCouponForMember({ coupon, paused, claimable, storageRead
     usableNote: PP_REOPEN_COUPON_USABLE_NOTE,
     /** 条件が未確定であることを隠さない */
     termsDetermined: PP_REOPEN_COUPON.terms.determined === true,
-    termsNote: PP_REOPEN_COUPON_TERMS_NOTE,
+    termsNote: PP_REOPEN_COUPON_EXPIRY_NOTE,
     /** 現在受付休止中か */
     paused: paused === true,
     /** 取得 CTA を出してよいか（取得済みなら常に false ＝ 二重取得させない） */

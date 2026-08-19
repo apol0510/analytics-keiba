@@ -195,10 +195,12 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         <div class="coupon-badge">取得済み</div>
                     </div>
                     <div class="coupon-name" id="reopen-coupon-name"></div>
+                    <div class="coupon-benefit" id="reopen-coupon-discount"></div>
+                    <div class="coupon-price" id="reopen-coupon-price"></div>
                     <dl class="coupon-kv">
                         <dt>取得日時</dt><dd id="reopen-coupon-claimed-at"></dd>
                         <dt>ご利用時期</dt><dd id="reopen-coupon-usable"></dd>
-                        <dt>優待条件</dt><dd id="reopen-coupon-terms"></dd>
+                        <dt>有効期限</dt><dd id="reopen-coupon-expiry"></dd>
                     </dl>
                     <a class="coupon-link" id="reopen-coupon-link" href="/premium-plus-coupon/">クーポン詳細を確認</a>
                 </div>
@@ -2458,7 +2460,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             font-size: .78rem; font-weight: 700; padding: .25rem .7rem; border-radius: 999px;
             background: rgba(16, 185, 129, .18); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, .5);
         }
-        .coupon-name { font-size: 1rem; font-weight: 700; color: #e2e8f0; margin: 0 0 .9rem; }
+        .coupon-name { font-size: 1rem; font-weight: 700; color: #e2e8f0; margin: 0 0 .35rem; }
+        .coupon-benefit { font-size: 1.45rem; font-weight: 800; color: #6ee7b7; margin: 0 0 .15rem; }
+        .coupon-price { font-size: .95rem; color: #cbd5e1; margin: 0 0 1rem; }
         .coupon-kv { display: grid; grid-template-columns: auto 1fr; gap: .45rem 1rem; margin: 0; font-size: .92rem; }
         .coupon-kv dt { color: #94a3b8; font-size: .82rem; white-space: nowrap; }
         .coupon-kv dd { margin: 0; color: #e2e8f0; }
@@ -5478,9 +5482,12 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         if (!c || c.claimed !== true) { sec.style.display = 'none'; return; }
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || ''; };
         set('reopen-coupon-name', c.name);
+        // 割引・価格・期限は**サーバーの単一源が作った文字列**をそのまま出す
+        set('reopen-coupon-discount', c.discountText);
+        set('reopen-coupon-price', c.priceText);
         set('reopen-coupon-claimed-at', c.claimedAtText);
         set('reopen-coupon-usable', c.usableNote);
-        set('reopen-coupon-terms', c.termsText);
+        set('reopen-coupon-expiry', c.expiryText);
         const link = document.getElementById('reopen-coupon-link');
         if (link && c.detailHref) link.setAttribute('href', c.detailHref);
         sec.style.display = '';

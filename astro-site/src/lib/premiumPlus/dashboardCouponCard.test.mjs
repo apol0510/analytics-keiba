@@ -42,10 +42,14 @@ test('取得済みなら名称・利用時期・条件文が単一源から出�
   assert.equal(v.showClaimCta, false);
 });
 
-test('条件が未確定のあいだは条件文が「募集再開時に案内」のまま（価格を作らない）', () => {
+test('確定条件が表示モデルから出る（10,000円OFF / 68,000円 → 58,000円）', () => {
   const v = describeCouponForMember({ coupon: { claimed: true }, paused: true, claimable: false });
-  assert.equal(v.termsDetermined, false);
-  assert.doesNotMatch(v.termsText, /[0-9]{3,}|%|OFF|円/);
+  assert.equal(v.termsDetermined, true);
+  assert.equal(v.discountText, '10,000円OFF');
+  assert.equal(v.priceText, '通常 68,000円 → 58,000円');
+  // 有効期限だけは未確定のまま
+  assert.equal(v.expiryDetermined, false);
+  assert.match(v.expiryText, /未定/);
 });
 
 test('取得日時は JST・時刻まで（UTC 基準で日付をズラさない）', () => {
@@ -94,13 +98,14 @@ test('dashboard は既定でカードを隠し、claimed のときだけ出す',
 });
 
 test('dashboard は表示に必要な項目をすべて出す', () => {
-  for (const id of ['reopen-coupon-name', 'reopen-coupon-claimed-at', 'reopen-coupon-usable', 'reopen-coupon-terms']) {
+  for (const id of ['reopen-coupon-name', 'reopen-coupon-claimed-at', 'reopen-coupon-usable',
+    'reopen-coupon-discount', 'reopen-coupon-price', 'reopen-coupon-expiry']) {
     assert.ok(DASH.includes(`id="${id}"`), `${id} が無い`);
   }
   assert.match(DASH, /取得済みクーポン/);
   assert.match(DASH, /取得日時/);
   assert.match(DASH, /ご利用時期/);
-  assert.match(DASH, /優待条件/);
+  assert.match(DASH, /有効期限/);
 });
 
 test('dashboard に /premium-plus-coupon/ への導線がある', () => {
@@ -109,11 +114,22 @@ test('dashboard に /premium-plus-coupon/ への導線がある', () => {
   assert.match(DASH, /クーポン詳細を確認/);
 });
 
-test('dashboard は価格・割引率・期限をハードコードしない', () => {
+test('dashboard は価格・割引額をハードコードしない（サーバーの文字列を出すだけ）', () => {
   const card = DASH.slice(DASH.indexOf('reopen-coupon-section'), DASH.indexOf('今日の予想'));
-  assert.doesNotMatch(card, /68,?000|98,?000|%OFF|割引|¥/);
-  const fn = DASH.slice(DASH.indexOf('function renderReopenCoupon'));
-  assert.doesNotMatch(fn.slice(0, 1200), /68,?000|割引|discount|price/i);
+  assert.doesNotMatch(card, /68,?000|58,?000|10,?000|98,?000/, 'カードに金額を直書きしている');
+  const fn = DASH.slice(DASH.indexOf('function renderReopenCoupon'), DASH.indexOf('function renderReopenCoupon') + 1400);
+  assert.doesNotMatch(fn, /68,?000|58,?000|10,?000/, '描画側に金額を直書きしている');
+  // 表示はサーバーが返した文字列をそのまま入れている
+  assert.match(fn, /c\.discountText/);
+  assert.match(fn, /c\.priceText/);
+  assert.match(fn, /c\.expiryText/);
+});
+
+test('dashboard に割引・価格・有効期限の枠がある', () => {
+  for (const id of ['reopen-coupon-discount', 'reopen-coupon-price', 'reopen-coupon-expiry']) {
+    assert.ok(DASH.includes(`id="${id}"`), `${id} が無い`);
+  }
+  assert.match(DASH, /有効期限/);
 });
 
 test('dashboard 側で独自の保有判定を作っていない（サーバーの claimed をそのまま使う）', () => {

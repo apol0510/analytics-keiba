@@ -869,7 +869,36 @@ route 未成立・`blocked`・無料会員にまで**商品の存在が漏れる
 | Plus の候補ではない（無料・Premium 加入直後 等）| 404 |
 | `UpsellTarget=none` / `sanrenpuku` | 404（管理者が別の導線を指定しているため） |
 
-### 再募集クーポン（取得権であって、割引ではない）
+### 再募集クーポンの優待条件（**2026-08-19 MK 確定**）
+
+| 項目 | 確定値 |
+|---|---|
+| クーポン種別 | 固定額割引（`discountType='amount'`）|
+| 割引額 | **10,000円OFF** |
+| Premium Plus 通常価格 | **68,000円**（`REGULAR_PRICE.premium_plus`）|
+| クーポン適用価格 | **58,000円**（通常価格から引き算で導出）|
+| 対象 | 再募集クーポン取得済み会員 |
+| 有効期限 | **未確定**（`expiresDetermined=false`。顧客には「未定」と表示）|
+
+**単一源は `premiumPlusReopenCoupon.js`**。割引額は `PP_REOPEN_COUPON_DISCOUNT_YEN` の
+1 か所だけ、通常価格は価格の正本 `promotionOfferCatalog.js` を参照し、
+**適用価格は引き算で導出**する（68,000 と 58,000 を別々に書かない）。
+表示文字列も `describeCouponDiscount()` / `describeCouponPrice()` / `describeCouponTerms()` /
+`describeCouponExpiry()` が作り、**画面・API・管理画面は文字列を受け取るだけ**。
+
+⚠️ **金額を画面側に書き写さないこと。** `pauseCouponWiring.guard.test.mjs` と
+`premiumPlusCouponTerms.test.mjs` が、単一源以外に数値があると落とす。
+
+⚠️ **クーポン取得は購入可否を一切変えない。** 販売停止中は購入不可のままで、
+`salePaused` / `eligibility` / `override` / PHASE / route / CTA / purchase gate /
+payment のいずれも動かさない。
+
+⚠️ **二重割引の防止**: 価格計算は `resolveCouponPrice()` だけが行い、
+**入力価格から引き算しない**（常に正本の通常価格から 1 回だけ引いた確定値を返す）。
+再募集用 `purchase_offer` は**まだ実体化していない**（＝ 2 つ目の価格経路が無い）。
+足した瞬間から `premiumPlusCouponTerms.test.mjs` が単一源との一致を検査する。
+
+### 再募集クーポン（取得権であって、その場で割引が効くものではない）
 
 休止ページから会員本人が取得できる。**取得しても権利は 1 ミリも増えない。**
 
