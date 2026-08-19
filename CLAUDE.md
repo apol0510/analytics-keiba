@@ -140,6 +140,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | Premium Plus（1日1鞍・単品） | [`PREMIUM_PLUS.md`](./astro-site/docs/PREMIUM_PLUS.md) / [`PREMIUM_PLUS_STAGED_RELEASE.md`](./astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md) / [`PREMIUM_PLUS_STORAGE_DESIGN.md`](./astro-site/docs/PREMIUM_PLUS_STORAGE_DESIGN.md) |
 | 有料実績ショーケース | [`RESULTS_SHOWCASE.md`](./astro-site/docs/RESULTS_SHOWCASE.md) |
 | 販売導線の制御（UpsellTarget） | [`UPSELL_TARGET.md`](./astro-site/docs/UPSELL_TARGET.md) |
+| **クーポン基盤（Premium Plus 専用ではない）** | [`COUPON_PLATFORM.md`](./astro-site/docs/COUPON_PLATFORM.md) |
 
 ### 顧客・決済・メール
 
@@ -167,6 +168,23 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 ## 🚫 領域別の不変条件（詳細は各正本へ）
 
 破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
+
+### 🎟 クーポン（**Premium Plus 専用ではない** / 2026-08-20 MK 確定）
+
+**クーポンは今後ほかの商品・プランでも利用する。Premium Plus は最初の利用商品にすぎない。**
+正本は [`COUPON_PLATFORM.md`](./astro-site/docs/COUPON_PLATFORM.md)。
+
+- 判定（操作の種類 / 排他規則 / 状態遷移 / 監査の書式 / fail closed）は
+  **共通層 `src/lib/coupons/`** に置く。**商品ごとに判定を書かない**
+- 商品固有なのは**クーポン定義**と**保有状態の置き場所（binding）**の 2 つだけ。
+  **2 商品目で Premium Plus のコードをコピーしない**
+- **付与と再発行は排他**（履歴なし → 付与 / 履歴あり → 再発行）。
+  取得済み・利用予約中・使用済み・台帳確認不能は**どちらも不可**
+- **UI だけの制御にしない**。サーバーが必ず同じ判定を再実行する
+- 履歴は **append-only**（`CouponOperationHistory`・**本番テーブル未作成 / MK 判断待ち**）。
+  **`PromotionalOffers` に監査行を混ぜない**（価格の無い行が顧客分類を壊す）
+- 割引額 / 期限 / 配布条件 / 併用可否 / 自動付与条件は**商品ごとに MK が決める**。
+  **決まっていない条件を既定値で埋めない**
 
 ### 単一源を再実装しない
 

@@ -501,6 +501,31 @@ allow-list は `pause-notice` / `coupon-page` だけで、`admin-*` は**この�
 
 画面には毎回「操作前 → 操作後」と戻し方を出す（再描画しても消えない）。
 
+### 3-D. クーポンは **Premium Plus 専用ではない**（2026-08-20 MK 確定・正本固定済み）
+
+**今後ほかの商品・プランでもクーポンを使う。Premium Plus は最初の利用商品にすぎない。**
+正本は `astro-site/docs/COUPON_PLATFORM.md`（CLAUDE.md の索引・不変条件からも参照）。
+
+共通化した層（新規 `src/lib/coupons/`）:
+
+| ファイル | 役割 |
+|---|---|
+| `couponPlatform.js` | 操作の種類 / 排他規則 / 状態遷移 / 監査の書式 / fail closed の条件 |
+| `couponCatalog.js` | どんなクーポンが存在するか（**商品識別子つき**）・適用可能なクーポン |
+| `couponOperationHistory.js` | append-only 履歴のレコード形（**本番テーブル未作成**）|
+
+Premium Plus 側（`premiumPlusCouponAdmin.js`）は **binding だけ**になった
+（保有状態の置き場所＝ 3 列と、その allow-list）。**判定は 1 行も持っていない。**
+
+**2 商品目を足すときにやること**（Premium Plus のコードはコピーしない）:
+①`couponCatalog.js` に定義 1 件 ②binding を 1 つ ③呼び出しの配線。
+`couponPlatform.test.mjs` が**合成の 2 商品目**で全規則を検査し、
+**Premium Plus を 1 行も import せずに**通ることを固定している。
+
+⚠️ **未確定のまま**（商品ごとに MK が決める）: 導入する商品 / 割引額・率 / 有効期限 /
+配布条件 / 併用可否 / 自動付与条件。**併用可否が未定なので 1 商品 1 枚**（fail closed）。
+⚠️ **Premium Plus の既存仕様（10,000円OFF / 68,000→58,000 / 開始+14日）は変えていない。**
+
 #### 🛑 既存 schema でできないこと（**ここで停止・MK 判断待ち**）
 
 **積み上げ式の操作履歴が持てない。** Customers に残るのは**直近 1 回の操作だけ**で、
@@ -512,13 +537,17 @@ sessionStorage なので**監査記録ではない**。）
 
 | 案 | 変更 | 影響 |
 |---|---|---|
-| A. 履歴テーブル新設 | Airtable に `CouponOperations` テーブル + 数列 | いちばん素直。読み手を 1 つ作るだけで既存に影響しない |
-| B. Customers に列追加 | `…CouponOpsLog`（long text）1 列へ追記 | 列 1 本で済むが行が肥大する |
-| C. `PromotionalOffers` に監査行 | schema 変更は不要だが**コード変更が要る** | ⚠️ 価格の無い行が `offerFilterModel.js` / `customerTimeline.js` /
-`recommendedActions.js` の分類を壊す。**採らない方針**（同じ理由で予約行も Source で除外している）|
+| **A. 履歴テーブル新設（採用予定）** | Airtable に **`CouponOperationHistory`** テーブル + 13 列 | いちばん素直。読み手を 1 つ作るだけで既存に影響しない |
+| B. Customers に列追加 | long text 1 列へ追記 | 列 1 本で済むが行が肥大する |
+| C. `PromotionalOffers` に監査行 | schema 変更は不要だが**コード変更が要る** | ⚠️ 価格の無い行が `offerFilterModel.js` / `customerTimeline.js` / `recommendedActions.js` の分類を壊す。**採らない**（同じ理由で予約行も Source で除外している）|
 
-⚠️ **A / B は本番 schema 変更なので、MK の指示があるまで実施しない。**
-現状（直近 1 回 + 訂正前の値）で運用可能かどうかを含めて判断が要る。
+**案 A の設計は `src/lib/coupons/couponOperationHistory.js` に固定済み**
+（テーブル名・13 列・冪等キー・gate・禁止フィールド）。**商品名をテーブル名に入れない。**
+
+⚠️ **テーブルは MK の指示があるまで作らない。**
+`COUPON_HISTORY_TABLE_READY` が未設定のあいだ `planHistoryAppend()` は
+必ず `append:false` を返し、**Function からの書き込み経路も作っていない**
+（`couponOperationHistory.test.mjs` が両方を検査している）。
 
 #### 実際の admin 画面で通したライフサイクル（**本番非接触・合成データ**）
 
