@@ -1,9 +1,9 @@
 ---
 /**
- * /race-viewpoints/nankan/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
+ * /free/nankan/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
  *
  * 2026-08-20: MK 判断により nav へ掲載し、noindex を解除した（検索対象にする）。
- *    URL（/race-viewpoints/）を後から変える場合は 301 リダイレクトが必要になる。
+ *    URL（/free/）を後から変える場合は 301 リダイレクトが必要になる。
  *
  * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量
  * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
@@ -18,7 +18,7 @@ let view: any = null;
 try {
   view = buildViewpoints('nankan', process.cwd());
 } catch (error) {
-  console.error('[race-viewpoints/nankan] build error:', error);
+  console.error('[free/nankan] build error:', error);
 }
 ---
 

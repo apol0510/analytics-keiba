@@ -8490,3 +8490,28 @@ nav = **無料予想** / H1 = **今日のレースの見どころ** で 1 日ズ
 候補 `/free/` `/free-races/` `/race-guide/` `/today/` はいずれも**未使用・本番 404**で衝突なし。
 ⚠️ 301 を入れる場合、`public/_redirects` には**個別行のみ**追加する。
 ワイルドカードの SPA フォールバックは過去に全 SSR ページをトップに化けさせた事故があるため禁止。
+
+### URL を `/race-viewpoints/` → `/free/` へ（2026-08-21・MK 承認）
+
+**MK 判断**: 候補提示のうち `/free/` を採用。
+
+**今やった理由**: `noindex` 解除が 2026-08-20 で、**検索に載ってまだ 1 日**。
+外部リンクもほぼ無く、変更コストが最小の時点だった。時間が経つほど 301 の負担は増える。
+
+| | 旧 | 新 |
+|---|---|---|
+| 索引 | `/race-viewpoints/` | **`/free/`** |
+| 中央 | `/race-viewpoints/jra/` | **`/free/jra/`** |
+| 南関 | `/race-viewpoints/nankan/` | **`/free/nankan/`** |
+
+- `git mv src/pages/race-viewpoints src/pages/free`。コード内参照 **52 箇所を置換・残存 0**
+- `netlify.toml` に **301 を 6 行**（末尾スラッシュ有無の両方）。既に共有されたリンクを死なせない
+- sitemap も新 URL 3 本に更新されることをビルド出力で確認
+
+**`/free-prediction/` には手を付けていない。**
+URL とラベルが逆（`/free-prediction/` = 有料版プレビュー、`/free/` = 実際の無料）という
+ねじれは残るが、`/free-prediction/` は旧サイト時代からの資産があり、
+**生きた 2 つの URL を入れ替えるのは危険**なため見送った。
+
+⚠️ `public/_redirects` にワイルドカードのフォールバックを入れないこと。
+`homeCta.guard.test.mjs` が 301 の存在とワイルドカード不在を検査する。

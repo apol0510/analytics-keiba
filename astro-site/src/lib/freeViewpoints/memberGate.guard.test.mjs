@@ -1,7 +1,7 @@
 /**
  * memberGate.guard.test.mjs
  *
- * 2026-08-20 確定: /race-viewpoints/ に**無料会員登録の特典**を置く。
+ * 2026-08-20 確定: /free/ に**無料会員登録の特典**を置く。
  *   特典＝拡張表示（出走間隔 / 馬体重の増減 / 条件変化の履歴 / 同条件馬の横比較）
  *
  * 守るべきこと:
@@ -103,7 +103,7 @@ test('登録 CTA は /free-signup/ を指す（プランページではない）
 test('/free-signup/ が「登録しなくても見られるもの」を特典として約束しない', () => {
   assert.equal(signup.includes('南関競馬のAI無料予想'), false,
     '登録不要で見られるものを特典に挙げている');
-  assert.ok(signup.includes('/race-viewpoints/') || signup.includes('出走間隔'),
+  assert.ok(signup.includes('/free/') || signup.includes('出走間隔'),
     '拡張表示が特典として書かれていない');
 });
 

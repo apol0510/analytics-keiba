@@ -28,7 +28,7 @@ const stripComments = (src) => src
   .split('\n').filter((l) => !/^\s*(\/\/|\*|\{\/\*)/.test(l)).join('\n');
 const boardCode = stripComments(board);
 const loaderCode = stripComments(loader);
-const pages = ['jra', 'nankan'].map((c) => readFileSync(join(ROOT, `src/pages/race-viewpoints/${c}.astro`), 'utf-8'));
+const pages = ['jra', 'nankan'].map((c) => readFileSync(join(ROOT, `src/pages/free/${c}.astro`), 'utf-8'));
 
 // ─── 出走馬を詳細内に出す ─────────────────────────────────────
 
@@ -141,11 +141,11 @@ test('2026-08-20: nav に掲載し noindex を解除した', () => {
     assert.equal(p.includes('noindex={true}'), false, 'noindex を戻してはいけない（nav 掲載済みのため）');
   }
   const layout = readFileSync(join(ROOT, 'src/layouts/BaseLayout.astro'), 'utf-8');
-  for (const href of ['/race-viewpoints/jra/', '/race-viewpoints/nankan/']) {
+  for (const href of ['/free/jra/', '/free/nankan/']) {
     assert.ok(layout.includes(href), `nav に ${href} が無い`);
   }
   assert.ok(layout.includes('無料予想'), 'nav のラベル（無料予想）が無い');
   // PC ナビ / モバイルナビ / フッターの 3 経路すべてに導線がある
-  const count = (layout.match(/\/race-viewpoints\//g) || []).length;
+  const count = (layout.match(/\/free\//g) || []).length;
   assert.ok(count >= 5, `導線が足りない（${count} 箇所）。PC・モバイル・フッターに置くこと`);
 });
