@@ -36,7 +36,9 @@ test('CTA は買い目が有料版で見られることを伝える（/free-pred
   const joined = Object.values(PAID_CTA).join(' ');
   assert.ok(joined.includes('買い目'), '買い目に言及すること');
   assert.ok(joined.includes('有料版'), '有料版で見られると伝えること');
-  assert.ok(joined.includes('無料予想'), '/free-prediction/ を案内すること');
+  assert.ok(joined.includes('プレビュー'), '/free-prediction/ をプレビューとして案内すること');
+  assert.equal(joined.includes('無料予想'), false,
+    '/free-prediction/ は 2026-08-20 に有料版プレビューへ変わった。「無料予想ページ」と呼ばない');
   assert.equal(/\d\s*[→↔⇔-]\s*\d/.test(joined), false, '実際の買い目（馬番の組み合わせ）を書かない');
   assert.equal(PAID_CTA.linkLabel.includes('出走馬・印を見る'), false, '旧 CTA の文言に戻さない');
 });

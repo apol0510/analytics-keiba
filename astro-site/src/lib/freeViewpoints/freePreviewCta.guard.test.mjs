@@ -104,3 +104,62 @@ test('有料項目のマスクは維持する（プレビュー化で緩めな�
     assert.equal(/bettingLines/.test(src), false, `${name}: 買い目の実データを描画している`);
   }
 });
+
+
+// ─── サイト全体の呼び方 ───────────────────────────────────────
+
+test('/free-prediction/ を「無料予想」と呼ばない（呼び名は AI予想プレビュー）', () => {
+  const layout = readFileSync(join(ROOT, 'src/layouts/BaseLayout.astro'), 'utf-8');
+  const hub = readFileSync(join(ROOT, 'src/pages/free-prediction/index.astro'), 'utf-8');
+  const home = readFileSync(join(ROOT, 'src/pages/index.astro'), 'utf-8');
+
+  // /free-prediction/ へのリンクに「無料予想」というラベルを付けない。
+  // （2026-08-20 以降「無料予想」は /race-viewpoints/ を指す名前になった）
+  for (const [name, src] of [['BaseLayout', layout], ['free-prediction/index', hub], ['index', home]]) {
+    const bad = [...src.matchAll(/href="\/free-prediction\/[^"]*"[^>]*>([^<]*)</g)]
+      .map((m) => m[1])
+      .filter((label) => label.includes('無料予想') || label.includes('無料AI予想'));
+    assert.deepEqual(bad, [], `${name}: /free-prediction/ のリンクに「無料予想」ラベルが付いている`);
+  }
+  assert.equal(hub.includes('無料AI予想'), false, '入口ページの見出しが「無料AI予想」に戻っている');
+  assert.ok(layout.includes('AI予想プレビュー'), 'ナビの名称が入っていない');
+  assert.ok(hub.includes('AI予想プレビュー'), '入口ページの名称が入っていない');
+});
+
+test('「無料予想」というラベルは /race-viewpoints/ を指す', () => {
+  const layout = readFileSync(join(ROOT, 'src/layouts/BaseLayout.astro'), 'utf-8');
+  assert.ok(/href="\/race-viewpoints\/[^"]*"[^>]*>[^<]*無料予想/.test(layout)
+    || /href="\/race-viewpoints\/[^"]*"[\s\S]{0,160}?無料予想/.test(layout),
+    'ナビの「無料予想」が /race-viewpoints/ を指していない');
+});
+
+test('トップページから /race-viewpoints/ へ到達できる', () => {
+  const home = readFileSync(join(ROOT, 'src/pages/index.astro'), 'utf-8');
+  for (const href of ['/race-viewpoints/jra/', '/race-viewpoints/nankan/']) {
+    assert.ok(home.includes(href), `トップページに ${href} への導線が無い`);
+  }
+  // 「無料で〜予想を見る」系のボタンは無料ページへ向ける
+  const bad = [...home.matchAll(/href="(\/free-prediction\/[^"]*)"[^>]*>\s*([^<]*)/g)]
+    .filter(([, , label]) => /無料で.*予想を見る/.test(label));
+  assert.deepEqual(bad.map((m) => m[1]), [], '「無料で〜予想を見る」が有料版プレビューへ向いている');
+});
+
+test('2 ページの title を「無料予想」にしない', () => {
+  for (const { name, src } of PAGES) {
+    const m = src.match(/title=(?:"([^"]*)"|\{`([^`]*)`\})/);
+    assert.ok(m, `${name}: title が読めない`);
+    const title = m[1] || m[2] || '';
+    assert.equal(title.includes('無料予想'), false, `${name}: title が実態と食い違っている: ${title}`);
+  }
+});
+
+test('2 ページの description が「無料公開」と言わない', () => {
+  for (const { name, src } of PAGES) {
+    const m = src.match(/description=(?:"([^"]*)"|\{`([^`]*)`\})/);
+    assert.ok(m, `${name}: description が読めない`);
+    const desc = m[1] || m[2] || '';
+    assert.equal(/無料(?:公開|予想|で提供)/.test(desc), false,
+      `${name}: description が実態と食い違っている: ${desc}`);
+    assert.ok(desc.includes('プレビュー'), `${name}: description にプレビューの明示が無い`);
+  }
+});

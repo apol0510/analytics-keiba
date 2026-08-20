@@ -60,15 +60,15 @@ const formatDate = (date: string | null): string => {
   return `${parseInt(m, 10)}月${parseInt(d, 10)}日`;
 };
 
-const pageTitle = '無料AI予想';
-const pageDescription = '中央競馬（JRA）と南関競馬の無料AI予想。XGBoost・LSTMによる高精度予想を毎日無料公開。';
+const pageTitle = 'AI予想プレビュー';
+const pageDescription = '中央競馬（JRA）と南関競馬の AI 予想プレビュー。出走馬と印は毎日公開、買い目は有料版で公開しています。';
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>
   <div class="free-prediction-hub">
     <div class="page-header">
-      <h1 class="page-title">🎁 無料AI予想</h1>
-      <p class="page-subtitle">中央競馬（JRA）と南関競馬の無料予想を毎日公開</p>
+      <h1 class="page-title">🎁 AI予想プレビュー</h1>
+      <p class="page-subtitle">中央競馬（JRA）と南関競馬の予想を毎日公開。買い目は有料版で公開しています</p>
       <p class="page-description">
         XGBoost・LSTM・ニューラルネットワークによる高精度AI予想。<br>
         どちらのカテゴリの予想を見ますか？
@@ -82,7 +82,7 @@ const pageDescription = '中央競馬（JRA）と南関競馬の無料AI予想�
           <span class="card-title">中央競馬（JRA）</span>
         </div>
         <p class="card-summary">
-          東京・中山・京都・阪神を中心とするJRA全10場の無料予想。重賞レースを含む全レースを毎週末公開。
+          東京・中山・京都・阪神を中心とする JRA 全10場。重賞を含む全レースの出走馬と印を毎週末公開。
         </p>
         <div class="card-venues">
           <span class="venue-tag">東京</span>
@@ -95,7 +95,7 @@ const pageDescription = '中央競馬（JRA）と南関競馬の無料AI予想�
           <span class="latest-badge">📅 最新: {formatDate(jraLatest)}の予想を公開中</span>
         )}
         <div class="card-actions">
-          <a href="/free-prediction/jra/" class="btn-primary">🎯 JRA無料予想を見る</a>
+          <a href="/free-prediction/jra/" class="btn-primary">🎯 JRA のプレビューを見る</a>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ const pageDescription = '中央競馬（JRA）と南関競馬の無料AI予想�
           <span class="card-title">南関競馬</span>
         </div>
         <p class="card-summary">
-          大井・川崎・船橋・浦和の南関4場の無料予想。平日夜のナイター開催を含む全レースを毎日公開。
+          大井・川崎・船橋・浦和の南関4場。ナイター開催を含む全レースの出走馬と印を毎日公開。
         </p>
         <div class="card-venues">
           <span class="venue-tag">大井</span>
@@ -117,7 +117,7 @@ const pageDescription = '中央競馬（JRA）と南関競馬の無料AI予想�
           <span class="latest-badge">📅 最新: {formatDate(nankanLatest)}の予想を公開中</span>
         )}
         <div class="card-actions">
-          <a href="/free-prediction/nankan/" class="btn-primary">🎯 南関無料予想を見る</a>
+          <a href="/free-prediction/nankan/" class="btn-primary">🎯 南関 のプレビューを見る</a>
         </div>
       </div>
     </div>

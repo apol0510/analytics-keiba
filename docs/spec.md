@@ -202,7 +202,7 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 
 | | |
 |---|---|
-| 仮 URL | `/race-viewpoints/{jra,nankan}/`（**未確定**。確定まで nav へ載せず `noindex`）|
+| URL | `/race-viewpoints/{jra,nankan}/`（**2026-08-20 に nav 掲載・`noindex` 解除**。nav / フッター / トップページでの呼び名は「**無料予想**」。URL 名称そのものは未確定で、変更する場合は 301 リダイレクトが要る）|
 | 判定の単一源 | `astro-site/src/lib/freeViewpoints/raceViewpoints.js`（純粋・I/O なし）|
 | しきい値の単一源 | `astro-site/src/lib/freeViewpoints/thresholds.js`（**凍結値**）|
 | 文言の単一源 | `astro-site/src/lib/freeViewpoints/copy.js`（**仮文言**・有限集合）|
@@ -277,7 +277,9 @@ DTO に `pt` / AI総合指数 / 役割 / 特徴量 / 買い目は含まれない
 
 #### 未確定（MK 目視確認が必要）
 
-**URL・ページ名称・最終コピー**は未確定。実装は仮ルート `/race-viewpoints/` と仮文言で進めてある。
+**ページ名称・最終コピー**は未確定（実装は仮文言）。
+2026-08-20 に MK 判断で **nav 掲載（独立トップ項目「🔍 レースの見どころ」）と `noindex` 解除**を実施した。
+URL を変える場合は **301 リダイレクトが必要**になる点に注意。
 
 ### `/results-showcase/` との関係（既存の例外を変えない）
 
