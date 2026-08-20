@@ -314,6 +314,12 @@ const LEGEND = [
                     <a class="rvb-cta-b" href="/pricing/">{PAID_CTA.planLabel}</a>
                   </div>
                 </div>
+
+                <div class="rvb-closebar">
+                  <button type="button" class="rvb-closebtn" data-close-race={race.raceNumber}>
+                    <span aria-hidden="true">✕</span>{race.raceNumber}R を閉じる
+                  </button>
+                </div>
               </div>
             </details>
           </li>
@@ -399,6 +405,37 @@ const LEGEND = [
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
     else apply();
+  })();
+
+  // ── アコーディオンを閉じやすくする ────────────────────────────
+  // 開くと中身が長くなる（1 レースで出走馬 10 数頭 × 過去 5 走）ため、
+  //   ① 中身の末尾に「閉じる」ボタンを置き、スクロール中も押せるよう sticky にする
+  //   ② 閉じたらそのレースの見出しへ戻す（どこにいるか分からなくならないように）
+  //   ③ 別のレースを開いたら前のレースは自動で閉じる（同時に開くのは 1 つ）
+  (function raceAccordionClose() {
+    function closeRace(details) {
+      const row = details.closest('.rvb-row') || details;
+      details.open = false;
+      // 閉じた直後に見出しが画面外だと迷子になるので、必要なときだけ戻す
+      const top = row.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+    document.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest('[data-close-race]') : null;
+      if (!btn) return;
+      const details = btn.closest('details.rvb-detail');
+      if (details) closeRace(details);
+    });
+    // 同時に開くのは 1 つだけ
+    document.addEventListener('toggle', (e) => {
+      const el = e.target;
+      if (!(el instanceof HTMLDetailsElement) || !el.classList.contains('rvb-detail') || !el.open) return;
+      document.querySelectorAll('details.rvb-detail[open]').forEach((other) => {
+        if (other !== el) other.open = false;
+      });
+    }, true);
   })();
 
   // details の開閉状態を class でも持たせる（CSS だけでなく状態として識別できるように）
@@ -628,4 +665,14 @@ const LEGEND = [
     .mh-chg { grid-area: chg; justify-content: flex-start; }
     .mh-when { grid-area: when; } .mh-where { grid-area: where; } .mh-rank { grid-area: rank; }
   }
+
+  /* 開いた内容の末尾に置く閉じるバー。長い中身をスクロール中も押せるよう sticky */
+  .rvb-closebar { position: sticky; bottom: 0; margin: 12px -12px -14px; padding: 8px 12px 10px;
+    background: linear-gradient(to top, rgba(8,47,73,.97) 60%, rgba(8,47,73,0));
+    display: flex; justify-content: center; }
+  .rvb-closebtn { cursor: pointer; border: 1px solid #22d3ee; background: rgba(34,211,238,.16); color: #ecfeff;
+    font-weight: 700; font-size: .84rem; padding: 8px 20px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 7px; }
+  .rvb-closebtn:hover { background: #22d3ee; color: #082f49; }
+  @media (max-width: 640px) { .rvb-closebtn { width: 100%; justify-content: center; } }
 </style>
