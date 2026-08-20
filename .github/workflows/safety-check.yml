@@ -165,6 +165,10 @@ jobs:
         working-directory: astro-site
         run: npm run test:jra-history-join
 
+      - name: Verify 無料「レースの見どころ」判定（しきい値凍結・有料値非露出・状態の分離）
+        working-directory: astro-site
+        run: npm run test:free-viewpoints
+
       - name: Verify prune 後の SSR 成果物に実行時データが残っている
         working-directory: astro-site
         run: npm run check:ssr-runtime-data
