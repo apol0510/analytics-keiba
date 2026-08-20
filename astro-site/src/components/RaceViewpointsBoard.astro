@@ -531,7 +531,13 @@ const LEGEND = [
 
   .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
   .rvb-time { color: #cbd5e1; font-variant-numeric: tabular-nums; font-size: .85rem; }
-  .rvb-r { font-weight: 800; color: #38bdf8; min-width: 2.6em; }
+  /* レース番号（2026-08-21・MK 目視判断）。
+     もとは #38bdf8 で、閉じたアコーディオンの塗りと**同じ水色**だったため、
+     1 枚のカードに水色の要素が 2 つ並んでいた。薄い緑へ変更して分離する。
+     枠も塗りも付けない（文字色だけ）。番号は識別子なので装飾を足さない。
+     ⚠️ 濃い緑（#16a34a 5.3:1）ではなく薄い緑（#86efac **12.4:1**）を選んでいる。
+        濃い色は暗い濃紺の背景に沈み、番号が読みにくくなる。 */
+  .rvb-r { font-weight: 800; color: #86efac; min-width: 2.6em; }
   .rvb-name { font-weight: 700; color: #f1f5f9; }
   .rvb-meta { color: #cbd5e1; font-size: .82rem; margin-left: auto; }
 

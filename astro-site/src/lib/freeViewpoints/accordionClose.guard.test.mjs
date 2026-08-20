@@ -88,3 +88,37 @@ test('summary でのトグルは残す（閉じ方を 1 つに減らさない）
     }
   });
 }
+
+/* ── レース番号の色（2026-08-21 追加） ────────────────────────────
+   もとは #38bdf8 で、閉じたアコーディオンの塗りと同じ水色だったため
+   1 枚のカードに水色が 2 つ並んでいた。薄い緑へ分離した。
+   濃い色に変えると暗い背景に沈むので、明るさを保つことも固定する。 */
+{
+  const style = board.slice(board.indexOf('<style'), board.lastIndexOf('</style>'));
+  const rule = (style.match(/\.rvb-r\s*\{([^}]*)\}/) || [])[1] || '';
+  const color = (rule.match(/color:\s*(#[0-9a-fA-F]{6})/) || [])[1] || '';
+
+  test('レース番号がアコーディオンと同じ水色に戻っていない', () => {
+    assert.ok(color, '.rvb-r の色指定が読めない');
+    assert.notEqual(color.toLowerCase(), '#38bdf8',
+      'レース番号が閉じたアコーディオンと同じ水色。カード内で水色が 2 つになる');
+  });
+
+  test('レース番号に枠や塗りを足していない（識別子なので装飾しない）', () => {
+    for (const deco of ['background:', 'border:']) {
+      assert.equal(rule.includes(deco), false, `.rvb-r に ${deco} を足している`);
+    }
+  });
+
+  test('レース番号が暗い背景に沈まない明るさである', () => {
+    // 濃紺のカード背景に対するコントラスト比が 4.5:1 以上（小さい文字の推奨値）。
+    const rgb = [1, 3, 5].map((i) => parseInt(color.substr(i, 2), 16));
+    const lum = (c) => {
+      const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (Math.max(lum(rgb), lum([16, 26, 45])) + 0.05) / (Math.min(lum(rgb), lum([16, 26, 45])) + 0.05);
+    assert.ok(ratio >= 4.5,
+      `レース番号のコントラストが ${ratio.toFixed(1)}:1。暗い背景に沈んで読みにくい（4.5:1 以上にすること）`);
+  });
+}
