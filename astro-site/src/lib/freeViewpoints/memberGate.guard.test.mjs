@@ -106,3 +106,38 @@ test('/free-signup/ が「登録しなくても見られるもの」を特典と
   assert.ok(signup.includes('/race-viewpoints/') || signup.includes('出走間隔'),
     '拡張表示が特典として書かれていない');
 });
+
+// ─── レイアウト（重なり事故の再発防止）─────────────────────────
+
+test('会員行は既存チップ行と別の grid-area を使う（重ねない）', () => {
+  // 2026-08-20: .rvb-member-row に grid-area: chips を割り当てて
+  // .rvb-horse-chips と同じセルに重なり、文字が重なって読めなくなった。
+  const memberArea = board.match(/\.rvb-member-row\s*\{[^}]*grid-area:\s*([a-z]+)/);
+  const chipsArea = board.match(/\.rvb-horse-chips\s*\{[^}]*grid-area:\s*([a-z]+)/);
+  assert.ok(memberArea && chipsArea, 'grid-area の指定が読めない');
+  assert.notEqual(memberArea[1], chipsArea[1],
+    `会員行とチップ行が同じ grid-area (${memberArea[1]}) を共有している。重なって読めなくなる`);
+});
+
+test('grid-template-areas に会員行の領域が定義されている（PC・モバイル両方）', () => {
+  const areas = [...board.matchAll(/grid-template-areas:\s*([^;]+);/g)].map((m) => m[1]);
+  const horseAreas = areas.filter((a) => a.includes('mark') && a.includes('chips'));
+  assert.ok(horseAreas.length >= 2, `出走馬行の grid-template-areas が 2 つ（PC/モバイル）無い: ${horseAreas.length}`);
+  for (const a of horseAreas) {
+    assert.ok(a.includes('member'), `member 領域が未定義: ${a}`);
+  }
+});
+
+test('同じ grid-area を 2 つ以上の要素へ割り当てない', () => {
+  const used = [...board.matchAll(/\.([a-z-]+)\s*\{[^}]*grid-area:\s*([a-z]+)/g)]
+    .map((m) => ({ cls: m[1], area: m[2] }));
+  const byArea = new Map();
+  for (const { cls, area } of used) {
+    if (!byArea.has(area)) byArea.set(area, new Set());
+    byArea.get(area).add(cls);
+  }
+  for (const [area, classes] of byArea) {
+    assert.equal(classes.size, 1,
+      `grid-area: ${area} を ${[...classes].join(' / ')} が共有している（重なる）`);
+  }
+});

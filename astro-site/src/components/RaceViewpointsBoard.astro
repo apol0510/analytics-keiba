@@ -178,20 +178,22 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
 
                           {h.extras && (
                             <span class="rvb-member-row" data-member-only>
-                              {h.extras.interval && (
-                                <span class="rvb-mchip mchip-interval">
-                                  <span aria-hidden="true">🗓</span>{h.extras.interval.label}
-                                  <span class="rvb-mchip-sub">{h.extras.interval.days}日</span>
-                                </span>
-                              )}
-                              {h.extras.bodyWeight && (
-                                <span class="rvb-mchip mchip-weight">
-                                  <span aria-hidden="true">⚖</span>前走 {h.extras.bodyWeight.latest}kg
-                                  {h.extras.bodyWeight.diff !== null && (
-                                    <span class="rvb-mchip-sub">{h.extras.bodyWeight.diff > 0 ? '+' : ''}{h.extras.bodyWeight.diff}</span>
-                                  )}
-                                </span>
-                              )}
+                              <span class="rvb-member-chips">
+                                {h.extras.interval && (
+                                  <span class="rvb-mchip mchip-interval">
+                                    <span aria-hidden="true">🗓</span>{h.extras.interval.label}
+                                    <span class="rvb-mchip-sub">{h.extras.interval.days}日</span>
+                                  </span>
+                                )}
+                                {h.extras.bodyWeight && (
+                                  <span class="rvb-mchip mchip-weight">
+                                    <span aria-hidden="true">⚖</span>前走 {h.extras.bodyWeight.latest}kg
+                                    {h.extras.bodyWeight.diff !== null && (
+                                      <span class="rvb-mchip-sub">{h.extras.bodyWeight.diff > 0 ? '+' : ''}{h.extras.bodyWeight.diff}</span>
+                                    )}
+                                  </span>
+                                )}
+                              </span>
                               {h.extras.history.length > 0 && (
                                 <span class="rvb-mhist">
                                   <span class="rvb-mhist-label">{MEMBER_EXTRAS.historyHeading}</span>
@@ -398,7 +400,7 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
   .rvb-horses-head { font-size: .88rem; font-weight: 800; color: #f8fafc; margin: 0 0 3px; }
   .rvb-horses-note { font-size: .72rem; color: #cbd5e1; margin: 0 0 8px; }
   .rvb-horse-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
-  .rvb-horse { display: grid; grid-template-columns: 26px 30px minmax(6.5em, 1fr) auto; grid-template-areas: 'mark num name sub' 'chips chips chips chips' 'prev prev prev prev'; gap: 2px 8px; align-items: baseline; padding: 6px 8px; border-radius: 8px; background: rgba(30,41,59,.55); border-left: 3px solid transparent; }
+  .rvb-horse { display: grid; grid-template-columns: 26px 30px minmax(6.5em, 1fr) auto; grid-template-areas: 'mark num name sub' 'chips chips chips chips' 'member member member member' 'prev prev prev prev'; gap: 2px 8px; align-items: baseline; padding: 6px 8px; border-radius: 8px; background: rgba(30,41,59,.55); border-left: 3px solid transparent; }
   .rvb-horse.hm-main { border-left-color: #ef4444; background: rgba(239,68,68,.12); }
   .rvb-horse.hm-sub { border-left-color: #f59e0b; background: rgba(245,158,11,.1); }
   .rvb-horse.hm-tana { border-left-color: #22c55e; background: rgba(34,197,94,.1); }
@@ -432,7 +434,7 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
   @media (max-width: 640px) {
     .rvb-title { font-size: 1.35rem; }
     .rvb-meta { margin-left: 0; width: 100%; }
-    .rvb-horse { grid-template-columns: 24px 26px 1fr; grid-template-areas: 'mark num name' 'sub sub sub' 'prev prev prev' 'chips chips chips'; }
+    .rvb-horse { grid-template-columns: 24px 26px 1fr; grid-template-areas: 'mark num name' 'sub sub sub' 'prev prev prev' 'chips chips chips' 'member member member'; }
     .rvb-horse-sub { text-align: left; }
   }
 
@@ -440,14 +442,18 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
   [data-member-only] { display: none; }
   [data-member-only].is-unlocked { display: block; }
   span[data-member-only].is-unlocked { display: flex; }
+  .rvb-member-row[data-member-only].is-unlocked { display: flex; flex-direction: column; }
   [data-guest-only].is-hidden { display: none; }
 
-  .rvb-member-row { grid-area: chips; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; padding-top: 5px; border-top: 1px dotted rgba(148,163,184,.3); width: 100%; }
+  /* chips とは別の行に置く（同じ grid-area を共有すると重なる）。
+     チップ行と履歴行を縦に積むため column にする。 */
+  .rvb-member-row { grid-area: member; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; padding-top: 5px; border-top: 1px dotted rgba(148,163,184,.3); width: 100%; min-width: 0; }
+  .rvb-member-chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .rvb-mchip { font-size: .7rem; padding: 2px 7px; border-radius: 6px; border: 1px solid; display: inline-flex; gap: 4px; align-items: center; }
   .rvb-mchip-sub { opacity: .85; font-size: .66rem; }
   .mchip-interval { color: #a5f3fc; border-color: #06b6d4; background: rgba(6,182,212,.16); }
   .mchip-weight { color: #fbcfe8; border-color: #ec4899; background: rgba(236,72,153,.16); }
-  .rvb-mhist { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; width: 100%; margin-top: 3px; }
+  .rvb-mhist { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; width: 100%; min-width: 0; margin-top: 0; }
   .rvb-mhist-label { font-size: .66rem; color: #94a3b8; }
   .rvb-mhist-item { font-size: .68rem; padding: 1px 6px; border-radius: 5px; background: rgba(100,116,139,.25); color: #e2e8f0; border: 1px solid transparent; }
   .rvb-mhist-item.is-vchg { border-color: #22c55e; color: #bbf7d0; }
