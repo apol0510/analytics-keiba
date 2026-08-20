@@ -56,6 +56,21 @@ const tagEvidence = (tag: string, c: any) => {
 };
 
 const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyCompare'] as const;
+
+// 凡例。**説明は本文として常に出す**（title 属性はマウスを止めないと出ず、スマホでは出ないため）
+// 「何走前か」の呼び方。5 走まで出す
+const RACE_AGO = ['前走', '2走前', '3走前', '4走前', '5走前'];
+
+const LEGEND = [
+  { kind: 'distance', icon: '⇔', label: '距離替わり', desc: '前回とちがう距離を走る馬がいる' },
+  { kind: 'course', icon: '◇', label: '初コース', desc: 'この競馬場を走るのが初めての馬がいる' },
+  { kind: 'jockey', icon: '⇄', label: '乗り替わり', desc: '前回とちがう騎手が乗る馬がいる' },
+  { kind: 'compare', icon: '≡', label: '前走と近い条件', desc: '前回と似た条件なので見比べやすい' },
+  { kind: 'contrast', icon: '≠', label: '比べにくい', desc: '条件がちがい、前回の着順を並べても比べにくい' },
+  { kind: 'neutral', icon: '＝', label: '目立つ変化なし', desc: '確認したが、大きく変わった点はなかった' },
+  { kind: 'nodata', icon: '—', label: '近走なし', desc: '出走馬に前回のレースの記録がない（新馬戦など）' },
+  { kind: 'pending', icon: '⏳', label: '準備中', desc: '出走馬の近走をまだ全頭ぶん確認できていない' },
+];
 ---
 
 <section class="rvb">
@@ -93,14 +108,12 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
     </div>
 
     <ul class="rvb-legend">
-      <li class="lg lg-distance" title="前回とちがう距離を走る"><span class="lg-ic">⇔</span>距離替わり</li>
-      <li class="lg lg-course" title="この競馬場を走るのが初めて"><span class="lg-ic">◇</span>初コース</li>
-      <li class="lg lg-jockey" title="前回とちがう騎手が乗る"><span class="lg-ic">⇄</span>乗り替わり</li>
-      <li class="lg lg-compare" title="前回と似た条件なので見比べやすい"><span class="lg-ic">≡</span>前走と近い条件</li>
-      <li class="lg lg-contrast" title="前回と条件がちがうので並べても比べにくい"><span class="lg-ic">≠</span>比べにくい</li>
-      <li class="lg lg-neutral"><span class="lg-ic">＝</span>目立つ変化なし</li>
-      <li class="lg lg-nodata"><span class="lg-ic">—</span>近走なし</li>
-      <li class="lg lg-pending"><span class="lg-ic">⏳</span>準備中</li>
+      {LEGEND.map((l) => (
+        <li class={`lg lg-${l.kind}`}>
+          <span class="lg-chip"><span class="lg-ic">{l.icon}</span>{l.label}</span>
+          <span class="lg-desc" data-help>{l.desc}</span>
+        </li>
+      ))}
     </ul>
   </header>
 
@@ -143,7 +156,7 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
                 ? race.result.tags.map((t: string) => {
                     const ev = tagEvidence(t, race.result.counts);
                     return (
-                      <span class={`rvb-tag tag-${TAG_KIND[t] || 'other'}`} title={TERM_HELP[t] || ''}>
+                      <span class={`rvb-tag tag-${TAG_KIND[t] || 'other'}`}>
                         <span class="rvb-tag-ic">{TAG_ICON[t]}</span>{TAG_LABEL[t]}
                         {ev && ev.of ? <span class="rvb-tag-n">{ev.of}頭中{ev.n}頭</span> : null}
                       </span>
@@ -155,6 +168,12 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
                   </span>
                 )}
             </div>
+
+            {race.result.state === RACE_STATE.TAGGED && (
+              <p class="rvb-tag-help" data-help>
+                {race.result.tags.map((t: string) => TERM_HELP[t]).filter(Boolean).join(' ')}
+              </p>
+            )}
 
             <details class="rvb-detail" data-race={race.raceNumber}>
               <summary class="rvb-detail-sum">
@@ -200,7 +219,7 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
                           <span class="rvb-horse-chips">
                             {h.changes
                               ? CHIP_ORDER.filter((k) => h.changes[k]).map((k) => (
-                                  <span class={`rvb-chip chip-${HORSE_CHANGE_CHIP[k].kind}`} title={CHIP_HELP[k]}>
+                                  <span class={`rvb-chip chip-${HORSE_CHANGE_CHIP[k].kind}`}>
                                     <span aria-hidden="true">{HORSE_CHANGE_CHIP[k].icon}</span>{HORSE_CHANGE_CHIP[k].label}
                                   </span>
                                 ))
@@ -211,13 +230,13 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
                             <span class="rvb-member-row" data-member-only>
                               <span class="rvb-member-chips">
                                 {h.extras.interval && (
-                                  <span class="rvb-mchip mchip-interval" title={CHIP_HELP.interval}>
+                                  <span class="rvb-mchip mchip-interval">
                                     <span aria-hidden="true">🗓</span>前走から{h.extras.interval.days}日ぶり
                                     <span class="rvb-mchip-sub">{h.extras.interval.label}</span>
                                   </span>
                                 )}
                                 {h.extras.bodyWeight && (
-                                  <span class="rvb-mchip mchip-weight" title={CHIP_HELP.bodyWeight}>
+                                  <span class="rvb-mchip mchip-weight">
                                     <span aria-hidden="true">⚖</span>前走の体重 {h.extras.bodyWeight.latest}kg
                                     {h.extras.bodyWeight.diff !== null && (
                                       <span class="rvb-mchip-sub">{h.extras.bodyWeight.diff > 0 ? '+' : ''}{h.extras.bodyWeight.diff}</span>
@@ -228,12 +247,20 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
                               {h.extras.history.length > 0 && (
                                 <span class="rvb-mhist">
                                   <span class="rvb-mhist-label">{MEMBER_EXTRAS.historyHeading}</span>
-                                  {h.extras.history.map((p) => (
-                                    <span class={`rvb-mhist-item${p.venueChanged ? ' is-vchg' : ''}${p.distanceChanged ? ' is-dchg' : ''}`}>
-                                      {p.venue || '—'}{p.distance ? ` ${p.distance}m` : ''}
-                                      {p.finish != null && p.finish !== '' ? ` ${p.finish}着` : ''}
-                                    </span>
-                                  ))}
+                                  <span class="rvb-mhist-help" data-help>{MEMBER_EXTRAS.historyHelp}</span>
+                                  <span class="rvb-mhist-rows">
+                                    {h.extras.history.map((p, i) => (
+                                      <span class="rvb-mhist-row">
+                                        <span class="mh-when">{RACE_AGO[i] || `${i + 1}走前`}</span>
+                                        <span class="mh-where">{p.venue || '—'}{p.distance ? ` ${p.distance}m` : ''}</span>
+                                        <span class="mh-rank">{p.finish != null && p.finish !== '' ? `${p.finish}着` : '—'}</span>
+                                        <span class="mh-chg">
+                                          {p.venueChanged && <span class="mh-badge mh-v">コースが変わった</span>}
+                                          {p.distanceChanged && <span class="mh-badge mh-d">距離が変わった</span>}
+                                        </span>
+                                      </span>
+                                    ))}
+                                  </span>
                                 </span>
                               )}
                             </span>
@@ -393,9 +420,11 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
   .rvb-lead { color: #e2e8f0; font-size: .92rem; line-height: 1.85; max-width: 660px; margin: 0 auto 14px; }
 
   /* 凡例: 色 + 記号 + 文字 で意味を示す */
-  .rvb-legend { list-style: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 0; padding: 0; }
-  .lg { font-size: .74rem; padding: 3px 9px; border-radius: 999px; border: 1px solid; display: inline-flex; align-items: center; gap: 4px; }
-  .lg-ic { font-weight: 700; }
+  .rvb-legend { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; margin: 0 auto; padding: 0; max-width: 900px; }
+  .lg { font-size: .74rem; padding: 6px 10px; border-radius: 10px; border: 1px solid; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; }
+  .lg-chip { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+  .lg-ic { font-weight: 800; }
+  .lg-desc { font-size: .7rem; opacity: .92; line-height: 1.55; font-weight: 400; }
   .lg-distance { color: #fde68a; border-color: #f59e0b; background: rgba(245,158,11,.16); }
   .lg-course   { color: #bbf7d0; border-color: #22c55e; background: rgba(34,197,94,.16); }
   .lg-jockey   { color: #ddd6fe; border-color: #8b5cf6; background: rgba(139,92,246,.18); }
@@ -528,9 +557,6 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
   .mchip-weight { color: #fbcfe8; border-color: #ec4899; background: rgba(236,72,153,.16); }
   .rvb-mhist { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; width: 100%; min-width: 0; margin-top: 0; }
   .rvb-mhist-label { font-size: .66rem; color: #94a3b8; }
-  .rvb-mhist-item { font-size: .68rem; padding: 1px 6px; border-radius: 5px; background: rgba(100,116,139,.25); color: #e2e8f0; border: 1px solid transparent; }
-  .rvb-mhist-item.is-vchg { border-color: #22c55e; color: #bbf7d0; }
-  .rvb-mhist-item.is-dchg { border-color: #f59e0b; color: #fde68a; }
 
   .rvb-member { margin-top: 12px; border: 1px solid rgba(6,182,212,.45); border-radius: 10px; background: rgba(6,182,212,.07); padding: 10px 12px; }
   .rvb-member-head { margin: 0 0 8px; font-size: .84rem; font-weight: 800; color: #a5f3fc; }
@@ -576,4 +602,30 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
   .rvb-help::before { content: '↳'; position: absolute; left: 0; color: #22d3ee; }
   :root[data-rvb-help="off"] .rvb-help { display: none; }
   :root[data-rvb-help="off"] .rvb-tag-n { opacity: .75; }
+
+  /* 一覧のタグに付ける説明（title に頼らない・スマホでも読める） */
+  .rvb-tag-help { margin: 5px 0 0; font-size: .76rem; line-height: 1.7; color: #a5f3fc; padding-left: 1.1em; position: relative; }
+  .rvb-tag-help::before { content: '↳'; position: absolute; left: 0; color: #22d3ee; }
+  :root[data-rvb-help="off"] .rvb-tag-help { display: none; }
+  :root[data-rvb-help="off"] .lg-desc { display: none; }
+  :root[data-rvb-help="off"] .lg { flex-direction: row; align-items: center; border-radius: 999px; padding: 3px 9px; }
+  :root[data-rvb-help="off"] .rvb-legend { display: flex; flex-wrap: wrap; justify-content: center; }
+
+  /* 前回までのレース: 何走前 / どこで / 何着 / 何が変わった の 4 列 */
+  .rvb-mhist-help { font-size: .7rem; color: #94a3b8; line-height: 1.6; width: 100%; }
+  :root[data-rvb-help="off"] .rvb-mhist-help { display: none; }
+  .rvb-mhist-rows { display: grid; gap: 3px; width: 100%; margin-top: 3px; }
+  .rvb-mhist-row { display: grid; grid-template-columns: 4.2em minmax(7em, 1fr) 3.2em auto; gap: 6px; align-items: baseline; font-size: .74rem; background: rgba(15,23,42,.45); border-radius: 5px; padding: 3px 7px; }
+  .mh-when { color: #94a3b8; }
+  .mh-where { color: #e2e8f0; }
+  .mh-rank { color: #f1f5f9; font-weight: 700; text-align: right; }
+  .mh-chg { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+  .mh-badge { font-size: .66rem; padding: 1px 6px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+  .mh-v { color: #bbf7d0; border-color: #22c55e; background: rgba(34,197,94,.16); }
+  .mh-d { color: #fde68a; border-color: #f59e0b; background: rgba(245,158,11,.16); }
+  @media (max-width: 640px) {
+    .rvb-mhist-row { grid-template-columns: 3.8em 1fr 3em; grid-template-areas: 'when where rank' 'chg chg chg'; }
+    .mh-chg { grid-area: chg; justify-content: flex-start; }
+    .mh-when { grid-area: when; } .mh-where { grid-area: where; } .mh-rank { grid-area: rank; }
+  }
 </style>

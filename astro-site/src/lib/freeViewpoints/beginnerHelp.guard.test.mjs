@@ -103,8 +103,28 @@ test('使い方ブロックとかんたん表示トグルが実装されてい�
   assert.ok(HELP_TOGGLE.on && HELP_TOGGLE.off, 'トグルの文言が無い');
 });
 
-test('凡例の記号に説明が付いている（記号だけにしない）', () => {
-  const legend = board.slice(board.indexOf('rvb-legend'), board.indexOf('</ul>', board.indexOf('rvb-legend')));
-  const titled = (legend.match(/title="/g) || []).length;
-  assert.ok(titled >= 5, `凡例の説明が足りない（${titled} 件）`);
+test('凡例の説明は本文として出す（title 属性に隠さない）', () => {
+  // title 属性はマウスを止めないと出ず、スマホでは出ない。初心者向けの説明を隠す場所にしない。
+  assert.equal(board.includes('title='), false, 'title 属性に説明を隠している');
+  const m = board.match(/const LEGEND = \[([\s\S]*?)\];/);
+  assert.ok(m, '凡例データが無い');
+  const descs = [...m[1].matchAll(/desc:\s*'([^']+)'/g)].map((x) => x[1]);
+  assert.ok(descs.length >= 8, `凡例の説明が足りない（${descs.length} 件）`);
+  for (const d of descs) assert.ok(d.length >= 8, `説明が短すぎる: ${d}`);
+  assert.ok(board.includes('lg-desc'), '凡例の説明を描画していない');
+});
+
+test('一覧のタグにも説明を本文で出す', () => {
+  assert.ok(board.includes('rvb-tag-help'), 'タグの説明行が無い');
+  assert.ok(/rvb-tag-help[\s\S]{0,200}TERM_HELP/.test(board), '説明にやさしい言い換えを使っていない');
+});
+
+test('「前回までのレース」は何走前・何が変わったかが分かる形にする', () => {
+  assert.ok(board.includes('RACE_AGO'), '何走前かのラベルが無い');
+  assert.ok(board.includes('前走') && board.includes('2走前'), '走順の呼び方が無い');
+  for (const w of ['コースが変わった', '距離が変わった']) {
+    assert.ok(board.includes(w), `変化を言葉で示していない: ${w}`);
+  }
+  assert.ok(board.includes('mh-when') && board.includes('mh-where') && board.includes('mh-rank'),
+    '何走前 / どこで / 何着 の列がそろっていない');
 });

@@ -160,7 +160,8 @@ export const MEMBER_EXTRAS = Object.freeze({
   unlockedHeading: '会員向けの詳しい情報',
   sameConditionHeading: '同じ条件を使ってきた馬',
   sameConditionEmpty: 'このレースには、前走で同じ会場・近い距離を使った馬がいません。',
-  historyHeading: '条件の移り変わり（新しい順）',
+  historyHeading: '前回までのレース',
+  historyHelp: '新しい順です。前の回とくらべて変わった点に印を付けています。',
 });
 
 
