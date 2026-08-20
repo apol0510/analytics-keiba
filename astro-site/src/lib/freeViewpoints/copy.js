@@ -163,7 +163,64 @@ export const MEMBER_EXTRAS = Object.freeze({
   historyHeading: '条件の移り変わり（新しい順）',
 });
 
+
+/**
+ * 初めての人向けの補足（2026-08-20 追加）。
+ *
+ * 対象は**競馬を始めたばかりの人**。「初コース」「乗り替わり」「中◯週」も知らない前提で書く。
+ *
+ * ⚠️ 書いてよいのは**事実の言い換え**だけ。
+ *    「だから狙える / 危ない」のような**予想の評価は書かない**（`BANNED_JUDGEMENT_WORDS` で検査）。
+ */
+
+/** タグ・チップの用語をやさしく言い換えた注釈。 */
+export const TERM_HELP = Object.freeze({
+  [TAG.DISTANCE_CHANGE]: '前回より長い（または短い）距離を走る馬が多いレースです。',
+  [TAG.FIRST_COURSE]: 'この競馬場を走るのが初めての馬が多いレースです。',
+  [TAG.JOCKEY_CHANGE]: '前回と違う騎手が乗る馬が多いレースです。',
+  [TAG.EASY_COMPARE]: '前回と似た条件で走る馬が多いので、前回の結果をそのまま見比べやすいレースです。',
+  [TAG.HARD_COMPARE]: '前回と条件が違う馬が多いので、前回の着順だけを並べても比べにくいレースです。',
+});
+
+/** 馬ごとのチップの注釈。 */
+export const CHIP_HELP = Object.freeze({
+  distanceChanged: '前回と走る距離が 200m 以上ちがいます。',
+  firstCourse: 'この競馬場で走るのは初めてです。',
+  jockeyChanged: '前回とちがう騎手が乗ります。',
+  easyCompare: '前回と同じ競馬場・近い距離なので、前回の結果を参考にしやすい馬です。',
+  interval: '前回のレースからどれくらい間が空いたかです。',
+  bodyWeight: '前回のレースのときの体重と、その前の回からの増減です。',
+});
+
+/** 「中◯週」など、そのままでは読めない言い方の補足。 */
+export const INTERVAL_HELP = Object.freeze({
+  連闘: '前の週にも走ったばかりです。',
+  休養明け: '3か月ちかく走っていませんでした。',
+  default: '前回のレースからの空き具合です。',
+});
+
+/** ページの使い方（初回だけ開いて見せる）。 */
+export const HOW_TO_USE = Object.freeze({
+  heading: 'このページの使い方',
+  lead: '今日走る全レースについて、出走馬の「前回のレース」と何がちがうかをまとめています。',
+  steps: Object.freeze([
+    { title: 'まず一覧をながめる', body: '各レースに付いた印で、そのレースの特徴がひと目で分かります。' },
+    { title: '気になるレースを開く', body: '「このレースの見かたと出走馬」を押すと、出走する馬の一覧が出ます。' },
+    { title: '馬ごとのちがいを見る', body: 'どの馬の条件が前回から変わったのかが、馬ごとに分かります。' },
+  ]),
+  note: '買い目（どの馬を買うか）は有料版で公開しています。このページには含みません。',
+  toggleOpen: '使い方を見る',
+  toggleClose: '使い方を閉じる',
+});
+
+/** 用語補足の出し分けトグル。 */
+export const HELP_TOGGLE = Object.freeze({
+  on: 'かんたん表示：オン',
+  off: 'かんたん表示：オフ',
+  hint: '競馬用語にやさしい説明を付けます',
+});
+
 export default {
   TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL,
-  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
+  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
 };
