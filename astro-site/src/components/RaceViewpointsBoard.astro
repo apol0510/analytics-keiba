@@ -19,7 +19,7 @@
 import { RACE_STATE } from '../lib/freeViewpoints/raceViewpoints.js';
 import {
   TAG_LABEL, TAG_SENTENCE, TAG_ICON, STATE_LABEL, STATE_SENTENCE, STATE_ICON,
-  HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, coverageNote,
+  HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
 } from '../lib/freeViewpoints/copy.js';
 
 interface Props { view: any; categoryLabel: string; freeUrl: string; }
@@ -175,10 +175,75 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
                                 ))
                               : <span class="rvb-chip chip-none">{HORSE_SECTION.noChanges}</span>}
                           </span>
+
+                          {h.extras && (
+                            <span class="rvb-member-row" data-member-only>
+                              {h.extras.interval && (
+                                <span class="rvb-mchip mchip-interval">
+                                  <span aria-hidden="true">🗓</span>{h.extras.interval.label}
+                                  <span class="rvb-mchip-sub">{h.extras.interval.days}日</span>
+                                </span>
+                              )}
+                              {h.extras.bodyWeight && (
+                                <span class="rvb-mchip mchip-weight">
+                                  <span aria-hidden="true">⚖</span>前走 {h.extras.bodyWeight.latest}kg
+                                  {h.extras.bodyWeight.diff !== null && (
+                                    <span class="rvb-mchip-sub">{h.extras.bodyWeight.diff > 0 ? '+' : ''}{h.extras.bodyWeight.diff}</span>
+                                  )}
+                                </span>
+                              )}
+                              {h.extras.history.length > 0 && (
+                                <span class="rvb-mhist">
+                                  <span class="rvb-mhist-label">{MEMBER_EXTRAS.historyHeading}</span>
+                                  {h.extras.history.map((p) => (
+                                    <span class={`rvb-mhist-item${p.venueChanged ? ' is-vchg' : ''}${p.distanceChanged ? ' is-dchg' : ''}`}>
+                                      {p.venue || '—'}{p.distance ? ` ${p.distance}m` : ''}
+                                      {p.finish != null && p.finish !== '' ? ` ${p.finish}着` : ''}
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>
                   </div>
+                )}
+
+                {race.result.state !== RACE_STATE.UNMATCHED && race.horseRows && race.horseRows.length > 0 && (
+                  <>
+                    <div class="rvb-member" data-member-only>
+                      <h4 class="rvb-member-head">{MEMBER_EXTRAS.unlockedHeading}</h4>
+                      <div class="rvb-samecond">
+                        <span class="rvb-samecond-head">{MEMBER_EXTRAS.sameConditionHeading}</span>
+                        {race.sameCondition && race.sameCondition.length > 0
+                          ? (
+                            <ul class="rvb-samecond-list">
+                              {race.sameCondition.map((r: any) => (
+                                <li class="rvb-samecond-item">
+                                  <span class="sc-num">{r.number}</span>
+                                  <span class="sc-name">{r.name}</span>
+                                  <span class="sc-finish">前走 {r.finish != null && r.finish !== '' ? `${r.finish}着` : '—'}</span>
+                                  <span class="sc-meta">{r.distance ? `${r.distance}m` : ''}{r.bodyWeight ? ` / ${r.bodyWeight}kg` : ''}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )
+                          : <p class="rvb-samecond-empty">{MEMBER_EXTRAS.sameConditionEmpty}</p>}
+                      </div>
+                    </div>
+
+                    <div class="rvb-signup" data-guest-only>
+                      <p class="rvb-signup-head">{MEMBER_EXTRAS.lockedHeading}</p>
+                      <p class="rvb-signup-body">{MEMBER_EXTRAS.lockedBody}</p>
+                      <ul class="rvb-signup-list">
+                        {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
+                      </ul>
+                      <a class="rvb-signup-cta" href="/free-signup/">{MEMBER_EXTRAS.ctaLabel}</a>
+                      <p class="rvb-signup-note">{MEMBER_EXTRAS.note}</p>
+                    </div>
+                  </>
                 )}
 
                 <div class="rvb-cta">
@@ -204,6 +269,36 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
 </section>
 
 <script is:inline>
+  // ── 無料会員向け拡張表示の出し分け ────────────────────────────
+  // 既定は「未登録」の見え方（拡張は隠す / 登録 CTA を出す）。JS で登録済みなら入れ替える。
+  //
+  // ⚠️ これは**クライアント側の soft gate** で、開発者ツールがあれば回避できる。
+  //    ここで隠しているのは**公開事実だけ**（出走間隔・馬体重・過去走の推移）なので、
+  //    回避されても買い目 / pt / AI総合指数 / 役割 / 特徴量は一切漏れない。
+  //    有料情報のゲートには絶対に使わないこと。
+  (function applyMemberGate() {
+    function isRegisteredUser() {
+      // 他ページ（free-prediction / dashboard）と同じ 5 キー OR 判定にそろえる
+      for (const key of ['user-plan', 'userPlan', 'user_plan', 'user_email', 'userEmail', 'auth_data']) {
+        if (localStorage.getItem(key)) return true;
+      }
+      return localStorage.getItem('isLoggedIn') === 'true';
+    }
+    function apply() {
+      let registered = false;
+      try { registered = isRegisteredUser(); } catch { registered = false; }
+      document.querySelectorAll('[data-member-only]').forEach((el) => {
+        el.classList.toggle('is-unlocked', registered);
+      });
+      document.querySelectorAll('[data-guest-only]').forEach((el) => {
+        el.classList.toggle('is-hidden', registered);
+      });
+      document.documentElement.setAttribute('data-rvb-member', registered ? 'true' : 'false');
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+  })();
+
   // details の開閉状態を class でも持たせる（CSS だけでなく状態として識別できるように）
   document.addEventListener('toggle', (e) => {
     const el = e.target;
@@ -340,4 +435,41 @@ const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyComp
     .rvb-horse { grid-template-columns: 24px 26px 1fr; grid-template-areas: 'mark num name' 'sub sub sub' 'prev prev prev' 'chips chips chips'; }
     .rvb-horse-sub { text-align: left; }
   }
+
+  /* ── 無料会員向け拡張（既定は非表示。登録済みで .is-unlocked が付く）── */
+  [data-member-only] { display: none; }
+  [data-member-only].is-unlocked { display: block; }
+  span[data-member-only].is-unlocked { display: flex; }
+  [data-guest-only].is-hidden { display: none; }
+
+  .rvb-member-row { grid-area: chips; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; padding-top: 5px; border-top: 1px dotted rgba(148,163,184,.3); width: 100%; }
+  .rvb-mchip { font-size: .7rem; padding: 2px 7px; border-radius: 6px; border: 1px solid; display: inline-flex; gap: 4px; align-items: center; }
+  .rvb-mchip-sub { opacity: .85; font-size: .66rem; }
+  .mchip-interval { color: #a5f3fc; border-color: #06b6d4; background: rgba(6,182,212,.16); }
+  .mchip-weight { color: #fbcfe8; border-color: #ec4899; background: rgba(236,72,153,.16); }
+  .rvb-mhist { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; width: 100%; margin-top: 3px; }
+  .rvb-mhist-label { font-size: .66rem; color: #94a3b8; }
+  .rvb-mhist-item { font-size: .68rem; padding: 1px 6px; border-radius: 5px; background: rgba(100,116,139,.25); color: #e2e8f0; border: 1px solid transparent; }
+  .rvb-mhist-item.is-vchg { border-color: #22c55e; color: #bbf7d0; }
+  .rvb-mhist-item.is-dchg { border-color: #f59e0b; color: #fde68a; }
+
+  .rvb-member { margin-top: 12px; border: 1px solid rgba(6,182,212,.45); border-radius: 10px; background: rgba(6,182,212,.07); padding: 10px 12px; }
+  .rvb-member-head { margin: 0 0 8px; font-size: .84rem; font-weight: 800; color: #a5f3fc; }
+  .rvb-samecond-head { font-size: .78rem; font-weight: 700; color: #e2e8f0; }
+  .rvb-samecond-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+  .rvb-samecond-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: .78rem; background: rgba(15,23,42,.5); border-radius: 6px; padding: 4px 8px; }
+  .sc-num { font-weight: 800; color: #38bdf8; min-width: 1.6em; text-align: right; }
+  .sc-name { font-weight: 600; color: #f1f5f9; }
+  .sc-finish { color: #a5f3fc; }
+  .sc-meta { color: #94a3b8; font-size: .72rem; margin-left: auto; }
+  .rvb-samecond-empty { margin: 6px 0 0; font-size: .76rem; color: #94a3b8; }
+
+  /* 未登録に出す案内。買い目の話はしない（有料版 CTA と役割を分ける） */
+  .rvb-signup { margin-top: 12px; border: 2px dashed #22c55e; border-radius: 10px; background: rgba(34,197,94,.08); padding: 11px 12px; }
+  .rvb-signup-head { margin: 0 0 5px; font-weight: 800; color: #bbf7d0; font-size: .88rem; }
+  .rvb-signup-body { margin: 0 0 7px; font-size: .8rem; line-height: 1.75; color: #f1f5f9; }
+  .rvb-signup-list { margin: 0 0 9px; padding-left: 1.1em; font-size: .78rem; color: #e2e8f0; line-height: 1.9; }
+  .rvb-signup-cta { display: inline-block; background: #22c55e; color: #052e16; font-weight: 800; font-size: .84rem; padding: 8px 16px; border-radius: 8px; text-decoration: none; }
+  .rvb-signup-cta:hover { background: #4ade80; }
+  .rvb-signup-note { margin: 7px 0 0; font-size: .72rem; color: #cbd5e1; }
 </style>

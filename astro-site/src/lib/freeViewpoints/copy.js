@@ -138,7 +138,32 @@ export const HORSE_SECTION = Object.freeze({
   noChanges: '近走が確認できていないため、条件の変化は出していません。',
 });
 
+
+/**
+ * 無料会員登録で開く拡張表示の文言（仮）。
+ *
+ * ⚠️ ここで約束するのは**公開事実の追加**だけ。
+ *    買い目 / pt / AI総合指数 / 役割 / 特徴量は登録しても出さない。
+ *    「登録すれば買い目が見える」と読める文言を書かないこと（有料価値を壊す）。
+ */
+export const MEMBER_EXTRAS = Object.freeze({
+  lockedHeading: '無料登録で、このレースをもっと詳しく',
+  lockedBody: 'メールアドレスだけで登録できます。登録すると、各馬の出走間隔・馬体重の増減・過去5走の条件の移り変わり、同じ条件を使ってきた馬の比較が見られるようになります。',
+  benefits: Object.freeze([
+    '出走間隔（連闘・中◯週・休養明け）',
+    '前走の馬体重と増減',
+    '過去5走の条件の移り変わり',
+    '同じ会場・近い距離を使ってきた馬の比較',
+  ]),
+  note: '買い目は有料版でのみ公開しています。無料登録では公開されません。',
+  ctaLabel: '無料で登録して詳しく見る →',
+  unlockedHeading: '会員向けの詳しい情報',
+  sameConditionHeading: '同じ条件を使ってきた馬',
+  sameConditionEmpty: 'このレースには、前走で同じ会場・近い距離を使った馬がいません。',
+  historyHeading: '条件の移り変わり（新しい順）',
+});
+
 export default {
   TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL,
-  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
+  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
 };
