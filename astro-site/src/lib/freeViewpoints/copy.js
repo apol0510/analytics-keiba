@@ -190,7 +190,15 @@ export const CHIP_HELP = Object.freeze({
   jockeyChanged: '前回とちがう騎手が乗ります。',
   easyCompare: '前回と同じ競馬場・近い距離なので、前回の結果を参考にしやすい馬です。',
   interval: '前回のレースからどれくらい間が空いたかです。',
+  layoff: '3か月ちかく走っていなかったあと、久しぶりのレースです。',
+  runAfterLayoff: '長い休みのあと、今日が何戦目かです。使われて調子が戻ってくることがあります。',
   bodyWeight: '前回のレースのときの体重と、その前の回からの増減です。',
+});
+
+/** 休み明け・叩き◯戦目の見せ方（仮）。 */
+export const LAYOFF_LABEL = Object.freeze({
+  layoff: { icon: '🏖', label: '休み明け', kind: 'layoff' },
+  runAfterLayoff: { icon: '🔁', kind: 'run' },   // ラベルは「叩き◯戦目」を組み立てる
 });
 
 /** 「中◯週」など、そのままでは読めない言い方の補足。 */
@@ -223,5 +231,5 @@ export const HELP_TOGGLE = Object.freeze({
 
 export default {
   TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL,
-  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
+  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, TERM_HELP, CHIP_HELP, LAYOFF_LABEL, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
 };
