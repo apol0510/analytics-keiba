@@ -131,6 +131,29 @@ curl -s -X POST "$SITE/.netlify/functions/admin-marketing" \
 #   {"action":"rolloutResume", "campaignId":"..."}
 ```
 
+⚠️ **`killed` を解除できるのは `rolloutResume` だけ。** `rolloutStart` は
+**`killed: true` を保持する**（`planRolloutStart` が `killed: base.killed === true`）。
+緊急停止したまま `rolloutStart` しても自動処理は動かない。
+固定テスト: `rolloutControl.test.mjs`「kill 中に start しても止めた事実を消さない」/
+「pause は新規付与だけ止める（killed は触らない）」/「resume で停止が解除される」。
+
+### ⚠️ orphan PENDING を取り消す前に **kill** する（2026-08-19/20 実測）
+
+`stage: paused` は**新規付与しか止めない**（上表のとおり）。したがって
+**orphan PENDING を取り消すと `pendingJobs` が 0 になり、次の tick が
+「積み残しの queue」を実行して同じ相手をもう一度積む**。
+
+2026-08-19 に paused のまま orphan を取り消したところ、翌 00:51Z に automation が
+同じ 100 名を再 queue し、配信行 0 行の **新しい orphan** ができた。
+
+手順は必ず **① `rolloutKill` → ② tick が `skip / kill_switch` になったのをログで確認 →
+③ orphan を `cancelJob` で取消 → ④ 復旧作業**の順にする。
+
+⚠️ 復旧の queue は cron ではなく**管理経路から小分け**（1 回 50 名程度）で行う。
+cron の 1 tick は実測 47〜55 秒に達しており、queue tick の途中で実行が終わると
+**ジョブだけ残って配信行が無い**状態（orphan）になり得る。
+
+
 ⚠️ **`killed: true` でも、既に起動した Background ジョブは取り消せない**（送信中のバッチは走り切る）。
 **送信そのものを確実に止める最終手段は `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy。**
 

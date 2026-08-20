@@ -734,6 +734,71 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-20 — 【本番実行】Light rollout の orphan 修復と Step1 の再 queue（実送信 0）
+
+#385（`55eac327`）本番反映後の救済。**実メールは 1 通も出していない。**
+
+### 判明した運用上の重要事実（ここを間違えると事故る）
+
+**`stage: paused` / `autoStopped: true` は「新規付与」しか止めない。**
+`tickRollout()` が `paused` を見るのは新規付与の判定だけで、
+**① 送信待ちジョブの dispatch 起動 ② 積み残しの queue ③ 期日の follow-up** は
+env gate が開いていれば**進む**（`ACTIVATION_RUNBOOK.md` の 3 段階表のとおり）。
+
+そのため 2026-08-19 に paused のまま orphan PENDING を取り消したところ、
+`pendingJobs` が 0 になったことで automation が動き、翌 00:51Z に
+**同じ 100 名を再 queue して配信行 0 行の新しい orphan** を作った。
+
+**全停止は `rolloutKill` を使う。** そして **`killed` を解除できるのは `rolloutResume` だけ**で、
+`rolloutStart` は `killed: true` を保持する（`planRolloutStart`）。
+※「解除は rolloutStart」は誤り。既存テスト（`rolloutControl.test.mjs` /
+`rolloutOrchestrator.test.mjs`）がこの挙動を固定している。
+
+### 実行したこと（本番書込み）
+
+| # | 操作 | 書込み | 結果 |
+|---|---|---|---|
+| 1 | `rolloutKill` | Redis の rollout 状態 **1 件**（version 82→83）| `killed: true`。以後の tick は `skip / kill_switch`・**150〜170ms**（kill 前は 47〜55 秒）|
+| 2 | orphan PENDING の取消（`cancelJob`・**削除は使わない**）| ScheduledEmails **1 行**（Status→CANCELLED）| 配信行 0 行のため `cancelledDeliveries: 0` / PENDING **0** |
+| 3 | Step1 の再 queue（管理経路・**50 名ずつ 4 回**）| CampaignDeliveries **159 行**（すべて `queued`）＋ ScheduledEmails **4 行**（PENDING）| 下表 |
+
+各 batch は **単一源 `action:'sequence'` の `next`（step=1）から対象を取り直し** →
+`dryRun` → **同じ対象・同じ `planFingerprint`** で live queue → **配信行を読み戻して検証**の順。
+
+| batch | 対象 | queued | expected/verified/missing | duplicate key |
+|---|---|---|---|---|
+| 1 | 50 | 50 | 50 / 50 / **0** | 0 |
+| 2 | 50 | 50 | 50 / 50 / **0** | 0 |
+| 3 | 50 | 50 | 50 / 50 / **0** | 0 |
+| 4 | 9（残り）| 9 | 9 / 9 / **0** | 0 |
+
+⚠️ 5 回目は **`next.step` が 2 になった時点で自動停止**した（Step2 は今回の対象外）。
+`rollback` / `partial_unconfirmed` は 1 度も発生していない。
+
+### 実行後の実測（read-only）
+
+- **`outstandingStep1: 0`**（granted **1,570** = 解決 **1,570**: Step1 キュー登録・送信済み 1,557 ＋ 停止リスト 13）
+- 本日作成の配信行 **159 行**・すべて `queued`・**DeliveryKey 重複 0**・campaignType は 1 種類のみ
+- PENDING ジョブ **4 件**（50 / 50 / 50 / 9 ＝ 宛先合計 **159**・`SentCount` はすべて 0）
+- **実送信 0**（step1 sent 1,518 / step2 sent 40 が不変。8/19 以降に作成された `sent` 行 **0**）
+- **新規 grant 0**（`lastRunDay: 2026-08-18` / `totalGranted: 1,400`）・**dispatch 0**・`killed: true` 維持
+
+⚠️ Redis の増分集計（`steps[].queued`）は cron が加算する設計のため、**管理経路の手動 queue では増えない**
+（949 のまま）。実数の正本は台帳（CampaignDeliveries / ScheduledEmails）。
+
+### まだやっていないこと
+
+**Step1 の実 dispatch / 実送信 / `rolloutResume` / Step2（due 598）**。すべて別承認。
+
+### 未確定（推測を確定扱いしない）
+
+00:51Z の orphan で **#385 の補償（読み戻し → 補完 → 配信行→ジョブの順で巻き戻し）が
+動いた形跡が無い**理由は未確定。当該実行のログが取得できない（CLI のログ取得が約 400 行・
+01:08Z 以降しか返さない）。ジョブが CANCELLED ではなく PENDING で残っていることから
+**補償コードへ到達しなかった**ことは強く示唆されるが、原因（実行時間切れ / Airtable の応答 /
+重複 tick）は特定できていない。kill 前は `*/2` の 1 スロットにつき **3 回**の完了ログが出ており
+（kill 後は 1 回）、この重複実行と queue 失敗の因果も**未証明**。
+
 ## 2026-08-19 — 【追加】Direct Response Marketing（DRM）基盤
 
 「一斉に送る」から「**反応を見て次の訴求を変える**」へ進むための土台を入れた。
