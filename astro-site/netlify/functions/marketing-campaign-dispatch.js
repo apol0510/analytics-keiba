@@ -61,6 +61,7 @@ import {
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { isQueueVerified } from '../../src/lib/marketing/queueJobPreparation.js';
 import {
   createDispatchLock, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, DispatchLockError,
 } from '../../src/lib/marketing/dispatchLock.js';
@@ -488,6 +489,24 @@ export async function runDispatch({
     //   ・text/plain の組み立てが保存済みマークアップと噛み合わない
     // といったズレが起きる。**版が違うジョブは送らない**（fail closed）。
     // 送りたい場合は dry-run からやり直して積み直す。
+    /**
+     * ⚠️ **配信行を確認できていないジョブは送らない**（fail closed）。
+     *    キュー登録は「ジョブを作る → 配信行を書く → 読み戻して確認 → 印を外す」の順で、
+     *    途中で実行が終わると**印が付いたまま**のジョブが残る。印がある＝配信行が
+     *    揃っている保証が無いので、ここで弾く（2026-08-18 / 08-20 の orphan 事故）。
+     *    印が無いジョブ（この仕組みより前に積まれたもの）は従来どおり送る。
+     */
+    if (!isQueueVerified(f.Notes)) {
+      jobResults.push({
+        jobId, total: recipients.length, willSend: 0, willSkip: recipients.length,
+        blocked: 'queue_unverified',
+        note: 'このジョブは配信行の確認が終わっていません（キュー登録が途中で終わった可能性）。'
+          + '積み直してから送ってください（送信していません）。',
+      });
+      summary.blockedJobs = (summary.blockedJobs || 0) + 1;
+      continue;
+    }
+
     const jobShellVersion = readShellVersionFromNote(f.Notes);
     if (jobShellVersion !== MARKETING_EMAIL_SHELL_VERSION) {
       jobResults.push({
