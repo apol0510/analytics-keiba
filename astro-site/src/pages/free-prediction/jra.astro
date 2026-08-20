@@ -242,8 +242,8 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
 ---
 
 <BaseLayout
-  title="中央競馬 無料予想 - KEIBA Analytics"
-  description="KEIBA Analytics 中央競馬（JRA）の無料予想。AI分析による全レース予想（上位5頭）を無料公開。全頭詳細分析と馬単買い目は有料プランで提供。"
+  title="中央競馬 AI予想プレビュー - KEIBA Analytics"
+  description="KEIBA Analytics 中央競馬（JRA）の AI 予想プレビュー。全レースの出走馬と印を公開。AI予測買い目・AI総合指数・累積スコア・役割は有料プランで公開しています。"
 >
   <section class="prediction-section">
     <div class="container">
@@ -270,6 +270,19 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
               )}
             </h1>
           </div>
+
+        <!-- 2026-08-20: このページが「有料版のプレビュー」であることを最上部で伝える -->
+        <div class="preview-banner">
+            <span class="preview-banner-badge">PREVIEW</span>
+            <div class="preview-banner-text">
+                <p class="preview-banner-title">このページは<strong>有料版のプレビュー</strong>です</p>
+                <p class="preview-banner-desc">
+                    出走全頭と印は<strong>どなたでもそのまま</strong>ご覧いただけます。
+                    <strong>AI予測買い目・AI総合指数・累積スコア・役割</strong>は伏せてあり、有料版で公開しています。
+                </p>
+            </div>
+            <a class="preview-banner-cta" href="/pricing/">プランを見る →</a>
+        </div>
 
           <!-- 会場タブ（複数会場の場合のみ表示）-->
           {isMultiVenue && venues.length > 1 && (
@@ -588,7 +601,7 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
                             return (
                               <>
                                 {headlineRows.map(renderFreeRow)}
-                                <div class="free-member-unlock-content" style="display: none;">
+                                <div class="free-member-unlock-content">
                                   {restRows.map((row) => (row.isHeadline ? renderFreeRow(row) : renderCollapsedRow(row)))}
                                 </div>
                               </>
@@ -596,17 +609,7 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
                           })()}
 
                           <div class="access-control-section">
-                            <div class="locked-content locked-free">
-                              <span class="cta-badge cta-badge-free">¥0 完全無料</span>
-                              <div class="cta-icon">🔓</div>
-                              <h3>出走全頭をフル解放</h3>
-                              <ul class="cta-benefits">
-                                <li>本命◎に加え ○▲△ほか全出走馬</li>
-                                <li>騎手・厩舎・近走もまとめて確認</li>
-                                <li>登録はメールアドレスだけ</li>
-                              </ul>
-                              <a href="/free-signup/" class="unlock-btn unlock-btn-free">無料登録で全頭を見る →</a>
-                            </div>
+                            
                             <div class="locked-content locked-paid">
                               <span class="cta-badge cta-badge-paid">★ PREMIUM</span>
                               <div class="cta-icon">👑</div>
@@ -619,6 +622,11 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
                               <a href="/pricing/" class="unlock-btn unlock-btn-paid">🚀 高性能AIの買い目を見る</a>
                             </div>
                           </div>
+                                                <p class="preview-note">
+                                                    このページは<strong>有料版のプレビュー</strong>です。出走全頭と印はそのままご覧いただけます。
+                                                    <strong>AI予測買い目・AI総合指数・累積スコア・役割</strong>は有料版で公開しています。
+                                                </p>
+
                         </div>
                           </div>
                         </div>
@@ -1738,18 +1746,14 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
       gap: 15px;
     }
 
-    /* CTA 2枚（無料=グリーン / 有料=プレミアム）購買誘導デザイン */
+    /* CTA は有料 1 枚のみ（2026-08-20: 無料登録解放 CTA を撤廃） */
     .locked-content { position: relative; gap: 12px; padding: 26px 22px 22px; }
     .cta-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.5px; padding: 4px 14px; border-radius: 999px; white-space: nowrap; }
-    .cta-badge-free { background: linear-gradient(135deg, #10b981, #22c55e); color: #06281c; box-shadow: 0 2px 10px rgba(16,185,129,0.4); }
     .cta-badge-paid { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #3a2400; box-shadow: 0 2px 10px rgba(245,158,11,0.4); }
     .cta-icon { font-size: 2.1rem; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); }
     .cta-benefits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; width: 100%; text-align: left; }
     .cta-benefits li { position: relative; padding-left: 24px; font-size: 0.86rem; color: #e2e8f0; line-height: 1.4; }
     .cta-benefits li::before { content: '✓'; position: absolute; left: 4px; top: 0; font-weight: 900; }
-    .locked-free { background: linear-gradient(160deg, rgba(16,185,129,0.14) 0%, rgba(15,23,42,0.6) 100%); border-color: rgba(16,185,129,0.45); }
-    .locked-free h3 { color: #34d399; font-size: 1.18rem; font-weight: 800; }
-    .locked-free .cta-benefits li::before { color: #34d399; }
     .locked-paid { background: linear-gradient(160deg, rgba(139,92,246,0.16) 0%, rgba(245,158,11,0.06) 60%, rgba(15,23,42,0.6) 100%); border-color: rgba(245,158,11,0.4); box-shadow: 0 0 24px rgba(139,92,246,0.12); }
     .locked-paid h3 { color: #c4b5fd; font-size: 1.18rem; font-weight: 800; }
     .locked-paid .cta-benefits li::before { color: #fbbf24; }
@@ -2745,7 +2749,122 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
         font-size: 1.3rem;
       }
     }
-  </style>
+  
+    /* ── 2026-08-20: CTA は有料 1 枚のみ ────────────────────────────
+       /free-prediction/ を「有料版のプレビュー」へ位置づけ変更したため、
+       無料登録による全頭解放 CTA を撤廃した。残る 1 枚を主役として見せる。
+       2 枚並び前提の grid をやめ、中央 1 枚のバナー型にする。 */
+    .access-control-section {
+        display: block;
+        max-width: 720px;
+        margin-left: auto;
+        margin-right: auto;
+        background: rgba(30, 41, 59, 0.22);
+        border-color: rgba(139, 92, 246, 0.28);
+    }
+    .access-control-section .locked-content.locked-paid {
+        gap: 14px;
+        padding: 30px 26px 26px;
+        background:
+            radial-gradient(120% 140% at 50% 0%, rgba(139, 92, 246, 0.26) 0%, rgba(139, 92, 246, 0.08) 45%, rgba(15, 23, 42, 0.72) 100%);
+        border: 2px solid rgba(245, 158, 11, 0.55);
+        box-shadow: 0 10px 34px rgba(139, 92, 246, 0.18);
+    }
+    .access-control-section .locked-content.locked-paid h3 {
+        font-size: 1.42rem;
+        color: #fde68a;
+        letter-spacing: 0.01em;
+    }
+    .access-control-section .locked-content.locked-paid .cta-icon { font-size: 2.5rem; }
+    .access-control-section .locked-content.locked-paid .cta-benefits {
+        text-align: left;
+        max-width: 460px;
+    }
+    .access-control-section .locked-content.locked-paid .cta-benefits li { font-size: 0.97rem; }
+    .access-control-section .locked-content.locked-paid .unlock-btn-paid {
+        font-size: 1.06rem;
+        padding: 15px 34px;
+        width: 100%;
+        max-width: 420px;
+    }
+    /* プレビューであることを伝える一言 */
+    .preview-note {
+        max-width: 720px;
+        margin: 14px auto 0;
+        text-align: center;
+        font-size: 0.84rem;
+        line-height: 1.85;
+        color: #cbd5e1;
+    }
+    .preview-note strong { color: #fde68a; }
+    @media (max-width: 768px) {
+        .access-control-section .locked-content.locked-paid { padding: 26px 18px 22px; }
+        .access-control-section .locked-content.locked-paid h3 { font-size: 1.2rem; }
+        .access-control-section .locked-content.locked-paid .unlock-btn-paid { font-size: 1rem; padding: 14px 20px; }
+    }
+
+    /* ── 2026-08-20: 上部プレビューバナー ──────────────────────────
+       /free-prediction/ が「有料版のプレビュー」であることを、
+       各レースの CTA まで読まなくてもページ上部で分かるようにする。 */
+    .preview-banner {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        max-width: 900px;
+        margin: 0 auto 22px;
+        padding: 14px 18px;
+        border-radius: 14px;
+        border: 2px solid rgba(245, 158, 11, 0.55);
+        background:
+            linear-gradient(135deg, rgba(139, 92, 246, 0.20) 0%, rgba(245, 158, 11, 0.12) 55%, rgba(15, 23, 42, 0.75) 100%);
+        box-shadow: 0 6px 24px rgba(139, 92, 246, 0.16);
+    }
+    .preview-banner-badge {
+        flex-shrink: 0;
+        font-size: 0.7rem;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #8b5cf6, #f59e0b);
+        color: #0f172a;
+        white-space: nowrap;
+    }
+    .preview-banner-text { flex: 1; min-width: 0; }
+    .preview-banner-title {
+        margin: 0 0 4px;
+        font-size: 1.02rem;
+        font-weight: 800;
+        color: #fde68a;
+        line-height: 1.5;
+    }
+    .preview-banner-title strong { color: #fbbf24; }
+    .preview-banner-desc {
+        margin: 0;
+        font-size: 0.82rem;
+        line-height: 1.75;
+        color: #e2e8f0;
+    }
+    .preview-banner-desc strong { color: #c4b5fd; font-weight: 700; }
+    .preview-banner-cta {
+        flex-shrink: 0;
+        text-decoration: none;
+        font-size: 0.86rem;
+        font-weight: 800;
+        padding: 10px 18px;
+        border-radius: 10px;
+        background: #f59e0b;
+        color: #1c1917;
+        white-space: nowrap;
+    }
+    .preview-banner-cta:hover { background: #fbbf24; }
+    @media (max-width: 768px) {
+        .preview-banner { flex-direction: column; align-items: stretch; text-align: center; gap: 10px; padding: 14px; }
+        .preview-banner-badge { align-self: center; }
+        .preview-banner-title { font-size: 0.96rem; }
+        .preview-banner-cta { width: 100%; text-align: center; }
+    }
+</style>
 
   <script is:inline>
     function selectVenue(event, button) {
@@ -2871,26 +2990,12 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
         userEmail: !!localStorage.getItem('userEmail')
       });
 
-      // 連下・抑えの実データ表示制御
-      document.querySelectorAll('.free-member-unlock-content').forEach(content => {
-        content.style.display = isRegistered ? 'block' : 'none';
-      });
-
-      // 全頭解放鍵の表示制御（有料鍵は維持）
+      // 2026-08-20: /free-prediction/ は「有料版のプレビュー」へ位置づけ変更。
+      // 無料登録による全頭解放ゲートは撤廃し、出走全頭と ○▲△ は誰でも見える。
+      // 有料項目（pt / AI総合指数 / 役割 / 買い目）のマスクは従来どおり維持する。
       document.querySelectorAll('.access-control-section').forEach(section => {
-        const lockedContents = section.querySelectorAll('.locked-content');
-        const renshitaOsaeLock = Array.from(lockedContents).find(c =>
-          c.querySelector('h3')?.textContent?.includes('全頭')
-        );
-        if (renshitaOsaeLock) {
-          renshitaOsaeLock.style.display = isRegistered ? 'none' : 'flex';
-        }
-        const paidLock = Array.from(lockedContents).find(c =>
-          c.querySelector('h3')?.textContent?.includes('AI予測買い目')
-        );
-        if (paidLock) {
-          paidLock.style.display = 'flex';
-        }
+        // 有料鍵（AI予測買い目）は常に表示
+        section.querySelectorAll('.locked-content').forEach(c => { c.style.display = 'flex'; });
       });
 
       // 開いているアコーディオンの maxHeight を再計算（コンテンツが伸びるため）

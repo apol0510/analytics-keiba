@@ -44,6 +44,41 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000"
 
+# 無料予想の URL 変更（2026-08-21）。旧 /race-viewpoints/ から /free/ へ。
+# 2026-08-20 に noindex を解除した直後の変更なので検索への影響は小さいが、
+# 既に共有されたリンクを死なせないため 301 を恒久的に残す。
+# ⚠️ 個別行のみ。ワイルドカードのフォールバックは書かないこと
+#    （過去に `/* /index.html 200` が全 SSR ページをトップに化けさせた事故がある）。
+[[redirects]]
+  from = "/race-viewpoints"
+  to = "/free/"
+  status = 301
+
+[[redirects]]
+  from = "/race-viewpoints/"
+  to = "/free/"
+  status = 301
+
+[[redirects]]
+  from = "/race-viewpoints/jra"
+  to = "/free/jra/"
+  status = 301
+
+[[redirects]]
+  from = "/race-viewpoints/jra/"
+  to = "/free/jra/"
+  status = 301
+
+[[redirects]]
+  from = "/race-viewpoints/nankan"
+  to = "/free/nankan/"
+  status = 301
+
+[[redirects]]
+  from = "/race-viewpoints/nankan/"
+  to = "/free/nankan/"
+  status = 301
+
 [[redirects]]
   from = "/tokutei"
   to = "/legal"

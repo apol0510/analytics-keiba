@@ -180,6 +180,13 @@ import { summarizeSegments as summarizeDrmSegments, routeNextTouch } from '../..
 import { resolveResponseState } from '../../src/lib/drm/drmResponseState.js';
 import { RESPONSE, RESPONSE_LABEL } from '../../src/lib/drm/drmResponseState.js';
 import { MEASURE } from '../../src/lib/crm/deliveryMeasurement.js';
+import {
+  classifyQueueOutcome, collectDeliveryKeys, summarizeRollback, QUEUE_FAIL,
+} from '../../src/lib/marketing/queueDeliveryOutcome.js';
+import {
+  markUnverified, clearUnverified, hasUnverifiedMark,
+  decideJobRowAction, JOB_ROW_ACTION,
+} from '../../src/lib/marketing/queueJobPreparation.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -191,6 +198,9 @@ import {
   resolveDeliveryStoreMode, resolveDeliveredKeys, recordDelivered,
 } from '../../src/lib/marketing/deliveryKeySource.js';
 import { createDeliveryKeyStore, makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
+  createDispatchLock, QUEUE_LOCK_ROOT, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, isSafeJobId,
+} from '../../src/lib/marketing/dispatchLock.js';
 // カムバック無料付与の成功者を引き継ぐ判定（対象の導出・期限・監査印の単一源）
 import {
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
@@ -793,8 +803,8 @@ export const handler = async (event) => {
     if (action === 'preview') return handlePreview({ req });
     if (action === 'customers') return await handleCustomers({ KEY, BASE, now, req });
     if (action === 'customerDetail') return await handleCustomerDetail({ KEY, BASE, now, req });
-    if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
-    if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
+    if (action === 'dryRun') return await handleQueuedPlan({ KEY, BASE, now, req, live: false });
+    if (action === 'send') return await handleQueuedPlan({ KEY, BASE, now, req, live: true });
     if (action === 'segmentCatalog') return handleSegmentCatalog();
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
@@ -2679,6 +2689,54 @@ async function handleSequence({ KEY, BASE, now, req }) {
   });
 }
 
+/**
+ * キュー登録の入口。**live のときだけ排他を取ってから**本体を呼ぶ。
+ *
+ * ⚠️ `JobId` は plan fingerprint 由来なので、同じキャンペーンのキュー登録が 2 本重なると
+ *    **同じ JobId の行が 2 つ**できる（2026-08-20 に本番で発生。cron の tick が
+ *    1 スロットで 3 回走っていた実測もある）。鍵が取れない = 他が書いている、
+ *    確かめられない = 状態不明。**どちらも 1 バイトも書かずに終わる**（fail closed）。
+ * ⚠️ dry-run は何も書かないので鍵を取らない（確認は何本走ってもよい）。
+ * ⚠️ 本体がどこで return しても `finally` で必ず鍵を返す。
+ */
+async function handleQueuedPlan({ KEY, BASE, now, req, live }) {
+  if (!live) return handlePlan({ KEY, BASE, now, req, live });
+
+  const campaignId = String((req && req.campaignId) || '').trim();
+  const stepPart = Number.isFinite(Number(req && req.step)) ? `:s${Number(req.step)}` : '';
+  const lockId = `queue:${campaignId}${stepPart}`;
+  if (!isSafeJobId(lockId)) {
+    return json(400, { error: 'キャンペーンの指定が不正です', sideEffects: 'none' });
+  }
+
+  let lock = null;
+  let token = null;
+  try {
+    lock = createDispatchLock({ cmd: makeRedisCmd(process.env), root: QUEUE_LOCK_ROOT });
+    const got = await lock.acquire({ jobId: lockId, ttlSec: DISPATCH_LOCK_TTL_SEC });
+    if (!got.ok) {
+      return json(got.reason === LOCK_FAIL.BUSY ? 409 : 503, {
+        error: got.reason === LOCK_FAIL.BUSY
+          ? '同じキャンペーンのキュー登録が実行中です（二重に積まないため中止しました）'
+          : 'キュー登録の排他を確認できないため中止しました',
+        code: got.reason, sideEffects: 'none',
+      });
+    }
+    token = got.token;
+  } catch {
+    return json(503, {
+      error: 'キュー登録の排他を確認できないため中止しました',
+      code: LOCK_FAIL.UNAVAILABLE, sideEffects: 'none',
+    });
+  }
+
+  try {
+    return await handlePlan({ KEY, BASE, now, req, live });
+  } finally {
+    try { await lock.release({ jobId: lockId, token }); } catch { /* TTL で切れる */ }
+  }
+}
+
 async function handlePlan({ KEY, BASE, now, req, live }) {
   const baseCampaign = getCampaign(req.campaignId);
   if (baseCampaign && isSequenceCampaign(baseCampaign) && !Number.isFinite(Number(req.step))) {
@@ -3071,10 +3129,61 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         handoffNote: grantOperationId ? handoffNote(grantOperationId) : '',
       }),
     });
+    /**
+     * ⚠️ **未検証の印を付けて作る。** ジョブは作った瞬間から dispatcher の対象
+     *    （`{Status}='PENDING'`）になるので、配信行を確認する前に「送ってよい」状態で
+     *    置いてはいけない。実行が途中で終わっても、残るのは**送られないジョブ**にする
+     *    （2026-08-18 / 08-20 の orphan 事故）。印は配信行を読み戻して確認できてから外す。
+     */
+    jobFields.Notes = markUnverified(jobFields.Notes);
     if (!assertOnlyScheduledFields(jobFields)) return json(500, { error: 'field allow-list violation' });
-    const created = await createRecord({ KEY, BASE, table: SCHEDULED_TABLE, fields: jobFields });
-    for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId: created?.id || null });
-    jobs.push({ jobId, recipientCount: batch.length, recordId: created?.id || null });
+    /**
+     * ⚠️ **同じ `JobId` の行を二重に作らない。** `JobId` は plan fingerprint 由来なので、
+     *    同じ母集団・同じ本文で積み直すと**同じ JobId** になる。`createRecord` は毎回
+     *    新しい行を作るため、失敗して積み直すと同じ JobId の行が 2 つできる
+     *    （2026-08-20 に本番で発生）。既存行があるならそれを作り直して使う。
+     * ⚠️ 送信済みのジョブは**絶対に作り直さない**（二重送信になる）。読めなければ書かない。
+     */
+    let existingRows = null;
+    try {
+      existingRows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
+        maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Status', 'SentCount'],
+      });
+    } catch {
+      existingRows = null;                 // 読めない = 判断できない（fail closed）
+    }
+    const decided = decideJobRowAction({ rows: existingRows });
+    if (decided.action === JOB_ROW_ACTION.REJECT) {
+      await rollbackQueue({
+        KEY, BASE, campaign, now, jobs, rows: new Map(), reason: decided.reason,
+      });
+      return json(409, {
+        error: 'キュー登録を中止しました（同じジョブの状態を確かめられません）',
+        reason: decided.reason, jobId,
+        sideEffects: jobs.length > 0 ? 'rolled_back' : 'none',
+        notice: '同じ内容のジョブが既に送信済み、もしくは状態を確認できません。'
+          + '**積み直すと二重送信になり得るため、何も書いていません。**',
+      });
+    }
+    let recordId = decided.recordId;
+    if (decided.action === JOB_ROW_ACTION.REUSE) {
+      const ok = await patchRecord({
+        KEY, BASE, table: SCHEDULED_TABLE, recordId: decided.recordId, fields: jobFields,
+      });
+      if (!ok) {
+        await rollbackQueue({ KEY, BASE, campaign, now, jobs, rows: new Map(), reason: 'job_reuse_failed' });
+        return json(500, {
+          error: 'キュー登録を確定できませんでした（既存ジョブを作り直せません）',
+          reason: 'job_reuse_failed', jobId, sideEffects: jobs.length > 0 ? 'rolled_back' : 'none',
+        });
+      }
+    } else {
+      const created = await createRecord({ KEY, BASE, table: SCHEDULED_TABLE, fields: jobFields });
+      recordId = created?.id || null;
+    }
+    for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId });
+    jobs.push({ jobId, recipientCount: batch.length, recordId });
   }
 
   // 2) CampaignDeliveries を DeliveryKey 冪等で upsert（二重送信の最終防壁）
@@ -3082,20 +3191,126 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   for (const rec of deliveryRecords) {
     if (!assertOnlyDeliveryFields(rec.fields)) return json(500, { error: 'field allow-list violation' });
   }
+  /**
+   * ⚠️ 組み立て段の**黙った取りこぼし**を先に捕まえる。
+   *    `buildDeliveryRecords` は許可外フィールドが混ざった行を `continue` で落とすので、
+   *    全件落ちても 0 件のまま素通りし、`upsertDeliveries` は HTTP を 1 回も呼ばない
+   *    （＝例外も出ない）。ここで数を突き合わせておかないと
+   *    「配信行 0 件なのにキュー成功」になる（2026-08-18 の事故）。
+   */
+  if (deliveryRecords.length !== plan.recipients.length) {
+    // まだ 1 行も書いていないので、取り消すのはジョブだけでよい（配信行は存在しない）
+    const rb = await rollbackQueue({
+      KEY, BASE, campaign, now, jobs, rows: new Map(), reason: QUEUE_FAIL.RECORDS_DROPPED,
+    });
+    return json(500, {
+      error: 'キュー登録を確定できませんでした（配信行を組み立てられません）',
+      reason: QUEUE_FAIL.RECORDS_DROPPED,
+      expected: plan.recipients.length, built: deliveryRecords.length,
+      rolledBack: rb.verified === true,
+      rollback: {
+        jobsTargeted: rb.jobsTargeted, jobsCancelled: rb.jobsCancelled,
+        jobsFailed: rb.jobsFailed, jobsStillPending: rb.jobsStillPending,
+      },
+      sideEffects: rb.verified === true ? 'rolled_back' : 'partial_unconfirmed',
+    });
+  }
   // 🛡️ 記録先も単一源に従う。既定は Airtable のみ。`dual` は Redis へも SADD する。
   //    Airtable 側の失敗は従来どおり致命（台帳が欠ける）。Redis 側の失敗は dual なら
   //    致命にせず、差分は scripts/reconcile-delivery-stores.mjs で拾う。
-  const deliveryWrite = await recordDelivered({
-    mode: deliveryStoreMode,
-    keys: plan.recipients.map((r) => r.deliveryKey).filter(Boolean),
-    writeAirtable: () => upsertDeliveries({ KEY, BASE, records: deliveryRecords }),
-    writeRedis: async (keys) => {
-      const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
-      await store.markDelivered({ ...deliveryStoreScope, keys });
-    },
+  /**
+   * ⚠️ **投げっぱなしで 500 にしない。** `upsertDeliveries` が最後に throw すると、
+   *    ジョブだけ作られて配信行が無い状態（2026-08-18 の事故そのもの）で
+   *    補償へ到達しないので、例外は捕まえて**同じ確定処理へ通す**。
+   */
+  let writeError = null;
+  try {
+    const deliveryWrite = await recordDelivered({
+      mode: deliveryStoreMode,
+      keys: plan.recipients.map((r) => r.deliveryKey).filter(Boolean),
+      writeAirtable: () => upsertDeliveries({ KEY, BASE, records: deliveryRecords }),
+      writeRedis: async (keys) => {
+        const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+        await store.markDelivered({ ...deliveryStoreScope, keys });
+      },
+    });
+    if (deliveryWrite.redis === 'failed') {
+      console.warn('⚠️ [admin-marketing] delivery store redis write failed（Airtable が正本のため継続）');
+    }
+  } catch (e) {
+    writeError = String((e && e.message) || 'delivery_write_failed').slice(0, 120);
+  }
+
+  /**
+   * ⚠️ **配信行の実在を読み戻して確かめてから**キュー成功と言う。
+   *    例外が出なかったことは「書けた」の証拠にならない。読めなければ 0 件とも言わず、
+   *    部分成功も成功へ丸めない（`queueDeliveryOutcome.js` が単一源）。
+   *    足りなければまず**不足ぶんだけ冪等に補完**し、それでも駄目なら
+   *    **既存の rollback 契約**で配信行ごと巻き戻す（ジョブだけ取り消さない）。
+   */
+  const settled = await settleQueueWrite({
+    KEY, BASE, campaign, now, jobs, recipients: plan.recipients, deliveryRecords, writeError,
   });
-  if (deliveryWrite.redis === 'failed') {
-    console.warn('⚠️ [admin-marketing] delivery store redis write failed（Airtable が正本のため継続）');
+  if (!settled.ok) {
+    const rb = settled.rollback || {};
+    console.error('🛑 [admin-marketing] キュー登録を確定できず巻き戻し:', {
+      campaignId: campaign.campaignId, reason: settled.outcome.reason,
+      expected: settled.outcome.expected, verified: settled.outcome.verified,
+      missing: settled.outcome.missing, rollbackVerified: rb.verified === true,
+    });
+    return json(500, {
+      error: 'キュー登録を確定できませんでした（配信行を確認できません）',
+      reason: settled.outcome.reason,
+      writeError: settled.writeError,
+      expected: settled.outcome.expected,
+      verified: settled.outcome.verified,
+      missing: settled.outcome.missing,
+      /** ⚠️ 巻き戻しを**確認できたときだけ** true。件数も丸めない */
+      rolledBack: rb.verified === true,
+      rollback: {
+        deliveriesTargeted: rb.deliveriesTargeted ?? null,
+        deliveriesCancelled: rb.deliveriesCancelled ?? null,
+        deliveriesFailed: rb.deliveriesFailed ?? null,
+        deliveriesStillActive: rb.deliveriesStillActive ?? null,
+        jobsTargeted: rb.jobsTargeted ?? null,
+        jobsCancelled: rb.jobsCancelled ?? null,
+        jobsFailed: rb.jobsFailed ?? null,
+        jobsStillPending: rb.jobsStillPending ?? null,
+      },
+      sideEffects: rb.verified === true ? 'rolled_back' : 'partial_unconfirmed',
+      notice: rb.verified === true
+        ? '配信行を確認できないため、作成した送信待ちジョブと配信行を取り消しました。'
+          + '取消済み配信行は既送信に数えないので、そのまま再実行できます。'
+        : '⚠️ 巻き戻しを確認できていません。**人が状態を確認するまで再実行しないでください。**',
+    });
+  }
+
+  /**
+   * ⚠️ **ここで初めて「送ってよい」状態にする。** 配信行の実在を読み戻して確認できたので、
+   *    未検証の印を外す。外せたことも**読み戻して確かめる**（外したつもりにしない）。
+   *    外せなければ成功と言わず、作ったものを巻き戻す（fail closed）。
+   */
+  const promoted = await promoteVerifiedJobs({ KEY, BASE, jobs });
+  if (!promoted.ok) {
+    const rb = await rollbackQueue({
+      KEY, BASE, campaign, now, jobs, rows: await readDeliveryRows({
+        KEY, BASE, campaign, keys: [...collectDeliveryKeys(plan.recipients)],
+      }), reason: 'job_promote_unconfirmed',
+    });
+    console.error('🛑 [admin-marketing] 未検証の印を外せず巻き戻し:', {
+      campaignId: campaign.campaignId, promoted: promoted.promoted, targeted: promoted.targeted,
+      rollbackVerified: rb.verified === true,
+    });
+    return json(500, {
+      error: 'キュー登録を確定できませんでした（ジョブを送信可能な状態にできません）',
+      reason: 'job_promote_unconfirmed',
+      targeted: promoted.targeted, promoted: promoted.promoted, stillUnverified: promoted.stillUnverified,
+      rolledBack: rb.verified === true,
+      sideEffects: rb.verified === true ? 'rolled_back' : 'partial_unconfirmed',
+      notice: rb.verified === true
+        ? '送信可能な状態にできなかったため、作成したジョブと配信行を取り消しました。'
+        : '⚠️ 巻き戻しを確認できていません。**人が状態を確認するまで再実行しないでください。**',
+    });
   }
 
   console.log('✅ [admin-marketing] キャンペーンをキューへ登録:', {
@@ -3350,15 +3565,308 @@ async function createRecord({ KEY, BASE, table, fields }) {
 }
 
 /** DeliveryKey を merge key にした upsert。同じ key は何度実行しても 1 行のまま。 */
+/**
+ * 指定した `DeliveryKey` の**行**を読む（read-only）。
+ *
+ * ⚠️ 読めなければ `null`（**0 件と言わない**）。呼び出し側が fail closed する。
+ * ⚠️ 既存の名指し formula（`buildDeliveryKeyFormula`）を使う。全件走査しない。
+ *
+ * @returns {Promise<Map<string,{id:string,status:string}>|null>} key → 行
+ */
+async function readDeliveryRows({ KEY, BASE, campaign, keys }) {
+  const list = (Array.isArray(keys) ? keys : []).map((k) => String(k || '').trim()).filter(Boolean);
+  if (list.length === 0) return null;
+  const campaignType = `${campaign.campaignId}:v${campaign.version}`;
+  const out = new Map();
+  for (let i = 0; i < list.length; i += 40) {
+    const group = list.slice(i, i + 40);
+    const formula = buildDeliveryKeyFormula({ campaignType, keys: group });
+    if (!formula) return null;
+    let rows;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 40 件ずつ名指し
+      rows = await fetchAllStrict({
+        KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula,
+        maxPages: TARGETED_MAX_PAGES, fields: ['DeliveryKey', 'Status'],
+      });
+    } catch {
+      return null;                       // 読めない = 確認できない
+    }
+    if (!Array.isArray(rows)) return null;
+    for (const r of rows) {
+      const f = (r && r.fields) || {};
+      const k = String(f.DeliveryKey || '').trim();
+      if (k) out.set(k, { id: r.id, status: String(f.Status || '').trim() });
+    }
+  }
+  return out;
+}
+
+/**
+ * 「送ったことになる」行だけを鍵の集合にする。
+ *
+ * ⚠️ 判定は **`fetchDeliveredKeys` と同一**（`sent` / `queued` のみ）。
+ *    `cancelled` / `failed` は既送信に数えない ＝ **再 queue の対象へ戻る**。
+ *    ここを変えると二重送信の防壁と rollback 契約が食い違う。
+ */
+function activeDeliveryKeys(rows) {
+  if (!(rows instanceof Map)) return null;
+  const out = new Set();
+  for (const [k, v] of rows) {
+    const st = String((v && v.status) || '');
+    if (st === 'sent' || st === 'queued') out.add(k);
+  }
+  return out;
+}
+
+/** 不足ぶんだけ冪等に補完する回数（`DeliveryKey` upsert なので行は増えない） */
+const DELIVERY_COMPLETE_MAX_RETRY = 2;
+
+/**
+ * キュー登録の後始末。**例外・読めない・0 件・部分成功を同じ確定処理へ通す。**
+ *
+ * ⚠️ `upsertDeliveries` が投げても**ここへ来る**（投げっぱなしで 500 にしない）。
+ *    ジョブと配信行の**実状態を read-only で数え直してから**次の処置を決める。
+ *
+ * 手順:
+ *   A. 不足している `DeliveryKey` だけを**冪等に補完**し、読み戻して確認する
+ *   B. それでも揃わなければ **既存の rollback 契約**で巻き戻す
+ *      （配信行を `cancelled` にすると `fetchDeliveredKeys` の既送信集合から外れ、
+ *        全員をそのまま再 queue できる。**新しい Status も削除も使わない**）
+ */
+async function settleQueueWrite({
+  KEY, BASE, campaign, now, jobs, recipients, deliveryRecords, writeError,
+}) {
+  const expected = [...collectDeliveryKeys(recipients)];
+  let rows = await readDeliveryRows({ KEY, BASE, campaign, keys: expected });
+  let outcome = classifyQueueOutcome({
+    recipients, builtCount: deliveryRecords.length, verifiedKeys: activeDeliveryKeys(rows),
+  });
+
+  // ── A. 不足だけ補完（部分成功・0 件・書き込み例外のいずれからも来る）──
+  for (let attempt = 0; attempt < DELIVERY_COMPLETE_MAX_RETRY; attempt += 1) {
+    if (outcome.ok || rows === null || outcome.reason !== QUEUE_FAIL.INCOMPLETE) break;
+    const active = activeDeliveryKeys(rows) || new Set();
+    const missing = deliveryRecords.filter((r) => !active.has(String(r.fields.DeliveryKey || '')));
+    if (missing.length === 0) break;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 補完は最大 2 回
+      await upsertDeliveries({ KEY, BASE, records: missing });
+    } catch {
+      // 投げても止めない。**次の読み戻しが実状態で判断する**
+    }
+    // eslint-disable-next-line no-await-in-loop
+    rows = await readDeliveryRows({ KEY, BASE, campaign, keys: expected });
+    outcome = classifyQueueOutcome({
+      recipients, builtCount: deliveryRecords.length, verifiedKeys: activeDeliveryKeys(rows),
+    });
+  }
+  if (outcome.ok) return { ok: true, outcome, writeError: writeError || null };
+
+  // ── B. 巻き戻す（**ジョブだけ取り消して配信行を残さない**）────────
+  const rollback = await rollbackQueue({
+    KEY, BASE, campaign, now, jobs, rows, reason: outcome.reason,
+  });
+  return { ok: false, outcome, rollback, writeError: writeError || null };
+}
+
+/**
+ * 配信行を確認できたジョブから**未検証の印を外す**（＝ dispatcher が送ってよい状態にする）。
+ *
+ * ⚠️ **外したことを読み戻して確かめる。** PATCH が 200 でも、実際に印が消えているかは
+ *    別の話（他の実行が同時に書き戻すこともある）。確かめられなければ `ok:false` を返し、
+ *    呼び出し側は成功と言わずに巻き戻す。
+ * ⚠️ 印が最初から無い行（この修正より前に積まれたもの）は**そのまま成功扱い**にする。
+ */
+async function promoteVerifiedJobs({ KEY, BASE, jobs }) {
+  const list = (Array.isArray(jobs) ? jobs : []).filter((j) => j && j.recordId && j.jobId);
+  const report = { ok: false, targeted: list.length, promoted: 0, stillUnverified: null };
+  if (list.length === 0) return { ...report, ok: true };
+
+  for (const j of list) {
+    let rows = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- ジョブ 1 件ずつ名指し
+      rows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${j.jobId}'`,
+        maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Notes'],
+      });
+    } catch {
+      return { ...report, stillUnverified: null };   // 読めない = 確認できない
+    }
+    const row = (rows || []).find((r) => String(((r && r.fields) || {}).JobId || '') === j.jobId);
+    if (!row) return { ...report, stillUnverified: null };
+    const notes = String((row.fields || {}).Notes || '');
+    if (!hasUnverifiedMark(notes)) { report.promoted += 1; continue; }
+    const fields = { Notes: clearUnverified(notes) };
+    if (!assertOnlyScheduledFields(fields)) return { ...report };
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 1 件ずつ
+      const ok = await patchRecord({ KEY, BASE, table: SCHEDULED_TABLE, recordId: row.id, fields });
+      if (!ok) return { ...report };
+    } catch {
+      return { ...report };
+    }
+    report.promoted += 1;
+  }
+
+  // 読み戻して「印が 1 つも残っていない」ことを確かめる
+  let stillUnverified = 0;
+  for (const j of list) {
+    let rows = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 1 件ずつ名指し
+      rows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${j.jobId}'`,
+        maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Notes'],
+      });
+    } catch {
+      return { ...report, stillUnverified: null };
+    }
+    const row = (rows || []).find((r) => String(((r && r.fields) || {}).JobId || '') === j.jobId);
+    if (!row) return { ...report, stillUnverified: null };
+    if (hasUnverifiedMark(String((row.fields || {}).Notes || ''))) stillUnverified += 1;
+  }
+  return { ...report, stillUnverified, ok: stillUnverified === 0 };
+}
+
+/**
+ * 作りかけのキュー登録を**既存契約で**巻き戻す。
+ *
+ * ⚠️ **配信行を先に `cancelled` にしてからジョブを取り消す**（`handleCancelJob` と同じ順）。
+ *    ジョブだけ取り消して配信行を `queued` のまま残すと、`fetchDeliveredKeys` が
+ *    それを既送信として数え、**送っていない人が再 queue から永久に外れる**。
+ * ⚠️ 取消は**確認できたぶんだけ**成功と数える。1 件でも確かめられなければ
+ *    `ok:false`（呼び出し側は「取消しました」と言わない）。
+ */
+async function rollbackQueue({ KEY, BASE, campaign, now, jobs, rows, reason }) {
+  const op = `queue-unconfirmed:${String(reason || 'unknown')}`.slice(0, 60);
+  const report = {
+    deliveriesTargeted: 0, deliveriesCancelled: 0, deliveriesFailed: 0,
+    jobsTargeted: 0, jobsCancelled: 0, jobsFailed: 0,
+    verified: false,
+  };
+
+  // ① 配信行（`queued` のものだけ）を取り消す
+  const targets = [];
+  if (rows instanceof Map) {
+    for (const [, v] of rows) {
+      if (v && String(v.status) === 'queued' && v.id) targets.push(v.id);
+    }
+  }
+  report.deliveriesTargeted = targets.length;
+  const deliveryFields = buildDeliveryCancelFields({ operationId: op, nowMs: now });
+  if (deliveryFields && assertOnlyCancelFields(deliveryFields, DELIVERY_CANCEL_WRITABLE_FIELDS)) {
+    for (const id of targets) {
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 1 行ずつ
+        const okRow = await patchRecord({
+          KEY, BASE, table: DELIVERIES_TABLE, recordId: id, fields: deliveryFields,
+        });
+        if (okRow) report.deliveriesCancelled += 1; else report.deliveriesFailed += 1;
+      } catch {
+        report.deliveriesFailed += 1;
+      }
+    }
+  } else {
+    report.deliveriesFailed = targets.length;
+  }
+
+  // ② ジョブを取り消す
+  const jobList = (Array.isArray(jobs) ? jobs : []).filter((j) => j && j.recordId);
+  report.jobsTargeted = jobList.length;
+  const jobFields = buildJobCancelFields({ operationId: op, nowMs: now });
+  if (jobFields && assertOnlyCancelFields(jobFields, JOB_CANCEL_WRITABLE_FIELDS)) {
+    for (const j of jobList) {
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 1 ジョブずつ
+        const okJob = await patchRecord({
+          KEY, BASE, table: SCHEDULED_TABLE, recordId: j.recordId, fields: jobFields,
+        });
+        if (okJob) report.jobsCancelled += 1; else report.jobsFailed += 1;
+      } catch {
+        report.jobsFailed += 1;
+      }
+    }
+  } else {
+    report.jobsFailed = jobList.length;
+  }
+
+  // ③ **読み戻して確かめる**（「取り消したつもり」を成功にしない）
+  /**
+   * ⚠️ **「読めなかった」と「読めた結果 0 行」を分ける。**
+   *    まだ 1 行も書いていない段階（`delivery_records_dropped`）は
+   *    呼び出し側が**空の Map**（＝読めていて 0 行）を渡す。ここを `null` と
+   *    同じに扱うと、完全に巻き戻せていても「確認できていない」と報告して
+   *    安全な再 queue まで止めてしまう。
+   */
+  let stillActive = null;
+  if (rows instanceof Map && rows.size === 0) {
+    stillActive = new Set();                 // 生きている配信行はそもそも無い
+  } else if (rows instanceof Map) {
+    let verifiedRows = null;
+    try {
+      verifiedRows = await readDeliveryRows({ KEY, BASE, campaign, keys: [...rows.keys()] });
+    } catch { verifiedRows = null; }
+    stillActive = activeDeliveryKeys(verifiedRows);
+  }
+  let jobsStillPending = null;
+  try {
+    const after = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE,
+      filterByFormula: `AND({Status}='PENDING',${MARKETING_JOB_FORMULA})`,
+      maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Status'],
+    });
+    const pendingIds = new Set((after || []).map((r) => String(((r && r.fields) || {}).JobId || '')));
+    jobsStillPending = jobList.filter((j) => pendingIds.has(String(j.jobId))).length;
+  } catch { jobsStillPending = null; }
+
+  report.deliveriesStillActive = stillActive instanceof Set ? stillActive.size : null;
+  report.jobsStillPending = jobsStillPending;
+  // ⚠️ 判定は純粋関数が単一源（`rollback failure` を成功扱いしない）
+  const verdict = summarizeRollback(report);
+  report.verified = verdict.verified;
+  report.verifyReason = verdict.reason;
+  return { ok: report.verified, ...report };
+}
+
+/** Airtable は 1 base 5 req/sec。既存の取得側（`airtable-fetch.js`）と同じ間隔を空ける */
+const AIRTABLE_PACE_MS = 220;
+/** 一過性（429 / 5xx）だけ、この回数まで待って再試行する */
+const UPSERT_MAX_RETRY = 3;
+
 async function upsertDeliveries({ KEY, BASE, records }) {
+  const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
   for (let i = 0; i < records.length; i += 10) {
     const batch = records.slice(i, i + 10);
-    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${DELIVERIES_TABLE}`, {
-      method: 'PATCH',
-      headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: batch }),
-    });
-    if (!res.ok) throw new Error(`${DELIVERIES_TABLE} upsert failed: HTTP ${res.status}`);
+    // ⚠️ 1 回の呼び出しで最大 10 件（Airtable の performUpsert 上限）。
+    //    ここは**冪等**（`DeliveryKey` をマージキーにした upsert）なので、
+    //    再試行しても行は増えない。
+    let lastStatus = 0;
+    let ok = false;
+    for (let attempt = 0; attempt <= UPSERT_MAX_RETRY; attempt += 1) {
+      if (i > 0 || attempt > 0) {
+        // eslint-disable-next-line no-await-in-loop -- 5rps を超えないための間隔
+        await sleep(AIRTABLE_PACE_MS * (attempt + 1));
+      }
+      let res;
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 10 件ずつ
+        res = await fetch(`https://api.airtable.com/v0/${BASE}/${DELIVERIES_TABLE}`, {
+          method: 'PATCH',
+          headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: batch }),
+        });
+      } catch {
+        lastStatus = 0;                       // 通信失敗も一過性として再試行
+        continue;
+      }
+      if (res.ok) { ok = true; break; }
+      lastStatus = res.status;
+      // ⚠️ 4xx（429 以外）は投げ直しても直らない。**即座に諦める**
+      if (res.status !== 429 && res.status < 500) break;
+    }
+    if (!ok) throw new Error(`${DELIVERIES_TABLE} upsert failed: HTTP ${lastStatus}`);
   }
 }
 

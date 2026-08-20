@@ -53,6 +53,24 @@ export const dispatchKey = Object.freeze({
 });
 
 /**
+ * **キュー登録**用の鍵空間（送信の鍵と混ぜない）。
+ *
+ * ⚠️ 同じ相手・同じ本文なら `JobId` は plan fingerprint 由来で同じになる。
+ *    2 本の実行が同時に積むと、同じ JobId の行が 2 つできる（2026-08-20 に本番で発生）。
+ *    書く前にここで排他を取る。
+ */
+export const QUEUE_LOCK_ROOT = 'ak:marketing-queue:';
+
+/**
+ * **cron tick** 用の鍵空間。
+ *
+ * ⚠️ 2 分間隔のはずの tick が、実測で 1 スロットにつき 3 回走っていた（2026-08-19/20）。
+ *    重なった実行は同じ事実を読んで同じ処置をしようとするので、
+ *    tick 全体を 1 本に絞る。
+ */
+export const TICK_LOCK_ROOT = 'ak:marketing-tick:';
+
+/**
  * 同期 Function 用の既定 TTL（秒）。
  * Netlify の上限は 26 秒。**その 10 倍以上**を取り、送信中に期限切れが起きない側へ倒す。
  */
@@ -114,11 +132,21 @@ export function isSafeJobId(jobId) {
 export function createDispatchLock(deps = {}) {
   const cmd = deps.cmd;
   if (typeof cmd !== 'function') throw new Error('createDispatchLock: cmd が必要です');
+  /**
+   * 鍵空間。既定は送信用（従来どおり）。キュー登録・tick は別空間を渡す。
+   * ⚠️ **用途ごとに分ける**。同じ空間を使うと、送信中の鍵をキュー登録が奪える。
+   */
+  const root = String(deps.root || DISPATCH_LOCK_ROOT);
+  /** 鍵名は root から作る（`dispatchKey` は送信用の既定 root 固定なので使わない） */
+  const keyOf = Object.freeze({
+    lock: (jobId) => `${root}lock:${jobId}`,
+    fence: () => `${root}fence`,
+  });
 
   /** 自分の鍵空間の外は触らない（他用途の鍵を消さない） */
   const assertKey = (key) => {
     const k = String(key ?? '');
-    if (!k.startsWith(DISPATCH_LOCK_ROOT)) {
+    if (!k.startsWith(root)) {
       throw new DispatchLockError(LOCK_FAIL.UNAVAILABLE, 'out_of_namespace');
     }
     return k;
@@ -152,11 +180,11 @@ export function createDispatchLock(deps = {}) {
      */
     async acquire({ jobId, ttlSec }) {
       if (!isSafeJobId(jobId)) throw new DispatchLockError(LOCK_FAIL.BAD_JOB_ID);
-      const n = await call(['INCR', dispatchKey.fence()]);
+      const n = await call(['INCR', keyOf.fence()]);
       const token = String(n);
       if (!/^[1-9][0-9]*$/.test(token)) throw new DispatchLockError(LOCK_FAIL.UNAVAILABLE, 'fence');
       const res = await call([
-        'SET', dispatchKey.lock(jobId), token, 'NX', 'EX',
+        'SET', keyOf.lock(jobId), token, 'NX', 'EX',
         String(Number.isFinite(ttlSec) && ttlSec > 0 ? Math.floor(ttlSec) : DISPATCH_LOCK_TTL_SEC),
       ]);
       if (res === 'OK') return { ok: true, token };
@@ -171,7 +199,7 @@ export function createDispatchLock(deps = {}) {
      */
     async verify({ jobId, token }) {
       if (!isSafeJobId(jobId)) throw new DispatchLockError(LOCK_FAIL.BAD_JOB_ID);
-      const res = await call(['EVAL', LOCK_VERIFY_LUA, '1', dispatchKey.lock(jobId), String(token)]);
+      const res = await call(['EVAL', LOCK_VERIFY_LUA, '1', keyOf.lock(jobId), String(token)]);
       if (res === 'OK') return { ok: true, reason: null };
       if (res === 'LOST') return { ok: false, reason: LOCK_FAIL.LOST };
       if (res === 'STOLEN') return { ok: false, reason: LOCK_FAIL.STOLEN };
@@ -190,7 +218,7 @@ export function createDispatchLock(deps = {}) {
       const ttl = Number.isFinite(ttlSec) && ttlSec > 0
         ? Math.floor(ttlSec) : DISPATCH_LOCK_BACKGROUND_TTL_SEC;
       const res = await call([
-        'EVAL', RENEW_LUA, '1', dispatchKey.lock(jobId), String(token), String(ttl),
+        'EVAL', RENEW_LUA, '1', keyOf.lock(jobId), String(token), String(ttl),
       ]);
       if (res === 'OK') return { ok: true, reason: null };
       if (res === 'LOST') return { ok: false, reason: LOCK_FAIL.LOST };
@@ -206,7 +234,7 @@ export function createDispatchLock(deps = {}) {
     async release({ jobId, token }) {
       if (!isSafeJobId(jobId)) return { ok: false, reason: LOCK_FAIL.BAD_JOB_ID };
       try {
-        const res = await call(['EVAL', LOCK_RELEASE_LUA, '1', dispatchKey.lock(jobId), String(token)]);
+        const res = await call(['EVAL', LOCK_RELEASE_LUA, '1', keyOf.lock(jobId), String(token)]);
         if (res === 'OK') return { ok: true, reason: null };
         return { ok: false, reason: String(res).toLowerCase() };
       } catch (e) {

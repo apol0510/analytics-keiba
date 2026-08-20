@@ -73,6 +73,9 @@ import { readBatchDeliveryKeys } from '../../src/lib/marketing/batchDeliveryKeys
 import { runLightTrialGrant } from './cron-light-trial-grant.js';
 import { handler as adminMarketingHandler } from './admin-marketing.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
+import {
+  createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL, isSafeJobId,
+} from '../../src/lib/marketing/dispatchLock.js';
 
 /**
  * この展開が対象とする道のり。**2 キャンペーンで 1 本**（合計 24 接点）。
@@ -1223,6 +1226,12 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   return { ok: true, ...view, sideEffects: 'none' };
 }
 
+/**
+ * tick の排他 TTL（秒）。**実測の tick 所要（47〜55 秒）より十分長く**取り、
+ * 実行が途中で終わっても次のスロット（120 秒後）までには必ず切れる長さにする。
+ */
+const TICK_LOCK_TTL_SEC = 110;
+
 /** Netlify Functions v2 のエントリ（下見だけ手動で叩ける） */
 export default async function handler(req) {
   let body = {};
@@ -1234,13 +1243,44 @@ export default async function handler(req) {
     if (!SECRET) return json(503, { error: '管理用 secret 未設定（機能無効）' });
     if (provided !== SECRET) return json(403, { error: 'Forbidden' });
   }
+  /**
+   * ⚠️ **同じ tick を重ねて走らせない。** 2 分間隔のはずが、実測では 1 スロットにつき
+   *    **3 回**の実行が並んでいた（2026-08-19/20・各 47〜55 秒）。重なると同じ事実を読んで
+   *    同じ処置をしようとし、キュー登録が二重になる余地ができる。
+   *    鍵が取れなければ**何もせずに終わる**（副作用ゼロ）。
+   * ⚠️ 下見（dryRun）は書かないので鍵を取らない。
+   */
+  let lock = null;
+  let token = null;
+  const lockId = `tick:${ROLLOUT_CAMPAIGN_ID}`;
+  if (!dryRun && isSafeJobId(lockId)) {
+    try {
+      lock = createDispatchLock({ cmd: makeRedisCmd(process.env), root: TICK_LOCK_ROOT });
+      const got = await lock.acquire({ jobId: lockId, ttlSec: TICK_LOCK_TTL_SEC });
+      if (!got.ok) {
+        const reason = got.reason === LOCK_FAIL.BUSY ? 'tick_busy' : 'tick_lock_unavailable';
+        log({ ok: true, action: 'skip', reason, sideEffects: 'none' });
+        return json(200, { ok: true, action: 'skip', reason, sideEffects: 'none' });
+      }
+      token = got.token;
+    } catch {
+      log({ ok: true, action: 'skip', reason: 'tick_lock_unavailable', sideEffects: 'none' });
+      return json(200, { ok: true, action: 'skip', reason: 'tick_lock_unavailable', sideEffects: 'none' });
+    }
+  }
+
   try {
     return json(200, await runRolloutTick({ env: process.env, now: Date.now(), dryRun }));
   } catch (e) {
     log({ ok: false, error: String((e && e.message) || 'unknown') });
     return json(200, { ok: false, error: 'tick_failed', sideEffects: 'unknown' });
+  } finally {
+    if (lock && token) {
+      try { await lock.release({ jobId: lockId, token }); } catch { /* TTL で切れる */ }
+    }
   }
 }
+
 
 /**
  * **5 分ごと**。1 tick 1 段階なので、1 バッチは 付与 → queue → 送信起動 の 3 tick で進む。
