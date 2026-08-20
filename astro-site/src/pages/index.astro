@@ -281,6 +281,17 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     AIが24時間365日、中央競馬・地方競馬を分析し続けています。
                 </p>
 
+                <!-- 無料予想への導線（2026-08-21 追加）
+                     ヒーローには押せる要素が 1 つも無く、本文で最初の無料CTAが
+                     3.8 画面ぶん下（y=3240）にあった。しかもそれより上に見えるのは
+                     有料実績のみで、「無料で試す前に有料を見せる」順番になっていた。
+                     ここに 1 つ置いて、最初の行動を無料側へ寄せる。
+                     着地先は索引ページ（/race-viewpoints/）。中央/南関はそこで選ばせる。 -->
+                <div class="hero-cta">
+                    <a class="hero-cta-btn" href="/race-viewpoints/">🔍 今日の無料予想を見る →</a>
+                    <p class="hero-cta-note">登録なしで全レース見られます。中央競馬・南関競馬から選べます。</p>
+                </div>
+
                 <!-- AI Statistics Cards -->
                 <div class="hero-stats-section" style="margin-top: 50px;">
                     <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-width: 100%; margin: 0 auto; padding: 0 10px;">
@@ -701,6 +712,40 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
             max-width: 600px;
             margin-left: auto;
             margin-right: auto;
+        }
+
+        /* 無料予想への導線（ヒーロー内・2026-08-21 追加） */
+        .hero-cta {
+            margin-top: 4px;
+        }
+        .hero-cta-btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: #052e16;
+            font-weight: 800;
+            font-size: 1.05rem;
+            padding: 15px 32px;
+            border-radius: 12px;
+            text-decoration: none;
+            box-shadow: 0 6px 18px rgba(34, 197, 94, .28);
+            transition: transform .15s, box-shadow .15s;
+        }
+        .hero-cta-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 24px rgba(34, 197, 94, .38);
+        }
+        .hero-cta-note {
+            margin: 12px 0 0;
+            font-size: .82rem;
+            color: var(--accent-text-color);
+            line-height: 1.7;
+        }
+        @media (max-width: 640px) {
+            .hero-cta-btn {
+                display: block;
+                font-size: .98rem;
+                padding: 14px 20px;
+            }
         }
 
         /* Live Prediction Section - オレンジ系（ガラスモーフィズム） */
