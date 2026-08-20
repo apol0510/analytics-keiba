@@ -229,3 +229,33 @@ t4('モバイル nav も同じ並びになっている', () => {
 });
 
 console.log(`homeCta.guard（ナビの並び）: ${passed4} 件すべて通過\n`);
+
+/* ── フッターの名称も nav と揃える（2026-08-21 追加） ──────────────
+   nav を「無料予想 / 有料版」に整理したのに、フッターだけ旧名称
+   「AI予想プレビュー」が残り、同じものが 2 つの名前で呼ばれていた。 */
+let passed5 = 0;
+const t5 = (name, fn) => { fn(); passed5 += 1; console.log(`  ✓ ${name}`); };
+
+console.log('homeCta.guard（フッターの名称）');
+
+t5('サイト全体から旧名称「AI予想プレビュー」が消えている', () => {
+  // ⚠️ HTML コメント `<!-- -->` は配信 HTML にそのまま出るので、
+  //    説明用の注記は Astro の JSX コメント `{/* */}` で書くこと。
+  //    ここでは JSX コメントだけを取り除いて、実際に配信される文字列を見る。
+  const visible = layout.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  assert.equal(visible.includes('AI予想プレビュー'), false,
+    'nav は「有料版」なのに旧名称が残っている（同じものが 2 つの名前で呼ばれる）');
+});
+
+t5('フッターでも無料予想が有料版プレビューより先にある', () => {
+  const i = layout.lastIndexOf('footer-links');
+  const foot = layout.slice(layout.indexOf('footer-links'));
+  assert.ok(i > -1, 'フッターが見つからない');
+  const free = foot.indexOf('>無料予想<');
+  const paid = foot.indexOf('>有料版プレビュー<');
+  assert.ok(free > -1, 'フッターに「無料予想」が無い');
+  assert.ok(paid > -1, 'フッターに「有料版プレビュー」が無い');
+  assert.ok(free < paid, 'フッターでも無料を先に出す');
+});
+
+console.log(`homeCta.guard（フッターの名称）: ${passed5} 件すべて通過\n`);
