@@ -54,3 +54,37 @@ test('summary でのトグルは残す（閉じ方を 1 つに減らさない）
   assert.ok(board.includes('<summary class="rvb-detail-sum"'), 'summary が無い');
   assert.equal(board.includes('preventDefault'), false, 'summary の既定動作を止めている');
 });
+
+/* ── 閉じている状態は塗り＋フル幅（2026-08-21 追加） ────────────────
+   細い枠線だと押せることが伝わらず、全レースが同じ見た目で並ぶため
+   一覧が「白と水色のツートンで単調」に見えていた（MK 指摘）。
+   色相は変えず、塗りにして解決した。ボタン化・バッジ化でクリック領域を
+   縮める案は、押せる幅が 931px → 約 230px になるため見送っている。 */
+{
+  const style = board.slice(board.indexOf('<style'), board.lastIndexOf('</style>'));
+
+  test('閉じている状態に塗りの背景がある（枠線だけに戻さない）', () => {
+    const m = style.match(/\.rvb-detail:not\(\[open\]\)\s*\{([^}]*)\}/);
+    assert.ok(m, '.rvb-detail:not([open]) の指定が無い');
+    assert.match(m[1], /background:\s*linear-gradient/,
+      '閉じている状態が塗りでない。枠線だけだと押せることが伝わらない');
+  });
+
+  test('閉じている状態の指定が [open] を侵さない（開いた時はシアンのまま）', () => {
+    // `:not([open])` を使っていれば、開いた瞬間に自動で解除される。
+    const bad = /\.rvb-detail\s*\{[^}]*background:\s*linear-gradient/;
+    assert.equal(bad.test(style), false,
+      '.rvb-detail 本体に塗りを書くと開いた状態にも効いてしまう。:not([open]) を使うこと');
+    assert.match(style, /\.rvb-detail\[open\][^{]*\{[^}]*border-color:\s*#22d3ee/,
+      '開いている状態のシアンが消えている');
+  });
+
+  test('見出しをフル幅のまま保つ（ボタン化・バッジ化しない）', () => {
+    const m = style.match(/\.rvb-detail:not\(\[open\]\)\s+\.rvb-detail-sum\s*\{([^}]*)\}/);
+    if (!m) return;
+    for (const shrink of ['width: auto', 'display: inline', 'float:']) {
+      assert.equal(m[1].includes(shrink), false,
+        `閉じた見出しを縮めている（${shrink}）。押せる幅が狭まりスマホで押しづらくなる`);
+    }
+  });
+}
